@@ -13,6 +13,14 @@ beary 的 iOS 壳工程（Capacitor），内嵌 WKWebView，打开线上站 `htt
 
 公开仓库的 macOS 构建免费无限量；私有仓库每月约 200 分钟 macOS 额度。
 
+## 侧载到真机（免费，无需开发者账号）
+
+工作流每次推 main 还会编一个真机包，产物为 `beary-ipa`（beary.ipa，未签名）。
+在 Windows 电脑上用 Sideloadly + 自己的 Apple ID 安装到 iPhone（Sideloadly 会用免费证书签名）：
+- 免费证书 7 天过期，到期后重新装一次；免费账号最多 3 个侧载 App。
+- 装完后在 iPhone 设置 → 通用 → VPN 与设备管理里信任自己的 Apple ID 证书。
+- Apple ID 只填在自己的电脑上，不要发给任何人。
+
 ## 本地构建（需要 Mac）
 
 ```sh
