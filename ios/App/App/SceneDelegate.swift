@@ -52,6 +52,9 @@ final class BearyChromeViewController: CAPBridgeViewController {
     private var didFirstPush = false
     private var avatarURLString: String?
     private var chromeHandler: BearyChromeMessageHandler?
+    private var navFailureCount = 0
+    private var handshakeReloaded = false
+    private var navReloadNotBefore = Date.distantPast
 
     private var ink: UIColor { UIColor { t in t.userInterfaceStyle == .dark ? UIColor(white: 0.96, alpha: 1) : .black } }
     private var gray: UIColor { UIColor { t in t.userInterfaceStyle == .dark ? UIColor(white: 0.66, alpha: 1) : UIColor(white: 0.45, alpha: 1) } }
@@ -98,6 +101,7 @@ final class BearyChromeViewController: CAPBridgeViewController {
         logo.setImage(UIImage(named: "LogoHorizontal"), for: .normal)
         logo.imageView?.contentMode = .scaleAspectFit
         logo.addTarget(self, action: #selector(didTapLogo), for: .touchUpInside)
+        logo.accessibilityLabel = "beary 首页"
         logo.translatesAutoresizingMaskIntoConstraints = false
         NSLayoutConstraint.activate([
             logo.widthAnchor.constraint(equalToConstant: 79),
@@ -105,7 +109,8 @@ final class BearyChromeViewController: CAPBridgeViewController {
         ])
         let login = UIButton(type: .custom)
         login.setTitle("登录", for: .normal)
-        login.titleLabel?.font = .boldSystemFont(ofSize: 14)
+        login.titleLabel?.font = UIFontMetrics.default.scaledFont(for: .boldSystemFont(ofSize: 14))
+        login.titleLabel?.adjustsFontForContentSizeCategory = true
         login.setTitleColor(UIColor { t in t.userInterfaceStyle == .dark ? .black : .white }, for: .normal)
         login.backgroundColor = ink
         login.layer.cornerRadius = 16
@@ -114,11 +119,13 @@ final class BearyChromeViewController: CAPBridgeViewController {
         login.sizeToFit()
         NSLayoutConstraint.activate([
             login.heightAnchor.constraint(equalToConstant: 32),
-            login.widthAnchor.constraint(equalToConstant: login.bounds.width + 30),
+            login.widthAnchor.constraint(greaterThanOrEqualToConstant: login.bounds.width + 30),
         ])
         loginButton = login
         let search = makeTopIconButton(imageName: "IconSearch", tint: ink, action: #selector(didTapSearch))
+        search.accessibilityLabel = "搜索"
         let gift = makeTopIconButton(imageName: "IconGift", tint: bearyOrange, action: #selector(didTapGift))
+        gift.accessibilityLabel = "邀请"
         giftButton = gift
         let avatar = UIButton(type: .custom)
         avatar.setImage(UIImage(named: "IconUser")?.withRenderingMode(.alwaysTemplate), for: .normal)
@@ -127,6 +134,7 @@ final class BearyChromeViewController: CAPBridgeViewController {
         avatar.layer.cornerRadius = 18
         avatar.clipsToBounds = true
         avatar.addTarget(self, action: #selector(didTapAvatar), for: .touchUpInside)
+        avatar.accessibilityLabel = "我的菜单"
         avatar.translatesAutoresizingMaskIntoConstraints = false
         NSLayoutConstraint.activate([
             avatar.widthAnchor.constraint(equalToConstant: 36),
@@ -178,21 +186,23 @@ final class BearyChromeViewController: CAPBridgeViewController {
             ("IconCalendar", "timeline", #selector(didTapTimeline)),
             ("IconUser", "me", #selector(didTapMe)),
         ]
-        for (img, _, sel) in tabs {
+        for (img, key, sel) in tabs {
             let b = UIButton(type: .custom)
             b.setImage(UIImage(named: img)?.withRenderingMode(.alwaysTemplate), for: .normal)
             b.tintColor = gray
             b.addTarget(self, action: sel, for: .touchUpInside)
+            b.accessibilityLabel = ["home": "首页", "notif": "消息", "timeline": "时间线", "me": "我"][key] ?? key
             b.translatesAutoresizingMaskIntoConstraints = false
             b.widthAnchor.constraint(equalToConstant: 62).isActive = true
             tabStack.addArrangedSubview(b)
             tabButtons.append(b)
         }
-        // 未读角标：挂在消息钮右上角（与网页 .nt-badge 同口径：只在 ntUnread>0 时显示；有系统消息时变蓝）
+        // 未读角标：挂在消息钮右上角（与网页同口径：只在 ntUnread>0 时显示，底色一律蓝——网页 .bnav-badge 即蓝底）
         let badge = UILabel()
-        badge.font = .boldSystemFont(ofSize: 11)
+        badge.font = UIFontMetrics.default.scaledFont(for: .boldSystemFont(ofSize: 11))
+        badge.adjustsFontForContentSizeCategory = true
         badge.textColor = .white
-        badge.backgroundColor = bearyOrange
+        badge.backgroundColor = bearyBlue
         badge.textAlignment = .center
         badge.layer.cornerRadius = 8
         badge.clipsToBounds = true
@@ -202,7 +212,7 @@ final class BearyChromeViewController: CAPBridgeViewController {
         notifButton.addSubview(badge)
         bellBadge = badge
         NSLayoutConstraint.activate([
-            badge.heightAnchor.constraint(equalToConstant: 16),
+            badge.heightAnchor.constraint(greaterThanOrEqualToConstant: 16),
             badge.widthAnchor.constraint(greaterThanOrEqualToConstant: 16),
             badge.centerXAnchor.constraint(equalTo: notifButton.centerXAnchor, constant: 11),
             badge.centerYAnchor.constraint(equalTo: notifButton.centerYAnchor, constant: -11),
@@ -218,6 +228,7 @@ final class BearyChromeViewController: CAPBridgeViewController {
         fab.layer.shadowRadius = 12
         fab.layer.shadowOffset = CGSize(width: 0, height: 10)
         fab.addTarget(self, action: #selector(didTapWrite), for: .touchUpInside)
+        fab.accessibilityLabel = "写日记"
         fab.translatesAutoresizingMaskIntoConstraints = false
         view.addSubview(fab)
         fabButton = fab
@@ -238,6 +249,13 @@ final class BearyChromeViewController: CAPBridgeViewController {
             let h = BearyChromeMessageHandler(owner: self)
             chromeHandler = h
             wv.configuration.userContentController.add(h, name: "bearyChrome")
+        }
+        // 桥接握手超时：8 秒内没收到网页首推且页面已提交过 URL，只重载一次（慢网只多一次加载，不循环）；
+        // 重载后网页重跑、首推到达即重新同步
+        DispatchQueue.main.asyncAfter(deadline: .now() + 8) { [weak self] in
+            guard let self = self, !self.didFirstPush, !self.handshakeReloaded, self.webView?.url != nil else { return }
+            self.handshakeReloaded = true
+            self.webView?.reload()
         }
     }
 
@@ -264,13 +282,20 @@ final class BearyChromeViewController: CAPBridgeViewController {
         let keys = ["home", "notif", "timeline", "me"]
         for (i, k) in keys.enumerated() where i < tabButtons.count {
             tabButtons[i].tintColor = (k == tab) ? ink : gray
+            tabButtons[i].accessibilityTraits = (k == tab) ? [.button, .selected] : [.button]
         }
         if unread > 0 {
             bellBadge.text = unread > 99 ? "99+" : "\(unread)"
-            bellBadge.backgroundColor = sysUnread > 0 ? bearyBlue : bearyOrange
+            bellBadge.backgroundColor = bearyBlue
             bellBadge.isHidden = false
+            if tabButtons.count > 1 {
+                tabButtons[1].accessibilityLabel = "消息，\(unread) 条未读" + (sysUnread > 0 ? "，含系统消息" : "")
+            }
         } else {
             bellBadge.isHidden = true
+            if tabButtons.count > 1 {
+                tabButtons[1].accessibilityLabel = "消息"
+            }
         }
         loginButton.isHidden = loggedIn
         giftButton.isHidden = giftHidden
@@ -282,11 +307,20 @@ final class BearyChromeViewController: CAPBridgeViewController {
                     avatarButton.setImage(UIImage(named: "IconUser")?.withRenderingMode(.alwaysTemplate), for: .normal)
                     avatarButton.tintColor = ink
                 } else {
+                    // 先回占位图，下载失败不留旧头像
+                    avatarButton.setImage(UIImage(named: "IconUser")?.withRenderingMode(.alwaysTemplate), for: .normal)
+                    avatarButton.tintColor = ink
                     var urlString = avatar
                     if urlString.hasPrefix("/") { urlString = "https://teddyhn.com" + urlString }
                     if let url = URL(string: urlString) {
                         URLSession.shared.dataTask(with: url) { [weak self] data, _, _ in
-                            guard let self = self, let data = data, let img = UIImage(data: data) else { return }
+                            guard let self = self, let data = data, let img = UIImage(data: data) else {
+                                // 下载失败：清掉记账，下次状态推送到达时重试；当前保持占位图
+                                DispatchQueue.main.async { [weak self] in
+                                    if self?.avatarURLString == avatar { self?.avatarURLString = nil }
+                                }
+                                return
+                            }
                             DispatchQueue.main.async {
                                 if self.avatarURLString == avatar {
                                     self.avatarButton.setImage(img.withRenderingMode(.alwaysOriginal), for: .normal)
@@ -306,13 +340,18 @@ final class BearyChromeViewController: CAPBridgeViewController {
             scrollHidden = scroll
             let showTop = !hidden
             let showBottom = !hidden && !scroll
-            UIView.animate(withDuration: 0.25) {
+            let applyBars = {
                 self.topGlass.alpha = showTop ? 1 : 0
                 self.topGlass.transform = showTop ? .identity : CGAffineTransform(translationX: 0, y: -20)
                 self.bottomCapsule.alpha = showBottom ? 1 : 0
                 self.bottomCapsule.transform = showBottom ? .identity : CGAffineTransform(translationX: 0, y: 80)
                 self.fabButton.alpha = showBottom ? 1 : 0
                 self.fabButton.transform = showBottom ? .identity : CGAffineTransform(translationX: 0, y: 80)
+            }
+            if UIAccessibility.isReduceMotionEnabled {
+                applyBars()
+            } else {
+                UIView.animate(withDuration: 0.25, delay: 0, options: [.beginFromCurrentState, .allowUserInteraction], animations: applyBars)
             }
             topGlass.isUserInteractionEnabled = showTop
             bottomCapsule.isUserInteractionEnabled = showBottom
@@ -321,7 +360,22 @@ final class BearyChromeViewController: CAPBridgeViewController {
     }
 
     private func evalNav(_ js: String) {
-        webView?.evaluateJavaScript("window.__bearyNav&&window.__bearyNav." + js, completionHandler: nil)
+        // 探针式调用：返回 ok / missing，执行抛错走 error；连续两次失败才重载一次（30 秒冷却），
+        // 避免单次抖动刷掉正在看的页面；重载后网页重跑、首推到达即重新同步
+        let probe = "(function(){try{var n=window.__bearyNav; if(!n) return 'missing'; n." + js + "; return 'ok';}catch(e){return 'error';}})()"
+        webView?.evaluateJavaScript(probe) { [weak self] result, error in
+            guard let self = self else { return }
+            if error == nil, (result as? String) == "ok" {
+                self.navFailureCount = 0
+                return
+            }
+            self.navFailureCount += 1
+            if self.navFailureCount >= 2, Date() >= self.navReloadNotBefore {
+                self.navReloadNotBefore = Date().addingTimeInterval(30)
+                self.navFailureCount = 0
+                self.webView?.reload()
+            }
+        }
     }
     @objc private func didTapLogo() { evalNav("logo()") }
     @objc private func didTapLogin() { evalNav("login()") }
