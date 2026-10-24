@@ -1,0 +1,6 @@
+node_modules/
+ios/App/App/public/
+ios/App/App/capacitor.config.json
+build/
+DerivedData/
+.DS_Store
