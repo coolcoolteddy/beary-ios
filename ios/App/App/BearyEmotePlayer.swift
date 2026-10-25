@@ -28,6 +28,16 @@ public final class BearyEmoteView: UIView {
         let endFrame: CGFloat
     }
 
+    /// 仅解码 Bodymovin 顶层 markers 数组（cm=标记名、tm=帧号）。
+    /// 其余字段不建模，JSONDecoder 会跳过未知键。
+    private struct EmoteMarkersFile: Decodable {
+        struct Marker: Decodable {
+            let cm: String
+            let tm: CGFloat
+        }
+        let markers: [Marker]?
+    }
+
     private static var cache: [String: CachedEmote] = [:]
     private static var cacheOrder: [String] = []
     private static let cacheLock = NSLock()
@@ -257,21 +267,26 @@ public final class BearyEmoteView: UIView {
     private static func loadEmoteFromBundle(for key: String, dark: Bool) -> CachedEmote? {
         let name = dark ? "\(key)_dark" : key
         guard let url = Bundle.main.url(forResource: name, withExtension: "json") else { return nil }
-        // G24：只读盘一次——LottieAnimation.filepath 一次读入并解析，
-        // op 与循环标记直接取自解析后的模型（endFrame / marker(named:)），
-        // 不再另起 Data(contentsOf:) + JSONSerialization 读第二遍。
+        // G24：op 取自 LottieAnimation.filepath 解析后的模型（endFrame）。
+        // 循环标记取自 JSON 原文件：所钉 Lottie 4.6.1 里模型上的 markers 是
+        // internal、marker(named:) 也不存在（CI #44 实证），故直接解码
+        // markers 数组（cm=名、tm=帧号，与旧 Marker.time 同值），
+        // 首帧缓存后不再重复读盘。
         guard let animation = LottieAnimation.filepath(url.path) else { return nil }
         let endFrame = CGFloat(animation.endFrame)
         guard endFrame > 0 else { return nil }
         // markers 缺失时的兜底：loop_start 缺失则从 0 循环，loop_end 缺失则循环到 op。
-        // 注：所钉 Lottie 版本里 animation.markers 是 internal，改走公开的 marker(named:)。
         var loopStart: CGFloat = 0
         var loopEnd: CGFloat = endFrame
-        if let startMarker = animation.marker(named: "loop_start") {
-            loopStart = CGFloat(startMarker.time)
-        }
-        if let endMarker = animation.marker(named: "loop_end") {
-            loopEnd = CGFloat(endMarker.time)
+        if let data = try? Data(contentsOf: url),
+           let decoded = try? JSONDecoder().decode(EmoteMarkersFile.self, from: data),
+           let markers = decoded.markers {
+            if let startMarker = markers.first(where: { $0.cm == "loop_start" }) {
+                loopStart = startMarker.tm
+            }
+            if let endMarker = markers.first(where: { $0.cm == "loop_end" }) {
+                loopEnd = endMarker.tm
+            }
         }
         if loopStart < 0 {
             loopStart = 0
