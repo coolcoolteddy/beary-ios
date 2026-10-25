@@ -116,7 +116,7 @@ final class SessionManager {
             let group = DispatchGroup()
             for c in cookies where self.isBearyCookie(c) {
                 group.enter()
-                wkStore.deleteCookie(c) { group.leave() }
+                wkStore.delete(c) { group.leave() }
             }
             group.notify(queue: .main) { completion?() }
         }
