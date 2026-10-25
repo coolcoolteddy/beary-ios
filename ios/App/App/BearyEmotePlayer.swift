@@ -258,19 +258,19 @@ public final class BearyEmoteView: UIView {
         let name = dark ? "\(key)_dark" : key
         guard let url = Bundle.main.url(forResource: name, withExtension: "json") else { return nil }
         // G24：只读盘一次——LottieAnimation.filepath 一次读入并解析，
-        // op 与循环标记直接取自解析后的模型（endFrame / markers），
+        // op 与循环标记直接取自解析后的模型（endFrame / marker(named:)），
         // 不再另起 Data(contentsOf:) + JSONSerialization 读第二遍。
         guard let animation = LottieAnimation.filepath(url.path) else { return nil }
         let endFrame = CGFloat(animation.endFrame)
         guard endFrame > 0 else { return nil }
         // markers 缺失时的兜底：loop_start 缺失则从 0 循环，loop_end 缺失则循环到 op。
+        // 注：所钉 Lottie 版本里 animation.markers 是 internal，改走公开的 marker(named:)。
         var loopStart: CGFloat = 0
         var loopEnd: CGFloat = endFrame
-        let markers = animation.markers ?? []
-        if let startMarker = markers.first(where: { $0.name == "loop_start" }) {
+        if let startMarker = animation.marker(named: "loop_start") {
             loopStart = CGFloat(startMarker.time)
         }
-        if let endMarker = markers.first(where: { $0.name == "loop_end" }) {
+        if let endMarker = animation.marker(named: "loop_end") {
             loopEnd = CGFloat(endMarker.time)
         }
         if loopStart < 0 {

@@ -1478,7 +1478,7 @@ class BearyTimelineViewController: UIViewController {
     private var timelinePageFailed = false
     // M2：分页新增行的错峰滑入队列（willDisplay 时按原始序号起播，播过即摘；
     // 用序号字典而非数组，避免摘除后后续序号前移导致错峰失效）。
-    private var staggerInsertOrder: [IndexPath: Int] = []
+    private var staggerInsertOrder: [IndexPath: Int] = [:]
     // M16：跳转提示当前 label 弱引用，消失时先做透明度过渡再移除。
     private weak var jumpNoteLabel: UILabel?
     // G15：分页失败 toast（底色 ink，与回收站 toast 同口径）。
