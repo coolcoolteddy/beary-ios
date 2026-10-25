@@ -5,7 +5,7 @@ import UIKit
 // UIKit 纯代码布局；文案一律中文；颜色一律用 BearyColors 动态色。
 // Entry 全部字段 optional，取值一律 ?? 兜底，不对网络数据 force unwrap。
 // 对照源：网页 beary.html 卡片标题行 / 倒计时 pill / 回应行 / 回应面板 / 引用 lite 卡。
-// 跨代理契约（只调用、不定义）：BearyEmoteImages.image(for:dark:)、BearyWeatherIcon.systemName(for:)。
+// 跨代理契约（只调用、不定义）：BearyEmoteImages.image(for:dark:)。图标一律走 BearyIconImages（网页版同款 PNG）。
 // 本文件内实现：图片查看器、回应底 sheet、回应换行流式布局、虚线 + 钮、toast。
 
 // 详情滚动位置：按 entry id 记在内存里（不跨启动持久化），重开同一篇时恢复。
@@ -257,7 +257,7 @@ class BearyEntryDetailViewController: UIViewController {
         let writeToIconHeight = writeToIconView.heightAnchor.constraint(equalToConstant: 13)
         writeToIconHeight.priority = UILayoutPriority(999)
         writeToIconView.translatesAutoresizingMaskIntoConstraints = false
-        writeToIconView.image = UIImage(systemName: "envelope", withConfiguration: UIImage.SymbolConfiguration(pointSize: 13, weight: .regular))
+        writeToIconView.image = BearyIconImages.image(named: "icon_mail", pointSize: 13)
         writeToIconView.tintColor = BearyColors.orange
         writeToIconView.contentMode = .scaleAspectFit
         writeToLabel.font = UIFont.boldSystemFont(ofSize: 12)
@@ -400,7 +400,7 @@ class BearyEntryDetailViewController: UIViewController {
         likeButton.titleLabel?.font = UIFont.systemFont(ofSize: 14)
         bookmarkButton.contentEdgeInsets = UIEdgeInsets(top: 2, left: 2, bottom: 2, right: 2)
         shareButton.contentEdgeInsets = UIEdgeInsets(top: 2, left: 2, bottom: 2, right: 2)
-        shareButton.setImage(UIImage(systemName: "square.and.arrow.up", withConfiguration: UIImage.SymbolConfiguration(pointSize: 21, weight: .regular)), for: .normal)
+        shareButton.setImage(BearyIconImages.image(named: "icon_share", pointSize: 21), for: .normal)
         shareButton.tintColor = BearyColors.gray
         editButton.contentEdgeInsets = UIEdgeInsets(top: 6, left: 4, bottom: 6, right: 4)
         editButton.setTitle("编辑", for: .normal)
@@ -422,7 +422,7 @@ class BearyEntryDetailViewController: UIViewController {
         stackView.addArrangedSubview(emoteFlowView)
 
         // 回应行末尾常驻 + 入口：网页同款 34px 虚线圆圈灰色加号（虚线由子类 CAShapeLayer 画）。
-        emoteAddButton.setImage(UIImage(systemName: "plus"), for: .normal)
+        emoteAddButton.setImage(BearyIconImages.image(named: "icon_plus", pointSize: 16), for: .normal)
         emoteAddButton.tintColor = BearyColors.gray
         emoteAddButton.tag = -1
         emoteAddButton.translatesAutoresizingMaskIntoConstraints = false
@@ -671,8 +671,7 @@ class BearyEntryDetailViewController: UIViewController {
         }
         // 网页 wxHtml 口径：只认 9 个已知天气 key，未知 key 不显示（契约默认返回 cloud，不可直接采用）。
         if let weatherKey = current.weather, BearyText.weatherNames[weatherKey] != nil {
-            let symbolName = BearyWeatherIcon.systemName(for: weatherKey)
-            if let weatherImage = UIImage(systemName: symbolName) {
+            if let weatherImage = BearyIconImages.image(named: "icon_wx_" + weatherKey, pointSize: 15) {
                 weatherImageView.image = weatherImage
                 weatherImageView.isHidden = false
             } else {
@@ -769,16 +768,16 @@ class BearyEntryDetailViewController: UIViewController {
     private func updateActionButtons() {
         let liked = entry?.likedByMe ?? false
         let count = entry?.likeCount ?? 0
-        let likeImageName = liked ? "heart.fill" : "heart"
-        likeButton.setImage(UIImage(systemName: likeImageName, withConfiguration: UIImage.SymbolConfiguration(pointSize: 22, weight: .regular)), for: .normal)
+        let likeImageName = liked ? "icon_heart_fill" : "icon_heart"
+        likeButton.setImage(BearyIconImages.image(named: likeImageName, pointSize: 22) ?? BearyIconImages.image(named: "icon_heart", pointSize: 22), for: .normal)
         // 点赞计数恒显示（含 0，不隐藏数字位）。
         likeButton.setTitle("\(count)", for: .normal)
         likeButton.tintColor = liked ? BearyColors.orange : BearyColors.gray
         likeButton.setTitleColor(liked ? BearyColors.orange : BearyColors.gray, for: .normal)
 
         let bookmarked = entry?.bookmarkedByMe ?? false
-        let bookmarkImageName = bookmarked ? "bookmark.fill" : "bookmark"
-        bookmarkButton.setImage(UIImage(systemName: bookmarkImageName, withConfiguration: UIImage.SymbolConfiguration(pointSize: 21, weight: .regular)), for: .normal)
+        let bookmarkImageName = bookmarked ? "icon_bookmark_fill" : "icon_bookmark"
+        bookmarkButton.setImage(BearyIconImages.image(named: bookmarkImageName, pointSize: 21) ?? BearyIconImages.image(named: "icon_bookmark", pointSize: 21), for: .normal)
         bookmarkButton.tintColor = bookmarked ? BearyColors.orange : BearyColors.gray
     }
 
@@ -867,10 +866,11 @@ class BearyEntryDetailViewController: UIViewController {
             inner.trailingAnchor.constraint(equalTo: quoteCardView.trailingAnchor, constant: -12),
         ])
         // 图标顶距 2：包一层 15 图标 + 顶 2 的容器，行高由正文／缩略图撑起。
-        func quoteIcon(named symbolName: String) -> UIView {
+        // 网页口径：gone/正常卡用 beary-quote，未公开卡用 beary-lock（quoteHtml 分支）。
+        func quoteIcon(named name: String = "icon_quote") -> UIView {
             let wrap = UIView()
             wrap.translatesAutoresizingMaskIntoConstraints = false
-            let iconView = UIImageView(image: UIImage(systemName: symbolName))
+            let iconView = UIImageView(image: BearyIconImages.image(named: name, pointSize: 15))
             iconView.tintColor = BearyColors.gray
             iconView.translatesAutoresizingMaskIntoConstraints = false
             wrap.addSubview(iconView)
@@ -892,7 +892,7 @@ class BearyEntryDetailViewController: UIViewController {
         if isDeleted == true {
             // 网页 gone 态：quote 图标 15 + 13 gray“引用的日记已删除”。
             inner.alignment = .center
-            inner.addArrangedSubview(quoteIcon(named: "quote.opening"))
+            inner.addArrangedSubview(quoteIcon())
             let deletedLabel = UILabel()
             deletedLabel.font = UIFont.systemFont(ofSize: 13)
             deletedLabel.textColor = BearyColors.gray
@@ -904,7 +904,7 @@ class BearyEntryDetailViewController: UIViewController {
         }
         if isPublic == false {
             inner.alignment = .center
-            inner.addArrangedSubview(quoteIcon(named: "lock"))
+            inner.addArrangedSubview(quoteIcon(named: "icon_lock"))
             let lockedLabel = UILabel()
             lockedLabel.font = UIFont.systemFont(ofSize: 13)
             lockedLabel.textColor = BearyColors.gray
@@ -914,7 +914,7 @@ class BearyEntryDetailViewController: UIViewController {
             updateDetailSpacing()
             return
         }
-        inner.addArrangedSubview(quoteIcon(named: "quote.opening"))
+        inner.addArrangedSubview(quoteIcon())
         let textLabel = UILabel()
         textLabel.font = UIFont.systemFont(ofSize: 13.5)
         textLabel.textColor = BearyColors.ink
@@ -1535,7 +1535,7 @@ private class BearyEmoteSheetViewController: UIViewController, UICollectionViewD
         titleLabel.textColor = BearyColors.ink
         titleLabel.translatesAutoresizingMaskIntoConstraints = false
         sheetView.addSubview(titleLabel)
-        closeButton.setImage(UIImage(systemName: "xmark"), for: .normal)
+        closeButton.setImage(BearyIconImages.image(named: "icon_close", pointSize: 15), for: .normal)
         closeButton.tintColor = BearyColors.ink
         closeButton.backgroundColor = BearyColors.faint
         closeButton.layer.cornerRadius = 16
@@ -1792,7 +1792,7 @@ private class BearyEntryImageViewerViewController: UIViewController, UIScrollVie
             dotViews.append(dot)
         }
         view.addSubview(dotsStack)
-        closeButton.setImage(UIImage(systemName: "xmark"), for: .normal)
+        closeButton.setImage(BearyIconImages.image(named: "icon_close", pointSize: 15), for: .normal)
         closeButton.tintColor = .white
         closeButton.backgroundColor = UIColor(white: 1, alpha: 0.15)
         closeButton.layer.cornerRadius = 18

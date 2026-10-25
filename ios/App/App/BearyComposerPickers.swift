@@ -109,16 +109,14 @@ final class BearyRecipientPickerViewController: UIViewController, UITextFieldDel
         headerIconWrap.layer.masksToBounds = true
         headerIconWrap.layer.borderWidth = 1
         headerIconWrap.layer.borderColor = BearyColors.orange.withAlphaComponent(0.28).cgColor
-        headerIcon.image = UIImage(systemName: "at")
+        headerIcon.image = BearyIconImages.image(named: "icon_at", pointSize: 20)
         headerIcon.tintColor = BearyColors.orange
         headerIcon.contentMode = .scaleAspectFit
         headerTitle.text = "写给谁"
         headerTitle.font = UIFont.boldSystemFont(ofSize: 16)
         headerTitle.textColor = BearyColors.ink
-        if let closeImage = UIImage(systemName: "xmark", withConfiguration: UIImage.SymbolConfiguration(pointSize: 15, weight: .regular)) {
+        if let closeImage = BearyIconImages.image(named: "icon_close", pointSize: 15) {
             closeButton.setImage(closeImage, for: .normal)
-        } else {
-            closeButton.setImage(UIImage(systemName: "xmark"), for: .normal)
         }
         closeButton.tintColor = BearyColors.ink
         closeButton.backgroundColor = BearyColors.faint
@@ -130,7 +128,7 @@ final class BearyRecipientPickerViewController: UIViewController, UITextFieldDel
         searchBox.layer.masksToBounds = true
         searchBox.layer.borderWidth = 1
         searchBox.layer.borderColor = BearyColors.line.cgColor
-        searchIcon.image = UIImage(systemName: "magnifyingglass")
+        searchIcon.image = BearyIconImages.image(named: "icon_search", pointSize: 18)
         searchIcon.tintColor = BearyColors.gray
         searchIcon.contentMode = .scaleAspectFit
         searchField.placeholder = "搜索昵称或 @用户名"
@@ -472,21 +470,21 @@ final class BearyRecipientPickerViewController: UIViewController, UITextFieldDel
         stateRetryButton.isHidden = true
         stateRetryBottomConstraint?.isActive = false
         if kind == "loading" {
-            stateIcon.image = UIImage(systemName: "magnifyingglass")
+            stateIcon.image = BearyIconImages.image(named: "icon_search", pointSize: 25)
             stateTitle.text = "正在找"
             stateSubtitle.text = "马上就来"
         } else if kind == "none" {
-            stateIcon.image = UIImage(systemName: "magnifyingglass")
+            stateIcon.image = BearyIconImages.image(named: "icon_search", pointSize: 25)
             stateTitle.text = "没有找到「" + query + "」"
             stateSubtitle.text = "检查一下昵称或 @用户名是否正确"
         } else if kind == "fail" {
-            stateIcon.image = UIImage(systemName: "magnifyingglass")
+            stateIcon.image = BearyIconImages.image(named: "icon_search", pointSize: 25)
             stateTitle.text = "搜索失败"
             stateSubtitle.text = "网络好像不太顺"
             stateRetryButton.isHidden = false
             stateRetryBottomConstraint?.isActive = true
         } else {
-            stateIcon.image = UIImage(systemName: "at")
+            stateIcon.image = BearyIconImages.image(named: "icon_at", pointSize: 25)
             stateTitle.text = "写给某个人"
             stateSubtitle.text = "这篇 7 天后才公开"
         }
@@ -585,7 +583,7 @@ final class BearyRecipientPickerViewController: UIViewController, UITextFieldDel
             handleLabel.translatesAutoresizingMaskIntoConstraints = false
             handleLabel.font = UIFont.systemFont(ofSize: 12.5)
             handleLabel.textColor = BearyColors.gray
-            let chevron = UIImageView(image: UIImage(systemName: "chevron.right"))
+            let chevron = UIImageView(image: BearyIconImages.image(named: "icon_chevron_right", pointSize: 16))
             chevron.translatesAutoresizingMaskIntoConstraints = false
             chevron.tintColor = BearyColors.gray
             chevron.contentMode = .scaleAspectFit

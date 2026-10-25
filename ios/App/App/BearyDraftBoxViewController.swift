@@ -175,7 +175,7 @@ final class BearyDraftBoxViewController: UIViewController {
         closeButton.layer.cornerRadius = 16
         closeButton.tintColor = BearyColors.ink
         closeButton.accessibilityLabel = "关闭"
-        if let closeImage = UIImage(systemName: "xmark", withConfiguration: UIImage.SymbolConfiguration(pointSize: 15, weight: .regular)) {
+        if let closeImage = BearyIconImages.image(named: "icon_close", pointSize: 15) {
             closeButton.setImage(closeImage, for: .normal)
         } else {
             closeButton.setTitle("✕", for: .normal)
@@ -216,7 +216,7 @@ final class BearyDraftBoxViewController: UIViewController {
         newButton.setTitleColor(BearyColors.gray, for: .normal)
         newButton.titleLabel?.font = UIFont.systemFont(ofSize: 13.5)
         newButton.tintColor = BearyColors.gray
-        if let editImage = UIImage(systemName: "square.and.pencil", withConfiguration: UIImage.SymbolConfiguration(pointSize: 15, weight: .regular)) {
+        if let editImage = BearyIconImages.image(named: "icon_edit", pointSize: 15) {
             newButton.setImage(editImage, for: .normal)
         }
         newButton.titleEdgeInsets = UIEdgeInsets(top: 0, left: 6, bottom: 0, right: 0)
@@ -518,7 +518,7 @@ final class BearyDraftBoxViewController: UIViewController {
             imageRow.axis = .horizontal
             imageRow.spacing = 4
             imageRow.alignment = .center
-            if let photoImage = UIImage(systemName: "photo", withConfiguration: UIImage.SymbolConfiguration(pointSize: 15, weight: .regular)) {
+            if let photoImage = BearyIconImages.image(named: "icon_image", pointSize: 15) {
                 let photoView = UIImageView(image: photoImage)
                 photoView.tintColor = BearyColors.gray
                 photoView.translatesAutoresizingMaskIntoConstraints = false
@@ -549,7 +549,7 @@ final class BearyDraftBoxViewController: UIViewController {
         topRow.addArrangedSubview(openButton)
         openEntries.append((button: openButton, draftValue: draftValue))
         let deleteButton = UIButton(type: .custom)
-        if let trashImage = UIImage(systemName: "trash", withConfiguration: UIImage.SymbolConfiguration(pointSize: 17, weight: .regular)) {
+        if let trashImage = BearyIconImages.image(named: "icon_trash", pointSize: 17) {
             deleteButton.setImage(trashImage, for: .normal)
         }
         deleteButton.tintColor = BearyColors.red

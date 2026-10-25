@@ -85,14 +85,13 @@ class BearyFeedViewController: UIViewController {
     }()
 
     /// 空态（网页 .empty 口径）：图标 36×36 灰、标题 15 ink（图标→标题间距 8）、
-    /// 副文案 13 灰、容器 padding 26/20/8。图标图形为 SF tray，与网页自定义 inbox 图形不同。
+    /// 副文案 13 灰、容器 padding 26/20/8。图标图形为网页版同款 icon_tray。
     private lazy var emptyView: UIView = {
         let container = UIView()
         container.backgroundColor = BearyColors.bg
         let iconView = UIImageView()
         iconView.translatesAutoresizingMaskIntoConstraints = false
-        let iconConfig = UIImage.SymbolConfiguration(pointSize: 36, weight: .regular)
-        iconView.image = UIImage(systemName: "tray", withConfiguration: iconConfig)
+        iconView.image = BearyIconImages.image(named: "icon_tray", pointSize: 36)
         iconView.tintColor = BearyColors.gray
         iconView.contentMode = .scaleAspectFit
         let titleLabel = UILabel()
@@ -844,10 +843,9 @@ extension BearyFeedViewController: UITableViewDataSource, UITableViewDelegate {
         if deliveredError && deliveredAll.isEmpty { return nil }
         let container = UIView()
         container.backgroundColor = BearyColors.bg
-        let iconConfig = UIImage.SymbolConfiguration(pointSize: 17, weight: .regular)
         let iconView = UIImageView()
         iconView.translatesAutoresizingMaskIntoConstraints = false
-        iconView.image = UIImage(systemName: "envelope.badge.checkmark", withConfiguration: iconConfig)
+        iconView.image = BearyIconImages.image(named: "icon_mail_check", pointSize: 17)
         iconView.tintColor = BearyColors.orange
         iconView.contentMode = .scaleAspectFit
         let titleLabel = UILabel()
@@ -888,8 +886,7 @@ class BearyFeedErrorCell: UITableViewCell {
     private let iconView: UIImageView = {
         let v = UIImageView()
         v.translatesAutoresizingMaskIntoConstraints = false
-        let config = UIImage.SymbolConfiguration(pointSize: 36, weight: .regular)
-        v.image = UIImage(systemName: "wifi.slash", withConfiguration: config)
+        v.image = BearyIconImages.image(named: "icon_wifi_off", pointSize: 36)
         v.tintColor = BearyColors.gray
         v.contentMode = .scaleAspectFit
         return v
@@ -908,8 +905,7 @@ class BearyFeedErrorCell: UITableViewCell {
     private lazy var retryButton: UIButton = {
         let btn = UIButton(type: .system)
         btn.translatesAutoresizingMaskIntoConstraints = false
-        let config = UIImage.SymbolConfiguration(pointSize: 15, weight: .regular)
-        btn.setImage(UIImage(systemName: "arrow.triangle.2.circlepath", withConfiguration: config), for: .normal)
+        btn.setImage(BearyIconImages.image(named: "icon_refresh", pointSize: 15), for: .normal)
         btn.setTitle("点击重试", for: .normal)
         btn.titleLabel?.font = UIFont.systemFont(ofSize: 14)
         btn.setTitleColor(BearyColors.ink, for: .normal)
@@ -1041,8 +1037,7 @@ class BearyFeedCell: UITableViewCell {
     private let recipientIconView: UIImageView = {
         let v = UIImageView()
         v.translatesAutoresizingMaskIntoConstraints = false
-        let config = UIImage.SymbolConfiguration(pointSize: 13, weight: .regular)
-        v.image = UIImage(systemName: "envelope", withConfiguration: config)
+        v.image = BearyIconImages.image(named: "icon_mail", pointSize: 13)
         v.tintColor = BearyColors.orange
         v.contentMode = .scaleAspectFit
         return v
@@ -1169,8 +1164,7 @@ class BearyFeedCell: UITableViewCell {
         btn.titleLabel?.font = UIFont.systemFont(ofSize: 14)
         btn.setTitleColor(BearyColors.gray, for: .normal)
         btn.tintColor = BearyColors.gray
-        let chevronConfig = UIImage.SymbolConfiguration(pointSize: 14, weight: .regular)
-        btn.setImage(UIImage(systemName: "chevron.down", withConfiguration: chevronConfig), for: .normal)
+        btn.setImage(BearyIconImages.image(named: "icon_chevron_down", pointSize: 14), for: .normal)
         btn.titleEdgeInsets = UIEdgeInsets(top: 0, left: 4, bottom: 0, right: 0)
         btn.contentHorizontalAlignment = .left
         btn.contentEdgeInsets = UIEdgeInsets(top: 4, left: 2, bottom: 4, right: 2)
@@ -1220,8 +1214,7 @@ class BearyFeedCell: UITableViewCell {
     private lazy var shareButton: UIButton = {
         let btn = UIButton(type: .system)
         btn.translatesAutoresizingMaskIntoConstraints = false
-        let config = UIImage.SymbolConfiguration(pointSize: 21, weight: .regular)
-        btn.setImage(UIImage(systemName: "square.and.arrow.up", withConfiguration: config), for: .normal)
+        btn.setImage(BearyIconImages.image(named: "icon_share", pointSize: 21), for: .normal)
         btn.tintColor = BearyColors.gray
         btn.contentEdgeInsets = UIEdgeInsets(top: 2, left: 2, bottom: 2, right: 2)
         btn.addTarget(self, action: #selector(shareTapped), for: .touchUpInside)
@@ -1239,7 +1232,7 @@ class BearyFeedCell: UITableViewCell {
     private lazy var emoteAddButton: BearyFeedDashedAddButton = {
         let btn = BearyFeedDashedAddButton(frame: .zero)
         btn.translatesAutoresizingMaskIntoConstraints = false
-        btn.setImage(UIImage(systemName: "plus"), for: .normal)
+        btn.setImage(BearyIconImages.image(named: "icon_plus", pointSize: 16), for: .normal)
         btn.tintColor = BearyColors.gray
         btn.accessibilityLabel = "贴一只小熊"
         btn.widthAnchor.constraint(equalToConstant: 34).isActive = true
@@ -1541,8 +1534,8 @@ class BearyFeedCell: UITableViewCell {
     private func updateLikeButton() {
         let liked = currentEntry?.likedByMe ?? false
         let countValue = currentEntry?.likeCount ?? 0
-        let config = UIImage.SymbolConfiguration(pointSize: 22, weight: .regular)
-        likeButton.setImage(UIImage(systemName: liked ? "heart.fill" : "heart", withConfiguration: config), for: .normal)
+        let heartImage = BearyIconImages.image(named: liked ? "icon_heart_fill" : "icon_heart", pointSize: 22) ?? BearyIconImages.image(named: "icon_heart", pointSize: 22)
+        likeButton.setImage(heartImage, for: .normal)
         likeButton.setTitle("\(countValue)", for: .normal)
         let color = liked ? BearyColors.orange : BearyColors.gray
         likeButton.tintColor = color
@@ -1551,8 +1544,8 @@ class BearyFeedCell: UITableViewCell {
 
     private func updateBookmarkButton() {
         let bookmarked = currentEntry?.bookmarkedByMe ?? false
-        let config = UIImage.SymbolConfiguration(pointSize: 21, weight: .regular)
-        bookmarkButton.setImage(UIImage(systemName: bookmarked ? "bookmark.fill" : "bookmark", withConfiguration: config), for: .normal)
+        let bookmarkImage = BearyIconImages.image(named: bookmarked ? "icon_bookmark_fill" : "icon_bookmark", pointSize: 21) ?? BearyIconImages.image(named: "icon_bookmark", pointSize: 21)
+        bookmarkButton.setImage(bookmarkImage, for: .normal)
         bookmarkButton.tintColor = bookmarked ? BearyColors.orange : BearyColors.gray
     }
 
@@ -1626,10 +1619,9 @@ class BearyFeedCell: UITableViewCell {
         // F3：时间。
         timeLabel.text = BearyFeedCell.feedTimeString(ms: entry.createdAt ?? 0)
 
-        // F10：天气图标 15px（契约 BearyWeatherIcon.systemName(for:) 由编辑器文件提供，本文件只调用）。
+        // F10：天气图标 15px（icon_wx_<weatherKey>，取不到图时隐藏、不留空）。
         if let weatherKey = entry.weather, !weatherKey.isEmpty {
-            let systemNameValue = BearyWeatherIcon.systemName(for: weatherKey)
-            if let weatherImage = UIImage(systemName: systemNameValue) {
+            if let weatherImage = BearyIconImages.image(named: "icon_wx_" + weatherKey, pointSize: 15) {
                 weatherImageView.image = weatherImage
                 weatherImageView.isHidden = false
             } else {
@@ -2493,7 +2485,7 @@ private class BearyFeedEmoteSheetViewController: UIViewController, UICollectionV
         titleLabel.textColor = BearyColors.ink
         titleLabel.translatesAutoresizingMaskIntoConstraints = false
         sheetView.addSubview(titleLabel)
-        closeButton.setImage(UIImage(systemName: "xmark"), for: .normal)
+        closeButton.setImage(BearyIconImages.image(named: "icon_close", pointSize: 15), for: .normal)
         closeButton.tintColor = BearyColors.ink
         closeButton.backgroundColor = BearyColors.faint
         closeButton.layer.cornerRadius = 16

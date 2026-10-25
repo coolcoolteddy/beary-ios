@@ -11,26 +11,6 @@ import PhotosUI
 // 文案一律中文；深浅色一律用 BearyColors 的动态色（含语义红 red 与图片上深色衬底 scrim）。
 // 网络数据一律不用 force unwrap；图片移除只动本地与 key 列表，不调服务端。
 
-// MARK: - 天气图标契约（Feed 与 Detail 共用，名字与映射固定，勿改）
-
-/// 天气 key → SF Symbol 名；未列出的 key 一律回退 cloud。
-enum BearyWeatherIcon {
-    static func systemName(for key: String) -> String {
-        switch key {
-        case "sun": return "sun.max"
-        case "cloud": return "cloud"
-        case "cloudy": return "cloud.fill"
-        case "rain": return "cloud.rain"
-        case "snow": return "cloud.snow"
-        case "fog": return "cloud.fog"
-        case "thunder": return "cloud.bolt"
-        case "wind": return "wind"
-        case "night": return "moon.stars"
-        default: return "cloud"
-        }
-    }
-}
-
 final class BearyComposerViewController: UIViewController, UITextViewDelegate, PHPickerViewControllerDelegate {
 
     // MARK: - 公开接口
@@ -355,7 +335,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         // 发布：墨底白字 pill + 发送图标（网页 obtn p）；禁用时按网页口径：无底灰字。
         publishButton.setTitle(isEditMode ? "保存" : "发布", for: .normal)
         publishButton.titleLabel?.font = UIFont.systemFont(ofSize: 14)
-        publishButton.setImage(UIImage(systemName: "paperplane.fill", withConfiguration: UIImage.SymbolConfiguration(pointSize: 22, weight: .regular)), for: .normal)
+        publishButton.setImage(BearyIconImages.image(named: "icon_send", pointSize: 22), for: .normal)
         publishButton.contentEdgeInsets = UIEdgeInsets(top: 0, left: 12, bottom: 0, right: 12)
         publishButton.titleEdgeInsets = UIEdgeInsets(top: 0, left: 6, bottom: 0, right: 0)
         publishButton.layer.cornerRadius = 20
@@ -451,12 +431,11 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         moodStackView.axis = .horizontal
         moodStackView.spacing = 4
         moodStackView.alignment = .top
-        // 标题行：17×17 灰色图标 + “心情”（网页 beary-mood 自定义图标无原生等价物，
-        // 只对尺寸：取最接近的 SF Symbol face.smiling，图形差异已知）。
+        // 标题行：17×17 灰色图标 + “心情”（网页 beary-mood 自定义图标，现用 icon_mood 同款 PNG）。
         moodTitleRow.axis = .horizontal
         moodTitleRow.spacing = 6
         moodTitleRow.alignment = .center
-        moodTitleIcon.image = UIImage(systemName: "face.smiling", withConfiguration: UIImage.SymbolConfiguration(pointSize: 17, weight: .regular))
+        moodTitleIcon.image = BearyIconImages.image(named: "icon_mood", pointSize: 17)
         moodTitleIcon.tintColor = BearyColors.gray
         moodTitleIcon.contentMode = .scaleAspectFit
         moodTitleRow.translatesAutoresizingMaskIntoConstraints = false
@@ -573,12 +552,12 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             weatherStackView.trailingAnchor.constraint(equalTo: weatherScrollView.contentLayoutGuide.trailingAnchor),
         ])
         // 首项“无”：key 为空串即未选。
-        let noneButton = makeWeatherButton(key: "", title: "无", systemImage: nil)
+        let noneButton = makeWeatherButton(key: "", title: "无", iconName: nil)
         weatherButtons.append((key: "", button: noneButton))
         weatherStackView.addArrangedSubview(noneButton)
         for key in weatherOrder {
             let name = BearyText.weatherNames[key] ?? key
-            let button = makeWeatherButton(key: key, title: name, systemImage: BearyWeatherIcon.systemName(for: key))
+            let button = makeWeatherButton(key: key, title: name, iconName: "icon_wx_\(key)")
             weatherButtons.append((key: key, button: button))
             weatherStackView.addArrangedSubview(button)
         }
@@ -586,13 +565,13 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         contentStack.setCustomSpacing(8, after: weatherScrollView)
     }
 
-    private func makeWeatherButton(key: String, title: String, systemImage: String?) -> UIButton {
+    private func makeWeatherButton(key: String, title: String, iconName: String?) -> UIButton {
         let button = UIButton(type: .system)
         button.translatesAutoresizingMaskIntoConstraints = false
         button.setTitle(title, for: .normal)
         button.titleLabel?.font = UIFont.systemFont(ofSize: 13)
-        if let imageName = systemImage {
-            button.setImage(UIImage(systemName: imageName, withConfiguration: UIImage.SymbolConfiguration(pointSize: 16, weight: .regular)), for: .normal)
+        if let name = iconName {
+            button.setImage(BearyIconImages.image(named: name, pointSize: 16), for: .normal)
             button.titleEdgeInsets = UIEdgeInsets(top: 0, left: 5, bottom: 0, right: 0)
         }
         button.contentEdgeInsets = UIEdgeInsets(top: 6, left: 12, bottom: 6, right: 12)
@@ -649,7 +628,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         recipientLine.axis = .horizontal
         recipientLine.spacing = 8
         recipientLine.alignment = .center
-        recipientAtIcon.image = UIImage(systemName: "at")
+        recipientAtIcon.image = BearyIconImages.image(named: "icon_at", pointSize: 15)
         recipientAtIcon.tintColor = BearyColors.gray
         recipientAtIcon.contentMode = .scaleAspectFit
         // 未选：虚线边框 pill 钮（网页 addr-pick：1.5px dashed line、圆角 999；
@@ -880,7 +859,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         // 注意：网页 lite 卡右上角有 15px 的 ×（quoteChipX，移除引用），上一批误删后新建模式下已选引用无法清除，
         // 本处按网页口径恢复：图标 15pt 位于卡片右上（top 8 / right 8），按钮框 28×28 居中套住图标以保证触摸区；
         // 编辑模式引用锁定，不显示 ×。
-        quoteCardRemoveButton.setImage(UIImage(systemName: "xmark", withConfiguration: UIImage.SymbolConfiguration(pointSize: 15, weight: .regular)), for: .normal)
+        quoteCardRemoveButton.setImage(BearyIconImages.image(named: "icon_close", pointSize: 15), for: .normal)
         quoteCardRemoveButton.tintColor = BearyColors.gray
         quoteCardRemoveButton.addTarget(self, action: #selector(didTapRemoveQuote), for: .touchUpInside)
         for v in [quoteSection, pickQuoteButton, quoteCard, quoteAvatarImageView, quoteAvatarFallback, quoteNameLabel, quoteDeliveringPill, quoteContentLabel, quoteDateLabel, quoteImagesScrollView, quoteImagesStackView, quoteCardBottomLine, quoteCardRemoveButton] {
@@ -1343,17 +1322,17 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         toolRow.axis = .horizontal
         toolRow.spacing = 20
         toolRow.alignment = .center
-        imageToolButton.setImage(UIImage(systemName: "photo", withConfiguration: UIImage.SymbolConfiguration(pointSize: 24, weight: .regular)), for: .normal)
+        imageToolButton.setImage(BearyIconImages.image(named: "icon_image", pointSize: 24), for: .normal)
         imageToolButton.tintColor = BearyColors.gray
         imageToolButton.addTarget(self, action: #selector(didTapAddImage), for: .touchUpInside)
-        weatherToolButton.setImage(UIImage(systemName: "cloud", withConfiguration: UIImage.SymbolConfiguration(pointSize: 24, weight: .regular)), for: .normal)
+        weatherToolButton.setImage(BearyIconImages.image(named: "icon_weather_tool", pointSize: 24), for: .normal)
         weatherToolButton.tintColor = BearyColors.gray
         weatherToolButton.addTarget(self, action: #selector(didTapWeatherTool), for: .touchUpInside)
-        quoteToolButton.setImage(UIImage(systemName: "quote.bubble", withConfiguration: UIImage.SymbolConfiguration(pointSize: 24, weight: .regular)), for: .normal)
+        quoteToolButton.setImage(BearyIconImages.image(named: "icon_quote", pointSize: 24), for: .normal)
         quoteToolButton.tintColor = BearyColors.gray
         quoteToolButton.addTarget(self, action: #selector(didTapQuoteTool), for: .touchUpInside)
         draftPillButton.setTitle("草稿", for: .normal)
-        draftPillButton.setImage(UIImage(systemName: "note.text", withConfiguration: UIImage.SymbolConfiguration(pointSize: 16, weight: .regular)), for: .normal)
+        draftPillButton.setImage(BearyIconImages.image(named: "icon_draft", pointSize: 16), for: .normal)
         draftPillButton.titleLabel?.font = UIFont.systemFont(ofSize: 13)
         draftPillButton.setTitleColor(BearyColors.ink, for: .normal)
         draftPillButton.tintColor = BearyColors.gray
@@ -1443,7 +1422,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         extrasSummaryLabel.font = UIFont.systemFont(ofSize: 13)
         extrasSummaryLabel.textColor = BearyColors.gray
         extrasSummaryLabel.lineBreakMode = .byTruncatingTail
-        extrasChevronImageView.image = UIImage(systemName: "chevron.down")
+        extrasChevronImageView.image = BearyIconImages.image(named: "icon_chevron_down", pointSize: 16)
         extrasChevronImageView.tintColor = BearyColors.gray
         extrasChevronImageView.contentMode = .scaleAspectFit
         extrasBarButton.addTarget(self, action: #selector(didTapExtrasBar), for: .touchUpInside)
@@ -1547,7 +1526,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         draftStatusLabel.font = UIFont.systemFont(ofSize: 12.5)
         draftStatusLabel.textColor = BearyColors.blue
         // 草稿状态组：lvl2 时图标 + 文案 gap 5（网页 draft-status：15×15 对勾 + gap 5，蓝色继承）。
-        draftStatusIcon.image = UIImage(systemName: "checkmark", withConfiguration: UIImage.SymbolConfiguration(pointSize: 15, weight: .regular))
+        draftStatusIcon.image = BearyIconImages.image(named: "icon_check", pointSize: 15)
         draftStatusIcon.tintColor = BearyColors.blue
         draftStatusIcon.contentMode = .scaleAspectFit
         draftStatusIcon.translatesAutoresizingMaskIntoConstraints = false
@@ -1660,7 +1639,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         ruleBoxView.backgroundColor = BearyColors.faint
         ruleBoxView.layer.cornerRadius = 12
         ruleBoxView.layer.masksToBounds = true
-        ruleIconImageView.image = UIImage(systemName: "info.circle")
+        ruleIconImageView.image = BearyIconImages.image(named: "icon_info", pointSize: 18)
         ruleIconImageView.tintColor = BearyColors.gray
         ruleIconImageView.contentMode = .scaleAspectFit
         let paragraph = NSMutableParagraphStyle()
@@ -1817,7 +1796,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         failStack.axis = .vertical
         failStack.spacing = 3
         failStack.alignment = .center
-        let failIcon = UIImageView(image: UIImage(systemName: "photo"))
+        let failIcon = UIImageView(image: BearyIconImages.image(named: "icon_image", pointSize: 20))
         failIcon.tintColor = BearyColors.red
         failIcon.contentMode = .scaleAspectFit
         failIcon.translatesAutoresizingMaskIntoConstraints = false
@@ -2677,7 +2656,7 @@ private final class ComposerImageItem {
 // 1. 天气（weather）：图标 + 名 chip，首项“无”，选中墨色边框（无底，与网页 wx-chip.on 同款），
 //    再点已选项不取消；publish 传 weather；不选不传（服务端 validWeather 对缺失值置 null，
 //    与网页同口径）。publishEntry 同步补齐 quote_id/recipient_id/notify_recipient
-//    （默认参数，旧调用点不受影响）。天气图标契约见文件头 BearyWeatherIcon（Feed/Detail 共用）。
+//    （默认参数，旧调用点不受影响）。天气图标见 icon_wx_<key>（与网页 WX_ICON 同款）。
 // 2. 写给：新建模式只选一人（搜索接口 users 组），@ 图标 + “写给某个人”钮 / chip + 通知行
 //    （复选框只写本地状态，不触发重渲染）；编辑模式锁定只展示（服务端 PUT 不接受 recipient，
 //    改不了；无收信人时整区隐藏，网页编辑态同款）。

@@ -263,3 +263,21 @@ enum BearyImagePrep {
         return "data:image/jpeg;base64," + data.base64EncodedString()
     }
 }
+
+/// 网页版同款图标入口（一比一图标替换批）。
+/// 资产为 Assets.xcassets 内 icon_<名>（网页 beary-* sprite 渲染的黑色描边 PNG，
+/// 与 emote/crown 同款 @1x/@2x/@3x 三档）。必须走本函数取图：UIButton.setImage
+/// 不缩放图片，原始 72px 图会按 72pt 显示；本函数按目标 pt 尺寸重绘，
+/// 等价于旧 SF SymbolConfiguration(pointSize:) 的显示尺寸。
+/// 一律 alwaysTemplate + 调用方 tintColor 着色（与旧 SF 行为一致）。
+enum BearyIconImages {
+    static func image(named name: String, pointSize: CGFloat) -> UIImage? {
+        guard let base = UIImage(named: name) else { return nil }
+        let size = CGSize(width: pointSize, height: pointSize)
+        let format = UIGraphicsImageRendererFormat()
+        format.scale = UIScreen.main.scale
+        let renderer = UIGraphicsImageRenderer(size: size, format: format)
+        let drawn = renderer.image { _ in base.draw(in: CGRect(origin: .zero, size: size)) }
+        return drawn.withRenderingMode(.alwaysTemplate)
+    }
+}
