@@ -71,3 +71,18 @@ jobs:
         with:
           name: beary-ipa
           path: beary.ipa
+
+  test:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run unit tests (no host app)
+        run: >
+          xcodebuild
+          -project ios/App/App.xcodeproj
+          -target BearyCoreTests
+          -configuration Debug
+          -destination 'platform=iOS Simulator,name=iPhone 16,OS=latest'
+          CODE_SIGNING_ALLOWED=NO
+          test
