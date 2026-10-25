@@ -16,25 +16,41 @@ import WebKit
 // 一次性使用：一个 BearyTurnstilePage 只跑一次 requestToken；token 是单次有效的，
 // 发码成功或失败后调用方都应丢弃本对象，下次发码新建一个。
 //
-// U0 两段式（客户端过渡方案，最终原生登录方案仍等 Li 定）：
-// 1) 先跑 invisible widget（无感通过时全程无界面，行为与原来一致）；
-// 2) 无感失败或 30 秒执行超时时，不再空循环重试——若调用方给了 challengeHostView，
+// U0 两段式（客户端过渡方案）:
+// 1. 先跑 invisible widget（无感通过时全程无界面，行为与原来一致）；
+// 2. 无感失败或 30 秒执行超时时，不再空循环重试——若调用方给了 challengeHostView，
 //    把 webView 以可见尺寸挂到该宿主上并重渲为 normal 尺寸 widget 供用户完成挑战，
 //    卡片带“取消”入口（取消走失败回调，登录页复位按钮态）；挑战 120 秒未完成则失败。
 //    未给宿主时仍直接失败（行为与原来一致），绝不静默重试。
 // 服务端调用一律不动：只改验证 widget 的呈现方式，不改发码/验码接口。
+//
+// 清单第 12 项结论（blocked，卡片保留不动）：拿掉可见验证卡片后，无感失败或
+// 超时且必须人工交互的用户将无路可走，故卡片行为本次一律不改，见下：
+// 现行 requestToken 建的 WKWebView 从未加进任何视图层级（frame 为 zero，
+// 仅在 showChallenge 里才挂到宿主上），invisible widget 即便在需要交互时
+// 自带挑战弹窗，也只能渲染在离线 zero 尺寸 webView 里，用户既看不见也点不到；
+// 静默重建新页面再跑一次 invisible 也不会改变判定输入（同一设备、同一默认
+// 数据存储、同一 IP、同一 sitekey、无新增交互信号），对持续被判定需交互的
+// 用户只会重复失败；且发码在服务端 enforce 模式下缺有效 token 必被拒，
+// 原生内没有短信、邮件链接等第二条验证通道。所以卡片移除需 Li 另定替代
+// 通过路径后才能做，本次只落地与卡片去留无关的失败原因区分：执行或挑战
+// 超时报 verificationTimeout，挑战取消报 cancelled，不再笼统报验证失败。
 
 final class BearyTurnstilePage: NSObject {
     enum TokenError: Error {
         case loadTimeout
         case scriptFailed
+        case verificationTimeout
+        case cancelled
         case failed
 
-        /// 与网页端 lgGetToken 的区分文案一一对应。
+        /// 与登录页展示文案一一对应：登录页只展示本 message，不另拼文案。
         var message: String {
             switch self {
             case .loadTimeout: return "验证加载超时，请重试"
             case .scriptFailed: return "验证脚本加载失败，请重试"
+            case .verificationTimeout: return "验证超时，请重试"
+            case .cancelled: return "已取消验证"
             case .failed: return "人机验证失败，请重试"
             }
         }
@@ -125,6 +141,10 @@ final class BearyTurnstilePage: NSObject {
             } else if strongSelf.phase == .executing && !strongSelf.challengeShown && strongSelf.challengeHostView != nil {
                 // U0：执行超时不再空循环重试，改挂可见挑战。
                 strongSelf.showChallenge()
+            } else if strongSelf.phase == .executing || strongSelf.phase == .challenge {
+                // 第 12 项独立部分：执行 30 秒超时（无宿主时）与挑战 120 秒超时
+                // 不再笼统报验证失败，报超时原因；仍不重试。
+                strongSelf.finish(.failure(.verificationTimeout))
             } else {
                 strongSelf.finish(.failure(.failed))
             }
@@ -201,9 +221,10 @@ final class BearyTurnstilePage: NSObject {
         scheduleTimeout(BearyTurnstilePage.challengeTimeout)
     }
 
-    /// U0：挑战取消入口——走失败回调让登录页复位，不自动重试。
+    /// U0：挑战取消入口——走取消原因回调让登录页复位，不自动重试，
+    /// 也不谎报为验证失败。
     @objc private func challengeCancelTapped() {
-        finish(.failure(.failed))
+        finish(.failure(.cancelled))
     }
 
     private func finish(_ result: Result<String, TokenError>) {

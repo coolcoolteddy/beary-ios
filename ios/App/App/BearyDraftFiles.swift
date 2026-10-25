@@ -196,6 +196,9 @@ enum BearyDraftStore {
     private static let writeLock = NSLock()
 
     /// 后台删一篇：整库 loadAll + saveAll 都在 ioQueue 上，完成后回主线程。
+    /// 老签名保留作兼容（编辑器两处调用仍用它，见 BearyComposerViewController）；
+    /// 需成败回传的新调用方请用 deleteAsyncReporting（与 saveAsync /
+    /// saveAsyncReporting 的新旧并行口径一致）。
     static func deleteAsync(draftId: String, completion: (() -> Void)? = nil) {
         ioQueue.async {
             delete(draftId: draftId)
@@ -203,6 +206,18 @@ enum BearyDraftStore {
                 DispatchQueue.main.async {
                     completion()
                 }
+            }
+        }
+    }
+
+    /// 带成败回传的后台删一篇（主线程回调）。false = 写盘/删文件失败或
+    /// 草稿库已损坏（此时原文件被保留、未被覆盖），调用方须按失败处理
+    /// （草稿箱：卡片原地恢复 + toast，不得按成功出撤销条）。
+    static func deleteAsyncReporting(draftId: String, completion: @escaping (Bool) -> Void) {
+        ioQueue.async {
+            let ok = delete(draftId: draftId)
+            DispatchQueue.main.async {
+                completion(ok)
             }
         }
     }
@@ -369,23 +384,34 @@ enum BearyDraftStore {
     }
 
     /// 只删一篇：其余篇不受影响；删到空时直接删 v3 文件，不留空数组文件。
-    /// 库已损坏时不删不写（保原文件），静默返回。
-    static func delete(draftId: String) {
+    /// 库已损坏时不删不写（保原文件），返回 false；写盘/删文件失败同样
+    /// 返回 false，调用方不得按成功处理。
+    /// @discardableResult：老调用方（忽略返回值，如 deleteAsync）无需改动
+    /// 即可编译，与 save(_:) 的 Bool 返回口径一致。
+    @discardableResult
+    static func delete(draftId: String) -> Bool {
         writeLock.lock()
         defer { writeLock.unlock() }
         guard case .success(let all) = loadAllResult() else {
-            return
+            return false
         }
         var kept: [BearyDraft] = []
         for draftValue in all where draftValue.draftId != draftId {
             kept.append(draftValue)
         }
         if kept.isEmpty {
-            guard let url = fileURL() else { return }
-            try? FileManager.default.removeItem(at: url)
-        } else {
-            _ = saveAll(kept)
+            guard let url = fileURL() else { return false }
+            if !FileManager.default.fileExists(atPath: url.path) {
+                return true
+            }
+            do {
+                try FileManager.default.removeItem(at: url)
+                return true
+            } catch {
+                return false
+            }
         }
+        return saveAll(kept)
     }
 
     /// 整库清空（删全部草稿文件）：日常丢弃与发布成功只用 delete(draftId:)，

@@ -72,6 +72,9 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
     private var rowUsers: [SearchUser] = []
     private var entryButtons: [UIButton] = []
     private var rowEntryIds: [String] = []
+    // 图片失败重试槽位（用户头像 / 日记首图各一）：随行重建而丢弃，见文件末尾
+    // BearySearchImageRetry；clearResultRows 时连同行一起清空。
+    private var imageRetryHolders: [BearySearchImageRetry] = []
 
     // MARK: - 视图
 
@@ -640,6 +643,7 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         rowUsers = []
         entryButtons = []
         rowEntryIds = []
+        imageRetryHolders = []
     }
 
     private func renderResults(data: SearchResult, query: String) {
@@ -847,7 +851,9 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
             handleLabel.isHidden = true
         }
         if let avatarPath = user.avatarUrl, let url = BearyImageURLs.avatarURL(avatarPath) {
-            avatarView.bearySetImage(url: url, placeholder: nil)
+            let avatarRetry = BearySearchImageRetry(imageView: avatarView, retryButton: avatarRetryButton, imageURL: url)
+            imageRetryHolders.append(avatarRetry)
+            avatarRetry.load()
             avatarView.isHidden = false
             fallbackLabel.isHidden = true
         } else {
@@ -856,8 +862,19 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
             fallbackLabel.text = String(displayName.prefix(1)).uppercased()
         }
 
+        // 图片失败重试：纯图标（icon_refresh 20pt，消息页头像重试同款），
+        // 44×44 点击区居中压在头像上；仅失败态可见，加载中与成功态隐藏
+        // （显隐由 BearySearchImageRetry 持有，见文件末尾）。
+        let avatarRetryButton = UIButton(type: .custom)
+        avatarRetryButton.translatesAutoresizingMaskIntoConstraints = false
+        avatarRetryButton.setImage(BearyIconImages.image(named: "icon_refresh", pointSize: 20), for: .normal)
+        avatarRetryButton.tintColor = BearyColors.ink
+        avatarRetryButton.isHidden = true
+        avatarRetryButton.accessibilityLabel = "点击重试"
+        avatarRetryButton.accessibilityHint = "重新加载头像"
         row.addSubview(avatarView)
         row.addSubview(fallbackLabel)
+        row.addSubview(avatarRetryButton)
         row.addSubview(nameLabel)
         row.addSubview(handleLabel)
         row.addSubview(chevron)
@@ -872,6 +889,10 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
             fallbackLabel.leadingAnchor.constraint(equalTo: row.leadingAnchor, constant: 8),
             fallbackLabel.widthAnchor.constraint(equalToConstant: 44),
             fallbackLabel.heightAnchor.constraint(equalToConstant: 44),
+            avatarRetryButton.centerXAnchor.constraint(equalTo: avatarView.centerXAnchor),
+            avatarRetryButton.centerYAnchor.constraint(equalTo: avatarView.centerYAnchor),
+            avatarRetryButton.widthAnchor.constraint(equalToConstant: 44),
+            avatarRetryButton.heightAnchor.constraint(equalToConstant: 44),
             nameLabel.topAnchor.constraint(equalTo: row.topAnchor, constant: 9),
             nameLabel.leadingAnchor.constraint(equalTo: row.leadingAnchor, constant: 63),
             nameLabel.trailingAnchor.constraint(lessThanOrEqualTo: chevron.leadingAnchor, constant: -8),
@@ -931,8 +952,10 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         bodyRow.alignment = .top
         bodyRow.addArrangedSubview(contentLabel)
 
-        var thumbView: UIImageView?
+        var thumbWrapView: UIView?
         // 私密组行不拼缩略图（网页私密行 meta + 正文、无图）；公开组才拼首图。
+        // 首图包进 44×44 容器：图铺满容器，重试图标（与头像同款纯图标）
+        // 44×44 居中压在图上；UIStackView 只排容器，图标不参与横排、不挤正文。
         if !isMineGroup, let images = entry.images, let firstKey = images.first, let url = BearyImageURLs.imageURL(key: firstKey, thumb: true) {
             let thumb = UIImageView()
             thumb.translatesAutoresizingMaskIntoConstraints = false
@@ -940,9 +963,32 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
             thumb.clipsToBounds = true
             thumb.layer.cornerRadius = 10
             thumb.layer.masksToBounds = true
-            thumb.bearySetImage(url: url, placeholder: nil)
-            thumbView = thumb
-            bodyRow.addArrangedSubview(thumb)
+            let thumbRetryButton = UIButton(type: .custom)
+            thumbRetryButton.translatesAutoresizingMaskIntoConstraints = false
+            thumbRetryButton.setImage(BearyIconImages.image(named: "icon_refresh", pointSize: 20), for: .normal)
+            thumbRetryButton.tintColor = BearyColors.ink
+            thumbRetryButton.isHidden = true
+            thumbRetryButton.accessibilityLabel = "点击重试"
+            thumbRetryButton.accessibilityHint = "重新加载图片"
+            let thumbWrap = UIView()
+            thumbWrap.translatesAutoresizingMaskIntoConstraints = false
+            thumbWrap.addSubview(thumb)
+            thumbWrap.addSubview(thumbRetryButton)
+            NSLayoutConstraint.activate([
+                thumb.topAnchor.constraint(equalTo: thumbWrap.topAnchor),
+                thumb.leadingAnchor.constraint(equalTo: thumbWrap.leadingAnchor),
+                thumb.trailingAnchor.constraint(equalTo: thumbWrap.trailingAnchor),
+                thumb.bottomAnchor.constraint(equalTo: thumbWrap.bottomAnchor),
+                thumbRetryButton.centerXAnchor.constraint(equalTo: thumbWrap.centerXAnchor),
+                thumbRetryButton.centerYAnchor.constraint(equalTo: thumbWrap.centerYAnchor),
+                thumbRetryButton.widthAnchor.constraint(equalToConstant: 44),
+                thumbRetryButton.heightAnchor.constraint(equalToConstant: 44),
+            ])
+            let thumbRetry = BearySearchImageRetry(imageView: thumb, retryButton: thumbRetryButton, imageURL: url)
+            imageRetryHolders.append(thumbRetry)
+            thumbRetry.load()
+            thumbWrapView = thumbWrap
+            bodyRow.addArrangedSubview(thumbWrap)
         }
 
         let separator = UIView()
@@ -995,9 +1041,9 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
             separator.bottomAnchor.constraint(equalTo: row.bottomAnchor),
             separator.heightAnchor.constraint(equalToConstant: 1),
         ]
-        if let thumb = thumbView {
-            constraints.append(thumb.widthAnchor.constraint(equalToConstant: 44))
-            constraints.append(thumb.heightAnchor.constraint(equalToConstant: 44))
+        if let thumbWrap = thumbWrapView {
+            constraints.append(thumbWrap.widthAnchor.constraint(equalToConstant: 44))
+            constraints.append(thumbWrap.heightAnchor.constraint(equalToConstant: 44))
         }
         NSLayoutConstraint.activate(constraints)
 
@@ -1134,6 +1180,50 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
             return "@" + handle
         }
         return "beary 用户"
+    }
+}
+
+// MARK: - 图片失败重试槽位（用户头像 / 日记首图共用）
+//
+// 形态（用户定）：纯图标，不带文字按钮——icon_refresh 20pt，消息页头像重试
+// 同款；按钮无背景无描边，图标色取动态 BearyColors.ink，故深浅切换无需重刷。
+// 状态口径：加载中与成功态沿用现有行为（空白图 / 落图，重试图标隐藏）；
+// 仅失败态亮重试图标，点它重新走 load()（先藏图标回到加载态），成功后图标消失。
+// 代际守卫（消息页 avatarLoadGeneration 同款）：每次 load() 代际 +1，失败回调
+// 凭捕获的代际与当前代际比对，不一致一律丢弃——行重建（本页每次渲染整体重建
+// 结果区，旧行连同 holder 一起被 clearResultRows 丢弃）、换图、重试后，
+// 旧回调均不得亮新行的重试图标。bearySetImage 自身另有目标 URL 比对与取消旧
+// 任务，是第二重守卫；.cancelled 不算失败（bearySetImage 已过滤，不进 onFailure）。
+// 无图槽位（头像为 null、日记无图、私密组无缩略图）不建本槽位、不亮图标。
+
+private final class BearySearchImageRetry: NSObject {
+
+    private let imageView: UIImageView
+    private let retryButton: UIButton
+    private let imageURL: URL
+    private var generation: Int = 0
+
+    init(imageView: UIImageView, retryButton: UIButton, imageURL: URL) {
+        self.imageView = imageView
+        self.retryButton = retryButton
+        self.imageURL = imageURL
+        super.init()
+        retryButton.addTarget(self, action: #selector(retryTapped), for: .touchUpInside)
+    }
+
+    func load() {
+        generation += 1
+        let capturedGeneration = generation
+        retryButton.isHidden = true
+        imageView.bearySetImage(url: imageURL, placeholder: nil) { [weak self] _ in
+            guard let self = self else { return }
+            guard capturedGeneration == self.generation else { return }
+            self.retryButton.isHidden = false
+        }
+    }
+
+    @objc private func retryTapped() {
+        load()
     }
 }
 

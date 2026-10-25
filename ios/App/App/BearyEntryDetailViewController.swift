@@ -67,6 +67,9 @@ class BearyEntryDetailViewController: UIViewController {
     private var detailImageKeys: [String] = []
     /// 详情条缩略图加载失败的下标集合（点按该图先重试加载，不进查看器）。
     private var detailImageFailedIndices: Set<Int> = []
+    /// 详情条各下标的点击重试图标钮（清单第 13 项的详情部分）：纯图标、无文字；
+    /// 仅对应图加载失败时显示，点按重载该图，成功后隐藏；render 重建图片条时随旧图一并清空。
+    private var detailRetryButtons: [Int: UIButton] = [:]
     /// G11/U12：上次见到的登录用户 id 与上次成功拉取时间；viewWillAppear 时翻转或超 60 秒即轻量重拉。
     private var lastDetailLoginUserId: Int?
     private var lastDetailLoadAt: Date?
@@ -109,6 +112,9 @@ class BearyEntryDetailViewController: UIViewController {
     private let avatarWrapView = UIView()
     private let avatarInitialLabel = UILabel()
     private let avatarImageView = UIImageView()
+    /// 头像加载失败时的点击重试图标（清单第 13 项的详情部分）：纯图标、无文字；
+    /// 仅失败时显示，点按重载头像，加载中与成功态隐藏（loadAvatar 回写）。
+    private let avatarRetryButton = UIButton(type: .system)
     private let authorInfoStack = UIStackView()
     private let writeToRow = UIStackView()
     private let writeToIconView = UIImageView()
@@ -330,6 +336,20 @@ class BearyEntryDetailViewController: UIViewController {
             avatarImageView.leadingAnchor.constraint(equalTo: avatarWrapView.leadingAnchor),
             avatarImageView.trailingAnchor.constraint(equalTo: avatarWrapView.trailingAnchor),
         ])
+        // 头像重试图标：盖满 40 头像区（失败时整个头像都是重试靶区，不与头像点按进主页歧义），
+        // 图标 24pt 居中、灰色；仅失败时显示，平时隐藏不占视觉。
+        avatarRetryButton.translatesAutoresizingMaskIntoConstraints = false
+        avatarRetryButton.setImage(DetailIconCache.image(named: "icon_refresh", pointSize: 24), for: .normal)
+        avatarRetryButton.tintColor = BearyColors.gray
+        avatarRetryButton.accessibilityLabel = "重新加载头像"
+        avatarRetryButton.isHidden = true
+        avatarWrapView.addSubview(avatarRetryButton)
+        NSLayoutConstraint.activate([
+            avatarRetryButton.topAnchor.constraint(equalTo: avatarWrapView.topAnchor),
+            avatarRetryButton.bottomAnchor.constraint(equalTo: avatarWrapView.bottomAnchor),
+            avatarRetryButton.leadingAnchor.constraint(equalTo: avatarWrapView.leadingAnchor),
+            avatarRetryButton.trailingAnchor.constraint(equalTo: avatarWrapView.trailingAnchor),
+        ])
 
         // 标题区：写给标签 + 标题行（名 / 徽章 / 皇冠 / 时间 / 心情熊图 / 天气图标同行）+ 倒计时 pill 行。
         authorInfoStack.axis = .vertical
@@ -399,9 +419,10 @@ class BearyEntryDetailViewController: UIViewController {
         titleRow.addArrangedSubview(moodStack)
         titleRow.addArrangedSubview(weatherImageView)
         // 点头像或作者名打开作者主页（与 Feed 卡片同口径）。
+        // 头像区的手势单独走 avatarWrapTapped：重试图标可见时落在图标上的点按归重试钮，不进主页。
         avatarWrapView.isUserInteractionEnabled = true
         authorNameLabel.isUserInteractionEnabled = true
-        avatarWrapView.addGestureRecognizer(UITapGestureRecognizer(target: self, action: #selector(authorTapped)))
+        avatarWrapView.addGestureRecognizer(UITapGestureRecognizer(target: self, action: #selector(avatarWrapTapped(_:))))
         authorNameLabel.addGestureRecognizer(UITapGestureRecognizer(target: self, action: #selector(authorTapped)))
         // 倒计时 pill：蓝 13% 底 + 蓝字；pill 本身 hug 内容，右侧 spacer 吃掉剩余宽度。
         pillView.backgroundColor = BearyColors.alpha(BearyColors.blue, 0.13)
@@ -574,14 +595,15 @@ class BearyEntryDetailViewController: UIViewController {
         shareButton.addTarget(self, action: #selector(shareTapped), for: .touchUpInside)
         editButton.addTarget(self, action: #selector(editTapped), for: .touchUpInside)
         deleteButton.addTarget(self, action: #selector(deleteTapped), for: .touchUpInside)
-        // U10：分享/编辑/删除/贴熊统一接 iconTouchDown/iconTouchUp，与点赞/收藏一致。
-        for button in [shareButton, editButton, deleteButton, emoteAddButton] {
+        // U10：分享/编辑/删除/贴熊/头像重试统一接 iconTouchDown/iconTouchUp，与点赞/收藏一致。
+        for button in [shareButton, editButton, deleteButton, emoteAddButton, avatarRetryButton] {
             button.addTarget(self, action: #selector(iconTouchDown(_:)), for: .touchDown)
             button.addTarget(self, action: #selector(iconTouchUp(_:)), for: [.touchUpInside, .touchUpOutside, .touchCancel])
         }
         foldButton.addTarget(self, action: #selector(foldTapped), for: .touchUpInside)
         emoteAddButton.addTarget(self, action: #selector(emoteAddTapped), for: .touchUpInside)
         retryButton.addTarget(self, action: #selector(retryTapped), for: .touchUpInside)
+        avatarRetryButton.addTarget(self, action: #selector(avatarRetryTapped), for: .touchUpInside)
     }
 
     // MARK: - 状态
@@ -828,6 +850,24 @@ class BearyEntryDetailViewController: UIViewController {
         }
     }
 
+    /// 作者主页分享链接（清单第 1 项口径）：作者就是当前登录用户且 MeUser.handle 在手时用
+    /// https://teddyhn.com/beary/@<handle>；否则作者 id 在手时用 https://teddyhn.com/beary/u/<id>
+    /// （与网页本人 @handle／他人 u/id 的口径一致）；两者皆无时返回 nil，绝不拼 broken 链接；
+    /// 绝不为取 handle 单独发请求，只用已在手的 entry.authorId 与 MeUser 数据。
+    /// 注：详情页现有分享钮分享的是日记链接（/beary/d/<id>，见 shareTapped），不在此改动；
+    /// 详情内目前没有分享／复制作者主页链接的入口，本方法供容器／后续接线按此口径复用。
+    func authorProfileURL() -> URL? {
+        let me = SessionManager.shared.currentUser
+        if let authorId = entry?.authorId, let myId = me?.id, authorId == myId,
+           let handle = me?.handle, handle.isEmpty == false {
+            return URL(string: "https://teddyhn.com/beary/@\(handle)")
+        }
+        if let authorId = entry?.authorId {
+            return URL(string: "https://teddyhn.com/beary/u/\(authorId)")
+        }
+        return nil
+    }
+
     @objc private func shareTapped() {
         // E4-3 分享钮 present 守卫：转场中连点不再叠页。
         if isSharePresenting == true {
@@ -1020,17 +1060,22 @@ class BearyEntryDetailViewController: UIViewController {
         // W1：匿名/未知用户回退三处统一为“匿名”（与首页 displayAuthorName、选人页同口径）。
         authorNameLabel.text = current.authorName ?? "匿名"
         avatarInitialLabel.text = String((current.authorName ?? "匿名").prefix(1)).uppercased()
-        avatarImageView.bearySetImage(url: BearyImageURLs.avatarURL(current.authorAvatar))
+        loadAvatar()
         if let ms = current.createdAt ?? current.publishAt {
             timeLabel.text = BearyFeedCell.feedTimeString(ms: ms)
         } else {
             timeLabel.text = ""
         }
 
-        // 写给标签：仅收件人本人看为“写给你的”（网页公开卡无作者视角分支，该分支已删）。
+        // 写给标签：收件人本人看为“写给你的”；作者本人看自己写给他人的日记时补“写给 X”行
+        // （审计 N10，recipientName 已解码在手；收件人就是本人时上分支优先，不动）。
+        // 第三方视角仍隐藏（不在本项范围内）。
         let myUserId = SessionManager.shared.currentUser?.id
         if let recipient = current.recipientId, let mine = myUserId, recipient == mine {
             writeToLabel.text = "写给你的"
+            writeToRow.isHidden = false
+        } else if isMineEntry(), let recipientName = current.recipientName, recipientName.isEmpty == false {
+            writeToLabel.text = "写给 \(recipientName)"
             writeToRow.isHidden = false
         } else {
             writeToRow.isHidden = true
@@ -1047,8 +1092,9 @@ class BearyEntryDetailViewController: UIViewController {
             badgeImageView.image = nil
             badgeImageView.isHidden = true
         }
-        // 名后 Plus 皇冠：网页铂金渐变 PNG（crown.imageset）；资产缺失（image 为 nil）时同样隐藏。
-        crownImageView.isHidden = (current.authorPlus ?? 0) == 0 || crownImageView.image == nil
+        // 取消会员标（清单第 14 项的详情部分）：标题行皇冠一律隐藏；
+        // crown 资产与 authorPlus 数据不动，BETA 徽章不动。
+        crownImageView.isHidden = true
 
         // 未公开倒计时 pill（公开篇隐藏）。
         if current.isPublic == true {
@@ -1108,6 +1154,7 @@ class BearyEntryDetailViewController: UIViewController {
             sub.removeFromSuperview()
         }
         detailImageFailedIndices.removeAll()
+        detailRetryButtons.removeAll()
         detailImageKeys = current.images ?? []
         for (index, key) in detailImageKeys.enumerated() {
             detailImagesStack.addArrangedSubview(makeImageView(key: key, dims: current.imgDims, index: index))
@@ -1217,14 +1264,18 @@ class BearyEntryDetailViewController: UIViewController {
         return 280
     }
 
-    /// D9 详情条改用 _t 缩略图（灯箱内看原图）；加载失败时记下标，点按先重试、不进查看器。
+    /// D9 详情条改用 _t 缩略图（灯箱内看原图）；加载失败时记下标并显示点击重试图标，点按先重试、不进查看器。
+    /// 成功时清失败标记并隐藏重试图标；加载中保持现有行为（图标隐藏，见 makeImageView 初值与重试点按）。
     private func loadDetailThumbnail(into imageView: UIImageView, key: String, index: Int) {
         guard let url = BearyImageURLs.imageURL(key: key, thumb: true) else { return }
         BearyImageLoader.shared.load(url: url) { [weak self, weak imageView] img in
             if let img = img {
                 imageView?.image = img
+                self?.detailImageFailedIndices.remove(index)
+                self?.detailRetryButtons[index]?.isHidden = true
             } else {
                 self?.detailImageFailedIndices.insert(index)
+                self?.detailRetryButtons[index]?.isHidden = false
             }
         }
     }
@@ -1243,7 +1294,64 @@ class BearyEntryDetailViewController: UIViewController {
         imageView.isUserInteractionEnabled = true
         let tap = UITapGestureRecognizer(target: self, action: #selector(imageTapped(_:)))
         imageView.addGestureRecognizer(tap)
+        // 失败重试图标（清单第 13 项的详情部分）：纯图标、无文字，44 靶区居中、图标 26pt；
+        // 仅本图加载失败时显示，成功／加载中隐藏，不影响成功图的点按进灯箱。
+        let retryButton = UIButton(type: .system)
+        retryButton.translatesAutoresizingMaskIntoConstraints = false
+        retryButton.setImage(DetailIconCache.image(named: "icon_refresh", pointSize: 26), for: .normal)
+        retryButton.tintColor = BearyColors.gray
+        retryButton.accessibilityLabel = "重新加载图片"
+        retryButton.isHidden = true
+        retryButton.tag = index
+        retryButton.addTarget(self, action: #selector(detailRetryTapped(_:)), for: .touchUpInside)
+        retryButton.addTarget(self, action: #selector(iconTouchDown(_:)), for: .touchDown)
+        retryButton.addTarget(self, action: #selector(iconTouchUp(_:)), for: [.touchUpInside, .touchUpOutside, .touchCancel])
+        imageView.addSubview(retryButton)
+        NSLayoutConstraint.activate([
+            retryButton.centerXAnchor.constraint(equalTo: imageView.centerXAnchor),
+            retryButton.centerYAnchor.constraint(equalTo: imageView.centerYAnchor),
+            retryButton.widthAnchor.constraint(equalToConstant: 44),
+            retryButton.heightAnchor.constraint(equalToConstant: 44),
+        ])
+        detailRetryButtons[index] = retryButton
         return imageView
+    }
+
+    /// 头像加载：失败时显示点击重试图标（清单第 13 项的详情部分）；加载开始即隐藏图标，
+    /// 成功态图标保持隐藏；无头像 URL 时走现有首字母回退，不给重试图标。
+    private func loadAvatar() {
+        avatarRetryButton.isHidden = true
+        let url = BearyImageURLs.avatarURL(entry?.authorAvatar)
+        avatarImageView.bearySetImage(url: url, onFailure: { [weak self] _ in
+            if url != nil {
+                self?.avatarRetryButton.isHidden = false
+            }
+        })
+    }
+
+    @objc private func avatarRetryTapped() {
+        loadAvatar()
+    }
+
+    @objc private func avatarWrapTapped(_ sender: UITapGestureRecognizer) {
+        // 重试图标可见时，落在图标上的点按归重试钮（钮与 wrap 手势都会收到触摸），不进作者主页。
+        if avatarRetryButton.isHidden == false {
+            let point = sender.location(in: avatarWrapView)
+            if avatarRetryButton.frame.contains(point) {
+                return
+            }
+        }
+        authorTapped()
+    }
+
+    @objc private func detailRetryTapped(_ sender: UIButton) {
+        let index = sender.tag
+        guard index >= 0 && index < detailImageKeys.count else { return }
+        sender.isHidden = true
+        detailImageFailedIndices.remove(index)
+        if let imageView = detailImagesStack.arrangedSubviews.first(where: { $0.tag == index }) as? UIImageView {
+            loadDetailThumbnail(into: imageView, key: detailImageKeys[index], index: index)
+        }
     }
 
     @objc private func authorTapped() {
@@ -1256,6 +1364,13 @@ class BearyEntryDetailViewController: UIViewController {
         let start = tappedView.tag
         if detailImageKeys.isEmpty || start < 0 || start >= detailImageKeys.count {
             return
+        }
+        // 重试图标可见时，落在图标上的点按归重试钮（钮与图手势都会收到触摸），此处不重复触发。
+        if let retryButton = detailRetryButtons[start], retryButton.isHidden == false {
+            let point = sender.location(in: tappedView)
+            if retryButton.frame.contains(point) {
+                return
+            }
         }
         // 失败图点按重试（网页灯箱委托 img-err 口径），不进查看器。
         if detailImageFailedIndices.contains(start) == true, let imageView = tappedView as? UIImageView {
@@ -1283,17 +1398,13 @@ class BearyEntryDetailViewController: UIViewController {
         likeButton.setImage(likeImage, for: .normal)
         // 计数位宽度由显式约束定，不靠按钮固有宽：按钮固有宽不含标题边距，
         // 栈按固有宽给帧时标题框只剩边距差，数字会被裁成左半弧。
-        // 0 赞隐藏数字位，只剩爱心；非 0 按实测字宽给足整段标题宽。
+        // 审计 N9：0 赞也不再藏数字，同样设标题 "0" 并按点赞钮同款公式（图标宽 + 6 间隙 + 实测字宽）给足宽度，不断字。
         let imageWidth = likeImage?.size.width ?? 22
-        if count <= 0 {
-            likeButton.setTitle(nil, for: .normal)
-            likeButtonWidthConstraint?.constant = imageWidth
-        } else {
-            let titleText = "\(count)"
-            let titleWidth = ceil((titleText as NSString).size(withAttributes: [NSAttributedString.Key.font: UIFont.systemFont(ofSize: 14)]).width)
-            likeButton.setTitle(titleText, for: .normal)
-            likeButtonWidthConstraint?.constant = imageWidth + 6 + titleWidth
-        }
+        let shownCount = max(0, count)
+        let titleText = "\(shownCount)"
+        let titleWidth = ceil((titleText as NSString).size(withAttributes: [NSAttributedString.Key.font: UIFont.systemFont(ofSize: 14)]).width)
+        likeButton.setTitle(titleText, for: .normal)
+        likeButtonWidthConstraint?.constant = imageWidth + 6 + titleWidth
         likeButton.tintColor = liked ? BearyColors.orange : BearyColors.gray
         likeButton.setTitleColor(liked ? BearyColors.orange : BearyColors.gray, for: .normal)
         likeButton.imageView?.transform = .identity
@@ -2455,8 +2566,9 @@ private class BearyEmoteSheetCell: UICollectionViewCell {
 // 网页灯箱 IIFE 口径：pinch 1–4 倍、双击切 2 倍、放大后平移限幅（120*scale）、
 // 横向 >60px 才翻页、回绕瞬时归位、失败图点按重试、灯箱内看原图、0.92 黑底、计数与圆点。
 // 网页没有下滑关闭，本查看器不加下滑关闭；关闭只走关闭钮与单击（双击不关闭）。
-
-private class BearyEntryImageViewerViewController: UIViewController, UIGestureRecognizerDelegate {
+// 灯箱复用出口：本类由 private 改为内部类（仅此一词改动），供时间线／个人主页 lane
+// 跨文件复用；init(imageKeys:startIndex:) 与任何行为均未改动。
+class BearyEntryImageViewerViewController: UIViewController, UIGestureRecognizerDelegate {
 
     private let imageKeys: [String]
     private var currentIndex: Int

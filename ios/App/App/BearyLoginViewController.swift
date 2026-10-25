@@ -21,12 +21,15 @@ import UIKit
 // 不认 refreshMe（容器随后才刷新）；BearyAPI 的发码/验码不触发 onUnauthorized，
 // 不会触发 401 清用户态的连锁。
 // 登录钮启用条件与网页 lgSyncGo 同口径：复选框勾选 + 邮箱合法 + 验证码 6 位。
-// （网页邮箱正则 /.+@.+\..+/ 更松；本页沿用更严的 isEmailValid，合法邮箱均可通过，
-// 仅对无点号域等边缘输入更严，不放宽以免与服务端 ^[^\s@]+@[^\s@]+\.[^\s@]+$ 口径冲突。）
+// N13：邮箱口径与网页 lgEmailOk 同款 /.+@.+\..+/（任意非空＋@＋任意非空＋.＋任意非空）；
+// 发码、登录按钮启用与两处拦截共用 isEmailValid，不再用更严的服务端口径前置拦截。
 // 协议链接说明：网页复选框文案里的《隐私政策》/《用户协议》链向 /privacy、/terms；
 // F1：原生不做协议页，文案里的两个链接可点，点击走 UIApplication.shared.open
 // 用系统浏览器打开 https://teddyhn.com/privacy 与 /terms；点文案其他位置仍切换勾选。
-// Turnstile 互动挑战过渡方案见 BearyTurnstilePage 头注释（最终原生登录方案仍等 Li 定）。
+// Turnstile 互动挑战过渡方案见 BearyTurnstilePage 头注释。清单第 12 项：可见验证
+// 卡片移除已记为 blocked（无感失败且必须人工交互的用户拿掉卡片后无路可走），
+// 卡片行为本次不动；与卡片去留无关的失败原因区分已落地（超时／取消有各自文案，
+// 登录页展示 TokenError.message，不另拼文案，不静默循环）。
 
 final class BearyLoginViewController: UIViewController {
     /// 登录成功（验码 {ok: true}）。容器随后刷新登录态并关闭本页。
@@ -458,12 +461,11 @@ final class BearyLoginViewController: UIViewController {
         return ["w": Int(bounds.width), "h": Int(bounds.height), "d": Double(UIScreen.main.scale)]
     }
 
-    /// 与服务端 ^[^\s@]+@[^\s@]+\.[^\s@]+$ 同口径（网页发码钮的 /.+@.+\..+/ 更松，不用它）。
+    /// N13：与网页 lgEmailOk 同款 /.+@.+\..+/（任意非空＋@＋任意非空＋.＋任意非空），
+    /// 不锚定、不禁空格、不设长度上限、不要求恰好一个 @；发码与登录拦截共用本实现。
+    /// 注意：服务端仍可能以更严口径拒收（如含空格/多 @），此时走服务端返回文案，不由本页前置拦截。
     private func isEmailValid(_ email: String) -> Bool {
-        guard !email.isEmpty, email.count <= 254, !email.contains(" ") else { return false }
-        let parts = email.split(separator: "@")
-        guard parts.count == 2, !parts[0].isEmpty, !parts[1].isEmpty else { return false }
-        return parts[1].contains(".")
+        return email.range(of: ".+@.+\\..+", options: .regularExpression) != nil
     }
 
     private func showMessage(_ text: String, ok: Bool = false) {
