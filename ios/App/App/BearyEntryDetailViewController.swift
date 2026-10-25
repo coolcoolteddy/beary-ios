@@ -13,6 +13,11 @@ enum BearyDetailScrollStore {
 class BearyEntryDetailViewController: UIViewController {
 
     var onRequireLogin: (() -> Void)?
+    /// 互动成功后回传最新状态：传（日记 id、点赞数、我是否点赞、我是否收藏、回应聚合）。
+    /// 调用方按 id 定向刷新列表该行，不整表刷新；条目不在列表时调用方静默跳过。
+    var onInteractionChanged: ((String, Int?, Bool?, Bool?, [EmoteCount]?) -> Void)?
+    /// 点编辑：仅本人未公开且在编辑期内才显示入口，传整条 Entry。
+    var onEditEntry: ((Entry) -> Void)?
 
     private var entryId: String
     private var entry: Entry?
@@ -310,6 +315,45 @@ class BearyEntryDetailViewController: UIViewController {
         fetchEntry()
     }
 
+    /// 详情外（编辑保存后）要求重拉单篇：已有内容时保持显示，失败保留旧内容（fetchEntry 同款）。
+    func refreshEntry() {
+        fetchEntry()
+    }
+
+    /// 编辑入口：仅本人未公开且在编辑期内显示；is_mine 缺失时退到作者 id 与当前登录用户比对；
+    /// publishAt/editDeadline 缺失时放行给服务端判定（服务端是权威，保存时一定会拒掉非法编辑）。
+    private func updateEditButton() {
+        if isEditableEntry() {
+            if navigationItem.rightBarButtonItem == nil {
+                navigationItem.rightBarButtonItem = UIBarButtonItem(title: "编辑", style: .plain, target: self, action: #selector(editTapped))
+            }
+        } else {
+            navigationItem.rightBarButtonItem = nil
+        }
+    }
+
+    private func isEditableEntry() -> Bool {
+        guard let current = entry, let entryId = current.id, !entryId.isEmpty else { return false }
+        if current.isPublic == true { return false }
+        let mine = (current.isMine == true) || (current.authorId != nil && current.authorId == SessionManager.shared.currentUser?.id)
+        if !mine { return false }
+        let now = Int(Date().timeIntervalSince1970 * 1000)
+        if let pub = current.publishAt, pub <= now { return false }
+        if let deadline = current.editDeadline, deadline <= now { return false }
+        return true
+    }
+
+    @objc private func editTapped() {
+        guard let current = entry else { return }
+        onEditEntry?(current)
+    }
+
+    /// 互动成功后把当前最新状态回传给列表（点赞数/点亮态/收藏态/回应聚合以服务端响应为准）。
+    private func notifyInteraction() {
+        guard let entryId = entry?.id, let current = entry else { return }
+        onInteractionChanged?(entryId, current.likeCount, current.likedByMe, current.bookmarkedByMe, current.emotes)
+    }
+
     // MARK: - 渲染
 
     private func render() {
@@ -353,6 +397,7 @@ class BearyEntryDetailViewController: UIViewController {
         updateActionButtons()
         renderEmotes()
         updateInteractivity()
+        updateEditButton()
     }
 
     private func makeImageView(key: String, dims: [String: [Int]]?) -> UIImageView {
@@ -455,6 +500,7 @@ class BearyEntryDetailViewController: UIViewController {
                     }
                     self.updateActionButtons()
                     self.updateInteractivity()
+                    self.notifyInteraction()
                 case .failure(let err):
                     if case .unauthorized = err {
                         self.onRequireLogin?()
@@ -487,6 +533,7 @@ class BearyEntryDetailViewController: UIViewController {
                     self.entry?.bookmarkedByMe = resp.bookmarked ?? (currentlyBookmarked == false)
                     self.updateActionButtons()
                     self.updateInteractivity()
+                    self.notifyInteraction()
                 case .failure(let err):
                     if case .unauthorized = err {
                         self.onRequireLogin?()
@@ -545,6 +592,7 @@ class BearyEntryDetailViewController: UIViewController {
                                         self.entry?.emotes = emotes
                                     }
                                     self.renderEmotes()
+                                    self.notifyInteraction()
                                 case .failure(let err):
                                     if case .unauthorized = err {
                                         self.onRequireLogin?()
@@ -584,6 +632,7 @@ class BearyEntryDetailViewController: UIViewController {
                         self.entry?.emotes = emotes
                     }
                     self.renderEmotes()
+                    self.notifyInteraction()
                 case .failure(let err):
                     if case .unauthorized = err {
                         self.onRequireLogin?()

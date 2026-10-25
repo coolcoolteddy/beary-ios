@@ -32,6 +32,7 @@
 		2E336A1F3CBED468CAD5D554 /* BearyEdgeDismiss.swift in Sources */ = {isa = PBXBuildFile; fileRef = DFB7CEC22AB4833567716062 /* BearyEdgeDismiss.swift */; };
 		CC36F03F3B9948ACA0371634 /* BearyCenteredModal.swift in Sources */ = {isa = PBXBuildFile; fileRef = DF72F9D9B2F74A28879E58DD /* BearyCenteredModal.swift */; };
 		FE6E29AFED3B5E04593AB59C /* BearyPlaceholderViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = AC51784211948B3A8F2F516E /* BearyPlaceholderViewController.swift */; };
+		B19ABAE5D3904C1CBD12AE61 /* BearyComposerPickers.swift in Sources */ = {isa = PBXBuildFile; fileRef = E02EB770843D473AB5D8F4E2 /* BearyComposerPickers.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -61,6 +62,7 @@
 		DFB7CEC22AB4833567716062 /* BearyEdgeDismiss.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BearyEdgeDismiss.swift; sourceTree = "<group>"; };
 		DF72F9D9B2F74A28879E58DD /* BearyCenteredModal.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BearyCenteredModal.swift; sourceTree = "<group>"; };
 		AC51784211948B3A8F2F516E /* BearyPlaceholderViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BearyPlaceholderViewController.swift; sourceTree = "<group>"; };
+		E02EB770843D473AB5D8F4E2 /* BearyComposerPickers.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BearyComposerPickers.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -117,6 +119,7 @@
 				DFB7CEC22AB4833567716062 /* BearyEdgeDismiss.swift */,
 				DF72F9D9B2F74A28879E58DD /* BearyCenteredModal.swift */,
 				AC51784211948B3A8F2F516E /* BearyPlaceholderViewController.swift */,
+				E02EB770843D473AB5D8F4E2 /* BearyComposerPickers.swift */,
 				50379B222058CBB4000EE86E /* capacitor.config.json */,
 				504EC3071FED79650016851F /* AppDelegate.swift */,
 				504EC30B1FED79650016851F /* Main.storyboard */,
@@ -248,6 +251,7 @@
 				2E336A1F3CBED468CAD5D554 /* BearyEdgeDismiss.swift in Sources */,
 				CC36F03F3B9948ACA0371634 /* BearyCenteredModal.swift in Sources */,
 				FE6E29AFED3B5E04593AB59C /* BearyPlaceholderViewController.swift in Sources */,
+				B19ABAE5D3904C1CBD12AE61 /* BearyComposerPickers.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

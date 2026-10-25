@@ -191,14 +191,36 @@ extension BearyAPI {
     }
 
     /// 发帖：content 必填 ≤2000 字；images 是已上传的 R2 key 数组（须归属本人且存在）；
-    /// mood/weather 省略传 nil；client_req 须匹配 ^[A-Za-z0-9_-]{8,64}$，用于发布幂等。
+    /// mood/weather/quote_id 省略即不传（服务端 validMood/validWeather 对缺失值置 null，与网页同口径）；
+    /// recipient_id 有值时必带 notify_recipient（1 开 / 0 关，网页同款）；client_req 须匹配
+    /// ^[A-Za-z0-9_-]{8,64}$，用于发布幂等。
     /// 成功 201 返回 {id, publish_at, edit_deadline}；失败码：content required / content too long /
     /// invalid image ownership / image unavailable(409) / create_gap / create_day_limit /
     /// create_ip_limit(429) / create_dup / recipient_invalid。
-    func publishEntry(content: String, images: [String], mood: String?, clientReq: String, completion: @escaping (Result<CreateResponse, APIError>) -> Void) {
+    func publishEntry(content: String, images: [String], mood: String?, weather: String? = nil, quoteId: String? = nil, recipientId: Int? = nil, notifyRecipient: Int? = nil, clientReq: String, completion: @escaping (Result<CreateResponse, APIError>) -> Void) {
         var body: [String: Any] = ["content": content, "images": images, "client_req": clientReq]
         if let m = mood { body["mood"] = m }
+        if let w = weather { body["weather"] = w }
+        if let q = quoteId { body["quote_id"] = q }
+        if let r = recipientId {
+            body["recipient_id"] = r
+            body["notify_recipient"] = notifyRecipient ?? 1
+        }
         request("/beary/api/entries", method: "POST", jsonBody: body, completion: completion)
+    }
+
+    /// 编辑已发日记：PUT /beary/api/entries/:id，字段与网页编辑同款（content/images/mood/weather/quote_id；
+    /// 写给与通知不在 PUT 字段里，发布即锁定、编辑不可改）。
+    /// 服务端 15 分钟规则：已公开 403 'already public'、过编辑期 403 'edit window expired' 或
+    /// 'already public or expired'；成功只返回 {ok: true}，调用方成功后自行重拉单篇。
+    /// 图片须归属本人且存在，否则 400 'invalid image ownership' / 409 'image unavailable'。
+    func updateEntry(id: String, content: String, images: [String], mood: String?, weather: String?, quoteId: String?, completion: @escaping (Result<Void, APIError>) -> Void) {
+        let safe = id.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? id
+        var body: [String: Any] = ["content": content, "images": images]
+        if let m = mood { body["mood"] = m }
+        if let w = weather { body["weather"] = w }
+        if let q = quoteId { body["quote_id"] = q }
+        requestVoid("/beary/api/entries/\(safe)", method: "PUT", jsonBody: body, completion: completion)
     }
 }
 

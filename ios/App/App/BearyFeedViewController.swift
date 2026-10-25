@@ -320,6 +320,93 @@ class BearyFeedViewController: UIViewController {
         return result
     }
 
+    // MARK: - 互动/编辑定向刷新（不整表刷新）
+
+    /// 详情互动成功后回传：按 id 在两个模型里原地改字段，只刷新该行。
+    /// 列表不可见（本 VC 未在屏上）或该条已不在列表（被过滤/翻页未加载）时静默跳过，不报错。
+    func applyInteraction(entryId: String, likeCount: Int?, likedByMe: Bool?, bookmarkedByMe: Bool?, emotes: [EmoteCount]?) {
+        var updated = false
+        for index in deliveredAll.indices {
+            if deliveredAll[index].id == entryId {
+                if let v = likeCount { deliveredAll[index].likeCount = v }
+                if let v = likedByMe { deliveredAll[index].likedByMe = v }
+                if let v = bookmarkedByMe { deliveredAll[index].bookmarkedByMe = v }
+                if let v = emotes { deliveredAll[index].emotes = v }
+                updated = true
+                break
+            }
+        }
+        if !updated {
+            for index in plazaRaw.indices {
+                if plazaRaw[index].id == entryId {
+                    if let v = likeCount { plazaRaw[index].likeCount = v }
+                    if let v = likedByMe { plazaRaw[index].likedByMe = v }
+                    if let v = bookmarkedByMe { plazaRaw[index].bookmarkedByMe = v }
+                    if let v = emotes { plazaRaw[index].emotes = v }
+                    updated = true
+                    break
+                }
+            }
+        }
+        if !updated { return }
+        guard let path = indexPath(for: entryId) else { return }
+        reloadRowIfVisible(path)
+    }
+
+    /// 编辑保存后回传：正文/图片/心情按 id 原地替换，只刷新该行；天气与引用不在卡片上显示，不同步。
+    func applyEditedEntry(entryId: String, content: String, images: [String], mood: String?) {
+        var updated = false
+        for index in deliveredAll.indices {
+            if deliveredAll[index].id == entryId {
+                deliveredAll[index].content = content
+                deliveredAll[index].images = images
+                deliveredAll[index].mood = mood
+                updated = true
+                break
+            }
+        }
+        if !updated {
+            for index in plazaRaw.indices {
+                if plazaRaw[index].id == entryId {
+                    plazaRaw[index].content = content
+                    plazaRaw[index].images = images
+                    plazaRaw[index].mood = mood
+                    updated = true
+                    break
+                }
+            }
+        }
+        if !updated { return }
+        guard let path = indexPath(for: entryId) else { return }
+        reloadRowIfVisible(path)
+    }
+
+    /// 按 id 反查当前可见行：delivered 行只在已展开的 shown 范围内；plaza 行取过滤后下标；
+    /// section 按 isDeliveredSectionVisible 换算（可见时 delivered=0/plaza=1，否则 plaza=0）。
+    private func indexPath(for entryId: String) -> IndexPath? {
+        let shown = min(deliveredVisibleCount, deliveredAll.count)
+        for row in 0..<shown {
+            if deliveredAll[row].id == entryId {
+                return IndexPath(row: row, section: 0)
+            }
+        }
+        let entries = plazaEntries()
+        for row in entries.indices {
+            if entries[row].id == entryId {
+                let section = isDeliveredSectionVisible ? 1 : 0
+                return IndexPath(row: row, section: section)
+            }
+        }
+        return nil
+    }
+
+    /// 只刷新可见行：不可见时不调用 reloadRows（避免 UITableView 对屏外行做无用功与潜在警告）。
+    private func reloadRowIfVisible(_ path: IndexPath) {
+        if tableView.indexPathsForVisibleRows?.contains(path) == true {
+            tableView.reloadRows(at: [path], with: .none)
+        }
+    }
+
     // MARK: - 覆盖层状态
 
     private func finishFirstLoadIfNeeded() {

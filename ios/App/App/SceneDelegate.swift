@@ -66,6 +66,9 @@ final class BearyChromeViewController: UIViewController {
     override var preferredStatusBarStyle: UIStatusBarStyle { currentStatusBarStyle }
     // 边缘返回：transitioningDelegate 是弱引用，必须强持有到 dismiss 完成
     private var edgeDismiss: BearyEdgeDismissController?
+    /// 编辑态编辑器的边缘返回：独立强持有——详情 nav 的 edge delegate 还活着，
+    /// 编辑器若复用 edgeDismiss 会把详情的 delegate 顶掉，详情关闭后手势会断。
+    private var editEdgeDismiss: BearyEdgeDismissController?
     // 桌面式布局（宽 ≥821，与网页 @media 断点一致）：内容列 600 居中；iPhone 式（宽 ≤820）全宽列。
     // 分栏已整体撤除，不留分栏状态；底栏胶囊与 FAB 在 iPad 端与 iPhone 完全一致，走原有栏显隐逻辑。
     private var feedLeadingConstraint: NSLayoutConstraint?
@@ -497,6 +500,15 @@ final class BearyChromeViewController: UIViewController {
                 self?.presentLoginPlaceholder()
             }
         }
+        // 互动回传：详情点赞/收藏/回应成功后，列表只刷新该行（不整表刷新，不滚顶）。
+        d.onInteractionChanged = { [weak self] changedId, likeCount, liked, bookmarked, emotes in
+            self?.feedVC?.applyInteraction(entryId: changedId, likeCount: likeCount, likedByMe: liked, bookmarkedByMe: bookmarked, emotes: emotes)
+        }
+        // 编辑入口：详情只传整条 Entry，编辑器的 present 与回调由 SceneDelegate 接（详情不直接 present）。
+        d.onEditEntry = { [weak self, weak d] entry in
+            guard let self = self, let detailVC = d else { return }
+            self.presentComposerForEdit(entry: entry, detailVC: detailVC)
+        }
         let nav = UINavigationController(rootViewController: d)
         nav.modalPresentationStyle = .fullScreen
         // 第三项：左边缘右滑返回（关闭按钮保留；transitioningDelegate 弱引用，edgeDismiss 强持有到 dismiss 完成）
@@ -532,21 +544,68 @@ final class BearyChromeViewController: UIViewController {
                 self?.presentLoginPlaceholder()
             }
         }
-        // 宽 ≥821 时居中 640 模态（对应网页编辑器 ≥821px 居中 640px；第三项的 540 窄框已废除）；
-        // ≤820 时仍全屏 + 边缘返回。
+        configureComposerPresentation(c, forEdit: false)
+        present(c, animated: true)
+    }
+
+    /// 新建与编辑共用：宽 ≥821 时居中 640 模态（对应网页编辑器 ≥821px 居中 640px）；
+    /// ≤820 时仍全屏 + 边缘返回。编辑态用独立的 editEdgeDismiss 强持有——详情 nav 的
+    /// edge delegate 还活着，编辑器若复用 edgeDismiss 会把详情的 delegate 顶掉。
+    private func configureComposerPresentation(_ composer: BearyComposerViewController, forEdit: Bool) {
         if view.bounds.width >= 821 {
             let centered = BearyCenteredTransitioningDelegate()
-            c.modalPresentationStyle = .custom
-            c.transitioningDelegate = centered
+            composer.modalPresentationStyle = .custom
+            composer.transitioningDelegate = centered
             centeredModal = centered
         } else {
-            c.modalPresentationStyle = .fullScreen
+            composer.modalPresentationStyle = .fullScreen
             let edge = BearyEdgeDismissController()
-            edge.attach(to: c)
-            c.transitioningDelegate = edge
-            edgeDismiss = edge
+            edge.attach(to: composer)
+            composer.transitioningDelegate = edge
+            if forEdit {
+                editEdgeDismiss = edge
+            } else {
+                edgeDismiss = edge
+            }
         }
-        present(c, animated: true)
+    }
+
+    /// 沿 presentedViewController 链走到最上层：编辑器从详情 nav 上 present，而不是从根 VC 起，
+    /// 否则详情会被盖在编辑器下面、关闭顺序错乱。
+    private func topmostViewController() -> UIViewController {
+        var top: UIViewController = self
+        while let next = top.presentedViewController {
+            top = next
+        }
+        return top
+    }
+
+    /// 编辑模式入口：详情“编辑”钮 → 编辑器（从详情 nav 上 present）。
+    /// 未登录先弹登录占位；保存成功 → 关编辑器 → 详情重拉单篇 + 列表只刷新该行；
+    /// 取消 → 只关编辑器（不删原日记）；发布时登录失效 → 关编辑器与详情 → 登录占位。
+    private func presentComposerForEdit(entry: Entry, detailVC: BearyEntryDetailViewController) {
+        guard SessionManager.shared.isLoggedIn else {
+            presentLoginPlaceholder()
+            return
+        }
+        let c = BearyComposerViewController(entry: entry)
+        c.onUpdated = { [weak self, weak c] updatedId, content, images, mood in
+            guard let self = self else { return }
+            c?.dismiss(animated: true) {
+                detailVC.refreshEntry()
+                self.feedVC?.applyEditedEntry(entryId: updatedId, content: content, images: images, mood: mood)
+            }
+        }
+        c.onCancelled = { [weak c] in c?.dismiss(animated: true) }
+        c.onRequireLogin = { [weak self, weak c] in
+            c?.dismiss(animated: true) {
+                self?.dismiss(animated: true) {
+                    self?.presentLoginPlaceholder()
+                }
+            }
+        }
+        configureComposerPresentation(c, forEdit: true)
+        topmostViewController().present(c, animated: true)
     }
 
     // MARK: - 桌面式布局（宽 ≥821，与网页 @media 断点一致）
