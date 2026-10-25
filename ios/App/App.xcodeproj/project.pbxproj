@@ -28,6 +28,7 @@
 		F40B709B8AD75CFF1DD051E2 /* BearyFeedViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1CF8C5F0C4EAA6EE5AD6D99 /* BearyFeedViewController.swift */; };
 		8A047B8DD77DEF5271FBF3FE /* BearyEntryDetailViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8211DAE1B4534F851C014793 /* BearyEntryDetailViewController.swift */; };
 		18A6452B1F1FB1587C13CB37 /* BearyComposerViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 77AD3CB98561B2E60A48412C /* BearyComposerViewController.swift */; };
+		A46569900EDF7A6299450A3E /* BearyDraftFiles.swift in Sources */ = {isa = PBXBuildFile; fileRef = 55657C85F900B6AAC4EBF6D1 /* BearyDraftFiles.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -53,6 +54,7 @@
 		A1CF8C5F0C4EAA6EE5AD6D99 /* BearyFeedViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BearyFeedViewController.swift; sourceTree = "<group>"; };
 		8211DAE1B4534F851C014793 /* BearyEntryDetailViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BearyEntryDetailViewController.swift; sourceTree = "<group>"; };
 		77AD3CB98561B2E60A48412C /* BearyComposerViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BearyComposerViewController.swift; sourceTree = "<group>"; };
+		55657C85F900B6AAC4EBF6D1 /* BearyDraftFiles.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BearyDraftFiles.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -105,6 +107,7 @@
 				A1CF8C5F0C4EAA6EE5AD6D99 /* BearyFeedViewController.swift */,
 				8211DAE1B4534F851C014793 /* BearyEntryDetailViewController.swift */,
 				77AD3CB98561B2E60A48412C /* BearyComposerViewController.swift */,
+				55657C85F900B6AAC4EBF6D1 /* BearyDraftFiles.swift */,
 				50379B222058CBB4000EE86E /* capacitor.config.json */,
 				504EC3071FED79650016851F /* AppDelegate.swift */,
 				504EC30B1FED79650016851F /* Main.storyboard */,
@@ -232,6 +235,7 @@
 				F40B709B8AD75CFF1DD051E2 /* BearyFeedViewController.swift in Sources */,
 				8A047B8DD77DEF5271FBF3FE /* BearyEntryDetailViewController.swift in Sources */,
 				18A6452B1F1FB1587C13CB37 /* BearyComposerViewController.swift in Sources */,
+				A46569900EDF7A6299450A3E /* BearyDraftFiles.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
