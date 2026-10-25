@@ -77,6 +77,15 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      - run: npx cap sync ios
+
       - name: Run unit tests (no host app)
         run: >
           xcodebuild
