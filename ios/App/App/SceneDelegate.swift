@@ -49,7 +49,7 @@ final class BearyChromeViewController: UIViewController {
     private var bottomCapsuleHighlightView: UIView?
     // 批一：原生页切换状态。currentPage 为 nil 表示尚未显示任何页（启动时 showPage(.home) 亮原生列表）。
     private enum ContainerPage {
-        case home, notif, timeline, me, search, invite, user
+        case home, notif, timeline, me, search, user
     }
     private var currentPage: ContainerPage?
     private var placeholderVCs: [ContainerPage: UIViewController] = [:]
@@ -62,7 +62,6 @@ final class BearyChromeViewController: UIViewController {
     private var userVC: BearyProfileViewController?
     private var searchVC: BearySearchViewController?
     private var profileGated = false
-    private var inviteVC: BearyInviteViewController?
     /// 礼物钮门控缓存（A4）：仅上次 fetchReferralEnabled 成功为真时显礼物钮。
     private var referralEnabled = false
     private var userTargetKey: String?
@@ -110,6 +109,10 @@ final class BearyChromeViewController: UIViewController {
     private var centeredModal: BearyCenteredTransitioningDelegate?
     /// iPhone 底 sheet 编辑器模态的 transitioningDelegate（弱引用，强持有口径同 centeredModal）
     private var composerSheet: BearyComposerSheetTransitioningDelegate?
+    /// 邀请弹窗模态的 transitioningDelegate（弱引用，强持有口径同 centeredModal/composerSheet；
+    /// 宽屏居中与窄屏底 sheet 各持一个，与编辑器分开，避免互相覆盖持有）
+    private var inviteCentered: BearyCenteredTransitioningDelegate?
+    private var inviteSheet: BearyComposerSheetTransitioningDelegate?
 
     // 栏内颜色一律走 BearyColors（§0 单一来源，顶栏不再自带旧的 blue/line 近似值）。
     private var ink: UIColor { BearyColors.ink }
@@ -118,11 +121,20 @@ final class BearyChromeViewController: UIViewController {
     private var bearyBlue: UIColor { BearyColors.blue }
     private var lineColor: UIColor { BearyColors.line }
 
-    private func makeGlassView() -> UIVisualEffectView {
+    /// 玻璃本体：iOS 26+ 为 UIGlassEffect，低版本降级系统毛玻璃；调用点一律不新增玻璃视图。
+    /// tint 只给顶栏传：网页 .nav 底色为 bg 52%（color-mix），而默认玻璃未设 tint，
+    /// 浅色下系统默认透色发灰（截图顶栏灰渐变即此来源）；tint 为 nil 时与旧调用完全一致
+    /// （底栏胶囊仍走 makeGlassView()，配方不动）。低版本分支无 tint 参数，
+    /// 故同值以 contentView 底色叠加在毛玻璃上，复现网页 52% 底色口径。
+    private func makeGlassView(tint: UIColor? = nil) -> UIVisualEffectView {
         if #available(iOS 26.0, *) {
-            return UIVisualEffectView(effect: UIGlassEffect())
+            let effect = UIGlassEffect()
+            effect.tintColor = tint
+            return UIVisualEffectView(effect: effect)
         } else {
-            return UIVisualEffectView(effect: UIBlurEffect(style: .systemMaterial))
+            let view = UIVisualEffectView(effect: UIBlurEffect(style: .systemMaterial))
+            view.contentView.backgroundColor = tint
+            return view
         }
     }
 
@@ -154,7 +166,9 @@ final class BearyChromeViewController: UIViewController {
 
     private func buildChrome() {
         // ---- 顶栏：整宽玻璃，内容区 60pt 贴安全区下方 ----
-        let top = makeGlassView()
+        // 顶栏玻璃 tint：网页 .nav 底色 bg 52%，与下方白色内容同色系（浅色为白玻璃）；
+        // 只改本调用的参数，不动底栏胶囊调用；不加边框与阴影（网页 .nav 亦无，见 parity_values §7）。
+        let top = makeGlassView(tint: BearyColors.bg.withAlphaComponent(0.52))
         top.translatesAutoresizingMaskIntoConstraints = false
         view.addSubview(top)
         topGlass = top
@@ -578,7 +592,7 @@ final class BearyChromeViewController: UIViewController {
     // 顶栏入口：登录弹原生登录页，其余走 tab 页；不再有任何跳网页的调用。
     @objc private func didTapLogin() { presentLogin() }
     @objc private func didTapSearch() { showPage(.search) }
-    @objc private func didTapGift() { showPage(.invite) }
+    @objc private func didTapGift() { presentInvite() }
     @objc private func didTapWrite() { presentComposer() }
     @objc private func didTapAvatar() { showPage(.me) }
     @objc private func didTapHome() { showPage(.home) }
@@ -685,14 +699,13 @@ final class BearyChromeViewController: UIViewController {
         updateDesktopLayout()
     }
 
-    /// 容器页解析：消息/时间线/我/搜索/邀请/他人主页走真实现。
+    /// 容器页解析：消息/时间线/我/搜索/他人主页走真实现（邀请已改弹窗，不再是容器页）。
     private func pageView(for page: ContainerPage) -> UIViewController {
         switch page {
         case .notif: return ensureNotifVC()
         case .timeline: return ensureTimelineVC()
         case .me: return ensureProfileVC()
         case .search: return ensureSearchVC()
-        case .invite: return ensureInviteVC()
         case .user: return ensureUserVC()
         default: return ensurePlaceholder(page)
         }
@@ -836,14 +849,29 @@ final class BearyChromeViewController: UIViewController {
         return vc
     }
 
-    private func ensureInviteVC() -> BearyInviteViewController {
-        if let vc = inviteVC { return vc }
+    /// 邀请弹窗：礼物钮点开的不再是整页切换，而是与编辑器同款的模态——
+    /// 宽 ≥821 时居中卡片（BearyCenteredTransitioningDelegate），宽 ≤820 时底 sheet
+    /// （BearyComposerSheetTransitioningDelegate，带抓手与下滑关闭）；内容、门控与
+    /// 未登录处理一律不动（礼物钮显隐仍由 applyLoginState/onUserChanged 的
+    /// referral.enabled 门控决定；未登录时仍走本页 load() 的 onRequireLogin →
+    /// presentLogin，与整页版同路径）。每次点开新建一页，viewDidLoad 拉取最新
+    /// 邀请码与统计，不复用旧页；关闭只关弹窗，回到弹窗下的原页（不再强制回首页）。
+    private func presentInvite() {
         let vc = BearyInviteViewController()
-        vc.onClose = { [weak self] in self?.showPage(.home) }
+        vc.onClose = { [weak vc] in vc?.dismiss(animated: true) }
         vc.onRequireLogin = { [weak self] in self?.presentLogin() }
-        addPageVC(vc, page: .invite)
-        inviteVC = vc
-        return vc
+        if view.bounds.width >= 821 {
+            let centered = BearyCenteredTransitioningDelegate()
+            vc.modalPresentationStyle = .custom
+            vc.transitioningDelegate = centered
+            inviteCentered = centered
+        } else {
+            let sheet = BearyComposerSheetTransitioningDelegate()
+            vc.modalPresentationStyle = .custom
+            vc.transitioningDelegate = sheet
+            inviteSheet = sheet
+        }
+        present(vc, animated: true)
     }
 
     private func ensureUserVC() -> UIViewController {
@@ -887,7 +915,6 @@ final class BearyChromeViewController: UIViewController {
         case .timeline: title = "时间线"
         case .me: title = "我"
         case .search: title = "搜索"
-        case .invite: title = "邀请"
         case .user: title = "个人主页"
         case .home: title = "首页"
         }

@@ -2229,10 +2229,14 @@ private class BearyProfileEntryCell: UITableViewCell {
         return stackValue
     }()
 
+    /// 点赞钮显式宽约束：见 configure 的宽度算法。
+    private var likeButtonWidthConstraint: NSLayoutConstraint?
     private lazy var likeButton: UIButton = {
         let buttonValue = UIButton(type: .system)
         buttonValue.translatesAutoresizingMaskIntoConstraints = false
         buttonValue.titleLabel?.font = UIFont.systemFont(ofSize: 14)
+        buttonValue.contentEdgeInsets = .zero
+        buttonValue.titleEdgeInsets = UIEdgeInsets(top: 0, left: 6, bottom: 0, right: 0)
         buttonValue.addTarget(self, action: #selector(likeButtonTapped), for: .touchUpInside)
         return buttonValue
     }()
@@ -2316,6 +2320,7 @@ private class BearyProfileEntryCell: UITableViewCell {
         rightStack.setCustomSpacing(0, after: foldButton)
         imageHeightConstraint = imagesScrollView.heightAnchor.constraint(equalToConstant: 0)
         emoteHeightConstraint = emoteScrollView.heightAnchor.constraint(equalToConstant: 32)
+        likeButtonWidthConstraint = likeButton.widthAnchor.constraint(equalToConstant: 22)
         let quoteTap = UITapGestureRecognizer(target: self, action: #selector(quoteTapped))
         quoteContainer.addGestureRecognizer(quoteTap)
         NSLayoutConstraint.activate([
@@ -2349,6 +2354,7 @@ private class BearyProfileEntryCell: UITableViewCell {
             imageHeightConstraint,
 
             likeButton.heightAnchor.constraint(equalToConstant: 22),
+            likeButtonWidthConstraint,
             bookmarkButton.widthAnchor.constraint(equalToConstant: 21),
             bookmarkButton.heightAnchor.constraint(equalToConstant: 21),
             shareButton.widthAnchor.constraint(equalToConstant: 21),
@@ -2382,6 +2388,8 @@ private class BearyProfileEntryCell: UITableViewCell {
     override func prepareForReuse() {
         super.prepareForReuse()
         avatarImageView.image = nil
+        likeButton.setTitle(nil, for: .normal)
+        likeButtonWidthConstraint?.constant = 22
         onLike = nil
         onBookmark = nil
         onShare = nil
@@ -2528,8 +2536,22 @@ private class BearyProfileEntryCell: UITableViewCell {
         // 点赞 / 收藏 / 分享（已赞、已收藏为橙色；忙时整行互动禁用）。
         let likedByMe = entry.likedByMe ?? false
         let likedImageName = likedByMe ? "icon_heart_fill" : "icon_heart"
-        likeButton.setImage(BearyIconImages.image(named: likedImageName, pointSize: 22), for: .normal)
-        likeButton.setTitle("\(entry.likeCount ?? 0)", for: .normal)
+        let likedImage = BearyIconImages.image(named: likedImageName, pointSize: 22)
+        likeButton.setImage(likedImage, for: .normal)
+        // 计数位宽度由显式约束定，不靠按钮固有宽：按钮固有宽不含标题边距，
+        // 栈按固有宽给帧时标题框只剩边距差，数字会被裁成左半弧。
+        // 0 赞隐藏数字位，只剩爱心；非 0 按实测字宽给足整段标题宽。
+        let likeCountValue = entry.likeCount ?? 0
+        let imageWidth = likedImage?.size.width ?? 22
+        if likeCountValue <= 0 {
+            likeButton.setTitle(nil, for: .normal)
+            likeButtonWidthConstraint?.constant = imageWidth
+        } else {
+            let titleText = "\(likeCountValue)"
+            let titleWidth = ceil((titleText as NSString).size(withAttributes: [NSAttributedString.Key.font: UIFont.systemFont(ofSize: 14)]).width)
+            likeButton.setTitle(titleText, for: .normal)
+            likeButtonWidthConstraint?.constant = imageWidth + 6 + titleWidth
+        }
         let likeColor = likedByMe ? BearyColors.orange : BearyColors.gray
         likeButton.tintColor = likeColor
         likeButton.setTitleColor(likeColor, for: .normal)

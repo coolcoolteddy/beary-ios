@@ -17,11 +17,13 @@ import UIKit
 //     服务端 message 透传、网络异常）。
 // 数据来源：BearyAPI.fetchMe（user.invite_code + user.referral），与网页 openInvite
 // 的 fetchMe 刷新同口径；绑定走 BearyAPI.bindReferral。
-// 容器接线（总协调收尾）：
-//   - onClose：用户点关闭钮；本页不自己 dismiss，容器负责关闭。
+// 呈现方式：容器以弹窗呈现（宽 ≥821 居中卡片 / 宽 ≤820 底 sheet，与编辑器
+// 模态同款）；本页不决定呈现，只定内容与弹窗高度（见 updatePreferredSheetHeight）。
+// 容器接线：
+//   - onClose：用户点关闭钮；本页不自己 dismiss，容器负责关闭弹窗。
 //   - onRequireLogin：未登录（fetchMe 返回 nil 或 401）时调用，容器接登录页；
 //     未接时页内只显示“请先登录”。
-//   - reload()：容器重进本页时可手动刷新（打开时 viewDidLoad 已拉取一次）。
+//   - reload()：手动刷新（每次点开新建一页，打开时 viewDidLoad 已拉取一次）。
 // 礼物钮门控不在本页：容器用 BearyAPI.fetchReferralEnabled（/me 的
 // referral.enabled，网页 giftBtn 显示逻辑同款）决定是否显示礼物钮。
 // 颜色一律走 BearyColors，不新增字面量颜色；不使用液态玻璃效果；无 force unwrap。
@@ -56,6 +58,8 @@ final class BearyInviteViewController: UIViewController {
     private var isLoading = false
     private var isBinding = false
     private var copyTimer: Timer?
+    /// 上次写入的弹窗高度（updatePreferredSheetHeight 的幂等守卫）。
+    private var lastPreferredSheetHeight: CGFloat = 0
 
     init() {
         super.init(nibName: nil, bundle: nil)
@@ -77,9 +81,33 @@ final class BearyInviteViewController: UIViewController {
         load()
     }
 
-    /// 容器重进本页时手动刷新。
+    /// 手动刷新。
     func reload() {
         load()
+    }
+
+    override func viewDidLayoutSubviews() {
+        super.viewDidLayoutSubviews()
+        updatePreferredSheetHeight()
+    }
+
+    /// 弹窗高度跟内容走：内容栈 fitting 高 + 上下边距（16 / 24）+ 上下安全区；
+    /// 底 sheet 与居中卡片的 presentation 方各以 88% / 80% 容器高封顶取小，
+    /// 内容超高时内层 scrollView 可滚。绑定区显隐变化时布局重算即跟高；
+    /// 仅高度变化超 0.5pt 才写 preferredContentSize，避免布局循环。
+    /// 不设 tint/玻璃：弹窗本体仍是 bg 实色（与网页 lgm-sheet 的 surface 同口径）。
+    private func updatePreferredSheetHeight() {
+        let width = min(max(0, view.bounds.width - 44), 432)
+        let fitting = stackView.systemLayoutSizeFitting(
+            CGSize(width: width, height: UIView.layoutFittingCompressedSize.height),
+            withHorizontalFittingPriority: .required,
+            verticalFittingPriority: .fittingSizeLevel
+        )
+        let height = view.safeAreaInsets.top + fitting.height + 16 + 24 + view.safeAreaInsets.bottom
+        if abs(height - lastPreferredSheetHeight) > 0.5 {
+            lastPreferredSheetHeight = height
+            preferredContentSize = CGSize(width: 0, height: height)
+        }
     }
 
     // MARK: - 布局（与登录页同尺寸体系：左右 22、输入框高 48、内容列 ≤432）

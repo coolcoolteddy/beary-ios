@@ -216,6 +216,11 @@ class BearyEditProfileViewController: UIViewController {
         if let coverPath = initialCoverUrl, let coverURLValue = BearyImageURLs.avatarURL(coverPath) {
             coverImageView.bearySetImage(url: coverURLValue, placeholder: nil)
         }
+        // sweep 新发现：无封面时“移除封面”也常驻，点它除改标记外无任何可见
+        // 变化（网页编辑页本就没有移除入口）。按有无初始封面决定初始显隐，
+        // 换图/移除时同步改（见 removeCoverButtonTapped 与图片选择回调），
+        // 不改保存逻辑：移除仍走原有 cover=null 路径。
+        removeCoverButton.isHidden = (initialCoverUrl ?? "").isEmpty
         updateDynamicLayerColors()
     }
 
@@ -304,6 +309,7 @@ class BearyEditProfileViewController: UIViewController {
         pendingCoverDataURL = nil
         coverChanged = true
         coverRemoved = true
+        removeCoverButton.isHidden = true
     }
 
     private func presentImagePicker() {
@@ -550,6 +556,7 @@ extension BearyEditProfileViewController: UIImagePickerControllerDelegate, UINav
                 strongSelf.coverChanged = true
                 strongSelf.coverRemoved = false
                 strongSelf.coverImageView.image = image
+                strongSelf.removeCoverButton.isHidden = false
             }
         }
     }

@@ -142,6 +142,8 @@ class BearyEntryDetailViewController: UIViewController {
     private let shareButton = UIButton(type: .system)
     private let editButton = UIButton(type: .system)
     private var likeStrokeLayer: CAShapeLayer?
+    /// 点赞钮显式宽约束：见 updateActionButtons 的宽度算法。
+    private var likeButtonWidthConstraint: NSLayoutConstraint?
     /// 删除入口（D5）：仅本人未公开篇显示，走网页确认流程，进回收站。
     private let deleteButton = UIButton(type: .system)
 
@@ -489,6 +491,9 @@ class BearyEntryDetailViewController: UIViewController {
         likeButton.contentEdgeInsets = .zero
         likeButton.titleEdgeInsets = UIEdgeInsets(top: 0, left: 6, bottom: 0, right: 0)
         likeButton.titleLabel?.font = UIFont.systemFont(ofSize: 14)
+        let likeWidth = likeButton.widthAnchor.constraint(equalToConstant: 22)
+        likeWidth.isActive = true
+        likeButtonWidthConstraint = likeWidth
         bookmarkButton.contentEdgeInsets = UIEdgeInsets(top: 2, left: 2, bottom: 2, right: 2)
         shareButton.contentEdgeInsets = UIEdgeInsets(top: 2, left: 2, bottom: 2, right: 2)
         shareButton.setImage(DetailIconCache.image(named: "icon_share", pointSize: 21), for: .normal)
@@ -1232,9 +1237,21 @@ class BearyEntryDetailViewController: UIViewController {
         let liked = entry?.likedByMe ?? false
         let count = entry?.likeCount ?? 0
         let likeImageName = liked ? "icon_heart_fill" : "icon_heart"
-        likeButton.setImage(DetailIconCache.image(named: likeImageName, pointSize: 22) ?? DetailIconCache.image(named: "icon_heart", pointSize: 22), for: .normal)
-        // 点赞计数恒显示（含 0，不隐藏数字位）。
-        likeButton.setTitle("\(count)", for: .normal)
+        let likeImage = DetailIconCache.image(named: likeImageName, pointSize: 22) ?? DetailIconCache.image(named: "icon_heart", pointSize: 22)
+        likeButton.setImage(likeImage, for: .normal)
+        // 计数位宽度由显式约束定，不靠按钮固有宽：按钮固有宽不含标题边距，
+        // 栈按固有宽给帧时标题框只剩边距差，数字会被裁成左半弧。
+        // 0 赞隐藏数字位，只剩爱心；非 0 按实测字宽给足整段标题宽。
+        let imageWidth = likeImage?.size.width ?? 22
+        if count <= 0 {
+            likeButton.setTitle(nil, for: .normal)
+            likeButtonWidthConstraint?.constant = imageWidth
+        } else {
+            let titleText = "\(count)"
+            let titleWidth = ceil((titleText as NSString).size(withAttributes: [NSAttributedString.Key.font: UIFont.systemFont(ofSize: 14)]).width)
+            likeButton.setTitle(titleText, for: .normal)
+            likeButtonWidthConstraint?.constant = imageWidth + 6 + titleWidth
+        }
         likeButton.tintColor = liked ? BearyColors.orange : BearyColors.gray
         likeButton.setTitleColor(liked ? BearyColors.orange : BearyColors.gray, for: .normal)
         likeButton.imageView?.transform = .identity

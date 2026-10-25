@@ -219,6 +219,20 @@ enum BearyCalendarMarks {
 
 /// 一行几何标记：横向 gap 2、高 13（网页 .cal-dots 口径），用 UIBezierPath 实心绘制。
 final class BearyCalendarMarkView: UIView {
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        // 黑圈根因之一：本视图从未设过背景。UIView 默认不透明，nil 背景
+        // 在不透明图层上会画成黑块（沙漏 BearyHourglassView 同款教训，已在
+        // 其 init 里用 .clear + isOpaque=false 修过）；此处照抄该 fix：
+        // 显式透明底 + 非不透明，标记行只剩几何图形本身。
+        backgroundColor = .clear
+        isOpaque = false
+    }
+
+    required init?(coder: NSCoder) {
+        return nil
+    }
+
     var marks: [BearyCalendarMark] = [] {
         didSet { invalidateIntrinsicContentSize(); setNeedsDisplay() }
     }
@@ -314,6 +328,9 @@ final class BearyCalendarDayButton: UIButton {
 
     override init(frame: CGRect) {
         super.init(frame: frame)
+        // 黑圈根因之二：见 configure 注释。数字 label 同样显式非不透明，
+        // 避免 nil/.clear 背景在不透明图层上被画成黑底。
+        numberLabel.isOpaque = false
         numberLabel.translatesAutoresizingMaskIntoConstraints = false
         numberLabel.textAlignment = .center
         numberLabel.font = UIFont.systemFont(ofSize: 15)
@@ -349,14 +366,24 @@ final class BearyCalendarDayButton: UIButton {
         dayValue = day
         numberLabel.text = "\(day.day)"
         markView.marks = day.isOffMonth ? [] : BearyCalendarMarks.marks(published: day.published, unpublished: day.unpublished)
+        // 标记行背景每格都显式清透明（init 已设，此处防复用残留）。
+        markView.backgroundColor = .clear
         isEnabled = day.isEnabled
         numberLabel.layer.cornerRadius = 15
         numberLabel.layer.masksToBounds = true
         numberLabel.layer.borderWidth = 0
+        // 黑圈根因（截图 19-24 日全黑、25 日正常已证实）：选中判定本身是对的
+        // （只有 25 日是白字，即只有它走了 isSelected 分支；24 日灰字、19-23 日
+        // 墨字也都符合各自文字分支）——错在背景侧：选中分支是全函数唯一设实色
+        // 的地方，其余分支全写 nil 背景；nil 不是透明，在不透明图层上会画成
+        // 黑底，于是非选中日也顶着墨色圆、文字（墨/灰）糊在上面；
+        // 标记行更是从未设过背景，整行宽都黑。上一批只改了禁用文字灰度，没动
+        // 背景，所以漏了这一处。修复：非选中分支一律显式 .clear（配合 init 的
+        // isOpaque=false，才是真透明），选中分支保持墨底白字不变；几何标记不动。
         if day.isOffMonth {
             numberLabel.textColor = BearyColors.line
             numberLabel.font = UIFont.systemFont(ofSize: 15)
-            numberLabel.backgroundColor = nil
+            numberLabel.backgroundColor = .clear
         } else if day.isSelected {
             // 网页 .sel 后于 .today：选中态盖过今天态（墨底白字）。
             numberLabel.textColor = BearyColors.bg
@@ -365,17 +392,17 @@ final class BearyCalendarDayButton: UIButton {
         } else if day.isToday {
             numberLabel.textColor = BearyColors.orange
             numberLabel.font = UIFont.boldSystemFont(ofSize: 15)
-            numberLabel.backgroundColor = nil
+            numberLabel.backgroundColor = .clear
             numberLabel.layer.borderWidth = 1.5
             numberLabel.layer.borderColor = BearyColors.orange.cgColor
         } else if !day.isEnabled {
             numberLabel.textColor = BearyCalendarDayButton.disabledTextColor
             numberLabel.font = UIFont.systemFont(ofSize: 15)
-            numberLabel.backgroundColor = nil
+            numberLabel.backgroundColor = .clear
         } else {
             numberLabel.textColor = BearyColors.ink
             numberLabel.font = UIFont.systemFont(ofSize: 15)
-            numberLabel.backgroundColor = nil
+            numberLabel.backgroundColor = .clear
         }
     }
 }

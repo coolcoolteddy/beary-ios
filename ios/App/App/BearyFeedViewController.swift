@@ -1325,6 +1325,8 @@ class BearyFeedCell: UITableViewCell {
     private var isBookmarkBusy = false
     /// 点赞描边先行图层（0.5s 描边画出，服务器确认/失败后移除；不改填充与计数）。
     private var likeStrokeLayer: CAShapeLayer?
+    /// 点赞钮显式宽约束：见 updateLikeButton 的宽度算法。
+    private var likeButtonWidthConstraint: NSLayoutConstraint?
     /// 折叠溢出判定缓存（nil = 未测）：300 字以上且实测超 6 行才溢出。
     private var foldOverflow: Bool?
     /// 回应行当前快照（按 count 降序；chip 点选按下标取 key；成功后由服务端聚合覆盖）。
@@ -1634,6 +1636,9 @@ class BearyFeedCell: UITableViewCell {
         moodStack.setContentCompressionResistancePriority(.required, for: .horizontal)
         let height = imagesScrollView.heightAnchor.constraint(equalToConstant: 0)
         imageHeightConstraint = height
+        let likeWidth = likeButton.widthAnchor.constraint(equalToConstant: 22)
+        likeWidth.isActive = true
+        likeButtonWidthConstraint = likeWidth
         let emoteHeight = emoteFlowView.heightAnchor.constraint(equalToConstant: 0)
         emoteRowHeightConstraint = emoteHeight
         let rightTop = rightStack.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 22)
@@ -1759,6 +1764,8 @@ class BearyFeedCell: UITableViewCell {
             sub.removeFromSuperview()
         }
         emoteRowHeightConstraint?.constant = 0
+        likeButton.setTitle(nil, for: .normal)
+        likeButtonWidthConstraint?.constant = 22
         likeButton.isEnabled = true
         bookmarkButton.isEnabled = true
         avatarImageView.bearySetImage(url: nil, placeholder: nil)
@@ -1899,7 +1906,19 @@ class BearyFeedCell: UITableViewCell {
         let countValue = currentEntry?.likeCount ?? 0
         let heartImage = BearyFeedIconCache.image(named: liked ? "icon_heart_fill" : "icon_heart", pointSize: 22) ?? BearyFeedIconCache.image(named: "icon_heart", pointSize: 22)
         likeButton.setImage(heartImage, for: .normal)
-        likeButton.setTitle("\(countValue)", for: .normal)
+        // 计数位宽度由显式约束定，不靠按钮固有宽：按钮固有宽不含标题边距，
+        // 栈按固有宽给帧时标题框只剩边距差，数字会被裁成左半弧。
+        // 0 赞隐藏数字位，只剩爱心；非 0 按实测字宽给足整段标题宽。
+        let imageWidth = heartImage?.size.width ?? 22
+        if countValue <= 0 {
+            likeButton.setTitle(nil, for: .normal)
+            likeButtonWidthConstraint?.constant = imageWidth
+        } else {
+            let titleText = "\(countValue)"
+            let titleWidth = ceil((titleText as NSString).size(withAttributes: [NSAttributedString.Key.font: UIFont.systemFont(ofSize: 14)]).width)
+            likeButton.setTitle(titleText, for: .normal)
+            likeButtonWidthConstraint?.constant = imageWidth + 6 + titleWidth
+        }
         let color = liked ? BearyColors.orange : BearyColors.gray
         likeButton.tintColor = color
         likeButton.setTitleColor(color, for: .normal)

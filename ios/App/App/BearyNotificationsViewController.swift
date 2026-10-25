@@ -1093,7 +1093,7 @@ private class BearyLetterModal {
     private let quoteTextLabel = UILabel()
     private let quoteMetaLabel = UILabel()
     private let primaryButton = UIButton(type: .system)
-    private let secondaryButton = UIButton(type: .system)
+    private let secondaryButton = BearyLetterModalButton(type: .system)
     private let goEntryId: String?
     private var buttonTopToBody: NSLayoutConstraint?
     private var buttonTopToQuote: NSLayoutConstraint?
@@ -1272,6 +1272,31 @@ private class BearyLetterModal {
             if !cardView.frame.contains(point) {
                 overlayView.removeFromSuperview()
             }
+        }
+    }
+}
+
+// MARK: - 信件模态描边钮（深浅切换时重刷 line 描边）
+//
+// sweep 新发现：BearyLetterModal 是普通类、不是 VC/cell，自身没有 trait 回调，
+// 其 secondaryButton 的 line 描边（CGColor 赋值时解析一次）在打开弹窗后
+// 切换深浅模式会残留旧主题色（浅色 #dbdbdb 残留在深色卡上）。VC 侧 trait 回调
+// 没有该钮的引用可刷，故钮自身在 trait 回调里重刷描边，其余外观（字号/圆角/
+// 边宽）仍由 modal init 原样设置，不改行为。
+
+private final class BearyLetterModalButton: UIButton {
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+    }
+
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    override func traitCollectionDidChange(_ previousTraitCollection: UITraitCollection?) {
+        super.traitCollectionDidChange(previousTraitCollection)
+        if previousTraitCollection?.userInterfaceStyle != traitCollection.userInterfaceStyle {
+            layer.borderColor = BearyColors.line.cgColor
         }
     }
 }
