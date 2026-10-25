@@ -141,6 +141,7 @@ class BearyEntryDetailViewController: UIViewController {
     private let bookmarkButton = UIButton(type: .system)
     private let shareButton = UIButton(type: .system)
     private let editButton = UIButton(type: .system)
+    private var likeStrokeLayer: CAShapeLayer?
     /// 删除入口（D5）：仅本人未公开篇显示，走网页确认流程，进回收站。
     private let deleteButton = UIButton(type: .system)
 
@@ -547,6 +548,10 @@ class BearyEntryDetailViewController: UIViewController {
     private func setupActions() {
         likeButton.addTarget(self, action: #selector(likeTapped), for: .touchUpInside)
         bookmarkButton.addTarget(self, action: #selector(bookmarkTapped), for: .touchUpInside)
+        likeButton.addTarget(self, action: #selector(iconTouchDown(_:)), for: .touchDown)
+        likeButton.addTarget(self, action: #selector(iconTouchUp(_:)), for: [.touchUpInside, .touchUpOutside, .touchCancel])
+        bookmarkButton.addTarget(self, action: #selector(iconTouchDown(_:)), for: .touchDown)
+        bookmarkButton.addTarget(self, action: #selector(iconTouchUp(_:)), for: [.touchUpInside, .touchUpOutside, .touchCancel])
         shareButton.addTarget(self, action: #selector(shareTapped), for: .touchUpInside)
         editButton.addTarget(self, action: #selector(editTapped), for: .touchUpInside)
         deleteButton.addTarget(self, action: #selector(deleteTapped), for: .touchUpInside)
@@ -1112,17 +1117,17 @@ class BearyEntryDetailViewController: UIViewController {
             bodyLabel.numberOfLines = 0
             return
         }
+        var width = bodyLabel.bounds.width
+        if width <= 0 {
+            let screenWidth = view.bounds.width > 0 ? view.bounds.width : UIScreen.main.bounds.width
+            width = min(max(0, screenWidth - 72), 560)
+        }
         if content.count <= 300 {
             foldButton.isHidden = true
             bodyLabel.numberOfLines = 0
             lastFoldWidth = width
             updateDetailSpacing()
             return
-        }
-        var width = bodyLabel.bounds.width
-        if width <= 0 {
-            let screenWidth = view.bounds.width > 0 ? view.bounds.width : UIScreen.main.bounds.width
-            width = min(max(0, screenWidth - 72), 560)
         }
         if width <= 0 {
             foldButton.isHidden = true
@@ -1233,6 +1238,7 @@ class BearyEntryDetailViewController: UIViewController {
         likeButton.setTitle("\(count)", for: .normal)
         likeButton.tintColor = liked ? BearyColors.orange : BearyColors.gray
         likeButton.setTitleColor(liked ? BearyColors.orange : BearyColors.gray, for: .normal)
+        likeButton.imageView?.transform = .identity
 
         let bookmarked = entry?.bookmarkedByMe ?? false
         let bookmarkImageName = bookmarked ? "icon_bookmark_fill" : "icon_bookmark"
@@ -1607,6 +1613,34 @@ class BearyEntryDetailViewController: UIViewController {
 
     // MARK: - 互动
 
+    /// 点赞描边画出（网页 heartDraw .5s 同款，官方 beary-heart 路径）；减动效返回 nil。
+    private func playLikeStrokeDraw() {
+        likeStrokeLayer?.removeFromSuperlayer()
+        likeStrokeLayer = BearyIconMotion.playHeartStrokeDraw(on: likeButton)
+    }
+
+    private func removeLikeStroke() {
+        likeStrokeLayer?.removeFromSuperlayer()
+        likeStrokeLayer = nil
+    }
+
+    /// 取消点赞 pre-unlike（网页 .pre-unlike 同款：心形缩 .8 + 填充先清），失败由完成回调调 updateActionButtons 恢复。
+    private func applyPreUnlike() {
+        likeButton.setImage(DetailIconCache.image(named: "icon_heart", pointSize: 22) ?? DetailIconCache.image(named: "icon_heart", pointSize: 22), for: .normal)
+        likeButton.tintColor = BearyColors.gray
+        likeButton.setTitleColor(BearyColors.gray, for: .normal)
+        BearyIconMotion.animateIconScale(on: likeButton, to: 0.8)
+    }
+
+    /// 按压反馈（网页 .like-btn:active svg scale .84，transition .13s 同款）。
+    @objc private func iconTouchDown(_ sender: UIButton) {
+        BearyIconMotion.animateIconScale(on: sender, to: 0.84)
+    }
+
+    @objc private func iconTouchUp(_ sender: UIButton) {
+        BearyIconMotion.animateIconScale(on: sender, to: 1)
+    }
+
     @objc private func likeTapped() {
         if SessionManager.shared.isLoggedIn == false {
             denyLogin(source: likeButton)
@@ -1618,22 +1652,34 @@ class BearyEntryDetailViewController: UIViewController {
         let currentlyLiked = entry?.likedByMe ?? false
         isLikeBusy = true
         updateInteractivity()
-        // E3-1 点赞描边先行等价提示：点下即给 .5 秒缩放回弹，填充与计数仍等服务端确认，不乐观更新。
-        playPendingPulse(on: likeButton)
+        // 点赞描边先行：点下即画官方爱心描边，填充与计数等服务器确认；
+        // 取消点赞 pre-unlike：心形先缩先清，失败回滚。绝不做填充/计数的乐观更新。
+        if currentlyLiked == false {
+            playLikeStrokeDraw()
+        } else {
+            applyPreUnlike()
+        }
         BearyAPI.shared.toggleLike(id: entryId, liked: currentlyLiked == false) { [weak self] result in
             DispatchQueue.main.async {
                 guard let self = self else { return }
                 self.isLikeBusy = false
+                self.removeLikeStroke()
+                BearyIconMotion.animateIconScale(on: self.likeButton, to: 1)
                 switch result {
                 case .success(let resp):
-                    self.entry?.likedByMe = resp.liked ?? (currentlyLiked == false)
+                    let newLiked = resp.liked ?? (currentlyLiked == false)
+                    self.entry?.likedByMe = newLiked
                     if let c = resp.count {
                         self.entry?.likeCount = c
                     }
                     self.updateActionButtons()
+                    if newLiked {
+                        BearyIconMotion.playFillFade(on: self.likeButton)
+                    }
                     self.updateInteractivity()
                     self.notifyInteraction()
                 case .failure(let err):
+                    self.updateActionButtons()
                     if case .unauthorized = err {
                         self.denyLogin(source: self.likeButton)
                     } else {
@@ -1666,6 +1712,7 @@ class BearyEntryDetailViewController: UIViewController {
                 case .success(let resp):
                     self.entry?.bookmarkedByMe = resp.bookmarked ?? (currentlyBookmarked == false)
                     self.updateActionButtons()
+                    BearyIconMotion.playBookmarkPop(on: self.bookmarkButton)
                     self.updateInteractivity()
                     self.notifyInteraction()
                 case .failure(let err):

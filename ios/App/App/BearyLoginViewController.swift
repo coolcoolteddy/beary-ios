@@ -42,6 +42,7 @@ final class BearyLoginViewController: UIViewController {
     private let emailField = UITextField()
     private let codeField = UITextField()
     private let sendButton = UIButton(type: .system)
+    private let loginButton = UIButton(type: .system)
     private let inviteField = UITextField()
     private let messageLabel = UILabel()
     private let agreeButton = UIButton(type: .system)

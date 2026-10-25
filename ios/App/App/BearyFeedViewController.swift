@@ -788,7 +788,7 @@ class BearyFeedViewController: UIViewController {
     /// 静默换上重拉结果：送达展开数保留并夹取（F6），去重集合重建。
     private func applyRevalidated(delivered: [Entry], deliveredTotal: Int?, plaza: [Entry]) {
         deliveredAll = delivered
-        deliveredTotal = deliveredTotal
+        self.deliveredTotal = deliveredTotal
         if deliveredVisibleCount == 0 {
             deliveredVisibleCount = min(deliveredInitialCount, delivered.count)
         } else {
@@ -1543,6 +1543,8 @@ class BearyFeedCell: UITableViewCell {
         btn.contentEdgeInsets = UIEdgeInsets.zero
         btn.titleEdgeInsets = UIEdgeInsets(top: 0, left: 6, bottom: 0, right: 0)
         btn.addTarget(self, action: #selector(likeTapped), for: .touchUpInside)
+        btn.addTarget(self, action: #selector(iconTouchDown(_:)), for: .touchDown)
+        btn.addTarget(self, action: #selector(iconTouchUp(_:)), for: [.touchUpInside, .touchUpOutside, .touchCancel])
         return btn
     }()
 
@@ -1551,6 +1553,8 @@ class BearyFeedCell: UITableViewCell {
         btn.translatesAutoresizingMaskIntoConstraints = false
         btn.contentEdgeInsets = UIEdgeInsets(top: 2, left: 2, bottom: 2, right: 2)
         btn.addTarget(self, action: #selector(bookmarkTapped), for: .touchUpInside)
+        btn.addTarget(self, action: #selector(iconTouchDown(_:)), for: .touchDown)
+        btn.addTarget(self, action: #selector(iconTouchUp(_:)), for: [.touchUpInside, .touchUpOutside, .touchCancel])
         return btn
     }()
 
@@ -1906,6 +1910,25 @@ class BearyFeedCell: UITableViewCell {
         let color = liked ? BearyColors.orange : BearyColors.gray
         likeButton.tintColor = color
         likeButton.setTitleColor(color, for: .normal)
+        likeButton.imageView?.transform = .identity
+    }
+
+    /// 按压反馈（网页 .like-btn:active svg scale .84，transition .13s 同款）。
+    @objc private func iconTouchDown(_ sender: UIButton) {
+        BearyIconMotion.animateIconScale(on: sender, to: 0.84)
+    }
+
+    @objc private func iconTouchUp(_ sender: UIButton) {
+        BearyIconMotion.animateIconScale(on: sender, to: 1)
+    }
+
+    /// 取消点赞 pre-unlike（网页 .pre-unlike 同款：心形缩 .8 + 填充先清），失败由完成回调调 updateLikeButton 恢复。
+    private func applyPreUnlike() {
+        let outlineImage = BearyFeedIconCache.image(named: "icon_heart", pointSize: 22) ?? BearyFeedIconCache.image(named: "icon_heart", pointSize: 22)
+        likeButton.setImage(outlineImage, for: .normal)
+        likeButton.tintColor = BearyColors.gray
+        likeButton.setTitleColor(BearyColors.gray, for: .normal)
+        BearyIconMotion.animateIconScale(on: likeButton, to: 0.8)
     }
 
     private func updateBookmarkButton() {
@@ -2257,51 +2280,17 @@ class BearyFeedCell: UITableViewCell {
         if UIAccessibility.isReduceMotionEnabled { return }
         button.layer.removeAnimation(forKey: "bearyDenyShake")
         let shake = CAKeyframeAnimation(keyPath: "transform.translation.x")
-        shake.values = [0, -6, 6, -4, 4, 0]
+        shake.values = [0, -8, 8, -5, 5, 0]
         shake.keyTimes = [0, 0.2, 0.4, 0.6, 0.8, 1]
         shake.duration = 0.4
         button.layer.add(shake, forKey: "bearyDenyShake")
     }
 
-    /// F8/E3-1：点赞描边先行——PNG 图标画不出 SVG 描边动画，故以 0.5s 描边画出
-    /// 代理动效代替：点下即在心形位画一道描边（strokeEnd 0→1，网页 heartDraw .5s 同口径），
+    /// F8/E3-1：点赞描边先行——官方 beary-heart 路径描边画出（网页 heartDraw .5s 同口径），
     /// 橙色填充与计数仍等服务器确认；失败时撤掉描边 + 拒绝动效。绝不做填充/计数的乐观更新。
     private func playLikeStrokeDraw() {
-        if UIAccessibility.isReduceMotionEnabled { return }
         likeStrokeLayer?.removeFromSuperlayer()
-        let box: CGRect
-        if let imageFrame = likeButton.imageView?.frame, imageFrame.width > 0 {
-            box = imageFrame
-        } else {
-            let side: CGFloat = 22
-            box = CGRect(x: (likeButton.bounds.width - side) / 2, y: (likeButton.bounds.height - side) / 2, width: side, height: side)
-        }
-        let path = UIBezierPath()
-        let w = box.width
-        let h = box.height
-        path.moveToPoint(CGPoint(x: box.minX + w * 0.5, y: box.minY + h * 0.88))
-        path.addCurve(to: CGPoint(x: box.minX + w * 0.08, y: box.minY + h * 0.42), controlPoint1: CGPoint(x: box.minX + w * 0.18, y: box.minY + h * 0.72), controlPoint2: CGPoint(x: box.minX + w * 0.02, y: box.minY + h * 0.55))
-        path.addCurve(to: CGPoint(x: box.minX + w * 0.5, y: box.minY + h * 0.18), controlPoint1: CGPoint(x: box.minX + w * 0.14, y: box.minY + h * 0.18), controlPoint2: CGPoint(x: box.minX + w * 0.32, y: box.minY + h * 0.08))
-        path.addCurve(to: CGPoint(x: box.minX + w * 0.92, y: box.minY + h * 0.42), controlPoint1: CGPoint(x: box.minX + w * 0.68, y: box.minY + h * 0.08), controlPoint2: CGPoint(x: box.minX + w * 0.86, y: box.minY + h * 0.18))
-        path.addCurve(to: CGPoint(x: box.minX + w * 0.5, y: box.minY + h * 0.88), controlPoint1: CGPoint(x: box.minX + w * 0.98, y: box.minY + h * 0.55), controlPoint2: CGPoint(x: box.minX + w * 0.82, y: box.minY + h * 0.72))
-        path.close()
-        let layer = CAShapeLayer()
-        layer.path = path.cgPath
-        layer.fillColor = UIColor.clear.cgColor
-        layer.strokeColor = BearyColors.gray.cgColor
-        layer.lineWidth = 2
-        layer.lineCap = .round
-        layer.lineJoin = .round
-        layer.strokeEnd = 0
-        likeButton.layer.addSublayer(layer)
-        likeStrokeLayer = layer
-        let anim = CABasicAnimation(keyPath: "strokeEnd")
-        anim.fromValue = 0
-        anim.toValue = 1
-        anim.duration = 0.5
-        anim.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
-        layer.add(anim, forKey: "bearyLikeStroke")
-        layer.strokeEnd = 1
+        likeStrokeLayer = BearyIconMotion.playHeartStrokeDraw(on: likeButton)
     }
 
     private func removeLikeStroke() {
@@ -2321,6 +2310,8 @@ class BearyFeedCell: UITableViewCell {
         let currentlyLiked = currentEntry?.likedByMe ?? false
         if currentlyLiked == false {
             playLikeStrokeDraw()
+        } else {
+            applyPreUnlike()
         }
         isLikeBusy = true
         updateActionInteractivity()
@@ -2329,6 +2320,7 @@ class BearyFeedCell: UITableViewCell {
                 guard let strongSelf = self else { return }
                 strongSelf.isLikeBusy = false
                 strongSelf.removeLikeStroke()
+                BearyIconMotion.animateIconScale(on: strongSelf.likeButton, to: 1)
                 strongSelf.updateActionInteractivity()
                 switch result {
                 case .success(let resp):
@@ -2338,8 +2330,12 @@ class BearyFeedCell: UITableViewCell {
                         strongSelf.currentEntry?.likeCount = countValue
                     }
                     strongSelf.updateLikeButton()
+                    if newLiked {
+                        BearyIconMotion.playFillFade(on: strongSelf.likeButton)
+                    }
                     strongSelf.onInteractionChanged?(entryIdValue, strongSelf.currentEntry?.likeCount, newLiked, nil)
                 case .failure(let err):
+                    strongSelf.updateLikeButton()
                     if case .unauthorized = err {
                         strongSelf.onRequireLogin?()
                     } else {
@@ -2365,6 +2361,7 @@ class BearyFeedCell: UITableViewCell {
         let flipped = currentlyBookmarked == false
         currentEntry?.bookmarkedByMe = flipped
         updateBookmarkButton()
+        BearyIconMotion.playBookmarkPop(on: bookmarkButton)
         isBookmarkBusy = true
         bookmarkButton.alpha = 0.6
         bookmarkButton.isEnabled = false

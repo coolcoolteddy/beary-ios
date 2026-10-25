@@ -40,6 +40,7 @@
 		869B426E9AA42A1CE7EA84B1 /* BearyTrashViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8090F5EEA8A6BD0781318309 /* BearyTrashViewController.swift */; };
 		3843F17FBF0D34C698F51780 /* BearyEditProfileViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 13DFF27B056E1598E555E5A2 /* BearyEditProfileViewController.swift */; };
 		C7BB560646D1F3B2BF41E8CE /* BearyInviteViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = BC25E34F7F1469439164AB6F /* BearyInviteViewController.swift */; };
+		455A4C8BA2D150C518BD7A1F /* BearyIconMotion.swift in Sources */ = {isa = PBXBuildFile; fileRef = AE1004189D604B60D3CDB019 /* BearyIconMotion.swift */; };
 		79157599BFD08B6E2FD7418C /* BearyTimelineViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = D009B72CD3812F4FDC1F520A /* BearyTimelineViewController.swift */; };
 		852849F339E8F8D7F0BCF285 /* BearyProfileViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3C69557322ACDD89D6E6A408 /* BearyProfileViewController.swift */; };
 		2B5FFB899357ED2A2FA2E05E /* BearySearchViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = EF90ED3AC360C339FA2BAEFC /* BearySearchViewController.swift */; };
@@ -82,6 +83,7 @@
 		8090F5EEA8A6BD0781318309 /* BearyTrashViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BearyTrashViewController.swift; sourceTree = "<group>"; };
 		13DFF27B056E1598E555E5A2 /* BearyEditProfileViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BearyEditProfileViewController.swift; sourceTree = "<group>"; };
 		BC25E34F7F1469439164AB6F /* BearyInviteViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BearyInviteViewController.swift; sourceTree = "<group>"; };
+		AE1004189D604B60D3CDB019 /* BearyIconMotion.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BearyIconMotion.swift; sourceTree = "<group>"; };
 		D009B72CD3812F4FDC1F520A /* BearyTimelineViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BearyTimelineViewController.swift; sourceTree = "<group>"; };
 		3C69557322ACDD89D6E6A408 /* BearyProfileViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BearyProfileViewController.swift; sourceTree = "<group>"; };
 		EF90ED3AC360C339FA2BAEFC /* BearySearchViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BearySearchViewController.swift; sourceTree = "<group>"; };
@@ -151,6 +153,7 @@
 				8090F5EEA8A6BD0781318309 /* BearyTrashViewController.swift */,
 				13DFF27B056E1598E555E5A2 /* BearyEditProfileViewController.swift */,
 				BC25E34F7F1469439164AB6F /* BearyInviteViewController.swift */,
+				AE1004189D604B60D3CDB019 /* BearyIconMotion.swift */,
 				D009B72CD3812F4FDC1F520A /* BearyTimelineViewController.swift */,
 				3C69557322ACDD89D6E6A408 /* BearyProfileViewController.swift */,
 				EF90ED3AC360C339FA2BAEFC /* BearySearchViewController.swift */,
@@ -295,6 +298,7 @@
 				869B426E9AA42A1CE7EA84B1 /* BearyTrashViewController.swift in Sources */,
 				3843F17FBF0D34C698F51780 /* BearyEditProfileViewController.swift in Sources */,
 				C7BB560646D1F3B2BF41E8CE /* BearyInviteViewController.swift in Sources */,
+				455A4C8BA2D150C518BD7A1F /* BearyIconMotion.swift in Sources */,
 				79157599BFD08B6E2FD7418C /* BearyTimelineViewController.swift in Sources */,
 				852849F339E8F8D7F0BCF285 /* BearyProfileViewController.swift in Sources */,
 				2B5FFB899357ED2A2FA2E05E /* BearySearchViewController.swift in Sources */,

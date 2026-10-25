@@ -97,7 +97,7 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
     // 搜索框：网页 .srch-box——高 50、边框 1.5 line、圆角 999（半高 25）、左右 16、gap 9。
     private let searchBoxView = UIView()
     private let searchIconView = UIImageView()
-    private let boxSpinner = UIActivityIndicatorView(style: .medium)
+    private let boxRingView = UIImageView()
     private let searchField = UITextField()
     private let clearButton = UIButton(type: .custom)
 
@@ -109,7 +109,7 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
     private let stateStack = UIStackView()
     private let stateCircle = UIView()
     private let stateIconView = UIImageView()
-    private let stateSpinner = UIActivityIndicatorView(style: .medium)
+    private let stateRingView = UIImageView()
     private let stateTitleLabel = UILabel()
     private let stateSubLabel = UILabel()
     private let retryButton = UIButton(type: .custom)
@@ -259,10 +259,12 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         searchIconView.contentMode = .scaleAspectFit
         searchBoxView.addSubview(searchIconView)
 
-        boxSpinner.translatesAutoresizingMaskIntoConstraints = false
-        boxSpinner.color = BearyColors.gray
-        boxSpinner.hidesWhenStopped = true
-        searchBoxView.addSubview(boxSpinner)
+        boxRingView.translatesAutoresizingMaskIntoConstraints = false
+        boxRingView.image = BearyIconImages.image(named: "icon_loading", pointSize: 19)
+        boxRingView.tintColor = BearyColors.gray
+        boxRingView.contentMode = .scaleAspectFit
+        boxRingView.isHidden = true
+        searchBoxView.addSubview(boxRingView)
 
         searchField.translatesAutoresizingMaskIntoConstraints = false
         searchField.font = UIFont.systemFont(ofSize: 16)
@@ -307,10 +309,12 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         stateIconView.contentMode = .scaleAspectFit
         stateCircle.addSubview(stateIconView)
 
-        stateSpinner.translatesAutoresizingMaskIntoConstraints = false
-        stateSpinner.color = BearyColors.orange
-        stateSpinner.hidesWhenStopped = true
-        stateCircle.addSubview(stateSpinner)
+        stateRingView.translatesAutoresizingMaskIntoConstraints = false
+        stateRingView.image = BearyIconImages.image(named: "icon_loading", pointSize: 25)
+        stateRingView.tintColor = BearyColors.orange
+        stateRingView.contentMode = .scaleAspectFit
+        stateRingView.isHidden = true
+        stateCircle.addSubview(stateRingView)
 
         stateTitleLabel.translatesAutoresizingMaskIntoConstraints = false
         stateTitleLabel.font = UIFont.boldSystemFont(ofSize: 15)
@@ -402,8 +406,10 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
             searchIconView.widthAnchor.constraint(equalToConstant: 19),
             searchIconView.heightAnchor.constraint(equalToConstant: 19),
 
-            boxSpinner.leadingAnchor.constraint(equalTo: searchBoxView.leadingAnchor, constant: 16),
-            boxSpinner.centerYAnchor.constraint(equalTo: searchBoxView.centerYAnchor),
+            boxRingView.leadingAnchor.constraint(equalTo: searchBoxView.leadingAnchor, constant: 16),
+            boxRingView.centerYAnchor.constraint(equalTo: searchBoxView.centerYAnchor),
+            boxRingView.widthAnchor.constraint(equalToConstant: 19),
+            boxRingView.heightAnchor.constraint(equalToConstant: 19),
 
             searchField.leadingAnchor.constraint(equalTo: searchBoxView.leadingAnchor, constant: 44),
             searchField.topAnchor.constraint(equalTo: searchBoxView.topAnchor),
@@ -427,8 +433,10 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
             stateIconView.widthAnchor.constraint(equalToConstant: 25),
             stateIconView.heightAnchor.constraint(equalToConstant: 25),
 
-            stateSpinner.centerXAnchor.constraint(equalTo: stateCircle.centerXAnchor),
-            stateSpinner.centerYAnchor.constraint(equalTo: stateCircle.centerYAnchor),
+            stateRingView.centerXAnchor.constraint(equalTo: stateCircle.centerXAnchor),
+            stateRingView.centerYAnchor.constraint(equalTo: stateCircle.centerYAnchor),
+            stateRingView.widthAnchor.constraint(equalToConstant: 25),
+            stateRingView.heightAnchor.constraint(equalToConstant: 25),
         ])
         // sticky 框体顶距：初始按返回行后位置估算，首次布局与滚动时校准。
         boxTopConstraint = searchBoxView.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 38)
@@ -549,10 +557,11 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
     /// 已有结果时另有框下预留行“正在搜索…”（见 setSearchingHint）。
     private func setBoxBusy(_ busy: Bool) {
         searchIconView.isHidden = busy
+        boxRingView.isHidden = !busy
         if busy {
-            boxSpinner.startAnimating()
+            BearyIconMotion.startSpin(on: boxRingView, duration: 0.9, key: "bearyBoxSpin")
         } else {
-            boxSpinner.stopAnimating()
+            BearyIconMotion.stopSpin(on: boxRingView, key: "bearyBoxSpin")
         }
     }
 
@@ -569,10 +578,11 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         stateSubLabel.isHidden = (sub == nil)
         retryButton.isHidden = !showRetry
         stateIconView.isHidden = loading
+        stateRingView.isHidden = !loading
         if loading {
-            stateSpinner.startAnimating()
+            BearyIconMotion.startSpin(on: stateRingView, duration: 1, key: "bearyStateSpin")
         } else {
-            stateSpinner.stopAnimating()
+            BearyIconMotion.stopSpin(on: stateRingView, key: "bearyStateSpin")
         }
     }
 
@@ -640,7 +650,8 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         }
         showingResults = true
         stateWrap.isHidden = true
-        stateSpinner.stopAnimating()
+        stateRingView.isHidden = true
+        BearyIconMotion.stopSpin(on: stateRingView, key: "bearyStateSpin")
         clearResultRows()
         // 分区顺序与标题按网页 renderSrchResults：我的日记 · 未公开 → 公开日记 → 用户。
         if !mineEntries.isEmpty {

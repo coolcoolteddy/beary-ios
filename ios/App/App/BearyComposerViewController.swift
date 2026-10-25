@@ -144,7 +144,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     private let cancelButton = UIButton(type: .system)
     private let titleLabel = UILabel()
     private let publishButton = UIButton(type: .system)
-    private let publishSpinner = UIActivityIndicatorView(style: .medium)
+    private let publishRingView = UIImageView()
     private let topSeparator = UIView()
     private let scrollView = UIScrollView()
     private let contentView = UIView()
@@ -397,15 +397,18 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         publishButton.layer.masksToBounds = true
         publishButton.addTarget(self, action: #selector(didTapPublish), for: .touchUpInside)
         // 发布中 spinner：平时停在发送图标位，发布/保存中时替下发送图标转圈（E3-4）。
-        publishSpinner.translatesAutoresizingMaskIntoConstraints = false
-        publishSpinner.hidesWhenStopped = true
-        publishSpinner.isUserInteractionEnabled = false
-        publishButton.addSubview(publishSpinner)
+        publishRingView.translatesAutoresizingMaskIntoConstraints = false
+        publishRingView.image = BearyIconImages.image(named: "icon_loading", pointSize: 18)
+        publishRingView.tintColor = BearyColors.gray
+        publishRingView.contentMode = .scaleAspectFit
+        publishRingView.isHidden = true
+        publishRingView.isUserInteractionEnabled = false
+        publishButton.addSubview(publishRingView)
         NSLayoutConstraint.activate([
-            publishSpinner.leadingAnchor.constraint(equalTo: publishButton.leadingAnchor, constant: 12),
-            publishSpinner.centerYAnchor.constraint(equalTo: publishButton.centerYAnchor),
-            publishSpinner.widthAnchor.constraint(equalToConstant: 18),
-            publishSpinner.heightAnchor.constraint(equalToConstant: 18),
+            publishRingView.leadingAnchor.constraint(equalTo: publishButton.leadingAnchor, constant: 12),
+            publishRingView.centerYAnchor.constraint(equalTo: publishButton.centerYAnchor),
+            publishRingView.widthAnchor.constraint(equalToConstant: 18),
+            publishRingView.heightAnchor.constraint(equalToConstant: 18),
         ])
         for v in [cancelButton, titleLabel, publishButton, topSeparator] {
             v.translatesAutoresizingMaskIntoConstraints = false
@@ -2125,13 +2128,14 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             publishButton.setTitle(isEditMode ? "保存中…" : "发布中…", for: .normal)
             publishButton.setImage(nil, for: .normal)
             publishButton.titleEdgeInsets = UIEdgeInsets(top: 0, left: 24, bottom: 0, right: 0)
-            publishSpinner.color = BearyColors.gray
-            publishSpinner.startAnimating()
+            publishRingView.isHidden = false
+            BearyIconMotion.startSpin(on: publishRingView, duration: 0.9, key: "bearyPublishSpin")
         } else {
             publishButton.setTitle(isEditMode ? "保存" : "发布", for: .normal)
             publishButton.setImage(BearyIconImages.image(named: "icon_send", pointSize: 22), for: .normal)
             publishButton.titleEdgeInsets = UIEdgeInsets(top: 0, left: 6, bottom: 0, right: 0)
-            publishSpinner.stopAnimating()
+            publishRingView.isHidden = true
+            BearyIconMotion.stopSpin(on: publishRingView, key: "bearyPublishSpin")
         }
     }
 
