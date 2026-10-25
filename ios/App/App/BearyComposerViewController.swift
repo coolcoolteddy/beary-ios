@@ -80,6 +80,8 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     ]
 
     /// 引用 lite 卡状态：展示用字段（作者/头像/图片/是否公开供 lite 卡用），不存整条 Entry。
+    /// imgDims 只供 lite 卡图片条按原图比例定宽（面板选篇时取 Entry.imgDims；编辑锁定
+    /// 的 Quote 结构本身无尺寸字段，故为 nil，走 118 兜底宽，不另发明尺寸来源）。
     private struct SelectedQuote {
         let entryId: String
         let content: String
@@ -88,6 +90,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         let authorAvatar: String?
         let images: [String]
         let isPublic: Bool?
+        let imgDims: [String: [Int]]?
     }
 
     private static let maxLength = 2000
@@ -161,6 +164,8 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     // 状态行：编辑倒计时 + 草稿状态 + 字数圆环
     private let statusRow = UIStackView()
     private let editTimerLabel = UILabel()
+    private let draftStatusGroup = UIStackView()
+    private let draftStatusIcon = UIImageView()
     private let draftStatusLabel = UILabel()
     private let charRingView = UIView()
     private let charCountLabel = UILabel()
@@ -170,7 +175,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     private let recipientSection = UIStackView()
     private let recipientLine = UIStackView()
     private let recipientAtIcon = UIImageView()
-    private let recipientPickButton = UIButton(type: .system)
+    private let recipientPickButton = BearyComposerDashedPickButton()
     private let recipientChipView = UIView()
     private let recipientChipAvatar = UIImageView()
     private let recipientChipFallback = UILabel()
@@ -181,6 +186,8 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     private let notifyLabel = UILabel()
     // 心情（熊图条 + 动态标题“心情 · <选中名>”）
     private let moodSection = UIStackView()
+    private let moodTitleRow = UIStackView()
+    private let moodTitleIcon = UIImageView()
     private let moodTitleLabel = UILabel()
     private let moodScrollView = UIScrollView()
     private let moodStackView = UIStackView()
@@ -196,9 +203,12 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     private let quoteDateLabel = UILabel()
     private let quoteImagesScrollView = UIScrollView()
     private let quoteImagesStackView = UIStackView()
-    private let quoteRemoveButton = UIButton(type: .system)
+    private let quoteCardBottomLine = UIView()
+    private let quoteCardRemoveButton = UIButton(type: .system)
     private let quotePanel = UIView()
-    private let quoteSegmentedControl = UISegmentedControl(items: ["我的日记", "赞过的", "收藏的"])
+    private let quoteTabBarContainer = UIView()
+    private let quoteTabStack = UIStackView()
+    private var quoteTabButtons: [UIButton] = []
     private let quotePanelSpinner = UIActivityIndicatorView(style: .medium)
     private let quotePanelEmptyLabel = UILabel()
     private let quotePanelRetryButton = UIButton(type: .system)
@@ -248,6 +258,12 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         }
     }
 
+    override func viewDidLayoutSubviews() {
+        super.viewDidLayoutSubviews()
+        // 布局每次落定都重算 sheet 高：隐藏区塌掉、文本生长、图片增减都会走这里。
+        updatePreferredContentSize()
+    }
+
     override func viewDidAppear(_ animated: Bool) {
         super.viewDidAppear(animated)
         // 打开即聚焦正文：编辑器唯一目的就是写，首屏就绪后直接可打字；只做一次，
@@ -279,7 +295,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         contentStack.spacing = 0
         contentStack.alignment = .fill
         contentStack.isLayoutMarginsRelativeArrangement = true
-        contentStack.layoutMargins = UIEdgeInsets(top: 16, left: 16, bottom: 16, right: 16)
+        contentStack.layoutMargins = UIEdgeInsets(top: 14, left: 16, bottom: 14, right: 16)
         view.addSubview(topBar)
         view.addSubview(scrollView)
         scrollView.addSubview(contentView)
@@ -305,24 +321,44 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         ])
     }
 
+    /// Sheet 高跟随内容：preferredContentSize.height = 顶栏 44 + 内容栈 fitting 高。
+    /// 呈现层（SceneDelegate 的底 sheet / 居中卡片，本文件不动它）把 preferred 当整页高、
+    /// 再与 88%/80% 封顶取小，故只给栈高会少 44、短内容仍需内滚 44；顶栏必须计入。
+    /// 量取口径：contentStack.systemLayoutSizeFitting（给定当前宽、纵向压缩），
+    /// 栈内隐藏的 arranged 子项自动塌掉，正文/图片/工具栏/附加选项/天气/写给/心情/
+    /// 引用（挑钮或 lite 卡）/引用面板/规则框各区当前可见高度全计入；栈边距由 fitting 自带。
+    /// 变化小于 0.5pt 不赋值，避免改 preferred → 容器重布局 → viewDidLayoutSubviews 的循环。
+    private func updatePreferredContentSize() {
+        guard isViewLoaded else { return }
+        let fittingWidth = view.bounds.width
+        guard fittingWidth > 0 else { return }
+        let targetSize = CGSize(width: fittingWidth, height: UIView.layoutFittingCompressedSize.height)
+        let fitted = contentStack.systemLayoutSizeFitting(targetSize, withHorizontalFittingPriority: .required, verticalFittingPriority: .fittingSizeLevel)
+        let total = fitted.height + 44
+        guard abs(preferredContentSize.height - total) > 0.5 else { return }
+        preferredContentSize = CGSize(width: fittingWidth, height: total)
+        view.superview?.setNeedsLayout()
+    }
+
     private func buildTopBar() {
         topBar.backgroundColor = BearyColors.surface
         topSeparator.backgroundColor = BearyColors.line
         cancelButton.setTitle("取消", for: .normal)
-        cancelButton.setTitleColor(BearyColors.gray, for: .normal)
-        cancelButton.titleLabel?.font = UIFont.systemFont(ofSize: 17)
+        cancelButton.setTitleColor(BearyColors.ink, for: .normal)
+        cancelButton.titleLabel?.font = UIFont.systemFont(ofSize: 14)
+        cancelButton.contentEdgeInsets = UIEdgeInsets(top: 0, left: 8, bottom: 0, right: 8)
         cancelButton.addTarget(self, action: #selector(didTapCancel), for: .touchUpInside)
         titleLabel.text = isEditMode ? "编辑日记" : "新日记"
-        titleLabel.font = UIFont.boldSystemFont(ofSize: 17)
+        titleLabel.font = UIFont.boldSystemFont(ofSize: 15)
         titleLabel.textColor = BearyColors.ink
         titleLabel.textAlignment = .center
         // 发布：墨底白字 pill + 发送图标（网页 obtn p）；禁用时按网页口径：无底灰字。
         publishButton.setTitle(isEditMode ? "保存" : "发布", for: .normal)
-        publishButton.titleLabel?.font = UIFont.boldSystemFont(ofSize: 16)
-        publishButton.setImage(UIImage(systemName: "paperplane.fill"), for: .normal)
-        publishButton.contentEdgeInsets = UIEdgeInsets(top: 7, left: 14, bottom: 7, right: 14)
+        publishButton.titleLabel?.font = UIFont.systemFont(ofSize: 14)
+        publishButton.setImage(UIImage(systemName: "paperplane.fill", withConfiguration: UIImage.SymbolConfiguration(pointSize: 22, weight: .regular)), for: .normal)
+        publishButton.contentEdgeInsets = UIEdgeInsets(top: 0, left: 12, bottom: 0, right: 12)
         publishButton.titleEdgeInsets = UIEdgeInsets(top: 0, left: 6, bottom: 0, right: 0)
-        publishButton.layer.cornerRadius = 18
+        publishButton.layer.cornerRadius = 20
         publishButton.layer.masksToBounds = true
         publishButton.addTarget(self, action: #selector(didTapPublish), for: .touchUpInside)
         for v in [cancelButton, titleLabel, publishButton, topSeparator] {
@@ -336,6 +372,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             titleLabel.centerYAnchor.constraint(equalTo: topBar.centerYAnchor),
             publishButton.trailingAnchor.constraint(equalTo: topBar.trailingAnchor, constant: -16),
             publishButton.centerYAnchor.constraint(equalTo: topBar.centerYAnchor),
+            publishButton.heightAnchor.constraint(equalToConstant: 44),
             topSeparator.leadingAnchor.constraint(equalTo: topBar.leadingAnchor),
             topSeparator.trailingAnchor.constraint(equalTo: topBar.trailingAnchor),
             topSeparator.bottomAnchor.constraint(equalTo: topBar.bottomAnchor),
@@ -359,28 +396,48 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
 
     private func buildTextArea() {
         textView.delegate = self
-        textView.font = UIFont.systemFont(ofSize: 17)
+        textView.font = UIFont.systemFont(ofSize: 16)
         textView.textColor = BearyColors.ink
-        // 无框正文：透明底、最小 160、关掉自身滚动后随内容生长（外层 scrollView 滚动）。
+        // 无框正文：透明底、最小 140、关掉自身滚动后随内容生长（外层 scrollView 滚动）。
+        // 行高 1.7（27.2）：typingAttributes 管新输入；已恢复的正文由
+        // applyBodyLineHeight() 转 attributedText 后再套同一行高（见 setupEditContent/restoreDraft）。
+        let bodyParagraph = NSMutableParagraphStyle()
+        bodyParagraph.lineHeightMultiple = 1.7
+        textView.typingAttributes = [.font: UIFont.systemFont(ofSize: 16), .foregroundColor: BearyColors.ink, .paragraphStyle: bodyParagraph]
         textView.backgroundColor = UIColor.clear
         textView.layer.cornerRadius = 0
         textView.isScrollEnabled = false
         textView.textContainer.lineFragmentPadding = 0
-        textView.textContainerInset = UIEdgeInsets(top: 12, left: 0, bottom: 12, right: 0)
+        textView.textContainerInset = UIEdgeInsets(top: 0, left: 0, bottom: 0, right: 0)
         placeholderLabel.text = "记录今天…"
-        placeholderLabel.font = UIFont.systemFont(ofSize: 17)
-        placeholderLabel.textColor = BearyColors.gray
+        placeholderLabel.font = UIFont.systemFont(ofSize: 16)
+        placeholderLabel.textColor = BearyColors.gray.withAlphaComponent(0.7)
         textView.translatesAutoresizingMaskIntoConstraints = false
         placeholderLabel.translatesAutoresizingMaskIntoConstraints = false
         contentStack.addArrangedSubview(textView)
         textView.addSubview(placeholderLabel)
         NSLayoutConstraint.activate([
-            textView.heightAnchor.constraint(greaterThanOrEqualToConstant: 160),
-            placeholderLabel.topAnchor.constraint(equalTo: textView.topAnchor, constant: 12),
+            textView.heightAnchor.constraint(greaterThanOrEqualToConstant: 140),
+            placeholderLabel.topAnchor.constraint(equalTo: textView.topAnchor, constant: 0),
             placeholderLabel.leadingAnchor.constraint(equalTo: textView.leadingAnchor),
             placeholderLabel.trailingAnchor.constraint(lessThanOrEqualTo: textView.trailingAnchor),
         ])
         contentStack.setCustomSpacing(12, after: textView)
+    }
+
+    /// 已填入的正文套 1.7 行高（只换呈现属性，不改文字与光标语义；空文本只留 typingAttributes）。
+    private func applyBodyLineHeight() {
+        let current = textView.text ?? ""
+        guard !current.isEmpty else { return }
+        let savedRange = textView.selectedRange
+        let paragraph = NSMutableParagraphStyle()
+        paragraph.lineHeightMultiple = 1.7
+        let styled = NSAttributedString(string: current, attributes: [.font: UIFont.systemFont(ofSize: 16), .foregroundColor: BearyColors.ink, .paragraphStyle: paragraph])
+        textView.attributedText = styled
+        let maxLocation = styled.length
+        let location = min(savedRange.location, maxLocation)
+        let length = min(savedRange.length, maxLocation - location)
+        textView.selectedRange = NSRange(location: location, length: length)
     }
 
     // MARK: - 心情（网页 mood-strip：54 宽单项，44 圆环 + 熊图 35 + 10.5 名；
@@ -388,25 +445,40 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
 
     private func buildMoodRow() {
         moodSection.axis = .vertical
-        moodSection.spacing = 6
+        // 标题与圆环间距 10 = 网页 lab 下 4 + strip 上 6。
+        moodSection.spacing = 10
         moodScrollView.showsHorizontalScrollIndicator = false
         moodStackView.axis = .horizontal
         moodStackView.spacing = 4
         moodStackView.alignment = .top
+        // 标题行：17×17 灰色图标 + “心情”（网页 beary-mood 自定义图标无原生等价物，
+        // 只对尺寸：取最接近的 SF Symbol face.smiling，图形差异已知）。
+        moodTitleRow.axis = .horizontal
+        moodTitleRow.spacing = 6
+        moodTitleRow.alignment = .center
+        moodTitleIcon.image = UIImage(systemName: "face.smiling", withConfiguration: UIImage.SymbolConfiguration(pointSize: 17, weight: .regular))
+        moodTitleIcon.tintColor = BearyColors.gray
+        moodTitleIcon.contentMode = .scaleAspectFit
+        moodTitleRow.translatesAutoresizingMaskIntoConstraints = false
+        moodTitleIcon.translatesAutoresizingMaskIntoConstraints = false
         moodTitleLabel.translatesAutoresizingMaskIntoConstraints = false
         moodScrollView.translatesAutoresizingMaskIntoConstraints = false
         moodStackView.translatesAutoresizingMaskIntoConstraints = false
-        moodSection.addArrangedSubview(moodTitleLabel)
+        moodTitleRow.addArrangedSubview(moodTitleIcon)
+        moodTitleRow.addArrangedSubview(moodTitleLabel)
+        moodSection.addArrangedSubview(moodTitleRow)
         moodSection.addArrangedSubview(moodScrollView)
         moodScrollView.addSubview(moodStackView)
         contentStack.addArrangedSubview(moodSection)
         NSLayoutConstraint.activate([
-            moodScrollView.heightAnchor.constraint(equalToConstant: 62),
+            moodTitleIcon.widthAnchor.constraint(equalToConstant: 17),
+            moodTitleIcon.heightAnchor.constraint(equalToConstant: 17),
+            // 滚动区高内容驱动：单项高 = 圆环 44 + gap 4 + 名字行高，约 59–60。
+            moodScrollView.heightAnchor.constraint(equalTo: moodStackView.heightAnchor),
             moodStackView.topAnchor.constraint(equalTo: moodScrollView.contentLayoutGuide.topAnchor),
             moodStackView.bottomAnchor.constraint(equalTo: moodScrollView.contentLayoutGuide.bottomAnchor),
             moodStackView.leadingAnchor.constraint(equalTo: moodScrollView.contentLayoutGuide.leadingAnchor),
             moodStackView.trailingAnchor.constraint(equalTo: moodScrollView.contentLayoutGuide.trailingAnchor),
-            moodStackView.heightAnchor.constraint(equalTo: moodScrollView.frameLayoutGuide.heightAnchor),
         ])
         for key in moodOrder {
             let name = BearyText.moodNames[key] ?? key
@@ -493,12 +565,12 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         contentStack.addArrangedSubview(weatherScrollView)
         weatherScrollView.addSubview(weatherStackView)
         NSLayoutConstraint.activate([
-            weatherScrollView.heightAnchor.constraint(equalToConstant: 32),
-            weatherStackView.topAnchor.constraint(equalTo: weatherScrollView.contentLayoutGuide.topAnchor),
-            weatherStackView.bottomAnchor.constraint(equalTo: weatherScrollView.contentLayoutGuide.bottomAnchor),
+            // 天气行内容驱动约 40 = chip 高 + 上 10 + 下 2（左右 16 已由 contentStack 边距提供）。
+            weatherScrollView.heightAnchor.constraint(equalTo: weatherStackView.heightAnchor, constant: 12),
+            weatherStackView.topAnchor.constraint(equalTo: weatherScrollView.contentLayoutGuide.topAnchor, constant: 10),
+            weatherStackView.bottomAnchor.constraint(equalTo: weatherScrollView.contentLayoutGuide.bottomAnchor, constant: -2),
             weatherStackView.leadingAnchor.constraint(equalTo: weatherScrollView.contentLayoutGuide.leadingAnchor),
             weatherStackView.trailingAnchor.constraint(equalTo: weatherScrollView.contentLayoutGuide.trailingAnchor),
-            weatherStackView.heightAnchor.constraint(equalTo: weatherScrollView.frameLayoutGuide.heightAnchor),
         ])
         // 首项“无”：key 为空串即未选。
         let noneButton = makeWeatherButton(key: "", title: "无", systemImage: nil)
@@ -520,11 +592,11 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         button.setTitle(title, for: .normal)
         button.titleLabel?.font = UIFont.systemFont(ofSize: 13)
         if let imageName = systemImage {
-            button.setImage(UIImage(systemName: imageName), for: .normal)
+            button.setImage(UIImage(systemName: imageName, withConfiguration: UIImage.SymbolConfiguration(pointSize: 16, weight: .regular)), for: .normal)
             button.titleEdgeInsets = UIEdgeInsets(top: 0, left: 5, bottom: 0, right: 0)
         }
         button.contentEdgeInsets = UIEdgeInsets(top: 6, left: 12, bottom: 6, right: 12)
-        button.layer.cornerRadius = 16
+        button.layer.cornerRadius = 999
         button.layer.masksToBounds = true
         button.layer.borderWidth = 1.5
         button.accessibilityLabel = title
@@ -575,20 +647,18 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         recipientSection.spacing = 8
         recipientSection.alignment = .fill
         recipientLine.axis = .horizontal
-        recipientLine.spacing = 6
+        recipientLine.spacing = 8
         recipientLine.alignment = .center
         recipientAtIcon.image = UIImage(systemName: "at")
         recipientAtIcon.tintColor = BearyColors.gray
         recipientAtIcon.contentMode = .scaleAspectFit
-        // 未选：虚线边框 pill 钮（网页 addr-pick 同款形态；实线近似虚线，免去 shape 层）。
+        // 未选：虚线边框 pill 钮（网页 addr-pick：1.5px dashed line、圆角 999；
+        // 虚线由 BearyComposerDashedPickButton 的 CAShapeLayer 画，路径圆角取半高即 pill）。
         recipientPickButton.setTitle("写给某个人", for: .normal)
         recipientPickButton.titleLabel?.font = UIFont.systemFont(ofSize: 13)
         recipientPickButton.setTitleColor(BearyColors.gray, for: .normal)
         recipientPickButton.contentEdgeInsets = UIEdgeInsets(top: 7, left: 14, bottom: 7, right: 14)
-        recipientPickButton.layer.cornerRadius = 15
-        recipientPickButton.layer.masksToBounds = true
-        recipientPickButton.layer.borderWidth = 1.5
-        recipientPickButton.layer.borderColor = BearyColors.line.cgColor
+        recipientPickButton.layer.cornerRadius = 999
         recipientPickButton.addTarget(self, action: #selector(didTapPickRecipient), for: .touchUpInside)
         // 已选 chip：橙 13% 底 + 22 头像/首字母 + “写给 名” + ×。
         recipientChipView.backgroundColor = BearyColors.orange.withAlphaComponent(0.13)
@@ -604,12 +674,12 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         recipientChipFallback.textAlignment = .center
         recipientChipFallback.layer.cornerRadius = 11
         recipientChipFallback.layer.masksToBounds = true
-        recipientChipName.font = UIFont.boldSystemFont(ofSize: 13)
+        recipientChipName.font = UIFont.systemFont(ofSize: 13, weight: .semibold)
         recipientChipName.textColor = BearyColors.ink
         recipientClearButton.setTitle("×", for: .normal)
         recipientClearButton.titleLabel?.font = UIFont.systemFont(ofSize: 16)
         recipientClearButton.setTitleColor(BearyColors.gray, for: .normal)
-        recipientClearButton.backgroundColor = BearyColors.faint
+        recipientClearButton.backgroundColor = BearyColors.ink.withAlphaComponent(0.10)
         recipientClearButton.layer.cornerRadius = 9
         recipientClearButton.layer.masksToBounds = true
         recipientClearButton.addTarget(self, action: #selector(didTapClearRecipient), for: .touchUpInside)
@@ -620,7 +690,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         notifyCheckButton.titleLabel?.font = UIFont.boldSystemFont(ofSize: 14)
         notifyCheckButton.addTarget(self, action: #selector(didTapNotifyCheck), for: .touchUpInside)
         notifyLabel.text = "通知对方"
-        notifyLabel.font = UIFont.systemFont(ofSize: 14)
+        notifyLabel.font = UIFont.systemFont(ofSize: 13)
         notifyLabel.textColor = BearyColors.ink
         notifyGroup.axis = .horizontal
         notifyGroup.spacing = 6
@@ -658,7 +728,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             recipientChipFallback.centerYAnchor.constraint(equalTo: recipientChipView.centerYAnchor),
             recipientChipFallback.widthAnchor.constraint(equalToConstant: 22),
             recipientChipFallback.heightAnchor.constraint(equalToConstant: 22),
-            recipientChipName.leadingAnchor.constraint(equalTo: recipientChipView.leadingAnchor, constant: 30),
+            recipientChipName.leadingAnchor.constraint(equalTo: recipientChipView.leadingAnchor, constant: 33),
             recipientChipName.centerYAnchor.constraint(equalTo: recipientChipView.centerYAnchor),
             recipientClearButton.leadingAnchor.constraint(equalTo: recipientChipName.trailingAnchor, constant: 7),
             recipientClearButton.trailingAnchor.constraint(equalTo: recipientChipView.trailingAnchor, constant: -4),
@@ -666,8 +736,8 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             recipientClearButton.widthAnchor.constraint(equalToConstant: 18),
             recipientClearButton.heightAnchor.constraint(equalToConstant: 18),
             recipientChipView.heightAnchor.constraint(equalToConstant: 30),
-            notifyCheckButton.widthAnchor.constraint(equalToConstant: 22),
-            notifyCheckButton.heightAnchor.constraint(equalToConstant: 22),
+            notifyCheckButton.widthAnchor.constraint(equalToConstant: 16),
+            notifyCheckButton.heightAnchor.constraint(equalToConstant: 16),
         ])
         refreshRecipientRow()
         contentStack.setCustomSpacing(8, after: recipientSection)
@@ -774,10 +844,11 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         pickQuoteButton.layer.cornerRadius = 12
         pickQuoteButton.layer.masksToBounds = true
         pickQuoteButton.addTarget(self, action: #selector(didTapPickQuote), for: .touchUpInside)
-        quoteCard.layer.cornerRadius = 14
+        // qp-card：无圆角、无四边框，只留底部 1px line 边线（见 quoteCardBottomLine）。
+        quoteCard.layer.cornerRadius = 0
         quoteCard.layer.masksToBounds = true
-        quoteCard.layer.borderWidth = 1
-        quoteCard.layer.borderColor = BearyColors.line.cgColor
+        quoteCard.layer.borderWidth = 0
+        quoteCardBottomLine.backgroundColor = BearyColors.line
         quoteAvatarImageView.contentMode = .scaleAspectFill
         quoteAvatarImageView.clipsToBounds = true
         quoteAvatarImageView.layer.cornerRadius = 20
@@ -790,7 +861,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         quoteAvatarFallback.layer.masksToBounds = true
         quoteNameLabel.font = UIFont.boldSystemFont(ofSize: 16.5)
         quoteNameLabel.textColor = BearyColors.ink
-        quoteDeliveringPill.font = UIFont.boldSystemFont(ofSize: 11)
+        quoteDeliveringPill.font = UIFont.systemFont(ofSize: 11, weight: .semibold)
         quoteDeliveringPill.textColor = BearyColors.blue
         quoteDeliveringPill.backgroundColor = BearyColors.blue.withAlphaComponent(0.13)
         quoteDeliveringPill.textAlignment = .center
@@ -798,19 +869,21 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         quoteDeliveringPill.layer.masksToBounds = true
         quoteDeliveringPill.text = "投递中"
         quoteContentLabel.numberOfLines = 0
-        quoteContentLabel.font = UIFont.systemFont(ofSize: 15)
+        quoteContentLabel.font = UIFont.systemFont(ofSize: 16.5)
         quoteContentLabel.textColor = BearyColors.ink
-        quoteDateLabel.font = UIFont.systemFont(ofSize: 13)
+        quoteDateLabel.font = UIFont.systemFont(ofSize: 14)
         quoteDateLabel.textColor = BearyColors.gray
         quoteImagesScrollView.showsHorizontalScrollIndicator = false
         quoteImagesStackView.axis = .horizontal
         quoteImagesStackView.spacing = 8
         quoteImagesStackView.alignment = .center
-        quoteRemoveButton.setTitle("×", for: .normal)
-        quoteRemoveButton.titleLabel?.font = UIFont.systemFont(ofSize: 20)
-        quoteRemoveButton.setTitleColor(BearyColors.gray, for: .normal)
-        quoteRemoveButton.addTarget(self, action: #selector(didTapRemoveQuote), for: .touchUpInside)
-        for v in [quoteSection, pickQuoteButton, quoteCard, quoteAvatarImageView, quoteAvatarFallback, quoteNameLabel, quoteDeliveringPill, quoteContentLabel, quoteDateLabel, quoteImagesScrollView, quoteImagesStackView, quoteRemoveButton] {
+        // 注意：网页 lite 卡右上角有 15px 的 ×（quoteChipX，移除引用），上一批误删后新建模式下已选引用无法清除，
+        // 本处按网页口径恢复：图标 15pt 位于卡片右上（top 8 / right 8），按钮框 28×28 居中套住图标以保证触摸区；
+        // 编辑模式引用锁定，不显示 ×。
+        quoteCardRemoveButton.setImage(UIImage(systemName: "xmark", withConfiguration: UIImage.SymbolConfiguration(pointSize: 15, weight: .regular)), for: .normal)
+        quoteCardRemoveButton.tintColor = BearyColors.gray
+        quoteCardRemoveButton.addTarget(self, action: #selector(didTapRemoveQuote), for: .touchUpInside)
+        for v in [quoteSection, pickQuoteButton, quoteCard, quoteAvatarImageView, quoteAvatarFallback, quoteNameLabel, quoteDeliveringPill, quoteContentLabel, quoteDateLabel, quoteImagesScrollView, quoteImagesStackView, quoteCardBottomLine, quoteCardRemoveButton] {
             v.translatesAutoresizingMaskIntoConstraints = false
         }
         contentStack.addArrangedSubview(quoteSection)
@@ -824,46 +897,51 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         quoteCard.addSubview(quoteDateLabel)
         quoteCard.addSubview(quoteImagesScrollView)
         quoteImagesScrollView.addSubview(quoteImagesStackView)
-        quoteCard.addSubview(quoteRemoveButton)
+        quoteCard.addSubview(quoteCardBottomLine)
+        quoteCard.addSubview(quoteCardRemoveButton)
         NSLayoutConstraint.activate([
             pickQuoteButton.heightAnchor.constraint(equalToConstant: 44),
-            quoteAvatarImageView.topAnchor.constraint(equalTo: quoteCard.topAnchor, constant: 12),
-            quoteAvatarImageView.leadingAnchor.constraint(equalTo: quoteCard.leadingAnchor, constant: 12),
+            quoteAvatarImageView.topAnchor.constraint(equalTo: quoteCard.topAnchor, constant: 16),
+            quoteAvatarImageView.leadingAnchor.constraint(equalTo: quoteCard.leadingAnchor, constant: 2),
             quoteAvatarImageView.widthAnchor.constraint(equalToConstant: 40),
             quoteAvatarImageView.heightAnchor.constraint(equalToConstant: 40),
-            quoteAvatarFallback.topAnchor.constraint(equalTo: quoteCard.topAnchor, constant: 12),
-            quoteAvatarFallback.leadingAnchor.constraint(equalTo: quoteCard.leadingAnchor, constant: 12),
+            quoteAvatarFallback.topAnchor.constraint(equalTo: quoteCard.topAnchor, constant: 16),
+            quoteAvatarFallback.leadingAnchor.constraint(equalTo: quoteCard.leadingAnchor, constant: 2),
             quoteAvatarFallback.widthAnchor.constraint(equalToConstant: 40),
             quoteAvatarFallback.heightAnchor.constraint(equalToConstant: 40),
-            quoteNameLabel.topAnchor.constraint(equalTo: quoteCard.topAnchor, constant: 12),
-            quoteNameLabel.leadingAnchor.constraint(equalTo: quoteCard.leadingAnchor, constant: 64),
-            quoteNameLabel.trailingAnchor.constraint(lessThanOrEqualTo: quoteCard.trailingAnchor, constant: -40),
+            quoteNameLabel.topAnchor.constraint(equalTo: quoteCard.topAnchor, constant: 16),
+            quoteNameLabel.leadingAnchor.constraint(equalTo: quoteCard.leadingAnchor, constant: 54),
+            quoteNameLabel.trailingAnchor.constraint(lessThanOrEqualTo: quoteCard.trailingAnchor, constant: -2),
             quoteDeliveringPill.centerYAnchor.constraint(equalTo: quoteNameLabel.centerYAnchor),
             quoteDeliveringPill.leadingAnchor.constraint(equalTo: quoteNameLabel.trailingAnchor, constant: 8),
             quoteDeliveringPill.widthAnchor.constraint(equalToConstant: 48),
-            quoteDeliveringPill.heightAnchor.constraint(equalToConstant: 20),
+            quoteDeliveringPill.heightAnchor.constraint(equalToConstant: 17),
             quoteDateLabel.topAnchor.constraint(equalTo: quoteNameLabel.bottomAnchor, constant: 2),
-            quoteDateLabel.leadingAnchor.constraint(equalTo: quoteCard.leadingAnchor, constant: 64),
-            quoteDateLabel.trailingAnchor.constraint(lessThanOrEqualTo: quoteCard.trailingAnchor, constant: -40),
-            quoteContentLabel.topAnchor.constraint(equalTo: quoteDateLabel.bottomAnchor, constant: 6),
-            quoteContentLabel.leadingAnchor.constraint(equalTo: quoteCard.leadingAnchor, constant: 64),
-            quoteContentLabel.trailingAnchor.constraint(equalTo: quoteCard.trailingAnchor, constant: -12),
-            quoteImagesScrollView.leadingAnchor.constraint(equalTo: quoteCard.leadingAnchor, constant: 64),
-            quoteImagesScrollView.trailingAnchor.constraint(equalTo: quoteCard.trailingAnchor, constant: -12),
-            quoteImagesScrollView.heightAnchor.constraint(equalToConstant: 64),
+            quoteDateLabel.leadingAnchor.constraint(equalTo: quoteCard.leadingAnchor, constant: 54),
+            quoteDateLabel.trailingAnchor.constraint(lessThanOrEqualTo: quoteCard.trailingAnchor, constant: -2),
+            quoteContentLabel.topAnchor.constraint(equalTo: quoteDateLabel.bottomAnchor, constant: 4),
+            quoteContentLabel.leadingAnchor.constraint(equalTo: quoteCard.leadingAnchor, constant: 54),
+            quoteContentLabel.trailingAnchor.constraint(equalTo: quoteCard.trailingAnchor, constant: -2),
+            quoteImagesScrollView.leadingAnchor.constraint(equalTo: quoteCard.leadingAnchor, constant: 54),
+            quoteImagesScrollView.trailingAnchor.constraint(equalTo: quoteCard.trailingAnchor, constant: -2),
+            quoteImagesScrollView.heightAnchor.constraint(equalToConstant: 118),
             quoteImagesStackView.topAnchor.constraint(equalTo: quoteImagesScrollView.contentLayoutGuide.topAnchor),
             quoteImagesStackView.bottomAnchor.constraint(equalTo: quoteImagesScrollView.contentLayoutGuide.bottomAnchor),
             quoteImagesStackView.leadingAnchor.constraint(equalTo: quoteImagesScrollView.contentLayoutGuide.leadingAnchor),
             quoteImagesStackView.trailingAnchor.constraint(equalTo: quoteImagesScrollView.contentLayoutGuide.trailingAnchor),
             quoteImagesStackView.heightAnchor.constraint(equalTo: quoteImagesScrollView.frameLayoutGuide.heightAnchor),
-            quoteRemoveButton.topAnchor.constraint(equalTo: quoteCard.topAnchor, constant: 8),
-            quoteRemoveButton.trailingAnchor.constraint(equalTo: quoteCard.trailingAnchor, constant: -8),
-            quoteRemoveButton.widthAnchor.constraint(equalToConstant: 28),
-            quoteRemoveButton.heightAnchor.constraint(equalToConstant: 28),
+            quoteCardBottomLine.leadingAnchor.constraint(equalTo: quoteCard.leadingAnchor),
+            quoteCardBottomLine.trailingAnchor.constraint(equalTo: quoteCard.trailingAnchor),
+            quoteCardBottomLine.bottomAnchor.constraint(equalTo: quoteCard.bottomAnchor),
+            quoteCardBottomLine.heightAnchor.constraint(equalToConstant: 1),
+            quoteCardRemoveButton.topAnchor.constraint(equalTo: quoteCard.topAnchor, constant: 2),
+            quoteCardRemoveButton.trailingAnchor.constraint(equalTo: quoteCard.trailingAnchor, constant: -2),
+            quoteCardRemoveButton.widthAnchor.constraint(equalToConstant: 28),
+            quoteCardRemoveButton.heightAnchor.constraint(equalToConstant: 28),
         ])
         // 图片条链约束单独持有：无图时停用（见 refreshQuoteCardImages）。
         quoteImagesTopConstraint = quoteImagesScrollView.topAnchor.constraint(equalTo: quoteContentLabel.bottomAnchor, constant: 10)
-        quoteImagesBottomConstraint = quoteImagesScrollView.bottomAnchor.constraint(equalTo: quoteCard.bottomAnchor, constant: -12)
+        quoteImagesBottomConstraint = quoteImagesScrollView.bottomAnchor.constraint(equalTo: quoteCard.bottomAnchor, constant: -14)
         quoteImagesTopConstraint?.isActive = true
         quoteImagesBottomConstraint?.isActive = true
         refreshQuoteSection()
@@ -871,20 +949,20 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     }
 
     /// 引用区状态：stack 内的隐藏项自动塌掉（UIStackView 口径），无需改约束。
-    /// 新建未选 → 挑按钮；新建已选 → lite 卡 + ×；编辑 → 锁定的 lite 卡（无 ×）或都不显示。
+    /// 新建未选 → 挑按钮；新建已选 → lite 卡 + 右上 15px ×（网页 quoteChipX 口径，点即清除引用）；
+    /// 编辑 → 锁定的 lite 卡或都不显示（无 ×）。
     /// 无图时图片条隐藏：此时正文底部直接贴卡底（图片条 bottom 约束与内容 bottom 约束冲突时
     /// 以图片条隐藏为准——见下方 refreshQuoteCardImages 的约束切换）。
     private func refreshQuoteSection() {
         let quote = isEditMode ? lockedQuote : selectedQuote
         if isEditMode {
             pickQuoteButton.isHidden = true
-            quoteRemoveButton.isHidden = true
         } else {
             pickQuoteButton.isHidden = quote != nil
-            quoteRemoveButton.isHidden = quote == nil
         }
         guard let shown = quote else {
             quoteCard.isHidden = true
+            updatePreferredContentSize()
             return
         }
         quoteCard.isHidden = false
@@ -900,13 +978,17 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             quoteAvatarFallback.text = String(authorName.prefix(1)).uppercased()
         }
         quoteDeliveringPill.isHidden = (shown.isPublic == true)
-        quoteContentLabel.text = shown.content
+        // 正文 16.5、行高 1.75（28.9）。
+        let quoteParagraph = NSMutableParagraphStyle()
+        quoteParagraph.lineHeightMultiple = 1.75
+        quoteContentLabel.attributedText = NSAttributedString(string: shown.content, attributes: [.font: UIFont.systemFont(ofSize: 16.5), .foregroundColor: BearyColors.ink, .paragraphStyle: quoteParagraph])
         if let ms = shown.createdAt {
             quoteDateLabel.text = BearyText.timeString(ms: ms)
         } else {
             quoteDateLabel.text = nil
         }
-        refreshQuoteCardImages(images: shown.images)
+        refreshQuoteCardImages(images: shown.images, dims: shown.imgDims)
+        updatePreferredContentSize()
     }
 
     /// lite 卡图片条：有图才显示；无图时把正文底部约束改贴卡底，避免留白。
@@ -915,13 +997,13 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     private var quoteCardContentBottomConstraint: NSLayoutConstraint?
     private var quoteImagesTopConstraint: NSLayoutConstraint?
     private var quoteImagesBottomConstraint: NSLayoutConstraint?
-    private func refreshQuoteCardImages(images: [String]) {
+    private func refreshQuoteCardImages(images: [String], dims: [String: [Int]]?) {
         for arranged in quoteImagesStackView.arrangedSubviews {
             quoteImagesStackView.removeArrangedSubview(arranged)
             arranged.removeFromSuperview()
         }
         if quoteCardContentBottomConstraint == nil {
-            quoteCardContentBottomConstraint = quoteContentLabel.bottomAnchor.constraint(equalTo: quoteCard.bottomAnchor, constant: -12)
+            quoteCardContentBottomConstraint = quoteContentLabel.bottomAnchor.constraint(equalTo: quoteCard.bottomAnchor, constant: -14)
         }
         guard let bottomConstraint = quoteCardContentBottomConstraint else { return }
         if images.isEmpty {
@@ -945,8 +1027,13 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                     imageView.bearySetImage(url: url, placeholder: nil)
                 }
                 quoteImagesStackView.addArrangedSubview(imageView)
-                imageView.widthAnchor.constraint(equalToConstant: 64).isActive = true
-                imageView.heightAnchor.constraint(equalToConstant: 64).isActive = true
+                // 高 118、宽按原图比例（网页 stripW 口径：65–262 夹取）；无尺寸时兜底 153。
+                var thumbWidth: CGFloat = 153
+                if let dims = dims, let pair = dims[key], pair.count >= 2, pair[0] > 0, pair[1] > 0 {
+                    thumbWidth = min(262, max(65, round(118 * CGFloat(pair[0]) / CGFloat(pair[1]))))
+                }
+                imageView.widthAnchor.constraint(equalToConstant: thumbWidth).isActive = true
+                imageView.heightAnchor.constraint(equalToConstant: 118).isActive = true
             }
         }
     }
@@ -957,6 +1044,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         setQuotePanelOpen(!quotePanelOpen)
     }
 
+    /// lite 卡右上 ×：清除已选引用（新建模式专用，网页 quoteChipX 口径）。
     @objc private func didTapRemoveQuote() {
         if isEditMode { return }
         selectedQuote = nil
@@ -968,7 +1056,30 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
 
     private func buildQuotePanel() {
         quotePanel.translatesAutoresizingMaskIntoConstraints = false
-        quoteSegmentedControl.translatesAutoresizingMaskIntoConstraints = false
+        // 自定义 tab 条（网页 qp-seg-in）：容器 padding 3、faint 底、圆角 999；
+        // 钮 13.5/600、padding 6/16；选中墨字 + surface 底（网页滑块指示的静态等价），未选灰字无底。
+        quoteTabBarContainer.translatesAutoresizingMaskIntoConstraints = false
+        quoteTabBarContainer.backgroundColor = BearyColors.faint
+        quoteTabBarContainer.layer.cornerRadius = 999
+        quoteTabBarContainer.layer.masksToBounds = true
+        quoteTabStack.translatesAutoresizingMaskIntoConstraints = false
+        quoteTabStack.axis = .horizontal
+        quoteTabStack.spacing = 0
+        quoteTabStack.alignment = .fill
+        let tabTitles = ["我的日记", "赞过的", "收藏的"]
+        for title in tabTitles {
+            let tabButton = UIButton(type: .system)
+            tabButton.translatesAutoresizingMaskIntoConstraints = false
+            tabButton.setTitle(title, for: .normal)
+            tabButton.titleLabel?.font = UIFont.systemFont(ofSize: 13.5, weight: .semibold)
+            tabButton.contentEdgeInsets = UIEdgeInsets(top: 6, left: 16, bottom: 6, right: 16)
+            tabButton.layer.cornerRadius = 999
+            tabButton.layer.masksToBounds = true
+            tabButton.addTarget(self, action: #selector(didTapQuoteTab(_:)), for: .touchUpInside)
+            quoteTabButtons.append(tabButton)
+            quoteTabStack.addArrangedSubview(tabButton)
+        }
+        refreshQuoteTabs()
         quotePanelSpinner.translatesAutoresizingMaskIntoConstraints = false
         quotePanelSpinner.color = BearyColors.gray
         quotePanelSpinner.hidesWhenStopped = true
@@ -987,26 +1098,32 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         quotePanelRows.translatesAutoresizingMaskIntoConstraints = false
         quotePanelRows.axis = .vertical
         quotePanelRows.spacing = 0
-        quoteSegmentedControl.selectedSegmentIndex = 0
-        quoteSegmentedControl.addTarget(self, action: #selector(didChangeQuoteTab), for: .valueChanged)
         contentStack.addArrangedSubview(quotePanel)
-        quotePanel.addSubview(quoteSegmentedControl)
+        quotePanel.addSubview(quoteTabBarContainer)
+        quoteTabBarContainer.addSubview(quoteTabStack)
         quotePanel.addSubview(quotePanelSpinner)
         quotePanel.addSubview(quotePanelEmptyLabel)
         quotePanel.addSubview(quotePanelRetryButton)
         quotePanel.addSubview(quotePanelRows)
         NSLayoutConstraint.activate([
-            quoteSegmentedControl.topAnchor.constraint(equalTo: quotePanel.topAnchor, constant: 12),
-            quoteSegmentedControl.leadingAnchor.constraint(equalTo: quotePanel.leadingAnchor),
-            quoteSegmentedControl.trailingAnchor.constraint(equalTo: quotePanel.trailingAnchor),
-            quotePanelSpinner.topAnchor.constraint(equalTo: quoteSegmentedControl.bottomAnchor, constant: 16),
+            // 整段 padding 10/16/4：顶距面板顶 10、左右 16 已由 contentStack 边距提供、
+            // 行顶距 tab 条底 4；容器在面板内居中（网页 qp-seg justify-content:center）。
+            quoteTabBarContainer.topAnchor.constraint(equalTo: quotePanel.topAnchor, constant: 10),
+            quoteTabBarContainer.centerXAnchor.constraint(equalTo: quotePanel.centerXAnchor),
+            quoteTabBarContainer.leadingAnchor.constraint(greaterThanOrEqualTo: quotePanel.leadingAnchor),
+            quoteTabBarContainer.trailingAnchor.constraint(lessThanOrEqualTo: quotePanel.trailingAnchor),
+            quoteTabStack.topAnchor.constraint(equalTo: quoteTabBarContainer.topAnchor, constant: 3),
+            quoteTabStack.bottomAnchor.constraint(equalTo: quoteTabBarContainer.bottomAnchor, constant: -3),
+            quoteTabStack.leadingAnchor.constraint(equalTo: quoteTabBarContainer.leadingAnchor, constant: 3),
+            quoteTabStack.trailingAnchor.constraint(equalTo: quoteTabBarContainer.trailingAnchor, constant: -3),
+            quotePanelSpinner.topAnchor.constraint(equalTo: quoteTabBarContainer.bottomAnchor, constant: 16),
             quotePanelSpinner.centerXAnchor.constraint(equalTo: quotePanel.centerXAnchor),
-            quotePanelEmptyLabel.topAnchor.constraint(equalTo: quoteSegmentedControl.bottomAnchor, constant: 16),
+            quotePanelEmptyLabel.topAnchor.constraint(equalTo: quoteTabBarContainer.bottomAnchor, constant: 16),
             quotePanelEmptyLabel.leadingAnchor.constraint(equalTo: quotePanel.leadingAnchor),
             quotePanelEmptyLabel.trailingAnchor.constraint(equalTo: quotePanel.trailingAnchor),
-            quotePanelRetryButton.topAnchor.constraint(equalTo: quoteSegmentedControl.bottomAnchor, constant: 16),
+            quotePanelRetryButton.topAnchor.constraint(equalTo: quoteTabBarContainer.bottomAnchor, constant: 16),
             quotePanelRetryButton.centerXAnchor.constraint(equalTo: quotePanel.centerXAnchor),
-            quotePanelRows.topAnchor.constraint(equalTo: quoteSegmentedControl.bottomAnchor, constant: 4),
+            quotePanelRows.topAnchor.constraint(equalTo: quoteTabBarContainer.bottomAnchor, constant: 4),
             quotePanelRows.leadingAnchor.constraint(equalTo: quotePanel.leadingAnchor),
             quotePanelRows.trailingAnchor.constraint(equalTo: quotePanel.trailingAnchor),
             quotePanelRows.bottomAnchor.constraint(equalTo: quotePanel.bottomAnchor),
@@ -1015,21 +1132,41 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         contentStack.setCustomSpacing(16, after: quotePanel)
     }
 
+    /// 自定义 tab 选中态：选中墨字 + surface 底，未选灰字无底（与旧系统分段控件的
+    /// 选中序号语义一一对应，tab 值仍走 quotePanelTab）。
+    private func refreshQuoteTabs() {
+        for tabIndex in 0..<quoteTabButtons.count {
+            let tabButton = quoteTabButtons[tabIndex]
+            let isSelected = (tabIndex == 0 && quotePanelTab == "timeline") || (tabIndex == 1 && quotePanelTab == "liked") || (tabIndex == 2 && quotePanelTab == "saved")
+            tabButton.backgroundColor = isSelected ? BearyColors.surface : UIColor.clear
+            tabButton.setTitleColor(isSelected ? BearyColors.ink : BearyColors.gray, for: .normal)
+        }
+    }
+
     private func setQuotePanelOpen(_ open: Bool) {
         if isEditMode { return }
         quotePanelOpen = open
         quotePanel.isHidden = !open
         if open {
+            refreshQuoteTabs()
             loadQuotePanelTab()
         }
+        updatePreferredContentSize()
     }
 
-    @objc private func didChangeQuoteTab() {
-        switch quoteSegmentedControl.selectedSegmentIndex {
+    @objc private func didTapQuoteTab(_ sender: UIButton) {
+        var tappedIndex = 0
+        for tabIndex in 0..<quoteTabButtons.count {
+            if quoteTabButtons[tabIndex] == sender {
+                tappedIndex = tabIndex
+            }
+        }
+        switch tappedIndex {
         case 1: quotePanelTab = "liked"
         case 2: quotePanelTab = "saved"
         default: quotePanelTab = "timeline"
         }
+        refreshQuoteTabs()
         loadQuotePanelTab()
     }
 
@@ -1111,7 +1248,10 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             contentLabel.numberOfLines = 3
             contentLabel.font = UIFont.systemFont(ofSize: 14)
             contentLabel.textColor = BearyColors.ink
-            contentLabel.text = entry.content ?? ""
+            // 行正文行高 1.55（21.7），其余行指标（日期 12、间距、行 padding）不变。
+            let panelParagraph = NSMutableParagraphStyle()
+            panelParagraph.lineHeightMultiple = 1.55
+            contentLabel.attributedText = NSAttributedString(string: entry.content ?? "", attributes: [.font: UIFont.systemFont(ofSize: 14), .foregroundColor: BearyColors.ink, .paragraphStyle: panelParagraph])
             let separator = UIView()
             separator.translatesAutoresizingMaskIntoConstraints = false
             separator.backgroundColor = BearyColors.line
@@ -1128,7 +1268,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                 separator.topAnchor.constraint(equalTo: contentLabel.bottomAnchor, constant: 12),
                 separator.leadingAnchor.constraint(equalTo: rowButton.leadingAnchor, constant: 2),
                 separator.trailingAnchor.constraint(equalTo: rowButton.trailingAnchor, constant: -2),
-                separator.heightAnchor.constraint(equalToConstant: 0.5),
+                separator.heightAnchor.constraint(equalToConstant: 1),
                 separator.bottomAnchor.constraint(equalTo: rowButton.bottomAnchor),
             ])
             rowButton.addTarget(self, action: #selector(didTapQuotePanelRow(_:)), for: .touchUpInside)
@@ -1138,6 +1278,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             quotePanelRowEntries.append(entry)
             quotePanelRowButtons.append(rowButton)
         }
+        updatePreferredContentSize()
     }
 
     /// 面板行与日记的并行映射（行按钮按顺序与 entries 对应，渲染时同步重建）。
@@ -1152,7 +1293,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             }
         }
         guard let entry = picked, let entryId = entry.id, let content = entry.content else { return }
-        selectedQuote = SelectedQuote(entryId: entryId, content: content, createdAt: entry.createdAt, authorName: entry.authorName, authorAvatar: entry.authorAvatar, images: entry.images ?? [], isPublic: entry.isPublic)
+        selectedQuote = SelectedQuote(entryId: entryId, content: content, createdAt: entry.createdAt, authorName: entry.authorName, authorAvatar: entry.authorAvatar, images: entry.images ?? [], isPublic: entry.isPublic, imgDims: entry.imgDims)
         setQuotePanelOpen(false)
         refreshQuoteSection()
     }
@@ -1178,12 +1319,12 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         contentStack.addArrangedSubview(imageScrollView)
         imageScrollView.addSubview(imageStackView)
         NSLayoutConstraint.activate([
-            imageScrollView.heightAnchor.constraint(equalToConstant: 80),
+            // 条高 84 = 单项 72 + 下 padding 12（顶 0）。
+            imageScrollView.heightAnchor.constraint(equalToConstant: 84),
             imageStackView.topAnchor.constraint(equalTo: imageScrollView.contentLayoutGuide.topAnchor),
-            imageStackView.bottomAnchor.constraint(equalTo: imageScrollView.contentLayoutGuide.bottomAnchor),
+            imageStackView.bottomAnchor.constraint(equalTo: imageScrollView.contentLayoutGuide.bottomAnchor, constant: -12),
             imageStackView.leadingAnchor.constraint(equalTo: imageScrollView.contentLayoutGuide.leadingAnchor),
             imageStackView.trailingAnchor.constraint(equalTo: imageScrollView.contentLayoutGuide.trailingAnchor),
-            imageStackView.heightAnchor.constraint(equalTo: imageScrollView.frameLayoutGuide.heightAnchor),
         ])
         refreshImageStripVisibility()
         contentStack.setCustomSpacing(4, after: imageScrollView)
@@ -1202,23 +1343,23 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         toolRow.axis = .horizontal
         toolRow.spacing = 20
         toolRow.alignment = .center
-        imageToolButton.setImage(UIImage(systemName: "photo"), for: .normal)
+        imageToolButton.setImage(UIImage(systemName: "photo", withConfiguration: UIImage.SymbolConfiguration(pointSize: 24, weight: .regular)), for: .normal)
         imageToolButton.tintColor = BearyColors.gray
         imageToolButton.addTarget(self, action: #selector(didTapAddImage), for: .touchUpInside)
-        weatherToolButton.setImage(UIImage(systemName: "cloud"), for: .normal)
+        weatherToolButton.setImage(UIImage(systemName: "cloud", withConfiguration: UIImage.SymbolConfiguration(pointSize: 24, weight: .regular)), for: .normal)
         weatherToolButton.tintColor = BearyColors.gray
         weatherToolButton.addTarget(self, action: #selector(didTapWeatherTool), for: .touchUpInside)
-        quoteToolButton.setImage(UIImage(systemName: "quote.bubble"), for: .normal)
+        quoteToolButton.setImage(UIImage(systemName: "quote.bubble", withConfiguration: UIImage.SymbolConfiguration(pointSize: 24, weight: .regular)), for: .normal)
         quoteToolButton.tintColor = BearyColors.gray
         quoteToolButton.addTarget(self, action: #selector(didTapQuoteTool), for: .touchUpInside)
         draftPillButton.setTitle("草稿", for: .normal)
-        draftPillButton.setImage(UIImage(systemName: "note.text"), for: .normal)
+        draftPillButton.setImage(UIImage(systemName: "note.text", withConfiguration: UIImage.SymbolConfiguration(pointSize: 16, weight: .regular)), for: .normal)
         draftPillButton.titleLabel?.font = UIFont.systemFont(ofSize: 13)
         draftPillButton.setTitleColor(BearyColors.ink, for: .normal)
         draftPillButton.tintColor = BearyColors.gray
         draftPillButton.titleEdgeInsets = UIEdgeInsets(top: 0, left: 6, bottom: 0, right: 0)
         draftPillButton.contentEdgeInsets = UIEdgeInsets(top: 6, left: 12, bottom: 6, right: 12)
-        draftPillButton.layer.cornerRadius = 16
+        draftPillButton.layer.cornerRadius = 999
         draftPillButton.layer.masksToBounds = true
         draftPillButton.layer.borderWidth = 1.5
         draftPillButton.layer.borderColor = BearyColors.line.cgColor
@@ -1228,8 +1369,8 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         toolRow.translatesAutoresizingMaskIntoConstraints = false
         for button in [imageToolButton, weatherToolButton, quoteToolButton] {
             button.translatesAutoresizingMaskIntoConstraints = false
-            button.widthAnchor.constraint(equalToConstant: 44).isActive = true
-            button.heightAnchor.constraint(equalToConstant: 44).isActive = true
+            button.widthAnchor.constraint(equalToConstant: 24).isActive = true
+            button.heightAnchor.constraint(equalToConstant: 24).isActive = true
         }
         draftPillButton.translatesAutoresizingMaskIntoConstraints = false
         contentStack.addArrangedSubview(toolbarContainer)
@@ -1245,11 +1386,11 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             toolbarSeparator.topAnchor.constraint(equalTo: toolbarContainer.topAnchor),
             toolbarSeparator.leadingAnchor.constraint(equalTo: toolbarContainer.leadingAnchor),
             toolbarSeparator.trailingAnchor.constraint(equalTo: toolbarContainer.trailingAnchor),
-            toolbarSeparator.heightAnchor.constraint(equalToConstant: 0.5),
-            toolRow.topAnchor.constraint(equalTo: toolbarSeparator.bottomAnchor, constant: 6),
+            toolbarSeparator.heightAnchor.constraint(equalToConstant: 1),
+            toolRow.topAnchor.constraint(equalTo: toolbarSeparator.bottomAnchor, constant: 12),
             toolRow.leadingAnchor.constraint(equalTo: toolbarContainer.leadingAnchor),
             toolRow.trailingAnchor.constraint(equalTo: toolbarContainer.trailingAnchor),
-            toolRow.bottomAnchor.constraint(equalTo: toolbarContainer.bottomAnchor, constant: -2),
+            toolRow.bottomAnchor.constraint(equalTo: toolbarContainer.bottomAnchor, constant: -6),
         ])
         // 编辑模式：无草稿流（pill 隐藏），引用锁定（引用钮隐藏）。
         draftPillButton.isHidden = isEditMode
@@ -1268,9 +1409,12 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         if isEditMode { return }
         let count = draftCount()
         if count > 0 {
-            draftPillButton.setTitle("草稿 · \(count)", for: .normal)
+            // 计数字段单独加粗（网页 draft-pill 的 <b>），整串其余 regular。
+            let pillText = NSMutableAttributedString(string: "草稿 · ", attributes: [.font: UIFont.systemFont(ofSize: 13), .foregroundColor: BearyColors.ink])
+            pillText.append(NSAttributedString(string: "\(count)", attributes: [.font: UIFont.boldSystemFont(ofSize: 13), .foregroundColor: BearyColors.ink]))
+            draftPillButton.setAttributedTitle(pillText, for: .normal)
         } else {
-            draftPillButton.setTitle("草稿", for: .normal)
+            draftPillButton.setAttributedTitle(NSAttributedString(string: "草稿", attributes: [.font: UIFont.systemFont(ofSize: 13), .foregroundColor: BearyColors.ink]), for: .normal)
         }
     }
 
@@ -1312,9 +1456,10 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         extrasBarContainer.addSubview(extrasChevronImageView)
         extrasBarContainer.addSubview(extrasBarButton)
         NSLayoutConstraint.activate([
-            extrasBarContainer.heightAnchor.constraint(equalToConstant: 36),
+            // 栏高内容驱动约 32 = 摘要行高 + 上下各 8（左右 16 已由 contentStack 边距提供）。
             extrasSummaryLabel.leadingAnchor.constraint(equalTo: extrasBarContainer.leadingAnchor),
-            extrasSummaryLabel.centerYAnchor.constraint(equalTo: extrasBarContainer.centerYAnchor),
+            extrasSummaryLabel.topAnchor.constraint(equalTo: extrasBarContainer.topAnchor, constant: 8),
+            extrasSummaryLabel.bottomAnchor.constraint(equalTo: extrasBarContainer.bottomAnchor, constant: -8),
             extrasSummaryLabel.trailingAnchor.constraint(lessThanOrEqualTo: extrasChevronImageView.leadingAnchor, constant: -8),
             extrasChevronImageView.trailingAnchor.constraint(equalTo: extrasBarContainer.trailingAnchor),
             extrasChevronImageView.centerYAnchor.constraint(equalTo: extrasBarContainer.centerYAnchor),
@@ -1343,6 +1488,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             }
         }
         refreshExtras()
+        updatePreferredContentSize()
     }
 
     /// 附加选项显隐 + 摘要（网页 syncExtrasBar 口径：展开显“收起附加选项”，
@@ -1357,6 +1503,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             recipientSection.isHidden = !extrasExpanded
         }
         refreshExtrasSummary()
+        updatePreferredContentSize()
     }
 
     private func refreshExtrasSummary() {
@@ -1399,25 +1546,38 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         editTimerLabel.isHidden = true
         draftStatusLabel.font = UIFont.systemFont(ofSize: 12.5)
         draftStatusLabel.textColor = BearyColors.blue
-        draftStatusLabel.isHidden = true
+        // 草稿状态组：lvl2 时图标 + 文案 gap 5（网页 draft-status：15×15 对勾 + gap 5，蓝色继承）。
+        draftStatusIcon.image = UIImage(systemName: "checkmark", withConfiguration: UIImage.SymbolConfiguration(pointSize: 15, weight: .regular))
+        draftStatusIcon.tintColor = BearyColors.blue
+        draftStatusIcon.contentMode = .scaleAspectFit
+        draftStatusIcon.translatesAutoresizingMaskIntoConstraints = false
+        draftStatusGroup.axis = .horizontal
+        draftStatusGroup.spacing = 5
+        draftStatusGroup.alignment = .center
+        draftStatusGroup.translatesAutoresizingMaskIntoConstraints = false
+        draftStatusGroup.addArrangedSubview(draftStatusIcon)
+        draftStatusGroup.addArrangedSubview(draftStatusLabel)
+        draftStatusGroup.isHidden = true
         charCountLabel.font = UIFont.systemFont(ofSize: 12)
         charCountLabel.textColor = BearyColors.gray
         charRingView.translatesAutoresizingMaskIntoConstraints = false
         statusRow.axis = .horizontal
-        statusRow.spacing = 6
+        statusRow.spacing = 10
         statusRow.alignment = .center
         statusRow.translatesAutoresizingMaskIntoConstraints = false
         contentStack.addArrangedSubview(statusRow)
         statusRow.addArrangedSubview(editTimerLabel)
-        statusRow.addArrangedSubview(draftStatusLabel)
+        statusRow.addArrangedSubview(draftStatusGroup)
         let spacer = UIView()
         statusRow.addArrangedSubview(spacer)
         statusRow.addArrangedSubview(charRingView)
         statusRow.addArrangedSubview(charCountLabel)
         NSLayoutConstraint.activate([
+            draftStatusIcon.widthAnchor.constraint(equalToConstant: 15),
+            draftStatusIcon.heightAnchor.constraint(equalToConstant: 15),
             charRingView.widthAnchor.constraint(equalToConstant: 18),
             charRingView.heightAnchor.constraint(equalToConstant: 18),
-            statusRow.heightAnchor.constraint(greaterThanOrEqualToConstant: 24),
+            statusRow.heightAnchor.constraint(greaterThanOrEqualToConstant: 18),
         ])
         // 圆环：18 框、r 7.5、线宽 2.5，从顶部顺时针画（网页 cc-ring 同款）。
         let center = CGPoint(x: 9, y: 9)
@@ -1445,14 +1605,18 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     /// 编辑模式不显示（网页编辑态同款：状态行只留倒计时与字数）。
     private func updateDraftStatusLabel() {
         if isEditMode {
-            draftStatusLabel.isHidden = true
+            draftStatusGroup.isHidden = true
+            draftStatusIcon.isHidden = true
             return
         }
         guard let level = draftStatusLevel else {
-            draftStatusLabel.isHidden = true
+            draftStatusGroup.isHidden = true
+            draftStatusIcon.isHidden = true
             return
         }
-        draftStatusLabel.isHidden = false
+        draftStatusGroup.isHidden = false
+        // 仅 lvl2 带对勾图标；lvl1/失败态网页均无图标。
+        draftStatusIcon.isHidden = level != 2
         if level == 2 {
             draftStatusLabel.text = "草稿已保存"
             draftStatusLabel.textColor = BearyColors.blue
@@ -1527,6 +1691,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         updateCountLabel()
         updatePublishState()
         scheduleDraftSave()
+        updatePreferredContentSize()
     }
 
     private func trimmedContent() -> String {
@@ -1592,11 +1757,11 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         }
         // 标题：未选只显“心情”，已选显“心情 · <选中名>”（网页 mood-lab 同款）。
         if let mood = selectedMood, let name = BearyText.moodNames[mood] {
-            let title = NSMutableAttributedString(string: "心情", attributes: [.font: UIFont.boldSystemFont(ofSize: 13), .foregroundColor: BearyColors.ink])
+            let title = NSMutableAttributedString(string: "心情", attributes: [.font: UIFont.systemFont(ofSize: 13, weight: .semibold), .foregroundColor: BearyColors.ink])
             title.append(NSAttributedString(string: " · " + name, attributes: [.font: UIFont.systemFont(ofSize: 13), .foregroundColor: BearyColors.gray]))
             moodTitleLabel.attributedText = title
         } else {
-            moodTitleLabel.attributedText = NSAttributedString(string: "心情", attributes: [.font: UIFont.boldSystemFont(ofSize: 13), .foregroundColor: BearyColors.ink])
+            moodTitleLabel.attributedText = NSAttributedString(string: "心情", attributes: [.font: UIFont.systemFont(ofSize: 13, weight: .semibold), .foregroundColor: BearyColors.ink])
         }
         refreshExtrasSummary()
     }
@@ -1623,8 +1788,9 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     private func createImageItem(localImage: UIImage?, key: String?, uploading: Bool, localFile: String?, failed: Bool) -> ComposerImageItem {
         let container = UIView()
         container.translatesAutoresizingMaskIntoConstraints = false
-        container.backgroundColor = BearyColors.faint
-        container.layer.cornerRadius = 12
+        // 网页 thumb 本身无容器底：单项背后不再铺 faint 底，圆角 10 由容器裁剪提供。
+        container.backgroundColor = UIColor.clear
+        container.layer.cornerRadius = 10
         container.layer.masksToBounds = true
         let imageView = UIImageView()
         imageView.translatesAutoresizingMaskIntoConstraints = false
@@ -1643,6 +1809,8 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         let failView = UIView()
         failView.translatesAutoresizingMaskIntoConstraints = false
         failView.backgroundColor = BearyColors.red.withAlphaComponent(0.10)
+        failView.layer.cornerRadius = 10
+        failView.layer.masksToBounds = true
         failView.isHidden = !failed
         let failStack = UIStackView()
         failStack.translatesAutoresizingMaskIntoConstraints = false
@@ -1761,6 +1929,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         imageStackView.addArrangedSubview(item.container)
         refreshImageStripVisibility()
         updatePublishState()
+        updatePreferredContentSize()
     }
 
 
@@ -1781,6 +1950,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         refreshImageStripVisibility()
         updatePublishState()
         scheduleDraftSave()
+        updatePreferredContentSize()
     }
 
     @objc private func didTapRemoveImage(_ sender: UIButton) {
@@ -1931,6 +2101,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     private func setupEditContent() {
         guard let entry = editingEntry else { return }
         textView.text = entry.content ?? ""
+        applyBodyLineHeight()
         selectedMood = entry.mood
         refreshMoodButtons()
         selectedWeather = entry.weather
@@ -1938,7 +2109,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         lockedRecipientName = entry.recipientName
         if let quote = entry.quote, let quoteId = quote.id, let content = quote.content {
             // 内容为空的引用 = 已删（服务端 gone 只剩 id，网页版同款：已删引用不回填，保存时即丢弃）。
-            lockedQuote = SelectedQuote(entryId: quoteId, content: content, createdAt: quote.createdAt, authorName: quote.authorName, authorAvatar: quote.authorAvatar, images: quote.images ?? [], isPublic: quote.isPublic)
+            lockedQuote = SelectedQuote(entryId: quoteId, content: content, createdAt: quote.createdAt, authorName: quote.authorName, authorAvatar: quote.authorAvatar, images: quote.images ?? [], isPublic: quote.isPublic, imgDims: nil)
         }
         refreshRecipientRow()
         refreshQuoteSection()
@@ -1980,7 +2151,9 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         // 编辑模式不走草稿流：任何编辑中的改动都不写 beary_draft_v2。
         if isEditMode { return }
         // 防抖等待期先显“保存中…”（网页 queueSaveDraft 同款），落盘后由保存级别覆盖。
-        draftStatusLabel.isHidden = false
+        // 保存中态无对勾图标（图标只属于 lvl2 已保存态）。
+        draftStatusGroup.isHidden = false
+        draftStatusIcon.isHidden = true
         draftStatusLabel.text = "保存中…"
         draftStatusLabel.textColor = BearyColors.blue
         draftTimer?.invalidate()
@@ -2034,6 +2207,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         guard let draft = BearyDraftStore.load() else { return }
         draftClientReq = draft.clientReq
         textView.text = draft.content
+        applyBodyLineHeight()
         selectedMood = draft.mood
         refreshMoodButtons()
         var referenced = Set<String>()
@@ -2163,6 +2337,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         removeAllImageViews()
         draftClientReq = draft.clientReq
         textView.text = draft.content
+        applyBodyLineHeight()
         selectedMood = draft.mood
         selectedWeather = nil
         selectedRecipient = nil
@@ -2538,3 +2713,39 @@ private final class ComposerImageItem {
 //    已保存为草稿，联网后可重试”，失败一律保留草稿。
 // 7. 第四项：键盘跟随 WillChangeFrame（旋转/表情键盘/悬浮键盘拖动）；打开编辑器自动聚焦一次，
 //    有草稿时光标置末尾；选图按选择顺序占位插入（.ordered + 先建项后填图），读图失败直接移除占位项。
+
+// MARK: - 虚线“写给某个人”钮（网页 addr-pick：1.5px dashed line、pill 圆角；
+// 实现同款详情页 BearyDashedAddButton：CAShapeLayer 虚线，布局时按当前 bounds 重画路径）
+
+private final class BearyComposerDashedPickButton: UIButton {
+
+    private let dashedLayer = CAShapeLayer()
+
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        dashedLayer.fillColor = UIColor.clear.cgColor
+        dashedLayer.lineWidth = 1.5
+        dashedLayer.lineDashPattern = [4, 3]
+        updateStrokeColor()
+        layer.addSublayer(dashedLayer)
+    }
+
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    private func updateStrokeColor() {
+        dashedLayer.strokeColor = BearyColors.line.cgColor
+    }
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        dashedLayer.frame = bounds
+        dashedLayer.path = UIBezierPath(roundedRect: bounds, cornerRadius: bounds.height / 2).cgPath
+    }
+
+    override func traitCollectionDidChange(_ previousTraitCollection: UITraitCollection?) {
+        super.traitCollectionDidChange(previousTraitCollection)
+        updateStrokeColor()
+    }
+}

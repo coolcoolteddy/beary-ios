@@ -35,7 +35,7 @@ class BearyEntryDetailViewController: UIViewController {
     private var cachedQuoteKey: String?
     private var quoteFetchFailedKey: String?
     private var quoteFetching: Bool = false
-    /// 本篇图片 key（点图开查看器用，与 imagesStack 顺序一致）。
+    /// 本篇图片 key（点图开查看器用，与 detailImagesStack 顺序一致）。
     private var detailImageKeys: [String] = []
     /// 未公开倒计时 pill 的刷新计时（60 秒一跳；页面消失时停）。
     private var countdownTimer: Timer?
@@ -49,8 +49,12 @@ class BearyEntryDetailViewController: UIViewController {
     private let stackView = UIStackView()
 
     private let authorRow = UIStackView()
+    private let avatarWrapView = UIView()
+    private let avatarInitialLabel = UILabel()
     private let avatarImageView = UIImageView()
     private let authorInfoStack = UIStackView()
+    private let writeToRow = UIStackView()
+    private let writeToIconView = UIImageView()
     private let writeToLabel = UILabel()
     private let titleRow = UIStackView()
     private let authorNameLabel = UILabel()
@@ -65,9 +69,15 @@ class BearyEntryDetailViewController: UIViewController {
     private let pillView = UIView()
     private let pillLabel = UILabel()
 
+    private let detailCardView = UIView()
+    private let detailCardBottomLineView = UIView()
     private let bodyLabel = UILabel()
     private let quoteCardView = UIView()
-    private let imagesStack = UIStackView()
+    private let quoteLeftLineView = UIView()
+    private var quoteDeletedKey: String?
+    private let detailImagesScrollView = UIScrollView()
+    private let detailImagesStack = UIStackView()
+    private var detailImagesHeightConstraint: NSLayoutConstraint?
 
     private let actionRow = UIStackView()
     private let likeButton = UIButton(type: .system)
@@ -164,54 +174,100 @@ class BearyEntryDetailViewController: UIViewController {
         scrollView.translatesAutoresizingMaskIntoConstraints = false
         stackView.translatesAutoresizingMaskIntoConstraints = false
         stackView.axis = .vertical
-        stackView.spacing = 16
+        stackView.spacing = 0
         stackView.alignment = .fill
         stackView.distribution = .fill
         view.addSubview(scrollView)
-        scrollView.addSubview(stackView)
+        detailCardView.translatesAutoresizingMaskIntoConstraints = false
+        detailCardBottomLineView.translatesAutoresizingMaskIntoConstraints = false
+        detailCardBottomLineView.backgroundColor = BearyColors.line
+        scrollView.addSubview(detailCardView)
+        detailCardView.addSubview(stackView)
+        detailCardView.addSubview(detailCardBottomLineView)
 
+        // 详情卡片容器（网页 .public-card 口径）：内边距 22/20/14 + 底部 2px line 边线。
         // 内容列：宽 ≤820 时全宽（左右各 16pt）；宽 ≥821 时 600 居中（对应网页 .pf-col）。
         // 做法：宽 == 屏宽 -32 用次高优先级（750），宽 ≤600 用必需优先级——屏宽 ≤632 时前者胜出、
         // 屏宽 >632 时后者胜出压到 600，centerX 保证居中；两侧 ≥16pt 的不等式保证窄屏不断言。
-        let colWidth = stackView.widthAnchor.constraint(equalTo: scrollView.frameLayoutGuide.widthAnchor, constant: -32)
+        let colWidth = detailCardView.widthAnchor.constraint(equalTo: scrollView.frameLayoutGuide.widthAnchor, constant: -32)
         colWidth.priority = .defaultHigh
         NSLayoutConstraint.activate([
             scrollView.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
             scrollView.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor),
             scrollView.leadingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.leadingAnchor),
             scrollView.trailingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.trailingAnchor),
-            stackView.topAnchor.constraint(equalTo: scrollView.contentLayoutGuide.topAnchor, constant: 16),
-            stackView.bottomAnchor.constraint(equalTo: scrollView.contentLayoutGuide.bottomAnchor, constant: -16),
-            stackView.leadingAnchor.constraint(greaterThanOrEqualTo: scrollView.contentLayoutGuide.leadingAnchor, constant: 16),
-            stackView.trailingAnchor.constraint(lessThanOrEqualTo: scrollView.contentLayoutGuide.trailingAnchor, constant: -16),
-            stackView.centerXAnchor.constraint(equalTo: scrollView.frameLayoutGuide.centerXAnchor),
-            stackView.widthAnchor.constraint(lessThanOrEqualToConstant: 600),
+            detailCardView.topAnchor.constraint(equalTo: scrollView.contentLayoutGuide.topAnchor),
+            detailCardView.bottomAnchor.constraint(equalTo: scrollView.contentLayoutGuide.bottomAnchor),
+            detailCardView.leadingAnchor.constraint(greaterThanOrEqualTo: scrollView.contentLayoutGuide.leadingAnchor, constant: 16),
+            detailCardView.trailingAnchor.constraint(lessThanOrEqualTo: scrollView.contentLayoutGuide.trailingAnchor, constant: -16),
+            detailCardView.centerXAnchor.constraint(equalTo: scrollView.frameLayoutGuide.centerXAnchor),
+            detailCardView.widthAnchor.constraint(lessThanOrEqualToConstant: 600),
             colWidth,
+            stackView.topAnchor.constraint(equalTo: detailCardView.topAnchor, constant: 22),
+            stackView.bottomAnchor.constraint(equalTo: detailCardView.bottomAnchor, constant: -14),
+            stackView.leadingAnchor.constraint(equalTo: detailCardView.leadingAnchor, constant: 20),
+            stackView.trailingAnchor.constraint(equalTo: detailCardView.trailingAnchor, constant: -20),
+            detailCardBottomLineView.leadingAnchor.constraint(equalTo: detailCardView.leadingAnchor),
+            detailCardBottomLineView.trailingAnchor.constraint(equalTo: detailCardView.trailingAnchor),
+            detailCardBottomLineView.bottomAnchor.constraint(equalTo: detailCardView.bottomAnchor),
+            detailCardBottomLineView.heightAnchor.constraint(equalToConstant: 2),
         ])
 
         // 作者行
         authorRow.axis = .horizontal
         authorRow.spacing = 12
         authorRow.alignment = .center
+        // 头像无图回退：line 底 + 16 bold 灰色首字母（列表页同款做法，照片盖住首字母）。
+        avatarWrapView.translatesAutoresizingMaskIntoConstraints = false
+        avatarWrapView.backgroundColor = BearyColors.line
+        avatarWrapView.layer.cornerRadius = 20
+        avatarWrapView.clipsToBounds = true
+        avatarInitialLabel.translatesAutoresizingMaskIntoConstraints = false
+        avatarInitialLabel.font = UIFont.boldSystemFont(ofSize: 16)
+        avatarInitialLabel.textColor = BearyColors.gray
+        avatarInitialLabel.textAlignment = .center
+        avatarWrapView.addSubview(avatarInitialLabel)
+        avatarWrapView.addSubview(avatarImageView)
         avatarImageView.translatesAutoresizingMaskIntoConstraints = false
-        avatarImageView.backgroundColor = BearyColors.faint
+        avatarImageView.backgroundColor = BearyColors.line.withAlphaComponent(0)
         avatarImageView.contentMode = .scaleAspectFill
         avatarImageView.clipsToBounds = true
         avatarImageView.layer.cornerRadius = 20
         NSLayoutConstraint.activate([
-            avatarImageView.widthAnchor.constraint(equalToConstant: 40),
-            avatarImageView.heightAnchor.constraint(equalToConstant: 40),
+            avatarWrapView.widthAnchor.constraint(equalToConstant: 40),
+            avatarWrapView.heightAnchor.constraint(equalToConstant: 40),
+            avatarInitialLabel.centerXAnchor.constraint(equalTo: avatarWrapView.centerXAnchor),
+            avatarInitialLabel.centerYAnchor.constraint(equalTo: avatarWrapView.centerYAnchor),
+            avatarImageView.topAnchor.constraint(equalTo: avatarWrapView.topAnchor),
+            avatarImageView.bottomAnchor.constraint(equalTo: avatarWrapView.bottomAnchor),
+            avatarImageView.leadingAnchor.constraint(equalTo: avatarWrapView.leadingAnchor),
+            avatarImageView.trailingAnchor.constraint(equalTo: avatarWrapView.trailingAnchor),
         ])
 
         // 标题区：写给标签 + 标题行（名 / 徽章 / 皇冠 / 时间 / 心情熊图 / 天气图标同行）+ 倒计时 pill 行。
         authorInfoStack.axis = .vertical
         authorInfoStack.spacing = 4
+        authorInfoStack.isLayoutMarginsRelativeArrangement = true
+        writeToRow.axis = .horizontal
+        writeToRow.spacing = 5
+        writeToRow.alignment = .center
+        writeToRow.isHidden = true
+        let writeToIconWidth = writeToIconView.widthAnchor.constraint(equalToConstant: 13)
+        writeToIconWidth.priority = UILayoutPriority(999)
+        let writeToIconHeight = writeToIconView.heightAnchor.constraint(equalToConstant: 13)
+        writeToIconHeight.priority = UILayoutPriority(999)
+        writeToIconView.translatesAutoresizingMaskIntoConstraints = false
+        writeToIconView.image = UIImage(systemName: "envelope", withConfiguration: UIImage.SymbolConfiguration(pointSize: 13, weight: .regular))
+        writeToIconView.tintColor = BearyColors.orange
+        writeToIconView.contentMode = .scaleAspectFit
         writeToLabel.font = UIFont.boldSystemFont(ofSize: 12)
         writeToLabel.textColor = BearyColors.orange
-        writeToLabel.isHidden = true
+        writeToRow.addArrangedSubview(writeToIconView)
+        writeToRow.addArrangedSubview(writeToLabel)
+        NSLayoutConstraint.activate([writeToIconWidth, writeToIconHeight])
         titleRow.axis = .horizontal
         titleRow.spacing = 8
-        titleRow.alignment = .center
+        titleRow.alignment = .firstBaseline
         authorNameLabel.font = UIFont.boldSystemFont(ofSize: 16.5)
         authorNameLabel.textColor = BearyColors.ink
         authorNameLabel.numberOfLines = 1
@@ -222,8 +278,13 @@ class BearyEntryDetailViewController: UIViewController {
         badgeImageView.isHidden = true
         crownImageView.translatesAutoresizingMaskIntoConstraints = false
         crownImageView.contentMode = .scaleAspectFit
-        crownImageView.image = UIImage(systemName: "crown.fill")
-        crownImageView.tintColor = BearyColors.gray
+        // 网页 Plus 皇冠（铂金渐变 SVG 渲染的 PNG）；资产缺失时回退灰色 crown.fill。
+        if let crown = UIImage(named: "crown") {
+            crownImageView.image = crown
+        } else {
+            crownImageView.image = UIImage(systemName: "crown.fill")
+            crownImageView.tintColor = BearyColors.gray
+        }
         crownImageView.isHidden = true
         timeLabel.font = UIFont.systemFont(ofSize: 14)
         timeLabel.textColor = BearyColors.gray
@@ -264,13 +325,13 @@ class BearyEntryDetailViewController: UIViewController {
         pillView.clipsToBounds = true
         pillView.setContentHuggingPriority(.required, for: .horizontal)
         pillView.setContentCompressionResistancePriority(.required, for: .horizontal)
-        pillLabel.font = UIFont.systemFont(ofSize: 12, weight: .semibold)
+        pillLabel.font = UIFont.systemFont(ofSize: 11.5, weight: .semibold)
         pillLabel.textColor = BearyColors.blue
         pillLabel.translatesAutoresizingMaskIntoConstraints = false
         pillView.addSubview(pillLabel)
         NSLayoutConstraint.activate([
-            pillLabel.topAnchor.constraint(equalTo: pillView.topAnchor, constant: 5),
-            pillLabel.bottomAnchor.constraint(equalTo: pillView.bottomAnchor, constant: -5),
+            pillLabel.topAnchor.constraint(equalTo: pillView.topAnchor, constant: 2.5),
+            pillLabel.bottomAnchor.constraint(equalTo: pillView.bottomAnchor, constant: -2.5),
             pillLabel.leadingAnchor.constraint(equalTo: pillView.leadingAnchor, constant: 9),
             pillLabel.trailingAnchor.constraint(equalTo: pillView.trailingAnchor, constant: -9),
         ])
@@ -279,10 +340,12 @@ class BearyEntryDetailViewController: UIViewController {
         pillRow.addArrangedSubview(pillView)
         pillRow.addArrangedSubview(UIView())
         pillRow.isHidden = true
-        authorInfoStack.addArrangedSubview(writeToLabel)
+        authorInfoStack.addArrangedSubview(writeToRow)
         authorInfoStack.addArrangedSubview(titleRow)
         authorInfoStack.addArrangedSubview(pillRow)
-        authorRow.addArrangedSubview(avatarImageView)
+        // 写给标签 margin 1/0/3：上 1 由 layoutMargins（渲染时按是否显示回写），下 3 由 customSpacing。
+        authorInfoStack.setCustomSpacing(3, after: writeToRow)
+        authorRow.addArrangedSubview(avatarWrapView)
         authorRow.addArrangedSubview(authorInfoStack)
         stackView.addArrangedSubview(authorRow)
 
@@ -294,31 +357,55 @@ class BearyEntryDetailViewController: UIViewController {
 
         // 引用 lite 卡（网页 quoteHtml 口径：图标 + 正文 + 图片 + 日期；未公开为锁定态）。
         quoteCardView.backgroundColor = BearyColors.faint
-        quoteCardView.layer.cornerRadius = 12
+        quoteCardView.layer.cornerRadius = 8
         quoteCardView.clipsToBounds = true
         quoteCardView.isHidden = true
+        quoteLeftLineView.translatesAutoresizingMaskIntoConstraints = false
+        quoteLeftLineView.backgroundColor = BearyColors.line
+        quoteCardView.addSubview(quoteLeftLineView)
+        NSLayoutConstraint.activate([
+            quoteLeftLineView.leadingAnchor.constraint(equalTo: quoteCardView.leadingAnchor),
+            quoteLeftLineView.topAnchor.constraint(equalTo: quoteCardView.topAnchor),
+            quoteLeftLineView.bottomAnchor.constraint(equalTo: quoteCardView.bottomAnchor),
+            quoteLeftLineView.widthAnchor.constraint(equalToConstant: 3),
+        ])
         stackView.addArrangedSubview(quoteCardView)
 
-        // 图片
-        imagesStack.axis = .vertical
-        imagesStack.spacing = 12
-        stackView.addArrangedSubview(imagesStack)
+        // 图片条：网页 grabrow 口径——横向滚动，高 216、gap 8、圆角 12、宽按原图比例夹取。
+        detailImagesScrollView.translatesAutoresizingMaskIntoConstraints = false
+        detailImagesScrollView.showsHorizontalScrollIndicator = false
+        detailImagesStack.axis = .horizontal
+        detailImagesStack.spacing = 8
+        detailImagesStack.alignment = .fill
+        detailImagesStack.translatesAutoresizingMaskIntoConstraints = false
+        detailImagesScrollView.addSubview(detailImagesStack)
+        let detailImagesHeight = detailImagesScrollView.heightAnchor.constraint(equalToConstant: 0)
+        detailImagesHeightConstraint = detailImagesHeight
+        NSLayoutConstraint.activate([
+            detailImagesHeight,
+            detailImagesStack.topAnchor.constraint(equalTo: detailImagesScrollView.contentLayoutGuide.topAnchor),
+            detailImagesStack.bottomAnchor.constraint(equalTo: detailImagesScrollView.contentLayoutGuide.bottomAnchor),
+            detailImagesStack.leadingAnchor.constraint(equalTo: detailImagesScrollView.contentLayoutGuide.leadingAnchor),
+            detailImagesStack.trailingAnchor.constraint(equalTo: detailImagesScrollView.contentLayoutGuide.trailingAnchor),
+            detailImagesStack.heightAnchor.constraint(equalTo: detailImagesScrollView.frameLayoutGuide.heightAnchor),
+        ])
+        stackView.addArrangedSubview(detailImagesScrollView)
 
         // 互动行：点赞 / 收藏 / 分享 / spacer / 编辑（编辑已从导航栏移入行内）。
         actionRow.axis = .horizontal
-        actionRow.spacing = 20
+        actionRow.spacing = 16
         actionRow.alignment = .center
-        likeButton.contentEdgeInsets = UIEdgeInsets(top: 6, left: 4, bottom: 6, right: 4)
-        likeButton.titleEdgeInsets = UIEdgeInsets(top: 0, left: 4, bottom: 0, right: 0)
+        likeButton.contentEdgeInsets = .zero
+        likeButton.titleEdgeInsets = UIEdgeInsets(top: 0, left: 6, bottom: 0, right: 0)
         likeButton.titleLabel?.font = UIFont.systemFont(ofSize: 14)
-        bookmarkButton.contentEdgeInsets = UIEdgeInsets(top: 6, left: 4, bottom: 6, right: 4)
-        shareButton.contentEdgeInsets = UIEdgeInsets(top: 6, left: 4, bottom: 6, right: 4)
-        shareButton.setImage(UIImage(systemName: "square.and.arrow.up"), for: .normal)
+        bookmarkButton.contentEdgeInsets = UIEdgeInsets(top: 2, left: 2, bottom: 2, right: 2)
+        shareButton.contentEdgeInsets = UIEdgeInsets(top: 2, left: 2, bottom: 2, right: 2)
+        shareButton.setImage(UIImage(systemName: "square.and.arrow.up", withConfiguration: UIImage.SymbolConfiguration(pointSize: 21, weight: .regular)), for: .normal)
         shareButton.tintColor = BearyColors.gray
         editButton.contentEdgeInsets = UIEdgeInsets(top: 6, left: 4, bottom: 6, right: 4)
         editButton.setTitle("编辑", for: .normal)
         editButton.setTitleColor(BearyColors.gray, for: .normal)
-        editButton.titleLabel?.font = UIFont.systemFont(ofSize: 14)
+        editButton.titleLabel?.font = UIFont.systemFont(ofSize: 11)
         editButton.isHidden = true
         actionRow.addArrangedSubview(likeButton)
         actionRow.addArrangedSubview(bookmarkButton)
@@ -518,31 +605,23 @@ class BearyEntryDetailViewController: UIViewController {
     private func render() {
         guard let current = entry else { return }
         authorNameLabel.text = current.authorName ?? "未知用户"
+        avatarInitialLabel.text = String((current.authorName ?? "未知用户").prefix(1)).uppercased()
         avatarImageView.bearySetImage(url: BearyImageURLs.avatarURL(current.authorAvatar))
         if let ms = current.createdAt ?? current.publishAt {
-            timeLabel.text = BearyText.timeString(ms: ms)
+            timeLabel.text = BearyFeedCell.feedTimeString(ms: ms)
         } else {
             timeLabel.text = ""
         }
 
-        // 写给标签：收件人本人看为“写给你的”；作者本人看为“写给 X”（无名时退“写给某个人”）。
+        // 写给标签：仅收件人本人看为“写给你的”（网页公开卡无作者视角分支，该分支已删）。
         let myUserId = SessionManager.shared.currentUser?.id
         if let recipient = current.recipientId, let mine = myUserId, recipient == mine {
             writeToLabel.text = "写给你的"
-            writeToLabel.isHidden = false
-        } else if current.isMine == true || (current.authorId != nil && current.authorId == myUserId) {
-            if let recipientName = current.recipientName, !recipientName.isEmpty {
-                writeToLabel.text = "写给 \(recipientName)"
-                writeToLabel.isHidden = false
-            } else if current.recipientId != nil {
-                writeToLabel.text = "写给某个人"
-                writeToLabel.isHidden = false
-            } else {
-                writeToLabel.isHidden = true
-            }
+            writeToRow.isHidden = false
         } else {
-            writeToLabel.isHidden = true
+            writeToRow.isHidden = true
         }
+        authorInfoStack.layoutMargins = UIEdgeInsets(top: writeToRow.isHidden ? 0 : 1, left: 0, bottom: 0, right: 0)
 
         // 名后 BETA 徽章：网页 badges/v5/<key>-static.svg 拼法加载；SVG 解不出图时隐藏。
         badgeImageView.image = nil
@@ -561,7 +640,7 @@ class BearyEntryDetailViewController: UIViewController {
                 }
             }
         }
-        // 名后 Plus 皇冠：SF Symbol crown.fill 配灰色。
+        // 名后 Plus 皇冠：网页铂金渐变 PNG（crown.imageset），缺失时回退灰色 crown.fill。
         crownImageView.isHidden = (current.authorPlus ?? 0) == 0
 
         // 未公开倒计时 pill（公开篇隐藏）。
@@ -615,15 +694,16 @@ class BearyEntryDetailViewController: UIViewController {
             bodyLabel.isHidden = false
         }
 
-        for sub in imagesStack.arrangedSubviews {
-            imagesStack.removeArrangedSubview(sub)
+        for sub in detailImagesStack.arrangedSubviews {
+            detailImagesStack.removeArrangedSubview(sub)
             sub.removeFromSuperview()
         }
         detailImageKeys = current.images ?? []
         for (index, key) in detailImageKeys.enumerated() {
-            imagesStack.addArrangedSubview(makeImageView(key: key, dims: current.imgDims, index: index))
+            detailImagesStack.addArrangedSubview(makeImageView(key: key, dims: current.imgDims, index: index))
         }
-        imagesStack.isHidden = detailImageKeys.isEmpty
+        detailImagesScrollView.isHidden = detailImageKeys.isEmpty
+        detailImagesHeightConstraint?.constant = detailImageKeys.isEmpty ? 0 : 216
 
         renderQuoteCard()
         updateActionButtons()
@@ -631,6 +711,30 @@ class BearyEntryDetailViewController: UIViewController {
         updateInteractivity()
         updateEditButton()
         startCountdownTimer()
+        updateDetailSpacing()
+    }
+
+    /// 详情纵向节奏（废弃统一 16）：标题行→正文 4，其余段间（引用/图片/操作/回应）均为 10。
+    /// 按当前可见段重算：隐藏段不占位，其前驱的 customSpacing 不影响可见相邻段。
+    private func updateDetailSpacing() {
+        let visible = stackView.arrangedSubviews.filter { $0.isHidden == false }
+        for (position, section) in visible.enumerated() {
+            if position >= visible.count - 1 {
+                continue
+            }
+            let next = visible[position + 1]
+            let gap: CGFloat = (section === authorRow && next === bodyLabel) ? 4 : 10
+            stackView.setCustomSpacing(gap, after: section)
+        }
+    }
+
+    /// 图片条宽（列表页同款 stripW 口径）：216 高下限 0.55 倍、上限 2.22 倍夹取，无尺寸默认 280。
+    private func detailStripWidth(forKey key: String, dims: [String: [Int]]?) -> CGFloat {
+        if let dims = dims, let d = dims[key], d.count >= 2, d[0] > 0, d[1] > 0 {
+            let raw = 216 * CGFloat(d[0]) / CGFloat(d[1])
+            return round(max(216 * 0.55, min(216 * 2.22, raw)))
+        }
+        return 280
     }
 
     private func makeImageView(key: String, dims: [String: [Int]]?, index: Int) -> UIImageView {
@@ -640,11 +744,8 @@ class BearyEntryDetailViewController: UIViewController {
         imageView.contentMode = .scaleAspectFill
         imageView.clipsToBounds = true
         imageView.layer.cornerRadius = 12
-        var multiplier: CGFloat = 3.0 / 4.0
-        if let d = dims?[key], d.count >= 2, d[0] != 0, d[1] != 0 {
-            multiplier = CGFloat(d[1]) / CGFloat(d[0])
-        }
-        imageView.heightAnchor.constraint(equalTo: imageView.widthAnchor, multiplier: multiplier).isActive = true
+        imageView.widthAnchor.constraint(equalToConstant: detailStripWidth(forKey: key, dims: dims)).isActive = true
+        imageView.heightAnchor.constraint(equalToConstant: 216).isActive = true
         imageView.bearySetImage(url: BearyImageURLs.imageURL(key: key, thumb: false))
         imageView.tag = index
         imageView.isUserInteractionEnabled = true
@@ -669,7 +770,7 @@ class BearyEntryDetailViewController: UIViewController {
         let liked = entry?.likedByMe ?? false
         let count = entry?.likeCount ?? 0
         let likeImageName = liked ? "heart.fill" : "heart"
-        likeButton.setImage(UIImage(systemName: likeImageName), for: .normal)
+        likeButton.setImage(UIImage(systemName: likeImageName, withConfiguration: UIImage.SymbolConfiguration(pointSize: 22, weight: .regular)), for: .normal)
         // 点赞计数恒显示（含 0，不隐藏数字位）。
         likeButton.setTitle("\(count)", for: .normal)
         likeButton.tintColor = liked ? BearyColors.orange : BearyColors.gray
@@ -677,7 +778,7 @@ class BearyEntryDetailViewController: UIViewController {
 
         let bookmarked = entry?.bookmarkedByMe ?? false
         let bookmarkImageName = bookmarked ? "bookmark.fill" : "bookmark"
-        bookmarkButton.setImage(UIImage(systemName: bookmarkImageName), for: .normal)
+        bookmarkButton.setImage(UIImage(systemName: bookmarkImageName, withConfiguration: UIImage.SymbolConfiguration(pointSize: 21, weight: .regular)), for: .normal)
         bookmarkButton.tintColor = bookmarked ? BearyColors.orange : BearyColors.gray
     }
 
@@ -685,6 +786,9 @@ class BearyEntryDetailViewController: UIViewController {
 
     private func renderQuoteCard() {
         for sub in quoteCardView.subviews {
+            if sub === quoteLeftLineView {
+                continue
+            }
             sub.removeFromSuperview()
         }
         guard let current = entry else {
@@ -699,6 +803,11 @@ class BearyEntryDetailViewController: UIViewController {
         }
         guard let quoteKey = current.quoteId, !quoteKey.isEmpty else {
             quoteCardView.isHidden = true
+            return
+        }
+        if quoteDeletedKey == quoteKey {
+            quoteCardView.isHidden = false
+            buildQuoteCard(content: nil, createdAt: nil, imageKeys: nil, isPublic: nil, isDeleted: true)
             return
         }
         if quoteFetchFailedKey == quoteKey {
@@ -728,81 +837,124 @@ class BearyEntryDetailViewController: UIViewController {
                     self.cachedQuoteKey = quoteKey
                     self.cachedQuoteEntry = fetched
                     self.renderQuoteCard()
-                case .failure:
-                    self.quoteFetchFailedKey = quoteKey
-                    self.quoteCardView.isHidden = true
+                case .failure(let fetchErr):
+                    if case .notFound = fetchErr {
+                        // 引用目标已删：网页 gone 态，显示已删卡而非整卡隐藏。
+                        self.quoteDeletedKey = quoteKey
+                        self.quoteCardView.isHidden = false
+                        self.buildQuoteCard(content: nil, createdAt: nil, imageKeys: nil, isPublic: nil, isDeleted: true)
+                    } else {
+                        self.quoteFetchFailedKey = quoteKey
+                        self.quoteCardView.isHidden = true
+                    }
                 }
             }
         }
     }
 
-    private func buildQuoteCard(content: String?, createdAt: Int?, imageKeys: [String]?, isPublic: Bool?) {
+    private func buildQuoteCard(content: String?, createdAt: Int?, imageKeys: [String]?, isPublic: Bool?, isDeleted: Bool = false) {
+        // 网页 .quote-card 口径：横向一行（图标／正文／缩略图／日期同行，gap 8），内边距 9/12。
         let inner = UIStackView()
-        inner.axis = .vertical
-        inner.spacing = 6
+        inner.axis = .horizontal
+        inner.spacing = 8
+        inner.alignment = .top
         inner.translatesAutoresizingMaskIntoConstraints = false
         quoteCardView.addSubview(inner)
         NSLayoutConstraint.activate([
-            inner.topAnchor.constraint(equalTo: quoteCardView.topAnchor, constant: 12),
-            inner.bottomAnchor.constraint(equalTo: quoteCardView.bottomAnchor, constant: -12),
+            inner.topAnchor.constraint(equalTo: quoteCardView.topAnchor, constant: 9),
+            inner.bottomAnchor.constraint(equalTo: quoteCardView.bottomAnchor, constant: -9),
             inner.leadingAnchor.constraint(equalTo: quoteCardView.leadingAnchor, constant: 12),
             inner.trailingAnchor.constraint(equalTo: quoteCardView.trailingAnchor, constant: -12),
         ])
+        // 图标顶距 2：包一层 15 图标 + 顶 2 的容器，行高由正文／缩略图撑起。
+        func quoteIcon(named symbolName: String) -> UIView {
+            let wrap = UIView()
+            wrap.translatesAutoresizingMaskIntoConstraints = false
+            let iconView = UIImageView(image: UIImage(systemName: symbolName))
+            iconView.tintColor = BearyColors.gray
+            iconView.translatesAutoresizingMaskIntoConstraints = false
+            wrap.addSubview(iconView)
+            let iconWidth = iconView.widthAnchor.constraint(equalToConstant: 15)
+            iconWidth.priority = UILayoutPriority(999)
+            let iconHeight = iconView.heightAnchor.constraint(equalToConstant: 15)
+            iconHeight.priority = UILayoutPriority(999)
+            let wrapWidth = wrap.widthAnchor.constraint(equalToConstant: 15)
+            wrapWidth.priority = UILayoutPriority(999)
+            NSLayoutConstraint.activate([
+                iconWidth, iconHeight, wrapWidth,
+                iconView.topAnchor.constraint(equalTo: wrap.topAnchor, constant: 2),
+                iconView.bottomAnchor.constraint(equalTo: wrap.bottomAnchor),
+                iconView.leadingAnchor.constraint(equalTo: wrap.leadingAnchor),
+                iconView.trailingAnchor.constraint(equalTo: wrap.trailingAnchor),
+            ])
+            return wrap
+        }
+        if isDeleted == true {
+            // 网页 gone 态：quote 图标 15 + 13 gray“引用的日记已删除”。
+            inner.alignment = .center
+            inner.addArrangedSubview(quoteIcon(named: "quote.opening"))
+            let deletedLabel = UILabel()
+            deletedLabel.font = UIFont.systemFont(ofSize: 13)
+            deletedLabel.textColor = BearyColors.gray
+            deletedLabel.text = "引用的日记已删除"
+            deletedLabel.numberOfLines = 0
+            inner.addArrangedSubview(deletedLabel)
+            updateDetailSpacing()
+            return
+        }
         if isPublic == false {
-            let row = UIStackView()
-            row.axis = .horizontal
-            row.spacing = 6
-            row.alignment = .center
-            let lockImageView = UIImageView(image: UIImage(systemName: "lock"))
-            lockImageView.tintColor = BearyColors.gray
-            lockImageView.translatesAutoresizingMaskIntoConstraints = false
-            lockImageView.widthAnchor.constraint(equalToConstant: 16).isActive = true
-            lockImageView.heightAnchor.constraint(equalToConstant: 16).isActive = true
+            inner.alignment = .center
+            inner.addArrangedSubview(quoteIcon(named: "lock"))
             let lockedLabel = UILabel()
-            lockedLabel.font = UIFont.systemFont(ofSize: 14)
+            lockedLabel.font = UIFont.systemFont(ofSize: 13)
             lockedLabel.textColor = BearyColors.gray
             lockedLabel.text = "引用了一篇尚未公开的日记"
             lockedLabel.numberOfLines = 0
-            row.addArrangedSubview(lockImageView)
-            row.addArrangedSubview(lockedLabel)
-            inner.addArrangedSubview(row)
+            inner.addArrangedSubview(lockedLabel)
+            updateDetailSpacing()
             return
         }
-        let row = UIStackView()
-        row.axis = .horizontal
-        row.spacing = 6
-        row.alignment = .top
-        let quoteIconView = UIImageView(image: UIImage(systemName: "quote.opening"))
-        quoteIconView.tintColor = BearyColors.gray
-        quoteIconView.translatesAutoresizingMaskIntoConstraints = false
-        quoteIconView.widthAnchor.constraint(equalToConstant: 16).isActive = true
-        quoteIconView.heightAnchor.constraint(equalToConstant: 16).isActive = true
+        inner.addArrangedSubview(quoteIcon(named: "quote.opening"))
         let textLabel = UILabel()
-        textLabel.font = UIFont.systemFont(ofSize: 14)
+        textLabel.font = UIFont.systemFont(ofSize: 13.5)
         textLabel.textColor = BearyColors.ink
         textLabel.numberOfLines = 3
-        textLabel.text = content ?? ""
-        row.addArrangedSubview(quoteIconView)
-        row.addArrangedSubview(textLabel)
-        inner.addArrangedSubview(row)
-        if let keys = imageKeys, let firstKey = keys.first, !firstKey.isEmpty {
-            let thumbView = UIImageView()
-            thumbView.translatesAutoresizingMaskIntoConstraints = false
-            thumbView.backgroundColor = BearyColors.faint
-            thumbView.contentMode = .scaleAspectFill
-            thumbView.clipsToBounds = true
-            thumbView.layer.cornerRadius = 8
-            thumbView.heightAnchor.constraint(equalToConstant: 72).isActive = true
-            thumbView.bearySetImage(url: BearyImageURLs.imageURL(key: firstKey, thumb: true))
-            inner.addArrangedSubview(thumbView)
+        textLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        let paragraph = NSMutableParagraphStyle()
+        paragraph.lineHeightMultiple = 1.55
+        textLabel.attributedText = NSAttributedString(string: content ?? "", attributes: [.font: UIFont.systemFont(ofSize: 13.5), .foregroundColor: BearyColors.ink, .paragraphStyle: paragraph])
+        inner.addArrangedSubview(textLabel)
+        if let keys = imageKeys?.filter({ $0.isEmpty == false }), keys.isEmpty == false {
+            let thumbsStack = UIStackView()
+            thumbsStack.axis = .horizontal
+            thumbsStack.spacing = 5
+            thumbsStack.alignment = .fill
+            for thumbKey in keys {
+                let thumbView = UIImageView()
+                thumbView.translatesAutoresizingMaskIntoConstraints = false
+                thumbView.backgroundColor = BearyColors.faint
+                thumbView.contentMode = .scaleAspectFill
+                thumbView.clipsToBounds = true
+                thumbView.layer.cornerRadius = 7
+                let thumbWidth = thumbView.widthAnchor.constraint(equalToConstant: 42)
+                thumbWidth.priority = UILayoutPriority(999)
+                let thumbHeight = thumbView.heightAnchor.constraint(equalToConstant: 42)
+                thumbHeight.priority = UILayoutPriority(999)
+                NSLayoutConstraint.activate([thumbWidth, thumbHeight])
+                thumbView.bearySetImage(url: BearyImageURLs.imageURL(key: thumbKey, thumb: true))
+                thumbsStack.addArrangedSubview(thumbView)
+            }
+            inner.addArrangedSubview(thumbsStack)
         }
         if let ms = createdAt {
             let dateLabel = UILabel()
             dateLabel.font = UIFont.systemFont(ofSize: 12)
             dateLabel.textColor = BearyColors.gray
+            dateLabel.setContentCompressionResistancePriority(.required, for: .horizontal)
             dateLabel.text = quoteDateString(ms: ms)
             inner.addArrangedSubview(dateLabel)
         }
+        updateDetailSpacing()
     }
 
     /// 网页 fmtDate 口径：M月d日 HH:mm。
@@ -814,7 +966,7 @@ class BearyEntryDetailViewController: UIViewController {
         return fmt.string(from: date)
     }
 
-    // MARK: - 回应行（网页 chip 口径：淡底 + 线边框、熊图 24 + 计数粗体 12 灰字；自己的改墨边框 + 浅底 + 墨字粗体）
+    // MARK: - 回应行（网页 chip 口径：淡底 + 线边框、熊图 24 + 计数 12 灰字 regular；自己的改墨边框 + hov 底 + 墨字粗体）
 
     private func resizedEmoteImage(_ image: UIImage, pointSize: CGFloat) -> UIImage {
         if image.size.width <= pointSize && image.size.height <= pointSize {
@@ -844,19 +996,29 @@ class BearyEntryDetailViewController: UIViewController {
         }
         emoteFlowView.layoutIfNeeded()
         guard let button = chipButton(forKey: key) else { return }
-        button.transform = CGAffineTransform(scaleX: 0.5, y: 0.5)
-        UIView.animate(withDuration: 0.45, delay: 0, usingSpringWithDamping: 0.6, initialSpringVelocity: 0.5, options: [], animations: {
-            button.transform = .identity
+        // 网页 chipIn 口径：.45s cubic-bezier(.34,1.56,.64,1)，scale .4→1.12→1 + opacity 0→1。
+        button.transform = CGAffineTransform(scaleX: 0.4, y: 0.4)
+        button.alpha = 0
+        UIView.animateKeyframes(withDuration: 0.45, delay: 0, options: [], animations: {
+            UIView.addKeyframe(withRelativeStartTime: 0, relativeDuration: 0.6) {
+                button.transform = CGAffineTransform(scaleX: 1.12, y: 1.12)
+                button.alpha = 1
+            }
+            UIView.addKeyframe(withRelativeStartTime: 0.6, relativeDuration: 0.4) {
+                button.transform = .identity
+                button.alpha = 1
+            }
         }, completion: nil)
         if let imageView = button.imageView {
+            // 网页 emoteWiggle 口径：.5s，rotate 0→−10° scale 1.3→8° scale 1.15→0。
             UIView.animateKeyframes(withDuration: 0.5, delay: 0, options: [], animations: {
-                UIView.addKeyframe(withRelativeStartTime: 0, relativeDuration: 0.33) {
-                    imageView.transform = CGAffineTransform(rotationAngle: -0.14)
+                UIView.addKeyframe(withRelativeStartTime: 0, relativeDuration: 0.3) {
+                    imageView.transform = CGAffineTransform(rotationAngle: -0.1745).scaledBy(x: 1.3, y: 1.3)
                 }
-                UIView.addKeyframe(withRelativeStartTime: 0.33, relativeDuration: 0.34) {
-                    imageView.transform = CGAffineTransform(rotationAngle: 0.14)
+                UIView.addKeyframe(withRelativeStartTime: 0.3, relativeDuration: 0.3) {
+                    imageView.transform = CGAffineTransform(rotationAngle: 0.1396).scaledBy(x: 1.15, y: 1.15)
                 }
-                UIView.addKeyframe(withRelativeStartTime: 0.67, relativeDuration: 0.33) {
+                UIView.addKeyframe(withRelativeStartTime: 0.6, relativeDuration: 0.4) {
                     imageView.transform = .identity
                 }
             }, completion: nil)
@@ -884,11 +1046,12 @@ class BearyEntryDetailViewController: UIViewController {
                 let name = BearyText.moodNames[key] ?? key
                 button.setTitle("\(name) \(count)", for: .normal)
             }
-            button.titleLabel?.font = UIFont.boldSystemFont(ofSize: 12)
+            // 网页 .emote-chip 口径：非自己态 regular，自己态 bold；自己态底色 hov（另一路补齐该常量）。
+            button.titleLabel?.font = UIFont.systemFont(ofSize: 12, weight: mine ? .bold : .regular)
             button.setTitleColor(mine ? BearyColors.ink : BearyColors.gray, for: .normal)
             button.contentEdgeInsets = UIEdgeInsets(top: 4, left: 6, bottom: 4, right: 10)
             button.titleEdgeInsets = UIEdgeInsets(top: 0, left: 6, bottom: 0, right: 0)
-            button.backgroundColor = BearyColors.faint
+            button.backgroundColor = mine ? BearyColors.hov : BearyColors.faint
             button.layer.cornerRadius = 16
             button.layer.borderWidth = 1
             button.layer.borderColor = (mine ? BearyColors.ink : BearyColors.line).cgColor
@@ -951,7 +1114,7 @@ class BearyEntryDetailViewController: UIViewController {
                     if case .unauthorized = err {
                         self.onRequireLogin?()
                     } else {
-                        self.showAlert(message: "操作失败，请重试")
+                        self.showAlert(message: "操作失败")
                     }
                     self.updateInteractivity()
                 }
@@ -984,7 +1147,7 @@ class BearyEntryDetailViewController: UIViewController {
                     if case .unauthorized = err {
                         self.onRequireLogin?()
                     } else {
-                        self.showAlert(message: "操作失败，请重试")
+                        self.showAlert(message: "操作失败")
                     }
                     self.updateInteractivity()
                 }
@@ -1346,6 +1509,7 @@ private class BearyEmoteSheetViewController: UIViewController, UICollectionViewD
     private let titleLabel = UILabel()
     private let closeButton = UIButton(type: .system)
     private var sheetHeightConstraint: NSLayoutConstraint?
+    private var sheetBottomConstraint: NSLayoutConstraint?
 
     override func viewDidLoad() {
         super.viewDidLoad()
@@ -1382,7 +1546,7 @@ private class BearyEmoteSheetViewController: UIViewController, UICollectionViewD
         sheetView.addSubview(closeButton)
         let layout = UICollectionViewFlowLayout()
         layout.minimumInteritemSpacing = 6
-        layout.minimumLineSpacing = 10
+        layout.minimumLineSpacing = 6
         layout.sectionInset = UIEdgeInsets(top: 4, left: 18, bottom: 20, right: 18)
         let collection = UICollectionView(frame: .zero, collectionViewLayout: layout)
         collection.translatesAutoresizingMaskIntoConstraints = false
@@ -1393,6 +1557,8 @@ private class BearyEmoteSheetViewController: UIViewController, UICollectionViewD
         sheetView.addSubview(collection)
         let heightConstraint = sheetView.heightAnchor.constraint(equalToConstant: 480)
         sheetHeightConstraint = heightConstraint
+        let bottomConstraint = sheetView.bottomAnchor.constraint(equalTo: view.bottomAnchor)
+        sheetBottomConstraint = bottomConstraint
         let widthLimit = sheetView.widthAnchor.constraint(lessThanOrEqualToConstant: 440)
         let widthFull = sheetView.widthAnchor.constraint(equalTo: view.widthAnchor)
         widthFull.priority = .defaultHigh
@@ -1401,14 +1567,14 @@ private class BearyEmoteSheetViewController: UIViewController, UICollectionViewD
             scrimView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
             scrimView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             scrimView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-            sheetView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
+            bottomConstraint,
             sheetView.centerXAnchor.constraint(equalTo: view.centerXAnchor),
             sheetView.leadingAnchor.constraint(greaterThanOrEqualTo: view.leadingAnchor),
             sheetView.trailingAnchor.constraint(lessThanOrEqualTo: view.trailingAnchor),
             widthLimit,
             widthFull,
             heightConstraint,
-            grabView.topAnchor.constraint(equalTo: sheetView.topAnchor, constant: 10),
+            grabView.topAnchor.constraint(equalTo: sheetView.topAnchor, constant: 12),
             grabView.centerXAnchor.constraint(equalTo: sheetView.centerXAnchor),
             grabView.widthAnchor.constraint(equalToConstant: 38),
             grabView.heightAnchor.constraint(equalToConstant: 4),
@@ -1427,9 +1593,30 @@ private class BearyEmoteSheetViewController: UIViewController, UICollectionViewD
 
     override func viewDidLayoutSubviews() {
         super.viewDidLayoutSubviews()
-        let target = min(540, view.bounds.height * 0.7)
+        let target = min(480, view.bounds.height * 0.56)
         if target > 0, sheetHeightConstraint?.constant != target {
             sheetHeightConstraint?.constant = target
+        }
+        updateSheetChrome()
+    }
+
+    override func traitCollectionDidChange(_ previousTraitCollection: UITraitCollection?) {
+        super.traitCollectionDidChange(previousTraitCollection)
+        updateSheetChrome()
+    }
+
+    /// 面板宽屏形态（宽 ≥821）：全圆角 22 + 1px line 边框 + 底部偏移 24；移动端保持顶部圆角 22 无边框。
+    private func updateSheetChrome() {
+        let isWide = view.bounds.width >= 821
+        if isWide {
+            sheetView.layer.maskedCorners = [.layerMinXMinYCorner, .layerMaxXMinYCorner, .layerMinXMaxYCorner, .layerMaxXMaxYCorner]
+            sheetView.layer.borderWidth = 1
+            sheetView.layer.borderColor = BearyColors.line.cgColor
+            sheetBottomConstraint?.constant = -24
+        } else {
+            sheetView.layer.maskedCorners = [.layerMinXMinYCorner, .layerMaxXMinYCorner]
+            sheetView.layer.borderWidth = 0
+            sheetBottomConstraint?.constant = 0
         }
     }
 
@@ -1454,7 +1641,9 @@ private class BearyEmoteSheetViewController: UIViewController, UICollectionViewD
     func collectionView(_ collectionView: UICollectionView, layout collectionViewLayout: UICollectionViewLayout, sizeForItemAt indexPath: IndexPath) -> CGSize {
         let totalSpacing: CGFloat = 18 * 2 + 6 * 3
         let width = max(44, (collectionView.bounds.width - totalSpacing) / 4)
-        return CGSize(width: width, height: 72)
+        // 格子自动高（网页 .esheet-cell 口径）：上 padding 10 + 图 46 + gap 4 + 名字行高 + 下 padding 6，约 81。
+        let cellHeight = 10 + 46 + 4 + ceil(UIFont.systemFont(ofSize: 11).lineHeight) + 6
+        return CGSize(width: width, height: cellHeight)
     }
 
     func collectionView(_ collectionView: UICollectionView, didSelectItemAt indexPath: IndexPath) {
@@ -1471,7 +1660,7 @@ private class BearyEmoteSheetCell: UICollectionViewCell {
 
     override init(frame: CGRect) {
         super.init(frame: frame)
-        contentView.layer.cornerRadius = 12
+        contentView.layer.cornerRadius = 14
         contentView.clipsToBounds = true
         emoteImageView.contentMode = .scaleAspectFit
         emoteImageView.translatesAutoresizingMaskIntoConstraints = false
@@ -1482,13 +1671,14 @@ private class BearyEmoteSheetCell: UICollectionViewCell {
         let heightConstraint = emoteImageView.heightAnchor.constraint(equalToConstant: 46)
         imageHeightConstraint = heightConstraint
         NSLayoutConstraint.activate([
-            emoteImageView.topAnchor.constraint(equalTo: contentView.topAnchor),
+            emoteImageView.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 10),
             emoteImageView.centerXAnchor.constraint(equalTo: contentView.centerXAnchor),
             emoteImageView.widthAnchor.constraint(equalToConstant: 46),
             heightConstraint,
             nameLabel.topAnchor.constraint(equalTo: emoteImageView.bottomAnchor, constant: 4),
             nameLabel.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 2),
             nameLabel.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -2),
+            nameLabel.bottomAnchor.constraint(equalTo: contentView.bottomAnchor, constant: -6),
         ])
     }
 
@@ -1515,8 +1705,8 @@ private class BearyEmoteSheetCell: UICollectionViewCell {
             emoteImageView.image = nil
             emoteImageView.isHidden = true
             imageHeightConstraint?.constant = 0
-            nameLabel.font = UIFont.systemFont(ofSize: 14)
-            nameLabel.textColor = BearyColors.ink
+            nameLabel.font = UIFont.systemFont(ofSize: 11)
+            nameLabel.textColor = BearyColors.gray
         }
     }
 }
@@ -1531,6 +1721,8 @@ private class BearyEntryImageViewerViewController: UIViewController, UIScrollVie
     private let pagingScrollView = UIScrollView()
     private let counterLabel = UILabel()
     private let closeButton = UIButton(type: .system)
+    private let dotsStack = UIStackView()
+    private var dotViews: [UIView] = []
     private var pageViews: [UIView] = []
     private var didSetInitialPage = false
 
@@ -1550,7 +1742,7 @@ private class BearyEntryImageViewerViewController: UIViewController, UIScrollVie
 
     override func viewDidLoad() {
         super.viewDidLoad()
-        view.backgroundColor = .black
+        view.backgroundColor = UIColor(white: 0, alpha: 0.92)
         pagingScrollView.isPagingEnabled = true
         pagingScrollView.showsHorizontalScrollIndicator = false
         pagingScrollView.showsVerticalScrollIndicator = false
@@ -1561,7 +1753,7 @@ private class BearyEntryImageViewerViewController: UIViewController, UIScrollVie
             let container = UIView()
             let imageView = UIImageView()
             imageView.contentMode = .scaleAspectFit
-            imageView.backgroundColor = .black
+            imageView.backgroundColor = .clear
             imageView.translatesAutoresizingMaskIntoConstraints = false
             container.addSubview(imageView)
             NSLayoutConstraint.activate([
@@ -1580,6 +1772,26 @@ private class BearyEntryImageViewerViewController: UIViewController, UIScrollVie
         counterLabel.translatesAutoresizingMaskIntoConstraints = false
         counterLabel.isHidden = imageKeys.count <= 1
         view.addSubview(counterLabel)
+        // 底部圆点指示器（网页 .lb-dots 口径）：bottom safe+24、gap 8、圆点 6、非当前白 35%、当前白；仅多图显示。
+        dotsStack.axis = .horizontal
+        dotsStack.spacing = 8
+        dotsStack.alignment = .center
+        dotsStack.translatesAutoresizingMaskIntoConstraints = false
+        dotsStack.isHidden = imageKeys.count <= 1
+        for _ in imageKeys {
+            let dot = UIView()
+            dot.translatesAutoresizingMaskIntoConstraints = false
+            dot.backgroundColor = UIColor(white: 1, alpha: 0.35)
+            dot.layer.cornerRadius = 3
+            dot.clipsToBounds = true
+            NSLayoutConstraint.activate([
+                dot.widthAnchor.constraint(equalToConstant: 6),
+                dot.heightAnchor.constraint(equalToConstant: 6),
+            ])
+            dotsStack.addArrangedSubview(dot)
+            dotViews.append(dot)
+        }
+        view.addSubview(dotsStack)
         closeButton.setImage(UIImage(systemName: "xmark"), for: .normal)
         closeButton.tintColor = .white
         closeButton.backgroundColor = UIColor(white: 1, alpha: 0.15)
@@ -1599,8 +1811,10 @@ private class BearyEntryImageViewerViewController: UIViewController, UIScrollVie
             pagingScrollView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
             pagingScrollView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             pagingScrollView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-            counterLabel.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 12),
+            counterLabel.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 20),
             counterLabel.centerXAnchor.constraint(equalTo: view.centerXAnchor),
+            dotsStack.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor, constant: -24),
+            dotsStack.centerXAnchor.constraint(equalTo: view.centerXAnchor),
             closeButton.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 12),
             closeButton.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -16),
             closeButton.widthAnchor.constraint(equalToConstant: 36),
@@ -1636,6 +1850,9 @@ private class BearyEntryImageViewerViewController: UIViewController, UIScrollVie
         if width > 0 && pageViews.isEmpty == false {
             let page = Int(round(pagingScrollView.contentOffset.x / width)) + 1
             counterLabel.text = "\(page) / \(pageViews.count)"
+            for (dotIndex, dot) in dotViews.enumerated() {
+                dot.backgroundColor = (dotIndex == page - 1) ? .white : UIColor(white: 1, alpha: 0.35)
+            }
         }
     }
 

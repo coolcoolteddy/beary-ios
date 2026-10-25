@@ -8,8 +8,10 @@ import UIKit
 // 数据只读草稿 v2（BearyDraftFiles.swift）：v2 存储目前是单槽文件 beary_draft_v2.json，
 // 因此本弹层当前最多呈现一份草稿；多份列表待多槽存储到位后由调用方接线扩展，
 // 本文件不引入草稿 v3（天气/写给/引用进草稿不在本批）。
-// 本批不做草稿删除（含删除动画与撤销 toast 不在内），卡片上无删除入口。
-// 调用约定：点“新建日记”只回调 onNew，点卡片只回调 onOpen 并传出该篇草稿，
+// 卡片操作：整卡点按打开（onOpen）；卡片顶行另有打开钮与删除钮（网页 .df-open/.df-trash
+// 同款）；删除为本地操作：删单槽 v2 文件（图片文件不动，6 秒撤销期内可原样恢复），
+// 删后出 6 秒撤销条，超时丢弃暂存；不碰服务端，不改草稿 v2 存储结构本身。
+// 调用约定：点“新建日记”只回调 onNew，点卡片/打开钮只回调 onOpen 并传出该篇草稿，
 // 弹层本身不 dismiss——由编辑器代理在打开编辑器时负责 dismiss，避免呈现链冲突；
 // 只有关闭钮与遮罩点击会直接 dismiss，且不删任何草稿。
 // 约束：颜色只用 BearyColors（遮罩透明用 .clear）；不新增液态玻璃效果；
@@ -39,6 +41,11 @@ final class BearyDraftBoxViewController: UIViewController {
     private let boxTransitionDelegate = BearyDraftBoxTransitionDelegate()
     private var drafts: [BearyDraft] = []
     private var cardEntries: [(button: UIButton, draftValue: BearyDraft)] = []
+    private var openEntries: [(button: UIButton, draftValue: BearyDraft)] = []
+    private var deleteEntries: [(button: UIButton, draftValue: BearyDraft)] = []
+    private var pendingDeletedDraft: BearyDraft?
+    private var pendingDeletedIndex: Int = 0
+    private var undoTimer: Timer?
     private var didPlayEntrance = false
     private var isDismissing = false
     private var isPadLayout = false
@@ -58,6 +65,10 @@ final class BearyDraftBoxViewController: UIViewController {
     private let subWrap = UIView()
     private let subLabel = UILabel()
     private let newButton = BearyDraftBoxDashedButton(type: .custom)
+    private let undoWrap = UIView()
+    private let undoBar = UIView()
+    private let undoLabel = UILabel()
+    private let undoButton = UIButton(type: .custom)
     private let listWrap = UIView()
     private let listStack = UIStackView()
     private let hintWrap = UIView()
@@ -154,7 +165,6 @@ final class BearyDraftBoxViewController: UIViewController {
         contentStack.addArrangedSubview(handleWrap)
 
         headerWrap.translatesAutoresizingMaskIntoConstraints = false
-        headerWrap.heightAnchor.constraint(equalToConstant: 42).isActive = true
         titleLabel.text = "草稿箱"
         titleLabel.font = UIFont.systemFont(ofSize: 15, weight: .bold)
         titleLabel.textColor = BearyColors.ink
@@ -177,7 +187,9 @@ final class BearyDraftBoxViewController: UIViewController {
         headerWrap.addSubview(closeButton)
         NSLayoutConstraint.activate([
             titleLabel.centerXAnchor.constraint(equalTo: headerWrap.centerXAnchor),
-            titleLabel.centerYAnchor.constraint(equalTo: headerWrap.centerYAnchor),
+            // 头高内容驱动：标题 15/700 + 上 6 + 下 4，约 29（原固定 42）。
+            titleLabel.topAnchor.constraint(equalTo: headerWrap.topAnchor, constant: 6),
+            titleLabel.bottomAnchor.constraint(equalTo: headerWrap.bottomAnchor, constant: -4),
             closeButton.widthAnchor.constraint(equalToConstant: 32),
             closeButton.heightAnchor.constraint(equalToConstant: 32),
             closeButton.trailingAnchor.constraint(equalTo: headerWrap.trailingAnchor, constant: -14),
@@ -210,8 +222,41 @@ final class BearyDraftBoxViewController: UIViewController {
         newButton.titleEdgeInsets = UIEdgeInsets(top: 0, left: 6, bottom: 0, right: 0)
         newButton.contentEdgeInsets = UIEdgeInsets(top: 10, left: 0, bottom: 10, right: 0)
         newButton.addTarget(self, action: #selector(newDraftTapped), for: .touchUpInside)
-        let newWrap = wrapWithBottomPadding(newButton, bottom: 12)
+        let newWrap = wrapWithBottomPadding(newButton, bottom: 12, horizontal: 16)
         contentStack.addArrangedSubview(newWrap)
+
+        // 删除撤销条：删卡后出现，6 秒内点“撤销”恢复该篇，超时自动消失。
+        undoWrap.isHidden = true
+        undoWrap.translatesAutoresizingMaskIntoConstraints = false
+        undoBar.backgroundColor = BearyColors.faint
+        undoBar.layer.cornerRadius = 12
+        undoBar.layer.masksToBounds = true
+        undoBar.translatesAutoresizingMaskIntoConstraints = false
+        undoLabel.text = "草稿已删除"
+        undoLabel.font = UIFont.systemFont(ofSize: 13.5)
+        undoLabel.textColor = BearyColors.ink
+        undoLabel.translatesAutoresizingMaskIntoConstraints = false
+        undoButton.setTitle("撤销", for: .normal)
+        undoButton.setTitleColor(BearyColors.blue, for: .normal)
+        undoButton.titleLabel?.font = UIFont.systemFont(ofSize: 13.5, weight: .semibold)
+        undoButton.translatesAutoresizingMaskIntoConstraints = false
+        undoButton.addTarget(self, action: #selector(undoDeleteTapped), for: .touchUpInside)
+        undoWrap.addSubview(undoBar)
+        undoBar.addSubview(undoLabel)
+        undoBar.addSubview(undoButton)
+        NSLayoutConstraint.activate([
+            undoBar.topAnchor.constraint(equalTo: undoWrap.topAnchor),
+            undoBar.bottomAnchor.constraint(equalTo: undoWrap.bottomAnchor, constant: -12),
+            undoBar.leadingAnchor.constraint(equalTo: undoWrap.leadingAnchor, constant: 16),
+            undoBar.trailingAnchor.constraint(equalTo: undoWrap.trailingAnchor, constant: -16),
+            undoLabel.leadingAnchor.constraint(equalTo: undoBar.leadingAnchor, constant: 14),
+            undoLabel.topAnchor.constraint(equalTo: undoBar.topAnchor, constant: 12),
+            undoLabel.bottomAnchor.constraint(equalTo: undoBar.bottomAnchor, constant: -12),
+            undoButton.trailingAnchor.constraint(equalTo: undoBar.trailingAnchor, constant: -14),
+            undoButton.centerYAnchor.constraint(equalTo: undoBar.centerYAnchor),
+            undoButton.leadingAnchor.constraint(greaterThanOrEqualTo: undoLabel.trailingAnchor, constant: 8),
+        ])
+        contentStack.addArrangedSubview(undoWrap)
 
         listStack.axis = .vertical
         listStack.spacing = 10
@@ -222,8 +267,8 @@ final class BearyDraftBoxViewController: UIViewController {
         NSLayoutConstraint.activate([
             listStack.topAnchor.constraint(equalTo: listWrap.topAnchor, constant: 2),
             listStack.bottomAnchor.constraint(equalTo: listWrap.bottomAnchor, constant: -4),
-            listStack.leadingAnchor.constraint(equalTo: listWrap.leadingAnchor),
-            listStack.trailingAnchor.constraint(equalTo: listWrap.trailingAnchor),
+            listStack.leadingAnchor.constraint(equalTo: listWrap.leadingAnchor, constant: 16),
+            listStack.trailingAnchor.constraint(equalTo: listWrap.trailingAnchor, constant: -16),
         ])
         contentStack.addArrangedSubview(listWrap)
 
@@ -247,7 +292,7 @@ final class BearyDraftBoxViewController: UIViewController {
         contentStack.addArrangedSubview(bottomSpacer)
     }
 
-    private func wrapWithBottomPadding(_ inner: UIView, bottom: CGFloat) -> UIView {
+    private func wrapWithBottomPadding(_ inner: UIView, bottom: CGFloat, horizontal: CGFloat = 0) -> UIView {
         let wrap = UIView()
         wrap.translatesAutoresizingMaskIntoConstraints = false
         inner.translatesAutoresizingMaskIntoConstraints = false
@@ -255,8 +300,8 @@ final class BearyDraftBoxViewController: UIViewController {
         NSLayoutConstraint.activate([
             inner.topAnchor.constraint(equalTo: wrap.topAnchor),
             inner.bottomAnchor.constraint(equalTo: wrap.bottomAnchor, constant: -bottom),
-            inner.leadingAnchor.constraint(equalTo: wrap.leadingAnchor),
-            inner.trailingAnchor.constraint(equalTo: wrap.trailingAnchor),
+            inner.leadingAnchor.constraint(equalTo: wrap.leadingAnchor, constant: horizontal),
+            inner.trailingAnchor.constraint(equalTo: wrap.trailingAnchor, constant: -horizontal),
         ])
         return wrap
     }
@@ -332,7 +377,7 @@ final class BearyDraftBoxViewController: UIViewController {
             sheetView.layer.borderWidth = 1
             sheetView.layer.borderColor = BearyColors.line.cgColor
             sheetView.layer.shadowOpacity = 0.30
-            sheetView.layer.shadowRadius = 30
+            sheetView.layer.shadowRadius = 60
             sheetView.layer.shadowOffset = CGSize(width: 0, height: 24)
             topBorderView.isHidden = true
             sheetScrollView.layer.maskedCorners = [.layerMinXMinYCorner, .layerMaxXMinYCorner, .layerMinXMaxYCorner, .layerMaxXMaxYCorner]
@@ -340,7 +385,7 @@ final class BearyDraftBoxViewController: UIViewController {
             sheetView.layer.maskedCorners = [.layerMinXMinYCorner, .layerMaxXMinYCorner]
             sheetView.layer.borderWidth = 0
             sheetView.layer.shadowOpacity = 0.22
-            sheetView.layer.shadowRadius = 16
+            sheetView.layer.shadowRadius = 32
             sheetView.layer.shadowOffset = CGSize(width: 0, height: -12)
             topBorderView.isHidden = false
             sheetScrollView.layer.maskedCorners = [.layerMinXMinYCorner, .layerMaxXMinYCorner]
@@ -395,6 +440,8 @@ final class BearyDraftBoxViewController: UIViewController {
             arranged.removeFromSuperview()
         }
         cardEntries = []
+        openEntries = []
+        deleteEntries = []
         if drafts.isEmpty {
             subLabel.text = nil
             subWrap.isHidden = true
@@ -471,13 +518,13 @@ final class BearyDraftBoxViewController: UIViewController {
             imageRow.axis = .horizontal
             imageRow.spacing = 4
             imageRow.alignment = .center
-            if let photoImage = UIImage(systemName: "photo", withConfiguration: UIImage.SymbolConfiguration(pointSize: 12, weight: .regular)) {
+            if let photoImage = UIImage(systemName: "photo", withConfiguration: UIImage.SymbolConfiguration(pointSize: 15, weight: .regular)) {
                 let photoView = UIImageView(image: photoImage)
                 photoView.tintColor = BearyColors.gray
                 photoView.translatesAutoresizingMaskIntoConstraints = false
                 NSLayoutConstraint.activate([
-                    photoView.widthAnchor.constraint(equalToConstant: 12),
-                    photoView.heightAnchor.constraint(equalToConstant: 12),
+                    photoView.widthAnchor.constraint(equalToConstant: 15),
+                    photoView.heightAnchor.constraint(equalToConstant: 15),
                 ])
                 imageRow.addArrangedSubview(photoView)
             }
@@ -488,6 +535,33 @@ final class BearyDraftBoxViewController: UIViewController {
             imageRow.addArrangedSubview(countLabel)
             topRow.addArrangedSubview(imageRow)
         }
+        // 卡片操作钮（网页 .df-open/.df-trash 同款）：打开钮整卡点按等价，删除钮本地删卡。
+        let openButton = UIButton(type: .custom)
+        openButton.setTitle("打开", for: .normal)
+        openButton.setTitleColor(BearyColors.ink, for: .normal)
+        openButton.titleLabel?.font = UIFont.systemFont(ofSize: 12.5)
+        openButton.layer.borderWidth = 1.5
+        openButton.layer.borderColor = BearyColors.line.cgColor
+        openButton.layer.cornerRadius = 999
+        openButton.contentEdgeInsets = UIEdgeInsets(top: 5, left: 12, bottom: 5, right: 12)
+        openButton.accessibilityLabel = "打开这份草稿"
+        openButton.addTarget(self, action: #selector(openTapped(_:)), for: .touchUpInside)
+        topRow.addArrangedSubview(openButton)
+        openEntries.append((button: openButton, draftValue: draftValue))
+        let deleteButton = UIButton(type: .custom)
+        if let trashImage = UIImage(systemName: "trash", withConfiguration: UIImage.SymbolConfiguration(pointSize: 17, weight: .regular)) {
+            deleteButton.setImage(trashImage, for: .normal)
+        }
+        deleteButton.tintColor = BearyColors.red
+        deleteButton.accessibilityLabel = "删除草稿"
+        deleteButton.translatesAutoresizingMaskIntoConstraints = false
+        NSLayoutConstraint.activate([
+            deleteButton.widthAnchor.constraint(equalToConstant: 28),
+            deleteButton.heightAnchor.constraint(equalToConstant: 28),
+        ])
+        deleteButton.addTarget(self, action: #selector(deleteTapped(_:)), for: .touchUpInside)
+        topRow.addArrangedSubview(deleteButton)
+        deleteEntries.append((button: deleteButton, draftValue: draftValue))
         inner.addArrangedSubview(topRow)
 
         let summaryLabel = UILabel()
@@ -550,7 +624,7 @@ final class BearyDraftBoxViewController: UIViewController {
     private func moodChip(name: String) -> UIView {
         let chip = UIView()
         chip.backgroundColor = BearyColors.orange.withAlphaComponent(0.13)
-        chip.layer.cornerRadius = 11
+        chip.layer.cornerRadius = 999
         chip.layer.masksToBounds = true
         let label = UILabel()
         label.text = name
@@ -702,6 +776,69 @@ final class BearyDraftBoxViewController: UIViewController {
                 return
             }
         }
+    }
+
+    @objc private func openTapped(_ sender: UIButton) {
+        for entry in openEntries {
+            if entry.button === sender {
+                onOpenHandler(entry.draftValue)
+                return
+            }
+        }
+    }
+
+    /// 本地删卡：从列表移除并清单槽 v2 文件；图片文件不动（撤销期内可原样恢复，
+    /// 超时后由编辑器侧的孤文件清理承接，不在此处改存储结构）。
+    @objc private func deleteTapped(_ sender: UIButton) {
+        var targetIndex: Int?
+        var targetDraft: BearyDraft?
+        for offset in 0..<deleteEntries.count {
+            if deleteEntries[offset].button === sender {
+                targetIndex = offset
+                targetDraft = deleteEntries[offset].draftValue
+            }
+        }
+        guard let foundIndex = targetIndex, let draftValue = targetDraft, foundIndex < drafts.count else { return }
+        // 若上一笔删除仍在撤销期内，先使其过期（不再可恢复），再暂存新的一笔。
+        expirePendingUndo()
+        pendingDeletedDraft = draftValue
+        pendingDeletedIndex = foundIndex
+        drafts.remove(at: foundIndex)
+        BearyDraftStore.clear()
+        renderDrafts()
+        undoWrap.isHidden = false
+        undoTimer?.invalidate()
+        undoTimer = Timer.scheduledTimer(withTimeInterval: 6, repeats: false) { [weak self] _ in
+            self?.expirePendingUndo()
+        }
+    }
+
+    /// 6 秒撤销：把暂存草稿插回原位并写回单槽 v2 文件。
+    @objc private func undoDeleteTapped() {
+        guard let draftValue = pendingDeletedDraft else {
+            expirePendingUndo()
+            return
+        }
+        undoTimer?.invalidate()
+        undoTimer = nil
+        pendingDeletedDraft = nil
+        let insertIndex = min(pendingDeletedIndex, drafts.count)
+        drafts.insert(draftValue, at: insertIndex)
+        BearyDraftStore.save(draftValue)
+        undoWrap.isHidden = true
+        renderDrafts()
+    }
+
+    /// 撤销过期：只丢弃暂存（草稿文件在删除时已清），不重建列表。
+    private func expirePendingUndo() {
+        undoTimer?.invalidate()
+        undoTimer = nil
+        pendingDeletedDraft = nil
+        undoWrap.isHidden = true
+    }
+
+    deinit {
+        undoTimer?.invalidate()
     }
 }
 

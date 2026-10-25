@@ -3,9 +3,13 @@ import UIKit
 // ===== 编辑器写给选人（网页对齐批）=====
 // 写给选人：调 GET /beary/api/search?q=，只取 users 组（display_name/handle 匹配，≤8 条，
 // 与网页搜索同口径），结果过滤掉本人；点行即回传 SearchUser，调用方负责写给 chip 与通知开关。
-// 呈现：底 sheet（UISheetPresentationController，medium/large 两档 + 抓手，文件内自包含，
-// 不碰 SceneDelegate）；搜索框为图标 + “搜索昵称或 @用户名”；init/loading/none/fail 四态齐全；
-// 加载态为搜索框内转圈（图标位换 spinner，不再居中大转圈）。
+// 呈现：自定义底 sheet（文件内自包含，不碰 SceneDelegate）：手机端 max-height 82vh 底 sheet、
+// 圆角 20/20/0/0、border-top 1px line、阴影 0 −12 32 rgba(0,0,0,.22)；宽 ≥821 时居中 440
+// 全圆角 20 + 边框 1 + 阴影 0 24 60 rgba(0,0,0,.30)；自定义抓手 40×4（不用系统抓手）。
+// 遮罩为通用 0.45 黑遮罩（网页 .modal .backdrop 口径），点遮罩关闭；键盘弹出时 sheet
+// 底边抬到键盘上方（此前由 UISheet 承担的避让，改自定义 sheet 后在本文件内补上）。
+// 搜索框为图标 + “搜索昵称或 @用户名”；init/loading/none/fail 四态齐全；
+// 加载态为搜索图标位 18×18 旋转动画（网页 addrSetIconBusy 同款，不再用系统 spinner）。
 // 引用选择不再是独立导航页：已改为编辑器内嵌展开面板（见 BearyComposerViewController），
 // 本文件旧的 BearyQuotePickerViewController 已删除。
 // 约束：部署目标 iOS 15.0、Swift 5.0——只用闭包回调，不用 async/await，不用 if-let 简写。
@@ -17,13 +21,26 @@ final class BearyRecipientPickerViewController: UIViewController, UITextFieldDel
     /// 点行回传（调用方写 selectedRecipient；本页随后自行 dismiss）。
     var onPick: ((SearchUser) -> Void)?
 
+    override init(nibName: String?, bundle: Bundle?) {
+        super.init(nibName: nibName, bundle: bundle)
+        modalPresentationStyle = .overFullScreen
+    }
+
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    private let backdropButton = UIButton(type: .custom)
+    private let sheetView = UIView()
+    private let topBorderView = UIView()
+    private let grabberWrap = UIView()
+    private let grabberView = UIView()
     private let headerIconWrap = UIView()
     private let headerIcon = UIImageView()
     private let headerTitle = UILabel()
     private let closeButton = UIButton(type: .system)
     private let searchBox = UIView()
     private let searchIcon = UIImageView()
-    private let searchSpinner = UIActivityIndicatorView(style: .medium)
     private let searchField = UITextField()
     private let listContainer = UIView()
     private let listScrollView = UIScrollView()
@@ -31,7 +48,6 @@ final class BearyRecipientPickerViewController: UIViewController, UITextFieldDel
     private let stateView = UIView()
     private let stateCircle = UIView()
     private let stateIcon = UIImageView()
-    private let stateSpinner = UIActivityIndicatorView(style: .medium)
     private let stateTitle = UILabel()
     private let stateSubtitle = UILabel()
     private let stateRetryButton = UIButton(type: .system)
@@ -39,50 +55,84 @@ final class BearyRecipientPickerViewController: UIViewController, UITextFieldDel
     private var searchTimer: Timer?
     private var searchSeq = 0
     private var lastQuery = ""
+    private var isPadLayout = false
+    private var keyboardHeight: CGFloat = 0
+    private var sheetHeightConstraint: NSLayoutConstraint?
+    private var sheetWidthConstraint: NSLayoutConstraint?
+    private var phoneConstraints: [NSLayoutConstraint] = []
+    private var padConstraints: [NSLayoutConstraint] = []
+    private var phoneBottomConstraint: NSLayoutConstraint?
+    private var listBottomConstraint: NSLayoutConstraint?
+    private var stateRetryBottomConstraint: NSLayoutConstraint?
 
     override func viewDidLoad() {
         super.viewDidLoad()
-        view.backgroundColor = BearyColors.bg
-        if let sheet = sheetPresentationController {
-            sheet.detents = [.medium(), .large()]
-            sheet.prefersGrabberVisible = true
-            sheet.preferredCornerRadius = 20
-        }
+        view.backgroundColor = UIColor.clear
         buildViews()
+        buildSheetConstraints()
+        applySheetChrome()
         showState(kind: "init", query: "")
+        NotificationCenter.default.addObserver(self, selector: #selector(keyboardWillShow(_:)), name: UIResponder.keyboardWillShowNotification, object: nil)
+        NotificationCenter.default.addObserver(self, selector: #selector(keyboardWillHide(_:)), name: UIResponder.keyboardWillHideNotification, object: nil)
         searchField.becomeFirstResponder()
+    }
+
+    override func viewDidLayoutSubviews() {
+        super.viewDidLayoutSubviews()
+        updateLayoutModeIfNeeded()
+        updateSheetHeight()
     }
 
     deinit {
         searchTimer?.invalidate()
+        NotificationCenter.default.removeObserver(self)
     }
 
     private func buildViews() {
-        headerIconWrap.backgroundColor = BearyColors.orange.withAlphaComponent(0.20)
+        backdropButton.backgroundColor = BearyColors.scrim.withAlphaComponent(0.45)
+        backdropButton.accessibilityLabel = "关闭"
+        backdropButton.addTarget(self, action: #selector(didTapClose), for: .touchUpInside)
+
+        sheetView.backgroundColor = BearyColors.bg
+        sheetView.layer.cornerRadius = 20
+        sheetView.layer.shadowColor = UIColor.black.cgColor
+
+        topBorderView.backgroundColor = BearyColors.line
+
+        grabberView.backgroundColor = BearyColors.line
+        grabberView.layer.cornerRadius = 2
+
+        // 头图底色：网页 color-mix(in srgb, orange 20%, surface)——以 surface 为底混 20% 橙，
+        // 深色下 surface 为 #26262c 而非 bg 的 #000，故比直接 alpha 叠 bg 更亮；另补内圈 28% 橙描边。
+        headerIconWrap.backgroundColor = bearyOrangeMixedOverSurface(fraction: 0.20)
         headerIconWrap.layer.cornerRadius = 20
         headerIconWrap.layer.masksToBounds = true
+        headerIconWrap.layer.borderWidth = 1
+        headerIconWrap.layer.borderColor = BearyColors.orange.withAlphaComponent(0.28).cgColor
         headerIcon.image = UIImage(systemName: "at")
         headerIcon.tintColor = BearyColors.orange
         headerIcon.contentMode = .scaleAspectFit
         headerTitle.text = "写给谁"
         headerTitle.font = UIFont.boldSystemFont(ofSize: 16)
         headerTitle.textColor = BearyColors.ink
-        closeButton.setImage(UIImage(systemName: "xmark"), for: .normal)
+        if let closeImage = UIImage(systemName: "xmark", withConfiguration: UIImage.SymbolConfiguration(pointSize: 15, weight: .regular)) {
+            closeButton.setImage(closeImage, for: .normal)
+        } else {
+            closeButton.setImage(UIImage(systemName: "xmark"), for: .normal)
+        }
         closeButton.tintColor = BearyColors.ink
         closeButton.backgroundColor = BearyColors.faint
         closeButton.layer.cornerRadius = 16
         closeButton.layer.masksToBounds = true
         closeButton.addTarget(self, action: #selector(didTapClose), for: .touchUpInside)
         searchBox.backgroundColor = BearyColors.faint
-        searchBox.layer.cornerRadius = 24
+        searchBox.layer.cornerRadius = 999
         searchBox.layer.masksToBounds = true
         searchBox.layer.borderWidth = 1
         searchBox.layer.borderColor = BearyColors.line.cgColor
         searchIcon.image = UIImage(systemName: "magnifyingglass")
         searchIcon.tintColor = BearyColors.gray
         searchIcon.contentMode = .scaleAspectFit
-        searchSpinner.color = BearyColors.gray
-        searchSpinner.hidesWhenStopped = true
         searchField.placeholder = "搜索昵称或 @用户名"
         searchField.font = UIFont.systemFont(ofSize: 16)
         searchField.textColor = BearyColors.ink
@@ -91,13 +141,14 @@ final class BearyRecipientPickerViewController: UIViewController, UITextFieldDel
         searchField.addTarget(self, action: #selector(searchFieldChanged), for: .editingChanged)
         rowsStack.axis = .vertical
         rowsStack.spacing = 0
+        // 空态圆：底色 orange 18% 不变，补内圈 orange 25% 描边（网页 .addr-stic 同款）。
         stateCircle.backgroundColor = BearyColors.orange.withAlphaComponent(0.18)
         stateCircle.layer.cornerRadius = 27
         stateCircle.layer.masksToBounds = true
+        stateCircle.layer.borderWidth = 1
+        stateCircle.layer.borderColor = BearyColors.orange.withAlphaComponent(0.25).cgColor
         stateIcon.tintColor = BearyColors.orange
         stateIcon.contentMode = .scaleAspectFit
-        stateSpinner.color = BearyColors.orange
-        stateSpinner.hidesWhenStopped = true
         stateTitle.font = UIFont.boldSystemFont(ofSize: 15)
         stateTitle.textColor = BearyColors.ink
         stateTitle.textAlignment = .center
@@ -110,30 +161,51 @@ final class BearyRecipientPickerViewController: UIViewController, UITextFieldDel
         stateRetryButton.titleLabel?.font = UIFont.systemFont(ofSize: 15)
         stateRetryButton.isHidden = true
         stateRetryButton.addTarget(self, action: #selector(didTapStateRetry), for: .touchUpInside)
-        for v in [headerIconWrap, headerIcon, headerTitle, closeButton, searchBox, searchIcon, searchSpinner, searchField, listContainer, listScrollView, rowsStack, stateView, stateCircle, stateIcon, stateSpinner, stateTitle, stateSubtitle, stateRetryButton] {
+        for v in [backdropButton, sheetView, topBorderView, grabberWrap, grabberView, headerIconWrap, headerIcon, headerTitle, closeButton, searchBox, searchIcon, searchField, listContainer, listScrollView, rowsStack, stateView, stateCircle, stateIcon, stateTitle, stateSubtitle, stateRetryButton] {
             v.translatesAutoresizingMaskIntoConstraints = false
         }
-        view.addSubview(headerIconWrap)
+        view.addSubview(backdropButton)
+        view.addSubview(sheetView)
+        sheetView.addSubview(topBorderView)
+        sheetView.addSubview(grabberWrap)
+        grabberWrap.addSubview(grabberView)
+        sheetView.addSubview(headerIconWrap)
         headerIconWrap.addSubview(headerIcon)
-        view.addSubview(headerTitle)
-        view.addSubview(closeButton)
-        view.addSubview(searchBox)
+        sheetView.addSubview(headerTitle)
+        sheetView.addSubview(closeButton)
+        sheetView.addSubview(searchBox)
         searchBox.addSubview(searchIcon)
-        searchBox.addSubview(searchSpinner)
         searchBox.addSubview(searchField)
-        view.addSubview(listContainer)
+        sheetView.addSubview(listContainer)
         listContainer.addSubview(listScrollView)
         listScrollView.addSubview(rowsStack)
         listContainer.addSubview(stateView)
         stateView.addSubview(stateCircle)
         stateCircle.addSubview(stateIcon)
-        stateCircle.addSubview(stateSpinner)
         stateView.addSubview(stateTitle)
         stateView.addSubview(stateSubtitle)
         stateView.addSubview(stateRetryButton)
+        let retryBottom = stateRetryButton.bottomAnchor.constraint(equalTo: stateView.bottomAnchor)
+        stateRetryBottomConstraint = retryBottom
         NSLayoutConstraint.activate([
-            headerIconWrap.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 4),
-            headerIconWrap.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 16),
+            backdropButton.topAnchor.constraint(equalTo: view.topAnchor),
+            backdropButton.bottomAnchor.constraint(equalTo: view.bottomAnchor),
+            backdropButton.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            backdropButton.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            topBorderView.topAnchor.constraint(equalTo: sheetView.topAnchor),
+            topBorderView.leadingAnchor.constraint(equalTo: sheetView.leadingAnchor),
+            topBorderView.trailingAnchor.constraint(equalTo: sheetView.trailingAnchor),
+            topBorderView.heightAnchor.constraint(equalToConstant: 1),
+            grabberWrap.topAnchor.constraint(equalTo: sheetView.topAnchor),
+            grabberWrap.leadingAnchor.constraint(equalTo: sheetView.leadingAnchor),
+            grabberWrap.trailingAnchor.constraint(equalTo: sheetView.trailingAnchor),
+            grabberView.widthAnchor.constraint(equalToConstant: 40),
+            grabberView.heightAnchor.constraint(equalToConstant: 4),
+            grabberView.centerXAnchor.constraint(equalTo: grabberWrap.centerXAnchor),
+            grabberView.topAnchor.constraint(equalTo: grabberWrap.topAnchor, constant: 10),
+            grabberView.bottomAnchor.constraint(equalTo: grabberWrap.bottomAnchor),
+            headerIconWrap.topAnchor.constraint(equalTo: grabberWrap.bottomAnchor, constant: 4),
+            headerIconWrap.leadingAnchor.constraint(equalTo: sheetView.leadingAnchor, constant: 16),
             headerIconWrap.widthAnchor.constraint(equalToConstant: 40),
             headerIconWrap.heightAnchor.constraint(equalToConstant: 40),
             headerIcon.centerXAnchor.constraint(equalTo: headerIconWrap.centerXAnchor),
@@ -143,27 +215,24 @@ final class BearyRecipientPickerViewController: UIViewController, UITextFieldDel
             headerTitle.centerYAnchor.constraint(equalTo: headerIconWrap.centerYAnchor),
             headerTitle.leadingAnchor.constraint(equalTo: headerIconWrap.trailingAnchor, constant: 11),
             closeButton.centerYAnchor.constraint(equalTo: headerIconWrap.centerYAnchor),
-            closeButton.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -16),
+            closeButton.trailingAnchor.constraint(equalTo: sheetView.trailingAnchor, constant: -16),
             closeButton.widthAnchor.constraint(equalToConstant: 32),
             closeButton.heightAnchor.constraint(equalToConstant: 32),
             searchBox.topAnchor.constraint(equalTo: headerIconWrap.bottomAnchor, constant: 12),
-            searchBox.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 16),
-            searchBox.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -16),
-            searchBox.heightAnchor.constraint(equalToConstant: 48),
+            searchBox.leadingAnchor.constraint(equalTo: sheetView.leadingAnchor, constant: 16),
+            searchBox.trailingAnchor.constraint(equalTo: sheetView.trailingAnchor, constant: -16),
             searchIcon.leadingAnchor.constraint(equalTo: searchBox.leadingAnchor, constant: 14),
             searchIcon.centerYAnchor.constraint(equalTo: searchBox.centerYAnchor),
             searchIcon.widthAnchor.constraint(equalToConstant: 18),
             searchIcon.heightAnchor.constraint(equalToConstant: 18),
-            searchSpinner.leadingAnchor.constraint(equalTo: searchBox.leadingAnchor, constant: 14),
-            searchSpinner.centerYAnchor.constraint(equalTo: searchBox.centerYAnchor),
+            // 搜索框高内容驱动：字号 16 + 上下 padding 各 12，约 44（原固定 48）。
             searchField.leadingAnchor.constraint(equalTo: searchBox.leadingAnchor, constant: 41),
             searchField.trailingAnchor.constraint(equalTo: searchBox.trailingAnchor, constant: -14),
-            searchField.topAnchor.constraint(equalTo: searchBox.topAnchor),
-            searchField.bottomAnchor.constraint(equalTo: searchBox.bottomAnchor),
+            searchField.topAnchor.constraint(equalTo: searchBox.topAnchor, constant: 12),
+            searchField.bottomAnchor.constraint(equalTo: searchBox.bottomAnchor, constant: -12),
             listContainer.topAnchor.constraint(equalTo: searchBox.bottomAnchor, constant: 10),
-            listContainer.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 10),
-            listContainer.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -10),
-            listContainer.bottomAnchor.constraint(equalTo: view.bottomAnchor),
+            listContainer.leadingAnchor.constraint(equalTo: sheetView.leadingAnchor, constant: 10),
+            listContainer.trailingAnchor.constraint(equalTo: sheetView.trailingAnchor, constant: -10),
             listScrollView.topAnchor.constraint(equalTo: listContainer.topAnchor),
             listScrollView.leadingAnchor.constraint(equalTo: listContainer.leadingAnchor),
             listScrollView.trailingAnchor.constraint(equalTo: listContainer.trailingAnchor),
@@ -184,18 +253,185 @@ final class BearyRecipientPickerViewController: UIViewController, UITextFieldDel
             stateIcon.centerYAnchor.constraint(equalTo: stateCircle.centerYAnchor),
             stateIcon.widthAnchor.constraint(equalToConstant: 25),
             stateIcon.heightAnchor.constraint(equalToConstant: 25),
-            stateSpinner.centerXAnchor.constraint(equalTo: stateCircle.centerXAnchor),
-            stateSpinner.centerYAnchor.constraint(equalTo: stateCircle.centerYAnchor),
             stateTitle.topAnchor.constraint(equalTo: stateCircle.bottomAnchor, constant: 11),
             stateTitle.leadingAnchor.constraint(equalTo: stateView.leadingAnchor, constant: 20),
             stateTitle.trailingAnchor.constraint(equalTo: stateView.trailingAnchor, constant: -20),
             stateSubtitle.topAnchor.constraint(equalTo: stateTitle.bottomAnchor, constant: 4),
             stateSubtitle.leadingAnchor.constraint(equalTo: stateView.leadingAnchor, constant: 20),
             stateSubtitle.trailingAnchor.constraint(equalTo: stateView.trailingAnchor, constant: -20),
+            stateSubtitle.bottomAnchor.constraint(lessThanOrEqualTo: stateView.bottomAnchor),
             stateRetryButton.topAnchor.constraint(equalTo: stateSubtitle.bottomAnchor, constant: 8),
             stateRetryButton.centerXAnchor.constraint(equalTo: stateView.centerXAnchor),
-            stateRetryButton.bottomAnchor.constraint(equalTo: stateView.bottomAnchor),
+            retryBottom,
         ])
+    }
+
+    // MARK: - 自定义 sheet 布局（手机端底 sheet / 宽 ≥821 居中卡片）
+
+    private func buildSheetConstraints() {
+        let heightConstraint = sheetView.heightAnchor.constraint(equalToConstant: 320)
+        heightConstraint.isActive = true
+        sheetHeightConstraint = heightConstraint
+        let widthConstraint = sheetView.widthAnchor.constraint(equalToConstant: 440)
+        sheetWidthConstraint = widthConstraint
+        let bottomConstraint = sheetView.bottomAnchor.constraint(equalTo: view.bottomAnchor)
+        phoneBottomConstraint = bottomConstraint
+        phoneConstraints = [
+            sheetView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            sheetView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            bottomConstraint,
+        ]
+        padConstraints = [
+            sheetView.centerXAnchor.constraint(equalTo: view.centerXAnchor),
+            sheetView.centerYAnchor.constraint(equalTo: view.centerYAnchor),
+            widthConstraint,
+        ]
+        let listBottom = listContainer.bottomAnchor.constraint(equalTo: sheetView.bottomAnchor, constant: -14)
+        listBottom.isActive = true
+        listBottomConstraint = listBottom
+        NSLayoutConstraint.activate(phoneConstraints)
+    }
+
+    private func updateLayoutModeIfNeeded() {
+        let pad = view.bounds.width >= 821
+        if pad == isPadLayout {
+            return
+        }
+        isPadLayout = pad
+        if pad {
+            NSLayoutConstraint.deactivate(phoneConstraints)
+            NSLayoutConstraint.activate(padConstraints)
+        } else {
+            NSLayoutConstraint.deactivate(padConstraints)
+            NSLayoutConstraint.activate(phoneConstraints)
+        }
+        applySheetChrome()
+    }
+
+    private func applySheetChrome() {
+        if isPadLayout {
+            sheetView.layer.maskedCorners = [.layerMinXMinYCorner, .layerMaxXMinYCorner, .layerMinXMaxYCorner, .layerMaxXMaxYCorner]
+            sheetView.layer.borderWidth = 1
+            sheetView.layer.borderColor = BearyColors.line.cgColor
+            sheetView.layer.shadowOpacity = 0.30
+            sheetView.layer.shadowRadius = 60
+            sheetView.layer.shadowOffset = CGSize(width: 0, height: 24)
+            topBorderView.isHidden = true
+        } else {
+            sheetView.layer.maskedCorners = [.layerMinXMinYCorner, .layerMaxXMinYCorner]
+            sheetView.layer.borderWidth = 0
+            sheetView.layer.shadowOpacity = 0.22
+            sheetView.layer.shadowRadius = 32
+            sheetView.layer.shadowOffset = CGSize(width: 0, height: -12)
+            topBorderView.isHidden = false
+        }
+    }
+
+    /// sheet 高 = 内容高，上限 82vh（键盘弹出时手机端上限改按键盘上方的可见高计）。
+    private func updateSheetHeight() {
+        let containerHeight = view.bounds.height
+        guard containerHeight > 0 else { return }
+        let sheetWidth = isPadLayout ? min(440, view.bounds.width - 80) : view.bounds.width
+        if let widthConstraint = sheetWidthConstraint, isPadLayout {
+            widthConstraint.constant = max(sheetWidth, 0)
+        }
+        if let listBottom = listBottomConstraint {
+            let pad = 14 + (isPadLayout ? 0 : view.safeAreaInsets.bottom)
+            listBottom.constant = -pad
+        }
+        let searchHeight = searchBox.systemLayoutSizeFitting(
+            CGSize(width: max(sheetWidth - 32, 0), height: 0),
+            withHorizontalFittingPriority: .required,
+            verticalFittingPriority: .fittingSizeLevel
+        ).height
+        let listWidth = max(sheetWidth - 20, 0)
+        let listHeight: CGFloat
+        if !listScrollView.isHidden {
+            listHeight = rowsStack.systemLayoutSizeFitting(
+                CGSize(width: listWidth, height: 0),
+                withHorizontalFittingPriority: .required,
+                verticalFittingPriority: .fittingSizeLevel
+            ).height
+        } else {
+            listHeight = stateView.systemLayoutSizeFitting(
+                CGSize(width: listWidth, height: 0),
+                withHorizontalFittingPriority: .required,
+                verticalFittingPriority: .fittingSizeLevel
+            ).height
+        }
+        let bottomPad = 14 + (isPadLayout ? 0 : view.safeAreaInsets.bottom)
+        // 抓手 14 + 头顶 4 + 头图 40 + 头到搜索 12 + 搜索框高 + 搜索到列表 10 + 列表高 + 底 padding。
+        let fittingHeight = 14 + 4 + 40 + 12 + searchHeight + 10 + listHeight + bottomPad
+        let visibleHeight = containerHeight - (isPadLayout ? 0 : keyboardHeight)
+        let maxHeight = max(visibleHeight * 0.82, 0)
+        let target = min(fittingHeight, maxHeight)
+        if let heightConstraint = sheetHeightConstraint, abs(heightConstraint.constant - target) > 0.5 {
+            heightConstraint.constant = target
+        }
+    }
+
+    /// 以 BearyColors.surface 为底混 fraction 橙（网页 color-mix 同款，动态色随主题切换）。
+    private func bearyOrangeMixedOverSurface(fraction: CGFloat) -> UIColor {
+        return UIColor { traits in
+            let base = BearyColors.surface.resolvedColor(with: traits)
+            let orange = BearyColors.orange.resolvedColor(with: traits)
+            var baseRed: CGFloat = 0
+            var baseGreen: CGFloat = 0
+            var baseBlue: CGFloat = 0
+            var baseAlpha: CGFloat = 0
+            var orangeRed: CGFloat = 0
+            var orangeGreen: CGFloat = 0
+            var orangeBlue: CGFloat = 0
+            var orangeAlpha: CGFloat = 0
+            if base.getRed(&baseRed, green: &baseGreen, blue: &baseBlue, alpha: &baseAlpha),
+               orange.getRed(&orangeRed, green: &orangeGreen, blue: &orangeBlue, alpha: &orangeAlpha) {
+                return UIColor(
+                    red: fraction * orangeRed + (1 - fraction) * baseRed,
+                    green: fraction * orangeGreen + (1 - fraction) * baseGreen,
+                    blue: fraction * orangeBlue + (1 - fraction) * baseBlue,
+                    alpha: 1
+                )
+            }
+            return BearyColors.orange.withAlphaComponent(fraction)
+        }
+    }
+
+    @objc private func keyboardWillShow(_ note: Notification) {
+        keyboardHeight = keyboardHeightFrom(note)
+        if let bottomConstraint = phoneBottomConstraint, !isPadLayout {
+            bottomConstraint.constant = -keyboardHeight
+        }
+        animateKeyboardLayout(note)
+    }
+
+    @objc private func keyboardWillHide(_ note: Notification) {
+        keyboardHeight = 0
+        if let bottomConstraint = phoneBottomConstraint, !isPadLayout {
+            bottomConstraint.constant = 0
+        }
+        animateKeyboardLayout(note)
+    }
+
+    private func keyboardHeightFrom(_ note: Notification) -> CGFloat {
+        guard let info = note.userInfo else { return 0 }
+        guard let value = info[UIResponder.keyboardFrameEndUserInfoKey] as? NSValue else { return 0 }
+        let frame = value.cgRectValue
+        let height = view.bounds.height - frame.minY
+        return max(height, 0)
+    }
+
+    private func animateKeyboardLayout(_ note: Notification) {
+        var duration: TimeInterval = 0.25
+        if let info = note.userInfo, let value = info[UIResponder.keyboardAnimationDurationUserInfoKey] as? TimeInterval {
+            duration = value
+        }
+        if UIAccessibility.isReduceMotionEnabled {
+            view.layoutIfNeeded()
+        } else {
+            UIView.animate(withDuration: duration, animations: {
+                self.view.layoutIfNeeded()
+            })
+        }
     }
 
     @objc private func didTapClose() {
@@ -223,7 +459,7 @@ final class BearyRecipientPickerViewController: UIViewController, UITextFieldDel
         return true
     }
 
-    /// 四态：init（未搜）/ loading（框内转圈 + 列表态）/ none / fail；有结果时态视图隐藏。
+    /// 四态：init（未搜）/ loading（搜索图标位旋转 + 列表态文案）/ none / fail；有结果时态视图隐藏。
     private func showState(kind: String, query: String) {
         if kind == "results" {
             stateView.isHidden = true
@@ -232,12 +468,11 @@ final class BearyRecipientPickerViewController: UIViewController, UITextFieldDel
         }
         stateView.isHidden = false
         listScrollView.isHidden = true
-        stateSpinner.stopAnimating()
         stateIcon.isHidden = false
         stateRetryButton.isHidden = true
+        stateRetryBottomConstraint?.isActive = false
         if kind == "loading" {
-            stateIcon.isHidden = true
-            stateSpinner.startAnimating()
+            stateIcon.image = UIImage(systemName: "magnifyingglass")
             stateTitle.text = "正在找"
             stateSubtitle.text = "马上就来"
         } else if kind == "none" {
@@ -249,6 +484,7 @@ final class BearyRecipientPickerViewController: UIViewController, UITextFieldDel
             stateTitle.text = "搜索失败"
             stateSubtitle.text = "网络好像不太顺"
             stateRetryButton.isHidden = false
+            stateRetryBottomConstraint?.isActive = true
         } else {
             stateIcon.image = UIImage(systemName: "at")
             stateTitle.text = "写给某个人"
@@ -256,14 +492,17 @@ final class BearyRecipientPickerViewController: UIViewController, UITextFieldDel
         }
     }
 
-    /// 搜索框内转圈：图标位换 spinner（网页 addrSetIconBusy 同款），不再居中大转圈。
+    /// 搜索图标位旋转：18×18 放大镜 0.9s 线性无限旋转（网页 .addr-sic.spinning 同款），
+    /// 减动效下不转；不再用框内 medium spinner 与列表态 spinner。
     private func setSearchBusy(_ busy: Bool) {
-        if busy {
-            searchIcon.isHidden = true
-            searchSpinner.startAnimating()
-        } else {
-            searchSpinner.stopAnimating()
-            searchIcon.isHidden = false
+        searchIcon.layer.removeAnimation(forKey: "bearySearchSpin")
+        if busy && !UIAccessibility.isReduceMotionEnabled {
+            let spin = CABasicAnimation(keyPath: "transform.rotation.z")
+            spin.fromValue = 0
+            spin.toValue = CGFloat.pi * 2
+            spin.duration = 0.9
+            spin.repeatCount = .infinity
+            searchIcon.layer.add(spin, forKey: "bearySearchSpin")
         }
     }
 
@@ -376,7 +615,7 @@ final class BearyRecipientPickerViewController: UIViewController, UITextFieldDel
             }
             let separator = UIView()
             separator.translatesAutoresizingMaskIntoConstraints = false
-            separator.backgroundColor = BearyColors.line
+            separator.backgroundColor = BearyColors.line.withAlphaComponent(0.55)
             separator.isHidden = (index == 0)
             row.addSubview(avatarView)
             row.addSubview(fallbackLabel)
@@ -409,7 +648,7 @@ final class BearyRecipientPickerViewController: UIViewController, UITextFieldDel
                 separator.topAnchor.constraint(equalTo: row.topAnchor),
                 separator.leadingAnchor.constraint(equalTo: row.leadingAnchor, constant: 68),
                 separator.trailingAnchor.constraint(equalTo: row.trailingAnchor, constant: -12),
-                separator.heightAnchor.constraint(equalToConstant: 0.5),
+                separator.heightAnchor.constraint(equalToConstant: 1),
             ])
             row.addTarget(self, action: #selector(didTapRow(_:)), for: .touchUpInside)
             row.accessibilityLabel = name

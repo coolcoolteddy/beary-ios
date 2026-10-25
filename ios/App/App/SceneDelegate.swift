@@ -38,6 +38,15 @@ final class BearyChromeViewController: UIViewController {
     private var tabButtons: [UIButton] = []
     private var bellBadge: UILabel!
     private var avatarURLString: String?
+    /// 顶栏图标行（宽度相关间距：≤480 时 10，其余 18，见 layoutChromeOverlays）。
+    private var topStackView: UIStackView?
+    /// 底栏选中背景 pill 及其外阴影（置于选中钮后方、tabStack 下方）。
+    private var selectedPillView: UIView?
+    private var selectedPillShadowView: UIView?
+    /// 底栏玻璃阴影载体（与底栏胶囊同框；玻璃本体 clipsToBounds 会裁掉自身阴影，故阴影另挂一层）。
+    private var bottomCapsuleShadowView: UIView?
+    /// 底栏玻璃深色内高光（inset 0 1 0 白 18%，仅深色显示）。
+    private var bottomCapsuleHighlightView: UIView?
     // 批一：原生页切换状态。currentPage 为 nil 表示尚未显示任何页（启动时 showPage(.home) 亮原生列表）。
     private enum ContainerPage {
         case home, notif, timeline, me, search, invite, user
@@ -80,11 +89,12 @@ final class BearyChromeViewController: UIViewController {
     /// iPhone 底 sheet 编辑器模态的 transitioningDelegate（弱引用，强持有口径同 centeredModal）
     private var composerSheet: BearyComposerSheetTransitioningDelegate?
 
-    private var ink: UIColor { UIColor { t in t.userInterfaceStyle == .dark ? UIColor(white: 0.96, alpha: 1) : .black } }
-    private var gray: UIColor { UIColor { t in t.userInterfaceStyle == .dark ? UIColor(white: 0.66, alpha: 1) : UIColor(white: 0.45, alpha: 1) } }
-    private var bearyOrange: UIColor { UIColor(red: 1.0, green: 0.584, blue: 0.0, alpha: 1) }
-    private var bearyBlue: UIColor { UIColor { t in t.userInterfaceStyle == .dark ? UIColor(red: 0.04, green: 0.52, blue: 1.0, alpha: 1) : UIColor(red: 0.0, green: 0.478, blue: 1.0, alpha: 1) } }
-    private var lineColor: UIColor { UIColor { t in t.userInterfaceStyle == .dark ? UIColor(white: 0.23, alpha: 1) : UIColor(white: 0.86, alpha: 1) } }
+    // 栏内颜色一律走 BearyColors（§0 单一来源，顶栏不再自带旧的 blue/line 近似值）。
+    private var ink: UIColor { BearyColors.ink }
+    private var gray: UIColor { BearyColors.gray }
+    private var bearyOrange: UIColor { BearyColors.orange }
+    private var bearyBlue: UIColor { BearyColors.blue }
+    private var lineColor: UIColor { BearyColors.line }
 
     private func makeGlassView() -> UIVisualEffectView {
         if #available(iOS 26.0, *) {
@@ -94,16 +104,29 @@ final class BearyChromeViewController: UIViewController {
         }
     }
 
+    /// 顶栏图标 imageView 显式 24×24（资产 1x 图 25×25，无约束会显示 25pt；网页 .icon 为 24）。
+    private func constrainButtonIcon(_ button: UIButton) {
+        guard let imageView = button.imageView else { return }
+        imageView.contentMode = .scaleAspectFit
+        imageView.translatesAutoresizingMaskIntoConstraints = false
+        NSLayoutConstraint.activate([
+            imageView.widthAnchor.constraint(equalToConstant: 24),
+            imageView.heightAnchor.constraint(equalToConstant: 24),
+        ])
+    }
+
     private func makeTopIconButton(imageName: String, tint: UIColor, action: Selector) -> UIButton {
         let b = UIButton(type: .custom)
         b.setImage(UIImage(named: imageName)?.withRenderingMode(.alwaysTemplate), for: .normal)
         b.tintColor = tint
+        b.layer.cornerRadius = 12
         b.addTarget(self, action: action, for: .touchUpInside)
         b.translatesAutoresizingMaskIntoConstraints = false
         NSLayoutConstraint.activate([
             b.widthAnchor.constraint(equalToConstant: 40),
             b.heightAnchor.constraint(equalToConstant: 40),
         ])
+        constrainButtonIcon(b)
         return b
     }
 
@@ -133,8 +156,9 @@ final class BearyChromeViewController: UIViewController {
         ])
         let login = UIButton(type: .custom)
         login.setTitle("登录", for: .normal)
-        login.titleLabel?.font = UIFontMetrics.default.scaledFont(for: .boldSystemFont(ofSize: 14))
-        login.titleLabel?.adjustsFontForContentSizeCategory = true
+        // 网页登录 pill：14 semibold 固定字号，不跟随系统字号缩放。
+        login.titleLabel?.font = .systemFont(ofSize: 14, weight: .semibold)
+        login.titleLabel?.adjustsFontForContentSizeCategory = false
         login.setTitleColor(UIColor { t in t.userInterfaceStyle == .dark ? .black : .white }, for: .normal)
         login.backgroundColor = ink
         login.layer.cornerRadius = 16
@@ -155,14 +179,15 @@ final class BearyChromeViewController: UIViewController {
         avatar.setImage(UIImage(named: "IconUser")?.withRenderingMode(.alwaysTemplate), for: .normal)
         avatar.tintColor = ink
         avatar.backgroundColor = lineColor
-        avatar.layer.cornerRadius = 18
+        avatar.layer.cornerRadius = 16
+        avatar.layer.borderWidth = 1
         avatar.clipsToBounds = true
         avatar.addTarget(self, action: #selector(didTapAvatar), for: .touchUpInside)
         avatar.accessibilityLabel = "我"
         avatar.translatesAutoresizingMaskIntoConstraints = false
         NSLayoutConstraint.activate([
-            avatar.widthAnchor.constraint(equalToConstant: 36),
-            avatar.heightAnchor.constraint(equalToConstant: 36),
+            avatar.widthAnchor.constraint(equalToConstant: 32),
+            avatar.heightAnchor.constraint(equalToConstant: 32),
         ])
         avatarButton = avatar
         let spacer = UIView()
@@ -170,6 +195,7 @@ final class BearyChromeViewController: UIViewController {
         topStack.axis = .horizontal
         topStack.alignment = .center
         topStack.spacing = 18
+        topStackView = topStack
         topStack.translatesAutoresizingMaskIntoConstraints = false
         top.contentView.addSubview(topStack)
         NSLayoutConstraint.activate([
@@ -179,6 +205,16 @@ final class BearyChromeViewController: UIViewController {
             topStack.heightAnchor.constraint(equalToConstant: 60),
         ])
         // ---- 底栏胶囊：居中，50pt 高，圆角 25 ----
+        // 阴影载体先加（在胶囊后方）：胶囊本体 clipsToBounds 会裁自身阴影，故阴影另挂一层；
+        // 玻璃本体配方不动（UIGlassEffect 调用不改），这里只补边框与阴影。
+        let capShadow = UIView()
+        capShadow.backgroundColor = .clear
+        capShadow.layer.shadowColor = UIColor.black.cgColor
+        capShadow.layer.shadowOffset = CGSize(width: 0, height: 3)
+        capShadow.layer.shadowRadius = 5
+        capShadow.translatesAutoresizingMaskIntoConstraints = false
+        view.addSubview(capShadow)
+        bottomCapsuleShadowView = capShadow
         let cap = makeGlassView()
         cap.layer.cornerRadius = 25
         cap.clipsToBounds = true
@@ -191,6 +227,10 @@ final class BearyChromeViewController: UIViewController {
             cap.centerXAnchor.constraint(equalTo: view.centerXAnchor),
             cap.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor, constant: -12),
             cap.heightAnchor.constraint(equalToConstant: 50),
+            capShadow.centerXAnchor.constraint(equalTo: cap.centerXAnchor),
+            capShadow.bottomAnchor.constraint(equalTo: cap.bottomAnchor),
+            capShadow.heightAnchor.constraint(equalTo: cap.heightAnchor),
+            capShadow.widthAnchor.constraint(equalTo: cap.widthAnchor),
         ])
         let tabStack = UIStackView()
         tabStack.axis = .horizontal
@@ -220,13 +260,55 @@ final class BearyChromeViewController: UIViewController {
             b.widthAnchor.constraint(equalToConstant: 62).isActive = true
             tabStack.addArrangedSubview(b)
             tabButtons.append(b)
+            constrainButtonIcon(b)
         }
+        // 底栏选中背景 pill：底色 bg 88%、外阴影 0 2 8 黑 13%（CALayer radius 取 CSS blur 一半即 4，
+        // 与 FAB 24→12、草稿箱 32→16 同口径）、内高光 inset 0 1 0 白 55%（顶缘 1pt 亮条）。
+        // 阴影与圆角裁剪冲突，故 pill 与阴影分两层；两层帧由 layoutChromeOverlays 跟选中钮走。
+        let pillShadow = UIView()
+        pillShadow.backgroundColor = .clear
+        pillShadow.layer.shadowColor = UIColor.black.cgColor
+        pillShadow.layer.shadowOpacity = 0.13
+        pillShadow.layer.shadowOffset = CGSize(width: 0, height: 2)
+        pillShadow.layer.shadowRadius = 4
+        pillShadow.isHidden = true
+        cap.contentView.insertSubview(pillShadow, belowSubview: tabStack)
+        selectedPillShadowView = pillShadow
+        let pill = UIView()
+        pill.backgroundColor = BearyColors.bg.withAlphaComponent(0.88)
+        pill.layer.cornerRadius = 21
+        pill.clipsToBounds = true
+        pill.isHidden = true
+        cap.contentView.insertSubview(pill, belowSubview: tabStack)
+        selectedPillView = pill
+        let pillHighlight = UIView()
+        pillHighlight.backgroundColor = UIColor(white: 1, alpha: 0.55)
+        pillHighlight.translatesAutoresizingMaskIntoConstraints = false
+        pill.addSubview(pillHighlight)
+        NSLayoutConstraint.activate([
+            pillHighlight.leadingAnchor.constraint(equalTo: pill.leadingAnchor),
+            pillHighlight.trailingAnchor.constraint(equalTo: pill.trailingAnchor),
+            pillHighlight.topAnchor.constraint(equalTo: pill.topAnchor),
+            pillHighlight.heightAnchor.constraint(equalToConstant: 1),
+        ])
+        // 底栏玻璃深色内高光：inset 0 1 0 白 18%（顶缘 1pt 亮条，仅深色显示，浅色无）。
+        let capHighlight = UIView()
+        capHighlight.backgroundColor = UIColor(white: 1, alpha: 0.18)
+        capHighlight.translatesAutoresizingMaskIntoConstraints = false
+        cap.contentView.insertSubview(capHighlight, belowSubview: tabStack)
+        NSLayoutConstraint.activate([
+            capHighlight.leadingAnchor.constraint(equalTo: cap.contentView.leadingAnchor),
+            capHighlight.trailingAnchor.constraint(equalTo: cap.contentView.trailingAnchor),
+            capHighlight.topAnchor.constraint(equalTo: cap.contentView.topAnchor),
+            capHighlight.heightAnchor.constraint(equalToConstant: 1),
+        ])
+        bottomCapsuleHighlightView = capHighlight
         // 未读角标：挂在消息钮右上角，底色一律蓝；批一无通知接口，默认隐藏，批二接通知接口后再驱动。
-        // 对齐网页 .bnav-badge：最小 17、10 粗体、图标右上 top -5 / right -9。
-        // 原生铃铛图 25pt 居中于钮内，换算为钮中心偏移：横向 +13（25/2 + 9 - 17/2）、纵向 -9（-(25/2 + 5 - 17/2)）。
-        let badge = UILabel()
-        badge.font = UIFontMetrics.default.scaledFont(for: .boldSystemFont(ofSize: 10))
-        badge.adjustsFontForContentSizeCategory = true
+        // 对齐网页 .bnav-badge：高固定 17、10 粗体固定字号、左右 padding 各 5、图标右上 top -5 / right -9。
+        // 图标改 24pt 后换算为钮中心偏移：横向 +12.5（24/2 + 9 - 17/2）、纵向 -8.5（-(24/2 + 5 - 17/2)）。
+        let badge = BearyBadgeLabel()
+        badge.font = .boldSystemFont(ofSize: 10)
+        badge.adjustsFontForContentSizeCategory = false
         badge.textColor = .white
         badge.backgroundColor = bearyBlue
         badge.textAlignment = .center
@@ -238,10 +320,10 @@ final class BearyChromeViewController: UIViewController {
         notifButton.addSubview(badge)
         bellBadge = badge
         NSLayoutConstraint.activate([
-            badge.heightAnchor.constraint(greaterThanOrEqualToConstant: 17),
+            badge.heightAnchor.constraint(equalToConstant: 17),
             badge.widthAnchor.constraint(greaterThanOrEqualToConstant: 17),
-            badge.centerXAnchor.constraint(equalTo: notifButton.centerXAnchor, constant: 13),
-            badge.centerYAnchor.constraint(equalTo: notifButton.centerYAnchor, constant: -9),
+            badge.centerXAnchor.constraint(equalTo: notifButton.centerXAnchor, constant: 12.5),
+            badge.centerYAnchor.constraint(equalTo: notifButton.centerYAnchor, constant: -8.5),
         ])
         // ---- FAB：橙色实心圆，与网页 .fab 同尺寸同位置 ----
         let fab = UIButton(type: .custom)
@@ -254,6 +336,7 @@ final class BearyChromeViewController: UIViewController {
         fab.layer.shadowRadius = 12
         fab.layer.shadowOffset = CGSize(width: 0, height: 10)
         fab.addTarget(self, action: #selector(didTapWrite), for: .touchUpInside)
+        constrainButtonIcon(fab)
         fab.accessibilityLabel = "写日记"
         fab.translatesAutoresizingMaskIntoConstraints = false
         view.addSubview(fab)
@@ -266,6 +349,61 @@ final class BearyChromeViewController: UIViewController {
             fab.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -18),
             fab.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor, constant: -84),
         ])
+        refreshChromeDynamicLayers()
+    }
+
+    /// 深浅切换时才需刷新的图层色（CALayer borderColor/shadowOpacity 不跟动态色自动走）：
+    /// 头像 1px line 边框、底栏玻璃边框（浅 1px 黑 6%、深无边框）、
+    /// 底栏玻璃阴影（浅黑 10%、深黑 42%）、底栏深色内高光显隐。
+    private func refreshChromeDynamicLayers() {
+        let isDark = traitCollection.userInterfaceStyle == .dark
+        if let avatar = avatarButton {
+            avatar.layer.borderColor = BearyColors.line.resolvedColor(with: traitCollection).cgColor
+        }
+        if let cap = bottomCapsule {
+            cap.layer.borderWidth = isDark ? 0 : 1
+            cap.layer.borderColor = UIColor(white: 0, alpha: 0.06).cgColor
+        }
+        bottomCapsuleShadowView?.layer.shadowOpacity = isDark ? 0.42 : 0.10
+        bottomCapsuleHighlightView?.isHidden = !isDark
+    }
+
+    /// 栏覆盖层布局（viewDidLayoutSubviews 与 updateTabSelection 后调用）：
+    /// 顶栏图标间距随屏宽走（≤480 时 10，其余 18）；选中 pill 跟选中钮帧走；
+    /// 底栏阴影 shadowPath 跟胶囊 bounds 走。只在值变化时写，避免布局循环。
+    private func layoutChromeOverlays() {
+        if let stack = topStackView {
+            let desired: CGFloat = view.bounds.width <= 480 ? 10 : 18
+            if stack.spacing != desired { stack.spacing = desired }
+        }
+        if let shadowView = bottomCapsuleShadowView {
+            shadowView.layer.shadowPath = UIBezierPath(roundedRect: shadowView.bounds, cornerRadius: 25).cgPath
+        }
+        guard let pill = selectedPillView, let pillShadow = selectedPillShadowView, let cap = bottomCapsule else { return }
+        let selectedIndex: Int?
+        switch currentPage {
+        case .home: selectedIndex = 0
+        case .notif: selectedIndex = 1
+        case .timeline: selectedIndex = 2
+        case .me: selectedIndex = 3
+        default: selectedIndex = nil
+        }
+        guard let index = selectedIndex, index < tabButtons.count else {
+            pill.isHidden = true
+            pillShadow.isHidden = true
+            return
+        }
+        let frame = tabButtons[index].convert(tabButtons[index].bounds, to: cap.contentView)
+        guard frame.width > 0, frame.height > 0 else {
+            pill.isHidden = true
+            pillShadow.isHidden = true
+            return
+        }
+        pill.frame = frame
+        pillShadow.frame = frame
+        pillShadow.layer.shadowPath = UIBezierPath(roundedRect: pillShadow.bounds, cornerRadius: 21).cgPath
+        pill.isHidden = false
+        pillShadow.isHidden = false
     }
 
     override func viewDidLoad() {
@@ -289,6 +427,7 @@ final class BearyChromeViewController: UIViewController {
         super.traitCollectionDidChange(previousTraitCollection)
         if traitCollection.hasDifferentColorAppearance(comparedTo: previousTraitCollection) {
             updateStatusBarFromTrait()
+            refreshChromeDynamicLayers()
         }
     }
 
@@ -308,6 +447,9 @@ final class BearyChromeViewController: UIViewController {
             self.topGlass.transform = visible ? .identity : CGAffineTransform(translationX: 0, y: -20)
             self.bottomCapsule.alpha = visible ? 1 : 0
             self.bottomCapsule.transform = visible ? .identity : CGAffineTransform(translationX: 0, y: 80)
+            // 底栏阴影载体与胶囊同显隐同位移（否则胶囊藏起后阴影还留在原地）。
+            self.bottomCapsuleShadowView?.alpha = visible ? 1 : 0
+            self.bottomCapsuleShadowView?.transform = visible ? .identity : CGAffineTransform(translationX: 0, y: 80)
             self.fabButton.alpha = visible ? 1 : 0
             self.fabButton.transform = visible ? .identity : CGAffineTransform(translationX: 0, y: 80)
         }
@@ -336,6 +478,7 @@ final class BearyChromeViewController: UIViewController {
             tabButtons[i].tintColor = (k == selectedKey) ? ink : gray
             tabButtons[i].accessibilityTraits = (k == selectedKey) ? [.button, .selected] : [.button]
         }
+        layoutChromeOverlays()
     }
 
     /// 登录态 → 顶栏：已登录显头像与礼物钮、藏登录钮；未登录反之（礼物钮与头像同口径）。
@@ -375,6 +518,7 @@ final class BearyChromeViewController: UIViewController {
         super.viewDidLayoutSubviews()
         // 旋转/多任务改 bounds 时重算桌面式（iPad 旋转不改 size class，trait 回调靠不住，以 bounds 为准）
         updateDesktopLayout()
+        layoutChromeOverlays()
     }
 
     @objc private func didTapLogo() { showPage(.home) }
@@ -650,10 +794,15 @@ final class BearyChromeViewController: UIViewController {
 
 
 // MARK: - iPhone 编辑器底 sheet（宽 ≤820，对应网页 #editorModal 手机端）
-// 网页形态：88vh 高、底 sheet、顶部圆角 20、抓手 40×4、遮罩 0.45。
+// 网页形态：上限 88vh（内容短时随内容收缩、超高封顶 88%）、底 sheet、顶部圆角 20、
+// 抓手 40×4（margin 10 auto 0）、顶边框 1px line、阴影 0 -12 32 黑 22%、遮罩 0.45。
 // 抓手与下滑关闭由本 presentation controller 提供，不改编辑器本体；遮罩点击不关闭，
 // 取消仍走编辑器自身取消流程（含草稿保留/丢弃三选）。颜色只用 BearyColors：
-// 遮罩为 scrim 降 alpha 至 0.45，抓手为 line（网页 .sheet-handle 用 --line）。
+// 遮罩为 scrim 降 alpha 至 0.45，抓手与顶边框为 line（网页 .sheet-handle 用 --line）。
+// 阴影挂在容器里的独立阴影层上（presentedView 本身 clipsToBounds 会裁掉自身阴影；
+// CALayer radius 取 CSS blur 一半即 16，与草稿箱 32→16 同口径）。
+// 上限实现：取 preferredContentSize 高与 88% 容器高之小；编辑器本体目前不设
+// preferredContentSize，届时仍按 88% 封顶呈现，内容收缩需编辑器一路设该值后才生效。
 // reduced-motion：进出动画时长 0，见 BearyComposerSheetAnimator；下滑松手回弹亦直接复位。
 
 final class BearyComposerSheetTransitioningDelegate: NSObject, UIViewControllerTransitioningDelegate {
@@ -674,13 +823,17 @@ private final class BearyComposerSheetPresentationController: UIPresentationCont
     private let dimmingView = UIView()
     private let grabberStrip = UIView()
     private let grabberPill = UIView()
+    private let sheetShadowView = UIView()
+    private let sheetTopBorderView = UIView()
     private var grabberInstalled = false
     private var sheetHeight: CGFloat = 0
 
     override var frameOfPresentedViewInContainerView: CGRect {
         guard let container = containerView else { return .zero }
         let bounds = container.bounds
-        let height = bounds.height * 0.88
+        let capHeight = bounds.height * 0.88
+        let preferredHeight = presentedViewController.preferredContentSize.height
+        let height = preferredHeight > 0 ? min(capHeight, preferredHeight) : capHeight
         return CGRect(x: 0, y: bounds.height - height, width: bounds.width, height: height)
     }
 
@@ -696,8 +849,14 @@ private final class BearyComposerSheetPresentationController: UIPresentationCont
             dimmingView.leadingAnchor.constraint(equalTo: container.leadingAnchor),
             dimmingView.trailingAnchor.constraint(equalTo: container.trailingAnchor),
         ])
-        // 给编辑器顶栏留 28pt 抓手条：顶栏贴 safeArea 顶，顶起后抓手不压取消/标题。
-        presentedViewController.additionalSafeAreaInsets = UIEdgeInsets(top: 28, left: 0, bottom: 0, right: 0)
+        // 网页抓手无附加安全区：不再补 28pt 顶 inset；抓手直接落在 sheet 顶部（顶距 10）。
+        // 阴影层挂在容器里、presentedView 下方（presentedView 自身裁剪，阴影不能挂它身上）。
+        sheetShadowView.backgroundColor = .clear
+        sheetShadowView.layer.shadowColor = UIColor.black.cgColor
+        sheetShadowView.layer.shadowOpacity = 0.22
+        sheetShadowView.layer.shadowOffset = CGSize(width: 0, height: -12)
+        sheetShadowView.layer.shadowRadius = 16
+        container.addSubview(sheetShadowView)
         if UIAccessibility.isReduceMotionEnabled {
             dimmingView.alpha = 1
         } else if let coordinator = presentedViewController.transitionCoordinator {
@@ -717,9 +876,15 @@ private final class BearyComposerSheetPresentationController: UIPresentationCont
         }
     }
 
+    override func presentationTransitionDidEnd(_ completed: Bool) {
+        if !completed {
+            sheetShadowView.removeFromSuperview()
+        }
+    }
+
     override func dismissalTransitionDidEnd(_ completed: Bool) {
         if completed {
-            presentedViewController.additionalSafeAreaInsets = UIEdgeInsets(top: 0, left: 0, bottom: 0, right: 0)
+            sheetShadowView.removeFromSuperview()
         }
     }
 
@@ -732,7 +897,16 @@ private final class BearyComposerSheetPresentationController: UIPresentationCont
         presentedView.layer.cornerRadius = 20
         presentedView.layer.maskedCorners = [.layerMinXMinYCorner, .layerMaxXMinYCorner]
         presentedView.clipsToBounds = true
-        // 抓手挂在 sheet 自身 view 顶部，随 sheet 跟手下滑而动；只装一次，帧随布局重算。
+        // 阴影层与 sheet 同框、跟 sheet 帧走（跟手下滑时 transform 由 pan 回调同步）。
+        sheetShadowView.frame = frame
+        sheetShadowView.layer.shadowPath = UIBezierPath(
+            roundedRect: sheetShadowView.bounds,
+            byRoundingCorners: [.topLeft, .topRight],
+            cornerRadii: CGSize(width: 20, height: 20)
+        ).cgPath
+        // 阴影层在 presentationTransitionWillBegin 里先于 presentedView 加进容器，故天然在其下方。
+        // 抓手与顶边框挂在 sheet 自身 view 顶部，随 sheet 跟手下滑而动；只装一次，帧随布局重算。
+        // 抓手条不再是 28pt：仅占抓手自身高度（顶距 10 + 高 4 = 14），无附加安全区。
         if grabberInstalled == false {
             grabberPill.backgroundColor = BearyColors.line
             grabberPill.layer.cornerRadius = 2
@@ -740,12 +914,16 @@ private final class BearyComposerSheetPresentationController: UIPresentationCont
             let pan = UIPanGestureRecognizer(target: self, action: #selector(handleGrabberPan(_:)))
             grabberStrip.addGestureRecognizer(pan)
             presentedView.addSubview(grabberStrip)
+            sheetTopBorderView.backgroundColor = BearyColors.line
+            presentedView.addSubview(sheetTopBorderView)
             grabberInstalled = true
         }
-        grabberStrip.frame = CGRect(x: 0, y: 0, width: presentedView.bounds.width, height: 28)
+        grabberStrip.frame = CGRect(x: 0, y: 0, width: presentedView.bounds.width, height: 14)
         let pillWidth: CGFloat = 40
-        grabberPill.frame = CGRect(x: (presentedView.bounds.width - pillWidth) / 2, y: 12, width: pillWidth, height: 4)
+        grabberPill.frame = CGRect(x: (presentedView.bounds.width - pillWidth) / 2, y: 10, width: pillWidth, height: 4)
+        sheetTopBorderView.frame = CGRect(x: 0, y: 0, width: presentedView.bounds.width, height: 1)
         presentedView.bringSubviewToFront(grabberStrip)
+        presentedView.bringSubviewToFront(sheetTopBorderView)
     }
 
     @objc private func handleGrabberPan(_ pan: UIPanGestureRecognizer) {
@@ -755,6 +933,7 @@ private final class BearyComposerSheetPresentationController: UIPresentationCont
         case .changed:
             let drag = max(0, translation)
             presentedView.transform = CGAffineTransform(translationX: 0, y: drag)
+            sheetShadowView.transform = presentedView.transform
             if sheetHeight > 0 {
                 dimmingView.alpha = max(0, 1 - drag / sheetHeight)
             }
@@ -766,6 +945,7 @@ private final class BearyComposerSheetPresentationController: UIPresentationCont
             } else {
                 let restore = {
                     presentedView.transform = .identity
+                    self.sheetShadowView.transform = .identity
                     self.dimmingView.alpha = 1
                 }
                 if UIAccessibility.isReduceMotionEnabled {
@@ -821,5 +1001,14 @@ private final class BearyComposerSheetAnimator: NSObject, UIViewControllerAnimat
                 transitionContext.completeTransition(transitionContext.transitionWasCancelled == false)
             })
         }
+    }
+}
+
+/// 未读角标 label：左右 padding 各 5（intrinsic 宽 = 文字宽 + 10，下限 17）、高固定 17。
+/// UILabel 本身无内容边距，故用子类改 intrinsicContentSize；角标数据逻辑不动。
+private final class BearyBadgeLabel: UILabel {
+    override var intrinsicContentSize: CGSize {
+        let base = super.intrinsicContentSize
+        return CGSize(width: max(17, base.width + 10), height: 17)
     }
 }

@@ -7,7 +7,7 @@ import UIKit
 // 对齐口径（对照 ~/workspace/teddy_site/beary.html 的 renderPublic / deliveredSectionHtml）：
 // 卡片左列头像 40 + 右列内容，padding 22/20/14、底线 2px 全宽；
 // 名 16.5 粗体、时间 14 灰、正文 15 行高 1.6；时间一律 M月d日 HH:mm；
-// 图片条 216 高按宽高比定宽、圆角 12、间距 8、横向滚动；正文超 300 字折叠。
+// 图片条 216 高按宽高比定宽、圆角 12、间距 8、横向滚动；正文超 10 行折叠在 10 行处。
 // 颜色只用 BearyColors；不新增玻璃效果；不碰草稿逻辑与通知角标数据。
 
 class BearyFeedViewController: UIViewController {
@@ -72,12 +72,57 @@ class BearyFeedViewController: UIViewController {
         return tv
     }()
 
+    /// 首拉加载：网页 #feed .loading 口径——32px 转圈 + 上 padding 40。
+    /// 系统 medium 圈为 20pt，放大 1.6 倍后视觉为 32；布局顶距取 46（40 + 半边放大差 6），
+    /// 使放大后的视觉顶边恰好落在 40 处。
     private lazy var centralSpinner: UIActivityIndicatorView = {
-        let sp = UIActivityIndicatorView(style: .large)
+        let sp = UIActivityIndicatorView(style: .medium)
         sp.translatesAutoresizingMaskIntoConstraints = false
         sp.color = BearyColors.gray
         sp.hidesWhenStopped = true
+        sp.transform = CGAffineTransform(scaleX: 1.6, y: 1.6)
         return sp
+    }()
+
+    /// 空态（网页 .empty 口径）：图标 36×36 灰、标题 15 ink（图标→标题间距 8）、
+    /// 副文案 13 灰、容器 padding 26/20/8。图标图形为 SF tray，与网页自定义 inbox 图形不同。
+    private lazy var emptyView: UIView = {
+        let container = UIView()
+        container.backgroundColor = BearyColors.bg
+        let iconView = UIImageView()
+        iconView.translatesAutoresizingMaskIntoConstraints = false
+        let iconConfig = UIImage.SymbolConfiguration(pointSize: 36, weight: .regular)
+        iconView.image = UIImage(systemName: "tray", withConfiguration: iconConfig)
+        iconView.tintColor = BearyColors.gray
+        iconView.contentMode = .scaleAspectFit
+        let titleLabel = UILabel()
+        titleLabel.translatesAutoresizingMaskIntoConstraints = false
+        titleLabel.text = "还没有公开的日记"
+        titleLabel.font = UIFont.systemFont(ofSize: 15)
+        titleLabel.textColor = BearyColors.ink
+        titleLabel.textAlignment = .center
+        let subtitleLabel = UILabel()
+        subtitleLabel.translatesAutoresizingMaskIntoConstraints = false
+        subtitleLabel.text = "每篇日记都会经过 7 天的沉淀，才会在这里与你见面"
+        subtitleLabel.font = UIFont.systemFont(ofSize: 13)
+        subtitleLabel.textColor = BearyColors.gray
+        subtitleLabel.textAlignment = .center
+        subtitleLabel.numberOfLines = 0
+        let stack = UIStackView(arrangedSubviews: [iconView, titleLabel, subtitleLabel])
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        stack.axis = .vertical
+        stack.alignment = .center
+        stack.spacing = 8
+        container.addSubview(stack)
+        NSLayoutConstraint.activate([
+            iconView.widthAnchor.constraint(equalToConstant: 36),
+            iconView.heightAnchor.constraint(equalToConstant: 36),
+            stack.topAnchor.constraint(equalTo: container.topAnchor, constant: 26),
+            stack.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 20),
+            stack.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -20),
+            stack.bottomAnchor.constraint(equalTo: container.bottomAnchor, constant: -8),
+        ])
+        return container
     }()
 
     /// 游客底部 logo（F19）：只在未登录且首拉完成后出现，登录后撤掉。
@@ -97,7 +142,7 @@ class BearyFeedViewController: UIViewController {
             tableView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
             tableView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
             centralSpinner.centerXAnchor.constraint(equalTo: view.centerXAnchor),
-            centralSpinner.centerYAnchor.constraint(equalTo: view.centerYAnchor),
+            centralSpinner.topAnchor.constraint(equalTo: view.topAnchor, constant: 46),
         ])
         refreshAll()
     }
@@ -109,6 +154,9 @@ class BearyFeedViewController: UIViewController {
 
     override func viewDidLayoutSubviews() {
         super.viewDidLayoutSubviews()
+        if tableView.tableHeaderView === emptyView {
+            setEmptyVisible(true)
+        }
         updateFootLogo()
     }
 
@@ -173,8 +221,13 @@ class BearyFeedViewController: UIViewController {
         }
         let container = UIView(frame: CGRect(x: 0, y: 0, width: width, height: 90))
         container.backgroundColor = BearyColors.bg
-        let imgView = UIImageView(frame: CGRect(x: 20, y: 30, width: max(0, width - 40), height: 26))
-        imgView.image = UIImage(named: "LogoHorizontal")
+        let logoImageValue = UIImage(named: "LogoHorizontal")
+        var logoWidth: CGFloat = 0
+        if let logoImageValue = logoImageValue, logoImageValue.size.height > 0 {
+            logoWidth = 26 * logoImageValue.size.width / logoImageValue.size.height
+        }
+        let imgView = UIImageView(frame: CGRect(x: (width - logoWidth) / 2, y: 30, width: logoWidth, height: 26))
+        imgView.image = logoImageValue
         imgView.contentMode = .scaleAspectFit
         imgView.alpha = 0.45
         container.addSubview(imgView)
@@ -489,16 +542,47 @@ class BearyFeedViewController: UIViewController {
         }
     }
 
-    /// F17：空态不再放居中灰字“还没有日记”——空流只留底部 logo（F19，见 updateFootLogo）。
-    /// 这里只管首拉转圈与底部 logo 的显隐。
+    /// 空态以 tableHeaderView 承载（网页空态在流顶、游客 logo 在其下方的叠放顺序；
+    /// 覆盖层写法会把底部 logo 盖住，故不用覆盖层）。
+    private func setEmptyVisible(_ visible: Bool) {
+        if visible == false {
+            if tableView.tableHeaderView === emptyView {
+                tableView.tableHeaderView = nil
+            }
+            return
+        }
+        let width = tableView.bounds.width > 0 ? tableView.bounds.width : view.bounds.width
+        emptyView.frame = CGRect(x: 0, y: 0, width: width, height: 0)
+        emptyView.setNeedsLayout()
+        emptyView.layoutIfNeeded()
+        let height = emptyView.systemLayoutSizeFitting(
+            CGSize(width: width, height: UIView.layoutFittingCompressedSize.height),
+            withHorizontalFittingPriority: .required,
+            verticalFittingPriority: .fittingSizeLevel
+        ).height
+        emptyView.frame = CGRect(x: 0, y: 0, width: width, height: height)
+        if tableView.tableHeaderView !== emptyView {
+            tableView.tableHeaderView = emptyView
+        }
+    }
+
+    /// 空态恢复网页口径：首拉完成、两流均无条目且均无失败时显示空态文案；
+    /// 任一流失败时由失败行承担，不叠加空态；加载中不闪空态。
     private func updateOverlayState() {
         if isFirstLoad && (!deliveredFirstDone || !plazaFirstDone) {
             centralSpinner.isHidden = false
             centralSpinner.startAnimating()
+            setEmptyVisible(false)
             updateFootLogo()
             return
         }
         centralSpinner.stopAnimating()
+        if deliveredLoading || plazaLoading {
+            setEmptyVisible(false)
+        } else {
+            let hasEntries = !deliveredAll.isEmpty || !plazaEntries().isEmpty
+            setEmptyVisible(hasEntries == false && deliveredError == false && plazaError == false)
+        }
         updateFootLogo()
     }
 
@@ -550,8 +634,8 @@ class BearyFeedViewController: UIViewController {
             cell.contentView.addSubview(made)
             NSLayoutConstraint.activate([
                 made.centerXAnchor.constraint(equalTo: cell.contentView.centerXAnchor),
-                made.topAnchor.constraint(equalTo: cell.contentView.topAnchor, constant: 12),
-                made.bottomAnchor.constraint(equalTo: cell.contentView.bottomAnchor, constant: -12),
+                made.topAnchor.constraint(equalTo: cell.contentView.topAnchor, constant: 10),
+                made.bottomAnchor.constraint(equalTo: cell.contentView.bottomAnchor, constant: -4),
             ])
             label = made
         }
@@ -592,12 +676,35 @@ class BearyFeedViewController: UIViewController {
         return made
     }
 
+    /// 回应行 + 号走本文件内的底 sheet（详情页的面板为其文件私有，无法复用）；
+    /// 选定后先收起面板，再由该行 cell 按条目 id 校验后走贴/摘/换逻辑。
+    private func presentEmoteSheet(cell: BearyFeedCell?, entryIdValue: String) {
+        if entryIdValue.isEmpty { return }
+        if presentedViewController != nil { return }
+        let sheet = BearyFeedEmoteSheetViewController()
+        sheet.modalPresentationStyle = .overFullScreen
+        sheet.onPick = { [weak self, weak cell] pickedKey in
+            let reduceMotion = UIAccessibility.isReduceMotionEnabled
+            self?.dismiss(animated: reduceMotion == false) {
+                cell?.handleEmoteSheetPick(entryIdValue: entryIdValue, key: pickedKey)
+            }
+        }
+        let reduceMotion = UIAccessibility.isReduceMotionEnabled
+        present(sheet, animated: reduceMotion == false, completion: nil)
+    }
+
     private func wireCell(_ cell: BearyFeedCell, entry: Entry) {
         cell.onImageTapped = { [weak self] in
             self?.onEntrySelected?(entry)
         }
         cell.onInteractionChanged = { [weak self] changedEntryIdValue, likeCountValue, likedValue, bookmarkedValue in
             self?.applyInteraction(entryId: changedEntryIdValue, likeCount: likeCountValue, likedByMe: likedValue, bookmarkedByMe: bookmarkedValue, emotes: nil)
+        }
+        cell.onEmoteChanged = { [weak self] changedEntryIdValue, emotesValue in
+            self?.applyInteraction(entryId: changedEntryIdValue, likeCount: nil, likedByMe: nil, bookmarkedByMe: nil, emotes: emotesValue)
+        }
+        cell.onEmoteAddRequested = { [weak self, weak cell] in
+            self?.presentEmoteSheet(cell: cell, entryIdValue: entry.id ?? "")
         }
         cell.onRequireLogin = { [weak self] in
             self?.onRequireLogin?()
@@ -714,10 +821,19 @@ extension BearyFeedViewController: UITableViewDataSource, UITableViewDelegate {
         loadPlazaNextPage()
     }
 
+    /// 今日送达头高度内容驱动（约 34 = 头顶 14 + 标题行高），不再固定 36。
     func tableView(_ tableView: UITableView, heightForHeaderInSection section: Int) -> CGFloat {
         if kind(for: section) == .delivered {
             if deliveredError && deliveredAll.isEmpty { return 0 }
-            return 36
+            return UITableView.automaticDimension
+        }
+        return 0
+    }
+
+    func tableView(_ tableView: UITableView, estimatedHeightForHeaderInSection section: Int) -> CGFloat {
+        if kind(for: section) == .delivered {
+            if deliveredError && deliveredAll.isEmpty { return 0 }
+            return 34
         }
         return 0
     }
@@ -755,8 +871,9 @@ extension BearyFeedViewController: UITableViewDataSource, UITableViewDelegate {
             iconView.widthAnchor.constraint(equalToConstant: 17),
             iconView.heightAnchor.constraint(equalToConstant: 17),
             stack.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 20),
-            stack.trailingAnchor.constraint(lessThanOrEqualTo: container.trailingAnchor, constant: -16),
-            stack.centerYAnchor.constraint(equalTo: container.centerYAnchor),
+            stack.trailingAnchor.constraint(lessThanOrEqualTo: container.trailingAnchor, constant: -20),
+            stack.topAnchor.constraint(equalTo: container.topAnchor, constant: 14),
+            stack.bottomAnchor.constraint(equalTo: container.bottomAnchor),
         ])
         return container
     }
@@ -797,11 +914,11 @@ class BearyFeedErrorCell: UITableViewCell {
         btn.titleLabel?.font = UIFont.systemFont(ofSize: 14)
         btn.setTitleColor(BearyColors.ink, for: .normal)
         btn.tintColor = BearyColors.ink
-        btn.contentEdgeInsets = UIEdgeInsets(top: 8, left: 20, bottom: 8, right: 20)
+        btn.contentEdgeInsets = UIEdgeInsets(top: 0, left: 12, bottom: 0, right: 12)
         btn.titleEdgeInsets = UIEdgeInsets(top: 0, left: 6, bottom: 0, right: 0)
         btn.layer.borderWidth = 1
         btn.layer.borderColor = BearyColors.line.cgColor
-        btn.layer.cornerRadius = 17
+        btn.layer.cornerRadius = 20
         btn.addTarget(self, action: #selector(retryTapped), for: .touchUpInside)
         return btn
     }()
@@ -815,16 +932,17 @@ class BearyFeedErrorCell: UITableViewCell {
         stack.translatesAutoresizingMaskIntoConstraints = false
         stack.axis = .vertical
         stack.alignment = .center
-        stack.spacing = 12
+        stack.spacing = 8
         stack.setCustomSpacing(14, after: messageLabel)
         contentView.addSubview(stack)
         NSLayoutConstraint.activate([
             iconView.widthAnchor.constraint(equalToConstant: 36),
             iconView.heightAnchor.constraint(equalToConstant: 36),
+            retryButton.heightAnchor.constraint(equalToConstant: 40),
             stack.centerXAnchor.constraint(equalTo: contentView.centerXAnchor),
             stack.leadingAnchor.constraint(greaterThanOrEqualTo: contentView.leadingAnchor, constant: 16),
             stack.trailingAnchor.constraint(lessThanOrEqualTo: contentView.trailingAnchor, constant: -16),
-            stack.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 20),
+            stack.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 26),
             stack.bottomAnchor.constraint(equalTo: contentView.bottomAnchor, constant: -20),
         ])
     }
@@ -851,6 +969,10 @@ class BearyFeedCell: UITableViewCell {
     var onImageTapped: (() -> Void)?
     /// 点赞/收藏成功后回传（控制器用 applyInteraction 同步模型并刷新该行）。
     var onInteractionChanged: ((String, Int?, Bool?, Bool?) -> Void)?
+    /// 回应成功后回传聚合 emotes（控制器走现有 applyInteraction 只刷该行）。
+    var onEmoteChanged: ((String, [EmoteCount]?) -> Void)?
+    /// 回应行 + 号被点时转发（控制器弹出本文件内的首贴底 sheet）。
+    var onEmoteAddRequested: (() -> Void)?
     var onRequireLogin: (() -> Void)?
     var onActionFailed: (() -> Void)?
     var onShareRequested: ((Entry) -> Void)?
@@ -876,6 +998,13 @@ class BearyFeedCell: UITableViewCell {
     private var isExpanded = false
     private var isLikeBusy = false
     private var isBookmarkBusy = false
+    /// 折叠溢出判定缓存（nil = 未测）：正文是否确实超 10 行。
+    private var foldOverflow: Bool?
+    /// 回应行当前快照（chip 点选按下标取 key；成功后由服务端聚合覆盖）。
+    private var currentEmoteList: [EmoteCount] = []
+    private var isEmoteBusy = false
+    private var emoteRowHeightConstraint: NSLayoutConstraint?
+    private var rightStackTopConstraint: NSLayoutConstraint?
 
     // MARK: 左列头像（F4：无图时背后首字母圆透出）
 
@@ -957,9 +1086,14 @@ class BearyFeedCell: UITableViewCell {
     private let crownImageView: UIImageView = {
         let v = UIImageView()
         v.translatesAutoresizingMaskIntoConstraints = false
-        let config = UIImage.SymbolConfiguration(pointSize: 19, weight: .regular)
-        v.image = UIImage(systemName: "crown.fill", withConfiguration: config)
-        v.tintColor = BearyColors.gray
+        // 网页 Plus 皇冠（铂金渐变 SVG 渲染的 PNG）；资产缺失时回退灰色 crown.fill。
+        if let crown = UIImage(named: "crown") {
+            v.image = crown
+        } else {
+            let config = UIImage.SymbolConfiguration(pointSize: 19, weight: .regular)
+            v.image = UIImage(systemName: "crown.fill", withConfiguration: config)
+            v.tintColor = BearyColors.gray
+        }
         v.contentMode = .scaleAspectFit
         v.isHidden = true
         return v
@@ -1034,6 +1168,10 @@ class BearyFeedCell: UITableViewCell {
         btn.translatesAutoresizingMaskIntoConstraints = false
         btn.titleLabel?.font = UIFont.systemFont(ofSize: 14)
         btn.setTitleColor(BearyColors.gray, for: .normal)
+        btn.tintColor = BearyColors.gray
+        let chevronConfig = UIImage.SymbolConfiguration(pointSize: 14, weight: .regular)
+        btn.setImage(UIImage(systemName: "chevron.down", withConfiguration: chevronConfig), for: .normal)
+        btn.titleEdgeInsets = UIEdgeInsets(top: 0, left: 4, bottom: 0, right: 0)
         btn.contentHorizontalAlignment = .left
         btn.contentEdgeInsets = UIEdgeInsets(top: 4, left: 2, bottom: 4, right: 2)
         btn.isHidden = true
@@ -1065,7 +1203,7 @@ class BearyFeedCell: UITableViewCell {
         let btn = UIButton(type: .system)
         btn.translatesAutoresizingMaskIntoConstraints = false
         btn.titleLabel?.font = UIFont.systemFont(ofSize: 14)
-        btn.contentEdgeInsets = UIEdgeInsets(top: 6, left: 4, bottom: 6, right: 4)
+        btn.contentEdgeInsets = UIEdgeInsets.zero
         btn.titleEdgeInsets = UIEdgeInsets(top: 0, left: 6, bottom: 0, right: 0)
         btn.addTarget(self, action: #selector(likeTapped), for: .touchUpInside)
         return btn
@@ -1074,7 +1212,7 @@ class BearyFeedCell: UITableViewCell {
     private lazy var bookmarkButton: UIButton = {
         let btn = UIButton(type: .system)
         btn.translatesAutoresizingMaskIntoConstraints = false
-        btn.contentEdgeInsets = UIEdgeInsets(top: 5, left: 5, bottom: 5, right: 5)
+        btn.contentEdgeInsets = UIEdgeInsets(top: 2, left: 2, bottom: 2, right: 2)
         btn.addTarget(self, action: #selector(bookmarkTapped), for: .touchUpInside)
         return btn
     }()
@@ -1085,8 +1223,28 @@ class BearyFeedCell: UITableViewCell {
         let config = UIImage.SymbolConfiguration(pointSize: 21, weight: .regular)
         btn.setImage(UIImage(systemName: "square.and.arrow.up", withConfiguration: config), for: .normal)
         btn.tintColor = BearyColors.gray
-        btn.contentEdgeInsets = UIEdgeInsets(top: 5, left: 5, bottom: 5, right: 5)
+        btn.contentEdgeInsets = UIEdgeInsets(top: 2, left: 2, bottom: 2, right: 2)
         btn.addTarget(self, action: #selector(shareTapped), for: .touchUpInside)
+        return btn
+    }()
+
+    // MARK: 回应行（网页 .emote-row 口径：chip + 行末虚线 + 钮，自动换行）
+
+    private let emoteFlowView: BearyFeedEmoteFlowView = {
+        let v = BearyFeedEmoteFlowView()
+        v.translatesAutoresizingMaskIntoConstraints = false
+        return v
+    }()
+
+    private lazy var emoteAddButton: BearyFeedDashedAddButton = {
+        let btn = BearyFeedDashedAddButton(frame: .zero)
+        btn.translatesAutoresizingMaskIntoConstraints = false
+        btn.setImage(UIImage(systemName: "plus"), for: .normal)
+        btn.tintColor = BearyColors.gray
+        btn.accessibilityLabel = "贴一只小熊"
+        btn.widthAnchor.constraint(equalToConstant: 34).isActive = true
+        btn.heightAnchor.constraint(equalToConstant: 34).isActive = true
+        btn.addTarget(self, action: #selector(emoteAddTapped), for: .touchUpInside)
         return btn
     }()
 
@@ -1105,7 +1263,7 @@ class BearyFeedCell: UITableViewCell {
 
     private lazy var rightStack: UIStackView = {
         quoteView.translatesAutoresizingMaskIntoConstraints = false
-        let st = UIStackView(arrangedSubviews: [recipientRow, titleStack, contentLabel, foldButton, quoteView, imagesScrollView, actionStack])
+        let st = UIStackView(arrangedSubviews: [recipientRow, titleStack, contentLabel, foldButton, quoteView, imagesScrollView, actionStack, emoteFlowView])
         st.translatesAutoresizingMaskIntoConstraints = false
         st.axis = .vertical
         st.alignment = .fill
@@ -1142,6 +1300,10 @@ class BearyFeedCell: UITableViewCell {
         moodStack.setContentCompressionResistancePriority(.required, for: .horizontal)
         let height = imagesScrollView.heightAnchor.constraint(equalToConstant: 0)
         imageHeightConstraint = height
+        let emoteHeight = emoteFlowView.heightAnchor.constraint(equalToConstant: 0)
+        emoteRowHeightConstraint = emoteHeight
+        let rightTop = rightStack.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 22)
+        rightStackTopConstraint = rightTop
         // 标题行内可隐藏的子视图：被 stack 隐藏时 stack 会将其尺寸压为 0，
         // 固定尺寸用 999 优先级，避免与 stack 的零尺寸约束冲突出警告；显示时 999 照常生效。
         let recipientIconHeight = recipientIconView.heightAnchor.constraint(equalToConstant: 13)
@@ -1165,10 +1327,10 @@ class BearyFeedCell: UITableViewCell {
             avatarImageView.leadingAnchor.constraint(equalTo: avatarContainer.leadingAnchor),
             avatarImageView.trailingAnchor.constraint(equalTo: avatarContainer.trailingAnchor),
             avatarImageView.bottomAnchor.constraint(equalTo: avatarContainer.bottomAnchor),
-            rightStack.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 22),
+            rightTop,
             rightStack.leadingAnchor.constraint(equalTo: avatarContainer.trailingAnchor, constant: 12),
             rightStack.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -20),
-            rightStack.bottomAnchor.constraint(equalTo: contentView.bottomAnchor, constant: -16),
+            rightStack.bottomAnchor.constraint(equalTo: contentView.bottomAnchor, constant: -14),
             recipientIconView.widthAnchor.constraint(equalToConstant: 13),
             recipientIconHeight,
             badgeWidth,
@@ -1180,6 +1342,7 @@ class BearyFeedCell: UITableViewCell {
             moodImageWidth,
             moodImageView.heightAnchor.constraint(equalToConstant: 20),
             height,
+            emoteHeight,
             imagesStack.topAnchor.constraint(equalTo: imagesScrollView.contentLayoutGuide.topAnchor),
             imagesStack.bottomAnchor.constraint(equalTo: imagesScrollView.contentLayoutGuide.bottomAnchor),
             imagesStack.leadingAnchor.constraint(equalTo: imagesScrollView.contentLayoutGuide.leadingAnchor),
@@ -1198,11 +1361,27 @@ class BearyFeedCell: UITableViewCell {
         fatalError("init(coder:) has not been implemented")
     }
 
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        updateEmoteRowHeight()
+        // 折叠判定以实测行宽为准：初次 configure 时 cell 宽可能尚未落位（用屏宽估算），
+        // 布局落位后若溢出结论变了，在此纠正一次（结论稳定后不再变动，不会往复）。
+        if currentEntry != nil, contentLabel.bounds.width > 0 {
+            let overflow = measuredFoldOverflow(contentWidth: contentLabel.bounds.width)
+            if overflow != foldOverflow {
+                foldOverflow = overflow
+                applyFoldVisibility(overflow: overflow)
+                updateRightStackSpacing()
+            }
+        }
+    }
+
     override func traitCollectionDidChange(_ previousTraitCollection: UITraitCollection?) {
         super.traitCollectionDidChange(previousTraitCollection)
         if currentEntry == nil { return }
         if previousTraitCollection?.userInterfaceStyle != traitCollection.userInterfaceStyle {
             refreshMoodView()
+            renderEmotes()
         }
     }
 
@@ -1210,6 +1389,8 @@ class BearyFeedCell: UITableViewCell {
         super.prepareForReuse()
         onImageTapped = nil
         onInteractionChanged = nil
+        onEmoteChanged = nil
+        onEmoteAddRequested = nil
         onRequireLogin = nil
         onActionFailed = nil
         onShareRequested = nil
@@ -1219,6 +1400,13 @@ class BearyFeedCell: UITableViewCell {
         isExpanded = false
         isLikeBusy = false
         isBookmarkBusy = false
+        foldOverflow = nil
+        currentEmoteList = []
+        isEmoteBusy = false
+        for sub in emoteFlowView.subviews {
+            sub.removeFromSuperview()
+        }
+        emoteRowHeightConstraint?.constant = 0
         likeButton.isEnabled = true
         bookmarkButton.isEnabled = true
         avatarImageView.bearySetImage(url: nil, placeholder: nil)
@@ -1292,27 +1480,62 @@ class BearyFeedCell: UITableViewCell {
     }
 
     private func updateRightStackSpacing() {
+        // 写给行上边距 1：右列顶距 22，写给行可见时改为 23（其余行不变）。
+        rightStackTopConstraint?.constant = recipientRow.isHidden ? 22 : 23
         rightStack.setCustomSpacing(3, after: recipientRow)
         rightStack.setCustomSpacing(4, after: titleStack)
         rightStack.setCustomSpacing(foldButton.isHidden ? 10 : 6, after: contentLabel)
         rightStack.setCustomSpacing(10, after: foldButton)
         rightStack.setCustomSpacing(10, after: quoteView)
         rightStack.setCustomSpacing(10, after: imagesScrollView)
+        rightStack.setCustomSpacing(10, after: actionStack)
+    }
+
+    /// 按行判定折叠：同一属性串实测全文高度 / 单行高度，行数 > 10 即溢出。
+    /// 行高取实测（15pt × 1.6 段落样式），不硬编码 24，避免字体度量偏差。
+    private func measuredFoldOverflow(contentWidth: CGFloat) -> Bool {
+        let fullText = currentEntry?.content ?? ""
+        if fullText.isEmpty || contentWidth <= 0 { return false }
+        let full = attributedBody(fullText)
+        let fullHeight = full.boundingRect(
+            with: CGSize(width: contentWidth, height: CGFloat.greatestFiniteMagnitude),
+            options: [.usesLineFragmentOrigin, .usesFontLeading],
+            context: nil
+        ).height
+        let singleHeight = attributedBody("X").boundingRect(
+            with: CGSize(width: contentWidth, height: CGFloat.greatestFiniteMagnitude),
+            options: [.usesLineFragmentOrigin, .usesFontLeading],
+            context: nil
+        ).height
+        if singleHeight <= 0 { return false }
+        let lines = Int(ceil(fullHeight / singleHeight - 0.01))
+        return lines > 10
+    }
+
+    /// 右列内容宽：头像列 20 + 40 + 间距 12，右 20，共 92。
+    private func rightColumnWidthEstimate() -> CGFloat {
+        let cellWidth = bounds.width > 0 ? bounds.width : UIScreen.main.bounds.width
+        return max(0, cellWidth - 92)
+    }
+
+    private func applyFoldVisibility(overflow: Bool) {
+        contentLabel.numberOfLines = isExpanded ? 0 : (overflow ? 10 : 0)
+        if overflow {
+            foldButton.isHidden = false
+            foldButton.setTitle(isExpanded ? "收起" : "展开全文", for: .normal)
+            foldButton.imageView?.transform = isExpanded ? CGAffineTransform(rotationAngle: CGFloat.pi) : .identity
+        } else {
+            foldButton.isHidden = true
+        }
     }
 
     private func updateContentAndFold() {
         let fullText = currentEntry?.content ?? ""
-        if fullText.count > 300 && !isExpanded {
-            contentLabel.attributedText = attributedBody(String(fullText.prefix(300)))
-        } else {
-            contentLabel.attributedText = attributedBody(fullText)
-        }
-        if fullText.count > 300 {
-            foldButton.isHidden = false
-            foldButton.setTitle(isExpanded ? "收起" : "展开全文", for: .normal)
-        } else {
-            foldButton.isHidden = true
-        }
+        contentLabel.attributedText = attributedBody(fullText)
+        let width = contentLabel.bounds.width > 0 ? contentLabel.bounds.width : rightColumnWidthEstimate()
+        let overflow = measuredFoldOverflow(contentWidth: width)
+        foldOverflow = overflow
+        applyFoldVisibility(overflow: overflow)
     }
 
     private func updateLikeButton() {
@@ -1368,16 +1591,11 @@ class BearyFeedCell: UITableViewCell {
         avatarInitialLabel.text = String(authorNameValue.prefix(1)).uppercased()
         avatarImageView.bearySetImage(url: BearyImageURLs.avatarURL(entry.authorAvatar), placeholder: nil)
 
-        // F12：写给标签。判定（只读 SessionManager + 条目 recipient 字段）：
-        // 1) 当前用户 id == recipientId -> “写给你的”；
-        // 2) 否则只要 recipientName 存在 -> “写给 X”（作者视角；未登录/判定不了时也落到这支，
-        //    因为 recipientName 本身就是作者写给的人名；无名时不显示，避免残标签）。
+        // F12：写给标签只在当前用户就是收件人时显示“写给你的”（网页 renderPublic 同口径）；
+        // 作者视角“写给 X”分支已删除——公开卡上作者本人不显示该行。
         if let recipientIdValue = entry.recipientId, let meIdValue = SessionManager.shared.currentUser?.id, recipientIdValue == meIdValue {
             recipientRow.isHidden = false
             recipientLabel.text = "写给你的"
-        } else if let recipientNameValue = entry.recipientName, !recipientNameValue.isEmpty {
-            recipientRow.isHidden = false
-            recipientLabel.text = "写给 " + recipientNameValue
         } else {
             recipientRow.isHidden = true
             recipientLabel.text = nil
@@ -1467,38 +1685,73 @@ class BearyFeedCell: UITableViewCell {
         // F7/F8：点赞、收藏、分享（按钮状态见 updateLikeButton / updateBookmarkButton）。
         updateLikeButton()
         updateBookmarkButton()
+        // 回应行：操作行下方、行上边距 10（见 updateRightStackSpacing）。
+        renderEmotes()
         updateRightStackSpacing()
     }
 
     // MARK: - 引用 lite 卡（F11）
 
+    /// 引用卡统一落点（服务端 Quote 模型无 gone/locked 字段，按服务端返回形状推断）：
+    /// - 正文非空：正常卡；引用对象未公开（isPublic == false，本人视角才有正文）时带“投递中”pill；
+    /// - 正文空且未公开：服务端已剥离正文的锁定态 → “引用了一篇尚未公开的日记”；
+    /// - 正文空且无公开态：服务端 map 缺失的 gone 态（已删）→ “引用的日记已删除”。
+    private func presentQuoteCard(authorName: String, authorAvatar: String?, content: String, images: [String], dims: [String: [Int]]?, createdAt: Int?, isPublic: Bool?) {
+        if content.isEmpty {
+            if isPublic == false {
+                quoteView.showGone(message: "引用了一篇尚未公开的日记")
+            } else {
+                quoteView.showGone(message: "引用的日记已删除")
+            }
+            quoteView.isHidden = false
+            return
+        }
+        quoteView.configure(
+            authorName: authorName,
+            authorAvatar: authorAvatar,
+            content: content,
+            images: images,
+            dims: dims,
+            createdAt: createdAt,
+            showDeliveringPill: isPublic == false
+        )
+        quoteView.isHidden = false
+    }
+
     private func configureQuote(for entry: Entry) {
         quoteView.clear()
         quoteView.isHidden = true
         if let quoteValue = entry.quote {
-            quoteView.configure(
+            presentQuoteCard(
                 authorName: displayAuthorName(quoteValue.authorName),
                 authorAvatar: quoteValue.authorAvatar,
                 content: quoteValue.content ?? "",
                 images: quoteValue.images ?? [],
-                dims: nil
+                dims: nil,
+                createdAt: quoteValue.createdAt,
+                isPublic: quoteValue.isPublic
             )
-            quoteView.isHidden = false
             return
         }
         guard let quoteIdValue = entry.quoteId, !quoteIdValue.isEmpty else { return }
         if let cachedEntry = BearyFeedCell.quoteCache[quoteIdValue] {
-            quoteView.configure(
+            presentQuoteCard(
                 authorName: displayAuthorName(cachedEntry.authorName),
                 authorAvatar: cachedEntry.authorAvatar,
                 content: cachedEntry.content ?? "",
                 images: cachedEntry.images ?? [],
-                dims: cachedEntry.imgDims
+                dims: cachedEntry.imgDims,
+                createdAt: cachedEntry.createdAt,
+                isPublic: cachedEntry.isPublic
             )
+            return
+        }
+        // 拉取失败不再隐藏整卡：无服务端状态可区分时按“已删除”显示 gone 文案。
+        if BearyFeedCell.quoteFailedIds.contains(quoteIdValue) {
+            quoteView.showGone(message: "引用的日记已删除")
             quoteView.isHidden = false
             return
         }
-        if BearyFeedCell.quoteFailedIds.contains(quoteIdValue) { return }
         if BearyFeedCell.quoteLoadingIds.contains(quoteIdValue) { return }
         BearyFeedCell.quoteLoadingIds.insert(quoteIdValue)
         let hostEntryIdValue = entry.id
@@ -1509,18 +1762,24 @@ class BearyFeedCell: UITableViewCell {
                 case .success(let fetchedEntry):
                     BearyFeedCell.quoteCache[quoteIdValue] = fetchedEntry
                     guard let strongSelf = self, strongSelf.currentEntryIdValue == hostEntryIdValue else { return }
-                    strongSelf.quoteView.configure(
+                    strongSelf.presentQuoteCard(
                         authorName: strongSelf.displayAuthorName(fetchedEntry.authorName),
                         authorAvatar: fetchedEntry.authorAvatar,
                         content: fetchedEntry.content ?? "",
                         images: fetchedEntry.images ?? [],
-                        dims: fetchedEntry.imgDims
+                        dims: fetchedEntry.imgDims,
+                        createdAt: fetchedEntry.createdAt,
+                        isPublic: fetchedEntry.isPublic
                     )
-                    strongSelf.quoteView.isHidden = false
                     strongSelf.updateRightStackSpacing()
                     strongSelf.onNeedsRowReload?()
                 case .failure:
                     BearyFeedCell.quoteFailedIds.insert(quoteIdValue)
+                    guard let strongSelf = self, strongSelf.currentEntryIdValue == hostEntryIdValue else { return }
+                    strongSelf.quoteView.showGone(message: "引用的日记已删除")
+                    strongSelf.quoteView.isHidden = false
+                    strongSelf.updateRightStackSpacing()
+                    strongSelf.onNeedsRowReload?()
                 }
             }
         }
@@ -1623,6 +1882,189 @@ class BearyFeedCell: UITableViewCell {
             onShareRequested?(entryValue)
         }
     }
+
+    // MARK: - 回应行（网页 .emote-row 口径）
+
+    private func resizedEmoteImage(_ image: UIImage, pointSize: CGFloat) -> UIImage {
+        if image.size.width <= pointSize && image.size.height <= pointSize {
+            return image
+        }
+        let size = CGSize(width: pointSize, height: pointSize)
+        let renderer = UIGraphicsImageRenderer(size: size)
+        return renderer.image { _ in
+            image.draw(in: CGRect(origin: .zero, size: size))
+        }
+    }
+
+    /// 回应行高：flow 实测换行高；行宽取 flow 实测宽，落位前用右列宽估算。
+    private func updateEmoteRowHeight() {
+        let width = emoteFlowView.bounds.width > 0 ? emoteFlowView.bounds.width : rightColumnWidthEstimate()
+        let height = emoteFlowView.height(forWidth: width)
+        if emoteRowHeightConstraint?.constant != height {
+            emoteRowHeightConstraint?.constant = height
+        }
+    }
+
+    private func renderEmotes() {
+        for sub in emoteFlowView.subviews {
+            sub.removeFromSuperview()
+        }
+        let list = currentEntry?.emotes ?? []
+        currentEmoteList = list
+        let dark = traitCollection.userInterfaceStyle == .dark
+        for (index, item) in list.enumerated() {
+            let key = item.emote ?? ""
+            let count = item.count ?? 0
+            let mine = item.mine ?? false
+            let button = UIButton(type: .system)
+            button.tag = index
+            button.translatesAutoresizingMaskIntoConstraints = false
+            if let emoteImage = BearyEmoteImages.image(for: key, dark: dark) {
+                button.setImage(resizedEmoteImage(emoteImage, pointSize: 24).withRenderingMode(.alwaysOriginal), for: .normal)
+                button.setTitle("\(count)", for: .normal)
+            } else {
+                let name = BearyText.moodNames[key] ?? key
+                button.setTitle("\(name) \(count)", for: .normal)
+            }
+            button.titleLabel?.font = mine ? UIFont.boldSystemFont(ofSize: 12) : UIFont.systemFont(ofSize: 12)
+            button.setTitleColor(mine ? BearyColors.ink : BearyColors.gray, for: .normal)
+            button.contentEdgeInsets = UIEdgeInsets(top: 4, left: 6, bottom: 4, right: 10)
+            button.titleEdgeInsets = UIEdgeInsets(top: 0, left: 6, bottom: 0, right: 0)
+            button.backgroundColor = BearyColors.faint
+            button.layer.cornerRadius = 16
+            button.layer.borderWidth = 1
+            button.layer.borderColor = (mine ? BearyColors.ink : BearyColors.line).cgColor
+            button.clipsToBounds = true
+            button.heightAnchor.constraint(equalToConstant: 32).isActive = true
+            button.addTarget(self, action: #selector(emoteChipTapped(_:)), for: .touchUpInside)
+            emoteFlowView.addSubview(button)
+        }
+        emoteFlowView.addSubview(emoteAddButton)
+        updateEmoteRowHeight()
+        updateEmoteInteractivity()
+    }
+
+    private func updateEmoteInteractivity() {
+        let publicOK = currentEntry?.isPublic != false
+        for sub in emoteFlowView.subviews {
+            if let button = sub as? UIButton {
+                button.isEnabled = publicOK && isEmoteBusy == false
+                button.alpha = publicOK ? 1.0 : 0.4
+            }
+        }
+    }
+
+    @objc private func emoteChipTapped(_ sender: UIButton) {
+        if SessionManager.shared.isLoggedIn == false {
+            onRequireLogin?()
+            return
+        }
+        if isEmoteBusy { return }
+        let index = sender.tag
+        if index < 0 || index >= currentEmoteList.count { return }
+        let tappedKey = currentEmoteList[index].emote ?? ""
+        if tappedKey.isEmpty { return }
+        chooseEmote(key: tappedKey)
+    }
+
+    @objc private func emoteAddTapped() {
+        if SessionManager.shared.isLoggedIn == false {
+            onRequireLogin?()
+            return
+        }
+        if isEmoteBusy { return }
+        onEmoteAddRequested?()
+    }
+
+    /// 首贴面板选定后的入口：按条目 id 校验（面板弹出期间 cell 可能已被复用），
+    /// 校验失败静默丢弃；未登录时走 onRequireLogin。
+    func handleEmoteSheetPick(entryIdValue: String, key: String) {
+        if currentEntryIdValue != entryIdValue { return }
+        if key.isEmpty { return }
+        if SessionManager.shared.isLoggedIn == false {
+            onRequireLogin?()
+            return
+        }
+        chooseEmote(key: key)
+    }
+
+    /// 贴/换/摘回应的唯一入口（chip 与首贴面板共用；详情页同款规则）：
+    /// 同只再点即撤下；已有自己的一只且选了另一只时先摘旧再贴新；
+    /// 从不做乐观更新——行只在服务端成功返回聚合后重绘，失败保持原样。
+    private func chooseEmote(key: String) {
+        if key.isEmpty || isEmoteBusy { return }
+        guard let entryIdValue = currentEntryIdValue, !entryIdValue.isEmpty else { return }
+        if SessionManager.shared.isLoggedIn == false {
+            onRequireLogin?()
+            return
+        }
+        var tappedMine = false
+        var existingMineKey: String?
+        for item in currentEmoteList {
+            guard let itemKey = item.emote, !itemKey.isEmpty else { continue }
+            if itemKey == key && item.mine == true {
+                tappedMine = true
+            }
+            if item.mine == true && existingMineKey == nil {
+                existingMineKey = itemKey
+            }
+        }
+        if tappedMine {
+            postEmoteOnce(key: key)
+            return
+        }
+        if let oldKey = existingMineKey {
+            isEmoteBusy = true
+            updateEmoteInteractivity()
+            BearyAPI.shared.postEmote(id: entryIdValue, emote: oldKey) { [weak self] result in
+                DispatchQueue.main.async {
+                    guard let strongSelf = self else { return }
+                    switch result {
+                    case .success:
+                        strongSelf.postEmoteOnce(key: key)
+                    case .failure(let err):
+                        strongSelf.isEmoteBusy = false
+                        if case .unauthorized = err {
+                            strongSelf.onRequireLogin?()
+                        } else {
+                            strongSelf.onActionFailed?()
+                        }
+                        strongSelf.updateEmoteInteractivity()
+                    }
+                }
+            }
+        } else {
+            postEmoteOnce(key: key)
+        }
+    }
+
+    private func postEmoteOnce(key: String) {
+        guard let entryIdValue = currentEntryIdValue, !entryIdValue.isEmpty else { return }
+        isEmoteBusy = true
+        updateEmoteInteractivity()
+        BearyAPI.shared.postEmote(id: entryIdValue, emote: key) { [weak self] result in
+            DispatchQueue.main.async {
+                guard let strongSelf = self else { return }
+                strongSelf.isEmoteBusy = false
+                switch result {
+                case .success(let resp):
+                    if let emotes = resp.emotes {
+                        strongSelf.currentEntry?.emotes = emotes
+                    }
+                    strongSelf.renderEmotes()
+                    strongSelf.updateEmoteInteractivity()
+                    strongSelf.onEmoteChanged?(entryIdValue, resp.emotes)
+                case .failure(let err):
+                    if case .unauthorized = err {
+                        strongSelf.onRequireLogin?()
+                    } else {
+                        strongSelf.onActionFailed?()
+                    }
+                    strongSelf.updateEmoteInteractivity()
+                }
+            }
+        }
+    }
 }
 
 // MARK: - 引用 lite 卡视图（F11：头像 40 + 名 + 正文 + 图片）
@@ -1666,10 +2108,35 @@ class BearyFeedQuoteView: UIView {
     private let nameLabel: UILabel = {
         let lb = UILabel()
         lb.translatesAutoresizingMaskIntoConstraints = false
-        lb.font = UIFont.boldSystemFont(ofSize: 14)
+        lb.font = UIFont.boldSystemFont(ofSize: 16.5)
         lb.textColor = BearyColors.ink
         lb.numberOfLines = 1
         return lb
+    }()
+
+    /// 投递中 pill（lite 卡口径）：11/600/blue、blue 13% 底、圆角 6、padding 2/7。
+    private let deliveringPillButton: UIButton = {
+        let btn = UIButton(type: .system)
+        btn.translatesAutoresizingMaskIntoConstraints = false
+        btn.setTitle("投递中", for: .normal)
+        btn.titleLabel?.font = UIFont.systemFont(ofSize: 11, weight: .semibold)
+        btn.setTitleColor(BearyColors.blue, for: .normal)
+        btn.backgroundColor = BearyColors.blue.withAlphaComponent(0.13)
+        btn.layer.cornerRadius = 6
+        btn.clipsToBounds = true
+        btn.contentEdgeInsets = UIEdgeInsets(top: 2, left: 7, bottom: 2, right: 7)
+        btn.isUserInteractionEnabled = false
+        btn.isHidden = true
+        return btn
+    }()
+
+    private lazy var nameRow: UIStackView = {
+        let st = UIStackView(arrangedSubviews: [nameLabel, deliveringPillButton])
+        st.translatesAutoresizingMaskIntoConstraints = false
+        st.axis = .horizontal
+        st.spacing = 8
+        st.alignment = .center
+        return st
     }()
 
     private let contentLabel: UILabel = {
@@ -1678,6 +2145,27 @@ class BearyFeedQuoteView: UIView {
         lb.font = UIFont.systemFont(ofSize: 13.5)
         lb.textColor = BearyColors.ink
         lb.numberOfLines = 3
+        return lb
+    }()
+
+    private let dateLabel: UILabel = {
+        let lb = UILabel()
+        lb.translatesAutoresizingMaskIntoConstraints = false
+        lb.font = UIFont.systemFont(ofSize: 12)
+        lb.textColor = BearyColors.gray
+        lb.numberOfLines = 1
+        lb.isHidden = true
+        return lb
+    }()
+
+    /// gone/locked 失效文案：13px 灰字（网页 .quote-card.gone 口径）。
+    private let goneLabel: UILabel = {
+        let lb = UILabel()
+        lb.translatesAutoresizingMaskIntoConstraints = false
+        lb.font = UIFont.systemFont(ofSize: 13)
+        lb.textColor = BearyColors.gray
+        lb.numberOfLines = 0
+        lb.isHidden = true
         return lb
     }()
 
@@ -1700,12 +2188,13 @@ class BearyFeedQuoteView: UIView {
     }()
 
     private lazy var textStack: UIStackView = {
-        let st = UIStackView(arrangedSubviews: [nameLabel, contentLabel, thumbsScrollView])
+        let st = UIStackView(arrangedSubviews: [nameRow, contentLabel, thumbsScrollView, dateLabel])
         st.translatesAutoresizingMaskIntoConstraints = false
         st.axis = .vertical
         st.alignment = .fill
         st.distribution = .fill
-        st.spacing = 0
+        // 默认 6：缩略图行隐藏时正文→日期仍保持 6 间距（名字→正文由下方 custom 2 覆盖）。
+        st.spacing = 6
         return st
     }()
 
@@ -1731,6 +2220,7 @@ class BearyFeedQuoteView: UIView {
         thumbsScrollView.addSubview(thumbsStack)
         addSubview(leftBorderView)
         addSubview(rowStack)
+        addSubview(goneLabel)
         let height = thumbsScrollView.heightAnchor.constraint(equalToConstant: 0)
         thumbsHeightConstraint = height
         // 引用卡被右列 stack 隐藏时 stack 会将其高度压为 0，内部高度/上下边距用 999，
@@ -1741,6 +2231,12 @@ class BearyFeedQuoteView: UIView {
         rowTop.priority = UILayoutPriority(999)
         let rowBottom = rowStack.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -9)
         rowBottom.priority = UILayoutPriority(999)
+        let goneTop = goneLabel.topAnchor.constraint(equalTo: topAnchor, constant: 9)
+        goneTop.priority = UILayoutPriority(999)
+        let goneBottom = goneLabel.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -9)
+        goneBottom.priority = UILayoutPriority(999)
+        nameLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        deliveringPillButton.setContentCompressionResistancePriority(.required, for: .horizontal)
         NSLayoutConstraint.activate([
             leftBorderView.leadingAnchor.constraint(equalTo: leadingAnchor),
             leftBorderView.topAnchor.constraint(equalTo: topAnchor),
@@ -1755,9 +2251,13 @@ class BearyFeedQuoteView: UIView {
             avatarImageView.trailingAnchor.constraint(equalTo: avatarContainer.trailingAnchor),
             avatarImageView.bottomAnchor.constraint(equalTo: avatarContainer.bottomAnchor),
             rowTop,
-            rowStack.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 12),
+            rowStack.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 15),
             rowStack.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -12),
             rowBottom,
+            goneTop,
+            goneLabel.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 15),
+            goneLabel.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -12),
+            goneBottom,
             height,
             thumbsStack.topAnchor.constraint(equalTo: thumbsScrollView.contentLayoutGuide.topAnchor),
             thumbsStack.bottomAnchor.constraint(equalTo: thumbsScrollView.contentLayoutGuide.bottomAnchor),
@@ -1765,8 +2265,9 @@ class BearyFeedQuoteView: UIView {
             thumbsStack.trailingAnchor.constraint(equalTo: thumbsScrollView.contentLayoutGuide.trailingAnchor),
             thumbsStack.heightAnchor.constraint(equalTo: thumbsScrollView.frameLayoutGuide.heightAnchor),
         ])
-        textStack.setCustomSpacing(2, after: nameLabel)
+        textStack.setCustomSpacing(2, after: nameRow)
         textStack.setCustomSpacing(6, after: contentLabel)
+        textStack.setCustomSpacing(6, after: thumbsScrollView)
     }
 
     required init?(coder: NSCoder) {
@@ -1779,6 +2280,12 @@ class BearyFeedQuoteView: UIView {
         nameLabel.text = nil
         contentLabel.attributedText = nil
         contentLabel.text = nil
+        dateLabel.text = nil
+        dateLabel.isHidden = true
+        deliveringPillButton.isHidden = true
+        goneLabel.text = nil
+        goneLabel.isHidden = true
+        rowStack.isHidden = false
         for view in thumbsStack.arrangedSubviews {
             thumbsStack.removeArrangedSubview(view)
             view.removeFromSuperview()
@@ -1787,9 +2294,22 @@ class BearyFeedQuoteView: UIView {
         thumbsHeightConstraint?.constant = 0
     }
 
-    func configure(authorName: String, authorAvatar: String?, content: String, images: [String], dims: [String: [Int]]?) {
+    /// 失效态：隐藏正常行、只显示 13px 灰字文案（卡片本身不隐藏）。
+    func showGone(message: String) {
+        clear()
+        goneLabel.text = message
+        goneLabel.isHidden = false
+        rowStack.isHidden = true
+    }
+
+    func configure(authorName: String, authorAvatar: String?, content: String, images: [String], dims: [String: [Int]]?, createdAt: Int? = nil, showDeliveringPill: Bool = false) {
         clear()
         nameLabel.text = authorName
+        if let createdAt = createdAt, createdAt > 0 {
+            dateLabel.text = BearyFeedCell.feedTimeString(ms: createdAt)
+            dateLabel.isHidden = false
+        }
+        deliveringPillButton.isHidden = showDeliveringPill == false
         avatarInitialLabel.text = String(authorName.prefix(1)).uppercased()
         avatarImageView.bearySetImage(url: BearyImageURLs.avatarURL(authorAvatar), placeholder: nil)
         if content.isEmpty {
@@ -1828,5 +2348,284 @@ class BearyFeedQuoteView: UIView {
             }
         }
         _ = dims
+    }
+}
+
+// MARK: - 回应行 flow 布局（网页 .emote-row 口径：gap 8、自动换行）
+
+private class BearyFeedEmoteFlowView: UIView {
+
+    var itemSpacing: CGFloat = 8
+    var lineSpacing: CGFloat = 8
+
+    func height(forWidth width: CGFloat) -> CGFloat {
+        if width <= 0 || subviews.isEmpty {
+            return 0
+        }
+        var x: CGFloat = 0
+        var y: CGFloat = 0
+        var rowHeight: CGFloat = 0
+        var firstInRow = true
+        for sub in subviews {
+            if sub.isHidden { continue }
+            let size = sub.systemLayoutSizeFitting(UIView.layoutFittingCompressedSize)
+            let itemWidth = size.width
+            let itemHeight = max(size.height, 32)
+            if firstInRow == false && x + itemSpacing + itemWidth > width {
+                y += rowHeight + lineSpacing
+                x = 0
+                rowHeight = 0
+                firstInRow = true
+            }
+            if firstInRow == false {
+                x += itemSpacing
+            }
+            x += itemWidth
+            rowHeight = max(rowHeight, itemHeight)
+            firstInRow = false
+        }
+        return y + rowHeight
+    }
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        let width = bounds.width
+        if width <= 0 {
+            return
+        }
+        var x: CGFloat = 0
+        var y: CGFloat = 0
+        var rowHeight: CGFloat = 0
+        var firstInRow = true
+        for sub in subviews {
+            if sub.isHidden { continue }
+            let size = sub.systemLayoutSizeFitting(UIView.layoutFittingCompressedSize)
+            let itemWidth = size.width
+            let itemHeight = max(size.height, 32)
+            if firstInRow == false && x + itemSpacing + itemWidth > width {
+                y += rowHeight + lineSpacing
+                x = 0
+                rowHeight = 0
+                firstInRow = true
+            }
+            if firstInRow == false {
+                x += itemSpacing
+            }
+            sub.frame = CGRect(x: x, y: y, width: itemWidth, height: itemHeight)
+            x += itemWidth
+            rowHeight = max(rowHeight, itemHeight)
+            firstInRow = false
+        }
+    }
+}
+
+// MARK: - 虚线 + 钮：34px 圆圈、CAShapeLayer 虚线边框、灰色加号（网页 .emote-add 口径）
+
+private class BearyFeedDashedAddButton: UIButton {
+
+    private let dashedLayer = CAShapeLayer()
+
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        dashedLayer.fillColor = UIColor.clear.cgColor
+        dashedLayer.lineWidth = 1
+        dashedLayer.lineDashPattern = [4, 3]
+        updateStrokeColor()
+        layer.addSublayer(dashedLayer)
+    }
+
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    private func updateStrokeColor() {
+        dashedLayer.strokeColor = BearyColors.line.cgColor
+    }
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        dashedLayer.frame = bounds
+        dashedLayer.path = UIBezierPath(roundedRect: bounds, cornerRadius: bounds.height / 2).cgPath
+    }
+
+    override func traitCollectionDidChange(_ previousTraitCollection: UITraitCollection?) {
+        super.traitCollectionDidChange(previousTraitCollection)
+        updateStrokeColor()
+    }
+}
+
+// MARK: - 首贴回应底 sheet（详情页同款逻辑，本文件内实现：0.45 遮罩、顶部圆角 22、抓手、标题 + 关闭、熊图格）
+
+private class BearyFeedEmoteSheetViewController: UIViewController, UICollectionViewDataSource, UICollectionViewDelegateFlowLayout {
+
+    var onPick: ((String) -> Void)?
+
+    private let emoteKeys = ["agree", "happy", "applause", "candle", "love", "comfort", "confused", "cheer", "determined", "facepalm", "flower", "sleepy", "goodnight", "hug", "cry", "idea", "kiss", "thinking", "letter", "listening", "lonely", "wink", "nope", "paperplane", "shy", "pat", "peek", "surprised", "proud", "shrug", "sorry", "angry", "sprout", "tea", "speechless", "thanks", "umbrella", "zap", "wave", "wish"]
+
+    private let scrimView = UIView()
+    private let sheetView = UIView()
+    private let grabView = UIView()
+    private let titleLabel = UILabel()
+    private let closeButton = UIButton(type: .system)
+    private var sheetHeightConstraint: NSLayoutConstraint?
+
+    override func viewDidLoad() {
+        super.viewDidLoad()
+        view.backgroundColor = .clear
+        scrimView.backgroundColor = BearyColors.scrim.withAlphaComponent(0.45)
+        scrimView.translatesAutoresizingMaskIntoConstraints = false
+        let scrimTap = UITapGestureRecognizer(target: self, action: #selector(closeTapped))
+        scrimView.addGestureRecognizer(scrimTap)
+        view.addSubview(scrimView)
+        sheetView.backgroundColor = BearyColors.surface
+        sheetView.layer.cornerRadius = 22
+        sheetView.layer.maskedCorners = [.layerMinXMinYCorner, .layerMaxXMinYCorner]
+        sheetView.clipsToBounds = true
+        sheetView.translatesAutoresizingMaskIntoConstraints = false
+        view.addSubview(sheetView)
+        grabView.backgroundColor = BearyColors.line
+        grabView.layer.cornerRadius = 2
+        grabView.clipsToBounds = true
+        grabView.translatesAutoresizingMaskIntoConstraints = false
+        sheetView.addSubview(grabView)
+        titleLabel.text = "贴一只小熊"
+        titleLabel.font = UIFont.boldSystemFont(ofSize: 15)
+        titleLabel.textColor = BearyColors.ink
+        titleLabel.translatesAutoresizingMaskIntoConstraints = false
+        sheetView.addSubview(titleLabel)
+        closeButton.setImage(UIImage(systemName: "xmark"), for: .normal)
+        closeButton.tintColor = BearyColors.ink
+        closeButton.backgroundColor = BearyColors.faint
+        closeButton.layer.cornerRadius = 16
+        closeButton.clipsToBounds = true
+        closeButton.translatesAutoresizingMaskIntoConstraints = false
+        closeButton.addTarget(self, action: #selector(closeTapped), for: .touchUpInside)
+        closeButton.accessibilityLabel = "关闭"
+        sheetView.addSubview(closeButton)
+        let layout = UICollectionViewFlowLayout()
+        layout.minimumInteritemSpacing = 6
+        layout.minimumLineSpacing = 10
+        layout.sectionInset = UIEdgeInsets(top: 4, left: 18, bottom: 20, right: 18)
+        let collection = UICollectionView(frame: .zero, collectionViewLayout: layout)
+        collection.translatesAutoresizingMaskIntoConstraints = false
+        collection.backgroundColor = BearyColors.surface
+        collection.dataSource = self
+        collection.delegate = self
+        collection.register(BearyFeedEmoteSheetCell.self, forCellWithReuseIdentifier: "feedEmoteSheetCell")
+        sheetView.addSubview(collection)
+        let heightConstraint = sheetView.heightAnchor.constraint(equalToConstant: 480)
+        sheetHeightConstraint = heightConstraint
+        let widthLimit = sheetView.widthAnchor.constraint(lessThanOrEqualToConstant: 440)
+        let widthFull = sheetView.widthAnchor.constraint(equalTo: view.widthAnchor)
+        widthFull.priority = .defaultHigh
+        NSLayoutConstraint.activate([
+            scrimView.topAnchor.constraint(equalTo: view.topAnchor),
+            scrimView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
+            scrimView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            scrimView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            sheetView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
+            sheetView.centerXAnchor.constraint(equalTo: view.centerXAnchor),
+            sheetView.leadingAnchor.constraint(greaterThanOrEqualTo: view.leadingAnchor),
+            sheetView.trailingAnchor.constraint(lessThanOrEqualTo: view.trailingAnchor),
+            widthLimit,
+            widthFull,
+            heightConstraint,
+            grabView.topAnchor.constraint(equalTo: sheetView.topAnchor, constant: 10),
+            grabView.centerXAnchor.constraint(equalTo: sheetView.centerXAnchor),
+            grabView.widthAnchor.constraint(equalToConstant: 38),
+            grabView.heightAnchor.constraint(equalToConstant: 4),
+            titleLabel.topAnchor.constraint(equalTo: grabView.bottomAnchor, constant: 14),
+            titleLabel.leadingAnchor.constraint(equalTo: sheetView.leadingAnchor, constant: 18),
+            closeButton.centerYAnchor.constraint(equalTo: titleLabel.centerYAnchor),
+            closeButton.trailingAnchor.constraint(equalTo: sheetView.trailingAnchor, constant: -18),
+            closeButton.widthAnchor.constraint(equalToConstant: 32),
+            closeButton.heightAnchor.constraint(equalToConstant: 32),
+            collection.topAnchor.constraint(equalTo: titleLabel.bottomAnchor, constant: 12),
+            collection.bottomAnchor.constraint(equalTo: sheetView.safeAreaLayoutGuide.bottomAnchor),
+            collection.leadingAnchor.constraint(equalTo: sheetView.leadingAnchor),
+            collection.trailingAnchor.constraint(equalTo: sheetView.trailingAnchor),
+        ])
+    }
+
+    override func viewDidLayoutSubviews() {
+        super.viewDidLayoutSubviews()
+        let target = min(540, view.bounds.height * 0.7)
+        if target > 0, sheetHeightConstraint?.constant != target {
+            sheetHeightConstraint?.constant = target
+        }
+    }
+
+    @objc private func closeTapped() {
+        let reduceMotion = UIAccessibility.isReduceMotionEnabled
+        dismiss(animated: reduceMotion == false, completion: nil)
+    }
+
+    func collectionView(_ collectionView: UICollectionView, numberOfItemsInSection section: Int) -> Int {
+        return emoteKeys.count
+    }
+
+    func collectionView(_ collectionView: UICollectionView, cellForItemAt indexPath: IndexPath) -> UICollectionViewCell {
+        guard let cell = collectionView.dequeueReusableCell(withReuseIdentifier: "feedEmoteSheetCell", for: indexPath) as? BearyFeedEmoteSheetCell else {
+            return UICollectionViewCell()
+        }
+        let key = emoteKeys[indexPath.item]
+        cell.configure(key: key, dark: traitCollection.userInterfaceStyle == .dark)
+        return cell
+    }
+
+    func collectionView(_ collectionView: UICollectionView, layout collectionViewLayout: UICollectionViewLayout, sizeForItemAt indexPath: IndexPath) -> CGSize {
+        let totalSpacing: CGFloat = 18 * 2 + 6 * 3
+        let width = max(44, (collectionView.bounds.width - totalSpacing) / 4)
+        return CGSize(width: width, height: 72)
+    }
+
+    func collectionView(_ collectionView: UICollectionView, didSelectItemAt indexPath: IndexPath) {
+        let pickedKey = emoteKeys[indexPath.item]
+        onPick?(pickedKey)
+    }
+}
+
+private class BearyFeedEmoteSheetCell: UICollectionViewCell {
+
+    private let emoteImageView = UIImageView()
+    private let nameLabel = UILabel()
+
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        emoteImageView.contentMode = .scaleAspectFit
+        emoteImageView.translatesAutoresizingMaskIntoConstraints = false
+        contentView.addSubview(emoteImageView)
+        nameLabel.translatesAutoresizingMaskIntoConstraints = false
+        nameLabel.textAlignment = .center
+        contentView.addSubview(nameLabel)
+        NSLayoutConstraint.activate([
+            emoteImageView.topAnchor.constraint(equalTo: contentView.topAnchor),
+            emoteImageView.centerXAnchor.constraint(equalTo: contentView.centerXAnchor),
+            emoteImageView.widthAnchor.constraint(equalToConstant: 46),
+            emoteImageView.heightAnchor.constraint(equalToConstant: 46),
+            nameLabel.topAnchor.constraint(equalTo: emoteImageView.bottomAnchor, constant: 4),
+            nameLabel.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 2),
+            nameLabel.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -2),
+        ])
+    }
+
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    func configure(key: String, dark: Bool) {
+        let name = BearyText.moodNames[key] ?? key
+        if let image = BearyEmoteImages.image(for: key, dark: dark) {
+            emoteImageView.image = image.withRenderingMode(.alwaysOriginal)
+            emoteImageView.isHidden = false
+            nameLabel.font = UIFont.systemFont(ofSize: 11)
+            nameLabel.textColor = BearyColors.gray
+        } else {
+            emoteImageView.image = nil
+            emoteImageView.isHidden = true
+            nameLabel.font = UIFont.systemFont(ofSize: 14)
+            nameLabel.textColor = BearyColors.ink
+        }
+        nameLabel.text = name
     }
 }

@@ -1,7 +1,8 @@
 import UIKit
 
 // ===== 居中 640 编辑器模态（宽 ≥821 的桌面式；对应网页编辑器 ≥821px 居中 640px）=====
-// 自定义 presentation：卡片宽 min(640, 容器宽 - 32)、高为容器高的 88%、居中；背景黑色 0.45 遮罩。
+// 自定义 presentation：卡片宽 min(640, 容器宽 - 80)、高为 min(内容高, 80% 容器高)、居中；背景黑色 0.45 遮罩。
+// 卡片圆角 20、边框 1px line；阴影挂在容器里的独立阴影层上（presentedView 自身裁剪会裁掉自身阴影）。
 // 不做背景点击关闭：编辑器取消走自身取消流程（含草稿保留/丢弃），背景点击不得绕过它。
 // transitioningDelegate 是弱引用，调用方（SceneDelegate）必须强持有本对象直到 dismiss 完成，
 // 与 edgeDismiss 同口径。部署目标 iOS 15.0——只用闭包回调，不用 async/await。
@@ -24,13 +25,34 @@ final class BearyCenteredTransitioningDelegate: NSObject, UIViewControllerTransi
 private final class BearyCenteredPresentationController: UIPresentationController {
 
     private let dimmingView = UIView()
+    private let cardShadowView = UIView()
 
     override var frameOfPresentedViewInContainerView: CGRect {
         guard let container = containerView else { return .zero }
         let bounds = container.bounds
-        let width = min(CGFloat(640), bounds.width - 32)
-        let height = bounds.height * 0.88
+        let width = min(CGFloat(640), bounds.width - 80)
+        let capHeight = bounds.height * 0.80
+        let preferredHeight = presentedViewController.preferredContentSize.height
+        let height = preferredHeight > 0 ? min(capHeight, preferredHeight) : capHeight
         return CGRect(x: (bounds.width - width) / 2, y: (bounds.height - height) / 2, width: width, height: height)
+    }
+
+    /// 卡片外框：圆角 20 + 1px line 边框。CALayer borderColor 不跟动态色自动走，
+    /// 故每次布局与深浅切换时都按当前 trait 重解一次。
+    private func applyCardChrome() {
+        guard let presentedView = presentedView else { return }
+        presentedView.layer.cornerRadius = 20
+        presentedView.layer.maskedCorners = [.layerMinXMinYCorner, .layerMaxXMinYCorner, .layerMinXMaxYCorner, .layerMaxXMaxYCorner]
+        presentedView.layer.borderWidth = 1
+        presentedView.layer.borderColor = BearyColors.line.resolvedColor(with: traitCollection).cgColor
+        presentedView.clipsToBounds = true
+    }
+
+    override func traitCollectionDidChange(_ previousTraitCollection: UITraitCollection?) {
+        super.traitCollectionDidChange(previousTraitCollection)
+        if traitCollection.hasDifferentColorAppearance(comparedTo: previousTraitCollection) {
+            applyCardChrome()
+        }
     }
 
     override func presentationTransitionWillBegin() {
@@ -45,10 +67,25 @@ private final class BearyCenteredPresentationController: UIPresentationControlle
             dimmingView.leadingAnchor.constraint(equalTo: container.leadingAnchor),
             dimmingView.trailingAnchor.constraint(equalTo: container.trailingAnchor),
         ])
+        // 阴影层挂在容器里、presentedView 下方：presentedView 自身 clipsToBounds 会裁掉
+        // 挂它身上的阴影，故阴影不能挂 presentedView。CSS 阴影 0 24 60 黑 30%，
+        // CALayer radius 取 CSS blur 一半即 30（与底 sheet 32→16 同口径）。
+        cardShadowView.backgroundColor = .clear
+        cardShadowView.layer.shadowColor = UIColor.black.cgColor
+        cardShadowView.layer.shadowOpacity = 0.30
+        cardShadowView.layer.shadowOffset = CGSize(width: 0, height: 24)
+        cardShadowView.layer.shadowRadius = 30
+        container.addSubview(cardShadowView)
         if let coordinator = presentedViewController.transitionCoordinator {
             coordinator.animate(alongsideTransition: { _ in self.dimmingView.alpha = 1 }, completion: nil)
         } else {
             dimmingView.alpha = 1
+        }
+    }
+
+    override func presentationTransitionDidEnd(_ completed: Bool) {
+        if !completed {
+            cardShadowView.removeFromSuperview()
         }
     }
 
@@ -60,10 +97,22 @@ private final class BearyCenteredPresentationController: UIPresentationControlle
         }
     }
 
+    override func dismissalTransitionDidEnd(_ completed: Bool) {
+        if completed {
+            cardShadowView.removeFromSuperview()
+        }
+    }
+
     override func containerViewWillLayoutSubviews() {
         super.containerViewWillLayoutSubviews()
-        // 旋转/多任务改容器尺寸时重算卡片位置（居中 640 不变，只跟容器走）
-        presentedView?.frame = frameOfPresentedViewInContainerView
+        // 旋转/多任务改容器尺寸时重算卡片帧（居中、宽/高上限只跟容器走），
+        // 外框与阴影层同步跟帧走。
+        guard let presentedView = presentedView else { return }
+        let frame = frameOfPresentedViewInContainerView
+        presentedView.frame = frame
+        applyCardChrome()
+        cardShadowView.frame = frame
+        cardShadowView.layer.shadowPath = UIBezierPath(roundedRect: cardShadowView.bounds, cornerRadius: 20).cgPath
     }
 }
 
