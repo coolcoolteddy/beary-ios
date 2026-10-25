@@ -56,6 +56,10 @@ final class BearyChromeViewController: CAPBridgeViewController {
     private var handshakeReloaded = false
     private var navReloadNotBefore = Date.distantPast
     private lazy var navigator = BearyNavigationCoordinator(webViewProvider: { [weak self] in self?.webView }, performJS: { [weak self] js in self?.evalNav(js) })
+    // 原生首页：常驻子 VC，hide/show 切换以保留滚动位置；其他 tab 仍显示网页
+    private var feedVC: BearyFeedViewController?
+    private var feedVisible = false
+    private var presentedEntryId: String?
 
     private var ink: UIColor { UIColor { t in t.userInterfaceStyle == .dark ? UIColor(white: 0.96, alpha: 1) : .black } }
     private var gray: UIColor { UIColor { t in t.userInterfaceStyle == .dark ? UIColor(white: 0.66, alpha: 1) : UIColor(white: 0.45, alpha: 1) } }
@@ -379,14 +383,117 @@ final class BearyChromeViewController: CAPBridgeViewController {
             }
         }
     }
-    @objc private func didTapLogo() { evalNav("logo()") }
+    @objc private func didTapLogo() { showNativeFeed() }
     @objc private func didTapLogin() { evalNav("login()") }
     @objc private func didTapSearch() { evalNav("search()") }
     @objc private func didTapGift() { evalNav("invite()") }
-    @objc private func didTapWrite() { evalNav("write()") }
+    @objc private func didTapWrite() { presentComposer() }
     @objc private func didTapAvatar() { evalNav("menu()") }
-    @objc private func didTapHome() { navigator.goTab("home") }
-    @objc private func didTapNotif() { navigator.goTab("notif") }
-    @objc private func didTapTimeline() { navigator.goTab("timeline") }
-    @objc private func didTapMe() { navigator.goTab("me") }
+    @objc private func didTapHome() { showNativeFeed() }
+    @objc private func didTapNotif() { hideNativeFeed(); navigator.goTab("notif") }
+    @objc private func didTapTimeline() { hideNativeFeed(); navigator.goTab("timeline") }
+    @objc private func didTapMe() { hideNativeFeed(); navigator.goTab("me") }
+
+    // MARK: - 原生页接线（第二阶段第一项；原生栏行为、推送点、动画、无障碍标签一律不动）
+
+    private func ensureFeedVC() -> BearyFeedViewController {
+        if let f = feedVC { return f }
+        let f = BearyFeedViewController()
+        f.onEntrySelected = { [weak self] entry in
+            guard let id = entry.id else { return }
+            self?.presentDetail(entryId: id, initialEntry: entry)
+        }
+        addChild(f)
+        f.view.translatesAutoresizingMaskIntoConstraints = false
+        view.addSubview(f.view)
+        NSLayoutConstraint.activate([
+            f.view.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 60),
+            f.view.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            f.view.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            f.view.bottomAnchor.constraint(equalTo: view.bottomAnchor),
+        ])
+        f.didMove(toParent: self)
+        f.view.isHidden = true
+        // 原生列表出现时原生栏保持在最上层（列表 view 后加，会盖住先加的栏）
+        if let top = topGlass { view.bringSubviewToFront(top) }
+        if let cap = bottomCapsule { view.bringSubviewToFront(cap) }
+        if let fab = fabButton { view.bringSubviewToFront(fab) }
+        feedVC = f
+        return f
+    }
+
+    private func showNativeFeed() {
+        let f = ensureFeedVC()
+        if feedVisible {
+            // 重拍已显示的首页：先回顶（与网页 topThen 同口径），不重复推网页
+            f.scrollToTop()
+            return
+        }
+        f.view.isHidden = false
+        feedVisible = true
+        // 网页同步回首页：顶栏高亮与栏显隐继续由网页推送驱动
+        navigator.goTab("home")
+    }
+
+    private func hideNativeFeed() {
+        feedVC?.view.isHidden = true
+        feedVisible = false
+    }
+
+    private func presentDetail(entryId: String, initialEntry: Entry?) {
+        let d = BearyEntryDetailViewController(entryId: entryId, initialEntry: initialEntry)
+        d.title = "日记"
+        d.onOpenInWeb = { [weak self] in
+            self?.dismiss(animated: true) {
+                self?.navigator.open(.entry(entryId))
+            }
+        }
+        d.onRequireLogin = { [weak self] in
+            self?.dismiss(animated: true) {
+                self?.evalNav("login()")
+            }
+        }
+        presentedEntryId = entryId
+        let nav = UINavigationController(rootViewController: d)
+        nav.modalPresentationStyle = .fullScreen
+        d.navigationItem.leftBarButtonItem = UIBarButtonItem(title: "关闭", style: .plain, target: self, action: #selector(didTapDetailClose))
+        d.navigationItem.rightBarButtonItem = UIBarButtonItem(title: "网页打开", style: .plain, target: self, action: #selector(didTapDetailWeb))
+        present(nav, animated: true)
+    }
+
+    @objc private func didTapDetailClose() {
+        presentedEntryId = nil
+        dismiss(animated: true)
+    }
+
+    @objc private func didTapDetailWeb() {
+        let id = presentedEntryId
+        presentedEntryId = nil
+        dismiss(animated: true) { [weak self] in
+            if let id = id { self?.navigator.open(.entry(id)) }
+        }
+    }
+
+    private func presentComposer() {
+        // 未登录走网页写按钮：网页会先弹登录；原生编辑器只接已登录态
+        guard SessionManager.shared.isLoggedIn else {
+            evalNav("write()")
+            return
+        }
+        let c = BearyComposerViewController()
+        c.onPublished = { [weak self] _ in
+            self?.dismiss(animated: true) {
+                // 网页发帖落点是时间线：原生发帖同样回时间线，顺带刷新原生列表备下次回首页
+                self?.hideNativeFeed()
+                self?.feedVC?.refreshAll()
+                self?.navigator.goTab("timeline")
+            }
+        }
+        c.onCancelled = { [weak self] in self?.dismiss(animated: true) }
+        c.onRequireLogin = { [weak self] in
+            self?.dismiss(animated: true) { self?.evalNav("login()") }
+        }
+        c.modalPresentationStyle = .fullScreen
+        present(c, animated: true)
+    }
 }
