@@ -1097,6 +1097,12 @@ final class BearyTimelineCell: UITableViewCell {
         }
         footStack.isHidden = true
         actsStack.isHidden = true
+        // 与 metaStack 在 configure 开头先清后加一致：foot 行只靠
+        // prepareForReuse 清理时，configure 重跑会把足行与 spacer 叠加。
+        for arranged in footStack.arrangedSubviews {
+            footStack.removeArrangedSubview(arranged)
+            arranged.removeFromSuperview()
+        }
         if published {
             var footItems: [UIView] = []
             let likeCount = entry.likeCount ?? 0
@@ -1111,6 +1117,7 @@ final class BearyTimelineCell: UITableViewCell {
                 emoteLabel.font = UIFont.systemFont(ofSize: 12.5)
                 emoteLabel.textColor = BearyColors.gray
                 emoteLabel.text = "小熊回应 \(emoteTotal)"
+                emoteLabel.setContentHuggingPriority(.required, for: .horizontal)
                 footItems.append(emoteLabel)
             }
             let bookmarkCount = entry.bookmarkCount ?? 0
@@ -1120,6 +1127,15 @@ final class BearyTimelineCell: UITableViewCell {
             for item in footItems {
                 footStack.addArrangedSubview(item)
             }
+            // 足行吸宽 spacer（与 actsStack 的 actsSpacer 同款做法）：
+            // footStack 全宽 321pt，足项本身抗拉伸 required 后，多余宽度
+            // 只能被这个 defaultLow 的空视图吃掉，足项贴左、按本宽显示。
+            // spacer 仍在 footStack 内，prepareForReuse 的全清循环会一并移除，
+            // 不新增清理机制。
+            let footSpacer = UIView()
+            footSpacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
+            footSpacer.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+            footStack.addArrangedSubview(footSpacer)
             footStack.isHidden = false
         } else {
             // TL-3 私密行操作行（网页 .tl-acts 口径）：编辑倒计时或“编辑已结束”
@@ -1181,8 +1197,17 @@ final class BearyTimelineCell: UITableViewCell {
         row.axis = .horizontal
         row.spacing = 4
         row.alignment = .center
+        // 足行拉伸修复（#41 拉宽爱心）：footStack 与 row 都是横向 .fill，
+        // 唯一子项会被双层 stack 左右钉住拉满宽；14 宽约束在该冲突里丢了，
+        // 默认 .scaleToFill 的心形图就被横向拉成 321×14 的扁轮廓。
+        // 行与图标横向抗拉伸都设 required，让多余宽度只能进后面的 spacer，
+        // 图标框永远是 14×14；contentMode 改 aspectFit 是兜底，方框下方形图
+        // 本就无变化，万一框再被拉大也不会把心压扁。
+        row.setContentHuggingPriority(.required, for: .horizontal)
         let iconView = UIImageView(image: BearyIconImages.image(named: iconName, pointSize: 14))
         iconView.tintColor = BearyColors.gray
+        iconView.contentMode = .scaleAspectFit
+        iconView.setContentHuggingPriority(.required, for: .horizontal)
         iconView.translatesAutoresizingMaskIntoConstraints = false
         NSLayoutConstraint.activate([
             iconView.widthAnchor.constraint(equalToConstant: 14),

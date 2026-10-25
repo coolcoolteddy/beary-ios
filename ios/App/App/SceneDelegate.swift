@@ -8,6 +8,9 @@ class SceneDelegate: UIResponder, UIWindowSceneDelegate {
         guard let windowScene = scene as? UIWindowScene else { return }
 
         window = UIWindow(windowScene: windowScene)
+        // 顶栏玻璃底色兜底：窗口底色与容器 view 同为 BearyColors.bg（动态色，深浅自动跟随），
+        // 避免顶栏玻璃透出未设底色的空窗口（见 viewDidLoad 注释，此为本轮灰顶栏的根因）。
+        window?.backgroundColor = BearyColors.bg
         window?.rootViewController = BearyChromeViewController()
         window?.makeKeyAndVisible()
 
@@ -122,10 +125,14 @@ final class BearyChromeViewController: UIViewController {
     private var lineColor: UIColor { BearyColors.line }
 
     /// 玻璃本体：iOS 26+ 为 UIGlassEffect，低版本降级系统毛玻璃；调用点一律不新增玻璃视图。
-    /// tint 只给顶栏传：网页 .nav 底色为 bg 52%（color-mix），而默认玻璃未设 tint，
-    /// 浅色下系统默认透色发灰（截图顶栏灰渐变即此来源）；tint 为 nil 时与旧调用完全一致
+    /// tint 只给顶栏传：网页 .nav 底色为 bg 52%（color-mix），tint 为 nil 时与旧调用完全一致
     /// （底栏胶囊仍走 makeGlassView()，配方不动）。低版本分支无 tint 参数，
     /// 故同值以 contentView 底色叠加在毛玻璃上，复现网页 52% 底色口径。
+    /// 注意（2026-10-25 顶栏发灰复查）：灰色根因不是 tint 不足——顶栏玻璃帧内没有任何页面
+    /// 内容（各页顶距均为安全区+60，内容从玻璃下方才开始），玻璃只能透出容器/窗口底色；
+    /// 容器与窗口底色此前均未设（空底色透出即发灰的灰渐变），故上一轮只加 52% tint 无效：
+    /// iOS 26+ 分支的 tintColor 不是一层实色底，只给玻璃折射/高光着色，空底色上无白可透。
+    /// 修复在 viewDidLoad / scene willConnectTo 补 bg 底色，tint 保持网页口径 52% 不动，勿再靠加 tint 掩盖。
     private func makeGlassView(tint: UIColor? = nil) -> UIVisualEffectView {
         if #available(iOS 26.0, *) {
             let effect = UIGlassEffect()
@@ -444,6 +451,13 @@ final class BearyChromeViewController: UIViewController {
 
     override func viewDidLoad() {
         super.viewDidLoad()
+        // 顶栏玻璃根因修复（2026-10-25）：顶栏玻璃帧为 view.top 至安全区+60，页面内容
+        // （Feed/各页顶距均为安全区+60）从玻璃下方才开始，玻璃下方本无内容可透；此前容器
+        // view.backgroundColor 从未设置，玻璃透出空底色，在浅色下呈约 #D0 灰渐变（截图实测
+        // 顶栏带全宽约 208 灰、下方页面内容为纯白）。此处补 BearyColors.bg（动态色：浅色白/
+        // 深色黑，深浅切换自动跟随，无需 trait 回调），玻璃透出 bg 而非空底色；tint 仍为网页
+        // 口径 52% 不动，玻璃类型、布局尺寸、底栏胶囊配方均不动。
+        view.backgroundColor = BearyColors.bg
         buildChrome()
         // 初始态按未登录：登录钮显、头像与礼物钮藏；refreshMe 成功后 applyLoginState 再翻转（避免首帧两个钮同时出现）。
         avatarButton.isHidden = true
