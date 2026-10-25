@@ -46,13 +46,13 @@ public final class BearyEmoteView: UIView {
         fatalError("init(coder:) has not been implemented")
     }
 
-    override func layoutSubviews() {
+    public override func layoutSubviews() {
         super.layoutSubviews()
         animationView?.frame = bounds
         fallbackImageView?.frame = bounds
     }
 
-    override func traitCollectionDidChange(_ previousTraitCollection: UITraitCollection?) {
+    public override func traitCollectionDidChange(_ previousTraitCollection: UITraitCollection?) {
         super.traitCollectionDidChange(previousTraitCollection)
         guard let previous = previousTraitCollection else { return }
         guard traitCollection.hasDifferentColorAppearance(comparedTo: previous) else { return }
