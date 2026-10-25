@@ -15,6 +15,11 @@
 		504EC30F1FED79650016851F /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 504EC30E1FED79650016851F /* Assets.xcassets */; };
 		504EC3121FED79650016851F /* LaunchScreen.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = 504EC3101FED79650016851F /* LaunchScreen.storyboard */; };
 		50B271D11FEDC1A000F3C39B /* public in Resources */ = {isa = PBXBuildFile; fileRef = 50B271D01FEDC1A000F3C39B /* public */; };
+		147711CB4F24122B8270E75F /* BearyCoreTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5402B22C53F47BC0E5260A35 /* BearyCoreTests.swift */; };
+		A8BEBC6E5F94AF59F6C14DDC /* BearyAPI.swift in Sources */ = {isa = PBXBuildFile; fileRef = AECBDBF45A4EEB200061613F /* BearyAPI.swift */; };
+		850D32A1A4CA4E3D088DA61F /* BearyNavigator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 86D18B2BF4591827760F0894 /* BearyNavigator.swift */; };
+		59C6778EEFAEC6629770AD96 /* WebKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 59B3786A24FEFF632E1621F3 /* WebKit.framework */; };
+		9F64B84E58D114FEDA76ED6E /* XCTest.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 1184567EDCC8BB2976BDBED4 /* XCTest.framework */; };
 		9582B6832FE993A70072D4E8 /* SceneDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9582B6822FE993A50072D4E8 /* SceneDelegate.swift */; };
 		FCE851521BDA875B32CD7A84 /* BearyNavigator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 86D18B2BF4591827760F0894 /* BearyNavigator.swift */; };
 		0A5C1A516A0841A9DBC6A722 /* SessionManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = EB603D97ED6DBB5EB3F8E3B8 /* SessionManager.swift */; };
@@ -31,6 +36,10 @@
 		504EC3111FED79650016851F /* Base */ = {isa = PBXFileReference; lastKnownFileType = file.storyboard; name = Base; path = Base.lproj/LaunchScreen.storyboard; sourceTree = "<group>"; };
 		504EC3131FED79650016851F /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		50B271D01FEDC1A000F3C39B /* public */ = {isa = PBXFileReference; lastKnownFileType = folder; path = public; sourceTree = "<group>"; };
+		AC443416658B407AACC3B8BA /* BearyCoreTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = BearyCoreTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		5402B22C53F47BC0E5260A35 /* BearyCoreTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BearyCoreTests.swift; sourceTree = "<group>"; };
+		59B3786A24FEFF632E1621F3 /* WebKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = WebKit.framework; path = WebKit.framework; sourceTree = SDKROOT; };
+		1184567EDCC8BB2976BDBED4 /* XCTest.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = XCTest.framework; path = XCTest.framework; sourceTree = SDKROOT; };
 		9582B6822FE993A50072D4E8 /* SceneDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SceneDelegate.swift; sourceTree = "<group>"; };
 		86D18B2BF4591827760F0894 /* BearyNavigator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BearyNavigator.swift; sourceTree = "<group>"; };
 		EB603D97ED6DBB5EB3F8E3B8 /* SessionManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionManager.swift; sourceTree = "<group>"; };
@@ -47,6 +56,15 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		064B896DC5357AB34E3BD4E1 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				59C6778EEFAEC6629770AD96 /* WebKit.framework in Frameworks */,
+				9F64B84E58D114FEDA76ED6E /* XCTest.framework in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
@@ -54,6 +72,7 @@
 			isa = PBXGroup;
 			children = (
 				958DCC722DB07C7200EA8C5F /* debug.xcconfig */,
+				D05045A39C0D4EB2ADE47183 /* BearyCoreTests */,
 				504EC3061FED79650016851F /* App */,
 				504EC3051FED79650016851F /* Products */,
 			);
@@ -86,6 +105,14 @@
 			path = App;
 			sourceTree = "<group>";
 		};
+		D05045A39C0D4EB2ADE47183 /* BearyCoreTests */ = {
+			isa = PBXGroup;
+			children = (
+				5402B22C53F47BC0E5260A35 /* BearyCoreTests.swift */,
+			);
+			path = BearyCoreTests;
+			sourceTree = "<group>";
+		};
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
@@ -108,6 +135,22 @@
 			productName = App;
 			productReference = 504EC3041FED79650016851F /* App.app */;
 			productType = "com.apple.product-type.application";
+		};
+		A26E44BB065F29296E3F5F68 /* BearyCoreTests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = AEA7FCABF568721F985239BD /* Build configuration list for PBXNativeTarget "BearyCoreTests" */;
+			buildPhases = (
+				086862ECCB8678A68C4B37AB /* Sources */,
+				064B896DC5357AB34E3BD4E1 /* Frameworks */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = BearyCoreTests;
+			productName = BearyCoreTests;
+			productReference = AC443416658B407AACC3B8BA /* BearyCoreTests.xctest */;
+			productType = "com.apple.product-type.bundle.unit-test";
 		};
 /* End PBXNativeTarget section */
 
@@ -141,6 +184,7 @@
 			projectDirPath = "";
 			projectRoot = "";
 			targets = (
+				A26E44BB065F29296E3F5F68 /* BearyCoreTests */,
 				504EC3031FED79650016851F /* App */,
 			);
 		};
@@ -172,6 +216,16 @@
 				FCE851521BDA875B32CD7A84 /* BearyNavigator.swift in Sources */,
 				0A5C1A516A0841A9DBC6A722 /* SessionManager.swift in Sources */,
 				6C0B3118064804F9010301DD /* BearyAPI.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		086862ECCB8678A68C4B37AB /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				147711CB4F24122B8270E75F /* BearyCoreTests.swift in Sources */,
+				A8BEBC6E5F94AF59F6C14DDC /* BearyAPI.swift in Sources */,
+				850D32A1A4CA4E3D088DA61F /* BearyNavigator.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -350,6 +404,35 @@
 			};
 			name = Release;
 		};
+		752ACEBC9D5AAA758C97DEA8 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 15.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.teddyhn.beary.tests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		2F5EC5AF2066943E0BDFC805 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 15.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.teddyhn.beary.tests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
@@ -367,6 +450,15 @@
 			buildConfigurations = (
 				504EC3171FED79650016851F /* Debug */,
 				504EC3181FED79650016851F /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		AEA7FCABF568721F985239BD /* Build configuration list for PBXNativeTarget "BearyCoreTests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				752ACEBC9D5AAA758C97DEA8 /* Debug */,
+				2F5EC5AF2066943E0BDFC805 /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
