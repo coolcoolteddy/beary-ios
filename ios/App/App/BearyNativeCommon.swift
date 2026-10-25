@@ -3,7 +3,8 @@ import ObjectiveC
 
 // ===== 原生页共享契约（第二阶段第一项）=====
 // 三个原生页（列表 / 详情 / 编辑器）共用：动态色、图片地址与加载、时间文案、
-// 心情与天气名字、写接口响应模型、BearyAPI 扩展、本地草稿存储、图片压缩。
+// 心情与天气名字、写接口响应模型、BearyAPI 扩展、图片压缩。
+// 本地草稿 v2（文件原子写 + 图片落盘）见 BearyDraftFiles.swift。
 // 约束：部署目标 iOS 15.0、Swift 5.0——只用闭包回调，不用 async/await，不用 if-let 简写。
 
 // MARK: - 动态色（与 SceneDelegate 原生栏、网页三色制同值）
@@ -227,34 +228,5 @@ enum BearyImagePrep {
 
     static func dataURL(_ data: Data) -> String {
         return "data:image/jpeg;base64," + data.base64EncodedString()
-    }
-}
-
-// MARK: - 本地草稿（单篇；图片已随选图上传，草稿只存服务端 key，不存图片字节）
-
-struct NativeDraft: Codable {
-    var content: String
-    var mood: String?
-    var imageKeys: [String]
-    var updatedAt: TimeInterval
-}
-
-enum BearyDraftStore {
-    private static let key = "beary_native_draft_v1"
-
-    static func load() -> NativeDraft? {
-        guard let data = UserDefaults.standard.data(forKey: key) else { return nil }
-        return try? JSONDecoder().decode(NativeDraft.self, from: data)
-    }
-
-    static func save(content: String, mood: String?, imageKeys: [String]) {
-        let draft = NativeDraft(content: content, mood: mood, imageKeys: imageKeys, updatedAt: Date().timeIntervalSince1970)
-        if let data = try? JSONEncoder().encode(draft) {
-            UserDefaults.standard.set(data, forKey: key)
-        }
-    }
-
-    static func clear() {
-        UserDefaults.standard.removeObject(forKey: key)
     }
 }

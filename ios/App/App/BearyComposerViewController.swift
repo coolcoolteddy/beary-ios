@@ -34,6 +34,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     // MARK: - 状态
 
     private var selectedMood: String?
+    private var draftClientReq: String?
     private var isPublishing = false
     private var draftTimer: Timer?
     private var imageItems: [ComposerImageItem] = []
@@ -341,7 +342,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
 
     // MARK: - 图片条
 
-    private func createImageItem(localImage: UIImage?, key: String?, uploading: Bool) -> ComposerImageItem {
+    private func createImageItem(localImage: UIImage?, key: String?, uploading: Bool, localFile: String?, failed: Bool) -> ComposerImageItem {
         let container = UIView()
         container.translatesAutoresizingMaskIntoConstraints = false
         container.backgroundColor = BearyColors.faint
@@ -352,10 +353,24 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         imageView.contentMode = .scaleAspectFill
         imageView.clipsToBounds = true
         imageView.image = localImage
+        imageView.isUserInteractionEnabled = true
+        let tap = UITapGestureRecognizer(target: self, action: #selector(didTapImageItem(_:)))
+        imageView.addGestureRecognizer(tap)
         let spinner = UIActivityIndicatorView(style: .medium)
         spinner.translatesAutoresizingMaskIntoConstraints = false
         spinner.color = BearyColors.gray
         spinner.hidesWhenStopped = true
+        // 失败态：半透明图 + “重试”标签，点图重试，不弹全局框。
+        let retryLabel = UILabel()
+        retryLabel.translatesAutoresizingMaskIntoConstraints = false
+        retryLabel.text = "重试"
+        retryLabel.font = UIFont.boldSystemFont(ofSize: 12)
+        retryLabel.textColor = UIColor.white
+        retryLabel.backgroundColor = BearyColors.ink.withAlphaComponent(0.6)
+        retryLabel.textAlignment = .center
+        retryLabel.layer.cornerRadius = 8
+        retryLabel.layer.masksToBounds = true
+        retryLabel.isHidden = !failed
         let removeButton = UIButton(type: .system)
         removeButton.translatesAutoresizingMaskIntoConstraints = false
         removeButton.setTitle("×", for: .normal)
@@ -367,6 +382,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         removeButton.addTarget(self, action: #selector(didTapRemoveImage(_:)), for: .touchUpInside)
         container.addSubview(imageView)
         container.addSubview(spinner)
+        container.addSubview(retryLabel)
         container.addSubview(removeButton)
         NSLayoutConstraint.activate([
             container.widthAnchor.constraint(equalToConstant: 72),
@@ -377,6 +393,10 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             imageView.trailingAnchor.constraint(equalTo: container.trailingAnchor),
             spinner.centerXAnchor.constraint(equalTo: container.centerXAnchor),
             spinner.centerYAnchor.constraint(equalTo: container.centerYAnchor),
+            retryLabel.centerXAnchor.constraint(equalTo: container.centerXAnchor),
+            retryLabel.centerYAnchor.constraint(equalTo: container.centerYAnchor),
+            retryLabel.widthAnchor.constraint(equalToConstant: 44),
+            retryLabel.heightAnchor.constraint(equalToConstant: 22),
             removeButton.topAnchor.constraint(equalTo: container.topAnchor, constant: 2),
             removeButton.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -2),
             removeButton.widthAnchor.constraint(equalToConstant: 20),
@@ -385,8 +405,56 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         if uploading {
             spinner.startAnimating()
         }
-        let item = ComposerImageItem(key: key, uploading: uploading, container: container, imageView: imageView, spinner: spinner, removeButton: removeButton)
+        if failed {
+            imageView.alpha = 0.55
+        }
+        let item = ComposerImageItem(key: key, uploading: uploading, localFile: localFile, failed: failed, container: container, imageView: imageView, spinner: spinner, retryLabel: retryLabel, removeButton: removeButton)
         return item
+    }
+
+    // MARK: - 上传状态（上传中 / 已传 / 失败三态；失败只亮重试态，不弹框）
+
+    private func markUploading(_ item: ComposerImageItem) {
+        item.uploading = true
+        item.failed = false
+        item.retryLabel.isHidden = true
+        item.imageView.alpha = 1.0
+        item.spinner.startAnimating()
+    }
+
+    private func markUploaded(_ item: ComposerImageItem, key: String) {
+        item.key = key
+        item.uploading = false
+        item.failed = false
+        item.retryLabel.isHidden = true
+        item.imageView.alpha = 1.0
+        item.spinner.stopAnimating()
+    }
+
+    private func markFailed(_ item: ComposerImageItem) {
+        item.uploading = false
+        item.failed = true
+        item.retryLabel.isHidden = false
+        item.imageView.alpha = 0.55
+        item.spinner.stopAnimating()
+    }
+
+    @objc private func didTapImageItem(_ gesture: UITapGestureRecognizer) {
+        guard let tappedView = gesture.view else { return }
+        for item in imageItems {
+            if item.imageView === tappedView {
+                if item.failed {
+                    if let name = item.localFile, let image = BearyDraftImageStore.image(for: name) {
+                        startUpload(for: item, image: image)
+                    } else if item.localFile == nil {
+                        // 无本地文件又无 key：无物可传，移除该项。
+                        removeImageItem(item)
+                    }
+                    // 本地文件读不出：保持失败态，下次点图再试。
+                }
+                return
+            }
+        }
     }
 
     private func insertImageItem(_ item: ComposerImageItem) {
@@ -412,6 +480,9 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             }
         }
         imageItems = kept
+        if let name = item.localFile {
+            BearyDraftImageStore.deletePair(fullName: name)
+        }
         imageStackView.removeArrangedSubview(item.container)
         item.container.removeFromSuperview()
         refreshAddButtonVisibility()
@@ -458,8 +529,17 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                     if self.imageItems.count >= BearyComposerViewController.maxImages {
                         return
                     }
-                    let item = self.createImageItem(localImage: image, key: nil, uploading: true)
+                    // 先落盘再建项：选完图立刻有本地文件，杀 App 也不丢图。
+                    // 落盘失败则按无本地文件降级（与旧行为一致，草稿里只有 key）。
+                    var localFile: String?
+                    if let full = BearyImagePrep.jpegData(image, maxSide: 1600, quality: 0.85),
+                       let thumb = BearyImagePrep.thumbData(image, maxSide: 480),
+                       let saved = BearyDraftImageStore.save(fullData: full.data, thumbData: thumb) {
+                        localFile = saved
+                    }
+                    let item = self.createImageItem(localImage: image, key: nil, uploading: true, localFile: localFile, failed: false)
                     self.insertImageItem(item)
+                    self.saveDraftNow()
                     self.startUpload(for: item, image: image)
                 }
             }
@@ -467,12 +547,17 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     }
 
     private func startUpload(for item: ComposerImageItem, image: UIImage) {
+        markUploading(item)
         guard let full = BearyImagePrep.jpegData(image, maxSide: 1600, quality: 0.85) else {
-            failUpload(item)
+            markFailed(item)
+            saveDraftNow()
+            updatePublishState()
             return
         }
         guard let thumb = BearyImagePrep.thumbData(image, maxSide: 480) else {
-            failUpload(item)
+            markFailed(item)
+            saveDraftNow()
+            updatePublishState()
             return
         }
         BearyAPI.shared.uploadImage(dataUrl: BearyImagePrep.dataURL(full.data), width: full.w, height: full.h, thumbDataUrl: BearyImagePrep.dataURL(thumb)) { [weak self, weak item] result in
@@ -490,25 +575,38 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                 switch result {
                 case .success(let resp):
                     if let key = resp.key {
-                        item.key = key
-                        item.uploading = false
-                        item.spinner.stopAnimating()
+                        self.markUploaded(item, key: key)
                         item.imageView.image = image
                         self.scheduleDraftSave()
                         self.updatePublishState()
                     } else {
-                        self.failUpload(item)
+                        self.markFailed(item)
+                        self.saveDraftNow()
+                        self.updatePublishState()
                     }
                 case .failure:
-                    self.failUpload(item)
+                    // 失败只亮重试态：图留在条里，点图重试；不弹全局框、不删项。
+                    self.markFailed(item)
+                    self.saveDraftNow()
+                    self.updatePublishState()
                 }
             }
         }
     }
 
-    private func failUpload(_ item: ComposerImageItem) {
-        removeImageItem(item)
-        showAlert(message: "图片上传失败，请重试")
+    /// 重开编辑器时续传：有本地文件、无 key、非失败态的项自动重新上传。
+    /// 失败态的项不自动续传，等用户点图重试；本地文件读不出的项置失败态。
+    private func resumePendingUploads() {
+        for item in imageItems {
+            if item.key != nil || item.uploading || item.failed {
+                continue
+            }
+            if let name = item.localFile, let image = BearyDraftImageStore.image(for: name) {
+                startUpload(for: item, image: image)
+            } else if item.localFile != nil {
+                markFailed(item)
+            }
+        }
     }
 
     private func uploadedImageKeys() -> [String] {
@@ -532,21 +630,65 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     }
 
     private func saveDraftNow() {
-        BearyDraftStore.save(content: textView.text, mood: selectedMood, imageKeys: uploadedImageKeys())
+        // clientReq 本篇草稿创建时生成一次，之后全程复用（含发布重试），
+        // 成功拿到 entry id 前绝不换——服务端靠它做发布幂等。
+        if draftClientReq == nil {
+            draftClientReq = BearyDraftStore.newClientReq()
+        }
+        guard let req = draftClientReq else { return }
+        var images: [BearyDraftImageItem] = []
+        for item in imageItems {
+            let state: BearyDraftImageState
+            if item.key != nil {
+                state = .uploaded
+            } else if item.failed {
+                state = .failed
+            } else {
+                state = .pending
+            }
+            images.append(BearyDraftImageItem(localFile: item.localFile, serverKey: item.key, state: state))
+        }
+        let draft = BearyDraft(content: textView.text, mood: selectedMood, images: images, clientReq: req, updatedAt: Date().timeIntervalSince1970)
+        BearyDraftStore.save(draft)
     }
 
     private func restoreDraft() {
         guard let draft = BearyDraftStore.load() else { return }
+        draftClientReq = draft.clientReq
         textView.text = draft.content
         selectedMood = draft.mood
         refreshMoodButtons()
-        for key in draft.imageKeys {
-            let item = createImageItem(localImage: nil, key: key, uploading: false)
+        var referenced = Set<String>()
+        for img in draft.images {
+            var localImage: UIImage?
+            if let name = img.localFile {
+                localImage = BearyDraftImageStore.image(for: name)
+                referenced.insert(name)
+            }
+            let failed = (img.state == .failed)
+            let item = createImageItem(localImage: localImage, key: img.serverKey, uploading: false, localFile: img.localFile, failed: failed)
             insertImageItem(item)
-            if let url = BearyImageURLs.imageURL(key: key, thumb: true) {
+            // 有本地图优先显示本地图；只有 key 的老项（v1 迁移而来）走远程缩略图。
+            if localImage == nil, let key = img.serverKey,
+               let url = BearyImageURLs.imageURL(key: key, thumb: true) {
                 item.imageView.bearySetImage(url: url, placeholder: nil)
             }
         }
+        // 回收无主文件（杀 App 后、首存前产生的孤文件），只保留本篇引用的。
+        BearyDraftImageStore.sweep(keeping: referenced)
+        resumePendingUploads()
+    }
+
+    /// 发布成功 / 丢弃草稿时：清草稿文件 + 本篇全部本地图片文件 + 换掉 clientReq。
+    /// 服务端孤 key 无删除接口，残留是已知可接受项（见文末注）。
+    private func clearDraftAndFiles() {
+        for item in imageItems {
+            if let name = item.localFile {
+                BearyDraftImageStore.deletePair(fullName: name)
+            }
+        }
+        BearyDraftStore.clear()
+        draftClientReq = nil
     }
 
     // MARK: - 取消与发布
@@ -561,7 +703,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         })
         sheet.addAction(UIAlertAction(title: "丢弃并关闭", style: .destructive) { [weak self] _ in
             guard let self = self else { return }
-            BearyDraftStore.clear()
+            self.clearDraftAndFiles()
             self.onCancelled?()
         })
         if let pop = sheet.popoverPresentationController {
@@ -584,10 +726,37 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             updatePublishState()
             return
         }
+        // 有上传失败的图片：先确认，避免用户在不知情下丢图发布。
+        var hasFailed = false
+        for item in imageItems {
+            if item.failed {
+                hasFailed = true
+            }
+        }
+        if hasFailed {
+            let alert = UIAlertController(title: nil, message: "有图片上传失败，发布时不会包含这些图片，仍要发布吗？", preferredStyle: .alert)
+            alert.addAction(UIAlertAction(title: "取消", style: .cancel, handler: nil))
+            alert.addAction(UIAlertAction(title: "仍要发布", style: .default) { [weak self] _ in
+                guard let self = self else { return }
+                self.performPublish(trimmed: trimmed)
+            })
+            present(alert, animated: true)
+            return
+        }
+        performPublish(trimmed: trimmed)
+    }
+
+    private func performPublish(trimmed: String) {
+        if draftClientReq == nil {
+            draftClientReq = BearyDraftStore.newClientReq()
+        }
+        guard let req = draftClientReq else { return }
+        // 先把本次 clientReq 落盘：服务端已落库但回包丢了，重试用同一 clientReq，
+        // 服务端直接返回已落库的那篇，不重复发。
+        saveDraftNow()
         isPublishing = true
         updatePublishState()
-        let clientReq = "n" + UUID().uuidString.replacingOccurrences(of: "-", with: "")
-        BearyAPI.shared.publishEntry(content: trimmed, images: uploadedImageKeys(), mood: selectedMood, clientReq: clientReq) { [weak self] result in
+        BearyAPI.shared.publishEntry(content: trimmed, images: uploadedImageKeys(), mood: selectedMood, clientReq: req) { [weak self] result in
             DispatchQueue.main.async {
                 guard let self = self else { return }
                 self.isPublishing = false
@@ -595,14 +764,20 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                 switch result {
                 case .success(let resp):
                     if let entryId = resp.id {
-                        BearyDraftStore.clear()
+                        // 只有拿到 entry id 才清草稿与本地图片。
+                        self.clearDraftAndFiles()
                         self.onPublished?(entryId)
                     } else {
+                        self.saveDraftNow()
                         self.showAlert(message: "发布失败，请重试")
                     }
                 case .failure(let error):
+                    // 失败一律保留草稿；离线/网络错误给明确文案。
+                    self.saveDraftNow()
                     if case .unauthorized = error {
                         self.onRequireLogin?()
+                    } else if case .network = error {
+                        self.showAlert(message: "网络不可用，已保存为草稿，联网后可重试")
                     } else {
                         self.showAlert(message: self.message(forPublishError: error))
                     }
@@ -684,17 +859,23 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
 private final class ComposerImageItem {
     var key: String?
     var uploading: Bool
+    var localFile: String?
+    var failed: Bool
     let container: UIView
     let imageView: UIImageView
     let spinner: UIActivityIndicatorView
+    let retryLabel: UILabel
     let removeButton: UIButton
 
-    init(key: String?, uploading: Bool, container: UIView, imageView: UIImageView, spinner: UIActivityIndicatorView, removeButton: UIButton) {
+    init(key: String?, uploading: Bool, localFile: String?, failed: Bool, container: UIView, imageView: UIImageView, spinner: UIActivityIndicatorView, retryLabel: UILabel, removeButton: UIButton) {
         self.key = key
         self.uploading = uploading
+        self.localFile = localFile
+        self.failed = failed
         self.container = container
         self.imageView = imageView
         self.spinner = spinner
+        self.retryLabel = retryLabel
         self.removeButton = removeButton
     }
 }
@@ -703,5 +884,9 @@ private final class ComposerImageItem {
 // 1. 天气（weather）本片不做：publishEntry 签名本身不接受 weather，服务端置 null，属缺口。
 // 2. 超 2000 字红字提示用了 UIColor.systemRed——BearyColors 里没有红色，主题色之外仅此一处语义红。
 // 3. 图片 × 只移除本地与 key 列表，不调服务端；未发布的孤 key 残留是已知可接受项。
-// 4. 草稿恢复的图片只有服务端 key、无本地原图；恢复后直接发布若 key 失效，服务端报 image unavailable，
-//    由发布失败文案承接，属可接受口径。
+// 4. 草稿 v2（BearyDraftFiles.swift）：正文 + 心情 + 图片项（本地文件名 / 服务端 key / 上传状态）
+//    + clientReq（创建时生成一次，发布重试全程复用）+ updatedAt；JSON 文件原子写；
+//    v1 草稿首次读取迁移为无本地文件的 key 项，走远程图显示。
+// 5. 丢弃草稿 / 发布成功会删本地图片文件；服务端孤 key 无删除接口，残留是已知可接受项。
+// 6. 发布时有上传失败的图片会先弹确认（防静默丢图）；离线/网络错误文案为“网络不可用，
+//    已保存为草稿，联网后可重试”，失败一律保留草稿。
