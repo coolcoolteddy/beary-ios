@@ -193,7 +193,7 @@ class BearyFeedViewController: UIViewController {
                         if let id = entry.id { known.insert(id) }
                     }
                     for entry in fresh {
-                        if let id = entry.id, known.contains(id) { continue }
+                        guard let id = entry.id, !known.contains(id) else { continue }
                         strongSelf.deliveredAll.append(entry)
                         known.insert(id)
                     }
@@ -286,7 +286,7 @@ class BearyFeedViewController: UIViewController {
                         if let id = entry.id { known.insert(id) }
                     }
                     for entry in fresh {
-                        if let id = entry.id, known.contains(id) { continue }
+                        guard let id = entry.id, !known.contains(id) else { continue }
                         strongSelf.plazaRaw.append(entry)
                         known.insert(id)
                     }
