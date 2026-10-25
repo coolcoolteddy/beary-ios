@@ -806,6 +806,14 @@ final class BearyChromeViewController: UIViewController {
     /// FAB 随栏同隐同现（沿用 setBarsVisible 行为：顶栏玻璃、底栏胶囊、阴影与 FAB 同步位移与交互开关）。
     func setChromeHidden(_ hidden: Bool, animated: Bool) { setBarsVisible(!hidden, animated: animated) }
 
+    /// 栏显隐查找（#46 修复）：用循环找 SceneDelegate，不用 compactMap（后者在部分文件报类型推断失败）。
+    static var chromeDelegate: SceneDelegate? {
+        for scene in UIApplication.shared.connectedScenes {
+            if let d = scene.delegate as? SceneDelegate { return d }
+        }
+        return nil
+    }
+
     /// 顶栏选中态：四个 tab 里当前页对应的钮为墨色，其余灰色；当前页不是 tab（搜索 / 邀请 / 个人主页）时全部灰色。
     private func updateTabSelection() {
         let selectedKey: String?
