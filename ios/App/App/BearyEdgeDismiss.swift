@@ -51,12 +51,15 @@ final class BearyEdgeDismissController: NSObject, UIViewControllerTransitioningD
             presented.dismiss(animated: true)
         case .changed:
             interaction?.update(progress)
-        case .cancelled:
+        case .cancelled, .failed:
+            // U24：.failed 与 .cancelled 同处理——清理交互式过渡对象，不留悬空态。
             interaction?.cancel()
             interaction = nil
         case .ended:
             let velocity = pan.velocity(in: view).x
             if progress > 0.35 || velocity > 800 {
+                // U24：完成关闭时给轻触感（取消时无）。
+                UIImpactFeedbackGenerator(style: .light).impact()
                 interaction?.finish()
             } else {
                 interaction?.cancel()

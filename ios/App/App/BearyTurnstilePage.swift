@@ -1,9 +1,10 @@
 import Foundation
+import UIKit
 import WebKit
 
 // ===== 原生登录的人机验证极小内嵌页（一次性补齐；只新建，不改其他文件）=====
 // Turnstile 没有原生组件，所以这里用 WKWebView 跑一段本地 HTML 字符串：
-// 该字符串只含一个 Turnstile widget（invisible），不加载 teddyhn.com/beary 网页，
+// 该字符串只含 Turnstile widget，不加载 teddyhn.com/beary 网页，
 // 不复用任何网页界面，不出现网页版任何文案与样式；唯一对外请求是 Turnstile
 // 自己的脚本 https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit。
 //
@@ -14,9 +15,14 @@ import WebKit
 //
 // 一次性使用：一个 BearyTurnstilePage 只跑一次 requestToken；token 是单次有效的，
 // 发码成功或失败后调用方都应丢弃本对象，下次发码新建一个。
-// 本对象不把 webView 挂到任何视图层级（invisible widget 本身不占视觉）；
-// 若 Cloudflare 要求互动挑战，挑战框无法在无层级的 webView 里被用户看到，
-// token 会走到执行超时——这是真机验证前必须确认的最大风险点（见登录页头注释）。
+//
+// U0 两段式（客户端过渡方案，最终原生登录方案仍等 Li 定）：
+// 1) 先跑 invisible widget（无感通过时全程无界面，行为与原来一致）；
+// 2) 无感失败或 30 秒执行超时时，不再空循环重试——若调用方给了 challengeHostView，
+//    把 webView 以可见尺寸挂到该宿主上并重渲为 normal 尺寸 widget 供用户完成挑战，
+//    卡片带“取消”入口（取消走失败回调，登录页复位按钮态）；挑战 120 秒未完成则失败。
+//    未给宿主时仍直接失败（行为与原来一致），绝不静默重试。
+// 服务端调用一律不动：只改验证 widget 的呈现方式，不改发码/验码接口。
 
 final class BearyTurnstilePage: NSObject {
     enum TokenError: Error {
@@ -39,6 +45,7 @@ final class BearyTurnstilePage: NSObject {
     private enum Phase {
         case loadingScript
         case executing
+        case challenge
     }
 
     private static let siteKey = "0x4AAAAAAFWOrIUH9C6y45it"
@@ -46,12 +53,19 @@ final class BearyTurnstilePage: NSObject {
     private static let handlerName = "bearyTurnstile"
     private static let scriptTimeout: TimeInterval = 15
     private static let executeTimeout: TimeInterval = 30
+    private static let challengeTimeout: TimeInterval = 120
+
+    /// U0：挑战宿主视图（调用方在 requestToken 前设置，通常是登录页的 view）。
+    /// 为 nil 时挑战阶段不可见，直接失败，不重试。
+    weak var challengeHostView: UIView?
 
     private var webView: WKWebView?
     private var pendingCompletion: TokenCompletion?
     private var finished = false
     private var phase: Phase = .loadingScript
     private var timeoutTimer: Timer?
+    private var challengeShown = false
+    private var challengeOverlay: UIView?
 
     deinit {
         teardown()
@@ -93,6 +107,8 @@ final class BearyTurnstilePage: NSObject {
         finished = true
         timeoutTimer?.invalidate()
         timeoutTimer = nil
+        challengeOverlay?.removeFromSuperview()
+        challengeOverlay = nil
         if let view = webView {
             view.configuration.userContentController.removeScriptMessageHandler(forName: BearyTurnstilePage.handlerName)
             view.stopLoading()
@@ -106,10 +122,88 @@ final class BearyTurnstilePage: NSObject {
             guard let strongSelf = self else { return }
             if strongSelf.phase == .loadingScript {
                 strongSelf.finish(.failure(.loadTimeout))
+            } else if strongSelf.phase == .executing && !strongSelf.challengeShown && strongSelf.challengeHostView != nil {
+                // U0：执行超时不再空循环重试，改挂可见挑战。
+                strongSelf.showChallenge()
             } else {
                 strongSelf.finish(.failure(.failed))
             }
         }
+    }
+
+    /// U0：把 webView 以可见尺寸挂到宿主上，重渲 normal 尺寸 widget 供用户完成挑战。
+    /// 挑战卡片带“取消”入口；无宿主或无 webView 时直接失败，不重试。
+    private func showChallenge() {
+        guard !challengeShown, let host = challengeHostView, let view = webView else {
+            finish(.failure(.failed))
+            return
+        }
+        challengeShown = true
+        phase = .challenge
+        let overlay = UIView()
+        overlay.translatesAutoresizingMaskIntoConstraints = false
+        overlay.backgroundColor = UIColor(white: 0, alpha: 0.5)
+        let card = UIView()
+        card.translatesAutoresizingMaskIntoConstraints = false
+        card.backgroundColor = BearyColors.surface
+        card.layer.cornerRadius = 16
+        card.clipsToBounds = true
+        let titleLabel = UILabel()
+        titleLabel.translatesAutoresizingMaskIntoConstraints = false
+        titleLabel.font = UIFont.boldSystemFont(ofSize: 16)
+        titleLabel.textColor = BearyColors.ink
+        titleLabel.textAlignment = .center
+        titleLabel.text = "人机验证"
+        let cancelButton = UIButton(type: .system)
+        cancelButton.translatesAutoresizingMaskIntoConstraints = false
+        cancelButton.setTitle("取消", for: .normal)
+        cancelButton.setTitleColor(BearyColors.ink, for: .normal)
+        cancelButton.titleLabel?.font = UIFont.systemFont(ofSize: 15, weight: .semibold)
+        cancelButton.addTarget(self, action: #selector(challengeCancelTapped), for: .touchUpInside)
+        view.translatesAutoresizingMaskIntoConstraints = false
+        host.addSubview(overlay)
+        overlay.addSubview(card)
+        card.addSubview(titleLabel)
+        card.addSubview(view)
+        card.addSubview(cancelButton)
+        let webHeight = view.heightAnchor.constraint(equalToConstant: 300)
+        webHeight.priority = UILayoutPriority(750)
+        NSLayoutConstraint.activate([
+            overlay.leadingAnchor.constraint(equalTo: host.leadingAnchor),
+            overlay.trailingAnchor.constraint(equalTo: host.trailingAnchor),
+            overlay.topAnchor.constraint(equalTo: host.topAnchor),
+            overlay.bottomAnchor.constraint(equalTo: host.bottomAnchor),
+            card.centerXAnchor.constraint(equalTo: overlay.centerXAnchor),
+            card.centerYAnchor.constraint(equalTo: overlay.centerYAnchor),
+            card.leadingAnchor.constraint(greaterThanOrEqualTo: overlay.leadingAnchor, constant: 32),
+            card.trailingAnchor.constraint(lessThanOrEqualTo: overlay.trailingAnchor, constant: -32),
+            card.widthAnchor.constraint(lessThanOrEqualToConstant: 360),
+            card.heightAnchor.constraint(lessThanOrEqualTo: overlay.heightAnchor, constant: -40),
+            titleLabel.topAnchor.constraint(equalTo: card.topAnchor, constant: 16),
+            titleLabel.leadingAnchor.constraint(equalTo: card.leadingAnchor, constant: 20),
+            titleLabel.trailingAnchor.constraint(equalTo: card.trailingAnchor, constant: -20),
+            view.topAnchor.constraint(equalTo: titleLabel.bottomAnchor, constant: 8),
+            view.leadingAnchor.constraint(equalTo: card.leadingAnchor),
+            view.trailingAnchor.constraint(equalTo: card.trailingAnchor),
+            webHeight,
+            cancelButton.topAnchor.constraint(equalTo: view.bottomAnchor, constant: 8),
+            cancelButton.leadingAnchor.constraint(equalTo: card.leadingAnchor, constant: 20),
+            cancelButton.trailingAnchor.constraint(equalTo: card.trailingAnchor, constant: -20),
+            cancelButton.bottomAnchor.constraint(equalTo: card.bottomAnchor, constant: -16),
+            cancelButton.heightAnchor.constraint(equalToConstant: 44),
+        ])
+        challengeOverlay = overlay
+        view.evaluateJavaScript("window.bearyShowChallenge && window.bearyShowChallenge()") { [weak self] _, error in
+            if error != nil {
+                self?.finish(.failure(.failed))
+            }
+        }
+        scheduleTimeout(BearyTurnstilePage.challengeTimeout)
+    }
+
+    /// U0：挑战取消入口——走失败回调让登录页复位，不自动重试。
+    @objc private func challengeCancelTapped() {
+        finish(.failure(.failed))
     }
 
     private func finish(_ result: Result<String, TokenError>) {
@@ -135,7 +229,13 @@ final class BearyTurnstilePage: NSObject {
         case "scriptFailed":
             finish(.failure(.scriptFailed))
         case "failed":
-            finish(.failure(.failed))
+            // U0：无感阶段失败时挂可见挑战（JS 侧已屏蔽旧 widget 在挑战期的滞后回调，
+            // 故挑战期收到的 failed 即新 widget 的真实失败，直接结束，不重试）。
+            if phase == .executing && !challengeShown && challengeHostView != nil {
+                showChallenge()
+            } else {
+                finish(.failure(.failed))
+            }
         default:
             break
         }
@@ -156,23 +256,44 @@ final class BearyTurnstilePage: NSObject {
         (function(){
         function postToSwift(payload){ try{ window.webkit.messageHandlers.\(handlerName).postMessage(payload); }catch(err){} }
         var started = false;
+        var widgetRef = null;
         function start(){
           if(started){ return; }
           if(typeof turnstile === 'undefined'){ return; }
           started = true;
           try{
-            var widgetRef = turnstile.render(document.getElementById('turnstile-box'), {
+            widgetRef = turnstile.render(document.getElementById('turnstile-box'), {
               sitekey: '\(siteKey)',
               size: 'invisible',
               callback: function(token){ postToSwift({type: 'token', token: token}); },
-              'error-callback': function(){ postToSwift({type: 'failed'}); },
-              'expired-callback': function(){ postToSwift({type: 'failed'}); },
-              'timeout-callback': function(){ postToSwift({type: 'failed'}); }
+              // 挑战期旧 widget 的滞后失败回调一律屏蔽，避免误杀可见挑战。
+              'error-callback': function(){ if(window.bearyChallengeActive){ return; } postToSwift({type: 'failed'}); },
+              'expired-callback': function(){ if(window.bearyChallengeActive){ return; } postToSwift({type: 'failed'}); },
+              'timeout-callback': function(){ if(window.bearyChallengeActive){ return; } postToSwift({type: 'failed'}); }
             });
             postToSwift({type: 'ready'});
             turnstile.execute(widgetRef);
           }catch(err){ postToSwift({type: 'failed'}); }
         }
+        // U0：可见挑战——拆掉 invisible widget，重渲 normal 尺寸 widget 供用户点选完成。
+        window.bearyShowChallenge = function(){
+          if(window.bearyChallengeActive){ return; }
+          window.bearyChallengeActive = true;
+          if(typeof turnstile === 'undefined'){ postToSwift({type: 'failed'}); return; }
+          try{
+            if(widgetRef !== null){ try{ turnstile.remove(widgetRef); }catch(err){} }
+            var box = document.getElementById('turnstile-box');
+            box.innerHTML = '';
+            widgetRef = turnstile.render(box, {
+              sitekey: '\(siteKey)',
+              size: 'normal',
+              callback: function(token){ postToSwift({type: 'token', token: token}); },
+              'error-callback': function(){ postToSwift({type: 'failed'}); },
+              'expired-callback': function(){ postToSwift({type: 'failed'}); },
+              'timeout-callback': function(){ postToSwift({type: 'failed'}); }
+            });
+          }catch(err){ postToSwift({type: 'failed'}); }
+        };
         var pollTimer = setInterval(function(){ start(); if(started){ clearInterval(pollTimer); } }, 100);
         })();
         </script>

@@ -24,8 +24,9 @@ import UIKit
 // （网页邮箱正则 /.+@.+\..+/ 更松；本页沿用更严的 isEmailValid，合法邮箱均可通过，
 // 仅对无点号域等边缘输入更严，不放宽以免与服务端 ^[^\s@]+@[^\s@]+\.[^\s@]+$ 口径冲突。）
 // 协议链接说明：网页复选框文案里的《隐私政策》/《用户协议》链向 /privacy、/terms；
-// 原生 App 无网页视图，文案只做纯文本展示、点整行切换勾选，链接打开方式待总协调定。
-// Turnstile 互动挑战在真机验证通过前是风险项：见 BearyTurnstilePage 头注释。
+// F1：原生不做协议页，文案里的两个链接可点，点击走 UIApplication.shared.open
+// 用系统浏览器打开 https://teddyhn.com/privacy 与 /terms；点文案其他位置仍切换勾选。
+// Turnstile 互动挑战过渡方案见 BearyTurnstilePage 头注释（最终原生登录方案仍等 Li 定）。
 
 final class BearyLoginViewController: UIViewController {
     /// 登录成功（验码 {ok: true}）。容器随后刷新登录态并关闭本页。
@@ -46,8 +47,26 @@ final class BearyLoginViewController: UIViewController {
     private let inviteField = UITextField()
     private let messageLabel = UILabel()
     private let agreeButton = UIButton(type: .system)
-    private let agreeLabel = UILabel()
+    /// F1：协议文案用 UITextView 承载可点链接（UILabel 接不住链接点按）。
+    private let agreeLabel = UITextView()
     private let agreeRow = UIView()
+    /// M14：登录进行态的圈转指示（与“处理中…”文案并用，不再只有 alpha 变化）。
+    private let loginSpinner: UIActivityIndicatorView = {
+        let spinner = UIActivityIndicatorView(style: .medium)
+        spinner.translatesAutoresizingMaskIntoConstraints = false
+        spinner.color = BearyColors.bg
+        spinner.hidesWhenStopped = true
+        return spinner
+    }()
+    /// U2：numberPad 没有 Return 键，配完成 accessory 收键盘。
+    private lazy var codeAccessoryToolbar: UIToolbar = {
+        let bar = UIToolbar()
+        bar.sizeToFit()
+        let flex = UIBarButtonItem(barButtonSystemItem: .flexibleSpace, target: nil, action: nil)
+        let done = UIBarButtonItem(title: "完成", style: .done, target: self, action: #selector(codeAccessoryDone))
+        bar.items = [flex, done]
+        return bar
+    }()
     private var isAgreed = false
 
     private var isRequestingToken = false
@@ -120,6 +139,11 @@ final class BearyLoginViewController: UIViewController {
         stackView.translatesAutoresizingMaskIntoConstraints = false
         stackView.axis = .vertical
         stackView.spacing = 0
+        // U2：滚动收键盘 + 点空白收键盘（点在输入框内时不收，见 dismissKeyboardOnBlankTap）。
+        scrollView.keyboardDismissMode = .onDrag
+        let blankTap = UITapGestureRecognizer(target: self, action: #selector(dismissKeyboardOnBlankTap(_:)))
+        blankTap.cancelsTouchesInView = false
+        scrollView.addGestureRecognizer(blankTap)
         view.addSubview(scrollView)
         scrollView.addSubview(contentView)
         contentView.addSubview(stackView)
@@ -165,6 +189,11 @@ final class BearyLoginViewController: UIViewController {
         loginButton.backgroundColor = BearyColors.ink
         loginButton.layer.cornerRadius = 12
         loginButton.addTarget(self, action: #selector(loginTapped), for: .touchUpInside)
+        loginButton.addSubview(loginSpinner)
+        NSLayoutConstraint.activate([
+            loginSpinner.centerYAnchor.constraint(equalTo: loginButton.centerYAnchor),
+            loginSpinner.leadingAnchor.constraint(equalTo: loginButton.leadingAnchor, constant: 16),
+        ])
 
         let emailContainer = makeFieldContainer(field: emailField)
         let codeContainer = makeFieldContainer(field: codeField)
@@ -299,7 +328,24 @@ final class BearyLoginViewController: UIViewController {
         codeField.autocorrectionType = .no
         codeField.textContentType = .oneTimeCode
         codeField.delegate = self
+        // U2：numberPad 无 Return 键，配“完成” accessory 收键盘。
+        codeField.inputAccessoryView = codeAccessoryToolbar
         codeField.addTarget(self, action: #selector(textChanged), for: .editingChanged)
+    }
+
+    @objc private func codeAccessoryDone() {
+        codeField.resignFirstResponder()
+    }
+
+    @objc private func dismissKeyboardOnBlankTap(_ gesture: UITapGestureRecognizer) {
+        let point = gesture.location(in: view)
+        // 点在输入框内时不收键盘（否则点输入框聚焦后立刻被收起）。
+        for field in [emailField, codeField, inviteField] {
+            if field.bounds.contains(field.convert(point, from: view)) {
+                return
+            }
+        }
+        view.endEditing(true)
     }
 
     private func configureInviteField() {
@@ -325,16 +371,53 @@ final class BearyLoginViewController: UIViewController {
         agreeButton.backgroundColor = BearyColors.faint
         agreeButton.accessibilityLabel = "我已阅读并同意《隐私政策》和《用户协议》"
         agreeButton.addTarget(self, action: #selector(agreeTapped), for: .touchUpInside)
+        // F1：文案里的两个协议名是真链接（系统浏览器打开），其余文字点按仍切换勾选。
         agreeLabel.translatesAutoresizingMaskIntoConstraints = false
-        agreeLabel.text = "我已阅读并同意《隐私政策》和《用户协议》"
+        agreeLabel.isEditable = false
+        agreeLabel.isScrollEnabled = false
+        agreeLabel.backgroundColor = UIColor.clear
+        agreeLabel.textContainerInset = UIEdgeInsets.zero
+        agreeLabel.textContainer.lineFragmentPadding = 0
         agreeLabel.font = UIFont.systemFont(ofSize: 13.5)
         agreeLabel.textColor = BearyColors.gray
-        agreeLabel.numberOfLines = 0
-        agreeLabel.isUserInteractionEnabled = true
-        agreeLabel.addGestureRecognizer(UITapGestureRecognizer(target: self, action: #selector(agreeTapped)))
+        agreeLabel.linkTextAttributes = [
+            .foregroundColor: BearyColors.blue,
+            .underlineStyle: NSUnderlineStyle.single.rawValue,
+        ]
+        let fullText = "我已阅读并同意《隐私政策》和《用户协议》"
+        let attributed = NSMutableAttributedString(string: fullText, attributes: [
+            .font: UIFont.systemFont(ofSize: 13.5),
+            .foregroundColor: BearyColors.gray,
+        ])
+        let privacyRange = (fullText as NSString).range(of: "隐私政策")
+        if privacyRange.location != NSNotFound, let privacyURL = URL(string: "https://teddyhn.com/privacy") {
+            attributed.addAttribute(.link, value: privacyURL, range: privacyRange)
+        }
+        let termsRange = (fullText as NSString).range(of: "用户协议")
+        if termsRange.location != NSNotFound, let termsURL = URL(string: "https://teddyhn.com/terms") {
+            attributed.addAttribute(.link, value: termsURL, range: termsRange)
+        }
+        agreeLabel.attributedText = attributed
+        agreeLabel.delegate = self
+        agreeLabel.addGestureRecognizer(UITapGestureRecognizer(target: self, action: #selector(agreeTextTapped(_:))))
         agreeRow.addSubview(agreeButton)
         agreeRow.addSubview(agreeLabel)
         refreshAgreeBox()
+    }
+
+    /// F1：点中文案非链接处切换勾选；点在链接上时放行给 UITextView 的链接交互。
+    @objc private func agreeTextTapped(_ gesture: UITapGestureRecognizer) {
+        let point = gesture.location(in: agreeLabel)
+        let index = agreeLabel.layoutManager.characterIndex(for: point, in: agreeLabel.textContainer, fractionOfDistanceBetweenInsertionPoints: nil)
+        let plainText = agreeLabel.attributedText?.string ?? ""
+        let textLength = (plainText as NSString).length
+        if index < textLength, let attributed = agreeLabel.attributedText {
+            var effectiveRange = NSRange(location: 0, length: 0)
+            if attributed.attribute(.link, at: index, effectiveRange: &effectiveRange) != nil {
+                return
+            }
+        }
+        agreeTapped()
     }
 
     private func refreshAgreeBox() {
@@ -421,6 +504,12 @@ final class BearyLoginViewController: UIViewController {
         let loginEnabled = isAgreed && emailValid && code.count == 6 && !isVerifying
         loginButton.isEnabled = loginEnabled
         loginButton.alpha = loginEnabled ? 1 : 0.35
+        // M14：进行态 = “处理中…”文案 + 圈转指示，不再只有 alpha 变化。
+        if isVerifying {
+            loginSpinner.startAnimating()
+        } else {
+            loginSpinner.stopAnimating()
+        }
         setLoginTitle(isVerifying ? "处理中…" : "登录")
     }
 
@@ -474,6 +563,9 @@ final class BearyLoginViewController: UIViewController {
         isRequestingToken = true
         updateButtonStates()
         let page = BearyTurnstilePage()
+        // U0：把本页视图交给验证页作挑战宿主——无感验证失败/超时时挑战框
+        // 在此挂出可见尺寸供用户完成，不再空循环重试。
+        page.challengeHostView = view
         activeTurnstilePage = page
         page.requestToken { [weak self] result in
             guard let strongSelf = self else { return }
@@ -580,9 +672,14 @@ final class BearyLoginViewController: UIViewController {
         let hours = (remainingMs % 86400000) / 3600000
         let minutes = (remainingMs % 3600000) / 60000
         var leftText = ""
-        if days > 0 { leftText += "\(days) 天 " }
-        if hours > 0 { leftText += "\(hours) 小时 " }
-        leftText += "\(minutes) 分钟"
+        // W6：剩余不足 1 分钟时不再显示“0 分钟”。
+        if remainingMs < 60000 {
+            leftText = "不到 1 分钟"
+        } else {
+            if days > 0 { leftText += "\(days) 天 " }
+            if hours > 0 { leftText += "\(hours) 小时 " }
+            leftText += "\(minutes) 分钟"
+        }
         let formatter = DateFormatter()
         formatter.locale = Locale(identifier: "zh_CN")
         formatter.dateFormat = "yyyy/M/d HH:mm"
@@ -642,5 +739,14 @@ extension BearyLoginViewController: UITextFieldDelegate {
             textField.resignFirstResponder()
         }
         return true
+    }
+}
+
+// MARK: - UITextViewDelegate（F1：协议链接走系统浏览器打开，不进内嵌页）
+
+extension BearyLoginViewController: UITextViewDelegate {
+    func textView(_ textView: UITextView, shouldInteractWith URL: URL, in characterRange: NSRange, interaction: UITextItemInteraction) -> Bool {
+        UIApplication.shared.open(URL, options: [:], completionHandler: nil)
+        return false
     }
 }

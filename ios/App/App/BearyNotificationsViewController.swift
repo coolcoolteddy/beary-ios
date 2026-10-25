@@ -564,6 +564,9 @@ final class BearyNotificationsViewController: UIViewController {
         isLoadingMore = true
         loadMoreFailed = false
         tableView.reloadData()
+        // M12：翻页追加的行身份（卡种 + 通知下标），用于成功后 insertRows 而非整表重载。
+        let oldDisplayRows = displayRows
+        let oldTrailingRow = showsTrailingRow
         BearyAPI.shared.fetchNotifications(limit: pageLimit, before: cursor) { [weak self] result in
             DispatchQueue.main.async {
                 guard let strongSelf = self else { return }
@@ -597,15 +600,65 @@ final class BearyNotificationsViewController: UIViewController {
                     strongSelf.loadMoreFailed = false
                     strongSelf.computeHasMore(fetchedCount: appendedCount, requestedLimit: strongSelf.pageLimit)
                     strongSelf.publishUnread(strongSelf.unreadTotal)
+                    // M12：翻页追加用 insertRows 动画（尾行随加载结束一并删掉）；
+                    // 已有行不动，不走整表 reloadData。
+                    // 并发守卫：加载中途用户若展开/收起卡片改了行表，旧坐标已失配，
+                    // 此时回退整表 reloadData，避免 insertRows 坐标不一致崩溃。
+                    let preRebuildRows = strongSelf.displayRows
                     strongSelf.rebuildDisplayRows()
+                    let preKeys = preRebuildRows.map({ strongSelf.displayRowIdentity(row: $0) })
+                    let oldKeys = oldDisplayRows.map({ strongSelf.displayRowIdentity(row: $0) })
+                    if preKeys == oldKeys {
+                        strongSelf.insertAppendedDisplayRows(oldRows: oldDisplayRows, oldTrailingRow: oldTrailingRow)
+                    } else {
+                        strongSelf.tableView.reloadData()
+                    }
                 case .failure:
                     // 401 不清列表（全局 onUnauthorized 已由容器接管）；其余失败亮尾行重试。
                     strongSelf.loadMoreFailed = true
+                    strongSelf.tableView.reloadData()
                 }
-                strongSelf.tableView.reloadData()
                 strongSelf.updateReadAllButton()
             }
         }
+    }
+
+    /// M12：按行身份算出新增行并 insertRows；旧尾行（加载态）在旧坐标下删掉。
+    private func insertAppendedDisplayRows(oldRows: [NotificationDisplayRow], oldTrailingRow: Bool) {
+        var oldKeys: Set<String> = []
+        for row in oldRows {
+            oldKeys.insert(displayRowIdentity(row: row))
+        }
+        var inserted: [IndexPath] = []
+        for index in displayRows.indices {
+            if !oldKeys.contains(displayRowIdentity(row: displayRows[index])) {
+                inserted.append(IndexPath(row: index, section: 0))
+            }
+        }
+        let newTrailingRow = showsTrailingRow
+        if inserted.isEmpty && !(oldTrailingRow && !newTrailingRow) {
+            return
+        }
+        tableView.performBatchUpdates({
+            if oldTrailingRow && !newTrailingRow {
+                self.tableView.deleteRows(at: [IndexPath(row: oldRows.count, section: 0)], with: .automatic)
+            }
+            if !inserted.isEmpty {
+                self.tableView.insertRows(at: inserted, with: .automatic)
+            }
+        }, completion: nil)
+    }
+
+    private func displayRowIdentity(row: NotificationDisplayRow) -> String {
+        let kindText: String
+        switch row.kind {
+        case .letter: kindText = "letter"
+        case .sysCard: kindText = "sysCard"
+        case .sysItem: kindText = "sysItem"
+        case .actCard: kindText = "actCard"
+        case .actItem: kindText = "actItem"
+        }
+        return kindText + ":" + String(row.itemIndex ?? -1)
     }
 
     /// hasMore 口径与网页一致：total 优先（total > 已加载数才有更多）；
@@ -654,7 +707,14 @@ final class BearyNotificationsViewController: UIViewController {
                     strongSelf.sysUnreadTotal = 0
                     strongSelf.publishUnread(0)
                     strongSelf.rebuildDisplayRows()
-                    strongSelf.tableView.reloadData()
+                    // M12：已读态变化用 reloadRows 淡入（减动效用 .none），不行数不变。
+                    let visiblePaths = strongSelf.tableView.indexPathsForVisibleRows ?? []
+                    let rowPaths = visiblePaths.filter({ $0.row < strongSelf.displayRows.count })
+                    if rowPaths.isEmpty {
+                        strongSelf.tableView.reloadData()
+                    } else {
+                        strongSelf.tableView.reloadRows(at: rowPaths, with: UIAccessibility.isReduceMotionEnabled ? .none : .fade)
+                    }
                     strongSelf.updateReadAllButton()
                 case .failure(let apiError):
                     // 401 由容器全局处理，不再提示；其余失败 toast + 全量重拉。
@@ -722,7 +782,8 @@ final class BearyNotificationsViewController: UIViewController {
             paths.append(IndexPath(row: cardRow, section: 0))
         }
         if !paths.isEmpty {
-            tableView.reloadRows(at: paths, with: .none)
+            // M12：单条已读态变化同样用淡入（减动效用 .none）。
+            tableView.reloadRows(at: paths, with: UIAccessibility.isReduceMotionEnabled ? .none : .fade)
         }
     }
 
@@ -890,6 +951,11 @@ final class BearyNotificationsViewController: UIViewController {
             return
         }
         let titleText = item.title ?? (item.type == "letter" ? "一封信" : "通知")
+        // U8：空正文不再弹空白模态，改 toast（标题 + 暂无正文）。
+        if (item.body ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            showToast(message: titleText + "（暂无正文）")
+            return
+        }
         let isBadgeLetter = titleText.contains("成就") || titleText.contains("徽章")
         presentLetterModal(
             title: titleText,
@@ -905,9 +971,12 @@ final class BearyNotificationsViewController: UIViewController {
     /// “稍后 / 去看看”两钮；引用预览随后拉单篇补全（失败则不显示引用区）。
     private func presentDeliveryLetter(for item: NotificationItem, entryId: String) {
         let titleText = item.title ?? "你的一篇日记今天公开了"
+        let rawBody = item.body ?? ""
+        // U8：送达信空正文时给默认文案（模态仍有“去看看”与引用预览价值，不改 toast）。
+        let bodyText = rawBody.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "这篇日记今天公开了，去看看吧。" : rawBody
         let modal = presentLetterModal(
             title: titleText,
-            body: item.body ?? "",
+            body: bodyText,
             iconName: "icon_mail",
             quoteText: nil,
             quoteMeta: nil,
@@ -1027,9 +1096,10 @@ extension BearyNotificationsViewController: UITableViewDataSource, UITableViewDe
                 let latest = items[latestIndex]
                 let anyUnread = actIndices.contains(where: { (items[$0].read ?? true) == false })
                 let actorName = latest.actorName ?? ""
+                let latestVerb = BearyNotificationCell.verb(for: latest.type)
                 cell.configureAsCard(
                     title: "互动消息",
-                    excerpt: actorName + " " + BearyNotificationCell.verb(for: latest.type),
+                    excerpt: latestVerb.isEmpty ? actorName : actorName + " " + latestVerb,
                     timeMs: latest.createdAt,
                     anyUnread: anyUnread,
                     isSystem: false,
@@ -1255,22 +1325,44 @@ private class BearyLetterModal {
         buttonTopToQuote?.isActive = true
     }
 
+    private var isDismissingModal = false
+
+    /// M13：关闭走 0.25s 淡出动画完成后再移除（减动效直接移除）；去看看在移除后回调。
+    private func dismissModalAnimated(afterDismiss: (() -> Void)? = nil) {
+        guard !isDismissingModal else { return }
+        isDismissingModal = true
+        let cleanup = {
+            self.overlayView.removeFromSuperview()
+            afterDismiss?()
+        }
+        if UIAccessibility.isReduceMotionEnabled {
+            cleanup()
+            return
+        }
+        UIView.animate(withDuration: 0.25, animations: {
+            self.overlayView.alpha = 0
+        }, completion: { _ in
+            cleanup()
+        })
+    }
+
     @objc private func dismissTapped() {
-        overlayView.removeFromSuperview()
+        dismissModalAnimated()
     }
 
     @objc private func goTapped() {
-        overlayView.removeFromSuperview()
-        if let entryId = goEntryId {
-            onGo?(entryId)
-        }
+        dismissModalAnimated(afterDismiss: { [weak self] in
+            if let entryId = self?.goEntryId {
+                self?.onGo?(entryId)
+            }
+        })
     }
 
     @objc private func overlayTapped(_ gesture: UITapGestureRecognizer) {
         if gesture.view == overlayView {
             let point = gesture.location(in: overlayView)
             if !cardView.frame.contains(point) {
-                overlayView.removeFromSuperview()
+                dismissModalAnimated()
             }
         }
     }
@@ -1617,6 +1709,8 @@ private class BearyNotificationCell: UITableViewCell {
     }
 
     /// 互动动词（卡面最新一条与行标题共用，须对 VC 可见，故不 private）。
+    /// I10：未知类型不再 fallback 到回应文案，返回中性文案（行标题不渲染动词时
+    /// 调用方以空串处理，见 configure 的标题拼接）。
     static func verb(for type: String?) -> String {
         if type == "like" {
             return "赞了你的日记"
@@ -1624,7 +1718,10 @@ private class BearyNotificationCell: UITableViewCell {
         if type == "bookmark" {
             return "收藏了你的日记"
         }
-        return "给你的日记贴了小熊回应"
+        if type == "emote" {
+            return "给你的日记贴了小熊回应"
+        }
+        return ""
     }
 
     func configure(with item: NotificationItem, nested: Bool) {
@@ -1679,13 +1776,16 @@ private class BearyNotificationCell: UITableViewCell {
             avatarImageView.backgroundColor = BearyColors.line
             avatarIconView.isHidden = true
             kindBadgeView.isHidden = false
+            // I10：未知互动类型用中性图标（icon_info），不再 fallback 到回应图标。
             let kindIconName: String
             if itemType == "like" {
                 kindIconName = "icon_heart"
             } else if itemType == "bookmark" {
                 kindIconName = "icon_bookmark"
-            } else {
+            } else if itemType == "emote" {
                 kindIconName = "icon_mood"
+            } else {
+                kindIconName = "icon_info"
             }
             kindIconView.image = BearyIconImages.image(named: kindIconName, pointSize: 11)
             let actorName = item.actorName ?? ""
@@ -1717,13 +1817,17 @@ private class BearyNotificationCell: UITableViewCell {
                     .foregroundColor: BearyColors.ink,
                 ]
             ))
-            title.append(NSAttributedString(
-                string: " " + BearyNotificationCell.verb(for: itemType),
-                attributes: [
-                    .font: UIFont.systemFont(ofSize: 15.5),
-                    .foregroundColor: BearyColors.ink,
-                ]
-            ))
+            // I10：未知类型动词为空时不渲染动词段（不留尾随空格、不 fallback 到回应文案）。
+            let verbText = BearyNotificationCell.verb(for: itemType)
+            if !verbText.isEmpty {
+                title.append(NSAttributedString(
+                    string: " " + verbText,
+                    attributes: [
+                        .font: UIFont.systemFont(ofSize: 15.5),
+                        .foregroundColor: BearyColors.ink,
+                    ]
+                ))
+            }
             if itemType == "emote", let emoteKey = item.emote, !emoteKey.isEmpty {
                 setTitleEmote(key: emoteKey)
             } else {

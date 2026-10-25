@@ -57,11 +57,16 @@ struct BearyDraft: Codable {
     /// 有实质内容：空白篇（全空）不迁入、不展示为有效草稿。
     /// 心情不算内容（网页口径：只选表情、没写字的日记不保存），与编辑器
     /// saveDraftNow 的 C10 空判定一致；旧槽里纯心情篇迁移时直接丢弃。
+    /// G19：写给口径与草稿箱摘要兜底统一——recipientId != nil 或
+    /// recipientName 非空即算有内容（只存了收信人快照、尚未写字也算）。
     var hasContent: Bool {
         if !content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             return true
         }
         if weather != nil || recipientId != nil || quoteId != nil {
+            return true
+        }
+        if let name = recipientName, !name.isEmpty {
             return true
         }
         return !images.isEmpty
@@ -120,6 +125,7 @@ enum BearyDraftImageStore {
     }
 
     /// 原图与缩略图一起落盘；任一失败返回 nil（调用方按无本地文件降级处理）。
+    /// G19：双写任一失败即删已写的一半，不留孤文件供后续误认已保存。
     static func save(fullData: Data, thumbData: Data) -> String? {
         let fullName = newFileName()
         let thumbName = thumbFileName(for: fullName)
@@ -135,6 +141,8 @@ enum BearyDraftImageStore {
             try? mutableThumb.setResourceValues(values)
             return fullName
         } catch {
+            try? FileManager.default.removeItem(at: fullURL)
+            try? FileManager.default.removeItem(at: thumbURL)
             return nil
         }
     }
@@ -180,6 +188,13 @@ enum BearyDraftStore {
     /// 收尾已对齐；旧“暂未改走本队列”备注作废）。
     static let ioQueue = DispatchQueue(label: "beary.draftStore.io", qos: .userInitiated)
 
+    /// G5：整库 read-modify-write 的互斥锁。ioQueue 已串行化队列内写，
+    /// 但 save/delete 也可能被队列外同步调用；锁保证“读库→改库→写库”
+    /// 全程不被另一路写插队。锁只包 save/delete 临界区，不包队列调度，
+    /// 故 ioQueue 内调 save/delete 不会死锁；loadAllResult 本身不加锁
+    /// （saveAll 是原子替换，读到旧整库或新整库，不会读到一半）。
+    private static let writeLock = NSLock()
+
     /// 后台删一篇：整库 loadAll + saveAll 都在 ioQueue 上，完成后回主线程。
     static func deleteAsync(draftId: String, completion: (() -> Void)? = nil) {
         ioQueue.async {
@@ -193,13 +208,27 @@ enum BearyDraftStore {
     }
 
     /// 后台增改一篇：整库 loadAll + saveAll 都在 ioQueue 上，完成后回主线程。
+    /// 老签名保留作兼容（成败仍可通过回读验证）；需成败回传的新调用方
+    /// 请用 saveAsyncReporting，失败时出红字/toast（见 G5 交接说明）。
     static func saveAsync(_ draft: BearyDraft, completion: (() -> Void)? = nil) {
         ioQueue.async {
-            save(draft)
+            _ = save(draft)
             if let completion = completion {
                 DispatchQueue.main.async {
                     completion()
                 }
+            }
+        }
+    }
+
+    /// G5：带成败回传的后台增改一篇（主线程回调）。false = 写盘失败或
+    /// 草稿库已损坏（此时原文件被保留、未被覆盖），调用方须出红字/toast，
+    /// 不得按成功处理。
+    static func saveAsyncReporting(_ draft: BearyDraft, completion: @escaping (Bool) -> Void) {
+        ioQueue.async {
+            let ok = save(draft)
+            DispatchQueue.main.async {
+                completion(ok)
             }
         }
     }
@@ -231,12 +260,35 @@ enum BearyDraftStore {
         return "n" + UUID().uuidString.replacingOccurrences(of: "-", with: "")
     }
 
-    /// 读全部：v3 文件优先（updatedAt 倒序）；无 v3 时走一次旧数据迁移。
+    /// G4：草稿库读取失败类型。文件不存在不是错误（首启即无文件），
+    /// 只有文件存在却读不出/解不出才算失败，且绝不以空数组冒充无草稿。
+    enum LoadError: Error {
+        case corruptStore(backupURL: URL?)
+        case legacyCorrupt(backupURL: URL?)
+    }
+
+    /// G4：最近一次 loadAll/loadAllResult 的失败；成功读取后清零。
+    /// loadAll() 为兼容老调用方仍返回数组，失败时返回 [] 但同时置本标记；
+    /// 草稿箱等调用方须在 loadAll() 后检查本标记，失败时出“草稿读取失败”态，
+    /// 不得出“暂无草稿”空态；或直接改用 loadAllResult()（见 G4 交接说明）。
+    private(set) static var lastLoadError: LoadError?
+
+    /// 读全部（带失败区分）：v3 文件优先（updatedAt 倒序）；无 v3 时走一次旧数据迁移。
     /// 启动时首次读取即触发迁移，调用方无需另调迁移入口。
-    static func loadAll() -> [BearyDraft] {
-        if let url = fileURL(), let data = try? Data(contentsOf: url),
-           let drafts = try? JSONDecoder().decode([BearyDraft].self, from: data) {
-            return sortedNormalized(drafts)
+    /// v3 文件存在却读不出/解不出时：原文件保留不动、另存一份备份、返回失败；
+    /// 旧源存在却解不出时同样返回失败（v2 备份同理，v1 在 UserDefaults 内无文件可备）。
+    static func loadAllResult() -> Result<[BearyDraft], LoadError> {
+        if let url = fileURL(), FileManager.default.fileExists(atPath: url.path) {
+            if let data = try? Data(contentsOf: url),
+               let drafts = try? JSONDecoder().decode([BearyDraft].self, from: data) {
+                lastLoadError = nil
+                return .success(sortedNormalized(drafts))
+            }
+            let backup = backupCorruptFile(at: url)
+            NSLog("[BearyDraft] corrupt v3 store, original kept, backup=%@", backup?.path ?? "none")
+            let err = LoadError.corruptStore(backupURL: backup)
+            lastLoadError = err
+            return .failure(err)
         }
         let migrated = migrateLegacyDrafts()
         if migrated.foundLegacy {
@@ -246,9 +298,50 @@ enum BearyDraftStore {
                 removeLegacySources()
             }
             // 写盘失败：保留旧源，下次启动重试迁移，不丢数据。
-            return sortedNormalized(migrated.drafts)
+            lastLoadError = nil
+            return .success(sortedNormalized(migrated.drafts))
         }
-        return []
+        if let v2url = legacyV2FileURL(), FileManager.default.fileExists(atPath: v2url.path) {
+            let backup = backupCorruptFile(at: v2url)
+            NSLog("[BearyDraft] corrupt legacy v2 store, original kept, backup=%@", backup?.path ?? "none")
+            let err = LoadError.legacyCorrupt(backupURL: backup)
+            lastLoadError = err
+            return .failure(err)
+        }
+        if UserDefaults.standard.data(forKey: v1Key) != nil {
+            let err = LoadError.legacyCorrupt(backupURL: nil)
+            lastLoadError = err
+            return .failure(err)
+        }
+        lastLoadError = nil
+        return .success([])
+    }
+
+    /// 读全部（兼容老调用方）：失败时返回 []，但 lastLoadError 会置失败标记，
+    /// 调用方不得把该 [] 当成“无草稿”。
+    static func loadAll() -> [BearyDraft] {
+        switch loadAllResult() {
+        case .success(let drafts):
+            return drafts
+        case .failure:
+            return []
+        }
+    }
+
+    /// 损坏文件备份：复制一份（原文件保留不动），名如
+    /// beary_draft_v3.json.corrupt-<unix 秒>.bak；复制失败返回 nil 但原文件仍在。
+    private static func backupCorruptFile(at url: URL) -> URL? {
+        let stamp = Int(Date().timeIntervalSince1970)
+        let backup = url.deletingLastPathComponent().appendingPathComponent(url.lastPathComponent + ".corrupt-\(stamp).bak")
+        do {
+            if FileManager.default.fileExists(atPath: backup.path) {
+                try FileManager.default.removeItem(at: backup)
+            }
+            try FileManager.default.copyItem(at: url, to: backup)
+            return backup
+        } catch {
+            return nil
+        }
     }
 
     /// 启动自动恢复口径：最新一篇（updatedAt 最大者）；草稿箱用 loadAll 列全部。
@@ -257,26 +350,35 @@ enum BearyDraftStore {
     }
 
     /// 按 draftId 增改一篇：同 draftId 覆盖，不同 draftId 新增；写盘后仍按倒序。
-    static func save(_ draft: BearyDraft) {
-        var all = loadAll()
+    /// G5：返回写盘成败（false = 库已损坏或写盘失败；库已损坏时绝不以新库
+    /// 覆盖原文件）。调用方失败时出红字/toast。@discardableResult 保证
+    /// 老调用方（忽略返回值、靠回读验证）无需改动即可编译。
+    @discardableResult
+    static func save(_ draft: BearyDraft) -> Bool {
+        writeLock.lock()
+        defer { writeLock.unlock() }
+        guard case .success(let all) = loadAllResult() else {
+            return false
+        }
         var kept: [BearyDraft] = []
-        for existing in all {
-            if existing.draftId != draft.draftId {
-                kept.append(existing)
-            }
+        for existing in all where existing.draftId != draft.draftId {
+            kept.append(existing)
         }
         kept.append(draft)
-        all = kept
-        _ = saveAll(all)
+        return saveAll(kept)
     }
 
     /// 只删一篇：其余篇不受影响；删到空时直接删 v3 文件，不留空数组文件。
+    /// 库已损坏时不删不写（保原文件），静默返回。
     static func delete(draftId: String) {
+        writeLock.lock()
+        defer { writeLock.unlock() }
+        guard case .success(let all) = loadAllResult() else {
+            return
+        }
         var kept: [BearyDraft] = []
-        for draftValue in loadAll() {
-            if draftValue.draftId != draftId {
-                kept.append(draftValue)
-            }
+        for draftValue in all where draftValue.draftId != draftId {
+            kept.append(draftValue)
         }
         if kept.isEmpty {
             guard let url = fileURL() else { return }
@@ -294,7 +396,9 @@ enum BearyDraftStore {
     }
 
     /// 归一化 + 倒序：本地文件已不在磁盘的项——有 key 则退为纯 key 项（走远程图），
-    /// 无 key 则丢弃（无图可显、无物可传）；同秒按 draftId 升序兜底。
+    /// 无 key 则转为失败态图项保留（localFile/serverKey 双空、state=.failed，
+    /// 草稿箱按此三元组识别并出“图片未保存”提示，不得直接丢弃，见 G6）；
+    /// 同秒按 draftId 升序兜底。
     private static func sortedNormalized(_ drafts: [BearyDraft]) -> [BearyDraft] {
         var out: [BearyDraft] = []
         for draftValue in drafts {
@@ -319,6 +423,10 @@ enum BearyDraftStore {
                     kept.append(item)
                 } else if let key = item.serverKey {
                     kept.append(BearyDraftImageItem(localFile: nil, serverKey: key, state: .uploaded))
+                } else {
+                    // G6：本地文件已删且无服务端 key——转为失败态图项并保留提示，
+                    // 而非丢弃；草稿箱现有识别逻辑（state==.failed 且双空）可直接认出。
+                    kept.append(BearyDraftImageItem(localFile: nil, serverKey: nil, state: .failed))
                 }
             } else {
                 kept.append(item)
@@ -330,7 +438,8 @@ enum BearyDraftStore {
 
     /// 原子写：先把完整 JSON 写进临时文件，再替换目标文件；已有文件用 replaceItemAt
     /// （替换本身原子），无文件直接移动；失败清临时文件，旧草稿不受损。返回成败，
-    /// 供迁移判断是否可删旧源；日常 save/delete 忽略返回值（回读是成败信号）。
+    /// 供迁移判断是否可删旧源；save 的 Bool 返回即源于此（日常调用方也可忽略返回值、
+    /// 靠回读验证，但失败时应优先用返回值出红字/toast）。
     private static func saveAll(_ drafts: [BearyDraft]) -> Bool {
         guard let url = fileURL(), let data = try? JSONEncoder().encode(drafts) else { return false }
         let tmp = url.appendingPathExtension("tmp")

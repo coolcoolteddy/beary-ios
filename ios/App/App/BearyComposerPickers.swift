@@ -63,6 +63,8 @@ final class BearyRecipientPickerViewController: UIViewController, UITextFieldDel
     private var keyboardHeight: CGFloat = 0
     private var sheetHeightConstraint: NSLayoutConstraint?
     private var sheetWidthConstraint: NSLayoutConstraint?
+    /// L11：iPad 居中卡片的 centerY 约束——键盘弹出时按遮挡量上抬，收起时归零。
+    private var padCenterYConstraint: NSLayoutConstraint?
     private var phoneConstraints: [NSLayoutConstraint] = []
     private var padConstraints: [NSLayoutConstraint] = []
     private var phoneBottomConstraint: NSLayoutConstraint?
@@ -127,7 +129,8 @@ final class BearyRecipientPickerViewController: UIViewController, UITextFieldDel
         headerIcon.image = BearyIconImages.image(named: "icon_at", pointSize: 20)
         headerIcon.tintColor = BearyColors.orange
         headerIcon.contentMode = .scaleAspectFit
-        headerTitle.text = "写给谁"
+        // W3：选人 sheet 标题与编辑器选人钮统一为“写给某个人”。
+        headerTitle.text = "写给某个人"
         headerTitle.font = UIFont.boldSystemFont(ofSize: 16)
         headerTitle.textColor = BearyColors.ink
         if let closeImage = BearyIconImages.image(named: "icon_close", pointSize: 15) {
@@ -310,9 +313,11 @@ final class BearyRecipientPickerViewController: UIViewController, UITextFieldDel
             sheetView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
             bottomConstraint,
         ]
+        let padCenterY = sheetView.centerYAnchor.constraint(equalTo: view.centerYAnchor)
+        padCenterYConstraint = padCenterY
         padConstraints = [
             sheetView.centerXAnchor.constraint(equalTo: view.centerXAnchor),
-            sheetView.centerYAnchor.constraint(equalTo: view.centerYAnchor),
+            padCenterY,
             widthConstraint,
         ]
         let listBottom = listContainer.bottomAnchor.constraint(equalTo: sheetView.bottomAnchor, constant: -14)
@@ -327,6 +332,8 @@ final class BearyRecipientPickerViewController: UIViewController, UITextFieldDel
             return
         }
         isPadLayout = pad
+        // L11：布局模式切换时清掉键盘抬升量（键盘事件会按新布局重算，避免旧抬升量叠加）。
+        padCenterYConstraint?.constant = 0
         if pad {
             NSLayoutConstraint.deactivate(phoneConstraints)
             NSLayoutConstraint.activate(padConstraints)
@@ -432,6 +439,16 @@ final class BearyRecipientPickerViewController: UIViewController, UITextFieldDel
         if let bottomConstraint = phoneBottomConstraint, !isPadLayout {
             bottomConstraint.constant = -keyboardHeight
         }
+        if isPadLayout {
+            // L11：iPad 居中卡片以前键盘弹出时不抬升、可能被盖——按键盘顶沿与卡片底沿的
+            // 重叠量上抬卡片（+14 间隙），不重叠时不动；动画走 animateKeyboardLayout 的键盘曲线。
+            view.layoutIfNeeded()
+            let sheetHeight = sheetHeightConstraint?.constant ?? 0
+            let sheetBottom = view.bounds.height / 2 + (padCenterYConstraint?.constant ?? 0) + sheetHeight / 2
+            let keyboardTop = view.bounds.height - keyboardHeight
+            let overlap = sheetBottom - keyboardTop
+            padCenterYConstraint?.constant = overlap > 0 ? -(overlap + 14) : 0
+        }
         animateKeyboardLayout(note)
     }
 
@@ -440,6 +457,7 @@ final class BearyRecipientPickerViewController: UIViewController, UITextFieldDel
         if let bottomConstraint = phoneBottomConstraint, !isPadLayout {
             bottomConstraint.constant = 0
         }
+        padCenterYConstraint?.constant = 0
         animateKeyboardLayout(note)
     }
 
@@ -451,17 +469,24 @@ final class BearyRecipientPickerViewController: UIViewController, UITextFieldDel
         return max(height, 0)
     }
 
+    /// M8：sheet 高度/位置变化走键盘动画同曲线（duration + curve 均取键盘通知，不再固定 0.25 线性）。
     private func animateKeyboardLayout(_ note: Notification) {
         var duration: TimeInterval = 0.25
-        if let info = note.userInfo, let value = info[UIResponder.keyboardAnimationDurationUserInfoKey] as? TimeInterval {
-            duration = value
+        var options: UIView.AnimationOptions = []
+        if let info = note.userInfo {
+            if let value = info[UIResponder.keyboardAnimationDurationUserInfoKey] as? TimeInterval {
+                duration = value
+            }
+            if let curveValue = info[UIResponder.keyboardAnimationCurveUserInfoKey] as? Int {
+                options = UIView.AnimationOptions(rawValue: UInt(curveValue << 16))
+            }
         }
         if UIAccessibility.isReduceMotionEnabled {
             view.layoutIfNeeded()
         } else {
-            UIView.animate(withDuration: duration, animations: {
+            UIView.animate(withDuration: duration, delay: 0, options: options, animations: {
                 self.view.layoutIfNeeded()
-            })
+            }, completion: nil)
         }
     }
 
@@ -632,7 +657,8 @@ final class BearyRecipientPickerViewController: UIViewController, UITextFieldDel
             } else if let handle = user.handle {
                 name = "@" + handle
             } else {
-                name = "beary 用户"
+                // W1：匿名/未知用户回退三处统一为“匿名”（与首页、详情同口径）。
+                name = "匿名"
             }
             nameLabel.text = name
             if let handle = user.handle {
@@ -691,6 +717,16 @@ final class BearyRecipientPickerViewController: UIViewController, UITextFieldDel
             row.accessibilityLabel = name
             rowsStack.addArrangedSubview(row)
             rowButtons.append(row)
+        }
+        // M8：搜索结果行淡入错峰（减动效跳过）；sheet 高度由 viewDidLayoutSubviews 的
+        // updateSheetHeight 跟进，键盘事件下的高度变化走 animateKeyboardLayout 的键盘曲线。
+        if UIAccessibility.isReduceMotionEnabled == false {
+            for (index, button) in rowButtons.enumerated() {
+                button.alpha = 0
+                UIView.animate(withDuration: 0.25, delay: Double(index) * 0.03, options: [], animations: {
+                    button.alpha = 1
+                }, completion: nil)
+            }
         }
         // 行按钮与 rowUsers 按顺序对应（渲染时同步重建）；点行时按按钮身份取用户。
     }

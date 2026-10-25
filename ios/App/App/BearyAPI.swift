@@ -81,6 +81,10 @@ struct TlCounts: Decodable {
 
 struct EntryList: Decodable {
     var entries: [Entry]?
+    // W12 立规矩：mailboxCount 里的 "mailbox" 是内部标识符（与服务端
+    // 字段口径对齐），不得进入任何用户侧字符串；字段名一律不改
+    // （测试与服务端口径在用）。用户侧文案已 grep 确认无“信箱”“出土”，
+    // 后续新增文案也不得复用该标识作展示文案。
     var mailboxCount: Int?
     var trashCount: Int?
     var tlCounts: TlCounts?
@@ -269,6 +273,8 @@ final class BearyAPI {
         case delivered
         case timeline
         case mine
+        // W12 立规矩：mailbox 是内部 scope 标识（服务端口径），rawValue
+        // "mailbox" 一律不改，不得进入任何用户侧字符串（见 mailboxCount 处注释）。
         case mailbox
         case author(Int)
         case authorLiked(Int)

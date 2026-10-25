@@ -33,13 +33,63 @@ public final class BearyEmoteView: UIView {
     private static let cacheLock = NSLock()
     private static let cacheLimit = 16
 
+    /// G24：失败 key 的负缓存（key → 过期时间，TTL 300 秒）：文件缺失/
+    /// 解析失败不再每次重复读盘；过期后自动失效、可重试。
+    private static var negativeCache: [String: Date] = [:]
+    private static let negativeCacheTTL: TimeInterval = 300
+
+    /// M23：存活播放器弱引用登记（减动效开启时对全部存活播放器 stop 回首帧）。
+    private static var livePlayers = NSHashTable<BearyEmoteView>.weakObjects()
+    private static var reduceMotionObserverInstalled = false
+    /// M23：减动效通知观察者 token（App 生命周期内常驻，不移除）。
+    private static var reduceMotionObserver: NSObjectProtocol?
+
     public init(key: String, animated: Bool) {
         self.emoteKey = key
         self.isPlaying = animated && UIAccessibility.isReduceMotionEnabled == false
         super.init(frame: .zero)
         backgroundColor = .clear
         clipsToBounds = false
+        Self.registerLivePlayer(self)
+        Self.installReduceMotionObserver()
         loadEmote()
+    }
+
+    deinit {
+        Self.unregisterLivePlayer(self)
+    }
+
+    private static func registerLivePlayer(_ player: BearyEmoteView) {
+        cacheLock.lock()
+        defer { cacheLock.unlock() }
+        livePlayers.add(player)
+    }
+
+    private static func unregisterLivePlayer(_ player: BearyEmoteView) {
+        cacheLock.lock()
+        defer { cacheLock.unlock() }
+        livePlayers.remove(player)
+    }
+
+    /// M23：监听减动效变化通知（只装一次）；开启时对所有存活播放器
+    /// stop() 回首帧。关闭时不自动重播（等调用方下次 play）。
+    private static func installReduceMotionObserver() {
+        cacheLock.lock()
+        let installed = reduceMotionObserverInstalled
+        if !installed {
+            reduceMotionObserverInstalled = true
+        }
+        cacheLock.unlock()
+        guard !installed else { return }
+        reduceMotionObserver = NotificationCenter.default.addObserver(forName: UIAccessibility.reduceMotionStatusDidChangeNotification, object: nil, queue: .main) { _ in
+            guard UIAccessibility.isReduceMotionEnabled else { return }
+            cacheLock.lock()
+            let players = livePlayers.allObjects
+            cacheLock.unlock()
+            for player in players {
+                player.stop()
+            }
+        }
     }
 
     required init?(coder: NSCoder) {
@@ -150,12 +200,36 @@ public final class BearyEmoteView: UIView {
 
     private static func cachedEmoteEntry(for key: String, dark: Bool) -> CachedEmote? {
         let cacheKey = dark ? "\(key)#dark" : "\(key)#light"
+        if isNegativeCached(cacheKey) {
+            return nil
+        }
         if let hit = cachedHit(for: cacheKey) {
             return hit
         }
-        guard let loaded = loadEmoteFromBundle(for: key, dark: dark) else { return nil }
+        guard let loaded = loadEmoteFromBundle(for: key, dark: dark) else {
+            storeNegative(cacheKey)
+            return nil
+        }
         store(loaded, for: cacheKey)
         return loaded
+    }
+
+    /// G24：负缓存命中判断（过期条目顺手清除，过期后可重试）。
+    private static func isNegativeCached(_ cacheKey: String) -> Bool {
+        cacheLock.lock()
+        defer { cacheLock.unlock() }
+        guard let expiry = negativeCache[cacheKey] else { return false }
+        if expiry > Date() {
+            return true
+        }
+        negativeCache.removeValue(forKey: cacheKey)
+        return false
+    }
+
+    private static func storeNegative(_ cacheKey: String) {
+        cacheLock.lock()
+        defer { cacheLock.unlock() }
+        negativeCache[cacheKey] = Date().addingTimeInterval(negativeCacheTTL)
     }
 
     private static func cachedHit(for cacheKey: String) -> CachedEmote? {
@@ -183,24 +257,21 @@ public final class BearyEmoteView: UIView {
     private static func loadEmoteFromBundle(for key: String, dark: Bool) -> CachedEmote? {
         let name = dark ? "\(key)_dark" : key
         guard let url = Bundle.main.url(forResource: name, withExtension: "json") else { return nil }
-        guard let data = try? Data(contentsOf: url) else { return nil }
+        // G24：只读盘一次——LottieAnimation.filepath 一次读入并解析，
+        // op 与循环标记直接取自解析后的模型（endFrame / markers），
+        // 不再另起 Data(contentsOf:) + JSONSerialization 读第二遍。
         guard let animation = LottieAnimation.filepath(url.path) else { return nil }
-        guard let document = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let opValue = document["op"] as? NSNumber else { return nil }
-        let endFrame = CGFloat(opValue.doubleValue)
+        let endFrame = CGFloat(animation.endFrame)
         guard endFrame > 0 else { return nil }
         // markers 缺失时的兜底：loop_start 缺失则从 0 循环，loop_end 缺失则循环到 op。
         var loopStart: CGFloat = 0
         var loopEnd: CGFloat = endFrame
-        if let markers = document["markers"] as? [[String: Any]] {
-            if let startMarker = markers.first(where: { ($0["cm"] as? String) == "loop_start" }),
-               let startValue = startMarker["tm"] as? NSNumber {
-                loopStart = CGFloat(startValue.doubleValue)
-            }
-            if let endMarker = markers.first(where: { ($0["cm"] as? String) == "loop_end" }),
-               let endValue = endMarker["tm"] as? NSNumber {
-                loopEnd = CGFloat(endValue.doubleValue)
-            }
+        let markers = animation.markers ?? []
+        if let startMarker = markers.first(where: { $0.name == "loop_start" }) {
+            loopStart = CGFloat(startMarker.time)
+        }
+        if let endMarker = markers.first(where: { $0.name == "loop_end" }) {
+            loopEnd = CGFloat(endMarker.time)
         }
         if loopStart < 0 {
             loopStart = 0
@@ -212,6 +283,13 @@ public final class BearyEmoteView: UIView {
             loopEnd = endFrame
         }
         if loopEnd > endFrame {
+            loopEnd = endFrame
+        }
+        // G25：零长循环段（loopEnd <= loopStart，如两者同为 endFrame）不得
+        // 以 .loop 播放——退化为循环整段 0…endFrame，并打日志。
+        if loopEnd <= loopStart {
+            NSLog("[BearyEmote] degenerate loop key=%@ dark=%@ loopStart=%f loopEnd=%f endFrame=%f; falling back to full-segment loop", key, dark ? "dark" : "light", loopStart, loopEnd, endFrame)
+            loopStart = 0
             loopEnd = endFrame
         }
         return CachedEmote(animation: animation, loopStart: loopStart, loopEnd: loopEnd, endFrame: endFrame)

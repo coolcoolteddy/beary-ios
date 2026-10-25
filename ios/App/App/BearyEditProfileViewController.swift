@@ -63,6 +63,13 @@ class BearyEditProfileViewController: UIViewController {
     private var pickingAvatar = false
     private var lastPickerSourceView: UIView?
     private var isSaving = false
+    /// G3：handle POST 成功后立即记下的已提交 handle（initialHandle 是 let，不可改；
+    /// 重试时以它为准，不再重发已成功的 handle 步）。
+    private var submittedHandle: String?
+    /// G3/U1 共用的 handle 比较基线：已提交的优先于初始值。
+    private var effectiveHandle: String {
+        return submittedHandle ?? initialHandle ?? ""
+    }
 
     private let scrollView: UIScrollView = {
         let scrollViewValue = UIScrollView()
@@ -204,10 +211,22 @@ class BearyEditProfileViewController: UIViewController {
         return buttonValue
     }
 
+    deinit {
+        NotificationCenter.default.removeObserver(self)
+    }
+
     override func viewDidLoad() {
         super.viewDidLoad()
         view.backgroundColor = BearyColors.bg
         buildLayout()
+        // U3：输入框 Return 收起/切换 + 滑动收键盘 + 键盘顶起时调 inset（与登录页同口径）。
+        nameField.delegate = self
+        handleField.delegate = self
+        nameField.returnKeyType = .next
+        handleField.returnKeyType = .done
+        scrollView.keyboardDismissMode = .onDrag
+        NotificationCenter.default.addObserver(self, selector: #selector(editKeyboardWillShow(_:)), name: UIResponder.keyboardWillShowNotification, object: nil)
+        NotificationCenter.default.addObserver(self, selector: #selector(editKeyboardWillHide(_:)), name: UIResponder.keyboardWillHideNotification, object: nil)
         nameField.text = initialDisplayName
         handleField.text = initialHandle
         if let avatarPath = initialAvatarUrl, let avatarURLValue = BearyImageURLs.avatarURL(avatarPath) {
@@ -267,12 +286,16 @@ class BearyEditProfileViewController: UIViewController {
             scrollView.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
             scrollView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             scrollView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-            scrollView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
+            // L2：底边改走安全区。
+            scrollView.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor),
             contentStack.topAnchor.constraint(equalTo: scrollView.topAnchor, constant: 12),
-            contentStack.leadingAnchor.constraint(equalTo: scrollView.leadingAnchor, constant: 20),
-            contentStack.trailingAnchor.constraint(equalTo: scrollView.trailingAnchor, constant: -20),
+            // L2：内容列最大宽 600 居中——窄屏时宽 = 屏宽 - 40（750 优先级），
+            // 宽屏时被 600 上限压住并居中，不再全宽拉伸。
+            contentStack.centerXAnchor.constraint(equalTo: scrollView.frameLayoutGuide.centerXAnchor),
+            contentStack.leadingAnchor.constraint(greaterThanOrEqualTo: scrollView.leadingAnchor, constant: 20),
+            contentStack.trailingAnchor.constraint(lessThanOrEqualTo: scrollView.trailingAnchor, constant: -20),
             contentStack.bottomAnchor.constraint(equalTo: scrollView.bottomAnchor, constant: -20),
-            contentStack.widthAnchor.constraint(equalTo: scrollView.widthAnchor, constant: -40),
+            contentStack.widthAnchor.constraint(lessThanOrEqualToConstant: 600),
             closeButton.widthAnchor.constraint(equalToConstant: 44),
             saveButton.widthAnchor.constraint(equalToConstant: 44),
             coverImageView.heightAnchor.constraint(equalToConstant: 160),
@@ -284,12 +307,55 @@ class BearyEditProfileViewController: UIViewController {
             nameField.heightAnchor.constraint(equalToConstant: 44),
             handleField.heightAnchor.constraint(equalToConstant: 44),
         ])
+        // L2（续）：窄屏时内容列宽 = 屏宽 - 40（750 优先级；宽屏时被 600 上限压住）。
+        let columnWidth = contentStack.widthAnchor.constraint(equalTo: scrollView.frameLayoutGuide.widthAnchor, constant: -40)
+        columnWidth.priority = UILayoutPriority(750)
+        columnWidth.isActive = true
     }
 
     // MARK: - 动作
 
+    /// U1：未保存改动 = 头像/封面动过，或名字/handle 文本与初始（或已提交 handle）不一致。
+    private var hasUnsavedChanges: Bool {
+        if avatarChanged || coverChanged {
+            return true
+        }
+        let nameValue = (nameField.text ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        if nameValue != (initialDisplayName ?? "") {
+            return true
+        }
+        let handleValue = (handleField.text ?? "").trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        if handleValue != effectiveHandle {
+            return true
+        }
+        return false
+    }
+
     @objc private func closeButtonTapped() {
-        onCancel?()
+        // U1：有关改动时先弹“放弃未保存的改动？”确认，无改动直接关。
+        guard hasUnsavedChanges else {
+            onCancel?()
+            return
+        }
+        let alert = UIAlertController(title: "放弃未保存的改动？", message: nil, preferredStyle: .alert)
+        alert.addAction(UIAlertAction(title: "继续编辑", style: .cancel, handler: nil))
+        alert.addAction(UIAlertAction(title: "放弃", style: .destructive, handler: { [weak self] _ in
+            self?.onCancel?()
+        }))
+        present(alert, animated: true, completion: nil)
+    }
+
+    // U3：键盘顶起时调 inset（与登录页同口径：扣掉底部安全区后的键盘高）。
+    @objc private func editKeyboardWillShow(_ notification: Notification) {
+        guard let frame = notification.userInfo?[UIResponder.keyboardFrameEndUserInfoKey] as? CGRect else { return }
+        let inset = max(0, frame.height - view.safeAreaInsets.bottom)
+        scrollView.contentInset.bottom = inset
+        scrollView.verticalScrollIndicatorInsets.bottom = inset
+    }
+
+    @objc private func editKeyboardWillHide(_ notification: Notification) {
+        scrollView.contentInset.bottom = 0
+        scrollView.verticalScrollIndicatorInsets.bottom = 0
     }
 
     @objc private func changeAvatarButtonTapped() {
@@ -347,7 +413,7 @@ class BearyEditProfileViewController: UIViewController {
             presentSimpleAlert(message: "名字里至少要有一个文字")
             return
         }
-        let handleChanged = handleValue != (initialHandle ?? "")
+        let handleChanged = handleValue != effectiveHandle
         if handleChanged {
             if !isValidHandle(handleValue) {
                 presentSimpleAlert(message: "用户名需 3–20 位小写字母、数字或下划线")
@@ -355,13 +421,16 @@ class BearyEditProfileViewController: UIViewController {
             }
         }
         isSaving = true
-        saveButton.isEnabled = false
+        updateSaveButtonState()
         if handleChanged {
             BearyAPI.shared.request("/api/account/handle", method: "POST", jsonBody: ["handle": handleValue]) { [weak self] (result: Result<BearyHandleUpdateResponse, APIError>) in
                 DispatchQueue.main.async {
                     guard let strongSelf = self else { return }
                     switch result {
                     case .success:
+                        // G3：handle 成功后立即记下已提交 handle；第二步资料失败时
+                        // 重试以它为准，跳过已成功的 handle 步，不再重发同一 handle。
+                        strongSelf.submittedHandle = handleValue
                         strongSelf.saveProfile(nameValue: nameValue)
                     case .failure(let err):
                         strongSelf.finishSavingWithError(message: strongSelf.handleErrorMessage(err: err))
@@ -371,6 +440,12 @@ class BearyEditProfileViewController: UIViewController {
         } else {
             saveProfile(nameValue: nameValue)
         }
+    }
+
+    /// M14：保存进行态 = “保存中…”文案 + 禁用，不再只有禁用/alpha 变化。
+    private func updateSaveButtonState() {
+        saveButton.isEnabled = !isSaving
+        saveButton.setTitle(isSaving ? "保存中…" : "保存", for: .normal)
     }
 
     private func saveProfile(nameValue: String) {
@@ -407,13 +482,13 @@ class BearyEditProfileViewController: UIViewController {
 
     private func finishSavingSuccess() {
         isSaving = false
-        saveButton.isEnabled = true
+        updateSaveButtonState()
         onSaved?()
     }
 
     private func finishSavingWithError(message: String) {
         isSaving = false
-        saveButton.isEnabled = true
+        updateSaveButtonState()
         presentSimpleAlert(message: message)
     }
 
@@ -563,5 +638,18 @@ extension BearyEditProfileViewController: UIImagePickerControllerDelegate, UINav
 
     func imagePickerControllerDidCancel(_ picker: UIImagePickerController) {
         dismiss(animated: true, completion: nil)
+    }
+}
+
+// MARK: - UITextFieldDelegate（U3：名字 Return 切到 handle，handle Return 收键盘）
+
+extension BearyEditProfileViewController: UITextFieldDelegate {
+    func textFieldShouldReturn(_ textField: UITextField) -> Bool {
+        if textField === nameField {
+            handleField.becomeFirstResponder()
+        } else if textField === handleField {
+            textField.resignFirstResponder()
+        }
+        return true
     }
 }

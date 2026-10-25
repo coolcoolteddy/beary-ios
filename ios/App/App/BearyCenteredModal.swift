@@ -9,8 +9,13 @@ import UIKit
 
 final class BearyCenteredTransitioningDelegate: NSObject, UIViewControllerTransitioningDelegate {
 
+    /// F9：仅邀请弹窗宽屏版置 true——dim 点击关闭；编辑器保持 false（背景点击不得绕过取消流程）。
+    var dimTapCloses = false
+
     func presentationController(forPresented presented: UIViewController, presenting: UIViewController?, source: UIViewController) -> UIPresentationController? {
-        return BearyCenteredPresentationController(presentedViewController: presented, presenting: presenting)
+        let controller = BearyCenteredPresentationController(presentedViewController: presented, presenting: presenting)
+        controller.dimTapCloses = dimTapCloses
+        return controller
     }
 
     func animationController(forPresented presented: UIViewController, presenting: UIViewController, source: UIViewController) -> UIViewControllerAnimatedTransitioning? {
@@ -26,6 +31,11 @@ private final class BearyCenteredPresentationController: UIPresentationControlle
 
     private let dimmingView = UIView()
     private let cardShadowView = UIView()
+    var dimTapCloses = false
+
+    @objc private func dimTapped() {
+        presentedViewController.dismiss(animated: true)
+    }
 
     override var frameOfPresentedViewInContainerView: CGRect {
         guard let container = containerView else { return .zero }
@@ -67,6 +77,10 @@ private final class BearyCenteredPresentationController: UIPresentationControlle
             dimmingView.leadingAnchor.constraint(equalTo: container.leadingAnchor),
             dimmingView.trailingAnchor.constraint(equalTo: container.trailingAnchor),
         ])
+        // F9：仅 dimTapCloses 时给 dim 加点击关闭手势（邀请宽屏版；编辑器不动）。
+        if dimTapCloses {
+            dimmingView.addGestureRecognizer(UITapGestureRecognizer(target: self, action: #selector(dimTapped)))
+        }
         // 阴影层挂在容器里、presentedView 下方：presentedView 自身 clipsToBounds 会裁掉
         // 挂它身上的阴影，故阴影不能挂 presentedView。CSS 阴影 0 24 60 黑 30%，
         // CALayer radius 取 CSS blur 一半即 30（与底 sheet 32→16 同口径）。
@@ -116,7 +130,8 @@ private final class BearyCenteredPresentationController: UIPresentationControlle
     }
 }
 
-/// 淡入淡出：reduced-motion 时时长为 0（瞬间切换，不播透明度）。
+/// 淡入 + 小幅上滑：reduced-motion 时时长为 0（瞬间切换，不播透明度与位移）。
+/// 呈现初态下偏约 4% 卡片高、淡入至原位；关闭反向（淡出 + 下偏 4% 高）。
 private final class BearyCenteredFadeAnimator: NSObject, UIViewControllerAnimatedTransitioning {
 
     private let isPresenting: Bool
@@ -132,15 +147,26 @@ private final class BearyCenteredFadeAnimator: NSObject, UIViewControllerAnimate
 
     func animateTransition(using transitionContext: UIViewControllerContextTransitioning) {
         let container = transitionContext.containerView
+        let duration = transitionDuration(using: transitionContext)
         if isPresenting {
-            guard let toView = transitionContext.view(forKey: .to) else {
+            guard let toView = transitionContext.view(forKey: .to),
+                  let toVC = transitionContext.viewController(forKey: .to) else {
                 transitionContext.completeTransition(false)
                 return
             }
             container.addSubview(toView)
+            let offset = transitionContext.finalFrame(for: toVC).height * 0.04
             toView.alpha = 0
-            UIView.animate(withDuration: transitionDuration(using: transitionContext), animations: {
+            toView.transform = CGAffineTransform(translationX: 0, y: offset)
+            if duration == 0 {
                 toView.alpha = 1
+                toView.transform = .identity
+                transitionContext.completeTransition(!transitionContext.transitionWasCancelled)
+                return
+            }
+            UIView.animate(withDuration: duration, animations: {
+                toView.alpha = 1
+                toView.transform = .identity
             }, completion: { _ in
                 transitionContext.completeTransition(!transitionContext.transitionWasCancelled)
             })
@@ -149,8 +175,16 @@ private final class BearyCenteredFadeAnimator: NSObject, UIViewControllerAnimate
                 transitionContext.completeTransition(false)
                 return
             }
-            UIView.animate(withDuration: transitionDuration(using: transitionContext), animations: {
+            let offset = fromView.bounds.height * 0.04
+            if duration == 0 {
                 fromView.alpha = 0
+                fromView.transform = CGAffineTransform(translationX: 0, y: offset)
+                transitionContext.completeTransition(!transitionContext.transitionWasCancelled)
+                return
+            }
+            UIView.animate(withDuration: duration, animations: {
+                fromView.alpha = 0
+                fromView.transform = CGAffineTransform(translationX: 0, y: offset)
             }, completion: { _ in
                 transitionContext.completeTransition(!transitionContext.transitionWasCancelled)
             })
