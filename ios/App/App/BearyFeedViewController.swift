@@ -15,6 +15,9 @@ class BearyFeedViewController: UIViewController {
     /// 点卡片或点图片条都走它，传整条 Entry。
     var onEntrySelected: ((Entry) -> Void)?
 
+    /// 点头像或作者名：打开作者主页（传作者 id）。
+    var onOpenUser: ((Int) -> Void)?
+
     /// 未登录点赞/收藏时转发（详情页同款接线：SceneDelegate 可接登录占位）。
     var onRequireLogin: (() -> Void)?
 
@@ -714,6 +717,11 @@ class BearyFeedViewController: UIViewController {
         cell.onShareRequested = { [weak self] entryValue in
             self?.presentShareSheet(for: entryValue)
         }
+        cell.onAuthorTapped = { [weak self] in
+            if let authorId = entry.authorId {
+                self?.onOpenUser?(authorId)
+            }
+        }
         cell.onNeedsRowReload = { [weak self, weak cell] in
             guard let strongSelf = self, let targetCell = cell else { return }
             guard let path = strongSelf.tableView.indexPath(for: targetCell) else { return }
@@ -972,6 +980,9 @@ class BearyFeedCell: UITableViewCell {
     var onRequireLogin: (() -> Void)?
     var onActionFailed: (() -> Void)?
     var onShareRequested: ((Entry) -> Void)?
+    /// 点头像或作者名：打开作者主页。
+    var onAuthorTapped: (() -> Void)?
+    private var authorTapInstalled = false
     /// 折叠切换 / 引用异步落位后，行高需重算时通知控制器 reloadRows（.none，无动画）。
     var onNeedsRowReload: (() -> Void)?
 
@@ -1387,6 +1398,7 @@ class BearyFeedCell: UITableViewCell {
         onRequireLogin = nil
         onActionFailed = nil
         onShareRequested = nil
+        onAuthorTapped = nil
         onNeedsRowReload = nil
         currentEntry = nil
         currentEntryIdValue = nil
@@ -1570,6 +1582,10 @@ class BearyFeedCell: UITableViewCell {
         }
     }
 
+    @objc private func authorTapped() {
+        onAuthorTapped?()
+    }
+
     func configure(with entry: Entry) {
         currentEntry = entry
         currentEntryIdValue = entry.id
@@ -1582,6 +1598,13 @@ class BearyFeedCell: UITableViewCell {
         // F4：头像。无 URL 时 imageView 为空、背后首字母圆透出；有 URL 时照片盖住首字母。
         let authorNameValue = displayAuthorName(entry.authorName)
         avatarInitialLabel.text = String(authorNameValue.prefix(1)).uppercased()
+        if !authorTapInstalled {
+            authorTapInstalled = true
+            avatarImageView.isUserInteractionEnabled = true
+            nameLabel.isUserInteractionEnabled = true
+            avatarImageView.addGestureRecognizer(UITapGestureRecognizer(target: self, action: #selector(authorTapped)))
+            nameLabel.addGestureRecognizer(UITapGestureRecognizer(target: self, action: #selector(authorTapped)))
+        }
         avatarImageView.bearySetImage(url: BearyImageURLs.avatarURL(entry.authorAvatar), placeholder: nil)
 
         // F12：写给标签只在当前用户就是收件人时显示“写给你的”（网页 renderPublic 同口径）；
@@ -1595,21 +1618,12 @@ class BearyFeedCell: UITableViewCell {
         }
 
         // F2/F13：名 16.5 粗体 + BETA 徽章图 + Plus 皇冠。
+        // 网页拼法：名后先徽章（.card-bdg 17×17）再皇冠；徽章走本地全彩 PNG
+        // （BearyBadgeImages，badges/v5/<key>-static.svg 渲染），取不到图时隐藏、不留空位。
         nameLabel.text = authorNameValue
-        if let badgeKey = entry.authorBadge, !badgeKey.isEmpty, let badgeURL = URL(string: "https://img.teddyhn.com/badges/v5/" + badgeKey + "-static.svg") {
-            badgeImageView.image = nil
+        if let badgeKey = entry.authorBadge, !badgeKey.isEmpty, let badgeImage = BearyBadgeImages.image(for: badgeKey) {
+            badgeImageView.image = badgeImage
             badgeImageView.isHidden = false
-            let hostEntryIdValue = entry.id
-            BearyImageLoader.shared.load(url: badgeURL) { [weak self] loadedImage in
-                guard let strongSelf = self, strongSelf.currentEntryIdValue == hostEntryIdValue else { return }
-                if let loadedImage = loadedImage {
-                    strongSelf.badgeImageView.image = loadedImage
-                    strongSelf.badgeImageView.isHidden = false
-                } else {
-                    strongSelf.badgeImageView.image = nil
-                    strongSelf.badgeImageView.isHidden = true
-                }
-            }
         } else {
             badgeImageView.image = nil
             badgeImageView.isHidden = true

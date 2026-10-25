@@ -4,7 +4,7 @@ import PhotosUI
 // ===== beary 原生编辑器（第二阶段 + 主线闭环第一块 + 网页对齐批）=====
 // 只负责写日记：正文 + 心情 + 天气 + 写给 + 引用 + 图片（上限 9 张）。
 // 编辑模式复用同一界面：正文/心情/天气/图片可改，写给与引用锁定不可改，
-// 不走新日记草稿流（不读不写 beary_draft_v2、不复用新篇 client_req）。
+// 不走新日记草稿流（不读不写 beary_draft_v3、不复用新篇 client_req）。
 // 段落顺序按网页版：正文 → 图片预览 → 工具栏 → 附加选项（收起）→ 天气 → 状态行
 // → 写给 → 心情 → 引用 → 规则框；天气/写给/心情三区收进附加选项栏（默认收起）。
 // 约束：部署目标 iOS 15.0、Swift 5.0——只用闭包回调，不用 async/await，不用 if-let 简写。
@@ -71,6 +71,9 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         let images: [String]
         let isPublic: Bool?
         let imgDims: [String: [Int]]?
+        /// 已删态：原日记已删时只剩 id，恢复时不按正常 lite 卡显示，见 refreshQuoteSection。
+        /// 发布时已删引用不传 quoteId（服务端会拒），只作展示态保留到用户清除或发布。
+        let isDeleted: Bool
     }
 
     private static let maxLength = 2000
@@ -91,6 +94,9 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     /// 编辑模式锁定的引用（服务端 PUT 接受 quote_id，但本片按 brief 锁定原值，不改）。
     private var lockedQuote: SelectedQuote?
     private var draftClientReq: String?
+    /// 当前正在写的草稿篇 id（v3 多槽键）：恢复/从箱打开时取该篇 draftId，
+    /// 首次保存时生成；发布成功与丢弃只删这一篇，不碰其他篇。
+    private var currentDraftId: String?
     private var isPublishing = false
     private var didAutoFocus = false
     private var draftTimer: Timer?
@@ -130,6 +136,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     private let toolbarContainer = UIView()
     private let toolbarSeparator = UIView()
     private let imageToolButton = UIButton(type: .system)
+    private let cameraToolButton = UIButton(type: .system)
     private let weatherToolButton = UIButton(type: .system)
     private let quoteToolButton = UIButton(type: .system)
     private let draftPillButton = UIButton(type: .system)
@@ -185,6 +192,11 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     private let quoteImagesStackView = UIStackView()
     private let quoteCardBottomLine = UIView()
     private let quoteCardRemoveButton = UIButton(type: .system)
+    /// 引用已删态行：灰字“引用的日记已删除”+ 右端“移除”钮（lite 卡隐藏时仍可清除引用，
+    /// 否则已删引用会堵住挑钮，用户无法再选引用）。
+    private let quoteDeletedRow = UIStackView()
+    private let quoteDeletedLabel = UILabel()
+    private let quoteDeletedRemoveButton = UIButton(type: .system)
     private let quotePanel = UIView()
     private let quoteTabBarContainer = UIView()
     private let quoteTabStack = UIStackView()
@@ -615,7 +627,8 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         }
         refreshWeatherButtons()
         refreshExtrasSummary()
-        // 天气不在草稿 v2 字段里（草稿格式冻结），只留本会话，不触发草稿保存。
+        // 天气在草稿 v3 字段里，改动即走防抖保存，杀 App 后可恢复。
+        scheduleDraftSave()
     }
 
     // MARK: - 写给（网页 addr-row：@ 图标 + “写给某个人”钮 / chip + 通知行；
@@ -794,6 +807,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             self.notifyRecipient = true
             self.refreshRecipientRow()
             self.refreshExtras()
+            self.scheduleDraftSave()
         }
         present(picker, animated: !UIAccessibility.isReduceMotionEnabled)
     }
@@ -802,12 +816,14 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         if isEditMode { return }
         selectedRecipient = nil
         refreshRecipientRow()
+        scheduleDraftSave()
     }
 
     @objc private func didTapNotifyCheck() {
         if isEditMode { return }
         notifyRecipient.toggle()
         refreshNotifyCheck()
+        scheduleDraftSave()
     }
 
     // MARK: - 引用 lite 卡（网页 diaryCardLite：头像 40 + 名 + 正文 + 图片 +
@@ -862,12 +878,31 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         quoteCardRemoveButton.setImage(BearyIconImages.image(named: "icon_close", pointSize: 15), for: .normal)
         quoteCardRemoveButton.tintColor = BearyColors.gray
         quoteCardRemoveButton.addTarget(self, action: #selector(didTapRemoveQuote), for: .touchUpInside)
-        for v in [quoteSection, pickQuoteButton, quoteCard, quoteAvatarImageView, quoteAvatarFallback, quoteNameLabel, quoteDeliveringPill, quoteContentLabel, quoteDateLabel, quoteImagesScrollView, quoteImagesStackView, quoteCardBottomLine, quoteCardRemoveButton] {
+        for v in [quoteSection, pickQuoteButton, quoteCard, quoteAvatarImageView, quoteAvatarFallback, quoteNameLabel, quoteDeliveringPill, quoteContentLabel, quoteDateLabel, quoteImagesScrollView, quoteImagesStackView, quoteCardBottomLine, quoteCardRemoveButton, quoteDeletedRow, quoteDeletedLabel, quoteDeletedRemoveButton] {
             v.translatesAutoresizingMaskIntoConstraints = false
         }
+        // 已删态行（恢复用）：灰字 + “移除”钮，默认隐藏；见 refreshQuoteSection。
+        quoteDeletedRow.axis = .horizontal
+        quoteDeletedRow.spacing = 8
+        quoteDeletedRow.alignment = .center
+        quoteDeletedRow.isLayoutMarginsRelativeArrangement = true
+        quoteDeletedRow.layoutMargins = UIEdgeInsets(top: 16, left: 2, bottom: 14, right: 2)
+        quoteDeletedLabel.text = "引用的日记已删除"
+        quoteDeletedLabel.font = UIFont.systemFont(ofSize: 13)
+        quoteDeletedLabel.textColor = BearyColors.gray
+        quoteDeletedRemoveButton.setTitle("移除", for: .normal)
+        quoteDeletedRemoveButton.setTitleColor(BearyColors.blue, for: .normal)
+        quoteDeletedRemoveButton.titleLabel?.font = UIFont.systemFont(ofSize: 13)
+        quoteDeletedRemoveButton.addTarget(self, action: #selector(didTapRemoveQuote), for: .touchUpInside)
+        quoteDeletedRow.addArrangedSubview(quoteDeletedLabel)
+        let deletedSpacer = UIView()
+        quoteDeletedRow.addArrangedSubview(deletedSpacer)
+        quoteDeletedRow.addArrangedSubview(quoteDeletedRemoveButton)
+        quoteDeletedRow.isHidden = true
         contentStack.addArrangedSubview(quoteSection)
         quoteSection.addArrangedSubview(pickQuoteButton)
         quoteSection.addArrangedSubview(quoteCard)
+        quoteSection.addArrangedSubview(quoteDeletedRow)
         quoteCard.addSubview(quoteAvatarImageView)
         quoteCard.addSubview(quoteAvatarFallback)
         quoteCard.addSubview(quoteNameLabel)
@@ -941,9 +976,20 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         }
         guard let shown = quote else {
             quoteCard.isHidden = true
+            quoteDeletedRow.isHidden = true
             updatePreferredContentSize()
             return
         }
+        if shown.isDeleted {
+            // 已删态：不画 lite 卡（无作者/正文/图片可信），只留灰字行 + “移除”钮；
+            // 挑钮仍隐藏（引用槽位被已删引用占着，清除后才可再选）。
+            pickQuoteButton.isHidden = true
+            quoteCard.isHidden = true
+            quoteDeletedRow.isHidden = false
+            updatePreferredContentSize()
+            return
+        }
+        quoteDeletedRow.isHidden = true
         quoteCard.isHidden = false
         let authorName = shown.authorName ?? "用户"
         quoteNameLabel.text = authorName
@@ -1023,11 +1069,12 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         setQuotePanelOpen(!quotePanelOpen)
     }
 
-    /// lite 卡右上 ×：清除已选引用（新建模式专用，网页 quoteChipX 口径）。
+    /// lite 卡右上 × / 已删行“移除”：清除已选引用（新建模式专用，网页 quoteChipX 口径）。
     @objc private func didTapRemoveQuote() {
         if isEditMode { return }
         selectedQuote = nil
         refreshQuoteSection()
+        scheduleDraftSave()
     }
 
     // MARK: - 引用内嵌面板（编辑器内就地展开，其他区块保持可见；
@@ -1272,9 +1319,10 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             }
         }
         guard let entry = picked, let entryId = entry.id, let content = entry.content else { return }
-        selectedQuote = SelectedQuote(entryId: entryId, content: content, createdAt: entry.createdAt, authorName: entry.authorName, authorAvatar: entry.authorAvatar, images: entry.images ?? [], isPublic: entry.isPublic, imgDims: entry.imgDims)
+        selectedQuote = SelectedQuote(entryId: entryId, content: content, createdAt: entry.createdAt, authorName: entry.authorName, authorAvatar: entry.authorAvatar, images: entry.images ?? [], isPublic: entry.isPublic, imgDims: entry.imgDims, isDeleted: false)
         setQuotePanelOpen(false)
         refreshQuoteSection()
+        scheduleDraftSave()
     }
 
     /// 面板行日期：M月d日 HH:mm（与网页 fmtDate 同款）。
@@ -1325,6 +1373,9 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         imageToolButton.setImage(BearyIconImages.image(named: "icon_image", pointSize: 24), for: .normal)
         imageToolButton.tintColor = BearyColors.gray
         imageToolButton.addTarget(self, action: #selector(didTapAddImage), for: .touchUpInside)
+        cameraToolButton.setImage(BearyIconImages.image(named: "icon_camera", pointSize: 24), for: .normal)
+        cameraToolButton.tintColor = BearyColors.gray
+        cameraToolButton.addTarget(self, action: #selector(didTapCamera), for: .touchUpInside)
         weatherToolButton.setImage(BearyIconImages.image(named: "icon_weather_tool", pointSize: 24), for: .normal)
         weatherToolButton.tintColor = BearyColors.gray
         weatherToolButton.addTarget(self, action: #selector(didTapWeatherTool), for: .touchUpInside)
@@ -1346,7 +1397,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         toolbarContainer.translatesAutoresizingMaskIntoConstraints = false
         toolbarSeparator.translatesAutoresizingMaskIntoConstraints = false
         toolRow.translatesAutoresizingMaskIntoConstraints = false
-        for button in [imageToolButton, weatherToolButton, quoteToolButton] {
+        for button in [imageToolButton, cameraToolButton, weatherToolButton, quoteToolButton] {
             button.translatesAutoresizingMaskIntoConstraints = false
             button.widthAnchor.constraint(equalToConstant: 24).isActive = true
             button.heightAnchor.constraint(equalToConstant: 24).isActive = true
@@ -1356,6 +1407,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         toolbarContainer.addSubview(toolbarSeparator)
         toolbarContainer.addSubview(toolRow)
         toolRow.addArrangedSubview(imageToolButton)
+        toolRow.addArrangedSubview(cameraToolButton)
         toolRow.addArrangedSubview(weatherToolButton)
         toolRow.addArrangedSubview(quoteToolButton)
         let spacer = UIView()
@@ -1377,11 +1429,10 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         contentStack.setCustomSpacing(2, after: toolbarContainer)
     }
 
-    /// 草稿 pill 计数：读当前 v2 单槽（有草稿=1，无=0）。
-    /// 注意：多篇索引存储尚未落到本仓（草稿箱代理的新文件未到），计数暂按单槽口径；
-    /// 索引 API 落地后这里改读索引长度即可，pill 文案与刷新点不变。
+    /// 草稿 pill 计数：v3 多槽篇数。0 篇时计数段隐藏（只留“草稿”二字），
+    /// pill 本体不隐藏——它是草稿箱的唯一入口，空箱也要能点开新建。
     private func draftCount() -> Int {
-        return BearyDraftStore.load() != nil ? 1 : 0
+        return BearyDraftStore.loadAll().count
     }
 
     private func updateDraftPillCount() {
@@ -1942,6 +1993,52 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         }
     }
 
+    @objc private func didTapCamera() {
+        if imageItems.count >= BearyComposerViewController.maxImages {
+            return
+        }
+        BearyCameraPicker.present(from: self) { [weak self] result in
+            DispatchQueue.main.async {
+                guard let self = self else { return }
+                switch result {
+                case .success(let photo):
+                    if self.imageItems.count >= BearyComposerViewController.maxImages {
+                        return
+                    }
+                    // 与相册选图同路：先占位建项，再落盘、保存草稿、上传。
+                    let item = self.createImageItem(localImage: nil, key: nil, uploading: true, localFile: nil, failed: false)
+                    self.insertImageItem(item)
+                    item.imageView.image = photo
+                    if let full = BearyImagePrep.jpegData(photo, maxSide: 1600, quality: 0.85),
+                       let thumb = BearyImagePrep.thumbData(photo, maxSide: 480),
+                       let saved = BearyDraftImageStore.save(fullData: full.data, thumbData: thumb) {
+                        item.localFile = saved
+                    }
+                    self.saveDraftNow()
+                    self.startUpload(for: item, image: photo)
+                case .failure(let failure):
+                    if failure == .cancelled {
+                        return
+                    }
+                    let message: String
+                    switch failure {
+                    case .cameraUnavailable:
+                        message = "这台设备无法使用相机"
+                    case .permissionDenied:
+                        message = "没有相机权限，请在系统设置里允许 beary 使用相机"
+                    case .permissionRestricted:
+                        message = "相机受限，无法拍摄"
+                    case .cancelled:
+                        message = ""
+                    }
+                    let alert = UIAlertController(title: "无法使用相机", message: message, preferredStyle: .alert)
+                    alert.addAction(UIAlertAction(title: "好", style: .default))
+                    self.present(alert, animated: true)
+                }
+            }
+        }
+    }
+
     @objc private func didTapAddImage() {
         if imageItems.count >= BearyComposerViewController.maxImages {
             return
@@ -2088,7 +2185,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         lockedRecipientName = entry.recipientName
         if let quote = entry.quote, let quoteId = quote.id, let content = quote.content {
             // 内容为空的引用 = 已删（服务端 gone 只剩 id，网页版同款：已删引用不回填，保存时即丢弃）。
-            lockedQuote = SelectedQuote(entryId: quoteId, content: content, createdAt: quote.createdAt, authorName: quote.authorName, authorAvatar: quote.authorAvatar, images: quote.images ?? [], isPublic: quote.isPublic, imgDims: nil)
+            lockedQuote = SelectedQuote(entryId: quoteId, content: content, createdAt: quote.createdAt, authorName: quote.authorName, authorAvatar: quote.authorAvatar, images: quote.images ?? [], isPublic: quote.isPublic, imgDims: nil, isDeleted: false)
         }
         refreshRecipientRow()
         refreshQuoteSection()
@@ -2127,7 +2224,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     // MARK: - 草稿
 
     private func scheduleDraftSave() {
-        // 编辑模式不走草稿流：任何编辑中的改动都不写 beary_draft_v2。
+        // 编辑模式不走草稿流：任何编辑中的改动都不写 beary_draft_v3。
         if isEditMode { return }
         // 防抖等待期先显“保存中…”（网页 queueSaveDraft 同款），落盘后由保存级别覆盖。
         // 保存中态无对勾图标（图标只属于 lvl2 已保存态）。
@@ -2145,12 +2242,15 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     private func saveDraftNow() {
         // 编辑模式不写草稿（scheduleDraftSave 已拦，这里再拦一道，防以后新增调用点漏拦）。
         if isEditMode { return }
-        // clientReq 本篇草稿创建时生成一次，之后全程复用（含发布重试），
-        // 成功拿到 entry id 前绝不换——服务端靠它做发布幂等。
+        // clientReq 与 draftId 都是本篇草稿创建时生成一次，之后全程复用（含发布重试），
+        // 成功拿到 entry id 前绝不换——服务端靠 clientReq 做发布幂等，本地靠 draftId 分篇。
         if draftClientReq == nil {
             draftClientReq = BearyDraftStore.newClientReq()
         }
-        guard let req = draftClientReq else { return }
+        if currentDraftId == nil {
+            currentDraftId = BearyDraftStore.newDraftId()
+        }
+        guard let req = draftClientReq, let draftIdValue = currentDraftId else { return }
         var images: [BearyDraftImageItem] = []
         for item in imageItems {
             let state: BearyDraftImageState
@@ -2163,11 +2263,51 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             }
             images.append(BearyDraftImageItem(localFile: item.localFile, serverKey: item.key, state: state))
         }
-        let draft = BearyDraft(content: textView.text, mood: selectedMood, images: images, clientReq: req, updatedAt: Date().timeIntervalSince1970)
+        // 写给展示名口径与 refreshRecipientRow 一致（展示名 / @handle / “用户”兜底），
+        // 只为恢复 chip 显示；发布仍以 recipientId 为准。
+        var recipientNameValue: String?
+        var recipientUserId: Int?
+        if let recipient = selectedRecipient {
+            recipientUserId = recipient.id
+            if let display = recipient.displayName {
+                recipientNameValue = display
+            } else if let handle = recipient.handle {
+                recipientNameValue = "@" + handle
+            } else {
+                recipientNameValue = "用户"
+            }
+        }
+        let draft = BearyDraft(
+            draftId: draftIdValue,
+            content: textView.text,
+            mood: selectedMood,
+            images: images,
+            clientReq: req,
+            updatedAt: Date().timeIntervalSince1970,
+            weather: selectedWeather,
+            recipientId: recipientUserId,
+            recipientName: recipientNameValue,
+            recipientAvatar: selectedRecipient?.avatarUrl,
+            notifyRecipient: notifyRecipient,
+            quoteId: selectedQuote?.entryId,
+            quoteAuthorName: selectedQuote?.authorName,
+            quoteAuthorAvatar: selectedQuote?.authorAvatar,
+            quoteCreatedAt: selectedQuote?.createdAt,
+            quoteContent: selectedQuote?.content,
+            quoteImages: selectedQuote?.images ?? [],
+            quoteIsPublic: selectedQuote?.isPublic,
+            quoteDeleted: selectedQuote?.isDeleted ?? false)
         BearyDraftStore.save(draft)
         // 保存级别跟随图片状态：有失败/未上传的图 = 1（文字已保存，图片未保存），否则 2；
-        // 落盘后回读不到 = 0（失败红字）。BearyDraftStore.save 本身不返回成败，回读是唯一信号。
-        if BearyDraftStore.load() == nil {
+        // 落盘后回读不到本篇 = 0（失败红字）。BearyDraftStore.save 本身不返回成败，
+        // 回读是唯一信号；多槽下必须按 draftId 查本篇，不能用“库非空”当成功信号。
+        var savedCurrentDraft = false
+        for savedDraft in BearyDraftStore.loadAll() {
+            if savedDraft.draftId == draftIdValue {
+                savedCurrentDraft = true
+            }
+        }
+        if savedCurrentDraft == false {
             draftStatusLevel = 0
         } else {
             var hasUnsavedImage = false
@@ -2184,11 +2324,19 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
 
     private func restoreDraft() {
         guard let draft = BearyDraftStore.load() else { return }
+        currentDraftId = draft.draftId
         draftClientReq = draft.clientReq
         textView.text = draft.content
         applyBodyLineHeight()
         selectedMood = draft.mood
         refreshMoodButtons()
+        selectedWeather = draft.weather
+        refreshWeatherButtons()
+        selectedRecipient = restoredRecipient(from: draft)
+        notifyRecipient = draft.notifyRecipient
+        selectedQuote = restoredQuote(from: draft)
+        refreshRecipientRow()
+        refreshQuoteSection()
         var referenced = Set<String>()
         for img in draft.images {
             var localImage: UIImage?
@@ -2205,20 +2353,71 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                 item.imageView.bearySetImage(url: url, placeholder: nil)
             }
         }
-        // 回收无主文件（杀 App 后、首存前产生的孤文件），只保留本篇引用的。
+        // 回收无主文件（杀 App 后、首存前产生的孤文件）：多槽下必须保留全部草稿的
+        // 引用并集，只留本篇会误删其他篇的本地图片。
+        for otherDraft in BearyDraftStore.loadAll() {
+            for img in otherDraft.images {
+                if let name = img.localFile {
+                    referenced.insert(name)
+                }
+            }
+        }
         BearyDraftImageStore.sweep(keeping: referenced)
         resumePendingUploads()
+        verifyRestoredQuote()
     }
 
-    /// 发布成功 / 丢弃草稿时：清草稿文件 + 本篇全部本地图片文件 + 换掉 clientReq。
-    /// 服务端孤 key 无删除接口，残留是已知可接受项（见文末注）。
+    /// v3 写给快照还原为选人对象：id 为空即无收信人；展示名/头像只供 chip 显示。
+    private func restoredRecipient(from draft: BearyDraft) -> SearchUser? {
+        guard let recipientUserId = draft.recipientId else { return nil }
+        return SearchUser(id: recipientUserId, displayName: draft.recipientName, handle: nil, avatarUrl: draft.recipientAvatar, coverUrl: nil)
+    }
+
+    /// v3 引用快照还原为选引用对象：quoteId 为空即无引用；已删标记照原样带回，
+    /// 快照正文在已删态下不展示（见 refreshQuoteSection 的已删行）。
+    private func restoredQuote(from draft: BearyDraft) -> SelectedQuote? {
+        guard let quoteEntryId = draft.quoteId else { return nil }
+        return SelectedQuote(entryId: quoteEntryId, content: draft.quoteContent ?? "", createdAt: draft.quoteCreatedAt, authorName: draft.quoteAuthorName, authorAvatar: draft.quoteAuthorAvatar, images: draft.quoteImages, isPublic: draft.quoteIsPublic, imgDims: nil, isDeleted: draft.quoteDeleted)
+    }
+
+    /// 恢复后校验引用是否还在：快照只能证明“选过”，不能证明“还在”。
+    /// 只读单篇接口；仅 notFound 才翻为已删态并落盘标记（下次恢复直接显已删，
+    /// 不再请求），其他失败（离线/未登录/服务端错）一律保留快照，不误判已删。
+    /// 回包时若引用已被用户换掉或清除，不碰当前引用。
+    private func verifyRestoredQuote() {
+        guard let quote = selectedQuote, quote.isDeleted == false else { return }
+        let quoteEntryId = quote.entryId
+        BearyAPI.shared.fetchEntry(id: quoteEntryId) { [weak self] result in
+            DispatchQueue.main.async {
+                guard let self = self else { return }
+                guard let currentQuote = self.selectedQuote, currentQuote.entryId == quoteEntryId, currentQuote.isDeleted == false else { return }
+                switch result {
+                case .success:
+                    return
+                case .failure(let fetchError):
+                    if case .notFound = fetchError {
+                        self.selectedQuote = SelectedQuote(entryId: currentQuote.entryId, content: "", createdAt: nil, authorName: nil, authorAvatar: nil, images: [], isPublic: nil, imgDims: nil, isDeleted: true)
+                        self.refreshQuoteSection()
+                        self.refreshExtras()
+                        self.saveDraftNow()
+                    }
+                }
+            }
+        }
+    }
+
+    /// 发布成功 / 丢弃草稿时：只清本篇草稿 + 本篇全部本地图片文件 + 换掉 clientReq。
+    /// 多槽下绝不能整库清，否则会误删其他篇。服务端孤 key 无删除接口，残留是已知可接受项（见文末注）。
     private func clearDraftAndFiles() {
         for item in imageItems {
             if let name = item.localFile {
                 BearyDraftImageStore.deletePair(fullName: name)
             }
         }
-        BearyDraftStore.clear()
+        if let draftIdValue = currentDraftId {
+            BearyDraftStore.delete(draftId: draftIdValue)
+        }
+        currentDraftId = nil
         draftClientReq = nil
         draftStatusLevel = nil
         updateDraftStatusLabel()
@@ -2250,14 +2449,19 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         present(box, animated: !UIAccessibility.isReduceMotionEnabled)
     }
 
-    /// 草稿箱“新建日记”：有内容先走取消守卫（继续写 / 丢弃并新建），无内容直接重置。
-    /// 说明：单槽 v2 下“保留当前并开新”无法同时成立——新空白的下一次自动保存即覆盖单槽，
-    /// 故守卫不提供保留项；多篇索引存储落地后可把保留项接回（见 draftCount 注释）。
+    /// 草稿箱“新建日记”：有内容先走守卫（继续写 / 保留并新建 / 丢弃并新建），
+    /// 无内容直接重置。v3 多槽下“保留并新建”成立：先落盘当前篇，再开空白新篇，
+    /// 当前篇留在箱里不删；取消三选与发布确认逻辑不在这里，不动。
     private func openBlankDraftFromBox() {
         if isEditMode { return }
         if hasEditorContent() {
             let sheet = UIAlertController(title: nil, message: "当前内容还没发布，换成空白新日记吗？", preferredStyle: .actionSheet)
             sheet.addAction(UIAlertAction(title: "继续写", style: .cancel, handler: nil))
+            sheet.addAction(UIAlertAction(title: "保留并新建", style: .default) { [weak self] _ in
+                guard let self = self else { return }
+                self.saveDraftNow()
+                self.resetEditorToBlank()
+            })
             sheet.addAction(UIAlertAction(title: "丢弃并新建", style: .destructive) { [weak self] _ in
                 guard let self = self else { return }
                 self.clearDraftAndFiles()
@@ -2269,6 +2473,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             }
             present(sheet, animated: !UIAccessibility.isReduceMotionEnabled)
         } else {
+            clearDraftAndFiles()
             resetEditorToBlank()
         }
     }
@@ -2283,8 +2488,9 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         return false
     }
 
-    /// 重置为空白新日记：清字段与图片视图、清单槽草稿与 clientReq（文件删除由调用方决定：
-    /// 丢弃路径先调 clearDraftAndFiles 删文件，这里只清视图与槽位，不重复删文件）。
+    /// 重置为空白新日记：清字段与图片视图、当前篇槽位与 clientReq（存储删除由调用方决定：
+    /// 丢弃路径先调 clearDraftAndFiles 删本篇，保留路径先调 saveDraftNow 落盘本篇，
+    /// 这里只清视图与槽位，不重复删存文件）。
     private func resetEditorToBlank() {
         draftTimer?.invalidate()
         textView.text = ""
@@ -2295,7 +2501,9 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         selectedQuote = nil
         setQuotePanelOpen(false)
         removeAllImageViews()
-        BearyDraftStore.clear()
+        // 只清视图与槽位，不碰存储：删篇由调用方决定（丢弃路径先调 clearDraftAndFiles
+        // 删本篇，保留路径先调 saveDraftNow 落盘本篇）；这里再整库清会误删其他篇。
+        currentDraftId = nil
         draftClientReq = nil
         draftStatusLevel = nil
         updateCountLabel()
@@ -2309,19 +2517,21 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         updateDraftPillCount()
     }
 
-    /// 草稿箱打开某篇：载入正文/心情/图片（v2 没有天气/写给/引用，那三项留空）。
+    /// 草稿箱打开某篇：正文/心情/图片/天气/写给/引用按 v3 原样恢复；之后再保存、
+    /// 发布、丢弃都只针对这一篇（currentDraftId 已切到该篇）。
     private func loadDraftFromBox(_ draft: BearyDraft) {
         if isEditMode { return }
         draftTimer?.invalidate()
         removeAllImageViews()
+        currentDraftId = draft.draftId
         draftClientReq = draft.clientReq
         textView.text = draft.content
         applyBodyLineHeight()
         selectedMood = draft.mood
-        selectedWeather = nil
-        selectedRecipient = nil
-        notifyRecipient = true
-        selectedQuote = nil
+        selectedWeather = draft.weather
+        selectedRecipient = restoredRecipient(from: draft)
+        notifyRecipient = draft.notifyRecipient
+        selectedQuote = restoredQuote(from: draft)
         setQuotePanelOpen(false)
         for img in draft.images {
             var localImage: UIImage?
@@ -2346,6 +2556,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         refreshQuoteSection()
         refreshExtras()
         updateDraftPillCount()
+        verifyRestoredQuote()
     }
 
     /// 只拆视图不删文件（切草稿时旧篇文件仍归旧篇所有，删文件只在丢弃/发布成功时做）。
@@ -2463,7 +2674,10 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         saveDraftNow()
         isPublishing = true
         updatePublishState()
-        BearyAPI.shared.publishEntry(content: trimmed, images: uploadedImageKeys(), mood: selectedMood, weather: selectedWeather, quoteId: selectedQuote?.entryId, recipientId: selectedRecipient?.id, notifyRecipient: selectedRecipient != nil ? (notifyRecipient ? 1 : 0) : nil, clientReq: req) { [weak self] result in
+        // 已删引用不传 quoteId：只剩 id 的引用服务端会拒，发布应按无引用走，
+        // 展示态仍保留到发布成功清本篇草稿为止。
+        let publishQuoteId = (selectedQuote?.isDeleted == true) ? nil : selectedQuote?.entryId
+        BearyAPI.shared.publishEntry(content: trimmed, images: uploadedImageKeys(), mood: selectedMood, weather: selectedWeather, quoteId: publishQuoteId, recipientId: selectedRecipient?.id, notifyRecipient: selectedRecipient != nil ? (notifyRecipient ? 1 : 0) : nil, clientReq: req) { [weak self] result in
             DispatchQueue.main.async {
                 guard let self = self else { return }
                 self.isPublishing = false
@@ -2664,12 +2878,12 @@ private final class ComposerImageItem {
 //    正文 14 clamp 3 + 底线；服务端 validQuoteId 只接受本人日记，非本人 picks 仍会被服务端
 //    静默丢弃（与网页行为一致）；编辑模式锁定原值；内容为空的引用视为已删，不回填、
 //    保存时即丢弃（与网页编辑同款）。
-// 3. 编辑模式：init(entry:) 进入；正文/心情/天气/图片可改；不读不写 beary_draft_v2（
+// 3. 编辑模式：init(entry:) 进入；正文/心情/天气/图片可改；不读不写 beary_draft_v3（
 //    scheduleDraftSave/saveDraftNow 在编辑模式直接 return）；取消时不删原日记，改过先确认；
 //    保存走 PUT，15 分钟规则只由服务端判定（403 三种过期码统一转“已超过编辑期”文案后关编辑器）；
 //    成功后删本轮新选图的本地文件（原日记的图 localFile 为 nil，不受影响），失败不删、留着重试。
-// 4. 草稿 v2 字段冻结：天气/写给/引用不在草稿字段里，杀 App 后这三项不恢复（正文/心情/图片照常恢复）；
-//    要持久化它们须另起草稿 v3 + 迁移，本片不做。
+// 4. 草稿 v3 多槽：正文/心情/图片/天气/写给/引用全部进草稿，杀 App 后原样恢复；
+//    发布成功与丢弃只清本篇（currentDraftId），不碰其他篇。
 // 5. 发布确认：新建无失败图时弹一次（标题“发布”，写清 7 天公开与 15 分钟可改）；有失败图时只弹
 //    失败图确认，不叠加；编辑模式弹“保存修改”确认。
 // 6. 超 2000 字红字提示用 BearyColors.red（网页 --red #e5484d，浅深同值），字数圆环同步变红；
@@ -2678,14 +2892,15 @@ private final class ComposerImageItem {
 //    其余白字只出现在恒定橙底上（心情 chip 回退名）与墨底上（发布 pill），浅深皆可读。
 // 8. 网页对齐批：段落顺序与网页版一致（正文 → 图片 → 工具栏 → 附加选项 → 天气 → 状态行
 //    → 写给 → 心情 → 引用 → 规则框）；附加选项默认收起，收起天气/写给/心情三区；
-//    草稿 pill 计数暂按 v2 单槽口径（有=1/无=0），多篇索引 API 落地后改读索引长度；
+//    草稿 pill 计数按 v3 多槽篇数，0 篇时只留“草稿”二字、计数段隐藏；
 //    引用面板相对网页 qp-mode 藏 10 区是有意简化：面板在引用行下方就地展开，其他区块保持可见；
 //    编辑倒计时到期只显“编辑已结束”并停表，不自动关编辑器（网页会关，App 侧不抢用户正在改的内容）。
 //    草稿箱弹层 BearyDraftBoxViewController 与熊图 BearyEmoteImages 均由其他代理新建文件提供，
 //    本文件只调用、不定义；两者未落地前本文件单独编译会缺符号，待齐套后由 CI 验证。
 // 3. 图片 × 只移除本地与 key 列表，不调服务端；未发布的孤 key 残留是已知可接受项。
-// 4. 草稿 v2（BearyDraftFiles.swift）：正文 + 心情 + 图片项（本地文件名 / 服务端 key / 上传状态）
-//    + clientReq（创建时生成一次，发布重试全程复用）+ updatedAt；JSON 文件原子写；
+// 4. 草稿 v3（BearyDraftFiles.swift）：v2 字段 + 天气 + 写给 + 引用快照，每篇独立 draftId，
+//    多篇存一个 v3 数组文件（updatedAt 倒序），JSON 文件原子写；
+//    旧 v2 单槽首次读取迁入 v3（有内容才迁），成功后删旧 v2 文件；
 //    v1 草稿首次读取迁移为无本地文件的 key 项，走远程图显示。
 // 5. 丢弃草稿 / 发布成功会删本地图片文件；服务端孤 key 无删除接口，残留是已知可接受项。
 // 6. 发布时有上传失败的图片会先弹确认（防静默丢图）；离线/网络错误文案为“网络不可用，

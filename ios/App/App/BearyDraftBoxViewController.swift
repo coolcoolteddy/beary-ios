@@ -5,12 +5,12 @@ import UIKit
 // 形态：overFullScreen 自包含呈现；遮罩透明且点遮罩关闭（网页 #draftModal .backdrop
 // 为 transparent、backdrop 点击走 closeDraftBox，与通用 0.45 黑遮罩不同，审计 S3）；
 // iPhone 为底部 sheet、最大高度 82vh；iPad（宽 ≥821）为居中 440 宽卡片。
-// 数据只读草稿 v2（BearyDraftFiles.swift）：v2 存储目前是单槽文件 beary_draft_v2.json，
-// 因此本弹层当前最多呈现一份草稿；多份列表待多槽存储到位后由调用方接线扩展，
-// 本文件不引入草稿 v3（天气/写给/引用进草稿不在本批）。
+// 数据只读草稿 v3（BearyDraftFiles.swift）：v3 存储是多槽数组文件 beary_draft_v3.json，
+// 本弹层按 updatedAt 倒序列出全部草稿；旧 v2 单槽由存储层首次读取时迁入 v3，
+// 本文件不做迁移、不改存储结构本身。
 // 卡片操作：整卡点按打开（onOpen）；卡片顶行另有打开钮与删除钮（网页 .df-open/.df-trash
-// 同款）；删除为本地操作：删单槽 v2 文件（图片文件不动，6 秒撤销期内可原样恢复），
-// 删后出 6 秒撤销条，超时丢弃暂存；不碰服务端，不改草稿 v2 存储结构本身。
+// 同款）；删除为本地操作：只删该篇（图片文件不动，6 秒撤销期内可原样恢复），
+// 删后出 6 秒撤销条，超时丢弃暂存；不碰服务端。
 // 调用约定：点“新建日记”只回调 onNew，点卡片/打开钮只回调 onOpen 并传出该篇草稿，
 // 弹层本身不 dismiss——由编辑器代理在打开编辑器时负责 dismiss，避免呈现链冲突；
 // 只有关闭钮与遮罩点击会直接 dismiss，且不删任何草稿。
@@ -425,13 +425,10 @@ final class BearyDraftBoxViewController: UIViewController {
         }
     }
 
-    // MARK: - 数据与渲染（只读 v2）
+    // MARK: - 数据与渲染（只读 v3 多槽，存储层已按 updatedAt 倒序）
 
     private func loadDrafts() {
-        drafts = []
-        if let draftValue = BearyDraftStore.load() {
-            drafts = [draftValue]
-        }
+        drafts = BearyDraftStore.loadAll()
     }
 
     private func renderDrafts() {
@@ -654,7 +651,9 @@ final class BearyDraftBoxViewController: UIViewController {
         if let moodKey = draftValue.mood, BearyText.moodNames[moodKey] != nil {
             return "（只有心情）"
         }
-        // v2 无引用/天气/写给字段，网页的“只有引用”“还没写字”分支在此不适用。
+        if draftValue.quoteId != nil {
+            return "（只有引用）"
+        }
         return "（空白草稿）"
     }
 
@@ -664,7 +663,7 @@ final class BearyDraftBoxViewController: UIViewController {
         case failed
     }
 
-    /// v2 没有显式的保存失败标记，状态由图片项推导：
+    /// v3 没有显式的保存失败标记，状态由图片项推导：
     /// 失败且本地文件与服务端 key 皆无（无物可续传）→ 失败红字；
     /// 其余失败项（本地文件尚在、可续传）→ 文字已保存、图片未保存；
     /// 无失败项 → 草稿已保存。
@@ -688,7 +687,7 @@ final class BearyDraftBoxViewController: UIViewController {
         return .saved
     }
 
-    /// 网页 dfTimeStr 移植：v2 updatedAt 为秒，网页 updated_at 为毫秒，此处按秒换算。
+    /// 网页 dfTimeStr 移植：v3 updatedAt 为秒，网页 updated_at 为毫秒，此处按秒换算。
     private func draftTimeText(updatedAtSeconds: TimeInterval) -> String {
         let date = Date(timeIntervalSince1970: updatedAtSeconds)
         let now = Date()
@@ -787,7 +786,7 @@ final class BearyDraftBoxViewController: UIViewController {
         }
     }
 
-    /// 本地删卡：从列表移除并清单槽 v2 文件；图片文件不动（撤销期内可原样恢复，
+    /// 本地删卡：从列表移除并只删该篇 v3 草稿；图片文件不动（撤销期内可原样恢复，
     /// 超时后由编辑器侧的孤文件清理承接，不在此处改存储结构）。
     @objc private func deleteTapped(_ sender: UIButton) {
         var targetIndex: Int?
@@ -804,7 +803,7 @@ final class BearyDraftBoxViewController: UIViewController {
         pendingDeletedDraft = draftValue
         pendingDeletedIndex = foundIndex
         drafts.remove(at: foundIndex)
-        BearyDraftStore.clear()
+        BearyDraftStore.delete(draftId: draftValue.draftId)
         renderDrafts()
         undoWrap.isHidden = false
         undoTimer?.invalidate()
@@ -813,7 +812,7 @@ final class BearyDraftBoxViewController: UIViewController {
         }
     }
 
-    /// 6 秒撤销：把暂存草稿插回原位并写回单槽 v2 文件。
+    /// 6 秒撤销：把暂存草稿插回原位并写回 v3 多槽文件（仅恢复该篇，同 draftId 覆盖）。
     @objc private func undoDeleteTapped() {
         guard let draftValue = pendingDeletedDraft else {
             expirePendingUndo()

@@ -22,6 +22,9 @@ class BearyEntryDetailViewController: UIViewController {
     /// 点编辑：仅本人未公开且在编辑期内才显示入口，传整条 Entry。
     var onEditEntry: ((Entry) -> Void)?
 
+    /// 点头像或作者名：打开作者主页（传作者 id）。
+    var onOpenUser: ((Int) -> Void)?
+
     private var entryId: String
     private var entry: Entry?
     private var currentEmotes: [EmoteCount] = []
@@ -319,6 +322,11 @@ class BearyEntryDetailViewController: UIViewController {
         titleRow.addArrangedSubview(timeLabel)
         titleRow.addArrangedSubview(moodStack)
         titleRow.addArrangedSubview(weatherImageView)
+        // 点头像或作者名打开作者主页（与 Feed 卡片同口径）。
+        avatarWrapView.isUserInteractionEnabled = true
+        authorNameLabel.isUserInteractionEnabled = true
+        avatarWrapView.addGestureRecognizer(UITapGestureRecognizer(target: self, action: #selector(authorTapped)))
+        authorNameLabel.addGestureRecognizer(UITapGestureRecognizer(target: self, action: #selector(authorTapped)))
         // 倒计时 pill：蓝 13% 底 + 蓝字；pill 本身 hug 内容，右侧 spacer 吃掉剩余宽度。
         pillView.backgroundColor = BearyColors.blue.withAlphaComponent(0.13)
         pillView.layer.cornerRadius = 11
@@ -623,22 +631,15 @@ class BearyEntryDetailViewController: UIViewController {
         }
         authorInfoStack.layoutMargins = UIEdgeInsets(top: writeToRow.isHidden ? 0 : 1, left: 0, bottom: 0, right: 0)
 
-        // 名后 BETA 徽章：网页 badges/v5/<key>-static.svg 拼法加载；SVG 解不出图时隐藏。
-        badgeImageView.image = nil
-        badgeImageView.isHidden = true
-        if let badgeKey = current.authorBadge, !badgeKey.isEmpty {
-            let badgeURLString = "https://img.teddyhn.com/badges/v5/" + badgeKey + "-static.svg"
-            if let badgeURL = URL(string: badgeURLString) {
-                BearyImageLoader.shared.load(url: badgeURL) { [weak self] loadedImage in
-                    guard let self = self, self.entry?.authorBadge == badgeKey else { return }
-                    if let loadedImage = loadedImage {
-                        self.badgeImageView.image = loadedImage
-                        self.badgeImageView.isHidden = false
-                    } else {
-                        self.badgeImageView.isHidden = true
-                    }
-                }
-            }
+        // 名后 BETA 徽章：网页拼法为名后徽章（.card-bdg 17×17）再皇冠；
+        // 徽章走本地全彩 PNG（BearyBadgeImages，badges/v5/<key>-static.svg 渲染），
+        // 取不到图时隐藏、不留空位（旧远程 SVG 路径 UIImage 解不出图，徽章恒不显示）。
+        if let badgeKey = current.authorBadge, !badgeKey.isEmpty, let badgeImage = BearyBadgeImages.image(for: badgeKey) {
+            badgeImageView.image = badgeImage
+            badgeImageView.isHidden = false
+        } else {
+            badgeImageView.image = nil
+            badgeImageView.isHidden = true
         }
         // 名后 Plus 皇冠：网页铂金渐变 PNG（crown.imageset），缺失时回退灰色 crown.fill。
         crownImageView.isHidden = (current.authorPlus ?? 0) == 0
@@ -751,6 +752,11 @@ class BearyEntryDetailViewController: UIViewController {
         let tap = UITapGestureRecognizer(target: self, action: #selector(imageTapped(_:)))
         imageView.addGestureRecognizer(tap)
         return imageView
+    }
+
+    @objc private func authorTapped() {
+        guard let authorId = entry?.authorId else { return }
+        onOpenUser?(authorId)
     }
 
     @objc private func imageTapped(_ sender: UITapGestureRecognizer) {
