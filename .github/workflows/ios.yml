@@ -87,11 +87,7 @@ jobs:
       - run: npx cap sync ios
 
       - name: Run unit tests (no host app)
-        run: >
-          xcodebuild
-          -project ios/App/App.xcodeproj
-          -scheme BearyCoreTests
-          -configuration Debug
-          -destination 'platform=iOS Simulator,name=iPhone 16,OS=latest'
-          CODE_SIGNING_ALLOWED=NO
-          test
+        run: |
+          DEVICE=$(xcrun simctl list devices available | grep -oE 'iPhone [^()]+' | head -n 1 | sed 's/ *$//')
+          echo "Using simulator device: $DEVICE"
+          xcodebuild -project ios/App/App.xcodeproj -scheme BearyCoreTests -configuration Debug -destination "platform=iOS Simulator,name=$DEVICE" CODE_SIGNING_ALLOWED=NO test
