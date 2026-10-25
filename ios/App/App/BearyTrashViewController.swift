@@ -674,7 +674,7 @@ struct TrashList: Decodable {
 
 // MARK: - 回收站网络（BearyAPI 风格：共享会话 + Origin + 401 分流；回调不在主线程）
 
-private enum TrashFailure: Equatable {
+private enum TrashFailure: Equatable, Error {
     case network
     case http(Int)
     case unauthorized

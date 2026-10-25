@@ -3,7 +3,7 @@ import UIKit
 
 /// 相机拍摄失败原因。调用方按原因提示用户；`.cancelled` 表示用户主动取消，
 /// 调用方一般直接忽略、不弹提示。
-enum BearyCameraFailure {
+enum BearyCameraFailure: Error {
     case cameraUnavailable
     case permissionDenied
     case permissionRestricted

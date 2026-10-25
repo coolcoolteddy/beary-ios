@@ -776,7 +776,7 @@ final class BearyChromeViewController: UIViewController {
             old.willMove(toParent: nil)
             old.view.removeFromSuperview()
             old.removeFromParent()
-            pageColumns.removeValue(forKey: "user")
+            pageColumns.removeValue(forKey: .user)
         }
         let vc: BearyProfileViewController
         switch target {

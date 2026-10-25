@@ -1331,7 +1331,7 @@ private class BearyProfileEntryCell: UITableViewCell {
             separatorView.trailingAnchor.constraint(equalTo: contentView.trailingAnchor),
             separatorView.heightAnchor.constraint(equalToConstant: 2),
             separatorView.bottomAnchor.constraint(equalTo: contentView.bottomAnchor),
-        ])
+        ].compactMap { $0 })
     }
 
     required init?(coder: NSCoder) {
