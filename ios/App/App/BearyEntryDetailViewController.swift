@@ -56,6 +56,8 @@ class BearyEntryDetailViewController: UIViewController {
 
     private let emoteScrollView = UIScrollView()
     private let emoteStack = UIStackView()
+    /// 网页同款回应行末尾常驻入口：无回应时行内只剩它，行不再隐藏。
+    private let emoteAddButton = UIButton(type: .system)
 
     private let stateStack = UIStackView()
     private let loadingIndicator = UIActivityIndicatorView(style: .medium)
@@ -219,6 +221,17 @@ class BearyEntryDetailViewController: UIViewController {
         ])
         stackView.addArrangedSubview(emoteScrollView)
 
+        // 回应行末尾常驻 + 入口：与 chip 同高 32、同 faint 底、同圆角 16；目标只挂一次（renderEmotes 每轮重建行，不在此重复挂）。
+        emoteAddButton.setImage(UIImage(systemName: "plus"), for: .normal)
+        emoteAddButton.tintColor = BearyColors.ink
+        emoteAddButton.backgroundColor = BearyColors.faint
+        emoteAddButton.layer.cornerRadius = 16
+        emoteAddButton.clipsToBounds = true
+        emoteAddButton.translatesAutoresizingMaskIntoConstraints = false
+        emoteAddButton.heightAnchor.constraint(equalToConstant: 32).isActive = true
+        emoteAddButton.widthAnchor.constraint(equalToConstant: 32).isActive = true
+        emoteAddButton.accessibilityLabel = "贴一只小熊"
+
         // 加载 / 失败态
         stateStack.axis = .vertical
         stateStack.spacing = 16
@@ -255,6 +268,7 @@ class BearyEntryDetailViewController: UIViewController {
     private func setupActions() {
         likeButton.addTarget(self, action: #selector(likeTapped), for: .touchUpInside)
         bookmarkButton.addTarget(self, action: #selector(bookmarkTapped), for: .touchUpInside)
+        emoteAddButton.addTarget(self, action: #selector(emoteAddTapped), for: .touchUpInside)
         retryButton.addTarget(self, action: #selector(retryTapped), for: .touchUpInside)
     }
 
@@ -457,7 +471,9 @@ class BearyEntryDetailViewController: UIViewController {
             button.addTarget(self, action: #selector(emoteTapped(_:)), for: .touchUpInside)
             emoteStack.addArrangedSubview(button)
         }
-        emoteScrollView.isHidden = list.isEmpty
+        // 网页同款：回应行末尾常驻一个 + 入口（无回应时行内只剩它，行不再隐藏）。
+        emoteStack.addArrangedSubview(emoteAddButton)
+        emoteScrollView.isHidden = false
         updateInteractivity()
     }
 
@@ -562,17 +578,61 @@ class BearyEntryDetailViewController: UIViewController {
         if tappedKey.isEmpty {
             return
         }
-        let tappedMine = currentEmotes[index].mine ?? false
-        if tappedMine == true {
-            postEmoteOnce(key: tappedKey)
+        chooseEmote(key: tappedKey)
+    }
+
+    @objc private func emoteAddTapped() {
+        if SessionManager.shared.isLoggedIn == false {
+            onRequireLogin?()
             return
         }
+        if isEmoteBusy == true {
+            return
+        }
+        // 未公开日记禁用互动（与点赞/收藏/回应 chip 一致；按钮本身也被 updateInteractivity 置灰禁用）。
+        if entry?.isPublic != true {
+            return
+        }
+        let picker = BearyEmotePickerViewController()
+        picker.onPick = { [weak self] pickedKey in
+            guard let self = self else { return }
+            let reduceMotion = UIAccessibility.isReduceMotionEnabled
+            self.dismiss(animated: reduceMotion == false) {
+                self.chooseEmote(key: pickedKey)
+            }
+        }
+        picker.navigationItem.rightBarButtonItem = UIBarButtonItem(title: "关闭", style: .plain, target: self, action: #selector(closeEmotePicker))
+        let nav = UINavigationController(rootViewController: picker)
+        let reduceMotion = UIAccessibility.isReduceMotionEnabled
+        present(nav, animated: reduceMotion == false, completion: nil)
+    }
+
+    @objc private func closeEmotePicker() {
+        let reduceMotion = UIAccessibility.isReduceMotionEnabled
+        dismiss(animated: reduceMotion == false, completion: nil)
+    }
+
+    /// 贴/换/摘回应的唯一入口（chip 点选与首贴面板共用）：同只再点即撤下；
+    /// 已有自己的一只且选了另一只时先摘旧再贴新（第二步失败时行保持原样并弹现有失败提示）。
+    /// 本函数从不做乐观更新：行只在服务端成功返回聚合后由 renderEmotes 重绘。
+    private func chooseEmote(key: String) {
+        if key.isEmpty || isEmoteBusy == true {
+            return
+        }
+        var tappedMine = false
         var existingMineKey: String? = nil
         for item in currentEmotes {
-            if item.mine == true, let k = item.emote, k.isEmpty == false {
-                existingMineKey = k
-                break
+            guard let itemKey = item.emote, itemKey.isEmpty == false else { continue }
+            if itemKey == key && item.mine == true {
+                tappedMine = true
             }
+            if item.mine == true && existingMineKey == nil {
+                existingMineKey = itemKey
+            }
+        }
+        if tappedMine == true {
+            postEmoteOnce(key: key)
+            return
         }
         if let oldKey = existingMineKey {
             isEmoteBusy = true
@@ -582,7 +642,7 @@ class BearyEntryDetailViewController: UIViewController {
                     guard let self = self else { return }
                     switch result {
                     case .success:
-                        BearyAPI.shared.postEmote(id: self.entryId, emote: tappedKey) { [weak self] result2 in
+                        BearyAPI.shared.postEmote(id: self.entryId, emote: key) { [weak self] result2 in
                             DispatchQueue.main.async {
                                 guard let self = self else { return }
                                 self.isEmoteBusy = false
@@ -615,7 +675,7 @@ class BearyEntryDetailViewController: UIViewController {
                 }
             }
         } else {
-            postEmoteOnce(key: tappedKey)
+            postEmoteOnce(key: key)
         }
     }
 
@@ -659,5 +719,86 @@ extension BearyEntryDetailViewController: UIScrollViewDelegate {
         if scrollView === self.scrollView {
             BearyDetailScrollStore.offsets[entryId] = scrollView.contentOffset
         }
+    }
+}
+
+// MARK: - 首贴表情选择：40 只按网页回应面板 EMOTE_ORDER 顺序；
+// 原生行用文字 chip，这里沿用文字格（不另起小熊图 URL：网页 emote 是 SVG，原生 UIImage 无法直接渲染），不改行视觉。
+private class BearyEmotePickerViewController: UIViewController, UICollectionViewDataSource, UICollectionViewDelegateFlowLayout {
+
+    var onPick: ((String) -> Void)?
+
+    private let emoteKeys = ["agree", "happy", "applause", "candle", "love", "comfort", "confused", "cheer", "determined", "facepalm", "flower", "sleepy", "goodnight", "hug", "cry", "idea", "kiss", "thinking", "letter", "listening", "lonely", "wink", "nope", "paperplane", "shy", "pat", "peek", "surprised", "proud", "shrug", "sorry", "angry", "sprout", "tea", "speechless", "thanks", "umbrella", "zap", "wave", "wish"]
+
+    override func viewDidLoad() {
+        super.viewDidLoad()
+        view.backgroundColor = BearyColors.bg
+        title = "贴一只小熊"
+        let layout = UICollectionViewFlowLayout()
+        layout.minimumInteritemSpacing = 12
+        layout.minimumLineSpacing = 12
+        layout.sectionInset = UIEdgeInsets(top: 16, left: 16, bottom: 16, right: 16)
+        let collectionView = UICollectionView(frame: .zero, collectionViewLayout: layout)
+        collectionView.translatesAutoresizingMaskIntoConstraints = false
+        collectionView.backgroundColor = BearyColors.bg
+        collectionView.dataSource = self
+        collectionView.delegate = self
+        collectionView.register(BearyEmotePickerCell.self, forCellWithReuseIdentifier: "emoteCell")
+        view.addSubview(collectionView)
+        NSLayoutConstraint.activate([
+            collectionView.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
+            collectionView.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor),
+            collectionView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            collectionView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+        ])
+    }
+
+    func collectionView(_ collectionView: UICollectionView, numberOfItemsInSection section: Int) -> Int {
+        return emoteKeys.count
+    }
+
+    func collectionView(_ collectionView: UICollectionView, cellForItemAt indexPath: IndexPath) -> UICollectionViewCell {
+        guard let cell = collectionView.dequeueReusableCell(withReuseIdentifier: "emoteCell", for: indexPath) as? BearyEmotePickerCell else {
+            return UICollectionViewCell()
+        }
+        let key = emoteKeys[indexPath.item]
+        cell.nameLabel.text = BearyText.moodNames[key] ?? key
+        return cell
+    }
+
+    func collectionView(_ collectionView: UICollectionView, layout collectionViewLayout: UICollectionViewLayout, sizeForItemAt indexPath: IndexPath) -> CGSize {
+        let totalSpacing: CGFloat = 16 * 2 + 12 * 3
+        let width = (collectionView.bounds.width - totalSpacing) / 4
+        return CGSize(width: width, height: 44)
+    }
+
+    func collectionView(_ collectionView: UICollectionView, didSelectItemAt indexPath: IndexPath) {
+        let key = emoteKeys[indexPath.item]
+        onPick?(key)
+    }
+}
+
+private class BearyEmotePickerCell: UICollectionViewCell {
+    let nameLabel = UILabel()
+
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        contentView.backgroundColor = BearyColors.faint
+        contentView.layer.cornerRadius = 12
+        contentView.clipsToBounds = true
+        nameLabel.font = UIFont.systemFont(ofSize: 14)
+        nameLabel.textColor = BearyColors.ink
+        nameLabel.textAlignment = .center
+        nameLabel.translatesAutoresizingMaskIntoConstraints = false
+        contentView.addSubview(nameLabel)
+        NSLayoutConstraint.activate([
+            nameLabel.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 4),
+            nameLabel.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -4),
+            nameLabel.centerYAnchor.constraint(equalTo: contentView.centerYAnchor),
+        ])
+    }
+
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
     }
 }
