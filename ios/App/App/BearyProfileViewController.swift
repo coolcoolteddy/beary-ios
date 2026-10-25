@@ -713,7 +713,7 @@ class BearyProfileViewController: UIViewController {
         // 第一次上滑会被误判为下滑而藏栏。FAB 同隐同现由容器 helper 负责。
         profileChromeHidden = false
         profileLastScrollOffsetY = tableView.contentOffset.y
-        UIApplication.shared.connectedScenes.compactMap({ $0.delegate as? SceneDelegate }).first?.setChromeHidden(false, animated: false)
+        SceneDelegate.chromeDelegate?.setChromeHidden(false, animated: false)
         updateTopBarVisibility()
     }
 
@@ -2372,7 +2372,7 @@ extension BearyProfileViewController: UITableViewDataSource, UITableViewDelegate
     private func setProfileChromeHidden(_ hidden: Bool) {
         profileChromeHidden = hidden
         // setChromeHidden 由容器 lane 在 SceneDelegate.swift 提供，本文件只调用。
-        UIApplication.shared.connectedScenes.compactMap({ $0.delegate as? SceneDelegate }).first?.setChromeHidden(hidden, animated: true)
+        SceneDelegate.chromeDelegate?.setChromeHidden(hidden, animated: true)
     }
 }
 

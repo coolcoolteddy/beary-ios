@@ -1696,7 +1696,7 @@ class BearyTimelineViewController: UIViewController {
         // 第一次上滑会被误判为下滑而藏栏。
         timelineChromeHidden = false
         timelineLastScrollOffsetY = tableView.contentOffset.y
-        UIApplication.shared.connectedScenes.compactMap({ $0.delegate as? SceneDelegate }).first?.setChromeHidden(false, animated: false)
+        SceneDelegate.chromeDelegate?.setChromeHidden(false, animated: false)
     }
 
     override func viewWillDisappear(_ animated: Bool) {
@@ -3183,6 +3183,6 @@ extension BearyTimelineViewController: UITableViewDataSource, UITableViewDelegat
         timelineChromeHidden = hidden
         // setChromeHidden 由容器 lane 在 SceneDelegate.swift 提供，本文件只调用；
         // 容器 lane 落地前本调用编译不过（见汇报 CI 风险点）。
-        UIApplication.shared.connectedScenes.compactMap({ $0.delegate as? SceneDelegate }).first?.setChromeHidden(hidden, animated: true)
+        SceneDelegate.chromeDelegate?.setChromeHidden(hidden, animated: true)
     }
 }

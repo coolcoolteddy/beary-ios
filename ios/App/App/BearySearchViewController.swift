@@ -850,6 +850,17 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         } else {
             handleLabel.isHidden = true
         }
+        // 图片失败重试：纯图标（icon_refresh 20pt，消息页头像重试同款），
+        // 44×44 点击区居中压在头像上；仅失败态可见，加载中与成功态隐藏
+        // （显隐由 BearySearchImageRetry 持有，见文件末尾）。
+        let avatarRetryButton = UIButton(type: .custom)
+        avatarRetryButton.translatesAutoresizingMaskIntoConstraints = false
+        avatarRetryButton.setImage(BearyIconImages.image(named: "icon_refresh", pointSize: 20), for: .normal)
+        avatarRetryButton.tintColor = BearyColors.ink
+        avatarRetryButton.isHidden = true
+        avatarRetryButton.accessibilityLabel = "点击重试"
+        avatarRetryButton.accessibilityHint = "重新加载头像"
+
         if let avatarPath = user.avatarUrl, let url = BearyImageURLs.avatarURL(avatarPath) {
             let avatarRetry = BearySearchImageRetry(imageView: avatarView, retryButton: avatarRetryButton, imageURL: url)
             imageRetryHolders.append(avatarRetry)
@@ -862,16 +873,6 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
             fallbackLabel.text = String(displayName.prefix(1)).uppercased()
         }
 
-        // 图片失败重试：纯图标（icon_refresh 20pt，消息页头像重试同款），
-        // 44×44 点击区居中压在头像上；仅失败态可见，加载中与成功态隐藏
-        // （显隐由 BearySearchImageRetry 持有，见文件末尾）。
-        let avatarRetryButton = UIButton(type: .custom)
-        avatarRetryButton.translatesAutoresizingMaskIntoConstraints = false
-        avatarRetryButton.setImage(BearyIconImages.image(named: "icon_refresh", pointSize: 20), for: .normal)
-        avatarRetryButton.tintColor = BearyColors.ink
-        avatarRetryButton.isHidden = true
-        avatarRetryButton.accessibilityLabel = "点击重试"
-        avatarRetryButton.accessibilityHint = "重新加载头像"
         row.addSubview(avatarView)
         row.addSubview(fallbackLabel)
         row.addSubview(avatarRetryButton)
