@@ -5,17 +5,29 @@ import UIKit
 // UIKit 纯代码布局；文案一律中文；颜色一律用 BearyColors 动态色。
 // Entry 全部字段 optional，取值一律 ?? 兜底，不对网络数据 force unwrap。
 
+// 详情滚动位置：按 entry id 记在内存里（不跨启动持久化），重开同一篇时恢复。
+enum BearyDetailScrollStore {
+    static var offsets: [String: CGPoint] = [:]
+}
+
 class BearyEntryDetailViewController: UIViewController {
 
     var onOpenInWeb: (() -> Void)?
     var onRequireLogin: (() -> Void)?
 
-    private let entryId: String
+    /// 分栏复用时为 true：底部多留 70pt，让最末内容能滚到悬浮底栏胶囊上方。
+    var isInSplitPane = false {
+        didSet { updateSplitInsets() }
+    }
+
+    private var entryId: String
     private var entry: Entry?
     private var currentEmotes: [EmoteCount] = []
     private var isLikeBusy: Bool = false
     private var isBookmarkBusy: Bool = false
     private var isEmoteBusy: Bool = false
+    /// 下一次布局时恢复一次滚动位置（每篇只消费一次；内容未出现前不消费，防加载态把偏移清零）。
+    private var needsScrollRestore = true
 
     // MARK: - 视图
 
@@ -71,18 +83,60 @@ class BearyEntryDetailViewController: UIViewController {
         view.backgroundColor = BearyColors.bg
         setupLayout()
         setupActions()
+        updateSplitInsets()
         if entry != nil {
             setStateContent()
             render()
         } else {
             setStateLoading()
         }
-        loadEntry()
+        fetchEntry()
+    }
+
+    /// 分栏复用：同一实例换一篇（modal 每次新建，不走这里）。
+    /// 未加载时只记字段，viewDidLoad 会按现有 entryId/entry 走同样流程。
+    func showEntry(entryId: String, initialEntry: Entry?) {
+        self.entryId = entryId
+        self.entry = initialEntry
+        self.currentEmotes = []
+        self.isLikeBusy = false
+        self.isBookmarkBusy = false
+        self.isEmoteBusy = false
+        self.needsScrollRestore = true
+        if isViewLoaded {
+            if initialEntry != nil {
+                setStateContent()
+                render()
+            } else {
+                setStateLoading()
+            }
+            fetchEntry()
+        }
+    }
+
+    override func viewDidLayoutSubviews() {
+        super.viewDidLayoutSubviews()
+        // 内容未出现（加载态 scrollView 还藏着）时不消费标记，等拉取成功渲染后再恢复；
+        // 无记录的篇目归零，防复用时残留上一篇的偏移。
+        if needsScrollRestore && scrollView.isHidden == false {
+            needsScrollRestore = false
+            let savedY = BearyDetailScrollStore.offsets[entryId]?.y ?? 0
+            let maxY = max(0, scrollView.contentSize.height + scrollView.contentInset.bottom - scrollView.bounds.height)
+            let y = min(max(0, savedY), maxY)
+            scrollView.setContentOffset(CGPoint(x: 0, y: y), animated: false)
+        }
+    }
+
+    private func updateSplitInsets() {
+        let bottom: CGFloat = isInSplitPane ? 70 : 0
+        scrollView.contentInset.bottom = bottom
+        scrollView.scrollIndicatorInsets.bottom = bottom
     }
 
     // MARK: - 布局
 
     private func setupLayout() {
+        scrollView.delegate = self
         scrollView.translatesAutoresizingMaskIntoConstraints = false
         stackView.translatesAutoresizingMaskIntoConstraints = false
         stackView.axis = .vertical
@@ -266,7 +320,7 @@ class BearyEntryDetailViewController: UIViewController {
 
     // MARK: - 加载
 
-    private func loadEntry() {
+    private func fetchEntry() {
         if entry == nil {
             setStateLoading()
         }
@@ -296,7 +350,7 @@ class BearyEntryDetailViewController: UIViewController {
     }
 
     @objc private func retryTapped() {
-        loadEntry()
+        fetchEntry()
     }
 
     @objc private func openInWebTapped() {
@@ -593,5 +647,15 @@ class BearyEntryDetailViewController: UIViewController {
         let alert = UIAlertController(title: nil, message: message, preferredStyle: .alert)
         alert.addAction(UIAlertAction(title: "确定", style: .default, handler: nil))
         present(alert, animated: true, completion: nil)
+    }
+}
+
+// MARK: - 滚动位置记忆：滚动即记（写字典是 O(1)，不节流）；恢复时程序化设置偏移也会回写同一值，无害。
+
+extension BearyEntryDetailViewController: UIScrollViewDelegate {
+    func scrollViewDidScroll(_ scrollView: UIScrollView) {
+        if scrollView === self.scrollView {
+            BearyDetailScrollStore.offsets[entryId] = scrollView.contentOffset
+        }
     }
 }
