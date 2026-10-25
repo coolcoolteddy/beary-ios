@@ -20,7 +20,10 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate {
     /// 未登录（401）时调用：调用方接登录页（与详情/列表页的 onRequireLogin 同口径）。
     var onRequireLogin: (() -> Void)?
     /// 关闭钮回调；为 nil 时不显示关闭钮（由调用方的导航栏返回负责关闭）。
-    var onClose: (() -> Void)?
+    /// didSet 即时刷新显隐：调用方在呈现后才接线时，按钮不再等到下次出现才现身。
+    var onClose: (() -> Void)? {
+        didSet { closeButton.isHidden = onClose == nil }
+    }
     /// TR-1：恢复/彻底删除成功后通知容器（容器接线由总协调收尾，本页只留回调）：
     /// 容器收到后应刷新时间线、回收站角标与日历圆点/统计（网页 restoreTrash /
     /// closeTrash 的 syncOpenSurfaces + setTrashCount(-1) 口径）。
@@ -34,6 +37,7 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate {
     private var trashLoading = false
     private var trashLoadingMore = false
     private var trashFirstLoadFailed = false
+    private var trashLoginEmpty = false
     private var trashBusyIdentifiers: Set<String> = []
     private var restoreEntries: [(button: UIButton, trashValue: TrashItem)] = []
     private var purgeEntries: [(button: UIButton, trashValue: TrashItem)] = []
@@ -57,6 +61,10 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate {
     private let failureLabel = UILabel()
     private let retryButton = UIButton(type: .custom)
     private let moreSpinner = UIActivityIndicatorView(style: .medium)
+    private let endLabel = UILabel()
+    private let loginWrap = UIStackView()
+    private let loginButton = UIButton(type: .custom)
+    private let toastWrap = UIView()
     private let toastLabel = UILabel()
 
     // MARK: - 生命周期
@@ -117,6 +125,11 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate {
         closeButton.isHidden = true
         if let closeImage = BearyIconImages.image(named: "icon_close", pointSize: 15) {
             closeButton.setImage(closeImage, for: .normal)
+        } else {
+            // I14：资产缺失时补文字回退，不留空白热区。
+            closeButton.setTitle("✕", for: .normal)
+            closeButton.setTitleColor(BearyColors.ink, for: .normal)
+            closeButton.titleLabel?.font = UIFont.systemFont(ofSize: 15)
         }
         closeButton.tintColor = BearyColors.ink
         closeButton.backgroundColor = BearyColors.faint
@@ -132,6 +145,24 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate {
             lineHeightMultiple: 1.6,
             color: BearyColors.gray
         )
+        // I12：说明行前加 13px 时钟图标（beary.html 官方 beary-clock symbol，
+        // 已按 icon_* 管线渲染为 icon_clock 资产；取不到时只留文字，不自拼字形）。
+        let noteRow = UIStackView()
+        noteRow.axis = .horizontal
+        noteRow.spacing = 4
+        noteRow.alignment = .top
+        if let clockImage = BearyIconImages.image(named: "icon_clock", pointSize: 13) {
+            let clockView = UIImageView(image: clockImage)
+            clockView.translatesAutoresizingMaskIntoConstraints = false
+            clockView.tintColor = BearyColors.gray
+            clockView.contentMode = .scaleAspectFit
+            NSLayoutConstraint.activate([
+                clockView.widthAnchor.constraint(equalToConstant: 13),
+                clockView.heightAnchor.constraint(equalToConstant: 13),
+            ])
+            noteRow.addArrangedSubview(clockView)
+        }
+        noteRow.addArrangedSubview(noteLabel)
 
         listStack.axis = .vertical
         listStack.spacing = 10
@@ -171,15 +202,41 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate {
         moreSpinner.color = BearyColors.gray
         moreSpinner.isHidden = true
 
+        endLabel.text = "已到底"
+        endLabel.font = UIFont.systemFont(ofSize: 12.5)
+        endLabel.textColor = BearyColors.gray
+        endLabel.textAlignment = .center
+        endLabel.isHidden = true
+
+        // W7：401 登录空态（与时间线“先登录 + 去登录”同口径）。
+        loginWrap.axis = .vertical
+        loginWrap.alignment = .center
+        loginWrap.spacing = 12
+        loginWrap.isHidden = true
+        let loginTitleLabel = UILabel()
+        loginTitleLabel.text = "先登录"
+        loginTitleLabel.font = UIFont.systemFont(ofSize: 15)
+        loginTitleLabel.textColor = BearyColors.ink
+        loginTitleLabel.textAlignment = .center
+        loginButton.setTitle("去登录", for: .normal)
+        loginButton.setTitleColor(BearyColors.blue, for: .normal)
+        loginButton.titleLabel?.font = UIFont.systemFont(ofSize: 14)
+        loginButton.addTarget(self, action: #selector(loginTapped), for: .touchUpInside)
+        loginWrap.addArrangedSubview(loginTitleLabel)
+        loginWrap.addArrangedSubview(loginButton)
+
+        // L6：toast 改带内边距容器（左右 14、上下 10），文字不再贴边。
+        toastWrap.backgroundColor = BearyColors.ink
+        toastWrap.layer.cornerRadius = 16
+        toastWrap.clipsToBounds = true
+        toastWrap.alpha = 0
+        toastWrap.translatesAutoresizingMaskIntoConstraints = false
         toastLabel.font = UIFont.systemFont(ofSize: 14)
         // 背景是 ink，文字取 bg 作反色：浅色黑底白字、深色白底黑字均可读。
         toastLabel.textColor = BearyColors.bg
-        toastLabel.backgroundColor = BearyColors.ink
+        toastLabel.backgroundColor = .clear
         toastLabel.textAlignment = .center
-        toastLabel.layer.cornerRadius = 16
-        toastLabel.clipsToBounds = true
         toastLabel.numberOfLines = 0
-        toastLabel.alpha = 0
         toastLabel.translatesAutoresizingMaskIntoConstraints = false
 
         view.addSubview(scrollView)
@@ -191,20 +248,23 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate {
         headerRow.addArrangedSubview(headerSpacer)
         headerRow.addArrangedSubview(closeButton)
         contentStack.addArrangedSubview(headerRow)
-        contentStack.addArrangedSubview(noteLabel)
+        contentStack.addArrangedSubview(noteRow)
         contentStack.addArrangedSubview(listStack)
         contentStack.addArrangedSubview(loadingView)
         contentStack.addArrangedSubview(emptyWrap)
         contentStack.addArrangedSubview(failureWrap)
+        contentStack.addArrangedSubview(loginWrap)
         contentStack.addArrangedSubview(moreSpinner)
+        contentStack.addArrangedSubview(endLabel)
         emptyWrap.addArrangedSubview(emptyIconView)
         emptyWrap.addArrangedSubview(emptyLabel)
         failureWrap.addArrangedSubview(failureLabel)
         failureWrap.addArrangedSubview(retryButton)
-        view.addSubview(toastLabel)
+        view.addSubview(toastWrap)
+        toastWrap.addSubview(toastLabel)
 
         contentStack.setCustomSpacing(6, after: headerRow)
-        contentStack.setCustomSpacing(4, after: noteLabel)
+        contentStack.setCustomSpacing(4, after: noteRow)
         contentStack.setCustomSpacing(10, after: listStack)
     }
 
@@ -229,10 +289,14 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate {
             contentStack.widthAnchor.constraint(lessThanOrEqualToConstant: 600),
             contentStack.leadingAnchor.constraint(greaterThanOrEqualTo: contentWrap.leadingAnchor, constant: 16),
             contentStack.trailingAnchor.constraint(lessThanOrEqualTo: contentWrap.trailingAnchor, constant: -16),
-            toastLabel.leadingAnchor.constraint(greaterThanOrEqualTo: view.leadingAnchor, constant: 20),
-            toastLabel.trailingAnchor.constraint(lessThanOrEqualTo: view.trailingAnchor, constant: -20),
-            toastLabel.centerXAnchor.constraint(equalTo: view.centerXAnchor),
-            toastLabel.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor, constant: -24),
+            toastWrap.leadingAnchor.constraint(greaterThanOrEqualTo: view.leadingAnchor, constant: 20),
+            toastWrap.trailingAnchor.constraint(lessThanOrEqualTo: view.trailingAnchor, constant: -20),
+            toastWrap.centerXAnchor.constraint(equalTo: view.centerXAnchor),
+            toastWrap.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor, constant: -24),
+            toastLabel.topAnchor.constraint(equalTo: toastWrap.topAnchor, constant: 10),
+            toastLabel.bottomAnchor.constraint(equalTo: toastWrap.bottomAnchor, constant: -10),
+            toastLabel.leadingAnchor.constraint(equalTo: toastWrap.leadingAnchor, constant: 14),
+            toastLabel.trailingAnchor.constraint(equalTo: toastWrap.trailingAnchor, constant: -14),
         ])
     }
 
@@ -246,6 +310,10 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate {
         loadFirstPage()
     }
 
+    @objc private func loginTapped() {
+        onRequireLogin?()
+    }
+
     // MARK: - 加载
 
     private func loadFirstPage() {
@@ -254,6 +322,7 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate {
         }
         trashLoading = true
         trashFirstLoadFailed = false
+        trashLoginEmpty = false
         trashHasMore = false
         renderStateViews()
         BearyAPI.shared.fetchTrash(before: nil, beforeId: nil) { [weak self] result in
@@ -275,8 +344,13 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate {
                 case .failure(let error):
                     if case .unauthorized = error {
                         self.onRequireLogin?()
-                    }
-                    if self.trashItems.isEmpty {
+                        // W7：401 单独出登录空态，不再与普通失败共用“加载失败”。
+                        if self.trashItems.isEmpty {
+                            self.trashLoginEmpty = true
+                        } else {
+                            self.showToast(message: "刷新失败，请重试")
+                        }
+                    } else if self.trashItems.isEmpty {
                         self.trashFirstLoadFailed = true
                     } else {
                         self.showToast(message: "刷新失败，请重试")
@@ -292,7 +366,14 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate {
             return
         }
         guard let lastItem = trashItems.last else { return }
-        guard let lastDeletedAt = lastItem.deletedAt else { return }
+        // G18：末项 deletedAt 缺失时服务端无法用 beforeId 单独分页
+        //（无 before 时服务端直接回第一页，续拉只会原地打转），
+        // 故 hasMore 置 false 并出“已到底”态，不再静默断流。
+        guard let lastDeletedAt = lastItem.deletedAt else {
+            trashHasMore = false
+            renderStateViews()
+            return
+        }
         trashLoadingMore = true
         moreSpinner.isHidden = false
         moreSpinner.startAnimating()
@@ -318,6 +399,7 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate {
                     self.trashItems.append(contentsOf: appended)
                     self.trashHasMore = list.hasMore
                     self.appendListRows(appended)
+                    self.renderStateViews()
                 case .failure(let error):
                     if case .unauthorized = error {
                         self.onRequireLogin?()
@@ -346,9 +428,12 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate {
         } else {
             loadingView.stopAnimating()
         }
-        emptyWrap.isHidden = hasItems || trashLoading || trashFirstLoadFailed
-        failureWrap.isHidden = trashFirstLoadFailed == false
+        emptyWrap.isHidden = hasItems || trashLoading || trashFirstLoadFailed || trashLoginEmpty
+        failureWrap.isHidden = trashFirstLoadFailed == false || trashLoginEmpty
+        loginWrap.isHidden = trashLoginEmpty == false
         listStack.isHidden = hasItems == false
+        // G18：“已到底”只在有行、已确认无更多页、且不在加载/失败/登录空态时出现。
+        endLabel.isHidden = hasItems == false || trashHasMore || trashLoading || trashLoadingMore || trashFirstLoadFailed || trashLoginEmpty
     }
 
     private func rebuildListRows() {
@@ -363,12 +448,23 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate {
     }
 
     private func appendListRows(_ rows: [TrashItem]) {
-        for trashValue in rows {
+        // M17：追加行错峰滑入（减动效时直设终值）。
+        let staggerEnabled = UIAccessibility.isReduceMotionEnabled == false
+        for (index, trashValue) in rows.enumerated() {
             let rowView = makeRowView(trashValue: trashValue)
             if let identifier = rowIdentifier(of: trashValue) {
                 rowViewsByIdentifier[identifier] = rowView
             }
             listStack.addArrangedSubview(rowView)
+            if staggerEnabled {
+                let delay = min(Double(index) * 0.03, 0.3)
+                rowView.alpha = 0
+                rowView.transform = CGAffineTransform(translationX: 0, y: 6)
+                UIView.animate(withDuration: 0.32, delay: delay, options: .curveEaseOut, animations: {
+                    rowView.alpha = 1
+                    rowView.transform = .identity
+                }, completion: nil)
+            }
         }
     }
 
@@ -417,11 +513,12 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate {
 
         let restoreButton = UIButton(type: .custom)
         restoreButton.setTitle("恢复", for: .normal)
-        restoreButton.setTitleColor(BearyColors.blue, for: .normal)
+        // C2：恢复钮文字与图标走 ink（此前错用蓝色）；彻底删除保持红。
+        restoreButton.setTitleColor(BearyColors.ink, for: .normal)
         if let undoImage = BearyIconImages.image(named: "icon_undo", pointSize: 14) {
             restoreButton.setImage(undoImage, for: .normal)
         }
-        restoreButton.tintColor = BearyColors.blue
+        restoreButton.tintColor = BearyColors.ink
         restoreButton.titleEdgeInsets = UIEdgeInsets(top: 0, left: 5, bottom: 0, right: 0)
         restoreButton.titleLabel?.font = UIFont.systemFont(ofSize: 13)
         restoreButton.layer.borderWidth = 1
@@ -474,6 +571,13 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate {
 
     // MARK: - 恢复 / 彻底删除
 
+    /// U17：进行中按钮置灰/降透明度 + 文案改“恢复中…/删除中…”，结束恢复原态。
+    private func setRowButtonBusy(_ button: UIButton, busy: Bool, busyTitle: String, idleTitle: String) {
+        button.isEnabled = !busy
+        button.alpha = busy ? 0.5 : 1
+        button.setTitle(busy ? busyTitle : idleTitle, for: .normal)
+    }
+
     @objc private func restoreTapped(_ sender: UIButton) {
         guard let matched = restoreEntries.first(where: { $0.button == sender }) else { return }
         let trashValue = matched.trashValue
@@ -482,12 +586,12 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate {
             return
         }
         trashBusyIdentifiers.insert(identifier)
-        sender.isEnabled = false
+        setRowButtonBusy(sender, busy: true, busyTitle: "恢复中…", idleTitle: "恢复")
         BearyAPI.shared.restoreTrash(id: identifier) { [weak self] result in
             DispatchQueue.main.async {
                 guard let self = self else { return }
                 self.trashBusyIdentifiers.remove(identifier)
-                sender.isEnabled = true
+                self.setRowButtonBusy(sender, busy: false, busyTitle: "恢复中…", idleTitle: "恢复")
                 switch result {
                 case .success:
                     // 恢复 toast 按 publish_at 分两句（网页 restoreTrash 口径，保持不变）。
@@ -526,12 +630,12 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate {
         alert.addAction(UIAlertAction(title: "彻底删除", style: .destructive) { [weak self] _ in
             guard let self = self else { return }
             self.trashBusyIdentifiers.insert(identifier)
-            sender.isEnabled = false
+            self.setRowButtonBusy(sender, busy: true, busyTitle: "删除中…", idleTitle: "彻底删除")
             BearyAPI.shared.purgeTrash(id: identifier) { [weak self] result in
                 DispatchQueue.main.async {
                     guard let self = self else { return }
                     self.trashBusyIdentifiers.remove(identifier)
-                    sender.isEnabled = true
+                    self.setRowButtonBusy(sender, busy: false, busyTitle: "删除中…", idleTitle: "彻底删除")
                     switch result {
                     case .success:
                         self.removeRow(identifier: identifier)
@@ -559,14 +663,21 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate {
             return
         }
         rowViewsByIdentifier[identifier] = nil
-        if UIAccessibility.isReduceMotionEnabled {
+        let rowHeight = rowView.bounds.height
+        if UIAccessibility.isReduceMotionEnabled || rowHeight <= 0 {
             listStack.removeArrangedSubview(rowView)
             rowView.removeFromSuperview()
             renderStateViews()
             return
         }
-        UIView.animate(withDuration: 0.25, animations: {
+        // M17：移除行先淡出 + 高度收起再移除（网页 collapseOut 口径），其余行跟随补位。
+        rowView.clipsToBounds = true
+        let heightConstraint = rowView.heightAnchor.constraint(equalToConstant: rowHeight)
+        heightConstraint.isActive = true
+        UIView.animate(withDuration: 0.3, animations: {
             rowView.alpha = 0
+            heightConstraint.constant = 0
+            self.view.layoutIfNeeded()
         }, completion: { [weak self] _ in
             guard let self = self else { return }
             self.listStack.removeArrangedSubview(rowView)
@@ -579,14 +690,14 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate {
 
     private func showToast(message: String) {
         toastLabel.text = message
-        toastLabel.alpha = 0
+        toastWrap.alpha = 0
         UIView.animate(withDuration: 0.2, animations: {
-            self.toastLabel.alpha = 1
+            self.toastWrap.alpha = 1
         }, completion: { [weak self] _ in
             guard let self = self else { return }
             DispatchQueue.main.asyncAfter(deadline: .now() + 1.6) {
                 UIView.animate(withDuration: 0.3, animations: {
-                    self.toastLabel.alpha = 0
+                    self.toastWrap.alpha = 0
                 }, completion: nil)
             }
         })
@@ -609,20 +720,24 @@ private enum TrashText {
     }
 
     /// 网页 fmtDayTime：恒为 M月d日 HH:mm（不走今天/昨天特例）。
+    /// G8：显示用 formatter 统一设北京时区，与服务端日界一致。
     static func createdLabel(ms: Int) -> String {
         let date = Date(timeIntervalSince1970: TimeInterval(ms) / 1000.0)
         let formatter = DateFormatter()
         formatter.locale = Locale(identifier: "zh_CN")
+        formatter.timeZone = TimeZone(secondsFromGMT: 8 * 3600)
         formatter.dateFormat = "M月d日 HH:mm"
         return formatter.string(from: date)
     }
 
     /// 网页 fmtDelLabel：今天 → 今天 HH:mm；昨天 → 昨天；否则 M月d日。
+    /// G8：今天/昨天判定与显示均走北京日历/时区，不用设备时区。
     static func deletedLabel(ms: Int) -> String {
         let date = Date(timeIntervalSince1970: TimeInterval(ms) / 1000.0)
-        let calendar = Calendar.current
+        let calendar = BearyBeijingDay.calendar
         let formatter = DateFormatter()
         formatter.locale = Locale(identifier: "zh_CN")
+        formatter.timeZone = TimeZone(secondsFromGMT: 8 * 3600)
         if calendar.isDateInToday(date) {
             formatter.dateFormat = "HH:mm"
             return "今天 " + formatter.string(from: date)
@@ -635,10 +750,26 @@ private enum TrashText {
     }
 
     /// 网页 trash-meta：写于 … · 删除于 … · 还剩 N 天。
+    /// W8：任一字段缺失时该段值显示“—”，不得用 1970 年日期或 0 天填充。
     static func metaLine(trashValue: TrashItem) -> String {
-        let createdPart = "写于 " + createdLabel(ms: trashValue.createdAt ?? 0)
-        let deletedPart = "删除于 " + deletedLabel(ms: trashValue.deletedAt ?? 0)
-        let daysPart = "还剩 \(trashValue.daysLeft ?? 0) 天"
+        let createdPart: String
+        if let createdAt = trashValue.createdAt {
+            createdPart = "写于 " + createdLabel(ms: createdAt)
+        } else {
+            createdPart = "写于 —"
+        }
+        let deletedPart: String
+        if let deletedAt = trashValue.deletedAt {
+            deletedPart = "删除于 " + deletedLabel(ms: deletedAt)
+        } else {
+            deletedPart = "删除于 —"
+        }
+        let daysPart: String
+        if let daysLeft = trashValue.daysLeft {
+            daysPart = "还剩 \(daysLeft) 天"
+        } else {
+            daysPart = "还剩 — 天"
+        }
         return createdPart + " · " + deletedPart + " · " + daysPart
     }
 }

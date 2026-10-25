@@ -18,4 +18,40 @@ enum BearyBadgeImages {
         guard !key.isEmpty else { return nil }
         return UIImage(named: "badge_" + key)
     }
+
+    /// I8：取不到图时不静默消失——返回中性占位图并打一条日志。
+    /// 占位图是代码现绘的灰底问号（非官方资产，仅作“图缺失”的可见标记）；
+    /// 新徽章资产与 key 同步上架仍是上架流程项，代码侧只保证不留空白。
+    static func imageOrPlaceholder(for key: String) -> UIImage? {
+        if let found = image(for: key) {
+            return found
+        }
+        guard !key.isEmpty else { return nil }
+        NSLog("[BearyBadgeImages] missing badge asset for key: %@", key)
+        let size = CGSize(width: 40, height: 40)
+        let renderer = UIGraphicsImageRenderer(size: size)
+        return renderer.image { context in
+            let rect = CGRect(origin: .zero, size: size)
+            let path = UIBezierPath(roundedRect: rect, cornerRadius: 10)
+            UIColor(white: 0.85, alpha: 1).setFill()
+            path.fill()
+            let question = "?"
+            let attributes: [NSAttributedString.Key: Any] = [
+                .font: UIFont.boldSystemFont(ofSize: 22),
+                .foregroundColor: UIColor(white: 0.45, alpha: 1),
+            ]
+            let textSize = question.size(withAttributes: attributes)
+            let origin = CGPoint(x: (size.width - textSize.width) / 2, y: (size.height - textSize.height) / 2)
+            question.draw(at: origin, withAttributes: attributes)
+            _ = context
+        }
+    }
+
+    /// I9：key→展示名映射；未知 key 一律显示通用文案，不直接露原始 key。
+    static func displayName(for key: String) -> String {
+        let known: [String: String] = [
+            "beta": "内测者",
+        ]
+        return known[key] ?? "新徽章"
+    }
 }

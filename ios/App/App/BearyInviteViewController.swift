@@ -153,7 +153,8 @@ final class BearyInviteViewController: UIViewController {
         codeLabel.textColor = BearyColors.ink
         copyButton.translatesAutoresizingMaskIntoConstraints = false
         copyButton.layer.cornerRadius = 12
-        copyButton.backgroundColor = BearyColors.bg
+        // C4：复制钮改用 surface 底，与码框 faint 底拉开对比（深色下不再融为一体）。
+        copyButton.backgroundColor = BearyColors.surface
         copyButton.setTitle("复制", for: .normal)
         copyButton.setTitleColor(BearyColors.orange, for: .normal)
         copyButton.titleLabel?.font = UIFont.systemFont(ofSize: 14, weight: .semibold)
@@ -169,7 +170,8 @@ final class BearyInviteViewController: UIViewController {
         hintLabel.numberOfLines = 0
 
         statsLabel.translatesAutoresizingMaskIntoConstraints = false
-        statsLabel.text = "已邀请 0 人 · 累计获得 0 个月 Plus"
+        // U6：加载中不再先显示“已邀请 0 人”假零值，拿到数据后 render() 再写数字。
+        statsLabel.text = "加载中…"
         statsLabel.font = UIFont.systemFont(ofSize: 14)
         statsLabel.textColor = BearyColors.ink
         statsLabel.numberOfLines = 0
@@ -313,6 +315,9 @@ final class BearyInviteViewController: UIViewController {
         guard !isLoading else { return }
         isLoading = true
         retryButton.isHidden = true
+        // U6：加载中统计区显示“加载中…”，复制钮在拿到码之前禁用。
+        statsLabel.text = "加载中…"
+        updateCopyButton()
         BearyAPI.shared.fetchMe { [weak self] result in
             DispatchQueue.main.async {
                 guard let strongSelf = self else { return }
@@ -349,8 +354,16 @@ final class BearyInviteViewController: UIViewController {
     }
 
     /// 网页 ivRender 同口径：先画码与统计，再按 bound/bind_open 画绑定区，并清空消息。
+    /// U5：无码时禁用复制钮（有码才可点）；复制钮文案不受禁用影响。
+    private func updateCopyButton() {
+        let hasCode = !(inviteCode ?? "").isEmpty
+        copyButton.isEnabled = hasCode
+        copyButton.alpha = hasCode ? 1 : 0.35
+    }
+
     private func render() {
         codeLabel.text = inviteCode ?? "—"
+        updateCopyButton()
         let invited = referral?.invitedCount ?? 0
         let months = referral?.rewardMonths ?? 0
         statsLabel.text = "已邀请 \(invited) 人 · 累计获得 \(months) 个月 Plus"
@@ -389,6 +402,8 @@ final class BearyInviteViewController: UIViewController {
         let enabled = !code.isEmpty && !isBinding
         bindButton.isEnabled = enabled
         bindButton.alpha = enabled ? 1 : 0.35
+        // M14：绑定进行态用“绑定中…”文案，不再只有 alpha 变化。
+        bindButton.setTitle(isBinding ? "绑定中…" : "绑定", for: .normal)
     }
 
     // MARK: - 动作
@@ -406,7 +421,11 @@ final class BearyInviteViewController: UIViewController {
     }
 
     @objc private func copyTapped() {
-        guard let code = inviteCode, !code.isEmpty else { return }
+        // U5：无码时（正常路径下按钮已禁用，此为兜底）toast 而非静默无反应。
+        guard let code = inviteCode, !code.isEmpty else {
+            showMessage("邀请码加载中")
+            return
+        }
         UIPasteboard.general.string = code
         copyButton.setTitle("已复制", for: .normal)
         copyTimer?.invalidate()
@@ -475,6 +494,8 @@ extension BearyInviteViewController: UITextFieldDelegate {
 
     func textFieldShouldReturn(_ textField: UITextField) -> Bool {
         if textField === bindField {
+            // U5：完成键先收键盘再绑定。
+            textField.resignFirstResponder()
             bindTapped()
         }
         return true

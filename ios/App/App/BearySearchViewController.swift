@@ -160,10 +160,16 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         }
     }
 
+    /// U4：仅首次出现聚焦输入框；从详情返回时不再重弹键盘。
+    private var searchFieldFocusedOnce = false
+
     override func viewDidAppear(_ animated: Bool) {
         super.viewDidAppear(animated)
         // 网页 openSearch 会在 120ms 后聚焦输入框；原生页打开即聚焦，同口径。
-        searchField.becomeFirstResponder()
+        if !searchFieldFocusedOnce {
+            searchFieldFocusedOnce = true
+            searchField.becomeFirstResponder()
+        }
     }
 
     override func viewWillDisappear(_ animated: Bool) {
@@ -657,29 +663,115 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         stateRingView.isHidden = true
         BearyIconMotion.stopSpin(on: stateRingView, key: "bearyStateSpin")
         clearResultRows()
+        // G13：先建行、行数 >0 时再加分区头，避免全部行被跳过时空挂分区头。
         // 分区顺序与标题按网页 renderSrchResults：我的日记 · 未公开 → 公开日记 → 用户。
-        if !mineEntries.isEmpty {
+        var mineRows: [UIView] = []
+        for entry in mineEntries {
+            if let row = makeEntryRow(entry: entry, query: query, isMineGroup: true) {
+                mineRows.append(row)
+            }
+        }
+        var publicRows: [UIView] = []
+        for entry in publicEntries {
+            if let row = makeEntryRow(entry: entry, query: query, isMineGroup: false) {
+                publicRows.append(row)
+            }
+        }
+        var userRows: [UIView] = []
+        for user in users {
+            userRows.append(makeUserRow(user: user, query: query))
+        }
+        if !mineRows.isEmpty {
             resultsStack.addArrangedSubview(makeSectionHeader(title: "我的日记 · 未公开"))
-            for entry in mineEntries {
-                if let row = makeEntryRow(entry: entry, query: query, isMineGroup: true) {
-                    resultsStack.addArrangedSubview(row)
-                }
+            for row in mineRows {
+                resultsStack.addArrangedSubview(row)
             }
         }
-        if !publicEntries.isEmpty {
+        if !publicRows.isEmpty {
             resultsStack.addArrangedSubview(makeSectionHeader(title: "公开日记"))
-            for entry in publicEntries {
-                if let row = makeEntryRow(entry: entry, query: query, isMineGroup: false) {
-                    resultsStack.addArrangedSubview(row)
+            for row in publicRows {
+                resultsStack.addArrangedSubview(row)
+            }
+        }
+        if !userRows.isEmpty {
+            resultsStack.addArrangedSubview(makeSectionHeader(title: "用户"))
+            for row in userRows {
+                resultsStack.addArrangedSubview(row)
+            }
+        }
+        // M11：结果区首次出现/换批时行错峰滑入；同一批仅内容变化的行淡入。
+        animateResultRows(query: query)
+    }
+
+    /// M11 入场口径：换关键词（新一批）→ 全部行错峰滑入；同关键词重渲
+    /// （同一批仅内容变化）→ 仅新出现的行淡入，已有行不动。减动效直设终值。
+    private var lastResultQuery: String?
+    private var lastResultRowKeys: Set<String> = []
+
+    private func animateResultRows(query: String) {
+        let isNewBatch = lastResultQuery != query
+        var nextKeys: Set<String> = []
+        for entryId in rowEntryIds {
+            nextKeys.insert("entry:" + entryId)
+        }
+        for user in rowUsers {
+            if let userId = user.id {
+                nextKeys.insert("user:\(userId)")
+            } else if let handle = user.handle, !handle.isEmpty {
+                nextKeys.insert("user:@\(handle)")
+            }
+        }
+        let rowViews: [UIView] = entryButtons + userButtons
+        if UIAccessibility.isReduceMotionEnabled {
+            lastResultQuery = query
+            lastResultRowKeys = nextKeys
+            return
+        }
+        if isNewBatch {
+            var delay: TimeInterval = 0
+            for rowView in rowViews {
+                rowView.alpha = 0
+                rowView.transform = CGAffineTransform(translationX: 0, y: 8)
+                UIView.animate(withDuration: 0.25, delay: delay, options: .curveEaseOut, animations: {
+                    rowView.alpha = 1
+                    rowView.transform = .identity
+                })
+                delay += 0.03
+            }
+        } else {
+            // 同批：按行身份找新行淡入；entryButtons 与 rowEntryIds、userButtons 与
+            // rowUsers 各自按下标一一对应（见 clearResultRows / make 行追加处）。
+            for offset in 0..<entryButtons.count {
+                guard offset < rowEntryIds.count else { continue }
+                let key = "entry:" + rowEntryIds[offset]
+                if !lastResultRowKeys.contains(key) {
+                    let rowView = entryButtons[offset]
+                    rowView.alpha = 0
+                    UIView.animate(withDuration: 0.2, animations: {
+                        rowView.alpha = 1
+                    })
+                }
+            }
+            for offset in 0..<userButtons.count {
+                guard offset < rowUsers.count else { continue }
+                let user = rowUsers[offset]
+                var key: String?
+                if let userId = user.id {
+                    key = "user:\(userId)"
+                } else if let handle = user.handle, !handle.isEmpty {
+                    key = "user:@\(handle)"
+                }
+                if let keyValue = key, !lastResultRowKeys.contains(keyValue) {
+                    let rowView = userButtons[offset]
+                    rowView.alpha = 0
+                    UIView.animate(withDuration: 0.2, animations: {
+                        rowView.alpha = 1
+                    })
                 }
             }
         }
-        if !users.isEmpty {
-            resultsStack.addArrangedSubview(makeSectionHeader(title: "用户"))
-            for user in users {
-                resultsStack.addArrangedSubview(makeUserRow(user: user, query: query))
-            }
-        }
+        lastResultQuery = query
+        lastResultRowKeys = nextKeys
     }
 
     /// 分区头：网页 .srch-sec——12.5 bold gray、padding 12/6/4。
@@ -923,7 +1015,7 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
     private func makePrivatePill() -> UIView {
         let pill = UIView()
         pill.translatesAutoresizingMaskIntoConstraints = false
-        pill.backgroundColor = BearyColors.blue.withAlphaComponent(0.13)
+        pill.backgroundColor = BearyColors.alpha(BearyColors.blue, 0.13)
         pill.layer.cornerRadius = 11
         pill.layer.masksToBounds = true
         let lock = UIImageView(image: BearyIconImages.image(named: "icon_lock", pointSize: 12))

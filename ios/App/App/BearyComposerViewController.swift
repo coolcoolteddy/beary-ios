@@ -70,6 +70,9 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         let authorAvatar: String?
         let images: [String]
         let isPublic: Bool?
+        /// W2：送达时间（面板选篇时取 Entry.publishAt；草稿恢复/编辑锁定引用无此字段时为 nil，
+        /// pill 回退 plain“投递中”，不凭 createdAt + 7 天推算，避免口径造假）。
+        let publishAt: Int?
         let imgDims: [String: [Int]]?
         /// 已删态：原日记已删时只剩 id，恢复时不按正常 lite 卡显示，见 refreshQuoteSection。
         /// 发布时已删引用不传 quoteId（服务端会拒），只作展示态保留到用户清除或发布。
@@ -347,6 +350,9 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         ])
     }
 
+    /// L9 已确认：iPad 640 宽不在 preferredContentSize 里定——呈现层 BearyCenteredModal 的
+    /// frameOfPresentedViewInContainerView 已写死 min(640, 容器宽 - 80) 居中，preferredContentSize
+    /// 只被呈现层取高（宽由呈现层框定）；故本文件不另在呈现层定宽，宽口径以呈现层为准。
     /// Sheet 高跟随内容：preferredContentSize.height = 顶栏 44 + 内容栈 fitting 高。
     /// 呈现层（SceneDelegate 的底 sheet / 居中卡片，本文件不动它）把 preferred 当整页高、
     /// 再与 88%/80% 封顶取小，故只给栈高会少 44、短内容仍需内滚 44；顶栏必须计入。
@@ -395,6 +401,9 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         titleLabel.font = UIFont.boldSystemFont(ofSize: 15)
         titleLabel.textColor = BearyColors.ink
         titleLabel.textAlignment = .center
+        // L10：标题允许截断（单行尾部省略），不与左右钮重叠见下方不等式。
+        titleLabel.numberOfLines = 1
+        titleLabel.lineBreakMode = .byTruncatingTail
         // 发布：墨底白字 pill + 发送图标（网页 obtn p）；禁用时按网页口径：无底灰字。
         publishButton.setTitle(isEditMode ? "保存" : "发布", for: .normal)
         publishButton.titleLabel?.font = UIFont.systemFont(ofSize: 14)
@@ -427,6 +436,9 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             cancelButton.centerYAnchor.constraint(equalTo: topBar.centerYAnchor),
             titleLabel.centerXAnchor.constraint(equalTo: topBar.centerXAnchor),
             titleLabel.centerYAnchor.constraint(equalTo: topBar.centerYAnchor),
+            // L10：标题左右不等式——左右各离钮 8pt，窄屏先截断标题不断言。
+            titleLabel.leadingAnchor.constraint(greaterThanOrEqualTo: cancelButton.trailingAnchor, constant: 8),
+            titleLabel.trailingAnchor.constraint(lessThanOrEqualTo: publishButton.leadingAnchor, constant: -8),
             publishButton.trailingAnchor.constraint(equalTo: topBar.trailingAnchor, constant: -16),
             publishButton.centerYAnchor.constraint(equalTo: topBar.centerYAnchor),
             publishButton.heightAnchor.constraint(equalToConstant: 44),
@@ -440,6 +452,13 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
 
     /// 发布钮外观跟随启用态（updatePublishState 只改 isEnabled，这里同步颜色/底色）。
     private func refreshPublishAppearance() {
+        // U13：空正文时视觉置灰（与真禁用同外观），但按钮仍可点按以便给提示。
+        if publishButton.isEnabled && trimmedContent().isEmpty {
+            publishButton.backgroundColor = UIColor.clear
+            publishButton.setTitleColor(BearyColors.gray, for: .normal)
+            publishButton.tintColor = BearyColors.gray
+            return
+        }
         if publishButton.isEnabled {
             publishButton.backgroundColor = BearyColors.ink
             // 底是 ink、字须取反色 bg：深色下 ink 近白，白字面量会糊在底上看不见。
@@ -733,7 +752,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         recipientPickButton.layer.cornerRadius = 999
         recipientPickButton.addTarget(self, action: #selector(didTapPickRecipient), for: .touchUpInside)
         // 已选 chip：橙 13% 底 + 22 头像/首字母 + “写给 名” + ×。
-        recipientChipView.backgroundColor = BearyColors.orange.withAlphaComponent(0.13)
+        recipientChipView.backgroundColor = BearyColors.alpha(BearyColors.orange, 0.13)
         recipientChipView.layer.cornerRadius = 15
         recipientChipView.layer.masksToBounds = true
         recipientChipAvatar.contentMode = .scaleAspectFill
@@ -748,9 +767,9 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         recipientChipFallback.layer.masksToBounds = true
         recipientChipName.font = UIFont.systemFont(ofSize: 13, weight: .semibold)
         recipientChipName.textColor = BearyColors.ink
-        recipientClearButton.setTitle("×", for: .normal)
-        recipientClearButton.titleLabel?.font = UIFont.systemFont(ofSize: 16)
-        recipientClearButton.setTitleColor(BearyColors.gray, for: .normal)
+        // I6：写给 chip 清除改用 icon_close 资产（不再用文字 ×）。
+        recipientClearButton.setImage(BearyIconImages.image(named: "icon_close", pointSize: 12), for: .normal)
+        recipientClearButton.tintColor = BearyColors.gray
         recipientClearButton.backgroundColor = BearyColors.ink.withAlphaComponent(0.10)
         recipientClearButton.layer.cornerRadius = 9
         recipientClearButton.layer.masksToBounds = true
@@ -874,12 +893,12 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     private func refreshNotifyCheck() {
         if notifyRecipient {
             notifyCheckButton.backgroundColor = BearyColors.ink
-            // 底是 ink、✓ 须取反色 bg：深色下 ink 近白，白字面量会糊在底上看不见。
-            notifyCheckButton.setTitle("✓", for: .normal)
-            notifyCheckButton.setTitleColor(BearyColors.bg, for: .normal)
+            // I6：通知复选改用 icon_check 资产；底是 ink、对勾须取反色 bg（深色下 ink 近白）。
+            notifyCheckButton.setImage(BearyIconImages.image(named: "icon_check", pointSize: 14), for: .normal)
+            notifyCheckButton.tintColor = BearyColors.bg
         } else {
             notifyCheckButton.backgroundColor = UIColor.clear
-            notifyCheckButton.setTitle("", for: .normal)
+            notifyCheckButton.setImage(nil, for: .normal)
         }
     }
 
@@ -954,7 +973,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         quoteDeliveringPill.setContentCompressionResistancePriority(.required, for: .horizontal)
         quoteDeliveringPill.font = UIFont.systemFont(ofSize: 11, weight: .semibold)
         quoteDeliveringPill.textColor = BearyColors.blue
-        quoteDeliveringPill.backgroundColor = BearyColors.blue.withAlphaComponent(0.13)
+        quoteDeliveringPill.backgroundColor = BearyColors.alpha(BearyColors.blue, 0.13)
         quoteDeliveringPill.textAlignment = .center
         quoteDeliveringPill.layer.cornerRadius = 6
         quoteDeliveringPill.layer.masksToBounds = true
@@ -1061,6 +1080,19 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         contentStack.setCustomSpacing(0, after: quoteSection)
     }
 
+    /// W2：带倒计时版“投递中”pill（与详情 countdownText 同口径：天 > 小时 > 分钟，分钟向上取整、至少 1 分钟）；
+    /// 无 publishAt 时回退 plain“投递中”。
+    private func quoteCountdownText(publishAt: Int?) -> String {
+        guard let publishAt = publishAt else { return "投递中" }
+        let remainMs = max(0, publishAt - Int(Date().timeIntervalSince1970 * 1000))
+        let days = remainMs / 86400000
+        let hours = (remainMs % 86400000) / 3600000
+        let minutes = (remainMs % 3600000 + 59999) / 60000
+        if days > 0 { return "投递中 · 还剩 \(days) 天" }
+        if hours > 0 { return "投递中 · 还剩 \(hours) 小时" }
+        return "投递中 · 还剩 \(max(1, minutes)) 分钟"
+    }
+
     /// 引用区状态：stack 内的隐藏项自动塌掉（UIStackView 口径），无需改约束。
     /// 新建未选 → 挑按钮；新建已选 → lite 卡 + 右上 15px ×（网页 quoteChipX 口径，点即清除引用）；
     /// 编辑 → 锁定的 lite 卡或都不显示（无 ×）。
@@ -1100,6 +1132,13 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             quoteAvatarFallback.text = String(authorName.prefix(1)).uppercased()
         }
         quoteDeliveringPill.isHidden = (shown.isPublic == true)
+        // W2：lite 卡 pill 统一为带倒计时版；倒计时文本变长时 pill 宽随文本撑开（原 48 固定宽只够“投递中”三字）。
+        let pillText = quoteCountdownText(publishAt: shown.publishAt)
+        quoteDeliveringPill.text = pillText
+        if let widthConstraint = quotePillWidthConstraint {
+            let textWidth = (pillText as NSString).size(withAttributes: [NSAttributedString.Key.font: UIFont.systemFont(ofSize: 11, weight: .semibold)]).width
+            widthConstraint.constant = ceil(textWidth) + 14
+        }
         // D-8：pill 可见时才激活 leading/宽/trailing 三约束（名 + pill + × 链完整，
         // 名先截断）；pill 隐藏时停用，名只受 × 左侧 -8 约束，不留 48 宽空位。
         let pillVisible = !quoteDeliveringPill.isHidden
@@ -1310,25 +1349,46 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             publishButton.isHidden = true
             refreshQuoteTabs()
             loadQuotePanelTab()
+            // M6：面板打开带透明度过渡（高度随 preferredContentSize 由呈现层跟进；减动效直设终值）。
+            if UIAccessibility.isReduceMotionEnabled {
+                quotePanel.alpha = 1
+            } else {
+                quotePanel.alpha = 0
+                UIView.animate(withDuration: 0.25) { self.quotePanel.alpha = 1 }
+            }
         } else {
-            quotePanel.isHidden = true
-            textView.isHidden = false
-            toolbarContainer.isHidden = false
-            extrasBarContainer.isHidden = false
-            statusRow.isHidden = false
-            quoteSection.isHidden = false
-            ruleBoxView.isHidden = false
-            cancelButton.setTitle("取消", for: .normal)
-            publishButton.isHidden = false
-            // 各区显隐按正常态重算（天气行含独立开关、写给含编辑态通知行、引用含 pill 约束）。
-            refreshExtras()
-            refreshRecipientRow()
-            refreshQuoteSection()
-            refreshImageStripVisibility()
-            if quotePanelSavedScrollValid {
-                quotePanelSavedScrollValid = false
-                view.layoutIfNeeded()
-                scrollView.setContentOffset(quotePanelSavedScrollOffset, animated: false)
+            // M6：关闭先 0.2s 淡出再恢复各区（减动效直接恢复）；恢复后重算 sheet 高。
+            let applyClose = {
+                self.quotePanel.isHidden = true
+                self.textView.isHidden = false
+                self.toolbarContainer.isHidden = false
+                self.extrasBarContainer.isHidden = false
+                self.statusRow.isHidden = false
+                self.quoteSection.isHidden = false
+                self.ruleBoxView.isHidden = false
+                self.cancelButton.setTitle("取消", for: .normal)
+                self.publishButton.isHidden = false
+                // 各区显隐按正常态重算（天气行含独立开关、写给含编辑态通知行、引用含 pill 约束）。
+                self.refreshExtras()
+                self.refreshRecipientRow()
+                self.refreshQuoteSection()
+                self.refreshImageStripVisibility()
+                if self.quotePanelSavedScrollValid {
+                    self.quotePanelSavedScrollValid = false
+                    self.view.layoutIfNeeded()
+                    self.scrollView.setContentOffset(self.quotePanelSavedScrollOffset, animated: false)
+                }
+                self.updatePreferredContentSize()
+            }
+            if UIAccessibility.isReduceMotionEnabled {
+                applyClose()
+            } else {
+                UIView.animate(withDuration: 0.2, animations: {
+                    self.quotePanel.alpha = 0
+                }, completion: { _ in
+                    applyClose()
+                    self.quotePanel.alpha = 1
+                })
             }
         }
         updatePreferredContentSize()
@@ -1517,15 +1577,18 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                 pill.translatesAutoresizingMaskIntoConstraints = false
                 pill.font = UIFont.systemFont(ofSize: 11, weight: .semibold)
                 pill.textColor = BearyColors.blue
-                pill.backgroundColor = BearyColors.blue.withAlphaComponent(0.13)
+                pill.backgroundColor = BearyColors.alpha(BearyColors.blue, 0.13)
                 pill.textAlignment = .center
                 pill.layer.cornerRadius = 6
                 pill.layer.masksToBounds = true
-                pill.text = "投递中"
+                // W2：面板行 pill 同样带倒计时版（Entry 自带 publishAt）；宽随文本撑开，不再固定 48。
+                let panelPillText = quoteCountdownText(publishAt: entry.publishAt)
+                pill.text = panelPillText
                 pill.setContentCompressionResistancePriority(.required, for: .horizontal)
                 headerStack.addArrangedSubview(pill)
+                let panelPillWidth = ceil((panelPillText as NSString).size(withAttributes: [NSAttributedString.Key.font: UIFont.systemFont(ofSize: 11, weight: .semibold)]).width) + 14
                 NSLayoutConstraint.activate([
-                    pill.widthAnchor.constraint(equalToConstant: 48),
+                    pill.widthAnchor.constraint(equalToConstant: panelPillWidth),
                     pill.heightAnchor.constraint(equalToConstant: 17),
                 ])
             }
@@ -1619,6 +1682,15 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             quotePanelRowEntries.append(entry)
             quotePanelRowButtons.append(rowButton)
         }
+        // M6：行入场错峰淡入（减动效跳过；换 tab 重建时同样只播新行）。
+        if UIAccessibility.isReduceMotionEnabled == false {
+            for (index, button) in quotePanelRowButtons.enumerated() {
+                button.alpha = 0
+                UIView.animate(withDuration: 0.25, delay: Double(index) * 0.03, options: [], animations: {
+                    button.alpha = 1
+                }, completion: nil)
+            }
+        }
         updatePreferredContentSize()
     }
 
@@ -1634,7 +1706,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             }
         }
         guard let entry = picked, let entryId = entry.id, let content = entry.content else { return }
-        let quote = SelectedQuote(entryId: entryId, content: content, createdAt: entry.createdAt, authorName: entry.authorName, authorAvatar: entry.authorAvatar, images: entry.images ?? [], isPublic: entry.isPublic, imgDims: entry.imgDims, isDeleted: false)
+        let quote = SelectedQuote(entryId: entryId, content: content, createdAt: entry.createdAt, authorName: entry.authorName, authorAvatar: entry.authorAvatar, images: entry.images ?? [], isPublic: entry.isPublic, publishAt: entry.publishAt, imgDims: entry.imgDims, isDeleted: false)
         if isEditMode {
             lockedQuote = quote
         } else {
@@ -2113,10 +2185,10 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     }
 
     private func updatePublishState() {
-        let trimmed = trimmedContent()
-        // C11：超长时发布钮保持可用（不禁用），点发布时 toast 报当前字数；空正文与
-        // 上传中仍禁用（点不上去，无需 toast）。
-        publishButton.isEnabled = !isPublishing && !trimmed.isEmpty && !hasUploadingImage()
+        // C11：超长时发布钮保持可用（不禁用），点发布时 toast 报当前字数；上传中仍禁用。
+        // U13：空正文不再真禁用（禁用钮收不到点按、零反馈）——改视觉置灰 + 点按给“先写点什么”
+        // 轻提示（见 didTapPublish）；超长时保持可用的口径不动。
+        publishButton.isEnabled = !isPublishing && !hasUploadingImage()
         refreshPublishAppearance()
         refreshPublishBusyState()
     }
@@ -2232,9 +2304,9 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         failView.addSubview(failStack)
         let removeButton = UIButton(type: .system)
         removeButton.translatesAutoresizingMaskIntoConstraints = false
-        removeButton.setTitle("×", for: .normal)
-        removeButton.titleLabel?.font = UIFont.boldSystemFont(ofSize: 14)
-        removeButton.setTitleColor(UIColor.white, for: .normal)
+        // I6：图片移除改用 icon_close 资产（不再用文字 ×）。
+        removeButton.setImage(BearyIconImages.image(named: "icon_close", pointSize: 12), for: .normal)
+        removeButton.tintColor = UIColor.white
         removeButton.backgroundColor = BearyColors.scrim
         removeButton.layer.cornerRadius = 10
         removeButton.layer.masksToBounds = true
@@ -2614,7 +2686,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         }
         if let quote = entry.quote, let quoteId = quote.id, let content = quote.content {
             // 内容为空的引用 = 已删（服务端 gone 只剩 id，网页版同款：已删引用不回填，保存时即丢弃）。
-            lockedQuote = SelectedQuote(entryId: quoteId, content: content, createdAt: quote.createdAt, authorName: quote.authorName, authorAvatar: quote.authorAvatar, images: quote.images ?? [], isPublic: quote.isPublic, imgDims: nil, isDeleted: false)
+            lockedQuote = SelectedQuote(entryId: quoteId, content: content, createdAt: quote.createdAt, authorName: quote.authorName, authorAvatar: quote.authorAvatar, images: quote.images ?? [], isPublic: quote.isPublic, publishAt: nil, imgDims: nil, isDeleted: false)
         }
         refreshRecipientRow()
         refreshQuoteSection()
@@ -2778,8 +2850,9 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         BearyDraftStore.ioQueue.async { [weak self] in
             BearyDraftStore.save(draft)
             // 保存级别跟随图片状态：有失败/未上传的图 = 1（文字已保存，图片未保存），否则 2；
-            // 落盘后回读不到本篇 = 0（失败红字）。BearyDraftStore.save 本身不返回成败，
-            // 回读是唯一信号；多槽下必须按 draftId 查本篇，不能用“库非空”当成功信号。
+            // 落盘后回读不到本篇 = 0（失败红字）。save 现返回 Bool（G5），
+            // 但此处仍以回读为准（与写盘失败时不覆盖旧库的语义一致）；
+            // 多槽下必须按 draftId 查本篇，不能用“库非空”当成功信号。
             var savedCurrentDraft = false
             var totalCount = 0
             for savedDraft in BearyDraftStore.loadAll() {
@@ -2909,7 +2982,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     /// 快照正文在已删态下不展示（见 refreshQuoteSection 的已删行）。
     private func restoredQuote(from draft: BearyDraft) -> SelectedQuote? {
         guard let quoteEntryId = draft.quoteId else { return nil }
-        return SelectedQuote(entryId: quoteEntryId, content: draft.quoteContent ?? "", createdAt: draft.quoteCreatedAt, authorName: draft.quoteAuthorName, authorAvatar: draft.quoteAuthorAvatar, images: draft.quoteImages, isPublic: draft.quoteIsPublic, imgDims: nil, isDeleted: draft.quoteDeleted)
+        return SelectedQuote(entryId: quoteEntryId, content: draft.quoteContent ?? "", createdAt: draft.quoteCreatedAt, authorName: draft.quoteAuthorName, authorAvatar: draft.quoteAuthorAvatar, images: draft.quoteImages, isPublic: draft.quoteIsPublic, publishAt: nil, imgDims: nil, isDeleted: draft.quoteDeleted)
     }
 
     /// 恢复后校验引用是否还在：快照只能证明“选过”，不能证明“还在”。
@@ -2928,7 +3001,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                     return
                 case .failure(let fetchError):
                     if case .notFound = fetchError {
-                        self.selectedQuote = SelectedQuote(entryId: currentQuote.entryId, content: "", createdAt: nil, authorName: nil, authorAvatar: nil, images: [], isPublic: nil, imgDims: nil, isDeleted: true)
+                        self.selectedQuote = SelectedQuote(entryId: currentQuote.entryId, content: "", createdAt: nil, authorName: nil, authorAvatar: nil, images: [], isPublic: nil, publishAt: nil, imgDims: nil, isDeleted: true)
                         self.refreshQuoteSection()
                         self.refreshExtras()
                         self.saveDraftNow()
@@ -3209,11 +3282,18 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             return
         }
         if !SessionManager.shared.isLoggedIn {
+            // G26：登录态未知（网络失败）时不弹登录页，改给网络不稳定提示。
+            if SessionManager.shared.authUnknown {
+                showToast(message: "网络不稳定，请稍后再试")
+                return
+            }
             onRequireLogin?()
             return
         }
         let trimmed = trimmedContent()
         if trimmed.isEmpty {
+            // U13：空正文点按给轻提示（按钮视觉置灰但仍可点，见 updatePublishState）。
+            showToast(message: "先写点什么")
             updatePublishState()
             return
         }

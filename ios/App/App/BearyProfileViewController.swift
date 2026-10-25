@@ -159,9 +159,13 @@ class BearyProfileViewController: UIViewController {
     /// entryId、点赞数、已赞、已收藏、回应聚合。
     var onInteractionChanged: ((String, Int?, Bool?, Bool?, [EmoteCount]?) -> Void)?
 
-    /// by-handle 解析出的改名信号（对方 30 天内改名时有值）：容器可用它 toast
-    /// 「对方已改名为 @<movedToHandle>」。非改名场景为 nil。
+    /// by-handle 解析出的改名信号（对方 30 天内改名时有值）。
+    /// F14：容器未接线（全仓 grep SceneDelegate 无 movedToHandle 消费），故页内
+    /// 在 handleProfileResult 成功时直接 toast「对方已改名为 @<movedToHandle>」。
+    /// 非改名场景为 nil。
     private(set) var movedToHandle: String?
+    /// F14：同一改名信号只提示一次，避免重复拉取时反复弹。
+    private var lastMovedToastHandle: String?
 
     enum ProfileTab {
         case diary
@@ -276,7 +280,7 @@ class BearyProfileViewController: UIViewController {
         return tableViewValue
     }()
 
-    // MARK: - 头部视图（封面带 + 头像半压 + 名字 / 加入时间 / 统计 + 在路上条 + 三标签）
+    // MARK: - 头部视图（封面带 + 头像半压 + 名字 / 加入时间 / 统计 + 小熊回应墙 + 徽章架 + 三标签）
 
     private let headerView = UIView()
 
@@ -372,6 +376,17 @@ class BearyProfileViewController: UIViewController {
         return labelValue
     }()
 
+    /// I7：加入时间前的 14px 日历图标（网页 pf-meta 用 beary-calendar；icon_calendar 由该 symbol 渲染）。
+    private let joinedIconView: UIImageView = {
+        let imageViewValue = UIImageView()
+        imageViewValue.translatesAutoresizingMaskIntoConstraints = false
+        imageViewValue.image = BearyIconImages.image(named: "icon_calendar", pointSize: 14)
+        imageViewValue.tintColor = BearyColors.gray
+        imageViewValue.contentMode = .scaleAspectFit
+        imageViewValue.isHidden = true
+        return imageViewValue
+    }()
+
     private let publicCountLabel: UILabel = {
         let labelValue = UILabel()
         labelValue.translatesAutoresizingMaskIntoConstraints = false
@@ -403,9 +418,10 @@ class BearyProfileViewController: UIViewController {
     private lazy var topBackButton: UIButton = {
         let buttonValue = UIButton(type: .system)
         buttonValue.translatesAutoresizingMaskIntoConstraints = false
-        buttonValue.setTitle("返回", for: .normal)
-        buttonValue.setTitleColor(BearyColors.ink, for: .normal)
-        buttonValue.titleLabel?.font = UIFont.systemFont(ofSize: 15)
+        // I7：返回改图标钮（网页 pfBack 用 beary-back；icon_back 由该 symbol 渲染）。
+        buttonValue.setImage(BearyIconImages.image(named: "icon_back", pointSize: 19), for: .normal)
+        buttonValue.tintColor = BearyColors.ink
+        buttonValue.accessibilityLabel = "返回"
         buttonValue.addTarget(self, action: #selector(backButtonTapped), for: .touchUpInside)
         return buttonValue
     }()
@@ -434,10 +450,10 @@ class BearyProfileViewController: UIViewController {
     private lazy var gearButton: UIButton = {
         let buttonValue = UIButton(type: .system)
         buttonValue.translatesAutoresizingMaskIntoConstraints = false
-        buttonValue.setTitle("更多", for: .normal)
-        buttonValue.setTitleColor(BearyColors.ink, for: .normal)
-        buttonValue.titleLabel?.font = UIFont.systemFont(ofSize: 14)
-        buttonValue.contentEdgeInsets = UIEdgeInsets(top: 0, left: 12, bottom: 0, right: 12)
+        // I1：齿轮改图标钮（网页 pfGearBtn 用 beary-more；icon_more 由该 symbol 渲染）。
+        buttonValue.setImage(BearyIconImages.image(named: "icon_more", pointSize: 19), for: .normal)
+        buttonValue.tintColor = BearyColors.ink
+        buttonValue.accessibilityLabel = "更多"
         buttonValue.layer.borderWidth = 1
         buttonValue.layer.cornerRadius = 20
         buttonValue.addTarget(self, action: #selector(gearButtonTapped), for: .touchUpInside)
@@ -541,15 +557,15 @@ class BearyProfileViewController: UIViewController {
     }()
 
     private lazy var diaryTabButton: UIButton = {
-        return makeTabButton(title: "日记", action: #selector(diaryTabTapped))
+        return makeTabButton(title: "日记", iconName: "icon_diary", action: #selector(diaryTabTapped))
     }()
 
     private lazy var likedTabButton: UIButton = {
-        return makeTabButton(title: "赞过", action: #selector(likedTabTapped))
+        return makeTabButton(title: "赞过", iconName: "icon_heart", action: #selector(likedTabTapped))
     }()
 
     private lazy var savedTabButton: UIButton = {
-        return makeTabButton(title: "收藏", action: #selector(savedTabTapped))
+        return makeTabButton(title: "收藏", iconName: "icon_bookmark", action: #selector(savedTabTapped))
     }()
 
     private let tabsUnderline: UIView = {
@@ -585,14 +601,20 @@ class BearyProfileViewController: UIViewController {
     private lazy var topBarWidthConstraint: NSLayoutConstraint = topBarView.widthAnchor.constraint(equalToConstant: 600)
     private var underlineLeadingConstraint: NSLayoutConstraint?
     private var underlineTrailingConstraint: NSLayoutConstraint?
+    /// L16：名字右缘上限约束，constant 由 updateNameTrailingLimit 按徽章/皇冠实际显隐动态取值。
+    private var nameTrailingConstraint: NSLayoutConstraint?
 
-    private func makeTabButton(title: String, action: Selector) -> UIButton {
+    private func makeTabButton(title: String, iconName: String, action: Selector) -> UIButton {
         let buttonValue = UIButton(type: .system)
         buttonValue.translatesAutoresizingMaskIntoConstraints = false
         buttonValue.setTitle(title, for: .normal)
+        // I2：三标签钮前加对应图标（日记 icon_diary 由 beary-diary 渲染；心/书签资产已有）。
+        buttonValue.setImage(BearyIconImages.image(named: iconName, pointSize: 15), for: .normal)
         buttonValue.titleLabel?.font = UIFont.systemFont(ofSize: 14, weight: .bold)
         buttonValue.setTitleColor(BearyColors.gray, for: .normal)
         buttonValue.setTitleColor(BearyColors.ink, for: .selected)
+        buttonValue.tintColor = BearyColors.gray
+        buttonValue.titleEdgeInsets = UIEdgeInsets(top: 0, left: 4, bottom: 0, right: 0)
         buttonValue.contentEdgeInsets = UIEdgeInsets(top: 9, left: 10, bottom: 9, right: 10)
         buttonValue.addTarget(self, action: action, for: .touchUpInside)
         return buttonValue
@@ -614,10 +636,10 @@ class BearyProfileViewController: UIViewController {
         ])
         tableView.tableHeaderView = headerView
         if selfGate && viewerUserIdValue == nil {
-            // 自己主页未登录：不拉任何本人数据，直接走登录回调（容器接登录页）。
+            // U7：二选一取“只铺页脚”：不拉任何本人数据、不直接弹登录，
+            // 弹登录交给页脚“去登录”按钮（loginButtonTapped → onRequireLogin）。
             applyMode()
             showLoginRequired()
-            onRequireLogin?()
             return
         }
         applyMode()
@@ -697,6 +719,7 @@ class BearyProfileViewController: UIViewController {
             topBarHeightConstraint,
             topBackButton.leadingAnchor.constraint(equalTo: topBarView.leadingAnchor, constant: 20),
             topBackButton.centerYAnchor.constraint(equalTo: topBarView.centerYAnchor),
+            topBackButton.widthAnchor.constraint(equalToConstant: 44),
             topBackButton.heightAnchor.constraint(equalToConstant: 44),
             topNameLabel.centerXAnchor.constraint(equalTo: topBarView.centerXAnchor),
             topNameLabel.centerYAnchor.constraint(equalTo: topBarView.centerYAnchor),
@@ -728,6 +751,7 @@ class BearyProfileViewController: UIViewController {
         headerView.addSubview(badgeImageView)
         headerView.addSubview(crownImageView)
         headerView.addSubview(handleLabel)
+        headerView.addSubview(joinedIconView)
         headerView.addSubview(joinedLabel)
         headerView.addSubview(publicCountLabel)
         headerView.addSubview(likesCountLabel)
@@ -763,6 +787,10 @@ class BearyProfileViewController: UIViewController {
         crownLeadingToBadgeConstraint = crownImageView.leadingAnchor.constraint(equalTo: badgeImageView.trailingAnchor, constant: 8)
         crownLeadingToNameConstraint = crownImageView.leadingAnchor.constraint(equalTo: nameLabel.trailingAnchor, constant: 8)
         crownLeadingToBadgeConstraint?.isActive = true
+        // L16：名字右缘上限不再固定预留 90pt，改由该约束按徽章/皇冠实际显隐
+        // 动态取值（见 updateNameTrailingLimit）。
+        nameTrailingConstraint = nameLabel.trailingAnchor.constraint(lessThanOrEqualTo: headerView.trailingAnchor, constant: -28)
+        nameTrailingConstraint?.isActive = true
         NSLayoutConstraint.activate([
             coverImageView.topAnchor.constraint(equalTo: headerView.topAnchor),
             coverImageView.leadingAnchor.constraint(equalTo: headerView.leadingAnchor),
@@ -781,6 +809,7 @@ class BearyProfileViewController: UIViewController {
             editButton.heightAnchor.constraint(equalToConstant: 40),
             gearButton.trailingAnchor.constraint(equalTo: editButton.leadingAnchor, constant: -8),
             gearButton.centerYAnchor.constraint(equalTo: editButton.centerYAnchor),
+            gearButton.widthAnchor.constraint(equalToConstant: 40),
             gearButton.heightAnchor.constraint(equalToConstant: 40),
             headerShareButton.centerYAnchor.constraint(equalTo: editButton.centerYAnchor),
             headerShareButton.widthAnchor.constraint(equalToConstant: 44),
@@ -788,8 +817,6 @@ class BearyProfileViewController: UIViewController {
 
             nameLabel.topAnchor.constraint(equalTo: avatarImageView.bottomAnchor, constant: 14),
             nameLabel.leadingAnchor.constraint(equalTo: headerView.leadingAnchor, constant: 28),
-            // 预留徽章 23 + 间隙 8 + 皇冠 23 + 间隙 8：长名字换行也不挤占徽章位。
-            nameLabel.trailingAnchor.constraint(lessThanOrEqualTo: headerView.trailingAnchor, constant: -90),
             badgeImageView.leadingAnchor.constraint(equalTo: nameLabel.trailingAnchor, constant: 8),
             badgeImageView.centerYAnchor.constraint(equalTo: nameLabel.topAnchor, constant: 14),
             badgeImageView.widthAnchor.constraint(equalToConstant: 23),
@@ -801,8 +828,13 @@ class BearyProfileViewController: UIViewController {
 
             handleLabel.topAnchor.constraint(equalTo: nameLabel.bottomAnchor, constant: 8),
             handleLabel.leadingAnchor.constraint(equalTo: headerView.leadingAnchor, constant: 28),
+            // I7：加入时间前补 14px 日历图标，图标与加入时间同显隐（见 applyProfile）。
+            joinedIconView.centerYAnchor.constraint(equalTo: handleLabel.centerYAnchor),
+            joinedIconView.leadingAnchor.constraint(equalTo: handleLabel.trailingAnchor, constant: 5),
+            joinedIconView.widthAnchor.constraint(equalToConstant: 14),
+            joinedIconView.heightAnchor.constraint(equalToConstant: 14),
             joinedLabel.centerYAnchor.constraint(equalTo: handleLabel.centerYAnchor),
-            joinedLabel.leadingAnchor.constraint(equalTo: handleLabel.trailingAnchor, constant: 5),
+            joinedLabel.leadingAnchor.constraint(equalTo: joinedIconView.trailingAnchor, constant: 4),
             joinedLabel.trailingAnchor.constraint(lessThanOrEqualTo: headerView.trailingAnchor, constant: -28),
 
             publicCountLabel.topAnchor.constraint(equalTo: handleLabel.bottomAnchor, constant: 13),
@@ -948,18 +980,127 @@ class BearyProfileViewController: UIViewController {
         diaryTabButton.isSelected = currentTab == .diary
         likedTabButton.isSelected = currentTab == .liked
         savedTabButton.isSelected = currentTab == .saved
+        // I2：标签图标 tint 跟随选中态（标题色已按选中态区分，图标同步）。
+        diaryTabButton.tintColor = currentTab == .diary ? BearyColors.ink : BearyColors.gray
+        likedTabButton.tintColor = currentTab == .liked ? BearyColors.ink : BearyColors.gray
+        savedTabButton.tintColor = currentTab == .saved ? BearyColors.ink : BearyColors.gray
         let selectedButton: UIButton
         switch currentTab {
         case .diary: selectedButton = diaryTabButton
         case .liked: selectedButton = likedTabButton
         case .saved: selectedButton = savedTabButton
         }
+        let hadUnderline = underlineLeadingConstraint != nil
         underlineLeadingConstraint?.isActive = false
         underlineTrailingConstraint?.isActive = false
         underlineLeadingConstraint = tabsUnderline.leadingAnchor.constraint(equalTo: selectedButton.leadingAnchor, constant: 10)
         underlineTrailingConstraint = tabsUnderline.trailingAnchor.constraint(equalTo: selectedButton.trailingAnchor, constant: -10)
         underlineLeadingConstraint?.isActive = true
         underlineTrailingConstraint?.isActive = true
+        // M9：下划线用 0.28s 约束动画；首建（无旧下划线）/减动效直设终值。
+        if hadUnderline && view.window != nil && !UIAccessibility.isReduceMotionEnabled {
+            UIView.animate(withDuration: 0.28, delay: 0, options: .curveEaseInOut, animations: {
+                self.tabsContainer.layoutIfNeeded()
+            })
+        } else {
+            tabsContainer.layoutIfNeeded()
+        }
+    }
+
+    /// L16：名字右缘上限 = 右边距 28 + 徽章位（23 + 间隙 8）+ 皇冠位（23 + 间隙 8），
+    /// 仅按实际显隐计入；两项皆无时名字可伸到距右缘 28pt。
+    private func updateNameTrailingLimit() {
+        var reserve: CGFloat = 28
+        if badgeImageView.isHidden == false {
+            reserve += 31
+        }
+        if crownImageView.isHidden == false {
+            reserve += 31
+        }
+        nameTrailingConstraint?.constant = -reserve
+    }
+
+    /// 已播过入场动画的行 id：新行只播一次，切回旧标签/后台回填时已有行不重播。
+    private var animatedRowIds: Set<String> = []
+
+    /// M9/M10：仅对从未播过入场动画的可见行做错峰滑入（每行递增 0.03s）；
+    /// 已有行一律不动。减动效时直设终值（即不播）。
+    private func animateNewRows() {
+        guard !UIAccessibility.isReduceMotionEnabled else { return }
+        tableView.layoutIfNeeded()
+        guard let visiblePaths = tableView.indexPathsForVisibleRows else { return }
+        var delay: TimeInterval = 0
+        for path in visiblePaths {
+            guard path.row < currentEntries.count else { continue }
+            guard let entryId = currentEntries[path.row].id, !animatedRowIds.contains(entryId) else { continue }
+            guard let cell = tableView.cellForRow(at: path) else { continue }
+            animatedRowIds.insert(entryId)
+            cell.alpha = 0
+            cell.transform = CGAffineTransform(translationX: 0, y: 8)
+            UIView.animate(withDuration: 0.25, delay: delay, options: .curveEaseOut, animations: {
+                cell.alpha = 1
+                cell.transform = .identity
+            })
+            delay += 0.03
+        }
+    }
+
+    /// F14/G12 共用的页内轻提示：墨底白字 toast，2 秒后淡出；减动效直接显隐。
+    private var profileToastView: UIView?
+
+    private func showProfileToast(message: String) {
+        profileToastView?.removeFromSuperview()
+        profileToastView = nil
+        let toastView = UIView()
+        toastView.backgroundColor = BearyColors.ink
+        toastView.layer.cornerRadius = 12
+        toastView.clipsToBounds = true
+        toastView.translatesAutoresizingMaskIntoConstraints = false
+        let label = UILabel()
+        label.text = message
+        label.font = UIFont.systemFont(ofSize: 14)
+        label.textColor = BearyColors.bg
+        label.textAlignment = .center
+        label.numberOfLines = 0
+        label.translatesAutoresizingMaskIntoConstraints = false
+        toastView.addSubview(label)
+        NSLayoutConstraint.activate([
+            label.topAnchor.constraint(equalTo: toastView.topAnchor, constant: 12),
+            label.bottomAnchor.constraint(equalTo: toastView.bottomAnchor, constant: -12),
+            label.leadingAnchor.constraint(equalTo: toastView.leadingAnchor, constant: 16),
+            label.trailingAnchor.constraint(equalTo: toastView.trailingAnchor, constant: -16),
+        ])
+        view.addSubview(toastView)
+        NSLayoutConstraint.activate([
+            toastView.centerXAnchor.constraint(equalTo: view.centerXAnchor),
+            toastView.leadingAnchor.constraint(greaterThanOrEqualTo: view.leadingAnchor, constant: 20),
+            toastView.trailingAnchor.constraint(lessThanOrEqualTo: view.trailingAnchor, constant: -20),
+            toastView.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor, constant: -24),
+        ])
+        profileToastView = toastView
+        if UIAccessibility.isReduceMotionEnabled {
+            toastView.alpha = 1
+            DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak self] in
+                if self?.profileToastView === toastView {
+                    toastView.removeFromSuperview()
+                    self?.profileToastView = nil
+                }
+            }
+        } else {
+            toastView.alpha = 0
+            UIView.animate(withDuration: 0.2, animations: {
+                toastView.alpha = 1
+            }, completion: { _ in
+                UIView.animate(withDuration: 0.25, delay: 2, options: [], animations: {
+                    toastView.alpha = 0
+                }, completion: { _ in
+                    if self.profileToastView === toastView {
+                        toastView.removeFromSuperview()
+                        self.profileToastView = nil
+                    }
+                })
+            })
+        }
     }
 
     // MARK: - 数据：资料
@@ -991,6 +1132,11 @@ class BearyProfileViewController: UIViewController {
             profileLoadFailed = false
             profile = profileValue
             movedToHandle = profileValue.movedTo
+            // F14：改名信号页内提示一次（容器未接线，见 movedToHandle 注释）。
+            if let moved = profileValue.movedTo, !moved.isEmpty, lastMovedToastHandle != moved {
+                lastMovedToastHandle = moved
+                showProfileToast(message: "对方已改名为 @\(moved)")
+            }
             applyProfile()
             applyMode()
             if isOwnProfile {
@@ -1002,7 +1148,14 @@ class BearyProfileViewController: UIViewController {
             }
         case .failure:
             profileLoadFailed = true
-            nameLabel.text = "—"
+            // G12：二选一取“保留整套旧头”：已有旧资料时名字/头像/封面/统计一律不动，
+            // 仅 toast 说明并以脚部重试/下拉刷新作重试入口；无旧资料时才落到统一失败态。
+            if profile == nil {
+                nameLabel.text = "—"
+            } else {
+                showProfileToast(message: "资料刷新失败，显示的是上次内容，下拉可重试")
+            }
+            tableView.refreshControl?.endRefreshing()
             refreshFooter()
             layoutHeaderForced(widthValue: headerWidthValue)
         }
@@ -1028,9 +1181,11 @@ class BearyProfileViewController: UIViewController {
             formatter.dateFormat = "yyyy年M月加入"
             joinedLabel.text = formatter.string(from: dateValue)
             joinedLabel.isHidden = false
+            joinedIconView.isHidden = false
         } else {
             joinedLabel.text = nil
             joinedLabel.isHidden = true
+            joinedIconView.isHidden = true
         }
         publicCountLabel.text = profileValue.diaryCount.map { "\($0)" } ?? "—"
         likesCountLabel.text = profileValue.likesReceived.map { "\($0)" } ?? "—"
@@ -1046,7 +1201,8 @@ class BearyProfileViewController: UIViewController {
         }
 
         // 封面带：有封面时 180 高 + 头像 -52 半压 + 3.5 bg 边；无封面时头顶距 20。
-        let hasCover = profileValue.coverUrl != nil
+        // L17：空字符串不再算有封面——须非空且能拼出 URL 才算。
+        let hasCover = !(profileValue.coverUrl ?? "").isEmpty && BearyImageURLs.avatarURL(profileValue.coverUrl) != nil
         if let coverPath = profileValue.coverUrl, let coverURLValue = BearyImageURLs.avatarURL(coverPath) {
             coverImageView.bearySetImage(url: coverURLValue, placeholder: nil)
         } else {
@@ -1059,7 +1215,8 @@ class BearyProfileViewController: UIViewController {
         avatarImageView.layer.borderWidth = hasCover ? 3.5 : 0
 
         // BETA 佩戴徽章（23，主页面口径）与 Plus 皇冠（23，主页面口径）。
-        if let badgeKey = profileValue.wornBadge, !badgeKey.isEmpty, let badgeImage = BearyBadgeImages.image(for: badgeKey) {
+        // I8：取不到图时用占位图（并打日志），不再静默隐藏徽章位。
+        if let badgeKey = profileValue.wornBadge, !badgeKey.isEmpty, let badgeImage = BearyBadgeImages.imageOrPlaceholder(for: badgeKey) {
             badgeImageView.image = badgeImage
             badgeImageView.isHidden = false
         } else {
@@ -1071,6 +1228,7 @@ class BearyProfileViewController: UIViewController {
         let badgeVisible = badgeImageView.isHidden == false
         crownLeadingToBadgeConstraint?.isActive = badgeVisible
         crownLeadingToNameConstraint?.isActive = !badgeVisible
+        updateNameTrailingLimit()
         topNameLabel.text = displayNameValue
 
         applyWall()
@@ -1145,7 +1303,8 @@ class BearyProfileViewController: UIViewController {
             badgesHeightConstraint.isActive = true
             return
         }
-        let shown = unlockedBadges.filter { BearyBadgeImages.image(for: $0) != nil }
+        // I8：未知 key 不再过滤掉，取不到图时以占位图展示（并打日志）。
+        let shown = unlockedBadges.filter { !$0.isEmpty }
         guard !shown.isEmpty else {
             badgesContainer.isHidden = true
             badgesHeightConstraint.isActive = true
@@ -1157,7 +1316,7 @@ class BearyProfileViewController: UIViewController {
             arrangedView.removeFromSuperview()
         }
         for key in shown {
-            guard let badgeImage = BearyBadgeImages.image(for: key) else { continue }
+            guard let badgeImage = BearyBadgeImages.imageOrPlaceholder(for: key) else { continue }
             let buttonValue = UIButton(type: .system)
             buttonValue.translatesAutoresizingMaskIntoConstraints = false
             buttonValue.accessibilityIdentifier = key
@@ -1169,7 +1328,7 @@ class BearyProfileViewController: UIViewController {
             nameLabelValue.font = UIFont.systemFont(ofSize: 11)
             nameLabelValue.textColor = BearyColors.ink
             nameLabelValue.textAlignment = .center
-            nameLabelValue.text = key == "beta" ? "内测者" : key
+            nameLabelValue.text = BearyBadgeImages.displayName(for: key)
             let cellStack = UIStackView(arrangedSubviews: [imageViewValue, nameLabelValue])
             cellStack.axis = .vertical
             cellStack.alignment = .center
@@ -1230,13 +1389,18 @@ class BearyProfileViewController: UIViewController {
     /// 只刷新名字旁的佩戴徽章位（不重拉整个头部，避免滚动跳动）。
     private func refreshWornBadge() {
         guard let profileValue = profile else { return }
-        if let badgeKey = profileValue.wornBadge, !badgeKey.isEmpty, let badgeImage = BearyBadgeImages.image(for: badgeKey) {
+        if let badgeKey = profileValue.wornBadge, !badgeKey.isEmpty, let badgeImage = BearyBadgeImages.imageOrPlaceholder(for: badgeKey) {
             badgeImageView.image = badgeImage
             badgeImageView.isHidden = false
         } else {
             badgeImageView.image = nil
             badgeImageView.isHidden = true
         }
+        let badgeVisible = badgeImageView.isHidden == false
+        crownLeadingToBadgeConstraint?.isActive = badgeVisible
+        crownLeadingToNameConstraint?.isActive = !badgeVisible
+        updateNameTrailingLimit()
+        layoutHeaderForced(widthValue: headerWidthValue)
     }
 
     private func presentSimpleAlert(message: String) {
@@ -1362,6 +1526,8 @@ class BearyProfileViewController: UIViewController {
         currentTab = tab
         applyTabSelection()
         tableView.reloadData()
+        // M9：新列表行错峰滑入，已有行不重播（见 animateNewRows）。
+        animateNewRows()
         if tabEntriesEmpty(tab: tab) {
             loadTab(forceReload: true)
         } else {
@@ -1379,9 +1545,9 @@ class BearyProfileViewController: UIViewController {
         BearyAPI.shared.fetchEntries(scope: scopeValue, limit: 50) { [weak self] result in
             DispatchQueue.main.async {
                 guard let strongSelf = self else { return }
-                if strongSelf.tabBackgroundTab == tabAtStart {
-                    strongSelf.tabBackgroundTab = nil
-                }
+                // G1：回包时无论当前标签是否切走都清零（守卫只决定是否采用回包，
+                // 不再由“切走后不复位”导致切回旧标签不再刷新）。
+                strongSelf.tabBackgroundTab = nil
                 guard strongSelf.currentTab == tabAtStart else { return }
                 switch result {
                 case .success(let listValue):
@@ -1391,6 +1557,8 @@ class BearyProfileViewController: UIViewController {
                         strongSelf.setHasMore(hasMore: false)
                     }
                     strongSelf.tableView.reloadData()
+                    // M10：回填用淡入/滑入新行（已有行不重播），不用整表瞬换观感。
+                    strongSelf.animateNewRows()
                     strongSelf.refreshFooter()
                 case .failure:
                     break
@@ -1619,14 +1787,11 @@ class BearyProfileViewController: UIViewController {
     // MARK: - 动作
 
     @objc private func pullToRefresh() {
-        profile = nil
-        diaryEntries = []
-        likedEntries = []
-        savedEntries = []
+        // G2：下拉刷新保留旧内容（顶部加载态由 UIRefreshControl 提供），
+        // 成功后替换、失败保留旧内容（见 handleProfileResult / handleTabResult）。
         diaryHasMore = true
         likedHasMore = true
         savedHasMore = true
-        tableView.reloadData()
         loadProfile()
         if targetUserIdValue != nil {
             loadTab(forceReload: true)

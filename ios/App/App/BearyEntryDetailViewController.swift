@@ -60,11 +60,16 @@ class BearyEntryDetailViewController: UIViewController {
     private var cachedQuoteEntry: Entry?
     private var cachedQuoteKey: String?
     private var quoteFetchFailedKey: String?
+    /// G20：引用卡当前是否处于“加载失败，点击重试”态（点卡重拉，不走公开/未公开分流）。
+    private var quoteCardIsLoadFailed = false
     private var quoteFetching: Bool = false
     /// 本篇图片 key（点图开查看器用，与 detailImagesStack 顺序一致）。
     private var detailImageKeys: [String] = []
     /// 详情条缩略图加载失败的下标集合（点按该图先重试加载，不进查看器）。
     private var detailImageFailedIndices: Set<Int> = []
+    /// G11/U12：上次见到的登录用户 id 与上次成功拉取时间；viewWillAppear 时翻转或超 60 秒即轻量重拉。
+    private var lastDetailLoginUserId: Int?
+    private var lastDetailLoadAt: Date?
     /// 未公开倒计时 pill 的刷新计时（1 秒一跳；页面消失时停）。
     private var countdownTimer: Timer?
     /// 送达点重拉节流：同篇最多 3 次、间隔 ≥3 秒；耗尽后该 publishAt 不再重拉。
@@ -191,6 +196,15 @@ class BearyEntryDetailViewController: UIViewController {
 
     override func viewWillAppear(_ animated: Bool) {
         super.viewWillAppear(animated)
+        // U12/G11：无下拉刷新，改 viewWillAppear 轻量重拉——登录态翻转必刷；否则距上次成功拉取
+        // 超 60 秒才刷（已有内容时失败保留旧内容，见 fetchEntry）；60 秒内不刷，不打扰阅读。
+        let currentLoginUserId = SessionManager.shared.currentUser?.id
+        let loginFlipped = currentLoginUserId != lastDetailLoginUserId
+        lastDetailLoginUserId = currentLoginUserId
+        let stale = lastDetailLoadAt.map { Date().timeIntervalSince($0) > 60 } ?? false
+        if entry != nil && (loginFlipped || stale) {
+            refreshEntry()
+        }
         startCountdownTimer()
         // 从别页回来时恢复详情页播放器的播放（消失时已 stop，见 viewWillDisappear）。
         moodEmoteView?.play()
@@ -264,6 +278,8 @@ class BearyEntryDetailViewController: UIViewController {
         colWidth.priority = .defaultHigh
         NSLayoutConstraint.activate([
             scrollView.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
+            // L8 已确认：详情由容器以全屏 modal 呈现（SceneDelegate.presentDetail），底栏胶囊被 modal
+            // 盖在下面、详情呈现时不可见，故不加首页同口径的 90pt 底 inset；若未来改非常驻页内嵌再补。
             scrollView.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor),
             scrollView.leadingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.leadingAnchor),
             scrollView.trailingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.trailingAnchor),
@@ -349,12 +365,9 @@ class BearyEntryDetailViewController: UIViewController {
         badgeImageView.isHidden = true
         crownImageView.translatesAutoresizingMaskIntoConstraints = false
         crownImageView.contentMode = .scaleAspectFit
-        // 网页 Plus 皇冠（铂金渐变 SVG 渲染的 PNG）；资产缺失时回退灰色 crown.fill。
+        // I4：与编辑器口径统一——只走 crown 资产，缺失即隐藏，不留灰色 crown.fill 回退。
         if let crown = UIImage(named: "crown") {
             crownImageView.image = crown
-        } else {
-            crownImageView.image = UIImage(systemName: "crown.fill")
-            crownImageView.tintColor = BearyColors.gray
         }
         crownImageView.isHidden = true
         timeLabel.font = UIFont.systemFont(ofSize: 14)
@@ -391,7 +404,7 @@ class BearyEntryDetailViewController: UIViewController {
         avatarWrapView.addGestureRecognizer(UITapGestureRecognizer(target: self, action: #selector(authorTapped)))
         authorNameLabel.addGestureRecognizer(UITapGestureRecognizer(target: self, action: #selector(authorTapped)))
         // 倒计时 pill：蓝 13% 底 + 蓝字；pill 本身 hug 内容，右侧 spacer 吃掉剩余宽度。
-        pillView.backgroundColor = BearyColors.blue.withAlphaComponent(0.13)
+        pillView.backgroundColor = BearyColors.alpha(BearyColors.blue, 0.13)
         pillView.layer.cornerRadius = 11
         pillView.clipsToBounds = true
         pillView.setContentHuggingPriority(.required, for: .horizontal)
@@ -498,10 +511,11 @@ class BearyEntryDetailViewController: UIViewController {
         shareButton.contentEdgeInsets = UIEdgeInsets(top: 2, left: 2, bottom: 2, right: 2)
         shareButton.setImage(DetailIconCache.image(named: "icon_share", pointSize: 21), for: .normal)
         shareButton.tintColor = BearyColors.gray
-        editButton.contentEdgeInsets = UIEdgeInsets(top: 6, left: 4, bottom: 6, right: 4)
-        editButton.setTitle("编辑", for: .normal)
-        editButton.setTitleColor(BearyColors.gray, for: .normal)
-        editButton.titleLabel?.font = UIFont.systemFont(ofSize: 11)
+        // I5：编辑改用 icon_edit 图标（与分享/删除同为 21 图标行），不再是 11pt 文字。
+        editButton.contentEdgeInsets = UIEdgeInsets(top: 2, left: 2, bottom: 2, right: 2)
+        editButton.setImage(DetailIconCache.image(named: "icon_edit", pointSize: 21), for: .normal)
+        editButton.tintColor = BearyColors.gray
+        editButton.accessibilityLabel = "编辑"
         editButton.isHidden = true
         // 删除钮：网页时间线 del-btn 口径为红色垃圾桶图标，仅本人未公开篇显示（updateDeleteButton 回写）。
         deleteButton.contentEdgeInsets = UIEdgeInsets(top: 2, left: 2, bottom: 2, right: 2)
@@ -560,6 +574,11 @@ class BearyEntryDetailViewController: UIViewController {
         shareButton.addTarget(self, action: #selector(shareTapped), for: .touchUpInside)
         editButton.addTarget(self, action: #selector(editTapped), for: .touchUpInside)
         deleteButton.addTarget(self, action: #selector(deleteTapped), for: .touchUpInside)
+        // U10：分享/编辑/删除/贴熊统一接 iconTouchDown/iconTouchUp，与点赞/收藏一致。
+        for button in [shareButton, editButton, deleteButton, emoteAddButton] {
+            button.addTarget(self, action: #selector(iconTouchDown(_:)), for: .touchDown)
+            button.addTarget(self, action: #selector(iconTouchUp(_:)), for: [.touchUpInside, .touchUpOutside, .touchCancel])
+        }
         foldButton.addTarget(self, action: #selector(foldTapped), for: .touchUpInside)
         emoteAddButton.addTarget(self, action: #selector(emoteAddTapped), for: .touchUpInside)
         retryButton.addTarget(self, action: #selector(retryTapped), for: .touchUpInside)
@@ -611,6 +630,7 @@ class BearyEntryDetailViewController: UIViewController {
                 switch result {
                 case .success(let fetched):
                     self.entry = fetched
+                    self.lastDetailLoadAt = Date()
                     self.setStateContent()
                     self.render()
                 case .failure(let err):
@@ -809,11 +829,18 @@ class BearyEntryDetailViewController: UIViewController {
     }
 
     @objc private func shareTapped() {
-        // E4-3 分享钮 present 守卫：转场中或已 present 其他页时连点不再叠页。
-        if isSharePresenting == true || presentedViewController != nil {
+        // E4-3 分享钮 present 守卫：转场中连点不再叠页。
+        if isSharePresenting == true {
             return
         }
         guard let shareURL = URL(string: "https://teddyhn.com/beary/d/" + entryId) else { return }
+        // F11：照首页同款兜底——已有 presented 页时不再顶着 present（会失败且无反馈），
+        // 改走复制链接 + toast。
+        if presentedViewController != nil {
+            UIPasteboard.general.string = shareURL.absoluteString
+            showToast(message: "链接已复制")
+            return
+        }
         var items: [Any] = []
         if let content = entry?.content, content.isEmpty == false {
             items.append(String(content.prefix(60)))
@@ -834,6 +861,12 @@ class BearyEntryDetailViewController: UIViewController {
     /// D7 未登录原地拒绝：摇头动效 + toast“请先登录”，1.2 秒后走 onRequireLogin 弹登录，
     /// 详情本身不 dismiss（容器须改为在详情上层弹登录，而非先 dismiss 详情；见交回说明）。
     private func denyLogin(source: UIView?) {
+        // G26：详情 4 处互动门控都汇到这里——登录态未知（网络失败）时不走“请先登录 + 1.2s 后弹登录页”，
+        // 只给网络不稳定提示；统一 toast 由容器 lane 接 onNetworkUnstable，本文件不赋值该回调。
+        if SessionManager.shared.authUnknown {
+            showToast(message: "网络不稳定，请稍后再试")
+            return
+        }
         if let view = source, UIAccessibility.isReduceMotionEnabled == false {
             UIView.animateKeyframes(withDuration: 0.4, delay: 0, options: [], animations: {
                 UIView.addKeyframe(withRelativeStartTime: 0, relativeDuration: 0.25) {
@@ -984,8 +1017,9 @@ class BearyEntryDetailViewController: UIViewController {
 
     private func render() {
         guard let current = entry else { return }
-        authorNameLabel.text = current.authorName ?? "未知用户"
-        avatarInitialLabel.text = String((current.authorName ?? "未知用户").prefix(1)).uppercased()
+        // W1：匿名/未知用户回退三处统一为“匿名”（与首页 displayAuthorName、选人页同口径）。
+        authorNameLabel.text = current.authorName ?? "匿名"
+        avatarInitialLabel.text = String((current.authorName ?? "匿名").prefix(1)).uppercased()
         avatarImageView.bearySetImage(url: BearyImageURLs.avatarURL(current.authorAvatar))
         if let ms = current.createdAt ?? current.publishAt {
             timeLabel.text = BearyFeedCell.feedTimeString(ms: ms)
@@ -1013,8 +1047,8 @@ class BearyEntryDetailViewController: UIViewController {
             badgeImageView.image = nil
             badgeImageView.isHidden = true
         }
-        // 名后 Plus 皇冠：网页铂金渐变 PNG（crown.imageset），缺失时回退灰色 crown.fill。
-        crownImageView.isHidden = (current.authorPlus ?? 0) == 0
+        // 名后 Plus 皇冠：网页铂金渐变 PNG（crown.imageset）；资产缺失（image 为 nil）时同样隐藏。
+        crownImageView.isHidden = (current.authorPlus ?? 0) == 0 || crownImageView.image == nil
 
         // 未公开倒计时 pill（公开篇隐藏）。
         if current.isPublic == true {
@@ -1155,7 +1189,15 @@ class BearyEntryDetailViewController: UIViewController {
         }
         foldButton.isHidden = false
         foldButton.setTitle(isBodyExpanded ? "收起" : "展开全文", for: .normal)
-        foldButton.imageView?.transform = isBodyExpanded ? CGAffineTransform(rotationAngle: CGFloat.pi) : .identity
+        // M7：与编辑器附加栏同口径——0.2s 旋转动画；变换未变时不播。折叠正文无透明度动画是刻意选择，不补。
+        let foldTarget = isBodyExpanded ? CGAffineTransform(rotationAngle: CGFloat.pi) : .identity
+        if foldButton.imageView?.transform != foldTarget {
+            if UIAccessibility.isReduceMotionEnabled {
+                foldButton.imageView?.transform = foldTarget
+            } else {
+                UIView.animate(withDuration: 0.2) { self.foldButton.imageView?.transform = foldTarget }
+            }
+        }
         bodyLabel.numberOfLines = isBodyExpanded ? 0 : 6
         lastFoldWidth = width
         updateDetailSpacing()
@@ -1271,6 +1313,8 @@ class BearyEntryDetailViewController: UIViewController {
             }
             sub.removeFromSuperview()
         }
+        // G20：每次重建引用卡先清失败态（失败分支随后按需重建失败卡，不残留旧态）。
+        quoteCardIsLoadFailed = false
         quoteThumbViews.removeAll()
         quoteImageKeys = []
         guard let current = entry else {
@@ -1278,6 +1322,7 @@ class BearyEntryDetailViewController: UIViewController {
             quoteCardId = nil
             quoteCardIsPublic = nil
             quoteCardIsDeleted = false
+            quoteCardIsLoadFailed = false
             return
         }
         // 先查模型字段。
@@ -1291,6 +1336,7 @@ class BearyEntryDetailViewController: UIViewController {
             quoteCardId = nil
             quoteCardIsPublic = nil
             quoteCardIsDeleted = false
+            quoteCardIsLoadFailed = false
             return
         }
         if quoteDeletedKey == quoteKey {
@@ -1299,7 +1345,9 @@ class BearyEntryDetailViewController: UIViewController {
             return
         }
         if quoteFetchFailedKey == quoteKey {
-            quoteCardView.isHidden = true
+            // G20：transient 失败不再整卡静默消失，改显示可点重试的失败卡。
+            quoteCardView.isHidden = false
+            buildQuoteCard(content: nil, createdAt: nil, imageKeys: nil, isPublic: nil, quoteId: quoteKey, isDeleted: false, isLoadFailed: true)
             return
         }
         if cachedQuoteKey == quoteKey, let cached = cachedQuoteEntry {
@@ -1333,17 +1381,19 @@ class BearyEntryDetailViewController: UIViewController {
                         self.buildQuoteCard(content: nil, createdAt: nil, imageKeys: nil, isPublic: nil, quoteId: quoteKey, isDeleted: true)
                     } else {
                         self.quoteFetchFailedKey = quoteKey
-                        self.quoteCardView.isHidden = true
+                        self.quoteCardView.isHidden = false
+                        self.buildQuoteCard(content: nil, createdAt: nil, imageKeys: nil, isPublic: nil, quoteId: quoteKey, isDeleted: false, isLoadFailed: true)
                     }
                 }
             }
         }
     }
 
-    private func buildQuoteCard(content: String?, createdAt: Int?, imageKeys: [String]?, isPublic: Bool?, quoteId: String? = nil, isDeleted: Bool = false) {
+    private func buildQuoteCard(content: String?, createdAt: Int?, imageKeys: [String]?, isPublic: Bool?, quoteId: String? = nil, isDeleted: Bool = false, isLoadFailed: Bool = false) {
         quoteCardId = quoteId
         quoteCardIsPublic = isPublic
         quoteCardIsDeleted = isDeleted
+        quoteCardIsLoadFailed = isLoadFailed
         quoteImageKeys = []
         quoteThumbViews.removeAll()
         // 网页 .quote-card 口径：横向一行（图标／正文／缩略图／日期同行，gap 8），内边距 9/12。
@@ -1382,6 +1432,19 @@ class BearyEntryDetailViewController: UIViewController {
                 iconView.trailingAnchor.constraint(equalTo: wrap.trailingAnchor),
             ])
             return wrap
+        }
+        if isLoadFailed == true {
+            // G20：transient 失败卡——quote 图标 15 + 13 gray“引用加载失败，点击重试”，点卡重拉。
+            inner.alignment = .center
+            inner.addArrangedSubview(quoteIcon())
+            let failedLabel = UILabel()
+            failedLabel.font = UIFont.systemFont(ofSize: 13)
+            failedLabel.textColor = BearyColors.gray
+            failedLabel.text = "引用加载失败，点击重试"
+            failedLabel.numberOfLines = 0
+            inner.addArrangedSubview(failedLabel)
+            updateDetailSpacing()
+            return
         }
         if isDeleted == true {
             // 网页 gone 态：quote 图标 15 + 13 gray“引用的日记已删除”。
@@ -1461,6 +1524,13 @@ class BearyEntryDetailViewController: UIViewController {
     /// D10 引用卡点按：gone 不动作（网页委托 return），公开走详情（onOpenEntry，容器接线），
     /// 未公开 toast“引用的这篇还没公开”。点在缩略图上时由缩略图手势处理灯箱，此处直接返回防双开。
     @objc private func quoteCardTapped(_ sender: UITapGestureRecognizer) {
+        // G20：失败卡点按即清失败 key 重拉（renderQuoteCard 会再次 fetch）。
+        if quoteCardIsLoadFailed == true {
+            quoteFetchFailedKey = nil
+            quoteCardIsLoadFailed = false
+            renderQuoteCard()
+            return
+        }
         if quoteCardIsDeleted == true {
             return
         }
@@ -2158,7 +2228,7 @@ private class BearyEmoteSheetViewController: UIViewController, UICollectionViewD
     /// 面板消失时回调（E4-2）：详情据此清掉 isEmoteSheetPresenting 守卫，防关闭后无法再开。
     var onDismiss: (() -> Void)?
 
-    private let emoteKeys = ["agree", "happy", "applause", "candle", "love", "comfort", "confused", "cheer", "determined", "facepalm", "flower", "sleepy", "goodnight", "hug", "cry", "idea", "kiss", "thinking", "letter", "listening", "lonely", "wink", "nope", "paperplane", "shy", "pat", "peek", "surprised", "proud", "shrug", "sorry", "angry", "sprout", "tea", "speechless", "thanks", "umbrella", "zap", "wave", "wish"]
+    // G21：40 key 表抽共享常量 BearyEmoteKeys.all（定义在 BearyFeedViewController.swift，与首页同表）。
 
     private let scrimView = UIView()
     private let sheetView = UIView()
@@ -2288,15 +2358,15 @@ private class BearyEmoteSheetViewController: UIViewController, UICollectionViewD
     }
 
     func collectionView(_ collectionView: UICollectionView, numberOfItemsInSection section: Int) -> Int {
-        return emoteKeys.count
+        return BearyEmoteKeys.all.count
     }
 
     func collectionView(_ collectionView: UICollectionView, cellForItemAt indexPath: IndexPath) -> UICollectionViewCell {
         guard let cell = collectionView.dequeueReusableCell(withReuseIdentifier: "emoteSheetCell", for: indexPath) as? BearyEmoteSheetCell else {
             return UICollectionViewCell()
         }
-        let key = emoteKeys[indexPath.item]
-        cell.configure(key: key, dark: traitCollection.userInterfaceStyle == .dark)
+        let key = BearyEmoteKeys.all[indexPath.item]
+        cell.configure(key: key)
         return cell
     }
 
@@ -2309,7 +2379,7 @@ private class BearyEmoteSheetViewController: UIViewController, UICollectionViewD
     }
 
     func collectionView(_ collectionView: UICollectionView, didSelectItemAt indexPath: IndexPath) {
-        let key = emoteKeys[indexPath.item]
+        let key = BearyEmoteKeys.all[indexPath.item]
         onPick?(key)
     }
 }
@@ -2356,8 +2426,8 @@ private class BearyEmoteSheetCell: UICollectionViewCell {
         emoteView?.stop()
     }
 
-    func configure(key: String, dark: Bool) {
-        // dark 由播放器内部处理，签名保留以免改动面板调用点。
+    /// G21：dark 死参数已从签名去掉（深浅由播放器内部处理）。
+    func configure(key: String) {
         let name = BearyText.moodNames[key] ?? key
         nameLabel.text = name
         nameLabel.font = UIFont.systemFont(ofSize: 11)

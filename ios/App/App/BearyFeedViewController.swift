@@ -75,6 +75,9 @@ class BearyFeedViewController: UIViewController {
     /// 原始拉取结果（含今日送达篇）；展示时再按 deliveredIds 过滤。
     private var plazaRaw: [Entry] = []
     private var plazaHasMore = true
+    /// G22：显式“无更多”标记——服务端广场接口无 hasMore/total 字段，末页 <20 即立标，
+    /// 表尾出“没有更多了”行，不再空发一页；首拉/重拉时复位。
+    private var plazaReachedEnd = false
     private var plazaLoading = false
     private var plazaError = false
     private var plazaFirstDone = false
@@ -83,6 +86,8 @@ class BearyFeedViewController: UIViewController {
 
     // MARK: - 列表缓存与后台 revalidate（F10）
 
+    /// G11：上次见到的登录用户 id；viewWillAppear 时与当前比对，翻转即绕开 60 秒门控整刷。
+    private var lastFeedLoginUserId: Int?
     /// 最近一次首拉成功的时间；viewWillAppear 时超 60 秒才后台重拉。
     private var lastFeedLoadAt: Date?
     private var isRevalidating = false
@@ -198,10 +203,17 @@ class BearyFeedViewController: UIViewController {
         view.addSubview(tableView)
         view.addSubview(centralSpinner)
         view.addSubview(newContentPill)
+        // L1：内容列与详情页同宽——宽 ≤600 居中（窄屏时 == 屏宽胜出，宽屏时 600 上限胜出，
+        // 与详情页 detailCardView 的 750 优先级 + 600 上限同口径；容器层亦有 600 列约束，双重居中不冲突）。
+        let feedColWidth = tableView.widthAnchor.constraint(equalTo: view.widthAnchor)
+        feedColWidth.priority = .defaultHigh
         NSLayoutConstraint.activate([
             tableView.topAnchor.constraint(equalTo: view.topAnchor),
-            tableView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
-            tableView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            tableView.leadingAnchor.constraint(greaterThanOrEqualTo: view.leadingAnchor),
+            tableView.trailingAnchor.constraint(lessThanOrEqualTo: view.trailingAnchor),
+            tableView.centerXAnchor.constraint(equalTo: view.centerXAnchor),
+            tableView.widthAnchor.constraint(lessThanOrEqualToConstant: 600),
+            feedColWidth,
             tableView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
             centralSpinner.centerXAnchor.constraint(equalTo: view.centerXAnchor),
             centralSpinner.topAnchor.constraint(equalTo: view.topAnchor, constant: 46),
@@ -214,7 +226,16 @@ class BearyFeedViewController: UIViewController {
     override func viewWillAppear(_ animated: Bool) {
         super.viewWillAppear(animated)
         updateFootLogo()
-        revalidateIfNeeded()
+        // G11：登录态翻转（登录/退出）时不走 60 秒门控，直接 refreshAll 重拉鉴权敏感的
+        // delivered + 广场；容器 lane 在翻转时也会调 refreshFeed()，此处是兜底。
+        let currentLoginUserId = SessionManager.shared.currentUser?.id
+        let loginFlipped = currentLoginUserId != lastFeedLoginUserId
+        lastFeedLoginUserId = currentLoginUserId
+        if loginFlipped && isFirstLoad == false {
+            refreshAll()
+        } else {
+            revalidateIfNeeded()
+        }
     }
 
     override func viewDidLayoutSubviews() {
@@ -241,6 +262,7 @@ class BearyFeedViewController: UIViewController {
         pendingPlaza = nil
         pendingDelivered = nil
         pendingDeliveredTotal = nil
+        plazaReachedEnd = false
         deliveredHasMore = true
         deliveredError = false
         plazaHasMore = true
@@ -274,7 +296,8 @@ class BearyFeedViewController: UIViewController {
             footLogoImageView = nil
             return
         }
-        if SessionManager.shared.isLoggedIn {
+        // G26：登录态未知（网络失败）时不按游客态渲染游客脚标——与已登录同处理（隐藏脚标）。
+        if SessionManager.shared.isLoggedIn || SessionManager.shared.authUnknown {
             if tableView.tableFooterView != nil {
                 tableView.tableFooterView = nil
             }
@@ -441,7 +464,14 @@ class BearyFeedViewController: UIViewController {
                     } else {
                         strongSelf.deliveredVisibleCount = min(strongSelf.deliveredVisibleCount, entries.count)
                     }
-                    strongSelf.deliveredHasMore = entries.count >= strongSelf.pageLimit
+                    // G22：服务端有 deliveredTotal 时优先用它判 hasMore（恰好 20 条不空发一页）；
+                    // 无 total 时回退 count >= limit（接受一次空页探底）。
+                    if let total = list.deliveredTotal {
+                        strongSelf.deliveredTotal = total
+                        strongSelf.deliveredHasMore = entries.count < total
+                    } else {
+                        strongSelf.deliveredHasMore = entries.count >= strongSelf.pageLimit
+                    }
                     strongSelf.deliveredError = false
                     strongSelf.deliveredFetchFailed = false
                     strongSelf.lastFeedLoadAt = Date()
@@ -479,6 +509,9 @@ class BearyFeedViewController: UIViewController {
             deliveredHasMore = false
             return
         }
+        let oldDeliveredShown = min(deliveredVisibleCount, deliveredAll.count)
+        let oldDeliveredRowCount = deliveredRowCount()
+        let wasDeliveredError = deliveredError
         deliveredLoading = true
         tableView.reloadData()
         // F6：送达翻页游标 publish_at || created_at（网页 dlvMore 同口径）。
@@ -497,7 +530,12 @@ class BearyFeedViewController: UIViewController {
                         strongSelf.deliveredAll.append(entry)
                         known.insert(entryIdValue)
                     }
-                    strongSelf.deliveredHasMore = fresh.count >= strongSelf.pageLimit
+                    if let total = list.deliveredTotal {
+                        strongSelf.deliveredTotal = total
+                        strongSelf.deliveredHasMore = strongSelf.deliveredAll.count < total
+                    } else {
+                        strongSelf.deliveredHasMore = fresh.count >= strongSelf.pageLimit
+                    }
                     strongSelf.deliveredError = false
                     strongSelf.deliveredVisibleCount = min(strongSelf.deliveredVisibleCount + strongSelf.deliveredExpandStep, strongSelf.deliveredAll.count)
                     strongSelf.rebuildDeliveredIds()
@@ -505,7 +543,10 @@ class BearyFeedViewController: UIViewController {
                     strongSelf.deliveredError = true
                 }
                 strongSelf.deliveredLoading = false
-                strongSelf.tableView.reloadData()
+                // M1：纯追加时只插新行 + 错峰淡入；结构对不上时 insertDeliveredRows 返回 false 走整表兜底。
+                if strongSelf.insertDeliveredRows(oldShown: oldDeliveredShown, oldRowCount: oldDeliveredRowCount, wasError: wasDeliveredError) == false {
+                    strongSelf.tableView.reloadData()
+                }
                 strongSelf.updateOverlayState()
                 strongSelf.maybeEndRefreshing()
             }
@@ -516,8 +557,11 @@ class BearyFeedViewController: UIViewController {
         if deliveredLoading { return }
         let shown = min(deliveredVisibleCount, deliveredAll.count)
         if shown < deliveredAll.count {
+            let oldRowCount = deliveredRowCount()
             deliveredVisibleCount = min(shown + deliveredExpandStep, deliveredAll.count)
-            tableView.reloadData()
+            if insertDeliveredRows(oldShown: shown, oldRowCount: oldRowCount, wasError: false) == false {
+                tableView.reloadData()
+            }
             updateOverlayState()
             return
         }
@@ -547,6 +591,7 @@ class BearyFeedViewController: UIViewController {
                     let entries = list.entries ?? []
                     strongSelf.plazaRaw = entries
                     strongSelf.plazaHasMore = entries.count >= strongSelf.pageLimit
+                    strongSelf.plazaReachedEnd = entries.count < strongSelf.pageLimit
                     strongSelf.plazaError = false
                     strongSelf.lastFeedLoadAt = Date()
                 case .failure:
@@ -579,6 +624,8 @@ class BearyFeedViewController: UIViewController {
             plazaHasMore = false
             return
         }
+        let oldPlazaCount = entries.count
+        let wasPlazaError = plazaError
         plazaLoading = true
         BearyAPI.shared.fetchEntries(scope: .plaza, limit: pageLimit, before: last.createdAt, beforeId: lastEntryIdValue) { [weak self] result in
             DispatchQueue.main.async {
@@ -596,12 +643,16 @@ class BearyFeedViewController: UIViewController {
                         known.insert(entryIdValue)
                     }
                     strongSelf.plazaHasMore = fresh.count >= strongSelf.pageLimit
+                    strongSelf.plazaReachedEnd = fresh.count < strongSelf.pageLimit
                     strongSelf.plazaError = false
                 case .failure:
                     strongSelf.plazaError = true
                 }
                 strongSelf.plazaLoading = false
-                strongSelf.tableView.reloadData()
+                // M1：纯追加时只插新行 + 错峰淡入；末页立标或结构对不上时走整表兜底。
+                if strongSelf.insertPlazaRows(oldCount: oldPlazaCount, wasError: wasPlazaError) == false {
+                    strongSelf.tableView.reloadData()
+                }
                 strongSelf.updateOverlayState()
                 strongSelf.maybeEndRefreshing()
             }
@@ -794,23 +845,61 @@ class BearyFeedViewController: UIViewController {
         } else {
             deliveredVisibleCount = min(deliveredVisibleCount, delivered.count)
         }
-        deliveredHasMore = delivered.count >= pageLimit
+        // G22：重拉同样用 total 判送达 hasMore、<20 立广场无更多标。
+        if let total = deliveredTotal {
+            deliveredHasMore = delivered.count < total
+        } else {
+            deliveredHasMore = delivered.count >= pageLimit
+        }
         deliveredError = false
         deliveredFetchFailed = false
         rebuildDeliveredIds()
         plazaRaw = plaza
         plazaHasMore = plaza.count >= pageLimit
+        plazaReachedEnd = plaza.count < pageLimit
         plazaError = false
         tableView.reloadData()
         updateOverlayState()
     }
 
+    /// M5：“有新内容”pill 出现/消失：0.25s 淡入 + 轻微上滑；减动效直设终值。
     private func showNewContentPill() {
+        if newContentPill.isHidden == false {
+            newContentPill.layer.removeAllAnimations()
+            newContentPill.alpha = 1
+            newContentPill.transform = .identity
+            return
+        }
         newContentPill.isHidden = false
+        if UIAccessibility.isReduceMotionEnabled {
+            newContentPill.alpha = 1
+            newContentPill.transform = .identity
+            return
+        }
+        newContentPill.alpha = 0
+        newContentPill.transform = CGAffineTransform(translationX: 0, y: 8)
+        UIView.animate(withDuration: 0.25) {
+            self.newContentPill.alpha = 1
+            self.newContentPill.transform = .identity
+        }
     }
 
     private func hideNewContentPill() {
-        newContentPill.isHidden = true
+        if newContentPill.isHidden { return }
+        if UIAccessibility.isReduceMotionEnabled {
+            newContentPill.isHidden = true
+            newContentPill.alpha = 1
+            newContentPill.transform = .identity
+            return
+        }
+        UIView.animate(withDuration: 0.25, animations: {
+            self.newContentPill.alpha = 0
+            self.newContentPill.transform = CGAffineTransform(translationX: 0, y: -8)
+        }, completion: { [weak self] _ in
+            self?.newContentPill.isHidden = true
+            self?.newContentPill.alpha = 1
+            self?.newContentPill.transform = .identity
+        })
     }
 
     @objc private func newContentPillTapped() {
@@ -823,8 +912,90 @@ class BearyFeedViewController: UIViewController {
         let total = pendingDeliveredTotal
         pendingDeliveredTotal = nil
         hideNewContentPill()
-        applyRevalidated(delivered: newDelivered, deliveredTotal: total, plaza: newPlaza)
-        scrollToTop()
+        // M5：点按后内容替换同样带过渡（减动效下直接换 + 回顶）。
+        if UIAccessibility.isReduceMotionEnabled {
+            applyRevalidated(delivered: newDelivered, deliveredTotal: total, plaza: newPlaza)
+            scrollToTop()
+        } else {
+            UIView.transition(with: tableView, duration: 0.25, options: .transitionCrossDissolve, animations: {
+                self.applyRevalidated(delivered: newDelivered, deliveredTotal: total, plaza: newPlaza)
+                self.tableView.setContentOffset(CGPoint(x: 0, y: -self.tableView.contentInset.top), animated: false)
+            }, completion: nil)
+        }
+    }
+
+    /// M1：新行错峰淡入 + 轻微上滑（只针对本批新行，已有行不重播；减动效直设终值）。
+    private func staggerFadeCells(at paths: [IndexPath]) {
+        if UIAccessibility.isReduceMotionEnabled { return }
+        let visible = tableView.indexPathsForVisibleRows ?? []
+        var order = 0
+        for path in paths where visible.contains(path) {
+            guard let cell = tableView.cellForRow(at: path) else { continue }
+            cell.contentView.alpha = 0
+            cell.contentView.transform = CGAffineTransform(translationX: 0, y: 6)
+            let delay = Double(order) * 0.03
+            order += 1
+            UIView.animate(withDuration: 0.25, delay: delay, options: [], animations: {
+                cell.contentView.alpha = 1
+                cell.contentView.transform = .identity
+            }, completion: nil)
+        }
+    }
+
+    /// M1：送达追加/展开只插新行；展开行消失（末页）时同批删旧展开行；对不上返回 false。
+    private func insertDeliveredRows(oldShown: Int, oldRowCount: Int, wasError: Bool) -> Bool {
+        guard isDeliveredSectionVisible, wasError == false, deliveredError == false else { return false }
+        let newShown = min(deliveredVisibleCount, deliveredAll.count)
+        guard newShown > oldShown else { return false }
+        let newRowCount = deliveredRowCount()
+        let inserted = (oldShown..<newShown).map { IndexPath(row: $0, section: 0) }
+        let deleteExpand: [IndexPath] = (newRowCount == oldRowCount + inserted.count) ? [] : [IndexPath(row: oldRowCount - 1, section: 0)]
+        guard newRowCount == oldRowCount + inserted.count - deleteExpand.count else { return false }
+        tableView.performBatchUpdates({
+            if deleteExpand.isEmpty == false { self.tableView.deleteRows(at: deleteExpand, with: .none) }
+            self.tableView.insertRows(at: inserted, with: .none)
+        }, completion: { [weak self] _ in self?.staggerFadeCells(at: inserted) })
+        return true
+    }
+
+    /// M1：广场追加只插新行；末页立标（多出“没有更多了”行）时走整表兜底。
+    private func insertPlazaRows(oldCount: Int, wasError: Bool) -> Bool {
+        guard wasError == false, plazaError == false, plazaReachedEnd == false else { return false }
+        let section = isDeliveredSectionVisible ? 1 : 0
+        guard section < tableView.numberOfSections else { return false }
+        let newCount = plazaEntries().count
+        guard newCount > oldCount else { return false }
+        let inserted = (oldCount..<newCount).map { IndexPath(row: $0, section: section) }
+        tableView.performBatchUpdates({
+            self.tableView.insertRows(at: inserted, with: .none)
+        }, completion: { [weak self] _ in self?.staggerFadeCells(at: inserted) })
+        return true
+    }
+
+    /// G22：显式“无更多”标记行（灰字居中，与展开行同字号）。
+    private func endCell(for tableView: UITableView) -> UITableViewCell {
+        let cell = tableView.dequeueReusableCell(withIdentifier: "BearyEndCell") ?? UITableViewCell(style: .default, reuseIdentifier: "BearyEndCell")
+        cell.selectionStyle = .none
+        cell.backgroundColor = BearyColors.bg
+        cell.contentView.backgroundColor = BearyColors.bg
+        var label = cell.contentView.viewWithTag(103) as? UILabel
+        if label == nil {
+            let made = UILabel()
+            made.tag = 103
+            made.translatesAutoresizingMaskIntoConstraints = false
+            made.font = UIFont.systemFont(ofSize: 14)
+            made.textAlignment = .center
+            made.textColor = BearyColors.gray
+            cell.contentView.addSubview(made)
+            NSLayoutConstraint.activate([
+                made.centerXAnchor.constraint(equalTo: cell.contentView.centerXAnchor),
+                made.topAnchor.constraint(equalTo: cell.contentView.topAnchor, constant: 10),
+                made.bottomAnchor.constraint(equalTo: cell.contentView.bottomAnchor, constant: -4),
+            ])
+            label = made
+        }
+        label?.text = "没有更多了"
+        return cell
     }
 
     /// 只刷新可见行：不可见时不调用 reloadRows（避免 UITableView 对屏外行做无用功与潜在警告）。
@@ -837,8 +1008,10 @@ class BearyFeedViewController: UIViewController {
     // MARK: - 覆盖层状态
 
     private func finishFirstLoadIfNeeded() {
-        if deliveredFirstDone && plazaFirstDone {
+        if deliveredFirstDone && plazaFirstDone && isFirstLoad {
             isFirstLoad = false
+            // M1：首拉完成时可见行错峰淡入一次（后续重拉/后台换新不再重播）。
+            staggerFadeCells(at: (tableView.indexPathsForVisibleRows ?? []).sorted())
         }
     }
 
@@ -1022,6 +1195,13 @@ class BearyFeedViewController: UIViewController {
             self?.presentEmoteSheet(cell: cell, entryIdValue: entry.id ?? "")
         }
         cell.onRequireLogin = { [weak self] in
+            // G26：cell 内 6 处未登录门控都汇到这里——登录态未知（网络失败）时不弹登录页，
+            // 改即时 toast“网络不稳定，请稍后再试”；统一 toast 由容器 lane 接 onNetworkUnstable，
+            // 此处是操作点的即时反馈，不与容器回调冲突（本文件不赋值 onNetworkUnstable）。
+            if SessionManager.shared.authUnknown {
+                self?.showFeedToast(message: "网络不稳定，请稍后再试")
+                return
+            }
             self?.onRequireLogin?()
         }
         cell.onActionFailed = { [weak self] in
@@ -1070,7 +1250,8 @@ extension BearyFeedViewController: UITableViewDataSource, UITableViewDelegate {
             return deliveredRowCount()
         }
         let count = plazaEntries().count
-        return plazaError ? count + 1 : count
+        if plazaError { return count + 1 }
+        return count + (plazaReachedEnd ? 1 : 0)
     }
 
     func tableView(_ tableView: UITableView, cellForRowAt indexPath: IndexPath) -> UITableViewCell {
@@ -1093,6 +1274,9 @@ extension BearyFeedViewController: UITableViewDataSource, UITableViewDelegate {
         let entries = plazaEntries()
         if indexPath.row < entries.count {
             return feedCell(for: tableView, entry: entries[indexPath.row], indexPath: indexPath)
+        }
+        if plazaReachedEnd {
+            return endCell(for: tableView)
         }
         return errorCell(for: tableView) { [weak self] in
             guard let strongSelf = self else { return }
@@ -1126,6 +1310,7 @@ extension BearyFeedViewController: UITableViewDataSource, UITableViewDelegate {
             tryNavigateEntry(entries[indexPath.row])
             return
         }
+        if plazaReachedEnd { return }
         if plazaError && !plazaLoading {
             loadPlazaFirstPage()
             tableView.reloadData()
@@ -1216,7 +1401,8 @@ class BearyFeedErrorCell: UITableViewCell {
     private let messageLabel: UILabel = {
         let lb = UILabel()
         lb.translatesAutoresizingMaskIntoConstraints = false
-        lb.text = "加载失败"
+        // W3：与详情/编辑器同句式——整句“加载失败，点击重试”（按钮仍为“点击重试”动作）。
+        lb.text = "加载失败，点击重试"
         lb.font = UIFont.systemFont(ofSize: 15)
         lb.textColor = BearyColors.ink
         lb.textAlignment = .center
@@ -1426,13 +1612,9 @@ class BearyFeedCell: UITableViewCell {
     private let crownImageView: UIImageView = {
         let v = UIImageView()
         v.translatesAutoresizingMaskIntoConstraints = false
-        // 网页 Plus 皇冠（铂金渐变 SVG 渲染的 PNG）；资产缺失时回退灰色 crown.fill。
+        // I4：与编辑器口径统一——只走 crown 资产，缺失即隐藏，不留灰色 crown.fill 回退。
         if let crown = UIImage(named: "crown") {
             v.image = crown
-        } else {
-            let config = UIImage.SymbolConfiguration(pointSize: 19, weight: .regular)
-            v.image = UIImage(systemName: "crown.fill", withConfiguration: config)
-            v.tintColor = BearyColors.gray
         }
         v.contentMode = .scaleAspectFit
         v.isHidden = true
@@ -1561,6 +1743,8 @@ class BearyFeedCell: UITableViewCell {
         btn.tintColor = BearyColors.gray
         btn.contentEdgeInsets = UIEdgeInsets(top: 2, left: 2, bottom: 2, right: 2)
         btn.addTarget(self, action: #selector(shareTapped), for: .touchUpInside)
+        btn.addTarget(self, action: #selector(iconTouchDown(_:)), for: .touchDown)
+        btn.addTarget(self, action: #selector(iconTouchUp(_:)), for: [.touchUpInside, .touchUpOutside, .touchCancel])
         return btn
     }()
 
@@ -1581,6 +1765,8 @@ class BearyFeedCell: UITableViewCell {
         btn.widthAnchor.constraint(equalToConstant: 34).isActive = true
         btn.heightAnchor.constraint(equalToConstant: 34).isActive = true
         btn.addTarget(self, action: #selector(emoteAddTapped), for: .touchUpInside)
+        btn.addTarget(self, action: #selector(iconTouchDown(_:)), for: .touchDown)
+        btn.addTarget(self, action: #selector(iconTouchUp(_:)), for: [.touchUpInside, .touchUpOutside, .touchCancel])
         return btn
     }()
 
@@ -1878,12 +2064,24 @@ class BearyFeedCell: UITableViewCell {
         return max(0, cellWidth - 92)
     }
 
+    /// M7：折叠箭头与编辑器附加栏同口径——0.2s 旋转动画；变换未变时不播（复用/重渲染不闪）。
+    /// 折叠正文无透明度动画是刻意选择（与网页一致），不补。
+    private func animateFoldArrow(expanded: Bool) {
+        let target = expanded ? CGAffineTransform(rotationAngle: CGFloat.pi) : .identity
+        guard foldButton.imageView?.transform != target else { return }
+        if UIAccessibility.isReduceMotionEnabled {
+            foldButton.imageView?.transform = target
+        } else {
+            UIView.animate(withDuration: 0.2) { self.foldButton.imageView?.transform = target }
+        }
+    }
+
     private func applyFoldVisibility(overflow: Bool) {
         contentLabel.numberOfLines = isExpanded ? 0 : (overflow ? 6 : 0)
         if overflow {
             foldButton.isHidden = false
             foldButton.setTitle(isExpanded ? "收起" : "展开全文", for: .normal)
-            foldButton.imageView?.transform = isExpanded ? CGAffineTransform(rotationAngle: CGFloat.pi) : .identity
+            animateFoldArrow(expanded: isExpanded)
         } else {
             foldButton.isHidden = true
         }
@@ -2028,7 +2226,8 @@ class BearyFeedCell: UITableViewCell {
             badgeImageView.image = nil
             badgeImageView.isHidden = true
         }
-        crownImageView.isHidden = !((entry.authorPlus ?? 0) != 0)
+        // I4：资产缺失（image 为 nil）时同样隐藏，不留空位。
+        crownImageView.isHidden = !((entry.authorPlus ?? 0) != 0) || crownImageView.image == nil
 
         // F3：时间。
         timeLabel.text = BearyFeedCell.feedTimeString(ms: entry.createdAt ?? 0)
@@ -2810,13 +3009,16 @@ class BearyFeedQuoteView: UIView {
     }()
 
     /// 投递中 pill（lite 卡口径）：11/600/blue、blue 13% 底、圆角 6、padding 2/7。
+    /// W2 口径说明：此处只显示不带倒计时的“投递中”是有意区分——服务端 attachQuotes 直传的
+    /// Quote 模型无 publishAt 字段（见 BearyAPI.swift，publishAt 只在 Entry 上），算不出倒计时；
+    /// 详情页与编辑器 lite 卡有 publishAt，走带倒计时版。Quote 补 publishAt 后此处再统一。
     private let deliveringPillButton: UIButton = {
         let btn = UIButton(type: .system)
         btn.translatesAutoresizingMaskIntoConstraints = false
         btn.setTitle("投递中", for: .normal)
         btn.titleLabel?.font = UIFont.systemFont(ofSize: 11, weight: .semibold)
         btn.setTitleColor(BearyColors.blue, for: .normal)
-        btn.backgroundColor = BearyColors.blue.withAlphaComponent(0.13)
+        btn.backgroundColor = BearyColors.alpha(BearyColors.blue, 0.13)
         btn.layer.cornerRadius = 6
         btn.clipsToBounds = true
         btn.contentEdgeInsets = UIEdgeInsets(top: 2, left: 7, bottom: 2, right: 7)
@@ -3191,7 +3393,8 @@ private class BearyFeedEmoteSheetViewController: UIViewController, UICollectionV
 
     var onPick: ((String) -> Void)?
 
-    private let emoteKeys = ["agree", "happy", "applause", "candle", "love", "comfort", "confused", "cheer", "determined", "facepalm", "flower", "sleepy", "goodnight", "hug", "cry", "idea", "kiss", "thinking", "letter", "listening", "lonely", "wink", "nope", "paperplane", "shy", "pat", "peek", "surprised", "proud", "shrug", "sorry", "angry", "sprout", "tea", "speechless", "thanks", "umbrella", "zap", "wave", "wish"]
+    // G21：40 key 表抽共享常量 BearyEmoteKeys.all（与详情页回应 sheet 同表，改一处即两处）。
+    // （声明见本文件末尾 BearyEmoteKeys；两套图片查看器与 IconCache 按任务要求不动。）
 
     private let scrimView = UIView()
     private let sheetView = UIView()
@@ -3317,15 +3520,15 @@ private class BearyFeedEmoteSheetViewController: UIViewController, UICollectionV
     }
 
     func collectionView(_ collectionView: UICollectionView, numberOfItemsInSection section: Int) -> Int {
-        return emoteKeys.count
+        return BearyEmoteKeys.all.count
     }
 
     func collectionView(_ collectionView: UICollectionView, cellForItemAt indexPath: IndexPath) -> UICollectionViewCell {
         guard let cell = collectionView.dequeueReusableCell(withReuseIdentifier: "feedEmoteSheetCell", for: indexPath) as? BearyFeedEmoteSheetCell else {
             return UICollectionViewCell()
         }
-        let key = emoteKeys[indexPath.item]
-        cell.configure(key: key, dark: traitCollection.userInterfaceStyle == .dark)
+        let key = BearyEmoteKeys.all[indexPath.item]
+        cell.configure(key: key)
         return cell
     }
 
@@ -3336,7 +3539,7 @@ private class BearyFeedEmoteSheetViewController: UIViewController, UICollectionV
     }
 
     func collectionView(_ collectionView: UICollectionView, didSelectItemAt indexPath: IndexPath) {
-        let pickedKey = emoteKeys[indexPath.item]
+        let pickedKey = BearyEmoteKeys.all[indexPath.item]
         onPick?(pickedKey)
     }
 }
@@ -3374,8 +3577,15 @@ private class BearyFeedEmoteSheetCell: UICollectionViewCell {
         emoteView?.stop()
     }
 
-    func configure(key: String, dark: Bool) {
-        // dark 由播放器内部处理，签名保留以免改动面板调用点。
+    /// U9：首页回应 sheet cell 照详情加 isHighlighted 按压态（faint 底）。
+    override var isHighlighted: Bool {
+        didSet {
+            contentView.backgroundColor = isHighlighted ? BearyColors.faint : .clear
+        }
+    }
+
+    /// G21：dark 死参数已从签名去掉（深浅由播放器内部处理）。
+    func configure(key: String) {
         let name = BearyText.moodNames[key] ?? key
         if let current = emoteView, current.emoteKey == key {
             current.play()
@@ -3546,4 +3756,9 @@ private class BearyFeedImageViewerViewController: UIViewController, UIScrollView
         let reduceMotion = UIAccessibility.isReduceMotionEnabled
         dismiss(animated: reduceMotion == false, completion: nil)
     }
+}
+
+// MARK: - G21：回应 40 key 共享表（首页与详情页回应 sheet 共用，改一处即两处）
+enum BearyEmoteKeys {
+    static let all: [String] = ["agree", "happy", "applause", "candle", "love", "comfort", "confused", "cheer", "determined", "facepalm", "flower", "sleepy", "goodnight", "hug", "cry", "idea", "kiss", "thinking", "letter", "listening", "lonely", "wink", "nope", "paperplane", "shy", "pat", "peek", "surprised", "proud", "shrug", "sorry", "angry", "sprout", "tea", "speechless", "thanks", "umbrella", "zap", "wave", "wish"]
 }

@@ -29,6 +29,17 @@ enum BearyColors {
     static var faint: UIColor { UIColor { t in t.userInterfaceStyle == .dark ? UIColor(white: 0.08, alpha: 1) : UIColor(white: 0.96, alpha: 1) } }
     /// 网页 --hov：浅 rgba(17,17,20,.06) / 深 rgba(244,244,248,.08)（悬停/按压底色）。
     static var hov: UIColor { UIColor { t in t.userInterfaceStyle == .dark ? UIColor(red: 244.0/255.0, green: 244.0/255.0, blue: 248.0/255.0, alpha: 0.08) : UIColor(red: 17.0/255.0, green: 17.0/255.0, blue: 20.0/255.0, alpha: 0.06) } }
+
+    /// C6：按当前 trait 重解 base 色再降透明度的动态色。0.13 透明底
+    /// （私密 pill 蓝底、草稿 chip 橙底、图片未保存红底等）一律走这里，
+    /// 不得对动态色直接 withAlphaComponent——后者会在生成时固化当前
+    /// trait 的解析值，深浅切换后不再跟随。固定色（橙/红/绿）重解后不变，
+    /// 同样可走本方法。
+    static func alpha(_ color: UIColor, _ alpha: CGFloat) -> UIColor {
+        return UIColor { trait in
+            color.resolvedColor(with: trait).withAlphaComponent(alpha)
+        }
+    }
 }
 
 // MARK: - 图片地址
@@ -54,24 +65,65 @@ enum BearyImageURLs {
 
 // MARK: - 图片加载（内存缓存 + 取消旧任务）
 
+/// 图片加载失败原因（F10：透传给各页放重试 UI；.cancelled 是复用/换图
+/// 时的正常取消，调用方不得当成失败出重试 UI）。
+enum BearyImageLoadError: Error {
+    case network(Error)
+    case invalidData
+    case cancelled
+}
+
 final class BearyImageLoader {
     static let shared = BearyImageLoader()
     private let cache = NSCache<NSString, UIImage>()
     private let session: URLSession
 
-    init(session: URLSession = .shared) { self.session = session }
+    init(session: URLSession = .shared) {
+        self.session = session
+        // G23：缓存按像素计 cost 并设上限，避免无界增长。
+        // 20_000_000 像素 ≈ 最坏 80MB（RGBA 4 字节/像素）；站内图以缩略图
+        // 与头像为主，日常占用远低于此。
+        cache.totalCostLimit = 20_000_000
+    }
 
     @discardableResult
     func load(url: URL, completion: @escaping (UIImage?) -> Void) -> URLSessionDataTask? {
+        return loadDetailed(url: url) { result in
+            switch result {
+            case .success(let img):
+                completion(img)
+            case .failure:
+                completion(nil)
+            }
+        }
+    }
+
+    /// 带失败原因的加载（F10 钩子的底层）：缓存命中时同步回调成功；
+    /// 网络/脏数据/取消均以 Result 回调（主线程），失败时不写缓存。
+    @discardableResult
+    func loadDetailed(url: URL, completion: @escaping (Result<UIImage, BearyImageLoadError>) -> Void) -> URLSessionDataTask? {
         if let img = cache.object(forKey: url.absoluteString as NSString) {
-            completion(img)
+            completion(.success(img))
             return nil
         }
-        let task = session.dataTask(with: url) { [weak self] data, _, _ in
-            var img: UIImage?
-            if let data = data { img = UIImage(data: data) }
-            if let img = img { self?.cache.setObject(img, forKey: url.absoluteString as NSString) }
-            DispatchQueue.main.async { completion(img) }
+        let task = session.dataTask(with: url) { [weak self] data, _, error in
+            if let e = error as NSError?, e.code == NSURLErrorCancelled {
+                DispatchQueue.main.async { completion(.failure(.cancelled)) }
+                return
+            }
+            if let e = error {
+                DispatchQueue.main.async { completion(.failure(.network(e))) }
+                return
+            }
+            guard let data = data, let img = UIImage(data: data) else {
+                DispatchQueue.main.async { completion(.failure(.invalidData)) }
+                return
+            }
+            // G23：cost 按像素计（pt 尺寸 × scale 的平方方向取整边长之积）。
+            let scale = img.scale
+            let cost = max(Int(img.size.width * scale) * Int(img.size.height * scale), 1)
+            self?.cache.setObject(img, forKey: url.absoluteString as NSString, cost: cost)
+            DispatchQueue.main.async { completion(.success(img)) }
         }
         task.resume()
         return task
@@ -79,17 +131,36 @@ final class BearyImageLoader {
 }
 
 private var bearyImageTaskKey: UInt8 = 0
+private var bearyImageURLKey: UInt8 = 0
 
 extension UIImageView {
     /// cell 复用时取消上一个未完成的下载，避免图片串位。
-    func bearySetImage(url: URL?, placeholder: UIImage? = nil) {
+    /// G23：调用前先记下本次目标 URL，回调时比对再设图——旧任务恰在
+    /// 取消前完成时不再覆盖新图；url=nil 时清掉旧目标，旧回调一律丢弃。
+    /// F10：onFailure 透传失败原因（网络失败/脏数据），供各页放重试 UI；
+    /// 默认 nil，不传时行为与旧版完全一致（静默保留 placeholder）。
+    /// 被取消的回调不触发 onFailure（复用/换图是正常路径）。
+    func bearySetImage(url: URL?, placeholder: UIImage? = nil, onFailure: ((BearyImageLoadError) -> Void)? = nil) {
         if let old = objc_getAssociatedObject(self, &bearyImageTaskKey) as? URLSessionDataTask {
             old.cancel()
         }
+        objc_setAssociatedObject(self, &bearyImageURLKey, url, .OBJC_ASSOCIATION_RETAIN_NONATOMIC)
         self.image = placeholder
-        guard let url = url else { return }
-        let task = BearyImageLoader.shared.load(url: url) { [weak self] img in
-            if let img = img { self?.image = img }
+        guard let url = url else {
+            objc_setAssociatedObject(self, &bearyImageTaskKey, nil, .OBJC_ASSOCIATION_RETAIN_NONATOMIC)
+            return
+        }
+        let task = BearyImageLoader.shared.loadDetailed(url: url) { [weak self] result in
+            guard let self = self else { return }
+            let current = objc_getAssociatedObject(self, &bearyImageURLKey) as? URL
+            guard current == url else { return }
+            switch result {
+            case .success(let img):
+                self.image = img
+            case .failure(let err):
+                if case .cancelled = err { return }
+                onFailure?(err)
+            }
         }
         objc_setAssociatedObject(self, &bearyImageTaskKey, task, .OBJC_ASSOCIATION_RETAIN_NONATOMIC)
     }
