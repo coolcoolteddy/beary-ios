@@ -18,8 +18,6 @@ jobs:
 
       - run: npm ci
 
-      - run: npx cap sync ios
-
       - name: Build for simulator (unsigned)
         run: >
           xcodebuild
@@ -47,8 +45,6 @@ jobs:
           cache: npm
 
       - run: npm ci
-
-      - run: npx cap sync ios
 
       - name: Build for device (unsigned)
         run: >
@@ -83,8 +79,6 @@ jobs:
           cache: npm
 
       - run: npm ci
-
-      - run: npx cap sync ios
 
       - name: Run unit tests (no host app)
         run: |
