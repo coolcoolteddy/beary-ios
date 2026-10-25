@@ -55,6 +55,7 @@ final class BearyChromeViewController: CAPBridgeViewController {
     private var navFailureCount = 0
     private var handshakeReloaded = false
     private var navReloadNotBefore = Date.distantPast
+    private lazy var navigator = BearyNavigationCoordinator(webViewProvider: { [weak self] in self?.webView }, performJS: { [weak self] js in self?.evalNav(js) })
 
     private var ink: UIColor { UIColor { t in t.userInterfaceStyle == .dark ? UIColor(white: 0.96, alpha: 1) : .black } }
     private var gray: UIColor { UIColor { t in t.userInterfaceStyle == .dark ? UIColor(white: 0.66, alpha: 1) : UIColor(white: 0.45, alpha: 1) } }
@@ -300,6 +301,7 @@ final class BearyChromeViewController: CAPBridgeViewController {
         loginButton.isHidden = loggedIn
         giftButton.isHidden = giftHidden
         avatarButton.isHidden = !loggedIn
+        SessionManager.shared.syncWebLoginState(loggedIn: loggedIn, webView: webView)
         if loggedIn {
             if avatar != avatarURLString {
                 avatarURLString = avatar
@@ -383,8 +385,8 @@ final class BearyChromeViewController: CAPBridgeViewController {
     @objc private func didTapGift() { evalNav("invite()") }
     @objc private func didTapWrite() { evalNav("write()") }
     @objc private func didTapAvatar() { evalNav("menu()") }
-    @objc private func didTapHome() { evalNav("go('home')") }
-    @objc private func didTapNotif() { evalNav("go('notif')") }
-    @objc private func didTapTimeline() { evalNav("go('timeline')") }
-    @objc private func didTapMe() { evalNav("go('me')") }
+    @objc private func didTapHome() { navigator.goTab("home") }
+    @objc private func didTapNotif() { navigator.goTab("notif") }
+    @objc private func didTapTimeline() { navigator.goTab("timeline") }
+    @objc private func didTapMe() { navigator.goTab("me") }
 }
