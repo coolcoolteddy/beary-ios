@@ -1,5 +1,14 @@
 import UIKit
-import Capacitor
+
+// ===== 外观手动切换（审计 N3）：主题档位 → window.overrideUserInterfaceStyle =====
+// 存档键 beary_theme_mode，值 system/light/dark；未知值按 system（跟随系统）处理。
+private func bearyUserInterfaceStyle(forThemeMode mode: String) -> UIUserInterfaceStyle {
+    switch mode {
+    case "light": return .light
+    case "dark": return .dark
+    default: return .unspecified
+    }
+}
 
 class SceneDelegate: UIResponder, UIWindowSceneDelegate {
     var window: UIWindow?
@@ -8,19 +17,17 @@ class SceneDelegate: UIResponder, UIWindowSceneDelegate {
         guard let windowScene = scene as? UIWindowScene else { return }
 
         window = UIWindow(windowScene: windowScene)
+        // 外观手动切换（审计 N3）：建窗时读存档主题应用一次（未存档按 system 跟随系统）。
+        window?.overrideUserInterfaceStyle = bearyUserInterfaceStyle(forThemeMode: UserDefaults.standard.string(forKey: "beary_theme_mode") ?? "system")
         // 顶栏玻璃底色兜底：窗口底色与容器 view 同为 BearyColors.bg（动态色，深浅自动跟随），
         // 避免顶栏玻璃透出未设底色的空窗口（见 viewDidLoad 注释，此为本轮灰顶栏的根因）。
         window?.backgroundColor = BearyColors.bg
         window?.rootViewController = BearyChromeViewController()
         window?.makeKeyAndVisible()
-
-        SceneDelegateProxy.shared.scene(scene, willConnectTo: session, options: connectionOptions)
     }
 
     func scene(_ scene: UIScene, openURLContexts URLContexts: Set<UIOpenURLContext>) {
-        // F4：先走原生深链解析，命中则经容器 navigator 打开；全部未命中才走旧 Capacitor 桥
-        // （命中即不再转发，避免旧桥重复消费同一链接；多链接中个别未命中者随整批不再转发，
-        // 深链实际为单链接场景，该取舍与“命中走原生、未命中走旧桥”同口径）。
+        // F4：先走原生深链解析，命中则经容器 navigator 打开；未命中直接丢弃
         if let chrome = window?.rootViewController as? BearyChromeViewController {
             var handledAny = false
             for context in URLContexts {
@@ -28,7 +35,6 @@ class SceneDelegate: UIResponder, UIWindowSceneDelegate {
             }
             if handledAny { return }
         }
-        SceneDelegateProxy.shared.scene(scene, openURLContexts: URLContexts)
     }
 
     func scene(_ scene: UIScene, continue userActivity: NSUserActivity) {
@@ -37,12 +43,10 @@ class SceneDelegate: UIResponder, UIWindowSceneDelegate {
            chrome.handleDeepLink(url: url) {
             return
         }
-        SceneDelegateProxy.shared.scene(scene, continue: userActivity)
     }
 }
 
 // ===== beary 原生栏：液态玻璃顶栏 + 底栏胶囊 + FAB =====
-// 批一：纯原生容器，不再继承 Capacitor 桥、不创建任何网页视图、不加载任何网页。
 // 栏状态（选中 tab、登录态）由容器本地管理；未读角标在批二接通知接口前保持隐藏。
 // iOS 26+ 用官方 UIGlassEffect，低版本自动降级系统毛玻璃；部署目标不用抬。
 
@@ -99,6 +103,9 @@ final class BearyChromeViewController: UIViewController {
     private var referralFetchFailed = false
     /// G28：头像下载失败待重试标记（前台恢复或下次 applyLoginState 时重试）。
     private var avatarRetryPending = false
+    /// 教程首次启动自动弹出（审计 N1 容器侧）：每进程只自动弹一次，
+    /// 避免教程页未置 seen 标记时 viewDidAppear 重复触发。
+    private var tutorialAutoPresented = false
     /// G11：首次会话同步只是恢复态、不是登录/退出翻转——首页已在首拉，
     /// 首次同步跳过翻转刷新，避免启动双拉；第二次起的 onUserChanged 才走翻转刷新。
     private var sessionFlipArmed = false
@@ -264,7 +271,10 @@ final class BearyChromeViewController: UIViewController {
         avatar.layer.cornerRadius = 16
         avatar.layer.borderWidth = 1
         avatar.clipsToBounds = true
-        avatar.addTarget(self, action: #selector(didTapAvatar), for: .touchUpInside)
+        // 顶栏头像菜单（审计 N4）：点头像不再直达我页，改为弹出原生菜单
+        //（首项即原直达行为；showsMenuAsPrimaryAction 使点按直接出菜单）。
+        avatar.menu = avatarMenu()
+        avatar.showsMenuAsPrimaryAction = true
         avatar.accessibilityLabel = "我"
         avatar.translatesAutoresizingMaskIntoConstraints = false
         NSLayoutConstraint.activate([
@@ -658,6 +668,11 @@ final class BearyChromeViewController: UIViewController {
         // 深色黑，深浅切换自动跟随，无需 trait 回调），玻璃透出 bg 而非空底色；tint 仍为网页
         // 口径 52% 不动，玻璃类型、布局尺寸、底栏胶囊配方均不动。
         view.backgroundColor = BearyColors.bg
+        // 外观存档兜底：建窗时 SceneDelegate 已应用过一次；此处再对已有 window 应用一次
+        //（window 已就绪的路径），window 为 nil 时无操作。
+        if let window = view.window {
+            window.overrideUserInterfaceStyle = bearyUserInterfaceStyle(forThemeMode: UserDefaults.standard.string(forKey: "beary_theme_mode") ?? "system")
+        }
         buildChrome()
         // 初始态按未登录：登录钮显、头像与礼物钮藏；refreshMe 成功后 applyLoginState 再翻转（避免首帧两个钮同时出现）。
         avatarButton.isHidden = true
@@ -741,6 +756,12 @@ final class BearyChromeViewController: UIViewController {
         }
     }
 
+    override func viewDidAppear(_ animated: Bool) {
+        super.viewDidAppear(animated)
+        // 教程首次启动自动弹出（审计 N1 容器侧）：容器首次出现时检查 seen 标记。
+        maybePresentTutorialOnFirstLaunch()
+    }
+
     override func traitCollectionDidChange(_ previousTraitCollection: UITraitCollection?) {
         super.traitCollectionDidChange(previousTraitCollection)
         if traitCollection.hasDifferentColorAppearance(comparedTo: previousTraitCollection) {
@@ -780,6 +801,10 @@ final class BearyChromeViewController: UIViewController {
         bottomCapsule.isUserInteractionEnabled = visible
         fabButton.isUserInteractionEnabled = visible
     }
+
+    /// 栏显隐容器 API（清单第 2 项容器侧）：首页／时间线／个人主页的滚动回调调此方法；
+    /// FAB 随栏同隐同现（沿用 setBarsVisible 行为：顶栏玻璃、底栏胶囊、阴影与 FAB 同步位移与交互开关）。
+    func setChromeHidden(_ hidden: Bool, animated: Bool) { setBarsVisible(!hidden, animated: animated) }
 
     /// 顶栏选中态：四个 tab 里当前页对应的钮为墨色，其余灰色；当前页不是 tab（搜索 / 邀请 / 个人主页）时全部灰色。
     private func updateTabSelection() {
@@ -878,6 +903,26 @@ final class BearyChromeViewController: UIViewController {
     @objc private func didTapGift() { presentInvite() }
     @objc private func didTapWrite() { presentComposer() }
     @objc private func didTapAvatar() { showPage(.me) }
+
+    /// 顶栏头像菜单（审计 N4，部署目标 iOS 15 可用 UIMenu）：项依次为个人主页
+    ///（原直达行为）、使用指南（教程页）、外观（主题三档）、账户设置（仍占位，
+    ///审计 N2 需 Li 先定范围）、退出登录（与我页 onLogout 同款路径）。
+    private func avatarMenu() -> UIMenu {
+        let profile = UIAction(title: "个人主页") { [weak self] _ in self?.didTapAvatar() }
+        let tutorial = UIAction(title: "使用指南") { [weak self] _ in self?.presentTutorial() }
+        let appearance = UIAction(title: "外观") { [weak self] _ in self?.presentAppearanceSheet() }
+        let account = UIAction(title: "账户设置") { [weak self] _ in self?.presentComingSoon() }
+        let logout = UIAction(title: "退出登录", attributes: .destructive) { [weak self] _ in self?.logoutFromMenu() }
+        return UIMenu(title: "", children: [profile, tutorial, appearance, account, logout])
+    }
+
+    /// 头像菜单退出登录：与我页 vc.onLogout 同款路径（服务端登出＋清 cookie＋本地退出）。
+    private func logoutFromMenu() {
+        BearyAPI.shared.logout { _ in
+            SessionManager.shared.clearLocalCookies()
+            SessionManager.shared.signOutLocally()
+        }
+    }
     @objc private func didTapHome() { showPage(.home) }
     @objc private func didTapNotif() { navigator.goTab("notif") }
     @objc private func didTapTimeline() { navigator.goTab("timeline") }
@@ -1353,21 +1398,29 @@ final class BearyChromeViewController: UIViewController {
             }
         }
         vc.onEditProfile = { [weak self] in self?.presentEditProfile() }
-        // 齿轮菜单中尚无原生目的地的三项：先明示未推出，不静默无动作；目的地页为后续批次。
-        vc.onShowTutorial = { [weak self] in self?.presentComingSoon() }
+        // 齿轮菜单：教程与外观已接原生实现；账户设置仍占位（审计 N2，需 Li 先定范围），不静默无动作。
+        vc.onShowTutorial = { [weak self] in self?.presentTutorial() }
         vc.onOpenAccountSettings = { [weak self] in self?.presentComingSoon() }
-        vc.onToggleAppearance = { [weak self] in self?.presentComingSoon() }
+        vc.onToggleAppearance = { [weak self] in self?.presentAppearanceSheet() }
         vc.onInteractionChanged = { [weak self] changedId, likeCount, liked, bookmarked, emotes in
             self?.feedVC?.applyInteraction(entryId: changedId, likeCount: likeCount, likedByMe: liked, bookmarkedByMe: bookmarked, emotes: emotes)
         }
     }
 
     /// P11：编辑资料页（modal 全屏；保存/取消只关本页，保存后刷新我页与首页）。
-    /// 封面初值传 nil（MeUser 只有 coverVer 无封面 URL，页内封面预览初始为空；
-    /// 换封面/移除封面仍可走保存流程，保存只发改动字段）。
+    /// 封面初值（审计 N6 调用侧）：按网页口径由当前用户 id 与 coverVer 拼
+    /// /beary/api/users/:id/cover?v=<coverVer> 并加 teddyhn.com 前缀；
+    /// coverVer 为空或 0（或无 id）时仍传 nil，页内封面预览初始为空；
+    /// 换封面/移除封面仍可走保存流程，保存只发改动字段。
     private func presentEditProfile() {
         let user = SessionManager.shared.currentUser
-        let vc = BearyEditProfileViewController(displayName: user?.displayName, handle: user?.handle, avatarUrl: user?.avatar, coverUrl: nil)
+        let coverUrl: String?
+        if let id = user?.id, let ver = user?.coverVer, ver != 0 {
+            coverUrl = BearyImageURLs.base + "/beary/api/users/\(id)/cover?v=\(ver)"
+        } else {
+            coverUrl = nil
+        }
+        let vc = BearyEditProfileViewController(displayName: user?.displayName, handle: user?.handle, avatarUrl: user?.avatar, coverUrl: coverUrl)
         vc.modalPresentationStyle = .fullScreen
         vc.onSaved = { [weak self, weak vc] in
             vc?.dismiss(animated: true) {
@@ -1380,11 +1433,57 @@ final class BearyChromeViewController: UIViewController {
         topmostViewController().present(vc, animated: true)
     }
 
-    /// 尚无原生目的地的功能占位提示（齿轮菜单三项），不做假页面。
+    /// 尚无原生目的地的功能占位提示（齿轮菜单账户设置），不做假页面。
     private func presentComingSoon() {
         let alert = UIAlertController(title: "即将推出", message: "该功能正在做原生版", preferredStyle: .alert)
         alert.addAction(UIAlertAction(title: "知道了", style: .default, handler: nil))
         topmostViewController().present(alert, animated: true)
+    }
+
+    /// 教程页弹出（审计 N1 容器侧）：教程 UI 由另一 lane 在 BearyPlaceholderViewController.swift
+    /// 内定义（BearyTutorialViewController，无参 init）；容器只负责全屏模态弹出，
+    /// 关闭／完成时由教程页自己置 beary_tutorial_seen_v1，容器不写该标记。
+    private func presentTutorial() {
+        let vc = BearyTutorialViewController()
+        vc.modalPresentationStyle = .fullScreen
+        topmostViewController().present(vc, animated: true)
+    }
+
+    /// 首次启动自动弹出：容器首次出现且 seen 未置位时弹一次；每进程只尝试一次，
+    /// 避免教程页未置标记时 viewDidAppear 循环重弹；已有 modal 在前时不弹。
+    private func maybePresentTutorialOnFirstLaunch() {
+        guard !tutorialAutoPresented else { return }
+        tutorialAutoPresented = true
+        guard !UserDefaults.standard.bool(forKey: BearyTutorialViewController.tutorialSeenKey) else { return }
+        guard presentedViewController == nil else { return }
+        presentTutorial()
+    }
+
+    /// 外观手动切换（审计 N3）：跟随系统／浅色／深色三档，当前档标题前打 ✓；
+    /// 选择后持久化（beary_theme_mode：system/light/dark）并立即应用到 window。
+    private func presentAppearanceSheet() {
+        let current = UserDefaults.standard.string(forKey: "beary_theme_mode") ?? "system"
+        let alert = UIAlertController(title: "外观", message: nil, preferredStyle: .actionSheet)
+        let modes: [(String, String)] = [("system", "跟随系统"), ("light", "浅色"), ("dark", "深色")]
+        for (value, title) in modes {
+            let display = (value == current) ? "✓ " + title : title
+            alert.addAction(UIAlertAction(title: display, style: .default) { [weak self] _ in
+                UserDefaults.standard.set(value, forKey: "beary_theme_mode")
+                self?.applyThemeMode(value)
+            })
+        }
+        alert.addAction(UIAlertAction(title: "取消", style: .cancel, handler: nil))
+        let top = topmostViewController()
+        if let popover = alert.popoverPresentationController {
+            popover.sourceView = top.view
+            popover.sourceRect = CGRect(x: top.view.bounds.midX, y: top.view.bounds.midY, width: 0, height: 0)
+        }
+        top.present(alert, animated: true)
+    }
+
+    /// 立即应用主题档位到 window（只应用不写存档；存档由选择框写，建窗时由 SceneDelegate 读存档应用）。
+    private func applyThemeMode(_ mode: String) {
+        view.window?.overrideUserInterfaceStyle = bearyUserInterfaceStyle(forThemeMode: mode)
     }
 
     /// 回收站：全屏 modal，关闭钮由 TrashVC 自带（onClose 设置后才显示）。

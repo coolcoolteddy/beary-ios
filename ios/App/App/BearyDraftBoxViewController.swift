@@ -1182,26 +1182,49 @@ final class BearyDraftBoxViewController: UIViewController {
     }
 
     /// 删除收尾：删前再按 draftId 校验一次（动画期内下标可能已变），
-    /// 从内存列表移除并后台删盘，再出撤销条。
-    /// G7 注：deleteAsync 暂无返回值签名，删除失败提示按 Common lane 交接先不动；
-    /// 撤销期内的暂存仍是该篇可恢复的兜底。
+    /// 后台删盘；只有删盘成功才从内存列表移除并出撤销条，失败时卡片
+    /// 原地恢复（仍在原位置）+ toast，不让它静默消失。
+    /// G7：删盘走带 Bool 回传的 deleteAsyncReporting（老 deleteAsync
+    /// 保留给编辑器两处调用作兼容）；成功路径的 collapse 退场（deleteTapped）
+    /// 与撤销条行为不变，只是移除/出条改到删盘成功回调里（本地写盘，
+    /// 延迟毫秒级，视觉上与原来无差）。
     private func finishDelete(draftValue: BearyDraft) {
-        if let currentIndex = drafts.firstIndex(where: { $0.draftId == draftValue.draftId }) {
-            drafts.remove(at: currentIndex)
-            // E1-4：整库删写走后台队列，主线程只更新 UI。
-            BearyDraftStore.deleteAsync(draftId: draftValue.draftId)
-            // DF-2：删的是编辑器正在写的那篇时通知编辑器（容器接线后编辑器清 draftId）。
-            // 注意：6 秒内点撤销会把草稿插回箱里，但编辑器侧已清的槽位不会自动接回，
-            // 容器需决定撤销后是否重新打开该篇（见交回说明）。
-            if let current = currentDraftId, current == draftValue.draftId {
-                onDeleteCurrentDraft?(draftValue.draftId)
+        // 失败恢复用：记下当前下标；删盘失败且内存里已没它时按此插回原位。
+        let restoreIndex = drafts.firstIndex(where: { $0.draftId == draftValue.draftId }) ?? pendingDeletedIndex
+        BearyDraftStore.deleteAsyncReporting(draftId: draftValue.draftId) { [weak self] ok in
+            guard let strongSelf = self else { return }
+            if !ok {
+                // 失败：本笔仍是待撤销的那笔时清掉暂存（撤销条尚未出，
+                // 此处只清暂存与计时器，不动后一笔的暂存）。
+                if strongSelf.pendingDeletedDraft?.draftId == draftValue.draftId {
+                    strongSelf.expirePendingUndo()
+                }
+                if strongSelf.drafts.firstIndex(where: { $0.draftId == draftValue.draftId }) == nil {
+                    strongSelf.drafts.insert(draftValue, at: min(restoreIndex, strongSelf.drafts.count))
+                }
+                strongSelf.renderDrafts()
+                strongSelf.showDraftToast(message: "删除失败，请再试一次")
+                return
             }
-        }
-        renderDrafts()
-        showUndoAnimated()
-        undoTimer?.invalidate()
-        undoTimer = Timer.scheduledTimer(withTimeInterval: 6, repeats: false) { [weak self] _ in
-            self?.expirePendingUndo()
+            if let currentIndex = strongSelf.drafts.firstIndex(where: { $0.draftId == draftValue.draftId }) {
+                strongSelf.drafts.remove(at: currentIndex)
+                // DF-2：删的是编辑器正在写的那篇时通知编辑器（容器接线后编辑器清 draftId）。
+                // 注意：6 秒内点撤销会把草稿插回箱里，但编辑器侧已清的槽位不会自动接回，
+                // 容器需决定撤销后是否重新打开该篇（见交回说明）。
+                if let current = strongSelf.currentDraftId, current == draftValue.draftId {
+                    strongSelf.onDeleteCurrentDraft?(draftValue.draftId)
+                }
+            }
+            strongSelf.renderDrafts()
+            // 只有本笔仍是待撤销的那笔时才出撤销条 + 计时；已被后一笔删除
+            // 顶掉时，后一笔自己的回调会出它的撤销条，这里只静默移除。
+            if strongSelf.pendingDeletedDraft?.draftId == draftValue.draftId {
+                strongSelf.showUndoAnimated()
+                strongSelf.undoTimer?.invalidate()
+                strongSelf.undoTimer = Timer.scheduledTimer(withTimeInterval: 6, repeats: false) { [weak self] _ in
+                    self?.expirePendingUndo()
+                }
+            }
         }
     }
 

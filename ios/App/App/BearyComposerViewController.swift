@@ -7,6 +7,8 @@ import PhotosUI
 // 不走新日记草稿流（不读不写 beary_draft_v3、不复用新篇 client_req）。
 // 段落顺序按网页版：正文 → 图片预览 → 工具栏 → 附加选项（收起）→ 天气 → 状态行
 // → 写给 → 心情 → 引用 → 规则框；天气/写给/心情三区收进附加选项栏（默认收起）。
+// 清单第 9 项：工具栏已钉在顶栏下方、移出滚动内容栈（始终可见，不随正文滚动）；
+// 代价是视觉顺序变化——工具栏现位于正文之前（原先在图片条之后），其余区顺序不变。
 // 约束：部署目标 iOS 15.0、Swift 5.0——只用闭包回调，不用 async/await，不用 if-let 简写。
 // 文案一律中文；深浅色一律用 BearyColors 的动态色（含语义红 red 与图片上深色衬底 scrim）。
 // 网络数据一律不用 force unwrap；图片移除只动本地与 key 列表，不调服务端。
@@ -158,7 +160,14 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     private let imageScrollView = UIScrollView()
     private let imageStackView = UIStackView()
     // 工具栏：图片/天气/引用图标钮 + 草稿 pill（网页 3 钮口径；编辑模式 pill 可见但点开无动作，引用钮保留）
+    // 清单第 9 项：工具栏钉在顶栏下方（见 buildLayout），不随正文滚动；引用面板打开时
+    // 它隐藏，scrollView 顶锚随之改回顶栏（见 updateToolbarScrollAnchoring），不留空隙。
     private let toolbarContainer = UIView()
+    private var scrollTopToToolbarConstraint: NSLayoutConstraint?
+    private var scrollTopToTopBarConstraint: NSLayoutConstraint?
+    /// 清单第 15 项：发布钮 / 草稿 pill 的显式宽度约束（点赞钮同款修法，见各自刷新函数）。
+    private var publishWidthConstraint: NSLayoutConstraint?
+    private var draftPillWidthConstraint: NSLayoutConstraint?
     private let toolbarSeparator = UIView()
     private let imageToolButton = UIButton(type: .system)
     private let weatherToolButton = UIButton(type: .system)
@@ -317,6 +326,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
 
     private func buildLayout() {
         topBar.translatesAutoresizingMaskIntoConstraints = false
+        toolbarContainer.translatesAutoresizingMaskIntoConstraints = false
         scrollView.translatesAutoresizingMaskIntoConstraints = false
         contentView.translatesAutoresizingMaskIntoConstraints = false
         contentStack.translatesAutoresizingMaskIntoConstraints = false
@@ -326,15 +336,24 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         contentStack.isLayoutMarginsRelativeArrangement = true
         contentStack.layoutMargins = UIEdgeInsets(top: 14, left: 16, bottom: 14, right: 16)
         view.addSubview(topBar)
+        view.addSubview(toolbarContainer)
         view.addSubview(scrollView)
         scrollView.addSubview(contentView)
         contentView.addSubview(contentStack)
+        // 工具栏固定：它不在内容栈里，scrollView 顶锚在它之下（常态）；面板打开时
+        // 工具栏隐藏，改锚到顶栏（见 updateToolbarScrollAnchoring，初始锚工具栏）。
+        let scrollToToolbar = scrollView.topAnchor.constraint(equalTo: toolbarContainer.bottomAnchor)
+        scrollToToolbar.isActive = true
+        scrollTopToToolbarConstraint = scrollToToolbar
+        scrollTopToTopBarConstraint = scrollView.topAnchor.constraint(equalTo: topBar.bottomAnchor)
         NSLayoutConstraint.activate([
             topBar.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
             topBar.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             topBar.trailingAnchor.constraint(equalTo: view.trailingAnchor),
             topBar.heightAnchor.constraint(equalToConstant: 44),
-            scrollView.topAnchor.constraint(equalTo: topBar.bottomAnchor),
+            toolbarContainer.topAnchor.constraint(equalTo: topBar.bottomAnchor),
+            toolbarContainer.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 16),
+            toolbarContainer.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -16),
             scrollView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             scrollView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
             scrollView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
@@ -372,6 +391,19 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             fittingWidth = screenWidth >= 821 ? min(640, screenWidth - 80) : screenWidth
         }
         guard fittingWidth > 0 else { return }
+        // 钉住的工具栏不在内容栈里：sheet 高须另加它（面板打开时它隐藏，计 0）。
+        // 高度取容器 fitting（内容驱动：分隔线 1 + 间距 12 + 工具行 + 底 6），不硬编码；
+        // 容器本身无高度约束，fitting 不会被自身约束带偏。
+        let toolbarHeight: CGFloat
+        if toolbarContainer.isHidden {
+            toolbarHeight = 0
+        } else {
+            toolbarHeight = toolbarContainer.systemLayoutSizeFitting(
+                CGSize(width: max(fittingWidth - 32, 0), height: UIView.layoutFittingCompressedSize.height),
+                withHorizontalFittingPriority: .required,
+                verticalFittingPriority: .fittingSizeLevel
+            ).height
+        }
         // qp-mode 整编形态：sheet 高固定为 86vh（网页 qp-mode 同款；居中卡呈现层
         // 另有 80% 封顶，实际取小，属呈现层口径，本文件不动呈现层）。
         if quotePanelOpen {
@@ -383,7 +415,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         }
         let targetSize = CGSize(width: fittingWidth, height: UIView.layoutFittingCompressedSize.height)
         let fitted = contentStack.systemLayoutSizeFitting(targetSize, withHorizontalFittingPriority: .required, verticalFittingPriority: .fittingSizeLevel)
-        let total = fitted.height + 44
+        let total = fitted.height + 44 + toolbarHeight
         guard abs(preferredContentSize.height - total) > 0.5 else { return }
         preferredContentSize = CGSize(width: fittingWidth, height: total)
         view.superview?.setNeedsLayout()
@@ -447,7 +479,24 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             topSeparator.bottomAnchor.constraint(equalTo: topBar.bottomAnchor),
             topSeparator.heightAnchor.constraint(equalToConstant: 0.5),
         ])
+        // 清单第 15 项：发布钮显式宽度约束（初值由 refreshPublishButtonWidth 按当前标题算出，
+        // 此后标题/图标/边距每次变化都经 refreshPublishBusyState 重算，见该函数末尾）。
+        let publishWidth = publishButton.widthAnchor.constraint(equalToConstant: 0)
+        publishWidth.isActive = true
+        publishWidthConstraint = publishWidth
+        refreshPublishButtonWidth()
         refreshPublishAppearance()
+    }
+
+    /// 发布钮显式宽度（点赞钮同款修法）：UIButton 固有宽不含 titleEdgeInsets，
+    /// 前沿自由的按钮按固有宽给帧时，标题会被左边距吃掉尾部（常态 6pt、发布中态 24pt，
+    /// 后者会把“发布中…”裁成残字）。宽度按实测字宽重算：左右 content 边距 +
+    /// 图宽 + 左右 title 边距 + 字宽；发布中态图为 nil、title 左边距 24 已含 spinner 位。
+    private func refreshPublishButtonWidth() {
+        let title = publishButton.title(for: .normal) ?? ""
+        let titleWidth = ceil((title as NSString).size(withAttributes: [NSAttributedString.Key.font: UIFont.systemFont(ofSize: 14)]).width)
+        let imageWidth = publishButton.image(for: .normal)?.size.width ?? 0
+        publishWidthConstraint?.constant = publishButton.contentEdgeInsets.left + imageWidth + publishButton.titleEdgeInsets.left + titleWidth + publishButton.titleEdgeInsets.right + publishButton.contentEdgeInsets.right
     }
 
     /// 发布钮外观跟随启用态（updatePublishState 只改 isEnabled，这里同步颜色/底色）。
@@ -1337,6 +1386,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             textView.isHidden = true
             imageScrollView.isHidden = true
             toolbarContainer.isHidden = true
+            updateToolbarScrollAnchoring()
             extrasBarContainer.isHidden = true
             weatherScrollView.isHidden = true
             statusRow.isHidden = true
@@ -1362,6 +1412,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                 self.quotePanel.isHidden = true
                 self.textView.isHidden = false
                 self.toolbarContainer.isHidden = false
+                self.updateToolbarScrollAnchoring()
                 self.extrasBarContainer.isHidden = false
                 self.statusRow.isHidden = false
                 self.quoteSection.isHidden = false
@@ -1392,6 +1443,19 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             }
         }
         updatePreferredContentSize()
+    }
+
+    /// 工具栏钉住后的顶锚切换：工具栏隐藏时（引用面板打开）scrollView 顶锚改回顶栏，
+    /// 否则隐藏的工具栏仍按内容高占位、面板上方会空一段；显示时锚回工具栏底部。
+    /// 工具栏显隐只在这两处改（grep toolbarContainer.isHidden 仅此两处），故不另做监听。
+    private func updateToolbarScrollAnchoring() {
+        if toolbarContainer.isHidden {
+            scrollTopToToolbarConstraint?.isActive = false
+            scrollTopToTopBarConstraint?.isActive = true
+        } else {
+            scrollTopToTopBarConstraint?.isActive = false
+            scrollTopToToolbarConstraint?.isActive = true
+        }
     }
 
     @objc private func didTapQuoteTab(_ sender: UIButton) {
@@ -1478,7 +1542,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     }
 
     /// 面板行：完整 lite 卡（网页 diaryCardLite 同款：头像 40 + 名 + 日期 + 全文 +
-    /// 118 图片条 + 未公开“投递中”pill + Plus 皇冠 + 天气图标；名截断优先）。
+    /// 118 图片条 + 未公开“投递中”pill + 天气图标；名截断优先；Plus 皇冠已按清单取消显示）。
     private func renderQuotePanelRows(entries: [Entry]) {
         for arranged in quotePanelRows.arrangedSubviews {
             quotePanelRows.removeArrangedSubview(arranged)
@@ -1535,12 +1599,13 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                 let crownView = UIImageView()
                 crownView.translatesAutoresizingMaskIntoConstraints = false
                 crownView.contentMode = .scaleAspectFit
-                // 只走 crown 资产：不用 SF Symbol；资产缺失时藏起皇冠位，不留空位、不替灰色符号。
+                // 清单第 14 项编辑器部分：App 端先取消会员标显示——皇冠一律隐藏
+                //（stack 会自动塌掉隐藏的 arranged 子项，不留空位；只改显示，不删
+                // 资产与 authorPlus 数据；邀请页是另一文件，与此无关、不动）。
                 if let crown = UIImage(named: "crown") {
                     crownView.image = crown
-                } else {
-                    crownView.isHidden = true
                 }
+                crownView.isHidden = true
                 crownView.setContentCompressionResistancePriority(.required, for: .horizontal)
                 headerStack.addArrangedSubview(crownView)
                 NSLayoutConstraint.activate([
@@ -1755,7 +1820,9 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         imageScrollView.isHidden = imageItems.isEmpty
     }
 
-    // MARK: - 工具栏（网页 editor-tools：图片/天气/引用图标钮 + 右端草稿 pill）
+    // MARK: - 工具栏（网页 editor-tools：图片/天气/引用图标钮 + 右端草稿 pill；
+    // 清单第 9 项：容器已钉在顶栏下方、不在内容栈里，见 buildLayout；本函数只布
+    // 容器内部，分隔线 + 工具行约束不变，工具行左右仍与内容栈边距同宽 16）
 
     private func buildToolbarRow() {
         toolbarSeparator.backgroundColor = BearyColors.line
@@ -1794,7 +1861,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             button.heightAnchor.constraint(equalToConstant: 24).isActive = true
         }
         draftPillButton.translatesAutoresizingMaskIntoConstraints = false
-        contentStack.addArrangedSubview(toolbarContainer)
+        // 容器已由 buildLayout 加到 view 顶栏下方（固定），这里不再进内容栈。
         toolbarContainer.addSubview(toolbarSeparator)
         toolbarContainer.addSubview(toolRow)
         toolRow.addArrangedSubview(imageToolButton)
@@ -1813,10 +1880,16 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             toolRow.trailingAnchor.constraint(equalTo: toolbarContainer.trailingAnchor),
             toolRow.bottomAnchor.constraint(equalTo: toolbarContainer.bottomAnchor, constant: -6),
         ])
+        // 清单第 15 项：草稿 pill 显式宽度约束（初值按当前“草稿”标题算出，此后计数
+        // 每次变化都经 setDraftPillCount 重算，见该函数末尾）。
+        let draftPillWidth = draftPillButton.widthAnchor.constraint(equalToConstant: 0)
+        draftPillWidth.isActive = true
+        draftPillWidthConstraint = draftPillWidth
+        refreshDraftPillWidth()
         // 编辑模式：无草稿流，但 pill 可见（DF-3：网页 openDraftBox 在 editingId 时
         // 直接 return，pill 可见但点开无动作；didTapDraftBox 编辑态已直接 return，
         // 故这里不再隐藏 pill）；引用钮保留（C6：编辑模式引用可改可删）。
-        contentStack.setCustomSpacing(2, after: toolbarContainer)
+        // 工具栏已不在内容栈里，不再设栈间距（旧 setCustomSpacing 已删）。
     }
 
     /// 草稿 pill 计数：v3 多槽篇数。0 篇时计数段隐藏（只留“草稿”二字），
@@ -1844,6 +1917,25 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         } else {
             draftPillButton.setAttributedTitle(NSAttributedString(string: "草稿", attributes: [.font: UIFont.systemFont(ofSize: 13), .foregroundColor: BearyColors.ink]), for: .normal)
         }
+        // 标题每次变化都重算显式宽度（标题只在这里与 buildToolbarRow 改，
+        // 故此处是唯一需要跟进的运行时更新点；编辑模式直接 return，不改 pill）。
+        refreshDraftPillWidth()
+    }
+
+    /// 草稿 pill 显式宽度（点赞钮同款修法）：titleEdgeInsets.left=6 不进固有宽，
+    /// 工具行栈按固有宽给帧会把标题尾部裁掉（“草稿 · N”的数字最先遭殃）。宽度按
+    /// 实测字宽重算：左右 content 边距 + 图宽 + title 左边距 + 字宽；计数态标题
+    /// 是 attributed（数字段单独加粗），直接量 attributed 宽，不按单字号估算。
+    private func refreshDraftPillWidth() {
+        let titleWidth: CGFloat
+        if let attributed = draftPillButton.attributedTitle(for: .normal) {
+            titleWidth = ceil(attributed.size().width)
+        } else {
+            let title = draftPillButton.title(for: .normal) ?? ""
+            titleWidth = ceil((title as NSString).size(withAttributes: [NSAttributedString.Key.font: UIFont.systemFont(ofSize: 13)]).width)
+        }
+        let imageWidth = draftPillButton.image(for: .normal)?.size.width ?? 16
+        draftPillWidthConstraint?.constant = draftPillButton.contentEdgeInsets.left + imageWidth + draftPillButton.titleEdgeInsets.left + titleWidth + draftPillButton.titleEdgeInsets.right + draftPillButton.contentEdgeInsets.right
     }
 
     /// 天气工具钮：单独开关天气行（网页 toggleWxRow 同款：可独立于附加选项栏开关；
@@ -2209,6 +2301,9 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             publishRingView.isHidden = true
             BearyIconMotion.stopSpin(on: publishRingView, key: "bearyPublishSpin")
         }
+        // 标题/图标/边距三处每次变化都重算显式宽度（标题只在这里与 buildTopBar 改，
+        // 故此处是唯一需要跟进的运行时更新点；updatePublishState 每次都走这里）。
+        refreshPublishButtonWidth()
     }
 
     // MARK: - 心情（选中态与标题跟随选中值；标题动态带选中名）
@@ -2311,10 +2406,23 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         removeButton.layer.cornerRadius = 10
         removeButton.layer.masksToBounds = true
         removeButton.addTarget(self, action: #selector(didTapRemoveImage(_:)), for: .touchUpInside)
+        // 裁剪钮（清单第 3 项）：左下角，与移除钮同款 20×20 scrim 圆钮；无裁剪资产，
+        // 复用 icon_edit（编辑）+ 无障碍文案“裁剪图片”，不碰 Assets、不新开文件。
+        let cropButton = UIButton(type: .system)
+        cropButton.translatesAutoresizingMaskIntoConstraints = false
+        cropButton.setImage(BearyIconImages.image(named: "icon_edit", pointSize: 12), for: .normal)
+        cropButton.tintColor = UIColor.white
+        cropButton.backgroundColor = BearyColors.scrim
+        cropButton.layer.cornerRadius = 10
+        cropButton.layer.masksToBounds = true
+        cropButton.accessibilityLabel = "裁剪图片"
+        cropButton.addTarget(self, action: #selector(didTapCropImage(_:)), for: .touchUpInside)
+        cropButton.isHidden = uploading || failed
         container.addSubview(imageView)
         container.addSubview(spinner)
         container.addSubview(failView)
         container.addSubview(removeButton)
+        container.addSubview(cropButton)
         NSLayoutConstraint.activate([
             container.widthAnchor.constraint(equalToConstant: 72),
             container.heightAnchor.constraint(equalToConstant: 72),
@@ -2338,6 +2446,10 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             removeButton.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -2),
             removeButton.widthAnchor.constraint(equalToConstant: 20),
             removeButton.heightAnchor.constraint(equalToConstant: 20),
+            cropButton.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 2),
+            cropButton.bottomAnchor.constraint(equalTo: container.bottomAnchor, constant: -2),
+            cropButton.widthAnchor.constraint(equalToConstant: 20),
+            cropButton.heightAnchor.constraint(equalToConstant: 20),
         ])
         if uploading {
             spinner.startAnimating()
@@ -2345,7 +2457,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         if failed {
             imageView.isHidden = true
         }
-        let item = ComposerImageItem(key: key, uploading: uploading, localFile: localFile, failed: failed, container: container, imageView: imageView, spinner: spinner, failView: failView, removeButton: removeButton)
+        let item = ComposerImageItem(key: key, uploading: uploading, localFile: localFile, failed: failed, container: container, imageView: imageView, spinner: spinner, failView: failView, removeButton: removeButton, cropButton: cropButton)
         return item
     }
 
@@ -2357,6 +2469,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         item.failView.isHidden = true
         item.imageView.isHidden = false
         item.imageView.alpha = 1.0
+        item.cropButton.isHidden = true
         item.spinner.startAnimating()
     }
 
@@ -2367,6 +2480,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         item.failView.isHidden = true
         item.imageView.isHidden = false
         item.imageView.alpha = 1.0
+        item.cropButton.isHidden = false
         item.spinner.stopAnimating()
     }
 
@@ -2375,6 +2489,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         item.failed = true
         item.failView.isHidden = false
         item.imageView.isHidden = true
+        item.cropButton.isHidden = true
         item.spinner.stopAnimating()
     }
 
@@ -2449,6 +2564,118 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                 // 只去本地与 key 列表，不调服务端；未发布的孤 key 残留是已知可接受项。
                 removeImageItem(item)
                 return
+            }
+        }
+    }
+
+    // MARK: - 裁剪调整（清单第 3 项：预览图左下角裁剪钮进页；确认替换、取消不动）
+
+    @objc private func didTapCropImage(_ sender: UIButton) {
+        if presentedViewController != nil { return }
+        for item in imageItems {
+            if item.cropButton == sender {
+                // 上传中/失败态不进裁剪（失败态点图走重试，见 didTapImageItem）。
+                if item.uploading || item.failed { return }
+                // 裁剪源优先本地原图（全分辨率），其次条内图；两者皆无时只提示、不进页。
+                // 本地文件读盘走后台队列（与失败重试同款），条内图直接可用。
+                if let name = item.localFile {
+                    imagePrepQueue.async { [weak self, weak item] in
+                        let diskImage = BearyDraftImageStore.image(for: name)
+                        DispatchQueue.main.async {
+                            guard let self = self, let item = item else { return }
+                            var stillThere = false
+                            for existing in self.imageItems {
+                                if existing === item {
+                                    stillThere = true
+                                }
+                            }
+                            if !stillThere {
+                                return
+                            }
+                            if let source = diskImage ?? item.imageView.image {
+                                self.presentCropEditor(for: item, source: source)
+                            } else {
+                                self.showToast(message: "图片还没加载好，稍后再试")
+                            }
+                        }
+                    }
+                } else if let source = item.imageView.image {
+                    presentCropEditor(for: item, source: source)
+                } else {
+                    showToast(message: "图片还没加载好，稍后再试")
+                }
+                return
+            }
+        }
+    }
+
+    private func presentCropEditor(for item: ComposerImageItem, source: UIImage) {
+        // 磁盘读图是异步的：回到主线程时若已有弹窗在上（草稿箱等），不再叠页。
+        if presentedViewController != nil { return }
+        let cropVC = BearyComposerCropViewController(image: source)
+        cropVC.modalPresentationStyle = .fullScreen
+        cropVC.onConfirm = { [weak self, weak item] cropped in
+            guard let self = self, let item = item else { return }
+            self.applyCroppedImage(cropped, to: item)
+        }
+        present(cropVC, animated: !UIAccessibility.isReduceMotionEnabled)
+    }
+
+    /// 确认裁剪：先在后台编一次码（失败则原图原样不动、只 toast），成功后才替换预览、
+    /// 清掉旧 key（旧 key 指向未裁剪原图，不可复用；孤 key 残留与移除同款已知可接受）、
+    /// 删旧本地对、落盘新图、走与选图同一份 uploadPrepared 上传；取消则全程不碰原项。
+    /// 编辑模式同款：新 key 进 uploadedImageKeys，保存走 PUT，不碰草稿流。
+    private func applyCroppedImage(_ cropped: UIImage, to item: ComposerImageItem) {
+        var stillThere = false
+        for existing in imageItems {
+            if existing === item {
+                stillThere = true
+            }
+        }
+        if !stillThere { return }
+        let oldName = item.localFile
+        imagePrepQueue.async { [weak self, weak item] in
+            guard let full = BearyImagePrep.jpegData(cropped, maxSide: 1600, quality: 0.85),
+                  let thumb = BearyImagePrep.thumbData(cropped, maxSide: 480) else {
+                DispatchQueue.main.async {
+                    self?.showToast(message: "裁剪保存失败，原图未改")
+                }
+                return
+            }
+            let saved = BearyDraftImageStore.save(fullData: full.data, thumbData: thumb)
+            DispatchQueue.main.async {
+                guard let self = self, let item = item else { return }
+                var stillThere = false
+                for existing in self.imageItems {
+                    if existing === item {
+                        stillThere = true
+                    }
+                }
+                if !stillThere {
+                    return
+                }
+                item.imageView.image = cropped
+                item.key = nil
+                item.failed = false
+                if let saved = saved {
+                    item.localFile = saved
+                    if let oldName = oldName, oldName != saved {
+                        BearyDraftImageStore.deletePair(fullName: oldName)
+                    }
+                } else {
+                    // 落盘失败：不让旧文件顶着新图残留（恢复会错显示旧图），删旧对、
+                    // 本地文件置空，仍走上传（成功后 key 落盘，与选图落盘失败降级同款）。
+                    item.localFile = nil
+                    if let oldName = oldName {
+                        BearyDraftImageStore.deletePair(fullName: oldName)
+                    }
+                }
+                self.markUploading(item)
+                self.saveDraftNow()
+                self.updatePublishState()
+                self.imagePrepQueue.async { [weak self, weak item] in
+                    self?.uploadPrepared(for: item, full: full, thumbData: thumb, image: cropped)
+                }
             }
         }
     }
@@ -3620,8 +3847,10 @@ private final class ComposerImageItem {
     let spinner: UIActivityIndicatorView
     let failView: UIView
     let removeButton: UIButton
+    /// 清单第 3 项：左下角裁剪钮（与右上角移除钮同款 20×20 scrim 圆钮）。
+    let cropButton: UIButton
 
-    init(key: String?, uploading: Bool, localFile: String?, failed: Bool, container: UIView, imageView: UIImageView, spinner: UIActivityIndicatorView, failView: UIView, removeButton: UIButton) {
+    init(key: String?, uploading: Bool, localFile: String?, failed: Bool, container: UIView, imageView: UIImageView, spinner: UIActivityIndicatorView, failView: UIView, removeButton: UIButton, cropButton: UIButton) {
         self.key = key
         self.uploading = uploading
         self.localFile = localFile
@@ -3631,6 +3860,223 @@ private final class ComposerImageItem {
         self.spinner = spinner
         self.failView = failView
         self.removeButton = removeButton
+        self.cropButton = cropButton
+    }
+}
+
+// MARK: - 裁剪编辑器（清单第 3 项；文件内自包含，不新开文件）
+
+/// 图片裁剪：正方形裁剪窗居中，双指缩放 + 拖动平移；确认回传裁剪图，取消原图不动。
+/// 缩放走 UIScrollView（捏合/拖动/回弹均为系统手势）；最小缩放 = 刚好盖满裁剪窗，
+/// 故窗内永不露底；确认时按窗在图内的实际位置裁（convert 计入缩放变换），
+/// 先把原图方向归一化再按像素裁，避免朝向图的像素坐标错位。
+/// 恒黑底（不跟随主题，裁剪时图外区域须压暗）；旋转会按新尺寸重算窗与缩放、
+/// 回到盖满居中（旋转不保留上次构图，是已知取舍，见汇报）。
+private final class BearyComposerCropViewController: UIViewController, UIScrollViewDelegate {
+
+    /// 确认回传裁剪图（调用方负责替换原项与上传；取消不回调）。
+    var onConfirm: ((UIImage) -> Void)?
+
+    private let sourceImage: UIImage
+    private let topBar = UIView()
+    private let cancelButton = UIButton(type: .system)
+    private let titleLabel = UILabel()
+    private let confirmButton = UIButton(type: .system)
+    private let scrollView = UIScrollView()
+    private let imageView = UIImageView()
+    private let hintLabel = UILabel()
+    private var dimViews: [UIView] = []
+    private let cropBorderView = UIView()
+    /// 裁剪窗（view 坐标；每布局重算，确认时以它为准）。
+    private var cropRect = CGRect.zero
+    private var didSetupZoom = false
+    private var lastZoomBounds = CGSize.zero
+
+    init(image: UIImage) {
+        self.sourceImage = image
+        super.init(nibName: nil, bundle: nil)
+    }
+
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    override func viewDidLoad() {
+        super.viewDidLoad()
+        view.backgroundColor = UIColor.black
+        topBar.backgroundColor = UIColor.black
+        cancelButton.setTitle("取消", for: .normal)
+        cancelButton.setTitleColor(UIColor.white, for: .normal)
+        cancelButton.titleLabel?.font = UIFont.systemFont(ofSize: 16)
+        cancelButton.addTarget(self, action: #selector(didTapCancel), for: .touchUpInside)
+        titleLabel.text = "裁剪"
+        titleLabel.font = UIFont.boldSystemFont(ofSize: 16)
+        titleLabel.textColor = UIColor.white
+        titleLabel.textAlignment = .center
+        confirmButton.setTitle("确认", for: .normal)
+        confirmButton.setTitleColor(BearyColors.orange, for: .normal)
+        confirmButton.titleLabel?.font = UIFont.boldSystemFont(ofSize: 16)
+        confirmButton.addTarget(self, action: #selector(didTapConfirm), for: .touchUpInside)
+        scrollView.delegate = self
+        scrollView.showsHorizontalScrollIndicator = false
+        scrollView.showsVerticalScrollIndicator = false
+        scrollView.backgroundColor = UIColor.black
+        imageView.image = sourceImage
+        imageView.contentMode = .scaleAspectFit
+        hintLabel.text = "双指缩放，拖动调整"
+        hintLabel.font = UIFont.systemFont(ofSize: 13)
+        hintLabel.textColor = UIColor.white.withAlphaComponent(0.7)
+        hintLabel.textAlignment = .center
+        cropBorderView.layer.borderWidth = 1
+        cropBorderView.layer.borderColor = UIColor.white.cgColor
+        cropBorderView.isUserInteractionEnabled = false
+        for v in [topBar, scrollView, hintLabel, cancelButton, titleLabel, confirmButton] {
+            v.translatesAutoresizingMaskIntoConstraints = false
+        }
+        view.addSubview(topBar)
+        topBar.addSubview(cancelButton)
+        topBar.addSubview(titleLabel)
+        topBar.addSubview(confirmButton)
+        view.addSubview(scrollView)
+        scrollView.addSubview(imageView)
+        view.addSubview(hintLabel)
+        // 遮罩四块先加、白框最后加（白框须在遮罩之上；两者均按帧定位，不走约束）。
+        for _ in 0..<4 {
+            let dim = UIView()
+            dim.backgroundColor = UIColor.black.withAlphaComponent(0.6)
+            dim.isUserInteractionEnabled = false
+            view.addSubview(dim)
+            dimViews.append(dim)
+        }
+        view.addSubview(cropBorderView)
+        NSLayoutConstraint.activate([
+            topBar.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
+            topBar.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            topBar.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            topBar.heightAnchor.constraint(equalToConstant: 44),
+            cancelButton.leadingAnchor.constraint(equalTo: topBar.leadingAnchor, constant: 16),
+            cancelButton.centerYAnchor.constraint(equalTo: topBar.centerYAnchor),
+            titleLabel.centerXAnchor.constraint(equalTo: topBar.centerXAnchor),
+            titleLabel.centerYAnchor.constraint(equalTo: topBar.centerYAnchor),
+            confirmButton.trailingAnchor.constraint(equalTo: topBar.trailingAnchor, constant: -16),
+            confirmButton.centerYAnchor.constraint(equalTo: topBar.centerYAnchor),
+            scrollView.topAnchor.constraint(equalTo: topBar.bottomAnchor),
+            scrollView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            scrollView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            scrollView.bottomAnchor.constraint(equalTo: hintLabel.topAnchor),
+            hintLabel.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            hintLabel.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            hintLabel.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor, constant: -12),
+            hintLabel.heightAnchor.constraint(equalToConstant: 20),
+        ])
+    }
+
+    override func viewDidLayoutSubviews() {
+        super.viewDidLayoutSubviews()
+        layoutCropWindow()
+        // 首帧与旋转后（滚动区尺寸变了）都重算缩放、回到盖满居中。
+        if !didSetupZoom || scrollView.bounds.size != lastZoomBounds {
+            didSetupZoom = true
+            setupImageZoom()
+        }
+    }
+
+    /// 裁剪窗：正方形，边长 = 滚动区短边 - 32，居中；遮罩四块 + 白框按窗定位。
+    private func layoutCropWindow() {
+        let bounds = scrollView.bounds
+        guard bounds.width > 0 && bounds.height > 0 else { return }
+        let side = max(min(bounds.width, bounds.height) - 32, 0)
+        let rectInScroll = CGRect(x: (bounds.width - side) / 2, y: (bounds.height - side) / 2, width: side, height: side)
+        let origin = scrollView.frame.origin
+        cropRect = CGRect(x: origin.x + rectInScroll.minX, y: origin.y + rectInScroll.minY, width: side, height: side)
+        cropBorderView.frame = cropRect
+        if dimViews.count == 4 {
+            let scrollFrame = scrollView.frame
+            dimViews[0].frame = CGRect(x: scrollFrame.minX, y: scrollFrame.minY, width: scrollFrame.width, height: cropRect.minY - scrollFrame.minY)
+            dimViews[1].frame = CGRect(x: scrollFrame.minX, y: cropRect.maxY, width: scrollFrame.width, height: scrollFrame.maxY - cropRect.maxY)
+            dimViews[2].frame = CGRect(x: scrollFrame.minX, y: cropRect.minY, width: cropRect.minX - scrollFrame.minX, height: cropRect.height)
+            dimViews[3].frame = CGRect(x: cropRect.maxX, y: cropRect.minY, width: scrollFrame.maxX - cropRect.maxX, height: cropRect.height)
+        }
+    }
+
+    /// 图按滚动区等比适配；最小缩放 = 刚好盖满裁剪窗（窗内永不露底），初始即该缩放并居中。
+    private func setupImageZoom() {
+        let bounds = scrollView.bounds
+        guard bounds.width > 0 && bounds.height > 0 else { return }
+        let imageSize = sourceImage.size
+        guard imageSize.width > 0 && imageSize.height > 0 else { return }
+        lastZoomBounds = bounds.size
+        let fitScale = min(bounds.width / imageSize.width, bounds.height / imageSize.height)
+        let fitted = CGSize(width: imageSize.width * fitScale, height: imageSize.height * fitScale)
+        imageView.frame = CGRect(origin: .zero, size: fitted)
+        scrollView.contentSize = fitted
+        let side = max(min(bounds.width, bounds.height) - 32, 0)
+        let coverScale = max(side / fitted.width, side / fitted.height)
+        scrollView.minimumZoomScale = coverScale
+        scrollView.maximumZoomScale = max(coverScale * 4, coverScale + 1)
+        scrollView.zoomScale = coverScale
+        let offsetX = max((scrollView.contentSize.width - bounds.width) / 2, 0)
+        let offsetY = max((scrollView.contentSize.height - bounds.height) / 2, 0)
+        scrollView.contentOffset = CGPoint(x: offsetX, y: offsetY)
+    }
+
+    func viewForZooming(in scrollView: UIScrollView) -> UIView? {
+        return imageView
+    }
+
+    func scrollViewDidZoom(_ scrollView: UIScrollView) {
+        // 内容小于滚动区时居中（否则缩放后图会贴一边）；center 不受缩放变换影响。
+        let boundsSize = scrollView.bounds.size
+        let offsetX = max((boundsSize.width - scrollView.contentSize.width) * 0.5, 0)
+        let offsetY = max((boundsSize.height - scrollView.contentSize.height) * 0.5, 0)
+        imageView.center = CGPoint(x: scrollView.contentSize.width * 0.5 + offsetX, y: scrollView.contentSize.height * 0.5 + offsetY)
+    }
+
+    @objc private func didTapConfirm() {
+        if let cropped = croppedImage() {
+            onConfirm?(cropped)
+        }
+        dismiss(animated: !UIAccessibility.isReduceMotionEnabled)
+    }
+
+    @objc private func didTapCancel() {
+        dismiss(animated: !UIAccessibility.isReduceMotionEnabled)
+    }
+
+    /// 按窗裁：窗（view 坐标）→ 滚动区坐标 → 图视图坐标（convert 计入缩放变换）
+    /// → 点坐标 → 像素坐标；先把原图方向归一化再裁，避免朝向图的像素坐标错位。
+    private func croppedImage() -> UIImage? {
+        guard cropRect.width > 0 && cropRect.height > 0 else { return nil }
+        guard imageView.bounds.width > 0 && imageView.bounds.height > 0 else { return nil }
+        let rectInScroll = scrollView.convert(cropRect, from: view)
+        let rectInImageView = imageView.convert(rectInScroll, from: scrollView)
+        // 方向归一化：按 size 重绘，原朝向 baked 进像素，cgImage 尺寸即 size×scale。
+        let format = UIGraphicsImageRendererFormat()
+        format.scale = sourceImage.scale
+        let normalized = UIGraphicsImageRenderer(size: sourceImage.size, format: format).image { _ in
+            sourceImage.draw(in: CGRect(origin: .zero, size: sourceImage.size))
+        }
+        guard let cgImage = normalized.cgImage else { return nil }
+        let scaleX = normalized.size.width / imageView.bounds.width
+        let scaleY = normalized.size.height / imageView.bounds.height
+        var pixelRect = CGRect(
+            x: rectInImageView.minX * scaleX,
+            y: rectInImageView.minY * scaleY,
+            width: rectInImageView.width * scaleX,
+            height: rectInImageView.height * scaleY
+        )
+        pixelRect = pixelRect.integral
+        pixelRect = pixelRect.intersection(CGRect(origin: .zero, size: normalized.size))
+        guard pixelRect.width > 0 && pixelRect.height > 0 else { return nil }
+        // cgImage 按像素裁：点坐标须乘 scale（size 是 pt，cgImage 是像素）。
+        let cgRect = CGRect(
+            x: pixelRect.minX * normalized.scale,
+            y: pixelRect.minY * normalized.scale,
+            width: pixelRect.width * normalized.scale,
+            height: pixelRect.height * normalized.scale
+        )
+        guard let croppedCG = cgImage.cropping(to: cgRect) else { return nil }
+        return UIImage(cgImage: croppedCG, scale: normalized.scale, orientation: .up)
     }
 }
 
@@ -3643,7 +4089,7 @@ private final class ComposerImageItem {
 //    （复选框只写本地状态，不触发重渲染）；编辑模式锁定只展示（服务端 PUT 不接受 recipient，
 //    改不了；无收信人时整区隐藏，网页编辑态同款）。
 //    引用：qp-mode 面板三 tab（我的日记 timeline / 赞过的 liked / 收藏的 saved），行是完整
-//    lite 卡（头像 40 + 名 + 日期 + 全文 + 118 图片条 + 投递中 pill + Plus 皇冠）；服务端
+//    lite 卡（头像 40 + 名 + 日期 + 全文 + 118 图片条 + 投递中 pill；Plus 皇冠已取消显示）；服务端
 //    validQuoteId 只接受本人日记，非本人 picks 仍会被服务端静默丢弃（与网页行为一致）；
 //    编辑模式引用可改可删（PUT 带新 quote_id，删为空时服务端按 null 写）；内容为空的引用
 //    视为已删，不回填、保存时即丢弃（与网页编辑同款）。

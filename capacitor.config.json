@@ -3,7 +3,6 @@
   "appName": "beary",
   "webDir": "www",
   "server": {
-    "url": "https://teddyhn.com/beary",
     "cleartext": false
   },
   "ios": {

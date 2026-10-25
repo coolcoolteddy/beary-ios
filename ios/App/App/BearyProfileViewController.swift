@@ -64,22 +64,28 @@ struct BearyUserProfile: Decodable {
     var movedFrom: String?
     var movedTo: String?
 
+    // R3 根因修复：BearyAPI 的 decoder 用 convertFromSnakeCase（BearyAPI.swift
+    // 约 267 行），会先把服务端 display_name/avatar_url 等转成 camelCase 再匹配；
+    // 此前这里写了 snake_case rawValue，与策略叠加后全部多词字段恒为 nil
+    // （名退化为 TA、handle 隐藏、头像变首字母、统计全为 —）。
+    // 修法与 TrashItem 既有规矩一致：只写 camelCase 名，唯一保留的显式映射
+    // 是 profileIdValue = "id"（属性名避裸 id，服务端键本身就是 id，不受策略影响）。
     enum CodingKeys: String, CodingKey {
         case profileIdValue = "id"
-        case displayName = "display_name"
-        case handle = "handle"
-        case avatarUrl = "avatar_url"
-        case coverUrl = "cover_url"
-        case createdAt = "created_at"
-        case diaryCount = "diary_count"
-        case likesReceived = "likes_received"
-        case emotesReceived = "emotes_received"
-        case emotesTotal = "emotes_total"
-        case plus = "plus"
-        case plusFree = "plus_free"
-        case wornBadge = "worn_badge"
-        case movedFrom = "moved_from"
-        case movedTo = "moved_to"
+        case displayName
+        case handle
+        case avatarUrl
+        case coverUrl
+        case createdAt
+        case diaryCount
+        case likesReceived
+        case emotesReceived
+        case emotesTotal
+        case plus
+        case plusFree
+        case wornBadge
+        case movedFrom
+        case movedTo
     }
 }
 
@@ -210,6 +216,11 @@ class BearyProfileViewController: UIViewController {
     // MARK: - 状态
 
     private var profile: BearyUserProfile?
+    /// 头像重试目标：applyProfile 写入，失败回退与重试共用（旧失败不覆盖
+    /// 新图靠 onFailure 内的 URL 比对）。
+    private var headerAvatarURL: URL?
+    /// 头像失败时恢复的首字母（与当前显示名同源）。
+    private var avatarFallbackLetter: String?
     private var profileLoadFailed = false
     private var currentTab: ProfileTab = .diary
     private var diaryEntries: [Entry] = []
@@ -231,6 +242,11 @@ class BearyProfileViewController: UIViewController {
     private var wornBadgeKey: String?
     private var tabBackgroundTab: ProfileTab?
     private var rowTapGuardUntil: Date?
+    /// 清单 2 滚动藏栏（个人主页部分）：与首页／时间线同款 120pt 阈值；
+    /// 本页主滚动视图即 tableView（头部为 tableHeaderView、contentInset.top = 0，
+    /// offset 语义与首页一致，无需自定阈值）。
+    private var profileChromeHidden = false
+    private var profileLastScrollOffsetY: CGFloat = 0
 
     /// 本人判定：viewer 已登录且 profile id 与 viewer 一致；handle 目标在 profile
     /// 解析前按 id 预判（id 目标且与 viewer 相同）先行显示本人元素，解析后复核。
@@ -312,6 +328,19 @@ class BearyProfileViewController: UIViewController {
         return labelValue
     }()
 
+    /// 头像失败重试图标（R3 次因）：失败时才出现，点它重载头像；
+    /// 成功/加载中保持隐藏。后加于首字母 label 之上，保证可点按。
+    private lazy var avatarRetryButton: UIButton = {
+        let buttonValue = UIButton(type: .system)
+        buttonValue.translatesAutoresizingMaskIntoConstraints = false
+        buttonValue.setImage(BearyIconImages.image(named: "icon_refresh", pointSize: 20), for: .normal)
+        buttonValue.tintColor = BearyColors.ink
+        buttonValue.accessibilityLabel = "重新加载头像"
+        buttonValue.isHidden = true
+        buttonValue.addTarget(self, action: #selector(avatarRetryButtonTapped), for: .touchUpInside)
+        return buttonValue
+    }()
+
     private lazy var editButton: UIButton = {
         let buttonValue = UIButton(type: .system)
         buttonValue.translatesAutoresizingMaskIntoConstraints = false
@@ -352,6 +381,9 @@ class BearyProfileViewController: UIViewController {
         if let crownImage = UIImage(named: "crown") {
             imageViewValue.image = crownImage
         }
+        // 清单 14 主页部分：皇冠会员标始终隐藏（资产与 plus 数据不动），
+        // 工厂态即隐藏，避免资料加载前首帧闪出皇冠。
+        imageViewValue.isHidden = true
         return imageViewValue
     }()
 
@@ -385,6 +417,17 @@ class BearyProfileViewController: UIViewController {
         imageViewValue.contentMode = .scaleAspectFit
         imageViewValue.isHidden = true
         return imageViewValue
+    }()
+
+    /// 邮箱行（审计 N4 主页部分）：仅本人显示，字体/颜色与 handle 同款 13 灰；
+    /// 他人主页由 applyEmailRow 强制隐藏（见该方法）。
+    private let emailLabel: UILabel = {
+        let labelValue = UILabel()
+        labelValue.translatesAutoresizingMaskIntoConstraints = false
+        labelValue.font = UIFont.systemFont(ofSize: 13)
+        labelValue.textColor = BearyColors.gray
+        labelValue.isHidden = true
+        return labelValue
     }()
 
     private let publicCountLabel: UILabel = {
@@ -591,6 +634,10 @@ class BearyProfileViewController: UIViewController {
     private lazy var topBarHeightConstraint: NSLayoutConstraint = topBarView.heightAnchor.constraint(equalToConstant: 0)
     private lazy var headerShareToGearConstraint: NSLayoutConstraint = headerShareButton.trailingAnchor.constraint(equalTo: gearButton.leadingAnchor, constant: -8)
     private lazy var headerShareToHeaderConstraint: NSLayoutConstraint = headerShareButton.trailingAnchor.constraint(equalTo: headerView.trailingAnchor, constant: -28)
+    /// 统计行顶约束二选一（邮箱行用）：有邮箱时统计顶贴邮箱下 13，
+    /// 无邮箱时统计顶贴 handle 下 13，与旧间距完全一致。
+    private lazy var statsTopWithEmailConstraint: NSLayoutConstraint = publicCountLabel.topAnchor.constraint(equalTo: emailLabel.bottomAnchor, constant: 13)
+    private lazy var statsTopWithoutEmailConstraint: NSLayoutConstraint = publicCountLabel.topAnchor.constraint(equalTo: handleLabel.bottomAnchor, constant: 13)
     private lazy var tableLeadingConstraint: NSLayoutConstraint = tableView.leadingAnchor.constraint(equalTo: view.leadingAnchor)
     private lazy var tableTrailingConstraint: NSLayoutConstraint = tableView.trailingAnchor.constraint(equalTo: view.trailingAnchor)
     private lazy var tableCenterXConstraint: NSLayoutConstraint = tableView.centerXAnchor.constraint(equalTo: view.centerXAnchor)
@@ -661,6 +708,12 @@ class BearyProfileViewController: UIViewController {
         super.viewWillAppear(animated)
         // 回到本页 = 上一层已关，行点按守卫清零（防连点叠页的另一半）。
         rowTapGuardUntil = nil
+        // 清单 2 滚动藏栏复位：回到本页时栏恢复可见（animated: false，避免进页先闪一下栏）；
+        // lastY 取当前真实 offset（不硬置 0），否则返回时列表停在下方、
+        // 第一次上滑会被误判为下滑而藏栏。FAB 同隐同现由容器 helper 负责。
+        profileChromeHidden = false
+        profileLastScrollOffsetY = tableView.contentOffset.y
+        UIApplication.shared.connectedScenes.compactMap({ $0.delegate as? SceneDelegate }).first?.setChromeHidden(false, animated: false)
         updateTopBarVisibility()
     }
 
@@ -744,6 +797,7 @@ class BearyProfileViewController: UIViewController {
         headerView.addSubview(coverImageView)
         headerView.addSubview(avatarImageView)
         headerView.addSubview(avatarLetterLabel)
+        headerView.addSubview(avatarRetryButton)
         headerView.addSubview(editButton)
         headerView.addSubview(gearButton)
         headerView.addSubview(headerShareButton)
@@ -753,6 +807,7 @@ class BearyProfileViewController: UIViewController {
         headerView.addSubview(handleLabel)
         headerView.addSubview(joinedIconView)
         headerView.addSubview(joinedLabel)
+        headerView.addSubview(emailLabel)
         headerView.addSubview(publicCountLabel)
         headerView.addSubview(likesCountLabel)
         headerView.addSubview(wallContainer)
@@ -803,6 +858,10 @@ class BearyProfileViewController: UIViewController {
             avatarLetterLabel.trailingAnchor.constraint(equalTo: avatarImageView.trailingAnchor),
             avatarLetterLabel.topAnchor.constraint(equalTo: avatarImageView.topAnchor),
             avatarLetterLabel.bottomAnchor.constraint(equalTo: avatarImageView.bottomAnchor),
+            avatarRetryButton.centerXAnchor.constraint(equalTo: avatarImageView.centerXAnchor),
+            avatarRetryButton.centerYAnchor.constraint(equalTo: avatarImageView.centerYAnchor),
+            avatarRetryButton.widthAnchor.constraint(equalToConstant: 44),
+            avatarRetryButton.heightAnchor.constraint(equalToConstant: 44),
 
             editButton.trailingAnchor.constraint(equalTo: headerView.trailingAnchor, constant: -28),
             editButton.bottomAnchor.constraint(equalTo: avatarImageView.bottomAnchor),
@@ -837,7 +896,11 @@ class BearyProfileViewController: UIViewController {
             joinedLabel.leadingAnchor.constraint(equalTo: joinedIconView.trailingAnchor, constant: 4),
             joinedLabel.trailingAnchor.constraint(lessThanOrEqualTo: headerView.trailingAnchor, constant: -28),
 
-            publicCountLabel.topAnchor.constraint(equalTo: handleLabel.bottomAnchor, constant: 13),
+            emailLabel.topAnchor.constraint(equalTo: handleLabel.bottomAnchor, constant: 8),
+            emailLabel.leadingAnchor.constraint(equalTo: headerView.leadingAnchor, constant: 28),
+            emailLabel.trailingAnchor.constraint(lessThanOrEqualTo: headerView.trailingAnchor, constant: -28),
+
+            statsTopWithoutEmailConstraint,
             publicCountLabel.leadingAnchor.constraint(equalTo: headerView.leadingAnchor, constant: 28),
             publicTextLabel.centerYAnchor.constraint(equalTo: publicCountLabel.centerYAnchor),
             publicTextLabel.leadingAnchor.constraint(equalTo: publicCountLabel.trailingAnchor, constant: 4),
@@ -973,6 +1036,7 @@ class BearyProfileViewController: UIViewController {
             currentTab = .diary
         }
         applyTabSelection()
+        applyEmailRow()
         updateTopBarVisibility()
     }
 
@@ -1190,15 +1254,21 @@ class BearyProfileViewController: UIViewController {
         publicCountLabel.text = profileValue.diaryCount.map { "\($0)" } ?? "—"
         likesCountLabel.text = profileValue.likesReceived.map { "\($0)" } ?? "—"
 
-        // 头像：有图盖住首字母位，无图透出首字母（与列表页同款回退）。
+        // 头像：有图盖住首字母位，无图透出首字母（与列表页同款回退）；
+        // 有图时的加载与失败回退走 startHeaderAvatarLoad（失败显式恢复首字母 + 出重试图标）。
         if let avatarPath = profileValue.avatarUrl, let avatarURLValue = BearyImageURLs.avatarURL(avatarPath) {
-            avatarLetterLabel.isHidden = true
-            avatarImageView.bearySetImage(url: avatarURLValue, placeholder: nil)
+            headerAvatarURL = avatarURLValue
+            avatarFallbackLetter = String(displayNameValue.prefix(1)).uppercased()
+            startHeaderAvatarLoad()
         } else {
+            headerAvatarURL = nil
+            avatarFallbackLetter = String(displayNameValue.prefix(1)).uppercased()
+            avatarRetryButton.isHidden = true
             avatarImageView.image = nil
             avatarLetterLabel.isHidden = false
-            avatarLetterLabel.text = String(displayNameValue.prefix(1)).uppercased()
+            avatarLetterLabel.text = avatarFallbackLetter
         }
+        applyEmailRow()
 
         // 封面带：有封面时 180 高 + 头像 -52 半压 + 3.5 bg 边；无封面时头顶距 20。
         // L17：空字符串不再算有封面——须非空且能拼出 URL 才算。
@@ -1214,7 +1284,7 @@ class BearyProfileViewController: UIViewController {
         avatarTopWithoutCoverConstraint.isActive = !hasCover
         avatarImageView.layer.borderWidth = hasCover ? 3.5 : 0
 
-        // BETA 佩戴徽章（23，主页面口径）与 Plus 皇冠（23，主页面口径）。
+        // BETA 佩戴徽章（23，主页面口径）；皇冠位保留布局但清单 14 起始终隐藏（见下）。
         // I8：取不到图时用占位图（并打日志），不再静默隐藏徽章位。
         if let badgeKey = profileValue.wornBadge, !badgeKey.isEmpty, let badgeImage = BearyBadgeImages.imageOrPlaceholder(for: badgeKey) {
             badgeImageView.image = badgeImage
@@ -1223,7 +1293,9 @@ class BearyProfileViewController: UIViewController {
             badgeImageView.image = nil
             badgeImageView.isHidden = true
         }
-        crownImageView.isHidden = !(profileValue.plus ?? false)
+        // 清单 14 主页部分：皇冠会员标一律隐藏（资产与 plus 数据不动，
+        // 仅不展示；BETA 徽章位不受影响）。旧逻辑按 plus 显隐，已废止。
+        crownImageView.isHidden = true
         // 无佩戴徽章时皇冠改贴名字，避免隐藏徽章占位造成的 39pt 空隙。
         let badgeVisible = badgeImageView.isHidden == false
         crownLeadingToBadgeConstraint?.isActive = badgeVisible
@@ -1234,6 +1306,50 @@ class BearyProfileViewController: UIViewController {
         applyWall()
         updateDynamicLayerColors()
         layoutHeaderForced(widthValue: headerWidthValue)
+    }
+
+    /// 头像加载（含失败回退）：起手先藏重试图标 + 藏首字母（与旧行为一致，
+    /// 加载中只露 faint 底）；bearySetImage 成功时无回调，图标保持隐藏即
+    /// “成功后图标消失”；失败时 onFailure 显式恢复首字母并出重试图标。
+    /// 层级注意：本文件先加头像视图后加首字母 label，失败时必须显式把
+    /// label.isHidden 置回 false，否则 label 仍被加载前的隐藏态盖住。
+    private func startHeaderAvatarLoad() {
+        guard let avatarURLValue = headerAvatarURL else { return }
+        avatarRetryButton.isHidden = true
+        avatarLetterLabel.isHidden = true
+        avatarImageView.bearySetImage(url: avatarURLValue, placeholder: nil, onFailure: { [weak self] _ in
+            DispatchQueue.main.async {
+                guard let strongSelf = self, strongSelf.headerAvatarURL == avatarURLValue else { return }
+                strongSelf.avatarImageView.image = nil
+                strongSelf.avatarLetterLabel.isHidden = false
+                if let letter = strongSelf.avatarFallbackLetter {
+                    strongSelf.avatarLetterLabel.text = letter
+                }
+                strongSelf.avatarRetryButton.isHidden = false
+            }
+        })
+    }
+
+    @objc private func avatarRetryButtonTapped() {
+        startHeaderAvatarLoad()
+    }
+
+    /// 邮箱行（审计 N4 主页部分）：仅本人显示登录邮箱，他人绝不显示。
+    /// 邮箱不在 profilePayload 里，取 SessionManager 现有登录用户 MeUser.email；
+    /// 统计行顶约束随邮箱显隐二选一，隐藏时与旧间距（handle 下 13）完全一致。
+    private func applyEmailRow() {
+        let own = isOwnProfile
+        if own, let emailText = SessionManager.shared.currentUser?.email, !emailText.isEmpty {
+            emailLabel.text = emailText
+            emailLabel.isHidden = false
+            statsTopWithEmailConstraint.isActive = true
+            statsTopWithoutEmailConstraint.isActive = false
+        } else {
+            emailLabel.text = nil
+            emailLabel.isHidden = true
+            statsTopWithEmailConstraint.isActive = false
+            statsTopWithoutEmailConstraint.isActive = true
+        }
     }
 
     // MARK: - 小熊回应墙（P1）与徽章架（P2）
@@ -1399,6 +1515,8 @@ class BearyProfileViewController: UIViewController {
         let badgeVisible = badgeImageView.isHidden == false
         crownLeadingToBadgeConstraint?.isActive = badgeVisible
         crownLeadingToNameConstraint?.isActive = !badgeVisible
+        // 清单 14：佩戴刷新也不复活皇冠（始终隐藏）。
+        crownImageView.isHidden = true
         updateNameTrailingLimit()
         layoutHeaderForced(widthValue: headerWidthValue)
     }
@@ -1842,7 +1960,9 @@ class BearyProfileViewController: UIViewController {
 
     /// 分享链接：他人 u/<id>；本人 @<handle>（无 handle 时回退 u/<id>）。
     /// 注：网页 pfShare 在 id 已知时恒用 u/<id>（见交回注记），本实现按任务口径：
-    /// 本人优先 @handle。
+    /// 本人优先 @handle。R3 解码修复前 profile.handle 恒为 nil，本人分享曾
+    /// 退化为 u/<id>；修复后 handle 通路恢复，本人口径即为 @handle。
+    /// 任一分支取不到 handle 与 id 时返回 nil，绝不拼 broken 链接。
     private func shareProfileURL() -> URL? {
         if isOwnProfile {
             if let handle = profile?.handle, !handle.isEmpty {
@@ -2194,6 +2314,14 @@ extension BearyProfileViewController: UITableViewDataSource, UITableViewDelegate
         cellValue.onEmoteAdd = { [weak self] in self?.handleCellEmoteAdd(entry: entryValue) }
         cellValue.onQuoteTap = { [weak self] in self?.handleCellQuoteTap(entry: entryValue) }
         cellValue.onFoldToggle = { [weak self] in self?.handleCellFoldToggle(entryId: entryId) }
+        // N7 主页图片灯箱：复用详情文件内的查看器（详情 lane 已由 private 改为内部类），
+        // 全屏模态弹出，弹出方式与时间线同款（已弹出时不叠加、减动效直显）。
+        cellValue.onTapImages = { [weak self] keys, index in
+            guard let self = self, self.presentedViewController == nil else { return }
+            let viewer = BearyEntryImageViewerViewController(imageKeys: keys, startIndex: index)
+            viewer.modalPresentationStyle = .fullScreen
+            self.present(viewer, animated: UIAccessibility.isReduceMotionEnabled == false, completion: nil)
+        }
         return cellValue
     }
 
@@ -2214,6 +2342,38 @@ extension BearyProfileViewController: UITableViewDataSource, UITableViewDelegate
             loadMoreIfNeeded()
         }
     }
+
+    // MARK: - 清单 2 滚动隐藏栏（个人主页部分）
+
+    /// 主滚动视图即本表：向下滚过 120pt 藏栏、向上滚显栏；
+    /// 顶部回弹区（offset ≤ 0）一律显栏。栏态变化时才调容器 helper，
+    /// FAB 随栏同隐同现由容器 helper 内部负责，本页不直接碰 FAB。
+    /// 回调触发依据：tableView 懒初始化时已设 delegate = self（本文件列表节），
+    /// 且本扩展遵循 UITableViewDelegate，故 UIScrollViewDelegate 的
+    /// scrollViewDidScroll 由主表滚动触发；横滑墙（wall/badges）未设 delegate，
+    /// 即便触发也被 `=== tableView` 守卫挡下。
+    func scrollViewDidScroll(_ scrollView: UIScrollView) {
+        guard scrollView === tableView else { return }
+        let y = scrollView.contentOffset.y
+        defer { profileLastScrollOffsetY = y }
+        if y <= 0 {
+            if profileChromeHidden {
+                setProfileChromeHidden(false)
+            }
+            return
+        }
+        if y > profileLastScrollOffsetY && y > 120 && !profileChromeHidden {
+            setProfileChromeHidden(true)
+        } else if y < profileLastScrollOffsetY && profileChromeHidden {
+            setProfileChromeHidden(false)
+        }
+    }
+
+    private func setProfileChromeHidden(_ hidden: Bool) {
+        profileChromeHidden = hidden
+        // setChromeHidden 由容器 lane 在 SceneDelegate.swift 提供，本文件只调用。
+        UIApplication.shared.connectedScenes.compactMap({ $0.delegate as? SceneDelegate }).first?.setChromeHidden(hidden, animated: true)
+    }
 }
 
 // MARK: - 列表行（网页公开卡同款：写给标记 / 作者行 / 正文折叠 / 引用卡 /
@@ -2228,8 +2388,12 @@ private class BearyProfileEntryCell: UITableViewCell {
     var onEmoteAdd: (() -> Void)?
     var onQuoteTap: (() -> Void)?
     var onFoldToggle: (() -> Void)?
+    /// N7 主页图片灯箱：图片条点按回调（keys=本条图 key，index=点按位置），
+    /// VC 侧复用详情文件内的 BearyEntryImageViewerViewController 全屏弹出（时间线同款）。
+    var onTapImages: (([String], Int) -> Void)?
 
     private var chipKeys: [String] = []
+    private var currentImageKeys: [String] = []
 
     private let avatarImageView: UIImageView = {
         let imageViewValue = UIImageView()
@@ -2302,6 +2466,8 @@ private class BearyProfileEntryCell: UITableViewCell {
         if let crownImage = UIImage(named: "crown") {
             imageViewValue.image = crownImage
         }
+        // 清单 14 主页部分：列表行皇冠与头部皇冠同规则，始终隐藏。
+        imageViewValue.isHidden = true
         return imageViewValue
     }()
 
@@ -2562,7 +2728,9 @@ private class BearyProfileEntryCell: UITableViewCell {
         onEmoteAdd = nil
         onQuoteTap = nil
         onFoldToggle = nil
+        onTapImages = nil
         chipKeys = []
+        currentImageKeys = []
         for arrangedView in imagesStack.arrangedSubviews {
             imagesStack.removeArrangedSubview(arrangedView)
             arrangedView.removeFromSuperview()
@@ -2594,6 +2762,16 @@ private class BearyProfileEntryCell: UITableViewCell {
 
     @objc private func quoteTapped() {
         onQuoteTap?()
+    }
+
+    /// N7 主页图片条点按：下标取自 imageView.tag，keys 为 configure 存下的本条图 key；
+    /// 复用后手势随旧 imageView 一并移除，configure 重建时重新挂接，不留跨条目残留。
+    /// 手势截获此次点按，行点按进详情（didSelectRowAt）不再触发（时间线／首页同款守卫）；
+    /// 卡片其他区域无手势，仍走 didSelectRowAt 进详情。
+    @objc private func imageTapped(_ sender: UITapGestureRecognizer) {
+        let index = sender.view?.tag ?? 0
+        guard index >= 0, index < currentImageKeys.count else { return }
+        onTapImages?(currentImageKeys, index)
     }
 
     @objc private func emoteChipTapped(_ sender: UIButton) {
@@ -2628,7 +2806,8 @@ private class BearyProfileEntryCell: UITableViewCell {
         } else {
             recipientRow.isHidden = true
         }
-        // 作者徽章 + Plus 皇冠（Feed 行同口径：徽章 17、皇冠 19）。
+        // 作者徽章（BETA 等，照常显示）；Plus 皇冠按清单 14 始终隐藏，
+        // authorPlus 数据不动，仅不展示（旧逻辑按 authorPlus 显隐，已废止）。
         if let badgeKey = entry.authorBadge, !badgeKey.isEmpty, let badgeImage = BearyBadgeImages.image(for: badgeKey) {
             rowBadgeImageView.image = badgeImage
             rowBadgeImageView.isHidden = false
@@ -2636,7 +2815,7 @@ private class BearyProfileEntryCell: UITableViewCell {
             rowBadgeImageView.image = nil
             rowBadgeImageView.isHidden = true
         }
-        rowCrownImageView.isHidden = !((entry.authorPlus ?? 0) != 0)
+        rowCrownImageView.isHidden = true
         // 天气图标（icon_wx_<key>，取不到图时隐藏、不留空）。
         if let weatherKey = entry.weather, !weatherKey.isEmpty, let weatherImage = BearyIconImages.image(named: "icon_wx_" + weatherKey, pointSize: 15) {
             weatherImageView.image = weatherImage
@@ -2676,20 +2855,27 @@ private class BearyProfileEntryCell: UITableViewCell {
         }
         configureQuote(entry: entry)
         // 图片条 216 高、按宽高比定宽（原 stripW 口径）。
+        // N7 主页灯箱：详情文件内的 BearyEntryImageViewerViewController 已由 private
+        // 改为内部类，此处给图片加手势接灯箱（时间线同款：UIImageView 默认不接收触摸，
+        // 必须显式开启；手势截获此次点按，行点按进详情不再触发）。本文件不自复制查看器。
         let imageKeys = entry.images ?? []
+        currentImageKeys = imageKeys
         if imageKeys.isEmpty {
             imagesScrollView.isHidden = true
             imageHeightConstraint?.constant = 0
         } else {
             imagesScrollView.isHidden = false
             imageHeightConstraint?.constant = 216
-            for imageKey in imageKeys {
+            for (imageIndex, imageKey) in imageKeys.enumerated() {
                 let imageViewValue = UIImageView()
                 imageViewValue.translatesAutoresizingMaskIntoConstraints = false
                 imageViewValue.backgroundColor = BearyColors.faint
                 imageViewValue.contentMode = .scaleAspectFill
                 imageViewValue.clipsToBounds = true
                 imageViewValue.layer.cornerRadius = 12
+                imageViewValue.isUserInteractionEnabled = true
+                imageViewValue.tag = imageIndex
+                imageViewValue.addGestureRecognizer(UITapGestureRecognizer(target: self, action: #selector(imageTapped(_:))))
                 imageViewValue.bearySetImage(url: BearyImageURLs.imageURL(key: imageKey, thumb: true), placeholder: nil)
                 imagesStack.addArrangedSubview(imageViewValue)
                 NSLayoutConstraint.activate([

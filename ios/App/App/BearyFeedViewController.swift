@@ -15,6 +15,48 @@ private enum BearyFeedIconCache {
     }
 }
 
+// MARK: - 图片失败重试（清单第 13 项首页部分：主卡图片 + 头像）
+
+/// 纯图标重试钮（用户定形态就是图标，不要文字按钮）：28pt bg 色圆盘 + icon_refresh。
+/// 只由失败回调显示；点按先藏、重载成功后保持隐藏、再失败则重新出现。
+/// 加载中与成功态不碰——成功路径不回调，图标自然不会出现。
+private final class BearyFeedRetryButton: UIButton {
+    weak var targetImageView: UIImageView?
+    var retryURL: URL?
+}
+
+private func bearyFeedRetryButton(target: Any?, action: Selector) -> BearyFeedRetryButton {
+    let btn = BearyFeedRetryButton(type: .system)
+    btn.translatesAutoresizingMaskIntoConstraints = false
+    btn.setImage(BearyFeedIconCache.image(named: "icon_refresh", pointSize: 20), for: .normal)
+    btn.tintColor = BearyColors.gray
+    btn.backgroundColor = BearyColors.bg
+    btn.layer.cornerRadius = 14
+    btn.clipsToBounds = true
+    btn.isHidden = true
+    btn.accessibilityLabel = "重新加载图片"
+    btn.addTarget(target, action: action, for: .touchUpInside)
+    return btn
+}
+
+/// 经 bearySetImage 的 onFailure 钩子加载：失败（取消除外，复用取消不算失败）时亮重试图标。
+private func bearyFeedLoadImage(into imageView: UIImageView, url: URL?, retryButton: BearyFeedRetryButton) {
+    retryButton.targetImageView = imageView
+    retryButton.retryURL = url
+    retryButton.isHidden = true
+    imageView.bearySetImage(url: url, placeholder: nil, onFailure: { [weak retryButton] _ in
+        retryButton?.isHidden = false
+    })
+}
+
+private func bearyFeedPerformRetry(_ button: BearyFeedRetryButton) {
+    guard let imageView = button.targetImageView, let url = button.retryURL else { return }
+    button.isHidden = true
+    imageView.bearySetImage(url: url, placeholder: nil, onFailure: { [weak button] _ in
+        button?.isHidden = false
+    })
+}
+
 // ===== beary 原生列表页（全量对齐修复：广场 + 今日送达）=====
 // 一张 UITableView：section 0 今日送达、section 1 广场流。
 // 约束：部署目标 iOS 15.0、Swift 5.0——只用闭包回调，不用 async/await，
@@ -100,6 +142,11 @@ class BearyFeedViewController: UIViewController {
     /// 行/图点按防连点：上次导航时间，0.8 秒内重复点按直接丢弃。
     private var lastNavigationAt: Date?
     private var toastHideWorkItem: DispatchWorkItem?
+    /// 滚动藏栏（清单第 2 项首页部分）：上次处理的滚动偏移（2pt 死区内不更新，
+    /// 慢速滚动的位移可累积到位再判定方向）；feedChromeHidden 是本页已下发的栏态，
+    /// 态不变时不重复调容器，避免滚动事件刷屏。
+    private var lastFeedScrollOffsetY: CGFloat = 0
+    private var feedChromeHidden = false
 
     /// 有新内容 pill（网页 #newPill 口径：ink 底、bg 字、13 semibold、999 圆角、padding 9/16，
     /// 底部 92 + 安全区上方，点按应用待定内容并回顶）。
@@ -225,6 +272,11 @@ class BearyFeedViewController: UIViewController {
 
     override func viewWillAppear(_ animated: Bool) {
         super.viewWillAppear(animated)
+        // 滚动藏栏复位：回到本页时栏恢复可见（animated: false）；FAB 同隐同现由容器 helper 负责。
+        // 注意：容器 lane 在 SceneDelegate.swift 里提供 setChromeHidden，未落地前本文件单独编译不过（见交回 CI 风险）。
+        feedChromeHidden = false
+        lastFeedScrollOffsetY = tableView.contentOffset.y
+        UIApplication.shared.connectedScenes.compactMap({ $0.delegate as? SceneDelegate }).first?.setChromeHidden(false, animated: false)
         updateFootLogo()
         // G11：登录态翻转（登录/退出）时不走 60 秒门控，直接 refreshAll 重拉鉴权敏感的
         // delivered + 广场；容器 lane 在翻转时也会调 refreshFeed()，此处是兜底。
@@ -328,12 +380,13 @@ class BearyFeedViewController: UIViewController {
 
     // MARK: - 分享与失败提示
 
-    /// F9：分享 payload 统一为标题 + 正文前 60 字 + 深链（与详情 shareTapped 同口径）。
-    /// 四级回退（原生能力映射）：① 系统分享 sheet；② 已有 presented 时复制到剪贴板 + toast；
-    /// ③ sheet 回调带错时同样复制 + toast；④ 仍失败时弹 alert 明文给出链接。
+    /// F9：分享 payload 统一为标题 + 正文前 60 字 + 日记深链 d/<id>（与详情 shareTapped
+    /// 同口径：首页卡片分享的是日记本身，不是作者主页）。
+    /// 回退（原生能力映射）：① 系统分享 sheet；② 已有 presented 时复制到剪贴板 + toast；
+    /// ③ sheet 回调带错时同样复制 + toast。
     private func presentShareSheet(for entry: Entry) {
-        guard let entryIdValue = entry.id, !entryIdValue.isEmpty else { return }
-        guard let urlValue = URL(string: "https://teddyhn.com/beary/d/" + entryIdValue) else { return }
+        guard let entryIdValue = entry.id, !entryIdValue.isEmpty,
+              let urlValue = URL(string: "https://teddyhn.com/beary/d/" + entryIdValue) else { return }
         let shareText = (entry.content ?? "").replacingOccurrences(of: "\\s+", with: " ", options: .regularExpression)
         var items: [Any] = ["beary 日记"]
         if !shareText.isEmpty {
@@ -580,6 +633,9 @@ class BearyFeedViewController: UIViewController {
 
     // MARK: - 广场流
 
+    /// 清单第 7 项首页部分记为 deferred（不在此硬发明筛选）：网页端广场本无筛选入口，
+    /// 服务端只给 created_at DESC 顺序（fetchEntries 仅 scope/limit/before/before_id/author_id，
+    /// 无 sort/filter 参数）；客户端自排会打断 before 分页游标、且与网页口径脱节。
     private func loadPlazaFirstPage() {
         plazaLoading = true
         plazaError = false
@@ -1326,6 +1382,28 @@ extension BearyFeedViewController: UITableViewDataSource, UITableViewDelegate {
         loadPlazaNextPage()
     }
 
+    /// 滚动藏栏（清单第 2 项首页部分）：主滚动视图向下超过 120pt 后藏栏、向上即显栏；
+    /// 栏态变化时才调容器 helper（FAB 同隐同现由容器 helper 负责，本文件不动 FAB）。
+    /// 阈值 120pt 为本 lane 自定：避开顶部小幅滚动就藏栏；总协调可调。
+    func scrollViewDidScroll(_ scrollView: UIScrollView) {
+        guard scrollView === tableView else { return }
+        let y = scrollView.contentOffset.y
+        let delta = y - lastFeedScrollOffsetY
+        if delta > 2 {
+            lastFeedScrollOffsetY = y
+            if y > 120, feedChromeHidden == false {
+                feedChromeHidden = true
+                UIApplication.shared.connectedScenes.compactMap({ $0.delegate as? SceneDelegate }).first?.setChromeHidden(true, animated: true)
+            }
+        } else if delta < -2 {
+            lastFeedScrollOffsetY = y
+            if feedChromeHidden {
+                feedChromeHidden = false
+                UIApplication.shared.connectedScenes.compactMap({ $0.delegate as? SceneDelegate }).first?.setChromeHidden(false, animated: true)
+            }
+        }
+    }
+
     /// 今日送达头高度内容驱动（约 34 = 头顶 14 + 标题行高），不再固定 36。
     func tableView(_ tableView: UITableView, heightForHeaderInSection section: Int) -> CGFloat {
         if kind(for: section) == .delivered {
@@ -1561,6 +1639,12 @@ class BearyFeedCell: UITableViewCell {
         v.layer.cornerRadius = 20
         v.backgroundColor = BearyColors.line.withAlphaComponent(0)
         return v
+    }()
+
+    /// 头像失败重试钮（清单第 13 项）：放 avatarContainer 内（avatarImageView 的兄弟层，
+    /// 不拦截作者点按手势；隐藏时不占交互），失败时亮、点按重载头像。
+    private lazy var avatarRetryButton: BearyFeedRetryButton = {
+        return bearyFeedRetryButton(target: self, action: #selector(feedRetryTapped(_:)))
     }()
 
     // MARK: 右列
@@ -1810,6 +1894,7 @@ class BearyFeedCell: UITableViewCell {
         contentView.backgroundColor = BearyColors.bg
         avatarContainer.addSubview(avatarInitialLabel)
         avatarContainer.addSubview(avatarImageView)
+        avatarContainer.addSubview(avatarRetryButton)
         contentView.addSubview(avatarContainer)
         contentView.addSubview(rightStack)
         imagesScrollView.addSubview(imagesStack)
@@ -1850,6 +1935,10 @@ class BearyFeedCell: UITableViewCell {
             avatarImageView.leadingAnchor.constraint(equalTo: avatarContainer.leadingAnchor),
             avatarImageView.trailingAnchor.constraint(equalTo: avatarContainer.trailingAnchor),
             avatarImageView.bottomAnchor.constraint(equalTo: avatarContainer.bottomAnchor),
+            avatarRetryButton.centerXAnchor.constraint(equalTo: avatarContainer.centerXAnchor),
+            avatarRetryButton.centerYAnchor.constraint(equalTo: avatarContainer.centerYAnchor),
+            avatarRetryButton.widthAnchor.constraint(equalToConstant: 28),
+            avatarRetryButton.heightAnchor.constraint(equalToConstant: 28),
             rightTop,
             rightStack.leadingAnchor.constraint(equalTo: avatarContainer.trailingAnchor, constant: 12),
             rightStack.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -20),
@@ -1956,6 +2045,8 @@ class BearyFeedCell: UITableViewCell {
         bookmarkButton.isEnabled = true
         avatarImageView.bearySetImage(url: nil, placeholder: nil)
         avatarInitialLabel.text = nil
+        avatarRetryButton.isHidden = true
+        avatarRetryButton.retryURL = nil
         recipientRow.isHidden = true
         recipientLabel.text = nil
         for view in imagesStack.arrangedSubviews {
@@ -2194,6 +2285,7 @@ class BearyFeedCell: UITableViewCell {
         }
 
         // F4：头像。无 URL 时 imageView 为空、背后首字母圆透出；有 URL 时照片盖住首字母。
+        // 失败时 avatarRetryButton 亮重试图标（无 URL 不算失败，不亮）。
         let authorNameValue = displayAuthorName(entry.authorName)
         avatarInitialLabel.text = String(authorNameValue.prefix(1)).uppercased()
         if !authorTapInstalled {
@@ -2203,7 +2295,7 @@ class BearyFeedCell: UITableViewCell {
             avatarImageView.addGestureRecognizer(UITapGestureRecognizer(target: self, action: #selector(authorTapped)))
             nameLabel.addGestureRecognizer(UITapGestureRecognizer(target: self, action: #selector(authorTapped)))
         }
-        avatarImageView.bearySetImage(url: BearyImageURLs.avatarURL(entry.authorAvatar), placeholder: nil)
+        bearyFeedLoadImage(into: avatarImageView, url: BearyImageURLs.avatarURL(entry.authorAvatar), retryButton: avatarRetryButton)
 
         // F12：写给标签只在当前用户就是收件人时显示“写给你的”（网页 renderPublic 同口径）；
         // 作者视角“写给 X”分支已删除——公开卡上作者本人不显示该行。
@@ -2215,9 +2307,10 @@ class BearyFeedCell: UITableViewCell {
             recipientLabel.text = nil
         }
 
-        // F2/F13：名 16.5 粗体 + BETA 徽章图 + Plus 皇冠。
-        // 网页拼法：名后先徽章（.card-bdg 17×17）再皇冠；徽章走本地全彩 PNG
-        // （BearyBadgeImages，badges/v5/<key>-static.svg 渲染），取不到图时隐藏、不留空位。
+        // F2/F13：名 16.5 粗体 + BETA 徽章图。Plus 皇冠按清单第 14 项首页部分在 App 端
+        // 取消显示：一律隐藏（crown 资产与 entry.authorPlus 数据不动；BETA 徽章不动）。
+        // 无残留空位：crownImageView 是 titleStack 的 arrangedSubview，隐藏后 stack 自动
+        // 将其尺寸压为 0，间距只算在可见项之间；19pt 宽约束是 999 优先级，不与压零冲突。
         nameLabel.text = authorNameValue
         if let badgeKey = entry.authorBadge, !badgeKey.isEmpty, let badgeImage = BearyBadgeImages.image(for: badgeKey) {
             badgeImageView.image = badgeImage
@@ -2226,8 +2319,7 @@ class BearyFeedCell: UITableViewCell {
             badgeImageView.image = nil
             badgeImageView.isHidden = true
         }
-        // I4：资产缺失（image 为 nil）时同样隐藏，不留空位。
-        crownImageView.isHidden = !((entry.authorPlus ?? 0) != 0) || crownImageView.image == nil
+        crownImageView.isHidden = true
 
         // F3：时间。
         timeLabel.text = BearyFeedCell.feedTimeString(ms: entry.createdAt ?? 0)
@@ -2276,7 +2368,17 @@ class BearyFeedCell: UITableViewCell {
                 iv.layer.cornerRadius = 12
                 iv.backgroundColor = BearyColors.line
                 iv.isUserInteractionEnabled = true
-                iv.bearySetImage(url: BearyImageURLs.imageURL(key: key, thumb: true), placeholder: nil)
+                // 失败时图中央亮纯图标重试钮（无文字）；点按重载该图，成功后图标消失。
+                // 重试钮是 iv 的子视图，随复用丢弃，不残留。
+                let retry = bearyFeedRetryButton(target: self, action: #selector(feedRetryTapped(_:)))
+                iv.addSubview(retry)
+                NSLayoutConstraint.activate([
+                    retry.centerXAnchor.constraint(equalTo: iv.centerXAnchor),
+                    retry.centerYAnchor.constraint(equalTo: iv.centerYAnchor),
+                    retry.widthAnchor.constraint(equalToConstant: 28),
+                    retry.heightAnchor.constraint(equalToConstant: 28),
+                ])
+                bearyFeedLoadImage(into: iv, url: BearyImageURLs.imageURL(key: key, thumb: true), retryButton: retry)
                 iv.tag = imageIndex
                 let tap = UITapGestureRecognizer(target: self, action: #selector(imageTapped(_:)))
                 iv.addGestureRecognizer(tap)
@@ -2465,10 +2567,20 @@ class BearyFeedCell: UITableViewCell {
     // MARK: - 交互
 
     /// F1：点图进查看器（带下标）；正文点按已由 contentTapped 截住，不会走到行导航。
+    /// 重试图标可见时点按只走重试，不进查看器（钮是 iv 子视图，父层手势可能同收该点按）。
     @objc private func imageTapped(_ sender: UITapGestureRecognizer) {
+        if let iv = sender.view as? UIImageView,
+           iv.subviews.contains(where: { ($0 as? BearyFeedRetryButton)?.isHidden == false }) {
+            return
+        }
         let index = sender.view?.tag ?? 0
         if index < 0 || index >= currentImageKeys.count { return }
         onImageTapped?(index)
+    }
+
+    /// 图片重试（头像与图片条共用）：先藏图标再重载，成功保持隐藏、再失败重新亮起。
+    @objc private func feedRetryTapped(_ sender: BearyFeedRetryButton) {
+        bearyFeedPerformRetry(sender)
     }
 
     /// F6：展开/收起即时切换，不加透明度动画；行高重算走 reloadRows(.none)。

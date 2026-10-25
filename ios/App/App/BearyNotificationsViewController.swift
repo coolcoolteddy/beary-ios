@@ -134,6 +134,10 @@ final class BearyNotificationsViewController: UIViewController {
     }()
 
     /// 顶部“全部已读”（网页 .nt-readall：14/600 灰、check 14、图标右 gap 4、padding 4/6）。
+    /// 宽度约束见下：点赞按钮同款问题——UIButton 固有宽不含 titleEdgeInsets，
+    /// 无显式宽度时标题会被裁掉边距量，故按实测字宽给足宽度。
+    private var readAllButtonWidthConstraint: NSLayoutConstraint?
+
     private lazy var readAllButton: UIButton = {
         let button = UIButton(type: .system)
         button.translatesAutoresizingMaskIntoConstraints = false
@@ -145,6 +149,10 @@ final class BearyNotificationsViewController: UIViewController {
         button.contentEdgeInsets = UIEdgeInsets(top: 4, left: 6, bottom: 4, right: 6)
         button.titleEdgeInsets = UIEdgeInsets(top: 0, left: 4, bottom: 0, right: 0)
         button.addTarget(self, action: #selector(readAllTapped), for: .touchUpInside)
+        let titleWidth = ceil(("全部已读" as NSString).size(withAttributes: [NSAttributedString.Key.font: UIFont.systemFont(ofSize: 14, weight: .semibold)]).width)
+        let width = button.widthAnchor.constraint(equalToConstant: 6 + (button.currentImage?.size.width ?? 14) + 4 + titleWidth + 6)
+        width.isActive = true
+        readAllButtonWidthConstraint = width
         return button
     }()
 
@@ -243,6 +251,10 @@ final class BearyNotificationsViewController: UIViewController {
     }()
 
     /// 态内按钮（列表页失败态同款：高 40、圆角 20、1px line 描边、14 ink、图标 15、图标右 gap 6）。
+    /// 宽度约束不在此创建：标题与图标只在失败态才赋值（见 applyVisibleState），
+    /// 由 updateStateButtonWidth 在赋值后按实测字宽创建/更新（点赞按钮同款修法）。
+    private var stateButtonWidthConstraint: NSLayoutConstraint?
+
     private lazy var stateButton: UIButton = {
         let button = UIButton(type: .system)
         button.translatesAutoresizingMaskIntoConstraints = false
@@ -691,6 +703,7 @@ final class BearyNotificationsViewController: UIViewController {
         isMarkingAllRead = true
         readAllButton.isEnabled = false
         readAllButton.setTitle("处理中…", for: .normal)
+        updateReadAllButtonWidth()
         // 全部已读不等乐观更新：成功后才整批置已读（网页 ntReadAll 同款）。
         BearyAPI.shared.markNotificationRead(id: nil) { [weak self] result in
             DispatchQueue.main.async {
@@ -698,6 +711,7 @@ final class BearyNotificationsViewController: UIViewController {
                 strongSelf.isMarkingAllRead = false
                 strongSelf.readAllButton.isEnabled = true
                 strongSelf.readAllButton.setTitle("全部已读", for: .normal)
+                strongSelf.updateReadAllButtonWidth()
                 switch result {
                 case .success:
                     for index in strongSelf.items.indices {
@@ -840,6 +854,40 @@ final class BearyNotificationsViewController: UIViewController {
         readAllButton.isHidden = unreadTotal <= 0
     }
 
+    /// 点赞按钮同款宽度修法：显式宽度 = 内容边距 + 图宽 + 标题边距 + 实测标题宽；
+    /// 固有宽不含 titleEdgeInsets，不给足会在标题末尾裁掉边距量。
+    /// 每次改标题后调用（“全部已读”↔“处理中…”两态字宽不同）。
+    private func updateReadAllButtonWidth() {
+        let titleText = readAllButton.currentTitle ?? ""
+        let font = readAllButton.titleLabel?.font ?? UIFont.systemFont(ofSize: 14, weight: .semibold)
+        let titleWidth = ceil((titleText as NSString).size(withAttributes: [NSAttributedString.Key.font: font]).width)
+        let imageWidth = readAllButton.currentImage?.size.width ?? 14
+        let width = readAllButton.contentEdgeInsets.left + imageWidth + readAllButton.titleEdgeInsets.left + titleWidth + readAllButton.titleEdgeInsets.right + readAllButton.contentEdgeInsets.right
+        if let constraint = readAllButtonWidthConstraint {
+            constraint.constant = width
+        } else {
+            let constraint = readAllButton.widthAnchor.constraint(equalToConstant: width)
+            constraint.isActive = true
+            readAllButtonWidthConstraint = constraint
+        }
+    }
+
+    /// stateButton 同款宽度修法（失败态赋值标题/图标后调用；首次调用时创建约束）。
+    private func updateStateButtonWidth() {
+        let titleText = stateButton.currentTitle ?? ""
+        let font = stateButton.titleLabel?.font ?? UIFont.systemFont(ofSize: 14)
+        let titleWidth = ceil((titleText as NSString).size(withAttributes: [NSAttributedString.Key.font: font]).width)
+        let imageWidth = stateButton.currentImage?.size.width ?? 15
+        let width = stateButton.contentEdgeInsets.left + imageWidth + stateButton.titleEdgeInsets.left + titleWidth + stateButton.titleEdgeInsets.right + stateButton.contentEdgeInsets.right
+        if let constraint = stateButtonWidthConstraint {
+            constraint.constant = width
+        } else {
+            let constraint = stateButton.widthAnchor.constraint(equalToConstant: width)
+            constraint.isActive = true
+            stateButtonWidthConstraint = constraint
+        }
+    }
+
     // MARK: - 态与提示
 
     private func refreshVisibleState() {
@@ -891,6 +939,7 @@ final class BearyNotificationsViewController: UIViewController {
             stateButton.setImage(BearyIconImages.image(named: "icon_refresh", pointSize: 15), for: .normal)
             stateButton.titleEdgeInsets = UIEdgeInsets(top: 0, left: 6, bottom: 0, right: 0)
             stateButton.setTitle("点击重试", for: .normal)
+            updateStateButtonWidth()
         case .list:
             centralSpinner.stopAnimating()
         }
@@ -1398,6 +1447,9 @@ private final class BearyLetterModalButton: UIButton {
 private class BearyNotificationCell: UITableViewCell {
 
     private var avatarTask: URLSessionDataTask?
+    private var avatarLoadGeneration = 0
+    private var avatarRetryURL: URL?
+    private var avatarRetryActorName = ""
 
     private let avatarImageView: UIImageView = {
         let imageView = UIImageView()
@@ -1423,6 +1475,21 @@ private class BearyNotificationCell: UITableViewCell {
         iconView.tintColor = BearyColors.orange
         iconView.contentMode = .scaleAspectFit
         return iconView
+    }()
+
+    /// 头像加载失败重试：纯图标按钮（非文字按钮），44×44 点击区居中压在头像上；
+    /// 仅失败态可见，加载中与成功态一律隐藏（见 loadAvatar）。无描边、无背景色，
+    /// 故深浅切换无需重刷；图标本身走 BearyIconImages 本地资产，不会再加载失败。
+    private lazy var avatarRetryButton: UIButton = {
+        let button = UIButton(type: .system)
+        button.translatesAutoresizingMaskIntoConstraints = false
+        button.setImage(BearyIconImages.image(named: "icon_refresh", pointSize: 20), for: .normal)
+        button.tintColor = BearyColors.ink
+        button.isHidden = true
+        button.accessibilityLabel = "点击重试"
+        button.accessibilityHint = "重新加载头像"
+        button.addTarget(self, action: #selector(avatarRetryTapped), for: .touchUpInside)
+        return button
     }()
 
     /// 右下角 19 号类型角标（网页 .nt-kind：圆底 bg、1px line 边、11 号橙图标）。
@@ -1530,6 +1597,7 @@ private class BearyNotificationCell: UITableViewCell {
         contentView.addSubview(avatarFallbackLabel)
         contentView.addSubview(avatarIconView)
         contentView.addSubview(kindBadgeView)
+        contentView.addSubview(avatarRetryButton)
         contentView.addSubview(bodyStack)
         contentView.addSubview(timeLabel)
         contentView.addSubview(unreadDotView)
@@ -1555,6 +1623,10 @@ private class BearyNotificationCell: UITableViewCell {
             avatarIconView.centerYAnchor.constraint(equalTo: avatarImageView.centerYAnchor),
             avatarIconView.widthAnchor.constraint(equalToConstant: 19),
             avatarIconView.heightAnchor.constraint(equalToConstant: 19),
+            avatarRetryButton.centerXAnchor.constraint(equalTo: avatarImageView.centerXAnchor),
+            avatarRetryButton.centerYAnchor.constraint(equalTo: avatarImageView.centerYAnchor),
+            avatarRetryButton.widthAnchor.constraint(equalToConstant: 44),
+            avatarRetryButton.heightAnchor.constraint(equalToConstant: 44),
             kindBadgeView.widthAnchor.constraint(equalToConstant: 19),
             kindBadgeView.heightAnchor.constraint(equalToConstant: 19),
             kindBadgeView.trailingAnchor.constraint(equalTo: avatarImageView.trailingAnchor, constant: 4),
@@ -1600,8 +1672,10 @@ private class BearyNotificationCell: UITableViewCell {
 
     override func prepareForReuse() {
         super.prepareForReuse()
-        avatarTask?.cancel()
-        avatarTask = nil
+        cancelAvatarLoad()
+        avatarRetryURL = nil
+        avatarRetryActorName = ""
+        avatarRetryButton.isHidden = true
         titleEmoteView?.removeFromSuperview()
         titleEmoteView = nil
         avatarImageView.image = nil
@@ -1624,6 +1698,52 @@ private class BearyNotificationCell: UITableViewCell {
         separatorLeadingConstraint?.constant = 0
         dotTrailingToContentConstraint?.isActive = true
         dotTrailingToChevronConstraint?.isActive = false
+    }
+
+    /// 取消在途头像加载并作废其回调：复用/换行时旧失败回调不得亮重试图标。
+    private func cancelAvatarLoad() {
+        avatarTask?.cancel()
+        avatarTask = nil
+        avatarLoadGeneration += 1
+    }
+
+    /// 互动行头像加载：加载中与成功态沿用现有行为（首字母占位 / 落图）；
+    /// 仅失败态新增重试图标：失败时藏首字母占位、亮重试图标，点重试重新走
+    /// 本方法（重试中图标先藏、恢复首字母占位），成功后图标消失。
+    /// 取消（复用/换图）不算失败，不亮重试图标；无图（avatarURL 为空）不走
+    /// 本方法，调用方只露首字母占位、不亮重试图标。
+    private func loadAvatar(url: URL, actorName: String) {
+        cancelAvatarLoad()
+        avatarRetryURL = url
+        avatarRetryActorName = actorName
+        avatarImageView.image = nil
+        avatarRetryButton.isHidden = true
+        avatarFallbackLabel.isHidden = false
+        avatarFallbackLabel.text = actorName.isEmpty ? "T" : String(actorName.prefix(1)).uppercased()
+        let generation = avatarLoadGeneration
+        avatarTask = BearyImageLoader.shared.loadDetailed(url: url) { [weak self] result in
+            guard let strongSelf = self else { return }
+            guard generation == strongSelf.avatarLoadGeneration else { return }
+            strongSelf.avatarTask = nil
+            switch result {
+            case .success(let loadedImage):
+                strongSelf.avatarImageView.image = loadedImage
+                strongSelf.avatarFallbackLabel.isHidden = true
+                strongSelf.avatarRetryButton.isHidden = true
+            case .failure(let loadError):
+                if case .cancelled = loadError {
+                    return
+                }
+                strongSelf.avatarImageView.image = nil
+                strongSelf.avatarFallbackLabel.isHidden = true
+                strongSelf.avatarRetryButton.isHidden = false
+            }
+        }
+    }
+
+    @objc private func avatarRetryTapped() {
+        guard let retryURL = avatarRetryURL else { return }
+        loadAvatar(url: retryURL, actorName: avatarRetryActorName)
     }
 
     /// 标题行表情位：key 不变时复用（深浅由播放器内部切换），key 变了才重建；nil 则清空。静态首帧，不播。
@@ -1655,6 +1775,10 @@ private class BearyNotificationCell: UITableViewCell {
     /// 折叠卡卡面：系统卡橙 14% 底 + mail 图，互动卡蓝 12% 底 + heart 图；
     /// 未读底一律蓝 9%（网页 .nt-item.sys.unread，互动卡同样带 sys 类）。
     func configureAsCard(title: String, excerpt: String, timeMs: Int?, anyUnread: Bool, isSystem: Bool, expanded: Bool) {
+        cancelAvatarLoad()
+        avatarRetryURL = nil
+        avatarRetryActorName = ""
+        avatarRetryButton.isHidden = true
         if anyUnread {
             contentView.backgroundColor = BearyColors.blue.withAlphaComponent(0.09)
             backgroundColor = BearyColors.blue.withAlphaComponent(0.09)
@@ -1748,6 +1872,11 @@ private class BearyNotificationCell: UITableViewCell {
 
         if isSystemStyle {
             // 信件行与系统信行：橙 14% 底头像 + 19 号图（网页 .nt-sysava）。
+            // 本地图标无网络加载，故无重试图标；在途互动头像加载一律取消作废。
+            cancelAvatarLoad()
+            avatarRetryURL = nil
+            avatarRetryActorName = ""
+            avatarRetryButton.isHidden = true
             // system 行标题含“成就/徽章”时用 popper（礼花）图，否则 mail 图；
             // letter 行恒为 mail 图（网页 ntOne 两分支同口径）。
             avatarImageView.backgroundColor = BearyColors.orange.withAlphaComponent(0.14)
@@ -1790,22 +1919,12 @@ private class BearyNotificationCell: UITableViewCell {
             kindIconView.image = BearyIconImages.image(named: kindIconName, pointSize: 11)
             let actorName = item.actorName ?? ""
             if let avatarURL = BearyImageURLs.avatarURL(item.actorAvatar) {
-                avatarFallbackLabel.isHidden = true
-                avatarTask = BearyImageLoader.shared.load(url: avatarURL) { [weak self] loadedImage in
-                    guard let strongSelf = self else { return }
-                    if let loadedImage = loadedImage {
-                        strongSelf.avatarImageView.image = loadedImage
-                        strongSelf.avatarFallbackLabel.isHidden = true
-                    } else {
-                        strongSelf.avatarFallbackLabel.isHidden = false
-                    }
-                }
-                // 缓存命中时 load 已同步回调，图片已落位；未命中则先露首字母占位。
-                if avatarImageView.image == nil {
-                    avatarFallbackLabel.isHidden = false
-                    avatarFallbackLabel.text = actorName.isEmpty ? "T" : String(actorName.prefix(1)).uppercased()
-                }
+                loadAvatar(url: avatarURL, actorName: actorName)
             } else {
+                cancelAvatarLoad()
+                avatarRetryURL = nil
+                avatarRetryActorName = ""
+                avatarRetryButton.isHidden = true
                 avatarFallbackLabel.isHidden = false
                 avatarFallbackLabel.text = actorName.isEmpty ? "T" : String(actorName.prefix(1)).uppercased()
             }
@@ -1847,6 +1966,10 @@ private class BearyNotificationTrailingCell: UITableViewCell {
 
     var onRetry: (() -> Void)?
 
+    /// 点赞按钮同款宽度修法：固有宽不含 titleEdgeInsets，故显式宽度按实测字宽给足，
+    /// 否则“点击重试”末尾会被裁掉 6pt；标题固定不变，创建时算一次即可。
+    private var retryButtonWidthConstraint: NSLayoutConstraint?
+
     private let spinner: UIActivityIndicatorView = {
         let spinner = UIActivityIndicatorView(style: .medium)
         spinner.translatesAutoresizingMaskIntoConstraints = false
@@ -1869,6 +1992,10 @@ private class BearyNotificationTrailingCell: UITableViewCell {
         button.layer.borderColor = BearyColors.line.cgColor
         button.layer.cornerRadius = 20
         button.addTarget(self, action: #selector(retryTapped), for: .touchUpInside)
+        let retryTitleWidth = ceil(("点击重试" as NSString).size(withAttributes: [NSAttributedString.Key.font: UIFont.systemFont(ofSize: 14)]).width)
+        let retryWidth = button.widthAnchor.constraint(equalToConstant: 12 + (button.currentImage?.size.width ?? 15) + 6 + retryTitleWidth + 12)
+        retryWidth.isActive = true
+        retryButtonWidthConstraint = retryWidth
         return button
     }()
 
