@@ -45,6 +45,10 @@ final class BearyRecipientPickerViewController: UIViewController, UITextFieldDel
     private let listContainer = UIView()
     private let listScrollView = UIScrollView()
     private let rowsStack = UIStackView()
+    /// 结果区“搜索结果”分组 label（网页 addr-lab 同款：12px 灰字，只在有结果时显示；
+    /// 包一层 wrap 做 2/12/4 内边距，与行内头像左 12 对齐）。
+    private let resultsLabelWrap = UIView()
+    private let resultsLabel = UILabel()
     private let stateView = UIView()
     private let stateCircle = UIView()
     private let stateIcon = UIImageView()
@@ -139,6 +143,10 @@ final class BearyRecipientPickerViewController: UIViewController, UITextFieldDel
         searchField.addTarget(self, action: #selector(searchFieldChanged), for: .editingChanged)
         rowsStack.axis = .vertical
         rowsStack.spacing = 0
+        resultsLabel.text = "搜索结果"
+        resultsLabel.font = UIFont.systemFont(ofSize: 12)
+        resultsLabel.textColor = BearyColors.gray
+        resultsLabelWrap.isHidden = true
         // 空态圆：底色 orange 18% 不变，补内圈 orange 25% 描边（网页 .addr-stic 同款）。
         stateCircle.backgroundColor = BearyColors.orange.withAlphaComponent(0.18)
         stateCircle.layer.cornerRadius = 27
@@ -159,7 +167,7 @@ final class BearyRecipientPickerViewController: UIViewController, UITextFieldDel
         stateRetryButton.titleLabel?.font = UIFont.systemFont(ofSize: 15)
         stateRetryButton.isHidden = true
         stateRetryButton.addTarget(self, action: #selector(didTapStateRetry), for: .touchUpInside)
-        for v in [backdropButton, sheetView, topBorderView, grabberWrap, grabberView, headerIconWrap, headerIcon, headerTitle, closeButton, searchBox, searchIcon, searchField, listContainer, listScrollView, rowsStack, stateView, stateCircle, stateIcon, stateTitle, stateSubtitle, stateRetryButton] {
+        for v in [backdropButton, sheetView, topBorderView, grabberWrap, grabberView, headerIconWrap, headerIcon, headerTitle, closeButton, searchBox, searchIcon, searchField, listContainer, listScrollView, rowsStack, resultsLabelWrap, resultsLabel, stateView, stateCircle, stateIcon, stateTitle, stateSubtitle, stateRetryButton] {
             v.translatesAutoresizingMaskIntoConstraints = false
         }
         view.addSubview(backdropButton)
@@ -177,6 +185,13 @@ final class BearyRecipientPickerViewController: UIViewController, UITextFieldDel
         sheetView.addSubview(listContainer)
         listContainer.addSubview(listScrollView)
         listScrollView.addSubview(rowsStack)
+        resultsLabelWrap.addSubview(resultsLabel)
+        NSLayoutConstraint.activate([
+            resultsLabel.topAnchor.constraint(equalTo: resultsLabelWrap.topAnchor, constant: 2),
+            resultsLabel.leadingAnchor.constraint(equalTo: resultsLabelWrap.leadingAnchor, constant: 12),
+            resultsLabel.trailingAnchor.constraint(equalTo: resultsLabelWrap.trailingAnchor, constant: -12),
+            resultsLabel.bottomAnchor.constraint(equalTo: resultsLabelWrap.bottomAnchor, constant: -4),
+        ])
         listContainer.addSubview(stateView)
         stateView.addSubview(stateCircle)
         stateCircle.addSubview(stateIcon)
@@ -462,8 +477,11 @@ final class BearyRecipientPickerViewController: UIViewController, UITextFieldDel
         if kind == "results" {
             stateView.isHidden = true
             listScrollView.isHidden = false
+            // 结果区“搜索结果”分组 label：stack 的 arranged 子项，隐藏时自动塌掉。
+            resultsLabelWrap.isHidden = false
             return
         }
+        resultsLabelWrap.isHidden = true
         stateView.isHidden = false
         listScrollView.isHidden = true
         stateIcon.isHidden = false
@@ -555,6 +573,9 @@ final class BearyRecipientPickerViewController: UIViewController, UITextFieldDel
             rowsStack.removeArrangedSubview(arranged)
             arranged.removeFromSuperview()
         }
+        // “搜索结果”分组 label 恒为 rowsStack 首个 arranged 项（隐藏时 stack 自动塌掉，
+        // 显示时在结果行上方；sheet 高 fitting 按 rowsStack 整体量取，label 高已计入）。
+        rowsStack.addArrangedSubview(resultsLabelWrap)
         rowButtons = []
         rowUsers = users
         for index in 0..<users.count {

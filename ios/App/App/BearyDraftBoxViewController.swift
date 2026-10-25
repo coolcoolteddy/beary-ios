@@ -43,6 +43,13 @@ final class BearyDraftBoxViewController: UIViewController {
     private var cardEntries: [(button: UIButton, draftValue: BearyDraft)] = []
     private var openEntries: [(button: UIButton, draftValue: BearyDraft)] = []
     private var deleteEntries: [(button: UIButton, draftValue: BearyDraft)] = []
+    private var lostEntries: [(button: UIButton, draftValue: BearyDraft)] = []
+    /// DF-1/DF-2：编辑器当前正在写的那篇 draftId（由容器/编辑器在呈现草稿箱后设置；
+    /// 未设置时“正在写”标记不显示、删正在写回调不触发）。容器接线由总协调收尾。
+    var currentDraftId: String?
+    /// DF-2：箱内删掉正在写的那篇时通知编辑器（编辑器侧清 draftId、换新 req，
+    /// 即网页 deleteDraft 里 edDraftId=null 的等价动作）。容器接线由总协调收尾。
+    var onDeleteCurrentDraft: ((String) -> Void)?
     private var pendingDeletedDraft: BearyDraft?
     private var pendingDeletedIndex: Int = 0
     private var undoTimer: Timer?
@@ -439,6 +446,7 @@ final class BearyDraftBoxViewController: UIViewController {
         cardEntries = []
         openEntries = []
         deleteEntries = []
+        lostEntries = []
         if drafts.isEmpty {
             subLabel.text = nil
             subWrap.isHidden = true
@@ -583,8 +591,38 @@ final class BearyDraftBoxViewController: UIViewController {
         wordLabel.font = UIFont.systemFont(ofSize: 12)
         wordLabel.textColor = BearyColors.gray
         metaRow.addArrangedSubview(wordLabel)
+        // DF-1 写给 chip（@ 图标 + 名，网页 buildDraftCard 的 d.to chip 口径）。
+        if let recipientName = draftValue.recipientName, !recipientName.isEmpty {
+            metaRow.addArrangedSubview(recipientChip(name: recipientName))
+        }
+        // DF-1 心情 chip 带 emote 图（网页 df-chip 内 emote 图 + 心情名）。
         if let moodKey = draftValue.mood, let moodName = BearyText.moodNames[moodKey] {
-            metaRow.addArrangedSubview(moodChip(name: moodName))
+            metaRow.addArrangedSubview(moodChip(key: moodKey, name: moodName))
+        }
+        // DF-1 图片未保存可点清除 chip：只针对已无物可续传的失败图
+        // （本地文件与服务端 key 皆无，网页 imgs_lost 的等价情形）；点一下清掉
+        // 这些图项与提示，可续传的失败图仍走原有“文字已保存，图片未保存”状态行。
+        if hasUnrecoverableImage(for: draftValue) {
+            let lostButton = UIButton(type: .custom)
+            lostButton.setTitle("图片未保存", for: .normal)
+            lostButton.setTitleColor(BearyColors.red, for: .normal)
+            lostButton.titleLabel?.font = UIFont.systemFont(ofSize: 11.5, weight: .semibold)
+            lostButton.backgroundColor = BearyColors.red.withAlphaComponent(0.13)
+            lostButton.layer.cornerRadius = 999
+            lostButton.layer.masksToBounds = true
+            lostButton.contentEdgeInsets = UIEdgeInsets(top: 2.5, left: 9, bottom: 2.5, right: 9)
+            lostButton.accessibilityLabel = "图片未保存，点一下清除这条提示"
+            lostButton.addTarget(self, action: #selector(clearLostTapped(_:)), for: .touchUpInside)
+            metaRow.addArrangedSubview(lostButton)
+            lostEntries.append((button: lostButton, draftValue: draftValue))
+        }
+        // DF-1 正在写标记：编辑器当前正在写的那篇（currentDraftId 由容器设置）。
+        if let current = currentDraftId, current == draftValue.draftId {
+            let writingLabel = UILabel()
+            writingLabel.text = "正在写"
+            writingLabel.font = UIFont.systemFont(ofSize: 12)
+            writingLabel.textColor = BearyColors.gray
+            metaRow.addArrangedSubview(writingLabel)
         }
         let status = saveStatus(for: draftValue)
         let statusLabel = UILabel()
@@ -618,28 +656,114 @@ final class BearyDraftBoxViewController: UIViewController {
         return card
     }
 
-    private func moodChip(name: String) -> UIView {
+    private func chipShell() -> UIView {
         let chip = UIView()
         chip.backgroundColor = BearyColors.orange.withAlphaComponent(0.13)
         chip.layer.cornerRadius = 999
         chip.layer.masksToBounds = true
+        return chip
+    }
+
+    private func moodChip(key: String, name: String) -> UIView {
+        let chip = chipShell()
+        let row = UIStackView()
+        row.axis = .horizontal
+        row.spacing = 4
+        row.alignment = .center
+        row.translatesAutoresizingMaskIntoConstraints = false
+        let isDark = traitCollection.userInterfaceStyle == .dark
+        if let emoteImage = BearyEmoteImages.image(for: key, dark: isDark) {
+            let imageView = UIImageView(image: emoteImage)
+            imageView.translatesAutoresizingMaskIntoConstraints = false
+            imageView.contentMode = .scaleAspectFit
+            NSLayoutConstraint.activate([
+                imageView.widthAnchor.constraint(equalToConstant: 16),
+                imageView.heightAnchor.constraint(equalToConstant: 16),
+            ])
+            row.addArrangedSubview(imageView)
+        }
         let label = UILabel()
         label.text = name
         label.font = UIFont.systemFont(ofSize: 11.5, weight: .semibold)
         label.textColor = BearyColors.ink
-        label.translatesAutoresizingMaskIntoConstraints = false
-        chip.addSubview(label)
+        row.addArrangedSubview(label)
+        chip.addSubview(row)
         NSLayoutConstraint.activate([
-            label.topAnchor.constraint(equalTo: chip.topAnchor, constant: 2.5),
-            label.bottomAnchor.constraint(equalTo: chip.bottomAnchor, constant: -2.5),
-            label.leadingAnchor.constraint(equalTo: chip.leadingAnchor, constant: 9),
-            label.trailingAnchor.constraint(equalTo: chip.trailingAnchor, constant: -9),
+            row.topAnchor.constraint(equalTo: chip.topAnchor, constant: 2.5),
+            row.bottomAnchor.constraint(equalTo: chip.bottomAnchor, constant: -2.5),
+            row.leadingAnchor.constraint(equalTo: chip.leadingAnchor, constant: 9),
+            row.trailingAnchor.constraint(equalTo: chip.trailingAnchor, constant: -9),
         ])
         return chip
     }
 
+    private func recipientChip(name: String) -> UIView {
+        let chip = chipShell()
+        let row = UIStackView()
+        row.axis = .horizontal
+        row.spacing = 4
+        row.alignment = .center
+        row.translatesAutoresizingMaskIntoConstraints = false
+        if let atImage = BearyIconImages.image(named: "icon_at", pointSize: 14) {
+            let imageView = UIImageView(image: atImage)
+            imageView.tintColor = BearyColors.ink
+            imageView.translatesAutoresizingMaskIntoConstraints = false
+            NSLayoutConstraint.activate([
+                imageView.widthAnchor.constraint(equalToConstant: 14),
+                imageView.heightAnchor.constraint(equalToConstant: 14),
+            ])
+            row.addArrangedSubview(imageView)
+        }
+        let label = UILabel()
+        label.text = "写给 \(name)"
+        label.font = UIFont.systemFont(ofSize: 11.5, weight: .semibold)
+        label.textColor = BearyColors.ink
+        row.addArrangedSubview(label)
+        chip.addSubview(row)
+        NSLayoutConstraint.activate([
+            row.topAnchor.constraint(equalTo: chip.topAnchor, constant: 2.5),
+            row.bottomAnchor.constraint(equalTo: chip.bottomAnchor, constant: -2.5),
+            row.leadingAnchor.constraint(equalTo: chip.leadingAnchor, constant: 9),
+            row.trailingAnchor.constraint(equalTo: chip.trailingAnchor, constant: -9),
+        ])
+        return chip
+    }
+
+    private func hasUnrecoverableImage(for draftValue: BearyDraft) -> Bool {
+        for item in draftValue.images {
+            if item.state == .failed && item.localFile == nil && item.serverKey == nil {
+                return true
+            }
+        }
+        return false
+    }
+
+    /// 图片未保存 chip 点按：清掉已无物可续传的失败图项并后台写盘、重渲卡片
+    /// （网页点 imgs_lost chip 清标记 + 重渲的等价动作；可续传图项不受影响）。
+    @objc private func clearLostTapped(_ sender: UIButton) {
+        var targetDraft: BearyDraft?
+        for entry in lostEntries {
+            if entry.button === sender {
+                targetDraft = entry.draftValue
+            }
+        }
+        guard var draftValue = targetDraft else { return }
+        draftValue.images = draftValue.images.filter { item in
+            return !(item.state == .failed && item.localFile == nil && item.serverKey == nil)
+        }
+        for offset in 0..<drafts.count {
+            if drafts[offset].draftId == draftValue.draftId {
+                drafts[offset] = draftValue
+            }
+        }
+        BearyDraftStore.saveAsync(draftValue)
+        renderDrafts()
+    }
+
     // MARK: - 文案推导（网页口径移植）
 
+    /// DF-1 摘要兜底顺序改网页口径（buildDraftCard）：
+    /// 正文 > 只有图片 > 只有引用 > 只有心情 > 有天气/写给则“（还没写字）” > “（空白草稿）”。
     private func summaryText(for draftValue: BearyDraft) -> String {
         let trimmed = draftValue.content.trimmingCharacters(in: .whitespacesAndNewlines)
         if !trimmed.isEmpty {
@@ -648,11 +772,14 @@ final class BearyDraftBoxViewController: UIViewController {
         if !draftValue.images.isEmpty {
             return "（只有图片）"
         }
+        if draftValue.quoteId != nil {
+            return "（只有引用）"
+        }
         if let moodKey = draftValue.mood, BearyText.moodNames[moodKey] != nil {
             return "（只有心情）"
         }
-        if draftValue.quoteId != nil {
-            return "（只有引用）"
+        if draftValue.weather != nil || draftValue.recipientId != nil || draftValue.recipientName != nil {
+            return "（还没写字）"
         }
         return "（空白草稿）"
     }
@@ -803,7 +930,14 @@ final class BearyDraftBoxViewController: UIViewController {
         pendingDeletedDraft = draftValue
         pendingDeletedIndex = foundIndex
         drafts.remove(at: foundIndex)
-        BearyDraftStore.delete(draftId: draftValue.draftId)
+        // E1-4：整库删写走后台队列，主线程只更新 UI。
+        BearyDraftStore.deleteAsync(draftId: draftValue.draftId)
+        // DF-2：删的是编辑器正在写的那篇时通知编辑器（容器接线后编辑器清 draftId）。
+        // 注意：6 秒内点撤销会把草稿插回箱里，但编辑器侧已清的槽位不会自动接回，
+        // 容器需决定撤销后是否重新打开该篇（见交回说明）。
+        if let current = currentDraftId, current == draftValue.draftId {
+            onDeleteCurrentDraft?(draftValue.draftId)
+        }
         renderDrafts()
         undoWrap.isHidden = false
         undoTimer?.invalidate()
@@ -823,7 +957,8 @@ final class BearyDraftBoxViewController: UIViewController {
         pendingDeletedDraft = nil
         let insertIndex = min(pendingDeletedIndex, drafts.count)
         drafts.insert(draftValue, at: insertIndex)
-        BearyDraftStore.save(draftValue)
+        // E1-4：整库写回走后台队列，主线程只更新 UI。
+        BearyDraftStore.saveAsync(draftValue)
         undoWrap.isHidden = true
         renderDrafts()
     }

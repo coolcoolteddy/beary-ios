@@ -7,8 +7,8 @@ import UIKit
 //   meta 13 灰（上距 8）、stats 13 灰（上距 13、gap 22、数字 16 ink）、
 //   tabs（margin 16/20/0、tab padding 9/10、14/700、选中 ink + 2px ink 下划线）、
 //   他人模式隐藏编辑资料与收藏页签（网页 PF_MODE 表）。
-// - 已批准设计稿 ~/workspace/previews/layout_rest.html 的个人帧：自己看带在路上条 +
-//   日记 / 赞过 / 收藏三标签；在路上条文案「在路上 N 篇 · 最近 M月d日送达」。
+// - 个人主页头部：封面带 / 头像 / 统计 / 小熊回应墙 / 徽章架 / 三标签；
+//   回应墙与徽章架的服务端口径见下方实现（均以 worker.js 为准）。
 // - 后端 ~/workspace/teddy_beary/worker.js（以它为准，见下方接口对照）。
 // 约束：部署目标 iOS 15.0、Swift 5.0——只用闭包回调，不用 async/await，
 // 不用 if-let 简写；颜色只走 BearyColors；不新增玻璃效果；不用 SF Symbol，
@@ -26,15 +26,23 @@ import UIKit
 //   收藏 scope=saved（仅登录本人，服务端按 bm.created_at 排序；未登录 401）。
 //   游标：日记 / 赞过用 before=created_at + before_id；收藏用 before=bm_at + before_id。
 //   每页 limit=50（与网页 pfFetch 同口径）。
-// - 在路上条数据来源（worker.js 核实）：GET /beary/api/entries?scope=timeline（仅登录本人）。
-//   响应中 mailbox_count = 本人 publish_at > now 的篇数（即私密期篇数）；
-//   tl_counts.next_pub = 这些篇里最早的 publish_at（即最近一次公开时间）。
-//   注意：scope=author / author_liked / saved 的响应不带 mailbox_count（服务端显式排除），
-//   所以在路上条不能从标签列表响应里取，必须单独拉一次 timeline；
-//   trash_count 是回收站篇数，与在路上无关，不用它。
+// - B3 已删：本文件不含该条目视图、不为它单独拉取、不引用标签列表之外的字段。
 // - 回调约定（容器接线，本文件只定义）：列表行点按走 onOpenEntry；
-//   自己主页未登录时走 onRequireLogin；编辑资料走 onEditProfile（容器决定去向，
-//   网页版对应 /account 资料编辑页，本文件不内置跳转）。
+//   自己主页未登录时走 onRequireLogin；编辑资料走 onEditProfile（容器接线到
+//   BearyEditProfileViewController）；页内返回走 onBack；退出登录成功走 onLogout；
+//   齿轮菜单的使用指南 / 账户设置 / 外观分别走 onShowTutorial /
+//   onOpenAccountSettings / onToggleAppearance；行内互动成功后走
+//   onInteractionChanged（与详情页同款签名：id、点赞数、已赞、已收藏、回应聚合）。
+// - 小熊回应墙：标题“小熊回应”+ 横滑表情 × 计数 + “共收到 N 只”，
+//   emotes_total > 0 才显示，数据直接用 profile 下发的 emotes_received /
+//   emotes_total（profilePayload，own 与 other 均含，不另拉 /api/stats）。
+// - 徽章架（仅本人）：GET /beary/api/my-badges 取 unlocked / worn，
+//   点徽章 POST /beary/api/wear {badge} 切换佩戴（传 null = 取消佩戴；
+//   服务端目前仅接受 beta，worn 也只回 beta 或 null）。
+// - 齿轮菜单退出登录走 BearyAPI.logout（/api/account/logout，见文末注记）。
+// - 分享：他人用 https://teddyhn.com/beary/u/<id>，本人用
+//   https://teddyhn.com/beary/@<handle>（无 handle 时回退 u/<id>）。
+// - 行内回应：不做乐观更新，只在服务端返回聚合后重绘（与详情页同口径）。
 // - BearyAPI 回调不在主线程：本文件所有碰 UI 的回调一律 DispatchQueue.main.async。
 
 // MARK: - 个人主页资料模型（CodingKeys 显式映射，避免裸 `id` 属性名）
@@ -89,6 +97,34 @@ extension BearyAPI {
         let safeHandle = handleValue.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? handleValue
         request("/beary/api/users/by-handle/\(safeHandle)", completion: completion)
     }
+
+    /// GET /beary/api/my-badges（仅登录本人）：已解锁徽章 + 当前佩戴。
+    func fetchMyBadges(completion: @escaping (Result<BearyMyBadgesResponse, APIError>) -> Void) {
+        request("/beary/api/my-badges", completion: completion)
+    }
+
+    /// POST /beary/api/wear：badge 为 nil = 取消佩戴；否则佩戴该徽章（须已解锁）。
+    func postWear(badgeKey: String?, completion: @escaping (Result<BearyWearResponse, APIError>) -> Void) {
+        var body: [String: Any] = [:]
+        if let key = badgeKey {
+            body["badge"] = key
+        } else {
+            body["badge"] = NSNull()
+        }
+        request("/beary/api/wear", method: "POST", jsonBody: body, completion: completion)
+    }
+}
+
+// MARK: - 徽章架响应（GET /beary/api/my-badges；POST /beary/api/wear 回 worn）
+
+struct BearyMyBadgesResponse: Decodable {
+    var unlocked: [String]?
+    var worn: String?
+}
+
+struct BearyWearResponse: Decodable {
+    var ok: Bool?
+    var worn: String?
 }
 
 // MARK: - 个人主页
@@ -103,6 +139,25 @@ class BearyProfileViewController: UIViewController {
 
     /// 本人点「编辑资料」时调用：容器接线到资料编辑去向。
     var onEditProfile: (() -> Void)?
+
+    /// 页内顶栏返回按钮点按：容器接线到关闭 / 返回。
+    var onBack: (() -> Void)?
+
+    /// 齿轮菜单退出登录成功后调用：容器接线到刷新登录态。
+    var onLogout: (() -> Void)?
+
+    /// 齿轮菜单「使用指南」：容器接线到教程页。
+    var onShowTutorial: (() -> Void)?
+
+    /// 齿轮菜单「账户设置」：容器接线到 /account 或账户设置页。
+    var onOpenAccountSettings: (() -> Void)?
+
+    /// 齿轮菜单「外观」：容器接线到外观切换。
+    var onToggleAppearance: (() -> Void)?
+
+    /// 行内互动成功后调用（详情页 onInteractionChanged 同款签名）：
+    /// entryId、点赞数、已赞、已收藏、回应聚合。
+    var onInteractionChanged: ((String, Int?, Bool?, Bool?, [EmoteCount]?) -> Void)?
 
     /// by-handle 解析出的改名信号（对方 30 天内改名时有值）：容器可用它 toast
     /// 「对方已改名为 @<movedToHandle>」。非改名场景为 nil。
@@ -162,9 +217,16 @@ class BearyProfileViewController: UIViewController {
     private var tabLoading = false
     private var tabLoadMore = false
     private var tabError = false
-    private var mailboxCountValue: Int?
-    private var nextPublishValue: Int?
     private var headerLaidOutWidth: CGFloat = 0
+    private var expandedEntryIds: Set<String> = []
+    private var likeBusyIds: Set<String> = []
+    private var bookmarkBusyIds: Set<String> = []
+    private var emoteBusyIds: Set<String> = []
+    private var badgeWearBusy = false
+    private var unlockedBadges: [String] = []
+    private var wornBadgeKey: String?
+    private var tabBackgroundTab: ProfileTab?
+    private var rowTapGuardUntil: Date?
 
     /// 本人判定：viewer 已登录且 profile id 与 viewer 一致；handle 目标在 profile
     /// 解析前按 id 预判（id 目标且与 viewer 相同）先行显示本人元素，解析后复核。
@@ -203,7 +265,7 @@ class BearyProfileViewController: UIViewController {
         tableViewValue.separatorStyle = .none
         tableViewValue.rowHeight = UITableView.automaticDimension
         tableViewValue.estimatedRowHeight = 220
-        tableViewValue.contentInset = UIEdgeInsets(top: 0, left: 0, bottom: 44, right: 0)
+        tableViewValue.contentInset = UIEdgeInsets(top: 0, left: 0, bottom: 90, right: 0)
         tableViewValue.scrollIndicatorInsets = tableViewValue.contentInset
         tableViewValue.register(BearyProfileEntryCell.self, forCellReuseIdentifier: "BearyProfileEntryCell")
         tableViewValue.delegate = self
@@ -323,7 +385,72 @@ class BearyProfileViewController: UIViewController {
         return labelValue
     }()
 
-    private let mailboxStrip: UIView = {
+    // MARK: - 页内顶栏（仅 modal 态显示；容器页态由容器顶栏承担，见 updateTopBarVisibility）
+
+    private let topBarView: UIView = {
+        let viewValue = UIView()
+        viewValue.translatesAutoresizingMaskIntoConstraints = false
+        viewValue.backgroundColor = BearyColors.bg
+        viewValue.isHidden = true
+        return viewValue
+    }()
+
+    private lazy var topBackButton: UIButton = {
+        let buttonValue = UIButton(type: .system)
+        buttonValue.translatesAutoresizingMaskIntoConstraints = false
+        buttonValue.setTitle("返回", for: .normal)
+        buttonValue.setTitleColor(BearyColors.ink, for: .normal)
+        buttonValue.titleLabel?.font = UIFont.systemFont(ofSize: 15)
+        buttonValue.addTarget(self, action: #selector(backButtonTapped), for: .touchUpInside)
+        return buttonValue
+    }()
+
+    private let topNameLabel: UILabel = {
+        let labelValue = UILabel()
+        labelValue.translatesAutoresizingMaskIntoConstraints = false
+        labelValue.font = UIFont.systemFont(ofSize: 16, weight: .bold)
+        labelValue.textColor = BearyColors.ink
+        labelValue.textAlignment = .center
+        labelValue.text = "—"
+        return labelValue
+    }()
+
+    private lazy var topShareButton: UIButton = {
+        let buttonValue = UIButton(type: .system)
+        buttonValue.translatesAutoresizingMaskIntoConstraints = false
+        buttonValue.setImage(BearyIconImages.image(named: "icon_share", pointSize: 21), for: .normal)
+        buttonValue.tintColor = BearyColors.ink
+        buttonValue.addTarget(self, action: #selector(topShareButtonTapped), for: .touchUpInside)
+        return buttonValue
+    }()
+
+    // MARK: - 头像行动作：齿轮（仅本人）与分享（仅容器页态；modal 态走顶栏分享）
+
+    private lazy var gearButton: UIButton = {
+        let buttonValue = UIButton(type: .system)
+        buttonValue.translatesAutoresizingMaskIntoConstraints = false
+        buttonValue.setTitle("更多", for: .normal)
+        buttonValue.setTitleColor(BearyColors.ink, for: .normal)
+        buttonValue.titleLabel?.font = UIFont.systemFont(ofSize: 14)
+        buttonValue.contentEdgeInsets = UIEdgeInsets(top: 0, left: 12, bottom: 0, right: 12)
+        buttonValue.layer.borderWidth = 1
+        buttonValue.layer.cornerRadius = 20
+        buttonValue.addTarget(self, action: #selector(gearButtonTapped), for: .touchUpInside)
+        return buttonValue
+    }()
+
+    private lazy var headerShareButton: UIButton = {
+        let buttonValue = UIButton(type: .system)
+        buttonValue.translatesAutoresizingMaskIntoConstraints = false
+        buttonValue.setImage(BearyIconImages.image(named: "icon_share", pointSize: 21), for: .normal)
+        buttonValue.tintColor = BearyColors.ink
+        buttonValue.addTarget(self, action: #selector(headerShareButtonTapped), for: .touchUpInside)
+        return buttonValue
+    }()
+
+    // MARK: - 小熊回应墙（emotes_total > 0 才显示）与徽章架（仅本人）
+
+    private let wallContainer: UIView = {
         let viewValue = UIView()
         viewValue.translatesAutoresizingMaskIntoConstraints = false
         viewValue.backgroundColor = BearyColors.bg
@@ -333,21 +460,72 @@ class BearyProfileViewController: UIViewController {
         return viewValue
     }()
 
-    private let mailboxIconView: UIImageView = {
-        let imageViewValue = UIImageView()
-        imageViewValue.translatesAutoresizingMaskIntoConstraints = false
-        imageViewValue.image = BearyIconImages.image(named: "icon_mail_check", pointSize: 20)
-        imageViewValue.tintColor = BearyColors.orange
-        imageViewValue.contentMode = .scaleAspectFit
-        return imageViewValue
-    }()
-
-    private let mailboxLabel: UILabel = {
+    private let wallTitleLabel: UILabel = {
         let labelValue = UILabel()
         labelValue.translatesAutoresizingMaskIntoConstraints = false
-        labelValue.font = UIFont.systemFont(ofSize: 14)
+        labelValue.font = UIFont.systemFont(ofSize: 14, weight: .bold)
         labelValue.textColor = BearyColors.ink
+        labelValue.text = "小熊回应"
         return labelValue
+    }()
+
+    private let wallScrollView: UIScrollView = {
+        let scrollViewValue = UIScrollView()
+        scrollViewValue.translatesAutoresizingMaskIntoConstraints = false
+        scrollViewValue.showsHorizontalScrollIndicator = false
+        return scrollViewValue
+    }()
+
+    private let wallStack: UIStackView = {
+        let stackValue = UIStackView()
+        stackValue.translatesAutoresizingMaskIntoConstraints = false
+        stackValue.axis = .horizontal
+        stackValue.spacing = 8
+        stackValue.alignment = .center
+        return stackValue
+    }()
+
+    private let wallTotalLabel: UILabel = {
+        let labelValue = UILabel()
+        labelValue.translatesAutoresizingMaskIntoConstraints = false
+        labelValue.font = UIFont.systemFont(ofSize: 13)
+        labelValue.textColor = BearyColors.gray
+        return labelValue
+    }()
+
+    private let badgesContainer: UIView = {
+        let viewValue = UIView()
+        viewValue.translatesAutoresizingMaskIntoConstraints = false
+        viewValue.backgroundColor = BearyColors.bg
+        viewValue.layer.borderWidth = 1
+        viewValue.layer.cornerRadius = 14
+        viewValue.isHidden = true
+        return viewValue
+    }()
+
+    private let badgesTitleLabel: UILabel = {
+        let labelValue = UILabel()
+        labelValue.translatesAutoresizingMaskIntoConstraints = false
+        labelValue.font = UIFont.systemFont(ofSize: 14, weight: .bold)
+        labelValue.textColor = BearyColors.ink
+        labelValue.text = "徽章"
+        return labelValue
+    }()
+
+    private let badgesScrollView: UIScrollView = {
+        let scrollViewValue = UIScrollView()
+        scrollViewValue.translatesAutoresizingMaskIntoConstraints = false
+        scrollViewValue.showsHorizontalScrollIndicator = false
+        return scrollViewValue
+    }()
+
+    private let badgesStack: UIStackView = {
+        let stackValue = UIStackView()
+        stackValue.translatesAutoresizingMaskIntoConstraints = false
+        stackValue.axis = .horizontal
+        stackValue.spacing = 16
+        stackValue.alignment = .center
+        return stackValue
     }()
 
     private let tabsContainer: UIView = {
@@ -386,8 +564,20 @@ class BearyProfileViewController: UIViewController {
     private lazy var coverHeightConstraint: NSLayoutConstraint = coverImageView.heightAnchor.constraint(equalToConstant: 0)
     private lazy var avatarTopWithCoverConstraint: NSLayoutConstraint = avatarImageView.topAnchor.constraint(equalTo: coverImageView.bottomAnchor, constant: -52)
     private lazy var avatarTopWithoutCoverConstraint: NSLayoutConstraint = avatarImageView.topAnchor.constraint(equalTo: headerView.topAnchor, constant: 20)
-    private lazy var tabsTopWithStripConstraint: NSLayoutConstraint = tabsContainer.topAnchor.constraint(equalTo: mailboxStrip.bottomAnchor, constant: 16)
-    private lazy var tabsTopWithoutStripConstraint: NSLayoutConstraint = tabsContainer.topAnchor.constraint(equalTo: publicCountLabel.bottomAnchor, constant: 16)
+    private lazy var tabsTopConstraint: NSLayoutConstraint = tabsContainer.topAnchor.constraint(equalTo: badgesContainer.bottomAnchor, constant: 16)
+    private lazy var wallHeightConstraint: NSLayoutConstraint = wallContainer.heightAnchor.constraint(equalToConstant: 0)
+    private lazy var badgesHeightConstraint: NSLayoutConstraint = badgesContainer.heightAnchor.constraint(equalToConstant: 0)
+    private lazy var topBarHeightConstraint: NSLayoutConstraint = topBarView.heightAnchor.constraint(equalToConstant: 0)
+    private lazy var headerShareToGearConstraint: NSLayoutConstraint = headerShareButton.trailingAnchor.constraint(equalTo: gearButton.leadingAnchor, constant: -8)
+    private lazy var headerShareToHeaderConstraint: NSLayoutConstraint = headerShareButton.trailingAnchor.constraint(equalTo: headerView.trailingAnchor, constant: -28)
+    private lazy var tableLeadingConstraint: NSLayoutConstraint = tableView.leadingAnchor.constraint(equalTo: view.leadingAnchor)
+    private lazy var tableTrailingConstraint: NSLayoutConstraint = tableView.trailingAnchor.constraint(equalTo: view.trailingAnchor)
+    private lazy var tableCenterXConstraint: NSLayoutConstraint = tableView.centerXAnchor.constraint(equalTo: view.centerXAnchor)
+    private lazy var tableWidthConstraint: NSLayoutConstraint = tableView.widthAnchor.constraint(equalToConstant: 600)
+    private lazy var topBarLeadingConstraint: NSLayoutConstraint = topBarView.leadingAnchor.constraint(equalTo: view.leadingAnchor)
+    private lazy var topBarTrailingConstraint: NSLayoutConstraint = topBarView.trailingAnchor.constraint(equalTo: view.trailingAnchor)
+    private lazy var topBarCenterXConstraint: NSLayoutConstraint = topBarView.centerXAnchor.constraint(equalTo: view.centerXAnchor)
+    private lazy var topBarWidthConstraint: NSLayoutConstraint = topBarView.widthAnchor.constraint(equalToConstant: 600)
     private var underlineLeadingConstraint: NSLayoutConstraint?
     private var underlineTrailingConstraint: NSLayoutConstraint?
 
@@ -409,11 +599,12 @@ class BearyProfileViewController: UIViewController {
         super.viewDidLoad()
         view.backgroundColor = BearyColors.bg
         buildHeader()
+        buildTopBar()
         view.addSubview(tableView)
         NSLayoutConstraint.activate([
-            tableView.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
-            tableView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
-            tableView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            tableView.topAnchor.constraint(equalTo: topBarView.bottomAnchor),
+            tableLeadingConstraint,
+            tableTrailingConstraint,
             tableView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
         ])
         tableView.tableHeaderView = headerView
@@ -434,8 +625,83 @@ class BearyProfileViewController: UIViewController {
 
     override func viewDidLayoutSubviews() {
         super.viewDidLayoutSubviews()
+        updateColumnLayout()
         layoutHeader()
         updateDynamicLayerColors()
+    }
+
+    override func viewWillAppear(_ animated: Bool) {
+        super.viewWillAppear(animated)
+        // 回到本页 = 上一层已关，行点按守卫清零（防连点叠页的另一半）。
+        rowTapGuardUntil = nil
+        updateTopBarVisibility()
+    }
+
+    /// 列宽：modal 态且宽 ≥821 时内容列 600 居中（D-1）；容器页态 view 本身
+    /// 已被容器锁 600（宽 <821），不加第二层收窄。
+    private var isDesktopColumn: Bool {
+        return view.bounds.width >= 821
+    }
+
+    private var headerWidthValue: CGFloat {
+        if isDesktopColumn {
+            return 600
+        }
+        return view.bounds.width
+    }
+
+    private func updateColumnLayout() {
+        let desktop = isDesktopColumn
+        tableLeadingConstraint.isActive = !desktop
+        tableTrailingConstraint.isActive = !desktop
+        tableCenterXConstraint.isActive = desktop
+        tableWidthConstraint.isActive = desktop
+        topBarLeadingConstraint.isActive = !desktop
+        topBarTrailingConstraint.isActive = !desktop
+        topBarCenterXConstraint.isActive = desktop
+        topBarWidthConstraint.isActive = desktop
+    }
+
+    /// modal 判定：被 present 的导航栈根（容器页态的 parent 是容器、navigationController 为 nil）。
+    private func updateTopBarVisibility() {
+        let modal = navigationController?.presentingViewController != nil || presentingViewController != nil
+        topBarView.isHidden = !modal
+        topBarHeightConstraint.constant = modal ? 44 : 0
+        // 分享入口恰好一个：modal 态走顶栏，容器页态走头像行。
+        headerShareButton.isHidden = modal
+        if modal {
+            headerShareToGearConstraint.isActive = false
+            headerShareToHeaderConstraint.isActive = true
+        } else {
+            let own = isOwnProfile
+            headerShareToGearConstraint.isActive = own
+            headerShareToHeaderConstraint.isActive = !own
+        }
+        layoutHeaderForced(widthValue: headerWidthValue)
+    }
+
+    private func buildTopBar() {
+        view.addSubview(topBarView)
+        topBarView.addSubview(topBackButton)
+        topBarView.addSubview(topNameLabel)
+        topBarView.addSubview(topShareButton)
+        NSLayoutConstraint.activate([
+            topBarView.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
+            topBarLeadingConstraint,
+            topBarTrailingConstraint,
+            topBarHeightConstraint,
+            topBackButton.leadingAnchor.constraint(equalTo: topBarView.leadingAnchor, constant: 20),
+            topBackButton.centerYAnchor.constraint(equalTo: topBarView.centerYAnchor),
+            topBackButton.heightAnchor.constraint(equalToConstant: 44),
+            topNameLabel.centerXAnchor.constraint(equalTo: topBarView.centerXAnchor),
+            topNameLabel.centerYAnchor.constraint(equalTo: topBarView.centerYAnchor),
+            topNameLabel.leadingAnchor.constraint(greaterThanOrEqualTo: topBackButton.trailingAnchor, constant: 8),
+            topNameLabel.trailingAnchor.constraint(lessThanOrEqualTo: topShareButton.leadingAnchor, constant: -8),
+            topShareButton.trailingAnchor.constraint(equalTo: topBarView.trailingAnchor, constant: -20),
+            topShareButton.centerYAnchor.constraint(equalTo: topBarView.centerYAnchor),
+            topShareButton.widthAnchor.constraint(equalToConstant: 44),
+            topShareButton.heightAnchor.constraint(equalToConstant: 44),
+        ])
     }
 
     override func traitCollectionDidChange(_ previousTraitCollection: UITraitCollection?) {
@@ -451,6 +717,8 @@ class BearyProfileViewController: UIViewController {
         headerView.addSubview(avatarImageView)
         headerView.addSubview(avatarLetterLabel)
         headerView.addSubview(editButton)
+        headerView.addSubview(gearButton)
+        headerView.addSubview(headerShareButton)
         headerView.addSubview(nameLabel)
         headerView.addSubview(badgeImageView)
         headerView.addSubview(crownImageView)
@@ -458,10 +726,16 @@ class BearyProfileViewController: UIViewController {
         headerView.addSubview(joinedLabel)
         headerView.addSubview(publicCountLabel)
         headerView.addSubview(likesCountLabel)
-        headerView.addSubview(mailboxStrip)
+        headerView.addSubview(wallContainer)
+        headerView.addSubview(badgesContainer)
         headerView.addSubview(tabsContainer)
-        mailboxStrip.addSubview(mailboxIconView)
-        mailboxStrip.addSubview(mailboxLabel)
+        wallContainer.addSubview(wallTitleLabel)
+        wallContainer.addSubview(wallScrollView)
+        wallContainer.addSubview(wallTotalLabel)
+        wallScrollView.addSubview(wallStack)
+        badgesContainer.addSubview(badgesTitleLabel)
+        badgesContainer.addSubview(badgesScrollView)
+        badgesScrollView.addSubview(badgesStack)
         tabsContainer.addSubview(diaryTabButton)
         tabsContainer.addSubview(likedTabButton)
         tabsContainer.addSubview(savedTabButton)
@@ -476,7 +750,9 @@ class BearyProfileViewController: UIViewController {
         NSLayoutConstraint.activate([
             coverHeightConstraint,
             avatarTopWithoutCoverConstraint,
-            tabsTopWithoutStripConstraint,
+            tabsTopConstraint,
+            wallHeightConstraint,
+            badgesHeightConstraint,
         ])
 
         NSLayoutConstraint.activate([
@@ -495,15 +771,23 @@ class BearyProfileViewController: UIViewController {
             editButton.trailingAnchor.constraint(equalTo: headerView.trailingAnchor, constant: -28),
             editButton.bottomAnchor.constraint(equalTo: avatarImageView.bottomAnchor),
             editButton.heightAnchor.constraint(equalToConstant: 40),
+            gearButton.trailingAnchor.constraint(equalTo: editButton.leadingAnchor, constant: -8),
+            gearButton.centerYAnchor.constraint(equalTo: editButton.centerYAnchor),
+            gearButton.heightAnchor.constraint(equalToConstant: 40),
+            headerShareButton.centerYAnchor.constraint(equalTo: editButton.centerYAnchor),
+            headerShareButton.widthAnchor.constraint(equalToConstant: 44),
+            headerShareButton.heightAnchor.constraint(equalToConstant: 44),
 
             nameLabel.topAnchor.constraint(equalTo: avatarImageView.bottomAnchor, constant: 14),
             nameLabel.leadingAnchor.constraint(equalTo: headerView.leadingAnchor, constant: 28),
+            // 预留徽章 23 + 间隙 8 + 皇冠 23 + 间隙 8：长名字换行也不挤占徽章位。
+            nameLabel.trailingAnchor.constraint(lessThanOrEqualTo: headerView.trailingAnchor, constant: -90),
             badgeImageView.leadingAnchor.constraint(equalTo: nameLabel.trailingAnchor, constant: 8),
-            badgeImageView.centerYAnchor.constraint(equalTo: nameLabel.centerYAnchor),
+            badgeImageView.centerYAnchor.constraint(equalTo: nameLabel.topAnchor, constant: 14),
             badgeImageView.widthAnchor.constraint(equalToConstant: 23),
             badgeImageView.heightAnchor.constraint(equalToConstant: 23),
             crownImageView.leadingAnchor.constraint(equalTo: badgeImageView.trailingAnchor, constant: 8),
-            crownImageView.centerYAnchor.constraint(equalTo: nameLabel.centerYAnchor),
+            crownImageView.centerYAnchor.constraint(equalTo: nameLabel.topAnchor, constant: 14),
             crownImageView.widthAnchor.constraint(equalToConstant: 23),
             crownImageView.heightAnchor.constraint(equalToConstant: 23),
             crownImageView.trailingAnchor.constraint(lessThanOrEqualTo: headerView.trailingAnchor, constant: -28),
@@ -524,17 +808,38 @@ class BearyProfileViewController: UIViewController {
             likesTextLabel.leadingAnchor.constraint(equalTo: likesCountLabel.trailingAnchor, constant: 4),
             likesTextLabel.trailingAnchor.constraint(lessThanOrEqualTo: headerView.trailingAnchor, constant: -28),
 
-            mailboxStrip.leadingAnchor.constraint(equalTo: headerView.leadingAnchor, constant: 20),
-            mailboxStrip.trailingAnchor.constraint(equalTo: headerView.trailingAnchor, constant: -20),
-            mailboxStrip.topAnchor.constraint(equalTo: publicCountLabel.bottomAnchor, constant: 16),
-            mailboxIconView.leadingAnchor.constraint(equalTo: mailboxStrip.leadingAnchor, constant: 14),
-            mailboxIconView.centerYAnchor.constraint(equalTo: mailboxStrip.centerYAnchor),
-            mailboxIconView.widthAnchor.constraint(equalToConstant: 20),
-            mailboxIconView.heightAnchor.constraint(equalToConstant: 20),
-            mailboxLabel.leadingAnchor.constraint(equalTo: mailboxIconView.trailingAnchor, constant: 10),
-            mailboxLabel.trailingAnchor.constraint(equalTo: mailboxStrip.trailingAnchor, constant: -14),
-            mailboxLabel.topAnchor.constraint(equalTo: mailboxStrip.topAnchor, constant: 12),
-            mailboxLabel.bottomAnchor.constraint(equalTo: mailboxStrip.bottomAnchor, constant: -12),
+            wallContainer.leadingAnchor.constraint(equalTo: headerView.leadingAnchor, constant: 20),
+            wallContainer.trailingAnchor.constraint(equalTo: headerView.trailingAnchor, constant: -20),
+            wallContainer.topAnchor.constraint(equalTo: publicCountLabel.bottomAnchor, constant: 16),
+            wallTitleLabel.leadingAnchor.constraint(equalTo: wallContainer.leadingAnchor, constant: 14),
+            wallTitleLabel.centerYAnchor.constraint(equalTo: wallContainer.centerYAnchor),
+            wallScrollView.leadingAnchor.constraint(equalTo: wallTitleLabel.trailingAnchor, constant: 12),
+            wallScrollView.centerYAnchor.constraint(equalTo: wallContainer.centerYAnchor),
+            wallScrollView.heightAnchor.constraint(equalToConstant: 28),
+            wallStack.topAnchor.constraint(equalTo: wallScrollView.topAnchor),
+            wallStack.leadingAnchor.constraint(equalTo: wallScrollView.leadingAnchor),
+            wallStack.trailingAnchor.constraint(equalTo: wallScrollView.trailingAnchor),
+            wallStack.bottomAnchor.constraint(equalTo: wallScrollView.bottomAnchor),
+            wallStack.heightAnchor.constraint(equalTo: wallScrollView.heightAnchor),
+            wallTotalLabel.leadingAnchor.constraint(equalTo: wallScrollView.trailingAnchor, constant: 12),
+            wallTotalLabel.trailingAnchor.constraint(equalTo: wallContainer.trailingAnchor, constant: -14),
+            wallTotalLabel.centerYAnchor.constraint(equalTo: wallContainer.centerYAnchor),
+
+            badgesContainer.leadingAnchor.constraint(equalTo: headerView.leadingAnchor, constant: 20),
+            badgesContainer.trailingAnchor.constraint(equalTo: headerView.trailingAnchor, constant: -20),
+            badgesContainer.topAnchor.constraint(equalTo: wallContainer.bottomAnchor, constant: 12),
+            badgesTitleLabel.leadingAnchor.constraint(equalTo: badgesContainer.leadingAnchor, constant: 14),
+            badgesTitleLabel.topAnchor.constraint(equalTo: badgesContainer.topAnchor, constant: 12),
+            badgesScrollView.leadingAnchor.constraint(equalTo: badgesContainer.leadingAnchor, constant: 14),
+            badgesScrollView.trailingAnchor.constraint(equalTo: badgesContainer.trailingAnchor, constant: -14),
+            badgesScrollView.topAnchor.constraint(equalTo: badgesTitleLabel.bottomAnchor, constant: 8),
+            badgesScrollView.bottomAnchor.constraint(equalTo: badgesContainer.bottomAnchor, constant: -12),
+            badgesScrollView.heightAnchor.constraint(equalToConstant: 72),
+            badgesStack.topAnchor.constraint(equalTo: badgesScrollView.topAnchor),
+            badgesStack.leadingAnchor.constraint(equalTo: badgesScrollView.leadingAnchor),
+            badgesStack.trailingAnchor.constraint(equalTo: badgesScrollView.trailingAnchor),
+            badgesStack.bottomAnchor.constraint(equalTo: badgesScrollView.bottomAnchor),
+            badgesStack.heightAnchor.constraint(equalTo: badgesScrollView.heightAnchor),
 
             tabsContainer.leadingAnchor.constraint(equalTo: headerView.leadingAnchor, constant: 20),
             tabsContainer.trailingAnchor.constraint(equalTo: headerView.trailingAnchor, constant: -20),
@@ -558,6 +863,11 @@ class BearyProfileViewController: UIViewController {
         avatarLetterLabel.layer.cornerRadius = 42
         avatarLetterLabel.clipsToBounds = true
         avatarImageView.layer.cornerRadius = 42
+        // D-10：长 handle 时日期优先保全、handle 截断（handle 低压缩、日期必保）。
+        handleLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        joinedLabel.setContentCompressionResistancePriority(.required, for: .horizontal)
+        wallTitleLabel.setContentCompressionResistancePriority(.required, for: .horizontal)
+        wallTotalLabel.setContentCompressionResistancePriority(.required, for: .horizontal)
         updateDynamicLayerColors()
     }
 
@@ -572,7 +882,7 @@ class BearyProfileViewController: UIViewController {
 
     /// tableHeaderView 不参与自动布局：按当前宽度量一次拟合高度再回填。
     private func layoutHeader() {
-        let widthValue = view.bounds.width
+        let widthValue = headerWidthValue
         guard widthValue > 0 else { return }
         if headerLaidOutWidth == widthValue && tableView.tableHeaderView != nil {
             // 宽度未变时仍可能因显隐变化需要重算，交给调用方在显隐后显式调
@@ -602,27 +912,29 @@ class BearyProfileViewController: UIViewController {
         // UIColor 动态色转 CGColor 只在赋值时解析一次，深浅切换时需重赋。
         avatarImageView.layer.borderColor = BearyColors.bg.cgColor
         editButton.layer.borderColor = BearyColors.line.cgColor
-        mailboxStrip.layer.borderColor = BearyColors.line.cgColor
+        gearButton.layer.borderColor = BearyColors.line.cgColor
+        wallContainer.layer.borderColor = BearyColors.line.cgColor
+        badgesContainer.layer.borderColor = BearyColors.line.cgColor
     }
 
     // MARK: - 本人 / 他人模式
 
-    /// 唯一显隐规则：他人主页隐藏编辑资料与在路上条，收藏页签仅本人可见。
-    /// （网页 PF_MODE 表同口径：self 全显、other 藏编辑资料与收藏。）
+    /// 唯一显隐规则：他人主页隐藏编辑资料、齿轮菜单与徽章架，收藏页签仅本人可见。
+    /// （网页 PF_MODE 表同口径：self 全显、other 藏编辑资料与收藏；徽章架同为本人专属。）
     private func applyMode() {
         let own = isOwnProfile
         editButton.isHidden = !own
+        gearButton.isHidden = !own
+        if !own {
+            badgesContainer.isHidden = true
+            badgesHeightConstraint.isActive = true
+        }
         savedTabButton.isHidden = !own
         if !own && currentTab == .saved {
             currentTab = .diary
         }
-        if !own {
-            mailboxStrip.isHidden = true
-            tabsTopWithStripConstraint.isActive = false
-            tabsTopWithoutStripConstraint.isActive = true
-        }
         applyTabSelection()
-        layoutHeaderForced(widthValue: view.bounds.width)
+        updateTopBarVisibility()
     }
 
     private func applyTabSelection() {
@@ -661,6 +973,11 @@ class BearyProfileViewController: UIViewController {
         }
     }
 
+    /// 收尾跨页同步：详情/时间线/回收站改动后刷新本页（资料头 + 列表，与初次加载同路径）。
+    func reloadProfile() {
+        loadProfile()
+    }
+
     private func handleProfileResult(result: Result<BearyUserProfile, APIError>) {
         switch result {
         case .success(let profileValue):
@@ -668,10 +985,9 @@ class BearyProfileViewController: UIViewController {
             profile = profileValue
             movedToHandle = profileValue.movedTo
             applyProfile()
-            let wasOwn = isOwnProfile
             applyMode()
-            if wasOwn {
-                loadMailbox()
+            if isOwnProfile {
+                loadBadges()
             }
             if targetHandleValue != nil {
                 // handle 目标的标签列表必须等 profile 解析出 id 才能拉。
@@ -681,7 +997,7 @@ class BearyProfileViewController: UIViewController {
             profileLoadFailed = true
             nameLabel.text = "—"
             refreshFooter()
-            layoutHeaderForced(widthValue: view.bounds.width)
+            layoutHeaderForced(widthValue: headerWidthValue)
         }
     }
 
@@ -744,61 +1060,183 @@ class BearyProfileViewController: UIViewController {
             badgeImageView.isHidden = true
         }
         crownImageView.isHidden = !(profileValue.plus ?? false)
+        topNameLabel.text = displayNameValue
 
+        applyWall()
         updateDynamicLayerColors()
-        layoutHeaderForced(widthValue: view.bounds.width)
+        layoutHeaderForced(widthValue: headerWidthValue)
     }
 
-    // MARK: - 数据：在路上条（仅本人）
+    // MARK: - 小熊回应墙（P1）与徽章架（P2）
 
-    private func loadMailbox() {
-        guard isOwnProfile, viewerUserIdValue != nil else { return }
-        // limit=1 即可：只要响应里的 mailbox_count 与 tl_counts，不要列表本身。
-        BearyAPI.shared.fetchEntries(scope: .timeline, limit: 1) { [weak self] result in
+    private func applyWall() {
+        guard let profileValue = profile else { return }
+        let total = profileValue.emotesTotal ?? 0
+        let received = profileValue.emotesReceived ?? []
+        guard total > 0, !received.isEmpty else {
+            wallContainer.isHidden = true
+            wallHeightConstraint.isActive = true
+            layoutHeaderForced(widthValue: headerWidthValue)
+            return
+        }
+        for arrangedView in wallStack.arrangedSubviews {
+            wallStack.removeArrangedSubview(arrangedView)
+            arrangedView.removeFromSuperview()
+        }
+        let dark = traitCollection.userInterfaceStyle == .dark
+        for item in received {
+            guard let key = item.emote, !key.isEmpty else { continue }
+            let chip = UIStackView()
+            chip.axis = .horizontal
+            chip.spacing = 2
+            chip.alignment = .center
+            let imageViewValue = UIImageView()
+            imageViewValue.translatesAutoresizingMaskIntoConstraints = false
+            imageViewValue.contentMode = .scaleAspectFit
+            if let emoteImage = BearyEmoteImages.image(for: key, dark: dark) {
+                imageViewValue.image = emoteImage
+            }
+            let countLabel = UILabel()
+            countLabel.font = UIFont.systemFont(ofSize: 13)
+            countLabel.textColor = BearyColors.ink
+            countLabel.text = "×\(item.count ?? 0)"
+            chip.addArrangedSubview(imageViewValue)
+            chip.addArrangedSubview(countLabel)
+            NSLayoutConstraint.activate([
+                imageViewValue.widthAnchor.constraint(equalToConstant: 24),
+                imageViewValue.heightAnchor.constraint(equalToConstant: 24),
+            ])
+            wallStack.addArrangedSubview(chip)
+        }
+        wallTotalLabel.text = "共收到 \(total) 只"
+        wallContainer.isHidden = false
+        wallHeightConstraint.isActive = false
+        layoutHeaderForced(widthValue: headerWidthValue)
+    }
+
+    private func loadBadges() {
+        guard isOwnProfile else { return }
+        BearyAPI.shared.fetchMyBadges { [weak self] result in
             DispatchQueue.main.async {
-                guard let strongSelf = self else { return }
-                guard strongSelf.isOwnProfile else { return }
+                guard let strongSelf = self, strongSelf.isOwnProfile else { return }
                 switch result {
-                case .success(let listValue):
-                    strongSelf.mailboxCountValue = listValue.mailboxCount
-                    strongSelf.nextPublishValue = listValue.tlCounts?.nextPub
-                    strongSelf.applyMailboxStrip()
+                case .success(let badgesValue):
+                    strongSelf.unlockedBadges = badgesValue.unlocked ?? []
+                    strongSelf.wornBadgeKey = badgesValue.worn
+                    strongSelf.renderBadges()
                 case .failure:
-                    // 在路上条是附属信息：拉失败只隐藏条，不阻塞主页。
-                    strongSelf.mailboxStrip.isHidden = true
-                    strongSelf.layoutHeaderForced(widthValue: strongSelf.view.bounds.width)
+                    strongSelf.badgesContainer.isHidden = true
+                    strongSelf.badgesHeightConstraint.isActive = true
+                    strongSelf.layoutHeaderForced(widthValue: strongSelf.headerWidthValue)
                 }
             }
         }
     }
 
-    private func applyMailboxStrip() {
+    private func renderBadges() {
         guard isOwnProfile else {
-            mailboxStrip.isHidden = true
-            tabsTopWithStripConstraint.isActive = false
-            tabsTopWithoutStripConstraint.isActive = true
+            badgesContainer.isHidden = true
+            badgesHeightConstraint.isActive = true
             return
         }
-        guard let countValue = mailboxCountValue, countValue > 0 else {
-            mailboxStrip.isHidden = true
-            tabsTopWithStripConstraint.isActive = false
-            tabsTopWithoutStripConstraint.isActive = true
-            layoutHeaderForced(widthValue: view.bounds.width)
+        let shown = unlockedBadges.filter { BearyBadgeImages.image(for: $0) != nil }
+        guard !shown.isEmpty else {
+            badgesContainer.isHidden = true
+            badgesHeightConstraint.isActive = true
+            layoutHeaderForced(widthValue: headerWidthValue)
             return
         }
-        if let nextMs = nextPublishValue, nextMs > 0 {
-            let dateValue = Date(timeIntervalSince1970: TimeInterval(nextMs) / 1000.0)
-            let formatter = DateFormatter()
-            formatter.locale = Locale(identifier: "zh_CN")
-            formatter.dateFormat = "M月d日"
-            mailboxLabel.text = "在路上 \(countValue) 篇 · 最近 \(formatter.string(from: dateValue))送达"
+        for arrangedView in badgesStack.arrangedSubviews {
+            badgesStack.removeArrangedSubview(arrangedView)
+            arrangedView.removeFromSuperview()
+        }
+        for key in shown {
+            guard let badgeImage = BearyBadgeImages.image(for: key) else { continue }
+            let buttonValue = UIButton(type: .system)
+            buttonValue.translatesAutoresizingMaskIntoConstraints = false
+            buttonValue.accessibilityIdentifier = key
+            let imageViewValue = UIImageView(image: badgeImage)
+            imageViewValue.translatesAutoresizingMaskIntoConstraints = false
+            imageViewValue.contentMode = .scaleAspectFit
+            let nameLabelValue = UILabel()
+            nameLabelValue.translatesAutoresizingMaskIntoConstraints = false
+            nameLabelValue.font = UIFont.systemFont(ofSize: 11)
+            nameLabelValue.textColor = BearyColors.ink
+            nameLabelValue.textAlignment = .center
+            nameLabelValue.text = key == "beta" ? "内测者" : key
+            let cellStack = UIStackView(arrangedSubviews: [imageViewValue, nameLabelValue])
+            cellStack.axis = .vertical
+            cellStack.alignment = .center
+            cellStack.spacing = 2
+            cellStack.isUserInteractionEnabled = false
+            buttonValue.addSubview(cellStack)
+            let worn = wornBadgeKey == key
+            buttonValue.backgroundColor = worn ? BearyColors.hov : BearyColors.bg
+            buttonValue.layer.borderWidth = 1
+            buttonValue.layer.borderColor = (worn ? BearyColors.ink : BearyColors.line).cgColor
+            buttonValue.layer.cornerRadius = 12
+            buttonValue.addTarget(self, action: #selector(badgeButtonTapped(_:)), for: .touchUpInside)
+            NSLayoutConstraint.activate([
+                imageViewValue.widthAnchor.constraint(equalToConstant: 40),
+                imageViewValue.heightAnchor.constraint(equalToConstant: 40),
+                cellStack.topAnchor.constraint(equalTo: buttonValue.topAnchor, constant: 6),
+                cellStack.leadingAnchor.constraint(equalTo: buttonValue.leadingAnchor, constant: 8),
+                cellStack.trailingAnchor.constraint(equalTo: buttonValue.trailingAnchor, constant: -8),
+                cellStack.bottomAnchor.constraint(equalTo: buttonValue.bottomAnchor, constant: -6),
+            ])
+            badgesStack.addArrangedSubview(buttonValue)
+        }
+        badgesContainer.isHidden = false
+        badgesHeightConstraint.isActive = false
+        layoutHeaderForced(widthValue: headerWidthValue)
+    }
+
+    @objc private func badgeButtonTapped(_ sender: UIButton) {
+        guard isOwnProfile, !badgeWearBusy else { return }
+        guard let key = sender.accessibilityIdentifier, !key.isEmpty else { return }
+        let next: String? = wornBadgeKey == key ? nil : key
+        badgeWearBusy = true
+        BearyAPI.shared.postWear(badgeKey: next) { [weak self] result in
+            DispatchQueue.main.async {
+                guard let strongSelf = self else { return }
+                strongSelf.badgeWearBusy = false
+                switch result {
+                case .success(let wearValue):
+                    strongSelf.wornBadgeKey = wearValue.worn
+                    if let profileValue = strongSelf.profile {
+                        var updated = profileValue
+                        updated.wornBadge = wearValue.worn
+                        strongSelf.profile = updated
+                    }
+                    strongSelf.refreshWornBadge()
+                    strongSelf.renderBadges()
+                case .failure(let err):
+                    if case .unauthorized = err {
+                        strongSelf.onRequireLogin?()
+                    } else {
+                        strongSelf.presentSimpleAlert(message: "佩戴失败，请重试")
+                    }
+                }
+            }
+        }
+    }
+
+    /// 只刷新名字旁的佩戴徽章位（不重拉整个头部，避免滚动跳动）。
+    private func refreshWornBadge() {
+        guard let profileValue = profile else { return }
+        if let badgeKey = profileValue.wornBadge, !badgeKey.isEmpty, let badgeImage = BearyBadgeImages.image(for: badgeKey) {
+            badgeImageView.image = badgeImage
+            badgeImageView.isHidden = false
         } else {
-            mailboxLabel.text = "在路上 \(countValue) 篇"
+            badgeImageView.image = nil
+            badgeImageView.isHidden = true
         }
-        mailboxStrip.isHidden = false
-        tabsTopWithStripConstraint.isActive = true
-        tabsTopWithoutStripConstraint.isActive = false
-        layoutHeaderForced(widthValue: view.bounds.width)
+    }
+
+    private func presentSimpleAlert(message: String) {
+        let alert = UIAlertController(title: nil, message: message, preferredStyle: .alert)
+        alert.addAction(UIAlertAction(title: "知道了", style: .default, handler: nil))
+        present(alert, animated: true, completion: nil)
     }
 
     // MARK: - 数据：标签列表
@@ -921,8 +1359,74 @@ class BearyProfileViewController: UIViewController {
         if tabEntriesEmpty(tab: tab) {
             loadTab(forceReload: true)
         } else {
+            // P10：有缓存先显，后台拉取回填对账（签名不变的卡保留原对象）。
             refreshFooter()
+            loadTabBackground()
         }
+    }
+
+    /// 后台回填：失败只保留缓存，不改失败态；切走后回包直接丢弃。
+    private func loadTabBackground() {
+        guard let scopeValue = scopeForTab(tab: currentTab), tabBackgroundTab != currentTab else { return }
+        tabBackgroundTab = currentTab
+        let tabAtStart = currentTab
+        BearyAPI.shared.fetchEntries(scope: scopeValue, limit: 50) { [weak self] result in
+            DispatchQueue.main.async {
+                guard let strongSelf = self else { return }
+                if strongSelf.tabBackgroundTab == tabAtStart {
+                    strongSelf.tabBackgroundTab = nil
+                }
+                guard strongSelf.currentTab == tabAtStart else { return }
+                switch result {
+                case .success(let listValue):
+                    let fresh = listValue.entries ?? []
+                    strongSelf.reconcileEntries(fresh: fresh)
+                    if fresh.count < 50 {
+                        strongSelf.setHasMore(hasMore: false)
+                    }
+                    strongSelf.tableView.reloadData()
+                    strongSelf.refreshFooter()
+                case .failure:
+                    break
+                }
+            }
+        }
+    }
+
+    /// 对账：同 id 且签名相同的卡保留旧对象（节点/折叠态不丢），其余用新数据；
+    /// 新卡按服务端顺序插入，已不在新数据里的旧卡摘除。
+    private func reconcileEntries(fresh: [Entry]) {
+        var oldById: [String: Entry] = [:]
+        for entryValue in currentEntries {
+            if let entryId = entryValue.id {
+                oldById[entryId] = entryValue
+            }
+        }
+        var merged: [Entry] = []
+        for freshEntry in fresh {
+            if let freshId = freshEntry.id, let oldEntry = oldById[freshId], entrySignature(entryValue: oldEntry) == entrySignature(entryValue: freshEntry) {
+                merged.append(oldEntry)
+            } else {
+                merged.append(freshEntry)
+            }
+        }
+        setEntries(entries: merged)
+    }
+
+    private func entrySignature(entryValue: Entry) -> String {
+        let emotePart = (entryValue.emotes ?? []).map { "\($0.emote ?? ""):\($0.count ?? 0):\($0.mine ?? false)" }.joined(separator: ",")
+        let imagePart = (entryValue.images ?? []).joined(separator: ",")
+        return [
+            entryValue.content ?? "",
+            imagePart,
+            "\(entryValue.likeCount ?? 0)",
+            "\(entryValue.likedByMe ?? false)",
+            "\(entryValue.bookmarkedByMe ?? false)",
+            emotePart,
+            entryValue.mood ?? "",
+            entryValue.weather ?? "",
+            entryValue.quoteId ?? "",
+        ].joined(separator: "|")
     }
 
     private func tabEntriesEmpty(tab: ProfileTab) -> Bool {
@@ -956,7 +1460,7 @@ class BearyProfileViewController: UIViewController {
     }
 
     private func makeLoadingFooter() -> UIView {
-        let container = UIView(frame: CGRect(x: 0, y: 0, width: view.bounds.width, height: 80))
+        let container = UIView(frame: CGRect(x: 0, y: 0, width: headerWidthValue, height: 80))
         let spinner = UIActivityIndicatorView(style: .medium)
         spinner.translatesAutoresizingMaskIntoConstraints = false
         spinner.color = BearyColors.gray
@@ -1150,6 +1654,348 @@ class BearyProfileViewController: UIViewController {
     @objc private func savedTabTapped() {
         switchTab(tab: .saved)
     }
+
+    // MARK: - 顶栏 / 齿轮 / 分享（P3 / P4 / P5）
+
+    @objc private func backButtonTapped() {
+        onBack?()
+    }
+
+    @objc private func topShareButtonTapped() {
+        shareProfile(sender: topShareButton)
+    }
+
+    @objc private func headerShareButtonTapped() {
+        shareProfile(sender: headerShareButton)
+    }
+
+    /// 分享链接：他人 u/<id>；本人 @<handle>（无 handle 时回退 u/<id>）。
+    /// 注：网页 pfShare 在 id 已知时恒用 u/<id>（见交回注记），本实现按任务口径：
+    /// 本人优先 @handle。
+    private func shareProfileURL() -> URL? {
+        if isOwnProfile {
+            if let handle = profile?.handle, !handle.isEmpty {
+                return URL(string: "https://teddyhn.com/beary/@\(handle)")
+            }
+            if let profileId = profile?.profileIdValue ?? targetUserIdValue {
+                return URL(string: "https://teddyhn.com/beary/u/\(profileId)")
+            }
+            return nil
+        }
+        if let profileId = profile?.profileIdValue ?? targetUserIdValue {
+            return URL(string: "https://teddyhn.com/beary/u/\(profileId)")
+        }
+        if let handle = profile?.handle, !handle.isEmpty {
+            return URL(string: "https://teddyhn.com/beary/@\(handle)")
+        }
+        return nil
+    }
+
+    private func shareProfile(sender: UIView) {
+        guard let shareURL = shareProfileURL() else { return }
+        var items: [Any] = []
+        let displayNameValue = profile?.displayName ?? profile?.handle.map { "@" + $0 } ?? "beary"
+        items.append("\(displayNameValue) · beary")
+        items.append(shareURL)
+        let sheet = UIActivityViewController(activityItems: items, applicationActivities: nil)
+        if let popover = sheet.popoverPresentationController {
+            popover.sourceView = sender
+            popover.sourceRect = sender.bounds
+        }
+        present(sheet, animated: true, completion: nil)
+    }
+
+    @objc private func gearButtonTapped() {
+        guard isOwnProfile else { return }
+        let sheet = UIAlertController(title: nil, message: nil, preferredStyle: .actionSheet)
+        sheet.addAction(UIAlertAction(title: "使用指南", style: .default, handler: { [weak self] _ in self?.onShowTutorial?() }))
+        sheet.addAction(UIAlertAction(title: "账户设置", style: .default, handler: { [weak self] _ in self?.onOpenAccountSettings?() }))
+        sheet.addAction(UIAlertAction(title: "外观", style: .default, handler: { [weak self] _ in self?.onToggleAppearance?() }))
+        sheet.addAction(UIAlertAction(title: "退出登录", style: .destructive, handler: { [weak self] _ in self?.logoutTapped() }))
+        sheet.addAction(UIAlertAction(title: "取消", style: .cancel, handler: nil))
+        if let popover = sheet.popoverPresentationController {
+            popover.sourceView = gearButton
+            popover.sourceRect = gearButton.bounds
+        }
+        present(sheet, animated: true, completion: nil)
+    }
+
+    private func logoutTapped() {
+        // 注记：BearyAPI.logout 走 /api/account/logout（accounts Worker，同样清
+        // teddy_session 会话与 cookie）；网页版 pfLogout 走 /beary/api/logout。
+        // 两者都删同一会话，若总协调要求与网页逐字一致，改 requestVoid 路径即可。
+        BearyAPI.shared.logout { [weak self] result in
+            DispatchQueue.main.async {
+                guard let strongSelf = self else { return }
+                switch result {
+                case .success:
+                    strongSelf.onLogout?()
+                case .failure(let err):
+                    if case .unauthorized = err {
+                        // 会话已失效 = 退出已达成，同样通知容器刷新。
+                        strongSelf.onLogout?()
+                    } else {
+                        strongSelf.presentSimpleAlert(message: "退出失败，请重试")
+                    }
+                }
+            }
+        }
+    }
+
+    // MARK: - 行内互动（P7）与行内回调
+
+    /// 详情页 notifyInteraction 同款：把最新状态回传容器同步各页。
+    private func notifyInteraction(entry: Entry) {
+        guard let entryId = entry.id else { return }
+        onInteractionChanged?(entryId, entry.likeCount, entry.likedByMe, entry.bookmarkedByMe, entry.emotes)
+    }
+
+    private func updateEntryInAllTabs(entry: Entry) {
+        guard let entryId = entry.id else { return }
+        for index in diaryEntries.indices where diaryEntries[index].id == entryId {
+            diaryEntries[index] = entry
+        }
+        for index in likedEntries.indices where likedEntries[index].id == entryId {
+            likedEntries[index] = entry
+        }
+        for index in savedEntries.indices where savedEntries[index].id == entryId {
+            savedEntries[index] = entry
+        }
+    }
+
+    private func reloadVisibleRow(entryId: String) {
+        for index in currentEntries.indices where currentEntries[index].id == entryId {
+            tableView.reloadRows(at: [IndexPath(row: index, section: 0)], with: .none)
+            return
+        }
+        tableView.reloadData()
+    }
+
+    /// 收尾跨页同步：首页/详情取消赞过或收藏后，对应页签摘卡（日记页签不受影响，
+    /// 只摘赞过/收藏页签）。容器接线（Feed onInteractionRemoved → 本方法）。
+    func removeEntryFromTabs(entryId: String, likeRemoved: Bool, bookmarkRemoved: Bool) {
+        if likeRemoved {
+            likedEntries.removeAll(where: { $0.id == entryId })
+        }
+        if bookmarkRemoved {
+            savedEntries.removeAll(where: { $0.id == entryId })
+        }
+        if likeRemoved || bookmarkRemoved {
+            tableView.reloadData()
+        }
+    }
+
+    private func requireLoginForCellAction() -> Bool {
+        if SessionManager.shared.isLoggedIn == false {
+            onRequireLogin?()
+            return false
+        }
+        return true
+    }
+
+    private func handleCellLike(entry: Entry) {
+        guard let entryId = entry.id, !entryId.isEmpty else { return }
+        guard requireLoginForCellAction() else { return }
+        guard !likeBusyIds.contains(entryId) else { return }
+        likeBusyIds.insert(entryId)
+        reloadVisibleRow(entryId: entryId)
+        let wantLiked = !(entry.likedByMe ?? false)
+        BearyAPI.shared.toggleLike(id: entryId, liked: wantLiked) { [weak self] result in
+            DispatchQueue.main.async {
+                guard let strongSelf = self else { return }
+                strongSelf.likeBusyIds.remove(entryId)
+                switch result {
+                case .success(let resp):
+                    var updated = entry
+                    updated.likedByMe = resp.liked ?? wantLiked
+                    if let count = resp.count {
+                        updated.likeCount = count
+                    }
+                    strongSelf.updateEntryInAllTabs(entry: updated)
+                    strongSelf.notifyInteraction(entry: updated)
+                    strongSelf.reloadVisibleRow(entryId: entryId)
+                case .failure(let err):
+                    if case .unauthorized = err {
+                        strongSelf.onRequireLogin?()
+                    } else {
+                        strongSelf.presentSimpleAlert(message: "操作失败")
+                    }
+                    strongSelf.reloadVisibleRow(entryId: entryId)
+                }
+            }
+        }
+    }
+
+    private func handleCellBookmark(entry: Entry) {
+        guard let entryId = entry.id, !entryId.isEmpty else { return }
+        guard requireLoginForCellAction() else { return }
+        guard !bookmarkBusyIds.contains(entryId) else { return }
+        bookmarkBusyIds.insert(entryId)
+        reloadVisibleRow(entryId: entryId)
+        BearyAPI.shared.toggleBookmark(id: entryId) { [weak self] result in
+            DispatchQueue.main.async {
+                guard let strongSelf = self else { return }
+                strongSelf.bookmarkBusyIds.remove(entryId)
+                switch result {
+                case .success(let resp):
+                    var updated = entry
+                    updated.bookmarkedByMe = resp.bookmarked ?? !(entry.bookmarkedByMe ?? false)
+                    strongSelf.updateEntryInAllTabs(entry: updated)
+                    strongSelf.notifyInteraction(entry: updated)
+                    // 收藏页签取消收藏时摘卡（与网页 toggleBookmark 同口径）。
+                    if strongSelf.currentTab == .saved && updated.bookmarkedByMe != true {
+                        strongSelf.savedEntries.removeAll { $0.id == entryId }
+                        strongSelf.tableView.reloadData()
+                    } else {
+                        strongSelf.reloadVisibleRow(entryId: entryId)
+                    }
+                case .failure(let err):
+                    if case .unauthorized = err {
+                        strongSelf.onRequireLogin?()
+                    } else {
+                        strongSelf.presentSimpleAlert(message: "操作失败")
+                    }
+                    strongSelf.reloadVisibleRow(entryId: entryId)
+                }
+            }
+        }
+    }
+
+    private func handleCellShare(entry: Entry) {
+        guard let entryId = entry.id, !entryId.isEmpty else { return }
+        guard let shareURL = URL(string: "https://teddyhn.com/beary/d/\(entryId)") else { return }
+        var items: [Any] = []
+        if let content = entry.content, !content.isEmpty {
+            items.append(String(content.prefix(60)))
+        }
+        items.append(shareURL)
+        let sheet = UIActivityViewController(activityItems: items, applicationActivities: nil)
+        if let popover = sheet.popoverPresentationController {
+            popover.sourceView = view
+            popover.sourceRect = CGRect(x: view.bounds.midX, y: view.bounds.midY, width: 0, height: 0)
+            popover.permittedArrowDirections = []
+        }
+        present(sheet, animated: true, completion: nil)
+    }
+
+    private func handleCellEmoteAdd(entry: Entry) {
+        guard requireLoginForCellAction() else { return }
+        guard entry.isPublic == true else { return }
+        let sheet = BearyProfileEmoteSheetViewController()
+        sheet.modalPresentationStyle = .overFullScreen
+        sheet.onPick = { [weak self] pickedKey in
+            self?.dismiss(animated: true) {
+                self?.handleCellEmote(entry: entry, key: pickedKey)
+            }
+        }
+        present(sheet, animated: true, completion: nil)
+    }
+
+    /// 贴 / 换 / 摘回应：不做乐观更新，只在服务端返回聚合后重绘。
+    private func handleCellEmote(entry: Entry, key: String) {
+        guard let entryId = entry.id, !entryId.isEmpty, !key.isEmpty else { return }
+        guard requireLoginForCellAction() else { return }
+        guard entry.isPublic == true else { return }
+        guard !emoteBusyIds.contains(entryId) else { return }
+        var tappedMine = false
+        var existingMineKey: String?
+        for item in entry.emotes ?? [] {
+            guard let itemKey = item.emote, !itemKey.isEmpty else { continue }
+            if itemKey == key && item.mine == true {
+                tappedMine = true
+            }
+            if item.mine == true && existingMineKey == nil {
+                existingMineKey = itemKey
+            }
+        }
+        emoteBusyIds.insert(entryId)
+        reloadVisibleRow(entryId: entryId)
+        if tappedMine {
+            postCellEmote(entry: entry, key: key)
+        } else if let oldKey = existingMineKey {
+            // 换贴：先摘旧，成功才贴新；第二步失败行保持原样。
+            BearyAPI.shared.postEmote(id: entryId, emote: oldKey) { [weak self] result in
+                DispatchQueue.main.async {
+                    guard let strongSelf = self else { return }
+                    switch result {
+                    case .success:
+                        strongSelf.postCellEmote(entry: entry, key: key)
+                    case .failure(let err):
+                        strongSelf.emoteBusyIds.remove(entryId)
+                        if case .unauthorized = err {
+                            strongSelf.onRequireLogin?()
+                        } else {
+                            strongSelf.presentSimpleAlert(message: "操作失败，请重试")
+                        }
+                        strongSelf.reloadVisibleRow(entryId: entryId)
+                    }
+                }
+            }
+        } else {
+            postCellEmote(entry: entry, key: key)
+        }
+    }
+
+    private func postCellEmote(entry: Entry, key: String) {
+        guard let entryId = entry.id else { return }
+        BearyAPI.shared.postEmote(id: entryId, emote: key) { [weak self] result in
+            DispatchQueue.main.async {
+                guard let strongSelf = self else { return }
+                strongSelf.emoteBusyIds.remove(entryId)
+                switch result {
+                case .success(let resp):
+                    var updated = entry
+                    if let emotes = resp.emotes {
+                        updated.emotes = emotes
+                    }
+                    strongSelf.updateEntryInAllTabs(entry: updated)
+                    strongSelf.notifyInteraction(entry: updated)
+                    strongSelf.reloadVisibleRow(entryId: entryId)
+                case .failure(let err):
+                    if case .unauthorized = err {
+                        strongSelf.onRequireLogin?()
+                    } else {
+                        strongSelf.presentSimpleAlert(message: "操作失败，请重试")
+                    }
+                    strongSelf.reloadVisibleRow(entryId: entryId)
+                }
+            }
+        }
+    }
+
+    private func handleCellFoldToggle(entryId: String) {
+        if expandedEntryIds.contains(entryId) {
+            expandedEntryIds.remove(entryId)
+        } else {
+            expandedEntryIds.insert(entryId)
+        }
+        reloadVisibleRow(entryId: entryId)
+    }
+
+    private func handleCellQuoteTap(entry: Entry) {
+        if let quoteValue = entry.quote {
+            if quoteValue.isPublic == false {
+                presentSimpleAlert(message: "引用的这篇还没公开")
+                return
+            }
+            guard let quoteId = quoteValue.id, !quoteId.isEmpty else { return }
+            BearyAPI.shared.fetchEntry(id: quoteId) { [weak self] result in
+                DispatchQueue.main.async {
+                    guard let strongSelf = self else { return }
+                    switch result {
+                    case .success(let fetched):
+                        strongSelf.onOpenEntry?(fetched)
+                    case .failure:
+                        strongSelf.presentSimpleAlert(message: "引用的日记已删除")
+                    }
+                }
+            }
+            return
+        }
+        if let quoteId = entry.quoteId, !quoteId.isEmpty {
+            presentSimpleAlert(message: "引用的日记已删除")
+        }
+    }
 }
 
 // MARK: - 列表数据源与点按（点按只走 onOpenEntry，不在本文件内置跳转）
@@ -1164,12 +2010,30 @@ extension BearyProfileViewController: UITableViewDataSource, UITableViewDelegate
             return UITableViewCell()
         }
         let entryValue = currentEntries[indexPath.row]
-        cellValue.configure(entry: entryValue)
+        let entryId = entryValue.id ?? ""
+        cellValue.configure(
+            entry: entryValue,
+            isExpanded: expandedEntryIds.contains(entryId),
+            interactionDisabled: likeBusyIds.contains(entryId) || bookmarkBusyIds.contains(entryId) || emoteBusyIds.contains(entryId)
+        )
+        cellValue.onLike = { [weak self] in self?.handleCellLike(entry: entryValue) }
+        cellValue.onBookmark = { [weak self] in self?.handleCellBookmark(entry: entryValue) }
+        cellValue.onShare = { [weak self] in self?.handleCellShare(entry: entryValue) }
+        cellValue.onEmoteTap = { [weak self] key in self?.handleCellEmote(entry: entryValue, key: key) }
+        cellValue.onEmoteAdd = { [weak self] in self?.handleCellEmoteAdd(entry: entryValue) }
+        cellValue.onQuoteTap = { [weak self] in self?.handleCellQuoteTap(entry: entryValue) }
+        cellValue.onFoldToggle = { [weak self] in self?.handleCellFoldToggle(entryId: entryId) }
         return cellValue
     }
 
     func tableView(_ tableView: UITableView, didSelectRowAt indexPath: IndexPath) {
         tableView.deselectRow(at: indexPath, animated: true)
+        // E4-1：行点按 in-flight 守卫，防连点叠页（viewWillAppear 回页时清零）。
+        if let guardUntil = rowTapGuardUntil, Date() < guardUntil {
+            return
+        }
+        guard indexPath.row < currentEntries.count else { return }
+        rowTapGuardUntil = Date().addingTimeInterval(1.5)
         let entryValue = currentEntries[indexPath.row]
         onOpenEntry?(entryValue)
     }
@@ -1181,10 +2045,20 @@ extension BearyProfileViewController: UITableViewDataSource, UITableViewDelegate
     }
 }
 
-// MARK: - 列表行（网页公开卡的精简版：头像 / 名字 / 时间 / 正文 / 图片条 / 获赞数；
-// 不含点赞、收藏、回应等互动——互动走详情页，容器点按后接线）
+// MARK: - 列表行（网页公开卡同款：写给标记 / 作者行 / 正文折叠 / 引用卡 /
+// 图片条 / 点赞收藏分享 / 回应行；互动经控制器回调，不在本行内发请求）
 
 private class BearyProfileEntryCell: UITableViewCell {
+
+    var onLike: (() -> Void)?
+    var onBookmark: (() -> Void)?
+    var onShare: (() -> Void)?
+    var onEmoteTap: ((String) -> Void)?
+    var onEmoteAdd: (() -> Void)?
+    var onQuoteTap: (() -> Void)?
+    var onFoldToggle: (() -> Void)?
+
+    private var chipKeys: [String] = []
 
     private let avatarImageView: UIImageView = {
         let imageViewValue = UIImageView()
@@ -1208,12 +2082,56 @@ private class BearyProfileEntryCell: UITableViewCell {
         return labelValue
     }()
 
+    private let recipientIconView: UIImageView = {
+        let imageViewValue = UIImageView()
+        imageViewValue.translatesAutoresizingMaskIntoConstraints = false
+        imageViewValue.image = BearyIconImages.image(named: "icon_mail", pointSize: 13)
+        imageViewValue.tintColor = BearyColors.orange
+        imageViewValue.contentMode = .scaleAspectFit
+        return imageViewValue
+    }()
+
+    private let recipientLabel: UILabel = {
+        let labelValue = UILabel()
+        labelValue.translatesAutoresizingMaskIntoConstraints = false
+        labelValue.font = UIFont.systemFont(ofSize: 13)
+        labelValue.textColor = BearyColors.orange
+        labelValue.text = "写给你的"
+        return labelValue
+    }()
+
+    private lazy var recipientRow: UIStackView = {
+        let stackValue = UIStackView(arrangedSubviews: [recipientIconView, recipientLabel])
+        stackValue.translatesAutoresizingMaskIntoConstraints = false
+        stackValue.axis = .horizontal
+        stackValue.spacing = 4
+        stackValue.alignment = .center
+        return stackValue
+    }()
+
     private let nameLabel: UILabel = {
         let labelValue = UILabel()
         labelValue.translatesAutoresizingMaskIntoConstraints = false
         labelValue.font = UIFont.systemFont(ofSize: 16.5, weight: .bold)
         labelValue.textColor = BearyColors.ink
         return labelValue
+    }()
+
+    private let rowBadgeImageView: UIImageView = {
+        let imageViewValue = UIImageView()
+        imageViewValue.translatesAutoresizingMaskIntoConstraints = false
+        imageViewValue.contentMode = .scaleAspectFit
+        return imageViewValue
+    }()
+
+    private let rowCrownImageView: UIImageView = {
+        let imageViewValue = UIImageView()
+        imageViewValue.translatesAutoresizingMaskIntoConstraints = false
+        imageViewValue.contentMode = .scaleAspectFit
+        if let crownImage = UIImage(named: "crown") {
+            imageViewValue.image = crownImage
+        }
+        return imageViewValue
     }()
 
     private let timeLabel: UILabel = {
@@ -1224,6 +2142,47 @@ private class BearyProfileEntryCell: UITableViewCell {
         return labelValue
     }()
 
+    private let weatherImageView: UIImageView = {
+        let imageViewValue = UIImageView()
+        imageViewValue.translatesAutoresizingMaskIntoConstraints = false
+        imageViewValue.tintColor = BearyColors.gray
+        imageViewValue.contentMode = .scaleAspectFit
+        return imageViewValue
+    }()
+
+    private let moodImageView: UIImageView = {
+        let imageViewValue = UIImageView()
+        imageViewValue.translatesAutoresizingMaskIntoConstraints = false
+        imageViewValue.contentMode = .scaleAspectFit
+        return imageViewValue
+    }()
+
+    private let moodLabel: UILabel = {
+        let labelValue = UILabel()
+        labelValue.translatesAutoresizingMaskIntoConstraints = false
+        labelValue.font = UIFont.systemFont(ofSize: 14)
+        labelValue.textColor = BearyColors.gray
+        return labelValue
+    }()
+
+    private lazy var moodStack: UIStackView = {
+        let stackValue = UIStackView(arrangedSubviews: [moodImageView, moodLabel])
+        stackValue.translatesAutoresizingMaskIntoConstraints = false
+        stackValue.axis = .horizontal
+        stackValue.spacing = 4
+        stackValue.alignment = .center
+        return stackValue
+    }()
+
+    private lazy var titleStack: UIStackView = {
+        let stackValue = UIStackView(arrangedSubviews: [nameLabel, rowBadgeImageView, rowCrownImageView, timeLabel, weatherImageView, moodStack])
+        stackValue.translatesAutoresizingMaskIntoConstraints = false
+        stackValue.axis = .horizontal
+        stackValue.spacing = 8
+        stackValue.alignment = .center
+        return stackValue
+    }()
+
     private let bodyLabel: UILabel = {
         let labelValue = UILabel()
         labelValue.translatesAutoresizingMaskIntoConstraints = false
@@ -1231,6 +2190,27 @@ private class BearyProfileEntryCell: UITableViewCell {
         labelValue.textColor = BearyColors.ink
         labelValue.numberOfLines = 0
         return labelValue
+    }()
+
+    private lazy var foldButton: UIButton = {
+        let buttonValue = UIButton(type: .system)
+        buttonValue.translatesAutoresizingMaskIntoConstraints = false
+        buttonValue.setTitleColor(BearyColors.gray, for: .normal)
+        buttonValue.titleLabel?.font = UIFont.systemFont(ofSize: 14)
+        buttonValue.setImage(BearyIconImages.image(named: "icon_chevron_down", pointSize: 14), for: .normal)
+        buttonValue.tintColor = BearyColors.gray
+        buttonValue.contentHorizontalAlignment = .left
+        buttonValue.addTarget(self, action: #selector(foldButtonTapped), for: .touchUpInside)
+        return buttonValue
+    }()
+
+    private let quoteContainer: UIView = {
+        let viewValue = UIView()
+        viewValue.translatesAutoresizingMaskIntoConstraints = false
+        viewValue.backgroundColor = BearyColors.faint
+        viewValue.layer.cornerRadius = 12
+        viewValue.clipsToBounds = true
+        return viewValue
     }()
 
     private let imagesScrollView: UIScrollView = {
@@ -1248,20 +2228,55 @@ private class BearyProfileEntryCell: UITableViewCell {
         return stackValue
     }()
 
-    private let likeIconView: UIImageView = {
-        let imageViewValue = UIImageView()
-        imageViewValue.translatesAutoresizingMaskIntoConstraints = false
-        imageViewValue.image = BearyIconImages.image(named: "icon_heart", pointSize: 22)
-        imageViewValue.contentMode = .scaleAspectFit
-        return imageViewValue
+    private lazy var likeButton: UIButton = {
+        let buttonValue = UIButton(type: .system)
+        buttonValue.translatesAutoresizingMaskIntoConstraints = false
+        buttonValue.titleLabel?.font = UIFont.systemFont(ofSize: 14)
+        buttonValue.addTarget(self, action: #selector(likeButtonTapped), for: .touchUpInside)
+        return buttonValue
     }()
 
-    private let likeCountLabel: UILabel = {
-        let labelValue = UILabel()
-        labelValue.translatesAutoresizingMaskIntoConstraints = false
-        labelValue.font = UIFont.systemFont(ofSize: 14)
-        labelValue.textColor = BearyColors.gray
-        return labelValue
+    private lazy var bookmarkButton: UIButton = {
+        let buttonValue = UIButton(type: .system)
+        buttonValue.translatesAutoresizingMaskIntoConstraints = false
+        buttonValue.addTarget(self, action: #selector(bookmarkButtonTapped), for: .touchUpInside)
+        return buttonValue
+    }()
+
+    private lazy var shareButton: UIButton = {
+        let buttonValue = UIButton(type: .system)
+        buttonValue.translatesAutoresizingMaskIntoConstraints = false
+        buttonValue.setImage(BearyIconImages.image(named: "icon_share", pointSize: 21), for: .normal)
+        buttonValue.tintColor = BearyColors.gray
+        buttonValue.addTarget(self, action: #selector(shareButtonTapped), for: .touchUpInside)
+        return buttonValue
+    }()
+
+    private lazy var actionStack: UIStackView = {
+        let spacer = UIView()
+        spacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        let stackValue = UIStackView(arrangedSubviews: [likeButton, spacer, bookmarkButton, shareButton])
+        stackValue.translatesAutoresizingMaskIntoConstraints = false
+        stackValue.axis = .horizontal
+        stackValue.spacing = 16
+        stackValue.alignment = .center
+        return stackValue
+    }()
+
+    private let emoteScrollView: UIScrollView = {
+        let scrollViewValue = UIScrollView()
+        scrollViewValue.translatesAutoresizingMaskIntoConstraints = false
+        scrollViewValue.showsHorizontalScrollIndicator = false
+        return scrollViewValue
+    }()
+
+    private let emoteStack: UIStackView = {
+        let stackValue = UIStackView()
+        stackValue.translatesAutoresizingMaskIntoConstraints = false
+        stackValue.axis = .horizontal
+        stackValue.spacing = 6
+        stackValue.alignment = .center
+        return stackValue
     }()
 
     private let separatorView: UIView = {
@@ -1271,7 +2286,17 @@ private class BearyProfileEntryCell: UITableViewCell {
         return viewValue
     }()
 
+    private lazy var rightStack: UIStackView = {
+        let stackValue = UIStackView(arrangedSubviews: [recipientRow, titleStack, bodyLabel, foldButton, quoteContainer, imagesScrollView, actionStack, emoteScrollView])
+        stackValue.translatesAutoresizingMaskIntoConstraints = false
+        stackValue.axis = .vertical
+        stackValue.spacing = 10
+        stackValue.alignment = .fill
+        return stackValue
+    }()
+
     private var imageHeightConstraint: NSLayoutConstraint?
+    private var emoteHeightConstraint: NSLayoutConstraint?
 
     override init(style: UITableViewCell.CellStyle, reuseIdentifier: String?) {
         super.init(style: style, reuseIdentifier: reuseIdentifier)
@@ -1280,15 +2305,18 @@ private class BearyProfileEntryCell: UITableViewCell {
         contentView.backgroundColor = BearyColors.bg
         contentView.addSubview(avatarImageView)
         contentView.addSubview(avatarLetterLabel)
-        contentView.addSubview(nameLabel)
-        contentView.addSubview(timeLabel)
-        contentView.addSubview(bodyLabel)
-        contentView.addSubview(imagesScrollView)
-        contentView.addSubview(likeIconView)
-        contentView.addSubview(likeCountLabel)
+        contentView.addSubview(rightStack)
         contentView.addSubview(separatorView)
         imagesScrollView.addSubview(imagesStack)
+        emoteScrollView.addSubview(emoteStack)
+        rightStack.setCustomSpacing(4, after: recipientRow)
+        rightStack.setCustomSpacing(4, after: titleStack)
+        rightStack.setCustomSpacing(6, after: bodyLabel)
+        rightStack.setCustomSpacing(0, after: foldButton)
         imageHeightConstraint = imagesScrollView.heightAnchor.constraint(equalToConstant: 0)
+        emoteHeightConstraint = emoteScrollView.heightAnchor.constraint(equalToConstant: 32)
+        let quoteTap = UITapGestureRecognizer(target: self, action: #selector(quoteTapped))
+        quoteContainer.addGestureRecognizer(quoteTap)
         NSLayoutConstraint.activate([
             avatarImageView.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 22),
             avatarImageView.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 20),
@@ -1299,39 +2327,53 @@ private class BearyProfileEntryCell: UITableViewCell {
             avatarLetterLabel.trailingAnchor.constraint(equalTo: avatarImageView.trailingAnchor),
             avatarLetterLabel.bottomAnchor.constraint(equalTo: avatarImageView.bottomAnchor),
 
-            nameLabel.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 22),
-            nameLabel.leadingAnchor.constraint(equalTo: avatarImageView.trailingAnchor, constant: 12),
-            timeLabel.centerYAnchor.constraint(equalTo: nameLabel.centerYAnchor),
-            timeLabel.leadingAnchor.constraint(equalTo: nameLabel.trailingAnchor, constant: 8),
-            timeLabel.trailingAnchor.constraint(lessThanOrEqualTo: contentView.trailingAnchor, constant: -20),
+            rightStack.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 22),
+            rightStack.leadingAnchor.constraint(equalTo: avatarImageView.trailingAnchor, constant: 12),
+            rightStack.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -20),
 
-            bodyLabel.topAnchor.constraint(equalTo: nameLabel.bottomAnchor, constant: 4),
-            bodyLabel.leadingAnchor.constraint(equalTo: nameLabel.leadingAnchor),
-            bodyLabel.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -20),
+            recipientIconView.widthAnchor.constraint(equalToConstant: 13),
+            recipientIconView.heightAnchor.constraint(equalToConstant: 13),
+            rowBadgeImageView.widthAnchor.constraint(equalToConstant: 17),
+            rowBadgeImageView.heightAnchor.constraint(equalToConstant: 17),
+            rowCrownImageView.widthAnchor.constraint(equalToConstant: 19),
+            rowCrownImageView.heightAnchor.constraint(equalToConstant: 19),
+            weatherImageView.widthAnchor.constraint(equalToConstant: 15),
+            weatherImageView.heightAnchor.constraint(equalToConstant: 15),
+            moodImageView.widthAnchor.constraint(equalToConstant: 20),
+            moodImageView.heightAnchor.constraint(equalToConstant: 20),
 
-            imagesScrollView.topAnchor.constraint(equalTo: bodyLabel.bottomAnchor, constant: 10),
-            imagesScrollView.leadingAnchor.constraint(equalTo: nameLabel.leadingAnchor),
-            imagesScrollView.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -20),
-            imageHeightConstraint,
             imagesStack.topAnchor.constraint(equalTo: imagesScrollView.topAnchor),
             imagesStack.leadingAnchor.constraint(equalTo: imagesScrollView.leadingAnchor),
             imagesStack.trailingAnchor.constraint(equalTo: imagesScrollView.trailingAnchor),
             imagesStack.bottomAnchor.constraint(equalTo: imagesScrollView.bottomAnchor),
             imagesStack.heightAnchor.constraint(equalTo: imagesScrollView.heightAnchor),
+            imageHeightConstraint,
 
-            likeIconView.topAnchor.constraint(equalTo: imagesScrollView.bottomAnchor, constant: 10),
-            likeIconView.leadingAnchor.constraint(equalTo: nameLabel.leadingAnchor),
-            likeIconView.widthAnchor.constraint(equalToConstant: 22),
-            likeIconView.heightAnchor.constraint(equalToConstant: 22),
-            likeCountLabel.centerYAnchor.constraint(equalTo: likeIconView.centerYAnchor),
-            likeCountLabel.leadingAnchor.constraint(equalTo: likeIconView.trailingAnchor, constant: 6),
+            likeButton.heightAnchor.constraint(equalToConstant: 22),
+            bookmarkButton.widthAnchor.constraint(equalToConstant: 21),
+            bookmarkButton.heightAnchor.constraint(equalToConstant: 21),
+            shareButton.widthAnchor.constraint(equalToConstant: 21),
+            shareButton.heightAnchor.constraint(equalToConstant: 21),
 
-            separatorView.topAnchor.constraint(equalTo: likeIconView.bottomAnchor, constant: 14),
+            emoteStack.topAnchor.constraint(equalTo: emoteScrollView.topAnchor),
+            emoteStack.leadingAnchor.constraint(equalTo: emoteScrollView.leadingAnchor),
+            emoteStack.trailingAnchor.constraint(equalTo: emoteScrollView.trailingAnchor),
+            emoteStack.bottomAnchor.constraint(equalTo: emoteScrollView.bottomAnchor),
+            emoteStack.heightAnchor.constraint(equalTo: emoteScrollView.heightAnchor),
+            emoteHeightConstraint,
+
+            separatorView.topAnchor.constraint(equalTo: rightStack.bottomAnchor, constant: 14),
             separatorView.leadingAnchor.constraint(equalTo: contentView.leadingAnchor),
             separatorView.trailingAnchor.constraint(equalTo: contentView.trailingAnchor),
             separatorView.heightAnchor.constraint(equalToConstant: 2),
             separatorView.bottomAnchor.constraint(equalTo: contentView.bottomAnchor),
         ].compactMap { $0 })
+        nameLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        timeLabel.setContentCompressionResistancePriority(.required, for: .horizontal)
+        rowBadgeImageView.setContentCompressionResistancePriority(.required, for: .horizontal)
+        rowCrownImageView.setContentCompressionResistancePriority(.required, for: .horizontal)
+        weatherImageView.setContentCompressionResistancePriority(.required, for: .horizontal)
+        moodStack.setContentCompressionResistancePriority(.required, for: .horizontal)
     }
 
     required init?(coder: NSCoder) {
@@ -1341,13 +2383,58 @@ private class BearyProfileEntryCell: UITableViewCell {
     override func prepareForReuse() {
         super.prepareForReuse()
         avatarImageView.image = nil
+        onLike = nil
+        onBookmark = nil
+        onShare = nil
+        onEmoteTap = nil
+        onEmoteAdd = nil
+        onQuoteTap = nil
+        onFoldToggle = nil
+        chipKeys = []
         for arrangedView in imagesStack.arrangedSubviews {
             imagesStack.removeArrangedSubview(arrangedView)
             arrangedView.removeFromSuperview()
         }
+        for arrangedView in emoteStack.arrangedSubviews {
+            emoteStack.removeArrangedSubview(arrangedView)
+            arrangedView.removeFromSuperview()
+        }
+        for subview in quoteContainer.subviews {
+            subview.removeFromSuperview()
+        }
     }
 
-    func configure(entry: Entry) {
+    @objc private func foldButtonTapped() {
+        onFoldToggle?()
+    }
+
+    @objc private func likeButtonTapped() {
+        onLike?()
+    }
+
+    @objc private func bookmarkButtonTapped() {
+        onBookmark?()
+    }
+
+    @objc private func shareButtonTapped() {
+        onShare?()
+    }
+
+    @objc private func quoteTapped() {
+        onQuoteTap?()
+    }
+
+    @objc private func emoteChipTapped(_ sender: UIButton) {
+        let index = sender.tag
+        guard index >= 0, index < chipKeys.count else { return }
+        onEmoteTap?(chipKeys[index])
+    }
+
+    @objc private func emoteAddTapped() {
+        onEmoteAdd?()
+    }
+
+    func configure(entry: Entry, isExpanded: Bool, interactionDisabled: Bool) {
         let authorNameValue = entry.authorName ?? "beary 用户"
         nameLabel.text = authorNameValue
         if let createdMs = entry.createdAt, createdMs > 0 {
@@ -1363,6 +2450,41 @@ private class BearyProfileEntryCell: UITableViewCell {
             avatarLetterLabel.isHidden = false
             avatarLetterLabel.text = String(authorNameValue.prefix(1)).uppercased()
         }
+        // 写给标记：仅收件人是当前用户时显示（网页 renderPublic 同口径）。
+        if let recipientIdValue = entry.recipientId, let meIdValue = SessionManager.shared.currentUser?.id, recipientIdValue == meIdValue {
+            recipientRow.isHidden = false
+        } else {
+            recipientRow.isHidden = true
+        }
+        // 作者徽章 + Plus 皇冠（Feed 行同口径：徽章 17、皇冠 19）。
+        if let badgeKey = entry.authorBadge, !badgeKey.isEmpty, let badgeImage = BearyBadgeImages.image(for: badgeKey) {
+            rowBadgeImageView.image = badgeImage
+            rowBadgeImageView.isHidden = false
+        } else {
+            rowBadgeImageView.image = nil
+            rowBadgeImageView.isHidden = true
+        }
+        rowCrownImageView.isHidden = !((entry.authorPlus ?? 0) != 0)
+        // 天气图标（icon_wx_<key>，取不到图时隐藏、不留空）。
+        if let weatherKey = entry.weather, !weatherKey.isEmpty, let weatherImage = BearyIconImages.image(named: "icon_wx_" + weatherKey, pointSize: 15) {
+            weatherImageView.image = weatherImage
+            weatherImageView.isHidden = false
+        } else {
+            weatherImageView.image = nil
+            weatherImageView.isHidden = true
+        }
+        // 心情标签（表情图 20 + 心情名）。
+        if let moodKey = entry.mood, !moodKey.isEmpty, let moodName = BearyText.moodNames[moodKey] {
+            let dark = traitCollection.userInterfaceStyle == .dark
+            moodImageView.image = BearyEmoteImages.image(for: moodKey, dark: dark)
+            moodLabel.text = moodName
+            moodStack.isHidden = false
+        } else {
+            moodImageView.image = nil
+            moodLabel.text = nil
+            moodStack.isHidden = true
+        }
+        // 正文 + 300 字折叠（网页 renderPublic foldLong 口径；折叠态收起 6 行）。
         let bodyText = entry.content ?? ""
         let paragraph = NSMutableParagraphStyle()
         paragraph.lineHeightMultiple = 1.6
@@ -1371,6 +2493,17 @@ private class BearyProfileEntryCell: UITableViewCell {
             .foregroundColor: BearyColors.ink,
             .paragraphStyle: paragraph,
         ])
+        if bodyText.count > 300 {
+            foldButton.isHidden = false
+            foldButton.setTitle(isExpanded ? "收起" : "展开全文", for: .normal)
+            foldButton.imageView?.transform = isExpanded ? CGAffineTransform(rotationAngle: CGFloat.pi) : .identity
+            bodyLabel.numberOfLines = isExpanded ? 0 : 6
+        } else {
+            foldButton.isHidden = true
+            bodyLabel.numberOfLines = 0
+        }
+        configureQuote(entry: entry)
+        // 图片条 216 高、按宽高比定宽（原 stripW 口径）。
         let imageKeys = entry.images ?? []
         if imageKeys.isEmpty {
             imagesScrollView.isHidden = true
@@ -1393,10 +2526,220 @@ private class BearyProfileEntryCell: UITableViewCell {
                 ])
             }
         }
+        // 点赞 / 收藏 / 分享（已赞、已收藏为橙色；忙时整行互动禁用）。
         let likedByMe = entry.likedByMe ?? false
-        likeIconView.tintColor = likedByMe ? BearyColors.orange : BearyColors.gray
-        likeCountLabel.text = "\(entry.likeCount ?? 0)"
-        likeCountLabel.textColor = likedByMe ? BearyColors.orange : BearyColors.gray
+        let likedImageName = likedByMe ? "icon_heart_fill" : "icon_heart"
+        likeButton.setImage(BearyIconImages.image(named: likedImageName, pointSize: 22), for: .normal)
+        likeButton.setTitle("\(entry.likeCount ?? 0)", for: .normal)
+        let likeColor = likedByMe ? BearyColors.orange : BearyColors.gray
+        likeButton.tintColor = likeColor
+        likeButton.setTitleColor(likeColor, for: .normal)
+        let bookmarkedByMe = entry.bookmarkedByMe ?? false
+        let bookmarkImageName = bookmarkedByMe ? "icon_bookmark_fill" : "icon_bookmark"
+        bookmarkButton.setImage(BearyIconImages.image(named: bookmarkImageName, pointSize: 21), for: .normal)
+        bookmarkButton.tintColor = bookmarkedByMe ? BearyColors.orange : BearyColors.gray
+        likeButton.isEnabled = !interactionDisabled
+        bookmarkButton.isEnabled = !interactionDisabled
+        shareButton.isEnabled = !interactionDisabled
+        configureEmotes(entry: entry, interactionDisabled: interactionDisabled)
+    }
+
+    /// 引用卡：服务端 Quote 模型无 gone/locked 字段，按返回形状推断（Feed 行同口径）：
+    /// 正文空 + 未公开 = 锁定；正文空 + 其他 = 已删除；正文非空 = 正常卡。
+    /// 缩略图门控与网页 quoteThumbsHtml 同口径：公开或本人日记才出图。
+    private func configureQuote(entry: Entry) {
+        for subview in quoteContainer.subviews {
+            subview.removeFromSuperview()
+        }
+        guard let quoteValue = entry.quote else {
+            if let quoteId = entry.quoteId, !quoteId.isEmpty {
+                buildGoneQuote(message: "引用的日记已删除")
+                quoteContainer.isHidden = false
+            } else {
+                quoteContainer.isHidden = true
+            }
+            return
+        }
+        let quoteContent = quoteValue.content ?? ""
+        if quoteContent.isEmpty {
+            if quoteValue.isPublic == false {
+                buildGoneQuote(message: "引用了一篇尚未公开的日记")
+            } else {
+                buildGoneQuote(message: "引用的日记已删除")
+            }
+            quoteContainer.isHidden = false
+            return
+        }
+        let inner = UIStackView()
+        inner.translatesAutoresizingMaskIntoConstraints = false
+        inner.axis = .horizontal
+        inner.spacing = 8
+        inner.alignment = .top
+        quoteContainer.addSubview(inner)
+        NSLayoutConstraint.activate([
+            inner.topAnchor.constraint(equalTo: quoteContainer.topAnchor, constant: 9),
+            inner.bottomAnchor.constraint(equalTo: quoteContainer.bottomAnchor, constant: -9),
+            inner.leadingAnchor.constraint(equalTo: quoteContainer.leadingAnchor, constant: 12),
+            inner.trailingAnchor.constraint(equalTo: quoteContainer.trailingAnchor, constant: -12),
+        ])
+        let iconView = UIImageView(image: BearyIconImages.image(named: "icon_quote", pointSize: 15))
+        iconView.translatesAutoresizingMaskIntoConstraints = false
+        iconView.tintColor = BearyColors.gray
+        iconView.contentMode = .scaleAspectFit
+        inner.addArrangedSubview(iconView)
+        NSLayoutConstraint.activate([
+            iconView.widthAnchor.constraint(equalToConstant: 15),
+            iconView.heightAnchor.constraint(equalToConstant: 15),
+        ])
+        let textLabel = UILabel()
+        textLabel.font = UIFont.systemFont(ofSize: 13.5)
+        textLabel.textColor = BearyColors.ink
+        textLabel.numberOfLines = 3
+        textLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        let quoteParagraph = NSMutableParagraphStyle()
+        quoteParagraph.lineHeightMultiple = 1.55
+        textLabel.attributedText = NSAttributedString(string: quoteContent, attributes: [
+            .font: UIFont.systemFont(ofSize: 13.5),
+            .foregroundColor: BearyColors.ink,
+            .paragraphStyle: quoteParagraph,
+        ])
+        inner.addArrangedSubview(textLabel)
+        let showThumbs = quoteValue.isPublic == true || entry.isMine == true
+        if showThumbs, let keys = quoteValue.images?.filter({ !$0.isEmpty }), !keys.isEmpty {
+            let thumbsStack = UIStackView()
+            thumbsStack.axis = .horizontal
+            thumbsStack.spacing = 5
+            for thumbKey in keys {
+                let thumbView = UIImageView()
+                thumbView.translatesAutoresizingMaskIntoConstraints = false
+                thumbView.backgroundColor = BearyColors.faint
+                thumbView.contentMode = .scaleAspectFill
+                thumbView.clipsToBounds = true
+                thumbView.layer.cornerRadius = 7
+                thumbView.bearySetImage(url: BearyImageURLs.imageURL(key: thumbKey, thumb: true))
+                thumbsStack.addArrangedSubview(thumbView)
+                NSLayoutConstraint.activate([
+                    thumbView.widthAnchor.constraint(equalToConstant: 42),
+                    thumbView.heightAnchor.constraint(equalToConstant: 42),
+                ])
+            }
+            inner.addArrangedSubview(thumbsStack)
+        }
+        if let createdMs = quoteValue.createdAt, createdMs > 0 {
+            let dateLabel = UILabel()
+            dateLabel.font = UIFont.systemFont(ofSize: 12)
+            dateLabel.textColor = BearyColors.gray
+            dateLabel.setContentCompressionResistancePriority(.required, for: .horizontal)
+            dateLabel.text = BearyFeedCell.feedTimeString(ms: createdMs)
+            inner.addArrangedSubview(dateLabel)
+        }
+        quoteContainer.isHidden = false
+    }
+
+    private func buildGoneQuote(message: String) {
+        let inner = UIStackView()
+        inner.translatesAutoresizingMaskIntoConstraints = false
+        inner.axis = .horizontal
+        inner.spacing = 8
+        inner.alignment = .center
+        quoteContainer.addSubview(inner)
+        NSLayoutConstraint.activate([
+            inner.topAnchor.constraint(equalTo: quoteContainer.topAnchor, constant: 9),
+            inner.bottomAnchor.constraint(equalTo: quoteContainer.bottomAnchor, constant: -9),
+            inner.leadingAnchor.constraint(equalTo: quoteContainer.leadingAnchor, constant: 12),
+            inner.trailingAnchor.constraint(equalTo: quoteContainer.trailingAnchor, constant: -12),
+        ])
+        let iconName = message.contains("尚未公开") ? "icon_lock" : "icon_quote"
+        let iconView = UIImageView(image: BearyIconImages.image(named: iconName, pointSize: 15))
+        iconView.translatesAutoresizingMaskIntoConstraints = false
+        iconView.tintColor = BearyColors.gray
+        iconView.contentMode = .scaleAspectFit
+        inner.addArrangedSubview(iconView)
+        NSLayoutConstraint.activate([
+            iconView.widthAnchor.constraint(equalToConstant: 15),
+            iconView.heightAnchor.constraint(equalToConstant: 15),
+        ])
+        let labelValue = UILabel()
+        labelValue.font = UIFont.systemFont(ofSize: 13)
+        labelValue.textColor = BearyColors.gray
+        labelValue.numberOfLines = 0
+        labelValue.text = message
+        inner.addArrangedSubview(labelValue)
+    }
+
+    /// 回应行：count 降序（网页 emoteChipsHtml 同口径），mine 高亮，末尾常驻 + 按钮。
+    private func configureEmotes(entry: Entry, interactionDisabled: Bool) {
+        chipKeys = []
+        for arrangedView in emoteStack.arrangedSubviews {
+            emoteStack.removeArrangedSubview(arrangedView)
+            arrangedView.removeFromSuperview()
+        }
+        let dark = traitCollection.userInterfaceStyle == .dark
+        let sorted = (entry.emotes ?? []).sorted { ($0.count ?? 0) > ($1.count ?? 0) }
+        for item in sorted {
+            guard let key = item.emote, !key.isEmpty else { continue }
+            chipKeys.append(key)
+            let mine = item.mine ?? false
+            let buttonValue = UIButton(type: .system)
+            buttonValue.translatesAutoresizingMaskIntoConstraints = false
+            buttonValue.tag = chipKeys.count - 1
+            if let emoteImage = BearyEmoteImages.image(for: key, dark: dark) {
+                buttonValue.setImage(resizedEmoteImage(emoteImage, pointSize: 24).withRenderingMode(.alwaysOriginal), for: .normal)
+                buttonValue.setTitle("\(item.count ?? 0)", for: .normal)
+            } else {
+                let name = BearyText.moodNames[key] ?? key
+                buttonValue.setTitle("\(name) \(item.count ?? 0)", for: .normal)
+            }
+            buttonValue.titleLabel?.font = UIFont.systemFont(ofSize: 12, weight: mine ? .bold : .regular)
+            buttonValue.setTitleColor(mine ? BearyColors.ink : BearyColors.gray, for: .normal)
+            buttonValue.contentEdgeInsets = UIEdgeInsets(top: 4, left: 6, bottom: 4, right: 10)
+            buttonValue.titleEdgeInsets = UIEdgeInsets(top: 0, left: 6, bottom: 0, right: 0)
+            buttonValue.backgroundColor = mine ? BearyColors.hov : BearyColors.faint
+            buttonValue.layer.cornerRadius = 16
+            buttonValue.layer.borderWidth = 1
+            buttonValue.layer.borderColor = (mine ? BearyColors.ink : BearyColors.line).cgColor
+            buttonValue.clipsToBounds = true
+            buttonValue.isEnabled = !interactionDisabled
+            buttonValue.addTarget(self, action: #selector(emoteChipTapped(_:)), for: .touchUpInside)
+            NSLayoutConstraint.activate([
+                buttonValue.heightAnchor.constraint(equalToConstant: 32),
+            ])
+            emoteStack.addArrangedSubview(buttonValue)
+        }
+        let addButton = UIButton(type: .system)
+        addButton.translatesAutoresizingMaskIntoConstraints = false
+        addButton.setImage(BearyIconImages.image(named: "icon_plus", pointSize: 16), for: .normal)
+        addButton.tintColor = BearyColors.gray
+        addButton.backgroundColor = BearyColors.faint
+        addButton.layer.cornerRadius = 16
+        addButton.layer.borderWidth = 1
+        addButton.layer.borderColor = BearyColors.line.cgColor
+        addButton.clipsToBounds = true
+        addButton.isEnabled = !interactionDisabled
+        addButton.addTarget(self, action: #selector(emoteAddTapped), for: .touchUpInside)
+        NSLayoutConstraint.activate([
+            addButton.widthAnchor.constraint(equalToConstant: 32),
+            addButton.heightAnchor.constraint(equalToConstant: 32),
+        ])
+        emoteStack.addArrangedSubview(addButton)
+        emoteScrollView.isHidden = false
+    }
+
+    /// 详情页同款：把 emote 原图缩放到指定 pt（按比例，不拉伸）。
+    private func resizedEmoteImage(_ image: UIImage, pointSize: CGFloat) -> UIImage {
+        let scale = UIScreen.main.scale
+        let pixelSize = pointSize * scale
+        let width = image.size.width
+        let height = image.size.height
+        guard width > 0, height > 0 else { return image }
+        let ratio = min(pixelSize / width, pixelSize / height)
+        let target = CGSize(width: max(1, width * ratio), height: max(1, height * ratio))
+        let format = UIGraphicsImageRendererFormat()
+        format.scale = scale
+        let renderer = UIGraphicsImageRenderer(size: target, format: format)
+        return renderer.image { _ in
+            image.draw(in: CGRect(origin: .zero, size: target))
+        }
     }
 
     /// 网页 stripW 同口径：216 高下宽按原图比，0.55–2.22 倍高夹取，无尺寸默认 280。
@@ -1406,5 +2749,159 @@ private class BearyProfileEntryCell: UITableViewCell {
             return round(max(height * 0.55, min(height * 2.22, raw)))
         }
         return 280
+    }
+}
+
+// MARK: - 回应选择 sheet（详情页 BearyEmoteSheetViewController 的本文件版，
+// 详情页那份是文件私有、跨文件不可复用，故在此复刻 40 只键表与底 sheet 形态）
+
+private class BearyProfileEmoteSheetViewController: UIViewController, UICollectionViewDataSource, UICollectionViewDelegateFlowLayout {
+
+    var onPick: ((String) -> Void)?
+
+    private let emoteKeys = ["agree", "happy", "applause", "candle", "love", "comfort", "confused", "cheer", "determined", "facepalm", "flower", "sleepy", "goodnight", "hug", "cry", "idea", "kiss", "thinking", "letter", "listening", "lonely", "wink", "nope", "paperplane", "shy", "pat", "peek", "surprised", "proud", "shrug", "sorry", "angry", "sprout", "tea", "speechless", "thanks", "umbrella", "zap", "wave", "wish"]
+
+    private let scrimView = UIView()
+    private let sheetView = UIView()
+    private let grabView = UIView()
+    private let titleLabel = UILabel()
+    private let closeButton = UIButton(type: .system)
+
+    override func viewDidLoad() {
+        super.viewDidLoad()
+        view.backgroundColor = .clear
+        scrimView.backgroundColor = BearyColors.scrim
+        scrimView.translatesAutoresizingMaskIntoConstraints = false
+        let scrimTap = UITapGestureRecognizer(target: self, action: #selector(closeTapped))
+        scrimView.addGestureRecognizer(scrimTap)
+        view.addSubview(scrimView)
+        sheetView.backgroundColor = BearyColors.surface
+        sheetView.layer.cornerRadius = 22
+        sheetView.layer.maskedCorners = [.layerMinXMinYCorner, .layerMaxXMinYCorner]
+        sheetView.clipsToBounds = true
+        sheetView.translatesAutoresizingMaskIntoConstraints = false
+        view.addSubview(sheetView)
+        grabView.backgroundColor = BearyColors.line
+        grabView.layer.cornerRadius = 2
+        grabView.clipsToBounds = true
+        grabView.translatesAutoresizingMaskIntoConstraints = false
+        sheetView.addSubview(grabView)
+        titleLabel.text = "贴一只小熊"
+        titleLabel.font = UIFont.boldSystemFont(ofSize: 15)
+        titleLabel.textColor = BearyColors.ink
+        titleLabel.translatesAutoresizingMaskIntoConstraints = false
+        sheetView.addSubview(titleLabel)
+        closeButton.setImage(BearyIconImages.image(named: "icon_close", pointSize: 15), for: .normal)
+        closeButton.tintColor = BearyColors.ink
+        closeButton.backgroundColor = BearyColors.faint
+        closeButton.layer.cornerRadius = 16
+        closeButton.clipsToBounds = true
+        closeButton.translatesAutoresizingMaskIntoConstraints = false
+        closeButton.addTarget(self, action: #selector(closeTapped), for: .touchUpInside)
+        closeButton.accessibilityLabel = "关闭"
+        sheetView.addSubview(closeButton)
+        let layout = UICollectionViewFlowLayout()
+        layout.minimumInteritemSpacing = 6
+        layout.minimumLineSpacing = 6
+        layout.sectionInset = UIEdgeInsets(top: 4, left: 18, bottom: 20, right: 18)
+        let collection = UICollectionView(frame: .zero, collectionViewLayout: layout)
+        collection.translatesAutoresizingMaskIntoConstraints = false
+        collection.backgroundColor = BearyColors.surface
+        collection.dataSource = self
+        collection.delegate = self
+        collection.register(BearyProfileEmoteSheetCell.self, forCellWithReuseIdentifier: "emoteSheetCell")
+        sheetView.addSubview(collection)
+        let widthLimit = sheetView.widthAnchor.constraint(lessThanOrEqualToConstant: 440)
+        let widthFull = sheetView.widthAnchor.constraint(equalTo: view.widthAnchor)
+        widthFull.priority = .defaultHigh
+        NSLayoutConstraint.activate([
+            scrimView.topAnchor.constraint(equalTo: view.topAnchor),
+            scrimView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
+            scrimView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            scrimView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            sheetView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
+            sheetView.centerXAnchor.constraint(equalTo: view.centerXAnchor),
+            sheetView.leadingAnchor.constraint(greaterThanOrEqualTo: view.leadingAnchor),
+            sheetView.trailingAnchor.constraint(greaterThanOrEqualTo: view.trailingAnchor),
+            widthLimit,
+            widthFull,
+            sheetView.heightAnchor.constraint(equalToConstant: 480),
+            grabView.topAnchor.constraint(equalTo: sheetView.topAnchor, constant: 12),
+            grabView.centerXAnchor.constraint(equalTo: sheetView.centerXAnchor),
+            grabView.widthAnchor.constraint(equalToConstant: 38),
+            grabView.heightAnchor.constraint(equalToConstant: 4),
+            titleLabel.topAnchor.constraint(equalTo: sheetView.topAnchor, constant: 28),
+            titleLabel.leadingAnchor.constraint(equalTo: sheetView.leadingAnchor, constant: 18),
+            closeButton.centerYAnchor.constraint(equalTo: titleLabel.centerYAnchor),
+            closeButton.trailingAnchor.constraint(equalTo: sheetView.trailingAnchor, constant: -18),
+            closeButton.widthAnchor.constraint(equalToConstant: 32),
+            closeButton.heightAnchor.constraint(equalToConstant: 32),
+            collection.topAnchor.constraint(equalTo: titleLabel.bottomAnchor, constant: 12),
+            collection.leadingAnchor.constraint(equalTo: sheetView.leadingAnchor),
+            collection.trailingAnchor.constraint(equalTo: sheetView.trailingAnchor),
+            collection.bottomAnchor.constraint(equalTo: sheetView.bottomAnchor),
+        ])
+    }
+
+    @objc private func closeTapped() {
+        dismiss(animated: true, completion: nil)
+    }
+
+    func collectionView(_ collectionView: UICollectionView, numberOfItemsInSection section: Int) -> Int {
+        return emoteKeys.count
+    }
+
+    func collectionView(_ collectionView: UICollectionView, cellForItemAt indexPath: IndexPath) -> UICollectionViewCell {
+        guard let cellValue = collectionView.dequeueReusableCell(withReuseIdentifier: "emoteSheetCell", for: indexPath) as? BearyProfileEmoteSheetCell else {
+            return UICollectionViewCell()
+        }
+        let key = emoteKeys[indexPath.item]
+        let dark = traitCollection.userInterfaceStyle == .dark
+        cellValue.configure(image: BearyEmoteImages.image(for: key, dark: dark), name: BearyText.moodNames[key] ?? key)
+        return cellValue
+    }
+
+    func collectionView(_ collectionView: UICollectionView, didSelectItemAt indexPath: IndexPath) {
+        onPick?(emoteKeys[indexPath.item])
+    }
+
+    func collectionView(_ collectionView: UICollectionView, layout collectionViewLayout: UICollectionViewLayout, sizeForItemAt indexPath: IndexPath) -> CGSize {
+        return CGSize(width: 64, height: 76)
+    }
+}
+
+private class BearyProfileEmoteSheetCell: UICollectionViewCell {
+
+    private let imageViewValue = UIImageView()
+    private let nameLabel = UILabel()
+
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        imageViewValue.translatesAutoresizingMaskIntoConstraints = false
+        imageViewValue.contentMode = .scaleAspectFit
+        nameLabel.translatesAutoresizingMaskIntoConstraints = false
+        nameLabel.font = UIFont.systemFont(ofSize: 11)
+        nameLabel.textColor = BearyColors.gray
+        nameLabel.textAlignment = .center
+        contentView.addSubview(imageViewValue)
+        contentView.addSubview(nameLabel)
+        NSLayoutConstraint.activate([
+            imageViewValue.topAnchor.constraint(equalTo: contentView.topAnchor),
+            imageViewValue.centerXAnchor.constraint(equalTo: contentView.centerXAnchor),
+            imageViewValue.widthAnchor.constraint(equalToConstant: 44),
+            imageViewValue.heightAnchor.constraint(equalToConstant: 44),
+            nameLabel.topAnchor.constraint(equalTo: imageViewValue.bottomAnchor, constant: 4),
+            nameLabel.leadingAnchor.constraint(equalTo: contentView.leadingAnchor),
+            nameLabel.trailingAnchor.constraint(equalTo: contentView.trailingAnchor),
+        ])
+    }
+
+    required init?(coder: NSCoder) {
+        return nil
+    }
+
+    func configure(image: UIImage?, name: String) {
+        imageViewValue.image = image
+        nameLabel.text = name
     }
 }

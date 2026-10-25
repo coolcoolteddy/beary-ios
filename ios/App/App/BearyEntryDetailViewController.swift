@@ -13,6 +13,23 @@ enum BearyDetailScrollStore {
     static var offsets: [String: CGPoint] = [:]
 }
 
+/// 本文件内图标缓存（E1-5 详情部分）：BearyIconImages 每次都用 UIGraphicsImageRenderer
+/// 重绘，点赞/收藏/回应成功后重绘整行时会重复绘制。模板图与深浅无关，可按名 + pt 缓存。
+private enum DetailIconCache {
+    static var images: [String: UIImage] = [:]
+    static func image(named name: String, pointSize: CGFloat) -> UIImage? {
+        let key = name + "|" + "\(pointSize)"
+        if let cached = images[key] {
+            return cached
+        }
+        guard let drawn = BearyIconImages.image(named: name, pointSize: pointSize) else {
+            return nil
+        }
+        images[key] = drawn
+        return drawn
+    }
+}
+
 class BearyEntryDetailViewController: UIViewController {
 
     var onRequireLogin: (() -> Void)?
@@ -24,6 +41,12 @@ class BearyEntryDetailViewController: UIViewController {
 
     /// 点头像或作者名：打开作者主页（传作者 id）。
     var onOpenUser: ((Int) -> Void)?
+
+    /// 引用卡公开篇被点：打开该篇详情（传引用篇 id；容器接线，详情不直接 present）。
+    var onOpenEntry: ((String) -> Void)?
+
+    /// 删除成功后回传（传被删日记 id；容器据此刷新列表/时间线/个人主页）。
+    var onDeletedEntry: ((String) -> Void)?
 
     private var entryId: String
     private var entry: Entry?
@@ -40,11 +63,37 @@ class BearyEntryDetailViewController: UIViewController {
     private var quoteFetching: Bool = false
     /// 本篇图片 key（点图开查看器用，与 detailImagesStack 顺序一致）。
     private var detailImageKeys: [String] = []
-    /// 未公开倒计时 pill 的刷新计时（60 秒一跳；页面消失时停）。
+    /// 详情条缩略图加载失败的下标集合（点按该图先重试加载，不进查看器）。
+    private var detailImageFailedIndices: Set<Int> = []
+    /// 未公开倒计时 pill 的刷新计时（1 秒一跳；页面消失时停）。
     private var countdownTimer: Timer?
+    /// 送达点重拉节流：同篇最多 3 次、间隔 ≥3 秒；耗尽后该 publishAt 不再重拉。
+    private var publishDueAttempts: Int = 0
+    private var lastPublishDueAtMs: Int = 0
+    private var countdownPublishAt: Int?
+    private var countdownExhaustedPublishAt: Int?
+    /// 单篇拉取在途守卫（E4-5）：重试连点只发一次；在途期间的 refreshEntry 记 pending，完成后补拉一次。
+    private var isFetchingEntry: Bool = false
+    private var fetchRefreshPending: Bool = false
+    /// 分享 / 回应 sheet 连点守卫（E4-2/E4-3）：转场中 + 已 present 时均拦截。
+    private var isSharePresenting: Bool = false
+    private var isEmoteSheetPresenting: Bool = false
+    /// 删除在途守卫。
+    private var isDeleteBusy: Bool = false
+    /// 未登录拒绝动效后 1.2 秒弹登录的待处理标记（防连点重复排队）。
+    private var denyLoginScheduled: Bool = false
     /// 回应动画待处理：贴上为 added=true，摘下为 added=false；失败时清空。
     private var pendingEmoteKey: String?
     private var pendingEmoteAdded: Bool = false
+    /// 正文折叠（D8）：>300 字才给按钮，实测 ≤6 行摘按钮；折叠态只显示 6 行。
+    private var isBodyExpanded: Bool = false
+    private var lastFoldWidth: CGFloat = 0
+    /// 引用卡点按状态（D10）：gone 不动作，公开走详情，未公开 toast。
+    private var quoteCardId: String?
+    private var quoteCardIsPublic: Bool?
+    private var quoteCardIsDeleted: Bool = false
+    private var quoteImageKeys: [String] = []
+    private var quoteThumbViews: [UIView] = []
 
     // MARK: - 视图
 
@@ -71,10 +120,15 @@ class BearyEntryDetailViewController: UIViewController {
     private let pillRow = UIStackView()
     private let pillView = UIView()
     private let pillLabel = UILabel()
+    /// 编辑倒计时行（D3）：仅本人未公开篇显示，“可编辑 M:SS / 编辑已结束”。
+    private let editRow = UIStackView()
+    private let editCountdownLabel = UILabel()
 
     private let detailCardView = UIView()
     private let detailCardBottomLineView = UIView()
     private let bodyLabel = UILabel()
+    /// 正文折叠按钮（D8）：>300 字且实测 >6 行时显示。
+    private let foldButton = UIButton(type: .system)
     private let quoteCardView = UIView()
     private let quoteLeftLineView = UIView()
     private var quoteDeletedKey: String?
@@ -87,6 +141,8 @@ class BearyEntryDetailViewController: UIViewController {
     private let bookmarkButton = UIButton(type: .system)
     private let shareButton = UIButton(type: .system)
     private let editButton = UIButton(type: .system)
+    /// 删除入口（D5）：仅本人未公开篇显示，走网页确认流程，进回收站。
+    private let deleteButton = UIButton(type: .system)
 
     private let emoteFlowView = BearyEmoteFlowView()
     private var emoteFlowHeightConstraint: NSLayoutConstraint?
@@ -151,6 +207,10 @@ class BearyEntryDetailViewController: UIViewController {
             let maxY = max(0, scrollView.contentSize.height + scrollView.contentInset.bottom - scrollView.bounds.height)
             let y = min(max(0, savedY), maxY)
             scrollView.setContentOffset(CGPoint(x: 0, y: y), animated: false)
+        }
+        // 正文折叠：布局后才有真实行宽，宽度变化时重测（>300 字且实测 >6 行才留按钮）。
+        if scrollView.isHidden == false && bodyLabel.bounds.width > 0 && bodyLabel.bounds.width != lastFoldWidth {
+            updateBodyFold()
         }
         // 回应行换行后的实际高度随宽度而变，布局完成后按当前宽度回写高度约束。
         let flowWidth = emoteFlowView.bounds.width
@@ -260,7 +320,7 @@ class BearyEntryDetailViewController: UIViewController {
         let writeToIconHeight = writeToIconView.heightAnchor.constraint(equalToConstant: 13)
         writeToIconHeight.priority = UILayoutPriority(999)
         writeToIconView.translatesAutoresizingMaskIntoConstraints = false
-        writeToIconView.image = BearyIconImages.image(named: "icon_mail", pointSize: 13)
+        writeToIconView.image = DetailIconCache.image(named: "icon_mail", pointSize: 13)
         writeToIconView.tintColor = BearyColors.orange
         writeToIconView.contentMode = .scaleAspectFit
         writeToLabel.font = UIFont.boldSystemFont(ofSize: 12)
@@ -348,9 +408,18 @@ class BearyEntryDetailViewController: UIViewController {
         pillRow.addArrangedSubview(pillView)
         pillRow.addArrangedSubview(UIView())
         pillRow.isHidden = true
+        // 编辑倒计时行：灰字 11.5 semibold，默认隐藏，render / 每秒 tick 时回写。
+        editCountdownLabel.font = UIFont.systemFont(ofSize: 11.5, weight: .semibold)
+        editCountdownLabel.textColor = BearyColors.gray
+        editRow.axis = .horizontal
+        editRow.alignment = .center
+        editRow.addArrangedSubview(editCountdownLabel)
+        editRow.addArrangedSubview(UIView())
+        editRow.isHidden = true
         authorInfoStack.addArrangedSubview(writeToRow)
         authorInfoStack.addArrangedSubview(titleRow)
         authorInfoStack.addArrangedSubview(pillRow)
+        authorInfoStack.addArrangedSubview(editRow)
         // 写给标签 margin 1/0/3：上 1 由 layoutMargins（渲染时按是否显示回写），下 3 由 customSpacing。
         authorInfoStack.setCustomSpacing(3, after: writeToRow)
         authorRow.addArrangedSubview(avatarWrapView)
@@ -362,12 +431,25 @@ class BearyEntryDetailViewController: UIViewController {
         bodyLabel.font = UIFont.systemFont(ofSize: 15)
         bodyLabel.textColor = BearyColors.ink
         stackView.addArrangedSubview(bodyLabel)
+        // 折叠按钮：灰字 14 + 下箭头，左对齐，默认隐藏；点按只换行数，不做透明度动画（网页 foldAnim 教训）。
+        foldButton.setTitle("展开全文", for: .normal)
+        foldButton.setTitleColor(BearyColors.gray, for: .normal)
+        foldButton.titleLabel?.font = UIFont.systemFont(ofSize: 14)
+        foldButton.setImage(DetailIconCache.image(named: "icon_chevron_down", pointSize: 14), for: .normal)
+        foldButton.tintColor = BearyColors.gray
+        foldButton.contentHorizontalAlignment = .left
+        foldButton.contentEdgeInsets = UIEdgeInsets(top: 6, left: 2, bottom: 0, right: 0)
+        foldButton.isHidden = true
+        stackView.addArrangedSubview(foldButton)
 
         // 引用 lite 卡（网页 quoteHtml 口径：图标 + 正文 + 图片 + 日期；未公开为锁定态）。
+        // 卡本身可点（D10）：gone 不动作，公开走详情，未公开 toast；缩略图点按走灯箱，卡点按需排除缩略图区域。
         quoteCardView.backgroundColor = BearyColors.faint
         quoteCardView.layer.cornerRadius = 8
         quoteCardView.clipsToBounds = true
         quoteCardView.isHidden = true
+        quoteCardView.isUserInteractionEnabled = true
+        quoteCardView.addGestureRecognizer(UITapGestureRecognizer(target: self, action: #selector(quoteCardTapped(_:))))
         quoteLeftLineView.translatesAutoresizingMaskIntoConstraints = false
         quoteLeftLineView.backgroundColor = BearyColors.line
         quoteCardView.addSubview(quoteLeftLineView)
@@ -408,18 +490,25 @@ class BearyEntryDetailViewController: UIViewController {
         likeButton.titleLabel?.font = UIFont.systemFont(ofSize: 14)
         bookmarkButton.contentEdgeInsets = UIEdgeInsets(top: 2, left: 2, bottom: 2, right: 2)
         shareButton.contentEdgeInsets = UIEdgeInsets(top: 2, left: 2, bottom: 2, right: 2)
-        shareButton.setImage(BearyIconImages.image(named: "icon_share", pointSize: 21), for: .normal)
+        shareButton.setImage(DetailIconCache.image(named: "icon_share", pointSize: 21), for: .normal)
         shareButton.tintColor = BearyColors.gray
         editButton.contentEdgeInsets = UIEdgeInsets(top: 6, left: 4, bottom: 6, right: 4)
         editButton.setTitle("编辑", for: .normal)
         editButton.setTitleColor(BearyColors.gray, for: .normal)
         editButton.titleLabel?.font = UIFont.systemFont(ofSize: 11)
         editButton.isHidden = true
+        // 删除钮：网页时间线 del-btn 口径为红色垃圾桶图标，仅本人未公开篇显示（updateDeleteButton 回写）。
+        deleteButton.contentEdgeInsets = UIEdgeInsets(top: 2, left: 2, bottom: 2, right: 2)
+        deleteButton.setImage(DetailIconCache.image(named: "icon_trash", pointSize: 21), for: .normal)
+        deleteButton.tintColor = BearyColors.red
+        deleteButton.accessibilityLabel = "删除"
+        deleteButton.isHidden = true
         actionRow.addArrangedSubview(likeButton)
         actionRow.addArrangedSubview(bookmarkButton)
         actionRow.addArrangedSubview(shareButton)
         actionRow.addArrangedSubview(UIView())
         actionRow.addArrangedSubview(editButton)
+        actionRow.addArrangedSubview(deleteButton)
         stackView.addArrangedSubview(actionRow)
 
         // 回应行：自动换行（流式布局），不再横向滚动单行。
@@ -430,7 +519,7 @@ class BearyEntryDetailViewController: UIViewController {
         stackView.addArrangedSubview(emoteFlowView)
 
         // 回应行末尾常驻 + 入口：网页同款 34px 虚线圆圈灰色加号（虚线由子类 CAShapeLayer 画）。
-        emoteAddButton.setImage(BearyIconImages.image(named: "icon_plus", pointSize: 16), for: .normal)
+        emoteAddButton.setImage(DetailIconCache.image(named: "icon_plus", pointSize: 16), for: .normal)
         emoteAddButton.tintColor = BearyColors.gray
         emoteAddButton.tag = -1
         emoteAddButton.translatesAutoresizingMaskIntoConstraints = false
@@ -460,6 +549,8 @@ class BearyEntryDetailViewController: UIViewController {
         bookmarkButton.addTarget(self, action: #selector(bookmarkTapped), for: .touchUpInside)
         shareButton.addTarget(self, action: #selector(shareTapped), for: .touchUpInside)
         editButton.addTarget(self, action: #selector(editTapped), for: .touchUpInside)
+        deleteButton.addTarget(self, action: #selector(deleteTapped), for: .touchUpInside)
+        foldButton.addTarget(self, action: #selector(foldTapped), for: .touchUpInside)
         emoteAddButton.addTarget(self, action: #selector(emoteAddTapped), for: .touchUpInside)
         retryButton.addTarget(self, action: #selector(retryTapped), for: .touchUpInside)
     }
@@ -489,12 +580,24 @@ class BearyEntryDetailViewController: UIViewController {
     // MARK: - 加载
 
     private func fetchEntry() {
+        // E4-5 在途守卫：连点重试只发一次；在途期间又被要求刷新时记 pending，完成后补拉一次。
+        if isFetchingEntry == true {
+            fetchRefreshPending = true
+            return
+        }
+        isFetchingEntry = true
         if entry == nil {
             setStateLoading()
         }
         BearyAPI.shared.fetchEntry(id: entryId) { [weak self] result in
             DispatchQueue.main.async {
                 guard let self = self else { return }
+                self.isFetchingEntry = false
+                let needsRefetch = self.fetchRefreshPending
+                self.fetchRefreshPending = false
+                if needsRefetch == true {
+                    self.fetchEntry()
+                }
                 switch result {
                 case .success(let fetched):
                     self.entry = fetched
@@ -532,20 +635,117 @@ class BearyEntryDetailViewController: UIViewController {
         fetchEntry()
     }
 
+    /// D2：编辑保存后容器传完整更新后 Entry（不再是 (id, content, images, mood) 元组）。
+    /// 详情内同步全部字段：非空字段逐项覆盖（空字段视为未知、保留旧值，防部分 Entry 覆盖掉已有字段；
+    /// 图片/回应数组非空即整体替换，空数组亦替换——空即清掉旧图/旧回应）。
+    /// 容器仍可另调 refreshEntry 重拉权威数据兜底。
+    func applyUpdatedEntry(_ updated: Entry) {
+        guard let updatedId = updated.id, updatedId == entryId else { return }
+        if entry == nil {
+            entry = updated
+            setStateContent()
+            render()
+            return
+        }
+        mergeEntryFields(from: updated)
+        render()
+    }
+
+    /// D1 反向刷新入口：容器在首页/其他面改动同一篇时调用，详情即时同步已打开的本篇。
+    /// 口径与 applyUpdatedEntry 相同（非空字段覆盖）；id 不符时静默忽略。
+    /// 时间线/个人主页/搜索的同步由容器接线，本方法只负责详情自身。
+    func onExternalInteraction(entry: Entry) {
+        applyUpdatedEntry(entry)
+    }
+
+    private func mergeEntryFields(from updated: Entry) {
+        guard var current = entry else { return }
+        if let v = updated.authorId { current.authorId = v }
+        if let v = updated.authorName { current.authorName = v }
+        if let v = updated.authorAvatar { current.authorAvatar = v }
+        if let v = updated.authorCover { current.authorCover = v }
+        if let v = updated.authorBadge { current.authorBadge = v }
+        if let v = updated.authorPlus { current.authorPlus = v }
+        if let v = updated.content { current.content = v }
+        if let v = updated.images { current.images = v }
+        if let v = updated.imgDims { current.imgDims = v }
+        if let v = updated.mood { current.mood = v }
+        if let v = updated.weather { current.weather = v }
+        if let v = updated.quoteId { current.quoteId = v }
+        if let v = updated.quote { current.quote = v }
+        if let v = updated.createdAt { current.createdAt = v }
+        if let v = updated.publishAt { current.publishAt = v }
+        if let v = updated.editDeadline { current.editDeadline = v }
+        if let v = updated.isPublic { current.isPublic = v }
+        if let v = updated.isLocked { current.isLocked = v }
+        if let v = updated.isMine { current.isMine = v }
+        if let v = updated.likeCount { current.likeCount = v }
+        if let v = updated.likedByMe { current.likedByMe = v }
+        if let v = updated.bookmarkedByMe { current.bookmarkedByMe = v }
+        if let v = updated.bookmarkCount { current.bookmarkCount = v }
+        if let v = updated.bmAt { current.bmAt = v }
+        if let v = updated.recipientId { current.recipientId = v }
+        if let v = updated.recipientName { current.recipientName = v }
+        if let v = updated.emotes { current.emotes = v }
+        // 引用指向变了：旧缓存/已删/失败标记全部作废，renderQuoteCard 会按新 quoteId 重拉。
+        if let newQuoteId = updated.quoteId, newQuoteId != quoteCardId {
+            cachedQuoteKey = nil
+            cachedQuoteEntry = nil
+            quoteFetchFailedKey = nil
+            quoteDeletedKey = nil
+        }
+        entry = current
+    }
+
     /// 编辑入口：仅本人未公开且在编辑期内显示，位置在操作行内（不再占导航栏右侧）。
     private func updateEditButton() {
         editButton.isHidden = isEditableEntry() == false
     }
 
+    /// D6：网页只看 edit_deadline（tlItemHtml：now >= edit_deadline 即锁），
+    /// 原生多余的 publishAt > now 门控已删，只留本人 + 未公开 + editDeadline > now。
+    /// editDeadline 为空时不拦（与旧代码一致：空即未知，不因缺失字段误锁）。
     private func isEditableEntry() -> Bool {
-        guard let current = entry, let entryId = current.id, !entryId.isEmpty else { return false }
+        guard let current = entry, let entryId = current.id, entryId.isEmpty == false else { return false }
         if current.isPublic == true { return false }
         let mine = (current.isMine == true) || (current.authorId != nil && current.authorId == SessionManager.shared.currentUser?.id)
-        if !mine { return false }
-        let now = Int(Date().timeIntervalSince1970 * 1000)
-        if let pub = current.publishAt, pub <= now { return false }
-        if let deadline = current.editDeadline, deadline <= now { return false }
+        if mine == false { return false }
+        if let deadline = current.editDeadline, deadline <= Int(Date().timeIntervalSince1970 * 1000) { return false }
         return true
+    }
+
+    private func isMineEntry() -> Bool {
+        guard let current = entry else { return false }
+        return (current.isMine == true) || (current.authorId != nil && current.authorId == SessionManager.shared.currentUser?.id)
+    }
+
+    /// D5 删除钮显隐：仅本人未公开篇；D4 私密置灰不适用于它（它是私密篇专属操作）。
+    private func updateDeleteButton() {
+        let show = isMineEntry() && entry?.isPublic != true
+        deleteButton.isHidden = show == false
+        deleteButton.isEnabled = isDeleteBusy == false
+        deleteButton.alpha = isDeleteBusy ? 0.4 : 1.0
+    }
+
+    /// D3 编辑倒计时文案：网页时间线私密卡口径“可编辑 M:SS / 编辑已结束”。
+    private func editCountdownText(deadline: Int) -> String {
+        let remainSec = max(0, (deadline - Int(Date().timeIntervalSince1970 * 1000)) / 1000)
+        if remainSec <= 0 {
+            return "编辑已结束"
+        }
+        let minutes = remainSec / 60
+        let seconds = remainSec % 60
+        let secText = seconds < 10 ? "0\(seconds)" : "\(seconds)"
+        return "可编辑 \(minutes):\(secText)"
+    }
+
+    private func updateEditCountdownLabel() {
+        guard let current = entry, current.isPublic != true, isMineEntry() == true, let deadline = current.editDeadline else {
+            editRow.isHidden = true
+            return
+        }
+        editCountdownLabel.text = editCountdownText(deadline: deadline)
+        editRow.isHidden = false
     }
 
     @objc private func editTapped() {
@@ -553,10 +753,59 @@ class BearyEntryDetailViewController: UIViewController {
         onEditEntry?(current)
     }
 
+    /// D5 删除：仅本人未公开篇可见。网页确认流程（confirmModal）：
+    /// 标题“确认删除？”、正文“删除后会移入回收站，30 天内可以在「时间线」里恢复。”
+    /// 语义以 worker.js DELETE /beary/api/entries/:id 为准：是移入回收站 30 天，
+    /// 不是彻底删除（彻底删除是回收站内 DELETE /beary/api/trash/:id，与此无关）。
+    /// 成功后先回调 onDeletedEntry(id:) 供容器刷新，再关闭详情；失败不关页。
+    @objc private func deleteTapped() {
+        if isDeleteBusy == true || presentedViewController != nil {
+            return
+        }
+        guard let currentId = entry?.id, currentId.isEmpty == false else { return }
+        let alert = UIAlertController(title: "确认删除？", message: "删除后会移入回收站，30 天内可以在「时间线」里恢复。", preferredStyle: .alert)
+        alert.addAction(UIAlertAction(title: "取消", style: .cancel, handler: nil))
+        alert.addAction(UIAlertAction(title: "删除", style: .destructive, handler: { [weak self] _ in
+            self?.performDelete(id: currentId)
+        }))
+        present(alert, animated: true, completion: nil)
+    }
+
+    private func performDelete(id: String) {
+        if isDeleteBusy == true {
+            return
+        }
+        isDeleteBusy = true
+        updateDeleteButton()
+        // deleteEntry 由 API 路实现（签名 Result<Void, APIError>）；总协调收尾核对。
+        BearyAPI.shared.deleteEntry(id: id) { [weak self] result in
+            DispatchQueue.main.async {
+                guard let self = self else { return }
+                self.isDeleteBusy = false
+                switch result {
+                case .success:
+                    self.onDeletedEntry?(id)
+                    self.closeDetail()
+                case .failure(let err):
+                    self.updateDeleteButton()
+                    if case .unauthorized = err {
+                        self.denyLogin(source: self.deleteButton)
+                    } else {
+                        self.showAlert(message: "删除失败")
+                    }
+                }
+            }
+        }
+    }
+
     @objc private func shareTapped() {
+        // E4-3 分享钮 present 守卫：转场中或已 present 其他页时连点不再叠页。
+        if isSharePresenting == true || presentedViewController != nil {
+            return
+        }
         guard let shareURL = URL(string: "https://teddyhn.com/beary/d/" + entryId) else { return }
         var items: [Any] = []
-        if let content = entry?.content, !content.isEmpty {
+        if let content = entry?.content, content.isEmpty == false {
             items.append(String(content.prefix(60)))
         }
         items.append(shareURL)
@@ -565,7 +814,57 @@ class BearyEntryDetailViewController: UIViewController {
             popover.sourceView = shareButton
             popover.sourceRect = shareButton.bounds
         }
-        present(sheet, animated: true, completion: nil)
+        isSharePresenting = true
+        let reduceMotion = UIAccessibility.isReduceMotionEnabled
+        present(sheet, animated: reduceMotion == false, completion: { [weak self] in
+            self?.isSharePresenting = false
+        })
+    }
+
+    /// D7 未登录原地拒绝：摇头动效 + toast“请先登录”，1.2 秒后走 onRequireLogin 弹登录，
+    /// 详情本身不 dismiss（容器须改为在详情上层弹登录，而非先 dismiss 详情；见交回说明）。
+    private func denyLogin(source: UIView?) {
+        if let view = source, UIAccessibility.isReduceMotionEnabled == false {
+            UIView.animateKeyframes(withDuration: 0.4, delay: 0, options: [], animations: {
+                UIView.addKeyframe(withRelativeStartTime: 0, relativeDuration: 0.25) {
+                    view.transform = CGAffineTransform(translationX: -6, y: 0)
+                }
+                UIView.addKeyframe(withRelativeStartTime: 0.25, relativeDuration: 0.25) {
+                    view.transform = CGAffineTransform(translationX: 6, y: 0)
+                }
+                UIView.addKeyframe(withRelativeStartTime: 0.5, relativeDuration: 0.25) {
+                    view.transform = CGAffineTransform(translationX: -4, y: 0)
+                }
+                UIView.addKeyframe(withRelativeStartTime: 0.75, relativeDuration: 0.25) {
+                    view.transform = .identity
+                }
+            }, completion: nil)
+        }
+        showToast(message: "请先登录")
+        if denyLoginScheduled == true {
+            return
+        }
+        denyLoginScheduled = true
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) { [weak self] in
+            guard let self = self else { return }
+            self.denyLoginScheduled = false
+            self.onRequireLogin?()
+        }
+    }
+
+    /// E3 视觉 pending：只做按压提示（.5 秒缩放回弹），不改计数、不改选中/填充态、不做乐观更新。
+    private func playPendingPulse(on view: UIView) {
+        if UIAccessibility.isReduceMotionEnabled == true {
+            return
+        }
+        UIView.animateKeyframes(withDuration: 0.5, delay: 0, options: [], animations: {
+            UIView.addKeyframe(withRelativeStartTime: 0, relativeDuration: 0.5) {
+                view.transform = CGAffineTransform(scaleX: 1.15, y: 1.15)
+            }
+            UIView.addKeyframe(withRelativeStartTime: 0.5, relativeDuration: 0.5) {
+                view.transform = .identity
+            }
+        }, completion: nil)
     }
 
     /// 互动成功后把当前最新状态回传给列表（点赞数/点亮态/收藏态/回应聚合以服务端响应为准）。
@@ -590,22 +889,85 @@ class BearyEntryDetailViewController: UIViewController {
         return "投递中 · 还剩 \(max(1, minutes)) 分钟"
     }
 
+    /// D3：1 秒 tick（网页 startCountdowns 同口径）；滚动时也用 common 模式继续走。
+    /// 到点后重拉单篇翻公开（同篇最多 3 次、间隔 ≥3 秒），耗尽后 timer 停止，不再逐秒连环触发。
+    /// 编辑倒计时同 timer 驱动；无未来送达点且无未来编辑点时不设 timer。
     private func startCountdownTimer() {
         countdownTimer?.invalidate()
         countdownTimer = nil
-        guard let current = entry, current.isPublic != true, let publishAt = current.publishAt else { return }
+        guard let current = entry, current.isPublic != true else { return }
         let now = Int(Date().timeIntervalSince1970 * 1000)
-        if publishAt <= now { return }
-        countdownTimer = Timer.scheduledTimer(timeInterval: 60, target: self, selector: #selector(updateCountdownPill), userInfo: nil, repeats: true)
+        if let publishAt = current.publishAt, publishAt != countdownPublishAt {
+            countdownPublishAt = publishAt
+            publishDueAttempts = 0
+            lastPublishDueAtMs = 0
+            countdownExhaustedPublishAt = nil
+        }
+        var needsTimer = false
+        if let publishAt = current.publishAt {
+            if publishAt > now {
+                needsTimer = true
+            } else if countdownExhaustedPublishAt != publishAt && publishDueAttempts < 3 {
+                needsTimer = true
+            }
+        }
+        if isMineEntry() == true, let deadline = current.editDeadline, deadline > now {
+            needsTimer = true
+        }
+        if needsTimer == false {
+            return
+        }
+        let timer = Timer(timeInterval: 1, target: self, selector: #selector(updateCountdownPill), userInfo: nil, repeats: true)
+        RunLoop.main.add(timer, forMode: .common)
+        countdownTimer = timer
     }
 
     @objc private func updateCountdownPill() {
-        guard let current = entry, current.isPublic != true, let publishAt = current.publishAt else {
+        guard let current = entry, current.isPublic != true else {
             countdownTimer?.invalidate()
             countdownTimer = nil
             return
         }
-        pillLabel.text = countdownText(publishAt: publishAt)
+        let now = Int(Date().timeIntervalSince1970 * 1000)
+        if let publishAt = current.publishAt {
+            if publishAt > now {
+                pillLabel.text = countdownText(publishAt: publishAt)
+            } else {
+                // 已到送达点、服务端尚未翻公开：不谎报“还剩 1 分钟”，显示即将公开并走节流重拉。
+                pillLabel.text = "即将公开"
+                if countdownExhaustedPublishAt == publishAt {
+                    countdownTimer?.invalidate()
+                    countdownTimer = nil
+                } else if publishDueAttempts < 3 && now - lastPublishDueAtMs >= 3000 {
+                    publishDueAttempts += 1
+                    lastPublishDueAtMs = now
+                    if publishDueAttempts >= 3 {
+                        countdownExhaustedPublishAt = publishAt
+                    }
+                    fetchEntry()
+                    // fetchEntry 成功后 render 会按新状态重设 timer；若仍未公开且未耗尽，timer 继续。
+                    // 若已耗尽，本次 tick 后不再重拉；下次 render 见 exhausted 也不再设 timer。
+                    if publishDueAttempts >= 3 {
+                        // 最后一拉在途：先停本 timer，fetch 回包 render 时按 exhausted 判定不再重设。
+                        countdownTimer?.invalidate()
+                        countdownTimer = nil
+                    }
+                }
+            }
+        }
+        updateEditCountdownLabel()
+        updateEditButton()
+        // 送达与编辑均无未来点时停表（编辑已结束为静态文案，无需继续 tick）。
+        let publishFuture = (current.publishAt ?? 0) > now
+        let editFuture = isMineEntry() && (current.editDeadline ?? 0) > now
+        if publishFuture == false && editFuture == false {
+            if let publishAt = current.publishAt, publishAt <= now, publishDueAttempts < 3, countdownExhaustedPublishAt != publishAt {
+                // 仍在节流重拉窗口内：保持 timer，等下次 tick 再拉。
+            } else {
+                countdownTimer?.invalidate()
+                countdownTimer = nil
+            }
+        }
     }
 
     // MARK: - 渲染
@@ -648,12 +1010,17 @@ class BearyEntryDetailViewController: UIViewController {
         if current.isPublic == true {
             pillRow.isHidden = true
         } else if let publishAt = current.publishAt {
-            pillLabel.text = countdownText(publishAt: publishAt)
+            if publishAt <= Int(Date().timeIntervalSince1970 * 1000) {
+                pillLabel.text = "即将公开"
+            } else {
+                pillLabel.text = countdownText(publishAt: publishAt)
+            }
             pillRow.isHidden = false
         } else {
             pillLabel.text = "投递中"
             pillRow.isHidden = false
         }
+        updateEditCountdownLabel()
 
         // 心情熊图 + 名（缺图回退文字名）、天气图标（走天气图标契约，解不出则隐藏）。
         if let moodKey = current.mood, let moodName = BearyText.moodNames[moodKey] {
@@ -672,7 +1039,7 @@ class BearyEntryDetailViewController: UIViewController {
         }
         // 网页 wxHtml 口径：只认 9 个已知天气 key，未知 key 不显示（契约默认返回 cloud，不可直接采用）。
         if let weatherKey = current.weather, BearyText.weatherNames[weatherKey] != nil {
-            if let weatherImage = BearyIconImages.image(named: "icon_wx_" + weatherKey, pointSize: 15) {
+            if let weatherImage = DetailIconCache.image(named: "icon_wx_" + weatherKey, pointSize: 15) {
                 weatherImageView.image = weatherImage
                 weatherImageView.isHidden = false
             } else {
@@ -687,17 +1054,20 @@ class BearyEntryDetailViewController: UIViewController {
         if content.isEmpty {
             bodyLabel.attributedText = nil
             bodyLabel.isHidden = true
+            foldButton.isHidden = true
         } else {
             let paragraph = NSMutableParagraphStyle()
             paragraph.lineHeightMultiple = 1.6
             bodyLabel.attributedText = NSAttributedString(string: content, attributes: [.font: UIFont.systemFont(ofSize: 15), .foregroundColor: BearyColors.ink, .paragraphStyle: paragraph])
             bodyLabel.isHidden = false
+            updateBodyFold()
         }
 
         for sub in detailImagesStack.arrangedSubviews {
             detailImagesStack.removeArrangedSubview(sub)
             sub.removeFromSuperview()
         }
+        detailImageFailedIndices.removeAll()
         detailImageKeys = current.images ?? []
         for (index, key) in detailImageKeys.enumerated() {
             detailImagesStack.addArrangedSubview(makeImageView(key: key, dims: current.imgDims, index: index))
@@ -710,6 +1080,7 @@ class BearyEntryDetailViewController: UIViewController {
         renderEmotes()
         updateInteractivity()
         updateEditButton()
+        updateDeleteButton()
         startCountdownTimer()
         updateDetailSpacing()
     }
@@ -723,9 +1094,70 @@ class BearyEntryDetailViewController: UIViewController {
                 continue
             }
             let next = visible[position + 1]
-            let gap: CGFloat = (section === authorRow && next === bodyLabel) ? 4 : 10
+            var gap: CGFloat = 10
+            if section === authorRow && next === bodyLabel {
+                gap = 4
+            } else if section === bodyLabel && next === foldButton {
+                gap = 6
+            }
             stackView.setCustomSpacing(gap, after: section)
         }
+    }
+
+    /// D8 正文折叠：与首页同口径——>300 字才给按钮，实测 ≤6 行摘按钮（网页 pruneFolds 口径）。
+    /// 折叠态只显示 6 行；展开态全文。宽度未布局时用内容列估算（屏宽 -72，宽屏封顶 560），布局后重测。
+    private func updateBodyFold() {
+        guard let content = entry?.content, content.isEmpty == false else {
+            foldButton.isHidden = true
+            bodyLabel.numberOfLines = 0
+            return
+        }
+        if content.count <= 300 {
+            foldButton.isHidden = true
+            bodyLabel.numberOfLines = 0
+            lastFoldWidth = width
+            updateDetailSpacing()
+            return
+        }
+        var width = bodyLabel.bounds.width
+        if width <= 0 {
+            let screenWidth = view.bounds.width > 0 ? view.bounds.width : UIScreen.main.bounds.width
+            width = min(max(0, screenWidth - 72), 560)
+        }
+        if width <= 0 {
+            foldButton.isHidden = true
+            bodyLabel.numberOfLines = 0
+            return
+        }
+        let paragraph = NSMutableParagraphStyle()
+        paragraph.lineHeightMultiple = 1.6
+        let attrs: [NSAttributedString.Key: Any] = [.font: UIFont.systemFont(ofSize: 15), .foregroundColor: BearyColors.ink, .paragraphStyle: paragraph]
+        let fullHeight = NSAttributedString(string: content, attributes: attrs).boundingRect(with: CGSize(width: width, height: CGFloat.greatestFiniteMagnitude), options: [.usesLineFragmentOrigin, .usesFontLeading], context: nil).height
+        let singleHeight = NSAttributedString(string: "X", attributes: attrs).boundingRect(with: CGSize(width: width, height: CGFloat.greatestFiniteMagnitude), options: [.usesLineFragmentOrigin, .usesFontLeading], context: nil).height
+        if singleHeight <= 0 {
+            foldButton.isHidden = true
+            bodyLabel.numberOfLines = 0
+            return
+        }
+        let lines = Int(ceil(fullHeight / singleHeight - 0.01))
+        if lines <= 6 {
+            foldButton.isHidden = true
+            bodyLabel.numberOfLines = 0
+            lastFoldWidth = width
+            updateDetailSpacing()
+            return
+        }
+        foldButton.isHidden = false
+        foldButton.setTitle(isBodyExpanded ? "收起" : "展开全文", for: .normal)
+        foldButton.imageView?.transform = isBodyExpanded ? CGAffineTransform(rotationAngle: CGFloat.pi) : .identity
+        bodyLabel.numberOfLines = isBodyExpanded ? 0 : 6
+        lastFoldWidth = width
+        updateDetailSpacing()
+    }
+
+    @objc private func foldTapped() {
+        isBodyExpanded = isBodyExpanded == false
+        updateBodyFold()
     }
 
     /// 图片条宽（列表页同款 stripW 口径）：216 高下限 0.55 倍、上限 2.22 倍夹取，无尺寸默认 280。
@@ -737,6 +1169,18 @@ class BearyEntryDetailViewController: UIViewController {
         return 280
     }
 
+    /// D9 详情条改用 _t 缩略图（灯箱内看原图）；加载失败时记下标，点按先重试、不进查看器。
+    private func loadDetailThumbnail(into imageView: UIImageView, key: String, index: Int) {
+        guard let url = BearyImageURLs.imageURL(key: key, thumb: true) else { return }
+        BearyImageLoader.shared.load(url: url) { [weak self, weak imageView] img in
+            if let img = img {
+                imageView?.image = img
+            } else {
+                self?.detailImageFailedIndices.insert(index)
+            }
+        }
+    }
+
     private func makeImageView(key: String, dims: [String: [Int]]?, index: Int) -> UIImageView {
         let imageView = UIImageView()
         imageView.translatesAutoresizingMaskIntoConstraints = false
@@ -746,7 +1190,7 @@ class BearyEntryDetailViewController: UIViewController {
         imageView.layer.cornerRadius = 12
         imageView.widthAnchor.constraint(equalToConstant: detailStripWidth(forKey: key, dims: dims)).isActive = true
         imageView.heightAnchor.constraint(equalToConstant: 216).isActive = true
-        imageView.bearySetImage(url: BearyImageURLs.imageURL(key: key, thumb: false))
+        loadDetailThumbnail(into: imageView, key: key, index: index)
         imageView.tag = index
         imageView.isUserInteractionEnabled = true
         let tap = UITapGestureRecognizer(target: self, action: #selector(imageTapped(_:)))
@@ -765,6 +1209,15 @@ class BearyEntryDetailViewController: UIViewController {
         if detailImageKeys.isEmpty || start < 0 || start >= detailImageKeys.count {
             return
         }
+        // 失败图点按重试（网页灯箱委托 img-err 口径），不进查看器。
+        if detailImageFailedIndices.contains(start) == true, let imageView = tappedView as? UIImageView {
+            detailImageFailedIndices.remove(start)
+            loadDetailThumbnail(into: imageView, key: detailImageKeys[start], index: start)
+            return
+        }
+        if presentedViewController != nil {
+            return
+        }
         let viewer = BearyEntryImageViewerViewController(imageKeys: detailImageKeys, startIndex: start)
         viewer.modalPresentationStyle = .fullScreen
         let reduceMotion = UIAccessibility.isReduceMotionEnabled
@@ -775,7 +1228,7 @@ class BearyEntryDetailViewController: UIViewController {
         let liked = entry?.likedByMe ?? false
         let count = entry?.likeCount ?? 0
         let likeImageName = liked ? "icon_heart_fill" : "icon_heart"
-        likeButton.setImage(BearyIconImages.image(named: likeImageName, pointSize: 22) ?? BearyIconImages.image(named: "icon_heart", pointSize: 22), for: .normal)
+        likeButton.setImage(DetailIconCache.image(named: likeImageName, pointSize: 22) ?? DetailIconCache.image(named: "icon_heart", pointSize: 22), for: .normal)
         // 点赞计数恒显示（含 0，不隐藏数字位）。
         likeButton.setTitle("\(count)", for: .normal)
         likeButton.tintColor = liked ? BearyColors.orange : BearyColors.gray
@@ -783,7 +1236,7 @@ class BearyEntryDetailViewController: UIViewController {
 
         let bookmarked = entry?.bookmarkedByMe ?? false
         let bookmarkImageName = bookmarked ? "icon_bookmark_fill" : "icon_bookmark"
-        bookmarkButton.setImage(BearyIconImages.image(named: bookmarkImageName, pointSize: 21) ?? BearyIconImages.image(named: "icon_bookmark", pointSize: 21), for: .normal)
+        bookmarkButton.setImage(DetailIconCache.image(named: bookmarkImageName, pointSize: 21) ?? DetailIconCache.image(named: "icon_bookmark", pointSize: 21), for: .normal)
         bookmarkButton.tintColor = bookmarked ? BearyColors.orange : BearyColors.gray
     }
 
@@ -796,23 +1249,31 @@ class BearyEntryDetailViewController: UIViewController {
             }
             sub.removeFromSuperview()
         }
+        quoteThumbViews.removeAll()
+        quoteImageKeys = []
         guard let current = entry else {
             quoteCardView.isHidden = true
+            quoteCardId = nil
+            quoteCardIsPublic = nil
+            quoteCardIsDeleted = false
             return
         }
         // 先查模型字段。
         if let quote = current.quote {
             quoteCardView.isHidden = false
-            buildQuoteCard(content: quote.content, createdAt: quote.createdAt, imageKeys: quote.images, isPublic: quote.isPublic)
+            buildQuoteCard(content: quote.content, createdAt: quote.createdAt, imageKeys: quote.images, isPublic: quote.isPublic, quoteId: quote.id)
             return
         }
-        guard let quoteKey = current.quoteId, !quoteKey.isEmpty else {
+        guard let quoteKey = current.quoteId, quoteKey.isEmpty == false else {
             quoteCardView.isHidden = true
+            quoteCardId = nil
+            quoteCardIsPublic = nil
+            quoteCardIsDeleted = false
             return
         }
         if quoteDeletedKey == quoteKey {
             quoteCardView.isHidden = false
-            buildQuoteCard(content: nil, createdAt: nil, imageKeys: nil, isPublic: nil, isDeleted: true)
+            buildQuoteCard(content: nil, createdAt: nil, imageKeys: nil, isPublic: nil, quoteId: quoteKey, isDeleted: true)
             return
         }
         if quoteFetchFailedKey == quoteKey {
@@ -821,7 +1282,7 @@ class BearyEntryDetailViewController: UIViewController {
         }
         if cachedQuoteKey == quoteKey, let cached = cachedQuoteEntry {
             quoteCardView.isHidden = false
-            buildQuoteCard(content: cached.content, createdAt: cached.createdAt, imageKeys: cached.images, isPublic: cached.isPublic)
+            buildQuoteCard(content: cached.content, createdAt: cached.createdAt, imageKeys: cached.images, isPublic: cached.isPublic, quoteId: cached.id)
             return
         }
         // 模型无引用体时用单篇接口按 quote_id 拉取缓存；拉取中与失败均隐藏。
@@ -847,7 +1308,7 @@ class BearyEntryDetailViewController: UIViewController {
                         // 引用目标已删：网页 gone 态，显示已删卡而非整卡隐藏。
                         self.quoteDeletedKey = quoteKey
                         self.quoteCardView.isHidden = false
-                        self.buildQuoteCard(content: nil, createdAt: nil, imageKeys: nil, isPublic: nil, isDeleted: true)
+                        self.buildQuoteCard(content: nil, createdAt: nil, imageKeys: nil, isPublic: nil, quoteId: quoteKey, isDeleted: true)
                     } else {
                         self.quoteFetchFailedKey = quoteKey
                         self.quoteCardView.isHidden = true
@@ -857,7 +1318,12 @@ class BearyEntryDetailViewController: UIViewController {
         }
     }
 
-    private func buildQuoteCard(content: String?, createdAt: Int?, imageKeys: [String]?, isPublic: Bool?, isDeleted: Bool = false) {
+    private func buildQuoteCard(content: String?, createdAt: Int?, imageKeys: [String]?, isPublic: Bool?, quoteId: String? = nil, isDeleted: Bool = false) {
+        quoteCardId = quoteId
+        quoteCardIsPublic = isPublic
+        quoteCardIsDeleted = isDeleted
+        quoteImageKeys = []
+        quoteThumbViews.removeAll()
         // 网页 .quote-card 口径：横向一行（图标／正文／缩略图／日期同行，gap 8），内边距 9/12。
         let inner = UIStackView()
         inner.axis = .horizontal
@@ -876,7 +1342,7 @@ class BearyEntryDetailViewController: UIViewController {
         func quoteIcon(named name: String = "icon_quote") -> UIView {
             let wrap = UIView()
             wrap.translatesAutoresizingMaskIntoConstraints = false
-            let iconView = UIImageView(image: BearyIconImages.image(named: name, pointSize: 15))
+            let iconView = UIImageView(image: DetailIconCache.image(named: name, pointSize: 15))
             iconView.tintColor = BearyColors.gray
             iconView.translatesAutoresizingMaskIntoConstraints = false
             wrap.addSubview(iconView)
@@ -931,11 +1397,14 @@ class BearyEntryDetailViewController: UIViewController {
         textLabel.attributedText = NSAttributedString(string: content ?? "", attributes: [.font: UIFont.systemFont(ofSize: 13.5), .foregroundColor: BearyColors.ink, .paragraphStyle: paragraph])
         inner.addArrangedSubview(textLabel)
         if let keys = imageKeys?.filter({ $0.isEmpty == false }), keys.isEmpty == false {
+            // D10：引用缩略图可点灯箱（网页 quoteThumbsHtml 在灯箱委托范围内）。
+            // 锁卡/已删卡已在上游分支提前返回，不走此分支。
+            quoteImageKeys = keys
             let thumbsStack = UIStackView()
             thumbsStack.axis = .horizontal
             thumbsStack.spacing = 5
             thumbsStack.alignment = .fill
-            for thumbKey in keys {
+            for (thumbIndex, thumbKey) in keys.enumerated() {
                 let thumbView = UIImageView()
                 thumbView.translatesAutoresizingMaskIntoConstraints = false
                 thumbView.backgroundColor = BearyColors.faint
@@ -948,6 +1417,10 @@ class BearyEntryDetailViewController: UIViewController {
                 thumbHeight.priority = UILayoutPriority(999)
                 NSLayoutConstraint.activate([thumbWidth, thumbHeight])
                 thumbView.bearySetImage(url: BearyImageURLs.imageURL(key: thumbKey, thumb: true))
+                thumbView.tag = thumbIndex
+                thumbView.isUserInteractionEnabled = true
+                thumbView.addGestureRecognizer(UITapGestureRecognizer(target: self, action: #selector(quoteThumbTapped(_:))))
+                quoteThumbViews.append(thumbView)
                 thumbsStack.addArrangedSubview(thumbView)
             }
             inner.addArrangedSubview(thumbsStack)
@@ -961,6 +1434,48 @@ class BearyEntryDetailViewController: UIViewController {
             inner.addArrangedSubview(dateLabel)
         }
         updateDetailSpacing()
+    }
+
+    /// D10 引用卡点按：gone 不动作（网页委托 return），公开走详情（onOpenEntry，容器接线），
+    /// 未公开 toast“引用的这篇还没公开”。点在缩略图上时由缩略图手势处理灯箱，此处直接返回防双开。
+    @objc private func quoteCardTapped(_ sender: UITapGestureRecognizer) {
+        if quoteCardIsDeleted == true {
+            return
+        }
+        let point = sender.location(in: quoteCardView)
+        for thumbView in quoteThumbViews {
+            let thumbFrame = thumbView.convert(thumbView.bounds, to: quoteCardView)
+            if thumbFrame.contains(point) {
+                return
+            }
+        }
+        if quoteCardIsPublic == true {
+            if let qid = quoteCardId, qid.isEmpty == false {
+                onOpenEntry?(qid)
+            }
+            return
+        }
+        if quoteCardIsPublic == false {
+            showToast(message: "引用的这篇还没公开")
+            return
+        }
+        // isPublic 未知时不猜：无 id 或未知公开态均不动作，避免把未公开篇当公开打开。
+    }
+
+    /// D10 引用缩略图点按：灯箱内看原图（viewer 按原图 key 加载）。
+    @objc private func quoteThumbTapped(_ sender: UITapGestureRecognizer) {
+        guard let tappedView = sender.view else { return }
+        let start = tappedView.tag
+        if quoteImageKeys.isEmpty || start < 0 || start >= quoteImageKeys.count {
+            return
+        }
+        if presentedViewController != nil {
+            return
+        }
+        let viewer = BearyEntryImageViewerViewController(imageKeys: quoteImageKeys, startIndex: start)
+        viewer.modalPresentationStyle = .fullScreen
+        let reduceMotion = UIAccessibility.isReduceMotionEnabled
+        present(viewer, animated: reduceMotion == false, completion: nil)
     }
 
     /// 网页 fmtDate 口径：M月d日 HH:mm。
@@ -1094,7 +1609,7 @@ class BearyEntryDetailViewController: UIViewController {
 
     @objc private func likeTapped() {
         if SessionManager.shared.isLoggedIn == false {
-            onRequireLogin?()
+            denyLogin(source: likeButton)
             return
         }
         if isLikeBusy == true {
@@ -1103,6 +1618,8 @@ class BearyEntryDetailViewController: UIViewController {
         let currentlyLiked = entry?.likedByMe ?? false
         isLikeBusy = true
         updateInteractivity()
+        // E3-1 点赞描边先行等价提示：点下即给 .5 秒缩放回弹，填充与计数仍等服务端确认，不乐观更新。
+        playPendingPulse(on: likeButton)
         BearyAPI.shared.toggleLike(id: entryId, liked: currentlyLiked == false) { [weak self] result in
             DispatchQueue.main.async {
                 guard let self = self else { return }
@@ -1118,7 +1635,7 @@ class BearyEntryDetailViewController: UIViewController {
                     self.notifyInteraction()
                 case .failure(let err):
                     if case .unauthorized = err {
-                        self.onRequireLogin?()
+                        self.denyLogin(source: self.likeButton)
                     } else {
                         self.showAlert(message: "操作失败")
                     }
@@ -1130,7 +1647,7 @@ class BearyEntryDetailViewController: UIViewController {
 
     @objc private func bookmarkTapped() {
         if SessionManager.shared.isLoggedIn == false {
-            onRequireLogin?()
+            denyLogin(source: bookmarkButton)
             return
         }
         if isBookmarkBusy == true {
@@ -1139,6 +1656,8 @@ class BearyEntryDetailViewController: UIViewController {
         let currentlyBookmarked = entry?.bookmarkedByMe ?? false
         isBookmarkBusy = true
         updateInteractivity()
+        // E3-2 收藏 pending：点下即半透明提示，选中态仍等服务端确认，不乐观翻转。
+        bookmarkButton.alpha = 0.6
         BearyAPI.shared.toggleBookmark(id: entryId) { [weak self] result in
             DispatchQueue.main.async {
                 guard let self = self else { return }
@@ -1151,7 +1670,7 @@ class BearyEntryDetailViewController: UIViewController {
                     self.notifyInteraction()
                 case .failure(let err):
                     if case .unauthorized = err {
-                        self.onRequireLogin?()
+                        self.denyLogin(source: self.bookmarkButton)
                     } else {
                         self.showAlert(message: "操作失败")
                     }
@@ -1163,7 +1682,7 @@ class BearyEntryDetailViewController: UIViewController {
 
     @objc private func emoteTapped(_ sender: UIButton) {
         if SessionManager.shared.isLoggedIn == false {
-            onRequireLogin?()
+            denyLogin(source: sender)
             return
         }
         if isEmoteBusy == true {
@@ -1182,7 +1701,7 @@ class BearyEntryDetailViewController: UIViewController {
 
     @objc private func emoteAddTapped() {
         if SessionManager.shared.isLoggedIn == false {
-            onRequireLogin?()
+            denyLogin(source: emoteAddButton)
             return
         }
         if isEmoteBusy == true {
@@ -1192,9 +1711,16 @@ class BearyEntryDetailViewController: UIViewController {
         if entry?.isPublic != true {
             return
         }
+        // E4-2 回应 sheet present 守卫：转场中或已 present 其他页时连点不再叠开第二个面板。
+        if isEmoteSheetPresenting == true || presentedViewController != nil {
+            return
+        }
         // 首贴面板改底 sheet 形态（本文件内实现），不再是全屏导航模态。
         let sheet = BearyEmoteSheetViewController()
         sheet.modalPresentationStyle = .overFullScreen
+        sheet.onDismiss = { [weak self] in
+            self?.isEmoteSheetPresenting = false
+        }
         sheet.onPick = { [weak self] pickedKey in
             guard let self = self else { return }
             let reduceMotion = UIAccessibility.isReduceMotionEnabled
@@ -1202,6 +1728,7 @@ class BearyEntryDetailViewController: UIViewController {
                 self.chooseEmote(key: pickedKey)
             }
         }
+        isEmoteSheetPresenting = true
         let reduceMotion = UIAccessibility.isReduceMotionEnabled
         present(sheet, animated: reduceMotion == false, completion: nil)
     }
@@ -1209,9 +1736,17 @@ class BearyEntryDetailViewController: UIViewController {
     /// 贴/换/摘回应的唯一入口（chip 点选与首贴面板共用）：同只再点即撤下；
     /// 已有自己的一只且选了另一只时先摘旧再贴新（第二步失败时行保持原样并弹现有失败提示）。
     /// 本函数从不做乐观更新：行只在服务端成功返回聚合后由 renderEmotes 重绘。
+    /// E3-3 换贴口径（已核实 worker.js 8265–8295）：服务端单次 POST 只 toggle 同一只，
+    /// 不自动摘旧——贴新仍须两步串行（先 POST 旧只撤下、再 POST 新只），否则一人会留两只，违背单选规则。
+    /// 因此此处保持两步串行，不改单次 POST；pending 提示只做 chip/+ 钮缩放回弹，不改计数/选中。
     private func chooseEmote(key: String) {
         if key.isEmpty || isEmoteBusy == true {
             return
+        }
+        if let chip = chipButton(forKey: key) {
+            playPendingPulse(on: chip)
+        } else {
+            playPendingPulse(on: emoteAddButton)
         }
         var tappedMine = false
         var existingMineKey: String? = nil
@@ -1254,7 +1789,7 @@ class BearyEntryDetailViewController: UIViewController {
                                     self.notifyInteraction()
                                 case .failure(let err):
                                     if case .unauthorized = err {
-                                        self.onRequireLogin?()
+                                        self.denyLogin(source: self.chipButton(forKey: key) as UIView? ?? self.emoteAddButton)
                                     } else {
                                         self.showAlert(message: "操作失败，请重试")
                                     }
@@ -1265,7 +1800,7 @@ class BearyEntryDetailViewController: UIViewController {
                     case .failure(let err):
                         self.isEmoteBusy = false
                         if case .unauthorized = err {
-                            self.onRequireLogin?()
+                            self.denyLogin(source: self.chipButton(forKey: key) as UIView? ?? self.emoteAddButton)
                         } else {
                             self.showAlert(message: "操作失败，请重试")
                         }
@@ -1315,10 +1850,15 @@ class BearyEntryDetailViewController: UIViewController {
                         self.notifyInteraction()
                     }
                 case .failure(let err):
+                    let failedKey = self.pendingEmoteKey
                     self.pendingEmoteKey = nil
                     self.isEmoteBusy = false
                     if case .unauthorized = err {
-                        self.onRequireLogin?()
+                        var denySource: UIView = self.emoteAddButton
+                        if let failedKey = failedKey, let chip = self.chipButton(forKey: failedKey) {
+                            denySource = chip
+                        }
+                        self.denyLogin(source: denySource)
                     } else {
                         self.showAlert(message: "操作失败，请重试")
                     }
@@ -1506,6 +2046,8 @@ private class BearyDashedAddButton: UIButton {
 private class BearyEmoteSheetViewController: UIViewController, UICollectionViewDataSource, UICollectionViewDelegateFlowLayout {
 
     var onPick: ((String) -> Void)?
+    /// 面板消失时回调（E4-2）：详情据此清掉 isEmoteSheetPresenting 守卫，防关闭后无法再开。
+    var onDismiss: (() -> Void)?
 
     private let emoteKeys = ["agree", "happy", "applause", "candle", "love", "comfort", "confused", "cheer", "determined", "facepalm", "flower", "sleepy", "goodnight", "hug", "cry", "idea", "kiss", "thinking", "letter", "listening", "lonely", "wink", "nope", "paperplane", "shy", "pat", "peek", "surprised", "proud", "shrug", "sorry", "angry", "sprout", "tea", "speechless", "thanks", "umbrella", "zap", "wave", "wish"]
 
@@ -1516,6 +2058,11 @@ private class BearyEmoteSheetViewController: UIViewController, UICollectionViewD
     private let closeButton = UIButton(type: .system)
     private var sheetHeightConstraint: NSLayoutConstraint?
     private var sheetBottomConstraint: NSLayoutConstraint?
+
+    override func viewDidDisappear(_ animated: Bool) {
+        super.viewDidDisappear(animated)
+        onDismiss?()
+    }
 
     override func viewDidLoad() {
         super.viewDidLoad()
@@ -1541,7 +2088,7 @@ private class BearyEmoteSheetViewController: UIViewController, UICollectionViewD
         titleLabel.textColor = BearyColors.ink
         titleLabel.translatesAutoresizingMaskIntoConstraints = false
         sheetView.addSubview(titleLabel)
-        closeButton.setImage(BearyIconImages.image(named: "icon_close", pointSize: 15), for: .normal)
+        closeButton.setImage(DetailIconCache.image(named: "icon_close", pointSize: 15), for: .normal)
         closeButton.tintColor = BearyColors.ink
         closeButton.backgroundColor = BearyColors.faint
         closeButton.layer.cornerRadius = 16
@@ -1717,27 +2264,38 @@ private class BearyEmoteSheetCell: UICollectionViewCell {
     }
 }
 
-// MARK: - 原生图片查看器（本文件内新增，不新建文件）：全屏、左右滑动切换本篇多图、点按或下滑关闭。
-// 网页灯箱滑轨不照搬；用分页滚动视图实现。
+// MARK: - 原生图片查看器（本文件内实现，不新建文件）：网页灯箱口径对齐版。
+// 网页灯箱 IIFE 口径：pinch 1–4 倍、双击切 2 倍、放大后平移限幅（120*scale）、
+// 横向 >60px 才翻页、回绕瞬时归位、失败图点按重试、灯箱内看原图、0.92 黑底、计数与圆点。
+// 网页没有下滑关闭，本查看器不加下滑关闭；关闭只走关闭钮与单击（双击不关闭）。
 
-private class BearyEntryImageViewerViewController: UIViewController, UIScrollViewDelegate, UIGestureRecognizerDelegate {
+private class BearyEntryImageViewerViewController: UIViewController, UIGestureRecognizerDelegate {
 
     private let imageKeys: [String]
-    private let startIndex: Int
-    private let pagingScrollView = UIScrollView()
+    private var currentIndex: Int
+    private let imageView = UIImageView()
+    private let retryLabel = UILabel()
     private let counterLabel = UILabel()
     private let closeButton = UIButton(type: .system)
     private let dotsStack = UIStackView()
     private var dotViews: [UIView] = []
-    private var pageViews: [UIView] = []
-    private var didSetInitialPage = false
+    private var scale: CGFloat = 1
+    private var tx: CGFloat = 0
+    private var ty: CGFloat = 0
+    private var panTx0: CGFloat = 0
+    private var panTy0: CGFloat = 0
+    private var pinchScale0: CGFloat = 1
+    private var pinchActive: Bool = false
+    private var isNavigating: Bool = false
+    private var isFailed: Bool = false
+    private var loadingKey: String?
 
     init(imageKeys: [String], startIndex: Int) {
         self.imageKeys = imageKeys
         if startIndex >= 0 && startIndex < imageKeys.count {
-            self.startIndex = startIndex
+            self.currentIndex = startIndex
         } else {
-            self.startIndex = 0
+            self.currentIndex = 0
         }
         super.init(nibName: nil, bundle: nil)
     }
@@ -1749,29 +2307,17 @@ private class BearyEntryImageViewerViewController: UIViewController, UIScrollVie
     override func viewDidLoad() {
         super.viewDidLoad()
         view.backgroundColor = UIColor(white: 0, alpha: 0.92)
-        pagingScrollView.isPagingEnabled = true
-        pagingScrollView.showsHorizontalScrollIndicator = false
-        pagingScrollView.showsVerticalScrollIndicator = false
-        pagingScrollView.delegate = self
-        pagingScrollView.translatesAutoresizingMaskIntoConstraints = false
-        view.addSubview(pagingScrollView)
-        for key in imageKeys {
-            let container = UIView()
-            let imageView = UIImageView()
-            imageView.contentMode = .scaleAspectFit
-            imageView.backgroundColor = .clear
-            imageView.translatesAutoresizingMaskIntoConstraints = false
-            container.addSubview(imageView)
-            NSLayoutConstraint.activate([
-                imageView.topAnchor.constraint(equalTo: container.topAnchor),
-                imageView.bottomAnchor.constraint(equalTo: container.bottomAnchor),
-                imageView.leadingAnchor.constraint(equalTo: container.leadingAnchor),
-                imageView.trailingAnchor.constraint(equalTo: container.trailingAnchor),
-            ])
-            imageView.bearySetImage(url: BearyImageURLs.imageURL(key: key, thumb: false))
-            pagingScrollView.addSubview(container)
-            pageViews.append(container)
-        }
+        imageView.contentMode = .scaleAspectFit
+        imageView.backgroundColor = .clear
+        imageView.translatesAutoresizingMaskIntoConstraints = false
+        view.addSubview(imageView)
+        retryLabel.text = "图片加载失败，点击重试"
+        retryLabel.textColor = .white
+        retryLabel.font = UIFont.systemFont(ofSize: 14)
+        retryLabel.textAlignment = .center
+        retryLabel.translatesAutoresizingMaskIntoConstraints = false
+        retryLabel.isHidden = true
+        view.addSubview(retryLabel)
         counterLabel.textColor = .white
         counterLabel.font = UIFont.systemFont(ofSize: 14)
         counterLabel.textAlignment = .center
@@ -1798,7 +2344,7 @@ private class BearyEntryImageViewerViewController: UIViewController, UIScrollVie
             dotViews.append(dot)
         }
         view.addSubview(dotsStack)
-        closeButton.setImage(BearyIconImages.image(named: "icon_close", pointSize: 15), for: .normal)
+        closeButton.setImage(DetailIconCache.image(named: "icon_close", pointSize: 15), for: .normal)
         closeButton.tintColor = .white
         closeButton.backgroundColor = UIColor(white: 1, alpha: 0.15)
         closeButton.layer.cornerRadius = 18
@@ -1807,16 +2353,26 @@ private class BearyEntryImageViewerViewController: UIViewController, UIScrollVie
         closeButton.addTarget(self, action: #selector(closeTapped), for: .touchUpInside)
         closeButton.accessibilityLabel = "关闭"
         view.addSubview(closeButton)
-        let tap = UITapGestureRecognizer(target: self, action: #selector(closeTapped))
-        view.addGestureRecognizer(tap)
+        let singleTap = UITapGestureRecognizer(target: self, action: #selector(stageTapped(_:)))
+        singleTap.numberOfTapsRequired = 1
+        let doubleTap = UITapGestureRecognizer(target: self, action: #selector(stageDoubleTapped(_:)))
+        doubleTap.numberOfTapsRequired = 2
+        singleTap.require(toFail: doubleTap)
+        let pinch = UIPinchGestureRecognizer(target: self, action: #selector(pinchChanged(_:)))
+        pinch.delegate = self
         let pan = UIPanGestureRecognizer(target: self, action: #selector(panChanged(_:)))
         pan.delegate = self
+        view.addGestureRecognizer(singleTap)
+        view.addGestureRecognizer(doubleTap)
+        view.addGestureRecognizer(pinch)
         view.addGestureRecognizer(pan)
         NSLayoutConstraint.activate([
-            pagingScrollView.topAnchor.constraint(equalTo: view.topAnchor),
-            pagingScrollView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
-            pagingScrollView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
-            pagingScrollView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            imageView.topAnchor.constraint(equalTo: view.topAnchor),
+            imageView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
+            imageView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            imageView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            retryLabel.centerXAnchor.constraint(equalTo: view.centerXAnchor),
+            retryLabel.centerYAnchor.constraint(equalTo: view.centerYAnchor),
             counterLabel.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 20),
             counterLabel.centerXAnchor.constraint(equalTo: view.centerXAnchor),
             dotsStack.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor, constant: -24),
@@ -1827,37 +2383,70 @@ private class BearyEntryImageViewerViewController: UIViewController, UIScrollVie
             closeButton.heightAnchor.constraint(equalToConstant: 36),
         ])
         updateCounter()
+        loadCurrent()
     }
 
-    override func viewDidLayoutSubviews() {
-        super.viewDidLayoutSubviews()
-        let width = pagingScrollView.bounds.width
-        let height = pagingScrollView.bounds.height
-        if width <= 0 || height <= 0 {
-            return
-        }
-        for (index, page) in pageViews.enumerated() {
-            page.frame = CGRect(x: CGFloat(index) * width, y: 0, width: width, height: height)
-        }
-        pagingScrollView.contentSize = CGSize(width: width * CGFloat(pageViews.count), height: height)
-        if didSetInitialPage == false {
-            didSetInitialPage = true
-            pagingScrollView.setContentOffset(CGPoint(x: CGFloat(startIndex) * width, y: 0), animated: false)
-            updateCounter()
+    func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldRecognizeSimultaneouslyWith otherGestureRecognizer: UIGestureRecognizer) -> Bool {
+        return true
+    }
+
+    private func applyTransform(animated: Bool) {
+        let transform = CGAffineTransform(translationX: tx, y: ty).scaledBy(x: scale, y: scale)
+        if animated == true && UIAccessibility.isReduceMotionEnabled == false {
+            UIView.animate(withDuration: 0.25, animations: {
+                self.imageView.transform = transform
+            })
+        } else {
+            imageView.transform = transform
         }
     }
 
-    func scrollViewDidScroll(_ scrollView: UIScrollView) {
-        updateCounter()
+    private func resetZoom(animated: Bool) {
+        scale = 1
+        tx = 0
+        ty = 0
+        applyTransform(animated: animated)
+    }
+
+    private func clampPan() {
+        let lim = 120 * scale
+        tx = max(-lim, min(lim, tx))
+        ty = max(-lim, min(lim, ty))
     }
 
     private func updateCounter() {
-        let width = pagingScrollView.bounds.width
-        if width > 0 && pageViews.isEmpty == false {
-            let page = Int(round(pagingScrollView.contentOffset.x / width)) + 1
-            counterLabel.text = "\(page) / \(pageViews.count)"
-            for (dotIndex, dot) in dotViews.enumerated() {
-                dot.backgroundColor = (dotIndex == page - 1) ? .white : UIColor(white: 1, alpha: 0.35)
+        counterLabel.text = "\(currentIndex + 1) / \(imageKeys.count)"
+        for (dotIndex, dot) in dotViews.enumerated() {
+            dot.backgroundColor = (dotIndex == currentIndex) ? .white : UIColor(white: 1, alpha: 0.35)
+        }
+    }
+
+    private func loadCurrent() {
+        if imageKeys.isEmpty || currentIndex < 0 || currentIndex >= imageKeys.count {
+            return
+        }
+        let key = imageKeys[currentIndex]
+        loadingKey = key
+        isFailed = false
+        retryLabel.isHidden = true
+        imageView.image = nil
+        guard let url = BearyImageURLs.imageURL(key: key, thumb: false) else {
+            isFailed = true
+            retryLabel.isHidden = false
+            return
+        }
+        BearyImageLoader.shared.load(url: url) { [weak self] img in
+            guard let self = self else { return }
+            if self.loadingKey != key {
+                return
+            }
+            if let img = img {
+                self.imageView.image = img
+                self.isFailed = false
+                self.retryLabel.isHidden = true
+            } else {
+                self.isFailed = true
+                self.retryLabel.isHidden = false
             }
         }
     }
@@ -1867,32 +2456,139 @@ private class BearyEntryImageViewerViewController: UIViewController, UIScrollVie
         dismiss(animated: reduceMotion == false, completion: nil)
     }
 
-    @objc private func panChanged(_ sender: UIPanGestureRecognizer) {
-        let translation = sender.translation(in: view)
-        if sender.state == .changed {
-            if translation.y > 0 {
-                view.transform = CGAffineTransform(translationX: 0, y: translation.y)
-            }
+    @objc private func stageTapped(_ sender: UITapGestureRecognizer) {
+        // 失败图点按重试，不关闭（网页 img-err 口径）；关闭钮点按由按钮自身处理。
+        if isFailed == true {
+            loadCurrent()
+            return
+        }
+        let point = sender.location(in: view)
+        if closeButton.frame.contains(point) {
+            return
+        }
+        closeTapped()
+    }
+
+    @objc private func stageDoubleTapped(_ sender: UITapGestureRecognizer) {
+        if isNavigating == true {
+            return
+        }
+        if scale > 1 {
+            resetZoom(animated: true)
+        } else {
+            scale = 2
+            tx = 0
+            ty = 0
+            applyTransform(animated: true)
+        }
+    }
+
+    @objc private func pinchChanged(_ sender: UIPinchGestureRecognizer) {
+        if isNavigating == true {
+            return
+        }
+        if sender.state == .began {
+            pinchActive = true
+            pinchScale0 = scale
+        } else if sender.state == .changed {
+            pinchActive = true
+            scale = max(1, min(4, pinchScale0 * sender.scale))
+            clampPan()
+            applyTransform(animated: false)
         } else if sender.state == .ended || sender.state == .cancelled {
-            if translation.y > 120 {
-                closeTapped()
+            pinchActive = false
+            if scale < 1.15 {
+                resetZoom(animated: true)
             } else {
-                UIView.animate(withDuration: 0.25, animations: {
-                    self.view.transform = .identity
-                })
+                clampPan()
+                applyTransform(animated: true)
             }
         }
     }
 
-    func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
-        if let pan = gestureRecognizer as? UIPanGestureRecognizer {
-            let velocity = pan.velocity(in: view)
-            return abs(velocity.y) > abs(velocity.x)
+    @objc private func panChanged(_ sender: UIPanGestureRecognizer) {
+        if isNavigating == true || pinchActive == true {
+            return
         }
-        return true
+        let translation = sender.translation(in: view)
+        if sender.state == .began {
+            panTx0 = tx
+            panTy0 = ty
+        } else if sender.state == .changed {
+            if scale > 1 {
+                // 放大后平移，限幅 120*scale（网页 clampPan 口径）。
+                tx = panTx0 + translation.x
+                ty = panTy0 + translation.y
+                clampPan()
+            } else {
+                // 未放大：轨道跟手，只跟横向。
+                tx = translation.x
+                ty = 0
+            }
+            applyTransform(animated: false)
+        } else if sender.state == .ended || sender.state == .cancelled {
+            if scale > 1 {
+                // 放大态平移停在当前位置（已限幅），不翻页、不回弹。
+                clampPan()
+                applyTransform(animated: true)
+                return
+            }
+            let totalDx = translation.x
+            let totalDy = translation.y
+            // 网页口径：横向 >60px 且横向占优才翻页，否则回弹。
+            if imageKeys.count > 1 && abs(totalDx) > 60 && abs(totalDx) > abs(totalDy) * 1.5 {
+                navigate(direction: totalDx < 0 ? 1 : -1)
+            } else {
+                tx = 0
+                ty = 0
+                applyTransform(animated: true)
+            }
+        }
     }
 
-    func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldRecognizeSimultaneouslyWith otherGestureRecognizer: UIGestureRecognizer) -> Bool {
-        return true
+    private func navigate(direction: Int) {
+        if imageKeys.count <= 1 || isNavigating == true {
+            return
+        }
+        let next = currentIndex + direction
+        let isWrap = next < 0 || next >= imageKeys.count
+        let wrapped = (next + imageKeys.count) % imageKeys.count
+        if isWrap == true {
+            // 回绕瞬时归位：不做长距离倒带动效（网页 trackTo(!wrap) 口径）。
+            currentIndex = wrapped
+            resetZoom(animated: false)
+            updateCounter()
+            loadCurrent()
+            return
+        }
+        isNavigating = true
+        let width = view.bounds.width > 0 ? view.bounds.width : UIScreen.main.bounds.width
+        let offX: CGFloat = direction > 0 ? -width : width
+        let reduceMotion = UIAccessibility.isReduceMotionEnabled
+        let slideOut: () -> Void = { [weak self] in
+            guard let self = self else { return }
+            self.currentIndex = wrapped
+            self.scale = 1
+            self.tx = -offX
+            self.ty = 0
+            self.applyTransform(animated: false)
+            self.updateCounter()
+            self.loadCurrent()
+            self.tx = 0
+            self.ty = 0
+            self.applyTransform(animated: reduceMotion == false)
+            self.isNavigating = false
+        }
+        if reduceMotion == true {
+            slideOut()
+            return
+        }
+        tx = offX
+        ty = 0
+        UIView.animate(withDuration: 0.25, animations: {
+            self.applyTransform(animated: false)
+        }, completion: { _ in
+            slideOut()
+        })
     }
 }

@@ -1,18 +1,17 @@
 import UIKit
 
-// ===== 回收站页（网页回收站移植；只新建本文件，不动其他文件）=====
+// ===== 回收站页（网页回收站移植）=====
 // 网页对照：~/workspace/teddy_site/beary.html 内 #trashPage（标题 / 说明 / .trash-item /
 // .trash-btns / #trashCfm 确认框）；设计稿：~/workspace/previews/layout_rest.html 回收站帧。
 // 后端对照：~/workspace/teddy_beary/worker.js（GET /beary/api/trash、
 // POST /beary/api/trash/:entryIdentifier/restore、DELETE /beary/api/trash/:entryIdentifier）。
-// 接口层说明：本任务只允许新建本文件、不得改 BearyAPI.swift，因此回收站的三个请求
-// 在本文件内按 BearyAPI 既有风格实现（URLSession.shared 共享 cookie、Origin 头、
-// 401 分流；回调不在主线程，碰 UI 处一律 DispatchQueue.main.async）。
-// 后续若要收进 BearyAPI.swift，只需把本文件底部的 TrashNetwork 部分原样搬过去。
+// 接口层：三个请求走 BearyAPI 的 trash 方法（fetchTrash / restoreTrash / purgeTrash，
+// 由 API 路在 BearyAPI.swift 内统一实现；本文件不再自带私有网络层）。
+// 注意：本文件引用的三个 BearyAPI 方法在 API 路落地前尚不存在，
+// 在此之前本文件单独编译不过——总协调收尾时须先合入 API 路再构建（见交回说明）。
 // 约束：部署目标 iOS 15.0、Swift 5.0——只用闭包回调，不用 async/await，不用 if-let 简写。
 // 颜色一律走 BearyColors，不新增字面量颜色；不新增 UIGlassEffect；图标只走
-// BearyIconImages 与已有 icon_* 资产（恢复钮无对应 undo 资产，故恢复钮为纯文字钮，
-// 不借用语义不符的图标）；无 force unwrap；无裸 id 变量名。
+// BearyIconImages 与已有 icon_* 资产；无 force unwrap；无裸 id 变量名。
 
 final class BearyTrashViewController: UIViewController, UIScrollViewDelegate {
 
@@ -22,6 +21,11 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate {
     var onRequireLogin: (() -> Void)?
     /// 关闭钮回调；为 nil 时不显示关闭钮（由调用方的导航栏返回负责关闭）。
     var onClose: (() -> Void)?
+    /// TR-1：恢复/彻底删除成功后通知容器（容器接线由总协调收尾，本页只留回调）：
+    /// 容器收到后应刷新时间线、回收站角标与日历圆点/统计（网页 restoreTrash /
+    /// closeTrash 的 syncOpenSurfaces + setTrashCount(-1) 口径）。
+    var onRestored: ((TrashItem) -> Void)?
+    var onPurged: ((TrashItem) -> Void)?
 
     // MARK: - 状态
 
@@ -235,7 +239,7 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate {
         trashFirstLoadFailed = false
         trashHasMore = false
         renderStateViews()
-        TrashNetwork.fetchTrash(beforeDeletedAt: nil, beforeIdentifier: nil) { [weak self] result in
+        BearyAPI.shared.fetchTrash(before: nil, beforeId: nil) { [weak self] result in
             DispatchQueue.main.async {
                 guard let self = self else { return }
                 self.trashLoading = false
@@ -251,8 +255,8 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate {
                             self.loadMoreIfNeeded()
                         }
                     }
-                case .failure(let failure):
-                    if failure == .unauthorized {
+                case .failure(let error):
+                    if case .unauthorized = error {
                         self.onRequireLogin?()
                     }
                     if self.trashItems.isEmpty {
@@ -275,7 +279,7 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate {
         trashLoadingMore = true
         moreSpinner.isHidden = false
         moreSpinner.startAnimating()
-        TrashNetwork.fetchTrash(beforeDeletedAt: lastDeletedAt, beforeIdentifier: lastItem.entryIdentifier) { [weak self] result in
+        BearyAPI.shared.fetchTrash(before: "\(lastDeletedAt)", beforeId: lastItem.entryIdentifier) { [weak self] result in
             DispatchQueue.main.async {
                 guard let self = self else { return }
                 self.trashLoadingMore = false
@@ -297,8 +301,8 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate {
                     self.trashItems.append(contentsOf: appended)
                     self.trashHasMore = list.hasMore
                     self.appendListRows(appended)
-                case .failure(let failure):
-                    if failure == .unauthorized {
+                case .failure(let error):
+                    if case .unauthorized = error {
                         self.onRequireLogin?()
                     } else {
                         self.showToast(message: "加载失败")
@@ -462,13 +466,14 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate {
         }
         trashBusyIdentifiers.insert(identifier)
         sender.isEnabled = false
-        TrashNetwork.restoreTrash(entryIdentifier: identifier) { [weak self] result in
+        BearyAPI.shared.restoreTrash(id: identifier) { [weak self] result in
             DispatchQueue.main.async {
                 guard let self = self else { return }
                 self.trashBusyIdentifiers.remove(identifier)
                 sender.isEnabled = true
                 switch result {
                 case .success:
+                    // 恢复 toast 按 publish_at 分两句（网页 restoreTrash 口径，保持不变）。
                     let nowMs = Int(Date().timeIntervalSince1970 * 1000)
                     if let publishAt = trashValue.publishAt, publishAt > 0, publishAt <= nowMs {
                         self.showToast(message: "已恢复，日记已公开")
@@ -476,8 +481,9 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate {
                         self.showToast(message: "已恢复为私密")
                     }
                     self.removeRow(identifier: identifier)
-                case .failure(let failure):
-                    if failure == .unauthorized {
+                    self.onRestored?(trashValue)
+                case .failure(let error):
+                    if case .unauthorized = error {
                         self.onRequireLogin?()
                     } else {
                         self.showToast(message: "恢复失败，请刷新后重试")
@@ -504,7 +510,7 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate {
             guard let self = self else { return }
             self.trashBusyIdentifiers.insert(identifier)
             sender.isEnabled = false
-            TrashNetwork.purgeTrash(entryIdentifier: identifier) { [weak self] result in
+            BearyAPI.shared.purgeTrash(id: identifier) { [weak self] result in
                 DispatchQueue.main.async {
                     guard let self = self else { return }
                     self.trashBusyIdentifiers.remove(identifier)
@@ -512,8 +518,9 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate {
                     switch result {
                     case .success:
                         self.removeRow(identifier: identifier)
-                    case .failure(let failure):
-                        if failure == .unauthorized {
+                        self.onPurged?(trashValue)
+                    case .failure(let error):
+                        if case .unauthorized = error {
                             self.onRequireLogin?()
                         } else {
                             self.showToast(message: "删除失败")
@@ -619,176 +626,14 @@ private enum TrashText {
     }
 }
 
-// MARK: - 回收站模型（字段全部 optional；服务端增减字段不断解码）
+// MARK: - 回收站模型（收尾去重）
 
-struct TrashItem: Decodable {
-    var entryIdentifier: String
-    var content: String?
-    var createdAt: Int?
-    var publishAt: Int?
-    var deletedAt: Int?
-    var daysLeft: Int?
-
-    enum CodingKeys: String, CodingKey {
-        case entryIdentifier = "id"
-        case content
-        case createdAt = "created_at"
-        case publishAt = "publish_at"
-        case deletedAt = "deleted_at"
-        case daysLeft = "days_left"
-    }
-
-    init(from decoder: Decoder) throws {
-        let container = try decoder.container(keyedBy: CodingKeys.self)
-        // 条目标识服务端现为字符串；数字型万一出现也转字符串，不抛解码错。
-        if let textIdentifier = try? container.decode(String.self, forKey: .entryIdentifier) {
-            entryIdentifier = textIdentifier
-        } else if let numericIdentifier = try? container.decode(Int.self, forKey: .entryIdentifier) {
-            entryIdentifier = "\(numericIdentifier)"
-        } else {
-            entryIdentifier = ""
-        }
-        content = try container.decodeIfPresent(String.self, forKey: .content)
-        createdAt = try container.decodeIfPresent(Int.self, forKey: .createdAt)
-        publishAt = try container.decodeIfPresent(Int.self, forKey: .publishAt)
-        deletedAt = try container.decodeIfPresent(Int.self, forKey: .deletedAt)
-        daysLeft = try container.decodeIfPresent(Int.self, forKey: .daysLeft)
-    }
+// TrashItem / TrashPage 的唯一定义在 BearyAPI.swift（TR-3 收进 BearyAPI）；
+// 本文件只补一个别名属性，让行内旧称 entryIdentifier 继续可用，不改行逻辑。
+extension TrashItem {
+    var entryIdentifier: String { id }
 }
 
-struct TrashList: Decodable {
-    var items: [TrashItem]
-    var hasMore: Bool
-
-    enum CodingKeys: String, CodingKey {
-        case items
-        case hasMore = "has_more"
-    }
-
-    init(from decoder: Decoder) throws {
-        let container = try decoder.container(keyedBy: CodingKeys.self)
-        items = try container.decodeIfPresent([TrashItem].self, forKey: .items) ?? []
-        hasMore = try container.decodeIfPresent(Bool.self, forKey: .hasMore) ?? false
-    }
-}
-
-// MARK: - 回收站网络（BearyAPI 风格：共享会话 + Origin + 401 分流；回调不在主线程）
-
-private enum TrashFailure: Equatable, Error {
-    case network
-    case http(Int)
-    case unauthorized
-    case notFound
-    case decoding
-}
-
-private enum TrashNetwork {
-
-    private static let base = "https://teddyhn.com"
-
-    private static func perform(
-        path: String,
-        query: [String: String] = [:],
-        method: String = "GET",
-        completion: @escaping (Data?, Int) -> Void
-    ) {
-        guard var url = URL(string: base + path) else {
-            completion(nil, 0)
-            return
-        }
-        if query.isEmpty == false {
-            var components = URLComponents(url: url, resolvingAgainstBaseURL: false)
-            components?.queryItems = query.map { URLQueryItem(name: $0.key, value: $0.value) }
-            if let composed = components?.url {
-                url = composed
-            }
-        }
-        var request = URLRequest(url: url)
-        request.httpMethod = method
-        request.setValue("https://teddyhn.com", forHTTPHeaderField: "Origin")
-        let task = URLSession.shared.dataTask(with: request) { data, response, _ in
-            let status = (response as? HTTPURLResponse)?.statusCode ?? 0
-            completion(data, status)
-        }
-        task.resume()
-    }
-
-    private static func decodeList(data: Data?, status: Int, completion: @escaping (Result<TrashList, TrashFailure>) -> Void) {
-        if status == 401 {
-            completion(.failure(.unauthorized))
-            return
-        }
-        if status == 404 {
-            completion(.failure(.notFound))
-            return
-        }
-        if (200...299).contains(status) == false {
-            completion(.failure(.http(status)))
-            return
-        }
-        guard let data = data else {
-            completion(.failure(.http(status)))
-            return
-        }
-        do {
-            let decoder = JSONDecoder()
-            let list = try decoder.decode(TrashList.self, from: data)
-            completion(.success(list))
-        } catch {
-            completion(.failure(.decoding))
-        }
-    }
-
-    private static func decodeVoid(status: Int, completion: @escaping (Result<Void, TrashFailure>) -> Void) {
-        if status == 401 {
-            completion(.failure(.unauthorized))
-            return
-        }
-        if status == 404 {
-            completion(.failure(.notFound))
-            return
-        }
-        if (200...299).contains(status) {
-            completion(.success(()))
-        } else {
-            completion(.failure(.http(status)))
-        }
-    }
-
-    static func fetchTrash(
-        beforeDeletedAt: Int?,
-        beforeIdentifier: String?,
-        completion: @escaping (Result<TrashList, TrashFailure>) -> Void
-    ) {
-        var query: [String: String] = ["limit": "50"]
-        if let beforeDeletedAt = beforeDeletedAt {
-            query["before"] = "\(beforeDeletedAt)"
-        }
-        if let beforeIdentifier = beforeIdentifier, beforeIdentifier.isEmpty == false {
-            query["before_id"] = beforeIdentifier
-        }
-        perform(path: "/beary/api/trash", query: query) { data, status in
-            decodeList(data: data, status: status, completion: completion)
-        }
-    }
-
-    static func restoreTrash(
-        entryIdentifier: String,
-        completion: @escaping (Result<Void, TrashFailure>) -> Void
-    ) {
-        let encoded = entryIdentifier.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? entryIdentifier
-        perform(path: "/beary/api/trash/\(encoded)/restore", method: "POST") { _, status in
-            decodeVoid(status: status, completion: completion)
-        }
-    }
-
-    static func purgeTrash(
-        entryIdentifier: String,
-        completion: @escaping (Result<Void, TrashFailure>) -> Void
-    ) {
-        let encoded = entryIdentifier.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? entryIdentifier
-        perform(path: "/beary/api/trash/\(encoded)", method: "DELETE") { _, status in
-            decodeVoid(status: status, completion: completion)
-        }
-    }
-}
+// TR-3：三个请求调 BearyAPI 的 fetchTrash(before:beforeId:completion:) /
+// restoreTrash(id:completion:) / purgeTrash(id:completion:)，游标 before 为
+// deletedAt 的字符串形式（API 侧签名 before: String?）。

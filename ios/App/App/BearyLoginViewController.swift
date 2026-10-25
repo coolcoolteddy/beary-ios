@@ -1,56 +1,37 @@
 import Foundation
 import UIKit
 
-// ===== 原生登录页（一次性补齐；只新建，不改其他文件）=====
+// ===== 原生登录页 =====
 // 容器接线（总协调收尾）：由 SceneDelegate 的 presentLogin present 本页，
 // 本页只通过回调交回结果，不自己 dismiss（容器拥有 presentation，负责关闭）：
 //   - onLoggedIn：验码成功（服务端 {ok: true}，会话 cookie 已由 URLSession.shared 存入
 //     共享存储）；容器随后调 SessionManager.refreshMe 刷新登录态。
 //   - onCancelled：用户点关闭钮；容器负责 dismiss。
-// 页面元素（按任务口径）：邮箱输入 + 获取验证码 + 6 位验证码输入 + 登录钮 + 关闭钮。
-// 文案与尺寸对照网页版登录框（beary.html 的 lgm 系列）：标题“登录 beary”21/800、
-// 副标题“邮箱验证码登录，无需密码；新邮箱登录即注册”13.5 灰、字段 label 11/600、
-// 输入框高 48 圆角 12 faint 底、发码钮高 48 圆角 12、登录钮高 49 圆角 12 墨底白字。
-// 颜色一律走 BearyColors，不新增字面量颜色；图标走 icon_close 资产；不使用液态玻璃效果。
+// 页面元素（对照网页版登录框 beary.html 的 lgm 系列）：邮箱输入 + 获取验证码 +
+// 6 位验证码输入 + 邀请码输入（选填）+ 隐私协议复选框 + 登录钮 + 关闭钮。
+// 文案与尺寸：标题“登录 beary”21/800、副标题“邮箱验证码登录，无需密码；新邮箱登录即注册”
+// 13.5 灰、字段 label 11/600、输入框高 48 圆角 12 faint 底、发码钮高 48 圆角 12、
+// 登录钮高 49 圆角 12 墨底白字。颜色一律走 BearyColors，不新增字面量颜色；
+// 图标走 icon_close/icon_check 资产；不使用液态玻璃效果。
 //
-// 发码/验码为什么不用 BearyAPI.sendCode/verify（先读过，不改 BearyAPI 是任务约束）：
-//   - BearyAPI.sendCode 的 body 里没有 turnstileToken，enforce 模式下发码必被拒；
-//   - BearyAPI.verify 是 requestVoid，只看状态码，验码返回的 pending_delete 响应体会被丢掉，
-//     注销冷静期用户会静默失败。本页的两个本地请求与 BearyAPI 同风格：
-//     同 baseURL、同 Origin: https://teddyhn.com、同 URLSession.shared 共享 cookie 存储、
-//     同 ServerErrorBody（error/message）解码；完成回调一律回主线程发。
-// me/logout 仍走现有接口：登录成功后容器调 SessionManager.refreshMe；
-// performLogout 供容器在登出路径复用（BearyAPI.logout + 清本地 cookie + 刷新用户态）。
-// 401 口径：本页的发码/验码请求不经过 BearyAPI.onUnauthorized，不会触发 401 清用户态的
-// 连锁；登录成功判定只认验码 {ok: true}，不认 refreshMe（容器随后才刷新）。
-//
-// 已知缺口（容器/总协调决策，见头注释末尾与交付报告）：
-//   1. 网页版登录钮受“我已阅读并同意《隐私政策》和《用户协议》”复选框门控，本页按任务
-//      口径未放该复选框——是否补，由总协调定。
-//   2. 本页无邀请码输入框，验码 body 不带 invite_code/dev（dev 服务端可选，不影响登录）。
-//   3. Turnstile 互动挑战在真机验证通过前是风险项：见 BearyTurnstilePage 头注释。
+// 发码/验码一律走 BearyAPI（BearyAPI.sendCode 带 turnstileToken，
+// BearyAPI.verify 返回完整响应体含 pending_delete）：本页不再有本地账户请求实现。
+// 发码链路保持串行：先 BearyTurnstilePage.requestToken，再 BearyAPI.sendCode，
+// 按钮文案“验证中…/发送中…”保持。登录成功判定只认验码 {ok: true}，
+// 不认 refreshMe（容器随后才刷新）；BearyAPI 的发码/验码不触发 onUnauthorized，
+// 不会触发 401 清用户态的连锁。
+// 登录钮启用条件与网页 lgSyncGo 同口径：复选框勾选 + 邮箱合法 + 验证码 6 位。
+// （网页邮箱正则 /.+@.+\..+/ 更松；本页沿用更严的 isEmailValid，合法邮箱均可通过，
+// 仅对无点号域等边缘输入更严，不放宽以免与服务端 ^[^\s@]+@[^\s@]+\.[^\s@]+$ 口径冲突。）
+// 协议链接说明：网页复选框文案里的《隐私政策》/《用户协议》链向 /privacy、/terms；
+// 原生 App 无网页视图，文案只做纯文本展示、点整行切换勾选，链接打开方式待总协调定。
+// Turnstile 互动挑战在真机验证通过前是风险项：见 BearyTurnstilePage 头注释。
 
 final class BearyLoginViewController: UIViewController {
     /// 登录成功（验码 {ok: true}）。容器随后刷新登录态并关闭本页。
     var onLoggedIn: (() -> Void)?
     /// 用户关闭。本页不自己 dismiss，容器负责关闭。
     var onCancelled: (() -> Void)?
-
-    private enum VerifyOutcome {
-        case success
-        case pendingDelete(deleteAt: Int)
-        case failure(message: String)
-    }
-
-    private struct SendCodeResponse: Decodable {
-        var ok: Bool?
-    }
-
-    private struct VerifyResponse: Decodable {
-        var ok: Bool?
-        var pendingDelete: Bool?
-        var deleteAt: Int?
-    }
 
     private let scrollView = UIScrollView()
     private let contentView = UIView()
@@ -61,8 +42,12 @@ final class BearyLoginViewController: UIViewController {
     private let emailField = UITextField()
     private let codeField = UITextField()
     private let sendButton = UIButton(type: .system)
+    private let inviteField = UITextField()
     private let messageLabel = UILabel()
-    private let loginButton = UIButton(type: .system)
+    private let agreeButton = UIButton(type: .system)
+    private let agreeLabel = UILabel()
+    private let agreeRow = UIView()
+    private var isAgreed = false
 
     private var isRequestingToken = false
     private var isSendingCode = false
@@ -99,7 +84,8 @@ final class BearyLoginViewController: UIViewController {
 
     // MARK: - 登出路径（供容器复用）
 
-    /// 显式登出：调 POST /api/account/logout，成功后清本地 beary cookie 并刷新用户态。
+    /// 显式登出：调 BearyAPI.logout（POST /beary/api/logout，网页 pmLogout 同口径），
+    /// 成功后清本地 beary cookie 并刷新用户态。
     /// 完成回调回主线程发；true = 服务端登出成功，false = 请求失败（会话可能仍在）。
     func performLogout(completion: ((Bool) -> Void)? = nil) {
         BearyAPI.shared.logout { result in
@@ -153,6 +139,8 @@ final class BearyLoginViewController: UIViewController {
 
         configureEmailField()
         configureCodeField()
+        configureInviteField()
+        configureAgreeRow()
 
         sendButton.translatesAutoresizingMaskIntoConstraints = false
         sendButton.layer.cornerRadius = 12
@@ -175,9 +163,11 @@ final class BearyLoginViewController: UIViewController {
         codeRow.translatesAutoresizingMaskIntoConstraints = false
         codeRow.addSubview(codeContainer)
         codeRow.addSubview(sendButton)
+        let inviteContainer = makeFieldContainer(field: inviteField)
 
         let emailLabel = makeFieldLabel(text: "邮箱")
         let codeLabel = makeFieldLabel(text: "验证码")
+        let inviteLabel = makeFieldLabel(text: "邀请码（选填）")
         stackView.addArrangedSubview(closeRow)
         stackView.addArrangedSubview(titleLabel)
         stackView.addArrangedSubview(subtitleLabel)
@@ -185,7 +175,10 @@ final class BearyLoginViewController: UIViewController {
         stackView.addArrangedSubview(emailContainer)
         stackView.addArrangedSubview(codeLabel)
         stackView.addArrangedSubview(codeRow)
+        stackView.addArrangedSubview(inviteLabel)
+        stackView.addArrangedSubview(inviteContainer)
         stackView.addArrangedSubview(messageLabel)
+        stackView.addArrangedSubview(agreeRow)
         stackView.addArrangedSubview(loginButton)
         stackView.setCustomSpacing(18, after: closeRow)
         stackView.setCustomSpacing(5, after: titleLabel)
@@ -193,8 +186,11 @@ final class BearyLoginViewController: UIViewController {
         stackView.setCustomSpacing(7, after: emailLabel)
         stackView.setCustomSpacing(14, after: emailContainer)
         stackView.setCustomSpacing(7, after: codeLabel)
-        stackView.setCustomSpacing(8, after: codeRow)
+        stackView.setCustomSpacing(14, after: codeRow)
+        stackView.setCustomSpacing(7, after: inviteLabel)
+        stackView.setCustomSpacing(8, after: inviteContainer)
         stackView.setCustomSpacing(8, after: messageLabel)
+        stackView.setCustomSpacing(12, after: agreeRow)
 
         NSLayoutConstraint.activate([
             scrollView.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
@@ -228,6 +224,14 @@ final class BearyLoginViewController: UIViewController {
             sendButton.bottomAnchor.constraint(equalTo: codeRow.bottomAnchor),
             sendButton.heightAnchor.constraint(equalToConstant: 48),
             codeContainer.trailingAnchor.constraint(equalTo: sendButton.leadingAnchor, constant: -9),
+            agreeButton.leadingAnchor.constraint(equalTo: agreeRow.leadingAnchor),
+            agreeButton.topAnchor.constraint(equalTo: agreeRow.topAnchor, constant: 2),
+            agreeButton.widthAnchor.constraint(equalToConstant: 22),
+            agreeButton.heightAnchor.constraint(equalToConstant: 22),
+            agreeLabel.leadingAnchor.constraint(equalTo: agreeButton.trailingAnchor, constant: 10),
+            agreeLabel.trailingAnchor.constraint(equalTo: agreeRow.trailingAnchor),
+            agreeLabel.topAnchor.constraint(equalTo: agreeRow.topAnchor),
+            agreeLabel.bottomAnchor.constraint(equalTo: agreeRow.bottomAnchor),
         ])
     }
 
@@ -289,10 +293,77 @@ final class BearyLoginViewController: UIViewController {
         codeField.addTarget(self, action: #selector(textChanged), for: .editingChanged)
     }
 
+    private func configureInviteField() {
+        inviteField.font = UIFont.systemFont(ofSize: 16)
+        inviteField.textColor = BearyColors.ink
+        inviteField.attributedPlaceholder = NSAttributedString(string: "填好友的邀请码，成功后各得 1 个月 Plus", attributes: [
+            .foregroundColor: BearyColors.gray,
+            .font: UIFont.systemFont(ofSize: 16),
+        ])
+        inviteField.autocapitalizationType = .allCharacters
+        inviteField.autocorrectionType = .no
+        inviteField.returnKeyType = .done
+        inviteField.delegate = self
+        inviteField.addTarget(self, action: #selector(textChanged), for: .editingChanged)
+    }
+
+    private func configureAgreeRow() {
+        agreeRow.translatesAutoresizingMaskIntoConstraints = false
+        agreeButton.translatesAutoresizingMaskIntoConstraints = false
+        agreeButton.layer.cornerRadius = 6
+        agreeButton.layer.borderWidth = 1.5
+        agreeButton.layer.borderColor = BearyColors.line.cgColor
+        agreeButton.backgroundColor = BearyColors.faint
+        agreeButton.accessibilityLabel = "我已阅读并同意《隐私政策》和《用户协议》"
+        agreeButton.addTarget(self, action: #selector(agreeTapped), for: .touchUpInside)
+        agreeLabel.translatesAutoresizingMaskIntoConstraints = false
+        agreeLabel.text = "我已阅读并同意《隐私政策》和《用户协议》"
+        agreeLabel.font = UIFont.systemFont(ofSize: 13.5)
+        agreeLabel.textColor = BearyColors.gray
+        agreeLabel.numberOfLines = 0
+        agreeLabel.isUserInteractionEnabled = true
+        agreeLabel.addGestureRecognizer(UITapGestureRecognizer(target: self, action: #selector(agreeTapped)))
+        agreeRow.addSubview(agreeButton)
+        agreeRow.addSubview(agreeLabel)
+        refreshAgreeBox()
+    }
+
+    private func refreshAgreeBox() {
+        if isAgreed {
+            agreeButton.backgroundColor = BearyColors.orange
+            agreeButton.layer.borderColor = BearyColors.orange.cgColor
+            agreeButton.tintColor = BearyColors.bg
+            agreeButton.setImage(BearyIconImages.image(named: "icon_check", pointSize: 13), for: .normal)
+        } else {
+            agreeButton.backgroundColor = BearyColors.faint
+            agreeButton.layer.borderColor = BearyColors.line.cgColor
+            agreeButton.setImage(nil, for: .normal)
+        }
+    }
+
+    @objc private func agreeTapped() {
+        isAgreed.toggle()
+        refreshAgreeBox()
+        updateButtonStates()
+    }
+
     // MARK: - 状态与文案
 
     private func normalizedEmail() -> String {
         return (emailField.text ?? "").trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+    }
+
+    /// 邀请码：网页 lgVerify 口径 trim + 大写；空串也照常带（服务端空串视同未填）。
+    private func normalizedInviteCode() -> String {
+        return (inviteField.text ?? "").trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
+    }
+
+    /// 设备信号：网页 lgDeviceSignals 口径 {g, w, h, d}，原生只带能取到的字段：
+    /// w/h 为屏幕逻辑尺寸（与网页 screen.width/height 同为 CSS 点单位），
+    /// d 为像素比；g 是 WebGL GPU 字符串，原生无对应采集口径，不编造、不带。
+    private func deviceSignals() -> [String: Any] {
+        let bounds = UIScreen.main.bounds
+        return ["w": Int(bounds.width), "h": Int(bounds.height), "d": Double(UIScreen.main.scale)]
     }
 
     /// 与服务端 ^[^\s@]+@[^\s@]+\.[^\s@]+$ 同口径（网页发码钮的 /.+@.+\..+/ 更松，不用它）。
@@ -338,7 +409,7 @@ final class BearyLoginViewController: UIViewController {
         sendButton.setTitleColor(sendTitleColor, for: .disabled)
         sendButton.titleLabel?.font = UIFont.systemFont(ofSize: 14, weight: sendEnabled ? .semibold : .medium)
 
-        let loginEnabled = emailValid && code.count == 6 && !isVerifying
+        let loginEnabled = isAgreed && emailValid && code.count == 6 && !isVerifying
         loginButton.isEnabled = loginEnabled
         loginButton.alpha = loginEnabled ? 1 : 0.35
         setLoginTitle(isVerifying ? "处理中…" : "登录")
@@ -407,16 +478,28 @@ final class BearyLoginViewController: UIViewController {
                 strongSelf.isRequestingToken = false
                 strongSelf.isSendingCode = true
                 strongSelf.updateButtonStates()
-                strongSelf.requestSendCode(email: email, token: token) { [weak strongSelf] message in
-                    guard let strongSelf = strongSelf else { return }
-                    strongSelf.isSendingCode = false
-                    if let message = message {
-                        strongSelf.showMessage(message)
-                        strongSelf.updateButtonStates()
-                    } else {
-                        strongSelf.showMessage("验证码已发送，请查收邮件", ok: true)
-                        strongSelf.startCountdown()
-                        strongSelf.codeField.becomeFirstResponder()
+                strongSelf.currentTask = BearyAPI.shared.sendCode(email: email, turnstileToken: token) { [weak strongSelf] result in
+                    DispatchQueue.main.async {
+                        guard let strongSelf = strongSelf else { return }
+                        strongSelf.currentTask = nil
+                        strongSelf.isSendingCode = false
+                        switch result {
+                        case .success:
+                            strongSelf.showMessage("验证码已发送，请查收邮件", ok: true)
+                            strongSelf.startCountdown()
+                            strongSelf.codeField.becomeFirstResponder()
+                        case .failure(.cancelled):
+                            strongSelf.updateButtonStates()
+                        case .failure(.server(let message)):
+                            strongSelf.showMessage(message)
+                            strongSelf.updateButtonStates()
+                        case .failure(.network):
+                            strongSelf.showMessage("网络错误，请重试")
+                            strongSelf.updateButtonStates()
+                        case .failure:
+                            strongSelf.showMessage("发送失败")
+                            strongSelf.updateButtonStates()
+                        }
                     }
                 }
             }
@@ -440,23 +523,42 @@ final class BearyLoginViewController: UIViewController {
     }
 
     private func verify(email: String, code: String, confirmCancel: Bool) {
-        requestVerify(email: email, code: code, confirmCancel: confirmCancel) { [weak self] outcome in
-            guard let strongSelf = self else { return }
-            strongSelf.isVerifying = false
-            strongSelf.updateButtonStates()
-            switch outcome {
-            case .success:
-                // 会话 cookie 已由共享 URLSession 存好；容器随后刷新登录态。
-                strongSelf.onLoggedIn?()
-            case .pendingDelete(let deleteAt):
-                if confirmCancel {
-                    // 二次确认后仍回 pending_delete 不应出现：不断循环，直接报失败。
-                    strongSelf.showMessage("验证失败，请重试")
-                } else {
-                    strongSelf.presentPendingDeleteConfirm(email: email, code: code, deleteAt: deleteAt)
+        currentTask = BearyAPI.shared.verify(
+            email: email,
+            code: code,
+            inviteCode: normalizedInviteCode(),
+            dev: deviceSignals(),
+            confirmCancel: confirmCancel
+        ) { [weak self] result in
+            DispatchQueue.main.async {
+                guard let strongSelf = self else { return }
+                strongSelf.currentTask = nil
+                strongSelf.isVerifying = false
+                strongSelf.updateButtonStates()
+                switch result {
+                case .success(let resp):
+                    if resp.pendingDelete == true {
+                        if confirmCancel {
+                            // 二次确认后仍回 pending_delete 不应出现：不断循环，直接报失败。
+                            strongSelf.showMessage("验证失败，请重试")
+                        } else {
+                            strongSelf.presentPendingDeleteConfirm(email: email, code: code, deleteAt: resp.deleteAt ?? 0)
+                        }
+                    } else if resp.ok == true {
+                        // 会话 cookie 已由共享 URLSession 存好；容器随后刷新登录态。
+                        strongSelf.onLoggedIn?()
+                    } else {
+                        strongSelf.showMessage(resp.message ?? resp.error ?? "验证失败")
+                    }
+                case .failure(.cancelled):
+                    break
+                case .failure(.server(let message)):
+                    strongSelf.showMessage(message)
+                case .failure(.network):
+                    strongSelf.showMessage("网络错误，请重试")
+                case .failure:
+                    strongSelf.showMessage("验证失败")
                 }
-            case .failure(let message):
-                strongSelf.showMessage(message)
             }
         }
     }
@@ -505,93 +607,20 @@ final class BearyLoginViewController: UIViewController {
         scrollView.verticalScrollIndicatorInsets.bottom = 0
     }
 
-    // MARK: - 账户请求（本地实现，理由见头注释；完成回调一律回主线程）
-
-    private func postAccount(path: String, body: [String: Any], completion: @escaping (Data?, Int, Error?) -> Void) -> URLSessionDataTask? {
-        guard let baseURL = URL(string: "https://teddyhn.com"), let url = URL(string: path, relativeTo: baseURL)?.absoluteURL else {
-            completion(nil, 0, nil)
-            return nil
-        }
-        var request = URLRequest(url: url)
-        request.httpMethod = "POST"
-        request.setValue("https://teddyhn.com", forHTTPHeaderField: "Origin")
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.httpBody = try? JSONSerialization.data(withJSONObject: body)
-        let task = URLSession.shared.dataTask(with: request) { data, response, error in
-            let status = (response as? HTTPURLResponse)?.statusCode ?? 0
-            completion(data, status, error)
-        }
-        task.resume()
-        return task
-    }
-
-    private func decodeErrorMessage(data: Data?, fallback: String) -> String {
-        if let data = data {
-            let decoder = JSONDecoder()
-            if let body = try? decoder.decode(ServerErrorBody.self, from: data), let message = body.message, !message.isEmpty {
-                return message
-            }
-        }
-        return fallback
-    }
-
-    /// 发码：成功返回 nil，失败返回展示文案（服务端 message 原样透传，与网页 lgSendCode 同口径）。
-    private func requestSendCode(email: String, token: String, completion: @escaping (String?) -> Void) {
-        currentTask = postAccount(path: "/api/account/send-code", body: ["email": email, "turnstileToken": token]) { [weak self] data, status, error in
-            DispatchQueue.main.async {
-                if let strongSelf = self { strongSelf.currentTask = nil }
-                if error != nil {
-                    completion("网络错误，请重试")
-                    return
-                }
-                if (200...299).contains(status), let data = data {
-                    let decoder = JSONDecoder()
-                    if let body = try? decoder.decode(SendCodeResponse.self, from: data), body.ok == true {
-                        completion(nil)
-                        return
-                    }
-                }
-                completion(self?.decodeErrorMessage(data: data, fallback: "发送失败") ?? "发送失败")
-            }
-        }
-    }
-
-    private func requestVerify(email: String, code: String, confirmCancel: Bool, completion: @escaping (VerifyOutcome) -> Void) {
-        var body: [String: Any] = ["email": email, "code": code]
-        if confirmCancel { body["confirm_cancel"] = true }
-        currentTask = postAccount(path: "/api/account/verify", body: body) { [weak self] data, status, error in
-            DispatchQueue.main.async {
-                if let strongSelf = self { strongSelf.currentTask = nil }
-                if error != nil {
-                    completion(.failure(message: "网络错误，请重试"))
-                    return
-                }
-                if let data = data {
-                    let decoder = JSONDecoder()
-                    decoder.keyDecodingStrategy = .convertFromSnakeCase
-                    if let body = try? decoder.decode(VerifyResponse.self, from: data), body.pendingDelete == true {
-                        completion(.pendingDelete(deleteAt: body.deleteAt ?? 0))
-                        return
-                    }
-                    if (200...299).contains(status), let body = try? decoder.decode(VerifyResponse.self, from: data), body.ok == true {
-                        completion(.success)
-                        return
-                    }
-                }
-                completion(.failure(message: self?.decodeErrorMessage(data: data, fallback: "验证失败") ?? "验证失败"))
-            }
-        }
-    }
+    // 发码/验码走 BearyAPI（见头注释）；本页不再保留本地账户请求实现。
 }
 
-// MARK: - UITextFieldDelegate（验证码只接受 ASCII 数字且 ≤6 位）
+// MARK: - UITextFieldDelegate（验证码只接受 ASCII 数字且 ≤6 位；邀请码 ≤16 位，与网页 maxlength 同口径）
 
 extension BearyLoginViewController: UITextFieldDelegate {
     func textField(_ textField: UITextField, shouldChangeCharactersIn range: NSRange, replacementString string: String) -> Bool {
-        guard textField === codeField else { return true }
         let current = textField.text ?? ""
         guard let swiftRange = Range(range, in: current) else { return false }
         let next = current.replacingCharacters(in: swiftRange, with: string)
+        if textField === inviteField {
+            return next.count <= 16
+        }
+        guard textField === codeField else { return true }
         guard next.count <= 6 else { return false }
         if string.isEmpty { return true }
         return string.unicodeScalars.allSatisfy({ $0.value >= 48 && $0.value <= 57 })
@@ -600,6 +629,8 @@ extension BearyLoginViewController: UITextFieldDelegate {
     func textFieldShouldReturn(_ textField: UITextField) -> Bool {
         if textField === emailField {
             codeField.becomeFirstResponder()
+        } else if textField === inviteField {
+            textField.resignFirstResponder()
         }
         return true
     }

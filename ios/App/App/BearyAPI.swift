@@ -32,6 +32,9 @@ struct Quote: Decodable {
     var images: [String]?
     var createdAt: Int?
     var isPublic: Bool?
+    /// 服务端 attachQuotes 直传的引用态（F3 收尾补解码）：gone=原篇已删，locked=原篇未公开。
+    var gone: Bool?
+    var locked: Bool?
     var authorName: String?
     var authorAvatar: String?
     var authorBadge: String?
@@ -120,6 +123,18 @@ struct SearchResult: Decodable {
     var mine: [Entry]?
 }
 
+struct ReferralInfo: Decodable {
+    var bound: Bool?
+    var bindOpen: Bool?
+    var bindDeadline: Int?
+    var invitedCount: Int?
+    var rewardMonths: Int?
+    var enabled: Bool?
+    var inviterName: String?
+    var status: String?
+    var boundAt: Int?
+}
+
 struct MeUser: Decodable {
     var id: Int?
     var email: String?
@@ -132,10 +147,97 @@ struct MeUser: Decodable {
     var plusUntil: Int?
     var plusFree: Bool?
     var isAdmin: Bool?
+    var inviteCode: String?
+    var referral: ReferralInfo?
 }
 
 struct MeResponse: Decodable {
     var user: MeUser?
+}
+
+/// 验码完整响应体（accounts /api/account/verify）。
+/// 成功：ok=true，另带 isNew 与 referral（邀请绑定结果，老用户带码登录时也可能有）；
+/// 注销冷静期：HTTP 200 但 ok 缺失，pendingDelete=true + deleteAt（毫秒时间戳），
+/// 调用方须二次确认后再带 confirmCancel 重调；失败体：error/message 由本文件
+/// verify() 转成 .server(展示文案)，不走通用 mapStatus（避免 401 清用户态）。
+struct VerifyReferral: Decodable {
+    var ok: Bool?
+    var status: String?
+    var error: String?
+}
+
+struct VerifyResponse: Decodable {
+    var ok: Bool?
+    var pendingDelete: Bool?
+    var deleteAt: Int?
+    var isNew: Bool?
+    var error: String?
+    var message: String?
+    var referral: VerifyReferral?
+}
+
+/// 回收站页（服务端 GET /beary/api/trash：{items, has_more}）。
+/// TrashItem / TrashPage 的唯一定义在本文件；BearyTrashViewController 只调方法，
+/// 不再自带同名模型（TR-3 收尾已去重）。
+struct TrashItem: Decodable {
+    var id: String
+    var content: String?
+    var createdAt: Int?
+    var publishAt: Int?
+    var deletedAt: Int?
+    var daysLeft: Int?
+
+    // CodingKeys 取 camelCase 名：BearyAPI 的 decoder 用 convertFromSnakeCase，
+    // 会把服务端 created_at/publish_at/deleted_at/days_left 转成这些名再匹配；
+    // 不要给它们写 snake_case rawValue，否则与策略叠加后匹配失败。
+    enum CodingKeys: String, CodingKey {
+        case id
+        case content
+        case createdAt
+        case publishAt
+        case deletedAt
+        case daysLeft
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        if let textId = try? container.decode(String.self, forKey: .id) {
+            id = textId
+        } else if let numericId = try? container.decode(Int.self, forKey: .id) {
+            id = "\(numericId)"
+        } else {
+            id = ""
+        }
+        content = try container.decodeIfPresent(String.self, forKey: .content)
+        createdAt = try container.decodeIfPresent(Int.self, forKey: .createdAt)
+        publishAt = try container.decodeIfPresent(Int.self, forKey: .publishAt)
+        deletedAt = try container.decodeIfPresent(Int.self, forKey: .deletedAt)
+        daysLeft = try container.decodeIfPresent(Int.self, forKey: .daysLeft)
+    }
+}
+
+struct TrashPage: Decodable {
+    var items: [TrashItem]
+    var hasMore: Bool
+
+    enum CodingKeys: String, CodingKey {
+        case items
+        case hasMore
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        items = try container.decodeIfPresent([TrashItem].self, forKey: .items) ?? []
+        hasMore = try container.decodeIfPresent(Bool.self, forKey: .hasMore) ?? false
+    }
+}
+
+/// 邀请补绑响应（accounts POST /api/account/referral/bind：{ok, status}）。
+struct ReferralBindResponse: Decodable {
+    var ok: Bool?
+    var status: String?
+    var error: String?
+    var message: String?
 }
 
 struct ServerErrorBody: Decodable {
@@ -270,7 +372,8 @@ final class BearyAPI {
         }
     }
 
-    /// 无 body 响应请求：只看状态码（标已读、发码、验码、退出等）。
+    /// 无 body 响应请求：只看状态码（标已读、退出、删帖、回收站恢复/彻底删除等）。
+    /// 发码/验码不用它（它们要透传服务端 message 并返回完整响应体，见下方专法）。
     @discardableResult
     func requestVoid(
         _ path: String,
@@ -346,16 +449,150 @@ final class BearyAPI {
         }
     }
 
-    func sendCode(email: String, completion: @escaping (Result<Void, APIError>) -> Void) {
-        requestVoid("/api/account/send-code", method: "POST", jsonBody: ["email": email], completion: completion)
+    /// 发码：body 必须带 turnstileToken（accounts enforce 模式下缺 token 必被拒）。
+    /// 失败时 .server 携带服务端 message 展示文案（不是通用 mapStatus 的 error 码），
+    /// 调用方直接展示即可；网络失败为 .network，取消为 .cancelled。
+    /// 完成回调不在主线程发（与本文件其他方法同口径），调用方碰 UI 前自行回主线程。
+    @discardableResult
+    func sendCode(email: String, turnstileToken: String, completion: @escaping (Result<Void, APIError>) -> Void) -> URLSessionDataTask? {
+        return perform("/api/account/send-code", method: "POST", jsonBody: ["email": email, "turnstileToken": turnstileToken]) { [weak self] data, status, error in
+            guard let self = self else { return }
+            if let apiErr = self.accountActionError(status, data: data, error: error, fallback: "发送失败") {
+                completion(.failure(apiErr))
+                return
+            }
+            completion(.success(()))
+        }
     }
 
-    /// 验码只看状态码；成功后调 fetchMe 取用户（cookie 已由 URLSession 存入共享存储）。
-    func verify(email: String, code: String, completion: @escaping (Result<Void, APIError>) -> Void) {
-        requestVoid("/api/account/verify", method: "POST", jsonBody: ["email": email, "code": code], completion: completion)
+    /// 验码：返回完整响应体（含 pending_delete 冷静期与 referral 绑定结果），不只看状态码。
+    /// body 与网页 lgVerify 同口径：恒带 invite_code（空串也带，上层须先 trim + 大写），
+    /// 恒带 dev（设备信号，能取到的字段才带）；confirmCancel 仅二次确认时带 true。
+    /// 本方法不走通用 mapStatus、不触发 onUnauthorized（登录请求不该清用户态）。
+    /// 失败时 .server 携带服务端 message 展示文案；完成回调不在主线程发。
+    @discardableResult
+    func verify(email: String, code: String, inviteCode: String?, dev: [String: Any]?, confirmCancel: Bool, completion: @escaping (Result<VerifyResponse, APIError>) -> Void) -> URLSessionDataTask? {
+        var body: [String: Any] = ["email": email, "code": code, "invite_code": inviteCode ?? ""]
+        if let dev = dev, !dev.isEmpty { body["dev"] = dev }
+        if confirmCancel { body["confirm_cancel"] = true }
+        return perform("/api/account/verify", method: "POST", jsonBody: body) { [weak self] data, status, error in
+            guard let self = self else { return }
+            if let e = error as NSError?, e.code == NSURLErrorCancelled {
+                completion(.failure(.cancelled))
+                return
+            }
+            if let e = error {
+                completion(.failure(.network(e)))
+                return
+            }
+            if let data = data, let resp = try? self.decoder.decode(VerifyResponse.self, from: data) {
+                if resp.pendingDelete == true { completion(.success(resp)); return }
+                if resp.ok == true { completion(.success(resp)); return }
+                let message = resp.message ?? resp.error ?? "验证失败"
+                completion(.failure(.server(message)))
+                return
+            }
+            if !(200...299).contains(status) {
+                completion(.failure(.http(status)))
+                return
+            }
+            completion(.failure(.decoding(NSError(domain: "BearyAPI", code: -1, userInfo: nil))))
+        }
     }
 
+    /// 发码/验码共用的失败映射：不触发 onUnauthorized，只把服务端 message 透传为 .server。
+    private func accountActionError(_ status: Int, data: Data?, error: Error?, fallback: String) -> APIError? {
+        if let e = error as NSError?, e.code == NSURLErrorCancelled { return .cancelled }
+        if let e = error { return .network(e) }
+        if (200...299).contains(status) { return nil }
+        if let data = data, let body = try? decoder.decode(ServerErrorBody.self, from: data) {
+            if let message = body.message, !message.isEmpty { return .server(message) }
+            if let code = body.error, !code.isEmpty { return .server(code) }
+        }
+        return .http(status)
+    }
+
+    /// 登出：网页 pmLogout 走 POST /beary/api/logout（beary Worker，清会话并清 cookie），
+    /// 不是 accounts 的 /api/account/logout（两者服务端都会删会话，但以网页口径为准）。
     func logout(completion: @escaping (Result<Void, APIError>) -> Void) {
-        requestVoid("/api/account/logout", method: "POST", completion: completion)
+        requestVoid("/beary/api/logout", method: "POST", completion: completion)
+    }
+
+    // MARK: - 邀请门控与补绑（accounts /me 口径）
+
+    /// 礼物钮门控：以 accounts /me 的 user.referral.enabled 为准（网页 giftBtn 显示逻辑
+    /// 同款：checkAuth 里 myReferral.enabled 为真才显示）。未登录时 fetchMe 返回
+    /// success(nil)，此处映射为 false（礼物钮本来就只在登录态显示）。
+    /// 另有公开端点 /api/account/beta-status 的 referral_enabled 与之一致，但那是
+    /// 注册态公开接口，不含登录用户的 referral 明细，故门控不用它。
+    func fetchReferralEnabled(completion: @escaping (Result<Bool, APIError>) -> Void) {
+        fetchMe { result in
+            switch result {
+            case .success(let user):
+                completion(.success(user?.referral?.enabled ?? false))
+            case .failure(let e):
+                completion(.failure(e))
+            }
+        }
+    }
+
+    /// 邀请补绑：POST /api/account/referral/bind {code}，code 由调用方 trim + 大写。
+    /// 成功返回 {ok, status}（granted/flagged/pending 等）；失败时 .server 携带
+    /// 服务端 message 展示文案（自邀/已绑定/超 30 天/功能未开启等），完成回调不在主线程发。
+    @discardableResult
+    func bindReferral(code: String, completion: @escaping (Result<ReferralBindResponse, APIError>) -> Void) -> URLSessionDataTask? {
+        return perform("/api/account/referral/bind", method: "POST", jsonBody: ["code": code]) { [weak self] data, status, error in
+            guard let self = self else { return }
+            if let e = error as NSError?, e.code == NSURLErrorCancelled {
+                completion(.failure(.cancelled))
+                return
+            }
+            if let e = error {
+                completion(.failure(.network(e)))
+                return
+            }
+            if let data = data, let resp = try? self.decoder.decode(ReferralBindResponse.self, from: data) {
+                if resp.ok == true { completion(.success(resp)); return }
+                let message = resp.message ?? resp.error ?? "绑定失败，请稍后再试"
+                completion(.failure(.server(message)))
+                return
+            }
+            if !(200...299).contains(status) {
+                completion(.failure(.http(status)))
+                return
+            }
+            completion(.failure(.decoding(NSError(domain: "BearyAPI", code: -1, userInfo: nil))))
+        }
+    }
+
+    // MARK: - 日记删除与回收站
+
+    /// 删帖：DELETE /beary/api/entries/:id（beary Worker：仅私密期、仅作者可删，
+    /// 成功后日记进回收站；已公开返回 403 cannot delete public entry）。
+    func deleteEntry(id: String, completion: @escaping (Result<Void, APIError>) -> Void) {
+        let safe = id.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? id
+        requestVoid("/beary/api/entries/\(safe)", method: "DELETE", completion: completion)
+    }
+
+    /// 回收站分页：GET /beary/api/trash?limit=50&before&before_id（deleted_at DESC, id DESC）。
+    /// before 传上一页末条的 deleted_at（毫秒，字符串形式）；beforeId 传其 id；
+    /// 首页两者皆传 nil。服务端 30 天保留，过期自动彻底删除。
+    func fetchTrash(before: String?, beforeId: String?, completion: @escaping (Result<TrashPage, APIError>) -> Void) {
+        var q: [String: String] = ["limit": "50"]
+        if let before = before, !before.isEmpty { q["before"] = before }
+        if let beforeId = beforeId, !beforeId.isEmpty { q["before_id"] = beforeId }
+        request("/beary/api/trash", query: q, completion: completion)
+    }
+
+    /// 恢复：POST /beary/api/trash/:id/restore（恢复后公开倒计时按原 publish_at 继续）。
+    func restoreTrash(id: String, completion: @escaping (Result<Void, APIError>) -> Void) {
+        let safe = id.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? id
+        requestVoid("/beary/api/trash/\(safe)/restore", method: "POST", completion: completion)
+    }
+
+    /// 彻底删除：DELETE /beary/api/trash/:id（不可恢复；过期或已变化返回 409）。
+    func purgeTrash(id: String, completion: @escaping (Result<Void, APIError>) -> Void) {
+        let safe = id.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? id
+        requestVoid("/beary/api/trash/\(safe)", method: "DELETE", completion: completion)
     }
 }

@@ -17,7 +17,6 @@ import WebKit
 // 本对象不把 webView 挂到任何视图层级（invisible widget 本身不占视觉）；
 // 若 Cloudflare 要求互动挑战，挑战框无法在无层级的 webView 里被用户看到，
 // token 会走到执行超时——这是真机验证前必须确认的最大风险点（见登录页头注释）。
-// hostedWebView 仅作逃生口：后续迭代如需把挑战展示出来，可由容器把它 present 出来。
 
 final class BearyTurnstilePage: NSObject {
     enum TokenError: Error {
@@ -47,9 +46,6 @@ final class BearyTurnstilePage: NSObject {
     private static let handlerName = "bearyTurnstile"
     private static let scriptTimeout: TimeInterval = 15
     private static let executeTimeout: TimeInterval = 30
-
-    /// 逃生口：当前跑验证的 webView（正常流程不挂层级、不展示）。
-    var hostedWebView: WKWebView? { webView }
 
     private var webView: WKWebView?
     private var pendingCompletion: TokenCompletion?

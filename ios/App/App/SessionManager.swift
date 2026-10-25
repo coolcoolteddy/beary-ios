@@ -50,6 +50,12 @@ final class SessionManager {
         }
     }
 
+    /// 显式退出：服务端会话已清后调（登出接口成功后），清本地用户态并通知界面。
+    func signOutLocally() {
+        currentUser = nil
+        notifyUserChanged(nil)
+    }
+
     private func isBearyCookie(_ cookie: HTTPCookie) -> Bool {
         cookie.domain.contains("teddyhn.com")
     }

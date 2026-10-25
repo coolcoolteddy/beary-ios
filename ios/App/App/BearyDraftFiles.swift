@@ -55,11 +55,13 @@ struct BearyDraft: Codable {
     var quoteDeleted: Bool
 
     /// 有实质内容：空白篇（全空）不迁入、不展示为有效草稿。
+    /// 心情不算内容（网页口径：只选表情、没写字的日记不保存），与编辑器
+    /// saveDraftNow 的 C10 空判定一致；旧槽里纯心情篇迁移时直接丢弃。
     var hasContent: Bool {
         if !content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             return true
         }
-        if mood != nil || weather != nil || recipientId != nil || quoteId != nil {
+        if weather != nil || recipientId != nil || quoteId != nil {
             return true
         }
         return !images.isEmpty
@@ -173,6 +175,35 @@ enum BearyDraftImageStore {
 // MARK: - 草稿文件存储（原子写 + v2/v1 迁移）
 
 enum BearyDraftStore {
+    /// E1-4：草稿整库读写后台队列（串行）。草稿箱删除/撤销走 saveAsync/deleteAsync，
+    /// 主线程只更新 UI；编辑器侧 save/delete 已改走本队列（ioQueue 串行，
+    /// 收尾已对齐；旧“暂未改走本队列”备注作废）。
+    static let ioQueue = DispatchQueue(label: "beary.draftStore.io", qos: .userInitiated)
+
+    /// 后台删一篇：整库 loadAll + saveAll 都在 ioQueue 上，完成后回主线程。
+    static func deleteAsync(draftId: String, completion: (() -> Void)? = nil) {
+        ioQueue.async {
+            delete(draftId: draftId)
+            if let completion = completion {
+                DispatchQueue.main.async {
+                    completion()
+                }
+            }
+        }
+    }
+
+    /// 后台增改一篇：整库 loadAll + saveAll 都在 ioQueue 上，完成后回主线程。
+    static func saveAsync(_ draft: BearyDraft, completion: (() -> Void)? = nil) {
+        ioQueue.async {
+            save(draft)
+            if let completion = completion {
+                DispatchQueue.main.async {
+                    completion()
+                }
+            }
+        }
+    }
+
     private static let fileName = "beary_draft_v3.json"
     private static let legacyV2FileName = "beary_draft_v2.json"
     private static let v1Key = "beary_native_draft_v1"

@@ -62,6 +62,9 @@ final class BearyChromeViewController: UIViewController {
     private var userVC: BearyProfileViewController?
     private var searchVC: BearySearchViewController?
     private var profileGated = false
+    private var inviteVC: BearyInviteViewController?
+    /// 礼物钮门控缓存（A4）：仅上次 fetchReferralEnabled 成功为真时显礼物钮。
+    private var referralEnabled = false
     private var userTargetKey: String?
     private enum UserTarget { case id(Int); case handle(String) }
     private var pendingUserTarget: UserTarget?
@@ -440,6 +443,16 @@ final class BearyChromeViewController: UIViewController {
             self?.applyLoginState(user)
             guard let self = self else { return }
             if user != nil {
+                // A4 礼物钮门控（收尾）：仅 referral.enabled 时显；失败沿用旧值。
+                BearyAPI.shared.fetchReferralEnabled { [weak self] result in
+                    guard let self = self else { return }
+                    if case .success(let enabled) = result {
+                        DispatchQueue.main.async {
+                            self.referralEnabled = enabled
+                            self.giftButton.isHidden = !enabled
+                        }
+                    }
+                }
                 if self.currentPage == .me && self.profileGated {
                     self.rebuildProfileVC()
                 } else if self.currentPage == .timeline, let tl = self.timelineVC, tl.isViewLoaded {
@@ -448,7 +461,8 @@ final class BearyChromeViewController: UIViewController {
                     nt.refresh()
                 }
             } else if self.currentPage == .me && !self.profileGated {
-                self.rebuildProfileVC()
+                // A11（收尾）：退出后不再亮 gated 占位我页，回首页。
+                self.showPage(.home)
             }
         }
         SessionManager.shared.refreshMe()
@@ -522,9 +536,11 @@ final class BearyChromeViewController: UIViewController {
     private func applyLoginState(_ user: MeUser?) {
         loginButton.isHidden = user != nil
         avatarButton.isHidden = user == nil
-        giftButton.isHidden = user == nil
+        // A4：礼物钮仅登录且 referral.enabled 时显（enabled 由 onUserChanged 拉取缓存）。
+        giftButton.isHidden = !(user != nil && referralEnabled)
         let avatar = user?.avatar ?? ""
         if user == nil {
+            referralEnabled = false
             avatarURLString = nil
             avatarButton.setImage(UIImage(named: "IconUser")?.withRenderingMode(.alwaysTemplate), for: .normal)
             avatarButton.tintColor = ink
@@ -589,6 +605,17 @@ final class BearyChromeViewController: UIViewController {
         f.onRequireLogin = { [weak self] in
             self?.presentLogin()
         }
+        // 收尾接线：引用卡可点进详情（F2）；赞过/收藏页签取消摘卡（F8）；
+        // 行内互动同步已打开的详情（D1 反向）。
+        f.onQuoteEntrySelected = { [weak self] quoteId in
+            self?.presentDetail(entryId: quoteId, initialEntry: nil)
+        }
+        f.onInteractionRemoved = { [weak self] entryId, likeRemoved, bookmarkRemoved in
+            self?.profileVC?.removeEntryFromTabs(entryId: entryId, likeRemoved: likeRemoved, bookmarkRemoved: bookmarkRemoved)
+        }
+        f.onRowInteractionChanged = { [weak self] entry in
+            self?.notifyOpenDetail(entry: entry)
+        }
         addChild(f)
         f.view.translatesAutoresizingMaskIntoConstraints = false
         view.addSubview(f.view)
@@ -618,9 +645,18 @@ final class BearyChromeViewController: UIViewController {
         return f
     }
 
-    /// 原生页切换：首页与新页均为常驻子 VC（hide/show 保留滚动位置），仅邀请页仍为占位页。
+    /// 原生页切换：首页与新页均为常驻子 VC（hide/show 保留滚动位置）。
     /// 重拍当前 tab：首页先回顶再刷新（与网页 topThen 同口径），消息页回顶再刷新，时间线重拉。
     private func showPage(_ page: ContainerPage) {
+        // A11（收尾）：未登录“我”页不亮 gated 占位页，toast + 1200ms 后弹登录（网页同口径）。
+        if page == .me && SessionManager.shared.isLoggedIn == false {
+            showToast(message: "请先登录")
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) { [weak self] in
+                guard let self = self, SessionManager.shared.isLoggedIn == false else { return }
+                self.presentLogin()
+            }
+            return
+        }
         if page == currentPage {
             if page == .home {
                 guard let feed = feedVC else { return }
@@ -649,13 +685,14 @@ final class BearyChromeViewController: UIViewController {
         updateDesktopLayout()
     }
 
-    /// 容器页解析：消息/时间线/我/搜索/他人主页走真实现，邀请页仍为占位页。
+    /// 容器页解析：消息/时间线/我/搜索/邀请/他人主页走真实现。
     private func pageView(for page: ContainerPage) -> UIViewController {
         switch page {
         case .notif: return ensureNotifVC()
         case .timeline: return ensureTimelineVC()
         case .me: return ensureProfileVC()
         case .search: return ensureSearchVC()
+        case .invite: return ensureInviteVC()
         case .user: return ensureUserVC()
         default: return ensurePlaceholder(page)
         }
@@ -708,6 +745,37 @@ final class BearyChromeViewController: UIViewController {
             guard let entryId = entry.id else { return }
             self?.presentDetail(entryId: entryId, initialEntry: entry)
         }
+        // 收尾接线：编辑（无详情宿主）、删除（网页确认流程）、引用进详情、互动同步首页。
+        vc.onEditEntry = { [weak self] entry in
+            self?.presentComposerForEdit(entry: entry, detailVC: nil)
+        }
+        vc.onDeleteEntry = { [weak self] entry in
+            guard let entryId = entry.id else { return }
+            let alert = UIAlertController(title: "确认删除？", message: "删除后会移入回收站，30 天内可以在「时间线」里恢复。", preferredStyle: .alert)
+            alert.addAction(UIAlertAction(title: "取消", style: .cancel, handler: nil))
+            alert.addAction(UIAlertAction(title: "删除", style: .destructive) { [weak self] _ in
+                BearyAPI.shared.deleteEntry(id: entryId) { [weak self] result in
+                    DispatchQueue.main.async {
+                        guard let self = self else { return }
+                        switch result {
+                        case .success:
+                            self.timelineVC?.refreshAfterDetailChange()
+                            self.feedVC?.refreshAll()
+                            self.profileVC?.reloadProfile()
+                        case .failure:
+                            self.showToast(message: "删除失败，请重试")
+                        }
+                    }
+                }
+            })
+            self?.present(alert, animated: true)
+        }
+        vc.onQuoteEntry = { [weak self] quoteId in
+            self?.presentDetail(entryId: quoteId, initialEntry: nil)
+        }
+        vc.onInteractionChanged = { [weak self] changedId, likeCount, liked, bookmarked, emotes in
+            self?.feedVC?.applyInteraction(entryId: changedId, likeCount: likeCount, likedByMe: liked, bookmarkedByMe: bookmarked, emotes: emotes)
+        }
         vc.onRequireLogin = { [weak self] in self?.presentLogin() }
         addPageVC(vc, page: .timeline)
         timelineVC = vc
@@ -730,6 +798,8 @@ final class BearyChromeViewController: UIViewController {
             self?.presentDetail(entryId: entryId, initialEntry: entry)
         }
         vc.onRequireLogin = { [weak self] in self?.presentLogin() }
+        // 收尾接线：返回/退出/编辑资料/齿轮菜单/行内互动（P3/P11，见 wireProfileVC）。
+        wireProfileVC(vc, modal: false)
         addPageVC(vc, page: .me)
         profileVC = vc
         return vc
@@ -759,8 +829,20 @@ final class BearyChromeViewController: UIViewController {
         }, onOpenEntry: { [weak self] entryId in
             self?.presentDetail(entryId: entryId, initialEntry: nil)
         })
+        // 收尾接线：搜索返回回首页（S4 返回行）。
+        vc.onBack = { [weak self] in self?.showPage(.home) }
         addPageVC(vc, page: .search)
         searchVC = vc
+        return vc
+    }
+
+    private func ensureInviteVC() -> BearyInviteViewController {
+        if let vc = inviteVC { return vc }
+        let vc = BearyInviteViewController()
+        vc.onClose = { [weak self] in self?.showPage(.home) }
+        vc.onRequireLogin = { [weak self] in self?.presentLogin() }
+        addPageVC(vc, page: .invite)
+        inviteVC = vc
         return vc
     }
 
@@ -831,16 +913,111 @@ final class BearyChromeViewController: UIViewController {
 
     /// 原生登录页：全屏 modal，登录页自带关闭钮（onCancelled）；登录成功后刷新登录态，
     /// 若当前在 gated 我页，onUserChanged 会把 gated 视图重建为本人主页。
+    /// D7（收尾）：登录页一律从最上层 present，关闭只关登录页自身——详情/编辑器
+    /// 等下层 modal 不会被连带关掉（旧 self.dismiss 会关掉整条 present 链）。
     private func presentLogin() {
         let vc = BearyLoginViewController()
         vc.modalPresentationStyle = .fullScreen
-        vc.onCancelled = { [weak self] in self?.dismiss(animated: true) }
-        vc.onLoggedIn = { [weak self] in
-            self?.dismiss(animated: true) {
+        vc.onCancelled = { [weak vc] in vc?.dismiss(animated: true) }
+        vc.onLoggedIn = { [weak self, weak vc] in
+            vc?.dismiss(animated: true) {
                 SessionManager.shared.refreshMe()
             }
         }
-        present(vc, animated: true)
+        topmostViewController().present(vc, animated: true)
+    }
+
+    /// 容器级轻提示（A11 未登录“我”页、时间线删除失败等）：底栏胶囊上方浮现，2 秒淡出。
+    private func showToast(message: String) {
+        let toast = UIView()
+        toast.backgroundColor = BearyColors.ink
+        toast.layer.cornerRadius = 16
+        toast.translatesAutoresizingMaskIntoConstraints = false
+        let label = UILabel()
+        label.text = message
+        label.font = UIFont.systemFont(ofSize: 14)
+        label.textColor = BearyColors.bg
+        label.textAlignment = .center
+        label.translatesAutoresizingMaskIntoConstraints = false
+        toast.addSubview(label)
+        NSLayoutConstraint.activate([
+            label.leadingAnchor.constraint(equalTo: toast.leadingAnchor, constant: 16),
+            label.trailingAnchor.constraint(equalTo: toast.trailingAnchor, constant: -16),
+            label.topAnchor.constraint(equalTo: toast.topAnchor, constant: 8),
+            label.bottomAnchor.constraint(equalTo: toast.bottomAnchor, constant: -8),
+        ])
+        view.addSubview(toast)
+        view.bringSubviewToFront(toast)
+        NSLayoutConstraint.activate([
+            toast.centerXAnchor.constraint(equalTo: view.centerXAnchor),
+            toast.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor, constant: -88),
+        ])
+        toast.alpha = 0
+        UIView.animate(withDuration: 0.25) { toast.alpha = 1 }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
+            UIView.animate(withDuration: 0.25, animations: { toast.alpha = 0 }) { _ in
+                toast.removeFromSuperview()
+            }
+        }
+    }
+
+    /// D1 反向同步：首页行内互动后，已打开的详情（modal nav 顶层）即时同步该篇；
+    /// 顶层不是详情时静默跳过（编辑器盖在详情上时不同步，等编辑回调走正向）。
+    private func notifyOpenDetail(entry: Entry) {
+        if let nav = topmostViewController() as? UINavigationController,
+           let detail = nav.topViewController as? BearyEntryDetailViewController {
+            detail.onExternalInteraction(entry: entry)
+        }
+    }
+
+    /// 个人主页通用回调接线（我页与他人主页 modal 共用；onOpenEntry/onRequireLogin 各处自接）。
+    private func wireProfileVC(_ vc: BearyProfileViewController, modal: Bool) {
+        vc.onBack = { [weak self] in
+            if modal {
+                self?.dismiss(animated: true)
+            } else {
+                self?.showPage(.home)
+            }
+        }
+        vc.onLogout = { [weak self] in
+            BearyAPI.shared.logout { _ in
+                SessionManager.shared.clearLocalCookies()
+                SessionManager.shared.signOutLocally()
+            }
+        }
+        vc.onEditProfile = { [weak self] in self?.presentEditProfile() }
+        // 齿轮菜单中尚无原生目的地的三项：先明示未推出，不静默无动作；目的地页为后续批次。
+        vc.onShowTutorial = { [weak self] in self?.presentComingSoon() }
+        vc.onOpenAccountSettings = { [weak self] in self?.presentComingSoon() }
+        vc.onToggleAppearance = { [weak self] in self?.presentComingSoon() }
+        vc.onInteractionChanged = { [weak self] changedId, likeCount, liked, bookmarked, emotes in
+            self?.feedVC?.applyInteraction(entryId: changedId, likeCount: likeCount, likedByMe: liked, bookmarkedByMe: bookmarked, emotes: emotes)
+        }
+    }
+
+    /// P11：编辑资料页（modal 全屏；保存/取消只关本页，保存后刷新我页与首页）。
+    /// 封面初值传 nil（MeUser 只有 coverVer 无封面 URL，页内封面预览初始为空；
+    /// 换封面/移除封面仍可走保存流程，保存只发改动字段）。
+    private func presentEditProfile() {
+        let user = SessionManager.shared.currentUser
+        let vc = BearyEditProfileViewController(displayName: user?.displayName, handle: user?.handle, avatarUrl: user?.avatar, coverUrl: nil)
+        vc.modalPresentationStyle = .fullScreen
+        vc.onSaved = { [weak self, weak vc] in
+            vc?.dismiss(animated: true) {
+                self?.profileVC?.reloadProfile()
+                self?.feedVC?.refreshAll()
+            }
+        }
+        vc.onCancel = { [weak vc] in vc?.dismiss(animated: true) }
+        vc.onRequireLogin = { [weak self] in self?.presentLogin() }
+        topmostViewController().present(vc, animated: true)
+    }
+
+    /// 尚无原生目的地的功能占位提示（齿轮菜单三项），不做假页面。
+    private func presentComingSoon() {
+        let alert = UIAlertController(title: "即将推出", message: "该功能正在做原生版", preferredStyle: .alert)
+        alert.addAction(UIAlertAction(title: "知道了", style: .default, handler: nil))
+        topmostViewController().present(alert, animated: true)
     }
 
     /// 回收站：全屏 modal，关闭钮由 TrashVC 自带（onClose 设置后才显示）。
@@ -848,10 +1025,16 @@ final class BearyChromeViewController: UIViewController {
         let vc = BearyTrashViewController()
         vc.modalPresentationStyle = .fullScreen
         vc.onClose = { [weak self] in self?.dismiss(animated: true) }
-        vc.onRequireLogin = { [weak self] in
-            self?.dismiss(animated: true) {
-                self?.presentLogin()
-            }
+        vc.onRequireLogin = { [weak self] in self?.presentLogin() }
+        // TR-1（收尾）：恢复/彻底删除后刷新时间线、首页与我页（角标随时间线重拉更新）。
+        vc.onRestored = { [weak self] _ in
+            self?.timelineVC?.refreshAfterDetailChange()
+            self?.feedVC?.refreshAll()
+            self?.profileVC?.reloadProfile()
+        }
+        vc.onPurged = { [weak self] _ in
+            self?.timelineVC?.refreshAfterDetailChange()
+            self?.profileVC?.reloadProfile()
         }
         present(vc, animated: true)
     }
@@ -876,10 +1059,10 @@ final class BearyChromeViewController: UIViewController {
             }
         }
         vc.onRequireLogin = { [weak self] in
-            self?.dismiss(animated: true) {
-                self?.presentLogin()
-            }
+            self?.presentLogin()
         }
+        // 收尾接线：返回/退出/编辑资料/齿轮菜单/行内互动（P3/P11，见 wireProfileVC）。
+        wireProfileVC(vc, modal: true)
         let nav = UINavigationController(rootViewController: vc)
         nav.modalPresentationStyle = .fullScreen
         vc.navigationItem.leftBarButtonItem = UIBarButtonItem(title: "关闭", style: .plain, target: self, action: #selector(didTapUserProfileClose))
@@ -893,14 +1076,24 @@ final class BearyChromeViewController: UIViewController {
     private func presentDetail(entryId: String, initialEntry: Entry?) {
         let d = BearyEntryDetailViewController(entryId: entryId, initialEntry: initialEntry)
         d.title = "日记"
+        // D7（收尾）：登录页盖在详情上层，不先关详情（presentLogin 已改走最上层 present）。
         d.onRequireLogin = { [weak self] in
-            self?.dismiss(animated: true) {
-                self?.presentLogin()
-            }
+            self?.presentLogin()
         }
         // 互动回传：详情点赞/收藏/回应成功后，列表只刷新该行（不整表刷新，不滚顶）。
         d.onInteractionChanged = { [weak self] changedId, likeCount, liked, bookmarked, emotes in
             self?.feedVC?.applyInteraction(entryId: changedId, likeCount: likeCount, likedByMe: liked, bookmarkedByMe: bookmarked, emotes: emotes)
+        }
+        // 收尾接线：删除成功后刷新首页/时间线/我页（详情自关）；引用卡点按先关本详情再开被引详情。
+        d.onDeletedEntry = { [weak self] _ in
+            self?.feedVC?.refreshAll()
+            self?.timelineVC?.refreshAfterDetailChange()
+            self?.profileVC?.reloadProfile()
+        }
+        d.onOpenEntry = { [weak self] entryId in
+            self?.dismiss(animated: true) {
+                self?.presentDetail(entryId: entryId, initialEntry: nil)
+            }
         }
         // 编辑入口：详情只传整条 Entry，编辑器的 present 与回调由 SceneDelegate 接（详情不直接 present）。
         d.onEditEntry = { [weak self, weak d] entry in
@@ -945,9 +1138,7 @@ final class BearyChromeViewController: UIViewController {
         }
         c.onCancelled = { [weak self] in self?.dismiss(animated: true) }
         c.onRequireLogin = { [weak self] in
-            self?.dismiss(animated: true) {
-                self?.presentLogin()
-            }
+            self?.presentLogin()
         }
         configureComposerPresentation(c, forEdit: false)
         present(c, animated: true)
@@ -982,28 +1173,34 @@ final class BearyChromeViewController: UIViewController {
     }
 
     /// 编辑模式入口：详情“编辑”钮 → 编辑器（从详情 nav 上 present）。
-    /// 未登录先弹登录页；保存成功 → 关编辑器 → 详情重拉单篇 + 列表只刷新该行；
-    /// 取消 → 只关编辑器（不删原日记）；发布时登录失效 → 关编辑器与详情 → 登录页。
-    private func presentComposerForEdit(entry: Entry, detailVC: BearyEntryDetailViewController) {
+    /// 未登录先弹登录页；保存成功 → 关编辑器 → 详情重拉单篇 + 列表定向刷新该行
+    /// + 时间线/我页刷新；取消（含编辑期到点）→ 关编辑器 → 详情重拉 + 首页刷新 +
+    /// 时间线重拉（C4 网页 closeEditor + loadFeed 同口径）；发布时登录失效 →
+    /// 登录页盖在编辑器上层，编辑器不关（D7）。
+    private func presentComposerForEdit(entry: Entry, detailVC: BearyEntryDetailViewController?) {
         guard SessionManager.shared.isLoggedIn else {
             presentLogin()
             return
         }
         let c = BearyComposerViewController(entry: entry)
-        c.onUpdated = { [weak self, weak c] updatedId, content, images, mood in
+        c.onUpdated = { [weak self, weak c] updated in
             guard let self = self else { return }
             c?.dismiss(animated: true) {
-                detailVC.refreshEntry()
-                self.feedVC?.applyEditedEntry(entryId: updatedId, content: content, images: images, mood: mood)
+                detailVC?.refreshEntry()
+                self.feedVC?.applyEditedEntry(updated)
+                self.timelineVC?.refreshAfterDetailChange()
+                self.profileVC?.reloadProfile()
             }
         }
-        c.onCancelled = { [weak c] in c?.dismiss(animated: true) }
-        c.onRequireLogin = { [weak self, weak c] in
+        c.onCancelled = { [weak self, weak c] in
             c?.dismiss(animated: true) {
-                self?.dismiss(animated: true) {
-                    self?.presentLogin()
-                }
+                detailVC?.refreshEntry()
+                self?.feedVC?.refreshFeed()
+                self?.timelineVC?.reloadTimeline()
             }
+        }
+        c.onRequireLogin = { [weak self] in
+            self?.presentLogin()
         }
         configureComposerPresentation(c, forEdit: true)
         topmostViewController().present(c, animated: true)

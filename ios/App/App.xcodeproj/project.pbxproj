@@ -34,11 +34,12 @@
 		FE6E29AFED3B5E04593AB59C /* BearyPlaceholderViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = AC51784211948B3A8F2F516E /* BearyPlaceholderViewController.swift */; };
 		B19ABAE5D3904C1CBD12AE61 /* BearyComposerPickers.swift in Sources */ = {isa = PBXBuildFile; fileRef = E02EB770843D473AB5D8F4E2 /* BearyComposerPickers.swift */; };
 		E312AC32EA7088A2062A9321 /* BearyDraftBoxViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1D6C94421FC75DA02227F95C /* BearyDraftBoxViewController.swift */; };
-		9D628AB144EDB2F20C18726C /* BearyCameraPicker.swift in Sources */ = {isa = PBXBuildFile; fileRef = 06ADBD6F5F4EF4BAEDE237EE /* BearyCameraPicker.swift */; };
 		04769784170F76C24AD9C4FE /* BearyBadgeImages.swift in Sources */ = {isa = PBXBuildFile; fileRef = 262A3F3922B766B8BAC61520 /* BearyBadgeImages.swift */; };
 		C195BE494BEAEDF6DF31C826 /* BearyTurnstilePage.swift in Sources */ = {isa = PBXBuildFile; fileRef = C362AC0D3BB8291189E21720 /* BearyTurnstilePage.swift */; };
 		1F6B3477892DECC058DEDB4A /* BearyLoginViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = B9FF8FF6169D4CB6D168FBE4 /* BearyLoginViewController.swift */; };
 		869B426E9AA42A1CE7EA84B1 /* BearyTrashViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8090F5EEA8A6BD0781318309 /* BearyTrashViewController.swift */; };
+		3843F17FBF0D34C698F51780 /* BearyEditProfileViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 13DFF27B056E1598E555E5A2 /* BearyEditProfileViewController.swift */; };
+		C7BB560646D1F3B2BF41E8CE /* BearyInviteViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = BC25E34F7F1469439164AB6F /* BearyInviteViewController.swift */; };
 		79157599BFD08B6E2FD7418C /* BearyTimelineViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = D009B72CD3812F4FDC1F520A /* BearyTimelineViewController.swift */; };
 		852849F339E8F8D7F0BCF285 /* BearyProfileViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3C69557322ACDD89D6E6A408 /* BearyProfileViewController.swift */; };
 		2B5FFB899357ED2A2FA2E05E /* BearySearchViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = EF90ED3AC360C339FA2BAEFC /* BearySearchViewController.swift */; };
@@ -75,11 +76,12 @@
 		AC51784211948B3A8F2F516E /* BearyPlaceholderViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BearyPlaceholderViewController.swift; sourceTree = "<group>"; };
 		E02EB770843D473AB5D8F4E2 /* BearyComposerPickers.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BearyComposerPickers.swift; sourceTree = "<group>"; };
 		1D6C94421FC75DA02227F95C /* BearyDraftBoxViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BearyDraftBoxViewController.swift; sourceTree = "<group>"; };
-		06ADBD6F5F4EF4BAEDE237EE /* BearyCameraPicker.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BearyCameraPicker.swift; sourceTree = "<group>"; };
 		262A3F3922B766B8BAC61520 /* BearyBadgeImages.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BearyBadgeImages.swift; sourceTree = "<group>"; };
 		C362AC0D3BB8291189E21720 /* BearyTurnstilePage.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BearyTurnstilePage.swift; sourceTree = "<group>"; };
 		B9FF8FF6169D4CB6D168FBE4 /* BearyLoginViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BearyLoginViewController.swift; sourceTree = "<group>"; };
 		8090F5EEA8A6BD0781318309 /* BearyTrashViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BearyTrashViewController.swift; sourceTree = "<group>"; };
+		13DFF27B056E1598E555E5A2 /* BearyEditProfileViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BearyEditProfileViewController.swift; sourceTree = "<group>"; };
+		BC25E34F7F1469439164AB6F /* BearyInviteViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BearyInviteViewController.swift; sourceTree = "<group>"; };
 		D009B72CD3812F4FDC1F520A /* BearyTimelineViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BearyTimelineViewController.swift; sourceTree = "<group>"; };
 		3C69557322ACDD89D6E6A408 /* BearyProfileViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BearyProfileViewController.swift; sourceTree = "<group>"; };
 		EF90ED3AC360C339FA2BAEFC /* BearySearchViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BearySearchViewController.swift; sourceTree = "<group>"; };
@@ -143,11 +145,12 @@
 				AC51784211948B3A8F2F516E /* BearyPlaceholderViewController.swift */,
 				E02EB770843D473AB5D8F4E2 /* BearyComposerPickers.swift */,
 				1D6C94421FC75DA02227F95C /* BearyDraftBoxViewController.swift */,
-				06ADBD6F5F4EF4BAEDE237EE /* BearyCameraPicker.swift */,
 				262A3F3922B766B8BAC61520 /* BearyBadgeImages.swift */,
 				C362AC0D3BB8291189E21720 /* BearyTurnstilePage.swift */,
 				B9FF8FF6169D4CB6D168FBE4 /* BearyLoginViewController.swift */,
 				8090F5EEA8A6BD0781318309 /* BearyTrashViewController.swift */,
+				13DFF27B056E1598E555E5A2 /* BearyEditProfileViewController.swift */,
+				BC25E34F7F1469439164AB6F /* BearyInviteViewController.swift */,
 				D009B72CD3812F4FDC1F520A /* BearyTimelineViewController.swift */,
 				3C69557322ACDD89D6E6A408 /* BearyProfileViewController.swift */,
 				EF90ED3AC360C339FA2BAEFC /* BearySearchViewController.swift */,
@@ -286,11 +289,12 @@
 				FE6E29AFED3B5E04593AB59C /* BearyPlaceholderViewController.swift in Sources */,
 				B19ABAE5D3904C1CBD12AE61 /* BearyComposerPickers.swift in Sources */,
 				E312AC32EA7088A2062A9321 /* BearyDraftBoxViewController.swift in Sources */,
-				9D628AB144EDB2F20C18726C /* BearyCameraPicker.swift in Sources */,
 				04769784170F76C24AD9C4FE /* BearyBadgeImages.swift in Sources */,
 				C195BE494BEAEDF6DF31C826 /* BearyTurnstilePage.swift in Sources */,
 				1F6B3477892DECC058DEDB4A /* BearyLoginViewController.swift in Sources */,
 				869B426E9AA42A1CE7EA84B1 /* BearyTrashViewController.swift in Sources */,
+				3843F17FBF0D34C698F51780 /* BearyEditProfileViewController.swift in Sources */,
+				C7BB560646D1F3B2BF41E8CE /* BearyInviteViewController.swift in Sources */,
 				79157599BFD08B6E2FD7418C /* BearyTimelineViewController.swift in Sources */,
 				852849F339E8F8D7F0BCF285 /* BearyProfileViewController.swift in Sources */,
 				2B5FFB899357ED2A2FA2E05E /* BearySearchViewController.swift in Sources */,
