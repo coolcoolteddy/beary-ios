@@ -7,8 +7,7 @@ import UIKit
 // 实现：自定义 transitioningDelegate + slide 进出动画（进从右滑入、出向右滑出）+
 // UIPercentDrivenInteractiveTransition 驱动交互式关闭。transitioningDelegate 是弱引用，
 // 调用方（SceneDelegate）必须强持有本对象直到 dismiss 完成，否则手势中途失效。
-// 注意：只接全屏 modal；iPad 编辑器 formSheet（居中窄框、不贴屏幕边缘）不走这里，
-// 边缘手势在它身上物理上无法触发，关闭仍靠取消按钮。
+// 注意：只接全屏 modal；桌面式居中 640 编辑器模态不贴屏幕边缘，边缘手势在它身上物理上无法触发，关闭仍靠取消按钮。
 // 约束：部署目标 iOS 15.0、Swift 5.0——只用闭包回调，不用 async/await，不用 if-let 简写。
 
 final class BearyEdgeDismissController: NSObject, UIViewControllerTransitioningDelegate {

@@ -15,11 +15,6 @@ class BearyEntryDetailViewController: UIViewController {
     var onOpenInWeb: (() -> Void)?
     var onRequireLogin: (() -> Void)?
 
-    /// 分栏复用时为 true：底部多留 70pt，让最末内容能滚到悬浮底栏胶囊上方。
-    var isInSplitPane = false {
-        didSet { updateSplitInsets() }
-    }
-
     private var entryId: String
     private var entry: Entry?
     private var currentEmotes: [EmoteCount] = []
@@ -83,7 +78,6 @@ class BearyEntryDetailViewController: UIViewController {
         view.backgroundColor = BearyColors.bg
         setupLayout()
         setupActions()
-        updateSplitInsets()
         if entry != nil {
             setStateContent()
             render()
@@ -91,27 +85,6 @@ class BearyEntryDetailViewController: UIViewController {
             setStateLoading()
         }
         fetchEntry()
-    }
-
-    /// 分栏复用：同一实例换一篇（modal 每次新建，不走这里）。
-    /// 未加载时只记字段，viewDidLoad 会按现有 entryId/entry 走同样流程。
-    func showEntry(entryId: String, initialEntry: Entry?) {
-        self.entryId = entryId
-        self.entry = initialEntry
-        self.currentEmotes = []
-        self.isLikeBusy = false
-        self.isBookmarkBusy = false
-        self.isEmoteBusy = false
-        self.needsScrollRestore = true
-        if isViewLoaded {
-            if initialEntry != nil {
-                setStateContent()
-                render()
-            } else {
-                setStateLoading()
-            }
-            fetchEntry()
-        }
     }
 
     override func viewDidLayoutSubviews() {
@@ -127,12 +100,6 @@ class BearyEntryDetailViewController: UIViewController {
         }
     }
 
-    private func updateSplitInsets() {
-        let bottom: CGFloat = isInSplitPane ? 70 : 0
-        scrollView.contentInset.bottom = bottom
-        scrollView.scrollIndicatorInsets.bottom = bottom
-    }
-
     // MARK: - 布局
 
     private func setupLayout() {
@@ -146,6 +113,11 @@ class BearyEntryDetailViewController: UIViewController {
         view.addSubview(scrollView)
         scrollView.addSubview(stackView)
 
+        // 内容列：宽 ≤820 时全宽（左右各 16pt）；宽 ≥821 时 600 居中（对应网页 .pf-col）。
+        // 做法：宽 == 屏宽 -32 用次高优先级（750），宽 ≤600 用必需优先级——屏宽 ≤632 时前者胜出、
+        // 屏宽 >632 时后者胜出压到 600，centerX 保证居中；两侧 ≥16pt 的不等式保证窄屏不断言。
+        let colWidth = stackView.widthAnchor.constraint(equalTo: scrollView.frameLayoutGuide.widthAnchor, constant: -32)
+        colWidth.priority = .defaultHigh
         NSLayoutConstraint.activate([
             scrollView.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
             scrollView.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor),
@@ -153,9 +125,11 @@ class BearyEntryDetailViewController: UIViewController {
             scrollView.trailingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.trailingAnchor),
             stackView.topAnchor.constraint(equalTo: scrollView.contentLayoutGuide.topAnchor, constant: 16),
             stackView.bottomAnchor.constraint(equalTo: scrollView.contentLayoutGuide.bottomAnchor, constant: -16),
-            stackView.leadingAnchor.constraint(equalTo: scrollView.contentLayoutGuide.leadingAnchor, constant: 16),
-            stackView.trailingAnchor.constraint(equalTo: scrollView.contentLayoutGuide.trailingAnchor, constant: -16),
-            stackView.widthAnchor.constraint(equalTo: scrollView.frameLayoutGuide.widthAnchor, constant: -32),
+            stackView.leadingAnchor.constraint(greaterThanOrEqualTo: scrollView.contentLayoutGuide.leadingAnchor, constant: 16),
+            stackView.trailingAnchor.constraint(lessThanOrEqualTo: scrollView.contentLayoutGuide.trailingAnchor, constant: -16),
+            stackView.centerXAnchor.constraint(equalTo: scrollView.frameLayoutGuide.centerXAnchor),
+            stackView.widthAnchor.constraint(lessThanOrEqualToConstant: 600),
+            colWidth,
         ])
 
         // 作者行

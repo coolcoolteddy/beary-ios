@@ -13,6 +13,10 @@ enum BearyColors {
     static var ink: UIColor { UIColor { t in t.userInterfaceStyle == .dark ? UIColor(white: 0.96, alpha: 1) : .black } }
     static var gray: UIColor { UIColor { t in t.userInterfaceStyle == .dark ? UIColor(white: 0.66, alpha: 1) : UIColor(white: 0.45, alpha: 1) } }
     static var orange: UIColor { UIColor(red: 1.0, green: 0.584, blue: 0.0, alpha: 1) }
+    /// 语义红：网页 --red #e5484d，浅深同值（超字数提示等语义红一律走这里，不用 systemRed）。
+    static var red: UIColor { UIColor(red: 0.898, green: 0.282, blue: 0.302, alpha: 1) }
+    /// 图片上的深色衬底：固定黑色半透明（与 ink 不同——深色下 ink 是近白，白字会看不清）。
+    static var scrim: UIColor { UIColor(white: 0, alpha: 0.6) }
     static var blue: UIColor { UIColor { t in t.userInterfaceStyle == .dark ? UIColor(red: 0.04, green: 0.52, blue: 1.0, alpha: 1) : UIColor(red: 0.0, green: 0.478, blue: 1.0, alpha: 1) } }
     static var line: UIColor { UIColor { t in t.userInterfaceStyle == .dark ? UIColor(white: 0.23, alpha: 1) : UIColor(white: 0.86, alpha: 1) } }
     static var bg: UIColor { UIColor { t in t.userInterfaceStyle == .dark ? .black : .white } }

@@ -66,15 +66,16 @@ final class BearyChromeViewController: CAPBridgeViewController {
     private var lastPushedTab: String?
     // 边缘返回：transitioningDelegate 是弱引用，必须强持有到 dismiss 完成
     private var edgeDismiss: BearyEdgeDismissController?
-    // iPad 分栏：列表宽 380 固定、详情占剩余宽度；竖屏/窄屏回单列时只关宽约束、不拆子 VC
+    // 桌面式布局（宽 ≥821，与网页 @media 断点一致）：内容列 600 居中；iPhone 式（宽 ≤820）全宽列。
+    // 分栏已整体撤除，不留分栏状态；底栏胶囊与 FAB 在 iPad 端与 iPhone 完全一致，走原有栏显隐逻辑。
+    private var feedLeadingConstraint: NSLayoutConstraint?
     private var feedTrailingConstraint: NSLayoutConstraint?
-    private var feedWidthConstraint: NSLayoutConstraint?
-    private var splitPaneContainer: UIView?
-    private var splitPaneNav: UINavigationController?
-    private var splitDetailVC: BearyEntryDetailViewController?
-    private var splitSelectedEntryId: String?
-    /// 分栏当前状态（updateSplitLayout 的幂等守卫：状态不变直接返回，绝不在布局回调里反复开关约束）
-    private var splitActive = false
+    private var feedColumnWidthConstraint: NSLayoutConstraint?
+    private var feedCenterXConstraint: NSLayoutConstraint?
+    /// 桌面式当前状态（updateDesktopLayout 的幂等守卫：状态不变直接返回，绝不在布局回调里反复开关约束）
+    private var desktopActive = false
+    /// 居中 640 编辑器模态的 transitioningDelegate（弱引用，必须强持有到 dismiss 完成，与 edgeDismiss 同口径）
+    private var centeredModal: BearyCenteredTransitioningDelegate?
 
     private var ink: UIColor { UIColor { t in t.userInterfaceStyle == .dark ? UIColor(white: 0.96, alpha: 1) : .black } }
     private var gray: UIColor { UIColor { t in t.userInterfaceStyle == .dark ? UIColor(white: 0.66, alpha: 1) : UIColor(white: 0.45, alpha: 1) } }
@@ -284,8 +285,8 @@ final class BearyChromeViewController: CAPBridgeViewController {
 
     override func viewDidLayoutSubviews() {
         super.viewDidLayoutSubviews()
-        // 旋转/分屏改 bounds 时重算分栏（iPad 旋转不改 size class，trait 回调靠不住，以 bounds 为准）
-        updateSplitLayout()
+        // 旋转/多任务改 bounds 时重算桌面式（iPad 旋转不改 size class，trait 回调靠不住，以 bounds 为准）
+        updateDesktopLayout()
     }
 
     func applyChromeState(_ s: [String: Any]) {
@@ -409,7 +410,7 @@ final class BearyChromeViewController: CAPBridgeViewController {
             let f = ensureFeedVC()
             f.view.isHidden = false
             feedVisible = true
-            updateSplitLayout()
+            updateDesktopLayout()
         }
         lastPushedTab = tab
         // 登录态翻转（首推之后才算：首推的登录态是启动时就有的 cookie，列表第一次拉取已经带上了它，不用重拉）：
@@ -456,24 +457,25 @@ final class BearyChromeViewController: CAPBridgeViewController {
         let f = BearyFeedViewController()
         f.onEntrySelected = { [weak self] entry in
             guard let id = entry.id else { return }
-            // 分栏下点卡片直接换右侧窗格内容，不弹全屏 modal；其余一律 modal
-            if self?.feedVisible == true && self?.isSplitLayout() == true {
-                self?.showDetailInPane(entryId: id, initialEntry: entry)
-            } else {
-                self?.presentDetail(entryId: id, initialEntry: entry)
-            }
+            // 点卡片一律全屏 modal 详情（分栏已撤，不再有窗格分支）
+            self?.presentDetail(entryId: id, initialEntry: entry)
         }
         addChild(f)
         f.view.translatesAutoresizingMaskIntoConstraints = false
         view.addSubview(f.view)
+        let leading = f.view.leadingAnchor.constraint(equalTo: view.leadingAnchor)
         let trailing = f.view.trailingAnchor.constraint(equalTo: view.trailingAnchor)
-        let width = f.view.widthAnchor.constraint(equalToConstant: 380)
-        width.isActive = false
+        let colWidth = f.view.widthAnchor.constraint(equalToConstant: 600)
+        colWidth.isActive = false
+        let centerX = f.view.centerXAnchor.constraint(equalTo: view.centerXAnchor)
+        centerX.isActive = false
+        feedLeadingConstraint = leading
         feedTrailingConstraint = trailing
-        feedWidthConstraint = width
+        feedColumnWidthConstraint = colWidth
+        feedCenterXConstraint = centerX
         NSLayoutConstraint.activate([
             f.view.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 60),
-            f.view.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            leading,
             trailing,
             f.view.bottomAnchor.constraint(equalTo: view.bottomAnchor),
         ])
@@ -496,7 +498,7 @@ final class BearyChromeViewController: CAPBridgeViewController {
         }
         f.view.isHidden = false
         feedVisible = true
-        updateSplitLayout()
+        updateDesktopLayout()
         // 网页同步回首页：顶栏高亮与栏显隐继续由网页推送驱动
         navigator.goTab("home")
     }
@@ -507,7 +509,7 @@ final class BearyChromeViewController: CAPBridgeViewController {
         f.view.isHidden = false
         feedVisible = true
         pendingHomeSync = true
-        updateSplitLayout()
+        updateDesktopLayout()
     }
 
     private func hideNativeFeed() {
@@ -515,7 +517,7 @@ final class BearyChromeViewController: CAPBridgeViewController {
         feedVisible = false
         // 用户已离开列表：启动同步作废（别在首推到达时把人从别的页拽回首页）
         pendingHomeSync = false
-        updateSplitLayout()
+        updateDesktopLayout()
     }
 
     private func presentDetail(entryId: String, initialEntry: Entry?) {
@@ -586,10 +588,13 @@ final class BearyChromeViewController: CAPBridgeViewController {
                 self?.evalNav("login()")
             }
         }
-        // 第三项：regular width 下居中窄框（系统 formSheet，宽 540 左右；编辑器内容本身在内部 scrollView 里滚，窄框高度不由它定）；
-        // compact 下仍全屏。formSheet 不贴屏幕边缘、边缘手势物理上无法触发，只在全屏时接边缘返回。
-        if traitCollection.horizontalSizeClass == .regular {
-            c.modalPresentationStyle = .formSheet
+        // 宽 ≥821 时居中 640 模态（对应网页编辑器 ≥821px 居中 640px；第三项的 540 窄框已废除）；
+        // ≤820 时仍全屏 + 边缘返回。
+        if view.bounds.width >= 821 {
+            let centered = BearyCenteredTransitioningDelegate()
+            c.modalPresentationStyle = .custom
+            c.transitioningDelegate = centered
+            centeredModal = centered
         } else {
             c.modalPresentationStyle = .fullScreen
             let edge = BearyEdgeDismissController()
@@ -600,151 +605,34 @@ final class BearyChromeViewController: CAPBridgeViewController {
         present(c, animated: true)
     }
 
-    // MARK: - 第三项：iPad 分栏（列表 380pt + 右侧详情窗格）
+    // MARK: - 桌面式布局（宽 ≥821，与网页 @media 断点一致）
 
-    /// 分栏判定：regular width 且横屏向（宽 > 高）且宽 ≥900。
-    /// 只用 size class 不够：iPad 竖屏也是 regular，任务要求竖屏回单列，所以必须再卡方向与宽度。
-    private func isSplitLayout() -> Bool {
-        return traitCollection.horizontalSizeClass == .regular
-            && view.bounds.width > view.bounds.height
-            && view.bounds.width >= 900
+    /// 桌面式判定：只看宽度（网页 @media (min-width:821px) 同口径，不用 size class 单独判断；
+    /// iPad 竖屏 820 回 iPhone 式，横屏 1180 走桌面式；旋转/多任务改 bounds 时 viewDidLayoutSubviews 重算）。
+    private func isDesktopLayout() -> Bool {
+        return view.bounds.width >= 821
     }
 
-    /// 列表显隐或 bounds 变化时重算：分栏开 → 列表锁 380 宽、窗格显现；分栏关 → 列表回全宽、窗格隐藏。
-    /// 子 VC 不拆（滚动位与详情态都留在内存里），只开关约束与 hidden，重复调用无变化即无操作，不会布局循环。
-    private func updateSplitLayout() {
+    /// 列表显隐或 bounds 变化时重算：桌面式 → 列表列锁 600 宽居中；iPhone 式 → 列表回全宽。
+    /// 只开关约束，不拆子 VC（滚动位留在内存里）；重复调用无变化即无操作，不会布局循环。
+    /// 底栏胶囊与 FAB 不参与本函数：iPad 端与 iPhone 完全一致，走原有栏显隐逻辑。
+    private func updateDesktopLayout() {
         guard feedVC != nil else { return }
-        let wantSplit = feedVisible && isSplitLayout()
-        if wantSplit == splitActive { return }
-        splitActive = wantSplit
-        if wantSplit {
-            ensureSplitPane()
+        let wantDesktop = feedVisible && isDesktopLayout()
+        if wantDesktop == desktopActive { return }
+        desktopActive = wantDesktop
+        if wantDesktop {
+            feedLeadingConstraint?.isActive = false
             feedTrailingConstraint?.isActive = false
-            feedWidthConstraint?.isActive = true
-            splitPaneContainer?.isHidden = false
+            feedColumnWidthConstraint?.isActive = true
+            feedCenterXConstraint?.isActive = true
         } else {
-            feedWidthConstraint?.isActive = false
+            feedColumnWidthConstraint?.isActive = false
+            feedCenterXConstraint?.isActive = false
+            feedLeadingConstraint?.isActive = true
             feedTrailingConstraint?.isActive = true
-            splitPaneContainer?.isHidden = true
         }
-    }
-
-    /// 懒建分栏窗格：容器（左发丝线 + 导航控制器，根为占位页）常驻为子 VC，hidden 开关显隐。
-    private func ensureSplitPane() {
-        if splitPaneContainer != nil { return }
-        guard let feedView = feedVC?.view else { return }
-        let container = UIView()
-        container.translatesAutoresizingMaskIntoConstraints = false
-        container.backgroundColor = BearyColors.bg
-        container.isHidden = true
-        view.addSubview(container)
-        NSLayoutConstraint.activate([
-            container.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 60),
-            container.leadingAnchor.constraint(equalTo: feedView.trailingAnchor),
-            container.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-            container.bottomAnchor.constraint(equalTo: view.bottomAnchor),
-        ])
-        // 列表与详情之间的发丝分隔线
-        let divider = UIView()
-        divider.translatesAutoresizingMaskIntoConstraints = false
-        divider.backgroundColor = BearyColors.line
-        container.addSubview(divider)
-        NSLayoutConstraint.activate([
-            divider.topAnchor.constraint(equalTo: container.topAnchor),
-            divider.bottomAnchor.constraint(equalTo: container.bottomAnchor),
-            divider.leadingAnchor.constraint(equalTo: container.leadingAnchor),
-            divider.widthAnchor.constraint(equalToConstant: 0.5),
-        ])
-        let placeholder = BearySplitPlaceholderViewController()
-        let nav = UINavigationController(rootViewController: placeholder)
-        nav.view.translatesAutoresizingMaskIntoConstraints = false
-        addChild(nav)
-        container.addSubview(nav.view)
-        NSLayoutConstraint.activate([
-            nav.view.topAnchor.constraint(equalTo: container.topAnchor),
-            nav.view.leadingAnchor.constraint(equalTo: container.leadingAnchor),
-            nav.view.trailingAnchor.constraint(equalTo: container.trailingAnchor),
-            nav.view.bottomAnchor.constraint(equalTo: container.bottomAnchor),
-        ])
-        nav.didMove(toParent: self)
-        splitPaneNav = nav
-        splitPaneContainer = container
-        // 窗格后加会盖住原生栏，把栏重新置顶（顶栏/底栏胶囊/FAB 位置尺寸一律不动）
-        if let top = topGlass { view.bringSubviewToFront(top) }
-        if let cap = bottomCapsule { view.bringSubviewToFront(cap) }
-        if let fab = fabButton { view.bringSubviewToFront(fab) }
-    }
-
-    private func makePaneDetailVC() -> BearyEntryDetailViewController {
-        // 先占位建实例，showEntry 会在 push 前后把内容换成实篇（未加载时只记字段，viewDidLoad 照常跑）
-        let d = BearyEntryDetailViewController(entryId: "", initialEntry: nil)
-        d.title = "日记"
-        d.isInSplitPane = true
-        d.navigationItem.leftBarButtonItem = UIBarButtonItem(title: "关闭", style: .plain, target: self, action: #selector(didTapPaneDetailClose))
-        d.navigationItem.rightBarButtonItem = UIBarButtonItem(title: "网页打开", style: .plain, target: self, action: #selector(didTapPaneDetailWeb))
-        d.onOpenInWeb = { [weak self] in
-            self?.didTapPaneDetailWeb()
-        }
-        d.onRequireLogin = { [weak self] in
-            self?.hideNativeFeed()
-            self?.updateSplitLayout()
-            self?.evalNav("login()")
-        }
-        return d
-    }
-
-    /// 分栏下点卡片：右侧窗格直接换内容（实例复用 + showEntry），不弹 modal；滚动位置按篇记忆恢复。
-    private func showDetailInPane(entryId: String, initialEntry: Entry?) {
-        ensureSplitPane()
-        updateSplitLayout()
-        guard let nav = splitPaneNav else { return }
-        let d: BearyEntryDetailViewController
-        if let existing = splitDetailVC {
-            d = existing
-        } else {
-            d = makePaneDetailVC()
-            splitDetailVC = d
-        }
-        d.showEntry(entryId: entryId, initialEntry: initialEntry)
-        splitSelectedEntryId = entryId
-        if nav.topViewController !== d {
-            // 关闭后占位页在栈顶时把详情推回去；已在栈顶时只换内容，不重复 push
-            nav.pushViewController(d, animated: !UIAccessibility.isReduceMotionEnabled)
-        }
-    }
-
-    @objc private func didTapPaneDetailClose() {
-        // 分栏下的关闭 = 回占位页（实例留着复用，滚动位置仍按篇记着），不是 dismiss
-        splitSelectedEntryId = nil
-        splitPaneNav?.popViewController(animated: !UIAccessibility.isReduceMotionEnabled)
-    }
-
-    @objc private func didTapPaneDetailWeb() {
-        let id = splitSelectedEntryId
-        // 窗格里的详情不动（回列表时还在），只藏列表+窗格、载网页单篇
-        hideNativeFeed()
-        updateSplitLayout()
-        if let id = id { navigator.open(.entry(id)) }
     }
 }
 
-/// 分栏未选篇时的右侧占位页：只一句灰字，不抢视觉。
-private final class BearySplitPlaceholderViewController: UIViewController {
-    override func viewDidLoad() {
-        super.viewDidLoad()
-        view.backgroundColor = BearyColors.bg
-        let label = UILabel()
-        label.text = "点一篇日记查看详情"
-        label.font = UIFont.systemFont(ofSize: 15)
-        label.textColor = BearyColors.gray
-        label.textAlignment = .center
-        label.translatesAutoresizingMaskIntoConstraints = false
-        view.addSubview(label)
-        NSLayoutConstraint.activate([
-            label.centerXAnchor.constraint(equalTo: view.centerXAnchor),
-            label.centerYAnchor.constraint(equalTo: view.centerYAnchor),
-            label.leadingAnchor.constraint(greaterThanOrEqualTo: view.leadingAnchor, constant: 32),
-            label.trailingAnchor.constraint(lessThanOrEqualTo: view.trailingAnchor, constant: -32),
-        ])
-    }
-}
+

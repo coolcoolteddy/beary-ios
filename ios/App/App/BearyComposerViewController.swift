@@ -4,7 +4,7 @@ import PhotosUI
 // ===== beary 原生编辑器（第二阶段）=====
 // 只负责写日记：正文 + 心情 + 图片（上限 9 张），不含天气。
 // 约束：部署目标 iOS 15.0、Swift 5.0——只用闭包回调，不用 async/await，不用 if-let 简写。
-// 文案一律中文；深浅色一律用 BearyColors 的动态色（超字数红字提示除外，见文末注）。
+// 文案一律中文；深浅色一律用 BearyColors 的动态色（含语义红 red 与图片上深色衬底 scrim）。
 // 网络数据一律不用 force unwrap；图片移除只动本地与 key 列表，不调服务端。
 
 final class BearyComposerViewController: UIViewController, UITextViewDelegate, PHPickerViewControllerDelegate {
@@ -36,6 +36,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     private var selectedMood: String?
     private var draftClientReq: String?
     private var isPublishing = false
+    private var didAutoFocus = false
     private var draftTimer: Timer?
     private var imageItems: [ComposerImageItem] = []
     private var moodButtons: [(key: String, button: UIButton)] = []
@@ -76,6 +77,21 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         updatePublishState()
         NotificationCenter.default.addObserver(self, selector: #selector(keyboardWillShow(_:)), name: UIResponder.keyboardWillShowNotification, object: nil)
         NotificationCenter.default.addObserver(self, selector: #selector(keyboardWillHide(_:)), name: UIResponder.keyboardWillHideNotification, object: nil)
+        NotificationCenter.default.addObserver(self, selector: #selector(keyboardWillChangeFrame(_:)), name: UIResponder.keyboardWillChangeFrameNotification, object: nil)
+    }
+
+    override func viewDidAppear(_ animated: Bool) {
+        super.viewDidAppear(animated)
+        // 打开即聚焦正文：编辑器唯一目的就是写，首屏就绪后直接可打字；只做一次，
+        // 从选图/弹窗回来不抢焦点；有草稿时光标置末尾，接着写。
+        // 与草稿恢复/图片续传无冲突：恢复在 viewDidLoad 已完成，续传是后台任务。
+        if !didAutoFocus {
+            didAutoFocus = true
+            if !textView.text.isEmpty {
+                textView.selectedRange = NSRange(location: textView.text.count, length: 0)
+            }
+            textView.becomeFirstResponder()
+        }
     }
 
     deinit {
@@ -284,7 +300,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         let count = textView.text.count
         countLabel.text = "\(count) / \(BearyComposerViewController.maxLength)"
         if count > BearyComposerViewController.maxLength {
-            countLabel.textColor = UIColor.systemRed
+            countLabel.textColor = BearyColors.red
         } else {
             countLabel.textColor = BearyColors.gray
         }
@@ -366,7 +382,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         retryLabel.text = "重试"
         retryLabel.font = UIFont.boldSystemFont(ofSize: 12)
         retryLabel.textColor = UIColor.white
-        retryLabel.backgroundColor = BearyColors.ink.withAlphaComponent(0.6)
+        retryLabel.backgroundColor = BearyColors.scrim
         retryLabel.textAlignment = .center
         retryLabel.layer.cornerRadius = 8
         retryLabel.layer.masksToBounds = true
@@ -376,7 +392,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         removeButton.setTitle("×", for: .normal)
         removeButton.titleLabel?.font = UIFont.boldSystemFont(ofSize: 14)
         removeButton.setTitleColor(UIColor.white, for: .normal)
-        removeButton.backgroundColor = BearyColors.ink.withAlphaComponent(0.6)
+        removeButton.backgroundColor = BearyColors.scrim
         removeButton.layer.cornerRadius = 10
         removeButton.layer.masksToBounds = true
         removeButton.addTarget(self, action: #selector(didTapRemoveImage(_:)), for: .touchUpInside)
@@ -507,6 +523,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         var config = PHPickerConfiguration()
         config.selectionLimit = BearyComposerViewController.maxImages - imageItems.count
         config.filter = .images
+        config.selection = .ordered
         let picker = PHPickerViewController(configuration: config)
         picker.delegate = self
         present(picker, animated: true)
@@ -522,23 +539,36 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             if !provider.canLoadObject(ofClass: UIImage.self) {
                 continue
             }
-            provider.loadObject(ofClass: UIImage.self) { [weak self] object, _ in
+            // 先按选择顺序占位建项（转圈态），加载完成后再填图上传：
+            // 异步加载各图快慢不一，旧写法按完成顺序建项会打乱用户选图顺序。
+            // 占位项计入 9 张上限，发布在上传完成前保持禁用，与原有联动一致。
+            let item = createImageItem(localImage: nil, key: nil, uploading: true, localFile: nil, failed: false)
+            insertImageItem(item)
+            provider.loadObject(ofClass: UIImage.self) { [weak self, weak item] object, _ in
                 DispatchQueue.main.async {
-                    guard let self = self else { return }
-                    guard let image = object as? UIImage else { return }
-                    if self.imageItems.count >= BearyComposerViewController.maxImages {
+                    guard let self = self, let item = item else { return }
+                    var stillThere = false
+                    for existing in self.imageItems {
+                        if existing === item {
+                            stillThere = true
+                        }
+                    }
+                    if !stillThere {
                         return
                     }
-                    // 先落盘再建项：选完图立刻有本地文件，杀 App 也不丢图。
+                    guard let image = object as? UIImage else {
+                        // 读不出图：占位项直接移除，不留转圈、不留误导的重试态。
+                        self.removeImageItem(item)
+                        return
+                    }
+                    item.imageView.image = image
+                    // 先落盘再上传：选完图立刻有本地文件，杀 App 也不丢图。
                     // 落盘失败则按无本地文件降级（与旧行为一致，草稿里只有 key）。
-                    var localFile: String?
                     if let full = BearyImagePrep.jpegData(image, maxSide: 1600, quality: 0.85),
                        let thumb = BearyImagePrep.thumbData(image, maxSide: 480),
                        let saved = BearyDraftImageStore.save(fullData: full.data, thumbData: thumb) {
-                        localFile = saved
+                        item.localFile = saved
                     }
-                    let item = self.createImageItem(localImage: image, key: nil, uploading: true, localFile: localFile, failed: false)
-                    self.insertImageItem(item)
                     self.saveDraftNow()
                     self.startUpload(for: item, image: image)
                 }
@@ -816,6 +846,13 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         applyKeyboard(notification, showing: false)
     }
 
+    @objc private func keyboardWillChangeFrame(_ notification: Notification) {
+        // 旋转、表情/听写键盘高度变化、悬浮键盘拖动只发 WillChangeFrame，不发 WillShow：
+        // 同一套 inset 计算跟随最终帧；出现时与 WillShow 同值、beginFromCurrentState 保证幂等，不叠加；
+        // 键盘收起时最终帧在屏外，算出的高度为 0，与 WillHide 一致。
+        applyKeyboard(notification, showing: true)
+    }
+
     private func applyKeyboard(_ notification: Notification, showing: Bool) {
         var height: CGFloat = 0
         if showing {
@@ -882,7 +919,9 @@ private final class ComposerImageItem {
 
 // 注：
 // 1. 天气（weather）本片不做：publishEntry 签名本身不接受 weather，服务端置 null，属缺口。
-// 2. 超 2000 字红字提示用了 UIColor.systemRed——BearyColors 里没有红色，主题色之外仅此一处语义红。
+// 2. 超 2000 字红字提示用 BearyColors.red（网页 --red #e5484d，浅深同值）；图片上的
+//    “重试”/× 衬底用 BearyColors.scrim（固定深色半透明，深色下 ink 是近白、白字会看不清）。
+//    其余白字只出现在恒定橙底上（选中心情），浅深皆可读。
 // 3. 图片 × 只移除本地与 key 列表，不调服务端；未发布的孤 key 残留是已知可接受项。
 // 4. 草稿 v2（BearyDraftFiles.swift）：正文 + 心情 + 图片项（本地文件名 / 服务端 key / 上传状态）
 //    + clientReq（创建时生成一次，发布重试全程复用）+ updatedAt；JSON 文件原子写；
@@ -890,3 +929,5 @@ private final class ComposerImageItem {
 // 5. 丢弃草稿 / 发布成功会删本地图片文件；服务端孤 key 无删除接口，残留是已知可接受项。
 // 6. 发布时有上传失败的图片会先弹确认（防静默丢图）；离线/网络错误文案为“网络不可用，
 //    已保存为草稿，联网后可重试”，失败一律保留草稿。
+// 7. 第四项：键盘跟随 WillChangeFrame（旋转/表情键盘/悬浮键盘拖动）；打开编辑器自动聚焦一次，
+//    有草稿时光标置末尾；选图按选择顺序占位插入（.ordered + 先建项后填图），读图失败直接移除占位项。

@@ -129,8 +129,9 @@ class BearyFeedViewController: UIViewController {
     }
 
     /// 重拍首页 tab 时先回顶（与网页 topThen 同口径；接线层在已显示时调它）。
+    /// reduced-motion 下直达顶部，不播滚动动画。
     func scrollToTop() {
-        tableView.setContentOffset(CGPoint(x: 0, y: -tableView.contentInset.top), animated: true)
+        tableView.setContentOffset(CGPoint(x: 0, y: -tableView.contentInset.top), animated: !UIAccessibility.isReduceMotionEnabled)
     }
 
     // MARK: - 今日送达区
@@ -500,7 +501,7 @@ extension BearyFeedViewController: UITableViewDataSource, UITableViewDelegate {
     }
 
     func tableView(_ tableView: UITableView, didSelectRowAt indexPath: IndexPath) {
-        tableView.deselectRow(at: indexPath, animated: true)
+        tableView.deselectRow(at: indexPath, animated: !UIAccessibility.isReduceMotionEnabled)
         if kind(for: indexPath.section) == .delivered {
             let shown = min(deliveredVisibleCount, deliveredAll.count)
             if indexPath.row < shown {
