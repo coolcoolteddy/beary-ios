@@ -321,6 +321,15 @@ final class BearyNotificationsViewController: UIViewController {
         NotificationCenter.default.removeObserver(self)
     }
 
+    override func traitCollectionDidChange(_ previousTraitCollection: UITraitCollection?) {
+        super.traitCollectionDidChange(previousTraitCollection)
+        // CGColor 只在赋值时解析一次：深浅切换时重刷态内按钮描边；
+        // 行 cell 各自的角标/重试钮描边由 cell 自身 trait 回调重刷。
+        if previousTraitCollection?.userInterfaceStyle != traitCollection.userInterfaceStyle {
+            stateButton.layer.borderColor = BearyColors.line.cgColor
+        }
+    }
+
     /// 60 秒轮询：只做 limit=1 轻量刷新（见 refreshUnreadCountLightly）。
     private func startPolling() {
         pollTimer?.invalidate()
@@ -1451,6 +1460,14 @@ private class BearyNotificationCell: UITableViewCell {
         fatalError("init(coder:) has not been implemented")
     }
 
+    override func traitCollectionDidChange(_ previousTraitCollection: UITraitCollection?) {
+        super.traitCollectionDidChange(previousTraitCollection)
+        // 角标描边是 CGColor，深浅切换时重赋，否则深色下仍留浅色边。
+        if previousTraitCollection?.userInterfaceStyle != traitCollection.userInterfaceStyle {
+            kindBadgeView.layer.borderColor = BearyColors.line.cgColor
+        }
+    }
+
     override func prepareForReuse() {
         super.prepareForReuse()
         avatarTask?.cancel()
@@ -1713,6 +1730,14 @@ private class BearyNotificationTrailingCell: UITableViewCell {
 
     required init?(coder: NSCoder) {
         fatalError("init(coder:) has not been implemented")
+    }
+
+    override func traitCollectionDidChange(_ previousTraitCollection: UITraitCollection?) {
+        super.traitCollectionDidChange(previousTraitCollection)
+        // 重试钮描边是 CGColor，深浅切换时重赋，否则深色下仍留浅色边。
+        if previousTraitCollection?.userInterfaceStyle != traitCollection.userInterfaceStyle {
+            retryButton.layer.borderColor = BearyColors.line.cgColor
+        }
     }
 
     override func prepareForReuse() {

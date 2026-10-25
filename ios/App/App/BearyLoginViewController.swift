@@ -83,6 +83,14 @@ final class BearyLoginViewController: UIViewController {
         updateButtonStates()
     }
 
+    override func traitCollectionDidChange(_ previousTraitCollection: UITraitCollection?) {
+        super.traitCollectionDidChange(previousTraitCollection)
+        // 协议复选框描边是 CGColor：深浅切换时走已有刷新重赋（勾选态橙边、未选 line 边）。
+        if previousTraitCollection?.userInterfaceStyle != traitCollection.userInterfaceStyle {
+            refreshAgreeBox()
+        }
+    }
+
     // MARK: - 登出路径（供容器复用）
 
     /// 显式登出：调 BearyAPI.logout（POST /beary/api/logout，网页 pmLogout 同口径），

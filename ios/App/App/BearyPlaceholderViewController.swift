@@ -25,11 +25,16 @@ final class BearyPlaceholderViewController: UIViewController {
         label.text = message
         label.font = UIFont.systemFont(ofSize: 15)
         label.textColor = BearyColors.gray
+        // 长文案也要收进屏内换行居中：只定中心时超长文本会横向溢出屏幕。
+        label.numberOfLines = 0
+        label.textAlignment = .center
         label.translatesAutoresizingMaskIntoConstraints = false
         view.addSubview(label)
         NSLayoutConstraint.activate([
             label.centerXAnchor.constraint(equalTo: view.centerXAnchor),
             label.centerYAnchor.constraint(equalTo: view.centerYAnchor),
+            label.leadingAnchor.constraint(greaterThanOrEqualTo: view.leadingAnchor, constant: 20),
+            label.trailingAnchor.constraint(lessThanOrEqualTo: view.trailingAnchor, constant: -20),
         ])
     }
 }

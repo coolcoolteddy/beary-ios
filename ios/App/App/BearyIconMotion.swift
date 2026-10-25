@@ -25,24 +25,35 @@ enum BearyIconMotion {
     /// 点赞描边画出（网页 heartDraw：.5s cubic-bezier(.4,0,.2,1)）。
     /// 返回描边图层，调用方持有并在响应到达时移除；减动效返回 nil（不画）。
     /// 描边色取未点赞态灰色（网页 currentColor 同款），线宽按框缩放（2/24）。
+    /// 残留修复：图层挂在 imageView 层下、路径用 imageView.bounds 画，
+    /// 不再挂按钮层用 imageView.frame 画——frame 会受按压缩放（.84）影响而
+    /// 缩小并偏移，按钮重布局后图标移走、旧描边却留在原坐标，右侧露出一截；
+    /// 子层则随图标一起缩放与移位，与空心 PNG 始终重合。
+    /// 动画结束即自清：.5s 画完后底层空心 PNG 本就是同一条灰色轮廓，
+    /// 描边层再留着只是重复描边；自清后未点赞态只剩空心 PNG，
+    /// 填充与计数仍等服务器确认（语义不动），调用方响应到达时再清一次亦无害。
     static func playHeartStrokeDraw(on button: UIButton) -> CAShapeLayer? {
         if UIAccessibility.isReduceMotionEnabled { return nil }
+        let host: CALayer
         let box: CGRect
-        if let frame = button.imageView?.frame, frame.width > 0 {
-            box = frame
+        if let imageView = button.imageView, imageView.bounds.width > 0 {
+            host = imageView.layer
+            box = imageView.bounds
         } else {
             let side: CGFloat = 22
+            host = button.layer
             box = CGRect(x: (button.bounds.width - side) / 2, y: (button.bounds.height - side) / 2, width: side, height: side)
         }
         let layer = CAShapeLayer()
-        layer.path = heartPath(in: box).cgPath
+        layer.frame = box
+        layer.path = heartPath(in: CGRect(origin: .zero, size: box.size)).cgPath
         layer.fillColor = UIColor.clear.cgColor
         layer.strokeColor = BearyColors.gray.cgColor
         layer.lineWidth = 2 * box.width / 24
         layer.lineCap = .round
         layer.lineJoin = .round
         layer.strokeEnd = 0
-        button.layer.addSublayer(layer)
+        host.addSublayer(layer)
         let anim = CABasicAnimation(keyPath: "strokeEnd")
         anim.fromValue = 0
         anim.toValue = 1
@@ -50,6 +61,9 @@ enum BearyIconMotion {
         anim.timingFunction = CAMediaTimingFunction(controlPoints: 0.4, 0, 0.2, 1)
         layer.add(anim, forKey: "bearyHeartDraw")
         layer.strokeEnd = 1
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak layer] in
+            layer?.removeFromSuperlayer()
+        }
         return layer
     }
 

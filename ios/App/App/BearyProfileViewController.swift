@@ -351,6 +351,11 @@ class BearyProfileViewController: UIViewController {
         return imageViewValue
     }()
 
+    /// 皇冠左缘二选一：有佩戴徽章时贴徽章、无徽章时直接贴名字；
+    /// 隐藏的徽章视图仍占布局位，固定贴徽章会在无徽章时多出 39pt 空隙。
+    private var crownLeadingToBadgeConstraint: NSLayoutConstraint?
+    private var crownLeadingToNameConstraint: NSLayoutConstraint?
+
     private let handleLabel: UILabel = {
         let labelValue = UILabel()
         labelValue.translatesAutoresizingMaskIntoConstraints = false
@@ -755,6 +760,9 @@ class BearyProfileViewController: UIViewController {
             badgesHeightConstraint,
         ])
 
+        crownLeadingToBadgeConstraint = crownImageView.leadingAnchor.constraint(equalTo: badgeImageView.trailingAnchor, constant: 8)
+        crownLeadingToNameConstraint = crownImageView.leadingAnchor.constraint(equalTo: nameLabel.trailingAnchor, constant: 8)
+        crownLeadingToBadgeConstraint?.isActive = true
         NSLayoutConstraint.activate([
             coverImageView.topAnchor.constraint(equalTo: headerView.topAnchor),
             coverImageView.leadingAnchor.constraint(equalTo: headerView.leadingAnchor),
@@ -786,7 +794,6 @@ class BearyProfileViewController: UIViewController {
             badgeImageView.centerYAnchor.constraint(equalTo: nameLabel.topAnchor, constant: 14),
             badgeImageView.widthAnchor.constraint(equalToConstant: 23),
             badgeImageView.heightAnchor.constraint(equalToConstant: 23),
-            crownImageView.leadingAnchor.constraint(equalTo: badgeImageView.trailingAnchor, constant: 8),
             crownImageView.centerYAnchor.constraint(equalTo: nameLabel.topAnchor, constant: 14),
             crownImageView.widthAnchor.constraint(equalToConstant: 23),
             crownImageView.heightAnchor.constraint(equalToConstant: 23),
@@ -1060,6 +1067,10 @@ class BearyProfileViewController: UIViewController {
             badgeImageView.isHidden = true
         }
         crownImageView.isHidden = !(profileValue.plus ?? false)
+        // 无佩戴徽章时皇冠改贴名字，避免隐藏徽章占位造成的 39pt 空隙。
+        let badgeVisible = badgeImageView.isHidden == false
+        crownLeadingToBadgeConstraint?.isActive = badgeVisible
+        crownLeadingToNameConstraint?.isActive = !badgeVisible
         topNameLabel.text = displayNameValue
 
         applyWall()
@@ -2778,7 +2789,13 @@ private class BearyProfileEmoteSheetViewController: UIViewController, UICollecti
         sheetView.backgroundColor = BearyColors.surface
         sheetView.layer.cornerRadius = 22
         sheetView.layer.maskedCorners = [.layerMinXMinYCorner, .layerMaxXMinYCorner]
-        sheetView.clipsToBounds = true
+        // 网页底 sheet 阴影 0 -12 32：CALayer radius 取 CSS blur 一半即 16；
+        // 阴影不能挂在 clipsToBounds 的视图上（会被自身裁掉），故不裁剪——
+        // sheet 内元素均内收（抓手/标题/列表顶距均在圆角区之下），不会从圆角外漏出。
+        sheetView.layer.shadowColor = UIColor.black.cgColor
+        sheetView.layer.shadowOpacity = 0.22
+        sheetView.layer.shadowOffset = CGSize(width: 0, height: -12)
+        sheetView.layer.shadowRadius = 16
         sheetView.translatesAutoresizingMaskIntoConstraints = false
         view.addSubview(sheetView)
         grabView.backgroundColor = BearyColors.line
@@ -2839,7 +2856,8 @@ private class BearyProfileEmoteSheetViewController: UIViewController, UICollecti
             collection.topAnchor.constraint(equalTo: titleLabel.bottomAnchor, constant: 12),
             collection.leadingAnchor.constraint(equalTo: sheetView.leadingAnchor),
             collection.trailingAnchor.constraint(equalTo: sheetView.trailingAnchor),
-            collection.bottomAnchor.constraint(equalTo: sheetView.bottomAnchor),
+            // 列表底停在安全区底之上：旧值贴 sheet 底（= 屏底），末行会被 Home 指示条压住。
+            collection.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor),
         ])
     }
 

@@ -1230,6 +1230,9 @@ class BearyEntryDetailViewController: UIViewController {
     }
 
     private func updateActionButtons() {
+        // 状态渲染先清瞬时描边层：描边只是点下 .5s 的画出动画，
+        // 任何一次按状态重绘（render / 成功 / 失败 / 外部同步）都不应把它留在未点赞态。
+        removeLikeStroke()
         let liked = entry?.likedByMe ?? false
         let count = entry?.likeCount ?? 0
         let likeImageName = liked ? "icon_heart_fill" : "icon_heart"

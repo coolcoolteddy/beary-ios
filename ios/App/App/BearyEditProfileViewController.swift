@@ -146,7 +146,11 @@ class BearyEditProfileViewController: UIViewController {
         fieldValue.translatesAutoresizingMaskIntoConstraints = false
         fieldValue.font = UIFont.systemFont(ofSize: 15)
         fieldValue.textColor = BearyColors.ink
-        fieldValue.placeholder = "名字"
+        // 占位色走 BearyColors.gray（与登录/邀请页 attributedPlaceholder 同口径）。
+        fieldValue.attributedPlaceholder = NSAttributedString(string: "名字", attributes: [
+            .foregroundColor: BearyColors.gray,
+            .font: UIFont.systemFont(ofSize: 15),
+        ])
         fieldValue.borderStyle = .roundedRect
         fieldValue.autocorrectionType = .no
         return fieldValue
@@ -166,7 +170,11 @@ class BearyEditProfileViewController: UIViewController {
         fieldValue.translatesAutoresizingMaskIntoConstraints = false
         fieldValue.font = UIFont.systemFont(ofSize: 15)
         fieldValue.textColor = BearyColors.ink
-        fieldValue.placeholder = "用户名"
+        // 占位色走 BearyColors.gray（与登录/邀请页 attributedPlaceholder 同口径）。
+        fieldValue.attributedPlaceholder = NSAttributedString(string: "用户名", attributes: [
+            .foregroundColor: BearyColors.gray,
+            .font: UIFont.systemFont(ofSize: 15),
+        ])
         fieldValue.borderStyle = .roundedRect
         fieldValue.autocapitalizationType = .none
         fieldValue.autocorrectionType = .no

@@ -127,6 +127,20 @@ final class BearyDraftBoxViewController: UIViewController {
         updateBottomSpacer()
     }
 
+    override func traitCollectionDidChange(_ previousTraitCollection: UITraitCollection?) {
+        super.traitCollectionDidChange(previousTraitCollection)
+        // CGColor 只在赋值时解析一次：深浅切换时重刷 sheet 边框与卡片/打开钮描边。
+        if previousTraitCollection?.userInterfaceStyle != traitCollection.userInterfaceStyle {
+            applySheetChrome()
+            for entry in cardEntries {
+                entry.button.layer.borderColor = BearyColors.line.cgColor
+            }
+            for entry in openEntries {
+                entry.button.layer.borderColor = BearyColors.line.cgColor
+            }
+        }
+    }
+
     // MARK: - 视图搭建
 
     private func buildViews() {
@@ -384,7 +398,9 @@ final class BearyDraftBoxViewController: UIViewController {
             sheetView.layer.borderWidth = 1
             sheetView.layer.borderColor = BearyColors.line.cgColor
             sheetView.layer.shadowOpacity = 0.30
-            sheetView.layer.shadowRadius = 60
+            // CALayer radius 取 CSS blur 一半（居中卡片与 SceneDelegate 底 sheet 同口径）：
+            // 网页 60 → 30、32 → 16，旧值 60/32 直写会把阴影晕得比网页大一倍。
+            sheetView.layer.shadowRadius = 30
             sheetView.layer.shadowOffset = CGSize(width: 0, height: 24)
             topBorderView.isHidden = true
             sheetScrollView.layer.maskedCorners = [.layerMinXMinYCorner, .layerMaxXMinYCorner, .layerMinXMaxYCorner, .layerMaxXMaxYCorner]
@@ -392,7 +408,7 @@ final class BearyDraftBoxViewController: UIViewController {
             sheetView.layer.maskedCorners = [.layerMinXMinYCorner, .layerMaxXMinYCorner]
             sheetView.layer.borderWidth = 0
             sheetView.layer.shadowOpacity = 0.22
-            sheetView.layer.shadowRadius = 32
+            sheetView.layer.shadowRadius = 16
             sheetView.layer.shadowOffset = CGSize(width: 0, height: -12)
             topBorderView.isHidden = false
             sheetScrollView.layer.maskedCorners = [.layerMinXMinYCorner, .layerMaxXMinYCorner]
@@ -1043,5 +1059,13 @@ private final class BearyDraftBoxDashedButton: UIButton {
         super.layoutSubviews()
         dashedLayer.frame = bounds
         dashedLayer.path = UIBezierPath(roundedRect: bounds, cornerRadius: 12).cgPath
+    }
+
+    override func traitCollectionDidChange(_ previousTraitCollection: UITraitCollection?) {
+        super.traitCollectionDidChange(previousTraitCollection)
+        // CAShapeLayer 描边色只在赋值时解析一次，深浅切换时重赋（编辑器同款虚线钮已有此处理）。
+        if previousTraitCollection?.userInterfaceStyle != traitCollection.userInterfaceStyle {
+            dashedLayer.strokeColor = BearyColors.line.cgColor
+        }
     }
 }

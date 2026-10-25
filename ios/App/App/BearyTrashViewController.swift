@@ -76,6 +76,23 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate {
         closeButton.isHidden = onClose == nil
     }
 
+    override func traitCollectionDidChange(_ previousTraitCollection: UITraitCollection?) {
+        super.traitCollectionDidChange(previousTraitCollection)
+        // CGColor 只在赋值时解析一次：深浅切换时重刷重试钮、行框与行内两钮描边。
+        if previousTraitCollection?.userInterfaceStyle != traitCollection.userInterfaceStyle {
+            retryButton.layer.borderColor = BearyColors.line.cgColor
+            for rowView in rowViewsByIdentifier.values {
+                rowView.layer.borderColor = BearyColors.line.cgColor
+            }
+            for entry in restoreEntries {
+                entry.button.layer.borderColor = BearyColors.line.cgColor
+            }
+            for entry in purgeEntries {
+                entry.button.layer.borderColor = BearyColors.line.cgColor
+            }
+        }
+    }
+
     /// 调用方重进本页时可手动刷新（首屏重置，不滚顶由调用方呈现方式保证）。
     func reloadTrash() {
         loadFirstPage()

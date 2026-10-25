@@ -270,9 +270,17 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
 
     override func traitCollectionDidChange(_ previousTraitCollection: UITraitCollection?) {
         super.traitCollectionDidChange(previousTraitCollection)
-        // 深浅切换时熊图变体（-w）也要换：只刷新环内图，不重建条。
+        // 深浅切换时 CGColor 只在赋值时解析一次，必须重赋：心情环描边、
+        // 天气 chip 描边、通知复选框描边、草稿 pill 描边、字数圆环轨道色
+        // 全走已有刷新函数重算（心情刷新内含熊图 -w 变体切换，不重建条）。
         if previousTraitCollection?.userInterfaceStyle != traitCollection.userInterfaceStyle {
-            refreshMoodImages()
+            refreshMoodButtons()
+            refreshWeatherButtons()
+            refreshNotifyCheck()
+            notifyCheckButton.layer.borderColor = BearyColors.line.cgColor
+            draftPillButton.layer.borderColor = BearyColors.line.cgColor
+            charTrackLayer?.strokeColor = BearyColors.line.cgColor
+            updateCountLabel()
         }
     }
 
@@ -434,8 +442,9 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     private func refreshPublishAppearance() {
         if publishButton.isEnabled {
             publishButton.backgroundColor = BearyColors.ink
-            publishButton.setTitleColor(UIColor.white, for: .normal)
-            publishButton.tintColor = UIColor.white
+            // 底是 ink、字须取反色 bg：深色下 ink 近白，白字面量会糊在底上看不见。
+            publishButton.setTitleColor(BearyColors.bg, for: .normal)
+            publishButton.tintColor = BearyColors.bg
         } else {
             publishButton.backgroundColor = UIColor.clear
             publishButton.setTitleColor(BearyColors.gray, for: .normal)
@@ -874,8 +883,9 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     private func refreshNotifyCheck() {
         if notifyRecipient {
             notifyCheckButton.backgroundColor = BearyColors.ink
+            // 底是 ink、✓ 须取反色 bg：深色下 ink 近白，白字面量会糊在底上看不见。
             notifyCheckButton.setTitle("✓", for: .normal)
-            notifyCheckButton.setTitleColor(UIColor.white, for: .normal)
+            notifyCheckButton.setTitleColor(BearyColors.bg, for: .normal)
         } else {
             notifyCheckButton.backgroundColor = UIColor.clear
             notifyCheckButton.setTitle("", for: .normal)
@@ -1474,12 +1484,11 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                 let crownView = UIImageView()
                 crownView.translatesAutoresizingMaskIntoConstraints = false
                 crownView.contentMode = .scaleAspectFit
+                // 只走 crown 资产：不用 SF Symbol；资产缺失时藏起皇冠位，不留空位、不替灰色符号。
                 if let crown = UIImage(named: "crown") {
                     crownView.image = crown
                 } else {
-                    let config = UIImage.SymbolConfiguration(pointSize: 19, weight: .regular)
-                    crownView.image = UIImage(systemName: "crown.fill", withConfiguration: config)
-                    crownView.tintColor = BearyColors.gray
+                    crownView.isHidden = true
                 }
                 crownView.setContentCompressionResistancePriority(.required, for: .horizontal)
                 headerStack.addArrangedSubview(crownView)

@@ -87,6 +87,17 @@ final class BearyRecipientPickerViewController: UIViewController, UITextFieldDel
         updateSheetHeight()
     }
 
+    override func traitCollectionDidChange(_ previousTraitCollection: UITraitCollection?) {
+        super.traitCollectionDidChange(previousTraitCollection)
+        // CGColor 只在赋值时解析一次：深浅切换时重刷 sheet 边框与搜索框/头图圈/空态圈描边。
+        if previousTraitCollection?.userInterfaceStyle != traitCollection.userInterfaceStyle {
+            applySheetChrome()
+            searchBox.layer.borderColor = BearyColors.line.cgColor
+            headerIconWrap.layer.borderColor = BearyColors.orange.withAlphaComponent(0.28).cgColor
+            stateCircle.layer.borderColor = BearyColors.orange.withAlphaComponent(0.25).cgColor
+        }
+    }
+
     deinit {
         searchTimer?.invalidate()
         NotificationCenter.default.removeObserver(self)
@@ -135,7 +146,12 @@ final class BearyRecipientPickerViewController: UIViewController, UITextFieldDel
         searchIcon.image = BearyIconImages.image(named: "icon_search", pointSize: 18)
         searchIcon.tintColor = BearyColors.gray
         searchIcon.contentMode = .scaleAspectFit
-        searchField.placeholder = "搜索昵称或 @用户名"
+        // 占位色走 BearyColors.gray（与登录/邀请页 attributedPlaceholder 同口径），
+        // 不用系统默认占位色，避免与全站灰字不一致。
+        searchField.attributedPlaceholder = NSAttributedString(string: "搜索昵称或 @用户名", attributes: [
+            .foregroundColor: BearyColors.gray,
+            .font: UIFont.systemFont(ofSize: 16),
+        ])
         searchField.font = UIFont.systemFont(ofSize: 16)
         searchField.textColor = BearyColors.ink
         searchField.delegate = self
@@ -327,14 +343,16 @@ final class BearyRecipientPickerViewController: UIViewController, UITextFieldDel
             sheetView.layer.borderWidth = 1
             sheetView.layer.borderColor = BearyColors.line.cgColor
             sheetView.layer.shadowOpacity = 0.30
-            sheetView.layer.shadowRadius = 60
+            // CALayer radius 取 CSS blur 一半（居中卡片与 SceneDelegate 底 sheet 同口径）：
+            // 网页 60 → 30、32 → 16，旧值 60/32 直写会把阴影晕得比网页大一倍。
+            sheetView.layer.shadowRadius = 30
             sheetView.layer.shadowOffset = CGSize(width: 0, height: 24)
             topBorderView.isHidden = true
         } else {
             sheetView.layer.maskedCorners = [.layerMinXMinYCorner, .layerMaxXMinYCorner]
             sheetView.layer.borderWidth = 0
             sheetView.layer.shadowOpacity = 0.22
-            sheetView.layer.shadowRadius = 32
+            sheetView.layer.shadowRadius = 16
             sheetView.layer.shadowOffset = CGSize(width: 0, height: -12)
             topBorderView.isHidden = false
         }

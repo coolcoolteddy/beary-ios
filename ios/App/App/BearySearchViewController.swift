@@ -269,7 +269,11 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         searchField.translatesAutoresizingMaskIntoConstraints = false
         searchField.font = UIFont.systemFont(ofSize: 16)
         searchField.textColor = BearyColors.ink
-        searchField.placeholder = "搜索日记或用户"
+        // 占位色走 BearyColors.gray（与登录/邀请页 attributedPlaceholder 同口径）。
+        searchField.attributedPlaceholder = NSAttributedString(string: "搜索日记或用户", attributes: [
+            .foregroundColor: BearyColors.gray,
+            .font: UIFont.systemFont(ofSize: 16),
+        ])
         searchField.returnKeyType = .search
         searchField.autocorrectionType = .no
         searchField.delegate = self

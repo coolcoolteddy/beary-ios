@@ -336,6 +336,15 @@ final class BearyCalendarDayButton: UIButton {
         return nil
     }
 
+    /// 网页 .cal-d.dis .n 口径：color-mix(in srgb, var(--gray) 55%, transparent)，
+    /// 即 gray 降到 55% 透明度，不是满值 gray。必须用 trait 闭包从 BearyColors.gray
+    /// 现取再降透明度：浅色取 #737373、深色取 #a8a8a8，各自再取 55%，深色下也不错。
+    private static var disabledTextColor: UIColor {
+        return UIColor { trait in
+            BearyColors.gray.resolvedColor(with: trait).withAlphaComponent(0.55)
+        }
+    }
+
     func configure(day: BearyCalendarDay) {
         dayValue = day
         numberLabel.text = "\(day.day)"
@@ -360,7 +369,7 @@ final class BearyCalendarDayButton: UIButton {
             numberLabel.layer.borderWidth = 1.5
             numberLabel.layer.borderColor = BearyColors.orange.cgColor
         } else if !day.isEnabled {
-            numberLabel.textColor = BearyColors.gray
+            numberLabel.textColor = BearyCalendarDayButton.disabledTextColor
             numberLabel.font = UIFont.systemFont(ofSize: 15)
             numberLabel.backgroundColor = nil
         } else {
@@ -730,6 +739,15 @@ final class BearyTimelineCell: UITableViewCell {
         moodLabel.textColor = BearyColors.gray
         recipientLabel.font = UIFont.boldSystemFont(ofSize: 12.5)
         recipientLabel.textColor = BearyColors.orange
+        // 网页 .tl-to 口径：单行 + max-width 170 + ellipsis，超出截断不撑开 meta 行。
+        // meta 是单行横向 stack、不会像网页 .tl-meta 那样 flex-wrap 换行，故长名字必须
+        // 在此先让位：横向抗压缩调到最低，空间不足时先缩它（带省略号），时间（required）
+        // 与 pill 绝不被它挤到重叠；纵向抱紧 + 宽 ≤170，上限内按本长显示、不拉伸。
+        recipientLabel.numberOfLines = 1
+        recipientLabel.lineBreakMode = .byTruncatingTail
+        recipientLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        recipientLabel.setContentHuggingPriority(.required, for: .horizontal)
+        recipientLabel.widthAnchor.constraint(lessThanOrEqualToConstant: 170).isActive = true
 
         metaStack.translatesAutoresizingMaskIntoConstraints = false
         metaStack.axis = .horizontal
@@ -912,6 +930,7 @@ final class BearyTimelineCell: UITableViewCell {
         }
         for arranged in metaStack.arrangedSubviews {
             metaStack.removeArrangedSubview(arranged)
+            arranged.removeFromSuperview()
         }
     }
 
@@ -919,6 +938,7 @@ final class BearyTimelineCell: UITableViewCell {
         currentEntry = entry
         for arranged in metaStack.arrangedSubviews {
             metaStack.removeArrangedSubview(arranged)
+            arranged.removeFromSuperview()
         }
         if let createdMs = entry.createdAt {
             let date = Date(timeIntervalSince1970: TimeInterval(createdMs) / 1000.0)
@@ -1172,6 +1192,19 @@ final class BearyTimelineCell: UITableViewCell {
 /// 沙漏小图标：按 beary.html #beary-hourglass sprite 路径描边绘制
 /// （24 坐标系、线宽 2、圆头圆角），颜色走 BearyColors.blue。
 private final class BearyHourglassView: UIView {
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        // 描边绘制只画蓝线、不填底：此前从未设过背景，未绘制区域按不透明位图
+        // 留下 12x12 黑块。显式透明底 + 非不透明，pill 的蓝底透出来，只剩沙漏线。
+        // .clear 在此只是“无背景”（非调色板颜色，BearyColors 本无透明项），描边色仍走 BearyColors.blue。
+        backgroundColor = .clear
+        isOpaque = false
+    }
+
+    required init?(coder: NSCoder) {
+        return nil
+    }
+
     override func draw(_ rect: CGRect) {
         super.draw(rect)
         guard let context = UIGraphicsGetCurrentContext() else { return }
