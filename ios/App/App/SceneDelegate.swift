@@ -1,6 +1,5 @@
 import UIKit
 import Capacitor
-import WebKit
 
 class SceneDelegate: UIResponder, UIWindowSceneDelegate {
     var window: UIWindow?
@@ -25,20 +24,11 @@ class SceneDelegate: UIResponder, UIWindowSceneDelegate {
 }
 
 // ===== beary 原生栏：液态玻璃顶栏 + 底栏胶囊 + FAB =====
-// 只在 App 内存在；网页版不受影响。网页通过 window.webkit.messageHandlers.bearyChrome
-// 推送状态（activeTab/unread/sysUnread/barsHidden/scrollHidden/giftHidden/loggedIn/avatarUrl/theme/themeMode）。
+// 批一：纯原生容器，不再继承 Capacitor 桥、不创建任何网页视图、不加载任何网页。
+// 栏状态（选中 tab、登录态）由容器本地管理；未读角标在批二接通知接口前保持隐藏。
 // iOS 26+ 用官方 UIGlassEffect，低版本自动降级系统毛玻璃；部署目标不用抬。
 
-private final class BearyChromeMessageHandler: NSObject, WKScriptMessageHandler {
-    weak var owner: BearyChromeViewController?
-    init(owner: BearyChromeViewController) { self.owner = owner }
-    func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
-        guard message.name == "bearyChrome", let body = message.body as? [String: Any] else { return }
-        owner?.applyChromeState(body)
-    }
-}
-
-final class BearyChromeViewController: CAPBridgeViewController {
+final class BearyChromeViewController: UIViewController {
     private var topGlass: UIVisualEffectView!
     private var bottomCapsule: UIVisualEffectView!
     private var fabButton: UIButton!
@@ -47,23 +37,33 @@ final class BearyChromeViewController: CAPBridgeViewController {
     private var avatarButton: UIButton!
     private var tabButtons: [UIButton] = []
     private var bellBadge: UILabel!
-    private var barsHidden = false
-    private var scrollHidden = false
-    private var didFirstPush = false
     private var avatarURLString: String?
-    private var chromeHandler: BearyChromeMessageHandler?
-    private var navFailureCount = 0
-    private var handshakeReloaded = false
-    private var navReloadNotBefore = Date.distantPast
-    private lazy var navigator = BearyNavigationCoordinator(webViewProvider: { [weak self] in self?.webView }, performJS: { [weak self] js in self?.evalNav(js) })
-    // 原生首页：常驻子 VC，hide/show 切换以保留滚动位置；其他 tab 仍显示网页
+    // 批一：原生页切换状态。currentPage 为 nil 表示尚未显示任何页（启动时 showPage(.home) 亮原生列表）。
+    private enum ContainerPage {
+        case home, notif, timeline, me, search, invite, user
+    }
+    private var currentPage: ContainerPage?
+    private var placeholderVCs: [ContainerPage: UIViewController] = [:]
+    // 原生首页：常驻子 VC，hide/show 切换以保留滚动位置
     private var feedVC: BearyFeedViewController?
-    private var feedVisible = false
-    private var presentedEntryId: String?
-    // 第三项：启动直达原生列表——首次显示只做一次的网页回首页同步（首推到达后、且网页还不在首页时才推一次，避免首推前的探针 miss 触发重载回声）
-    private var pendingHomeSync = false
-    // 网页内链回首页检测：只认 tab 从非 home 切到 home 的那一次（配合 URL 门，见 applyChromeState 末尾）
-    private var lastPushedTab: String?
+    // 原生页路由：四个 tab 走 goTab；搜索 / 个人主页 / 单篇 / 编辑器走 open（批二 / 批三逐页接真实现时只改 handler，不改调用点）。
+    private lazy var navigator = BearyNavigationCoordinator(handler: { [weak self] route in
+        guard let self = self else { return }
+        switch route {
+        case .home: self.showPage(.home)
+        case .notifications: self.showPage(.notif)
+        case .timeline: self.showPage(.timeline)
+        case .profile: self.showPage(.me)
+        case .search: self.showPage(.search)
+        case .editor: self.presentComposer()
+        case .entry(let entryId): self.presentDetail(entryId: entryId, initialEntry: nil)
+        case .userByHandle, .userById: self.showPage(.user)
+        }
+    })
+    // 状态栏：批一跟随系统深浅（原桥的 setStatusBarStyle 由 preferredStatusBarStyle 接管；
+    // Info.plist 的 UIViewControllerBasedStatusBarAppearance 已是 true）。
+    private var currentStatusBarStyle: UIStatusBarStyle = .default
+    override var preferredStatusBarStyle: UIStatusBarStyle { currentStatusBarStyle }
     // 边缘返回：transitioningDelegate 是弱引用，必须强持有到 dismiss 完成
     private var edgeDismiss: BearyEdgeDismissController?
     // 桌面式布局（宽 ≥821，与网页 @media 断点一致）：内容列 600 居中；iPhone 式（宽 ≤820）全宽列。
@@ -155,7 +155,7 @@ final class BearyChromeViewController: CAPBridgeViewController {
         avatar.layer.cornerRadius = 18
         avatar.clipsToBounds = true
         avatar.addTarget(self, action: #selector(didTapAvatar), for: .touchUpInside)
-        avatar.accessibilityLabel = "我的菜单"
+        avatar.accessibilityLabel = "我"
         avatar.translatesAutoresizingMaskIntoConstraints = false
         NSLayoutConstraint.activate([
             avatar.widthAnchor.constraint(equalToConstant: 36),
@@ -218,7 +218,7 @@ final class BearyChromeViewController: CAPBridgeViewController {
             tabStack.addArrangedSubview(b)
             tabButtons.append(b)
         }
-        // 未读角标：挂在消息钮右上角（与网页同口径：只在 ntUnread>0 时显示，底色一律蓝——网页 .bnav-badge 即蓝底）
+        // 未读角标：挂在消息钮右上角，底色一律蓝；批一无通知接口，默认隐藏，批二接通知接口后再驱动。
         let badge = UILabel()
         badge.font = UIFontMetrics.default.scaledFont(for: .boldSystemFont(ofSize: 11))
         badge.adjustsFontForContentSizeCategory = true
@@ -266,21 +266,102 @@ final class BearyChromeViewController: CAPBridgeViewController {
     override func viewDidLoad() {
         super.viewDidLoad()
         buildChrome()
-        if let wv = webView {
-            let h = BearyChromeMessageHandler(owner: self)
-            chromeHandler = h
-            wv.configuration.userContentController.add(h, name: "bearyChrome")
+        // 初始态按未登录：登录钮显、头像藏；refreshMe 成功后 applyLoginState 再翻转（避免首帧两个钮同时出现）。
+        avatarButton.isHidden = true
+        // 栏初始即显示（不再等网页首推）；启动落点：直接亮原生列表。
+        setBarsVisible(true, animated: false)
+        showPage(.home)
+        updateStatusBarFromTrait()
+        // 登录态：从共享 cookie 恢复（已登录用户不用重登）；变化时刷新顶栏登录钮 / 头像。
+        SessionManager.shared.onUserChanged = { [weak self] user in
+            self?.applyLoginState(user)
         }
-        // 桥接握手超时：8 秒内没收到网页首推且页面已提交过 URL，只重载一次（慢网只多一次加载，不循环）；
-        // 重载后网页重跑、首推到达即重新同步
-        DispatchQueue.main.asyncAfter(deadline: .now() + 8) { [weak self] in
-            guard let self = self, !self.didFirstPush, !self.handshakeReloaded, self.webView?.url != nil else { return }
-            self.handshakeReloaded = true
-            self.webView?.reload()
+        SessionManager.shared.refreshMe()
+    }
+
+    override func traitCollectionDidChange(_ previousTraitCollection: UITraitCollection?) {
+        super.traitCollectionDidChange(previousTraitCollection)
+        if traitCollection.hasDifferentColorAppearance(comparedTo: previousTraitCollection) {
+            updateStatusBarFromTrait()
         }
-        // 第三项：启动落点——首次启动直接显示原生列表，不用先点首页 tab。
-        // 只亮列表、不推网页（网页还在加载，首推前推 goTab 会探针 miss，白白触发重载逻辑）。
-        showNativeFeedAtLaunch()
+    }
+
+    /// 状态栏跟随系统深浅：深色 → 浅字，浅色 → 深字。
+    private func updateStatusBarFromTrait() {
+        let style: UIStatusBarStyle = (traitCollection.userInterfaceStyle == .dark) ? .lightContent : .darkContent
+        if currentStatusBarStyle != style {
+            currentStatusBarStyle = style
+            setNeedsStatusBarAppearanceUpdate()
+        }
+    }
+
+    /// 栏显隐：动画可中断、可交互，reduced-motion 下直接设终值（与原栏动画同口径）。
+    private func setBarsVisible(_ visible: Bool, animated: Bool) {
+        let applyBars = {
+            self.topGlass.alpha = visible ? 1 : 0
+            self.topGlass.transform = visible ? .identity : CGAffineTransform(translationX: 0, y: -20)
+            self.bottomCapsule.alpha = visible ? 1 : 0
+            self.bottomCapsule.transform = visible ? .identity : CGAffineTransform(translationX: 0, y: 80)
+            self.fabButton.alpha = visible ? 1 : 0
+            self.fabButton.transform = visible ? .identity : CGAffineTransform(translationX: 0, y: 80)
+        }
+        if !animated || UIAccessibility.isReduceMotionEnabled {
+            applyBars()
+        } else {
+            UIView.animate(withDuration: 0.25, delay: 0, options: [.beginFromCurrentState, .allowUserInteraction], animations: applyBars)
+        }
+        topGlass.isUserInteractionEnabled = visible
+        bottomCapsule.isUserInteractionEnabled = visible
+        fabButton.isUserInteractionEnabled = visible
+    }
+
+    /// 顶栏选中态：四个 tab 里当前页对应的钮为墨色，其余灰色；当前页不是 tab（搜索 / 邀请 / 个人主页）时全部灰色。
+    private func updateTabSelection() {
+        let selectedKey: String?
+        switch currentPage {
+        case .home: selectedKey = "home"
+        case .notif: selectedKey = "notif"
+        case .timeline: selectedKey = "timeline"
+        case .me: selectedKey = "me"
+        default: selectedKey = nil
+        }
+        let keys = ["home", "notif", "timeline", "me"]
+        for (i, k) in keys.enumerated() where i < tabButtons.count {
+            tabButtons[i].tintColor = (k == selectedKey) ? ink : gray
+            tabButtons[i].accessibilityTraits = (k == selectedKey) ? [.button, .selected] : [.button]
+        }
+    }
+
+    /// 登录态 → 顶栏：已登录显头像、藏登录钮；未登录反之。头像沿用原下载逻辑（失败清记账，下次用户变化时重试）。
+    private func applyLoginState(_ user: MeUser?) {
+        loginButton.isHidden = user != nil
+        avatarButton.isHidden = user == nil
+        let avatar = user?.avatar ?? ""
+        if user == nil {
+            avatarURLString = nil
+            avatarButton.setImage(UIImage(named: "IconUser")?.withRenderingMode(.alwaysTemplate), for: .normal)
+            avatarButton.tintColor = ink
+            return
+        }
+        if avatar == avatarURLString { return }
+        avatarURLString = avatar
+        avatarButton.setImage(UIImage(named: "IconUser")?.withRenderingMode(.alwaysTemplate), for: .normal)
+        avatarButton.tintColor = ink
+        if let url = BearyImageURLs.avatarURL(avatar) {
+            URLSession.shared.dataTask(with: url) { [weak self] data, _, _ in
+                guard let self = self, let data = data, let img = UIImage(data: data) else {
+                    DispatchQueue.main.async { [weak self] in
+                        if self?.avatarURLString == avatar { self?.avatarURLString = nil }
+                    }
+                    return
+                }
+                DispatchQueue.main.async {
+                    if self.avatarURLString == avatar {
+                        self.avatarButton.setImage(img.withRenderingMode(.alwaysOriginal), for: .normal)
+                    }
+                }
+            }.resume()
+        }
     }
 
     override func viewDidLayoutSubviews() {
@@ -289,168 +370,19 @@ final class BearyChromeViewController: CAPBridgeViewController {
         updateDesktopLayout()
     }
 
-    func applyChromeState(_ s: [String: Any]) {
-        // 登录翻转检测用的快照（必须在 SessionManager 同步之前取）
-        let wasLoggedIn = SessionManager.shared.isLoggedIn
-        let wasFirstPush = didFirstPush
-        let tab = s["activeTab"] as? String ?? "home"
-        let unread = s["unread"] as? Int ?? 0
-        let sysUnread = s["sysUnread"] as? Int ?? 0
-        let hidden = s["barsHidden"] as? Bool ?? false
-        let scroll = s["scrollHidden"] as? Bool ?? false
-        let giftHidden = s["giftHidden"] as? Bool ?? false
-        let loggedIn = s["loggedIn"] as? Bool ?? false
-        let avatar = s["avatarUrl"] as? String ?? ""
-        let theme = s["theme"] as? String ?? "light"
-        let themeMode = s["themeMode"] as? String ?? "auto"
-        // 主题跟网页走：auto 跟系统，其余强制——玻璃与状态栏不跟系统打架
-        let style: UIUserInterfaceStyle = (themeMode == "auto") ? .unspecified : (theme == "dark" ? .dark : .light)
-        if overrideUserInterfaceStyle != style {
-            overrideUserInterfaceStyle = style
-        }
-        let sbStyle: UIStatusBarStyle = (theme == "dark") ? .lightContent : .darkContent
-        if statusBarStyle != sbStyle {
-            setStatusBarStyle(sbStyle)
-        }
-        let keys = ["home", "notif", "timeline", "me"]
-        for (i, k) in keys.enumerated() where i < tabButtons.count {
-            tabButtons[i].tintColor = (k == tab) ? ink : gray
-            tabButtons[i].accessibilityTraits = (k == tab) ? [.button, .selected] : [.button]
-        }
-        if unread > 0 {
-            bellBadge.text = unread > 99 ? "99+" : "\(unread)"
-            bellBadge.backgroundColor = bearyBlue
-            bellBadge.isHidden = false
-            if tabButtons.count > 1 {
-                tabButtons[1].accessibilityLabel = "消息，\(unread) 条未读" + (sysUnread > 0 ? "，含系统消息" : "")
-            }
-        } else {
-            bellBadge.isHidden = true
-            if tabButtons.count > 1 {
-                tabButtons[1].accessibilityLabel = "消息"
-            }
-        }
-        loginButton.isHidden = loggedIn
-        giftButton.isHidden = giftHidden
-        avatarButton.isHidden = !loggedIn
-        SessionManager.shared.syncWebLoginState(loggedIn: loggedIn, webView: webView)
-        if loggedIn {
-            if avatar != avatarURLString {
-                avatarURLString = avatar
-                if avatar.isEmpty {
-                    avatarButton.setImage(UIImage(named: "IconUser")?.withRenderingMode(.alwaysTemplate), for: .normal)
-                    avatarButton.tintColor = ink
-                } else {
-                    // 先回占位图，下载失败不留旧头像
-                    avatarButton.setImage(UIImage(named: "IconUser")?.withRenderingMode(.alwaysTemplate), for: .normal)
-                    avatarButton.tintColor = ink
-                    var urlString = avatar
-                    if urlString.hasPrefix("/") { urlString = "https://teddyhn.com" + urlString }
-                    if let url = URL(string: urlString) {
-                        URLSession.shared.dataTask(with: url) { [weak self] data, _, _ in
-                            guard let self = self, let data = data, let img = UIImage(data: data) else {
-                                // 下载失败：清掉记账，下次状态推送到达时重试；当前保持占位图
-                                DispatchQueue.main.async { [weak self] in
-                                    if self?.avatarURLString == avatar { self?.avatarURLString = nil }
-                                }
-                                return
-                            }
-                            DispatchQueue.main.async {
-                                if self.avatarURLString == avatar {
-                                    self.avatarButton.setImage(img.withRenderingMode(.alwaysOriginal), for: .normal)
-                                }
-                            }
-                        }.resume()
-                    }
-                }
-            }
-        } else {
-            avatarURLString = nil
-        }
-        // 栏显隐只在变化或首推时做动画；其余状态每次都刷
-        if !didFirstPush || hidden != barsHidden || scroll != scrollHidden {
-            didFirstPush = true
-            barsHidden = hidden
-            scrollHidden = scroll
-            let showTop = !hidden
-            let showBottom = !hidden && !scroll
-            let applyBars = {
-                self.topGlass.alpha = showTop ? 1 : 0
-                self.topGlass.transform = showTop ? .identity : CGAffineTransform(translationX: 0, y: -20)
-                self.bottomCapsule.alpha = showBottom ? 1 : 0
-                self.bottomCapsule.transform = showBottom ? .identity : CGAffineTransform(translationX: 0, y: 80)
-                self.fabButton.alpha = showBottom ? 1 : 0
-                self.fabButton.transform = showBottom ? .identity : CGAffineTransform(translationX: 0, y: 80)
-            }
-            if UIAccessibility.isReduceMotionEnabled {
-                applyBars()
-            } else {
-                UIView.animate(withDuration: 0.25, delay: 0, options: [.beginFromCurrentState, .allowUserInteraction], animations: applyBars)
-            }
-            topGlass.isUserInteractionEnabled = showTop
-            bottomCapsule.isUserInteractionEnabled = showBottom
-            fabButton.isUserInteractionEnabled = showBottom
-        }
-        // 第三项：启动同步只做一次——网页已在首页就不推（省一次网页顶栏刷新），不在首页才推回首页
-        if pendingHomeSync {
-            pendingHomeSync = false
-            if feedVisible && tab != "home" {
-                navigator.goTab("home")
-            }
-        }
-        // 第三项：网页内链/返回回首页时切出原生列表。只认三重门，缺一不可：
-        // ① tab 从非 home 切到 home（单次跃迁，不是每次 home 推送都触发，防重拍抢滚动位）；
-        // ② 原生列表当前没显示（已显示时不动，绝不滚顶）；
-        // ③ 网页地址确为 /beary（网页搜索页/编辑页也报 tab='home'，深链启动的瞬时 home 推送地址是 /beary/d/:id 或 /beary/@handle，URL 门把这两类都挡在外面；
-        //    若 WKWebView.url 对 pushState 的跟进慢了一拍，这里只会漏一次跃迁、列表继续藏着，绝不会抢错页面——失败方向是安全的）。
-        // 满足时只亮列表，不调 goTab（网页已经在首页，再推会触发网页顶栏刷新），不滚顶。
-        let webPath = webView?.url?.path ?? ""
-        let webIsHome = (webPath == "/beary" || webPath == "/beary/")
-        if lastPushedTab != nil && lastPushedTab != "home" && tab == "home" && !feedVisible && webIsHome {
-            let f = ensureFeedVC()
-            f.view.isHidden = false
-            feedVisible = true
-            updateDesktopLayout()
-        }
-        lastPushedTab = tab
-        // 登录态翻转（首推之后才算：首推的登录态是启动时就有的 cookie，列表第一次拉取已经带上了它，不用重拉）：
-        // 启动直达列表后，列表可能在未登录时拉过一次，登录/退出后重拉一次，否则点赞态与送达区会停在旧身份上。
-        if loggedIn != wasLoggedIn && wasFirstPush {
-            feedVC?.refreshAll()
-        }
-    }
-
-    private func evalNav(_ js: String) {
-        // 探针式调用：返回 ok / missing，执行抛错走 error；连续两次失败才重载一次（30 秒冷却），
-        // 避免单次抖动刷掉正在看的页面；重载后网页重跑、首推到达即重新同步
-        let probe = "(function(){try{var n=window.__bearyNav; if(!n) return 'missing'; n." + js + "; return 'ok';}catch(e){return 'error';}})()"
-        webView?.evaluateJavaScript(probe) { [weak self] result, error in
-            guard let self = self else { return }
-            if error == nil, (result as? String) == "ok" {
-                self.navFailureCount = 0
-                return
-            }
-            self.navFailureCount += 1
-            if self.navFailureCount >= 2, Date() >= self.navReloadNotBefore {
-                self.navReloadNotBefore = Date().addingTimeInterval(30)
-                self.navFailureCount = 0
-                self.webView?.reload()
-            }
-        }
-    }
-    @objc private func didTapLogo() { showNativeFeed() }
-    // 登录/搜索/邀请/菜单都是网页界面：先藏原生列表，否则网页弹窗会被列表盖住（启动直达列表后这点变成必选项，之前只在点过首页 tab 后才撞得上）。
-    @objc private func didTapLogin() { hideNativeFeed(); evalNav("login()") }
-    @objc private func didTapSearch() { hideNativeFeed(); evalNav("search()") }
-    @objc private func didTapGift() { hideNativeFeed(); evalNav("invite()") }
+    @objc private func didTapLogo() { showPage(.home) }
+    // 顶栏入口在批一里全部接原生占位页（登录是 modal 占位，其余是 tab 式占位页）；不再有任何跳网页的调用。
+    @objc private func didTapLogin() { presentLoginPlaceholder() }
+    @objc private func didTapSearch() { showPage(.search) }
+    @objc private func didTapGift() { showPage(.invite) }
     @objc private func didTapWrite() { presentComposer() }
-    @objc private func didTapAvatar() { hideNativeFeed(); evalNav("menu()") }
-    @objc private func didTapHome() { showNativeFeed() }
-    @objc private func didTapNotif() { hideNativeFeed(); navigator.goTab("notif") }
-    @objc private func didTapTimeline() { hideNativeFeed(); navigator.goTab("timeline") }
-    @objc private func didTapMe() { hideNativeFeed(); navigator.goTab("me") }
+    @objc private func didTapAvatar() { showPage(.me) }
+    @objc private func didTapHome() { showPage(.home) }
+    @objc private func didTapNotif() { navigator.goTab("notif") }
+    @objc private func didTapTimeline() { navigator.goTab("timeline") }
+    @objc private func didTapMe() { navigator.goTab("me") }
 
-    // MARK: - 原生页接线（第二阶段第一项；原生栏行为、推送点、动画、无障碍标签一律不动）
+    // MARK: - 原生页接线（批一：原生栏行为、动画、无障碍标签一律不动；页切换只在原生页之间）
 
     private func ensureFeedVC() -> BearyFeedViewController {
         if let f = feedVC { return f }
@@ -489,55 +421,82 @@ final class BearyChromeViewController: CAPBridgeViewController {
         return f
     }
 
-    private func showNativeFeed() {
-        let f = ensureFeedVC()
-        if feedVisible {
-            // 重拍已显示的首页：先回顶（与网页 topThen 同口径），不重复推网页
-            f.scrollToTop()
+    /// 原生页切换：首页是常驻原生列表（hide/show 保留滚动位置），其余页是懒建的占位页（同样常驻）。
+    /// 重拍当前 tab：首页回顶（与原 topThen 同口径），占位页无操作。
+    private func showPage(_ page: ContainerPage) {
+        if page == currentPage {
+            if page == .home { feedVC?.scrollToTop() }
             return
         }
-        f.view.isHidden = false
-        feedVisible = true
+        if currentPage == .home {
+            feedVC?.view.isHidden = true
+        } else if let prev = currentPage {
+            placeholderVCs[prev]?.view.isHidden = true
+        }
+        currentPage = page
+        if page == .home {
+            ensureFeedVC().view.isHidden = false
+        } else {
+            ensurePlaceholder(page).view.isHidden = false
+        }
+        updateTabSelection()
         updateDesktopLayout()
-        // 网页同步回首页：顶栏高亮与栏显隐继续由网页推送驱动
-        navigator.goTab("home")
     }
 
-    /// 启动落点：只亮列表，不推网页（见 viewDidLoad 注释）；首推到达后 pendingHomeSync 再决定要不要推一次。
-    private func showNativeFeedAtLaunch() {
-        let f = ensureFeedVC()
-        f.view.isHidden = false
-        feedVisible = true
-        pendingHomeSync = true
-        updateDesktopLayout()
+    /// 占位页懒建：与列表同顶距（安全区 + 60 顶栏高），全宽列，居中一行说明文案。
+    private func ensurePlaceholder(_ page: ContainerPage) -> UIViewController {
+        if let vc = placeholderVCs[page] { return vc }
+        let title: String
+        switch page {
+        case .notif: title = "消息"
+        case .timeline: title = "时间线"
+        case .me: title = "我"
+        case .search: title = "搜索"
+        case .invite: title = "邀请"
+        case .user: title = "个人主页"
+        case .home: title = "首页"
+        }
+        let vc = BearyPlaceholderViewController(title: title)
+        addChild(vc)
+        vc.view.translatesAutoresizingMaskIntoConstraints = false
+        view.addSubview(vc.view)
+        NSLayoutConstraint.activate([
+            vc.view.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 60),
+            vc.view.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            vc.view.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            vc.view.bottomAnchor.constraint(equalTo: view.bottomAnchor),
+        ])
+        vc.didMove(toParent: self)
+        vc.view.isHidden = true
+        // 占位页出现时原生栏保持在最上层（与 ensureFeedVC 同口径）
+        if let top = topGlass { view.bringSubviewToFront(top) }
+        if let cap = bottomCapsule { view.bringSubviewToFront(cap) }
+        if let fab = fabButton { view.bringSubviewToFront(fab) }
+        placeholderVCs[page] = vc
+        return vc
     }
 
-    private func hideNativeFeed() {
-        feedVC?.view.isHidden = true
-        feedVisible = false
-        // 用户已离开列表：启动同步作废（别在首推到达时把人从别的页拽回首页）
-        pendingHomeSync = false
-        updateDesktopLayout()
+    /// 登录占位：modal 全屏 + 导航栏关闭钮（与顶栏登录同一个占位；人机验证方案等用户定，批一不碰）。
+    private func presentLoginPlaceholder() {
+        let vc = BearyPlaceholderViewController(title: "登录")
+        let nav = UINavigationController(rootViewController: vc)
+        nav.modalPresentationStyle = .fullScreen
+        vc.navigationItem.leftBarButtonItem = UIBarButtonItem(title: "关闭", style: .plain, target: self, action: #selector(didTapLoginClose))
+        present(nav, animated: true)
+    }
+
+    @objc private func didTapLoginClose() {
+        dismiss(animated: true)
     }
 
     private func presentDetail(entryId: String, initialEntry: Entry?) {
         let d = BearyEntryDetailViewController(entryId: entryId, initialEntry: initialEntry)
         d.title = "日记"
-        d.onOpenInWeb = { [weak self] in
-            self?.dismiss(animated: true) {
-                // 原实现漏了这一步：只关 modal 不藏列表，网页单篇会在列表后面加载、用户看不到。
-                // 现在先藏列表再载网页单篇，与发帖后回时间线（hideNativeFeed + goTab）同口径。
-                self?.hideNativeFeed()
-                self?.navigator.open(.entry(entryId))
-            }
-        }
         d.onRequireLogin = { [weak self] in
             self?.dismiss(animated: true) {
-                self?.hideNativeFeed()
-                self?.evalNav("login()")
+                self?.presentLoginPlaceholder()
             }
         }
-        presentedEntryId = entryId
         let nav = UINavigationController(rootViewController: d)
         nav.modalPresentationStyle = .fullScreen
         // 第三项：左边缘右滑返回（关闭按钮保留；transitioningDelegate 弱引用，edgeDismiss 强持有到 dismiss 完成）
@@ -546,46 +505,31 @@ final class BearyChromeViewController: CAPBridgeViewController {
         nav.transitioningDelegate = edge
         edgeDismiss = edge
         d.navigationItem.leftBarButtonItem = UIBarButtonItem(title: "关闭", style: .plain, target: self, action: #selector(didTapDetailClose))
-        d.navigationItem.rightBarButtonItem = UIBarButtonItem(title: "网页打开", style: .plain, target: self, action: #selector(didTapDetailWeb))
         present(nav, animated: true)
     }
 
     @objc private func didTapDetailClose() {
-        presentedEntryId = nil
         dismiss(animated: true)
     }
 
-    @objc private func didTapDetailWeb() {
-        let id = presentedEntryId
-        presentedEntryId = nil
-        dismiss(animated: true) { [weak self] in
-            self?.hideNativeFeed()
-            if let id = id { self?.navigator.open(.entry(id)) }
-        }
-    }
-
     private func presentComposer() {
-        // 未登录走网页写按钮：网页会先弹登录；原生编辑器只接已登录态
+        // 未登录不再走网页登录，弹原生登录占位；原生编辑器只接已登录态
         guard SessionManager.shared.isLoggedIn else {
-            // 与登录/搜索按钮同理：先藏列表，否则网页编辑器在列表后面打不开在眼前
-            hideNativeFeed()
-            evalNav("write()")
+            presentLoginPlaceholder()
             return
         }
         let c = BearyComposerViewController()
         c.onPublished = { [weak self] _ in
             self?.dismiss(animated: true) {
-                // 网页发帖落点是时间线：原生发帖同样回时间线，顺带刷新原生列表备下次回首页
-                self?.hideNativeFeed()
+                // 发帖落点是原生时间线占位（批二换真时间线时落点不变），顺带刷新原生列表备下次回首页
+                self?.showPage(.timeline)
                 self?.feedVC?.refreshAll()
-                self?.navigator.goTab("timeline")
             }
         }
         c.onCancelled = { [weak self] in self?.dismiss(animated: true) }
         c.onRequireLogin = { [weak self] in
             self?.dismiss(animated: true) {
-                self?.hideNativeFeed()
-                self?.evalNav("login()")
+                self?.presentLoginPlaceholder()
             }
         }
         // 宽 ≥821 时居中 640 模态（对应网页编辑器 ≥821px 居中 640px；第三项的 540 窄框已废除）；
@@ -618,7 +562,7 @@ final class BearyChromeViewController: CAPBridgeViewController {
     /// 底栏胶囊与 FAB 不参与本函数：iPad 端与 iPhone 完全一致，走原有栏显隐逻辑。
     private func updateDesktopLayout() {
         guard feedVC != nil else { return }
-        let wantDesktop = feedVisible && isDesktopLayout()
+        let wantDesktop = currentPage == .home && isDesktopLayout()
         if wantDesktop == desktopActive { return }
         desktopActive = wantDesktop
         if wantDesktop {

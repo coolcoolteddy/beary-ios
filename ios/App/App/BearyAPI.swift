@@ -4,7 +4,7 @@ import Foundation
 // 后端：Cloudflare Workers（teddy-beary + teddy-accounts-v2），无需重写数据库。
 // 约定：
 // - 所有请求带 Origin: https://teddyhn.com（写接口 CSRF 校验要求；读接口无害）。
-// - 会话 cookie teddy_session 走共享 HTTPCookieStorage，与 WKWebView 之间由 SessionManager 同步。
+// - 会话 cookie teddy_session 走共享 HTTPCookieStorage，由 SessionManager 原生侧独占（批一删网页同步）。
 // - 分页一律游标式（before + before_id），与网页端同口径；服务端排序 created_at DESC, id DESC。
 // - 模型字段全部 optional：服务端增减字段不断解码；调用方用 ?? 兜底。
 

@@ -31,6 +31,7 @@
 		A46569900EDF7A6299450A3E /* BearyDraftFiles.swift in Sources */ = {isa = PBXBuildFile; fileRef = 55657C85F900B6AAC4EBF6D1 /* BearyDraftFiles.swift */; };
 		2E336A1F3CBED468CAD5D554 /* BearyEdgeDismiss.swift in Sources */ = {isa = PBXBuildFile; fileRef = DFB7CEC22AB4833567716062 /* BearyEdgeDismiss.swift */; };
 		CC36F03F3B9948ACA0371634 /* BearyCenteredModal.swift in Sources */ = {isa = PBXBuildFile; fileRef = DF72F9D9B2F74A28879E58DD /* BearyCenteredModal.swift */; };
+		FE6E29AFED3B5E04593AB59C /* BearyPlaceholderViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = AC51784211948B3A8F2F516E /* BearyPlaceholderViewController.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -59,6 +60,7 @@
 		55657C85F900B6AAC4EBF6D1 /* BearyDraftFiles.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BearyDraftFiles.swift; sourceTree = "<group>"; };
 		DFB7CEC22AB4833567716062 /* BearyEdgeDismiss.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BearyEdgeDismiss.swift; sourceTree = "<group>"; };
 		DF72F9D9B2F74A28879E58DD /* BearyCenteredModal.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BearyCenteredModal.swift; sourceTree = "<group>"; };
+		AC51784211948B3A8F2F516E /* BearyPlaceholderViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BearyPlaceholderViewController.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -114,6 +116,7 @@
 				55657C85F900B6AAC4EBF6D1 /* BearyDraftFiles.swift */,
 				DFB7CEC22AB4833567716062 /* BearyEdgeDismiss.swift */,
 				DF72F9D9B2F74A28879E58DD /* BearyCenteredModal.swift */,
+				AC51784211948B3A8F2F516E /* BearyPlaceholderViewController.swift */,
 				50379B222058CBB4000EE86E /* capacitor.config.json */,
 				504EC3071FED79650016851F /* AppDelegate.swift */,
 				504EC30B1FED79650016851F /* Main.storyboard */,
@@ -244,6 +247,7 @@
 				A46569900EDF7A6299450A3E /* BearyDraftFiles.swift in Sources */,
 				2E336A1F3CBED468CAD5D554 /* BearyEdgeDismiss.swift in Sources */,
 				CC36F03F3B9948ACA0371634 /* BearyCenteredModal.swift in Sources */,
+				FE6E29AFED3B5E04593AB59C /* BearyPlaceholderViewController.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

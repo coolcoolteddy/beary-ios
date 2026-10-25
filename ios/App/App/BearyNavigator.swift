@@ -1,10 +1,9 @@
 import Foundation
-import WebKit
 
-// ===== 原生导航协调器（第一阶段）=====
-// Route 是全 App 统一的页面地址；第二阶段起逐页把 open() 的实现从“走网页”换成原生页面，
-// 调用方不用改。现阶段：tab/搜索/写日记走现有 __bearyNav；单篇/用户走网页深链加载
-// （网页启动时会按地址打开对应页，与 pgGo 历史模型一致）。
+// ===== 原生导航协调器（第一阶段；批一改原生路由）=====
+// Route 是全 App 统一的页面地址；协调器不再持有网页视图、不执行任何 JS、不加载任何地址，
+// 只把路由交给容器 handler（批一：tab → 原生页切换，单篇 → 原生详情，编辑器 → 原生编辑器）。
+// webURL 保留：它是纯值地址构造（测试断言在用），批一不再有任何调用点加载它。
 
 enum BearyRoute: Equatable {
     case home
@@ -41,7 +40,7 @@ enum BearyRoute: Equatable {
         return nil
     }
 
-    /// 原生页面接管前，路由对应的网页地址（深链回退用）。
+    /// 路由对应的网页地址（纯值构造，测试断言在用；批一不再有任何调用点加载它）。
     var webURL: URL? {
         switch self {
         case .home: return URL(string: "https://teddyhn.com/beary")
@@ -58,32 +57,24 @@ enum BearyRoute: Equatable {
 }
 
 final class BearyNavigationCoordinator {
-    private let webViewProvider: () -> WKWebView?
-    private let performJS: (String) -> Void
+    private let handler: (BearyRoute) -> Void
 
-    init(webViewProvider: @escaping () -> WKWebView?, performJS: @escaping (String) -> Void) {
-        self.webViewProvider = webViewProvider
-        self.performJS = performJS
+    init(handler: @escaping (BearyRoute) -> Void) {
+        self.handler = handler
     }
 
-    /// 底栏 tab（与网页 bnavGo 同口径；第二阶段起逐个换成原生页面）。
+    /// 底栏 tab（键与原网页 bnavGo 同名，批一直接映射到原生页）。
     func goTab(_ key: String) {
-        performJS("go('\(key)')")
+        switch key {
+        case "home": handler(.home)
+        case "notif": handler(.notifications)
+        case "timeline": handler(.timeline)
+        case "me": handler(.profile)
+        default: break
+        }
     }
 
     func open(_ route: BearyRoute) {
-        switch route {
-        case .home: goTab("home")
-        case .notifications: goTab("notif")
-        case .timeline: goTab("timeline")
-        case .profile: goTab("me")
-        case .search: performJS("search()")
-        case .editor: performJS("write()")
-        case .entry, .userByHandle, .userById:
-            // 第一阶段：深链仍走网页加载；第二阶段原生详情页接管后改这里。
-            if let url = route.webURL {
-                webViewProvider()?.load(URLRequest(url: url))
-            }
-        }
+        handler(route)
     }
 }

@@ -12,7 +12,6 @@ enum BearyDetailScrollStore {
 
 class BearyEntryDetailViewController: UIViewController {
 
-    var onOpenInWeb: (() -> Void)?
     var onRequireLogin: (() -> Void)?
 
     private var entryId: String
@@ -52,8 +51,6 @@ class BearyEntryDetailViewController: UIViewController {
 
     private let emoteScrollView = UIScrollView()
     private let emoteStack = UIStackView()
-
-    private let openInWebButton = UIButton(type: .system)
 
     private let stateStack = UIStackView()
     private let loadingIndicator = UIActivityIndicatorView(style: .medium)
@@ -217,19 +214,6 @@ class BearyEntryDetailViewController: UIViewController {
         ])
         stackView.addArrangedSubview(emoteScrollView)
 
-        // 在网页中打开
-        openInWebButton.translatesAutoresizingMaskIntoConstraints = false
-        openInWebButton.setTitle("在网页中打开", for: .normal)
-        openInWebButton.setTitleColor(BearyColors.blue, for: .normal)
-        openInWebButton.titleLabel?.font = UIFont.systemFont(ofSize: 15)
-        openInWebButton.backgroundColor = BearyColors.faint
-        openInWebButton.layer.cornerRadius = 10
-        openInWebButton.clipsToBounds = true
-        NSLayoutConstraint.activate([
-            openInWebButton.heightAnchor.constraint(equalToConstant: 44),
-        ])
-        stackView.addArrangedSubview(openInWebButton)
-
         // 加载 / 失败态
         stateStack.axis = .vertical
         stateStack.spacing = 16
@@ -266,7 +250,6 @@ class BearyEntryDetailViewController: UIViewController {
     private func setupActions() {
         likeButton.addTarget(self, action: #selector(likeTapped), for: .touchUpInside)
         bookmarkButton.addTarget(self, action: #selector(bookmarkTapped), for: .touchUpInside)
-        openInWebButton.addTarget(self, action: #selector(openInWebTapped), for: .touchUpInside)
         retryButton.addTarget(self, action: #selector(retryTapped), for: .touchUpInside)
     }
 
@@ -325,10 +308,6 @@ class BearyEntryDetailViewController: UIViewController {
 
     @objc private func retryTapped() {
         fetchEntry()
-    }
-
-    @objc private func openInWebTapped() {
-        onOpenInWeb?()
     }
 
     // MARK: - 渲染
