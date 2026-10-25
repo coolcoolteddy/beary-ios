@@ -65,10 +65,8 @@ final class BearyChromeViewController: UIViewController {
     private var currentStatusBarStyle: UIStatusBarStyle = .default
     override var preferredStatusBarStyle: UIStatusBarStyle { currentStatusBarStyle }
     // 边缘返回：transitioningDelegate 是弱引用，必须强持有到 dismiss 完成
+    // （详情 nav 用它；iPhone 编辑器已改底 sheet，不再用边缘返回，故不与详情共用持有）
     private var edgeDismiss: BearyEdgeDismissController?
-    /// 编辑态编辑器的边缘返回：独立强持有——详情 nav 的 edge delegate 还活着，
-    /// 编辑器若复用 edgeDismiss 会把详情的 delegate 顶掉，详情关闭后手势会断。
-    private var editEdgeDismiss: BearyEdgeDismissController?
     // 桌面式布局（宽 ≥821，与网页 @media 断点一致）：内容列 600 居中；iPhone 式（宽 ≤820）全宽列。
     // 分栏已整体撤除，不留分栏状态；底栏胶囊与 FAB 在 iPad 端与 iPhone 完全一致，走原有栏显隐逻辑。
     private var feedLeadingConstraint: NSLayoutConstraint?
@@ -79,6 +77,8 @@ final class BearyChromeViewController: UIViewController {
     private var desktopActive = false
     /// 居中 640 编辑器模态的 transitioningDelegate（弱引用，必须强持有到 dismiss 完成，与 edgeDismiss 同口径）
     private var centeredModal: BearyCenteredTransitioningDelegate?
+    /// iPhone 底 sheet 编辑器模态的 transitioningDelegate（弱引用，强持有口径同 centeredModal）
+    private var composerSheet: BearyComposerSheetTransitioningDelegate?
 
     private var ink: UIColor { UIColor { t in t.userInterfaceStyle == .dark ? UIColor(white: 0.96, alpha: 1) : .black } }
     private var gray: UIColor { UIColor { t in t.userInterfaceStyle == .dark ? UIColor(white: 0.66, alpha: 1) : UIColor(white: 0.45, alpha: 1) } }
@@ -169,7 +169,7 @@ final class BearyChromeViewController: UIViewController {
         let topStack = UIStackView(arrangedSubviews: [logo, spacer, login, search, gift, avatar])
         topStack.axis = .horizontal
         topStack.alignment = .center
-        topStack.spacing = 8
+        topStack.spacing = 18
         topStack.translatesAutoresizingMaskIntoConstraints = false
         top.contentView.addSubview(topStack)
         NSLayoutConstraint.activate([
@@ -222,13 +222,15 @@ final class BearyChromeViewController: UIViewController {
             tabButtons.append(b)
         }
         // 未读角标：挂在消息钮右上角，底色一律蓝；批一无通知接口，默认隐藏，批二接通知接口后再驱动。
+        // 对齐网页 .bnav-badge：最小 17、10 粗体、图标右上 top -5 / right -9。
+        // 原生铃铛图 25pt 居中于钮内，换算为钮中心偏移：横向 +13（25/2 + 9 - 17/2）、纵向 -9（-(25/2 + 5 - 17/2)）。
         let badge = UILabel()
-        badge.font = UIFontMetrics.default.scaledFont(for: .boldSystemFont(ofSize: 11))
+        badge.font = UIFontMetrics.default.scaledFont(for: .boldSystemFont(ofSize: 10))
         badge.adjustsFontForContentSizeCategory = true
         badge.textColor = .white
         badge.backgroundColor = bearyBlue
         badge.textAlignment = .center
-        badge.layer.cornerRadius = 8
+        badge.layer.cornerRadius = 8.5
         badge.clipsToBounds = true
         badge.isHidden = true
         badge.translatesAutoresizingMaskIntoConstraints = false
@@ -236,10 +238,10 @@ final class BearyChromeViewController: UIViewController {
         notifButton.addSubview(badge)
         bellBadge = badge
         NSLayoutConstraint.activate([
-            badge.heightAnchor.constraint(greaterThanOrEqualToConstant: 16),
-            badge.widthAnchor.constraint(greaterThanOrEqualToConstant: 16),
-            badge.centerXAnchor.constraint(equalTo: notifButton.centerXAnchor, constant: 11),
-            badge.centerYAnchor.constraint(equalTo: notifButton.centerYAnchor, constant: -11),
+            badge.heightAnchor.constraint(greaterThanOrEqualToConstant: 17),
+            badge.widthAnchor.constraint(greaterThanOrEqualToConstant: 17),
+            badge.centerXAnchor.constraint(equalTo: notifButton.centerXAnchor, constant: 13),
+            badge.centerYAnchor.constraint(equalTo: notifButton.centerYAnchor, constant: -9),
         ])
         // ---- FAB：橙色实心圆，与网页 .fab 同尺寸同位置 ----
         let fab = UIButton(type: .custom)
@@ -269,8 +271,9 @@ final class BearyChromeViewController: UIViewController {
     override func viewDidLoad() {
         super.viewDidLoad()
         buildChrome()
-        // 初始态按未登录：登录钮显、头像藏；refreshMe 成功后 applyLoginState 再翻转（避免首帧两个钮同时出现）。
+        // 初始态按未登录：登录钮显、头像与礼物钮藏；refreshMe 成功后 applyLoginState 再翻转（避免首帧两个钮同时出现）。
         avatarButton.isHidden = true
+        giftButton.isHidden = true
         // 栏初始即显示（不再等网页首推）；启动落点：直接亮原生列表。
         setBarsVisible(true, animated: false)
         showPage(.home)
@@ -335,10 +338,11 @@ final class BearyChromeViewController: UIViewController {
         }
     }
 
-    /// 登录态 → 顶栏：已登录显头像、藏登录钮；未登录反之。头像沿用原下载逻辑（失败清记账，下次用户变化时重试）。
+    /// 登录态 → 顶栏：已登录显头像与礼物钮、藏登录钮；未登录反之（礼物钮与头像同口径）。
     private func applyLoginState(_ user: MeUser?) {
         loginButton.isHidden = user != nil
         avatarButton.isHidden = user == nil
+        giftButton.isHidden = user == nil
         let avatar = user?.avatar ?? ""
         if user == nil {
             avatarURLString = nil
@@ -391,9 +395,14 @@ final class BearyChromeViewController: UIViewController {
         if let f = feedVC { return f }
         let f = BearyFeedViewController()
         f.onEntrySelected = { [weak self] entry in
-            guard let id = entry.id else { return }
+            guard let entryId = entry.id else { return }
             // 点卡片一律全屏 modal 详情（分栏已撤，不再有窗格分支）
-            self?.presentDetail(entryId: id, initialEntry: entry)
+            self?.presentDetail(entryId: entryId, initialEntry: entry)
+        }
+        // 收尾补线（总协调）：Feed 卡片内点赞/收藏未登录时走登录占位，与详情/编辑器同口径；
+        // Feed 是底层常驻页、无需先 dismiss，直接 present 占位页。
+        f.onRequireLogin = { [weak self] in
+            self?.presentLoginPlaceholder()
         }
         addChild(f)
         f.view.translatesAutoresizingMaskIntoConstraints = false
@@ -425,10 +434,14 @@ final class BearyChromeViewController: UIViewController {
     }
 
     /// 原生页切换：首页是常驻原生列表（hide/show 保留滚动位置），其余页是懒建的占位页（同样常驻）。
-    /// 重拍当前 tab：首页回顶（与原 topThen 同口径），占位页无操作。
+    /// 重拍当前 tab：首页先回顶再刷新（与网页 topThen 同口径：回顶后调 Feed 侧 refreshFeed），占位页无操作。
     private func showPage(_ page: ContainerPage) {
         if page == currentPage {
-            if page == .home { feedVC?.scrollToTop() }
+            if page == .home {
+                guard let feed = feedVC else { return }
+                feed.scrollToTop()
+                feed.refreshFeed()
+            }
             return
         }
         if currentPage == .home {
@@ -549,8 +562,9 @@ final class BearyChromeViewController: UIViewController {
     }
 
     /// 新建与编辑共用：宽 ≥821 时居中 640 模态（对应网页编辑器 ≥821px 居中 640px）；
-    /// ≤820 时仍全屏 + 边缘返回。编辑态用独立的 editEdgeDismiss 强持有——详情 nav 的
-    /// edge delegate 还活着，编辑器若复用 edgeDismiss 会把详情的 delegate 顶掉。
+    /// 宽 ≤820 时改回底 sheet（对应网页编辑器手机端 88vh 底 sheet：带抓手、0.45 遮罩、
+    /// 下滑可关闭，取消仍走编辑器自身取消流程）。forEdit 仅保留参数位（两模式同路径，
+    /// 不再按编辑态分 edge 持有——底 sheet 不碰详情的 edge delegate）。
     private func configureComposerPresentation(_ composer: BearyComposerViewController, forEdit: Bool) {
         if view.bounds.width >= 821 {
             let centered = BearyCenteredTransitioningDelegate()
@@ -558,15 +572,10 @@ final class BearyChromeViewController: UIViewController {
             composer.transitioningDelegate = centered
             centeredModal = centered
         } else {
-            composer.modalPresentationStyle = .fullScreen
-            let edge = BearyEdgeDismissController()
-            edge.attach(to: composer)
-            composer.transitioningDelegate = edge
-            if forEdit {
-                editEdgeDismiss = edge
-            } else {
-                edgeDismiss = edge
-            }
+            let sheet = BearyComposerSheetTransitioningDelegate()
+            composer.modalPresentationStyle = .custom
+            composer.transitioningDelegate = sheet
+            composerSheet = sheet
         }
     }
 
@@ -639,3 +648,178 @@ final class BearyChromeViewController: UIViewController {
 }
 
 
+
+// MARK: - iPhone 编辑器底 sheet（宽 ≤820，对应网页 #editorModal 手机端）
+// 网页形态：88vh 高、底 sheet、顶部圆角 20、抓手 40×4、遮罩 0.45。
+// 抓手与下滑关闭由本 presentation controller 提供，不改编辑器本体；遮罩点击不关闭，
+// 取消仍走编辑器自身取消流程（含草稿保留/丢弃三选）。颜色只用 BearyColors：
+// 遮罩为 scrim 降 alpha 至 0.45，抓手为 line（网页 .sheet-handle 用 --line）。
+// reduced-motion：进出动画时长 0，见 BearyComposerSheetAnimator；下滑松手回弹亦直接复位。
+
+final class BearyComposerSheetTransitioningDelegate: NSObject, UIViewControllerTransitioningDelegate {
+    func presentationController(forPresented presented: UIViewController, presenting: UIViewController?, source: UIViewController) -> UIPresentationController? {
+        return BearyComposerSheetPresentationController(presentedViewController: presented, presenting: presenting)
+    }
+
+    func animationController(forPresented presented: UIViewController, presenting: UIViewController, source: UIViewController) -> UIViewControllerAnimatedTransitioning? {
+        return BearyComposerSheetAnimator(isPresenting: true)
+    }
+
+    func animationController(forDismissed dismissed: UIViewController) -> UIViewControllerAnimatedTransitioning? {
+        return BearyComposerSheetAnimator(isPresenting: false)
+    }
+}
+
+private final class BearyComposerSheetPresentationController: UIPresentationController {
+    private let dimmingView = UIView()
+    private let grabberStrip = UIView()
+    private let grabberPill = UIView()
+    private var grabberInstalled = false
+    private var sheetHeight: CGFloat = 0
+
+    override var frameOfPresentedViewInContainerView: CGRect {
+        guard let container = containerView else { return .zero }
+        let bounds = container.bounds
+        let height = bounds.height * 0.88
+        return CGRect(x: 0, y: bounds.height - height, width: bounds.width, height: height)
+    }
+
+    override func presentationTransitionWillBegin() {
+        guard let container = containerView else { return }
+        dimmingView.backgroundColor = BearyColors.scrim.withAlphaComponent(0.45)
+        dimmingView.alpha = 0
+        dimmingView.translatesAutoresizingMaskIntoConstraints = false
+        container.addSubview(dimmingView)
+        NSLayoutConstraint.activate([
+            dimmingView.topAnchor.constraint(equalTo: container.topAnchor),
+            dimmingView.bottomAnchor.constraint(equalTo: container.bottomAnchor),
+            dimmingView.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+            dimmingView.trailingAnchor.constraint(equalTo: container.trailingAnchor),
+        ])
+        // 给编辑器顶栏留 28pt 抓手条：顶栏贴 safeArea 顶，顶起后抓手不压取消/标题。
+        presentedViewController.additionalSafeAreaInsets = UIEdgeInsets(top: 28, left: 0, bottom: 0, right: 0)
+        if UIAccessibility.isReduceMotionEnabled {
+            dimmingView.alpha = 1
+        } else if let coordinator = presentedViewController.transitionCoordinator {
+            coordinator.animate(alongsideTransition: { _ in self.dimmingView.alpha = 1 }, completion: nil)
+        } else {
+            dimmingView.alpha = 1
+        }
+    }
+
+    override func dismissalTransitionWillBegin() {
+        if UIAccessibility.isReduceMotionEnabled {
+            dimmingView.alpha = 0
+        } else if let coordinator = presentedViewController.transitionCoordinator {
+            coordinator.animate(alongsideTransition: { _ in self.dimmingView.alpha = 0 }, completion: nil)
+        } else {
+            dimmingView.alpha = 0
+        }
+    }
+
+    override func dismissalTransitionDidEnd(_ completed: Bool) {
+        if completed {
+            presentedViewController.additionalSafeAreaInsets = UIEdgeInsets(top: 0, left: 0, bottom: 0, right: 0)
+        }
+    }
+
+    override func containerViewWillLayoutSubviews() {
+        super.containerViewWillLayoutSubviews()
+        guard let presentedView = presentedView else { return }
+        let frame = frameOfPresentedViewInContainerView
+        presentedView.frame = frame
+        sheetHeight = frame.height
+        presentedView.layer.cornerRadius = 20
+        presentedView.layer.maskedCorners = [.layerMinXMinYCorner, .layerMaxXMinYCorner]
+        presentedView.clipsToBounds = true
+        // 抓手挂在 sheet 自身 view 顶部，随 sheet 跟手下滑而动；只装一次，帧随布局重算。
+        if grabberInstalled == false {
+            grabberPill.backgroundColor = BearyColors.line
+            grabberPill.layer.cornerRadius = 2
+            grabberStrip.addSubview(grabberPill)
+            let pan = UIPanGestureRecognizer(target: self, action: #selector(handleGrabberPan(_:)))
+            grabberStrip.addGestureRecognizer(pan)
+            presentedView.addSubview(grabberStrip)
+            grabberInstalled = true
+        }
+        grabberStrip.frame = CGRect(x: 0, y: 0, width: presentedView.bounds.width, height: 28)
+        let pillWidth: CGFloat = 40
+        grabberPill.frame = CGRect(x: (presentedView.bounds.width - pillWidth) / 2, y: 12, width: pillWidth, height: 4)
+        presentedView.bringSubviewToFront(grabberStrip)
+    }
+
+    @objc private func handleGrabberPan(_ pan: UIPanGestureRecognizer) {
+        guard let presentedView = presentedView, let container = containerView else { return }
+        let translation = pan.translation(in: container).y
+        switch pan.state {
+        case .changed:
+            let drag = max(0, translation)
+            presentedView.transform = CGAffineTransform(translationX: 0, y: drag)
+            if sheetHeight > 0 {
+                dimmingView.alpha = max(0, 1 - drag / sheetHeight)
+            }
+        case .ended, .cancelled:
+            let velocity = pan.velocity(in: container).y
+            let height = sheetHeight > 0 ? sheetHeight : presentedView.bounds.height
+            if translation > height * 0.25 || velocity > 800 {
+                presentedViewController.dismiss(animated: true)
+            } else {
+                let restore = {
+                    presentedView.transform = .identity
+                    self.dimmingView.alpha = 1
+                }
+                if UIAccessibility.isReduceMotionEnabled {
+                    restore()
+                } else {
+                    UIView.animate(withDuration: 0.3, animations: restore)
+                }
+            }
+        default:
+            break
+        }
+    }
+}
+
+private final class BearyComposerSheetAnimator: NSObject, UIViewControllerAnimatedTransitioning {
+    private let isPresenting: Bool
+
+    init(isPresenting: Bool) {
+        self.isPresenting = isPresenting
+        super.init()
+    }
+
+    func transitionDuration(using transitionContext: UIViewControllerContextTransitioning?) -> TimeInterval {
+        return UIAccessibility.isReduceMotionEnabled ? 0 : 0.3
+    }
+
+    func animateTransition(using transitionContext: UIViewControllerContextTransitioning) {
+        let container = transitionContext.containerView
+        let duration = transitionDuration(using: transitionContext)
+        if isPresenting {
+            guard let toView = transitionContext.view(forKey: .to), let toVC = transitionContext.viewController(forKey: .to) else {
+                transitionContext.completeTransition(false)
+                return
+            }
+            container.addSubview(toView)
+            toView.frame = transitionContext.finalFrame(for: toVC)
+            let height = toView.bounds.height
+            toView.transform = CGAffineTransform(translationX: 0, y: height)
+            UIView.animate(withDuration: duration, animations: {
+                toView.transform = .identity
+            }, completion: { _ in
+                transitionContext.completeTransition(transitionContext.transitionWasCancelled == false)
+            })
+        } else {
+            guard let fromView = transitionContext.view(forKey: .from) else {
+                transitionContext.completeTransition(false)
+                return
+            }
+            let height = container.bounds.height
+            UIView.animate(withDuration: duration, animations: {
+                fromView.transform = CGAffineTransform(translationX: 0, y: height)
+            }, completion: { _ in
+                transitionContext.completeTransition(transitionContext.transitionWasCancelled == false)
+            })
+        }
+    }
+}

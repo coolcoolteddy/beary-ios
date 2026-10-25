@@ -1,13 +1,35 @@
 import UIKit
 import PhotosUI
 
-// ===== beary 原生编辑器（第二阶段 + 主线闭环第一块）=====
+// ===== beary 原生编辑器（第二阶段 + 主线闭环第一块 + 网页对齐批）=====
 // 只负责写日记：正文 + 心情 + 天气 + 写给 + 引用 + 图片（上限 9 张）。
 // 编辑模式复用同一界面：正文/心情/天气/图片可改，写给与引用锁定不可改，
 // 不走新日记草稿流（不读不写 beary_draft_v2、不复用新篇 client_req）。
+// 段落顺序按网页版：正文 → 图片预览 → 工具栏 → 附加选项（收起）→ 天气 → 状态行
+// → 写给 → 心情 → 引用 → 规则框；天气/写给/心情三区收进附加选项栏（默认收起）。
 // 约束：部署目标 iOS 15.0、Swift 5.0——只用闭包回调，不用 async/await，不用 if-let 简写。
 // 文案一律中文；深浅色一律用 BearyColors 的动态色（含语义红 red 与图片上深色衬底 scrim）。
 // 网络数据一律不用 force unwrap；图片移除只动本地与 key 列表，不调服务端。
+
+// MARK: - 天气图标契约（Feed 与 Detail 共用，名字与映射固定，勿改）
+
+/// 天气 key → SF Symbol 名；未列出的 key 一律回退 cloud。
+enum BearyWeatherIcon {
+    static func systemName(for key: String) -> String {
+        switch key {
+        case "sun": return "sun.max"
+        case "cloud": return "cloud"
+        case "cloudy": return "cloud.fill"
+        case "rain": return "cloud.rain"
+        case "snow": return "cloud.snow"
+        case "fog": return "cloud.fog"
+        case "thunder": return "cloud.bolt"
+        case "wind": return "wind"
+        case "night": return "moon.stars"
+        default: return "cloud"
+        }
+    }
+}
 
 final class BearyComposerViewController: UIViewController, UITextViewDelegate, PHPickerViewControllerDelegate {
 
@@ -57,11 +79,15 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         "sun", "cloud", "cloudy", "rain", "snow", "fog", "thunder", "wind", "night",
     ]
 
-    /// 引用纸片状态：只存展示用的三字段（id/content/createdAt），不存整条 Entry。
+    /// 引用 lite 卡状态：展示用字段（作者/头像/图片/是否公开供 lite 卡用），不存整条 Entry。
     private struct SelectedQuote {
         let entryId: String
         let content: String
         let createdAt: Int?
+        let authorName: String?
+        let authorAvatar: String?
+        let images: [String]
+        let isPublic: Bool?
     }
 
     private static let maxLength = 2000
@@ -85,11 +111,24 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     private var isPublishing = false
     private var didAutoFocus = false
     private var draftTimer: Timer?
+    private var editTimer: Timer?
     private var imageItems: [ComposerImageItem] = []
-    private var moodButtons: [(key: String, button: UIButton)] = []
+    /// 心情条单项：按钮 + 44 圆环 + 环内熊图 + 环内缺图回退名 + 下方名。
+    private var moodItems: [(key: String, button: UIButton, ringView: UIView, emoteView: UIImageView, fallbackLabel: UILabel, nameLabel: UILabel)] = []
     private var weatherButtons: [(key: String, button: UIButton)] = []
+    /// 附加选项栏是否展开（默认收起；展开时才显示天气/写给/心情三区）。
+    private var extrasExpanded = false
+    /// 草稿保存级别：nil=未显示；2=草稿已保存；1=文字已保存，图片未保存；0=保存失败（红字）。
+    private var draftStatusLevel: Int?
+    /// 引用内嵌面板状态：当前 tab（timeline/liked/saved）与每 tab 缓存、加载序号。
+    private var quotePanelOpen = false
+    private var quotePanelTab = "timeline"
+    private var quotePanelCache: [String: [Entry]] = [:]
+    private var quotePanelSeq = 0
+    private var quotePanelLoading = false
+    private var quotePanelFailed = false
 
-    // MARK: - 视图
+    // MARK: - 视图（段落顺序即网页版顺序，见文件头注释）
 
     private let topBar = UIView()
     private let cancelButton = UIButton(type: .system)
@@ -98,33 +137,76 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     private let topSeparator = UIView()
     private let scrollView = UIScrollView()
     private let contentView = UIView()
+    private let contentStack = UIStackView()
     private let textView = UITextView()
     private let placeholderLabel = UILabel()
-    private let countLabel = UILabel()
-    private let moodTitleLabel = UILabel()
-    private let moodScrollView = UIScrollView()
-    private let moodStackView = UIStackView()
-    private let weatherTitleLabel = UILabel()
+    // 图片预览（无标题、无 + 块；空时整条隐藏，添加走工具栏图片钮）
+    private let imageScrollView = UIScrollView()
+    private let imageStackView = UIStackView()
+    // 工具栏：图片/天气/引用图标钮 + 草稿 pill（编辑模式无草稿 pill、引用钮隐藏）
+    private let toolbarContainer = UIView()
+    private let toolbarSeparator = UIView()
+    private let imageToolButton = UIButton(type: .system)
+    private let weatherToolButton = UIButton(type: .system)
+    private let quoteToolButton = UIButton(type: .system)
+    private let draftPillButton = UIButton(type: .system)
+    // 附加选项栏（默认收起）
+    private let extrasBarContainer = UIView()
+    private let extrasSummaryLabel = UILabel()
+    private let extrasChevronImageView = UIImageView()
+    private let extrasBarButton = UIButton(type: .system)
+    // 天气（图标 + 名 chip，首项“无”，选中墨色边框）
     private let weatherScrollView = UIScrollView()
     private let weatherStackView = UIStackView()
-    private let recipientRow = UIView()
-    private let recipientLabel = UILabel()
+    // 状态行：编辑倒计时 + 草稿状态 + 字数圆环
+    private let statusRow = UIStackView()
+    private let editTimerLabel = UILabel()
+    private let draftStatusLabel = UILabel()
+    private let charRingView = UIView()
+    private let charCountLabel = UILabel()
+    private var charTrackLayer: CAShapeLayer?
+    private var charProgressLayer: CAShapeLayer?
+    // 写给（@ 图标 + “写给某个人”钮 / chip + 通知行）
+    private let recipientSection = UIStackView()
+    private let recipientLine = UIStackView()
+    private let recipientAtIcon = UIImageView()
     private let recipientPickButton = UIButton(type: .system)
+    private let recipientChipView = UIView()
+    private let recipientChipAvatar = UIImageView()
+    private let recipientChipFallback = UILabel()
+    private let recipientChipName = UILabel()
     private let recipientClearButton = UIButton(type: .system)
     private let notifyGroup = UIStackView()
     private let notifyCheckButton = UIButton(type: .system)
     private let notifyLabel = UILabel()
+    // 心情（熊图条 + 动态标题“心情 · <选中名>”）
+    private let moodSection = UIStackView()
+    private let moodTitleLabel = UILabel()
+    private let moodScrollView = UIScrollView()
+    private let moodStackView = UIStackView()
+    // 引用（挑钮 / lite 卡）+ 内嵌展开面板
     private let quoteSection = UIStackView()
     private let pickQuoteButton = UIButton(type: .system)
     private let quoteCard = UIView()
+    private let quoteAvatarImageView = UIImageView()
+    private let quoteAvatarFallback = UILabel()
+    private let quoteNameLabel = UILabel()
+    private let quoteDeliveringPill = UILabel()
     private let quoteContentLabel = UILabel()
     private let quoteDateLabel = UILabel()
+    private let quoteImagesScrollView = UIScrollView()
+    private let quoteImagesStackView = UIStackView()
     private let quoteRemoveButton = UIButton(type: .system)
-    private let imageTitleLabel = UILabel()
-    private let imageScrollView = UIScrollView()
-    private let imageStackView = UIStackView()
-    private let addImageContainer = UIView()
-    private let addImageButton = UIButton(type: .system)
+    private let quotePanel = UIView()
+    private let quoteSegmentedControl = UISegmentedControl(items: ["我的日记", "赞过的", "收藏的"])
+    private let quotePanelSpinner = UIActivityIndicatorView(style: .medium)
+    private let quotePanelEmptyLabel = UILabel()
+    private let quotePanelRetryButton = UIButton(type: .system)
+    private let quotePanelRows = UIStackView()
+    // 规则框
+    private let ruleBoxView = UIView()
+    private let ruleIconImageView = UIImageView()
+    private let ruleLabel = UILabel()
 
     // MARK: - 生命周期
 
@@ -134,11 +216,16 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         buildLayout()
         buildTopBar()
         buildTextArea()
-        buildMoodRow()
-        buildWeatherRow()
-        buildRecipientRow()
-        buildQuoteSection()
         buildImageRow()
+        buildToolbarRow()
+        buildExtrasBar()
+        buildWeatherRow()
+        buildStatusRow()
+        buildRecipientRow()
+        buildMoodRow()
+        buildQuoteSection()
+        buildQuotePanel()
+        buildRuleBox()
         if isEditMode {
             setupEditContent()
         } else {
@@ -146,9 +233,19 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         }
         updateCountLabel()
         updatePublishState()
+        refreshExtras()
+        updateDraftPillCount()
         NotificationCenter.default.addObserver(self, selector: #selector(keyboardWillShow(_:)), name: UIResponder.keyboardWillShowNotification, object: nil)
         NotificationCenter.default.addObserver(self, selector: #selector(keyboardWillHide(_:)), name: UIResponder.keyboardWillHideNotification, object: nil)
         NotificationCenter.default.addObserver(self, selector: #selector(keyboardWillChangeFrame(_:)), name: UIResponder.keyboardWillChangeFrameNotification, object: nil)
+    }
+
+    override func traitCollectionDidChange(_ previousTraitCollection: UITraitCollection?) {
+        super.traitCollectionDidChange(previousTraitCollection)
+        // 深浅切换时熊图变体（-w）也要换：只刷新环内图，不重建条。
+        if previousTraitCollection?.userInterfaceStyle != traitCollection.userInterfaceStyle {
+            refreshMoodImages()
+        }
     }
 
     override func viewDidAppear(_ animated: Bool) {
@@ -167,18 +264,26 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
 
     deinit {
         draftTimer?.invalidate()
+        editTimer?.invalidate()
         NotificationCenter.default.removeObserver(self)
     }
 
-    // MARK: - 布局
+    // MARK: - 布局（内容栈顺序即 E6 网页顺序；隐藏的 arranged 子项自动塌掉）
 
     private func buildLayout() {
         topBar.translatesAutoresizingMaskIntoConstraints = false
         scrollView.translatesAutoresizingMaskIntoConstraints = false
         contentView.translatesAutoresizingMaskIntoConstraints = false
+        contentStack.translatesAutoresizingMaskIntoConstraints = false
+        contentStack.axis = .vertical
+        contentStack.spacing = 0
+        contentStack.alignment = .fill
+        contentStack.isLayoutMarginsRelativeArrangement = true
+        contentStack.layoutMargins = UIEdgeInsets(top: 16, left: 16, bottom: 16, right: 16)
         view.addSubview(topBar)
         view.addSubview(scrollView)
         scrollView.addSubview(contentView)
+        contentView.addSubview(contentStack)
         NSLayoutConstraint.activate([
             topBar.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
             topBar.leadingAnchor.constraint(equalTo: view.leadingAnchor),
@@ -193,6 +298,10 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             contentView.trailingAnchor.constraint(equalTo: scrollView.contentLayoutGuide.trailingAnchor),
             contentView.bottomAnchor.constraint(equalTo: scrollView.contentLayoutGuide.bottomAnchor),
             contentView.widthAnchor.constraint(equalTo: scrollView.frameLayoutGuide.widthAnchor),
+            contentStack.topAnchor.constraint(equalTo: contentView.topAnchor),
+            contentStack.leadingAnchor.constraint(equalTo: contentView.leadingAnchor),
+            contentStack.trailingAnchor.constraint(equalTo: contentView.trailingAnchor),
+            contentStack.bottomAnchor.constraint(equalTo: contentView.bottomAnchor),
         ])
     }
 
@@ -200,17 +309,21 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         topBar.backgroundColor = BearyColors.surface
         topSeparator.backgroundColor = BearyColors.line
         cancelButton.setTitle("取消", for: .normal)
-        cancelButton.setTitleColor(BearyColors.blue, for: .normal)
+        cancelButton.setTitleColor(BearyColors.gray, for: .normal)
         cancelButton.titleLabel?.font = UIFont.systemFont(ofSize: 17)
         cancelButton.addTarget(self, action: #selector(didTapCancel), for: .touchUpInside)
-        titleLabel.text = isEditMode ? "编辑日记" : "写日记"
+        titleLabel.text = isEditMode ? "编辑日记" : "新日记"
         titleLabel.font = UIFont.boldSystemFont(ofSize: 17)
         titleLabel.textColor = BearyColors.ink
         titleLabel.textAlignment = .center
+        // 发布：墨底白字 pill + 发送图标（网页 obtn p）；禁用时按网页口径：无底灰字。
         publishButton.setTitle(isEditMode ? "保存" : "发布", for: .normal)
-        publishButton.setTitleColor(BearyColors.orange, for: .normal)
-        publishButton.setTitleColor(BearyColors.gray, for: .disabled)
-        publishButton.titleLabel?.font = UIFont.boldSystemFont(ofSize: 17)
+        publishButton.titleLabel?.font = UIFont.boldSystemFont(ofSize: 16)
+        publishButton.setImage(UIImage(systemName: "paperplane.fill"), for: .normal)
+        publishButton.contentEdgeInsets = UIEdgeInsets(top: 7, left: 14, bottom: 7, right: 14)
+        publishButton.titleEdgeInsets = UIEdgeInsets(top: 0, left: 6, bottom: 0, right: 0)
+        publishButton.layer.cornerRadius = 18
+        publishButton.layer.masksToBounds = true
         publishButton.addTarget(self, action: #selector(didTapPublish), for: .touchUpInside)
         for v in [cancelButton, titleLabel, publishButton, topSeparator] {
             v.translatesAutoresizingMaskIntoConstraints = false
@@ -228,142 +341,208 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             topSeparator.bottomAnchor.constraint(equalTo: topBar.bottomAnchor),
             topSeparator.heightAnchor.constraint(equalToConstant: 0.5),
         ])
+        refreshPublishAppearance()
+    }
+
+    /// 发布钮外观跟随启用态（updatePublishState 只改 isEnabled，这里同步颜色/底色）。
+    private func refreshPublishAppearance() {
+        if publishButton.isEnabled {
+            publishButton.backgroundColor = BearyColors.ink
+            publishButton.setTitleColor(UIColor.white, for: .normal)
+            publishButton.tintColor = UIColor.white
+        } else {
+            publishButton.backgroundColor = UIColor.clear
+            publishButton.setTitleColor(BearyColors.gray, for: .normal)
+            publishButton.tintColor = BearyColors.gray
+        }
     }
 
     private func buildTextArea() {
         textView.delegate = self
         textView.font = UIFont.systemFont(ofSize: 17)
         textView.textColor = BearyColors.ink
-        textView.backgroundColor = BearyColors.faint
-        textView.layer.cornerRadius = 12
-        textView.layer.masksToBounds = true
-        textView.textContainerInset = UIEdgeInsets(top: 12, left: 8, bottom: 12, right: 8)
-        placeholderLabel.text = "写下今天…"
+        // 无框正文：透明底、最小 160、关掉自身滚动后随内容生长（外层 scrollView 滚动）。
+        textView.backgroundColor = UIColor.clear
+        textView.layer.cornerRadius = 0
+        textView.isScrollEnabled = false
+        textView.textContainer.lineFragmentPadding = 0
+        textView.textContainerInset = UIEdgeInsets(top: 12, left: 0, bottom: 12, right: 0)
+        placeholderLabel.text = "记录今天…"
         placeholderLabel.font = UIFont.systemFont(ofSize: 17)
         placeholderLabel.textColor = BearyColors.gray
-        countLabel.font = UIFont.systemFont(ofSize: 13)
-        countLabel.textColor = BearyColors.gray
-        countLabel.textAlignment = .right
-        for v in [textView, placeholderLabel, countLabel] {
-            v.translatesAutoresizingMaskIntoConstraints = false
-        }
-        contentView.addSubview(textView)
+        textView.translatesAutoresizingMaskIntoConstraints = false
+        placeholderLabel.translatesAutoresizingMaskIntoConstraints = false
+        contentStack.addArrangedSubview(textView)
         textView.addSubview(placeholderLabel)
-        contentView.addSubview(countLabel)
         NSLayoutConstraint.activate([
-            textView.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 16),
-            textView.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 16),
-            textView.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -16),
-            textView.heightAnchor.constraint(equalToConstant: 280),
+            textView.heightAnchor.constraint(greaterThanOrEqualToConstant: 160),
             placeholderLabel.topAnchor.constraint(equalTo: textView.topAnchor, constant: 12),
-            placeholderLabel.leadingAnchor.constraint(equalTo: textView.leadingAnchor, constant: 13),
-            placeholderLabel.trailingAnchor.constraint(lessThanOrEqualTo: textView.trailingAnchor, constant: -8),
-            countLabel.topAnchor.constraint(equalTo: textView.bottomAnchor, constant: 8),
-            countLabel.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -16),
-            countLabel.leadingAnchor.constraint(greaterThanOrEqualTo: contentView.leadingAnchor, constant: 16),
+            placeholderLabel.leadingAnchor.constraint(equalTo: textView.leadingAnchor),
+            placeholderLabel.trailingAnchor.constraint(lessThanOrEqualTo: textView.trailingAnchor),
         ])
+        contentStack.setCustomSpacing(12, after: textView)
     }
 
+    // MARK: - 心情（网页 mood-strip：54 宽单项，44 圆环 + 熊图 35 + 10.5 名；
+    // 选中：圆环橙 12% 底 + 橙色描边、名变橙；标题动态带选中名）
+
     private func buildMoodRow() {
-        moodTitleLabel.text = "心情"
-        moodTitleLabel.font = UIFont.systemFont(ofSize: 14)
-        moodTitleLabel.textColor = BearyColors.gray
+        moodSection.axis = .vertical
+        moodSection.spacing = 6
         moodScrollView.showsHorizontalScrollIndicator = false
         moodStackView.axis = .horizontal
-        moodStackView.spacing = 8
-        moodStackView.alignment = .center
-        for v in [moodTitleLabel, moodScrollView, moodStackView] {
-            v.translatesAutoresizingMaskIntoConstraints = false
-        }
-        contentView.addSubview(moodTitleLabel)
-        contentView.addSubview(moodScrollView)
+        moodStackView.spacing = 4
+        moodStackView.alignment = .top
+        moodTitleLabel.translatesAutoresizingMaskIntoConstraints = false
+        moodScrollView.translatesAutoresizingMaskIntoConstraints = false
+        moodStackView.translatesAutoresizingMaskIntoConstraints = false
+        moodSection.addArrangedSubview(moodTitleLabel)
+        moodSection.addArrangedSubview(moodScrollView)
         moodScrollView.addSubview(moodStackView)
+        contentStack.addArrangedSubview(moodSection)
         NSLayoutConstraint.activate([
-            moodTitleLabel.topAnchor.constraint(equalTo: countLabel.bottomAnchor, constant: 20),
-            moodTitleLabel.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 16),
-            moodScrollView.topAnchor.constraint(equalTo: moodTitleLabel.bottomAnchor, constant: 8),
-            moodScrollView.leadingAnchor.constraint(equalTo: contentView.leadingAnchor),
-            moodScrollView.trailingAnchor.constraint(equalTo: contentView.trailingAnchor),
-            moodScrollView.heightAnchor.constraint(equalToConstant: 36),
+            moodScrollView.heightAnchor.constraint(equalToConstant: 62),
             moodStackView.topAnchor.constraint(equalTo: moodScrollView.contentLayoutGuide.topAnchor),
             moodStackView.bottomAnchor.constraint(equalTo: moodScrollView.contentLayoutGuide.bottomAnchor),
-            moodStackView.leadingAnchor.constraint(equalTo: moodScrollView.contentLayoutGuide.leadingAnchor, constant: 16),
-            moodStackView.trailingAnchor.constraint(equalTo: moodScrollView.contentLayoutGuide.trailingAnchor, constant: -16),
+            moodStackView.leadingAnchor.constraint(equalTo: moodScrollView.contentLayoutGuide.leadingAnchor),
+            moodStackView.trailingAnchor.constraint(equalTo: moodScrollView.contentLayoutGuide.trailingAnchor),
             moodStackView.heightAnchor.constraint(equalTo: moodScrollView.frameLayoutGuide.heightAnchor),
         ])
         for key in moodOrder {
-            let button = UIButton(type: .system)
-            button.translatesAutoresizingMaskIntoConstraints = false
             let name = BearyText.moodNames[key] ?? key
-            button.setTitle(name, for: .normal)
-            button.titleLabel?.font = UIFont.systemFont(ofSize: 14)
-            button.contentEdgeInsets = UIEdgeInsets(top: 6, left: 12, bottom: 6, right: 12)
-            button.layer.cornerRadius = 16
-            button.layer.masksToBounds = true
-            button.layer.borderWidth = 1
+            let button = UIButton(type: .custom)
+            button.translatesAutoresizingMaskIntoConstraints = false
+            let ringView = UIView()
+            ringView.translatesAutoresizingMaskIntoConstraints = false
+            ringView.backgroundColor = BearyColors.faint
+            ringView.layer.cornerRadius = 22
+            ringView.layer.masksToBounds = true
+            ringView.layer.borderWidth = 2.5
+            let emoteView = UIImageView()
+            emoteView.translatesAutoresizingMaskIntoConstraints = false
+            emoteView.contentMode = .scaleAspectFit
+            let fallbackLabel = UILabel()
+            fallbackLabel.translatesAutoresizingMaskIntoConstraints = false
+            fallbackLabel.text = name
+            fallbackLabel.font = UIFont.systemFont(ofSize: 11)
+            fallbackLabel.textColor = BearyColors.gray
+            fallbackLabel.textAlignment = .center
+            fallbackLabel.numberOfLines = 2
+            let nameLabel = UILabel()
+            nameLabel.translatesAutoresizingMaskIntoConstraints = false
+            nameLabel.text = name
+            nameLabel.font = UIFont.systemFont(ofSize: 10.5)
+            nameLabel.textColor = BearyColors.gray
+            nameLabel.textAlignment = .center
+            button.addSubview(ringView)
+            button.addSubview(nameLabel)
+            ringView.addSubview(emoteView)
+            ringView.addSubview(fallbackLabel)
+            NSLayoutConstraint.activate([
+                button.widthAnchor.constraint(equalToConstant: 54),
+                ringView.topAnchor.constraint(equalTo: button.topAnchor),
+                ringView.centerXAnchor.constraint(equalTo: button.centerXAnchor),
+                ringView.widthAnchor.constraint(equalToConstant: 44),
+                ringView.heightAnchor.constraint(equalToConstant: 44),
+                emoteView.centerXAnchor.constraint(equalTo: ringView.centerXAnchor),
+                emoteView.centerYAnchor.constraint(equalTo: ringView.centerYAnchor),
+                emoteView.widthAnchor.constraint(equalToConstant: 35),
+                emoteView.heightAnchor.constraint(equalToConstant: 35),
+                fallbackLabel.centerXAnchor.constraint(equalTo: ringView.centerXAnchor),
+                fallbackLabel.centerYAnchor.constraint(equalTo: ringView.centerYAnchor),
+                fallbackLabel.leadingAnchor.constraint(greaterThanOrEqualTo: ringView.leadingAnchor, constant: 4),
+                fallbackLabel.trailingAnchor.constraint(lessThanOrEqualTo: ringView.trailingAnchor, constant: -4),
+                nameLabel.topAnchor.constraint(equalTo: ringView.bottomAnchor, constant: 4),
+                nameLabel.leadingAnchor.constraint(equalTo: button.leadingAnchor),
+                nameLabel.trailingAnchor.constraint(equalTo: button.trailingAnchor),
+                nameLabel.bottomAnchor.constraint(equalTo: button.bottomAnchor),
+            ])
             button.addTarget(self, action: #selector(didTapMood(_:)), for: .touchUpInside)
-            moodButtons.append((key: key, button: button))
+            moodItems.append((key: key, button: button, ringView: ringView, emoteView: emoteView, fallbackLabel: fallbackLabel, nameLabel: nameLabel))
             moodStackView.addArrangedSubview(button)
         }
         refreshMoodButtons()
+        contentStack.setCustomSpacing(12, after: moodSection)
     }
 
-    // MARK: - 天气（与心情行同款横向 chip；选中态是墨色，与网页天气已选态一致）
+    /// 只换环内图（深浅切换时调用，不重建条、不丢选中态）。
+    private func refreshMoodImages() {
+        let dark = traitCollection.userInterfaceStyle == .dark
+        for item in moodItems {
+            if let image = BearyEmoteImages.image(for: item.key, dark: dark) {
+                item.emoteView.image = image
+                item.emoteView.isHidden = false
+                item.fallbackLabel.isHidden = true
+            } else {
+                item.emoteView.image = nil
+                item.emoteView.isHidden = true
+                item.fallbackLabel.isHidden = false
+            }
+        }
+    }
+
+    // MARK: - 天气（图标 + 名 chip；选中墨色边框、无底；首项“无”；再点已选项不取消）
 
     private func buildWeatherRow() {
-        weatherTitleLabel.text = "天气"
-        weatherTitleLabel.font = UIFont.systemFont(ofSize: 14)
-        weatherTitleLabel.textColor = BearyColors.gray
         weatherScrollView.showsHorizontalScrollIndicator = false
         weatherStackView.axis = .horizontal
         weatherStackView.spacing = 8
         weatherStackView.alignment = .center
-        for v in [weatherTitleLabel, weatherScrollView, weatherStackView] {
-            v.translatesAutoresizingMaskIntoConstraints = false
-        }
-        contentView.addSubview(weatherTitleLabel)
-        contentView.addSubview(weatherScrollView)
+        weatherScrollView.translatesAutoresizingMaskIntoConstraints = false
+        weatherStackView.translatesAutoresizingMaskIntoConstraints = false
+        contentStack.addArrangedSubview(weatherScrollView)
         weatherScrollView.addSubview(weatherStackView)
         NSLayoutConstraint.activate([
-            weatherTitleLabel.topAnchor.constraint(equalTo: moodScrollView.bottomAnchor, constant: 20),
-            weatherTitleLabel.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 16),
-            weatherScrollView.topAnchor.constraint(equalTo: weatherTitleLabel.bottomAnchor, constant: 8),
-            weatherScrollView.leadingAnchor.constraint(equalTo: contentView.leadingAnchor),
-            weatherScrollView.trailingAnchor.constraint(equalTo: contentView.trailingAnchor),
-            weatherScrollView.heightAnchor.constraint(equalToConstant: 36),
+            weatherScrollView.heightAnchor.constraint(equalToConstant: 32),
             weatherStackView.topAnchor.constraint(equalTo: weatherScrollView.contentLayoutGuide.topAnchor),
             weatherStackView.bottomAnchor.constraint(equalTo: weatherScrollView.contentLayoutGuide.bottomAnchor),
-            weatherStackView.leadingAnchor.constraint(equalTo: weatherScrollView.contentLayoutGuide.leadingAnchor, constant: 16),
-            weatherStackView.trailingAnchor.constraint(equalTo: weatherScrollView.contentLayoutGuide.trailingAnchor, constant: -16),
+            weatherStackView.leadingAnchor.constraint(equalTo: weatherScrollView.contentLayoutGuide.leadingAnchor),
+            weatherStackView.trailingAnchor.constraint(equalTo: weatherScrollView.contentLayoutGuide.trailingAnchor),
             weatherStackView.heightAnchor.constraint(equalTo: weatherScrollView.frameLayoutGuide.heightAnchor),
         ])
+        // 首项“无”：key 为空串即未选。
+        let noneButton = makeWeatherButton(key: "", title: "无", systemImage: nil)
+        weatherButtons.append((key: "", button: noneButton))
+        weatherStackView.addArrangedSubview(noneButton)
         for key in weatherOrder {
-            let button = UIButton(type: .system)
-            button.translatesAutoresizingMaskIntoConstraints = false
             let name = BearyText.weatherNames[key] ?? key
-            button.setTitle(name, for: .normal)
-            button.titleLabel?.font = UIFont.systemFont(ofSize: 14)
-            button.contentEdgeInsets = UIEdgeInsets(top: 6, left: 12, bottom: 6, right: 12)
-            button.layer.cornerRadius = 16
-            button.layer.masksToBounds = true
-            button.layer.borderWidth = 1
-            button.addTarget(self, action: #selector(didTapWeather(_:)), for: .touchUpInside)
+            let button = makeWeatherButton(key: key, title: name, systemImage: BearyWeatherIcon.systemName(for: key))
             weatherButtons.append((key: key, button: button))
             weatherStackView.addArrangedSubview(button)
         }
         refreshWeatherButtons()
+        contentStack.setCustomSpacing(8, after: weatherScrollView)
+    }
+
+    private func makeWeatherButton(key: String, title: String, systemImage: String?) -> UIButton {
+        let button = UIButton(type: .system)
+        button.translatesAutoresizingMaskIntoConstraints = false
+        button.setTitle(title, for: .normal)
+        button.titleLabel?.font = UIFont.systemFont(ofSize: 13)
+        if let imageName = systemImage {
+            button.setImage(UIImage(systemName: imageName), for: .normal)
+            button.titleEdgeInsets = UIEdgeInsets(top: 0, left: 5, bottom: 0, right: 0)
+        }
+        button.contentEdgeInsets = UIEdgeInsets(top: 6, left: 12, bottom: 6, right: 12)
+        button.layer.cornerRadius = 16
+        button.layer.masksToBounds = true
+        button.layer.borderWidth = 1.5
+        button.accessibilityLabel = title
+        button.addTarget(self, action: #selector(didTapWeather(_:)), for: .touchUpInside)
+        return button
     }
 
     private func refreshWeatherButtons() {
         for pair in weatherButtons {
             let button = pair.button
-            if pair.key == selectedWeather {
-                button.backgroundColor = BearyColors.ink
-                button.setTitleColor(UIColor.white, for: .normal)
+            let isNoneButton = pair.key.isEmpty
+            let isSelected = isNoneButton ? (selectedWeather == nil) : (pair.key == selectedWeather)
+            button.backgroundColor = UIColor.clear
+            button.setTitleColor(BearyColors.ink, for: .normal)
+            button.tintColor = BearyColors.ink
+            if isSelected {
                 button.layer.borderColor = BearyColors.ink.cgColor
             } else {
-                button.backgroundColor = BearyColors.faint
-                button.setTitleColor(BearyColors.ink, for: .normal)
                 button.layer.borderColor = BearyColors.line.cgColor
             }
         }
@@ -377,27 +556,62 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             }
         }
         guard let key = tappedKey else { return }
-        if selectedWeather == key {
+        // 网页口径：点某项即选中该项（含“无”=清空），再点已选项不取消。
+        if key.isEmpty {
             selectedWeather = nil
         } else {
             selectedWeather = key
         }
         refreshWeatherButtons()
+        refreshExtrasSummary()
         // 天气不在草稿 v2 字段里（草稿格式冻结），只留本会话，不触发草稿保存。
     }
 
-    // MARK: - 写给（只选一人；发布后锁定，编辑模式只展示）
+    // MARK: - 写给（网页 addr-row：@ 图标 + “写给某个人”钮 / chip + 通知行；
+    // 只选一人；编辑模式锁定只展示，无 ×、无通知行）
 
     private func buildRecipientRow() {
-        recipientLabel.text = "写给"
-        recipientLabel.font = UIFont.systemFont(ofSize: 14)
-        recipientLabel.textColor = BearyColors.gray
-        recipientPickButton.titleLabel?.font = UIFont.systemFont(ofSize: 15)
-        recipientPickButton.contentHorizontalAlignment = .left
+        recipientSection.axis = .vertical
+        recipientSection.spacing = 8
+        recipientSection.alignment = .fill
+        recipientLine.axis = .horizontal
+        recipientLine.spacing = 6
+        recipientLine.alignment = .center
+        recipientAtIcon.image = UIImage(systemName: "at")
+        recipientAtIcon.tintColor = BearyColors.gray
+        recipientAtIcon.contentMode = .scaleAspectFit
+        // 未选：虚线边框 pill 钮（网页 addr-pick 同款形态；实线近似虚线，免去 shape 层）。
+        recipientPickButton.setTitle("写给某个人", for: .normal)
+        recipientPickButton.titleLabel?.font = UIFont.systemFont(ofSize: 13)
+        recipientPickButton.setTitleColor(BearyColors.gray, for: .normal)
+        recipientPickButton.contentEdgeInsets = UIEdgeInsets(top: 7, left: 14, bottom: 7, right: 14)
+        recipientPickButton.layer.cornerRadius = 15
+        recipientPickButton.layer.masksToBounds = true
+        recipientPickButton.layer.borderWidth = 1.5
+        recipientPickButton.layer.borderColor = BearyColors.line.cgColor
         recipientPickButton.addTarget(self, action: #selector(didTapPickRecipient), for: .touchUpInside)
+        // 已选 chip：橙 13% 底 + 22 头像/首字母 + “写给 名” + ×。
+        recipientChipView.backgroundColor = BearyColors.orange.withAlphaComponent(0.13)
+        recipientChipView.layer.cornerRadius = 15
+        recipientChipView.layer.masksToBounds = true
+        recipientChipAvatar.contentMode = .scaleAspectFill
+        recipientChipAvatar.clipsToBounds = true
+        recipientChipAvatar.layer.cornerRadius = 11
+        recipientChipAvatar.layer.masksToBounds = true
+        recipientChipFallback.font = UIFont.boldSystemFont(ofSize: 12)
+        recipientChipFallback.textColor = UIColor.white
+        recipientChipFallback.backgroundColor = BearyColors.orange
+        recipientChipFallback.textAlignment = .center
+        recipientChipFallback.layer.cornerRadius = 11
+        recipientChipFallback.layer.masksToBounds = true
+        recipientChipName.font = UIFont.boldSystemFont(ofSize: 13)
+        recipientChipName.textColor = BearyColors.ink
         recipientClearButton.setTitle("×", for: .normal)
-        recipientClearButton.titleLabel?.font = UIFont.systemFont(ofSize: 20)
+        recipientClearButton.titleLabel?.font = UIFont.systemFont(ofSize: 16)
         recipientClearButton.setTitleColor(BearyColors.gray, for: .normal)
+        recipientClearButton.backgroundColor = BearyColors.faint
+        recipientClearButton.layer.cornerRadius = 9
+        recipientClearButton.layer.masksToBounds = true
         recipientClearButton.addTarget(self, action: #selector(didTapClearRecipient), for: .touchUpInside)
         notifyCheckButton.layer.cornerRadius = 6
         notifyCheckButton.layer.masksToBounds = true
@@ -413,53 +627,71 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         notifyGroup.alignment = .center
         notifyGroup.addArrangedSubview(notifyCheckButton)
         notifyGroup.addArrangedSubview(notifyLabel)
-        let rowStack = UIStackView()
-        rowStack.axis = .horizontal
-        rowStack.spacing = 8
-        rowStack.alignment = .center
-        rowStack.addArrangedSubview(recipientLabel)
-        rowStack.addArrangedSubview(recipientPickButton)
-        rowStack.addArrangedSubview(recipientClearButton)
-        rowStack.addArrangedSubview(notifyGroup)
-        recipientPickButton.setContentHuggingPriority(.defaultLow, for: .horizontal)
-        for v in [recipientRow, rowStack, notifyCheckButton] {
-            v.translatesAutoresizingMaskIntoConstraints = false
-        }
-        contentView.addSubview(recipientRow)
-        recipientRow.addSubview(rowStack)
-        rowStack.translatesAutoresizingMaskIntoConstraints = false
+        recipientSection.translatesAutoresizingMaskIntoConstraints = false
+        recipientLine.translatesAutoresizingMaskIntoConstraints = false
+        recipientAtIcon.translatesAutoresizingMaskIntoConstraints = false
+        recipientPickButton.translatesAutoresizingMaskIntoConstraints = false
+        recipientChipView.translatesAutoresizingMaskIntoConstraints = false
+        recipientChipAvatar.translatesAutoresizingMaskIntoConstraints = false
+        recipientChipFallback.translatesAutoresizingMaskIntoConstraints = false
+        recipientChipName.translatesAutoresizingMaskIntoConstraints = false
+        recipientClearButton.translatesAutoresizingMaskIntoConstraints = false
+        notifyCheckButton.translatesAutoresizingMaskIntoConstraints = false
+        contentStack.addArrangedSubview(recipientSection)
+        recipientSection.addArrangedSubview(recipientLine)
+        recipientSection.addArrangedSubview(notifyGroup)
+        recipientLine.addArrangedSubview(recipientAtIcon)
+        recipientLine.addArrangedSubview(recipientPickButton)
+        recipientLine.addArrangedSubview(recipientChipView)
+        recipientChipView.addSubview(recipientChipAvatar)
+        recipientChipView.addSubview(recipientChipFallback)
+        recipientChipView.addSubview(recipientChipName)
+        recipientChipView.addSubview(recipientClearButton)
         NSLayoutConstraint.activate([
-            recipientRow.topAnchor.constraint(equalTo: weatherScrollView.bottomAnchor, constant: 20),
-            recipientRow.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 16),
-            recipientRow.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -16),
-            recipientRow.heightAnchor.constraint(equalToConstant: 44),
-            rowStack.topAnchor.constraint(equalTo: recipientRow.topAnchor),
-            rowStack.bottomAnchor.constraint(equalTo: recipientRow.bottomAnchor),
-            rowStack.leadingAnchor.constraint(equalTo: recipientRow.leadingAnchor),
-            rowStack.trailingAnchor.constraint(equalTo: recipientRow.trailingAnchor),
+            recipientAtIcon.widthAnchor.constraint(equalToConstant: 15),
+            recipientAtIcon.heightAnchor.constraint(equalToConstant: 15),
+            recipientChipAvatar.leadingAnchor.constraint(equalTo: recipientChipView.leadingAnchor, constant: 4),
+            recipientChipAvatar.centerYAnchor.constraint(equalTo: recipientChipView.centerYAnchor),
+            recipientChipAvatar.widthAnchor.constraint(equalToConstant: 22),
+            recipientChipAvatar.heightAnchor.constraint(equalToConstant: 22),
+            recipientChipFallback.leadingAnchor.constraint(equalTo: recipientChipView.leadingAnchor, constant: 4),
+            recipientChipFallback.centerYAnchor.constraint(equalTo: recipientChipView.centerYAnchor),
+            recipientChipFallback.widthAnchor.constraint(equalToConstant: 22),
+            recipientChipFallback.heightAnchor.constraint(equalToConstant: 22),
+            recipientChipName.leadingAnchor.constraint(equalTo: recipientChipView.leadingAnchor, constant: 30),
+            recipientChipName.centerYAnchor.constraint(equalTo: recipientChipView.centerYAnchor),
+            recipientClearButton.leadingAnchor.constraint(equalTo: recipientChipName.trailingAnchor, constant: 7),
+            recipientClearButton.trailingAnchor.constraint(equalTo: recipientChipView.trailingAnchor, constant: -4),
+            recipientClearButton.centerYAnchor.constraint(equalTo: recipientChipView.centerYAnchor),
+            recipientClearButton.widthAnchor.constraint(equalToConstant: 18),
+            recipientClearButton.heightAnchor.constraint(equalToConstant: 18),
+            recipientChipView.heightAnchor.constraint(equalToConstant: 30),
             notifyCheckButton.widthAnchor.constraint(equalToConstant: 22),
             notifyCheckButton.heightAnchor.constraint(equalToConstant: 22),
         ])
         refreshRecipientRow()
+        contentStack.setCustomSpacing(8, after: recipientSection)
     }
 
-    /// 写给行状态：新建未选 → “选择收信人”；新建已选 → 名 + × + 通知复选框；
-    /// 编辑模式 → 锁定的名（或“未写给任何人”），不可点、无 ×、无通知复选框。
+    /// 写给行状态：新建未选 → @ + “写给某个人”钮；新建已选 → chip + × + 通知行；
+    /// 编辑模式 → 锁定的 chip（无 ×、无通知行）；编辑且无收信人 → 整区隐藏（见 refreshExtras）。
     private func refreshRecipientRow() {
         if isEditMode {
-            recipientPickButton.isEnabled = false
-            recipientPickButton.setTitleColor(BearyColors.gray, for: .normal)
-            if let name = lockedRecipientName {
-                recipientPickButton.setTitle("写给 " + name, for: .normal)
-            } else {
-                recipientPickButton.setTitle("未写给任何人", for: .normal)
-            }
-            recipientClearButton.isHidden = true
+            recipientPickButton.isHidden = true
             notifyGroup.isHidden = true
+            if let name = lockedRecipientName {
+                recipientChipView.isHidden = false
+                recipientChipAvatar.isHidden = true
+                recipientChipFallback.isHidden = false
+                recipientChipFallback.text = String(name.prefix(1)).uppercased()
+                recipientChipName.text = "写给 " + name
+                recipientClearButton.isHidden = true
+            } else {
+                recipientChipView.isHidden = true
+            }
+            refreshExtrasSummary()
             return
         }
-        recipientPickButton.isEnabled = true
-        recipientPickButton.setTitleColor(BearyColors.blue, for: .normal)
         if let user = selectedRecipient {
             let name: String
             if let display = user.displayName {
@@ -469,15 +701,27 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             } else {
                 name = "用户"
             }
-            recipientPickButton.setTitle("写给 " + name, for: .normal)
+            recipientPickButton.isHidden = true
+            recipientChipView.isHidden = false
+            if let avatarPath = user.avatarUrl, let url = BearyImageURLs.avatarURL(avatarPath) {
+                recipientChipAvatar.bearySetImage(url: url, placeholder: nil)
+                recipientChipAvatar.isHidden = false
+                recipientChipFallback.isHidden = true
+            } else {
+                recipientChipAvatar.isHidden = true
+                recipientChipFallback.isHidden = false
+                recipientChipFallback.text = String(name.prefix(1)).uppercased()
+            }
+            recipientChipName.text = "写给 " + name
             recipientClearButton.isHidden = false
             notifyGroup.isHidden = false
         } else {
-            recipientPickButton.setTitle("选择收信人", for: .normal)
-            recipientClearButton.isHidden = true
+            recipientPickButton.isHidden = false
+            recipientChipView.isHidden = true
             notifyGroup.isHidden = true
         }
         refreshNotifyCheck()
+        refreshExtrasSummary()
     }
 
     /// 通知复选框只改本地状态与自身外观，不重建行（网页版同款规矩）。
@@ -500,9 +744,9 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             self.selectedRecipient = user
             self.notifyRecipient = true
             self.refreshRecipientRow()
+            self.refreshExtras()
         }
-        let nav = UINavigationController(rootViewController: picker)
-        present(nav, animated: true)
+        present(picker, animated: !UIAccessibility.isReduceMotionEnabled)
     }
 
     @objc private func didTapClearRecipient() {
@@ -517,7 +761,8 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         refreshNotifyCheck()
     }
 
-    // MARK: - 引用（新建可挑自己的时间线；编辑模式锁定原值）
+    // MARK: - 引用 lite 卡（网页 diaryCardLite：头像 40 + 名 + 正文 + 图片 +
+    // 未公开时“投递中”pill + 右上 ×；编辑模式锁定原值，无 ×）
 
     private func buildQuoteSection() {
         quoteSection.axis = .vertical
@@ -529,84 +774,187 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         pickQuoteButton.layer.cornerRadius = 12
         pickQuoteButton.layer.masksToBounds = true
         pickQuoteButton.addTarget(self, action: #selector(didTapPickQuote), for: .touchUpInside)
-        quoteCard.backgroundColor = BearyColors.faint
-        quoteCard.layer.cornerRadius = 12
+        quoteCard.layer.cornerRadius = 14
         quoteCard.layer.masksToBounds = true
-        quoteContentLabel.numberOfLines = 2
+        quoteCard.layer.borderWidth = 1
+        quoteCard.layer.borderColor = BearyColors.line.cgColor
+        quoteAvatarImageView.contentMode = .scaleAspectFill
+        quoteAvatarImageView.clipsToBounds = true
+        quoteAvatarImageView.layer.cornerRadius = 20
+        quoteAvatarImageView.layer.masksToBounds = true
+        quoteAvatarFallback.font = UIFont.boldSystemFont(ofSize: 16)
+        quoteAvatarFallback.textColor = BearyColors.gray
+        quoteAvatarFallback.backgroundColor = BearyColors.faint
+        quoteAvatarFallback.textAlignment = .center
+        quoteAvatarFallback.layer.cornerRadius = 20
+        quoteAvatarFallback.layer.masksToBounds = true
+        quoteNameLabel.font = UIFont.boldSystemFont(ofSize: 16.5)
+        quoteNameLabel.textColor = BearyColors.ink
+        quoteDeliveringPill.font = UIFont.boldSystemFont(ofSize: 11)
+        quoteDeliveringPill.textColor = BearyColors.blue
+        quoteDeliveringPill.backgroundColor = BearyColors.blue.withAlphaComponent(0.13)
+        quoteDeliveringPill.textAlignment = .center
+        quoteDeliveringPill.layer.cornerRadius = 6
+        quoteDeliveringPill.layer.masksToBounds = true
+        quoteDeliveringPill.text = "投递中"
+        quoteContentLabel.numberOfLines = 0
         quoteContentLabel.font = UIFont.systemFont(ofSize: 15)
         quoteContentLabel.textColor = BearyColors.ink
         quoteDateLabel.font = UIFont.systemFont(ofSize: 13)
         quoteDateLabel.textColor = BearyColors.gray
+        quoteImagesScrollView.showsHorizontalScrollIndicator = false
+        quoteImagesStackView.axis = .horizontal
+        quoteImagesStackView.spacing = 8
+        quoteImagesStackView.alignment = .center
         quoteRemoveButton.setTitle("×", for: .normal)
         quoteRemoveButton.titleLabel?.font = UIFont.systemFont(ofSize: 20)
         quoteRemoveButton.setTitleColor(BearyColors.gray, for: .normal)
         quoteRemoveButton.addTarget(self, action: #selector(didTapRemoveQuote), for: .touchUpInside)
-        for v in [quoteSection, pickQuoteButton, quoteCard, quoteContentLabel, quoteDateLabel, quoteRemoveButton] {
+        for v in [quoteSection, pickQuoteButton, quoteCard, quoteAvatarImageView, quoteAvatarFallback, quoteNameLabel, quoteDeliveringPill, quoteContentLabel, quoteDateLabel, quoteImagesScrollView, quoteImagesStackView, quoteRemoveButton] {
             v.translatesAutoresizingMaskIntoConstraints = false
         }
-        contentView.addSubview(quoteSection)
+        contentStack.addArrangedSubview(quoteSection)
         quoteSection.addArrangedSubview(pickQuoteButton)
         quoteSection.addArrangedSubview(quoteCard)
+        quoteCard.addSubview(quoteAvatarImageView)
+        quoteCard.addSubview(quoteAvatarFallback)
+        quoteCard.addSubview(quoteNameLabel)
+        quoteCard.addSubview(quoteDeliveringPill)
         quoteCard.addSubview(quoteContentLabel)
         quoteCard.addSubview(quoteDateLabel)
+        quoteCard.addSubview(quoteImagesScrollView)
+        quoteImagesScrollView.addSubview(quoteImagesStackView)
         quoteCard.addSubview(quoteRemoveButton)
         NSLayoutConstraint.activate([
-            quoteSection.topAnchor.constraint(equalTo: recipientRow.bottomAnchor, constant: 16),
-            quoteSection.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 16),
-            quoteSection.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -16),
             pickQuoteButton.heightAnchor.constraint(equalToConstant: 44),
-            quoteContentLabel.topAnchor.constraint(equalTo: quoteCard.topAnchor, constant: 12),
-            quoteContentLabel.leadingAnchor.constraint(equalTo: quoteCard.leadingAnchor, constant: 12),
-            quoteContentLabel.trailingAnchor.constraint(equalTo: quoteCard.trailingAnchor, constant: -40),
-            quoteDateLabel.topAnchor.constraint(equalTo: quoteContentLabel.bottomAnchor, constant: 4),
-            quoteDateLabel.leadingAnchor.constraint(equalTo: quoteCard.leadingAnchor, constant: 12),
-            quoteDateLabel.trailingAnchor.constraint(equalTo: quoteCard.trailingAnchor, constant: -12),
-            quoteDateLabel.bottomAnchor.constraint(equalTo: quoteCard.bottomAnchor, constant: -12),
+            quoteAvatarImageView.topAnchor.constraint(equalTo: quoteCard.topAnchor, constant: 12),
+            quoteAvatarImageView.leadingAnchor.constraint(equalTo: quoteCard.leadingAnchor, constant: 12),
+            quoteAvatarImageView.widthAnchor.constraint(equalToConstant: 40),
+            quoteAvatarImageView.heightAnchor.constraint(equalToConstant: 40),
+            quoteAvatarFallback.topAnchor.constraint(equalTo: quoteCard.topAnchor, constant: 12),
+            quoteAvatarFallback.leadingAnchor.constraint(equalTo: quoteCard.leadingAnchor, constant: 12),
+            quoteAvatarFallback.widthAnchor.constraint(equalToConstant: 40),
+            quoteAvatarFallback.heightAnchor.constraint(equalToConstant: 40),
+            quoteNameLabel.topAnchor.constraint(equalTo: quoteCard.topAnchor, constant: 12),
+            quoteNameLabel.leadingAnchor.constraint(equalTo: quoteCard.leadingAnchor, constant: 64),
+            quoteNameLabel.trailingAnchor.constraint(lessThanOrEqualTo: quoteCard.trailingAnchor, constant: -40),
+            quoteDeliveringPill.centerYAnchor.constraint(equalTo: quoteNameLabel.centerYAnchor),
+            quoteDeliveringPill.leadingAnchor.constraint(equalTo: quoteNameLabel.trailingAnchor, constant: 8),
+            quoteDeliveringPill.widthAnchor.constraint(equalToConstant: 48),
+            quoteDeliveringPill.heightAnchor.constraint(equalToConstant: 20),
+            quoteDateLabel.topAnchor.constraint(equalTo: quoteNameLabel.bottomAnchor, constant: 2),
+            quoteDateLabel.leadingAnchor.constraint(equalTo: quoteCard.leadingAnchor, constant: 64),
+            quoteDateLabel.trailingAnchor.constraint(lessThanOrEqualTo: quoteCard.trailingAnchor, constant: -40),
+            quoteContentLabel.topAnchor.constraint(equalTo: quoteDateLabel.bottomAnchor, constant: 6),
+            quoteContentLabel.leadingAnchor.constraint(equalTo: quoteCard.leadingAnchor, constant: 64),
+            quoteContentLabel.trailingAnchor.constraint(equalTo: quoteCard.trailingAnchor, constant: -12),
+            quoteImagesScrollView.leadingAnchor.constraint(equalTo: quoteCard.leadingAnchor, constant: 64),
+            quoteImagesScrollView.trailingAnchor.constraint(equalTo: quoteCard.trailingAnchor, constant: -12),
+            quoteImagesScrollView.heightAnchor.constraint(equalToConstant: 64),
+            quoteImagesStackView.topAnchor.constraint(equalTo: quoteImagesScrollView.contentLayoutGuide.topAnchor),
+            quoteImagesStackView.bottomAnchor.constraint(equalTo: quoteImagesScrollView.contentLayoutGuide.bottomAnchor),
+            quoteImagesStackView.leadingAnchor.constraint(equalTo: quoteImagesScrollView.contentLayoutGuide.leadingAnchor),
+            quoteImagesStackView.trailingAnchor.constraint(equalTo: quoteImagesScrollView.contentLayoutGuide.trailingAnchor),
+            quoteImagesStackView.heightAnchor.constraint(equalTo: quoteImagesScrollView.frameLayoutGuide.heightAnchor),
             quoteRemoveButton.topAnchor.constraint(equalTo: quoteCard.topAnchor, constant: 8),
             quoteRemoveButton.trailingAnchor.constraint(equalTo: quoteCard.trailingAnchor, constant: -8),
             quoteRemoveButton.widthAnchor.constraint(equalToConstant: 28),
             quoteRemoveButton.heightAnchor.constraint(equalToConstant: 28),
         ])
+        // 图片条链约束单独持有：无图时停用（见 refreshQuoteCardImages）。
+        quoteImagesTopConstraint = quoteImagesScrollView.topAnchor.constraint(equalTo: quoteContentLabel.bottomAnchor, constant: 10)
+        quoteImagesBottomConstraint = quoteImagesScrollView.bottomAnchor.constraint(equalTo: quoteCard.bottomAnchor, constant: -12)
+        quoteImagesTopConstraint?.isActive = true
+        quoteImagesBottomConstraint?.isActive = true
         refreshQuoteSection()
+        contentStack.setCustomSpacing(0, after: quoteSection)
     }
 
     /// 引用区状态：stack 内的隐藏项自动塌掉（UIStackView 口径），无需改约束。
-    /// 新建未选 → 挑按钮；新建已选 → 纸片 + ×；编辑 → 锁定的纸片（无 ×）或都不显示。
+    /// 新建未选 → 挑按钮；新建已选 → lite 卡 + ×；编辑 → 锁定的 lite 卡（无 ×）或都不显示。
+    /// 无图时图片条隐藏：此时正文底部直接贴卡底（图片条 bottom 约束与内容 bottom 约束冲突时
+    /// 以图片条隐藏为准——见下方 refreshQuoteCardImages 的约束切换）。
     private func refreshQuoteSection() {
+        let quote = isEditMode ? lockedQuote : selectedQuote
         if isEditMode {
             pickQuoteButton.isHidden = true
             quoteRemoveButton.isHidden = true
-            if let quote = lockedQuote {
-                quoteContentLabel.text = quote.content
-                quoteDateLabel.text = quote.createdAt.map { BearyText.timeString(ms: $0) }
-                quoteCard.isHidden = false
-            } else {
-                quoteCard.isHidden = true
-            }
+        } else {
+            pickQuoteButton.isHidden = quote != nil
+            quoteRemoveButton.isHidden = quote == nil
+        }
+        guard let shown = quote else {
+            quoteCard.isHidden = true
             return
         }
-        if let quote = selectedQuote {
-            pickQuoteButton.isHidden = true
-            quoteRemoveButton.isHidden = false
-            quoteContentLabel.text = quote.content
-            quoteDateLabel.text = quote.createdAt.map { BearyText.timeString(ms: $0) }
-            quoteCard.isHidden = false
+        quoteCard.isHidden = false
+        let authorName = shown.authorName ?? "用户"
+        quoteNameLabel.text = authorName
+        if let avatarPath = shown.authorAvatar, let url = BearyImageURLs.avatarURL(avatarPath) {
+            quoteAvatarImageView.bearySetImage(url: url, placeholder: nil)
+            quoteAvatarImageView.isHidden = false
+            quoteAvatarFallback.isHidden = true
         } else {
-            pickQuoteButton.isHidden = false
-            quoteCard.isHidden = true
+            quoteAvatarImageView.isHidden = true
+            quoteAvatarFallback.isHidden = false
+            quoteAvatarFallback.text = String(authorName.prefix(1)).uppercased()
+        }
+        quoteDeliveringPill.isHidden = (shown.isPublic == true)
+        quoteContentLabel.text = shown.content
+        if let ms = shown.createdAt {
+            quoteDateLabel.text = BearyText.timeString(ms: ms)
+        } else {
+            quoteDateLabel.text = nil
+        }
+        refreshQuoteCardImages(images: shown.images)
+    }
+
+    /// lite 卡图片条：有图才显示；无图时把正文底部约束改贴卡底，避免留白。
+    /// 注意：隐藏的 UIView 约束仍生效，故无图时必须同时停用图片条的 top/bottom 约束，
+    /// 否则正文贴底约束与图片条链约束冲突。
+    private var quoteCardContentBottomConstraint: NSLayoutConstraint?
+    private var quoteImagesTopConstraint: NSLayoutConstraint?
+    private var quoteImagesBottomConstraint: NSLayoutConstraint?
+    private func refreshQuoteCardImages(images: [String]) {
+        for arranged in quoteImagesStackView.arrangedSubviews {
+            quoteImagesStackView.removeArrangedSubview(arranged)
+            arranged.removeFromSuperview()
+        }
+        if quoteCardContentBottomConstraint == nil {
+            quoteCardContentBottomConstraint = quoteContentLabel.bottomAnchor.constraint(equalTo: quoteCard.bottomAnchor, constant: -12)
+        }
+        guard let bottomConstraint = quoteCardContentBottomConstraint else { return }
+        if images.isEmpty {
+            quoteImagesScrollView.isHidden = true
+            quoteImagesTopConstraint?.isActive = false
+            quoteImagesBottomConstraint?.isActive = false
+            bottomConstraint.isActive = true
+        } else {
+            quoteImagesScrollView.isHidden = false
+            bottomConstraint.isActive = false
+            quoteImagesTopConstraint?.isActive = true
+            quoteImagesBottomConstraint?.isActive = true
+            for key in images {
+                let imageView = UIImageView()
+                imageView.translatesAutoresizingMaskIntoConstraints = false
+                imageView.contentMode = .scaleAspectFill
+                imageView.clipsToBounds = true
+                imageView.layer.cornerRadius = 10
+                imageView.layer.masksToBounds = true
+                if let url = BearyImageURLs.imageURL(key: key, thumb: true) {
+                    imageView.bearySetImage(url: url, placeholder: nil)
+                }
+                quoteImagesStackView.addArrangedSubview(imageView)
+                imageView.widthAnchor.constraint(equalToConstant: 64).isActive = true
+                imageView.heightAnchor.constraint(equalToConstant: 64).isActive = true
+            }
         }
     }
 
+    /// 挑钮与工具栏引用钮都开关内嵌面板（不再跳独立导航页）。
     @objc private func didTapPickQuote() {
         if isEditMode { return }
-        let picker = BearyQuotePickerViewController()
-        picker.onPick = { [weak self] entry in
-            guard let self = self, let entryId = entry.id, let content = entry.content else { return }
-            self.selectedQuote = SelectedQuote(entryId: entryId, content: content, createdAt: entry.createdAt)
-            self.refreshQuoteSection()
-        }
-        let nav = UINavigationController(rootViewController: picker)
-        present(nav, animated: true)
+        setQuotePanelOpen(!quotePanelOpen)
     }
 
     @objc private func didTapRemoveQuote() {
@@ -615,50 +963,561 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         refreshQuoteSection()
     }
 
+    // MARK: - 引用内嵌面板（编辑器内就地展开，其他区块保持可见；
+    // 网页 qp-mode 会藏 10 区，这里有意简化：面板只在引用行下方展开，不藏其他区）
+
+    private func buildQuotePanel() {
+        quotePanel.translatesAutoresizingMaskIntoConstraints = false
+        quoteSegmentedControl.translatesAutoresizingMaskIntoConstraints = false
+        quotePanelSpinner.translatesAutoresizingMaskIntoConstraints = false
+        quotePanelSpinner.color = BearyColors.gray
+        quotePanelSpinner.hidesWhenStopped = true
+        quotePanelEmptyLabel.translatesAutoresizingMaskIntoConstraints = false
+        quotePanelEmptyLabel.font = UIFont.systemFont(ofSize: 15)
+        quotePanelEmptyLabel.textColor = BearyColors.gray
+        quotePanelEmptyLabel.textAlignment = .center
+        quotePanelEmptyLabel.text = "还没有可引用的日记"
+        quotePanelEmptyLabel.isHidden = true
+        quotePanelRetryButton.translatesAutoresizingMaskIntoConstraints = false
+        quotePanelRetryButton.setTitle("加载失败，点击重试", for: .normal)
+        quotePanelRetryButton.setTitleColor(BearyColors.blue, for: .normal)
+        quotePanelRetryButton.titleLabel?.font = UIFont.systemFont(ofSize: 15)
+        quotePanelRetryButton.isHidden = true
+        quotePanelRetryButton.addTarget(self, action: #selector(didTapQuotePanelRetry), for: .touchUpInside)
+        quotePanelRows.translatesAutoresizingMaskIntoConstraints = false
+        quotePanelRows.axis = .vertical
+        quotePanelRows.spacing = 0
+        quoteSegmentedControl.selectedSegmentIndex = 0
+        quoteSegmentedControl.addTarget(self, action: #selector(didChangeQuoteTab), for: .valueChanged)
+        contentStack.addArrangedSubview(quotePanel)
+        quotePanel.addSubview(quoteSegmentedControl)
+        quotePanel.addSubview(quotePanelSpinner)
+        quotePanel.addSubview(quotePanelEmptyLabel)
+        quotePanel.addSubview(quotePanelRetryButton)
+        quotePanel.addSubview(quotePanelRows)
+        NSLayoutConstraint.activate([
+            quoteSegmentedControl.topAnchor.constraint(equalTo: quotePanel.topAnchor, constant: 12),
+            quoteSegmentedControl.leadingAnchor.constraint(equalTo: quotePanel.leadingAnchor),
+            quoteSegmentedControl.trailingAnchor.constraint(equalTo: quotePanel.trailingAnchor),
+            quotePanelSpinner.topAnchor.constraint(equalTo: quoteSegmentedControl.bottomAnchor, constant: 16),
+            quotePanelSpinner.centerXAnchor.constraint(equalTo: quotePanel.centerXAnchor),
+            quotePanelEmptyLabel.topAnchor.constraint(equalTo: quoteSegmentedControl.bottomAnchor, constant: 16),
+            quotePanelEmptyLabel.leadingAnchor.constraint(equalTo: quotePanel.leadingAnchor),
+            quotePanelEmptyLabel.trailingAnchor.constraint(equalTo: quotePanel.trailingAnchor),
+            quotePanelRetryButton.topAnchor.constraint(equalTo: quoteSegmentedControl.bottomAnchor, constant: 16),
+            quotePanelRetryButton.centerXAnchor.constraint(equalTo: quotePanel.centerXAnchor),
+            quotePanelRows.topAnchor.constraint(equalTo: quoteSegmentedControl.bottomAnchor, constant: 4),
+            quotePanelRows.leadingAnchor.constraint(equalTo: quotePanel.leadingAnchor),
+            quotePanelRows.trailingAnchor.constraint(equalTo: quotePanel.trailingAnchor),
+            quotePanelRows.bottomAnchor.constraint(equalTo: quotePanel.bottomAnchor),
+        ])
+        quotePanel.isHidden = true
+        contentStack.setCustomSpacing(16, after: quotePanel)
+    }
+
+    private func setQuotePanelOpen(_ open: Bool) {
+        if isEditMode { return }
+        quotePanelOpen = open
+        quotePanel.isHidden = !open
+        if open {
+            loadQuotePanelTab()
+        }
+    }
+
+    @objc private func didChangeQuoteTab() {
+        switch quoteSegmentedControl.selectedSegmentIndex {
+        case 1: quotePanelTab = "liked"
+        case 2: quotePanelTab = "saved"
+        default: quotePanelTab = "timeline"
+        }
+        loadQuotePanelTab()
+    }
+
+    @objc private func didTapQuotePanelRetry() {
+        quotePanelCache.removeValue(forKey: quotePanelTab)
+        loadQuotePanelTab()
+    }
+
+    private func quotePanelScope() -> BearyAPI.Scope {
+        switch quotePanelTab {
+        case "liked": return .liked
+        case "saved": return .saved
+        default: return .timeline
+        }
+    }
+
+    private func loadQuotePanelTab() {
+        if let cached = quotePanelCache[quotePanelTab] {
+            quotePanelLoading = false
+            quotePanelFailed = false
+            renderQuotePanelRows(entries: cached)
+            return
+        }
+        quotePanelLoading = true
+        quotePanelFailed = false
+        quotePanelSpinner.startAnimating()
+        quotePanelEmptyLabel.isHidden = true
+        quotePanelRetryButton.isHidden = true
+        for arranged in quotePanelRows.arrangedSubviews {
+            quotePanelRows.removeArrangedSubview(arranged)
+            arranged.removeFromSuperview()
+        }
+        quotePanelSeq += 1
+        let seq = quotePanelSeq
+        let tab = quotePanelTab
+        BearyAPI.shared.fetchEntries(scope: quotePanelScope(), limit: 50) { [weak self] result in
+            DispatchQueue.main.async {
+                guard let self = self, seq == self.quotePanelSeq, tab == self.quotePanelTab else { return }
+                self.quotePanelSpinner.stopAnimating()
+                self.quotePanelLoading = false
+                switch result {
+                case .success(let list):
+                    let entries = list.entries ?? []
+                    self.quotePanelCache[tab] = entries
+                    self.quotePanelFailed = false
+                    self.renderQuotePanelRows(entries: entries)
+                case .failure:
+                    self.quotePanelFailed = true
+                    self.quotePanelRetryButton.isHidden = false
+                }
+            }
+        }
+    }
+
+    /// 面板行：日期 12 灰 + 正文 14 clamp 3 + 底线（网页 qp-item 同款指标）。
+    private func renderQuotePanelRows(entries: [Entry]) {
+        for arranged in quotePanelRows.arrangedSubviews {
+            quotePanelRows.removeArrangedSubview(arranged)
+            arranged.removeFromSuperview()
+        }
+        quotePanelRowEntries = []
+        quotePanelRowButtons = []
+        quotePanelEmptyLabel.isHidden = !entries.isEmpty
+        quotePanelRetryButton.isHidden = !quotePanelFailed
+        for entry in entries {
+            let rowButton = UIButton(type: .custom)
+            rowButton.translatesAutoresizingMaskIntoConstraints = false
+            let dateLabel = UILabel()
+            dateLabel.translatesAutoresizingMaskIntoConstraints = false
+            dateLabel.font = UIFont.systemFont(ofSize: 12)
+            dateLabel.textColor = BearyColors.gray
+            if let ms = entry.createdAt {
+                dateLabel.text = quoteRowDate(ms: ms)
+            } else {
+                dateLabel.text = nil
+            }
+            let contentLabel = UILabel()
+            contentLabel.translatesAutoresizingMaskIntoConstraints = false
+            contentLabel.numberOfLines = 3
+            contentLabel.font = UIFont.systemFont(ofSize: 14)
+            contentLabel.textColor = BearyColors.ink
+            contentLabel.text = entry.content ?? ""
+            let separator = UIView()
+            separator.translatesAutoresizingMaskIntoConstraints = false
+            separator.backgroundColor = BearyColors.line
+            rowButton.addSubview(dateLabel)
+            rowButton.addSubview(contentLabel)
+            rowButton.addSubview(separator)
+            NSLayoutConstraint.activate([
+                dateLabel.topAnchor.constraint(equalTo: rowButton.topAnchor, constant: 12),
+                dateLabel.leadingAnchor.constraint(equalTo: rowButton.leadingAnchor, constant: 2),
+                dateLabel.trailingAnchor.constraint(equalTo: rowButton.trailingAnchor, constant: -2),
+                contentLabel.topAnchor.constraint(equalTo: dateLabel.bottomAnchor, constant: 3),
+                contentLabel.leadingAnchor.constraint(equalTo: rowButton.leadingAnchor, constant: 2),
+                contentLabel.trailingAnchor.constraint(equalTo: rowButton.trailingAnchor, constant: -2),
+                separator.topAnchor.constraint(equalTo: contentLabel.bottomAnchor, constant: 12),
+                separator.leadingAnchor.constraint(equalTo: rowButton.leadingAnchor, constant: 2),
+                separator.trailingAnchor.constraint(equalTo: rowButton.trailingAnchor, constant: -2),
+                separator.heightAnchor.constraint(equalToConstant: 0.5),
+                separator.bottomAnchor.constraint(equalTo: rowButton.bottomAnchor),
+            ])
+            rowButton.addTarget(self, action: #selector(didTapQuotePanelRow(_:)), for: .touchUpInside)
+            rowButton.accessibilityLabel = entry.content ?? ""
+            quotePanelRows.addArrangedSubview(rowButton)
+            // 行与日记的并行映射：渲染时同步重建，点行时按按钮身份取对应日记。
+            quotePanelRowEntries.append(entry)
+            quotePanelRowButtons.append(rowButton)
+        }
+    }
+
+    /// 面板行与日记的并行映射（行按钮按顺序与 entries 对应，渲染时同步重建）。
+    private var quotePanelRowEntries: [Entry] = []
+    private var quotePanelRowButtons: [UIButton] = []
+
+    @objc private func didTapQuotePanelRow(_ sender: UIButton) {
+        var picked: Entry?
+        for index in 0..<quotePanelRowButtons.count {
+            if index < quotePanelRowEntries.count && quotePanelRowButtons[index] == sender {
+                picked = quotePanelRowEntries[index]
+            }
+        }
+        guard let entry = picked, let entryId = entry.id, let content = entry.content else { return }
+        selectedQuote = SelectedQuote(entryId: entryId, content: content, createdAt: entry.createdAt, authorName: entry.authorName, authorAvatar: entry.authorAvatar, images: entry.images ?? [], isPublic: entry.isPublic)
+        setQuotePanelOpen(false)
+        refreshQuoteSection()
+    }
+
+    /// 面板行日期：M月d日 HH:mm（与网页 fmtDate 同款）。
+    private func quoteRowDate(ms: Int) -> String {
+        let date = Date(timeIntervalSince1970: TimeInterval(ms) / 1000.0)
+        let fmt = DateFormatter()
+        fmt.locale = Locale(identifier: "zh_CN")
+        fmt.dateFormat = "M月d日 HH:mm"
+        return fmt.string(from: date)
+    }
+
+    // MARK: - 图片预览（网页 img-preview：无标题、无 + 块，空时整条隐藏）
+
     private func buildImageRow() {
-        imageTitleLabel.text = "图片"
-        imageTitleLabel.font = UIFont.systemFont(ofSize: 14)
-        imageTitleLabel.textColor = BearyColors.gray
         imageScrollView.showsHorizontalScrollIndicator = false
         imageStackView.axis = .horizontal
         imageStackView.spacing = 8
         imageStackView.alignment = .center
-        addImageButton.setTitle("+", for: .normal)
-        addImageButton.titleLabel?.font = UIFont.systemFont(ofSize: 28)
-        addImageButton.setTitleColor(BearyColors.gray, for: .normal)
-        addImageButton.addTarget(self, action: #selector(didTapAddImage), for: .touchUpInside)
-        addImageContainer.backgroundColor = BearyColors.faint
-        addImageContainer.layer.cornerRadius = 12
-        addImageContainer.layer.masksToBounds = true
-        addImageContainer.layer.borderWidth = 1
-        addImageContainer.layer.borderColor = BearyColors.line.cgColor
-        for v in [imageTitleLabel, imageScrollView, imageStackView, addImageContainer, addImageButton] {
-            v.translatesAutoresizingMaskIntoConstraints = false
-        }
-        contentView.addSubview(imageTitleLabel)
-        contentView.addSubview(imageScrollView)
+        imageScrollView.translatesAutoresizingMaskIntoConstraints = false
+        imageStackView.translatesAutoresizingMaskIntoConstraints = false
+        contentStack.addArrangedSubview(imageScrollView)
         imageScrollView.addSubview(imageStackView)
-        imageStackView.addArrangedSubview(addImageContainer)
-        addImageContainer.addSubview(addImageButton)
         NSLayoutConstraint.activate([
-            imageTitleLabel.topAnchor.constraint(equalTo: quoteSection.bottomAnchor, constant: 20),
-            imageTitleLabel.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 16),
-            imageScrollView.topAnchor.constraint(equalTo: imageTitleLabel.bottomAnchor, constant: 8),
-            imageScrollView.leadingAnchor.constraint(equalTo: contentView.leadingAnchor),
-            imageScrollView.trailingAnchor.constraint(equalTo: contentView.trailingAnchor),
             imageScrollView.heightAnchor.constraint(equalToConstant: 80),
-            imageScrollView.bottomAnchor.constraint(equalTo: contentView.bottomAnchor, constant: -16),
             imageStackView.topAnchor.constraint(equalTo: imageScrollView.contentLayoutGuide.topAnchor),
             imageStackView.bottomAnchor.constraint(equalTo: imageScrollView.contentLayoutGuide.bottomAnchor),
-            imageStackView.leadingAnchor.constraint(equalTo: imageScrollView.contentLayoutGuide.leadingAnchor, constant: 16),
-            imageStackView.trailingAnchor.constraint(equalTo: imageScrollView.contentLayoutGuide.trailingAnchor, constant: -16),
+            imageStackView.leadingAnchor.constraint(equalTo: imageScrollView.contentLayoutGuide.leadingAnchor),
+            imageStackView.trailingAnchor.constraint(equalTo: imageScrollView.contentLayoutGuide.trailingAnchor),
             imageStackView.heightAnchor.constraint(equalTo: imageScrollView.frameLayoutGuide.heightAnchor),
-            addImageContainer.widthAnchor.constraint(equalToConstant: 72),
-            addImageContainer.heightAnchor.constraint(equalToConstant: 72),
-            addImageButton.topAnchor.constraint(equalTo: addImageContainer.topAnchor),
-            addImageButton.bottomAnchor.constraint(equalTo: addImageContainer.bottomAnchor),
-            addImageButton.leadingAnchor.constraint(equalTo: addImageContainer.leadingAnchor),
-            addImageButton.trailingAnchor.constraint(equalTo: addImageContainer.trailingAnchor),
+        ])
+        refreshImageStripVisibility()
+        contentStack.setCustomSpacing(4, after: imageScrollView)
+    }
+
+    /// 图片条显隐：有图才显示（网页 img-preview 空时 display:none）。
+    private func refreshImageStripVisibility() {
+        imageScrollView.isHidden = imageItems.isEmpty
+    }
+
+    // MARK: - 工具栏（网页 editor-tools：图片/天气/引用图标钮 + 右端草稿 pill）
+
+    private func buildToolbarRow() {
+        toolbarSeparator.backgroundColor = BearyColors.line
+        let toolRow = UIStackView()
+        toolRow.axis = .horizontal
+        toolRow.spacing = 20
+        toolRow.alignment = .center
+        imageToolButton.setImage(UIImage(systemName: "photo"), for: .normal)
+        imageToolButton.tintColor = BearyColors.gray
+        imageToolButton.addTarget(self, action: #selector(didTapAddImage), for: .touchUpInside)
+        weatherToolButton.setImage(UIImage(systemName: "cloud"), for: .normal)
+        weatherToolButton.tintColor = BearyColors.gray
+        weatherToolButton.addTarget(self, action: #selector(didTapWeatherTool), for: .touchUpInside)
+        quoteToolButton.setImage(UIImage(systemName: "quote.bubble"), for: .normal)
+        quoteToolButton.tintColor = BearyColors.gray
+        quoteToolButton.addTarget(self, action: #selector(didTapQuoteTool), for: .touchUpInside)
+        draftPillButton.setTitle("草稿", for: .normal)
+        draftPillButton.setImage(UIImage(systemName: "note.text"), for: .normal)
+        draftPillButton.titleLabel?.font = UIFont.systemFont(ofSize: 13)
+        draftPillButton.setTitleColor(BearyColors.ink, for: .normal)
+        draftPillButton.tintColor = BearyColors.gray
+        draftPillButton.titleEdgeInsets = UIEdgeInsets(top: 0, left: 6, bottom: 0, right: 0)
+        draftPillButton.contentEdgeInsets = UIEdgeInsets(top: 6, left: 12, bottom: 6, right: 12)
+        draftPillButton.layer.cornerRadius = 16
+        draftPillButton.layer.masksToBounds = true
+        draftPillButton.layer.borderWidth = 1.5
+        draftPillButton.layer.borderColor = BearyColors.line.cgColor
+        draftPillButton.addTarget(self, action: #selector(didTapDraftBox), for: .touchUpInside)
+        toolbarContainer.translatesAutoresizingMaskIntoConstraints = false
+        toolbarSeparator.translatesAutoresizingMaskIntoConstraints = false
+        toolRow.translatesAutoresizingMaskIntoConstraints = false
+        for button in [imageToolButton, weatherToolButton, quoteToolButton] {
+            button.translatesAutoresizingMaskIntoConstraints = false
+            button.widthAnchor.constraint(equalToConstant: 44).isActive = true
+            button.heightAnchor.constraint(equalToConstant: 44).isActive = true
+        }
+        draftPillButton.translatesAutoresizingMaskIntoConstraints = false
+        contentStack.addArrangedSubview(toolbarContainer)
+        toolbarContainer.addSubview(toolbarSeparator)
+        toolbarContainer.addSubview(toolRow)
+        toolRow.addArrangedSubview(imageToolButton)
+        toolRow.addArrangedSubview(weatherToolButton)
+        toolRow.addArrangedSubview(quoteToolButton)
+        let spacer = UIView()
+        toolRow.addArrangedSubview(spacer)
+        toolRow.addArrangedSubview(draftPillButton)
+        NSLayoutConstraint.activate([
+            toolbarSeparator.topAnchor.constraint(equalTo: toolbarContainer.topAnchor),
+            toolbarSeparator.leadingAnchor.constraint(equalTo: toolbarContainer.leadingAnchor),
+            toolbarSeparator.trailingAnchor.constraint(equalTo: toolbarContainer.trailingAnchor),
+            toolbarSeparator.heightAnchor.constraint(equalToConstant: 0.5),
+            toolRow.topAnchor.constraint(equalTo: toolbarSeparator.bottomAnchor, constant: 6),
+            toolRow.leadingAnchor.constraint(equalTo: toolbarContainer.leadingAnchor),
+            toolRow.trailingAnchor.constraint(equalTo: toolbarContainer.trailingAnchor),
+            toolRow.bottomAnchor.constraint(equalTo: toolbarContainer.bottomAnchor, constant: -2),
+        ])
+        // 编辑模式：无草稿流（pill 隐藏），引用锁定（引用钮隐藏）。
+        draftPillButton.isHidden = isEditMode
+        quoteToolButton.isHidden = isEditMode
+        contentStack.setCustomSpacing(2, after: toolbarContainer)
+    }
+
+    /// 草稿 pill 计数：读当前 v2 单槽（有草稿=1，无=0）。
+    /// 注意：多篇索引存储尚未落到本仓（草稿箱代理的新文件未到），计数暂按单槽口径；
+    /// 索引 API 落地后这里改读索引长度即可，pill 文案与刷新点不变。
+    private func draftCount() -> Int {
+        return BearyDraftStore.load() != nil ? 1 : 0
+    }
+
+    private func updateDraftPillCount() {
+        if isEditMode { return }
+        let count = draftCount()
+        if count > 0 {
+            draftPillButton.setTitle("草稿 · \(count)", for: .normal)
+        } else {
+            draftPillButton.setTitle("草稿", for: .normal)
+        }
+    }
+
+    /// 天气工具钮：展开附加选项并滚动到天气行（网页 wxBtn 同款：先开 extras 再显 wxRow）。
+    @objc private func didTapWeatherTool() {
+        if !extrasExpanded {
+            setExtrasExpanded(true)
+        }
+        view.layoutIfNeeded()
+        let animated = !UIAccessibility.isReduceMotionEnabled
+        let target = contentView.convert(weatherScrollView.frame, from: contentStack)
+        scrollView.scrollRectToVisible(target, animated: animated)
+    }
+
+    @objc private func didTapQuoteTool() {
+        if isEditMode { return }
+        setQuotePanelOpen(!quotePanelOpen)
+    }
+
+    // MARK: - 附加选项栏（默认收起；收起时天气/写给/心情三区隐藏）
+
+    private func buildExtrasBar() {
+        // 容器：摘要左、chevron 右（网页 extras-bar space-between 同款）；
+        // 透明按钮整层覆盖接点击，避免 UIButton 图文排布随语义方向走偏。
+        extrasSummaryLabel.text = "附加选项"
+        extrasSummaryLabel.font = UIFont.systemFont(ofSize: 13)
+        extrasSummaryLabel.textColor = BearyColors.gray
+        extrasSummaryLabel.lineBreakMode = .byTruncatingTail
+        extrasChevronImageView.image = UIImage(systemName: "chevron.down")
+        extrasChevronImageView.tintColor = BearyColors.gray
+        extrasChevronImageView.contentMode = .scaleAspectFit
+        extrasBarButton.addTarget(self, action: #selector(didTapExtrasBar), for: .touchUpInside)
+        extrasBarContainer.translatesAutoresizingMaskIntoConstraints = false
+        extrasSummaryLabel.translatesAutoresizingMaskIntoConstraints = false
+        extrasChevronImageView.translatesAutoresizingMaskIntoConstraints = false
+        extrasBarButton.translatesAutoresizingMaskIntoConstraints = false
+        contentStack.addArrangedSubview(extrasBarContainer)
+        extrasBarContainer.addSubview(extrasSummaryLabel)
+        extrasBarContainer.addSubview(extrasChevronImageView)
+        extrasBarContainer.addSubview(extrasBarButton)
+        NSLayoutConstraint.activate([
+            extrasBarContainer.heightAnchor.constraint(equalToConstant: 36),
+            extrasSummaryLabel.leadingAnchor.constraint(equalTo: extrasBarContainer.leadingAnchor),
+            extrasSummaryLabel.centerYAnchor.constraint(equalTo: extrasBarContainer.centerYAnchor),
+            extrasSummaryLabel.trailingAnchor.constraint(lessThanOrEqualTo: extrasChevronImageView.leadingAnchor, constant: -8),
+            extrasChevronImageView.trailingAnchor.constraint(equalTo: extrasBarContainer.trailingAnchor),
+            extrasChevronImageView.centerYAnchor.constraint(equalTo: extrasBarContainer.centerYAnchor),
+            extrasChevronImageView.widthAnchor.constraint(equalToConstant: 16),
+            extrasChevronImageView.heightAnchor.constraint(equalToConstant: 16),
+            extrasBarButton.topAnchor.constraint(equalTo: extrasBarContainer.topAnchor),
+            extrasBarButton.bottomAnchor.constraint(equalTo: extrasBarContainer.bottomAnchor),
+            extrasBarButton.leadingAnchor.constraint(equalTo: extrasBarContainer.leadingAnchor),
+            extrasBarButton.trailingAnchor.constraint(equalTo: extrasBarContainer.trailingAnchor),
+        ])
+        contentStack.setCustomSpacing(4, after: extrasBarContainer)
+    }
+
+    @objc private func didTapExtrasBar() {
+        setExtrasExpanded(!extrasExpanded)
+    }
+
+    private func setExtrasExpanded(_ expanded: Bool) {
+        extrasExpanded = expanded
+        let angle: CGFloat = expanded ? CGFloat.pi : 0
+        if UIAccessibility.isReduceMotionEnabled {
+            extrasChevronImageView.transform = CGAffineTransform(rotationAngle: angle)
+        } else {
+            UIView.animate(withDuration: 0.2) { [weak self] in
+                self?.extrasChevronImageView.transform = CGAffineTransform(rotationAngle: angle)
+            }
+        }
+        refreshExtras()
+    }
+
+    /// 附加选项显隐 + 摘要（网页 syncExtrasBar 口径：展开显“收起附加选项”，
+    /// 收起显“附加选项：心情名 · 天气名 · 写给 X”，空时只显“附加选项”）。
+    private func refreshExtras() {
+        weatherScrollView.isHidden = !extrasExpanded
+        moodSection.isHidden = !extrasExpanded
+        // 写给区：展开才显；编辑模式无收信人时整区隐藏（网页编辑态同款）。
+        if isEditMode && lockedRecipientName == nil && selectedRecipient == nil {
+            recipientSection.isHidden = true
+        } else {
+            recipientSection.isHidden = !extrasExpanded
+        }
+        refreshExtrasSummary()
+    }
+
+    private func refreshExtrasSummary() {
+        if extrasExpanded {
+            extrasSummaryLabel.text = "收起附加选项"
+            return
+        }
+        var parts: [String] = []
+        if let mood = selectedMood, let name = BearyText.moodNames[mood] {
+            parts.append(name)
+        }
+        if let weather = selectedWeather, let name = BearyText.weatherNames[weather] {
+            parts.append(name)
+        }
+        if let user = selectedRecipient {
+            let name: String
+            if let display = user.displayName {
+                name = display
+            } else if let handle = user.handle {
+                name = "@" + handle
+            } else {
+                name = "用户"
+            }
+            parts.append("写给 " + name)
+        } else if let locked = lockedRecipientName {
+            parts.append("写给 " + locked)
+        }
+        if parts.isEmpty {
+            extrasSummaryLabel.text = "附加选项"
+        } else {
+            extrasSummaryLabel.text = "附加选项：" + parts.joined(separator: " · ")
+        }
+    }
+
+    // MARK: - 状态行（编辑倒计时 + 草稿状态 + 字数圆环）
+
+    private func buildStatusRow() {
+        editTimerLabel.font = UIFont.boldSystemFont(ofSize: 12)
+        editTimerLabel.textColor = BearyColors.gray
+        editTimerLabel.isHidden = true
+        draftStatusLabel.font = UIFont.systemFont(ofSize: 12.5)
+        draftStatusLabel.textColor = BearyColors.blue
+        draftStatusLabel.isHidden = true
+        charCountLabel.font = UIFont.systemFont(ofSize: 12)
+        charCountLabel.textColor = BearyColors.gray
+        charRingView.translatesAutoresizingMaskIntoConstraints = false
+        statusRow.axis = .horizontal
+        statusRow.spacing = 6
+        statusRow.alignment = .center
+        statusRow.translatesAutoresizingMaskIntoConstraints = false
+        contentStack.addArrangedSubview(statusRow)
+        statusRow.addArrangedSubview(editTimerLabel)
+        statusRow.addArrangedSubview(draftStatusLabel)
+        let spacer = UIView()
+        statusRow.addArrangedSubview(spacer)
+        statusRow.addArrangedSubview(charRingView)
+        statusRow.addArrangedSubview(charCountLabel)
+        NSLayoutConstraint.activate([
+            charRingView.widthAnchor.constraint(equalToConstant: 18),
+            charRingView.heightAnchor.constraint(equalToConstant: 18),
+            statusRow.heightAnchor.constraint(greaterThanOrEqualToConstant: 24),
+        ])
+        // 圆环：18 框、r 7.5、线宽 2.5，从顶部顺时针画（网页 cc-ring 同款）。
+        let center = CGPoint(x: 9, y: 9)
+        let path = UIBezierPath(arcCenter: center, radius: 7.5, startAngle: -CGFloat.pi / 2, endAngle: CGFloat.pi * 3 / 2, clockwise: true)
+        let track = CAShapeLayer()
+        track.path = path.cgPath
+        track.fillColor = UIColor.clear.cgColor
+        track.strokeColor = BearyColors.line.cgColor
+        track.lineWidth = 2.5
+        let progress = CAShapeLayer()
+        progress.path = path.cgPath
+        progress.fillColor = UIColor.clear.cgColor
+        progress.strokeColor = BearyColors.blue.cgColor
+        progress.lineWidth = 2.5
+        progress.lineCap = .round
+        progress.strokeEnd = 0
+        charRingView.layer.addSublayer(track)
+        charRingView.layer.addSublayer(progress)
+        charTrackLayer = track
+        charProgressLayer = progress
+        contentStack.setCustomSpacing(8, after: statusRow)
+    }
+
+    /// 草稿状态文案跟随保存级别：2 草稿已保存 / 1 文字已保存，图片未保存 / 0 失败红字。
+    /// 编辑模式不显示（网页编辑态同款：状态行只留倒计时与字数）。
+    private func updateDraftStatusLabel() {
+        if isEditMode {
+            draftStatusLabel.isHidden = true
+            return
+        }
+        guard let level = draftStatusLevel else {
+            draftStatusLabel.isHidden = true
+            return
+        }
+        draftStatusLabel.isHidden = false
+        if level == 2 {
+            draftStatusLabel.text = "草稿已保存"
+            draftStatusLabel.textColor = BearyColors.blue
+        } else if level == 1 {
+            draftStatusLabel.text = "文字已保存，图片未保存"
+            draftStatusLabel.textColor = BearyColors.blue
+        } else {
+            draftStatusLabel.text = "草稿保存失败"
+            draftStatusLabel.textColor = BearyColors.red
+        }
+    }
+
+    // MARK: - 编辑倒计时（从 editDeadline 算剩余，网页 edit-timer 口径“剩 M:SS”）
+
+    private func startEditTimer() {
+        editTimer?.invalidate()
+        guard isEditMode, let deadline = editingEntry?.editDeadline else {
+            editTimerLabel.isHidden = true
+            return
+        }
+        editTimerLabel.isHidden = false
+        let tickBlock: () -> Void = { [weak self] in
+            guard let self = self else { return }
+            let nowMs = Int(Date().timeIntervalSince1970 * 1000)
+            let remain = max(0, Int(ceil(Double(deadline - nowMs) / 1000.0)))
+            if remain <= 0 {
+                self.editTimerLabel.text = "编辑已结束"
+                self.editTimer?.invalidate()
+                self.editTimer = nil
+                return
+            }
+            self.editTimerLabel.text = "剩 \(remain / 60):\(String(format: "%02d", remain % 60))"
+        }
+        tickBlock()
+        editTimer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { _ in tickBlock() }
+    }
+
+    // MARK: - 规则框（网页 rule-box 原文：淡底 + info 图标 + 12px 灰字）
+
+    private func buildRuleBox() {
+        ruleBoxView.backgroundColor = BearyColors.faint
+        ruleBoxView.layer.cornerRadius = 12
+        ruleBoxView.layer.masksToBounds = true
+        ruleIconImageView.image = UIImage(systemName: "info.circle")
+        ruleIconImageView.tintColor = BearyColors.gray
+        ruleIconImageView.contentMode = .scaleAspectFit
+        let paragraph = NSMutableParagraphStyle()
+        paragraph.lineHeightMultiple = 1.7
+        ruleLabel.attributedText = NSAttributedString(string: "发布后 7 天自动公开 · 15 分钟内可修改 · 公开后不能再删改。", attributes: [.font: UIFont.systemFont(ofSize: 12), .foregroundColor: BearyColors.gray, .paragraphStyle: paragraph])
+        ruleLabel.numberOfLines = 0
+        ruleBoxView.translatesAutoresizingMaskIntoConstraints = false
+        ruleIconImageView.translatesAutoresizingMaskIntoConstraints = false
+        ruleLabel.translatesAutoresizingMaskIntoConstraints = false
+        contentStack.addArrangedSubview(ruleBoxView)
+        ruleBoxView.addSubview(ruleIconImageView)
+        ruleBoxView.addSubview(ruleLabel)
+        NSLayoutConstraint.activate([
+            ruleIconImageView.topAnchor.constraint(equalTo: ruleBoxView.topAnchor, constant: 13),
+            ruleIconImageView.leadingAnchor.constraint(equalTo: ruleBoxView.leadingAnchor, constant: 14),
+            ruleIconImageView.widthAnchor.constraint(equalToConstant: 18),
+            ruleIconImageView.heightAnchor.constraint(equalToConstant: 18),
+            ruleLabel.topAnchor.constraint(equalTo: ruleBoxView.topAnchor, constant: 12),
+            ruleLabel.leadingAnchor.constraint(equalTo: ruleBoxView.leadingAnchor, constant: 42),
+            ruleLabel.trailingAnchor.constraint(equalTo: ruleBoxView.trailingAnchor, constant: -14),
+            ruleLabel.bottomAnchor.constraint(equalTo: ruleBoxView.bottomAnchor, constant: -12),
         ])
     }
 
@@ -674,15 +1533,29 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         return textView.text.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
+    /// 字数：状态行圆环 + N/2000（网页 char-count 同款）；空时整组隐藏，超字红字红环。
     private func updateCountLabel() {
         let count = textView.text.count
-        countLabel.text = "\(count) / \(BearyComposerViewController.maxLength)"
-        if count > BearyComposerViewController.maxLength {
-            countLabel.textColor = BearyColors.red
-        } else {
-            countLabel.textColor = BearyColors.gray
-        }
         placeholderLabel.isHidden = !textView.text.isEmpty
+        if count == 0 {
+            charRingView.isHidden = true
+            charCountLabel.isHidden = true
+            return
+        }
+        charRingView.isHidden = false
+        charCountLabel.isHidden = false
+        charCountLabel.text = "\(count)/\(BearyComposerViewController.maxLength)"
+        let ratio = min(1.0, CGFloat(count) / CGFloat(BearyComposerViewController.maxLength))
+        charProgressLayer?.strokeEnd = ratio
+        if count > BearyComposerViewController.maxLength {
+            charCountLabel.textColor = BearyColors.red
+            charCountLabel.font = UIFont.boldSystemFont(ofSize: 12)
+            charProgressLayer?.strokeColor = BearyColors.red.cgColor
+        } else {
+            charCountLabel.textColor = BearyColors.gray
+            charCountLabel.font = UIFont.systemFont(ofSize: 12)
+            charProgressLayer?.strokeColor = BearyColors.blue.cgColor
+        }
     }
 
     private func hasUploadingImage() -> Bool {
@@ -698,30 +1571,41 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         let trimmed = trimmedContent()
         let overLimit = textView.text.count > BearyComposerViewController.maxLength
         publishButton.isEnabled = !isPublishing && !trimmed.isEmpty && !overLimit && !hasUploadingImage()
+        refreshPublishAppearance()
     }
 
-    // MARK: - 心情
+    // MARK: - 心情（选中态与标题跟随选中值；标题动态带选中名）
 
     private func refreshMoodButtons() {
-        for pair in moodButtons {
-            let button = pair.button
-            if pair.key == selectedMood {
-                button.backgroundColor = BearyColors.orange
-                button.setTitleColor(UIColor.white, for: .normal)
-                button.layer.borderColor = BearyColors.orange.cgColor
+        refreshMoodImages()
+        for item in moodItems {
+            let isSelected = (item.key == selectedMood)
+            if isSelected {
+                item.ringView.backgroundColor = BearyColors.orange.withAlphaComponent(0.12)
+                item.ringView.layer.borderColor = BearyColors.orange.cgColor
+                item.nameLabel.textColor = BearyColors.orange
             } else {
-                button.backgroundColor = BearyColors.faint
-                button.setTitleColor(BearyColors.ink, for: .normal)
-                button.layer.borderColor = BearyColors.line.cgColor
+                item.ringView.backgroundColor = BearyColors.faint
+                item.ringView.layer.borderColor = UIColor.clear.cgColor
+                item.nameLabel.textColor = BearyColors.gray
             }
         }
+        // 标题：未选只显“心情”，已选显“心情 · <选中名>”（网页 mood-lab 同款）。
+        if let mood = selectedMood, let name = BearyText.moodNames[mood] {
+            let title = NSMutableAttributedString(string: "心情", attributes: [.font: UIFont.boldSystemFont(ofSize: 13), .foregroundColor: BearyColors.ink])
+            title.append(NSAttributedString(string: " · " + name, attributes: [.font: UIFont.systemFont(ofSize: 13), .foregroundColor: BearyColors.gray]))
+            moodTitleLabel.attributedText = title
+        } else {
+            moodTitleLabel.attributedText = NSAttributedString(string: "心情", attributes: [.font: UIFont.boldSystemFont(ofSize: 13), .foregroundColor: BearyColors.ink])
+        }
+        refreshExtrasSummary()
     }
 
     @objc private func didTapMood(_ sender: UIButton) {
         var tappedKey: String?
-        for pair in moodButtons {
-            if pair.button == sender {
-                tappedKey = pair.key
+        for item in moodItems {
+            if item.button == sender {
+                tappedKey = item.key
             }
         }
         guard let key = tappedKey else { return }
@@ -747,24 +1631,37 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         imageView.contentMode = .scaleAspectFill
         imageView.clipsToBounds = true
         imageView.image = localImage
-        imageView.isUserInteractionEnabled = true
+        container.isUserInteractionEnabled = true
         let tap = UITapGestureRecognizer(target: self, action: #selector(didTapImageItem(_:)))
-        imageView.addGestureRecognizer(tap)
+        container.addGestureRecognizer(tap)
         let spinner = UIActivityIndicatorView(style: .medium)
         spinner.translatesAutoresizingMaskIntoConstraints = false
         spinner.color = BearyColors.gray
         spinner.hidesWhenStopped = true
-        // 失败态：半透明图 + “重试”标签，点图重试，不弹全局框。
-        let retryLabel = UILabel()
-        retryLabel.translatesAutoresizingMaskIntoConstraints = false
-        retryLabel.text = "重试"
-        retryLabel.font = UIFont.boldSystemFont(ofSize: 12)
-        retryLabel.textColor = UIColor.white
-        retryLabel.backgroundColor = BearyColors.scrim
-        retryLabel.textAlignment = .center
-        retryLabel.layer.cornerRadius = 8
-        retryLabel.layer.masksToBounds = true
-        retryLabel.isHidden = !failed
+        // 失败态：行内红底块（网页 thumb-fail 同款：红 10% 底 + 图标 + “失败，点我重试”），
+        // 点块重试，不弹全局框；发布时的失败确认弹框另行保留（两者并存）。
+        let failView = UIView()
+        failView.translatesAutoresizingMaskIntoConstraints = false
+        failView.backgroundColor = BearyColors.red.withAlphaComponent(0.10)
+        failView.isHidden = !failed
+        let failStack = UIStackView()
+        failStack.translatesAutoresizingMaskIntoConstraints = false
+        failStack.axis = .vertical
+        failStack.spacing = 3
+        failStack.alignment = .center
+        let failIcon = UIImageView(image: UIImage(systemName: "photo"))
+        failIcon.tintColor = BearyColors.red
+        failIcon.contentMode = .scaleAspectFit
+        failIcon.translatesAutoresizingMaskIntoConstraints = false
+        let failLabel = UILabel()
+        failLabel.translatesAutoresizingMaskIntoConstraints = false
+        failLabel.text = "失败，点我重试"
+        failLabel.font = UIFont.systemFont(ofSize: 10)
+        failLabel.textColor = BearyColors.red
+        failLabel.textAlignment = .center
+        failStack.addArrangedSubview(failIcon)
+        failStack.addArrangedSubview(failLabel)
+        failView.addSubview(failStack)
         let removeButton = UIButton(type: .system)
         removeButton.translatesAutoresizingMaskIntoConstraints = false
         removeButton.setTitle("×", for: .normal)
@@ -776,7 +1673,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         removeButton.addTarget(self, action: #selector(didTapRemoveImage(_:)), for: .touchUpInside)
         container.addSubview(imageView)
         container.addSubview(spinner)
-        container.addSubview(retryLabel)
+        container.addSubview(failView)
         container.addSubview(removeButton)
         NSLayoutConstraint.activate([
             container.widthAnchor.constraint(equalToConstant: 72),
@@ -787,10 +1684,16 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             imageView.trailingAnchor.constraint(equalTo: container.trailingAnchor),
             spinner.centerXAnchor.constraint(equalTo: container.centerXAnchor),
             spinner.centerYAnchor.constraint(equalTo: container.centerYAnchor),
-            retryLabel.centerXAnchor.constraint(equalTo: container.centerXAnchor),
-            retryLabel.centerYAnchor.constraint(equalTo: container.centerYAnchor),
-            retryLabel.widthAnchor.constraint(equalToConstant: 44),
-            retryLabel.heightAnchor.constraint(equalToConstant: 22),
+            failView.topAnchor.constraint(equalTo: container.topAnchor),
+            failView.bottomAnchor.constraint(equalTo: container.bottomAnchor),
+            failView.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+            failView.trailingAnchor.constraint(equalTo: container.trailingAnchor),
+            failStack.centerXAnchor.constraint(equalTo: failView.centerXAnchor),
+            failStack.centerYAnchor.constraint(equalTo: failView.centerYAnchor),
+            failStack.leadingAnchor.constraint(greaterThanOrEqualTo: failView.leadingAnchor, constant: 4),
+            failStack.trailingAnchor.constraint(lessThanOrEqualTo: failView.trailingAnchor, constant: -4),
+            failIcon.widthAnchor.constraint(equalToConstant: 20),
+            failIcon.heightAnchor.constraint(equalToConstant: 20),
             removeButton.topAnchor.constraint(equalTo: container.topAnchor, constant: 2),
             removeButton.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -2),
             removeButton.widthAnchor.constraint(equalToConstant: 20),
@@ -800,18 +1703,19 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             spinner.startAnimating()
         }
         if failed {
-            imageView.alpha = 0.55
+            imageView.isHidden = true
         }
-        let item = ComposerImageItem(key: key, uploading: uploading, localFile: localFile, failed: failed, container: container, imageView: imageView, spinner: spinner, retryLabel: retryLabel, removeButton: removeButton)
+        let item = ComposerImageItem(key: key, uploading: uploading, localFile: localFile, failed: failed, container: container, imageView: imageView, spinner: spinner, failView: failView, removeButton: removeButton)
         return item
     }
 
-    // MARK: - 上传状态（上传中 / 已传 / 失败三态；失败只亮重试态，不弹框）
+    // MARK: - 上传状态（上传中 / 已传 / 失败三态；失败只亮红底重试块，不弹框）
 
     private func markUploading(_ item: ComposerImageItem) {
         item.uploading = true
         item.failed = false
-        item.retryLabel.isHidden = true
+        item.failView.isHidden = true
+        item.imageView.isHidden = false
         item.imageView.alpha = 1.0
         item.spinner.startAnimating()
     }
@@ -820,7 +1724,8 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         item.key = key
         item.uploading = false
         item.failed = false
-        item.retryLabel.isHidden = true
+        item.failView.isHidden = true
+        item.imageView.isHidden = false
         item.imageView.alpha = 1.0
         item.spinner.stopAnimating()
     }
@@ -828,15 +1733,15 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     private func markFailed(_ item: ComposerImageItem) {
         item.uploading = false
         item.failed = true
-        item.retryLabel.isHidden = false
-        item.imageView.alpha = 0.55
+        item.failView.isHidden = false
+        item.imageView.isHidden = true
         item.spinner.stopAnimating()
     }
 
     @objc private func didTapImageItem(_ gesture: UITapGestureRecognizer) {
         guard let tappedView = gesture.view else { return }
         for item in imageItems {
-            if item.imageView === tappedView {
+            if item.container === tappedView {
                 if item.failed {
                     if let name = item.localFile, let image = BearyDraftImageStore.image(for: name) {
                         startUpload(for: item, image: image)
@@ -853,18 +1758,12 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
 
     private func insertImageItem(_ item: ComposerImageItem) {
         imageItems.append(item)
-        if let addIndex = imageStackView.arrangedSubviews.firstIndex(of: addImageContainer) {
-            imageStackView.insertArrangedSubview(item.container, at: addIndex)
-        } else {
-            imageStackView.addArrangedSubview(item.container)
-        }
-        refreshAddButtonVisibility()
+        imageStackView.addArrangedSubview(item.container)
+        refreshImageStripVisibility()
         updatePublishState()
     }
 
-    private func refreshAddButtonVisibility() {
-        addImageContainer.isHidden = imageItems.count >= BearyComposerViewController.maxImages
-    }
+
 
     private func removeImageItem(_ item: ComposerImageItem) {
         var kept: [ComposerImageItem] = []
@@ -879,7 +1778,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         }
         imageStackView.removeArrangedSubview(item.container)
         item.container.removeFromSuperview()
-        refreshAddButtonVisibility()
+        refreshImageStripVisibility()
         updatePublishState()
         scheduleDraftSave()
     }
@@ -1039,10 +1938,12 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         lockedRecipientName = entry.recipientName
         if let quote = entry.quote, let quoteId = quote.id, let content = quote.content {
             // 内容为空的引用 = 已删（服务端 gone 只剩 id，网页版同款：已删引用不回填，保存时即丢弃）。
-            lockedQuote = SelectedQuote(entryId: quoteId, content: content, createdAt: quote.createdAt)
+            lockedQuote = SelectedQuote(entryId: quoteId, content: content, createdAt: quote.createdAt, authorName: quote.authorName, authorAvatar: quote.authorAvatar, images: quote.images ?? [], isPublic: quote.isPublic)
         }
         refreshRecipientRow()
         refreshQuoteSection()
+        refreshExtras()
+        startEditTimer()
         for key in entry.images ?? [] {
             let item = createImageItem(localImage: nil, key: key, uploading: false, localFile: nil, failed: false)
             insertImageItem(item)
@@ -1050,7 +1951,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                 item.imageView.bearySetImage(url: url, placeholder: nil)
             }
         }
-        refreshAddButtonVisibility()
+        refreshImageStripVisibility()
     }
 
     /// 编辑期内的本地文件（本轮新选的图）：取消/保存成功后删本地文件，不留孤文件；
@@ -1078,6 +1979,10 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     private func scheduleDraftSave() {
         // 编辑模式不走草稿流：任何编辑中的改动都不写 beary_draft_v2。
         if isEditMode { return }
+        // 防抖等待期先显“保存中…”（网页 queueSaveDraft 同款），落盘后由保存级别覆盖。
+        draftStatusLabel.isHidden = false
+        draftStatusLabel.text = "保存中…"
+        draftStatusLabel.textColor = BearyColors.blue
         draftTimer?.invalidate()
         draftTimer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: false) { [weak self] _ in
             guard let self = self else { return }
@@ -1108,6 +2013,21 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         }
         let draft = BearyDraft(content: textView.text, mood: selectedMood, images: images, clientReq: req, updatedAt: Date().timeIntervalSince1970)
         BearyDraftStore.save(draft)
+        // 保存级别跟随图片状态：有失败/未上传的图 = 1（文字已保存，图片未保存），否则 2；
+        // 落盘后回读不到 = 0（失败红字）。BearyDraftStore.save 本身不返回成败，回读是唯一信号。
+        if BearyDraftStore.load() == nil {
+            draftStatusLevel = 0
+        } else {
+            var hasUnsavedImage = false
+            for item in imageItems {
+                if item.key == nil {
+                    hasUnsavedImage = true
+                }
+            }
+            draftStatusLevel = hasUnsavedImage ? 1 : 2
+        }
+        updateDraftStatusLabel()
+        updateDraftPillCount()
     }
 
     private func restoreDraft() {
@@ -1147,6 +2067,141 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         }
         BearyDraftStore.clear()
         draftClientReq = nil
+        draftStatusLevel = nil
+        updateDraftStatusLabel()
+        updateDraftPillCount()
+    }
+
+    // MARK: - 草稿箱（BearyDraftBoxViewController 由草稿箱代理新建文件提供，只调用不定义）
+
+    @objc private func didTapDraftBox() {
+        if isEditMode { return }
+        // 有内容先落盘当前篇，再开箱（箱内计数含当前篇）；空白编辑器不建空草稿。
+        if hasEditorContent() {
+            saveDraftNow()
+        }
+        let box = BearyDraftBoxViewController(
+            onNew: { [weak self] in
+                guard let self = self else { return }
+                self.dismiss(animated: !UIAccessibility.isReduceMotionEnabled) {
+                    self.openBlankDraftFromBox()
+                }
+            },
+            onOpen: { [weak self] draft in
+                guard let self = self else { return }
+                self.dismiss(animated: !UIAccessibility.isReduceMotionEnabled) {
+                    self.loadDraftFromBox(draft)
+                }
+            }
+        )
+        present(box, animated: !UIAccessibility.isReduceMotionEnabled)
+    }
+
+    /// 草稿箱“新建日记”：有内容先走取消守卫（继续写 / 丢弃并新建），无内容直接重置。
+    /// 说明：单槽 v2 下“保留当前并开新”无法同时成立——新空白的下一次自动保存即覆盖单槽，
+    /// 故守卫不提供保留项；多篇索引存储落地后可把保留项接回（见 draftCount 注释）。
+    private func openBlankDraftFromBox() {
+        if isEditMode { return }
+        if hasEditorContent() {
+            let sheet = UIAlertController(title: nil, message: "当前内容还没发布，换成空白新日记吗？", preferredStyle: .actionSheet)
+            sheet.addAction(UIAlertAction(title: "继续写", style: .cancel, handler: nil))
+            sheet.addAction(UIAlertAction(title: "丢弃并新建", style: .destructive) { [weak self] _ in
+                guard let self = self else { return }
+                self.clearDraftAndFiles()
+                self.resetEditorToBlank()
+            })
+            if let pop = sheet.popoverPresentationController {
+                pop.sourceView = draftPillButton
+                pop.sourceRect = draftPillButton.bounds
+            }
+            present(sheet, animated: !UIAccessibility.isReduceMotionEnabled)
+        } else {
+            resetEditorToBlank()
+        }
+    }
+
+    private func hasEditorContent() -> Bool {
+        if !textView.text.isEmpty { return true }
+        if selectedMood != nil { return true }
+        if selectedWeather != nil { return true }
+        if selectedRecipient != nil { return true }
+        if selectedQuote != nil { return true }
+        if !imageItems.isEmpty { return true }
+        return false
+    }
+
+    /// 重置为空白新日记：清字段与图片视图、清单槽草稿与 clientReq（文件删除由调用方决定：
+    /// 丢弃路径先调 clearDraftAndFiles 删文件，这里只清视图与槽位，不重复删文件）。
+    private func resetEditorToBlank() {
+        draftTimer?.invalidate()
+        textView.text = ""
+        selectedMood = nil
+        selectedWeather = nil
+        selectedRecipient = nil
+        notifyRecipient = true
+        selectedQuote = nil
+        setQuotePanelOpen(false)
+        removeAllImageViews()
+        BearyDraftStore.clear()
+        draftClientReq = nil
+        draftStatusLevel = nil
+        updateCountLabel()
+        updatePublishState()
+        refreshMoodButtons()
+        refreshWeatherButtons()
+        refreshRecipientRow()
+        refreshQuoteSection()
+        refreshExtras()
+        updateDraftStatusLabel()
+        updateDraftPillCount()
+    }
+
+    /// 草稿箱打开某篇：载入正文/心情/图片（v2 没有天气/写给/引用，那三项留空）。
+    private func loadDraftFromBox(_ draft: BearyDraft) {
+        if isEditMode { return }
+        draftTimer?.invalidate()
+        removeAllImageViews()
+        draftClientReq = draft.clientReq
+        textView.text = draft.content
+        selectedMood = draft.mood
+        selectedWeather = nil
+        selectedRecipient = nil
+        notifyRecipient = true
+        selectedQuote = nil
+        setQuotePanelOpen(false)
+        for img in draft.images {
+            var localImage: UIImage?
+            if let name = img.localFile {
+                localImage = BearyDraftImageStore.image(for: name)
+            }
+            let failed = (img.state == .failed)
+            let item = createImageItem(localImage: localImage, key: img.serverKey, uploading: false, localFile: img.localFile, failed: failed)
+            insertImageItem(item)
+            if localImage == nil, let key = img.serverKey,
+               let url = BearyImageURLs.imageURL(key: key, thumb: true) {
+                item.imageView.bearySetImage(url: url, placeholder: nil)
+            }
+        }
+        refreshImageStripVisibility()
+        resumePendingUploads()
+        updateCountLabel()
+        updatePublishState()
+        refreshMoodButtons()
+        refreshWeatherButtons()
+        refreshRecipientRow()
+        refreshQuoteSection()
+        refreshExtras()
+        updateDraftPillCount()
+    }
+
+    /// 只拆视图不删文件（切草稿时旧篇文件仍归旧篇所有，删文件只在丢弃/发布成功时做）。
+    private func removeAllImageViews() {
+        for item in imageItems {
+            imageStackView.removeArrangedSubview(item.container)
+            item.container.removeFromSuperview()
+        }
+        imageItems = []
+        refreshImageStripVisibility()
     }
 
     // MARK: - 取消与发布
@@ -1427,10 +2482,10 @@ private final class ComposerImageItem {
     let container: UIView
     let imageView: UIImageView
     let spinner: UIActivityIndicatorView
-    let retryLabel: UILabel
+    let failView: UIView
     let removeButton: UIButton
 
-    init(key: String?, uploading: Bool, localFile: String?, failed: Bool, container: UIView, imageView: UIImageView, spinner: UIActivityIndicatorView, retryLabel: UILabel, removeButton: UIButton) {
+    init(key: String?, uploading: Bool, localFile: String?, failed: Bool, container: UIView, imageView: UIImageView, spinner: UIActivityIndicatorView, failView: UIView, removeButton: UIButton) {
         self.key = key
         self.uploading = uploading
         self.localFile = localFile
@@ -1438,20 +2493,23 @@ private final class ComposerImageItem {
         self.container = container
         self.imageView = imageView
         self.spinner = spinner
-        self.retryLabel = retryLabel
+        self.failView = failView
         self.removeButton = removeButton
     }
 }
 
 // 注：
-// 1. 天气（weather）主线闭环第一块已补：9 天气单选 chip（选中态墨色，与网页天气已选态一致），
-//    publish 传 weather；不选不传（服务端 validWeather 对缺失值置 null，与网页同口径）。
-//    publishEntry 同步补齐 quote_id/recipient_id/notify_recipient（默认参数，旧调用点不受影响）。
-// 2. 写给：新建模式只选一人（搜索接口 users 组），标签 + 通知对方复选框（默认开；复选框只写
-//    本地状态，不触发重渲染）；编辑模式锁定只展示（服务端 PUT 不接受 recipient，改不了）。
-//    引用：新建模式只挑自己的时间线（服务端 validQuoteId 只接受本人日记，赞过/收藏的他人日记
-//    会被服务端静默丢弃，故不做 liked/saved tab）；编辑模式锁定原值；内容为空的引用视为已删，
-//    不回填、保存时即丢弃（与网页编辑同款）。
+// 1. 天气（weather）：图标 + 名 chip，首项“无”，选中墨色边框（无底，与网页 wx-chip.on 同款），
+//    再点已选项不取消；publish 传 weather；不选不传（服务端 validWeather 对缺失值置 null，
+//    与网页同口径）。publishEntry 同步补齐 quote_id/recipient_id/notify_recipient
+//    （默认参数，旧调用点不受影响）。天气图标契约见文件头 BearyWeatherIcon（Feed/Detail 共用）。
+// 2. 写给：新建模式只选一人（搜索接口 users 组），@ 图标 + “写给某个人”钮 / chip + 通知行
+//    （复选框只写本地状态，不触发重渲染）；编辑模式锁定只展示（服务端 PUT 不接受 recipient，
+//    改不了；无收信人时整区隐藏，网页编辑态同款）。
+//    引用：内嵌面板三 tab（我的日记 timeline / 赞过的 liked / 收藏的 saved），行指标日期 12 +
+//    正文 14 clamp 3 + 底线；服务端 validQuoteId 只接受本人日记，非本人 picks 仍会被服务端
+//    静默丢弃（与网页行为一致）；编辑模式锁定原值；内容为空的引用视为已删，不回填、
+//    保存时即丢弃（与网页编辑同款）。
 // 3. 编辑模式：init(entry:) 进入；正文/心情/天气/图片可改；不读不写 beary_draft_v2（
 //    scheduleDraftSave/saveDraftNow 在编辑模式直接 return）；取消时不删原日记，改过先确认；
 //    保存走 PUT，15 分钟规则只由服务端判定（403 三种过期码统一转“已超过编辑期”文案后关编辑器）；
@@ -1460,9 +2518,17 @@ private final class ComposerImageItem {
 //    要持久化它们须另起草稿 v3 + 迁移，本片不做。
 // 5. 发布确认：新建无失败图时弹一次（标题“发布”，写清 7 天公开与 15 分钟可改）；有失败图时只弹
 //    失败图确认，不叠加；编辑模式弹“保存修改”确认。
-// 6. 超 2000 字红字提示用 BearyColors.red（网页 --red #e5484d，浅深同值）；图片上的
-//    “重试”/× 衬底用 BearyColors.scrim（固定深色半透明，深色下 ink 是近白、白字会看不清）。
-//    其余白字只出现在恒定橙底上（选中心情）与墨底上（选中天气），浅深皆可读。
+// 6. 超 2000 字红字提示用 BearyColors.red（网页 --red #e5484d，浅深同值），字数圆环同步变红；
+//    图片 × 衬底用 BearyColors.scrim（固定深色半透明，深色下 ink 是近白、白字会看不清）；
+//    上传失败图为行内红底块（红 10% 底 + “失败，点我重试”），发布时失败确认弹框另行保留。
+//    其余白字只出现在恒定橙底上（心情 chip 回退名）与墨底上（发布 pill），浅深皆可读。
+// 8. 网页对齐批：段落顺序与网页版一致（正文 → 图片 → 工具栏 → 附加选项 → 天气 → 状态行
+//    → 写给 → 心情 → 引用 → 规则框）；附加选项默认收起，收起天气/写给/心情三区；
+//    草稿 pill 计数暂按 v2 单槽口径（有=1/无=0），多篇索引 API 落地后改读索引长度；
+//    引用面板相对网页 qp-mode 藏 10 区是有意简化：面板在引用行下方就地展开，其他区块保持可见；
+//    编辑倒计时到期只显“编辑已结束”并停表，不自动关编辑器（网页会关，App 侧不抢用户正在改的内容）。
+//    草稿箱弹层 BearyDraftBoxViewController 与熊图 BearyEmoteImages 均由其他代理新建文件提供，
+//    本文件只调用、不定义；两者未落地前本文件单独编译会缺符号，待齐套后由 CI 验证。
 // 3. 图片 × 只移除本地与 key 列表，不调服务端；未发布的孤 key 残留是已知可接受项。
 // 4. 草稿 v2（BearyDraftFiles.swift）：正文 + 心情 + 图片项（本地文件名 / 服务端 key / 上传状态）
 //    + clientReq（创建时生成一次，发布重试全程复用）+ updatedAt；JSON 文件原子写；

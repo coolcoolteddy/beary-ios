@@ -1,0 +1,23 @@
+{
+  "images": [
+    {
+      "idiom": "universal",
+      "filename": "wish-72.png",
+      "scale": "1x"
+    },
+    {
+      "idiom": "universal",
+      "filename": "wish-144.png",
+      "scale": "2x"
+    },
+    {
+      "idiom": "universal",
+      "filename": "wish-216.png",
+      "scale": "3x"
+    }
+  ],
+  "info": {
+    "version": 1,
+    "author": "xcode"
+  }
+}
