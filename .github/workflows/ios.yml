@@ -90,7 +90,7 @@ jobs:
         run: >
           xcodebuild
           -project ios/App/App.xcodeproj
-          -target BearyCoreTests
+          -scheme BearyCoreTests
           -configuration Debug
           -destination 'platform=iOS Simulator,name=iPhone 16,OS=latest'
           CODE_SIGNING_ALLOWED=NO
