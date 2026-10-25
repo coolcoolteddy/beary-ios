@@ -1455,13 +1455,7 @@ class BearyFeedCell: UITableViewCell {
         return v
     }()
 
-    private let moodImageView: UIImageView = {
-        let v = UIImageView()
-        v.translatesAutoresizingMaskIntoConstraints = false
-        v.contentMode = .scaleAspectFit
-        v.isHidden = true
-        return v
-    }()
+    private var moodEmoteView: BearyEmoteView?
 
     private let moodLabel: UILabel = {
         let lb = UILabel()
@@ -1473,7 +1467,7 @@ class BearyFeedCell: UITableViewCell {
     }()
 
     private lazy var moodStack: UIStackView = {
-        let st = UIStackView(arrangedSubviews: [moodImageView, moodLabel])
+        let st = UIStackView(arrangedSubviews: [moodLabel])
         st.translatesAutoresizingMaskIntoConstraints = false
         st.axis = .horizontal
         st.spacing = 3
@@ -1654,8 +1648,6 @@ class BearyFeedCell: UITableViewCell {
         crownWidth.priority = UILayoutPriority(999)
         let weatherWidth = weatherImageView.widthAnchor.constraint(equalToConstant: 15)
         weatherWidth.priority = UILayoutPriority(999)
-        let moodImageWidth = moodImageView.widthAnchor.constraint(equalToConstant: 20)
-        moodImageWidth.priority = UILayoutPriority(999)
         NSLayoutConstraint.activate([
             avatarContainer.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 22),
             avatarContainer.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 20),
@@ -1679,8 +1671,6 @@ class BearyFeedCell: UITableViewCell {
             crownImageView.heightAnchor.constraint(equalToConstant: 19),
             weatherWidth,
             weatherImageView.heightAnchor.constraint(equalToConstant: 15),
-            moodImageWidth,
-            moodImageView.heightAnchor.constraint(equalToConstant: 20),
             height,
             emoteHeight,
             imagesStack.topAnchor.constraint(equalTo: imagesScrollView.contentLayoutGuide.topAnchor),
@@ -1794,8 +1784,8 @@ class BearyFeedCell: UITableViewCell {
         weatherImageView.image = nil
         weatherImageView.isHidden = true
         moodStack.isHidden = true
-        moodImageView.image = nil
-        moodImageView.isHidden = true
+        moodEmoteView?.removeFromSuperview()
+        moodEmoteView = nil
         moodLabel.text = nil
     }
 
@@ -1941,25 +1931,36 @@ class BearyFeedCell: UITableViewCell {
         bookmarkButton.tintColor = bookmarked ? BearyColors.orange : BearyColors.gray
     }
 
-    /// F9：心情 = 灰字 + 熊图 20px；缺图时只显示文字名，图片位隐藏、不留空。
+    /// F9：心情 = 灰字 + 熊图 20px；无心情时整行隐藏。深浅变体由播放器内部切换。
     private func refreshMoodView() {
         guard let moodKey = currentEntry?.mood, let moodName = BearyText.moodNames[moodKey] else {
             moodStack.isHidden = true
             moodLabel.text = nil
-            moodImageView.image = nil
-            moodImageView.isHidden = true
+            moodEmoteView?.removeFromSuperview()
+            moodEmoteView = nil
             return
         }
         moodStack.isHidden = false
         moodLabel.text = moodName
-        let isDark = traitCollection.userInterfaceStyle == .dark
-        if let emoteImage = BearyEmoteImages.image(for: moodKey, dark: isDark) {
-            moodImageView.image = emoteImage
-            moodImageView.isHidden = false
-        } else {
-            moodImageView.image = nil
-            moodImageView.isHidden = true
+        setMoodEmote(key: moodKey)
+    }
+
+    /// 卡片心情位：key 不变时复用播放器（深浅由其内部切换），key 变了才重建，尺寸仍为 20（宽约束 999 与原口径一致）。
+    private func setMoodEmote(key: String) {
+        if let current = moodEmoteView, current.emoteKey == key {
+            return
         }
+        moodEmoteView?.removeFromSuperview()
+        let emoteView = BearyEmoteView(key: key, animated: false)
+        emoteView.translatesAutoresizingMaskIntoConstraints = false
+        moodStack.insertArrangedSubview(emoteView, at: 0)
+        let width = emoteView.widthAnchor.constraint(equalToConstant: 20)
+        width.priority = UILayoutPriority(999)
+        NSLayoutConstraint.activate([
+            width,
+            emoteView.heightAnchor.constraint(equalToConstant: 20),
+        ])
+        moodEmoteView = emoteView
     }
 
     @objc private func authorTapped() {
@@ -2404,17 +2405,6 @@ class BearyFeedCell: UITableViewCell {
 
     // MARK: - 回应行（网页 .emote-row 口径）
 
-    private func resizedEmoteImage(_ image: UIImage, pointSize: CGFloat) -> UIImage {
-        if image.size.width <= pointSize && image.size.height <= pointSize {
-            return image
-        }
-        let size = CGSize(width: pointSize, height: pointSize)
-        let renderer = UIGraphicsImageRenderer(size: size)
-        return renderer.image { _ in
-            image.draw(in: CGRect(origin: .zero, size: size))
-        }
-    }
-
     /// 回应行高：flow 实测换行高；行宽取 flow 实测宽，落位前用右列宽估算。
     private func updateEmoteRowHeight() {
         let width = emoteFlowView.bounds.width > 0 ? emoteFlowView.bounds.width : rightColumnWidthEstimate()
@@ -2424,12 +2414,26 @@ class BearyFeedCell: UITableViewCell {
         }
     }
 
-    /// F7：回应 chip 按 count 降序（网页 emoteChipsHtml 同口径）。
-    private func chipButton(forKey key: String) -> UIButton? {
+    /// F7：回应 chip 按 count 降序（网页 emoteChipsHtml 同口径）。返回 chip 容器（点击层在内）。
+    private func chipButton(forKey key: String) -> UIView? {
         guard let index = currentEmoteList.firstIndex(where: { $0.emote == key }) else { return nil }
         for sub in emoteFlowView.subviews {
-            if let button = sub as? UIButton, button !== emoteAddButton, button.tag == index {
-                return button
+            guard sub as? UIButton == nil else { continue }
+            if let overlay = sub.subviews.compactMap({ $0 as? UIButton }).first, overlay.tag == index {
+                return sub
+            }
+        }
+        return nil
+    }
+
+    /// 在 chip 容器内递归找播放器（容器 → 横排 → 播放器）。
+    private func emoteView(in view: UIView) -> BearyEmoteView? {
+        if let emote = view as? BearyEmoteView {
+            return emote
+        }
+        for sub in view.subviews {
+            if let found = emoteView(in: sub) {
+                return found
             }
         }
         return nil
@@ -2440,29 +2444,29 @@ class BearyFeedCell: UITableViewCell {
     private func playChipIn(forKey key: String) {
         if UIAccessibility.isReduceMotionEnabled { return }
         emoteFlowView.layoutIfNeeded()
-        guard let button = chipButton(forKey: key) else { return }
-        button.transform = CGAffineTransform(scaleX: 0.4, y: 0.4)
-        button.alpha = 0
+        guard let chip = chipButton(forKey: key) else { return }
+        chip.transform = CGAffineTransform(scaleX: 0.4, y: 0.4)
+        chip.alpha = 0
         UIView.animateKeyframes(withDuration: 0.45, delay: 0, options: [], animations: {
             UIView.addKeyframe(withRelativeStartTime: 0, relativeDuration: 0.6) {
-                button.transform = CGAffineTransform(scaleX: 1.12, y: 1.12)
-                button.alpha = 1
+                chip.transform = CGAffineTransform(scaleX: 1.12, y: 1.12)
+                chip.alpha = 1
             }
             UIView.addKeyframe(withRelativeStartTime: 0.6, relativeDuration: 0.4) {
-                button.transform = .identity
-                button.alpha = 1
+                chip.transform = .identity
+                chip.alpha = 1
             }
         }, completion: nil)
-        if let imageView = button.imageView {
+        if let emoteView = emoteView(in: chip) {
             UIView.animateKeyframes(withDuration: 0.5, delay: 0, options: [], animations: {
                 UIView.addKeyframe(withRelativeStartTime: 0, relativeDuration: 0.3) {
-                    imageView.transform = CGAffineTransform(rotationAngle: -0.1745).scaledBy(x: 1.3, y: 1.3)
+                    emoteView.transform = CGAffineTransform(rotationAngle: -0.1745).scaledBy(x: 1.3, y: 1.3)
                 }
                 UIView.addKeyframe(withRelativeStartTime: 0.3, relativeDuration: 0.3) {
-                    imageView.transform = CGAffineTransform(rotationAngle: 0.1396).scaledBy(x: 1.15, y: 1.15)
+                    emoteView.transform = CGAffineTransform(rotationAngle: 0.1396).scaledBy(x: 1.15, y: 1.15)
                 }
                 UIView.addKeyframe(withRelativeStartTime: 0.6, relativeDuration: 0.4) {
-                    imageView.transform = .identity
+                    emoteView.transform = .identity
                 }
             }, completion: nil)
         }
@@ -2477,7 +2481,7 @@ class BearyFeedCell: UITableViewCell {
             onEmoteChanged?(entryIdValue, emotes)
             return
         }
-        guard let button = chipButton(forKey: key) else {
+        guard let chip = chipButton(forKey: key) else {
             isEmoteBusy = false
             renderEmotes()
             updateEmoteInteractivity()
@@ -2486,8 +2490,8 @@ class BearyFeedCell: UITableViewCell {
         }
         updateEmoteInteractivity()
         UIView.animate(withDuration: 0.2, animations: {
-            button.transform = CGAffineTransform(scaleX: 0.5, y: 0.5)
-            button.alpha = 0
+            chip.transform = CGAffineTransform(scaleX: 0.5, y: 0.5)
+            chip.alpha = 0
         }, completion: { [weak self] _ in
             guard let strongSelf = self else { return }
             strongSelf.isEmoteBusy = false
@@ -2503,33 +2507,51 @@ class BearyFeedCell: UITableViewCell {
         }
         let list = (currentEntry?.emotes ?? []).sorted(by: { ($0.count ?? 0) > ($1.count ?? 0) })
         currentEmoteList = list
-        let dark = traitCollection.userInterfaceStyle == .dark
         for (index, item) in list.enumerated() {
             let key = item.emote ?? ""
             let count = item.count ?? 0
             let mine = item.mine ?? false
-            let button = UIButton(type: .system)
-            button.tag = index
+            // 回应 chip：容器承载样式，内层横排为播放器 24 + 计数；透明点击层保留原 tag 与点击回调。
+            let chip = UIView()
+            chip.translatesAutoresizingMaskIntoConstraints = false
+            chip.backgroundColor = BearyColors.faint
+            chip.layer.cornerRadius = 16
+            chip.layer.borderWidth = 1
+            chip.layer.borderColor = (mine ? BearyColors.ink : BearyColors.line).cgColor
+            chip.clipsToBounds = true
+            let row = UIStackView()
+            row.axis = .horizontal
+            row.spacing = 6
+            row.alignment = .center
+            row.translatesAutoresizingMaskIntoConstraints = false
+            let emoteView = BearyEmoteView(key: key, animated: false)
+            emoteView.translatesAutoresizingMaskIntoConstraints = false
+            let countLabel = UILabel()
+            countLabel.font = mine ? UIFont.boldSystemFont(ofSize: 12) : UIFont.systemFont(ofSize: 12)
+            countLabel.textColor = mine ? BearyColors.ink : BearyColors.gray
+            countLabel.text = "\(count)"
+            row.addArrangedSubview(emoteView)
+            row.addArrangedSubview(countLabel)
+            chip.addSubview(row)
+            let button = UIButton(type: .custom)
             button.translatesAutoresizingMaskIntoConstraints = false
-            if let emoteImage = BearyEmoteImages.image(for: key, dark: dark) {
-                button.setImage(resizedEmoteImage(emoteImage, pointSize: 24).withRenderingMode(.alwaysOriginal), for: .normal)
-                button.setTitle("\(count)", for: .normal)
-            } else {
-                let name = BearyText.moodNames[key] ?? key
-                button.setTitle("\(name) \(count)", for: .normal)
-            }
-            button.titleLabel?.font = mine ? UIFont.boldSystemFont(ofSize: 12) : UIFont.systemFont(ofSize: 12)
-            button.setTitleColor(mine ? BearyColors.ink : BearyColors.gray, for: .normal)
-            button.contentEdgeInsets = UIEdgeInsets(top: 4, left: 6, bottom: 4, right: 10)
-            button.titleEdgeInsets = UIEdgeInsets(top: 0, left: 6, bottom: 0, right: 0)
-            button.backgroundColor = BearyColors.faint
-            button.layer.cornerRadius = 16
-            button.layer.borderWidth = 1
-            button.layer.borderColor = (mine ? BearyColors.ink : BearyColors.line).cgColor
-            button.clipsToBounds = true
-            button.heightAnchor.constraint(equalToConstant: 32).isActive = true
+            button.tag = index
             button.addTarget(self, action: #selector(emoteChipTapped(_:)), for: .touchUpInside)
-            emoteFlowView.addSubview(button)
+            chip.addSubview(button)
+            NSLayoutConstraint.activate([
+                emoteView.widthAnchor.constraint(equalToConstant: 24),
+                emoteView.heightAnchor.constraint(equalToConstant: 24),
+                row.topAnchor.constraint(equalTo: chip.topAnchor, constant: 4),
+                row.bottomAnchor.constraint(equalTo: chip.bottomAnchor, constant: -4),
+                row.leadingAnchor.constraint(equalTo: chip.leadingAnchor, constant: 6),
+                row.trailingAnchor.constraint(equalTo: chip.trailingAnchor, constant: -10),
+                button.topAnchor.constraint(equalTo: chip.topAnchor),
+                button.bottomAnchor.constraint(equalTo: chip.bottomAnchor),
+                button.leadingAnchor.constraint(equalTo: chip.leadingAnchor),
+                button.trailingAnchor.constraint(equalTo: chip.trailingAnchor),
+                chip.heightAnchor.constraint(equalToConstant: 32),
+            ])
+            emoteFlowView.addSubview(chip)
         }
         emoteFlowView.addSubview(emoteAddButton)
         updateEmoteRowHeight()
@@ -2541,18 +2563,27 @@ class BearyFeedCell: UITableViewCell {
     private func updateEmoteInteractivity() {
         let publicOK = currentEntry?.isPublic == true
         for sub in emoteFlowView.subviews {
-            guard let button = sub as? UIButton else { continue }
-            button.isEnabled = publicOK && isEmoteBusy == false
+            if let button = sub as? UIButton {
+                button.isEnabled = publicOK && isEmoteBusy == false
+                if publicOK == false {
+                    button.alpha = 0.4
+                } else {
+                    button.alpha = 1.0
+                }
+                continue
+            }
+            guard let overlay = sub.subviews.compactMap({ $0 as? UIButton }).first else { continue }
+            overlay.isEnabled = publicOK && isEmoteBusy == false
             var chipKey: String?
-            if button !== emoteAddButton, button.tag >= 0, button.tag < currentEmoteList.count {
-                chipKey = currentEmoteList[button.tag].emote
+            if overlay.tag >= 0, overlay.tag < currentEmoteList.count {
+                chipKey = currentEmoteList[overlay.tag].emote
             }
             if publicOK == false {
-                button.alpha = 0.4
+                sub.alpha = 0.4
             } else if isEmoteBusy, let key = chipKey, key == pendingEmoteKey || key == pendingRemovingEmoteKey {
-                button.alpha = 0.6
+                sub.alpha = 0.6
             } else {
-                button.alpha = 1.0
+                sub.alpha = 1.0
             }
         }
     }
@@ -3293,23 +3324,23 @@ private class BearyFeedEmoteSheetViewController: UIViewController, UICollectionV
 
 private class BearyFeedEmoteSheetCell: UICollectionViewCell {
 
-    private let emoteImageView = UIImageView()
+    private let emoteSlot = UIView()
+    private var emoteView: BearyEmoteView?
     private let nameLabel = UILabel()
 
     override init(frame: CGRect) {
         super.init(frame: frame)
-        emoteImageView.contentMode = .scaleAspectFit
-        emoteImageView.translatesAutoresizingMaskIntoConstraints = false
-        contentView.addSubview(emoteImageView)
+        emoteSlot.translatesAutoresizingMaskIntoConstraints = false
+        contentView.addSubview(emoteSlot)
         nameLabel.translatesAutoresizingMaskIntoConstraints = false
         nameLabel.textAlignment = .center
         contentView.addSubview(nameLabel)
         NSLayoutConstraint.activate([
-            emoteImageView.topAnchor.constraint(equalTo: contentView.topAnchor),
-            emoteImageView.centerXAnchor.constraint(equalTo: contentView.centerXAnchor),
-            emoteImageView.widthAnchor.constraint(equalToConstant: 46),
-            emoteImageView.heightAnchor.constraint(equalToConstant: 46),
-            nameLabel.topAnchor.constraint(equalTo: emoteImageView.bottomAnchor, constant: 4),
+            emoteSlot.topAnchor.constraint(equalTo: contentView.topAnchor),
+            emoteSlot.centerXAnchor.constraint(equalTo: contentView.centerXAnchor),
+            emoteSlot.widthAnchor.constraint(equalToConstant: 46),
+            emoteSlot.heightAnchor.constraint(equalToConstant: 46),
+            nameLabel.topAnchor.constraint(equalTo: emoteSlot.bottomAnchor, constant: 4),
             nameLabel.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 2),
             nameLabel.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -2),
         ])
@@ -3319,19 +3350,32 @@ private class BearyFeedEmoteSheetCell: UICollectionViewCell {
         fatalError("init(coder:) has not been implemented")
     }
 
+    override func prepareForReuse() {
+        super.prepareForReuse()
+        emoteView?.stop()
+    }
+
     func configure(key: String, dark: Bool) {
+        // dark 由播放器内部处理，签名保留以免改动面板调用点。
         let name = BearyText.moodNames[key] ?? key
-        if let image = BearyEmoteImages.image(for: key, dark: dark) {
-            emoteImageView.image = image.withRenderingMode(.alwaysOriginal)
-            emoteImageView.isHidden = false
-            nameLabel.font = UIFont.systemFont(ofSize: 11)
-            nameLabel.textColor = BearyColors.gray
+        if let current = emoteView, current.emoteKey == key {
+            current.play()
         } else {
-            emoteImageView.image = nil
-            emoteImageView.isHidden = true
-            nameLabel.font = UIFont.systemFont(ofSize: 14)
-            nameLabel.textColor = BearyColors.ink
+            emoteView?.stop()
+            emoteView?.removeFromSuperview()
+            let next = BearyEmoteView(key: key, animated: true)
+            next.translatesAutoresizingMaskIntoConstraints = false
+            emoteSlot.addSubview(next)
+            NSLayoutConstraint.activate([
+                next.topAnchor.constraint(equalTo: emoteSlot.topAnchor),
+                next.bottomAnchor.constraint(equalTo: emoteSlot.bottomAnchor),
+                next.leadingAnchor.constraint(equalTo: emoteSlot.leadingAnchor),
+                next.trailingAnchor.constraint(equalTo: emoteSlot.trailingAnchor),
+            ])
+            emoteView = next
         }
+        nameLabel.font = UIFont.systemFont(ofSize: 11)
+        nameLabel.textColor = BearyColors.gray
         nameLabel.text = name
     }
 }

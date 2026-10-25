@@ -687,17 +687,13 @@ final class BearyDraftBoxViewController: UIViewController {
         row.spacing = 4
         row.alignment = .center
         row.translatesAutoresizingMaskIntoConstraints = false
-        let isDark = traitCollection.userInterfaceStyle == .dark
-        if let emoteImage = BearyEmoteImages.image(for: key, dark: isDark) {
-            let imageView = UIImageView(image: emoteImage)
-            imageView.translatesAutoresizingMaskIntoConstraints = false
-            imageView.contentMode = .scaleAspectFit
-            NSLayoutConstraint.activate([
-                imageView.widthAnchor.constraint(equalToConstant: 16),
-                imageView.heightAnchor.constraint(equalToConstant: 16),
-            ])
-            row.addArrangedSubview(imageView)
-        }
+        let emoteView = BearyEmoteView(key: key, animated: false)
+        emoteView.translatesAutoresizingMaskIntoConstraints = false
+        NSLayoutConstraint.activate([
+            emoteView.widthAnchor.constraint(equalToConstant: 16),
+            emoteView.heightAnchor.constraint(equalToConstant: 16),
+        ])
+        row.addArrangedSubview(emoteView)
         let label = UILabel()
         label.text = name
         label.font = UIFont.systemFont(ofSize: 11.5, weight: .semibold)

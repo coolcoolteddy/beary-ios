@@ -46,6 +46,87 @@
 		2B5FFB899357ED2A2FA2E05E /* BearySearchViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = EF90ED3AC360C339FA2BAEFC /* BearySearchViewController.swift */; };
 		A23C53DAC03E8C03962E6498 /* BearyNotificationsViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5E158D917D57FA5831A2069F /* BearyNotificationsViewController.swift */; };
 		EA84A3E04072B1309A399108 /* BearyEmoteImages.swift in Sources */ = {isa = PBXBuildFile; fileRef = B67362B50D4D2A91E59412D2 /* BearyEmoteImages.swift */; };
+		93F45F628E22C5045A1EF58F /* agree.json in Resources */ = {isa = PBXBuildFile; fileRef = DAE48A2C16A1E3B2821093EB /* agree.json */; };
+		4497343DBC967B83178641E1 /* agree_dark.json in Resources */ = {isa = PBXBuildFile; fileRef = 37B9943EDEF2C3A792782E9E /* agree_dark.json */; };
+		253B820FAB0078EED0B89D4E /* angry.json in Resources */ = {isa = PBXBuildFile; fileRef = 0F94F0E398907EA72C0111A3 /* angry.json */; };
+		E2BA82FA3D6D7993407A70D0 /* angry_dark.json in Resources */ = {isa = PBXBuildFile; fileRef = A51DFDB490D877CB099D60EA /* angry_dark.json */; };
+		581E39E8004B165DA78AF048 /* applause.json in Resources */ = {isa = PBXBuildFile; fileRef = 3DCCC88B87742D1427B69EB1 /* applause.json */; };
+		1FC27B9CA1830139474452A8 /* applause_dark.json in Resources */ = {isa = PBXBuildFile; fileRef = D1A845A48EBF3139C11CCA78 /* applause_dark.json */; };
+		C3C722A9C26F5353CA42B1E4 /* candle.json in Resources */ = {isa = PBXBuildFile; fileRef = 65894B185719F2B81C3DF054 /* candle.json */; };
+		6A4E71D37E9D01D2FC558A4C /* candle_dark.json in Resources */ = {isa = PBXBuildFile; fileRef = 41B3813B090522D8721BF864 /* candle_dark.json */; };
+		854668F02EBA7FD1AB3C5B71 /* cheer.json in Resources */ = {isa = PBXBuildFile; fileRef = 3CB3F324D9C8AA9E9F870890 /* cheer.json */; };
+		08EDB2F4A049E20ECE5E9134 /* cheer_dark.json in Resources */ = {isa = PBXBuildFile; fileRef = 73CC34C5DF9940AB25753B1C /* cheer_dark.json */; };
+		F45075D583734C5292C67D07 /* comfort.json in Resources */ = {isa = PBXBuildFile; fileRef = C6B2C224C9DCA4F25430B3A4 /* comfort.json */; };
+		5BC5B1B29908B9847A793757 /* comfort_dark.json in Resources */ = {isa = PBXBuildFile; fileRef = BDF96D68B8DF90E9A7EECD11 /* comfort_dark.json */; };
+		AF81331D3137B5DB947A62B4 /* confused.json in Resources */ = {isa = PBXBuildFile; fileRef = AE1688450CBF6EF1F2813833 /* confused.json */; };
+		B7310CB3447441022CC3CECA /* confused_dark.json in Resources */ = {isa = PBXBuildFile; fileRef = 970961B53CBE4FD1A1782BD1 /* confused_dark.json */; };
+		C4A323D2C9355B9B5D7D5220 /* cry.json in Resources */ = {isa = PBXBuildFile; fileRef = FB561B22ACC2B4CE3BEFF7C0 /* cry.json */; };
+		0F82ECD7420CAB92D4EAF459 /* cry_dark.json in Resources */ = {isa = PBXBuildFile; fileRef = 286A7B889822123007F9E1F8 /* cry_dark.json */; };
+		F2E097CAA526F4708BBA0D05 /* determined.json in Resources */ = {isa = PBXBuildFile; fileRef = 0263588FD792BA30CCA1AFC6 /* determined.json */; };
+		1A67C04608C7177A50BD6D50 /* determined_dark.json in Resources */ = {isa = PBXBuildFile; fileRef = 97FF65991FDF37330753EDAB /* determined_dark.json */; };
+		A7C21701BB5FB1A9CC640791 /* facepalm.json in Resources */ = {isa = PBXBuildFile; fileRef = D3F2C3BF66161523D7E83944 /* facepalm.json */; };
+		F6CFCE18743CDBBB6E6C4644 /* facepalm_dark.json in Resources */ = {isa = PBXBuildFile; fileRef = 4BC4F99BC69C098DCBD15022 /* facepalm_dark.json */; };
+		BB2EAFDC799E91BF135D18A6 /* flower.json in Resources */ = {isa = PBXBuildFile; fileRef = BE27ED5EF991AA9F954195D8 /* flower.json */; };
+		3462FC3C9643AAB1726EF143 /* flower_dark.json in Resources */ = {isa = PBXBuildFile; fileRef = 7CF3CB1DEC8775C267442A70 /* flower_dark.json */; };
+		9845F6078FC9433DCFE4CF85 /* goodnight.json in Resources */ = {isa = PBXBuildFile; fileRef = 748A73D5AFA1EBC6848BEF37 /* goodnight.json */; };
+		11A72FB5B3F7A1FC348AF1BB /* goodnight_dark.json in Resources */ = {isa = PBXBuildFile; fileRef = B807F013B62B1235148553FC /* goodnight_dark.json */; };
+		3E3D0B6DDA8F7BA275265D28 /* happy.json in Resources */ = {isa = PBXBuildFile; fileRef = D44B05171E68792A60FDA640 /* happy.json */; };
+		06D43822AD01884A7F7FD7AB /* happy_dark.json in Resources */ = {isa = PBXBuildFile; fileRef = 875E78E58DFBAAC0239C369C /* happy_dark.json */; };
+		ED23125215670EE63645BC8C /* hug.json in Resources */ = {isa = PBXBuildFile; fileRef = F709307EFA8752AA62D98BCB /* hug.json */; };
+		CC8F0B11B61628FD6AD6CAF2 /* hug_dark.json in Resources */ = {isa = PBXBuildFile; fileRef = 5FE42B5BDEF9808FFEE164B3 /* hug_dark.json */; };
+		58CF75B795F7D39C5E2CF214 /* idea.json in Resources */ = {isa = PBXBuildFile; fileRef = 6FB794ABBC5344BF45531A0A /* idea.json */; };
+		FA9CF13A8949AC01B14613C0 /* idea_dark.json in Resources */ = {isa = PBXBuildFile; fileRef = 55CB77DF4FBE9776F513B837 /* idea_dark.json */; };
+		CC370CC78C0E9A0171C4718D /* kiss.json in Resources */ = {isa = PBXBuildFile; fileRef = 75083CD78F871BE3B055483B /* kiss.json */; };
+		7F4F6ECDE135231CE2A4329B /* kiss_dark.json in Resources */ = {isa = PBXBuildFile; fileRef = C76881BFF51403B81D1671FF /* kiss_dark.json */; };
+		B403BEE2B178AED5F0BE9CC1 /* letter.json in Resources */ = {isa = PBXBuildFile; fileRef = 11566135D7A8AE0DA3DEDF75 /* letter.json */; };
+		EE53508F66ED9E5942B8266C /* letter_dark.json in Resources */ = {isa = PBXBuildFile; fileRef = 59F182E7740F6A5C8C673FC4 /* letter_dark.json */; };
+		535C9C56123B8F59A05C2461 /* listening.json in Resources */ = {isa = PBXBuildFile; fileRef = C58CADB643DFAC4A1018CF26 /* listening.json */; };
+		14B072EC361D108B212F0C7F /* listening_dark.json in Resources */ = {isa = PBXBuildFile; fileRef = 3F154A280ECA7A10A9508F00 /* listening_dark.json */; };
+		9FE03442046C537EDF2990E0 /* lonely.json in Resources */ = {isa = PBXBuildFile; fileRef = E2E4C3EF36D1E26A4D796002 /* lonely.json */; };
+		3DE715E7A2DEF36A816BC3E5 /* lonely_dark.json in Resources */ = {isa = PBXBuildFile; fileRef = 453650B3BAB905908BEEC24E /* lonely_dark.json */; };
+		298DADBB6DD670988CE8C375 /* love.json in Resources */ = {isa = PBXBuildFile; fileRef = 627AF3EA0230B01E159D96FA /* love.json */; };
+		67C46595BE894AB014F97D06 /* love_dark.json in Resources */ = {isa = PBXBuildFile; fileRef = 42E3628E7A3DA2DBDA06C646 /* love_dark.json */; };
+		86B0E090411CE26E57D08B10 /* nope.json in Resources */ = {isa = PBXBuildFile; fileRef = 0A6DC09D06E79D35ADF65D3C /* nope.json */; };
+		DAF813B7D23E27C94CE3D293 /* nope_dark.json in Resources */ = {isa = PBXBuildFile; fileRef = E6C81B73F7FC7298F17A3A44 /* nope_dark.json */; };
+		5881C7CDECACF666F13E184B /* paperplane.json in Resources */ = {isa = PBXBuildFile; fileRef = 584DF7F269EBB09D006CEA43 /* paperplane.json */; };
+		A6760E04FC2AD0C35CB1A665 /* paperplane_dark.json in Resources */ = {isa = PBXBuildFile; fileRef = FEA8393766256203E9C0ADA4 /* paperplane_dark.json */; };
+		95BDE30FB3FCEEF87BC08DA4 /* pat.json in Resources */ = {isa = PBXBuildFile; fileRef = 23F2E4DCEC9537BFEA3BA288 /* pat.json */; };
+		2C476CDCCA7AB6AA45ED2586 /* pat_dark.json in Resources */ = {isa = PBXBuildFile; fileRef = 4F776F6BE33B9B930D2E9C89 /* pat_dark.json */; };
+		E47388DA63A2ADDD7A1BB765 /* peek.json in Resources */ = {isa = PBXBuildFile; fileRef = 95E503770EE656135E30F48A /* peek.json */; };
+		5B6AFAC26C84135C692F717F /* peek_dark.json in Resources */ = {isa = PBXBuildFile; fileRef = CFAE6F8CA125B450E792FE58 /* peek_dark.json */; };
+		54A0F167D749FB9C5E1986E2 /* proud.json in Resources */ = {isa = PBXBuildFile; fileRef = 9C87B2F1456D8732F04D11AA /* proud.json */; };
+		535480CF3E7AE5E595B316F4 /* proud_dark.json in Resources */ = {isa = PBXBuildFile; fileRef = B876DD67260E3E28DA78B9DD /* proud_dark.json */; };
+		E2C397A40A7E3C2463F6F7A3 /* shrug.json in Resources */ = {isa = PBXBuildFile; fileRef = 776DA1A88CFDDF4097D042A3 /* shrug.json */; };
+		E896A007039347DE35CBAE34 /* shrug_dark.json in Resources */ = {isa = PBXBuildFile; fileRef = 4AC20C5F928E5164C03D208B /* shrug_dark.json */; };
+		F3E819CE368827390071A464 /* shy.json in Resources */ = {isa = PBXBuildFile; fileRef = 46407876831C64AB45666E1B /* shy.json */; };
+		DC34F17FE826C20843F04F84 /* shy_dark.json in Resources */ = {isa = PBXBuildFile; fileRef = 678A14B30AD082EB73D2BA82 /* shy_dark.json */; };
+		36A03389AB8E884B166AAFF6 /* sleepy.json in Resources */ = {isa = PBXBuildFile; fileRef = D6597411DC972CD4A211B13E /* sleepy.json */; };
+		BCA285EAD8567190CE0BC8AB /* sleepy_dark.json in Resources */ = {isa = PBXBuildFile; fileRef = 34B7F3BA008691B649A69337 /* sleepy_dark.json */; };
+		E61EADC9CAF1F810F395B664 /* sorry.json in Resources */ = {isa = PBXBuildFile; fileRef = 679CD8FEDADC411AF5784533 /* sorry.json */; };
+		02A5981E2747165F6DD3703B /* sorry_dark.json in Resources */ = {isa = PBXBuildFile; fileRef = 5D6EE6547E53653BA259B7C7 /* sorry_dark.json */; };
+		E45A00763D980C58233426B0 /* speechless.json in Resources */ = {isa = PBXBuildFile; fileRef = C99DAF8DBB2FD099FFC5535A /* speechless.json */; };
+		4FE983275F06AB4C05FF96B7 /* speechless_dark.json in Resources */ = {isa = PBXBuildFile; fileRef = EF352DD789947D15B57D0A38 /* speechless_dark.json */; };
+		634BA524AB5D864AA9652F25 /* sprout.json in Resources */ = {isa = PBXBuildFile; fileRef = FD6B6D4FD600B4846EC96E25 /* sprout.json */; };
+		5038609805FB05255DF3E598 /* sprout_dark.json in Resources */ = {isa = PBXBuildFile; fileRef = 2465C379FFE1620F45619416 /* sprout_dark.json */; };
+		608B897B147904B5C9821EA9 /* surprised.json in Resources */ = {isa = PBXBuildFile; fileRef = 8FD3E3820BD9BCFCD638F139 /* surprised.json */; };
+		987FB02B2395132E647C3871 /* surprised_dark.json in Resources */ = {isa = PBXBuildFile; fileRef = 845B9FFEDF6C5E73506B336A /* surprised_dark.json */; };
+		7857AFB5BB4C62D0AC5D8524 /* tea.json in Resources */ = {isa = PBXBuildFile; fileRef = 2055E7AFA93300C7CBE16797 /* tea.json */; };
+		30D2FE07CB973EFED632422A /* tea_dark.json in Resources */ = {isa = PBXBuildFile; fileRef = B3C13E4E636D03EEB3D90992 /* tea_dark.json */; };
+		F8F9EBB1E7E8C62CA4B26C61 /* thanks.json in Resources */ = {isa = PBXBuildFile; fileRef = 8231A38B5D62CA1F59B6B60E /* thanks.json */; };
+		3FC490054145981C3C385AA7 /* thanks_dark.json in Resources */ = {isa = PBXBuildFile; fileRef = AF0033D47D99C2DE6C38F153 /* thanks_dark.json */; };
+		7802D47FC524CDCB5160B0AF /* thinking.json in Resources */ = {isa = PBXBuildFile; fileRef = 1C3E89B15784BC0820CED966 /* thinking.json */; };
+		2431C73EBF90391A0530E7B6 /* thinking_dark.json in Resources */ = {isa = PBXBuildFile; fileRef = 684E6AE08556341A451D94F8 /* thinking_dark.json */; };
+		082E96A90F0B1CD0AB250996 /* umbrella.json in Resources */ = {isa = PBXBuildFile; fileRef = 51EFE9A28C74F4EB867D6F90 /* umbrella.json */; };
+		16AA8370B7F2184D547384FE /* umbrella_dark.json in Resources */ = {isa = PBXBuildFile; fileRef = D31F1F777981782C95A27F45 /* umbrella_dark.json */; };
+		2DAAA020DCDD045221079B03 /* wave.json in Resources */ = {isa = PBXBuildFile; fileRef = 3D2D97C5B4D63878D30FB785 /* wave.json */; };
+		7FA8EF615D3EEE50C0866DB0 /* wave_dark.json in Resources */ = {isa = PBXBuildFile; fileRef = 5B974F9AC9E958F7BC1C7780 /* wave_dark.json */; };
+		FD2B43A8E07DD71A20E173EA /* wink.json in Resources */ = {isa = PBXBuildFile; fileRef = 365AE29A625A9E0D6815757E /* wink.json */; };
+		0D6006E5D5B6D525F5688434 /* wink_dark.json in Resources */ = {isa = PBXBuildFile; fileRef = 160EDADE3800465F9638711F /* wink_dark.json */; };
+		CC44290AF09066C3553629F4 /* wish.json in Resources */ = {isa = PBXBuildFile; fileRef = 29201CACFA492A882B791748 /* wish.json */; };
+		7EC7184A822E299D4AE5A95D /* wish_dark.json in Resources */ = {isa = PBXBuildFile; fileRef = 66A30D087D0C4BE318AD4C46 /* wish_dark.json */; };
+		80708F8472B7D2F81E42B791 /* zap.json in Resources */ = {isa = PBXBuildFile; fileRef = D1FEDAEE06536713E0B7515C /* zap.json */; };
+		D54F707D67D52AB5B0EE1DFA /* zap_dark.json in Resources */ = {isa = PBXBuildFile; fileRef = 29302F6301B0882F2EA91CF7 /* zap_dark.json */; };
+		79F247252364A4DF73EEBDA2 /* BearyEmotePlayer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 073AE0417A7BFF6FD0034CE0 /* BearyEmotePlayer.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -89,6 +170,87 @@
 		EF90ED3AC360C339FA2BAEFC /* BearySearchViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BearySearchViewController.swift; sourceTree = "<group>"; };
 		5E158D917D57FA5831A2069F /* BearyNotificationsViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BearyNotificationsViewController.swift; sourceTree = "<group>"; };
 		B67362B50D4D2A91E59412D2 /* BearyEmoteImages.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BearyEmoteImages.swift; sourceTree = "<group>"; };
+		DAE48A2C16A1E3B2821093EB /* agree.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = LottieEmotes/agree.json; sourceTree = "<group>"; };
+		37B9943EDEF2C3A792782E9E /* agree_dark.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = LottieEmotes/agree_dark.json; sourceTree = "<group>"; };
+		0F94F0E398907EA72C0111A3 /* angry.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = LottieEmotes/angry.json; sourceTree = "<group>"; };
+		A51DFDB490D877CB099D60EA /* angry_dark.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = LottieEmotes/angry_dark.json; sourceTree = "<group>"; };
+		3DCCC88B87742D1427B69EB1 /* applause.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = LottieEmotes/applause.json; sourceTree = "<group>"; };
+		D1A845A48EBF3139C11CCA78 /* applause_dark.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = LottieEmotes/applause_dark.json; sourceTree = "<group>"; };
+		65894B185719F2B81C3DF054 /* candle.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = LottieEmotes/candle.json; sourceTree = "<group>"; };
+		41B3813B090522D8721BF864 /* candle_dark.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = LottieEmotes/candle_dark.json; sourceTree = "<group>"; };
+		3CB3F324D9C8AA9E9F870890 /* cheer.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = LottieEmotes/cheer.json; sourceTree = "<group>"; };
+		73CC34C5DF9940AB25753B1C /* cheer_dark.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = LottieEmotes/cheer_dark.json; sourceTree = "<group>"; };
+		C6B2C224C9DCA4F25430B3A4 /* comfort.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = LottieEmotes/comfort.json; sourceTree = "<group>"; };
+		BDF96D68B8DF90E9A7EECD11 /* comfort_dark.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = LottieEmotes/comfort_dark.json; sourceTree = "<group>"; };
+		AE1688450CBF6EF1F2813833 /* confused.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = LottieEmotes/confused.json; sourceTree = "<group>"; };
+		970961B53CBE4FD1A1782BD1 /* confused_dark.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = LottieEmotes/confused_dark.json; sourceTree = "<group>"; };
+		FB561B22ACC2B4CE3BEFF7C0 /* cry.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = LottieEmotes/cry.json; sourceTree = "<group>"; };
+		286A7B889822123007F9E1F8 /* cry_dark.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = LottieEmotes/cry_dark.json; sourceTree = "<group>"; };
+		0263588FD792BA30CCA1AFC6 /* determined.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = LottieEmotes/determined.json; sourceTree = "<group>"; };
+		97FF65991FDF37330753EDAB /* determined_dark.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = LottieEmotes/determined_dark.json; sourceTree = "<group>"; };
+		D3F2C3BF66161523D7E83944 /* facepalm.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = LottieEmotes/facepalm.json; sourceTree = "<group>"; };
+		4BC4F99BC69C098DCBD15022 /* facepalm_dark.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = LottieEmotes/facepalm_dark.json; sourceTree = "<group>"; };
+		BE27ED5EF991AA9F954195D8 /* flower.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = LottieEmotes/flower.json; sourceTree = "<group>"; };
+		7CF3CB1DEC8775C267442A70 /* flower_dark.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = LottieEmotes/flower_dark.json; sourceTree = "<group>"; };
+		748A73D5AFA1EBC6848BEF37 /* goodnight.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = LottieEmotes/goodnight.json; sourceTree = "<group>"; };
+		B807F013B62B1235148553FC /* goodnight_dark.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = LottieEmotes/goodnight_dark.json; sourceTree = "<group>"; };
+		D44B05171E68792A60FDA640 /* happy.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = LottieEmotes/happy.json; sourceTree = "<group>"; };
+		875E78E58DFBAAC0239C369C /* happy_dark.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = LottieEmotes/happy_dark.json; sourceTree = "<group>"; };
+		F709307EFA8752AA62D98BCB /* hug.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = LottieEmotes/hug.json; sourceTree = "<group>"; };
+		5FE42B5BDEF9808FFEE164B3 /* hug_dark.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = LottieEmotes/hug_dark.json; sourceTree = "<group>"; };
+		6FB794ABBC5344BF45531A0A /* idea.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = LottieEmotes/idea.json; sourceTree = "<group>"; };
+		55CB77DF4FBE9776F513B837 /* idea_dark.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = LottieEmotes/idea_dark.json; sourceTree = "<group>"; };
+		75083CD78F871BE3B055483B /* kiss.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = LottieEmotes/kiss.json; sourceTree = "<group>"; };
+		C76881BFF51403B81D1671FF /* kiss_dark.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = LottieEmotes/kiss_dark.json; sourceTree = "<group>"; };
+		11566135D7A8AE0DA3DEDF75 /* letter.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = LottieEmotes/letter.json; sourceTree = "<group>"; };
+		59F182E7740F6A5C8C673FC4 /* letter_dark.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = LottieEmotes/letter_dark.json; sourceTree = "<group>"; };
+		C58CADB643DFAC4A1018CF26 /* listening.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = LottieEmotes/listening.json; sourceTree = "<group>"; };
+		3F154A280ECA7A10A9508F00 /* listening_dark.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = LottieEmotes/listening_dark.json; sourceTree = "<group>"; };
+		E2E4C3EF36D1E26A4D796002 /* lonely.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = LottieEmotes/lonely.json; sourceTree = "<group>"; };
+		453650B3BAB905908BEEC24E /* lonely_dark.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = LottieEmotes/lonely_dark.json; sourceTree = "<group>"; };
+		627AF3EA0230B01E159D96FA /* love.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = LottieEmotes/love.json; sourceTree = "<group>"; };
+		42E3628E7A3DA2DBDA06C646 /* love_dark.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = LottieEmotes/love_dark.json; sourceTree = "<group>"; };
+		0A6DC09D06E79D35ADF65D3C /* nope.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = LottieEmotes/nope.json; sourceTree = "<group>"; };
+		E6C81B73F7FC7298F17A3A44 /* nope_dark.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = LottieEmotes/nope_dark.json; sourceTree = "<group>"; };
+		584DF7F269EBB09D006CEA43 /* paperplane.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = LottieEmotes/paperplane.json; sourceTree = "<group>"; };
+		FEA8393766256203E9C0ADA4 /* paperplane_dark.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = LottieEmotes/paperplane_dark.json; sourceTree = "<group>"; };
+		23F2E4DCEC9537BFEA3BA288 /* pat.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = LottieEmotes/pat.json; sourceTree = "<group>"; };
+		4F776F6BE33B9B930D2E9C89 /* pat_dark.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = LottieEmotes/pat_dark.json; sourceTree = "<group>"; };
+		95E503770EE656135E30F48A /* peek.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = LottieEmotes/peek.json; sourceTree = "<group>"; };
+		CFAE6F8CA125B450E792FE58 /* peek_dark.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = LottieEmotes/peek_dark.json; sourceTree = "<group>"; };
+		9C87B2F1456D8732F04D11AA /* proud.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = LottieEmotes/proud.json; sourceTree = "<group>"; };
+		B876DD67260E3E28DA78B9DD /* proud_dark.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = LottieEmotes/proud_dark.json; sourceTree = "<group>"; };
+		776DA1A88CFDDF4097D042A3 /* shrug.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = LottieEmotes/shrug.json; sourceTree = "<group>"; };
+		4AC20C5F928E5164C03D208B /* shrug_dark.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = LottieEmotes/shrug_dark.json; sourceTree = "<group>"; };
+		46407876831C64AB45666E1B /* shy.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = LottieEmotes/shy.json; sourceTree = "<group>"; };
+		678A14B30AD082EB73D2BA82 /* shy_dark.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = LottieEmotes/shy_dark.json; sourceTree = "<group>"; };
+		D6597411DC972CD4A211B13E /* sleepy.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = LottieEmotes/sleepy.json; sourceTree = "<group>"; };
+		34B7F3BA008691B649A69337 /* sleepy_dark.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = LottieEmotes/sleepy_dark.json; sourceTree = "<group>"; };
+		679CD8FEDADC411AF5784533 /* sorry.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = LottieEmotes/sorry.json; sourceTree = "<group>"; };
+		5D6EE6547E53653BA259B7C7 /* sorry_dark.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = LottieEmotes/sorry_dark.json; sourceTree = "<group>"; };
+		C99DAF8DBB2FD099FFC5535A /* speechless.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = LottieEmotes/speechless.json; sourceTree = "<group>"; };
+		EF352DD789947D15B57D0A38 /* speechless_dark.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = LottieEmotes/speechless_dark.json; sourceTree = "<group>"; };
+		FD6B6D4FD600B4846EC96E25 /* sprout.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = LottieEmotes/sprout.json; sourceTree = "<group>"; };
+		2465C379FFE1620F45619416 /* sprout_dark.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = LottieEmotes/sprout_dark.json; sourceTree = "<group>"; };
+		8FD3E3820BD9BCFCD638F139 /* surprised.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = LottieEmotes/surprised.json; sourceTree = "<group>"; };
+		845B9FFEDF6C5E73506B336A /* surprised_dark.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = LottieEmotes/surprised_dark.json; sourceTree = "<group>"; };
+		2055E7AFA93300C7CBE16797 /* tea.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = LottieEmotes/tea.json; sourceTree = "<group>"; };
+		B3C13E4E636D03EEB3D90992 /* tea_dark.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = LottieEmotes/tea_dark.json; sourceTree = "<group>"; };
+		8231A38B5D62CA1F59B6B60E /* thanks.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = LottieEmotes/thanks.json; sourceTree = "<group>"; };
+		AF0033D47D99C2DE6C38F153 /* thanks_dark.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = LottieEmotes/thanks_dark.json; sourceTree = "<group>"; };
+		1C3E89B15784BC0820CED966 /* thinking.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = LottieEmotes/thinking.json; sourceTree = "<group>"; };
+		684E6AE08556341A451D94F8 /* thinking_dark.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = LottieEmotes/thinking_dark.json; sourceTree = "<group>"; };
+		51EFE9A28C74F4EB867D6F90 /* umbrella.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = LottieEmotes/umbrella.json; sourceTree = "<group>"; };
+		D31F1F777981782C95A27F45 /* umbrella_dark.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = LottieEmotes/umbrella_dark.json; sourceTree = "<group>"; };
+		3D2D97C5B4D63878D30FB785 /* wave.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = LottieEmotes/wave.json; sourceTree = "<group>"; };
+		5B974F9AC9E958F7BC1C7780 /* wave_dark.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = LottieEmotes/wave_dark.json; sourceTree = "<group>"; };
+		365AE29A625A9E0D6815757E /* wink.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = LottieEmotes/wink.json; sourceTree = "<group>"; };
+		160EDADE3800465F9638711F /* wink_dark.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = LottieEmotes/wink_dark.json; sourceTree = "<group>"; };
+		29201CACFA492A882B791748 /* wish.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = LottieEmotes/wish.json; sourceTree = "<group>"; };
+		66A30D087D0C4BE318AD4C46 /* wish_dark.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = LottieEmotes/wish_dark.json; sourceTree = "<group>"; };
+		D1FEDAEE06536713E0B7515C /* zap.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = LottieEmotes/zap.json; sourceTree = "<group>"; };
+		29302F6301B0882F2EA91CF7 /* zap_dark.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = LottieEmotes/zap_dark.json; sourceTree = "<group>"; };
+		073AE0417A7BFF6FD0034CE0 /* BearyEmotePlayer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BearyEmotePlayer.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -133,6 +295,7 @@
 		504EC3061FED79650016851F /* App */ = {
 			isa = PBXGroup;
 			children = (
+				073AE0417A7BFF6FD0034CE0 /* BearyEmotePlayer.swift */,
 				9582B6822FE993A50072D4E8 /* SceneDelegate.swift */,
 				86D18B2BF4591827760F0894 /* BearyNavigator.swift */,
 				EB603D97ED6DBB5EB3F8E3B8 /* SessionManager.swift */,
@@ -167,6 +330,86 @@
 				504EC3131FED79650016851F /* Info.plist */,
 				2FAD9762203C412B000D30F8 /* config.xml */,
 				50B271D01FEDC1A000F3C39B /* public */,
+				DAE48A2C16A1E3B2821093EB /* agree.json */,
+				37B9943EDEF2C3A792782E9E /* agree_dark.json */,
+				0F94F0E398907EA72C0111A3 /* angry.json */,
+				A51DFDB490D877CB099D60EA /* angry_dark.json */,
+				3DCCC88B87742D1427B69EB1 /* applause.json */,
+				D1A845A48EBF3139C11CCA78 /* applause_dark.json */,
+				65894B185719F2B81C3DF054 /* candle.json */,
+				41B3813B090522D8721BF864 /* candle_dark.json */,
+				3CB3F324D9C8AA9E9F870890 /* cheer.json */,
+				73CC34C5DF9940AB25753B1C /* cheer_dark.json */,
+				C6B2C224C9DCA4F25430B3A4 /* comfort.json */,
+				BDF96D68B8DF90E9A7EECD11 /* comfort_dark.json */,
+				AE1688450CBF6EF1F2813833 /* confused.json */,
+				970961B53CBE4FD1A1782BD1 /* confused_dark.json */,
+				FB561B22ACC2B4CE3BEFF7C0 /* cry.json */,
+				286A7B889822123007F9E1F8 /* cry_dark.json */,
+				0263588FD792BA30CCA1AFC6 /* determined.json */,
+				97FF65991FDF37330753EDAB /* determined_dark.json */,
+				D3F2C3BF66161523D7E83944 /* facepalm.json */,
+				4BC4F99BC69C098DCBD15022 /* facepalm_dark.json */,
+				BE27ED5EF991AA9F954195D8 /* flower.json */,
+				7CF3CB1DEC8775C267442A70 /* flower_dark.json */,
+				748A73D5AFA1EBC6848BEF37 /* goodnight.json */,
+				B807F013B62B1235148553FC /* goodnight_dark.json */,
+				D44B05171E68792A60FDA640 /* happy.json */,
+				875E78E58DFBAAC0239C369C /* happy_dark.json */,
+				F709307EFA8752AA62D98BCB /* hug.json */,
+				5FE42B5BDEF9808FFEE164B3 /* hug_dark.json */,
+				6FB794ABBC5344BF45531A0A /* idea.json */,
+				55CB77DF4FBE9776F513B837 /* idea_dark.json */,
+				75083CD78F871BE3B055483B /* kiss.json */,
+				C76881BFF51403B81D1671FF /* kiss_dark.json */,
+				11566135D7A8AE0DA3DEDF75 /* letter.json */,
+				59F182E7740F6A5C8C673FC4 /* letter_dark.json */,
+				C58CADB643DFAC4A1018CF26 /* listening.json */,
+				3F154A280ECA7A10A9508F00 /* listening_dark.json */,
+				E2E4C3EF36D1E26A4D796002 /* lonely.json */,
+				453650B3BAB905908BEEC24E /* lonely_dark.json */,
+				627AF3EA0230B01E159D96FA /* love.json */,
+				42E3628E7A3DA2DBDA06C646 /* love_dark.json */,
+				0A6DC09D06E79D35ADF65D3C /* nope.json */,
+				E6C81B73F7FC7298F17A3A44 /* nope_dark.json */,
+				584DF7F269EBB09D006CEA43 /* paperplane.json */,
+				FEA8393766256203E9C0ADA4 /* paperplane_dark.json */,
+				23F2E4DCEC9537BFEA3BA288 /* pat.json */,
+				4F776F6BE33B9B930D2E9C89 /* pat_dark.json */,
+				95E503770EE656135E30F48A /* peek.json */,
+				CFAE6F8CA125B450E792FE58 /* peek_dark.json */,
+				9C87B2F1456D8732F04D11AA /* proud.json */,
+				B876DD67260E3E28DA78B9DD /* proud_dark.json */,
+				776DA1A88CFDDF4097D042A3 /* shrug.json */,
+				4AC20C5F928E5164C03D208B /* shrug_dark.json */,
+				46407876831C64AB45666E1B /* shy.json */,
+				678A14B30AD082EB73D2BA82 /* shy_dark.json */,
+				D6597411DC972CD4A211B13E /* sleepy.json */,
+				34B7F3BA008691B649A69337 /* sleepy_dark.json */,
+				679CD8FEDADC411AF5784533 /* sorry.json */,
+				5D6EE6547E53653BA259B7C7 /* sorry_dark.json */,
+				C99DAF8DBB2FD099FFC5535A /* speechless.json */,
+				EF352DD789947D15B57D0A38 /* speechless_dark.json */,
+				FD6B6D4FD600B4846EC96E25 /* sprout.json */,
+				2465C379FFE1620F45619416 /* sprout_dark.json */,
+				8FD3E3820BD9BCFCD638F139 /* surprised.json */,
+				845B9FFEDF6C5E73506B336A /* surprised_dark.json */,
+				2055E7AFA93300C7CBE16797 /* tea.json */,
+				B3C13E4E636D03EEB3D90992 /* tea_dark.json */,
+				8231A38B5D62CA1F59B6B60E /* thanks.json */,
+				AF0033D47D99C2DE6C38F153 /* thanks_dark.json */,
+				1C3E89B15784BC0820CED966 /* thinking.json */,
+				684E6AE08556341A451D94F8 /* thinking_dark.json */,
+				51EFE9A28C74F4EB867D6F90 /* umbrella.json */,
+				D31F1F777981782C95A27F45 /* umbrella_dark.json */,
+				3D2D97C5B4D63878D30FB785 /* wave.json */,
+				5B974F9AC9E958F7BC1C7780 /* wave_dark.json */,
+				365AE29A625A9E0D6815757E /* wink.json */,
+				160EDADE3800465F9638711F /* wink_dark.json */,
+				29201CACFA492A882B791748 /* wish.json */,
+				66A30D087D0C4BE318AD4C46 /* wish_dark.json */,
+				D1FEDAEE06536713E0B7515C /* zap.json */,
+				29302F6301B0882F2EA91CF7 /* zap_dark.json */,
 			);
 			path = App;
 			sourceTree = "<group>";
@@ -197,6 +440,7 @@
 			name = App;
 			packageProductDependencies = (
 				4D22ABE82AF431CB00220026 /* CapApp-SPM */,
+				87E933BE17F8980AC09B76C6 /* Lottie */,
 			);
 			productName = App;
 			productReference = 504EC3041FED79650016851F /* App.app */;
@@ -245,6 +489,7 @@
 			mainGroup = 504EC2FB1FED79650016851F;
 			packageReferences = (
 				D4C12C0A2AAA248700AAC8A2 /* XCLocalSwiftPackageReference "CapApp-SPM" */,
+				E86E5ADBF2D28EAEFCAB8A79 /* XCRemoteSwiftPackageReference "lottie-ios" */,
 			);
 			productRefGroup = 504EC3051FED79650016851F /* Products */;
 			projectDirPath = "";
@@ -267,6 +512,86 @@
 				50379B232058CBB4000EE86E /* capacitor.config.json in Resources */,
 				504EC30D1FED79650016851F /* Main.storyboard in Resources */,
 				2FAD9763203C412B000D30F8 /* config.xml in Resources */,
+				93F45F628E22C5045A1EF58F /* agree.json in Resources */,
+				4497343DBC967B83178641E1 /* agree_dark.json in Resources */,
+				253B820FAB0078EED0B89D4E /* angry.json in Resources */,
+				E2BA82FA3D6D7993407A70D0 /* angry_dark.json in Resources */,
+				581E39E8004B165DA78AF048 /* applause.json in Resources */,
+				1FC27B9CA1830139474452A8 /* applause_dark.json in Resources */,
+				C3C722A9C26F5353CA42B1E4 /* candle.json in Resources */,
+				6A4E71D37E9D01D2FC558A4C /* candle_dark.json in Resources */,
+				854668F02EBA7FD1AB3C5B71 /* cheer.json in Resources */,
+				08EDB2F4A049E20ECE5E9134 /* cheer_dark.json in Resources */,
+				F45075D583734C5292C67D07 /* comfort.json in Resources */,
+				5BC5B1B29908B9847A793757 /* comfort_dark.json in Resources */,
+				AF81331D3137B5DB947A62B4 /* confused.json in Resources */,
+				B7310CB3447441022CC3CECA /* confused_dark.json in Resources */,
+				C4A323D2C9355B9B5D7D5220 /* cry.json in Resources */,
+				0F82ECD7420CAB92D4EAF459 /* cry_dark.json in Resources */,
+				F2E097CAA526F4708BBA0D05 /* determined.json in Resources */,
+				1A67C04608C7177A50BD6D50 /* determined_dark.json in Resources */,
+				A7C21701BB5FB1A9CC640791 /* facepalm.json in Resources */,
+				F6CFCE18743CDBBB6E6C4644 /* facepalm_dark.json in Resources */,
+				BB2EAFDC799E91BF135D18A6 /* flower.json in Resources */,
+				3462FC3C9643AAB1726EF143 /* flower_dark.json in Resources */,
+				9845F6078FC9433DCFE4CF85 /* goodnight.json in Resources */,
+				11A72FB5B3F7A1FC348AF1BB /* goodnight_dark.json in Resources */,
+				3E3D0B6DDA8F7BA275265D28 /* happy.json in Resources */,
+				06D43822AD01884A7F7FD7AB /* happy_dark.json in Resources */,
+				ED23125215670EE63645BC8C /* hug.json in Resources */,
+				CC8F0B11B61628FD6AD6CAF2 /* hug_dark.json in Resources */,
+				58CF75B795F7D39C5E2CF214 /* idea.json in Resources */,
+				FA9CF13A8949AC01B14613C0 /* idea_dark.json in Resources */,
+				CC370CC78C0E9A0171C4718D /* kiss.json in Resources */,
+				7F4F6ECDE135231CE2A4329B /* kiss_dark.json in Resources */,
+				B403BEE2B178AED5F0BE9CC1 /* letter.json in Resources */,
+				EE53508F66ED9E5942B8266C /* letter_dark.json in Resources */,
+				535C9C56123B8F59A05C2461 /* listening.json in Resources */,
+				14B072EC361D108B212F0C7F /* listening_dark.json in Resources */,
+				9FE03442046C537EDF2990E0 /* lonely.json in Resources */,
+				3DE715E7A2DEF36A816BC3E5 /* lonely_dark.json in Resources */,
+				298DADBB6DD670988CE8C375 /* love.json in Resources */,
+				67C46595BE894AB014F97D06 /* love_dark.json in Resources */,
+				86B0E090411CE26E57D08B10 /* nope.json in Resources */,
+				DAF813B7D23E27C94CE3D293 /* nope_dark.json in Resources */,
+				5881C7CDECACF666F13E184B /* paperplane.json in Resources */,
+				A6760E04FC2AD0C35CB1A665 /* paperplane_dark.json in Resources */,
+				95BDE30FB3FCEEF87BC08DA4 /* pat.json in Resources */,
+				2C476CDCCA7AB6AA45ED2586 /* pat_dark.json in Resources */,
+				E47388DA63A2ADDD7A1BB765 /* peek.json in Resources */,
+				5B6AFAC26C84135C692F717F /* peek_dark.json in Resources */,
+				54A0F167D749FB9C5E1986E2 /* proud.json in Resources */,
+				535480CF3E7AE5E595B316F4 /* proud_dark.json in Resources */,
+				E2C397A40A7E3C2463F6F7A3 /* shrug.json in Resources */,
+				E896A007039347DE35CBAE34 /* shrug_dark.json in Resources */,
+				F3E819CE368827390071A464 /* shy.json in Resources */,
+				DC34F17FE826C20843F04F84 /* shy_dark.json in Resources */,
+				36A03389AB8E884B166AAFF6 /* sleepy.json in Resources */,
+				BCA285EAD8567190CE0BC8AB /* sleepy_dark.json in Resources */,
+				E61EADC9CAF1F810F395B664 /* sorry.json in Resources */,
+				02A5981E2747165F6DD3703B /* sorry_dark.json in Resources */,
+				E45A00763D980C58233426B0 /* speechless.json in Resources */,
+				4FE983275F06AB4C05FF96B7 /* speechless_dark.json in Resources */,
+				634BA524AB5D864AA9652F25 /* sprout.json in Resources */,
+				5038609805FB05255DF3E598 /* sprout_dark.json in Resources */,
+				608B897B147904B5C9821EA9 /* surprised.json in Resources */,
+				987FB02B2395132E647C3871 /* surprised_dark.json in Resources */,
+				7857AFB5BB4C62D0AC5D8524 /* tea.json in Resources */,
+				30D2FE07CB973EFED632422A /* tea_dark.json in Resources */,
+				F8F9EBB1E7E8C62CA4B26C61 /* thanks.json in Resources */,
+				3FC490054145981C3C385AA7 /* thanks_dark.json in Resources */,
+				7802D47FC524CDCB5160B0AF /* thinking.json in Resources */,
+				2431C73EBF90391A0530E7B6 /* thinking_dark.json in Resources */,
+				082E96A90F0B1CD0AB250996 /* umbrella.json in Resources */,
+				16AA8370B7F2184D547384FE /* umbrella_dark.json in Resources */,
+				2DAAA020DCDD045221079B03 /* wave.json in Resources */,
+				7FA8EF615D3EEE50C0866DB0 /* wave_dark.json in Resources */,
+				FD2B43A8E07DD71A20E173EA /* wink.json in Resources */,
+				0D6006E5D5B6D525F5688434 /* wink_dark.json in Resources */,
+				CC44290AF09066C3553629F4 /* wish.json in Resources */,
+				7EC7184A822E299D4AE5A95D /* wish_dark.json in Resources */,
+				80708F8472B7D2F81E42B791 /* zap.json in Resources */,
+				D54F707D67D52AB5B0EE1DFA /* zap_dark.json in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -277,6 +602,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				79F247252364A4DF73EEBDA2 /* BearyEmotePlayer.swift in Sources */,
 				504EC3081FED79650016851F /* AppDelegate.swift in Sources */,
 				9582B6832FE993A70072D4E8 /* SceneDelegate.swift in Sources */,
 				FCE851521BDA875B32CD7A84 /* BearyNavigator.swift in Sources */,
@@ -553,6 +879,17 @@
 		};
 /* End XCConfigurationList section */
 
+/* Begin XCRemoteSwiftPackageReference section */
+		E86E5ADBF2D28EAEFCAB8A79 /* XCRemoteSwiftPackageReference "lottie-ios" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/airbnb/lottie-ios";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 4.5.0;
+			};
+		};
+/* End XCRemoteSwiftPackageReference section */
+
 /* Begin XCLocalSwiftPackageReference section */
 		D4C12C0A2AAA248700AAC8A2 /* XCLocalSwiftPackageReference "CapApp-SPM" */ = {
 			isa = XCLocalSwiftPackageReference;
@@ -565,6 +902,11 @@
 			isa = XCSwiftPackageProductDependency;
 			package = D4C12C0A2AAA248700AAC8A2 /* XCLocalSwiftPackageReference "CapApp-SPM" */;
 			productName = "CapApp-SPM";
+		};
+		87E933BE17F8980AC09B76C6 /* Lottie */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = E86E5ADBF2D28EAEFCAB8A79 /* XCRemoteSwiftPackageReference "lottie-ios" */;
+			productName = Lottie;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};

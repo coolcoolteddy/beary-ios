@@ -124,7 +124,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     private var editTimer: Timer?
     private var imageItems: [ComposerImageItem] = []
     /// 心情条单项：按钮 + 44 圆环 + 环内熊图 + 环内缺图回退名 + 下方名。
-    private var moodItems: [(key: String, button: UIButton, ringView: UIView, emoteView: UIImageView, fallbackLabel: UILabel, nameLabel: UILabel)] = []
+    private var moodItems: [(key: String, button: UIButton, ringView: UIView, emoteView: BearyEmoteView, fallbackLabel: UILabel, nameLabel: UILabel)] = []
     private var weatherButtons: [(key: String, button: UIButton)] = []
     /// 附加选项栏是否展开（默认收起；展开时才显示天气/写给/心情三区）。
     private var extrasExpanded = false
@@ -272,7 +272,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         super.traitCollectionDidChange(previousTraitCollection)
         // 深浅切换时 CGColor 只在赋值时解析一次，必须重赋：心情环描边、
         // 天气 chip 描边、通知复选框描边、草稿 pill 描边、字数圆环轨道色
-        // 全走已有刷新函数重算（心情刷新内含熊图 -w 变体切换，不重建条）。
+        // 全走已有刷新函数重算（心情熊图深浅变体由播放器内部切换，不重建条）。
         if previousTraitCollection?.userInterfaceStyle != traitCollection.userInterfaceStyle {
             refreshMoodButtons()
             refreshWeatherButtons()
@@ -547,9 +547,8 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             ringView.layer.cornerRadius = 22
             ringView.layer.masksToBounds = true
             ringView.layer.borderWidth = 2.5
-            let emoteView = UIImageView()
+            let emoteView = BearyEmoteView(key: key, animated: true)
             emoteView.translatesAutoresizingMaskIntoConstraints = false
-            emoteView.contentMode = .scaleAspectFit
             let fallbackLabel = UILabel()
             fallbackLabel.translatesAutoresizingMaskIntoConstraints = false
             fallbackLabel.text = name
@@ -594,19 +593,11 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         contentStack.setCustomSpacing(12, after: moodSection)
     }
 
-    /// 只换环内图（深浅切换时调用，不重建条、不丢选中态）。
+    /// 深浅切换时播放器内部自动换变体，这里只保证环内图可见、不重建条、不丢选中态。
     private func refreshMoodImages() {
-        let dark = traitCollection.userInterfaceStyle == .dark
         for item in moodItems {
-            if let image = BearyEmoteImages.image(for: item.key, dark: dark) {
-                item.emoteView.image = image
-                item.emoteView.isHidden = false
-                item.fallbackLabel.isHidden = true
-            } else {
-                item.emoteView.image = nil
-                item.emoteView.isHidden = true
-                item.fallbackLabel.isHidden = false
-            }
+            item.emoteView.isHidden = false
+            item.fallbackLabel.isHidden = true
         }
     }
 

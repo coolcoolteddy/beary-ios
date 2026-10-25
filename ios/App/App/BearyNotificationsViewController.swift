@@ -1337,6 +1337,18 @@ private class BearyNotificationCell: UITableViewCell {
         return label
     }()
 
+    /// 标题行：标题 + 行末表情位（原富文本内联附件无法承载播放器视图，改为横排；表情 20 与原附件同尺寸）。
+    private let titleRowStack: UIStackView = {
+        let stack = UIStackView()
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        stack.axis = .horizontal
+        stack.spacing = 4
+        stack.alignment = .center
+        return stack
+    }()
+
+    private var titleEmoteView: BearyEmoteView?
+
     private let excerptLabel: UILabel = {
         let label = UILabel()
         label.translatesAutoresizingMaskIntoConstraints = false
@@ -1391,7 +1403,8 @@ private class BearyNotificationCell: UITableViewCell {
         let selectedBackground = UIView()
         selectedBackground.backgroundColor = BearyColors.hov
         selectedBackgroundView = selectedBackground
-        let bodyStack = UIStackView(arrangedSubviews: [titleLabel, excerptLabel])
+        let bodyStack = UIStackView(arrangedSubviews: [titleRowStack, excerptLabel])
+        titleRowStack.addArrangedSubview(titleLabel)
         bodyStack.translatesAutoresizingMaskIntoConstraints = false
         bodyStack.axis = .vertical
         bodyStack.spacing = 2
@@ -1472,6 +1485,8 @@ private class BearyNotificationCell: UITableViewCell {
         super.prepareForReuse()
         avatarTask?.cancel()
         avatarTask = nil
+        titleEmoteView?.removeFromSuperview()
+        titleEmoteView = nil
         avatarImageView.image = nil
         avatarFallbackLabel.text = nil
         avatarFallbackLabel.isHidden = true
@@ -1492,6 +1507,27 @@ private class BearyNotificationCell: UITableViewCell {
         separatorLeadingConstraint?.constant = 0
         dotTrailingToContentConstraint?.isActive = true
         dotTrailingToChevronConstraint?.isActive = false
+    }
+
+    /// 标题行表情位：key 不变时复用（深浅由播放器内部切换），key 变了才重建；nil 则清空。静态首帧，不播。
+    private func setTitleEmote(key: String?) {
+        guard let key = key, !key.isEmpty else {
+            titleEmoteView?.removeFromSuperview()
+            titleEmoteView = nil
+            return
+        }
+        if let current = titleEmoteView, current.emoteKey == key {
+            return
+        }
+        titleEmoteView?.removeFromSuperview()
+        let emoteView = BearyEmoteView(key: key, animated: false)
+        emoteView.translatesAutoresizingMaskIntoConstraints = false
+        titleRowStack.addArrangedSubview(emoteView)
+        NSLayoutConstraint.activate([
+            emoteView.widthAnchor.constraint(equalToConstant: 20),
+            emoteView.heightAnchor.constraint(equalToConstant: 20),
+        ])
+        titleEmoteView = emoteView
     }
 
     /// 卡面箭头旋转（调用方用 UIView.animate 包裹即得展开/收起动画）。
@@ -1516,6 +1552,7 @@ private class BearyNotificationCell: UITableViewCell {
         avatarIconView.image = BearyIconImages.image(named: isSystem ? "icon_mail" : "icon_heart", pointSize: 19)
         avatarFallbackLabel.isHidden = true
         kindBadgeView.isHidden = true
+        setTitleEmote(key: nil)
         titleLabel.attributedText = NSAttributedString(
             string: title,
             attributes: [
@@ -1604,6 +1641,7 @@ private class BearyNotificationCell: UITableViewCell {
             avatarIconView.image = BearyIconImages.image(named: iconName, pointSize: 19)
             avatarFallbackLabel.isHidden = true
             kindBadgeView.isHidden = true
+            setTitleEmote(key: nil)
             titleLabel.attributedText = NSAttributedString(
                 string: titleText,
                 attributes: [
@@ -1662,14 +1700,9 @@ private class BearyNotificationCell: UITableViewCell {
                 ]
             ))
             if itemType == "emote", let emoteKey = item.emote, !emoteKey.isEmpty {
-                let isDark = traitCollection.userInterfaceStyle == .dark
-                if let emoteImage = BearyEmoteImages.image(for: emoteKey, dark: isDark) {
-                    let attachment = NSTextAttachment()
-                    attachment.image = emoteImage
-                    attachment.bounds = CGRect(x: 0, y: -5, width: 20, height: 20)
-                    title.append(NSAttributedString(string: " "))
-                    title.append(NSAttributedString(attachment: attachment))
-                }
+                setTitleEmote(key: emoteKey)
+            } else {
+                setTitleEmote(key: nil)
             }
             titleLabel.attributedText = title
         }

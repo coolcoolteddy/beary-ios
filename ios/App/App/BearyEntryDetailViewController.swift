@@ -5,7 +5,7 @@ import UIKit
 // UIKit 纯代码布局；文案一律中文；颜色一律用 BearyColors 动态色。
 // Entry 全部字段 optional，取值一律 ?? 兜底，不对网络数据 force unwrap。
 // 对照源：网页 beary.html 卡片标题行 / 倒计时 pill / 回应行 / 回应面板 / 引用 lite 卡。
-// 跨代理契约（只调用、不定义）：BearyEmoteImages.image(for:dark:)。图标一律走 BearyIconImages（网页版同款 PNG）。
+// 跨代理契约（只调用、不定义）：BearyEmoteView(key:animated:)。图标一律走 BearyIconImages（网页版同款 PNG）。
 // 本文件内实现：图片查看器、回应底 sheet、回应换行流式布局、虚线 + 钮、toast。
 
 // 详情滚动位置：按 entry id 记在内存里（不跨启动持久化），重开同一篇时恢复。
@@ -114,7 +114,7 @@ class BearyEntryDetailViewController: UIViewController {
     private let crownImageView = UIImageView()
     private let timeLabel = UILabel()
     private let moodStack = UIStackView()
-    private let moodImageView = UIImageView()
+    private var moodEmoteView: BearyEmoteView?
     private let moodNameLabel = UILabel()
     private let weatherImageView = UIImageView()
     private let pillRow = UIStackView()
@@ -190,12 +190,17 @@ class BearyEntryDetailViewController: UIViewController {
     override func viewWillAppear(_ animated: Bool) {
         super.viewWillAppear(animated)
         startCountdownTimer()
+        // 从别页回来时恢复详情页播放器的播放（消失时已 stop，见 viewWillDisappear）。
+        moodEmoteView?.play()
+        forEachEmoteView(in: emoteFlowView) { $0.play() }
     }
 
     override func viewWillDisappear(_ animated: Bool) {
         super.viewWillDisappear(animated)
         countdownTimer?.invalidate()
         countdownTimer = nil
+        moodEmoteView?.stop()
+        forEachEmoteView(in: emoteFlowView) { $0.stop() }
     }
 
     override func viewDidLayoutSubviews() {
@@ -357,8 +362,6 @@ class BearyEntryDetailViewController: UIViewController {
         moodStack.spacing = 3
         moodStack.alignment = .center
         moodStack.isHidden = true
-        moodImageView.translatesAutoresizingMaskIntoConstraints = false
-        moodImageView.contentMode = .scaleAspectFit
         moodNameLabel.font = UIFont.systemFont(ofSize: 12.5)
         moodNameLabel.textColor = BearyColors.gray
         weatherImageView.translatesAutoresizingMaskIntoConstraints = false
@@ -370,12 +373,9 @@ class BearyEntryDetailViewController: UIViewController {
             badgeImageView.heightAnchor.constraint(equalToConstant: 17),
             crownImageView.widthAnchor.constraint(equalToConstant: 19),
             crownImageView.heightAnchor.constraint(equalToConstant: 19),
-            moodImageView.widthAnchor.constraint(equalToConstant: 20),
-            moodImageView.heightAnchor.constraint(equalToConstant: 20),
             weatherImageView.widthAnchor.constraint(equalToConstant: 15),
             weatherImageView.heightAnchor.constraint(equalToConstant: 15),
         ])
-        moodStack.addArrangedSubview(moodImageView)
         moodStack.addArrangedSubview(moodNameLabel)
         titleRow.addArrangedSubview(authorNameLabel)
         titleRow.addArrangedSubview(badgeImageView)
@@ -1027,19 +1027,15 @@ class BearyEntryDetailViewController: UIViewController {
         }
         updateEditCountdownLabel()
 
-        // 心情熊图 + 名（缺图回退文字名）、天气图标（走天气图标契约，解不出则隐藏）。
+        // 心情熊图 + 名（深浅变体由播放器内部切换；无心情时整行隐藏）。
         if let moodKey = current.mood, let moodName = BearyText.moodNames[moodKey] {
             moodNameLabel.text = moodName
-            let dark = traitCollection.userInterfaceStyle == .dark
-            if let moodImage = BearyEmoteImages.image(for: moodKey, dark: dark) {
-                moodImageView.image = moodImage.withRenderingMode(.alwaysOriginal)
-                moodImageView.isHidden = false
-            } else {
-                moodImageView.image = nil
-                moodImageView.isHidden = true
-            }
+            setMoodEmote(key: moodKey)
             moodStack.isHidden = false
         } else {
+            moodEmoteView?.stop()
+            moodEmoteView?.removeFromSuperview()
+            moodEmoteView = nil
             moodStack.isHidden = true
         }
         // 网页 wxHtml 口径：只认 9 个已知天气 key，未知 key 不显示（契约默认返回 cloud，不可直接采用）。
@@ -1498,22 +1494,12 @@ class BearyEntryDetailViewController: UIViewController {
 
     // MARK: - 回应行（网页 chip 口径：淡底 + 线边框、熊图 24 + 计数 12 灰字 regular；自己的改墨边框 + hov 底 + 墨字粗体）
 
-    private func resizedEmoteImage(_ image: UIImage, pointSize: CGFloat) -> UIImage {
-        if image.size.width <= pointSize && image.size.height <= pointSize {
-            return image
-        }
-        let size = CGSize(width: pointSize, height: pointSize)
-        let renderer = UIGraphicsImageRenderer(size: size)
-        return renderer.image { _ in
-            image.draw(in: CGRect(origin: .zero, size: size))
-        }
-    }
-
-    private func chipButton(forKey key: String) -> UIButton? {
+    private func chipButton(forKey key: String) -> UIView? {
         guard let index = currentEmotes.firstIndex(where: { $0.emote == key }) else { return nil }
         for sub in emoteFlowView.subviews {
-            if let button = sub as? UIButton, button !== emoteAddButton, button.tag == index {
-                return button
+            guard sub as? UIButton == nil else { continue }
+            if let overlay = sub.subviews.compactMap({ $0 as? UIButton }).first, overlay.tag == index {
+                return sub
             }
         }
         return nil
@@ -1525,71 +1511,123 @@ class BearyEntryDetailViewController: UIViewController {
             return
         }
         emoteFlowView.layoutIfNeeded()
-        guard let button = chipButton(forKey: key) else { return }
+        guard let chip = chipButton(forKey: key) else { return }
         // 网页 chipIn 口径：.45s cubic-bezier(.34,1.56,.64,1)，scale .4→1.12→1 + opacity 0→1。
-        button.transform = CGAffineTransform(scaleX: 0.4, y: 0.4)
-        button.alpha = 0
+        chip.transform = CGAffineTransform(scaleX: 0.4, y: 0.4)
+        chip.alpha = 0
         UIView.animateKeyframes(withDuration: 0.45, delay: 0, options: [], animations: {
             UIView.addKeyframe(withRelativeStartTime: 0, relativeDuration: 0.6) {
-                button.transform = CGAffineTransform(scaleX: 1.12, y: 1.12)
-                button.alpha = 1
+                chip.transform = CGAffineTransform(scaleX: 1.12, y: 1.12)
+                chip.alpha = 1
             }
             UIView.addKeyframe(withRelativeStartTime: 0.6, relativeDuration: 0.4) {
-                button.transform = .identity
-                button.alpha = 1
+                chip.transform = .identity
+                chip.alpha = 1
             }
         }, completion: nil)
-        if let imageView = button.imageView {
+        if let emoteView = emoteView(in: chip) {
             // 网页 emoteWiggle 口径：.5s，rotate 0→−10° scale 1.3→8° scale 1.15→0。
             UIView.animateKeyframes(withDuration: 0.5, delay: 0, options: [], animations: {
                 UIView.addKeyframe(withRelativeStartTime: 0, relativeDuration: 0.3) {
-                    imageView.transform = CGAffineTransform(rotationAngle: -0.1745).scaledBy(x: 1.3, y: 1.3)
+                    emoteView.transform = CGAffineTransform(rotationAngle: -0.1745).scaledBy(x: 1.3, y: 1.3)
                 }
                 UIView.addKeyframe(withRelativeStartTime: 0.3, relativeDuration: 0.3) {
-                    imageView.transform = CGAffineTransform(rotationAngle: 0.1396).scaledBy(x: 1.15, y: 1.15)
+                    emoteView.transform = CGAffineTransform(rotationAngle: 0.1396).scaledBy(x: 1.15, y: 1.15)
                 }
                 UIView.addKeyframe(withRelativeStartTime: 0.6, relativeDuration: 0.4) {
-                    imageView.transform = .identity
+                    emoteView.transform = .identity
                 }
             }, completion: nil)
         }
     }
 
+    /// 详情心情位：key 不变时复用播放器（深浅由其内部切换），key 变了才重建并停掉旧的，尺寸仍为 20。
+    private func setMoodEmote(key: String) {
+        if let current = moodEmoteView, current.emoteKey == key {
+            return
+        }
+        moodEmoteView?.stop()
+        moodEmoteView?.removeFromSuperview()
+        let emoteView = BearyEmoteView(key: key, animated: true)
+        emoteView.translatesAutoresizingMaskIntoConstraints = false
+        moodStack.insertArrangedSubview(emoteView, at: 0)
+        NSLayoutConstraint.activate([
+            emoteView.widthAnchor.constraint(equalToConstant: 20),
+            emoteView.heightAnchor.constraint(equalToConstant: 20),
+        ])
+        moodEmoteView = emoteView
+    }
+
+    /// 对一棵视图树里的每个播放器执行操作（回应行重建/消失时停播、回来时续播）。
+    private func forEachEmoteView(in view: UIView, _ body: (BearyEmoteView) -> Void) {
+        if let emote = view as? BearyEmoteView {
+            body(emote)
+            return
+        }
+        for sub in view.subviews {
+            forEachEmoteView(in: sub, body)
+        }
+    }
+
+    /// 在 chip 容器内找播放器（容器 → 横排 → 播放器），供 chip-in wiggle 用。
+    private func emoteView(in chip: UIView) -> BearyEmoteView? {
+        var found: BearyEmoteView?
+        forEachEmoteView(in: chip) { found = $0 }
+        return found
+    }
+
     private func renderEmotes() {
+        forEachEmoteView(in: emoteFlowView) { $0.stop() }
         for sub in emoteFlowView.subviews {
             sub.removeFromSuperview()
         }
         let list = entry?.emotes ?? []
         currentEmotes = list
-        let dark = traitCollection.userInterfaceStyle == .dark
         for (index, item) in list.enumerated() {
             let key = item.emote ?? ""
             let count = item.count ?? 0
             let mine = item.mine ?? false
-            let button = UIButton(type: .system)
-            button.tag = index
-            if let emoteImage = BearyEmoteImages.image(for: key, dark: dark) {
-                button.setImage(resizedEmoteImage(emoteImage, pointSize: 24).withRenderingMode(.alwaysOriginal), for: .normal)
-                button.setTitle("\(count)", for: .normal)
-            } else {
-                // 图片管线无图时回退文字名。
-                let name = BearyText.moodNames[key] ?? key
-                button.setTitle("\(name) \(count)", for: .normal)
-            }
-            // 网页 .emote-chip 口径：非自己态 regular，自己态 bold；自己态底色 hov（另一路补齐该常量）。
-            button.titleLabel?.font = UIFont.systemFont(ofSize: 12, weight: mine ? .bold : .regular)
-            button.setTitleColor(mine ? BearyColors.ink : BearyColors.gray, for: .normal)
-            button.contentEdgeInsets = UIEdgeInsets(top: 4, left: 6, bottom: 4, right: 10)
-            button.titleEdgeInsets = UIEdgeInsets(top: 0, left: 6, bottom: 0, right: 0)
-            button.backgroundColor = mine ? BearyColors.hov : BearyColors.faint
-            button.layer.cornerRadius = 16
-            button.layer.borderWidth = 1
-            button.layer.borderColor = (mine ? BearyColors.ink : BearyColors.line).cgColor
-            button.clipsToBounds = true
+            // 回应 chip：容器承载样式，内层横排为播放器 24 + 计数；透明点击层保留原 tag 与点击回调。
+            let chip = UIView()
+            chip.translatesAutoresizingMaskIntoConstraints = false
+            chip.backgroundColor = mine ? BearyColors.hov : BearyColors.faint
+            chip.layer.cornerRadius = 16
+            chip.layer.borderWidth = 1
+            chip.layer.borderColor = (mine ? BearyColors.ink : BearyColors.line).cgColor
+            chip.clipsToBounds = true
+            let row = UIStackView()
+            row.axis = .horizontal
+            row.spacing = 6
+            row.alignment = .center
+            row.translatesAutoresizingMaskIntoConstraints = false
+            let emoteView = BearyEmoteView(key: key, animated: true)
+            emoteView.translatesAutoresizingMaskIntoConstraints = false
+            let countLabel = UILabel()
+            countLabel.font = UIFont.systemFont(ofSize: 12, weight: mine ? .bold : .regular)
+            countLabel.textColor = mine ? BearyColors.ink : BearyColors.gray
+            countLabel.text = "\(count)"
+            row.addArrangedSubview(emoteView)
+            row.addArrangedSubview(countLabel)
+            chip.addSubview(row)
+            let button = UIButton(type: .custom)
             button.translatesAutoresizingMaskIntoConstraints = false
-            button.heightAnchor.constraint(equalToConstant: 32).isActive = true
+            button.tag = index
             button.addTarget(self, action: #selector(emoteTapped(_:)), for: .touchUpInside)
-            emoteFlowView.addSubview(button)
+            chip.addSubview(button)
+            NSLayoutConstraint.activate([
+                emoteView.widthAnchor.constraint(equalToConstant: 24),
+                emoteView.heightAnchor.constraint(equalToConstant: 24),
+                row.topAnchor.constraint(equalTo: chip.topAnchor, constant: 4),
+                row.bottomAnchor.constraint(equalTo: chip.bottomAnchor, constant: -4),
+                row.leadingAnchor.constraint(equalTo: chip.leadingAnchor, constant: 6),
+                row.trailingAnchor.constraint(equalTo: chip.trailingAnchor, constant: -10),
+                button.topAnchor.constraint(equalTo: chip.topAnchor),
+                button.bottomAnchor.constraint(equalTo: chip.bottomAnchor),
+                button.leadingAnchor.constraint(equalTo: chip.leadingAnchor),
+                button.trailingAnchor.constraint(equalTo: chip.trailingAnchor),
+                chip.heightAnchor.constraint(equalToConstant: 32),
+            ])
+            emoteFlowView.addSubview(chip)
         }
         // 网页同款：回应行末尾常驻一个 + 入口（无回应时行内只剩它，行不再隐藏）。
         emoteFlowView.addSubview(emoteAddButton)
@@ -1610,7 +1648,11 @@ class BearyEntryDetailViewController: UIViewController {
             if let button = sub as? UIButton {
                 button.isEnabled = isPublic && isEmoteBusy == false
                 button.alpha = isPublic ? 1.0 : 0.4
+                continue
             }
+            guard let overlay = sub.subviews.compactMap({ $0 as? UIButton }).first else { continue }
+            overlay.isEnabled = isPublic && isEmoteBusy == false
+            sub.alpha = isPublic ? 1.0 : 0.4
         }
     }
 
@@ -1839,7 +1881,7 @@ class BearyEntryDetailViewController: UIViewController {
                                     self.notifyInteraction()
                                 case .failure(let err):
                                     if case .unauthorized = err {
-                                        self.denyLogin(source: self.chipButton(forKey: key) as UIView? ?? self.emoteAddButton)
+                                        self.denyLogin(source: self.chipButton(forKey: key) ?? self.emoteAddButton)
                                     } else {
                                         self.showAlert(message: "操作失败，请重试")
                                     }
@@ -1850,7 +1892,7 @@ class BearyEntryDetailViewController: UIViewController {
                     case .failure(let err):
                         self.isEmoteBusy = false
                         if case .unauthorized = err {
-                            self.denyLogin(source: self.chipButton(forKey: key) as UIView? ?? self.emoteAddButton)
+                            self.denyLogin(source: self.chipButton(forKey: key) ?? self.emoteAddButton)
                         } else {
                             self.showAlert(message: "操作失败，请重试")
                         }
@@ -1879,12 +1921,12 @@ class BearyEntryDetailViewController: UIViewController {
                     let animKey = self.pendingEmoteKey
                     let animAdded = self.pendingEmoteAdded
                     self.pendingEmoteKey = nil
-                    if let animKey = animKey, animAdded == false, UIAccessibility.isReduceMotionEnabled == false, let button = self.chipButton(forKey: animKey) {
+                    if let animKey = animKey, animAdded == false, UIAccessibility.isReduceMotionEnabled == false, let chip = self.chipButton(forKey: animKey) {
                         // 摘下：先对旧 chip 做 chip-out 缩没，动画结束后再重绘行。
                         self.updateInteractivity()
                         UIView.animate(withDuration: 0.2, animations: {
-                            button.transform = CGAffineTransform(scaleX: 0.5, y: 0.5)
-                            button.alpha = 0
+                            chip.transform = CGAffineTransform(scaleX: 0.5, y: 0.5)
+                            chip.alpha = 0
                         }, completion: { [weak self] _ in
                             guard let self = self else { return }
                             self.isEmoteBusy = false
@@ -2257,28 +2299,25 @@ private class BearyEmoteSheetViewController: UIViewController, UICollectionViewD
 
 private class BearyEmoteSheetCell: UICollectionViewCell {
 
-    private let emoteImageView = UIImageView()
+    private let emoteSlot = UIView()
+    private var emoteView: BearyEmoteView?
     private let nameLabel = UILabel()
-    private var imageHeightConstraint: NSLayoutConstraint?
 
     override init(frame: CGRect) {
         super.init(frame: frame)
         contentView.layer.cornerRadius = 14
         contentView.clipsToBounds = true
-        emoteImageView.contentMode = .scaleAspectFit
-        emoteImageView.translatesAutoresizingMaskIntoConstraints = false
+        emoteSlot.translatesAutoresizingMaskIntoConstraints = false
         nameLabel.textAlignment = .center
         nameLabel.translatesAutoresizingMaskIntoConstraints = false
-        contentView.addSubview(emoteImageView)
+        contentView.addSubview(emoteSlot)
         contentView.addSubview(nameLabel)
-        let heightConstraint = emoteImageView.heightAnchor.constraint(equalToConstant: 46)
-        imageHeightConstraint = heightConstraint
         NSLayoutConstraint.activate([
-            emoteImageView.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 10),
-            emoteImageView.centerXAnchor.constraint(equalTo: contentView.centerXAnchor),
-            emoteImageView.widthAnchor.constraint(equalToConstant: 46),
-            heightConstraint,
-            nameLabel.topAnchor.constraint(equalTo: emoteImageView.bottomAnchor, constant: 4),
+            emoteSlot.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 10),
+            emoteSlot.centerXAnchor.constraint(equalTo: contentView.centerXAnchor),
+            emoteSlot.widthAnchor.constraint(equalToConstant: 46),
+            emoteSlot.heightAnchor.constraint(equalToConstant: 46),
+            nameLabel.topAnchor.constraint(equalTo: emoteSlot.bottomAnchor, constant: 4),
             nameLabel.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 2),
             nameLabel.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -2),
             nameLabel.bottomAnchor.constraint(equalTo: contentView.bottomAnchor, constant: -6),
@@ -2295,21 +2334,32 @@ private class BearyEmoteSheetCell: UICollectionViewCell {
         }
     }
 
+    override func prepareForReuse() {
+        super.prepareForReuse()
+        emoteView?.stop()
+    }
+
     func configure(key: String, dark: Bool) {
+        // dark 由播放器内部处理，签名保留以免改动面板调用点。
         let name = BearyText.moodNames[key] ?? key
         nameLabel.text = name
-        if let image = BearyEmoteImages.image(for: key, dark: dark) {
-            emoteImageView.image = image.withRenderingMode(.alwaysOriginal)
-            emoteImageView.isHidden = false
-            imageHeightConstraint?.constant = 46
-            nameLabel.font = UIFont.systemFont(ofSize: 11)
-            nameLabel.textColor = BearyColors.gray
+        nameLabel.font = UIFont.systemFont(ofSize: 11)
+        nameLabel.textColor = BearyColors.gray
+        if let current = emoteView, current.emoteKey == key {
+            current.play()
         } else {
-            emoteImageView.image = nil
-            emoteImageView.isHidden = true
-            imageHeightConstraint?.constant = 0
-            nameLabel.font = UIFont.systemFont(ofSize: 11)
-            nameLabel.textColor = BearyColors.gray
+            emoteView?.stop()
+            emoteView?.removeFromSuperview()
+            let next = BearyEmoteView(key: key, animated: true)
+            next.translatesAutoresizingMaskIntoConstraints = false
+            emoteSlot.addSubview(next)
+            NSLayoutConstraint.activate([
+                next.topAnchor.constraint(equalTo: emoteSlot.topAnchor),
+                next.bottomAnchor.constraint(equalTo: emoteSlot.bottomAnchor),
+                next.leadingAnchor.constraint(equalTo: emoteSlot.leadingAnchor),
+                next.trailingAnchor.constraint(equalTo: emoteSlot.trailingAnchor),
+            ])
+            emoteView = next
         }
     }
 }
