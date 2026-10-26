@@ -435,22 +435,15 @@ final class BearyChromeViewController: UIViewController {
         // 故衬底不再比控件大，只盖住分段器本身；
         // 永不拦截触摸，藏显与位移只跟 setBarsVisible；层级在分段器之下
         // （bringChromeToFront 里 blur 先于分段器提至最前，防后挂页盖住它）。
-        let blur = UIVisualEffectView(effect: UIBlurEffect(style: .systemMaterial))
+        let blur = makeGlassView(tint: BearyColors.bg.withAlphaComponent(0.52))
         blur.layer.cornerRadius = 25
         blur.clipsToBounds = true
         blur.isUserInteractionEnabled = false
-        // Li 2026-10-26 定：底栏也加 52 tint，与顶栏统一颜色；分段器本身无 tint 槽，
-        // tint 落在衬底 contentView 上，值与顶栏 makeGlassView 调用点一字一致（bg 52%）；
-        // BearyColors.bg 为动态色，withAlphaComponent 后仍跟随深浅，不写死黑白。
-        // 64 包反馈修（第 10 项）：底栏衬底与选中格颜色对调——选中格改用本衬底原来的
-        // bg 52%（见下方 selectedSegmentTintColor）；衬底改用选中格原来的浅色 pill 色调。
-        // 系统默认选中色读不出来，故衬底侧只能写显式动态近似值（浅色白 0.60 / 深色白 0.18），
-        // 非系统原值——须向 Li 明示这是近似、由他真机 judge；顶栏 tint 口径 bg 52% 本项不动。
-        blur.contentView.backgroundColor = UIColor { trait in
-            trait.userInterfaceStyle == .dark
-                ? UIColor.white.withAlphaComponent(0.18)
-                : UIColor.white.withAlphaComponent(0.60)
-        }
+        // Li 2026-10-26 定：底栏也加 52 tint，与顶栏统一颜色。
+        // 67 包反馈修：底栏衬底改走与顶栏同一只 makeGlassView（真液态玻璃 + bg 52%），
+        // 之前是 systemMaterial 旧模糊 + contentView 平铺 0.60/0.18 近似色，两层叠出来发灰，
+        // 加上分段器自身默认底色透出来，选中格就比顶栏灰一截；玻璃 tint 由 effect 自带，
+        // contentView 不再另铺色。选中格仍为 bg 52%（见下方 selectedSegmentTintColor）。
         blur.translatesAutoresizingMaskIntoConstraints = false
         view.addSubview(blur)
         bottomBlurView = blur
@@ -469,8 +462,11 @@ final class BearyChromeViewController: UIViewController {
         ]
         let seg = BearyHit44SegmentedControl(items: tabIcons.map { segmentIcon(named: $0.0, systemFallback: $0.1) })
         seg.apportionsSegmentWidthsByContent = false
-        // 64 包反馈修（第 10 项）：选中格显式设为衬底原来的毛玻璃色调 bg 52%——
-        // 系统默认选中色读不出来，不依赖它；与衬底对调，深浅两态由 bg 动态色自动跟随。
+        // 67 包反馈修：分段器自身底色显式 clear——之前没设，系统默认灰底透出来，
+        // 选中格 bg 52% 盖在灰底上就是截图里那截灰；clear 后选中格直接落在玻璃衬底上，
+        // 与顶栏同一块玻璃，颜色一致。
+        seg.backgroundColor = .clear
+        // 选中格显式设为 bg 52%，与顶栏 tint 同值；深浅两态由 bg 动态色自动跟随。
         seg.selectedSegmentTintColor = BearyColors.bg.withAlphaComponent(0.52)
         seg.selectedSegmentIndex = 0
         seg.accessibilityLabel = "底栏"
