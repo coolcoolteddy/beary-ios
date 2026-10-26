@@ -1541,9 +1541,11 @@ final class BearyChromeViewController: UIViewController {
         }
         // 收尾接线：返回/退出/编辑资料/齿轮菜单/行内互动（P3/P11，见 wireProfileVC）。
         wireProfileVC(vc, modal: true)
+        // P2-2：系统导航栏在 modal 态真实可见（全仓无 setNavigationBarHidden），与个人主页自有 44pt 顶栏成双顶栏。
+        // 按网页单顶栏口径隐藏系统导航栏、保留自有顶栏；自有返回钮经 onBack dismiss，关闭路径不受影响。
         let nav = UINavigationController(rootViewController: vc)
+        nav.isNavigationBarHidden = true
         nav.modalPresentationStyle = .fullScreen
-        vc.navigationItem.leftBarButtonItem = UIBarButtonItem(title: "关闭", style: .plain, target: self, action: #selector(didTapUserProfileClose))
         present(nav, animated: true)
     }
 

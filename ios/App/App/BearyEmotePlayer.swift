@@ -266,15 +266,24 @@ public final class BearyEmoteView: UIView {
 
     private static func loadEmoteFromBundle(for key: String, dark: Bool) -> CachedEmote? {
         let name = dark ? "\(key)_dark" : key
-        guard let url = Bundle.main.url(forResource: name, withExtension: "json") else { return nil }
+        guard let url = Bundle.main.url(forResource: name, withExtension: "json") else {
+            NSLog("[BearyEmote] load failed key=%@ dark=%@ reason=missing-json", key, dark ? "dark" : "light")
+            return nil
+        }
         // G24：op 取自 LottieAnimation.filepath 解析后的模型（endFrame）。
         // 循环标记取自 JSON 原文件：所钉 Lottie 4.6.1 里模型上的 markers 是
         // internal、marker(named:) 也不存在（CI #44 实证），故直接解码
         // markers 数组（cm=名、tm=帧号，与旧 Marker.time 同值），
         // 首帧缓存后不再重复读盘。
-        guard let animation = LottieAnimation.filepath(url.path) else { return nil }
+        guard let animation = LottieAnimation.filepath(url.path) else {
+            NSLog("[BearyEmote] load failed key=%@ dark=%@ reason=animation-parse-failed", key, dark ? "dark" : "light")
+            return nil
+        }
         let endFrame = CGFloat(animation.endFrame)
-        guard endFrame > 0 else { return nil }
+        guard endFrame > 0 else {
+            NSLog("[BearyEmote] load failed key=%@ dark=%@ reason=nonpositive-endFrame endFrame=%f", key, dark ? "dark" : "light", endFrame)
+            return nil
+        }
         // markers 缺失时的兜底：loop_start 缺失则从 0 循环，loop_end 缺失则循环到 op。
         var loopStart: CGFloat = 0
         var loopEnd: CGFloat = endFrame

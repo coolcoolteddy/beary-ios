@@ -354,6 +354,11 @@ class BearyProfileViewController: UIViewController {
         buttonValue.layer.borderWidth = 1
         buttonValue.layer.cornerRadius = 20
         buttonValue.addTarget(self, action: #selector(editButtonTapped), for: .touchUpInside)
+        // P2-4：照抄点赞钮实测字宽修法——按钮固有宽不含标题边距，显式宽 =
+        // content 12 + 图宽 + titleEdge 6 + 实测标题宽 + content 12，防标题被裁。
+        let editImageWidth = buttonValue.image(for: .normal)?.size.width ?? 15
+        let editTitleWidth = ceil(("编辑资料" as NSString).size(withAttributes: [NSAttributedString.Key.font: UIFont.systemFont(ofSize: 14)]).width)
+        buttonValue.widthAnchor.constraint(equalToConstant: 12 + editImageWidth + 6 + editTitleWidth + 12).isActive = true
         return buttonValue
     }()
 
@@ -363,6 +368,7 @@ class BearyProfileViewController: UIViewController {
         labelValue.font = UIFont.systemFont(ofSize: 23, weight: .heavy)
         labelValue.textColor = BearyColors.ink
         labelValue.numberOfLines = 0
+        labelValue.lineBreakMode = .byCharWrapping
         labelValue.text = "—"
         return labelValue
     }()
@@ -664,6 +670,10 @@ class BearyProfileViewController: UIViewController {
         buttonValue.titleEdgeInsets = UIEdgeInsets(top: 0, left: 4, bottom: 0, right: 0)
         buttonValue.contentEdgeInsets = UIEdgeInsets(top: 9, left: 10, bottom: 9, right: 10)
         buttonValue.addTarget(self, action: action, for: .touchUpInside)
+        // P2-4：同点赞钮修法——显式宽 = content 10 + 图宽 + titleEdge 4 + 实测标题宽 + content 10。
+        let tabImageWidth = buttonValue.image(for: .normal)?.size.width ?? 15
+        let tabTitleWidth = ceil((title as NSString).size(withAttributes: [NSAttributedString.Key.font: UIFont.systemFont(ofSize: 14, weight: .bold)]).width)
+        buttonValue.widthAnchor.constraint(equalToConstant: 10 + tabImageWidth + 4 + tabTitleWidth + 10).isActive = true
         return buttonValue
     }
 
@@ -1126,6 +1136,7 @@ class BearyProfileViewController: UIViewController {
         label.textColor = BearyColors.bg
         label.textAlignment = .center
         label.numberOfLines = 0
+        label.lineBreakMode = .byCharWrapping
         label.translatesAutoresizingMaskIntoConstraints = false
         toastView.addSubview(label)
         NSLayoutConstraint.activate([
@@ -1418,7 +1429,7 @@ class BearyProfileViewController: UIViewController {
                     retryButton.setTitle("徽章加载失败，点按重试", for: .normal)
                     retryButton.titleLabel?.font = UIFont.systemFont(ofSize: 13)
                     retryButton.setTitleColor(BearyColors.gray, for: .normal)
-                    retryButton.addTarget(strongSelf, action: #selector(badgeRetryTapped), for: .touchUpInside)
+                    retryButton.addTarget(strongSelf, action: #selector(BearyProfileViewController.badgeRetryTapped), for: .touchUpInside)
                     NSLayoutConstraint.activate([
                         retryButton.heightAnchor.constraint(equalToConstant: 32),
                     ])
@@ -1837,6 +1848,7 @@ class BearyProfileViewController: UIViewController {
             subtitleLabel.textColor = BearyColors.gray
             subtitleLabel.textAlignment = .center
             subtitleLabel.numberOfLines = 0
+            subtitleLabel.lineBreakMode = .byCharWrapping
             subtitleLabel.text = subtitleText
             stack.addArrangedSubview(subtitleLabel)
             constraints.append(stack.bottomAnchor.constraint(equalTo: container.bottomAnchor, constant: -8))
@@ -2543,6 +2555,7 @@ private class BearyProfileEntryCell: UITableViewCell {
         labelValue.font = UIFont.systemFont(ofSize: 15)
         labelValue.textColor = BearyColors.ink
         labelValue.numberOfLines = 0
+        labelValue.lineBreakMode = .byCharWrapping
         return labelValue
     }()
 
@@ -2861,6 +2874,7 @@ private class BearyProfileEntryCell: UITableViewCell {
         let bodyText = entry.content ?? ""
         let paragraph = NSMutableParagraphStyle()
         paragraph.lineHeightMultiple = 1.6
+        paragraph.lineBreakMode = .byCharWrapping
         bodyLabel.attributedText = NSAttributedString(string: bodyText, attributes: [
             .font: UIFont.systemFont(ofSize: 15),
             .foregroundColor: BearyColors.ink,
@@ -2989,9 +3003,11 @@ private class BearyProfileEntryCell: UITableViewCell {
         textLabel.font = UIFont.systemFont(ofSize: 13.5)
         textLabel.textColor = BearyColors.ink
         textLabel.numberOfLines = 3
+        textLabel.lineBreakMode = .byCharWrapping
         textLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         let quoteParagraph = NSMutableParagraphStyle()
         quoteParagraph.lineHeightMultiple = 1.55
+        quoteParagraph.lineBreakMode = .byCharWrapping
         textLabel.attributedText = NSAttributedString(string: quoteContent, attributes: [
             .font: UIFont.systemFont(ofSize: 13.5),
             .foregroundColor: BearyColors.ink,
@@ -3057,6 +3073,7 @@ private class BearyProfileEntryCell: UITableViewCell {
         labelValue.font = UIFont.systemFont(ofSize: 13)
         labelValue.textColor = BearyColors.gray
         labelValue.numberOfLines = 0
+        labelValue.lineBreakMode = .byCharWrapping
         labelValue.text = message
         inner.addArrangedSubview(labelValue)
     }

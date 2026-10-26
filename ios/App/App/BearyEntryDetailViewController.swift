@@ -136,6 +136,8 @@ class BearyEntryDetailViewController: UIViewController {
     private let editCountdownLabel = UILabel()
 
     private let detailCardView = UIView()
+    /// P2-1 列宽 600 上限约束：宽 ≥821 时激活、宽 ≤820 时关闭（见 updateDetailColumnWidth）。
+    private var detailCardWidthCapConstraint: NSLayoutConstraint?
     private let detailCardBottomLineView = UIView()
     private let bodyLabel = UILabel()
     /// 正文折叠按钮（D8）：>300 字且实测 >6 行时显示。
@@ -227,6 +229,7 @@ class BearyEntryDetailViewController: UIViewController {
 
     override func viewDidLayoutSubviews() {
         super.viewDidLayoutSubviews()
+        updateDetailColumnWidth()
         // 内容未出现（加载态 scrollView 还藏着）时不消费标记，等拉取成功渲染后再恢复；
         // 无记录的篇目归零，防复用时残留上一篇的偏移。
         if needsScrollRestore && scrollView.isHidden == false {
@@ -247,6 +250,14 @@ class BearyEntryDetailViewController: UIViewController {
             if emoteFlowHeightConstraint?.constant != flowHeight {
                 emoteFlowHeightConstraint?.constant = flowHeight
             }
+        }
+    }
+
+    /// P2-1：宽 ≥821 时 600 上限激活、宽 ≤820 时关闭；只切换 isActive，不重建约束。
+    private func updateDetailColumnWidth() {
+        let isWide = view.bounds.width >= 821
+        if detailCardWidthCapConstraint?.isActive != isWide {
+            detailCardWidthCapConstraint?.isActive = isWide
         }
     }
 
@@ -277,10 +288,13 @@ class BearyEntryDetailViewController: UIViewController {
         detailCardView.addSubview(detailCardBottomLineView)
 
         // 详情卡片容器（网页 .public-card 口径）：内边距 22/20/14 + 底部 2px line 边线。
-        // 内容列：宽 ≤820 时全宽（左右各 16pt）；宽 ≥821 时 600 居中（对应网页 .pf-col）。
-        // 做法：宽 == 屏宽 -32 用次高优先级（750），宽 ≤600 用必需优先级——屏宽 ≤632 时前者胜出、
-        // 屏宽 >632 时后者胜出压到 600，centerX 保证居中；两侧 ≥16pt 的不等式保证窄屏不断言。
+        // 内容列（P2-1 铁律）：宽 ≤820 时 iPhone 式全宽（屏宽 -32，左右各 16pt）；
+        // 宽 ≥821 时 600 居中。做法：屏宽 -32 约束用次高优先级（750）常驻，600 上限约束
+        // 只在宽屏激活（updateDetailColumnWidth 开关，个人主页 updateColumnLayout 同款）；
+        // 窄屏上限关闭后不再把 633–820 段压到 600，centerX 保证宽屏居中，两侧 ≥16pt 不等式保证窄屏不断言。
         let colWidth = detailCardView.widthAnchor.constraint(equalTo: scrollView.frameLayoutGuide.widthAnchor, constant: -32)
+        let colCap = detailCardView.widthAnchor.constraint(lessThanOrEqualToConstant: 600)
+        detailCardWidthCapConstraint = colCap
         colWidth.priority = .defaultHigh
         NSLayoutConstraint.activate([
             scrollView.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
@@ -294,7 +308,7 @@ class BearyEntryDetailViewController: UIViewController {
             detailCardView.leadingAnchor.constraint(greaterThanOrEqualTo: scrollView.contentLayoutGuide.leadingAnchor, constant: 16),
             detailCardView.trailingAnchor.constraint(lessThanOrEqualTo: scrollView.contentLayoutGuide.trailingAnchor, constant: -16),
             detailCardView.centerXAnchor.constraint(equalTo: scrollView.frameLayoutGuide.centerXAnchor),
-            detailCardView.widthAnchor.constraint(lessThanOrEqualToConstant: 600),
+            colCap,
             colWidth,
             stackView.topAnchor.constraint(equalTo: detailCardView.topAnchor, constant: 22),
             stackView.bottomAnchor.constraint(equalTo: detailCardView.bottomAnchor, constant: -14),
@@ -465,6 +479,7 @@ class BearyEntryDetailViewController: UIViewController {
 
         // 正文：15 字号、行高 1.6（渲染时用段落样式设置）。
         bodyLabel.numberOfLines = 0
+        bodyLabel.lineBreakMode = .byCharWrapping
         bodyLabel.font = UIFont.systemFont(ofSize: 15)
         bodyLabel.textColor = BearyColors.ink
         stackView.addArrangedSubview(bodyLabel)
@@ -1144,6 +1159,7 @@ class BearyEntryDetailViewController: UIViewController {
         } else {
             let paragraph = NSMutableParagraphStyle()
             paragraph.lineHeightMultiple = 1.6
+            paragraph.lineBreakMode = .byCharWrapping
             bodyLabel.attributedText = NSAttributedString(string: content, attributes: [.font: UIFont.systemFont(ofSize: 15), .foregroundColor: BearyColors.ink, .paragraphStyle: paragraph])
             bodyLabel.isHidden = false
             updateBodyFold()
@@ -1587,9 +1603,11 @@ class BearyEntryDetailViewController: UIViewController {
         textLabel.font = UIFont.systemFont(ofSize: 13.5)
         textLabel.textColor = BearyColors.ink
         textLabel.numberOfLines = 3
+        textLabel.lineBreakMode = .byCharWrapping
         textLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         let paragraph = NSMutableParagraphStyle()
         paragraph.lineHeightMultiple = 1.55
+        paragraph.lineBreakMode = .byCharWrapping
         textLabel.attributedText = NSAttributedString(string: content ?? "", attributes: [.font: UIFont.systemFont(ofSize: 13.5), .foregroundColor: BearyColors.ink, .paragraphStyle: paragraph])
         inner.addArrangedSubview(textLabel)
         if let keys = imageKeys?.filter({ $0.isEmpty == false }), keys.isEmpty == false {

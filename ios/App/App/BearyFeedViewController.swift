@@ -248,6 +248,8 @@ class BearyFeedViewController: UIViewController {
     /// 游客底部 logo（F19）：只在未登录且首拉完成后出现，登录后撤掉。
     private var footLogoContainer: UIView?
     private var footLogoImageView: UIImageView?
+    /// P2-1：600 列上限约束（宽 ≥821 才激活，开关在 viewDidLayoutSubviews）。
+    private var feedColCapConstraint: NSLayoutConstraint?
 
     // MARK: - 生命周期
 
@@ -257,16 +259,19 @@ class BearyFeedViewController: UIViewController {
         view.addSubview(tableView)
         view.addSubview(centralSpinner)
         view.addSubview(newContentPill)
-        // L1：内容列与详情页同宽——宽 ≤600 居中（窄屏时 == 屏宽胜出，宽屏时 600 上限胜出，
-        // 与详情页 detailCardView 的 750 优先级 + 600 上限同口径；容器层亦有 600 列约束，双重居中不冲突）。
+        // P2-1：内容列走网页 821 断点——宽 ≥821 时 600 居中，宽 ≤820 时 iPhone 式全宽
+        //（600 上限只在 ≥821 激活，开关在 viewDidLayoutSubviews；容器层 SceneDelegate 同断点开关，
+        // 本文件不再常驻 600 上限，避免 633–820 档被双重收窄）。
         let feedColWidth = tableView.widthAnchor.constraint(equalTo: view.widthAnchor)
         feedColWidth.priority = .defaultHigh
+        let feedColCap = tableView.widthAnchor.constraint(lessThanOrEqualToConstant: 600)
+        feedColCapConstraint = feedColCap
         NSLayoutConstraint.activate([
             tableView.topAnchor.constraint(equalTo: view.topAnchor),
             tableView.leadingAnchor.constraint(greaterThanOrEqualTo: view.leadingAnchor),
             tableView.trailingAnchor.constraint(lessThanOrEqualTo: view.trailingAnchor),
             tableView.centerXAnchor.constraint(equalTo: view.centerXAnchor),
-            tableView.widthAnchor.constraint(lessThanOrEqualToConstant: 600),
+            feedColCap,
             feedColWidth,
             tableView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
             centralSpinner.centerXAnchor.constraint(equalTo: view.centerXAnchor),
@@ -299,6 +304,12 @@ class BearyFeedViewController: UIViewController {
 
     override func viewDidLayoutSubviews() {
         super.viewDidLayoutSubviews()
+        // P2-1：600 上限只在宽 ≥821 时激活，宽 ≤820 时关掉、表走 == 屏宽回 iPhone 式全宽；
+        // 状态不变不开关，避免布局循环。
+        let wantColCap = view.bounds.width >= 821
+        if feedColCapConstraint?.isActive != wantColCap {
+            feedColCapConstraint?.isActive = wantColCap
+        }
         if tableView.tableHeaderView === emptyView {
             setEmptyVisible(true)
         }
@@ -1508,6 +1519,11 @@ class BearyFeedErrorCell: UITableViewCell {
         btn.layer.borderColor = BearyColors.line.cgColor
         btn.layer.cornerRadius = 20
         btn.addTarget(self, action: #selector(retryTapped), for: .touchUpInside)
+        // P2-4：照抄点赞钮修法——按钮固有宽不含标题边距，显式给足实测字宽，
+        // 否则标题会被裁：图宽 + titleEdgeInsets 左 6 + 实测标题宽 + contentEdgeInsets 左右各 12。
+        let retryImageWidth = btn.currentImage?.size.width ?? 15
+        let retryTitleWidth = ceil(("点击重试" as NSString).size(withAttributes: [NSAttributedString.Key.font: UIFont.systemFont(ofSize: 14)]).width)
+        btn.widthAnchor.constraint(equalToConstant: retryImageWidth + 6 + retryTitleWidth + 24).isActive = true
         return btn
     }()
 
@@ -1767,6 +1783,8 @@ class BearyFeedCell: UITableViewCell {
         lb.font = UIFont.systemFont(ofSize: 15)
         lb.textColor = BearyColors.ink
         lb.numberOfLines = 0
+        // P3-3：长串断行——超长无空格 token 按字符断行，不溢出；字号行高不动。
+        lb.lineBreakMode = .byCharWrapping
         return lb
     }()
 
@@ -2096,6 +2114,8 @@ class BearyFeedCell: UITableViewCell {
     private func attributedBody(_ text: String) -> NSAttributedString {
         let paragraph = NSMutableParagraphStyle()
         paragraph.lineHeightMultiple = 1.6
+        // P3-3：富文本段落样式会覆盖 label 的 lineBreakMode，此处同步按字符断行（字号行高不动）。
+        paragraph.lineBreakMode = .byCharWrapping
         let attrs: [NSAttributedString.Key: Any] = [
             .font: UIFont.systemFont(ofSize: 15),
             .foregroundColor: BearyColors.ink,
@@ -2778,10 +2798,10 @@ class BearyFeedCell: UITableViewCell {
 
     /// 贴上动效：chip-in 弹入 + 熊图 wiggle（详情页同款口径，网页 chipIn/emoteWiggle）；
     /// reduced-motion 时不动画。
-    private func playChipIn(forKey key: String) {
-        if UIAccessibility.isReduceMotionEnabled { return }
+    private func playChipIn(forKey key: String, completion: (() -> Void)? = nil) {
+        if UIAccessibility.isReduceMotionEnabled { completion?(); return }
         emoteFlowView.layoutIfNeeded()
-        guard let chip = chipButton(forKey: key) else { return }
+        guard let chip = chipButton(forKey: key) else { completion?(); return }
         chip.transform = CGAffineTransform(scaleX: 0.4, y: 0.4)
         chip.alpha = 0
         UIView.animateKeyframes(withDuration: 0.45, delay: 0, options: [], animations: {
@@ -2793,7 +2813,7 @@ class BearyFeedCell: UITableViewCell {
                 chip.transform = .identity
                 chip.alpha = 1
             }
-        }, completion: nil)
+        }, completion: { _ in completion?() })
         if let emoteView = emoteView(in: chip) {
             UIView.animateKeyframes(withDuration: 0.5, delay: 0, options: [], animations: {
                 UIView.addKeyframe(withRelativeStartTime: 0, relativeDuration: 0.3) {
@@ -3057,9 +3077,15 @@ class BearyFeedCell: UITableViewCell {
                         strongSelf.renderEmotes()
                         strongSelf.updateEmoteInteractivity()
                         if let inKey = animKey, animAdded == true {
-                            strongSelf.playChipIn(forKey: inKey)
+                            // P3-8：onEmoteChanged 推迟到 chip-in 完成回调之后——此前立即回传会经
+                            // applyInteraction → reloadRowIfVisible 重建整行，丢弃正在播的 0.45s chip-in。
+                            // 无动画（reduced-motion）或 chip 未找到时 playChipIn 立即调 completion，不拖延。
+                            strongSelf.playChipIn(forKey: inKey) {
+                                strongSelf.onEmoteChanged?(entryIdValue, resp.emotes)
+                            }
+                        } else {
+                            strongSelf.onEmoteChanged?(entryIdValue, resp.emotes)
                         }
-                        strongSelf.onEmoteChanged?(entryIdValue, resp.emotes)
                     }
                 case .failure(let err):
                     strongSelf.isEmoteBusy = false
@@ -3161,6 +3187,8 @@ class BearyFeedQuoteView: UIView {
         lb.font = UIFont.systemFont(ofSize: 13.5)
         lb.textColor = BearyColors.ink
         lb.numberOfLines = 3
+        // P3-3：引用正文同款长串断行（字号行高不动）。
+        lb.lineBreakMode = .byCharWrapping
         return lb
     }()
 
@@ -3369,6 +3397,8 @@ class BearyFeedQuoteView: UIView {
             contentLabel.isHidden = false
             let paragraph = NSMutableParagraphStyle()
             paragraph.lineHeightMultiple = 1.55
+            // P3-3：引用正文富文本同步按字符断行（字号行高不动）。
+            paragraph.lineBreakMode = .byCharWrapping
             let attrs: [NSAttributedString.Key: Any] = [
                 .font: UIFont.systemFont(ofSize: 13.5),
                 .foregroundColor: BearyColors.ink,

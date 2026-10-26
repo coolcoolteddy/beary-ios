@@ -338,8 +338,14 @@ final class BearyNotificationsViewController: UIViewController {
         // CGColor 只在赋值时解析一次：深浅切换时重刷态内按钮描边；
         // 行 cell 各自的角标/重试钮描边由 cell 自身 trait 回调重刷。
         if previousTraitCollection?.userInterfaceStyle != traitCollection.userInterfaceStyle {
-            stateButton.layer.borderColor = BearyColors.line.cgColor
+            updateDynamicLayerColors()
         }
+    }
+
+    /// P3-4：个人主页 updateDynamicLayerColors 同款——本 VC 直接持有的 CGColor 描边集中在此重赋。
+    /// 信件模态按钮另由 BearyLetterModalButton 自身 trait 回调重刷（模态非 VC、VC 侧无引用，见该类注释），不重复持有。
+    private func updateDynamicLayerColors() {
+        stateButton.layer.borderColor = BearyColors.line.cgColor
     }
 
     /// 60 秒轮询：只做 limit=1 轻量刷新（见 refreshUnreadCountLightly）。
@@ -1240,6 +1246,7 @@ private class BearyLetterModal {
         bodyLabel.font = UIFont.systemFont(ofSize: 16)
         bodyLabel.textColor = BearyColors.ink
         bodyLabel.numberOfLines = 0
+        bodyLabel.lineBreakMode = .byCharWrapping
         bodyLabel.text = body
         quoteWrap.translatesAutoresizingMaskIntoConstraints = false
         quoteWrap.backgroundColor = BearyColors.faint
@@ -1251,6 +1258,7 @@ private class BearyLetterModal {
         quoteTextLabel.font = UIFont.systemFont(ofSize: 15.5)
         quoteTextLabel.textColor = BearyColors.ink
         quoteTextLabel.numberOfLines = 0
+        quoteTextLabel.lineBreakMode = .byCharWrapping
         quoteMetaLabel.translatesAutoresizingMaskIntoConstraints = false
         quoteMetaLabel.font = UIFont.systemFont(ofSize: 13)
         quoteMetaLabel.textColor = BearyColors.gray
@@ -1518,6 +1526,9 @@ private class BearyNotificationCell: UITableViewCell {
         label.font = UIFont.systemFont(ofSize: 15.5)
         label.textColor = BearyColors.ink
         label.numberOfLines = 1
+        // P3-6：标题显式截断 + 横向低压缩先缩标题，timeLabel 保持 required 不被挤。
+        label.lineBreakMode = .byTruncatingTail
+        label.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         return label
     }()
 
@@ -1780,14 +1791,14 @@ private class BearyNotificationCell: UITableViewCell {
         avatarRetryActorName = ""
         avatarRetryButton.isHidden = true
         if anyUnread {
-            contentView.backgroundColor = BearyColors.blue.withAlphaComponent(0.09)
-            backgroundColor = BearyColors.blue.withAlphaComponent(0.09)
+            contentView.backgroundColor = BearyColors.alpha(BearyColors.blue, 0.09)
+            backgroundColor = BearyColors.alpha(BearyColors.blue, 0.09)
         } else {
             contentView.backgroundColor = BearyColors.bg
             backgroundColor = BearyColors.bg
         }
         unreadDotView.isHidden = !anyUnread
-        avatarImageView.backgroundColor = isSystem ? BearyColors.orange.withAlphaComponent(0.14) : BearyColors.blue.withAlphaComponent(0.12)
+        avatarImageView.backgroundColor = isSystem ? BearyColors.alpha(BearyColors.orange, 0.14) : BearyColors.alpha(BearyColors.blue, 0.12)
         avatarIconView.isHidden = false
         avatarIconView.tintColor = isSystem ? BearyColors.orange : BearyColors.blue
         avatarIconView.image = BearyIconImages.image(named: isSystem ? "icon_mail" : "icon_heart", pointSize: 19)
@@ -1862,8 +1873,8 @@ private class BearyNotificationCell: UITableViewCell {
 
         // 未读底：普通行蓝 7%、sys 行（含信件行）蓝 9%（网页 .nt-item.unread / .sys.unread）。
         if isUnread {
-            contentView.backgroundColor = BearyColors.blue.withAlphaComponent(isSystemStyle ? 0.09 : 0.07)
-            backgroundColor = BearyColors.blue.withAlphaComponent(isSystemStyle ? 0.09 : 0.07)
+            contentView.backgroundColor = BearyColors.alpha(BearyColors.blue, isSystemStyle ? 0.09 : 0.07)
+            backgroundColor = BearyColors.alpha(BearyColors.blue, isSystemStyle ? 0.09 : 0.07)
         } else {
             contentView.backgroundColor = BearyColors.bg
             backgroundColor = BearyColors.bg
@@ -1879,7 +1890,7 @@ private class BearyNotificationCell: UITableViewCell {
             avatarRetryButton.isHidden = true
             // system 行标题含“成就/徽章”时用 popper（礼花）图，否则 mail 图；
             // letter 行恒为 mail 图（网页 ntOne 两分支同口径）。
-            avatarImageView.backgroundColor = BearyColors.orange.withAlphaComponent(0.14)
+            avatarImageView.backgroundColor = BearyColors.alpha(BearyColors.orange, 0.14)
             avatarIconView.isHidden = false
             avatarIconView.tintColor = BearyColors.orange
             let titleText = item.title ?? (itemType == "letter" ? "一封信" : "通知")

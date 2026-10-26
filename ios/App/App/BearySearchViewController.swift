@@ -63,6 +63,12 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
     private var searchFieldToBoxTrailing: NSLayoutConstraint?
     private var searchFieldToClearLeading: NSLayoutConstraint?
     private var boxTopConstraint: NSLayoutConstraint?
+    // P2-1：600 列口径（与个人主页 isDesktopColumn 同口径：宽 ≥821 才锁 600，
+    // 宽 ≤820 走满宽）——上限约束与满宽约束二选一，见 updateColumnLayout。
+    private var contentStackWidthCap: NSLayoutConstraint?
+    private var contentStackFullWidth: NSLayoutConstraint?
+    private var searchBoxWidthCap: NSLayoutConstraint?
+    private var searchBoxFullWidth: NSLayoutConstraint?
     private var searchSeq: Int = 0
     private var lastQuery: String = ""
     private var showingResults: Bool = false
@@ -129,7 +135,18 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
 
     override func viewDidLayoutSubviews() {
         super.viewDidLayoutSubviews()
+        updateColumnLayout()
         updateStickyBoxPosition()
+    }
+
+    /// P2-1：宽 ≥821 时内容列 600 / 搜索框 568 居中，宽 ≤820 时内容列满宽 /
+    /// 搜索框 = 屏宽 -32；与个人主页 isDesktopColumn（≥821）同口径，不自创第三种。
+    private func updateColumnLayout() {
+        let desktop = view.bounds.width >= 821
+        contentStackWidthCap?.isActive = desktop
+        contentStackFullWidth?.isActive = !desktop
+        searchBoxWidthCap?.isActive = desktop
+        searchBoxFullWidth?.isActive = !desktop
     }
 
     func scrollViewDidScroll(_ scrollView: UIScrollView) {
@@ -334,6 +351,7 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         stateTitleLabel.textColor = BearyColors.ink
         stateTitleLabel.textAlignment = .center
         stateTitleLabel.numberOfLines = 0
+        stateTitleLabel.lineBreakMode = .byCharWrapping
         stateStack.addArrangedSubview(stateTitleLabel)
 
         stateSubLabel.translatesAutoresizingMaskIntoConstraints = false
@@ -341,6 +359,7 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         stateSubLabel.textColor = BearyColors.gray
         stateSubLabel.textAlignment = .center
         stateSubLabel.numberOfLines = 0
+        stateSubLabel.lineBreakMode = .byCharWrapping
         stateStack.addArrangedSubview(stateSubLabel)
 
         // 失败重试：网页 .addr-retry——padding 7/20、边框 1 line、圆角 999、13 ink、surface 底。
@@ -372,7 +391,7 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
             scrollView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
             scrollView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
 
-            // 内容列：容器已锁 600 列，页内不再二次收窄——列 = 满宽 ≤600 居中，
+            // 内容列（P2-1）：宽 ≥821 时 600 居中、宽 ≤820 时满宽（见 updateColumnLayout）；
             // 16 边距改由 contentStack layoutMargins 承担（窄屏仍是 16）。
             columnWrap.topAnchor.constraint(equalTo: scrollView.contentLayoutGuide.topAnchor),
             columnWrap.leadingAnchor.constraint(equalTo: scrollView.contentLayoutGuide.leadingAnchor),
@@ -384,7 +403,6 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
             contentStack.leadingAnchor.constraint(greaterThanOrEqualTo: columnWrap.leadingAnchor, constant: 0),
             contentStack.trailingAnchor.constraint(lessThanOrEqualTo: columnWrap.trailingAnchor, constant: 0),
             contentStack.centerXAnchor.constraint(equalTo: columnWrap.centerXAnchor),
-            contentStack.widthAnchor.constraint(lessThanOrEqualToConstant: 600),
             contentStack.bottomAnchor.constraint(equalTo: columnWrap.bottomAnchor),
 
             // 页顶返回行：按钮 28 + gap 10 + 标题，上下 padding 4/2。
@@ -412,7 +430,6 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
             searchBoxView.leadingAnchor.constraint(greaterThanOrEqualTo: view.leadingAnchor, constant: 16),
             searchBoxView.trailingAnchor.constraint(lessThanOrEqualTo: view.trailingAnchor, constant: -16),
             searchBoxView.centerXAnchor.constraint(equalTo: view.centerXAnchor),
-            searchBoxView.widthAnchor.constraint(lessThanOrEqualToConstant: 568),
 
             searchIconView.leadingAnchor.constraint(equalTo: searchBoxView.leadingAnchor, constant: 16),
             searchIconView.centerYAnchor.constraint(equalTo: searchBoxView.centerYAnchor),
@@ -451,6 +468,16 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
             stateRingView.widthAnchor.constraint(equalToConstant: 25),
             stateRingView.heightAnchor.constraint(equalToConstant: 25),
         ])
+        // P2-1：列宽二选一约束（初始按桌面态建，viewDidLayoutSubviews 的
+        // updateColumnLayout 按实际宽度纠正；窄屏满宽约束与上限约束永不同时激活）。
+        contentStackWidthCap = contentStack.widthAnchor.constraint(lessThanOrEqualToConstant: 600)
+        contentStackWidthCap?.isActive = true
+        contentStackFullWidth = contentStack.widthAnchor.constraint(equalTo: columnWrap.widthAnchor)
+        contentStackFullWidth?.isActive = false
+        searchBoxWidthCap = searchBoxView.widthAnchor.constraint(lessThanOrEqualToConstant: 568)
+        searchBoxWidthCap?.isActive = true
+        searchBoxFullWidth = searchBoxView.widthAnchor.constraint(equalTo: view.widthAnchor, constant: -32)
+        searchBoxFullWidth?.isActive = false
         // sticky 框体顶距：初始按返回行后位置估算，首次布局与滚动时校准。
         boxTopConstraint = searchBoxView.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 38)
         boxTopConstraint?.isActive = true
@@ -468,8 +495,11 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
     /// CGColor 不跟随深浅模式自动变：边框色一律这里集中刷新。
     private func updateBorderColors() {
         if searchBoxFocused {
-            // 网页 :focus-within 口径：边框取蓝 55% 混 line；原生以蓝 55% 透明度近似。
-            searchBoxView.layer.borderColor = BearyColors.blue.withAlphaComponent(0.55).cgColor
+            // 网页 :focus-within 口径：边框取蓝 55% 混 line；P2-5：走 BearyColors.alpha
+            // 动态重解（BearyNativeCommon.swift：static func alpha(_ color: UIColor, _ alpha: CGFloat) -> UIColor），
+            // 不得对动态色直接 withAlphaComponent（会固化当前 trait 解析值）；CGColor 快照
+            // 由 traitCollectionDidChange → updateBorderColors 重赋。
+            searchBoxView.layer.borderColor = BearyColors.alpha(BearyColors.blue, 0.55).cgColor
         } else {
             searchBoxView.layer.borderColor = BearyColors.line.cgColor
         }
@@ -941,10 +971,11 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         let contentLabel = BearyRoundedMarkLabel()
         contentLabel.translatesAutoresizingMaskIntoConstraints = false
         contentLabel.numberOfLines = 3
+        contentLabel.lineBreakMode = .byCharWrapping
         contentLabel.clipsToBounds = true
         // 横向栈内正文先让位：固定 44 宽缩略图不被挤，正文换行承接剩余宽度。
         contentLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-        contentLabel.attributedText = highlightedText(contentText, query: query, font: UIFont.systemFont(ofSize: 16), color: BearyColors.ink, lineHeightMultiple: 1.6)
+        contentLabel.attributedText = highlightedText(contentText, query: query, font: UIFont.systemFont(ofSize: 16), color: BearyColors.ink, lineHeightMultiple: 1.6, lineBreakMode: .byCharWrapping)
 
         let bodyRow = UIStackView()
         bodyRow.translatesAutoresizingMaskIntoConstraints = false
@@ -1124,8 +1155,9 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
     /// 网页 mark 样式：橙 24% 底、圆角 3、左右 padding 1；NSAttributedString 的
     /// .backgroundColor 画不出圆角，故命中段改记自定义属性，由
     /// BearyRoundedMarkLabel 在 drawText 里按段画圆角 3 底（见文件末尾）。
-    private func highlightedText(_ text: String, query: String, font: UIFont, color: UIColor, lineHeightMultiple: CGFloat = 0) -> NSAttributedString {
+    private func highlightedText(_ text: String, query: String, font: UIFont, color: UIColor, lineHeightMultiple: CGFloat = 0, lineBreakMode: NSLineBreakMode = .byWordWrapping) -> NSAttributedString {
         let paragraph = NSMutableParagraphStyle()
+        paragraph.lineBreakMode = lineBreakMode
         if lineHeightMultiple > 0 {
             paragraph.lineHeightMultiple = lineHeightMultiple
         }
