@@ -1994,7 +1994,7 @@ class BearyFeedErrorCell: UITableViewCell {
 
 // MARK: - 日记卡片 cell（F1–F13）
 
-class BearyFeedCell: UITableViewCell, UIGestureRecognizerDelegate {
+class BearyFeedCell: UITableViewCell {
 
     /// 点图片条时触发（传图片下标，控制器开本文件内查看器；不再进详情）。
     var onImageTapped: ((Int) -> Void)?
@@ -2838,7 +2838,7 @@ class BearyFeedCell: UITableViewCell, UIGestureRecognizerDelegate {
 
     /// Q9 长按互斥：按钮（点赞/收藏/分享/回应/折叠/公开行）与图片灯箱、
     /// 引用卡、作者头像/名字上的触摸不触发长按菜单，各自原有手势照常走。
-    func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldReceive touch: UITouch) -> Bool {
+    override func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldReceive touch: UITouch) -> Bool {
         var view: UIView? = touch.view
         while let current = view {
             if current is UIButton { return false }
