@@ -1263,6 +1263,13 @@ final class BearyChromeViewController: UIViewController {
         } else if let prev = currentPage {
             pageView(for: prev).view.isHidden = true
         }
+        // 切离时间线页时清掉未播的错峰队列（见 Timeline.clearStaggerEntries）：
+        // 分页追加后未显示的行若带着 stagger 条目切走，切回时 willDisplay 会补播
+        // 滑入——行已是既有内容，不得重播。容器切页只改 isHidden，不触发子页
+        // appearance 回调，故清队列只能落在这里。
+        if previousPage == .timeline {
+            timelineVC?.clearStaggerEntries()
+        }
         // 64 包反馈修：切 tab 离开旧页时统一收键盘——容器切页只改 isHidden，不触发
         // 子页 appearance 回调，搜索页 viewWillDisappear 里的收键盘走不到这里；
         // 非搜索页无第一响应者，本行是无害 no-op；返回/切 tab/其他入口离开全覆盖。
@@ -1275,23 +1282,14 @@ final class BearyChromeViewController: UIViewController {
         } else {
             pageView(for: page).view.isHidden = false
         }
-        // M4：切页新页 0.25s 淡入（减动效直设终值；首建页 previousPage 为 nil 时不播入场）。
-        let shownView: UIView? = (page == .home) ? feedVC?.view : pageView(for: page).view
-        if previousPage != nil, let shownView = shownView {
-            if UIAccessibility.isReduceMotionEnabled {
-                shownView.alpha = 1
-            } else {
-                shownView.alpha = 0
-                UIView.animate(withDuration: 0.25, delay: 0, options: [.beginFromCurrentState], animations: {
-                    shownView.alpha = 1
-                })
-            }
-        }
+        // 2026-10-26 切 tab 滑动重播排查：M4 全页淡入已删——缓存页每次切 tab 都
+        // 重播入场动效，违背“已有元素不重播”；切 tab 只留顶栏高度结构动画
+        //（setHeaderVisible，见下），页本身即时显示，alpha 恒 1。
         updateTabSelection()
         updateDesktopLayout()
         // 64 包反馈修：52 批“他页恒收起无动画”决定作废——切页时顶栏收起/展开一并走
-        // setHeaderVisible 的 0.25s 高度动效（减动效时内部直达）；页切换淡入与顶栏
-        // 高度动画同向，不冲突。
+        // setHeaderVisible 的 0.25s 高度动效（减动效时内部直达）；页本身即时显示，
+        // 不再播 M4 淡入（见上，缓存页切 tab 不重播入场动效）。
         setHeaderVisible(page == .home, animated: true)
         // E 批搜索藏栏（Li 2026-10-24 拍板：搜索页打开时 bnav + FAB 都藏）：
         // 容器切页只改 isHidden、不触发子页 appearance 回调，故藏/恢复只能落
