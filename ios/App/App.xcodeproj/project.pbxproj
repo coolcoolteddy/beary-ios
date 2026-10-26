@@ -8,6 +8,7 @@
 
 /* Begin PBXBuildFile section */
 		2FAD9763203C412B000D30F8 /* config.xml in Resources */ = {isa = PBXBuildFile; fileRef = 2FAD9762203C412B000D30F8 /* config.xml */; };
+		99060793831946979576E79C /* BearyEntryImageViewerViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5F509C857697461EBD1A11F9 /* BearyEntryImageViewerViewController.swift */; };
 		504EC3081FED79650016851F /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 504EC3071FED79650016851F /* AppDelegate.swift */; };
 		504EC30D1FED79650016851F /* Main.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = 504EC30B1FED79650016851F /* Main.storyboard */; };
 		504EC30F1FED79650016851F /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 504EC30E1FED79650016851F /* Assets.xcassets */; };
@@ -23,7 +24,6 @@
 		6C0B3118064804F9010301DD /* BearyAPI.swift in Sources */ = {isa = PBXBuildFile; fileRef = AECBDBF45A4EEB200061613F /* BearyAPI.swift */; };
 		521E56F5F2DAA7D36ED1DDD7 /* BearyNativeCommon.swift in Sources */ = {isa = PBXBuildFile; fileRef = F22580FBE9BDF051BF0B217E /* BearyNativeCommon.swift */; };
 		F40B709B8AD75CFF1DD051E2 /* BearyFeedViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1CF8C5F0C4EAA6EE5AD6D99 /* BearyFeedViewController.swift */; };
-		8A047B8DD77DEF5271FBF3FE /* BearyEntryDetailViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8211DAE1B4534F851C014793 /* BearyEntryDetailViewController.swift */; };
 		18A6452B1F1FB1587C13CB37 /* BearyComposerViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 77AD3CB98561B2E60A48412C /* BearyComposerViewController.swift */; };
 		A46569900EDF7A6299450A3E /* BearyDraftFiles.swift in Sources */ = {isa = PBXBuildFile; fileRef = 55657C85F900B6AAC4EBF6D1 /* BearyDraftFiles.swift */; };
 		2E336A1F3CBED468CAD5D554 /* BearyEdgeDismiss.swift in Sources */ = {isa = PBXBuildFile; fileRef = DFB7CEC22AB4833567716062 /* BearyEdgeDismiss.swift */; };
@@ -147,7 +147,6 @@
 		958DCC722DB07C7200EA8C5F /* debug.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; name = debug.xcconfig; path = ../debug.xcconfig; sourceTree = SOURCE_ROOT; };
 		F22580FBE9BDF051BF0B217E /* BearyNativeCommon.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BearyNativeCommon.swift; sourceTree = "<group>"; };
 		A1CF8C5F0C4EAA6EE5AD6D99 /* BearyFeedViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BearyFeedViewController.swift; sourceTree = "<group>"; };
-		8211DAE1B4534F851C014793 /* BearyEntryDetailViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BearyEntryDetailViewController.swift; sourceTree = "<group>"; };
 		77AD3CB98561B2E60A48412C /* BearyComposerViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BearyComposerViewController.swift; sourceTree = "<group>"; };
 		55657C85F900B6AAC4EBF6D1 /* BearyDraftFiles.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BearyDraftFiles.swift; sourceTree = "<group>"; };
 		DFB7CEC22AB4833567716062 /* BearyEdgeDismiss.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BearyEdgeDismiss.swift; sourceTree = "<group>"; };
@@ -248,6 +247,7 @@
 		66A30D087D0C4BE318AD4C46 /* wish_dark.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = LottieEmotes/wish_dark.json; sourceTree = "<group>"; };
 		D1FEDAEE06536713E0B7515C /* zap.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = LottieEmotes/zap.json; sourceTree = "<group>"; };
 		29302F6301B0882F2EA91CF7 /* zap_dark.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = LottieEmotes/zap_dark.json; sourceTree = "<group>"; };
+		5F509C857697461EBD1A11F9 /* BearyEntryImageViewerViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BearyEntryImageViewerViewController.swift; sourceTree = "<group>"; };
 		073AE0417A7BFF6FD0034CE0 /* BearyEmotePlayer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BearyEmotePlayer.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
@@ -293,13 +293,13 @@
 			isa = PBXGroup;
 			children = (
 				073AE0417A7BFF6FD0034CE0 /* BearyEmotePlayer.swift */,
+				5F509C857697461EBD1A11F9 /* BearyEntryImageViewerViewController.swift */,
 				9582B6822FE993A50072D4E8 /* SceneDelegate.swift */,
 				86D18B2BF4591827760F0894 /* BearyNavigator.swift */,
 				EB603D97ED6DBB5EB3F8E3B8 /* SessionManager.swift */,
 				AECBDBF45A4EEB200061613F /* BearyAPI.swift */,
 				F22580FBE9BDF051BF0B217E /* BearyNativeCommon.swift */,
 				A1CF8C5F0C4EAA6EE5AD6D99 /* BearyFeedViewController.swift */,
-				8211DAE1B4534F851C014793 /* BearyEntryDetailViewController.swift */,
 				77AD3CB98561B2E60A48412C /* BearyComposerViewController.swift */,
 				55657C85F900B6AAC4EBF6D1 /* BearyDraftFiles.swift */,
 				DFB7CEC22AB4833567716062 /* BearyEdgeDismiss.swift */,
@@ -596,6 +596,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				79F247252364A4DF73EEBDA2 /* BearyEmotePlayer.swift in Sources */,
+				99060793831946979576E79C /* BearyEntryImageViewerViewController.swift in Sources */,
 				504EC3081FED79650016851F /* AppDelegate.swift in Sources */,
 				9582B6832FE993A70072D4E8 /* SceneDelegate.swift in Sources */,
 				FCE851521BDA875B32CD7A84 /* BearyNavigator.swift in Sources */,
@@ -603,7 +604,6 @@
 				6C0B3118064804F9010301DD /* BearyAPI.swift in Sources */,
 				521E56F5F2DAA7D36ED1DDD7 /* BearyNativeCommon.swift in Sources */,
 				F40B709B8AD75CFF1DD051E2 /* BearyFeedViewController.swift in Sources */,
-				8A047B8DD77DEF5271FBF3FE /* BearyEntryDetailViewController.swift in Sources */,
 				18A6452B1F1FB1587C13CB37 /* BearyComposerViewController.swift in Sources */,
 				A46569900EDF7A6299450A3E /* BearyDraftFiles.swift in Sources */,
 				2E336A1F3CBED468CAD5D554 /* BearyEdgeDismiss.swift in Sources */,

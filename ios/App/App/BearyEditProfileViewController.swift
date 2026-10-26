@@ -294,7 +294,7 @@ class BearyEditProfileViewController: UIViewController {
         buttonValue.titleLabel?.font = UIFont.systemFont(ofSize: 14)
         buttonValue.contentEdgeInsets = UIEdgeInsets(top: 0, left: 12, bottom: 0, right: 12)
         buttonValue.layer.borderWidth = 1
-        buttonValue.layer.cornerRadius = 20
+        buttonValue.layer.cornerRadius = 22
         buttonValue.addTarget(self, action: action, for: .touchUpInside)
         return buttonValue
     }
@@ -442,7 +442,7 @@ class BearyEditProfileViewController: UIViewController {
             changeCoverButton.topAnchor.constraint(equalTo: coverButtonWrap.topAnchor),
             changeCoverButton.leadingAnchor.constraint(equalTo: coverButtonWrap.leadingAnchor),
             changeCoverButton.bottomAnchor.constraint(equalTo: coverButtonWrap.bottomAnchor),
-            changeCoverButton.heightAnchor.constraint(equalToConstant: 40),
+            changeCoverButton.heightAnchor.constraint(equalToConstant: 44),
         ])
         // F15：表单（网页 ed-form 口径：顶边线 + 58 标签行 + 行分隔线）。
         let nameRow = UIStackView(arrangedSubviews: [makeFormLabel("昵称"), nameField])

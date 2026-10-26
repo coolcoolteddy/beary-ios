@@ -41,6 +41,8 @@ final class BearyDraftBoxViewController: UIViewController {
     private let boxTransitionDelegate = BearyDraftBoxTransitionDelegate()
     private var drafts: [BearyDraft] = []
     private var cardEntries: [(button: UIButton, draftValue: BearyDraft)] = []
+    /// 新规矩 (b)：草稿列表入场动效只播一次（首渲），后续重渲不重播已有卡片。
+    private var draftCardsAnimatedOnce = false
     private var openEntries: [(button: UIButton, draftValue: BearyDraft)] = []
     private var deleteEntries: [(button: UIButton, draftValue: BearyDraft)] = []
     private var lostEntries: [(button: UIButton, draftValue: BearyDraft)] = []
@@ -100,8 +102,9 @@ final class BearyDraftBoxViewController: UIViewController {
         view.backgroundColor = UIColor.clear
         buildViews()
         buildConstraints()
-        loadDrafts()
-        renderDrafts()
+        loadDrafts { [weak self] in
+            self?.renderDrafts()
+        }
     }
 
     override func viewWillAppear(_ animated: Bool) {
@@ -480,14 +483,24 @@ final class BearyDraftBoxViewController: UIViewController {
 
     /// G5：改用 loadAllResult——读取失败时置失败标记，渲染走失败态，
     /// 绝不以空数组冒充“暂无草稿”。
-    private func loadDrafts() {
-        switch BearyDraftStore.loadAllResult() {
-        case .success(let loaded):
-            drafts = loaded
-            draftsLoadFailed = false
-        case .failure:
-            drafts = []
-            draftsLoadFailed = true
+    /// 旧 23：读盘 + 解码在 BearyDraftStore.ioQueue（串行后台队列，与
+    /// save/deleteAsync 同队列，读不到写一半的库）上执行；状态赋值与
+    /// completion 一律回主线程，调用方在 completion 里做 UI 渲染。
+    private func loadDrafts(completion: (() -> Void)? = nil) {
+        BearyDraftStore.ioQueue.async { [weak self] in
+            let result = BearyDraftStore.loadAllResult()
+            DispatchQueue.main.async { [weak self] in
+                guard let strongSelf = self else { return }
+                switch result {
+                case .success(let loaded):
+                    strongSelf.drafts = loaded
+                    strongSelf.draftsLoadFailed = false
+                case .failure:
+                    strongSelf.drafts = []
+                    strongSelf.draftsLoadFailed = true
+                }
+                completion?()
+            }
         }
     }
 
@@ -552,13 +565,30 @@ final class BearyDraftBoxViewController: UIViewController {
             listStack.addArrangedSubview(emptyWrap)
         } else {
             subWrap.isHidden = false
-            // D-G18：网页 draftSub 口径「仅保存在当前浏览器」，原「仅保存在本机」改齐。
-            subLabel.text = "共 \(drafts.count) 份 · 写的时候自动保存 · 仅保存在当前浏览器"
+            // Q10：App 草稿只存本机，副文案改“仅保存在本设备”
+            //（原网页口径“仅保存在当前浏览器”不适用于 App 本机存储）。
+            subLabel.text = "共 \(drafts.count) 份 · 写的时候自动保存 · 仅保存在本设备"
             hintWrap.isHidden = false
             for draftValue in drafts {
                 let card = makeCard(for: draftValue)
                 cardEntries.append((button: card, draftValue: draftValue))
                 listStack.addArrangedSubview(card)
+            }
+            // 新规矩 (b)：草稿列表首次渲染错峰淡入一次（后续删除/回页重渲不重播，
+            // 已有卡片不动；减动效直显）。
+            if !draftCardsAnimatedOnce && !UIAccessibility.isReduceMotionEnabled {
+                draftCardsAnimatedOnce = true
+                var delay: TimeInterval = 0
+                for entry in cardEntries {
+                    let card = entry.button
+                    card.alpha = 0
+                    card.transform = CGAffineTransform(translationX: 0, y: 8)
+                    UIView.animate(withDuration: 0.25, delay: delay, options: .curveEaseOut, animations: {
+                        card.alpha = 1
+                        card.transform = .identity
+                    })
+                    delay += 0.03
+                }
             }
         }
     }
@@ -581,10 +611,10 @@ final class BearyDraftBoxViewController: UIViewController {
         inner.translatesAutoresizingMaskIntoConstraints = false
         card.addSubview(inner)
         NSLayoutConstraint.activate([
-            inner.topAnchor.constraint(equalTo: card.topAnchor, constant: 13),
-            inner.bottomAnchor.constraint(equalTo: card.bottomAnchor, constant: -11),
-            inner.leadingAnchor.constraint(equalTo: card.leadingAnchor, constant: 14),
-            inner.trailingAnchor.constraint(equalTo: card.trailingAnchor, constant: -14),
+            inner.topAnchor.constraint(equalTo: card.topAnchor, constant: 14),
+            inner.bottomAnchor.constraint(equalTo: card.bottomAnchor, constant: -14),
+            inner.leadingAnchor.constraint(equalTo: card.leadingAnchor, constant: 16),
+            inner.trailingAnchor.constraint(equalTo: card.trailingAnchor, constant: -16),
         ])
 
         let topRow = UIStackView()
@@ -593,7 +623,7 @@ final class BearyDraftBoxViewController: UIViewController {
         topRow.alignment = .center
         let timeLabel = UILabel()
         timeLabel.text = draftTimeText(updatedAtSeconds: draftValue.updatedAt)
-        timeLabel.font = UIFont.systemFont(ofSize: 12.5, weight: .semibold)
+        timeLabel.font = UIFont.systemFont(ofSize: 13, weight: .semibold)
         timeLabel.textColor = BearyColors.blue
         topRow.addArrangedSubview(timeLabel)
         let spacer = UIView()
@@ -652,7 +682,7 @@ final class BearyDraftBoxViewController: UIViewController {
         inner.addArrangedSubview(topRow)
 
         let summaryLabel = UILabel()
-        summaryLabel.font = UIFont.systemFont(ofSize: 15.5)
+        summaryLabel.font = UIFont.systemFont(ofSize: 16)
         summaryLabel.textColor = BearyColors.ink
         summaryLabel.numberOfLines = 2
         summaryLabel.textAlignment = .left
@@ -873,9 +903,10 @@ final class BearyDraftBoxViewController: UIViewController {
             if ok {
                 strongSelf.renderDrafts()
             } else {
-                strongSelf.loadDrafts()
-                strongSelf.renderDrafts()
-                strongSelf.showDraftToast(message: "保存失败，图片提示还在")
+                strongSelf.loadDrafts {
+                    strongSelf.renderDrafts()
+                    strongSelf.showDraftToast(message: "保存失败，图片提示还在")
+                }
             }
         }
     }
@@ -1082,7 +1113,7 @@ final class BearyDraftBoxViewController: UIViewController {
             toastView.centerXAnchor.constraint(equalTo: view.centerXAnchor),
             toastView.leadingAnchor.constraint(greaterThanOrEqualTo: view.leadingAnchor, constant: 20),
             toastView.trailingAnchor.constraint(lessThanOrEqualTo: view.trailingAnchor, constant: -20),
-            toastView.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor, constant: -24),
+            toastView.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor, constant: -158),
         ])
         draftToastView = toastView
         if UIAccessibility.isReduceMotionEnabled {
@@ -1256,9 +1287,10 @@ final class BearyDraftBoxViewController: UIViewController {
             if ok {
                 strongSelf.renderDrafts()
             } else {
-                strongSelf.loadDrafts()
-                strongSelf.renderDrafts()
-                strongSelf.showDraftToast(message: "恢复失败，请再试一次")
+                strongSelf.loadDrafts {
+                    strongSelf.renderDrafts()
+                    strongSelf.showDraftToast(message: "恢复失败，请再试一次")
+                }
             }
         }
     }

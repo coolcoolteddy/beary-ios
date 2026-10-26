@@ -60,6 +60,8 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
     private let onOpenEntryHandler: (String) -> Void
 
     private var searchTimer: Timer?
+    /// 顶栏透度批：容器最后一次发来的栏态（本页属性内边距不含安全区顶，见 applyHeaderTopInset）。
+    private var headerTopInsetVisible = false
     private var searchFieldToBoxTrailing: NSLayoutConstraint?
     private var searchFieldToClearLeading: NSLayoutConstraint?
     private var boxTopConstraint: NSLayoutConstraint?
@@ -70,9 +72,18 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
     private var searchBoxWidthCap: NSLayoutConstraint?
     private var searchBoxFullWidth: NSLayoutConstraint?
     private var searchSeq: Int = 0
+    /// S10：在途搜索请求（新搜索先取消上一路；searchSeq 保留作第二道防线）。
+    private var currentSearchTask: URLSessionDataTask?
     private var lastQuery: String = ""
     private var showingResults: Bool = false
     private var searchBoxFocused: Bool = false
+    // S7：有旧结果时失败保留旧结果，行内重试行（复用失败态 retryButton 样式，
+    // 不新增组件）；随 clearResultRows 重建而丢弃，见 showFailedStateKeepingResults。
+    private var searchInlineRetryRow: UIView?
+    private var searchInlineRetryButton: UIButton?
+    /// Q9 最近搜索：只存本机 UserDefaults，不走服务端；最多 8 条，新在前、去重。
+    private let recentSearchesKey = "bearyRecentSearches"
+    private var recentButtons: [UIButton] = []
 
     private var userButtons: [UIButton] = []
     private var rowUsers: [SearchUser] = []
@@ -125,6 +136,11 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
     private let stateTitleLabel = UILabel()
     private let stateSubLabel = UILabel()
     private let retryButton = UIButton(type: .custom)
+    /// Q5 无结果 CTA：只在无结果态显示，点按复用 clearTapped（清空并回初始态）。
+    private let clearSearchButton = UIButton(type: .custom)
+    /// Q9 最近搜索容器：插在状态区与结果区之间，只在初始态有记录时显示。
+    private let recentWrap = UIView()
+    private let recentStack = UIStackView()
 
     // MARK: - 生命周期
 
@@ -134,6 +150,20 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         buildViews()
         buildConstraints()
         showInitialState()
+    }
+
+    /// 顶栏透度批（容器调用，见 SceneDelegate.applyHeaderTopInsets）：主滚动视图即 scrollView。
+    /// 本页滚动框顶锚页安全区（容器页顶改 view.top 后，页安全区顶仍为容器安全区顶，框绝对位置不变），
+    /// 故属性内边距只需 60/0：显示 60、收起 0，视觉顶距即安全区顶 + 60 / 安全区顶。
+    /// 本页在容器里恒收起，显示值只经容器统一发一次；sticky 框逻辑（safeTop 与占位同移 S）不受影响。
+    /// 本页无公开回顶方法、无 contentOffset 在顶判定（容器回顶走 BFS 的 -contentInset.top，收起态为 0）。
+    func applyHeaderTopInset(visible: Bool) {
+        headerTopInsetVisible = visible
+        let top: CGFloat = visible ? 60 : 0
+        if scrollView.contentInset.top != top {
+            scrollView.contentInset.top = top
+            scrollView.scrollIndicatorInsets.top = top
+        }
     }
 
     override func viewDidLayoutSubviews() {
@@ -386,6 +416,39 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         retryButton.addTarget(self, action: #selector(retryTapped), for: .touchUpInside)
         stateStack.addArrangedSubview(retryButton)
 
+        // Q5 无结果 CTA：pill 口径（高 44、圆角 22、左右内边距 20），默认隐藏，
+        // 只由 showState(showClear: true) 在无结果态亮起；动作复用 clearTapped。
+        clearSearchButton.translatesAutoresizingMaskIntoConstraints = false
+        clearSearchButton.setTitle("清空搜索", for: .normal)
+        clearSearchButton.setTitleColor(BearyColors.ink, for: .normal)
+        clearSearchButton.titleLabel?.font = UIFont.systemFont(ofSize: 14, weight: .semibold)
+        clearSearchButton.backgroundColor = BearyColors.surface
+        clearSearchButton.layer.borderWidth = 1
+        clearSearchButton.layer.borderColor = BearyColors.line.cgColor
+        clearSearchButton.layer.cornerRadius = 22
+        clearSearchButton.layer.masksToBounds = true
+        clearSearchButton.contentEdgeInsets = UIEdgeInsets(top: 0, left: 20, bottom: 0, right: 20)
+        clearSearchButton.heightAnchor.constraint(equalToConstant: 44).isActive = true
+        clearSearchButton.isHidden = true
+        clearSearchButton.addTarget(self, action: #selector(clearSearchTapped), for: .touchUpInside)
+        stateStack.addArrangedSubview(clearSearchButton)
+
+        // Q9 最近搜索区：标题 + 本机记录行（行高 44、圆角 14 卡片口径）；
+        // 内容由 renderRecentSearches 重建，初始态外一律隐藏（见 showState）。
+        recentWrap.translatesAutoresizingMaskIntoConstraints = false
+        recentWrap.isHidden = true
+        contentStack.addArrangedSubview(recentWrap)
+        recentStack.translatesAutoresizingMaskIntoConstraints = false
+        recentStack.axis = .vertical
+        recentStack.spacing = 8
+        recentWrap.addSubview(recentStack)
+        NSLayoutConstraint.activate([
+            recentStack.topAnchor.constraint(equalTo: recentWrap.topAnchor),
+            recentStack.bottomAnchor.constraint(equalTo: recentWrap.bottomAnchor),
+            recentStack.leadingAnchor.constraint(equalTo: recentWrap.leadingAnchor),
+            recentStack.trailingAnchor.constraint(equalTo: recentWrap.trailingAnchor),
+        ])
+
         // 结果区
         resultsStack.translatesAutoresizingMaskIntoConstraints = false
         resultsStack.axis = .vertical
@@ -519,6 +582,8 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         // 状态圆描边：网页 inset 1px 橙 25% 圈。
         stateCircle.layer.borderColor = BearyColors.orange.withAlphaComponent(0.25).cgColor
         retryButton.layer.borderColor = BearyColors.line.cgColor
+        clearSearchButton.layer.borderColor = BearyColors.line.cgColor
+        searchInlineRetryButton?.layer.borderColor = BearyColors.line.cgColor
         updateSearchBoxShadow()
     }
 
@@ -640,6 +705,9 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         // 序号防旧请求：每次执行序号 +1，在途回包凭序号失效（与网页 srchSeq 同口径）。
         searchSeq += 1
         let seq = searchSeq
+        // S10：先取消上一路在途请求，旧回包由序号守卫丢弃。
+        currentSearchTask?.cancel()
+        currentSearchTask = nil
         if trimmed.isEmpty {
             setBoxBusy(false)
             setSearchingHint(false)
@@ -655,7 +723,7 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
             setSearchingHint(false)
             showLoadingState()
         }
-        BearyAPI.shared.search(q: trimmed) { [weak self] result in
+        currentSearchTask = BearyAPI.shared.search(q: trimmed) { [weak self] result in
             // BearyAPI 回调不在主线程，碰 UI 必须回主线程。
             DispatchQueue.main.async {
                 guard let self = self else { return }
@@ -664,9 +732,17 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
                 self.setSearchingHint(false)
                 switch result {
                 case .success(let data):
+                    self.recordRecentSearch(trimmed)
                     self.renderResults(data: data, query: trimmed)
                 case .failure:
-                    self.showFailedState()
+                    // S7：已有旧结果时不进失败态（showState 会清结果区），
+                    // 只在结果区行内补重试入口，旧结果行原样保留；
+                    // 无旧结果时才进现有失败态。searchSeq 序号守卫在上不动。
+                    if self.showingResults {
+                        self.showFailedStateKeepingResults()
+                    } else {
+                        self.showFailedState()
+                    }
                 }
             }
         }
@@ -686,9 +762,12 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
 
     // MARK: - 状态渲染（网页 srchStateHtml 四态口径）
 
-    private func showState(title: String?, sub: String?, showRetry: Bool, loading: Bool) {
+    private func showState(title: String?, sub: String?, showRetry: Bool, loading: Bool, showClear: Bool = false) {
+        let wasStateHidden = stateWrap.isHidden
         showingResults = false
         resultsStack.isHidden = true
+        // Q9：最近搜索只属于初始态，其他状态一律隐藏（初始态由 showInitialState 重亮）。
+        recentWrap.isHidden = true
         clearResultRows()
         stateWrap.isHidden = false
         stateTitleLabel.text = title
@@ -696,12 +775,22 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         stateSubLabel.text = sub
         stateSubLabel.isHidden = (sub == nil)
         retryButton.isHidden = !showRetry
+        clearSearchButton.isHidden = !showClear
         stateIconView.isHidden = loading
         stateRingView.isHidden = !loading
         if loading {
             BearyIconMotion.startSpin(on: stateRingView, duration: 1, key: "bearyStateSpin")
         } else {
             BearyIconMotion.stopSpin(on: stateRingView, key: "bearyStateSpin")
+        }
+        // 新规矩 (b)：状态区首次出现淡入（同态内文案更换不重播；减动效直显）。
+        if wasStateHidden && !UIAccessibility.isReduceMotionEnabled {
+            stateWrap.alpha = 0
+            UIView.animate(withDuration: 0.2, animations: {
+                self.stateWrap.alpha = 1
+            })
+        } else {
+            stateWrap.alpha = 1
         }
     }
 
@@ -714,6 +803,82 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
             sub = nil
         }
         showState(title: nil, sub: sub, showRetry: false, loading: false)
+        // Q9：初始态补最近搜索（无记录时整区隐藏）。
+        renderRecentSearches()
+    }
+
+    /// Q9 最近搜索：读本机记录，重建标题 + 行；点行直接搜（不走服务端）。
+    private func loadRecentSearches() -> [String] {
+        return UserDefaults.standard.stringArray(forKey: recentSearchesKey) ?? []
+    }
+
+    private func recordRecentSearch(_ query: String) {
+        let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed.isEmpty { return }
+        var list = loadRecentSearches().filter { $0 != trimmed }
+        list.insert(trimmed, at: 0)
+        if list.count > 8 {
+            list = Array(list.prefix(8))
+        }
+        UserDefaults.standard.set(list, forKey: recentSearchesKey)
+    }
+
+    private func renderRecentSearches() {
+        for view in recentStack.arrangedSubviews {
+            recentStack.removeArrangedSubview(view)
+            view.removeFromSuperview()
+        }
+        recentButtons = []
+        let terms = loadRecentSearches()
+        if terms.isEmpty {
+            recentWrap.isHidden = true
+            return
+        }
+        let titleLabel = UILabel()
+        titleLabel.translatesAutoresizingMaskIntoConstraints = false
+        titleLabel.text = "最近搜索"
+        titleLabel.font = UIFont.systemFont(ofSize: 13, weight: .semibold)
+        titleLabel.textColor = BearyColors.gray
+        recentStack.addArrangedSubview(titleLabel)
+        for term in terms {
+            let button = UIButton(type: .custom)
+            button.translatesAutoresizingMaskIntoConstraints = false
+            button.setTitle(term, for: .normal)
+            button.setTitleColor(BearyColors.ink, for: .normal)
+            button.titleLabel?.font = UIFont.systemFont(ofSize: 15)
+            button.backgroundColor = BearyColors.surface
+            button.layer.cornerRadius = 14
+            button.layer.masksToBounds = true
+            button.contentHorizontalAlignment = .left
+            button.contentEdgeInsets = UIEdgeInsets(top: 0, left: 16, bottom: 0, right: 16)
+            button.heightAnchor.constraint(equalToConstant: 44).isActive = true
+            button.accessibilityLabel = "搜索" + term
+            button.addTarget(self, action: #selector(recentSearchTapped(_:)), for: .touchUpInside)
+            recentStack.addArrangedSubview(button)
+            recentButtons.append(button)
+        }
+        recentWrap.isHidden = false
+        if !UIAccessibility.isReduceMotionEnabled {
+            recentWrap.alpha = 0
+            UIView.animate(withDuration: 0.2, animations: {
+                self.recentWrap.alpha = 1
+            })
+        } else {
+            recentWrap.alpha = 1
+        }
+    }
+
+    @objc private func recentSearchTapped(_ sender: UIButton) {
+        guard let term = sender.title(for: .normal), !term.isEmpty else { return }
+        searchField.text = term
+        updateClearButtonVisibility()
+        searchTimer?.invalidate()
+        runSearch(query: term)
+    }
+
+    @objc private func clearSearchTapped() {
+        // Q5 无结果 CTA：复用框内清空逻辑（清空输入、回初始态并亮起最近搜索）。
+        clearTapped()
     }
 
     private func showLoadingState() {
@@ -733,9 +898,52 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         showState(title: "搜索失败", sub: "网络好像不太顺", showRetry: true, loading: false)
     }
 
+    /// S7：有旧结果时的失败处理——不调 showState（它会清结果区），
+    /// 旧结果行原样保留，只在结果区末尾加一行内重试入口。
+    /// 样式与动作复用失败态 retryButton（标题“重试”/13 ink/surface 底/
+    /// 1 line 边框/圆角 15/padding 7/20，点按走同一 retryTapped 立即重跑
+    /// lastQuery，不走防抖；重复失败先摘旧行，不叠加。成功/清状态时
+    /// clearResultRows 会连同此行一起摘掉并置空引用。
+    private func showFailedStateKeepingResults() {
+        if let oldRow = searchInlineRetryRow {
+            resultsStack.removeArrangedSubview(oldRow)
+            oldRow.removeFromSuperview()
+            searchInlineRetryRow = nil
+            searchInlineRetryButton = nil
+        }
+        showingResults = true
+        stateWrap.isHidden = true
+        // 结果出现时最近搜索区隐藏（只属于初始态）。
+        recentWrap.isHidden = true
+        resultsStack.isHidden = false
+        let row = UIView()
+        row.translatesAutoresizingMaskIntoConstraints = false
+        let button = UIButton(type: .custom)
+        button.translatesAutoresizingMaskIntoConstraints = false
+        button.setTitle("重试", for: .normal)
+        button.setTitleColor(BearyColors.ink, for: .normal)
+        button.titleLabel?.font = UIFont.systemFont(ofSize: 13)
+        button.backgroundColor = BearyColors.surface
+        button.layer.borderWidth = 1
+        button.layer.borderColor = BearyColors.line.cgColor
+        button.layer.cornerRadius = 15
+        button.layer.masksToBounds = true
+        button.contentEdgeInsets = UIEdgeInsets(top: 7, left: 20, bottom: 7, right: 20)
+        button.addTarget(self, action: #selector(retryTapped), for: .touchUpInside)
+        row.addSubview(button)
+        NSLayoutConstraint.activate([
+            button.centerXAnchor.constraint(equalTo: row.centerXAnchor),
+            button.topAnchor.constraint(equalTo: row.topAnchor, constant: 12),
+            button.bottomAnchor.constraint(equalTo: row.bottomAnchor, constant: -12),
+        ])
+        resultsStack.addArrangedSubview(row)
+        searchInlineRetryRow = row
+        searchInlineRetryButton = button
+    }
+
     private func showNoneState(query: String) {
-        // 网页 none 态：标题“没有找到「q」”+ 副文案“换个关键词试试”。
-        showState(title: "没有找到「" + query + "」", sub: "换个关键词试试", showRetry: false, loading: false)
+        // 网页 none 态：标题“没有找到「q」”+ 副文案“换个关键词试试”+ Q5 清空搜索 CTA。
+        showState(title: "没有找到「" + query + "」", sub: "换个关键词试试", showRetry: false, loading: false, showClear: true)
     }
 
     // MARK: - 结果渲染
@@ -750,6 +958,9 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         entryButtons = []
         rowEntryIds = []
         imageRetryHolders = []
+        // S7 行内重试行随结果区重建而丢弃（成功重渲 / showState 清状态均走此地）。
+        searchInlineRetryRow = nil
+        searchInlineRetryButton = nil
     }
 
     private func renderResults(data: SearchResult, query: String) {
@@ -774,6 +985,8 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         }
         showingResults = true
         stateWrap.isHidden = true
+        // 结果出现时最近搜索区隐藏（只属于初始态）。
+        recentWrap.isHidden = true
         // 64 包回归修：成功路径必须把 resultsStack 改回可见——showState（加载/失败/
         // 无结果/初始）把它藏起后，旧代码只藏 stateWrap、从不恢复 resultsStack，
         // 结果行加进隐藏的栈，全程不可见。
@@ -994,29 +1207,29 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         row.addSubview(handleLabel)
         row.addSubview(chevron)
         NSLayoutConstraint.activate([
-            avatarView.topAnchor.constraint(equalTo: row.topAnchor, constant: 9),
-            avatarView.bottomAnchor.constraint(equalTo: row.bottomAnchor, constant: -9),
-            avatarView.leadingAnchor.constraint(equalTo: row.leadingAnchor, constant: 8),
+            avatarView.topAnchor.constraint(equalTo: row.topAnchor, constant: 14),
+            avatarView.bottomAnchor.constraint(equalTo: row.bottomAnchor, constant: -14),
+            avatarView.leadingAnchor.constraint(equalTo: row.leadingAnchor, constant: 16),
             avatarView.widthAnchor.constraint(equalToConstant: 44),
             avatarView.heightAnchor.constraint(equalToConstant: 44),
-            fallbackLabel.topAnchor.constraint(equalTo: row.topAnchor, constant: 9),
-            fallbackLabel.bottomAnchor.constraint(equalTo: row.bottomAnchor, constant: -9),
-            fallbackLabel.leadingAnchor.constraint(equalTo: row.leadingAnchor, constant: 8),
+            fallbackLabel.topAnchor.constraint(equalTo: row.topAnchor, constant: 14),
+            fallbackLabel.bottomAnchor.constraint(equalTo: row.bottomAnchor, constant: -14),
+            fallbackLabel.leadingAnchor.constraint(equalTo: row.leadingAnchor, constant: 16),
             fallbackLabel.widthAnchor.constraint(equalToConstant: 44),
             fallbackLabel.heightAnchor.constraint(equalToConstant: 44),
             avatarRetryButton.centerXAnchor.constraint(equalTo: avatarView.centerXAnchor),
             avatarRetryButton.centerYAnchor.constraint(equalTo: avatarView.centerYAnchor),
             avatarRetryButton.widthAnchor.constraint(equalToConstant: 44),
             avatarRetryButton.heightAnchor.constraint(equalToConstant: 44),
-            nameLabel.topAnchor.constraint(equalTo: row.topAnchor, constant: 9),
-            nameLabel.leadingAnchor.constraint(equalTo: row.leadingAnchor, constant: 63),
+            nameLabel.topAnchor.constraint(equalTo: row.topAnchor, constant: 14),
+            nameLabel.leadingAnchor.constraint(equalTo: row.leadingAnchor, constant: 71),
             nameLabel.trailingAnchor.constraint(lessThanOrEqualTo: chevron.leadingAnchor, constant: -8),
             handleLabel.topAnchor.constraint(equalTo: nameLabel.bottomAnchor, constant: 1),
-            handleLabel.leadingAnchor.constraint(equalTo: row.leadingAnchor, constant: 63),
+            handleLabel.leadingAnchor.constraint(equalTo: row.leadingAnchor, constant: 71),
             handleLabel.trailingAnchor.constraint(lessThanOrEqualTo: chevron.leadingAnchor, constant: -8),
-            handleLabel.bottomAnchor.constraint(lessThanOrEqualTo: row.bottomAnchor, constant: -9),
+            handleLabel.bottomAnchor.constraint(lessThanOrEqualTo: row.bottomAnchor, constant: -14),
             chevron.centerYAnchor.constraint(equalTo: row.centerYAnchor),
-            chevron.trailingAnchor.constraint(equalTo: row.trailingAnchor, constant: -8),
+            chevron.trailingAnchor.constraint(equalTo: row.trailingAnchor, constant: -16),
             chevron.widthAnchor.constraint(equalToConstant: 16),
             chevron.heightAnchor.constraint(equalToConstant: 16),
         ])
@@ -1029,8 +1242,8 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         return row
     }
 
-    /// 日记行：网页 .srch-entry——padding 13/8、底边 1 line；meta 行 gap 7（作者 13.5 bold、
-    /// 日期 13 gray）；正文 16、行高 1.6、最多 3 行；首图 44×44 圆角 10 居右。
+    /// 日记行：网页 .srch-entry——padding 14/16（Q1 行内边距统一）、底边 1 line；meta 行 gap 7（作者 13.5 bold、
+    /// 日期 13 gray）；正文 16、行高 1.6、最多 3 行；首图 44×44 圆角 12 居右。
     /// 私密组 meta 为“日期 + 私密 pill + · 未公开”；公开组 meta 为“作者 + 日期 + · 我的（本人时）”。
     private func makeEntryRow(entry: Entry, query: String, isMineGroup: Bool) -> UIButton? {
         guard let entryId = entry.id else { return nil }
@@ -1077,7 +1290,7 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
             thumb.translatesAutoresizingMaskIntoConstraints = false
             thumb.contentMode = .scaleAspectFill
             thumb.clipsToBounds = true
-            thumb.layer.cornerRadius = 10
+            thumb.layer.cornerRadius = 12
             thumb.layer.masksToBounds = true
             let thumbRetryButton = UIButton(type: .custom)
             thumbRetryButton.translatesAutoresizingMaskIntoConstraints = false
@@ -1148,10 +1361,10 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         row.addSubview(column)
         row.addSubview(separator)
         var constraints: [NSLayoutConstraint] = [
-            column.topAnchor.constraint(equalTo: row.topAnchor, constant: 13),
-            column.leadingAnchor.constraint(equalTo: row.leadingAnchor, constant: 8),
-            column.trailingAnchor.constraint(equalTo: row.trailingAnchor, constant: -8),
-            column.bottomAnchor.constraint(equalTo: row.bottomAnchor, constant: -13),
+            column.topAnchor.constraint(equalTo: row.topAnchor, constant: 14),
+            column.leadingAnchor.constraint(equalTo: row.leadingAnchor, constant: 16),
+            column.trailingAnchor.constraint(equalTo: row.trailingAnchor, constant: -16),
+            column.bottomAnchor.constraint(equalTo: row.bottomAnchor, constant: -14),
             separator.leadingAnchor.constraint(equalTo: row.leadingAnchor),
             separator.trailingAnchor.constraint(equalTo: row.trailingAnchor),
             separator.bottomAnchor.constraint(equalTo: row.bottomAnchor),

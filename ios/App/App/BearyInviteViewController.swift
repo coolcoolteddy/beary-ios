@@ -24,7 +24,7 @@ import UIKit
 //   - onRequireLogin：未登录（fetchMe 返回 nil 或 401）时调用，容器接登录页；
 //     未接时页内只显示“请先登录”。
 //   - reload()：手动刷新（每次点开新建一页，打开时 viewDidLoad 已拉取一次）。
-// 礼物钮门控不在本页：容器用 BearyAPI.fetchReferralEnabled（/me 的
+// 礼物钮门控不在本页：容器用 refreshMe 结果（/me 的
 // referral.enabled，网页 giftBtn 显示逻辑同款）决定是否显示礼物钮。
 // 颜色一律走 BearyColors，不新增字面量颜色；不使用液态玻璃效果；无 force unwrap。
 
@@ -298,7 +298,7 @@ final class BearyInviteViewController: UIViewController {
             codeLabel.centerYAnchor.constraint(equalTo: codeBox.centerYAnchor),
             copyButton.trailingAnchor.constraint(equalTo: codeBox.trailingAnchor, constant: -8),
             copyButton.centerYAnchor.constraint(equalTo: codeBox.centerYAnchor),
-            copyButton.heightAnchor.constraint(equalToConstant: 40),
+            copyButton.heightAnchor.constraint(equalToConstant: 44),
             codeLabel.trailingAnchor.constraint(lessThanOrEqualTo: copyButton.leadingAnchor, constant: -8),
             bindRow.heightAnchor.constraint(equalToConstant: 48),
             bindContainer.leadingAnchor.constraint(equalTo: bindRow.leadingAnchor),
@@ -387,6 +387,10 @@ final class BearyInviteViewController: UIViewController {
     }
 
     private func render() {
+        // 新规矩(b)：绑定区由隐藏变可见时淡入 0.25；已可见的不重播。
+        let boundWasHidden = boundRow.isHidden
+        let bindWasHidden = bindRow.isHidden
+        let hintWasHidden = bindHintLabel.isHidden
         codeLabel.text = inviteCode ?? "—"
         updateCopyButton()
         let invited = referral?.invitedCount ?? 0
@@ -420,6 +424,16 @@ final class BearyInviteViewController: UIViewController {
             updateBindButton()
         }
         messageLabel.text = ""
+        if UIAccessibility.isReduceMotionEnabled == false {
+            for (view, wasHidden) in [(boundRow, boundWasHidden), (bindRow, bindWasHidden), (bindHintLabel, hintWasHidden)] {
+                if wasHidden && view.isHidden == false {
+                    view.alpha = 0
+                    UIView.animate(withDuration: 0.25) {
+                        view.alpha = 1
+                    }
+                }
+            }
+        }
     }
 
     private func updateBindButton() {

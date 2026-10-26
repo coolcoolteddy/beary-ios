@@ -639,7 +639,7 @@ final class BearySettingsViewController: UIViewController {
             toastWrap.leadingAnchor.constraint(greaterThanOrEqualTo: view.leadingAnchor, constant: 20),
             toastWrap.trailingAnchor.constraint(lessThanOrEqualTo: view.trailingAnchor, constant: -20),
             toastWrap.centerXAnchor.constraint(equalTo: view.centerXAnchor),
-            toastWrap.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor, constant: -24),
+            toastWrap.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor, constant: -158),
             toastLabel.topAnchor.constraint(equalTo: toastWrap.topAnchor, constant: 10),
             toastLabel.leadingAnchor.constraint(equalTo: toastWrap.leadingAnchor, constant: 14),
             toastLabel.trailingAnchor.constraint(equalTo: toastWrap.trailingAnchor, constant: -14),
@@ -879,8 +879,8 @@ final class BearySettingsViewController: UIViewController {
     }
 
     private func buildActionsSection() {
-        // F8：网页无标题组口径——退出登录、导出我的数据、注销账户同卡、无组标题，
-        // 顺序与网页一致（退出登录在前）；原「数据与安全」组标题取消。
+        // S9：动作卡补组标题「账户操作」（覆盖 F8 无标题口径），
+        // 顺序与网页一致（退出登录在前）。
         let logoutTitle = makeLabel(font: UIFont.systemFont(ofSize: 15), color: BearyColors.red)
         logoutTitle.text = "退出登录"
         let logoutRow = UIStackView(arrangedSubviews: [makeRowIcon("icon_logout"), logoutTitle])
@@ -965,7 +965,7 @@ final class BearySettingsViewController: UIViewController {
             deleteRowButton.bottomAnchor.constraint(equalTo: deleteRow.bottomAnchor),
         ])
 
-        let actionsGroup = makeGroupCard(title: nil, rows: [logoutRowWrap, exportRowWrap, deleteRow])
+        let actionsGroup = makeGroupCard(title: "账户操作", rows: [logoutRowWrap, exportRowWrap, deleteRow])
         if actionsGroup.wrappers.count > 2 {
             deleteRowWrapper = actionsGroup.wrappers[2]
         }
@@ -1240,12 +1240,14 @@ final class BearySettingsViewController: UIViewController {
             let failedLabel = makeLabel(font: UIFont.systemFont(ofSize: 14), color: BearyColors.gray, lines: 0)
             failedLabel.text = "加载失败"
             grantsStack.addArrangedSubview(failedLabel)
+            fadeInNewStackRows(grantsStack)
             return
         }
         guard let list = grants, !list.isEmpty else {
             let emptyLabel = makeLabel(font: UIFont.systemFont(ofSize: 14), color: BearyColors.gray, lines: 0)
             emptyLabel.text = "暂无发放记录"
             grantsStack.addArrangedSubview(emptyLabel)
+            fadeInNewStackRows(grantsStack)
             return
         }
         for grant in list {
@@ -1258,6 +1260,7 @@ final class BearySettingsViewController: UIViewController {
             rowStack.spacing = 4
             grantsStack.addArrangedSubview(rowStack)
         }
+        fadeInNewStackRows(grantsStack)
     }
 
     private func loadSessions() {
@@ -1303,12 +1306,14 @@ final class BearySettingsViewController: UIViewController {
             retryButton.addTarget(self, action: #selector(retrySessionsButtonTapped), for: .touchUpInside)
             sessionsStack.addArrangedSubview(failedLabel)
             sessionsStack.addArrangedSubview(retryButton)
+            fadeInNewStackRows(sessionsStack)
             return
         }
         guard let list = sessions, !list.isEmpty else {
             let emptyLabel = makeLabel(font: UIFont.systemFont(ofSize: 14), color: BearyColors.gray, lines: 0)
             emptyLabel.text = "暂无登录设备"
             sessionsStack.addArrangedSubview(emptyLabel)
+            fadeInNewStackRows(sessionsStack)
             return
         }
         for session in list {
@@ -1350,6 +1355,22 @@ final class BearySettingsViewController: UIViewController {
             rowStack.spacing = 4
             if session.expired == true { rowStack.alpha = 0.55 }
             sessionsStack.addArrangedSubview(rowStack)
+        }
+        fadeInNewStackRows(sessionsStack)
+    }
+
+    /// 新规矩(b)：会话/发放行异步落袋时错峰淡入（回收站 stagger 同口径：
+    /// 0.32 + 每行 0.03、上限 0.3、curveEaseOut；减动效直显）。
+    /// 目标透明度按行原值取（已过期行 0.55 不被洗成 1）；重建即新视图，
+    /// 不存在已有行重播问题。
+    private func fadeInNewStackRows(_ stack: UIStackView) {
+        guard UIAccessibility.isReduceMotionEnabled == false else { return }
+        for (index, view) in stack.arrangedSubviews.enumerated() {
+            let targetAlpha = view.alpha
+            view.alpha = 0
+            UIView.animate(withDuration: 0.32, delay: min(Double(index) * 0.03, 0.3), options: .curveEaseOut, animations: {
+                view.alpha = targetAlpha
+            }, completion: nil)
         }
     }
 

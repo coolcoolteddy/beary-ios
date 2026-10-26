@@ -1,5 +1,7 @@
 import UIKit
 import ObjectiveC
+import CryptoKit
+import ImageIO
 
 // ===== 原生页共享契约（第二阶段第一项）=====
 // 三个原生页（列表 / 详情 / 编辑器）共用：动态色、图片地址与加载、时间文案、
@@ -108,9 +110,61 @@ final class BearyImageLoader {
         cache.totalCostLimit = 20_000_000
     }
 
+    // S10 磁盘缓存：目录 = 系统 caches 目录下的 BearyImageCache 子目录；
+    // 键 = URL 字符串的 SHA256 十六进制（CryptoKit，系统框架）；存的是网络
+    // 返回的原始字节，与下采样参数无关，同一 URL 的完整图与下采样图共用
+    // 一份磁盘数据、解码时再按需下采样。不做过期淘汰，不新增清理状态机。
+    // 顺序：内存 NSCache → 磁盘 → 网络；网络成功后同时写内存与磁盘。
+    // 内存 NSCache 的上限与行为保持原样（G23 的 totalCostLimit 不动）。
+    private func diskFileURL(for url: URL) -> URL? {
+        guard let caches = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first else { return nil }
+        let digest = SHA256.hash(data: Data(url.absoluteString.utf8))
+        let key = digest.map { String(format: "%02x", $0) }.joined()
+        return caches.appendingPathComponent("BearyImageCache").appendingPathComponent(key)
+    }
+
+    private func diskData(for url: URL) -> Data? {
+        guard let file = diskFileURL(for: url) else { return nil }
+        return try? Data(contentsOf: file)
+    }
+
+    private func writeDisk(data: Data, for url: URL) {
+        guard let file = diskFileURL(for: url) else { return }
+        try? FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try? data.write(to: file, options: .atomic)
+    }
+
+    /// 内存键：nil 时就是原 URL 字符串（旧行为一字不动）；下采样时后缀
+    /// 下采样宽度，避免下采样图占用完整图的内存键、后续完整请求误取缩略图。
+    private func memoryKey(for url: URL, downsampleToWidth: CGFloat?) -> NSString {
+        if let width = downsampleToWidth {
+            return "\(url.absoluteString)|downsample:\(width)" as NSString
+        }
+        return url.absoluteString as NSString
+    }
+
+    /// S10 下采样解码：downsampleToWidth 非 nil 时走 ImageIO 缩略图路径
+    ///（CGImageSourceCreateWithData + CGImageSourceCreateThumbnailAtIndex，
+    /// 最大像素边 = downsampleToWidth，带方向变换），绝不整图全解码；
+    /// 缩略图创建失败时直接返回 nil，不回退完整解码。
+    /// 为 nil 时走现有完整解码路径 UIImage(data:)。
+    private static func decodedImage(data: Data, downsampleToWidth: CGFloat?) -> UIImage? {
+        if let width = downsampleToWidth {
+            guard let source = CGImageSourceCreateWithData(data as CFData, nil) else { return nil }
+            let options: [CFString: Any] = [
+                kCGImageSourceCreateThumbnailFromImageIfAbsent: true,
+                kCGImageSourceCreateThumbnailWithTransform: true,
+                kCGImageSourceThumbnailMaxPixelSize: Int(width),
+            ]
+            guard let cgImage = CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary) else { return nil }
+            return UIImage(cgImage: cgImage)
+        }
+        return UIImage(data: data)
+    }
+
     @discardableResult
-    func load(url: URL, completion: @escaping (UIImage?) -> Void) -> URLSessionDataTask? {
-        return loadDetailed(url: url) { result in
+    func load(url: URL, downsampleToWidth: CGFloat? = nil, completion: @escaping (UIImage?) -> Void) -> URLSessionDataTask? {
+        return loadDetailed(url: url, downsampleToWidth: downsampleToWidth) { result in
             switch result {
             case .success(let img):
                 completion(img)
@@ -123,8 +177,17 @@ final class BearyImageLoader {
     /// 带失败原因的加载（F10 钩子的底层）：缓存命中时同步回调成功；
     /// 网络/脏数据/取消均以 Result 回调（主线程），失败时不写缓存。
     @discardableResult
-    func loadDetailed(url: URL, completion: @escaping (Result<UIImage, BearyImageLoadError>) -> Void) -> URLSessionDataTask? {
-        if let img = cache.object(forKey: url.absoluteString as NSString) {
+    func loadDetailed(url: URL, downsampleToWidth: CGFloat? = nil, completion: @escaping (Result<UIImage, BearyImageLoadError>) -> Void) -> URLSessionDataTask? {
+        let key = memoryKey(for: url, downsampleToWidth: downsampleToWidth)
+        if let img = cache.object(forKey: key) {
+            completion(.success(img))
+            return nil
+        }
+        if let disk = diskData(for: url), let img = BearyImageLoader.decodedImage(data: disk, downsampleToWidth: downsampleToWidth) {
+            // G23：cost 按像素计（pt 尺寸 × scale 的平方方向取整边长之积）。
+            let scale = img.scale
+            let cost = max(Int(img.size.width * scale) * Int(img.size.height * scale), 1)
+            cache.setObject(img, forKey: key, cost: cost)
             completion(.success(img))
             return nil
         }
@@ -137,14 +200,15 @@ final class BearyImageLoader {
                 DispatchQueue.main.async { completion(.failure(.network(e))) }
                 return
             }
-            guard let data = data, let img = UIImage(data: data) else {
+            guard let data = data, let img = BearyImageLoader.decodedImage(data: data, downsampleToWidth: downsampleToWidth) else {
                 DispatchQueue.main.async { completion(.failure(.invalidData)) }
                 return
             }
             // G23：cost 按像素计（pt 尺寸 × scale 的平方方向取整边长之积）。
             let scale = img.scale
             let cost = max(Int(img.size.width * scale) * Int(img.size.height * scale), 1)
-            self?.cache.setObject(img, forKey: url.absoluteString as NSString, cost: cost)
+            self?.cache.setObject(img, forKey: key, cost: cost)
+            self?.writeDisk(data: data, for: url)
             DispatchQueue.main.async { completion(.success(img)) }
         }
         task.resume()
@@ -162,7 +226,10 @@ extension UIImageView {
     /// F10：onFailure 透传失败原因（网络失败/脏数据），供各页放重试 UI；
     /// 默认 nil，不传时行为与旧版完全一致（静默保留 placeholder）。
     /// 被取消的回调不触发 onFailure（复用/换图是正常路径）。
-    func bearySetImage(url: URL?, placeholder: UIImage? = nil, onFailure: ((BearyImageLoadError) -> Void)? = nil) {
+    /// S10：downsampleToWidth 透传给 BearyImageLoader.loadDetailed（bearySetImage
+    /// 本来就走 loadDetailed 而非 load，onFailure 需 Result 区分取消与失败）；
+    /// 它放在 onFailure 之前，使 onFailure 仍为末尾闭包参数，现有尾随闭包调用点不用改。
+    func bearySetImage(url: URL?, placeholder: UIImage? = nil, downsampleToWidth: CGFloat? = nil, onFailure: ((BearyImageLoadError) -> Void)? = nil) {
         if let old = objc_getAssociatedObject(self, &bearyImageTaskKey) as? URLSessionDataTask {
             old.cancel()
         }
@@ -172,7 +239,7 @@ extension UIImageView {
             objc_setAssociatedObject(self, &bearyImageTaskKey, nil, .OBJC_ASSOCIATION_RETAIN_NONATOMIC)
             return
         }
-        let task = BearyImageLoader.shared.loadDetailed(url: url) { [weak self] result in
+        let task = BearyImageLoader.shared.loadDetailed(url: url, downsampleToWidth: downsampleToWidth) { [weak self] result in
             guard let self = self else { return }
             let current = objc_getAssociatedObject(self, &bearyImageURLKey) as? URL
             guard current == url else { return }
@@ -276,7 +343,8 @@ extension BearyAPI {
     }
 
     /// 回应：POST 同一 emote 即撤下；响应带聚合后的 emotes，前端一律以它覆盖。
-    /// 产品规则“每人每篇只留一个回应”由调用方保证：贴新回应时先 POST 旧的撤下、再 POST 新的。
+    /// 产品规则（2026-10-26 多选定版）：每人每篇可贴多种回应；点新回应只直接
+    /// POST 新增，点已贴过的只撤那只，不摘另一只。
     func postEmote(id: String, emote: String, completion: @escaping (Result<EmoteResponse, APIError>) -> Void) {
         let safe = id.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? id
         request("/beary/api/entries/\(safe)/emote", method: "POST", jsonBody: ["emote": emote], completion: completion)
@@ -868,5 +936,22 @@ final class BearyBookmarkView: UIView {
         bookmark.lineJoin = .round
         layer.addSublayer(bookmark)
         bookmarkLayer = bookmark
+    }
+}
+
+// MARK: - 震动三件套（Li 2026-10-26 批准，只做点赞/发布成功/拒绝三处）
+// UIKit 原生即跟随系统触感设置，不另设 App 内开关；不拿减动效门控（两者不是一回事）。
+enum BearyHaptics {
+    /// 点赞 tap 瞬间（配描边先行画出的那一刻）；失败回滚时不调用。
+    static func likeTap() {
+        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+    }
+    /// 发布成功：服务端确认、成功反馈出现时。
+    static func publishSuccess() {
+        UINotificationFeedbackGenerator().notificationOccurred(.success)
+    }
+    /// 拒绝：摇头 + toast 的主要拒绝路径上。
+    static func rejectionWarning() {
+        UINotificationFeedbackGenerator().notificationOccurred(.warning)
     }
 }
