@@ -1973,6 +1973,30 @@ class BearyTimelineViewController: UIViewController {
         stopCountdownTimer()
     }
 
+    /// 切页生命周期 7 号（最小化）：容器切页只改 isHidden，本回调不触发，
+    /// 故容器 showPage 在离页/进页时显式调这两个钩子；只覆盖倒计时启停
+    ///（栏恢复已有 showPage 的 setBarsVisible/setHeaderVisible 兜底，不重复）。
+    func pageDidEnter() {
+        startCountdownTimer()
+    }
+
+    func pageDidLeave() {
+        stopCountdownTimer()
+    }
+
+    /// 动画批 11 号：切 tab 离页时停掉本页可见行全部表情（容器只改 isHidden，
+    /// 不触发 didEndDisplaying、不离窗，播放器侧无法自停）。
+    func stopVisibleEmotes() {
+        for cell in tableView.visibleCells {
+            cell.stopAllBearyEmotes()
+        }
+    }
+
+    /// 动画批 11 号离屏停播：行离屏即停其全部表情（含心情位）。
+    func tableView(_ tableView: UITableView, didEndDisplaying cell: UITableViewCell, forRowAt indexPath: IndexPath) {
+        cell.stopAllBearyEmotes()
+    }
+
     deinit {
         countdownTimer?.invalidate()
         jumpNoteTimer?.invalidate()
@@ -1999,17 +2023,30 @@ class BearyTimelineViewController: UIViewController {
 
     /// keepSelectedDay=true 时保留当前选中日：跳过“重置为今天 + 拉今天当日”，
     /// 只拉一次最终选中日（G16 下拉刷新口径；默认 false 保持原有进页行为）。
+    /// 账号隔离 9 号：keepDay 时同时保留旧内容——不清时间线模型、不动
+    /// timelineState、不清当日面板，首屏回包经行 diff 更新；失败时旧内容
+    /// 原样保留（失败/加载态只在空表时渲染特殊态，见 3617 一带，故不闪白）。
     func reloadTimeline(keepSelectedDay: Bool = false) {
         let keepDay = keepSelectedDay && selectedDayKey != nil
-        timelineEntries = []
-        timelineHasMore = false
-        timelineState = .idle
-        timelineUnauthorized = false
-        timelinePageFailed = false
-        loginNotified = false
-        showJumpNote = false
-        jumpNoteTimer?.invalidate()
-        jumpNoteTimer = nil
+        if keepDay {
+            // 只重置瞬时标记，不动模型与状态。
+            timelinePageFailed = false
+            timelineUnauthorized = false
+            loginNotified = false
+            showJumpNote = false
+            jumpNoteTimer?.invalidate()
+            jumpNoteTimer = nil
+        } else {
+            timelineEntries = []
+            timelineHasMore = false
+            timelineState = .idle
+            timelineUnauthorized = false
+            timelinePageFailed = false
+            loginNotified = false
+            showJumpNote = false
+            jumpNoteTimer?.invalidate()
+            jumpNoteTimer = nil
+        }
         if calendarAnchor == nil {
             calendarAnchor = BearyBeijingDay.todayComponents()
         }
