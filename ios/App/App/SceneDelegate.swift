@@ -113,7 +113,7 @@ final class BearyChromeViewController: UIViewController {
     private var fabPressedState = false
     private var loginButton: UIButton!
     private var giftButton: UIButton!
-    private var avatarButton: UIButton!
+    private var bellButton: UIButton!
     /// 顶栏 logo 钮（buildChrome 内建，veil 归位动画的目标锚点）。
     private var topLogoButton: UIButton?
     /// 64 包反馈修（第 18 项）启动 veil：系统 LaunchScreen.storyboard 本身有效
@@ -125,7 +125,6 @@ final class BearyChromeViewController: UIViewController {
     private var launchVeilLogo: UIImageView?
     private var launchVeilPlayed = false
     private var bellBadge: UILabel!
-    private var avatarURLString: String?
     /// 顶栏图标行（宽度相关间距：≤360 时 4、≤480 时 10，其余 18，见 layoutChromeOverlays）。
     private var topStackView: UIStackView?
     // 批一：原生页切换状态。currentPage 为 nil 表示尚未显示任何页（启动时 showPage(.home) 亮原生列表）。
@@ -156,11 +155,8 @@ final class BearyChromeViewController: UIViewController {
     }
     private var pageColumns: [ContainerPage: PageColumn] = [:]
     private var unreadObserver: NSObjectProtocol?
-    private var foregroundObserver: NSObjectProtocol?
     /// G27（S10 后）：门控取自 refreshMe 结果，不再单独拉取；refreshMe 失败时
     /// onUserChanged 不触发，旧 enabled 自然保留，不按关闭处理。
-    /// G28：头像下载失败待重试标记（前台恢复或下次 applyLoginState 时重试）。
-    private var avatarRetryPending = false
     /// 教程首次启动自动弹出（审计 N1 容器侧）：每进程只自动弹一次，
     /// 避免教程页未置 seen 标记时 viewDidAppear 重复触发。
     private var tutorialAutoPresented = false
@@ -203,9 +199,6 @@ final class BearyChromeViewController: UIViewController {
     private var sideDecoRightWidth: NSLayoutConstraint?
     /// 上次建 matrix 时的容器尺寸（bounds 变化才重建，避免布局回调里反复建图）。
     private var sideDecoBuiltSize: CGSize?
-    /// 审计 5 玻璃头像菜单头图：applyLoginState 更新此值，点头像时现建菜单，
-    /// 不再经 avatarButton.menu（UIMenu 无法设 52% 玻璃底，见 presentAvatarMenu）。
-    private var avatarMenuHeaderImage: UIImage?
     /// 居中 640 编辑器模态的 transitioningDelegate（弱引用，必须强持有到 dismiss 完成）
     private var centeredModal: BearyCenteredTransitioningDelegate?
     /// iPhone 底 sheet 编辑器模态的 transitioningDelegate（弱引用，强持有口径同 centeredModal）
@@ -279,33 +272,6 @@ final class BearyChromeViewController: UIViewController {
     /// 皆空则取 '—'，首字符大写；字号 14、字重 semibold、颜色 ink，与网页一致。
     /// 画成 32×32 图（alwaysOriginal）走原有 setImage 路径：按钮 imageView 已钉
     /// 32×32 + scaleAspectFill，改 title 方案会被空 imageView 挤占，画图最稳。
-    private func avatarInitialImage(for user: MeUser?) -> UIImage? {
-        let raw = user?.displayName?.trimmingCharacters(in: .whitespacesAndNewlines)
-        let name: String
-        if let raw = raw, !raw.isEmpty {
-            name = raw
-        } else if let email = user?.email, !email.isEmpty {
-            name = email
-        } else {
-            name = "—"
-        }
-        let initial = String(name.prefix(1)).uppercased()
-        let size = CGSize(width: 32, height: 32)
-        let format = UIGraphicsImageRendererFormat()
-        format.opaque = false
-        format.scale = traitCollection.displayScale
-        let rendered = UIGraphicsImageRenderer(size: size, format: format).image { _ in
-            let attrs: [NSAttributedString.Key: Any] = [
-                .font: UIFont.systemFont(ofSize: 14, weight: .semibold),
-                .foregroundColor: ink.resolvedColor(with: traitCollection),
-            ]
-            let textSize = (initial as NSString).size(withAttributes: attrs)
-            let origin = CGPoint(x: (size.width - textSize.width) / 2,
-                                 y: (size.height - textSize.height) / 2)
-            (initial as NSString).draw(at: origin, withAttributes: attrs)
-        }
-        return rendered.withRenderingMode(.alwaysOriginal)
-    }
 
     private func makeTopIconButton(imageName: String, fallbackSystemName: String, tint: UIColor, action: Selector) -> UIButton {
         let b = BearyHit44Button(type: .custom)
@@ -375,39 +341,13 @@ final class BearyChromeViewController: UIViewController {
         let gift = makeTopIconButton(imageName: "IconGift", fallbackSystemName: "gift", tint: bearyOrange, action: #selector(didTapGift))
         gift.accessibilityLabel = "邀请"
         giftButton = gift
-        // L5 + U23 + C5：头像钮视觉仍 32×32 圆角裁切，imageView 定 32×32 + scaleAspectFill；
-        // 热区经 BearyHitExpandingButton 向外扩 4pt 至 40（视觉不动）；底色改 bg，
-        // 透明头像不再透灰底，图未到时只显示首字母占位（见 applyLoginState，F24）。
-        let avatar = BearyHitExpandingButton(type: .custom)
-        avatar.setImage(avatarInitialImage(for: SessionManager.shared.currentUser), for: .normal)
-        avatar.tintColor = ink
-        avatar.backgroundColor = BearyColors.bg
-        avatar.layer.cornerRadius = 16
-        avatar.layer.borderWidth = 1
-        avatar.clipsToBounds = true
-        // 顶栏头像菜单（审计 5 → 玻璃菜单，见 presentAvatarMenu）：UIMenu 无公开接口改
-        // 玻璃底（52% + blur），故点头像现建玻璃 popover 菜单；头块数据取当前用户，
-        // 头图由 applyLoginState 存入 avatarMenuHeaderImage（下载到真图后更新）。
-        avatar.addTarget(self, action: #selector(didTapAvatar), for: .touchUpInside)
-        avatar.accessibilityLabel = "我"
-        avatar.translatesAutoresizingMaskIntoConstraints = false
-        NSLayoutConstraint.activate([
-            avatar.widthAnchor.constraint(equalToConstant: 32),
-            avatar.heightAnchor.constraint(equalToConstant: 32),
-        ])
-        if let avatarImageView = avatar.imageView {
-            avatarImageView.contentMode = .scaleAspectFill
-            avatarImageView.layer.cornerRadius = 16
-            avatarImageView.clipsToBounds = true
-            avatarImageView.translatesAutoresizingMaskIntoConstraints = false
-            NSLayoutConstraint.activate([
-                avatarImageView.widthAnchor.constraint(equalToConstant: 32),
-                avatarImageView.heightAnchor.constraint(equalToConstant: 32),
-            ])
-        }
-        avatarButton = avatar
+        // 2026-10-26：头像钮由铃铛钮取代（Li 定：消息入口挪到首页顶栏右上角）；
+        // 铃铛走顶栏图标钮同款（IconBell 官方资产优先、SF bell 回退），点按进消息页。
+        let bell = makeTopIconButton(imageName: "IconBell", fallbackSystemName: "bell", tint: ink, action: #selector(didTapBell))
+        bell.accessibilityLabel = "消息"
+        bellButton = bell
         let spacer = UIView()
-        let topStack = UIStackView(arrangedSubviews: [logo, spacer, login, search, gift, avatar])
+        let topStack = UIStackView(arrangedSubviews: [logo, spacer, login, gift, search, bell])
         topStack.axis = .horizontal
         topStack.alignment = .center
         topStack.spacing = 18
@@ -441,7 +381,7 @@ final class BearyChromeViewController: UIViewController {
         // 67 包反馈修：底栏衬底改走与顶栏同一只 makeGlassView（真液态玻璃 + bg 52%），
         // 之前是 systemMaterial 旧模糊 + contentView 平铺 0.60/0.18 近似色，两层叠出来发灰，
         // 加上分段器自身默认底色透出来，选中格就比顶栏灰一截；玻璃 tint 由 effect 自带，
-        // contentView 不再另铺色。选中格仍为 bg 52%（见下方 selectedSegmentTintColor）。
+        // contentView 不再另铺色。选中格见下方 selectedSegmentTintColor（深色 bg 52%、浅色墨 12%）。
         blur.translatesAutoresizingMaskIntoConstraints = false
         view.addSubview(blur)
         bottomBlurView = blur
@@ -454,7 +394,6 @@ final class BearyChromeViewController: UIViewController {
         ])
         let tabIcons: [(String, String)] = [
             ("IconHome", "house"),
-            ("IconBell", "bell"),
             ("IconCalendar", "calendar"),
             ("IconUser", "person"),
         ]
@@ -464,8 +403,13 @@ final class BearyChromeViewController: UIViewController {
         // 选中格 bg 52% 盖在灰底上就是截图里那截灰；clear 后选中格直接落在玻璃衬底上，
         // 与顶栏同一块玻璃，颜色一致。
         seg.backgroundColor = .clear
-        // 选中格显式设为 bg 52%，与顶栏 tint 同值；深浅两态由 bg 动态色自动跟随。
-        seg.selectedSegmentTintColor = BearyColors.bg.withAlphaComponent(0.52)
+        // 选中格：深色保持 bg 52% 不动；浅色改墨 12%——原 bg 52% 在浅色下近白、选中态看不清。
+        seg.selectedSegmentTintColor = UIColor { trait in
+            if trait.userInterfaceStyle == .dark {
+                return BearyColors.bg.withAlphaComponent(0.52).resolvedColor(with: trait)
+            }
+            return UIColor.black.withAlphaComponent(0.12)
+        }
         seg.selectedSegmentIndex = 0
         seg.accessibilityLabel = "底栏"
         seg.addTarget(self, action: #selector(bottomSegmentTouchDown), for: .touchDown)
@@ -484,8 +428,8 @@ final class BearyChromeViewController: UIViewController {
             seg.widthAnchor.constraint(equalToConstant: 288),
             seg.heightAnchor.constraint(equalToConstant: 58),
         ])
-        // 未读角标：挂在分段器第 2 段（消息）右上角，随控件 alpha/transform 一起藏显；
-        // 样式与旧钮上角标一致（高 17、10 粗体、蓝底白字、宽下限 17）；位置由 layoutBottomBadge 跟段走。
+        // 未读角标：挂在铃铛钮右上角，随顶栏藏显；
+        // 样式不变（高 17、10 粗体、蓝底白字、宽下限 17）；位置由 layoutBellBadge 跟铃铛钮走。
         let badge = BearyBadgeLabel()
         badge.font = .boldSystemFont(ofSize: 10)
         badge.adjustsFontForContentSizeCategory = false
@@ -495,7 +439,7 @@ final class BearyChromeViewController: UIViewController {
         badge.layer.cornerRadius = 8.5
         badge.clipsToBounds = true
         badge.isHidden = true
-        seg.addSubview(badge)
+        bellButton.addSubview(badge)
         bellBadge = badge
         // ---- FAB：官方液态玻璃橙色圆钮，与网页 .fab 同尺寸同位置 ----
         // 三层结构：阴影载体在后（玻璃 clipsToBounds
@@ -577,22 +521,13 @@ final class BearyChromeViewController: UIViewController {
             fabContainer.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -18),
             fabContainer.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor, constant: -92),
         ])
-        refreshChromeDynamicLayers()
     }
 
-    /// 深浅切换时才需刷新的图层色（CALayer borderColor 不跟动态色自动走）：
-    /// 头像 1px line 边框。底栏已改系统分段器（深浅自适应），不再有玻璃阴影与内高光要刷。
-    /// 底栏玻璃边框已于 2026-10-26 按 Li 决定摘掉（浅色 1px 黑 6% 不再设置）。
-    private func refreshChromeDynamicLayers() {
-        if let avatar = avatarButton {
-            avatar.layer.borderColor = BearyColors.line.resolvedColor(with: traitCollection).cgColor
-        }
-    }
 
     /// 栏覆盖层布局（viewDidLayoutSubviews 与 updateTabSelection 后调用）：
-    /// 顶栏图标间距随屏宽走（≤360 时 4、≤480 时 10，其余 18）；底栏角标跟消息段走。
+    /// 顶栏图标间距随屏宽走（≤360 时 4、≤480 时 10，其余 18）；铃铛角标跟铃铛钮走。
     /// 旧自绘胶囊的 pill/阴影/高光已随分段器改造删除，选中 pill 由系统自绘。
-    /// S9 窄屏档：320pt 宽时固定项 79（logo）+ 约 60（登录 pill）+ 3×40（搜索/礼物/头像）
+    /// S9 窄屏档：320pt 宽时固定项 79（logo）+ 约 60（登录 pill）+ 3×40（礼物/搜索/铃铛）
     /// + 两侧边距 32 = 约 291，5 档间距在 10 时共 50、合计约 341 超宽；≤360 时间距 4，
     /// 合计约 311 不超宽（不隐藏任何按钮，顶栏高仍 60）。
     private func layoutChromeOverlays() {
@@ -601,19 +536,18 @@ final class BearyChromeViewController: UIViewController {
             let desired: CGFloat = width <= 360 ? 4 : (width <= 480 ? 10 : 18)
             if stack.spacing != desired { stack.spacing = desired }
         }
-        layoutBottomBadge()
+        layoutBellBadge()
     }
 
-    /// 底栏角标定位：消息段（第 2 段）中心 + 旧钮同款偏移（横 +12.5、纵 -8.5），
-    /// 段等宽故段中心 x = 段宽 × 1.5；角标尺寸取 BearyBadgeLabel 自身口径（高 17、宽下限 17）。
-    /// 角标是分段器的子视图，栏藏显的 alpha/transform 自动带上它；每次布局都把它
-    /// 提至最前，防止系统在选段变化时重排内部视图盖住角标。
-    private func layoutBottomBadge() {
-        guard let seg = bottomSegmented, let badge = bellBadge,
-              seg.bounds.width > 0, seg.bounds.height > 0 else { return }
+    /// 铃铛角标定位：铃铛钮（40×40、图标 24 居中）右上角，沿用旧钮同款偏移口径
+    /// （图标右沿 +0.5、图标上沿 +3.5）；角标尺寸取 BearyBadgeLabel 自身口径（高 17、宽下限 17）。
+    /// 角标是铃铛钮的子视图，顶栏藏显自动带上它；每次布局都把它提至最前。
+    private func layoutBellBadge() {
+        guard let bell = bellButton, let badge = bellBadge,
+              bell.bounds.width > 0, bell.bounds.height > 0 else { return }
         badge.frame = CGRect(origin: .zero, size: badge.intrinsicContentSize)
-        badge.center = CGPoint(x: seg.bounds.width * 0.375 + 12.5, y: seg.bounds.height / 2 - 8.5)
-        seg.bringSubviewToFront(badge)
+        badge.center = CGPoint(x: bell.bounds.width - 7.5, y: 11.5)
+        bell.bringSubviewToFront(badge)
     }
 
     /// L3：挂页后把栏覆盖层一次提齐——页 view 在栏之后加入会盖住栏，
@@ -701,7 +635,7 @@ final class BearyChromeViewController: UIViewController {
                 })
             }
         }
-        layoutBottomBadge()
+        layoutBellBadge()
     }
 
     /// F5 回顶：我页/搜索页均无公开回顶方法（不编方法名），容器内 BFS 找页级滚动视图——
@@ -724,7 +658,7 @@ final class BearyChromeViewController: UIViewController {
 
     /// F8：容器启动且已登录时主动拉一次未读数（轻量接口 limit:1），
     /// 以消息页同一机制发 BearyUnreadChanged（同名 + 同 payload 格式 ["unread": Int, "sysUnread": Int]），
-    /// 底栏角标观察者复用，不另起角标通道；失败静默（消息页首拉时自会再拉）。
+    /// 铃铛角标观察者复用，不另起角标通道；失败静默（消息页首拉时自会再拉）。
     private func fetchInitialUnread() {
         guard SessionManager.shared.isLoggedIn else { return }
         BearyAPI.shared.fetchNotifications(limit: 1) { result in
@@ -739,11 +673,6 @@ final class BearyChromeViewController: UIViewController {
         }
     }
 
-    /// G28：前台恢复时头像待重试则重走 applyLoginState（同 URL 亦重试，见该函数早返守卫）。
-    private func retryAvatarIfNeeded() {
-        guard avatarRetryPending, let user = SessionManager.shared.currentUser else { return }
-        applyLoginState(user)
-    }
 
     override func viewDidLoad() {
         super.viewDidLoad()
@@ -762,20 +691,17 @@ final class BearyChromeViewController: UIViewController {
         buildChrome()
         // 审计 2：两侧背景层在栏之后建（插 view 最底层），布局由 viewDidLayoutSubviews 驱动。
         buildSideDeco()
-        // 初始态：本地有有效会话 cookie 时首帧直接按缓存登录态出（头像钮先显、
-        // 登录钮藏，头像占位等 refreshMe 回来后补真图），后台验出 401 才切游客态；
-        // 无 cookie 时仍按游客首帧。旧口径“恒按未登录首帧”会让已登录用户每次
-        // 重开都先见登录钮、几秒后才翻头像，体感即“检测几秒是否登录”。
-        // 首帧直设显隐（不走 setTopButtonVisible 的 0.25s 淡入淡出）。
+        // 初始态：本地有有效会话 cookie 时首帧直接按缓存登录态出（登录钮藏），
+        // 后台验出 401 才切游客态；无 cookie 时仍按游客首帧。旧口径“恒按未登录首帧”
+        // 会让已登录用户每次重开都先见登录钮、几秒后才翻态，体感即“检测几秒是否登录”。
+        // 首帧直设显隐（不走 setTopButtonVisible 的 0.25s 淡入淡出）。铃铛钮常显。
+        bellButton.isHidden = false
+        bellButton.alpha = 1
         if SessionManager.shared.hasCachedSession {
             loginButton.isHidden = true
             loginButton.alpha = 0
-            avatarButton.isHidden = false
-            avatarButton.alpha = 1
-            avatarButton.setImage(avatarInitialImage(for: nil), for: .normal)
             giftButton.isHidden = true
         } else {
-            avatarButton.isHidden = true
             giftButton.isHidden = true
         }
         // 栏初始即显示（不再等网页首推）；启动落点：直接亮原生列表。
@@ -842,14 +768,10 @@ final class BearyChromeViewController: UIViewController {
             self?.showToast(message: "网络不稳定，请稍后再试")
         }
         SessionManager.shared.refreshMe()
-        // 未读角标：消息页发 BearyUnreadChanged，底栏消息钮角标跟数走（0 隐藏；显隐走 M23 动画）。
+        // 未读角标：消息页发 BearyUnreadChanged，铃铛角标跟数走（0 隐藏；显隐走 M23 动画）。
         unreadObserver = NotificationCenter.default.addObserver(forName: BearyNotificationsViewController.unreadChangedNotificationName, object: nil, queue: .main) { [weak self] note in
             let unread = note.userInfo?["unread"] as? Int ?? 0
             self?.updateBellBadge(unread: unread)
-        }
-        // G28：前台恢复时重试失败的头像下载。
-        foregroundObserver = NotificationCenter.default.addObserver(forName: UIApplication.willEnterForegroundNotification, object: nil, queue: .main) { [weak self] _ in
-            self?.retryAvatarIfNeeded()
         }
         // 64 包反馈修（第 18 项）：冷启动品牌 veil（viewDidLoad 挂首帧静态画面，
         // viewDidAppear 跑出现→停顿→归位动画；只播一次，modal 回落不重播）。
@@ -950,8 +872,7 @@ final class BearyChromeViewController: UIViewController {
         super.traitCollectionDidChange(previousTraitCollection)
         if traitCollection.hasDifferentColorAppearance(comparedTo: previousTraitCollection) {
             updateStatusBarFromTrait()
-            refreshChromeDynamicLayers()
-        }
+            }
     }
 
     /// 状态栏跟随系统深浅：深色 → 浅字，浅色 → 深字。
@@ -1094,16 +1015,16 @@ final class BearyChromeViewController: UIViewController {
     func setChromeHidden(_ hidden: Bool, animated: Bool) { setBarsVisible(!hidden, animated: animated) }
 
     /// 底栏选中态：分段器选段与 currentPage 双向同步。当前页不是 tab（搜索 /
-    /// 邀请 / 个人主页）时选段置 noSegment，对应旧“全部灰色、无 pill”口径。
+    /// 消息 / 邀请 / 个人主页）时选段置 noSegment，对应旧“全部灰色、无 pill”口径。
+    /// 消息页已无 tab（入口挪到首页顶栏铃铛），故 .notif 同样置 noSegment。
     /// 程序化设 selectedSegmentIndex 不发 valueChanged，不会与点按手势重入。
     private func updateTabSelection() {
         guard let seg = bottomSegmented else { return }
         let index: Int
         switch currentPage {
         case .home: index = 0
-        case .notif: index = 1
-        case .timeline: index = 2
-        case .me: index = 3
+        case .timeline: index = 1
+        case .me: index = 2
         default: index = UISegmentedControl.noSegment
         }
         if seg.selectedSegmentIndex != index {
@@ -1112,52 +1033,20 @@ final class BearyChromeViewController: UIViewController {
         layoutChromeOverlays()
     }
 
-    /// 登录态 → 顶栏：已登录显头像与礼物钮、藏登录钮；未登录反之（礼物钮与头像同口径）。
+    /// 登录态 → 顶栏：已登录显礼物钮、藏登录钮；未登录反之。铃铛钮常显（消息入口不依赖登录态，未登录点按由消息页引导登录）。
     /// M21：显隐走 alpha 动画（setTopButtonVisible，减动效直设终值）。
     private func applyLoginState(_ user: MeUser?) {
         // G26：登录态未知（网络失败）时不按游客渲染，保持旧顶栏。
         // 401 与显式退出都会先清 authUnknown，故此守卫不影响真实登出/过期路径。
         if user == nil && SessionManager.shared.authUnknown { return }
         setTopButtonVisible(loginButton, visible: user == nil)
-        setTopButtonVisible(avatarButton, visible: user != nil)
         // A4：礼物钮仅登录且 referral.enabled 时显（enabled 由 applyLoginState 从 refreshMe 的 user.referral 取值，不再单独拉取）。
         // S10：refreshMe 失败时 onUserChanged 不触发，旧值自然保留，不按关闭处理。
         if let user = user { referralEnabled = user.referral?.enabled ?? false }
         setTopButtonVisible(giftButton, visible: user != nil && referralEnabled)
-        let avatar = user?.avatar ?? ""
         if user == nil {
             referralEnabled = false
-            avatarRetryPending = false
-            avatarURLString = nil
-            avatarButton.setImage(avatarInitialImage(for: nil), for: .normal)
-            avatarMenuHeaderImage = nil
             return
-        }
-        // G28：同 URL 且无待重试标记时早返；待重试时即使同 URL 也重新下载。
-        if avatar == avatarURLString && !avatarRetryPending { return }
-        avatarRetryPending = false
-        avatarURLString = avatar
-        avatarButton.setImage(avatarInitialImage(for: user), for: .normal)
-        avatarMenuHeaderImage = avatarInitialImage(for: user)
-        if let url = BearyImageURLs.avatarURL(avatar) {
-            URLSession.shared.dataTask(with: url) { [weak self] data, _, _ in
-                guard let self = self, let data = data, let img = UIImage(data: data) else {
-                    DispatchQueue.main.async { [weak self] in
-                        // G28：失败时保留 URL、只记待重试标记（前台恢复或下次 applyLoginState 时重试），
-                        // 不把 avatarURLString 清空导致的状态与早返口径分裂。
-                        // 失败回退即 F24 首字母占位（上文已设），不留空白圆。
-                        if self?.avatarURLString == avatar { self?.avatarRetryPending = true }
-                    }
-                    return
-                }
-                DispatchQueue.main.async {
-                    if self.avatarURLString == avatar {
-                        self.avatarButton.setImage(img.withRenderingMode(.alwaysOriginal), for: .normal)
-                        // 头块头像跟真图走：只更新存量头图，下次点头像现建的菜单即用真图。
-                        self.avatarMenuHeaderImage = img.withRenderingMode(.alwaysOriginal)
-                    }
-                }
-            }.resume()
         }
     }
 
@@ -1182,6 +1071,7 @@ final class BearyChromeViewController: UIViewController {
     // 顶栏入口：登录弹原生登录页，其余走 tab 页；不再有任何跳网页的调用。
     @objc private func didTapLogin() { presentLogin() }
     @objc private func didTapSearch() { showPage(.search) }
+    @objc private func didTapBell() { showPage(.notif) }
     @objc private func didTapGift() { presentInvite() }
     @objc private func didTapWrite() { presentComposer() }
     @objc private func fabPressedDown() { setFabPressed(true) }
@@ -1203,39 +1093,6 @@ final class BearyChromeViewController: UIViewController {
         })
     }
 
-    /// F2：顶栏头像菜单——网页口径（beary.html:1073-1082 .profile-menu）：
-    /// 头块（名 + 邮箱，网页 .pm-head：44 头像 + 16 粗体名 + 12 灰邮箱）+
-    /// 行依次为使用指南（beary-help）、账户设置（beary-settings）、
-    /// 外观（beary-theme-auto，行内即三档开关，见 BearyThemeSwitchView）、
-    /// 退出登录（beary-logout，danger）。网页菜单没有“个人主页”首项，
-    /// 个人主页仍可经底栏“我”段进入。行图标走官方 beary-ui 资产
-    /// （icon_help/icon_settings/icon_theme_auto/icon_logout），不用 SF 符号冒充。
-    /// 表现复刻（审计 5）：UIMenu 无公开接口改底色/模糊，故不用 UIMenu，
-    /// 而是现建 BearyAvatarGlassMenuViewController 玻璃 popover（网页 :164/:376/:746：
-    /// bg 52% + blur32 口径，见文件末尾 bearyMenuGlassView；圆角取 :164 的 16）。
-    /// 头块行不可点，与网页 .pm-head 无点击行为一致；头图取 avatarMenuHeaderImage
-    ///（applyLoginState 维护，下载到真图后更新）。
-    @objc private func didTapAvatar() { presentAvatarMenu() }
-
-    private func presentAvatarMenu() {
-        let current = UserDefaults.standard.string(forKey: "beary_theme_mode") ?? "system"
-        let menuVC = BearyAvatarGlassMenuViewController(
-            user: SessionManager.shared.currentUser,
-            headerImage: avatarMenuHeaderImage ?? avatarInitialImage(for: SessionManager.shared.currentUser),
-            themeMode: current)
-        menuVC.modalPresentationStyle = .popover
-        menuVC.onTutorial = { [weak self] in self?.presentTutorial() }
-        menuVC.onSettings = { [weak self] in self?.presentSettings() }
-        menuVC.onThemeCycle = { [weak self] in self?.cycleThemeMode() ?? "system" }
-        menuVC.onLogout = { [weak self] in self?.logoutFromMenu() }
-        if let popover = menuVC.popoverPresentationController {
-            popover.sourceView = avatarButton
-            popover.sourceRect = avatarButton.bounds
-            popover.permittedArrowDirections = .up
-            popover.delegate = self
-        }
-        present(menuVC, animated: true)
-    }
 
     /// 三档主题拨档（审计 5，网页 cycleTheme 口径 beary.html:1491-1493）：
     /// 点按即按 system → light → dark → system 循环（网页 auto → light → dark → auto），
@@ -1252,25 +1109,7 @@ final class BearyChromeViewController: UIViewController {
         return next
     }
 
-    /// 头像菜单退出登录：按设置页口径（BearySettingsViewController.logoutButtonTapped）——
-    /// 服务端失败只 toast“退出失败，请重试”并保留本地会话；成功才清 cookie 与本地态。
-    /// 此前这里忽略 result、无条件清本地态，失败时本地已退出而服务端会话仍在。
-    private func logoutFromMenu() {
-        BearyAPI.shared.logout { [weak self] result in
-            DispatchQueue.main.async {
-                guard let self = self else { return }
-                switch result {
-                case .success:
-                    SessionManager.shared.clearLocalCookies()
-                    SessionManager.shared.signOutLocally()
-                case .failure:
-                    self.showToast(message: "退出失败，请重试")
-                }
-            }
-        }
-    }
     @objc private func didTapHome() { showPage(.home) }
-    @objc private func didTapNotif() { navigator.goTab("notif") }
     @objc private func didTapTimeline() { navigator.goTab("timeline") }
     @objc private func didTapMe() { navigator.goTab("me") }
 
@@ -1285,9 +1124,8 @@ final class BearyChromeViewController: UIViewController {
     @objc private func bottomSegmentChanged() {
         switch bottomSegmented.selectedSegmentIndex {
         case 0: didTapHome()
-        case 1: didTapNotif()
-        case 2: didTapTimeline()
-        case 3: didTapMe()
+        case 1: didTapTimeline()
+        case 2: didTapMe()
         default: break
         }
     }
@@ -1298,14 +1136,13 @@ final class BearyChromeViewController: UIViewController {
     /// 重拍路径与旧钮完全一致（didTap* → showPage/goTab 的重拍分支：回顶再刷新）。
     @objc private func bottomSegmentTapped(_ gesture: UITapGestureRecognizer) {
         guard let seg = bottomSegmented, seg.bounds.width > 0 else { return }
-        let segmentWidth = seg.bounds.width / 4
-        let tapped = min(3, max(0, Int(gesture.location(in: seg).x / segmentWidth)))
+        let segmentWidth = seg.bounds.width / 3
+        let tapped = min(2, max(0, Int(gesture.location(in: seg).x / segmentWidth)))
         guard tapped == segmentIndexAtTouchDown else { return }
         switch tapped {
         case 0: didTapHome()
-        case 1: didTapNotif()
-        case 2: didTapTimeline()
-        case 3: didTapMe()
+        case 1: didTapTimeline()
+        case 2: didTapMe()
         default: break
         }
     }
@@ -1816,7 +1653,7 @@ final class BearyChromeViewController: UIViewController {
                 self?.showPage(.home)
             }
         }
-        // B6：退出只发一次（与头像菜单 logoutFromMenu 同口径）：成功才清本地态，
+        // B6：退出只发一次：成功才清本地态，
         // 失败 toast“退出失败，请重试”并保留会话（401 由 BearyAPI.logout 侧映射为成功，此处不另判）。
         vc.onLogout = { [weak self] in
             BearyAPI.shared.logout { [weak self] result in
@@ -1911,7 +1748,7 @@ final class BearyChromeViewController: UIViewController {
     /// tmode=auto 中档为半黑渐变，见 BearyThemeSwitchView）。点开关即按
     /// system → light → dark 循环（cycleThemeMode，网页 cycleTheme 同款顺序），
     /// 存档键 beary_theme_mode 与 applyThemeMode 逻辑原样保留；卡内文案同步显示当前档名。
-    /// 齿轮菜单仍调本方法；头像菜单的外观行则直接内嵌同一开关，不再经本卡。
+    /// 齿轮菜单调本方法（我的页三个点“外观”行的落点）。
     private func presentAppearanceSheet() {
         let current = UserDefaults.standard.string(forKey: "beary_theme_mode") ?? "system"
         let card = BearyThemeSwitchCardViewController(themeMode: current)
@@ -2284,7 +2121,7 @@ final class BearyChromeViewController: UIViewController {
 
 
 
-// MARK: - 审计 5 玻璃头像菜单与三档外观开关（与 BearyChromeViewController 同文件）
+// MARK: - 审计 5 三档外观开关（与 BearyChromeViewController 同文件）
 
 /// 玻璃底（网页 .profile-menu :376/:746 口径：bg 52% + blur32）。
 /// iOS 无公开 blur 半径参数：iOS 26+ 用 UIGlassEffect（系统玻璃，tint 52%），
@@ -2400,205 +2237,8 @@ final class BearyThemeSwitchView: UIControl {
     }
 }
 
-/// 玻璃头像菜单（审计 5）：头块 + 使用指南 / 账户设置 / 外观（行内三档开关）/
-/// 退出登录四行，跳转逻辑与原 UIMenu 四项一字一致（presentTutorial /
-/// presentSettings / cycleThemeMode / logoutFromMenu），行图标与原菜单同源同尺寸。
-/// 每行点按先 dismiss 本菜单、再走原跳转（present* 用 topmostViewController 定位，
-/// 菜单未关时顶层是菜单自身，故必须先关）。
-final class BearyAvatarGlassMenuViewController: UIViewController {
-    var onTutorial: (() -> Void)?
-    var onSettings: (() -> Void)?
-    var onThemeCycle: (() -> String)?
-    var onLogout: (() -> Void)?
-
-    private let user: MeUser?
-    private let headerImage: UIImage?
-    private var themeMode: String
-    private var themeSwitch: BearyThemeSwitchView!
-
-    init(user: MeUser?, headerImage: UIImage?, themeMode: String) {
-        self.user = user
-        self.headerImage = headerImage
-        self.themeMode = themeMode
-        super.init(nibName: nil, bundle: nil)
-        self.preferredContentSize = CGSize(width: 280, height: 237)
-    }
-
-    required init?(coder: NSCoder) { return nil }
-
-    override func viewDidLoad() {
-        super.viewDidLoad()
-        view.backgroundColor = .clear
-        view.layer.cornerRadius = 16
-        view.layer.shadowColor = UIColor.black.cgColor
-        view.layer.shadowOpacity = 0.18
-        view.layer.shadowRadius = 20
-        view.layer.shadowOffset = CGSize(width: 0, height: 12)
-        let glass = bearyMenuGlassView()
-        glass.layer.cornerRadius = 16
-        glass.clipsToBounds = true
-        glass.translatesAutoresizingMaskIntoConstraints = false
-        view.addSubview(glass)
-        NSLayoutConstraint.activate([
-            glass.leadingAnchor.constraint(equalTo: view.leadingAnchor),
-            glass.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-            glass.topAnchor.constraint(equalTo: view.topAnchor),
-            glass.bottomAnchor.constraint(equalTo: view.bottomAnchor),
-        ])
-        let stack = UIStackView()
-        stack.axis = .vertical
-        stack.translatesAutoresizingMaskIntoConstraints = false
-        stack.isLayoutMarginsRelativeArrangement = true
-        stack.layoutMargins = UIEdgeInsets(top: 8, left: 0, bottom: 8, right: 0)
-        glass.contentView.addSubview(stack)
-        NSLayoutConstraint.activate([
-            stack.leadingAnchor.constraint(equalTo: glass.contentView.leadingAnchor),
-            stack.trailingAnchor.constraint(equalTo: glass.contentView.trailingAnchor),
-            stack.topAnchor.constraint(equalTo: glass.contentView.topAnchor),
-            stack.bottomAnchor.constraint(equalTo: glass.contentView.bottomAnchor),
-        ])
-        stack.addArrangedSubview(makeHeader())
-        let line = UIView()
-        line.backgroundColor = BearyColors.line
-        line.translatesAutoresizingMaskIntoConstraints = false
-        line.heightAnchor.constraint(equalToConstant: 1).isActive = true
-        stack.addArrangedSubview(line)
-        stack.addArrangedSubview(makeRow(title: "使用指南", iconName: "icon_help", destructive: false, action: #selector(tutorialTapped)))
-        stack.addArrangedSubview(makeRow(title: "账户设置", iconName: "icon_settings", destructive: false, action: #selector(settingsTapped)))
-        stack.addArrangedSubview(makeThemeRow())
-        stack.addArrangedSubview(makeRow(title: "退出登录", iconName: "icon_logout", destructive: true, action: #selector(logoutTapped)))
-    }
-
-    private func makeHeader() -> UIView {
-        let rawName = user?.displayName?.trimmingCharacters(in: .whitespacesAndNewlines)
-        let headName: String
-        if let rawName = rawName, !rawName.isEmpty {
-            headName = rawName
-        } else if let email = user?.email, !email.isEmpty {
-            headName = email
-        } else {
-            headName = "—"
-        }
-        let header = UIView()
-        header.translatesAutoresizingMaskIntoConstraints = false
-        header.heightAnchor.constraint(equalToConstant: 44).isActive = true
-        let imageView = UIImageView(image: headerImage)
-        imageView.contentMode = .scaleAspectFill
-        imageView.backgroundColor = BearyColors.faint
-        imageView.layer.cornerRadius = 22
-        imageView.clipsToBounds = true
-        imageView.translatesAutoresizingMaskIntoConstraints = false
-        header.addSubview(imageView)
-        let nameLabel = UILabel()
-        nameLabel.text = headName
-        nameLabel.font = .systemFont(ofSize: 16, weight: .semibold)
-        nameLabel.textColor = BearyColors.ink
-        let emailLabel = UILabel()
-        emailLabel.text = user?.email
-        emailLabel.font = .systemFont(ofSize: 12)
-        emailLabel.textColor = BearyColors.gray
-        emailLabel.isHidden = (user?.email ?? "").isEmpty
-        let labels = UIStackView(arrangedSubviews: [nameLabel, emailLabel])
-        labels.axis = .vertical
-        labels.spacing = 2
-        labels.translatesAutoresizingMaskIntoConstraints = false
-        header.addSubview(labels)
-        NSLayoutConstraint.activate([
-            imageView.leadingAnchor.constraint(equalTo: header.leadingAnchor, constant: 12),
-            imageView.centerYAnchor.constraint(equalTo: header.centerYAnchor),
-            imageView.widthAnchor.constraint(equalToConstant: 44),
-            imageView.heightAnchor.constraint(equalToConstant: 44),
-            labels.leadingAnchor.constraint(equalTo: imageView.trailingAnchor, constant: 12),
-            labels.trailingAnchor.constraint(equalTo: header.trailingAnchor, constant: -12),
-            labels.centerYAnchor.constraint(equalTo: header.centerYAnchor),
-        ])
-        return header
-    }
-
-    private func makeRow(title: String, iconName: String, destructive: Bool, action: Selector) -> UIView {
-        let row = UIView()
-        row.translatesAutoresizingMaskIntoConstraints = false
-        row.heightAnchor.constraint(equalToConstant: 44).isActive = true
-        let color: UIColor = destructive ? BearyColors.red : BearyColors.ink
-        let iconView = UIImageView(image: BearyIconImages.image(named: iconName, pointSize: 22))
-        iconView.tintColor = color
-        iconView.translatesAutoresizingMaskIntoConstraints = false
-        row.addSubview(iconView)
-        let label = UILabel()
-        label.text = title
-        label.font = .systemFont(ofSize: 14)
-        label.textColor = color
-        label.translatesAutoresizingMaskIntoConstraints = false
-        row.addSubview(label)
-        let button = UIButton(type: .custom)
-        button.addTarget(self, action: action, for: .touchUpInside)
-        button.translatesAutoresizingMaskIntoConstraints = false
-        row.addSubview(button)
-        NSLayoutConstraint.activate([
-            iconView.leadingAnchor.constraint(equalTo: row.leadingAnchor, constant: 12),
-            iconView.centerYAnchor.constraint(equalTo: row.centerYAnchor),
-            iconView.widthAnchor.constraint(equalToConstant: 22),
-            iconView.heightAnchor.constraint(equalToConstant: 22),
-            label.leadingAnchor.constraint(equalTo: iconView.trailingAnchor, constant: 12),
-            label.centerYAnchor.constraint(equalTo: row.centerYAnchor),
-            button.leadingAnchor.constraint(equalTo: row.leadingAnchor),
-            button.trailingAnchor.constraint(equalTo: row.trailingAnchor),
-            button.topAnchor.constraint(equalTo: row.topAnchor),
-            button.bottomAnchor.constraint(equalTo: row.bottomAnchor),
-        ])
-        return row
-    }
-
-    private func makeThemeRow() -> UIView {
-        let row = UIView()
-        row.translatesAutoresizingMaskIntoConstraints = false
-        row.heightAnchor.constraint(equalToConstant: 44).isActive = true
-        let iconView = UIImageView(image: BearyIconImages.image(named: "icon_theme_auto", pointSize: 22))
-        iconView.tintColor = BearyColors.ink
-        iconView.translatesAutoresizingMaskIntoConstraints = false
-        row.addSubview(iconView)
-        let label = UILabel()
-        label.text = "外观"
-        label.font = .systemFont(ofSize: 14)
-        label.textColor = BearyColors.ink
-        label.translatesAutoresizingMaskIntoConstraints = false
-        row.addSubview(label)
-        let themeSwitchView = BearyThemeSwitchView(mode: themeMode)
-        themeSwitchView.translatesAutoresizingMaskIntoConstraints = false
-        row.addSubview(themeSwitchView)
-        themeSwitch = themeSwitchView
-        let tap = UITapGestureRecognizer(target: self, action: #selector(themeRowTapped))
-        row.addGestureRecognizer(tap)
-        NSLayoutConstraint.activate([
-            iconView.leadingAnchor.constraint(equalTo: row.leadingAnchor, constant: 12),
-            iconView.centerYAnchor.constraint(equalTo: row.centerYAnchor),
-            iconView.widthAnchor.constraint(equalToConstant: 22),
-            iconView.heightAnchor.constraint(equalToConstant: 22),
-            label.leadingAnchor.constraint(equalTo: iconView.trailingAnchor, constant: 12),
-            label.centerYAnchor.constraint(equalTo: row.centerYAnchor),
-            themeSwitchView.trailingAnchor.constraint(equalTo: row.trailingAnchor, constant: -12),
-            themeSwitchView.centerYAnchor.constraint(equalTo: row.centerYAnchor),
-            themeSwitchView.widthAnchor.constraint(equalToConstant: 52),
-            themeSwitchView.heightAnchor.constraint(equalToConstant: 30),
-        ])
-        return row
-    }
-
-    private func dismissThen(_ action: @escaping () -> Void) {
-        dismiss(animated: true, completion: action)
-    }
-
-    @objc private func tutorialTapped() { dismissThen { [weak self] in self?.onTutorial?() } }
-    @objc private func settingsTapped() { dismissThen { [weak self] in self?.onSettings?() } }
-    @objc private func logoutTapped() { dismissThen { [weak self] in self?.onLogout?() } }
-
-    @objc private func themeRowTapped() {
-        guard let newMode = onThemeCycle?() else { return }
-        themeMode = newMode
-        themeSwitch.setMode(newMode, animated: !UIAccessibility.isReduceMotionEnabled)
-    }
-}
-
+/// 三档外观开关（审计 5）：system → light → dark 循环拨档；
+/// 外观开关卡内嵌本开关（齿轮菜单“外观”行的落点）。
 /// 外观开关卡（齿轮菜单调 presentAppearanceSheet 时弹出）：玻璃卡 + 三档开关 +
 /// 当前档名文案 + 完成钮；点开关即 cycleThemeMode 循环拨档并立即应用，文案同步更新。
 final class BearyThemeSwitchCardViewController: UIViewController {
@@ -2944,11 +2584,3 @@ private final class BearyBadgeLabel: UILabel {
     }
 }
 
-/// U23：视觉 32、热区 40 的头像钮——hitTest 向外扩 4pt，帧与视觉均不动，
-/// 避免 40 帧按钮的底色/边框破坏 32 圆形头像视觉。
-/// B 组：外扩由 4pt 改为 6pt，热区 32→44，视觉帧仍 32 不动。
-private final class BearyHitExpandingButton: UIButton {
-    override func point(inside point: CGPoint, with event: UIEvent?) -> Bool {
-        return bounds.insetBy(dx: -6, dy: -6).contains(point)
-    }
-}
