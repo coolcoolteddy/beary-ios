@@ -4,65 +4,53 @@ import UIKit
 /// 减动效时所有动画直接跳到结束态（不动）。
 enum BearyIconMotion {
 
-    /// 官方 beary-heart 路径（viewBox 24×24），缩放到目标框。
-    /// 路径原文：M12 20s-7.5-4.6-7.5-10.2A4.2 4.2 0 0 1 12 7.4a4.2 4.2 0 0 1 7.5 2.4C19.5 15.4 12 20 12 20z
-    /// s 段无前导曲线时控制点 1 = 起点；两段圆弧经端点→圆心换算
-    ///（圆心 8.6956/9.9925 与 15.3044/9.9925，半径 4.2，起止角由端点向量算出）。
-    static func heartPath(in box: CGRect) -> UIBezierPath {
-        let path = UIBezierPath()
-        path.move(to: CGPoint(x: 12, y: 20))
-        path.addCurve(to: CGPoint(x: 4.5, y: 9.8), controlPoint1: CGPoint(x: 12, y: 20), controlPoint2: CGPoint(x: 4.5, y: 15.4))
-        path.addArc(withCenter: CGPoint(x: 8.6956, y: 9.9925), radius: 4.2, startAngle: -3.09575, endAngle: -0.66525, clockwise: true)
-        path.addArc(withCenter: CGPoint(x: 15.3044, y: 9.9925), radius: 4.2, startAngle: -2.47635, endAngle: -0.04584, clockwise: true)
-        path.addCurve(to: CGPoint(x: 12, y: 20), controlPoint1: CGPoint(x: 19.5, y: 15.4), controlPoint2: CGPoint(x: 12, y: 20))
-        path.close()
-        let scale = box.width / 24
-        let transform = CGAffineTransform(translationX: box.minX, y: box.minY).scaledBy(x: scale, y: scale)
-        path.apply(transform)
-        return path
-    }
-
-    /// 点赞描边画出（网页 heartDraw：.5s cubic-bezier(.4,0,.2,1)）。
-    /// 返回描边图层，调用方持有并在响应到达时移除；减动效返回 nil（不画）。
-    /// 描边色取按钮当前 tint（即图标本身的颜色）：Feed 未赞是墨色、主页未赞是灰色；
-    /// 旧代码把灰色写死，在 Feed 上会描出一条与墨色图标不重合的灰心。
-    /// 残留修复：图层挂在 imageView 层下、路径用 imageView.bounds 画，
-    /// 不再挂按钮层用 imageView.frame 画——frame 会受按压缩放（.84）影响而
-    /// 缩小并偏移，按钮重布局后图标移走、旧描边却留在原坐标，右侧露出一截；
-    /// 子层则随图标一起缩放与移位，与空心 PNG 始终重合。
-    /// fallback 修复：imageView 无框时不再按按钮中心估一个 22 框——按钮带计数标题时
-    /// 按钮中心 ≠ 图标中心，估算必偏；先强制布局一次，仍无框说明无图，直接不画。
-    /// 动画结束即自清：.5s 画完后底层空心 PNG 本就是同一条轮廓，
-    /// 描边层再留着只是重复描边；自清后未点赞态只剩空心 PNG，
-    /// 填充与计数仍等服务器确认（语义不动），调用方响应到达时再清一次亦无害。
-    static func playHeartStrokeDraw(on button: UIButton) -> CAShapeLayer? {
-        if UIAccessibility.isReduceMotionEnabled { return nil }
-        guard let imageView = button.imageView else { return nil }
-        if imageView.bounds.width <= 0 { button.layoutIfNeeded() }
-        guard imageView.bounds.width > 0 else { return nil }
-        let host = imageView.layer
-        let box = imageView.bounds
-        let layer = CAShapeLayer()
-        layer.frame = box
-        layer.path = heartPath(in: CGRect(origin: .zero, size: box.size)).cgPath
-        layer.fillColor = UIColor.clear.cgColor
-        layer.strokeColor = button.tintColor.cgColor
-        layer.lineWidth = 2 * box.width / 24
-        layer.lineCap = .round
-        layer.lineJoin = .round
-        layer.strokeEnd = 0
-        host.addSublayer(layer)
-        let anim = CABasicAnimation(keyPath: "strokeEnd")
-        anim.fromValue = 0
-        anim.toValue = 1
-        anim.duration = 0.5
-        anim.timingFunction = CAMediaTimingFunction(controlPoints: 0.4, 0, 0.2, 1)
-        layer.add(anim, forKey: "bearyHeartDraw")
-        layer.strokeEnd = 1
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak layer] in
-            layer?.removeFromSuperlayer()
+    /// 点赞成功爆点（Li 2026-10-27 新规格，替代描边画出）：爱心轻微放大再回弹，
+    /// 同时向外炸出 7 滴橙色液体微粒（20–30pt 后淡出）。只在点赞成功（填充确认）
+    /// 的那一刻播；取消点赞不炸。点亮色沿用现行橙，不改真红。减动效不播。
+    static func playLikeBurst(on button: UIButton) {
+        if UIAccessibility.isReduceMotionEnabled { return }
+        guard let imageView = button.imageView else { return }
+        // 爱心先轻微放大再回弹（1 → 1.22 → 1，.32s）。
+        let pop = CAKeyframeAnimation(keyPath: "transform.scale")
+        pop.values = [1, 1.22, 1]
+        pop.keyTimes = [0, 0.45, 1]
+        pop.duration = 0.32
+        pop.timingFunction = CAMediaTimingFunction(controlPoints: 0.25, 0.1, 0.25, 1)
+        imageView.layer.add(pop, forKey: "bearyLikeBurstPop")
+        // 7 滴液体：定角放射（全向），橙色系交替，飞 22–30pt 后淡出缩没。
+        let center = imageView.center
+        let angles: [CGFloat] = [-90, -38, 14, 66, 118, 170, -142]
+        let distances: [CGFloat] = [28, 23, 30, 24, 29, 22, 26]
+        let sizes: [CGFloat] = [5, 4, 5.5, 4.5, 5, 4, 5.5]
+        for i in 0..<7 {
+            let rad = angles[i] * .pi / 180
+            let size = sizes[i]
+            let dot = CALayer()
+            dot.frame = CGRect(x: center.x - size / 2, y: center.y - size / 2, width: size, height: size)
+            dot.cornerRadius = size / 2
+            dot.backgroundColor = (i % 2 == 0 ? BearyColors.orange : BearyColors.orange.withAlphaComponent(0.6)).cgColor
+            button.layer.addSublayer(dot)
+            let target = CGPoint(x: center.x + cos(rad) * distances[i], y: center.y + sin(rad) * distances[i])
+            let group = CAAnimationGroup()
+            group.duration = 0.5
+            group.timingFunction = CAMediaTimingFunction(name: .easeOut)
+            group.isRemovedOnCompletion = false
+            group.fillMode = .forwards
+            let move = CABasicAnimation(keyPath: "position")
+            move.fromValue = NSValue(cgPoint: dot.position)
+            move.toValue = NSValue(cgPoint: target)
+            let fade = CABasicAnimation(keyPath: "opacity")
+            fade.fromValue = 1
+            fade.toValue = 0
+            let shrink = CABasicAnimation(keyPath: "transform.scale")
+            shrink.fromValue = 1
+            shrink.toValue = 0.5
+            group.animations = [move, fade, shrink]
+            dot.add(group, forKey: "bearyLikeBurstDrop")
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.55) { [weak dot] in
+                dot?.removeFromSuperlayer()
+            }
         }
-        return layer
     }
 
     /// 点赞填充淡入（网页 .fill transition fill .3s）。
