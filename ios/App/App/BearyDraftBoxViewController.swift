@@ -78,14 +78,14 @@ final class BearyDraftBoxViewController: UIViewController {
     private let handleView = UIView()
     private let headerWrap = UIView()
     private let titleLabel = UILabel()
-    private let closeButton = BearyGlassButton(type: .custom)
+    private let closeButton = BearyHit44Button(type: .custom)
     private let subWrap = UIView()
     private let subLabel = UILabel()
     private let newButton = BearyDraftBoxDashedButton(type: .custom)
     private let undoWrap = UIView()
     private let undoBar = UIView()
     private let undoLabel = UILabel()
-    private let undoButton = BearyGlassButton(type: .custom)
+    private let undoButton = UIButton(type: .custom)
     private let listWrap = UIView()
     private let listStack = UIStackView()
     private let hintWrap = UIView()
@@ -232,7 +232,7 @@ final class BearyDraftBoxViewController: UIViewController {
         titleLabel.textAlignment = .center
         titleLabel.translatesAutoresizingMaskIntoConstraints = false
         headerWrap.addSubview(titleLabel)
-        closeButton.backgroundColor = .clear
+        closeButton.backgroundColor = BearyColors.faint
         closeButton.layer.cornerRadius = 16
         closeButton.tintColor = BearyColors.ink
         closeButton.accessibilityLabel = "关闭"
@@ -667,7 +667,7 @@ final class BearyDraftBoxViewController: UIViewController {
             topRow.addArrangedSubview(imageRow)
         }
         // 卡片操作钮（网页 .df-open/.df-trash 同款）：打开钮整卡点按等价，删除钮本地删卡。
-        let openButton = BearyGlassButton(type: .custom)
+        let openButton = UIButton(type: .custom)
         openButton.setTitle("打开", for: .normal)
         openButton.setTitleColor(BearyColors.ink, for: .normal)
         openButton.titleLabel?.font = UIFont.systemFont(ofSize: 12.5)
@@ -679,7 +679,7 @@ final class BearyDraftBoxViewController: UIViewController {
         openButton.addTarget(self, action: #selector(openTapped(_:)), for: .touchUpInside)
         topRow.addArrangedSubview(openButton)
         openEntries.append((button: openButton, draftValue: draftValue))
-        let deleteButton = BearyGlassButton(type: .custom)
+        let deleteButton = UIButton(type: .custom)
         if let trashImage = BearyIconImages.image(named: "icon_trash", pointSize: 17) {
             deleteButton.setImage(trashImage, for: .normal)
         }
@@ -1378,19 +1378,8 @@ private final class BearyDraftBoxDashedButton: UIButton {
 
     override init(frame: CGRect) {
         super.init(frame: frame)
-        // 玻璃批：虚线钮只换底质——玻璃 subview 先加，随后 dashedLayer 叠加其上，
-        // 虚线描边仍在玻璃之上；玻璃圆角 12 与虚线 path 圆角一致。
-        let glassView = BearyGlass.effectView(tint: BearyGlass.neutralTint)
-        glassView.translatesAutoresizingMaskIntoConstraints = false
-        glassView.layer.cornerRadius = 12
-        glassView.clipsToBounds = true
-        addSubview(glassView)
-        NSLayoutConstraint.activate([
-            glassView.topAnchor.constraint(equalTo: topAnchor),
-            glassView.bottomAnchor.constraint(equalTo: bottomAnchor),
-            glassView.leadingAnchor.constraint(equalTo: leadingAnchor),
-            glassView.trailingAnchor.constraint(equalTo: trailingAnchor),
-        ])
+        // 撤回批（2026-10-27）：虚线钮去玻璃留虚线——玻璃 subview 会拦截触摸致死钮，删掉，
+        // 只留 dashedLayer 描边（原 75 包形态）。
         dashedLayer.fillColor = UIColor.clear.cgColor
         dashedLayer.strokeColor = BearyColors.line.cgColor
         dashedLayer.lineWidth = 1.5
