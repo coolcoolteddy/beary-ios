@@ -530,7 +530,10 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         textView.delegate = self
         textView.font = UIFont.systemFont(ofSize: 16)
         textView.textColor = BearyColors.ink
-        // 无框正文：透明底、最小 140、关掉自身滚动后随内容生长（外层 scrollView 滚动）。
+        // 无框正文：透明底。实验 2（2026-10-26，微信输入法×编辑器隔离）：
+        // 开自身滚动、固定 160 可见区在区内滚动，取代之前靠外层 scrollView 滚动的模式。
+        // 实验 1 已证阴性（去掉 typingAttributes 段落样式后仍打不上），段落样式未恢复，
+        // 两次实验变量不混；其余配置（键盘、聚焦、草稿、字数、工具栏）一行未动。
         // 行高 1.7（27.2）：已恢复的正文由 applyBodyLineHeight() 转 attributedText 后套行高
         //（见 setupEditContent/restoreDraft）；新输入的 typingAttributes 行高见下实验 1。
         // 实验 1（2026-10-26，微信输入法×编辑器隔离）：typingAttributes 先去掉段落样式，
@@ -539,7 +542,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         textView.typingAttributes = [.font: UIFont.systemFont(ofSize: 16), .foregroundColor: BearyColors.ink]
         textView.backgroundColor = UIColor.clear
         textView.layer.cornerRadius = 0
-        textView.isScrollEnabled = false
+        textView.isScrollEnabled = true
         textView.textContainer.lineFragmentPadding = 0
         textView.textContainerInset = UIEdgeInsets(top: 0, left: 0, bottom: 0, right: 0)
         placeholderLabel.text = "记录今天…"
@@ -550,7 +553,9 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         contentStack.addArrangedSubview(textView)
         textView.addSubview(placeholderLabel)
         NSLayoutConstraint.activate([
-            textView.heightAnchor.constraint(greaterThanOrEqualToConstant: 140),
+            // 实验 2：自身滚动开启后 textView 无内在高度，必须给固定高度约束，
+            // 否则在内容栈里高度不确定；160 可见区，超长在区内滚动。
+            textView.heightAnchor.constraint(equalToConstant: 160),
             placeholderLabel.topAnchor.constraint(equalTo: textView.topAnchor, constant: 0),
             placeholderLabel.leadingAnchor.constraint(equalTo: textView.leadingAnchor),
             placeholderLabel.trailingAnchor.constraint(lessThanOrEqualTo: textView.trailingAnchor),
