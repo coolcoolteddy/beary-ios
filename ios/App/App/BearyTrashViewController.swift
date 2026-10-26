@@ -321,7 +321,7 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate {
             toastWrap.leadingAnchor.constraint(greaterThanOrEqualTo: view.leadingAnchor, constant: 20),
             toastWrap.trailingAnchor.constraint(lessThanOrEqualTo: view.trailingAnchor, constant: -20),
             toastWrap.centerXAnchor.constraint(equalTo: view.centerXAnchor),
-            toastWrap.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor, constant: -24),
+            toastWrap.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor, constant: -158),
             toastLabel.topAnchor.constraint(equalTo: toastWrap.topAnchor, constant: 10),
             toastLabel.bottomAnchor.constraint(equalTo: toastWrap.bottomAnchor, constant: -10),
             toastLabel.leadingAnchor.constraint(equalTo: toastWrap.leadingAnchor, constant: 14),
@@ -450,6 +450,10 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate {
     // MARK: - 渲染（原地更新：只增删行视图，不整列重建、不滚顶）
 
     private func renderStateViews() {
+        // 新规矩(b)：空/失败/登录态由隐藏变可见时淡入 0.25；列表行已有 stagger，不动。
+        let emptyWasHidden = emptyWrap.isHidden
+        let failureWasHidden = failureWrap.isHidden
+        let loginWasHidden = loginWrap.isHidden
         let hasItems = trashItems.isEmpty == false
         loadingView.isHidden = trashLoading == false || hasItems
         if loadingView.isHidden == false {
@@ -465,6 +469,16 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate {
         contentStack.setCustomSpacing(emptyWrap.isHidden ? 4 : 0, after: noteRow)
         failureWrap.isHidden = trashFirstLoadFailed == false || trashLoginEmpty
         loginWrap.isHidden = trashLoginEmpty == false
+        if UIAccessibility.isReduceMotionEnabled == false {
+            for (view, wasHidden) in [(emptyWrap, emptyWasHidden), (failureWrap, failureWasHidden), (loginWrap, loginWasHidden)] {
+                if wasHidden && view.isHidden == false {
+                    view.alpha = 0
+                    UIView.animate(withDuration: 0.25) {
+                        view.alpha = 1
+                    }
+                }
+            }
+        }
         listStack.isHidden = hasItems == false
         // B-G14: web trash has no trailing "已到底" footer (the list just ends);
         // this page no longer renders one.
@@ -525,20 +539,20 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate {
 
         let summaryLabel = UILabel()
         summaryLabel.numberOfLines = 2
-        summaryLabel.font = UIFont.systemFont(ofSize: 14.5)
+        summaryLabel.font = UIFont.systemFont(ofSize: 16)
         summaryLabel.textColor = BearyColors.ink
         // P3-3：日记摘要长串按字符断行，不溢出；字号行高不动（富文本段落同步见 TrashText.lineSpaced）。
         summaryLabel.lineBreakMode = .byCharWrapping
         summaryLabel.attributedText = TrashText.lineSpaced(
             text: trashValue.content ?? "",
-            fontSize: 14.5,
+            fontSize: 16,
             lineHeightMultiple: 1.6,
             color: BearyColors.ink
         )
 
         let metaLabel = UILabel()
         metaLabel.numberOfLines = 0
-        metaLabel.font = UIFont.systemFont(ofSize: 12.5)
+        metaLabel.font = UIFont.systemFont(ofSize: 13)
         metaLabel.textColor = BearyColors.gray
         metaLabel.text = TrashText.metaLine(trashValue: trashValue)
 
@@ -613,10 +627,10 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate {
         innerStack.setCustomSpacing(10, after: metaLabel)
         rowView.addSubview(innerStack)
         NSLayoutConstraint.activate([
-            innerStack.topAnchor.constraint(equalTo: rowView.topAnchor, constant: 12),
-            innerStack.bottomAnchor.constraint(equalTo: rowView.bottomAnchor, constant: -12),
-            innerStack.leadingAnchor.constraint(equalTo: rowView.leadingAnchor, constant: 14),
-            innerStack.trailingAnchor.constraint(equalTo: rowView.trailingAnchor, constant: -14),
+            innerStack.topAnchor.constraint(equalTo: rowView.topAnchor, constant: 14),
+            innerStack.bottomAnchor.constraint(equalTo: rowView.bottomAnchor, constant: -14),
+            innerStack.leadingAnchor.constraint(equalTo: rowView.leadingAnchor, constant: 16),
+            innerStack.trailingAnchor.constraint(equalTo: rowView.trailingAnchor, constant: -16),
         ])
         restoreEntries.append((button: restoreButton, trashValue: trashValue))
         purgeEntries.append((button: purgeButton, trashValue: trashValue))

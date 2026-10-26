@@ -178,6 +178,10 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     private let textView = BearyBodyTextView()
     /// 正文区高度约束（正式修法：随内容动态走，下限 140、上限由 updateTextViewHeight 按 sheet 封顶算）。
     private var textViewHeightConstraint: NSLayoutConstraint?
+    /// S10：textViewDidChange 高度缓存（contentSize 高度作判据）；高度不变时跳过
+    /// updateTextViewHeight + updatePreferredContentSize 的重算。注意不用换行符
+    /// 计行：长段落视觉折行不产生换行符，用换行符判会漏掉折行导致编辑器不跟长。
+    private var lastTextViewContentHeight: CGFloat?
     private let placeholderLabel = UILabel()
     // 图片预览（无标题、无 + 块；空时整条隐藏，添加走工具栏图片钮）
     private let imageScrollView = UIScrollView()
@@ -407,13 +411,15 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     /// 变化小于 0.5pt 不赋值，避免改 preferred → 容器重布局 → viewDidLayoutSubviews 的循环。
     private func updatePreferredContentSize() {
         guard isViewLoaded else { return }
-        // 首帧前 view.bounds 可能仍为 0：按屏宽估算呈现宽（居中卡 min(640, 屏宽-80)、
-        // 底 sheet 即屏宽），先算出非 0 的首帧高，不以占位满高上屏；布局落定后再纠正。
+        // 首帧前 view.bounds 可能仍为 0：按窗口宽估算呈现宽（居中卡 min(640, 窗口宽-80)、
+        // 底 sheet 即窗口宽），先算出非 0 的首帧高，不以占位满高上屏；布局落定后再纠正。
         let fittingWidth: CGFloat
         if view.bounds.width > 0 {
             fittingWidth = view.bounds.width
         } else {
-            let screenWidth = UIScreen.main.bounds.width
+            // S8：本分支 view.bounds 已知为 0，故不以它作中间回退；窗口宽为准，
+            // 未挂窗时回退屏宽。阈值 821 / 居中 640 不动。
+            let screenWidth = view.window?.bounds.width ?? UIScreen.main.bounds.width
             fittingWidth = screenWidth >= 821 ? min(640, screenWidth - 80) : screenWidth
         }
         guard fittingWidth > 0 else { return }
@@ -434,8 +440,11 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         // min(620px, 82vh)（beary.html:602/606；居中卡呈现层另有 80% 封顶，
         // 实际取小，属呈现层口径，本文件不动呈现层）。
         if quotePanelOpen {
-            let viewportHeight = UIScreen.main.bounds.height
-            let target = UIScreen.main.bounds.width >= 821 ? min(620, viewportHeight * 0.82) : viewportHeight * 0.86
+            // S8：视口以窗口为准（未挂窗回退屏）；桌面判断用窗口宽，不用呈现宽
+            // （居中卡本身只有 640，会误判为窄屏）。阈值 821 / 620 不动。
+            let viewportHeight = view.window?.bounds.height ?? UIScreen.main.bounds.height
+            let windowWidth = view.window?.bounds.width ?? UIScreen.main.bounds.width
+            let target = windowWidth >= 821 ? min(620, viewportHeight * 0.82) : viewportHeight * 0.86
             guard abs(preferredContentSize.height - target) > 0.5 else { return }
             preferredContentSize = CGSize(width: fittingWidth, height: target)
             view.superview?.setNeedsLayout()
@@ -592,17 +601,18 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     /// 封顶依据（不拍脑袋）：呈现层封顶见 SceneDelegate.configureComposerPresentation
     /// （宽 ≥821 居中卡）与 BearyCenteredModal.frameOfPresentedViewInContainerView
     /// （卡高 = 容器高 × 0.80）；窄屏底 sheet 为容器高 × 0.88（同函数注释）。
-    /// 容器高取 view.window bounds（未挂窗时回退屏高），屏宽阈值 821 与呈现层分流一致。
+    /// 容器高取 view.window bounds（未挂窗时回退屏高），窗口宽阈值 821 与呈现层分流一致。
     private func updateTextViewHeight() {
         guard isViewLoaded, let heightConstraint = textViewHeightConstraint else { return }
-        // 宽度：布局前 bounds 可能为 0，走 updatePreferredContentSize 同款屏宽估算。
+        // 宽度：布局前 bounds 可能为 0，走 updatePreferredContentSize 同款窗口宽估算
+        // （未挂窗回退屏宽）；前两支已处理 textView/view 的实宽，本支 view 宽已知为 0。
         let width: CGFloat
         if textView.bounds.width > 0 {
             width = textView.bounds.width
         } else if view.bounds.width > 0 {
             width = view.bounds.width
         } else {
-            let screenWidth = UIScreen.main.bounds.width
+            let screenWidth = view.window?.bounds.width ?? UIScreen.main.bounds.width
             width = screenWidth >= 821 ? min(640, screenWidth - 80) : screenWidth
         }
         guard width > 0 else { return }
@@ -627,7 +637,9 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             ).height
         }
         let containerHeight = view.window?.bounds.height ?? UIScreen.main.bounds.height
-        let sheetCap = containerHeight * (UIScreen.main.bounds.width >= 821 ? 0.80 : 0.88)
+        // S8：桌面判断用窗口宽（同上，居中卡呈现宽 640 不能作判断依据；未挂窗回退屏宽）。
+        let windowWidth = view.window?.bounds.width ?? UIScreen.main.bounds.width
+        let sheetCap = containerHeight * (windowWidth >= 821 ? 0.80 : 0.88)
         // 顶栏 44 同 updatePreferredContentSize 口径；封顶不足 140 时仍保下限，
         // 此时 sheet 走呈现层封顶、外层滚动兜底，与正式修法前行为一致。
         let cap = sheetCap - 44 - toolbarHeight - othersHeight
@@ -1714,7 +1726,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             }
             let dateLabel = UILabel()
             dateLabel.translatesAutoresizingMaskIntoConstraints = false
-            dateLabel.font = UIFont.systemFont(ofSize: 14)
+            dateLabel.font = UIFont.systemFont(ofSize: 13)
             dateLabel.textColor = BearyColors.gray
             dateLabel.setContentCompressionResistancePriority(.required, for: .horizontal)
             if let ms = entry.createdAt {
@@ -2348,6 +2360,12 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         updateCountLabel()
         updatePublishState()
         scheduleDraftSave()
+        // S10：contentSize 高度不变时跳过高度重算（同行内敲字不触发布局）；
+        // 折行、增删、旋转都会改变 contentSize 高度，变化时正常重算并更新缓存。
+        // 高度计算公式与下限不动（见 updateTextViewHeight）。
+        let contentHeight = textView.contentSize.height
+        guard contentHeight != lastTextViewContentHeight else { return }
+        lastTextViewContentHeight = contentHeight
         // 高度先定，fitting 再按新高算 sheet 高。
         updateTextViewHeight()
         updatePreferredContentSize()
@@ -3683,11 +3701,12 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         }
         // 决议第 4 项 B：取消不再弹三选、无丢弃路径，直接关 + 静默存草稿。
         // 草稿规则不动：saveDraftNow 原样走分级保存、纯心情不保存的现有逻辑。
-        // C10：关闭时仍有图片在上传（失败图不算），toast“还有图片没上传完，
-        // 这次没存进草稿”——toast 挂 presenting 方，关编辑器后仍可见；上传中图
-        // 本就不进草稿（见 saveDraftNow 的落盘过滤）。
+        // C10：关闭时仍有图片在上传（失败图不算）——toast 挂 presenting 方，
+        // 关编辑器后仍可见。旧文案“这次没存进草稿”范围过大：紧接着仍调
+        // saveDraftNow，正文与已上传图等按原逻辑照常落盘，只有 key 为空的
+        // 上传中图被落盘过滤排除；故新文案只说上传中的图片没存进草稿。
         if hasUploadingImage() {
-            showToastAfterClose(message: "还有图片没上传完，这次没存进草稿")
+            showToastAfterClose(message: "还有图片没上传完，上传中的图片没存进草稿")
         }
         saveDraftNow {
             self.onCancelled?()
@@ -3773,6 +3792,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                         // 落点高亮见交回说明：时间线无现成按 id 高亮入口，接线在
                         // SceneDelegate.onPublished（D 路禁改），本处不硬编。
                         self.showToastAfterClose(message: "已发布 · 7 天后送达")
+                        BearyHaptics.publishSuccess()
                         self.onPublished?(entryId)
                     } else {
                         self.saveDraftNow()
@@ -4010,7 +4030,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             toastView.leadingAnchor.constraint(greaterThanOrEqualTo: container.leadingAnchor, constant: 32),
             toastView.trailingAnchor.constraint(lessThanOrEqualTo: container.trailingAnchor, constant: -32),
             toastView.centerXAnchor.constraint(equalTo: container.centerXAnchor),
-            toastView.bottomAnchor.constraint(equalTo: container.safeAreaLayoutGuide.bottomAnchor, constant: -24),
+            toastView.bottomAnchor.constraint(equalTo: container.safeAreaLayoutGuide.bottomAnchor, constant: -158),
         ])
         toastView.alpha = 0
         UIView.animate(withDuration: 0.25, animations: {
