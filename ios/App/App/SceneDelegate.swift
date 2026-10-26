@@ -907,6 +907,9 @@ final class BearyChromeViewController: UIViewController {
     /// 全屏 bg 底、抱信封小熊 162pt 宽、中心偏上 43% 处；深色由图集 dark 变体承接，
     /// 与网页 invert(1) 同效）。动画在 viewDidAppear 跑（此时顶栏 logo 帧已定）。
     private func installLaunchVeil() {
+        // DIAG-ONLY (branch diag-veil-off, never main): veil disabled to test
+        // whether the 65 launch crash comes from the launch veil chain.
+        return
         guard launchVeilView == nil else { return }
         let veil = UIView()
         veil.backgroundColor = BearyColors.bg
