@@ -167,9 +167,9 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     // MARK: - 视图（段落顺序即网页版顺序，见文件头注释）
 
     private let topBar = UIView()
-    private let cancelButton = UIButton(type: .system)
+    private let cancelButton = BearyGlassButton(type: .system)
     private let titleLabel = UILabel()
-    private let publishButton = UIButton(type: .system)
+    private let publishButton = BearyGlassButton(type: .system)
     private let publishRingView = UIImageView()
     private let topSeparator = UIView()
     private let scrollView = UIScrollView()
@@ -196,9 +196,9 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     private var publishWidthConstraint: NSLayoutConstraint?
     private var draftPillWidthConstraint: NSLayoutConstraint?
     private let toolbarSeparator = UIView()
-    private let imageToolButton = BearyHit44Button(type: .system)
-    private let weatherToolButton = BearyHit44Button(type: .system)
-    private let quoteToolButton = BearyHit44Button(type: .system)
+    private let imageToolButton = BearyGlassButton(type: .system)
+    private let weatherToolButton = BearyGlassButton(type: .system)
+    private let quoteToolButton = BearyGlassButton(type: .system)
     private let draftPillButton = UIButton(type: .system)
     // 附加选项栏（默认收起）
     private let extrasBarContainer = UIView()
@@ -270,7 +270,18 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
 
     override func viewDidLoad() {
         super.viewDidLoad()
-        view.backgroundColor = BearyColors.bg
+        // 玻璃批：view 自身即 modal 卡片，底改 clear，玻璃背板钉满 bounds 垫在最底层（index 0），
+        // 后续 build* 加的子视图自然在其上；呈现层文件不动。
+        view.backgroundColor = UIColor.clear
+        let glassBacking = BearyGlass.effectView(tint: BearyGlass.neutralTint)
+        glassBacking.translatesAutoresizingMaskIntoConstraints = false
+        view.insertSubview(glassBacking, at: 0)
+        NSLayoutConstraint.activate([
+            glassBacking.topAnchor.constraint(equalTo: view.topAnchor),
+            glassBacking.bottomAnchor.constraint(equalTo: view.bottomAnchor),
+            glassBacking.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            glassBacking.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+        ])
         buildLayout()
         buildTopBar()
         buildTextArea()
@@ -459,7 +470,8 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     }
 
     private func buildTopBar() {
-        topBar.backgroundColor = BearyColors.surface
+        // 玻璃批：顶栏实色 surface 底会盖住 view 的玻璃背板，改 clear 让玻璃透出来；分隔线不动。
+        topBar.backgroundColor = UIColor.clear
         topSeparator.backgroundColor = BearyColors.line
         cancelButton.setTitle("取消", for: .normal)
         cancelButton.setTitleColor(BearyColors.ink, for: .normal)
@@ -481,6 +493,8 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         publishButton.titleEdgeInsets = UIEdgeInsets(top: 0, left: 6, bottom: 0, right: 0)
         publishButton.layer.cornerRadius = 20
         publishButton.layer.masksToBounds = true
+        // 玻璃批：主操作钮玻璃 tint 取橙（FAB 同款）；取消钮默认中性 tint 不动。
+        publishButton.glassTint = BearyColors.orange
         publishButton.addTarget(self, action: #selector(didTapPublish), for: .touchUpInside)
         // 发布中 spinner：平时停在发送图标位，发布/保存中时替下发送图标转圈（E3-4）。
         publishRingView.translatesAutoresizingMaskIntoConstraints = false
@@ -546,8 +560,8 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             return
         }
         if publishButton.isEnabled {
-            publishButton.backgroundColor = BearyColors.ink
-            // 底是 ink、字须取反色 bg：深色下 ink 近白，白字面量会糊在底上看不见。
+            // 玻璃批：原墨色实底改 clear，底色改由橙玻璃提供，实底会盖住玻璃；字/图标仍取反色 bg。
+            publishButton.backgroundColor = UIColor.clear
             publishButton.setTitleColor(BearyColors.bg, for: .normal)
             publishButton.tintColor = BearyColors.bg
         } else {
@@ -1450,6 +1464,17 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             quotePanelRows.trailingAnchor.constraint(equalTo: quotePanel.trailingAnchor),
             quotePanelRows.bottomAnchor.constraint(equalTo: quotePanel.bottomAnchor),
         ])
+        // 玻璃批：面板自身底改 clear，玻璃背板插 index 0 钉满面板 bounds；圆角沿用面板现有值，不新编。
+        quotePanel.backgroundColor = UIColor.clear
+        let quoteGlass = BearyGlass.effectView(tint: BearyGlass.neutralTint)
+        quoteGlass.translatesAutoresizingMaskIntoConstraints = false
+        quotePanel.insertSubview(quoteGlass, at: 0)
+        NSLayoutConstraint.activate([
+            quoteGlass.topAnchor.constraint(equalTo: quotePanel.topAnchor),
+            quoteGlass.bottomAnchor.constraint(equalTo: quotePanel.bottomAnchor),
+            quoteGlass.leadingAnchor.constraint(equalTo: quotePanel.leadingAnchor),
+            quoteGlass.trailingAnchor.constraint(equalTo: quotePanel.trailingAnchor),
+        ])
         quotePanel.isHidden = true
         contentStack.setCustomSpacing(16, after: quotePanel)
     }
@@ -1505,6 +1530,20 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             moodSection.isHidden = true
             quoteSection.isHidden = true
             ruleBoxView.isHidden = true
+            // 间隙修复（只动布局）：滚动归零不影响开头已保存的恢复偏移；面板前各区栈间距显式置 0，
+            // 否则隐藏区塌掉后残留 customSpacing 会在面板上方留空隙；tab 条显式可见后先落一次布局，
+            // 再显示面板，首帧即按无间隙高度算。
+            scrollView.contentOffset = CGPoint.zero
+            contentStack.setCustomSpacing(0, after: textView)
+            contentStack.setCustomSpacing(0, after: imageScrollView)
+            contentStack.setCustomSpacing(0, after: extrasBarContainer)
+            contentStack.setCustomSpacing(0, after: weatherScrollView)
+            contentStack.setCustomSpacing(0, after: statusRow)
+            contentStack.setCustomSpacing(0, after: recipientSection)
+            contentStack.setCustomSpacing(0, after: moodSection)
+            contentStack.setCustomSpacing(0, after: quoteSection)
+            quoteTabBarContainer.isHidden = false
+            view.layoutIfNeeded()
             quotePanel.isHidden = false
             cancelButton.setTitle("返回", for: .normal)
             publishButton.isHidden = true
@@ -1530,6 +1569,15 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                 self.ruleBoxView.isHidden = false
                 self.cancelButton.setTitle("取消", for: .normal)
                 self.publishButton.isHidden = false
+                // 间隙修复的关闭恢复：把打开时置 0 的栈间距按 build 时原值还原（其余区同 build 原值）。
+                self.contentStack.setCustomSpacing(12, after: self.textView)
+                self.contentStack.setCustomSpacing(4, after: self.imageScrollView)
+                self.contentStack.setCustomSpacing(4, after: self.extrasBarContainer)
+                self.contentStack.setCustomSpacing(8, after: self.weatherScrollView)
+                self.contentStack.setCustomSpacing(8, after: self.statusRow)
+                self.contentStack.setCustomSpacing(8, after: self.recipientSection)
+                self.contentStack.setCustomSpacing(12, after: self.moodSection)
+                self.contentStack.setCustomSpacing(0, after: self.quoteSection)
                 // 各区显隐按正常态重算（天气行含独立开关、写给含编辑态通知行、引用含 pill 约束）。
                 self.refreshExtras()
                 self.refreshRecipientRow()

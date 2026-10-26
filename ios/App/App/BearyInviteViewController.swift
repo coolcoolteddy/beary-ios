@@ -26,7 +26,8 @@ import UIKit
 //   - reload()：手动刷新（每次点开新建一页，打开时 viewDidLoad 已拉取一次）。
 // 礼物钮门控不在本页：容器用 refreshMe 结果（/me 的
 // referral.enabled，网页 giftBtn 显示逻辑同款）决定是否显示礼物钮。
-// 颜色一律走 BearyColors，不新增字面量颜色；不使用液态玻璃效果；无 force unwrap。
+// 颜色一律走 BearyColors，不新增字面量颜色；弹窗背板与关闭/复制钮走 BearyGlass
+// （中性 bg 52% tint，见 BearyNativeCommon）；无 force unwrap。
 
 final class BearyInviteViewController: UIViewController {
     /// 用户点关闭钮。本页不自己 dismiss，容器负责关闭。
@@ -37,12 +38,12 @@ final class BearyInviteViewController: UIViewController {
     private let scrollView = UIScrollView()
     private let contentView = UIView()
     private let stackView = UIStackView()
-    private let closeButton = BearyHit44Button(type: .system)
+    private let closeButton = BearyGlassButton(type: .system)
     private let titleLabel = UILabel()
     private let subtitleLabel = UILabel()
     private let codeBox = UIView()
     private let codeLabel = UILabel()
-    private let copyButton = UIButton(type: .system)
+    private let copyButton = BearyGlassButton(type: .system)
     private let hintLabel = UILabel()
     private let statsLabel = UILabel()
     private let boundLabel = UILabel()
@@ -79,7 +80,7 @@ final class BearyInviteViewController: UIViewController {
 
     override func viewDidLoad() {
         super.viewDidLoad()
-        view.backgroundColor = BearyColors.bg
+        view.backgroundColor = .clear
         buildLayout()
         // 52 批：先定一次非 0 首帧高，避免呈现层首帧以 preferred=0 走 88%/80% 满高封顶；
         // 布局落定后 viewDidLayoutSubviews 再按真实宽与安全区纠正。
@@ -101,7 +102,8 @@ final class BearyInviteViewController: UIViewController {
     /// 底 sheet 与居中卡片的 presentation 方各以 88% / 80% 容器高封顶取小，
     /// 内容超高时内层 scrollView 可滚。绑定区显隐变化时布局重算即跟高；
     /// 仅高度变化超 0.5pt 才写 preferredContentSize，避免布局循环。
-    /// 不设 tint/玻璃：弹窗本体仍是 bg 实色（与网页 lgm-sheet 的 surface 同口径）。
+    /// 玻璃批：弹窗本体已改玻璃背板（view 底 clear + BearyGlass 背板钉满），
+    /// 外形圆角仍由呈现层定，本方法只算高度不动玻璃。
     /// 52 批：此前只写 preferredContentSize、不通知呈现层，导致首帧 0 高 fallback 走 88%/80%
     /// 满高封顶后不回落（即“弹窗过高”）；现与编辑器同款，写完即请父视图重布局，
     /// 呈现层 containerViewWillLayoutSubviews 重算帧；首帧 view.bounds 仍为 0 时按屏宽估算。
@@ -124,6 +126,18 @@ final class BearyInviteViewController: UIViewController {
     // MARK: - 布局（与登录页同尺寸体系：左右 22、输入框高 48、内容列 ≤432）
 
     private func buildLayout() {
+        // 玻璃批：弹窗玻璃背板钉满 view（index 0，在 scrollView 之下）；本文件内无卡片
+        // 容器圆角值，故背板不新编圆角，外形由呈现层 presentedView 的圆角 20 + 裁剪定
+        // （居中卡片/底 sheet 呈现层均已设 cornerRadius 20 与 clipsToBounds，本文件不动）。
+        let inviteGlassView = BearyGlass.effectView(tint: BearyGlass.neutralTint)
+        inviteGlassView.translatesAutoresizingMaskIntoConstraints = false
+        view.insertSubview(inviteGlassView, at: 0)
+        NSLayoutConstraint.activate([
+            inviteGlassView.topAnchor.constraint(equalTo: view.topAnchor),
+            inviteGlassView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
+            inviteGlassView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            inviteGlassView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+        ])
         scrollView.translatesAutoresizingMaskIntoConstraints = false
         contentView.translatesAutoresizingMaskIntoConstraints = false
         stackView.translatesAutoresizingMaskIntoConstraints = false
@@ -134,7 +148,7 @@ final class BearyInviteViewController: UIViewController {
         contentView.addSubview(stackView)
 
         closeButton.translatesAutoresizingMaskIntoConstraints = false
-        closeButton.backgroundColor = BearyColors.faint
+        closeButton.backgroundColor = .clear
         closeButton.layer.cornerRadius = 16
         closeButton.tintColor = BearyColors.ink
         closeButton.setImage(BearyIconImages.image(named: "icon_close", pointSize: 15), for: .normal)
@@ -163,9 +177,9 @@ final class BearyInviteViewController: UIViewController {
         codeLabel.font = UIFont.systemFont(ofSize: 20, weight: .bold)
         codeLabel.textColor = BearyColors.ink
         copyButton.translatesAutoresizingMaskIntoConstraints = false
-        copyButton.layer.cornerRadius = 12
-        // C4：复制钮改用 surface 底，与码框 faint 底拉开对比（深色下不再融为一体）。
-        copyButton.backgroundColor = BearyColors.surface
+        // 玻璃批：复制钮走玻璃（BearyGlassButton 玻璃圆角取半高成胶囊，原 12 圆角与
+        // surface 实色底一并让位；橙字/复制文案不动，码框 faint 底不动）。
+        copyButton.backgroundColor = .clear
         copyButton.setTitle("复制", for: .normal)
         copyButton.setTitleColor(BearyColors.orange, for: .normal)
         copyButton.titleLabel?.font = UIFont.systemFont(ofSize: 14, weight: .semibold)

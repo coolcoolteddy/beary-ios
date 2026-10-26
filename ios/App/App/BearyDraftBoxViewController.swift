@@ -70,20 +70,22 @@ final class BearyDraftBoxViewController: UIViewController {
 
     private let backdropButton = UIButton(type: .custom)
     private let sheetView = UIView()
+    /// 玻璃批：sheet 玻璃背板（钉在 sheetView 内部，只裁玻璃自身，不裁 sheetView 阴影）。
+    private let sheetGlassView = BearyGlass.effectView(tint: BearyGlass.neutralTint)
     private let sheetScrollView = UIScrollView()
     private let contentStack = UIStackView()
     private let topBorderView = UIView()
     private let handleView = UIView()
     private let headerWrap = UIView()
     private let titleLabel = UILabel()
-    private let closeButton = BearyHit44Button(type: .custom)
+    private let closeButton = BearyGlassButton(type: .custom)
     private let subWrap = UIView()
     private let subLabel = UILabel()
     private let newButton = BearyDraftBoxDashedButton(type: .custom)
     private let undoWrap = UIView()
     private let undoBar = UIView()
     private let undoLabel = UILabel()
-    private let undoButton = UIButton(type: .custom)
+    private let undoButton = BearyGlassButton(type: .custom)
     private let listWrap = UIView()
     private let listStack = UIStackView()
     private let hintWrap = UIView()
@@ -175,9 +177,21 @@ final class BearyDraftBoxViewController: UIViewController {
         backdropButton.translatesAutoresizingMaskIntoConstraints = false
         view.addSubview(backdropButton)
 
-        sheetView.backgroundColor = BearyColors.bg
+        sheetView.backgroundColor = .clear
         sheetView.layer.cornerRadius = 20
         sheetView.layer.shadowColor = UIColor.black.cgColor
+        // 玻璃批：玻璃只钉在 sheetView 内部（index 0，在 topBorder/scrollView 之下），
+        // 玻璃自身圆角 20 + clipsToBounds；sheetView 本身不裁剪，阴影保留。
+        sheetGlassView.layer.cornerRadius = 20
+        sheetGlassView.clipsToBounds = true
+        sheetGlassView.translatesAutoresizingMaskIntoConstraints = false
+        sheetView.insertSubview(sheetGlassView, at: 0)
+        NSLayoutConstraint.activate([
+            sheetGlassView.topAnchor.constraint(equalTo: sheetView.topAnchor),
+            sheetGlassView.bottomAnchor.constraint(equalTo: sheetView.bottomAnchor),
+            sheetGlassView.leadingAnchor.constraint(equalTo: sheetView.leadingAnchor),
+            sheetGlassView.trailingAnchor.constraint(equalTo: sheetView.trailingAnchor),
+        ])
         sheetView.translatesAutoresizingMaskIntoConstraints = false
         view.addSubview(sheetView)
 
@@ -218,7 +232,7 @@ final class BearyDraftBoxViewController: UIViewController {
         titleLabel.textAlignment = .center
         titleLabel.translatesAutoresizingMaskIntoConstraints = false
         headerWrap.addSubview(titleLabel)
-        closeButton.backgroundColor = BearyColors.faint
+        closeButton.backgroundColor = .clear
         closeButton.layer.cornerRadius = 16
         closeButton.tintColor = BearyColors.ink
         closeButton.accessibilityLabel = "关闭"
@@ -444,6 +458,8 @@ final class BearyDraftBoxViewController: UIViewController {
             topBorderView.isHidden = false
             sheetScrollView.layer.maskedCorners = [.layerMinXMinYCorner, .layerMaxXMinYCorner]
         }
+        // 玻璃批：玻璃圆角裁剪跟随 sheet（手机仅顶圆角 / iPad 四圆角），仍只裁玻璃。
+        sheetGlassView.layer.maskedCorners = sheetView.layer.maskedCorners
     }
 
     private func updateSheetHeight() {
@@ -651,7 +667,7 @@ final class BearyDraftBoxViewController: UIViewController {
             topRow.addArrangedSubview(imageRow)
         }
         // 卡片操作钮（网页 .df-open/.df-trash 同款）：打开钮整卡点按等价，删除钮本地删卡。
-        let openButton = UIButton(type: .custom)
+        let openButton = BearyGlassButton(type: .custom)
         openButton.setTitle("打开", for: .normal)
         openButton.setTitleColor(BearyColors.ink, for: .normal)
         openButton.titleLabel?.font = UIFont.systemFont(ofSize: 12.5)
@@ -663,7 +679,7 @@ final class BearyDraftBoxViewController: UIViewController {
         openButton.addTarget(self, action: #selector(openTapped(_:)), for: .touchUpInside)
         topRow.addArrangedSubview(openButton)
         openEntries.append((button: openButton, draftValue: draftValue))
-        let deleteButton = UIButton(type: .custom)
+        let deleteButton = BearyGlassButton(type: .custom)
         if let trashImage = BearyIconImages.image(named: "icon_trash", pointSize: 17) {
             deleteButton.setImage(trashImage, for: .normal)
         }
@@ -1362,6 +1378,19 @@ private final class BearyDraftBoxDashedButton: UIButton {
 
     override init(frame: CGRect) {
         super.init(frame: frame)
+        // 玻璃批：虚线钮只换底质——玻璃 subview 先加，随后 dashedLayer 叠加其上，
+        // 虚线描边仍在玻璃之上；玻璃圆角 12 与虚线 path 圆角一致。
+        let glassView = BearyGlass.effectView(tint: BearyGlass.neutralTint)
+        glassView.translatesAutoresizingMaskIntoConstraints = false
+        glassView.layer.cornerRadius = 12
+        glassView.clipsToBounds = true
+        addSubview(glassView)
+        NSLayoutConstraint.activate([
+            glassView.topAnchor.constraint(equalTo: topAnchor),
+            glassView.bottomAnchor.constraint(equalTo: bottomAnchor),
+            glassView.leadingAnchor.constraint(equalTo: leadingAnchor),
+            glassView.trailingAnchor.constraint(equalTo: trailingAnchor),
+        ])
         dashedLayer.fillColor = UIColor.clear.cgColor
         dashedLayer.strokeColor = BearyColors.line.cgColor
         dashedLayer.lineWidth = 1.5

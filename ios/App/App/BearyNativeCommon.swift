@@ -25,7 +25,10 @@ enum BearyColors {
     static var green: UIColor { UIColor(red: 47.0/255.0, green: 191.0/255.0, blue: 113.0/255.0, alpha: 1) }
     /// 网页 --line：浅 #dbdbdb / 深 #3a3a40（深色带蓝偏，单 white 值复现不了）。
     static var line: UIColor { UIColor { t in t.userInterfaceStyle == .dark ? UIColor(red: 58.0/255.0, green: 58.0/255.0, blue: 64.0/255.0, alpha: 1) : UIColor(white: 0.86, alpha: 1) } }
-    static var bg: UIColor { UIColor { t in t.userInterfaceStyle == .dark ? .black : .white } }
+    /// 网页 --bg：浅 #fff / 深 #1c1c1e（Li 2026-10-26 定：深色去纯黑；原深色 .black 已改）。
+    /// 全 App 深色面（页面底、窗口底、容器底、玻璃 tint 基色）均走本变量，改一处即全跟走。
+    /// 注意：裁剪页/灯箱的纯黑底、遮罩 scrim、阴影色是故意的黑，不走本变量，一律不动。
+    static var bg: UIColor { UIColor { t in t.userInterfaceStyle == .dark ? UIColor(red: 28.0/255.0, green: 28.0/255.0, blue: 30.0/255.0, alpha: 1) : .white } }
     /// 网页 --surface：浅 #fff / 深 #26262c。
     static var surface: UIColor { UIColor { t in t.userInterfaceStyle == .dark ? UIColor(red: 38.0/255.0, green: 38.0/255.0, blue: 44.0/255.0, alpha: 1) : .white } }
     static var faint: UIColor { UIColor { t in t.userInterfaceStyle == .dark ? UIColor(white: 0.08, alpha: 1) : UIColor(white: 0.96, alpha: 1) } }
@@ -41,6 +44,76 @@ enum BearyColors {
         return UIColor { trait in
             color.resolvedColor(with: trait).withAlphaComponent(alpha)
         }
+    }
+}
+
+// MARK: - 液态玻璃（与 SceneDelegate.makeGlassView 同配方，勿另起 tint）
+
+/// 玻璃配方唯一口径：iOS 26+ 为 UIGlassEffect，低版本降级系统毛玻璃；
+/// tint 只用两档：中性 bg 52%（与顶栏/底栏同款）、主操作橙（与 FAB 同款）。
+/// SceneDelegate.makeGlassView 与本 helper 同配方，调用点按需任选其一，不新增配方。
+/// 部署目标 iOS 15.0：分支内 #available 兜底，不抬部署目标，不引新依赖。
+enum BearyGlass {
+    static func effectView(tint: UIColor? = nil) -> UIVisualEffectView {
+        if #available(iOS 26.0, *) {
+            let effect = UIGlassEffect()
+            effect.tintColor = tint
+            return UIVisualEffectView(effect: effect)
+        } else {
+            let view = UIVisualEffectView(effect: UIBlurEffect(style: .systemMaterial))
+            view.contentView.backgroundColor = tint
+            return view
+        }
+    }
+
+    /// 中性玻璃 tint：bg 52%（顶栏/底栏同款）。
+    static var neutralTint: UIColor { BearyColors.bg.withAlphaComponent(0.52) }
+}
+
+/// 玻璃按钮：BearyHit44Button + 背部玻璃底。只换按钮底质，不动图标/文字/尺寸/44pt 热区；
+/// 点亮色、描边、边框等上层样式一律不动。圆角取半高（44×44 图标钮为圆、宽钮为胶囊，与预览一致）。
+/// 玻璃视图插在 index 0，位于 imageView/titleLabel 之下；backgroundColor 必须保持 clear，
+/// 否则实色底会盖住玻璃——转换点须同步把原实色底改 clear（边框/描边不动）。
+/// UIButton(type:) 在子类上调用仍走本类实例，现有 BearyHit44Button(type:) 调用点只改类名即可。
+final class BearyGlassButton: BearyHit44Button {
+    private var glassView: UIVisualEffectView?
+
+    /// 玻璃 tint：默认中性 bg 52%；主操作（发布/分享/登录）置 BearyColors.orange（FAB 同款）。
+    var glassTint: UIColor? = BearyGlass.neutralTint {
+        didSet { rebuildGlass() }
+    }
+
+    private func rebuildGlass() {
+        glassView?.removeFromSuperview()
+        let gv = BearyGlass.effectView(tint: glassTint)
+        gv.translatesAutoresizingMaskIntoConstraints = false
+        insertSubview(gv, at: 0)
+        NSLayoutConstraint.activate([
+            gv.topAnchor.constraint(equalTo: topAnchor),
+            gv.bottomAnchor.constraint(equalTo: bottomAnchor),
+            gv.leadingAnchor.constraint(equalTo: leadingAnchor),
+            gv.trailingAnchor.constraint(equalTo: trailingAnchor),
+        ])
+        glassView = gv
+        setNeedsLayout()
+    }
+
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        backgroundColor = .clear
+        rebuildGlass()
+    }
+
+    required init?(coder: NSCoder) {
+        super.init(coder: coder)
+        backgroundColor = .clear
+        rebuildGlass()
+    }
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        glassView?.layer.cornerRadius = bounds.height / 2
+        glassView?.clipsToBounds = true
     }
 }
 
