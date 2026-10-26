@@ -167,9 +167,9 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     // MARK: - 视图（段落顺序即网页版顺序，见文件头注释）
 
     private let topBar = UIView()
-    private let cancelButton = BearyGlassButton(type: .system)
+    private let cancelButton = UIButton(type: .system)
     private let titleLabel = UILabel()
-    private let publishButton = BearyGlassButton(type: .system)
+    private let publishButton = UIButton(type: .system)
     private let publishRingView = UIImageView()
     private let topSeparator = UIView()
     private let scrollView = UIScrollView()
@@ -196,9 +196,9 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     private var publishWidthConstraint: NSLayoutConstraint?
     private var draftPillWidthConstraint: NSLayoutConstraint?
     private let toolbarSeparator = UIView()
-    private let imageToolButton = BearyGlassButton(type: .system)
-    private let weatherToolButton = BearyGlassButton(type: .system)
-    private let quoteToolButton = BearyGlassButton(type: .system)
+    private let imageToolButton = BearyHit44Button(type: .system)
+    private let weatherToolButton = BearyHit44Button(type: .system)
+    private let quoteToolButton = BearyHit44Button(type: .system)
     private let draftPillButton = UIButton(type: .system)
     // 附加选项栏（默认收起）
     private let extrasBarContainer = UIView()
@@ -330,9 +330,18 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         }
     }
 
+    // 看门狗修法（2026-10-27，74 包 .ips 定案）：布局轮次里重算 preferred 会与呈现层
+    // 容器布局成环——测量值每轮漂移 >0.5pt 时 0.5pt 门限防不住，主线程转圈 10 秒触发
+    // 系统 scene-update 看门狗杀进程。故只在宽变化时重算；天气开关/附加栏/图片/
+    // 正文/引用等各入口都直接调 updatePreferredContentSize，不走这里，不会丢更新。
+    // 首帧：viewDidLoad 已算一次，首个非 0 宽布局再纠正一次（lastLayoutWidth 初值 -1）。
+    private var lastLayoutWidth: CGFloat = -1
+
     override func viewDidLayoutSubviews() {
         super.viewDidLayoutSubviews()
-        // 布局每次落定都重算 sheet 高：隐藏区塌掉、文本生长、图片增减都会走这里。
+        let w = view.bounds.width
+        guard w > 0, w != lastLayoutWidth else { return }
+        lastLayoutWidth = w
         updatePreferredContentSize()
     }
 
@@ -493,8 +502,6 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         publishButton.titleEdgeInsets = UIEdgeInsets(top: 0, left: 6, bottom: 0, right: 0)
         publishButton.layer.cornerRadius = 20
         publishButton.layer.masksToBounds = true
-        // 玻璃批：主操作钮玻璃 tint 取橙（FAB 同款）；取消钮默认中性 tint 不动。
-        publishButton.glassTint = BearyColors.orange
         publishButton.addTarget(self, action: #selector(didTapPublish), for: .touchUpInside)
         // 发布中 spinner：平时停在发送图标位，发布/保存中时替下发送图标转圈（E3-4）。
         publishRingView.translatesAutoresizingMaskIntoConstraints = false
@@ -560,8 +567,8 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             return
         }
         if publishButton.isEnabled {
-            // 玻璃批：原墨色实底改 clear，底色改由橙玻璃提供，实底会盖住玻璃；字/图标仍取反色 bg。
-            publishButton.backgroundColor = UIColor.clear
+            publishButton.backgroundColor = BearyColors.ink
+            // 底是 ink、字须取反色 bg：深色下 ink 近白，白字面量会糊在底上看不见。
             publishButton.setTitleColor(BearyColors.bg, for: .normal)
             publishButton.tintColor = BearyColors.bg
         } else {
@@ -2116,10 +2123,15 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         refreshWeatherRowVisibility()
         updatePreferredContentSize()
         if !weatherScrollView.isHidden {
-            view.layoutIfNeeded()
-            let animated = !UIAccessibility.isReduceMotionEnabled
-            let target = contentView.convert(weatherScrollView.frame, from: contentStack)
-            scrollView.scrollRectToVisible(target, animated: animated)
+            // 看门狗修法（2026-10-27）：不在 preferred 刚改写、容器帧还没跟上的当口
+            // 同步强制布局（重入测量最不稳定的时刻）；滚动放到下一 runloop，在 settle
+            // 后的几何上做。滚动语义与动画门（减动效）不变。
+            DispatchQueue.main.async { [weak self] in
+                guard let self = self else { return }
+                let animated = !UIAccessibility.isReduceMotionEnabled
+                let target = self.contentView.convert(self.weatherScrollView.frame, from: self.contentStack)
+                self.scrollView.scrollRectToVisible(target, animated: animated)
+            }
         }
     }
 

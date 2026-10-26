@@ -55,15 +55,20 @@ enum BearyColors {
 /// 部署目标 iOS 15.0：分支内 #available 兜底，不抬部署目标，不引新依赖。
 enum BearyGlass {
     static func effectView(tint: UIColor? = nil) -> UIVisualEffectView {
+        let view: UIVisualEffectView
         if #available(iOS 26.0, *) {
             let effect = UIGlassEffect()
             effect.tintColor = tint
-            return UIVisualEffectView(effect: effect)
+            view = UIVisualEffectView(effect: effect)
         } else {
-            let view = UIVisualEffectView(effect: UIBlurEffect(style: .systemMaterial))
+            view = UIVisualEffectView(effect: UIBlurEffect(style: .systemMaterial))
             view.contentView.backgroundColor = tint
-            return view
         }
+        // 撤回批（2026-10-27，76 包死钮根因）：UIVisualEffectView 默认可交互，命中测试
+        // 落在玻璃层上即吞掉触摸；经此 helper 出来的玻璃一律只做视觉（背板与按钮内玻璃），
+        // 触摸由上层内容/按钮本体接管，故永不参与触摸。
+        view.isUserInteractionEnabled = false
+        return view
     }
 
     /// 中性玻璃 tint：bg 52%（顶栏/底栏同款）。

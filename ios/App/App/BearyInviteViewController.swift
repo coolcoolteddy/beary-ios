@@ -26,8 +26,8 @@ import UIKit
 //   - reload()：手动刷新（每次点开新建一页，打开时 viewDidLoad 已拉取一次）。
 // 礼物钮门控不在本页：容器用 refreshMe 结果（/me 的
 // referral.enabled，网页 giftBtn 显示逻辑同款）决定是否显示礼物钮。
-// 颜色一律走 BearyColors，不新增字面量颜色；弹窗背板与关闭/复制钮走 BearyGlass
-// （中性 bg 52% tint，见 BearyNativeCommon）；无 force unwrap。
+// 颜色一律走 BearyColors，不新增字面量颜色；弹窗背板走 BearyGlass（中性 bg 52%
+// tint，见 BearyNativeCommon），关闭/复制钮已撤回玻璃（2026-10-27）；无 force unwrap。
 
 final class BearyInviteViewController: UIViewController {
     /// 用户点关闭钮。本页不自己 dismiss，容器负责关闭。
@@ -38,12 +38,12 @@ final class BearyInviteViewController: UIViewController {
     private let scrollView = UIScrollView()
     private let contentView = UIView()
     private let stackView = UIStackView()
-    private let closeButton = BearyGlassButton(type: .system)
+    private let closeButton = BearyHit44Button(type: .system)
     private let titleLabel = UILabel()
     private let subtitleLabel = UILabel()
     private let codeBox = UIView()
     private let codeLabel = UILabel()
-    private let copyButton = BearyGlassButton(type: .system)
+    private let copyButton = UIButton(type: .system)
     private let hintLabel = UILabel()
     private let statsLabel = UILabel()
     private let boundLabel = UILabel()
@@ -148,7 +148,7 @@ final class BearyInviteViewController: UIViewController {
         contentView.addSubview(stackView)
 
         closeButton.translatesAutoresizingMaskIntoConstraints = false
-        closeButton.backgroundColor = .clear
+        closeButton.backgroundColor = BearyColors.faint
         closeButton.layer.cornerRadius = 16
         closeButton.tintColor = BearyColors.ink
         closeButton.setImage(BearyIconImages.image(named: "icon_close", pointSize: 15), for: .normal)
@@ -177,9 +177,9 @@ final class BearyInviteViewController: UIViewController {
         codeLabel.font = UIFont.systemFont(ofSize: 20, weight: .bold)
         codeLabel.textColor = BearyColors.ink
         copyButton.translatesAutoresizingMaskIntoConstraints = false
-        // 玻璃批：复制钮走玻璃（BearyGlassButton 玻璃圆角取半高成胶囊，原 12 圆角与
-        // surface 实色底一并让位；橙字/复制文案不动，码框 faint 底不动）。
-        copyButton.backgroundColor = .clear
+        copyButton.layer.cornerRadius = 12
+        // C4：复制钮改用 surface 底，与码框 faint 底拉开对比（深色下不再融为一体）。
+        copyButton.backgroundColor = BearyColors.surface
         copyButton.setTitle("复制", for: .normal)
         copyButton.setTitleColor(BearyColors.orange, for: .normal)
         copyButton.titleLabel?.font = UIFont.systemFont(ofSize: 14, weight: .semibold)

@@ -227,15 +227,19 @@ final class BearyChromeViewController: UIViewController {
     /// iOS 26+ 分支的 tintColor 不是一层实色底，只给玻璃折射/高光着色，空底色上无白可透。
     /// 修复在 viewDidLoad / scene willConnectTo 补 bg 底色，tint 保持网页口径 52% 不动，勿再靠加 tint 掩盖。
     private func makeGlassView(tint: UIColor? = nil) -> UIVisualEffectView {
+        let view: UIVisualEffectView
         if #available(iOS 26.0, *) {
             let effect = UIGlassEffect()
             effect.tintColor = tint
-            return UIVisualEffectView(effect: effect)
+            view = UIVisualEffectView(effect: effect)
         } else {
-            let view = UIVisualEffectView(effect: UIBlurEffect(style: .systemMaterial))
+            view = UIVisualEffectView(effect: UIBlurEffect(style: .systemMaterial))
             view.contentView.backgroundColor = tint
-            return view
         }
+        // 撤回批（2026-10-27，76 包死钮根因）：经此 helper 出来的玻璃只做视觉（顶栏/
+        // 底栏衬底/FAB 玻璃），永不拦截触摸；调用点原有的显式 false 保留，与此一致。
+        view.isUserInteractionEnabled = false
+        return view
     }
 
     /// 顶栏图标 imageView 显式 24×24（资产 1x 图 25×25，无约束会显示 25pt；网页 .icon 为 24）。
@@ -2180,15 +2184,18 @@ final class BearyChromeViewController: UIViewController {
 /// 低版本用 systemMaterial + 52% contentView 底色（与顶栏 makeGlassView 同口径，
 /// 该 helper 的 tint 入参语义与此一致）。
 private func bearyMenuGlassView() -> UIVisualEffectView {
+    let view: UIVisualEffectView
     if #available(iOS 26.0, *) {
         let effect = UIGlassEffect()
         effect.tintColor = BearyColors.bg.withAlphaComponent(0.52)
-        return UIVisualEffectView(effect: effect)
+        view = UIVisualEffectView(effect: effect)
     } else {
-        let view = UIVisualEffectView(effect: UIBlurEffect(style: .systemMaterial))
+        view = UIVisualEffectView(effect: UIBlurEffect(style: .systemMaterial))
         view.contentView.backgroundColor = BearyColors.bg.withAlphaComponent(0.52)
-        return view
     }
+    // 撤回批（2026-10-27）：外观卡背板只做视觉，永不拦截触摸；卡内开关/按钮在上层接管。
+    view.isUserInteractionEnabled = false
+    return view
 }
 
 /// 三档拨动开关（网页 .switch-btn 口径 beary.html:176-181）：
@@ -2503,18 +2510,22 @@ private final class BearyComposerSheetPresentationController: UIPresentationCont
         super.containerViewWillLayoutSubviews()
         guard let presentedView = presentedView else { return }
         let frame = frameOfPresentedViewInContainerView
-        presentedView.frame = frame
-        sheetHeight = frame.height
+        // 看门狗修法（2026-10-27，第二层）：等值帧不再重复赋值与带阴影层重算，
+        // 防止等值帧设置本身反复脏化呈现子树；与 Composer 宽门互为备份。
+        if presentedView.frame != frame {
+            presentedView.frame = frame
+            sheetHeight = frame.height
+            // 阴影层与 sheet 同框、跟 sheet 帧走（跟手下滑时 transform 由 pan 回调同步）。
+            sheetShadowView.frame = frame
+            sheetShadowView.layer.shadowPath = UIBezierPath(
+                roundedRect: sheetShadowView.bounds,
+                byRoundingCorners: [.topLeft, .topRight],
+                cornerRadii: CGSize(width: 20, height: 20)
+            ).cgPath
+        }
         presentedView.layer.cornerRadius = 20
         presentedView.layer.maskedCorners = [.layerMinXMinYCorner, .layerMaxXMinYCorner]
         presentedView.clipsToBounds = true
-        // 阴影层与 sheet 同框、跟 sheet 帧走（跟手下滑时 transform 由 pan 回调同步）。
-        sheetShadowView.frame = frame
-        sheetShadowView.layer.shadowPath = UIBezierPath(
-            roundedRect: sheetShadowView.bounds,
-            byRoundingCorners: [.topLeft, .topRight],
-            cornerRadii: CGSize(width: 20, height: 20)
-        ).cgPath
         // 阴影层在 presentationTransitionWillBegin 里先于 presentedView 加进容器，故天然在其下方。
         // 抓手与顶边框挂在 sheet 自身 view 顶部，随 sheet 跟手下滑而动；只装一次，帧随布局重算。
         // 抓手条不再是 28pt：仅占抓手自身高度（顶距 10 + 高 4 = 14），无附加安全区。
