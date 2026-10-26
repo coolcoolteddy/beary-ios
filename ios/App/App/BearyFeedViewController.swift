@@ -93,9 +93,9 @@ class BearyFeedViewController: UIViewController {
     /// 参数：条目 id、是否取消了点赞、是否取消了收藏。
     var onInteractionRemoved: ((String, Bool, Bool) -> Void)?
 
-    /// 行内互动（点赞/收藏/回应）成功后回传更新后的模型副本：容器接线到已打开的
-    /// 详情（D1 反向同步），本文件只通知，不直接碰详情。
-    var onRowInteractionChanged: ((Entry) -> Void)?
+    /// Q5 空态“写一篇”：容器接线到编辑器（与 FAB 写按钮同去向），本文件只通知。
+    /// 容器未接线时按钮不动作，不在本文件内 present 编辑器（导航归容器）。
+    var onComposeRequested: (() -> Void)?
 
     private enum FeedSection {
         case delivered
@@ -201,6 +201,13 @@ class BearyFeedViewController: UIViewController {
         tv.estimatedRowHeight = 220
         tv.contentInset = UIEdgeInsets(top: 8, left: 0, bottom: 90, right: 0)
         tv.scrollIndicatorInsets = tv.contentInset
+        // 顶栏透度批：表框贴页顶（view.top），系统自动安全区叠加会使 S+60 再叠加一次 S，
+        // 故关掉自动调整——此后 contentInset.top 即视觉顶距（见 applyHeaderTopInset）。
+        tv.contentInsetAdjustmentBehavior = .never
+        // 跟手批：按钮在滚动视图里默认 delaysContentTouches=true 时，
+        // 按下要等滚动判定才送达按钮，.84 按压与描边都慢半拍；关掉后触摸立即送达，
+        // 滚动仍可经 canCancelContentTouches（默认 true）取消按钮跟踪（touchCancel 已接回弹）。
+        tv.delaysContentTouches = false
         tv.register(BearyFeedCell.self, forCellReuseIdentifier: "BearyFeedCell")
         tv.delegate = self
         tv.dataSource = self
@@ -242,7 +249,22 @@ class BearyFeedViewController: UIViewController {
         subtitleLabel.textColor = BearyColors.gray
         subtitleLabel.textAlignment = .center
         subtitleLabel.numberOfLines = 0
-        let stack = UIStackView(arrangedSubviews: [pencilView, titleLabel, subtitleLabel])
+        // Q5 空态 CTA：高 44、圆角 22（pill 口径）、左右内边距 20；点按只回调
+        // onComposeRequested，导航归容器（与 FAB 同去向），本文件不 present。
+        let writeButton = UIButton(type: .custom)
+        writeButton.translatesAutoresizingMaskIntoConstraints = false
+        writeButton.setTitle("写一篇", for: .normal)
+        writeButton.setTitleColor(BearyColors.ink, for: .normal)
+        writeButton.titleLabel?.font = UIFont.systemFont(ofSize: 14, weight: .semibold)
+        writeButton.backgroundColor = BearyColors.surface
+        writeButton.layer.borderWidth = 1
+        writeButton.layer.borderColor = BearyColors.line.cgColor
+        writeButton.layer.cornerRadius = 22
+        writeButton.layer.masksToBounds = true
+        writeButton.contentEdgeInsets = UIEdgeInsets(top: 0, left: 20, bottom: 0, right: 20)
+        writeButton.heightAnchor.constraint(equalToConstant: 44).isActive = true
+        writeButton.addTarget(self, action: #selector(emptyWriteTapped), for: .touchUpInside)
+        let stack = UIStackView(arrangedSubviews: [pencilView, titleLabel, subtitleLabel, writeButton])
         stack.translatesAutoresizingMaskIntoConstraints = false
         stack.axis = .vertical
         stack.alignment = .center
@@ -264,6 +286,9 @@ class BearyFeedViewController: UIViewController {
     private var footLogoImageView: UIImageView?
     /// P2-1：600 列上限约束（宽 ≥821 才激活，开关在 viewDidLayoutSubviews）。
     private var feedColCapConstraint: NSLayoutConstraint?
+    /// 顶栏透度批：容器最后一次发来的栏态（viewDidLayoutSubviews 安全区变化时按此重算内边距与转圈顶距）。
+    private var headerTopInsetVisible = true
+    private var centralSpinnerTopConstraint: NSLayoutConstraint?
 
     // MARK: - 生命周期
 
@@ -286,6 +311,8 @@ class BearyFeedViewController: UIViewController {
         let ptrHeight = ptrView.heightAnchor.constraint(equalToConstant: 0)
         self.ptrHeightConstraint = ptrHeight
         ptrView.addSubview(ptrSpinner)
+        let spinnerTop = centralSpinner.topAnchor.constraint(equalTo: view.topAnchor, constant: 46)
+        self.centralSpinnerTopConstraint = spinnerTop
         NSLayoutConstraint.activate([
             ptrView.topAnchor.constraint(equalTo: view.topAnchor),
             ptrView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
@@ -302,7 +329,7 @@ class BearyFeedViewController: UIViewController {
             feedColWidth,
             tableView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
             centralSpinner.centerXAnchor.constraint(equalTo: view.centerXAnchor),
-            centralSpinner.topAnchor.constraint(equalTo: view.topAnchor, constant: 46),
+            spinnerTop,
             newContentPill.centerXAnchor.constraint(equalTo: view.centerXAnchor),
             newContentPill.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor, constant: -92),
         ])
@@ -341,6 +368,31 @@ class BearyFeedViewController: UIViewController {
             setEmptyVisible(true)
         }
         updateFootLogo()
+        // 顶栏透度批：安全区变化时按已存栏态重算（容器 viewDidLayoutSubviews 也会重发，双重 no-op）。
+        applyHeaderTopInset(visible: headerTopInsetVisible)
+    }
+
+    /// 顶栏透度批（容器调用，见 SceneDelegate.applyHeaderTopInsets）：主滚动视图即 tableView，
+    /// 表框贴页顶 + .never，故属性内边距即视觉顶距。显示 = 安全区顶 + 60 + 原 8 间隙，
+    /// 收起 = 安全区顶 + 原 8 间隙（与旧收起时内容起于安全区顶 + 8 一致）。底内边距同步补
+    /// 安全区底（.never 后系统不再自动叠加，旧视觉底 = 90 + 安全区底，须显式补回）。
+    /// scrollToTop 已用 -contentInset.top，.never 下即顶部，无需改；藏栏 y>120 阈值原文不动
+    /// （见最终报告：有效滚动距离随内边距增大，属已知行为变化）。
+    func applyHeaderTopInset(visible: Bool) {
+        headerTopInsetVisible = visible
+        let safeTop = view.safeAreaInsets.top
+        let top = safeTop + (visible ? 60 : 0) + 8
+        let bottom = 90 + view.safeAreaInsets.bottom
+        if tableView.contentInset.top != top || tableView.contentInset.bottom != bottom {
+            tableView.contentInset.top = top
+            tableView.contentInset.bottom = bottom
+            tableView.scrollIndicatorInsets.top = top
+            tableView.scrollIndicatorInsets.bottom = bottom
+        }
+        let spinnerTop = safeTop + (visible ? 60 : 0) + 46
+        if centralSpinnerTopConstraint?.constant != spinnerTop {
+            centralSpinnerTopConstraint?.constant = spinnerTop
+        }
     }
 
     // MARK: - 自定义下拉刷新（只换表现层；刷新逻辑仍走 pullToRefresh → refreshAll，一字不动）
@@ -567,6 +619,8 @@ class BearyFeedViewController: UIViewController {
     /// 回退（原生能力映射）：① 系统分享 sheet；② 已有 presented 时复制到剪贴板 + toast；
     /// ③ sheet 回调带错时同样复制 + toast。
     private func presentShareSheet(for entry: Entry) {
+        // B3：未公开直接 return，不进分享 sheet、不交出正文前 60 字、不走剪贴板回退。
+        if entry.isPublic != true { return }
         guard let entryIdValue = entry.id, !entryIdValue.isEmpty,
               let urlValue = URL(string: "https://teddyhn.com/beary/d/" + entryIdValue) else { return }
         let shareText = (entry.content ?? "").replacingOccurrences(of: "\\s+", with: " ", options: .regularExpression)
@@ -596,6 +650,32 @@ class BearyFeedViewController: UIViewController {
             }
         }
         present(activity, animated: !UIAccessibility.isReduceMotionEnabled, completion: nil)
+    }
+
+    /// Q9 卡片长按菜单：分享/收藏复用 cell 内已有处理（shareTapped 经
+    /// onShareRequested 走 presentShareSheet；bookmarkTapped 走原收藏接口），
+    /// 不新增服务端接口；非公开卡不给分享项（与分享钮隐藏口径一致）。
+    private func presentCardLongPressMenu(cell: BearyFeedCell, entry: Entry) {
+        if presentedViewController != nil { return }
+        let menu = UIAlertController(title: nil, message: nil, preferredStyle: .actionSheet)
+        if entry.isPublic == true {
+            menu.addAction(UIAlertAction(title: "分享", style: .default) { _ in
+                cell.shareFromLongPressMenu()
+            })
+        }
+        menu.addAction(UIAlertAction(title: "收藏", style: .default) { _ in
+            cell.bookmarkFromLongPressMenu()
+        })
+        menu.addAction(UIAlertAction(title: "取消", style: .cancel))
+        if let popover = menu.popoverPresentationController {
+            popover.sourceView = tableView
+            if let entryIdValue = entry.id, let path = indexPath(for: entryIdValue) {
+                popover.sourceRect = tableView.rectForRow(at: path)
+            } else {
+                popover.sourceRect = CGRect(x: tableView.bounds.midX, y: tableView.bounds.midY, width: 0, height: 0)
+            }
+        }
+        present(menu, animated: !UIAccessibility.isReduceMotionEnabled, completion: nil)
     }
 
     /// F1：图片查看器（本文件内实现；详情的查看器类为其文件私有，无法跨文件复用）。
@@ -646,7 +726,7 @@ class BearyFeedViewController: UIViewController {
                 made.leadingAnchor.constraint(greaterThanOrEqualTo: view.leadingAnchor, constant: 24),
                 made.trailingAnchor.constraint(lessThanOrEqualTo: view.trailingAnchor, constant: -24),
                 made.centerXAnchor.constraint(equalTo: view.centerXAnchor),
-                made.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor, constant: -24),
+                made.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor, constant: -158),
                 label.topAnchor.constraint(equalTo: made.topAnchor, constant: 9),
                 label.bottomAnchor.constraint(equalTo: made.bottomAnchor, constant: -9),
                 label.leadingAnchor.constraint(equalTo: made.leadingAnchor, constant: 16),
@@ -1324,7 +1404,19 @@ class BearyFeedViewController: UIViewController {
             // 只在首次成为 header 时播一次（viewDidLayoutSubviews 会反复调本函数，
             // 在那里播会陷入布局循环式重播；刷新时先 false 再 true，仍会经此分支重播）。
             feedEmptyPencilView?.start()
+            // 新规矩 (b)：空态首次出现淡入（已有空态不重播；减动效直显）。
+            if !UIAccessibility.isReduceMotionEnabled {
+                emptyView.alpha = 0
+                UIView.animate(withDuration: 0.25, animations: {
+                    self.emptyView.alpha = 1
+                })
+            }
         }
+    }
+
+    /// Q5 空态 CTA：只转发 onComposeRequested，导航归容器。
+    @objc private func emptyWriteTapped() {
+        onComposeRequested?()
     }
 
     /// 空态恢复网页口径：首拉完成、两流均无条目且均无失败时显示空态文案；
@@ -1467,15 +1559,9 @@ class BearyFeedViewController: UIViewController {
         }
         cell.onInteractionChanged = { [weak self] changedEntryIdValue, likeCountValue, likedValue, bookmarkedValue in
             self?.applyInteraction(entryId: changedEntryIdValue, likeCount: likeCountValue, likedByMe: likedValue, bookmarkedByMe: bookmarkedValue, emotes: nil)
-            if let updated = self?.entryModel(for: changedEntryIdValue) {
-                self?.onRowInteractionChanged?(updated)
-            }
         }
         cell.onEmoteChanged = { [weak self] changedEntryIdValue, emotesValue in
             self?.applyInteraction(entryId: changedEntryIdValue, likeCount: nil, likedByMe: nil, bookmarkedByMe: nil, emotes: emotesValue)
-            if let updated = self?.entryModel(for: changedEntryIdValue) {
-                self?.onRowInteractionChanged?(updated)
-            }
         }
         cell.onEmoteAddRequested = { [weak self, weak cell] in
             self?.presentEmoteSheet(cell: cell, entryIdValue: entry.id ?? "")
@@ -1495,6 +1581,10 @@ class BearyFeedViewController: UIViewController {
         }
         cell.onShareRequested = { [weak self] entryValue in
             self?.presentShareSheet(for: entryValue)
+        }
+        cell.onLongPressMenuRequested = { [weak self, weak cell] in
+            guard let targetCell = cell else { return }
+            self?.presentCardLongPressMenu(cell: targetCell, entry: entry)
         }
         cell.onPublishTapped = { [weak self] in
             self?.handlePublishTap(entryId: entry.id ?? "")
@@ -1695,7 +1785,8 @@ extension BearyFeedViewController: UITableViewDataSource, UITableViewDelegate {
         if kind(for: indexPath.section) != .plaza { return }
         let entries = plazaEntries()
         if entries.isEmpty { return }
-        if indexPath.row != plazaSectionRowOffset + entries.count - 1 { return }
+        // S9：距末尾 3 行即预取（倒数第 3 行显示时触发）；loading 守卫与后续条件不动。
+        if indexPath.row < plazaSectionRowOffset + entries.count - 3 { return }
         if plazaError || plazaLoading || !plazaHasMore { return }
         loadPlazaNextPage()
     }
@@ -1903,7 +1994,7 @@ class BearyFeedErrorCell: UITableViewCell {
 
 // MARK: - 日记卡片 cell（F1–F13）
 
-class BearyFeedCell: UITableViewCell {
+class BearyFeedCell: UITableViewCell, UIGestureRecognizerDelegate {
 
     /// 点图片条时触发（传图片下标，控制器开本文件内查看器；不再进详情）。
     var onImageTapped: ((Int) -> Void)?
@@ -1924,6 +2015,8 @@ class BearyFeedCell: UITableViewCell {
     var onPublishCancelTapped: (() -> Void)?
     /// 点头像或作者名：打开作者主页。
     var onAuthorTapped: (() -> Void)?
+    /// Q9 卡片长按：只转发，菜单由控制器 present（分享/收藏走 cell 内已有处理）。
+    var onLongPressMenuRequested: (() -> Void)?
     private var authorTapInstalled = false
     /// 折叠切换 / 引用异步落位后，行高需重算时通知控制器 reloadRows（.none，无动画）。
     var onNeedsRowReload: (() -> Void)?
@@ -1950,6 +2043,8 @@ class BearyFeedCell: UITableViewCell {
     private var isBookmarkBusy = false
     /// 点赞描边先行图层（0.5s 描边画出，服务器确认/失败后移除；不改填充与计数）。
     private var likeStrokeLayer: CAShapeLayer?
+    /// 跟手批：按下已给过先行反馈（描边/预取消赞），抬起确认时不再重播。
+    private var likePressPreviewActive = false
     /// 点赞钮显式宽约束：见 updateLikeButton 的宽度算法。
     private var likeButtonWidthConstraint: NSLayoutConstraint?
     /// 折叠溢出判定缓存（nil = 未测）：300 字以上且实测超 6 行才溢出。
@@ -2074,7 +2169,7 @@ class BearyFeedCell: UITableViewCell {
     private let timeLabel: UILabel = {
         let lb = UILabel()
         lb.translatesAutoresizingMaskIntoConstraints = false
-        lb.font = UIFont.systemFont(ofSize: 14)
+        lb.font = UIFont.systemFont(ofSize: 13)
         lb.textColor = BearyColors.gray
         lb.numberOfLines = 1
         return lb
@@ -2094,7 +2189,7 @@ class BearyFeedCell: UITableViewCell {
     private let moodLabel: UILabel = {
         let lb = UILabel()
         lb.translatesAutoresizingMaskIntoConstraints = false
-        lb.font = UIFont.systemFont(ofSize: 12.5)
+        lb.font = UIFont.systemFont(ofSize: 13)
         lb.textColor = BearyColors.gray
         lb.numberOfLines = 1
         return lb
@@ -2133,7 +2228,7 @@ class BearyFeedCell: UITableViewCell {
     private let contentLabel: UILabel = {
         let lb = UILabel()
         lb.translatesAutoresizingMaskIntoConstraints = false
-        lb.font = UIFont.systemFont(ofSize: 15)
+        lb.font = UIFont.systemFont(ofSize: 16)
         lb.textColor = BearyColors.ink
         lb.numberOfLines = 0
         // P3-3：长串断行——超长无空格 token 按字符断行，不溢出；字号行高不动。
@@ -2185,6 +2280,9 @@ class BearyFeedCell: UITableViewCell {
         btn.addTarget(self, action: #selector(likeTapped), for: .touchUpInside)
         btn.addTarget(self, action: #selector(iconTouchDown(_:)), for: .touchDown)
         btn.addTarget(self, action: #selector(iconTouchUp(_:)), for: [.touchUpInside, .touchUpOutside, .touchCancel])
+        // 跟手批：按下即预览、抬起在外/滚动取消即复原（API 只在抬起确认时发）。
+        btn.addTarget(self, action: #selector(likePressDown), for: .touchDown)
+        btn.addTarget(self, action: #selector(likePressCancelled), for: [.touchUpOutside, .touchCancel])
         return btn
     }()
 
@@ -2249,9 +2347,9 @@ class BearyFeedCell: UITableViewCell {
         btn.setTitle("公开", for: .normal)
         btn.setTitleColor(BearyColors.ink, for: .normal)
         btn.contentEdgeInsets = UIEdgeInsets(top: 6, left: 12, bottom: 6, right: 12)
-        // 网页 .obtn 口径：高 40、圆角 20（此前视觉高约 30、圆角 15）。
-        btn.layer.cornerRadius = 20
-        btn.heightAnchor.constraint(equalToConstant: 40).isActive = true
+        // 网页 .obtn 口径：高 44、圆角 22（Q1 按钮高/pill 圆角统一；此前高 40、圆角 20）。
+        btn.layer.cornerRadius = 22
+        btn.heightAnchor.constraint(equalToConstant: 44).isActive = true
         btn.layer.borderWidth = 1
         btn.layer.borderColor = BearyColors.line.cgColor
         btn.addTarget(self, action: #selector(publishTapped), for: .touchUpInside)
@@ -2324,6 +2422,13 @@ class BearyFeedCell: UITableViewCell {
         contentView.addSubview(rightStack)
         imagesScrollView.addSubview(imagesStack)
         contentView.addSubview(bottomLineView)
+        // Q9 卡片长按：挂 contentView、只在 .began 转发一次；cancelsTouchesInView=false，
+        // 使点按/滚动不受影响；与按钮/图片/引用/作者手势的互斥见 longPress delegate。
+        let cardLongPress = UILongPressGestureRecognizer(target: self, action: #selector(cardLongPressed(_:)))
+        cardLongPress.minimumPressDuration = 0.5
+        cardLongPress.delegate = self
+        cardLongPress.cancelsTouchesInView = false
+        contentView.addGestureRecognizer(cardLongPress)
         // D2：公开行插在点赞钮与 spacer 之间（网页操作行：likeBtn + pubAction + spacer + bmBtn + shBtn）。
         actionStack.insertArrangedSubview(pubStack, at: 1)
         nameLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
@@ -2341,7 +2446,7 @@ class BearyFeedCell: UITableViewCell {
         likeButtonWidthConstraint = likeWidth
         let emoteHeight = emoteFlowView.heightAnchor.constraint(equalToConstant: 0)
         emoteRowHeightConstraint = emoteHeight
-        let rightTop = rightStack.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 22)
+        let rightTop = rightStack.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 14)
         rightStackTopConstraint = rightTop
         // 标题行内可隐藏的子视图：被 stack 隐藏时 stack 会将其尺寸压为 0，
         // 固定尺寸用 999 优先级，避免与 stack 的零尺寸约束冲突出警告；显示时 999 照常生效。
@@ -2354,8 +2459,8 @@ class BearyFeedCell: UITableViewCell {
         let weatherWidth = weatherImageView.widthAnchor.constraint(equalToConstant: 15)
         weatherWidth.priority = UILayoutPriority(999)
         NSLayoutConstraint.activate([
-            avatarContainer.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 22),
-            avatarContainer.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 20),
+            avatarContainer.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 14),
+            avatarContainer.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 16),
             avatarContainer.widthAnchor.constraint(equalToConstant: 40),
             avatarContainer.heightAnchor.constraint(equalToConstant: 40),
             avatarInitialLabel.centerXAnchor.constraint(equalTo: avatarContainer.centerXAnchor),
@@ -2370,7 +2475,7 @@ class BearyFeedCell: UITableViewCell {
             avatarRetryButton.heightAnchor.constraint(equalToConstant: 44),
             rightTop,
             rightStack.leadingAnchor.constraint(equalTo: avatarContainer.trailingAnchor, constant: 12),
-            rightStack.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -20),
+            rightStack.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -16),
             rightStack.bottomAnchor.constraint(equalTo: contentView.bottomAnchor, constant: -14),
             recipientIconView.widthAnchor.constraint(equalToConstant: 13),
             recipientIconHeight,
@@ -2448,6 +2553,7 @@ class BearyFeedCell: UITableViewCell {
         onPublishCancelTapped = nil
         onAuthorTapped = nil
         onNeedsRowReload = nil
+        onLongPressMenuRequested = nil
         currentEntry = nil
         currentEntryIdValue = nil
         currentImageKeys = []
@@ -2456,6 +2562,7 @@ class BearyFeedCell: UITableViewCell {
         isBookmarkBusy = false
         likeStrokeLayer?.removeFromSuperlayer()
         likeStrokeLayer = nil
+        likePressPreviewActive = false
         foldOverflow = nil
         currentEmoteList = []
         isEmoteBusy = false
@@ -2525,7 +2632,7 @@ class BearyFeedCell: UITableViewCell {
         // P3-3：富文本段落样式会覆盖 label 的 lineBreakMode，此处同步按字符断行（字号行高不动）。
         paragraph.lineBreakMode = .byCharWrapping
         let attrs: [NSAttributedString.Key: Any] = [
-            .font: UIFont.systemFont(ofSize: 15),
+            .font: UIFont.systemFont(ofSize: 16),
             .foregroundColor: BearyColors.ink,
             .paragraphStyle: paragraph,
         ]
@@ -2712,6 +2819,35 @@ class BearyFeedCell: UITableViewCell {
 
     @objc private func authorTapped() {
         onAuthorTapped?()
+    }
+
+    /// Q9 长按菜单：长按菜单由控制器 present，本 cell 只转发；分享/收藏动作
+    /// 复用本 cell 已有的 shareTapped/bookmarkTapped，不新增服务端接口。
+    func shareFromLongPressMenu() {
+        shareTapped()
+    }
+
+    func bookmarkFromLongPressMenu() {
+        bookmarkTapped()
+    }
+
+    @objc private func cardLongPressed(_ sender: UILongPressGestureRecognizer) {
+        guard sender.state == .began else { return }
+        onLongPressMenuRequested?()
+    }
+
+    /// Q9 长按互斥：按钮（点赞/收藏/分享/回应/折叠/公开行）与图片灯箱、
+    /// 引用卡、作者头像/名字上的触摸不触发长按菜单，各自原有手势照常走。
+    func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldReceive touch: UITouch) -> Bool {
+        var view: UIView? = touch.view
+        while let current = view {
+            if current is UIButton { return false }
+            if current === imagesScrollView || current === quoteView { return false }
+            if current === avatarImageView || current === nameLabel { return false }
+            if current === contentView { break }
+            view = current.superview
+        }
+        return true
     }
 
     func configure(with entry: Entry) {
@@ -3091,6 +3227,8 @@ class BearyFeedCell: UITableViewCell {
 
     /// 拒绝动效（网页 .deny shakeX .4s 同口径）：左右小幅抖动，reduced-motion 时跳过。
     private func playDenyShake(on button: UIButton) {
+        // 拒绝震动不拿减动效门控：减动效只跳过视觉抖动，震动照常给。
+        BearyHaptics.rejectionWarning()
         if UIAccessibility.isReduceMotionEnabled { return }
         button.layer.removeAnimation(forKey: "bearyDenyShake")
         let shake = CAKeyframeAnimation(keyPath: "transform.translation.x")
@@ -3103,6 +3241,7 @@ class BearyFeedCell: UITableViewCell {
     /// F8/E3-1：点赞描边先行——官方 beary-heart 路径描边画出（网页 heartDraw .5s 同口径），
     /// 橙色填充与计数仍等服务器确认；失败时撤掉描边 + 拒绝动效。绝不做填充/计数的乐观更新。
     private func playLikeStrokeDraw() {
+        BearyHaptics.likeTap()
         likeStrokeLayer?.removeFromSuperlayer()
         likeStrokeLayer = BearyIconMotion.playHeartStrokeDraw(on: likeButton)
     }
@@ -3112,20 +3251,64 @@ class BearyFeedCell: UITableViewCell {
         likeStrokeLayer = nil
     }
 
+    /// 跟手批：按下即给先行反馈（描边/预取消赞），手指的按压不等抬起；
+    /// 守卫与 likeTapped 完全一致（公开、已登录、非忙碌、有 id），不满足不预览；
+    /// API 仍只在抬起确认的 likeTapped 里发。
+    @objc private func likePressDown() {
+        guard !isLikeBusy else { return }
+        guard currentEntry?.isPublic == true else { return }
+        guard SessionManager.shared.isLoggedIn else { return }
+        guard let entryIdValue = currentEntryIdValue, !entryIdValue.isEmpty else { return }
+        if currentEntry?.likedByMe == true {
+            applyPreUnlike()
+        } else {
+            playLikeStrokeDraw()
+        }
+        likePressPreviewActive = true
+    }
+
+    /// 跟手批：抬起在外或滚动取消时复原按下预览（API 未发，状态一字未动）。
+    @objc private func likePressCancelled() {
+        guard likePressPreviewActive, !isLikeBusy else { return }
+        likePressPreviewActive = false
+        removeLikeStroke()
+        updateLikeButton()
+    }
+
     /// F8：点赞——描边点下即画，填充与计数等服务器确认；失败撤描边 + 拒绝动效 + 通用提示。
     @objc private func likeTapped() {
-        guard let entryIdValue = currentEntryIdValue, !entryIdValue.isEmpty else { return }
-        if currentEntry?.isPublic != true { return }
+        // 按下已给过先行反馈时抬起不再重播（否则描边/震动各来两次）；
+        // 守卫失败时把按下预览复原（按下与抬起之间状态几乎不可能变，纯防御）。
+        let hadPressPreview = likePressPreviewActive
+        likePressPreviewActive = false
+        func restorePressPreview() {
+            removeLikeStroke()
+            updateLikeButton()
+        }
+        guard let entryIdValue = currentEntryIdValue, !entryIdValue.isEmpty else {
+            if hadPressPreview { restorePressPreview() }
+            return
+        }
+        if currentEntry?.isPublic != true {
+            if hadPressPreview { restorePressPreview() }
+            return
+        }
         if SessionManager.shared.isLoggedIn == false {
+            if hadPressPreview { restorePressPreview() }
             onRequireLogin?()
             return
         }
-        if isLikeBusy { return }
+        if isLikeBusy {
+            if hadPressPreview { restorePressPreview() }
+            return
+        }
         let currentlyLiked = currentEntry?.likedByMe ?? false
-        if currentlyLiked == false {
-            playLikeStrokeDraw()
-        } else {
-            applyPreUnlike()
+        if hadPressPreview == false {
+            if currentlyLiked == false {
+                playLikeStrokeDraw()
+            } else {
+                applyPreUnlike()
+            }
         }
         isLikeBusy = true
         updateActionInteractivity()
@@ -3442,12 +3625,10 @@ class BearyFeedCell: UITableViewCell {
         }
     }
 
-    /// 贴/换/摘回应的唯一入口（chip 与首贴面板共用）：
-    /// 同只再点即撤下；已有自己的一只且选了另一只时先摘旧再贴新；
+    /// 贴/摘回应的唯一入口（chip 与首贴面板共用，多选）：
+    /// 同只再点即撤下那只；点自己没贴过的只直接 POST 新增，绝不因点新回应
+    /// 而摘掉用户已贴的另一只；只有被点的那只计数变化。
     /// 从不做乐观更新——行只在服务端成功返回聚合后重绘，失败保持原样。
-    /// 核实结论（worker.js 8265–8293）：emote 接口只切换所贴的一只，不自动摘旧，
-    /// 故换贴保持两步串行（先 POST 旧只撤下，成功后再 POST 新只）；单次 POST 会
-    /// 让同一人同时留两只，违背单选规则。
     private func chooseEmote(key: String) {
         if key.isEmpty || isEmoteBusy { return }
         guard let entryIdValue = currentEntryIdValue, !entryIdValue.isEmpty else { return }
@@ -3457,14 +3638,10 @@ class BearyFeedCell: UITableViewCell {
             return
         }
         var tappedMine = false
-        var existingMineKey: String?
         for item in currentEmoteList {
             guard let itemKey = item.emote, !itemKey.isEmpty else { continue }
             if itemKey == key && item.mine == true {
                 tappedMine = true
-            }
-            if item.mine == true && existingMineKey == nil {
-                existingMineKey = itemKey
             }
         }
         if tappedMine {
@@ -3473,37 +3650,9 @@ class BearyFeedCell: UITableViewCell {
             postEmoteOnce(key: key)
             return
         }
-        if let oldKey = existingMineKey {
-            pendingEmoteKey = key
-            pendingEmoteAdded = true
-            pendingRemovingEmoteKey = oldKey
-            isEmoteBusy = true
-            updateEmoteInteractivity()
-            BearyAPI.shared.postEmote(id: entryIdValue, emote: oldKey) { [weak self] result in
-                DispatchQueue.main.async {
-                    guard let strongSelf = self else { return }
-                    switch result {
-                    case .success:
-                        strongSelf.pendingRemovingEmoteKey = nil
-                        strongSelf.postEmoteOnce(key: key)
-                    case .failure(let err):
-                        strongSelf.isEmoteBusy = false
-                        strongSelf.pendingEmoteKey = nil
-                        strongSelf.pendingRemovingEmoteKey = nil
-                        if case .unauthorized = err {
-                            strongSelf.onRequireLogin?()
-                        } else {
-                            strongSelf.onActionFailed?()
-                        }
-                        strongSelf.updateEmoteInteractivity()
-                    }
-                }
-            }
-        } else {
-            pendingEmoteKey = key
-            pendingEmoteAdded = true
-            postEmoteOnce(key: key)
-        }
+        pendingEmoteKey = key
+        pendingEmoteAdded = true
+        postEmoteOnce(key: key)
     }
 
     private func postEmoteOnce(key: String) {
@@ -4303,7 +4452,10 @@ private class BearyFeedImageViewerViewController: UIViewController, UIScrollView
                 imageView.leadingAnchor.constraint(equalTo: container.leadingAnchor),
                 imageView.trailingAnchor.constraint(equalTo: container.trailingAnchor),
             ])
-            imageView.bearySetImage(url: BearyImageURLs.imageURL(key: key, thumb: false))
+            // S10：灯箱页宽 = pagingScrollView 实测宽；viewDidLoad 时尚未布局则回退
+            // view.bounds.width（全屏查看器，页宽即视图宽）。下采样到页宽 × 屏幕 scale。
+            let pageWidth = pagingScrollView.bounds.width > 0 ? pagingScrollView.bounds.width : view.bounds.width
+            imageView.bearySetImage(url: BearyImageURLs.imageURL(key: key, thumb: false), downsampleToWidth: pageWidth * UIScreen.main.scale)
             pagingScrollView.addSubview(container)
             pageViews.append(container)
         }

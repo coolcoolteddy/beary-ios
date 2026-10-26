@@ -4,8 +4,8 @@ import UIKit
 // 自定义 presentation：卡片宽 min(640, 容器宽 - 80)、高为 min(内容高, 80% 容器高)、居中；背景黑色 0.45 遮罩。
 // 卡片圆角 20、边框 1px line；阴影挂在容器里的独立阴影层上（presentedView 自身裁剪会裁掉自身阴影）。
 // 不做背景点击关闭：编辑器取消走自身取消流程（含草稿保留/丢弃），背景点击不得绕过它。
-// transitioningDelegate 是弱引用，调用方（SceneDelegate）必须强持有本对象直到 dismiss 完成，
-// 与 edgeDismiss 同口径。部署目标 iOS 15.0——只用闭包回调，不用 async/await。
+// transitioningDelegate 是弱引用，调用方（SceneDelegate）必须强持有本对象直到 dismiss 完成。
+// 部署目标 iOS 15.0——只用闭包回调，不用 async/await。
 
 final class BearyCenteredTransitioningDelegate: NSObject, UIViewControllerTransitioningDelegate {
 
