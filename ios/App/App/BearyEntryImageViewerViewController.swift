@@ -10,7 +10,7 @@ class BearyEntryImageViewerViewController: UIViewController, UIGestureRecognizer
     private let imageView = UIImageView()
     private let retryLabel = UILabel()
     private let counterLabel = UILabel()
-    private let closeButton = BearyHit44Button(type: .system)
+    private let closeButton = BearyGlassButton(type: .system)
     private let dotsStack = UIStackView()
     private var dotViews: [UIView] = []
     private var scale: CGFloat = 1
@@ -83,7 +83,7 @@ class BearyEntryImageViewerViewController: UIViewController, UIGestureRecognizer
         view.addSubview(dotsStack)
         closeButton.setImage(BearyIconImages.image(named: "icon_close", pointSize: 20), for: .normal)
         closeButton.tintColor = .white
-        closeButton.backgroundColor = UIColor(white: 1, alpha: 0.15)
+        closeButton.backgroundColor = .clear
         closeButton.layer.cornerRadius = 18
         closeButton.clipsToBounds = true
         closeButton.translatesAutoresizingMaskIntoConstraints = false

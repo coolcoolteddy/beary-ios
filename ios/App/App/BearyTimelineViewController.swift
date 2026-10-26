@@ -842,7 +842,7 @@ final class BearyTimelineCell: UITableViewCell {
     // B 方案公开操作（网页 pubActionInnerHtml 口径）：已送达未公开出“公开”钮，
     // 倒计时中出剩余时间 + “取消”钮；未送达时三者全隐。字段约定见 D 路：
     // Entry.publishPendingUntil（Int? 毫秒时间戳，nil = 不在倒计时中）。
-    private let publishButton = UIButton(type: .system)
+    private let publishButton = BearyGlassButton(type: .system)
     private let pendingCountdownLabel = UILabel()
     private let cancelPublishButton = UIButton(type: .system)
     var onPublishEntry: ((Entry) -> Void)?
@@ -1046,6 +1046,7 @@ final class BearyTimelineCell: UITableViewCell {
             publishButton.setImage(globeImage, for: .normal)
         }
         publishButton.tintColor = BearyColors.ink
+        publishButton.glassTint = BearyColors.orange
         publishButton.imageView?.contentMode = .scaleAspectFit
         publishButton.accessibilityLabel = "公开"
         publishButton.heightAnchor.constraint(equalToConstant: 44).isActive = true
