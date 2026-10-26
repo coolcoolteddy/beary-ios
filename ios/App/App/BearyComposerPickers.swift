@@ -38,7 +38,7 @@ final class BearyRecipientPickerViewController: UIViewController, UITextFieldDel
     private let headerIconWrap = UIView()
     private let headerIcon = UIImageView()
     private let headerTitle = UILabel()
-    private let closeButton = UIButton(type: .system)
+    private let closeButton = BearyHit44Button(type: .system)
     private let searchBox = UIView()
     private let searchIcon = UIImageView()
     private let searchField = UITextField()

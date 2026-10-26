@@ -85,7 +85,7 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
     // 页顶返回行：网页 .tl-backrow——返回钮 28 + gap 10 + “搜索”标题 16/700，
     // 上下 padding 4/2；返回钮复用 chevron 右图旋转 180°（无新增资产）。
     private let backRowView = UIView()
-    private let backButton = UIButton(type: .custom)
+    private let backButton = BearyHit44Button(type: .custom)
     private let backTitleLabel = UILabel()
 
     // 搜索框占位：框体本身是 view 级 sticky 视图，流内留 50 高占位，版式不跳动。
@@ -102,7 +102,7 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
     private let searchIconView = UIImageView()
     private let boxRingView = UIImageView()
     private let searchField = UITextField()
-    private let clearButton = UIButton(type: .custom)
+    private let clearButton = BearyHit44Button(type: .custom)
 
     // 结果区：每次渲染整体重建（与网页 body.innerHTML 重写同口径）。
     private let resultsStack = UIStackView()

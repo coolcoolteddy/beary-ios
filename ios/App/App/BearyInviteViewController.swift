@@ -37,7 +37,7 @@ final class BearyInviteViewController: UIViewController {
     private let scrollView = UIScrollView()
     private let contentView = UIView()
     private let stackView = UIStackView()
-    private let closeButton = UIButton(type: .system)
+    private let closeButton = BearyHit44Button(type: .system)
     private let titleLabel = UILabel()
     private let subtitleLabel = UILabel()
     private let codeBox = UIView()

@@ -429,9 +429,9 @@ final class BearyCalendarCardView: UIView {
     var onJumpToToday: (() -> Void)?
 
     private let titleLabel = UILabel()
-    private let toggleButton = UIButton(type: .system)
-    private let prevButton = UIButton(type: .system)
-    private let nextButton = UIButton(type: .system)
+    private let toggleButton = BearyHit44Button(type: .system)
+    private let prevButton = BearyHit44Button(type: .system)
+    private let nextButton = BearyHit44Button(type: .system)
     private let todayButton = UIButton(type: .system)
     private let gridStack = UIStackView()
     private let weekNoteLabel = UILabel()
@@ -769,8 +769,8 @@ final class BearyTimelineCell: UITableViewCell {
     private let actsStack = UIStackView()
     private let statusIconView = UIImageView()
     private let editStatusLabel = UILabel()
-    private let editButton = UIButton(type: .custom)
-    private let deleteButton = UIButton(type: .custom)
+    private let editButton = BearyHit44Button(type: .custom)
+    private let deleteButton = BearyHit44Button(type: .custom)
 
     override init(style: UITableViewCell.CellStyle, reuseIdentifier: String?) {
         super.init(style: style, reuseIdentifier: reuseIdentifier)
@@ -1538,7 +1538,7 @@ class BearyTimelineViewController: UIViewController {
     // 同步抬高，见 viewDidLoad。
     private let timelineFilterBarHeight: CGFloat = 44
     private let timelineFilterBar = UIView()
-    private let timelineFilterControl = UISegmentedControl(items: ["全部", "已公开", "未公开"])
+    private let timelineFilterControl = BearyHit44SegmentedControl(items: ["全部", "已公开", "未公开"])
     // M2：分页新增行的错峰滑入队列（willDisplay 时按原始序号起播，播过即摘；
     // 用序号字典而非数组，避免摘除后后续序号前移导致错峰失效）。
     private var staggerInsertOrder: [IndexPath: Int] = [:]

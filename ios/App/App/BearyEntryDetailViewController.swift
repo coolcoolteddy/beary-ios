@@ -148,15 +148,15 @@ class BearyEntryDetailViewController: UIViewController {
     private var detailImagesHeightConstraint: NSLayoutConstraint?
 
     private let actionRow = UIStackView()
-    private let likeButton = UIButton(type: .system)
-    private let bookmarkButton = UIButton(type: .system)
-    private let shareButton = UIButton(type: .system)
-    private let editButton = UIButton(type: .system)
+    private let likeButton = BearyHit44Button(type: .system)
+    private let bookmarkButton = BearyHit44Button(type: .system)
+    private let shareButton = BearyHit44Button(type: .system)
+    private let editButton = BearyHit44Button(type: .system)
     private var likeStrokeLayer: CAShapeLayer?
     /// 点赞钮显式宽约束：见 updateActionButtons 的宽度算法。
     private var likeButtonWidthConstraint: NSLayoutConstraint?
     /// 删除入口（D5）：仅本人未公开篇显示，走网页确认流程，进回收站。
-    private let deleteButton = UIButton(type: .system)
+    private let deleteButton = BearyHit44Button(type: .system)
 
     private let emoteFlowView = BearyEmoteFlowView()
     private var emoteFlowHeightConstraint: NSLayoutConstraint?
@@ -2345,7 +2345,7 @@ private class BearyEmoteSheetViewController: UIViewController, UICollectionViewD
     private let sheetView = UIView()
     private let grabView = UIView()
     private let titleLabel = UILabel()
-    private let closeButton = UIButton(type: .system)
+    private let closeButton = BearyHit44Button(type: .system)
     private var sheetHeightConstraint: NSLayoutConstraint?
     private var sheetBottomConstraint: NSLayoutConstraint?
 
@@ -2575,7 +2575,7 @@ class BearyEntryImageViewerViewController: UIViewController, UIGestureRecognizer
     private let imageView = UIImageView()
     private let retryLabel = UILabel()
     private let counterLabel = UILabel()
-    private let closeButton = UIButton(type: .system)
+    private let closeButton = BearyHit44Button(type: .system)
     private let dotsStack = UIStackView()
     private var dotViews: [UIView] = []
     private var scale: CGFloat = 1

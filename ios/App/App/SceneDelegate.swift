@@ -212,7 +212,7 @@ final class BearyChromeViewController: UIViewController {
     }
 
     private func makeTopIconButton(imageName: String, fallbackSystemName: String, tint: UIColor, action: Selector) -> UIButton {
-        let b = UIButton(type: .custom)
+        let b = BearyHit44Button(type: .custom)
         b.setImage(topIconImage(named: imageName, systemFallback: fallbackSystemName), for: .normal)
         b.tintColor = tint
         b.layer.cornerRadius = 12
@@ -365,7 +365,7 @@ final class BearyChromeViewController: UIViewController {
             ("IconUser", "person", "me", #selector(didTapMe)),
         ]
         for (img, fallback, key, sel) in tabs {
-            let b = UIButton(type: .custom)
+            let b = BearyHit44Button(type: .custom)
             b.setImage(topIconImage(named: img, systemFallback: fallback), for: .normal)
             b.tintColor = gray
             b.addTarget(self, action: sel, for: .touchUpInside)
@@ -1614,7 +1614,7 @@ final class BearyChromeViewController: UIViewController {
                 self?.feedVC?.refreshAll()
             }
         }
-        c.onCancelled = { [weak self] in self?.dismiss(animated: true) }
+        c.onCancelled = { [weak c] in c?.dismiss(animated: true) }
         c.onRequireLogin = { [weak self] in
             self?.presentLogin()
         }
@@ -1759,9 +1759,21 @@ final class BearyComposerSheetTransitioningDelegate: NSObject, UIViewControllerT
     }
 }
 
+/// P1-3：抓手条命中穿透——条带帧仍为全宽×44（布局/无障碍帧不动），
+/// 但命中只认 pill 本体：pill 外的触摸返回 nil，落到下方的编辑器顶栏
+/// （取消/发布钮），不再被条带空吞；pill 上的触摸仍走条带 pan 手势，
+/// 滑动关闭的起始区与原来 pill 位置完全一致。
+private final class BearyGrabberHitView: UIView {
+    weak var pillView: UIView?
+    override func hitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? {
+        guard let pill = pillView, pill.frame.contains(point) else { return nil }
+        return super.hitTest(point, with: event)
+    }
+}
+
 private final class BearyComposerSheetPresentationController: UIPresentationController {
     private let dimmingView = UIView()
-    private let grabberStrip = UIView()
+    private let grabberStrip = BearyGrabberHitView()
     private let grabberPill = UIView()
     private let sheetShadowView = UIView()
     private let sheetTopBorderView = UIView()
@@ -1851,6 +1863,7 @@ private final class BearyComposerSheetPresentationController: UIPresentationCont
             grabberPill.backgroundColor = BearyColors.line
             grabberPill.layer.cornerRadius = 2
             grabberStrip.addSubview(grabberPill)
+            grabberStrip.pillView = grabberPill
             let pan = UIPanGestureRecognizer(target: self, action: #selector(handleGrabberPan(_:)))
             grabberStrip.addGestureRecognizer(pan)
             // U20：抓手热区无障碍标签（视觉 pill 位置不动，见下方帧）。
@@ -1861,8 +1874,9 @@ private final class BearyComposerSheetPresentationController: UIPresentationCont
             presentedView.addSubview(sheetTopBorderView)
             grabberInstalled = true
         }
-        // U20：抓手热区扩至 44pt 高（原 14pt：顶距 10 + pill 高 4）；pill 帧仍为 y=10、高 4，
-        // 视觉位置不动，热区向下扩展 30pt（条带须落在 sheet 自身 bounds 内，触摸才能命中）。
+        // P1-3：条带帧仍为全宽×44（视觉/布局不动），但 BearyGrabberHitView
+        // 只在 pill 矩形内命中：pill 外触摸穿透到编辑器顶栏（取消/发布钮），
+        // 不再被条带空吞；pan 手势仍挂在条带上，滑动关闭只从 pill 起手。
         grabberStrip.frame = CGRect(x: 0, y: 0, width: presentedView.bounds.width, height: 44)
         let pillWidth: CGFloat = 40
         grabberPill.frame = CGRect(x: (presentedView.bounds.width - pillWidth) / 2, y: 10, width: pillWidth, height: 4)
@@ -1965,8 +1979,9 @@ private final class BearyBadgeLabel: UILabel {
 
 /// U23：视觉 32、热区 40 的头像钮——hitTest 向外扩 4pt，帧与视觉均不动，
 /// 避免 40 帧按钮的底色/边框破坏 32 圆形头像视觉。
+/// B 组：外扩由 4pt 改为 6pt，热区 32→44，视觉帧仍 32 不动。
 private final class BearyHitExpandingButton: UIButton {
     override func point(inside point: CGPoint, with event: UIEvent?) -> Bool {
-        return bounds.insetBy(dx: -4, dy: -4).contains(point)
+        return bounds.insetBy(dx: -6, dy: -6).contains(point)
     }
 }

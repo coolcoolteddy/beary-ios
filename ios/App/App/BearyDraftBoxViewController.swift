@@ -74,7 +74,7 @@ final class BearyDraftBoxViewController: UIViewController {
     private let handleView = UIView()
     private let headerWrap = UIView()
     private let titleLabel = UILabel()
-    private let closeButton = UIButton(type: .custom)
+    private let closeButton = BearyHit44Button(type: .custom)
     private let subWrap = UIView()
     private let subLabel = UILabel()
     private let newButton = BearyDraftBoxDashedButton(type: .custom)
