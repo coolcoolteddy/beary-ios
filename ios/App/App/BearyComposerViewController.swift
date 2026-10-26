@@ -531,11 +531,12 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         textView.font = UIFont.systemFont(ofSize: 16)
         textView.textColor = BearyColors.ink
         // 无框正文：透明底、最小 140、关掉自身滚动后随内容生长（外层 scrollView 滚动）。
-        // 行高 1.7（27.2）：typingAttributes 管新输入；已恢复的正文由
-        // applyBodyLineHeight() 转 attributedText 后再套同一行高（见 setupEditContent/restoreDraft）。
-        let bodyParagraph = NSMutableParagraphStyle()
-        bodyParagraph.lineHeightMultiple = 1.7
-        textView.typingAttributes = [.font: UIFont.systemFont(ofSize: 16), .foregroundColor: BearyColors.ink, .paragraphStyle: bodyParagraph]
+        // 行高 1.7（27.2）：已恢复的正文由 applyBodyLineHeight() 转 attributedText 后套行高
+        //（见 setupEditContent/restoreDraft）；新输入的 typingAttributes 行高见下实验 1。
+        // 实验 1（2026-10-26，微信输入法×编辑器隔离）：typingAttributes 先去掉段落样式，
+        // 只留字号与颜色——验证自定义行高段落样式是否就是触发输入法失效的那一项。
+        // 实验包里新打的字行距会暂时变密；若证实是它，再设计保行高的正式修法，不要直接把这行当终态。
+        textView.typingAttributes = [.font: UIFont.systemFont(ofSize: 16), .foregroundColor: BearyColors.ink]
         textView.backgroundColor = UIColor.clear
         textView.layer.cornerRadius = 0
         textView.isScrollEnabled = false

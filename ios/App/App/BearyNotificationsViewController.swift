@@ -8,7 +8,7 @@ import UIKit
 //   未读底为蓝 9%；互动行未读底为蓝 7%；已读行无底无点）。
 // - 设计帧：~/workspace/previews/layout_rest.html 的消息帧（未读蓝点 + 全部已读 +
 //   信件与系统信区分）。帧里时间写“今天 09:40 / 昨天”仅为示意，网页代码的
-//   fmtDate 一律是 M月d日 HH:mm，本页以网页代码为准。
+//   fmtDate 一律是 M月d日 H:mm（小时不补零），本页以网页代码为准。
 // - 后端：~/workspace/teddy_beary/worker.js（GET /beary/api/notifications、
 //   POST /beary/api/notifications/read，均已在 BearyAPI.swift 里有现成方法，
 //   本文件不新增网络层、不改 BearyAPI.swift）。
@@ -26,9 +26,9 @@ import UIKit
 // - 卡面：系统卡“系统消息”+ 最新一条标题 + 时间 + 未读点 + 下箭头，
 //   头像橙 14% 底 + mail 图；互动卡“互动消息”+ 最新一条“人名 + 动词”
 //   + 时间 + 未读点 + 下箭头，头像蓝 12% 底 + heart 图；卡片未读底蓝 9%。
-// - 点卡只展开/收起（插删行高度动画 + 箭头 180° 旋转），不标已读；
+// - 点卡只展开/收起（整区高度生长 .34s 缓动 + 箭头 180° 旋转 .3s），不标已读；
 //   展开态存在本页状态里，刷新/翻页/标已读后重建行表仍恢复展开态。
-// - 嵌套行内容左缩进 30（头像 x=50，近似网页 .nt-sysin 的 margin+边线+内边距）。
+// - 嵌套行：网页 .nt-sysin 口径——左侧 20 起 2px line 竖线 + 8 内边距，头像 x=48、分隔线起于 28。
 // 点击行为（与网页 onclick 同口径）：
 // - 点一条先乐观标已读（失败回滚，与网页 ntMarkRead 一致），再按类型分流：
 //   letter 行带 entry_id → onEntrySelected(entry_id) 直接进详情；
@@ -41,7 +41,7 @@ import UIKit
 //   成功后才整批置已读，失败 toast“操作失败，请重试”+ 全量重拉。
 // 未登录（网页 openNotifs 同口径）：首拉 401 且列表为空时 toast“请先登录”，
 //   1200ms 后走 onRequireLogin 弹登录；本页不再设页内登录引导态，
-//   失败态按“加载失败 / 点击重试”显示；登录提示一集只发一次，成功加载后清零。
+//   失败态按“加载失败 / 重试”显示；登录提示一集只发一次，成功加载后清零。
 // 角标：未读数每次变化都在主线程 post NotificationCenter，
 //   name = BearyNotificationsViewController.unreadChangedNotificationName
 //   （即 "BearyUnreadChanged"），userInfo = ["unread": Int, "sysUnread": Int]；
@@ -102,6 +102,19 @@ final class BearyNotificationsViewController: UIViewController {
         let itemIndex: Int?
     }
 
+    /// 跨实例缓存快照（网页 openNotifs ntItemsCache 口径）：已读态与展开态
+    /// 随同一快照存取，不拆开存、不错乱；仅成功加载过才写（见 saveNotificationCache）。
+    private struct CachedNotificationPage {
+        let items: [NotificationItem]
+        let unread: Int
+        let sysUnread: Int
+        let total: Int?
+        let isSysExpanded: Bool
+        let isActExpanded: Bool
+    }
+
+    private static var cachedPage: CachedNotificationPage?
+
     private var items: [NotificationItem] = []
     private var displayRows: [NotificationDisplayRow] = []
     private var isSysExpanded = false
@@ -121,6 +134,15 @@ final class BearyNotificationsViewController: UIViewController {
     private var pollTimer: Timer?
     private var loginPromptShown = false
     private var visibleState: VisibleState = .loading
+    private var hasDisplayedPage = false
+    private var hasSuccessfulLoad = false
+    private var isCustomPullRefreshing = false
+    private var customPullStartTime: Date?
+    private var pullEngageTranslation: CGFloat?
+    private var isCardAnimating = false
+    private var zeroHeightRows: Set<Int> = []
+    private var headerHeight: CGFloat = 41
+    private var stateContainerTopConstraint: NSLayoutConstraint?
 
     // MARK: - 视图
 
@@ -178,17 +200,45 @@ final class BearyNotificationsViewController: UIViewController {
         table.backgroundColor = BearyColors.bg
         table.separatorStyle = .none
         table.rowHeight = UITableView.automaticDimension
-        table.estimatedRowHeight = 74
-        table.contentInset = UIEdgeInsets(top: 0, left: 0, bottom: 90, right: 0)
+        table.estimatedRowHeight = 78
+        table.contentInset = UIEdgeInsets(top: 0, left: 0, bottom: 120, right: 0)
         table.scrollIndicatorInsets = table.contentInset
         table.register(BearyNotificationCell.self, forCellReuseIdentifier: "BearyNotificationCell")
         table.register(BearyNotificationTrailingCell.self, forCellReuseIdentifier: "BearyNotificationTrailingCell")
         table.delegate = self
         table.dataSource = self
-        let refreshControl = UIRefreshControl()
-        refreshControl.addTarget(self, action: #selector(pullToRefresh), for: .valueChanged)
-        table.refreshControl = refreshControl
+        table.addSubview(pullView)
         return table
+    }()
+
+    /// 自定义下拉转圈（网页 #ptrIn 口径：32 视觉、灰色；平时 alpha 0，
+    /// 指示高 ≥80 时淡入放大，刷新中常亮转圈）。
+    private lazy var pullSpinner: UIActivityIndicatorView = {
+        let spinner = UIActivityIndicatorView(style: .medium)
+        spinner.translatesAutoresizingMaskIntoConstraints = false
+        spinner.color = BearyColors.gray
+        spinner.hidesWhenStopped = false
+        spinner.transform = CGAffineTransform(scaleX: 1.6, y: 1.6)
+        spinner.alpha = 0
+        return spinner
+    }()
+
+    /// 自定义下拉指示器（网页 #ptr 口径）：固定高 116、藏在表内容上方
+    /// （content y=-116..0），指示高按手指行程 ×0.48 阻尼（上限 116），
+    /// 不拦截触摸；刷新中改固定 84 高（网页 runRefresh）。
+    private lazy var pullView: UIView = {
+        let pull = UIView()
+        pull.backgroundColor = BearyColors.bg
+        pull.isUserInteractionEnabled = false
+        pull.frame = CGRect(x: 0, y: -116, width: 0, height: 116)
+        pull.addSubview(pullSpinner)
+        NSLayoutConstraint.activate([
+            pullSpinner.centerXAnchor.constraint(equalTo: pull.centerXAnchor),
+            pullSpinner.bottomAnchor.constraint(equalTo: pull.bottomAnchor, constant: -14),
+            pullSpinner.widthAnchor.constraint(equalToConstant: 20),
+            pullSpinner.heightAnchor.constraint(equalToConstant: 20),
+        ])
+        return pull
     }()
 
     /// 内容列：容器已锁 600 列，页内不再二次收窄——宽 = 视图宽（750 优先级）
@@ -199,13 +249,11 @@ final class BearyNotificationsViewController: UIViewController {
         let container = UIView()
         container.translatesAutoresizingMaskIntoConstraints = false
         container.backgroundColor = BearyColors.bg
-        container.addSubview(headerView)
+        // 顶栏不再钉在 contentView 顶部：改作 tableHeaderView，随列表滚走
+        // （网页 .tl-head 在列表容器内口径；接线见 viewDidLoad / viewDidLayoutSubviews）。
         container.addSubview(tableView)
         NSLayoutConstraint.activate([
-            headerView.topAnchor.constraint(equalTo: container.topAnchor),
-            headerView.leadingAnchor.constraint(equalTo: container.leadingAnchor),
-            headerView.trailingAnchor.constraint(equalTo: container.trailingAnchor),
-            tableView.topAnchor.constraint(equalTo: headerView.bottomAnchor),
+            tableView.topAnchor.constraint(equalTo: container.topAnchor),
             tableView.leadingAnchor.constraint(equalTo: container.leadingAnchor),
             tableView.trailingAnchor.constraint(equalTo: container.trailingAnchor),
             tableView.bottomAnchor.constraint(equalTo: container.bottomAnchor),
@@ -303,6 +351,10 @@ final class BearyNotificationsViewController: UIViewController {
         view.backgroundColor = BearyColors.bg
         view.addSubview(contentView)
         view.addSubview(stateContainer)
+        // 顶栏随列表滚走：改作 tableHeaderView（frame 手动管理，见 viewDidLayoutSubviews）。
+        headerView.translatesAutoresizingMaskIntoConstraints = true
+        headerView.frame = CGRect(x: 0, y: 0, width: view.bounds.width, height: headerHeight)
+        tableView.tableHeaderView = headerView
         let contentWidth = contentView.widthAnchor.constraint(equalTo: view.widthAnchor, constant: 0)
         contentWidth.priority = UILayoutPriority(750)
         NSLayoutConstraint.activate([
@@ -313,24 +365,89 @@ final class BearyNotificationsViewController: UIViewController {
             contentView.trailingAnchor.constraint(lessThanOrEqualTo: view.trailingAnchor),
             contentView.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
             contentView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
-            stateContainer.topAnchor.constraint(equalTo: headerView.bottomAnchor),
+            // 态容器顶锚 contentView.top + 表头高（表头在顶时与旧 header 底同位）。
             stateContainer.leadingAnchor.constraint(equalTo: contentView.leadingAnchor),
             stateContainer.trailingAnchor.constraint(equalTo: contentView.trailingAnchor),
             stateContainer.bottomAnchor.constraint(equalTo: view.bottomAnchor),
         ])
+        // 态容器顶约束另建（需持有引用供 viewDidLayoutSubviews 更新表头高）。
+        let stateTopConstraint = stateContainer.topAnchor.constraint(equalTo: contentView.topAnchor, constant: headerHeight)
+        stateContainerTopConstraint = stateTopConstraint
+        stateTopConstraint.isActive = true
         NotificationCenter.default.addObserver(
             self,
             selector: #selector(handleForeground),
             name: UIApplication.willEnterForegroundNotification,
             object: nil
         )
+        // 缓存秒显（网页 openNotifs ntItemsCache 口径）：已打开过先原样显旧列表，
+        // 后台 loadFirstPage 刷新、变了才重绘；首次打开才走转圈。
+        if let cached = Self.cachedPage {
+            items = cached.items
+            unreadTotal = cached.unread
+            sysUnreadTotal = cached.sysUnread
+            totalCount = cached.total
+            isSysExpanded = cached.isSysExpanded
+            isActExpanded = cached.isActExpanded
+            hasDisplayedPage = true
+            hasSuccessfulLoad = true
+            rebuildDisplayRows()
+            tableView.reloadData()
+            refreshVisibleState()
+            publishUnread(unreadTotal)
+            updateReadAllButton()
+        }
         startPolling()
         loadFirstPage()
     }
 
     deinit {
+        saveNotificationCache()
         pollTimer?.invalidate()
         NotificationCenter.default.removeObserver(self)
+    }
+
+    override func viewWillDisappear(_ animated: Bool) {
+        super.viewWillDisappear(animated)
+        saveNotificationCache()
+    }
+
+    /// 表头高度实测：标题 19 + 上 14 下 4；实测后写回 tableHeaderView frame
+    /// 与态容器顶锚，宽度变化时同步下拉指示器宽。
+    override func viewDidLayoutSubviews() {
+        super.viewDidLayoutSubviews()
+        let width = tableView.bounds.width
+        if width > 0 {
+            let fittingHeight = headerView.systemLayoutSizeFitting(
+                CGSize(width: width, height: UIView.layoutFittingCompressedSize.height),
+                withHorizontalFittingPriority: .required,
+                verticalFittingPriority: .fittingSizeLevel
+            ).height
+            if abs(headerView.frame.width - width) > 0.5 || abs(headerView.frame.height - fittingHeight) > 0.5 {
+                headerView.frame = CGRect(x: 0, y: 0, width: width, height: fittingHeight)
+                tableView.tableHeaderView = headerView
+                headerHeight = fittingHeight
+                stateContainerTopConstraint?.constant = fittingHeight
+            }
+            if pullView.frame.width != width {
+                pullView.frame.size.width = width
+            }
+        }
+    }
+
+    /// 缓存写回：仅成功加载过才存（失败/未加载不以空列表覆盖旧缓存）。
+    private func saveNotificationCache() {
+        if !hasSuccessfulLoad {
+            return
+        }
+        Self.cachedPage = CachedNotificationPage(
+            items: items,
+            unread: unreadTotal,
+            sysUnread: sysUnreadTotal,
+            total: totalCount,
+            isSysExpanded: isSysExpanded,
+            isActExpanded: isActExpanded
+        )
     }
 
     override func traitCollectionDidChange(_ previousTraitCollection: UITraitCollection?) {
@@ -390,8 +507,13 @@ final class BearyNotificationsViewController: UIViewController {
 
     /// 下拉刷新与容器调用都走它：重拉第一页；已有列表时拉取量不少于已加载条数
     /// （网页 ntWant 同款，上限 200），避免翻页成果被打回第一页。
+    /// 容器重拍 tab / 程序触发刷新都走自定义下拉外观（网页 __ptrRefresh 同口径：
+    /// 下滑 84 + 转圈，至少展示 500ms），而非标准 UIRefreshControl。
     func refresh() {
-        loadFirstPage()
+        if isCustomPullRefreshing || isLoadingFirstPage {
+            return
+        }
+        beginCustomPullRefresh()
     }
 
     /// 重拍消息 tab 时先回顶（列表页同款；接线层在已显示时调它，再调 refresh()）。
@@ -401,13 +523,9 @@ final class BearyNotificationsViewController: UIViewController {
 
     // MARK: - 拉取
 
-    @objc private func pullToRefresh() {
-        loadFirstPage()
-    }
-
-    private func loadFirstPage() {
+    private func loadFirstPage(completion: (() -> Void)? = nil) {
         if isLoadingFirstPage {
-            tableView.refreshControl?.endRefreshing()
+            completion?()
             return
         }
         isLoadingFirstPage = true
@@ -418,9 +536,9 @@ final class BearyNotificationsViewController: UIViewController {
             DispatchQueue.main.async {
                 guard let strongSelf = self else { return }
                 strongSelf.isLoadingFirstPage = false
-                strongSelf.tableView.refreshControl?.endRefreshing()
                 switch result {
                 case .success(let list):
+                    let oldSignatures = Set(strongSelf.items.map({ strongSelf.itemSignature($0) }))
                     strongSelf.items = list.items ?? []
                     strongSelf.totalCount = list.total
                     if let unreadValue = list.unread {
@@ -436,6 +554,10 @@ final class BearyNotificationsViewController: UIViewController {
                     strongSelf.publishUnread(strongSelf.unreadTotal)
                     strongSelf.rebuildDisplayRows()
                     strongSelf.tableView.reloadData()
+                    strongSelf.hasDisplayedPage = true
+                    strongSelf.hasSuccessfulLoad = true
+                    strongSelf.saveNotificationCache()
+                    strongSelf.playStaggeredEntrance(oldSignatures: oldSignatures)
                 case .failure(let apiError):
                     if strongSelf.items.isEmpty {
                         strongSelf.firstLoadFailed = true
@@ -444,10 +566,15 @@ final class BearyNotificationsViewController: UIViewController {
                             strongSelf.promptLoginIfNeeded()
                         }
                     }
+                    if case APIError.unauthorized = apiError {
+                        // 换号/退出后旧缓存不得再秒显给下一账号；本页内存列表仍按旧口径保留。
+                        Self.cachedPage = nil
+                    }
                     // 已有列表时首拉失败不断列表：保持旧内容，不弹失败态。
                 }
                 strongSelf.refreshVisibleState()
                 strongSelf.updateReadAllButton()
+                completion?()
             }
         }
     }
@@ -463,6 +590,152 @@ final class BearyNotificationsViewController: UIViewController {
             guard let strongSelf = self else { return }
             strongSelf.onRequireLogin?()
         }
+    }
+
+    // MARK: - 入场动效与自定义下拉
+
+    /// 行签名（id + 已读 + 类型 + 文案 + 时间）：刷新后只对签名不在旧集里的
+    /// 行播错峰入场，已有行不重播（网页 staggerIn / 对账口径）。
+    private func itemSignature(_ item: NotificationItem) -> String {
+        return "\(item.id ?? -1):\(item.read ?? false):\(item.type ?? ""):\(item.title ?? ""):\(item.excerpt ?? ""):\(item.actorName ?? ""):\(item.emote ?? ""):\(item.entryId ?? ""):\(item.createdAt ?? 0)"
+    }
+
+    /// 逐行错峰入场（网页 staggerIn 口径）：slideDown .42s、步进 40ms、
+    /// 总延迟封顶 240ms、仅可视区前 24 行、减动效不播。
+    private func playStaggeredEntrance(oldSignatures: Set<String>) {
+        if UIAccessibility.isReduceMotionEnabled {
+            return
+        }
+        tableView.layoutIfNeeded()
+        guard let visiblePaths = tableView.indexPathsForVisibleRows else {
+            return
+        }
+        var animatedCount = 0
+        for path in visiblePaths.sorted(by: { $0.row < $1.row }) {
+            if animatedCount >= 24 || path.row >= displayRows.count {
+                continue
+            }
+            let row = displayRows[path.row]
+            let signature: String?
+            switch row.kind {
+            case .letter, .sysItem, .actItem:
+                if let itemIndex = row.itemIndex, itemIndex < items.count {
+                    signature = itemSignature(items[itemIndex])
+                } else {
+                    signature = nil
+                }
+            case .sysCard:
+                if let latestIndex = items.indices.first(where: { items[$0].type == "system" }) {
+                    signature = itemSignature(items[latestIndex])
+                } else {
+                    signature = nil
+                }
+            case .actCard:
+                if let latestIndex = items.indices.first(where: { (items[$0].type ?? "") != "system" && (items[$0].type ?? "") != "letter" }) {
+                    signature = itemSignature(items[latestIndex])
+                } else {
+                    signature = nil
+                }
+            }
+            guard let rowSignature = signature, !oldSignatures.contains(rowSignature) else {
+                continue
+            }
+            guard let cell = tableView.cellForRow(at: path) else {
+                continue
+            }
+            let delay = min(Double(animatedCount) * 0.04, 0.24)
+            cell.alpha = 0
+            cell.transform = CGAffineTransform(translationX: 0, y: -24)
+            let animator = UIViewPropertyAnimator(
+                duration: 0.42,
+                timingParameters: UICubicTimingParameters(controlPoint1: CGPoint(x: 0.32, y: 0.72), controlPoint2: CGPoint(x: 0.35, y: 1))
+            )
+            animator.addAnimations({
+                cell.alpha = 1
+                cell.transform = CGAffineTransform.identity
+            })
+            animator.startAnimation(afterDelay: delay)
+            animatedCount += 1
+        }
+    }
+
+    /// 自定义下拉指示器跟随：手指行程（pan 手势自顶部锚点起算，网页 engageY
+    /// 口径）× 0.48 阻尼、上限 116；指示高 ≥80 时转圈淡入放大（网页 .pull）。
+    /// 指示器是表内子视图：屏内底边固定为指示高，顶边随表回弹裁剪。
+    private func updateCustomPullIndicator() {
+        if isCustomPullRefreshing {
+            return
+        }
+        if !tableView.isDragging {
+            pullEngageTranslation = nil
+            pullView.frame = CGRect(x: 0, y: -116, width: tableView.bounds.width, height: 116)
+            pullSpinner.alpha = 0
+            pullSpinner.stopAnimating()
+            return
+        }
+        let contentRaw = max(0, -tableView.contentOffset.y)
+        let panTranslation = tableView.panGestureRecognizer.translation(in: tableView).y
+        if tableView.contentOffset.y <= 0 && pullEngageTranslation == nil {
+            pullEngageTranslation = panTranslation
+        } else if tableView.contentOffset.y > 0 {
+            pullEngageTranslation = nil
+        }
+        let fingerRaw = max(0, panTranslation - (pullEngageTranslation ?? panTranslation))
+        let indicatorHeight = min(fingerRaw * 0.48, 116)
+        pullView.frame = CGRect(x: 0, y: indicatorHeight - 116 - contentRaw, width: tableView.bounds.width, height: 116)
+        if indicatorHeight <= 0 {
+            pullSpinner.alpha = 0
+            pullSpinner.stopAnimating()
+        } else {
+            let progress = min(1, indicatorHeight / 80)
+            pullSpinner.alpha = progress
+            let scale = 1.6 * (0.6 + 0.4 * progress)
+            pullSpinner.transform = CGAffineTransform(scaleX: scale, y: scale)
+            pullSpinner.startAnimating()
+        }
+    }
+
+    /// 自定义下拉刷新进入：指示固定 84 高 + 转圈（网页 runRefresh），
+    /// 至少展示 500ms，loadFirstPage 完成后再收回。
+    private func beginCustomPullRefresh() {
+        if isCustomPullRefreshing || isLoadingFirstPage {
+            return
+        }
+        isCustomPullRefreshing = true
+        customPullStartTime = Date()
+        pullSpinner.alpha = 1
+        pullSpinner.transform = CGAffineTransform(scaleX: 1.6, y: 1.6)
+        pullSpinner.startAnimating()
+        UIView.animate(withDuration: 0.32, animations: {
+            self.tableView.contentInset.top = 84
+            self.tableView.scrollIndicatorInsets.top = 84
+            self.tableView.contentOffset = CGPoint(x: 0, y: -84)
+            self.pullView.frame = CGRect(x: 0, y: -84, width: self.tableView.bounds.width, height: 84)
+        })
+        loadFirstPage(completion: { [weak self] in
+            guard let strongSelf = self else { return }
+            let elapsed = strongSelf.customPullStartTime.map({ Date().timeIntervalSince($0) }) ?? 0.5
+            let remaining = max(0, 0.5 - elapsed)
+            DispatchQueue.main.asyncAfter(deadline: .now() + remaining) {
+                strongSelf.endCustomPullRefresh()
+            }
+        })
+    }
+
+    private func endCustomPullRefresh() {
+        if !isCustomPullRefreshing {
+            return
+        }
+        isCustomPullRefreshing = false
+        UIView.animate(withDuration: 0.32, animations: {
+            self.tableView.contentInset.top = 0
+            self.tableView.scrollIndicatorInsets.top = 0
+            self.tableView.contentOffset = CGPoint(x: 0, y: 0)
+            self.pullView.frame = CGRect(x: 0, y: -116, width: self.tableView.bounds.width, height: 116)
+        }, completion: { _ in
+            self.pullSpinner.alpha = 0
+            self.pullSpinner.stopAnimating()
+        })
     }
 
     /// 行表重建：letter 扁平置顶 → 系统卡（+ 展开时的系统行）→ 互动卡（+ 展开时的互动行）。
@@ -530,43 +803,122 @@ final class BearyNotificationsViewController: UIViewController {
         return nil
     }
 
-    /// 点卡只展开/收起：插删嵌套行（高度动画）+ 箭头旋转；卡本身不标已读。
+    /// 点卡只展开/收起：整区高度生长（网页 .nt-syslist grid-template-rows
+    /// 0fr→1fr .34s 缓动口径），不是逐行插入；chevron 转 .3s。
+    /// 展开：先插行（高 0）再整体长到满高；收起：先整体缩到 0 再删行。
+    /// 减动效直接重载，不播动画；动画中再次点卡直接忽略，防坐标错乱。
     private func toggleCard(kind: NotificationRowKind) {
-        let expanding: Bool
-        if kind == .sysCard {
-            isSysExpanded.toggle()
-            expanding = isSysExpanded
-        } else {
-            isActExpanded.toggle()
-            expanding = isActExpanded
+        if isCardAnimating {
+            return
         }
-        guard let cardRow = displayRows.firstIndex(where: { $0.kind == kind }) else { return }
-        let oldCount = displayRows.count
-        rebuildDisplayRows()
+        let isSysKind = kind == .sysCard
+        if UIAccessibility.isReduceMotionEnabled {
+            if isSysKind {
+                isSysExpanded.toggle()
+            } else {
+                isActExpanded.toggle()
+            }
+            rebuildDisplayRows()
+            tableView.reloadData()
+            if let cardRow = displayRows.firstIndex(where: { $0.kind == kind }),
+               let cardCell = tableView.cellForRow(at: IndexPath(row: cardRow, section: 0)) as? BearyNotificationCell {
+                cardCell.setChevronExpanded(isSysKind ? isSysExpanded : isActExpanded)
+            }
+            return
+        }
+        guard let cardRow = displayRows.firstIndex(where: { $0.kind == kind }) else {
+            return
+        }
+        let expanding = isSysKind ? !isSysExpanded : !isActExpanded
         if expanding {
+            if isSysKind {
+                isSysExpanded = true
+            } else {
+                isActExpanded = true
+            }
+            rebuildDisplayRows()
             var inserted: [IndexPath] = []
             for index in displayRows.indices {
                 let rowKind = displayRows[index].kind
-                if (kind == .sysCard && rowKind == .sysItem) || (kind == .actCard && rowKind == .actItem) {
+                if (isSysKind && rowKind == .sysItem) || (!isSysKind && rowKind == .actItem) {
                     inserted.append(IndexPath(row: index, section: 0))
+                    zeroHeightRows.insert(index)
                 }
             }
+            if inserted.isEmpty {
+                return
+            }
+            isCardAnimating = true
             tableView.performBatchUpdates({
-                self.tableView.insertRows(at: inserted, with: .automatic)
+                self.tableView.insertRows(at: inserted, with: .none)
             }, completion: nil)
+            tableView.layoutIfNeeded()
+            if let cardCell = tableView.cellForRow(at: IndexPath(row: cardRow, section: 0)) as? BearyNotificationCell {
+                UIView.animate(withDuration: 0.30) {
+                    cardCell.setChevronExpanded(true)
+                }
+            }
+            let animator = UIViewPropertyAnimator(duration: 0.34, timingParameters: UICubicTimingParameters(controlPoint1: CGPoint(x: 0.32, y: 0.72), controlPoint2: CGPoint(x: 0.35, y: 1)))
+            animator.addAnimations({
+                self.zeroHeightRows.removeAll()
+                self.tableView.beginUpdates()
+                self.tableView.endUpdates()
+            })
+            animator.addCompletion({ _ in
+                self.zeroHeightRows.removeAll()
+                self.isCardAnimating = false
+            })
+            animator.startAnimation()
         } else {
-            var deleted: [IndexPath] = []
-            for offset in 0..<(oldCount - displayRows.count) {
-                deleted.append(IndexPath(row: cardRow + 1 + offset, section: 0))
+            var collapsing: [Int] = []
+            for index in displayRows.indices where index > cardRow {
+                let rowKind = displayRows[index].kind
+                if (isSysKind && rowKind == .sysItem) || (!isSysKind && rowKind == .actItem) {
+                    collapsing.append(index)
+                } else {
+                    break
+                }
             }
-            tableView.performBatchUpdates({
-                self.tableView.deleteRows(at: deleted, with: .automatic)
-            }, completion: nil)
-        }
-        if let cardCell = tableView.cellForRow(at: IndexPath(row: cardRow, section: 0)) as? BearyNotificationCell {
-            UIView.animate(withDuration: 0.25) {
-                cardCell.setChevronExpanded(expanding)
+            if collapsing.isEmpty {
+                if isSysKind {
+                    isSysExpanded = false
+                } else {
+                    isActExpanded = false
+                }
+                rebuildDisplayRows()
+                tableView.reloadData()
+                return
             }
+            isCardAnimating = true
+            for index in collapsing {
+                zeroHeightRows.insert(index)
+            }
+            if let cardCell = tableView.cellForRow(at: IndexPath(row: cardRow, section: 0)) as? BearyNotificationCell {
+                UIView.animate(withDuration: 0.30) {
+                    cardCell.setChevronExpanded(false)
+                }
+            }
+            let animator = UIViewPropertyAnimator(duration: 0.34, timingParameters: UICubicTimingParameters(controlPoint1: CGPoint(x: 0.32, y: 0.72), controlPoint2: CGPoint(x: 0.35, y: 1)))
+            animator.addAnimations({
+                self.tableView.beginUpdates()
+                self.tableView.endUpdates()
+            })
+            animator.addCompletion({ [weak self] _ in
+                guard let strongSelf = self else { return }
+                strongSelf.zeroHeightRows.removeAll()
+                if isSysKind {
+                    strongSelf.isSysExpanded = false
+                } else {
+                    strongSelf.isActExpanded = false
+                }
+                let deleted = collapsing.map({ IndexPath(row: $0, section: 0) })
+                strongSelf.rebuildDisplayRows()
+                strongSelf.tableView.performBatchUpdates({
+                    strongSelf.tableView.deleteRows(at: deleted, with: .none)
+                }, completion: nil)
+                strongSelf.isCardAnimating = false
+            })
+            animator.startAnimation()
         }
     }
 
@@ -584,7 +936,7 @@ final class BearyNotificationsViewController: UIViewController {
         tableView.reloadData()
         // M12：翻页追加的行身份（卡种 + 通知下标），用于成功后 insertRows 而非整表重载。
         let oldDisplayRows = displayRows
-        let oldTrailingRow = showsTrailingRow
+        let oldSentinelRow = showsSentinelRow
         BearyAPI.shared.fetchNotifications(limit: pageLimit, before: cursor) { [weak self] result in
             DispatchQueue.main.async {
                 guard let strongSelf = self else { return }
@@ -627,13 +979,15 @@ final class BearyNotificationsViewController: UIViewController {
                     let preKeys = preRebuildRows.map({ strongSelf.displayRowIdentity(row: $0) })
                     let oldKeys = oldDisplayRows.map({ strongSelf.displayRowIdentity(row: $0) })
                     if preKeys == oldKeys {
-                        strongSelf.insertAppendedDisplayRows(oldRows: oldDisplayRows, oldTrailingRow: oldTrailingRow)
+                        strongSelf.insertAppendedDisplayRows(oldRows: oldDisplayRows, oldSentinelRow: oldSentinelRow)
                     } else {
                         strongSelf.tableView.reloadData()
                     }
                 case .failure:
-                    // 401 不清列表（全局 onUnauthorized 已由容器接管）；其余失败亮尾行重试。
+                    // 401 不清列表（全局 onUnauthorized 已由容器接管）；其余失败只 toast，
+                    // 不产生新行，哨兵留位、滚出再滚回才重触（见 scrollViewDidScroll 重 arm）。
                     strongSelf.loadMoreFailed = true
+                    strongSelf.showToast(message: "加载失败")
                     strongSelf.tableView.reloadData()
                 }
                 strongSelf.updateReadAllButton()
@@ -641,8 +995,8 @@ final class BearyNotificationsViewController: UIViewController {
         }
     }
 
-    /// M12：按行身份算出新增行并 insertRows；旧尾行（加载态）在旧坐标下删掉。
-    private func insertAppendedDisplayRows(oldRows: [NotificationDisplayRow], oldTrailingRow: Bool) {
+    /// M12：按行身份算出新增行并 insertRows；旧哨兵行（加载态）在旧坐标下删掉。
+    private func insertAppendedDisplayRows(oldRows: [NotificationDisplayRow], oldSentinelRow: Bool) {
         var oldKeys: Set<String> = []
         for row in oldRows {
             oldKeys.insert(displayRowIdentity(row: row))
@@ -653,12 +1007,12 @@ final class BearyNotificationsViewController: UIViewController {
                 inserted.append(IndexPath(row: index, section: 0))
             }
         }
-        let newTrailingRow = showsTrailingRow
-        if inserted.isEmpty && !(oldTrailingRow && !newTrailingRow) {
+        let newSentinelRow = showsSentinelRow
+        if inserted.isEmpty && !(oldSentinelRow && !newSentinelRow) {
             return
         }
         tableView.performBatchUpdates({
-            if oldTrailingRow && !newTrailingRow {
+            if oldSentinelRow && !newSentinelRow {
                 self.tableView.deleteRows(at: [IndexPath(row: oldRows.count, section: 0)], with: .automatic)
             }
             if !inserted.isEmpty {
@@ -708,14 +1062,24 @@ final class BearyNotificationsViewController: UIViewController {
         }
         isMarkingAllRead = true
         readAllButton.isEnabled = false
+        // 网页口径：处理中换成转圈图标 +“处理中…”（check 图标不再保留）。
+        readAllButton.setImage(BearyIconImages.image(named: "icon_loading", pointSize: 14), for: .normal)
         readAllButton.setTitle("处理中…", for: .normal)
         updateReadAllButtonWidth()
+        readAllButton.layoutIfNeeded()
+        if let buttonImageView = readAllButton.imageView {
+            BearyIconMotion.startSpin(on: buttonImageView, duration: 1.0, key: "bearyReadAllSpin")
+        }
         // 全部已读不等乐观更新：成功后才整批置已读（网页 ntReadAll 同款）。
         BearyAPI.shared.markNotificationRead(id: nil) { [weak self] result in
             DispatchQueue.main.async {
                 guard let strongSelf = self else { return }
                 strongSelf.isMarkingAllRead = false
                 strongSelf.readAllButton.isEnabled = true
+                if let buttonImageView = strongSelf.readAllButton.imageView {
+                    BearyIconMotion.stopSpin(on: buttonImageView, key: "bearyReadAllSpin")
+                }
+                strongSelf.readAllButton.setImage(BearyIconImages.image(named: "icon_check", pointSize: 14), for: .normal)
                 strongSelf.readAllButton.setTitle("全部已读", for: .normal)
                 strongSelf.updateReadAllButtonWidth()
                 switch result {
@@ -883,7 +1247,7 @@ final class BearyNotificationsViewController: UIViewController {
         let titleText = stateButton.currentTitle ?? ""
         let font = stateButton.titleLabel?.font ?? UIFont.systemFont(ofSize: 14)
         let titleWidth = ceil((titleText as NSString).size(withAttributes: [NSAttributedString.Key.font: font]).width)
-        let imageWidth = stateButton.currentImage?.size.width ?? 15
+        let imageWidth = stateButton.currentImage?.size.width ?? 0
         let width = stateButton.contentEdgeInsets.left + imageWidth + stateButton.titleEdgeInsets.left + titleWidth + stateButton.titleEdgeInsets.right + stateButton.contentEdgeInsets.right
         if let constraint = stateButtonWidthConstraint {
             constraint.constant = width
@@ -897,7 +1261,7 @@ final class BearyNotificationsViewController: UIViewController {
     // MARK: - 态与提示
 
     private func refreshVisibleState() {
-        if isLoadingFirstPage && items.isEmpty {
+        if isLoadingFirstPage && items.isEmpty && !hasDisplayedPage {
             visibleState = .loading
         } else if firstLoadFailed && items.isEmpty {
             visibleState = .error
@@ -911,8 +1275,12 @@ final class BearyNotificationsViewController: UIViewController {
 
     private func applyVisibleState() {
         let showsList = visibleState == .list
-        tableView.isHidden = !showsList
+        // 表头是 tableHeaderView：表区不再整体隐藏，态容器只盖住表头以下；
+        // 非列表态把表滚回顶，让表头回到视野（自定义下拉刷新中不抢偏移）。
         stateContainer.isHidden = showsList
+        if !showsList && !isCustomPullRefreshing {
+            tableView.setContentOffset(CGPoint(x: 0, y: -tableView.contentInset.top), animated: false)
+        }
         if showsList {
             centralSpinner.stopAnimating()
             return
@@ -927,7 +1295,13 @@ final class BearyNotificationsViewController: UIViewController {
         case .empty:
             centralSpinner.stopAnimating()
             stateIconView.isHidden = false
-            stateIconView.image = BearyIconImages.image(named: "icon_mail", pointSize: 36)
+            stateIconView.image = BearyIconImages.image(named: "icon_mail", pointSize: 40)
+            // 网页 .empty svg.nb 是 40x40（其余空态数值已对上，不动）。
+            for constraint in stateIconView.constraints {
+                if constraint.firstAttribute == .width || constraint.firstAttribute == .height {
+                    constraint.constant = 40
+                }
+            }
             stateTitleLabel.isHidden = false
             stateTitleLabel.text = "还没有消息"
             stateSubtitleLabel.isHidden = false
@@ -935,16 +1309,27 @@ final class BearyNotificationsViewController: UIViewController {
             stateButton.isHidden = true
         case .error:
             centralSpinner.stopAnimating()
-            stateIconView.isHidden = false
-            stateIconView.image = BearyIconImages.image(named: "icon_wifi_off", pointSize: 36)
+            // 网页 ntLoadError：无图标 + .load-more 13px pill（1px line 描边、
+            // 左右 24、上 9），标题/副文案与现行一致。
+            stateIconView.isHidden = true
             stateTitleLabel.isHidden = false
             stateTitleLabel.text = "加载失败"
             stateSubtitleLabel.isHidden = false
             stateSubtitleLabel.text = "网络好像不太顺"
             stateButton.isHidden = false
-            stateButton.setImage(BearyIconImages.image(named: "icon_refresh", pointSize: 15), for: .normal)
-            stateButton.titleEdgeInsets = UIEdgeInsets(top: 0, left: 6, bottom: 0, right: 0)
-            stateButton.setTitle("点击重试", for: .normal)
+            stateButton.setImage(nil, for: .normal)
+            stateButton.titleLabel?.font = UIFont.systemFont(ofSize: 13)
+            stateButton.setTitleColor(BearyColors.gray, for: .normal)
+            stateButton.tintColor = BearyColors.gray
+            stateButton.contentEdgeInsets = UIEdgeInsets(top: 9, left: 24, bottom: 9, right: 24)
+            stateButton.titleEdgeInsets = UIEdgeInsets(top: 0, left: 0, bottom: 0, right: 0)
+            stateButton.layer.borderWidth = 1
+            stateButton.setTitle("重试", for: .normal)
+            for constraint in stateButton.constraints {
+                if constraint.firstAttribute == .height {
+                    constraint.constant = 36
+                }
+            }
             updateStateButtonWidth()
         case .list:
             centralSpinner.stopAnimating()
@@ -1006,11 +1391,7 @@ final class BearyNotificationsViewController: UIViewController {
             return
         }
         let titleText = item.title ?? (item.type == "letter" ? "一封信" : "通知")
-        // U8：空正文不再弹空白模态，改 toast（标题 + 暂无正文）。
-        if (item.body ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            showToast(message: titleText + "（暂无正文）")
-            return
-        }
+        // 网页 openLetter 口径：不论 body 是否为空都弹信件模态（空正文只显标题）。
         let isBadgeLetter = titleText.contains("成就") || titleText.contains("徽章")
         presentLetterModal(
             title: titleText,
@@ -1098,12 +1479,24 @@ final class BearyNotificationsViewController: UIViewController {
 
 extension BearyNotificationsViewController: UITableViewDataSource, UITableViewDelegate {
 
-    private var showsTrailingRow: Bool {
-        return isLoadingMore || loadMoreFailed
+    /// 哨兵行：有更多页或正在翻页时占位（不可见；忙时仅 16px 转圈），
+    /// 翻页失败也不产生重试行，哨兵留位待重 arm。
+    private var showsSentinelRow: Bool {
+        return hasMore || isLoadingMore
     }
 
     func tableView(_ tableView: UITableView, numberOfRowsInSection section: Int) -> Int {
-        return displayRows.count + (showsTrailingRow ? 1 : 0)
+        return displayRows.count + (showsSentinelRow ? 1 : 0)
+    }
+
+    func tableView(_ tableView: UITableView, heightForRowAt indexPath: IndexPath) -> CGFloat {
+        if indexPath.row == displayRows.count {
+            return isLoadingMore ? 40 : 24
+        }
+        if zeroHeightRows.contains(indexPath.row) {
+            return 0
+        }
+        return UITableView.automaticDimension
     }
 
     func tableView(_ tableView: UITableView, cellForRowAt indexPath: IndexPath) -> UITableViewCell {
@@ -1117,9 +1510,7 @@ extension BearyNotificationsViewController: UITableViewDataSource, UITableViewDe
             if isLoadingMore {
                 trailingCell.configureLoading()
             } else {
-                trailingCell.configureRetry { [weak self] in
-                    self?.loadMore()
-                }
+                trailingCell.configureIdle()
             }
             return trailingCell
         }
@@ -1176,9 +1567,7 @@ extension BearyNotificationsViewController: UITableViewDataSource, UITableViewDe
     func tableView(_ tableView: UITableView, didSelectRowAt indexPath: IndexPath) {
         tableView.deselectRow(at: indexPath, animated: !UIAccessibility.isReduceMotionEnabled)
         if indexPath.row == displayRows.count {
-            if loadMoreFailed {
-                loadMore()
-            }
+            // 哨兵行不可见、无点击行为；翻页只由 willDisplay / 滚动触发。
             return
         }
         let row = displayRows[indexPath.row]
@@ -1195,8 +1584,35 @@ extension BearyNotificationsViewController: UITableViewDataSource, UITableViewDe
     }
 
     func tableView(_ tableView: UITableView, willDisplay cell: UITableViewCell, forRowAt indexPath: IndexPath) {
-        if indexPath.row == displayRows.count - 1 && hasMore && !isLoadingMore && !loadMoreFailed {
+        if indexPath.row == displayRows.count && showsSentinelRow && hasMore && !isLoadingMore && !loadMoreFailed {
             loadMore()
+        }
+    }
+
+    func scrollViewDidScroll(_ scrollView: UIScrollView) {
+        updateCustomPullIndicator()
+        // 翻页失败重 arm：哨兵滚出视野后清失败旗，下次滚回/近底再触。
+        if loadMoreFailed {
+            let visibleRows = tableView.indexPathsForVisibleRows ?? []
+            if !visibleRows.contains(where: { $0.row == displayRows.count }) {
+                loadMoreFailed = false
+            }
+        }
+        if hasMore && !isLoadingMore && !isLoadingFirstPage && !loadMoreFailed {
+            let nearBottom = scrollView.contentOffset.y + scrollView.bounds.height >= scrollView.contentSize.height - 120
+            if nearBottom && scrollView.contentSize.height > 0 {
+                loadMore()
+            }
+        }
+    }
+
+    func scrollViewDidEndDragging(_ scrollView: UIScrollView, willDecelerate decelerate: Bool) {
+        // 自定义下拉触发：手指原始行程满 205px 松手才刷新（网页 TRIGRAW 口径）。
+        let panTranslation = scrollView.panGestureRecognizer.translation(in: scrollView).y
+        let fingerRaw = max(0, panTranslation - (pullEngageTranslation ?? panTranslation))
+        pullEngageTranslation = nil
+        if fingerRaw >= 205 && !isLoadingFirstPage && !isCustomPullRefreshing {
+            beginCustomPullRefresh()
         }
     }
 }
@@ -1532,7 +1948,8 @@ private class BearyNotificationCell: UITableViewCell {
         return label
     }()
 
-    /// 标题行：标题 + 行末表情位（原富文本内联附件无法承载播放器视图，改为横排；表情 20 与原附件同尺寸）。
+    /// 标题行：仅标题 label（表情改用 NSTextAttachment 内联进标题文本，见 configure；
+    /// 长标题截断时表情一并被截掉，与网页 .nt-act 同行为）。
     private let titleRowStack: UIStackView = {
         let stack = UIStackView()
         stack.translatesAutoresizingMaskIntoConstraints = false
@@ -1542,7 +1959,6 @@ private class BearyNotificationCell: UITableViewCell {
         return stack
     }()
 
-    private var titleEmoteView: BearyEmoteView?
 
     private let excerptLabel: UILabel = {
         let label = UILabel()
@@ -1593,11 +2009,23 @@ private class BearyNotificationCell: UITableViewCell {
         return separator
     }()
 
+    /// 嵌套行左侧竖线（网页 .nt-sysin border-left 2px line 色，x=20 起，
+    /// 随展开区整列连续；仅嵌套行显示，卡面/顶层行隐藏）。
+    private let nestedLineView: UIView = {
+        let line = UIView()
+        line.translatesAutoresizingMaskIntoConstraints = false
+        line.backgroundColor = BearyColors.line
+        line.isHidden = true
+        return line
+    }()
+
     override init(style: UITableViewCell.CellStyle, reuseIdentifier: String?) {
         super.init(style: style, reuseIdentifier: reuseIdentifier)
         let selectedBackground = UIView()
         selectedBackground.backgroundColor = BearyColors.hov
         selectedBackgroundView = selectedBackground
+        // 高度生长动画中行高缩到 0 时内容不得溢出到相邻行。
+        clipsToBounds = true
         let bodyStack = UIStackView(arrangedSubviews: [titleRowStack, excerptLabel])
         titleRowStack.addArrangedSubview(titleLabel)
         bodyStack.translatesAutoresizingMaskIntoConstraints = false
@@ -1614,6 +2042,7 @@ private class BearyNotificationCell: UITableViewCell {
         contentView.addSubview(unreadDotView)
         contentView.addSubview(chevronView)
         contentView.addSubview(separatorView)
+        contentView.addSubview(nestedLineView)
         // 行内边距 20 由 cell 自身承担（列宽已是满 600，见 contentView 注释）：
         // 顶层行头像 x=20、未读点右 -20；嵌套行在此基础上再缩进（见 configure）。
         avatarLeadingConstraint = avatarImageView.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 20)
@@ -1662,6 +2091,10 @@ private class BearyNotificationCell: UITableViewCell {
             separatorView.trailingAnchor.constraint(equalTo: contentView.trailingAnchor),
             separatorView.bottomAnchor.constraint(equalTo: contentView.bottomAnchor),
             separatorView.heightAnchor.constraint(equalToConstant: 1),
+            nestedLineView.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 20),
+            nestedLineView.widthAnchor.constraint(equalToConstant: 2),
+            nestedLineView.topAnchor.constraint(equalTo: contentView.topAnchor),
+            nestedLineView.bottomAnchor.constraint(equalTo: contentView.bottomAnchor),
         ])
         // 底线贴行底时行高由内容撑起：头像 42 + 上下 16 即最小 74。
         let bottomGuard = contentView.bottomAnchor.constraint(greaterThanOrEqualTo: avatarImageView.bottomAnchor, constant: 16)
@@ -1687,8 +2120,6 @@ private class BearyNotificationCell: UITableViewCell {
         avatarRetryURL = nil
         avatarRetryActorName = ""
         avatarRetryButton.isHidden = true
-        titleEmoteView?.removeFromSuperview()
-        titleEmoteView = nil
         avatarImageView.image = nil
         avatarFallbackLabel.text = nil
         avatarFallbackLabel.isHidden = true
@@ -1699,7 +2130,11 @@ private class BearyNotificationCell: UITableViewCell {
         kindIconView.image = nil
         titleLabel.attributedText = nil
         titleLabel.text = nil
+        excerptLabel.attributedText = nil
         excerptLabel.text = nil
+        // 错峰入场动画残留不得带到复用行。
+        alpha = 1
+        transform = CGAffineTransform.identity
         timeLabel.text = nil
         unreadDotView.isHidden = true
         chevronView.isHidden = true
@@ -1707,6 +2142,7 @@ private class BearyNotificationCell: UITableViewCell {
         chevronView.image = nil
         avatarLeadingConstraint?.constant = 20
         separatorLeadingConstraint?.constant = 0
+        nestedLineView.isHidden = true
         dotTrailingToContentConstraint?.isActive = true
         dotTrailingToChevronConstraint?.isActive = false
     }
@@ -1757,27 +2193,6 @@ private class BearyNotificationCell: UITableViewCell {
         loadAvatar(url: retryURL, actorName: avatarRetryActorName)
     }
 
-    /// 标题行表情位：key 不变时复用（深浅由播放器内部切换），key 变了才重建；nil 则清空。静态首帧，不播。
-    private func setTitleEmote(key: String?) {
-        guard let key = key, !key.isEmpty else {
-            titleEmoteView?.removeFromSuperview()
-            titleEmoteView = nil
-            return
-        }
-        if let current = titleEmoteView, current.emoteKey == key {
-            return
-        }
-        titleEmoteView?.removeFromSuperview()
-        let emoteView = BearyEmoteView(key: key, animated: false)
-        emoteView.translatesAutoresizingMaskIntoConstraints = false
-        titleRowStack.addArrangedSubview(emoteView)
-        NSLayoutConstraint.activate([
-            emoteView.widthAnchor.constraint(equalToConstant: 20),
-            emoteView.heightAnchor.constraint(equalToConstant: 20),
-        ])
-        titleEmoteView = emoteView
-    }
-
     /// 卡面箭头旋转（调用方用 UIView.animate 包裹即得展开/收起动画）。
     func setChevronExpanded(_ expanded: Bool) {
         chevronView.transform = expanded ? CGAffineTransform(rotationAngle: CGFloat.pi) : CGAffineTransform.identity
@@ -1804,15 +2219,9 @@ private class BearyNotificationCell: UITableViewCell {
         avatarIconView.image = BearyIconImages.image(named: isSystem ? "icon_mail" : "icon_heart", pointSize: 19)
         avatarFallbackLabel.isHidden = true
         kindBadgeView.isHidden = true
-        setTitleEmote(key: nil)
-        titleLabel.attributedText = NSAttributedString(
-            string: title,
-            attributes: [
-                .font: UIFont.boldSystemFont(ofSize: 15.5),
-                .foregroundColor: BearyColors.ink,
-            ]
-        )
-        excerptLabel.text = excerpt
+        nestedLineView.isHidden = true
+        titleLabel.attributedText = BearyNotificationCell.lineHeightText(title, font: UIFont.boldSystemFont(ofSize: 15.5), color: BearyColors.ink)
+        excerptLabel.attributedText = BearyNotificationCell.lineHeightText(excerpt, font: UIFont.systemFont(ofSize: 14), color: BearyColors.gray)
         timeLabel.text = BearyNotificationCell.timeText(ms: timeMs)
         chevronView.isHidden = false
         chevronView.image = BearyIconImages.image(named: "icon_chevron_down", pointSize: 16)
@@ -1821,15 +2230,25 @@ private class BearyNotificationCell: UITableViewCell {
         dotTrailingToChevronConstraint?.isActive = true
         avatarLeadingConstraint?.constant = 20
         separatorLeadingConstraint?.constant = 0
+        nestedLineView.isHidden = true
     }
 
-    /// 网页时间口径：fmtDate 一律 M月d日 HH:mm（不用今天/昨天特例）。
+    /// 网页 .nt-body line-height 1.5：标题 15.5→23.3、摘要 14→21，
+    /// 与上下 16 padding 合计行高约 78（现行无行高倍数被压到 74）。
+    private static func lineHeightText(_ string: String, font: UIFont, color: UIColor) -> NSAttributedString {
+        let paragraph = NSMutableParagraphStyle()
+        paragraph.lineHeightMultiple = 1.5
+        paragraph.lineBreakMode = .byTruncatingTail
+        return NSAttributedString(string: string, attributes: [.font: font, .foregroundColor: color, .paragraphStyle: paragraph])
+    }
+
+    /// 网页时间口径：fmtDate 一律 M月d日 H:mm——小时不补零（9:40），分钟补零。
     private static func timeText(ms: Int?) -> String {
         guard let msValue = ms else { return "" }
         let date = Date(timeIntervalSince1970: TimeInterval(msValue) / 1000.0)
         let formatter = DateFormatter()
         formatter.locale = Locale(identifier: "zh_CN")
-        formatter.dateFormat = "M月d日 HH:mm"
+        formatter.dateFormat = "M月d日 H:mm"
         return formatter.string(from: date)
     }
 
@@ -1844,8 +2263,8 @@ private class BearyNotificationCell: UITableViewCell {
     }
 
     /// 互动动词（卡面最新一条与行标题共用，须对 VC 可见，故不 private）。
-    /// I10：未知类型不再 fallback 到回应文案，返回中性文案（行标题不渲染动词时
-    /// 调用方以空串处理，见 configure 的标题拼接）。
+    /// 网页 ntVerb 口径：非 like / bookmark 一律回退为“给你的日记贴了小熊回应”
+    ///（未知 type 同 emote 文案，不再返回空串）。
     static func verb(for type: String?) -> String {
         if type == "like" {
             return "赞了你的日记"
@@ -1853,10 +2272,7 @@ private class BearyNotificationCell: UITableViewCell {
         if type == "bookmark" {
             return "收藏了你的日记"
         }
-        if type == "emote" {
-            return "给你的日记贴了小熊回应"
-        }
-        return ""
+        return "给你的日记贴了小熊回应"
     }
 
     func configure(with item: NotificationItem, nested: Bool) {
@@ -1864,9 +2280,11 @@ private class BearyNotificationCell: UITableViewCell {
         let isSystemStyle = itemType == "system" || itemType == "letter"
         let isUnread = (item.read ?? true) == false
 
-        // 嵌套行（卡内）再缩进 30：头像 x=50、分隔线起于 30，近似网页 .nt-sysin。
-        avatarLeadingConstraint?.constant = nested ? 50 : 20
-        separatorLeadingConstraint?.constant = nested ? 30 : 0
+        // 嵌套行（网页 .nt-sysin 口径）：竖线 x=20 起 2px + 内边距 8，
+        // 头像 x=48、分隔线起于 28；顶层行无竖线。
+        avatarLeadingConstraint?.constant = nested ? 48 : 20
+        separatorLeadingConstraint?.constant = nested ? 28 : 0
+        nestedLineView.isHidden = !nested
         chevronView.isHidden = true
         dotTrailingToContentConstraint?.isActive = true
         dotTrailingToChevronConstraint?.isActive = false
@@ -1903,20 +2321,13 @@ private class BearyNotificationCell: UITableViewCell {
             avatarIconView.image = BearyIconImages.image(named: iconName, pointSize: 19)
             avatarFallbackLabel.isHidden = true
             kindBadgeView.isHidden = true
-            setTitleEmote(key: nil)
-            titleLabel.attributedText = NSAttributedString(
-                string: titleText,
-                attributes: [
-                    .font: UIFont.boldSystemFont(ofSize: 15.5),
-                    .foregroundColor: BearyColors.ink,
-                ]
-            )
+            titleLabel.attributedText = BearyNotificationCell.lineHeightText(titleText, font: UIFont.boldSystemFont(ofSize: 15.5), color: BearyColors.ink)
         } else {
             // 互动行：42 圆头像（无图回退首字母 15/700 灰）+ 右下角 19 号类型角标。
             avatarImageView.backgroundColor = BearyColors.line
             avatarIconView.isHidden = true
             kindBadgeView.isHidden = false
-            // I10：未知互动类型用中性图标（icon_info），不再 fallback 到回应图标。
+            // 网页 ntOne 口径：非 like / bookmark 的角标一律回退为 mood 图。
             let kindIconName: String
             if itemType == "like" {
                 kindIconName = "icon_heart"
@@ -1925,7 +2336,7 @@ private class BearyNotificationCell: UITableViewCell {
             } else if itemType == "emote" {
                 kindIconName = "icon_mood"
             } else {
-                kindIconName = "icon_info"
+                kindIconName = "icon_mood"
             }
             kindIconView.image = BearyIconImages.image(named: kindIconName, pointSize: 11)
             let actorName = item.actorName ?? ""
@@ -1947,67 +2358,51 @@ private class BearyNotificationCell: UITableViewCell {
                     .foregroundColor: BearyColors.ink,
                 ]
             ))
-            // I10：未知类型动词为空时不渲染动词段（不留尾随空格、不 fallback 到回应文案）。
             let verbText = BearyNotificationCell.verb(for: itemType)
-            if !verbText.isEmpty {
-                title.append(NSAttributedString(
-                    string: " " + verbText,
-                    attributes: [
-                        .font: UIFont.systemFont(ofSize: 15.5),
-                        .foregroundColor: BearyColors.ink,
-                    ]
-                ))
-            }
+            title.append(NSAttributedString(
+                string: " " + verbText,
+                attributes: [
+                    .font: UIFont.systemFont(ofSize: 15.5),
+                    .foregroundColor: BearyColors.ink,
+                ]
+            ))
+            // 网页 .nt-act 口径：emote 仅作内联附件贴进标题文本流（20x20、
+            // vertical-align -5），长标题截断时表情一并被截掉，不再是行末固定视图。
+            // 静态 PNG（BearyEmoteImages）与网页 <img> 同为静态图，不走 Lottie 播放器。
             if itemType == "emote", let emoteKey = item.emote, !emoteKey.isEmpty {
-                setTitleEmote(key: emoteKey)
-            } else {
-                setTitleEmote(key: nil)
+                let isDark = traitCollection.userInterfaceStyle == .dark
+                if let emoteImage = BearyEmoteImages.image(for: emoteKey, dark: isDark) {
+                    let attachment = NSTextAttachment()
+                    attachment.image = emoteImage
+                    attachment.bounds = CGRect(x: 0, y: -5, width: 20, height: 20)
+                    title.append(NSAttributedString(string: " "))
+                    title.append(NSAttributedString(attachment: attachment))
+                }
             }
+            let titleParagraph = NSMutableParagraphStyle()
+            titleParagraph.lineHeightMultiple = 1.5
+            titleParagraph.lineBreakMode = .byTruncatingTail
+            title.addAttribute(.paragraphStyle, value: titleParagraph, range: NSRange(location: 0, length: title.length))
             titleLabel.attributedText = title
         }
 
-        excerptLabel.text = item.excerpt ?? ""
+        excerptLabel.attributedText = BearyNotificationCell.lineHeightText(item.excerpt ?? "", font: UIFont.systemFont(ofSize: 14), color: BearyColors.gray)
         timeLabel.text = BearyNotificationCell.timeText(ms: item.createdAt)
     }
 }
 
-// MARK: - 尾行 cell（翻页加载圈 / 翻页失败重试）
+// MARK: - 哨兵 cell（翻页触发占位：忙时 16px 转圈，闲时不可见）
 
 private class BearyNotificationTrailingCell: UITableViewCell {
 
-    var onRetry: (() -> Void)?
-
-    /// 点赞按钮同款宽度修法：固有宽不含 titleEdgeInsets，故显式宽度按实测字宽给足，
-    /// 否则“点击重试”末尾会被裁掉 6pt；标题固定不变，创建时算一次即可。
-    private var retryButtonWidthConstraint: NSLayoutConstraint?
-
+    /// 忙时仅 16px 转圈（medium 20 × 0.8，与网页 .more-sentinel 16px 同口径）。
     private let spinner: UIActivityIndicatorView = {
         let spinner = UIActivityIndicatorView(style: .medium)
         spinner.translatesAutoresizingMaskIntoConstraints = false
         spinner.color = BearyColors.gray
         spinner.hidesWhenStopped = true
+        spinner.transform = CGAffineTransform(scaleX: 0.8, y: 0.8)
         return spinner
-    }()
-
-    private lazy var retryButton: UIButton = {
-        let button = UIButton(type: .system)
-        button.translatesAutoresizingMaskIntoConstraints = false
-        button.setImage(BearyIconImages.image(named: "icon_refresh", pointSize: 15), for: .normal)
-        button.setTitle("点击重试", for: .normal)
-        button.titleLabel?.font = UIFont.systemFont(ofSize: 14)
-        button.setTitleColor(BearyColors.ink, for: .normal)
-        button.tintColor = BearyColors.ink
-        button.contentEdgeInsets = UIEdgeInsets(top: 0, left: 12, bottom: 0, right: 12)
-        button.titleEdgeInsets = UIEdgeInsets(top: 0, left: 6, bottom: 0, right: 0)
-        button.layer.borderWidth = 1
-        button.layer.borderColor = BearyColors.line.cgColor
-        button.layer.cornerRadius = 20
-        button.addTarget(self, action: #selector(retryTapped), for: .touchUpInside)
-        let retryTitleWidth = ceil(("点击重试" as NSString).size(withAttributes: [NSAttributedString.Key.font: UIFont.systemFont(ofSize: 14)]).width)
-        let retryWidth = button.widthAnchor.constraint(equalToConstant: 12 + (button.currentImage?.size.width ?? 15) + 6 + retryTitleWidth + 12)
-        retryWidth.isActive = true
-        retryButtonWidthConstraint = retryWidth
-        return button
     }()
 
     override init(style: UITableViewCell.CellStyle, reuseIdentifier: String?) {
@@ -2016,15 +2411,9 @@ private class BearyNotificationTrailingCell: UITableViewCell {
         backgroundColor = BearyColors.bg
         contentView.backgroundColor = BearyColors.bg
         contentView.addSubview(spinner)
-        contentView.addSubview(retryButton)
         NSLayoutConstraint.activate([
             spinner.centerXAnchor.constraint(equalTo: contentView.centerXAnchor),
-            spinner.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 20),
-            spinner.bottomAnchor.constraint(equalTo: contentView.bottomAnchor, constant: -20),
-            retryButton.centerXAnchor.constraint(equalTo: contentView.centerXAnchor),
-            retryButton.heightAnchor.constraint(equalToConstant: 40),
-            retryButton.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 12),
-            retryButton.bottomAnchor.constraint(equalTo: contentView.bottomAnchor, constant: -12),
+            spinner.centerYAnchor.constraint(equalTo: contentView.centerYAnchor),
         ])
     }
 
@@ -2034,32 +2423,22 @@ private class BearyNotificationTrailingCell: UITableViewCell {
 
     override func traitCollectionDidChange(_ previousTraitCollection: UITraitCollection?) {
         super.traitCollectionDidChange(previousTraitCollection)
-        // 重试钮描边是 CGColor，深浅切换时重赋，否则深色下仍留浅色边。
-        if previousTraitCollection?.userInterfaceStyle != traitCollection.userInterfaceStyle {
-            retryButton.layer.borderColor = BearyColors.line.cgColor
-        }
+        // 哨兵 cell 已无描边钮，转圈颜色走 UIColor 动态解析，无需重刷。
     }
 
     override func prepareForReuse() {
         super.prepareForReuse()
-        onRetry = nil
         spinner.stopAnimating()
     }
 
+    /// 忙时仅 16px 转圈；闲时不可见、无按钮、无点击。
     func configureLoading() {
         spinner.isHidden = false
         spinner.startAnimating()
-        retryButton.isHidden = true
     }
 
-    func configureRetry(onRetry: @escaping () -> Void) {
+    func configureIdle() {
         spinner.stopAnimating()
         spinner.isHidden = true
-        retryButton.isHidden = false
-        self.onRetry = onRetry
-    }
-
-    @objc private func retryTapped() {
-        onRetry?()
     }
 }

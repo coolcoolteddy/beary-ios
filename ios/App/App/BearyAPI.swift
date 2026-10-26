@@ -30,6 +30,11 @@ struct Quote: Decodable {
     var id: String?
     var content: String?
     var images: [String]?
+    /// 被引用篇自己的图片尺寸（直传引用分支用它，不再误用宿主 entry.imgDims）。
+    /// 实测：工作区 worker 的 attachQuotes 目前不返回 img_dims（直传 quote 只有 id/author/content/images/
+    /// created_at/is_public/gone/locked），故本字段现阶段恒为 nil；字段先行补位，待服务端透传后直接可用。
+    /// 当前引用缩略图已固定 42x42，不依赖本字段（旧 stripW 的 153 兜底宽已随 strip 函数一并删除）。
+    var imgDims: [String: [Int]]?
     var createdAt: Int?
     var isPublic: Bool?
     /// 服务端 attachQuotes 直传的引用态（F3 收尾补解码）：gone=原篇已删，locked=原篇未公开。
@@ -58,6 +63,9 @@ struct Entry: Decodable {
     var quote: Quote?
     var createdAt: Int?
     var publishAt: Int?
+    /// B 方案公开倒计时截止（毫秒时间戳；nil = 不在倒计时中）。服务端仅对作者本人返回该字段，
+    /// 他人视角下该字段被剥离；解码走 convertFromSnakeCase（publish_pending_until），不要写 snake_case CodingKeys。
+    var publishPendingUntil: Int?
     var editDeadline: Int?
     var isPublic: Bool?
     var isLocked: Bool?
@@ -89,6 +97,17 @@ struct EntryList: Decodable {
     var trashCount: Int?
     var tlCounts: TlCounts?
     var deliveredTotal: Int?
+    /// B 方案广场附加字段：published=1 按 published_at DESC 最新 5 条（仅 scope=plaza 返回，
+    /// 条目形状与 entries 列表项一致；其他 scope 下服务端不返回本字段，解码为 nil）。
+    var recentPublished: [Entry]?
+}
+
+/// B 方案公开/取消响应：服务端 POST /publish 与 /publish/cancel 均返回
+/// {ok, publish_pending_until, published}（published 为 0/1 数字；取消成功时 publish_pending_until 为 null）。
+struct PublishResponse: Decodable {
+    var ok: Bool?
+    var publishPendingUntil: Int?
+    var published: Int?
 }
 
 struct NotificationItem: Decodable {
@@ -569,6 +588,22 @@ final class BearyAPI {
             }
             completion(.failure(.decoding(NSError(domain: "BearyAPI", code: -1, userInfo: nil))))
         }
+    }
+
+    // MARK: - B 方案公开 / 取消（网页 doPublish / doPublishCancel 同款端点，见 teddy_beary/worker.js）
+
+    /// 公开：POST /beary/api/entries/:id/publish（作者对已送达未公开日记发起 24h 公开倒计时）。
+    /// 已在倒计时中服务端 403 already pending；成功后调用方以 publishPendingUntil 覆盖本地态。
+    func requestPublish(id: String, completion: @escaping (Result<PublishResponse, APIError>) -> Void) {
+        let safe = id.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? id
+        request("/beary/api/entries/\(safe)/publish", method: "POST", completion: completion)
+    }
+
+    /// 取消公开：POST /beary/api/entries/:id/publish/cancel（倒计时内取消，清 pending 回未公开）。
+    /// 不在倒计时中服务端 403 not pending；成功后调用方将本地 publishPendingUntil 清为 nil。
+    func cancelPublish(id: String, completion: @escaping (Result<PublishResponse, APIError>) -> Void) {
+        let safe = id.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? id
+        request("/beary/api/entries/\(safe)/publish/cancel", method: "POST", completion: completion)
     }
 
     // MARK: - 日记删除与回收站
