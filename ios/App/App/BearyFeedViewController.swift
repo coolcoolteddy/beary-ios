@@ -23,6 +23,13 @@ private enum BearyFeedIconCache {
 private final class BearyFeedRetryButton: UIButton {
     weak var targetImageView: UIImageView?
     var retryURL: URL?
+    // B 组：帧 28 时 point 外扩至 44（头像帧另改 44 后本扩不生效，图片重试仍靠它）。
+    override func point(inside point: CGPoint, with event: UIEvent?) -> Bool {
+        let dx: CGFloat = bounds.width < 44 ? (44 - bounds.width) / 2 : 0
+        let dy: CGFloat = bounds.height < 44 ? (44 - bounds.height) / 2 : 0
+        if dx == 0 && dy == 0 { return super.point(inside: point, with: event) }
+        return bounds.insetBy(dx: -dx, dy: -dy).contains(point)
+    }
 }
 
 private func bearyFeedRetryButton(target: Any?, action: Selector) -> BearyFeedRetryButton {
@@ -1799,7 +1806,7 @@ class BearyFeedCell: UITableViewCell {
     }()
 
     private lazy var likeButton: UIButton = {
-        let btn = UIButton(type: .system)
+        let btn = BearyHit44Button(type: .system)
         btn.translatesAutoresizingMaskIntoConstraints = false
         btn.titleLabel?.font = UIFont.systemFont(ofSize: 14)
         btn.contentEdgeInsets = UIEdgeInsets.zero
@@ -1811,7 +1818,7 @@ class BearyFeedCell: UITableViewCell {
     }()
 
     private lazy var bookmarkButton: UIButton = {
-        let btn = UIButton(type: .system)
+        let btn = BearyHit44Button(type: .system)
         btn.translatesAutoresizingMaskIntoConstraints = false
         btn.contentEdgeInsets = UIEdgeInsets(top: 2, left: 2, bottom: 2, right: 2)
         btn.addTarget(self, action: #selector(bookmarkTapped), for: .touchUpInside)
@@ -1821,7 +1828,7 @@ class BearyFeedCell: UITableViewCell {
     }()
 
     private lazy var shareButton: UIButton = {
-        let btn = UIButton(type: .system)
+        let btn = BearyHit44Button(type: .system)
         btn.translatesAutoresizingMaskIntoConstraints = false
         btn.setImage(BearyFeedIconCache.image(named: "icon_share", pointSize: 21), for: .normal)
         btn.tintColor = BearyColors.gray
@@ -1937,8 +1944,8 @@ class BearyFeedCell: UITableViewCell {
             avatarImageView.bottomAnchor.constraint(equalTo: avatarContainer.bottomAnchor),
             avatarRetryButton.centerXAnchor.constraint(equalTo: avatarContainer.centerXAnchor),
             avatarRetryButton.centerYAnchor.constraint(equalTo: avatarContainer.centerYAnchor),
-            avatarRetryButton.widthAnchor.constraint(equalToConstant: 28),
-            avatarRetryButton.heightAnchor.constraint(equalToConstant: 28),
+            avatarRetryButton.widthAnchor.constraint(equalToConstant: 44),
+            avatarRetryButton.heightAnchor.constraint(equalToConstant: 44),
             rightTop,
             rightStack.leadingAnchor.constraint(equalTo: avatarContainer.trailingAnchor, constant: 12),
             rightStack.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -20),
@@ -2486,8 +2493,8 @@ class BearyFeedCell: UITableViewCell {
         let hostIsMine = entry.isMine == true
         if let quoteValue = entry.quote {
             presentQuoteCard(
-                authorName: displayAuthorName(quoteValue.authorName),
-                authorAvatar: quoteValue.authorAvatar,
+                authorName: displayAuthorName(quoteValue.authorName ?? entry.authorName),
+                authorAvatar: quoteValue.authorAvatar ?? entry.authorAvatar,
                 content: quoteValue.content ?? "",
                 images: quoteValue.images ?? [],
                 dims: entry.imgDims,
@@ -2854,7 +2861,7 @@ class BearyFeedCell: UITableViewCell {
             row.spacing = 6
             row.alignment = .center
             row.translatesAutoresizingMaskIntoConstraints = false
-            let emoteView = BearyEmoteView(key: key, animated: false)
+            let emoteView = BearyEmoteView(key: key, animated: true)
             emoteView.translatesAutoresizingMaskIntoConstraints = false
             let countLabel = UILabel()
             countLabel.font = mine ? UIFont.boldSystemFont(ofSize: 12) : UIFont.systemFont(ofSize: 12)
@@ -3512,7 +3519,7 @@ private class BearyFeedEmoteSheetViewController: UIViewController, UICollectionV
     private let sheetView = UIView()
     private let grabView = UIView()
     private let titleLabel = UILabel()
-    private let closeButton = UIButton(type: .system)
+    private let closeButton = BearyHit44Button(type: .system)
     private var sheetHeightConstraint: NSLayoutConstraint?
     private var sheetBottomConstraint: NSLayoutConstraint?
 
@@ -3732,7 +3739,7 @@ private class BearyFeedImageViewerViewController: UIViewController, UIScrollView
     private let startIndex: Int
     private let pagingScrollView = UIScrollView()
     private let counterLabel = UILabel()
-    private let closeButton = UIButton(type: .system)
+    private let closeButton = BearyHit44Button(type: .system)
     private let dotsStack = UIStackView()
     private var dotViews: [UIView] = []
     private var pageViews: [UIView] = []

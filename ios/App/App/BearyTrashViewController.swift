@@ -50,7 +50,7 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate {
     private let contentStack = UIStackView()
     private let headerRow = UIStackView()
     private let titleLabel = UILabel()
-    private let closeButton = UIButton(type: .custom)
+    private let closeButton = BearyHit44Button(type: .custom)
     private let noteLabel = UILabel()
     private let listStack = UIStackView()
     private let loadingView = UIActivityIndicatorView(style: .medium)

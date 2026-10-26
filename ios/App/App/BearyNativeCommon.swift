@@ -42,6 +42,28 @@ enum BearyColors {
     }
 }
 
+// MARK: - 44pt 热区（B 组：只扩触摸帧，视觉帧一律不动）
+// BearyHit44Button / BearyHit44SegmentedControl：point(inside:) 向外扩到至少 44x44，
+// 小于 44 的轴按 (44-边长)/2 向两侧扩，已达 44 的轴不扩；不改约束、不改图标、不改布局。
+// 先例：SceneDelegate 的 BearyHitExpandingButton（32 视觉扩 4pt 至 40）；本类是其通用版。
+final class BearyHit44Button: UIButton {
+    override func point(inside point: CGPoint, with event: UIEvent?) -> Bool {
+        let dx: CGFloat = bounds.width < 44 ? (44 - bounds.width) / 2 : 0
+        let dy: CGFloat = bounds.height < 44 ? (44 - bounds.height) / 2 : 0
+        if dx == 0 && dy == 0 { return super.point(inside: point, with: event) }
+        return bounds.insetBy(dx: -dx, dy: -dy).contains(point)
+    }
+}
+
+final class BearyHit44SegmentedControl: UISegmentedControl {
+    override func point(inside point: CGPoint, with event: UIEvent?) -> Bool {
+        let dx: CGFloat = bounds.width < 44 ? (44 - bounds.width) / 2 : 0
+        let dy: CGFloat = bounds.height < 44 ? (44 - bounds.height) / 2 : 0
+        if dx == 0 && dy == 0 { return super.point(inside: point, with: event) }
+        return bounds.insetBy(dx: -dx, dy: -dy).contains(point)
+    }
+}
+
 // MARK: - 图片地址
 
 enum BearyImageURLs {

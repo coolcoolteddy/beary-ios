@@ -40,7 +40,7 @@ final class BearyLoginViewController: UIViewController {
     private let scrollView = UIScrollView()
     private let contentView = UIView()
     private let stackView = UIStackView()
-    private let closeButton = UIButton(type: .system)
+    private let closeButton = BearyHit44Button(type: .system)
     private let titleLabel = UILabel()
     private let subtitleLabel = UILabel()
     private let emailField = UITextField()
@@ -49,7 +49,7 @@ final class BearyLoginViewController: UIViewController {
     private let loginButton = UIButton(type: .system)
     private let inviteField = UITextField()
     private let messageLabel = UILabel()
-    private let agreeButton = UIButton(type: .system)
+    private let agreeButton = BearyHit44Button(type: .system)
     /// F1：协议文案用 UITextView 承载可点链接（UILabel 接不住链接点按）。
     private let agreeLabel = UITextView()
     private let agreeRow = UIView()

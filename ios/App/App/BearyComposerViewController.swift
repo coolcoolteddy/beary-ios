@@ -169,9 +169,9 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     private var publishWidthConstraint: NSLayoutConstraint?
     private var draftPillWidthConstraint: NSLayoutConstraint?
     private let toolbarSeparator = UIView()
-    private let imageToolButton = UIButton(type: .system)
-    private let weatherToolButton = UIButton(type: .system)
-    private let quoteToolButton = UIButton(type: .system)
+    private let imageToolButton = BearyHit44Button(type: .system)
+    private let weatherToolButton = BearyHit44Button(type: .system)
+    private let quoteToolButton = BearyHit44Button(type: .system)
     private let draftPillButton = UIButton(type: .system)
     // 附加选项栏（默认收起）
     private let extrasBarContainer = UIView()
@@ -200,9 +200,9 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     private let recipientChipAvatar = UIImageView()
     private let recipientChipFallback = UILabel()
     private let recipientChipName = UILabel()
-    private let recipientClearButton = UIButton(type: .system)
+    private let recipientClearButton = BearyHit44Button(type: .system)
     private let notifyGroup = UIStackView()
-    private let notifyCheckButton = UIButton(type: .system)
+    private let notifyCheckButton = BearyHit44Button(type: .system)
     private let notifyLabel = UILabel()
     // 心情（熊图条 + 动态标题“心情 · <选中名>”）
     private let moodSection = UIStackView()
@@ -224,7 +224,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     private let quoteImagesScrollView = UIScrollView()
     private let quoteImagesStackView = UIStackView()
     private let quoteCardBottomLine = UIView()
-    private let quoteCardRemoveButton = UIButton(type: .system)
+    private let quoteCardRemoveButton = BearyHit44Button(type: .system)
     /// 引用已删态行：灰字“引用的日记已删除”+ 右端“移除”钮（lite 卡隐藏时仍可清除引用，
     /// 否则已删引用会堵住挑钮，用户无法再选引用）。
     private let quoteDeletedRow = UIStackView()
@@ -2397,7 +2397,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         failStack.addArrangedSubview(failIcon)
         failStack.addArrangedSubview(failLabel)
         failView.addSubview(failStack)
-        let removeButton = UIButton(type: .system)
+        let removeButton = BearyHit44Button(type: .system)
         removeButton.translatesAutoresizingMaskIntoConstraints = false
         // I6：图片移除改用 icon_close 资产（不再用文字 ×）。
         removeButton.setImage(BearyIconImages.image(named: "icon_close", pointSize: 12), for: .normal)
@@ -2408,7 +2408,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         removeButton.addTarget(self, action: #selector(didTapRemoveImage(_:)), for: .touchUpInside)
         // 裁剪钮（清单第 3 项）：左下角，与移除钮同款 20×20 scrim 圆钮；无裁剪资产，
         // 复用 icon_edit（编辑）+ 无障碍文案“裁剪图片”，不碰 Assets、不新开文件。
-        let cropButton = UIButton(type: .system)
+        let cropButton = BearyHit44Button(type: .system)
         cropButton.translatesAutoresizingMaskIntoConstraints = false
         cropButton.setImage(BearyIconImages.image(named: "icon_edit", pointSize: 12), for: .normal)
         cropButton.tintColor = UIColor.white
@@ -3461,6 +3461,8 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             setQuotePanelOpen(false)
             return
         }
+        // presented 守卫（选人器/裁剪/草稿箱同款）：已有弹层在上时不叠开取消确认。
+        if presentedViewController != nil { return }
         if isEditMode {
             // 编辑模式不走草稿三选：没改过直接关，改过先确认，两种情况都不删原日记、不碰草稿。
             if isEditDirty() {
@@ -3469,7 +3471,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                 alert.addAction(UIAlertAction(title: "放弃修改", style: .destructive) { [weak self] _ in
                     guard let self = self else { return }
                     self.deleteEditLocalFiles()
-                    self.onCancelled?()
+                    DispatchQueue.main.async { [weak self] in self?.onCancelled?() }
                 })
                 present(alert, animated: true)
             } else {
@@ -3495,7 +3497,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         sheet.addAction(UIAlertAction(title: "丢弃并关闭", style: .destructive) { [weak self] _ in
             guard let self = self else { return }
             self.clearDraftAndFiles()
-            self.onCancelled?()
+            DispatchQueue.main.async { [weak self] in self?.onCancelled?() }
         })
         if let pop = sheet.popoverPresentationController {
             pop.sourceView = cancelButton

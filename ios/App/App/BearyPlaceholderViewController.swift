@@ -113,7 +113,7 @@ final class BearyTutorialViewController: UIViewController, UIScrollViewDelegate 
 
     private let scrollView = UIScrollView()
     private let pageControl = UIPageControl()
-    private let closeButton = UIButton(type: .system)
+    private let closeButton = BearyHit44Button(type: .system)
     private let nextButton = UIButton(type: .system)
     private var pageViews: [UIView] = []
     private var currentPage = 0

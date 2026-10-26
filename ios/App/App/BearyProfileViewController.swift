@@ -1404,9 +1404,27 @@ class BearyProfileViewController: UIViewController {
                     strongSelf.unlockedBadges = badgesValue.unlocked ?? []
                     strongSelf.wornBadgeKey = badgesValue.worn
                     strongSelf.renderBadges()
-                case .failure:
-                    strongSelf.badgesContainer.isHidden = true
-                    strongSelf.badgesHeightConstraint.isActive = true
+                case .failure(let error):
+                    NSLog("[BearyProfile] loadBadges failed: %@", "\(error)")
+                    // P1-5：失败态现形（不再隐藏容器）：徽章 stack 清空后放一个
+                    // 可点重试钮；文案与空态区分——空态是 unlocked 为空时整个
+                    // 容器隐藏、无任何文案（见 renderBadges 空分支）。
+                    for arrangedView in strongSelf.badgesStack.arrangedSubviews {
+                        strongSelf.badgesStack.removeArrangedSubview(arrangedView)
+                        arrangedView.removeFromSuperview()
+                    }
+                    let retryButton = UIButton(type: .system)
+                    retryButton.translatesAutoresizingMaskIntoConstraints = false
+                    retryButton.setTitle("徽章加载失败，点按重试", for: .normal)
+                    retryButton.titleLabel?.font = UIFont.systemFont(ofSize: 13)
+                    retryButton.setTitleColor(BearyColors.gray, for: .normal)
+                    retryButton.addTarget(strongSelf, action: #selector(badgeRetryTapped), for: .touchUpInside)
+                    NSLayoutConstraint.activate([
+                        retryButton.heightAnchor.constraint(equalToConstant: 32),
+                    ])
+                    strongSelf.badgesStack.addArrangedSubview(retryButton)
+                    strongSelf.badgesContainer.isHidden = false
+                    strongSelf.badgesHeightConstraint.isActive = false
                     strongSelf.layoutHeaderForced(widthValue: strongSelf.headerWidthValue)
                 }
             }
@@ -1470,6 +1488,10 @@ class BearyProfileViewController: UIViewController {
         badgesContainer.isHidden = false
         badgesHeightConstraint.isActive = false
         layoutHeaderForced(widthValue: headerWidthValue)
+    }
+
+    @objc private func badgeRetryTapped() {
+        loadBadges()
     }
 
     @objc private func badgeButtonTapped(_ sender: UIButton) {
@@ -2563,7 +2585,7 @@ private class BearyProfileEntryCell: UITableViewCell {
     /// 点赞钮显式宽约束：见 configure 的宽度算法。
     private var likeButtonWidthConstraint: NSLayoutConstraint?
     private lazy var likeButton: UIButton = {
-        let buttonValue = UIButton(type: .system)
+        let buttonValue = BearyHit44Button(type: .system)
         buttonValue.translatesAutoresizingMaskIntoConstraints = false
         buttonValue.titleLabel?.font = UIFont.systemFont(ofSize: 14)
         buttonValue.contentEdgeInsets = .zero
@@ -2573,14 +2595,14 @@ private class BearyProfileEntryCell: UITableViewCell {
     }()
 
     private lazy var bookmarkButton: UIButton = {
-        let buttonValue = UIButton(type: .system)
+        let buttonValue = BearyHit44Button(type: .system)
         buttonValue.translatesAutoresizingMaskIntoConstraints = false
         buttonValue.addTarget(self, action: #selector(bookmarkButtonTapped), for: .touchUpInside)
         return buttonValue
     }()
 
     private lazy var shareButton: UIButton = {
-        let buttonValue = UIButton(type: .system)
+        let buttonValue = BearyHit44Button(type: .system)
         buttonValue.translatesAutoresizingMaskIntoConstraints = false
         buttonValue.setImage(BearyIconImages.image(named: "icon_share", pointSize: 21), for: .normal)
         buttonValue.tintColor = BearyColors.gray
@@ -3080,7 +3102,7 @@ private class BearyProfileEntryCell: UITableViewCell {
             row.spacing = 6
             row.alignment = .center
             row.translatesAutoresizingMaskIntoConstraints = false
-            let emoteView = BearyEmoteView(key: key, animated: false)
+            let emoteView = BearyEmoteView(key: key, animated: true)
             emoteView.translatesAutoresizingMaskIntoConstraints = false
             let countLabel = UILabel()
             countLabel.font = UIFont.systemFont(ofSize: 12, weight: mine ? .bold : .regular)
@@ -3152,7 +3174,7 @@ private class BearyProfileEmoteSheetViewController: UIViewController, UICollecti
     private let sheetView = UIView()
     private let grabView = UIView()
     private let titleLabel = UILabel()
-    private let closeButton = UIButton(type: .system)
+    private let closeButton = BearyHit44Button(type: .system)
 
     override func viewDidLoad() {
         super.viewDidLoad()
