@@ -71,6 +71,11 @@ final class BearyChromeViewController: UIViewController {
     private var pageTopConstraints: [ContainerPage: NSLayoutConstraint] = [:]
     private var bottomCapsule: UIVisualEffectView!
     private var fabButton: UIButton!
+    /// FAB 玻璃化容器（阴影载体 + 玻璃 + 按钮三层；拖动变形只改容器 transform，不动约束）。
+    private var fabContainerView: UIView?
+    /// FAB 长按拖动锚点（长按落点，view 坐标）；nil = 未在拖动。
+    private var fabDragAnchor: CGPoint?
+    private var fabDragging = false
     private var loginButton: UIButton!
     private var giftButton: UIButton!
     private var avatarButton: UIButton!
@@ -449,44 +454,77 @@ final class BearyChromeViewController: UIViewController {
             badge.centerXAnchor.constraint(equalTo: notifButton.centerXAnchor, constant: 12.5),
             badge.centerYAnchor.constraint(equalTo: notifButton.centerYAnchor, constant: -8.5),
         ])
-        // ---- FAB：橙色实心圆，与网页 .fab 同尺寸同位置 ----
+        // ---- FAB：官方液态玻璃橙色圆钮，与网页 .fab 同尺寸同位置 ----
+        // 三层结构（与底栏胶囊同款阴影载体口径）：阴影载体在后（玻璃 clipsToBounds
+        // 会裁自身阴影，故阴影另挂一层）、玻璃本体居中、按钮在最上只负责点击与图标。
+        // 玻璃走 makeGlassView(tint: 橙)：iOS 26+ 为 UIGlassEffect 橙色 tint，低版本降级
+        // 系统毛玻璃 + 橙色 contentView 底色（helper 内 #available 兜底，不抬部署目标）。
+        let fabContainer = UIView()
+        fabContainer.backgroundColor = .clear
+        fabContainer.translatesAutoresizingMaskIntoConstraints = false
+        view.addSubview(fabContainer)
+        fabContainerView = fabContainer
+        let fabShadow = UIView()
+        fabShadow.backgroundColor = .clear
+        fabShadow.layer.shadowColor = bearyOrange.cgColor
+        fabShadow.layer.shadowOpacity = 0.45
+        fabShadow.layer.shadowRadius = 12
+        fabShadow.layer.shadowOffset = CGSize(width: 0, height: 10)
+        fabShadow.layer.cornerRadius = 27
+        fabShadow.translatesAutoresizingMaskIntoConstraints = false
+        fabContainer.addSubview(fabShadow)
+        let fabGlass = makeGlassView(tint: bearyOrange)
+        fabGlass.layer.cornerRadius = 27
+        fabGlass.clipsToBounds = true
+        fabGlass.translatesAutoresizingMaskIntoConstraints = false
+        fabContainer.addSubview(fabGlass)
         let fab = UIButton(type: .custom)
         fab.setImage(topIconImage(named: "IconPlus", systemFallback: "plus"), for: .normal)
         fab.tintColor = .white
-        fab.backgroundColor = bearyOrange
-        fab.layer.cornerRadius = 27
-        fab.layer.shadowColor = bearyOrange.cgColor
-        fab.layer.shadowOpacity = 0.45
-        fab.layer.shadowRadius = 12
-        fab.layer.shadowOffset = CGSize(width: 0, height: 10)
+        fab.backgroundColor = .clear
         fab.addTarget(self, action: #selector(didTapWrite), for: .touchUpInside)
         constrainButtonIcon(fab)
         fab.accessibilityLabel = "写日记"
         fab.translatesAutoresizingMaskIntoConstraints = false
-        view.addSubview(fab)
+        fabContainer.addSubview(fab)
         fabButton = fab
-        fab.alpha = 0
-        fab.isUserInteractionEnabled = false
+        fabContainer.alpha = 0
+        fabContainer.isUserInteractionEnabled = false
+        // 长按拖动变形：单用长按手势跟手指（.changed 直接给位移），不用“长按后启用 pan”
+        // ——pan 在触摸中途启用接不到当次触摸，长按手势则全程跟随。长按识别后
+        // cancelsTouchesInView 默认 true 会取消按钮触摸，故拖动不会误触写日记；
+        // 0.4s 内完成的快点走不到长按识别，正常点按不受影响。
+        let fabLongPress = UILongPressGestureRecognizer(target: self, action: #selector(fabLongPressed(_:)))
+        fabLongPress.minimumPressDuration = 0.4
+        fabContainer.addGestureRecognizer(fabLongPress)
         NSLayoutConstraint.activate([
-            fab.widthAnchor.constraint(equalToConstant: 54),
-            fab.heightAnchor.constraint(equalToConstant: 54),
-            fab.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -18),
-            fab.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor, constant: -84),
+            fabShadow.leadingAnchor.constraint(equalTo: fabContainer.leadingAnchor),
+            fabShadow.trailingAnchor.constraint(equalTo: fabContainer.trailingAnchor),
+            fabShadow.topAnchor.constraint(equalTo: fabContainer.topAnchor),
+            fabShadow.bottomAnchor.constraint(equalTo: fabContainer.bottomAnchor),
+            fabGlass.leadingAnchor.constraint(equalTo: fabContainer.leadingAnchor),
+            fabGlass.trailingAnchor.constraint(equalTo: fabContainer.trailingAnchor),
+            fabGlass.topAnchor.constraint(equalTo: fabContainer.topAnchor),
+            fabGlass.bottomAnchor.constraint(equalTo: fabContainer.bottomAnchor),
+            fab.leadingAnchor.constraint(equalTo: fabContainer.leadingAnchor),
+            fab.trailingAnchor.constraint(equalTo: fabContainer.trailingAnchor),
+            fab.topAnchor.constraint(equalTo: fabContainer.topAnchor),
+            fab.bottomAnchor.constraint(equalTo: fabContainer.bottomAnchor),
+            fabContainer.widthAnchor.constraint(equalToConstant: 54),
+            fabContainer.heightAnchor.constraint(equalToConstant: 54),
+            fabContainer.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -18),
+            fabContainer.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor, constant: -84),
         ])
         refreshChromeDynamicLayers()
     }
 
     /// 深浅切换时才需刷新的图层色（CALayer borderColor/shadowOpacity 不跟动态色自动走）：
-    /// 头像 1px line 边框、底栏玻璃边框（浅 1px 黑 6%、深无边框）、
-    /// 底栏玻璃阴影（浅黑 10%、深黑 42%）、底栏深色内高光显隐。
+    /// 头像 1px line 边框、底栏玻璃阴影（浅黑 10%、深黑 42%）、底栏深色内高光显隐。
+    /// 底栏玻璃边框已于 2026-10-26 按 Li 决定摘掉（浅色 1px 黑 6% 不再设置）。
     private func refreshChromeDynamicLayers() {
         let isDark = traitCollection.userInterfaceStyle == .dark
         if let avatar = avatarButton {
             avatar.layer.borderColor = BearyColors.line.resolvedColor(with: traitCollection).cgColor
-        }
-        if let cap = bottomCapsule {
-            cap.layer.borderWidth = isDark ? 0 : 1
-            cap.layer.borderColor = UIColor(white: 0, alpha: 0.06).cgColor
         }
         bottomCapsuleShadowView?.layer.shadowOpacity = isDark ? 0.42 : 0.10
         bottomCapsuleHighlightView?.isHidden = !isDark
@@ -536,7 +574,7 @@ final class BearyChromeViewController: UIViewController {
         if let top = topGlass { view.bringSubviewToFront(top) }
         if let shadow = bottomCapsuleShadowView { view.bringSubviewToFront(shadow) }
         if let cap = bottomCapsule { view.bringSubviewToFront(cap) }
-        if let fab = fabButton { view.bringSubviewToFront(fab) }
+        if let fab = fabContainerView { view.bringSubviewToFront(fab) }
     }
 
     /// M21：顶栏钮登录态显隐走 alpha 动画（减动效直设终值）；状态未变时不重播。
@@ -835,8 +873,8 @@ final class BearyChromeViewController: UIViewController {
             // 底栏阴影载体与胶囊同显隐同位移（否则胶囊藏起后阴影还留在原地）。
             self.bottomCapsuleShadowView?.alpha = visible ? 1 : 0
             self.bottomCapsuleShadowView?.transform = visible ? .identity : CGAffineTransform(translationX: 0, y: 80)
-            self.fabButton.alpha = visible ? 1 : 0
-            self.fabButton.transform = visible ? .identity : CGAffineTransform(translationX: 0, y: 80)
+            self.fabContainerView?.alpha = visible ? 1 : 0
+            self.fabContainerView?.transform = visible ? .identity : CGAffineTransform(translationX: 0, y: 80)
         }
         if !animated || UIAccessibility.isReduceMotionEnabled {
             applyBars()
@@ -844,7 +882,50 @@ final class BearyChromeViewController: UIViewController {
             UIView.animate(withDuration: 0.25, delay: 0, options: [.beginFromCurrentState, .allowUserInteraction], animations: applyBars)
         }
         bottomCapsule.isUserInteractionEnabled = visible
-        fabButton.isUserInteractionEnabled = visible
+        fabContainerView?.isUserInteractionEnabled = visible
+    }
+
+    /// FAB 长按拖动变形：长按落点为锚点，跟手位移 + 沿拖动方向拉伸（玻璃随容器
+    /// 一起形变）；松手弹簧回锚点，不改变常驻位置、不持久化。拖动中途栏显隐
+    /// 若改写 transform，下一次 setBarsVisible 会重新收敛，不留残态。
+    @objc private func fabLongPressed(_ gesture: UILongPressGestureRecognizer) {
+        guard let container = fabContainerView else { return }
+        switch gesture.state {
+        case .began:
+            fabDragAnchor = gesture.location(in: view)
+            fabDragging = true
+            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+        case .changed:
+            guard fabDragging, let anchor = fabDragAnchor else { return }
+            let point = gesture.location(in: view)
+            let tx = point.x - anchor.x
+            let ty = point.y - anchor.y
+            let len = hypot(tx, ty)
+            if len < 4 {
+                container.transform = .identity
+                return
+            }
+            // 沿拖动方向拉伸、垂直方向微缩：R(θ)·S·R(−θ) 拼到平移之后。
+            let angle = atan2(ty, tx)
+            let sx = 1 + min(0.30, len / 400)
+            let sy = 1 - min(0.12, len / 800)
+            container.transform = CGAffineTransform(translationX: tx, y: ty)
+                .rotated(by: angle)
+                .scaledBy(x: sx, y: sy)
+                .rotated(by: -angle)
+        case .ended, .cancelled, .failed:
+            fabDragAnchor = nil
+            fabDragging = false
+            if UIAccessibility.isReduceMotionEnabled {
+                container.transform = .identity
+            } else {
+                UIView.animate(withDuration: 0.5, delay: 0, usingSpringWithDamping: 0.7, initialSpringVelocity: 0, options: [.beginFromCurrentState, .allowUserInteraction], animations: {
+                    container.transform = .identity
+                })
+            }
+        default:
+            break
+        }
     }
 
     /// 栏显隐容器 API（清单第 2 项容器侧）：首页／时间线／个人主页的滚动回调调此方法；
@@ -866,8 +947,9 @@ final class BearyChromeViewController: UIViewController {
             tabButtons[i].tintColor = (k == selectedKey) ? ink : gray
             tabButtons[i].accessibilityTraits = (k == selectedKey) ? [.button, .selected] : [.button]
         }
-        // M4：选中 pill 帧变化走 0.28s 约束/帧动画（减动效直设终值；layoutChromeOverlays
-        // 本身仍直设终值，旋转等布局回调不经此动画，避免布局循环）。
+        // M4：选中 pill 帧变化走弹簧动画（对标系统分段器选中 pill 滑动感；
+        // 减动效直设终值；layoutChromeOverlays 本身仍直设终值，旋转等布局回调
+        // 不经此动画，避免布局循环）。
         let oldPillFrame = selectedPillView?.frame
         let oldPillShadowFrame = selectedPillShadowView?.frame
         let pillWasVisible = selectedPillView?.isHidden == false
@@ -880,7 +962,7 @@ final class BearyChromeViewController: UIViewController {
             let newShadowFrame = pillShadow.frame
             pill.frame = oldFrame
             pillShadow.frame = oldPillShadowFrame ?? oldFrame
-            UIView.animate(withDuration: 0.28, delay: 0, options: [.beginFromCurrentState, .curveEaseInOut], animations: {
+            UIView.animate(withDuration: 0.45, delay: 0, usingSpringWithDamping: 0.82, initialSpringVelocity: 0, options: [.beginFromCurrentState, .allowUserInteraction], animations: {
                 pill.frame = newFrame
                 pillShadow.frame = newShadowFrame
             }) { _ in
