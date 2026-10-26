@@ -239,6 +239,15 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         searchSeq += 1
     }
 
+    /// 切页生命周期 7 号（最小化）：容器切页只改 isHidden，本回调不触发，
+    /// 故容器 showPage 在离页时显式调本钩子，只覆盖序号失效（收键盘已有
+    /// showPage 的 view.endEditing，不重复）。
+    func pageDidLeave() {
+        searchTimer?.invalidate()
+        searchTimer = nil
+        searchSeq += 1
+    }
+
     deinit {
         searchTimer?.invalidate()
     }
