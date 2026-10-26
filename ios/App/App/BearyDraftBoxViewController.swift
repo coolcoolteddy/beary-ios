@@ -552,7 +552,8 @@ final class BearyDraftBoxViewController: UIViewController {
             listStack.addArrangedSubview(emptyWrap)
         } else {
             subWrap.isHidden = false
-            subLabel.text = "共 \(drafts.count) 份 · 写的时候自动保存 · 仅保存在本机"
+            // D-G18：网页 draftSub 口径「仅保存在当前浏览器」，原「仅保存在本机」改齐。
+            subLabel.text = "共 \(drafts.count) 份 · 写的时候自动保存 · 仅保存在当前浏览器"
             hintWrap.isHidden = false
             for draftValue in drafts {
                 let card = makeCard(for: draftValue)
@@ -636,6 +637,7 @@ final class BearyDraftBoxViewController: UIViewController {
         if let trashImage = BearyIconImages.image(named: "icon_trash", pointSize: 17) {
             deleteButton.setImage(trashImage, for: .normal)
         }
+        deleteButton.imageView?.contentMode = .scaleAspectFit
         deleteButton.tintColor = BearyColors.red
         deleteButton.accessibilityLabel = "删除草稿"
         deleteButton.translatesAutoresizingMaskIntoConstraints = false
@@ -686,9 +688,11 @@ final class BearyDraftBoxViewController: UIViewController {
         if hasUnrecoverableImage(for: draftValue) {
             let lostButton = UIButton(type: .custom)
             lostButton.setTitle("图片未保存", for: .normal)
-            lostButton.setTitleColor(BearyColors.red, for: .normal)
-            lostButton.titleLabel?.font = UIFont.systemFont(ofSize: 11.5, weight: .semibold)
-            lostButton.backgroundColor = BearyColors.alpha(BearyColors.red, 0.13)
+            // D-G13：网页 .df-chip.df-lost 为 faint 底 + 灰字 + 500 字重；
+            // 原 App 红底红字 semibold 改齐。
+            lostButton.setTitleColor(BearyColors.gray, for: .normal)
+            lostButton.titleLabel?.font = UIFont.systemFont(ofSize: 11.5, weight: .medium)
+            lostButton.backgroundColor = BearyColors.faint
             lostButton.layer.cornerRadius = 999
             lostButton.layer.masksToBounds = true
             lostButton.contentEdgeInsets = UIEdgeInsets(top: 2.5, left: 9, bottom: 2.5, right: 9)
@@ -748,7 +752,7 @@ final class BearyDraftBoxViewController: UIViewController {
     }
 
     /// I16：emote 可用性与播放器回退链同口径——Lottie JSON（当前深浅）或 PNG
-    /// 任一存在即有图；两者皆无时播放器只会留 16px 空白，故不放 emote 视图。
+    /// 任一存在即有图；两者皆无时播放器只会留 14px 空白，故不放 emote 视图。
     /// （JSON 存在但解析失败的极端情形不在此判定内，属资产损坏而非缺失。）
     private func isEmoteAssetAvailable(key: String) -> Bool {
         let dark = traitCollection.userInterfaceStyle == .dark
@@ -766,13 +770,14 @@ final class BearyDraftBoxViewController: UIViewController {
         row.spacing = 4
         row.alignment = .center
         row.translatesAutoresizingMaskIntoConstraints = false
-        // I16：emote 加载失败时隐藏 16px 视图，只留心情名。
+        // I16：emote 加载失败时隐藏 14px 视图，只留心情名。
+        // D-G12：网页 .df-chip img 为 14px，原 16 改 14。
         if isEmoteAssetAvailable(key: key) {
             let emoteView = BearyEmoteView(key: key, animated: false)
             emoteView.translatesAutoresizingMaskIntoConstraints = false
             NSLayoutConstraint.activate([
-                emoteView.widthAnchor.constraint(equalToConstant: 16),
-                emoteView.heightAnchor.constraint(equalToConstant: 16),
+                emoteView.widthAnchor.constraint(equalToConstant: 14),
+                emoteView.heightAnchor.constraint(equalToConstant: 14),
             ])
             row.addArrangedSubview(emoteView)
         }
@@ -803,13 +808,14 @@ final class BearyDraftBoxViewController: UIViewController {
         row.spacing = 4
         row.alignment = .center
         row.translatesAutoresizingMaskIntoConstraints = false
-        if let atImage = BearyIconImages.image(named: "icon_at", pointSize: 14) {
+        // D-G12：网页 .df-chip .icon 为 12px，原 14 改 12。
+        if let atImage = BearyIconImages.image(named: "icon_at", pointSize: 12) {
             let imageView = UIImageView(image: atImage)
             imageView.tintColor = BearyColors.ink
             imageView.translatesAutoresizingMaskIntoConstraints = false
             NSLayoutConstraint.activate([
-                imageView.widthAnchor.constraint(equalToConstant: 14),
-                imageView.heightAnchor.constraint(equalToConstant: 14),
+                imageView.widthAnchor.constraint(equalToConstant: 12),
+                imageView.heightAnchor.constraint(equalToConstant: 12),
             ])
             row.addArrangedSubview(imageView)
         }

@@ -164,6 +164,7 @@ class BearyFeedViewController: UIViewController {
     private var feedChromeHidden = false
 
     /// 有新内容 pill（网页 #newPill 口径：ink 底、bg 字、13 semibold、999 圆角、padding 9/16，
+    /// 阴影 0 6px 18px rgba(0,0,0,.22)，
     /// 底部 92 + 安全区上方，点按应用待定内容并回顶）。
     private lazy var newContentPill: UIButton = {
         let btn = UIButton(type: .system)
@@ -173,7 +174,11 @@ class BearyFeedViewController: UIViewController {
         btn.setTitleColor(BearyColors.bg, for: .normal)
         btn.backgroundColor = BearyColors.ink
         btn.layer.cornerRadius = 17
-        btn.clipsToBounds = true
+        btn.clipsToBounds = false
+        btn.layer.shadowColor = UIColor.black.cgColor
+        btn.layer.shadowOpacity = 0.22
+        btn.layer.shadowOffset = CGSize(width: 0, height: 6)
+        btn.layer.shadowRadius = 9
         btn.contentEdgeInsets = UIEdgeInsets(top: 9, left: 16, bottom: 9, right: 16)
         btn.isHidden = true
         btn.addTarget(self, action: #selector(newContentPillTapped), for: .touchUpInside)
@@ -464,7 +469,8 @@ class BearyFeedViewController: UIViewController {
         onEntrySelected?(entry)
     }
 
-    /// 轻 toast（详情 showToast 同口径：ink 底白字、底部安全区 -24、2 秒自动消失）。
+    /// 轻 toast（网页 .toast 口径：ink 底、bg 字、13 semibold、圆角 20、内边距 9/16，
+    /// 底部安全区 -24、2 秒自动消失）。
     private func showFeedToast(message: String) {
         if message.isEmpty { return }
         toastHideWorkItem?.cancel()
@@ -475,12 +481,12 @@ class BearyFeedViewController: UIViewController {
             made.tag = tag
             made.translatesAutoresizingMaskIntoConstraints = false
             made.backgroundColor = BearyColors.ink
-            made.layer.cornerRadius = 12
+            made.layer.cornerRadius = 20
             made.clipsToBounds = true
             let label = UILabel()
             label.tag = 992
             label.translatesAutoresizingMaskIntoConstraints = false
-            label.font = UIFont.systemFont(ofSize: 14)
+            label.font = UIFont.systemFont(ofSize: 13, weight: .semibold)
             label.textColor = BearyColors.bg
             label.textAlignment = .center
             label.numberOfLines = 0
@@ -491,8 +497,8 @@ class BearyFeedViewController: UIViewController {
                 made.trailingAnchor.constraint(lessThanOrEqualTo: view.trailingAnchor, constant: -24),
                 made.centerXAnchor.constraint(equalTo: view.centerXAnchor),
                 made.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor, constant: -24),
-                label.topAnchor.constraint(equalTo: made.topAnchor, constant: 10),
-                label.bottomAnchor.constraint(equalTo: made.bottomAnchor, constant: -10),
+                label.topAnchor.constraint(equalTo: made.topAnchor, constant: 9),
+                label.bottomAnchor.constraint(equalTo: made.bottomAnchor, constant: -9),
                 label.leadingAnchor.constraint(equalTo: made.leadingAnchor, constant: 16),
                 label.trailingAnchor.constraint(equalTo: made.trailingAnchor, constant: -16),
             ])
@@ -1690,7 +1696,7 @@ class BearyFeedErrorCell: UITableViewCell {
             stack.leadingAnchor.constraint(greaterThanOrEqualTo: contentView.leadingAnchor, constant: 16),
             stack.trailingAnchor.constraint(lessThanOrEqualTo: contentView.trailingAnchor, constant: -16),
             stack.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 26),
-            stack.bottomAnchor.constraint(equalTo: contentView.bottomAnchor, constant: -20),
+            stack.bottomAnchor.constraint(equalTo: contentView.bottomAnchor, constant: -8),
         ])
     }
 
@@ -1869,6 +1875,11 @@ class BearyFeedCell: UITableViewCell {
             v.image = crown
         }
         v.contentMode = .scaleAspectFit
+        // 网页 .plus-crown 口径：drop-shadow(0 1px 1px rgba(0,0,0,.30))。
+        v.layer.shadowColor = UIColor.black.cgColor
+        v.layer.shadowOpacity = 0.30
+        v.layer.shadowOffset = CGSize(width: 0, height: 1)
+        v.layer.shadowRadius = 1
         v.isHidden = true
         return v
     }()
@@ -1913,7 +1924,7 @@ class BearyFeedCell: UITableViewCell {
     }()
 
     private lazy var titleStack: UIStackView = {
-        let st = UIStackView(arrangedSubviews: [nameLabel, badgeImageView, crownImageView, timeLabel, weatherImageView, moodStack])
+        let st = UIStackView(arrangedSubviews: [nameLabel, badgeImageView, crownImageView, titleSpacerLabel, timeLabel, weatherImageView, moodStack])
         st.translatesAutoresizingMaskIntoConstraints = false
         st.axis = .horizontal
         st.spacing = 8
@@ -1921,6 +1932,15 @@ class BearyFeedCell: UITableViewCell {
         st.alignment = .firstBaseline
         st.distribution = .fill
         return st
+    }()
+
+    /// 标题行弹性垫片：横向 hugging/compression 均为最低（1），独吞标题行全部
+    /// 剩余宽度，使徽章/皇冠紧贴名字、日期留在右缘；空间不足时垫片先缩到 0，
+    /// 再由名字（defaultLow）截断。空 UILabel 自带基线，不破坏 firstBaseline 对齐。
+    private let titleSpacerLabel: UILabel = {
+        let lb = UILabel()
+        lb.translatesAutoresizingMaskIntoConstraints = false
+        return lb
     }()
 
     private let contentLabel: UILabel = {
@@ -2042,7 +2062,9 @@ class BearyFeedCell: UITableViewCell {
         btn.setTitle("公开", for: .normal)
         btn.setTitleColor(BearyColors.ink, for: .normal)
         btn.contentEdgeInsets = UIEdgeInsets(top: 6, left: 12, bottom: 6, right: 12)
-        btn.layer.cornerRadius = 15
+        // 网页 .obtn 口径：高 40、圆角 20（此前视觉高约 30、圆角 15）。
+        btn.layer.cornerRadius = 20
+        btn.heightAnchor.constraint(equalToConstant: 40).isActive = true
         btn.layer.borderWidth = 1
         btn.layer.borderColor = BearyColors.line.cgColor
         btn.addTarget(self, action: #selector(publishTapped), for: .touchUpInside)
@@ -2119,6 +2141,8 @@ class BearyFeedCell: UITableViewCell {
         actionStack.insertArrangedSubview(pubStack, at: 1)
         nameLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         timeLabel.setContentCompressionResistancePriority(.required, for: .horizontal)
+        titleSpacerLabel.setContentHuggingPriority(UILayoutPriority(1), for: .horizontal)
+        titleSpacerLabel.setContentCompressionResistancePriority(UILayoutPriority(1), for: .horizontal)
         badgeImageView.setContentCompressionResistancePriority(.required, for: .horizontal)
         crownImageView.setContentCompressionResistancePriority(.required, for: .horizontal)
         weatherImageView.setContentCompressionResistancePriority(.required, for: .horizontal)
@@ -2435,9 +2459,10 @@ class BearyFeedCell: UITableViewCell {
             likeButton.setTitle(titleText, for: .normal)
             likeButtonWidthConstraint?.constant = imageWidth + 6 + titleWidth
         }
-        let color = liked ? BearyColors.orange : BearyColors.gray
-        likeButton.tintColor = color
-        likeButton.setTitleColor(color, for: .normal)
+        // 网页口径：未赞时爱心描边跟随正文墨色（.like-btn 无基准色，即继承 ink），
+        // 计数 span.like-n 才灰；点赞后爱心与计数同为橙。
+        likeButton.tintColor = liked ? BearyColors.orange : BearyColors.ink
+        likeButton.setTitleColor(liked ? BearyColors.orange : BearyColors.gray, for: .normal)
         likeButton.imageView?.transform = .identity
     }
 
@@ -2454,7 +2479,7 @@ class BearyFeedCell: UITableViewCell {
     private func applyPreUnlike() {
         let outlineImage = BearyFeedIconCache.image(named: "icon_heart", pointSize: 22) ?? BearyFeedIconCache.image(named: "icon_heart", pointSize: 22)
         likeButton.setImage(outlineImage, for: .normal)
-        likeButton.tintColor = BearyColors.gray
+        likeButton.tintColor = BearyColors.ink
         likeButton.setTitleColor(BearyColors.gray, for: .normal)
         BearyIconMotion.animateIconScale(on: likeButton, to: 0.8)
     }
@@ -3497,6 +3522,35 @@ class BearyFeedQuoteView: UIView {
 
     private var thumbsHeightConstraint: NSLayoutConstraint?
     private var thumbsWidthConstraint: NSLayoutConstraint?
+    /// A23：缩略图条总宽（单张 42 + 间距 5）；布局时按网页 .quote-thumbs flex:1 分配，
+    /// 不再封顶 180，超出部分在条内横向滚动。
+    private var thumbsTotalWidth: CGFloat = 0
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        guard thumbsScrollView.isHidden == false, thumbsTotalWidth > 0 else { return }
+        let rowWidth = bounds.width - 24
+        if rowWidth <= 0 { return }
+        let dateWidth = dateLabel.isHidden ? 0 : dateLabel.intrinsicContentSize.width
+        let visibleCount = 3 + (dateLabel.isHidden ? 0 : 1)
+        let gaps = CGFloat(visibleCount - 1) * 8
+        let avail = rowWidth - 15 - dateWidth - gaps
+        if avail <= 0 { return }
+        // 正文自然宽（单行实测；投递中 pill 行宽取大者）与缩略图条按 flex:1 分享剩余空间：
+        // 正文短时条带拿剩余全部，正文长时两者对半、正文换行。
+        let contentSingleLine = contentLabel.sizeThatFits(CGSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)).width
+        let pillWidth = deliveringPillButton.isHidden ? 0 : deliveringPillButton.intrinsicContentSize.width
+        let textNatural = max(contentSingleLine, pillWidth)
+        let thumbsWidth: CGFloat
+        if textNatural < avail / 2 {
+            thumbsWidth = min(thumbsTotalWidth, avail - textNatural)
+        } else {
+            thumbsWidth = min(thumbsTotalWidth, avail / 2)
+        }
+        if let current = thumbsWidthConstraint?.constant, abs(current - thumbsWidth) > 0.5 {
+            thumbsWidthConstraint?.constant = thumbsWidth
+        }
+    }
 
     override init(frame: CGRect) {
         super.init(frame: frame)
@@ -3649,17 +3703,19 @@ class BearyFeedQuoteView: UIView {
         }
         // D8c：缩略图只当 quote.is_public 或宿主本人时出（allowThumbs 门控）；
         // 网页 .quote-thumbs 口径：与正文同行、单张 42x42、圆角 7、间距 5（thumbsStack.spacing）。
-        // 条带宽按张数给足、上限 180，超出横向滚动（网页 flex:1 + overflow-x:auto 的 App 侧近似）。
+        // 条带宽按 flex:1 在布局时分配（见 layoutSubviews），不封顶；超出横向滚动。
         let keys = images.filter { !$0.isEmpty }
         if keys.isEmpty || allowThumbs == false {
             thumbsScrollView.isHidden = true
             thumbsHeightConstraint?.constant = 0
             thumbsWidthConstraint?.constant = 0
+            thumbsTotalWidth = 0
         } else {
             thumbsScrollView.isHidden = false
             thumbsHeightConstraint?.constant = 42
             let totalThumbWidth = CGFloat(keys.count) * 42 + CGFloat(max(0, keys.count - 1)) * 5
-            thumbsWidthConstraint?.constant = min(totalThumbWidth, 180)
+            thumbsTotalWidth = totalThumbWidth
+            thumbsWidthConstraint?.constant = totalThumbWidth
             for key in keys {
                 let iv = UIImageView()
                 iv.translatesAutoresizingMaskIntoConstraints = false
@@ -4008,7 +4064,7 @@ private class BearyFeedEmoteSheetCell: UICollectionViewCell {
 // 详情的 BearyEntryImageViewerViewController 为其文件私有，无法跨文件复用，
 // 故本文件内实现同结构查看器：0.92 黑底、全屏 paging、计数 + 底部圆点（仅多图）、
 // 关闭钮、任意处点按关闭；原图加载（thumb:false），与详情查看器同口径。
-private class BearyFeedImageViewerViewController: UIViewController, UIScrollViewDelegate {
+private class BearyFeedImageViewerViewController: UIViewController, UIScrollViewDelegate, UIViewControllerTransitioningDelegate {
 
     private let imageKeys: [String]
     private let startIndex: Int
@@ -4028,6 +4084,10 @@ private class BearyFeedImageViewerViewController: UIViewController, UIScrollView
             self.startIndex = 0
         }
         super.init(nibName: nil, bundle: nil)
+        // E-G12：网页灯箱开场 200ms 淡入、关场 160ms 淡出，不用默认滑入滑出。
+        // 转场由本页自带（present 点只传 animated 旗标，减动效时仍瞬时）。
+        modalPresentationStyle = .fullScreen
+        transitioningDelegate = self
     }
 
     required init?(coder: NSCoder) {
@@ -4085,7 +4145,7 @@ private class BearyFeedImageViewerViewController: UIViewController, UIScrollView
             dotViews.append(dot)
         }
         view.addSubview(dotsStack)
-        closeButton.setImage(BearyFeedIconCache.image(named: "icon_close", pointSize: 15), for: .normal)
+        closeButton.setImage(BearyFeedIconCache.image(named: "icon_close", pointSize: 20), for: .normal)
         closeButton.tintColor = .white
         closeButton.backgroundColor = UIColor.white.withAlphaComponent(0.15)
         closeButton.layer.cornerRadius = 18
@@ -4149,6 +4209,56 @@ private class BearyFeedImageViewerViewController: UIViewController, UIScrollView
     @objc private func closeTapped() {
         let reduceMotion = UIAccessibility.isReduceMotionEnabled
         dismiss(animated: reduceMotion == false, completion: nil)
+    }
+
+    // MARK: - E-G12 淡入淡出转场
+
+    func animationController(forPresented presented: UIViewController, presenting: UIViewController, source: UIViewController) -> UIViewControllerAnimatedTransitioning? {
+        return BearyFeedFadeAnimator(presenting: true)
+    }
+
+    func animationController(forDismissed dismissed: UIViewController) -> UIViewControllerAnimatedTransitioning? {
+        return BearyFeedFadeAnimator(presenting: false)
+    }
+}
+
+/// 网页灯箱同款纯透明度转场：开场 200ms 淡入、关场 160ms 淡出。
+private final class BearyFeedFadeAnimator: NSObject, UIViewControllerAnimatedTransitioning {
+    private let presenting: Bool
+
+    init(presenting: Bool) {
+        self.presenting = presenting
+    }
+
+    func transitionDuration(using transitionContext: UIViewControllerContextTransitioning?) -> TimeInterval {
+        return presenting ? 0.2 : 0.16
+    }
+
+    func animateTransition(using transitionContext: UIViewControllerContextTransitioning) {
+        let duration = transitionDuration(using: transitionContext)
+        if presenting {
+            guard let toView = transitionContext.view(forKey: .to) else {
+                transitionContext.completeTransition(false)
+                return
+            }
+            transitionContext.containerView.addSubview(toView)
+            toView.alpha = 0
+            UIView.animate(withDuration: duration, animations: {
+                toView.alpha = 1
+            }, completion: { _ in
+                transitionContext.completeTransition(!transitionContext.transitionWasCancelled)
+            })
+        } else {
+            guard let fromView = transitionContext.view(forKey: .from) else {
+                transitionContext.completeTransition(false)
+                return
+            }
+            UIView.animate(withDuration: duration, animations: {
+                fromView.alpha = 0
+            }, completion: { _ in
+                transitionContext.completeTransition(!transitionContext.transitionWasCancelled)
+            })
+        }
     }
 }
 

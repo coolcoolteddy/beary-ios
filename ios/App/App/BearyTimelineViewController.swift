@@ -517,19 +517,22 @@ final class BearyCalendarCardView: UIView {
 
         monthLegendStack.translatesAutoresizingMaskIntoConstraints = false
         monthLegendStack.axis = .vertical
-        monthLegendStack.alignment = .center
+        // B-G13: legend no longer forced into 4+3 rows; it wraps naturally
+        // (web .cal-legend flex-wrap + justify-content:center), row count decided
+        // by width. Stack is .fill so the flow view gets full width.
+        monthLegendStack.alignment = .fill
         monthLegendStack.spacing = 2
-        monthLegendStack.addArrangedSubview(legendRow(items: [
-            (BearyCalendarMarks.marks(published: 1, unpublished: 0), "1 篇"),
-            (BearyCalendarMarks.marks(published: 2, unpublished: 0), "2 篇"),
-            (BearyCalendarMarks.marks(published: 3, unpublished: 0), "3 篇"),
-            (BearyCalendarMarks.marks(published: 4, unpublished: 0), "4 篇"),
-        ]))
-        monthLegendStack.addArrangedSubview(legendRow(items: [
-            (BearyCalendarMarks.marks(published: 5, unpublished: 0), "5 篇"),
-            (BearyCalendarMarks.marks(published: 6, unpublished: 0), "6 篇"),
-            (BearyCalendarMarks.marks(published: 7, unpublished: 0), "7 篇起"),
-        ]))
+        let legendFlowView = BearyCalendarLegendFlowView()
+        legendFlowView.setPairs([
+            legendPair(marks: BearyCalendarMarks.marks(published: 1, unpublished: 0), text: "1 篇"),
+            legendPair(marks: BearyCalendarMarks.marks(published: 2, unpublished: 0), text: "2 篇"),
+            legendPair(marks: BearyCalendarMarks.marks(published: 3, unpublished: 0), text: "3 篇"),
+            legendPair(marks: BearyCalendarMarks.marks(published: 4, unpublished: 0), text: "4 篇"),
+            legendPair(marks: BearyCalendarMarks.marks(published: 5, unpublished: 0), text: "5 篇"),
+            legendPair(marks: BearyCalendarMarks.marks(published: 6, unpublished: 0), text: "6 篇"),
+            legendPair(marks: BearyCalendarMarks.marks(published: 7, unpublished: 0), text: "7 篇起"),
+        ])
+        monthLegendStack.addArrangedSubview(legendFlowView)
         let legendNote = UILabel()
         legendNote.text = "橙 = 已公开 · 蓝 = 未公开 · 形状旁的异色小点 = 两种状态都有"
         legendNote.font = UIFont.systemFont(ofSize: 12)
@@ -568,25 +571,18 @@ final class BearyCalendarCardView: UIView {
         layer.borderColor = BearyColors.line.cgColor
     }
 
-    private func legendRow(items: [(marks: [BearyCalendarMark], text: String)]) -> UIStackView {
-        let row = UIStackView()
-        row.axis = .horizontal
-        row.spacing = 14
-        row.alignment = .center
-        for item in items {
-            let markView = BearyCalendarMarkView()
-            markView.marks = item.marks
-            let label = UILabel()
-            label.text = item.text
-            label.font = UIFont.systemFont(ofSize: 12)
-            label.textColor = BearyColors.gray
-            let pair = UIStackView(arrangedSubviews: [markView, label])
-            pair.axis = .horizontal
-            pair.spacing = 5
-            pair.alignment = .center
-            row.addArrangedSubview(pair)
-        }
-        return row
+    private func legendPair(marks: [BearyCalendarMark], text: String) -> UIStackView {
+        let markView = BearyCalendarMarkView()
+        markView.marks = marks
+        let label = UILabel()
+        label.text = text
+        label.font = UIFont.systemFont(ofSize: 12)
+        label.textColor = BearyColors.gray
+        let pair = UIStackView(arrangedSubviews: [markView, label])
+        pair.axis = .horizontal
+        pair.spacing = 5
+        pair.alignment = .center
+        return pair
     }
 
     func setTitle(_ text: String) {
@@ -692,6 +688,87 @@ final class BearyCalendarCardView: UIView {
     }
 }
 
+/// B-G13 legend natural-wrap container (native equivalent of web .cal-legend
+/// flex-wrap): column gap 14, row gap 8, each line centered; row count is decided
+/// by the actual width, never forced. Height is an explicit constraint updated in
+/// layoutSubviews once the width is known (the parent stack is .fill, so width is
+/// exact); the view controller re-checks header height after layout (see
+/// viewDidLayoutSubviews) so the legend is never clipped on first layout.
+private final class BearyCalendarLegendFlowView: UIView {
+    private var pairs: [UIView] = []
+    private var heightConstraint: NSLayoutConstraint?
+
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        backgroundColor = .clear
+        isOpaque = false
+        heightConstraint = heightAnchor.constraint(equalToConstant: 15)
+        heightConstraint?.isActive = true
+    }
+
+    required init?(coder: NSCoder) {
+        return nil
+    }
+
+    func setPairs(_ pairs: [UIView]) {
+        for old in self.pairs {
+            old.removeFromSuperview()
+        }
+        self.pairs = pairs
+        for pair in pairs {
+            addSubview(pair)
+        }
+        setNeedsLayout()
+    }
+
+    private func pairSize(_ pair: UIView) -> CGSize {
+        let size = pair.systemLayoutSizeFitting(UIView.layoutFittingCompressedSize)
+        return CGSize(width: ceil(size.width), height: ceil(size.height))
+    }
+
+    private func lines(forWidth width: CGFloat) -> [[UIView]] {
+        var lines: [[UIView]] = [[]]
+        var lineWidth: CGFloat = 0
+        for pair in pairs {
+            let size = pairSize(pair)
+            let extra = lines[lines.count - 1].isEmpty ? size.width : 14 + size.width
+            if lineWidth + extra > width && !lines[lines.count - 1].isEmpty {
+                lines.append([pair])
+                lineWidth = size.width
+            } else {
+                lines[lines.count - 1].append(pair)
+                lineWidth += extra
+            }
+        }
+        return lines
+    }
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        let width = bounds.width
+        guard width > 0 else { return }
+        let broken = lines(forWidth: width)
+        var y: CGFloat = 0
+        for (lineIndex, line) in broken.enumerated() {
+            let sizes = line.map { pairSize($0) }
+            let totalWidth = sizes.reduce(0, +) + CGFloat(max(0, line.count - 1)) * 14
+            let lineHeight = sizes.map { $0.height }.max() ?? 0
+            var x = (width - totalWidth) / 2
+            if x < 0 { x = 0 }
+            for (index, pair) in line.enumerated() {
+                let size = sizes[index]
+                pair.frame = CGRect(x: x, y: y + (lineHeight - size.height) / 2, width: size.width, height: size.height)
+                x += size.width + 14
+            }
+            y += lineHeight
+            if lineIndex < broken.count - 1 { y += 8 }
+        }
+        if heightConstraint?.constant != y {
+            heightConstraint?.constant = y
+        }
+    }
+}
+
 // MARK: - 时间线行（网页 .tl-card：边框 1 line、圆角 14、padding 12/14；正文 16.5/1.75）
 
 final class BearyTimelineCell: UITableViewCell {
@@ -715,19 +792,39 @@ final class BearyTimelineCell: UITableViewCell {
 
     // TL-1 竖线 + 圆点：线 x=11 宽 2（与 .tl:before 一致）；圆点中心 x=12 与线对齐，
     // 公开 14px 墨圆点（2.5 bg 边 + 1.5 line 外环），私密 9px 蓝空心圆（无外环）。
+    // 第 14 项 B：竖线按日通长连续（网页 .tl:before 口径：每个日期组容器一条线，
+    // top 8 / bottom 8，组头 .date-h 在组外、线不穿头）。原生无组容器，改为按行
+    // 拼线：组内首行 top 8、末行 bottom -8、中间行 top/bottom 均为 0——相邻行
+    // 的线在 cell 交界处恰好相接，组内不断；组与组之间由组头隔开，线自然断开。
+    // 边距由 VC 在 cellForRowAt 按行在组内的位置设定（setTimelineLineEdges），
+    // 分页向同组追加行时旧末行由 updateChrome 的可见行重刷改回中间行边距。
     private let timelineLineView = UIView()
+    private let dotRingView = UIView()
+    private let dotView = UIView()
+    private var timelineLineTopConstraint: NSLayoutConstraint?
+    private var timelineLineBottomConstraint: NSLayoutConstraint?
     private let dotRingView = UIView()
     private let dotView = UIView()
     private var dotSizeConstraint: NSLayoutConstraint?
     private var dotRingSizeConstraint: NSLayoutConstraint?
     private var dotTopConstraint: NSLayoutConstraint?
-    // TL-2 沙漏：无 hourglass 资产（资产清单里只有 icon_*，无沙漏/时钟），故按
-    // beary.html #beary-hourglass sprite 路径程序化描边绘制，不新增资产、不写 emoji。
-    private let hourglassView = BearyHourglassView()
+    // TL-2 沙漏：官方 icon_hourglass 资产（beary-ui-2.zip 内有 hourglass.svg，
+    // 按 compass 同款工艺渲染入 catalog；此前查 beary-ui.zip 无沙漏是查错了包）。
+    // 12pt 模板图 + 蓝色 tint，与原自绘 BearyHourglassView 同色同形，自绘类已删。
+    private let hourglassView: UIImageView = {
+        let imageViewValue = UIImageView()
+        imageViewValue.translatesAutoresizingMaskIntoConstraints = false
+        imageViewValue.image = BearyIconImages.image(named: "icon_hourglass", pointSize: 12)
+        imageViewValue.tintColor = BearyColors.blue
+        imageViewValue.contentMode = .scaleAspectFit
+        return imageViewValue
+    }()
     private var pillLabelLeadingWithIcon: NSLayoutConstraint?
     private var pillLabelLeadingWithoutIcon: NSLayoutConstraint?
     // TL-3 引用卡与私密操作行。
     private let quoteButton = UIButton(type: .custom)
+    // B-G1: left 3px line (web .tl-qcard border-left; full border removed).
+    private let quoteLeftLineView = UIView()
     private let quoteIconView = UIImageView()
     private let quoteTitleLabel = UILabel()
     private let quoteBodyLabel = UILabel()
@@ -807,11 +904,9 @@ final class BearyTimelineCell: UITableViewCell {
         moodLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         recipientLabel.font = UIFont.boldSystemFont(ofSize: 12.5)
         recipientLabel.textColor = BearyColors.orange
-        // 网页 .tl-meta 可 flex-wrap 口径：收件人名允许多行换行（不截断），
-        // max-width 170 仍保留作单行上限，超宽后换行而非省略；横向抗压缩调到最低，
-        // 空间不足时先缩它，时间（required）与 pill 绝不被它挤到重叠。
-        recipientLabel.numberOfLines = 0
-        recipientLabel.lineBreakMode = .byCharWrapping
+        // B-G12 (web .tl-to): max-width 170 + single-line ellipsis, never wrap.
+        recipientLabel.numberOfLines = 1
+        recipientLabel.lineBreakMode = .byTruncatingTail
         recipientLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         recipientLabel.setContentHuggingPriority(.required, for: .horizontal)
         recipientLabel.widthAnchor.constraint(lessThanOrEqualToConstant: 170).isActive = true
@@ -859,31 +954,34 @@ final class BearyTimelineCell: UITableViewCell {
 
         quoteButton.translatesAutoresizingMaskIntoConstraints = false
         quoteButton.backgroundColor = BearyColors.faint
-        quoteButton.layer.borderWidth = 1
-        quoteButton.layer.borderColor = BearyColors.line.cgColor
-        quoteButton.layer.cornerRadius = 12
+        // B-G1: web .tl-qcard has no full border, only left 3px line + radius 8.
+        quoteButton.layer.borderWidth = 0
+        quoteButton.layer.cornerRadius = 8
         quoteButton.layer.masksToBounds = true
+        quoteLeftLineView.translatesAutoresizingMaskIntoConstraints = false
+        quoteLeftLineView.backgroundColor = BearyColors.line
         quoteButton.contentHorizontalAlignment = .left
         quoteButton.addTarget(self, action: #selector(quoteTapped), for: .touchUpInside)
         quoteIconView.translatesAutoresizingMaskIntoConstraints = false
         quoteIconView.tintColor = BearyColors.gray
         quoteTitleLabel.translatesAutoresizingMaskIntoConstraints = false
-        quoteTitleLabel.font = UIFont.systemFont(ofSize: 12.5)
+        quoteTitleLabel.font = UIFont.systemFont(ofSize: 11.5)
         quoteTitleLabel.textColor = BearyColors.gray
         quoteBodyLabel.translatesAutoresizingMaskIntoConstraints = false
-        quoteBodyLabel.font = UIFont.systemFont(ofSize: 14.5)
+        // B-G1: web .tl-qt 13.5/1.6, clamped to 2 lines.
+        quoteBodyLabel.font = UIFont.systemFont(ofSize: 13.5)
         quoteBodyLabel.textColor = BearyColors.ink
-        quoteBodyLabel.numberOfLines = 0
-        quoteBodyLabel.lineBreakMode = .byCharWrapping
+        quoteBodyLabel.numberOfLines = 2
+        quoteBodyLabel.lineBreakMode = .byTruncatingTail
         let quoteTitleRow = UIStackView(arrangedSubviews: [quoteIconView, quoteTitleLabel])
         quoteTitleRow.translatesAutoresizingMaskIntoConstraints = false
         quoteTitleRow.axis = .horizontal
-        quoteTitleRow.spacing = 4
+        quoteTitleRow.spacing = 5
         quoteTitleRow.alignment = .center
         // F2：引用缩略图行（网页 tl-qcard 内 .quote-thumbs 口径）：无图时隐藏不占位。
         quoteThumbsStack.translatesAutoresizingMaskIntoConstraints = false
         quoteThumbsStack.axis = .horizontal
-        quoteThumbsStack.spacing = 6
+        quoteThumbsStack.spacing = 5
         quoteThumbsStack.isHidden = true
         let quoteStack = UIStackView(arrangedSubviews: [quoteTitleRow, quoteBodyLabel, quoteThumbsStack])
         quoteStack.translatesAutoresizingMaskIntoConstraints = false
@@ -891,12 +989,19 @@ final class BearyTimelineCell: UITableViewCell {
         quoteStack.spacing = 4
         quoteButton.addSubview(quoteStack)
         NSLayoutConstraint.activate([
-            quoteIconView.widthAnchor.constraint(equalToConstant: 14),
-            quoteIconView.heightAnchor.constraint(equalToConstant: 14),
-            quoteStack.topAnchor.constraint(equalTo: quoteButton.topAnchor, constant: 10),
+            quoteIconView.widthAnchor.constraint(equalToConstant: 12),
+            quoteIconView.heightAnchor.constraint(equalToConstant: 12),
+            quoteStack.topAnchor.constraint(equalTo: quoteButton.topAnchor, constant: 9),
             quoteStack.leadingAnchor.constraint(equalTo: quoteButton.leadingAnchor, constant: 12),
             quoteStack.trailingAnchor.constraint(equalTo: quoteButton.trailingAnchor, constant: -12),
-            quoteStack.bottomAnchor.constraint(equalTo: quoteButton.bottomAnchor, constant: -10),
+            quoteStack.bottomAnchor.constraint(equalTo: quoteButton.bottomAnchor, constant: -9),
+        ])
+        quoteButton.addSubview(quoteLeftLineView)
+        NSLayoutConstraint.activate([
+            quoteLeftLineView.leadingAnchor.constraint(equalTo: quoteButton.leadingAnchor),
+            quoteLeftLineView.topAnchor.constraint(equalTo: quoteButton.topAnchor),
+            quoteLeftLineView.bottomAnchor.constraint(equalTo: quoteButton.bottomAnchor),
+            quoteLeftLineView.widthAnchor.constraint(equalToConstant: 3),
         ])
 
         editStatusLabel.font = UIFont.systemFont(ofSize: 12)
@@ -918,13 +1023,21 @@ final class BearyTimelineCell: UITableViewCell {
         if let trashImage = BearyIconImages.image(named: "icon_trash", pointSize: 17) {
             deleteButton.setImage(trashImage, for: .normal)
         }
+        deleteButton.imageView?.contentMode = .scaleAspectFit
         deleteButton.tintColor = BearyColors.red
         deleteButton.alpha = 0.5
         deleteButton.addTarget(self, action: #selector(deleteTapped), for: .touchUpInside)
         publishButton.translatesAutoresizingMaskIntoConstraints = false
         publishButton.setTitle("公开", for: .normal)
-        publishButton.titleLabel?.font = UIFont.boldSystemFont(ofSize: 13)
-        publishButton.setTitleColor(BearyColors.orange, for: .normal)
+        // B-G6: web .obtn.o - 1px line border, 14 ink text, radius 20, height 40, 12 sides.
+        publishButton.titleLabel?.font = UIFont.systemFont(ofSize: 14)
+        publishButton.setTitleColor(BearyColors.ink, for: .normal)
+        publishButton.layer.borderWidth = 1
+        publishButton.layer.borderColor = BearyColors.line.cgColor
+        publishButton.layer.cornerRadius = 20
+        publishButton.layer.masksToBounds = true
+        publishButton.contentEdgeInsets = UIEdgeInsets(top: 0, left: 12, bottom: 0, right: 12)
+        publishButton.heightAnchor.constraint(equalToConstant: 40).isActive = true
         publishButton.addTarget(self, action: #selector(publishTapped), for: .touchUpInside)
         pendingCountdownLabel.font = UIFont.systemFont(ofSize: 12.5)
         pendingCountdownLabel.textColor = BearyColors.gray
@@ -941,12 +1054,14 @@ final class BearyTimelineCell: UITableViewCell {
         actsStack.spacing = 6
         actsStack.alignment = .center
         let actsSpacer = UIView()
+        // B-G6: publish button sits inline right after the edit status (web tl-acts
+        // puts pub-acts before the flex spacer); the spacer only pushes edit/delete right.
         actsStack.addArrangedSubview(statusIconView)
         actsStack.addArrangedSubview(editStatusLabel)
-        actsStack.addArrangedSubview(actsSpacer)
         actsStack.addArrangedSubview(publishButton)
         actsStack.addArrangedSubview(pendingCountdownLabel)
         actsStack.addArrangedSubview(cancelPublishButton)
+        actsStack.addArrangedSubview(actsSpacer)
         actsStack.addArrangedSubview(editButton)
         actsStack.addArrangedSubview(deleteButton)
         NSLayoutConstraint.activate([
@@ -974,9 +1089,9 @@ final class BearyTimelineCell: UITableViewCell {
         dotSizeConstraint = dotView.widthAnchor.constraint(equalToConstant: 14)
         dotRingSizeConstraint = dotRingView.widthAnchor.constraint(equalToConstant: 17)
         dotTopConstraint = dotView.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 12)
+        timelineLineTopConstraint = timelineLineView.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 8)
+        timelineLineBottomConstraint = timelineLineView.bottomAnchor.constraint(equalTo: contentView.bottomAnchor, constant: -8)
         NSLayoutConstraint.activate([
-            timelineLineView.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 8),
-            timelineLineView.bottomAnchor.constraint(equalTo: contentView.bottomAnchor, constant: -8),
             timelineLineView.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 11),
             timelineLineView.widthAnchor.constraint(equalToConstant: 2),
             dotRingView.centerXAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 12),
@@ -985,6 +1100,8 @@ final class BearyTimelineCell: UITableViewCell {
         ])
         // 可选约束逐条激活（不可直接放进 activate 数组，类型不匹配）。
         dotTopConstraint?.isActive = true
+        timelineLineTopConstraint?.isActive = true
+        timelineLineBottomConstraint?.isActive = true
         dotSizeConstraint?.isActive = true
         dotRingSizeConstraint?.isActive = true
         dotView.heightAnchor.constraint(equalTo: dotView.widthAnchor).isActive = true
@@ -1022,8 +1139,8 @@ final class BearyTimelineCell: UITableViewCell {
         } else {
             dotView.layer.borderColor = BearyColors.bg.cgColor
         }
-        quoteButton.layer.borderColor = BearyColors.line.cgColor
-        hourglassView.setNeedsDisplay()
+        quoteLeftLineView.backgroundColor = BearyColors.line
+        publishButton.layer.borderColor = BearyColors.line.cgColor
     }
 
     /// U14：行点按给卡片短暂 faint 底色（selectionStyle 已是 .none，
@@ -1040,8 +1157,17 @@ final class BearyTimelineCell: UITableViewCell {
         }
     }
 
+    /// 第 14 项 B：按行在日组内的位置定竖线边距。首行 top 8、末行 bottom -8、
+    /// 中间行 0/0；单行组同时是首末行，即恢复旧的 8/-8。VC 在 cellForRowAt
+    /// 设定，复用前 prepareForReuse 复位为 8/-8，防中间行状态漏到单行组。
+    func setTimelineLineEdges(isFirstInDay: Bool, isLastInDay: Bool) {
+        timelineLineTopConstraint?.constant = isFirstInDay ? 8 : 0
+        timelineLineBottomConstraint?.constant = isLastInDay ? -8 : 0
+    }
+
     override func prepareForReuse() {
         super.prepareForReuse()
+        setTimelineLineEdges(isFirstInDay: true, isLastInDay: true)
         currentEntry = nil
         cardView.backgroundColor = BearyColors.bg
         quoteButton.isHidden = true
@@ -1114,14 +1240,7 @@ final class BearyTimelineCell: UITableViewCell {
             dotRingView.isHidden = false
             dotRingView.layer.cornerRadius = 8.5
         } else {
-            // C6：动态色上的 0.13 透明度走 BearyColors.alpha（Common lane 提供），
-            // 不再对动态色直接 withAlphaComponent（深浅解析会失真）。
-            pillBackground.backgroundColor = BearyColors.alpha(BearyColors.blue, 0.13)
-            pillLabel.textColor = BearyColors.blue
-            pillLabel.text = BearyTimelineCell.privCountdownText(publishAtMs: entry.publishAt)
-            hourglassView.isHidden = false
-            pillLabelLeadingWithoutIcon?.isActive = false
-            pillLabelLeadingWithIcon?.isActive = true
+            updatePill(entry: entry)
             dotSizeConstraint?.constant = 9
             dotRingSizeConstraint?.constant = 12
             dotTopConstraint?.constant = 14.5
@@ -1185,11 +1304,14 @@ final class BearyTimelineCell: UITableViewCell {
             .paragraphStyle: paragraph,
         ])
         // TL-3 引用卡（网页 tlQuoteHtml 口径）：引用日记在时间线里必须有痕迹，
-        // 卡内附 74px 引用缩略图行（见下方 F2 分支），无图不占位。
-        // 注意：Entry.Quote 模型没有服务端的 gone/locked 字段，以下是推断口径
-        // （API 路若给 Quote 补 gone/locked 字段，应改用服务端值，见交回说明）：
-        // quoteId 有而 quote 体缺失 → 已删除；quote 体无正文且未公开 → 尚未公开；
-        // gone/locked 卡在网页里带 gone class、不可点，故此处禁用按钮。
+        // 卡内附 42px 引用缩略图行（见下方 F2 分支），无图不占位。
+        // B-G2 (privacy, server fields first): Quote.gone/locked ARE decoded
+        // (BearyAPI.swift); read them before any heuristic - gone -> deleted state,
+        // locked -> locked state, neither leaks body/images, neither is tappable.
+        // Missing fields fall back to the old heuristic. A visibility gate also applies:
+        // a non-public quote on someone else's entry never shows body, even if the
+        // server passed body through (fail-closed, see below).
+        // quoteId 有而 quote 体缺失 → 已删除；quote 体无正文且未公开 → 尚未公开。
         // 引用缩略图见下方 F2 分支（仅有正文的公开/自己的引用才配图）。
         quoteButton.isHidden = true
         quoteBodyLabel.isHidden = false
@@ -1197,20 +1319,46 @@ final class BearyTimelineCell: UITableViewCell {
         quoteButton.isEnabled = true
         if entry.quote == nil, entry.quoteId != nil {
             quoteTitleLabel.text = "引用的日记已删除"
-            quoteIconView.image = BearyIconImages.image(named: "icon_quote", pointSize: 14)
+            quoteIconView.image = BearyIconImages.image(named: "icon_quote", pointSize: 12)
             quoteBodyLabel.isHidden = true
             quoteButton.isEnabled = false
             quoteButton.isHidden = false
         } else if let quote = entry.quote {
+            // B-G2 decision order (web tlQuoteHtml order: gone -> locked -> visibility):
+            // non-empty server fields win; missing fields fall back to old heuristic.
             let quoteBody = (quote.content ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-            if quoteBody.isEmpty {
+            if quote.gone == true {
+                quoteTitleLabel.text = "引用的日记已删除"
+                quoteIconView.image = BearyIconImages.image(named: "icon_quote", pointSize: 12)
+                quoteBodyLabel.isHidden = true
+                quoteButton.isEnabled = false
+                quoteButton.isHidden = false
+            } else if quote.locked == true {
+                quoteTitleLabel.text = "引用了一篇尚未公开的日记"
+                quoteIconView.image = BearyIconImages.image(named: "icon_lock", pointSize: 12)
+                quoteBodyLabel.isHidden = true
+                quoteButton.isEnabled = false
+                quoteButton.isHidden = false
+            } else if quoteBody.isEmpty {
                 if quote.isPublic == true {
                     quoteTitleLabel.text = "引用的日记已删除"
-                    quoteIconView.image = BearyIconImages.image(named: "icon_quote", pointSize: 14)
+                    quoteIconView.image = BearyIconImages.image(named: "icon_quote", pointSize: 12)
                 } else {
                     quoteTitleLabel.text = "引用了一篇尚未公开的日记"
-                    quoteIconView.image = BearyIconImages.image(named: "icon_lock", pointSize: 14)
+                    quoteIconView.image = BearyIconImages.image(named: "icon_lock", pointSize: 12)
                 }
+                quoteBodyLabel.isHidden = true
+                quoteButton.isEnabled = false
+                quoteButton.isHidden = false
+            } else if quote.isPublic != true && entry.isMine != true {
+                // B-G2 visibility gate (the computable subset of web quoteVisible):
+                // a non-public quote is visible only when public or the host entry is
+                // mine. From another user's perspective, even server-passed body is
+                // replaced by the locked placeholder - never leak body or images.
+                // Quote has no author_id field, so the "quoted author is the viewer"
+                // branch cannot be evaluated here; fail closed to locked state.
+                quoteTitleLabel.text = "引用了一篇尚未公开的日记"
+                quoteIconView.image = BearyIconImages.image(named: "icon_lock", pointSize: 12)
                 quoteBodyLabel.isHidden = true
                 quoteButton.isEnabled = false
                 quoteButton.isHidden = false
@@ -1226,9 +1374,17 @@ final class BearyTimelineCell: UITableViewCell {
                 } else {
                     quoteTitleLabel.text = "引用"
                 }
-                quoteBodyLabel.text = quoteBody
-                quoteIconView.image = BearyIconImages.image(named: "icon_quote", pointSize: 14)
-                // F2：引用卡内补一行 74px 小缩略图（网页 tl-qcard 内 .quote-thumbs 口径）；
+                // B-G1: web .tl-qt 13.5/1.6, clamped to 2 lines (count set in init).
+                let quoteParagraph = NSMutableParagraphStyle()
+                quoteParagraph.lineHeightMultiple = 1.6
+                quoteParagraph.lineBreakMode = .byTruncatingTail
+                quoteBodyLabel.attributedText = NSAttributedString(string: quoteBody, attributes: [
+                    .font: UIFont.systemFont(ofSize: 13.5),
+                    .foregroundColor: BearyColors.ink,
+                    .paragraphStyle: quoteParagraph,
+                ])
+                quoteIconView.image = BearyIconImages.image(named: "icon_quote", pointSize: 12)
+                // F2：引用卡内补一行 42px 小缩略图（网页 tl-qcard 内 .quote-thumbs 口径）；
                 // 仅公开引用或自己的引用才配图（网页 quoteThumbsHtml 口径），无图不占位。
                 if quote.isPublic == true || entry.isMine == true {
                     let quoteKeys = (quote.images ?? []).filter { !$0.isEmpty }
@@ -1237,12 +1393,12 @@ final class BearyTimelineCell: UITableViewCell {
                         imageView.translatesAutoresizingMaskIntoConstraints = false
                         imageView.contentMode = .scaleAspectFill
                         imageView.clipsToBounds = true
-                        imageView.layer.cornerRadius = 10
+                        imageView.layer.cornerRadius = 7
                         imageView.backgroundColor = BearyColors.faint
                         quoteThumbsStack.addArrangedSubview(imageView)
                         NSLayoutConstraint.activate([
-                            imageView.widthAnchor.constraint(equalToConstant: 74),
-                            imageView.heightAnchor.constraint(equalToConstant: 74),
+                            imageView.widthAnchor.constraint(equalToConstant: 42),
+                            imageView.heightAnchor.constraint(equalToConstant: 42),
                         ])
                         quoteThumbImageViews.append(imageView)
                         if let url = BearyImageURLs.imageURL(key: key, thumb: true) {
@@ -1374,7 +1530,10 @@ final class BearyTimelineCell: UITableViewCell {
         // 未送达则三者全隐。publishPendingUntil 为可选字段，缺失按 nil 计、不崩。
         // 注意：本引用在 D 路补字段前编译不过，见回执说明。
         let nowMs = Int(Date().timeIntervalSince1970 * 1000)
-        if let pendingUntil = entry.publishPendingUntil {
+        // B-G5: an expired countdown (pendingUntil <= now) must NOT stick on
+        // "剩不到 1 小时"; it falls through to delivered/undelivered state here,
+        // and the 1s tick (refreshCountdowns) flips it without waiting for reload.
+        if let pendingUntil = entry.publishPendingUntil, pendingUntil > nowMs {
             publishButton.isHidden = true
             pendingCountdownLabel.isHidden = false
             pendingCountdownLabel.text = BearyTimelineCell.pubCountdownText(pendingMs: pendingUntil)
@@ -1426,7 +1585,9 @@ final class BearyTimelineCell: UITableViewCell {
     func refreshCountdowns() {
         guard let entry = currentEntry else { return }
         if entry.isPublic == true { return }
-        pillLabel.text = BearyTimelineCell.privCountdownText(publishAtMs: entry.publishAt)
+        // B-G4/B-G5: 1s tick recomputes pill + action row, so delivery / countdown
+        // expiry flips state locally without waiting for a reload.
+        updatePill(entry: entry)
         updateEditRow(entry: entry)
     }
 
@@ -1442,6 +1603,10 @@ final class BearyTimelineCell: UITableViewCell {
 
     @objc private func quoteTapped() {
         guard let entry = currentEntry, let quoteId = entry.quote?.id else { return }
+        // B-G2 second lock: gone/locked/other-user-unpublished never navigates,
+        // even if the button was somehow left enabled.
+        if entry.quote?.gone == true || entry.quote?.locked == true { return }
+        if entry.quote?.isPublic != true && entry.isMine != true { return }
         onQuoteEntry?(quoteId)
     }
 
@@ -1481,6 +1646,33 @@ final class BearyTimelineCell: UITableViewCell {
     /// “投递中 · 还剩 X 天/小时/分钟”，天取整、小时取余数、分钟余数向上取整至少 1。
     /// 到点（remaining <= 0）时网页当即触发重拉、不会出现该文案；原生在重拉完成前
     /// 短暂显示“即将公开”，随后 tick 的重拉会把行翻为“已公开”。
+    /// B-G4: private pill (web tlItemHtml / pubState) - pending (countdown not yet
+    /// expired) and delivered-but-unpublished both show blue "未公开" with NO hourglass;
+    /// only undelivered shows the hourglass + delivery countdown (the original private
+    /// countdown pill, verbatim). publishAt missing falls back to the old "未公开".
+    /// NOTE: this pill is NOT the detail countdown pill; each is handled separately,
+    /// and this change does not touch the detail file.
+    private func updatePill(entry: Entry) {
+        // C6：动态色上的 0.13 透明度走 BearyColors.alpha（Common lane 提供），
+        // 不再对动态色直接 withAlphaComponent（深浅解析会失真）。
+        pillBackground.backgroundColor = BearyColors.alpha(BearyColors.blue, 0.13)
+        pillLabel.textColor = BearyColors.blue
+        let nowMs = Int(Date().timeIntervalSince1970 * 1000)
+        let isPending = (entry.publishPendingUntil ?? 0) > nowMs
+        let isDelivered = (entry.publishAt ?? 0) > 0 && (entry.publishAt ?? 0) <= nowMs
+        if isPending || isDelivered {
+            pillLabel.text = "未公开"
+            hourglassView.isHidden = true
+            pillLabelLeadingWithIcon?.isActive = false
+            pillLabelLeadingWithoutIcon?.isActive = true
+        } else {
+            pillLabel.text = BearyTimelineCell.privCountdownText(publishAtMs: entry.publishAt)
+            hourglassView.isHidden = false
+            pillLabelLeadingWithoutIcon?.isActive = false
+            pillLabelLeadingWithIcon?.isActive = true
+        }
+    }
+
     static func privCountdownText(publishAtMs: Int?) -> String {
         guard let publishAtMs = publishAtMs else { return "未公开" }
         let remaining = Double(publishAtMs) / 1000.0 - Date().timeIntervalSince1970
@@ -1494,55 +1686,6 @@ final class BearyTimelineCell: UITableViewCell {
     }
 }
 
-/// 沙漏小图标：按 beary.html #beary-hourglass sprite 路径描边绘制
-/// （24 坐标系、线宽 2、圆头圆角），颜色走 BearyColors.blue。
-private final class BearyHourglassView: UIView {
-    override init(frame: CGRect) {
-        super.init(frame: frame)
-        // 描边绘制只画蓝线、不填底：此前从未设过背景，未绘制区域按不透明位图
-        // 留下 12x12 黑块。显式透明底 + 非不透明，pill 的蓝底透出来，只剩沙漏线。
-        // .clear 在此只是“无背景”（非调色板颜色，BearyColors 本无透明项），描边色仍走 BearyColors.blue。
-        backgroundColor = .clear
-        isOpaque = false
-    }
-
-    required init?(coder: NSCoder) {
-        return nil
-    }
-
-    override func draw(_ rect: CGRect) {
-        super.draw(rect)
-        guard let context = UIGraphicsGetCurrentContext() else { return }
-        let scale = rect.width / 24.0
-        context.saveGState()
-        context.translateBy(x: rect.minX, y: rect.minY)
-        context.scaleBy(x: scale, y: scale)
-        let path = UIBezierPath()
-        path.lineWidth = 2
-        path.lineCapStyle = .round
-        path.lineJoinStyle = .round
-        path.move(to: CGPoint(x: 7, y: 4))
-        path.addLine(to: CGPoint(x: 17, y: 4))
-        path.move(to: CGPoint(x: 7, y: 20))
-        path.addLine(to: CGPoint(x: 17, y: 20))
-        path.move(to: CGPoint(x: 8, y: 4))
-        path.addLine(to: CGPoint(x: 8, y: 7))
-        path.addQuadCurve(to: CGPoint(x: 12, y: 12), controlPoint: CGPoint(x: 8, y: 10.5))
-        path.addLine(to: CGPoint(x: 12, y: 12))
-        path.move(to: CGPoint(x: 16, y: 4))
-        path.addLine(to: CGPoint(x: 16, y: 7))
-        path.addQuadCurve(to: CGPoint(x: 12, y: 12), controlPoint: CGPoint(x: 16, y: 10.5))
-        path.move(to: CGPoint(x: 8, y: 20))
-        path.addLine(to: CGPoint(x: 8, y: 17))
-        path.addQuadCurve(to: CGPoint(x: 12, y: 12), controlPoint: CGPoint(x: 8, y: 13.5))
-        path.move(to: CGPoint(x: 16, y: 20))
-        path.addLine(to: CGPoint(x: 16, y: 17))
-        path.addQuadCurve(to: CGPoint(x: 12, y: 12), controlPoint: CGPoint(x: 16, y: 13.5))
-        BearyColors.blue.resolvedColor(with: traitCollection).setStroke()
-        path.stroke()
-        context.restoreGState()
-    }
-}
 
 // MARK: - 时间线页
 
@@ -1613,6 +1756,12 @@ class BearyTimelineViewController: UIViewController {
     /// 月份补拉到达后，选中日计数为 null/0 时才触发跳转/取消选中；
     /// 平时月份到达不触发，避免空的今天被无故清选区。
     private var pendingFixSelCheck = false
+    /// 第 2 项 A 初次进入 / 下拉刷新跳转守卫：只在 viewDidLoad 与 pullToRefresh
+    /// 两处设置；选中日无日记时走 checkEntryJumpForSelectedDay → applyDayFixSel
+    /// 跳最近有篇日并出 jumpNote 提示。故意不用 pendingFixSelCheck 承载，
+    /// 避免守卫漏到翻页（tryStepFollowSelection）路径：翻页到全无有篇日时
+    /// 必须保留原选区，本标志在当日/月份回包到达时即被消费或清掉。
+    private var pendingEntryJumpCheck = false
     /// 第 5 项公开/取消在途去重（同篇重复点按只发一次请求）。
     private var publishBusyIds: Set<String> = []
 
@@ -1708,6 +1857,10 @@ class BearyTimelineViewController: UIViewController {
             timelineToastLabel.leadingAnchor.constraint(equalTo: timelineToastWrap.leadingAnchor, constant: 14),
             timelineToastLabel.trailingAnchor.constraint(equalTo: timelineToastWrap.trailingAnchor, constant: -14),
         ])
+        // 第 2 项 A 调用点 1/2（初次进入）：置跳转守卫挂起，选中日（今天）
+        // 无日记时由当日/月份回包触发跳最近有篇日；标志不放在 reloadTimeline
+        // 内，以免空态重试等其他 reloadTimeline 调用点也被接上守卫。
+        pendingEntryJumpCheck = true
         reloadTimeline()
     }
 
@@ -1715,6 +1868,19 @@ class BearyTimelineViewController: UIViewController {
         super.viewDidLayoutSubviews()
         if abs(tableView.bounds.width - lastHeaderWidth) > 0.5 {
             refreshHeaderHeight()
+            return
+        }
+        // B-G13: legend flow height is only final after layout (row count depends
+        // on width). If the fitting height now differs from the header height,
+        // refresh it so the legend is never clipped; if it matches, just restore
+        // the height that fittingHeaderHeight temporarily zeroed (no reassign, so
+        // this cannot loop: after a refresh the heights already match).
+        let oldHeight = headerContainer.frame.height
+        let fitting = fittingHeaderHeight()
+        if abs(fitting - oldHeight) > 0.5 {
+            refreshHeaderHeight()
+        } else {
+            headerContainer.frame = CGRect(x: 0, y: 0, width: tableView.bounds.width, height: oldHeight)
         }
     }
 
@@ -1803,6 +1969,35 @@ class BearyTimelineViewController: UIViewController {
         }
     }
 
+    /// B-G7 local sync patch: timeline and day panel are two independent decodes
+    /// of the same entry (currentSections can show one id twice). After either
+    /// source reloads, copy interaction/publication state into the other source so
+    /// a copy whose own reload failed does not stay split from the fresh state.
+    /// Only interaction + publication fields are patched (like/bookmark/emotes/
+    /// isPublic/publishAt/publishPendingUntil); body and images still require a
+    /// full reload. Calendar month counts are monthly aggregates that paginated
+    /// lists cannot recompute, so they keep syncing via refreshAfterDetailChange's
+    /// forced month refetch; this patch deliberately does not touch calendarCache.
+    private func patchedEntries(_ target: [Entry], withFresh fresh: [Entry]) -> [Entry] {
+        var freshById: [String: Entry] = [:]
+        for entry in fresh {
+            if let entryId = entry.id { freshById[entryId] = entry }
+        }
+        return target.map { old in
+            guard let entryId = old.id, let freshEntry = freshById[entryId] else { return old }
+            var merged = old
+            merged.likeCount = freshEntry.likeCount
+            merged.likedByMe = freshEntry.likedByMe
+            merged.bookmarkCount = freshEntry.bookmarkCount
+            merged.bookmarkedByMe = freshEntry.bookmarkedByMe
+            merged.emotes = freshEntry.emotes
+            merged.isPublic = freshEntry.isPublic
+            merged.publishAt = freshEntry.publishAt
+            merged.publishPendingUntil = freshEntry.publishPendingUntil
+            return merged
+        }
+    }
+
     private func interactionSnapshot() -> [String: String] {
         var snapshot: [String: String] = [:]
         let allEntries = timelineEntries + dayEntries
@@ -1837,6 +2032,9 @@ class BearyTimelineViewController: UIViewController {
     @objc private func pullToRefresh() {
         // G16：刷新时先保存选中日（reloadTimeline keepDay 分支内保留），
         // 跳过当日拉取，只拉一次最终选中日；不再先拉今天再拉回原选中日。
+        // 第 2 项 A 调用点 2/2（下拉刷新）：keepSelectedDay 下守卫接在刷新
+        // 完成后——当日/月份回包到达时消费本标志，选中日已空即跳最近有篇日。
+        pendingEntryJumpCheck = true
         reloadTimeline(keepSelectedDay: true)
         refreshHeaderHeight()
     }
@@ -1901,6 +2099,9 @@ class BearyTimelineViewController: UIViewController {
         if let trashImage = BearyIconImages.image(named: "icon_trash", pointSize: 16) {
             trashButton.setImage(trashImage, for: .normal)
         }
+        // 回收站图标防压扁：按钮 imageView 默认 scaleToFill，受挤压即失真，
+        // 显式 aspectFit + 方形图，任何压缩都不改变宽高比。
+        trashButton.imageView?.contentMode = .scaleAspectFit
         trashButton.tintColor = BearyColors.ink
         trashButton.imageEdgeInsets = UIEdgeInsets(top: 0, left: 0, bottom: 0, right: 6)
         trashButton.addTarget(self, action: #selector(didTapTrash), for: .touchUpInside)
@@ -2118,6 +2319,9 @@ class BearyTimelineViewController: UIViewController {
                 switch result {
                 case .success(let list):
                     strongSelf.timelineEntries = list.entries ?? []
+                    // B-G7: patch the day-panel copy from the fresh timeline copy
+                    // before diff/reload, so both copies render the same state.
+                    strongSelf.dayEntries = strongSelf.patchedEntries(strongSelf.dayEntries, withFresh: strongSelf.timelineEntries)
                     strongSelf.trashCountValue = list.trashCount ?? 0
                     strongSelf.countsValue = list.tlCounts
                     strongSelf.timelineHasMore = (list.entries ?? []).count >= strongSelf.pageLimit
@@ -2346,6 +2550,10 @@ class BearyTimelineViewController: UIViewController {
                     }
                 } else if strongSelf.pendingFixSelCheck {
                     _ = strongSelf.checkFixSelForSelectedDay()
+                } else if strongSelf.pendingEntryJumpCheck {
+                    // 第 2 项 A：初次进入 / 下拉刷新守卫在月份回包处消费。
+                    // 翻页跟随挂起时走上一分支，本分支不抢翻页选区。
+                    _ = strongSelf.checkEntryJumpForSelectedDay()
                 }
             }
         }
@@ -2612,6 +2820,48 @@ class BearyTimelineViewController: UIViewController {
         return true
     }
 
+    /// 第 2 项 A 初次进入 / 下拉刷新跳转守卫（checkFixSel 的同月口径、
+    /// 但走独立挂起标志 pendingEntryJumpCheck，不碰 pendingFixSelCheck）：
+    /// 选中日当月计数 > 0 不动；计数 0 时经 applyDayFixSel 同月先往前、
+    /// 再往后找最近有篇日并跳过去，提示复用现成 jumpNote 机制
+    /// （showJumpNote + viewForHeader 的“这天已没有日记，已跳到最近的一天”）；
+    /// 同月全空时 applyDayFixSel 原有行为是取消选中 + toast“这天已没有日记”
+    /// （无可跳之日，故无跳转提示）。缓存缺失时挂起并补拉该月，到达后由
+    /// fetchCalendarMonth 回包的本守卫分支重试；月份已失败时清挂起、
+    /// 保留选区（与 checkFixSel 同口径，防失败回包 → 守卫 → 再补拉死循环）。
+    /// 返回 true 表示已执行跳转/取消（调用方应跳过后续重载），false 表示
+    /// 未触发或仍挂起。翻页路径永不调用本函数（翻页全空保留原选区）。
+    @discardableResult
+    private func checkEntryJumpForSelectedDay() -> Bool {
+        guard let key = selectedDayKey else {
+            pendingEntryJumpCheck = false
+            return false
+        }
+        let parts = key.split(separator: "-")
+        guard parts.count == 3, let year = Int(parts[0]), let month = Int(parts[1]), let day = Int(parts[2]) else {
+            pendingEntryJumpCheck = false
+            return false
+        }
+        let monthKey = BearyBeijingDay.monthKey(year: year, month: month)
+        guard calendarCache[monthKey] != nil else {
+            if calendarFailed.contains(monthKey) {
+                pendingEntryJumpCheck = false
+                return false
+            }
+            pendingEntryJumpCheck = true
+            fetchCalendarMonth(key: monthKey)
+            return false
+        }
+        let counts = calendarDayCounts(year: year, month: month, day: day)
+        if counts.published + counts.unpublished > 0 {
+            pendingEntryJumpCheck = false
+            return false
+        }
+        pendingEntryJumpCheck = false
+        applyDayFixSel()
+        return true
+    }
+
     private func stepCalendar(delta: Int) {
         var targetAnchor = calendarAnchor
         var targetDisplayed = calendarDisplayedMonth
@@ -2707,9 +2957,15 @@ class BearyTimelineViewController: UIViewController {
                 switch result {
                 case .success(let list):
                     strongSelf.dayEntries = list.entries ?? []
+                    // B-G7: patch the timeline copy from the fresh day-panel copy
+                    // before reload, so both copies render the same state.
+                    strongSelf.timelineEntries = strongSelf.patchedEntries(strongSelf.timelineEntries, withFresh: strongSelf.dayEntries)
                     strongSelf.dayEntriesKey = key
                     strongSelf.dayState = .loaded
                     if wasNonEmptyForKey && strongSelf.dayEntries.isEmpty {
+                        // 第 2 项 A 的活已由本次跳转完成，挂起标志随之清掉，
+                        // 避免之后某次月份到达时对新选区再跑一次初次/刷新守卫。
+                        strongSelf.pendingEntryJumpCheck = false
                         strongSelf.applyDayFixSel()
                         return
                     }
@@ -2717,7 +2973,20 @@ class BearyTimelineViewController: UIViewController {
                     // （以日历计数为准；已跳转/取消则跳过后续重载）。
                     if strongSelf.pendingFixSelCheck && strongSelf.dayEntries.isEmpty {
                         if strongSelf.checkFixSelForSelectedDay() {
+                            strongSelf.pendingEntryJumpCheck = false
                             return
+                        }
+                    }
+                    // 第 2 项 A：初次进入 / 下拉刷新守卫在当日回包处消费。
+                    // 当日已空才跑（非空即清挂起、不跳转）；缓存未到时
+                    // checkEntryJumpForSelectedDay 会重新挂起并补拉该月，
+                    // 到达后由月份回包分支重试，本处先按空面板正常重载。
+                    if strongSelf.pendingEntryJumpCheck {
+                        strongSelf.pendingEntryJumpCheck = false
+                        if strongSelf.dayEntries.isEmpty {
+                            if strongSelf.checkEntryJumpForSelectedDay() {
+                                return
+                            }
                         }
                     }
                 case .failure(let error):
@@ -2852,7 +3121,10 @@ class BearyTimelineViewController: UIViewController {
         }
         let head = "\(month) 月 \(day) 日"
         if dayState == .failed {
-            return (head, " · 加载失败，点一下日期再试")
+            // B-G8: web replaces the whole day segment with the failure text
+            // (beary.html 4216/4223); the date segment is NOT kept. Empty head
+            // leaves only the 12.5 gray failure text in viewForHeader.
+            return ("", "加载失败，点一下日期再试")
         }
         if dayState != .loaded {
             return (head, "")
@@ -2986,7 +3258,7 @@ class BearyTimelineViewController: UIViewController {
             if isLoginEmpty {
                 tableView.backgroundView = emptyView(title: "先登录", subtitle: "时间线只放你自己的日记，登录后就能看", actionTitle: "去登录", action: { [weak self] in
                     self?.onRequireLogin?()
-                }, iconName: "IconCalendar")
+                }, iconName: "icon_calendar")
             } else {
                 // W10：加载失败空态副标题补网页同款“网络好像不太顺”。
                 tableView.backgroundView = emptyView(title: "加载失败", subtitle: "网络好像不太顺", actionTitle: "点击重试", action: { [weak self] in
@@ -2994,9 +3266,23 @@ class BearyTimelineViewController: UIViewController {
                 }, iconName: "icon_wifi_off")
             }
         } else if timelineState == .loaded && !hasRows {
-            tableView.backgroundView = emptyView(title: "还没有日记", subtitle: "写下第一篇，它会出现在这里", actionTitle: nil, action: nil)
+            // B-G9: web renderTimeline empty state uses beary-diary, not tray.
+            tableView.backgroundView = emptyView(title: "还没有日记", subtitle: "写下第一篇，它会出现在这里", actionTitle: nil, action: nil, iconName: "icon_diary")
         } else {
             tableView.backgroundView = nil
+        }
+        // 第 14 项 B：分页向同组追加行时，旧末行不会重走 cellForRowAt，
+        // 其 bottom -8 会在新行（top 0）上方留 8px 断口；此处按当前分区
+        // 重刷可见行的线边距，旧末行改回中间行 0/0，组内恢复通长。
+        // updateChrome 在首屏/分页/当日回包后均被调用，且只碰可见行、无重载。
+        for visibleCell in tableView.visibleCells {
+            guard let timelineCell = visibleCell as? BearyTimelineCell else { continue }
+            guard let indexPath = tableView.indexPath(for: timelineCell) else { continue }
+            guard indexPath.section < sections.count, indexPath.row < sections[indexPath.section].entries.count else { continue }
+            timelineCell.setTimelineLineEdges(
+                isFirstInDay: indexPath.row == 0,
+                isLastInDay: indexPath.row == sections[indexPath.section].entries.count - 1
+            )
         }
         updateFooter()
     }
@@ -3189,6 +3475,11 @@ extension BearyTimelineViewController: UITableViewDataSource, UITableViewDelegat
             return UITableViewCell()
         }
         cell.configure(entry: sections[indexPath.section].entries[indexPath.row])
+        // 第 14 项 B：竖线按日组拼线——首行 top 8、末行 bottom -8、中间行 0/0。
+        cell.setTimelineLineEdges(
+            isFirstInDay: indexPath.row == 0,
+            isLastInDay: indexPath.row == sections[indexPath.section].entries.count - 1
+        )
         cell.onEditEntry = onEditEntry
         cell.onDeleteEntry = onDeleteEntry
         cell.onQuoteEntry = onQuoteEntry
@@ -3237,7 +3528,10 @@ extension BearyTimelineViewController: UITableViewDataSource, UITableViewDelegat
         // 当日面板头按网页 .cal-day-t 取 16。
         let leading: CGFloat = isDayPanel ? 16 : 36
         var bottomView: UIView = label
-        var bottomConstant: CGFloat = -8
+        // B-G8: day header uses web .cal-day-t (top 16, bottom 4); timeline section
+        // headers keep .date-h (top 18, bottom 8). They previously shared 18/8,
+        // so the day header was 2/4pt too tall.
+        var bottomConstant: CGFloat = isDayPanel ? -4 : -8
         // 第 15 项：当日失败不再出头旁蓝色“重试”文字钮，重试靠再点日期
         // （失败文案本身即“加载失败，点一下日期再试”）。
         if isDayPanel && showJumpNote {
@@ -3253,7 +3547,7 @@ extension BearyTimelineViewController: UITableViewDataSource, UITableViewDelegat
                 jumpLabel.trailingAnchor.constraint(equalTo: holder.trailingAnchor, constant: -16),
             ])
             bottomView = jumpLabel
-            bottomConstant = -8
+            bottomConstant = isDayPanel ? -4 : -8
             // M16：跳转提示出现时 0.3s 透明度淡入（减动效直显）。
             jumpNoteLabel = jumpLabel
             if UIAccessibility.isReduceMotionEnabled == false {
@@ -3264,14 +3558,15 @@ extension BearyTimelineViewController: UITableViewDataSource, UITableViewDelegat
             }
         }
         NSLayoutConstraint.activate([
-            label.topAnchor.constraint(equalTo: holder.topAnchor, constant: 18),
+            label.topAnchor.constraint(equalTo: holder.topAnchor, constant: isDayPanel ? 16 : 18),
             label.leadingAnchor.constraint(equalTo: holder.leadingAnchor, constant: leading),
             label.trailingAnchor.constraint(equalTo: holder.trailingAnchor, constant: -16),
             bottomView.bottomAnchor.constraint(equalTo: holder.bottomAnchor, constant: bottomConstant),
         ])
-        // 第 9 项：组头处无圆点、竖线断开——R1 补段已拆除，组头不再补
-        // 14px 墨圆 + 17px line 色外环与满高竖线；竖线只在每行 cell 内
-        // 上下各 inset 8px 的一段（第 13 项），整列不再通长。
+        // 第 9 项：组头处无圆点、竖线不穿头——R1 补段已拆除，组头不再补
+        // 14px 墨圆 + 17px line 色外环与满高竖线（网页 .date-h 在 .tl 组外同口径）。
+        // 第 14 项 B：竖线按日通长连续——组内行按首/中/末拼线（见 TL-1 注释），
+        // 组与组之间由组头隔开，线自然断开，不再是每行各 inset 8px 的分段。
         // 第 10 项：表已改 grouped，头不吸顶，仍需不透明底防透字。
         holder.backgroundColor = BearyColors.bg
         return holder
