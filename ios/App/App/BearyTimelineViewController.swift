@@ -1772,11 +1772,24 @@ class BearyTimelineViewController: UIViewController {
     private var timelineState = LoadState.idle
     private var timelineUnauthorized = false
     private var timelineLoadingMore = false
+    // 崩溃 1（21:33/21:50 两次 Invalid_Batch_Updates）：首屏加载此前无在途守卫，
+    // 重拍 tab/下拉/登录翻转/发布都可重入 loadTimelineFirstPage；旧回包按陈旧
+    // oldSections diff 时表早已不是旧快照即崩。seq 令牌：每次首屏加载 +1，
+    // 回包 seq 不符直接丢弃（不碰模型、不 diff、不 reload、不调 completion，
+    // 新加载的回包自会渲染）。当前无调用方传 completion（仅 reloadTimeline
+    // 无参调用），故陈旧回包不调 completion 是安全的；日后若有调用方传
+    // completion，需自行处理陈旧语义。
+    private var timelineFirstPageSeq = 0
     // G15：分页失败标记——脚部保持“加载失败，点击重试”可重试。
     private var timelinePageFailed = false
     // M2：分页新增行的错峰滑入队列（willDisplay 时按原始序号起播，播过即摘；
     // 用序号字典而非数组，避免摘除后后续序号前移导致错峰失效）。
     private var staggerInsertOrder: [IndexPath: Int] = [:]
+    /// 切页/整表重载时清掉未播的错峰队列：分页追加后未显示的行若带着 stagger
+    /// 条目切走 tab，切回时 willDisplay 会补播滑入——行已是既有内容，不得重播。
+    /// 容器切离时间线页与 reloadTimeline 整表重载时调用；分页追加本身不调
+    ///（新行首显仍需滑入；willDisplay 播过即摘，不影响正常路径）。
+    func clearStaggerEntries() { staggerInsertOrder.removeAll() }
     // M16：跳转提示当前 label 弱引用，消失时先做透明度过渡再移除。
     private weak var jumpNoteLabel: UILabel?
     // G15：分页失败 toast（底色 ink，与回收站 toast 同口径）。
@@ -2018,6 +2031,7 @@ class BearyTimelineViewController: UIViewController {
             dayState = .idle
             dayKeyForLoad = nil
         }
+        clearStaggerEntries()
         tableView.reloadData()
         updateChrome()
         loadTimelineFirstPage()
@@ -2535,6 +2549,8 @@ class BearyTimelineViewController: UIViewController {
     // MARK: - 时间线拉取
 
     private func loadTimelineFirstPage(completion: (() -> Void)? = nil) {
+        timelineFirstPageSeq += 1
+        let seq = timelineFirstPageSeq
         timelineState = .loading
         updateChrome()
         // M2：已有行只更新变化行——刷新前记下旧分区，成功后若分区结构（日期键序列）
@@ -2544,6 +2560,8 @@ class BearyTimelineViewController: UIViewController {
         BearyAPI.shared.fetchEntries(scope: .timeline, limit: pageLimit) { [weak self] result in
             DispatchQueue.main.async {
                 guard let strongSelf = self else { return }
+                // 旧回包直接丢弃（见 timelineFirstPageSeq 注释）：表与模型均已由新加载接管。
+                guard seq == strongSelf.timelineFirstPageSeq else { return }
                 switch result {
                 case .success(let list):
                     strongSelf.timelineEntries = list.entries ?? []
@@ -2580,6 +2598,15 @@ class BearyTimelineViewController: UIViewController {
     /// 首屏刷新行 diff：分区键序列必须全等、每行必须有唯一 id，
     /// 任一异常即返回 false 由调用方回落 reloadData，绝不带病插删。
     private func applyFirstPageDiff(oldSections: [DaySection]) -> Bool {
+        // 纵深校验：diff 的前提是表当前仍显示 oldSections。首屏加载与分页追加/
+        // 选日重载交错时，模型新旧快照可能一致但表已被改写（计数对不上即
+        // Invalid_Batch_Updates）；计数不符一律回落 reloadData，绝不带病批更新。
+        // numberOfSections/numberOfRows 取表当前已渲染态（非数据源实时查询），
+        // 故能反映 reloadData/批更新后的表状态。
+        guard tableView.numberOfSections == oldSections.count else { return false }
+        for section in 0..<oldSections.count {
+            guard tableView.numberOfRows(inSection: section) == oldSections[section].entries.count else { return false }
+        }
         let newSections = currentSections()
         guard newSections.count == oldSections.count else { return false }
         for index in 0..<oldSections.count {

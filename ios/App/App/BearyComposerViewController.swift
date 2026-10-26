@@ -1706,24 +1706,14 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             nameLabel.text = authorName
             nameLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
             headerStack.addArrangedSubview(nameLabel)
-            if (entry.authorPlus ?? 0) != 0 {
-                let crownView = UIImageView()
-                crownView.translatesAutoresizingMaskIntoConstraints = false
-                crownView.contentMode = .scaleAspectFit
-                // 清单第 14 项编辑器部分：App 端先取消会员标显示——皇冠一律隐藏
-                //（stack 会自动塌掉隐藏的 arranged 子项，不留空位；只改显示，不删
-                // 资产与 authorPlus 数据；邀请页是另一文件，与此无关、不动）。
-                if let crown = UIImage(named: "crown") {
-                    crownView.image = crown
-                }
-                crownView.isHidden = true
-                crownView.setContentCompressionResistancePriority(.required, for: .horizontal)
-                headerStack.addArrangedSubview(crownView)
-                NSLayoutConstraint.activate([
-                    crownView.widthAnchor.constraint(equalToConstant: 19),
-                    crownView.heightAnchor.constraint(equalToConstant: 19),
-                ])
-            }
+            // 崩溃 2（21:38 引用面板 mutuallyExclusiveConstraints）：此前这里建一个
+            // isHidden=true 的皇冠图，加进横向 headerStack 后再激活 required 宽 19。
+            // UIStackView 给隐藏 arranged 子项激活 required 的 'UISV-hiding' 宽 0 约束，
+            // 再激活宽 19 即与系统约束互斥抛错（栈帧：直接 activate ← renderQuotePanelRows，
+            // 无 UIStackView 帧，因冲突约束在 addArrangedSubview 时已激活）。
+            // 皇冠按清单本就一律隐藏（零像素贡献），故直接不建该视图——资产与
+            // authorPlus 数据不动，只删这个永不显示的视图；显式尺寸 + 隐藏入栈
+            // 的组合今后也不许再出现（要藏就别入栈，要入栈就别给 required 尺寸）。
             let dateLabel = UILabel()
             dateLabel.translatesAutoresizingMaskIntoConstraints = false
             dateLabel.font = UIFont.systemFont(ofSize: 13)
