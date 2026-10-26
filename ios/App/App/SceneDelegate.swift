@@ -277,7 +277,7 @@ final class BearyChromeViewController: UIViewController {
     /// 32×32 + scaleAspectFill，改 title 方案会被空 imageView 挤占，画图最稳。
 
     private func makeTopIconButton(imageName: String, fallbackSystemName: String, tint: UIColor, action: Selector) -> UIButton {
-        let b = BearyHit44Button(type: .custom)
+        let b = BearyGlassButton(type: .custom)
         b.setImage(topIconImage(named: imageName, systemFallback: fallbackSystemName), for: .normal)
         b.tintColor = tint
         b.layer.cornerRadius = 12
@@ -323,13 +323,14 @@ final class BearyChromeViewController: UIViewController {
             logo.widthAnchor.constraint(equalToConstant: 79),
             logo.heightAnchor.constraint(equalToConstant: 28),
         ])
-        let login = UIButton(type: .custom)
+        let login = BearyGlassButton(type: .custom)
+        login.glassTint = BearyColors.orange
         login.setTitle("登录", for: .normal)
         // 网页登录 pill：14 semibold 固定字号，不跟随系统字号缩放。
         login.titleLabel?.font = .systemFont(ofSize: 14, weight: .semibold)
         login.titleLabel?.adjustsFontForContentSizeCategory = false
-        login.setTitleColor(UIColor { t in t.userInterfaceStyle == .dark ? .black : .white }, for: .normal)
-        login.backgroundColor = ink
+        login.setTitleColor(BearyColors.ink, for: .normal)
+        login.backgroundColor = .clear
         login.layer.cornerRadius = 16
         login.addTarget(self, action: #selector(didTapLogin), for: .touchUpInside)
         login.translatesAutoresizingMaskIntoConstraints = false
@@ -1320,6 +1321,10 @@ final class BearyChromeViewController: UIViewController {
         } else {
             pageView(for: page).view.isHidden = false
         }
+        // 首次切入飞入修：懒建页首亮时帧仍为 .zero（addPageVC 只加约束未布局），
+        // 下方 setHeaderVisible 的 0.25s layoutIfNeeded 动画会把整页从左上零帧动画到满帧；
+        // 此处先非动画布局一次定帧，动画只剩顶栏高度变化。只布局不动数据/分页/错峰滑入。
+        view.layoutIfNeeded()
         // 切页生命周期 7 号（最小化）：进时间线页时显式启动倒计时
         //（离页钩子在上方切离分支；其他页进页逻辑已有 showPage 各分支兜底）。
         if page == .timeline {

@@ -2849,7 +2849,7 @@ private class BearyProfileEntryCell: UITableViewCell {
     fileprivate var cellEntryId: String?
     private var cellLikedByMe = false
     private lazy var likeButton: UIButton = {
-        let buttonValue = BearyHit44Button(type: .system)
+        let buttonValue = BearyGlassButton(type: .system)
         buttonValue.translatesAutoresizingMaskIntoConstraints = false
         buttonValue.titleLabel?.font = UIFont.systemFont(ofSize: 14)
         buttonValue.contentEdgeInsets = .zero
@@ -2864,7 +2864,7 @@ private class BearyProfileEntryCell: UITableViewCell {
     }()
 
     private lazy var bookmarkButton: UIButton = {
-        let buttonValue = BearyHit44Button(type: .system)
+        let buttonValue = BearyGlassButton(type: .system)
         buttonValue.translatesAutoresizingMaskIntoConstraints = false
         buttonValue.addTarget(self, action: #selector(bookmarkButtonTapped), for: .touchUpInside)
         buttonValue.addTarget(self, action: #selector(iconTouchDown(_:)), for: .touchDown)
@@ -2873,7 +2873,7 @@ private class BearyProfileEntryCell: UITableViewCell {
     }()
 
     private lazy var shareButton: UIButton = {
-        let buttonValue = BearyHit44Button(type: .system)
+        let buttonValue = BearyGlassButton(type: .system)
         buttonValue.translatesAutoresizingMaskIntoConstraints = false
         buttonValue.setImage(BearyIconImages.image(named: "icon_share", pointSize: 21), for: .normal)
         buttonValue.tintColor = BearyColors.gray

@@ -2285,7 +2285,7 @@ class BearyFeedCell: UITableViewCell {
     }()
 
     private lazy var likeButton: UIButton = {
-        let btn = BearyHit44Button(type: .system)
+        let btn = BearyGlassButton(type: .system)
         btn.translatesAutoresizingMaskIntoConstraints = false
         btn.titleLabel?.font = UIFont.systemFont(ofSize: 14)
         btn.contentEdgeInsets = UIEdgeInsets.zero
@@ -2300,7 +2300,7 @@ class BearyFeedCell: UITableViewCell {
     }()
 
     private lazy var bookmarkButton: UIButton = {
-        let btn = BearyHit44Button(type: .system)
+        let btn = BearyGlassButton(type: .system)
         btn.translatesAutoresizingMaskIntoConstraints = false
         btn.contentEdgeInsets = UIEdgeInsets(top: 2, left: 2, bottom: 2, right: 2)
         btn.addTarget(self, action: #selector(bookmarkTapped), for: .touchUpInside)
@@ -2310,7 +2310,7 @@ class BearyFeedCell: UITableViewCell {
     }()
 
     private lazy var shareButton: UIButton = {
-        let btn = BearyHit44Button(type: .system)
+        let btn = BearyGlassButton(type: .system)
         btn.translatesAutoresizingMaskIntoConstraints = false
         btn.setImage(BearyFeedIconCache.image(named: "icon_share", pointSize: 21), for: .normal)
         btn.tintColor = BearyColors.gray
@@ -2354,7 +2354,7 @@ class BearyFeedCell: UITableViewCell {
     }()
 
     private lazy var publishButton: UIButton = {
-        let btn = BearyHit44Button(type: .system)
+        let btn = BearyGlassButton(type: .system)
         btn.translatesAutoresizingMaskIntoConstraints = false
         btn.titleLabel?.font = UIFont.systemFont(ofSize: 14, weight: .semibold)
         btn.setTitle("公开", for: .normal)
@@ -2365,6 +2365,7 @@ class BearyFeedCell: UITableViewCell {
         btn.heightAnchor.constraint(equalToConstant: 44).isActive = true
         btn.layer.borderWidth = 1
         btn.layer.borderColor = BearyColors.line.cgColor
+        btn.glassTint = BearyColors.orange
         btn.addTarget(self, action: #selector(publishTapped), for: .touchUpInside)
         return btn
     }()
@@ -4419,7 +4420,7 @@ private class BearyFeedImageViewerViewController: UIViewController, UIScrollView
     private let startIndex: Int
     private let pagingScrollView = UIScrollView()
     private let counterLabel = UILabel()
-    private let closeButton = BearyHit44Button(type: .system)
+    private let closeButton = BearyGlassButton(type: .system)
     private let dotsStack = UIStackView()
     private var dotViews: [UIView] = []
     private var pageViews: [UIView] = []
@@ -4499,7 +4500,7 @@ private class BearyFeedImageViewerViewController: UIViewController, UIScrollView
         view.addSubview(dotsStack)
         closeButton.setImage(BearyFeedIconCache.image(named: "icon_close", pointSize: 20), for: .normal)
         closeButton.tintColor = .white
-        closeButton.backgroundColor = UIColor.white.withAlphaComponent(0.15)
+        closeButton.backgroundColor = .clear // 玻璃底自带底质，原白 0.15 底会盖住玻璃
         closeButton.layer.cornerRadius = 18
         closeButton.clipsToBounds = true
         closeButton.translatesAutoresizingMaskIntoConstraints = false

@@ -77,7 +77,7 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate {
 
     override func viewDidLoad() {
         super.viewDidLoad()
-        view.backgroundColor = BearyColors.bg
+        view.backgroundColor = .clear
         title = "回收站"
         buildViews()
         buildConstraints()
@@ -125,6 +125,16 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate {
     // MARK: - 视图搭建
 
     private func buildViews() {
+        // 玻璃批：模态玻璃背板钉满 view（index 0，在 scrollView/toast 之下）；行卡片底不动。
+        let trashGlassView = BearyGlass.effectView(tint: BearyGlass.neutralTint)
+        trashGlassView.translatesAutoresizingMaskIntoConstraints = false
+        view.insertSubview(trashGlassView, at: 0)
+        NSLayoutConstraint.activate([
+            trashGlassView.topAnchor.constraint(equalTo: view.topAnchor),
+            trashGlassView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
+            trashGlassView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            trashGlassView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+        ])
         scrollView.delegate = self
         scrollView.translatesAutoresizingMaskIntoConstraints = false
         contentWrap.translatesAutoresizingMaskIntoConstraints = false
@@ -561,7 +571,7 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate {
         buttonsRow.alignment = .center
         buttonsRow.spacing = 8
 
-        let restoreButton = UIButton(type: .custom)
+        let restoreButton = BearyGlassButton(type: .custom)
         restoreButton.setTitle("恢复", for: .normal)
         // C2：恢复钮文字与图标走 ink（此前错用蓝色）；彻底删除保持红。
         restoreButton.setTitleColor(BearyColors.ink, for: .normal)
@@ -575,7 +585,7 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate {
         restoreButton.layer.borderWidth = 1
         restoreButton.layer.borderColor = BearyColors.line.cgColor
         restoreButton.layer.cornerRadius = 22
-        restoreButton.backgroundColor = BearyColors.bg
+        restoreButton.backgroundColor = .clear
         restoreButton.contentEdgeInsets = UIEdgeInsets(top: 7, left: 14, bottom: 7, right: 14)
         // B-G14: button fixed height 44 (was >= 44).
         restoreButton.heightAnchor.constraint(equalToConstant: 44).isActive = true
@@ -591,7 +601,7 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate {
         let spacerView = UIView()
         spacerView.setContentHuggingPriority(.defaultLow, for: .horizontal)
 
-        let purgeButton = UIButton(type: .custom)
+        let purgeButton = BearyGlassButton(type: .custom)
         purgeButton.setTitle("彻底删除", for: .normal)
         purgeButton.setTitleColor(BearyColors.red, for: .normal)
         purgeButton.titleLabel?.font = UIFont.systemFont(ofSize: 13)
@@ -604,7 +614,7 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate {
         purgeButton.layer.borderWidth = 1
         purgeButton.layer.borderColor = BearyColors.line.cgColor
         purgeButton.layer.cornerRadius = 22
-        purgeButton.backgroundColor = BearyColors.bg
+        purgeButton.backgroundColor = .clear
         purgeButton.contentEdgeInsets = UIEdgeInsets(top: 7, left: 14, bottom: 7, right: 14)
         // B-G14: button fixed height 44 (was >= 44).
         purgeButton.heightAnchor.constraint(equalToConstant: 44).isActive = true
