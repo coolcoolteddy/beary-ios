@@ -40,8 +40,8 @@ import UIKit
 //   点徽章 POST /beary/api/wear {badge} 切换佩戴（传 null = 取消佩戴；
 //   服务端目前仅接受 beta，worn 也只回 beta 或 null）。
 // - 齿轮菜单退出登录走 BearyAPI.logout（/api/account/logout，见文末注记）。
-// - 分享：他人用 https://teddyhn.com/beary/u/<id>，本人用
-//   https://teddyhn.com/beary/@<handle>（无 handle 时回退 u/<id>）。
+// - 分享：本人优先 https://teddyhn.com/beary/u/<id>（取不到 id 才回退
+//   @<handle>），他人用 u/<id> 不变。
 // - 行内回应：不做乐观更新，只在服务端返回聚合后重绘（与详情页同口径）。
 // - BearyAPI 回调不在主线程：本文件所有碰 UI 的回调一律 DispatchQueue.main.async。
 
@@ -387,8 +387,8 @@ class BearyProfileViewController: UIViewController {
         if let crownImage = UIImage(named: "crown") {
             imageViewValue.image = crownImage
         }
-        // 清单 14 主页部分：皇冠会员标始终隐藏（资产与 plus 数据不动），
-        // 工厂态即隐藏，避免资料加载前首帧闪出皇冠。
+        // 皇冠会员标按 plus 数据显示（网页 pfPlusPill 口径：d.plus 才显示）；
+        // 工厂态先隐藏，避免资料加载前首帧闪出皇冠，applyProfile / refreshWornBadge 按 plus 复核。
         imageViewValue.isHidden = true
         return imageViewValue
     }()
@@ -425,8 +425,8 @@ class BearyProfileViewController: UIViewController {
         return imageViewValue
     }()
 
-    /// 邮箱行（审计 N4 主页部分）：仅本人显示，字体/颜色与 handle 同款 13 灰；
-    /// 他人主页由 applyEmailRow 强制隐藏（见该方法）。
+    /// 邮箱行：1:1 复刻后本人主页也不显示（网页个人主页无邮箱行）；
+    /// 视图保留仅作统计行约束锚点，applyEmailRow 恒隐藏（见该方法）。
     private let emailLabel: UILabel = {
         let labelValue = UILabel()
         labelValue.translatesAutoresizingMaskIntoConstraints = false
@@ -494,7 +494,7 @@ class BearyProfileViewController: UIViewController {
         return buttonValue
     }()
 
-    // MARK: - 头像行动作：齿轮（仅本人）与分享（仅容器页态；modal 态走顶栏分享）
+    // MARK: - 头像行动作：齿轮（仅本人）；头像行分享已按 1:1 去掉，modal 态走顶栏分享
 
     private lazy var gearButton: UIButton = {
         let buttonValue = UIButton(type: .system)
@@ -558,7 +558,7 @@ class BearyProfileViewController: UIViewController {
     private let wallTotalLabel: UILabel = {
         let labelValue = UILabel()
         labelValue.translatesAutoresizingMaskIntoConstraints = false
-        labelValue.font = UIFont.systemFont(ofSize: 13)
+        labelValue.font = UIFont.systemFont(ofSize: 12)
         labelValue.textColor = BearyColors.gray
         return labelValue
     }()
@@ -576,25 +576,20 @@ class BearyProfileViewController: UIViewController {
     private let badgesTitleLabel: UILabel = {
         let labelValue = UILabel()
         labelValue.translatesAutoresizingMaskIntoConstraints = false
-        labelValue.font = UIFont.systemFont(ofSize: 14, weight: .bold)
+        labelValue.font = UIFont.systemFont(ofSize: 13, weight: .bold)
         labelValue.textColor = BearyColors.ink
         labelValue.text = "徽章"
         return labelValue
     }()
 
-    private let badgesScrollView: UIScrollView = {
-        let scrollViewValue = UIScrollView()
-        scrollViewValue.translatesAutoresizingMaskIntoConstraints = false
-        scrollViewValue.showsHorizontalScrollIndicator = false
-        return scrollViewValue
-    }()
-
+    /// 徽章架：网页 .bdg-shelf flex-wrap 口径——纵向容器内按实测宽分行
+    /// （renderBadges 分行），不再用横滑滚动条；单徽章时单行，外观不变。
     private let badgesStack: UIStackView = {
         let stackValue = UIStackView()
         stackValue.translatesAutoresizingMaskIntoConstraints = false
-        stackValue.axis = .horizontal
-        stackValue.spacing = 16
-        stackValue.alignment = .center
+        stackValue.axis = .vertical
+        stackValue.spacing = 8
+        stackValue.alignment = .fill
         return stackValue
     }()
 
@@ -621,6 +616,8 @@ class BearyProfileViewController: UIViewController {
         let viewValue = UIView()
         viewValue.translatesAutoresizingMaskIntoConstraints = false
         viewValue.backgroundColor = BearyColors.ink
+        viewValue.layer.cornerRadius = 2
+        viewValue.clipsToBounds = true
         return viewValue
     }()
 
@@ -640,8 +637,8 @@ class BearyProfileViewController: UIViewController {
     private lazy var topBarHeightConstraint: NSLayoutConstraint = topBarView.heightAnchor.constraint(equalToConstant: 0)
     private lazy var headerShareToGearConstraint: NSLayoutConstraint = headerShareButton.trailingAnchor.constraint(equalTo: gearButton.leadingAnchor, constant: -8)
     private lazy var headerShareToHeaderConstraint: NSLayoutConstraint = headerShareButton.trailingAnchor.constraint(equalTo: headerView.trailingAnchor, constant: -28)
-    /// 统计行顶约束二选一（邮箱行用）：有邮箱时统计顶贴邮箱下 13，
-    /// 无邮箱时统计顶贴 handle 下 13，与旧间距完全一致。
+    /// 统计行顶约束二选一（邮箱行已按 1:1 移除，withEmail 恒不激活、
+    /// 仅保留作锚点；统计行恒贴 handle 下 13，与旧无邮箱间距一致）。
     private lazy var statsTopWithEmailConstraint: NSLayoutConstraint = publicCountLabel.topAnchor.constraint(equalTo: emailLabel.bottomAnchor, constant: 13)
     private lazy var statsTopWithoutEmailConstraint: NSLayoutConstraint = publicCountLabel.topAnchor.constraint(equalTo: handleLabel.bottomAnchor, constant: 13)
     private lazy var tableLeadingConstraint: NSLayoutConstraint = tableView.leadingAnchor.constraint(equalTo: view.leadingAnchor)
@@ -662,18 +659,19 @@ class BearyProfileViewController: UIViewController {
         buttonValue.translatesAutoresizingMaskIntoConstraints = false
         buttonValue.setTitle(title, for: .normal)
         // I2：三标签钮前加对应图标（日记 icon_diary 由 beary-diary 渲染；心/书签资产已有）。
-        buttonValue.setImage(BearyIconImages.image(named: iconName, pointSize: 15), for: .normal)
+        // 1:1 网页 .pf-tab 口径：图标 16、图标与文字 gap 6；内边距 9/10、字 14/700、钮间 gap 4 不变。
+        buttonValue.setImage(BearyIconImages.image(named: iconName, pointSize: 16), for: .normal)
         buttonValue.titleLabel?.font = UIFont.systemFont(ofSize: 14, weight: .bold)
         buttonValue.setTitleColor(BearyColors.gray, for: .normal)
         buttonValue.setTitleColor(BearyColors.ink, for: .selected)
         buttonValue.tintColor = BearyColors.gray
-        buttonValue.titleEdgeInsets = UIEdgeInsets(top: 0, left: 4, bottom: 0, right: 0)
+        buttonValue.titleEdgeInsets = UIEdgeInsets(top: 0, left: 6, bottom: 0, right: 0)
         buttonValue.contentEdgeInsets = UIEdgeInsets(top: 9, left: 10, bottom: 9, right: 10)
         buttonValue.addTarget(self, action: action, for: .touchUpInside)
-        // P2-4：同点赞钮修法——显式宽 = content 10 + 图宽 + titleEdge 4 + 实测标题宽 + content 10。
-        let tabImageWidth = buttonValue.image(for: .normal)?.size.width ?? 15
+        // P2-4：同点赞钮修法——显式宽 = content 10 + 图宽 + titleEdge 6 + 实测标题宽 + content 10。
+        let tabImageWidth = buttonValue.image(for: .normal)?.size.width ?? 16
         let tabTitleWidth = ceil((title as NSString).size(withAttributes: [NSAttributedString.Key.font: UIFont.systemFont(ofSize: 14, weight: .bold)]).width)
-        buttonValue.widthAnchor.constraint(equalToConstant: 10 + tabImageWidth + 4 + tabTitleWidth + 10).isActive = true
+        buttonValue.widthAnchor.constraint(equalToConstant: 10 + tabImageWidth + 6 + tabTitleWidth + 10).isActive = true
         return buttonValue
     }
 
@@ -757,15 +755,15 @@ class BearyProfileViewController: UIViewController {
         let modal = navigationController?.presentingViewController != nil || presentingViewController != nil
         topBarView.isHidden = !modal
         topBarHeightConstraint.constant = modal ? 44 : 0
-        // 分享入口恰好一个：modal 态走顶栏，容器页态走头像行。
-        headerShareButton.isHidden = modal
+        // 1:1 复刻：头像行分享钮去掉——容器页态（贴齿轮左侧 8pt 的那一处）
+        // 不再显示；modal 态本来就走顶栏分享（topShareButton），不受影响。
+        headerShareButton.isHidden = true
         if modal {
             headerShareToGearConstraint.isActive = false
             headerShareToHeaderConstraint.isActive = true
         } else {
-            let own = isOwnProfile
-            headerShareToGearConstraint.isActive = own
-            headerShareToHeaderConstraint.isActive = !own
+            headerShareToGearConstraint.isActive = false
+            headerShareToHeaderConstraint.isActive = false
         }
         layoutHeaderForced(widthValue: headerWidthValue)
     }
@@ -828,8 +826,7 @@ class BearyProfileViewController: UIViewController {
         wallContainer.addSubview(wallTotalLabel)
         wallScrollView.addSubview(wallStack)
         badgesContainer.addSubview(badgesTitleLabel)
-        badgesContainer.addSubview(badgesScrollView)
-        badgesScrollView.addSubview(badgesStack)
+        badgesContainer.addSubview(badgesStack)
         tabsContainer.addSubview(diaryTabButton)
         tabsContainer.addSubview(likedTabButton)
         tabsContainer.addSubview(savedTabButton)
@@ -923,35 +920,31 @@ class BearyProfileViewController: UIViewController {
             wallContainer.leadingAnchor.constraint(equalTo: headerView.leadingAnchor, constant: 20),
             wallContainer.trailingAnchor.constraint(equalTo: headerView.trailingAnchor, constant: -20),
             wallContainer.topAnchor.constraint(equalTo: publicCountLabel.bottomAnchor, constant: 16),
+            // 网页移动端两行卡片：第一行标题左、总数右；第二行表情条独占整行横滑、右端截断。
             wallTitleLabel.leadingAnchor.constraint(equalTo: wallContainer.leadingAnchor, constant: 14),
-            wallTitleLabel.centerYAnchor.constraint(equalTo: wallContainer.centerYAnchor),
-            wallScrollView.leadingAnchor.constraint(equalTo: wallTitleLabel.trailingAnchor, constant: 12),
-            wallScrollView.centerYAnchor.constraint(equalTo: wallContainer.centerYAnchor),
+            wallTitleLabel.topAnchor.constraint(equalTo: wallContainer.topAnchor, constant: 12),
+            wallScrollView.leadingAnchor.constraint(equalTo: wallContainer.leadingAnchor, constant: 14),
+            wallScrollView.trailingAnchor.constraint(equalTo: wallContainer.trailingAnchor, constant: -14),
+            wallScrollView.topAnchor.constraint(equalTo: wallTitleLabel.bottomAnchor, constant: 8),
+            wallScrollView.bottomAnchor.constraint(equalTo: wallContainer.bottomAnchor, constant: -12),
             wallScrollView.heightAnchor.constraint(equalToConstant: 28),
             wallStack.topAnchor.constraint(equalTo: wallScrollView.topAnchor),
             wallStack.leadingAnchor.constraint(equalTo: wallScrollView.leadingAnchor),
             wallStack.trailingAnchor.constraint(equalTo: wallScrollView.trailingAnchor),
             wallStack.bottomAnchor.constraint(equalTo: wallScrollView.bottomAnchor),
             wallStack.heightAnchor.constraint(equalTo: wallScrollView.heightAnchor),
-            wallTotalLabel.leadingAnchor.constraint(equalTo: wallScrollView.trailingAnchor, constant: 12),
             wallTotalLabel.trailingAnchor.constraint(equalTo: wallContainer.trailingAnchor, constant: -14),
-            wallTotalLabel.centerYAnchor.constraint(equalTo: wallContainer.centerYAnchor),
+            wallTotalLabel.centerYAnchor.constraint(equalTo: wallTitleLabel.centerYAnchor),
 
             badgesContainer.leadingAnchor.constraint(equalTo: headerView.leadingAnchor, constant: 20),
             badgesContainer.trailingAnchor.constraint(equalTo: headerView.trailingAnchor, constant: -20),
             badgesContainer.topAnchor.constraint(equalTo: wallContainer.bottomAnchor, constant: 12),
             badgesTitleLabel.leadingAnchor.constraint(equalTo: badgesContainer.leadingAnchor, constant: 14),
             badgesTitleLabel.topAnchor.constraint(equalTo: badgesContainer.topAnchor, constant: 12),
-            badgesScrollView.leadingAnchor.constraint(equalTo: badgesContainer.leadingAnchor, constant: 14),
-            badgesScrollView.trailingAnchor.constraint(equalTo: badgesContainer.trailingAnchor, constant: -14),
-            badgesScrollView.topAnchor.constraint(equalTo: badgesTitleLabel.bottomAnchor, constant: 8),
-            badgesScrollView.bottomAnchor.constraint(equalTo: badgesContainer.bottomAnchor, constant: -12),
-            badgesScrollView.heightAnchor.constraint(equalToConstant: 72),
-            badgesStack.topAnchor.constraint(equalTo: badgesScrollView.topAnchor),
-            badgesStack.leadingAnchor.constraint(equalTo: badgesScrollView.leadingAnchor),
-            badgesStack.trailingAnchor.constraint(equalTo: badgesScrollView.trailingAnchor),
-            badgesStack.bottomAnchor.constraint(equalTo: badgesScrollView.bottomAnchor),
-            badgesStack.heightAnchor.constraint(equalTo: badgesScrollView.heightAnchor),
+            badgesStack.leadingAnchor.constraint(equalTo: badgesContainer.leadingAnchor, constant: 14),
+            badgesStack.trailingAnchor.constraint(equalTo: badgesContainer.trailingAnchor, constant: -14),
+            badgesStack.topAnchor.constraint(equalTo: badgesTitleLabel.bottomAnchor, constant: 10),
+            badgesStack.bottomAnchor.constraint(equalTo: badgesContainer.bottomAnchor, constant: -12),
 
             tabsContainer.leadingAnchor.constraint(equalTo: headerView.leadingAnchor, constant: 20),
             tabsContainer.trailingAnchor.constraint(equalTo: headerView.trailingAnchor, constant: -20),
@@ -1295,7 +1288,7 @@ class BearyProfileViewController: UIViewController {
         avatarTopWithoutCoverConstraint.isActive = !hasCover
         avatarImageView.layer.borderWidth = hasCover ? 3.5 : 0
 
-        // BETA 佩戴徽章（23，主页面口径）；皇冠位保留布局但清单 14 起始终隐藏（见下）。
+        // BETA 佩戴徽章（23，主页面口径）；皇冠按 plus 显示（网页 pfPlusPill 口径）。
         // I8：取不到图时用占位图（并打日志），不再静默隐藏徽章位。
         if let badgeKey = profileValue.wornBadge, !badgeKey.isEmpty, let badgeImage = BearyBadgeImages.imageOrPlaceholder(for: badgeKey) {
             badgeImageView.image = badgeImage
@@ -1304,9 +1297,8 @@ class BearyProfileViewController: UIViewController {
             badgeImageView.image = nil
             badgeImageView.isHidden = true
         }
-        // 清单 14 主页部分：皇冠会员标一律隐藏（资产与 plus 数据不动，
-        // 仅不展示；BETA 徽章位不受影响）。旧逻辑按 plus 显隐，已废止。
-        crownImageView.isHidden = true
+        // 1:1 复刻（推翻清单 14）：皇冠按 profile.plus 显示，plus 数据已到位。
+        crownImageView.isHidden = !(profileValue.plus ?? false)
         // 无佩戴徽章时皇冠改贴名字，避免隐藏徽章占位造成的 39pt 空隙。
         let badgeVisible = badgeImageView.isHidden == false
         crownLeadingToBadgeConstraint?.isActive = badgeVisible
@@ -1345,32 +1337,29 @@ class BearyProfileViewController: UIViewController {
         startHeaderAvatarLoad()
     }
 
-    /// 邮箱行（审计 N4 主页部分）：仅本人显示登录邮箱，他人绝不显示。
-    /// 邮箱不在 profilePayload 里，取 SessionManager 现有登录用户 MeUser.email；
-    /// 统计行顶约束随邮箱显隐二选一，隐藏时与旧间距（handle 下 13）完全一致。
+    /// 邮箱行：1:1 复刻后本人主页也不显示邮箱行（网页个人主页无邮箱行），
+    /// 他人同样不显示。统计行恒贴 handle 下 13，不再被邮箱行下推。
     private func applyEmailRow() {
-        let own = isOwnProfile
-        if own, let emailText = SessionManager.shared.currentUser?.email, !emailText.isEmpty {
-            emailLabel.text = emailText
-            emailLabel.isHidden = false
-            statsTopWithEmailConstraint.isActive = true
-            statsTopWithoutEmailConstraint.isActive = false
-        } else {
-            emailLabel.text = nil
-            emailLabel.isHidden = true
-            statsTopWithEmailConstraint.isActive = false
-            statsTopWithoutEmailConstraint.isActive = true
-        }
+        emailLabel.text = nil
+        emailLabel.isHidden = true
+        statsTopWithEmailConstraint.isActive = false
+        statsTopWithoutEmailConstraint.isActive = true
     }
 
     // MARK: - 小熊回应墙（P1）与徽章架（P2）
+
+    /// 回应墙首次出现动效只播一次（网页 pfFillWall 首次出现 300ms 动效口径）。
+    private var wallHasAnimated = false
 
     private func applyWall() {
         guard let profileValue = profile else { return }
         let total = profileValue.emotesTotal ?? 0
         let received = profileValue.emotesReceived ?? []
-        guard total > 0, !received.isEmpty else {
+        // 网页 pfFillWall 口径：total > 0 即显示，received 为空也显示空墙。
+        guard total > 0 else {
             wallContainer.isHidden = true
+            wallContainer.alpha = 1
+            wallContainer.transform = .identity
             wallHeightConstraint.isActive = true
             layoutHeaderForced(widthValue: headerWidthValue)
             return
@@ -1383,28 +1372,40 @@ class BearyProfileViewController: UIViewController {
             guard let key = item.emote, !key.isEmpty else { continue }
             let chip = UIStackView()
             chip.axis = .horizontal
-            chip.spacing = 2
+            chip.spacing = 4
             chip.alignment = .center
             // 52 批：回应墙改动态（与卡片内回应一致；网页端墙上表情是 SVG 自带循环、本身就是动的，
             // App 静态反而与网页不一致，故上一批“汇总展示保持静态”的理由撤回；减动效首帧逻辑在播放器内，不动）。
             let imageViewValue = BearyEmoteView(key: key, animated: true)
             imageViewValue.translatesAutoresizingMaskIntoConstraints = false
             let countLabel = UILabel()
-            countLabel.font = UIFont.systemFont(ofSize: 13)
-            countLabel.textColor = BearyColors.ink
+            countLabel.font = UIFont.systemFont(ofSize: 12)
+            countLabel.textColor = BearyColors.gray
             countLabel.text = "×\(item.count ?? 0)"
             chip.addArrangedSubview(imageViewValue)
             chip.addArrangedSubview(countLabel)
             NSLayoutConstraint.activate([
-                imageViewValue.widthAnchor.constraint(equalToConstant: 24),
-                imageViewValue.heightAnchor.constraint(equalToConstant: 24),
+                imageViewValue.widthAnchor.constraint(equalToConstant: 20),
+                imageViewValue.heightAnchor.constraint(equalToConstant: 20),
             ])
             wallStack.addArrangedSubview(chip)
         }
         wallTotalLabel.text = "共收到 \(total) 只"
+        let wasHidden = wallContainer.isHidden
         wallContainer.isHidden = false
         wallHeightConstraint.isActive = false
         layoutHeaderForced(widthValue: headerWidthValue)
+        if wasHidden && !wallHasAnimated {
+            wallHasAnimated = true
+            if !UIAccessibility.isReduceMotionEnabled {
+                wallContainer.alpha = 0
+                wallContainer.transform = CGAffineTransform(translationX: 0, y: 8)
+                UIView.animate(withDuration: 0.3, delay: 0, options: .curveEaseOut, animations: {
+                    wallContainer.alpha = 1
+                    wallContainer.transform = .identity
+                })
+            }
+        }
     }
 
     private func loadBadges() {
@@ -1450,8 +1451,10 @@ class BearyProfileViewController: UIViewController {
             badgesHeightConstraint.isActive = true
             return
         }
-        // I8：未知 key 不再过滤掉，取不到图时以占位图展示（并打日志）。
-        let shown = unlockedBadges.filter { !$0.isEmpty }
+        // 网页 BADGE_ORDER 口径：排序固定为 ['beta']，只显示该表内已解锁的 key
+        // （接口 unlocked 原顺序不用；表外 key 不展示，与 renderBadgeShelf 一致）。
+        // “暂无徽章”空态分支（下）按例外保留不动。
+        let shown = ["beta"].filter { unlockedBadges.contains($0) }
         guard !shown.isEmpty else {
             // 52 批补充：成功返回空时不再直接隐藏，显示“暂无徽章”空态文案，
             // 让没数据与没渲染一眼分清（失败态重试钮不动）。
@@ -1474,6 +1477,7 @@ class BearyProfileViewController: UIViewController {
             badgesStack.removeArrangedSubview(arrangedView)
             arrangedView.removeFromSuperview()
         }
+        var badgeButtons: [UIButton] = []
         for key in shown {
             guard let badgeImage = BearyBadgeImages.imageOrPlaceholder(for: key) else { continue }
             let buttonValue = UIButton(type: .system)
@@ -1482,33 +1486,58 @@ class BearyProfileViewController: UIViewController {
             let imageViewValue = UIImageView(image: badgeImage)
             imageViewValue.translatesAutoresizingMaskIntoConstraints = false
             imageViewValue.contentMode = .scaleAspectFit
+            let worn = wornBadgeKey == key
             let nameLabelValue = UILabel()
             nameLabelValue.translatesAutoresizingMaskIntoConstraints = false
-            nameLabelValue.font = UIFont.systemFont(ofSize: 11)
-            nameLabelValue.textColor = BearyColors.ink
+            // 网页 .bdg-cell 口径：图 44、图与名 gap 4；未佩戴灰字，佩戴墨色粗体。
+            nameLabelValue.font = worn ? UIFont.boldSystemFont(ofSize: 11) : UIFont.systemFont(ofSize: 11)
+            nameLabelValue.textColor = worn ? BearyColors.ink : BearyColors.gray
             nameLabelValue.textAlignment = .center
             nameLabelValue.text = BearyBadgeImages.displayName(for: key)
             let cellStack = UIStackView(arrangedSubviews: [imageViewValue, nameLabelValue])
             cellStack.axis = .vertical
             cellStack.alignment = .center
-            cellStack.spacing = 2
+            cellStack.spacing = 4
             cellStack.isUserInteractionEnabled = false
             buttonValue.addSubview(cellStack)
-            let worn = wornBadgeKey == key
-            buttonValue.backgroundColor = worn ? BearyColors.hov : BearyColors.bg
-            buttonValue.layer.borderWidth = 1
-            buttonValue.layer.borderColor = (worn ? BearyColors.ink : BearyColors.line).cgColor
+            // 网页 .bdg-cell.on 口径：无边框（未佩戴无描边），佩戴态 2px 墨色描边 + faint 底。
+            buttonValue.backgroundColor = worn ? BearyColors.faint : BearyColors.bg
+            buttonValue.layer.borderWidth = worn ? 2 : 0
+            buttonValue.layer.borderColor = BearyColors.ink.cgColor
             buttonValue.layer.cornerRadius = 12
             buttonValue.addTarget(self, action: #selector(badgeButtonTapped(_:)), for: .touchUpInside)
             NSLayoutConstraint.activate([
-                imageViewValue.widthAnchor.constraint(equalToConstant: 40),
-                imageViewValue.heightAnchor.constraint(equalToConstant: 40),
+                imageViewValue.widthAnchor.constraint(equalToConstant: 44),
+                imageViewValue.heightAnchor.constraint(equalToConstant: 44),
                 cellStack.topAnchor.constraint(equalTo: buttonValue.topAnchor, constant: 6),
                 cellStack.leadingAnchor.constraint(equalTo: buttonValue.leadingAnchor, constant: 8),
                 cellStack.trailingAnchor.constraint(equalTo: buttonValue.trailingAnchor, constant: -8),
                 cellStack.bottomAnchor.constraint(equalTo: buttonValue.bottomAnchor, constant: -6),
             ])
-            badgesStack.addArrangedSubview(buttonValue)
+            badgeButtons.append(buttonValue)
+        }
+        // 网页 .bdg-shelf flex-wrap 口径：按实测宽分行，行内 gap 8；
+        // 架子内宽 = 头宽 − 容器边 20×2 − 架子边 14×2；单徽章时单行，外观不变。
+        let shelfWidth = max((headerWidthValue > 0 ? headerWidthValue : view.bounds.width) - 68, 60)
+        var currentRow: UIStackView?
+        var usedWidth: CGFloat = 0
+        for buttonValue in badgeButtons {
+            let measuredWidth = buttonValue.systemLayoutSizeFitting(UIView.layoutFittingCompressedSize).width
+            let buttonWidth = measuredWidth > 0 ? measuredWidth : 60
+            if currentRow == nil || usedWidth + 8 + buttonWidth > shelfWidth {
+                let newRow = UIStackView()
+                newRow.translatesAutoresizingMaskIntoConstraints = false
+                newRow.axis = .horizontal
+                newRow.spacing = 8
+                newRow.alignment = .center
+                badgesStack.addArrangedSubview(newRow)
+                currentRow = newRow
+                usedWidth = 0
+            } else {
+                usedWidth += 8
+            }
+            currentRow?.addArrangedSubview(buttonValue)
+            usedWidth += buttonWidth
         }
         badgesContainer.isHidden = false
         badgesHeightConstraint.isActive = false
@@ -1538,6 +1567,12 @@ class BearyProfileViewController: UIViewController {
                     }
                     strongSelf.refreshWornBadge()
                     strongSelf.renderBadges()
+                    // 网页佩戴成功 toast 口径：已佩戴「名」/ 已取消佩戴，名取 displayName。
+                    if let wornKey = wearValue.worn, !wornKey.isEmpty {
+                        strongSelf.showProfileToast(message: "已佩戴「\(BearyBadgeImages.displayName(for: wornKey))」")
+                    } else {
+                        strongSelf.showProfileToast(message: "已取消佩戴")
+                    }
                 case .failure(let err):
                     if case .unauthorized = err {
                         strongSelf.onRequireLogin?()
@@ -1562,8 +1597,8 @@ class BearyProfileViewController: UIViewController {
         let badgeVisible = badgeImageView.isHidden == false
         crownLeadingToBadgeConstraint?.isActive = badgeVisible
         crownLeadingToNameConstraint?.isActive = !badgeVisible
-        // 清单 14：佩戴刷新也不复活皇冠（始终隐藏）。
-        crownImageView.isHidden = true
+        // 1:1 复刻：佩戴刷新时皇冠仍按 profile.plus 显示（不复活/不写死隐藏）。
+        crownImageView.isHidden = !(profileValue.plus ?? false)
         updateNameTrailingLimit()
         layoutHeaderForced(widthValue: headerWidthValue)
     }
@@ -2006,18 +2041,15 @@ class BearyProfileViewController: UIViewController {
         shareProfile(sender: headerShareButton)
     }
 
-    /// 分享链接：他人 u/<id>；本人 @<handle>（无 handle 时回退 u/<id>）。
-    /// 注：网页 pfShare 在 id 已知时恒用 u/<id>（见交回注记），本实现按任务口径：
-    /// 本人优先 @handle。R3 解码修复前 profile.handle 恒为 nil，本人分享曾
-    /// 退化为 u/<id>；修复后 handle 通路恢复，本人口径即为 @handle。
+    /// 分享链接：本人优先 u/<id>（取不到 id 才回退 @handle）；他人 u/<id> 不变。
     /// 任一分支取不到 handle 与 id 时返回 nil，绝不拼 broken 链接。
     private func shareProfileURL() -> URL? {
         if isOwnProfile {
-            if let handle = profile?.handle, !handle.isEmpty {
-                return URL(string: "https://teddyhn.com/beary/@\(handle)")
-            }
             if let profileId = profile?.profileIdValue ?? targetUserIdValue {
                 return URL(string: "https://teddyhn.com/beary/u/\(profileId)")
+            }
+            if let handle = profile?.handle, !handle.isEmpty {
+                return URL(string: "https://teddyhn.com/beary/@\(handle)")
             }
             return nil
         }
@@ -2514,7 +2546,8 @@ private class BearyProfileEntryCell: UITableViewCell {
         if let crownImage = UIImage(named: "crown") {
             imageViewValue.image = crownImage
         }
-        // 清单 14 主页部分：列表行皇冠与头部皇冠同规则，始终隐藏。
+        // 列表行皇冠按 authorPlus 显示（网页卡片 author_plus 口径）；
+        // 工厂态先隐藏，configure 按 authorPlus 复核。
         imageViewValue.isHidden = true
         return imageViewValue
     }()
@@ -2837,7 +2870,12 @@ private class BearyProfileEntryCell: UITableViewCell {
         let authorNameValue = entry.authorName ?? "beary 用户"
         nameLabel.text = authorNameValue
         if let createdMs = entry.createdAt, createdMs > 0 {
-            timeLabel.text = BearyFeedCell.feedTimeString(ms: createdMs)
+            // 本页时间小时不补零（9:05 不是 09:05）：本地格式化，不改共享
+            // BearyFeedCell.feedTimeString（Feed 路由另行负责，避免连带改 Feed）。
+            let timeFormatter = DateFormatter()
+            timeFormatter.locale = Locale(identifier: "zh_CN")
+            timeFormatter.dateFormat = "M月d日 H:mm"
+            timeLabel.text = timeFormatter.string(from: Date(timeIntervalSince1970: TimeInterval(createdMs) / 1000.0))
         } else {
             timeLabel.text = nil
         }
@@ -2855,8 +2893,8 @@ private class BearyProfileEntryCell: UITableViewCell {
         } else {
             recipientRow.isHidden = true
         }
-        // 作者徽章（BETA 等，照常显示）；Plus 皇冠按清单 14 始终隐藏，
-        // authorPlus 数据不动，仅不展示（旧逻辑按 authorPlus 显隐，已废止）。
+        // 作者徽章（BETA 等，照常显示）；Plus 皇冠按 authorPlus 显示
+        // （1:1 复刻，推翻清单 14；authorPlus 为 Int，0/缺失 = 不显示）。
         if let badgeKey = entry.authorBadge, !badgeKey.isEmpty, let badgeImage = BearyBadgeImages.image(for: badgeKey) {
             rowBadgeImageView.image = badgeImage
             rowBadgeImageView.isHidden = false
@@ -2864,7 +2902,7 @@ private class BearyProfileEntryCell: UITableViewCell {
             rowBadgeImageView.image = nil
             rowBadgeImageView.isHidden = true
         }
-        rowCrownImageView.isHidden = true
+        rowCrownImageView.isHidden = (entry.authorPlus ?? 0) == 0
         // 天气图标（icon_wx_<key>，取不到图时隐藏、不留空）。
         if let weatherKey = entry.weather, !weatherKey.isEmpty, let weatherImage = BearyIconImages.image(named: "icon_wx_" + weatherKey, pointSize: 15) {
             weatherImageView.image = weatherImage
@@ -3054,7 +3092,11 @@ private class BearyProfileEntryCell: UITableViewCell {
             dateLabel.font = UIFont.systemFont(ofSize: 12)
             dateLabel.textColor = BearyColors.gray
             dateLabel.setContentCompressionResistancePriority(.required, for: .horizontal)
-            dateLabel.text = BearyFeedCell.feedTimeString(ms: createdMs)
+            // 本页时间小时不补零（与上行同口径，本地格式化，不改共享函数）。
+            let quoteTimeFormatter = DateFormatter()
+            quoteTimeFormatter.locale = Locale(identifier: "zh_CN")
+            quoteTimeFormatter.dateFormat = "M月d日 H:mm"
+            dateLabel.text = quoteTimeFormatter.string(from: Date(timeIntervalSince1970: TimeInterval(createdMs) / 1000.0))
             inner.addArrangedSubview(dateLabel)
         }
         quoteContainer.isHidden = false

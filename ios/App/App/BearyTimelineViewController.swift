@@ -426,13 +426,11 @@ final class BearyCalendarCardView: UIView {
     var onToggleView: (() -> Void)?
     var onPrevious: (() -> Void)?
     var onNext: (() -> Void)?
-    var onJumpToToday: (() -> Void)?
 
     private let titleLabel = UILabel()
     private let toggleButton = BearyHit44Button(type: .system)
     private let prevButton = BearyHit44Button(type: .system)
     private let nextButton = BearyHit44Button(type: .system)
-    private let todayButton = UIButton(type: .system)
     private let gridStack = UIStackView()
     private let weekNoteLabel = UILabel()
     private let monthLegendStack = UIStackView()
@@ -488,24 +486,6 @@ final class BearyCalendarCardView: UIView {
         }
         nextButton.addTarget(self, action: #selector(didTapNext), for: .touchUpInside)
 
-        // 清单 6 回到今天：卡内独立一行、右对齐的常驻 pill（不塞进顶栏，
-        // 避免 320pt 窄屏下标题/周月切换/翻页钮挤压截断；常驻则周月步进时
-        // 卡高不跳变，performCalendarTransition 的高度动画不受影响）。
-        todayButton.translatesAutoresizingMaskIntoConstraints = false
-        todayButton.backgroundColor = BearyColors.faint
-        todayButton.layer.cornerRadius = 14
-        todayButton.titleLabel?.font = UIFont.boldSystemFont(ofSize: 12.5)
-        todayButton.setTitleColor(BearyColors.ink, for: .normal)
-        todayButton.contentEdgeInsets = UIEdgeInsets(top: 6, left: 12, bottom: 6, right: 12)
-        todayButton.setTitle("回到今天", for: .normal)
-        todayButton.accessibilityLabel = "回到今天"
-        todayButton.addTarget(self, action: #selector(didTapToday), for: .touchUpInside)
-        let todaySpacer = UIView()
-        let todayRow = UIStackView(arrangedSubviews: [todaySpacer, todayButton])
-        todayRow.translatesAutoresizingMaskIntoConstraints = false
-        todayRow.axis = .horizontal
-        todayRow.alignment = .center
-
         let topRow = UIStackView(arrangedSubviews: [titleLabel, toggleButton, prevButton, nextButton])
         topRow.translatesAutoresizingMaskIntoConstraints = false
         topRow.axis = .horizontal
@@ -558,12 +538,11 @@ final class BearyCalendarCardView: UIView {
         legendNote.numberOfLines = 0
         monthLegendStack.addArrangedSubview(legendNote)
 
-        let outer = UIStackView(arrangedSubviews: [topRow, todayRow, weekdayRow, gridStack, weekNoteLabel, monthLegendStack])
+        let outer = UIStackView(arrangedSubviews: [topRow, weekdayRow, gridStack, weekNoteLabel, monthLegendStack])
         outer.translatesAutoresizingMaskIntoConstraints = false
         outer.axis = .vertical
         outer.spacing = 0
         outer.setCustomSpacing(8, after: topRow)
-        outer.setCustomSpacing(8, after: todayRow)
         outer.setCustomSpacing(6, after: weekdayRow)
         outer.setCustomSpacing(10, after: gridStack)
         addSubview(outer)
@@ -707,10 +686,6 @@ final class BearyCalendarCardView: UIView {
         onNext?()
     }
 
-    @objc private func didTapToday() {
-        onJumpToToday?()
-    }
-
     @objc private func didTapDay(_ sender: BearyCalendarDayButton) {
         guard let day = sender.dayValue else { return }
         onSelectDay?(day)
@@ -771,6 +746,14 @@ final class BearyTimelineCell: UITableViewCell {
     private let editStatusLabel = UILabel()
     private let editButton = BearyHit44Button(type: .custom)
     private let deleteButton = BearyHit44Button(type: .custom)
+    // B 方案公开操作（网页 pubActionInnerHtml 口径）：已送达未公开出“公开”钮，
+    // 倒计时中出剩余时间 + “取消”钮；未送达时三者全隐。字段约定见 D 路：
+    // Entry.publishPendingUntil（Int? 毫秒时间戳，nil = 不在倒计时中）。
+    private let publishButton = UIButton(type: .system)
+    private let pendingCountdownLabel = UILabel()
+    private let cancelPublishButton = UIButton(type: .system)
+    var onPublishEntry: ((Entry) -> Void)?
+    var onCancelPublishEntry: ((Entry) -> Void)?
 
     override init(style: UITableViewCell.CellStyle, reuseIdentifier: String?) {
         super.init(style: style, reuseIdentifier: reuseIdentifier)
@@ -812,24 +795,23 @@ final class BearyTimelineCell: UITableViewCell {
 
         weatherLabel.font = UIFont.systemFont(ofSize: 12.5)
         weatherLabel.textColor = BearyColors.gray
-        // L12（“或”分支）：天气/心情单行截断 + 横向低压缩，空间不足时先缩它们，
-        // 时间（required）与 pill 绝不被挤到重叠。
-        weatherLabel.numberOfLines = 1
-        weatherLabel.lineBreakMode = .byTruncatingTail
+        // 网页 .tl-meta 可 flex-wrap 口径：天气/心情允许多行换行（不截断），
+        // 横向低压缩，空间不足时先缩它们，时间（required）与 pill 绝不被挤到重叠。
+        weatherLabel.numberOfLines = 0
+        weatherLabel.lineBreakMode = .byWordWrapping
         weatherLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         moodLabel.font = UIFont.systemFont(ofSize: 12.5)
         moodLabel.textColor = BearyColors.gray
-        moodLabel.numberOfLines = 1
-        moodLabel.lineBreakMode = .byTruncatingTail
+        moodLabel.numberOfLines = 0
+        moodLabel.lineBreakMode = .byWordWrapping
         moodLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         recipientLabel.font = UIFont.boldSystemFont(ofSize: 12.5)
         recipientLabel.textColor = BearyColors.orange
-        // 网页 .tl-to 口径：单行 + max-width 170 + ellipsis，超出截断不撑开 meta 行。
-        // meta 是单行横向 stack、不会像网页 .tl-meta 那样 flex-wrap 换行，故长名字必须
-        // 在此先让位：横向抗压缩调到最低，空间不足时先缩它（带省略号），时间（required）
-        // 与 pill 绝不被它挤到重叠；纵向抱紧 + 宽 ≤170，上限内按本长显示、不拉伸。
-        recipientLabel.numberOfLines = 1
-        recipientLabel.lineBreakMode = .byTruncatingTail
+        // 网页 .tl-meta 可 flex-wrap 口径：收件人名允许多行换行（不截断），
+        // max-width 170 仍保留作单行上限，超宽后换行而非省略；横向抗压缩调到最低，
+        // 空间不足时先缩它，时间（required）与 pill 绝不被它挤到重叠。
+        recipientLabel.numberOfLines = 0
+        recipientLabel.lineBreakMode = .byCharWrapping
         recipientLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         recipientLabel.setContentHuggingPriority(.required, for: .horizontal)
         recipientLabel.widthAnchor.constraint(lessThanOrEqualToConstant: 170).isActive = true
@@ -915,7 +897,7 @@ final class BearyTimelineCell: UITableViewCell {
             quoteStack.bottomAnchor.constraint(equalTo: quoteButton.bottomAnchor, constant: -10),
         ])
 
-        editStatusLabel.font = UIFont.systemFont(ofSize: 12.5)
+        editStatusLabel.font = UIFont.systemFont(ofSize: 12)
         editStatusLabel.textColor = BearyColors.gray
         // I11：私密操作行文案前加 13px 状态图标（可编辑 icon_edit / 已结束 icon_lock）。
         statusIconView.translatesAutoresizingMaskIntoConstraints = false
@@ -925,31 +907,51 @@ final class BearyTimelineCell: UITableViewCell {
             statusIconView.widthAnchor.constraint(equalToConstant: 13),
             statusIconView.heightAnchor.constraint(equalToConstant: 13),
         ])
-        if let editImage = BearyIconImages.image(named: "icon_edit", pointSize: 14) {
+        if let editImage = BearyIconImages.image(named: "icon_edit", pointSize: 17) {
             editButton.setImage(editImage, for: .normal)
         }
         editButton.tintColor = BearyColors.gray
+        editButton.alpha = 0.5
         editButton.addTarget(self, action: #selector(editTapped), for: .touchUpInside)
-        if let trashImage = BearyIconImages.image(named: "icon_trash", pointSize: 14) {
+        if let trashImage = BearyIconImages.image(named: "icon_trash", pointSize: 17) {
             deleteButton.setImage(trashImage, for: .normal)
         }
         deleteButton.tintColor = BearyColors.red
+        deleteButton.alpha = 0.5
         deleteButton.addTarget(self, action: #selector(deleteTapped), for: .touchUpInside)
+        publishButton.translatesAutoresizingMaskIntoConstraints = false
+        publishButton.setTitle("公开", for: .normal)
+        publishButton.titleLabel?.font = UIFont.boldSystemFont(ofSize: 13)
+        publishButton.setTitleColor(BearyColors.orange, for: .normal)
+        publishButton.addTarget(self, action: #selector(publishTapped), for: .touchUpInside)
+        pendingCountdownLabel.font = UIFont.systemFont(ofSize: 12.5)
+        pendingCountdownLabel.textColor = BearyColors.gray
+        cancelPublishButton.translatesAutoresizingMaskIntoConstraints = false
+        cancelPublishButton.setTitle("取消", for: .normal)
+        cancelPublishButton.titleLabel?.font = UIFont.systemFont(ofSize: 13)
+        cancelPublishButton.setTitleColor(BearyColors.gray, for: .normal)
+        cancelPublishButton.addTarget(self, action: #selector(cancelPublishTapped), for: .touchUpInside)
+        publishButton.isHidden = true
+        pendingCountdownLabel.isHidden = true
+        cancelPublishButton.isHidden = true
         actsStack.translatesAutoresizingMaskIntoConstraints = false
         actsStack.axis = .horizontal
-        actsStack.spacing = 12
+        actsStack.spacing = 6
         actsStack.alignment = .center
         let actsSpacer = UIView()
         actsStack.addArrangedSubview(statusIconView)
         actsStack.addArrangedSubview(editStatusLabel)
         actsStack.addArrangedSubview(actsSpacer)
+        actsStack.addArrangedSubview(publishButton)
+        actsStack.addArrangedSubview(pendingCountdownLabel)
+        actsStack.addArrangedSubview(cancelPublishButton)
         actsStack.addArrangedSubview(editButton)
         actsStack.addArrangedSubview(deleteButton)
         NSLayoutConstraint.activate([
-            editButton.widthAnchor.constraint(equalToConstant: 32),
-            editButton.heightAnchor.constraint(equalToConstant: 32),
-            deleteButton.widthAnchor.constraint(equalToConstant: 32),
-            deleteButton.heightAnchor.constraint(equalToConstant: 32),
+            editButton.widthAnchor.constraint(equalToConstant: 28),
+            editButton.heightAnchor.constraint(equalToConstant: 28),
+            deleteButton.widthAnchor.constraint(equalToConstant: 28),
+            deleteButton.heightAnchor.constraint(equalToConstant: 28),
         ])
 
         let cardStack = UIStackView(arrangedSubviews: [metaStack, contentLabel, quoteButton, thumbsScrollView, footStack, actsStack])
@@ -971,8 +973,8 @@ final class BearyTimelineCell: UITableViewCell {
         dotRingSizeConstraint = dotRingView.widthAnchor.constraint(equalToConstant: 17)
         dotTopConstraint = dotView.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 12)
         NSLayoutConstraint.activate([
-            timelineLineView.topAnchor.constraint(equalTo: contentView.topAnchor),
-            timelineLineView.bottomAnchor.constraint(equalTo: contentView.bottomAnchor),
+            timelineLineView.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 8),
+            timelineLineView.bottomAnchor.constraint(equalTo: contentView.bottomAnchor, constant: -8),
             timelineLineView.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 11),
             timelineLineView.widthAnchor.constraint(equalToConstant: 2),
             dotRingView.centerXAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 12),
@@ -1044,6 +1046,9 @@ final class BearyTimelineCell: UITableViewCell {
         quoteBodyLabel.isHidden = false
         clearQuoteThumbs()
         actsStack.isHidden = true
+        publishButton.isHidden = true
+        pendingCountdownLabel.isHidden = true
+        cancelPublishButton.isHidden = true
         for imageView in thumbImageViews {
             imageView.bearySetImage(url: nil)
             imageView.removeFromSuperview()
@@ -1348,6 +1353,47 @@ final class BearyTimelineCell: UITableViewCell {
         // I11：文案前 13px 图标与状态同步（已结束锁 / 可编辑笔）。
         statusIconView.image = BearyIconImages.image(named: locked ? "icon_lock" : "icon_edit", pointSize: 13)
         editButton.isHidden = locked
+        // B 方案公开操作：pending 优先于已送达（字段有值即倒计时态）；
+        // 字段为 nil 时看是否已送达（publishAt != nil 且 <= now）才出“公开”钮，
+        // 未送达则三者全隐。publishPendingUntil 为可选字段，缺失按 nil 计、不崩。
+        // 注意：本引用在 D 路补字段前编译不过，见回执说明。
+        let nowMs = Int(Date().timeIntervalSince1970 * 1000)
+        if let pendingUntil = entry.publishPendingUntil {
+            publishButton.isHidden = true
+            pendingCountdownLabel.isHidden = false
+            pendingCountdownLabel.text = BearyTimelineCell.pubCountdownText(pendingMs: pendingUntil)
+            cancelPublishButton.isHidden = false
+        } else if let publishAt = entry.publishAt, publishAt <= nowMs {
+            publishButton.isHidden = false
+            pendingCountdownLabel.isHidden = true
+            cancelPublishButton.isHidden = true
+        } else {
+            publishButton.isHidden = true
+            pendingCountdownLabel.isHidden = true
+            cancelPublishButton.isHidden = true
+        }
+    }
+
+    /// 网页 pubCountdownText 口径（定死粒度）：>=1 小时显示“剩 X 小时”
+    /// （X = 剩余毫秒 / 3600000 向上取整），<1 小时显示“剩不到 1 小时”。
+    /// 只在渲染/进入时算一次；每秒 tick 经 refreshCountdowns → updateEditRow 重算。
+    static func pubCountdownText(pendingMs: Int) -> String {
+        let ms = max(0, pendingMs - Int(Date().timeIntervalSince1970 * 1000))
+        if ms >= 3600000 {
+            let hours = Int(ceil(Double(ms) / 3600000.0))
+            return "剩 \(hours) 小时"
+        }
+        return "剩不到 1 小时"
+    }
+
+    @objc private func publishTapped() {
+        guard let entry = currentEntry else { return }
+        onPublishEntry?(entry)
+    }
+
+    @objc private func cancelPublishTapped() {
+        guard let entry = currentEntry else { return }
+        onCancelPublishEntry?(entry)
     }
 
     /// F2 引用缩略图清理（复用与重配时先清，避免旧图残留）。
@@ -1525,23 +1571,6 @@ class BearyTimelineViewController: UIViewController {
     private var timelineLoadingMore = false
     // G15：分页失败标记——脚部保持“加载失败，点击重试”可重试。
     private var timelinePageFailed = false
-    // 清单 7 时间线筛选：只影响本页列表展示（currentSections 过滤时间线
-    // 分区），不动服务端排序与日历统计；当日面板（日历选区）不过滤，
-    // 避免点某天却看不到该天部分日记。默认全部。
-    private enum TimelineFilter {
-        case all
-        case published
-        case unpublished
-    }
-    private var timelineFilter: TimelineFilter = .all
-    // 清单 2 滚动隐藏栏：方向 + 阈值判定，FAB 随栏同隐同现由容器 helper 负责。
-    private var timelineChromeHidden = false
-    private var timelineLastScrollOffsetY: CGFloat = 0
-    // 清单 7 筛选条：固定在页顶（不随列表滚走），高 44；列表 contentInset.top
-    // 同步抬高，见 viewDidLoad。
-    private let timelineFilterBarHeight: CGFloat = 44
-    private let timelineFilterBar = UIView()
-    private let timelineFilterControl = BearyHit44SegmentedControl(items: ["全部", "已公开", "未公开"])
     // M2：分页新增行的错峰滑入队列（willDisplay 时按原始序号起播，播过即摘；
     // 用序号字典而非数组，避免摘除后后续序号前移导致错峰失效）。
     private var staggerInsertOrder: [IndexPath: Int] = [:]
@@ -1561,6 +1590,15 @@ class BearyTimelineViewController: UIViewController {
     private var calendarAnchor: (year: Int, month: Int, day: Int)?
     private var calendarDisplayedMonth: (year: Int, month: Int)?
     private var selectedDayKey: String?
+    /// 第 3 项翻周/翻月选区跟随：新视图月份缓存未到齐时挂起，到达后在
+    /// fetchCalendarMonth 回包里重试（tryStepFollowSelection）。
+    private var pendingStepFollow = false
+    /// 第 4 项 calFixSel 守卫：删除后（refreshAfterDetailChange 置位）或
+    /// 月份补拉到达后，选中日计数为 null/0 时才触发跳转/取消选中；
+    /// 平时月份到达不触发，避免空的今天被无故清选区。
+    private var pendingFixSelCheck = false
+    /// 第 5 项公开/取消在途去重（同篇重复点按只发一次请求）。
+    private var publishBusyIds: Set<String> = []
 
     private var dayEntries: [Entry] = []
     private var dayState = LoadState.idle
@@ -1576,7 +1614,11 @@ class BearyTimelineViewController: UIViewController {
     // MARK: - 视图
 
     private lazy var tableView: UITableView = {
-        let tv = UITableView(frame: .zero, style: .plain)
+        // 不吸顶（第 10 项）：grouped 风格的 section header 随内容滚动、不悬浮；
+        // plain 的悬浮吸顶是问题根源。sectionHeaderTopPadding 置 0，避免 grouped
+        // 默认的首组顶距改变原有纵向节奏；其余布局（自定义头视图、行高、表头）不变。
+        let tv = UITableView(frame: .zero, style: .grouped)
+        tv.sectionHeaderTopPadding = 0
         tv.translatesAutoresizingMaskIntoConstraints = false
         tv.backgroundColor = BearyColors.bg
         tv.separatorStyle = .none
@@ -1596,7 +1638,7 @@ class BearyTimelineViewController: UIViewController {
 
     /// 表头容器：标题行 + 统计小字 + 连续写作行 + 日历卡。
     /// 用 tableHeaderView 承载（随列表一起滚走，不常驻占位）；高度每次渲染后重算。
-    /// TL-7：当日列表不再是表头里的筛选条、也不替换整个时间线，而是表格的
+    /// TL-7：当日列表不替换整个时间线，而是表格的
     /// 第一个分区（当日面板），时间线分区紧随其后（与网页 #calDay + #tlBody 并存一致）。
     private let headerContainer = UIView()
     private let titleLabel = UILabel()
@@ -1623,36 +1665,6 @@ class BearyTimelineViewController: UIViewController {
             tableView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
             tableView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
         ])
-        // 清单 7 筛选条位置取舍：固定页顶而非塞进随列表滚走的表头，
-        // 否则长列表下滑后就换不了筛选；代价是列表顶 inset +44（本页
-        // 原本就是 tableView 顶贴 view 顶的全幅布局，安全区外无其他顶栏）。
-        // 不透明底 + 底 hairline，避免列表文字从条下透出。
-        timelineFilterBar.backgroundColor = BearyColors.bg
-        timelineFilterBar.translatesAutoresizingMaskIntoConstraints = false
-        timelineFilterControl.translatesAutoresizingMaskIntoConstraints = false
-        timelineFilterControl.selectedSegmentIndex = 0
-        timelineFilterControl.addTarget(self, action: #selector(didChangeTimelineFilter(_:)), for: .valueChanged)
-        let filterHairline = UIView()
-        filterHairline.backgroundColor = BearyColors.line
-        filterHairline.translatesAutoresizingMaskIntoConstraints = false
-        view.addSubview(timelineFilterBar)
-        timelineFilterBar.addSubview(timelineFilterControl)
-        timelineFilterBar.addSubview(filterHairline)
-        NSLayoutConstraint.activate([
-            timelineFilterBar.topAnchor.constraint(equalTo: view.topAnchor),
-            timelineFilterBar.leadingAnchor.constraint(equalTo: view.leadingAnchor),
-            timelineFilterBar.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-            timelineFilterBar.heightAnchor.constraint(equalToConstant: timelineFilterBarHeight),
-            timelineFilterControl.leadingAnchor.constraint(equalTo: timelineFilterBar.leadingAnchor, constant: 16),
-            timelineFilterControl.trailingAnchor.constraint(equalTo: timelineFilterBar.trailingAnchor, constant: -16),
-            timelineFilterControl.centerYAnchor.constraint(equalTo: timelineFilterBar.centerYAnchor),
-            filterHairline.leadingAnchor.constraint(equalTo: timelineFilterBar.leadingAnchor),
-            filterHairline.trailingAnchor.constraint(equalTo: timelineFilterBar.trailingAnchor),
-            filterHairline.bottomAnchor.constraint(equalTo: timelineFilterBar.bottomAnchor),
-            filterHairline.heightAnchor.constraint(equalToConstant: 0.5),
-        ])
-        tableView.contentInset.top = timelineFilterBarHeight
-        tableView.scrollIndicatorInsets.top = timelineFilterBarHeight
         loadMoreButton.titleLabel?.font = UIFont.systemFont(ofSize: 14)
         loadMoreButton.setTitleColor(BearyColors.gray, for: .normal)
         loadMoreButton.addTarget(self, action: #selector(didTapFooter), for: .touchUpInside)
@@ -1693,12 +1705,9 @@ class BearyTimelineViewController: UIViewController {
     override func viewWillAppear(_ animated: Bool) {
         super.viewWillAppear(animated)
         startCountdownTimer()
-        // 清单 2：回到本页时栏恢复可见（不带动画，避免进页先闪一下栏）。
+        // 回到本页时栏恢复可见（不带动画，避免进页先闪一下栏）。
         // setChromeHidden 由容器 lane 在 SceneDelegate.swift 提供，本文件只调用。
-        // lastY 取当前真实 offset（不硬置 0），否则返回时列表停在下方、
-        // 第一次上滑会被误判为下滑而藏栏。
-        timelineChromeHidden = false
-        timelineLastScrollOffsetY = tableView.contentOffset.y
+        // 下滑藏栏已拆除（第 11 项）：底栏胶囊与 FAB 常驻，不再按滚动方向藏栏。
         SceneDelegate.chrome?.setChromeHidden(false, animated: false)
     }
 
@@ -1762,6 +1771,9 @@ class BearyTimelineViewController: UIViewController {
     /// 不重置选中日、不清当日面板；互动字段变化时按详情口径发 onInteractionChanged。
     /// 选中日由有篇变空时走 TL-8 的 calFixSel 等价逻辑（见 fetchDayEntries）。
     func refreshAfterDetailChange() {
+        // 第 4 项删除后守卫：详情/回收站改动后，月份强制重拉到达时
+        // 按日历计数复核选中日（空则跳转/取消），不只靠当日面板变空。
+        pendingFixSelCheck = true
         let before = interactionSnapshot()
         loadTimelineFirstPage { [weak self] in
             guard let strongSelf = self else { return }
@@ -1905,9 +1917,6 @@ class BearyTimelineViewController: UIViewController {
         calendarCard.onNext = { [weak self] in
             self?.stepCalendar(delta: 1)
         }
-        calendarCard.onJumpToToday = { [weak self] in
-            self?.jumpToToday()
-        }
 
         let stack = UIStackView(arrangedSubviews: [titleRow, countsLabel, statsButton, calendarCard])
         stack.translatesAutoresizingMaskIntoConstraints = false
@@ -2007,7 +2016,7 @@ class BearyTimelineViewController: UIViewController {
             .foregroundColor: BearyColors.ink,
         ])
         if trashCountValue > 0 {
-            base.append(NSAttributedString(string: " \(trashCountValue)", attributes: [
+            base.append(NSAttributedString(string: " \(trashCountValue)篇", attributes: [
                 .font: UIFont.systemFont(ofSize: 12.5),
                 .foregroundColor: BearyColors.gray,
             ]))
@@ -2028,17 +2037,10 @@ class BearyTimelineViewController: UIViewController {
 
     /// 连续写作行：网页 .cal-stats（13.5 灰、数字墨色加粗、16pt 橙色火苗图标）。
     /// 火苗图为本批新建的 icon_fire 资产（beary.html #beary-fire sprite 路径渲染）。
-    /// 任一可视月份失败时整行变重试入口（G14）；缺失月份在途拉取时出加载态（G9）。
+    /// 任一可视月份失败时整行变重试入口（G14）；在途/缺失月份不出加载态（无“日历加载中…”）。
     private func updateStatsLine() {
         let primaryKey = primaryStatsMonthKey()
         let visibleKeys = monthKeysForCurrentView()
-        if let primaryKey = primaryKey, calendarCache[primaryKey] == nil, calendarFetching.contains(primaryKey) {
-            statsButton.setImage(nil, for: .normal)
-            statsButton.setAttributedTitle(nil, for: .normal)
-            statsButton.setTitle("日历加载中…", for: .normal)
-            statsButton.setTitleColor(BearyColors.gray, for: .normal)
-            return
-        }
         let anyVisibleFailed = visibleKeys.contains { calendarFailed.contains($0) && calendarCache[$0] == nil }
         if anyVisibleFailed {
             statsButton.setImage(nil, for: .normal)
@@ -2316,6 +2318,15 @@ class BearyTimelineViewController: UIViewController {
                 strongSelf.updateStatsLine()
                 strongSelf.renderCalendar()
                 strongSelf.refreshHeaderHeight()
+                // 第 3/4 项：月份到达后先解翻页跟随（若仍挂起则跳过守卫，
+                // 避免守卫把选区跳回旧月），跟随落定后再跑 calFixSel 守卫。
+                if strongSelf.pendingStepFollow {
+                    if strongSelf.tryStepFollowSelection() && strongSelf.pendingFixSelCheck {
+                        _ = strongSelf.checkFixSelForSelectedDay()
+                    }
+                } else if strongSelf.pendingFixSelCheck {
+                    _ = strongSelf.checkFixSelForSelectedDay()
+                }
             }
         }
     }
@@ -2431,7 +2442,7 @@ class BearyTimelineViewController: UIViewController {
 
     private func toggleCalendarView() {
         // G9：切换视图后对缺失月份补拉一次（fetchCalendarMonthsForCurrentView
-        // 只发未缓存/未在途的月份），在途时统计行出“日历加载中…”；
+        // 只发未缓存/未在途的月份）；在途时统计行不出加载态。
         // 不再长期停留在“全灰假装无日记”。此前严格零请求的注释已作废。
         var targetMode = calendarMode
         var targetDisplayed = calendarDisplayedMonth
@@ -2469,6 +2480,102 @@ class BearyTimelineViewController: UIViewController {
         }
     }
 
+    /// 第 3 项翻周/翻月选区跟随（网页 calFlipPending 口径）：
+    /// 在新周/月内先找锚点日，再按距离由近及远、前后交替（同日距先往前、
+    /// 与 calFixSel 的先往前再往后一致）找最近有篇日，找到即重定选区并
+    /// 重拉当日面板；新视图月份缓存未到齐时返回 false、挂起待月份到达后重试；
+    /// 新视图内全无有篇日时返回 true（落定、保留原选区，不清选区）。
+    /// 锚点：周模式 = 新锚点日；月模式 = 原选中日的“日号”落到新月（超月长则截断）。
+    private func tryStepFollowSelection() -> Bool {
+        guard selectedDayKey != nil else {
+            pendingStepFollow = false
+            return true
+        }
+        var candidateDays: [(year: Int, month: Int, day: Int)] = []
+        switch calendarMode {
+        case .week:
+            guard let anchor = calendarAnchor else { pendingStepFollow = false; return true }
+            guard let monday = BearyBeijingDay.mondayOf(year: anchor.year, month: anchor.month, day: anchor.day) else { pendingStepFollow = false; return true }
+            var weekDays: [(year: Int, month: Int, day: Int)] = []
+            for offset in 0..<7 {
+                guard let day = BearyBeijingDay.shifted(year: monday.year, month: monday.month, day: monday.day, byDays: offset) else { continue }
+                weekDays.append(day)
+            }
+            // 缓存未到齐（周跨两月时两月都要有）则挂起。
+            for day in weekDays {
+                if calendarCache[BearyBeijingDay.monthKey(year: day.year, month: day.month)] == nil { return false }
+            }
+            guard let anchorIndex = weekDays.firstIndex(where: { $0.year == anchor.year && $0.month == anchor.month && $0.day == anchor.day }) else { pendingStepFollow = false; return true }
+            candidateDays.append(weekDays[anchorIndex])
+            for distance in 1..<7 {
+                if anchorIndex - distance >= 0 { candidateDays.append(weekDays[anchorIndex - distance]) }
+                if anchorIndex + distance < weekDays.count { candidateDays.append(weekDays[anchorIndex + distance]) }
+            }
+        case .month:
+            guard let displayed = calendarDisplayedMonth else { pendingStepFollow = false; return true }
+            guard calendarCache[BearyBeijingDay.monthKey(year: displayed.year, month: displayed.month)] != nil else { return false }
+            guard let dim = BearyBeijingDay.daysInMonth(year: displayed.year, month: displayed.month) else { pendingStepFollow = false; return true }
+            var anchorDay = calendarAnchor?.day ?? 1
+            if let selected = selectedDayKey {
+                let parts = selected.split(separator: "-")
+                if parts.count == 3, let day = Int(parts[2]) { anchorDay = day }
+            }
+            anchorDay = min(max(anchorDay, 1), dim)
+            candidateDays.append((displayed.year, displayed.month, anchorDay))
+            for distance in 1...dim {
+                if anchorDay - distance >= 1 { candidateDays.append((displayed.year, displayed.month, anchorDay - distance)) }
+                if anchorDay + distance <= dim { candidateDays.append((displayed.year, displayed.month, anchorDay + distance)) }
+            }
+        }
+        for day in candidateDays {
+            let counts = calendarDayCounts(year: day.year, month: day.month, day: day.day)
+            if counts.published + counts.unpublished > 0 {
+                pendingStepFollow = false
+                selectDay(key: BearyBeijingDay.dayKey(year: day.year, month: day.month, day: day.day))
+                return true
+            }
+        }
+        pendingStepFollow = false
+        return true
+    }
+
+    /// 第 4 项 calFixSel 通用守卫：选中日当月计数为 null（days 缺该日）
+    /// 或 0 时触发；计数 > 0 时不触发并清挂起。月份缓存缺失时挂起并补拉，
+    /// 到达后由 fetchCalendarMonth 回包重试，不直接取消选中。
+    /// 返回 true 表示已执行跳转/取消（调用方应跳过后续重载），false 表示未触发或仍挂起。
+    @discardableResult
+    private func checkFixSelForSelectedDay() -> Bool {
+        guard let key = selectedDayKey else {
+            pendingFixSelCheck = false
+            return false
+        }
+        let parts = key.split(separator: "-")
+        guard parts.count == 3, let year = Int(parts[0]), let month = Int(parts[1]), let day = Int(parts[2]) else {
+            pendingFixSelCheck = false
+            return false
+        }
+        let monthKey = BearyBeijingDay.monthKey(year: year, month: month)
+        guard calendarCache[monthKey] != nil else {
+            // 月份已失败则不再补拉（避免失败回包 → 守卫 → 再补拉的死循环）：
+            // 挂起清掉、保留选区，统计行重试入口会重新拉取该月。
+            if calendarFailed.contains(monthKey) {
+                pendingFixSelCheck = false
+                return false
+            }
+            pendingFixSelCheck = true
+            fetchCalendarMonth(key: monthKey)
+            return false
+        }
+        let counts = calendarDayCounts(year: year, month: month, day: day)
+        if counts.published + counts.unpublished > 0 {
+            pendingFixSelCheck = false
+            return false
+        }
+        pendingFixSelCheck = false
+        applyDayFixSel()
+        return true
+    }
+
     private func stepCalendar(delta: Int) {
         var targetAnchor = calendarAnchor
         var targetDisplayed = calendarDisplayedMonth
@@ -2492,24 +2599,15 @@ class BearyTimelineViewController: UIViewController {
             guard let strongSelf = self else { return }
             strongSelf.calendarAnchor = targetAnchor
             strongSelf.calendarDisplayedMonth = targetDisplayed
+            // 第 3 项：锚点改完即挂起跟随；缓存已齐时当场跟随，
+            // 未齐时月份到达后在 fetchCalendarMonth 回包里跟随。
+            if strongSelf.selectedDayKey != nil {
+                strongSelf.pendingStepFollow = true
+            }
             strongSelf.fetchCalendarMonthsForCurrentView()
-        }
-    }
-
-    /// 清单 6 回到今天：周/月步进逻辑不动（calendarMode 不变），只把
-    /// 锚点/展示月拉回今天所在周/月，再把选区切回今天并重拉当日数据
-    /// （selectDay：已是今天则 clear:false 重拉，否则 clear:true 换日重拉）。
-    /// 周模式下锚点=今天 → renderCalendar 出本周；月模式下展示月=本月。
-    private func jumpToToday() {
-        guard let today = BearyBeijingDay.todayComponents() else { return }
-        let key = BearyBeijingDay.dayKey(year: today.year, month: today.month, day: today.day)
-        performCalendarTransition { [weak self] in
-            guard let strongSelf = self else { return }
-            strongSelf.calendarAnchor = today
-            strongSelf.calendarDisplayedMonth = (today.year, today.month)
-            strongSelf.renderCalendar()
-            strongSelf.fetchCalendarMonthsForCurrentView()
-            strongSelf.selectDay(key: key)
+            if strongSelf.pendingStepFollow {
+                _ = strongSelf.tryStepFollowSelection()
+            }
         }
     }
 
@@ -2561,6 +2659,13 @@ class BearyTimelineViewController: UIViewController {
                         strongSelf.applyDayFixSel()
                         return
                     }
+                    // 第 4 项：删除后挂起的守卫在当日面板已空时也跑一次
+                    // （以日历计数为准；已跳转/取消则跳过后续重载）。
+                    if strongSelf.pendingFixSelCheck && strongSelf.dayEntries.isEmpty {
+                        if strongSelf.checkFixSelForSelectedDay() {
+                            return
+                        }
+                    }
                 case .failure(let error):
                     strongSelf.dayState = .failed
                     if case .unauthorized = error {
@@ -2595,9 +2700,11 @@ class BearyTimelineViewController: UIViewController {
     }
 
     /// TL-8 calFixSel 等价逻辑：选中日变空时，同月内先往前、再往后找最近有日记日
-    /// 跳转（周视图下锚点同步跟过去）；同月再无有篇日则取消选中并清面板。
+    /// 跳转（周视图下锚点同步跟过去）；同月再无有篇日则取消选中并清面板，
+    /// 并以 toast 提示“这天已没有日记”（第 4 项：找不到也要提示）。
     /// 跳转时面板头下出 3 秒提示“这天已没有日记，已跳到最近的一天”。
     /// 注：网页前向搜索上限写死 31 天，本实现按当月实际天数 bound，结果等价。
+    /// 月份缓存缺失时不直接取消选中：挂起并补拉，月份到达后由守卫重试。
     private func applyDayFixSel() {
         guard let key = selectedDayKey else { return }
         let parts = key.split(separator: "-")
@@ -2607,9 +2714,16 @@ class BearyTimelineViewController: UIViewController {
         }
         let monthKey = BearyBeijingDay.monthKey(year: year, month: month)
         guard let monthData = calendarCache[monthKey] else {
-            clearDaySelection()
+            // 月份已失败时不补拉（防死循环）、不取消选中，保留选区待重试。
+            if calendarFailed.contains(monthKey) {
+                pendingFixSelCheck = false
+                return
+            }
+            pendingFixSelCheck = true
+            fetchCalendarMonth(key: monthKey)
             return
         }
+        pendingFixSelCheck = false
         var foundDay: Int?
         var backward = day - 1
         while backward >= 1 && foundDay == nil {
@@ -2661,13 +2775,16 @@ class BearyTimelineViewController: UIViewController {
             fetchDayEntries(key: newKey, clear: true)
         } else {
             clearDaySelection()
+            showTimelineToast(message: "这天已没有日记")
         }
     }
 
-    /// TL-7 当日面板表头（网页 calDayRender 口径）：
-    /// “M 月 d 日 周X · N篇”+ 全公开/全未公开注记；加载中补“加载中…”（M15），
-    /// 失败时出“加载失败”（重试走面板头旁的“重试”钮，见 U15）。
-    /// head/suffix 分段供表头富文本使用（L13：日期加粗 + 计数灰色 12.5）。
+    /// TL-7 当日面板表头（第 7 项两段式 + 第 15 项网页口径）：
+    /// 日期一段（15pt 加粗墨色，如“10 月 25 日”，星期不在此段）；
+    /// 星期·篇数·状态一段（12.5pt 灰色，如“周日 · 1 篇 · 都未公开”，篇数带空格）。
+    /// 失败时只写“加载失败，点一下日期再试”，重试靠再点日期（无头旁重试钮）；
+    /// 加载中/未加载时不写“加载中…”，只出日期一段。
+    /// head/suffix 分段供表头富文本使用（日期加粗 15 + 后段灰色 12.5）。
     private func dayPanelTitleParts(key: String) -> (head: String, suffix: String) {
         let parts = key.split(separator: "-")
         guard parts.count == 3, let year = Int(parts[0]), let month = Int(parts[1]), let day = Int(parts[2]) else { return (key, "") }
@@ -2676,17 +2793,22 @@ class BearyTimelineViewController: UIViewController {
             let weekday = BearyBeijingDay.calendar.component(.weekday, from: date)
             let names = ["周日", "周一", "周二", "周三", "周四", "周五", "周六"]
             if weekday >= 1 && weekday <= names.count {
-                weekdayText = " " + names[weekday - 1]
+                weekdayText = names[weekday - 1]
             }
         }
-        let head = "\(month) 月 \(day) 日\(weekdayText)"
+        let head = "\(month) 月 \(day) 日"
         if dayState == .failed {
-            return (head, " · 加载失败")
+            return (head, " · 加载失败，点一下日期再试")
         }
         if dayState != .loaded {
-            return (head, " · 加载中…")
+            return (head, "")
         }
-        var suffix = " · \(dayEntries.count)篇"
+        var suffix = ""
+        if weekdayText.isEmpty {
+            suffix = " · \(dayEntries.count) 篇"
+        } else {
+            suffix = " · \(weekdayText) · \(dayEntries.count) 篇"
+        }
         if !dayEntries.isEmpty {
             let allPublic = dayEntries.allSatisfy { $0.isPublic == true }
             let allPrivate = dayEntries.allSatisfy { $0.isPublic != true }
@@ -2716,10 +2838,6 @@ class BearyTimelineViewController: UIViewController {
         for entry in timelineEntries {
             guard let createdMs = entry.createdAt else { continue }
             guard let key = BearyBeijingDay.dayKey(ofMs: createdMs) else { continue }
-            // 清单 7：筛选只过滤时间线分区（当日面板在上面已原样加入）；
-            // isPublic 判定与行圆点一致（entry.isPublic ?? false）。
-            if timelineFilter == .published && entry.isPublic != true { continue }
-            if timelineFilter == .unpublished && entry.isPublic == true { continue }
             if let existing = indexByKey[key] {
                 sections[existing].entries.append(entry)
             } else {
@@ -2732,7 +2850,7 @@ class BearyTimelineViewController: UIViewController {
 
     private func dayTitleForMs(_ ms: Int) -> String {
         guard let comps = BearyBeijingDay.components(ofMs: ms) else { return "" }
-        let label = "\(comps.month)月\(comps.day)日"
+        let label = "\(comps.month) 月 \(comps.day) 日"
         guard let today = BearyBeijingDay.todayComponents() else { return label }
         if today.year == comps.year && today.month == comps.month && today.day == comps.day {
             return "今天 · \(label)"
@@ -2822,12 +2940,7 @@ class BearyTimelineViewController: UIViewController {
                 }, iconName: "icon_wifi_off")
             }
         } else if timelineState == .loaded && !hasRows {
-            if timelineFilter != .all {
-                // 清单 7：筛选致空时不谎称“还没有日记”（数据其实有，只是被滤掉）。
-                tableView.backgroundView = emptyView(title: "没有符合筛选的日记", subtitle: "换个筛选看看", actionTitle: nil, action: nil)
-            } else {
-                tableView.backgroundView = emptyView(title: "还没有日记", subtitle: "写下第一篇，它会出现在这里", actionTitle: nil, action: nil)
-            }
+            tableView.backgroundView = emptyView(title: "还没有日记", subtitle: "写下第一篇，它会出现在这里", actionTitle: nil, action: nil)
         } else {
             tableView.backgroundView = nil
         }
@@ -2938,19 +3051,55 @@ class BearyTimelineViewController: UIViewController {
         onOpenTrash?()
     }
 
-    /// 清单 7 筛选切换：只改本页过滤档位 + 整表重载，不发任何服务端请求，
-    /// 不动日历月份缓存与统计；分页游标与服务端排序原样保留。
-    @objc private func didChangeTimelineFilter(_ sender: UISegmentedControl) {
-        switch sender.selectedSegmentIndex {
-        case 1:
-            timelineFilter = .published
-        case 2:
-            timelineFilter = .unpublished
-        default:
-            timelineFilter = .all
+    /// 第 5 项公开：网页 doPublish 口径 POST /beary/api/entries/:id/publish，
+    /// 先弹网页同款确认框（“确认公开？/ 公开后不能撤回删除。确认后开始倒计时，
+    /// 倒计时结束即公开，期间可以取消。”），成功后整页刷新（倒计时态随新数据回来）；
+    /// 失败 toast“公开失败，请重试”。在途去重，同一篇重复点按只发一次。
+    private func handlePublishEntry(_ entry: Entry) {
+        guard let entryId = entry.id, !entryId.isEmpty else { return }
+        if publishBusyIds.contains(entryId) { return }
+        let alert = UIAlertController(title: "确认公开？", message: "公开后不能撤回删除。确认后开始倒计时，倒计时结束即公开，期间可以取消。", preferredStyle: .alert)
+        alert.addAction(UIAlertAction(title: "取消", style: .cancel, handler: nil))
+        alert.addAction(UIAlertAction(title: "公开", style: .default, handler: { [weak self] _ in
+            guard let strongSelf = self else { return }
+            if strongSelf.publishBusyIds.contains(entryId) { return }
+            strongSelf.publishBusyIds.insert(entryId)
+            let safe = entryId.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? entryId
+            BearyAPI.shared.requestVoid("/beary/api/entries/\(safe)/publish", method: "POST") { [weak self] result in
+                DispatchQueue.main.async {
+                    guard let strongSelf = self else { return }
+                    strongSelf.publishBusyIds.remove(entryId)
+                    switch result {
+                    case .success:
+                        strongSelf.refreshAfterDetailChange()
+                    case .failure:
+                        strongSelf.showTimelineToast(message: "公开失败，请重试")
+                    }
+                }
+            }
+        }))
+        present(alert, animated: true, completion: nil)
+    }
+
+    /// 第 5 项取消公开：网页 doPublishCancel 口径 POST /beary/api/entries/:id/publish/cancel，
+    /// 无确认框（网页取消即直接发请求），成功后整页刷新，失败 toast“取消失败，请重试”。
+    private func handleCancelPublishEntry(_ entry: Entry) {
+        guard let entryId = entry.id, !entryId.isEmpty else { return }
+        if publishBusyIds.contains(entryId) { return }
+        publishBusyIds.insert(entryId)
+        let safe = entryId.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? entryId
+        BearyAPI.shared.requestVoid("/beary/api/entries/\(safe)/publish/cancel", method: "POST") { [weak self] result in
+            DispatchQueue.main.async {
+                guard let strongSelf = self else { return }
+                strongSelf.publishBusyIds.remove(entryId)
+                switch result {
+                case .success:
+                    strongSelf.refreshAfterDetailChange()
+                case .failure:
+                    strongSelf.showTimelineToast(message: "取消失败，请重试")
+                }
+            }
         }
-        tableView.reloadData()
-        updateChrome()
     }
 
     @objc private func didTapStats() {
@@ -2962,11 +3111,6 @@ class BearyTimelineViewController: UIViewController {
         }
     }
 
-    @objc private func didTapDayRetry() {
-        // U15：当日失败面板头旁“重试”钮：同日重拉，不清面板。
-        guard let key = selectedDayKey else { return }
-        fetchDayEntries(key: key, clear: false)
-    }
 }
 
 // MARK: - UITableViewDataSource / UITableViewDelegate
@@ -2994,6 +3138,8 @@ extension BearyTimelineViewController: UITableViewDataSource, UITableViewDelegat
         cell.onEditEntry = onEditEntry
         cell.onDeleteEntry = onDeleteEntry
         cell.onQuoteEntry = onQuoteEntry
+        cell.onPublishEntry = { [weak self] entry in self?.handlePublishEntry(entry) }
+        cell.onCancelPublishEntry = { [weak self] entry in self?.handleCancelPublishEntry(entry) }
         // N7：复用详情文件内的查看器（详情 lane 已由 private 改为内部类），
         // 全屏模态弹出，弹出方式与详情页同款（已弹出时不叠加、减动效直显）。
         cell.onTapImages = { [weak self] keys, index in
@@ -3038,24 +3184,8 @@ extension BearyTimelineViewController: UITableViewDataSource, UITableViewDelegat
         let leading: CGFloat = isDayPanel ? 16 : 36
         var bottomView: UIView = label
         var bottomConstant: CGFloat = -8
-        // U15：当日失败时面板头旁加“重试”文字钮（此前只能靠“点一下日期再试”猜）。
-        var labelTrailingAnchor: NSLayoutXAxisAnchor = holder.trailingAnchor
-        var labelTrailingConstant: CGFloat = -16
-        if isDayPanel && dayState == .failed {
-            let retryButton = UIButton(type: .system)
-            retryButton.translatesAutoresizingMaskIntoConstraints = false
-            retryButton.setTitle("重试", for: .normal)
-            retryButton.titleLabel?.font = UIFont.systemFont(ofSize: 13.5)
-            retryButton.setTitleColor(BearyColors.blue, for: .normal)
-            retryButton.addTarget(self, action: #selector(didTapDayRetry), for: .touchUpInside)
-            holder.addSubview(retryButton)
-            NSLayoutConstraint.activate([
-                retryButton.trailingAnchor.constraint(equalTo: holder.trailingAnchor, constant: -16),
-                retryButton.centerYAnchor.constraint(equalTo: label.centerYAnchor),
-            ])
-            labelTrailingAnchor = retryButton.leadingAnchor
-            labelTrailingConstant = -8
-        }
+        // 第 15 项：当日失败不再出头旁蓝色“重试”文字钮，重试靠再点日期
+        // （失败文案本身即“加载失败，点一下日期再试”）。
         if isDayPanel && showJumpNote {
             let jumpLabel = UILabel()
             jumpLabel.text = "这天已没有日记，已跳到最近的一天"
@@ -3082,55 +3212,14 @@ extension BearyTimelineViewController: UITableViewDataSource, UITableViewDelegat
         NSLayoutConstraint.activate([
             label.topAnchor.constraint(equalTo: holder.topAnchor, constant: 18),
             label.leadingAnchor.constraint(equalTo: holder.leadingAnchor, constant: leading),
-            label.trailingAnchor.constraint(equalTo: labelTrailingAnchor, constant: labelTrailingConstant),
+            label.trailingAnchor.constraint(equalTo: holder.trailingAnchor, constant: -16),
             bottomView.bottomAnchor.constraint(equalTo: holder.bottomAnchor, constant: bottomConstant),
         ])
-        // N8：plain 悬浮头原本是透明 UIView，滚动悬浮时下方卡片文字会透出来；
-        // 补与背景同色的不透明底。样式仍是 plain（不改 grouped），悬浮行为不变。
+        // 第 9 项：组头处无圆点、竖线断开——R1 补段已拆除，组头不再补
+        // 14px 墨圆 + 17px line 色外环与满高竖线；竖线只在每行 cell 内
+        // 上下各 inset 8px 的一段（第 13 项），整列不再通长。
+        // 第 10 项：表已改 grouped，头不吸顶，仍需不透明底防透字。
         holder.backgroundColor = BearyColors.bg
-        // R1 日期头圆点与竖线承接：条目圆点代码不动，真缺口只在 header。
-        // 修法选 header 内补段（不做 section 容器级）：plain 表格没有 section
-        // 容器视图，容器级画线要靠帧追踪（悬浮头 + 可变行高 + 批量更新下极脆）；
-        // 而行线本就占满整个 cell 高、header 紧贴上下行，header 内一段满高线
-        // + 日期文字同行高度处的圆点即可拼成连续线，无需追踪。
-        // 线与 cell 线同 x（leading 11）同宽（2）、同色（BearyColors.line）；
-        // 圆点与条目公开款同款（17px line 色外环 + 14px 墨圆 + 2.5 bg 边）。
-        // 日期头用公开款：头代表整组日期（组内公开/私密混写），私密与否是
-        // 每行的圆点 + pill 的事，头不替整组表隐私。
-        // 当日面板头除外：其文字 leading 16 会撞上圆点横向范围（5…19），且它
-        // 是日历选区面板而非时间线日期组；其不透明底（N8）照常补。
-        if !isDayPanel {
-            let headerLineView = UIView()
-            headerLineView.backgroundColor = BearyColors.line
-            headerLineView.translatesAutoresizingMaskIntoConstraints = false
-            let headerDotRingView = UIView()
-            headerDotRingView.backgroundColor = BearyColors.line
-            headerDotRingView.layer.cornerRadius = 8.5
-            headerDotRingView.translatesAutoresizingMaskIntoConstraints = false
-            let headerDotView = UIView()
-            headerDotView.backgroundColor = BearyColors.ink
-            headerDotView.layer.borderWidth = 2.5
-            headerDotView.layer.borderColor = BearyColors.bg.cgColor
-            headerDotView.layer.cornerRadius = 7
-            headerDotView.translatesAutoresizingMaskIntoConstraints = false
-            holder.addSubview(headerLineView)
-            holder.addSubview(headerDotRingView)
-            holder.addSubview(headerDotView)
-            NSLayoutConstraint.activate([
-                headerLineView.topAnchor.constraint(equalTo: holder.topAnchor),
-                headerLineView.bottomAnchor.constraint(equalTo: holder.bottomAnchor),
-                headerLineView.leadingAnchor.constraint(equalTo: holder.leadingAnchor, constant: 11),
-                headerLineView.widthAnchor.constraint(equalToConstant: 2),
-                headerDotRingView.centerXAnchor.constraint(equalTo: holder.leadingAnchor, constant: 12),
-                headerDotRingView.centerYAnchor.constraint(equalTo: label.centerYAnchor),
-                headerDotRingView.widthAnchor.constraint(equalToConstant: 17),
-                headerDotRingView.heightAnchor.constraint(equalToConstant: 17),
-                headerDotView.centerXAnchor.constraint(equalTo: holder.leadingAnchor, constant: 12),
-                headerDotView.centerYAnchor.constraint(equalTo: label.centerYAnchor),
-                headerDotView.widthAnchor.constraint(equalToConstant: 14),
-                headerDotView.heightAnchor.constraint(equalToConstant: 14),
-            ])
-        }
         return holder
     }
 
@@ -3159,33 +3248,5 @@ extension BearyTimelineViewController: UITableViewDataSource, UITableViewDelegat
         }, completion: nil)
     }
 
-    // MARK: - 清单 2 滚动隐藏栏（时间线部分）
-
-    /// 主滚动视图即本表（plain）：向下滚过阈值藏栏、向上滚显栏；
-    /// 顶部回弹区（offset ≤ 0，含 44pt 筛选条 inset 的初始 -44）一律显栏。
-    /// 阈值 120pt：小幅抖动不触发，只在明确下滑一段后藏栏。
-    /// FAB 随栏同隐同现由容器 helper 内部负责，本页不直接碰 FAB。
-    func scrollViewDidScroll(_ scrollView: UIScrollView) {
-        guard scrollView === tableView else { return }
-        let y = scrollView.contentOffset.y
-        defer { timelineLastScrollOffsetY = y }
-        if y <= 0 {
-            if timelineChromeHidden {
-                setTimelineChromeHidden(false)
-            }
-            return
-        }
-        if y > timelineLastScrollOffsetY && y > 120 && !timelineChromeHidden {
-            setTimelineChromeHidden(true)
-        } else if y < timelineLastScrollOffsetY && timelineChromeHidden {
-            setTimelineChromeHidden(false)
-        }
-    }
-
-    private func setTimelineChromeHidden(_ hidden: Bool) {
-        timelineChromeHidden = hidden
-        // setChromeHidden 由容器 lane 在 SceneDelegate.swift 提供，本文件只调用；
-        // 容器 lane 落地前本调用编译不过（见汇报 CI 风险点）。
-        SceneDelegate.chrome?.setChromeHidden(hidden, animated: true)
-    }
+    // 下滑藏栏已拆除（第 11 项）：底栏胶囊与 FAB 常驻，本文件不再实现 scrollViewDidScroll 藏栏。
 }
