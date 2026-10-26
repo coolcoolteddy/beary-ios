@@ -359,8 +359,9 @@ final class BearyChromeViewController: UIViewController {
         ])
         // ---- 底栏：官方分段选择器（Li 2026-10-26 纠正：55 包的自绘胶囊不是官方分段器）----
         // 时间线筛选条已在复刻批拆除，线上已无可抄的筛选条配置；本控件口径：
-        // 系统默认外观（iOS 27 自绘玻璃与选中 pill，不设背景色/选中色、不改 tint——
-        // tint 保留规矩只管顶栏 52% 与 FAB 橙色两处，底栏不新增 tint）；
+        // 系统默认外观（iOS 27 自绘玻璃与选中 pill，不设背景色/选中色；
+        // Li 2026-10-26 定底栏也加 52 tint：分段器本身无整条玻璃 tint 槽，
+        // tint 落在它后面的模糊衬底 contentView 上，与顶栏同值统一颜色）；
         // BearyHit44SegmentedControl 是筛选条用过的同款热区扩类（仅扩触摸帧）；
         // 四段等宽（apportionsSegmentWidthsByContent=false），图标与旧钮同源、
         // 统一缩到 24pt；布局常量与旧胶囊 1:1：宽 256、高 50、底距安全区 12。
@@ -372,6 +373,10 @@ final class BearyChromeViewController: UIViewController {
         blur.layer.cornerRadius = 31
         blur.clipsToBounds = true
         blur.isUserInteractionEnabled = false
+        // Li 2026-10-26 定：底栏也加 52 tint，与顶栏统一颜色；分段器本身无 tint 槽，
+        // tint 落在衬底 contentView 上，值与顶栏 makeGlassView 调用点一字一致（bg 52%）；
+        // BearyColors.bg 为动态色，withAlphaComponent 后仍跟随深浅，不写死黑白。
+        blur.contentView.backgroundColor = BearyColors.bg.withAlphaComponent(0.52)
         blur.translatesAutoresizingMaskIntoConstraints = false
         view.addSubview(blur)
         bottomBlurView = blur
