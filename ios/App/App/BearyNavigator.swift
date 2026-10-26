@@ -18,9 +18,10 @@ enum BearyRoute: Equatable {
     case userById(Int)
 
     static func parse(url: URL) -> BearyRoute? {
-        guard url.host == "teddyhn.com" else { return nil }
-        let path = url.path
-        if path == "/beary" || path == "/beary/" { return .home }
+        guard url.host == "teddyhn.com" || url.host == "www.teddyhn.com" else { return nil }
+        var path = url.path
+        while path.count > 1 && path.hasSuffix("/") { path.removeLast() }
+        if path == "/beary" { return .home }
         if path == "/beary/notifications" { return .notifications }
         if path == "/beary/timeline" { return .timeline }
         if path == "/beary/profile" { return .profile }
@@ -28,16 +29,18 @@ enum BearyRoute: Equatable {
         if path == "/beary/trash" { return .trash }
         if path.hasPrefix("/beary/d/") {
             let id = String(path.dropFirst("/beary/d/".count))
-            return id.isEmpty ? nil : .entry(id)
+            return id.isEmpty || id.contains("/") ? nil : .entry(id)
         }
         if path.hasPrefix("/beary/@") {
             let handle = String(path.dropFirst("/beary/@".count))
-            return handle.isEmpty ? nil : .userByHandle(handle)
+            let allowed = "abcdefghijklmnopqrstuvwxyz0123456789_"
+            guard handle.count >= 3 && handle.count <= 20 && handle.allSatisfy({ allowed.contains($0) }) else { return nil }
+            return .userByHandle(handle)
         }
         if path.hasPrefix("/beary/u/") {
             let rest = String(path.dropFirst("/beary/u/".count))
-            if let id = Int(rest) { return .userById(id) }
-            return nil
+            guard !rest.isEmpty && rest.allSatisfy({ "0123456789".contains($0) }), let id = Int(rest) else { return nil }
+            return .userById(id)
         }
         return nil
     }

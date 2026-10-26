@@ -280,7 +280,8 @@ final class BearyAPI {
     /// 401 时调用（SessionManager 接管：清本地用户态；界面层可再接登录页）。
     var onUnauthorized: (() -> Void)?
 
-    private let baseURL = URL(string: "https://teddyhn.com")!
+    /// 固定站点域名字面量恒可解析，故此处一次 force unwrap 安全，调用处一律用本常量。
+    private static let baseURL = URL(string: "https://teddyhn.com")!
     private let session: URLSession
     private let decoder: JSONDecoder
 
@@ -333,7 +334,7 @@ final class BearyAPI {
         jsonBody: [String: Any]? = nil,
         completion: @escaping (Data?, Int, Error?) -> Void
     ) -> URLSessionDataTask? {
-        guard var url = URL(string: path, relativeTo: baseURL)?.absoluteURL else {
+        guard var url = URL(string: path, relativeTo: Self.baseURL)?.absoluteURL else {
             completion(nil, 0, nil)
             return nil
         }
@@ -357,12 +358,13 @@ final class BearyAPI {
         return task
     }
 
-    // 状态码分流（401/404/业务错误码/HTTP 错误共用；401 统一通知 onUnauthorized）
-    private func mapStatus(_ status: Int, data: Data?, error: Error?) -> APIError? {
+    // 状态码分流（401/404/业务错误码/HTTP 错误共用；401 默认通知 onUnauthorized，
+    // suppressUnauthorized 为真时只返回 .unauthorized，不触发 onUnauthorized）
+    private func mapStatus(_ status: Int, data: Data?, error: Error?, suppressUnauthorized: Bool = false) -> APIError? {
         if let e = error as NSError?, e.code == NSURLErrorCancelled { return .cancelled }
         if let e = error { return .network(e) }
         if status == 401 {
-            onUnauthorized?()
+            if !suppressUnauthorized { onUnauthorized?() }
             return .unauthorized
         }
         if status == 404 { return .notFound }
@@ -381,11 +383,12 @@ final class BearyAPI {
         query: [String: String] = [:],
         method: String = "GET",
         jsonBody: [String: Any]? = nil,
+        suppressUnauthorized: Bool = false,
         completion: @escaping (Result<T, APIError>) -> Void
     ) -> URLSessionDataTask? {
         return perform(path, query: query, method: method, jsonBody: jsonBody) { [weak self] data, status, error in
             guard let self = self else { return }
-            if let apiErr = self.mapStatus(status, data: data, error: error) {
+            if let apiErr = self.mapStatus(status, data: data, error: error, suppressUnauthorized: suppressUnauthorized) {
                 completion(.failure(apiErr))
                 return
             }
@@ -409,11 +412,12 @@ final class BearyAPI {
         query: [String: String] = [:],
         method: String = "GET",
         jsonBody: [String: Any]? = nil,
+        suppressUnauthorized: Bool = false,
         completion: @escaping (Result<Void, APIError>) -> Void
     ) -> URLSessionDataTask? {
         return perform(path, query: query, method: method, jsonBody: jsonBody) { [weak self] data, status, error in
             guard let self = self else { return }
-            if let apiErr = self.mapStatus(status, data: data, error: error) {
+            if let apiErr = self.mapStatus(status, data: data, error: error, suppressUnauthorized: suppressUnauthorized) {
                 completion(.failure(apiErr))
                 return
             }
@@ -447,11 +451,12 @@ final class BearyAPI {
     func fetchNotifications(
         limit: Int = 30,
         before: String? = nil,
+        suppressUnauthorized: Bool = false,
         completion: @escaping (Result<NotificationList, APIError>) -> Void
     ) {
         var q: [String: String] = ["limit": "\(min(max(limit, 1), 200))"]
         if let b = before { q["before"] = b }
-        request("/beary/api/notifications", query: q, completion: completion)
+        request("/beary/api/notifications", query: q, suppressUnauthorized: suppressUnauthorized, completion: completion)
     }
 
     /// id 为 nil = 全部标已读。
@@ -461,15 +466,16 @@ final class BearyAPI {
         requestVoid("/beary/api/notifications/read", method: "POST", jsonBody: body, completion: completion)
     }
 
-    func search(q: String, completion: @escaping (Result<SearchResult, APIError>) -> Void) {
-        request("/beary/api/search", query: ["q": q], completion: completion)
+    @discardableResult
+    func search(q: String, completion: @escaping (Result<SearchResult, APIError>) -> Void) -> URLSessionDataTask? {
+        return request("/beary/api/search", query: ["q": q], completion: completion)
     }
 
     // MARK: - 账户与会话
 
     /// 401 = 未登录，不是错误：返回 nil。
     func fetchMe(completion: @escaping (Result<MeUser?, APIError>) -> Void) {
-        request("/api/account/me") { (result: Result<MeResponse, APIError>) in
+        request("/api/account/me", suppressUnauthorized: true) { (result: Result<MeResponse, APIError>) in
             switch result {
             case .success(let resp): completion(.success(resp.user))
             case .failure(.unauthorized): completion(.success(nil))
@@ -544,26 +550,16 @@ final class BearyAPI {
     /// 登出：网页 pmLogout 走 POST /beary/api/logout（beary Worker，清会话并清 cookie），
     /// 不是 accounts 的 /api/account/logout（两者服务端都会删会话，但以网页口径为准）。
     func logout(completion: @escaping (Result<Void, APIError>) -> Void) {
-        requestVoid("/beary/api/logout", method: "POST", completion: completion)
-    }
-
-    // MARK: - 邀请门控与补绑（accounts /me 口径）
-
-    /// 礼物钮门控：以 accounts /me 的 user.referral.enabled 为准（网页 giftBtn 显示逻辑
-    /// 同款：checkAuth 里 myReferral.enabled 为真才显示）。未登录时 fetchMe 返回
-    /// success(nil)，此处映射为 false（礼物钮本来就只在登录态显示）。
-    /// 另有公开端点 /api/account/beta-status 的 referral_enabled 与之一致，但那是
-    /// 注册态公开接口，不含登录用户的 referral 明细，故门控不用它。
-    func fetchReferralEnabled(completion: @escaping (Result<Bool, APIError>) -> Void) {
-        fetchMe { result in
+        requestVoid("/beary/api/logout", method: "POST", suppressUnauthorized: true) { result in
             switch result {
-            case .success(let user):
-                completion(.success(user?.referral?.enabled ?? false))
-            case .failure(let e):
-                completion(.failure(e))
+            case .success: completion(.success(()))
+            case .failure(.unauthorized): completion(.success(()))
+            case .failure(let e): completion(.failure(e))
             }
         }
     }
+
+    // MARK: - 邀请门控与补绑（accounts /me 口径）
 
     /// 邀请补绑：POST /api/account/referral/bind {code}，code 由调用方 trim + 大写。
     /// 成功返回 {ok, status}（granted/flagged/pending 等）；失败时 .server 携带

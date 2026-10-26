@@ -20,7 +20,9 @@ enum BearyBadgeImages {
     }
 
     /// I8：取不到图时不静默消失——返回中性占位图并打一条日志。
-    /// 占位图是代码现绘的灰底问号（非官方资产，仅作“图缺失”的可见标记）；
+    /// 占位图是代码现绘的 17×17 问号（非官方资产，仅作“图缺失”的可见标记，
+    /// 与卡片徽章位 17×17 同口径）；底色/问号色走 BearyColors 动态色，
+    /// 随深浅自适应，不再是固定浅灰块；
     /// 新徽章资产与 key 同步上架仍是上架流程项，代码侧只保证不留空白。
     static func imageOrPlaceholder(for key: String) -> UIImage? {
         if let found = image(for: key) {
@@ -28,17 +30,17 @@ enum BearyBadgeImages {
         }
         guard !key.isEmpty else { return nil }
         NSLog("[BearyBadgeImages] missing badge asset for key: %@", key)
-        let size = CGSize(width: 40, height: 40)
+        let size = CGSize(width: 17, height: 17)
         let renderer = UIGraphicsImageRenderer(size: size)
         return renderer.image { context in
             let rect = CGRect(origin: .zero, size: size)
-            let path = UIBezierPath(roundedRect: rect, cornerRadius: 10)
-            UIColor(white: 0.85, alpha: 1).setFill()
+            let path = UIBezierPath(roundedRect: rect, cornerRadius: 4)
+            BearyColors.faint.setFill()
             path.fill()
             let question = "?"
             let attributes: [NSAttributedString.Key: Any] = [
-                .font: UIFont.boldSystemFont(ofSize: 22),
-                .foregroundColor: UIColor(white: 0.45, alpha: 1),
+                .font: UIFont.boldSystemFont(ofSize: 10),
+                .foregroundColor: BearyColors.gray,
             ]
             let textSize = question.size(withAttributes: attributes)
             let origin = CGPoint(x: (size.width - textSize.width) / 2, y: (size.height - textSize.height) / 2)
