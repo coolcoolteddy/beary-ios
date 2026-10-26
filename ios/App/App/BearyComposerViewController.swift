@@ -1714,6 +1714,8 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             // 皇冠按清单本就一律隐藏（零像素贡献），故直接不建该视图——资产与
             // authorPlus 数据不动，只删这个永不显示的视图；显式尺寸 + 隐藏入栈
             // 的组合今后也不许再出现（要藏就别入栈，要入栈就别给 required 尺寸）。
+            // 22:44 订正：皇冠删后 71 包仍同栈崩，证实真因不在皇冠——是下方
+            // separator 只创建未挂载（见 rowButton.addSubview(separator) 处注释）。
             let dateLabel = UILabel()
             dateLabel.translatesAutoresizingMaskIntoConstraints = false
             dateLabel.font = UIFont.systemFont(ofSize: 13)
@@ -1773,6 +1775,10 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             rowButton.addSubview(avatarFallback)
             rowButton.addSubview(headerStack)
             rowButton.addSubview(contentLabel)
+            // 22:44 引用闪退真因：separator 此前只创建未挂载，约束却锚向 rowButton 子树，
+            // 无公共祖先致 activate 在首行当场抛错（与条目内容、Plus、天气、图片全无关）；
+            // 必须先挂载再激活，否则每渲染必崩。
+            rowButton.addSubview(separator)
             var lastBottomAnchor: NSLayoutYAxisAnchor = contentLabel.bottomAnchor
             var lastBottomConstant: CGFloat = 14
             let entryImages = entry.images ?? []
