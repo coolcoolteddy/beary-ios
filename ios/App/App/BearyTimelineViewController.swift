@@ -843,6 +843,7 @@ final class BearyTimelineCell: UITableViewCell {
         contentLabel.font = UIFont.systemFont(ofSize: 16.5)
         contentLabel.textColor = BearyColors.ink
         contentLabel.numberOfLines = 0
+        contentLabel.lineBreakMode = .byCharWrapping
         contentLabel.attributedText = nil
 
         thumbsScrollView.translatesAutoresizingMaskIntoConstraints = false
@@ -889,6 +890,7 @@ final class BearyTimelineCell: UITableViewCell {
         quoteBodyLabel.font = UIFont.systemFont(ofSize: 14.5)
         quoteBodyLabel.textColor = BearyColors.ink
         quoteBodyLabel.numberOfLines = 0
+        quoteBodyLabel.lineBreakMode = .byCharWrapping
         let quoteTitleRow = UIStackView(arrangedSubviews: [quoteIconView, quoteTitleLabel])
         quoteTitleRow.translatesAutoresizingMaskIntoConstraints = false
         quoteTitleRow.axis = .horizontal
@@ -1156,6 +1158,7 @@ final class BearyTimelineCell: UITableViewCell {
         }
         let paragraph = NSMutableParagraphStyle()
         paragraph.lineHeightMultiple = 1.75
+        paragraph.lineBreakMode = .byCharWrapping
         let body = entry.content ?? ""
         contentLabel.attributedText = NSAttributedString(string: body, attributes: [
             .font: UIFont.systemFont(ofSize: 16.5),

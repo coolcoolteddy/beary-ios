@@ -70,6 +70,9 @@ class BearyEditProfileViewController: UIViewController {
     private var effectiveHandle: String {
         return submittedHandle ?? initialHandle ?? ""
     }
+    /// P2-1：600 列上限约束（宽 ≥821 才激活；宽 ≤820 时停用，改由 750 优先级的
+    /// 屏宽 -40 约束撑满，与个人主页 isDesktopColumn 同口径；开关见 viewDidLayoutSubviews）。
+    private var contentColumnWidthCap: NSLayoutConstraint?
 
     private let scrollView: UIScrollView = {
         let scrollViewValue = UIScrollView()
@@ -194,6 +197,7 @@ class BearyEditProfileViewController: UIViewController {
         labelValue.font = UIFont.systemFont(ofSize: 13)
         labelValue.textColor = BearyColors.gray
         labelValue.numberOfLines = 0
+        labelValue.lineBreakMode = .byCharWrapping
         labelValue.text = "用户名 3–20 位小写字母、数字或下划线；改名后 7 天内不能再改。名字最多 30 个字。"
         return labelValue
     }()
@@ -243,6 +247,12 @@ class BearyEditProfileViewController: UIViewController {
         updateDynamicLayerColors()
     }
 
+    override func viewDidLayoutSubviews() {
+        super.viewDidLayoutSubviews()
+        // P2-1：宽 ≥821 才锁 600 上限；宽 ≤820 时停用上限，屏宽 -40 约束撑满。
+        contentColumnWidthCap?.isActive = view.bounds.width >= 821
+    }
+
     override func traitCollectionDidChange(_ previousTraitCollection: UITraitCollection?) {
         super.traitCollectionDidChange(previousTraitCollection)
         updateDynamicLayerColors()
@@ -290,12 +300,11 @@ class BearyEditProfileViewController: UIViewController {
             scrollView.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor),
             contentStack.topAnchor.constraint(equalTo: scrollView.topAnchor, constant: 12),
             // L2：内容列最大宽 600 居中——窄屏时宽 = 屏宽 - 40（750 优先级），
-            // 宽屏时被 600 上限压住并居中，不再全宽拉伸。
+            // 宽 ≥821 时被 600 上限压住并居中（P2-1 开关），宽 ≤820 时上限停用、列宽 = 屏宽 -40 撑满。
             contentStack.centerXAnchor.constraint(equalTo: scrollView.frameLayoutGuide.centerXAnchor),
             contentStack.leadingAnchor.constraint(greaterThanOrEqualTo: scrollView.leadingAnchor, constant: 20),
             contentStack.trailingAnchor.constraint(lessThanOrEqualTo: scrollView.trailingAnchor, constant: -20),
             contentStack.bottomAnchor.constraint(equalTo: scrollView.bottomAnchor, constant: -20),
-            contentStack.widthAnchor.constraint(lessThanOrEqualToConstant: 600),
             closeButton.widthAnchor.constraint(equalToConstant: 44),
             saveButton.widthAnchor.constraint(equalToConstant: 44),
             coverImageView.heightAnchor.constraint(equalToConstant: 160),
@@ -307,10 +316,13 @@ class BearyEditProfileViewController: UIViewController {
             nameField.heightAnchor.constraint(equalToConstant: 44),
             handleField.heightAnchor.constraint(equalToConstant: 44),
         ])
-        // L2（续）：窄屏时内容列宽 = 屏宽 - 40（750 优先级；宽屏时被 600 上限压住）。
+        // L2（续）：窄屏时内容列宽 = 屏宽 - 40（750 优先级；宽 ≥821 时被 600 上限压住）。
         let columnWidth = contentStack.widthAnchor.constraint(equalTo: scrollView.frameLayoutGuide.widthAnchor, constant: -40)
         columnWidth.priority = UILayoutPriority(750)
         columnWidth.isActive = true
+        // P2-1：600 上限改为可开关约束（初始激活，viewDidLayoutSubviews 按实际宽度纠正）。
+        contentColumnWidthCap = contentStack.widthAnchor.constraint(lessThanOrEqualToConstant: 600)
+        contentColumnWidthCap?.isActive = true
     }
 
     // MARK: - 动作

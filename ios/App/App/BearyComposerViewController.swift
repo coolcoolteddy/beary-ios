@@ -404,10 +404,12 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                 verticalFittingPriority: .fittingSizeLevel
             ).height
         }
-        // qp-mode 整编形态：sheet 高固定为 86vh（网页 qp-mode 同款；居中卡呈现层
-        // 另有 80% 封顶，实际取小，属呈现层口径，本文件不动呈现层）。
+        // qp-mode 整编形态：网页 qp-mode 高度——手机端 86vh，≥821px 桌面端
+        // min(620px, 82vh)（beary.html:602/606；居中卡呈现层另有 80% 封顶，
+        // 实际取小，属呈现层口径，本文件不动呈现层）。
         if quotePanelOpen {
-            let target = UIScreen.main.bounds.height * 0.86
+            let viewportHeight = UIScreen.main.bounds.height
+            let target = UIScreen.main.bounds.width >= 821 ? min(620, viewportHeight * 0.82) : viewportHeight * 0.86
             guard abs(preferredContentSize.height - target) > 0.5 else { return }
             preferredContentSize = CGSize(width: fittingWidth, height: target)
             view.superview?.setNeedsLayout()
@@ -537,7 +539,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         textView.textContainerInset = UIEdgeInsets(top: 0, left: 0, bottom: 0, right: 0)
         placeholderLabel.text = "记录今天…"
         placeholderLabel.font = UIFont.systemFont(ofSize: 16)
-        placeholderLabel.textColor = BearyColors.gray.withAlphaComponent(0.7)
+        placeholderLabel.textColor = BearyColors.alpha(BearyColors.gray, 0.7)
         textView.translatesAutoresizingMaskIntoConstraints = false
         placeholderLabel.translatesAutoresizingMaskIntoConstraints = false
         contentStack.addArrangedSubview(textView)
@@ -819,7 +821,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         // I6：写给 chip 清除改用 icon_close 资产（不再用文字 ×）。
         recipientClearButton.setImage(BearyIconImages.image(named: "icon_close", pointSize: 12), for: .normal)
         recipientClearButton.tintColor = BearyColors.gray
-        recipientClearButton.backgroundColor = BearyColors.ink.withAlphaComponent(0.10)
+        recipientClearButton.backgroundColor = BearyColors.alpha(BearyColors.ink, 0.10)
         recipientClearButton.layer.cornerRadius = 9
         recipientClearButton.layer.masksToBounds = true
         recipientClearButton.addTarget(self, action: #selector(didTapClearRecipient), for: .touchUpInside)
@@ -1941,7 +1943,11 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     /// 天气工具钮：单独开关天气行（网页 toggleWxRow 同款：可独立于附加选项栏开关；
     /// 打开时滚动到天气行，关闭时只收起该行，不动附加栏展开态）。
     @objc private func didTapWeatherTool() {
-        if quotePanelOpen { return }
+        // P3-5：引用面板打开时天气工具钮仍不切换（行为不变），给提示不再静默 return。
+        if quotePanelOpen {
+            showToast(message: "请先关闭引用面板")
+            return
+        }
         // 真开关：当前可见则收起（附加栏撑着显示时用压制标记收起），当前隐藏则打开。
         if !weatherScrollView.isHidden {
             weatherRowVisible = false
@@ -3264,7 +3270,11 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     // MARK: - 草稿箱（BearyDraftBoxViewController 由草稿箱代理新建文件提供，只调用不定义）
 
     @objc private func didTapDraftBox() {
-        if isEditMode { return }
+        // P3-5：编辑态草稿 pill 仍不开箱（行为不变），给提示不再静默 return。
+        if isEditMode {
+            showToast(message: "编辑日记时不能打开草稿箱")
+            return
+        }
         // presented 守卫 + 在途标记（E4-3）：连点不叠开两个草稿箱。
         if presentedViewController != nil || isDraftBoxPresenting { return }
         // 有内容先落盘当前篇，再开箱（箱内计数含当前篇）；空白编辑器不建空草稿。
@@ -3456,6 +3466,12 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     // MARK: - 取消与发布
 
     @objc private func didTapCancel() {
+        // P1-7：发布/保存进行中时取消键不走取消流程，给进行中提示（与 didTapPublish
+        // 首行 isPublishing 守卫同口径；真取消在途请求属结构改动，本批不做）。
+        if isPublishing {
+            showToast(message: isEditMode ? "保存中…" : "发布中…")
+            return
+        }
         // qp-mode 下取消键是“返回”，只退面板，不走整编取消三选/放弃确认（网页同款）。
         if quotePanelOpen {
             setQuotePanelOpen(false)

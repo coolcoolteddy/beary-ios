@@ -2,8 +2,8 @@ import UIKit
 
 // ===== 草稿箱弹层（网页草稿箱移植；对应审计 G1）=====
 // 网页对照：~/workspace/teddy_site/beary.html 内 #draftModal。
-// 形态：overFullScreen 自包含呈现；遮罩透明且点遮罩关闭（网页 #draftModal .backdrop
-// 为 transparent、backdrop 点击走 closeDraftBox，与通用 0.45 黑遮罩不同，审计 S3）；
+// 形态：overFullScreen 自包含呈现；遮罩为选人 sheet 同款 0.45 scrim、点遮罩关闭
+// （backdrop 点击走 closeDraftBox，行为不变）；
 // iPhone 为底部 sheet、最大高度 82vh；iPad（宽 ≥821）为居中 440 宽卡片。
 // 数据只读草稿 v3（BearyDraftFiles.swift）：v3 存储是多槽数组文件 beary_draft_v3.json，
 // 本弹层按 updatedAt 倒序列出全部草稿；旧 v2 单槽由存储层首次读取时迁入 v3，
@@ -165,7 +165,8 @@ final class BearyDraftBoxViewController: UIViewController {
     // MARK: - 视图搭建
 
     private func buildViews() {
-        backdropButton.backgroundColor = UIColor.clear
+        // 草稿箱遮罩与网页端一致：全透明（网页 #draftModal .backdrop 即透明，P2-7 scrim 已按网页对齐回滚）。
+        backdropButton.backgroundColor = .clear
         backdropButton.accessibilityLabel = "关闭"
         backdropButton.addTarget(self, action: #selector(closeBox), for: .touchUpInside)
         backdropButton.translatesAutoresizingMaskIntoConstraints = false

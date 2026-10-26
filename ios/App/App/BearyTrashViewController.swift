@@ -42,6 +42,8 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate {
     private var restoreEntries: [(button: UIButton, trashValue: TrashItem)] = []
     private var purgeEntries: [(button: UIButton, trashValue: TrashItem)] = []
     private var rowViewsByIdentifier: [String: UIView] = [:]
+    /// P2-1：600 列上限约束（宽 ≥821 才激活，开关在 viewDidLayoutSubviews）。
+    private var trashColCapConstraint: NSLayoutConstraint?
 
     // MARK: - 视图
 
@@ -82,6 +84,16 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate {
         super.viewWillAppear(animated)
         // 关闭钮只在调用方给了 onClose 时出现（调用方可能在呈现后才接线）。
         closeButton.isHidden = onClose == nil
+    }
+
+    override func viewDidLayoutSubviews() {
+        super.viewDidLayoutSubviews()
+        // P2-1：同 Feed 的 821 断点——宽 ≥821 才激活 600 上限，宽 ≤820 时关掉走全宽；
+        // 状态不变不开关，避免布局循环。
+        let wantColCap = view.bounds.width >= 821
+        if trashColCapConstraint?.isActive != wantColCap {
+            trashColCapConstraint?.isActive = wantColCap
+        }
     }
 
     override func traitCollectionDidChange(_ previousTraitCollection: UITraitCollection?) {
@@ -273,6 +285,12 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate {
         closeButton.heightAnchor.constraint(equalToConstant: 32).isActive = true
         emptyIconView.widthAnchor.constraint(equalToConstant: 36).isActive = true
         emptyIconView.heightAnchor.constraint(equalToConstant: 36).isActive = true
+        // P2-1：全宽驱动用次高优先级（== contentWrap）；宽 ≤820 时两侧 ≥16 不等式（必需）
+        // 胜出得全宽减 32，宽 ≥821 时 600 上限（必需）胜出居中；上限开关在 viewDidLayoutSubviews。
+        let trashColWidth = contentStack.widthAnchor.constraint(equalTo: contentWrap.widthAnchor)
+        trashColWidth.priority = .defaultHigh
+        let trashColCap = contentStack.widthAnchor.constraint(lessThanOrEqualToConstant: 600)
+        trashColCapConstraint = trashColCap
         NSLayoutConstraint.activate([
             scrollView.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
             scrollView.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor),
@@ -286,7 +304,8 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate {
             contentStack.topAnchor.constraint(equalTo: contentWrap.topAnchor, constant: 0),
             contentStack.bottomAnchor.constraint(equalTo: contentWrap.bottomAnchor, constant: -16),
             contentStack.centerXAnchor.constraint(equalTo: contentWrap.centerXAnchor),
-            contentStack.widthAnchor.constraint(lessThanOrEqualToConstant: 600),
+            trashColCap,
+            trashColWidth,
             contentStack.leadingAnchor.constraint(greaterThanOrEqualTo: contentWrap.leadingAnchor, constant: 16),
             contentStack.trailingAnchor.constraint(lessThanOrEqualTo: contentWrap.trailingAnchor, constant: -16),
             toastWrap.leadingAnchor.constraint(greaterThanOrEqualTo: view.leadingAnchor, constant: 20),
@@ -493,6 +512,8 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate {
         summaryLabel.numberOfLines = 2
         summaryLabel.font = UIFont.systemFont(ofSize: 14.5)
         summaryLabel.textColor = BearyColors.ink
+        // P3-3：日记摘要长串按字符断行，不溢出；字号行高不动（富文本段落同步见 TrashText.lineSpaced）。
+        summaryLabel.lineBreakMode = .byCharWrapping
         summaryLabel.attributedText = TrashText.lineSpaced(
             text: trashValue.content ?? "",
             fontSize: 14.5,
@@ -528,6 +549,13 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate {
         restoreButton.contentEdgeInsets = UIEdgeInsets(top: 7, left: 14, bottom: 7, right: 14)
         restoreButton.heightAnchor.constraint(greaterThanOrEqualToConstant: 44).isActive = true
         restoreButton.addTarget(self, action: #selector(restoreTapped(_:)), for: .touchUpInside)
+        // P2-4：照抄点赞钮修法——显式给足实测字宽，否则标题被裁：图宽 + titleEdgeInsets 左 5
+        // + 实测标题宽 + contentEdgeInsets 左右各 14；取闲/忙两文案之宽的最大值，两态均不裁。
+        let restoreTitleWidth = max(
+            ceil(("恢复" as NSString).size(withAttributes: [NSAttributedString.Key.font: UIFont.systemFont(ofSize: 13)]).width),
+            ceil(("恢复中…" as NSString).size(withAttributes: [NSAttributedString.Key.font: UIFont.systemFont(ofSize: 13)]).width)
+        )
+        restoreButton.widthAnchor.constraint(equalToConstant: (restoreButton.currentImage?.size.width ?? 14) + 5 + restoreTitleWidth + 28).isActive = true
 
         let spacerView = UIView()
         spacerView.setContentHuggingPriority(.defaultLow, for: .horizontal)
@@ -548,6 +576,13 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate {
         purgeButton.contentEdgeInsets = UIEdgeInsets(top: 7, left: 14, bottom: 7, right: 14)
         purgeButton.heightAnchor.constraint(greaterThanOrEqualToConstant: 44).isActive = true
         purgeButton.addTarget(self, action: #selector(purgeTapped(_:)), for: .touchUpInside)
+        // P2-4：同恢复钮修法——图宽 + titleEdgeInsets 左 5 + 实测标题宽 + contentEdgeInsets 左右各 14，
+        // 取闲/忙两文案之宽的最大值，两态均不裁。
+        let purgeTitleWidth = max(
+            ceil(("彻底删除" as NSString).size(withAttributes: [NSAttributedString.Key.font: UIFont.systemFont(ofSize: 13)]).width),
+            ceil(("删除中…" as NSString).size(withAttributes: [NSAttributedString.Key.font: UIFont.systemFont(ofSize: 13)]).width)
+        )
+        purgeButton.widthAnchor.constraint(equalToConstant: (purgeButton.currentImage?.size.width ?? 14) + 5 + purgeTitleWidth + 28).isActive = true
 
         buttonsRow.addArrangedSubview(restoreButton)
         buttonsRow.addArrangedSubview(spacerView)
@@ -711,6 +746,8 @@ private enum TrashText {
     static func lineSpaced(text: String, fontSize: CGFloat, lineHeightMultiple: CGFloat, color: UIColor) -> NSAttributedString {
         let style = NSMutableParagraphStyle()
         style.lineHeightMultiple = lineHeightMultiple
+        // P3-3：富文本段落样式会覆盖 label 的 lineBreakMode，此处同步按字符断行（字号行高不动）。
+        style.lineBreakMode = .byCharWrapping
         let attributes: [NSAttributedString.Key: Any] = [
             .font: UIFont.systemFont(ofSize: fontSize),
             .foregroundColor: color,
