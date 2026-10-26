@@ -751,7 +751,7 @@ private final class BearyCalendarLegendFlowView: UIView {
         var y: CGFloat = 0
         for (lineIndex, line) in broken.enumerated() {
             let sizes = line.map { pairSize($0) }
-            let totalWidth = sizes.reduce(0, +) + CGFloat(max(0, line.count - 1)) * 14
+            let totalWidth = sizes.reduce(0) { $0 + $1.width } + CGFloat(max(0, line.count - 1)) * 14
             let lineHeight = sizes.map { $0.height }.max() ?? 0
             var x = (width - totalWidth) / 2
             if x < 0 { x = 0 }
@@ -799,8 +799,6 @@ final class BearyTimelineCell: UITableViewCell {
     // 边距由 VC 在 cellForRowAt 按行在组内的位置设定（setTimelineLineEdges），
     // 分页向同组追加行时旧末行由 updateChrome 的可见行重刷改回中间行边距。
     private let timelineLineView = UIView()
-    private let dotRingView = UIView()
-    private let dotView = UIView()
     private var timelineLineTopConstraint: NSLayoutConstraint?
     private var timelineLineBottomConstraint: NSLayoutConstraint?
     private let dotRingView = UIView()
