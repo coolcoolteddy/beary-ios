@@ -280,6 +280,16 @@ final class BearyAPI {
     /// 401 时调用（SessionManager 接管：清本地用户态；界面层可再接登录页）。
     var onUnauthorized: (() -> Void)?
 
+    /// 账号隔离 3 号：鉴权代际。SessionManager 在权威登录态变迁时
+    /// bumpAuthEpoch()；request/requestVoid 在发起时捕获当前值，回包 401
+    /// 时 epoch 已变说明请求属于旧登录态，只返回 .unauthorized，不触发
+    /// onUnauthorized（旧 401 不得把新账号界面切成未登录）。
+    var authEpoch = 0
+
+    func bumpAuthEpoch() {
+        authEpoch += 1
+    }
+
     /// 固定站点域名字面量恒可解析，故此处一次 force unwrap 安全，调用处一律用本常量。
     private static let baseURL = URL(string: "https://teddyhn.com")!
     private let session: URLSession
@@ -359,12 +369,13 @@ final class BearyAPI {
     }
 
     // 状态码分流（401/404/业务错误码/HTTP 错误共用；401 默认通知 onUnauthorized，
-    // suppressUnauthorized 为真时只返回 .unauthorized，不触发 onUnauthorized）
-    private func mapStatus(_ status: Int, data: Data?, error: Error?, suppressUnauthorized: Bool = false) -> APIError? {
+    // suppressUnauthorized 为真时只返回 .unauthorized，不触发 onUnauthorized；
+    // 账号隔离 3 号：epoch 与发起时不一致时同样只返回、不触发）。
+    private func mapStatus(_ status: Int, data: Data?, error: Error?, suppressUnauthorized: Bool = false, epoch: Int? = nil) -> APIError? {
         if let e = error as NSError?, e.code == NSURLErrorCancelled { return .cancelled }
         if let e = error { return .network(e) }
         if status == 401 {
-            if !suppressUnauthorized { onUnauthorized?() }
+            if !suppressUnauthorized, epoch == nil || epoch == authEpoch { onUnauthorized?() }
             return .unauthorized
         }
         if status == 404 { return .notFound }
@@ -386,9 +397,10 @@ final class BearyAPI {
         suppressUnauthorized: Bool = false,
         completion: @escaping (Result<T, APIError>) -> Void
     ) -> URLSessionDataTask? {
+        let epoch = authEpoch
         return perform(path, query: query, method: method, jsonBody: jsonBody) { [weak self] data, status, error in
             guard let self = self else { return }
-            if let apiErr = self.mapStatus(status, data: data, error: error, suppressUnauthorized: suppressUnauthorized) {
+            if let apiErr = self.mapStatus(status, data: data, error: error, suppressUnauthorized: suppressUnauthorized, epoch: epoch) {
                 completion(.failure(apiErr))
                 return
             }
@@ -415,9 +427,10 @@ final class BearyAPI {
         suppressUnauthorized: Bool = false,
         completion: @escaping (Result<Void, APIError>) -> Void
     ) -> URLSessionDataTask? {
+        let epoch = authEpoch
         return perform(path, query: query, method: method, jsonBody: jsonBody) { [weak self] data, status, error in
             guard let self = self else { return }
-            if let apiErr = self.mapStatus(status, data: data, error: error, suppressUnauthorized: suppressUnauthorized) {
+            if let apiErr = self.mapStatus(status, data: data, error: error, suppressUnauthorized: suppressUnauthorized, epoch: epoch) {
                 completion(.failure(apiErr))
                 return
             }
