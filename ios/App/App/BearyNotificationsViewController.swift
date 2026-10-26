@@ -312,6 +312,16 @@ final class BearyNotificationsViewController: UIViewController {
         return iconView
     }()
 
+    /// 消息空态动态信封（NB.mail 口径：40×40 灰描 + 橙速度线，循环动画；
+    /// 仅空态显示，其余态隐藏并停动画）。
+    private lazy var stateMailView: BearyMailView = {
+        let mailView = BearyMailView()
+        mailView.translatesAutoresizingMaskIntoConstraints = false
+        mailView.envelopeColor = BearyColors.gray
+        mailView.isHidden = true
+        return mailView
+    }()
+
     private lazy var stateTitleLabel: UILabel = {
         let label = UILabel()
         label.translatesAutoresizingMaskIntoConstraints = false
@@ -356,7 +366,7 @@ final class BearyNotificationsViewController: UIViewController {
         let container = UIView()
         container.translatesAutoresizingMaskIntoConstraints = false
         container.backgroundColor = BearyColors.bg
-        let stack = UIStackView(arrangedSubviews: [stateIconView, stateTitleLabel, stateSubtitleLabel, stateButton])
+        let stack = UIStackView(arrangedSubviews: [stateIconView, stateMailView, stateTitleLabel, stateSubtitleLabel, stateButton])
         stack.translatesAutoresizingMaskIntoConstraints = false
         stack.axis = .vertical
         stack.alignment = .center
@@ -367,6 +377,8 @@ final class BearyNotificationsViewController: UIViewController {
         NSLayoutConstraint.activate([
             stateIconView.widthAnchor.constraint(equalToConstant: 36),
             stateIconView.heightAnchor.constraint(equalToConstant: 36),
+            stateMailView.widthAnchor.constraint(equalToConstant: 40),
+            stateMailView.heightAnchor.constraint(equalToConstant: 40),
             stateButton.heightAnchor.constraint(equalToConstant: 40),
             centralSpinner.centerXAnchor.constraint(equalTo: container.centerXAnchor),
             centralSpinner.topAnchor.constraint(equalTo: container.topAnchor, constant: 40),
@@ -1530,19 +1542,17 @@ final class BearyNotificationsViewController: UIViewController {
         case .loading:
             centralSpinner.startAnimating()
             stateIconView.isHidden = true
+            stateMailView.isHidden = true
+            stateMailView.stop()
             stateTitleLabel.isHidden = true
             stateSubtitleLabel.isHidden = true
             stateButton.isHidden = true
         case .empty:
             centralSpinner.stopAnimating()
-            stateIconView.isHidden = false
-            stateIconView.image = BearyIconImages.image(named: "icon_mail", pointSize: 40)
-            // 网页 .empty svg.nb 是 40x40（其余空态数值已对上，不动）。
-            for constraint in stateIconView.constraints {
-                if constraint.firstAttribute == .width || constraint.firstAttribute == .height {
-                    constraint.constant = 40
-                }
-            }
+            stateIconView.isHidden = true
+            // 网页 .empty svg.nb 是 40x40（其余空态数值已对上，不动）；空态用 NB.mail 动态信封。
+            stateMailView.isHidden = false
+            stateMailView.start()
             stateTitleLabel.isHidden = false
             stateTitleLabel.text = "还没有消息"
             stateSubtitleLabel.isHidden = false
@@ -1553,6 +1563,8 @@ final class BearyNotificationsViewController: UIViewController {
             // 网页 ntLoadError：无图标 + .load-more 13px pill（1px line 描边、
             // 左右 24、上 9），标题/副文案与现行一致。
             stateIconView.isHidden = true
+            stateMailView.isHidden = true
+            stateMailView.stop()
             stateTitleLabel.isHidden = false
             stateTitleLabel.text = "加载失败"
             stateSubtitleLabel.isHidden = false
@@ -1574,6 +1586,8 @@ final class BearyNotificationsViewController: UIViewController {
             updateStateButtonWidth()
         case .list:
             centralSpinner.stopAnimating()
+            stateMailView.isHidden = true
+            stateMailView.stop()
         }
     }
 
@@ -1889,6 +1903,10 @@ private class BearyLetterModal {
     /// 关闭即丢弃，无需像行 cell 那样在复用时 stop。
     private let popperView = BearyPopperView()
     private let isPopper: Bool
+    /// 信件模态动态信封：非徽章信（iconName == "icon_mail"）时用 NB.mail
+    ///（网页 .letter-ico 口径：54×54 墨描 + 橙速度线，循环动画），不用静态 icon_mail。
+    private let mailView = BearyMailView()
+    private let isMail: Bool
     private let titleLabel = UILabel()
     private let bodyScrollView = UIScrollView()
     private let bodyLabel = UILabel()
@@ -1906,6 +1924,7 @@ private class BearyLetterModal {
     init(title: String, body: String, iconName: String, quoteText: String?, quoteMeta: String?, goEntryId: String?) {
         self.goEntryId = goEntryId
         self.isPopper = (iconName == "icon_popper")
+        self.isMail = (iconName == "icon_mail")
         overlayView.backgroundColor = BearyColors.scrim
         overlayView.translatesAutoresizingMaskIntoConstraints = false
         cardView.backgroundColor = BearyColors.surface
@@ -1914,14 +1933,17 @@ private class BearyLetterModal {
         cardView.clipsToBounds = true
         cardView.translatesAutoresizingMaskIntoConstraints = false
         iconView.translatesAutoresizingMaskIntoConstraints = false
-        iconView.isHidden = isPopper
-        if !isPopper {
+        iconView.isHidden = isPopper || isMail
+        if !isPopper && !isMail {
             iconView.image = BearyIconImages.image(named: iconName, pointSize: 36)
         }
         iconView.tintColor = BearyColors.orange
         iconView.contentMode = .scaleAspectFit
         popperView.translatesAutoresizingMaskIntoConstraints = false
         popperView.isHidden = !isPopper
+        mailView.translatesAutoresizingMaskIntoConstraints = false
+        mailView.envelopeColor = BearyColors.ink
+        mailView.isHidden = !isMail
         titleLabel.translatesAutoresizingMaskIntoConstraints = false
         // C-G8：网页 .confirm-box h3 字号 16，不是 17。
         titleLabel.font = UIFont.boldSystemFont(ofSize: 16)
@@ -1985,6 +2007,10 @@ private class BearyLetterModal {
         if isPopper {
             popperView.start()
         }
+        cardView.addSubview(mailView)
+        if isMail {
+            mailView.start()
+        }
         cardView.addSubview(titleLabel)
         cardView.addSubview(bodyScrollView)
         bodyScrollView.addSubview(bodyLabel)
@@ -2035,7 +2061,13 @@ private class BearyLetterModal {
             popperView.centerXAnchor.constraint(equalTo: cardView.centerXAnchor),
             popperView.widthAnchor.constraint(equalToConstant: 36),
             popperView.heightAnchor.constraint(equalToConstant: 36),
-            titleLabel.topAnchor.constraint(equalTo: iconView.bottomAnchor, constant: 10),
+            mailView.topAnchor.constraint(equalTo: cardView.topAnchor, constant: 24),
+            mailView.centerXAnchor.constraint(equalTo: cardView.centerXAnchor),
+            mailView.widthAnchor.constraint(equalToConstant: 54),
+            mailView.heightAnchor.constraint(equalToConstant: 54),
+            // 标题跟当前可见的图标走：mail 信 54 高、其余 36 高，锚点切换避免重叠
+            //（隐藏视图的约束仍生效，不能共用 iconView 锚点）。
+            titleLabel.topAnchor.constraint(equalTo: isMail ? mailView.bottomAnchor : iconView.bottomAnchor, constant: 10),
             titleLabel.leadingAnchor.constraint(equalTo: cardView.leadingAnchor, constant: 24),
             titleLabel.trailingAnchor.constraint(equalTo: cardView.trailingAnchor, constant: -24),
             bodyScrollView.topAnchor.constraint(equalTo: titleLabel.bottomAnchor, constant: 12),
