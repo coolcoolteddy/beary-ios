@@ -927,9 +927,13 @@ final class BearyChromeViewController: UIViewController {
             logo.centerXAnchor.constraint(equalTo: veil.centerXAnchor),
             logo.widthAnchor.constraint(equalToConstant: 162),
             logo.heightAnchor.constraint(equalToConstant: 162),
-            // 网页 launchVeil：logo 中心落在 43% 高度处（centerY = veil 高 × 0.43）。
+            // 网页 launchVeil：logo 中心落在 43% 高度处。注意：centerY 是位置属性，
+            // 只能配另一位置属性——配 .height（尺寸属性）会在 viewDidLoad 直接抛
+            // NSInvalidArgumentException 致 SIGABRT（65 包闪退根因，崩溃日志实证）。
+            // veil 铺满 view（top = view.top），故 veil.bottom 在 view 坐标系里即 veil 高，
+            // centerY = 0.43 × bottom 与原意图完全等价。
             NSLayoutConstraint(item: logo, attribute: .centerY, relatedBy: .equal,
-                               toItem: veil, attribute: .height, multiplier: 0.43, constant: 0),
+                               toItem: veil, attribute: .bottom, multiplier: 0.43, constant: 0),
         ])
         launchVeilView = veil
         launchVeilLogo = logo
