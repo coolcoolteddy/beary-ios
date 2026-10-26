@@ -72,11 +72,25 @@ final class BearyChromeViewController: UIViewController {
     /// 底栏：官方分段选择器（BearyHit44SegmentedControl 仅扩热区至 44pt，
     /// 与已拆除的时间线筛选条同款热区扩类；系统自绘玻璃与选中 pill，不再自绘胶囊）。
     private var bottomSegmented: BearyHit44SegmentedControl!
+    /// 分段器后方的模糊衬底（Li 2026-10-26：分段器太透，加一层模糊）：
+    /// systemMaterial，随深浅自适应；与分段器同中心、每边大 6pt（268×62），
+    /// 保证盖住分段器全幅与边缘抗锯齿；永不拦截触摸（isUserInteractionEnabled 恒 false，
+    /// 外圈 6pt 悬边也不会吞触摸），藏显与位移只跟 setBarsVisible 走。
+    private var bottomBlurView: UIVisualEffectView?
     /// 分段器 touchDown 瞬间记录的旧选段（供重拍手势与 valueChanged 时序竞态判定用）。
     private var segmentIndexAtTouchDown: Int = -1
     private var fabButton: UIButton!
-    /// FAB 玻璃化容器（阴影载体 + 玻璃 + 按钮三层；拖动变形只改容器 transform，不动约束）。
+    /// FAB 玻璃化容器（阴影载体 + 玻璃 + 按钮三层；拖动时容器只平移跟手指，
+    /// 形变改玻璃与阴影的尺寸约束——55 批只改容器 transform 时真机上玻璃边缘
+    /// 不跟形变（Li 2026-10-26 实证），故形变直接改尺寸）。
     private var fabContainerView: UIView?
+    /// FAB 玻璃本体与阴影载体（拖动变形对象：尺寸约束 + 转角 + 自转）。
+    private var fabGlassView: UIVisualEffectView?
+    private var fabShadowView: UIView?
+    private var fabGlassWidthConstraint: NSLayoutConstraint?
+    private var fabGlassHeightConstraint: NSLayoutConstraint?
+    private var fabShadowWidthConstraint: NSLayoutConstraint?
+    private var fabShadowHeightConstraint: NSLayoutConstraint?
     /// FAB 长按拖动锚点（长按落点，view 坐标）；nil = 未在拖动。
     private var fabDragAnchor: CGPoint?
     private var fabDragging = false
@@ -350,6 +364,24 @@ final class BearyChromeViewController: UIViewController {
         // BearyHit44SegmentedControl 是筛选条用过的同款热区扩类（仅扩触摸帧）；
         // 四段等宽（apportionsSegmentWidthsByContent=false），图标与旧钮同源、
         // 统一缩到 24pt；布局常量与旧胶囊 1:1：宽 256、高 50、底距安全区 12。
+        // 模糊衬底（Li 2026-10-26：分段器太透）：systemMaterial 随深浅自适应；
+        // 每边比控件大 6pt（268×62、圆角 31），保证盖住分段器全幅与边缘抗锯齿；
+        // 永不拦截触摸，藏显与位移只跟 setBarsVisible；层级在分段器之下
+        // （bringChromeToFront 里 blur 先于分段器提至最前，防后挂页盖住它）。
+        let blur = UIVisualEffectView(effect: UIBlurEffect(style: .systemMaterial))
+        blur.layer.cornerRadius = 31
+        blur.clipsToBounds = true
+        blur.isUserInteractionEnabled = false
+        blur.translatesAutoresizingMaskIntoConstraints = false
+        view.addSubview(blur)
+        bottomBlurView = blur
+        blur.alpha = 0
+        NSLayoutConstraint.activate([
+            blur.centerXAnchor.constraint(equalTo: view.centerXAnchor),
+            blur.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor, constant: -12),
+            blur.widthAnchor.constraint(equalToConstant: 268),
+            blur.heightAnchor.constraint(equalToConstant: 62),
+        ])
         let tabIcons: [(String, String)] = [
             ("IconHome", "house"),
             ("IconBell", "bell"),
@@ -408,11 +440,13 @@ final class BearyChromeViewController: UIViewController {
         fabShadow.layer.cornerRadius = 27
         fabShadow.translatesAutoresizingMaskIntoConstraints = false
         fabContainer.addSubview(fabShadow)
+        fabShadowView = fabShadow
         let fabGlass = makeGlassView(tint: bearyOrange)
         fabGlass.layer.cornerRadius = 27
         fabGlass.clipsToBounds = true
         fabGlass.translatesAutoresizingMaskIntoConstraints = false
         fabContainer.addSubview(fabGlass)
+        fabGlassView = fabGlass
         let fab = UIButton(type: .custom)
         fab.setImage(topIconImage(named: "IconPlus", systemFallback: "plus"), for: .normal)
         fab.tintColor = .white
@@ -429,18 +463,29 @@ final class BearyChromeViewController: UIViewController {
         // ——pan 在触摸中途启用接不到当次触摸，长按手势则全程跟随。长按识别后
         // cancelsTouchesInView 默认 true 会取消按钮触摸，故拖动不会误触写日记；
         // 0.4s 内完成的快点走不到长按识别，正常点按不受影响。
+        // 形变见 fabLongPressed：容器只平移跟手指，玻璃与阴影改尺寸（55 批只改
+        // 容器 transform 时玻璃边缘真机不跟形变，故形变直接改尺寸）。
         let fabLongPress = UILongPressGestureRecognizer(target: self, action: #selector(fabLongPressed(_:)))
         fabLongPress.minimumPressDuration = 0.4
         fabContainer.addGestureRecognizer(fabLongPress)
+        // 玻璃与阴影改中心 + 尺寸约束（不再钉容器四边）：拖动形变时改尺寸，
+        // 按钮仍钉容器四边（54×54 不动，加号保持端正清晰）；容器不裁剪，
+        // 玻璃拉伸后每边超出容器约 8pt 的部分照常可见。
+        let fabShadowWidth = fabShadow.widthAnchor.constraint(equalToConstant: 54)
+        let fabShadowHeight = fabShadow.heightAnchor.constraint(equalToConstant: 54)
+        let fabGlassWidth = fabGlass.widthAnchor.constraint(equalToConstant: 54)
+        let fabGlassHeight = fabGlass.heightAnchor.constraint(equalToConstant: 54)
+        fabShadowWidthConstraint = fabShadowWidth
+        fabShadowHeightConstraint = fabShadowHeight
+        fabGlassWidthConstraint = fabGlassWidth
+        fabGlassHeightConstraint = fabGlassHeight
         NSLayoutConstraint.activate([
-            fabShadow.leadingAnchor.constraint(equalTo: fabContainer.leadingAnchor),
-            fabShadow.trailingAnchor.constraint(equalTo: fabContainer.trailingAnchor),
-            fabShadow.topAnchor.constraint(equalTo: fabContainer.topAnchor),
-            fabShadow.bottomAnchor.constraint(equalTo: fabContainer.bottomAnchor),
-            fabGlass.leadingAnchor.constraint(equalTo: fabContainer.leadingAnchor),
-            fabGlass.trailingAnchor.constraint(equalTo: fabContainer.trailingAnchor),
-            fabGlass.topAnchor.constraint(equalTo: fabContainer.topAnchor),
-            fabGlass.bottomAnchor.constraint(equalTo: fabContainer.bottomAnchor),
+            fabShadow.centerXAnchor.constraint(equalTo: fabContainer.centerXAnchor),
+            fabShadow.centerYAnchor.constraint(equalTo: fabContainer.centerYAnchor),
+            fabShadowWidth, fabShadowHeight,
+            fabGlass.centerXAnchor.constraint(equalTo: fabContainer.centerXAnchor),
+            fabGlass.centerYAnchor.constraint(equalTo: fabContainer.centerYAnchor),
+            fabGlassWidth, fabGlassHeight,
             fab.leadingAnchor.constraint(equalTo: fabContainer.leadingAnchor),
             fab.trailingAnchor.constraint(equalTo: fabContainer.trailingAnchor),
             fab.topAnchor.constraint(equalTo: fabContainer.topAnchor),
@@ -486,9 +531,10 @@ final class BearyChromeViewController: UIViewController {
     }
 
     /// L3：挂页后把栏覆盖层一次提齐——页 view 在栏之后加入会盖住栏，
-    /// 顺序须为：页 < 顶栏 < 底栏分段器 < FAB。
+    /// 顺序须为：页 < 顶栏 < 模糊衬底 < 底栏分段器 < FAB。
     private func bringChromeToFront() {
         if let top = topGlass { view.bringSubviewToFront(top) }
+        if let blur = bottomBlurView { view.bringSubviewToFront(blur) }
         if let seg = bottomSegmented { view.bringSubviewToFront(seg) }
         if let fab = fabContainerView { view.bringSubviewToFront(fab) }
     }
@@ -789,6 +835,8 @@ final class BearyChromeViewController: UIViewController {
                 seg.alpha = visible ? 1 : 0
                 seg.transform = visible ? .identity : CGAffineTransform(translationX: 0, y: 80)
             }
+            self.bottomBlurView?.alpha = visible ? 1 : 0
+            self.bottomBlurView?.transform = visible ? .identity : CGAffineTransform(translationX: 0, y: 80)
             self.fabContainerView?.alpha = visible ? 1 : 0
             self.fabContainerView?.transform = visible ? .identity : CGAffineTransform(translationX: 0, y: 80)
         }
@@ -799,13 +847,34 @@ final class BearyChromeViewController: UIViewController {
         }
         bottomSegmented?.isUserInteractionEnabled = visible
         fabContainerView?.isUserInteractionEnabled = visible
+        // 模糊衬底永不参与触摸（isUserInteractionEnabled 恒 false），不在此同步，
+        // 否则外圈 6pt 悬边会在显示时吞掉下方内容的触摸。
     }
 
-    /// FAB 长按拖动变形：长按落点为锚点，跟手位移 + 沿拖动方向拉伸（玻璃随容器
-    /// 一起形变）；松手弹簧回锚点，不改变常驻位置、不持久化。拖动中途栏显隐
-    /// 若改写 transform，下一次 setBarsVisible 会重新收敛，不留残态。
+    /// FAB 长按拖动变形：长按落点为锚点，跟手位移 + 沿拖动方向拉伸。
+    /// 55 批只改容器 transform 时真机上玻璃边缘不跟形变（Li 2026-10-26 实证），
+    /// 故形变改玻璃与阴影的尺寸约束（+ 自转对齐拖动方向、转角跟半宽走），
+    /// 容器 transform 只负责跟手指平移；按钮不形变，加号保持端正清晰。
+    /// 松手弹簧回锚点，不改变常驻位置、不持久化。拖动中途栏显隐
+    /// 若改写容器 transform，下一次 setBarsVisible 会重新收敛，不留残态。
     @objc private func fabLongPressed(_ gesture: UILongPressGestureRecognizer) {
         guard let container = fabContainerView else { return }
+        // 形变辅助：玻璃与阴影同尺寸同转角同自转；缺任一层时只做平移，不半吊子形变。
+        func applyDeform(width: CGFloat, height: CGFloat, angle: CGFloat) {
+            let radius = min(width, height) / 2
+            if let glass = self.fabGlassView {
+                self.fabGlassWidthConstraint?.constant = width
+                self.fabGlassHeightConstraint?.constant = height
+                glass.layer.cornerRadius = radius
+                glass.transform = CGAffineTransform(rotationAngle: angle)
+            }
+            if let shadow = self.fabShadowView {
+                self.fabShadowWidthConstraint?.constant = width
+                self.fabShadowHeightConstraint?.constant = height
+                shadow.layer.cornerRadius = radius
+                shadow.transform = CGAffineTransform(rotationAngle: angle)
+            }
+        }
         switch gesture.state {
         case .began:
             fabDragAnchor = gesture.location(in: view)
@@ -819,24 +888,28 @@ final class BearyChromeViewController: UIViewController {
             let len = hypot(tx, ty)
             if len < 4 {
                 container.transform = .identity
+                applyDeform(width: 54, height: 54, angle: 0)
                 return
             }
-            // 沿拖动方向拉伸、垂直方向微缩：R(θ)·S·R(−θ) 拼到平移之后。
+            // 沿拖动方向拉伸、垂直方向微缩（参数与 55 批一致：拉伸上限 30%、微缩上限 12%）。
             let angle = atan2(ty, tx)
             let sx = 1 + min(0.30, len / 400)
             let sy = 1 - min(0.12, len / 800)
             container.transform = CGAffineTransform(translationX: tx, y: ty)
-                .rotated(by: angle)
-                .scaledBy(x: sx, y: sy)
-                .rotated(by: -angle)
+            applyDeform(width: 54 * sx, height: 54 * sy, angle: angle)
         case .ended, .cancelled, .failed:
             fabDragAnchor = nil
             fabDragging = false
-            if UIAccessibility.isReduceMotionEnabled {
+            let resetDeform = {
                 container.transform = .identity
+                applyDeform(width: 54, height: 54, angle: 0)
+            }
+            if UIAccessibility.isReduceMotionEnabled {
+                resetDeform()
             } else {
                 UIView.animate(withDuration: 0.5, delay: 0, usingSpringWithDamping: 0.7, initialSpringVelocity: 0, options: [.beginFromCurrentState, .allowUserInteraction], animations: {
-                    container.transform = .identity
+                    resetDeform()
+                    container.layoutIfNeeded()
                 })
             }
         default:

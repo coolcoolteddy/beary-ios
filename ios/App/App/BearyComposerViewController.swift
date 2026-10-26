@@ -155,6 +155,8 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     private let contentView = UIView()
     private let contentStack = UIStackView()
     private let textView = UITextView()
+    /// 正文区高度约束（正式修法：随内容动态走，下限 140、上限由 updateTextViewHeight 按 sheet 封顶算）。
+    private var textViewHeightConstraint: NSLayoutConstraint?
     private let placeholderLabel = UILabel()
     // 图片预览（无标题、无 + 块；空时整条隐藏，添加走工具栏图片钮）
     private let imageScrollView = UIScrollView()
@@ -530,16 +532,16 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         textView.delegate = self
         textView.font = UIFont.systemFont(ofSize: 16)
         textView.textColor = BearyColors.ink
-        // 无框正文：透明底。实验 2（2026-10-26，微信输入法×编辑器隔离）：
-        // 开自身滚动、固定 160 可见区在区内滚动，取代之前靠外层 scrollView 滚动的模式。
-        // 实验 1 已证阴性（去掉 typingAttributes 段落样式后仍打不上），段落样式未恢复，
-        // 两次实验变量不混；其余配置（键盘、聚焦、草稿、字数、工具栏）一行未动。
-        // 行高 1.7（27.2）：已恢复的正文由 applyBodyLineHeight() 转 attributedText 后套行高
-        //（见 setupEditContent/restoreDraft）；新输入的 typingAttributes 行高见下实验 1。
-        // 实验 1（2026-10-26，微信输入法×编辑器隔离）：typingAttributes 先去掉段落样式，
-        // 只留字号与颜色——验证自定义行高段落样式是否就是触发输入法失效的那一项。
-        // 实验包里新打的字行距会暂时变密；若证实是它，再设计保行高的正式修法，不要直接把这行当终态。
-        textView.typingAttributes = [.font: UIFont.systemFont(ofSize: 16), .foregroundColor: BearyColors.ink]
+        // 无框正文：透明底。正式修法（2026-10-26，微信输入法×编辑器隔离结论）：
+        // 根因是正文区自身滚动关闭——isScrollEnabled=false 时微信输入法打不上字，
+        // 改 true 后真机已证实能打，故自身滚动保持开启，绝不能改回去。
+        // typingAttributes 恢复段落样式 lineHeightMultiple=1.7（网页版行高）：
+        // 之前去掉段落样式只证明了它单独不是根因；段落样式×可滚动这个组合此前
+        // 从未在真机验过，组合待真机复验。
+        // 已填入的正文行高仍由 applyBodyLineHeight() 套 1.7（见 setupEditContent/restoreDraft）。
+        let bodyParagraph = NSMutableParagraphStyle()
+        bodyParagraph.lineHeightMultiple = 1.7
+        textView.typingAttributes = [.font: UIFont.systemFont(ofSize: 16), .foregroundColor: BearyColors.ink, .paragraphStyle: bodyParagraph]
         textView.backgroundColor = UIColor.clear
         textView.layer.cornerRadius = 0
         textView.isScrollEnabled = true
@@ -552,15 +554,66 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         placeholderLabel.translatesAutoresizingMaskIntoConstraints = false
         contentStack.addArrangedSubview(textView)
         textView.addSubview(placeholderLabel)
+        let textHeightConstraint = textView.heightAnchor.constraint(equalToConstant: 140)
+        textViewHeightConstraint = textHeightConstraint
         NSLayoutConstraint.activate([
-            // 实验 2：自身滚动开启后 textView 无内在高度，必须给固定高度约束，
-            // 否则在内容栈里高度不确定；160 可见区，超长在区内滚动。
-            textView.heightAnchor.constraint(equalToConstant: 160),
+            // 自身滚动开启后 textView 无内在高度：先给下限 140（正式修法前原值），
+            // 实际高度由 updateTextViewHeight() 随 contentSize 动态更新（下限 140、上限按 sheet 封顶算）。
+            textHeightConstraint,
             placeholderLabel.topAnchor.constraint(equalTo: textView.topAnchor, constant: 0),
             placeholderLabel.leadingAnchor.constraint(equalTo: textView.leadingAnchor),
             placeholderLabel.trailingAnchor.constraint(lessThanOrEqualTo: textView.trailingAnchor),
         ])
         contentStack.setCustomSpacing(12, after: textView)
+    }
+
+    /// 正文区动态高度：随内容撑高（下限 140），上限按 sheet 可用高度封顶，
+    /// 让工具栏与附加栏始终可见、超长只在区内滚动。
+    /// 封顶依据（不拍脑袋）：呈现层封顶见 SceneDelegate.configureComposerPresentation
+    /// （宽 ≥821 居中卡）与 BearyCenteredModal.frameOfPresentedViewInContainerView
+    /// （卡高 = 容器高 × 0.80）；窄屏底 sheet 为容器高 × 0.88（同函数注释）。
+    /// 容器高取 view.window bounds（未挂窗时回退屏高），屏宽阈值 821 与呈现层分流一致。
+    private func updateTextViewHeight() {
+        guard isViewLoaded, let heightConstraint = textViewHeightConstraint else { return }
+        // 宽度：布局前 bounds 可能为 0，走 updatePreferredContentSize 同款屏宽估算。
+        let width: CGFloat
+        if textView.bounds.width > 0 {
+            width = textView.bounds.width
+        } else if view.bounds.width > 0 {
+            width = view.bounds.width
+        } else {
+            let screenWidth = UIScreen.main.bounds.width
+            width = screenWidth >= 821 ? min(640, screenWidth - 80) : screenWidth
+        }
+        guard width > 0 else { return }
+        let contentHeight = textView.sizeThatFits(CGSize(width: width, height: .greatestFiniteMagnitude)).height
+        // 栈内除正文外的高度：当前栈 fitting 高减去当前正文约束高（间距已含在 fitting 内）。
+        let fittingWidth = view.bounds.width > 0 ? view.bounds.width : width
+        let stackHeight = contentStack.systemLayoutSizeFitting(
+            CGSize(width: fittingWidth, height: UIView.layoutFittingCompressedSize.height),
+            withHorizontalFittingPriority: .required,
+            verticalFittingPriority: .fittingSizeLevel
+        ).height
+        let othersHeight = stackHeight - heightConstraint.constant
+        // 钉住的工具栏不在内容栈里：同 updatePreferredContentSize 口径另加（隐藏计 0）。
+        let toolbarHeight: CGFloat
+        if toolbarContainer.isHidden {
+            toolbarHeight = 0
+        } else {
+            toolbarHeight = toolbarContainer.systemLayoutSizeFitting(
+                CGSize(width: max(fittingWidth - 32, 0), height: UIView.layoutFittingCompressedSize.height),
+                withHorizontalFittingPriority: .required,
+                verticalFittingPriority: .fittingSizeLevel
+            ).height
+        }
+        let containerHeight = view.window?.bounds.height ?? UIScreen.main.bounds.height
+        let sheetCap = containerHeight * (UIScreen.main.bounds.width >= 821 ? 0.80 : 0.88)
+        // 顶栏 44 同 updatePreferredContentSize 口径；封顶不足 140 时仍保下限，
+        // 此时 sheet 走呈现层封顶、外层滚动兜底，与正式修法前行为一致。
+        let cap = sheetCap - 44 - toolbarHeight - othersHeight
+        let target = min(max(contentHeight, 140), max(140, cap))
+        guard abs(heightConstraint.constant - target) > 0.5 else { return }
+        heightConstraint.constant = target
     }
 
     /// 已填入的正文套 1.7 行高（只换呈现属性，不改文字与光标语义；空文本只留 typingAttributes）。
@@ -2212,6 +2265,8 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         updateCountLabel()
         updatePublishState()
         scheduleDraftSave()
+        // 高度先定，fitting 再按新高算 sheet 高。
+        updateTextViewHeight()
         updatePreferredContentSize()
     }
 
@@ -2935,6 +2990,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             }
         }
         refreshImageStripVisibility()
+        updateTextViewHeight()
     }
 
     /// 回填后原引用的有效 id（setup 时 content 为空的引用视为已删、不算原引用，
@@ -3174,6 +3230,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                 self.updatePublishState()
                 self.refreshExtras()
                 self.updateDraftPillCount()
+                self.updateTextViewHeight()
                 self.updatePreferredContentSize()
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) { [weak self] in
                     guard let self = self, self.view.window != nil else { return }
