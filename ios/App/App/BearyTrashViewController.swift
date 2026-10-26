@@ -51,19 +51,23 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate {
     private let contentWrap = UIView()
     private let contentStack = UIStackView()
     private let headerRow = UIStackView()
+    // noteRow is a property (not a buildViews local) so renderStateViews can
+    // change the spacing after it for the empty state (see B-G14 below).
+    private let noteRow = UIStackView()
     private let titleLabel = UILabel()
     private let closeButton = BearyHit44Button(type: .custom)
     private let noteLabel = UILabel()
     private let listStack = UIStackView()
     private let loadingView = UIActivityIndicatorView(style: .medium)
     private let emptyWrap = UIStackView()
+    // B-G14: trash empty-state 40pt top pad (web trashEmptyHtml padding-top:40).
+    private let emptyTopSpacer = UIView()
     private let emptyIconView = UIImageView()
     private let emptyLabel = UILabel()
     private let failureWrap = UIStackView()
     private let failureLabel = UILabel()
     private let retryButton = UIButton(type: .custom)
     private let moreSpinner = UIActivityIndicatorView(style: .medium)
-    private let endLabel = UILabel()
     private let loginWrap = UIStackView()
     private let loginButton = UIButton(type: .custom)
     private let toastWrap = UIView()
@@ -159,7 +163,7 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate {
         )
         // I12：说明行前加 13px 时钟图标（beary.html 官方 beary-clock symbol，
         // 已按 icon_* 管线渲染为 icon_clock 资产；取不到时只留文字，不自拼字形）。
-        let noteRow = UIStackView()
+        // (noteRow is now a property; configured here as before.)
         noteRow.axis = .horizontal
         noteRow.spacing = 4
         noteRow.alignment = .top
@@ -188,6 +192,8 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate {
         if let trashImage = BearyIconImages.image(named: "icon_trash", pointSize: 36) {
             emptyIconView.image = trashImage
         }
+        // 空态图标防压扁：UIImageView 默认 scaleToFill，显式 aspectFit（框已是 36×36 方形）。
+        emptyIconView.contentMode = .scaleAspectFit
         emptyIconView.tintColor = BearyColors.gray
         emptyLabel.text = "回收站是空的"
         emptyLabel.font = UIFont.systemFont(ofSize: 15)
@@ -213,12 +219,6 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate {
 
         moreSpinner.color = BearyColors.gray
         moreSpinner.isHidden = true
-
-        endLabel.text = "已到底"
-        endLabel.font = UIFont.systemFont(ofSize: 12.5)
-        endLabel.textColor = BearyColors.gray
-        endLabel.textAlignment = .center
-        endLabel.isHidden = true
 
         // W7：401 登录空态（与时间线“先登录 + 去登录”同口径）。
         loginWrap.axis = .vertical
@@ -263,11 +263,15 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate {
         contentStack.addArrangedSubview(noteRow)
         contentStack.addArrangedSubview(listStack)
         contentStack.addArrangedSubview(loadingView)
+        emptyTopSpacer.backgroundColor = .clear
+        emptyTopSpacer.translatesAutoresizingMaskIntoConstraints = false
+        emptyTopSpacer.heightAnchor.constraint(equalToConstant: 40).isActive = true
+        emptyTopSpacer.isHidden = true
+        contentStack.addArrangedSubview(emptyTopSpacer)
         contentStack.addArrangedSubview(emptyWrap)
         contentStack.addArrangedSubview(failureWrap)
         contentStack.addArrangedSubview(loginWrap)
         contentStack.addArrangedSubview(moreSpinner)
-        contentStack.addArrangedSubview(endLabel)
         emptyWrap.addArrangedSubview(emptyIconView)
         emptyWrap.addArrangedSubview(emptyLabel)
         failureWrap.addArrangedSubview(failureLabel)
@@ -387,7 +391,7 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate {
         guard let lastItem = trashItems.last else { return }
         // G18：末项 deletedAt 缺失时服务端无法用 beforeId 单独分页
         //（无 before 时服务端直接回第一页，续拉只会原地打转），
-        // 故 hasMore 置 false 并出“已到底”态，不再静默断流。
+        // 故 hasMore 置 false 结束分页，不再静默断流（B-G14：无尾部文案）。
         guard let lastDeletedAt = lastItem.deletedAt else {
             trashHasMore = false
             renderStateViews()
@@ -448,11 +452,16 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate {
             loadingView.stopAnimating()
         }
         emptyWrap.isHidden = hasItems || trashLoading || trashFirstLoadFailed || trashLoginEmpty
+        emptyTopSpacer.isHidden = emptyWrap.isHidden
+        // B-G14: in empty state the 4pt spacing after noteRow would stack on top
+        // of the 40pt pad (44 total), so empty state uses 0 there and the pad
+        // alone gives exactly 40; non-empty state restores 4.
+        contentStack.setCustomSpacing(emptyWrap.isHidden ? 4 : 0, after: noteRow)
         failureWrap.isHidden = trashFirstLoadFailed == false || trashLoginEmpty
         loginWrap.isHidden = trashLoginEmpty == false
         listStack.isHidden = hasItems == false
-        // G18：“已到底”只在有行、已确认无更多页、且不在加载/失败/登录空态时出现。
-        endLabel.isHidden = hasItems == false || trashHasMore || trashLoading || trashLoadingMore || trashFirstLoadFailed || trashLoginEmpty
+        // B-G14: web trash has no trailing "已到底" footer (the list just ends);
+        // this page no longer renders one.
     }
 
     private func rebuildListRows() {
@@ -539,6 +548,7 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate {
         if let undoImage = BearyIconImages.image(named: "icon_undo", pointSize: 14) {
             restoreButton.setImage(undoImage, for: .normal)
         }
+        restoreButton.imageView?.contentMode = .scaleAspectFit
         restoreButton.tintColor = BearyColors.ink
         restoreButton.titleEdgeInsets = UIEdgeInsets(top: 0, left: 5, bottom: 0, right: 0)
         restoreButton.titleLabel?.font = UIFont.systemFont(ofSize: 13)
@@ -547,7 +557,8 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate {
         restoreButton.layer.cornerRadius = 22
         restoreButton.backgroundColor = BearyColors.bg
         restoreButton.contentEdgeInsets = UIEdgeInsets(top: 7, left: 14, bottom: 7, right: 14)
-        restoreButton.heightAnchor.constraint(greaterThanOrEqualToConstant: 44).isActive = true
+        // B-G14: button fixed height 44 (was >= 44).
+        restoreButton.heightAnchor.constraint(equalToConstant: 44).isActive = true
         restoreButton.addTarget(self, action: #selector(restoreTapped(_:)), for: .touchUpInside)
         // P2-4：照抄点赞钮修法——显式给足实测字宽，否则标题被裁：图宽 + titleEdgeInsets 左 5
         // + 实测标题宽 + contentEdgeInsets 左右各 14；取闲/忙两文案之宽的最大值，两态均不裁。
@@ -567,6 +578,7 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate {
         if let trashImage = BearyIconImages.image(named: "icon_trash", pointSize: 14) {
             purgeButton.setImage(trashImage, for: .normal)
         }
+        purgeButton.imageView?.contentMode = .scaleAspectFit
         purgeButton.tintColor = BearyColors.red
         purgeButton.titleEdgeInsets = UIEdgeInsets(top: 0, left: 5, bottom: 0, right: 0)
         purgeButton.layer.borderWidth = 1
@@ -574,7 +586,8 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate {
         purgeButton.layer.cornerRadius = 22
         purgeButton.backgroundColor = BearyColors.bg
         purgeButton.contentEdgeInsets = UIEdgeInsets(top: 7, left: 14, bottom: 7, right: 14)
-        purgeButton.heightAnchor.constraint(greaterThanOrEqualToConstant: 44).isActive = true
+        // B-G14: button fixed height 44 (was >= 44).
+        purgeButton.heightAnchor.constraint(equalToConstant: 44).isActive = true
         purgeButton.addTarget(self, action: #selector(purgeTapped(_:)), for: .touchUpInside)
         // P2-4：同恢复钮修法——图宽 + titleEdgeInsets 左 5 + 实测标题宽 + contentEdgeInsets 左右各 14，
         // 取闲/忙两文案之宽的最大值，两态均不裁。
@@ -629,13 +642,9 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate {
                 self.setRowButtonBusy(sender, busy: false, busyTitle: "恢复中…", idleTitle: "恢复")
                 switch result {
                 case .success:
-                    // 恢复 toast 按 publish_at 分两句（网页 restoreTrash 口径，保持不变）。
-                    let nowMs = Int(Date().timeIntervalSince1970 * 1000)
-                    if let publishAt = trashValue.publishAt, publishAt > 0, publishAt <= nowMs {
-                        self.showToast(message: "已恢复，日记已公开")
-                    } else {
-                        self.showToast(message: "已恢复为私密")
-                    }
+                    // B-G3: web restoreTrash always toasts "已恢复为私密"; never split
+                    // by publish_at (a restored diary is private, never public).
+                    self.showToast(message: "已恢复为私密")
                     self.removeRow(identifier: identifier)
                     self.onRestored?(trashValue)
                 case .failure(let error):

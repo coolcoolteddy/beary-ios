@@ -3,7 +3,7 @@ import UIKit
 // ===== beary 原生个人主页（只此一文件；不改 BearyAPI.swift、不改 SceneDelegate、不改 pbxproj）=====
 // 对照源（均已先读核实）：
 // - 网页版 ~/workspace/teddy_site/beary.html 的个人主页形态：封面带 .pf-hero 180、
-//   cover-on 时头像 -52 半压 + 3.5 边、头像 84、名字 23/800、handle 13 灰、
+//   cover-on 时头像 -28 半压 + 3.5 边、头像 84、名字 23/800、handle 13 灰、
 //   meta 13 灰（上距 8）、stats 13 灰（上距 13、gap 22、数字 16 ink）、
 //   tabs（margin 16/20/0、tab padding 9/10、14/700、选中 ink + 2px ink 下划线）、
 //   他人模式隐藏编辑资料与收藏页签（网页 PF_MODE 表）。
@@ -468,7 +468,8 @@ class BearyProfileViewController: UIViewController {
         let buttonValue = UIButton(type: .system)
         buttonValue.translatesAutoresizingMaskIntoConstraints = false
         // I7：返回改图标钮（网页 pfBack 用 beary-back；icon_back 由该 symbol 渲染）。
-        buttonValue.setImage(BearyIconImages.image(named: "icon_back", pointSize: 19), for: .normal)
+        // F20：个人主页自有顶栏（本文件内，非 SceneDelegate）——返回 19 → 24。
+        buttonValue.setImage(BearyIconImages.image(named: "icon_back", pointSize: 24), for: .normal)
         buttonValue.tintColor = BearyColors.ink
         buttonValue.accessibilityLabel = "返回"
         buttonValue.addTarget(self, action: #selector(backButtonTapped), for: .touchUpInside)
@@ -478,7 +479,8 @@ class BearyProfileViewController: UIViewController {
     private let topNameLabel: UILabel = {
         let labelValue = UILabel()
         labelValue.translatesAutoresizingMaskIntoConstraints = false
-        labelValue.font = UIFont.systemFont(ofSize: 16, weight: .bold)
+        // F20：顶栏名 16/700 → 17/800。
+        labelValue.font = UIFont.systemFont(ofSize: 17, weight: .heavy)
         labelValue.textColor = BearyColors.ink
         labelValue.textAlignment = .center
         labelValue.text = "—"
@@ -488,7 +490,8 @@ class BearyProfileViewController: UIViewController {
     private lazy var topShareButton: UIButton = {
         let buttonValue = UIButton(type: .system)
         buttonValue.translatesAutoresizingMaskIntoConstraints = false
-        buttonValue.setImage(BearyIconImages.image(named: "icon_share", pointSize: 21), for: .normal)
+        // F20：顶栏分享 21 → 24。
+        buttonValue.setImage(BearyIconImages.image(named: "icon_share", pointSize: 24), for: .normal)
         buttonValue.tintColor = BearyColors.ink
         buttonValue.addTarget(self, action: #selector(topShareButtonTapped), for: .touchUpInside)
         return buttonValue
@@ -629,9 +632,27 @@ class BearyProfileViewController: UIViewController {
     }()
 
     private lazy var coverHeightConstraint: NSLayoutConstraint = coverImageView.heightAnchor.constraint(equalToConstant: 0)
-    private lazy var avatarTopWithCoverConstraint: NSLayoutConstraint = avatarImageView.topAnchor.constraint(equalTo: coverImageView.bottomAnchor, constant: -52)
+    /// 头像上压量（Li 2026-10-26 真机观感定）：-28，头像下沿 = 封面下沿 +56，
+    /// 按钮（高 40、底对齐头像底）顶部 = 封面下沿 +16，完全落到封面下方。
+    /// 注意：此组数值与网页（-52/按钮压封面 8pt）拉开差距，系 Li 亲眼定版，勿以“对齐网页”改回。
+    private lazy var avatarTopWithCoverConstraint: NSLayoutConstraint = avatarImageView.topAnchor.constraint(equalTo: coverImageView.bottomAnchor, constant: -28)
     private lazy var avatarTopWithoutCoverConstraint: NSLayoutConstraint = avatarImageView.topAnchor.constraint(equalTo: headerView.topAnchor, constant: 20)
     private lazy var tabsTopConstraint: NSLayoutConstraint = tabsContainer.topAnchor.constraint(equalTo: badgesContainer.bottomAnchor, constant: 16)
+    /// F17：头模块间距链（网页口径：墙 margin-top 10、徽章架 margin-top 16、标签 margin-top 16）。
+    /// 隐藏容器仍占顶部间隙是旧 bug：updateHeaderSpacing 在每次强制布局前按显隐把
+    /// 隐藏项的顶部间隙归零，使标签距上一可见元素恒为 16。
+    /// F18：无 handle 时日历图标改贴头左缘 28（网页 pf-meta flex 口径：handle
+    /// display:none 时日历即首项）；有 handle 时贴 handle 后 5。两约束二选一。
+    private lazy var joinedIconLeadingWithHandleConstraint: NSLayoutConstraint = joinedIconView.leadingAnchor.constraint(equalTo: handleLabel.trailingAnchor, constant: 5)
+    private lazy var joinedIconLeadingWithoutHandleConstraint: NSLayoutConstraint = joinedIconView.leadingAnchor.constraint(equalTo: headerView.leadingAnchor, constant: 28)
+    private lazy var wallTopConstraint: NSLayoutConstraint = wallContainer.topAnchor.constraint(equalTo: publicCountLabel.bottomAnchor, constant: 10)
+    private lazy var badgesTopConstraint: NSLayoutConstraint = badgesContainer.topAnchor.constraint(equalTo: wallContainer.bottomAnchor, constant: 16)
+
+    private func updateHeaderSpacing() {
+        wallTopConstraint.constant = wallContainer.isHidden ? 0 : 10
+        badgesTopConstraint.constant = badgesContainer.isHidden ? 0 : 16
+        tabsTopConstraint.constant = 16
+    }
     private lazy var wallHeightConstraint: NSLayoutConstraint = wallContainer.heightAnchor.constraint(equalToConstant: 0)
     private lazy var badgesHeightConstraint: NSLayoutConstraint = badgesContainer.heightAnchor.constraint(equalToConstant: 0)
     private lazy var topBarHeightConstraint: NSLayoutConstraint = topBarView.heightAnchor.constraint(equalToConstant: 0)
@@ -884,10 +905,12 @@ class BearyProfileViewController: UIViewController {
             nameLabel.topAnchor.constraint(equalTo: avatarImageView.bottomAnchor, constant: 14),
             nameLabel.leadingAnchor.constraint(equalTo: headerView.leadingAnchor, constant: 28),
             badgeImageView.leadingAnchor.constraint(equalTo: nameLabel.trailingAnchor, constant: 8),
-            badgeImageView.centerYAnchor.constraint(equalTo: nameLabel.topAnchor, constant: 14),
+            // F16：徽章 / 皇冠改贴名字整块中心（网页 .pf-name flex align-items:center 口径），
+            // 不再贴首行中心；单行时与旧 top+14 差 0.4pt 内，已齐。
+            badgeImageView.centerYAnchor.constraint(equalTo: nameLabel.centerYAnchor),
             badgeImageView.widthAnchor.constraint(equalToConstant: 23),
             badgeImageView.heightAnchor.constraint(equalToConstant: 23),
-            crownImageView.centerYAnchor.constraint(equalTo: nameLabel.topAnchor, constant: 14),
+            crownImageView.centerYAnchor.constraint(equalTo: nameLabel.centerYAnchor),
             crownImageView.widthAnchor.constraint(equalToConstant: 23),
             crownImageView.heightAnchor.constraint(equalToConstant: 23),
             crownImageView.trailingAnchor.constraint(lessThanOrEqualTo: headerView.trailingAnchor, constant: -28),
@@ -896,11 +919,10 @@ class BearyProfileViewController: UIViewController {
             handleLabel.leadingAnchor.constraint(equalTo: headerView.leadingAnchor, constant: 28),
             // I7：加入时间前补 14px 日历图标，图标与加入时间同显隐（见 applyProfile）。
             joinedIconView.centerYAnchor.constraint(equalTo: handleLabel.centerYAnchor),
-            joinedIconView.leadingAnchor.constraint(equalTo: handleLabel.trailingAnchor, constant: 5),
-            joinedIconView.widthAnchor.constraint(equalToConstant: 14),
-            joinedIconView.heightAnchor.constraint(equalToConstant: 14),
+            joinedIconLeadingWithHandleConstraint,
             joinedLabel.centerYAnchor.constraint(equalTo: handleLabel.centerYAnchor),
-            joinedLabel.leadingAnchor.constraint(equalTo: joinedIconView.trailingAnchor, constant: 4),
+            // F18：图标与加入时间 gap 4 → 5（网页 pf-meta gap:5px）。
+            joinedLabel.leadingAnchor.constraint(equalTo: joinedIconView.trailingAnchor, constant: 5),
             joinedLabel.trailingAnchor.constraint(lessThanOrEqualTo: headerView.trailingAnchor, constant: -28),
 
             emailLabel.topAnchor.constraint(equalTo: handleLabel.bottomAnchor, constant: 8),
@@ -919,7 +941,7 @@ class BearyProfileViewController: UIViewController {
 
             wallContainer.leadingAnchor.constraint(equalTo: headerView.leadingAnchor, constant: 20),
             wallContainer.trailingAnchor.constraint(equalTo: headerView.trailingAnchor, constant: -20),
-            wallContainer.topAnchor.constraint(equalTo: publicCountLabel.bottomAnchor, constant: 16),
+            wallTopConstraint,
             // 网页移动端两行卡片：第一行标题左、总数右；第二行表情条独占整行横滑、右端截断。
             wallTitleLabel.leadingAnchor.constraint(equalTo: wallContainer.leadingAnchor, constant: 14),
             wallTitleLabel.topAnchor.constraint(equalTo: wallContainer.topAnchor, constant: 12),
@@ -938,7 +960,7 @@ class BearyProfileViewController: UIViewController {
 
             badgesContainer.leadingAnchor.constraint(equalTo: headerView.leadingAnchor, constant: 20),
             badgesContainer.trailingAnchor.constraint(equalTo: headerView.trailingAnchor, constant: -20),
-            badgesContainer.topAnchor.constraint(equalTo: wallContainer.bottomAnchor, constant: 12),
+            badgesTopConstraint,
             badgesTitleLabel.leadingAnchor.constraint(equalTo: badgesContainer.leadingAnchor, constant: 14),
             badgesTitleLabel.topAnchor.constraint(equalTo: badgesContainer.topAnchor, constant: 12),
             badgesStack.leadingAnchor.constraint(equalTo: badgesContainer.leadingAnchor, constant: 14),
@@ -998,6 +1020,8 @@ class BearyProfileViewController: UIViewController {
     }
 
     private func layoutHeaderForced(widthValue: CGFloat) {
+        // F17：每次强制布局前先按显隐刷新间距链（隐藏容器间隙归零）。
+        updateHeaderSpacing()
         headerLaidOutWidth = widthValue
         headerView.frame = CGRect(x: 0, y: 0, width: widthValue, height: 1)
         headerView.setNeedsLayout()
@@ -1041,6 +1065,11 @@ class BearyProfileViewController: UIViewController {
         applyTabSelection()
         applyEmailRow()
         updateTopBarVisibility()
+        // F17：他人主页徽章架在此隐藏，须立即重算间距链（否则标签仍按
+        // 徽章架可见时的间隙下偏）；宽未出时跳过，首布局会补算。
+        if headerWidthValue > 0 {
+            layoutHeaderForced(widthValue: headerWidthValue)
+        }
     }
 
     private func applyTabSelection() {
@@ -1238,15 +1267,21 @@ class BearyProfileViewController: UIViewController {
         if let handle = profileValue.handle, !handle.isEmpty {
             handleLabel.text = "@" + handle
             handleLabel.isHidden = false
+            joinedIconLeadingWithHandleConstraint.isActive = true
+            joinedIconLeadingWithoutHandleConstraint.isActive = false
         } else {
             handleLabel.text = nil
             handleLabel.isHidden = true
+            // F18：无 handle 时日历图标贴头左缘，不再沿用 handle 后 5pt 的约束右偏。
+            joinedIconLeadingWithHandleConstraint.isActive = false
+            joinedIconLeadingWithoutHandleConstraint.isActive = true
         }
         if let createdMs = profileValue.createdAt, createdMs > 0 {
             let dateValue = Date(timeIntervalSince1970: TimeInterval(createdMs) / 1000.0)
             let formatter = DateFormatter()
             formatter.locale = Locale(identifier: "zh_CN")
-            formatter.dateFormat = "yyyy年M月加入"
+            // F18：网页 "2026 年 10 月加入" 口径——年 / 月前后带空格。
+            formatter.dateFormat = "yyyy 年 M 月加入"
             joinedLabel.text = formatter.string(from: dateValue)
             joinedLabel.isHidden = false
             joinedIconView.isHidden = false
@@ -1495,6 +1530,7 @@ class BearyProfileViewController: UIViewController {
             nameLabelValue.textAlignment = .center
             nameLabelValue.text = BearyBadgeImages.displayName(for: key)
             let cellStack = UIStackView(arrangedSubviews: [imageViewValue, nameLabelValue])
+            cellStack.translatesAutoresizingMaskIntoConstraints = false
             cellStack.axis = .vertical
             cellStack.alignment = .center
             cellStack.spacing = 4
@@ -1506,6 +1542,10 @@ class BearyProfileViewController: UIViewController {
             buttonValue.layer.borderColor = BearyColors.ink.cgColor
             buttonValue.layer.cornerRadius = 12
             buttonValue.addTarget(self, action: #selector(badgeButtonTapped(_:)), for: .touchUpInside)
+            // 钮宽由下文行内实测宽度约束固定（见行循环），不靠 hugging 猜：
+            // 钮自身无 title/image、intrinsic 宽为 0，hugging required 会与
+            // cellStack 的 required 宽度约束冲突，故只留 compression required 防挤压。
+            buttonValue.setContentCompressionResistancePriority(.required, for: .horizontal)
             NSLayoutConstraint.activate([
                 imageViewValue.widthAnchor.constraint(equalToConstant: 44),
                 imageViewValue.heightAnchor.constraint(equalToConstant: 44),
@@ -1537,7 +1577,18 @@ class BearyProfileViewController: UIViewController {
                 usedWidth += 8
             }
             currentRow?.addArrangedSubview(buttonValue)
+            // 钮宽定死为实测内容宽：单枚时行 stack（.fill）无法再把它拉满整行，
+            // 剩余宽度由行尾垫片吃掉；钮高仍由 cellStack（图 44 + 名 + 内边距）撑起。
+            buttonValue.widthAnchor.constraint(equalToConstant: buttonWidth).isActive = true
             usedWidth += buttonWidth
+        }
+        // 行尾垫片：每行末尾补一个最低 hugging 的空 view，吃掉行内剩余宽度，
+        // 单枚徽章不再被 .fill 行拉满整行；换行丈量在垫片加入前已完成，不受影响。
+        for case let row as UIStackView in badgesStack.arrangedSubviews {
+            let spacer = UIView()
+            spacer.translatesAutoresizingMaskIntoConstraints = false
+            spacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
+            row.addArrangedSubview(spacer)
         }
         badgesContainer.isHidden = false
         badgesHeightConstraint.isActive = false
@@ -2588,12 +2639,20 @@ private class BearyProfileEntryCell: UITableViewCell {
     }()
 
     private lazy var titleStack: UIStackView = {
-        let stackValue = UIStackView(arrangedSubviews: [nameLabel, rowBadgeImageView, rowCrownImageView, timeLabel, weatherImageView, moodStack])
+        let stackValue = UIStackView(arrangedSubviews: [nameLabel, rowBadgeImageView, rowCrownImageView, titleSpacerLabel, timeLabel, weatherImageView, moodStack])
         stackValue.translatesAutoresizingMaskIntoConstraints = false
         stackValue.axis = .horizontal
         stackValue.spacing = 8
         stackValue.alignment = .center
         return stackValue
+    }()
+
+    /// 标题行弹性垫片：与 Feed 标题行同款——横向 hugging/compression 均为最低（1），
+    /// 独吞剩余宽度，使徽章/皇冠紧贴名字、日期留在右缘；空间不足时垫片先缩到 0。
+    private let titleSpacerLabel: UILabel = {
+        let labelValue = UILabel()
+        labelValue.translatesAutoresizingMaskIntoConstraints = false
+        return labelValue
     }()
 
     private let bodyLabel: UILabel = {
@@ -2788,6 +2847,8 @@ private class BearyProfileEntryCell: UITableViewCell {
         ].compactMap { $0 })
         nameLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         timeLabel.setContentCompressionResistancePriority(.required, for: .horizontal)
+        titleSpacerLabel.setContentHuggingPriority(UILayoutPriority(1), for: .horizontal)
+        titleSpacerLabel.setContentCompressionResistancePriority(UILayoutPriority(1), for: .horizontal)
         rowBadgeImageView.setContentCompressionResistancePriority(.required, for: .horizontal)
         rowCrownImageView.setContentCompressionResistancePriority(.required, for: .horizontal)
         weatherImageView.setContentCompressionResistancePriority(.required, for: .horizontal)

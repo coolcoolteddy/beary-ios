@@ -125,7 +125,8 @@ class BearyEditProfileViewController: UIViewController {
         imageViewValue.backgroundColor = BearyColors.faint
         imageViewValue.contentMode = .scaleAspectFill
         imageViewValue.clipsToBounds = true
-        imageViewValue.layer.cornerRadius = 14
+        // F14：网页 ed-banner 口径——180 高、无圆角。
+        imageViewValue.layer.cornerRadius = 0
         return imageViewValue
     }()
 
@@ -133,9 +134,8 @@ class BearyEditProfileViewController: UIViewController {
         return makeSecondaryButton(title: "更换封面", action: #selector(changeCoverButtonTapped))
     }()
 
-    private lazy var removeCoverButton: UIButton = {
-        return makeSecondaryButton(title: "移除封面", action: #selector(removeCoverButtonTapped))
-    }()
+    /// F14：头像包容器（80 半压封面 + 右下角相机角标，网页 ed-ava 口径）。
+    private let avatarWrap = UIView()
 
     private let avatarImageView: UIImageView = {
         let imageViewValue = UIImageView()
@@ -143,25 +143,56 @@ class BearyEditProfileViewController: UIViewController {
         imageViewValue.backgroundColor = BearyColors.faint
         imageViewValue.contentMode = .scaleAspectFill
         imageViewValue.clipsToBounds = true
-        imageViewValue.layer.cornerRadius = 42
+        imageViewValue.layer.cornerRadius = 40
         return imageViewValue
     }()
 
-    private lazy var changeAvatarButton: UIButton = {
-        return makeSecondaryButton(title: "更换头像", action: #selector(changeAvatarButtonTapped))
+    /// F14：相机角标（网页 ed-ava-cam 口径：27 圆、ink 底、2pt bg 边、内 14 相机图）。
+    private let avatarCamBadge: UIView = {
+        let badge = UIView()
+        badge.translatesAutoresizingMaskIntoConstraints = false
+        badge.backgroundColor = BearyColors.ink
+        badge.layer.cornerRadius = 13.5
+        badge.layer.borderWidth = 2
+        badge.layer.borderColor = BearyColors.bg.cgColor
+        badge.clipsToBounds = true
+        badge.isUserInteractionEnabled = false
+        let icon = UIImageView()
+        icon.translatesAutoresizingMaskIntoConstraints = false
+        icon.image = BearyIconImages.image(named: "icon_camera", pointSize: 14)
+        icon.tintColor = BearyColors.bg
+        icon.contentMode = .scaleAspectFit
+        badge.addSubview(icon)
+        NSLayoutConstraint.activate([
+            icon.centerXAnchor.constraint(equalTo: badge.centerXAnchor),
+            icon.centerYAnchor.constraint(equalTo: badge.centerYAnchor),
+            icon.widthAnchor.constraint(equalToConstant: 14),
+            icon.heightAnchor.constraint(equalToConstant: 14),
+        ])
+        return badge
+    }()
+
+    /// F14：头像本身就是更换入口（网页 edAvaBtn 口径）；旧并排「更换头像」文字钮取消。
+    private lazy var avatarTapButton: UIButton = {
+        let buttonValue = UIButton(type: .custom)
+        buttonValue.translatesAutoresizingMaskIntoConstraints = false
+        buttonValue.addTarget(self, action: #selector(avatarButtonTapped), for: .touchUpInside)
+        buttonValue.accessibilityLabel = "更换头像"
+        return buttonValue
     }()
 
     private let nameField: UITextField = {
         let fieldValue = UITextField()
         fieldValue.translatesAutoresizingMaskIntoConstraints = false
-        fieldValue.font = UIFont.systemFont(ofSize: 15)
+        // F15：网页 ed-rinput 口径——16 字、无边框矩形框；占位文案同网页。
+        fieldValue.font = UIFont.systemFont(ofSize: 16)
         fieldValue.textColor = BearyColors.ink
         // 占位色走 BearyColors.gray（与登录/邀请页 attributedPlaceholder 同口径）。
-        fieldValue.attributedPlaceholder = NSAttributedString(string: "名字", attributes: [
+        fieldValue.attributedPlaceholder = NSAttributedString(string: "给自己起个名字", attributes: [
             .foregroundColor: BearyColors.gray,
-            .font: UIFont.systemFont(ofSize: 15),
+            .font: UIFont.systemFont(ofSize: 16),
         ])
-        fieldValue.borderStyle = .roundedRect
+        fieldValue.borderStyle = .none
         fieldValue.autocorrectionType = .no
         return fieldValue
     }()
@@ -169,7 +200,7 @@ class BearyEditProfileViewController: UIViewController {
     private let handlePrefixLabel: UILabel = {
         let labelValue = UILabel()
         labelValue.translatesAutoresizingMaskIntoConstraints = false
-        labelValue.font = UIFont.systemFont(ofSize: 15)
+        labelValue.font = UIFont.systemFont(ofSize: 16)
         labelValue.textColor = BearyColors.gray
         labelValue.text = "@"
         return labelValue
@@ -178,28 +209,81 @@ class BearyEditProfileViewController: UIViewController {
     private let handleField: UITextField = {
         let fieldValue = UITextField()
         fieldValue.translatesAutoresizingMaskIntoConstraints = false
-        fieldValue.font = UIFont.systemFont(ofSize: 15)
+        fieldValue.font = UIFont.systemFont(ofSize: 16)
         fieldValue.textColor = BearyColors.ink
         // 占位色走 BearyColors.gray（与登录/邀请页 attributedPlaceholder 同口径）。
-        fieldValue.attributedPlaceholder = NSAttributedString(string: "用户名", attributes: [
+        fieldValue.attributedPlaceholder = NSAttributedString(string: "小写字母、数字或下划线", attributes: [
             .foregroundColor: BearyColors.gray,
-            .font: UIFont.systemFont(ofSize: 15),
+            .font: UIFont.systemFont(ofSize: 16),
         ])
-        fieldValue.borderStyle = .roundedRect
+        fieldValue.borderStyle = .none
         fieldValue.autocapitalizationType = .none
         fieldValue.autocorrectionType = .no
         return fieldValue
     }()
 
+    /// F15：网页 ed-subnote 口径——12 灰、仅「改名后 7 天内不能再改」一行；
+    /// 旧三规则合并长提示取消（格式规则改由占位文案 + 保存校验承担）。
     private let hintLabel: UILabel = {
         let labelValue = UILabel()
         labelValue.translatesAutoresizingMaskIntoConstraints = false
-        labelValue.font = UIFont.systemFont(ofSize: 13)
+        labelValue.font = UIFont.systemFont(ofSize: 12)
         labelValue.textColor = BearyColors.gray
         labelValue.numberOfLines = 0
         labelValue.lineBreakMode = .byCharWrapping
-        labelValue.text = "用户名 3–20 位小写字母、数字或下划线；改名后 7 天内不能再改。名字最多 30 个字。"
+        labelValue.text = "改名后 7 天内不能再改"
         return labelValue
+    }()
+
+    // MARK: - F12 行（主页链接 / 邮箱 / 账户与安全；id 与邮箱由 /me 补）
+
+    /// 账户与安全的容器回调；容器未接线时页内模态兜底（见 openAccountPage）。
+    var onOpenAccount: (() -> Void)?
+
+    /// /me 补到的用户 id（主页链接用 /beary/u/<id> 口径，网页 edCopyLink 同款）。
+    private var fetchedUserId: Int?
+
+    private let emailLabel: UILabel = {
+        let labelValue = UILabel()
+        labelValue.translatesAutoresizingMaskIntoConstraints = false
+        labelValue.font = UIFont.systemFont(ofSize: 16)
+        labelValue.textColor = BearyColors.gray
+        labelValue.numberOfLines = 1
+        labelValue.lineBreakMode = .byTruncatingTail
+        labelValue.text = "–"
+        return labelValue
+    }()
+
+    private let linkLabel: UILabel = {
+        let labelValue = UILabel()
+        labelValue.translatesAutoresizingMaskIntoConstraints = false
+        labelValue.font = UIFont.systemFont(ofSize: 12.5)
+        labelValue.textColor = BearyColors.gray
+        labelValue.numberOfLines = 1
+        labelValue.lineBreakMode = .byTruncatingTail
+        labelValue.text = "主页链接 teddyhn.com/beary/@用户名"
+        return labelValue
+    }()
+
+    private lazy var copyLinkButton: UIButton = {
+        let buttonValue = UIButton(type: .system)
+        buttonValue.translatesAutoresizingMaskIntoConstraints = false
+        buttonValue.setTitle("复制", for: .normal)
+        buttonValue.setTitleColor(BearyColors.ink, for: .normal)
+        buttonValue.titleLabel?.font = UIFont.systemFont(ofSize: 13)
+        buttonValue.contentEdgeInsets = UIEdgeInsets(top: 0, left: 14, bottom: 0, right: 14)
+        buttonValue.layer.borderWidth = 1
+        buttonValue.layer.borderColor = BearyColors.line.cgColor
+        buttonValue.layer.cornerRadius = 16
+        buttonValue.addTarget(self, action: #selector(copyLinkButtonTapped), for: .touchUpInside)
+        return buttonValue
+    }()
+
+    private lazy var accountRowButton: UIButton = {
+        let buttonValue = UIButton(type: .custom)
+        buttonValue.translatesAutoresizingMaskIntoConstraints = false
+        buttonValue.addTarget(self, action: #selector(accountRowButtonTapped), for: .touchUpInside)
+        return buttonValue
     }()
 
     private func makeSecondaryButton(title: String, action: Selector) -> UIButton {
@@ -239,12 +323,32 @@ class BearyEditProfileViewController: UIViewController {
         if let coverPath = initialCoverUrl, let coverURLValue = BearyImageURLs.avatarURL(coverPath) {
             coverImageView.bearySetImage(url: coverURLValue, placeholder: nil)
         }
-        // sweep 新发现：无封面时“移除封面”也常驻，点它除改标记外无任何可见
-        // 变化（网页编辑页本就没有移除入口）。按有无初始封面决定初始显隐，
-        // 换图/移除时同步改（见 removeCoverButtonTapped 与图片选择回调），
-        // 不改保存逻辑：移除仍走原有 cover=null 路径。
-        removeCoverButton.isHidden = (initialCoverUrl ?? "").isEmpty
+        // F14：网页编辑页本就没有移除封面入口，移除钮整组删除（保存逻辑的
+        // cover=null 路径保留作将来入口复用，但本页不再提供移除操作）。
         updateDynamicLayerColors()
+        // F12：id 与邮箱不在 init 入参里（不改容器调用点），页内调既有 /me 补齐。
+        BearyAPI.shared.fetchMe { [weak self] result in
+            DispatchQueue.main.async {
+                guard let strongSelf = self else { return }
+                if case .success(let user) = result, let userValue = user {
+                    strongSelf.fetchedUserId = userValue.id
+                    strongSelf.emailLabel.text = userValue.email ?? "–"
+                    strongSelf.updateLinkRow()
+                }
+            }
+        }
+    }
+
+    /// F12：主页链接文案（网页 edFillForm/edCopyLink 口径：有 id 用 /u/id，
+    /// 无 id 回退 @handle，再无回退 @用户名；复制只认 /u/id，无 id 时先登录）。
+    private func updateLinkRow() {
+        if let id = fetchedUserId {
+            linkLabel.text = "主页链接 teddyhn.com/beary/u/\(id)"
+        } else if !effectiveHandle.isEmpty {
+            linkLabel.text = "主页链接 teddyhn.com/beary/@\(effectiveHandle)"
+        } else {
+            linkLabel.text = "主页链接 teddyhn.com/beary/@用户名"
+        }
     }
 
     override func viewDidLayoutSubviews() {
@@ -260,8 +364,46 @@ class BearyEditProfileViewController: UIViewController {
 
     private func updateDynamicLayerColors() {
         changeCoverButton.layer.borderColor = BearyColors.line.cgColor
-        removeCoverButton.layer.borderColor = BearyColors.line.cgColor
-        changeAvatarButton.layer.borderColor = BearyColors.line.cgColor
+        copyLinkButton.layer.borderColor = BearyColors.line.cgColor
+        avatarCamBadge.layer.borderColor = BearyColors.bg.cgColor
+    }
+
+    /// F15：表单标签（网页 ed-rlabel 口径：宽 58、15/600）。
+    private func makeFormLabel(_ text: String) -> UILabel {
+        let labelValue = UILabel()
+        labelValue.translatesAutoresizingMaskIntoConstraints = false
+        labelValue.font = UIFont.systemFont(ofSize: 15, weight: .semibold)
+        labelValue.textColor = BearyColors.ink
+        labelValue.text = text
+        NSLayoutConstraint.activate([
+            labelValue.widthAnchor.constraint(equalToConstant: 58),
+        ])
+        return labelValue
+    }
+
+    /// F15：表单行包容器（网页 ed-row 口径：上下 15 内边距）。
+    private func makeFormRowWrap(_ inner: UIView) -> UIView {
+        let wrap = UIView()
+        wrap.translatesAutoresizingMaskIntoConstraints = false
+        inner.translatesAutoresizingMaskIntoConstraints = false
+        wrap.addSubview(inner)
+        NSLayoutConstraint.activate([
+            inner.topAnchor.constraint(equalTo: wrap.topAnchor, constant: 15),
+            inner.leadingAnchor.constraint(equalTo: wrap.leadingAnchor),
+            inner.trailingAnchor.constraint(equalTo: wrap.trailingAnchor),
+            inner.bottomAnchor.constraint(equalTo: wrap.bottomAnchor, constant: -15),
+        ])
+        return wrap
+    }
+
+    private func makeFormSeparator() -> UIView {
+        let separator = UIView()
+        separator.translatesAutoresizingMaskIntoConstraints = false
+        separator.backgroundColor = BearyColors.line
+        NSLayoutConstraint.activate([
+            separator.heightAnchor.constraint(equalToConstant: 1),
+        ])
+        return separator
     }
 
     private func buildLayout() {
@@ -271,27 +413,177 @@ class BearyEditProfileViewController: UIViewController {
         topRow.translatesAutoresizingMaskIntoConstraints = false
         topRow.axis = .horizontal
         topRow.alignment = .center
-        let coverButtonsRow = UIStackView(arrangedSubviews: [changeCoverButton, removeCoverButton])
-        coverButtonsRow.translatesAutoresizingMaskIntoConstraints = false
-        coverButtonsRow.axis = .horizontal
-        coverButtonsRow.spacing = 8
-        let avatarRow = UIStackView(arrangedSubviews: [avatarImageView, changeAvatarButton])
-        avatarRow.translatesAutoresizingMaskIntoConstraints = false
-        avatarRow.axis = .horizontal
-        avatarRow.spacing = 12
-        avatarRow.alignment = .center
-        let handleRow = UIStackView(arrangedSubviews: [handlePrefixLabel, handleField])
+        // F14：头像包容器（80 头像 + 相机角标 + 全幅点按），封面下半压 40。
+        avatarWrap.translatesAutoresizingMaskIntoConstraints = false
+        avatarWrap.addSubview(avatarImageView)
+        avatarWrap.addSubview(avatarCamBadge)
+        avatarWrap.addSubview(avatarTapButton)
+        NSLayoutConstraint.activate([
+            avatarImageView.topAnchor.constraint(equalTo: avatarWrap.topAnchor),
+            avatarImageView.leadingAnchor.constraint(equalTo: avatarWrap.leadingAnchor),
+            avatarImageView.widthAnchor.constraint(equalToConstant: 80),
+            avatarImageView.heightAnchor.constraint(equalToConstant: 80),
+            avatarImageView.bottomAnchor.constraint(equalTo: avatarWrap.bottomAnchor),
+            avatarCamBadge.widthAnchor.constraint(equalToConstant: 27),
+            avatarCamBadge.heightAnchor.constraint(equalToConstant: 27),
+            avatarCamBadge.trailingAnchor.constraint(equalTo: avatarWrap.leadingAnchor, constant: 80 + 2),
+            avatarCamBadge.bottomAnchor.constraint(equalTo: avatarWrap.bottomAnchor, constant: 2),
+            avatarTapButton.topAnchor.constraint(equalTo: avatarWrap.topAnchor),
+            avatarTapButton.leadingAnchor.constraint(equalTo: avatarWrap.leadingAnchor),
+            avatarTapButton.trailingAnchor.constraint(equalTo: avatarImageView.trailingAnchor),
+            avatarTapButton.bottomAnchor.constraint(equalTo: avatarWrap.bottomAnchor),
+        ])
+        // F14：更换封面钮保留（仅移除「移除封面」钮），移到头像行下方。
+        let coverButtonWrap = UIView()
+        coverButtonWrap.translatesAutoresizingMaskIntoConstraints = false
+        coverButtonWrap.addSubview(changeCoverButton)
+        changeCoverButton.translatesAutoresizingMaskIntoConstraints = false
+        NSLayoutConstraint.activate([
+            changeCoverButton.topAnchor.constraint(equalTo: coverButtonWrap.topAnchor),
+            changeCoverButton.leadingAnchor.constraint(equalTo: coverButtonWrap.leadingAnchor),
+            changeCoverButton.bottomAnchor.constraint(equalTo: coverButtonWrap.bottomAnchor),
+            changeCoverButton.heightAnchor.constraint(equalToConstant: 40),
+        ])
+        // F15：表单（网页 ed-form 口径：顶边线 + 58 标签行 + 行分隔线）。
+        let nameRow = UIStackView(arrangedSubviews: [makeFormLabel("昵称"), nameField])
+        nameRow.translatesAutoresizingMaskIntoConstraints = false
+        nameRow.axis = .horizontal
+        nameRow.spacing = 14
+        nameRow.alignment = .center
+        let handleInner = UIStackView(arrangedSubviews: [handlePrefixLabel, handleField])
+        handleInner.translatesAutoresizingMaskIntoConstraints = false
+        handleInner.axis = .horizontal
+        handleInner.spacing = 0
+        handleInner.alignment = .center
+        let handleRow = UIStackView(arrangedSubviews: [makeFormLabel("用户名"), handleInner])
         handleRow.translatesAutoresizingMaskIntoConstraints = false
         handleRow.axis = .horizontal
-        handleRow.spacing = 4
+        handleRow.spacing = 14
         handleRow.alignment = .center
+        // F15：提示行与标签同宽占位（网页 ed-subnote 左 90 = 页边 18 + 标签 58 + 间隙 14；
+        // 本页内容列左 20，故占位取 58 + 间隙 14，与标签结构对齐）。
+        let hintSpacer = UIView()
+        hintSpacer.translatesAutoresizingMaskIntoConstraints = false
+        NSLayoutConstraint.activate([
+            hintSpacer.widthAnchor.constraint(equalToConstant: 58),
+        ])
+        let hintRow = UIStackView(arrangedSubviews: [hintSpacer, hintLabel])
+        hintRow.translatesAutoresizingMaskIntoConstraints = false
+        hintRow.axis = .horizontal
+        hintRow.spacing = 14
+        hintRow.alignment = .center
+        let hintWrap = UIView()
+        hintWrap.translatesAutoresizingMaskIntoConstraints = false
+        hintRow.translatesAutoresizingMaskIntoConstraints = false
+        hintWrap.addSubview(hintRow)
+        NSLayoutConstraint.activate([
+            hintRow.topAnchor.constraint(equalTo: hintWrap.topAnchor, constant: 8),
+            hintRow.leadingAnchor.constraint(equalTo: hintWrap.leadingAnchor),
+            hintRow.trailingAnchor.constraint(equalTo: hintWrap.trailingAnchor),
+            hintRow.bottomAnchor.constraint(equalTo: hintWrap.bottomAnchor),
+        ])
+        // F12：邮箱行（网页 ed-row 口径：标签 + 灰值 + 「不在这里修改」）。
+        let emailSubLabel = UILabel()
+        emailSubLabel.translatesAutoresizingMaskIntoConstraints = false
+        emailSubLabel.font = UIFont.systemFont(ofSize: 12)
+        emailSubLabel.textColor = BearyColors.gray
+        emailSubLabel.text = "不在这里修改"
+        emailSubLabel.setContentHuggingPriority(.required, for: .horizontal)
+        let emailRow = UIStackView(arrangedSubviews: [makeFormLabel("邮箱"), emailLabel, emailSubLabel])
+        emailRow.translatesAutoresizingMaskIntoConstraints = false
+        emailRow.axis = .horizontal
+        emailRow.spacing = 14
+        emailRow.alignment = .center
+        let formStack = UIStackView()
+        formStack.translatesAutoresizingMaskIntoConstraints = false
+        formStack.axis = .vertical
+        formStack.spacing = 0
+        formStack.alignment = .fill
+        formStack.addArrangedSubview(makeFormSeparator())
+        formStack.addArrangedSubview(makeFormRowWrap(nameRow))
+        formStack.addArrangedSubview(makeFormSeparator())
+        formStack.addArrangedSubview(makeFormRowWrap(handleRow))
+        formStack.addArrangedSubview(hintWrap)
+        formStack.addArrangedSubview(makeFormRowWrap(emailRow))
+        formStack.addArrangedSubview(makeFormSeparator())
+        // F12：主页链接行（网页 ed-linkrow 口径：灰文案 + 复制钮）。
+        let linkRow = UIStackView(arrangedSubviews: [linkLabel, copyLinkButton])
+        linkRow.translatesAutoresizingMaskIntoConstraints = false
+        linkRow.axis = .horizontal
+        linkRow.spacing = 10
+        linkRow.alignment = .center
+        let linkWrap = UIView()
+        linkWrap.translatesAutoresizingMaskIntoConstraints = false
+        linkRow.translatesAutoresizingMaskIntoConstraints = false
+        linkWrap.addSubview(linkRow)
+        NSLayoutConstraint.activate([
+            linkRow.topAnchor.constraint(equalTo: linkWrap.topAnchor, constant: 14),
+            linkRow.leadingAnchor.constraint(equalTo: linkWrap.leadingAnchor),
+            linkRow.trailingAnchor.constraint(equalTo: linkWrap.trailingAnchor),
+            linkRow.bottomAnchor.constraint(equalTo: linkWrap.bottomAnchor),
+            copyLinkButton.heightAnchor.constraint(equalToConstant: 32),
+        ])
+        // F12：账户与安全行（网页 ed-link-row 口径：标题 + 副文 + 右 chevron，上下边线）。
+        let accountTitle = UILabel()
+        accountTitle.translatesAutoresizingMaskIntoConstraints = false
+        accountTitle.font = UIFont.systemFont(ofSize: 15, weight: .semibold)
+        accountTitle.textColor = BearyColors.ink
+        accountTitle.text = "账户与安全"
+        let accountSub = UILabel()
+        accountSub.translatesAutoresizingMaskIntoConstraints = false
+        accountSub.font = UIFont.systemFont(ofSize: 13)
+        accountSub.textColor = BearyColors.gray
+        accountSub.text = "登录设备、注销账号"
+        let accountChevron = UIImageView()
+        accountChevron.translatesAutoresizingMaskIntoConstraints = false
+        accountChevron.image = BearyIconImages.image(named: "icon_chevron_right", pointSize: 16)
+        accountChevron.tintColor = BearyColors.gray
+        accountChevron.contentMode = .scaleAspectFit
+        NSLayoutConstraint.activate([
+            accountChevron.widthAnchor.constraint(equalToConstant: 16),
+            accountChevron.heightAnchor.constraint(equalToConstant: 16),
+        ])
+        let accountRow = UIStackView(arrangedSubviews: [accountTitle, accountSub, accountChevron])
+        accountRow.translatesAutoresizingMaskIntoConstraints = false
+        accountRow.axis = .horizontal
+        accountRow.spacing = 8
+        accountRow.alignment = .center
+        let accountWrap = UIView()
+        accountWrap.translatesAutoresizingMaskIntoConstraints = false
+        accountRow.translatesAutoresizingMaskIntoConstraints = false
+        accountWrap.addSubview(accountRow)
+        accountWrap.addSubview(accountRowButton)
+        NSLayoutConstraint.activate([
+            accountRow.topAnchor.constraint(equalTo: accountWrap.topAnchor, constant: 16),
+            accountRow.leadingAnchor.constraint(equalTo: accountWrap.leadingAnchor),
+            accountRow.trailingAnchor.constraint(equalTo: accountWrap.trailingAnchor),
+            accountRow.bottomAnchor.constraint(equalTo: accountWrap.bottomAnchor, constant: -16),
+            accountRowButton.topAnchor.constraint(equalTo: accountWrap.topAnchor),
+            accountRowButton.leadingAnchor.constraint(equalTo: accountWrap.leadingAnchor),
+            accountRowButton.trailingAnchor.constraint(equalTo: accountWrap.trailingAnchor),
+            accountRowButton.bottomAnchor.constraint(equalTo: accountWrap.bottomAnchor),
+        ])
+        let accountStack = UIStackView()
+        accountStack.translatesAutoresizingMaskIntoConstraints = false
+        accountStack.axis = .vertical
+        accountStack.spacing = 0
+        accountStack.alignment = .fill
+        accountStack.addArrangedSubview(makeFormSeparator())
+        accountStack.addArrangedSubview(accountWrap)
+        accountStack.addArrangedSubview(makeFormSeparator())
         contentStack.addArrangedSubview(topRow)
         contentStack.addArrangedSubview(coverImageView)
-        contentStack.addArrangedSubview(coverButtonsRow)
-        contentStack.addArrangedSubview(avatarRow)
-        contentStack.addArrangedSubview(nameField)
-        contentStack.addArrangedSubview(handleRow)
-        contentStack.addArrangedSubview(hintLabel)
+        contentStack.addArrangedSubview(avatarWrap)
+        contentStack.addArrangedSubview(coverButtonWrap)
+        contentStack.addArrangedSubview(formStack)
+        contentStack.addArrangedSubview(linkWrap)
+        contentStack.addArrangedSubview(accountStack)
+        // F14：头像半压封面（网页 ed-ava-row margin-top:-40 口径）。
+        contentStack.setCustomSpacing(-40, after: coverImageView)
+        // F12：表单→链接行距 0（链接包容器自带 14 上边距 = 网页 margin-top:14）；
+        // 链接行→账户行距 26（网页 ed-link-row margin-top:26 口径）。
+        contentStack.setCustomSpacing(0, after: formStack)
+        contentStack.setCustomSpacing(26, after: linkWrap)
         NSLayoutConstraint.activate([
             scrollView.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
             scrollView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
@@ -307,14 +599,9 @@ class BearyEditProfileViewController: UIViewController {
             contentStack.bottomAnchor.constraint(equalTo: scrollView.bottomAnchor, constant: -20),
             closeButton.widthAnchor.constraint(equalToConstant: 44),
             saveButton.widthAnchor.constraint(equalToConstant: 44),
-            coverImageView.heightAnchor.constraint(equalToConstant: 160),
-            changeCoverButton.heightAnchor.constraint(equalToConstant: 40),
-            removeCoverButton.heightAnchor.constraint(equalToConstant: 40),
-            avatarImageView.widthAnchor.constraint(equalToConstant: 84),
-            avatarImageView.heightAnchor.constraint(equalToConstant: 84),
-            changeAvatarButton.heightAnchor.constraint(equalToConstant: 40),
-            nameField.heightAnchor.constraint(equalToConstant: 44),
-            handleField.heightAnchor.constraint(equalToConstant: 44),
+            coverImageView.heightAnchor.constraint(equalToConstant: 180),
+            nameField.heightAnchor.constraint(equalToConstant: 28),
+            handleField.heightAnchor.constraint(equalToConstant: 28),
         ])
         // L2（续）：窄屏时内容列宽 = 屏宽 - 40（750 优先级；宽 ≥821 时被 600 上限压住）。
         let columnWidth = contentStack.widthAnchor.constraint(equalTo: scrollView.frameLayoutGuide.widthAnchor, constant: -40)
@@ -370,9 +657,9 @@ class BearyEditProfileViewController: UIViewController {
         scrollView.verticalScrollIndicatorInsets.bottom = 0
     }
 
-    @objc private func changeAvatarButtonTapped() {
+    @objc private func avatarButtonTapped() {
         pickingAvatar = true
-        lastPickerSourceView = changeAvatarButton
+        lastPickerSourceView = avatarTapButton
         presentImagePicker()
     }
 
@@ -382,12 +669,50 @@ class BearyEditProfileViewController: UIViewController {
         presentImagePicker()
     }
 
-    @objc private func removeCoverButtonTapped() {
-        coverImageView.image = nil
-        pendingCoverDataURL = nil
-        coverChanged = true
-        coverRemoved = true
-        removeCoverButton.isHidden = true
+    /// F12：主页链接复制（网页 edCopyLink 口径：只认 /u/id，无 id 时先登录）。
+    @objc private func copyLinkButtonTapped() {
+        guard let id = fetchedUserId else {
+            presentSimpleAlert(message: "先登录")
+            return
+        }
+        UIPasteboard.general.string = "https://teddyhn.com/beary/u/\(id)"
+        copyLinkButton.setTitle("已复制", for: .normal)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in
+            self?.copyLinkButton.setTitle("复制", for: .normal)
+        }
+    }
+
+    /// F12：账户与安全行（网页 ed-link-row → /account 口径）。
+    @objc private func accountRowButtonTapped() {
+        openAccountPage()
+    }
+
+    private func openAccountPage() {
+        if let handler = onOpenAccount {
+            handler()
+            return
+        }
+        let accountVC = BearySettingsViewController()
+        accountVC.modalPresentationStyle = .fullScreen
+        accountVC.onClose = { [weak accountVC] in
+            accountVC?.dismiss(animated: true)
+        }
+        accountVC.onRequireLogin = { [weak self, weak accountVC] in
+            accountVC?.dismiss(animated: true) {
+                self?.onRequireLogin?()
+            }
+        }
+        accountVC.onAccountDeleted = { [weak self, weak accountVC] in
+            accountVC?.dismiss(animated: true) {
+                self?.onRequireLogin?()
+            }
+        }
+        accountVC.onLoggedOut = { [weak self, weak accountVC] in
+            accountVC?.dismiss(animated: true) {
+                self?.onRequireLogin?()
+            }
+        }
+        present(accountVC, animated: true)
     }
 
     private func presentImagePicker() {
@@ -646,12 +971,13 @@ extension BearyEditProfileViewController: UIImagePickerControllerDelegate, UINav
         if pickingAvatar {
             aspectRatio = 1
         } else {
+            // F14：封面预览高已改 180，裁剪窗比例同步。
             let previewWidth = coverImageView.bounds.width
             if previewWidth > 0 {
-                aspectRatio = previewWidth / 160
+                aspectRatio = previewWidth / 180
             } else {
                 let columnWidth = min(max(view.bounds.width - 40, 0), 600)
-                aspectRatio = columnWidth > 0 ? columnWidth / 160 : 2
+                aspectRatio = columnWidth > 0 ? columnWidth / 180 : 2
             }
         }
         let cropVC = BearyEditProfileCropViewController(image: image, aspectRatio: aspectRatio)
@@ -675,7 +1001,6 @@ extension BearyEditProfileViewController: UIImagePickerControllerDelegate, UINav
                 strongSelf.coverChanged = true
                 strongSelf.coverRemoved = false
                 strongSelf.coverImageView.image = cropped
-                strongSelf.removeCoverButton.isHidden = false
             }
         }
         present(cropVC, animated: !UIAccessibility.isReduceMotionEnabled)
@@ -689,6 +1014,28 @@ extension BearyEditProfileViewController: UIImagePickerControllerDelegate, UINav
 // MARK: - UITextFieldDelegate（U3：名字 Return 切到 handle，handle Return 收键盘）
 
 extension BearyEditProfileViewController: UITextFieldDelegate {
+    /// F13：网页 maxlength 口径——打字即截断（名字 30、用户名 20；输入法
+    /// 组字中不截断，组字结束后的超长部分在下一次输入时截断）。
+    func textField(_ textField: UITextField, shouldChangeCharactersIn range: NSRange, replacementString string: String) -> Bool {
+        if textField.markedTextRange != nil { return true }
+        let maxLength: Int
+        if textField === nameField {
+            maxLength = 30
+        } else if textField === handleField {
+            maxLength = 20
+        } else {
+            return true
+        }
+        let current = textField.text ?? ""
+        guard let swiftRange = Range(range, in: current) else { return true }
+        let proposed = current.replacingCharacters(in: swiftRange, with: string)
+        if proposed.count > maxLength {
+            textField.text = String(proposed.prefix(maxLength))
+            return false
+        }
+        return true
+    }
+
     func textFieldShouldReturn(_ textField: UITextField) -> Bool {
         if textField === nameField {
             handleField.becomeFirstResponder()

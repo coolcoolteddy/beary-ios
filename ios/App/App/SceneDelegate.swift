@@ -94,6 +94,7 @@ final class BearyChromeViewController: UIViewController {
     /// FAB 长按拖动锚点（长按落点，view 坐标）；nil = 未在拖动。
     private var fabDragAnchor: CGPoint?
     private var fabDragging = false
+    private var fabPressedState = false
     private var loginButton: UIButton!
     private var giftButton: UIButton!
     private var avatarButton: UIButton!
@@ -239,10 +240,37 @@ final class BearyChromeViewController: UIViewController {
         return rendered.withRenderingMode(.alwaysTemplate)
     }
 
-    /// I17：头像占位图——IconUser 资产优先，缺失时用 SF person 通用图标。
-    private func placeholderAvatarImage() -> UIImage? {
-        if let img = UIImage(named: "IconUser")?.withRenderingMode(.alwaysTemplate) { return img }
-        return UIImage(systemName: "person")?.withRenderingMode(.alwaysTemplate)
+    /// F24：顶栏头像回退——网页口径（beary.html:163 .avatar-btn；1909-1912）：
+    /// 无头像图时显示首字母，不用用户图标。取 display_name，空则取 email，
+    /// 皆空则取 '—'，首字符大写；字号 14、字重 semibold、颜色 ink，与网页一致。
+    /// 画成 32×32 图（alwaysOriginal）走原有 setImage 路径：按钮 imageView 已钉
+    /// 32×32 + scaleAspectFill，改 title 方案会被空 imageView 挤占，画图最稳。
+    private func avatarInitialImage(for user: MeUser?) -> UIImage? {
+        let raw = user?.displayName?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let name: String
+        if let raw = raw, !raw.isEmpty {
+            name = raw
+        } else if let email = user?.email, !email.isEmpty {
+            name = email
+        } else {
+            name = "—"
+        }
+        let initial = String(name.prefix(1)).uppercased()
+        let size = CGSize(width: 32, height: 32)
+        let format = UIGraphicsImageRendererFormat()
+        format.opaque = false
+        format.scale = traitCollection.displayScale
+        let rendered = UIGraphicsImageRenderer(size: size, format: format).image { _ in
+            let attrs: [NSAttributedString.Key: Any] = [
+                .font: UIFont.systemFont(ofSize: 14, weight: .semibold),
+                .foregroundColor: ink.resolvedColor(with: traitCollection),
+            ]
+            let textSize = (initial as NSString).size(withAttributes: attrs)
+            let origin = CGPoint(x: (size.width - textSize.width) / 2,
+                                 y: (size.height - textSize.height) / 2)
+            (initial as NSString).draw(at: origin, withAttributes: attrs)
+        }
+        return rendered.withRenderingMode(.alwaysOriginal)
     }
 
     private func makeTopIconButton(imageName: String, fallbackSystemName: String, tint: UIColor, action: Selector) -> UIButton {
@@ -314,17 +342,18 @@ final class BearyChromeViewController: UIViewController {
         giftButton = gift
         // L5 + U23 + C5：头像钮视觉仍 32×32 圆角裁切，imageView 定 32×32 + scaleAspectFill；
         // 热区经 BearyHitExpandingButton 向外扩 4pt 至 40（视觉不动）；底色改 bg，
-        // 透明头像不再透灰底，图未到时只显示 IconUser 占位（见 applyLoginState）。
+        // 透明头像不再透灰底，图未到时只显示首字母占位（见 applyLoginState，F24）。
         let avatar = BearyHitExpandingButton(type: .custom)
-        avatar.setImage(placeholderAvatarImage(), for: .normal)
+        avatar.setImage(avatarInitialImage(for: SessionManager.shared.currentUser), for: .normal)
         avatar.tintColor = ink
         avatar.backgroundColor = BearyColors.bg
         avatar.layer.cornerRadius = 16
         avatar.layer.borderWidth = 1
         avatar.clipsToBounds = true
-        // 顶栏头像菜单（审计 N4）：点头像不再直达我页，改为弹出原生菜单
-        //（首项即原直达行为；showsMenuAsPrimaryAction 使点按直接出菜单）。
-        avatar.menu = avatarMenu()
+        // 顶栏头像菜单（审计 N4 → F2 见 avatarMenu）：点头像弹出原生菜单
+        //（showsMenuAsPrimaryAction 使点按直接出菜单）；菜单在 applyLoginState
+        // 里随登录用户重建，头块取当前人名/邮箱。
+        avatar.menu = avatarMenu(for: SessionManager.shared.currentUser)
         avatar.showsMenuAsPrimaryAction = true
         avatar.accessibilityLabel = "我"
         avatar.translatesAutoresizingMaskIntoConstraints = false
@@ -366,11 +395,12 @@ final class BearyChromeViewController: UIViewController {
         // 四段等宽（apportionsSegmentWidthsByContent=false），图标与旧钮同源、
         // 统一缩到 24pt；布局常量与旧胶囊 1:1：宽 256、高 50、底距安全区 12。
         // 模糊衬底（Li 2026-10-26：分段器太透）：systemMaterial 随深浅自适应；
-        // 每边比控件大 6pt（268×62、圆角 31），保证盖住分段器全幅与边缘抗锯齿；
+        // 与分段器同尺寸（256×50、圆角 25）：加 52 tint 后大一圈的光晕显形，
+        // 故衬底不再比控件大，只盖住分段器本身；
         // 永不拦截触摸，藏显与位移只跟 setBarsVisible；层级在分段器之下
         // （bringChromeToFront 里 blur 先于分段器提至最前，防后挂页盖住它）。
         let blur = UIVisualEffectView(effect: UIBlurEffect(style: .systemMaterial))
-        blur.layer.cornerRadius = 31
+        blur.layer.cornerRadius = 25
         blur.clipsToBounds = true
         blur.isUserInteractionEnabled = false
         // Li 2026-10-26 定：底栏也加 52 tint，与顶栏统一颜色；分段器本身无 tint 槽，
@@ -384,8 +414,8 @@ final class BearyChromeViewController: UIViewController {
         NSLayoutConstraint.activate([
             blur.centerXAnchor.constraint(equalTo: view.centerXAnchor),
             blur.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor, constant: -12),
-            blur.widthAnchor.constraint(equalToConstant: 268),
-            blur.heightAnchor.constraint(equalToConstant: 62),
+            blur.widthAnchor.constraint(equalToConstant: 256),
+            blur.heightAnchor.constraint(equalToConstant: 50),
         ])
         let tabIcons: [(String, String)] = [
             ("IconHome", "house"),
@@ -457,6 +487,12 @@ final class BearyChromeViewController: UIViewController {
         fab.tintColor = .white
         fab.backgroundColor = .clear
         fab.addTarget(self, action: #selector(didTapWrite), for: .touchUpInside)
+        // F21：FAB 按压缩放（网页 .fab:active scale(.93)，beary.html:371）。
+        // 缩放改在容器层：玻璃+阴影+按钮一起缩；拖动变形时容器 transform 只留
+        // 平移（位移优先），长按识别会取消按钮触摸并发出 touchCancel，缩放随即复位，
+        // 不与拖动冲突；0.4s 内快点走不到长按识别，点按照常触发 didTapWrite。
+        fab.addTarget(self, action: #selector(fabPressedDown), for: .touchDown)
+        fab.addTarget(self, action: #selector(fabPressedUp), for: [.touchUpInside, .touchUpOutside, .touchCancel])
         constrainButtonIcon(fab)
         fab.accessibilityLabel = "写日记"
         fab.translatesAutoresizingMaskIntoConstraints = false
@@ -572,11 +608,22 @@ final class BearyChromeViewController: UIViewController {
         }
     }
 
+    /// 最近一次未读数（供角标开关即时重算：开关翻转时不再等下次轮询）。
+    private var lastUnreadCount = 0
+
+    /// 角标开关即时重算（设置页调用；不经过网络，直接按现存未读数重走显隐）。
+    func reapplyBellBadge() {
+        updateBellBadge(unread: lastUnreadCount)
+    }
+
     /// M23 角标部分：出现时小缩放 + 淡入，消失时淡出 + 小缩放；已显示时只改数字不重播。
     /// 减动效直设终值。
     private func updateBellBadge(unread: Int) {
-        let text = unread > 99 ? "99+" : "\(unread)"
-        if unread <= 0 {
+        lastUnreadCount = unread
+        // 设置页消息角标开关（默认开，未存档按开处理）：关时按 0 走隐藏路径。
+        let effectiveUnread = (UserDefaults.standard.object(forKey: "beary_unread_badge_enabled") as? Bool ?? true) ? unread : 0
+        let text = effectiveUnread > 99 ? "99+" : "\(effectiveUnread)"
+        if effectiveUnread <= 0 {
             if bellBadge.isHidden { return }
             if UIAccessibility.isReduceMotionEnabled {
                 bellBadge.isHidden = true
@@ -892,7 +939,7 @@ final class BearyChromeViewController: UIViewController {
             let ty = point.y - anchor.y
             let len = hypot(tx, ty)
             if len < 4 {
-                container.transform = .identity
+                container.transform = fabPressedState ? CGAffineTransform(scaleX: 0.93, y: 0.93) : .identity
                 applyDeform(width: 54, height: 54, angle: 0)
                 return
             }
@@ -961,22 +1008,23 @@ final class BearyChromeViewController: UIViewController {
             referralFetchFailed = false
             avatarRetryPending = false
             avatarURLString = nil
-            avatarButton.setImage(placeholderAvatarImage(), for: .normal)
-            avatarButton.tintColor = ink
+            avatarButton.setImage(avatarInitialImage(for: nil), for: .normal)
+            avatarButton.menu = avatarMenu(for: nil)
             return
         }
         // G28：同 URL 且无待重试标记时早返；待重试时即使同 URL 也重新下载。
         if avatar == avatarURLString && !avatarRetryPending { return }
         avatarRetryPending = false
         avatarURLString = avatar
-        avatarButton.setImage(placeholderAvatarImage(), for: .normal)
-        avatarButton.tintColor = ink
+        avatarButton.setImage(avatarInitialImage(for: user), for: .normal)
+        avatarButton.menu = avatarMenu(for: user)
         if let url = BearyImageURLs.avatarURL(avatar) {
             URLSession.shared.dataTask(with: url) { [weak self] data, _, _ in
                 guard let self = self, let data = data, let img = UIImage(data: data) else {
                     DispatchQueue.main.async { [weak self] in
                         // G28：失败时保留 URL、只记待重试标记（前台恢复或下次 applyLoginState 时重试），
                         // 不把 avatarURLString 清空导致的状态与早返口径分裂。
+                        // 失败回退即 F24 首字母占位（上文已设），不留空白圆。
                         if self?.avatarURLString == avatar { self?.avatarRetryPending = true }
                     }
                     return
@@ -984,6 +1032,8 @@ final class BearyChromeViewController: UIViewController {
                 DispatchQueue.main.async {
                     if self.avatarURLString == avatar {
                         self.avatarButton.setImage(img.withRenderingMode(.alwaysOriginal), for: .normal)
+                        // 头块头像跟真图走：菜单头图换成刚下载的头像。
+                        self.avatarButton.menu = self.avatarMenu(for: SessionManager.shared.currentUser, headerImage: img.withRenderingMode(.alwaysOriginal))
                     }
                 }
             }.resume()
@@ -1008,18 +1058,61 @@ final class BearyChromeViewController: UIViewController {
     @objc private func didTapSearch() { showPage(.search) }
     @objc private func didTapGift() { presentInvite() }
     @objc private func didTapWrite() { presentComposer() }
-    @objc private func didTapAvatar() { showPage(.me) }
+    @objc private func fabPressedDown() { setFabPressed(true) }
+    @objc private func fabPressedUp() { setFabPressed(false) }
+    /// F21 按压态：整颗按压缩放到 .93（容器层：玻璃+阴影+按钮一起缩，
+    /// 网页 .fab:active scale(.93) 是整颗一起缩，不是只缩按钮）、松手回 1；
+    /// 拖动中位移优先（容器 transform 只留平移，缩放让位），松手两者复位；
+    /// 减动效直设终值。
+    private func setFabPressed(_ pressed: Bool) {
+        fabPressedState = pressed
+        guard let container = fabContainerView, !fabDragging else { return }
+        let target = pressed ? CGAffineTransform(scaleX: 0.93, y: 0.93) : .identity
+        if UIAccessibility.isReduceMotionEnabled {
+            container.transform = target
+            return
+        }
+        UIView.animate(withDuration: 0.15, delay: 0, options: [.beginFromCurrentState, .allowUserInteraction], animations: {
+            container.transform = target
+        })
+    }
 
-    /// 顶栏头像菜单（审计 N4，部署目标 iOS 15 可用 UIMenu）：项依次为个人主页
-    ///（原直达行为）、使用指南（教程页）、外观（主题三档）、账户设置（F 批原生账户页）、
-    ///退出登录（与我页 onLogout 同款路径）。
-    private func avatarMenu() -> UIMenu {
-        let profile = UIAction(title: "个人主页") { [weak self] _ in self?.didTapAvatar() }
-        let tutorial = UIAction(title: "使用指南") { [weak self] _ in self?.presentTutorial() }
-        let appearance = UIAction(title: "外观") { [weak self] _ in self?.presentAppearanceSheet() }
-        let account = UIAction(title: "账户设置") { [weak self] _ in self?.presentAccount() }
-        let logout = UIAction(title: "退出登录", attributes: .destructive) { [weak self] _ in self?.logoutFromMenu() }
-        return UIMenu(title: "", children: [profile, tutorial, appearance, account, logout])
+    /// F2：顶栏头像菜单——网页口径（beary.html:1073-1082 .profile-menu）：
+    /// 头块（名 + 邮箱，网页 .pm-head：44 头像 + 16 粗体名 + 12 灰邮箱）+
+    /// 行依次为使用指南（beary-help）、账户设置（beary-settings）、
+    /// 外观（beary-theme-auto）、退出登录（beary-logout，danger）。
+    /// 网页菜单没有“个人主页”首项，故删掉 App 原首项（原 didTapAvatar 直达）；
+    /// 个人主页仍可经底栏“我”段进入。行图标走官方 beary-ui 资产
+    /// （icon_help/icon_settings/icon_theme_auto/icon_logout，beary-ui-2.zip
+    /// 渲染入 catalog；logout 原已在 catalog 内），不用 SF 符号冒充。
+    /// 头块用原生 inline 分区实现（名作分区标题、邮箱为禁用的行），不用
+    /// UIAction subtitle 初始化器（部署目标 iOS 15，避新 API 编译风险）；
+    /// 头块行不可点，与网页 .pm-head 无点击行为一致。菜单随登录用户重建，
+    /// 头图由调用方传入（已下载的真头像；未传则用 F24 首字母图）。
+    private func avatarMenu(for user: MeUser?, headerImage: UIImage? = nil) -> UIMenu {
+        let rawName = user?.displayName?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let headName: String
+        if let rawName = rawName, !rawName.isEmpty {
+            headName = rawName
+        } else if let email = user?.email, !email.isEmpty {
+            headName = email
+        } else {
+            headName = "—"
+        }
+        let headImage = headerImage ?? avatarInitialImage(for: user)
+        let headSection: UIMenu
+        if let email = user?.email, !email.isEmpty {
+            let emailRow = UIAction(title: email, image: headImage, attributes: .disabled) { _ in }
+            headSection = UIMenu(title: headName, options: .displayInline, children: [emailRow])
+        } else {
+            let nameRow = UIAction(title: headName, image: headImage, attributes: .disabled) { _ in }
+            headSection = UIMenu(title: "", options: .displayInline, children: [nameRow])
+        }
+        let tutorial = UIAction(title: "使用指南", image: BearyIconImages.image(named: "icon_help", pointSize: 22)) { [weak self] _ in self?.presentTutorial() }
+        let account = UIAction(title: "账户设置", image: BearyIconImages.image(named: "icon_settings", pointSize: 22)) { [weak self] _ in self?.presentSettings() }
+        let appearance = UIAction(title: "外观", image: BearyIconImages.image(named: "icon_theme_auto", pointSize: 22)) { [weak self] _ in self?.presentAppearanceSheet() }
+        let logout = UIAction(title: "退出登录", image: BearyIconImages.image(named: "icon_logout", pointSize: 22), attributes: .destructive) { [weak self] _ in self?.logoutFromMenu() }
+        return UIMenu(title: "", children: [headSection, tutorial, account, appearance, logout])
     }
 
     /// 头像菜单退出登录：与我页 vc.onLogout 同款路径（服务端登出＋清 cookie＋本地退出）。
@@ -1567,7 +1660,7 @@ final class BearyChromeViewController: UIViewController {
         vc.onEditProfile = { [weak self] in self?.presentEditProfile() }
         // 齿轮菜单：教程与外观已接原生实现；账户设置接 F 批原生账户页（不再是占位）。
         vc.onShowTutorial = { [weak self] in self?.presentTutorial() }
-        vc.onOpenAccountSettings = { [weak self] in self?.presentAccount() }
+        vc.onOpenAccountSettings = { [weak self] in self?.presentSettings() }
         vc.onToggleAppearance = { [weak self] in self?.presentAppearanceSheet() }
         vc.onInteractionChanged = { [weak self] changedId, likeCount, liked, bookmarked, emotes in
             self?.feedVC?.applyInteraction(entryId: changedId, likeCount: likeCount, likedByMe: liked, bookmarkedByMe: bookmarked, emotes: emotes)
@@ -1600,11 +1693,12 @@ final class BearyChromeViewController: UIViewController {
         topmostViewController().present(vc, animated: true)
     }
 
-    /// F 批：原生账户设置页（modal 全屏，与编辑资料页同款呈现）。
+    /// 设置页（modal 全屏，与编辑资料页同款呈现；2026-10-26：原独立账户页
+    /// 已整体迁移为本页「账号与安全」分区，旧 BearyAccountViewController 已删除）。
     /// 未登录时页内走 onRequireLogin（容器弹登录页）；注销成功后容器清 cookie、
     /// 本地退出并关闭本页（服务端在注销发起时已清全部会话），再回首页。
-    private func presentAccount() {
-        let vc = BearyAccountViewController()
+    private func presentSettings() {
+        let vc = BearySettingsViewController()
         vc.modalPresentationStyle = .fullScreen
         vc.onClose = { [weak vc] in vc?.dismiss(animated: true) }
         vc.onRequireLogin = { [weak self] in self?.presentLogin() }

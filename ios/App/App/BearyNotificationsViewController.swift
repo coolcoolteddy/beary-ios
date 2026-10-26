@@ -28,7 +28,7 @@ import UIKit
 //   + 时间 + 未读点 + 下箭头，头像蓝 12% 底 + heart 图；卡片未读底蓝 9%。
 // - 点卡只展开/收起（整区高度生长 .34s 缓动 + 箭头 180° 旋转 .3s），不标已读；
 //   展开态存在本页状态里，刷新/翻页/标已读后重建行表仍恢复展开态。
-// - 嵌套行：网页 .nt-sysin 口径——左侧 20 起 2px line 竖线 + 8 内边距，头像 x=48、分隔线起于 28。
+// - 嵌套行：网页 .nt-sysin 口径——左侧 20 起 2px line 竖线 + 8 内边距，头像 x=50、分隔线起于 30。
 // 点击行为（与网页 onclick 同口径）：
 // - 点一条先乐观标已读（失败回滚，与网页 ntMarkRead 一致），再按类型分流：
 //   letter 行带 entry_id → onEntrySelected(entry_id) 直接进详情；
@@ -116,6 +116,8 @@ final class BearyNotificationsViewController: UIViewController {
 
     /// 跨实例缓存快照（网页 openNotifs ntItemsCache 口径）：已读态与展开态
     /// 随同一快照存取，不拆开存、不错乱；仅成功加载过才写（见 saveNotificationCache）。
+    /// C-G3：快照补 hasMore——缓存秒显后哨兵行按旧 hasMore 占位，直到后台
+    /// 首拉成功后 computeHasMore 重算，不再因快照缺 hasMore 而漏哨兵。
     private struct CachedNotificationPage {
         let items: [NotificationItem]
         let unread: Int
@@ -123,6 +125,7 @@ final class BearyNotificationsViewController: UIViewController {
         let total: Int?
         let isSysExpanded: Bool
         let isActExpanded: Bool
+        let hasMore: Bool
     }
 
     private static var cachedPage: CachedNotificationPage?
@@ -158,6 +161,15 @@ final class BearyNotificationsViewController: UIViewController {
     private var customPullStartTime: Date?
     private var pullEngageTranslation: CGFloat?
     private var isCardAnimating = false
+    /// C-G11：卡片动画代次与方向——动画中同卡再点可反转（见 reverseCardAnimation），
+    /// 代次让被打断的旧动画 completion 失效，不再事后清掉新动画的旗标。
+    private var cardAnimatingKind: NotificationRowKind?
+    private var cardAnimatingExpanding = false
+    private var cardAnimationGeneration = 0
+    private var cardAnimator: UIViewPropertyAnimator?
+    /// C-G4：首拉 401 清列表后立起的“需重拉”旗——新账号首拉的触发器（见
+    /// clearItemsAfterUnauthorized 与 refreshListIfUnreadChanged / 轻量刷新成功分支）。
+    private var needsReloadAfterUnauthorized = false
     private var zeroHeightRows: Set<Int> = []
     private var headerHeight: CGFloat = 41
     private var stateContainerTopConstraint: NSLayoutConstraint?
@@ -234,7 +246,9 @@ final class BearyNotificationsViewController: UIViewController {
     private lazy var pullSpinner: UIActivityIndicatorView = {
         let spinner = UIActivityIndicatorView(style: .medium)
         spinner.translatesAutoresizingMaskIntoConstraints = false
-        spinner.color = BearyColors.gray
+        // C-G9：网页 #ptrIn 与首屏加载圈均走 stroke currentColor（body 色即墨），
+        // 不是灰；下拉与首屏转圈改墨，翻页哨兵圈不在本项范围、保持灰。
+        spinner.color = BearyColors.ink
         spinner.hidesWhenStopped = false
         spinner.transform = CGAffineTransform(scaleX: 1.6, y: 1.6)
         spinner.alpha = 0
@@ -283,7 +297,8 @@ final class BearyNotificationsViewController: UIViewController {
     private lazy var centralSpinner: UIActivityIndicatorView = {
         let spinner = UIActivityIndicatorView(style: .medium)
         spinner.translatesAutoresizingMaskIntoConstraints = false
-        spinner.color = BearyColors.gray
+        // C-G9：同 pullSpinner，网页首屏加载圈 stroke currentColor 即墨。
+        spinner.color = BearyColors.ink
         spinner.hidesWhenStopped = true
         spinner.transform = CGAffineTransform(scaleX: 1.6, y: 1.6)
         return spinner
@@ -407,6 +422,8 @@ final class BearyNotificationsViewController: UIViewController {
             totalCount = cached.total
             isSysExpanded = cached.isSysExpanded
             isActExpanded = cached.isActExpanded
+            // C-G3：缓存秒显即恢复 hasMore，哨兵行不丢。
+            hasMore = cached.hasMore
             hasDisplayedPage = true
             hasSuccessfulLoad = true
             rebuildDisplayRows()
@@ -443,8 +460,29 @@ final class BearyNotificationsViewController: UIViewController {
 
     /// 表头高度实测：标题 19 + 上 14 下 4；实测后写回 tableHeaderView frame
     /// 与态容器顶锚，宽度变化时同步下拉指示器宽。
+    /// C-G14：底部留白按网页 .pf-col 口径随视口宽分档——宽 >820 时 44（网页
+    /// 宽屏档无 safe-area 叠加），窄屏时 120 + safe-area 下边距（网页
+    /// max-width:820 档 calc(120px + safe-area-inset-bottom)）。contentView
+    /// 底锚 view.bottom（非 safeArea），故窄屏档需显式叠加 safeAreaInsets.bottom。
+    private func updateTableBottomInset() {
+        let bottom: CGFloat
+        if view.bounds.width > 820 {
+            bottom = 44
+        } else {
+            bottom = 120 + view.safeAreaInsets.bottom
+        }
+        tableView.contentInset.bottom = bottom
+        tableView.scrollIndicatorInsets.bottom = bottom
+    }
+
+    override func viewSafeAreaInsetsDidChange() {
+        super.viewSafeAreaInsetsDidChange()
+        updateTableBottomInset()
+    }
+
     override func viewDidLayoutSubviews() {
         super.viewDidLayoutSubviews()
+        updateTableBottomInset()
         let width = tableView.bounds.width
         if width > 0 {
             let fittingHeight = headerView.systemLayoutSizeFitting(
@@ -475,7 +513,8 @@ final class BearyNotificationsViewController: UIViewController {
             sysUnread: sysUnreadTotal,
             total: totalCount,
             isSysExpanded: isSysExpanded,
-            isActExpanded: isActExpanded
+            isActExpanded: isActExpanded,
+            hasMore: hasMore
         )
     }
 
@@ -540,6 +579,14 @@ final class BearyNotificationsViewController: UIViewController {
                     }
                     strongSelf.publishUnread(strongSelf.unreadTotal)
                     strongSelf.updateReadAllButton()
+                    // C-G4：401 清场后轻量刷新一旦成功（说明已重新登录），
+                    // 旗立起时无条件整页拉取新账号首拉——此时快照为 nil，
+                    // 门控比对恒 false，不能靠门控触发，故单列此分支。
+                    // 仍 401 时走 failure 静默分支，旗保留、下次轮询再试。
+                    if strongSelf.needsReloadAfterUnauthorized && !strongSelf.isLoadingFirstPage && !strongSelf.isCustomPullRefreshing {
+                        strongSelf.loadFirstPage()
+                        return
+                    }
                     // 门控点：轻量刷新本身绝不写快照；只有这里比对，变了才整页重拉。
                     // 未成功整页加载过（快照 nil）不触发，首拉/重试仍走原有路径；
                     // 整页加载中或自定义下拉刷新中不叠加第二路整页请求。
@@ -589,6 +636,14 @@ final class BearyNotificationsViewController: UIViewController {
     /// 未读数变了才整页重拉，没变只刷角标；与无条件 refresh() 不同——
     /// 重拍 tab 与登录翻转仍走 refresh()，不走这里。
     func refreshListIfUnreadChanged() {
+        // C-G4：401 清场后（hasSuccessfulLoad 已复位 false）仍要能拉新账号
+        // 首拉——旗立起时无条件整页拉取，不走“未成功加载过则返回”的早退。
+        if needsReloadAfterUnauthorized {
+            if !isLoadingFirstPage && !isCustomPullRefreshing {
+                loadFirstPage()
+            }
+            return
+        }
         if !hasSuccessfulLoad {
             return
         }
@@ -616,6 +671,8 @@ final class BearyNotificationsViewController: UIViewController {
                 switch result {
                 case .success(let list):
                     let oldSignatures = Set(strongSelf.items.map({ strongSelf.itemSignature($0) }))
+                    // C-G4：整页成功加载即新账号数据已落袋，清掉 401 遗留的重拉旗。
+                    strongSelf.needsReloadAfterUnauthorized = false
                     strongSelf.items = list.items ?? []
                     strongSelf.totalCount = list.total
                     if let unreadValue = list.unread {
@@ -646,16 +703,56 @@ final class BearyNotificationsViewController: UIViewController {
                         }
                     }
                     if case APIError.unauthorized = apiError {
-                        // 换号/退出后旧缓存不得再秒显给下一账号；本页内存列表仍按旧口径保留。
+                        // C-G4（隐私）：401 后静态缓存与实例内存列表必须同时清——
+                        // 只清缓存不清 items 时，容器切回首页只是隐藏本页，换号/
+                        // 退出后重进本页仍能看到旧账号消息。清列表后门控快照与
+                        // 成功态一并复位（见 clearItemsAfterUnauthorized），否则
+                        // 旧快照会挡住新账号的首拉（轻量比对恒等于旧值、门不开）。
                         Self.cachedPage = nil
+                        if !strongSelf.items.isEmpty {
+                            strongSelf.clearItemsAfterUnauthorized()
+                            strongSelf.firstLoadFailed = true
+                            strongSelf.promptLoginIfNeeded()
+                        }
                     }
-                    // 已有列表时首拉失败不断列表：保持旧内容，不弹失败态。
+                    // 已有列表时首拉失败（非 401）不断列表：保持旧内容，不弹失败态。
                 }
                 strongSelf.refreshVisibleState()
                 strongSelf.updateReadAllButton()
                 completion?()
             }
         }
+    }
+
+    /// C-G4：首拉 401 后的内存清场——只清本页实例状态，不碰容器与 SceneDelegate。
+    /// 清单：items 与行表、总数、hasMore、未读数、展开态、成功/已显旗；
+    /// 门控快照（lastFullLoadUnread/SysUnread）复位为 nil 是关键：不复位时
+    /// 轻量刷新拿新账号未读数与旧快照比对——若恰好相等门不开，新账号首拉
+    /// 被旧快照挡住；复位后门控比对返回 false、不触发误重拉，而新账号的
+    /// 真正首拉由 needsReloadAfterUnauthorized 旗驱动（见下两处）：
+    /// refreshListIfUnreadChanged（切回/ viewWillAppear）与轻量刷新成功分支
+    /// （轮询/回前台时已重新登录）都会在旗立起时无条件 loadFirstPage。
+    /// 角标同步归零：publishUnread(0) 把旧账号角标清掉，底栏不残留旧数。
+    /// 注意：本方法不调 saveNotificationCache——hasSuccessfulLoad 已先置
+    /// false，deinit/viewWillDisappear 的写回守卫本身就不会以空列表覆缓存，
+    /// 且静态缓存已在调用点先行置 nil。
+    private func clearItemsAfterUnauthorized() {
+        items = []
+        displayRows = []
+        totalCount = nil
+        hasMore = false
+        unreadTotal = 0
+        sysUnreadTotal = 0
+        isSysExpanded = false
+        isActExpanded = false
+        hasSuccessfulLoad = false
+        hasDisplayedPage = false
+        loadMoreFailed = false
+        lastFullLoadUnread = nil
+        lastFullLoadSysUnread = nil
+        needsReloadAfterUnauthorized = true
+        publishUnread(0)
+        tableView.reloadData()
     }
 
     /// 未登录提示一集只发一次：toast“请先登录”，1200ms 后走 onRequireLogin。
@@ -852,42 +949,17 @@ final class BearyNotificationsViewController: UIViewController {
         displayRows = rows
     }
 
-    private func displayRowIndex(forItemIndex itemIndex: Int) -> Int? {
-        for index in displayRows.indices {
-            if displayRows[index].itemIndex == itemIndex {
-                return index
-            }
-        }
-        return nil
-    }
-
-    /// 某条通知所属的卡行（letter 无卡；system → 系统卡；互动 → 互动卡）。
-    private func cardDisplayRowIndex(forItemIndex itemIndex: Int) -> Int? {
-        guard itemIndex < items.count else { return nil }
-        let type = items[itemIndex].type ?? ""
-        let wantedKind: NotificationRowKind?
-        if type == "system" {
-            wantedKind = .sysCard
-        } else if type == "letter" {
-            wantedKind = nil
-        } else {
-            wantedKind = .actCard
-        }
-        guard let wanted = wantedKind else { return nil }
-        for index in displayRows.indices {
-            if displayRows[index].kind == wanted {
-                return index
-            }
-        }
-        return nil
-    }
-
     /// 点卡只展开/收起：整区高度生长（网页 .nt-syslist grid-template-rows
     /// 0fr→1fr .34s 缓动口径），不是逐行插入；chevron 转 .3s。
     /// 展开：先插行（高 0）再整体长到满高；收起：先整体缩到 0 再删行。
-    /// 减动效直接重载，不播动画；动画中再次点卡直接忽略，防坐标错乱。
+    /// 减动效直接重载，不播动画；C-G11：动画中同卡再点可反转（网页
+    /// grid-template-rows 过渡天然可反转），异卡仍忽略、防坐标错乱。
     private func toggleCard(kind: NotificationRowKind) {
         if isCardAnimating {
+            // C-G11：同卡反转、异卡忽略。
+            if kind == cardAnimatingKind {
+                reverseCardAnimation(kind: kind)
+            }
             return
         }
         let isSysKind = kind == .sysCard
@@ -928,6 +1000,8 @@ final class BearyNotificationsViewController: UIViewController {
                 return
             }
             isCardAnimating = true
+            cardAnimatingKind = kind
+            cardAnimatingExpanding = true
             tableView.performBatchUpdates({
                 self.tableView.insertRows(at: inserted, with: .none)
             }, completion: nil)
@@ -937,16 +1011,21 @@ final class BearyNotificationsViewController: UIViewController {
                     cardCell.setChevronExpanded(true)
                 }
             }
+            cardAnimationGeneration += 1
+            let generation = cardAnimationGeneration
             let animator = UIViewPropertyAnimator(duration: 0.34, timingParameters: UICubicTimingParameters(controlPoint1: CGPoint(x: 0.32, y: 0.72), controlPoint2: CGPoint(x: 0.35, y: 1)))
             animator.addAnimations({
                 self.zeroHeightRows.removeAll()
                 self.tableView.beginUpdates()
                 self.tableView.endUpdates()
             })
-            animator.addCompletion({ _ in
-                self.zeroHeightRows.removeAll()
-                self.isCardAnimating = false
+            animator.addCompletion({ [weak self] _ in
+                guard let strongSelf = self, generation == strongSelf.cardAnimationGeneration else { return }
+                strongSelf.zeroHeightRows.removeAll()
+                strongSelf.cardAnimatingKind = nil
+                strongSelf.isCardAnimating = false
             })
+            cardAnimator = animator
             animator.startAnimation()
         } else {
             var collapsing: [Int] = []
@@ -969,6 +1048,8 @@ final class BearyNotificationsViewController: UIViewController {
                 return
             }
             isCardAnimating = true
+            cardAnimatingKind = kind
+            cardAnimatingExpanding = false
             for index in collapsing {
                 zeroHeightRows.insert(index)
             }
@@ -977,13 +1058,15 @@ final class BearyNotificationsViewController: UIViewController {
                     cardCell.setChevronExpanded(false)
                 }
             }
+            cardAnimationGeneration += 1
+            let generation = cardAnimationGeneration
             let animator = UIViewPropertyAnimator(duration: 0.34, timingParameters: UICubicTimingParameters(controlPoint1: CGPoint(x: 0.32, y: 0.72), controlPoint2: CGPoint(x: 0.35, y: 1)))
             animator.addAnimations({
                 self.tableView.beginUpdates()
                 self.tableView.endUpdates()
             })
             animator.addCompletion({ [weak self] _ in
-                guard let strongSelf = self else { return }
+                guard let strongSelf = self, generation == strongSelf.cardAnimationGeneration else { return }
                 strongSelf.zeroHeightRows.removeAll()
                 if isSysKind {
                     strongSelf.isSysExpanded = false
@@ -995,10 +1078,61 @@ final class BearyNotificationsViewController: UIViewController {
                 strongSelf.tableView.performBatchUpdates({
                     strongSelf.tableView.deleteRows(at: deleted, with: .none)
                 }, completion: nil)
+                strongSelf.cardAnimatingKind = nil
                 strongSelf.isCardAnimating = false
             })
+            cardAnimator = animator
             animator.startAnimation()
         }
+    }
+
+    /// C-G11：动画中同卡再点的反转。先让旧动画代次失效再定格在当前
+    /// 位置（旧 completion 因代次不符直接返回，不会清新旗标），再按
+    /// 打断时的真实状态走反方向：
+    /// - 展开中被打断：展开态已置 true、行已插入，重进 toggleCard 即走收起分支；
+    /// - 收起中被打断：展开态仍 true、行仍在表、高度正往 0 缩，直接清
+    ///   zeroHeightRows 并播一次生长动画回到满高（展开态不动）。
+    /// 减动效路径不走动画，本方法不会被调用。
+    private func reverseCardAnimation(kind: NotificationRowKind) {
+        let wasExpanding = cardAnimatingExpanding
+        // 代次先 +1：旧动画随后 finish 时 completion 已过期，不碰新状态。
+        cardAnimationGeneration += 1
+        if let animator = cardAnimator {
+            cardAnimator = nil
+            animator.stopAnimation(true)
+            animator.finishAnimation(at: .current)
+        }
+        cardAnimatingKind = nil
+        isCardAnimating = false
+        if wasExpanding {
+            toggleCard(kind: kind)
+            return
+        }
+        guard let cardRow = displayRows.firstIndex(where: { $0.kind == kind }) else { return }
+        zeroHeightRows.removeAll()
+        if let cardCell = tableView.cellForRow(at: IndexPath(row: cardRow, section: 0)) as? BearyNotificationCell {
+            UIView.animate(withDuration: 0.30) {
+                cardCell.setChevronExpanded(true)
+            }
+        }
+        isCardAnimating = true
+        cardAnimatingKind = kind
+        cardAnimatingExpanding = true
+        cardAnimationGeneration += 1
+        let generation = cardAnimationGeneration
+        let animator = UIViewPropertyAnimator(duration: 0.34, timingParameters: UICubicTimingParameters(controlPoint1: CGPoint(x: 0.32, y: 0.72), controlPoint2: CGPoint(x: 0.35, y: 1)))
+        animator.addAnimations({
+            self.tableView.beginUpdates()
+            self.tableView.endUpdates()
+        })
+        animator.addCompletion({ [weak self] _ in
+            guard let strongSelf = self, generation == strongSelf.cardAnimationGeneration else { return }
+            strongSelf.zeroHeightRows.removeAll()
+            strongSelf.cardAnimatingKind = nil
+            strongSelf.isCardAnimating = false
+        })
+        cardAnimator = animator
+        animator.startAnimation()
     }
 
     private func loadMore() {
@@ -1022,6 +1156,9 @@ final class BearyNotificationsViewController: UIViewController {
                 strongSelf.isLoadingMore = false
                 switch result {
                 case .success(let list):
+                    // C-G1：翻页追加也要错峰入场——先记旧签名集，成功后只对
+                    // 不在旧集里的新行播 stagger（与首屏 playStaggeredEntrance 同口径）。
+                    let oldSignatures = Set(strongSelf.items.map({ strongSelf.itemSignature($0) }))
                     var knownIds: Set<Int> = []
                     for existing in strongSelf.items {
                         if let existingId = existing.id {
@@ -1064,6 +1201,8 @@ final class BearyNotificationsViewController: UIViewController {
                     } else {
                         strongSelf.tableView.reloadData()
                     }
+                    // C-G1：追加成功后播新行 stagger（旧行签名在旧集里、不重播）。
+                    strongSelf.playStaggeredEntrance(oldSignatures: oldSignatures)
                 case .failure:
                     // 401 不清列表（全局 onUnauthorized 已由容器接管）；其余失败只 toast，
                     // 不产生新行，哨兵留位、滚出再滚回才重触（见 scrollViewDidScroll 重 arm）。
@@ -1175,14 +1314,8 @@ final class BearyNotificationsViewController: UIViewController {
                     // 否则下次轻量比对会把这次已读误判为变化而多拉一次整页。
                     strongSelf.recordFullLoadUnread()
                     strongSelf.rebuildDisplayRows()
-                    // M12：已读态变化用 reloadRows 淡入（减动效用 .none），不行数不变。
-                    let visiblePaths = strongSelf.tableView.indexPathsForVisibleRows ?? []
-                    let rowPaths = visiblePaths.filter({ $0.row < strongSelf.displayRows.count })
-                    if rowPaths.isEmpty {
-                        strongSelf.tableView.reloadData()
-                    } else {
-                        strongSelf.tableView.reloadRows(at: rowPaths, with: UIAccessibility.isReduceMotionEnabled ? .none : .fade)
-                    }
+                    // C-G10：全部已读同样直接改可见行 class，不 reloadRows。
+                    strongSelf.applyReadAppearanceToVisibleRows()
                     strongSelf.updateReadAllButton()
                 case .failure(let apiError):
                     // 401 由容器全局处理，不再提示；其余失败 toast + 全量重拉。
@@ -1213,10 +1346,9 @@ final class BearyNotificationsViewController: UIViewController {
             publishUnread(unreadTotal)
             updateReadAllButton()
             // 本页乐观标已读：行已读态与本地未读数已一致，快照同步跟进，
-            // 否则 POST 成功后轻量比对会误判为变化而多拉一次整页（且重载会
-            // 因签名含 read 位而给已读行重播入场动效）；失败回滚处同步改回。
+            // 否则 POST 成功后轻量比对会误判为变化而多拉一次整页；失败回滚处同步改回。
             recordFullLoadUnread()
-            reloadItemAndCardRows(forItemIndex: index)
+            applyReadAppearanceToVisibleRows()
         }
         if isUnread {
             markSingleRead(item, at: index)
@@ -1244,18 +1376,30 @@ final class BearyNotificationsViewController: UIViewController {
         }
     }
 
-    /// 刷新一条及其所属卡行（卡面未读点随组内未读变化，行与卡都要刷）。
-    private func reloadItemAndCardRows(forItemIndex index: Int) {
-        var paths: [IndexPath] = []
-        if let row = displayRowIndex(forItemIndex: index) {
-            paths.append(IndexPath(row: row, section: 0))
-        }
-        if let cardRow = cardDisplayRowIndex(forItemIndex: index) {
-            paths.append(IndexPath(row: cardRow, section: 0))
-        }
-        if !paths.isEmpty {
-            // M12：单条已读态变化同样用淡入（减动效用 .none）。
-            tableView.reloadRows(at: paths, with: UIAccessibility.isReduceMotionEnabled ? .none : .fade)
+    /// C-G10：已读态变化直接改可见行/卡的 class（背景 + 未读点），不走
+    /// reloadRows——网页 ntMarkRead 是 remove('unread') + 摘点，不重载行；
+    /// reloadRows 的淡入会让整行闪一下，且不可见行本来就由 cellForRow 按
+    /// 模型重绘，不需要刷。
+    private func applyReadAppearanceToVisibleRows() {
+        guard let visiblePaths = tableView.indexPathsForVisibleRows else { return }
+        for path in visiblePaths {
+            if path.row >= displayRows.count { continue }
+            guard let cell = tableView.cellForRow(at: path) as? BearyNotificationCell else { continue }
+            let row = displayRows[path.row]
+            switch row.kind {
+            case .letter, .sysItem, .actItem:
+                if let itemIndex = row.itemIndex, itemIndex < items.count {
+                    let item = items[itemIndex]
+                    let isSystemStyle = item.type == "system" || item.type == "letter"
+                    cell.setReadAppearance(isUnread: (item.read ?? true) == false, isSystemStyle: isSystemStyle)
+                }
+            case .sysCard:
+                let anyUnread = items.contains(where: { $0.type == "system" && ($0.read ?? true) == false })
+                cell.setCardReadAppearance(anyUnread: anyUnread)
+            case .actCard:
+                let anyUnread = items.contains(where: { ($0.type ?? "") != "system" && ($0.type ?? "") != "letter" && ($0.read ?? true) == false })
+                cell.setCardReadAppearance(anyUnread: anyUnread)
+            }
         }
     }
 
@@ -1284,7 +1428,7 @@ final class BearyNotificationsViewController: UIViewController {
                     // 标已读失败回滚：快照随本地未读数改回，与回滚后的列表一致。
                     strongSelf.recordFullLoadUnread()
                     if index < strongSelf.items.count {
-                        strongSelf.reloadItemAndCardRows(forItemIndex: index)
+                        strongSelf.applyReadAppearanceToVisibleRows()
                     }
                 }
             }
@@ -1310,7 +1454,14 @@ final class BearyNotificationsViewController: UIViewController {
     }
 
     /// 全部已读钮仅在未读数 > 0 时出现（网页 ntSyncReadAll）。
+    /// C-G5：首屏加载完成前（hasSuccessfulLoad false：冷启动转圈中、401 清场后）
+    /// 一律隐藏——轻量刷新先回未读数时不得让按钮在转圈/空态上闪现；
+    /// 缓存秒显路径已先置 hasSuccessfulLoad true，不受影响。
     private func updateReadAllButton() {
+        if !hasSuccessfulLoad {
+            readAllButton.isHidden = true
+            return
+        }
         readAllButton.isHidden = unreadTotal <= 0
     }
 
@@ -1480,7 +1631,10 @@ final class BearyNotificationsViewController: UIViewController {
             handler(item)
             return
         }
-        let titleText = item.title ?? (item.type == "letter" ? "一封信" : "通知")
+        // C-G2：网页 n.title||'通知'/'一封信' 的 || 语义下空字符串同样回退；
+        // App 原 ?? 只防 nil，空串标题会原样透传为空标题，此处与下两处同改。
+        let rawTitle = item.title ?? ""
+        let titleText = rawTitle.isEmpty ? (item.type == "letter" ? "一封信" : "通知") : rawTitle
         // 网页 openLetter 口径：不论 body 是否为空都弹信件模态（空正文只显标题）。
         let isBadgeLetter = titleText.contains("成就") || titleText.contains("徽章")
         presentLetterModal(
@@ -1496,7 +1650,9 @@ final class BearyNotificationsViewController: UIViewController {
     /// 送达信模态（网页 openDeliveryLetter 同口径）：恒 mail 图，
     /// “稍后 / 去看看”两钮；引用预览随后拉单篇补全（失败则不显示引用区）。
     private func presentDeliveryLetter(for item: NotificationItem, entryId: String) {
-        let titleText = item.title ?? "你的一篇日记今天公开了"
+        // C-G2：同 presentSystemLetter，空串标题回退默认文案。
+        let rawTitle = item.title ?? ""
+        let titleText = rawTitle.isEmpty ? "你的一篇日记今天公开了" : rawTitle
         let rawBody = item.body ?? ""
         // U8：送达信空正文时给默认文案（模态仍有“去看看”与引用预览价值，不改 toast）。
         let bodyText = rawBody.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "这篇日记今天公开了，去看看吧。" : rawBody
@@ -1581,7 +1737,9 @@ extension BearyNotificationsViewController: UITableViewDataSource, UITableViewDe
 
     func tableView(_ tableView: UITableView, heightForRowAt indexPath: IndexPath) -> CGFloat {
         if indexPath.row == displayRows.count {
-            return isLoadingMore ? 40 : 24
+            // C-G6：网页 .more-sentinel 闲置总高 = min-height 24 + padding 10/22
+            // = 56，不是 24；忙时 40 不在本项范围、保持。
+            return isLoadingMore ? 40 : 56
         }
         if zeroHeightRows.contains(indexPath.row) {
             return 0
@@ -1617,9 +1775,17 @@ extension BearyNotificationsViewController: UITableViewDataSource, UITableViewDe
             if let latestIndex = sysIndices.first {
                 let latest = items[latestIndex]
                 let anyUnread = sysIndices.contains(where: { (items[$0].read ?? true) == false })
+                // C-G2：网页卡面 ntLatest.title||ntLatest.excerpt||''——空串标题
+                // 同样落到 excerpt，不再只防 nil。
+                let sysExcerpt: String
+                if let latestTitle = latest.title, !latestTitle.isEmpty {
+                    sysExcerpt = latestTitle
+                } else {
+                    sysExcerpt = latest.excerpt ?? ""
+                }
                 cell.configureAsCard(
                     title: "系统消息",
-                    excerpt: latest.title ?? latest.excerpt ?? "",
+                    excerpt: sysExcerpt,
                     timeMs: latest.createdAt,
                     anyUnread: anyUnread,
                     isSystem: true,
@@ -1689,7 +1855,9 @@ extension BearyNotificationsViewController: UITableViewDataSource, UITableViewDe
             }
         }
         if hasMore && !isLoadingMore && !isLoadingFirstPage && !loadMoreFailed {
-            let nearBottom = scrollView.contentOffset.y + scrollView.bounds.height >= scrollView.contentSize.height - 120
+            // C-G6：网页哨兵用 IntersectionObserver rootMargin 900px 预取，
+            // App 原 120 触发太晚，改 900 与网页一致。
+            let nearBottom = scrollView.contentOffset.y + scrollView.bounds.height >= scrollView.contentSize.height - 900
             if nearBottom && scrollView.contentSize.height > 0 {
                 loadMore()
             }
@@ -1716,6 +1884,11 @@ private class BearyLetterModal {
     private let overlayView = UIView()
     private let cardView = UIView()
     private let iconView = UIImageView()
+    /// 信件模态礼花：徽章信（iconName == "icon_popper"）时用动态 BearyPopperView
+    ///（网页 letterIco 同款 NB.popper），不用静态 icon_popper；模态不复用，
+    /// 关闭即丢弃，无需像行 cell 那样在复用时 stop。
+    private let popperView = BearyPopperView()
+    private let isPopper: Bool
     private let titleLabel = UILabel()
     private let bodyScrollView = UIScrollView()
     private let bodyLabel = UILabel()
@@ -1728,21 +1901,30 @@ private class BearyLetterModal {
     private let goEntryId: String?
     private var buttonTopToBody: NSLayoutConstraint?
     private var buttonTopToQuote: NSLayoutConstraint?
+    private var buttonRatioConstraint: NSLayoutConstraint?
 
     init(title: String, body: String, iconName: String, quoteText: String?, quoteMeta: String?, goEntryId: String?) {
         self.goEntryId = goEntryId
+        self.isPopper = (iconName == "icon_popper")
         overlayView.backgroundColor = BearyColors.scrim
         overlayView.translatesAutoresizingMaskIntoConstraints = false
         cardView.backgroundColor = BearyColors.surface
-        cardView.layer.cornerRadius = 14
+        // C-G15：网页 .confirm-box 圆角 16（letter-box 只改 max-width，不改圆角）。
+        cardView.layer.cornerRadius = 16
         cardView.clipsToBounds = true
         cardView.translatesAutoresizingMaskIntoConstraints = false
         iconView.translatesAutoresizingMaskIntoConstraints = false
-        iconView.image = BearyIconImages.image(named: iconName, pointSize: 36)
+        iconView.isHidden = isPopper
+        if !isPopper {
+            iconView.image = BearyIconImages.image(named: iconName, pointSize: 36)
+        }
         iconView.tintColor = BearyColors.orange
         iconView.contentMode = .scaleAspectFit
+        popperView.translatesAutoresizingMaskIntoConstraints = false
+        popperView.isHidden = !isPopper
         titleLabel.translatesAutoresizingMaskIntoConstraints = false
-        titleLabel.font = UIFont.boldSystemFont(ofSize: 17)
+        // C-G8：网页 .confirm-box h3 字号 16，不是 17。
+        titleLabel.font = UIFont.boldSystemFont(ofSize: 16)
         titleLabel.textColor = BearyColors.ink
         titleLabel.textAlignment = .center
         titleLabel.numberOfLines = 0
@@ -1753,7 +1935,8 @@ private class BearyLetterModal {
         bodyLabel.textColor = BearyColors.ink
         bodyLabel.numberOfLines = 0
         bodyLabel.lineBreakMode = .byCharWrapping
-        bodyLabel.text = body
+        // C-G8：网页 .letter-body line-height 1.9，App 原无行高倍数。
+        bodyLabel.attributedText = BearyLetterModal.lineHeightText(body, font: UIFont.systemFont(ofSize: 16), color: BearyColors.ink, multiple: 1.9)
         quoteWrap.translatesAutoresizingMaskIntoConstraints = false
         quoteWrap.backgroundColor = BearyColors.faint
         quoteWrap.layer.cornerRadius = 12
@@ -1770,7 +1953,8 @@ private class BearyLetterModal {
         quoteMetaLabel.textColor = BearyColors.gray
         quoteMetaLabel.numberOfLines = 0
         if let quoteText = quoteText, let quoteMeta = quoteMeta {
-            quoteTextLabel.text = quoteText
+            // C-G17：网页 .lq-txt line-height 1.75，App 原无行高。
+            quoteTextLabel.attributedText = BearyLetterModal.lineHeightText(quoteText, font: UIFont.systemFont(ofSize: 15.5), color: BearyColors.ink, multiple: 1.75)
             quoteMetaLabel.text = quoteMeta
             quoteWrap.isHidden = false
         } else {
@@ -1782,13 +1966,14 @@ private class BearyLetterModal {
         secondaryButton.tintColor = BearyColors.ink
         secondaryButton.layer.borderWidth = 1
         secondaryButton.layer.borderColor = BearyColors.line.cgColor
-        secondaryButton.layer.cornerRadius = 22
+        // C-G16：网页 .obtn 圆角 20，不是 22。
+        secondaryButton.layer.cornerRadius = 20
         secondaryButton.setTitle(goEntryId == nil ? "知道了" : "稍后", for: .normal)
         primaryButton.translatesAutoresizingMaskIntoConstraints = false
         primaryButton.titleLabel?.font = UIFont.systemFont(ofSize: 16, weight: .semibold)
         primaryButton.setTitleColor(BearyColors.bg, for: .normal)
         primaryButton.backgroundColor = BearyColors.orange
-        primaryButton.layer.cornerRadius = 22
+        primaryButton.layer.cornerRadius = 20
         primaryButton.setTitle("去看看", for: .normal)
         primaryButton.isHidden = goEntryId == nil
     }
@@ -1796,6 +1981,10 @@ private class BearyLetterModal {
     func show(in parentView: UIView) {
         overlayView.addSubview(cardView)
         cardView.addSubview(iconView)
+        cardView.addSubview(popperView)
+        if isPopper {
+            popperView.start()
+        }
         cardView.addSubview(titleLabel)
         cardView.addSubview(bodyScrollView)
         bodyScrollView.addSubview(bodyLabel)
@@ -1811,8 +2000,15 @@ private class BearyLetterModal {
         buttonStack.translatesAutoresizingMaskIntoConstraints = false
         buttonStack.axis = .horizontal
         buttonStack.spacing = 10
-        buttonStack.distribution = .fillEqually
+        // C-G16：网页 #letterOk flex:1、#letterGo flex:1.5，不是等宽；
+        // 单钮时（去看看隐藏）不激活比例约束，免得隐藏钮约束冲突。
+        buttonStack.distribution = .fill
         cardView.addSubview(buttonStack)
+        if !primaryButton.isHidden {
+            let ratioConstraint = primaryButton.widthAnchor.constraint(equalTo: secondaryButton.widthAnchor, multiplier: 1.5)
+            ratioConstraint.isActive = true
+            buttonRatioConstraint = ratioConstraint
+        }
         secondaryButton.addTarget(self, action: #selector(dismissTapped), for: .touchUpInside)
         primaryButton.addTarget(self, action: #selector(goTapped), for: .touchUpInside)
         let tap = UITapGestureRecognizer(target: self, action: #selector(overlayTapped(_:)))
@@ -1827,17 +2023,24 @@ private class BearyLetterModal {
             cardView.centerYAnchor.constraint(equalTo: overlayView.centerYAnchor),
             cardView.leadingAnchor.constraint(greaterThanOrEqualTo: overlayView.leadingAnchor, constant: 32),
             cardView.trailingAnchor.constraint(lessThanOrEqualTo: overlayView.trailingAnchor, constant: -32),
+            // C-G15 宽：审计称网页 320，但源码里 .confirm-box max-width 320
+            // 被 .letter-box max-width 420 覆盖——信件模态实际宽就是 420，
+            // App 原 420 已对上，不改；圆角与内边距按 .confirm-box 改 16/24。
             cardView.widthAnchor.constraint(lessThanOrEqualToConstant: 420),
-            iconView.topAnchor.constraint(equalTo: cardView.topAnchor, constant: 20),
+            iconView.topAnchor.constraint(equalTo: cardView.topAnchor, constant: 24),
             iconView.centerXAnchor.constraint(equalTo: cardView.centerXAnchor),
             iconView.widthAnchor.constraint(equalToConstant: 36),
             iconView.heightAnchor.constraint(equalToConstant: 36),
+            popperView.topAnchor.constraint(equalTo: cardView.topAnchor, constant: 24),
+            popperView.centerXAnchor.constraint(equalTo: cardView.centerXAnchor),
+            popperView.widthAnchor.constraint(equalToConstant: 36),
+            popperView.heightAnchor.constraint(equalToConstant: 36),
             titleLabel.topAnchor.constraint(equalTo: iconView.bottomAnchor, constant: 10),
-            titleLabel.leadingAnchor.constraint(equalTo: cardView.leadingAnchor, constant: 20),
-            titleLabel.trailingAnchor.constraint(equalTo: cardView.trailingAnchor, constant: -20),
+            titleLabel.leadingAnchor.constraint(equalTo: cardView.leadingAnchor, constant: 24),
+            titleLabel.trailingAnchor.constraint(equalTo: cardView.trailingAnchor, constant: -24),
             bodyScrollView.topAnchor.constraint(equalTo: titleLabel.bottomAnchor, constant: 12),
-            bodyScrollView.leadingAnchor.constraint(equalTo: cardView.leadingAnchor, constant: 20),
-            bodyScrollView.trailingAnchor.constraint(equalTo: cardView.trailingAnchor, constant: -20),
+            bodyScrollView.leadingAnchor.constraint(equalTo: cardView.leadingAnchor, constant: 24),
+            bodyScrollView.trailingAnchor.constraint(equalTo: cardView.trailingAnchor, constant: -24),
             bodyScrollView.heightAnchor.constraint(lessThanOrEqualTo: parentView.heightAnchor, multiplier: 0.52),
             bodyLabel.topAnchor.constraint(equalTo: bodyScrollView.contentLayoutGuide.topAnchor),
             bodyLabel.leadingAnchor.constraint(equalTo: bodyScrollView.contentLayoutGuide.leadingAnchor),
@@ -1845,8 +2048,8 @@ private class BearyLetterModal {
             bodyLabel.bottomAnchor.constraint(equalTo: bodyScrollView.contentLayoutGuide.bottomAnchor),
             bodyLabel.widthAnchor.constraint(equalTo: bodyScrollView.frameLayoutGuide.widthAnchor),
             quoteWrap.topAnchor.constraint(equalTo: bodyScrollView.bottomAnchor, constant: 18),
-            quoteWrap.leadingAnchor.constraint(equalTo: cardView.leadingAnchor, constant: 20),
-            quoteWrap.trailingAnchor.constraint(equalTo: cardView.trailingAnchor, constant: -20),
+            quoteWrap.leadingAnchor.constraint(equalTo: cardView.leadingAnchor, constant: 24),
+            quoteWrap.trailingAnchor.constraint(equalTo: cardView.trailingAnchor, constant: -24),
             quoteBar.leadingAnchor.constraint(equalTo: quoteWrap.leadingAnchor),
             quoteBar.topAnchor.constraint(equalTo: quoteWrap.topAnchor),
             quoteBar.bottomAnchor.constraint(equalTo: quoteWrap.bottomAnchor),
@@ -1858,9 +2061,9 @@ private class BearyLetterModal {
             quoteMetaLabel.leadingAnchor.constraint(equalTo: quoteWrap.leadingAnchor, constant: 14),
             quoteMetaLabel.trailingAnchor.constraint(equalTo: quoteWrap.trailingAnchor, constant: -14),
             quoteMetaLabel.bottomAnchor.constraint(equalTo: quoteWrap.bottomAnchor, constant: -12),
-            buttonStack.leadingAnchor.constraint(equalTo: cardView.leadingAnchor, constant: 20),
-            buttonStack.trailingAnchor.constraint(equalTo: cardView.trailingAnchor, constant: -20),
-            buttonStack.bottomAnchor.constraint(equalTo: cardView.bottomAnchor, constant: -20),
+            buttonStack.leadingAnchor.constraint(equalTo: cardView.leadingAnchor, constant: 24),
+            buttonStack.trailingAnchor.constraint(equalTo: cardView.trailingAnchor, constant: -24),
+            buttonStack.bottomAnchor.constraint(equalTo: cardView.bottomAnchor, constant: -24),
             secondaryButton.heightAnchor.constraint(equalToConstant: 44),
             primaryButton.heightAnchor.constraint(equalToConstant: 44),
         ])
@@ -1873,15 +2076,37 @@ private class BearyLetterModal {
         buttonTopToQuote = buttonStack.topAnchor.constraint(equalTo: quoteWrap.bottomAnchor, constant: 18)
         buttonTopToBody?.isActive = quoteWrap.isHidden
         buttonTopToQuote?.isActive = !quoteWrap.isHidden
+        if UIAccessibility.isReduceMotionEnabled {
+            overlayView.alpha = 1
+            cardView.transform = CGAffineTransform.identity
+            return
+        }
+        // C-G17：网页 .confirm.open .confirm-box 走 cfmPop .28s——从
+        // translateY(10px) scale(.95) + 透明到原位；App 原只有遮罩淡入、无卡片 pop。
         overlayView.alpha = 0
+        cardView.transform = CGAffineTransform(translationX: 0, y: 10).scaledBy(x: 0.95, y: 0.95)
         UIView.animate(withDuration: 0.25) {
             self.overlayView.alpha = 1
         }
+        let popAnimator = UIViewPropertyAnimator(duration: 0.28, timingParameters: UICubicTimingParameters(controlPoint1: CGPoint(x: 0.32, y: 0.72), controlPoint2: CGPoint(x: 0.35, y: 1)))
+        popAnimator.addAnimations({
+            self.cardView.transform = CGAffineTransform.identity
+        })
+        popAnimator.startAnimation()
+    }
+
+    /// 行高富文本（模态正文 1.9、引用 1.75 用；字号/颜色由调用方传）。
+    private static func lineHeightText(_ string: String, font: UIFont, color: UIColor, multiple: CGFloat) -> NSAttributedString {
+        let paragraph = NSMutableParagraphStyle()
+        paragraph.lineHeightMultiple = multiple
+        paragraph.lineBreakMode = .byCharWrapping
+        return NSAttributedString(string: string, attributes: [.font: font, .foregroundColor: color, .paragraphStyle: paragraph])
     }
 
     /// 送达信引用预览随后补全：有正文才显示引用区，按钮行随之改贴引用区。
     func fillQuote(text: String, meta: String) {
-        quoteTextLabel.text = text
+        // C-G17：随后补全的引用同样带 1.75 行高（与 init 分支一致）。
+        quoteTextLabel.attributedText = BearyLetterModal.lineHeightText(text, font: UIFont.systemFont(ofSize: 15.5), color: BearyColors.ink, multiple: 1.75)
         quoteMetaLabel.text = meta
         quoteWrap.isHidden = false
         buttonTopToBody?.isActive = false
@@ -1989,6 +2214,15 @@ private class BearyNotificationCell: UITableViewCell {
         iconView.tintColor = BearyColors.orange
         iconView.contentMode = .scaleAspectFit
         return iconView
+    }()
+
+    /// 第 17 项 B：行内 popper 动态画（网页 NB.popper 口径，见 BearyPopperView）。
+    /// 仅系统行“成就/徽章”标题时用；其余行仍走 avatarIconView 静态资产。
+    private let popperView: BearyPopperView = {
+        let view = BearyPopperView()
+        view.translatesAutoresizingMaskIntoConstraints = false
+        view.isHidden = true
+        return view
     }()
 
     /// 头像加载失败重试：纯图标按钮（非文字按钮），44×44 点击区居中压在头像上；
@@ -2125,6 +2359,7 @@ private class BearyNotificationCell: UITableViewCell {
         contentView.addSubview(avatarImageView)
         contentView.addSubview(avatarFallbackLabel)
         contentView.addSubview(avatarIconView)
+        contentView.addSubview(popperView)
         contentView.addSubview(kindBadgeView)
         contentView.addSubview(avatarRetryButton)
         contentView.addSubview(bodyStack)
@@ -2153,6 +2388,10 @@ private class BearyNotificationCell: UITableViewCell {
             avatarIconView.centerYAnchor.constraint(equalTo: avatarImageView.centerYAnchor),
             avatarIconView.widthAnchor.constraint(equalToConstant: 19),
             avatarIconView.heightAnchor.constraint(equalToConstant: 19),
+            popperView.centerXAnchor.constraint(equalTo: avatarImageView.centerXAnchor),
+            popperView.centerYAnchor.constraint(equalTo: avatarImageView.centerYAnchor),
+            popperView.widthAnchor.constraint(equalToConstant: 19),
+            popperView.heightAnchor.constraint(equalToConstant: 19),
             avatarRetryButton.centerXAnchor.constraint(equalTo: avatarImageView.centerXAnchor),
             avatarRetryButton.centerYAnchor.constraint(equalTo: avatarImageView.centerYAnchor),
             avatarRetryButton.widthAnchor.constraint(equalToConstant: 44),
@@ -2216,6 +2455,8 @@ private class BearyNotificationCell: UITableViewCell {
         avatarIconView.image = nil
         avatarIconView.isHidden = true
         avatarIconView.tintColor = BearyColors.orange
+        popperView.stop()
+        popperView.isHidden = true
         kindBadgeView.isHidden = true
         kindIconView.image = nil
         titleLabel.attributedText = nil
@@ -2288,6 +2529,23 @@ private class BearyNotificationCell: UITableViewCell {
         chevronView.transform = expanded ? CGAffineTransform(rotationAngle: CGFloat.pi) : CGAffineTransform.identity
     }
 
+    /// C-G10：已读态直接改 class——只动背景与未读点，不重载行。
+    /// 普通行未读底蓝 7%、sys 行蓝 9%（与 configure 同口径）。
+    func setReadAppearance(isUnread: Bool, isSystemStyle: Bool) {
+        let background = isUnread ? BearyColors.blue.withAlphaComponent(isSystemStyle ? 0.09 : 0.07) : BearyColors.bg
+        contentView.backgroundColor = background
+        backgroundColor = background
+        unreadDotView.isHidden = !isUnread
+    }
+
+    /// C-G10：卡面已读态直接改 class——未读底一律蓝 9%。
+    func setCardReadAppearance(anyUnread: Bool) {
+        let background = anyUnread ? BearyColors.blue.withAlphaComponent(0.09) : BearyColors.bg
+        contentView.backgroundColor = background
+        backgroundColor = background
+        unreadDotView.isHidden = !anyUnread
+    }
+
     /// 折叠卡卡面：系统卡橙 14% 底 + mail 图，互动卡蓝 12% 底 + heart 图；
     /// 未读底一律蓝 9%（网页 .nt-item.sys.unread，互动卡同样带 sys 类）。
     func configureAsCard(title: String, excerpt: String, timeMs: Int?, anyUnread: Bool, isSystem: Bool, expanded: Bool) {
@@ -2304,6 +2562,8 @@ private class BearyNotificationCell: UITableViewCell {
         }
         unreadDotView.isHidden = !anyUnread
         avatarImageView.backgroundColor = isSystem ? BearyColors.orange.withAlphaComponent(0.14) : BearyColors.blue.withAlphaComponent(0.12)
+        popperView.stop()
+        popperView.isHidden = true
         avatarIconView.isHidden = false
         avatarIconView.tintColor = isSystem ? BearyColors.orange : BearyColors.blue
         avatarIconView.image = BearyIconImages.image(named: isSystem ? "icon_mail" : "icon_heart", pointSize: 19)
@@ -2370,10 +2630,12 @@ private class BearyNotificationCell: UITableViewCell {
         let isSystemStyle = itemType == "system" || itemType == "letter"
         let isUnread = (item.read ?? true) == false
 
-        // 嵌套行（网页 .nt-sysin 口径）：竖线 x=20 起 2px + 内边距 8，
-        // 头像 x=48、分隔线起于 28；顶层行无竖线。
-        avatarLeadingConstraint?.constant = nested ? 48 : 20
-        separatorLeadingConstraint?.constant = nested ? 28 : 0
+        // 嵌套行（网页 .nt-sysin 口径）：容器 margin-left 20 + border 2px
+        // + padding-left 8，再加行内 padding 20——头像 x=20+2+8+20=50，
+        // 分隔线（行底边、起于行左缘）x=20+2+8=30；App 原 48/28 各左偏 2px。
+        // 竖线本身 x=20（margin 起点）不变。
+        avatarLeadingConstraint?.constant = nested ? 50 : 20
+        separatorLeadingConstraint?.constant = nested ? 30 : 0
         nestedLineView.isHidden = !nested
         chevronView.isHidden = true
         dotTrailingToContentConstraint?.isActive = true
@@ -2399,22 +2661,31 @@ private class BearyNotificationCell: UITableViewCell {
             // system 行标题含“成就/徽章”时用 popper（礼花）图，否则 mail 图；
             // letter 行恒为 mail 图（网页 ntOne 两分支同口径）。
             avatarImageView.backgroundColor = BearyColors.orange.withAlphaComponent(0.14)
-            avatarIconView.isHidden = false
             avatarIconView.tintColor = BearyColors.orange
-            let titleText = item.title ?? (itemType == "letter" ? "一封信" : "通知")
-            let iconName: String
+            // C-G2：同上，空串标题回退（网页 || 语义）。
+            let rawTitle = item.title ?? ""
+            let titleText = rawTitle.isEmpty ? (itemType == "letter" ? "一封信" : "通知") : rawTitle
+            // 第 17 项 B：system 行标题含“成就/徽章”时不再用静态 icon_popper，
+            // 改 BearyPopperView 按网页 NB.popper 动态画；否则仍为 mail 静态图。
             if itemType == "system" && (titleText.contains("成就") || titleText.contains("徽章")) {
-                iconName = "icon_popper"
+                avatarIconView.image = nil
+                avatarIconView.isHidden = true
+                popperView.isHidden = false
+                popperView.start()
             } else {
-                iconName = "icon_mail"
+                popperView.stop()
+                popperView.isHidden = true
+                avatarIconView.isHidden = false
+                avatarIconView.image = BearyIconImages.image(named: "icon_mail", pointSize: 19)
             }
-            avatarIconView.image = BearyIconImages.image(named: iconName, pointSize: 19)
             avatarFallbackLabel.isHidden = true
             kindBadgeView.isHidden = true
             titleLabel.attributedText = BearyNotificationCell.lineHeightText(titleText, font: UIFont.boldSystemFont(ofSize: 15.5), color: BearyColors.ink)
         } else {
             // 互动行：42 圆头像（无图回退首字母 15/700 灰）+ 右下角 19 号类型角标。
             avatarImageView.backgroundColor = BearyColors.line
+            popperView.stop()
+            popperView.isHidden = true
             avatarIconView.isHidden = true
             kindBadgeView.isHidden = false
             // 网页 ntOne 口径：非 like / bookmark 的角标一律回退为 mood 图。
@@ -2478,6 +2749,204 @@ private class BearyNotificationCell: UITableViewCell {
 
         excerptLabel.attributedText = BearyNotificationCell.lineHeightText(item.excerpt ?? "", font: UIFont.systemFont(ofSize: 14), color: BearyColors.gray)
         timeLabel.text = BearyNotificationCell.timeText(ms: item.createdAt)
+    }
+}
+
+// MARK: - 行内 popper 动态画（第 17 项 B，网页 NB.popper 口径）
+
+/// 网页定义来源：~/workspace/teddy_site/beary.html:1340（NB.popper）与 :85-86
+///（nb-shake / nb-pb 关键帧 + .cn / .pb 规则），行内尺寸见 :96（.nt-sysava svg.nb 19px）。
+/// 48 盒描边：stroke-width 2.2、round cap/join、fill none；炮身 .cn 两条路径
+/// M7 41l8-24 16 16z 与 M12 29l8 8；彩带 .pb 六条短线，各带 --x/--y/--r。
+/// 动画：炮身 nb-shake 2.8s（0/70/100% 转 0，76% -5°，84% 4°，92% -2°，
+/// 原点 20% 90%）；彩带 nb-pb 2.8s（0/70% 不可见在原点，76% 现形，100%
+/// 按 --x/--y 平移 + --r 旋转后消失），d2 延迟 .8s、d3 延迟 1.6s。
+/// 颜色：行内 .nt-sysava 的 color 是橙（beary.html:699），故网页 currentColor
+/// 在此上下文即橙；原生全程用 BearyColors.orange（固定色，深浅同值，
+/// 不触动现有 tint 写法），不引入 SF 符号、不自创图形。
+/// 减动效：与网页 prefers-reduced-motion 一致——炮身静止、彩带隐藏。
+/// 自绘模式参照 App 内已有先例 BearyIconMotion（CAShapeLayer + 关键帧动画）。
+private final class BearyPopperView: UIView {
+
+    /// 彩带一条：48 盒起止点 + 飞散位移/旋转（网页 --x/--y/--r，单位=48 盒单位）+ 延迟。
+    private struct Confetti {
+        let from: CGPoint
+        let to: CGPoint
+        let dx: CGFloat
+        let dy: CGFloat
+        let rotation: CGFloat
+        let delay: TimeInterval
+    }
+
+    private let confettiSpecs: [Confetti] = [
+        Confetti(from: CGPoint(x: 26, y: 16), to: CGPoint(x: 27.6, y: 14.4), dx: 8, dy: -14, rotation: 80, delay: 0),
+        Confetti(from: CGPoint(x: 30, y: 22), to: CGPoint(x: 32, y: 21), dx: 16, dy: -6, rotation: -60, delay: 0.8),
+        Confetti(from: CGPoint(x: 22, y: 12), to: CGPoint(x: 22, y: 9.8), dx: -2, dy: -16, rotation: 50, delay: 1.6),
+        Confetti(from: CGPoint(x: 29, y: 17), to: CGPoint(x: 30.4, y: 15.2), dx: 14, dy: -14, rotation: 110, delay: 1.6),
+        Confetti(from: CGPoint(x: 31, y: 26), to: CGPoint(x: 33.2, y: 26.4), dx: 18, dy: 2, rotation: -90, delay: 0),
+        Confetti(from: CGPoint(x: 25, y: 14), to: CGPoint(x: 25.8, y: 12), dx: 4, dy: -17, rotation: -50, delay: 0.8),
+    ]
+
+    private let cannonLayer = CALayer()
+    private var confettiLayers: [CAShapeLayer] = []
+    private var builtSize: CGSize = .zero
+    private var animating = false
+
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        isAccessibilityElement = false
+        backgroundColor = .clear
+    }
+
+    required init?(coder: NSCoder) {
+        super.init(coder: coder)
+        isAccessibilityElement = false
+        backgroundColor = .clear
+    }
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        guard bounds.width > 0, bounds.size != builtSize else { return }
+        builtSize = bounds.size
+        buildLayers()
+        if animating {
+            start()
+        }
+    }
+
+    /// 按当前框重建图层：48 盒路径等比缩放到框宽，线宽 2.2 同比缩放。
+    private func buildLayers() {
+        cannonLayer.removeFromSuperlayer()
+        for layer in confettiLayers {
+            layer.removeFromSuperlayer()
+        }
+        confettiLayers = []
+        let scale = bounds.width / 48
+        let lineWidth = 2.2 * scale
+        let stroke = BearyColors.orange.cgColor
+
+        cannonLayer.bounds = bounds
+        cannonLayer.anchorPoint = CGPoint(x: 0.2, y: 0.9)
+        cannonLayer.position = CGPoint(x: bounds.width * 0.2, y: bounds.height * 0.9)
+        layer.addSublayer(cannonLayer)
+
+        let bodyPath = UIBezierPath()
+        bodyPath.move(to: CGPoint(x: 7, y: 41))
+        bodyPath.addLine(to: CGPoint(x: 15, y: 17))
+        bodyPath.addLine(to: CGPoint(x: 31, y: 33))
+        bodyPath.close()
+        bodyPath.apply(CGAffineTransform(scaleX: scale, y: scale))
+        let bodyLayer = CAShapeLayer()
+        bodyLayer.frame = bounds
+        bodyLayer.path = bodyPath.cgPath
+        bodyLayer.fillColor = UIColor.clear.cgColor
+        bodyLayer.strokeColor = stroke
+        bodyLayer.lineWidth = lineWidth
+        bodyLayer.lineCap = .round
+        bodyLayer.lineJoin = .round
+        cannonLayer.addSublayer(bodyLayer)
+
+        let fusePath = UIBezierPath()
+        fusePath.move(to: CGPoint(x: 12, y: 29))
+        fusePath.addLine(to: CGPoint(x: 20, y: 37))
+        fusePath.apply(CGAffineTransform(scaleX: scale, y: scale))
+        let fuseLayer = CAShapeLayer()
+        fuseLayer.frame = bounds
+        fuseLayer.path = fusePath.cgPath
+        fuseLayer.fillColor = UIColor.clear.cgColor
+        fuseLayer.strokeColor = stroke
+        fuseLayer.lineWidth = lineWidth
+        fuseLayer.lineCap = .round
+        fuseLayer.lineJoin = .round
+        cannonLayer.addSublayer(fuseLayer)
+
+        for spec in confettiSpecs {
+            let path = UIBezierPath()
+            path.move(to: spec.from)
+            path.addLine(to: spec.to)
+            path.apply(CGAffineTransform(scaleX: scale, y: scale))
+            let confettiLayer = CAShapeLayer()
+            confettiLayer.frame = bounds
+            confettiLayer.path = path.cgPath
+            confettiLayer.fillColor = UIColor.clear.cgColor
+            confettiLayer.strokeColor = stroke
+            confettiLayer.lineWidth = lineWidth
+            confettiLayer.lineCap = .round
+            confettiLayer.lineJoin = .round
+            confettiLayer.opacity = 0
+            layer.addSublayer(confettiLayer)
+            confettiLayers.append(confettiLayer)
+        }
+    }
+
+    /// 开始 2.8s 无限循环动画；减动效时只留静态炮身，彩带保持隐藏。
+    func start() {
+        animating = true
+        guard bounds.width > 0 else { return }
+        if builtSize != bounds.size {
+            buildLayers()
+            builtSize = bounds.size
+        }
+        if UIAccessibility.isReduceMotionEnabled {
+            stopAnimationsOnly()
+            for confettiLayer in confettiLayers {
+                confettiLayer.opacity = 0
+            }
+            return
+        }
+        cannonLayer.removeAnimation(forKey: "bearyPopperShake")
+        let shake = CAKeyframeAnimation(keyPath: "transform.rotation.z")
+        shake.values = [0, 0, -5 * CGFloat.pi / 180, 4 * CGFloat.pi / 180, -2 * CGFloat.pi / 180, 0]
+        shake.keyTimes = [0, 0.70, 0.76, 0.84, 0.92, 1]
+        shake.duration = 2.8
+        shake.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+        shake.repeatCount = .infinity
+        cannonLayer.add(shake, forKey: "bearyPopperShake")
+
+        let scale = bounds.width / 48
+        for (index, confettiLayer) in confettiLayers.enumerated() {
+            let spec = confettiSpecs[index]
+            confettiLayer.removeAnimation(forKey: "bearyPopperBurst")
+            confettiLayer.removeAnimation(forKey: "bearyPopperFade")
+            let translation = CATransform3DMakeTranslation(spec.dx * scale, spec.dy * scale, 0)
+            let rotation = CATransform3DMakeRotation(spec.rotation * CGFloat.pi / 180, 0, 0, 1)
+            let burst = CAKeyframeAnimation(keyPath: "transform")
+            burst.values = [
+                NSValue(caTransform3D: CATransform3DIdentity),
+                NSValue(caTransform3D: CATransform3DIdentity),
+                NSValue(caTransform3D: CATransform3DIdentity),
+                NSValue(caTransform3D: CATransform3DConcat(translation, rotation)),
+            ]
+            burst.keyTimes = [0, 0.70, 0.76, 1]
+            burst.duration = 2.8
+            burst.beginTime = CACurrentMediaTime() + spec.delay
+            burst.repeatCount = .infinity
+            confettiLayer.add(burst, forKey: "bearyPopperBurst")
+            let fade = CAKeyframeAnimation(keyPath: "opacity")
+            fade.values = [0, 0, 1, 0]
+            fade.keyTimes = [0, 0.70, 0.76, 1]
+            fade.duration = 2.8
+            fade.beginTime = CACurrentMediaTime() + spec.delay
+            fade.repeatCount = .infinity
+            confettiLayer.add(fade, forKey: "bearyPopperFade")
+        }
+    }
+
+    private func stopAnimationsOnly() {
+        cannonLayer.removeAnimation(forKey: "bearyPopperShake")
+        for confettiLayer in confettiLayers {
+            confettiLayer.removeAnimation(forKey: "bearyPopperBurst")
+            confettiLayer.removeAnimation(forKey: "bearyPopperFade")
+        }
+    }
+
+    /// 停动画并复位：炮身回正、彩带隐藏，供复用与切行时调用。
+    func stop() {
+        animating = false
+        stopAnimationsOnly()
+        for confettiLayer in confettiLayers {
+            confettiLayer.opacity = 0
+        }
     }
 }
 

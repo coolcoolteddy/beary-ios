@@ -9,7 +9,8 @@ import UIKit
 // 遮罩为通用 0.45 黑遮罩（网页 .modal .backdrop 口径），点遮罩关闭；键盘弹出时 sheet
 // 底边抬到键盘上方（此前由 UISheet 承担的避让，改自定义 sheet 后在本文件内补上）。
 // 搜索框为图标 + “搜索昵称或 @用户名”；init/loading/none/fail 四态齐全；
-// 加载态为搜索图标位 18×18 旋转动画（网页 addrSetIconBusy 同款，不再用系统 spinner）。
+// 加载态为搜索图标位 18×18：闲时放大镜，搜索中换 beary-loading 并旋转
+// （网页 addrSetIconBusy 同款，不再用系统 spinner，也不再转放大镜）。
 // 引用选择不再是独立导航页：已改为编辑器内嵌展开面板（见 BearyComposerViewController），
 // 本文件旧的 BearyQuotePickerViewController 已删除。
 // 约束：部署目标 iOS 15.0、Swift 5.0——只用闭包回调，不用 async/await，不用 if-let 简写。
@@ -129,8 +130,8 @@ final class BearyRecipientPickerViewController: UIViewController, UITextFieldDel
         headerIcon.image = BearyIconImages.image(named: "icon_at", pointSize: 20)
         headerIcon.tintColor = BearyColors.orange
         headerIcon.contentMode = .scaleAspectFit
-        // W3：选人 sheet 标题与编辑器选人钮统一为“写给某个人”。
-        headerTitle.text = "写给某个人"
+        // 决议第 16 项 B：选人 sheet 标题改“写给谁”。
+        headerTitle.text = "写给谁"
         headerTitle.font = UIFont.boldSystemFont(ofSize: 16)
         headerTitle.textColor = BearyColors.ink
         if let closeImage = BearyIconImages.image(named: "icon_close", pointSize: 15) {
@@ -546,22 +547,28 @@ final class BearyRecipientPickerViewController: UIViewController, UITextFieldDel
             stateRetryBottomConstraint?.isActive = true
         } else {
             stateIcon.image = BearyIconImages.image(named: "icon_at", pointSize: 25)
-            stateTitle.text = "写给某个人"
+            stateTitle.text = "写给谁"
             stateSubtitle.text = "这篇 7 天后才送达"
         }
     }
 
-    /// 搜索图标位旋转：18×18 放大镜 0.9s 线性无限旋转（网页 .addr-sic.spinning 同款），
-    /// 减动效下不转；不再用框内 medium spinner 与列表态 spinner。
+    /// 搜索图标位状态（D-G9）：网页 addrSetIconBusy 同款——闲时放大镜，
+    /// 搜索中换 beary-loading 并 0.9s 线性无限旋转；减动效下换图不转。
+    /// 资产 icon_loading.imageset 已存在（发布钮/搜索页同款）。
     private func setSearchBusy(_ busy: Bool) {
         searchIcon.layer.removeAnimation(forKey: "bearySearchSpin")
-        if busy && !UIAccessibility.isReduceMotionEnabled {
-            let spin = CABasicAnimation(keyPath: "transform.rotation.z")
-            spin.fromValue = 0
-            spin.toValue = CGFloat.pi * 2
-            spin.duration = 0.9
-            spin.repeatCount = .infinity
-            searchIcon.layer.add(spin, forKey: "bearySearchSpin")
+        if busy {
+            searchIcon.image = BearyIconImages.image(named: "icon_loading", pointSize: 18)
+            if !UIAccessibility.isReduceMotionEnabled {
+                let spin = CABasicAnimation(keyPath: "transform.rotation.z")
+                spin.fromValue = 0
+                spin.toValue = CGFloat.pi * 2
+                spin.duration = 0.9
+                spin.repeatCount = .infinity
+                searchIcon.layer.add(spin, forKey: "bearySearchSpin")
+            }
+        } else {
+            searchIcon.image = BearyIconImages.image(named: "icon_search", pointSize: 18)
         }
     }
 
@@ -639,6 +646,10 @@ final class BearyRecipientPickerViewController: UIViewController, UITextFieldDel
             fallbackLabel.textAlignment = .center
             fallbackLabel.layer.cornerRadius = 22
             fallbackLabel.layer.masksToBounds = true
+            // D-G10：网页 .addr-user .addr-avafall 回退头像带 inset 1px 橙 25% 内圈；
+            // 描边画在圆内侧，等价于该 inset ring（仅回退头像，真头像不加）。
+            fallbackLabel.layer.borderWidth = 1
+            fallbackLabel.layer.borderColor = BearyColors.orange.withAlphaComponent(0.25).cgColor
             let nameLabel = UILabel()
             nameLabel.translatesAutoresizingMaskIntoConstraints = false
             nameLabel.font = UIFont.systemFont(ofSize: 15, weight: .bold)
