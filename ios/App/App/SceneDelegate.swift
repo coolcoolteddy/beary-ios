@@ -64,6 +64,11 @@ class SceneDelegate: UIResponder, UIWindowSceneDelegate {
 
 final class BearyChromeViewController: UIViewController {
     private var topGlass: UIVisualEffectView!
+    /// 52 批 header 高度开关：显示 = 安全区顶 + 60，收起 = 0；页顶约束同步 60↔0，收起后不留空占区。
+    private var headerVisible = true
+    private var topHeightConstraint: NSLayoutConstraint?
+    private var feedTopConstraint: NSLayoutConstraint?
+    private var pageTopConstraints: [ContainerPage: NSLayoutConstraint] = [:]
     private var bottomCapsule: UIVisualEffectView!
     private var fabButton: UIButton!
     private var loginButton: UIButton!
@@ -236,11 +241,16 @@ final class BearyChromeViewController: UIViewController {
         topGlass = top
         top.alpha = 0
         top.isUserInteractionEnabled = false
+        // 52 批：顶栏不再用 bottom=安全区+60 定高（收起时帧不塌、空占 60pt），改用高度约束开关：
+        // 显示 = 安全区顶 + 60（viewDidLayoutSubviews 按真实安全区纠正），收起 = 0；内容栈在玻璃内，裁剪防溢出。
+        top.clipsToBounds = true
+        let topHeight = top.heightAnchor.constraint(equalToConstant: 60)
+        topHeightConstraint = topHeight
         NSLayoutConstraint.activate([
             top.topAnchor.constraint(equalTo: view.topAnchor),
             top.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             top.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-            top.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 60),
+            topHeight,
         ])
         let logo = UIButton(type: .custom)
         logo.setImage(UIImage(named: "LogoHorizontal"), for: .normal)
@@ -791,11 +801,35 @@ final class BearyChromeViewController: UIViewController {
         }
     }
 
+    /// 52 批 header 规则：header 只在首页出现；切页与滚动都走高度塌掉而非仅淡出。
+    /// 显示时顶栏高 = 安全区顶 + 60、各页顶距 60；收起时顶栏高 0、各页顶距 0，空占区彻底消失。
+    /// 底栏胶囊/阴影/FAB 不走这里（setBarsVisible 原口径不动）。
+    private func setHeaderVisible(_ visible: Bool, animated: Bool) {
+        headerVisible = visible
+        let height: CGFloat = visible ? view.safeAreaInsets.top + 60 : 0
+        if topHeightConstraint?.constant != height { topHeightConstraint?.constant = height }
+        let pageTop: CGFloat = visible ? 60 : 0
+        if feedTopConstraint?.constant != pageTop { feedTopConstraint?.constant = pageTop }
+        for (_, constraint) in pageTopConstraints where constraint.constant != pageTop {
+            constraint.constant = pageTop
+        }
+        topGlass.alpha = visible ? 1 : 0
+        topGlass.isUserInteractionEnabled = visible
+        if animated && !UIAccessibility.isReduceMotionEnabled {
+            UIView.animate(withDuration: 0.25, delay: 0, options: [.beginFromCurrentState, .allowUserInteraction], animations: {
+                self.view.layoutIfNeeded()
+            })
+        } else {
+            view.layoutIfNeeded()
+        }
+    }
+
     /// 栏显隐：动画可中断、可交互，reduced-motion 下直接设终值（与原栏动画同口径）。
     private func setBarsVisible(_ visible: Bool, animated: Bool) {
+        // 52 批：header 高度走 setHeaderVisible——首页才显示、他页恒收起（各页 setChromeHidden(false)
+        // 强制显示调用至此即按新规则收敛：他页只恢复底栏胶囊与 FAB，不恢复 header）。
+        setHeaderVisible(visible && currentPage == .home, animated: animated)
         let applyBars = {
-            self.topGlass.alpha = visible ? 1 : 0
-            self.topGlass.transform = visible ? .identity : CGAffineTransform(translationX: 0, y: -20)
             self.bottomCapsule.alpha = visible ? 1 : 0
             self.bottomCapsule.transform = visible ? .identity : CGAffineTransform(translationX: 0, y: 80)
             // 底栏阴影载体与胶囊同显隐同位移（否则胶囊藏起后阴影还留在原地）。
@@ -809,13 +843,12 @@ final class BearyChromeViewController: UIViewController {
         } else {
             UIView.animate(withDuration: 0.25, delay: 0, options: [.beginFromCurrentState, .allowUserInteraction], animations: applyBars)
         }
-        topGlass.isUserInteractionEnabled = visible
         bottomCapsule.isUserInteractionEnabled = visible
         fabButton.isUserInteractionEnabled = visible
     }
 
     /// 栏显隐容器 API（清单第 2 项容器侧）：首页／时间线／个人主页的滚动回调调此方法；
-    /// FAB 随栏同隐同现（沿用 setBarsVisible 行为：顶栏玻璃、底栏胶囊、阴影与 FAB 同步位移与交互开关）。
+    /// 52 批：hidden=false 时底栏胶囊与 FAB 恢复，header 只在首页恢复（他页恒收起）；hidden=true 时 header 高度塌掉 + 底栏藏起。
     func setChromeHidden(_ hidden: Bool, animated: Bool) { setBarsVisible(!hidden, animated: animated) }
 
     /// 顶栏选中态：四个 tab 里当前页对应的钮为墨色，其余灰色；当前页不是 tab（搜索 / 邀请 / 个人主页）时全部灰色。
@@ -906,6 +939,11 @@ final class BearyChromeViewController: UIViewController {
         // 旋转/多任务改 bounds 时重算桌面式（iPad 旋转不改 size class，trait 回调靠不住，以 bounds 为准）
         updateDesktopLayout()
         layoutChromeOverlays()
+        // 52 批：安全区变化（旋转/分屏）时把显示态顶栏高纠正为 安全区顶 + 60；收起态保持 0 不动。
+        if headerVisible, let heightConstraint = topHeightConstraint {
+            let corrected = view.safeAreaInsets.top + 60
+            if heightConstraint.constant != corrected { heightConstraint.constant = corrected }
+        }
     }
 
     @objc private func didTapLogo() { showPage(.home) }
@@ -995,8 +1033,10 @@ final class BearyChromeViewController: UIViewController {
         feedTrailingConstraint = trailing
         feedColumnWidthConstraint = colWidth
         feedCenterXConstraint = centerX
+        let feedTop = f.view.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 60)
+        feedTopConstraint = feedTop
         NSLayoutConstraint.activate([
-            f.view.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 60),
+            feedTop,
             f.view.bottomAnchor.constraint(equalTo: view.bottomAnchor),
         ])
         f.didMove(toParent: self)
@@ -1071,6 +1111,8 @@ final class BearyChromeViewController: UIViewController {
         }
         updateTabSelection()
         updateDesktopLayout()
+        // 52 批：切页即按 header 规则定高——首页显示、他页收起（无动画，页切换本身已有淡入）。
+        setHeaderVisible(page == .home, animated: false)
     }
 
     /// 容器页解析：消息/时间线/我/搜索/他人主页走真实现（邀请已改弹窗，不再是容器页）。
@@ -1101,8 +1143,10 @@ final class BearyChromeViewController: UIViewController {
         let centerX = vc.view.centerXAnchor.constraint(equalTo: view.centerXAnchor)
         centerX.isActive = desktopNow
         pageColumns[page] = PageColumn(leading: leading, trailing: trailing, colWidth: colWidth, centerX: centerX)
+        let pageTop = vc.view.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 60)
+        pageTopConstraints[page] = pageTop
         NSLayoutConstraint.activate([
-            vc.view.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 60),
+            pageTop,
             vc.view.bottomAnchor.constraint(equalTo: view.bottomAnchor),
         ])
         vc.didMove(toParent: self)
@@ -1310,8 +1354,10 @@ final class BearyChromeViewController: UIViewController {
         let centerX = vc.view.centerXAnchor.constraint(equalTo: view.centerXAnchor)
         centerX.isActive = desktopNow
         pageColumns[page] = PageColumn(leading: leading, trailing: trailing, colWidth: colWidth, centerX: centerX)
+        let placeholderTop = vc.view.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 60)
+        pageTopConstraints[page] = placeholderTop
         NSLayoutConstraint.activate([
-            vc.view.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 60),
+            placeholderTop,
             vc.view.bottomAnchor.constraint(equalTo: view.bottomAnchor),
         ])
         vc.didMove(toParent: self)

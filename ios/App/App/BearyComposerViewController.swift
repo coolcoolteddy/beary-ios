@@ -13,7 +13,7 @@ import PhotosUI
 // 文案一律中文；深浅色一律用 BearyColors 的动态色（含语义红 red 与图片上深色衬底 scrim）。
 // 网络数据一律不用 force unwrap；图片移除只动本地与 key 列表，不调服务端。
 
-final class BearyComposerViewController: UIViewController, UITextViewDelegate, PHPickerViewControllerDelegate {
+final class BearyComposerViewController: UIViewController, UITextViewDelegate, PHPickerViewControllerDelegate, UIGestureRecognizerDelegate {
 
     // MARK: - 公开接口
 
@@ -215,9 +215,6 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     private let quoteSection = UIStackView()
     private let pickQuoteButton = UIButton(type: .system)
     private let quoteCard = UIView()
-    private let quoteAvatarImageView = UIImageView()
-    private let quoteAvatarFallback = UILabel()
-    private let quoteNameLabel = UILabel()
     private let quoteDeliveringPill = UILabel()
     private let quoteContentLabel = UILabel()
     private let quoteDateLabel = UILabel()
@@ -328,6 +325,13 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         topBar.translatesAutoresizingMaskIntoConstraints = false
         toolbarContainer.translatesAutoresizingMaskIntoConstraints = false
         scrollView.translatesAutoresizingMaskIntoConstraints = false
+        // 52 批收键盘：滚动拖动即收（keyboardDismissMode）+ 点空白处收（下方 tap 手势，cancelsTouchesInView=false
+        // 不吞控件点按；正文区点按由手势代理放行给 textView 聚焦，不走收键盘）。打开即自动聚焦（viewDidAppear）不动。
+        scrollView.keyboardDismissMode = .onDrag
+        let dismissTap = UITapGestureRecognizer(target: self, action: #selector(dismissKeyboardTap))
+        dismissTap.cancelsTouchesInView = false
+        dismissTap.delegate = self
+        scrollView.addGestureRecognizer(dismissTap)
         contentView.translatesAutoresizingMaskIntoConstraints = false
         contentStack.translatesAutoresizingMaskIntoConstraints = false
         contentStack.axis = .vertical
@@ -1005,22 +1009,6 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         quoteCard.layer.masksToBounds = true
         quoteCard.layer.borderWidth = 0
         quoteCardBottomLine.backgroundColor = BearyColors.line
-        quoteAvatarImageView.contentMode = .scaleAspectFill
-        quoteAvatarImageView.clipsToBounds = true
-        quoteAvatarImageView.layer.cornerRadius = 20
-        quoteAvatarImageView.layer.masksToBounds = true
-        quoteAvatarFallback.font = UIFont.boldSystemFont(ofSize: 16)
-        quoteAvatarFallback.textColor = BearyColors.gray
-        quoteAvatarFallback.backgroundColor = BearyColors.faint
-        quoteAvatarFallback.textAlignment = .center
-        quoteAvatarFallback.layer.cornerRadius = 20
-        quoteAvatarFallback.layer.masksToBounds = true
-        quoteNameLabel.font = UIFont.boldSystemFont(ofSize: 16.5)
-        quoteNameLabel.textColor = BearyColors.ink
-        quoteNameLabel.numberOfLines = 1
-        quoteNameLabel.lineBreakMode = .byTruncatingTail
-        // 名截断优先：横向压缩优先级低于 pill 与 ×，长名先截断，不挤 pill、不盖 ×。
-        quoteNameLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         quoteDeliveringPill.setContentCompressionResistancePriority(.required, for: .horizontal)
         quoteDeliveringPill.font = UIFont.systemFont(ofSize: 11, weight: .semibold)
         quoteDeliveringPill.textColor = BearyColors.blue
@@ -1044,7 +1032,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         quoteCardRemoveButton.setImage(BearyIconImages.image(named: "icon_close", pointSize: 15), for: .normal)
         quoteCardRemoveButton.tintColor = BearyColors.gray
         quoteCardRemoveButton.addTarget(self, action: #selector(didTapRemoveQuote), for: .touchUpInside)
-        for v in [quoteSection, pickQuoteButton, quoteCard, quoteAvatarImageView, quoteAvatarFallback, quoteNameLabel, quoteDeliveringPill, quoteContentLabel, quoteDateLabel, quoteImagesScrollView, quoteImagesStackView, quoteCardBottomLine, quoteCardRemoveButton, quoteDeletedRow, quoteDeletedLabel, quoteDeletedRemoveButton] {
+        for v in [quoteSection, pickQuoteButton, quoteCard, quoteDeliveringPill, quoteContentLabel, quoteDateLabel, quoteImagesScrollView, quoteImagesStackView, quoteCardBottomLine, quoteCardRemoveButton, quoteDeletedRow, quoteDeletedLabel, quoteDeletedRemoveButton] {
             v.translatesAutoresizingMaskIntoConstraints = false
         }
         // 已删态行（恢复用）：灰字 + “移除”钮，默认隐藏；见 refreshQuoteSection。
@@ -1069,9 +1057,6 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         quoteSection.addArrangedSubview(pickQuoteButton)
         quoteSection.addArrangedSubview(quoteCard)
         quoteSection.addArrangedSubview(quoteDeletedRow)
-        quoteCard.addSubview(quoteAvatarImageView)
-        quoteCard.addSubview(quoteAvatarFallback)
-        quoteCard.addSubview(quoteNameLabel)
         quoteCard.addSubview(quoteDeliveringPill)
         quoteCard.addSubview(quoteContentLabel)
         quoteCard.addSubview(quoteDateLabel)
@@ -1081,27 +1066,17 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         quoteCard.addSubview(quoteCardRemoveButton)
         NSLayoutConstraint.activate([
             pickQuoteButton.heightAnchor.constraint(equalToConstant: 44),
-            quoteAvatarImageView.topAnchor.constraint(equalTo: quoteCard.topAnchor, constant: 16),
-            quoteAvatarImageView.leadingAnchor.constraint(equalTo: quoteCard.leadingAnchor, constant: 2),
-            quoteAvatarImageView.widthAnchor.constraint(equalToConstant: 40),
-            quoteAvatarImageView.heightAnchor.constraint(equalToConstant: 40),
-            quoteAvatarFallback.topAnchor.constraint(equalTo: quoteCard.topAnchor, constant: 16),
-            quoteAvatarFallback.leadingAnchor.constraint(equalTo: quoteCard.leadingAnchor, constant: 2),
-            quoteAvatarFallback.widthAnchor.constraint(equalToConstant: 40),
-            quoteAvatarFallback.heightAnchor.constraint(equalToConstant: 40),
-            quoteNameLabel.topAnchor.constraint(equalTo: quoteCard.topAnchor, constant: 16),
-            quoteNameLabel.leadingAnchor.constraint(equalTo: quoteCard.leadingAnchor, constant: 54),
-            // 名 trailing 恒贴 × 左侧 -8（原先贴卡片 -2，长名会滑到 28×28 的 × 下面）。
-            quoteNameLabel.trailingAnchor.constraint(lessThanOrEqualTo: quoteCardRemoveButton.leadingAnchor, constant: -8),
-            quoteDeliveringPill.centerYAnchor.constraint(equalTo: quoteNameLabel.centerYAnchor),
+            // 52 批：lite 卡不带头像名——pill 顶行贴卡左（原头像 40 + 名 54 链已删），日期/正文/图片条同贴卡左 2。
+            quoteDeliveringPill.topAnchor.constraint(equalTo: quoteCard.topAnchor, constant: 16),
+            quoteDeliveringPill.leadingAnchor.constraint(equalTo: quoteCard.leadingAnchor, constant: 2),
             quoteDeliveringPill.heightAnchor.constraint(equalToConstant: 17),
-            quoteDateLabel.topAnchor.constraint(equalTo: quoteNameLabel.bottomAnchor, constant: 2),
-            quoteDateLabel.leadingAnchor.constraint(equalTo: quoteCard.leadingAnchor, constant: 54),
+            quoteDateLabel.topAnchor.constraint(equalTo: quoteDeliveringPill.bottomAnchor, constant: 2),
+            quoteDateLabel.leadingAnchor.constraint(equalTo: quoteCard.leadingAnchor, constant: 2),
             quoteDateLabel.trailingAnchor.constraint(lessThanOrEqualTo: quoteCard.trailingAnchor, constant: -2),
             quoteContentLabel.topAnchor.constraint(equalTo: quoteDateLabel.bottomAnchor, constant: 4),
-            quoteContentLabel.leadingAnchor.constraint(equalTo: quoteCard.leadingAnchor, constant: 54),
+            quoteContentLabel.leadingAnchor.constraint(equalTo: quoteCard.leadingAnchor, constant: 2),
             quoteContentLabel.trailingAnchor.constraint(equalTo: quoteCard.trailingAnchor, constant: -2),
-            quoteImagesScrollView.leadingAnchor.constraint(equalTo: quoteCard.leadingAnchor, constant: 54),
+            quoteImagesScrollView.leadingAnchor.constraint(equalTo: quoteCard.leadingAnchor, constant: 2),
             quoteImagesScrollView.trailingAnchor.constraint(equalTo: quoteCard.trailingAnchor, constant: -2),
             quoteImagesScrollView.heightAnchor.constraint(equalToConstant: 118),
             quoteImagesStackView.topAnchor.constraint(equalTo: quoteImagesScrollView.contentLayoutGuide.topAnchor),
@@ -1124,7 +1099,8 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         quoteImagesTopConstraint?.isActive = true
         quoteImagesBottomConstraint?.isActive = true
         // pill 约束单独持有：仅可见时激活（见 refreshQuoteSection 的 D-8 切换）。
-        quotePillLeadingConstraint = quoteDeliveringPill.leadingAnchor.constraint(equalTo: quoteNameLabel.trailingAnchor, constant: 8)
+        // 52 批：pill 贴卡左（原“名后 +8”链随名删除而改贴卡左 2），宽随倒计时文本撑开。
+        quotePillLeadingConstraint = quoteDeliveringPill.leadingAnchor.constraint(equalTo: quoteCard.leadingAnchor, constant: 2)
         quotePillWidthConstraint = quoteDeliveringPill.widthAnchor.constraint(equalToConstant: 48)
         quotePillTrailingConstraint = quoteDeliveringPill.trailingAnchor.constraint(lessThanOrEqualTo: quoteCardRemoveButton.leadingAnchor, constant: -8)
         refreshQuoteSection()
@@ -1171,17 +1147,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         }
         quoteDeletedRow.isHidden = true
         quoteCard.isHidden = false
-        let authorName = shown.authorName ?? "用户"
-        quoteNameLabel.text = authorName
-        if let avatarPath = shown.authorAvatar, let url = BearyImageURLs.avatarURL(avatarPath) {
-            quoteAvatarImageView.bearySetImage(url: url, placeholder: nil)
-            quoteAvatarImageView.isHidden = false
-            quoteAvatarFallback.isHidden = true
-        } else {
-            quoteAvatarImageView.isHidden = true
-            quoteAvatarFallback.isHidden = false
-            quoteAvatarFallback.text = String(authorName.prefix(1)).uppercased()
-        }
+        // 52 批：lite 卡不带头像名——作者名/头像不再赋值（shown.authorName/authorAvatar 字段保留在模型里，不删）。
         quoteDeliveringPill.isHidden = (shown.isPublic == true)
         // W2：lite 卡 pill 统一为带倒计时版；倒计时文本变长时 pill 宽随文本撑开（原 48 固定宽只够“投递中”三字）。
         let pillText = quoteCountdownText(publishAt: shown.publishAt)
@@ -1190,8 +1156,8 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             let textWidth = (pillText as NSString).size(withAttributes: [NSAttributedString.Key.font: UIFont.systemFont(ofSize: 11, weight: .semibold)]).width
             widthConstraint.constant = ceil(textWidth) + 14
         }
-        // D-8：pill 可见时才激活 leading/宽/trailing 三约束（名 + pill + × 链完整，
-        // 名先截断）；pill 隐藏时停用，名只受 × 左侧 -8 约束，不留 48 宽空位。
+        // D-8：pill 可见时才激活 leading/宽/trailing 三约束（pill 贴卡左 + × 左侧 -8；
+        // pill 隐藏时停用，日期行仍以 pill 底锚定（pill 帧仍在 16 高处，日期位置与原来名行下方一致），不留空位。
         let pillVisible = !quoteDeliveringPill.isHidden
         quotePillLeadingConstraint?.isActive = pillVisible
         quotePillWidthConstraint?.isActive = pillVisible
@@ -1215,10 +1181,9 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     private var quoteCardContentBottomConstraint: NSLayoutConstraint?
     private var quoteImagesTopConstraint: NSLayoutConstraint?
     private var quoteImagesBottomConstraint: NSLayoutConstraint?
-    /// D-8：作者名 / 投递中 pill / 右上 × 的防重叠约束。名 trailing 恒贴 × 左侧 -8；
-    /// pill 仅在可见时激活 leading（名后 +8）与 trailing（× 左侧 -8），名压缩优先级
-    /// 低于 pill（名先截断，pill 不出界、不被卡片 masksToBounds 裁掉）；pill 隐藏时
-    /// 停用其 leading/宽约束，名仍受 × 左侧 -8 约束，不滑到 × 下面。
+    /// D-8（52 批）：投递中 pill / 右上 × 的防重叠约束。pill 贴卡左 2；
+    /// pill 仅在可见时激活 leading（卡左 2）与 trailing（× 左侧 -8），不出界、
+    /// 不被卡片 masksToBounds 裁掉；pill 隐藏时停用其 leading/宽约束。
     private var quotePillLeadingConstraint: NSLayoutConstraint?
     private var quotePillWidthConstraint: NSLayoutConstraint?
     private var quotePillTrailingConstraint: NSLayoutConstraint?
@@ -3135,9 +3100,13 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             BearyDraftImageStore.sweep(keeping: referenced)
             DispatchQueue.main.async {
                 guard let self = self else { return }
+                // 52 批补充：恢复竞态门——恢复是异步读盘，落地时用户可能已经打过字；
+                // 此时整段覆盖会抹掉刚打的字（拼音组词中还会被 attributedText 重设打散）。
+                // 用户已打字时整单跳过恢复（旧草稿仍在草稿箱，不丢），只字为空时才应用。
+                let wasEmptyBeforeRestore = self.textView.text.isEmpty
+                guard wasEmptyBeforeRestore else { return }
                 self.currentDraftId = draft.draftId
                 self.draftClientReq = draft.clientReq
-                let wasEmptyBeforeRestore = self.textView.text.isEmpty
                 self.textView.text = draft.content
                 self.applyBodyLineHeight()
                 // 恢复后光标置末尾（接着写）：未出现时由 viewDidAppear 兜底，已聚焦且
@@ -3756,6 +3725,20 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         // 同一套 inset 计算跟随最终帧；出现时与 WillShow 同值、beginFromCurrentState 保证幂等，不叠加；
         // 键盘收起时最终帧在屏外，算出的高度为 0，与 WillHide 一致。
         applyKeyboard(notification, showing: true)
+    }
+
+    /// 52 批收键盘：点编辑器空白处收键盘（手势挂在 scrollView 上；正文区点按由下方代理排除，不干扰聚焦）。
+    @objc private func dismissKeyboardTap() {
+        view.endEditing(true)
+    }
+
+    /// 手势代理：落在正文 textView（含占位 label 子视图）内的点按不触发收键盘，交给 textView 正常聚焦/选区；
+    /// 其余空白与控件点按照常收键盘（cancelsTouchesInView=false，控件自身点按不受影响）。
+    func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldReceive touch: UITouch) -> Bool {
+        if let touchedView = touch.view, touchedView.isDescendant(of: textView) || touchedView === textView {
+            return false
+        }
+        return true
     }
 
     private func applyKeyboard(_ notification: Notification, showing: Bool) {
