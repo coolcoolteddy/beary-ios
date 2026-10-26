@@ -205,7 +205,7 @@ class BearyFeedViewController: UIViewController {
         // 故关掉自动调整——此后 contentInset.top 即视觉顶距（见 applyHeaderTopInset）。
         tv.contentInsetAdjustmentBehavior = .never
         // 跟手批：按钮在滚动视图里默认 delaysContentTouches=true 时，
-        // 按下要等滚动判定才送达按钮，.84 按压与描边都慢半拍；关掉后触摸立即送达，
+        // 按下要等滚动判定才送达按钮，.84 按压慢半拍；关掉后触摸立即送达，
         // 滚动仍可经 canCancelContentTouches（默认 true）取消按钮跟踪（touchCancel 已接回弹）。
         tv.delaysContentTouches = false
         tv.register(BearyFeedCell.self, forCellReuseIdentifier: "BearyFeedCell")
@@ -2054,9 +2054,7 @@ class BearyFeedCell: UITableViewCell {
     private var isExpanded = false
     private var isLikeBusy = false
     private var isBookmarkBusy = false
-    /// 点赞描边先行图层（0.5s 描边画出，服务器确认/失败后移除；不改填充与计数）。
-    private var likeStrokeLayer: CAShapeLayer?
-    /// 跟手批：按下已给过先行反馈（描边/预取消赞），抬起确认时不再重播。
+    /// 跟手批：按下已给过先行反馈（轻震/预取消赞），抬起确认时不再重播。
     private var likePressPreviewActive = false
     /// 点赞钮显式宽约束：见 updateLikeButton 的宽度算法。
     private var likeButtonWidthConstraint: NSLayoutConstraint?
@@ -2573,8 +2571,6 @@ class BearyFeedCell: UITableViewCell {
         isExpanded = false
         isLikeBusy = false
         isBookmarkBusy = false
-        likeStrokeLayer?.removeFromSuperlayer()
-        likeStrokeLayer = nil
         likePressPreviewActive = false
         foldOverflow = nil
         currentEmoteList = []
@@ -2745,9 +2741,6 @@ class BearyFeedCell: UITableViewCell {
     }
 
     private func updateLikeButton() {
-        // 状态渲染先清瞬时描边层：描边只是点下 .5s 的画出动画，
-        // 任何一次按状态重绘（configure / 成功 / 失败）都不应把它留在未点赞态。
-        removeLikeStroke()
         let liked = currentEntry?.likedByMe ?? false
         let countValue = currentEntry?.likeCount ?? 0
         let heartImage = BearyFeedIconCache.image(named: liked ? "icon_heart_fill" : "icon_heart", pointSize: 22) ?? BearyFeedIconCache.image(named: "icon_heart", pointSize: 22)
@@ -3251,20 +3244,7 @@ class BearyFeedCell: UITableViewCell {
         button.layer.add(shake, forKey: "bearyDenyShake")
     }
 
-    /// F8/E3-1：点赞描边先行——官方 beary-heart 路径描边画出（网页 heartDraw .5s 同口径），
-    /// 橙色填充与计数仍等服务器确认；失败时撤掉描边 + 拒绝动效。绝不做填充/计数的乐观更新。
-    private func playLikeStrokeDraw() {
-        BearyHaptics.likeTap()
-        likeStrokeLayer?.removeFromSuperlayer()
-        likeStrokeLayer = BearyIconMotion.playHeartStrokeDraw(on: likeButton)
-    }
-
-    private func removeLikeStroke() {
-        likeStrokeLayer?.removeFromSuperlayer()
-        likeStrokeLayer = nil
-    }
-
-    /// 跟手批：按下即给先行反馈（描边/预取消赞），手指的按压不等抬起；
+    /// 跟手批：按下即给先行反馈（轻震/预取消赞），手指的按压不等抬起；
     /// 守卫与 likeTapped 完全一致（公开、已登录、非忙碌、有 id），不满足不预览；
     /// API 仍只在抬起确认的 likeTapped 里发。
     @objc private func likePressDown() {
@@ -3275,7 +3255,8 @@ class BearyFeedCell: UITableViewCell {
         if currentEntry?.likedByMe == true {
             applyPreUnlike()
         } else {
-            playLikeStrokeDraw()
+            // 描边已撤：按下只给轻震，按压缩放由 iconTouchDown 的 .84 给。
+            BearyHaptics.likeTap()
         }
         likePressPreviewActive = true
     }
@@ -3284,18 +3265,16 @@ class BearyFeedCell: UITableViewCell {
     @objc private func likePressCancelled() {
         guard likePressPreviewActive, !isLikeBusy else { return }
         likePressPreviewActive = false
-        removeLikeStroke()
         updateLikeButton()
     }
 
-    /// F8：点赞——描边点下即画，填充与计数等服务器确认；失败撤描边 + 拒绝动效 + 通用提示。
+    /// F8：点赞——按下只给轻震与按压缩放，填充与计数等服务器确认；成功时回弹 + 液体爆点，失败拒绝动效 + 通用提示。
     @objc private func likeTapped() {
-        // 按下已给过先行反馈时抬起不再重播（否则描边/震动各来两次）；
+        // 按下已给过先行反馈时抬起不再重播（否则震动来两次）；
         // 守卫失败时把按下预览复原（按下与抬起之间状态几乎不可能变，纯防御）。
         let hadPressPreview = likePressPreviewActive
         likePressPreviewActive = false
         func restorePressPreview() {
-            removeLikeStroke()
             updateLikeButton()
         }
         guard let entryIdValue = currentEntryIdValue, !entryIdValue.isEmpty else {
@@ -3318,7 +3297,7 @@ class BearyFeedCell: UITableViewCell {
         let currentlyLiked = currentEntry?.likedByMe ?? false
         if hadPressPreview == false {
             if currentlyLiked == false {
-                playLikeStrokeDraw()
+                BearyHaptics.likeTap()
             } else {
                 applyPreUnlike()
             }
@@ -3329,7 +3308,6 @@ class BearyFeedCell: UITableViewCell {
             DispatchQueue.main.async {
                 guard let strongSelf = self else { return }
                 strongSelf.isLikeBusy = false
-                strongSelf.removeLikeStroke()
                 BearyIconMotion.animateIconScale(on: strongSelf.likeButton, to: 1)
                 strongSelf.updateActionInteractivity()
                 switch result {
@@ -3342,6 +3320,8 @@ class BearyFeedCell: UITableViewCell {
                     strongSelf.updateLikeButton()
                     if newLiked {
                         BearyIconMotion.playFillFade(on: strongSelf.likeButton)
+                        // 填充确认的那一刻：爱心回弹 + 液体爆点；取消点赞不炸。
+                        BearyIconMotion.playLikeBurst(on: strongSelf.likeButton)
                     }
                     strongSelf.onInteractionChanged?(entryIdValue, strongSelf.currentEntry?.likeCount, newLiked, nil)
                 case .failure(let err):

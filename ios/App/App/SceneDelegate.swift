@@ -110,6 +110,10 @@ final class BearyChromeViewController: UIViewController {
     /// FAB 长按拖动锚点（长按落点，view 坐标）；nil = 未在拖动。
     private var fabDragAnchor: CGPoint?
     private var fabDragging = false
+    /// FAB 本次触摸是否真的拖动过（.changed 里位移 > 8pt 才置真）：点按优先的判据。
+    /// 长按识别会取消按钮触摸，慢按（>0.4s 不动）时 touchUpInside 永不触发，
+    /// 故慢按的开编辑器走手势 .ended 补开；拖过的松手不补开。
+    private var fabDraggedThisTouch = false
     private var fabPressedState = false
     private var loginButton: UIButton!
     private var giftButton: UIButton!
@@ -281,7 +285,8 @@ final class BearyChromeViewController: UIViewController {
     /// 32×32 + scaleAspectFill，改 title 方案会被空 imageView 挤占，画图最稳。
 
     private func makeTopIconButton(imageName: String, fallbackSystemName: String, tint: UIColor, action: Selector) -> UIButton {
-        let b = BearyGlassButton(type: .custom)
+        // 顶栏三个钮去玻璃（Li 2026-10-27 令）：回 51a572d 原版 BearyHit44Button；登录 pill 不动。
+        let b = BearyHit44Button(type: .custom)
         b.setImage(topIconImage(named: imageName, systemFallback: fallbackSystemName), for: .normal)
         b.tintColor = tint
         b.layer.cornerRadius = 12
@@ -970,6 +975,9 @@ final class BearyChromeViewController: UIViewController {
     /// 容器 transform 只负责跟手指平移；按钮不形变，加号保持端正清晰。
     /// 松手弹簧回锚点，不改变常驻位置、不持久化。拖动中途栏显隐
     /// 若改写容器 transform，下一次 setBarsVisible 会重新收敛，不留残态。
+    /// 点按优先（2026-10-27 FAB 死钮修法）：长按识别（0.4s）会取消按钮触摸，
+    /// 慢按不动时 touchUpInside 永不触发，故 .ended 里没拖过即补开编辑器；
+    /// 判据只看本次是否真的拖动（位移 > 8pt），不看按住时长。
     @objc private func fabLongPressed(_ gesture: UILongPressGestureRecognizer) {
         guard let container = fabContainerView else { return }
         // 形变辅助：玻璃与阴影同尺寸同转角同自转；缺任一层时只做平移，不半吊子形变。
@@ -992,6 +1000,7 @@ final class BearyChromeViewController: UIViewController {
         case .began:
             fabDragAnchor = gesture.location(in: view)
             fabDragging = true
+            fabDraggedThisTouch = false
             UIImpactFeedbackGenerator(style: .light).impactOccurred()
         case .changed:
             guard fabDragging, let anchor = fabDragAnchor else { return }
@@ -999,6 +1008,8 @@ final class BearyChromeViewController: UIViewController {
             let tx = point.x - anchor.x
             let ty = point.y - anchor.y
             let len = hypot(tx, ty)
+            // 点按优先的唯一判据：位移 > 8pt 才算本次真的拖动（与下方 4pt 的形变门限无关）。
+            if len > 8 { fabDraggedThisTouch = true }
             if len < 4 {
                 container.transform = fabPressedState ? CGAffineTransform(scaleX: 0.93, y: 0.93) : .identity
                 applyDeform(width: 54, height: 54, angle: 0)
@@ -1011,6 +1022,9 @@ final class BearyChromeViewController: UIViewController {
             container.transform = CGAffineTransform(translationX: tx, y: ty)
             applyDeform(width: 54 * sx, height: 54 * sy, angle: angle)
         case .ended, .cancelled, .failed:
+            // 点按优先：先记下本次是正常松手还是中途取消/失败、是否拖过，再统一复位。
+            let wasEnded = (gesture.state == .ended)
+            let wasDragged = fabDraggedThisTouch
             fabDragAnchor = nil
             fabDragging = false
             let resetDeform = {
@@ -1025,6 +1039,13 @@ final class BearyChromeViewController: UIViewController {
                     container.layoutIfNeeded()
                 })
             }
+            // 慢按补开：长按识别已取消按钮触摸，touchUpInside 永不触发；
+            // 正常松手且没拖过 = 一次点按，在此补开编辑器。拖过、中途取消、
+            // 识别失败（快点已走按钮路径）均不补开。同一次触摸里 touchUpInside
+            // 与 .ended 互斥，故与快点路径不会重复开两次。
+            if wasEnded && !wasDragged { presentComposer() }
+            // 下一 runloop 再清：保证 didTapWrite 开头的检查（若其触发）仍能看到标志。
+            DispatchQueue.main.async { self.fabDraggedThisTouch = false }
         default:
             break
         }
@@ -1093,7 +1114,11 @@ final class BearyChromeViewController: UIViewController {
     @objc private func didTapSearch() { showPage(.search) }
     @objc private func didTapBell() { showPage(.notif) }
     @objc private func didTapGift() { presentInvite() }
-    @objc private func didTapWrite() { presentComposer() }
+    @objc private func didTapWrite() {
+        // 拖完松手不误开：本次触摸已记为拖动时直接 return（与手势 .ended 补开路径互斥）。
+        guard !fabDraggedThisTouch else { return }
+        presentComposer()
+    }
     @objc private func fabPressedDown() { setFabPressed(true) }
     @objc private func fabPressedUp() { setFabPressed(false) }
     /// F21 按压态：整颗按压缩放到 .93（容器层：玻璃+阴影+按钮一起缩，

@@ -2323,7 +2323,7 @@ class BearyProfileViewController: UIViewController {
         guard requireLoginForCellAction() else { return }
         guard !likeBusyIds.contains(entryId) else { return }
         likeBusyIds.insert(entryId)
-        // 跟手批：不再立即 reload——立即 reload 会换掉刚播按下预览的 cell，描边当场消失；
+        // 跟手批：不再立即 reload——立即 reload 会换掉刚播按下预览的 cell，预览当场消失；
         // 忙碌重入由 likeBusyIds 挡；轻震已由 cell 按下时给，控制器不再重复给。
         let wantLiked = !(entry.likedByMe ?? false)
         BearyAPI.shared.toggleLike(id: entryId, liked: wantLiked) { [weak self] result in
@@ -2340,6 +2340,19 @@ class BearyProfileViewController: UIViewController {
                     strongSelf.updateEntryInAllTabs(entry: updated)
                     strongSelf.notifyInteraction(entry: updated)
                     strongSelf.reloadVisibleRow(entryId: entryId)
+                    // 点赞成功（填充确认）才对新 cell 补液体爆点，mirror 收藏 pop 口径；
+                    // 取消点赞不炸，已滑走则 cell 为空，跳过无害。
+                    if wantLiked {
+                        DispatchQueue.main.async { [weak self] in
+                            guard let strongSelf = self else { return }
+                            for case let cell as BearyProfileEntryCell in strongSelf.tableView.visibleCells {
+                                if cell.cellEntryId == entryId {
+                                    cell.playLikeBurst()
+                                    break
+                                }
+                            }
+                        }
+                    }
                 case .failure(let err):
                     if case .unauthorized = err {
                         strongSelf.onRequireLogin?()
@@ -2842,8 +2855,7 @@ private class BearyProfileEntryCell: UITableViewCell {
 
     /// 点赞钮显式宽约束：见 configure 的宽度算法。
     private var likeButtonWidthConstraint: NSLayoutConstraint?
-    /// 跟手批：按下预览层与按下标记、复原用赞态（复用时清掉，见 prepareForReuse）。
-    private var likeStrokeLayer: CAShapeLayer?
+    /// 跟手批：按下标记（复用时清掉，见 prepareForReuse）。
     private var likePressPreviewActive = false
     /// 跟手批：控制器先行翻转后找可见 cell 补 pop 用（fileprivate：控制器同文件访问）。
     fileprivate var cellEntryId: String?
@@ -3025,9 +3037,7 @@ private class BearyProfileEntryCell: UITableViewCell {
         avatarImageView.image = nil
         likeButton.setTitle(nil, for: .normal)
         likeButtonWidthConstraint?.constant = 22
-        // 跟手批：复用时清掉按下预览残留（描边层、标记、按压缩放），不带到下一卡。
-        likeStrokeLayer?.removeFromSuperlayer()
-        likeStrokeLayer = nil
+        // 跟手批：复用时清掉按下预览残留（标记、按压缩放），不带到下一卡。
         likePressPreviewActive = false
         cellEntryId = nil
         cellLikedByMe = false
@@ -3071,16 +3081,15 @@ private class BearyProfileEntryCell: UITableViewCell {
         onLike?()
     }
 
-    /// 跟手批：按下即给先行反馈（Feed 同款语义：描边/预取消赞只是手指按压，
+    /// 跟手批：按下即给先行反馈（Feed 同款语义：轻震/预取消赞只是手指按压，
     /// 填充与计数仍等服务端；未登录不预览，抬起确认失败时控制器 reload 复原）。
     @objc private func likePressDown() {
         guard SessionManager.shared.isLoggedIn else { return }
         if cellLikedByMe {
             applyCellPreUnlike()
         } else {
+            // 描边已撤：按下只给轻震，按压缩放由 iconTouchDown 的 .84 给。
             BearyHaptics.likeTap()
-            likeStrokeLayer?.removeFromSuperlayer()
-            likeStrokeLayer = BearyIconMotion.playHeartStrokeDraw(on: likeButton)
         }
         likePressPreviewActive = true
     }
@@ -3089,8 +3098,6 @@ private class BearyProfileEntryCell: UITableViewCell {
     @objc private func likePressCancelled() {
         guard likePressPreviewActive else { return }
         likePressPreviewActive = false
-        likeStrokeLayer?.removeFromSuperlayer()
-        likeStrokeLayer = nil
         if cellLikedByMe {
             likeButton.setImage(BearyIconImages.image(named: "icon_heart_fill", pointSize: 22), for: .normal)
             likeButton.tintColor = BearyColors.orange
@@ -3120,6 +3127,12 @@ private class BearyProfileEntryCell: UITableViewCell {
     /// 跟手批：供控制器先行翻转 reload 后对新 cell 补弹一下（旧 cell 已被 reload 换掉）。
     func playBookmarkPop() {
         BearyIconMotion.playBookmarkPop(on: bookmarkButton)
+    }
+
+    /// 点赞成功爆点（Li 2026-10-27 新规格）：控制器回包 reload 后对新 cell 补播，
+    /// 爱心回弹 + 液体爆点；取消点赞不调用。
+    func playLikeBurst() {
+        BearyIconMotion.playLikeBurst(on: likeButton)
     }
 
     @objc private func bookmarkButtonTapped() {
