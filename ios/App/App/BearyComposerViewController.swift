@@ -539,7 +539,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         textView.textContainerInset = UIEdgeInsets(top: 0, left: 0, bottom: 0, right: 0)
         placeholderLabel.text = "记录今天…"
         placeholderLabel.font = UIFont.systemFont(ofSize: 16)
-        placeholderLabel.textColor = BearyColors.alpha(BearyColors.gray, 0.7)
+        placeholderLabel.textColor = BearyColors.gray.withAlphaComponent(0.7)
         textView.translatesAutoresizingMaskIntoConstraints = false
         placeholderLabel.translatesAutoresizingMaskIntoConstraints = false
         contentStack.addArrangedSubview(textView)
@@ -821,7 +821,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         // I6：写给 chip 清除改用 icon_close 资产（不再用文字 ×）。
         recipientClearButton.setImage(BearyIconImages.image(named: "icon_close", pointSize: 12), for: .normal)
         recipientClearButton.tintColor = BearyColors.gray
-        recipientClearButton.backgroundColor = BearyColors.alpha(BearyColors.ink, 0.10)
+        recipientClearButton.backgroundColor = BearyColors.ink.withAlphaComponent(0.10)
         recipientClearButton.layer.cornerRadius = 9
         recipientClearButton.layer.masksToBounds = true
         recipientClearButton.addTarget(self, action: #selector(didTapClearRecipient), for: .touchUpInside)
