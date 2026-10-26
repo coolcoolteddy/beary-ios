@@ -3117,42 +3117,6 @@ class BearyFeedQuoteView: UIView {
         return v
     }()
 
-    private let avatarContainer: UIView = {
-        let v = UIView()
-        v.translatesAutoresizingMaskIntoConstraints = false
-        v.backgroundColor = BearyColors.line
-        v.layer.cornerRadius = 20
-        v.clipsToBounds = true
-        return v
-    }()
-
-    private let avatarInitialLabel: UILabel = {
-        let lb = UILabel()
-        lb.translatesAutoresizingMaskIntoConstraints = false
-        lb.font = UIFont.boldSystemFont(ofSize: 16)
-        lb.textColor = BearyColors.gray
-        lb.textAlignment = .center
-        return lb
-    }()
-
-    private let avatarImageView: UIImageView = {
-        let v = UIImageView()
-        v.translatesAutoresizingMaskIntoConstraints = false
-        v.contentMode = .scaleAspectFill
-        v.clipsToBounds = true
-        v.layer.cornerRadius = 20
-        return v
-    }()
-
-    private let nameLabel: UILabel = {
-        let lb = UILabel()
-        lb.translatesAutoresizingMaskIntoConstraints = false
-        lb.font = UIFont.boldSystemFont(ofSize: 16.5)
-        lb.textColor = BearyColors.ink
-        lb.numberOfLines = 1
-        return lb
-    }()
-
     /// 投递中 pill（lite 卡口径）：11/600/blue、blue 13% 底、圆角 6、padding 2/7。
     /// W2 口径说明：此处只显示不带倒计时的“投递中”是有意区分——服务端 attachQuotes 直传的
     /// Quote 模型无 publishAt 字段（见 BearyAPI.swift，publishAt 只在 Entry 上），算不出倒计时；
@@ -3172,8 +3136,9 @@ class BearyFeedQuoteView: UIView {
         return btn
     }()
 
+    // 52 批：lite 卡不带头像名——nameRow 只剩投递中 pill（pill 隐藏时该行自动塌掉）。
     private lazy var nameRow: UIStackView = {
-        let st = UIStackView(arrangedSubviews: [nameLabel, deliveringPillButton])
+        let st = UIStackView(arrangedSubviews: [deliveringPillButton])
         st.translatesAutoresizingMaskIntoConstraints = false
         st.axis = .horizontal
         st.spacing = 8
@@ -3242,8 +3207,9 @@ class BearyFeedQuoteView: UIView {
         return st
     }()
 
+    // 52 批：lite 卡不带头像——行栈只剩正文栈（原 avatarContainer 已删）。
     private lazy var rowStack: UIStackView = {
-        let st = UIStackView(arrangedSubviews: [avatarContainer, textStack])
+        let st = UIStackView(arrangedSubviews: [textStack])
         st.translatesAutoresizingMaskIntoConstraints = false
         st.axis = .horizontal
         st.spacing = 8
@@ -3261,8 +3227,6 @@ class BearyFeedQuoteView: UIView {
         backgroundColor = BearyColors.faint
         layer.cornerRadius = 8
         clipsToBounds = true
-        avatarContainer.addSubview(avatarInitialLabel)
-        avatarContainer.addSubview(avatarImageView)
         thumbsScrollView.addSubview(thumbsStack)
         addSubview(leftBorderView)
         addSubview(rowStack)
@@ -3271,8 +3235,6 @@ class BearyFeedQuoteView: UIView {
         thumbsHeightConstraint = height
         // 引用卡被右列 stack 隐藏时 stack 会将其高度压为 0，内部高度/上下边距用 999，
         // 避免与零高度约束冲突；显示时 999 照常生效。
-        let avatarHeight = avatarContainer.heightAnchor.constraint(equalToConstant: 40)
-        avatarHeight.priority = UILayoutPriority(999)
         let rowTop = rowStack.topAnchor.constraint(equalTo: topAnchor, constant: 9)
         rowTop.priority = UILayoutPriority(999)
         let rowBottom = rowStack.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -9)
@@ -3281,21 +3243,12 @@ class BearyFeedQuoteView: UIView {
         goneTop.priority = UILayoutPriority(999)
         let goneBottom = goneLabel.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -9)
         goneBottom.priority = UILayoutPriority(999)
-        nameLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         deliveringPillButton.setContentCompressionResistancePriority(.required, for: .horizontal)
         NSLayoutConstraint.activate([
             leftBorderView.leadingAnchor.constraint(equalTo: leadingAnchor),
             leftBorderView.topAnchor.constraint(equalTo: topAnchor),
             leftBorderView.bottomAnchor.constraint(equalTo: bottomAnchor),
             leftBorderView.widthAnchor.constraint(equalToConstant: 3),
-            avatarContainer.widthAnchor.constraint(equalToConstant: 40),
-            avatarHeight,
-            avatarInitialLabel.centerXAnchor.constraint(equalTo: avatarContainer.centerXAnchor),
-            avatarInitialLabel.centerYAnchor.constraint(equalTo: avatarContainer.centerYAnchor),
-            avatarImageView.topAnchor.constraint(equalTo: avatarContainer.topAnchor),
-            avatarImageView.leadingAnchor.constraint(equalTo: avatarContainer.leadingAnchor),
-            avatarImageView.trailingAnchor.constraint(equalTo: avatarContainer.trailingAnchor),
-            avatarImageView.bottomAnchor.constraint(equalTo: avatarContainer.bottomAnchor),
             rowTop,
             rowStack.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 15),
             rowStack.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -12),
@@ -3334,9 +3287,6 @@ class BearyFeedQuoteView: UIView {
     }
 
     func clear() {
-        avatarImageView.bearySetImage(url: nil, placeholder: nil)
-        avatarInitialLabel.text = nil
-        nameLabel.text = nil
         contentLabel.attributedText = nil
         contentLabel.text = nil
         dateLabel.text = nil
@@ -3383,14 +3333,12 @@ class BearyFeedQuoteView: UIView {
 
     func configure(authorName: String, authorAvatar: String?, content: String, images: [String], dims: [String: [Int]]?, createdAt: Int? = nil, showDeliveringPill: Bool = false, allowThumbs: Bool = true) {
         clear()
-        nameLabel.text = authorName
+        // 52 批：lite 卡不带头像名——authorName/authorAvatar 参数仅为调用点兼容保留，不再赋值给任何视图。
         if let createdAt = createdAt, createdAt > 0 {
             dateLabel.text = BearyFeedCell.feedTimeString(ms: createdAt)
             dateLabel.isHidden = false
         }
         deliveringPillButton.isHidden = showDeliveringPill == false
-        avatarInitialLabel.text = String(authorName.prefix(1)).uppercased()
-        avatarImageView.bearySetImage(url: BearyImageURLs.avatarURL(authorAvatar), placeholder: nil)
         if content.isEmpty {
             contentLabel.isHidden = true
         } else {
