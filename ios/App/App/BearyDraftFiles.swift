@@ -1,10 +1,13 @@
 import UIKit
 
 // ===== 原生编辑器草稿 v3（多槽）=====
-// v2 单槽已升级为 v3 多槽：每篇草稿独立 draftId + updatedAt，全部存在一个
-// Application Support/beary_draft_v3.json 数组文件里（原子写，先写临时文件再替换，
-// 绝不出现半截草稿）；图片文件落盘 Application Support/beary_draft_images/
-// （目录与每个文件都排除备份），多篇共用同一图片目录，清理时按全部草稿的引用取并集。
+// v3 多槽按账号隔离：草稿文件与图片目录均按用户 ID 分桶
+//（beary_draft_v3_<uid>.json、beary_draft_images_<uid>/）；未登录时
+//（currentAccountId == nil）读空、写失败，不读不写任何账号的数据。
+// 旧全局文件（beary_draft_v3.json）与旧全局图片目录在 setAccount(_:) 时
+// 一次性迁移到当前账号名下，迁移后旧全局文件即消失；已分桶后不再动旧路径。
+// 退出只清内存态（本存储本身无内存态，调用方在内存的编辑中草稿由容器
+// 刷新接管），文件归属其账号、退出不删。
 // v3 = v2 字段（正文 + 心情 + 图片项数组（本地文件名 / 服务端 key / 上传状态）
 // + clientReq（本篇草稿创建时生成一次，发布重试全程复用，拿到 entry id 才换）
 // + updatedAt）+ weather + recipientId + notifyRecipient + quoteId
@@ -95,9 +98,12 @@ private struct BearyDraftV1Data: Decodable {
 enum BearyDraftImageStore {
     static let directoryName = "beary_draft_images"
 
+    /// 按账号分桶的图片目录：已登录为 beary_draft_images_<uid>，未登录为 nil
+    ///（调用方 save/image/delete/sweep 均已对 nil 做了无操作降级，见各函数守卫）。
     static func directory() -> URL? {
+        guard let accountId = BearyDraftStore.currentAccountId else { return nil }
         guard let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first else { return nil }
-        let dir = base.appendingPathComponent(directoryName, isDirectory: true)
+        let dir = base.appendingPathComponent("\(directoryName)_\(accountId)", isDirectory: true)
         if !FileManager.default.fileExists(atPath: dir.path) {
             try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true, attributes: nil)
         }
@@ -252,11 +258,60 @@ enum BearyDraftStore {
     private static let legacyV2FileName = "beary_draft_v2.json"
     private static let v1Key = "beary_native_draft_v1"
 
+    /// 账号隔离 1 号：当前账号（容器 onUserChanged 写入）。nil = 未登录，
+    /// 此时 fileURL() 为 nil、loadAllResult() 直接返回空，不读任何账号文件。
+    private(set) static var currentAccountId: Int?
+
+    /// 账号隔离 1 号：切换账号时调用。分桶路径随 currentAccountId 自动切换，
+    /// 本存储无内存态故无需清内存；返回 true = 本次把旧全局 v3 文件迁移到了
+    /// 该账号名下（调用方据此首启一次 toast 明示，之后旧文件已消失不再触发）。
+    /// 旧全局图片目录一并合并进该账号图片目录（重名文件跳过，旧目录尽力删除）。
+    @discardableResult
+    static func setAccount(_ id: Int?) -> Bool {
+        currentAccountId = id
+        guard let id = id else { return false }
+        guard let legacyURL = legacyGlobalFileURL(),
+              FileManager.default.fileExists(atPath: legacyURL.path) else { return false }
+        guard let targetURL = fileURL(), !FileManager.default.fileExists(atPath: targetURL.path) else { return false }
+        do {
+            try FileManager.default.moveItem(at: legacyURL, to: targetURL)
+        } catch {
+            guard let data = try? Data(contentsOf: legacyURL),
+                  let drafts = try? JSONDecoder().decode([BearyDraft].self, from: data),
+                  saveAll(drafts) else { return false }
+            try? FileManager.default.removeItem(at: legacyURL)
+        }
+        // 图片目录合并：旧全局目录文件逐个移入账号目录（重名跳过），移完删旧目录。
+        if let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first {
+            let legacyDir = base.appendingPathComponent(BearyDraftImageStore.directoryName, isDirectory: true)
+            if let names = try? FileManager.default.contentsOfDirectory(atPath: legacyDir.path),
+               let targetDir = BearyDraftImageStore.directory() {
+                try? FileManager.default.createDirectory(at: targetDir, withIntermediateDirectories: true, attributes: nil)
+                for name in names {
+                    let src = legacyDir.appendingPathComponent(name)
+                    let dst = targetDir.appendingPathComponent(name)
+                    if !FileManager.default.fileExists(atPath: dst.path) {
+                        try? FileManager.default.moveItem(at: src, to: dst)
+                    }
+                }
+                try? FileManager.default.removeItem(at: legacyDir)
+            }
+        }
+        return true
+    }
+
     private static func fileURL() -> URL? {
+        guard let accountId = currentAccountId else { return nil }
         guard let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first else { return nil }
         if !FileManager.default.fileExists(atPath: base.path) {
             try? FileManager.default.createDirectory(at: base, withIntermediateDirectories: true, attributes: nil)
         }
+        return base.appendingPathComponent("beary_draft_v3_\(accountId).json")
+    }
+
+    /// 旧全局 v3 文件路径（仅迁移源，不再作为读写路径）。
+    private static func legacyGlobalFileURL() -> URL? {
+        guard let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first else { return nil }
         return base.appendingPathComponent(fileName)
     }
 
@@ -293,6 +348,12 @@ enum BearyDraftStore {
     /// v3 文件存在却读不出/解不出时：原文件保留不动、另存一份备份、返回失败；
     /// 旧源存在却解不出时同样返回失败（v2 备份同理，v1 在 UserDefaults 内无文件可备）。
     static func loadAllResult() -> Result<[BearyDraft], LoadError> {
+        // 账号隔离 1 号：未登录不读任何账号文件（也不触发 v2/v1 迁移，
+        // 迁移只在登录后的账号分桶里发生）。
+        guard currentAccountId != nil else {
+            lastLoadError = nil
+            return .success([])
+        }
         if let url = fileURL(), FileManager.default.fileExists(atPath: url.path) {
             if let data = try? Data(contentsOf: url),
                let drafts = try? JSONDecoder().decode([BearyDraft].self, from: data) {

@@ -472,6 +472,13 @@ final class BearyNotificationsViewController: UIViewController {
         saveNotificationCache()
     }
 
+    /// 切页生命周期 7 号（最小化）：容器切页只改 isHidden，本回调不触发，
+    /// 故容器 showPage 在离页时显式调本钩子，只覆盖缓存写回（进页刷新
+    /// 已有 showPage 的 refreshListIfUnreadChanged，不重复）。
+    func pageDidLeave() {
+        saveNotificationCache()
+    }
+
     /// 表头高度实测：标题 19 + 上 14 下 4；实测后写回 tableHeaderView frame
     /// 与态容器顶锚，宽度变化时同步下拉指示器宽。
     /// C-G14：底部留白按网页 .pf-col 口径随视口宽分档——宽 >820 时 44（网页

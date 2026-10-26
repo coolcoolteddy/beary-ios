@@ -142,6 +142,9 @@ final class BearyChromeViewController: UIViewController {
     private var userVC: BearyProfileViewController?
     private var searchVC: BearySearchViewController?
     private var profileGated = false
+    /// 账号隔离 2 号：我页建造时绑定的账号 id（ensureProfileVC 写入）。
+    /// onUserChanged 以它为准判定是否重建，不再只看 gated 态与当前页。
+    private var profileBuiltForUserId: Int?
     /// 礼物钮门控缓存（A4）：取自 refreshMe 的 user.referral.enabled，不再单独拉取 /me。
     private var referralEnabled = false
     private var userTargetKey: String?
@@ -712,6 +715,14 @@ final class BearyChromeViewController: UIViewController {
         SessionManager.shared.onUserChanged = { [weak self] user in
             self?.applyLoginState(user)
             guard let self = self else { return }
+            // 账号隔离 1/4 号：登录态每次变化先切草稿桶与图片桶（分桶路径
+            // 随账号自动切换，内存态不跨账号）；旧全局草稿首启迁移到当前
+            // 账号时 toast 明示一次（迁移后旧文件消失，不再触发）。
+            let draftMigrated = BearyDraftStore.setAccount(user?.id)
+            BearyImageLoader.shared.setAccount(user?.id)
+            if draftMigrated {
+                self.showToast(message: "旧草稿已归到当前账号")
+            }
             // 首次同步只恢复态：礼物门控由 applyLoginState 从 refreshMe 结果复用，不再单独拉；启动未读照常拉，翻转刷新跳过（见 sessionFlipArmed 注释）。
             if !self.sessionFlipArmed {
                 self.sessionFlipArmed = true
@@ -723,10 +734,14 @@ final class BearyChromeViewController: UIViewController {
             if user != nil {
                 // S10：礼物门控已由 applyLoginState 从 refreshMe 结果复用，此处不再单独拉；F8 启动/登录未读照常拉。
                 self.fetchInitialUnread()
+                // 账号隔离 2 号：我页按建造时账号钉死，账号变化时重建
+                //（不限当前页与 gated 态；重建后非我页保持隐藏，见 rebuildProfileVC）。
                 // G11 登录翻转刷新：gated 我页重建（新页自拉），其余已建页各走已存在的方法，
                 // 已开详情重拉单篇；方法均经 grep 核实存在（Feed.refreshFeed / Timeline.reloadTimeline /
                 // Notifications.refresh / Profile.reloadProfile / Detail.refreshEntry），只调已存在的。
-                if self.currentPage == .me && self.profileGated {
+                if self.profileVC != nil, self.profileBuiltForUserId != user?.id {
+                    self.rebuildProfileVC()
+                } else if self.currentPage == .me && self.profileGated {
                     self.rebuildProfileVC()
                 } else if let profile = self.profileVC, profile.isViewLoaded {
                     profile.reloadProfile()
@@ -1246,7 +1261,9 @@ final class BearyChromeViewController: UIViewController {
                 notifVC?.scrollToTop()
                 notifVC?.refresh()
             } else if page == .timeline {
-                timelineVC?.reloadTimeline()
+                // 账号隔离 9 号：重拍时间线 tab 保留选中日与旧内容（与下拉刷新同口径），
+                // 不再先清空闪白；登录翻转等其他调用点仍走默认清表路径。
+                timelineVC?.reloadTimeline(keepSelectedDay: true)
             } else if page == .me {
                 // F5：重拍“我”页回顶 + reloadProfile（回顶走 scrollPageToTop，见该函数注释）。
                 scrollPageToTop(profileVC)
@@ -1270,6 +1287,27 @@ final class BearyChromeViewController: UIViewController {
         if previousPage == .timeline {
             timelineVC?.clearStaggerEntries()
         }
+        // 切页生命周期 7 号（最小化）：容器只改 isHidden，子页 appearance 回调
+        // 不触发；以下三项是核实确认丢失的，在唯一切页点显式转发（已有补偿
+        // 的收键盘、清错峰队列、消息显式刷新不在此重复）。
+        if previousPage == .timeline {
+            timelineVC?.pageDidLeave()
+        } else if previousPage == .notif {
+            notifVC?.pageDidLeave()
+        } else if previousPage == .search {
+            searchVC?.pageDidLeave()
+        }
+        // 动画批 11 号离屏停播：切 tab 只改 isHidden，不触发 didEndDisplaying、
+        // 不离窗，离页表情必须在这里显式停掉，否则切走的页在后台继续播。
+        if previousPage == .home {
+            feedVC?.stopVisibleEmotes()
+        } else if previousPage == .timeline {
+            timelineVC?.stopVisibleEmotes()
+        } else if previousPage == .me {
+            profileVC?.stopVisibleEmotes()
+        } else if previousPage == .user {
+            userVC?.stopVisibleEmotes()
+        }
         // 64 包反馈修：切 tab 离开旧页时统一收键盘——容器切页只改 isHidden，不触发
         // 子页 appearance 回调，搜索页 viewWillDisappear 里的收键盘走不到这里；
         // 非搜索页无第一响应者，本行是无害 no-op；返回/切 tab/其他入口离开全覆盖。
@@ -1281,6 +1319,11 @@ final class BearyChromeViewController: UIViewController {
             ensureFeedVC().view.isHidden = false
         } else {
             pageView(for: page).view.isHidden = false
+        }
+        // 切页生命周期 7 号（最小化）：进时间线页时显式启动倒计时
+        //（离页钩子在上方切离分支；其他页进页逻辑已有 showPage 各分支兜底）。
+        if page == .timeline {
+            timelineVC?.pageDidEnter()
         }
         // 2026-10-26 切 tab 滑动重播排查：M4 全页淡入已删——缓存页每次切 tab 都
         // 重播入场动效，违背“已有元素不重播”；切 tab 只留顶栏高度结构动画
@@ -1421,6 +1464,7 @@ final class BearyChromeViewController: UIViewController {
             vc = BearyProfileViewController(ownProfileViewerUserIdValue: nil)
             profileGated = true
         }
+        profileBuiltForUserId = SessionManager.shared.currentUser?.id
         vc.onOpenEntry = { [weak self] entry in
             self?.gotoEntry(entry: entry)
         }
@@ -1433,7 +1477,9 @@ final class BearyChromeViewController: UIViewController {
         return vc
     }
 
-    /// 登录态翻转时重建我页（未登录 gated 视图 ↔ 已登录本人主页），调用方保证 currentPage == .me。
+    /// 登录态翻转时重建我页（未登录 gated 视图 ↔ 已登录本人主页；账号变化时亦重建）。
+    /// 账号隔离 2 号：账号变化时也可能在非我页调用——此时新页必须保持隐藏，
+    /// 否则会盖住当前页；只有当前页是我页时才亮出。
     private func rebuildProfileVC() {
         if let old = profileVC {
             old.willMove(toParent: nil)
@@ -1442,7 +1488,7 @@ final class BearyChromeViewController: UIViewController {
             pageColumns.removeValue(forKey: .me)
         }
         profileVC = nil
-        ensureProfileVC().view.isHidden = false
+        ensureProfileVC().view.isHidden = (currentPage != .me)
         updateDesktopLayout()
     }
 
@@ -1494,10 +1540,13 @@ final class BearyChromeViewController: UIViewController {
 
     private func ensureUserVC() -> UIViewController {
         guard let target = pendingUserTarget else { return ensurePlaceholder(.user) }
+        // 账号隔离 2 号：缓存键含观看者 id——账号切换后观看者变化，
+        // 旧他人页（旧观看者的点赞/收藏态与本人判定）不得复用，按新键重建。
+        let viewerKey = SessionManager.shared.currentUser?.id.map(String.init) ?? "nil"
         let key: String
         switch target {
-        case .id(let value): key = "id:\(value)"
-        case .handle(let value): key = "handle:\(value)"
+        case .id(let value): key = "id:\(value)|viewer:\(viewerKey)"
+        case .handle(let value): key = "handle:\(value)|viewer:\(viewerKey)"
         }
         if let vc = userVC, userTargetKey == key { return vc }
         if let old = userVC {

@@ -102,6 +102,29 @@ final class BearyImageLoader {
     private let cache = NSCache<NSString, UIImage>()
     private let session: URLSession
 
+    /// 账号隔离 4 号：当前账号（容器 onUserChanged 写入）。缓存键与磁盘
+    /// 目录均含该维度，未登录为 nil 时走 guest 桶，与任何账号桶互不命中。
+    var currentAccountId: Int?
+
+    /// 账号隔离 4 号：切换账号桶。键变化后旧账号内存条目即不可达，
+    /// 此处再全清内存，避免旧图残留；旧账号磁盘目录保留（切回可复用），
+    /// 退出时的磁盘删除走 purgeAccount(_:)（SessionManager 退出/401 路径）。
+    func setAccount(_ id: Int?) {
+        if currentAccountId != id {
+            currentAccountId = id
+            cache.removeAllObjects()
+        }
+    }
+
+    /// 账号隔离 4 号：退出/会话失效时清掉该账号的全部缓存——内存全清
+    ///（NSCache 不可按 key 枚举，故全清；重建成本低）+ 该账号磁盘目录删除。
+    func purgeAccount(_ id: Int) {
+        cache.removeAllObjects()
+        guard let caches = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first else { return }
+        let dir = caches.appendingPathComponent("BearyImageCache").appendingPathComponent("\(id)")
+        try? FileManager.default.removeItem(at: dir)
+    }
+
     init(session: URLSession = .shared) {
         self.session = session
         // G23：缓存按像素计 cost 并设上限，避免无界增长。
@@ -110,7 +133,9 @@ final class BearyImageLoader {
         cache.totalCostLimit = 20_000_000
     }
 
-    // S10 磁盘缓存：目录 = 系统 caches 目录下的 BearyImageCache 子目录；
+    // S10 磁盘缓存：目录 = 系统 caches 目录下的 BearyImageCache/<账号> 子目录
+    //（账号隔离 4 号：未登录为 guest 桶；同 URL 在不同账号桶下键不同，
+    // 绝不跨账号命中；旧版无子目录的缓存文件自然失效、不再被读到）。
     // 键 = URL 字符串的 SHA256 十六进制（CryptoKit，系统框架）；存的是网络
     // 返回的原始字节，与下采样参数无关，同一 URL 的完整图与下采样图共用
     // 一份磁盘数据、解码时再按需下采样。不做过期淘汰，不新增清理状态机。
@@ -118,9 +143,10 @@ final class BearyImageLoader {
     // 内存 NSCache 的上限与行为保持原样（G23 的 totalCostLimit 不动）。
     private func diskFileURL(for url: URL) -> URL? {
         guard let caches = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first else { return nil }
+        let bucket = currentAccountId.map(String.init) ?? "guest"
         let digest = SHA256.hash(data: Data(url.absoluteString.utf8))
         let key = digest.map { String(format: "%02x", $0) }.joined()
-        return caches.appendingPathComponent("BearyImageCache").appendingPathComponent(key)
+        return caches.appendingPathComponent("BearyImageCache").appendingPathComponent(bucket).appendingPathComponent(key)
     }
 
     private func diskData(for url: URL) -> Data? {
@@ -134,13 +160,15 @@ final class BearyImageLoader {
         try? data.write(to: file, options: .atomic)
     }
 
-    /// 内存键：nil 时就是原 URL 字符串（旧行为一字不动）；下采样时后缀
-    /// 下采样宽度，避免下采样图占用完整图的内存键、后续完整请求误取缩略图。
+    /// 内存键：账号隔离 4 号——键首含账号维度（未登录为 guest），同 URL
+    /// 在不同账号下绝不互通；下采样时后缀下采样宽度，避免下采样图占用
+    /// 完整图的内存键、后续完整请求误取缩略图。
     private func memoryKey(for url: URL, downsampleToWidth: CGFloat?) -> NSString {
+        let bucket = currentAccountId.map(String.init) ?? "guest"
         if let width = downsampleToWidth {
-            return "\(url.absoluteString)|downsample:\(width)" as NSString
+            return "\(bucket)|\(url.absoluteString)|downsample:\(width)" as NSString
         }
-        return url.absoluteString as NSString
+        return "\(bucket)|\(url.absoluteString)" as NSString
     }
 
     /// S10 下采样解码：downsampleToWidth 非 nil 时走 ImageIO 缩略图路径
@@ -218,6 +246,20 @@ final class BearyImageLoader {
 
 private var bearyImageTaskKey: UInt8 = 0
 private var bearyImageURLKey: UInt8 = 0
+
+extension UIView {
+    /// 动画批 11 号离屏停播：递归停掉子树内全部 BearyEmoteView。cell 的
+    /// prepareForReuse 只停心情位属性，回应流 chips 只有子树遍历能覆盖；
+    /// 停播幂等，重复调用无害。
+    func stopAllBearyEmotes() {
+        if let emote = self as? BearyEmoteView {
+            emote.stop()
+        }
+        for sub in subviews {
+            sub.stopAllBearyEmotes()
+        }
+    }
+}
 
 extension UIImageView {
     /// cell 复用时取消上一个未完成的下载，避免图片串位。
