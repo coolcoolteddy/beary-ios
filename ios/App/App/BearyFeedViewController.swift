@@ -172,6 +172,10 @@ class BearyFeedViewController: UIViewController {
         btn.setTitle("有新内容", for: .normal)
         btn.titleLabel?.font = UIFont.systemFont(ofSize: 13, weight: .semibold)
         btn.setTitleColor(BearyColors.bg, for: .normal)
+        // 网页 #newPill 口径：左侧 15pt 上箭头（beary-arrow-up 官方路径渲染），与标题 gap 6。
+        btn.setImage(BearyIconImages.image(named: "icon_arrow_up", pointSize: 15), for: .normal)
+        btn.tintColor = BearyColors.bg
+        btn.titleEdgeInsets.left = 6
         btn.backgroundColor = BearyColors.ink
         btn.layer.cornerRadius = 17
         btn.clipsToBounds = false
@@ -218,16 +222,16 @@ class BearyFeedViewController: UIViewController {
         return sp
     }()
 
-    /// 空态（网页 .empty 口径）：图标 36×36 灰、标题 15 ink（图标→标题间距 8）、
-    /// 副文案 13 灰、容器 padding 26/20/8。图标图形为网页版同款 icon_tray。
+    /// 空态（网页 .empty 口径）：图标 40×40 灰（NB.pencil 一次性描画）、标题 15 ink（图标→标题间距 8）、
+    /// 副文案 13 灰、容器 padding 26/20/8。广场空态用 pencil（网页 beary.html:2187 的 nb-once 口径）。
+    private weak var feedEmptyPencilView: BearyPencilView?
     private lazy var emptyView: UIView = {
         let container = UIView()
         container.backgroundColor = BearyColors.bg
-        let iconView = UIImageView()
-        iconView.translatesAutoresizingMaskIntoConstraints = false
-        iconView.image = BearyFeedIconCache.image(named: "icon_tray", pointSize: 36)
-        iconView.tintColor = BearyColors.gray
-        iconView.contentMode = .scaleAspectFit
+        let pencilView = BearyPencilView()
+        pencilView.translatesAutoresizingMaskIntoConstraints = false
+        pencilView.strokeColor = BearyColors.gray
+        feedEmptyPencilView = pencilView
         let titleLabel = UILabel()
         titleLabel.translatesAutoresizingMaskIntoConstraints = false
         titleLabel.text = "还没有公开的日记"
@@ -241,15 +245,15 @@ class BearyFeedViewController: UIViewController {
         subtitleLabel.textColor = BearyColors.gray
         subtitleLabel.textAlignment = .center
         subtitleLabel.numberOfLines = 0
-        let stack = UIStackView(arrangedSubviews: [iconView, titleLabel, subtitleLabel])
+        let stack = UIStackView(arrangedSubviews: [pencilView, titleLabel, subtitleLabel])
         stack.translatesAutoresizingMaskIntoConstraints = false
         stack.axis = .vertical
         stack.alignment = .center
         stack.spacing = 8
         container.addSubview(stack)
         NSLayoutConstraint.activate([
-            iconView.widthAnchor.constraint(equalToConstant: 36),
-            iconView.heightAnchor.constraint(equalToConstant: 36),
+            pencilView.widthAnchor.constraint(equalToConstant: 40),
+            pencilView.heightAnchor.constraint(equalToConstant: 40),
             stack.topAnchor.constraint(equalTo: container.topAnchor, constant: 26),
             stack.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 20),
             stack.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -20),
@@ -1171,6 +1175,9 @@ class BearyFeedViewController: UIViewController {
         emptyView.frame = CGRect(x: 0, y: 0, width: width, height: height)
         if tableView.tableHeaderView !== emptyView {
             tableView.tableHeaderView = emptyView
+            // 只在首次成为 header 时播一次（viewDidLayoutSubviews 会反复调本函数，
+            // 在那里播会陷入布局循环式重播；刷新时先 false 再 true，仍会经此分支重播）。
+            feedEmptyPencilView?.start()
         }
     }
 

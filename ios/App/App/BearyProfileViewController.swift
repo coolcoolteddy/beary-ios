@@ -1900,43 +1900,48 @@ class BearyProfileViewController: UIViewController {
 
     private func makeEmptyFooter() -> UIView {
         let container = UIView()
-        let iconName: String
+        let graphicView: UIView
         let titleText: String
         let subtitleText: String
         switch currentTab {
         case .diary:
-            iconName = "icon_tray"
+            // 网页 beary.html:2690 的 nb-once 口径：一次性描画铅笔。
             titleText = "还没有公开的日记"
             subtitleText = isOwnProfile ? "写下第一篇，7 天后公开" : ""
+            let pencilView = BearyPencilView()
+            pencilView.strokeColor = BearyColors.gray
+            graphicView = pencilView
         case .liked:
-            iconName = "icon_heart"
+            // 网页 beary.html:2693 的 nb-static 口径：仅描边轮廓，无动画。
             titleText = isOwnProfile ? "还没有赞过的日记" : "TA 还没有赞过的日记"
             subtitleText = "去广场逛逛吧"
+            let heartView = BearyHeartView()
+            heartView.strokeColor = BearyColors.gray
+            graphicView = heartView
         case .saved:
-            iconName = "icon_bookmark"
+            // 网页 beary.html:2692 的 nb-static 口径：仅描边轮廓，无动画。
             titleText = "还没有收藏的日记"
             subtitleText = "看到喜欢的日记，点书签存到这里，只有你能看到"
+            let bookmarkView = BearyBookmarkView()
+            bookmarkView.strokeColor = BearyColors.gray
+            graphicView = bookmarkView
         }
-        let iconView = UIImageView()
-        iconView.translatesAutoresizingMaskIntoConstraints = false
-        iconView.image = BearyIconImages.image(named: iconName, pointSize: 36)
-        iconView.tintColor = BearyColors.gray
-        iconView.contentMode = .scaleAspectFit
+        graphicView.translatesAutoresizingMaskIntoConstraints = false
         let titleLabel = UILabel()
         titleLabel.translatesAutoresizingMaskIntoConstraints = false
         titleLabel.font = UIFont.systemFont(ofSize: 15)
         titleLabel.textColor = BearyColors.ink
         titleLabel.textAlignment = .center
         titleLabel.text = titleText
-        let stack = UIStackView(arrangedSubviews: [iconView, titleLabel])
+        let stack = UIStackView(arrangedSubviews: [graphicView, titleLabel])
         stack.translatesAutoresizingMaskIntoConstraints = false
         stack.axis = .vertical
         stack.alignment = .center
         stack.spacing = 8
         container.addSubview(stack)
         var constraints: [NSLayoutConstraint] = [
-            iconView.widthAnchor.constraint(equalToConstant: 36),
-            iconView.heightAnchor.constraint(equalToConstant: 36),
+            graphicView.widthAnchor.constraint(equalToConstant: 40),
+            graphicView.heightAnchor.constraint(equalToConstant: 40),
             stack.topAnchor.constraint(equalTo: container.topAnchor, constant: 26),
             stack.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 20),
             stack.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -20),
@@ -1956,6 +1961,10 @@ class BearyProfileViewController: UIViewController {
             constraints.append(stack.bottomAnchor.constraint(equalTo: container.bottomAnchor, constant: -8))
         }
         NSLayoutConstraint.activate(constraints)
+        // footer 每次渲染新建视图：diary 态的铅笔每次渲染播一次（与网页 innerHTML 重建同款）。
+        if let pencilView = graphicView as? BearyPencilView {
+            pencilView.start()
+        }
         return container
     }
 

@@ -46,6 +46,9 @@ final class BearyInviteViewController: UIViewController {
     private let hintLabel = UILabel()
     private let statsLabel = UILabel()
     private let boundLabel = UILabel()
+    // 绑定行：16pt 绿圆圈勾 + 文字，gap 7（网页 .iv-bound 口径）；显隐由行容器控制。
+    private let boundRow = UIStackView()
+    private let boundCheckIcon = UIImageView()
     private let bindRow = UIView()
     private let bindField = UITextField()
     private let bindButton = UIButton(type: .system)
@@ -188,7 +191,21 @@ final class BearyInviteViewController: UIViewController {
         boundLabel.font = UIFont.systemFont(ofSize: 14)
         boundLabel.textColor = BearyColors.ink
         boundLabel.numberOfLines = 0
-        boundLabel.isHidden = true
+        boundCheckIcon.translatesAutoresizingMaskIntoConstraints = false
+        boundCheckIcon.image = BearyIconImages.image(named: "icon_check_circle", pointSize: 16)
+        boundCheckIcon.tintColor = BearyColors.green
+        boundCheckIcon.contentMode = .scaleAspectFit
+        boundRow.translatesAutoresizingMaskIntoConstraints = false
+        boundRow.axis = .horizontal
+        boundRow.spacing = 7
+        boundRow.alignment = .top
+        boundRow.addArrangedSubview(boundCheckIcon)
+        boundRow.addArrangedSubview(boundLabel)
+        boundRow.isHidden = true
+        NSLayoutConstraint.activate([
+            boundCheckIcon.widthAnchor.constraint(equalToConstant: 16),
+            boundCheckIcon.heightAnchor.constraint(equalToConstant: 16),
+        ])
 
         bindRow.translatesAutoresizingMaskIntoConstraints = false
         bindRow.isHidden = true
@@ -239,7 +256,7 @@ final class BearyInviteViewController: UIViewController {
         stackView.addArrangedSubview(codeBox)
         stackView.addArrangedSubview(hintLabel)
         stackView.addArrangedSubview(statsLabel)
-        stackView.addArrangedSubview(boundLabel)
+        stackView.addArrangedSubview(boundRow)
         stackView.addArrangedSubview(bindRow)
         stackView.addArrangedSubview(bindHintLabel)
         stackView.addArrangedSubview(messageLabel)
@@ -250,7 +267,7 @@ final class BearyInviteViewController: UIViewController {
         stackView.setCustomSpacing(10, after: codeBox)
         stackView.setCustomSpacing(14, after: hintLabel)
         stackView.setCustomSpacing(16, after: statsLabel)
-        stackView.setCustomSpacing(8, after: boundLabel)
+        stackView.setCustomSpacing(8, after: boundRow)
         stackView.setCustomSpacing(8, after: bindRow)
         stackView.setCustomSpacing(8, after: bindHintLabel)
         stackView.setCustomSpacing(8, after: messageLabel)
@@ -375,7 +392,7 @@ final class BearyInviteViewController: UIViewController {
         let invited = referral?.invitedCount ?? 0
         let months = referral?.rewardMonths ?? 0
         statsLabel.text = "已邀请 \(invited) 人 · 累计获得 \(months) 个月 Plus"
-        boundLabel.isHidden = true
+        boundRow.isHidden = true
         bindRow.isHidden = true
         bindHintLabel.isHidden = true
         if referral?.bound == true {
@@ -385,7 +402,7 @@ final class BearyInviteViewController: UIViewController {
             } else {
                 boundLabel.text = "已通过 \(referral?.inviterName ?? "好友") 的邀请加入 beary"
             }
-            boundLabel.isHidden = false
+            boundRow.isHidden = false
         } else if referral?.bindOpen == true {
             bindRow.isHidden = false
             bindHintLabel.isHidden = false

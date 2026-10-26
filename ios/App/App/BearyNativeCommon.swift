@@ -374,3 +374,499 @@ enum BearyIconImages {
         return drawn.withRenderingMode(.alwaysTemplate)
     }
 }
+
+// MARK: - NB 动态图标（网页 beary.html:1340 的 NB 定义 + :75-:99 关键帧口径）
+//
+// 48 盒、描边 2.2、圆头圆角；路径坐标均为 48 盒单位，buildLayers 时等比缩放到框宽。
+// 注意网页实际渲染口径：mail 是循环动画（nb-fly + nb-spd）；pencil 是 nb-once
+// （播一次后回到完成态——动画无 fill，结束后回到基础样式即画完的图）；
+// heart/bookmark 在空态里是 nb-static（animation:none、填充与涟漪隐藏），
+// 故此处 heart/bookmark 只画官方轮廓线、不播动画——“动态版”指 NB 资产家族，
+// 空态渲染本身就是静态的；减动效 fallback 与常态相同。
+// 圆弧统一走 appendArcSweep1（sweep=1，即屏幕顺时针），圆心由弦长精确反推，
+// 避免手写圆心引入的端点误差。
+
+private enum BearyNBPath {
+    /// 追加一段 sweep=1 的圆弧（from→to，半径 radius），拆成 ≤90° 的三次贝塞尔。
+    /// 调用方须已把路径当前点移到 from（与 from 的浮点误差在亚像素级，不可见）。
+    static func appendArcSweep1(to path: UIBezierPath, from: CGPoint, to: CGPoint, radius: CGFloat) {
+        let dx = Double(to.x - from.x)
+        let dy = Double(to.y - from.y)
+        let chord = hypot(dx, dy)
+        guard chord > 0, chord <= 2 * Double(radius) else {
+            path.addLine(to: to)
+            return
+        }
+        let ux = dx / chord
+        let uy = dy / chord
+        let h = sqrt(max(0, Double(radius) * Double(radius) - (chord / 2) * (chord / 2)))
+        // sweep=1 时圆心在弦方向 (-uy, ux) 一侧（经 pencil 两角与 heart 两瓣验算）。
+        let cx = (Double(from.x) + Double(to.x)) / 2 + h * (-uy)
+        let cy = (Double(from.y) + Double(to.y)) / 2 + h * ux
+        let a0 = atan2(Double(from.y) - cy, Double(from.x) - cx)
+        var a1 = atan2(Double(to.y) - cy, Double(from.x) - cx)
+        while a1 <= a0 { a1 += 2 * Double.pi }
+        var a = a0
+        while a < a1 - 1e-6 {
+            let step = min(Double.pi / 2, a1 - a)
+            let b = a + step
+            let k = 4.0 / 3.0 * tan(step / 4.0)
+            let r = Double(radius)
+            let p0 = CGPoint(x: CGFloat(cx + r * cos(a)), y: CGFloat(cy + r * sin(a)))
+            let p3 = CGPoint(x: CGFloat(cx + r * cos(b)), y: CGFloat(cy + r * sin(b)))
+            let c1 = CGPoint(x: CGFloat(Double(p0.x) + k * r * (-sin(a))), y: CGFloat(Double(p0.y) + k * r * cos(a)))
+            let c2 = CGPoint(x: CGFloat(Double(p3.x) - k * r * (-sin(b))), y: CGFloat(Double(p3.y) - k * r * cos(b)))
+            path.addCurve(to: p3, controlPoint1: c1, controlPoint2: c2)
+            a = b
+        }
+    }
+}
+
+/// NB.mail：循环信封（nb-fly 2.2s + nb-spd 1.1s，sp2 延迟 0.4s）。
+/// 信封描边走 envelopeColor（消息空态灰、信件框墨），速度线恒橙。
+/// 减动效：信封静止、速度线可见（完成态）。
+final class BearyMailView: UIView {
+    var envelopeColor: UIColor = BearyColors.gray {
+        didSet { updateStrokeColors() }
+    }
+
+    private let envelopeLayer = CALayer()
+    private var envelopeBodyLayer: CAShapeLayer?
+    private var speedLayers: [CAShapeLayer] = []
+    private var builtSize: CGSize = .zero
+    private var animating = false
+
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        isAccessibilityElement = false
+        backgroundColor = .clear
+    }
+
+    required init?(coder: NSCoder) {
+        super.init(coder: coder)
+        isAccessibilityElement = false
+        backgroundColor = .clear
+    }
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        guard bounds.width > 0, bounds.size != builtSize else { return }
+        builtSize = bounds.size
+        buildLayers()
+        if animating {
+            start()
+        }
+    }
+
+    override func traitCollectionDidChange(_ previousTraitCollection: UITraitCollection?) {
+        super.traitCollectionDidChange(previousTraitCollection)
+        updateStrokeColors()
+    }
+
+    private func updateStrokeColors() {
+        envelopeBodyLayer?.strokeColor = envelopeColor.resolvedColor(with: traitCollection).cgColor
+    }
+
+    private func buildLayers() {
+        envelopeLayer.removeFromSuperlayer()
+        envelopeLayer.sublayers?.forEach { $0.removeFromSuperlayer() }
+        for layer in speedLayers {
+            layer.removeFromSuperlayer()
+        }
+        speedLayers = []
+        envelopeBodyLayer = nil
+        let scale = bounds.width / 48
+        let lineWidth = 2.2 * scale
+
+        envelopeLayer.bounds = bounds
+        envelopeLayer.anchorPoint = CGPoint(x: 0.5, y: 0.5)
+        envelopeLayer.position = CGPoint(x: bounds.width / 2, y: bounds.height / 2)
+        layer.addSublayer(envelopeLayer)
+
+        // 信封：圆角矩形 (7,14)-(37,32) + 翻盖折线（NB.mail 的 ev 组）。
+        let bodyPath = UIBezierPath(roundedRect: CGRect(x: 7, y: 14, width: 30, height: 18), cornerRadius: 2)
+        bodyPath.move(to: CGPoint(x: 7.5, y: 16))
+        bodyPath.addLine(to: CGPoint(x: 22, y: 26))
+        bodyPath.addLine(to: CGPoint(x: 36.5, y: 16))
+        bodyPath.apply(CGAffineTransform(scaleX: scale, y: scale))
+        let bodyLayer = CAShapeLayer()
+        bodyLayer.frame = bounds
+        bodyLayer.path = bodyPath.cgPath
+        bodyLayer.fillColor = UIColor.clear.cgColor
+        bodyLayer.strokeColor = envelopeColor.resolvedColor(with: traitCollection).cgColor
+        bodyLayer.lineWidth = lineWidth
+        bodyLayer.lineCap = .round
+        bodyLayer.lineJoin = .round
+        envelopeLayer.addSublayer(bodyLayer)
+        envelopeBodyLayer = bodyLayer
+
+        // 速度线 sp1/sp2（NB.mail，恒橙）。
+        let speedPaths: [UIBezierPath] = {
+            let sp1 = UIBezierPath()
+            sp1.move(to: CGPoint(x: 3, y: 20))
+            sp1.addLine(to: CGPoint(x: 2.99, y: 20))
+            sp1.move(to: CGPoint(x: 1, y: 27))
+            sp1.addLine(to: CGPoint(x: 4, y: 27))
+            let sp2 = UIBezierPath()
+            sp2.move(to: CGPoint(x: 2, y: 33))
+            sp2.addLine(to: CGPoint(x: 6, y: 33))
+            return [sp1, sp2]
+        }()
+        for speedPath in speedPaths {
+            speedPath.apply(CGAffineTransform(scaleX: scale, y: scale))
+            let speedLayer = CAShapeLayer()
+            speedLayer.frame = bounds
+            speedLayer.path = speedPath.cgPath
+            speedLayer.fillColor = UIColor.clear.cgColor
+            speedLayer.strokeColor = BearyColors.orange.cgColor
+            speedLayer.lineWidth = lineWidth
+            speedLayer.lineCap = .round
+            speedLayer.lineJoin = .round
+            speedLayer.opacity = 0
+            layer.addSublayer(speedLayer)
+            speedLayers.append(speedLayer)
+        }
+    }
+
+    /// 开始循环动画；减动效时只留静态信封 + 可见速度线。
+    func start() {
+        animating = true
+        guard bounds.width > 0 else { return }
+        if builtSize != bounds.size {
+            buildLayers()
+            builtSize = bounds.size
+        }
+        let scale = bounds.width / 48
+        envelopeLayer.removeAllAnimations()
+        for speedLayer in speedLayers {
+            speedLayer.removeAllAnimations()
+        }
+        if UIAccessibility.isReduceMotionEnabled {
+            for speedLayer in speedLayers {
+                speedLayer.opacity = 1
+            }
+            return
+        }
+        let bob = CAKeyframeAnimation(keyPath: "transform.translation")
+        bob.values = [
+            NSValue(cgSize: CGSize(width: 0, height: 2 * scale)),
+            NSValue(cgSize: CGSize(width: 7 * scale, height: -3 * scale)),
+            NSValue(cgSize: CGSize(width: 0, height: 2 * scale)),
+        ]
+        bob.keyTimes = [0, 0.5, 1]
+        bob.duration = 2.2
+        bob.repeatCount = .infinity
+        envelopeLayer.add(bob, forKey: "bearyMailBob")
+        let tilt = CAKeyframeAnimation(keyPath: "transform.rotation.z")
+        tilt.values = [-3 * CGFloat.pi / 180, 2 * CGFloat.pi / 180, -3 * CGFloat.pi / 180]
+        tilt.keyTimes = [0, 0.5, 1]
+        tilt.duration = 2.2
+        tilt.repeatCount = .infinity
+        envelopeLayer.add(tilt, forKey: "bearyMailTilt")
+        for (index, speedLayer) in speedLayers.enumerated() {
+            let fade = CAKeyframeAnimation(keyPath: "opacity")
+            fade.values = [0, 1, 0]
+            fade.keyTimes = [0, 0.4, 1]
+            fade.duration = 1.1
+            fade.beginTime = CACurrentMediaTime() + Double(index) * 0.4
+            fade.repeatCount = .infinity
+            speedLayer.add(fade, forKey: "bearyMailSpdFade")
+            let slide = CAKeyframeAnimation(keyPath: "transform.translation.x")
+            slide.values = [4 * scale, -5 * scale]
+            slide.keyTimes = [0, 1]
+            slide.duration = 1.1
+            slide.beginTime = CACurrentMediaTime() + Double(index) * 0.4
+            slide.repeatCount = .infinity
+            speedLayer.add(slide, forKey: "bearyMailSpdSlide")
+        }
+    }
+
+    /// 停动画：信封回正、速度线隐藏。
+    func stop() {
+        animating = false
+        envelopeLayer.removeAllAnimations()
+        for speedLayer in speedLayers {
+            speedLayer.removeAllAnimations()
+            speedLayer.opacity = 0
+        }
+    }
+}
+
+/// NB.pencil：nb-once 一次性描画（波浪线画出 + 铅笔右滑淡出，结束后回到完成态）。
+/// 波浪线恒橙，铅笔描边走 strokeColor。减动效：直接显示完成态。
+final class BearyPencilView: UIView {
+    var strokeColor: UIColor = BearyColors.gray {
+        didSet { updateStrokeColors() }
+    }
+
+    private let pencilLayer = CALayer()
+    private var wavyLayer: CAShapeLayer?
+    private var pencilBodyLayer: CAShapeLayer?
+    private var builtSize: CGSize = .zero
+    private var animating = false
+
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        isAccessibilityElement = false
+        backgroundColor = .clear
+    }
+
+    required init?(coder: NSCoder) {
+        super.init(coder: coder)
+        isAccessibilityElement = false
+        backgroundColor = .clear
+    }
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        guard bounds.width > 0, bounds.size != builtSize else { return }
+        builtSize = bounds.size
+        buildLayers()
+        if animating {
+            start()
+        }
+    }
+
+    override func traitCollectionDidChange(_ previousTraitCollection: UITraitCollection?) {
+        super.traitCollectionDidChange(previousTraitCollection)
+        updateStrokeColors()
+    }
+
+    private func updateStrokeColors() {
+        pencilBodyLayer?.strokeColor = strokeColor.resolvedColor(with: traitCollection).cgColor
+    }
+
+    private func buildLayers() {
+        pencilLayer.removeFromSuperlayer()
+        pencilLayer.sublayers?.forEach { $0.removeFromSuperlayer() }
+        wavyLayer?.removeFromSuperlayer()
+        wavyLayer = nil
+        pencilBodyLayer = nil
+        let scale = bounds.width / 48
+        let lineWidth = 2.2 * scale
+
+        pencilLayer.bounds = bounds
+        pencilLayer.anchorPoint = CGPoint(x: 0.5, y: 0.5)
+        pencilLayer.position = CGPoint(x: bounds.width / 2, y: bounds.height / 2)
+        layer.addSublayer(pencilLayer)
+
+        // 波浪线 wl：三段 smooth cubic（NB.pencil 原值，pathLength=1 语义即 strokeEnd）。
+        let wavyPath = UIBezierPath()
+        wavyPath.move(to: CGPoint(x: 8, y: 43))
+        wavyPath.addCurve(to: CGPoint(x: 18, y: 42), controlPoint1: CGPoint(x: 12, y: 39), controlPoint2: CGPoint(x: 14, y: 46))
+        wavyPath.addCurve(to: CGPoint(x: 28, y: 41), controlPoint1: CGPoint(x: 22, y: 38), controlPoint2: CGPoint(x: 24, y: 45))
+        wavyPath.addCurve(to: CGPoint(x: 37, y: 40), controlPoint1: CGPoint(x: 32, y: 37), controlPoint2: CGPoint(x: 33, y: 43))
+        wavyPath.apply(CGAffineTransform(scaleX: scale, y: scale))
+        let wavy = CAShapeLayer()
+        wavy.frame = bounds
+        wavy.path = wavyPath.cgPath
+        wavy.fillColor = UIColor.clear.cgColor
+        wavy.strokeColor = BearyColors.orange.cgColor
+        wavy.lineWidth = lineWidth
+        wavy.lineCap = .round
+        wavy.lineJoin = .round
+        wavy.strokeEnd = 1
+        layer.addSublayer(wavy)
+        wavyLayer = wavy
+
+        // 铅笔体 pn：两段 r=3 圆角走 appendArcSweep1 精确圆弧（其余为原值直线）。
+        let bodyPath = UIBezierPath()
+        bodyPath.move(to: CGPoint(x: 8, y: 42))
+        bodyPath.addLine(to: CGPoint(x: 10, y: 35))
+        bodyPath.addLine(to: CGPoint(x: 28, y: 17))
+        BearyNBPath.appendArcSweep1(to: bodyPath, from: CGPoint(x: 28, y: 17), to: CGPoint(x: 32.2, y: 17), radius: 3)
+        bodyPath.addLine(to: CGPoint(x: 34, y: 18.8))
+        BearyNBPath.appendArcSweep1(to: bodyPath, from: CGPoint(x: 34, y: 18.8), to: CGPoint(x: 34, y: 23), radius: 3)
+        bodyPath.addLine(to: CGPoint(x: 16, y: 41))
+        bodyPath.close()
+        bodyPath.move(to: CGPoint(x: 25, y: 20))
+        bodyPath.addLine(to: CGPoint(x: 31, y: 26))
+        bodyPath.apply(CGAffineTransform(scaleX: scale, y: scale))
+        let body = CAShapeLayer()
+        body.frame = bounds
+        body.path = bodyPath.cgPath
+        body.fillColor = UIColor.clear.cgColor
+        body.strokeColor = strokeColor.resolvedColor(with: traitCollection).cgColor
+        body.lineWidth = lineWidth
+        body.lineCap = .round
+        body.lineJoin = .round
+        pencilLayer.addSublayer(body)
+        pencilBodyLayer = body
+    }
+
+    /// 播一次（nb-once）：动画无 fill，结束后自动回到完成态（线画完、铅笔归位）。
+    /// 减动效：直接显示完成态。重复调用即重播（Feed 空态每次重新出现时与网页同款重播）。
+    func start() {
+        animating = true
+        guard bounds.width > 0 else { return }
+        if builtSize != bounds.size {
+            buildLayers()
+            builtSize = bounds.size
+        }
+        guard let wavy = wavyLayer else { return }
+        wavy.removeAllAnimations()
+        pencilLayer.removeAllAnimations()
+        wavy.strokeEnd = 1
+        pencilLayer.transform = CATransform3DIdentity
+        pencilLayer.opacity = 1
+        if UIAccessibility.isReduceMotionEnabled {
+            return
+        }
+        let draw = CAKeyframeAnimation(keyPath: "strokeEnd")
+        draw.values = [0, 1, 1]
+        draw.keyTimes = [0, 0.65, 1]
+        draw.duration = 3.2
+        wavy.add(draw, forKey: "bearyPencilDraw")
+        let wavyFade = CAKeyframeAnimation(keyPath: "opacity")
+        wavyFade.values = [1, 1, 1, 0]
+        wavyFade.keyTimes = [0, 0.65, 0.88, 1]
+        wavyFade.duration = 3.2
+        wavy.add(wavyFade, forKey: "bearyPencilWavyFade")
+        let scale = bounds.width / 48
+        let slide = CAKeyframeAnimation(keyPath: "transform.translation.x")
+        slide.values = [0, 30 * scale, 31 * scale, 31 * scale]
+        slide.keyTimes = [0, 0.65, 0.8, 1]
+        slide.duration = 3.2
+        pencilLayer.add(slide, forKey: "bearyPencilSlide")
+        let tilt = CAKeyframeAnimation(keyPath: "transform.rotation.z")
+        tilt.values = [0, -3 * CGFloat.pi / 180, -3 * CGFloat.pi / 180, -3 * CGFloat.pi / 180]
+        tilt.keyTimes = [0, 0.65, 0.8, 1]
+        tilt.duration = 3.2
+        pencilLayer.add(tilt, forKey: "bearyPencilTilt")
+        let fade = CAKeyframeAnimation(keyPath: "opacity")
+        fade.values = [1, 1, 1, 0]
+        fade.keyTimes = [0, 0.65, 0.8, 1]
+        fade.duration = 3.2
+        pencilLayer.add(fade, forKey: "bearyPencilFade")
+    }
+}
+
+/// NB.heart 空态口径（nb-static）：只画官方轮廓线，无填充、无涟漪、无动画。
+final class BearyHeartView: UIView {
+    var strokeColor: UIColor = BearyColors.gray {
+        didSet { updateStrokeColors() }
+    }
+
+    private var heartLayer: CAShapeLayer?
+    private var builtSize: CGSize = .zero
+
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        isAccessibilityElement = false
+        backgroundColor = .clear
+    }
+
+    required init?(coder: NSCoder) {
+        super.init(coder: coder)
+        isAccessibilityElement = false
+        backgroundColor = .clear
+    }
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        guard bounds.width > 0, bounds.size != builtSize else { return }
+        builtSize = bounds.size
+        buildLayers()
+    }
+
+    override func traitCollectionDidChange(_ previousTraitCollection: UITraitCollection?) {
+        super.traitCollectionDidChange(previousTraitCollection)
+        updateStrokeColors()
+    }
+
+    private func updateStrokeColors() {
+        heartLayer?.strokeColor = strokeColor.resolvedColor(with: traitCollection).cgColor
+    }
+
+    private func buildLayers() {
+        heartLayer?.removeFromSuperlayer()
+        heartLayer = nil
+        let scale = bounds.width / 48
+        let lineWidth = 2.2 * scale
+        let path = UIBezierPath()
+        path.move(to: CGPoint(x: 24, y: 40))
+        path.addCurve(to: CGPoint(x: 9, y: 19.6), controlPoint1: CGPoint(x: 24, y: 40), controlPoint2: CGPoint(x: 9, y: 30.8))
+        BearyNBPath.appendArcSweep1(to: path, from: CGPoint(x: 9, y: 19.6), to: CGPoint(x: 24, y: 14.8), radius: 8.4)
+        BearyNBPath.appendArcSweep1(to: path, from: CGPoint(x: 24, y: 14.8), to: CGPoint(x: 39, y: 19.6), radius: 8.4)
+        path.addCurve(to: CGPoint(x: 24, y: 40), controlPoint1: CGPoint(x: 39, y: 30.8), controlPoint2: CGPoint(x: 24, y: 40))
+        path.close()
+        path.apply(CGAffineTransform(scaleX: scale, y: scale))
+        let heart = CAShapeLayer()
+        heart.frame = bounds
+        heart.path = path.cgPath
+        heart.fillColor = UIColor.clear.cgColor
+        heart.strokeColor = strokeColor.resolvedColor(with: traitCollection).cgColor
+        heart.lineWidth = lineWidth
+        heart.lineCap = .round
+        heart.lineJoin = .round
+        layer.addSublayer(heart)
+        heartLayer = heart
+    }
+}
+
+/// NB.bookmark 空态口径（nb-static）：只画官方轮廓线，无填充、无动画。
+/// 两处 r=2 小圆角用二次贝塞尔近似（误差 <0.05 盒单位，40pt 下不可见）。
+final class BearyBookmarkView: UIView {
+    var strokeColor: UIColor = BearyColors.gray {
+        didSet { updateStrokeColors() }
+    }
+
+    private var bookmarkLayer: CAShapeLayer?
+    private var builtSize: CGSize = .zero
+
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        isAccessibilityElement = false
+        backgroundColor = .clear
+    }
+
+    required init?(coder: NSCoder) {
+        super.init(coder: coder)
+        isAccessibilityElement = false
+        backgroundColor = .clear
+    }
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        guard bounds.width > 0, bounds.size != builtSize else { return }
+        builtSize = bounds.size
+        buildLayers()
+    }
+
+    override func traitCollectionDidChange(_ previousTraitCollection: UITraitCollection?) {
+        super.traitCollectionDidChange(previousTraitCollection)
+        updateStrokeColors()
+    }
+
+    private func updateStrokeColors() {
+        bookmarkLayer?.strokeColor = strokeColor.resolvedColor(with: traitCollection).cgColor
+    }
+
+    private func buildLayers() {
+        bookmarkLayer?.removeFromSuperlayer()
+        bookmarkLayer = nil
+        let scale = bounds.width / 48
+        let lineWidth = 2.2 * scale
+        let path = UIBezierPath()
+        path.move(to: CGPoint(x: 14, y: 8))
+        path.addLine(to: CGPoint(x: 34, y: 8))
+        path.addQuadCurve(to: CGPoint(x: 36, y: 10), controlPoint: CGPoint(x: 36, y: 8))
+        path.addLine(to: CGPoint(x: 36, y: 40))
+        path.addLine(to: CGPoint(x: 24, y: 32))
+        path.addLine(to: CGPoint(x: 12, y: 40))
+        path.addLine(to: CGPoint(x: 12, y: 10))
+        path.addQuadCurve(to: CGPoint(x: 14, y: 8), controlPoint: CGPoint(x: 12, y: 8))
+        path.close()
+        path.apply(CGAffineTransform(scaleX: scale, y: scale))
+        let bookmark = CAShapeLayer()
+        bookmark.frame = bounds
+        bookmark.path = path.cgPath
+        bookmark.fillColor = UIColor.clear.cgColor
+        bookmark.strokeColor = strokeColor.resolvedColor(with: traitCollection).cgColor
+        bookmark.lineWidth = lineWidth
+        bookmark.lineCap = .round
+        bookmark.lineJoin = .round
+        layer.addSublayer(bookmark)
+        bookmarkLayer = bookmark
+    }
+}
