@@ -276,7 +276,7 @@ class BearyFeedViewController: UIViewController {
         // 注意：容器 lane 在 SceneDelegate.swift 里提供 setChromeHidden，未落地前本文件单独编译不过（见交回 CI 风险）。
         feedChromeHidden = false
         lastFeedScrollOffsetY = tableView.contentOffset.y
-        SceneDelegate.chromeDelegate?.setChromeHidden(false, animated: false)
+        SceneDelegate.chrome?.setChromeHidden(false, animated: false)
         updateFootLogo()
         // G11：登录态翻转（登录/退出）时不走 60 秒门控，直接 refreshAll 重拉鉴权敏感的
         // delivered + 广场；容器 lane 在翻转时也会调 refreshFeed()，此处是兜底。
@@ -1393,13 +1393,13 @@ extension BearyFeedViewController: UITableViewDataSource, UITableViewDelegate {
             lastFeedScrollOffsetY = y
             if y > 120, feedChromeHidden == false {
                 feedChromeHidden = true
-                SceneDelegate.chromeDelegate?.setChromeHidden(true, animated: true)
+                SceneDelegate.chrome?.setChromeHidden(true, animated: true)
             }
         } else if delta < -2 {
             lastFeedScrollOffsetY = y
             if feedChromeHidden {
                 feedChromeHidden = false
-                SceneDelegate.chromeDelegate?.setChromeHidden(false, animated: true)
+                SceneDelegate.chrome?.setChromeHidden(false, animated: true)
             }
         }
     }
