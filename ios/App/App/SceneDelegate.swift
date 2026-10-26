@@ -24,6 +24,20 @@ class SceneDelegate: UIResponder, UIWindowSceneDelegate {
         window?.backgroundColor = BearyColors.bg
         window?.rootViewController = BearyChromeViewController()
         window?.makeKeyAndVisible()
+        // 审计 4 冷启动：建窗后立即补读 connectionOptions，走与 openURLContexts /
+        // continue userActivity 同一条 handleDeepLink 链路（SceneDelegate 下方两方法），
+        // 不另起解析。urlContexts 命中后不再走 userActivities（两者互斥的同一启动意图）。
+        if let chrome = window?.rootViewController as? BearyChromeViewController {
+            var coldHandled = false
+            for context in connectionOptions.urlContexts {
+                if chrome.handleDeepLink(url: context.url) { coldHandled = true }
+            }
+            if !coldHandled {
+                for activity in connectionOptions.userActivities {
+                    if let url = activity.webpageURL, chrome.handleDeepLink(url: url) { break }
+                }
+            }
+        }
     }
 
     func scene(_ scene: UIScene, openURLContexts URLContexts: Set<UIOpenURLContext>) {
@@ -155,6 +169,7 @@ final class BearyChromeViewController: UIViewController {
         case .entry(let entryId): self.presentDetail(entryId: entryId, initialEntry: nil)
         case .userByHandle(let handle): self.pendingUserTarget = .handle(handle); self.showPage(.user)
         case .userById(let userId): self.pendingUserTarget = .id(userId); self.showPage(.user)
+        case .trash: self.presentTrash()
         }
     })
     // 状态栏：批一跟随系统深浅（原桥的 setStatusBarStyle 由 preferredStatusBarStyle 接管；
@@ -172,6 +187,17 @@ final class BearyChromeViewController: UIViewController {
     private var feedCenterXConstraint: NSLayoutConstraint?
     /// 桌面式当前状态（updateDesktopLayout 的幂等守卫：状态不变直接返回，绝不在布局回调里反复开关约束）
     private var desktopActive = false
+    /// 审计 2 两侧背景层：仅宽 ≥821 时显示的 side-matrix 容器（左/右各一），
+    /// 宽度随 bounds 走（(宽-600)/2），内容列 600 与底栏/FAB 一字不动。
+    private var sideDecoLeft: UIView?
+    private var sideDecoRight: UIView?
+    private var sideDecoLeftWidth: NSLayoutConstraint?
+    private var sideDecoRightWidth: NSLayoutConstraint?
+    /// 上次建 matrix 时的容器尺寸（bounds 变化才重建，避免布局回调里反复建图）。
+    private var sideDecoBuiltSize: CGSize?
+    /// 审计 5 玻璃头像菜单头图：applyLoginState 更新此值，点头像时现建菜单，
+    /// 不再经 avatarButton.menu（UIMenu 无法设 52% 玻璃底，见 presentAvatarMenu）。
+    private var avatarMenuHeaderImage: UIImage?
     /// 居中 640 编辑器模态的 transitioningDelegate（弱引用，必须强持有到 dismiss 完成，与 edgeDismiss 同口径）
     private var centeredModal: BearyCenteredTransitioningDelegate?
     /// iPhone 底 sheet 编辑器模态的 transitioningDelegate（弱引用，强持有口径同 centeredModal）
@@ -350,11 +376,10 @@ final class BearyChromeViewController: UIViewController {
         avatar.layer.cornerRadius = 16
         avatar.layer.borderWidth = 1
         avatar.clipsToBounds = true
-        // 顶栏头像菜单（审计 N4 → F2 见 avatarMenu）：点头像弹出原生菜单
-        //（showsMenuAsPrimaryAction 使点按直接出菜单）；菜单在 applyLoginState
-        // 里随登录用户重建，头块取当前人名/邮箱。
-        avatar.menu = avatarMenu(for: SessionManager.shared.currentUser)
-        avatar.showsMenuAsPrimaryAction = true
+        // 顶栏头像菜单（审计 5 → 玻璃菜单，见 presentAvatarMenu）：UIMenu 无公开接口改
+        // 玻璃底（52% + blur），故点头像现建玻璃 popover 菜单；头块数据取当前用户，
+        // 头图由 applyLoginState 存入 avatarMenuHeaderImage（下载到真图后更新）。
+        avatar.addTarget(self, action: #selector(didTapAvatar), for: .touchUpInside)
         avatar.accessibilityLabel = "我"
         avatar.translatesAutoresizingMaskIntoConstraints = false
         NSLayoutConstraint.activate([
@@ -749,6 +774,8 @@ final class BearyChromeViewController: UIViewController {
             window.overrideUserInterfaceStyle = bearyUserInterfaceStyle(forThemeMode: UserDefaults.standard.string(forKey: "beary_theme_mode") ?? "system")
         }
         buildChrome()
+        // 审计 2：两侧背景层在栏之后建（插 view 最底层），布局由 viewDidLayoutSubviews 驱动。
+        buildSideDeco()
         // 初始态按未登录：登录钮显、头像与礼物钮藏；refreshMe 成功后 applyLoginState 再翻转（避免首帧两个钮同时出现）。
         avatarButton.isHidden = true
         giftButton.isHidden = true
@@ -1009,7 +1036,7 @@ final class BearyChromeViewController: UIViewController {
             avatarRetryPending = false
             avatarURLString = nil
             avatarButton.setImage(avatarInitialImage(for: nil), for: .normal)
-            avatarButton.menu = avatarMenu(for: nil)
+            avatarMenuHeaderImage = nil
             return
         }
         // G28：同 URL 且无待重试标记时早返；待重试时即使同 URL 也重新下载。
@@ -1017,7 +1044,7 @@ final class BearyChromeViewController: UIViewController {
         avatarRetryPending = false
         avatarURLString = avatar
         avatarButton.setImage(avatarInitialImage(for: user), for: .normal)
-        avatarButton.menu = avatarMenu(for: user)
+        avatarMenuHeaderImage = avatarInitialImage(for: user)
         if let url = BearyImageURLs.avatarURL(avatar) {
             URLSession.shared.dataTask(with: url) { [weak self] data, _, _ in
                 guard let self = self, let data = data, let img = UIImage(data: data) else {
@@ -1032,8 +1059,8 @@ final class BearyChromeViewController: UIViewController {
                 DispatchQueue.main.async {
                     if self.avatarURLString == avatar {
                         self.avatarButton.setImage(img.withRenderingMode(.alwaysOriginal), for: .normal)
-                        // 头块头像跟真图走：菜单头图换成刚下载的头像。
-                        self.avatarButton.menu = self.avatarMenu(for: SessionManager.shared.currentUser, headerImage: img.withRenderingMode(.alwaysOriginal))
+                        // 头块头像跟真图走：只更新存量头图，下次点头像现建的菜单即用真图。
+                        self.avatarMenuHeaderImage = img.withRenderingMode(.alwaysOriginal)
                     }
                 }
             }.resume()
@@ -1044,6 +1071,8 @@ final class BearyChromeViewController: UIViewController {
         super.viewDidLayoutSubviews()
         // 旋转/多任务改 bounds 时重算桌面式（iPad 旋转不改 size class，trait 回调靠不住，以 bounds 为准）
         updateDesktopLayout()
+        // 审计 2：两侧背景层随 bounds 重算（窄屏隐藏、宽屏定宽/重建）。
+        updateSideDecoLayout()
         layoutChromeOverlays()
         // 52 批：安全区变化（旋转/分屏）时把显示态顶栏高纠正为 安全区顶 + 60；收起态保持 0 不动。
         if headerVisible, let heightConstraint = topHeightConstraint {
@@ -1080,46 +1109,67 @@ final class BearyChromeViewController: UIViewController {
     /// F2：顶栏头像菜单——网页口径（beary.html:1073-1082 .profile-menu）：
     /// 头块（名 + 邮箱，网页 .pm-head：44 头像 + 16 粗体名 + 12 灰邮箱）+
     /// 行依次为使用指南（beary-help）、账户设置（beary-settings）、
-    /// 外观（beary-theme-auto）、退出登录（beary-logout，danger）。
-    /// 网页菜单没有“个人主页”首项，故删掉 App 原首项（原 didTapAvatar 直达）；
+    /// 外观（beary-theme-auto，行内即三档开关，见 BearyThemeSwitchView）、
+    /// 退出登录（beary-logout，danger）。网页菜单没有“个人主页”首项，
     /// 个人主页仍可经底栏“我”段进入。行图标走官方 beary-ui 资产
-    /// （icon_help/icon_settings/icon_theme_auto/icon_logout，beary-ui-2.zip
-    /// 渲染入 catalog；logout 原已在 catalog 内），不用 SF 符号冒充。
-    /// 头块用原生 inline 分区实现（名作分区标题、邮箱为禁用的行），不用
-    /// UIAction subtitle 初始化器（部署目标 iOS 15，避新 API 编译风险）；
-    /// 头块行不可点，与网页 .pm-head 无点击行为一致。菜单随登录用户重建，
-    /// 头图由调用方传入（已下载的真头像；未传则用 F24 首字母图）。
-    private func avatarMenu(for user: MeUser?, headerImage: UIImage? = nil) -> UIMenu {
-        let rawName = user?.displayName?.trimmingCharacters(in: .whitespacesAndNewlines)
-        let headName: String
-        if let rawName = rawName, !rawName.isEmpty {
-            headName = rawName
-        } else if let email = user?.email, !email.isEmpty {
-            headName = email
-        } else {
-            headName = "—"
+    /// （icon_help/icon_settings/icon_theme_auto/icon_logout），不用 SF 符号冒充。
+    /// 表现复刻（审计 5）：UIMenu 无公开接口改底色/模糊，故不用 UIMenu，
+    /// 而是现建 BearyAvatarGlassMenuViewController 玻璃 popover（网页 :164/:376/:746：
+    /// bg 52% + blur32 口径，见文件末尾 bearyMenuGlassView；圆角取 :164 的 16）。
+    /// 头块行不可点，与网页 .pm-head 无点击行为一致；头图取 avatarMenuHeaderImage
+    ///（applyLoginState 维护，下载到真图后更新）。
+    @objc private func didTapAvatar() { presentAvatarMenu() }
+
+    private func presentAvatarMenu() {
+        let current = UserDefaults.standard.string(forKey: "beary_theme_mode") ?? "system"
+        let menuVC = BearyAvatarGlassMenuViewController(
+            user: SessionManager.shared.currentUser,
+            headerImage: avatarMenuHeaderImage ?? avatarInitialImage(for: SessionManager.shared.currentUser),
+            themeMode: current)
+        menuVC.modalPresentationStyle = .popover
+        menuVC.onTutorial = { [weak self] in self?.presentTutorial() }
+        menuVC.onSettings = { [weak self] in self?.presentSettings() }
+        menuVC.onThemeCycle = { [weak self] in self?.cycleThemeMode() ?? "system" }
+        menuVC.onLogout = { [weak self] in self?.logoutFromMenu() }
+        if let popover = menuVC.popoverPresentationController {
+            popover.sourceView = avatarButton
+            popover.sourceRect = avatarButton.bounds
+            popover.permittedArrowDirections = .up
+            popover.delegate = self
         }
-        let headImage = headerImage ?? avatarInitialImage(for: user)
-        let headSection: UIMenu
-        if let email = user?.email, !email.isEmpty {
-            let emailRow = UIAction(title: email, image: headImage, attributes: .disabled) { _ in }
-            headSection = UIMenu(title: headName, options: .displayInline, children: [emailRow])
-        } else {
-            let nameRow = UIAction(title: headName, image: headImage, attributes: .disabled) { _ in }
-            headSection = UIMenu(title: "", options: .displayInline, children: [nameRow])
-        }
-        let tutorial = UIAction(title: "使用指南", image: BearyIconImages.image(named: "icon_help", pointSize: 22)) { [weak self] _ in self?.presentTutorial() }
-        let account = UIAction(title: "账户设置", image: BearyIconImages.image(named: "icon_settings", pointSize: 22)) { [weak self] _ in self?.presentSettings() }
-        let appearance = UIAction(title: "外观", image: BearyIconImages.image(named: "icon_theme_auto", pointSize: 22)) { [weak self] _ in self?.presentAppearanceSheet() }
-        let logout = UIAction(title: "退出登录", image: BearyIconImages.image(named: "icon_logout", pointSize: 22), attributes: .destructive) { [weak self] _ in self?.logoutFromMenu() }
-        return UIMenu(title: "", children: [headSection, tutorial, account, appearance, logout])
+        present(menuVC, animated: true)
     }
 
-    /// 头像菜单退出登录：与我页 vc.onLogout 同款路径（服务端登出＋清 cookie＋本地退出）。
+    /// 三档主题拨档（审计 5，网页 cycleTheme 口径 beary.html:1491-1493）：
+    /// 点按即按 system → light → dark → system 循环（网页 auto → light → dark → auto），
+    /// 持久化 beary_theme_mode 并立即应用到 window，返回新档位供开关视觉跟进。
+    /// 原 presentAppearanceSheet 的三档逻辑（存档键与 applyThemeMode）原样保留，
+    /// 只把 actionSheet + ✓ 标记换成拨动开关（菜单行内与外观卡共用本方法）。
+    private func cycleThemeMode() -> String {
+        let current = UserDefaults.standard.string(forKey: "beary_theme_mode") ?? "system"
+        let order = ["system", "light", "dark"]
+        let index = order.firstIndex(of: current) ?? 0
+        let next = order[(index + 1) % order.count]
+        UserDefaults.standard.set(next, forKey: "beary_theme_mode")
+        applyThemeMode(next)
+        return next
+    }
+
+    /// 头像菜单退出登录：按设置页口径（BearySettingsViewController.logoutButtonTapped）——
+    /// 服务端失败只 toast“退出失败，请重试”并保留本地会话；成功才清 cookie 与本地态。
+    /// 此前这里忽略 result、无条件清本地态，失败时本地已退出而服务端会话仍在。
     private func logoutFromMenu() {
-        BearyAPI.shared.logout { _ in
-            SessionManager.shared.clearLocalCookies()
-            SessionManager.shared.signOutLocally()
+        BearyAPI.shared.logout { [weak self] result in
+            DispatchQueue.main.async {
+                guard let self = self else { return }
+                switch result {
+                case .success:
+                    SessionManager.shared.clearLocalCookies()
+                    SessionManager.shared.signOutLocally()
+                case .failure:
+                    self.showToast(message: "退出失败，请重试")
+                }
+            }
         }
     }
     @objc private func didTapHome() { showPage(.home) }
@@ -1731,26 +1781,25 @@ final class BearyChromeViewController: UIViewController {
         presentTutorial()
     }
 
-    /// 外观手动切换（审计 N3）：跟随系统／浅色／深色三档，当前档标题前打 ✓；
-    /// 选择后持久化（beary_theme_mode：system/light/dark）并立即应用到 window。
+    /// 外观手动切换（审计 5）：不再是 UIAlertController actionSheet + ✓ 标记，
+    /// 改为三档拨动开关卡（网页 .switch-btn 口径 beary.html:176-181、:1081，
+    /// tmode=auto 中档为半黑渐变，见 BearyThemeSwitchView）。点开关即按
+    /// system → light → dark 循环（cycleThemeMode，网页 cycleTheme 同款顺序），
+    /// 存档键 beary_theme_mode 与 applyThemeMode 逻辑原样保留；卡内文案同步显示当前档名。
+    /// 齿轮菜单仍调本方法；头像菜单的外观行则直接内嵌同一开关，不再经本卡。
     private func presentAppearanceSheet() {
         let current = UserDefaults.standard.string(forKey: "beary_theme_mode") ?? "system"
-        let alert = UIAlertController(title: "外观", message: nil, preferredStyle: .actionSheet)
-        let modes: [(String, String)] = [("system", "跟随系统"), ("light", "浅色"), ("dark", "深色")]
-        for (value, title) in modes {
-            let display = (value == current) ? "✓ " + title : title
-            alert.addAction(UIAlertAction(title: display, style: .default) { [weak self] _ in
-                UserDefaults.standard.set(value, forKey: "beary_theme_mode")
-                self?.applyThemeMode(value)
-            })
-        }
-        alert.addAction(UIAlertAction(title: "取消", style: .cancel, handler: nil))
+        let card = BearyThemeSwitchCardViewController(themeMode: current)
+        card.modalPresentationStyle = .popover
+        card.onThemeCycle = { [weak self] in self?.cycleThemeMode() ?? "system" }
         let top = topmostViewController()
-        if let popover = alert.popoverPresentationController {
+        if let popover = card.popoverPresentationController {
             popover.sourceView = top.view
             popover.sourceRect = CGRect(x: top.view.bounds.midX, y: top.view.bounds.midY, width: 0, height: 0)
+            popover.permittedArrowDirections = []
+            popover.delegate = self
         }
-        top.present(alert, animated: true)
+        top.present(card, animated: true)
     }
 
     /// 立即应用主题档位到 window（只应用不写存档；存档由选择框写，建窗时由 SceneDelegate 读存档应用）。
@@ -1949,6 +1998,118 @@ final class BearyChromeViewController: UIViewController {
         topmostViewController().present(c, animated: true)
     }
 
+    // MARK: - 审计 2 两侧 side-matrix 背景层（仅宽 ≥821）
+    /// 网页锚点 teddy_site/beary.html:201-210（.side-matrix：sideFlow 30s linear
+    /// infinite、图标透明度 .34、减动效停播）与 :1061-1062（左右 .side-deco 容器）。
+    /// 纯装饰：容器插在 view 最底层（at:0，页/栏在其上）、isUserInteractionEnabled=false，
+    /// 不拦截触摸；内容列 600、底栏、FAB 的约束一字不动，只在两侧留白处铺图。
+    /// 资产说明：网页侧图走 img.teddyhn.com/logos 远端图，原生侧不为装饰层发网络请求，
+    /// 故用本地同款资产代位——icon/stack/部件位用 bear_watermark（40/52/30pt，
+    /// template + ink 着色，深色下近白，与网页深色换白图同口径），wordmark 位用
+    /// LogoHorizontal（60×30，资产自带深色白图）。平铺周期与网页一致（横 4 格 344pt、
+    /// 纵 2 格 164pt 的整数倍 328pt），30s 平移动画循环回跳时图案无缝。
+    private func buildSideDeco() {
+        let left = UIView()
+        left.backgroundColor = .clear
+        left.clipsToBounds = true
+        left.isUserInteractionEnabled = false
+        left.isHidden = true
+        left.translatesAutoresizingMaskIntoConstraints = false
+        view.insertSubview(left, at: 0)
+        let right = UIView()
+        right.backgroundColor = .clear
+        right.clipsToBounds = true
+        right.isUserInteractionEnabled = false
+        right.isHidden = true
+        right.translatesAutoresizingMaskIntoConstraints = false
+        view.insertSubview(right, at: 0)
+        let leftWidth = left.widthAnchor.constraint(equalToConstant: 0)
+        let rightWidth = right.widthAnchor.constraint(equalToConstant: 0)
+        sideDecoLeftWidth = leftWidth
+        sideDecoRightWidth = rightWidth
+        NSLayoutConstraint.activate([
+            left.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            left.topAnchor.constraint(equalTo: view.topAnchor),
+            left.bottomAnchor.constraint(equalTo: view.bottomAnchor),
+            leftWidth,
+            right.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            right.topAnchor.constraint(equalTo: view.topAnchor),
+            right.bottomAnchor.constraint(equalTo: view.bottomAnchor),
+            rightWidth,
+        ])
+        sideDecoLeft = left
+        sideDecoRight = right
+    }
+
+    /// viewDidLayoutSubviews 调用：窄屏隐藏、宽屏按 (宽-600)/2 定两侧宽；
+    /// 尺寸不变直接返回，不重建、不重启动画。
+    private func updateSideDecoLayout() {
+        guard let left = sideDecoLeft, let right = sideDecoRight,
+              let leftWidth = sideDecoLeftWidth, let rightWidth = sideDecoRightWidth else { return }
+        guard isDesktopLayout() else {
+            left.isHidden = true
+            right.isHidden = true
+            return
+        }
+        let sideWidth = max(0, (view.bounds.width - 600) / 2)
+        if leftWidth.constant != sideWidth { leftWidth.constant = sideWidth }
+        if rightWidth.constant != sideWidth { rightWidth.constant = sideWidth }
+        left.isHidden = false
+        right.isHidden = false
+        let size = CGSize(width: sideWidth, height: view.bounds.height)
+        if sideDecoBuiltSize == size { return }
+        sideDecoBuiltSize = size
+        rebuildSideMatrix(in: left, width: sideWidth, height: size.height)
+        rebuildSideMatrix(in: right, width: sideWidth, height: size.height)
+    }
+
+    /// 在一侧容器内建 matrix：格距横 86（52 列 + 34 间隙）、纵 82（52 行 + 30 间隙），
+    /// 与网页 .side-matrix 的 grid 口径一致；matrix 本体向左上各扩 344/328（一个动画周期），
+    /// 平移 0→344/328 全程不露出空白边。
+    private func rebuildSideMatrix(in container: UIView, width: CGFloat, height: CGFloat) {
+        for sub in container.subviews { sub.removeFromSuperview() }
+        guard width > 0, height > 0 else { return }
+        let matrix = UIView()
+        matrix.backgroundColor = .clear
+        matrix.isUserInteractionEnabled = false
+        matrix.frame = CGRect(x: -344, y: -328, width: width + 688, height: height + 656)
+        container.addSubview(matrix)
+        // 网页 SIDE_TILE（beary.html:2419）：行 0 [icon, wordmark, stack, part]，
+        // 行 1 [part, part, part, wordmark]；元组 =（资产位，宽，高）。
+        let pattern: [[(String, CGFloat, CGFloat)]] = [
+            [("bear", 40, 40), ("logo", 60, 30), ("bear", 52, 52), ("bear", 30, 30)],
+            [("bear", 30, 30), ("bear", 30, 30), ("bear", 30, 30), ("logo", 60, 30)],
+        ]
+        let bearImage = UIImage(named: "bear_watermark")?.withRenderingMode(.alwaysTemplate)
+        let logoImage = UIImage(named: "LogoHorizontal")
+        let cols = Int(ceil(matrix.bounds.width / 86)) + 1
+        let rows = Int(ceil(matrix.bounds.height / 82)) + 1
+        for row in 0..<rows {
+            for col in 0..<cols {
+                let tile = pattern[row % 2][col % 4]
+                let imageView = UIImageView()
+                if tile.0 == "logo" {
+                    imageView.image = logoImage
+                } else {
+                    imageView.image = bearImage
+                    imageView.tintColor = ink
+                }
+                imageView.contentMode = .scaleAspectFit
+                imageView.alpha = 0.34
+                imageView.frame = CGRect(
+                    x: CGFloat(col) * 86 + (52 - tile.1) / 2,
+                    y: CGFloat(row) * 82 + (52 - tile.2) / 2,
+                    width: tile.1, height: tile.2)
+                matrix.addSubview(imageView)
+            }
+        }
+        // 减动效停播（网页 :210 @media prefers-reduced-motion 同口径）。
+        guard !UIAccessibility.isReduceMotionEnabled else { return }
+        UIView.animate(withDuration: 30, delay: 0, options: [.repeat, .curveLinear], animations: {
+            matrix.transform = CGAffineTransform(translationX: 344, y: 328)
+        })
+    }
+
     // MARK: - 桌面式布局（宽 ≥821，与网页 @media 断点一致）
 
     /// 桌面式判定：只看宽度（网页 @media (min-width:821px) 同口径，不用 size class 单独判断；
@@ -1994,6 +2155,422 @@ final class BearyChromeViewController: UIViewController {
 }
 
 
+
+// MARK: - 审计 5 玻璃头像菜单与三档外观开关（与 BearyChromeViewController 同文件）
+
+/// 玻璃底（网页 .profile-menu :376/:746 口径：bg 52% + blur32）。
+/// iOS 无公开 blur 半径参数：iOS 26+ 用 UIGlassEffect（系统玻璃，tint 52%），
+/// 低版本用 systemMaterial + 52% contentView 底色（与顶栏 makeGlassView 同口径，
+/// 该 helper 的 tint 入参语义与此一致）。
+private func bearyMenuGlassView() -> UIVisualEffectView {
+    if #available(iOS 26.0, *) {
+        let effect = UIGlassEffect()
+        effect.tintColor = BearyColors.bg.withAlphaComponent(0.52)
+        return UIVisualEffectView(effect: effect)
+    } else {
+        let view = UIVisualEffectView(effect: UIBlurEffect(style: .systemMaterial))
+        view.contentView.backgroundColor = BearyColors.bg.withAlphaComponent(0.52)
+        return view
+    }
+}
+
+/// 三档拨动开关（网页 .switch-btn 口径 beary.html:176-181）：
+/// 52×30 轨道、24 圆钮（左右留 3）；档位 → 钮位：浅色左（leading 3）、
+/// 跟随系统中（leading 14）、深色右（leading 25）；跟随系统档轨道为半黑渐变
+/// （左半 ink 14%、右半 ink 全值，硬切分，非平滑渐变，与 :180 一致）。
+/// 钮内无月亮/太阳 glyph——catalog 内无此二主题资产（仅 icon_theme_auto），
+/// 不冒充 SF 符号，档位由钮位 + 轨道 + 卡片文案共同表达。
+/// 点按循环顺序由调用方（cycleThemeMode，网页 cycleTheme 同款）决定，本控件只呈现档位。
+final class BearyThemeSwitchView: UIControl {
+    private(set) var mode: String
+    private let trackView = UIView()
+    private let knobView = UIView()
+    private let gradientLayer = CAGradientLayer()
+
+    static func displayName(for mode: String) -> String {
+        switch mode {
+        case "light": return "浅色"
+        case "dark": return "深色"
+        default: return "跟随系统"
+        }
+    }
+
+    init(mode: String) {
+        self.mode = mode
+        super.init(frame: .zero)
+        trackView.backgroundColor = .clear
+        trackView.layer.cornerRadius = 15
+        trackView.clipsToBounds = true
+        trackView.isUserInteractionEnabled = false
+        trackView.layer.addSublayer(gradientLayer)
+        trackView.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(trackView)
+        knobView.backgroundColor = BearyColors.bg
+        knobView.layer.cornerRadius = 12
+        knobView.layer.shadowColor = UIColor.black.cgColor
+        knobView.layer.shadowOpacity = 0.25
+        knobView.layer.shadowRadius = 4
+        knobView.layer.shadowOffset = CGSize(width: 0, height: 1)
+        knobView.isUserInteractionEnabled = false
+        addSubview(knobView)
+        NSLayoutConstraint.activate([
+            trackView.leadingAnchor.constraint(equalTo: leadingAnchor),
+            trackView.trailingAnchor.constraint(equalTo: trailingAnchor),
+            trackView.topAnchor.constraint(equalTo: topAnchor),
+            trackView.bottomAnchor.constraint(equalTo: bottomAnchor),
+        ])
+        accessibilityLabel = "外观"
+        updateTrack()
+    }
+
+    required init?(coder: NSCoder) { return nil }
+
+    override var intrinsicContentSize: CGSize { CGSize(width: 52, height: 30) }
+
+    private func knobCenterX(for mode: String) -> CGFloat {
+        switch mode {
+        case "light": return 15
+        case "dark": return 37
+        default: return 26
+        }
+    }
+
+    private func updateTrack() {
+        if mode == "system" {
+            trackView.backgroundColor = .clear
+            gradientLayer.isHidden = false
+        } else {
+            gradientLayer.isHidden = true
+            trackView.backgroundColor = (mode == "dark") ? BearyColors.ink : BearyColors.alpha(BearyColors.ink, 0.14)
+        }
+        accessibilityValue = BearyThemeSwitchView.displayName(for: mode)
+    }
+
+    func setMode(_ mode: String, animated: Bool) {
+        self.mode = mode
+        updateTrack()
+        let target = CGRect(x: knobCenterX(for: mode) - 12, y: 3, width: 24, height: 24)
+        if animated {
+            UIView.animate(withDuration: 0.3, delay: 0, options: [.beginFromCurrentState], animations: {
+                self.knobView.frame = target
+            })
+        } else {
+            knobView.frame = target
+        }
+    }
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        gradientLayer.frame = trackView.bounds
+        let faintInk = BearyColors.alpha(BearyColors.ink, 0.14).resolvedColor(with: traitCollection).cgColor
+        let fullInk = BearyColors.ink.resolvedColor(with: traitCollection).cgColor
+        gradientLayer.colors = [faintInk, faintInk, fullInk, fullInk]
+        gradientLayer.locations = [0, 0.5, 0.5, 1]
+        gradientLayer.startPoint = CGPoint(x: 0, y: 0.5)
+        gradientLayer.endPoint = CGPoint(x: 1, y: 0.5)
+        knobView.frame = CGRect(x: knobCenterX(for: mode) - 12, y: 3, width: 24, height: 24)
+    }
+}
+
+/// 玻璃头像菜单（审计 5）：头块 + 使用指南 / 账户设置 / 外观（行内三档开关）/
+/// 退出登录四行，跳转逻辑与原 UIMenu 四项一字一致（presentTutorial /
+/// presentSettings / cycleThemeMode / logoutFromMenu），行图标与原菜单同源同尺寸。
+/// 每行点按先 dismiss 本菜单、再走原跳转（present* 用 topmostViewController 定位，
+/// 菜单未关时顶层是菜单自身，故必须先关）。
+final class BearyAvatarGlassMenuViewController: UIViewController {
+    var onTutorial: (() -> Void)?
+    var onSettings: (() -> Void)?
+    var onThemeCycle: (() -> String)?
+    var onLogout: (() -> Void)?
+
+    private let user: MeUser?
+    private let headerImage: UIImage?
+    private var themeMode: String
+    private var themeSwitch: BearyThemeSwitchView!
+
+    init(user: MeUser?, headerImage: UIImage?, themeMode: String) {
+        self.user = user
+        self.headerImage = headerImage
+        self.themeMode = themeMode
+        super.init(nibName: nil, bundle: nil)
+        self.preferredContentSize = CGSize(width: 280, height: 237)
+    }
+
+    required init?(coder: NSCoder) { return nil }
+
+    override func viewDidLoad() {
+        super.viewDidLoad()
+        view.backgroundColor = .clear
+        view.layer.cornerRadius = 16
+        view.layer.shadowColor = UIColor.black.cgColor
+        view.layer.shadowOpacity = 0.18
+        view.layer.shadowRadius = 20
+        view.layer.shadowOffset = CGSize(width: 0, height: 12)
+        let glass = bearyMenuGlassView()
+        glass.layer.cornerRadius = 16
+        glass.clipsToBounds = true
+        glass.translatesAutoresizingMaskIntoConstraints = false
+        view.addSubview(glass)
+        NSLayoutConstraint.activate([
+            glass.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            glass.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            glass.topAnchor.constraint(equalTo: view.topAnchor),
+            glass.bottomAnchor.constraint(equalTo: view.bottomAnchor),
+        ])
+        let stack = UIStackView()
+        stack.axis = .vertical
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        stack.isLayoutMarginsRelativeArrangement = true
+        stack.layoutMargins = UIEdgeInsets(top: 8, left: 0, bottom: 8, right: 0)
+        glass.contentView.addSubview(stack)
+        NSLayoutConstraint.activate([
+            stack.leadingAnchor.constraint(equalTo: glass.contentView.leadingAnchor),
+            stack.trailingAnchor.constraint(equalTo: glass.contentView.trailingAnchor),
+            stack.topAnchor.constraint(equalTo: glass.contentView.topAnchor),
+            stack.bottomAnchor.constraint(equalTo: glass.contentView.bottomAnchor),
+        ])
+        stack.addArrangedSubview(makeHeader())
+        let line = UIView()
+        line.backgroundColor = BearyColors.line
+        line.translatesAutoresizingMaskIntoConstraints = false
+        line.heightAnchor.constraint(equalToConstant: 1).isActive = true
+        stack.addArrangedSubview(line)
+        stack.addArrangedSubview(makeRow(title: "使用指南", iconName: "icon_help", destructive: false, action: #selector(tutorialTapped)))
+        stack.addArrangedSubview(makeRow(title: "账户设置", iconName: "icon_settings", destructive: false, action: #selector(settingsTapped)))
+        stack.addArrangedSubview(makeThemeRow())
+        stack.addArrangedSubview(makeRow(title: "退出登录", iconName: "icon_logout", destructive: true, action: #selector(logoutTapped)))
+    }
+
+    private func makeHeader() -> UIView {
+        let rawName = user?.displayName?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let headName: String
+        if let rawName = rawName, !rawName.isEmpty {
+            headName = rawName
+        } else if let email = user?.email, !email.isEmpty {
+            headName = email
+        } else {
+            headName = "—"
+        }
+        let header = UIView()
+        header.translatesAutoresizingMaskIntoConstraints = false
+        header.heightAnchor.constraint(equalToConstant: 44).isActive = true
+        let imageView = UIImageView(image: headerImage)
+        imageView.contentMode = .scaleAspectFill
+        imageView.backgroundColor = BearyColors.faint
+        imageView.layer.cornerRadius = 22
+        imageView.clipsToBounds = true
+        imageView.translatesAutoresizingMaskIntoConstraints = false
+        header.addSubview(imageView)
+        let nameLabel = UILabel()
+        nameLabel.text = headName
+        nameLabel.font = .systemFont(ofSize: 16, weight: .semibold)
+        nameLabel.textColor = BearyColors.ink
+        let emailLabel = UILabel()
+        emailLabel.text = user?.email
+        emailLabel.font = .systemFont(ofSize: 12)
+        emailLabel.textColor = BearyColors.gray
+        emailLabel.isHidden = (user?.email ?? "").isEmpty
+        let labels = UIStackView(arrangedSubviews: [nameLabel, emailLabel])
+        labels.axis = .vertical
+        labels.spacing = 2
+        labels.translatesAutoresizingMaskIntoConstraints = false
+        header.addSubview(labels)
+        NSLayoutConstraint.activate([
+            imageView.leadingAnchor.constraint(equalTo: header.leadingAnchor, constant: 12),
+            imageView.centerYAnchor.constraint(equalTo: header.centerYAnchor),
+            imageView.widthAnchor.constraint(equalToConstant: 44),
+            imageView.heightAnchor.constraint(equalToConstant: 44),
+            labels.leadingAnchor.constraint(equalTo: imageView.trailingAnchor, constant: 12),
+            labels.trailingAnchor.constraint(equalTo: header.trailingAnchor, constant: -12),
+            labels.centerYAnchor.constraint(equalTo: header.centerYAnchor),
+        ])
+        return header
+    }
+
+    private func makeRow(title: String, iconName: String, destructive: Bool, action: Selector) -> UIView {
+        let row = UIView()
+        row.translatesAutoresizingMaskIntoConstraints = false
+        row.heightAnchor.constraint(equalToConstant: 44).isActive = true
+        let color: UIColor = destructive ? BearyColors.red : BearyColors.ink
+        let iconView = UIImageView(image: BearyIconImages.image(named: iconName, pointSize: 22))
+        iconView.tintColor = color
+        iconView.translatesAutoresizingMaskIntoConstraints = false
+        row.addSubview(iconView)
+        let label = UILabel()
+        label.text = title
+        label.font = .systemFont(ofSize: 14)
+        label.textColor = color
+        label.translatesAutoresizingMaskIntoConstraints = false
+        row.addSubview(label)
+        let button = UIButton(type: .custom)
+        button.addTarget(self, action: action, for: .touchUpInside)
+        button.translatesAutoresizingMaskIntoConstraints = false
+        row.addSubview(button)
+        NSLayoutConstraint.activate([
+            iconView.leadingAnchor.constraint(equalTo: row.leadingAnchor, constant: 12),
+            iconView.centerYAnchor.constraint(equalTo: row.centerYAnchor),
+            iconView.widthAnchor.constraint(equalToConstant: 22),
+            iconView.heightAnchor.constraint(equalToConstant: 22),
+            label.leadingAnchor.constraint(equalTo: iconView.trailingAnchor, constant: 12),
+            label.centerYAnchor.constraint(equalTo: row.centerYAnchor),
+            button.leadingAnchor.constraint(equalTo: row.leadingAnchor),
+            button.trailingAnchor.constraint(equalTo: row.trailingAnchor),
+            button.topAnchor.constraint(equalTo: row.topAnchor),
+            button.bottomAnchor.constraint(equalTo: row.bottomAnchor),
+        ])
+        return row
+    }
+
+    private func makeThemeRow() -> UIView {
+        let row = UIView()
+        row.translatesAutoresizingMaskIntoConstraints = false
+        row.heightAnchor.constraint(equalToConstant: 44).isActive = true
+        let iconView = UIImageView(image: BearyIconImages.image(named: "icon_theme_auto", pointSize: 22))
+        iconView.tintColor = BearyColors.ink
+        iconView.translatesAutoresizingMaskIntoConstraints = false
+        row.addSubview(iconView)
+        let label = UILabel()
+        label.text = "外观"
+        label.font = .systemFont(ofSize: 14)
+        label.textColor = BearyColors.ink
+        label.translatesAutoresizingMaskIntoConstraints = false
+        row.addSubview(label)
+        let themeSwitchView = BearyThemeSwitchView(mode: themeMode)
+        themeSwitchView.translatesAutoresizingMaskIntoConstraints = false
+        row.addSubview(themeSwitchView)
+        themeSwitch = themeSwitchView
+        let tap = UITapGestureRecognizer(target: self, action: #selector(themeRowTapped))
+        row.addGestureRecognizer(tap)
+        NSLayoutConstraint.activate([
+            iconView.leadingAnchor.constraint(equalTo: row.leadingAnchor, constant: 12),
+            iconView.centerYAnchor.constraint(equalTo: row.centerYAnchor),
+            iconView.widthAnchor.constraint(equalToConstant: 22),
+            iconView.heightAnchor.constraint(equalToConstant: 22),
+            label.leadingAnchor.constraint(equalTo: iconView.trailingAnchor, constant: 12),
+            label.centerYAnchor.constraint(equalTo: row.centerYAnchor),
+            themeSwitchView.trailingAnchor.constraint(equalTo: row.trailingAnchor, constant: -12),
+            themeSwitchView.centerYAnchor.constraint(equalTo: row.centerYAnchor),
+            themeSwitchView.widthAnchor.constraint(equalToConstant: 52),
+            themeSwitchView.heightAnchor.constraint(equalToConstant: 30),
+        ])
+        return row
+    }
+
+    private func dismissThen(_ action: @escaping () -> Void) {
+        dismiss(animated: true, completion: action)
+    }
+
+    @objc private func tutorialTapped() { dismissThen { [weak self] in self?.onTutorial?() } }
+    @objc private func settingsTapped() { dismissThen { [weak self] in self?.onSettings?() } }
+    @objc private func logoutTapped() { dismissThen { [weak self] in self?.onLogout?() } }
+
+    @objc private func themeRowTapped() {
+        guard let newMode = onThemeCycle?() else { return }
+        themeMode = newMode
+        themeSwitch.setMode(newMode, animated: !UIAccessibility.isReduceMotionEnabled)
+    }
+}
+
+/// 外观开关卡（齿轮菜单调 presentAppearanceSheet 时弹出）：玻璃卡 + 三档开关 +
+/// 当前档名文案 + 完成钮；点开关即 cycleThemeMode 循环拨档并立即应用，文案同步更新。
+final class BearyThemeSwitchCardViewController: UIViewController {
+    var onThemeCycle: (() -> String)?
+
+    private var themeMode: String
+    private var themeSwitch: BearyThemeSwitchView!
+    private var captionLabel: UILabel!
+
+    init(themeMode: String) {
+        self.themeMode = themeMode
+        super.init(nibName: nil, bundle: nil)
+        self.preferredContentSize = CGSize(width: 280, height: 180)
+    }
+
+    required init?(coder: NSCoder) { return nil }
+
+    override func viewDidLoad() {
+        super.viewDidLoad()
+        view.backgroundColor = .clear
+        view.layer.cornerRadius = 16
+        view.layer.shadowColor = UIColor.black.cgColor
+        view.layer.shadowOpacity = 0.18
+        view.layer.shadowRadius = 20
+        view.layer.shadowOffset = CGSize(width: 0, height: 12)
+        let glass = bearyMenuGlassView()
+        glass.layer.cornerRadius = 16
+        glass.clipsToBounds = true
+        glass.translatesAutoresizingMaskIntoConstraints = false
+        view.addSubview(glass)
+        NSLayoutConstraint.activate([
+            glass.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            glass.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            glass.topAnchor.constraint(equalTo: view.topAnchor),
+            glass.bottomAnchor.constraint(equalTo: view.bottomAnchor),
+        ])
+        let titleLabel = UILabel()
+        titleLabel.text = "外观"
+        titleLabel.font = .systemFont(ofSize: 17, weight: .semibold)
+        titleLabel.textColor = BearyColors.ink
+        titleLabel.textAlignment = .center
+        let switchWrap = UIView()
+        switchWrap.translatesAutoresizingMaskIntoConstraints = false
+        switchWrap.heightAnchor.constraint(equalToConstant: 30).isActive = true
+        let switchView = BearyThemeSwitchView(mode: themeMode)
+        switchView.addTarget(self, action: #selector(switchTapped), for: .touchUpInside)
+        switchView.translatesAutoresizingMaskIntoConstraints = false
+        switchWrap.addSubview(switchView)
+        themeSwitch = switchView
+        NSLayoutConstraint.activate([
+            switchView.centerXAnchor.constraint(equalTo: switchWrap.centerXAnchor),
+            switchView.centerYAnchor.constraint(equalTo: switchWrap.centerYAnchor),
+            switchView.widthAnchor.constraint(equalToConstant: 52),
+            switchView.heightAnchor.constraint(equalToConstant: 30),
+        ])
+        let caption = UILabel()
+        caption.text = BearyThemeSwitchView.displayName(for: themeMode)
+        caption.font = .systemFont(ofSize: 13)
+        caption.textColor = BearyColors.gray
+        caption.textAlignment = .center
+        captionLabel = caption
+        let doneButton = UIButton(type: .custom)
+        doneButton.setTitle("完成", for: .normal)
+        doneButton.titleLabel?.font = .systemFont(ofSize: 15, weight: .semibold)
+        doneButton.setTitleColor(BearyColors.ink, for: .normal)
+        doneButton.addTarget(self, action: #selector(doneTapped), for: .touchUpInside)
+        doneButton.translatesAutoresizingMaskIntoConstraints = false
+        doneButton.heightAnchor.constraint(equalToConstant: 44).isActive = true
+        let stack = UIStackView(arrangedSubviews: [titleLabel, switchWrap, caption, doneButton])
+        stack.axis = .vertical
+        stack.spacing = 12
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        stack.isLayoutMarginsRelativeArrangement = true
+        stack.layoutMargins = UIEdgeInsets(top: 16, left: 16, bottom: 16, right: 16)
+        glass.contentView.addSubview(stack)
+        NSLayoutConstraint.activate([
+            stack.leadingAnchor.constraint(equalTo: glass.contentView.leadingAnchor),
+            stack.trailingAnchor.constraint(equalTo: glass.contentView.trailingAnchor),
+            stack.topAnchor.constraint(equalTo: glass.contentView.topAnchor),
+            stack.bottomAnchor.constraint(equalTo: glass.contentView.bottomAnchor),
+        ])
+    }
+
+    @objc private func switchTapped() {
+        guard let newMode = onThemeCycle?() else { return }
+        themeMode = newMode
+        themeSwitch.setMode(newMode, animated: !UIAccessibility.isReduceMotionEnabled)
+        captionLabel.text = BearyThemeSwitchView.displayName(for: newMode)
+    }
+
+    @objc private func doneTapped() { dismiss(animated: true) }
+}
+
+extension BearyChromeViewController: UIPopoverPresentationControllerDelegate {
+    /// 玻璃菜单/开关卡在 iPhone 上也保持 popover 形态，不自适应为底 sheet
+    ///（菜单锚在头像、卡片居中，sheet 会改写两者的锚定表现）。
+    func adaptivePresentationStyle(for controller: UIPresentationController) -> UIModalPresentationStyle {
+        return .none
+    }
+}
 
 // MARK: - iPhone 编辑器底 sheet（宽 ≤820，对应网页 #editorModal 手机端）
 // 网页形态：上限 88vh（内容短时随内容收缩、超高封顶 88%）、底 sheet、顶部圆角 20、

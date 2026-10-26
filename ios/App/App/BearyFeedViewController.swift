@@ -204,9 +204,6 @@ class BearyFeedViewController: UIViewController {
         tv.register(BearyFeedCell.self, forCellReuseIdentifier: "BearyFeedCell")
         tv.delegate = self
         tv.dataSource = self
-        let rc = UIRefreshControl()
-        rc.addTarget(self, action: #selector(pullToRefresh), for: .valueChanged)
-        tv.refreshControl = rc
         return tv
     }()
 
@@ -273,6 +270,7 @@ class BearyFeedViewController: UIViewController {
     override func viewDidLoad() {
         super.viewDidLoad()
         view.backgroundColor = BearyColors.bg
+        view.addSubview(ptrView)
         view.addSubview(tableView)
         view.addSubview(centralSpinner)
         view.addSubview(newContentPill)
@@ -283,8 +281,20 @@ class BearyFeedViewController: UIViewController {
         feedColWidth.priority = .defaultHigh
         let feedColCap = tableView.widthAnchor.constraint(lessThanOrEqualToConstant: 600)
         feedColCapConstraint = feedColCap
+        let feedTableTop = tableView.topAnchor.constraint(equalTo: view.topAnchor)
+        self.feedTableTopConstraint = feedTableTop
+        let ptrHeight = ptrView.heightAnchor.constraint(equalToConstant: 0)
+        self.ptrHeightConstraint = ptrHeight
+        ptrView.addSubview(ptrSpinner)
         NSLayoutConstraint.activate([
-            tableView.topAnchor.constraint(equalTo: view.topAnchor),
+            ptrView.topAnchor.constraint(equalTo: view.topAnchor),
+            ptrView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            ptrView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            ptrHeight,
+            ptrSpinner.centerXAnchor.constraint(equalTo: ptrView.centerXAnchor),
+            // 圈视觉 32pt（medium 20pt × 1.6，同 centralSpinner 口径）：视觉底边距 ptr 底边 8pt（网页 #ptrIn margin-bottom:8）。
+            ptrSpinner.centerYAnchor.constraint(equalTo: ptrView.bottomAnchor, constant: -24),
+            feedTableTop,
             tableView.leadingAnchor.constraint(greaterThanOrEqualTo: view.leadingAnchor),
             tableView.trailingAnchor.constraint(lessThanOrEqualTo: view.trailingAnchor),
             tableView.centerXAnchor.constraint(equalTo: view.centerXAnchor),
@@ -333,6 +343,137 @@ class BearyFeedViewController: UIViewController {
         updateFootLogo()
     }
 
+    // MARK: - 自定义下拉刷新（只换表现层；刷新逻辑仍走 pullToRefresh → refreshAll，一字不动）
+
+    /// 网页 #ptr 同款表现层，网页锚点 beary.html：
+    /// - #ptrIn 32px 指示圈缩放淡入：约 70-71 行（opacity 0 / scale .6 → .pull 时 opacity 1 / scale 1）；
+    /// - #ptr 元素：约 1014 行（顶部固定、高度撑开、圈底对齐 margin-bottom 8）；
+    /// - 80px 达阈值切 pull 态：约 6367 行 setPtr（h >= 80 时挂 pull 类）；
+    /// - ptr-solid 压列背景 + 回位动画结束才摘类：约 6388-6411 行 dropSolid。
+    /// 原生映射：手指下拉时表整体下压 h（feedTableTopConstraint），压出的条带由 ptrView
+    ///（bg 实色，即 ptr-solid 的“压列背景”）填充；h = min(下拉量 × 0.48, 116)，与网页 DAMP/MAXH 同值；
+    /// 达 80pt 时圈 opacity 0→1、scale .6→1；松手触发后保持 84pt（网页 runRefresh 的 setPtr(84)）；
+    /// 回位走 .32s cubic-bezier(.25,.8,.3,1)，动画完成回调里才摘 ptr-solid 并停圈（网页 dropSolid 同款时序）。
+    /// translatesAutoresizingMaskIntoConstraints：ptrView / ptrSpinner 均为代码建视图，手动设 false（徽章墙黑线教训）。
+    private lazy var ptrView: UIView = {
+        let container = UIView()
+        container.translatesAutoresizingMaskIntoConstraints = false
+        container.backgroundColor = BearyColors.bg
+        container.clipsToBounds = true
+        return container
+    }()
+
+    /// 指示圈：medium 20pt × 1.6 = 32pt 视觉，与网页 #ptrIn 32px 及本文件 centralSpinner 同口径；
+    /// 网页 scale .6→1 折算到本圈为 transform 0.96→1.6（base 1.6 × 网页 scale）。
+    private lazy var ptrSpinner: UIActivityIndicatorView = {
+        let spinner = UIActivityIndicatorView(style: .medium)
+        spinner.translatesAutoresizingMaskIntoConstraints = false
+        spinner.color = BearyColors.gray
+        spinner.hidesWhenStopped = true
+        spinner.transform = CGAffineTransform(scaleX: 0.96, y: 0.96)
+        spinner.alpha = 0
+        return spinner
+    }()
+
+    private var ptrHeightConstraint: NSLayoutConstraint?
+    private var feedTableTopConstraint: NSLayoutConstraint?
+    /// ptr-solid 是否挂着：h > 0 即挂上，只在回位动画完成回调里摘下，动画中途不硬切。
+    private var isPtrPressed = false
+    /// 是否已达 80pt 阈值（网页 .pull 态）。
+    private var isPtrAtThreshold = false
+    /// 是否处于刷新保持态（松手触发后、两路首拉都完成前）。
+    private var isPtrRefreshing = false
+
+    private enum PtrConstants {
+        static let threshold: CGFloat = 80
+        static let holdHeight: CGFloat = 84
+        static let damp: CGFloat = 0.48
+        static let maxHeight: CGFloat = 116
+    }
+
+    /// 手指拖动中的 1:1 跟随（网页 move 里手指跟随不传 anim）：高度直接写约束，不播动画。
+    private func updatePtrForDrag(scrollView: UIScrollView) {
+        guard self.isPtrRefreshing == false else { return }
+        let overscroll = -(scrollView.contentOffset.y + scrollView.contentInset.top)
+        guard overscroll > 0 else {
+            if self.isPtrPressed { self.ptrCancel() }
+            return
+        }
+        let height = min(overscroll * PtrConstants.damp, PtrConstants.maxHeight)
+        self.ptrSetPressed(height > 0)
+        self.ptrHeightConstraint?.constant = height
+        self.feedTableTopConstraint?.constant = height
+        self.view.layoutIfNeeded()
+        if height > 0, self.ptrSpinner.isAnimating == false {
+            self.ptrSpinner.startAnimating()
+        }
+        self.ptrUpdateThresholdState(pulled: height >= PtrConstants.threshold, animated: true)
+    }
+
+    /// 阈值穿越时才播圈的淡入/缩放（网页 #ptrIn 的 opacity .22s / transform .28s 过渡）；未穿越不重复播。
+    private func ptrUpdateThresholdState(pulled: Bool, animated: Bool) {
+        guard pulled != self.isPtrAtThreshold else { return }
+        self.isPtrAtThreshold = pulled
+        let apply = {
+            self.ptrSpinner.alpha = pulled ? 1 : 0
+            self.ptrSpinner.transform = CGAffineTransform(scaleX: pulled ? 1.6 : 0.96, y: pulled ? 1.6 : 0.96)
+        }
+        if animated {
+            UIView.animate(withDuration: 0.28, animations: apply)
+        } else {
+            apply()
+        }
+    }
+
+    private func ptrSetPressed(_ pressed: Bool) {
+        self.isPtrPressed = pressed
+    }
+
+    /// 回位动画：网页高度过渡 .32s cubic-bezier(.25,.8,.3,1)；完成回调里才摘 ptr-solid、停圈。
+    private func ptrAnimateBackToZero(completion: (() -> Void)?) {
+        let finish = {
+            self.ptrHeightConstraint?.constant = 0
+            self.feedTableTopConstraint?.constant = 0
+            self.isPtrPressed = false
+            self.isPtrAtThreshold = false
+            self.ptrSpinner.alpha = 0
+            self.ptrSpinner.transform = CGAffineTransform(scaleX: 0.96, y: 0.96)
+            self.ptrSpinner.stopAnimating()
+            completion?()
+        }
+        if UIAccessibility.isReduceMotionEnabled {
+            finish()
+            return
+        }
+        let animator = UIViewPropertyAnimator(
+            duration: 0.32,
+            timingParameters: UICubicTimingParameters(
+                controlPoint1: CGPoint(x: 0.25, y: 0.8),
+                controlPoint2: CGPoint(x: 0.3, y: 1.0)
+            )
+        )
+        animator.addAnimations {
+            self.ptrHeightConstraint?.constant = 0
+            self.feedTableTopConstraint?.constant = 0
+            self.view.layoutIfNeeded()
+        }
+        animator.addCompletion { _ in finish() }
+        animator.startAnimation()
+    }
+
+    /// 未达阈值松手：取消回位（动画结束才摘类，与刷新结束同款时序）。
+    private func ptrCancel() {
+        self.ptrAnimateBackToZero(completion: nil)
+    }
+
+    /// 刷新结束：只在保持态才回位；程序触发的 refreshAll（重拍 tab 等）没走下拉时是 no-op。
+    private func ptrEndRefreshing() {
+        guard self.isPtrRefreshing else { return }
+        self.isPtrRefreshing = false
+        self.ptrAnimateBackToZero(completion: nil)
+    }
+
+    /// 下拉刷新触发口：原 UIRefreshControl 的 valueChanged 目标，现由松手判定调用；函数体一字不动。
     @objc private func pullToRefresh() {
         refreshAll()
     }
@@ -1203,9 +1344,7 @@ class BearyFeedViewController: UIViewController {
 
     private func maybeEndRefreshing() {
         if deliveredLoading || plazaLoading { return }
-        if let rc = tableView.refreshControl, rc.isRefreshing {
-            rc.endRefreshing()
-        }
+        ptrEndRefreshing()
     }
 
     // MARK: - section 映射
@@ -1575,6 +1714,42 @@ extension BearyFeedViewController: UITableViewDataSource, UITableViewDelegate {
                 feedChromeHidden = false
                 SceneDelegate.chrome?.setChromeHidden(false, animated: true)
             }
+        }
+        if scrollView.isDragging {
+            updatePtrForDrag(scrollView: scrollView)
+        }
+    }
+
+    /// 松手判定（网页 setPtr 的 h >= 80 触发口）：达阈值则保持 84pt 再走 pullToRefresh；
+    /// 未达阈值则取消回位；刷新保持态中不重复触发。
+    func scrollViewDidEndDragging(_ scrollView: UIScrollView, willDecelerate decelerate: Bool) {
+        guard scrollView === tableView else { return }
+        guard isPtrRefreshing == false else { return }
+        if isPtrAtThreshold {
+            isPtrRefreshing = true
+            if UIAccessibility.isReduceMotionEnabled {
+                ptrHeightConstraint?.constant = PtrConstants.holdHeight
+                feedTableTopConstraint?.constant = PtrConstants.holdHeight
+                view.layoutIfNeeded()
+                pullToRefresh()
+                return
+            }
+            let animator = UIViewPropertyAnimator(
+                duration: 0.32,
+                timingParameters: UICubicTimingParameters(
+                    controlPoint1: CGPoint(x: 0.25, y: 0.8),
+                    controlPoint2: CGPoint(x: 0.3, y: 1.0)
+                )
+            )
+            animator.addAnimations {
+                self.ptrHeightConstraint?.constant = PtrConstants.holdHeight
+                self.feedTableTopConstraint?.constant = PtrConstants.holdHeight
+                self.view.layoutIfNeeded()
+            }
+            animator.addCompletion { _ in self.pullToRefresh() }
+            animator.startAnimation()
+        } else if isPtrPressed {
+            ptrCancel()
         }
     }
 

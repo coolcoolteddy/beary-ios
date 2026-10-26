@@ -1481,20 +1481,51 @@ final class BearySettingsViewController: UIViewController {
         var mineEntries: [Entry] = []
         var mailboxEntries: [Entry] = []
         var likedEntries: [Entry] = []
+        // 第 7 项：分页结果不再静默丢弃——任一 scope 失败即整单 fail-closed，
+        // 任一 scope 触顶即整单走部分导出标注；失败优先于触顶（先判失败）。
+        var exportFailedReason: String?
+        var exportTruncated = false
         group.enter()
         BearyAPI.shared.fetchAccountSessions { result in
             if case .success(let resp) = result { sessionsResp = resp }
             group.leave()
         }
-        let scopes: [(BearyAPI.Scope, ( [Entry]) -> Void)] = [
-            (.mine, { mineEntries = $0 }),
-            (.mailbox, { mailboxEntries = $0 }),
-            (.liked, { likedEntries = $0 }),
+        let scopes: [(BearyAPI.Scope, (BearyExportPageResult) -> Void)] = [
+            (.mine, { result in
+                mineEntries = result.entries
+                if !result.complete {
+                    if result.reason == "已达 20 页上限" {
+                        exportTruncated = true
+                    } else {
+                        exportFailedReason = result.reason ?? "分页失败"
+                    }
+                }
+            }),
+            (.mailbox, { result in
+                mailboxEntries = result.entries
+                if !result.complete {
+                    if result.reason == "已达 20 页上限" {
+                        exportTruncated = true
+                    } else {
+                        exportFailedReason = result.reason ?? "分页失败"
+                    }
+                }
+            }),
+            (.liked, { result in
+                likedEntries = result.entries
+                if !result.complete {
+                    if result.reason == "已达 20 页上限" {
+                        exportTruncated = true
+                    } else {
+                        exportFailedReason = result.reason ?? "分页失败"
+                    }
+                }
+            }),
         ]
         for item in scopes {
             group.enter()
-            fetchAllEntries(scope: item.0) { entries in
-                item.1(entries)
+            fetchAllEntries(scope: item.0) { result in
+                item.1(result)
                 group.leave()
             }
         }
@@ -1502,57 +1533,88 @@ final class BearySettingsViewController: UIViewController {
             guard let self = self else { return }
             self.isExporting = false
             self.exportRowButton.isEnabled = true
-            var data: [String: Any] = [:]
-            data["exported_at"] = ISO8601DateFormatter().string(from: Date())
-            data["site"] = "teddyhn.com"
-            data["profile"] = self.exportProfileDict(user: user)
-            if let resp = sessionsResp, let list = resp.sessions {
-                data["sessions"] = list.map { self.exportSessionDict(session: $0) }
-            }
-            data["diaries"] = mineEntries.map { self.exportEntryDict(entry: $0, isPrivate: false) } +
-                mailboxEntries.map { self.exportEntryDict(entry: $0, isPrivate: true) }
-            data["liked_entries"] = likedEntries.map { self.exportEntryDict(entry: $0, isPrivate: false) }
-            guard let jsonData = try? JSONSerialization.data(withJSONObject: data, options: [.prettyPrinted, .sortedKeys]) else {
-                self.showToast("导出失败，请重试")
+            // 失败 fail-closed：只 toast、不拼 JSON、不出文件、不出分享面板。
+            if let failedReason = exportFailedReason {
+                self.showToast("导出失败（\(failedReason)），未生成文件")
                 return
             }
-            let fmt = DateFormatter()
-            fmt.locale = Locale(identifier: "en_US_POSIX")
-            fmt.dateFormat = "yyyy-MM-dd"
-            let fileName = "teddyhn-data-" + fmt.string(from: Date()) + ".json"
-            let fileURL = FileManager.default.temporaryDirectory.appendingPathComponent(fileName)
-            var text = "\u{feff}"
-            text += String(data: jsonData, encoding: .utf8) ?? ""
-            guard let fileData = text.data(using: .utf8), (try? fileData.write(to: fileURL)) != nil else {
-                self.showToast("导出失败，请重试")
+            // 触顶：分享前先弹明确标注，用户点“继续分享”才拼文件、出分享面板；
+            // 点取消则不出文件。N = 三个 scope 已取篇数之和（即文件内总篇数）。
+            if exportTruncated {
+                let totalCount = mineEntries.count + mailboxEntries.count + likedEntries.count
+                let alert = UIAlertController(title: "部分导出", message: "部分导出（已取 \(totalCount) 篇，已达 20 页上限），是否继续分享部分数据？", preferredStyle: .alert)
+                alert.addAction(UIAlertAction(title: "取消", style: .cancel, handler: nil))
+                alert.addAction(UIAlertAction(title: "继续分享", style: .default, handler: { [weak self] _ in
+                    self?.buildAndShareExport(user: user, sessionsResp: sessionsResp, mineEntries: mineEntries, mailboxEntries: mailboxEntries, likedEntries: likedEntries)
+                }))
+                self.present(alert, animated: true)
                 return
             }
-            let activity = UIActivityViewController(activityItems: [fileURL], applicationActivities: nil)
-            if let pop = activity.popoverPresentationController {
-                pop.sourceView = self.exportRowButton
-                pop.sourceRect = self.exportRowButton.bounds
-            }
-            activity.completionWithItemsHandler = { [weak self] _, completed, _, _ in
-                if completed { self?.showToast("导出完成") }
-            }
-            self.present(activity, animated: true)
+            self.buildAndShareExport(user: user, sessionsResp: sessionsResp, mineEntries: mineEntries, mailboxEntries: mailboxEntries, likedEntries: likedEntries)
         }
     }
 
+    /// 导出文件拼装 + 分享面板（原 exportWithUser 内 group.notify 后半段原样挪出，
+    /// JSON/写文件两处“导出失败，请重试”文案与触发条件均不动；仅调用点改为
+    /// 成功直出、触顶经用户确认后出，失败路径根本不进本方法）。
+    private func buildAndShareExport(user: MeUser, sessionsResp: BearyAccountSessionsResponse?, mineEntries: [Entry], mailboxEntries: [Entry], likedEntries: [Entry]) {
+        var data: [String: Any] = [:]
+        data["exported_at"] = ISO8601DateFormatter().string(from: Date())
+        data["site"] = "teddyhn.com"
+        data["profile"] = self.exportProfileDict(user: user)
+        if let resp = sessionsResp, let list = resp.sessions {
+            data["sessions"] = list.map { self.exportSessionDict(session: $0) }
+        }
+        data["diaries"] = mineEntries.map { self.exportEntryDict(entry: $0, isPrivate: false) } +
+            mailboxEntries.map { self.exportEntryDict(entry: $0, isPrivate: true) }
+        data["liked_entries"] = likedEntries.map { self.exportEntryDict(entry: $0, isPrivate: false) }
+        guard let jsonData = try? JSONSerialization.data(withJSONObject: data, options: [.prettyPrinted, .sortedKeys]) else {
+            self.showToast("导出失败，请重试")
+            return
+        }
+        let fmt = DateFormatter()
+        fmt.locale = Locale(identifier: "en_US_POSIX")
+        fmt.dateFormat = "yyyy-MM-dd"
+        let fileName = "teddyhn-data-" + fmt.string(from: Date()) + ".json"
+        let fileURL = FileManager.default.temporaryDirectory.appendingPathComponent(fileName)
+        var text = "\u{feff}"
+        text += String(data: jsonData, encoding: .utf8) ?? ""
+        guard let fileData = text.data(using: .utf8), (try? fileData.write(to: fileURL)) != nil else {
+            self.showToast("导出失败，请重试")
+            return
+        }
+        let activity = UIActivityViewController(activityItems: [fileURL], applicationActivities: nil)
+        if let pop = activity.popoverPresentationController {
+            pop.sourceView = self.exportRowButton
+            pop.sourceRect = self.exportRowButton.bounds
+        }
+        activity.completionWithItemsHandler = { [weak self] _, completed, _, _ in
+            if completed { self?.showToast("导出完成") }
+        }
+        self.present(activity, animated: true)
+    }
+
+    /// 第 7 项分页结果：entries=已取条目；complete=true 时 reason 恒为 nil；
+    /// complete=false 仅两种情形——某页请求失败（reason="第 X 页失败"，X=depth+1，
+    /// depth 从 0 计故首失败页为“第 1 页失败”）或已取满 20 页仍可能有下一页
+    /// （reason="已达 20 页上限”）。调用方据此 fail-closed（失败）/ 部分标注（触顶），
+    /// 再不允许静默拿已取数据当完整备份出文件。
+    private typealias BearyExportPageResult = (entries: [Entry], complete: Bool, reason: String?)
+
     /// 分页拉全一个 scope：limit=50、guard 20 页（网页 fetchAll 同口径），
     /// 游标 before + before_id（App fetchEntries 既有口径，服务端 created_at DESC, id DESC）。
-    private func fetchAllEntries(scope: BearyAPI.Scope, completion: @escaping ([Entry]) -> Void) {
+    private func fetchAllEntries(scope: BearyAPI.Scope, completion: @escaping (BearyExportPageResult) -> Void) {
         fetchScopePage(scope: scope, before: nil, beforeId: nil, accumulated: [], depth: 0, completion: completion)
     }
 
-    private func fetchScopePage(scope: BearyAPI.Scope, before: Int?, beforeId: String?, accumulated: [Entry], depth: Int, completion: @escaping ([Entry]) -> Void) {
+    private func fetchScopePage(scope: BearyAPI.Scope, before: Int?, beforeId: String?, accumulated: [Entry], depth: Int, completion: @escaping (BearyExportPageResult) -> Void) {
         if depth >= 20 {
-            completion(accumulated)
+            completion((entries: accumulated, complete: false, reason: "已达 20 页上限"))
             return
         }
         BearyAPI.shared.fetchEntries(scope: scope, limit: 50, before: before, beforeId: beforeId) { [weak self] result in
             guard let self = self else {
-                completion(accumulated)
+                completion((entries: accumulated, complete: false, reason: "第 \(depth + 1) 页失败"))
                 return
             }
             switch result {
@@ -1560,16 +1622,16 @@ final class BearySettingsViewController: UIViewController {
                 let entries = list.entries ?? []
                 let all = accumulated + entries
                 if entries.count < 50 {
-                    completion(all)
+                    completion((entries: all, complete: true, reason: nil))
                     return
                 }
                 guard let last = entries.last, let lastCreated = last.createdAt else {
-                    completion(all)
+                    completion((entries: all, complete: true, reason: nil))
                     return
                 }
                 self.fetchScopePage(scope: scope, before: lastCreated, beforeId: last.id, accumulated: all, depth: depth + 1, completion: completion)
             case .failure:
-                completion(accumulated)
+                completion((entries: accumulated, complete: false, reason: "第 \(depth + 1) 页失败"))
             }
         }
     }

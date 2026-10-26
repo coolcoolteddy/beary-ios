@@ -9,7 +9,9 @@ import Lottie
 /// 深浅版本按当前 traitCollection 选择，文件以平铺方式放在 Bundle.main 的 Resources 中，
 /// 文件名为 key 加 json 后缀，深色版在 key 后加 dark 后缀。
 /// 解析失败或取不到 JSON 时回退到 PNG 静态图，不抛错，不中断调用方布局。
-/// 减动效开启时一律只显示首帧，不自动播放，play 调用同样只停在首帧。
+/// 减动效开启时一律只显示循环段末帧（完成帧），不自动播放，play 调用同样只停在完成帧。
+/// 首次解析（LottieAnimation.filepath + markers 解码）不在视图创建调用链上同步做：
+/// 未命中缓存时先挂 PNG 占位，后台线程解析、回主线程挂接；缓存命中仍同步挂接（只建视图，不解析）。
 /// 颜色与玻璃效果均不由本文件决定，颜色走调用方约束与 BearyColors。
 public final class BearyEmoteView: UIView {
 
@@ -17,6 +19,10 @@ public final class BearyEmoteView: UIView {
 
     private var isPlaying: Bool
     private var playbackGeneration: Int = 0
+    /// ①专用加载代次：只在 teardownContent（即每次 loadEmote / 主题切换）时递增，
+    /// stop()/startPlayback() 不动它——后台解析完成时凭它判断视图是否仍在等同一批内容。
+    /// 用 playbackGeneration 会误杀：stop() 也递增它，加载中 stop 后再 play 将永远等不到挂接。
+    private var loadGeneration: Int = 0
     private var animationView: LottieAnimationView?
     private var fallbackImageView: UIImageView?
     private var currentEmote: CachedEmote?
@@ -43,12 +49,29 @@ public final class BearyEmoteView: UIView {
     private static let cacheLock = NSLock()
     private static let cacheLimit = 16
 
+    /// ①后台解析队列（userInitiated）：只做 Lottie 解析 + markers 解码，不建 UIView。
+    /// 与预热队列分开，避免预热排队挡住当前视图急需的解析。
+    private static let parseQueue = DispatchQueue(label: "com.beary.emote-parse", qos: .userInitiated)
+    /// ②预热队列（utility，串行）：预热解析走这里，优先级低于按需解析，不抢主线程。
+    private static let prewarmQueue = DispatchQueue(label: "com.beary.emote-prewarm", qos: .utility)
+
+    /// ②预热集合（只预热当前 trait 的一个版本，不同时预热深浅两版，避免占满 16 条 LRU）：
+    /// agree——编辑器心情顺序第 1 位、最常用确认回应，且仅 28KB，几乎零成本；
+    /// happy / love——通用高频正向回应，且各约 1.4MB，是小文件里最值得提前解析的两只；
+    /// hug / applause / wave——高频社交回应（安慰/喝彩/打招呼），各仅约 30–60KB，成本可忽略。
+    /// 刻意不预热 shy（约 7.2MB）与 speechless（约 19.6MB）：两者合计占预热队列绝大部分时间，
+    /// 且预热会把它们顶进 LRU 挤掉常用项；它们改为按需后台解析 + PNG 占位更划算。
+    /// 下一候选是 cheer（约 1.0MB），如需扩容先加它，不要先加两只巨文件。
+    private static let prewarmEmoteKeys = ["agree", "happy", "love", "hug", "applause", "wave"]
+    /// 每种外观（light/dark）只预热一次；复用 cacheLock 保护。
+    private static var prewarmScheduled: Set<String> = []
+
     /// G24：失败 key 的负缓存（key → 过期时间，TTL 300 秒）：文件缺失/
     /// 解析失败不再每次重复读盘；过期后自动失效、可重试。
     private static var negativeCache: [String: Date] = [:]
     private static let negativeCacheTTL: TimeInterval = 300
 
-    /// M23：存活播放器弱引用登记（减动效开启时对全部存活播放器 stop 回首帧）。
+    /// M23：存活播放器弱引用登记（减动效开启时对全部存活播放器 stop 回循环段末帧）。
     private static var livePlayers = NSHashTable<BearyEmoteView>.weakObjects()
     private static var reduceMotionObserverInstalled = false
     /// M23：减动效通知观察者 token（App 生命周期内常驻，不移除）。
@@ -63,6 +86,7 @@ public final class BearyEmoteView: UIView {
         Self.registerLivePlayer(self)
         Self.installReduceMotionObserver()
         loadEmote()
+        Self.schedulePrewarm(dark: self.isDark)
     }
 
     deinit {
@@ -82,7 +106,7 @@ public final class BearyEmoteView: UIView {
     }
 
     /// M23：监听减动效变化通知（只装一次）；开启时对所有存活播放器
-    /// stop() 回首帧。关闭时不自动重播（等调用方下次 play）。
+    /// stop() 回循环段末帧（减动效下 stop 显示完成帧，见 stop）。关闭时不自动重播（等调用方下次 play）。
     private static func installReduceMotionObserver() {
         cacheLock.lock()
         let installed = reduceMotionObserverInstalled
@@ -120,28 +144,43 @@ public final class BearyEmoteView: UIView {
         teardownContent()
         isPlaying = wasPlaying
         loadEmote()
+        Self.schedulePrewarm(dark: self.isDark)
     }
 
     /// 开始播放：先播 0 到 op 一次，完成后进入 loop_start 到 loop_end 的无限循环。
-    /// 回退静态图时为空操作，减动效开启时只显示首帧。
+    /// 减动效开启时只显示循环段末帧（完成帧）。
+    /// 后台加载中调用 play 时视图上还是 PNG 占位：只记下起播意图就返回，
+    /// 挂接时 attachCachedEmote 见 isPlaying 为真即起播，不丢这次 play；
+    /// 永久回退（解析失败）时该意图无动画可播，无害。
     public func play() {
-        guard fallbackImageView == nil else { return }
+        guard fallbackImageView == nil else {
+            isPlaying = UIAccessibility.isReduceMotionEnabled == false
+            return
+        }
         if UIAccessibility.isReduceMotionEnabled {
             isPlaying = false
-            animationView?.currentFrame = 0
+            if let view = animationView, let cached = currentEmote {
+                view.currentFrame = cached.loopEnd
+            }
             return
         }
         isPlaying = true
         startPlayback()
     }
 
-    /// 停止播放并回到首帧。回退静态图时为空操作。
+    /// 停止播放：正常模式回到首帧；减动效开启时停在循环段末帧（完成帧），
+    /// 这也是减动效通知观察者调用本方法时应有的静态态。
+    /// 回退静态图时为空操作。
     public func stop() {
         isPlaying = false
         playbackGeneration += 1
         if let view = animationView {
             view.stop()
-            view.currentFrame = 0
+            if UIAccessibility.isReduceMotionEnabled, let cached = currentEmote {
+                view.currentFrame = cached.loopEnd
+            } else {
+                view.currentFrame = 0
+            }
         }
     }
 
@@ -152,24 +191,60 @@ public final class BearyEmoteView: UIView {
     private func loadEmote() {
         teardownContent()
         let dark = isDark
-        if let cached = Self.cachedEmoteEntry(for: emoteKey, dark: dark) {
-            currentEmote = cached
-            let view = LottieAnimationView(animation: cached.animation)
-            view.contentMode = .scaleAspectFit
-            view.backgroundColor = .clear
-            view.clipsToBounds = false
-            view.frame = bounds
-            view.autoresizingMask = [.flexibleWidth, .flexibleHeight]
-            addSubview(view)
-            animationView = view
-            if isPlaying && UIAccessibility.isReduceMotionEnabled == false {
-                startPlayback()
-            } else {
-                view.currentFrame = 0
-            }
+        let cacheKey = Self.cacheKey(for: emoteKey, dark: dark)
+        // 缓存命中：只建 LottieAnimationView，不做任何解析，仍可同步挂接。
+        if let cached = Self.cachedHit(for: cacheKey) {
+            self.attachCachedEmote(cached)
             return
         }
-        currentEmote = nil
+        // 未命中：先挂 PNG 占位（布局不空、不卡主线程），再决定是否后台解析。
+        self.showFallback(dark: dark)
+        // G24 负缓存期内（文件缺失/解析失败 300 秒内）：不重复读盘、不派发后台解析。
+        if Self.isNegativeCached(cacheKey) {
+            return
+        }
+        // ①首次解析走后台：teardown 之后取到的代次，completion 回主线程时凭它验旧。
+        let generation = self.loadGeneration
+        let key = self.emoteKey
+        Self.loadEmoteInBackground(for: key, dark: dark) { [weak self] loaded in
+            guard let self = self else { return }
+            guard self.loadGeneration == generation else { return }
+            guard self.isDark == dark else { return }
+            guard self.animationView == nil else { return }
+            guard let loaded = loaded else { return }
+            self.attachCachedEmote(loaded)
+        }
+    }
+
+    /// 主线程专用：把已解析好的缓存项挂成 Lottie 视图（建视图、定初始帧/起播）。
+    /// 调用方保证在主线程：loadEmote 的缓存命中分支、后台解析的 completion（已回主线程）。
+    /// 不调 teardownContent——它会递增 loadGeneration，挂接完成不应再动代次；
+    /// 这里只摘掉 PNG 占位。
+    private func attachCachedEmote(_ cached: CachedEmote) {
+        fallbackImageView?.removeFromSuperview()
+        fallbackImageView = nil
+        currentEmote = cached
+        let view = LottieAnimationView(animation: cached.animation)
+        view.contentMode = .scaleAspectFit
+        view.backgroundColor = .clear
+        view.clipsToBounds = false
+        view.frame = bounds
+        view.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+        addSubview(view)
+        animationView = view
+        if UIAccessibility.isReduceMotionEnabled {
+            // ③减动效完成帧：循环段末帧 cached.loopEnd（即 loop_end 标记；
+            // 标记缺失时 loadEmoteFromBundle 已兜底为 op，零长段已兜底为整段末帧）。
+            view.currentFrame = cached.loopEnd
+        } else if isPlaying {
+            startPlayback()
+        } else {
+            view.currentFrame = 0
+        }
+    }
+
+    /// PNG 占位：未命中缓存时的即时静态内容，也是解析失败后的最终回退。
+    private func showFallback(dark: Bool) {
         let imageView = UIImageView()
         imageView.contentMode = .scaleAspectFit
         imageView.backgroundColor = .clear
@@ -181,8 +256,46 @@ public final class BearyEmoteView: UIView {
         fallbackImageView = imageView
     }
 
+    /// ①后台解析入口（静态方法，不持有任何视图）：parseQueue 上同步解析并写缓存，
+    /// 再回主线程调 completion。视图是否已释放、是否已换批内容，由调用方在 completion
+    /// 里用 [weak self] + loadGeneration 验——本方法本身不判断视图存活。
+    private static func loadEmoteInBackground(for key: String, dark: Bool, completion: @escaping (CachedEmote?) -> Void) {
+        parseQueue.async {
+            let loaded = Self.cachedEmoteEntry(for: key, dark: dark)
+            DispatchQueue.main.async {
+                completion(loaded)
+            }
+        }
+    }
+
+    /// ②预热入口（供调用方在启动/首屏出现后显式调用；首个 BearyEmoteView 创建时也会自动调度一次，
+    /// 同一外观只调度一次，重复调用为空操作）。只解析当前外观版本，不同时预热深浅两版。
+    public static func prewarmCommonEmotes(dark: Bool) {
+        Self.schedulePrewarm(dark: dark)
+    }
+
+    /// ②预热调度：先占位标记防重复，再在 utility 队列上延迟 1 秒顺序解析。
+    /// 延迟是给按需解析让路：首个视图自己的解析走 userInitiated 队列先跑，1 秒内大概率已写缓存，
+    /// 预热循环里 cachedEmoteEntry 命中缓存即跳过，不重复解析同一只。
+    private static func schedulePrewarm(dark: Bool) {
+        let variant = dark ? "dark" : "light"
+        cacheLock.lock()
+        let already = prewarmScheduled.contains(variant)
+        if !already {
+            prewarmScheduled.insert(variant)
+        }
+        cacheLock.unlock()
+        guard !already else { return }
+        prewarmQueue.asyncAfter(deadline: .now() + 1.0) {
+            for key in Self.prewarmEmoteKeys {
+                _ = Self.cachedEmoteEntry(for: key, dark: dark)
+            }
+        }
+    }
+
     private func teardownContent() {
         playbackGeneration += 1
+        loadGeneration += 1
         animationView?.removeFromSuperview()
         animationView = nil
         fallbackImageView?.removeFromSuperview()
@@ -193,7 +306,7 @@ public final class BearyEmoteView: UIView {
     private func startPlayback() {
         guard let view = animationView, let cached = currentEmote else { return }
         if UIAccessibility.isReduceMotionEnabled {
-            view.currentFrame = 0
+            view.currentFrame = cached.loopEnd
             return
         }
         playbackGeneration += 1
@@ -208,8 +321,12 @@ public final class BearyEmoteView: UIView {
         }
     }
 
+    private static func cacheKey(for key: String, dark: Bool) -> String {
+        dark ? "\(key)#dark" : "\(key)#light"
+    }
+
     private static func cachedEmoteEntry(for key: String, dark: Bool) -> CachedEmote? {
-        let cacheKey = dark ? "\(key)#dark" : "\(key)#light"
+        let cacheKey = Self.cacheKey(for: key, dark: dark)
         if isNegativeCached(cacheKey) {
             return nil
         }
