@@ -1385,7 +1385,9 @@ class BearyProfileViewController: UIViewController {
             chip.axis = .horizontal
             chip.spacing = 2
             chip.alignment = .center
-            let imageViewValue = BearyEmoteView(key: key, animated: false)
+            // 52 批：回应墙改动态（与卡片内回应一致；网页端墙上表情是 SVG 自带循环、本身就是动的，
+            // App 静态反而与网页不一致，故上一批“汇总展示保持静态”的理由撤回；减动效首帧逻辑在播放器内，不动）。
+            let imageViewValue = BearyEmoteView(key: key, animated: true)
             imageViewValue.translatesAutoresizingMaskIntoConstraints = false
             let countLabel = UILabel()
             countLabel.font = UIFont.systemFont(ofSize: 13)
@@ -1451,8 +1453,20 @@ class BearyProfileViewController: UIViewController {
         // I8：未知 key 不再过滤掉，取不到图时以占位图展示（并打日志）。
         let shown = unlockedBadges.filter { !$0.isEmpty }
         guard !shown.isEmpty else {
-            badgesContainer.isHidden = true
-            badgesHeightConstraint.isActive = true
+            // 52 批补充：成功返回空时不再直接隐藏，显示“暂无徽章”空态文案，
+            // 让没数据与没渲染一眼分清（失败态重试钮不动）。
+            for arrangedView in badgesStack.arrangedSubviews {
+                badgesStack.removeArrangedSubview(arrangedView)
+                arrangedView.removeFromSuperview()
+            }
+            let emptyLabel = UILabel()
+            emptyLabel.translatesAutoresizingMaskIntoConstraints = false
+            emptyLabel.text = "暂无徽章"
+            emptyLabel.font = UIFont.systemFont(ofSize: 13)
+            emptyLabel.textColor = BearyColors.gray
+            badgesStack.addArrangedSubview(emptyLabel)
+            badgesContainer.isHidden = false
+            badgesHeightConstraint.isActive = false
             layoutHeaderForced(widthValue: headerWidthValue)
             return
         }
