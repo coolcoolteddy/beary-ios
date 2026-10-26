@@ -58,7 +58,7 @@ class SceneDelegate: UIResponder, UIWindowSceneDelegate {
     }
 }
 
-// ===== beary 原生栏：液态玻璃顶栏 + 底栏胶囊 + FAB =====
+// ===== beary 原生栏：液态玻璃顶栏 + 底栏分段器 + FAB =====
 // 栏状态（选中 tab、登录态）由容器本地管理；未读角标在批二接通知接口前保持隐藏。
 // iOS 26+ 用官方 UIGlassEffect，低版本自动降级系统毛玻璃；部署目标不用抬。
 
@@ -69,7 +69,11 @@ final class BearyChromeViewController: UIViewController {
     private var topHeightConstraint: NSLayoutConstraint?
     private var feedTopConstraint: NSLayoutConstraint?
     private var pageTopConstraints: [ContainerPage: NSLayoutConstraint] = [:]
-    private var bottomCapsule: UIVisualEffectView!
+    /// 底栏：官方分段选择器（BearyHit44SegmentedControl 仅扩热区至 44pt，
+    /// 与已拆除的时间线筛选条同款热区扩类；系统自绘玻璃与选中 pill，不再自绘胶囊）。
+    private var bottomSegmented: BearyHit44SegmentedControl!
+    /// 分段器 touchDown 瞬间记录的旧选段（供重拍手势与 valueChanged 时序竞态判定用）。
+    private var segmentIndexAtTouchDown: Int = -1
     private var fabButton: UIButton!
     /// FAB 玻璃化容器（阴影载体 + 玻璃 + 按钮三层；拖动变形只改容器 transform，不动约束）。
     private var fabContainerView: UIView?
@@ -79,18 +83,10 @@ final class BearyChromeViewController: UIViewController {
     private var loginButton: UIButton!
     private var giftButton: UIButton!
     private var avatarButton: UIButton!
-    private var tabButtons: [UIButton] = []
     private var bellBadge: UILabel!
     private var avatarURLString: String?
     /// 顶栏图标行（宽度相关间距：≤480 时 10，其余 18，见 layoutChromeOverlays）。
     private var topStackView: UIStackView?
-    /// 底栏选中背景 pill 及其外阴影（置于选中钮后方、tabStack 下方）。
-    private var selectedPillView: UIView?
-    private var selectedPillShadowView: UIView?
-    /// 底栏玻璃阴影载体（与底栏胶囊同框；玻璃本体 clipsToBounds 会裁掉自身阴影，故阴影另挂一层）。
-    private var bottomCapsuleShadowView: UIView?
-    /// 底栏玻璃深色内高光（inset 0 1 0 白 18%，仅深色显示）。
-    private var bottomCapsuleHighlightView: UIView?
     // 批一：原生页切换状态。currentPage 为 nil 表示尚未显示任何页（启动时 showPage(.home) 亮原生列表）。
     private enum ContainerPage {
         case home, notif, timeline, me, search, user
@@ -154,7 +150,7 @@ final class BearyChromeViewController: UIViewController {
     // （详情 nav 用它；iPhone 编辑器已改底 sheet，不再用边缘返回，故不与详情共用持有）
     private var edgeDismiss: BearyEdgeDismissController?
     // 桌面式布局（宽 ≥821，与网页 @media 断点一致）：内容列 600 居中；iPhone 式（宽 ≤820）全宽列。
-    // 分栏已整体撤除，不留分栏状态；底栏胶囊与 FAB 在 iPad 端与 iPhone 完全一致，走原有栏显隐逻辑。
+    // 分栏已整体撤除，不留分栏状态；底栏分段器与 FAB 在 iPad 端与 iPhone 完全一致，走原有栏显隐逻辑。
     private var feedLeadingConstraint: NSLayoutConstraint?
     private var feedTrailingConstraint: NSLayoutConstraint?
     private var feedColumnWidthConstraint: NSLayoutConstraint?
@@ -178,7 +174,7 @@ final class BearyChromeViewController: UIViewController {
 
     /// 玻璃本体：iOS 26+ 为 UIGlassEffect，低版本降级系统毛玻璃；调用点一律不新增玻璃视图。
     /// tint 只给顶栏传：网页 .nav 底色为 bg 52%（color-mix），tint 为 nil 时与旧调用完全一致
-    /// （底栏胶囊仍走 makeGlassView()，配方不动）。低版本分支无 tint 参数，
+    /// （底栏已改系统分段器，不再调用 makeGlassView）。低版本分支无 tint 参数，
     /// 故同值以 contentView 底色叠加在毛玻璃上，复现网页 52% 底色口径。
     /// 注意（2026-10-25 顶栏发灰复查）：灰色根因不是 tint 不足——顶栏玻璃帧内没有任何页面
     /// 内容（各页顶距均为安全区+60，内容从玻璃下方才开始），玻璃只能透出容器/窗口底色；
@@ -215,6 +211,20 @@ final class BearyChromeViewController: UIViewController {
         return UIImage(systemName: systemFallback)?.withRenderingMode(.alwaysTemplate)
     }
 
+    /// 底栏分段图标：与旧钮同源（资产优先、SF 回退），统一缩到 24pt（旧钮图标尺寸），
+    /// template 模式不变；两源皆空时返回空白图以保四段不断（与旧钮空白热区同口径）。
+    private func segmentIcon(named: String, systemFallback: String) -> UIImage {
+        let src = topIconImage(named: named, systemFallback: systemFallback) ?? UIImage()
+        let size = CGSize(width: 24, height: 24)
+        let format = UIGraphicsImageRendererFormat()
+        format.opaque = false
+        format.scale = traitCollection.displayScale
+        let rendered = UIGraphicsImageRenderer(size: size, format: format).image { _ in
+            src.draw(in: CGRect(origin: .zero, size: size))
+        }
+        return rendered.withRenderingMode(.alwaysTemplate)
+    }
+
     /// I17：头像占位图——IconUser 资产优先，缺失时用 SF person 通用图标。
     private func placeholderAvatarImage() -> UIImage? {
         if let img = UIImage(named: "IconUser")?.withRenderingMode(.alwaysTemplate) { return img }
@@ -239,7 +249,7 @@ final class BearyChromeViewController: UIViewController {
     private func buildChrome() {
         // ---- 顶栏：整宽玻璃，内容区 60pt 贴安全区下方 ----
         // 顶栏玻璃 tint：网页 .nav 底色 bg 52%，与下方白色内容同色系（浅色为白玻璃）；
-        // 只改本调用的参数，不动底栏胶囊调用；不加边框与阴影（网页 .nav 亦无，见 parity_values §7）。
+        // 只改本调用的参数；底栏已改系统分段器，无玻璃调用；不加边框与阴影（网页 .nav 亦无，见 parity_values §7）。
         let top = makeGlassView(tint: BearyColors.bg.withAlphaComponent(0.52))
         top.translatesAutoresizingMaskIntoConstraints = false
         view.addSubview(top)
@@ -333,108 +343,41 @@ final class BearyChromeViewController: UIViewController {
             topStack.bottomAnchor.constraint(equalTo: top.contentView.bottomAnchor),
             topStack.heightAnchor.constraint(equalToConstant: 60),
         ])
-        // ---- 底栏胶囊：居中，50pt 高，圆角 25 ----
-        // 阴影载体先加（在胶囊后方）：胶囊本体 clipsToBounds 会裁自身阴影，故阴影另挂一层；
-        // 玻璃本体配方不动（UIGlassEffect 调用不改），这里只补边框与阴影。
-        let capShadow = UIView()
-        capShadow.backgroundColor = .clear
-        capShadow.layer.shadowColor = UIColor.black.cgColor
-        capShadow.layer.shadowOffset = CGSize(width: 0, height: 3)
-        capShadow.layer.shadowRadius = 5
-        capShadow.translatesAutoresizingMaskIntoConstraints = false
-        view.addSubview(capShadow)
-        bottomCapsuleShadowView = capShadow
-        let cap = makeGlassView()
-        cap.layer.cornerRadius = 25
-        cap.clipsToBounds = true
-        cap.translatesAutoresizingMaskIntoConstraints = false
-        view.addSubview(cap)
-        bottomCapsule = cap
-        cap.alpha = 0
-        cap.isUserInteractionEnabled = false
-        NSLayoutConstraint.activate([
-            cap.centerXAnchor.constraint(equalTo: view.centerXAnchor),
-            cap.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor, constant: -12),
-            cap.heightAnchor.constraint(equalToConstant: 50),
-            capShadow.centerXAnchor.constraint(equalTo: cap.centerXAnchor),
-            capShadow.bottomAnchor.constraint(equalTo: cap.bottomAnchor),
-            capShadow.heightAnchor.constraint(equalTo: cap.heightAnchor),
-            capShadow.widthAnchor.constraint(equalTo: cap.widthAnchor),
-        ])
-        let tabStack = UIStackView()
-        tabStack.axis = .horizontal
-        tabStack.alignment = .fill
-        tabStack.distribution = .fill
-        tabStack.translatesAutoresizingMaskIntoConstraints = false
-        cap.contentView.addSubview(tabStack)
-        NSLayoutConstraint.activate([
-            tabStack.leadingAnchor.constraint(equalTo: cap.contentView.leadingAnchor, constant: 4),
-            tabStack.trailingAnchor.constraint(equalTo: cap.contentView.trailingAnchor, constant: -4),
-            tabStack.topAnchor.constraint(equalTo: cap.contentView.topAnchor, constant: 4),
-            tabStack.bottomAnchor.constraint(equalTo: cap.contentView.bottomAnchor, constant: -4),
-        ])
-        let tabs: [(String, String, String, Selector)] = [
-            ("IconHome", "house", "home", #selector(didTapHome)),
-            ("IconBell", "bell", "notif", #selector(didTapNotif)),
-            ("IconCalendar", "calendar", "timeline", #selector(didTapTimeline)),
-            ("IconUser", "person", "me", #selector(didTapMe)),
+        // ---- 底栏：官方分段选择器（Li 2026-10-26 纠正：55 包的自绘胶囊不是官方分段器）----
+        // 时间线筛选条已在复刻批拆除，线上已无可抄的筛选条配置；本控件口径：
+        // 系统默认外观（iOS 27 自绘玻璃与选中 pill，不设背景色/选中色、不改 tint——
+        // tint 保留规矩只管顶栏 52% 与 FAB 橙色两处，底栏不新增 tint）；
+        // BearyHit44SegmentedControl 是筛选条用过的同款热区扩类（仅扩触摸帧）；
+        // 四段等宽（apportionsSegmentWidthsByContent=false），图标与旧钮同源、
+        // 统一缩到 24pt；布局常量与旧胶囊 1:1：宽 256、高 50、底距安全区 12。
+        let tabIcons: [(String, String)] = [
+            ("IconHome", "house"),
+            ("IconBell", "bell"),
+            ("IconCalendar", "calendar"),
+            ("IconUser", "person"),
         ]
-        for (img, fallback, key, sel) in tabs {
-            let b = BearyHit44Button(type: .custom)
-            b.setImage(topIconImage(named: img, systemFallback: fallback), for: .normal)
-            b.tintColor = gray
-            b.addTarget(self, action: sel, for: .touchUpInside)
-            b.accessibilityLabel = ["home": "首页", "notif": "消息", "timeline": "时间线", "me": "我"][key] ?? key
-            b.translatesAutoresizingMaskIntoConstraints = false
-            b.widthAnchor.constraint(equalToConstant: 62).isActive = true
-            tabStack.addArrangedSubview(b)
-            tabButtons.append(b)
-            constrainButtonIcon(b)
-        }
-        // 底栏选中背景 pill：底色 bg 88%、外阴影 0 2 8 黑 13%（CALayer radius 取 CSS blur 一半即 4，
-        // 与 FAB 24→12、草稿箱 32→16 同口径）、内高光 inset 0 1 0 白 55%（顶缘 1pt 亮条）。
-        // 阴影与圆角裁剪冲突，故 pill 与阴影分两层；两层帧由 layoutChromeOverlays 跟选中钮走。
-        let pillShadow = UIView()
-        pillShadow.backgroundColor = .clear
-        pillShadow.layer.shadowColor = UIColor.black.cgColor
-        pillShadow.layer.shadowOpacity = 0.13
-        pillShadow.layer.shadowOffset = CGSize(width: 0, height: 2)
-        pillShadow.layer.shadowRadius = 4
-        pillShadow.isHidden = true
-        cap.contentView.insertSubview(pillShadow, belowSubview: tabStack)
-        selectedPillShadowView = pillShadow
-        let pill = UIView()
-        pill.backgroundColor = BearyColors.bg.withAlphaComponent(0.88)
-        pill.layer.cornerRadius = 21
-        pill.clipsToBounds = true
-        pill.isHidden = true
-        cap.contentView.insertSubview(pill, belowSubview: tabStack)
-        selectedPillView = pill
-        let pillHighlight = UIView()
-        pillHighlight.backgroundColor = UIColor(white: 1, alpha: 0.55)
-        pillHighlight.translatesAutoresizingMaskIntoConstraints = false
-        pill.addSubview(pillHighlight)
+        let seg = BearyHit44SegmentedControl(items: tabIcons.map { segmentIcon(named: $0.0, systemFallback: $0.1) })
+        seg.apportionsSegmentWidthsByContent = false
+        seg.selectedSegmentIndex = 0
+        seg.accessibilityLabel = "底栏"
+        seg.addTarget(self, action: #selector(bottomSegmentTouchDown), for: .touchDown)
+        seg.addTarget(self, action: #selector(bottomSegmentChanged), for: .valueChanged)
+        let retap = UITapGestureRecognizer(target: self, action: #selector(bottomSegmentTapped(_:)))
+        retap.cancelsTouchesInView = false
+        seg.addGestureRecognizer(retap)
+        seg.translatesAutoresizingMaskIntoConstraints = false
+        view.addSubview(seg)
+        bottomSegmented = seg
+        seg.alpha = 0
+        seg.isUserInteractionEnabled = false
         NSLayoutConstraint.activate([
-            pillHighlight.leadingAnchor.constraint(equalTo: pill.leadingAnchor),
-            pillHighlight.trailingAnchor.constraint(equalTo: pill.trailingAnchor),
-            pillHighlight.topAnchor.constraint(equalTo: pill.topAnchor),
-            pillHighlight.heightAnchor.constraint(equalToConstant: 1),
+            seg.centerXAnchor.constraint(equalTo: view.centerXAnchor),
+            seg.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor, constant: -12),
+            seg.widthAnchor.constraint(equalToConstant: 256),
+            seg.heightAnchor.constraint(equalToConstant: 50),
         ])
-        // 底栏玻璃深色内高光：inset 0 1 0 白 18%（顶缘 1pt 亮条，仅深色显示，浅色无）。
-        let capHighlight = UIView()
-        capHighlight.backgroundColor = UIColor(white: 1, alpha: 0.18)
-        capHighlight.translatesAutoresizingMaskIntoConstraints = false
-        cap.contentView.insertSubview(capHighlight, belowSubview: tabStack)
-        NSLayoutConstraint.activate([
-            capHighlight.leadingAnchor.constraint(equalTo: cap.contentView.leadingAnchor),
-            capHighlight.trailingAnchor.constraint(equalTo: cap.contentView.trailingAnchor),
-            capHighlight.topAnchor.constraint(equalTo: cap.contentView.topAnchor),
-            capHighlight.heightAnchor.constraint(equalToConstant: 1),
-        ])
-        bottomCapsuleHighlightView = capHighlight
-        // 未读角标：挂在消息钮右上角，底色一律蓝；批一无通知接口，默认隐藏，批二接通知接口后再驱动。
-        // 对齐网页 .bnav-badge：高固定 17、10 粗体固定字号、左右 padding 各 5、图标右上 top -5 / right -9。
-        // 图标改 24pt 后换算为钮中心偏移：横向 +12.5（24/2 + 9 - 17/2）、纵向 -8.5（-(24/2 + 5 - 17/2)）。
+        // 未读角标：挂在分段器第 2 段（消息）右上角，随控件 alpha/transform 一起藏显；
+        // 样式与旧钮上角标一致（高 17、10 粗体、蓝底白字、宽下限 17）；位置由 layoutBottomBadge 跟段走。
         let badge = BearyBadgeLabel()
         badge.font = .boldSystemFont(ofSize: 10)
         badge.adjustsFontForContentSizeCategory = false
@@ -444,18 +387,10 @@ final class BearyChromeViewController: UIViewController {
         badge.layer.cornerRadius = 8.5
         badge.clipsToBounds = true
         badge.isHidden = true
-        badge.translatesAutoresizingMaskIntoConstraints = false
-        let notifButton = tabButtons[1]
-        notifButton.addSubview(badge)
+        seg.addSubview(badge)
         bellBadge = badge
-        NSLayoutConstraint.activate([
-            badge.heightAnchor.constraint(equalToConstant: 17),
-            badge.widthAnchor.constraint(greaterThanOrEqualToConstant: 17),
-            badge.centerXAnchor.constraint(equalTo: notifButton.centerXAnchor, constant: 12.5),
-            badge.centerYAnchor.constraint(equalTo: notifButton.centerYAnchor, constant: -8.5),
-        ])
         // ---- FAB：官方液态玻璃橙色圆钮，与网页 .fab 同尺寸同位置 ----
-        // 三层结构（与底栏胶囊同款阴影载体口径）：阴影载体在后（玻璃 clipsToBounds
+        // 三层结构：阴影载体在后（玻璃 clipsToBounds
         // 会裁自身阴影，故阴影另挂一层）、玻璃本体居中、按钮在最上只负责点击与图标。
         // 玻璃走 makeGlassView(tint: 橙)：iOS 26+ 为 UIGlassEffect 橙色 tint，低版本降级
         // 系统毛玻璃 + 橙色 contentView 底色（helper 内 #available 兜底，不抬部署目标）。
@@ -518,62 +453,43 @@ final class BearyChromeViewController: UIViewController {
         refreshChromeDynamicLayers()
     }
 
-    /// 深浅切换时才需刷新的图层色（CALayer borderColor/shadowOpacity 不跟动态色自动走）：
-    /// 头像 1px line 边框、底栏玻璃阴影（浅黑 10%、深黑 42%）、底栏深色内高光显隐。
+    /// 深浅切换时才需刷新的图层色（CALayer borderColor 不跟动态色自动走）：
+    /// 头像 1px line 边框。底栏已改系统分段器（深浅自适应），不再有玻璃阴影与内高光要刷。
     /// 底栏玻璃边框已于 2026-10-26 按 Li 决定摘掉（浅色 1px 黑 6% 不再设置）。
     private func refreshChromeDynamicLayers() {
-        let isDark = traitCollection.userInterfaceStyle == .dark
         if let avatar = avatarButton {
             avatar.layer.borderColor = BearyColors.line.resolvedColor(with: traitCollection).cgColor
         }
-        bottomCapsuleShadowView?.layer.shadowOpacity = isDark ? 0.42 : 0.10
-        bottomCapsuleHighlightView?.isHidden = !isDark
     }
 
     /// 栏覆盖层布局（viewDidLayoutSubviews 与 updateTabSelection 后调用）：
-    /// 顶栏图标间距随屏宽走（≤480 时 10，其余 18）；选中 pill 跟选中钮帧走；
-    /// 底栏阴影 shadowPath 跟胶囊 bounds 走。只在值变化时写，避免布局循环。
+    /// 顶栏图标间距随屏宽走（≤480 时 10，其余 18）；底栏角标跟消息段走。
+    /// 旧自绘胶囊的 pill/阴影/高光已随分段器改造删除，选中 pill 由系统自绘。
     private func layoutChromeOverlays() {
         if let stack = topStackView {
             let desired: CGFloat = view.bounds.width <= 480 ? 10 : 18
             if stack.spacing != desired { stack.spacing = desired }
         }
-        if let shadowView = bottomCapsuleShadowView {
-            shadowView.layer.shadowPath = UIBezierPath(roundedRect: shadowView.bounds, cornerRadius: 25).cgPath
-        }
-        guard let pill = selectedPillView, let pillShadow = selectedPillShadowView, let cap = bottomCapsule else { return }
-        let selectedIndex: Int?
-        switch currentPage {
-        case .home: selectedIndex = 0
-        case .notif: selectedIndex = 1
-        case .timeline: selectedIndex = 2
-        case .me: selectedIndex = 3
-        default: selectedIndex = nil
-        }
-        guard let index = selectedIndex, index < tabButtons.count else {
-            pill.isHidden = true
-            pillShadow.isHidden = true
-            return
-        }
-        let frame = tabButtons[index].convert(tabButtons[index].bounds, to: cap.contentView)
-        guard frame.width > 0, frame.height > 0 else {
-            pill.isHidden = true
-            pillShadow.isHidden = true
-            return
-        }
-        pill.frame = frame
-        pillShadow.frame = frame
-        pillShadow.layer.shadowPath = UIBezierPath(roundedRect: pillShadow.bounds, cornerRadius: 21).cgPath
-        pill.isHidden = false
-        pillShadow.isHidden = false
+        layoutBottomBadge()
+    }
+
+    /// 底栏角标定位：消息段（第 2 段）中心 + 旧钮同款偏移（横 +12.5、纵 -8.5），
+    /// 段等宽故段中心 x = 段宽 × 1.5；角标尺寸取 BearyBadgeLabel 自身口径（高 17、宽下限 17）。
+    /// 角标是分段器的子视图，栏藏显的 alpha/transform 自动带上它；每次布局都把它
+    /// 提至最前，防止系统在选段变化时重排内部视图盖住角标。
+    private func layoutBottomBadge() {
+        guard let seg = bottomSegmented, let badge = bellBadge,
+              seg.bounds.width > 0, seg.bounds.height > 0 else { return }
+        badge.frame = CGRect(origin: .zero, size: badge.intrinsicContentSize)
+        badge.center = CGPoint(x: seg.bounds.width * 0.375 + 12.5, y: seg.bounds.height / 2 - 8.5)
+        seg.bringSubviewToFront(badge)
     }
 
     /// L3：挂页后把栏覆盖层一次提齐——页 view 在栏之后加入会盖住栏，
-    /// 顺序须为：页 < 顶栏 < 阴影 view < 胶囊 < FAB（阴影在页之上、胶囊之下）。
+    /// 顺序须为：页 < 顶栏 < 底栏分段器 < FAB。
     private func bringChromeToFront() {
         if let top = topGlass { view.bringSubviewToFront(top) }
-        if let shadow = bottomCapsuleShadowView { view.bringSubviewToFront(shadow) }
-        if let cap = bottomCapsule { view.bringSubviewToFront(cap) }
+        if let seg = bottomSegmented { view.bringSubviewToFront(seg) }
         if let fab = fabContainerView { view.bringSubviewToFront(fab) }
     }
 
@@ -642,6 +558,7 @@ final class BearyChromeViewController: UIViewController {
                 })
             }
         }
+        layoutBottomBadge()
     }
 
     /// F5 回顶：我页/搜索页均无公开回顶方法（不编方法名），容器内 BFS 找页级滚动视图——
@@ -726,7 +643,7 @@ final class BearyChromeViewController: UIViewController {
         // view.backgroundColor 从未设置，玻璃透出空底色，在浅色下呈约 #D0 灰渐变（截图实测
         // 顶栏带全宽约 208 灰、下方页面内容为纯白）。此处补 BearyColors.bg（动态色：浅色白/
         // 深色黑，深浅切换自动跟随，无需 trait 回调），玻璃透出 bg 而非空底色；tint 仍为网页
-        // 口径 52% 不动，玻璃类型、布局尺寸、底栏胶囊配方均不动。
+        // 口径 52% 不动，玻璃类型、布局尺寸均不动（底栏已改系统分段器）。
         view.backgroundColor = BearyColors.bg
         // 外观存档兜底：建窗时 SceneDelegate 已应用过一次；此处再对已有 window 应用一次
         //（window 已就绪的路径），window 为 nil 时无操作。
@@ -841,7 +758,7 @@ final class BearyChromeViewController: UIViewController {
 
     /// 52 批 header 规则：header 只在首页出现；切页与滚动都走高度塌掉而非仅淡出。
     /// 显示时顶栏高 = 安全区顶 + 60、各页顶距 60；收起时顶栏高 0、各页顶距 0，空占区彻底消失。
-    /// 底栏胶囊/阴影/FAB 不走这里（setBarsVisible 原口径不动）。
+    /// 底栏分段器/FAB 不走这里（setBarsVisible 原口径不动）。
     private func setHeaderVisible(_ visible: Bool, animated: Bool) {
         headerVisible = visible
         let height: CGFloat = visible ? view.safeAreaInsets.top + 60 : 0
@@ -865,14 +782,13 @@ final class BearyChromeViewController: UIViewController {
     /// 栏显隐：动画可中断、可交互，reduced-motion 下直接设终值（与原栏动画同口径）。
     private func setBarsVisible(_ visible: Bool, animated: Bool) {
         // 52 批：header 高度走 setHeaderVisible——首页才显示、他页恒收起（各页 setChromeHidden(false)
-        // 强制显示调用至此即按新规则收敛：他页只恢复底栏胶囊与 FAB，不恢复 header）。
+        // 强制显示调用至此即按新规则收敛：他页只恢复底栏分段器与 FAB，不恢复 header）。
         setHeaderVisible(visible && currentPage == .home, animated: animated)
         let applyBars = {
-            self.bottomCapsule.alpha = visible ? 1 : 0
-            self.bottomCapsule.transform = visible ? .identity : CGAffineTransform(translationX: 0, y: 80)
-            // 底栏阴影载体与胶囊同显隐同位移（否则胶囊藏起后阴影还留在原地）。
-            self.bottomCapsuleShadowView?.alpha = visible ? 1 : 0
-            self.bottomCapsuleShadowView?.transform = visible ? .identity : CGAffineTransform(translationX: 0, y: 80)
+            if let seg = self.bottomSegmented {
+                seg.alpha = visible ? 1 : 0
+                seg.transform = visible ? .identity : CGAffineTransform(translationX: 0, y: 80)
+            }
             self.fabContainerView?.alpha = visible ? 1 : 0
             self.fabContainerView?.transform = visible ? .identity : CGAffineTransform(translationX: 0, y: 80)
         }
@@ -881,7 +797,7 @@ final class BearyChromeViewController: UIViewController {
         } else {
             UIView.animate(withDuration: 0.25, delay: 0, options: [.beginFromCurrentState, .allowUserInteraction], animations: applyBars)
         }
-        bottomCapsule.isUserInteractionEnabled = visible
+        bottomSegmented?.isUserInteractionEnabled = visible
         fabContainerView?.isUserInteractionEnabled = visible
     }
 
@@ -929,46 +845,26 @@ final class BearyChromeViewController: UIViewController {
     }
 
     /// 栏显隐容器 API（清单第 2 项容器侧）：首页／时间线／个人主页的滚动回调调此方法；
-    /// 52 批：hidden=false 时底栏胶囊与 FAB 恢复，header 只在首页恢复（他页恒收起）；hidden=true 时 header 高度塌掉 + 底栏藏起。
+    /// 52 批：hidden=false 时底栏分段器与 FAB 恢复，header 只在首页恢复（他页恒收起）；hidden=true 时 header 高度塌掉 + 底栏藏起。
     func setChromeHidden(_ hidden: Bool, animated: Bool) { setBarsVisible(!hidden, animated: animated) }
 
-    /// 顶栏选中态：四个 tab 里当前页对应的钮为墨色，其余灰色；当前页不是 tab（搜索 / 邀请 / 个人主页）时全部灰色。
+    /// 底栏选中态：分段器选段与 currentPage 双向同步。当前页不是 tab（搜索 /
+    /// 邀请 / 个人主页）时选段置 noSegment，对应旧“全部灰色、无 pill”口径。
+    /// 程序化设 selectedSegmentIndex 不发 valueChanged，不会与点按手势重入。
     private func updateTabSelection() {
-        let selectedKey: String?
+        guard let seg = bottomSegmented else { return }
+        let index: Int
         switch currentPage {
-        case .home: selectedKey = "home"
-        case .notif: selectedKey = "notif"
-        case .timeline: selectedKey = "timeline"
-        case .me: selectedKey = "me"
-        default: selectedKey = nil
+        case .home: index = 0
+        case .notif: index = 1
+        case .timeline: index = 2
+        case .me: index = 3
+        default: index = UISegmentedControl.noSegment
         }
-        let keys = ["home", "notif", "timeline", "me"]
-        for (i, k) in keys.enumerated() where i < tabButtons.count {
-            tabButtons[i].tintColor = (k == selectedKey) ? ink : gray
-            tabButtons[i].accessibilityTraits = (k == selectedKey) ? [.button, .selected] : [.button]
+        if seg.selectedSegmentIndex != index {
+            seg.selectedSegmentIndex = index
         }
-        // M4：选中 pill 帧变化走弹簧动画（对标系统分段器选中 pill 滑动感；
-        // 减动效直设终值；layoutChromeOverlays 本身仍直设终值，旋转等布局回调
-        // 不经此动画，避免布局循环）。
-        let oldPillFrame = selectedPillView?.frame
-        let oldPillShadowFrame = selectedPillShadowView?.frame
-        let pillWasVisible = selectedPillView?.isHidden == false
         layoutChromeOverlays()
-        if let pill = selectedPillView, let pillShadow = selectedPillShadowView,
-           pillWasVisible, !pill.isHidden,
-           let oldFrame = oldPillFrame, oldFrame != pill.frame,
-           !UIAccessibility.isReduceMotionEnabled {
-            let newFrame = pill.frame
-            let newShadowFrame = pillShadow.frame
-            pill.frame = oldFrame
-            pillShadow.frame = oldPillShadowFrame ?? oldFrame
-            UIView.animate(withDuration: 0.45, delay: 0, usingSpringWithDamping: 0.82, initialSpringVelocity: 0, options: [.beginFromCurrentState, .allowUserInteraction], animations: {
-                pill.frame = newFrame
-                pillShadow.frame = newShadowFrame
-            }) { _ in
-                pillShadow.layer.shadowPath = UIBezierPath(roundedRect: pillShadow.bounds, cornerRadius: 21).cgPath
-            }
-        }
     }
 
     /// 登录态 → 顶栏：已登录显头像与礼物钮、藏登录钮；未登录反之（礼物钮与头像同口径）。
@@ -1060,6 +956,42 @@ final class BearyChromeViewController: UIViewController {
     @objc private func didTapTimeline() { navigator.goTab("timeline") }
     @objc private func didTapMe() { navigator.goTab("me") }
 
+    /// 底栏分段 touchDown：记录旧选段。valueChanged 与点按手势都在 touchUp 时触发、
+    /// 时序不定，故重拍判定不以手势触发时的 selectedSegmentIndex 为准，只认 touchDown 快照。
+    @objc private func bottomSegmentTouchDown() {
+        segmentIndexAtTouchDown = bottomSegmented.selectedSegmentIndex
+    }
+
+    /// 底栏分段切换：只在选段变化时触发（点已选段不触发），逐段沿用旧钮的导航调用，
+    /// home 走 showPage、其余走 navigator.goTab，与旧钮行为完全一致。
+    @objc private func bottomSegmentChanged() {
+        switch bottomSegmented.selectedSegmentIndex {
+        case 0: didTapHome()
+        case 1: didTapNotif()
+        case 2: didTapTimeline()
+        case 3: didTapMe()
+        default: break
+        }
+    }
+
+    /// 底栏重拍：UISegmentedControl 点已选段不发 valueChanged，故另加手势补重拍。
+    /// 手势 cancelsTouchesInView=false，不吞控件自身的 valueChanged；点到别的段时
+    /// 因 tapped != touchDown 快照而直接返回，切换只由 valueChanged 处理一次。
+    /// 重拍路径与旧钮完全一致（didTap* → showPage/goTab 的重拍分支：回顶再刷新）。
+    @objc private func bottomSegmentTapped(_ gesture: UITapGestureRecognizer) {
+        guard let seg = bottomSegmented, seg.bounds.width > 0 else { return }
+        let segmentWidth = seg.bounds.width / 4
+        let tapped = min(3, max(0, Int(gesture.location(in: seg).x / segmentWidth)))
+        guard tapped == segmentIndexAtTouchDown else { return }
+        switch tapped {
+        case 0: didTapHome()
+        case 1: didTapNotif()
+        case 2: didTapTimeline()
+        case 3: didTapMe()
+        default: break
+        }
+    }
+
     // F4 深链入口（SceneDelegate 调用）：BearyRoute.parse 命中则 navigator.open，
     // 未命中返回 false 由调用方走旧桥。parse 签名见 BearyNavigator.swift（static func parse(url: URL) -> BearyRoute?）。
     func handleDeepLink(url: URL) -> Bool {
@@ -1123,7 +1055,7 @@ final class BearyChromeViewController: UIViewController {
         ])
         f.didMove(toParent: self)
         f.view.isHidden = true
-        // L3：原生列表出现时原生栏保持在最上层（列表 view 后加，会盖住先加的栏；阴影在页之上、胶囊之下）。
+        // L3：原生列表出现时原生栏保持在最上层（列表 view 后加，会盖住先加的栏；分段器在页之上、FAB 之下）。
         bringChromeToFront()
         feedVC = f
         return f
@@ -1461,7 +1393,7 @@ final class BearyChromeViewController: UIViewController {
         ])
         vc.didMove(toParent: self)
         vc.view.isHidden = true
-        // L3：占位页出现时原生栏保持在最上层（与 ensureFeedVC 同口径，阴影在页之上、胶囊之下）。
+        // L3：占位页出现时原生栏保持在最上层（与 ensureFeedVC 同口径，分段器在页之上、FAB 之下）。
         bringChromeToFront()
         placeholderVCs[page] = vc
         return vc
@@ -1492,7 +1424,7 @@ final class BearyChromeViewController: UIViewController {
         topmostViewController().present(vc, animated: true)
     }
 
-    /// 容器级轻提示（A11 未登录“我”页、时间线删除失败等）：底栏胶囊上方浮现，2 秒淡出。
+    /// 容器级轻提示（A11 未登录“我”页、时间线删除失败等）：底栏分段器上方浮现，2 秒淡出。
     private func showToast(message: String) {
         let toast = UIView()
         toast.backgroundColor = BearyColors.ink
@@ -1855,7 +1787,7 @@ final class BearyChromeViewController: UIViewController {
 
     /// 列表显隐或 bounds 变化时重算：桌面式 → 列表列锁 600 宽居中；iPhone 式 → 列表回全宽。
     /// 只开关约束，不拆子 VC（滚动位留在内存里）；重复调用无变化即无操作，不会布局循环。
-    /// 底栏胶囊与 FAB 不参与本函数：iPad 端与 iPhone 完全一致，走原有栏显隐逻辑。
+    /// 底栏分段器与 FAB 不参与本函数：iPad 端与 iPhone 完全一致，走原有栏显隐逻辑。
     private func updateDesktopLayout() {
         guard feedVC != nil else { return }
         let wantDesktop = isDesktopLayout()
