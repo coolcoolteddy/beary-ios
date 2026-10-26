@@ -495,11 +495,9 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
     /// CGColor 不跟随深浅模式自动变：边框色一律这里集中刷新。
     private func updateBorderColors() {
         if searchBoxFocused {
-            // 网页 :focus-within 口径：边框取蓝 55% 混 line；P2-5：走 BearyColors.alpha
-            // 动态重解（BearyNativeCommon.swift：static func alpha(_ color: UIColor, _ alpha: CGFloat) -> UIColor），
-            // 不得对动态色直接 withAlphaComponent（会固化当前 trait 解析值）；CGColor 快照
-            // 由 traitCollectionDidChange → updateBorderColors 重赋。
-            searchBoxView.layer.borderColor = BearyColors.alpha(BearyColors.blue, 0.55).cgColor
+            // 网页 :focus-within 口径：边框取蓝 55% 混 line；边框色由
+            // traitCollectionDidChange → updateBorderColors 重赋。
+            searchBoxView.layer.borderColor = BearyColors.blue.withAlphaComponent(0.55).cgColor
         } else {
             searchBoxView.layer.borderColor = BearyColors.line.cgColor
         }
