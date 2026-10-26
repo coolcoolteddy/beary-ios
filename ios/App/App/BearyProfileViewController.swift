@@ -1995,7 +1995,7 @@ class BearyProfileViewController: UIViewController {
         case .diary:
             // 网页 beary.html:2690 的 nb-once 口径：一次性描画铅笔。
             titleText = "还没有公开的日记"
-            subtitleText = isOwnProfile ? "写下第一篇，7 天后公开" : ""
+            subtitleText = isOwnProfile ? "写下第一篇，7 天后送达给自己" : ""
             let pencilView = BearyPencilView()
             pencilView.strokeColor = BearyColors.gray
             graphicView = pencilView
@@ -2594,6 +2594,19 @@ extension BearyProfileViewController: UITableViewDataSource, UITableViewDelegate
     func tableView(_ tableView: UITableView, willDisplay cell: UITableViewCell, forRowAt indexPath: IndexPath) {
         if indexPath.row == currentEntries.count - 1 {
             loadMoreIfNeeded()
+        }
+    }
+
+    /// 动画批 11 号离屏停播：行离屏即停其全部表情（含回应流 chips）。
+    func tableView(_ tableView: UITableView, didEndDisplaying cell: UITableViewCell, forRowAt indexPath: IndexPath) {
+        cell.stopAllBearyEmotes()
+    }
+
+    /// 动画批 11 号：切 tab 离页时停掉本页可见行全部表情（容器只改 isHidden，
+    /// 不触发 didEndDisplaying、不离窗，播放器侧无法自停）。
+    func stopVisibleEmotes() {
+        for cell in tableView.visibleCells {
+            cell.stopAllBearyEmotes()
         }
     }
 
