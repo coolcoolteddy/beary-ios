@@ -10,6 +10,7 @@ import Lottie
 /// 文件名为 key 加 json 后缀，深色版在 key 后加 dark 后缀。
 /// 解析失败或取不到 JSON 时回退到 PNG 静态图，不抛错，不中断调用方布局。
 /// 减动效开启时一律只显示循环段末帧（完成帧），不自动播放，play 调用同样只停在完成帧。
+/// 完成帧取 CachedEmote.staticFrame：恒落在 [0, op) 半开区间内，永不等于 op（见该属性注释）。
 /// 首次解析（LottieAnimation.filepath + markers 解码）不在视图创建调用链上同步做：
 /// 未命中缓存时先挂 PNG 占位，后台线程解析、回主线程挂接；缓存命中仍同步挂接（只建视图，不解析）。
 /// 颜色与玻璃效果均不由本文件决定，颜色走调用方约束与 BearyColors。
@@ -32,6 +33,18 @@ public final class BearyEmoteView: UIView {
         let loopStart: CGFloat
         let loopEnd: CGFloat
         let endFrame: CGFloat
+        /// 对应 JSON 文件字节数：解析后模型实际占用更大，故只作缓存预算的代理值，
+        /// 预算因此取保守值（见 cacheByteBudget）。
+        let estimatedBytes: Int
+        /// 减动效静态帧：必须落在 [0, op) 半开区间内，不得等于 op。
+        /// 审计 12 项核实：80 只 loop_end 均 == op，属边界落点；lottie-ios 对
+        /// currentFrame == op 渲染末帧还是空白，JSON 无法证明，故静态帧取
+        /// min(loopEnd, endFrame - 1)：loopEnd 在区间内时原值不动，仅把 == op 的
+        /// 边界情形退一帧。JSON 只能证明落点，渲染结果仍待真机复验。
+        var staticFrame: CGFloat {
+            guard endFrame > 1 else { return 0 }
+            return min(loopEnd, endFrame - 1)
+        }
     }
 
     /// 仅解码 Bodymovin 顶层 markers 数组（cm=标记名、tm=帧号）。
@@ -48,6 +61,10 @@ public final class BearyEmoteView: UIView {
     private static var cacheOrder: [String] = []
     private static let cacheLock = NSLock()
     private static let cacheLimit = 16
+    /// 字节双预算：以 JSON 文件大小为代理估算占用（解析后模型实际更大，故取保守值；
+    /// 全量 80 只约 75.9MB，单只 speechless 约 19.6MB——预算须小于总量且容得下常用组合）。
+    private static let cacheByteBudget = 48 * 1024 * 1024
+    private static var cacheBytes: Int = 0
 
     /// ①后台解析队列（userInitiated）：只做 Lottie 解析 + markers 解码，不建 UIView。
     /// 与预热队列分开，避免预热排队挡住当前视图急需的解析。
@@ -76,6 +93,10 @@ public final class BearyEmoteView: UIView {
     private static var reduceMotionObserverInstalled = false
     /// M23：减动效通知观察者 token（App 生命周期内常驻，不移除）。
     private static var reduceMotionObserver: NSObjectProtocol?
+    /// 内存警告时清解析缓存（只清缓存字典，不停正在播的视图：视图自持 CachedEmote，
+    /// 下次加载重新解析；清掉后大文件不再常驻内存）。
+    private static var memoryWarningObserver: NSObjectProtocol?
+    private static var memoryWarningObserverInstalled = false
 
     public init(key: String, animated: Bool) {
         self.emoteKey = key
@@ -85,6 +106,7 @@ public final class BearyEmoteView: UIView {
         clipsToBounds = false
         Self.registerLivePlayer(self)
         Self.installReduceMotionObserver()
+        Self.installMemoryWarningObserver()
         loadEmote()
         Self.schedulePrewarm(dark: self.isDark)
     }
@@ -126,6 +148,35 @@ public final class BearyEmoteView: UIView {
         }
     }
 
+    /// 内存警告观察者（只装一次，常驻不移除）：收到警告即清空解析缓存与字节计数，
+    /// 正在播的视图不受影响（自持 CachedEmote），下次加载重新解析。
+    private static func installMemoryWarningObserver() {
+        cacheLock.lock()
+        let installed = memoryWarningObserverInstalled
+        if !installed {
+            memoryWarningObserverInstalled = true
+        }
+        cacheLock.unlock()
+        guard !installed else { return }
+        memoryWarningObserver = NotificationCenter.default.addObserver(forName: UIApplication.didReceiveMemoryWarningNotification, object: nil, queue: .main) { _ in
+            cacheLock.lock()
+            cache.removeAll()
+            cacheOrder.removeAll()
+            cacheBytes = 0
+            cacheLock.unlock()
+        }
+    }
+
+    /// 离屏停播：cell 滚出可视区会被 tableView 移出层级（window 变 nil），此时停播，
+    /// 避免不可见 cell 的动画继续消耗；切 tab 只改 isHidden 不离窗，故切页停播不在此
+    /// 覆盖（需控制器层钩子，见批报告）。
+    public override func didMoveToWindow() {
+        super.didMoveToWindow()
+        if window == nil {
+            stop()
+        }
+    }
+
     required init?(coder: NSCoder) {
         fatalError("init(coder:) has not been implemented")
     }
@@ -160,7 +211,7 @@ public final class BearyEmoteView: UIView {
         if UIAccessibility.isReduceMotionEnabled {
             isPlaying = false
             if let view = animationView, let cached = currentEmote {
-                view.currentFrame = cached.loopEnd
+                view.currentFrame = cached.staticFrame
             }
             return
         }
@@ -177,7 +228,7 @@ public final class BearyEmoteView: UIView {
         if let view = animationView {
             view.stop()
             if UIAccessibility.isReduceMotionEnabled, let cached = currentEmote {
-                view.currentFrame = cached.loopEnd
+                view.currentFrame = cached.staticFrame
             } else {
                 view.currentFrame = 0
             }
@@ -233,9 +284,10 @@ public final class BearyEmoteView: UIView {
         addSubview(view)
         animationView = view
         if UIAccessibility.isReduceMotionEnabled {
-            // ③减动效完成帧：循环段末帧 cached.loopEnd（即 loop_end 标记；
-            // 标记缺失时 loadEmoteFromBundle 已兜底为 op，零长段已兜底为整段末帧）。
-            view.currentFrame = cached.loopEnd
+            // ③减动效完成帧：cached.staticFrame（即 loop_end 标记，但恒退到 [0, op) 内，
+            // 见 staticFrame 注释；标记缺失时 loadEmoteFromBundle 已兜底为 op，
+            // 零长段已兜底为整段末帧，再由 staticFrame 退一帧）。
+            view.currentFrame = cached.staticFrame
         } else if isPlaying {
             startPlayback()
         } else {
@@ -306,7 +358,7 @@ public final class BearyEmoteView: UIView {
     private func startPlayback() {
         guard let view = animationView, let cached = currentEmote else { return }
         if UIAccessibility.isReduceMotionEnabled {
-            view.currentFrame = cached.loopEnd
+            view.currentFrame = cached.staticFrame
             return
         }
         playbackGeneration += 1
@@ -371,13 +423,26 @@ public final class BearyEmoteView: UIView {
     private static func store(_ value: CachedEmote, for cacheKey: String) {
         cacheLock.lock()
         defer { cacheLock.unlock() }
+        if let old = cache[cacheKey] {
+            cacheBytes -= old.estimatedBytes
+        }
         cache[cacheKey] = value
+        cacheBytes += value.estimatedBytes
         cacheOrder.removeAll(where: { $0 == cacheKey })
         cacheOrder.append(cacheKey)
-        while cacheOrder.count > cacheLimit {
-            guard let oldest = cacheOrder.first else { break }
-            cache.removeValue(forKey: oldest)
-            cacheOrder.removeFirst()
+        // 数量 + 字节双预算：超任一预算即淘汰，淘汰顺序按占用从大到小
+        // （大文件先淘汰）；新存入的条目最后才动，避免刚存入即被逐出导致
+        // 大文件反复解析；只剩新条目时即使仍超预算也保留，不做空缓存。
+        while (cacheOrder.count > cacheLimit || cacheBytes > cacheByteBudget) && cacheOrder.count > 1 {
+            let victim = cacheOrder.filter({ $0 != cacheKey }).max(by: { (cache[$0]?.estimatedBytes ?? 0) < (cache[$1]?.estimatedBytes ?? 0) })
+            guard let key = victim else { break }
+            if let removed = cache.removeValue(forKey: key) {
+                cacheBytes -= removed.estimatedBytes
+            }
+            cacheOrder.removeAll(where: { $0 == key })
+        }
+        if cacheBytes < 0 {
+            cacheBytes = 0
         }
     }
 
@@ -396,6 +461,8 @@ public final class BearyEmoteView: UIView {
             NSLog("[BearyEmote] load failed key=%@ dark=%@ reason=animation-parse-failed", key, dark ? "dark" : "light")
             return nil
         }
+        // 缓存预算代理值：JSON 文件字节数（解析后模型实际更大，预算取保守值）。
+        let fileSize = (try? FileManager.default.attributesOfItem(atPath: url.path)[.size] as? NSNumber)?.intValue ?? 0
         let endFrame = CGFloat(animation.endFrame)
         guard endFrame > 0 else {
             NSLog("[BearyEmote] load failed key=%@ dark=%@ reason=nonpositive-endFrame endFrame=%f", key, dark ? "dark" : "light", endFrame)
@@ -433,6 +500,6 @@ public final class BearyEmoteView: UIView {
             loopStart = 0
             loopEnd = endFrame
         }
-        return CachedEmote(animation: animation, loopStart: loopStart, loopEnd: loopEnd, endFrame: endFrame)
+        return CachedEmote(animation: animation, loopStart: loopStart, loopEnd: loopEnd, endFrame: endFrame, estimatedBytes: fileSize)
     }
 }
