@@ -1401,8 +1401,8 @@ class BearyProfileViewController: UIViewController {
                 wallContainer.alpha = 0
                 wallContainer.transform = CGAffineTransform(translationX: 0, y: 8)
                 UIView.animate(withDuration: 0.3, delay: 0, options: .curveEaseOut, animations: {
-                    wallContainer.alpha = 1
-                    wallContainer.transform = .identity
+                    self.wallContainer.alpha = 1
+                    self.wallContainer.transform = .identity
                 })
             }
         }
