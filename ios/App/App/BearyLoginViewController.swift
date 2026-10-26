@@ -40,16 +40,16 @@ final class BearyLoginViewController: UIViewController {
     private let scrollView = UIScrollView()
     private let contentView = UIView()
     private let stackView = UIStackView()
-    private let closeButton = BearyGlassButton(type: .system)
+    private let closeButton = BearyHit44Button(type: .system)
     private let titleLabel = UILabel()
     private let subtitleLabel = UILabel()
     private let emailField = UITextField()
     private let codeField = UITextField()
-    private let sendButton = BearyGlassButton(type: .system)
-    private let loginButton = BearyGlassButton(type: .system)
+    private let sendButton = UIButton(type: .system)
+    private let loginButton = UIButton(type: .system)
     private let inviteField = UITextField()
     private let messageLabel = UILabel()
-    private let agreeButton = BearyGlassButton(type: .system)
+    private let agreeButton = BearyHit44Button(type: .system)
     /// 协议文案用 UITextView 承载可点链接（UILabel 接不住链接点按）；点按走 App 内原生法律页。
     private let agreeLabel = UITextView()
     private let agreeRow = UIView()
@@ -152,7 +152,7 @@ final class BearyLoginViewController: UIViewController {
         contentView.addSubview(stackView)
 
         closeButton.translatesAutoresizingMaskIntoConstraints = false
-        closeButton.backgroundColor = .clear
+        closeButton.backgroundColor = BearyColors.faint
         closeButton.layer.cornerRadius = 16
         closeButton.tintColor = BearyColors.ink
         closeButton.setImage(BearyIconImages.image(named: "icon_close", pointSize: 15), for: .normal)
@@ -189,8 +189,7 @@ final class BearyLoginViewController: UIViewController {
         messageLabel.numberOfLines = 0
 
         loginButton.translatesAutoresizingMaskIntoConstraints = false
-        loginButton.backgroundColor = .clear
-        loginButton.glassTint = BearyColors.orange
+        loginButton.backgroundColor = BearyColors.ink
         loginButton.layer.cornerRadius = 12
         loginButton.addTarget(self, action: #selector(loginTapped), for: .touchUpInside)
         loginButton.addSubview(loginSpinner)
@@ -372,7 +371,7 @@ final class BearyLoginViewController: UIViewController {
         agreeButton.layer.cornerRadius = 6
         agreeButton.layer.borderWidth = 1.5
         agreeButton.layer.borderColor = BearyColors.line.cgColor
-        agreeButton.backgroundColor = .clear
+        agreeButton.backgroundColor = BearyColors.faint
         agreeButton.accessibilityLabel = "我已阅读并同意《隐私政策》和《用户协议》"
         agreeButton.addTarget(self, action: #selector(agreeTapped), for: .touchUpInside)
         // 协议文案里的两个协议名是真链接（App 内原生法律页打开），其余文字点按仍切换勾选。

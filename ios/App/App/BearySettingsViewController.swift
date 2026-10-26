@@ -229,15 +229,15 @@ final class BearySettingsViewController: UIViewController {
 
     private let scrollView = UIScrollView()
     private let contentStack = UIStackView()
-    private let closeButton = BearyGlassButton(type: .system)
+    private let closeButton = UIButton(type: .system)
     private let titleLabel = UILabel()
     private let loadingView = UIActivityIndicatorView(style: .medium)
     private let failureWrap = UIStackView()
     private let failureLabel = UILabel()
-    private let retryButton = BearyGlassButton(type: .system)
+    private let retryButton = UIButton(type: .system)
     private let loginWrap = UIStackView()
     private let loginHintLabel = UILabel()
-    private let loginButton = BearyGlassButton(type: .system)
+    private let loginButton = UIButton(type: .system)
     private let contentWrap = UIStackView()
     /// 设置页新增三区容器：登录态无关（主题/隐私/通知开关本地可用），
     /// 故不随 contentWrap 一起在未登录/加载失败时隐藏，恒可见。
@@ -265,14 +265,14 @@ final class BearySettingsViewController: UIViewController {
     // 账户分组
     private let accountNameLabel = UILabel()
     private let accountHandleLabel = UILabel()
-    private let copyHandleButton = BearyGlassButton(type: .system)
+    private let copyHandleButton = UIButton(type: .system)
     private let accountEmailLabel = UILabel()
     private let accountCreatedLabel = UILabel()
 
     // 设备分组
     private let deviceCountLabel = UILabel()
     private let sessionsStack = UIStackView()
-    private let logoutOthersButton = BearyGlassButton(type: .system)
+    private let logoutOthersButton = UIButton(type: .system)
 
     // 操作分组
     private var deleteRowWrapper: UIView?
@@ -833,7 +833,7 @@ final class BearySettingsViewController: UIViewController {
     /// 账户组行末文字钮（复制 / 编辑 / 修改同款：14 墨字，与网页 .btn 区分——
     /// 网页 .btn 为 36 高边框钮，App 本页行末既有用文字钮，沿用它不另起样式）。
     private func makeAccountActionButton(title: String, action: Selector) -> UIButton {
-        let buttonValue = BearyGlassButton(type: .system)
+        let buttonValue = UIButton(type: .system)
         buttonValue.translatesAutoresizingMaskIntoConstraints = false
         buttonValue.setTitle(title, for: .normal)
         buttonValue.setTitleColor(BearyColors.ink, for: .normal)
@@ -1297,7 +1297,7 @@ final class BearySettingsViewController: UIViewController {
             // F11：组头刷新钮已取消，失败态改行内「重试」钮（仍调 loadSessions）。
             let failedLabel = makeLabel(font: UIFont.systemFont(ofSize: 14), color: BearyColors.gray, lines: 0)
             failedLabel.text = "加载失败"
-            let retryButton = BearyGlassButton(type: .system)
+            let retryButton = UIButton(type: .system)
             retryButton.translatesAutoresizingMaskIntoConstraints = false
             retryButton.setTitle("重试", for: .normal)
             retryButton.setTitleColor(BearyColors.ink, for: .normal)
@@ -1907,7 +1907,7 @@ final class BearySettingsViewController: UIViewController {
 final class BearyLegalTextViewController: UIViewController {
     private let pageTitle: String
     private let pageText: String
-    private let closeButton = BearyGlassButton(type: .system)
+    private let closeButton = UIButton(type: .system)
     private let titleLabel = UILabel()
     private let textView = UITextView()
 
