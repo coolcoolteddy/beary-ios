@@ -172,6 +172,10 @@ struct MeUser: Decodable {
     var isAdmin: Bool?
     var inviteCode: String?
     var referral: ReferralInfo?
+    /// F 批账号页补充（模型字段补充，BearyAPI.swift 不新增方法）：服务端旧版 /me 曾下发
+    /// serial_id（TD-000001 式），现行 /me 不再下发；字段留作可选，服务端将来恢复下发时
+    /// 账号页 ID 行直接显示它，未下发时账号页按 @handle / 数字 id 回退，绝不编造。
+    var serialId: String?
 }
 
 struct MeResponse: Decodable {

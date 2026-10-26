@@ -832,14 +832,16 @@ final class BearyTimelineCell: UITableViewCell {
         thumbsScrollView.showsHorizontalScrollIndicator = false
         thumbsStack.translatesAutoresizingMaskIntoConstraints = false
         thumbsStack.axis = .horizontal
-        thumbsStack.spacing = 6
+        // 主图条：网页 tl-item grabrow / 广场卡口径——216 高、间距 8、圆角 12、
+        // 按宽高比定宽（见 configure 内 timelineStripWidth），不再是 74 方块。
+        thumbsStack.spacing = 8
         thumbsScrollView.addSubview(thumbsStack)
         NSLayoutConstraint.activate([
             thumbsStack.topAnchor.constraint(equalTo: thumbsScrollView.topAnchor),
             thumbsStack.leadingAnchor.constraint(equalTo: thumbsScrollView.leadingAnchor),
             thumbsStack.trailingAnchor.constraint(equalTo: thumbsScrollView.trailingAnchor),
             thumbsStack.bottomAnchor.constraint(equalTo: thumbsScrollView.bottomAnchor),
-            thumbsStack.heightAnchor.constraint(equalToConstant: 74),
+            thumbsStack.heightAnchor.constraint(equalToConstant: 216),
         ])
 
         footStack.translatesAutoresizingMaskIntoConstraints = false
@@ -998,7 +1000,7 @@ final class BearyTimelineCell: UITableViewCell {
             cardStack.bottomAnchor.constraint(equalTo: cardView.bottomAnchor, constant: -12),
         ])
         // 无图时把图片条高度约束压到 0（只靠 hidden 不够：显式高度约束仍会撑开 stack）。
-        thumbsHeightConstraint = thumbsScrollView.heightAnchor.constraint(equalToConstant: 74)
+        thumbsHeightConstraint = thumbsScrollView.heightAnchor.constraint(equalToConstant: 216)
         thumbsHeightConstraint?.isActive = true
     }
 
@@ -1062,6 +1064,18 @@ final class BearyTimelineCell: UITableViewCell {
             metaStack.removeArrangedSubview(arranged)
             arranged.removeFromSuperview()
         }
+    }
+
+    /// 主图条定宽：广场卡 stripWidth 同口径（网页 stripW）——0.55–2.22 倍高夹取，
+    /// 无尺寸老图默认 280。仅时间线主图条用；引用卡 74 小图不走此路。
+    private func timelineStripWidth(forKey key: String, dims: [String: [Int]]?, height: CGFloat) -> CGFloat {
+        if let dims = dims, let d = dims[key], d.count >= 2, d[0] > 0, d[1] > 0 {
+            let raw = height * CGFloat(d[0]) / CGFloat(d[1])
+            let low = height * 0.55
+            let high = height * 2.22
+            return round(max(low, min(high, raw)))
+        }
+        return 280
     }
 
     func configure(entry: Entry) {
@@ -1242,14 +1256,14 @@ final class BearyTimelineCell: UITableViewCell {
         }
         let imageKeys = (entry.images ?? []).filter { !$0.isEmpty }
         thumbsScrollView.isHidden = imageKeys.isEmpty
-        thumbsHeightConstraint?.constant = imageKeys.isEmpty ? 0 : 74
+        thumbsHeightConstraint?.constant = imageKeys.isEmpty ? 0 : 216
         cardStackReference?.setCustomSpacing(imageKeys.isEmpty ? 0 : 9, after: thumbsScrollView)
         for (thumbIndex, key) in imageKeys.enumerated() {
             let imageView = UIImageView()
             imageView.translatesAutoresizingMaskIntoConstraints = false
             imageView.contentMode = .scaleAspectFill
             imageView.clipsToBounds = true
-            imageView.layer.cornerRadius = 10
+            imageView.layer.cornerRadius = 12
             imageView.backgroundColor = BearyColors.faint
             // N7：主图条点按接灯箱（UIImageView 默认不接收触摸，必须显式开启；
             // 手势会截获此次点按，行点按进详情不再触发）。tag 记下标，
@@ -1258,9 +1272,11 @@ final class BearyTimelineCell: UITableViewCell {
             imageView.tag = thumbIndex
             imageView.addGestureRecognizer(UITapGestureRecognizer(target: self, action: #selector(didTapThumb(_:))))
             thumbsStack.addArrangedSubview(imageView)
+            // 216 图片条：宽按原图宽高比定（广场 stripWidth 同口径），高固定 216。
+            let strip = timelineStripWidth(forKey: key, dims: entry.imgDims, height: 216)
             NSLayoutConstraint.activate([
-                imageView.widthAnchor.constraint(equalToConstant: 74),
-                imageView.heightAnchor.constraint(equalToConstant: 74),
+                imageView.widthAnchor.constraint(equalToConstant: strip),
+                imageView.heightAnchor.constraint(equalToConstant: 216),
             ])
             thumbImageViews.append(imageView)
             if let url = BearyImageURLs.imageURL(key: key, thumb: true) {
@@ -2311,6 +2327,10 @@ class BearyTimelineViewController: UIViewController {
                     strongSelf.calendarFailed.remove(key)
                 case .failure(let error):
                     strongSelf.calendarFailed.insert(key)
+                    // 翻页失败清挂起：残留 pendingStepFollow 不得在之后某次
+                    // 月份到达时把用户新点选的日子意外移走（网页失败恢复原选区
+                    // 同口径；App 选区在跟随落定前本就未动，故只清挂起、不动选区）。
+                    strongSelf.pendingStepFollow = false
                     if case .unauthorized = error {
                         strongSelf.notifyLoginOnce()
                     }
@@ -2481,8 +2501,8 @@ class BearyTimelineViewController: UIViewController {
     }
 
     /// 第 3 项翻周/翻月选区跟随（网页 calFlipPending 口径）：
-    /// 在新周/月内先找锚点日，再按距离由近及远、前后交替（同日距先往前、
-    /// 与 calFixSel 的先往前再往后一致）找最近有篇日，找到即重定选区并
+    /// 在新周/月内先找锚点日，再全部往前、再全部往后（与 calFixSel 的
+    /// 先往前再往后一致，不按距离交替）找最近有篇日，找到即重定选区并
     /// 重拉当日面板；新视图月份缓存未到齐时返回 false、挂起待月份到达后重试；
     /// 新视图内全无有篇日时返回 true（落定、保留原选区，不清选区）。
     /// 锚点：周模式 = 新锚点日；月模式 = 原选中日的“日号”落到新月（超月长则截断）。
@@ -2507,9 +2527,17 @@ class BearyTimelineViewController: UIViewController {
             }
             guard let anchorIndex = weekDays.firstIndex(where: { $0.year == anchor.year && $0.month == anchor.month && $0.day == anchor.day }) else { pendingStepFollow = false; return true }
             candidateDays.append(weekDays[anchorIndex])
-            for distance in 1..<7 {
-                if anchorIndex - distance >= 0 { candidateDays.append(weekDays[anchorIndex - distance]) }
-                if anchorIndex + distance < weekDays.count { candidateDays.append(weekDays[anchorIndex + distance]) }
+            // 网页口径：先全部往前（锚点前一日 → 周首日），再全部往后
+            // （锚点后一日 → 周末日），不按距离交替。
+            var backwardIndex = anchorIndex - 1
+            while backwardIndex >= 0 {
+                candidateDays.append(weekDays[backwardIndex])
+                backwardIndex -= 1
+            }
+            var forwardIndex = anchorIndex + 1
+            while forwardIndex < weekDays.count {
+                candidateDays.append(weekDays[forwardIndex])
+                forwardIndex += 1
             }
         case .month:
             guard let displayed = calendarDisplayedMonth else { pendingStepFollow = false; return true }
@@ -2522,9 +2550,17 @@ class BearyTimelineViewController: UIViewController {
             }
             anchorDay = min(max(anchorDay, 1), dim)
             candidateDays.append((displayed.year, displayed.month, anchorDay))
-            for distance in 1...dim {
-                if anchorDay - distance >= 1 { candidateDays.append((displayed.year, displayed.month, anchorDay - distance)) }
-                if anchorDay + distance <= dim { candidateDays.append((displayed.year, displayed.month, anchorDay + distance)) }
+            // 网页口径：先全部往前（锚点日前一日 → 1 日），再全部往后
+            // （锚点日后一日 → 月末日），不按距离交替。
+            var backwardDay = anchorDay - 1
+            while backwardDay >= 1 {
+                candidateDays.append((displayed.year, displayed.month, backwardDay))
+                backwardDay -= 1
+            }
+            var forwardDay = anchorDay + 1
+            while forwardDay <= dim {
+                candidateDays.append((displayed.year, displayed.month, forwardDay))
+                forwardDay += 1
             }
         }
         for day in candidateDays {
@@ -2581,13 +2617,24 @@ class BearyTimelineViewController: UIViewController {
         var targetDisplayed = calendarDisplayedMonth
         switch calendarMode {
         case .week:
-            guard let anchor = calendarAnchor else { return }
+            // 翻周锚点 = 点选日 + 7 天（网页 calFlip 以 calAnchor 为基；
+            // 点选已同步 calendarAnchor，见 selectDay，但直接赋值选区/
+            // 守卫路径可能让两者脱节，故翻周以点选日为准，点选缺失
+            // 时才回落 calendarAnchor）。
+            var base = calendarAnchor
+            if let selected = selectedDayKey {
+                let parts = selected.split(separator: "-")
+                if parts.count == 3, let year = Int(parts[0]), let month = Int(parts[1]), let day = Int(parts[2]) {
+                    base = (year, month, day)
+                }
+            }
+            guard let base = base else { return }
             // 下一周不许翻进未来：已是本周时 next 按钮本身已禁用，此处再拦一道。
             if delta > 0 {
-                guard let monday = BearyBeijingDay.mondayOf(year: anchor.year, month: anchor.month, day: anchor.day) else { return }
+                guard let monday = BearyBeijingDay.mondayOf(year: base.year, month: base.month, day: base.day) else { return }
                 if isCurrentWeek(monday: monday) { return }
             }
-            guard let moved = BearyBeijingDay.shifted(year: anchor.year, month: anchor.month, day: anchor.day, byDays: delta * 7) else { return }
+            guard let moved = BearyBeijingDay.shifted(year: base.year, month: base.month, day: base.day, byDays: delta * 7) else { return }
             targetAnchor = moved
         case .month:
             guard let displayed = calendarDisplayedMonth else { return }
@@ -2620,6 +2667,13 @@ class BearyTimelineViewController: UIViewController {
     /// TL-8：点已选中日不取消筛选，只重渲 + 重拉当日；
     /// E4-5：同日在途拉取未完成时不重复发请求。
     private func selectDay(key: String) {
+        // 点选同步 calendarAnchor（网页周视图点选口径；此前点选不更新
+        // 锚点是 bug：翻周基点会落在旧锚点而非点选日）。解析失败时不动锚点。
+        // 重复点选同日也同步（修锚点漂移后重拍即回正）。
+        let keyParts = key.split(separator: "-")
+        if keyParts.count == 3, let year = Int(keyParts[0]), let month = Int(keyParts[1]), let day = Int(keyParts[2]) {
+            calendarAnchor = (year, month, day)
+        }
         if key == selectedDayKey {
             renderCalendar()
             tableView.reloadData()

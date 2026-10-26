@@ -1037,13 +1037,13 @@ final class BearyChromeViewController: UIViewController {
     @objc private func didTapAvatar() { showPage(.me) }
 
     /// 顶栏头像菜单（审计 N4，部署目标 iOS 15 可用 UIMenu）：项依次为个人主页
-    ///（原直达行为）、使用指南（教程页）、外观（主题三档）、账户设置（仍占位，
-    ///审计 N2 需 Li 先定范围）、退出登录（与我页 onLogout 同款路径）。
+    ///（原直达行为）、使用指南（教程页）、外观（主题三档）、账户设置（F 批原生账户页）、
+    ///退出登录（与我页 onLogout 同款路径）。
     private func avatarMenu() -> UIMenu {
         let profile = UIAction(title: "个人主页") { [weak self] _ in self?.didTapAvatar() }
         let tutorial = UIAction(title: "使用指南") { [weak self] _ in self?.presentTutorial() }
         let appearance = UIAction(title: "外观") { [weak self] _ in self?.presentAppearanceSheet() }
-        let account = UIAction(title: "账户设置") { [weak self] _ in self?.presentComingSoon() }
+        let account = UIAction(title: "账户设置") { [weak self] _ in self?.presentAccount() }
         let logout = UIAction(title: "退出登录", attributes: .destructive) { [weak self] _ in self?.logoutFromMenu() }
         return UIMenu(title: "", children: [profile, tutorial, appearance, account, logout])
     }
@@ -1195,6 +1195,23 @@ final class BearyChromeViewController: UIViewController {
         updateDesktopLayout()
         // 52 批：切页即按 header 规则定高——首页显示、他页收起（无动画，页切换本身已有淡入）。
         setHeaderVisible(page == .home, animated: false)
+        // E 批搜索藏栏（Li 2026-10-24 拍板：搜索页打开时 bnav + FAB 都藏）：
+        // 容器切页只改 isHidden、不触发子页 appearance 回调，故藏/恢复只能落
+        // 在唯一切页点 showPage，不走 SearchVC 生命周期（详情/登录等模态盖在
+        // 搜索页上时 currentPage 不变，栏保持隐藏；模态关闭不误恢复）。
+        // 只认“进搜索 / 离搜索”两次变迁：他页之间切页不碰栏（首页滚动藏栏、
+        // 时间线/个人主页/消息的原口径保持原样）。setBarsVisible 内 header
+        // 与上面一行同值收敛，无额外 header 变化。
+        if page == .search {
+            setBarsVisible(false, animated: false)
+        } else if previousPage == .search {
+            setBarsVisible(true, animated: false)
+        }
+        // 功能完善批接线：切回消息页瞬间必刷（门控口径：未读数变了才整页重拉，
+        // 不变时零请求，不违背“切 tab 不重复拉取”；重拍分支已有无条件刷新，不走这里）。
+        if page == .notif {
+            notifVC?.refreshListIfUnreadChanged()
+        }
     }
 
     /// 容器页解析：消息/时间线/我/搜索/他人主页走真实现（邀请已改弹窗，不再是容器页）。
@@ -1538,9 +1555,9 @@ final class BearyChromeViewController: UIViewController {
             }
         }
         vc.onEditProfile = { [weak self] in self?.presentEditProfile() }
-        // 齿轮菜单：教程与外观已接原生实现；账户设置仍占位（审计 N2，需 Li 先定范围），不静默无动作。
+        // 齿轮菜单：教程与外观已接原生实现；账户设置接 F 批原生账户页（不再是占位）。
         vc.onShowTutorial = { [weak self] in self?.presentTutorial() }
-        vc.onOpenAccountSettings = { [weak self] in self?.presentComingSoon() }
+        vc.onOpenAccountSettings = { [weak self] in self?.presentAccount() }
         vc.onToggleAppearance = { [weak self] in self?.presentAppearanceSheet() }
         vc.onInteractionChanged = { [weak self] changedId, likeCount, liked, bookmarked, emotes in
             self?.feedVC?.applyInteraction(entryId: changedId, likeCount: likeCount, likedByMe: liked, bookmarkedByMe: bookmarked, emotes: emotes)
@@ -1573,11 +1590,22 @@ final class BearyChromeViewController: UIViewController {
         topmostViewController().present(vc, animated: true)
     }
 
-    /// 尚无原生目的地的功能占位提示（齿轮菜单账户设置），不做假页面。
-    private func presentComingSoon() {
-        let alert = UIAlertController(title: "即将推出", message: "该功能正在做原生版", preferredStyle: .alert)
-        alert.addAction(UIAlertAction(title: "知道了", style: .default, handler: nil))
-        topmostViewController().present(alert, animated: true)
+    /// F 批：原生账户设置页（modal 全屏，与编辑资料页同款呈现）。
+    /// 未登录时页内走 onRequireLogin（容器弹登录页）；注销成功后容器清 cookie、
+    /// 本地退出并关闭本页（服务端在注销发起时已清全部会话），再回首页。
+    private func presentAccount() {
+        let vc = BearyAccountViewController()
+        vc.modalPresentationStyle = .fullScreen
+        vc.onClose = { [weak vc] in vc?.dismiss(animated: true) }
+        vc.onRequireLogin = { [weak self] in self?.presentLogin() }
+        vc.onAccountDeleted = { [weak self, weak vc] in
+            SessionManager.shared.clearLocalCookies()
+            SessionManager.shared.signOutLocally()
+            vc?.dismiss(animated: true) {
+                self?.showPage(.home)
+            }
+        }
+        topmostViewController().present(vc, animated: true)
     }
 
     /// 教程页弹出（审计 N1 容器侧）：教程 UI 由另一 lane 在 BearyPlaceholderViewController.swift

@@ -48,6 +48,18 @@ import UIKit
 //   sysUnread 随 unread 一起透传，底栏接线由总协调收尾做，本文件不碰底栏、不碰 SceneDelegate。
 // 轻量刷新：60 秒定时 + 回前台各一次 limit=1 拉取，只更新未读数与角标，
 //   不动列表（网页 fetchNotifCount 同口径）；401 与其他失败一律静默忽略。
+// 未读数门控重拉（切回/回前台看新消息，但不违背“切 tab 不重复拉取”）：
+//   上次整页加载时的未读数快照（lastFullLoadUnread/lastFullLoadSysUnread，
+//   只由整页成功加载与本页标已读写回，轻量刷新绝不写回）；切回、回前台、
+//   轮询都先走 limit=1 轻量拉取，比对快照——变了才 loadFirstPage 整页重拉，
+//   没变则只刷角标、不碰列表、不发整页请求。直接每次切回都整页拉取会被
+//   否决：它违背 Li 的切 tab 不重复拉取规矩，且切回瞬间旧列表会被整表
+//   reloadData 闪一下；门控把整页请求压到“确实有新消息/已读态变化”时才发。
+//   注意容器切 tab 走 view.isHidden 切换，不走 viewWillAppear：本页的
+//   viewWillAppear 门控只是兜底（首次挂载/模态 dismiss 等真正 appearance
+//   场景），切回的实际覆盖靠轮询 + 回前台的轻量门控；想做到切回瞬间必刷
+//   需容器在 showPage(.notif) 时调本页 refreshListIfUnreadChanged()（容器
+//   文件不在本次改动范围，未动）。未读数字段来源见 refreshUnreadCountLightly。
 // 约束：部署目标 iOS 15.0、Swift 5.0——只用闭包回调，不用 async/await，
 //   不用 if-let 简写；颜色只用 BearyColors，不新增字面量颜色；
 //   不新增玻璃效果；图标一律走 BearyIconImages（icon_* 资产），不用系统符号图标；
@@ -131,6 +143,12 @@ final class BearyNotificationsViewController: UIViewController {
     private var markingReadIds: Set<Int> = []
     private var lastPublishedUnread = -1
     private var lastPublishedSysUnread = -1
+    /// 上次整页加载时的未读数快照（门控用，与 unreadTotal 严格分开）：
+    /// nil = 尚未整页成功加载过，门控不触发（首拉/重试仍由 viewDidLoad 与
+    /// 失败态按钮负责）。轻量刷新只更新 unreadTotal/sysUnreadTotal，绝不写
+    /// 这里——写了门就永远比对相等、再也触发不了整页重拉。
+    private var lastFullLoadUnread: Int?
+    private var lastFullLoadSysUnread: Int?
     private var pollTimer: Timer?
     private var loginPromptShown = false
     private var visibleState: VisibleState = .loading
@@ -396,6 +414,9 @@ final class BearyNotificationsViewController: UIViewController {
             refreshVisibleState()
             publishUnread(unreadTotal)
             updateReadAllButton()
+            // 缓存即上次整页成功加载的结果：门控快照与缓存未读数同值，
+            // 之后轻量拉取比对它，变了才整页重拉。
+            recordFullLoadUnread()
         }
         startPolling()
         loadFirstPage()
@@ -405,6 +426,14 @@ final class BearyNotificationsViewController: UIViewController {
         saveNotificationCache()
         pollTimer?.invalidate()
         NotificationCenter.default.removeObserver(self)
+    }
+
+    /// 切回兜底：容器切 tab 走 view.isHidden 切换时本回调不触发（见文件头），
+    /// 故这里只做门控轻量检查、不直接整页重拉；切回的实际覆盖靠轮询与
+    /// 回前台的轻量门控，容器想切回瞬间必刷时调 refreshListIfUnreadChanged()。
+    override func viewWillAppear(_ animated: Bool) {
+        super.viewWillAppear(animated)
+        refreshListIfUnreadChanged()
     }
 
     override func viewWillDisappear(_ animated: Bool) {
@@ -478,7 +507,22 @@ final class BearyNotificationsViewController: UIViewController {
         refreshUnreadCountLightly()
     }
 
-    /// 轻量刷新：只更新未读数与角标，不动列表、不动失败态；失败静默忽略。
+    /// 轻量刷新 + 未读数门控（60 秒轮询、回前台、viewWillAppear 的统一入口）：
+    /// 先 limit=1 拉取，只更新未读数与角标（不动列表、不动失败态；失败静默忽略），
+    /// 再把新未读数与上次整页加载快照比对——变了才 loadFirstPage 整页重拉，
+    /// 没变不发整页请求。未读数字段来源（已核实，非推测）：
+    /// GET /beary/api/notifications 的响应体（worker.js 该路由全量与 limit<=1
+    /// 轻路径都回 {items, unread, sysUnread, total}；App 侧 NotificationList
+    /// 经 convertFromSnakeCase 解码为 unread/sysUnread）：unread = read_at=0
+    /// 的可见通知总数（system/letter 全算，互动行只算日记仍存在的那条），
+    /// sysUnread = 其中 type='system' 的子集。门控比对 (unread, sysUnread)
+    /// 一对：今日 worker 口径下 sysUnread 已含于 unread，但一对齐比对可在
+    /// 总数不变、构成变化时（如系统信 +1、互动 -1）仍触发重拉，且不增加请求。
+    /// 门控盲区（取舍，见文件头）：新消息与别处已读恰好相抵、总数不变时
+    /// 门不开，列表要等下次手动下拉/重拍 tab 的无条件 refresh() 才更新；
+    /// 为堵它而每次切回都整页拉取会被 Li 的切 tab 不重复拉取规矩否决。
+    /// 整页重拉失败时快照不动：下次轮询（60 秒）/回前台会再次比对到变化
+    /// 而重试，有界（轮询 cadence），不会紧循环。
     private func refreshUnreadCountLightly() {
         if isLoadingFirstPage {
             return
@@ -496,11 +540,31 @@ final class BearyNotificationsViewController: UIViewController {
                     }
                     strongSelf.publishUnread(strongSelf.unreadTotal)
                     strongSelf.updateReadAllButton()
+                    // 门控点：轻量刷新本身绝不写快照；只有这里比对，变了才整页重拉。
+                    // 未成功整页加载过（快照 nil）不触发，首拉/重试仍走原有路径；
+                    // 整页加载中或自定义下拉刷新中不叠加第二路整页请求。
+                    if strongSelf.hasSuccessfulLoad && !strongSelf.isLoadingFirstPage && !strongSelf.isCustomPullRefreshing && strongSelf.hasUnreadChangedSinceFullLoad(unread: strongSelf.unreadTotal, sysUnread: strongSelf.sysUnreadTotal) {
+                        strongSelf.loadFirstPage()
+                    }
                 case .failure:
                     break
                 }
             }
         }
+    }
+
+    /// 写门控快照：只在整页成功加载与本页标已读写回处调用（见各调用点注释）。
+    private func recordFullLoadUnread() {
+        lastFullLoadUnread = unreadTotal
+        lastFullLoadSysUnread = sysUnreadTotal
+    }
+
+    /// 门控比对：快照 nil（未整页成功加载过）返回 false，不触发。
+    private func hasUnreadChangedSinceFullLoad(unread: Int, sysUnread: Int) -> Bool {
+        guard let lastUnread = lastFullLoadUnread, let lastSysUnread = lastFullLoadSysUnread else {
+            return false
+        }
+        return unread != lastUnread || sysUnread != lastSysUnread
     }
 
     // MARK: - 公开接口
@@ -519,6 +583,19 @@ final class BearyNotificationsViewController: UIViewController {
     /// 重拍消息 tab 时先回顶（列表页同款；接线层在已显示时调它，再调 refresh()）。
     func scrollToTop() {
         tableView.setContentOffset(CGPoint(x: 0, y: -tableView.contentInset.top), animated: !UIAccessibility.isReduceMotionEnabled)
+    }
+
+    /// 门控重拉入口（供容器未来在 showPage(.notif) 时调用，本次未改容器）：
+    /// 未读数变了才整页重拉，没变只刷角标；与无条件 refresh() 不同——
+    /// 重拍 tab 与登录翻转仍走 refresh()，不走这里。
+    func refreshListIfUnreadChanged() {
+        if !hasSuccessfulLoad {
+            return
+        }
+        if isLoadingFirstPage || isCustomPullRefreshing {
+            return
+        }
+        refreshUnreadCountLightly()
     }
 
     // MARK: - 拉取
@@ -552,6 +629,8 @@ final class BearyNotificationsViewController: UIViewController {
                     strongSelf.loadMoreFailed = false
                     strongSelf.computeHasMore(fetchedCount: strongSelf.items.count, requestedLimit: requestedLimit)
                     strongSelf.publishUnread(strongSelf.unreadTotal)
+                    // 整页成功加载：门控快照与本次未读数同值，之后轻量比对以此为准。
+                    strongSelf.recordFullLoadUnread()
                     strongSelf.rebuildDisplayRows()
                     strongSelf.tableView.reloadData()
                     strongSelf.hasDisplayedPage = true
@@ -969,6 +1048,8 @@ final class BearyNotificationsViewController: UIViewController {
                     }
                     strongSelf.loadMoreFailed = false
                     strongSelf.computeHasMore(fetchedCount: appendedCount, requestedLimit: strongSelf.pageLimit)
+                    // 翻页只追加旧条：不写门控快照——顶条仍可能滞后，写了会把
+                    // 新消息的门控信号吃掉；未读数本身照常更新角标。
                     strongSelf.publishUnread(strongSelf.unreadTotal)
                     // M12：翻页追加用 insertRows 动画（尾行随加载结束一并删掉）；
                     // 已有行不动，不走整表 reloadData。
@@ -1090,6 +1171,9 @@ final class BearyNotificationsViewController: UIViewController {
                     strongSelf.unreadTotal = 0
                     strongSelf.sysUnreadTotal = 0
                     strongSelf.publishUnread(0)
+                    // 本页全部已读成功：列表已读态与服务端一致，快照同步归零，
+                    // 否则下次轻量比对会把这次已读误判为变化而多拉一次整页。
+                    strongSelf.recordFullLoadUnread()
                     strongSelf.rebuildDisplayRows()
                     // M12：已读态变化用 reloadRows 淡入（减动效用 .none），不行数不变。
                     let visiblePaths = strongSelf.tableView.indexPathsForVisibleRows ?? []
@@ -1128,6 +1212,10 @@ final class BearyNotificationsViewController: UIViewController {
             }
             publishUnread(unreadTotal)
             updateReadAllButton()
+            // 本页乐观标已读：行已读态与本地未读数已一致，快照同步跟进，
+            // 否则 POST 成功后轻量比对会误判为变化而多拉一次整页（且重载会
+            // 因签名含 read 位而给已读行重播入场动效）；失败回滚处同步改回。
+            recordFullLoadUnread()
             reloadItemAndCardRows(forItemIndex: index)
         }
         if isUnread {
@@ -1193,6 +1281,8 @@ final class BearyNotificationsViewController: UIViewController {
                     }
                     strongSelf.publishUnread(strongSelf.unreadTotal)
                     strongSelf.updateReadAllButton()
+                    // 标已读失败回滚：快照随本地未读数改回，与回滚后的列表一致。
+                    strongSelf.recordFullLoadUnread()
                     if index < strongSelf.items.count {
                         strongSelf.reloadItemAndCardRows(forItemIndex: index)
                     }

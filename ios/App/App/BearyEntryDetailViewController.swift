@@ -75,11 +75,8 @@ class BearyEntryDetailViewController: UIViewController {
     private var lastDetailLoadAt: Date?
     /// 未公开倒计时 pill 的刷新计时（1 秒一跳；页面消失时停）。
     private var countdownTimer: Timer?
-    /// 送达点重拉节流：同篇最多 3 次、间隔 ≥3 秒；耗尽后该 publishAt 不再重拉。
-    private var publishDueAttempts: Int = 0
-    private var lastPublishDueAtMs: Int = 0
-    private var countdownPublishAt: Int?
-    private var countdownExhaustedPublishAt: Int?
+    /// B 方案公开/取消在途去重（网页 pubBusy 同口径：一次只发一请求；失败不改本地态，只摇头+toast）。
+    private var isPublishBusy: Bool = false
     /// 单篇拉取在途守卫（E4-5）：重试连点只发一次；在途期间的 refreshEntry 记 pending，完成后补拉一次。
     private var isFetchingEntry: Bool = false
     private var fetchRefreshPending: Bool = false
@@ -159,6 +156,12 @@ class BearyEntryDetailViewController: UIViewController {
     private var likeButtonWidthConstraint: NSLayoutConstraint?
     /// 删除入口（D5）：仅本人未公开篇显示，走网页确认流程，进回收站。
     private let deleteButton = BearyHit44Button(type: .system)
+    /// B 方案公开行（广场卡 pubAction 同款，见 BearyFeedViewController.refreshPubRow）：
+    /// 仅本人已送达未公开篇显示；倒计时中显示剩余时间 + “取消”，否则显示“公开”。
+    private let pubRow = UIStackView()
+    private let pubCountdownLabel = UILabel()
+    private let pubPublishButton = BearyHit44Button(type: .system)
+    private let pubCancelButton = BearyHit44Button(type: .system)
 
     private let emoteFlowView = BearyEmoteFlowView()
     private var emoteFlowHeightConstraint: NSLayoutConstraint?
@@ -567,6 +570,32 @@ class BearyEntryDetailViewController: UIViewController {
         actionRow.addArrangedSubview(deleteButton)
         stackView.addArrangedSubview(actionRow)
 
+        // B 方案公开行：广场卡 pubStack 同款样式（倒计时 13 semibold 灰字；公开 14 semibold
+        // 墨字 + line 描边圆角 15；取消 14 灰字无边框），行尾 spacer 左对齐，默认隐藏。
+        pubCountdownLabel.font = UIFont.systemFont(ofSize: 13, weight: .semibold)
+        pubCountdownLabel.textColor = BearyColors.gray
+        pubCountdownLabel.numberOfLines = 1
+        pubPublishButton.titleLabel?.font = UIFont.systemFont(ofSize: 14, weight: .semibold)
+        pubPublishButton.setTitle("公开", for: .normal)
+        pubPublishButton.setTitleColor(BearyColors.ink, for: .normal)
+        pubPublishButton.contentEdgeInsets = UIEdgeInsets(top: 6, left: 12, bottom: 6, right: 12)
+        pubPublishButton.layer.cornerRadius = 15
+        pubPublishButton.layer.borderWidth = 1
+        pubPublishButton.layer.borderColor = BearyColors.line.cgColor
+        pubCancelButton.titleLabel?.font = UIFont.systemFont(ofSize: 14)
+        pubCancelButton.setTitle("取消", for: .normal)
+        pubCancelButton.setTitleColor(BearyColors.gray, for: .normal)
+        pubCancelButton.contentEdgeInsets = UIEdgeInsets(top: 6, left: 8, bottom: 6, right: 8)
+        pubRow.axis = .horizontal
+        pubRow.spacing = 8
+        pubRow.alignment = .center
+        pubRow.addArrangedSubview(pubCountdownLabel)
+        pubRow.addArrangedSubview(pubPublishButton)
+        pubRow.addArrangedSubview(pubCancelButton)
+        pubRow.addArrangedSubview(UIView())
+        pubRow.isHidden = true
+        stackView.addArrangedSubview(pubRow)
+
         // 回应行：自动换行（流式布局），不再横向滚动单行。
         emoteFlowView.translatesAutoresizingMaskIntoConstraints = false
         let flowHeight = emoteFlowView.heightAnchor.constraint(equalToConstant: 36)
@@ -610,8 +639,10 @@ class BearyEntryDetailViewController: UIViewController {
         shareButton.addTarget(self, action: #selector(shareTapped), for: .touchUpInside)
         editButton.addTarget(self, action: #selector(editTapped), for: .touchUpInside)
         deleteButton.addTarget(self, action: #selector(deleteTapped), for: .touchUpInside)
+        pubPublishButton.addTarget(self, action: #selector(publishTapped), for: .touchUpInside)
+        pubCancelButton.addTarget(self, action: #selector(publishCancelTapped), for: .touchUpInside)
         // U10：分享/编辑/删除/贴熊/头像重试统一接 iconTouchDown/iconTouchUp，与点赞/收藏一致。
-        for button in [shareButton, editButton, deleteButton, emoteAddButton, avatarRetryButton] {
+        for button in [shareButton, editButton, deleteButton, emoteAddButton, avatarRetryButton, pubPublishButton, pubCancelButton] {
             button.addTarget(self, action: #selector(iconTouchDown(_:)), for: .touchDown)
             button.addTarget(self, action: #selector(iconTouchUp(_:)), for: [.touchUpInside, .touchUpOutside, .touchCancel])
         }
@@ -742,8 +773,12 @@ class BearyEntryDetailViewController: UIViewController {
         if let v = updated.quote { current.quote = v }
         if let v = updated.createdAt { current.createdAt = v }
         if let v = updated.publishAt { current.publishAt = v }
+        if let v = updated.publishPendingUntil { current.publishPendingUntil = v }
         if let v = updated.editDeadline { current.editDeadline = v }
-        if let v = updated.isPublic { current.isPublic = v }
+        if let v = updated.isPublic {
+            current.isPublic = v
+            if v == true { current.publishPendingUntil = nil }
+        }
         if let v = updated.isLocked { current.isLocked = v }
         if let v = updated.isMine { current.isMine = v }
         if let v = updated.likeCount { current.likeCount = v }
@@ -860,6 +895,155 @@ class BearyEntryDetailViewController: UIViewController {
                     } else {
                         self.showAlert(message: "删除失败")
                     }
+                }
+            }
+        }
+    }
+
+    // MARK: - B 方案公开 / 取消（网页 pubState / pubActionInnerHtml 口径；广场卡 D2 同款端点与文案）
+
+    /// 网页 pubCountdownText 定死粒度：>=1 小时显示“剩 X 小时”（X=ceil），<1 小时显示“剩不到 1 小时”。
+    private func pubCountdownText(pendingUntil: Int) -> String {
+        let remainMs = max(0, pendingUntil - Int(Date().timeIntervalSince1970 * 1000))
+        if remainMs >= 3600000 {
+            return "剩 \(Int(ceil(Double(remainMs) / 3600000.0))) 小时"
+        }
+        return "剩不到 1 小时"
+    }
+
+    /// B 方案公开行渲染（广场卡 refreshPubRow 同款）：
+    /// 仅本人未公开篇显示；倒计时中（publishPendingUntil > now）显示剩余时间 + “取消”；
+    /// 已送达未公开（publishAt <= now 且不在倒计时中）显示“公开”；未送达与已公开均隐藏。
+    /// 在途时两钮禁用（置灰），但不改任何公开态——失败只摇头+toast，不做乐观更新后回滚。
+    private func refreshPublishRow() {
+        guard let current = entry, isMineEntry() == true, current.isPublic != true else {
+            pubRow.isHidden = true
+            return
+        }
+        let nowMs = Int(Date().timeIntervalSince1970 * 1000)
+        pubPublishButton.layer.borderColor = BearyColors.line.cgColor
+        if let pend = current.publishPendingUntil, pend > nowMs {
+            pubCountdownLabel.text = pubCountdownText(pendingUntil: pend)
+            pubCountdownLabel.isHidden = false
+            pubPublishButton.isHidden = true
+            pubCancelButton.isHidden = false
+            pubRow.isHidden = false
+        } else if let publishAt = current.publishAt, publishAt <= nowMs {
+            pubCountdownLabel.isHidden = true
+            pubPublishButton.isHidden = false
+            pubCancelButton.isHidden = true
+            pubRow.isHidden = false
+        } else {
+            pubRow.isHidden = true
+            return
+        }
+        pubPublishButton.isEnabled = isPublishBusy == false
+        pubCancelButton.isEnabled = isPublishBusy == false
+        pubPublishButton.alpha = isPublishBusy ? 0.4 : 1.0
+        pubCancelButton.alpha = isPublishBusy ? 0.4 : 1.0
+    }
+
+    /// 失败拒绝动效（denyLogin 同款摇头关键帧，不弹登录、不改状态）：公开/取消失败时摇对应按钮。
+    private func shakeView(_ view: UIView) {
+        if UIAccessibility.isReduceMotionEnabled == true {
+            return
+        }
+        UIView.animateKeyframes(withDuration: 0.4, delay: 0, options: [], animations: {
+            UIView.addKeyframe(withRelativeStartTime: 0, relativeDuration: 0.25) {
+                view.transform = CGAffineTransform(translationX: -6, y: 0)
+            }
+            UIView.addKeyframe(withRelativeStartTime: 0.25, relativeDuration: 0.25) {
+                view.transform = CGAffineTransform(translationX: 6, y: 0)
+            }
+            UIView.addKeyframe(withRelativeStartTime: 0.5, relativeDuration: 0.25) {
+                view.transform = CGAffineTransform(translationX: -4, y: 0)
+            }
+            UIView.addKeyframe(withRelativeStartTime: 0.75, relativeDuration: 0.25) {
+                view.transform = .identity
+            }
+        }, completion: nil)
+    }
+
+    /// “公开”钮：先弹网页 openPubConfirm 同款确认框，确认后走 POST /publish；
+    /// 仅本人已送达未公开态进确认框（倒计时中、未送达、已公开均不进）。
+    /// 在途去重：isPublishBusy 时连点直接返回；确认前不改本地态。
+    @objc private func publishTapped() {
+        if isPublishBusy == true || presentedViewController != nil {
+            return
+        }
+        guard let currentId = entry?.id, currentId.isEmpty == false else { return }
+        guard isMineEntry() == true, entry?.isPublic != true else { return }
+        let nowMs = Int(Date().timeIntervalSince1970 * 1000)
+        if let pend = entry?.publishPendingUntil, pend > nowMs { return }
+        guard let publishAt = entry?.publishAt, publishAt <= nowMs else { return }
+        let alert = UIAlertController(title: "确认公开？", message: "公开后不能撤回删除。确认后开始倒计时，倒计时结束即公开，期间可以取消。", preferredStyle: .alert)
+        alert.addAction(UIAlertAction(title: "取消", style: .cancel, handler: nil))
+        alert.addAction(UIAlertAction(title: "公开", style: .default, handler: { [weak self] _ in
+            self?.performPublish(id: currentId)
+        }))
+        present(alert, animated: true, completion: nil)
+    }
+
+    private func performPublish(id: String) {
+        if isPublishBusy == true {
+            return
+        }
+        isPublishBusy = true
+        refreshPublishRow()
+        BearyAPI.shared.requestPublish(id: id) { [weak self] result in
+            DispatchQueue.main.async {
+                guard let self = self else { return }
+                self.isPublishBusy = false
+                switch result {
+                case .success(let resp):
+                    // 成功后才写本地态（不乐观更新）：pending 覆盖、服务端直接翻公开时同步公开态，随后整页重绘。
+                    if self.entry?.id == id, var current = self.entry {
+                        if let pend = resp.publishPendingUntil { current.publishPendingUntil = pend }
+                        if resp.published == 1 { current.isPublic = true; current.publishPendingUntil = nil }
+                        self.entry = current
+                    }
+                    self.render()
+                case .failure:
+                    self.shakeView(self.pubPublishButton)
+                    self.showToast(message: "公开失败，请重试")
+                    self.refreshPublishRow()
+                }
+            }
+        }
+    }
+
+    /// “取消”钮：网页 doPublishCancel 无确认框，直接走 POST /publish/cancel；
+    /// 在途去重同公开（同一 isPublishBusy）；失败只摇头+toast，不动本地态。
+    @objc private func publishCancelTapped() {
+        if isPublishBusy == true {
+            return
+        }
+        guard let currentId = entry?.id, currentId.isEmpty == false else { return }
+        performPublishCancel(id: currentId)
+    }
+
+    private func performPublishCancel(id: String) {
+        if isPublishBusy == true {
+            return
+        }
+        isPublishBusy = true
+        refreshPublishRow()
+        BearyAPI.shared.cancelPublish(id: id) { [weak self] result in
+            DispatchQueue.main.async {
+                guard let self = self else { return }
+                self.isPublishBusy = false
+                switch result {
+                case .success(let resp):
+                    if self.entry?.id == id, var current = self.entry {
+                        current.publishPendingUntil = nil
+                        if let pub = resp.published { current.isPublic = (pub == 1) }
+                        self.entry = current
+                    }
+                    self.render()
+                case .failure:
+                    self.shakeView(self.pubCancelButton)
+                    self.showToast(message: "取消失败，请重试")
+                    self.refreshPublishRow()
                 }
             }
         }
@@ -988,26 +1172,19 @@ class BearyEntryDetailViewController: UIViewController {
     }
 
     /// D3：1 秒 tick（网页 startCountdowns 同口径）；滚动时也用 common 模式继续走。
-    /// 到点后重拉单篇翻公开（同篇最多 3 次、间隔 ≥3 秒），耗尽后 timer 停止，不再逐秒连环触发。
-    /// 编辑倒计时同 timer 驱动；无未来送达点且无未来编辑点时不设 timer。
+    /// B 方案：送达≠公开——已送达未公开不再是“到点翻公开”，不设送达点重拉；
+    /// timer 只为未来点服务：未送达倒计时、公开倒计时剩余、编辑倒计时；三者皆无未来点时不设 timer。
     private func startCountdownTimer() {
         countdownTimer?.invalidate()
         countdownTimer = nil
         guard let current = entry, current.isPublic != true else { return }
         let now = Int(Date().timeIntervalSince1970 * 1000)
-        if let publishAt = current.publishAt, publishAt != countdownPublishAt {
-            countdownPublishAt = publishAt
-            publishDueAttempts = 0
-            lastPublishDueAtMs = 0
-            countdownExhaustedPublishAt = nil
-        }
         var needsTimer = false
-        if let publishAt = current.publishAt {
-            if publishAt > now {
-                needsTimer = true
-            } else if countdownExhaustedPublishAt != publishAt && publishDueAttempts < 3 {
-                needsTimer = true
-            }
+        if let publishAt = current.publishAt, publishAt > now {
+            needsTimer = true
+        }
+        if let pend = current.publishPendingUntil, pend > now {
+            needsTimer = true
         }
         if isMineEntry() == true, let deadline = current.editDeadline, deadline > now {
             needsTimer = true
@@ -1031,40 +1208,22 @@ class BearyEntryDetailViewController: UIViewController {
             if publishAt > now {
                 pillLabel.text = countdownText(publishAt: publishAt)
             } else {
-                // 已到送达点、服务端尚未翻公开：不谎报“还剩 1 分钟”，显示即将公开并走节流重拉。
-                pillLabel.text = "即将公开"
-                if countdownExhaustedPublishAt == publishAt {
-                    countdownTimer?.invalidate()
-                    countdownTimer = nil
-                } else if publishDueAttempts < 3 && now - lastPublishDueAtMs >= 3000 {
-                    publishDueAttempts += 1
-                    lastPublishDueAtMs = now
-                    if publishDueAttempts >= 3 {
-                        countdownExhaustedPublishAt = publishAt
-                    }
-                    fetchEntry()
-                    // fetchEntry 成功后 render 会按新状态重设 timer；若仍未公开且未耗尽，timer 继续。
-                    // 若已耗尽，本次 tick 后不再重拉；下次 render 见 exhausted 也不再设 timer。
-                    if publishDueAttempts >= 3 {
-                        // 最后一拉在途：先停本 timer，fetch 回包 render 时按 exhausted 判定不再重设。
-                        countdownTimer?.invalidate()
-                        countdownTimer = nil
-                    }
-                }
+                // B 方案：到点只送达、不自动公开——已送达未公开 pill 统一为“未公开”
+                //（网页 tlItemHtml 口径），不再显示“即将公开”，也不再节流重拉等翻公开。
+                pillLabel.text = "未公开"
             }
         }
+        refreshPublishRow()
         updateEditCountdownLabel()
         updateEditButton()
-        // 送达与编辑均无未来点时停表（编辑已结束为静态文案，无需继续 tick）。
+        // 未来点耗尽时停表：未送达、公开倒计时、编辑倒计时三者皆无未来点即停；
+        // 已送达未公开是静态态，不靠 timer 驱动（公开必须作者手动点“公开”）。
         let publishFuture = (current.publishAt ?? 0) > now
+        let pendingFuture = (current.publishPendingUntil ?? 0) > now
         let editFuture = isMineEntry() && (current.editDeadline ?? 0) > now
-        if publishFuture == false && editFuture == false {
-            if let publishAt = current.publishAt, publishAt <= now, publishDueAttempts < 3, countdownExhaustedPublishAt != publishAt {
-                // 仍在节流重拉窗口内：保持 timer，等下次 tick 再拉。
-            } else {
-                countdownTimer?.invalidate()
-                countdownTimer = nil
-            }
+        if publishFuture == false && pendingFuture == false && editFuture == false {
+            countdownTimer?.invalidate()
+            countdownTimer = nil
         }
     }
 
@@ -1112,11 +1271,12 @@ class BearyEntryDetailViewController: UIViewController {
         crownImageView.isHidden = true
 
         // 未公开倒计时 pill（公开篇隐藏）。
+        // B 方案：已送达未公开与倒计时中统一为“未公开”（网页 tlItemHtml 口径），网页无“即将公开”一词。
         if current.isPublic == true {
             pillRow.isHidden = true
         } else if let publishAt = current.publishAt {
             if publishAt <= Int(Date().timeIntervalSince1970 * 1000) {
-                pillLabel.text = "即将公开"
+                pillLabel.text = "未公开"
             } else {
                 pillLabel.text = countdownText(publishAt: publishAt)
             }
@@ -1184,6 +1344,7 @@ class BearyEntryDetailViewController: UIViewController {
         updateInteractivity()
         updateEditButton()
         updateDeleteButton()
+        refreshPublishRow()
         startCountdownTimer()
         updateDetailSpacing()
     }
