@@ -24,8 +24,8 @@ import UIKit
 // N13：邮箱口径与网页 lgEmailOk 同款 /.+@.+\..+/（任意非空＋@＋任意非空＋.＋任意非空）；
 // 发码、登录按钮启用与两处拦截共用 isEmailValid，不再用更严的服务端口径前置拦截。
 // 协议链接说明：网页复选框文案里的《隐私政策》/《用户协议》链向 /privacy、/terms；
-// F1：原生不做协议页，文案里的两个链接可点，点击走 UIApplication.shared.open
-// 用系统浏览器打开 https://teddyhn.com/privacy 与 /terms；点文案其他位置仍切换勾选。
+// 原生不走系统浏览器：点链接 present 设置页同款 App 内原生法律页 BearyLegalTextViewController
+//（BearyLegalTexts.privacy / .terms，设置页 presentLegalText 同款全屏 modal）；点文案其他位置仍切换勾选。
 // Turnstile 互动挑战过渡方案见 BearyTurnstilePage 头注释。清单第 12 项：可见验证
 // 卡片移除已记为 blocked（无感失败且必须人工交互的用户拿掉卡片后无路可走），
 // 卡片行为本次不动；与卡片去留无关的失败原因区分已落地（超时／取消有各自文案，
@@ -50,7 +50,7 @@ final class BearyLoginViewController: UIViewController {
     private let inviteField = UITextField()
     private let messageLabel = UILabel()
     private let agreeButton = BearyHit44Button(type: .system)
-    /// F1：协议文案用 UITextView 承载可点链接（UILabel 接不住链接点按）。
+    /// 协议文案用 UITextView 承载可点链接（UILabel 接不住链接点按）；点按走 App 内原生法律页。
     private let agreeLabel = UITextView()
     private let agreeRow = UIView()
     /// M14：登录进行态的圈转指示（与“处理中…”文案并用，不再只有 alpha 变化）。
@@ -374,7 +374,7 @@ final class BearyLoginViewController: UIViewController {
         agreeButton.backgroundColor = BearyColors.faint
         agreeButton.accessibilityLabel = "我已阅读并同意《隐私政策》和《用户协议》"
         agreeButton.addTarget(self, action: #selector(agreeTapped), for: .touchUpInside)
-        // F1：文案里的两个协议名是真链接（系统浏览器打开），其余文字点按仍切换勾选。
+        // 协议文案里的两个协议名是真链接（App 内原生法律页打开），其余文字点按仍切换勾选。
         agreeLabel.translatesAutoresizingMaskIntoConstraints = false
         agreeLabel.isEditable = false
         agreeLabel.isScrollEnabled = false
@@ -744,11 +744,27 @@ extension BearyLoginViewController: UITextFieldDelegate {
     }
 }
 
-// MARK: - UITextViewDelegate（F1：协议链接走系统浏览器打开，不进内嵌页）
+// MARK: - UITextViewDelegate（协议链接走设置页同款 App 内原生法律页，不走系统浏览器）
 
 extension BearyLoginViewController: UITextViewDelegate {
     func textView(_ textView: UITextView, shouldInteractWith URL: URL, in characterRange: NSRange, interaction: UITextItemInteraction) -> Bool {
-        UIApplication.shared.open(URL, options: [:], completionHandler: nil)
+        // 与设置页 presentLegalText 同款：同一 BearyLegalTextViewController、同一全屏 modal、
+        // 同一 BearyLegalTexts 文本；本页不新增文本、不改设置页。未知链接不外跳，直接吞掉。
+        let title: String
+        let text: String
+        switch URL.path {
+        case "/privacy":
+            title = "隐私政策"
+            text = BearyLegalTexts.privacy
+        case "/terms":
+            title = "用户协议"
+            text = BearyLegalTexts.terms
+        default:
+            return false
+        }
+        let vc = BearyLegalTextViewController(pageTitle: title, pageText: text)
+        vc.modalPresentationStyle = .fullScreen
+        present(vc, animated: true)
         return false
     }
 }

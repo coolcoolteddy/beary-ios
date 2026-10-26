@@ -11,6 +11,7 @@ enum BearyRoute: Equatable {
     case timeline
     case profile
     case search
+    case trash
     case editor
     case entry(String)
     case userByHandle(String)
@@ -24,6 +25,7 @@ enum BearyRoute: Equatable {
         if path == "/beary/timeline" { return .timeline }
         if path == "/beary/profile" { return .profile }
         if path == "/beary/search" { return .search }
+        if path == "/beary/trash" { return .trash }
         if path.hasPrefix("/beary/d/") {
             let id = String(path.dropFirst("/beary/d/".count))
             return id.isEmpty ? nil : .entry(id)
@@ -48,6 +50,7 @@ enum BearyRoute: Equatable {
         case .timeline: return URL(string: "https://teddyhn.com/beary/timeline")
         case .profile: return URL(string: "https://teddyhn.com/beary/profile")
         case .search: return URL(string: "https://teddyhn.com/beary/search")
+        case .trash: return URL(string: "https://teddyhn.com/beary/trash")
         case .editor: return URL(string: "https://teddyhn.com/beary")
         case .entry(let id): return URL(string: "https://teddyhn.com/beary/d/\(id)")
         case .userByHandle(let handle): return URL(string: "https://teddyhn.com/beary/@\(handle)")
