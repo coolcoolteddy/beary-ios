@@ -78,6 +78,9 @@ final class BearyInviteViewController: UIViewController {
         super.viewDidLoad()
         view.backgroundColor = BearyColors.bg
         buildLayout()
+        // 52 批：先定一次非 0 首帧高，避免呈现层首帧以 preferred=0 走 88%/80% 满高封顶；
+        // 布局落定后 viewDidLayoutSubviews 再按真实宽与安全区纠正。
+        updatePreferredSheetHeight()
         load()
     }
 
@@ -96,8 +99,12 @@ final class BearyInviteViewController: UIViewController {
     /// 内容超高时内层 scrollView 可滚。绑定区显隐变化时布局重算即跟高；
     /// 仅高度变化超 0.5pt 才写 preferredContentSize，避免布局循环。
     /// 不设 tint/玻璃：弹窗本体仍是 bg 实色（与网页 lgm-sheet 的 surface 同口径）。
+    /// 52 批：此前只写 preferredContentSize、不通知呈现层，导致首帧 0 高 fallback 走 88%/80%
+    /// 满高封顶后不回落（即“弹窗过高”）；现与编辑器同款，写完即请父视图重布局，
+    /// 呈现层 containerViewWillLayoutSubviews 重算帧；首帧 view.bounds 仍为 0 时按屏宽估算。
     private func updatePreferredSheetHeight() {
-        let width = min(max(0, view.bounds.width - 44), 432)
+        let baseWidth = view.bounds.width > 0 ? view.bounds.width : UIScreen.main.bounds.width
+        let width = min(max(0, baseWidth - 44), 432)
         let fitting = stackView.systemLayoutSizeFitting(
             CGSize(width: width, height: UIView.layoutFittingCompressedSize.height),
             withHorizontalFittingPriority: .required,
@@ -107,6 +114,7 @@ final class BearyInviteViewController: UIViewController {
         if abs(height - lastPreferredSheetHeight) > 0.5 {
             lastPreferredSheetHeight = height
             preferredContentSize = CGSize(width: 0, height: height)
+            view.superview?.setNeedsLayout()
         }
     }
 
