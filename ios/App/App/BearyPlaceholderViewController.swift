@@ -87,11 +87,11 @@ final class BearyTutorialViewController: UIViewController, UIScrollViewDelegate 
     private let pages: [TutorialPage] = [
         TutorialPage(
             title: "",
-            body: "这里是一个安静的日记角落：写下今天，先私密保存七天，之后再与大家见面——给每篇日记一点沉淀的时间。下面五页是这里的简单规则。"
+            body: "这里是一个安静的日记角落：写下今天，先私密保存七天，送达后由你决定是否公开——给每篇日记一点沉淀的时间。下面五页是这里的简单规则。"
         ),
         TutorialPage(
             title: "日记先私密 7 天",
-            body: "每篇日记发布后不会立刻公开，而是先私密保存 7 天，在时间线里能看到离送达还剩多久。时间一到，它就会自动公开，出现在公开流顶部的「今日送达」专区里。"
+            body: "每篇日记发布后不会立刻公开，而是先私密保存 7 天，在时间线里能看到离送达还剩多久。送达后，它只属于你自己；想公开时，在自己的日记上点「公开」，确认后进入倒计时，期间可以取消，到期后公开且不能撤回删除。"
         ),
         TutorialPage(
             title: "15 分钟内可修改",

@@ -2181,7 +2181,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         ruleIconImageView.contentMode = .scaleAspectFit
         let paragraph = NSMutableParagraphStyle()
         paragraph.lineHeightMultiple = 1.7
-        ruleLabel.attributedText = NSAttributedString(string: "发布后 7 天自动公开 · 15 分钟内可修改 · 公开后不能再删改。", attributes: [.font: UIFont.systemFont(ofSize: 12), .foregroundColor: BearyColors.gray, .paragraphStyle: paragraph])
+        ruleLabel.attributedText = NSAttributedString(string: "发布后 7 天送达给自己 · 15 分钟内可修改 · 公开后不能再删改。", attributes: [.font: UIFont.systemFont(ofSize: 12), .foregroundColor: BearyColors.gray, .paragraphStyle: paragraph])
         ruleLabel.numberOfLines = 0
         ruleBoxView.translatesAutoresizingMaskIntoConstraints = false
         ruleIconImageView.translatesAutoresizingMaskIntoConstraints = false
@@ -2255,6 +2255,37 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         publishButton.isEnabled = !isPublishing && !hasUploadingImage()
         refreshPublishAppearance()
         refreshPublishBusyState()
+        refreshPublishingInputFreeze()
+    }
+
+    /// D 批：发布/保存请求在途时冻结编辑输入（发布钮本身由上方的 updatePublishState
+    /// 单独管禁用，本函数不动它）：正文不可改；心情/天气（含工具栏天气钮与附加栏
+    /// 开关，这两处是心情/天气行的入口）与图片（添加钮 + 每项移除/裁剪钮 + 条内
+    /// 点按重试走容器手势，一并关容器交互）不可点。挂在 updatePublishState 里，
+    /// 故 performPublish/performUpdate 的成功与失败分支只要走原有的
+    /// isPublishing = false + updatePublishState() 即恢复，无需各分支另写恢复。
+    /// 取消路径不动：进行中点取消仍走原有“发布中…”提示，不关编辑器、不碰草稿；
+    /// 请求结束后的取消仍走原有三选/确认流程，草稿按原规则保留；本函数不碰
+    /// 发布成功后的清草稿逻辑（clearDraftAndFiles 仍只在 performPublish 成功分支里调）。
+    /// 恢复时直接置回可用：上述控件在别处没有其他禁用逻辑（grep 无其他 isEnabled/
+    /// isEditable 赋值），不会误解开本应禁用的项。
+    private func refreshPublishingInputFreeze() {
+        let frozen = isPublishing
+        textView.isEditable = !frozen
+        for item in moodItems {
+            item.button.isEnabled = !frozen
+        }
+        for pair in weatherButtons {
+            pair.button.isEnabled = !frozen
+        }
+        weatherToolButton.isEnabled = !frozen
+        extrasBarButton.isEnabled = !frozen
+        imageToolButton.isEnabled = !frozen
+        for item in imageItems {
+            item.removeButton.isEnabled = !frozen
+            item.cropButton.isEnabled = !frozen
+            item.container.isUserInteractionEnabled = !frozen
+        }
     }
 
     /// 发布/保存中态（E3-4）：标题改“发布中…”/“保存中…”+ 发送图标位转 spinner；
@@ -3542,7 +3573,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             present(alert, animated: true)
             return
         }
-        let alert = UIAlertController(title: "发布", message: "发布后 7 天自动公开，15 分钟内可修改。", preferredStyle: .alert)
+        let alert = UIAlertController(title: "发布", message: "发布后 7 天送达给自己，15 分钟内可修改。", preferredStyle: .alert)
         alert.addAction(UIAlertAction(title: "取消", style: .cancel, handler: nil))
         alert.addAction(UIAlertAction(title: "发布", style: .default) { [weak self] _ in
             guard let self = self else { return }
@@ -4102,7 +4133,7 @@ private final class BearyComposerCropViewController: UIViewController, UIScrollV
 //    成功后删本轮新选图的本地文件（原日记的图 localFile 为 nil，不受影响），失败不删、留着重试。
 // 4. 草稿 v3 多槽：正文/心情/图片/天气/写给/引用全部进草稿，杀 App 后原样恢复；
 //    发布成功与丢弃只清本篇（currentDraftId），不碰其他篇。
-// 5. 发布确认：新建无失败图时弹一次（标题“发布”，写清 7 天公开与 15 分钟可改）；有失败图时只弹
+// 5. 发布确认：新建无失败图时弹一次（标题“发布”，写清 7 天送达与 15 分钟可改）；有失败图时只弹
 //    失败图确认，不叠加；编辑模式弹“保存修改”确认。
 // 6. 超 2000 字红字提示用 BearyColors.red（网页 --red #e5484d，浅深同值），字数圆环同步变红；
 //    图片 × 衬底用 BearyColors.scrim（固定深色半透明，深色下 ink 是近白、白字会看不清）；

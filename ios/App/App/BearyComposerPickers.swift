@@ -547,7 +547,7 @@ final class BearyRecipientPickerViewController: UIViewController, UITextFieldDel
         } else {
             stateIcon.image = BearyIconImages.image(named: "icon_at", pointSize: 25)
             stateTitle.text = "写给某个人"
-            stateSubtitle.text = "这篇 7 天后才公开"
+            stateSubtitle.text = "这篇 7 天后才送达"
         }
     }
 
