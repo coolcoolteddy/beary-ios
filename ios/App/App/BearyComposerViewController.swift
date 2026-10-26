@@ -13,6 +13,22 @@ import PhotosUI
 // 文案一律中文；深浅色一律用 BearyColors 的动态色（含语义红 red 与图片上深色衬底 scrim）。
 // 网络数据一律不用 force unwrap；图片移除只动本地与 key 列表，不调服务端。
 
+/// 64 包反馈修（第 14 项）：正文光标高度跟字体行高走——正文段落 lineHeightMultiple=1.7
+/// 会把系统 caret 拉到行片段高（约 32pt），比 16pt 字大一圈；只收敛 caret 高度到
+/// font.lineHeight（16pt 系统字约 19pt），y 在行片段内居中，宽与 x 不动；选区手柄
+/// 不走 caretRect，不受影响。textView.font 与 typingAttributes 字体已同为 16pt 系统字。
+private final class BearyBodyTextView: UITextView {
+    override func caretRect(for position: UITextPosition) -> CGRect {
+        var rect = super.caretRect(for: position)
+        guard rect.height > 0, let lineHeight = font?.lineHeight, lineHeight > 0,
+              abs(rect.height - lineHeight) > 0.5 else { return rect }
+        let centerY = rect.midY
+        rect.origin.y = centerY - lineHeight / 2
+        rect.size.height = lineHeight
+        return rect
+    }
+}
+
 final class BearyComposerViewController: UIViewController, UITextViewDelegate, PHPickerViewControllerDelegate, UIGestureRecognizerDelegate {
 
     // MARK: - 公开接口
@@ -159,7 +175,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     private let scrollView = UIScrollView()
     private let contentView = UIView()
     private let contentStack = UIStackView()
-    private let textView = UITextView()
+    private let textView = BearyBodyTextView()
     /// 正文区高度约束（正式修法：随内容动态走，下限 140、上限由 updateTextViewHeight 按 sheet 封顶算）。
     private var textViewHeightConstraint: NSLayoutConstraint?
     private let placeholderLabel = UILabel()
@@ -3941,7 +3957,12 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             guard let self = self else { return }
             self.scrollView.contentInset.bottom = height
             self.scrollView.scrollIndicatorInsets.bottom = height
-            self.textView.contentInset.bottom = height
+            // 64 包反馈修（第 13 项）：不再给 textView 内层加键盘底 inset——旧代码内外两层
+            // 同加 keyboardHeight，空态下内层可视高 =  bounds 高 − 键盘高成负值，caret
+            // 可见性计算退化、contentOffset 自己往上跳（占位 label 随之下滑），即 Li 报的
+            // “什么都没写也会往上滑一下”。外层 inset 已把整区抬到键盘上方，内层 inset
+            // 是冗余的；去掉后空态 caret 本就在可视区内，打开与空态 contentOffset 全程不动，
+            // 长文 caret 仍走系统标准 caret 可见滚动（只在用户打到可视区外时动）。
         }, completion: nil)
     }
 

@@ -14,6 +14,16 @@ final class SessionManager {
 
     private(set) var currentUser: MeUser?
     var isLoggedIn: Bool { currentUser != nil }
+    /// 64 包反馈修（第 17 项）：本地有效会话 cookie（teddy_session 且未过期）——
+    /// 首帧缓存态依据，同步读存储、不发网络；后台 refreshMe 验出 401 才切游客态。
+    /// 注意：只判断 cookie 存在与过期，不证明服务端会话仍有效，401 回来即纠正。
+    var hasCachedSession: Bool {
+        let store = HTTPCookieStorage.shared
+        return (store.cookies ?? []).contains { cookie in
+            cookie.name == "teddy_session" && self.isBearyCookie(cookie)
+                && (cookie.expiresDate == nil || cookie.expiresDate! > Date())
+        }
+    }
     /// 401 时调用（界面层可接登录页；默认只清用户）。
     var onUnauthorized: (() -> Void)?
     /// 用户变化时调用（登录/退出/刷新后）。

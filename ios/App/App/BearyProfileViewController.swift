@@ -676,8 +676,13 @@ class BearyProfileViewController: UIViewController {
     private var nameTrailingConstraint: NSLayoutConstraint?
 
     private func makeTabButton(title: String, iconName: String, action: Selector) -> UIButton {
-        let buttonValue = UIButton(type: .system)
+        // 64 包反馈修：页签选中变黑块——UIButton(type: .system) 在 iOS 26/27 上选中态会
+        // 由系统以 tint 填充底色（真机上选中钮整块变黑、图标与标题墨色沉底不可见），
+        // 代码里并无任何背景色设置；改 .custom 彻底去掉系统选中填充，选中指示只剩
+        // applyTabSelection 的下划线 + 墨色标题/图标（网页口径）；未选中态外观一字不动。
+        let buttonValue = UIButton(type: .custom)
         buttonValue.translatesAutoresizingMaskIntoConstraints = false
+        buttonValue.backgroundColor = .clear
         buttonValue.setTitle(title, for: .normal)
         // I2：三标签钮前加对应图标（日记 icon_diary 由 beary-diary 渲染；心/书签资产已有）。
         // 1:1 网页 .pf-tab 口径：图标 16、图标与文字 gap 6；内边距 9/10、字 14/700、钮间 gap 4 不变。
@@ -2405,7 +2410,14 @@ class BearyProfileViewController: UIViewController {
 
     private func handleCellQuoteTap(entry: Entry) {
         if let quoteValue = entry.quote {
-            if quoteValue.isPublic == false {
+            // 64 包反馈修（第 16 项）：gone 引用体只有 {id, gone:true}、无 is_public 字段，
+            // 旧代码只查 isPublic == false，gone 会漏网走到 fetch 再弹提示；与时间线/
+            // 首页看齐：gone 与 locked 都直接按网页口径给提示，不再尝试打开目标。
+            if quoteValue.gone == true {
+                presentSimpleAlert(message: "引用的日记已删除")
+                return
+            }
+            if quoteValue.locked == true || quoteValue.isPublic == false {
                 presentSimpleAlert(message: "引用的这篇还没公开")
                 return
             }

@@ -170,50 +170,38 @@ struct BearyCalendarMark {
 }
 
 enum BearyCalendarMarks {
-    /// 网页口径：1 篇 1 个 6pt 圆点；2 篇 2 点（混合时橙蓝各一）；3 三角、4 方、5 五边、
-    /// 6 五边+1 点、7 五边+2 点、8+ 按 7 封顶；主形状取篇数多一方（一样多取橙=公开优先），
-    /// 混合时末尾再加 1 个 5pt 异色小点（“形状旁的异色小点 = 两种状态都有”）。
+    /// 64 包反馈修（第 4 项，Li 混色方案）：旧“全天同色多数判定”整段删除——
+    /// 每种状态各自按数量拆现有图形词汇（公开=橙、未公开=蓝），一天内先画公开组、
+    /// 再画未公开组拼进同一格：1→1 点、2→2 点、3→三角形、4→正方形、5→五边形、
+    /// 6→五边形+1 点、7→五边形+2 点、单状态 8+ 按 7 封顶。
+    /// 逐一核对 Li 的例子：2 篇 1 公开 = 1 橙点 + 1 蓝点；3 篇 2 公开 = 2 橙点 + 1 蓝点；
+    /// 10 篇 7 公开 3 未公开 = 橙五边形 + 橙 2 点 + 蓝三角形。
     static func marks(published: Int, unpublished: Int) -> [BearyCalendarMark] {
-        let total = published + unpublished
-        if total <= 0 { return [] }
-        let mixed = published > 0 && unpublished > 0
-        let main: BearyCalendarMarkColor
-        if unpublished == 0 {
-            main = .published
-        } else if published == 0 {
-            main = .unpublished
-        } else if published >= unpublished {
-            main = .published
-        } else {
-            main = .unpublished
+        return marksForCount(published, color: .published) + marksForCount(unpublished, color: .unpublished)
+    }
+
+    private static func marksForCount(_ count: Int, color: BearyCalendarMarkColor) -> [BearyCalendarMark] {
+        let dot = BearyCalendarMark(kind: .dot, color: color, size: 6)
+        switch min(max(count, 0), 7) {
+        case 0:
+            return []
+        case 1:
+            return [dot]
+        case 2:
+            return [dot, dot]
+        case 3:
+            return [BearyCalendarMark(kind: .triangle, color: color, size: 12)]
+        case 4:
+            return [BearyCalendarMark(kind: .square, color: color, size: 11)]
+        case 5:
+            return [BearyCalendarMark(kind: .pentagon, color: color, size: 12)]
+        case 6:
+            return [BearyCalendarMark(kind: .pentagon, color: color, size: 12), dot]
+        case 7:
+            return [BearyCalendarMark(kind: .pentagon, color: color, size: 12), dot, dot]
+        default:
+            return []
         }
-        let other: BearyCalendarMarkColor = (main == .published) ? .unpublished : .published
-        if total == 1 { return [BearyCalendarMark(kind: .dot, color: main, size: 6)] }
-        if total == 2 {
-            if mixed {
-                return [
-                    BearyCalendarMark(kind: .dot, color: .published, size: 6),
-                    BearyCalendarMark(kind: .dot, color: .unpublished, size: 6),
-                ]
-            }
-            return [
-                BearyCalendarMark(kind: .dot, color: main, size: 6),
-                BearyCalendarMark(kind: .dot, color: main, size: 6),
-            ]
-        }
-        let capped = min(total, 7)
-        var out: [BearyCalendarMark] = []
-        if capped == 3 {
-            out.append(BearyCalendarMark(kind: .triangle, color: main, size: 12))
-        } else if capped == 4 {
-            out.append(BearyCalendarMark(kind: .square, color: main, size: 11))
-        } else {
-            out.append(BearyCalendarMark(kind: .pentagon, color: main, size: 12))
-            if capped >= 6 { out.append(BearyCalendarMark(kind: .dot, color: main, size: 6)) }
-            if capped >= 7 { out.append(BearyCalendarMark(kind: .dot, color: main, size: 6)) }
-        }
-        if mixed { out.append(BearyCalendarMark(kind: .dot, color: other, size: 5)) }
-        return out
     }
 }
 
@@ -555,6 +543,10 @@ final class BearyCalendarCardView: UIView {
             outer.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -14),
             outer.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -10),
             toggleButton.heightAnchor.constraint(equalToConstant: 32),
+            // 64 包反馈修（第 6 项）：周/月切换钮等宽——旧代码宽度随标题内容走，
+            // “月视图”/“周视图”两态渲染宽不一致；固定 64（内边距 12+12 + 3 字×12.5 + 余量），
+            // 两态同宽，不再随标题伸缩。
+            toggleButton.widthAnchor.constraint(equalToConstant: 64),
             prevButton.widthAnchor.constraint(equalToConstant: 32),
             prevButton.heightAnchor.constraint(equalToConstant: 32),
             nextButton.widthAnchor.constraint(equalToConstant: 32),
@@ -1743,6 +1735,10 @@ class BearyTimelineViewController: UIViewController {
     private var calendarCache: [String: BearyCalendarMonthResponse] = [:]
     private var calendarFetching: Set<String> = []
     private var calendarFailed: Set<String> = []
+    /// 64 包反馈修（第 3 项）：统计行已渲染签名（主月份 key|streak|monthTotal，失败/空态另计）。
+    /// updateStatsLine 每次先比签名：一致则一字不碰按钮——切日期、翻页只调 renderCalendar，
+    /// 不重渲染该行；签名只在写新日记时由 invalidateStatsLine 清掉（删除/回收站恢复走
+    /// refreshAfterDetailChange 强制重拉，值变了签名自然不同、无需另清）。
     private var calendarMode: BearyCalendarCardView.ViewMode = .week
     private var calendarAnchor: (year: Int, month: Int, day: Int)?
     private var calendarDisplayedMonth: (year: Int, month: Int)?
@@ -2250,6 +2246,17 @@ class BearyTimelineViewController: UIViewController {
         }
     }
 
+    /// 64 包反馈修（第 3 项）：写新日记后统计行失效——清已渲染签名并丢掉当前视图月份缓存，
+    /// 使随后 reloadTimeline 的非强制月份拉取真正走网络（否则缓存命中、统计恒旧）。
+    /// 切日期、翻页、删除、恢复均不调本方法（删除/恢复走强制重拉 + 签名比对）。
+    func invalidateStatsLine() {
+        lastStatsLineSignature = nil
+        for key in monthKeysForCurrentView() {
+            calendarCache.removeValue(forKey: key)
+        }
+    }
+    private var lastStatsLineSignature: String?
+
     /// 连续写作行：网页 .cal-stats（13.5 灰、数字墨色加粗、16pt 橙色火苗图标）。
     /// 火苗图为本批新建的 icon_fire 资产（beary.html #beary-fire sprite 路径渲染）。
     /// 任一可视月份失败时整行变重试入口（G14）；在途/缺失月份不出加载态（无“日历加载中…”）。
@@ -2258,6 +2265,10 @@ class BearyTimelineViewController: UIViewController {
         let visibleKeys = monthKeysForCurrentView()
         let anyVisibleFailed = visibleKeys.contains { calendarFailed.contains($0) && calendarCache[$0] == nil }
         if anyVisibleFailed {
+            // 64 包反馈修（第 3 项）：失败态亦计签名，一致则不重碰按钮。
+            let signature = "fail"
+            guard signature != lastStatsLineSignature else { return }
+            lastStatsLineSignature = signature
             statsButton.setImage(nil, for: .normal)
             statsButton.setAttributedTitle(nil, for: .normal)
             statsButton.setTitle("日历加载失败，点击重试", for: .normal)
@@ -2265,11 +2276,18 @@ class BearyTimelineViewController: UIViewController {
             return
         }
         guard let primaryKey = primaryKey, let data = calendarCache[primaryKey] else {
+            let signature = "empty"
+            guard signature != lastStatsLineSignature else { return }
+            lastStatsLineSignature = signature
             statsButton.setImage(nil, for: .normal)
             statsButton.setAttributedTitle(nil, for: .normal)
             statsButton.setTitle("", for: .normal)
             return
         }
+        // 64 包反馈修（第 3 项）：值一致直接返回——切日期、翻页、月份回包都不重渲染该行。
+        let signature = "\(primaryKey)|\(data.streak ?? 0)|\(data.monthTotal ?? 0)"
+        guard signature != lastStatsLineSignature else { return }
+        lastStatsLineSignature = signature
         statsButton.setImage(BearyIconImages.image(named: "icon_fire", pointSize: 16), for: .normal)
         statsButton.tintColor = BearyColors.orange
         statsButton.imageEdgeInsets = UIEdgeInsets(top: 0, left: 0, bottom: 0, right: 6)
@@ -2890,20 +2908,23 @@ class BearyTimelineViewController: UIViewController {
             guard let moved = BearyBeijingDay.shiftedMonth(year: displayed.year, month: displayed.month, byMonths: delta) else { return }
             targetDisplayed = moved
         }
-        performCalendarTransition { [weak self] in
-            guard let strongSelf = self else { return }
-            strongSelf.calendarAnchor = targetAnchor
-            strongSelf.calendarDisplayedMonth = targetDisplayed
-            // 第 3 项：锚点改完即挂起跟随；缓存已齐时当场跟随，
-            // 未齐时月份到达后在 fetchCalendarMonth 回包里跟随。
-            if strongSelf.selectedDayKey != nil {
-                strongSelf.pendingStepFollow = true
-            }
-            strongSelf.fetchCalendarMonthsForCurrentView()
-            if strongSelf.pendingStepFollow {
-                _ = strongSelf.tryStepFollowSelection()
-            }
+        // 64 包反馈修（第 7 项）：翻页不再走 performCalendarTransition——旧路径先整卡
+        // 淡出 + 横移、再淡回并重挂 tableHeaderView，表头整块（时间线顶部到日历图底部）
+        // 肉眼可见闪一下；翻页只外科更新日历网格内容：锚点/月份直改、网格重渲（复用
+        // 的日期钮不重播动效）、表头高度同步直设（refreshHeaderHeight 本就无动画），
+        // 头部、统计、日历容器节点不重建、不重播动效。视图切换（周/月）仍走过渡动画。
+        calendarAnchor = targetAnchor
+        calendarDisplayedMonth = targetDisplayed
+        // 第 3 项：锚点改完即挂起跟随；缓存已齐时当场跟随，
+        // 未齐时月份到达后在 fetchCalendarMonth 回包里跟随。
+        if selectedDayKey != nil {
+            pendingStepFollow = true
         }
+        fetchCalendarMonthsForCurrentView()
+        if pendingStepFollow {
+            _ = tryStepFollowSelection()
+        }
+        refreshHeaderHeight()
     }
 
     // MARK: - 当日面板（TL-7/TL-8）

@@ -1,0 +1,24 @@
+{
+  "images": [
+    {
+      "idiom": "universal",
+      "filename": "part-notebook.png",
+      "scale": "1x"
+    },
+    {
+      "idiom": "universal",
+      "filename": "part-notebook-white.png",
+      "scale": "1x",
+      "appearances": [
+        {
+          "appearance": "luminosity",
+          "value": "dark"
+        }
+      ]
+    }
+  ],
+  "info": {
+    "version": 1,
+    "author": "xcode"
+  }
+}

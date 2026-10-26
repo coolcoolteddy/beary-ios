@@ -407,7 +407,10 @@ class BearyFeedViewController: UIViewController {
         if height > 0, self.ptrSpinner.isAnimating == false {
             self.ptrSpinner.startAnimating()
         }
-        self.ptrUpdateThresholdState(pulled: height >= PtrConstants.threshold, animated: true)
+        // 64 包回归修：阈值改按原始下拉量判定（网页手感 80pt），不再按阻尼后高度判定——
+        // 阻尼高 h = overscroll×0.48 封顶 116，达 80 需约 167pt 原始下拉，正常手势够不着、
+        // 永远取消；条带视觉仍走阻尼 h（84pt 保持、.32s 回弹不变），保功能优先于保手感。
+        self.ptrUpdateThresholdState(pulled: overscroll >= PtrConstants.threshold, animated: true)
     }
 
     /// 阈值穿越时才播圈的淡入/缩放（网页 #ptrIn 的 opacity .22s / transform .28s 过渡）；未穿越不重复播。
@@ -526,7 +529,9 @@ class BearyFeedViewController: UIViewController {
             return
         }
         // G26：登录态未知（网络失败）时不按游客态渲染游客脚标——与已登录同处理（隐藏脚标）。
-        if SessionManager.shared.isLoggedIn || SessionManager.shared.authUnknown {
+        // 64 包反馈修（第 17 项）：本地有有效会话 cookie 时首帧亦按缓存登录态（不闪游客脚标），
+        // 后台 /me 验出 401 后 isLoggedIn 翻游客、缓存过期失效，脚标自然恢复。
+        if SessionManager.shared.isLoggedIn || SessionManager.shared.authUnknown || SessionManager.shared.hasCachedSession {
             if tableView.tableFooterView != nil {
                 tableView.tableFooterView = nil
             }

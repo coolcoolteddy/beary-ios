@@ -89,7 +89,9 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
     private let columnWrap = UIView()
 
     // 页顶返回行：网页 .tl-backrow——返回钮 28 + gap 10 + “搜索”标题 16/700，
-    // 上下 padding 4/2；返回钮复用 chevron 右图旋转 180°（无新增资产）。
+    // 上下 padding 4/2；返回钮用 beary-back 24 墨（icon_back 资产，网页
+    // #srchBack .icon-btn 口径：.icon 24 + .icon-btn ink 色；.tl-acts 的
+    // 17px 规则只管 .tl-acts 内按钮，不适用于搜索返回行）。
     private let backRowView = UIView()
     private let backButton = BearyHit44Button(type: .custom)
     private let backTitleLabel = UILabel()
@@ -98,9 +100,10 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
     private let boxPlaceholderView = UIView()
 
     // 框下预留行：网页 .srch-hint——恒高 24、12.5 灰、gap 6、左右 padding 4，
-    // 平时透明占位（opacity 0），已有结果搜索中才显示“正在搜索…”。
+    // 平时透明占位（opacity 0），已有结果搜索中才显示“正在搜索…”；
+    // 转圈用官方 beary-loading 15（icon_loading 资产，1s 旋转），不用系统菊花。
     private let hintRowView = UIView()
-    private let hintSpinner = UIActivityIndicatorView(style: .medium)
+    private let hintSpinner = UIImageView()
     private let hintLabel = UILabel()
 
     // 搜索框：网页 .srch-box——高 50、边框 1.5 line、圆角 999（半高 25）、左右 16、gap 9。
@@ -137,6 +140,8 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         super.viewDidLayoutSubviews()
         updateColumnLayout()
         updateStickyBoxPosition()
+        // 旋转/列宽变化后刷新阴影 path（path 与 bounds 绑定，旧 path 会错位）。
+        updateSearchBoxShadow()
     }
 
     /// P2-1：宽 ≥821 时内容列 600 / 搜索框 568 居中，宽 ≤820 时内容列满宽 /
@@ -169,11 +174,12 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
     }
 
     /// 框下预留行显隐：只改透明度（.18s，网页 .srch-hint transition 同口径），高度恒 24。
+    /// 转圈是 beary-loading 图（网页 .srch-hint .icon.spin 1s 旋转），开/关同步起停。
     private func setSearchingHint(_ on: Bool) {
         if on {
-            hintSpinner.startAnimating()
+            BearyIconMotion.startSpin(on: hintSpinner, duration: 1.0, key: "bearyHintSpin")
         } else {
-            hintSpinner.stopAnimating()
+            BearyIconMotion.stopSpin(on: hintSpinner, key: "bearyHintSpin")
         }
         UIView.animate(withDuration: 0.18) {
             self.hintRowView.alpha = on ? 1 : 0
@@ -194,6 +200,9 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
 
     override func viewWillDisappear(_ animated: Bool) {
         super.viewWillDisappear(animated)
+        // 64 包反馈修：退出搜索页键盘跟随收走——模态/ push 离开走本回调时先收键盘，
+        // 容器 isHidden 切页不触发本回调，另由 SceneDelegate.showPage 离搜索分支收键盘。
+        view.endEditing(true)
         // 网页 closeSearch 口径：清防抖计时、序号 +1 使在途请求回包失效。
         searchTimer?.invalidate()
         searchTimer = nil
@@ -237,9 +246,8 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         contentStack.addArrangedSubview(backRowView)
 
         backButton.translatesAutoresizingMaskIntoConstraints = false
-        backButton.setImage(BearyIconImages.image(named: "icon_chevron_right", pointSize: 16), for: .normal)
-        backButton.tintColor = BearyColors.gray
-        backButton.imageView?.transform = CGAffineTransform(rotationAngle: CGFloat.pi)
+        backButton.setImage(BearyIconImages.image(named: "icon_back", pointSize: 24), for: .normal)
+        backButton.tintColor = BearyColors.ink
         backButton.accessibilityLabel = "返回"
         backButton.addTarget(self, action: #selector(backTapped), for: .touchUpInside)
         backRowView.addSubview(backButton)
@@ -259,9 +267,9 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         contentStack.addArrangedSubview(hintRowView)
 
         hintSpinner.translatesAutoresizingMaskIntoConstraints = false
-        hintSpinner.color = BearyColors.gray
-        hintSpinner.hidesWhenStopped = true
-        hintSpinner.transform = CGAffineTransform(scaleX: 0.75, y: 0.75)
+        hintSpinner.image = BearyIconImages.image(named: "icon_loading", pointSize: 15)
+        hintSpinner.tintColor = BearyColors.gray
+        hintSpinner.contentMode = .scaleAspectFit
         hintRowView.addSubview(hintSpinner)
 
         hintLabel.translatesAutoresizingMaskIntoConstraints = false
@@ -276,7 +284,8 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         searchBoxView.backgroundColor = BearyColors.bg
         searchBoxView.layer.borderWidth = 1.5
         searchBoxView.layer.cornerRadius = 25
-        searchBoxView.layer.masksToBounds = true
+        // 阴影须画出框外，masksToBounds 必须关；框内元素均有内边距，不会溢出圆角。
+        searchBoxView.layer.masksToBounds = false
         view.addSubview(searchBoxView)
 
         searchIconView.translatesAutoresizingMaskIntoConstraints = false
@@ -327,7 +336,9 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         stateWrap.addSubview(stateStack)
 
         stateCircle.translatesAutoresizingMaskIntoConstraints = false
-        stateCircle.backgroundColor = BearyColors.orange.withAlphaComponent(0.18)
+        // 网页 .addr-stic：橙 18% 混 surface（不是 18% 透明盖在 bg 上；
+        // 深色下 bg 纯黑、surface #26262c，两者差一档）。
+        stateCircle.backgroundColor = BearySearchViewController.mixedColor(BearyColors.orange, 0.18, over: BearyColors.surface)
         stateCircle.layer.borderWidth = 1
         stateCircle.layer.cornerRadius = 27
         stateCircle.layer.masksToBounds = true
@@ -421,6 +432,8 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
             hintRowView.heightAnchor.constraint(equalToConstant: 24),
             hintSpinner.leadingAnchor.constraint(equalTo: hintRowView.leadingAnchor, constant: 4),
             hintSpinner.centerYAnchor.constraint(equalTo: hintRowView.centerYAnchor),
+            hintSpinner.widthAnchor.constraint(equalToConstant: 15),
+            hintSpinner.heightAnchor.constraint(equalToConstant: 15),
             hintLabel.leadingAnchor.constraint(equalTo: hintSpinner.trailingAnchor, constant: 6),
             hintLabel.centerYAnchor.constraint(equalTo: hintRowView.centerYAnchor),
             hintLabel.trailingAnchor.constraint(lessThanOrEqualTo: hintRowView.trailingAnchor),
@@ -495,15 +508,80 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
     /// CGColor 不跟随深浅模式自动变：边框色一律这里集中刷新。
     private func updateBorderColors() {
         if searchBoxFocused {
-            // 网页 :focus-within 口径：边框取蓝 55% 混 line；边框色由
-            // traitCollectionDidChange → updateBorderColors 重赋。
-            searchBoxView.layer.borderColor = BearyColors.blue.withAlphaComponent(0.55).cgColor
+            // 网页 :focus-within 口径：边框取蓝 55% 混 line（color-mix，
+            // 不是蓝 55% 透明——深色下两者不同；原 withAlphaComponent 写法
+            // 在深色 line #3a3a40 上会偏蓝偏暗，随 E-G11 一并纠正）。
+            // 边框色由 traitCollectionDidChange → updateBorderColors 重赋。
+            searchBoxView.layer.borderColor = BearySearchViewController.mixedColor(BearyColors.blue, 0.55, over: BearyColors.line).cgColor
         } else {
             searchBoxView.layer.borderColor = BearyColors.line.cgColor
         }
         // 状态圆描边：网页 inset 1px 橙 25% 圈。
         stateCircle.layer.borderColor = BearyColors.orange.withAlphaComponent(0.25).cgColor
         retryButton.layer.borderColor = BearyColors.line.cgColor
+        updateSearchBoxShadow()
+    }
+
+    /// 网页 color-mix(in srgb, A w%, B) 的原生等价：按当前 trait 重解两色
+    /// 再按权重混 RGBA（BearyColors.alpha 只降透明度，混不出“盖在某色上”
+    /// 的效果；动态色闭包保证深浅切换后重解，不固化当前 trait）。
+    /// 本文件内专用（不改共享 BearyNativeCommon，避免波及其他路）。
+    private static func mixedColor(_ first: UIColor, _ weight: CGFloat, over second: UIColor) -> UIColor {
+        return UIColor { trait in
+            let a = rgbComponents(of: first.resolvedColor(with: trait))
+            let b = rgbComponents(of: second.resolvedColor(with: trait))
+            return UIColor(
+                red: a.0 * weight + b.0 * (1 - weight),
+                green: a.1 * weight + b.1 * (1 - weight),
+                blue: a.2 * weight + b.2 * (1 - weight),
+                alpha: a.3 * weight + b.3 * (1 - weight)
+            )
+        }
+    }
+
+    private static func rgbComponents(of color: UIColor) -> (CGFloat, CGFloat, CGFloat, CGFloat) {
+        var r: CGFloat = 0
+        var g: CGFloat = 0
+        var b: CGFloat = 0
+        var a: CGFloat = 0
+        if color.getRed(&r, green: &g, blue: &b, alpha: &a) {
+            return (r, g, b, a)
+        }
+        var w: CGFloat = 0
+        if color.getWhite(&w, alpha: &a) {
+            return (w, w, w, a)
+        }
+        return (0, 0, 0, 1)
+    }
+
+    /// 搜索框阴影（网页 .srch-box）：常态 0 4 14 黑 5%；聚焦时常态阴影
+    /// 被 :focus-within 的 2px 蓝 55% 外圈取代（不是叠加）。外圈用
+    /// radius 0 + 外扩 2px 的 shadowPath 实现实心环：框体不透明底盖住
+    /// path 内部，只露出框外 2px 一圈；path 随 bounds 更新（见
+    /// viewDidLayoutSubviews），旋转后不错位。
+    private func updateSearchBoxShadow() {
+        let bounds = searchBoxView.bounds
+        guard bounds.width > 0 && bounds.height > 0 else { return }
+        if searchBoxFocused {
+            let ring = BearySearchViewController.mixedColor(BearyColors.blue, 0.55, over: BearyColors.line)
+            searchBoxView.layer.shadowColor = ring.cgColor
+            searchBoxView.layer.shadowOpacity = 1
+            searchBoxView.layer.shadowOffset = CGSize.zero
+            searchBoxView.layer.shadowRadius = 0
+            searchBoxView.layer.shadowPath = UIBezierPath(
+                roundedRect: bounds.insetBy(dx: -2, dy: -2),
+                cornerRadius: 27
+            ).cgPath
+        } else {
+            searchBoxView.layer.shadowColor = UIColor.black.cgColor
+            searchBoxView.layer.shadowOpacity = 0.05
+            searchBoxView.layer.shadowOffset = CGSize(width: 0, height: 4)
+            searchBoxView.layer.shadowRadius = 14
+            searchBoxView.layer.shadowPath = UIBezierPath(
+                roundedRect: bounds,
+                cornerRadius: 25
+            ).cgPath
+        }
     }
 
     // MARK: - 输入与搜索
@@ -684,6 +762,10 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
                 }
             }
         }
+        // 64 包回归修：公开组直接用服务端 entries——服务端 SQL 已按 published=1 过滤，
+        // 且公开条目不下发 is_public 字段（2026-10-26 curl 实测 /beary/api/search?q=的 返回
+        // entries 均无 is_public）；旧的 isPublic == true 二次过滤把全部公开条目滤掉，
+        // 导致公开组恒空。我的组保留 is_public 过滤（服务端对 mine 下发 is_public）。
         let publicEntries = data.entries ?? []
         let users = data.users ?? []
         if mineEntries.isEmpty && publicEntries.isEmpty && users.isEmpty {
@@ -692,6 +774,10 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         }
         showingResults = true
         stateWrap.isHidden = true
+        // 64 包回归修：成功路径必须把 resultsStack 改回可见——showState（加载/失败/
+        // 无结果/初始）把它藏起后，旧代码只藏 stateWrap、从不恢复 resultsStack，
+        // 结果行加进隐藏的栈，全程不可见。
+        resultsStack.isHidden = false
         stateRingView.isHidden = true
         BearyIconMotion.stopSpin(on: stateRingView, key: "bearyStateSpin")
         clearResultRows()

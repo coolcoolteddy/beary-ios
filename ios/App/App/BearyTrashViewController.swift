@@ -289,9 +289,15 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate {
         closeButton.heightAnchor.constraint(equalToConstant: 32).isActive = true
         emptyIconView.widthAnchor.constraint(equalToConstant: 36).isActive = true
         emptyIconView.heightAnchor.constraint(equalToConstant: 36).isActive = true
-        // P2-1：全宽驱动用次高优先级（== contentWrap）；宽 ≤820 时两侧 ≥16 不等式（必需）
-        // 胜出得全宽减 32，宽 ≥821 时 600 上限（必需）胜出居中；上限开关在 viewDidLayoutSubviews。
-        let trashColWidth = contentStack.widthAnchor.constraint(equalTo: contentWrap.widthAnchor)
+        // P2-1：列宽 = 全宽减 32（两侧各 16），宽 ≥821 时 600 上限（必需）胜出居中；
+        // 上限开关在 viewDidLayoutSubviews。
+        // 64 包反馈修（第 5 项）：旧式子是 width == contentWrap.width（@750），与必需的
+        // centerX + 两侧 ≥16 不等式联立无解（居中满宽时 leading=0 < 16）——求解器只能
+        // 丢掉 @750 的宽约束，列宽于是退化成内容拟合：打开时只有标题/说明/转圈，列被
+        // 挤得很细，几秒后列表行到了才随内容撑开（截图即此态）。改成 width == wrap - 32
+        // 后与 centerX + 两侧 16 恰好联立有解，约束从首帧就定住全宽，不再先窄后撑；
+        // iPad 侧 600 上限（必需）仍高于 @750，照常胜出。
+        let trashColWidth = contentStack.widthAnchor.constraint(equalTo: contentWrap.widthAnchor, constant: -32)
         trashColWidth.priority = .defaultHigh
         let trashColCap = contentStack.widthAnchor.constraint(lessThanOrEqualToConstant: 600)
         trashColCapConstraint = trashColCap

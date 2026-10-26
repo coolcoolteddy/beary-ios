@@ -112,6 +112,16 @@ final class BearyChromeViewController: UIViewController {
     private var loginButton: UIButton!
     private var giftButton: UIButton!
     private var avatarButton: UIButton!
+    /// 顶栏 logo 钮（buildChrome 内建，veil 归位动画的目标锚点）。
+    private var topLogoButton: UIButton?
+    /// 64 包反馈修（第 18 项）启动 veil：系统 LaunchScreen.storyboard 本身有效
+    /// （Info.plist 有 UILaunchStoryboardName、storyboard 已进 Resources、Splash 图集
+    /// 浅/深两套齐全），但侧载覆盖安装时 iOS 常缓存旧启动图、且冷启动快时一闪而过，
+    /// 体感即“启动图没有效果”。App 内 veil 作保底：冷启动首帧必见品牌画面，
+    /// 走网页 launchVeil 口径（出现→停顿→归位顶栏 logo，减动效下静态直出）。
+    private var launchVeilView: UIView?
+    private var launchVeilLogo: UIImageView?
+    private var launchVeilPlayed = false
     private var bellBadge: UILabel!
     private var avatarURLString: String?
     /// 顶栏图标行（宽度相关间距：≤480 时 10，其余 18，见 layoutChromeOverlays）。
@@ -341,6 +351,7 @@ final class BearyChromeViewController: UIViewController {
         logo.addTarget(self, action: #selector(didTapLogo), for: .touchUpInside)
         logo.accessibilityLabel = "beary 首页"
         logo.translatesAutoresizingMaskIntoConstraints = false
+        topLogoButton = logo
         NSLayoutConstraint.activate([
             logo.widthAnchor.constraint(equalToConstant: 79),
             logo.heightAnchor.constraint(equalToConstant: 28),
@@ -431,7 +442,15 @@ final class BearyChromeViewController: UIViewController {
         // Li 2026-10-26 定：底栏也加 52 tint，与顶栏统一颜色；分段器本身无 tint 槽，
         // tint 落在衬底 contentView 上，值与顶栏 makeGlassView 调用点一字一致（bg 52%）；
         // BearyColors.bg 为动态色，withAlphaComponent 后仍跟随深浅，不写死黑白。
-        blur.contentView.backgroundColor = BearyColors.bg.withAlphaComponent(0.52)
+        // 64 包反馈修（第 10 项）：底栏衬底与选中格颜色对调——选中格改用本衬底原来的
+        // bg 52%（见下方 selectedSegmentTintColor）；衬底改用选中格原来的浅色 pill 色调。
+        // 系统默认选中色读不出来，故衬底侧只能写显式动态近似值（浅色白 0.60 / 深色白 0.18），
+        // 非系统原值——须向 Li 明示这是近似、由他真机 judge；顶栏 tint 口径 bg 52% 本项不动。
+        blur.contentView.backgroundColor = UIColor { trait in
+            trait.userInterfaceStyle == .dark
+                ? UIColor.white.withAlphaComponent(0.18)
+                : UIColor.white.withAlphaComponent(0.60)
+        }
         blur.translatesAutoresizingMaskIntoConstraints = false
         view.addSubview(blur)
         bottomBlurView = blur
@@ -450,6 +469,9 @@ final class BearyChromeViewController: UIViewController {
         ]
         let seg = BearyHit44SegmentedControl(items: tabIcons.map { segmentIcon(named: $0.0, systemFallback: $0.1) })
         seg.apportionsSegmentWidthsByContent = false
+        // 64 包反馈修（第 10 项）：选中格显式设为衬底原来的毛玻璃色调 bg 52%——
+        // 系统默认选中色读不出来，不依赖它；与衬底对调，深浅两态由 bg 动态色自动跟随。
+        seg.selectedSegmentTintColor = BearyColors.bg.withAlphaComponent(0.52)
         seg.selectedSegmentIndex = 0
         seg.accessibilityLabel = "底栏"
         seg.addTarget(self, action: #selector(bottomSegmentTouchDown), for: .touchDown)
@@ -776,9 +798,22 @@ final class BearyChromeViewController: UIViewController {
         buildChrome()
         // 审计 2：两侧背景层在栏之后建（插 view 最底层），布局由 viewDidLayoutSubviews 驱动。
         buildSideDeco()
-        // 初始态按未登录：登录钮显、头像与礼物钮藏；refreshMe 成功后 applyLoginState 再翻转（避免首帧两个钮同时出现）。
-        avatarButton.isHidden = true
-        giftButton.isHidden = true
+        // 初始态：本地有有效会话 cookie 时首帧直接按缓存登录态出（头像钮先显、
+        // 登录钮藏，头像占位等 refreshMe 回来后补真图），后台验出 401 才切游客态；
+        // 无 cookie 时仍按游客首帧。旧口径“恒按未登录首帧”会让已登录用户每次
+        // 重开都先见登录钮、几秒后才翻头像，体感即“检测几秒是否登录”。
+        // 首帧直设显隐（不走 setTopButtonVisible 的 0.25s 淡入淡出）。
+        if SessionManager.shared.hasCachedSession {
+            loginButton.isHidden = true
+            loginButton.alpha = 0
+            avatarButton.isHidden = false
+            avatarButton.alpha = 1
+            avatarButton.setImage(avatarInitialImage(for: nil), for: .normal)
+            giftButton.isHidden = true
+        } else {
+            avatarButton.isHidden = true
+            giftButton.isHidden = true
+        }
         // 栏初始即显示（不再等网页首推）；启动落点：直接亮原生列表。
         setBarsVisible(true, animated: false)
         showPage(.home)
@@ -856,12 +891,95 @@ final class BearyChromeViewController: UIViewController {
         foregroundObserver = NotificationCenter.default.addObserver(forName: UIApplication.willEnterForegroundNotification, object: nil, queue: .main) { [weak self] _ in
             self?.retryAvatarIfNeeded()
         }
+        // 64 包反馈修（第 18 项）：冷启动品牌 veil（viewDidLoad 挂首帧静态画面，
+        // viewDidAppear 跑出现→停顿→归位动画；只播一次，modal 回落不重播）。
+        installLaunchVeil()
     }
 
     override func viewDidAppear(_ animated: Bool) {
         super.viewDidAppear(animated)
         // 教程首次启动自动弹出（审计 N1 容器侧）：容器首次出现时检查 seen 标记。
         maybePresentTutorialOnFirstLaunch()
+        runLaunchVeilIfNeeded()
+    }
+
+    /// 64 包反馈修（第 18 项）：挂启动 veil 首帧静态画面（网页 launchVeil 口径：
+    /// 全屏 bg 底、抱信封小熊 162pt 宽、中心偏上 43% 处；深色由图集 dark 变体承接，
+    /// 与网页 invert(1) 同效）。动画在 viewDidAppear 跑（此时顶栏 logo 帧已定）。
+    private func installLaunchVeil() {
+        guard launchVeilView == nil else { return }
+        let veil = UIView()
+        veil.backgroundColor = BearyColors.bg
+        veil.translatesAutoresizingMaskIntoConstraints = false
+        view.addSubview(veil)
+        NSLayoutConstraint.activate([
+            veil.topAnchor.constraint(equalTo: view.topAnchor),
+            veil.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            veil.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            veil.bottomAnchor.constraint(equalTo: view.bottomAnchor),
+        ])
+        // 第 1 项新入图集的抱信封小熊（官方 beary-logos 原图，非主站资产）。
+        let logo = UIImageView(image: UIImage(named: "side_beary_icon"))
+        logo.contentMode = .scaleAspectFit
+        logo.translatesAutoresizingMaskIntoConstraints = false
+        veil.addSubview(logo)
+        NSLayoutConstraint.activate([
+            logo.centerXAnchor.constraint(equalTo: veil.centerXAnchor),
+            logo.widthAnchor.constraint(equalToConstant: 162),
+            logo.heightAnchor.constraint(equalToConstant: 162),
+            // 网页 launchVeil：logo 中心落在 43% 高度处（centerY = veil 高 × 0.43）。
+            NSLayoutConstraint(item: logo, attribute: .centerY, relatedBy: .equal,
+                               toItem: veil, attribute: .height, multiplier: 0.43, constant: 0),
+        ])
+        launchVeilView = veil
+        launchVeilLogo = logo
+        view.bringSubviewToFront(veil)
+        // 4 秒兜底（网页同口径）：动画链任何一环卡住都不留 veil 挡交互。
+        DispatchQueue.main.asyncAfter(deadline: .now() + 4) { [weak self] in
+            self?.removeLaunchVeil()
+        }
+    }
+
+    /// 64 包反馈修（第 18 项）：veil 动画链（网页 launchVeil 口径）——
+    /// logo 0.94→1 淡入 650ms → 停 200ms → logo 平移+缩到顶栏 logo 中心、veil 同步淡出 650ms；
+    /// 减动效或无可用目标时：淡入 180ms → 停 200ms → veil 淡出 180ms。只播一次。
+    private func runLaunchVeilIfNeeded() {
+        guard launchVeilPlayed == false, let veil = launchVeilView, let logo = launchVeilLogo else { return }
+        launchVeilPlayed = true
+        view.layoutIfNeeded()
+        let reduce = UIAccessibility.isReduceMotionEnabled
+        let targetFrame = topLogoButton?.convert(topLogoButton?.bounds ?? .zero, to: view)
+        let timing = UICubicTimingParameters(controlPoint1: CGPoint(x: 0.22, y: 1), controlPoint2: CGPoint(x: 0.36, y: 1))
+        logo.alpha = 0
+        logo.transform = CGAffineTransform(scaleX: 0.94, y: 0.94)
+        let fadeIn = UIViewPropertyAnimator(duration: reduce ? 0.18 : 0.65, timingParameters: timing)
+        fadeIn.addAnimations { logo.alpha = 1; logo.transform = .identity }
+        fadeIn.addCompletion { [weak self] _ in
+            guard let self = self, self.launchVeilView != nil else { return }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) { [weak self] in
+                guard let self = self, let veil = self.launchVeilView, let logo = self.launchVeilLogo else { return }
+                // 网页同口径的无目标守卫：目标缺失、零帧、或不在顶部 200pt 内时只淡出 veil。
+                if reduce || targetFrame == nil || targetFrame!.isEmpty || targetFrame!.origin.y < 0 || targetFrame!.origin.y > 200 {
+                    UIView.animate(withDuration: 0.18, animations: { veil.alpha = 0 }) { _ in self.removeLaunchVeil() }
+                    return
+                }
+                let target = targetFrame!
+                let dx = target.midX - logo.center.x
+                let dy = target.midY - logo.center.y
+                let scale = target.width / 162
+                UIView.animate(withDuration: 0.65, delay: 0, options: [.curveEaseOut], animations: {
+                    logo.transform = CGAffineTransform(translationX: dx, y: dy).scaledBy(x: scale, y: scale)
+                    veil.alpha = 0
+                }) { _ in self.removeLaunchVeil() }
+            }
+        }
+        fadeIn.startAnimation()
+    }
+
+    private func removeLaunchVeil() {
+        launchVeilView?.removeFromSuperview()
+        launchVeilView = nil
+        launchVeilLogo = nil
     }
 
     override func traitCollectionDidChange(_ previousTraitCollection: UITraitCollection?) {
@@ -1326,6 +1444,10 @@ final class BearyChromeViewController: UIViewController {
         } else if let prev = currentPage {
             pageView(for: prev).view.isHidden = true
         }
+        // 64 包反馈修：切 tab 离开旧页时统一收键盘——容器切页只改 isHidden，不触发
+        // 子页 appearance 回调，搜索页 viewWillDisappear 里的收键盘走不到这里；
+        // 非搜索页无第一响应者，本行是无害 no-op；返回/切 tab/其他入口离开全覆盖。
+        window?.endEditing(true)
         currentPage = page
         if page == .home {
             ensureFeedVC().view.isHidden = false
@@ -1346,8 +1468,10 @@ final class BearyChromeViewController: UIViewController {
         }
         updateTabSelection()
         updateDesktopLayout()
-        // 52 批：切页即按 header 规则定高——首页显示、他页收起（无动画，页切换本身已有淡入）。
-        setHeaderVisible(page == .home, animated: false)
+        // 64 包反馈修：52 批“他页恒收起无动画”决定作废——切页时顶栏收起/展开一并走
+        // setHeaderVisible 的 0.25s 高度动效（减动效时内部直达）；页切换淡入与顶栏
+        // 高度动画同向，不冲突。
+        setHeaderVisible(page == .home, animated: true)
         // E 批搜索藏栏（Li 2026-10-24 拍板：搜索页打开时 bnav + FAB 都藏）：
         // 容器切页只改 isHidden、不触发子页 appearance 回调，故藏/恢复只能落
         // 在唯一切页点 showPage，不走 SearchVC 生命周期（详情/登录等模态盖在
@@ -1919,7 +2043,10 @@ final class BearyChromeViewController: UIViewController {
         let c = BearyComposerViewController()
         c.onPublished = { [weak self] _ in
             self?.dismiss(animated: true) {
-                // 发帖落点是原生时间线，顺带刷新原生列表与时间线备下次回访
+                // 发帖落点是原生时间线，顺带刷新原生列表与时间线备下次回访。
+                // 64 包反馈修（第 3 项）：写新日记使统计失效（清签名 + 丢当月缓存），
+                // 否则 reloadTimeline 的非强制月份拉取命中旧缓存、统计恒旧。
+                self?.timelineVC?.invalidateStatsLine()
                 self?.showPage(.timeline)
                 self?.timelineVC?.reloadTimeline()
                 self?.feedVC?.refreshAll()
@@ -2000,14 +2127,18 @@ final class BearyChromeViewController: UIViewController {
 
     // MARK: - 审计 2 两侧 side-matrix 背景层（仅宽 ≥821）
     /// 网页锚点 teddy_site/beary.html:201-210（.side-matrix：sideFlow 30s linear
-    /// infinite、图标透明度 .34、减动效停播）与 :1061-1062（左右 .side-deco 容器）。
+    /// infinite、图标透明度 .34、减动效停播）与 :1061-1062（左右 .side-deco 容器）
+    /// 及 :2419-2421（SIDE_TILE / SIDE_FILES）。
     /// 纯装饰：容器插在 view 最底层（at:0，页/栏在其上）、isUserInteractionEnabled=false，
     /// 不拦截触摸；内容列 600、底栏、FAB 的约束一字不动，只在两侧留白处铺图。
-    /// 资产说明：网页侧图走 img.teddyhn.com/logos 远端图，原生侧不为装饰层发网络请求，
-    /// 故用本地同款资产代位——icon/stack/部件位用 bear_watermark（40/52/30pt，
-    /// template + ink 着色，深色下近白，与网页深色换白图同口径），wordmark 位用
-    /// LogoHorizontal（60×30，资产自带深色白图）。平铺周期与网页一致（横 4 格 344pt、
-    /// 纵 2 格 164pt 的整数倍 328pt），30s 平移动画循环回跳时图案无缝。
+    /// 资产：用且只用网页那套图形——img.teddyhn.com/logos 的 5 张原图已落本地图集
+    /// （beary-logos.zip 原文件，浅色原图 + 深色 -white 变体，不再用主站资产代位）：
+    /// icon=side_beary_icon（beary-icon-large）、stack=side_beary_stack
+    /// （beary-logo-stacked）、wordmark=side_beary_word（beary-wordmark）、
+    /// part-envelope=side_part_envelope、part-notebook=side_part_notebook。
+    /// 原图不 tint、不 template（网页亦不着色，深色靠 -white 变体），透明度 .34。
+    /// 平铺周期与网页一致（横 4 格 344pt、纵 2 格 164pt 的整数倍 328pt），
+    /// 30s 平移动画循环回跳时图案无缝。
     private func buildSideDeco() {
         let left = UIView()
         left.backgroundColor = .clear
@@ -2074,26 +2205,21 @@ final class BearyChromeViewController: UIViewController {
         matrix.isUserInteractionEnabled = false
         matrix.frame = CGRect(x: -344, y: -328, width: width + 688, height: height + 656)
         container.addSubview(matrix)
-        // 网页 SIDE_TILE（beary.html:2419）：行 0 [icon, wordmark, stack, part]，
-        // 行 1 [part, part, part, wordmark]；元组 =（资产位，宽，高）。
+        // 网页 SIDE_TILE（beary.html:2419）：行 0 [icon, wordmark, stack, part-envelope]，
+        // 行 1 [part-notebook, part-envelope, part-notebook, wordmark]；元组 =（图集名，宽，高），
+        // 尺寸与网页 .sd-icon/.sd-stack/.sd-word/.sd-part 一字一致（40/52/60×30/30）。
         let pattern: [[(String, CGFloat, CGFloat)]] = [
-            [("bear", 40, 40), ("logo", 60, 30), ("bear", 52, 52), ("bear", 30, 30)],
-            [("bear", 30, 30), ("bear", 30, 30), ("bear", 30, 30), ("logo", 60, 30)],
+            [("side_beary_icon", 40, 40), ("side_beary_word", 60, 30), ("side_beary_stack", 52, 52), ("side_part_envelope", 30, 30)],
+            [("side_part_notebook", 30, 30), ("side_part_envelope", 30, 30), ("side_part_notebook", 30, 30), ("side_beary_word", 60, 30)],
         ]
-        let bearImage = UIImage(named: "bear_watermark")?.withRenderingMode(.alwaysTemplate)
-        let logoImage = UIImage(named: "LogoHorizontal")
         let cols = Int(ceil(matrix.bounds.width / 86)) + 1
         let rows = Int(ceil(matrix.bounds.height / 82)) + 1
         for row in 0..<rows {
             for col in 0..<cols {
                 let tile = pattern[row % 2][col % 4]
                 let imageView = UIImageView()
-                if tile.0 == "logo" {
-                    imageView.image = logoImage
-                } else {
-                    imageView.image = bearImage
-                    imageView.tintColor = ink
-                }
+                // 网页原图直出：不 template、不 tint（深色由图集 dark 变体承接）。
+                imageView.image = UIImage(named: tile.0)
                 imageView.contentMode = .scaleAspectFit
                 imageView.alpha = 0.34
                 imageView.frame = CGRect(
