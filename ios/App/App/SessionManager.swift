@@ -41,9 +41,19 @@ final class SessionManager {
 
     private let api = BearyAPI.shared
 
+    /// 账号隔离 3 号：登录代际。每次权威登录态变迁（显式退出、401 清态、
+    /// refreshMe 成功且用户 id 变化）+1；refreshMe 回包与 BearyAPI 的 401
+    /// 回调只认当前代际，过期回包一律丢弃，不得覆盖当前态。
+    private var sessionGeneration = 0
+    /// refreshMe 请求序号：每次调用 +1，回包只认最新一次，旧请求回包
+    /// （含成功与 401 映射的 success(nil)）直接丢弃、不调 completion。
+    private var meSeq = 0
+
     private init() {
         api.onUnauthorized = { [weak self] in
             guard let self = self else { return }
+            self.purgeImageCacheForCurrentAccount()
+            self.sessionGeneration += 1
             self.currentUser = nil
             self.authUnknown = false
             self.notifyUserChanged(nil)
@@ -64,12 +74,26 @@ final class SessionManager {
     }
 
     func refreshMe(completion: ((Result<MeUser?, APIError>) -> Void)? = nil) {
+        meSeq += 1
+        let seq = meSeq
+        let previousUserId = currentUser?.id
         api.fetchMe { [weak self] result in
             guard let self = self else { return }
+            // 账号隔离 3 号：旧 refreshMe 回包直接丢弃（新登录后的旧请求
+            // 成功回包不得把旧用户写回，旧 401 映射的 nil 也不得清掉新态）。
+            guard seq == self.meSeq else { return }
             switch result {
             case .success(let user):
                 self.authUnknown = false
-                self.currentUser = user
+                // 用户 id 变化即权威登录态变迁：先应用新态，再推代际，
+                // 使此前在途请求的 401 回调（BearyAPI 侧 epoch 校验）失效。
+                if user?.id != previousUserId {
+                    self.currentUser = user
+                    self.sessionGeneration += 1
+                    self.api.bumpAuthEpoch()
+                } else {
+                    self.currentUser = user
+                }
                 self.notifyUserChanged(user)
                 completion?(.success(user))
             case .failure(let e):
@@ -97,9 +121,20 @@ final class SessionManager {
 
     /// 显式退出：服务端会话已清后调（登出接口成功后），清本地用户态并通知界面。
     func signOutLocally() {
+        purgeImageCacheForCurrentAccount()
+        sessionGeneration += 1
+        api.bumpAuthEpoch()
         currentUser = nil
         authUnknown = false
         notifyUserChanged(nil)
+    }
+
+    /// 账号隔离 4 号：退出/401 清态时清掉该账号的图片缓存（内存全清 +
+    /// 该账号磁盘目录删除）。切换账号（不退出）不走这里，旧账号磁盘保留、
+    /// 仅由容器 setAccount 切键 + 清内存，见 SceneDelegate onUserChanged。
+    private func purgeImageCacheForCurrentAccount() {
+        guard let id = currentUser?.id else { return }
+        BearyImageLoader.shared.purgeAccount(id)
     }
 
     private func isBearyCookie(_ cookie: HTTPCookie) -> Bool {
