@@ -2634,7 +2634,7 @@ extension BearyProfileViewController: UITableViewDataSource, UITableViewDelegate
 // MARK: - 列表行（网页公开卡同款：写给标记 / 作者行 / 正文折叠 / 引用卡 /
 // 图片条 / 点赞收藏分享 / 回应行；互动经控制器回调，不在本行内发请求）
 
-private class BearyProfileEntryCell: UITableViewCell, UIGestureRecognizerDelegate {
+private class BearyProfileEntryCell: UITableViewCell {
 
     var onLike: (() -> Void)?
     var onBookmark: (() -> Void)?
@@ -3128,7 +3128,7 @@ private class BearyProfileEntryCell: UITableViewCell, UIGestureRecognizerDelegat
 
     /// Q9 长按互斥：按钮（点赞/收藏/分享/回应/折叠）与图片灯箱、
     /// 引用卡上的触摸不触发长按菜单，各自原有手势照常走。
-    func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldReceive touch: UITouch) -> Bool {
+    override func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldReceive touch: UITouch) -> Bool {
         var view: UIView? = touch.view
         while let current = view {
             if current is UIButton { return false }
