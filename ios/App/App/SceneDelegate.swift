@@ -1447,7 +1447,9 @@ final class BearyChromeViewController: UIViewController {
         // 64 包反馈修：切 tab 离开旧页时统一收键盘——容器切页只改 isHidden，不触发
         // 子页 appearance 回调，搜索页 viewWillDisappear 里的收键盘走不到这里；
         // 非搜索页无第一响应者，本行是无害 no-op；返回/切 tab/其他入口离开全覆盖。
-        window?.endEditing(true)
+        // 注意：此处是 BearyChromeViewController，没有 window 属性，用 view.endEditing
+        // 覆盖整棵子树（含搜索框），与 window?.endEditing 等效；裸 window 在此作用域编不过。
+        view.endEditing(true)
         currentPage = page
         if page == .home {
             ensureFeedVC().view.isHidden = false
