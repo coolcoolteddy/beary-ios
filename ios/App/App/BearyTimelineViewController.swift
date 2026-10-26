@@ -1041,16 +1041,15 @@ final class BearyTimelineCell: UITableViewCell {
         deleteButton.alpha = 0.5
         deleteButton.addTarget(self, action: #selector(deleteTapped), for: .touchUpInside)
         publishButton.translatesAutoresizingMaskIntoConstraints = false
-        publishButton.setTitle("公开", for: .normal)
-        // B-G6: web .obtn.o - 1px line border, 14 ink text, radius 20, height 44, 12 sides.
-        publishButton.titleLabel?.font = UIFont.systemFont(ofSize: 14)
-        publishButton.setTitleColor(BearyColors.ink, for: .normal)
-        publishButton.layer.borderWidth = 1
-        publishButton.layer.borderColor = BearyColors.line.cgColor
-        publishButton.layer.cornerRadius = 20
-        publishButton.layer.masksToBounds = true
-        publishButton.contentEdgeInsets = UIEdgeInsets(top: 0, left: 12, bottom: 0, right: 12)
+        // 公开钮图标化（Li 2026-10-26 定：v3 public globe）：22pt 墨色图标、44×44，与编辑/删除同行齐平；无边框、无文字。
+        if let globeImage = BearyIconImages.image(named: "icon_globe", pointSize: 22) {
+            publishButton.setImage(globeImage, for: .normal)
+        }
+        publishButton.tintColor = BearyColors.ink
+        publishButton.imageView?.contentMode = .scaleAspectFit
+        publishButton.accessibilityLabel = "公开"
         publishButton.heightAnchor.constraint(equalToConstant: 44).isActive = true
+        publishButton.widthAnchor.constraint(equalToConstant: 44).isActive = true
         publishButton.addTarget(self, action: #selector(publishTapped), for: .touchUpInside)
         pendingCountdownLabel.font = UIFont.systemFont(ofSize: 13)
         pendingCountdownLabel.textColor = BearyColors.gray
@@ -1153,7 +1152,6 @@ final class BearyTimelineCell: UITableViewCell {
             dotView.layer.borderColor = BearyColors.bg.cgColor
         }
         quoteLeftLineView.backgroundColor = BearyColors.line
-        publishButton.layer.borderColor = BearyColors.line.cgColor
     }
 
     /// U14：行点按给卡片短暂 faint 底色（selectionStyle 已是 .none，
