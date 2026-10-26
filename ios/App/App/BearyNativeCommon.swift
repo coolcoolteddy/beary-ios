@@ -121,7 +121,8 @@ final class BearyGlassButton: BearyHit44Button {
 // BearyHit44Button / BearyHit44SegmentedControl：point(inside:) 向外扩到至少 44x44，
 // 小于 44 的轴按 (44-边长)/2 向两侧扩，已达 44 的轴不扩；不改约束、不改图标、不改布局。
 // 先例：SceneDelegate 的 BearyHitExpandingButton（32 视觉扩 4pt 至 40）；本类是其通用版。
-final class BearyHit44Button: UIButton {
+// final 已摘：BearyGlassButton 继承此类（玻璃批 CI 报错 inheritance from a final class 的修法；除继承外无其他影响）。
+class BearyHit44Button: UIButton {
     override func point(inside point: CGPoint, with event: UIEvent?) -> Bool {
         let dx: CGFloat = bounds.width < 44 ? (44 - bounds.width) / 2 : 0
         let dy: CGFloat = bounds.height < 44 ? (44 - bounds.height) / 2 : 0
