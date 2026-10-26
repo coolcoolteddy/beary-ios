@@ -1791,6 +1791,19 @@ extension BearyFeedViewController: UITableViewDataSource, UITableViewDelegate {
         loadPlazaNextPage()
     }
 
+    /// 动画批 11 号离屏停播：行离屏即停其全部表情（含回应流 chips）。
+    func tableView(_ tableView: UITableView, didEndDisplaying cell: UITableViewCell, forRowAt indexPath: IndexPath) {
+        cell.stopAllBearyEmotes()
+    }
+
+    /// 动画批 11 号：切 tab 离页时停掉本页可见行全部表情（容器只改 isHidden，
+    /// 不触发 didEndDisplaying、不离窗，播放器侧无法自停）。
+    func stopVisibleEmotes() {
+        for cell in tableView.visibleCells {
+            cell.stopAllBearyEmotes()
+        }
+    }
+
     /// 滚动藏栏（清单第 2 项首页部分）：主滚动视图向下超过 120pt 后藏栏、向上即显栏；
     /// 栏态变化时才调容器 helper（FAB 同隐同现由容器 helper 负责，本文件不动 FAB）。
     /// 阈值 120pt 为本 lane 自定：避开顶部小幅滚动就藏栏；总协调可调。
