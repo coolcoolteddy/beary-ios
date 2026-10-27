@@ -1780,7 +1780,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, U
         quotePanelEmptyLabel.text = "还没有可引用的日记"
         quotePanelEmptyLabel.isHidden = true
         quotePanelRetryButton.translatesAutoresizingMaskIntoConstraints = false
-        quotePanelRetryButton.setTitle("加载失败，点击重试", for: .normal)
+        quotePanelRetryButton.setTitle("加载失败，重试", for: .normal)
         quotePanelRetryButton.setTitleColor(BearyColors.blue, for: .normal)
         quotePanelRetryButton.titleLabel?.font = UIFont.systemFont(ofSize: 15)
         quotePanelRetryButton.isHidden = true
