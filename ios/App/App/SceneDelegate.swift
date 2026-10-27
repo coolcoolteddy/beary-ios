@@ -2240,7 +2240,9 @@ final class BearyChromeViewController: UIViewController {
                 _ = ensureUserVC()
                 userVC?.view.isHidden = false
             }
-            userVC?.locateEntry(entryId: entryId)
+            // 引用点按快路径：已拉到的单篇直接落点（按序插入日记 tab 并滚动高亮），
+            // 不再逐页翻查；之后正常翻页追加时按 id 去重，不会重复行。
+            userVC?.locateEntry(entry: entry)
             return
         }
         gotoEntry(entryId: entryId)
@@ -2250,6 +2252,16 @@ final class BearyChromeViewController: UIViewController {
     /// 拉不到（已删/无权）时 toast，不跳页。
     private func gotoEntry(entryId: String) {
         guard !entryId.isEmpty else { return }
+        // 引用点按快路径：引用卡渲染时已拉过单篇并进了 quoteCache（带 authorId/isMine/createdAt），
+        // 直接用缓存定作者，不再为定作者多发一次请求；缓存缺失或无作者信息时走原有拉取路径。
+        if let cached = BearyDiaryCardCell.quoteCache[entryId],
+           cached.authorId != nil || cached.isMine == true {
+            gotoEntry(entry: cached)
+            return
+        }
+        // 定位进行中的轻量指示：拉取往返期间卡片无反应是本次反馈的体感来源之一；
+        // toast 2 秒自清、后到的失败 toast 会清掉它，不做乐观假定位。
+        showToast(message: "正在打开…")
         BearyAPI.shared.fetchEntry(id: entryId) { [weak self] result in
             DispatchQueue.main.async {
                 guard let self = self else { return }
