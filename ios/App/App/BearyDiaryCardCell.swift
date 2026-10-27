@@ -487,7 +487,8 @@ class BearyDiaryCardCell: UITableViewCell {
     private let nameLabel: UILabel = {
         let lb = UILabel()
         lb.translatesAutoresizingMaskIntoConstraints = false
-        lb.font = UIFont.boldSystemFont(ofSize: 16.5)
+        lb.font = BearyDynamicType.cardTitleFont()
+        lb.adjustsFontForContentSizeCategory = true
         lb.textColor = BearyColors.ink
         lb.numberOfLines = 1
         return lb
@@ -577,7 +578,8 @@ class BearyDiaryCardCell: UITableViewCell {
     private let contentLabel: UILabel = {
         let lb = UILabel()
         lb.translatesAutoresizingMaskIntoConstraints = false
-        lb.font = UIFont.systemFont(ofSize: 16)
+        lb.font = BearyDynamicType.diaryBodyFont()
+        lb.adjustsFontForContentSizeCategory = true
         lb.textColor = BearyColors.ink
         lb.numberOfLines = 0
         // P3-3：长串断行——超长无空格 token 按字符断行，不溢出；字号行高不动。
@@ -1114,8 +1116,11 @@ class BearyDiaryCardCell: UITableViewCell {
         paragraph.lineHeightMultiple = 1.6
         // P3-3：富文本段落样式会覆盖 label 的 lineBreakMode，此处同步按字符断行（字号行高不动）。
         paragraph.lineBreakMode = .byCharWrapping
+        // C8：16pt 正文走 scaledFont（Feed 模式正文/折叠实测）；15pt 个人主页
+        // 正文不在本批口径内，原样 systemFont，不扩大。
+        let bodyFont = fontSize == 16 ? BearyDynamicType.diaryBodyFont() : UIFont.systemFont(ofSize: fontSize)
         let attrs: [NSAttributedString.Key: Any] = [
-            .font: UIFont.systemFont(ofSize: fontSize),
+            .font: bodyFont,
             .foregroundColor: BearyColors.ink,
             .paragraphStyle: paragraph,
         ]

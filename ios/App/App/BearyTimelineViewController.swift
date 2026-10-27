@@ -984,7 +984,8 @@ final class BearyTimelineCell: UITableViewCell {
         metaStack.alignment = .center
 
         contentLabel.translatesAutoresizingMaskIntoConstraints = false
-        contentLabel.font = UIFont.systemFont(ofSize: 16)
+        contentLabel.font = BearyDynamicType.diaryBodyFont()
+        contentLabel.adjustsFontForContentSizeCategory = true
         contentLabel.textColor = BearyColors.ink
         contentLabel.numberOfLines = 0
         contentLabel.lineBreakMode = .byCharWrapping
@@ -1406,7 +1407,7 @@ final class BearyTimelineCell: UITableViewCell {
         paragraph.lineBreakMode = .byCharWrapping
         let body = entry.content ?? ""
         contentLabel.attributedText = NSAttributedString(string: body, attributes: [
-            .font: UIFont.systemFont(ofSize: 16),
+            .font: BearyDynamicType.diaryBodyFont(),
             .foregroundColor: BearyColors.ink,
             .paragraphStyle: paragraph,
         ])

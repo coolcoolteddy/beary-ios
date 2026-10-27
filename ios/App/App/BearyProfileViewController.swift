@@ -246,6 +246,81 @@ class BearyProfileViewController: UIViewController {
     private var likedHasMore = true
     private var savedHasMore = true
     private var tabLoading = false
+
+    /// C9 首屏骨架屏：只覆盖本页首屏无缓存加载（首个 loadTab 发起时当前标签尚无
+    /// 条目）。有缓存的标签切换走 loadTabBackground 回填、分页走 loadMoreIfNeeded、
+    /// 下拉刷新时已有内容——三者一律不显骨架；profileSkeletonShown 保证本页一生只显一次。
+    /// 显隐只跟 handleTabResult 回包走（成功/失败都隐，失败后由页脚错误态接管，
+    /// 骨架不滞留）；隐藏时真实行已 reloadData 落表，再交叉溶解，不与真实卡片叠加。
+    private var profileSkeletonVisible = false
+    private var profileSkeletonShown = false
+    private var profileSkeletonTopConstraint: NSLayoutConstraint?
+    private lazy var profileSkeletonView: UIView = {
+        let container = UIView()
+        container.translatesAutoresizingMaskIntoConstraints = false
+        container.backgroundColor = BearyColors.bg
+        container.isHidden = true
+        container.isUserInteractionEnabled = false
+        let stack = UIStackView()
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        stack.axis = .vertical
+        stack.spacing = 12
+        for _ in 0..<3 {
+            let card = BearySkeletonCardView()
+            stack.addArrangedSubview(card)
+        }
+        container.addSubview(stack)
+        // 底约束降一档：小屏上资料头 + 3 张骨架可能超屏高，宁可骨架伸出容器
+        // （容器不裁剪，仍完整绘制），不触发约束冲突日志。
+        let stackBottom = stack.bottomAnchor.constraint(equalTo: container.bottomAnchor)
+        stackBottom.priority = .defaultHigh
+        NSLayoutConstraint.activate([
+            stack.topAnchor.constraint(equalTo: container.topAnchor, constant: 12),
+            stack.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 16),
+            stack.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -16),
+            stackBottom,
+        ])
+        return container
+    }()
+    private var profileSkeletonCards: [BearySkeletonCardView] {
+        guard let stack = profileSkeletonView.subviews.first as? UIStackView else { return [] }
+        return stack.arrangedSubviews.compactMap { $0 as? BearySkeletonCardView }
+    }
+
+    /// C9：骨架顶 = 资料头高度（骨架只盖日记列表区，不盖资料头）。
+    private func updateProfileSkeletonTop() {
+        profileSkeletonTopConstraint?.constant = tableView.tableHeaderView?.frame.height ?? 0
+    }
+
+    /// C9：首屏骨架显（幂等，本页只显一次）。
+    private func showProfileSkeleton() {
+        guard profileSkeletonVisible == false, profileSkeletonShown == false else { return }
+        profileSkeletonVisible = true
+        profileSkeletonShown = true
+        updateProfileSkeletonTop()
+        profileSkeletonView.isHidden = false
+        profileSkeletonView.alpha = 1
+        profileSkeletonCards.forEach { $0.startBreathing() }
+    }
+
+    /// C9：骨架隐（幂等；调用时真实行已落表）。减动效直隐，其余 0.28s 交叉溶解。
+    private func hideProfileSkeleton() {
+        guard profileSkeletonVisible else { return }
+        profileSkeletonVisible = false
+        profileSkeletonCards.forEach { $0.stopBreathing() }
+        if UIAccessibility.isReduceMotionEnabled {
+            profileSkeletonView.isHidden = true
+            profileSkeletonView.alpha = 1
+        } else {
+            UIView.transition(with: profileSkeletonView, duration: 0.28, options: [.transitionCrossDissolve, .curveEaseInOut], animations: {
+                self.profileSkeletonView.alpha = 0
+            }, completion: { [weak self] _ in
+                guard let strongSelf = self, strongSelf.profileSkeletonVisible == false else { return }
+                strongSelf.profileSkeletonView.isHidden = true
+                strongSelf.profileSkeletonView.alpha = 1
+            })
+        }
+    }
     private var tabLoadMore = false
     private var tabError = false
     private var headerLaidOutWidth: CGFloat = 0
@@ -501,8 +576,9 @@ class BearyProfileViewController: UIViewController {
     private let topNameLabel: UILabel = {
         let labelValue = UILabel()
         labelValue.translatesAutoresizingMaskIntoConstraints = false
-        // F20：顶栏名 16/700 → 17/800。
-        labelValue.font = UIFont.systemFont(ofSize: 17, weight: .heavy)
+        // F20：顶栏名 16/700 → 17/800；C8：modal 顶栏固定 44pt，字号上限 20pt 防撑破。
+        labelValue.font = BearyDynamicType.cappedFont(for: UIFont.systemFont(ofSize: 17, weight: .heavy))
+        labelValue.adjustsFontForContentSizeCategory = true
         labelValue.textColor = BearyColors.ink
         labelValue.textAlignment = .center
         labelValue.text = "—"
@@ -742,6 +818,15 @@ class BearyProfileViewController: UIViewController {
             tableView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
         ])
         tableView.tableHeaderView = headerView
+        view.addSubview(profileSkeletonView)
+        let skeletonTop = profileSkeletonView.topAnchor.constraint(equalTo: tableView.topAnchor, constant: 0)
+        self.profileSkeletonTopConstraint = skeletonTop
+        NSLayoutConstraint.activate([
+            skeletonTop,
+            profileSkeletonView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            profileSkeletonView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            profileSkeletonView.bottomAnchor.constraint(lessThanOrEqualTo: view.bottomAnchor),
+        ])
         if selfGate && viewerUserIdValue == nil {
             // U7：二选一取“只铺页脚”：不拉任何本人数据、不直接弹登录，
             // 弹登录交给页脚“去登录”按钮（loginButtonTapped → onRequireLogin）。
@@ -761,6 +846,7 @@ class BearyProfileViewController: UIViewController {
         super.viewDidLayoutSubviews()
         updateColumnLayout()
         layoutHeader()
+        updateProfileSkeletonTop()
         updateDynamicLayerColors()
     }
 
@@ -1673,6 +1759,9 @@ class BearyProfileViewController: UIViewController {
         guard let scopeValue = scopeForTab(tab: currentTab) else { return }
         if tabLoading || tabLoadMore { return }
         if forceReload {
+            if currentEntries.isEmpty {
+                showProfileSkeleton()
+            }
             tabLoading = true
             tabError = false
             refreshFooter()
@@ -1751,6 +1840,7 @@ class BearyProfileViewController: UIViewController {
             tabError = true
             tableView.reloadData()
         }
+        hideProfileSkeleton()
         refreshFooter()
         tableView.refreshControl?.endRefreshing()
         // 6A：tab 回包尾部消费定位挂起（日记 tab 内找到即滚到高亮，

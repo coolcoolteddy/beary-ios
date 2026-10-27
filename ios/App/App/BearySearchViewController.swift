@@ -1319,7 +1319,7 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         contentLabel.clipsToBounds = true
         // 横向栈内正文先让位：固定 44 宽缩略图不被挤，正文换行承接剩余宽度。
         contentLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-        contentLabel.attributedText = highlightedText(contentText, query: query, font: UIFont.systemFont(ofSize: 16), color: BearyColors.ink, lineHeightMultiple: 1.6, lineBreakMode: .byCharWrapping)
+        contentLabel.attributedText = highlightedText(contentText, query: query, font: BearyDynamicType.diaryBodyFont(), color: BearyColors.ink, lineHeightMultiple: 1.6, lineBreakMode: .byCharWrapping)
 
         let bodyRow = UIStackView()
         bodyRow.translatesAutoresizingMaskIntoConstraints = false
