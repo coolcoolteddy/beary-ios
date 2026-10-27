@@ -71,8 +71,6 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate {
     private let moreSpinner = UIActivityIndicatorView(style: .medium)
     private let loginWrap = UIStackView()
     private let loginButton = UIButton(type: .custom)
-    private let toastWrap = UIView()
-    private let toastLabel = UILabel()
 
     // MARK: - 生命周期
 
@@ -242,20 +240,7 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate {
         loginWrap.addArrangedSubview(loginTitleLabel)
         loginWrap.addArrangedSubview(loginButton)
 
-        // L6：toast 改带内边距容器（左右 14、上下 10），文字不再贴边。
-        toastWrap.backgroundColor = BearyColors.ink
-        toastWrap.layer.cornerRadius = 16
-        toastWrap.clipsToBounds = true
-        toastWrap.alpha = 0
-        toastWrap.translatesAutoresizingMaskIntoConstraints = false
-        toastLabel.font = UIFont.systemFont(ofSize: 14)
-        // 背景是 ink，文字取 bg 作反色：浅色黑底白字、深色白底黑字均可读。
-        toastLabel.textColor = BearyColors.bg
-        toastLabel.backgroundColor = .clear
-        toastLabel.textAlignment = .center
-        toastLabel.numberOfLines = 0
-        toastLabel.translatesAutoresizingMaskIntoConstraints = false
-
+        // toast 已委托 B 批统一 BearyToast（见 showToast），此处不再建常驻容器。
         view.addSubview(scrollView)
         scrollView.addSubview(contentWrap)
         contentWrap.addSubview(contentStack)
@@ -280,9 +265,6 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate {
         emptyWrap.addArrangedSubview(emptyIconView)
         emptyWrap.addArrangedSubview(emptyLabel)
         failureWrap.addArrangedSubview(failureStateView)
-        view.addSubview(toastWrap)
-        toastWrap.addSubview(toastLabel)
-
         contentStack.setCustomSpacing(6, after: headerRow)
         contentStack.setCustomSpacing(4, after: noteRow)
         contentStack.setCustomSpacing(10, after: listStack)
@@ -291,6 +273,8 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate {
     private func buildConstraints() {
         closeButton.widthAnchor.constraint(equalToConstant: 32).isActive = true
         closeButton.heightAnchor.constraint(equalToConstant: 32).isActive = true
+        // Hit44：头行高放开到 44（钮 32 在 stack 内居中，上下各留 6），热区不再被 32 高行截断；钮视觉尺寸不变。
+        headerRow.heightAnchor.constraint(equalToConstant: 44).isActive = true
         emptyIconView.widthAnchor.constraint(equalToConstant: 36).isActive = true
         emptyIconView.heightAnchor.constraint(equalToConstant: 36).isActive = true
         // P2-1：列宽 = 全宽减 32（两侧各 16），宽 ≥821 时 600 上限（必需）胜出居中；
@@ -322,14 +306,6 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate {
             trashColWidth,
             contentStack.leadingAnchor.constraint(greaterThanOrEqualTo: contentWrap.leadingAnchor, constant: 16),
             contentStack.trailingAnchor.constraint(lessThanOrEqualTo: contentWrap.trailingAnchor, constant: -16),
-            toastWrap.leadingAnchor.constraint(greaterThanOrEqualTo: view.leadingAnchor, constant: 20),
-            toastWrap.trailingAnchor.constraint(lessThanOrEqualTo: view.trailingAnchor, constant: -20),
-            toastWrap.centerXAnchor.constraint(equalTo: view.centerXAnchor),
-            toastWrap.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor, constant: -158),
-            toastLabel.topAnchor.constraint(equalTo: toastWrap.topAnchor, constant: 10),
-            toastLabel.bottomAnchor.constraint(equalTo: toastWrap.bottomAnchor, constant: -10),
-            toastLabel.leadingAnchor.constraint(equalTo: toastWrap.leadingAnchor, constant: 14),
-            toastLabel.trailingAnchor.constraint(equalTo: toastWrap.trailingAnchor, constant: -14),
         ])
     }
 
@@ -807,21 +783,12 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate {
         })
     }
 
-    // MARK: - 轻提示（网页 toast 的原生等价：底色 ink，自动消失）
+    // MARK: - 轻提示：委托 B 批统一 BearyToast。回收站是全屏模态，盖住
+    // Chrome 的 FAB，本页无可见 FAB，故 aboveFAB=false（落 -32，原 -158
+    // 悬空修掉）；展示时长由旧 1.6s 统一为 2.0s，调用签名与文案、触发时机不变。
 
     private func showToast(message: String) {
-        toastLabel.text = message
-        toastWrap.alpha = 0
-        UIView.animate(withDuration: 0.2, animations: {
-            self.toastWrap.alpha = 1
-        }, completion: { [weak self] _ in
-            guard let self = self else { return }
-            DispatchQueue.main.asyncAfter(deadline: .now() + 1.6) {
-                UIView.animate(withDuration: 0.3, animations: {
-                    self.toastWrap.alpha = 0
-                }, completion: nil)
-            }
-        })
+        BearyToast.show(in: view, message: message, aboveFAB: false)
     }
 }
 

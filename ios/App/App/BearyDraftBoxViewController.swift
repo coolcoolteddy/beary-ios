@@ -66,8 +66,6 @@ final class BearyDraftBoxViewController: UIViewController {
     private var bottomSpacerHeight: NSLayoutConstraint?
     /// G5：草稿库读取失败标记（loadAllResult 失败时置位，渲染时出失败态，不出空态）。
     private var draftsLoadFailed = false
-    /// G7：箱内轻提示的当前 toast 视图（新 toast 先清旧 toast）。
-    private var draftToastView: UIView?
     /// U18：把手外包容器（原 buildViews 内局部变量），下滑关闭手势挂在这里。
     private let handleWrapView = UIView()
 
@@ -254,13 +252,15 @@ final class BearyDraftBoxViewController: UIViewController {
         headerWrap.addSubview(closeButton)
         NSLayoutConstraint.activate([
             titleLabel.centerXAnchor.constraint(equalTo: headerWrap.centerXAnchor),
-            // 头高内容驱动：标题 15/700 + 上 6 + 下 4，约 29（原固定 42）。
+            // Hit44：头高改由关闭钮链驱动（钮 32 + 上 6 + 下 6 = 44），热区不再被约 34 高头截断；
+            // 标题底改 ≤，标题仍顶锚 6、位置不动。
             titleLabel.topAnchor.constraint(equalTo: headerWrap.topAnchor, constant: 6),
-            titleLabel.bottomAnchor.constraint(equalTo: headerWrap.bottomAnchor, constant: -4),
+            titleLabel.bottomAnchor.constraint(lessThanOrEqualTo: headerWrap.bottomAnchor, constant: -4),
             closeButton.widthAnchor.constraint(equalToConstant: 32),
             closeButton.heightAnchor.constraint(equalToConstant: 32),
             closeButton.trailingAnchor.constraint(equalTo: headerWrap.trailingAnchor, constant: -14),
-            closeButton.topAnchor.constraint(equalTo: headerWrap.topAnchor, constant: 2),
+            closeButton.topAnchor.constraint(equalTo: headerWrap.topAnchor, constant: 6),
+            closeButton.bottomAnchor.constraint(equalTo: headerWrap.bottomAnchor, constant: -6),
         ])
         contentStack.addArrangedSubview(headerWrap)
 
@@ -1111,60 +1111,12 @@ final class BearyDraftBoxViewController: UIViewController {
         }
     }
 
-    /// G7：箱内轻提示（墨底白字 toast，2 秒后淡出；减动效直接显隐）。
+    /// G7：箱内轻提示：委托 B 批统一 BearyToast。“新 toast 先清旧 toast”
+    /// 由统一组件内部承接（同容器旧 toast 先移除）。草稿箱是 overFullScreen
+    /// 模态，盖住 Chrome 的 FAB，本页无可见 FAB，故 aboveFAB=false（落 -32，
+    /// 原 -158 悬空修掉）。调用签名与文案、触发时机不变。
     private func showDraftToast(message: String) {
-        draftToastView?.removeFromSuperview()
-        draftToastView = nil
-        let toastView = UIView()
-        toastView.backgroundColor = BearyColors.ink
-        toastView.layer.cornerRadius = 12
-        toastView.clipsToBounds = true
-        toastView.translatesAutoresizingMaskIntoConstraints = false
-        let label = UILabel()
-        label.text = message
-        label.font = UIFont.systemFont(ofSize: 14)
-        label.textColor = BearyColors.bg
-        label.textAlignment = .center
-        label.numberOfLines = 0
-        label.translatesAutoresizingMaskIntoConstraints = false
-        toastView.addSubview(label)
-        NSLayoutConstraint.activate([
-            label.topAnchor.constraint(equalTo: toastView.topAnchor, constant: 12),
-            label.bottomAnchor.constraint(equalTo: toastView.bottomAnchor, constant: -12),
-            label.leadingAnchor.constraint(equalTo: toastView.leadingAnchor, constant: 16),
-            label.trailingAnchor.constraint(equalTo: toastView.trailingAnchor, constant: -16),
-        ])
-        view.addSubview(toastView)
-        NSLayoutConstraint.activate([
-            toastView.centerXAnchor.constraint(equalTo: view.centerXAnchor),
-            toastView.leadingAnchor.constraint(greaterThanOrEqualTo: view.leadingAnchor, constant: 20),
-            toastView.trailingAnchor.constraint(lessThanOrEqualTo: view.trailingAnchor, constant: -20),
-            toastView.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor, constant: -158),
-        ])
-        draftToastView = toastView
-        if UIAccessibility.isReduceMotionEnabled {
-            toastView.alpha = 1
-            DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak self] in
-                if self?.draftToastView === toastView {
-                    toastView.removeFromSuperview()
-                    self?.draftToastView = nil
-                }
-            }
-        } else {
-            toastView.alpha = 0
-            UIView.animate(withDuration: 0.2, animations: {
-                toastView.alpha = 1
-            }, completion: { _ in
-                UIView.animate(withDuration: 0.25, delay: 2, options: [], animations: {
-                    toastView.alpha = 0
-                }, completion: { _ in
-                    if self.draftToastView === toastView {
-                        toastView.removeFromSuperview()
-                        self.draftToastView = nil
-                    }
-                })
-            })
-        }
+        BearyToast.show(in: view, message: message, aboveFAB: false)
     }
 
     /// M20：撤销条淡入/滑入（减动效直接显示）。

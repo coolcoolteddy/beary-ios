@@ -1809,51 +1809,14 @@ final class BearyChromeViewController: UIViewController {
         topmostViewController().present(vc, animated: true)
     }
 
-    /// 容器级轻提示（A11 未登录“我”页、时间线删除失败等）：底栏分段器上方浮现，2 秒淡出。
+    /// 容器级轻提示（A11 未登录“我”页、时间线删除失败等）：委托 B 批统一
+    /// BearyToast。落点走现有栏显隐逻辑：FAB 容器由 setBarsVisible 同步
+    /// alpha + isUserInteractionEnabled，FAB 可见时抬至 FAB 顶之上（-158），
+    /// 栏隐藏时（搜索页等）落 -32，不再悬空。调用签名与文案不变。
     private func showToast(message: String) {
-        let toast = UIView()
-        toast.backgroundColor = BearyColors.ink
-        toast.layer.cornerRadius = 16
-        toast.translatesAutoresizingMaskIntoConstraints = false
-        let label = UILabel()
-        label.text = message
-        label.numberOfLines = 0
-        label.font = UIFont.systemFont(ofSize: 14)
-        label.textColor = BearyColors.bg
-        label.textAlignment = .center
-        label.translatesAutoresizingMaskIntoConstraints = false
-        toast.addSubview(label)
-        NSLayoutConstraint.activate([
-            label.leadingAnchor.constraint(equalTo: toast.leadingAnchor, constant: 16),
-            label.trailingAnchor.constraint(equalTo: toast.trailingAnchor, constant: -16),
-            label.topAnchor.constraint(equalTo: toast.topAnchor, constant: 8),
-            label.bottomAnchor.constraint(equalTo: toast.bottomAnchor, constant: -8),
-        ])
-        view.addSubview(toast)
-        view.bringSubviewToFront(toast)
-        NSLayoutConstraint.activate([
-            toast.centerXAnchor.constraint(equalTo: view.centerXAnchor),
-            // L20：底边抬至 FAB 顶（FAB 底边安全区 −92、高 54，顶为 −146）之上 12pt，
-            // 窄屏不再与 FAB 横向相擦；同时左右留 20pt 上限，避免超宽 toast 贴边。
-            toast.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor, constant: -158),
-            toast.leadingAnchor.constraint(greaterThanOrEqualTo: view.leadingAnchor, constant: 20),
-            toast.trailingAnchor.constraint(lessThanOrEqualTo: view.trailingAnchor, constant: -20),
-        ])
-        toast.alpha = 0
-        // A5-3（容器部分）：减动效时直接现身/直接消失，不播淡入淡出。
-        if UIAccessibility.isReduceMotionEnabled {
-            toast.alpha = 1
-            DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
-                toast.removeFromSuperview()
-            }
-        } else {
-            UIView.animate(withDuration: 0.25) { toast.alpha = 1 }
-            DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
-                UIView.animate(withDuration: 0.25, animations: { toast.alpha = 0 }) { _ in
-                    toast.removeFromSuperview()
-                }
-            }
-        }
+        let fabVisible = (fabContainerView?.alpha ?? 0) > 0
+            && (fabContainerView?.isUserInteractionEnabled == true)
+        BearyToast.show(in: view, message: message, aboveFAB: fabVisible)
     }
 
     /// 个人主页通用回调接线（我页与他人主页 modal 共用；onOpenEntry/onRequireLogin 各处自接）。
@@ -2039,7 +2002,7 @@ final class BearyChromeViewController: UIViewController {
     private func maybePresentOnboardingOnFirstLaunch() {
         guard !tutorialAutoPresented else { return }
         tutorialAutoPresented = true
-        guard !UserDefaults.standard.bool(forKey: BearyTutorialViewController.tutorialSeenKey) else { return }
+        guard !UserDefaults.standard.bool(forKey: BearyOnboardingViewController.tutorialSeenKey) else { return }
         guard presentedViewController == nil else { return }
         presentOnboarding(mode: .firstLaunch)
     }

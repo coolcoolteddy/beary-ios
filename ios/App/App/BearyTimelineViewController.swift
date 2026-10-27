@@ -1037,7 +1037,7 @@ final class BearyTimelineCell: UITableViewCell {
             editButton.setImage(editImage, for: .normal)
         }
         editButton.tintColor = BearyColors.gray
-        editButton.alpha = 0.5
+        editButton.alpha = 1
         editButton.addTarget(self, action: #selector(editTapped), for: .touchUpInside)
         editButton.bearyAddPressFeedback()
         if let trashImage = BearyIconImages.image(named: "icon_trash", pointSize: 17) {
@@ -1045,7 +1045,7 @@ final class BearyTimelineCell: UITableViewCell {
         }
         deleteButton.imageView?.contentMode = .scaleAspectFit
         deleteButton.tintColor = BearyColors.red
-        deleteButton.alpha = 0.5
+        deleteButton.alpha = 0.85
         deleteButton.addTarget(self, action: #selector(deleteTapped), for: .touchUpInside)
         deleteButton.bearyAddPressFeedback()
         publishButton.translatesAutoresizingMaskIntoConstraints = false
@@ -1073,7 +1073,7 @@ final class BearyTimelineCell: UITableViewCell {
         cancelPublishButton.isHidden = true
         actsStack.translatesAutoresizingMaskIntoConstraints = false
         actsStack.axis = .horizontal
-        actsStack.spacing = 6
+        actsStack.spacing = 14
         actsStack.alignment = .center
         let actsSpacer = UIView()
         // B-G6: publish button sits inline right after the edit status (web tl-acts
@@ -1828,9 +1828,6 @@ class BearyTimelineViewController: UIViewController {
     func clearStaggerEntries() { staggerInsertOrder.removeAll() }
     // M16：跳转提示当前 label 弱引用，消失时先做透明度过渡再移除。
     private weak var jumpNoteLabel: UILabel?
-    // G15：分页失败 toast（底色 ink，与回收站 toast 同口径）。
-    private let timelineToastWrap = UIView()
-    private let timelineToastLabel = UILabel()
     private var trashCountValue = 0
     private var countsValue: TlCounts?
     private var loginNotified = false
@@ -1947,29 +1944,8 @@ class BearyTimelineViewController: UIViewController {
         loadMoreButton.addTarget(self, action: #selector(didTapFooter), for: .touchUpInside)
         loadMoreButton.bearyAddPressHaptic()
         footerSpinner.color = BearyColors.gray
-        // G15 toast 容器：置于表之上、胶囊之上（底边安全区 -100），平时透明。
-        timelineToastWrap.backgroundColor = BearyColors.ink
-        timelineToastWrap.layer.cornerRadius = 16
-        timelineToastWrap.clipsToBounds = true
-        timelineToastWrap.alpha = 0
-        timelineToastWrap.translatesAutoresizingMaskIntoConstraints = false
-        timelineToastLabel.font = UIFont.systemFont(ofSize: 14)
-        timelineToastLabel.textColor = BearyColors.bg
-        timelineToastLabel.textAlignment = .center
-        timelineToastLabel.numberOfLines = 0
-        timelineToastLabel.translatesAutoresizingMaskIntoConstraints = false
-        view.addSubview(timelineToastWrap)
-        timelineToastWrap.addSubview(timelineToastLabel)
-        NSLayoutConstraint.activate([
-            timelineToastWrap.leadingAnchor.constraint(greaterThanOrEqualTo: view.leadingAnchor, constant: 20),
-            timelineToastWrap.trailingAnchor.constraint(lessThanOrEqualTo: view.trailingAnchor, constant: -20),
-            timelineToastWrap.centerXAnchor.constraint(equalTo: view.centerXAnchor),
-            timelineToastWrap.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor, constant: -158),
-            timelineToastLabel.topAnchor.constraint(equalTo: timelineToastWrap.topAnchor, constant: 10),
-            timelineToastLabel.bottomAnchor.constraint(equalTo: timelineToastWrap.bottomAnchor, constant: -10),
-            timelineToastLabel.leadingAnchor.constraint(equalTo: timelineToastWrap.leadingAnchor, constant: 14),
-            timelineToastLabel.trailingAnchor.constraint(equalTo: timelineToastWrap.trailingAnchor, constant: -14),
-        ])
+        // G15 toast 已委托 B 批统一 BearyToast（见 showTimelineToast），
+        // 此处不再建常驻 toast 容器。
         // 第 2 项 A 调用点 1/2（初次进入）：置跳转守卫挂起，选中日（今天）
         // 无日记时由当日/月份回包触发跳最近有篇日；标志不放在 reloadTimeline
         // 内，以免空态重试等其他 reloadTimeline 调用点也被接上守卫。
@@ -2350,7 +2326,8 @@ class BearyTimelineViewController: UIViewController {
         // 显式 aspectFit + 方形图，任何压缩都不改变宽高比。
         trashButton.imageView?.contentMode = .scaleAspectFit
         trashButton.tintColor = BearyColors.ink
-        trashButton.imageEdgeInsets = UIEdgeInsets(top: 0, left: 0, bottom: 0, right: 6)
+        trashButton.imageEdgeInsets = UIEdgeInsets.zero
+        trashButton.titleEdgeInsets = UIEdgeInsets(top: 0, left: 6, bottom: 0, right: 0)
         trashButton.addTarget(self, action: #selector(didTapTrash), for: .touchUpInside)
         trashButton.bearyAddPressFeedback()
         updateTrashTitle()
@@ -2627,7 +2604,8 @@ class BearyTimelineViewController: UIViewController {
         lastStatsMonthTotal = monthTotal
         statsButton.setImage(BearyIconImages.image(named: "icon_fire", pointSize: 16), for: .normal)
         statsButton.tintColor = BearyColors.orange
-        statsButton.imageEdgeInsets = UIEdgeInsets(top: 0, left: 0, bottom: 0, right: 6)
+        statsButton.imageEdgeInsets = UIEdgeInsets.zero
+        statsButton.titleEdgeInsets = UIEdgeInsets(top: 0, left: 6, bottom: 0, right: 0)
         let baseAttributes: [NSAttributedString.Key: Any] = [
             .font: UIFont.systemFont(ofSize: 13.5),
             .foregroundColor: BearyColors.gray,
@@ -3905,20 +3883,12 @@ class BearyTimelineViewController: UIViewController {
         return container
     }
 
-    /// G15 分页失败 toast（与回收站 toast 同口径：ink 底、自动消失）。
+    /// G15 分页失败 toast：委托 B 批统一 BearyToast。时间线是 Chrome 主 tab，
+    /// FAB 常驻（下滑藏栏已拆除；搜索藏栏只针对搜索页），FAB 可见性在本页
+    /// 拿不到 Chrome 的私有 fabContainerView，故调用方明确传 aboveFAB=true；
+    /// 展示时长由旧 1.6s 统一为 2.0s，调用签名与文案、触发时机不变。
     private func showTimelineToast(message: String) {
-        timelineToastLabel.text = message
-        timelineToastWrap.alpha = 0
-        UIView.animate(withDuration: 0.2, animations: {
-            self.timelineToastWrap.alpha = 1
-        }, completion: { [weak self] _ in
-            guard let self = self else { return }
-            DispatchQueue.main.asyncAfter(deadline: .now() + 1.6) {
-                UIView.animate(withDuration: 0.3, animations: {
-                    self.timelineToastWrap.alpha = 0
-                }, completion: nil)
-            }
-        })
+        BearyToast.show(in: view, message: message, aboveFAB: true)
     }
 
     private func updateFooter() {
