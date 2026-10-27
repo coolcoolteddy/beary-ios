@@ -453,6 +453,9 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, U
         }
         lastLayoutWidth = w
         updateColumnConstraints()
+        // P1-18：宽变化时先同步正文区高度再算 sheet 高（updateTextViewHeight 自带
+        // 0.5pt 防抖门限，高度不变不赋值，不会与布局轮次成环）。
+        updateTextViewHeight()
         updatePreferredContentSize()
         // 临时诊断（86 包，定根因后删除）：布局方法出口。
         DiagFile.mark("composer-layout-exit")
@@ -2368,24 +2371,30 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, U
         toolRow.spacing = 20
         toolRow.alignment = .center
         imageToolButton.setImage(BearyIconImages.image(named: "icon_image", pointSize: 24), for: .normal)
+        // P1-26：工具栏图标钮按功能命名（图标本身无文字，VoiceOver 否则无读法）。
+        imageToolButton.accessibilityLabel = "添加图片"
         // D-G7：网页 .icon-btn 默认墨色（editor-tools 的 .nb 灰规则不适用这三个钮），工具钮灰改墨。
         imageToolButton.tintColor = BearyColors.ink
         imageToolButton.addTarget(self, action: #selector(didTapAddImage), for: .touchUpInside)
         imageToolButton.bearyAddPressFeedback()
         moodToolButton.setImage(BearyIconImages.image(named: "icon_mood", pointSize: 24), for: .normal)
+        moodToolButton.accessibilityLabel = "选择心情"
         moodToolButton.tintColor = BearyColors.ink
         moodToolButton.addTarget(self, action: #selector(didTapMoodTool), for: .touchUpInside)
         moodToolButton.bearyAddPressFeedback()
         // 天气钮图标随选中天气变（见 refreshWeatherButtons 的 syncWxBtn 同款同步）。
         weatherToolButton.setImage(BearyIconImages.image(named: "icon_weather_tool", pointSize: 24), for: .normal)
+        weatherToolButton.accessibilityLabel = "选择天气"
         weatherToolButton.tintColor = BearyColors.ink
         weatherToolButton.addTarget(self, action: #selector(didTapWeatherTool), for: .touchUpInside)
         weatherToolButton.bearyAddPressFeedback()
         recipientToolButton.setImage(BearyIconImages.image(named: "icon_at", pointSize: 24), for: .normal)
+        recipientToolButton.accessibilityLabel = "写给某个人"
         recipientToolButton.tintColor = BearyColors.ink
         recipientToolButton.addTarget(self, action: #selector(didTapRecipientTool), for: .touchUpInside)
         recipientToolButton.bearyAddPressFeedback()
         quoteToolButton.setImage(BearyIconImages.image(named: "icon_quote", pointSize: 24), for: .normal)
+        quoteToolButton.accessibilityLabel = "引用一篇日记"
         quoteToolButton.tintColor = BearyColors.ink
         quoteToolButton.addTarget(self, action: #selector(didTapQuoteTool), for: .touchUpInside)
         quoteToolButton.bearyAddPressFeedback()
@@ -2504,6 +2513,11 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, U
 
     /// C1：引用唯一入口（工具栏引用钮）开关 qp-mode 面板（C6：编辑模式也可改引用，不再早退）。
     @objc private func didTapQuoteTool() {
+        // P1-14：冻结之外的第二道守卫（按钮禁用本已拦点按，防其他调用路径）。
+        if isPublishing {
+            showToast(message: isEditMode ? "保存中…" : "发布中…")
+            return
+        }
         setQuotePanelOpen(!quotePanelOpen)
     }
 
@@ -2853,8 +2867,27 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, U
         updatePreferredContentSize()
     }
 
+    /// 已落字正文：全文去掉拼音组合串（marked range）后的部分。只作快照读取，
+    /// 不改 textView、不调 unmarkText，组词中的输入法状态不受影响；
+    /// 拼音未落字时这段就是空/只有已落字，发布与存草稿不会带出未落字拼音。
+    private func committedContent() -> String {
+        let full = textView.text ?? ""
+        guard let marked = textView.markedTextRange else { return full }
+        let startOffset = textView.offset(from: textView.beginningOfDocument, to: marked.start)
+        let endOffset = textView.offset(from: textView.beginningOfDocument, to: marked.end)
+        guard startOffset >= 0, endOffset <= full.count, startOffset <= endOffset else { return full }
+        var result = full
+        let start = result.index(result.startIndex, offsetBy: startOffset)
+        let end = result.index(result.startIndex, offsetBy: endOffset)
+        result.removeSubrange(start..<end)
+        return result
+    }
+
+    /// P1-15：正文取数统一走已落字口径——trimmedContent 即 trim 后的已落字正文，
+    /// 与 committedTextCount()（字数显示）同为排除 marked 的口径；发布 2000 上限
+    /// 判定、空判定、草稿落盘均以它为准（发布侧 trim 沿用 D-G5，不再把首尾空白算进上限）。
     private func trimmedContent() -> String {
-        return textView.text.trimmingCharacters(in: .whitespacesAndNewlines)
+        return committedContent().trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     /// 落字数：拼音组合串（marked text，如未落字的 "nihao"）不计入字数——
@@ -2930,6 +2963,20 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, U
         let frozen = isPublishing
         textView.isEditable = !frozen
         titleField.isEnabled = !frozen
+        // P1-14：冻结清单补齐全部入口——草稿 pill、引用钮、三枚已选 Chip、
+        // 写给 pick/清除/通知、引用卡 ×（含已删行“移除”）；其余入口见下。
+        draftPillButton.isEnabled = !frozen
+        quoteToolButton.isEnabled = !frozen
+        moodChipButton.isEnabled = !frozen
+        weatherChipButton.isEnabled = !frozen
+        recipientChipButton.isEnabled = !frozen
+        recipientPickButton.isEnabled = !frozen
+        recipientClearButton.isEnabled = !frozen
+        // 例外：通知复选框编辑态本就禁用（refreshRecipientRow 的编辑锁定），
+        // 冻结恢复时不得误解开；新建态才随冻结恢复。
+        notifyCheckButton.isEnabled = !frozen && !isEditMode
+        quoteCardRemoveButton.isEnabled = !frozen
+        quoteDeletedRemoveButton.isEnabled = !frozen
         for item in moodItems {
             item.button.isEnabled = !frozen
         }
@@ -3444,21 +3491,21 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, U
                 if !stillThere {
                     return
                 }
-                item.imageView.image = cropped
-                item.key = nil
-                item.failed = false
                 if let saved = saved {
+                    // 落盘成功才替换预览、清旧 key、删旧本地对（旧 key 指向未裁剪
+                    // 原图，不可复用；孤 key 残留与移除同款已知可接受）。
+                    item.imageView.image = cropped
+                    item.key = nil
+                    item.failed = false
                     item.localFile = saved
                     if let oldName = oldName, oldName != saved {
                         BearyDraftImageStore.deletePair(fullName: oldName)
                     }
                 } else {
-                    // 落盘失败：不让旧文件顶着新图残留（恢复会错显示旧图），删旧对、
-                    // 本地文件置空，仍走上传（成功后 key 落盘，与选图落盘失败降级同款）。
-                    item.localFile = nil
-                    if let oldName = oldName {
-                        BearyDraftImageStore.deletePair(fullName: oldName)
-                    }
+                    // P1-19：落盘失败时旧文件、旧 key、旧预览一律不动，只 toast，
+                    // 不删原图、不走上传——失败的裁剪不丢原图。
+                    self.showToast(message: "裁剪保存失败，原图未改")
+                    return
                 }
                 self.markUploading(item)
                 self.saveDraftNow()
@@ -3471,7 +3518,9 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, U
     }
 
     @objc private func didTapAddImage() {
+        // P2：9 图上限到达时不再完全静默，给 toast（不改按钮置灰口径）。
         if imageItems.count >= BearyComposerViewController.maxImages {
+            showToast(message: "最多 9 张图片")
             return
         }
         var config = PHPickerConfiguration()
@@ -3740,7 +3789,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, U
     }
 
     /// 回填后原引用的有效 id（setup 时 content 为空的引用视为已删、不算原引用，
-    /// 否则 isEditDirty 会把“没改过”误判为改过）。
+    /// 否则改动判定会把“没改过”误判为改过）。
     private func originalQuoteId() -> String? {
         guard let quote = editingEntry?.quote, let quoteId = quote.id, quote.content != nil else { return nil }
         return quoteId
@@ -3756,18 +3805,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, U
         }
     }
 
-    /// 编辑是否改过东西（正文按 trim 后比，服务端落库时同样 trim；C6：引用改动也算）。
-    private func isEditDirty() -> Bool {
-        guard let entry = editingEntry else { return false }
-        // A4-App：标题改动也算改过（空与 nil 同按空计，不因 nil/"" 之差误判）。
-        if (trimmedTitle() ?? "") != (entry.title ?? "") { return true }
-        if trimmedContent() != (entry.content ?? "") { return true }
-        if selectedMood != entry.mood { return true }
-        if selectedWeather != entry.weather { return true }
-        if uploadedImageKeys() != (entry.images ?? []) { return true }
-        if lockedQuote?.entryId != originalQuoteId() { return true }
-        return false
-    }
+    // P2：isEditDirty() 为死代码（无调用点），直接删除，不接入其比较口径。
 
     // MARK: - 草稿
 
@@ -3862,7 +3900,9 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, U
         }
         let draft = BearyDraft(
             draftId: draftIdValue,
-            content: textView.text,
+            // P1-15：草稿快照只存已落字（拼音组词期的未落字拼音不进草稿），
+            // textView 本体不动，组词继续。
+            content: committedContent(),
             title: trimmedTitle(),
             mood: selectedMood,
             images: images,
@@ -4099,6 +4139,12 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, U
             showToast(message: "编辑日记时不能打开草稿箱")
             return
         }
+        // P1-14：发布在途时不开箱（冻结已禁 pill，此为第二道守卫），
+        // 否则切草稿会把在途发布的那篇换掉/删错篇。
+        if isPublishing {
+            showToast(message: "发布中…")
+            return
+        }
         // presented 守卫 + 在途标记（E4-3）：连点不叠开两个草稿箱。
         if presentedViewController != nil || isDraftBoxPresenting { return }
         // 有内容先落盘当前篇，再开箱（箱内计数含当前篇）；空白编辑器不建空草稿。
@@ -4127,6 +4173,9 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, U
             box.onDeleteCurrentDraft = { [weak self] deletedId in
                 if self?.currentDraftId == deletedId {
                     self?.currentDraftId = nil
+                    // P1-16：只清 currentDraftId 会让新篇复用旧幂等键——
+                    // 删“正在写”草稿时 clientReq 一并清掉，下次落盘重新生成。
+                    self?.draftClientReq = nil
                 }
             }
             self.present(box, animated: !UIAccessibility.isReduceMotionEnabled) { [weak self] in
@@ -4173,9 +4222,10 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, U
     }
 
     /// 编辑器有无实质内容（C10：心情是常驻选择、不算内容——纯心情不建草稿；
-    /// 注意正文这里按非空算，落盘时的空判定另按 trim，见 saveDraftNow）。
+    /// P2：正文按 trim 后算，纯空格不算有内容，与 saveDraftNow 的落盘口径一致；
+    /// trimmedContent 本身已排除拼音组合串，纯组词也不算有内容）。
     private func hasEditorContent() -> Bool {
-        if !textView.text.isEmpty { return true }
+        if !trimmedContent().isEmpty { return true }
         if selectedWeather != nil { return true }
         if selectedRecipient != nil { return true }
         if selectedQuote != nil { return true }
@@ -4212,6 +4262,11 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, U
         refreshToolStrip()
         updateDraftStatusLabel()
         updateDraftPillCount()
+        // P1-17：重置为空白后同款同步——正文区回落下限高，缓存同步，
+        // 避免残留旧篇高度导致空白编辑器正文区过高/过矮。
+        updateTextViewHeight()
+        lastTextViewContentHeight = textView.contentSize.height
+        updatePreferredContentSize()
     }
 
     /// 草稿箱打开某篇：正文/心情/图片/天气/写给/引用按 v3 原样恢复；之后再保存、
@@ -4282,6 +4337,11 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, U
         verifyRestoredQuote()
         // 录屏批 (c) 同款：草稿箱恢复后同步一次发布启用态，放全部刷新之后。
         updatePublishState()
+        // P1-17：切草稿后正文区高度同步（先按新正文定高、再同步高度缓存、
+        // 最后按新高重算 sheet 高，避免正文区停在旧篇高度）。
+        updateTextViewHeight()
+        lastTextViewContentHeight = textView.contentSize.height
+        updatePreferredContentSize()
     }
 
     /// 只拆视图不删文件（切草稿时旧篇文件仍归旧篇所有，删文件只在丢弃/发布成功时做）。
