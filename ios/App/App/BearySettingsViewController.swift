@@ -227,7 +227,11 @@ final class BearySettingsViewController: UIViewController {
     private var isLoggingOutOthers = false
     private var isDeleting = false
     private var isExporting = false
-    private var contentColumnWidthCap: NSLayoutConstraint?
+    /// 内容列宽：直接由 view.bounds 派生的必需约束（替代旧的
+    /// frameLayoutGuide 750 宽约束 + 600 上限开关两约束协商）。列宽是
+    /// view.bounds 的纯函数，首个布局轮次即最终值，不再经多轮约束收敛
+    /// 分段变宽；最终口径不变（iPhone 屏宽 -40，宽 ≥821 锁 600 居中）。
+    private var contentColumnWidth: NSLayoutConstraint?
 
     // MARK: - 视图
 
@@ -307,8 +311,18 @@ final class BearySettingsViewController: UIViewController {
 
     override func viewDidLayoutSubviews() {
         super.viewDidLayoutSubviews()
-        // P2-1 同款：宽 ≥821 才锁 600 上限；宽 ≤820 时停用，屏宽 -40 撑满。
-        contentColumnWidthCap?.isActive = view.bounds.width >= 821
+        updateColumnWidth()
+    }
+
+    /// 列宽只由 view.bounds 定：宽 ≥821 锁 600（P2-1 同款），宽 ≤820 时
+    /// 屏宽 -40 撑满；bounds 为 0 时跳过不钉死；值不变时不写，避免布局环。
+    private func updateColumnWidth() {
+        let w = view.bounds.width
+        guard w > 0 else { return }
+        let target: CGFloat = w >= 821 ? 600 : max(w - 40, 0)
+        if contentColumnWidth?.constant != target {
+            contentColumnWidth?.constant = target
+        }
     }
 
     override func traitCollectionDidChange(_ previousTraitCollection: UITraitCollection?) {
@@ -556,11 +570,9 @@ final class BearySettingsViewController: UIViewController {
             contentStack.trailingAnchor.constraint(lessThanOrEqualTo: scrollView.trailingAnchor, constant: -20),
             contentStack.bottomAnchor.constraint(equalTo: scrollView.bottomAnchor, constant: -20),
         ])
-        let columnWidth = contentStack.widthAnchor.constraint(equalTo: scrollView.frameLayoutGuide.widthAnchor, constant: -40)
-        columnWidth.priority = UILayoutPriority(750)
-        columnWidth.isActive = true
-        contentColumnWidthCap = contentStack.widthAnchor.constraint(lessThanOrEqualToConstant: 600)
-        contentColumnWidthCap?.isActive = true
+        contentColumnWidth = contentStack.widthAnchor.constraint(equalToConstant: 0)
+        contentColumnWidth?.isActive = true
+        updateColumnWidth()
 
         loadingView.translatesAutoresizingMaskIntoConstraints = false
         failureLabel.font = UIFont.systemFont(ofSize: 14)
