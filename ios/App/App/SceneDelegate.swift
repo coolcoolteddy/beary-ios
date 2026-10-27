@@ -885,6 +885,8 @@ final class BearyChromeViewController: UIViewController {
         guard launchVeilView == nil else { return }
         let veil = UIView()
         veil.backgroundColor = BearyColors.bg
+        // 88 包 H4：veil 默认可交互会吞掉底栏/FAB/顶栏触摸直至 4 秒兜底结束，关掉。
+        veil.isUserInteractionEnabled = false
         veil.translatesAutoresizingMaskIntoConstraints = false
         view.addSubview(veil)
         NSLayoutConstraint.activate([
@@ -1596,7 +1598,10 @@ final class BearyChromeViewController: UIViewController {
                         guard let self = self else { return }
                         switch result {
                         case .success:
-                            self.timelineVC?.refreshAfterDetailChange()
+                            // 88 包 M14：时间线走行级退场，不再整页首拉重载；
+                            // 首页与个人主页仍用原有重拉同步（其列表非日期分区，
+                            // 且个人主页无删除入口，只是跟随同步）。
+                            self.timelineVC?.removeDeletedEntry(entry)
                             self.feedVC?.refreshAll()
                             self.profileVC?.reloadProfile()
                         case .failure:

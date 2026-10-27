@@ -56,6 +56,10 @@ final class BearyDraftBoxViewController: UIViewController {
     private var pendingDeletedIndex: Int = 0
     private var undoTimer: Timer?
     private var didPlayEntrance = false
+    // 88 包 M8：入场错峰交汇门控——首轮 loadDrafts 回调完成 + 已 Appear 才播，
+    // 避免 viewDidAppear 对尚未渲染的空栈空跑、卡片随后硬切出现。
+    private var draftBoxAppeared = false
+    private var draftsInitialLoaded = false
     private var isDismissing = false
     private var isPadLayout = false
     private var bottomSpacerHeight: NSLayoutConstraint?
@@ -106,6 +110,8 @@ final class BearyDraftBoxViewController: UIViewController {
         buildConstraints()
         loadDrafts { [weak self] in
             self?.renderDrafts()
+            self?.draftsInitialLoaded = true
+            self?.tryPlayEntrance()
         }
     }
 
@@ -118,9 +124,15 @@ final class BearyDraftBoxViewController: UIViewController {
 
     override func viewDidAppear(_ animated: Bool) {
         super.viewDidAppear(animated)
-        if didPlayEntrance || UIAccessibility.isReduceMotionEnabled {
-            return
-        }
+        draftBoxAppeared = true
+        tryPlayEntrance()
+    }
+
+    /// 88 包 M8：入场错峰只在“已 Appear 且首轮 loadDrafts 已渲染”时播一次；
+    /// 减动效与已播过时与原来一致，直接返回。
+    private func tryPlayEntrance() {
+        guard !didPlayEntrance, draftBoxAppeared, draftsInitialLoaded,
+              !UIAccessibility.isReduceMotionEnabled else { return }
         didPlayEntrance = true
         view.layoutIfNeeded()
         applyEntranceStartState()
@@ -1279,8 +1291,22 @@ final class BearyDraftBoxViewController: UIViewController {
                     strongSelf.onDeleteCurrentDraft?(draftValue.draftId)
                 }
             }
-            strongSelf.renderDrafts()
-            // 只有本笔仍是待撤销的那笔时才出撤销条 + 计时；已被后一笔删除
+            if strongSelf.drafts.isEmpty {
+                // 删到空时无剩余卡片可保留，走原有全量渲染出空态。
+                strongSelf.renderDrafts()
+            } else {
+                // 88 包 M16：只摘被删卡片与各处按钮登记，不重建剩余卡片。
+                // （删卡自身已在 deleteTapped 里收起为 0 高，摘除无视觉跳变。）
+                if let cardEntry = strongSelf.cardEntries.first(where: { $0.draftValue.draftId == draftValue.draftId }) {
+                    strongSelf.listStack.removeArrangedSubview(cardEntry.button)
+                    cardEntry.button.removeFromSuperview()
+                }
+                strongSelf.cardEntries.removeAll { $0.draftValue.draftId == draftValue.draftId }
+                strongSelf.openEntries.removeAll { $0.draftValue.draftId == draftValue.draftId }
+                strongSelf.deleteEntries.removeAll { $0.draftValue.draftId == draftValue.draftId }
+                strongSelf.lostEntries.removeAll { $0.draftValue.draftId == draftValue.draftId }
+                strongSelf.subLabel.text = "共 \(strongSelf.drafts.count) 份 · 写的时候自动保存 · 仅保存在本设备"
+            }
             // 顶掉时，后一笔自己的回调会出它的撤销条，这里只静默移除。
             if strongSelf.pendingDeletedDraft?.draftId == draftValue.draftId {
                 strongSelf.showUndoAnimated()

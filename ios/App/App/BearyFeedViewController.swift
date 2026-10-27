@@ -688,7 +688,8 @@ class BearyFeedViewController: UIViewController {
         present(menu, animated: !UIAccessibility.isReduceMotionEnabled, completion: nil)
     }
 
-    /// F1：图片查看器（本文件内实现；详情的查看器类为其文件私有，无法跨文件复用）。
+    /// F1：图片查看器统一复用 BearyEntryImageViewerViewController（自定义
+    /// pinch＋双击、失败重试），不再用本文件内旧版。
     /// presented 守卫 + 导航节流，防连点叠页（E4）。
     private func presentImageViewer(imageKeys: [String], startIndex: Int) {
         if imageKeys.isEmpty { return }
@@ -696,7 +697,7 @@ class BearyFeedViewController: UIViewController {
         let now = Date()
         if let last = lastNavigationAt, now.timeIntervalSince(last) < 0.8 { return }
         lastNavigationAt = now
-        let viewer = BearyFeedImageViewerViewController(imageKeys: imageKeys, startIndex: startIndex)
+        let viewer = BearyEntryImageViewerViewController(imageKeys: imageKeys, startIndex: startIndex)
         viewer.modalPresentationStyle = .fullScreen
         present(viewer, animated: !UIAccessibility.isReduceMotionEnabled, completion: nil)
     }
@@ -4514,213 +4515,6 @@ private class BearyFeedEmoteSheetCell: UICollectionViewCell {
         nameLabel.font = UIFont.systemFont(ofSize: 11)
         nameLabel.textColor = BearyColors.gray
         nameLabel.text = name
-    }
-}
-
-// MARK: - F1：首页图片查看器（本文件内实现）
-
-// 详情的 BearyEntryImageViewerViewController 为其文件私有，无法跨文件复用，
-// 故本文件内实现同结构查看器：0.92 黑底、全屏 paging、计数 + 底部圆点（仅多图）、
-// 关闭钮、任意处点按关闭；原图加载（thumb:false），与详情查看器同口径。
-private class BearyFeedImageViewerViewController: UIViewController, UIScrollViewDelegate, UIViewControllerTransitioningDelegate {
-
-    private let imageKeys: [String]
-    private let startIndex: Int
-    private let pagingScrollView = UIScrollView()
-    private let counterLabel = UILabel()
-    private let closeButton = BearyHit44Button(type: .system)
-    private let dotsStack = UIStackView()
-    private var dotViews: [UIView] = []
-    private var pageViews: [UIView] = []
-    private var didSetInitialPage = false
-
-    init(imageKeys: [String], startIndex: Int) {
-        self.imageKeys = imageKeys
-        if startIndex >= 0 && startIndex < imageKeys.count {
-            self.startIndex = startIndex
-        } else {
-            self.startIndex = 0
-        }
-        super.init(nibName: nil, bundle: nil)
-        // E-G12：网页灯箱开场 200ms 淡入、关场 160ms 淡出，不用默认滑入滑出。
-        // 转场由本页自带（present 点只传 animated 旗标，减动效时仍瞬时）。
-        modalPresentationStyle = .fullScreen
-        transitioningDelegate = self
-    }
-
-    required init?(coder: NSCoder) {
-        fatalError("init(coder:) has not been implemented")
-    }
-
-    override func viewDidLoad() {
-        super.viewDidLoad()
-        view.backgroundColor = UIColor.black.withAlphaComponent(0.92)
-        pagingScrollView.isPagingEnabled = true
-        pagingScrollView.showsHorizontalScrollIndicator = false
-        pagingScrollView.showsVerticalScrollIndicator = false
-        pagingScrollView.delegate = self
-        pagingScrollView.translatesAutoresizingMaskIntoConstraints = false
-        view.addSubview(pagingScrollView)
-        for key in imageKeys {
-            let container = UIView()
-            let imageView = UIImageView()
-            imageView.contentMode = .scaleAspectFit
-            imageView.backgroundColor = .clear
-            imageView.translatesAutoresizingMaskIntoConstraints = false
-            container.addSubview(imageView)
-            NSLayoutConstraint.activate([
-                imageView.topAnchor.constraint(equalTo: container.topAnchor),
-                imageView.bottomAnchor.constraint(equalTo: container.bottomAnchor),
-                imageView.leadingAnchor.constraint(equalTo: container.leadingAnchor),
-                imageView.trailingAnchor.constraint(equalTo: container.trailingAnchor),
-            ])
-            // S10：灯箱页宽 = pagingScrollView 实测宽；viewDidLoad 时尚未布局则回退
-            // view.bounds.width（全屏查看器，页宽即视图宽）。下采样到页宽 × 屏幕 scale。
-            let pageWidth = pagingScrollView.bounds.width > 0 ? pagingScrollView.bounds.width : view.bounds.width
-            imageView.bearySetImage(url: BearyImageURLs.imageURL(key: key, thumb: false), downsampleToWidth: pageWidth * UIScreen.main.scale)
-            pagingScrollView.addSubview(container)
-            pageViews.append(container)
-        }
-        counterLabel.textColor = .white
-        counterLabel.font = UIFont.systemFont(ofSize: 14)
-        counterLabel.textAlignment = .center
-        counterLabel.translatesAutoresizingMaskIntoConstraints = false
-        counterLabel.isHidden = imageKeys.count <= 1
-        view.addSubview(counterLabel)
-        dotsStack.axis = .horizontal
-        dotsStack.spacing = 8
-        dotsStack.alignment = .center
-        dotsStack.translatesAutoresizingMaskIntoConstraints = false
-        dotsStack.isHidden = imageKeys.count <= 1
-        for _ in imageKeys {
-            let dot = UIView()
-            dot.translatesAutoresizingMaskIntoConstraints = false
-            dot.backgroundColor = UIColor.white.withAlphaComponent(0.35)
-            dot.layer.cornerRadius = 3
-            dot.clipsToBounds = true
-            NSLayoutConstraint.activate([
-                dot.widthAnchor.constraint(equalToConstant: 6),
-                dot.heightAnchor.constraint(equalToConstant: 6),
-            ])
-            dotsStack.addArrangedSubview(dot)
-            dotViews.append(dot)
-        }
-        view.addSubview(dotsStack)
-        closeButton.setImage(BearyFeedIconCache.image(named: "icon_close", pointSize: 20), for: .normal)
-        closeButton.tintColor = .white
-        closeButton.backgroundColor = UIColor.white.withAlphaComponent(0.15)
-        closeButton.layer.cornerRadius = 18
-        closeButton.clipsToBounds = true
-        closeButton.translatesAutoresizingMaskIntoConstraints = false
-        closeButton.addTarget(self, action: #selector(closeTapped), for: .touchUpInside)
-        closeButton.bearyAddPressFeedback()
-        closeButton.accessibilityLabel = "关闭"
-        view.addSubview(closeButton)
-        let tap = UITapGestureRecognizer(target: self, action: #selector(closeTapped))
-        view.addGestureRecognizer(tap)
-        NSLayoutConstraint.activate([
-            pagingScrollView.topAnchor.constraint(equalTo: view.topAnchor),
-            pagingScrollView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
-            pagingScrollView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
-            pagingScrollView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-            counterLabel.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 20),
-            counterLabel.centerXAnchor.constraint(equalTo: view.centerXAnchor),
-            dotsStack.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor, constant: -24),
-            dotsStack.centerXAnchor.constraint(equalTo: view.centerXAnchor),
-            closeButton.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 12),
-            closeButton.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -16),
-            closeButton.widthAnchor.constraint(equalToConstant: 36),
-            closeButton.heightAnchor.constraint(equalToConstant: 36),
-        ])
-        updateCounter()
-    }
-
-    override func viewDidLayoutSubviews() {
-        super.viewDidLayoutSubviews()
-        let width = pagingScrollView.bounds.width
-        let height = pagingScrollView.bounds.height
-        if width <= 0 || height <= 0 {
-            return
-        }
-        for (index, page) in pageViews.enumerated() {
-            page.frame = CGRect(x: CGFloat(index) * width, y: 0, width: width, height: height)
-        }
-        pagingScrollView.contentSize = CGSize(width: width * CGFloat(pageViews.count), height: height)
-        if didSetInitialPage == false {
-            didSetInitialPage = true
-            pagingScrollView.setContentOffset(CGPoint(x: CGFloat(startIndex) * width, y: 0), animated: false)
-        }
-    }
-
-    func scrollViewDidScroll(_ scrollView: UIScrollView) {
-        updateCounter()
-    }
-
-    private func updateCounter() {
-        let width = pagingScrollView.bounds.width
-        if width <= 0 || imageKeys.isEmpty {
-            return
-        }
-        let page = max(0, min(imageKeys.count - 1, Int(round(pagingScrollView.contentOffset.x / width))))
-        counterLabel.text = "\(page + 1) / \(imageKeys.count)"
-        for (index, dot) in dotViews.enumerated() {
-            dot.backgroundColor = index == page ? .white : UIColor.white.withAlphaComponent(0.35)
-        }
-    }
-
-    @objc private func closeTapped() {
-        let reduceMotion = UIAccessibility.isReduceMotionEnabled
-        dismiss(animated: reduceMotion == false, completion: nil)
-    }
-
-    // MARK: - E-G12 淡入淡出转场
-
-    func animationController(forPresented presented: UIViewController, presenting: UIViewController, source: UIViewController) -> UIViewControllerAnimatedTransitioning? {
-        return BearyFeedFadeAnimator(presenting: true)
-    }
-
-    func animationController(forDismissed dismissed: UIViewController) -> UIViewControllerAnimatedTransitioning? {
-        return BearyFeedFadeAnimator(presenting: false)
-    }
-}
-
-/// 网页灯箱同款纯透明度转场：开场 200ms 淡入、关场 160ms 淡出。
-private final class BearyFeedFadeAnimator: NSObject, UIViewControllerAnimatedTransitioning {
-    private let presenting: Bool
-
-    init(presenting: Bool) {
-        self.presenting = presenting
-    }
-
-    func transitionDuration(using transitionContext: UIViewControllerContextTransitioning?) -> TimeInterval {
-        return presenting ? 0.2 : 0.16
-    }
-
-    func animateTransition(using transitionContext: UIViewControllerContextTransitioning) {
-        let duration = transitionDuration(using: transitionContext)
-        if presenting {
-            guard let toView = transitionContext.view(forKey: .to) else {
-                transitionContext.completeTransition(false)
-                return
-            }
-            transitionContext.containerView.addSubview(toView)
-            toView.alpha = 0
-            UIView.animate(withDuration: duration, animations: {
-                toView.alpha = 1
-            }, completion: { _ in
-                transitionContext.completeTransition(!transitionContext.transitionWasCancelled)
-            })
-        } else {
-            guard let fromView = transitionContext.view(forKey: .from) else {
-                transitionContext.completeTransition(false)
-                return
-            }
-            UIView.animate(withDuration: duration, animations: {
-                fromView.alpha = 0
-            }, completion: { _ in
-                transitionContext.completeTransition(!transitionContext.transitionWasCancelled)
-            })
-        }
     }
 }
 

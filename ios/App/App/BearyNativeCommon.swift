@@ -269,7 +269,9 @@ final class BearyImageLoader {
     ///（CGImageSourceCreateWithData + CGImageSourceCreateThumbnailAtIndex，
     /// 最大像素边 = downsampleToWidth，带方向变换），绝不整图全解码；
     /// 缩略图创建失败时直接返回 nil，不回退完整解码。
-    /// 为 nil 时走现有完整解码路径 UIImage(data:)。
+    /// 88 包 H2：为 nil 时同样走 ImageIO 原尺寸立即解码（缩略图最大边取原图
+    /// 最长边 + 方向变换 + 立即缓存），不再直接返回懒解码的 UIImage(data:)——
+    /// 否则回主线程首次渲染时仍会在主线程解压整图；属性读不到时回退旧行为。
     private static func decodedImage(data: Data, downsampleToWidth: CGFloat?) -> UIImage? {
         if let width = downsampleToWidth {
             guard let source = CGImageSourceCreateWithData(data as CFData, nil) else { return nil }
@@ -281,7 +283,20 @@ final class BearyImageLoader {
             guard let cgImage = CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary) else { return nil }
             return UIImage(cgImage: cgImage)
         }
-        return UIImage(data: data)
+        guard let source = CGImageSourceCreateWithData(data as CFData, nil) else { return UIImage(data: data) }
+        let props = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any]
+        let pw = props?[kCGImagePropertyPixelWidth] as? Int ?? 0
+        let ph = props?[kCGImagePropertyPixelHeight] as? Int ?? 0
+        let maxSize = max(pw, ph)
+        guard maxSize > 0 else { return UIImage(data: data) }
+        let options: [CFString: Any] = [
+            kCGImageSourceCreateThumbnailFromImageAlways: true,
+            kCGImageSourceCreateThumbnailWithTransform: true,
+            kCGImageSourceThumbnailMaxPixelSize: maxSize,
+            kCGImageSourceShouldCacheImmediately: true,
+        ]
+        guard let cgImage = CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary) else { return UIImage(data: data) }
+        return UIImage(cgImage: cgImage)
     }
 
     @discardableResult
