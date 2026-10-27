@@ -232,6 +232,8 @@ final class BearyChromeViewController: UIViewController {
     private var centeredModal: BearyCenteredTransitioningDelegate?
     /// iPhone 底 sheet 编辑器模态的 transitioningDelegate（弱引用，强持有口径同 centeredModal）
     private var composerSheet: BearyComposerSheetTransitioningDelegate?
+    /// 临时诊断开关（89 包）：为真时 iPhone 也走居中 delegate，排查底 sheet 转场死堵；定根因后删除，恢复只需关开关。
+    private var forceCenteredForDiag = true
     /// 邀请弹窗模态的 transitioningDelegate（弱引用，强持有口径同 centeredModal/composerSheet；
     /// 宽屏居中与窄屏底 sheet 各持一个，与编辑器分开，避免互相覆盖持有）
     private var inviteCentered: BearyCenteredTransitioningDelegate?
@@ -2205,7 +2207,8 @@ final class BearyChromeViewController: UIViewController {
     /// 下滑可关闭，取消仍走编辑器自身取消流程）。forEdit 仅保留参数位（两模式同路径，
     /// 不再按编辑态分 edge 持有——底 sheet 不碰详情的 edge delegate）。
     private func configureComposerPresentation(_ composer: BearyComposerViewController, forEdit: Bool) {
-        if view.bounds.width >= 821 {
+        // 临时诊断（89 包）：forceCenteredForDiag 开时 iPhone 也走居中分支；底 sheet 分支原样保留在 else 里，恢复只需关开关。
+        if view.bounds.width >= 821 || forceCenteredForDiag {
             let centered = BearyCenteredTransitioningDelegate()
             composer.modalPresentationStyle = .custom
             composer.transitioningDelegate = centered
