@@ -2888,6 +2888,8 @@ private final class BearyComposerSheetAnimator: NSObject, UIViewControllerAnimat
             toView.transform = CGAffineTransform(translationX: 0, y: height)
             // 临时诊断（83 包，定根因后删除）。
             DiagFile.mark("animator-animate-call")
+            // 临时诊断（84 包，定根因后删除）：动画系统参数快照。
+            DiagFile.mark("animator-anim-params speed=\(toView.layer.speed) containerSpeed=\(container.layer.speed) duration=\(duration) reduce=\(UIAccessibility.isReduceMotionEnabled)")
             UIView.animate(withDuration: duration, animations: {
                 toView.transform = .identity
             }, completion: { _ in
@@ -2897,6 +2899,10 @@ private final class BearyComposerSheetAnimator: NSObject, UIViewControllerAnimat
                 // 临时诊断（82 包追加，定根因后删除）：转场终态，不进非终态集合。
                 DiagFile.mark("animator-completed")
             })
+            // 临时诊断（84 包，定根因后删除）：1 秒后主线程 runloop 还在转即记一行。
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+                DiagFile.mark("animator-1s-later")
+            }
         } else {
             guard let fromView = transitionContext.view(forKey: .from) else {
                 transitionContext.completeTransition(false)
@@ -2938,6 +2944,8 @@ enum DiagFile {
         "animator-added", "animator-framed",
         // 83 包追加：completion 入口（completeTransition 之前），仍属非终态。
         "animator-animate-call", "animator-completion-enter",
+        // 84 包追加：动画参数快照与 1 秒后 runloop 存活探针，仍属非终态。
+        "animator-anim-params", "animator-1s-later",
         "sheet-layout", "composer-layout", "composer-prefSize",
     ]
 
