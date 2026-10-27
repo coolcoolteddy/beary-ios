@@ -352,13 +352,21 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         // 临时诊断（82 包追加，定根因后删除）：入口每调一次记一次，不节流。
         DiagFile.mark("composer-layout")
         let w = view.bounds.width
-        guard w > 0, w != lastLayoutWidth else { return }
+        guard w > 0, w != lastLayoutWidth else {
+            // 临时诊断（86 包，定根因后删除）：布局方法出口（宽门挡住的早退路径）。
+            DiagFile.mark("composer-layout-exit")
+            return
+        }
         lastLayoutWidth = w
         updatePreferredContentSize()
+        // 临时诊断（86 包，定根因后删除）：布局方法出口。
+        DiagFile.mark("composer-layout-exit")
     }
 
     override func viewWillAppear(_ animated: Bool) {
         super.viewWillAppear(animated)
+        // 临时诊断（86 包，定根因后删除）。
+        DiagFile.mark("composer-willAppear")
         // B5-3 配套：viewWillDisappear 失效了编辑倒计时，回到页面时重起，
         // 否则从选图/弹窗回来后倒计时永久停摆；startEditTimer 本身幂等
         // （先 invalidate 旧计时器，非编辑态直接隐藏 label 返回）。
@@ -510,9 +518,15 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         let total = fitted.height + 44 + toolbarHeight
         // 临时诊断（82 包追加，定根因后删除）：total 每轮都记，看是否漂移。
         DiagFile.mark("composer-prefSize total=\(String(format: "%.1f", total))")
-        guard abs(preferredContentSize.height - total) > 0.5 else { return }
+        guard abs(preferredContentSize.height - total) > 0.5 else {
+            // 临时诊断（86 包，定根因后删除）：方法出口（0.5pt 门限挡住的早退路径）。
+            DiagFile.mark("composer-prefSize-exit")
+            return
+        }
         preferredContentSize = CGSize(width: fittingWidth, height: total)
         view.superview?.setNeedsLayout()
+        // 临时诊断（86 包，定根因后删除）：方法出口。
+        DiagFile.mark("composer-prefSize-exit")
     }
 
     private func buildTopBar() {
