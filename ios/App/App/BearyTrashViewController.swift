@@ -169,6 +169,8 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate {
         closeButton.tintColor = BearyColors.ink
         closeButton.backgroundColor = BearyColors.faint
         closeButton.layer.cornerRadius = 16
+        // P1-26：关闭钮按功能命名（图标/“✕”本身无语义，VoiceOver 勿读符号）。
+        closeButton.accessibilityLabel = "关闭回收站"
         closeButton.addTarget(self, action: #selector(closeTapped), for: .touchUpInside)
         closeButton.bearyAddPressFeedback()
 

@@ -215,6 +215,10 @@ final class BearyCalendarMarkView: UIView {
         // 显式透明底 + 非不透明，标记行只剩几何图形本身。
         backgroundColor = .clear
         isOpaque = false
+        // P1-9：窄屏双状态高篇数日标记总宽可能超过格宽，超宽部分必须
+        // 裁在本格内、不侵入相邻格；居中绘制见 draw（未超宽时与旧左对齐
+        // 等价，因格内 markView 本就居中且宽 = 总宽）。
+        clipsToBounds = true
     }
 
     required init?(coder: NSCoder) {
@@ -241,7 +245,15 @@ final class BearyCalendarMarkView: UIView {
 
     override func draw(_ rect: CGRect) {
         super.draw(rect)
-        var cursor: CGFloat = 0
+        // P1-9：居中绘制——总宽 <= 框宽时起点与旧左对齐等价（框宽即总宽
+        // 或框居中）；总宽 > 框宽（日历格宽上限裁剪）时左右对称裁剪，
+        // 不偏向一侧侵入相邻格。几何/颜色/尺寸/间距口径一律不动。
+        var totalWidth: CGFloat = 0
+        for (index, mark) in marks.enumerated() {
+            if index > 0 { totalWidth += 2 }
+            totalWidth += mark.size
+        }
+        var cursor: CGFloat = (rect.width - totalWidth) / 2
         for mark in marks {
             let top = (13 - mark.size) / 2
             let box = CGRect(x: cursor, y: top, width: mark.size, height: mark.size)
@@ -333,6 +345,11 @@ final class BearyCalendarDayButton: UIButton {
             markView.topAnchor.constraint(equalTo: numberLabel.bottomAnchor, constant: 1),
             markView.centerXAnchor.constraint(equalTo: centerXAnchor),
             markView.heightAnchor.constraint(equalToConstant: 13),
+            // P1-9：标记行宽上限 = 本格宽（fillEqually 均分后的格宽，随屏宽走，
+            // 不写死 pt 值，避免窄屏 320 下 37pt 格被 42pt+ 双状态标记撑出、
+            // 宽屏下又无谓裁剪）；超宽部分由 markView 居中裁剪消化。
+            // 图例行 markView 不在此约束内（图例走自然换行，不裁剪）。
+            markView.widthAnchor.constraint(lessThanOrEqualTo: widthAnchor),
             heightAnchor.constraint(equalToConstant: 50),
         ])
     }
@@ -354,7 +371,10 @@ final class BearyCalendarDayButton: UIButton {
         dayValue = day
         numberLabel.text = "\(day.day)"
         // F3：格子补网页 aria 口径无障碍文案（空日“无日记”）。
-        let dayTotal = day.published + day.unpublished
+        // P2：跨月占位格文案与视觉一致——视觉侧占位格标记被清（marks=[],
+        // 见下）、选中态被 isOffMonth 分支压掉、且 isEnabled=false，
+        // 故文案不得报篇数（即使该日邻月本身有篇，当前占位格也未呈现）。
+        let dayTotal = day.isOffMonth ? 0 : day.published + day.unpublished
         if dayTotal > 0 {
             accessibilityLabel = "\(day.month)月\(day.day)日，共 \(dayTotal) 篇，其中 \(day.unpublished) 篇未公开"
         } else {
@@ -2255,8 +2275,19 @@ class BearyTimelineViewController: UIViewController {
     /// 分区空了则 deleteSections，不再整页首拉重载。日历点与统计行仍走强制
     /// 月份重拉刷新（与 refreshAfterDetailChange 同口径），选中日空了由
     /// pendingFixSelCheck 走原有跳转/取消逻辑；总数行本地递减。
+    /// P0-1 例外：当日面板分区（section 0 且有选中日）在 currentSections 里
+    /// 恒存在（即使 dayEntries 为空也占一个分区），变空时绝不能 deleteSections——
+    /// 那会与数据源分区数脱节、且 completion 的 reloadSections(0) 越界崩溃；
+    /// 面板变空只 deleteRows，随后 pendingFixSelCheck + 强制月份重拉走既有
+    /// 选区跳转/取消逻辑。P1-8：本方法仅由删帖成功分支调用（容器 API 成功后），
+    /// 故此处即删帖成功点，回收站计数 +1 并立即刷新 pill。
     func removeDeletedEntry(_ entry: Entry) {
         guard let entryId = entry.id else { return }
+        // P1-8：先于模型/分区处理加计数——即使模型里已无该篇而走下方
+        // refreshAfterDetailChange 回落，删帖成功进回收站的事实不变；
+        // 回落的首拉成功后 trashCountValue 会被服务端值覆盖校准，不会累加。
+        trashCountValue += 1
+        updateTrashTitle()
         let oldSections = currentSections()
         var occurrences: [(section: Int, row: Int)] = []
         for (section, sec) in oldSections.enumerated() {
@@ -2277,8 +2308,14 @@ class BearyTimelineViewController: UIViewController {
         var panelAffected = false
         for occ in occurrences {
             let oldKey = oldSections[occ.section].dayKey
-            if occ.section == 0 && selectedDayKey != nil { panelAffected = true }
-            if occ.section < newSections.count && newSections[occ.section].dayKey == oldKey && !newSections[occ.section].entries.isEmpty {
+            let isDayPanel = occ.section == 0 && selectedDayKey != nil
+            if isDayPanel { panelAffected = true }
+            if isDayPanel {
+                // P0-1：只删行（见方法头注释）——旧 1 行 → 新 0 行，与
+                // 数据源的空面板分区一致；completion 的 reloadSections(0)
+                // 因此仍在界内，可重建含计数的面板头。
+                rowDeletes.append(IndexPath(row: occ.row, section: occ.section))
+            } else if occ.section < newSections.count && newSections[occ.section].dayKey == oldKey && !newSections[occ.section].entries.isEmpty {
                 rowDeletes.append(IndexPath(row: occ.row, section: occ.section))
             } else {
                 sectionDeletes.insert(occ.section)
@@ -2486,6 +2523,9 @@ class BearyTimelineViewController: UIViewController {
         statsButton.titleLabel?.font = UIFont.systemFont(ofSize: 13.5)
         statsButton.addTarget(self, action: #selector(didTapStats), for: .touchUpInside)
         statsButton.bearyAddPressFeedback()
+        // P2：统计行初态不可点（无文案、无重试可做）；失败态由
+        // updateStatsLine 重新启用，正常态保持禁用。
+        statsButton.isEnabled = false
 
         calendarCard.translatesAutoresizingMaskIntoConstraints = false
         calendarCard.onSelectDay = { [weak self] day in
@@ -2612,6 +2652,9 @@ class BearyTimelineViewController: UIViewController {
     private var lastTrashCount: Int?
 
     private func updateTrashTitle() {
+        // P1-26：回收站钮按功能命名（计数同步更新，含数字段-only 与
+        // 数值不变提前返回两路——标签放在所有返回之前，不会被短路漏掉）。
+        trashButton.accessibilityLabel = trashCountValue > 0 ? "回收站，\(trashCountValue)篇" : "回收站"
         if let last = lastTrashCount, last == trashCountValue,
            trashButton.attributedTitle(for: .normal) != nil {
             return
@@ -2710,6 +2753,10 @@ class BearyTimelineViewController: UIViewController {
         let visibleKeys = monthKeysForCurrentView()
         let anyVisibleFailed = visibleKeys.contains { calendarFailed.contains($0) && calendarCache[$0] == nil }
         if anyVisibleFailed {
+            // P2：失败态是唯一可点态（重试入口），保持启用 + 按压反馈；
+            // P1-26：按功能命名（与可见文案一致）。
+            statsButton.isEnabled = true
+            statsButton.accessibilityLabel = "日历加载失败，点击重试"
             // 64 包反馈修（第 3 项）：失败态亦计签名，一致则不重碰按钮。
             let signature = "fail"
             guard signature != lastStatsLineSignature else { return }
@@ -2723,6 +2770,9 @@ class BearyTimelineViewController: UIViewController {
             return
         }
         guard let primaryKey = primaryKey, let data = calendarCache[primaryKey] else {
+            // P2：空态无内容、无重试可做，与正常态同为不可点。
+            statsButton.isEnabled = false
+            statsButton.accessibilityLabel = nil
             let signature = "empty"
             guard signature != lastStatsLineSignature else { return }
             lastStatsLineSignature = signature
@@ -2740,6 +2790,11 @@ class BearyTimelineViewController: UIViewController {
         // 数值真变时只换数字段（下分支），静态段与火苗图标一律不动。
         let streak = data.streak ?? 0
         let monthTotal = data.monthTotal ?? 0
+        // P2：正常态不可点——禁用即去掉按压反馈（touchDown 缩放/震动
+        // 只在启用钮上触发），didTapStats 的重试逻辑只在失败态可达；
+        // P1-26：无障碍名与可见统计文案一致。
+        statsButton.isEnabled = false
+        statsButton.accessibilityLabel = "已连续写 \(streak) 天，本月共 \(monthTotal) 篇"
         if lastStatsLineSignature == "normal", lastStatsStreak == streak, lastStatsMonthTotal == monthTotal {
             return
         }
