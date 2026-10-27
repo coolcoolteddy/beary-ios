@@ -342,7 +342,10 @@ final class BearyChromeViewController: UIViewController {
             top.trailingAnchor.constraint(equalTo: view.trailingAnchor),
             topHeight,
         ])
-        let logo = UIButton(type: .custom)
+        // R9-A：logo 图-only、高仅 28（宽 79 已超 44，只扩竖向）：换 Hit44 后
+        // 热区竖向扩到 44（上下各 8pt），仍落在 60 高顶栏栈内、不被裁剪；
+        // 右侧为弹性 spacer，无邻钮重叠；视觉帧 79×28 不动。
+        let logo = BearyHit44Button(type: .custom)
         logo.setImage(UIImage(named: "LogoHorizontal"), for: .normal)
         logo.imageView?.contentMode = .scaleAspectFit
         logo.addTarget(self, action: #selector(didTapLogo), for: .touchUpInside)

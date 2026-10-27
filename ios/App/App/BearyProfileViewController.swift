@@ -607,7 +607,9 @@ class BearyProfileViewController: UIViewController {
     // MARK: - 头像行动作：齿轮（仅本人）；头像行分享已按 1:1 去掉，modal 态走顶栏分享
 
     private lazy var gearButton: UIButton = {
-        let buttonValue = UIButton(type: .system)
+        // R9-A：齿轮图-only、40×40（图标 19pt）：换 Hit44 后热区扩到 44
+        // （每侧 2pt）；右侧 editButton 间距 8pt，横扩 2pt 后仍余 6pt，不重叠；视觉不变。
+        let buttonValue = BearyHit44Button(type: .system)
         buttonValue.translatesAutoresizingMaskIntoConstraints = false
         // I1：齿轮改图标钮（网页 pfGearBtn 用 beary-more；icon_more 由该 symbol 渲染）。
         buttonValue.setImage(BearyIconImages.image(named: "icon_more", pointSize: 19), for: .normal)
