@@ -430,7 +430,7 @@ final class BearyChromeViewController: UIViewController {
         ])
         let tabIcons: [(String, String)] = [
             ("IconHome", "house"),
-            ("IconCalendar", "calendar"),
+            ("IconTimeline", "calendar"),
             ("IconUser", "person"),
         ]
         let seg = BearyHit44SegmentedControl(items: tabIcons.map { segmentIcon(named: $0.0, systemFallback: $0.1) })
