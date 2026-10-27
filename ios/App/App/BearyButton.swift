@@ -109,6 +109,12 @@ final class BearyButton: BearyHit44Button {
         return BearyButton(style: .iconCircleClose)
     }
 
+    /// 重试类描边 pill 唯一档：紧凑描边款（36 高 / 圆角 18 / 14 semibold）。
+    /// 搜索页两处重试钮共用本工厂，不再各写一套尺寸。
+    static func retryPill() -> BearyButton {
+        return BearyButton(style: .secondaryOutline(.compact))
+    }
+
     private func applyStyle() {
         layer.cornerRadius = style.cornerRadius
         layer.masksToBounds = true

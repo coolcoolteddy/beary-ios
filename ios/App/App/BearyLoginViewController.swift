@@ -454,6 +454,11 @@ final class BearyLoginViewController: UIViewController {
         return (inviteField.text ?? "").trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
     }
 
+    /// 审计 P2：邀请码格式两端统一——8 位大写字母或数字，与邀请面板同口径。
+    private func isValidInviteCode(_ code: String) -> Bool {
+        return code.range(of: "^[A-Z0-9]{8}$", options: .regularExpression) != nil
+    }
+
     /// 设备信号：网页 lgDeviceSignals 口径 {g, w, h, d}，原生只带能取到的字段：
     /// w/h 为屏幕逻辑尺寸（与网页 screen.width/height 同为 CSS 点单位），
     /// d 为像素比；g 是 WebGL GPU 字符串，原生无对应采集口径，不编造、不带。
@@ -604,6 +609,12 @@ final class BearyLoginViewController: UIViewController {
             showMessage("请输入验证码")
             return
         }
+        // 审计 P2：邀请码先行格式校验，不合规行内提示且不发请求。
+        let inviteCode = normalizedInviteCode()
+        guard inviteCode.isEmpty || isValidInviteCode(inviteCode) else {
+            showMessage("邀请码格式不正确，应为 8 位字母或数字")
+            return
+        }
         isVerifying = true
         updateButtonStates()
         verify(email: email, code: code, confirmCancel: false)
@@ -633,7 +644,8 @@ final class BearyLoginViewController: UIViewController {
                         }
                     } else if resp.ok == true {
                         // 会话 cookie 已由共享 URLSession 存好；容器随后刷新登录态。
-                        strongSelf.onLoggedIn?()
+                        // 审计 P1-25：先按 referral 绑定结果给一句反馈再 dismiss。
+                        strongSelf.handleLoginReferralFeedback(resp: resp)
                     } else {
                         strongSelf.showMessage(resp.message ?? resp.error ?? "验证失败")
                     }
@@ -647,6 +659,33 @@ final class BearyLoginViewController: UIViewController {
                     strongSelf.showMessage("验证失败")
                 }
             }
+        }
+    }
+
+    /// 审计 P1-25：验码成功分支的邀请绑定反馈。未填码时立即 dismiss；
+    /// 填了码时先行内提示绑定结果，1.2 秒后再 dismiss，让用户读到反馈。
+    /// granted → 到账文案；flagged → 待审核文案；其余（失败态 / 无 referral 回包）
+    /// 均显式提示“邀请码未绑定成功”，且不影响登录本身。
+    private func handleLoginReferralFeedback(resp: VerifyResponse) {
+        let inviteCode = normalizedInviteCode()
+        guard !inviteCode.isEmpty else {
+            onLoggedIn?()
+            return
+        }
+        let status = resp.referral?.status ?? ""
+        if resp.referral?.ok == true || status == "granted" {
+            showMessage("邀请码绑定成功，1 个月 Plus 已到账", ok: true)
+        } else if status == "flagged" {
+            showMessage("邀请码已提交，站长审核通过后各得 1 个月 Plus", ok: true)
+        } else {
+            var text = "邀请码未绑定成功"
+            if let err = resp.referral?.error, !err.isEmpty, err != text {
+                text += "：\(err)"
+            }
+            showMessage(text)
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) { [weak self] in
+            self?.onLoggedIn?()
         }
     }
 
@@ -702,7 +741,7 @@ final class BearyLoginViewController: UIViewController {
     // 发码/验码走 BearyAPI（见头注释）；本页不再保留本地账户请求实现。
 }
 
-// MARK: - UITextFieldDelegate（验证码只接受 ASCII 数字且 ≤6 位；邀请码 ≤16 位，与网页 maxlength 同口径）
+// MARK: - UITextFieldDelegate（验证码只接受 ASCII 数字且 ≤6 位；邀请码 8 位，与邀请面板同口径）
 
 extension BearyLoginViewController: UITextFieldDelegate {
     func textField(_ textField: UITextField, shouldChangeCharactersIn range: NSRange, replacementString string: String) -> Bool {
@@ -710,7 +749,7 @@ extension BearyLoginViewController: UITextFieldDelegate {
         guard let swiftRange = Range(range, in: current) else { return false }
         let next = current.replacingCharacters(in: swiftRange, with: string)
         if textField === inviteField {
-            return next.count <= 16
+            return next.count <= 8
         }
         guard textField === codeField else { return true }
         guard next.count <= 6 else { return false }

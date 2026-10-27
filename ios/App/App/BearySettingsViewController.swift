@@ -850,6 +850,7 @@ final class BearySettingsViewController: UIViewController {
         exportStack.axis = .vertical
         exportStack.spacing = 4
         exportRowButton.translatesAutoresizingMaskIntoConstraints = false
+        exportRowButton.accessibilityLabel = "导出我的数据"
         exportRowButton.addTarget(self, action: #selector(exportButtonTapped), for: .touchUpInside)
         exportRowButton.bearyAddPressHaptic()
         let exportRow = UIStackView(arrangedSubviews: [makeRowIcon("icon_download"), exportStack])
@@ -872,7 +873,8 @@ final class BearySettingsViewController: UIViewController {
             exportRowButton.trailingAnchor.constraint(equalTo: exportRowWrap.trailingAnchor),
             exportRowButton.bottomAnchor.constraint(equalTo: exportRowWrap.bottomAnchor),
         ])
-        let securityGroup = makeGroupCard(title: "安全", rows: [
+        // 审计 P2：卡外已有“账号与安全”组标题，卡内标题不再重复，传 nil 只留一处。
+        let securityGroup = makeGroupCard(title: nil, rows: [
             codeLoginRow,
             deviceRow,
             sessionsStack,
@@ -1211,7 +1213,7 @@ final class BearySettingsViewController: UIViewController {
                     let list = resp.sessions ?? []
                     self.accountSessions = list
                     let count = resp.activeCount ?? list.count
-                    self.deviceCountLabel.text = "共 \(count) 台设备"
+                    self.deviceCountLabel.text = "共 \(count) 台设备（活跃）"
                     self.rebuildSessions(sessions: list, failed: false)
                 case .failure(let error):
                     if case .unauthorized = error {
@@ -1376,15 +1378,18 @@ final class BearySettingsViewController: UIViewController {
         BearyAPI.shared.requestAccountDelete { [weak self] result in
             DispatchQueue.main.async {
                 guard let self = self else { return }
-                self.isDeleting = false
                 switch result {
                 case .success:
                     // 网页口径：提示后 1.2 秒回首页；原生等价为提示后走 onAccountDeleted（容器清态并关闭本页）。
+                    // 审计 P2：1.2 秒窗口内 isDeleting 保持 true，直至 onAccountDeleted 执行后才复位，
+                    // 防止窗口内重复点注销。
                     self.showToast("已提交注销申请，7 天后正式注销")
                     DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) { [weak self] in
                         self?.onAccountDeleted?()
+                        self?.isDeleting = false
                     }
                 case .failure(let error):
+                    self.isDeleting = false
                     if case .unauthorized = error {
                         self.onRequireLogin?()
                         return
@@ -1445,8 +1450,15 @@ final class BearySettingsViewController: UIViewController {
         var exportFailedReason: String?
         var exportTruncated = false
         group.enter()
+        var sessionsFailed = false
         BearyAPI.shared.fetchAccountSessions { result in
-            if case .success(let resp) = result { sessionsResp = resp }
+            // 审计 P1-23：会话拉取失败不得静默丢弃 sessions 让 JSON 看似完整——
+            // 整单 fail-closed，只 toast、不拼 JSON、不出文件（与三个日记 scope 同口径）。
+            if case .success(let resp) = result {
+                sessionsResp = resp
+            } else {
+                sessionsFailed = true
+            }
             group.leave()
         }
         let scopes: [(BearyAPI.Scope, (BearyExportPageResult) -> Void)] = [
@@ -1493,6 +1505,10 @@ final class BearySettingsViewController: UIViewController {
             self.isExporting = false
             self.exportRowButton.isEnabled = true
             // 失败 fail-closed：只 toast、不拼 JSON、不出文件、不出分享面板。
+            if sessionsFailed {
+                self.showToast("导出失败（登录设备拉取失败），未生成文件")
+                return
+            }
             if let failedReason = exportFailedReason {
                 self.showToast("导出失败（\(failedReason)），未生成文件")
                 return
@@ -1533,8 +1549,9 @@ final class BearySettingsViewController: UIViewController {
         }
         let fmt = DateFormatter()
         fmt.locale = Locale(identifier: "en_US_POSIX")
-        fmt.dateFormat = "yyyy-MM-dd"
-        let fileName = "teddyhn-data-" + fmt.string(from: Date()) + ".json"
+        fmt.dateFormat = "yyyy-MM-dd-HHmmss"
+        // 审计 P2：文件名加时间戳 + UUID 后缀，分享面板未收起时再导出不互相覆盖/删除。
+        let fileName = "teddyhn-data-" + fmt.string(from: Date()) + "-" + String(UUID().uuidString.prefix(8)) + ".json"
         let fileURL = FileManager.default.temporaryDirectory.appendingPathComponent(fileName)
         var text = "\u{feff}"
         text += String(data: jsonData, encoding: .utf8) ?? ""
@@ -1751,6 +1768,7 @@ final class BearySettingsViewController: UIViewController {
         systemDetail.text = "去系统设置"
         let systemContent = makeRow(title: "系统通知设置", detailLabel: systemDetail, iconName: "icon_settings")
         let systemButton = UIButton(type: .custom)
+        systemButton.accessibilityLabel = "系统通知设置"
         systemButton.addTarget(self, action: #selector(openSystemSettings), for: .touchUpInside)
         systemButton.bearyAddPressHaptic()
         let systemRow = makeSettingsTappableRow(content: systemContent, button: systemButton)
@@ -1771,6 +1789,7 @@ final class BearySettingsViewController: UIViewController {
             let content = makeRow(title: mode.title, detailLabel: checkmark, iconName: "icon_theme_auto")
             let button = UIButton(type: .custom)
             button.tag = index
+            button.accessibilityLabel = mode.title
             button.addTarget(self, action: #selector(themeRowTapped(_:)), for: .touchUpInside)
             button.bearyAddPressHaptic()
             rows.append(makeSettingsTappableRow(content: content, button: button))
@@ -1780,12 +1799,16 @@ final class BearySettingsViewController: UIViewController {
         tutorialDetail.text = "查看"
         let tutorialContent = makeRow(title: "使用指南", detailLabel: tutorialDetail)
         let tutorialButton = UIButton(type: .custom)
+        tutorialButton.accessibilityLabel = "使用指南"
         tutorialButton.addTarget(self, action: #selector(tutorialButtonTapped), for: .touchUpInside)
         tutorialButton.bearyAddPressHaptic()
         rows.append(makeSettingsTappableRow(content: tutorialContent, button: tutorialButton))
         // 版本行：Bundle 实值，只展示不跳转。
+        // 审计 P2：版本行与页底脚注统一口径，含构建号，不只显示对外版本。
         let versionDetail = makeLabel(font: UIFont.systemFont(ofSize: 13), color: BearyColors.gray)
-        versionDetail.text = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "—"
+        let versionShort = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "—"
+        let versionBuild = Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "—"
+        versionDetail.text = "\(versionShort)（构建号 \(versionBuild)）"
         rows.append(makeRow(title: "版本", detailLabel: versionDetail))
         // D2：诊断日志开关行（复用消息角标开关行样式：标题 + 说明 + UISwitch；
         // 放在诊断日志查看行正上方，开关关闭时 DiagFile 不再写入，默认开）。
@@ -1813,6 +1836,7 @@ final class BearySettingsViewController: UIViewController {
         diagDetail.text = "查看"
         let diagContent = makeRow(title: "诊断日志", detailLabel: diagDetail)
         let diagButton = UIButton(type: .custom)
+        diagButton.accessibilityLabel = "诊断日志"
         diagButton.addTarget(self, action: #selector(openDiagnosticsPage), for: .touchUpInside)
         diagButton.bearyAddPressHaptic()
         rows.append(makeSettingsTappableRow(content: diagContent, button: diagButton))
@@ -1825,6 +1849,7 @@ final class BearySettingsViewController: UIViewController {
         privacyDetail.text = "查看"
         let privacyContent = makeRow(title: "隐私政策", detailLabel: privacyDetail)
         let privacyButton = UIButton(type: .custom)
+        privacyButton.accessibilityLabel = "隐私政策"
         privacyButton.addTarget(self, action: #selector(openPrivacyText), for: .touchUpInside)
         privacyButton.bearyAddPressHaptic()
         let privacyRow = makeSettingsTappableRow(content: privacyContent, button: privacyButton)
@@ -1832,6 +1857,7 @@ final class BearySettingsViewController: UIViewController {
         termsDetail.text = "查看"
         let termsContent = makeRow(title: "用户协议", detailLabel: termsDetail)
         let termsButton = UIButton(type: .custom)
+        termsButton.accessibilityLabel = "用户协议"
         termsButton.addTarget(self, action: #selector(openTermsText), for: .touchUpInside)
         termsButton.bearyAddPressHaptic()
         let termsRow = makeSettingsTappableRow(content: termsContent, button: termsButton)
@@ -2596,9 +2622,12 @@ private final class BearyDiagnosticsViewController: UIViewController {
             if lines.isEmpty {
                 self.textView.text = "暂无诊断日志"
                 self.textView.textColor = BearyColors.gray
+                // 审计 P1-24：空日志时复制钮即显示无日志可复制，不留“复制全部”误导。
+                self.copyButton.setTitle("暂无日志可复制", for: .normal)
             } else {
                 self.textView.text = lines.joined(separator: "\n")
                 self.textView.textColor = BearyColors.ink
+                self.copyButton.setTitle("复制全部", for: .normal)
             }
         }
     }
@@ -2609,6 +2638,11 @@ private final class BearyDiagnosticsViewController: UIViewController {
 
     @objc private func copyTapped() {
         DiagFile.linesAsync { [weak self] lines in
+            // 审计 P1-24：日志为空时不写剪贴板（不清空用户原有剪贴内容），只提示无日志可复制。
+            guard !lines.isEmpty else {
+                self?.copyButton.setTitle("暂无日志可复制", for: .normal)
+                return
+            }
             UIPasteboard.general.string = lines.joined(separator: "\n")
             self?.copyButton.setTitle("已复制", for: .normal)
             DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in

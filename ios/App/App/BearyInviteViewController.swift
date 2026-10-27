@@ -59,6 +59,15 @@ final class BearyInviteViewController: UIViewController {
 
     private var inviteCode: String?
     private var referral: ReferralInfo?
+    /// 审计 P2：绑定成功文案先行状态——render() 会清空消息行，成功文案须在
+    /// render 后仍保留；二次 fetchMe 失败时也不得以失败文案覆盖它。
+    private var pendingBindMessage: String?
+    private var pendingBindMessageOK = false
+
+    /// 审计 P2：邀请码格式两端统一——8 位大写字母或数字，与登录页同口径。
+    private func isValidInviteCode(_ code: String) -> Bool {
+        return code.range(of: "^[A-Z0-9]{8}$", options: .regularExpression) != nil
+    }
     private var isLoading = false
     private var isBinding = false
     private var copyTimer: Timer?
@@ -387,10 +396,21 @@ final class BearyInviteViewController: UIViewController {
                         strongSelf.showMessage("请先登录")
                     }
                 case .failure(.network):
-                    strongSelf.showMessage("网络错误，请重试")
+                    // 审计 P2：绑定后二次刷新失败时，成功文案优先于加载失败文案。
+                    if let pending = strongSelf.pendingBindMessage {
+                        strongSelf.showMessage(pending, ok: strongSelf.pendingBindMessageOK)
+                        strongSelf.pendingBindMessage = nil
+                    } else {
+                        strongSelf.showMessage("网络错误，请重试")
+                    }
                     strongSelf.retryButton.isHidden = false
                 case .failure:
-                    strongSelf.showMessage("加载失败，请重试")
+                    if let pending = strongSelf.pendingBindMessage {
+                        strongSelf.showMessage(pending, ok: strongSelf.pendingBindMessageOK)
+                        strongSelf.pendingBindMessage = nil
+                    } else {
+                        strongSelf.showMessage("加载失败，请重试")
+                    }
                     strongSelf.retryButton.isHidden = false
                 }
             }
@@ -412,9 +432,14 @@ final class BearyInviteViewController: UIViewController {
         let hintWasHidden = bindHintLabel.isHidden
         codeLabel.text = inviteCode ?? "—"
         updateCopyButton()
-        let invited = referral?.invitedCount ?? 0
-        let months = referral?.rewardMonths ?? 0
-        statsLabel.text = "已邀请 \(invited) 人 · 累计获得 \(months) 个月 Plus"
+        // 审计 P2：referral 尚未回包时统计区保留“加载中…”，不回落假零值。
+        if let ref = referral {
+            let invited = ref.invitedCount ?? 0
+            let months = ref.rewardMonths ?? 0
+            statsLabel.text = "已邀请 \(invited) 人 · 累计获得 \(months) 个月 Plus"
+        } else {
+            statsLabel.text = "加载中…"
+        }
         boundRow.isHidden = true
         bindRow.isHidden = true
         bindHintLabel.isHidden = true
@@ -422,27 +447,47 @@ final class BearyInviteViewController: UIViewController {
             let status = referral?.status ?? ""
             if status == "cancelled" || status == "expired" {
                 boundLabel.text = "邀请已作废"
+                // 审计 P2：作废态不写死绿勾，图标隐藏。
+                boundCheckIcon.isHidden = true
             } else {
                 boundLabel.text = "已通过 \(referral?.inviterName ?? "好友") 的邀请加入 beary"
+                boundCheckIcon.isHidden = false
             }
             boundRow.isHidden = false
-        } else if referral?.bindOpen == true {
-            bindRow.isHidden = false
-            bindHintLabel.isHidden = false
-            if let deadline = referral?.bindDeadline {
-                let nowMs = Int(Date().timeIntervalSince1970 * 1000)
-                let days = max(0, (deadline - nowMs) / 86400000)
-                if days > 0 {
-                    bindHintLabel.text = "注册后 30 天内可补绑（还剩 \(days) 天）"
-                } else {
-                    bindHintLabel.text = "注册后 30 天内可补绑（还剩不到 1 天）"
-                }
+        } else if let ref = referral, ref.bindOpen == true {
+            let nowMs = Int(Date().timeIntervalSince1970 * 1000)
+            if let deadline = ref.bindDeadline, deadline <= nowMs {
+                // 审计 P2：补绑已过期——隐藏绑定框，明确显示过期文案，不按“不到 1 天”显示。
+                bindRow.isHidden = true
+                bindHintLabel.isHidden = false
+                bindHintLabel.text = "补绑期已过"
             } else {
-                bindHintLabel.text = "注册后 30 天内可补绑"
+                bindRow.isHidden = false
+                bindHintLabel.isHidden = false
+                if let deadline = ref.bindDeadline {
+                    let days = (deadline - nowMs) / 86400000
+                    if days > 0 {
+                        bindHintLabel.text = "注册后 30 天内可补绑（还剩 \(days) 天）"
+                    } else {
+                        bindHintLabel.text = "注册后 30 天内可补绑（还剩不到 1 天）"
+                    }
+                } else {
+                    bindHintLabel.text = "注册后 30 天内可补绑"
+                }
+                updateBindButton()
             }
-            updateBindButton()
+        } else if referral != nil {
+            // 审计 P2：未绑定且补绑窗口已关（bindOpen == false）——给过期文案，不整区静默消失。
+            bindHintLabel.isHidden = false
+            bindHintLabel.text = "补绑期已过"
         }
         messageLabel.text = ""
+        // 审计 P2：绑定成功文案先显示——render 清空消息行后，待展示的绑定文案重新落回。
+        if let pending = pendingBindMessage {
+            messageLabel.text = pending
+            messageLabel.textColor = pendingBindMessageOK ? BearyColors.green : BearyColors.red
+            pendingBindMessage = nil
+        }
         if UIAccessibility.isReduceMotionEnabled == false {
             for (view, wasHidden) in [(boundRow, boundWasHidden), (bindRow, bindWasHidden), (bindHintLabel, hintWasHidden)] {
                 if wasHidden && view.isHidden == false {
@@ -498,6 +543,11 @@ final class BearyInviteViewController: UIViewController {
             showMessage("请先填邀请码")
             return
         }
+        // 审计 P2：邀请码先行格式校验，不合规行内提示且不发请求。
+        guard isValidInviteCode(code) else {
+            showMessage("邀请码格式不正确，应为 8 位字母或数字")
+            return
+        }
         guard !isBinding else { return }
         isBinding = true
         updateBindButton()
@@ -510,9 +560,11 @@ final class BearyInviteViewController: UIViewController {
                 case .success(let resp):
                     if resp.status == "cancelled" {
                         // 网页同款：绑定返回 cancelled 不按成功处理，刷新后显示“邀请已作废”。
-                        strongSelf.load {
-                            strongSelf.showMessage("绑定已失效，请重新绑定")
-                        }
+                        // 审计 P2：文案先显示、再后台刷新统计，不依赖二次 fetchMe 成功。
+                        strongSelf.pendingBindMessage = "绑定已失效，请重新绑定"
+                        strongSelf.pendingBindMessageOK = false
+                        strongSelf.showMessage("绑定已失效，请重新绑定")
+                        strongSelf.load()
                     } else {
                         let okText: String
                         if resp.status == "granted" {
@@ -522,9 +574,10 @@ final class BearyInviteViewController: UIViewController {
                         } else {
                             okText = "绑定成功"
                         }
-                        strongSelf.load {
-                            strongSelf.showMessage(okText, ok: true)
-                        }
+                        strongSelf.pendingBindMessage = okText
+                        strongSelf.pendingBindMessageOK = true
+                        strongSelf.showMessage(okText, ok: true)
+                        strongSelf.load()
                     }
                 case .failure(.cancelled):
                     break
@@ -540,14 +593,14 @@ final class BearyInviteViewController: UIViewController {
     }
 }
 
-// MARK: - UITextFieldDelegate（邀请码 ≤16 位，与网页 maxlength 同口径）
+// MARK: - UITextFieldDelegate（邀请码 8 位，与登录页同口径）
 
 extension BearyInviteViewController: UITextFieldDelegate {
     func textField(_ textField: UITextField, shouldChangeCharactersIn range: NSRange, replacementString string: String) -> Bool {
         let current = textField.text ?? ""
         guard let swiftRange = Range(range, in: current) else { return false }
         let next = current.replacingCharacters(in: swiftRange, with: string)
-        return next.count <= 16
+        return next.count <= 8
     }
 
     func textFieldShouldReturn(_ textField: UITextField) -> Bool {
