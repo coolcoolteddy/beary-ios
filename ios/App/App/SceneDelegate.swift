@@ -3114,6 +3114,13 @@ private final class BearyFadeRiseAnimator: NSObject, UIViewControllerAnimatedTra
 enum DiagFile {
     static let fileName = "beary-diag.log"
     static let maxLines = 200
+    /// D2：诊断日志总开关（设置页通用分区“诊断日志”行上方）。
+    /// 默认开（未存过值时为 true），保持现有行为不变；关时 DiagFile 不再写入。
+    /// 与消息角标开关同款取值口径：object(forKey:) as? Bool ?? true。
+    static let enabledDefaultsKey = "beary_diag_enabled"
+    static var isEnabled: Bool {
+        UserDefaults.standard.object(forKey: enabledDefaultsKey) as? Bool ?? true
+    }
     static var url: URL {
         FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
             .appendingPathComponent(fileName)
@@ -3133,6 +3140,8 @@ enum DiagFile {
     }()
 
     static func mark(_ stage: String) {
+        // D2：开关关闭时不写入；关着启动时也不启动看门狗（看门狗只写日志）。
+        guard isEnabled else { return }
         ensureWatchdogStarted()
         let now = Date()
         diagQueue.async {
@@ -3146,7 +3155,10 @@ enum DiagFile {
     }
 
     /// 文件追加（调用方须在 diagQueue 上）。
+    /// D2：唯一写入口加总闸——看门狗静默事件也走这里，关时一律不写；
+    /// 每次写后补 isExcludedFromBackup（覆盖旧版已落盘的无标记文件，幂等）。
     private static func appendLine(_ line: String) {
+        guard isEnabled else { return }
         guard let data = line.data(using: .utf8) else { return }
         let u = url
         if FileManager.default.fileExists(atPath: u.path) {
@@ -3158,6 +3170,15 @@ enum DiagFile {
         } else {
             try? data.write(to: u, options: .atomic)
         }
+        excludeFromBackup(u)
+    }
+
+    /// D2：诊断日志不进 iCloud/设备备份（与草稿文件同款口径）。
+    private static func excludeFromBackup(_ u: URL) {
+        var values = URLResourceValues()
+        values.isExcludedFromBackup = true
+        var mutable = u
+        try? mutable.setResourceValues(values)
     }
 
     // 主线程心跳看门狗（86 包起，94 包起常驻供诊断页用）。
@@ -3245,10 +3266,14 @@ enum DiagFile {
     /// 节流裁剪（调用方须在 diagQueue 上）：每 50 次写入才检查一次，
     /// 不再每次 mark 全量读文件；超限才保留最后 maxLines 行。
     private static func trimIfNeeded() {
+        // D2：开关关闭时连裁剪重写也不做（仍是“写入”）；开时恢复裁剪。
+        // atomic 重写会丢资源标记，重写后补回备份排除。
+        guard isEnabled else { return }
         let ls = lines()
         guard ls.count > maxLines + 20 else { return }
         let kept = ls.suffix(maxLines).joined(separator: "\n") + "\n"
         try? kept.write(to: url, atomically: true, encoding: .utf8)
+        excludeFromBackup(url)
     }
 
     /// 诊断页读日志：走写入队列读，回调回主线程（与写入串行，无撕裂）。

@@ -1787,6 +1787,27 @@ final class BearySettingsViewController: UIViewController {
         let versionDetail = makeLabel(font: UIFont.systemFont(ofSize: 13), color: BearyColors.gray)
         versionDetail.text = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "—"
         rows.append(makeRow(title: "版本", detailLabel: versionDetail))
+        // D2：诊断日志开关行（复用消息角标开关行样式：标题 + 说明 + UISwitch；
+        // 放在诊断日志查看行正上方，开关关闭时 DiagFile 不再写入，默认开）。
+        let diagSwitchTitle = makeLabel(font: UIFont.systemFont(ofSize: 15), color: BearyColors.ink)
+        diagSwitchTitle.text = "记录诊断日志"
+        let diagSwitchDetail = makeLabel(font: UIFont.systemFont(ofSize: 12), color: BearyColors.gray, lines: 0)
+        diagSwitchDetail.text = "关闭后不再写入日志文件"
+        let diagSwitchTextStack = UIStackView(arrangedSubviews: [diagSwitchTitle, diagSwitchDetail])
+        diagSwitchTextStack.axis = .vertical
+        diagSwitchTextStack.spacing = 2
+        diagSwitchTextStack.alignment = .fill
+        let diagSwitch = UISwitch()
+        diagSwitch.isOn = DiagFile.isEnabled
+        diagSwitch.setContentHuggingPriority(.required, for: .horizontal)
+        diagSwitch.setContentCompressionResistancePriority(.required, for: .horizontal)
+        diagSwitch.addTarget(self, action: #selector(diagSwitchValueChanged(_:)), for: .valueChanged)
+        let diagSwitchRow = UIStackView(arrangedSubviews: [diagSwitchTextStack, diagSwitch])
+        diagSwitchRow.translatesAutoresizingMaskIntoConstraints = false
+        diagSwitchRow.axis = .horizontal
+        diagSwitchRow.spacing = 12
+        diagSwitchRow.alignment = .center
+        rows.append(diagSwitchRow)
         // 94 包：诊断日志行（点进专门页面看全部日志，不再只给 20 行尾巴）。
         let diagDetail = makeLabel(font: UIFont.systemFont(ofSize: 13), color: BearyColors.gray)
         diagDetail.text = "查看"
@@ -1821,6 +1842,12 @@ final class BearySettingsViewController: UIViewController {
     @objc private func badgeSwitchValueChanged(_ sender: UISwitch) {
         UserDefaults.standard.set(sender.isOn, forKey: "beary_unread_badge_enabled")
         SceneDelegate.chrome?.reapplyBellBadge()
+    }
+
+    /// D2：诊断日志开关——只存档；DiagFile 每次写入时实时读档，关后新写入即停
+    ///（关前已入队的一两条在途写入可能仍落盘，属队列时序，不新产生写入）。
+    @objc private func diagSwitchValueChanged(_ sender: UISwitch) {
+        UserDefaults.standard.set(sender.isOn, forKey: DiagFile.enabledDefaultsKey)
     }
 
     @objc private func openSystemSettings() {
