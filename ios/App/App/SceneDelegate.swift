@@ -2886,9 +2886,13 @@ private final class BearyComposerSheetAnimator: NSObject, UIViewControllerAnimat
             DiagFile.mark("animator-framed")
             let height = toView.bounds.height
             toView.transform = CGAffineTransform(translationX: 0, y: height)
+            // 临时诊断（83 包，定根因后删除）。
+            DiagFile.mark("animator-animate-call")
             UIView.animate(withDuration: duration, animations: {
                 toView.transform = .identity
             }, completion: { _ in
+                // 临时诊断（83 包，定根因后删除）。
+                DiagFile.mark("animator-completion-enter")
                 transitionContext.completeTransition(transitionContext.transitionWasCancelled == false)
                 // 临时诊断（82 包追加，定根因后删除）：转场终态，不进非终态集合。
                 DiagFile.mark("animator-completed")
@@ -2932,6 +2936,8 @@ enum DiagFile {
         "ob-welcome-enter", "ob-welcome-exit", "ob-updateChrome", "ob-entrance",
         // 82 包追加的转场/布局非终态（animator-completed 是转场终态，不在集合里）。
         "animator-added", "animator-framed",
+        // 83 包追加：completion 入口（completeTransition 之前），仍属非终态。
+        "animator-animate-call", "animator-completion-enter",
         "sheet-layout", "composer-layout", "composer-prefSize",
     ]
 
