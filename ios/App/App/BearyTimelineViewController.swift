@@ -3373,9 +3373,9 @@ class BearyTimelineViewController: UIViewController {
         }
         selectedDayKey = key
         renderCalendar()
-        if !reloadDayPanelSectionIfStable() {
-            tableView.reloadData()
-        }
+        // 切日闪退修：换日分支不再走 reloadSections——点按驱动的更新上下文里
+        // 分段数守卫也挡不住 UIKit Invalid Batch Updates，改整表重载。
+        tableView.reloadData()
         updateChrome()
         refreshHeaderHeight()
         fetchDayEntries(key: key, clear: true)
