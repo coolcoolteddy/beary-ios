@@ -2079,8 +2079,10 @@ class BearyDiaryCardCell: UITableViewCell {
         self.feedLikeTapped()
     }
 
-    /// F8（首页模式）：点赞——按下只给轻震与按压缩放，填充与计数等服务器确认；
-    /// 成功时回弹 + 液体爆点，失败拒绝动效 + 通用提示。
+    /// F8（首页模式）：点赞——Li 2026-10-27 定全量先行：抬起确认时立即填橙色、
+    /// 计数 +1，不等服务端；回包后以服务端值为准对齐，成功补爆点（填充已先行，
+    /// 不再重播填充淡入）；失败按原模型回滚 + 拒绝动效 + 通用提示。
+    /// 取消点赞 pre-unlike 口径不变（只改视图，失败由回包复原）。
     private func feedLikeTapped() {
         // 按下已给过先行反馈时抬起不再重播（否则震动来两次）；
         // 守卫失败时把按下预览复原（按下与抬起之间状态几乎不可能变，纯防御）。
@@ -2107,12 +2109,21 @@ class BearyDiaryCardCell: UITableViewCell {
             return
         }
         let currentlyLiked = currentEntry?.likedByMe ?? false
+        let originalCount = currentEntry?.likeCount ?? 0
         if hadPressPreview == false {
             if currentlyLiked == false {
                 BearyHaptics.likeTap()
             } else {
                 applyPreUnlike()
             }
+        }
+        if currentlyLiked == false {
+            // 点赞全量先行（Li 2026-10-27 定）：抬起确认时立即填橙色、计数 +1；
+            // 模型同步改，updateLikeButton 按新模型渲染；回包成功对齐服务端值，
+            // 失败按 originalCount / currentlyLiked 复原（见失败分支）。
+            currentEntry?.likedByMe = true
+            currentEntry?.likeCount = originalCount + 1
+            updateLikeButton()
         }
         isLikeBusy = true
         updateActionInteractivity()
@@ -2131,12 +2142,16 @@ class BearyDiaryCardCell: UITableViewCell {
                     }
                     strongSelf.updateLikeButton()
                     if newLiked {
-                        BearyIconMotion.playFillFade(on: strongSelf.likeButton)
-                        // 填充确认的那一刻：爱心回弹 + 液体爆点；取消点赞不炸。
+                        // 服务端确认的那一刻：爱心回弹 + 液体爆点；填充与计数已先行，
+                        // 不再重播填充淡入（否则已填好的爱心会闪一次）；取消点赞不炸。
                         BearyIconMotion.playLikeBurst(on: strongSelf.likeButton)
                     }
                     strongSelf.onInteractionChanged?(entryIdValue, strongSelf.currentEntry?.likeCount, newLiked, nil)
                 case .failure(let err):
+                    // 失败回滚：先行填色与计数按原模型复原（取消点赞本就只改视图，
+                    // 复原亦无害），再走既有失败路径（拒绝动效 + 通用提示），不另起一套。
+                    strongSelf.currentEntry?.likedByMe = currentlyLiked
+                    strongSelf.currentEntry?.likeCount = originalCount
                     strongSelf.updateLikeButton()
                     if case .unauthorized = err {
                         strongSelf.onRequireLogin?()
