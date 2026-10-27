@@ -3057,6 +3057,13 @@ private class BearyProfileEntryCell: UITableViewCell {
     /// 只取消在途加载并隐藏，不再每次销毁重建 UIImageView。
     private var imageSlots: [UIImageView] = []
     private var imageSlotWidthConstraints: [NSLayoutConstraint] = []
+    /// Gemini 第二批（引用缩略图槽位，94 主图槽位同款口径）：configureQuote
+    /// 原先每 configure 都新建一批 42pt 缩略图视图并各起一次下载，复用时旧
+    /// 下载无视图可取消（新视图接管不到旧任务）；池化后复用视图上的
+    /// bearySetImage 会先取消在途任务再起新图，prepareForReuse 与无图卡片
+    /// 同样先取消，不再漏下载。引用图片上限与条目图片同为 9 张，池按需
+    /// 增长、不预建（引用卡片非每卡都有，预建 9 只纯属浪费）。
+    private var quoteThumbPool: [UIImageView] = []
 
     private func makeImageSlots() {
         guard imageSlots.isEmpty else { return }
@@ -3208,6 +3215,11 @@ private class BearyProfileEntryCell: UITableViewCell {
         for slot in imageSlots {
             slot.bearySetImage(url: nil)
             slot.isHidden = true
+        }
+        // 引用缩略图池同款：只取消在途加载（视图随下方 quoteContainer
+        // 子视图移除一并离树，留池供下轮，不销毁）。
+        for thumbView in quoteThumbPool {
+            thumbView.bearySetImage(url: nil)
         }
         for arrangedView in emoteStack.arrangedSubviews {
             emoteStack.removeArrangedSubview(arrangedView)
@@ -3533,6 +3545,11 @@ private class BearyProfileEntryCell: UITableViewCell {
         for subview in quoteContainer.subviews {
             subview.removeFromSuperview()
         }
+        // 池化缩略图的在途加载先取消：新卡有图时复用视图起新图即覆盖，
+        // 无图卡片不走缩略图分支，旧下载不取消会在 detached 树上空跑。
+        for thumbView in quoteThumbPool {
+            thumbView.bearySetImage(url: nil)
+        }
         guard let quoteValue = entry.quote else {
             if let quoteId = entry.quoteId, !quoteId.isEmpty {
                 buildGoneQuote(message: "引用的日记已删除")
@@ -3593,19 +3610,32 @@ private class BearyProfileEntryCell: UITableViewCell {
             let thumbsStack = UIStackView()
             thumbsStack.axis = .horizontal
             thumbsStack.spacing = 5
-            for thumbKey in keys {
-                let thumbView = UIImageView()
-                thumbView.translatesAutoresizingMaskIntoConstraints = false
-                thumbView.backgroundColor = BearyColors.faint
-                thumbView.contentMode = .scaleAspectFill
-                thumbView.clipsToBounds = true
-                thumbView.layer.cornerRadius = 7
+            for (thumbIndex, thumbKey) in keys.enumerated() {
+                let thumbView: UIImageView
+                if thumbIndex < quoteThumbPool.count {
+                    thumbView = quoteThumbPool[thumbIndex]
+                } else {
+                    thumbView = UIImageView()
+                    thumbView.translatesAutoresizingMaskIntoConstraints = false
+                    thumbView.backgroundColor = BearyColors.faint
+                    thumbView.contentMode = .scaleAspectFill
+                    thumbView.clipsToBounds = true
+                    thumbView.layer.cornerRadius = 7
+                    NSLayoutConstraint.activate([
+                        thumbView.widthAnchor.constraint(equalToConstant: 42),
+                        thumbView.heightAnchor.constraint(equalToConstant: 42),
+                    ])
+                    quoteThumbPool.append(thumbView)
+                }
+                // 复用视图起新图：bearySetImage 先取消该视图在途任务（旧卡
+                // 的下载不再串位），再置占位、起新下载；尺寸约束只在建池时
+                // 激活一次，不随 configure 累积重复约束。
                 thumbView.bearySetImage(url: BearyImageURLs.imageURL(key: thumbKey, thumb: true), downsampleToWidth: 42 * UIScreen.main.scale)
                 thumbsStack.addArrangedSubview(thumbView)
-                NSLayoutConstraint.activate([
-                    thumbView.widthAnchor.constraint(equalToConstant: 42),
-                    thumbView.heightAnchor.constraint(equalToConstant: 42),
-                ])
+            }
+            // 本轮未复用的池视图离树（留池供下轮），不残留绘制。
+            for surplus in quoteThumbPool.dropFirst(keys.count) {
+                surplus.removeFromSuperview()
             }
             inner.addArrangedSubview(thumbsStack)
         }
