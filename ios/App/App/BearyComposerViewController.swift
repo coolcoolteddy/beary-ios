@@ -193,6 +193,16 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     private var moodPlaybackPanelVisible: Bool?
     private var moodPlaybackSelected: String?
     private var weatherButtons: [(key: String, button: UIButton)] = []
+    /// Gemini 第一批（天气 Lottie 后台空转修）：94 接线时 9 个天气 Lottie 以
+    /// animated:true 建在按钮 imageView 上，却无任何登记；refreshWeatherRowVisibility
+    /// 只改 isHidden（隐藏不停播），updateMoodPlayback 只遍历 moodItems，天气行
+    /// 收起/引用面板打开时 9 只仍在后台循环。登记只含 9 个天气项（“无”钮无 Lottie），
+    /// 播放权统一交给 updateWeatherPlayback（心情 updateMoodPlayback 同款口径）。
+    private var weatherEmoteViews: [(key: String, emoteView: BearyEmoteView)] = []
+    /// 天气播放控制上次状态（心情 moodPlaybackPanelVisible/Selected 同款缓存）：
+    /// 一致时直接返回，避免每次 refreshExtras 都把选中动画从 0 帧重播。
+    private var weatherPlaybackVisible: Bool?
+    private var weatherPlaybackSelected: String?
     /// 附加选项栏是否展开（默认收起；展开时才显示天气/写给/心情三区）。
     private var extrasExpanded = false
     /// 草稿保存级别：nil=未显示；2=草稿已保存；1=文字已保存，图片未保存；0=保存失败（红字）。
@@ -1043,6 +1053,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             // 减动效时播放器内置静态帧不播；加载失败回退 wx 静态图；拿不到 imageView 时回静态图。
             if let imageView = button.imageView {
                 let lottie = BearyEmoteView(key: Self.weatherLottieKey(for: key), animated: true, fallbackImage: staticImage)
+                weatherEmoteViews.append((key: key, emoteView: lottie))
                 lottie.isUserInteractionEnabled = false
                 lottie.translatesAutoresizingMaskIntoConstraints = false
                 imageView.addSubview(lottie)
@@ -1102,10 +1113,37 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     private func refreshWeatherRowVisibility() {
         if quotePanelOpen {
             weatherScrollView.isHidden = true
+            updateWeatherPlayback()
             return
         }
         let extrasShowsWeather = extrasExpanded && (weatherRowEverOpened || selectedWeather != nil)
         weatherScrollView.isHidden = weatherRowHiddenByTool || !(extrasShowsWeather || weatherRowVisible)
+        updateWeatherPlayback()
+    }
+
+    /// Gemini 第一批：天气播放控制（心情 updateMoodPlayback 同款口径）。
+    /// 行隐藏（附加栏收起/工具钮收起/引用面板打开）时 9 只全部冻结静态帧，
+    /// 不再后台循环；行可见时仅当前选中的 1 只播，其余 8 只冻结静态帧。
+    /// 94 接线的“9 项全循环”计划至此作废（Li 点“按这个分批修”即点头改）。
+    /// 减动效、深浅切换、失败回退 wx 静态图的既有兜底不动：play() 在减动效下
+    /// 本就只置静态帧不播；深浅变体由播放器 trait 切换内处理；加载失败回退
+    /// 的是 PNG 图，play/showStaticFrame 对它均为空操作。
+    private func updateWeatherPlayback() {
+        let rowVisible = !weatherScrollView.isHidden
+        if weatherPlaybackVisible == rowVisible && weatherPlaybackSelected == selectedWeather {
+            return
+        }
+        weatherPlaybackVisible = rowVisible
+        weatherPlaybackSelected = selectedWeather
+        for item in weatherEmoteViews {
+            if !rowVisible {
+                item.emoteView.showStaticFrame()
+            } else if item.key == selectedWeather {
+                item.emoteView.play()
+            } else {
+                item.emoteView.showStaticFrame()
+            }
+        }
     }
 
     @objc private func didTapWeather(_ sender: UIButton) {
@@ -1123,6 +1161,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             selectedWeather = key
         }
         refreshWeatherButtons()
+        updateWeatherPlayback()
         refreshExtrasSummary()
         // 天气在草稿 v3 字段里，改动即走防抖保存，杀 App 后可恢复。
         scheduleDraftSave()
@@ -1782,6 +1821,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             recipientSection.isHidden = true
             moodSection.isHidden = true
             updateMoodPlayback()
+            updateWeatherPlayback()
             quoteSection.isHidden = true
             ruleBoxView.isHidden = true
             // 间隙修复（只动布局）：滚动归零不影响开头已保存的恢复偏移；面板前各区栈间距显式置 0，
