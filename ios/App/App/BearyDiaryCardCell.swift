@@ -550,6 +550,22 @@ class BearyDiaryCardCell: UITableViewCell {
         return lb
     }()
 
+    /// R4 App：日记标题行（非作者行 titleStack）。16.5pt 粗体，走
+    /// BearyDynamicType.cardTitleFont()（scaledFont）+ adjustsFontForContentSizeCategory；
+    /// 单行截断（与作者名行既有 1 行口径一致，不另发明文案）；空标题时
+    /// isHidden，stack 不为其留高度、不留空行（见 updateEntryTitle）。
+    private let entryTitleLabel: UILabel = {
+        let lb = UILabel()
+        lb.translatesAutoresizingMaskIntoConstraints = false
+        lb.font = BearyDynamicType.cardTitleFont()
+        lb.adjustsFontForContentSizeCategory = true
+        lb.textColor = BearyColors.ink
+        lb.numberOfLines = 1
+        lb.lineBreakMode = .byTruncatingTail
+        lb.isHidden = true
+        return lb
+    }()
+
     private let contentLabel: UILabel = {
         let lb = UILabel()
         lb.translatesAutoresizingMaskIntoConstraints = false
@@ -713,7 +729,7 @@ class BearyDiaryCardCell: UITableViewCell {
 
     private lazy var rightStack: UIStackView = {
         quoteView.translatesAutoresizingMaskIntoConstraints = false
-        let st = UIStackView(arrangedSubviews: [recipientRow, titleStack, contentLabel, foldButton, quoteView, imagesScrollView, actionStack, emoteFlowView])
+        let st = UIStackView(arrangedSubviews: [recipientRow, titleStack, entryTitleLabel, contentLabel, foldButton, quoteView, imagesScrollView, actionStack, emoteFlowView])
         st.translatesAutoresizingMaskIntoConstraints = false
         st.axis = .vertical
         st.alignment = .fill
@@ -1052,6 +1068,8 @@ class BearyDiaryCardCell: UITableViewCell {
         imageHeightConstraint?.constant = 0
         nameLabel.text = nil
         timeLabel.text = nil
+        entryTitleLabel.text = nil
+        entryTitleLabel.isHidden = true
         contentLabel.attributedText = nil
         contentLabel.text = nil
         foldButton.isHidden = true
@@ -1091,15 +1109,55 @@ class BearyDiaryCardCell: UITableViewCell {
         paragraph.lineHeightMultiple = 1.6
         // P3-3：富文本段落样式会覆盖 label 的 lineBreakMode，此处同步按字符断行（字号行高不动）。
         paragraph.lineBreakMode = .byCharWrapping
-        // C8：16pt 正文走 scaledFont（Feed 模式正文/折叠实测）；15pt 个人主页
-        // 正文不在本批口径内，原样 systemFont，不扩大。
-        let bodyFont = fontSize == 16 ? BearyDynamicType.diaryBodyFont() : UIFont.systemFont(ofSize: fontSize)
+        // C8 + R8 卡片内部分：正文字号一律走 scaledFont（feed 16 / profile 15，
+        // 默认档点数不变，profile 15 此前未缩放、本批补齐）；contentLabel 侧
+        // 已置 adjustsFontForContentSizeCategory，富文本字号在下次 configure
+        // 时重解（C8 已知局限，本批不改）；装饰性小字不动。
+        let bodyFont = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: fontSize))
         let attrs: [NSAttributedString.Key: Any] = [
             .font: bodyFont,
             .foregroundColor: BearyColors.ink,
             .paragraphStyle: paragraph,
         ]
         return NSAttributedString(string: text, attributes: attrs)
+    }
+
+    /// R4 App：日记标题渲染（两路 configure 共用，模型 Entry.title 由 A4-App
+    /// 已透传，本处只做渲染、不加模型字段）。空白/缺失标题时 text 清空且
+    /// isHidden，stack 不留空行、不预留高度；卡片高度随内容。
+    private func updateEntryTitle(_ rawTitle: String?) {
+        let trimmed = rawTitle?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        if trimmed.isEmpty {
+            entryTitleLabel.text = nil
+            entryTitleLabel.isHidden = true
+        } else {
+            entryTitleLabel.text = trimmed
+            entryTitleLabel.isHidden = false
+        }
+    }
+
+    /// R9 A 卡片部分：只补无障碍标签，不改视觉与热区。点赞含状态与计数
+    /// （“点赞，12”/“已点赞，12”，feed 0 赞亦为“点赞，0”）；收藏含状态
+    /// （“收藏”/“已收藏”）；分享为功能标签“分享”。来源按模式取：feed 走
+    /// currentEntry，profile 走 cellLikedByMe/cellLikeCount/cellBookmarkedByMe；
+    /// profile 就地同步时 applyLike 与 applyProfileBookmark 先后各调一次，
+    /// 末次调用时三项均为最新值。
+    private func refreshActionAccessibility() {
+        let liked: Bool
+        let likeCount: Int
+        let bookmarked: Bool
+        if cardMode == .profile {
+            liked = cellLikedByMe
+            likeCount = cellLikeCount
+            bookmarked = cellBookmarkedByMe
+        } else {
+            liked = currentEntry?.likedByMe ?? false
+            likeCount = currentEntry?.likeCount ?? 0
+            bookmarked = currentEntry?.bookmarkedByMe ?? false
+        }
+        likeButton.accessibilityLabel = "\(liked ? "已点赞" : "点赞")，\(likeCount)"
+        bookmarkButton.accessibilityLabel = bookmarked ? "已收藏" : "收藏"
+        shareButton.accessibilityLabel = "分享"
     }
 
     /// 网页口径：authorName = author_name || 'teddy'（空名时名显 teddy、头像字母为 T；
@@ -1128,6 +1186,10 @@ class BearyDiaryCardCell: UITableViewCell {
             rightStackTopConstraint?.constant = recipientRow.isHidden ? 22 : 23
             rightStack.setCustomSpacing(3, after: recipientRow)
             rightStack.setCustomSpacing(4, after: titleStack)
+            // R4 App：作者行→标题 4、标题→正文 4，均与原作者行→正文 4 一致；
+            // 标题隐藏时其后间距置 0（无论 stack 按前一可见项还是按累计算间距，
+            // 作者行→正文均为上行 4，不留空行高度）。
+            rightStack.setCustomSpacing(entryTitleLabel.isHidden ? 0 : 4, after: entryTitleLabel)
             rightStack.setCustomSpacing(foldButton.isHidden ? 10 : 6, after: contentLabel)
             rightStack.setCustomSpacing(10, after: foldButton)
             rightStack.setCustomSpacing(10, after: quoteView)
@@ -1137,6 +1199,9 @@ class BearyDiaryCardCell: UITableViewCell {
             rightStackTopConstraint?.constant = 14
             rightStack.setCustomSpacing(4, after: recipientRow)
             rightStack.setCustomSpacing(4, after: titleStack)
+            // R4 App：同 feed，作者行→标题 4、标题→正文 4；标题隐藏时其后间距置 0，
+            // 作者行→正文仍为 4。
+            rightStack.setCustomSpacing(entryTitleLabel.isHidden ? 0 : 4, after: entryTitleLabel)
             rightStack.setCustomSpacing(6, after: contentLabel)
             rightStack.setCustomSpacing(0, after: foldButton)
         }
@@ -1316,6 +1381,9 @@ class BearyDiaryCardCell: UITableViewCell {
         // F9：心情。
         refreshMoodView()
 
+        // R4 App：日记标题在作者行（titleStack）与正文之间，空标题不占位。
+        updateEntryTitle(entry.title)
+
         // F6：正文折叠。
         updateContentAndFold()
 
@@ -1401,6 +1469,8 @@ class BearyDiaryCardCell: UITableViewCell {
             moodLabel.text = nil
             moodStack.isHidden = true
         }
+        // R4 App：日记标题在作者行（titleStack）与正文之间，空标题不占位。
+        updateEntryTitle(entry.title)
         // 正文 + 300 字折叠（网页 renderPublic foldLong 口径；折叠态收起 6 行）。
         let bodyText = entry.content ?? ""
         contentLabel.attributedText = attributedBody(bodyText, fontSize: 15)
@@ -1808,6 +1878,7 @@ class BearyDiaryCardCell: UITableViewCell {
         likeButton.tintColor = liked ? BearyColors.orange : BearyColors.ink
         likeButton.setTitleColor(liked ? BearyColors.orange : BearyColors.gray, for: .normal)
         likeButton.imageView?.transform = .identity
+        refreshActionAccessibility()
     }
 
     /// 点赞钮渲染（个人主页模式；原 configure 内联块抽出，口径一字不动）：
@@ -1830,12 +1901,14 @@ class BearyDiaryCardCell: UITableViewCell {
         likeButton.tintColor = likeColor
         likeButton.setTitleColor(likeColor, for: .normal)
         likeButton.imageView?.transform = .identity
+        refreshActionAccessibility()
     }
 
     private func applyProfileBookmarkState(bookmarked: Bool) {
         let bookmarkImageName = bookmarked ? "icon_bookmark_fill" : "icon_bookmark"
         bookmarkButton.setImage(BearyFeedIconCache.image(named: bookmarkImageName, pointSize: 21), for: .normal)
         bookmarkButton.tintColor = bookmarked ? BearyColors.orange : BearyColors.gray
+        refreshActionAccessibility()
     }
 
     /// 取消点赞 pre-unlike（首页模式；网页 .pre-unlike 同款：心形缩 .8 + 填充先清），
@@ -1862,6 +1935,7 @@ class BearyDiaryCardCell: UITableViewCell {
         let bookmarkImage = BearyFeedIconCache.image(named: bookmarked ? "icon_bookmark_fill" : "icon_bookmark", pointSize: 21) ?? BearyFeedIconCache.image(named: "icon_bookmark", pointSize: 21)
         bookmarkButton.setImage(bookmarkImage, for: .normal)
         bookmarkButton.tintColor = bookmarked ? BearyColors.orange : BearyColors.gray
+        refreshActionAccessibility()
     }
 
     /// F7/F8（首页模式）：首页与详情互动门控统一为 isPublic == true 才可互动（详情同口径）。
