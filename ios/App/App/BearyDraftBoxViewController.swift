@@ -794,7 +794,20 @@ final class BearyDraftBoxViewController: UIViewController {
             metaRow.trailingAnchor.constraint(equalTo: metaWrap.trailingAnchor),
         ])
         inner.addArrangedSubview(metaWrap)
+        // C7：左滑删除复用删除钮路径（直接删卡 + 6 秒撤销条，与按钮一致，
+        // 无确认框；删除钮本身保留；草稿箱为 stack 卡片、无 tableView 滑动
+        // API，故左滑只换触发方式，不新增执行逻辑）。
+        let swipe = UISwipeGestureRecognizer(target: self, action: #selector(draftCardSwiped(_:)))
+        swipe.direction = .left
+        card.addGestureRecognizer(swipe)
         return card
+    }
+
+    @objc private func draftCardSwiped(_ sender: UISwipeGestureRecognizer) {
+        guard let card = sender.view as? UIButton,
+              let draftValue = cardEntries.first(where: { $0.button === card })?.draftValue,
+              let button = deleteEntries.first(where: { $0.draftValue.draftId == draftValue.draftId })?.button else { return }
+        deleteTapped(button)
     }
 
     private func chipShell() -> UIView {

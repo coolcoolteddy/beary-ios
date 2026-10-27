@@ -332,8 +332,10 @@ class BearyDiaryCardCell: UITableViewCell {
     var onPublishCancelTapped: (() -> Void)?
     /// 点头像或作者名：打开作者主页。
     var onAuthorTapped: (() -> Void)?
-    /// Q9 卡片长按：只转发，菜单由控制器 present（分享/收藏走 cell 内已有处理）。
-    var onLongPressMenuRequested: (() -> Void)?
+    /// C6 卡片上下文菜单：编辑/删除转发给控制器（容器接线到编辑器与删除确认流程）；
+    /// 首页与个人主页两模式共用同一对回调（分享/收藏走 cell 内已有按钮路径）。
+    var onContextMenuEdit: (() -> Void)?
+    var onContextMenuDelete: (() -> Void)?
     /// 折叠切换 / 引用异步落位后，行高需重算时通知控制器 reloadRows（.none，无动画）。
     var onNeedsRowReload: (() -> Void)?
     /// L21（91 包）：仅展开/收起路径用——控制器改走 performBatchUpdates 平滑伸缩，
@@ -345,8 +347,6 @@ class BearyDiaryCardCell: UITableViewCell {
     var onLike: (() -> Void)?
     var onBookmark: (() -> Void)?
     var onShare: (() -> Void)?
-    /// Q9 卡片长按：只转发，菜单由控制器 present（分享/收藏走控制器已有处理）。
-    var onLongPress: (() -> Void)?
     var onEmoteTap: ((String) -> Void)?
     var onEmoteAdd: (() -> Void)?
     var onQuoteTap: (() -> Void)?
@@ -848,13 +848,11 @@ class BearyDiaryCardCell: UITableViewCell {
         contentView.addSubview(rightStack)
         imagesScrollView.addSubview(imagesStack)
         contentView.addSubview(separatorView)
-        // Q9 卡片长按：挂 contentView、只在 .began 转发一次；cancelsTouchesInView=false，
-        // 使点按/滚动不受影响；与按钮/图片/引用/作者手势的互斥见 gestureRecognizer delegate。
-        let cardLongPress = UILongPressGestureRecognizer(target: self, action: #selector(cardLongPressed(_:)))
-        cardLongPress.minimumPressDuration = 0.5
-        cardLongPress.delegate = self
-        cardLongPress.cancelsTouchesInView = false
-        contentView.addGestureRecognizer(cardLongPress)
+        // C6 卡片上下文菜单：UIContextMenuInteraction 挂 contentView（原位浮起
+        // 整卡预览 + 系统毛玻璃 UIMenu），取代 Q9 长按手势 + actionSheet；
+        // 按钮/图片/引用/头像上的长按排除见文件末尾 contextMenuInteraction 代理
+        // （头像/名字排除仅首页模式，个人主页模式各保各的，与旧口径一致）。
+        contentView.addInteraction(UIContextMenuInteraction(delegate: self))
         // D2（首页模式）：公开行插在点赞钮与 spacer 之间
         // （网页操作行：likeBtn + pubAction + spacer + bmBtn + shBtn）。
         if cardMode == .feed {
@@ -1006,11 +1004,11 @@ class BearyDiaryCardCell: UITableViewCell {
         onAuthorTapped = nil
         onNeedsRowReload = nil
         onNeedsFoldAnimation = nil
-        onLongPressMenuRequested = nil
+        onContextMenuEdit = nil
+        onContextMenuDelete = nil
         onLike = nil
         onBookmark = nil
         onShare = nil
-        onLongPress = nil
         onEmoteTap = nil
         onEmoteAdd = nil
         onQuoteTap = nil
@@ -1209,38 +1207,26 @@ class BearyDiaryCardCell: UITableViewCell {
         onAuthorTapped?()
     }
 
-    /// Q9 长按菜单：长按菜单由控制器 present，本 cell 只转发；分享/收藏动作
-    /// 复用本 cell 已有的 shareTapped/bookmarkTapped，不新增服务端接口。
-    func shareFromLongPressMenu() {
+    /// C6 上下文菜单：分享/收藏动作复用本 cell 已有的按钮路径
+    /// shareButtonTapped/bookmarkButtonTapped（其内已按 cardMode 分流：
+    /// 首页模式走 cell 内 API，个人主页模式走控制器回调），不新增服务端接口；
+    /// 编辑/删除走 onContextMenuEdit/onContextMenuDelete。
+    func shareFromCardMenu() {
         shareButtonTapped()
     }
 
-    func bookmarkFromLongPressMenu() {
+    func bookmarkFromCardMenu() {
         bookmarkButtonTapped()
     }
 
-    @objc private func cardLongPressed(_ sender: UILongPressGestureRecognizer) {
-        guard sender.state == .began else { return }
-        if cardMode == .feed {
-            onLongPressMenuRequested?()
-        } else {
-            onLongPress?()
-        }
-    }
-
-    /// Q9 长按互斥：按钮（点赞/收藏/分享/回应/折叠/公开行）与图片灯箱、
-    /// 引用卡、作者头像/名字上的触摸不触发长按菜单，各自原有手势照常走。
-    /// （个人主页原口径不排除头像/名字触摸，各保各的。）
-    override func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldReceive touch: UITouch) -> Bool {
-        var view: UIView? = touch.view
-        while let current = view {
-            if current is UIButton { return false }
-            if current === imagesScrollView || current === quoteView { return false }
-            if cardMode == .feed {
-                if current === avatarImageView || current === nameLabel { return false }
-            }
-            if current === contentView { break }
-            view = current.superview
+    /// C6 菜单编辑资格：本人 + 私密 + 未过编辑期；Feed/Profile 载荷未必带
+    /// editDeadline，缺失时仍出编辑项、由编辑器侧“已超过 15 分钟编辑期”拦截
+    /// （与时间线滑动编辑“缺失即锁”的口径不同，见 PR 说明）。
+    private func isCardMenuEditAvailable(entry: Entry) -> Bool {
+        guard entry.isMine == true, entry.isPublic != true else { return false }
+        if let deadline = entry.editDeadline {
+            let nowMs = Int(Date().timeIntervalSince1970 * 1000)
+            return nowMs < deadline
         }
         return true
     }
@@ -2567,6 +2553,58 @@ class BearyDiaryCardCell: UITableViewCell {
                     strongSelf.updateEmoteInteractivity()
                 }
             }
+        }
+    }
+}
+
+// MARK: - C6 卡片上下文菜单（取代 Q9 长按 + UIAlertController actionSheet，首页与个人主页共用）
+
+extension BearyDiaryCardCell: UIContextMenuInteractionDelegate {
+    func contextMenuInteraction(_ interaction: UIContextMenuInteraction, configurationForMenuAtLocation location: CGPoint) -> UIContextMenuConfiguration? {
+        // 旧长按互斥口径平移：按钮、图片条、引用卡上的长按不弹菜单，
+        // 各自原有手势照常走；头像/名字排除仅首页模式（个人主页原口径
+        // 不排除，各保各的）；正文区长按仍弹菜单。
+        if let hit = contentView.hitTest(location, with: nil) {
+            var view: UIView? = hit
+            while let current = view {
+                if current is UIButton { return nil }
+                if current === imagesScrollView || current === quoteView { return nil }
+                if cardMode == .feed {
+                    if current === avatarImageView || current === nameLabel { return nil }
+                }
+                if current === contentView { break }
+                view = current.superview
+            }
+        }
+        guard let entry = currentEntry else { return nil }
+        // previewProvider=nil：系统以 interaction 所附 view（contentView 整卡）作
+        // 原位浮起预览，菜单为系统毛玻璃 UIMenu；旧 sheet 的“取消”项由系统菜单
+        // 的空白处点按/下滑手势承担，不再单列。
+        return UIContextMenuConfiguration(identifier: nil, previewProvider: nil) { [weak self] _ in
+            guard let self = self else { return UIMenu(title: "", children: []) }
+            var actions: [UIAction] = []
+            if entry.isPublic == true {
+                actions.append(UIAction(title: "分享", image: UIImage(systemName: "square.and.arrow.up")) { [weak self] _ in
+                    self?.shareFromCardMenu()
+                })
+            }
+            // 收藏标题取实时态：首页模式 currentEntry 由 cell 内收藏路径就地维护，
+            // 个人主页模式 cellBookmarkedByMe 由 syncInteraction 维护。
+            let bookmarked = self.cardMode == .profile ? self.cellBookmarkedByMe : (self.currentEntry?.bookmarkedByMe ?? false)
+            actions.append(UIAction(title: bookmarked ? "取消收藏" : "收藏", image: UIImage(systemName: bookmarked ? "bookmark.slash" : "bookmark")) { [weak self] _ in
+                self?.bookmarkFromCardMenu()
+            })
+            if self.isCardMenuEditAvailable(entry: entry) {
+                actions.append(UIAction(title: "编辑", image: UIImage(systemName: "pencil")) { [weak self] _ in
+                    self?.onContextMenuEdit?()
+                })
+            }
+            if entry.isMine == true, entry.isPublic != true {
+                actions.append(UIAction(title: "删除", image: UIImage(systemName: "trash"), attributes: .destructive) { [weak self] _ in
+                    self?.onContextMenuDelete?()
+                })
+            }
+            return UIMenu(title: "", children: actions)
         }
     }
 }

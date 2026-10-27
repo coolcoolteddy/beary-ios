@@ -179,6 +179,11 @@ class BearyProfileViewController: UIViewController {
     /// entryId、点赞数、已赞、已收藏、回应聚合。
     var onInteractionChanged: ((String, Int?, Bool?, Bool?, [EmoteCount]?) -> Void)?
 
+    /// C6 卡片上下文菜单编辑/删除：容器接线到编辑器与删除确认流程
+    /// （与时间线 onEditEntry/onDeleteEntry 同口径，本文件只通知）。
+    var onEditEntry: ((Entry) -> Void)?
+    var onDeleteEntry: ((Entry) -> Void)?
+
     /// by-handle 解析出的改名信号（对方 30 天内改名时有值）。
     /// F14：容器未接线（全仓 grep SceneDelegate 无 movedToHandle 消费），故页内
     /// 在 handleProfileResult 成功时直接 toast「对方已改名为 @<movedToHandle>」。
@@ -2544,32 +2549,6 @@ class BearyProfileViewController: UIViewController {
         present(sheet, animated: true, completion: nil)
     }
 
-    /// Q9 卡片长按菜单：分享/收藏直接复用控制器已有处理
-    /// handleCellShare/handleCellBookmark，不新增服务端接口；
-    /// 非公开卡不给分享项（handleCellShare 本身亦有 isPublic 门控，双重守卫）。
-    private func presentCardLongPressMenu(entry: Entry) {
-        if presentedViewController != nil { return }
-        let menu = UIAlertController(title: nil, message: nil, preferredStyle: .actionSheet)
-        if entry.isPublic == true {
-            menu.addAction(UIAlertAction(title: "分享", style: .default) { [weak self] _ in
-                self?.handleCellShare(entry: entry)
-            })
-        }
-        menu.addAction(UIAlertAction(title: "收藏", style: .default) { [weak self] _ in
-            self?.handleCellBookmark(entry: entry)
-        })
-        menu.addAction(UIAlertAction(title: "取消", style: .cancel))
-        if let popover = menu.popoverPresentationController {
-            popover.sourceView = tableView
-            if let entryId = entry.id, let row = currentEntries.firstIndex(where: { $0.id == entryId }) {
-                popover.sourceRect = tableView.rectForRow(at: IndexPath(row: row, section: 0))
-            } else {
-                popover.sourceRect = CGRect(x: tableView.bounds.midX, y: tableView.bounds.midY, width: 0, height: 0)
-            }
-        }
-        present(menu, animated: !UIAccessibility.isReduceMotionEnabled, completion: nil)
-    }
-
     private func handleCellEmoteAdd(entry: Entry) {
         guard requireLoginForCellAction() else { return }
         guard entry.isPublic == true else { return }
@@ -2698,7 +2677,8 @@ extension BearyProfileViewController: UITableViewDataSource, UITableViewDelegate
         cellValue.onLike = { [weak self] in self?.handleCellLike(entry: entryValue) }
         cellValue.onBookmark = { [weak self] in self?.handleCellBookmark(entry: entryValue) }
         cellValue.onShare = { [weak self] in self?.handleCellShare(entry: entryValue) }
-        cellValue.onLongPress = { [weak self] in self?.presentCardLongPressMenu(entry: entryValue) }
+        cellValue.onContextMenuEdit = { [weak self] in self?.onEditEntry?(entryValue) }
+        cellValue.onContextMenuDelete = { [weak self] in self?.onDeleteEntry?(entryValue) }
         cellValue.onEmoteTap = { [weak self] key in self?.handleCellEmote(entry: entryValue, key: key) }
         cellValue.onEmoteAdd = { [weak self] in self?.handleCellEmoteAdd(entry: entryValue) }
         cellValue.onQuoteTap = { [weak self] in self?.handleCellQuoteTap(entry: entryValue) }

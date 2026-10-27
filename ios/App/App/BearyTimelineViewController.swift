@@ -4259,6 +4259,40 @@ extension BearyTimelineViewController: UITableViewDataSource, UITableViewDelegat
         onOpenEntry?(sections[indexPath.section].entries[indexPath.row])
     }
 
+    /// C7 滑动操作资格与私密操作行按钮完全一致：删除仅私密行（公开行无
+    /// 删除钮），编辑仅私密且未过编辑期（与编辑钮显隐同口径：editDeadline
+    /// 缺失即已锁）。触发后只复用 onDeleteEntry/onEditEntry（容器确认/
+    /// 编辑器流程），不另写执行逻辑；不符资格的行返回 nil，即不可滑动。
+    private static func isTimelineSwipeEditUnlocked(entry: Entry) -> Bool {
+        guard let deadline = entry.editDeadline else { return false }
+        let nowMs = Int(Date().timeIntervalSince1970 * 1000)
+        return nowMs < deadline
+    }
+
+    func tableView(_ tableView: UITableView, trailingSwipeActionsConfigurationForRowAt indexPath: IndexPath) -> UISwipeActionsConfiguration? {
+        let sections = currentSections()
+        guard indexPath.section < sections.count, indexPath.row < sections[indexPath.section].entries.count else { return nil }
+        let entry = sections[indexPath.section].entries[indexPath.row]
+        guard entry.isPublic != true else { return nil }
+        let delete = UIContextualAction(style: .destructive, title: "删除") { [weak self] _, _, completion in
+            self?.onDeleteEntry?(entry)
+            completion(true)
+        }
+        return UISwipeActionsConfiguration(actions: [delete])
+    }
+
+    func tableView(_ tableView: UITableView, leadingSwipeActionsConfigurationForRowAt indexPath: IndexPath) -> UISwipeActionsConfiguration? {
+        let sections = currentSections()
+        guard indexPath.section < sections.count, indexPath.row < sections[indexPath.section].entries.count else { return nil }
+        let entry = sections[indexPath.section].entries[indexPath.row]
+        guard entry.isPublic != true, Self.isTimelineSwipeEditUnlocked(entry: entry) else { return nil }
+        let edit = UIContextualAction(style: .normal, title: "编辑") { [weak self] _, _, completion in
+            self?.onEditEntry?(entry)
+            completion(true)
+        }
+        return UISwipeActionsConfiguration(actions: [edit])
+    }
+
     func tableView(_ tableView: UITableView, willDisplay cell: UITableViewCell, forRowAt indexPath: IndexPath) {
         // M2：分页新增行错峰滑入——cell 即将上屏时从透明 + 下偏 6 起播，
         // 按原始序号错峰（减动效时队列为空，不播）。
