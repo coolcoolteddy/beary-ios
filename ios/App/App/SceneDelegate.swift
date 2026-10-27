@@ -2767,6 +2767,8 @@ private final class BearyComposerSheetPresentationController: UIPresentationCont
 
     override func containerViewWillLayoutSubviews() {
         super.containerViewWillLayoutSubviews()
+        // 临时诊断（82 包追加，定根因后删除）：每调一次记一次，不节流，循环时时间戳能证明转圈。
+        DiagFile.mark("sheet-layout")
         guard let presentedView = presentedView else { return }
         let frame = frameOfPresentedViewInContainerView
         // 看门狗修法（2026-10-27，第二层）：等值帧不再重复赋值与带阴影层重算，
@@ -2877,13 +2879,19 @@ private final class BearyComposerSheetAnimator: NSObject, UIViewControllerAnimat
                 return
             }
             container.addSubview(toView)
+            // 临时诊断（82 包追加，定根因后删除）。
+            DiagFile.mark("animator-added")
             toView.frame = transitionContext.finalFrame(for: toVC)
+            // 临时诊断（82 包追加，定根因后删除）。
+            DiagFile.mark("animator-framed")
             let height = toView.bounds.height
             toView.transform = CGAffineTransform(translationX: 0, y: height)
             UIView.animate(withDuration: duration, animations: {
                 toView.transform = .identity
             }, completion: { _ in
                 transitionContext.completeTransition(transitionContext.transitionWasCancelled == false)
+                // 临时诊断（82 包追加，定根因后删除）：转场终态，不进非终态集合。
+                DiagFile.mark("animator-completed")
             })
         } else {
             guard let fromView = transitionContext.view(forKey: .from) else {
@@ -2922,6 +2930,9 @@ enum DiagFile {
         // 引导继续链路的非终态（ob-appeared 是走完的终态，不在集合里）。
         "ob-primaryTapped", "ob-goTo", "ob-screen",
         "ob-welcome-enter", "ob-welcome-exit", "ob-updateChrome", "ob-entrance",
+        // 82 包追加的转场/布局非终态（animator-completed 是转场终态，不在集合里）。
+        "animator-added", "animator-framed",
+        "sheet-layout", "composer-layout", "composer-prefSize",
     ]
 
     static var url: URL {
@@ -2974,7 +2985,10 @@ enum DiagFile {
         let ls = lines()
         guard ls.count >= 2, ls.last?.hasSuffix(" launch") == true else { return nil }
         let prev = ls[ls.count - 2]
-        let stage = prev.components(separatedBy: " ").last ?? ""
+        // stage 取时间戳后的第一个 token：单 token 旧埋点与原来 .last 口径一致，
+        // 带 total= 数值的埋点（如 composer-prefSize total=456.0）也能对上集合。
+        let parts = prev.components(separatedBy: " ")
+        let stage = parts.count >= 2 ? parts[1] : (parts.last ?? "")
         guard stuckStages.contains(stage) else { return nil }
         return Array(ls.dropLast().suffix(5))
     }
