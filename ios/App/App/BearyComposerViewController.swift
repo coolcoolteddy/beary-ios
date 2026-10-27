@@ -13,18 +13,55 @@ import PhotosUI
 // 文案一律中文；深浅色一律用 BearyColors 的动态色（含语义红 red 与图片上深色衬底 scrim）。
 // 网络数据一律不用 force unwrap；图片移除只动本地与 key 列表，不调服务端。
 
-/// 64 包反馈修（第 14 项）：正文光标高度跟字体行高走——正文段落 lineHeightMultiple=1.7
-/// 会把系统 caret 拉到行片段高（约 32pt），比 16pt 字大一圈；只收敛 caret 高度到
-/// font.lineHeight（16pt 系统字约 19pt），y 在行片段内居中，宽与 x 不动；选区手柄
-/// 不走 caretRect，不受影响。textView.font 与 typingAttributes 字体已同为 16pt 系统字。
+/// 64 包反馈修（第 14 项）+ 编辑器批修正：正文段落 lineHeightMultiple=1.7
+/// 会把系统 caret 拉到行片段高（约 32pt），比 16pt 字大一圈；64 包的“居中收敛”
+/// 仍不对准——TextKit 下 1.7 倍行高的额外高度按比例撑在 ascent/descent 上，
+/// 字形基线在行片段内并不居中（基线 = 片段顶 + ascender × 倍数），居中 caret
+/// 会比字形偏上约 4pt、底部也够不着字形底。故 caret 改按基线锚定：
+/// 高 = ascender − descender，顶 = 基线 − ascender（即片段顶 + ascender × (倍数 − 1)），
+/// 宽与 x 不动；选区手柄不走 caretRect，不受影响。倍数取光标处实际段落样式
+/// （已填文本取该处属性、空文本取 typingAttributes），取不到时回退居中旧口径；
+/// 字体取 typingAttributes 优先（attributedText 回填后 textView.font 可能取不到，
+/// 此时旧守卫会直接返回 32pt 高 caret，正是对不准的另一半原因）。
 private final class BearyBodyTextView: UITextView {
+    private func caretFont() -> UIFont? {
+        if let typed = typingAttributes[.font] as? UIFont {
+            return typed
+        }
+        return font
+    }
+
+    private func lineHeightMultiple(at position: UITextPosition) -> CGFloat? {
+        let offset = self.offset(from: beginningOfDocument, to: position)
+        let text = attributedText
+        if text.length > 0 {
+            let index = min(max(offset - 1, 0), text.length - 1)
+            if let style = text.attribute(.paragraphStyle, at: index, effectiveRange: nil) as? NSParagraphStyle,
+               style.lineHeightMultiple > 0 {
+                return style.lineHeightMultiple
+            }
+        }
+        if let style = typingAttributes[.paragraphStyle] as? NSParagraphStyle,
+           style.lineHeightMultiple > 0 {
+            return style.lineHeightMultiple
+        }
+        return nil
+    }
+
     override func caretRect(for position: UITextPosition) -> CGRect {
         var rect = super.caretRect(for: position)
-        guard rect.height > 0, let lineHeight = font?.lineHeight, lineHeight > 0,
-              abs(rect.height - lineHeight) > 0.5 else { return rect }
+        guard rect.height > 0, let caretFont = caretFont(), caretFont.lineHeight > 0,
+              abs(rect.height - caretFont.lineHeight) > 0.5 else { return rect }
+        if let multiple = lineHeightMultiple(at: position), multiple > 1.0 {
+            let height = caretFont.ascender - caretFont.descender
+            guard height > 0 else { return rect }
+            rect.origin.y = rect.origin.y + caretFont.ascender * (multiple - 1)
+            rect.size.height = height
+            return rect
+        }
         let centerY = rect.midY
-        rect.origin.y = centerY - lineHeight / 2
-        rect.size.height = lineHeight
+        rect.origin.y = centerY - caretFont.lineHeight / 2
+        rect.size.height = caretFont.lineHeight
         return rect
     }
 }
@@ -278,9 +315,14 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     private let quoteTabStack = UIStackView()
     private var quoteTabButtons: [UIButton] = []
     private let quotePanelSpinner = UIActivityIndicatorView(style: .medium)
+    /// 录屏批 (f)：加载态光转圈太空，加一句说明（与转圈同显同隐，见 loadQuotePanelTab）。
+    private let quotePanelLoadingLabel = UILabel()
     private let quotePanelEmptyLabel = UILabel()
     private let quotePanelRetryButton = UIButton(type: .system)
     private let quotePanelRows = UIStackView()
+    /// 录屏批 (b)：引用页标题保存/恢复——打开面板时标题改“选择引用”，关闭时
+    /// 还原打开前的标题（“新日记”/“编辑日记”/“加载日记…”均按原样回，不硬编码）。
+    private var quotePanelSavedTitle: String?
     // 规则框
     private let ruleBoxView = UIView()
     private let ruleIconImageView = UIImageView()
@@ -713,8 +755,10 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         // 之前去掉段落样式只证明了它单独不是根因；段落样式×可滚动这个组合此前
         // 从未在真机验过，组合待真机复验。
         // 已填入的正文行高仍由 applyBodyLineHeight() 套 1.7（见 setupEditContent/restoreDraft）。
+        // 编辑器批：倍数抽成局部量，placeholder 基线偏移与 caret 锚定同用它（见下）。
+        let bodyLineMultiple: CGFloat = 1.7
         let bodyParagraph = NSMutableParagraphStyle()
-        bodyParagraph.lineHeightMultiple = 1.7
+        bodyParagraph.lineHeightMultiple = bodyLineMultiple
         textView.typingAttributes = [.font: UIFont.systemFont(ofSize: 16), .foregroundColor: BearyColors.ink, .paragraphStyle: bodyParagraph]
         textView.backgroundColor = UIColor.clear
         textView.layer.cornerRadius = 0
@@ -734,7 +778,10 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             // 自身滚动开启后 textView 无内在高度：先给下限 140（正式修法前原值），
             // 实际高度由 updateTextViewHeight() 随 contentSize 动态更新（下限 140、上限按 sheet 封顶算）。
             textHeightConstraint,
-            placeholderLabel.topAnchor.constraint(equalTo: textView.topAnchor, constant: 0),
+            // 编辑器批同款（基线对齐）：1.7 倍行高把首行基线推到片段顶 + ascender × 倍数，
+            // 占位 label 若贴顶 0，其基线会比打出来的字高 ascender × (倍数 − 1)，
+            // 空态占位与落字位置对不上；占位顶下移该量，让两者基线重合。
+            placeholderLabel.topAnchor.constraint(equalTo: textView.topAnchor, constant: UIFont.systemFont(ofSize: 16).ascender * (bodyLineMultiple - 1)),
             placeholderLabel.leadingAnchor.constraint(equalTo: textView.leadingAnchor),
             placeholderLabel.trailingAnchor.constraint(lessThanOrEqualTo: textView.trailingAnchor),
         ])
@@ -1614,6 +1661,12 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         quotePanelSpinner.translatesAutoresizingMaskIntoConstraints = false
         quotePanelSpinner.color = BearyColors.gray
         quotePanelSpinner.hidesWhenStopped = true
+        quotePanelLoadingLabel.translatesAutoresizingMaskIntoConstraints = false
+        quotePanelLoadingLabel.font = UIFont.systemFont(ofSize: 13)
+        quotePanelLoadingLabel.textColor = BearyColors.gray
+        quotePanelLoadingLabel.textAlignment = .center
+        quotePanelLoadingLabel.text = "正在加载可引用的日记…"
+        quotePanelLoadingLabel.isHidden = true
         quotePanelEmptyLabel.translatesAutoresizingMaskIntoConstraints = false
         quotePanelEmptyLabel.font = UIFont.systemFont(ofSize: 15)
         quotePanelEmptyLabel.textColor = BearyColors.gray
@@ -1634,6 +1687,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         quotePanel.addSubview(quoteTabBarContainer)
         quoteTabBarContainer.addSubview(quoteTabStack)
         quotePanel.addSubview(quotePanelSpinner)
+        quotePanel.addSubview(quotePanelLoadingLabel)
         quotePanel.addSubview(quotePanelEmptyLabel)
         quotePanel.addSubview(quotePanelRetryButton)
         quotePanel.addSubview(quotePanelRows)
@@ -1650,6 +1704,9 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             quoteTabStack.trailingAnchor.constraint(equalTo: quoteTabBarContainer.trailingAnchor, constant: -3),
             quotePanelSpinner.topAnchor.constraint(equalTo: quoteTabBarContainer.bottomAnchor, constant: 16),
             quotePanelSpinner.centerXAnchor.constraint(equalTo: quotePanel.centerXAnchor),
+            quotePanelLoadingLabel.topAnchor.constraint(equalTo: quotePanelSpinner.bottomAnchor, constant: 8),
+            quotePanelLoadingLabel.leadingAnchor.constraint(equalTo: quotePanel.leadingAnchor),
+            quotePanelLoadingLabel.trailingAnchor.constraint(equalTo: quotePanel.trailingAnchor),
             quotePanelEmptyLabel.topAnchor.constraint(equalTo: quoteTabBarContainer.bottomAnchor, constant: 16),
             quotePanelEmptyLabel.leadingAnchor.constraint(equalTo: quotePanel.leadingAnchor),
             quotePanelEmptyLabel.trailingAnchor.constraint(equalTo: quotePanel.trailingAnchor),
@@ -1742,9 +1799,16 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             quoteTabBarContainer.isHidden = false
             view.layoutIfNeeded()
             quotePanel.isHidden = false
+            // 录屏批 (b)：面板标题不再沿用“新日记”/“编辑日记”，打开前先存原标题。
+            quotePanelSavedTitle = titleLabel.text
+            titleLabel.text = "选择引用"
             cancelButton.setTitle("返回", for: .normal)
             publishButton.isHidden = true
             refreshQuoteTabs()
+            // 录屏批 (e)：原顺序先 layout 再显示面板，转圈在 load 里起在面板布局
+            // 落定之前，首帧会落在面板收起态位置（编辑器中央一闪）再跳到面板里；
+            // 此处面板已显示，再落一次布局，帧 settle 后才起转圈，转圈首帧即在面板内。
+            view.layoutIfNeeded()
             loadQuotePanelTab()
             // M6：面板打开带透明度过渡（高度随 preferredContentSize 由呈现层跟进；减动效直设终值）。
             if UIAccessibility.isReduceMotionEnabled {
@@ -1757,6 +1821,16 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             // M6：关闭先 0.2s 淡出再恢复各区（减动效直接恢复）；恢复后重算 sheet 高。
             let applyClose = {
                 self.quotePanel.isHidden = true
+                // 录屏批 (b/e)：关闭即停转圈、藏加载文案（在途请求的回包另有面板守卫，
+                // 不会把转圈顶回已关闭的面板），标题还原打开前存的那句。
+                self.quotePanelSpinner.stopAnimating()
+                self.quotePanelLoadingLabel.isHidden = true
+                if let savedTitle = self.quotePanelSavedTitle {
+                    self.titleLabel.text = savedTitle
+                    self.quotePanelSavedTitle = nil
+                } else {
+                    self.titleLabel.text = self.isEditMode ? "编辑日记" : "新日记"
+                }
                 self.textView.isHidden = false
                 self.toolbarContainer.isHidden = false
                 self.updateToolbarScrollAnchoring()
@@ -1844,15 +1918,26 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     }
 
     private func loadQuotePanelTab() {
+        // 录屏批 (e)：面板已关时不启动加载指示（关闭淡出中误点 tab/重试也不起转圈，
+        // 转圈只活在打开的面板里）；缓存分支也要停转圈——旧代码缓存返回时不 stop，
+        // 上一次未缓存加载的转圈会残留到缓存行上。
+        guard quotePanelOpen else {
+            quotePanelSpinner.stopAnimating()
+            quotePanelLoadingLabel.isHidden = true
+            return
+        }
         if let cached = quotePanelCache[quotePanelTab] {
             quotePanelLoading = false
             quotePanelFailed = false
+            quotePanelSpinner.stopAnimating()
+            quotePanelLoadingLabel.isHidden = true
             renderQuotePanelRows(entries: cached)
             return
         }
         quotePanelLoading = true
         quotePanelFailed = false
         quotePanelSpinner.startAnimating()
+        quotePanelLoadingLabel.isHidden = false
         quotePanelEmptyLabel.isHidden = true
         quotePanelRetryButton.isHidden = true
         for arranged in quotePanelRows.arrangedSubviews {
@@ -1866,6 +1951,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             DispatchQueue.main.async {
                 guard let self = self, seq == self.quotePanelSeq, tab == self.quotePanelTab else { return }
                 self.quotePanelSpinner.stopAnimating()
+                self.quotePanelLoadingLabel.isHidden = true
                 self.quotePanelLoading = false
                 switch result {
                 case .success(let list):
@@ -1906,6 +1992,9 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         }
         quotePanelRowEntries = []
         quotePanelRowButtons = []
+        // 录屏批 (e/f)：行渲染即加载结束，转圈与加载文案到此为止，不留残影。
+        quotePanelSpinner.stopAnimating()
+        quotePanelLoadingLabel.isHidden = true
         quotePanelEmptyLabel.text = quotePanelEmptyText()
         quotePanelEmptyLabel.isHidden = !entries.isEmpty
         quotePanelRetryButton.isHidden = !quotePanelFailed
@@ -2319,11 +2408,19 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         refreshWeatherRowVisibility()
         updatePreferredContentSize()
         if !weatherScrollView.isHidden {
-            // 看门狗修法（2026-10-27）：不在 preferred 刚改写、容器帧还没跟上的当口
-            // 同步强制布局（重入测量最不稳定的时刻）；滚动放到下一 runloop，在 settle
-            // 后的几何上做。滚动语义与动画门（减动效）不变。
+            // 看门狗修法（2026-10-27）+ 编辑器批：同步强制布局仍不在 preferred 刚改写
+            // 的当口做（重入测量最不稳定的时刻），故滚动仍放到下一 runloop；但下一
+            // runloop 的 async 块跑在布局之前，weatherScrollView.frame 仍是收起态旧帧
+            // （长文/键盘顶起时行在可视区外，拿旧帧滚等于没滚，看起来就是“点了没出现”），
+            // 故块内先 layoutIfNeeded 落到开行后的几何再量帧。转换口径不动：
+            // frame 在 contentStack 系内、contentView 系与 scroll 内容系原点同为 (0,0)，
+            // 故 contentView.convert(frame, from: contentStack) 正是 scrollRectToVisible
+            // 要的内容坐标；改向 scrollView.convert(bounds, from:) 反而会被 contentOffset
+            // 抵掉一截。滚动语义与动画门（减动效）不变。
             DispatchQueue.main.async { [weak self] in
                 guard let self = self else { return }
+                self.view.layoutIfNeeded()
+                guard !self.weatherScrollView.isHidden else { return }
                 let animated = !UIAccessibility.isReduceMotionEnabled
                 let target = self.contentView.convert(self.weatherScrollView.frame, from: self.contentStack)
                 self.scrollView.scrollRectToVisible(target, animated: animated)
@@ -2630,9 +2727,23 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         return textView.text.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
+    /// 落字数：拼音组合串（marked text，如未落字的 "nihao"）不计入字数——
+    /// 组合串是输入法中间态，不是正文；textView.text 在组词期间已含组合串，
+    /// 直接 count 会把 5 个字母算成字（录屏里 "nihao" 显示 6/2000 即 1 落字 + 5 字母）。
+    /// 落字后 marked 为空，计数自然回到落字数（"你好" = 2）。占位显隐仍按全文
+    /// （含组合串）算：组词中占位就该藏，不因落字数为 0 而复现。
+    private func committedTextCount() -> Int {
+        let fullCount = textView.text.count
+        guard let marked = textView.markedTextRange,
+              let markedText = textView.text(in: marked) else {
+            return fullCount
+        }
+        return max(0, fullCount - markedText.count)
+    }
+
     /// 字数：状态行圆环 + N/2000（网页 char-count 同款）；空时整组隐藏，超字红字红环。
     private func updateCountLabel() {
-        let count = textView.text.count
+        let count = committedTextCount()
         placeholderLabel.isHidden = !textView.text.isEmpty
         if count == 0 {
             charRingView.isHidden = true
@@ -3238,6 +3349,9 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     /// 上传入口（重试/续传）：主线程只置上传态，编码 + base64 + 上传序列化走后台队列。
     private func startUpload(for item: ComposerImageItem, image: UIImage) {
         markUploading(item)
+        // 扫一遍同款（4c）：置上传态即改发布启用态，旧代码只在上传完成回调里
+        // 同步，续传/重试起传后到完成前发布态是陈旧的（应禁用时仍显可用）。
+        updatePublishState()
         imagePrepQueue.async { [weak self, weak item] in
             guard let full = BearyImagePrep.jpegData(image, maxSide: 1600, quality: 0.85),
                   let thumb = BearyImagePrep.thumbData(image, maxSide: 480) else {
@@ -3344,7 +3458,13 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     /// 已删引用（gone 只有 id、无正文）补拉后仍无正文时不再反复请求。
     private func setupEditContent() {
         guard let entry = editingEntry else { return }
-        titleLabel.text = "编辑日记"
+        // 录屏批 (b) 同款：面板打开时标题归面板（“选择引用”），回填不许把它顶回
+        // “编辑日记”；只把关闭后要还原的标题改成“编辑日记”，关闭时还原即正确。
+        if quotePanelOpen {
+            quotePanelSavedTitle = "编辑日记"
+        } else {
+            titleLabel.text = "编辑日记"
+        }
         textView.text = entry.content ?? ""
         applyBodyLineHeight()
         selectedMood = entry.mood
@@ -3360,7 +3480,11 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         }
         if quoteBodyMissing && !editQuoteFetchAttempted, let entryId = entry.id, !entryId.isEmpty {
             editQuoteFetchAttempted = true
-            titleLabel.text = "加载日记…"
+            if quotePanelOpen {
+                quotePanelSavedTitle = "加载日记…"
+            } else {
+                titleLabel.text = "加载日记…"
+            }
             refreshRecipientRow()
             refreshQuoteSection()
             refreshExtras()
@@ -3397,6 +3521,9 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         }
         refreshImageStripVisibility()
         updateTextViewHeight()
+        // 扫一遍同款（4c）：补拉单篇后的第二次回填是 viewDidLoad 之后唯一的正文
+        // 填充点，此前不调 updatePublishState，保存钮会留在空态灰直到用户输入。
+        updatePublishState()
     }
 
     /// 回填后原引用的有效 id（setup 时 content 为空的引用视为已删、不算原引用，
@@ -3637,11 +3764,15 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                     }
                 }
                 self.updateCountLabel()
-                self.updatePublishState()
                 self.refreshExtras()
                 self.updateDraftPillCount()
                 self.updateTextViewHeight()
                 self.updatePreferredContentSize()
+                // 录屏批 (c)：恢复草稿后同步一次发布启用态，且放在全部刷新之后当
+                // 最后一句——旧代码的 updatePublishState 在 refreshExtras 之前，恢复
+                // 流程收尾时发布态不是最后一句，恢复后发布钮仍留空态灰，直到用户
+                // 重新输入触发 textViewDidChange 才变白；放末尾保证收尾态即终态。
+                self.updatePublishState()
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) { [weak self] in
                     guard let self = self, self.view.window != nil else { return }
                     self.showToast(message: "已恢复上次的草稿")
@@ -3672,6 +3803,10 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                         }
                         self.resumePendingUploads()
                         self.verifyRestoredQuote()
+                        // 录屏批 (c) 同款：异步解码/续传完成后也同步一次发布态，
+                        // 续传起的上传态经 startUpload 的同步 + 上传完成回调覆盖，
+                        // 这里只保证恢复流程收尾时发布态与当前内容一致。
+                        self.updatePublishState()
                     }
                 }
             }
@@ -3913,10 +4048,11 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                     }
                 }
                 self.resumePendingUploads()
+                // 录屏批 (c) 同款：草稿箱恢复的异步解码收尾时同步一次发布态。
+                self.updatePublishState()
             }
         }
         updateCountLabel()
-        updatePublishState()
         refreshMoodButtons()
         refreshWeatherButtons()
         refreshRecipientRow()
@@ -3924,6 +4060,8 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         refreshExtras()
         updateDraftPillCount()
         verifyRestoredQuote()
+        // 录屏批 (c) 同款：草稿箱恢复后同步一次发布启用态，放全部刷新之后。
+        updatePublishState()
     }
 
     /// 只拆视图不删文件（切草稿时旧篇文件仍归旧篇所有，删文件只在丢弃/发布成功时做）。
