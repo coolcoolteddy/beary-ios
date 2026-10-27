@@ -110,7 +110,8 @@ class BearyEntryImageViewerViewController: UIViewController, UIGestureRecognizer
             imageView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             imageView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
             retryLabel.centerXAnchor.constraint(equalTo: view.centerXAnchor),
-            retryLabel.centerYAnchor.constraint(equalTo: view.centerYAnchor),
+            // E2：图片加载失败重试态按可视区中心往上 30pt 统一放（原正中心）。
+            retryLabel.centerYAnchor.constraint(equalTo: view.centerYAnchor, constant: -30),
             counterLabel.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 20),
             counterLabel.centerXAnchor.constraint(equalTo: view.centerXAnchor),
             dotsStack.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor, constant: -24),
