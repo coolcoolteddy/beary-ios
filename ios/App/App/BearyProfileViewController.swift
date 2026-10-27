@@ -29,9 +29,11 @@ import UIKit
 // - B3 已删：本文件不含该条目视图、不为它单独拉取、不引用标签列表之外的字段。
 // - 回调约定（容器接线，本文件只定义）：列表行点按走 onOpenEntry；
 //   自己主页未登录时走 onRequireLogin；编辑资料走 onEditProfile（容器接线到
-//   BearyEditProfileViewController）；页内返回走 onBack；退出登录成功走 onLogout；
-//   齿轮菜单的使用指南 / 账户设置 / 外观分别走 onShowTutorial /
-//   onOpenAccountSettings / onToggleAppearance；行内互动成功后走
+//   BearyEditProfileViewController）；页内返回走 onBack；
+//   C2：齿轮不再弹菜单，直接走 onOpenAccountSettings 打开设置页；使用指南 /
+//   外观切换 / 退出登录改由设置页内入口承载（通用与通知、独立退出钮），
+//   onShowTutorial / onToggleAppearance / onLogout 回调保留作容器兼容，
+//   齿轮路径不再触发它们；行内互动成功后走
 //   onInteractionChanged（与详情页同款签名：id、点赞数、已赞、已收藏、回应聚合）。
 // - 小熊回应墙：标题“小熊回应”+ 横滑表情 × 计数 + “共收到 N 只”，
 //   emotes_total > 0 才显示，数据直接用 profile 下发的 emotes_received /
@@ -39,7 +41,8 @@ import UIKit
 // - 徽章架（仅本人）：GET /beary/api/my-badges 取 unlocked / worn，
 //   点徽章 POST /beary/api/wear {badge} 切换佩戴（传 null = 取消佩戴；
 //   服务端目前仅接受 beta，worn 也只回 beta 或 null）。
-// - 齿轮菜单退出登录走 BearyAPI.logout（/api/account/logout，见文末注记）。
+// - C2：齿轮直达设置页，退出登录改走设置页独立按钮（仍是 BearyAPI.logout，
+//   /api/account/logout，见文末注记；设置页内逻辑一字不动）。
 // - 分享：本人优先 https://teddyhn.com/beary/u/<id>（取不到 id 才回退
 //   @<handle>），他人用 u/<id> 不变。
 // - 行内回应：不做乐观更新，只在服务端返回聚合后重绘（与详情页同口径）。
@@ -149,16 +152,20 @@ class BearyProfileViewController: UIViewController {
     /// 页内顶栏返回按钮点按：容器接线到关闭 / 返回。
     var onBack: (() -> Void)?
 
-    /// 齿轮菜单退出登录成功后调用：容器接线到刷新登录态。
+    /// C2 保留（齿轮路径不再触发）：原齿轮菜单退出登录成功后调用，
+    /// 容器接线到刷新登录态；退出入口现为设置页独立按钮。
     var onLogout: (() -> Void)?
 
-    /// 齿轮菜单「使用指南」：容器接线到教程页。
+    /// C2 保留（齿轮路径不再触发）：原齿轮菜单「使用指南」，容器接线到教程页；
+    /// 使用指南入口现为设置页通用组内一行。
     var onShowTutorial: (() -> Void)?
 
-    /// 齿轮菜单「账户设置」：容器接线到 /account 或账户设置页。
+    /// C2：齿轮直达设置页，容器接线到设置页（presentSettings）。
     var onOpenAccountSettings: (() -> Void)?
 
-    /// 齿轮菜单「外观」：容器接线到外观切换。
+    /// C2 保留（齿轮路径不再触发）：原齿轮菜单「外观」，容器接线到外观切换
+    /// （BearyThemeSwitchCardViewController Popover）；外观切换现为设置页
+    /// 通用组内三档行，Popover 类保留不断开其他调用方（见回执：无其他调用方）。
     var onToggleAppearance: (() -> Void)?
 
     /// Q5 “赞过”空态“去广场看看”：容器接线到广场页（切 tab/回首页），本文件只通知。
@@ -521,7 +528,7 @@ class BearyProfileViewController: UIViewController {
         // I1：齿轮改图标钮（网页 pfGearBtn 用 beary-more；icon_more 由该 symbol 渲染）。
         buttonValue.setImage(BearyIconImages.image(named: "icon_more", pointSize: 19), for: .normal)
         buttonValue.tintColor = BearyColors.ink
-        buttonValue.accessibilityLabel = "更多"
+        buttonValue.accessibilityLabel = "设置"
         buttonValue.layer.borderWidth = 1
         buttonValue.layer.cornerRadius = 20
         buttonValue.addTarget(self, action: #selector(gearButtonTapped), for: .touchUpInside)
@@ -2266,24 +2273,12 @@ class BearyProfileViewController: UIViewController {
         present(sheet, animated: true, completion: nil)
     }
 
+    /// C2：齿轮不再弹 ActionSheet，直接打开设置页（BearySettingsViewController，
+    /// 容器经 onOpenAccountSettings 接线）。使用指南 / 外观切换 / 退出登录
+    /// 改由设置页内入口承载，不再经本页菜单中转。
     @objc private func gearButtonTapped() {
         guard isOwnProfile else { return }
-        let sheet = UIAlertController(title: nil, message: nil, preferredStyle: .actionSheet)
-        sheet.addAction(UIAlertAction(title: "使用指南", style: .default, handler: { [weak self] _ in self?.onShowTutorial?() }))
-        sheet.addAction(UIAlertAction(title: "账户设置", style: .default, handler: { [weak self] _ in self?.onOpenAccountSettings?() }))
-        sheet.addAction(UIAlertAction(title: "外观", style: .default, handler: { [weak self] _ in self?.onToggleAppearance?() }))
-        sheet.addAction(UIAlertAction(title: "退出登录", style: .destructive, handler: { [weak self] _ in self?.logoutTapped() }))
-        sheet.addAction(UIAlertAction(title: "取消", style: .cancel, handler: nil))
-        if let popover = sheet.popoverPresentationController {
-            popover.sourceView = gearButton
-            popover.sourceRect = gearButton.bounds
-        }
-        present(sheet, animated: true, completion: nil)
-    }
-
-    private func logoutTapped() {
-        // Profile 侧只发通知，由容器做唯一一次退出 API 调用。
-        onLogout?()
+        onOpenAccountSettings?()
     }
 
     // MARK: - 行内互动（P7）与行内回调
