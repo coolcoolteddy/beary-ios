@@ -446,7 +446,8 @@ class BearyProfileViewController: UIViewController {
         buttonValue.translatesAutoresizingMaskIntoConstraints = false
         buttonValue.setTitle("编辑资料", for: .normal)
         buttonValue.setTitleColor(BearyColors.ink, for: .normal)
-        buttonValue.titleLabel?.font = UIFont.systemFont(ofSize: 14)
+        buttonValue.titleLabel?.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 14))
+        buttonValue.titleLabel?.adjustsFontForContentSizeCategory = true
         buttonValue.setImage(BearyIconImages.image(named: "icon_edit", pointSize: 15), for: .normal)
         buttonValue.tintColor = BearyColors.ink
         buttonValue.contentEdgeInsets = UIEdgeInsets(top: 0, left: 12, bottom: 0, right: 12)
@@ -457,16 +458,18 @@ class BearyProfileViewController: UIViewController {
         buttonValue.bearyAddPressFeedback()
         // P2-4：照抄点赞钮实测字宽修法——按钮固有宽不含标题边距，显式宽 =
         // content 12 + 图宽 + titleEdge 6 + 实测标题宽 + content 12，防标题被裁。
+        // R8：宽改下限（默认尺寸不变），大字号时可生长。
         let editImageWidth = buttonValue.image(for: .normal)?.size.width ?? 15
         let editTitleWidth = ceil(("编辑资料" as NSString).size(withAttributes: [NSAttributedString.Key.font: UIFont.systemFont(ofSize: 14)]).width)
-        buttonValue.widthAnchor.constraint(equalToConstant: 12 + editImageWidth + 6 + editTitleWidth + 12).isActive = true
+        buttonValue.widthAnchor.constraint(greaterThanOrEqualToConstant: 12 + editImageWidth + 6 + editTitleWidth + 12).isActive = true
         return buttonValue
     }()
 
     private let nameLabel: UILabel = {
         let labelValue = UILabel()
         labelValue.translatesAutoresizingMaskIntoConstraints = false
-        labelValue.font = UIFont.systemFont(ofSize: 23, weight: .heavy)
+        labelValue.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 23, weight: .heavy))
+        labelValue.adjustsFontForContentSizeCategory = true
         labelValue.textColor = BearyColors.ink
         labelValue.numberOfLines = 0
         labelValue.lineBreakMode = .byCharWrapping
@@ -642,7 +645,8 @@ class BearyProfileViewController: UIViewController {
     private let wallTitleLabel: UILabel = {
         let labelValue = UILabel()
         labelValue.translatesAutoresizingMaskIntoConstraints = false
-        labelValue.font = UIFont.systemFont(ofSize: 14, weight: .bold)
+        labelValue.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 14, weight: .bold))
+        labelValue.adjustsFontForContentSizeCategory = true
         labelValue.textColor = BearyColors.ink
         labelValue.text = "小熊回应"
         return labelValue
@@ -685,7 +689,8 @@ class BearyProfileViewController: UIViewController {
     private let badgesTitleLabel: UILabel = {
         let labelValue = UILabel()
         labelValue.translatesAutoresizingMaskIntoConstraints = false
-        labelValue.font = UIFont.systemFont(ofSize: 13, weight: .bold)
+        labelValue.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13, weight: .bold))
+        labelValue.adjustsFontForContentSizeCategory = true
         labelValue.textColor = BearyColors.ink
         labelValue.text = "徽章"
         return labelValue
@@ -793,7 +798,8 @@ class BearyProfileViewController: UIViewController {
         // I2：三标签钮前加对应图标（日记 icon_diary 由 beary-diary 渲染；心/书签资产已有）。
         // 1:1 网页 .pf-tab 口径：图标 16、图标与文字 gap 6；内边距 9/10、字 14/700、钮间 gap 4 不变。
         buttonValue.setImage(BearyIconImages.image(named: iconName, pointSize: 16), for: .normal)
-        buttonValue.titleLabel?.font = UIFont.systemFont(ofSize: 14, weight: .bold)
+        buttonValue.titleLabel?.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 14, weight: .bold))
+        buttonValue.titleLabel?.adjustsFontForContentSizeCategory = true
         buttonValue.setTitleColor(BearyColors.gray, for: .normal)
         buttonValue.setTitleColor(BearyColors.ink, for: .selected)
         buttonValue.tintColor = BearyColors.gray
@@ -802,9 +808,10 @@ class BearyProfileViewController: UIViewController {
         buttonValue.addTarget(self, action: action, for: .touchUpInside)
         buttonValue.bearyAddPressFeedback()
         // P2-4：同点赞钮修法——显式宽 = content 10 + 图宽 + titleEdge 6 + 实测标题宽 + content 10。
+        // R8：宽改下限（默认尺寸不变），大字号时可生长。
         let tabImageWidth = buttonValue.image(for: .normal)?.size.width ?? 16
         let tabTitleWidth = ceil((title as NSString).size(withAttributes: [NSAttributedString.Key.font: UIFont.systemFont(ofSize: 14, weight: .bold)]).width)
-        buttonValue.widthAnchor.constraint(equalToConstant: 10 + tabImageWidth + 6 + tabTitleWidth + 10).isActive = true
+        buttonValue.widthAnchor.constraint(greaterThanOrEqualToConstant: 10 + tabImageWidth + 6 + tabTitleWidth + 10).isActive = true
         return buttonValue
     }
 
@@ -1029,7 +1036,7 @@ class BearyProfileViewController: UIViewController {
 
             editButton.trailingAnchor.constraint(equalTo: headerView.trailingAnchor, constant: -28),
             editButton.bottomAnchor.constraint(equalTo: avatarImageView.bottomAnchor),
-            editButton.heightAnchor.constraint(equalToConstant: 40),
+            editButton.heightAnchor.constraint(greaterThanOrEqualToConstant: 40),
             gearButton.trailingAnchor.constraint(equalTo: editButton.leadingAnchor, constant: -8),
             gearButton.centerYAnchor.constraint(equalTo: editButton.centerYAnchor),
             gearButton.widthAnchor.constraint(equalToConstant: 40),
@@ -1558,12 +1565,13 @@ class BearyProfileViewController: UIViewController {
                     let retryButton = UIButton(type: .system)
                     retryButton.translatesAutoresizingMaskIntoConstraints = false
                     retryButton.setTitle("徽章加载失败，点按重试", for: .normal)
-                    retryButton.titleLabel?.font = UIFont.systemFont(ofSize: 13)
+                    retryButton.titleLabel?.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13))
+                    retryButton.titleLabel?.adjustsFontForContentSizeCategory = true
                     retryButton.setTitleColor(BearyColors.gray, for: .normal)
                     retryButton.addTarget(strongSelf, action: #selector(BearyProfileViewController.badgeRetryTapped), for: .touchUpInside)
                     retryButton.bearyAddPressFeedback()
                     NSLayoutConstraint.activate([
-                        retryButton.heightAnchor.constraint(equalToConstant: 32),
+                        retryButton.heightAnchor.constraint(greaterThanOrEqualToConstant: 32),
                     ])
                     strongSelf.badgesStack.addArrangedSubview(retryButton)
                     strongSelf.badgesContainer.isHidden = false
@@ -1594,7 +1602,8 @@ class BearyProfileViewController: UIViewController {
             let emptyLabel = UILabel()
             emptyLabel.translatesAutoresizingMaskIntoConstraints = false
             emptyLabel.text = "暂无徽章"
-            emptyLabel.font = UIFont.systemFont(ofSize: 13)
+            emptyLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13))
+            emptyLabel.adjustsFontForContentSizeCategory = true
             emptyLabel.textColor = BearyColors.gray
             badgesStack.addArrangedSubview(emptyLabel)
             badgesContainer.isHidden = false
@@ -2137,7 +2146,8 @@ class BearyProfileViewController: UIViewController {
         graphicView.translatesAutoresizingMaskIntoConstraints = false
         let titleLabel = UILabel()
         titleLabel.translatesAutoresizingMaskIntoConstraints = false
-        titleLabel.font = UIFont.systemFont(ofSize: 15)
+        titleLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 15))
+        titleLabel.adjustsFontForContentSizeCategory = true
         titleLabel.textColor = BearyColors.ink
         titleLabel.textAlignment = .center
         titleLabel.text = titleText
@@ -2157,7 +2167,8 @@ class BearyProfileViewController: UIViewController {
         if !subtitleText.isEmpty {
             let subtitleLabel = UILabel()
             subtitleLabel.translatesAutoresizingMaskIntoConstraints = false
-            subtitleLabel.font = UIFont.systemFont(ofSize: 13)
+            subtitleLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13))
+            subtitleLabel.adjustsFontForContentSizeCategory = true
             subtitleLabel.textColor = BearyColors.gray
             subtitleLabel.textAlignment = .center
             subtitleLabel.numberOfLines = 0
@@ -2185,9 +2196,10 @@ class BearyProfileViewController: UIViewController {
             let ctaButton = BearyButton(style: .secondaryOutline(.regular))
             ctaButton.translatesAutoresizingMaskIntoConstraints = false
             ctaButton.setTitle(cta.title, for: .normal)
-            ctaButton.titleLabel?.font = UIFont.systemFont(ofSize: 14, weight: .semibold)
+            ctaButton.titleLabel?.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 14, weight: .semibold))
+            ctaButton.titleLabel?.adjustsFontForContentSizeCategory = true
             ctaButton.contentEdgeInsets = UIEdgeInsets(top: 0, left: 20, bottom: 0, right: 20)
-            ctaButton.heightAnchor.constraint(equalToConstant: 44).isActive = true
+            ctaButton.heightAnchor.constraint(greaterThanOrEqualToConstant: 44).isActive = true
             ctaButton.addTarget(self, action: cta.action, for: .touchUpInside)
             ctaButton.bearyAddPressFeedback()
             stack.addArrangedSubview(ctaButton)
@@ -2219,7 +2231,8 @@ class BearyProfileViewController: UIViewController {
         iconView.contentMode = .scaleAspectFit
         let titleLabel = UILabel()
         titleLabel.translatesAutoresizingMaskIntoConstraints = false
-        titleLabel.font = UIFont.systemFont(ofSize: 15)
+        titleLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 15))
+        titleLabel.adjustsFontForContentSizeCategory = true
         titleLabel.textColor = BearyColors.ink
         titleLabel.textAlignment = .center
         titleLabel.text = profileLoadFailed && profile == nil ? "该用户不存在" : "加载失败"
@@ -2227,7 +2240,8 @@ class BearyProfileViewController: UIViewController {
         retryButton.translatesAutoresizingMaskIntoConstraints = false
         retryButton.setTitle("点击重试", for: .normal)
         retryButton.setTitleColor(BearyColors.ink, for: .normal)
-        retryButton.titleLabel?.font = UIFont.systemFont(ofSize: 14)
+        retryButton.titleLabel?.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 14))
+        retryButton.titleLabel?.adjustsFontForContentSizeCategory = true
         retryButton.setImage(BearyIconImages.image(named: "icon_refresh", pointSize: 15), for: .normal)
         retryButton.tintColor = BearyColors.ink
         retryButton.contentEdgeInsets = UIEdgeInsets(top: 0, left: 12, bottom: 0, right: 12)
@@ -2237,12 +2251,13 @@ class BearyProfileViewController: UIViewController {
         retryButton.layer.cornerRadius = 20
         retryButton.addTarget(self, action: #selector(retryButtonTapped), for: .touchUpInside)
         retryButton.bearyAddPressFeedback()
-        retryButton.heightAnchor.constraint(equalToConstant: 40).isActive = true
+        retryButton.heightAnchor.constraint(greaterThanOrEqualToConstant: 40).isActive = true
         // P2-4：照抄 editButton 实测字宽修法——按钮固有宽不含标题边距，显式宽 =
         // content 12 + 图宽 + titleEdge 6 + 实测标题宽 + content 12，防标题被裁。
+        // R8：宽改下限（默认尺寸不变），大字号时可生长。
         let profileRetryImageWidth = retryButton.currentImage?.size.width ?? 15
         let profileRetryTitleWidth = ceil(("点击重试" as NSString).size(withAttributes: [NSAttributedString.Key.font: UIFont.systemFont(ofSize: 14)]).width)
-        retryButton.widthAnchor.constraint(equalToConstant: 12 + profileRetryImageWidth + 6 + profileRetryTitleWidth + 12).isActive = true
+        retryButton.widthAnchor.constraint(greaterThanOrEqualToConstant: 12 + profileRetryImageWidth + 6 + profileRetryTitleWidth + 12).isActive = true
         profileErrorRetryButton = retryButton
         // 80 包重试统一：失败脚部补“网络好像不太顺”副标题（与时间线失败态同文案），
         // 用户不存在时不补副标题；按钮已与首页失败行同款描边 pill。
@@ -2250,7 +2265,8 @@ class BearyProfileViewController: UIViewController {
         if !(profileLoadFailed && profile == nil) {
             let subtitleLabel = UILabel()
             subtitleLabel.translatesAutoresizingMaskIntoConstraints = false
-            subtitleLabel.font = UIFont.systemFont(ofSize: 13)
+            subtitleLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13))
+            subtitleLabel.adjustsFontForContentSizeCategory = true
             subtitleLabel.textColor = BearyColors.gray
             subtitleLabel.textAlignment = .center
             subtitleLabel.numberOfLines = 0
@@ -2267,7 +2283,7 @@ class BearyProfileViewController: UIViewController {
         NSLayoutConstraint.activate([
             iconView.widthAnchor.constraint(equalToConstant: 36),
             iconView.heightAnchor.constraint(equalToConstant: 36),
-            retryButton.heightAnchor.constraint(equalToConstant: 40),
+            retryButton.heightAnchor.constraint(greaterThanOrEqualToConstant: 40),
             stack.topAnchor.constraint(equalTo: container.topAnchor, constant: 26),
             stack.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 20),
             stack.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -20),

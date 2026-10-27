@@ -66,16 +66,17 @@ enum BearyButtonStyle: Equatable {
     }
 
     /// 默认标题字号（紧凑 14 / 常规 16，与搜索 CTA / 通知弹窗主副钮同款）。
+    /// R8：全部走 scaledFont，默认字号下与原值一致，大字号档跟随系统缩放。
     var titleFont: UIFont {
         switch self {
         case .primaryPill:
-            return UIFont.systemFont(ofSize: 16, weight: .semibold)
+            return BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 16, weight: .semibold))
         case .secondaryOutline(let size):
-            return UIFont.systemFont(ofSize: size == .regular ? 16 : 14, weight: .semibold)
+            return BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: size == .regular ? 16 : 14, weight: .semibold))
         case .destructiveOutline(let size):
-            return UIFont.systemFont(ofSize: size == .regular ? 16 : 14, weight: .semibold)
+            return BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: size == .regular ? 16 : 14, weight: .semibold))
         case .iconCircleClose:
-            return UIFont.systemFont(ofSize: 15)
+            return BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 15))
         }
     }
 }
@@ -112,6 +113,8 @@ final class BearyButton: BearyHit44Button {
         layer.cornerRadius = style.cornerRadius
         layer.masksToBounds = true
         titleLabel?.font = style.titleFont
+        // R8：工厂钮一律跟随系统字号；调用方事后覆写 titleLabel?.font 时须自行重配 scaledFont + 本开关。
+        titleLabel?.adjustsFontForContentSizeCategory = true
         switch style {
         case .primaryPill(let tone):
             layer.borderWidth = 0
