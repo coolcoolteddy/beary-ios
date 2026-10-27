@@ -39,6 +39,8 @@ struct BearyDraftImageItem: Codable {
 struct BearyDraft: Codable {
     var draftId: String
     var content: String
+    /// A4-App：编辑器标题（默认 nil，老草稿缺本键时按 nil 解码，旧构造点不用改）。
+    var title: String? = nil
     var mood: String?
     var images: [BearyDraftImageItem]
     var clientReq: String

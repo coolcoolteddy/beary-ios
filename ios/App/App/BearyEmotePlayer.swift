@@ -109,7 +109,16 @@ public final class BearyEmoteView: UIView {
         self.init(key: key, animated: animated, fallbackImage: nil)
     }
 
-    public init(key: String, animated: Bool, fallbackImage: UIImage?) {
+    /// E4 懒加载：deferred=true 时构造不解析 Lottie、不触发预热，只挂静态回退图
+    /// （心情为表情 PNG、天气为调用方传的 wx 静态图）；首次用到时调用方调
+    /// ensureLoaded() 才真正加载，播放意图（play 前已记的 isPlaying / heldStaticFrame）
+    /// 在挂接时兑现。默认 false，旧调用点行为不变。
+    private var isDeferredLoad = false
+    private var loadStarted = false
+
+    // fallbackImage 补默认值 nil：旧 2 参调用走便捷构造器不变；编辑器心情条
+    // 可直接以 (key:animated:deferred:) 调用，省去显式传 nil。
+    public init(key: String, animated: Bool, fallbackImage: UIImage? = nil, deferred: Bool = false) {
         self.emoteKey = key
         self.isPlaying = animated && UIAccessibility.isReduceMotionEnabled == false
         super.init(frame: .zero)
@@ -119,8 +128,22 @@ public final class BearyEmoteView: UIView {
         Self.registerLivePlayer(self)
         Self.installReduceMotionObserver()
         Self.installMemoryWarningObserver()
+        if deferred {
+            self.isDeferredLoad = true
+            // 只挂静态回退，不解析、不预热；layoutSubviews 会把回退图铺满 bounds。
+            self.showFallback(dark: self.isDark)
+        } else {
+            loadEmote()
+            Self.schedulePrewarm(dark: self.isDark)
+        }
+    }
+
+    /// E4：触发延迟加载（幂等；已加载/已触发时为空操作）。调用方在选择条
+    /// 点开时调一次即可，后续 play/showStaticFrame 按原口径走已加载的动画。
+    public func ensureLoaded() {
+        guard isDeferredLoad, !loadStarted else { return }
+        loadStarted = true
         loadEmote()
-        Self.schedulePrewarm(dark: self.isDark)
     }
 
     deinit {
@@ -203,6 +226,13 @@ public final class BearyEmoteView: UIView {
         super.traitCollectionDidChange(previousTraitCollection)
         guard let previous = previousTraitCollection else { return }
         guard traitCollection.hasDifferentColorAppearance(comparedTo: previous) else { return }
+        // E4：延迟加载尚未触发时，深浅切换只换静态回退图，不因此提前解析。
+        if isDeferredLoad && !loadStarted {
+            fallbackImageView?.removeFromSuperview()
+            fallbackImageView = nil
+            showFallback(dark: self.isDark)
+            return
+        }
         let wasPlaying = isPlaying
         teardownContent()
         isPlaying = wasPlaying

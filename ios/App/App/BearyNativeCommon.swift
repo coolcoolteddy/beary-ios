@@ -590,8 +590,10 @@ extension BearyAPI {
     /// 成功 201 返回 {id, publish_at, edit_deadline}；失败码：content required / content too long /
     /// invalid image ownership / image unavailable(409) / create_gap / create_day_limit /
     /// create_ip_limit(429) / create_dup / recipient_invalid。
-    func publishEntry(content: String, images: [String], mood: String?, weather: String? = nil, quoteId: String? = nil, recipientId: Int? = nil, notifyRecipient: Int? = nil, clientReq: String, completion: @escaping (Result<CreateResponse, APIError>) -> Void) {
+    func publishEntry(content: String, images: [String], mood: String?, weather: String? = nil, quoteId: String? = nil, recipientId: Int? = nil, notifyRecipient: Int? = nil, title: String? = nil, clientReq: String, completion: @escaping (Result<CreateResponse, APIError>) -> Void) {
         var body: [String: Any] = ["content": content, "images": images, "client_req": clientReq]
+        // A4-App：标题透传；空标题省略不传（不做空标题占位决定，服务端按缺失处理）。
+        if let t = title, !t.isEmpty { body["title"] = t }
         if let m = mood { body["mood"] = m }
         if let w = weather { body["weather"] = w }
         if let q = quoteId { body["quote_id"] = q }
@@ -607,9 +609,11 @@ extension BearyAPI {
     /// 服务端 15 分钟规则：已公开 403 'already public'、过编辑期 403 'edit window expired' 或
     /// 'already public or expired'；成功只返回 {ok: true}，调用方成功后自行重拉单篇。
     /// 图片须归属本人且存在，否则 400 'invalid image ownership' / 409 'image unavailable'。
-    func updateEntry(id: String, content: String, images: [String], mood: String?, weather: String?, quoteId: String?, completion: @escaping (Result<Void, APIError>) -> Void) {
+    func updateEntry(id: String, content: String, images: [String], mood: String?, weather: String?, quoteId: String?, title: String? = nil, completion: @escaping (Result<Void, APIError>) -> Void) {
         let safe = id.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? id
         var body: [String: Any] = ["content": content, "images": images]
+        // A4-App：标题透传；空标题省略不传（编辑时不以此清标题，服务端按缺失处理）。
+        if let t = title, !t.isEmpty { body["title"] = t }
         if let m = mood { body["mood"] = m }
         if let w = weather { body["weather"] = w }
         if let q = quoteId { body["quote_id"] = q }
