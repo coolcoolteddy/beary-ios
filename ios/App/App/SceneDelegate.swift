@@ -1838,6 +1838,16 @@ final class BearyChromeViewController: UIViewController {
                 self?.showPage(.home)
             }
         }
+        // A 批空态 CTA 接线：个人主页日记（本人）空态“写一篇”与 FAB 同去向（未登录时 presentComposer 内弹原生登录页）；modal 时先 dismiss 再开编辑器，与 onGoToPlaza 同款。
+        vc.onWriteEntry = { [weak self] in
+            if modal {
+                self?.dismiss(animated: true) {
+                    self?.presentComposer()
+                }
+            } else {
+                self?.presentComposer()
+            }
+        }
         // B6：退出只发一次：成功才清本地态，
         // 失败 toast“退出失败，请重试”并保留会话（401 由 BearyAPI.logout 侧映射为成功，此处不另判）。
         vc.onLogout = { [weak self] in
