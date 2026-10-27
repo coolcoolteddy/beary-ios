@@ -2447,6 +2447,15 @@ class BearyProfileViewController: UIViewController {
         // 跟手批：不再立即 reload——立即 reload 会换掉刚播按下预览的 cell，预览当场消失；
         // 忙碌重入由 likeBusyIds 挡；轻震已由 cell 按下时给，控制器不再重复给。
         let wantLiked = !(entry.likedByMe ?? false)
+        if wantLiked {
+            // 点赞全量先行（Li 2026-10-27 定）：可见行立即填橙色、计数 +1；
+            // 只同步可见行，页签模型不动——回包成功后以服务端值为准对齐并通知，
+            // 失败按原 entry 复原可见行（既有失败路径，原样沿用）。
+            var optimistic = entry
+            optimistic.likedByMe = true
+            optimistic.likeCount = (entry.likeCount ?? 0) + 1
+            syncVisibleCell(entry: optimistic)
+        }
         BearyAPI.shared.toggleLike(id: entryId, liked: wantLiked) { [weak self] result in
             DispatchQueue.main.async {
                 guard let strongSelf = self else { return }
@@ -2473,8 +2482,8 @@ class BearyProfileViewController: UIViewController {
                     } else {
                         strongSelf.presentSimpleAlert(message: "操作失败")
                     }
-                    // 失败复原：按下预览（预取消赞）由就地同步按原 entry 刷回，
-                    // 不再整行重建。
+                    // 失败复原：按下预览（预取消赞）与点赞先行态均由就地同步按原 entry
+                    // 刷回，不再整行重建；页签模型从未先行改动，无需复原。
                     strongSelf.syncVisibleCell(entry: entry)
                 }
             }
