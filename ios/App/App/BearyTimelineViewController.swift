@@ -3617,6 +3617,8 @@ class BearyTimelineViewController: UIViewController {
         for entry in timelineEntries {
             guard let createdMs = entry.createdAt else { continue }
             guard let key = BearyBeijingDay.dayKey(ofMs: createdMs) else { continue }
+            // 84 包：当日面板已展示该天条目时，时间线不再重复建组；dayEntries 为空时保留时间线组，避免取数失败藏条目。非今天的选中日同样适用。
+            if key == selectedDayKey, !dayEntries.isEmpty { continue }
             if let existing = indexByKey[key] {
                 sections[existing].entries.append(entry)
             } else {
