@@ -3636,6 +3636,15 @@ class BearyTimelineViewController: UIViewController {
             scrollToEntryRow(section: 0, row: dayEntries.firstIndex(where: { $0.id == entryId }) ?? 0, entryId: entryId)
             return
         }
+        // 引用点按快路径：已加载时间线分区里已有该篇时直接滚，不再切日重拉；
+        // 切日才走 selectDay → fetchDayEntries（1 次往返）。日历选区保持原选区不变，
+        // 落点行与高亮与旧路径一致；同时清掉旧定位挂起，避免前一次切日请求的回包
+        // 把用户拽回旧目标（快速连点两篇引用时）。
+        if tryLocateInLoadedSections(entryId: entryId) {
+            pendingLocateEntryId = nil
+            pendingLocateDayKey = nil
+            return
+        }
         pendingLocateEntryId = entryId
         pendingLocateDayKey = dayKey
         locateDaySelection = true
@@ -3654,15 +3663,16 @@ class BearyTimelineViewController: UIViewController {
         tryLocateInLoadedSections(entryId: target)
     }
 
-    /// 6A：在已加载全部分区里找目标行（时间线分区兜底），找到即滚动高亮。
-    private func tryLocateInLoadedSections(entryId: String) {
+    /// 6A：在已加载全部分区里找目标行（时间线分区兜底），找到即滚动高亮并返回 true。
+    private func tryLocateInLoadedSections(entryId: String) -> Bool {
         let sections = currentSections()
         for (sectionIndex, section) in sections.enumerated() {
             if let row = section.entries.firstIndex(where: { $0.id == entryId }) {
                 scrollToEntryRow(section: sectionIndex, row: row, entryId: entryId)
-                return
+                return true
             }
         }
+        return false
     }
 
     /// 6A：滚动到指定行并闪一下（两段 async：先等重载落定，再等滚动落定取 cell）。

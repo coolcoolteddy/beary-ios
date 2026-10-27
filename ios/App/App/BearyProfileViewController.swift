@@ -247,6 +247,10 @@ class BearyProfileViewController: UIViewController {
     private var savedEntries: [Entry] = []
     /// 6A gotoEntry 定位挂起：他人主页日记 tab 里的目标 id；切走 tab 即作废。
     private var pendingLocateEntryId: String?
+    /// 引用点按直接落点：已拉到的单篇在首屏未到时挂起，首屏回包后插入；
+    /// 直接落点行集合（后台回填替换列表时按序插回，避免用户正看的行无声消失）。
+    private var pendingDirectEntry: Entry?
+    private var directLandedEntries: [String: Entry] = [:]
     private var diaryHasMore = true
     private var likedHasMore = true
     private var savedHasMore = true
@@ -1869,9 +1873,67 @@ class BearyProfileViewController: UIViewController {
         hideProfileSkeleton()
         refreshFooter()
         tableView.refreshControl?.endRefreshing()
+        // 引用点按直接落点：首屏回包后消费挂起的单篇（成功与失败路径都消费；
+        // 失败时列表为空，单篇本身是已拉到的真实内容，仍可落点展示）。
+        consumePendingDirectEntry()
         // 6A：tab 回包尾部消费定位挂起（日记 tab 内找到即滚到高亮，
         // 未找到且还有更多页即续拉，否则静默清掉）。
         tryLocatePending()
+    }
+
+    /// 6A gotoEntry 落点（他人篇，直接落点版）：调用方已持有单篇时用它直接落点，
+    /// 不再逐页翻查；之后正常翻页追加时按 id 去重（handleTabResult 已有 seenIds），不会重复行。
+    /// 旧 locateEntry(entryId:) 翻页路径保留，供只有 id 的入口（搜索/消息/深链）使用。
+    func locateEntry(entry: Entry) {
+        guard let targetId = entry.id, !targetId.isEmpty else { return }
+        // 作者守卫：容器换作者未落定时不把单篇插进错作者的列表，回落翻页路径
+        //（翻页只在 id 真在列表里时才滚动，找不到则静默，与旧路径一致）。
+        if let targetAuthor = targetUserIdValue, let entryAuthor = entry.authorId, targetAuthor != entryAuthor {
+            locateEntry(entryId: targetId)
+            return
+        }
+        if currentTab != .diary {
+            switchTab(tab: .diary)
+        }
+        pendingLocateEntryId = nil
+        if let row = diaryEntries.firstIndex(where: { $0.id == targetId }) {
+            scrollToProfileRow(row: row, entryId: targetId)
+            return
+        }
+        if diaryEntries.isEmpty {
+            pendingDirectEntry = entry
+            if !tabLoading && !tabLoadMore {
+                loadTab(forceReload: true)
+            }
+            return
+        }
+        insertDirectEntry(entry)
+    }
+
+    /// 按 createdAt 降序把单篇插进日记 tab 合适位置并滚动高亮。
+    private func insertDirectEntry(_ entry: Entry) {
+        guard let targetId = entry.id, !targetId.isEmpty else { return }
+        let targetMs = entry.createdAt ?? 0
+        let idx = diaryEntries.firstIndex(where: { ($0.createdAt ?? 0) < targetMs }) ?? diaryEntries.count
+        diaryEntries.insert(entry, at: idx)
+        directLandedEntries[targetId] = entry
+        tableView.reloadData()
+        scrollToProfileRow(row: idx, entryId: targetId)
+    }
+
+    /// 首屏回包后消费挂起的直接落点单篇；用户中途切走 tab 则 journey 已放弃，直接丢弃。
+    private func consumePendingDirectEntry() {
+        guard currentTab == .diary, let entry = pendingDirectEntry else {
+            pendingDirectEntry = nil
+            return
+        }
+        pendingDirectEntry = nil
+        guard let targetId = entry.id, !targetId.isEmpty else { return }
+        if let row = diaryEntries.firstIndex(where: { $0.id == targetId }) {
+            scrollToProfileRow(row: row, entryId: targetId)
+            return
+        }
+        insertDirectEntry(entry)
     }
 
     /// 6A gotoEntry 落点（他人篇）：切到日记 tab，找到即滚动高亮；
@@ -2036,6 +2098,21 @@ class BearyProfileViewController: UIViewController {
                 merged.append(oldEntry)
             } else {
                 merged.append(freshEntry)
+            }
+        }
+        // 直接落点行保护：后台回填用首屏替换列表时，保留已直接落点的单篇（按序插回），
+        // 避免用户正看的行无声消失；翻页到达该篇后由去重自然收敛，届时从保护集合里移除。
+        // 仅日记 tab 做保护（reconcileEntries 只在当前 tab 上跑回填）。
+        if currentTab == .diary {
+            for (landedId, landedEntry) in directLandedEntries {
+                if merged.contains(where: { $0.id == landedId }) {
+                    directLandedEntries.removeValue(forKey: landedId)
+                } else if let ms = landedEntry.createdAt {
+                    let idx = merged.firstIndex(where: { ($0.createdAt ?? 0) < ms }) ?? merged.count
+                    merged.insert(landedEntry, at: idx)
+                } else {
+                    merged.append(landedEntry)
+                }
             }
         }
         setEntries(entries: merged)
@@ -2684,6 +2761,15 @@ class BearyProfileViewController: UIViewController {
                 return
             }
             guard let quoteId = quoteValue.id, !quoteId.isEmpty else { return }
+            // 引用点按快路径：同篇引用已在首页渲染进 quoteCache 时直接用缓存定作者，不再拉一次。
+            if let cached = BearyDiaryCardCell.quoteCache[quoteId],
+               cached.authorId != nil || cached.isMine == true {
+                onOpenEntry?(cached)
+                return
+            }
+            // 定位进行中的轻量指示：拉取往返期间卡片无反应是本次反馈的体感来源之一；
+            // toast 2 秒自清，不做乐观假定位。
+            BearyToast.show(in: view, message: "正在打开…", aboveFAB: true)
             BearyAPI.shared.fetchEntry(id: quoteId) { [weak self] result in
                 DispatchQueue.main.async {
                     guard let strongSelf = self else { return }
