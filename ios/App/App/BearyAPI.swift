@@ -130,6 +130,12 @@ struct NotificationList: Decodable {
     var unread: Int?
     var sysUnread: Int?
     var total: Int?
+    /// D3-App 门控用服务端消息版本号（现行后端未下发，见
+    /// BearyNotificationsViewController 门控注释；后端将来下发时优先用它）。
+    /// 字段名未定稿前兼容两种写法：version 或 message_version
+    /// （decoder 用 convertFromSnakeCase，后者解为 messageVersion）。
+    var version: Int?
+    var messageVersion: Int?
 }
 
 struct SearchUser: Decodable {

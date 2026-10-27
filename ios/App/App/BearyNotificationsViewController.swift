@@ -46,15 +46,23 @@ import UIKit
 //   name = BearyNotificationsViewController.unreadChangedNotificationName
 //   （即 "BearyUnreadChanged"），userInfo = ["unread": Int, "sysUnread": Int]；
 //   sysUnread 随 unread 一起透传，底栏接线由总协调收尾做，本文件不碰底栏、不碰 SceneDelegate。
-// 轻量刷新：60 秒定时 + 回前台各一次 limit=1 拉取，只更新未读数与角标，
-//   不动列表（网页 fetchNotifCount 同口径）；401 与其他失败一律静默忽略。
-// 未读数门控重拉（切回/回前台看新消息，但不违背“切 tab 不重复拉取”）：
-//   上次整页加载时的未读数快照（lastFullLoadUnread/lastFullLoadSysUnread，
+// 轻量刷新：60 秒定时 + 回前台各一次 limit=2 拉取，只更新未读数与角标，
+//   不动列表；401 与其他失败一律静默忽略。limit 取 2 不取 1 的原因见
+//   refreshUnreadCountLightly：后端 limit<=1 轻路径只回空 items，拿不到最新消息 ID。
+// D3-App 门控重拉（切回/回前台看新消息，但不违背“切 tab 不重复拉取”）：
+//   门控条件是服务端消息版本号或最新消息 ID，替代旧的仅比（未读总数、
+//   系统消息未读数）一对——旧门控在“新消息 + 别处已读恰好相抵、未读总数
+//   不变”时门不开，是本批要修的盲区。版本号优先：轻量响应带 version
+//   （或 message_version）时以版本号为准；现行后端未下发版本号字段时，
+//   以最新消息 ID（整页 items 首条即最新一条，created_at DESC, id DESC）为准。
+//   上次整页加载时的快照（lastFullLoadVersion/lastFullLoadLatestId，
 //   只由整页成功加载与本页标已读写回，轻量刷新绝不写回）；切回、回前台、
-//   轮询都先走 limit=1 轻量拉取，比对快照——变了才 loadFirstPage 整页重拉，
-//   没变则只刷角标、不碰列表、不发整页请求。直接每次切回都整页拉取会被
-//   否决：它违背 Li 的切 tab 不重复拉取规矩，且切回瞬间旧列表会被整表
-//   reloadData 闪一下；门控把整页请求压到“确实有新消息/已读态变化”时才发。
+//   轮询都先走轻量拉取，比对快照——版本号或最新 ID 任一变化才 loadFirstPage
+//   整页重拉，都不变则只刷角标、不碰列表、不发整页请求。直接每次切回都
+//   整页拉取会被否决：它违背 Li 的切 tab 不重复拉取规矩，且切回瞬间旧列表
+//   会被整表 reloadData 闪一下；门控把整页请求压到“确实有新消息”时才发。
+//   未读数仍只用于角标与“全部已读”按钮，不再单独作为门控条件；
+//   切账号竞态不在本批范围内（401 清场旗仍按原口径处理）。
 //   注意容器切 tab 走 view.isHidden 切换，不走 viewWillAppear：本页的
 //   viewWillAppear 门控只是兜底（首次挂载/模态 dismiss 等真正 appearance
 //   场景），切回的实际覆盖靠轮询 + 回前台的轻量门控；想做到切回瞬间必刷
@@ -152,6 +160,12 @@ final class BearyNotificationsViewController: UIViewController {
     /// 这里——写了门就永远比对相等、再也触发不了整页重拉。
     private var lastFullLoadUnread: Int?
     private var lastFullLoadSysUnread: Int?
+    /// D3-App 门控快照：上次整页加载时的服务端消息版本号与最新消息 ID。
+    /// lastFullLoadVersion 为 nil = 整页响应未带版本号（现行后端口径），
+    /// 此时门控退到最新 ID；lastFullLoadLatestId 为 nil = 整页列表为空。
+    /// 两者都只由整页成功加载与本页标已读写回，轻量刷新绝不写回。
+    private var lastFullLoadVersion: Int?
+    private var lastFullLoadLatestId: Int?
     private var pollTimer: Timer?
     private var loginPromptShown = false
     private var visibleState: VisibleState = .loading
@@ -555,7 +569,7 @@ final class BearyNotificationsViewController: UIViewController {
         stateButton.layer.borderColor = BearyColors.line.cgColor
     }
 
-    /// 60 秒轮询：只做 limit=1 轻量刷新（见 refreshUnreadCountLightly）。
+    /// 60 秒轮询：只做轻量刷新（见 refreshUnreadCountLightly），cadence 不变。
     private func startPolling() {
         pollTimer?.invalidate()
         pollTimer = Timer.scheduledTimer(withTimeInterval: 60.0, repeats: true) { [weak self] _ in
@@ -568,27 +582,29 @@ final class BearyNotificationsViewController: UIViewController {
         refreshUnreadCountLightly()
     }
 
-    /// 轻量刷新 + 未读数门控（60 秒轮询、回前台、viewWillAppear 的统一入口）：
-    /// 先 limit=1 拉取，只更新未读数与角标（不动列表、不动失败态；失败静默忽略），
-    /// 再把新未读数与上次整页加载快照比对——变了才 loadFirstPage 整页重拉，
-    /// 没变不发整页请求。未读数字段来源（已核实，非推测）：
-    /// GET /beary/api/notifications 的响应体（worker.js 该路由全量与 limit<=1
-    /// 轻路径都回 {items, unread, sysUnread, total}；App 侧 NotificationList
-    /// 经 convertFromSnakeCase 解码为 unread/sysUnread）：unread = read_at=0
-    /// 的可见通知总数（system/letter 全算，互动行只算日记仍存在的那条），
-    /// sysUnread = 其中 type='system' 的子集。门控比对 (unread, sysUnread)
-    /// 一对：今日 worker 口径下 sysUnread 已含于 unread，但一对齐比对可在
-    /// 总数不变、构成变化时（如系统信 +1、互动 -1）仍触发重拉，且不增加请求。
-    /// 门控盲区（取舍，见文件头）：新消息与别处已读恰好相抵、总数不变时
-    /// 门不开，列表要等下次手动下拉/重拍 tab 的无条件 refresh() 才更新；
-    /// 为堵它而每次切回都整页拉取会被 Li 的切 tab 不重复拉取规矩否决。
+    /// 轻量刷新 + D3-App 门控（60 秒轮询、回前台、viewWillAppear 的统一入口）：
+    /// 先轻量拉取，只更新未读数与角标（不动列表、不动失败态；失败静默忽略），
+    /// 再把服务端消息版本号或最新消息 ID 与上次整页加载快照比对——任一变化
+    /// 才 loadFirstPage 整页重拉，都不变不发整页请求。字段来源（已核实，非推测）：
+    /// GET /beary/api/notifications 的响应体（worker.js 该路由全量路径回
+    /// {items, unread, sysUnread, total}，items 按 created_at DESC, id DESC 排序，
+    /// 故首条即最新一条；App 侧 NotificationList 经 convertFromSnakeCase 解码）：
+    /// 现行后端未下发版本号字段，故本批门控实际走最新消息 ID；后端将来下发
+    /// version/message_version 时，门控优先用版本号（见 hasMessageChangedSinceFullLoad）。
+    /// limit 取 2 不取 1：后端 limit<=1 轻路径只回 items: []（worker.js 该路由
+    /// nLim<=1 分支），拿不到最新消息 ID；limit=2 是能拿到最新一条的最小
+    /// 全量请求，仍远小于整页 pageLimit=30，不是整页拉取（且全量路径的计数
+    /// 口径与轻路径同一条聚合 SQL，角标不受影响）。
+    /// 旧门控盲区（本批修掉）：新消息与别处已读恰好相抵、未读总数不变时，
+    /// 仅比 (unread, sysUnread) 的门不开；新门控下最新 ID 变了，门开。
+    /// 为堵盲区而每次切回都整页拉取仍被否决：它违背 Li 的切 tab 不重复拉取规矩。
     /// 整页重拉失败时快照不动：下次轮询（60 秒）/回前台会再次比对到变化
     /// 而重试，有界（轮询 cadence），不会紧循环。
     private func refreshUnreadCountLightly() {
         if isLoadingFirstPage {
             return
         }
-        BearyAPI.shared.fetchNotifications(limit: 1, suppressUnauthorized: true) { [weak self] result in
+        BearyAPI.shared.fetchNotifications(limit: 2, suppressUnauthorized: true) { [weak self] result in
             DispatchQueue.main.async {
                 guard let strongSelf = self else { return }
                 switch result {
@@ -612,7 +628,9 @@ final class BearyNotificationsViewController: UIViewController {
                     // 门控点：轻量刷新本身绝不写快照；只有这里比对，变了才整页重拉。
                     // 未成功整页加载过（快照 nil）不触发，首拉/重试仍走原有路径；
                     // 整页加载中或自定义下拉刷新中不叠加第二路整页请求。
-                    if strongSelf.hasSuccessfulLoad && !strongSelf.isLoadingFirstPage && !strongSelf.isCustomPullRefreshing && strongSelf.hasUnreadChangedSinceFullLoad(unread: strongSelf.unreadTotal, sysUnread: strongSelf.sysUnreadTotal) {
+                    let lightVersion = list.version ?? list.messageVersion
+                    let lightLatestId = list.items?.first?.id
+                    if strongSelf.hasSuccessfulLoad && !strongSelf.isLoadingFirstPage && !strongSelf.isCustomPullRefreshing && strongSelf.hasMessageChangedSinceFullLoad(version: lightVersion, latestId: lightLatestId) {
                         strongSelf.loadFirstPage()
                     }
                 case .failure:
@@ -623,17 +641,40 @@ final class BearyNotificationsViewController: UIViewController {
     }
 
     /// 写门控快照：只在整页成功加载与本页标已读写回处调用（见各调用点注释）。
-    private func recordFullLoadUnread() {
+    /// 最新 ID 恒从当前 items 首条取（整页 items 已按最新在前排序；本页标已读
+    /// 不改顺序，首条不变）。版本号只在调用点显式传入非 nil 时才覆盖：
+    /// 本页标已读不知道服务端新版本号，传 nil 时保留旧快照版本号，不以 nil
+    /// 抹掉它（抹掉后版本号比对会退到最新 ID，仍可用，但会丢版本号口径）。
+    private func recordFullLoadUnread(version: Int? = nil) {
         lastFullLoadUnread = unreadTotal
         lastFullLoadSysUnread = sysUnreadTotal
+        lastFullLoadLatestId = items.first?.id
+        if let versionValue = version {
+            lastFullLoadVersion = versionValue
+        }
     }
 
-    /// 门控比对：快照 nil（未整页成功加载过）返回 false，不触发。
-    private func hasUnreadChangedSinceFullLoad(unread: Int, sysUnread: Int) -> Bool {
-        guard let lastUnread = lastFullLoadUnread, let lastSysUnread = lastFullLoadSysUnread else {
+    /// D3-App 门控比对：快照 nil（未整页成功加载过）返回 false，不触发。
+    /// 版本号优先：轻量响应与快照都带版本号时，只比版本号（服务端版本号
+    /// 若随任何消息变更递增，则已读态变化也在版本号口径内）；快照尚无版本
+    /// 号、轻量响应已带时，视为变化（版本号口径刚接通，拉一次整页落快照，
+    /// 此后以版本号为准）。任一版本号口径不成立时，退到最新消息 ID 比对：
+    /// 最新 ID 变了即有新消息（或旧最新一条被删），门开；最新 ID 不变则门关，
+    /// 未读数本身不再单独开门。
+    private func hasMessageChangedSinceFullLoad(version: Int?, latestId: Int?) -> Bool {
+        guard lastFullLoadUnread != nil, lastFullLoadSysUnread != nil else {
             return false
         }
-        return unread != lastUnread || sysUnread != lastSysUnread
+        if let versionValue = version {
+            if lastFullLoadVersion == nil {
+                return true
+            }
+            if versionValue != lastFullLoadVersion {
+                return true
+            }
+            return false
+        }
+        return latestId != lastFullLoadLatestId
     }
 
     // MARK: - 公开接口
@@ -723,8 +764,10 @@ final class BearyNotificationsViewController: UIViewController {
                     strongSelf.loadMoreFailed = false
                     strongSelf.computeHasMore(fetchedCount: strongSelf.items.count, requestedLimit: requestedLimit)
                     strongSelf.publishUnread(strongSelf.unreadTotal)
-                    // 整页成功加载：门控快照与本次未读数同值，之后轻量比对以此为准。
-                    strongSelf.recordFullLoadUnread()
+                    // 整页成功加载：门控快照与本次未读数同值，之后轻量比对以此为准；
+                    // D3-App：同时落版本号（响应未带时为 nil，旧快照版本号保留）
+                    // 与最新消息 ID（recordFullLoadUnread 内从 items 首条取）。
+                    strongSelf.recordFullLoadUnread(version: list.version ?? list.messageVersion)
                     strongSelf.rebuildDisplayRows()
                     strongSelf.tableView.reloadData()
                     strongSelf.hasDisplayedPage = true
@@ -763,9 +806,9 @@ final class BearyNotificationsViewController: UIViewController {
 
     /// C-G4：首拉 401 后的内存清场——只清本页实例状态，不碰容器与 SceneDelegate。
     /// 清单：items 与行表、总数、hasMore、未读数、展开态、成功/已显旗；
-    /// 门控快照（lastFullLoadUnread/SysUnread）复位为 nil 是关键：不复位时
-    /// 轻量刷新拿新账号未读数与旧快照比对——若恰好相等门不开，新账号首拉
-    /// 被旧快照挡住；复位后门控比对返回 false、不触发误重拉，而新账号的
+    /// 门控快照（lastFullLoadUnread/SysUnread/Version/LatestId）复位为 nil 是关键：
+    /// 不复位时轻量刷新拿新账号版本号/最新 ID 与旧快照比对——若恰好相等门不开，
+    /// 新账号首拉被旧快照挡住；复位后门控比对返回 false、不触发误重拉，而新账号的
     /// 真正首拉由 needsReloadAfterUnauthorized 旗驱动（见下两处）：
     /// refreshListIfUnreadChanged（切回/ viewWillAppear）与轻量刷新成功分支
     /// （轮询/回前台时已重新登录）都会在旗立起时无条件 loadFirstPage。
@@ -787,6 +830,8 @@ final class BearyNotificationsViewController: UIViewController {
         loadMoreFailed = false
         lastFullLoadUnread = nil
         lastFullLoadSysUnread = nil
+        lastFullLoadVersion = nil
+        lastFullLoadLatestId = nil
         needsReloadAfterUnauthorized = true
         publishUnread(0)
         tableView.reloadData()
