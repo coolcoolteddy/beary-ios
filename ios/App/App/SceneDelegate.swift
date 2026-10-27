@@ -2174,6 +2174,8 @@ final class BearyChromeViewController: UIViewController {
             presentLogin()
             return
         }
+        // 临时诊断（86 包，定根因后删除）：登录守卫已过。
+        DiagFile.mark("presentComposer-authed")
         let c = BearyComposerViewController()
         c.onPublished = { [weak self] _ in
             self?.dismiss(animated: true) {
@@ -2191,6 +2193,8 @@ final class BearyChromeViewController: UIViewController {
             self?.presentLogin()
         }
         configureComposerPresentation(c, forEdit: false)
+        // 临时诊断（86 包，定根因后删除）：present 调用之前。
+        DiagFile.mark("presentComposer-willPresent")
         present(c, animated: true)
         // 临时诊断（81 包，定根因后删除）：present 调用已返回（动画是异步的，返回只证明调用本身没堵住）。
         DiagFile.mark("present-returned")
@@ -2715,6 +2719,8 @@ private final class BearyComposerSheetPresentationController: UIPresentationCont
     }
 
     override func presentationTransitionWillBegin() {
+        // 临时诊断（86 包，定根因后删除）。
+        DiagFile.mark("sheet-willBegin")
         guard let container = containerView else { return }
         dimmingView.backgroundColor = BearyColors.scrim.withAlphaComponent(0.45)
         dimmingView.alpha = 0
@@ -2754,6 +2760,8 @@ private final class BearyComposerSheetPresentationController: UIPresentationCont
     }
 
     override func presentationTransitionDidEnd(_ completed: Bool) {
+        // 临时诊断（86 包，定根因后删除；UIKit 无 presentationTransitionDidComplete，此为最接近的结束点）。
+        DiagFile.mark("sheet-didComplete")
         if !completed {
             sheetShadowView.removeFromSuperview()
         }
@@ -2769,7 +2777,11 @@ private final class BearyComposerSheetPresentationController: UIPresentationCont
         super.containerViewWillLayoutSubviews()
         // 临时诊断（82 包追加，定根因后删除）：每调一次记一次，不节流，循环时时间戳能证明转圈。
         DiagFile.mark("sheet-layout")
-        guard let presentedView = presentedView else { return }
+        guard let presentedView = presentedView else {
+            // 临时诊断（86 包，定根因后删除）：布局方法出口（presentedView 为空的早退路径）。
+            DiagFile.mark("sheet-layout-exit")
+            return
+        }
         let frame = frameOfPresentedViewInContainerView
         // 看门狗修法（2026-10-27，第二层）：等值帧不再重复赋值与带阴影层重算，
         // 防止等值帧设置本身反复脏化呈现子树；与 Composer 宽门互为备份。
@@ -2814,6 +2826,8 @@ private final class BearyComposerSheetPresentationController: UIPresentationCont
         sheetTopBorderView.frame = CGRect(x: 0, y: 0, width: presentedView.bounds.width, height: 1)
         presentedView.bringSubviewToFront(grabberStrip)
         presentedView.bringSubviewToFront(sheetTopBorderView)
+        // 临时诊断（86 包，定根因后删除）：布局方法出口。
+        DiagFile.mark("sheet-layout-exit")
     }
 
     @objc private func handleGrabberPan(_ pan: UIPanGestureRecognizer) {
@@ -2893,7 +2907,11 @@ private final class BearyComposerSheetAnimator: NSObject, UIViewControllerAnimat
             // 临时诊断（84 包，定根因后删除）：动画系统参数快照。
             DiagFile.mark("animator-anim-params speed=\(toView.layer.speed) containerSpeed=\(container.layer.speed) duration=\(duration) reduce=\(UIAccessibility.isReduceMotionEnabled)")
             UIView.animate(withDuration: duration, animations: {
+                // 临时诊断（86 包，定根因后删除）。
+                DiagFile.mark("animator-closure-enter")
                 toView.transform = .identity
+                // 临时诊断（86 包，定根因后删除）。
+                DiagFile.mark("animator-closure-exit")
             }, completion: { _ in
                 // 临时诊断（83 包，定根因后删除）。
                 DiagFile.mark("animator-completion-enter")
@@ -2903,6 +2921,8 @@ private final class BearyComposerSheetAnimator: NSObject, UIViewControllerAnimat
                 // 临时诊断（82 包追加，定根因后删除）：转场终态，不进非终态集合。
                 DiagFile.mark("animator-completed")
             })
+            // 临时诊断（86 包，定根因后删除）：animate 调用已返回，与 animate-call 配对。
+            DiagFile.mark("animator-animate-returned")
             // 临时诊断（84 包，定根因后删除）：1 秒后主线程 runloop 还在转即记一行。
             // 临时诊断（85 包，定根因后删除）：completion 已跑过则不记，避免正常打开后误报。
             DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
@@ -2917,7 +2937,11 @@ private final class BearyComposerSheetAnimator: NSObject, UIViewControllerAnimat
             }
             let height = container.bounds.height
             UIView.animate(withDuration: duration, animations: {
+                // 临时诊断（86 包，定根因后删除）：关闭闭包入口。
+                DiagFile.mark("animator-dismiss-closure-enter")
                 fromView.transform = CGAffineTransform(translationX: 0, y: height)
+                // 临时诊断（86 包，定根因后删除）：关闭闭包出口。
+                DiagFile.mark("animator-dismiss-closure-exit")
             }, completion: { _ in
                 transitionContext.completeTransition(transitionContext.transitionWasCancelled == false)
             })
@@ -2953,6 +2977,14 @@ enum DiagFile {
         "animator-animate-call", "animator-completion-enter",
         // 84 包追加：动画参数快照与 1 秒后 runloop 存活探针，仍属非终态。
         "animator-anim-params", "animator-1s-later",
+        // 86 包追加：死堵边界再劈一半（animate 返回、闭包、呈现控制器、willAppear）。
+        "animator-animate-returned", "animator-closure-enter", "animator-closure-exit",
+        "sheet-willBegin", "sheet-didComplete", "composer-willAppear",
+        // 86 包追加（扩网）：present 链路、关闭闭包、布局方法出口、主线程看门狗。
+        "presentComposer-authed", "presentComposer-willPresent",
+        "animator-dismiss-closure-enter", "animator-dismiss-closure-exit",
+        "sheet-layout-exit", "composer-layout-exit", "composer-prefSize-exit",
+        "watchdog-main-silent",
         "sheet-layout", "composer-layout", "composer-prefSize",
     ]
 
@@ -2962,8 +2994,18 @@ enum DiagFile {
     }
 
     /// 同步追加一行；卡死前来不及落盘是异步写法的死穴，故不用任何异步队列。
+    /// 写操作由 diagLock 串行化（看门狗后台线程同写一文件）；appendLine/trimIfNeeded
+    /// 假定调用方已持锁，禁止嵌套加锁（NSLock 不可重入）。
     static func mark(_ stage: String) {
-        let line = "\(timestamp()) \(stage)\n"
+        ensureWatchdogStarted()
+        diagLock.lock()
+        appendLine("\(timestamp()) \(stage)\n")
+        trimIfNeeded()
+        diagLock.unlock()
+    }
+
+    /// 不加锁的文件追加（调用方须持 diagLock）。
+    private static func appendLine(_ line: String) {
         guard let data = line.data(using: .utf8) else { return }
         let u = url
         if FileManager.default.fileExists(atPath: u.path) {
@@ -2975,7 +3017,72 @@ enum DiagFile {
         } else {
             try? data.write(to: u, options: .atomic)
         }
-        trimIfNeeded()
+    }
+
+    // 临时诊断（86 包，定根因后删除）：主线程心跳看门狗。
+    // 主线程 50ms Timer（common modes，滑动时也不停）只写时间戳、不碰 UI；
+    // 后台线程每 100ms 查一次，心跳陈旧超 500ms 即记 watchdog-main-silent
+    // （附最后心跳时间戳），同一静默段 2 秒时再补记一次。被堵的主线程不持
+    // diagLock（堵点不在写日志里），故后台写不会被主线程卡住。
+    static let diagLock = NSLock()
+    private static var heartbeat: TimeInterval = 0
+    private static var watchdogStarted = false
+    private static var heartbeatTimer: Timer?
+    private static var silenceStart: TimeInterval?
+    private static var silenceSupplementLogged = false
+
+    private static func ensureWatchdogStarted() {
+        diagLock.lock()
+        let already = watchdogStarted
+        if !already {
+            watchdogStarted = true
+            heartbeat = Date().timeIntervalSince1970
+        }
+        diagLock.unlock()
+        guard !already else { return }
+        let startTimer = {
+            heartbeatTimer = Timer.scheduledTimer(withTimeInterval: 0.05, repeats: true) { _ in
+                diagLock.lock()
+                heartbeat = Date().timeIntervalSince1970
+                diagLock.unlock()
+            }
+            if let t = heartbeatTimer { RunLoop.main.add(t, forMode: .common) }
+        }
+        if Thread.isMainThread {
+            startTimer()
+        } else {
+            DispatchQueue.main.async(execute: startTimer)
+        }
+        DispatchQueue.global(qos: .background).async { watchdogLoop() }
+    }
+
+    private static func watchdogLoop() {
+        while true {
+            Thread.sleep(forTimeInterval: 0.1)
+            let now = Date().timeIntervalSince1970
+            diagLock.lock()
+            if now - heartbeat > 0.5 {
+                if silenceStart == nil {
+                    silenceStart = heartbeat
+                    appendLine("\(timestamp()) watchdog-main-silent since=\(formatTime(heartbeat))\n")
+                    trimIfNeeded()
+                } else if !silenceSupplementLogged, now - (silenceStart ?? now) >= 2.0 {
+                    silenceSupplementLogged = true
+                    appendLine("\(timestamp()) watchdog-main-silent still-silent 2s\n")
+                    trimIfNeeded()
+                }
+            } else {
+                silenceStart = nil
+                silenceSupplementLogged = false
+            }
+            diagLock.unlock()
+        }
+    }
+
+    private static func formatTime(_ t: TimeInterval) -> String {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "HH:mm:ss.SSS"
+        return formatter.string(from: Date(timeIntervalSince1970: t))
     }
 
     static func lines() -> [String] {
