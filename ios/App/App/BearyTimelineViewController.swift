@@ -2122,7 +2122,7 @@ class BearyTimelineViewController: UIViewController {
     /// 表框贴页顶 + .never，故属性内边距即视觉顶距：显示 = 安全区顶 + 60，收起 = 安全区顶
     /// （本页在容器里恒收起，显示值只在首页当前、时间线已建未亮时经容器统一发一次，切页时即改回收起）。
     /// 底内边距同步补安全区底（.never 后旧视觉底 = 90 + 安全区底）。本页无公开回顶方法、
-    /// 无 contentOffset 在顶判定（滚动藏栏已拆除），容器重拍只调 reloadTimeline，故回顶项无改动。
+    /// 再点当前 tab 口径（容器重拍分支）：已在顶部才刷新，否则只回顶（见 scrollToTop/isAtTop）。
     func applyHeaderTopInset(visible: Bool) {
         headerTopInsetVisible = visible
         let top = view.safeAreaInsets.top + (visible ? 60 : 0)
@@ -2137,6 +2137,16 @@ class BearyTimelineViewController: UIViewController {
 
     /// keepSelectedDay=true 时保留当前选中日：跳过“重置为今天 + 拉今天当日”，
     /// 只拉一次最终选中日（G16 下拉刷新口径；默认 false 保持原有进页行为）。
+    /// 再点当前 tab：回顶（与首页 scrollToTop 同口径，减动效直达）。
+    func scrollToTop() {
+        tableView.setContentOffset(CGPoint(x: 0, y: -tableView.contentInset.top), animated: !UIAccessibility.isReduceMotionEnabled)
+    }
+
+    /// 再点当前 tab 口径：offset 是否已在顶部容差（1pt）内；在顶部才刷新，否则只回顶。
+    var isAtTop: Bool {
+        tableView.contentOffset.y <= -tableView.contentInset.top + 1
+    }
+
     /// 账号隔离 9 号：keepDay 时同时保留旧内容——不清时间线模型、不动
     /// timelineState、不清当日面板，首屏回包经行 diff 更新；失败时旧内容
     /// 原样保留（失败/加载态只在空表时渲染特殊态，见 3617 一带，故不闪白）。

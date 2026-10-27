@@ -592,6 +592,11 @@ class BearyFeedViewController: UIViewController {
         tableView.setContentOffset(CGPoint(x: 0, y: -tableView.contentInset.top), animated: !UIAccessibility.isReduceMotionEnabled)
     }
 
+    /// 再点当前 tab 口径：offset 是否已在顶部容差（1pt）内；在顶部才刷新，否则只回顶。
+    var isAtTop: Bool {
+        tableView.contentOffset.y <= -tableView.contentInset.top + 1
+    }
+
     // MARK: - 游客底部 logo（F19）
 
     private func updateFootLogo() {
