@@ -207,7 +207,10 @@ final class BearyNotificationsViewController: UIViewController {
     private var readAllButtonWidthConstraint: NSLayoutConstraint?
 
     private lazy var readAllButton: UIButton = {
-        let button = UIButton(type: .system)
+        // R9-A：图标+文字小钮、高约 25（14 字 + 上下各 4 内边距）：换 Hit44 后
+        // 热区竖向扩向 44；受 41 高 header 框限，实际可达约 38（仍大于原 25），
+        // 要满 44 需改 header 高（属布局改动，本批不动）；宽已超 44 不横扩；视觉不动。
+        let button = BearyHit44Button(type: .system)
         button.translatesAutoresizingMaskIntoConstraints = false
         button.setImage(BearyIconImages.image(named: "icon_check", pointSize: 14), for: .normal)
         button.setTitle("全部已读", for: .normal)
