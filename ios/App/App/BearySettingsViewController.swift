@@ -222,7 +222,6 @@ final class BearySettingsViewController: UIViewController {
     private var isLoggingOutOthers = false
     private var isDeleting = false
     private var isExporting = false
-    private var toastTimer: Timer?
     private var contentColumnWidthCap: NSLayoutConstraint?
 
     // MARK: - 视图
@@ -281,9 +280,6 @@ final class BearySettingsViewController: UIViewController {
     private let deleteRow = UIView()
     private let deleteRowButton = UIButton(type: .custom)
 
-    private let toastWrap = UIView()
-    private let toastLabel = UILabel()
-
     init() {
         super.init(nibName: nil, bundle: nil)
         self.title = "账户设置"
@@ -291,10 +287,6 @@ final class BearySettingsViewController: UIViewController {
 
     required init?(coder: NSCoder) {
         return nil
-    }
-
-    deinit {
-        toastTimer?.invalidate()
     }
 
     override func viewDidLoad() {
@@ -635,29 +627,7 @@ final class BearySettingsViewController: UIViewController {
         buildFooterLabel.text = "版本 \(shortVersion)（构建号 \(buildNumber)）"
         contentStack.addArrangedSubview(buildFooterLabel)
 
-        toastWrap.backgroundColor = BearyColors.ink
-        toastWrap.layer.cornerRadius = 16
-        toastWrap.clipsToBounds = true
-        toastWrap.alpha = 0
-        toastWrap.translatesAutoresizingMaskIntoConstraints = false
-        toastLabel.font = UIFont.systemFont(ofSize: 14)
-        toastLabel.textColor = BearyColors.bg
-        toastLabel.backgroundColor = .clear
-        toastLabel.textAlignment = .center
-        toastLabel.numberOfLines = 0
-        toastLabel.translatesAutoresizingMaskIntoConstraints = false
-        view.addSubview(toastWrap)
-        toastWrap.addSubview(toastLabel)
-        NSLayoutConstraint.activate([
-            toastWrap.leadingAnchor.constraint(greaterThanOrEqualTo: view.leadingAnchor, constant: 20),
-            toastWrap.trailingAnchor.constraint(lessThanOrEqualTo: view.trailingAnchor, constant: -20),
-            toastWrap.centerXAnchor.constraint(equalTo: view.centerXAnchor),
-            toastWrap.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor, constant: -158),
-            toastLabel.topAnchor.constraint(equalTo: toastWrap.topAnchor, constant: 10),
-            toastLabel.leadingAnchor.constraint(equalTo: toastWrap.leadingAnchor, constant: 14),
-            toastLabel.trailingAnchor.constraint(equalTo: toastWrap.trailingAnchor, constant: -14),
-            toastLabel.bottomAnchor.constraint(equalTo: toastWrap.bottomAnchor, constant: -10),
-        ])
+        // toast 已委托 B 批统一 BearyToast（见 showToast），此处不再建常驻容器。
     }
 
     private func buildIdCard() {
@@ -1764,22 +1734,13 @@ final class BearySettingsViewController: UIViewController {
         return dict
     }
 
-    // MARK: - 轻提示（Trash 同款：ink 底白字，1.6 秒淡出）
+    // MARK: - 轻提示：委托 B 批统一 BearyToast。旧 Timer 重置语义由统一
+    // 组件“新 toast 先清旧 toast”承接。设置页是全屏模态，盖住 Chrome 的
+    // FAB，本页无可见 FAB，故 aboveFAB=false（落 -32，原 -158 悬空修掉）；
+    // 展示时长由旧 1.6s 统一为 2.0s，调用签名与文案、触发时机不变。
 
     private func showToast(_ text: String) {
-        toastTimer?.invalidate()
-        toastLabel.text = text
-        toastWrap.alpha = 0
-        UIView.animate(withDuration: 0.2, animations: {
-            self.toastWrap.alpha = 1
-        }, completion: { [weak self] _ in
-            guard let self = self else { return }
-            self.toastTimer = Timer.scheduledTimer(withTimeInterval: 1.6, repeats: false, block: { [weak self] _ in
-                UIView.animate(withDuration: 0.3, animations: {
-                    self?.toastWrap.alpha = 0
-                }, completion: nil)
-            })
-        })
+        BearyToast.show(in: view, message: text, aboveFAB: false)
     }
 
     // MARK: - 设置页新增三区（2026-10-26，第二阶段）

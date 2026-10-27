@@ -413,9 +413,6 @@ final class BearyOnboardingViewController: UIViewController {
     private let bottomBar = UIStackView()
     private let primaryButton = BearyPressButton(type: .system)
     private let secondaryButton = BearyPressButton(type: .system)
-    private let toastWrap = UIView()
-    private let toastLabel = UILabel()
-    private var toastWork: DispatchWorkItem?
 
     // 预加载状态（首启版）：步骤触发完成即计 1，准备屏真实反映该计数。
     private var preloadDone = 0
@@ -590,18 +587,7 @@ final class BearyOnboardingViewController: UIViewController {
         bottomBar.addArrangedSubview(primaryButton)
         view.addSubview(bottomBar)
 
-        toastWrap.backgroundColor = BearyColors.ink
-        toastWrap.layer.cornerRadius = 16
-        toastWrap.clipsToBounds = true
-        toastWrap.alpha = 0
-        toastWrap.translatesAutoresizingMaskIntoConstraints = false
-        toastLabel.font = UIFont.systemFont(ofSize: 14)
-        toastLabel.textColor = BearyColors.bg
-        toastLabel.textAlignment = .center
-        toastLabel.numberOfLines = 0
-        toastLabel.translatesAutoresizingMaskIntoConstraints = false
-        toastWrap.addSubview(toastLabel)
-        view.addSubview(toastWrap)
+        // toast 已委托 B 批统一 BearyToast（见 showToast），此处不再建常驻容器。
 
         NSLayoutConstraint.activate([
             topBar.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 8),
@@ -633,26 +619,15 @@ final class BearyOnboardingViewController: UIViewController {
             bottomBar.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 32),
             bottomBar.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -32),
             bottomBar.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor, constant: -16),
-            toastWrap.leadingAnchor.constraint(greaterThanOrEqualTo: view.leadingAnchor, constant: 20),
-            toastWrap.trailingAnchor.constraint(lessThanOrEqualTo: view.trailingAnchor, constant: -20),
-            toastWrap.centerXAnchor.constraint(equalTo: view.centerXAnchor),
-            toastWrap.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor, constant: -158),
-            toastLabel.topAnchor.constraint(equalTo: toastWrap.topAnchor, constant: 10),
-            toastLabel.bottomAnchor.constraint(equalTo: toastWrap.bottomAnchor, constant: -10),
-            toastLabel.leadingAnchor.constraint(equalTo: toastWrap.leadingAnchor, constant: 14),
-            toastLabel.trailingAnchor.constraint(equalTo: toastWrap.trailingAnchor, constant: -14),
         ])
     }
 
+    /// 引导页轻提示：委托 B 批统一 BearyToast。旧 DispatchWorkItem 取消语义
+    /// 由统一组件“新 toast 先清旧 toast”承接。引导页是全屏模态，盖住
+    /// Chrome 的 FAB，本页无可见 FAB，故 aboveFAB=false（落 -32，原 -158
+    /// 悬空修掉）；展示时长由旧 2.2s 统一为 2.0s，调用签名与文案、触发时机不变。
     private func showToast(_ text: String) {
-        toastWork?.cancel()
-        toastLabel.text = text
-        UIView.animate(withDuration: 0.25) { self.toastWrap.alpha = 1 }
-        let work = DispatchWorkItem { [weak self] in
-            UIView.animate(withDuration: 0.25) { self?.toastWrap.alpha = 0 }
-        }
-        toastWork = work
-        DispatchQueue.main.asyncAfter(deadline: .now() + 2.2, execute: work)
+        BearyToast.show(in: view, message: text, aboveFAB: false)
     }
 
     // MARK: 换屏

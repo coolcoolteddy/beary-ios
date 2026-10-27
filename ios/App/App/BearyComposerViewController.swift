@@ -4428,68 +4428,24 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
 
     // MARK: - 通用
 
-    /// 轻提示（网页 toast 的原生等价：ink 底 bg 字，2 秒自动消失；与回收站同款）。
+    /// 轻提示：委托 B 批统一 BearyToast。编辑器是全屏模态，盖住 Chrome
+    /// 的 FAB，编辑器页自身无可见 FAB，故 aboveFAB=false（落 -32）。
+    /// 调用签名与文案、触发时机不变。
     private func showToast(message: String) {
-        presentToastView(in: view, message: message)
+        BearyToast.show(in: view, message: message, aboveFAB: false)
     }
 
     /// 关编辑器后仍可见的 toast：挂在 presenting 方视图上（网页 toast 在页面层、
     /// 不随编辑器关闭而消失的等价处理），调用方随后走 onCancelled 关闭本页。
-    /// 若无 presenting 方（如已被 dismiss），退回本页 toast。
+    /// 若无 presenting 方（如已被 dismiss），退回本页 toast。落点按呈现方
+    /// 分流：呈现方是 Chrome 容器时 toast 落在带 FAB 的主 tab 页上（-158），
+    /// 其他呈现方（详情等无 FAB 的页）落 -32。
     private func showToastAfterClose(message: String) {
         if let parent = presentingViewController {
-            presentToastView(in: parent.view, message: message)
+            let aboveFAB = parent is BearyChromeViewController
+            BearyToast.show(in: parent.view, message: message, aboveFAB: aboveFAB)
         } else {
             showToast(message: message)
-        }
-    }
-
-    private func presentToastView(in container: UIView, message: String) {
-        let toastView = UIView()
-        toastView.backgroundColor = BearyColors.ink
-        toastView.layer.cornerRadius = 12
-        toastView.clipsToBounds = true
-        toastView.translatesAutoresizingMaskIntoConstraints = false
-        let label = UILabel()
-        label.text = message
-        label.font = UIFont.systemFont(ofSize: 14)
-        // 回收站 toast 同款：ink 底 + bg 字（浅色白字、深色黑字，两主题都可读；不用 .white 字面量）。
-        label.textColor = BearyColors.bg
-        label.textAlignment = .center
-        label.numberOfLines = 0
-        label.translatesAutoresizingMaskIntoConstraints = false
-        toastView.addSubview(label)
-        NSLayoutConstraint.activate([
-            label.topAnchor.constraint(equalTo: toastView.topAnchor, constant: 12),
-            label.bottomAnchor.constraint(equalTo: toastView.bottomAnchor, constant: -12),
-            label.leadingAnchor.constraint(equalTo: toastView.leadingAnchor, constant: 16),
-            label.trailingAnchor.constraint(equalTo: toastView.trailingAnchor, constant: -16),
-        ])
-        container.addSubview(toastView)
-        NSLayoutConstraint.activate([
-            toastView.leadingAnchor.constraint(greaterThanOrEqualTo: container.leadingAnchor, constant: 32),
-            toastView.trailingAnchor.constraint(lessThanOrEqualTo: container.trailingAnchor, constant: -32),
-            toastView.centerXAnchor.constraint(equalTo: container.centerXAnchor),
-            toastView.bottomAnchor.constraint(equalTo: container.safeAreaLayoutGuide.bottomAnchor, constant: -158),
-        ])
-        // A5-3：减动效时直接现身、到点直接移除，不播淡入淡出。
-        if UIAccessibility.isReduceMotionEnabled {
-            toastView.alpha = 1
-            DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
-                toastView.removeFromSuperview()
-            }
-            return
-        }
-        toastView.alpha = 0
-        UIView.animate(withDuration: 0.25, animations: {
-            toastView.alpha = 1
-        })
-        DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
-            UIView.animate(withDuration: 0.25, animations: {
-                toastView.alpha = 0
-            }, completion: { _ in
-                toastView.removeFromSuperview()
-            })
         }
     }
 
