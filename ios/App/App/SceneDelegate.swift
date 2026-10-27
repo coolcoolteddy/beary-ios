@@ -2919,6 +2919,9 @@ enum DiagFile {
     static let stuckStages: Set<String> = [
         "didTapWrite", "fabLongPress-open", "presentComposer-enter",
         "sheetAnimator-enter", "viewDidLoad-enter", "viewDidLoad-exit",
+        // 引导继续链路的非终态（ob-appeared 是走完的终态，不在集合里）。
+        "ob-primaryTapped", "ob-goTo", "ob-screen",
+        "ob-welcome-enter", "ob-welcome-exit", "ob-updateChrome", "ob-entrance",
     ]
 
     static var url: URL {
