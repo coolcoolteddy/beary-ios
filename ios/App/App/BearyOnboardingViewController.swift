@@ -1031,8 +1031,12 @@ extension BearyOnboardingViewController {
         DiagFile.mark("ob-welcome-enter")
         stack.addArrangedSubview(titleLabel("这里是一个安静的\n日记角落"))
         stack.addArrangedSubview(bodyLabel("写下今天，先私密保存 7 天，送达后由你决定是否公开——给每篇日记一点沉淀的时间。"))
-        stack.addArrangedSubview(ruleCard(stack, title: "先私密保存 7 天", body: "发布后不会立刻公开，在时间线里能看到离送达还剩多久。"))
-        stack.addArrangedSubview(ruleCard(stack, title: "送达后，你说了算", body: "送达后它只属于你自己；想公开时点「公开」，确认后进入倒计时。"))
+        let card1 = ruleCard(stack, title: "先私密保存 7 天", body: "发布后不会立刻公开，在时间线里能看到离送达还剩多久。")
+        stack.addArrangedSubview(card1)
+        card1.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
+        let card2 = ruleCard(stack, title: "送达后，你说了算", body: "送达后它只属于你自己；想公开时点「公开」，确认后进入倒计时。")
+        stack.addArrangedSubview(card2)
+        card2.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
         DiagFile.mark("ob-welcome-exit")
     }
 
@@ -1055,8 +1059,8 @@ extension BearyOnboardingViewController {
             inner.bottomAnchor.constraint(equalTo: card.bottomAnchor, constant: -14),
             inner.leadingAnchor.constraint(equalTo: card.leadingAnchor, constant: 16),
             inner.trailingAnchor.constraint(equalTo: card.trailingAnchor, constant: -16),
-            card.widthAnchor.constraint(equalTo: stack.widthAnchor),
         ])
+        // 宽度约束由调用方在挂载后绑定：卡片未放进 stack 时激活跨视图宽度约束会抛错。
         return card
     }
 
@@ -1153,9 +1157,9 @@ extension BearyOnboardingViewController {
         textView.delegate = self
         textView.translatesAutoresizingMaskIntoConstraints = false
         textView.heightAnchor.constraint(equalToConstant: 140).isActive = true
+        stack.addArrangedSubview(textView)
         textView.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
         trialTextView = textView
-        stack.addArrangedSubview(textView)
 
         let countRow = UIStackView()
         countRow.axis = .horizontal
@@ -1230,6 +1234,7 @@ extension BearyOnboardingViewController {
         moodRow.spacing = 12
         moodRow.distribution = .fillEqually
         moodRow.translatesAutoresizingMaskIntoConstraints = false
+        stack.addArrangedSubview(moodRow)
         moodRow.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
         let moods: [(key: String, name: String)] = [("happy", "开心"), ("love", "心动"), ("sleepy", "困倦"), ("shy", "害羞")]
         for mood in moods {
@@ -1274,14 +1279,13 @@ extension BearyOnboardingViewController {
             moodButtons[mood.key] = button
             moodRow.addArrangedSubview(chip)
         }
-        stack.addArrangedSubview(moodRow)
-
         stack.addArrangedSubview(ruleLabel("天气 · 也是正式版会用的那套图标"))
         let wxRow = UIStackView()
         wxRow.axis = .horizontal
         wxRow.spacing = 12
         wxRow.distribution = .fillEqually
         wxRow.translatesAutoresizingMaskIntoConstraints = false
+        stack.addArrangedSubview(wxRow)
         wxRow.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
         let weathers: [(key: String, name: String, icon: String)] = [
             ("sun", "晴", "icon_wx_sun"),
@@ -1337,7 +1341,6 @@ extension BearyOnboardingViewController {
             button.accessibilityIdentifier = weather.key
             wxRow.addArrangedSubview(chip)
         }
-        stack.addArrangedSubview(wxRow)
         stack.addArrangedSubview(bodyLabel("发布时选的心情，会和日记一起出现。"))
     }
 
@@ -1725,6 +1728,7 @@ extension BearyOnboardingViewController {
         inner.addArrangedSubview(body)
         inner.addArrangedSubview(actionRow)
         card.addSubview(inner)
+        stack.addArrangedSubview(card)
         NSLayoutConstraint.activate([
             inner.topAnchor.constraint(equalTo: card.topAnchor, constant: 14),
             inner.bottomAnchor.constraint(equalTo: card.bottomAnchor, constant: -14),
@@ -1732,7 +1736,6 @@ extension BearyOnboardingViewController {
             inner.trailingAnchor.constraint(equalTo: card.trailingAnchor, constant: -16),
             card.widthAnchor.constraint(equalTo: stack.widthAnchor),
         ])
-        stack.addArrangedSubview(card)
 
         stack.addArrangedSubview(ruleLabel("小熊回应 · 可同时贴好几种，再点一次摘下"))
         let rxnRow = UIStackView()
@@ -1896,6 +1899,7 @@ extension BearyOnboardingViewController {
         linkInner.alignment = .center
         linkInner.translatesAutoresizingMaskIntoConstraints = false
         linkCard.addSubview(linkInner)
+        stack.addArrangedSubview(linkCard)
         NSLayoutConstraint.activate([
             linkInner.topAnchor.constraint(equalTo: linkCard.topAnchor, constant: 14),
             linkInner.bottomAnchor.constraint(equalTo: linkCard.bottomAnchor, constant: -14),
@@ -1903,7 +1907,6 @@ extension BearyOnboardingViewController {
             linkInner.trailingAnchor.constraint(equalTo: linkCard.trailingAnchor, constant: -16),
             linkCard.widthAnchor.constraint(equalTo: stack.widthAnchor),
         ])
-        stack.addArrangedSubview(linkCard)
     }
 
     private func messageRow(iconName: String, iconColor: UIColor, title: String, body: String, showDot: Bool) -> UIView {
