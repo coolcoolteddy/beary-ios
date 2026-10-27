@@ -33,6 +33,11 @@ class BearyFeedViewController: UIViewController {
     /// 容器未接线时按钮不动作，不在本文件内 present 编辑器（导航归容器）。
     var onComposeRequested: (() -> Void)?
 
+    /// C6 卡片上下文菜单编辑/删除：容器接线到编辑器与删除确认流程
+    /// （与时间线 onEditEntry/onDeleteEntry 同口径，本文件只通知）。
+    var onEditEntry: ((Entry) -> Void)?
+    var onDeleteEntry: ((Entry) -> Void)?
+
     private enum FeedSection {
         case delivered
         case plaza
@@ -592,32 +597,6 @@ class BearyFeedViewController: UIViewController {
             }
         }
         present(activity, animated: !UIAccessibility.isReduceMotionEnabled, completion: nil)
-    }
-
-    /// Q9 卡片长按菜单：分享/收藏复用 cell 内已有处理（shareTapped 经
-    /// onShareRequested 走 presentShareSheet；bookmarkTapped 走原收藏接口），
-    /// 不新增服务端接口；非公开卡不给分享项（与分享钮隐藏口径一致）。
-    private func presentCardLongPressMenu(cell: BearyDiaryCardCell, entry: Entry) {
-        if presentedViewController != nil { return }
-        let menu = UIAlertController(title: nil, message: nil, preferredStyle: .actionSheet)
-        if entry.isPublic == true {
-            menu.addAction(UIAlertAction(title: "分享", style: .default) { _ in
-                cell.shareFromLongPressMenu()
-            })
-        }
-        menu.addAction(UIAlertAction(title: "收藏", style: .default) { _ in
-            cell.bookmarkFromLongPressMenu()
-        })
-        menu.addAction(UIAlertAction(title: "取消", style: .cancel))
-        if let popover = menu.popoverPresentationController {
-            popover.sourceView = tableView
-            if let entryIdValue = entry.id, let path = indexPath(for: entryIdValue) {
-                popover.sourceRect = tableView.rectForRow(at: path)
-            } else {
-                popover.sourceRect = CGRect(x: tableView.bounds.midX, y: tableView.bounds.midY, width: 0, height: 0)
-            }
-        }
-        present(menu, animated: !UIAccessibility.isReduceMotionEnabled, completion: nil)
     }
 
     /// F1：图片查看器统一复用 BearyEntryImageViewerViewController（自定义
@@ -1521,9 +1500,11 @@ class BearyFeedViewController: UIViewController {
         cell.onShareRequested = { [weak self] entryValue in
             self?.presentShareSheet(for: entryValue)
         }
-        cell.onLongPressMenuRequested = { [weak self, weak cell] in
-            guard let targetCell = cell else { return }
-            self?.presentCardLongPressMenu(cell: targetCell, entry: entry)
+        cell.onContextMenuEdit = { [weak self] in
+            self?.onEditEntry?(entry)
+        }
+        cell.onContextMenuDelete = { [weak self] in
+            self?.onDeleteEntry?(entry)
         }
         cell.onPublishTapped = { [weak self] in
             self?.handlePublishTap(entryId: entry.id ?? "")

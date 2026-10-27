@@ -667,7 +667,38 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate {
         ])
         restoreEntries.append((button: restoreButton, trashValue: trashValue))
         purgeEntries.append((button: purgeButton, trashValue: trashValue))
+        // C7：左滑复用按钮路径（恢复/彻底删除经下选后调已登记的按钮处理，
+        // 按钮本身保留；回收站为 stack 卡片、无 tableView 滑动 API，故左滑只
+        // 换触发方式，不新增执行逻辑；资格与按钮一致：全部回收站条目均可
+        // 恢复/彻底删除，仅 busy 守卫由按钮处理内把关）。
+        let swipe = UISwipeGestureRecognizer(target: self, action: #selector(trashCardSwiped(_:)))
+        swipe.direction = .left
+        rowView.addGestureRecognizer(swipe)
         return rowView
+    }
+
+    @objc private func trashCardSwiped(_ sender: UISwipeGestureRecognizer) {
+        guard let rowView = sender.view,
+              let identifier = rowViewsByIdentifier.first(where: { $0.value === rowView })?.key,
+              trashItems.contains(where: { $0.entryIdentifier == identifier }) else { return }
+        if presentedViewController != nil { return }
+        let sheet = UIAlertController(title: nil, message: nil, preferredStyle: .actionSheet)
+        sheet.addAction(UIAlertAction(title: "恢复", style: .default) { [weak self] _ in
+            guard let self = self,
+                  let button = self.restoreEntries.first(where: { $0.trashValue.entryIdentifier == identifier })?.button else { return }
+            self.restoreTapped(button)
+        })
+        sheet.addAction(UIAlertAction(title: "彻底删除", style: .destructive) { [weak self] _ in
+            guard let self = self,
+                  let button = self.purgeEntries.first(where: { $0.trashValue.entryIdentifier == identifier })?.button else { return }
+            self.purgeTapped(button)
+        })
+        sheet.addAction(UIAlertAction(title: "取消", style: .cancel, handler: nil))
+        if let popover = sheet.popoverPresentationController {
+            popover.sourceView = rowView
+            popover.sourceRect = rowView.bounds
+        }
+        present(sheet, animated: true, completion: nil)
     }
 
     // MARK: - 恢复 / 彻底删除

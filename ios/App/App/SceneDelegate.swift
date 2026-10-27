@@ -1320,6 +1320,13 @@ final class BearyChromeViewController: UIViewController {
         f.onInteractionRemoved = { [weak self] entryId, likeRemoved, bookmarkRemoved in
             self?.profileVC?.removeEntryFromTabs(entryId: entryId, likeRemoved: likeRemoved, bookmarkRemoved: bookmarkRemoved)
         }
+        // C6 卡片上下文菜单编辑/删除：与时间线同口径（编辑→编辑器，删除→确认流程）。
+        f.onEditEntry = { [weak self] entry in
+            self?.presentComposerForEdit(entry: entry)
+        }
+        f.onDeleteEntry = { [weak self] entry in
+            self?.confirmAndDeleteEntry(entry)
+        }
         // 6A：详情已删，行内互动不再需要反向同步已打开的详情（D1 反向随详情作废）。
         addChild(f)
         f.view.translatesAutoresizingMaskIntoConstraints = false
@@ -1578,6 +1585,35 @@ final class BearyChromeViewController: UIViewController {
         return vc
     }
 
+    /// C6/C7 共用删除执行路径：原时间线 onDeleteEntry 闭包原样抽出
+    /// （网页 confirmDelete 文案确认 → deleteEntry → 时间线行级退场 +
+    /// 首页重拉 + 主页重载；失败 toast）。Feed/Profile 上下文菜单删除与
+    /// 时间线滑动删除均走此方法，不另写执行逻辑。
+    private func confirmAndDeleteEntry(_ entry: Entry) {
+        guard let entryId = entry.id else { return }
+        let alert = UIAlertController(title: "确认删除？", message: "删除后会移入回收站，30 天内可以在「时间线」里恢复。", preferredStyle: .alert)
+        alert.addAction(UIAlertAction(title: "取消", style: .cancel, handler: nil))
+        alert.addAction(UIAlertAction(title: "删除", style: .destructive) { [weak self] _ in
+            BearyAPI.shared.deleteEntry(id: entryId) { [weak self] result in
+                DispatchQueue.main.async {
+                    guard let self = self else { return }
+                    switch result {
+                    case .success:
+                        // 88 包 M14：时间线走行级退场，不再整页首拉重载；
+                        // 首页与个人主页仍用原有重拉同步（其列表非日期分区，
+                        // 且个人主页无删除入口，只是跟随同步）。
+                        self.timelineVC?.removeDeletedEntry(entry)
+                        self.feedVC?.refreshAll()
+                        self.profileVC?.reloadProfile()
+                    case .failure:
+                        self.showToast(message: "删除失败，请重试")
+                    }
+                }
+            }
+        })
+        present(alert, animated: true)
+    }
+
     private func ensureTimelineVC() -> BearyTimelineViewController {
         if let vc = timelineVC { return vc }
         let vc = BearyTimelineViewController()
@@ -1592,28 +1628,7 @@ final class BearyChromeViewController: UIViewController {
             self?.presentComposerForEdit(entry: entry)
         }
         vc.onDeleteEntry = { [weak self] entry in
-            guard let entryId = entry.id else { return }
-            let alert = UIAlertController(title: "确认删除？", message: "删除后会移入回收站，30 天内可以在「时间线」里恢复。", preferredStyle: .alert)
-            alert.addAction(UIAlertAction(title: "取消", style: .cancel, handler: nil))
-            alert.addAction(UIAlertAction(title: "删除", style: .destructive) { [weak self] _ in
-                BearyAPI.shared.deleteEntry(id: entryId) { [weak self] result in
-                    DispatchQueue.main.async {
-                        guard let self = self else { return }
-                        switch result {
-                        case .success:
-                            // 88 包 M14：时间线走行级退场，不再整页首拉重载；
-                            // 首页与个人主页仍用原有重拉同步（其列表非日期分区，
-                            // 且个人主页无删除入口，只是跟随同步）。
-                            self.timelineVC?.removeDeletedEntry(entry)
-                            self.feedVC?.refreshAll()
-                            self.profileVC?.reloadProfile()
-                        case .failure:
-                            self.showToast(message: "删除失败，请重试")
-                        }
-                    }
-                }
-            })
-            self?.present(alert, animated: true)
+            self?.confirmAndDeleteEntry(entry)
         }
         vc.onQuoteEntry = { [weak self] quoteId in
             self?.gotoEntry(entryId: quoteId)
@@ -1858,6 +1873,13 @@ final class BearyChromeViewController: UIViewController {
             } else {
                 self?.presentComposer()
             }
+        }
+        // C6 卡片上下文菜单编辑/删除：与时间线同口径（编辑→编辑器，删除→确认流程）。
+        vc.onEditEntry = { [weak self] entry in
+            self?.presentComposerForEdit(entry: entry)
+        }
+        vc.onDeleteEntry = { [weak self] entry in
+            self?.confirmAndDeleteEntry(entry)
         }
         // B6：退出只发一次：成功才清本地态，
         // 失败 toast“退出失败，请重试”并保留会话（401 由 BearyAPI.logout 侧映射为成功，此处不另判）。
