@@ -55,6 +55,9 @@ struct Entry: Decodable {
     var authorBadge: String?
     var authorPlus: Int?
     var content: String?
+    /// A4-App（App 端标题，不依赖卡片渲染子项）：服务端 title 字段透传用；
+    /// 卡片渲染与空标题占位均未定，本处只做模型字段，不做任何展示回退。
+    var title: String?
     var images: [String]?
     var imgDims: [String: [Int]]?
     var mood: String?

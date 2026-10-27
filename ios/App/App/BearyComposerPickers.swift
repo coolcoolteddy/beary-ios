@@ -19,8 +19,13 @@ import UIKit
 
 final class BearyRecipientPickerViewController: UIViewController, UITextFieldDelegate {
 
-    /// 点行回传（调用方写 selectedRecipient；本页随后自行 dismiss）。
-    var onPick: ((SearchUser) -> Void)?
+    /// 点行回传（调用方写 selectedRecipient 与 notifyRecipient；本页随后自行 dismiss）。
+    /// A2：通知开关移入本面板——onPick 第二参即开关当前值；此前调用方在 onPick 里
+    /// 写死 notifyRecipient = true，现改由面板内开关控制。
+    var onPick: ((SearchUser, Bool) -> Void)?
+    /// A2：面板内通知开关当前值；默认值 true（与旧“选人即通知开启”行为一致）。
+    /// 调用方 present 前可按当前 notifyRecipient 覆写初值（新编辑器默认即 true）。
+    var notifyRecipient = true
 
     override init(nibName: String?, bundle: Bundle?) {
         super.init(nibName: nibName, bundle: bundle)
@@ -43,6 +48,19 @@ final class BearyRecipientPickerViewController: UIViewController, UITextFieldDel
     private let searchBox = UIView()
     private let searchIcon = UIImageView()
     private let searchField = UITextField()
+    /// A2：面板内通知开关（16 复选 + “通知对方”文案，编辑器写给行同款外观）。
+    private let notifyRow = UIStackView()
+    private let notifyCheckButton = UIButton(type: .custom)
+    private let notifyLabel = UILabel()
+    /// A2 搜索框可见性：底色与边框各比原值对比加深一级——浅色向暗一档
+    /// （底 0.96→0.92、边框 line 0.86→0.80），深色向亮一档（底 0.08→0.14、
+    /// 边框 58→74），均朝远离页底方向一档，否则深色下更暗反而更看不见。
+    private static var searchBoxBackgroundColor: UIColor {
+        UIColor { t in t.userInterfaceStyle == .dark ? UIColor(white: 0.14, alpha: 1) : UIColor(white: 0.92, alpha: 1) }
+    }
+    private static var searchBoxBorderColor: UIColor {
+        UIColor { t in t.userInterfaceStyle == .dark ? UIColor(red: 74.0/255.0, green: 74.0/255.0, blue: 80.0/255.0, alpha: 1) : UIColor(white: 0.80, alpha: 1) }
+    }
     private let listContainer = UIView()
     private let listScrollView = UIScrollView()
     private let rowsStack = UIStackView()
@@ -95,7 +113,8 @@ final class BearyRecipientPickerViewController: UIViewController, UITextFieldDel
         // CGColor 只在赋值时解析一次：深浅切换时重刷 sheet 边框与搜索框/头图圈/空态圈描边。
         if previousTraitCollection?.userInterfaceStyle != traitCollection.userInterfaceStyle {
             applySheetChrome()
-            searchBox.layer.borderColor = BearyColors.line.cgColor
+            searchBox.layer.borderColor = Self.searchBoxBorderColor.cgColor
+            notifyCheckButton.layer.borderColor = BearyColors.line.cgColor
             headerIconWrap.layer.borderColor = BearyColors.orange.withAlphaComponent(0.28).cgColor
             stateCircle.layer.borderColor = BearyColors.orange.withAlphaComponent(0.25).cgColor
         }
@@ -139,11 +158,14 @@ final class BearyRecipientPickerViewController: UIViewController, UITextFieldDel
         // 这里只保留动作与按压反馈，不再重复写底色/圆角。
         closeButton.addTarget(self, action: #selector(didTapClose), for: .touchUpInside)
         closeButton.bearyAddPressFeedback()
-        searchBox.backgroundColor = BearyColors.faint
+        // A2：搜索框底色/边框加深一级（见 searchBoxBackgroundColor/searchBoxBorderColor），
+        // 显式高度 44pt 见下方约束（内容驱动在 sheet fitting 下会被压高，图标与占位
+        // 文案随之看不见；定高后两者按原有 18 图标 + 16 占位正常渲染，不另改图与文案）。
+        searchBox.backgroundColor = Self.searchBoxBackgroundColor
         searchBox.layer.cornerRadius = 999
         searchBox.layer.masksToBounds = true
         searchBox.layer.borderWidth = 1
-        searchBox.layer.borderColor = BearyColors.line.cgColor
+        searchBox.layer.borderColor = Self.searchBoxBorderColor.cgColor
         searchIcon.image = BearyIconImages.image(named: "icon_search", pointSize: 18)
         searchIcon.tintColor = BearyColors.gray
         searchIcon.contentMode = .scaleAspectFit
@@ -155,8 +177,27 @@ final class BearyRecipientPickerViewController: UIViewController, UITextFieldDel
         ])
         searchField.font = UIFont.systemFont(ofSize: 16)
         searchField.textColor = BearyColors.ink
+        searchField.contentVerticalAlignment = .center
         searchField.delegate = self
         searchField.returnKeyType = .search
+        // A2：面板内通知开关（默认开；外观与编辑器写给行复选同款：16 圆角 6、
+        // 1.5 描边、开态 ink 底 + bg 色对勾）。
+        notifyRow.axis = .horizontal
+        notifyRow.spacing = 6
+        notifyRow.alignment = .center
+        notifyCheckButton.layer.cornerRadius = 6
+        notifyCheckButton.layer.masksToBounds = true
+        notifyCheckButton.layer.borderWidth = 1.5
+        notifyCheckButton.layer.borderColor = BearyColors.line.cgColor
+        notifyCheckButton.titleLabel?.font = UIFont.boldSystemFont(ofSize: 14)
+        notifyCheckButton.addTarget(self, action: #selector(didTapNotifyCheck), for: .touchUpInside)
+        notifyCheckButton.bearyAddPressFeedback()
+        notifyLabel.text = "通知对方"
+        notifyLabel.font = UIFont.systemFont(ofSize: 13)
+        notifyLabel.textColor = BearyColors.ink
+        notifyRow.addArrangedSubview(notifyCheckButton)
+        notifyRow.addArrangedSubview(notifyLabel)
+        refreshNotifyCheck()
         searchField.addTarget(self, action: #selector(searchFieldChanged), for: .editingChanged)
         rowsStack.axis = .vertical
         rowsStack.spacing = 0
@@ -185,7 +226,7 @@ final class BearyRecipientPickerViewController: UIViewController, UITextFieldDel
         stateRetryButton.isHidden = true
         stateRetryButton.addTarget(self, action: #selector(didTapStateRetry), for: .touchUpInside)
         stateRetryButton.bearyAddPressFeedback()
-        for v in [backdropButton, sheetView, topBorderView, grabberWrap, grabberView, headerIconWrap, headerIcon, headerTitle, closeButton, searchBox, searchIcon, searchField, listContainer, listScrollView, rowsStack, resultsLabelWrap, resultsLabel, stateView, stateCircle, stateIcon, stateTitle, stateSubtitle, stateRetryButton] {
+        for v in [backdropButton, sheetView, topBorderView, grabberWrap, grabberView, headerIconWrap, headerIcon, headerTitle, closeButton, searchBox, searchIcon, searchField, notifyRow, notifyCheckButton, listContainer, listScrollView, rowsStack, resultsLabelWrap, resultsLabel, stateView, stateCircle, stateIcon, stateTitle, stateSubtitle, stateRetryButton] {
             v.translatesAutoresizingMaskIntoConstraints = false
         }
         view.addSubview(backdropButton)
@@ -200,6 +241,7 @@ final class BearyRecipientPickerViewController: UIViewController, UITextFieldDel
         sheetView.addSubview(searchBox)
         searchBox.addSubview(searchIcon)
         searchBox.addSubview(searchField)
+        sheetView.addSubview(notifyRow)
         sheetView.addSubview(listContainer)
         listContainer.addSubview(listScrollView)
         listScrollView.addSubview(rowsStack)
@@ -252,16 +294,23 @@ final class BearyRecipientPickerViewController: UIViewController, UITextFieldDel
             searchBox.topAnchor.constraint(equalTo: headerIconWrap.bottomAnchor, constant: 12),
             searchBox.leadingAnchor.constraint(equalTo: sheetView.leadingAnchor, constant: 16),
             searchBox.trailingAnchor.constraint(equalTo: sheetView.trailingAnchor, constant: -16),
+            // A2：搜索框显式高度 44pt（不再内容驱动，避免 sheet fitting 压高导致图标/占位看不见）。
+            searchBox.heightAnchor.constraint(equalToConstant: 44),
             searchIcon.leadingAnchor.constraint(equalTo: searchBox.leadingAnchor, constant: 14),
             searchIcon.centerYAnchor.constraint(equalTo: searchBox.centerYAnchor),
             searchIcon.widthAnchor.constraint(equalToConstant: 18),
             searchIcon.heightAnchor.constraint(equalToConstant: 18),
-            // 搜索框高内容驱动：字号 16 + 上下 padding 各 12，约 44（原固定 48）。
             searchField.leadingAnchor.constraint(equalTo: searchBox.leadingAnchor, constant: 41),
             searchField.trailingAnchor.constraint(equalTo: searchBox.trailingAnchor, constant: -14),
             searchField.topAnchor.constraint(equalTo: searchBox.topAnchor, constant: 12),
             searchField.bottomAnchor.constraint(equalTo: searchBox.bottomAnchor, constant: -12),
-            listContainer.topAnchor.constraint(equalTo: searchBox.bottomAnchor, constant: 10),
+            // A2：通知行夹在搜索框与列表之间（搜索框下 8、列表在其下 10）。
+            notifyRow.topAnchor.constraint(equalTo: searchBox.bottomAnchor, constant: 8),
+            notifyRow.leadingAnchor.constraint(equalTo: sheetView.leadingAnchor, constant: 16),
+            notifyRow.trailingAnchor.constraint(lessThanOrEqualTo: sheetView.trailingAnchor, constant: -16),
+            notifyCheckButton.widthAnchor.constraint(equalToConstant: 16),
+            notifyCheckButton.heightAnchor.constraint(equalToConstant: 16),
+            listContainer.topAnchor.constraint(equalTo: notifyRow.bottomAnchor, constant: 10),
             listContainer.leadingAnchor.constraint(equalTo: sheetView.leadingAnchor, constant: 10),
             listContainer.trailingAnchor.constraint(equalTo: sheetView.trailingAnchor, constant: -10),
             listScrollView.topAnchor.constraint(equalTo: listContainer.topAnchor),
@@ -381,6 +430,12 @@ final class BearyRecipientPickerViewController: UIViewController, UITextFieldDel
             withHorizontalFittingPriority: .required,
             verticalFittingPriority: .fittingSizeLevel
         ).height
+        // A2：通知行高计入 sheet 高（搜索框下 8 + 通知行高 + 通知行到列表 10）。
+        let notifyHeight = notifyRow.systemLayoutSizeFitting(
+            CGSize(width: max(sheetWidth - 32, 0), height: 0),
+            withHorizontalFittingPriority: .required,
+            verticalFittingPriority: .fittingSizeLevel
+        ).height
         let listWidth = max(sheetWidth - 20, 0)
         let listHeight: CGFloat
         if !listScrollView.isHidden {
@@ -397,8 +452,9 @@ final class BearyRecipientPickerViewController: UIViewController, UITextFieldDel
             ).height
         }
         let bottomPad = 14 + (isPadLayout ? 0 : view.safeAreaInsets.bottom)
-        // 抓手 14 + 头顶 4 + 头图 40 + 头到搜索 12 + 搜索框高 + 搜索到列表 10 + 列表高 + 底 padding。
-        let fittingHeight = 14 + 4 + 40 + 12 + searchHeight + 10 + listHeight + bottomPad
+        // 抓手 14 + 头顶 4 + 头图 40 + 头到搜索 12 + 搜索框高 + 搜索到通知 8 + 通知行高
+        // + 通知到列表 10 + 列表高 + 底 padding。
+        let fittingHeight = 14 + 4 + 40 + 12 + searchHeight + 8 + notifyHeight + 10 + listHeight + bottomPad
         let visibleHeight = containerHeight - (isPadLayout ? 0 : keyboardHeight)
         let maxHeight = max(visibleHeight * 0.82, 0)
         let target = min(fittingHeight, maxHeight)
@@ -491,6 +547,24 @@ final class BearyRecipientPickerViewController: UIViewController, UITextFieldDel
 
     @objc private func didTapClose() {
         dismiss(animated: !UIAccessibility.isReduceMotionEnabled)
+    }
+
+    /// A2：面板内通知开关只改本地值与自身外观（与编辑器写给行复选同款），
+    /// 真正生效在点行回传时（onPick 第二参）。
+    private func refreshNotifyCheck() {
+        if notifyRecipient {
+            notifyCheckButton.backgroundColor = BearyColors.ink
+            notifyCheckButton.setImage(BearyIconImages.image(named: "icon_check", pointSize: 14), for: .normal)
+            notifyCheckButton.tintColor = BearyColors.bg
+        } else {
+            notifyCheckButton.backgroundColor = UIColor.clear
+            notifyCheckButton.setImage(nil, for: .normal)
+        }
+    }
+
+    @objc private func didTapNotifyCheck() {
+        notifyRecipient.toggle()
+        refreshNotifyCheck()
     }
 
     @objc private func didTapStateRetry() {
@@ -753,7 +827,7 @@ final class BearyRecipientPickerViewController: UIViewController, UITextFieldDel
             }
         }
         guard let user = picked else { return }
-        onPick?(user)
+        onPick?(user, notifyRecipient)
         dismiss(animated: !UIAccessibility.isReduceMotionEnabled)
     }
 }
