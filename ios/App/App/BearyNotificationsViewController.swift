@@ -249,9 +249,8 @@ final class BearyNotificationsViewController: UIViewController {
     private lazy var pullSpinner: UIActivityIndicatorView = {
         let spinner = UIActivityIndicatorView(style: .medium)
         spinner.translatesAutoresizingMaskIntoConstraints = false
-        // C-G9：网页 #ptrIn 与首屏加载圈均走 stroke currentColor（body 色即墨），
-        // 不是灰；下拉与首屏转圈改墨，翻页哨兵圈不在本项范围、保持灰。
-        spinner.color = BearyColors.ink
+        // E1：四页菊花统一灰（覆盖旧 C-G9 墨口径）；翻页哨兵圈本已是灰。
+        spinner.color = BearyColors.gray
         spinner.hidesWhenStopped = false
         spinner.transform = CGAffineTransform(scaleX: 1.6, y: 1.6)
         spinner.alpha = 0
@@ -300,8 +299,8 @@ final class BearyNotificationsViewController: UIViewController {
     private lazy var centralSpinner: UIActivityIndicatorView = {
         let spinner = UIActivityIndicatorView(style: .medium)
         spinner.translatesAutoresizingMaskIntoConstraints = false
-        // C-G9：同 pullSpinner，网页首屏加载圈 stroke currentColor 即墨。
-        spinner.color = BearyColors.ink
+        // E1：同 pullSpinner，四页菊花统一灰（覆盖旧 C-G9 墨口径）。
+        spinner.color = BearyColors.gray
         spinner.hidesWhenStopped = true
         spinner.transform = CGAffineTransform(scaleX: 1.6, y: 1.6)
         return spinner
