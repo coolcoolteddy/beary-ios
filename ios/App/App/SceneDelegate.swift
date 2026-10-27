@@ -2857,6 +2857,8 @@ private final class BearyComposerSheetPresentationController: UIPresentationCont
 
 private final class BearyComposerSheetAnimator: NSObject, UIViewControllerAnimatedTransitioning {
     private let isPresenting: Bool
+    // 临时诊断（85 包，定根因后删除）：completion 是否跑过；用于 1 秒探针防误报。
+    private var completionEntered = false
 
     init(isPresenting: Bool) {
         self.isPresenting = isPresenting
@@ -2895,13 +2897,18 @@ private final class BearyComposerSheetAnimator: NSObject, UIViewControllerAnimat
             }, completion: { _ in
                 // 临时诊断（83 包，定根因后删除）。
                 DiagFile.mark("animator-completion-enter")
+                // 临时诊断（85 包，定根因后删除）：completion 已跑过，1 秒探针不再误报。
+                self.completionEntered = true
                 transitionContext.completeTransition(transitionContext.transitionWasCancelled == false)
                 // 临时诊断（82 包追加，定根因后删除）：转场终态，不进非终态集合。
                 DiagFile.mark("animator-completed")
             })
             // 临时诊断（84 包，定根因后删除）：1 秒后主线程 runloop 还在转即记一行。
+            // 临时诊断（85 包，定根因后删除）：completion 已跑过则不记，避免正常打开后误报。
             DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
-                DiagFile.mark("animator-1s-later")
+                if !self.completionEntered {
+                    DiagFile.mark("animator-1s-later")
+                }
             }
         } else {
             guard let fromView = transitionContext.view(forKey: .from) else {
