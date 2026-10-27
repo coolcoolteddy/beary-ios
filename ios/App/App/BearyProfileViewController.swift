@@ -2226,6 +2226,8 @@ class BearyProfileViewController: UIViewController {
     // MARK: - 动作
 
     @objc private func pullToRefresh() {
+        // M12（91 包）：下拉刷新触发给一次轻触觉。
+        BearyHaptics.press()
         // G2：下拉刷新保留旧内容（顶部加载态由 UIRefreshControl 提供），
         // 成功后替换、失败保留旧内容（见 handleProfileResult / handleTabResult）。
         diaryHasMore = true
@@ -2596,7 +2598,13 @@ class BearyProfileViewController: UIViewController {
         } else {
             expandedEntryIds.insert(entryId)
         }
-        reloadVisibleRow(entryId: entryId)
+        // L21（91 包）：展开/收起专用——cell 就地改显示 + 正文淡入，行高由 batch 平滑伸缩；
+        // 其他路径仍走 reloadVisibleRow，不动。
+        let expanded = expandedEntryIds.contains(entryId)
+        guard let index = currentEntries.firstIndex(where: { $0.id == entryId }),
+              let cell = tableView.cellForRow(at: IndexPath(row: index, section: 0)) as? BearyProfileEntryCell else { return }
+        cell.setFoldDisplay(expanded: expanded, animated: true)
+        tableView.performBatchUpdates(nil)
     }
 
     private func handleCellQuoteTap(entry: Entry) {
@@ -2762,6 +2770,9 @@ private class BearyProfileEntryCell: UITableViewCell {
     var onEmoteAdd: (() -> Void)?
     var onQuoteTap: (() -> Void)?
     var onFoldToggle: (() -> Void)?
+    /// L21（91 包）：本卡正文是否超过 300 字（折叠按钮是否适用），configure 时记下，
+    /// 供 setFoldDisplay 就地切换显示用，不再每次重算。
+    private var foldApplies = false
     /// N7 主页图片灯箱：图片条点按回调（keys=本条图 key，index=点按位置），
     /// VC 侧复用独立文件内的 BearyEntryImageViewerViewController 全屏弹出（时间线同款）。
     var onTapImages: (([String], Int) -> Void)?
@@ -3172,6 +3183,22 @@ private class BearyProfileEntryCell: UITableViewCell {
         }
     }
 
+    /// L21（91 包）：展开/收起显示切换（标题/箭头/行数三件与 configure 原口径一致）。
+    /// animated 时正文 0.22s 交叉淡入，行高由控制器 performBatchUpdates 平滑伸缩。
+    func setFoldDisplay(expanded: Bool, animated: Bool) {
+        guard foldApplies else { return }
+        let apply = {
+            self.foldButton.setTitle(expanded ? "收起" : "展开全文", for: .normal)
+            self.foldButton.imageView?.transform = expanded ? CGAffineTransform(rotationAngle: CGFloat.pi) : .identity
+            self.bodyLabel.numberOfLines = expanded ? 0 : 6
+        }
+        if animated {
+            UIView.transition(with: bodyLabel, duration: 0.22, options: .transitionCrossDissolve, animations: apply)
+        } else {
+            apply()
+        }
+    }
+
     @objc private func foldButtonTapped() {
         onFoldToggle?()
     }
@@ -3356,13 +3383,11 @@ private class BearyProfileEntryCell: UITableViewCell {
             .foregroundColor: BearyColors.ink,
             .paragraphStyle: paragraph,
         ])
-        if bodyText.count > 300 {
-            foldButton.isHidden = false
-            foldButton.setTitle(isExpanded ? "收起" : "展开全文", for: .normal)
-            foldButton.imageView?.transform = isExpanded ? CGAffineTransform(rotationAngle: CGFloat.pi) : .identity
-            bodyLabel.numberOfLines = isExpanded ? 0 : 6
+        foldApplies = bodyText.count > 300
+        foldButton.isHidden = !foldApplies
+        if foldApplies {
+            setFoldDisplay(expanded: isExpanded, animated: false)
         } else {
-            foldButton.isHidden = true
             bodyLabel.numberOfLines = 0
         }
         configureQuote(entry: entry)

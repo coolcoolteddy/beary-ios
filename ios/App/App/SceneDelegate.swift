@@ -965,6 +965,9 @@ final class BearyChromeViewController: UIViewController {
         super.traitCollectionDidChange(previousTraitCollection)
         if traitCollection.hasDifferentColorAppearance(comparedTo: previousTraitCollection) {
             updateStatusBarFromTrait()
+            // M11（91 包）：复制层 tile 图在重建时按当前深浅解析，换主题强制重建以换图集变体。
+            sideDecoBuiltSize = nil
+            updateSideDecoLayout()
             }
     }
 
@@ -2340,6 +2343,13 @@ final class BearyChromeViewController: UIViewController {
     /// 在一侧容器内建 matrix：格距横 86（52 列 + 34 间隙）、纵 82（52 行 + 30 间隙），
     /// 与网页 .side-matrix 的 grid 口径一致；matrix 本体向左上各扩 344/328（一个动画周期），
     /// 平移 0→344/328 全程不露出空白边。
+    /// M11（91 包）：逐格 UIImageView（iPad 横屏两侧约 874 个）改成 CAReplicatorLayer——
+    /// 一个 2×4 图案块（344×164）做源层，内层复制列（步进 344）、外层复制行（步进 164）；
+    /// 块内 8 只 tile 的图、尺寸、居中偏移、.34 透明度与原逐格公式一字一致，
+    /// 全局格 (4b+c, 2d+r) 取图案 [r][c]，与原 pattern[row%2][col%4] 对齐无差；
+    /// 容器 clipsToBounds，超出的复制块与原超出的 tile 一样被裁掉，可见区无差。
+    /// 深浅变体：tile 图在重建时按当前 trait 解析（UIImage(named:)），换主题时
+    /// traitCollectionDidChange 置 sideDecoBuiltSize=nil 强制重建，与旧 UIImageView 自动换图同效。
     private func rebuildSideMatrix(in container: UIView, width: CGFloat, height: CGFloat) {
         for sub in container.subviews { sub.removeFromSuperview() }
         guard width > 0, height > 0 else { return }
@@ -2355,23 +2365,37 @@ final class BearyChromeViewController: UIViewController {
             [("side_beary_icon", 40, 40), ("side_beary_word", 60, 30), ("side_beary_stack", 52, 52), ("side_part_envelope", 30, 30)],
             [("side_part_notebook", 30, 30), ("side_part_envelope", 30, 30), ("side_part_notebook", 30, 30), ("side_beary_word", 60, 30)],
         ]
-        let cols = Int(ceil(matrix.bounds.width / 86)) + 1
-        let rows = Int(ceil(matrix.bounds.height / 82)) + 1
-        for row in 0..<rows {
-            for col in 0..<cols {
-                let tile = pattern[row % 2][col % 4]
-                let imageView = UIImageView()
+        // 一个图案块：4 列 ×86 = 344 宽、2 行 ×82 = 164 高，块内 tile 位置用原逐格公式。
+        let block = CALayer()
+        block.frame = CGRect(x: 0, y: 0, width: 344, height: 164)
+        for row in 0..<2 {
+            for col in 0..<4 {
+                let tile = pattern[row][col]
+                let tileLayer = CALayer()
                 // 网页原图直出：不 template、不 tint（深色由图集 dark 变体承接）。
-                imageView.image = UIImage(named: tile.0)
-                imageView.contentMode = .scaleAspectFit
-                imageView.alpha = 0.34
-                imageView.frame = CGRect(
+                // resizeAspect = UIImageView scaleAspectFit 同款；contentsScale 保视网膜锐度。
+                tileLayer.contents = UIImage(named: tile.0)?.cgImage
+                tileLayer.contentsScale = UIScreen.main.scale
+                tileLayer.contentsGravity = .resizeAspect
+                tileLayer.opacity = 0.34
+                tileLayer.frame = CGRect(
                     x: CGFloat(col) * 86 + (52 - tile.1) / 2,
                     y: CGFloat(row) * 82 + (52 - tile.2) / 2,
                     width: tile.1, height: tile.2)
-                matrix.addSubview(imageView)
+                block.addSublayer(tileLayer)
             }
         }
+        let colReplicator = CAReplicatorLayer()
+        colReplicator.frame = matrix.bounds
+        colReplicator.instanceCount = Int(ceil(matrix.bounds.width / 344)) + 1
+        colReplicator.instanceTransform = CATransform3DMakeTranslation(344, 0, 0)
+        colReplicator.addSublayer(block)
+        let rowReplicator = CAReplicatorLayer()
+        rowReplicator.frame = matrix.bounds
+        rowReplicator.instanceCount = Int(ceil(matrix.bounds.height / 164)) + 1
+        rowReplicator.instanceTransform = CATransform3DMakeTranslation(0, 164, 0)
+        rowReplicator.addSublayer(colReplicator)
+        matrix.layer.addSublayer(rowReplicator)
         // 减动效停播（网页 :210 @media prefers-reduced-motion 同口径）。
         guard !UIAccessibility.isReduceMotionEnabled else { return }
         UIView.animate(withDuration: 30, delay: 0, options: [.repeat, .curveLinear], animations: {

@@ -538,8 +538,10 @@ class BearyFeedViewController: UIViewController {
         self.ptrAnimateBackToZero(completion: nil)
     }
 
-    /// 下拉刷新触发口：原 UIRefreshControl 的 valueChanged 目标，现由松手判定调用；函数体一字不动。
+    /// 下拉刷新触发口：原 UIRefreshControl 的 valueChanged 目标，现由松手判定调用。
     @objc private func pullToRefresh() {
+        // M12（91 包）：下拉刷新触发给一次轻触觉（已批点赞/发布/拒绝三处不动）。
+        BearyHaptics.press()
         refreshAll()
     }
 
@@ -1658,6 +1660,15 @@ class BearyFeedViewController: UIViewController {
                 strongSelf.tableView.reloadRows(at: [path], with: .none)
             }
         }
+        // L21（91 包）：展开/收起专用——cell 内容已在 foldTapped 里就地改好，
+        // 这里只重算行高并平滑伸缩，不 reload（reload 会丢掉正文淡入且闪一下）。
+        cell.onNeedsFoldAnimation = { [weak self, weak cell] in
+            guard let strongSelf = self, let targetCell = cell else { return }
+            guard let path = strongSelf.tableView.indexPath(for: targetCell) else { return }
+            if strongSelf.tableView.indexPathsForVisibleRows?.contains(path) == true {
+                strongSelf.tableView.performBatchUpdates(nil)
+            }
+        }
     }
 
     // MARK: - B 方案公开 / 取消（D2）
@@ -2103,6 +2114,9 @@ class BearyFeedCell: UITableViewCell {
     private var authorTapInstalled = false
     /// 折叠切换 / 引用异步落位后，行高需重算时通知控制器 reloadRows（.none，无动画）。
     var onNeedsRowReload: (() -> Void)?
+    /// L21（91 包）：仅展开/收起路径用——控制器改走 performBatchUpdates 平滑伸缩，
+    /// 正文 0.22s 交叉淡入在 cell 内做；引用异步落位仍走 onNeedsRowReload。
+    var onNeedsFoldAnimation: (() -> Void)?
 
     /// 折叠展开态按条目持久化（滚动复用、整表刷新都不收起），与网页 __foldOpen 同口径。
     static var expandedEntryIds: Set<String> = []
@@ -2642,6 +2656,7 @@ class BearyFeedCell: UITableViewCell {
         onPublishCancelTapped = nil
         onAuthorTapped = nil
         onNeedsRowReload = nil
+        onNeedsFoldAnimation = nil
         onLongPressMenuRequested = nil
         currentEntry = nil
         currentEntryIdValue = nil
@@ -3300,7 +3315,8 @@ class BearyFeedCell: UITableViewCell {
         bearyFeedPerformRetry(sender)
     }
 
-    /// F6：展开/收起即时切换，不加透明度动画；行高重算走 reloadRows(.none)。
+    /// F6：展开/收起平滑切换（91 包 L21，已推翻即时切换定版）：正文 0.22s 交叉淡入，
+    /// 行高由控制器 performBatchUpdates 平滑伸缩；引用异步落位仍走 onNeedsRowReload。
     @objc private func foldTapped() {
         guard let entryIdValue = currentEntryIdValue else { return }
         if isExpanded {
@@ -3310,9 +3326,11 @@ class BearyFeedCell: UITableViewCell {
             BearyFeedCell.expandedEntryIds.insert(entryIdValue)
             isExpanded = true
         }
-        updateContentAndFold()
+        UIView.transition(with: contentLabel, duration: 0.22, options: .transitionCrossDissolve, animations: {
+            self.updateContentAndFold()
+        })
         updateRightStackSpacing()
-        onNeedsRowReload?()
+        onNeedsFoldAnimation?()
     }
 
     /// F7/F8：首页与详情互动门控统一为 isPublic == true 才可互动（详情同口径）。
