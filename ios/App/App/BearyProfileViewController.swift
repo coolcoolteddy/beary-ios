@@ -347,6 +347,7 @@ class BearyProfileViewController: UIViewController {
         buttonValue.accessibilityLabel = "重新加载头像"
         buttonValue.isHidden = true
         buttonValue.addTarget(self, action: #selector(avatarRetryButtonTapped), for: .touchUpInside)
+        buttonValue.bearyAddPressFeedback()
         return buttonValue
     }()
 
@@ -363,6 +364,7 @@ class BearyProfileViewController: UIViewController {
         buttonValue.layer.borderWidth = 1
         buttonValue.layer.cornerRadius = 20
         buttonValue.addTarget(self, action: #selector(editButtonTapped), for: .touchUpInside)
+        buttonValue.bearyAddPressFeedback()
         // P2-4：照抄点赞钮实测字宽修法——按钮固有宽不含标题边距，显式宽 =
         // content 12 + 图宽 + titleEdge 6 + 实测标题宽 + content 12，防标题被裁。
         let editImageWidth = buttonValue.image(for: .normal)?.size.width ?? 15
@@ -482,6 +484,7 @@ class BearyProfileViewController: UIViewController {
         buttonValue.tintColor = BearyColors.ink
         buttonValue.accessibilityLabel = "返回"
         buttonValue.addTarget(self, action: #selector(backButtonTapped), for: .touchUpInside)
+        buttonValue.bearyAddPressFeedback()
         return buttonValue
     }()
 
@@ -503,6 +506,7 @@ class BearyProfileViewController: UIViewController {
         buttonValue.setImage(BearyIconImages.image(named: "icon_share", pointSize: 24), for: .normal)
         buttonValue.tintColor = BearyColors.ink
         buttonValue.addTarget(self, action: #selector(topShareButtonTapped), for: .touchUpInside)
+        buttonValue.bearyAddPressFeedback()
         return buttonValue
     }()
 
@@ -518,6 +522,7 @@ class BearyProfileViewController: UIViewController {
         buttonValue.layer.borderWidth = 1
         buttonValue.layer.cornerRadius = 20
         buttonValue.addTarget(self, action: #selector(gearButtonTapped), for: .touchUpInside)
+        buttonValue.bearyAddPressFeedback()
         return buttonValue
     }()
 
@@ -527,6 +532,7 @@ class BearyProfileViewController: UIViewController {
         buttonValue.setImage(BearyIconImages.image(named: "icon_share", pointSize: 21), for: .normal)
         buttonValue.tintColor = BearyColors.ink
         buttonValue.addTarget(self, action: #selector(headerShareButtonTapped), for: .touchUpInside)
+        buttonValue.bearyAddPressFeedback()
         return buttonValue
     }()
 
@@ -703,6 +709,7 @@ class BearyProfileViewController: UIViewController {
         buttonValue.titleEdgeInsets = UIEdgeInsets(top: 0, left: 6, bottom: 0, right: 0)
         buttonValue.contentEdgeInsets = UIEdgeInsets(top: 9, left: 10, bottom: 9, right: 10)
         buttonValue.addTarget(self, action: action, for: .touchUpInside)
+        buttonValue.bearyAddPressFeedback()
         // P2-4：同点赞钮修法——显式宽 = content 10 + 图宽 + titleEdge 6 + 实测标题宽 + content 10。
         let tabImageWidth = buttonValue.image(for: .normal)?.size.width ?? 16
         let tabTitleWidth = ceil((title as NSString).size(withAttributes: [NSAttributedString.Key.font: UIFont.systemFont(ofSize: 14, weight: .bold)]).width)
@@ -1160,8 +1167,8 @@ class BearyProfileViewController: UIViewController {
             guard let cell = tableView.cellForRow(at: path) else { continue }
             animatedRowIds.insert(entryId)
             cell.alpha = 0
-            cell.transform = CGAffineTransform(translationX: 0, y: 8)
-            UIView.animate(withDuration: 0.25, delay: delay, options: .curveEaseOut, animations: {
+            cell.transform = CGAffineTransform(translationX: 0, y: 6)
+            UIView.animate(withDuration: 0.25, delay: delay, options: [.curveEaseOut, .allowUserInteraction], animations: {
                 cell.alpha = 1
                 cell.transform = .identity
             })
@@ -1306,11 +1313,8 @@ class BearyProfileViewController: UIViewController {
         }
         if let createdMs = profileValue.createdAt, createdMs > 0 {
             let dateValue = Date(timeIntervalSince1970: TimeInterval(createdMs) / 1000.0)
-            let formatter = DateFormatter()
-            formatter.locale = Locale(identifier: "zh_CN")
-            // F18：网页 "2026 年 10 月加入" 口径——年 / 月前后带空格。
-            formatter.dateFormat = "yyyy 年 M 月加入"
-            joinedLabel.text = formatter.string(from: dateValue)
+            // F18：网页 "2026 年 10 月加入" 口径——年 / 月前后带空格（静态 formatter 同口径）。
+            joinedLabel.text = Self.profileJoinedFormatter.string(from: dateValue)
             joinedLabel.isHidden = false
             joinedIconView.isHidden = false
         } else {
@@ -1341,7 +1345,7 @@ class BearyProfileViewController: UIViewController {
         // L17：空字符串不再算有封面——须非空且能拼出 URL 才算。
         let hasCover = !(profileValue.coverUrl ?? "").isEmpty && BearyImageURLs.avatarURL(profileValue.coverUrl) != nil
         if let coverPath = profileValue.coverUrl, let coverURLValue = BearyImageURLs.avatarURL(coverPath) {
-            coverImageView.bearySetImage(url: coverURLValue, placeholder: nil)
+            coverImageView.bearySetImage(url: coverURLValue, placeholder: nil, downsampleToWidth: (headerWidthValue > 0 ? headerWidthValue : UIScreen.main.bounds.width) * UIScreen.main.scale)
         } else {
             coverImageView.image = nil
         }
@@ -1383,7 +1387,7 @@ class BearyProfileViewController: UIViewController {
         guard let avatarURLValue = headerAvatarURL else { return }
         avatarRetryButton.isHidden = true
         avatarLetterLabel.isHidden = true
-        avatarImageView.bearySetImage(url: avatarURLValue, placeholder: nil, onFailure: { [weak self] _ in
+        avatarImageView.bearySetImage(url: avatarURLValue, placeholder: nil, downsampleToWidth: 84 * UIScreen.main.scale, onFailure: { [weak self] _ in
             DispatchQueue.main.async {
                 guard let strongSelf = self, strongSelf.headerAvatarURL == avatarURLValue else { return }
                 strongSelf.avatarImageView.image = nil
@@ -1413,6 +1417,14 @@ class BearyProfileViewController: UIViewController {
 
     /// 回应墙首次出现动效只播一次（网页 pfFillWall 首次出现 300ms 动效口径）。
     private var wallHasAnimated = false
+
+    /// 80 包 B4-1：加入日期 formatter 静态复用（主线程 UI 路径使用，原每次 applyHeader 新建）。
+    private static let profileJoinedFormatter: DateFormatter = {
+        let f = DateFormatter()
+        f.locale = Locale(identifier: "zh_CN")
+        f.dateFormat = "yyyy 年 M 月加入"
+        return f
+    }()
 
     private func applyWall() {
         guard let profileValue = profile else { return }
@@ -1496,6 +1508,7 @@ class BearyProfileViewController: UIViewController {
                     retryButton.titleLabel?.font = UIFont.systemFont(ofSize: 13)
                     retryButton.setTitleColor(BearyColors.gray, for: .normal)
                     retryButton.addTarget(strongSelf, action: #selector(BearyProfileViewController.badgeRetryTapped), for: .touchUpInside)
+                    retryButton.bearyAddPressFeedback()
                     NSLayoutConstraint.activate([
                         retryButton.heightAnchor.constraint(equalToConstant: 32),
                     ])
@@ -1570,6 +1583,7 @@ class BearyProfileViewController: UIViewController {
             buttonValue.layer.borderColor = BearyColors.ink.cgColor
             buttonValue.layer.cornerRadius = 12
             buttonValue.addTarget(self, action: #selector(badgeButtonTapped(_:)), for: .touchUpInside)
+            buttonValue.bearyAddPressFeedback()
             // 钮宽由下文行内实测宽度约束固定（见行循环），不靠 hugging 猜：
             // 钮自身无 title/image、intrinsic 宽为 0，hugging required 会与
             // cellStack 的 required 宽度约束冲突，故只留 compression required 防挤压。
@@ -1745,7 +1759,10 @@ class BearyProfileViewController: UIViewController {
         case .success(let listValue):
             tabError = false
             let freshEntries = listValue.entries ?? []
+            var appendedRowCount = 0
+            var oldRowCount = 0
             if appending {
+                oldRowCount = currentEntries.count
                 var seenIds = Set<String>()
                 for existingEntry in currentEntries {
                     if let existingId = existingEntry.id {
@@ -1760,13 +1777,24 @@ class BearyProfileViewController: UIViewController {
                     }
                 }
                 appendEntries(entries: appendedEntries)
+                appendedRowCount = appendedEntries.count
             } else {
                 setEntries(entries: freshEntries)
             }
             if freshEntries.count < 50 {
                 setHasMore(hasMore: false)
             }
-            tableView.reloadData()
+            // 80 包 A6-2：分页追加走 insertRows（与首页/时间线同口径），表行数对不上
+            // 回落 reloadData；首屏/失败仍 reloadData（见下）。
+            if appending, appendedRowCount > 0, tableView.numberOfSections > 0,
+               tableView.numberOfRows(inSection: 0) == oldRowCount {
+                let inserted = (oldRowCount..<oldRowCount + appendedRowCount).map { IndexPath(row: $0, section: 0) }
+                tableView.performBatchUpdates({
+                    self.tableView.insertRows(at: inserted, with: .none)
+                }, completion: { [weak self] _ in self?.animateNewRows() })
+            } else {
+                tableView.reloadData()
+            }
         case .failure:
             tabError = true
             tableView.reloadData()
@@ -1864,7 +1892,15 @@ class BearyProfileViewController: UIViewController {
         if tab == .saved && !isOwnProfile { return }
         currentTab = tab
         applyTabSelection()
-        tableView.reloadData()
+        // 80 包 A6-1：内容切换与指示条同动画——0.28s crossDissolve（指示条同款时长），
+        // 减动效直换；行错峰（animateNewRows）仍只针对未播过的新行。
+        if UIAccessibility.isReduceMotionEnabled {
+            tableView.reloadData()
+        } else {
+            UIView.transition(with: tableView, duration: 0.28, options: [.transitionCrossDissolve, .curveEaseInOut], animations: {
+                self.tableView.reloadData()
+            }, completion: nil)
+        }
         // M9：新列表行错峰滑入，已有行不重播（见 animateNewRows）。
         animateNewRows()
         if tabEntriesEmpty(tab: tab) {
@@ -1952,24 +1988,37 @@ class BearyProfileViewController: UIViewController {
 
     // MARK: - 底部状态（加载 / 空态 / 失败）
 
+    /// 80 包 A3-1：脚部种类记忆——空态脚部只在种类变化时淡入，已有空态不重播。
+    private var lastProfileFooterKind: String?
+
     private func refreshFooter() {
+        let kind: String
         if tabLoading {
             tableView.tableFooterView = makeLoadingFooter()
-            return
-        }
-        if tabError || (currentTab == .diary && profileLoadFailed && targetHandleValue != nil) {
+            kind = "loading"
+        } else if tabError || (currentTab == .diary && profileLoadFailed && targetHandleValue != nil) {
             tableView.tableFooterView = makeErrorFooter()
-            return
-        }
-        if currentEntries.isEmpty {
+            kind = "error"
+        } else if currentEntries.isEmpty {
             tableView.tableFooterView = makeEmptyFooter()
-            return
-        }
-        if tabLoadMore {
+            kind = "empty"
+        } else if tabLoadMore {
             tableView.tableFooterView = makeLoadingFooter()
-            return
+            kind = "loading"
+        } else {
+            tableView.tableFooterView = UIView()
+            kind = "none"
         }
-        tableView.tableFooterView = UIView()
+        // 80 包 A3-1：空态脚部出现时 0.25s 淡入（与首页空态进入淡入同口径）。
+        if kind == "empty", kind != lastProfileFooterKind,
+           UIAccessibility.isReduceMotionEnabled == false,
+           let footer = tableView.tableFooterView {
+            footer.alpha = 0
+            UIView.animate(withDuration: 0.25, animations: {
+                footer.alpha = 1
+            })
+        }
+        lastProfileFooterKind = kind
     }
 
     private func makeLoadingFooter() -> UIView {
@@ -2064,6 +2113,7 @@ class BearyProfileViewController: UIViewController {
             plazaButton.contentEdgeInsets = UIEdgeInsets(top: 0, left: 20, bottom: 0, right: 20)
             plazaButton.heightAnchor.constraint(equalToConstant: 44).isActive = true
             plazaButton.addTarget(self, action: #selector(emptyGoPlazaTapped), for: .touchUpInside)
+            plazaButton.bearyAddPressFeedback()
             stack.addArrangedSubview(plazaButton)
         }
         NSLayoutConstraint.activate(constraints)
@@ -2105,7 +2155,23 @@ class BearyProfileViewController: UIViewController {
         retryButton.layer.borderColor = BearyColors.line.cgColor
         retryButton.layer.cornerRadius = 20
         retryButton.addTarget(self, action: #selector(retryButtonTapped), for: .touchUpInside)
-        let stack = UIStackView(arrangedSubviews: [iconView, titleLabel, retryButton])
+        retryButton.bearyAddPressFeedback()
+        retryButton.heightAnchor.constraint(equalToConstant: 40).isActive = true
+        // 80 包重试统一：失败脚部补“网络好像不太顺”副标题（与时间线失败态同文案），
+        // 用户不存在时不补副标题；按钮已与首页失败行同款描边 pill。
+        var errorArranged: [UIView] = [iconView, titleLabel]
+        if !(profileLoadFailed && profile == nil) {
+            let subtitleLabel = UILabel()
+            subtitleLabel.translatesAutoresizingMaskIntoConstraints = false
+            subtitleLabel.font = UIFont.systemFont(ofSize: 13)
+            subtitleLabel.textColor = BearyColors.gray
+            subtitleLabel.textAlignment = .center
+            subtitleLabel.numberOfLines = 0
+            subtitleLabel.text = "网络好像不太顺"
+            errorArranged.append(subtitleLabel)
+        }
+        errorArranged.append(retryButton)
+        let stack = UIStackView(arrangedSubviews: errorArranged)
         stack.translatesAutoresizingMaskIntoConstraints = false
         stack.axis = .vertical
         stack.alignment = .center
@@ -2141,6 +2207,7 @@ class BearyProfileViewController: UIViewController {
         loginButton.layer.borderColor = BearyColors.line.cgColor
         loginButton.layer.cornerRadius = 20
         loginButton.addTarget(self, action: #selector(loginButtonTapped), for: .touchUpInside)
+        loginButton.bearyAddPressFeedback()
         let stack = UIStackView(arrangedSubviews: [titleLabel, loginButton])
         stack.translatesAutoresizingMaskIntoConstraints = false
         stack.axis = .vertical
@@ -2299,14 +2366,17 @@ class BearyProfileViewController: UIViewController {
     /// 收尾跨页同步：首页/详情取消赞过或收藏后，对应页签摘卡（日记页签不受影响，
     /// 只摘赞过/收藏页签）。容器接线（Feed onInteractionRemoved → 本方法）。
     func removeEntryFromTabs(entryId: String, likeRemoved: Bool, bookmarkRemoved: Bool) {
+        // 80 包 A6-2：只在当前页签正显示该行时删行；其他页签模型已改、界面不在本页，无需重载。
+        let visibleRow = currentEntries.firstIndex(where: { $0.id == entryId })
         if likeRemoved {
             likedEntries.removeAll(where: { $0.id == entryId })
         }
         if bookmarkRemoved {
             savedEntries.removeAll(where: { $0.id == entryId })
         }
-        if likeRemoved || bookmarkRemoved {
-            tableView.reloadData()
+        if (likeRemoved || bookmarkRemoved), let row = visibleRow,
+           (currentTab == .liked && likeRemoved) || (currentTab == .saved && bookmarkRemoved) {
+            tableView.deleteRows(at: [IndexPath(row: row, section: 0)], with: .fade)
         }
     }
 
@@ -2399,8 +2469,14 @@ class BearyProfileViewController: UIViewController {
                     strongSelf.notifyInteraction(entry: updated)
                     // 收藏页签取消收藏时摘卡（与网页 toggleBookmark 同口径）。
                     if strongSelf.currentTab == .saved && updated.bookmarkedByMe != true {
+                        let savedRow = strongSelf.currentEntries.firstIndex(where: { $0.id == entryId })
                         strongSelf.savedEntries.removeAll { $0.id == entryId }
-                        strongSelf.tableView.reloadData()
+                        // 80 包 A6-2：收藏页签摘卡走 deleteRows，行不在当前页签时才回落重载。
+                        if let row = savedRow {
+                            strongSelf.tableView.deleteRows(at: [IndexPath(row: row, section: 0)], with: .fade)
+                        } else {
+                            strongSelf.tableView.reloadData()
+                        }
                     } else if updated.bookmarkedByMe != wantBookmarked {
                         // 服务端值与先行值不一致时以服务端为准重绘；一致时不 reload，避免打断 pop。
                         strongSelf.reloadVisibleRow(entryId: entryId)
@@ -2599,6 +2675,8 @@ extension BearyProfileViewController: UITableViewDataSource, UITableViewDelegate
             return
         }
         guard indexPath.row < currentEntries.count else { return }
+        // W6：行点按补 .light 轻震（放在连点守卫与越界守卫之后，只对真实生效的点按震动）。
+        BearyHaptics.press()
         rowTapGuardUntil = Date().addingTimeInterval(1.5)
         let entryValue = currentEntries[indexPath.row]
         onOpenEntry?(entryValue)
@@ -2621,6 +2699,19 @@ extension BearyProfileViewController: UITableViewDataSource, UITableViewDelegate
         for cell in tableView.visibleCells {
             cell.stopAllBearyEmotes()
         }
+        // 80 包 A2-4：回应墙在 tableHeaderView 内，不在 visibleCells 内，单独停墙内表情。
+        wallContainer.stopAllBearyEmotes()
+    }
+
+    /// 80 包 A5：与 stopVisibleEmotes 对称的恢复入口（容器切回时调用）：
+    /// 只恢复可见行与回应墙内 BearyEmoteView 的播放，不重播整页入场。
+    func resumeVisibleEmotes() {
+        func resume(_ view: UIView) {
+            if let emote = view as? BearyEmoteView { emote.play() }
+            for sub in view.subviews { resume(sub) }
+        }
+        for cell in tableView.visibleCells { resume(cell) }
+        resume(wallContainer)
     }
 
     // MARK: - 清单 2 滚动隐藏栏（个人主页部分）
@@ -2676,6 +2767,10 @@ private class BearyProfileEntryCell: UITableViewCell {
     var onTapImages: (([String], Int) -> Void)?
 
     private var chipKeys: [String] = []
+    /// 80 包 B4-1：回应胶囊池——chip 容器留池复用，只在 key 变化时换播放器。
+    private var emoteChipPool: [UIView] = []
+    /// 80 包 B4-1：回应行末尾 + 钮复用（只建一次，isEnabled 每轮刷新）。
+    private var emoteAddButton: UIButton?
     private var currentImageKeys: [String] = []
 
     private let avatarImageView: UIImageView = {
@@ -2826,6 +2921,7 @@ private class BearyProfileEntryCell: UITableViewCell {
         buttonValue.tintColor = BearyColors.gray
         buttonValue.contentHorizontalAlignment = .left
         buttonValue.addTarget(self, action: #selector(foldButtonTapped), for: .touchUpInside)
+        buttonValue.bearyAddPressHaptic()
         return buttonValue
     }()
 
@@ -2879,8 +2975,8 @@ private class BearyProfileEntryCell: UITableViewCell {
         let buttonValue = BearyHit44Button(type: .system)
         buttonValue.translatesAutoresizingMaskIntoConstraints = false
         buttonValue.addTarget(self, action: #selector(bookmarkButtonTapped), for: .touchUpInside)
-        buttonValue.addTarget(self, action: #selector(iconTouchDown(_:)), for: .touchDown)
-        buttonValue.addTarget(self, action: #selector(iconTouchUp(_:)), for: [.touchUpInside, .touchUpOutside, .touchCancel])
+        // W6：原 iconTouchDown 只缩 .84，改通用按压（缩 .84 + .light），点赞钮不动（已有 likePressDown）。
+        buttonValue.bearyAddPressFeedback()
         return buttonValue
     }()
 
@@ -2890,8 +2986,8 @@ private class BearyProfileEntryCell: UITableViewCell {
         buttonValue.setImage(BearyIconImages.image(named: "icon_share", pointSize: 21), for: .normal)
         buttonValue.tintColor = BearyColors.gray
         buttonValue.addTarget(self, action: #selector(shareButtonTapped), for: .touchUpInside)
-        buttonValue.addTarget(self, action: #selector(iconTouchDown(_:)), for: .touchDown)
-        buttonValue.addTarget(self, action: #selector(iconTouchUp(_:)), for: [.touchUpInside, .touchUpOutside, .touchCancel])
+        // W6：同收藏钮，改通用按压（缩 .84 + .light）。
+        buttonValue.bearyAddPressFeedback()
         return buttonValue
     }()
 
@@ -3034,6 +3130,9 @@ private class BearyProfileEntryCell: UITableViewCell {
 
     override func prepareForReuse() {
         super.prepareForReuse()
+        // 80 包 A4：animateNewRows 改 cell.alpha/transform，对称复位。
+        alpha = 1
+        transform = .identity
         avatarImageView.image = nil
         likeButton.setTitle(nil, for: .normal)
         likeButtonWidthConstraint?.constant = 22
@@ -3061,6 +3160,10 @@ private class BearyProfileEntryCell: UITableViewCell {
         for arrangedView in emoteStack.arrangedSubviews {
             emoteStack.removeArrangedSubview(arrangedView)
             arrangedView.removeFromSuperview()
+        }
+        // 80 包 B4-1：池 chip 离树时先停其播放器，复用分支按 key 决定重播或重建。
+        for chip in emoteChipPool {
+            chip.subviews.compactMap({ $0 as? UIStackView }).first?.arrangedSubviews.compactMap({ $0 as? BearyEmoteView }).forEach { $0.stop() }
         }
         for subview in quoteContainer.subviews {
             subview.removeFromSuperview()
@@ -3194,16 +3297,13 @@ private class BearyProfileEntryCell: UITableViewCell {
         if let createdMs = entry.createdAt, createdMs > 0 {
             // 本页时间小时不补零（9:05 不是 09:05）：本地格式化，不改共享
             // BearyFeedCell.feedTimeString（Feed 路由另行负责，避免连带改 Feed）。
-            let timeFormatter = DateFormatter()
-            timeFormatter.locale = Locale(identifier: "zh_CN")
-            timeFormatter.dateFormat = "M月d日 H:mm"
-            timeLabel.text = timeFormatter.string(from: Date(timeIntervalSince1970: TimeInterval(createdMs) / 1000.0))
+            timeLabel.text = Self.profileTimeFormatter.string(from: Date(timeIntervalSince1970: TimeInterval(createdMs) / 1000.0))
         } else {
             timeLabel.text = nil
         }
         if let avatarPath = entry.authorAvatar, let avatarURLValue = BearyImageURLs.avatarURL(avatarPath) {
             avatarLetterLabel.isHidden = true
-            avatarImageView.bearySetImage(url: avatarURLValue, placeholder: nil)
+            avatarImageView.bearySetImage(url: avatarURLValue, placeholder: nil, downsampleToWidth: 40 * UIScreen.main.scale)
         } else {
             avatarImageView.image = nil
             avatarLetterLabel.isHidden = false
@@ -3286,10 +3386,11 @@ private class BearyProfileEntryCell: UITableViewCell {
                 imageViewValue.isUserInteractionEnabled = true
                 imageViewValue.tag = imageIndex
                 imageViewValue.addGestureRecognizer(UITapGestureRecognizer(target: self, action: #selector(imageTapped(_:))))
-                imageViewValue.bearySetImage(url: BearyImageURLs.imageURL(key: imageKey, thumb: true), placeholder: nil)
+                let strip = stripWidth(key: imageKey, dims: entry.imgDims, height: 216)
+                imageViewValue.bearySetImage(url: BearyImageURLs.imageURL(key: imageKey, thumb: true), placeholder: nil, downsampleToWidth: strip * UIScreen.main.scale)
                 imagesStack.addArrangedSubview(imageViewValue)
                 NSLayoutConstraint.activate([
-                    imageViewValue.widthAnchor.constraint(equalToConstant: stripWidth(key: imageKey, dims: entry.imgDims, height: 216)),
+                    imageViewValue.widthAnchor.constraint(equalToConstant: strip),
                     imageViewValue.heightAnchor.constraint(equalToConstant: 216),
                 ])
             }
@@ -3402,7 +3503,7 @@ private class BearyProfileEntryCell: UITableViewCell {
                 thumbView.contentMode = .scaleAspectFill
                 thumbView.clipsToBounds = true
                 thumbView.layer.cornerRadius = 7
-                thumbView.bearySetImage(url: BearyImageURLs.imageURL(key: thumbKey, thumb: true))
+                thumbView.bearySetImage(url: BearyImageURLs.imageURL(key: thumbKey, thumb: true), downsampleToWidth: 42 * UIScreen.main.scale)
                 thumbsStack.addArrangedSubview(thumbView)
                 NSLayoutConstraint.activate([
                     thumbView.widthAnchor.constraint(equalToConstant: 42),
@@ -3417,10 +3518,7 @@ private class BearyProfileEntryCell: UITableViewCell {
             dateLabel.textColor = BearyColors.gray
             dateLabel.setContentCompressionResistancePriority(.required, for: .horizontal)
             // 本页时间小时不补零（与上行同口径，本地格式化，不改共享函数）。
-            let quoteTimeFormatter = DateFormatter()
-            quoteTimeFormatter.locale = Locale(identifier: "zh_CN")
-            quoteTimeFormatter.dateFormat = "M月d日 H:mm"
-            dateLabel.text = quoteTimeFormatter.string(from: Date(timeIntervalSince1970: TimeInterval(createdMs) / 1000.0))
+            dateLabel.text = Self.profileTimeFormatter.string(from: Date(timeIntervalSince1970: TimeInterval(createdMs) / 1000.0))
             inner.addArrangedSubview(dateLabel)
         }
         quoteContainer.isHidden = false
@@ -3474,18 +3572,61 @@ private class BearyProfileEntryCell: UITableViewCell {
         moodEmoteView = emoteView
     }
 
+    /// 80 包 B4-1：卡片/引用时间 formatter 静态复用（主线程 UI 路径使用，原每次 configure 新建）。
+    private static let profileTimeFormatter: DateFormatter = {
+        let f = DateFormatter()
+        f.locale = Locale(identifier: "zh_CN")
+        f.dateFormat = "M月d日 H:mm"
+        return f
+    }()
+
     /// 回应行：count 降序（网页 emoteChipsHtml 同口径），mine 高亮，末尾常驻 + 按钮。
     private func configureEmotes(entry: Entry, interactionDisabled: Bool) {
         chipKeys = []
+        // 80 包 B4-1：胶囊池化——只把 chip 从 stack 摘下留池，不销毁；本轮未复用
+        // 的池 chip 在循环末尾离树（仍留池供下轮）。
         for arrangedView in emoteStack.arrangedSubviews {
             emoteStack.removeArrangedSubview(arrangedView)
-            arrangedView.removeFromSuperview()
         }
         let sorted = (entry.emotes ?? []).sorted { ($0.count ?? 0) > ($1.count ?? 0) }
         for item in sorted {
             guard let key = item.emote, !key.isEmpty else { continue }
             chipKeys.append(key)
             let mine = item.mine ?? false
+            let chipIndex = chipKeys.count - 1
+            // 80 包 B4-1：池中有 chip 即复用——更新样式/计数/tag，key 不变时重播
+            // 播放器、key 变了才换播放器；不重建容器与约束。
+            if chipIndex < emoteChipPool.count {
+                let chip = emoteChipPool[chipIndex]
+                chip.backgroundColor = mine ? BearyColors.hov : BearyColors.faint
+                chip.layer.borderColor = (mine ? BearyColors.ink : BearyColors.line).cgColor
+                if let row = chip.subviews.compactMap({ $0 as? UIStackView }).first,
+                   let oldEmote = row.arrangedSubviews.compactMap({ $0 as? BearyEmoteView }).first,
+                   let countLabel = row.arrangedSubviews.compactMap({ $0 as? UILabel }).first {
+                    countLabel.font = UIFont.systemFont(ofSize: 12, weight: mine ? .bold : .regular)
+                    countLabel.textColor = mine ? BearyColors.ink : BearyColors.gray
+                    countLabel.text = "\(item.count ?? 0)"
+                    if oldEmote.emoteKey != key {
+                        oldEmote.stop()
+                        oldEmote.removeFromSuperview()
+                        let next = BearyEmoteView(key: key, animated: true)
+                        next.translatesAutoresizingMaskIntoConstraints = false
+                        row.insertArrangedSubview(next, at: 0)
+                        NSLayoutConstraint.activate([
+                            next.widthAnchor.constraint(equalToConstant: 24),
+                            next.heightAnchor.constraint(equalToConstant: 24),
+                        ])
+                    } else {
+                        oldEmote.play()
+                    }
+                    if let buttonValue = chip.subviews.compactMap({ $0 as? UIButton }).first {
+                        buttonValue.tag = chipIndex
+                        buttonValue.isEnabled = !interactionDisabled
+                    }
+                }
+                emoteStack.addArrangedSubview(chip)
+                continue
+            }
             // 回应 chip：容器承载样式，内层横排为播放器 24 + 计数；透明点击层保留原 tag 与点击回调。
             let chip = UIView()
             chip.translatesAutoresizingMaskIntoConstraints = false
@@ -3513,6 +3654,7 @@ private class BearyProfileEntryCell: UITableViewCell {
             buttonValue.tag = chipKeys.count - 1
             buttonValue.isEnabled = !interactionDisabled
             buttonValue.addTarget(self, action: #selector(emoteChipTapped(_:)), for: .touchUpInside)
+            buttonValue.bearyAddPressFeedback()
             chip.addSubview(buttonValue)
             NSLayoutConstraint.activate([
                 emoteView.widthAnchor.constraint(equalToConstant: 24),
@@ -3528,22 +3670,36 @@ private class BearyProfileEntryCell: UITableViewCell {
                 chip.heightAnchor.constraint(equalToConstant: 32),
             ])
             emoteStack.addArrangedSubview(chip)
+            emoteChipPool.append(chip)
         }
-        let addButton = UIButton(type: .system)
-        addButton.translatesAutoresizingMaskIntoConstraints = false
-        addButton.setImage(BearyIconImages.image(named: "icon_plus", pointSize: 16), for: .normal)
-        addButton.tintColor = BearyColors.gray
-        addButton.backgroundColor = BearyColors.faint
-        addButton.layer.cornerRadius = 16
-        addButton.layer.borderWidth = 1
-        addButton.layer.borderColor = BearyColors.line.cgColor
-        addButton.clipsToBounds = true
+        // 本轮未复用的池 chip 彻底离树（留池供下轮），不残留绘制。
+        // 以 chipKeys 计（空 key 项不建 chip，sorted.count 会多算）。
+        for surplus in emoteChipPool.dropFirst(chipKeys.count) {
+            surplus.removeFromSuperview()
+        }
+        let addButton: UIButton
+        if let reused = emoteAddButton {
+            addButton = reused
+        } else {
+            let made = UIButton(type: .system)
+            made.translatesAutoresizingMaskIntoConstraints = false
+            made.setImage(BearyIconImages.image(named: "icon_plus", pointSize: 16), for: .normal)
+            made.tintColor = BearyColors.gray
+            made.backgroundColor = BearyColors.faint
+            made.layer.cornerRadius = 16
+            made.layer.borderWidth = 1
+            made.layer.borderColor = BearyColors.line.cgColor
+            made.clipsToBounds = true
+            made.addTarget(self, action: #selector(emoteAddTapped), for: .touchUpInside)
+            made.bearyAddPressFeedback()
+            NSLayoutConstraint.activate([
+                made.widthAnchor.constraint(equalToConstant: 32),
+                made.heightAnchor.constraint(equalToConstant: 32),
+            ])
+            emoteAddButton = made
+            addButton = made
+        }
         addButton.isEnabled = !interactionDisabled
-        addButton.addTarget(self, action: #selector(emoteAddTapped), for: .touchUpInside)
-        NSLayoutConstraint.activate([
-            addButton.widthAnchor.constraint(equalToConstant: 32),
-            addButton.heightAnchor.constraint(equalToConstant: 32),
-        ])
         emoteStack.addArrangedSubview(addButton)
         emoteScrollView.isHidden = false
     }
@@ -3610,6 +3766,7 @@ private class BearyProfileEmoteSheetViewController: UIViewController, UICollecti
         closeButton.clipsToBounds = true
         closeButton.translatesAutoresizingMaskIntoConstraints = false
         closeButton.addTarget(self, action: #selector(closeTapped), for: .touchUpInside)
+        closeButton.bearyAddPressFeedback()
         closeButton.accessibilityLabel = "关闭"
         sheetView.addSubview(closeButton)
         let layout = UICollectionViewFlowLayout()
