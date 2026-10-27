@@ -48,7 +48,7 @@ class BearyEntryImageViewerViewController: UIViewController, UIGestureRecognizer
         imageView.backgroundColor = .clear
         imageView.translatesAutoresizingMaskIntoConstraints = false
         view.addSubview(imageView)
-        retryLabel.text = "图片加载失败，点击重试"
+        retryLabel.text = "图片加载失败，重试"
         retryLabel.textColor = .white
         retryLabel.font = UIFont.systemFont(ofSize: 14)
         retryLabel.textAlignment = .center

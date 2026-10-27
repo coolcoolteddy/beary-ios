@@ -1771,7 +1771,7 @@ class BearyDiaryCardCell: UITableViewCell {
         if BearyDiaryCardCell.quoteFailedIds.contains(quoteIdValue) {
             quoteTapId = quoteIdValue
             quoteTapLoadFailed = true
-            quoteView.showLoadFailed(message: "引用加载失败，点击重试")
+            quoteView.showLoadFailed(message: "引用加载失败，重试")
             quoteView.isHidden = false
             return
         }
@@ -1805,7 +1805,7 @@ class BearyDiaryCardCell: UITableViewCell {
                     guard let strongSelf = self, strongSelf.cellEntryId == hostEntryIdValue else { return }
                     strongSelf.quoteTapId = quoteIdValue
                     strongSelf.quoteTapLoadFailed = true
-                    strongSelf.quoteView.showLoadFailed(message: "引用加载失败，点击重试")
+                    strongSelf.quoteView.showLoadFailed(message: "引用加载失败，重试")
                     strongSelf.quoteView.isHidden = false
                     strongSelf.updateRightStackSpacing()
                     strongSelf.onNeedsRowReload?()

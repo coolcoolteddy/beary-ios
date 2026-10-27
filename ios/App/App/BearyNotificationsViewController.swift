@@ -2437,7 +2437,7 @@ private class BearyNotificationCell: UITableViewCell {
         button.setImage(BearyIconImages.image(named: "icon_refresh", pointSize: 20), for: .normal)
         button.tintColor = BearyColors.ink
         button.isHidden = true
-        button.accessibilityLabel = "点击重试"
+        button.accessibilityLabel = "重试"
         button.accessibilityHint = "重新加载头像"
         button.addTarget(self, action: #selector(avatarRetryTapped), for: .touchUpInside)
         button.bearyAddPressFeedback()

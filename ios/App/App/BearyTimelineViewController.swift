@@ -1958,7 +1958,7 @@ class BearyTimelineViewController: UIViewController {
     // 无参调用），故陈旧回包不调 completion 是安全的；日后若有调用方传
     // completion，需自行处理陈旧语义。
     private var timelineFirstPageSeq = 0
-    // G15：分页失败标记——脚部保持“加载失败，点击重试”可重试。
+    // G15：分页失败标记——脚部保持“加载失败，重试”可重试。
     private var timelinePageFailed = false
     // M2：分页新增行的错峰滑入队列（willDisplay 时按原始序号起播，播过即摘；
     // 用序号字典而非数组，避免摘除后后续序号前移导致错峰失效）。
@@ -2756,7 +2756,7 @@ class BearyTimelineViewController: UIViewController {
             // P2：失败态是唯一可点态（重试入口），保持启用 + 按压反馈；
             // P1-26：按功能命名（与可见文案一致）。
             statsButton.isEnabled = true
-            statsButton.accessibilityLabel = "日历加载失败，点击重试"
+            statsButton.accessibilityLabel = "日历加载失败，重试"
             // 64 包反馈修（第 3 项）：失败态亦计签名，一致则不重碰按钮。
             let signature = "fail"
             guard signature != lastStatsLineSignature else { return }
@@ -2765,7 +2765,7 @@ class BearyTimelineViewController: UIViewController {
             lastStatsMonthTotal = nil
             statsButton.setImage(nil, for: .normal)
             statsButton.setAttributedTitle(nil, for: .normal)
-            statsButton.setTitle("日历加载失败，点击重试", for: .normal)
+            statsButton.setTitle("日历加载失败，重试", for: .normal)
             statsButton.setTitleColor(BearyColors.gray, for: .normal)
             return
         }
@@ -3059,7 +3059,7 @@ class BearyTimelineViewController: UIViewController {
                     }
                 case .failure:
                     // G15：分页失败 toast，并保持脚部可重试（hasMore 不动、
-                    // updateFooter 出“加载失败，点击重试”）。
+                    // updateFooter 出“加载失败，重试”）。
                     strongSelf.timelinePageFailed = true
                     strongSelf.showTimelineToast(message: "加载失败")
                 }
@@ -4080,7 +4080,7 @@ class BearyTimelineViewController: UIViewController {
                 newBackgroundKind = "login"
             } else {
                 // W10：加载失败空态副标题补网页同款“网络好像不太顺”。
-                tableView.backgroundView = emptyView(title: "加载失败", subtitle: "网络好像不太顺", actionTitle: "点击重试", action: { [weak self] in
+                tableView.backgroundView = emptyView(title: "加载失败", subtitle: "网络好像不太顺", actionTitle: "重试", action: { [weak self] in
                     self?.reloadTimeline()
                 }, iconName: "icon_wifi_off", actionOutlined: true)
                 newBackgroundKind = "failed"
@@ -4167,7 +4167,7 @@ class BearyTimelineViewController: UIViewController {
             tableView.tableFooterView = footerLoadingHolder()
         } else if timelinePageFailed && timelineHasMore {
             // G15：分页失败后脚部保持可重试。
-            loadMoreButton.setTitle("加载失败，点击重试", for: .normal)
+            loadMoreButton.setTitle("加载失败，重试", for: .normal)
             loadMoreButton.isEnabled = true
             tableView.tableFooterView = footerHolder(button: loadMoreButton)
         } else if timelineHasMore {

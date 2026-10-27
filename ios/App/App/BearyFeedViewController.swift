@@ -1887,8 +1887,8 @@ class BearyFeedErrorCell: UITableViewCell {
     private let messageLabel: UILabel = {
         let lb = UILabel()
         lb.translatesAutoresizingMaskIntoConstraints = false
-        // W3：与详情/编辑器同句式——整句“加载失败，点击重试”（按钮仍为“点击重试”动作）。
-        lb.text = "加载失败，点击重试"
+        // W3：与详情/编辑器同句式——整句“加载失败，重试”（按钮仍为“重试”动作）。
+        lb.text = "加载失败，重试"
         lb.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 15))
         lb.adjustsFontForContentSizeCategory = true
         lb.textColor = BearyColors.ink
@@ -1900,7 +1900,7 @@ class BearyFeedErrorCell: UITableViewCell {
         let btn = UIButton(type: .system)
         btn.translatesAutoresizingMaskIntoConstraints = false
         btn.setImage(BearyFeedIconCache.image(named: "icon_refresh", pointSize: 15), for: .normal)
-        btn.setTitle("点击重试", for: .normal)
+        btn.setTitle("重试", for: .normal)
         btn.titleLabel?.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 14))
         btn.titleLabel?.adjustsFontForContentSizeCategory = true
         btn.setTitleColor(BearyColors.ink, for: .normal)
@@ -1916,7 +1916,7 @@ class BearyFeedErrorCell: UITableViewCell {
         // 否则标题会被裁：图宽 + titleEdgeInsets 左 6 + 实测标题宽 + contentEdgeInsets 左右各 12。
         // R8：宽/高改下限约束（默认尺寸不变），大字号时标题可向外生长、不被自身约束裁掉。
         let retryImageWidth = btn.currentImage?.size.width ?? 15
-        let retryTitleWidth = ceil(("点击重试" as NSString).size(withAttributes: [NSAttributedString.Key.font: UIFont.systemFont(ofSize: 14)]).width)
+        let retryTitleWidth = ceil(("重试" as NSString).size(withAttributes: [NSAttributedString.Key.font: UIFont.systemFont(ofSize: 14)]).width)
         btn.widthAnchor.constraint(greaterThanOrEqualToConstant: retryImageWidth + 6 + retryTitleWidth + 24).isActive = true
         return btn
     }()

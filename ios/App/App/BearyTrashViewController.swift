@@ -229,7 +229,7 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate {
         // B 批示范：失败态由 BearyStateView 承载（标题“加载失败”+ 紧凑描边重试钮，
         // 动作复用 retryTapped；钮边框深浅重刷改由组件内 trait 处理，不再由本页重刷）。
         failureStateView.translatesAutoresizingMaskIntoConstraints = false
-        failureStateView.configure(kind: .error, title: "加载失败", subtitle: nil, iconName: nil, actionTitle: "点击重试", onAction: { [weak self] in self?.retryTapped() })
+        failureStateView.configure(kind: .error, title: "加载失败", subtitle: nil, iconName: nil, actionTitle: "重试", onAction: { [weak self] in self?.retryTapped() })
 
         moreSpinner.color = BearyColors.gray
         moreSpinner.isHidden = true
