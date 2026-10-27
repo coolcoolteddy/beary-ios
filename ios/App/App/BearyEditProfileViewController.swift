@@ -238,24 +238,12 @@ class BearyEditProfileViewController: UIViewController {
         return labelValue
     }()
 
-    // MARK: - F12 行（主页链接 / 邮箱 / 账户与安全；id 与邮箱由 /me 补）
-
-    /// 账户与安全的容器回调；容器未接线时页内模态兜底（见 openAccountPage）。
-    var onOpenAccount: (() -> Void)?
+    // MARK: - F12 行（主页链接；id 由 /me 补）
+    // C4：邮箱行与账户与安全行已删除，onOpenAccount 回调、emailLabel、
+    // accountRowButton、openAccountPage 一并移除（全仓 grep 确认无调用方）。
 
     /// /me 补到的用户 id（主页链接用 /beary/u/<id> 口径，网页 edCopyLink 同款）。
     private var fetchedUserId: Int?
-
-    private let emailLabel: UILabel = {
-        let labelValue = UILabel()
-        labelValue.translatesAutoresizingMaskIntoConstraints = false
-        labelValue.font = UIFont.systemFont(ofSize: 16)
-        labelValue.textColor = BearyColors.gray
-        labelValue.numberOfLines = 1
-        labelValue.lineBreakMode = .byTruncatingTail
-        labelValue.text = "–"
-        return labelValue
-    }()
 
     private let linkLabel: UILabel = {
         let labelValue = UILabel()
@@ -280,14 +268,6 @@ class BearyEditProfileViewController: UIViewController {
         buttonValue.layer.cornerRadius = 16
         buttonValue.addTarget(self, action: #selector(copyLinkButtonTapped), for: .touchUpInside)
         buttonValue.bearyAddPressFeedback()
-        return buttonValue
-    }()
-
-    private lazy var accountRowButton: UIButton = {
-        let buttonValue = UIButton(type: .custom)
-        buttonValue.translatesAutoresizingMaskIntoConstraints = false
-        buttonValue.addTarget(self, action: #selector(accountRowButtonTapped), for: .touchUpInside)
-        buttonValue.bearyAddPressHaptic()
         return buttonValue
     }()
 
@@ -332,13 +312,13 @@ class BearyEditProfileViewController: UIViewController {
         // F14：网页编辑页本就没有移除封面入口，移除钮整组删除（保存逻辑的
         // cover=null 路径保留作将来入口复用，但本页不再提供移除操作）。
         updateDynamicLayerColors()
-        // F12：id 与邮箱不在 init 入参里（不改容器调用点），页内调既有 /me 补齐。
+        // F12：id 不在 init 入参里（不改容器调用点），页内调既有 /me 补齐；
+        // C4：邮箱行已删，/me 不再为本页补邮箱（邮箱只在设置页 ID 卡呈现）。
         BearyAPI.shared.fetchMe { [weak self] result in
             DispatchQueue.main.async {
                 guard let strongSelf = self else { return }
                 if case .success(let user) = result, let userValue = user {
                     strongSelf.fetchedUserId = userValue.id
-                    strongSelf.emailLabel.text = userValue.email ?? "–"
                     strongSelf.updateLinkRow()
                 }
             }
@@ -488,18 +468,8 @@ class BearyEditProfileViewController: UIViewController {
             hintRow.trailingAnchor.constraint(equalTo: hintWrap.trailingAnchor),
             hintRow.bottomAnchor.constraint(equalTo: hintWrap.bottomAnchor),
         ])
-        // F12：邮箱行（网页 ed-row 口径：标签 + 灰值 + 「不在这里修改」）。
-        let emailSubLabel = UILabel()
-        emailSubLabel.translatesAutoresizingMaskIntoConstraints = false
-        emailSubLabel.font = UIFont.systemFont(ofSize: 12)
-        emailSubLabel.textColor = BearyColors.gray
-        emailSubLabel.text = "不在这里修改"
-        emailSubLabel.setContentHuggingPriority(.required, for: .horizontal)
-        let emailRow = UIStackView(arrangedSubviews: [makeFormLabel("邮箱"), emailLabel, emailSubLabel])
-        emailRow.translatesAutoresizingMaskIntoConstraints = false
-        emailRow.axis = .horizontal
-        emailRow.spacing = 14
-        emailRow.alignment = .center
+        // C4：只读邮箱行已删除（标签 + 灰值 + 「不在这里修改」整行移除；
+        // 邮箱仍在设置页 ID 卡呈现，不在这里改）。
         let formStack = UIStackView()
         formStack.translatesAutoresizingMaskIntoConstraints = false
         formStack.axis = .vertical
@@ -510,7 +480,6 @@ class BearyEditProfileViewController: UIViewController {
         formStack.addArrangedSubview(makeFormSeparator())
         formStack.addArrangedSubview(makeFormRowWrap(handleRow))
         formStack.addArrangedSubview(hintWrap)
-        formStack.addArrangedSubview(makeFormRowWrap(emailRow))
         formStack.addArrangedSubview(makeFormSeparator())
         // F12：主页链接行（网页 ed-linkrow 口径：灰文案 + 复制钮）。
         let linkRow = UIStackView(arrangedSubviews: [linkLabel, copyLinkButton])
@@ -529,67 +498,20 @@ class BearyEditProfileViewController: UIViewController {
             linkRow.bottomAnchor.constraint(equalTo: linkWrap.bottomAnchor),
             copyLinkButton.heightAnchor.constraint(equalToConstant: 32),
         ])
-        // F12：账户与安全行（网页 ed-link-row 口径：标题 + 副文 + 右 chevron，上下边线）。
-        let accountTitle = UILabel()
-        accountTitle.translatesAutoresizingMaskIntoConstraints = false
-        accountTitle.font = UIFont.systemFont(ofSize: 15, weight: .semibold)
-        accountTitle.textColor = BearyColors.ink
-        accountTitle.text = "账户与安全"
-        let accountSub = UILabel()
-        accountSub.translatesAutoresizingMaskIntoConstraints = false
-        accountSub.font = UIFont.systemFont(ofSize: 13)
-        accountSub.textColor = BearyColors.gray
-        accountSub.text = "登录设备、注销账号"
-        let accountChevron = UIImageView()
-        accountChevron.translatesAutoresizingMaskIntoConstraints = false
-        accountChevron.image = BearyIconImages.image(named: "icon_chevron_right", pointSize: 16)
-        accountChevron.tintColor = BearyColors.gray
-        accountChevron.contentMode = .scaleAspectFit
-        NSLayoutConstraint.activate([
-            accountChevron.widthAnchor.constraint(equalToConstant: 16),
-            accountChevron.heightAnchor.constraint(equalToConstant: 16),
-        ])
-        let accountRow = UIStackView(arrangedSubviews: [accountTitle, accountSub, accountChevron])
-        accountRow.translatesAutoresizingMaskIntoConstraints = false
-        accountRow.axis = .horizontal
-        accountRow.spacing = 8
-        accountRow.alignment = .center
-        let accountWrap = UIView()
-        accountWrap.translatesAutoresizingMaskIntoConstraints = false
-        accountRow.translatesAutoresizingMaskIntoConstraints = false
-        accountWrap.addSubview(accountRow)
-        accountWrap.addSubview(accountRowButton)
-        NSLayoutConstraint.activate([
-            accountRow.topAnchor.constraint(equalTo: accountWrap.topAnchor, constant: 16),
-            accountRow.leadingAnchor.constraint(equalTo: accountWrap.leadingAnchor),
-            accountRow.trailingAnchor.constraint(equalTo: accountWrap.trailingAnchor),
-            accountRow.bottomAnchor.constraint(equalTo: accountWrap.bottomAnchor, constant: -16),
-            accountRowButton.topAnchor.constraint(equalTo: accountWrap.topAnchor),
-            accountRowButton.leadingAnchor.constraint(equalTo: accountWrap.leadingAnchor),
-            accountRowButton.trailingAnchor.constraint(equalTo: accountWrap.trailingAnchor),
-            accountRowButton.bottomAnchor.constraint(equalTo: accountWrap.bottomAnchor),
-        ])
-        let accountStack = UIStackView()
-        accountStack.translatesAutoresizingMaskIntoConstraints = false
-        accountStack.axis = .vertical
-        accountStack.spacing = 0
-        accountStack.alignment = .fill
-        accountStack.addArrangedSubview(makeFormSeparator())
-        accountStack.addArrangedSubview(accountWrap)
-        accountStack.addArrangedSubview(makeFormSeparator())
+        // C4：跳设置页的「账户与安全」行已删除（设置页入口现为个人主页齿轮
+        // 直达，不再经编辑页中转；本页只保留 [封面与头像][昵称][用户名 @handle]
+        // [主页链接复制]）。
         contentStack.addArrangedSubview(topRow)
         contentStack.addArrangedSubview(coverImageView)
         contentStack.addArrangedSubview(avatarWrap)
         contentStack.addArrangedSubview(coverButtonWrap)
         contentStack.addArrangedSubview(formStack)
         contentStack.addArrangedSubview(linkWrap)
-        contentStack.addArrangedSubview(accountStack)
         // F14：头像半压封面（网页 ed-ava-row margin-top:-40 口径）。
         contentStack.setCustomSpacing(-40, after: coverImageView)
         // F12：表单→链接行距 0（链接包容器自带 14 上边距 = 网页 margin-top:14）；
-        // 链接行→账户行距 26（网页 ed-link-row margin-top:26 口径）。
+        // C4：链接行已为末行，旧「链接行→账户行距 26」随账户行一并删除。
         contentStack.setCustomSpacing(0, after: formStack)
-        contentStack.setCustomSpacing(26, after: linkWrap)
         NSLayoutConstraint.activate([
             scrollView.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
             scrollView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
@@ -686,39 +608,6 @@ class BearyEditProfileViewController: UIViewController {
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in
             self?.copyLinkButton.setTitle("复制", for: .normal)
         }
-    }
-
-    /// F12：账户与安全行（网页 ed-link-row → /account 口径）。
-    @objc private func accountRowButtonTapped() {
-        openAccountPage()
-    }
-
-    private func openAccountPage() {
-        if let handler = onOpenAccount {
-            handler()
-            return
-        }
-        let accountVC = BearySettingsViewController()
-        accountVC.modalPresentationStyle = .fullScreen
-        accountVC.onClose = { [weak accountVC] in
-            accountVC?.dismiss(animated: true)
-        }
-        accountVC.onRequireLogin = { [weak self, weak accountVC] in
-            accountVC?.dismiss(animated: true) {
-                self?.onRequireLogin?()
-            }
-        }
-        accountVC.onAccountDeleted = { [weak self, weak accountVC] in
-            accountVC?.dismiss(animated: true) {
-                self?.onRequireLogin?()
-            }
-        }
-        accountVC.onLoggedOut = { [weak self, weak accountVC] in
-            accountVC?.dismiss(animated: true) {
-                self?.onRequireLogin?()
-            }
-        }
-        present(accountVC, animated: true)
     }
 
     private func presentImagePicker() {

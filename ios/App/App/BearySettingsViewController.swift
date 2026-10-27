@@ -1,8 +1,11 @@
 // ===== beary 设置页（2026-10-26：原独立账户页整体迁移为本页「账号与安全」分区；
 // 齿轮菜单与头像菜单的“账户设置”入口均改开本页，旧 BearyAccountViewController 已删除，
 // 不留两个入口、不留死代码页）=====
-// 四分区：账号与安全（原账户页全量：ID 卡、Plus 明细、登录设备、退出其他设备、
-// 退出登录、邮箱验证码登录行、注销、导出我的数据）、消息与通知、通用、隐私。
+// C 批（C2/C3/C4）：模块顺序改为 [ID 概览卡 & Plus 状态] → [通用与通知
+// （外观切换、消息角标、使用指南入口）] → [账户与安全（登录设备管理、导出数据；
+// 个人资料入口为 ID 卡右侧“编辑资料”钮，旧账户组四行已按 C4 删除）] → [隐私与协议]；
+// 退出登录为独立居中常规钮（BearyButton 工厂），注销账户下沉至页底弱化灰字，
+// 两者行为一字不动；齿轮直达本页，不再经 ActionSheet / 外观 Popover 中转。
 // 新增行一律真实能力：消息角标开关（本地 UserDefaults 门控底栏角标）、系统通知设置入口
 // （打开 iOS 设置）、外观主题三选（复用 beary_theme_mode 存档键）、版本行（Bundle 实值）、
 // 隐私政策 / 用户协议（App 内原生文字页，文本取自 teddyhn.com 现行 privacy/terms，不开网页）。
@@ -212,6 +215,8 @@ final class BearySettingsViewController: UIViewController {
     /// （编辑页、退出后关闭本页），容器后续接线后走容器路径。
     var onEditProfile: (() -> Void)?
     var onLoggedOut: (() -> Void)?
+    /// C2：通用组内「使用指南」行的容器回调；容器接线到教程重播页。
+    var onShowTutorial: (() -> Void)?
 
     // MARK: - 状态
 
@@ -237,10 +242,18 @@ final class BearySettingsViewController: UIViewController {
     private let loginWrap = UIStackView()
     private let loginHintLabel = UILabel()
     private let loginButton = UIButton(type: .system)
+    /// C2：登录态相关容器。contentWrap = [ID 概览卡 & Plus 状态]；
+    /// accountSecurityWrap = [账户与安全]（安全组 + 导出行）；两者未登录 /
+    /// 加载失败时隐藏。generalNotifyWrap = [通用与通知]、privacyWrap =
+    /// [隐私与协议] 登录态无关（主题/隐私/通知开关本地可用），恒可见。
     private let contentWrap = UIStackView()
-    /// 设置页新增三区容器：登录态无关（主题/隐私/通知开关本地可用），
-    /// 故不随 contentWrap 一起在未登录/加载失败时隐藏，恒可见。
-    private let settingsExtraWrap = UIStackView()
+    private let generalNotifyWrap = UIStackView()
+    private let accountSecurityWrap = UIStackView()
+    private let privacyWrap = UIStackView()
+    /// C3：退出登录独立居中钮与页底注销入口的包容器（均登录态相关，
+    /// 未登录 / 加载失败时隐藏；注销包另按 is_admin 隐藏）。
+    private let logoutWrap = UIView()
+    private let deleteBottomWrap = UIView()
 
     // ID 卡
     private let avatarContainer = UIView()
@@ -261,23 +274,19 @@ final class BearySettingsViewController: UIViewController {
     private let plusPersonalLabel = UILabel()
     private let grantsStack = UIStackView()
 
-    // 账户分组
-    private let accountNameLabel = UILabel()
-    private let accountHandleLabel = UILabel()
-    private let copyHandleButton = UIButton(type: .system)
-    private let accountEmailLabel = UILabel()
-    private let accountCreatedLabel = UILabel()
+    // ID 卡右侧编辑资料钮（C4：账户组四行删除后，个人资料唯一入口）。
+    private let editProfileButton = UIButton(type: .system)
 
     // 设备分组
     private let deviceCountLabel = UILabel()
     private let sessionsStack = UIStackView()
     private let logoutOthersButton = UIButton(type: .system)
 
-    // 操作分组
-    private var deleteRowWrapper: UIView?
-    private let logoutRowButton = UIButton(type: .custom)
+    // C3：退出登录独立居中常规钮（#74 BearyButton 工厂 secondaryOutline 常规款，
+    // 不另起样式）；导出行复用 exportRowButton（安全组内行，isEnabled 由导出流程控制）；
+    // 注销账户复用 deleteRowButton，改弱化灰字文本钮置于页底（行为一字不动）。
+    private let logoutStandaloneButton = BearyButton(style: .secondaryOutline(.regular))
     private let exportRowButton = UIButton(type: .custom)
-    private let deleteRow = UIView()
     private let deleteRowButton = UIButton(type: .custom)
 
     init() {
@@ -596,26 +605,44 @@ final class BearySettingsViewController: UIViewController {
         contentWrap.alignment = .fill
         contentWrap.isHidden = true
 
-        contentWrap.addArrangedSubview(makeSectionTitle("账号与安全"))
+        // C2 模块顺序：[ID 概览卡 & Plus 状态] → [通用与通知] →
+        // [账户与安全] → [隐私与协议]，其后依次为独立退出钮与页底注销入口。
         buildIdCard()
         buildPlusSection()
-        buildAccountSection()
-        buildSecuritySection()
-        buildActionsSection()
 
-        settingsExtraWrap.translatesAutoresizingMaskIntoConstraints = false
-        settingsExtraWrap.axis = .vertical
-        settingsExtraWrap.spacing = 20
-        settingsExtraWrap.alignment = .fill
-        buildNotificationSection()
+        generalNotifyWrap.translatesAutoresizingMaskIntoConstraints = false
+        generalNotifyWrap.axis = .vertical
+        generalNotifyWrap.spacing = 20
+        generalNotifyWrap.alignment = .fill
         buildGeneralSection()
+        buildNotificationSection()
+
+        accountSecurityWrap.translatesAutoresizingMaskIntoConstraints = false
+        accountSecurityWrap.axis = .vertical
+        accountSecurityWrap.spacing = 20
+        accountSecurityWrap.alignment = .fill
+        accountSecurityWrap.isHidden = true
+        accountSecurityWrap.addArrangedSubview(makeSectionTitle("账号与安全"))
+        buildSecuritySection()
+
+        privacyWrap.translatesAutoresizingMaskIntoConstraints = false
+        privacyWrap.axis = .vertical
+        privacyWrap.spacing = 20
+        privacyWrap.alignment = .fill
         buildPrivacySection()
+
+        buildLogoutSection()
+        buildDeleteBottomSection()
 
         contentStack.addArrangedSubview(loadingView)
         contentStack.addArrangedSubview(failureWrap)
         contentStack.addArrangedSubview(loginWrap)
         contentStack.addArrangedSubview(contentWrap)
-        contentStack.addArrangedSubview(settingsExtraWrap)
+        contentStack.addArrangedSubview(generalNotifyWrap)
+        contentStack.addArrangedSubview(accountSecurityWrap)
+        contentStack.addArrangedSubview(privacyWrap)
+        contentStack.addArrangedSubview(logoutWrap)
+        contentStack.addArrangedSubview(deleteBottomWrap)
         // 94 包：设置页底部构建号（Bundle 实值，不写死）。
         let buildFooterLabel = UILabel()
         buildFooterLabel.translatesAutoresizingMaskIntoConstraints = false
@@ -665,7 +692,17 @@ final class BearySettingsViewController: UIViewController {
         let nameStack = UIStackView(arrangedSubviews: [heroNameLabel, heroEmailLabel])
         nameStack.axis = .vertical
         nameStack.spacing = 4
-        let heroRow = UIStackView(arrangedSubviews: [avatarContainer, nameStack])
+        // C4：ID 卡右侧直接提供“编辑资料”钮（旧账户组四行已删，个人资料
+        // 唯一入口走这里；行末文字钮口径与旧账户组编辑 / 修改同款 14 墨字）。
+        editProfileButton.translatesAutoresizingMaskIntoConstraints = false
+        editProfileButton.setTitle("编辑资料", for: .normal)
+        editProfileButton.setTitleColor(BearyColors.ink, for: .normal)
+        editProfileButton.titleLabel?.font = UIFont.systemFont(ofSize: 14)
+        editProfileButton.setContentHuggingPriority(.required, for: .horizontal)
+        editProfileButton.setContentCompressionResistancePriority(.required, for: .horizontal)
+        editProfileButton.addTarget(self, action: #selector(editProfileButtonTapped), for: .touchUpInside)
+        editProfileButton.bearyAddPressFeedback()
+        let heroRow = UIStackView(arrangedSubviews: [avatarContainer, nameStack, editProfileButton])
         heroRow.axis = .horizontal
         heroRow.spacing = 16
         heroRow.alignment = .center
@@ -757,75 +794,11 @@ final class BearySettingsViewController: UIViewController {
         contentWrap.addArrangedSubview(plusGroup.card)
     }
 
-    private func buildAccountSection() {
-        accountNameLabel.font = UIFont.systemFont(ofSize: 14)
-        accountNameLabel.textColor = BearyColors.gray
-        accountNameLabel.numberOfLines = 0
-        accountNameLabel.textAlignment = .right
-        accountHandleLabel.font = UIFont.systemFont(ofSize: 14)
-        accountHandleLabel.textColor = BearyColors.gray
-        accountHandleLabel.numberOfLines = 0
-        accountHandleLabel.textAlignment = .right
-        copyHandleButton.setTitle("复制", for: .normal)
-        copyHandleButton.setTitleColor(BearyColors.ink, for: .normal)
-        copyHandleButton.titleLabel?.font = UIFont.systemFont(ofSize: 14)
-        copyHandleButton.addTarget(self, action: #selector(copyHandleButtonTapped), for: .touchUpInside)
-        copyHandleButton.bearyAddPressFeedback()
-        accountEmailLabel.font = UIFont.systemFont(ofSize: 14)
-        accountEmailLabel.textColor = BearyColors.gray
-        accountEmailLabel.numberOfLines = 0
-        accountEmailLabel.textAlignment = .right
-        accountCreatedLabel.font = UIFont.systemFont(ofSize: 14)
-        accountCreatedLabel.textColor = BearyColors.gray
-        accountCreatedLabel.numberOfLines = 0
-        accountCreatedLabel.textAlignment = .right
-        // F7：已验证改网页 badge-ok 口径——11/600 绿 pill（绿 12% 底、内边距 4/10、圆角 20）。
-        let verifiedLabel = makeLabel(font: UIFont.systemFont(ofSize: 11, weight: .semibold), color: BearyColors.green)
-        verifiedLabel.text = "已验证"
-        let verifiedPill = UIView()
-        verifiedPill.translatesAutoresizingMaskIntoConstraints = false
-        verifiedPill.backgroundColor = BearyColors.alpha(BearyColors.green, 0.12)
-        verifiedPill.layer.cornerRadius = 20
-        verifiedPill.clipsToBounds = true
-        verifiedLabel.translatesAutoresizingMaskIntoConstraints = false
-        verifiedPill.addSubview(verifiedLabel)
-        NSLayoutConstraint.activate([
-            verifiedLabel.topAnchor.constraint(equalTo: verifiedPill.topAnchor, constant: 4),
-            verifiedLabel.leadingAnchor.constraint(equalTo: verifiedPill.leadingAnchor, constant: 10),
-            verifiedLabel.trailingAnchor.constraint(equalTo: verifiedPill.trailingAnchor, constant: -10),
-            verifiedLabel.bottomAnchor.constraint(equalTo: verifiedPill.bottomAnchor, constant: -4),
-        ])
-        let emailRow = makeRow(title: "邮箱", detailLabel: accountEmailLabel, iconName: "icon_mail")
-        if let stack = emailRow as? UIStackView {
-            stack.addArrangedSubview(verifiedPill)
-        }
-        let handleRow = makeRow(title: "用户名", detailLabel: accountHandleLabel, iconName: "icon_link")
-        if let stack = handleRow as? UIStackView {
-            stack.addArrangedSubview(copyHandleButton)
-            stack.addArrangedSubview(makeAccountActionButton(title: "修改", action: #selector(editHandleButtonTapped)))
-        }
-        // F6：显示名称行补「编辑」钮（与用户名行「修改」同款，接现有编辑资料入口）。
-        let nameRow = makeRow(title: "显示名称", detailLabel: accountNameLabel, iconName: "icon_user")
-        if let stack = nameRow as? UIStackView {
-            stack.addArrangedSubview(makeAccountActionButton(title: "编辑", action: #selector(editNameButtonTapped)))
-        }
-        let createdRow = makeRow(title: "注册时间", detailLabel: accountCreatedLabel, iconName: "icon_clock")
-        let accountGroup = makeGroupCard(title: "账户", rows: [nameRow, handleRow, emailRow, createdRow])
-        contentWrap.addArrangedSubview(accountGroup.card)
-    }
-
-    /// 账户组行末文字钮（复制 / 编辑 / 修改同款：14 墨字，与网页 .btn 区分——
-    /// 网页 .btn 为 36 高边框钮，App 本页行末既有用文字钮，沿用它不另起样式）。
-    private func makeAccountActionButton(title: String, action: Selector) -> UIButton {
-        let buttonValue = UIButton(type: .system)
-        buttonValue.translatesAutoresizingMaskIntoConstraints = false
-        buttonValue.setTitle(title, for: .normal)
-        buttonValue.setTitleColor(BearyColors.ink, for: .normal)
-        buttonValue.titleLabel?.font = UIFont.systemFont(ofSize: 14)
-        buttonValue.addTarget(self, action: action, for: .touchUpInside)
-        buttonValue.bearyAddPressFeedback()
-        return buttonValue
-    }
+    // C4：旧「账户」组整组删除——显示名称 / 用户名 / 邮箱 / 注册时间四行
+    // 均与编辑资料重复（昵称、用户名 @handle 在编辑页内，邮箱与注册时间
+    // 已在 ID 卡呈现），四行删完后组内无剩余行，故卡片一并移除，不留空组；
+    // 账户组其余行本就不存在，安全组与导出行不受影响（见 buildSecuritySection）。
+    // 个人资料入口改为 ID 卡右侧“编辑资料”钮（见 buildIdCard）。
 
     private func buildSecuritySection() {
         // F8/F11：设备不再单立「组头 + 刷新」分组，改为安全组内一行（网页
@@ -855,44 +828,8 @@ final class BearySettingsViewController: UIViewController {
         NSLayoutConstraint.activate([
             logoutOthersButton.heightAnchor.constraint(equalToConstant: 36),
         ])
-        let securityGroup = makeGroupCard(title: "安全", rows: [
-            codeLoginRow,
-            deviceRow,
-            sessionsStack,
-            logoutOthersButton,
-        ])
-        contentWrap.addArrangedSubview(securityGroup.card)
-    }
-
-    private func buildActionsSection() {
-        // S9：动作卡补组标题「账户操作」（覆盖 F8 无标题口径），
-        // 顺序与网页一致（退出登录在前）。
-        let logoutTitle = makeLabel(font: UIFont.systemFont(ofSize: 15), color: BearyColors.red)
-        logoutTitle.text = "退出登录"
-        let logoutRow = UIStackView(arrangedSubviews: [makeRowIcon("icon_logout"), logoutTitle])
-        logoutRow.translatesAutoresizingMaskIntoConstraints = false
-        logoutRow.axis = .horizontal
-        logoutRow.spacing = 12
-        logoutRow.alignment = .center
-        logoutRowButton.translatesAutoresizingMaskIntoConstraints = false
-        logoutRowButton.addTarget(self, action: #selector(logoutButtonTapped), for: .touchUpInside)
-        logoutRowButton.bearyAddPressHaptic()
-        let logoutRowWrap = UIView()
-        logoutRowWrap.translatesAutoresizingMaskIntoConstraints = false
-        logoutRowWrap.addSubview(logoutRow)
-        logoutRowWrap.addSubview(logoutRowButton)
-        logoutRow.translatesAutoresizingMaskIntoConstraints = false
-        NSLayoutConstraint.activate([
-            logoutRow.topAnchor.constraint(equalTo: logoutRowWrap.topAnchor),
-            logoutRow.leadingAnchor.constraint(equalTo: logoutRowWrap.leadingAnchor),
-            logoutRow.trailingAnchor.constraint(equalTo: logoutRowWrap.trailingAnchor),
-            logoutRow.bottomAnchor.constraint(equalTo: logoutRowWrap.bottomAnchor),
-            logoutRowButton.topAnchor.constraint(equalTo: logoutRowWrap.topAnchor),
-            logoutRowButton.leadingAnchor.constraint(equalTo: logoutRowWrap.leadingAnchor),
-            logoutRowButton.trailingAnchor.constraint(equalTo: logoutRowWrap.trailingAnchor),
-            logoutRowButton.bottomAnchor.constraint(equalTo: logoutRowWrap.bottomAnchor),
-        ])
-
+        // C2：导出我的数据归入账户与安全模块（原动作卡行，视觉与行为不动，
+        // 仅换组；exportRowButton 的 isEnabled 仍由导出流程控制）。
         let exportTitle = makeLabel(font: UIFont.systemFont(ofSize: 15), color: BearyColors.ink)
         exportTitle.text = "导出我的数据"
         let exportDetail = makeLabel(font: UIFont.systemFont(ofSize: 13), color: BearyColors.gray, lines: 0)
@@ -923,43 +860,55 @@ final class BearySettingsViewController: UIViewController {
             exportRowButton.trailingAnchor.constraint(equalTo: exportRowWrap.trailingAnchor),
             exportRowButton.bottomAnchor.constraint(equalTo: exportRowWrap.bottomAnchor),
         ])
+        let securityGroup = makeGroupCard(title: "安全", rows: [
+            codeLoginRow,
+            deviceRow,
+            sessionsStack,
+            logoutOthersButton,
+            exportRowWrap,
+        ])
+        accountSecurityWrap.addArrangedSubview(securityGroup.card)
+    }
 
-        let deleteTitle = makeLabel(font: UIFont.systemFont(ofSize: 15), color: BearyColors.red)
-        deleteTitle.text = "注销账户"
-        let deleteDetail = makeLabel(font: UIFont.systemFont(ofSize: 13), color: BearyColors.gray, lines: 0)
-        deleteDetail.text = "7 天冷静期，期间登录可取消"
-        let deleteStack = UIStackView(arrangedSubviews: [deleteTitle, deleteDetail])
-        deleteStack.axis = .vertical
-        deleteStack.spacing = 4
+    /// C3：退出登录独立居中的常规按钮（#74 BearyButton 工厂 secondaryOutline
+    /// 常规款 44 高；不再与注销同卡，不再是红色行）。行为一字不动：
+    /// 仍走 logoutButtonTapped（BearyAPI.logout + 清 cookie + 本地退出）。
+    private func buildLogoutSection() {
+        logoutWrap.translatesAutoresizingMaskIntoConstraints = false
+        logoutWrap.isHidden = true
+        logoutStandaloneButton.translatesAutoresizingMaskIntoConstraints = false
+        logoutStandaloneButton.setTitle("退出登录", for: .normal)
+        logoutStandaloneButton.addTarget(self, action: #selector(logoutButtonTapped), for: .touchUpInside)
+        logoutStandaloneButton.bearyAddPressHaptic()
+        logoutWrap.addSubview(logoutStandaloneButton)
+        NSLayoutConstraint.activate([
+            logoutStandaloneButton.topAnchor.constraint(equalTo: logoutWrap.topAnchor),
+            logoutStandaloneButton.centerXAnchor.constraint(equalTo: logoutWrap.centerXAnchor),
+            logoutStandaloneButton.widthAnchor.constraint(equalToConstant: 220),
+            logoutStandaloneButton.heightAnchor.constraint(equalToConstant: BearyButtonStyle.secondaryOutline(.regular).height),
+            logoutStandaloneButton.bottomAnchor.constraint(equalTo: logoutWrap.bottomAnchor),
+        ])
+    }
+
+    /// C3：注销账户单独下沉至页面最底部（隐私组与退出钮之后、版本脚注之前），
+    /// 弱化灰字文本钮（不再是红色卡片行），与退出登录彻底拉开物理距离。
+    /// 行为一字不动：仍走 deleteButtonTapped（两步确认 + 7 天冷静期软删除）。
+    /// 管理员隐藏由 loadAll 经页底包容器整体控制（原卡片行 + 包容器口径）。
+    private func buildDeleteBottomSection() {
+        deleteBottomWrap.translatesAutoresizingMaskIntoConstraints = false
+        deleteBottomWrap.isHidden = true
         deleteRowButton.translatesAutoresizingMaskIntoConstraints = false
+        deleteRowButton.setTitle("注销账户", for: .normal)
+        deleteRowButton.setTitleColor(BearyColors.gray, for: .normal)
+        deleteRowButton.titleLabel?.font = UIFont.systemFont(ofSize: 13)
         deleteRowButton.addTarget(self, action: #selector(deleteButtonTapped), for: .touchUpInside)
         deleteRowButton.bearyAddPressHaptic()
-        deleteRow.translatesAutoresizingMaskIntoConstraints = false
-        deleteStack.translatesAutoresizingMaskIntoConstraints = false
-        let deleteRowContent = UIStackView(arrangedSubviews: [makeRowIcon("icon_trash"), deleteStack])
-        deleteRowContent.translatesAutoresizingMaskIntoConstraints = false
-        deleteRowContent.axis = .horizontal
-        deleteRowContent.spacing = 12
-        deleteRowContent.alignment = .center
-        deleteRow.addSubview(deleteRowContent)
-        deleteRow.addSubview(deleteRowButton)
+        deleteBottomWrap.addSubview(deleteRowButton)
         NSLayoutConstraint.activate([
-            deleteRowContent.topAnchor.constraint(equalTo: deleteRow.topAnchor),
-            deleteRowContent.leadingAnchor.constraint(equalTo: deleteRow.leadingAnchor),
-            deleteRowContent.trailingAnchor.constraint(equalTo: deleteRow.trailingAnchor),
-            deleteRowContent.bottomAnchor.constraint(equalTo: deleteRow.bottomAnchor),
-            deleteRowButton.topAnchor.constraint(equalTo: deleteRow.topAnchor),
-            deleteRowButton.leadingAnchor.constraint(equalTo: deleteRow.leadingAnchor),
-            deleteRowButton.trailingAnchor.constraint(equalTo: deleteRow.trailingAnchor),
-            deleteRowButton.bottomAnchor.constraint(equalTo: deleteRow.bottomAnchor),
+            deleteRowButton.topAnchor.constraint(equalTo: deleteBottomWrap.topAnchor),
+            deleteRowButton.centerXAnchor.constraint(equalTo: deleteBottomWrap.centerXAnchor),
+            deleteRowButton.bottomAnchor.constraint(equalTo: deleteBottomWrap.bottomAnchor),
         ])
-
-        let actionsGroup = makeGroupCard(title: "账户操作", rows: [logoutRowWrap, exportRowWrap, deleteRow])
-        if actionsGroup.wrappers.count > 2 {
-            deleteRowWrapper = actionsGroup.wrappers[2]
-        }
-        contentWrap.addArrangedSubview(actionsGroup.card)
-
     }
 
     // MARK: - 动作
@@ -980,12 +929,14 @@ final class BearySettingsViewController: UIViewController {
         loadSessions()
     }
 
-    @objc private func editNameButtonTapped() {
+    /// C4：ID 卡右侧“编辑资料”钮（旧账户组编辑 / 修改钮已随组删除）。
+    @objc private func editProfileButtonTapped() {
         openEditPage()
     }
 
-    @objc private func editHandleButtonTapped() {
-        openEditPage()
+    /// C2：通用组内「使用指南」行，容器接线到教程重播页。
+    @objc private func tutorialButtonTapped() {
+        onShowTutorial?()
     }
 
     /// F6：编辑 / 修改均接现有编辑资料入口；容器接线时走容器，容器未接线时
@@ -1045,15 +996,6 @@ final class BearySettingsViewController: UIViewController {
         }
     }
 
-    @objc private func copyHandleButtonTapped() {
-        guard let handle = meUser?.handle, !handle.isEmpty else {
-            showToast("还没设置用户名")
-            return
-        }
-        UIPasteboard.general.string = "https://teddyhn.com/beary/@" + handle
-        showToast("主页链接已复制")
-    }
-
     // MARK: - 加载
 
     private func loadAll() {
@@ -1064,6 +1006,9 @@ final class BearySettingsViewController: UIViewController {
         failureWrap.isHidden = true
         loginWrap.isHidden = true
         contentWrap.isHidden = true
+        accountSecurityWrap.isHidden = true
+        logoutWrap.isHidden = true
+        deleteBottomWrap.isHidden = true
         BearyAPI.shared.fetchMe { [weak self] result in
             DispatchQueue.main.async {
                 guard let self = self else { return }
@@ -1078,13 +1023,13 @@ final class BearySettingsViewController: UIViewController {
                     }
                     self.meUser = userValue
                     self.contentWrap.isHidden = false
+                    self.accountSecurityWrap.isHidden = false
+                    self.logoutWrap.isHidden = false
                     self.fillIdCard(user: userValue)
-                    self.fillAccountRows(user: userValue)
                     // 注销入口：只用 /me 下发的 is_admin（服务端算出），客户端不写 id 判定；
                     // 服务端 403 admin_cannot_delete 仍是最终判定（见 delete 失败映射）。
-                    // 藏行须连包容器一起藏，否则分组卡内边距仍占位。
-                    self.deleteRow.isHidden = userValue.isAdmin == true
-                    self.deleteRowWrapper?.isHidden = userValue.isAdmin == true
+                    // C3：页底注销包容器整体隐藏（原卡片行 + 包容器口径）。
+                    self.deleteBottomWrap.isHidden = userValue.isAdmin == true
                     self.loadPlusDetail()
                     self.loadSessions()
                 case .failure(let error):
@@ -1137,17 +1082,8 @@ final class BearySettingsViewController: UIViewController {
         idValueLabel.attributedText = NSAttributedString(string: idText, attributes: [.kern: 2])
     }
 
-    private func fillAccountRows(user: MeUser) {
-        let name = user.displayName ?? ""
-        accountNameLabel.text = !name.isEmpty ? name : "–"
-        if let handle = user.handle, !handle.isEmpty {
-            accountHandleLabel.text = "@" + handle
-        } else {
-            accountHandleLabel.text = "未设置"
-        }
-        accountEmailLabel.text = user.email ?? "–"
-        accountCreatedLabel.text = BearyAccountText.dateTimeString(ms: user.createdAt)
-    }
+    // C4：fillAccountRows 已随旧账户组删除（显示名称 / 用户名 / 邮箱 /
+    // 注册时间四行不再渲染；ID 卡 fillIdCard 仍呈现名 / 邮箱 / 注册时间 / 会员）。
 
     private func loadPlusDetail() {
         plusStatusLabel.text = "–"
@@ -1808,7 +1744,7 @@ final class BearySettingsViewController: UIViewController {
         let systemRow = makeSettingsTappableRow(content: systemContent, button: systemButton)
 
         let group = makeGroupCard(title: "消息与通知", rows: [badgeRow, systemRow])
-        settingsExtraWrap.addArrangedSubview(group.card)
+        generalNotifyWrap.addArrangedSubview(group.card)
     }
 
     private func buildGeneralSection() {
@@ -1827,6 +1763,14 @@ final class BearySettingsViewController: UIViewController {
             button.bearyAddPressHaptic()
             rows.append(makeSettingsTappableRow(content: content, button: button))
         }
+        // C2：使用指南行（原齿轮菜单项，改由设置页承载；容器接线到教程重播页）。
+        let tutorialDetail = makeLabel(font: UIFont.systemFont(ofSize: 13), color: BearyColors.gray)
+        tutorialDetail.text = "查看"
+        let tutorialContent = makeRow(title: "使用指南", detailLabel: tutorialDetail)
+        let tutorialButton = UIButton(type: .custom)
+        tutorialButton.addTarget(self, action: #selector(tutorialButtonTapped), for: .touchUpInside)
+        tutorialButton.bearyAddPressHaptic()
+        rows.append(makeSettingsTappableRow(content: tutorialContent, button: tutorialButton))
         // 版本行：Bundle 实值，只展示不跳转。
         let versionDetail = makeLabel(font: UIFont.systemFont(ofSize: 13), color: BearyColors.gray)
         versionDetail.text = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "—"
@@ -1840,7 +1784,7 @@ final class BearySettingsViewController: UIViewController {
         diagButton.bearyAddPressHaptic()
         rows.append(makeSettingsTappableRow(content: diagContent, button: diagButton))
         let group = makeGroupCard(title: "通用", rows: rows)
-        settingsExtraWrap.addArrangedSubview(group.card)
+        generalNotifyWrap.addArrangedSubview(group.card)
     }
 
     private func buildPrivacySection() {
@@ -1859,7 +1803,7 @@ final class BearySettingsViewController: UIViewController {
         termsButton.bearyAddPressHaptic()
         let termsRow = makeSettingsTappableRow(content: termsContent, button: termsButton)
         let group = makeGroupCard(title: "隐私", rows: [privacyRow, termsRow])
-        settingsExtraWrap.addArrangedSubview(group.card)
+        privacyWrap.addArrangedSubview(group.card)
     }
 
     @objc private func badgeSwitchValueChanged(_ sender: UISwitch) {

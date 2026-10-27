@@ -1889,7 +1889,9 @@ final class BearyChromeViewController: UIViewController {
             }
         }
         vc.onEditProfile = { [weak self] in self?.presentEditProfile() }
-        // 齿轮菜单：教程与外观已接原生实现；账户设置接 F 批原生账户页（不再是占位）。
+        // C2：齿轮不再弹菜单，直接开设置页；教程与外观改由设置页内入口承载
+        // （设置页通用组：使用指南行走 onShowTutorial、主题三档行；外观 Popover
+        // 类与本接线保留，齿轮路径不再触发，见设置页回执）。
         vc.onShowTutorial = { [weak self] in self?.presentOnboarding(mode: .replay) }
         vc.onOpenAccountSettings = { [weak self] in self?.presentSettings() }
         vc.onToggleAppearance = { [weak self] in self?.presentAppearanceSheet() }
@@ -1945,6 +1947,8 @@ final class BearyChromeViewController: UIViewController {
         vc.transitioningDelegate = fadeRiseTransitionDelegate
         vc.onClose = { [weak vc] in vc?.dismiss(animated: true) }
         vc.onRequireLogin = { [weak self] in self?.presentLogin() }
+        // C2：设置页通用组内「使用指南」行 → 教程重播页（原齿轮菜单项迁移）。
+        vc.onShowTutorial = { [weak self] in self?.presentOnboarding(mode: .replay) }
         vc.onAccountDeleted = { [weak self, weak vc] in
             SessionManager.shared.clearLocalCookies()
             SessionManager.shared.signOutLocally()
@@ -2012,7 +2016,9 @@ final class BearyChromeViewController: UIViewController {
     /// tmode=auto 中档为半黑渐变，见 BearyThemeSwitchView）。点开关即按
     /// system → light → dark 循环（cycleThemeMode，网页 cycleTheme 同款顺序），
     /// 存档键 beary_theme_mode 与 applyThemeMode 逻辑原样保留；卡内文案同步显示当前档名。
-    /// 齿轮菜单调本方法（我的页三个点“外观”行的落点）。
+    /// C2：齿轮路径已断开（外观切换改由设置页通用组三档行承载），本方法与
+    /// BearyThemeSwitchCardViewController 类保留不删，唯一原调用链为齿轮 →
+    /// onToggleAppearance → 本方法，现无活跃调用方。
     private func presentAppearanceSheet() {
         let current = UserDefaults.standard.string(forKey: "beary_theme_mode") ?? "system"
         let card = BearyThemeSwitchCardViewController(themeMode: current)
