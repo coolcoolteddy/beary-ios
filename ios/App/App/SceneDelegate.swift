@@ -14,6 +14,8 @@ class SceneDelegate: UIResponder, UIWindowSceneDelegate {
     var window: UIWindow?
 
     func scene(_ scene: UIScene, willConnectTo session: UISceneSession, options connectionOptions: UIScene.ConnectionOptions) {
+        // 临时诊断（81 包，定根因后删除）：冷启动先记一行 launch，供下次启动判断上次是否卡在打开流程。
+        DiagFile.mark("launch")
         guard let windowScene = scene as? UIWindowScene else { return }
 
         window = UIWindow(windowScene: windowScene)
@@ -87,6 +89,8 @@ class SceneDelegate: UIResponder, UIWindowSceneDelegate {
 
 final class BearyChromeViewController: UIViewController {
     private var topGlass: UIVisualEffectView!
+    // 临时诊断（81 包，定根因后删除）：卡点弹窗每进程只弹一次。
+    private var diagStuckAlertChecked = false
     /// 52 批 header 高度开关：显示 = 安全区顶 + 60，收起 = 0；页顶约束同步 60↔0，收起后不留空占区。
     /// 顶栏透度批：页顶约束恒为 view.top（常量 0），不再随栏态改顶距；栏态改走各页
     /// 主滚动视图的顶部内边距（见 applyHeaderTopInsets），内容滑过时才透出玻璃。
@@ -865,6 +869,11 @@ final class BearyChromeViewController: UIViewController {
         // 教程首次启动自动弹出（审计 N1 容器侧）：容器首次出现时检查 seen 标记。
         maybePresentOnboardingOnFirstLaunch()
         runLaunchVeilIfNeeded()
+        // 临时诊断（81 包，定根因后删除）：每进程只查一次上次是否卡在打开流程，查到则下个 runloop 弹窗报卡点。
+        if !diagStuckAlertChecked {
+            diagStuckAlertChecked = true
+            DiagFile.maybeShowStuckAlert(from: self)
+        }
     }
 
     /// 64 包反馈修（第 18 项）：挂启动 veil 首帧静态画面（网页 launchVeil 口径：
@@ -1111,7 +1120,8 @@ final class BearyChromeViewController: UIViewController {
             // 正常松手且没拖过 = 一次点按，在此补开编辑器。拖过、中途取消、
             // 识别失败（快点已走按钮路径）均不补开。同一次触摸里 touchUpInside
             // 与 .ended 互斥，故与快点路径不会重复开两次。
-            if wasEnded && !wasDragged { presentComposer() }
+            // 临时诊断（81 包，定根因后删除）：慢按补开入口。
+            if wasEnded && !wasDragged { DiagFile.mark("fabLongPress-open"); presentComposer() }
             // 下一 runloop 再清：保证 didTapWrite 开头的检查（若其触发）仍能看到标志。
             DispatchQueue.main.async { self.fabDraggedThisTouch = false }
         default:
@@ -1183,6 +1193,8 @@ final class BearyChromeViewController: UIViewController {
     @objc private func didTapBell() { showPage(.notif) }
     @objc private func didTapGift() { presentInvite() }
     @objc private func didTapWrite() {
+        // 临时诊断（81 包，定根因后删除）：FAB 点按入口。
+        DiagFile.mark("didTapWrite")
         // 拖完松手不误开：本次触摸已记为拖动时直接 return（与手势 .ended 补开路径互斥）。
         guard !fabDraggedThisTouch else { return }
         presentComposer()
@@ -2155,6 +2167,8 @@ final class BearyChromeViewController: UIViewController {
         // 闪退诊断打点（容器侧，只记日志不改行为）：本文件此前无日志，循仓内
         // NSLog("[Tag] ...") 惯例（BearyEmotePlayer 等同款），每调用一次记一行。
         NSLog("[Diag] presentComposer-enter")
+        // 临时诊断（81 包，定根因后删除）：文件级埋点，与 NSLog 点一一对应（用户无 Mac 看不到控制台，改走文件）。
+        DiagFile.mark("presentComposer-enter")
         // 未登录不再走网页登录，弹原生登录页；原生编辑器只接已登录态
         guard SessionManager.shared.isLoggedIn else {
             presentLogin()
@@ -2178,6 +2192,8 @@ final class BearyChromeViewController: UIViewController {
         }
         configureComposerPresentation(c, forEdit: false)
         present(c, animated: true)
+        // 临时诊断（81 包，定根因后删除）：present 调用已返回（动画是异步的，返回只证明调用本身没堵住）。
+        DiagFile.mark("present-returned")
     }
 
     /// 新建与编辑共用：宽 ≥821 时居中 640 模态（对应网页编辑器 ≥821px 居中 640px）；
@@ -2851,6 +2867,8 @@ private final class BearyComposerSheetAnimator: NSObject, UIViewControllerAnimat
 
     func animateTransition(using transitionContext: UIViewControllerContextTransitioning) {
         NSLog("[Diag] sheetAnimator-enter")
+        // 临时诊断（81 包，定根因后删除）。
+        DiagFile.mark("sheetAnimator-enter")
         let container = transitionContext.containerView
         let duration = transitionDuration(using: transitionContext)
         if isPresenting {
@@ -2888,6 +2906,105 @@ private final class BearyBadgeLabel: UILabel {
     override var intrinsicContentSize: CGSize {
         let base = super.intrinsicContentSize
         return CGSize(width: max(17, base.width + 10), height: 17)
+    }
+}
+
+// 临时诊断（81 包，定根因后删除）：定位“点加号后整个 App 全卡住”的主线程卡死位置。
+// 只记日志不改业务逻辑；用户无 Mac 看不到 NSLog 控制台，改走文件埋点。
+// 文件 Documents/beary-diag.log，每行 "HH:mm:ss.SSS stage"，只保留最后 200 行。
+// 重启后若上次卡在打开流程（最后一行落在非终态集合），弹窗报出最后 5 行。
+enum DiagFile {
+    static let fileName = "beary-diag.log"
+    static let maxLines = 200
+    static let stuckStages: Set<String> = [
+        "didTapWrite", "fabLongPress-open", "presentComposer-enter",
+        "sheetAnimator-enter", "viewDidLoad-enter", "viewDidLoad-exit",
+    ]
+
+    static var url: URL {
+        FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent(fileName)
+    }
+
+    /// 同步追加一行；卡死前来不及落盘是异步写法的死穴，故不用任何异步队列。
+    static func mark(_ stage: String) {
+        let line = "\(timestamp()) \(stage)\n"
+        guard let data = line.data(using: .utf8) else { return }
+        let u = url
+        if FileManager.default.fileExists(atPath: u.path) {
+            if let handle = try? FileHandle(forWritingTo: u) {
+                handle.seekToEndOfFile()
+                handle.write(data)
+                try? handle.close()
+            }
+        } else {
+            try? data.write(to: u, options: .atomic)
+        }
+        trimIfNeeded()
+    }
+
+    static func lines() -> [String] {
+        guard let text = try? String(contentsOf: url, encoding: .utf8) else { return [] }
+        return text.components(separatedBy: "\n").filter { !$0.isEmpty }
+    }
+
+    static func trimIfNeeded() {
+        let ls = lines()
+        guard ls.count > maxLines + 20 else { return }
+        let kept = ls.suffix(maxLines).joined(separator: "\n") + "\n"
+        try? kept.write(to: url, atomically: true, encoding: .utf8)
+    }
+
+    static func clear() {
+        try? FileManager.default.removeItem(at: url)
+    }
+
+    static func timestamp() -> String {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "HH:mm:ss.SSS"
+        return formatter.string(from: Date())
+    }
+
+    /// 上次运行是否卡在打开流程：本次 launch 之前最后一行的 stage 落在非终态集合即算卡住，
+    /// 返回上次运行的最后 5 行（不含本次 launch 行）。
+    static func stuckTail() -> [String]? {
+        let ls = lines()
+        guard ls.count >= 2, ls.last?.hasSuffix(" launch") == true else { return nil }
+        let prev = ls[ls.count - 2]
+        let stage = prev.components(separatedBy: " ").last ?? ""
+        guard stuckStages.contains(stage) else { return nil }
+        return Array(ls.dropLast().suffix(5))
+    }
+
+    /// 主界面已出现后的下一个 runloop 再弹，避开引导页与登录页（有 modal 在前时晚 1.5 秒再试一次）。
+    static func maybeShowStuckAlert(from vc: UIViewController) {
+        guard let tail = stuckTail() else { return }
+        DispatchQueue.main.async {
+            if vc.presentedViewController != nil {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+                    guard vc.presentedViewController == nil else { return }
+                    showAlert(tail, from: vc)
+                }
+                return
+            }
+            showAlert(tail, from: vc)
+        }
+    }
+
+    private static func showAlert(_ tail: [String], from vc: UIViewController) {
+        let alert = UIAlertController(
+            title: "诊断：上次卡在打开流程",
+            message: tail.joined(separator: "\n"),
+            preferredStyle: .alert
+        )
+        alert.addAction(UIAlertAction(title: "复制", style: .default) { _ in
+            UIPasteboard.general.string = tail.joined(separator: "\n")
+        })
+        alert.addAction(UIAlertAction(title: "清除日志", style: .destructive) { _ in
+            clear()
+        })
+        alert.addAction(UIAlertAction(title: "好", style: .cancel))
+        vc.present(alert, animated: true)
     }
 }
 
