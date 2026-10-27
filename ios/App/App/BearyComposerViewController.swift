@@ -275,6 +275,8 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     override func viewDidLoad() {
         super.viewDidLoad()
         NSLog("[Diag] composer-viewDidLoad-enter")
+        // 临时诊断（81 包，定根因后删除）。
+        DiagFile.mark("viewDidLoad-enter")
         // 玻璃批：view 自身即 modal 卡片，底改 clear，玻璃背板钉满 bounds 垫在最底层（index 0），
         // 后续 build* 加的子视图自然在其上；呈现层文件不动。
         view.backgroundColor = UIColor.clear
@@ -318,6 +320,8 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         NotificationCenter.default.addObserver(self, selector: #selector(keyboardWillHide(_:)), name: UIResponder.keyboardWillHideNotification, object: nil)
         NotificationCenter.default.addObserver(self, selector: #selector(keyboardWillChangeFrame(_:)), name: UIResponder.keyboardWillChangeFrameNotification, object: nil)
         NSLog("[Diag] composer-viewDidLoad-exit")
+        // 临时诊断（81 包，定根因后删除）。
+        DiagFile.mark("viewDidLoad-exit")
     }
 
     override func traitCollectionDidChange(_ previousTraitCollection: UITraitCollection?) {
@@ -374,6 +378,8 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     override func viewDidAppear(_ animated: Bool) {
         super.viewDidAppear(animated)
         NSLog("[Diag] composer-viewDidAppear")
+        // 临时诊断（81 包，定根因后删除）。
+        DiagFile.mark("viewDidAppear")
         // 打开即聚焦正文：编辑器唯一目的就是写，首屏就绪后直接可打字；只做一次，
         // 从选图/弹窗回来不抢焦点；有草稿时光标置末尾，接着写。
         // 与草稿恢复/图片续传无冲突：恢复在 viewDidLoad 已完成，续传是后台任务。
@@ -4060,6 +4066,8 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
 
     @objc private func keyboardWillShow(_ notification: Notification) {
         NSLog("[Diag] composer-keyboard-willShow")
+        // 临时诊断（81 包，定根因后删除）。
+        DiagFile.mark("keyboard-willShow")
         applyKeyboard(notification, showing: true)
     }
 
