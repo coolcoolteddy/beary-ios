@@ -43,8 +43,8 @@ import UIKit
 //   服务端目前仅接受 beta，worn 也只回 beta 或 null）。
 // - C2：齿轮直达设置页，退出登录改走设置页独立按钮（仍是 BearyAPI.logout，
 //   /api/account/logout，见文末注记；设置页内逻辑一字不动）。
-// - 分享：本人优先 https://teddyhn.com/beary/u/<id>（取不到 id 才回退
-//   @<handle>），他人用 u/<id> 不变。
+// - 分享：优先 https://teddyhn.com/beary/@<handle>（取不到 handle 才回退
+//   u/<id>）；设置页隐私文案与引导页复制已是 @ 口径，以此为准。
 // - 行内回应：不做乐观更新，只在服务端返回聚合后重绘（与详情页同口径）。
 // - BearyAPI 回调不在主线程：本文件所有碰 UI 的回调一律 DispatchQueue.main.async。
 
@@ -599,6 +599,7 @@ class BearyProfileViewController: UIViewController {
         // F20：顶栏分享 21 → 24。
         buttonValue.setImage(BearyIconImages.image(named: "icon_share", pointSize: 24), for: .normal)
         buttonValue.tintColor = BearyColors.ink
+        buttonValue.accessibilityLabel = "分享"
         buttonValue.addTarget(self, action: #selector(topShareButtonTapped), for: .touchUpInside)
         buttonValue.bearyAddPressFeedback()
         return buttonValue
@@ -1308,6 +1309,9 @@ class BearyProfileViewController: UIViewController {
     /// 收尾跨页同步：详情/时间线/回收站改动后刷新本页（资料头 + 列表，与初次加载同路径）。
     func reloadProfile() {
         loadProfile()
+        // P1-12：除资料头外，当前 tab 再强制拉一次，编辑保存后列表同步刷新；
+        // 折叠态存在独立的 expandedEntryIds（loadTab/setEntries 不动它），故不丢。
+        loadTab(forceReload: true)
     }
 
     private func handleProfileResult(result: Result<BearyUserProfile, APIError>) {
@@ -1317,7 +1321,7 @@ class BearyProfileViewController: UIViewController {
             profile = profileValue
             movedToHandle = profileValue.movedTo
             // F14：改名信号页内提示一次（容器未接线，见 movedToHandle 注释）。
-            if let moved = profileValue.movedTo, !moved.isEmpty, lastMovedToastHandle != moved {
+            if !isOwnProfile, let moved = profileValue.movedTo, !moved.isEmpty, lastMovedToastHandle != moved {
                 lastMovedToastHandle = moved
                 BearyToast.show(in: view, message: "对方已改名为 @\(moved)", aboveFAB: true)
             }
@@ -1393,7 +1397,7 @@ class BearyProfileViewController: UIViewController {
         }
         applyEmailRow()
 
-        // 封面带：有封面时 180 高 + 头像 -52 半压 + 3.5 bg 边；无封面时头顶距 20。
+        // 封面带：有封面时 180 高 + 头像 -28 半压 + 3.5 bg 边；无封面时头顶距 20。
         // L17：空字符串不再算有封面——须非空且能拼出 URL 才算。
         let hasCover = !(profileValue.coverUrl ?? "").isEmpty && BearyImageURLs.avatarURL(profileValue.coverUrl) != nil
         if let coverPath = profileValue.coverUrl, let coverURLValue = BearyImageURLs.avatarURL(coverPath) {
@@ -2240,7 +2244,7 @@ class BearyProfileViewController: UIViewController {
         titleLabel.text = profileLoadFailed && profile == nil ? "该用户不存在" : "加载失败"
         let retryButton = UIButton(type: .system)
         retryButton.translatesAutoresizingMaskIntoConstraints = false
-        retryButton.setTitle("点击重试", for: .normal)
+        retryButton.setTitle("重试", for: .normal)
         retryButton.setTitleColor(BearyColors.ink, for: .normal)
         retryButton.titleLabel?.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 14))
         retryButton.titleLabel?.adjustsFontForContentSizeCategory = true
@@ -2258,7 +2262,9 @@ class BearyProfileViewController: UIViewController {
         // content 12 + 图宽 + titleEdge 6 + 实测标题宽 + content 12，防标题被裁。
         // R8：宽改下限（默认尺寸不变），大字号时可生长。
         let profileRetryImageWidth = retryButton.currentImage?.size.width ?? 15
-        let profileRetryTitleWidth = ceil(("点击重试" as NSString).size(withAttributes: [NSAttributedString.Key.font: UIFont.systemFont(ofSize: 14)]).width)
+        // 变基合解：标题取本批“重试”（P2 文案统一），宽约束取 main 的 R8 下限
+        // （greaterThanOrEqualToConstant，大字号可生长），两者逻辑全保留。
+        let profileRetryTitleWidth = ceil(("重试" as NSString).size(withAttributes: [NSAttributedString.Key.font: UIFont.systemFont(ofSize: 14)]).width)
         retryButton.widthAnchor.constraint(greaterThanOrEqualToConstant: 12 + profileRetryImageWidth + 6 + profileRetryTitleWidth + 12).isActive = true
         profileErrorRetryButton = retryButton
         // 80 包重试统一：失败脚部补“网络好像不太顺”副标题（与时间线失败态同文案），
@@ -2317,6 +2323,12 @@ class BearyProfileViewController: UIViewController {
     // MARK: - 动作
 
     @objc private func pullToRefresh() {
+        // P1-11：gated 页（targetUserIdValue 与 targetHandleValue 双空）无请求可发，
+        // 直接结束刷新，否则转圈永远不消失；handle 页仍走下方正常拉取路径。
+        if targetUserIdValue == nil && targetHandleValue == nil {
+            tableView.refreshControl?.endRefreshing()
+            return
+        }
         // M12（91 包）：下拉刷新触发给一次轻触觉。
         BearyHaptics.press()
         // G2：下拉刷新保留旧内容（顶部加载态由 UIRefreshControl 提供），
@@ -2372,23 +2384,14 @@ class BearyProfileViewController: UIViewController {
         shareProfile(sender: headerShareButton)
     }
 
-    /// 分享链接：本人优先 u/<id>（取不到 id 才回退 @handle）；他人 u/<id> 不变。
+    /// 分享链接：优先 @handle（取不到 handle 才回退 u/<id>），本人与他人同口径；
     /// 任一分支取不到 handle 与 id 时返回 nil，绝不拼 broken 链接。
     private func shareProfileURL() -> URL? {
-        if isOwnProfile {
-            if let profileId = profile?.profileIdValue ?? targetUserIdValue {
-                return URL(string: "https://teddyhn.com/beary/u/\(profileId)")
-            }
-            if let handle = profile?.handle, !handle.isEmpty {
-                return URL(string: "https://teddyhn.com/beary/@\(handle)")
-            }
-            return nil
+        if let handle = profile?.handle ?? targetHandleValue, !handle.isEmpty {
+            return URL(string: "https://teddyhn.com/beary/@\(handle)")
         }
         if let profileId = profile?.profileIdValue ?? targetUserIdValue {
             return URL(string: "https://teddyhn.com/beary/u/\(profileId)")
-        }
-        if let handle = profile?.handle, !handle.isEmpty {
-            return URL(string: "https://teddyhn.com/beary/@\(handle)")
         }
         return nil
     }
