@@ -496,13 +496,14 @@ final class BearyNotificationsViewController: UIViewController {
 
     /// 表头高度实测：标题 19 + 上 14 下 4；实测后写回 tableHeaderView frame
     /// 与态容器顶锚，宽度变化时同步下拉指示器宽。
-    /// C-G14：底部留白按网页 .pf-col 口径随视口宽分档——宽 >820 时 44（网页
+    /// C-G14：底部留白按网页 .pf-col 口径随视口宽分档——宽 >=821 时 44（网页
     /// 宽屏档无 safe-area 叠加），窄屏时 120 + safe-area 下边距（网页
     /// max-width:820 档 calc(120px + safe-area-inset-bottom)）。contentView
     /// 底锚 view.bottom（非 safeArea），故窄屏档需显式叠加 safeAreaInsets.bottom。
+    /// 断点与全工程其余断点统一为 >=821（P2；原 >820 在整数点宽下等价，但口径不一）。
     private func updateTableBottomInset() {
         let bottom: CGFloat
-        if view.bounds.width > 820 {
+        if view.bounds.width >= 821 {
             bottom = 44
         } else {
             bottom = 120 + view.safeAreaInsets.bottom
@@ -582,6 +583,14 @@ final class BearyNotificationsViewController: UIViewController {
         refreshUnreadCountLightly()
     }
 
+    /// P1-21：在途请求代次校验——各请求发起时捕获 BearyAPI.authEpoch，
+    /// 回包先比对，代次已变（切账号/401 清态后 bump）说明回包属于旧登录态，
+    /// 直接丢弃，不写 items/未读数/角标、不弹登录、不回滚已读。BearyAPI 侧
+    /// authEpoch 现只门控 401 回调，不丢弃过期回包数据，本方法是补缺口。
+    private func isStaleRequestEpoch(_ capturedEpoch: Int) -> Bool {
+        return capturedEpoch != BearyAPI.shared.authEpoch
+    }
+
     /// 轻量刷新 + D3-App 门控（60 秒轮询、回前台、viewWillAppear 的统一入口）：
     /// 先轻量拉取，只更新未读数与角标（不动列表、不动失败态；失败静默忽略），
     /// 再把服务端消息版本号或最新消息 ID 与上次整页加载快照比对——任一变化
@@ -604,9 +613,14 @@ final class BearyNotificationsViewController: UIViewController {
         if isLoadingFirstPage {
             return
         }
+        let requestEpoch = BearyAPI.shared.authEpoch
         BearyAPI.shared.fetchNotifications(limit: 2, suppressUnauthorized: true) { [weak self] result in
             DispatchQueue.main.async {
                 guard let strongSelf = self else { return }
+                // P1-21：代次已变 → 旧账号回包丢弃，不写未读数与角标。
+                if strongSelf.isStaleRequestEpoch(requestEpoch) {
+                    return
+                }
                 switch result {
                 case .success(let list):
                     if let unreadValue = list.unread {
@@ -742,10 +756,17 @@ final class BearyNotificationsViewController: UIViewController {
         firstLoadFailed = false
         let requestedLimit = items.isEmpty ? pageLimit : min(max(pageLimit, items.count), maxRefreshLimit)
         refreshVisibleState()
+        let requestEpoch = BearyAPI.shared.authEpoch
         BearyAPI.shared.fetchNotifications(limit: requestedLimit) { [weak self] result in
             DispatchQueue.main.async {
                 guard let strongSelf = self else { return }
                 strongSelf.isLoadingFirstPage = false
+                // P1-21：代次已变 → 旧账号回包丢弃；下拉刷新仍走 completion 收尾，
+                // 避免转圈悬停（见 beginCustomPullRefresh）。
+                if strongSelf.isStaleRequestEpoch(requestEpoch) {
+                    completion?()
+                    return
+                }
                 switch result {
                 case .success(let list):
                     let oldSignatures = Set(strongSelf.items.map({ strongSelf.itemSignature($0) }))
@@ -768,6 +789,9 @@ final class BearyNotificationsViewController: UIViewController {
                     // D3-App：同时落版本号（响应未带时为 nil，旧快照版本号保留）
                     // 与最新消息 ID（recordFullLoadUnread 内从 items 首条取）。
                     strongSelf.recordFullLoadUnread(version: list.version ?? list.messageVersion)
+                    // P1-22：整页重载前先灭卡片动画（见 cancelCardAnimation），
+                    // 否则收起 completion 会按旧下标删行。
+                    strongSelf.cancelCardAnimation()
                     strongSelf.rebuildDisplayRows()
                     strongSelf.tableView.reloadData()
                     strongSelf.hasDisplayedPage = true
@@ -779,6 +803,9 @@ final class BearyNotificationsViewController: UIViewController {
                         strongSelf.firstLoadFailed = true
                         // 未登录口径：toast 后 1200ms 走 onRequireLogin，不再页内引导。
                         if case APIError.unauthorized = apiError {
+                            // P1-21：空列表 401 同样是清态——bump 代次，使此前在途
+                            // 请求的回包随后一律过期，不再写回旧账号数据。
+                            BearyAPI.shared.bumpAuthEpoch()
                             strongSelf.promptLoginIfNeeded()
                         }
                     }
@@ -813,6 +840,10 @@ final class BearyNotificationsViewController: UIViewController {
     /// refreshListIfUnreadChanged（切回/ viewWillAppear）与轻量刷新成功分支
     /// （轮询/回前台时已重新登录）都会在旗立起时无条件 loadFirstPage。
     /// 角标同步归零：publishUnread(0) 把旧账号角标清掉，底栏不残留旧数。
+    /// P1-21：清态时 bumpAuthEpoch()——此前在途请求的回包随后一律过期，
+    /// 各请求回包的代次校验（见 isStaleRequestEpoch）会把它们丢弃。
+    /// P1-22：清态重载前先灭卡片动画（见 cancelCardAnimation），避免收起
+    /// completion 按旧下标删行。
     /// 注意：本方法不调 saveNotificationCache——hasSuccessfulLoad 已先置
     /// false，deinit/viewWillDisappear 的写回守卫本身就不会以空列表覆缓存，
     /// 且静态缓存已在调用点先行置 nil。
@@ -834,6 +865,8 @@ final class BearyNotificationsViewController: UIViewController {
         lastFullLoadLatestId = nil
         needsReloadAfterUnauthorized = true
         publishUnread(0)
+        cancelCardAnimation()
+        BearyAPI.shared.bumpAuthEpoch()
         tableView.reloadData()
     }
 
@@ -1183,6 +1216,26 @@ final class BearyNotificationsViewController: UIViewController {
         }
     }
 
+    /// P1-22（选方案 A：整页/翻页重载前先灭动画，不改收起 completion 的旧下标删行）：
+    /// 沿用 reverseCardAnimation 的反转路径前半段——代次 +1 让在途动画
+    /// completion 失效、停掉 animator、清动画旗标与零高行，但不改展开态、
+    /// 不重建行表：随后的 rebuildDisplayRows + reloadData 全量接管，收起
+    /// completion 再也不会按动画开始时捕获的旧 collapsing 下标删行
+    /// （整页/翻页中途收起动画仍在跑时，旧下标在新行表里可能指向另一行）。
+    /// 减动效与收起空行两处 reloadData 不走本方法：它们在 isCardAnimating
+    /// 守卫之后，不可能与在途动画并存（见 toggleCard）。
+    private func cancelCardAnimation() {
+        cardAnimationGeneration += 1
+        if let animator = cardAnimator {
+            cardAnimator = nil
+            animator.stopAnimation(true)
+            animator.finishAnimation(at: .current)
+        }
+        cardAnimatingKind = nil
+        isCardAnimating = false
+        zeroHeightRows.removeAll()
+    }
+
     /// C-G11：动画中同卡再点的反转。先让旧动画代次失效再定格在当前
     /// 位置（旧 completion 因代次不符直接返回，不会清新旗标），再按
     /// 打断时的真实状态走反方向：
@@ -1238,19 +1291,30 @@ final class BearyNotificationsViewController: UIViewController {
         }
         guard let cursor = cursorForLastItem() else {
             hasMore = false
+            // P1-22：重载前先灭卡片动画，避免收起 completion 按旧下标删行。
+            cancelCardAnimation()
             tableView.reloadData()
             return
         }
         isLoadingMore = true
         loadMoreFailed = false
+        // P1-22：哨兵重载前同样先灭卡片动画（见 cancelCardAnimation）。
+        cancelCardAnimation()
         tableView.reloadData()
         // M12：翻页追加的行身份（卡种 + 通知下标），用于成功后 insertRows 而非整表重载。
         let oldDisplayRows = displayRows
         let oldSentinelRow = showsSentinelRow
+        let requestEpoch = BearyAPI.shared.authEpoch
         BearyAPI.shared.fetchNotifications(limit: pageLimit, before: cursor) { [weak self] result in
             DispatchQueue.main.async {
                 guard let strongSelf = self else { return }
                 strongSelf.isLoadingMore = false
+                // P1-21：代次已变 → 旧账号回包丢弃；哨兵重绘回闲置态，不弹失败 toast。
+                if strongSelf.isStaleRequestEpoch(requestEpoch) {
+                    strongSelf.cancelCardAnimation()
+                    strongSelf.tableView.reloadData()
+                    return
+                }
                 switch result {
                 case .success(let list):
                     // C-G1：翻页追加也要错峰入场——先记旧签名集，成功后只对
@@ -1290,6 +1354,9 @@ final class BearyNotificationsViewController: UIViewController {
                     // 并发守卫：加载中途用户若展开/收起卡片改了行表，旧坐标已失配，
                     // 此时回退整表 reloadData，避免 insertRows 坐标不一致崩溃。
                     let preRebuildRows = strongSelf.displayRows
+                    // P1-22：重建行表前先灭卡片动画——insert 与回退 reloadData
+                    // 两路都不再与收起 completion 的旧下标删行竞态。
+                    strongSelf.cancelCardAnimation()
                     strongSelf.rebuildDisplayRows()
                     let preKeys = preRebuildRows.map({ strongSelf.displayRowIdentity(row: $0) })
                     let oldKeys = oldDisplayRows.map({ strongSelf.displayRowIdentity(row: $0) })
@@ -1303,8 +1370,10 @@ final class BearyNotificationsViewController: UIViewController {
                 case .failure:
                     // 401 不清列表（全局 onUnauthorized 已由容器接管）；其余失败只 toast，
                     // 不产生新行，哨兵留位、滚出再滚回才重触（见 scrollViewDidScroll 重 arm）。
+                    // P1-22：失败重载前先灭卡片动画，避免收起 completion 按旧下标删行。
                     strongSelf.loadMoreFailed = true
                     strongSelf.showToast(message: "加载失败")
+                    strongSelf.cancelCardAnimation()
                     strongSelf.tableView.reloadData()
                 }
                 strongSelf.updateReadAllButton()
@@ -1388,6 +1457,7 @@ final class BearyNotificationsViewController: UIViewController {
             BearyIconMotion.startSpin(on: buttonImageView, duration: 1.0, key: "bearyReadAllSpin")
         }
         // 全部已读不等乐观更新：成功后才整批置已读（网页 ntReadAll 同款）。
+        let requestEpoch = BearyAPI.shared.authEpoch
         BearyAPI.shared.markNotificationRead(id: nil) { [weak self] result in
             DispatchQueue.main.async {
                 guard let strongSelf = self else { return }
@@ -1399,6 +1469,10 @@ final class BearyNotificationsViewController: UIViewController {
                 strongSelf.readAllButton.setImage(BearyIconImages.image(named: "icon_check", pointSize: 14), for: .normal)
                 strongSelf.readAllButton.setTitle("全部已读", for: .normal)
                 strongSelf.updateReadAllButtonWidth()
+                // P1-21：代次已变 → 旧账号回包丢弃，不整批置已读、不重拉。
+                if strongSelf.isStaleRequestEpoch(requestEpoch) {
+                    return
+                }
                 switch result {
                 case .success:
                     for index in strongSelf.items.indices {
@@ -1501,20 +1575,28 @@ final class BearyNotificationsViewController: UIViewController {
     }
 
     /// 单条标已读：按通知 id 的在途集合防重复发 POST（连点同一行只发一次）。
+    /// P2：失败回滚按 notificationId 重查下标——在途期间翻页/刷新可能已改
+    /// items 顺序，旧 index 可能指向另一条；查不到（行已不在列表）时只回滚
+    /// 未读数，不写行。index 入参保留（调用点仍按行位传），回滚不再用它。
     private func markSingleRead(_ item: NotificationItem, at index: Int) {
         guard let notificationId = item.id else { return }
         if markingReadIds.contains(notificationId) {
             return
         }
         markingReadIds.insert(notificationId)
+        let requestEpoch = BearyAPI.shared.authEpoch
         BearyAPI.shared.markNotificationRead(id: notificationId) { [weak self] result in
             DispatchQueue.main.async {
                 guard let strongSelf = self else { return }
                 strongSelf.markingReadIds.remove(notificationId)
+                // P1-21：代次已变 → 旧账号回包丢弃，不回滚新账号的行与未读数。
+                if strongSelf.isStaleRequestEpoch(requestEpoch) {
+                    return
+                }
                 if case .failure = result {
                     // 失败回滚：恢复未读点与未读数（401 也回滚，全局登录处理归容器）。
-                    if index < strongSelf.items.count {
-                        strongSelf.items[index].read = false
+                    if let rollbackIndex = strongSelf.items.firstIndex(where: { $0.id == notificationId }) {
+                        strongSelf.items[rollbackIndex].read = false
                     }
                     strongSelf.unreadTotal += 1
                     if item.type == "system" {
@@ -1524,9 +1606,7 @@ final class BearyNotificationsViewController: UIViewController {
                     strongSelf.updateReadAllButton()
                     // 标已读失败回滚：快照随本地未读数改回，与回滚后的列表一致。
                     strongSelf.recordFullLoadUnread()
-                    if index < strongSelf.items.count {
-                        strongSelf.applyReadAppearanceToVisibleRows()
-                    }
+                    strongSelf.applyReadAppearanceToVisibleRows()
                 }
             }
         }
@@ -1748,8 +1828,14 @@ final class BearyNotificationsViewController: UIViewController {
             goEntryId: entryId
         )
         // 引用预览随后补全：modal 句柄由本次闭包持有，关闭后补全无害（不回贴视图）。
-        BearyAPI.shared.fetchEntry(id: entryId) { result in
+        // P1-21：代次校验——切账号后旧回包不往新账号模态里贴引用。
+        let requestEpoch = BearyAPI.shared.authEpoch
+        BearyAPI.shared.fetchEntry(id: entryId) { [weak self] result in
             DispatchQueue.main.async {
+                guard let strongSelf = self else { return }
+                if strongSelf.isStaleRequestEpoch(requestEpoch) {
+                    return
+                }
                 switch result {
                 case .success(let entry):
                     let collapsed = (entry.content ?? "").components(separatedBy: CharacterSet.whitespacesAndNewlines).filter({ !$0.isEmpty }).joined(separator: " ")
@@ -1769,8 +1855,13 @@ final class BearyNotificationsViewController: UIViewController {
                         meta += " · \(likeCount) 个点赞"
                     }
                     modal.fillQuote(text: quoteText, meta: meta)
-                case .failure:
-                    break
+                case .failure(let apiError):
+                    // P2：取日记失败按 APIError 分流——网络失败报网络文案；
+                    // 其余失败（不存在/无权/服务端等）只缺引用区，不谎报
+                    // “不存在或已被删除”（引用缺失≠日记已删，模态正文仍在）。
+                    if case APIError.network = apiError {
+                        strongSelf.showToast(message: "网络好像不太顺")
+                    }
                 }
             }
         }
