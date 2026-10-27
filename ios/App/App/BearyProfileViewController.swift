@@ -2702,6 +2702,12 @@ extension BearyProfileViewController: UITableViewDataSource, UITableViewDelegate
         cellValue.onContextMenuDelete = { [weak self] in self?.onDeleteEntry?(entryValue) }
         cellValue.onEmoteTap = { [weak self] key in self?.handleCellEmote(entry: entryValue, key: key) }
         cellValue.onEmoteAdd = { [weak self] in self?.handleCellEmoteAdd(entry: entryValue) }
+        // A1：个人主页非公开卡片点“+”不打开选择器，弹 toast 并返回。
+        cellValue.onEmoteAddNotPublic = { [weak self] in
+            if let strongSelf = self {
+                BearyToast.show(in: strongSelf.view, message: "公开后才能回应", aboveFAB: true)
+            }
+        }
         cellValue.onQuoteTap = { [weak self] in self?.handleCellQuoteTap(entry: entryValue) }
         cellValue.onFoldToggle = { [weak self] in self?.handleCellFoldToggle(entryId: entryId) }
         // N7 主页图片灯箱：复用独立文件内的查看器，全屏模态弹出，弹出方式与时间线同款（已弹出时不叠加、减动效直显）。

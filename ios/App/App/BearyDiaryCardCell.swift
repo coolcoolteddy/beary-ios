@@ -318,6 +318,9 @@ class BearyDiaryCardCell: UITableViewCell {
     var onShare: (() -> Void)?
     var onEmoteTap: ((String) -> Void)?
     var onEmoteAdd: (() -> Void)?
+    /// A1（个人主页模式）：非公开卡片点“+”时转发——控制器弹“公开后才能回应”
+    /// toast，不打开选择器；chip 本身已禁用，点按无事件，故提示只能挂在“+”钮上。
+    var onEmoteAddNotPublic: (() -> Void)?
     var onQuoteTap: (() -> Void)?
     var onFoldToggle: (() -> Void)?
     /// N7 主页图片灯箱：图片条点按回调（keys=本条图 key，index=点按位置），
@@ -980,6 +983,7 @@ class BearyDiaryCardCell: UITableViewCell {
         onShare = nil
         onEmoteTap = nil
         onEmoteAdd = nil
+        onEmoteAddNotPublic = nil
         onQuoteTap = nil
         onFoldToggle = nil
         onTapImages = nil
@@ -1937,13 +1941,9 @@ class BearyDiaryCardCell: UITableViewCell {
         if candidate != cellEmoteSignature {
             renderEmotes()
         } else {
-            for sub in emoteFlowView.subviews {
-                if let chip = sub as? BearyEmoteChipView {
-                    chip.overlayButton.isEnabled = !interactionDisabled
-                } else if let button = sub as? UIButton {
-                    button.isEnabled = !interactionDisabled
-                }
-            }
+            // A1：签名未变时就地同步也须走同一公开门控，否则会把
+            // updateEmoteInteractivity 置灰/禁用的 chip 重新放行。
+            updateEmoteInteractivity()
         }
     }
 
@@ -2368,12 +2368,17 @@ class BearyDiaryCardCell: UITableViewCell {
 
     /// F7：互动门控与详情一致（首页模式 isPublic == true 才可互动）；E3-3 pending 视觉：
     /// 进行中的新/旧 chip 半透明，其余不变；不做乐观计数/选中。
-    /// 个人主页模式：只控 enabled（控制器 busy 集合），不改 alpha。
+    /// A1（个人主页模式）：照抄首页口径——非公开日记的回应 chip 置灰禁用
+    ///（overlay isEnabled=false + chip alpha=0.4），作者本人对自己私密日记
+    /// 的回应同样不放行（无 isMine 例外）；“+”钮只控 busy 不按公开态
+    /// 禁用/置灰，否则非公开提示（见 emoteAddTapped）无从触发。
     private func updateEmoteInteractivity() {
         if cardMode == .profile {
+            let publicOK = currentEntry?.isPublic == true
             for sub in emoteFlowView.subviews {
                 if let chip = sub as? BearyEmoteChipView {
-                    chip.overlayButton.isEnabled = !profileDisabled
+                    chip.overlayButton.isEnabled = publicOK && !profileDisabled
+                    sub.alpha = publicOK ? 1.0 : 0.4
                 } else if let button = sub as? UIButton {
                     button.isEnabled = !profileDisabled
                 }
@@ -2410,6 +2415,9 @@ class BearyDiaryCardCell: UITableViewCell {
 
     @objc private func emoteChipTapped(_ sender: UIButton) {
         if cardMode == .profile {
+            // A1 纵深守卫：chip 非公开时本已禁用（点按无事件），此处再拦一道，
+            // 确保私密日记的回应绝不经本路径转发（含作者本人）。
+            if currentEntry?.isPublic != true { return }
             let index = sender.tag
             guard index >= 0, index < chipKeys.count else { return }
             onEmoteTap?(chipKeys[index])
@@ -2430,6 +2438,12 @@ class BearyDiaryCardCell: UITableViewCell {
 
     @objc private func emoteAddTapped() {
         if cardMode == .profile {
+            // A1：非公开卡片点“+”不打开选择器，改走提示回调（控制器弹 toast）
+            // 并返回，杜绝旧静默丢弃；公开卡片原样走 onEmoteAdd。
+            if currentEntry?.isPublic != true {
+                onEmoteAddNotPublic?()
+                return
+            }
             onEmoteAdd?()
             return
         }
