@@ -18,6 +18,10 @@ public final class BearyEmoteView: UIView {
 
     public let emoteKey: String
 
+    /// 非表情 Lottie 的回退图覆盖（天气选择器用）：设置后 showFallback 用它而非表情包 lookup。
+    /// 须在 loadEmote 之前生效，故经带 fallbackImage 的指定构造器传入；表情调用方不传，行为不变。
+    public var fallbackImageOverride: UIImage?
+
     private var isPlaying: Bool
     /// 静态帧持有态：showStaticFrame() 置真，play()/stop() 清掉；attach 时若为真，
     /// 未播放的视图停在循环段末帧而非 0 帧（0 帧是首播描线起点，未完成态）。
@@ -101,10 +105,15 @@ public final class BearyEmoteView: UIView {
     private static var memoryWarningObserver: NSObjectProtocol?
     private static var memoryWarningObserverInstalled = false
 
-    public init(key: String, animated: Bool) {
+    public convenience init(key: String, animated: Bool) {
+        self.init(key: key, animated: animated, fallbackImage: nil)
+    }
+
+    public init(key: String, animated: Bool, fallbackImage: UIImage?) {
         self.emoteKey = key
         self.isPlaying = animated && UIAccessibility.isReduceMotionEnabled == false
         super.init(frame: .zero)
+        self.fallbackImageOverride = fallbackImage
         backgroundColor = .clear
         clipsToBounds = false
         Self.registerLivePlayer(self)
@@ -324,7 +333,7 @@ public final class BearyEmoteView: UIView {
         imageView.clipsToBounds = false
         imageView.frame = bounds
         imageView.autoresizingMask = [.flexibleWidth, .flexibleHeight]
-        imageView.image = BearyEmoteImages.image(for: emoteKey, dark: dark)
+        imageView.image = fallbackImageOverride ?? BearyEmoteImages.image(for: emoteKey, dark: dark)
         addSubview(imageView)
         fallbackImageView = imageView
     }

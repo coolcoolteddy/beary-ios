@@ -972,14 +972,42 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         contentStack.setCustomSpacing(8, after: weatherScrollView)
     }
 
+    /// 天气 key → Lottie 资源 key：选择器 key 与 Lottie 包基本同名，唯 night 对应 moon。
+    private static func weatherLottieKey(for weatherKey: String) -> String {
+        weatherKey == "night" ? "moon" : weatherKey
+    }
+
+    /// 天气 Lottie 占位图：16×16 全透明，仅占住按钮 imageView 槽位（布局与原来 16pt 静态图一致），
+    /// 真正内容由贴在 imageView 上的 BearyEmoteView 画；加载失败时它回退 wx 静态图，永不留白。
+    private static let weatherPlaceholderImage: UIImage = {
+        UIGraphicsImageRenderer(size: CGSize(width: 16, height: 16)).image { _ in }
+    }()
+
     private func makeWeatherButton(key: String, title: String, iconName: String?) -> UIButton {
         let button = UIButton(type: .system)
         button.translatesAutoresizingMaskIntoConstraints = false
         button.setTitle(title, for: .normal)
         button.titleLabel?.font = UIFont.systemFont(ofSize: 13)
         if let name = iconName {
-            button.setImage(BearyIconImages.image(named: name, pointSize: 16), for: .normal)
+            let staticImage = BearyIconImages.image(named: name, pointSize: 16)
+            button.setImage(Self.weatherPlaceholderImage, for: .normal)
             button.titleEdgeInsets = UIEdgeInsets(top: 0, left: 5, bottom: 0, right: 0)
+            // 天气 Lottie：动画贴在 imageView 上（随 imageView 走位，布局与静态图一致，不拦截点按）；
+            // 减动效时播放器内置静态帧不播；加载失败回退 wx 静态图；拿不到 imageView 时回静态图。
+            if let imageView = button.imageView {
+                let lottie = BearyEmoteView(key: Self.weatherLottieKey(for: key), animated: true, fallbackImage: staticImage)
+                lottie.isUserInteractionEnabled = false
+                lottie.translatesAutoresizingMaskIntoConstraints = false
+                imageView.addSubview(lottie)
+                NSLayoutConstraint.activate([
+                    lottie.leadingAnchor.constraint(equalTo: imageView.leadingAnchor),
+                    lottie.trailingAnchor.constraint(equalTo: imageView.trailingAnchor),
+                    lottie.topAnchor.constraint(equalTo: imageView.topAnchor),
+                    lottie.bottomAnchor.constraint(equalTo: imageView.bottomAnchor),
+                ])
+            } else {
+                button.setImage(staticImage, for: .normal)
+            }
         }
         button.contentEdgeInsets = UIEdgeInsets(top: 6, left: 12, bottom: 6, right: 12)
         button.layer.cornerRadius = 999
