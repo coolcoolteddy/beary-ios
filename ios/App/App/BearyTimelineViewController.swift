@@ -855,6 +855,10 @@ final class BearyTimelineCell: UITableViewCell {
     private let pillBackground = UIView()
     private let pillLabel = UILabel()
     private let weatherLabel = UILabel()
+    /// E3：本行天气图标视图（configure 现建现存；复用/重配即清）与落点
+    /// 天气 Lottie 覆盖层（仅 gotoEntry 落点行创建，其他行恒为 nil）。
+    private var weatherIconView: UIImageView?
+    private var weatherEmoteView: BearyEmoteView?
     private let moodLabel = UILabel()
     private let recipientLabel = UILabel()
     private let contentLabel = UILabel()
@@ -1255,6 +1259,42 @@ final class BearyTimelineCell: UITableViewCell {
         }
     }
 
+    /// E3：gotoEntry 落点行天气标播 Lottie（统一卡片同款口径，见
+    /// BearyDiaryCardCell.playWeatherLottie：编辑器选择器同款
+    /// BearyEmoteView + LottieWeather 资源，night→moon；深浅切换与减动效
+    /// 静态帧由播放器内部处理）。仅落点控制器在定位落定后调用；其他行
+    /// 从不调用，天气标保持静态图。覆盖层贴在 14px 天气图标上，停播摘层
+    /// 即回到底层静态图。
+    func playWeatherLottie() {
+        guard let weatherKey = currentEntry?.weather, !weatherKey.isEmpty,
+              let iconView = weatherIconView else { return }
+        let lottieKey = weatherKey == "night" ? "moon" : weatherKey
+        if let current = weatherEmoteView, current.emoteKey == lottieKey {
+            current.play()
+            return
+        }
+        stopWeatherLottie()
+        let emoteView = BearyEmoteView(key: lottieKey, animated: true, fallbackImage: iconView.image)
+        emoteView.isUserInteractionEnabled = false
+        emoteView.translatesAutoresizingMaskIntoConstraints = false
+        iconView.addSubview(emoteView)
+        NSLayoutConstraint.activate([
+            emoteView.leadingAnchor.constraint(equalTo: iconView.leadingAnchor),
+            emoteView.trailingAnchor.constraint(equalTo: iconView.trailingAnchor),
+            emoteView.topAnchor.constraint(equalTo: iconView.topAnchor),
+            emoteView.bottomAnchor.constraint(equalTo: iconView.bottomAnchor),
+        ])
+        weatherEmoteView = emoteView
+    }
+
+    /// E3：停播落点天气 Lottie 并摘掉覆盖层。复用、重配、滑出可视区
+    /// （播放器离窗自停 + 复用/重配摘层）与新落点盖掉旧落点时均走此路。
+    func stopWeatherLottie() {
+        weatherEmoteView?.stop()
+        weatherEmoteView?.removeFromSuperview()
+        weatherEmoteView = nil
+    }
+
     /// 6A 定位高亮：卡片 faint 闪一下再回 bg（减动效下只滚动不闪）。
     /// 复用安全：prepareForReuse 已复位 bg；完成时再核对仍是同一篇才复位。
     func flashHighlight() {
@@ -1280,6 +1320,8 @@ final class BearyTimelineCell: UITableViewCell {
 
     override func prepareForReuse() {
         super.prepareForReuse()
+        stopWeatherLottie()
+        weatherIconView = nil
         // 80 包 A4/A2-3④：错峰改 cell.alpha/transform，对称复位，防复用残留。
         alpha = 1
         transform = .identity
@@ -1325,6 +1367,8 @@ final class BearyTimelineCell: UITableViewCell {
     }
 
     func configure(entry: Entry) {
+        stopWeatherLottie()
+        weatherIconView = nil
         currentEntry = entry
         for arranged in metaStack.arrangedSubviews {
             metaStack.removeArrangedSubview(arranged)
@@ -1381,6 +1425,7 @@ final class BearyTimelineCell: UITableViewCell {
                     weatherIconView.widthAnchor.constraint(equalToConstant: 14),
                     weatherIconView.heightAnchor.constraint(equalToConstant: 14),
                 ])
+                self.weatherIconView = weatherIconView
                 weatherRowItems.append(weatherIconView)
             }
             weatherRowItems.append(weatherLabel)
@@ -3579,6 +3624,16 @@ class BearyTimelineViewController: UIViewController {
             DispatchQueue.main.async { [weak self] in
                 guard let cell = self?.tableView.cellForRow(at: path) as? BearyTimelineCell else { return }
                 cell.flashHighlight()
+                // E3：定位落定后，目标行天气标播 Lottie；先停其他可见行，
+                // 避免上一次落点仍在视野内时两行同播。
+                if let tableView = self?.tableView {
+                    for visibleCell in tableView.visibleCells {
+                        if let timelineCell = visibleCell as? BearyTimelineCell, timelineCell !== cell {
+                            timelineCell.stopWeatherLottie()
+                        }
+                    }
+                }
+                cell.playWeatherLottie()
             }
         }
     }
