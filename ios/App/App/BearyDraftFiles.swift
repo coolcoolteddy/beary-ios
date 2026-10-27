@@ -107,15 +107,27 @@ enum BearyDraftImageStore {
         if !FileManager.default.fileExists(atPath: dir.path) {
             try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true, attributes: nil)
         }
-        var values = URLResourceValues()
-        values.isExcludedFromBackup = true
-        var mutableDir = dir
-        try? mutableDir.setResourceValues(values)
+        // D1：备份完整草稿——图片目录不再排除备份，文字与图片整份草稿都可备份。
         return dir
     }
 
+    /// 文件名白名单：只接受 newFileName 产出的 UUID + .jpg，及 thumbFileName
+    /// 派生的 <uuid>_t.jpg；其余（含 ../、/ 等路径穿越名）一律拒绝，返回 nil。
+    /// 另校验最终路径仍在草稿目录内（standardized 前缀比对），双重兜底。
     static func fileURL(for name: String) -> URL? {
-        return directory()?.appendingPathComponent(name)
+        guard isAllowedDraftFileName(name), let dir = directory() else { return nil }
+        let url = dir.appendingPathComponent(name)
+        let dirPath = dir.standardized.path
+        let filePath = url.standardized.path
+        guard filePath.hasPrefix(dirPath + "/") else { return nil }
+        return url
+    }
+
+    private static func isAllowedDraftFileName(_ name: String) -> Bool {
+        // UUID：8-4-4-4-12 位十六进制（大小写均可，UUID().uuidString 为大写）。
+        let uuid = "[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}"
+        let pattern = "^(?:\(uuid)\.jpg|\(uuid)_t\.jpg)$"
+        return name.range(of: pattern, options: .regularExpression) != nil
     }
 
     static func newFileName() -> String {
@@ -139,12 +151,7 @@ enum BearyDraftImageStore {
         do {
             try fullData.write(to: fullURL, options: .atomic)
             try thumbData.write(to: thumbURL, options: .atomic)
-            var values = URLResourceValues()
-            values.isExcludedFromBackup = true
-            var mutableFull = fullURL
-            try? mutableFull.setResourceValues(values)
-            var mutableThumb = thumbURL
-            try? mutableThumb.setResourceValues(values)
+            // D1：单文件不再排除备份；saveAll 原子替换的新文件备份属性随系统默认即可。
             return fullName
         } catch {
             try? FileManager.default.removeItem(at: fullURL)
@@ -382,7 +389,7 @@ enum BearyDraftStore {
                 return .success(sortedNormalized(drafts))
             }
             let backup = backupCorruptFile(at: url)
-            NSLog("[BearyDraft] corrupt v3 store, original kept, backup=%@", backup?.path ?? "none")
+            NSLog("[BearyDraft] corrupt v3 store, original kept")
             let err = LoadError.corruptStore(backupURL: backup)
             lastLoadError = err
             return .failure(err)
@@ -400,7 +407,7 @@ enum BearyDraftStore {
         }
         if let v2url = legacyV2FileURL(), FileManager.default.fileExists(atPath: v2url.path) {
             let backup = backupCorruptFile(at: v2url)
-            NSLog("[BearyDraft] corrupt legacy v2 store, original kept, backup=%@", backup?.path ?? "none")
+            NSLog("[BearyDraft] corrupt legacy v2 store, original kept")
             let err = LoadError.legacyCorrupt(backupURL: backup)
             lastLoadError = err
             return .failure(err)

@@ -138,7 +138,14 @@ final class SessionManager {
     }
 
     private func isBearyCookie(_ cookie: HTTPCookie) -> Bool {
-        cookie.domain.contains("teddyhn.com")
+        // 严格匹配：去前导点、大小写规范化后，仅 == teddyhn.com 或以 .teddyhn.com 结尾。
+        // contains 会误伤 evilteddyhn.com / teddyhn.com.evil.com；正常 Cookie 的
+        // domain 正是 teddyhn.com 或 .teddyhn.com 两种形态，不会被误伤。
+        var domain = cookie.domain.lowercased()
+        while domain.hasPrefix(".") {
+            domain.removeFirst()
+        }
+        return domain == "teddyhn.com" || domain.hasSuffix(".teddyhn.com")
     }
 
     /// 清共享存储里的 beary cookie（显式退出用；401 过期不用它）。

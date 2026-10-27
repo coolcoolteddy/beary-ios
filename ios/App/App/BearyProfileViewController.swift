@@ -1537,7 +1537,17 @@ class BearyProfileViewController: UIViewController {
                     strongSelf.wornBadgeKey = badgesValue.worn
                     strongSelf.renderBadges()
                 case .failure(let error):
-                    NSLog("[BearyProfile] loadBadges failed: %@", "\(error)")
+                    let badgeErrorCategory: String
+                    switch error {
+                    case .network: badgeErrorCategory = "network"
+                    case .http: badgeErrorCategory = "http"
+                    case .server: badgeErrorCategory = "server"
+                    case .decoding: badgeErrorCategory = "decoding"
+                    case .unauthorized: badgeErrorCategory = "unauthorized"
+                    case .notFound: badgeErrorCategory = "notFound"
+                    case .cancelled: badgeErrorCategory = "cancelled"
+                    }
+                    NSLog("[BearyProfile] loadBadges failed: %@", badgeErrorCategory)
                     // P1-5：失败态现形（不再隐藏容器）：徽章 stack 清空后放一个
                     // 可点重试钮；文案与空态区分——空态是 unlocked 为空时整个
                     // 容器隐藏、无任何文案（见 renderBadges 空分支）。

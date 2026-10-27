@@ -4111,13 +4111,13 @@ class BearyTimelineViewController: UIViewController {
     }
 
     /// 第 5 项公开：网页 doPublish 口径 POST /beary/api/entries/:id/publish，
-    /// 先弹网页同款确认框（“确认公开？/ 公开后不能撤回删除。确认后开始倒计时，
-    /// 倒计时结束即公开，期间可以取消。”），成功后整页刷新（倒计时态随新数据回来）；
+    /// 先弹网页同款确认框（“确认公开？/ 公开后无法撤回或删除。确认后开始 24 小时倒计时，
+    /// 期间可以取消公开。”），成功后整页刷新（倒计时态随新数据回来）；
     /// 失败 toast“公开失败，请重试”。在途去重，同一篇重复点按只发一次。
     private func handlePublishEntry(_ entry: Entry) {
         guard let entryId = entry.id, !entryId.isEmpty else { return }
         if publishBusyIds.contains(entryId) { return }
-        let alert = UIAlertController(title: "确认公开？", message: "公开后不能撤回删除。确认后开始 24 小时倒计时，倒计时结束即公开，期间可以取消。", preferredStyle: .alert)
+        let alert = UIAlertController(title: "确认公开？", message: "公开后无法撤回或删除。确认后开始 24 小时倒计时，期间可以取消公开。", preferredStyle: .alert)
         alert.addAction(UIAlertAction(title: "取消", style: .cancel, handler: nil))
         alert.addAction(UIAlertAction(title: "公开", style: .default, handler: { [weak self] _ in
             guard let strongSelf = self else { return }
