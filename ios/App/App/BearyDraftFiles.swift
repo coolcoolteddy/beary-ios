@@ -262,6 +262,27 @@ enum BearyDraftStore {
     /// 此时 fileURL() 为 nil、loadAllResult() 直接返回空，不读任何账号文件。
     private(set) static var currentAccountId: Int?
 
+    /// 引导试写（未登录时）：写旧全局 v3 文件（[BearyDraft] JSON，与登录迁
+    /// 移解码口径一致）；登录后 setAccount 把整文件迁入该账号草稿箱（若该
+    /// 账号已有草稿文件则本次不迁移，试写句仅作演示、不保证续写）。
+    static func saveTrialDraftToLegacyGlobal(_ draft: BearyDraft) {
+        ioQueue.async {
+            guard let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first else { return }
+            if !FileManager.default.fileExists(atPath: base.path) {
+                try? FileManager.default.createDirectory(at: base, withIntermediateDirectories: true, attributes: nil)
+            }
+            let url = base.appendingPathComponent(fileName)
+            var drafts: [BearyDraft] = []
+            if let data = try? Data(contentsOf: url),
+               let decoded = try? JSONDecoder().decode([BearyDraft].self, from: data) {
+                drafts = decoded.filter { $0.draftId != draft.draftId }
+            }
+            drafts.append(draft)
+            guard let data = try? JSONEncoder().encode(drafts) else { return }
+            try? data.write(to: url, options: .atomic)
+        }
+    }
+
     /// 账号隔离 1 号：切换账号时调用。分桶路径随 currentAccountId 自动切换，
     /// 本存储无内存态故无需清内存；返回 true = 本次把旧全局 v3 文件迁移到了
     /// 该账号名下（调用方据此首启一次 toast 明示，之后旧文件已消失不再触发）。

@@ -401,7 +401,7 @@ final class BearyChromeViewController: UIViewController {
         blur.alpha = 0
         NSLayoutConstraint.activate([
             blur.centerXAnchor.constraint(equalTo: view.centerXAnchor),
-            blur.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor, constant: -12),
+            blur.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor, constant: -6),
             blur.widthAnchor.constraint(equalToConstant: 288),
             blur.heightAnchor.constraint(equalToConstant: 58),
         ])
@@ -437,7 +437,7 @@ final class BearyChromeViewController: UIViewController {
         seg.isUserInteractionEnabled = false
         NSLayoutConstraint.activate([
             seg.centerXAnchor.constraint(equalTo: view.centerXAnchor),
-            seg.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor, constant: -12),
+            seg.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor, constant: -6),
             seg.widthAnchor.constraint(equalToConstant: 288),
             seg.heightAnchor.constraint(equalToConstant: 58),
         ])
@@ -806,7 +806,7 @@ final class BearyChromeViewController: UIViewController {
     override func viewDidAppear(_ animated: Bool) {
         super.viewDidAppear(animated)
         // 教程首次启动自动弹出（审计 N1 容器侧）：容器首次出现时检查 seen 标记。
-        maybePresentTutorialOnFirstLaunch()
+        maybePresentOnboardingOnFirstLaunch()
         runLaunchVeilIfNeeded()
     }
 
@@ -1752,7 +1752,7 @@ final class BearyChromeViewController: UIViewController {
         }
         vc.onEditProfile = { [weak self] in self?.presentEditProfile() }
         // 齿轮菜单：教程与外观已接原生实现；账户设置接 F 批原生账户页（不再是占位）。
-        vc.onShowTutorial = { [weak self] in self?.presentTutorial() }
+        vc.onShowTutorial = { [weak self] in self?.presentOnboarding(mode: .replay) }
         vc.onOpenAccountSettings = { [weak self] in self?.presentSettings() }
         vc.onToggleAppearance = { [weak self] in self?.presentAppearanceSheet() }
         vc.onInteractionChanged = { [weak self] changedId, likeCount, liked, bookmarked, emotes in
@@ -1805,23 +1805,51 @@ final class BearyChromeViewController: UIViewController {
         topmostViewController().present(vc, animated: true)
     }
 
-    /// 教程页弹出（审计 N1 容器侧）：教程 UI 由另一 lane 在 BearyPlaceholderViewController.swift
-    /// 内定义（BearyTutorialViewController，无参 init）；容器只负责全屏模态弹出，
-    /// 关闭／完成时由教程页自己置 beary_tutorial_seen_v1，容器不写该标记。
-    private func presentTutorial() {
-        let vc = BearyTutorialViewController()
+    /// 引导页弹出（v4 原生版，替代旧 6 页教程）：引导 UI 在
+    /// BearyOnboardingViewController.swift 内定义；容器只负责全屏模态弹出，
+    /// 关闭／完成时由引导页自己置 beary_tutorial_seen_v1，容器不写该标记。
+    /// 首启版带后台预加载三步（时间线首屏 / 广场首屏 / 表情预热），
+    /// 步骤触发完成即计入准备屏进度；重播版（我的页三个点 → 使用指南）无预加载。
+    private func presentOnboarding(mode: BearyOnboardingViewController.Mode) {
+        let vc = BearyOnboardingViewController(mode: mode)
         vc.modalPresentationStyle = .fullScreen
+        if mode == .firstLaunch {
+            let isDark = traitCollection.userInterfaceStyle == .dark
+            vc.preloadSteps = [
+                BearyOnboardingViewController.PreloadStep(title: "时间线首屏", run: { [weak self] done in
+                    guard let self = self else { done(); return }
+                    self.ensureTimelineVC().reloadTimeline()
+                    done()
+                }),
+                BearyOnboardingViewController.PreloadStep(title: "广场首屏", run: { [weak self] done in
+                    guard let self = self else { done(); return }
+                    self.ensureFeedVC().refreshAll()
+                    done()
+                }),
+                BearyOnboardingViewController.PreloadStep(title: "表情与图标资源", run: { done in
+                    BearyEmoteView.prewarmCommonEmotes(dark: isDark)
+                    done()
+                }),
+            ]
+        }
+        vc.onStartWriting = { [weak self, weak vc] in
+            vc?.dismiss(animated: true) { self?.presentComposer() }
+        }
+        vc.onEnterHome = { [weak self, weak vc] in
+            vc?.dismiss(animated: true) { self?.showPage(.home) }
+        }
+        vc.onClosed = { [weak vc] in vc?.dismiss(animated: true) }
         topmostViewController().present(vc, animated: true)
     }
 
     /// 首次启动自动弹出：容器首次出现且 seen 未置位时弹一次；每进程只尝试一次，
-    /// 避免教程页未置标记时 viewDidAppear 循环重弹；已有 modal 在前时不弹。
-    private func maybePresentTutorialOnFirstLaunch() {
+    /// 避免引导页未置标记时 viewDidAppear 循环重弹；已有 modal 在前时不弹。
+    private func maybePresentOnboardingOnFirstLaunch() {
         guard !tutorialAutoPresented else { return }
         tutorialAutoPresented = true
         guard !UserDefaults.standard.bool(forKey: BearyTutorialViewController.tutorialSeenKey) else { return }
         guard presentedViewController == nil else { return }
-        presentTutorial()
+        presentOnboarding(mode: .firstLaunch)
     }
 
     /// 外观手动切换（审计 5）：不再是 UIAlertController actionSheet + ✓ 标记，
