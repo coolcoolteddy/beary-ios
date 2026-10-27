@@ -95,6 +95,11 @@ class BearyFeedViewController: UIViewController {
     private var isRevalidating = false
     /// revalidate 代际：下拉刷新时 +1，在途重拉回来发现代际已变则丢弃，不覆盖新数据。
     private var revalidateGeneration = 0
+    /// B 视觉文案：首页公开倒计时 60 秒定时器（文案粒度为小时，60 秒足够；
+    /// 时间线用 1 秒是因为其倒计时精确到秒）。viewDidLoad 启动、deinit 停；
+    /// 容器切页只改 isHidden 不触发 appearance，故不依赖 viewWillAppear 启停，
+    /// 否则切 tab 回首页时定时器可能一直停着。
+    private var publishCountdownTimer: Timer?
     /// 后台重拉发现新头条、且用户已读到深处时暂存，等点 pill 才换上（不打断阅读）。
     private var pendingPlaza: [Entry]?
     private var pendingDelivered: [Entry]?
@@ -345,11 +350,21 @@ class BearyFeedViewController: UIViewController {
             newContentPill.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor, constant: -92),
         ])
         initialLoadStarted = true
+        startPublishCountdownTimer()
         refreshAll()
+    }
+
+    deinit {
+        publishCountdownTimer?.invalidate()
     }
 
     override func viewWillAppear(_ animated: Bool) {
         super.viewWillAppear(animated)
+        handlePageEnter()
+    }
+
+    /// P1-5：进页逻辑（原 viewWillAppear 体抽出，供 viewWillAppear 与 pageDidEnter 共用）。
+    private func handlePageEnter() {
         // 滚动藏栏复位：回到本页时栏恢复可见（animated: false）；FAB 同隐同现由容器 helper 负责。
         // 注意：容器 lane 在 SceneDelegate.swift 里提供 setChromeHidden，未落地前本文件单独编译不过（见交回 CI 风险）。
         feedChromeHidden = false
@@ -366,6 +381,17 @@ class BearyFeedViewController: UIViewController {
         } else {
             revalidateIfNeeded()
         }
+    }
+
+    /// P1-5：与时间线 pageDidEnter 同款钩子——容器切页只改 isHidden、不触发
+    /// viewWillAppear，故 viewWillAppear 里的 60 秒后台重拉在切 tab 回首页时走不到；
+    /// 容器在 showPage(.home) 接上 `feedVC?.pageDidEnter()`（与时间线分支同款一行）
+    /// 后即真正触发。文件约束不碰 SceneDelegate，故在容器接线前，进页逻辑先经
+    /// 下方 resumeVisibleEmotes 顺带跑一遍（容器目前切入 .home 时已调它）；
+    /// 两处双跑时由 revalidate 门控（isRevalidating/60 秒/loading）去重，无害。
+    func pageDidEnter() {
+        handlePageEnter()
+        resumeVisibleEmotesCore()
     }
 
     override func viewDidLayoutSubviews() {
@@ -388,8 +414,9 @@ class BearyFeedViewController: UIViewController {
     /// 表框贴页顶 + .never，故属性内边距即视觉顶距。显示 = 安全区顶 + 60 + 原 8 间隙，
     /// 收起 = 安全区顶 + 原 8 间隙（与旧收起时内容起于安全区顶 + 8 一致）。底内边距同步补
     /// 安全区底（.never 后系统不再自动叠加，旧视觉底 = 90 + 安全区底，须显式补回）。
-    /// scrollToTop 已用 -contentInset.top，.never 下即顶部，无需改；藏栏 y>120 阈值原文不动
-    /// （见最终报告：有效滚动距离随内边距增大，属已知行为变化）。
+    /// scrollToTop 已用 -contentInset.top，.never 下即顶部，无需改；藏栏阈值见
+    /// scrollViewDidScroll，已改为相对位移（y + contentInset.top > 120），不再随
+    /// 内边距增大而漂移（P2 首页纯逻辑项）。
     func applyHeaderTopInset(visible: Bool) {
         headerTopInsetVisible = visible
         let safeTop = view.safeAreaInsets.top
@@ -411,17 +438,24 @@ class BearyFeedViewController: UIViewController {
     }
 
     /// 下拉刷新触发口：标准 UIRefreshControl 的 valueChanged 目标（与时间线、个人主页同款）。
+    /// 手势刷新时 refreshControl 自带转圈，中央菊花不启动（B 视觉文案项）。
     @objc private func pullToRefresh() {
         // M12（91 包）：下拉刷新触发给一次轻触觉（已批点赞/发布/拒绝三处不动）。
         BearyHaptics.press()
-        refreshAll()
+        refreshAllInternal(showCentralSpinner: false)
     }
 
     // MARK: - 公开接口：下拉刷新与外部调用都走它，重拉 delivered + plaza
 
     /// F6：刷新不塌回——deliveredVisibleCount 与旧模型/去重集合都保留，
     /// 新数据回来才替换；首拉失败也保留旧专区（失败路径见两个首拉函数）。
+    /// 非手势刷新（首拉/tab 重拍/登录翻转）走这里，中央菊花启动；手势下拉
+    /// 刷新走 refreshAllInternal(showCentralSpinner: false)，菊花不抢 refreshControl 的戏。
     func refreshAll() {
+        refreshAllInternal(showCentralSpinner: true)
+    }
+
+    private func refreshAllInternal(showCentralSpinner: Bool) {
         BearyDiaryCardCell.resetQuoteFetchState()
         revalidateGeneration += 1
         isRevalidating = false
@@ -435,6 +469,12 @@ class BearyFeedViewController: UIViewController {
         deliveredError = false
         plazaHasMore = true
         plazaError = false
+        // B 视觉文案：中央菊花此前从未 startAnimating（死代码指示器），现改为
+        // 非手势刷新时启动；首屏骨架路径会在 updateOverlayState 里经 showSkeleton
+        // 停掉它（骨架优先），后台重拉 revalidate 不走这里、继续不闪菊花。
+        if showCentralSpinner {
+            centralSpinner.startAnimating()
+        }
         loadDeliveredFirstPage()
         loadPlazaFirstPage()
         tableView.reloadData()
@@ -649,12 +689,21 @@ class BearyFeedViewController: UIViewController {
         let oldDeliveredShown = min(deliveredVisibleCount, deliveredAll.count)
         let oldDeliveredRowCount = deliveredRowCount()
         let wasDeliveredError = deliveredError
+        // P1-4：分页回包同样捕获 generation，照抄首拉的代际守卫写法——
+        // 期间若有 refreshAll（代际 +1），旧分页回包只复位 loading，不动模型与表，
+        // 不覆盖新首拉的 hasMore/数据。
+        let nextPageGeneration = revalidateGeneration
         deliveredLoading = true
         tableView.reloadData()
         // F6：送达翻页游标 publish_at || created_at（网页 dlvMore 同口径）。
         BearyAPI.shared.fetchEntries(scope: .delivered, limit: pageLimit, before: last.publishAt ?? last.createdAt, beforeId: lastEntryIdValue) { [weak self] result in
             DispatchQueue.main.async {
                 guard let strongSelf = self else { return }
+                guard nextPageGeneration == strongSelf.revalidateGeneration else {
+                    strongSelf.deliveredLoading = false
+                    strongSelf.maybeEndRefreshing()
+                    return
+                }
                 switch result {
                 case .success(let list):
                     let fresh = list.entries ?? []
@@ -776,10 +825,18 @@ class BearyFeedViewController: UIViewController {
         }
         let oldPlazaCount = entries.count
         let wasPlazaError = plazaError
+        // P1-4：广场分页回包同样捕获 generation，照抄首拉的代际守卫写法——
+        // 期间若有 refreshAll，旧分页回包只复位 loading，不覆盖新首拉的 hasMore。
+        let nextPageGeneration = revalidateGeneration
         plazaLoading = true
         BearyAPI.shared.fetchEntries(scope: .plaza, limit: pageLimit, before: last.createdAt, beforeId: lastEntryIdValue) { [weak self] result in
             DispatchQueue.main.async {
                 guard let strongSelf = self else { return }
+                guard nextPageGeneration == strongSelf.revalidateGeneration else {
+                    strongSelf.plazaLoading = false
+                    strongSelf.maybeEndRefreshing()
+                    return
+                }
                 switch result {
                 case .success(let list):
                     let fresh = list.entries ?? []
@@ -815,14 +872,23 @@ class BearyFeedViewController: UIViewController {
     private var recentHeaderRowCount: Int { recentPublished.isEmpty ? 0 : 1 }
     private var plazaSectionRowOffset: Int { recentHeaderRowCount + recentPublished.count }
 
-    /// 广场行过滤：去掉已出现在 delivered 区的 id；delivered 拉取失败时不过滤。
+    /// 广场行过滤：去掉已出现在 delivered 区的 id，以及已出现在“最近公开”
+    /// 模块里的 id（P1-6：模块保留、正流去重，同篇不在广场出现两次）。
+    /// delivered 拉取失败时不知道送达 id，该路不过滤；最近公开 id 来自广场
+    /// 响应自身，不受送达失败影响，照常排除。
     private func plazaEntries() -> [Entry] {
-        if deliveredFetchFailed { return plazaRaw }
-        if deliveredIds.isEmpty { return plazaRaw }
+        var excluded = Set<String>()
+        if deliveredFetchFailed == false {
+            excluded.formUnion(deliveredIds)
+        }
+        for entry in recentPublished {
+            if let entryIdValue = entry.id { excluded.insert(entryIdValue) }
+        }
+        if excluded.isEmpty { return plazaRaw }
         var result: [Entry] = []
         for entry in plazaRaw {
             if let entryIdValue = entry.id {
-                if deliveredIds.contains(entryIdValue) { continue }
+                if excluded.contains(entryIdValue) { continue }
                 result.append(entry)
             } else {
                 result.append(entry)
@@ -1288,7 +1354,11 @@ class BearyFeedViewController: UIViewController {
             return
         }
         hideSkeleton()
-        centralSpinner.stopAnimating()
+        // B 视觉文案：菊花只在两流都落袋后停；在途时不截停，否则非手势刷新
+        // 一启动就被 refreshAll 末尾的本次调用同步停掉、永远转不起来。
+        if deliveredLoading == false && plazaLoading == false {
+            centralSpinner.stopAnimating()
+        }
         if deliveredLoading || plazaLoading {
             setEmptyVisible(false)
         } else {
@@ -1331,7 +1401,9 @@ class BearyFeedViewController: UIViewController {
 
     private func expandCell(for tableView: UITableView, loading: Bool) -> UITableViewCell {
         let cell = tableView.dequeueReusableCell(withIdentifier: "BearyExpandCell") ?? UITableViewCell(style: .default, reuseIdentifier: "BearyExpandCell")
-        cell.selectionStyle = .default
+        // P2 首页纯逻辑：“查看更多”展开行改 .none——它是首页唯一闪灰高亮的行
+        // （最近公开头、失败空块 cell 均已是 .none），点按只展开/翻页，不留灰闪。
+        cell.selectionStyle = .none
         cell.backgroundColor = BearyColors.bg
         cell.contentView.backgroundColor = BearyColors.bg
         var label = cell.contentView.viewWithTag(101) as? UILabel
@@ -1683,7 +1755,15 @@ extension BearyFeedViewController: UITableViewDataSource, UITableViewDelegate {
 
     /// 80 包 A5：与 stopVisibleEmotes 对称的恢复入口（容器切回时调用）：
     /// 只恢复可见行内 BearyEmoteView 的播放，不重播整页入场。
+    /// P1-5：容器目前切入 .home 时只调这里（未接 pageDidEnter），故顺带跑一遍
+    /// handlePageEnter，让 60 秒后台重拉在切 tab 回首页时真正触发；容器接上
+    /// pageDidEnter 后，两处双跑由 revalidate 门控去重，无害。
     func resumeVisibleEmotes() {
+        handlePageEnter()
+        resumeVisibleEmotesCore()
+    }
+
+    private func resumeVisibleEmotesCore() {
         func resume(_ view: UIView) {
             if let emote = view as? BearyEmoteView { emote.play() }
             for sub in view.subviews { resume(sub) }
@@ -1691,8 +1771,26 @@ extension BearyFeedViewController: UITableViewDataSource, UITableViewDelegate {
         for cell in tableView.visibleCells { resume(cell) }
     }
 
-    /// 滚动藏栏（清单第 2 项首页部分）：主滚动视图向下超过 120pt 后藏栏、向上即显栏；
-    /// 栏态变化时才调容器 helper（FAB 同隐同现由容器 helper 负责，本文件不动 FAB）。
+    /// B 视觉文案：公开倒计时 60 秒定时器——只重算可见行文案（cell 内 refreshPubRow
+    /// 已按 feed 模式守卫），不重拉、不重建行；过期瞬间翻公开态仍靠下一次重拉换模型。
+    private func startPublishCountdownTimer() {
+        if publishCountdownTimer != nil { return }
+        publishCountdownTimer = Timer.scheduledTimer(withTimeInterval: 60, repeats: true) { [weak self] _ in
+            self?.publishCountdownTick()
+        }
+    }
+
+    private func publishCountdownTick() {
+        for cell in tableView.visibleCells {
+            guard let cardCell = cell as? BearyDiaryCardCell else { continue }
+            cardCell.refreshPublishRow()
+        }
+    }
+
+    /// 滚动藏栏（清单第 2 项首页部分）：主滚动视图向下相对位移超过 120pt 后藏栏、
+    /// 向上即显栏；栏态变化时才调容器 helper（FAB 同隐同现由容器 helper 负责，本文件不动 FAB）。
+    /// P2 首页纯逻辑：阈值改相对位移（y + contentInset.top，即从顶部滚过的真实距离），
+    /// 不再用绝对偏移——顶栏显隐会改 contentInset.top，绝对阈值下有效滚动距离会漂移。
     /// 阈值 120pt 为本 lane 自定：避开顶部小幅滚动就藏栏；总协调可调。
     func scrollViewDidScroll(_ scrollView: UIScrollView) {
         guard scrollView === tableView else { return }
@@ -1700,7 +1798,7 @@ extension BearyFeedViewController: UITableViewDataSource, UITableViewDelegate {
         let delta = y - lastFeedScrollOffsetY
         if delta > 2 {
             lastFeedScrollOffsetY = y
-            if y > 120, feedChromeHidden == false {
+            if y + scrollView.contentInset.top > 120, feedChromeHidden == false {
                 feedChromeHidden = true
                 SceneDelegate.chrome?.setChromeHidden(true, animated: true)
             }

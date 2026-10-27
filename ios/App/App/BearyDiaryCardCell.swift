@@ -1962,7 +1962,12 @@ class BearyDiaryCardCell: UITableViewCell {
         button.layer.add(shake, forKey: "bearyDenyShake")
     }
 
-    /// D2：公开行渲染（首页模式；网页 pubState / pubCountdownText 口径；渲染时算一次，不设定时刷新）。
+    /// D2：公开行渲染（首页模式；网页 pubState / pubCountdownText 口径）。
+    /// B 视觉文案：控制器 60 秒定时器对可见行调 refreshPublishRow 重算文案，
+    /// 跨小时边界时“剩 N 小时”不再 stale；本函数自身仍是纯渲染，不持有定时器。
+    func refreshPublishRow() {
+        refreshPubRow()
+    }
     private func refreshPubRow() {
         guard cardMode == .feed else {
             pubStack.isHidden = true
@@ -2707,12 +2712,18 @@ extension BearyDiaryCardCell: UIContextMenuInteractionDelegate {
                     self?.shareFromCardMenu()
                 })
             }
+            // P2 首页纯逻辑：首页模式私密卡不给“收藏”项——其收藏路径
+            // feedBookmarkTapped 遇 isPublic != true 直接静默 return，留着就是死按钮
+            // （分享项同款口径：仅公开卡出现）。个人主页模式走自有 onBookmark 路径，
+            // 不在此改动，行为保持原样。
             // 收藏标题取实时态：首页模式 currentEntry 由 cell 内收藏路径就地维护，
             // 个人主页模式 cellBookmarkedByMe 由 syncInteraction 维护。
-            let bookmarked = self.cardMode == .profile ? self.cellBookmarkedByMe : (self.currentEntry?.bookmarkedByMe ?? false)
-            actions.append(UIAction(title: bookmarked ? "取消收藏" : "收藏", image: UIImage(systemName: bookmarked ? "bookmark.slash" : "bookmark")) { [weak self] _ in
-                self?.bookmarkFromCardMenu()
-            })
+            if entry.isPublic == true || self.cardMode == .profile {
+                let bookmarked = self.cardMode == .profile ? self.cellBookmarkedByMe : (self.currentEntry?.bookmarkedByMe ?? false)
+                actions.append(UIAction(title: bookmarked ? "取消收藏" : "收藏", image: UIImage(systemName: bookmarked ? "bookmark.slash" : "bookmark")) { [weak self] _ in
+                    self?.bookmarkFromCardMenu()
+                })
+            }
             if self.isCardMenuEditAvailable(entry: entry) {
                 actions.append(UIAction(title: "编辑", image: UIImage(systemName: "pencil")) { [weak self] _ in
                     self?.onContextMenuEdit?()
