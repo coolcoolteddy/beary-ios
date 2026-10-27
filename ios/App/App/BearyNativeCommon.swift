@@ -47,6 +47,25 @@ enum BearyColors {
     }
 }
 
+// MARK: - Sheet/居中模态统一口径（B 批）
+
+/// 底 sheet 与居中模态的共享 chrome：顶部圆角 20、抓手 40×4（顶距 10、圆角 2）、
+/// 遮罩 scrim 0.45。B 批前四处各写各的数值（恰好同值），改一处即全跟走，防再分裂。
+/// 例外一律不动：草稿箱遮罩有意全透明（网页口径回滚，见 BearyDraftBoxViewController
+/// 文件头）；回应 Sheet（Feed/Profile 内，卡片线范围）圆角 22 / 抓手 38×4 / Profile
+/// 遮罩 scrim 全值（0.6）不在此列。
+/// 注意：CenteredModal 旧值 UIColor(white: 0, alpha: 0.45) 与 scrimColor 等值
+/// （scrim 本就是 white 0，withAlphaComponent 只换 alpha），改写后视觉不变。
+enum BearySheetChrome {
+    static let topCornerRadius: CGFloat = 20
+    static let grabberWidth: CGFloat = 40
+    static let grabberHeight: CGFloat = 4
+    static let grabberTop: CGFloat = 10
+    static let grabberCornerRadius: CGFloat = 2
+    static let scrimAlpha: CGFloat = 0.45
+    static var scrimColor: UIColor { BearyColors.scrim.withAlphaComponent(scrimAlpha) }
+}
+
 // MARK: - 液态玻璃（与 SceneDelegate.makeGlassView 同配方，勿另起 tint）
 
 /// 玻璃配方唯一口径：iOS 26+ 为 UIGlassEffect，低版本降级系统毛玻璃；

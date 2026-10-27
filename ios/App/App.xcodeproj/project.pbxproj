@@ -29,6 +29,8 @@
 		A46569900EDF7A6299450A3E /* BearyDraftFiles.swift in Sources */ = {isa = PBXBuildFile; fileRef = 55657C85F900B6AAC4EBF6D1 /* BearyDraftFiles.swift */; };
 		2E336A1F3CBED468CAD5D554 /* BearyEdgeDismiss.swift in Sources */ = {isa = PBXBuildFile; fileRef = DFB7CEC22AB4833567716062 /* BearyEdgeDismiss.swift */; };
 		CC36F03F3B9948ACA0371634 /* BearyCenteredModal.swift in Sources */ = {isa = PBXBuildFile; fileRef = DF72F9D9B2F74A28879E58DD /* BearyCenteredModal.swift */; };
+		69DE2C19E74C327FA3626A93 /* BearyButton.swift in Sources */ = {isa = PBXBuildFile; fileRef = 25DEEB6AE3A0566F76549F5F /* BearyButton.swift */; };
+		23D88D2D590450808C9EF6BE /* BearyStateView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4373B88D3E61CD26A7F93F7F /* BearyStateView.swift */; };
 		FE6E29AFED3B5E04593AB59C /* BearyPlaceholderViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = AC51784211948B3A8F2F516E /* BearyPlaceholderViewController.swift */; };
 		B19ABAE5D3904C1CBD12AE61 /* BearyComposerPickers.swift in Sources */ = {isa = PBXBuildFile; fileRef = E02EB770843D473AB5D8F4E2 /* BearyComposerPickers.swift */; };
 		E312AC32EA7088A2062A9321 /* BearyDraftBoxViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1D6C94421FC75DA02227F95C /* BearyDraftBoxViewController.swift */; };
@@ -178,6 +180,8 @@
 		55657C85F900B6AAC4EBF6D1 /* BearyDraftFiles.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BearyDraftFiles.swift; sourceTree = "<group>"; };
 		DFB7CEC22AB4833567716062 /* BearyEdgeDismiss.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BearyEdgeDismiss.swift; sourceTree = "<group>"; };
 		DF72F9D9B2F74A28879E58DD /* BearyCenteredModal.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BearyCenteredModal.swift; sourceTree = "<group>"; };
+		25DEEB6AE3A0566F76549F5F /* BearyButton.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BearyButton.swift; sourceTree = "<group>"; };
+		4373B88D3E61CD26A7F93F7F /* BearyStateView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BearyStateView.swift; sourceTree = "<group>"; };
 		AC51784211948B3A8F2F516E /* BearyPlaceholderViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BearyPlaceholderViewController.swift; sourceTree = "<group>"; };
 		E02EB770843D473AB5D8F4E2 /* BearyComposerPickers.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BearyComposerPickers.swift; sourceTree = "<group>"; };
 		1D6C94421FC75DA02227F95C /* BearyDraftBoxViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BearyDraftBoxViewController.swift; sourceTree = "<group>"; };
@@ -357,6 +361,8 @@
 				55657C85F900B6AAC4EBF6D1 /* BearyDraftFiles.swift */,
 				DFB7CEC22AB4833567716062 /* BearyEdgeDismiss.swift */,
 				DF72F9D9B2F74A28879E58DD /* BearyCenteredModal.swift */,
+				25DEEB6AE3A0566F76549F5F /* BearyButton.swift */,
+				4373B88D3E61CD26A7F93F7F /* BearyStateView.swift */,
 				AC51784211948B3A8F2F516E /* BearyPlaceholderViewController.swift */,
 				E02EB770843D473AB5D8F4E2 /* BearyComposerPickers.swift */,
 				1D6C94421FC75DA02227F95C /* BearyDraftBoxViewController.swift */,
@@ -711,6 +717,8 @@
 				A46569900EDF7A6299450A3E /* BearyDraftFiles.swift in Sources */,
 				2E336A1F3CBED468CAD5D554 /* BearyEdgeDismiss.swift in Sources */,
 				CC36F03F3B9948ACA0371634 /* BearyCenteredModal.swift in Sources */,
+				69DE2C19E74C327FA3626A93 /* BearyButton.swift in Sources */,
+				23D88D2D590450808C9EF6BE /* BearyStateView.swift in Sources */,
 				FE6E29AFED3B5E04593AB59C /* BearyPlaceholderViewController.swift in Sources */,
 				B19ABAE5D3904C1CBD12AE61 /* BearyComposerPickers.swift in Sources */,
 				E312AC32EA7088A2062A9321 /* BearyDraftBoxViewController.swift in Sources */,

@@ -2736,7 +2736,7 @@ private final class BearyComposerSheetPresentationController: UIPresentationCont
         // 临时诊断（86 包，定根因后删除）。
         DiagFile.mark("sheet-willBegin")
         guard let container = containerView else { return }
-        dimmingView.backgroundColor = BearyColors.scrim.withAlphaComponent(0.45)
+        dimmingView.backgroundColor = BearySheetChrome.scrimColor
         dimmingView.alpha = 0
         dimmingView.translatesAutoresizingMaskIntoConstraints = false
         container.addSubview(dimmingView)
@@ -2812,10 +2812,10 @@ private final class BearyComposerSheetPresentationController: UIPresentationCont
             sheetShadowView.layer.shadowPath = UIBezierPath(
                 roundedRect: sheetShadowView.bounds,
                 byRoundingCorners: [.topLeft, .topRight],
-                cornerRadii: CGSize(width: 20, height: 20)
+                cornerRadii: CGSize(width: BearySheetChrome.topCornerRadius, height: BearySheetChrome.topCornerRadius)
             ).cgPath
         }
-        presentedView.layer.cornerRadius = 20
+        presentedView.layer.cornerRadius = BearySheetChrome.topCornerRadius
         presentedView.layer.maskedCorners = [.layerMinXMinYCorner, .layerMaxXMinYCorner]
         presentedView.clipsToBounds = true
         // 阴影层在 presentationTransitionWillBegin 里先于 presentedView 加进容器，故天然在其下方。
@@ -2823,7 +2823,7 @@ private final class BearyComposerSheetPresentationController: UIPresentationCont
         // 抓手条不再是 28pt：仅占抓手自身高度（顶距 10 + 高 4 = 14），无附加安全区。
         if grabberInstalled == false {
             grabberPill.backgroundColor = BearyColors.line
-            grabberPill.layer.cornerRadius = 2
+            grabberPill.layer.cornerRadius = BearySheetChrome.grabberCornerRadius
             grabberStrip.addSubview(grabberPill)
             grabberStrip.pillView = grabberPill
             let pan = UIPanGestureRecognizer(target: self, action: #selector(handleGrabberPan(_:)))
@@ -2840,8 +2840,8 @@ private final class BearyComposerSheetPresentationController: UIPresentationCont
         // 只在 pill 矩形内命中：pill 外触摸穿透到编辑器顶栏（取消/发布钮），
         // 不再被条带空吞；pan 手势仍挂在条带上，滑动关闭只从 pill 起手。
         grabberStrip.frame = CGRect(x: 0, y: 0, width: presentedView.bounds.width, height: 44)
-        let pillWidth: CGFloat = 40
-        grabberPill.frame = CGRect(x: (presentedView.bounds.width - pillWidth) / 2, y: 10, width: pillWidth, height: 4)
+        let pillWidth: CGFloat = BearySheetChrome.grabberWidth
+        grabberPill.frame = CGRect(x: (presentedView.bounds.width - pillWidth) / 2, y: BearySheetChrome.grabberTop, width: pillWidth, height: BearySheetChrome.grabberHeight)
         sheetTopBorderView.frame = CGRect(x: 0, y: 0, width: presentedView.bounds.width, height: 1)
         presentedView.bringSubviewToFront(grabberStrip)
         presentedView.bringSubviewToFront(sheetTopBorderView)
