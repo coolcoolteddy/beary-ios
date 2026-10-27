@@ -1817,11 +1817,11 @@ final class BearySettingsViewController: UIViewController {
     }
 
     private func buildNotificationSection() {
-        // 消息角标：本地开关，门控底栏消息段未读数显示（SceneDelegate.chrome.updateBellBadge 内查档）。
+        // 消息角标：本地开关，门控顶栏消息铃铛未读数显示（SceneDelegate.chrome.updateBellBadge 内查档）。
         let badgeTitle = makeLabel(font: UIFont.systemFont(ofSize: 15), color: BearyColors.ink)
         badgeTitle.text = "消息角标"
         let badgeDetail = makeLabel(font: UIFont.systemFont(ofSize: 12), color: BearyColors.gray, lines: 0)
-        badgeDetail.text = "底栏消息段显示未读数"
+        badgeDetail.text = "顶栏消息铃铛显示未读数"
         let badgeTextStack = UIStackView(arrangedSubviews: [badgeTitle, badgeDetail])
         badgeTextStack.axis = .vertical
         badgeTextStack.spacing = 2

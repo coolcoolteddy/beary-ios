@@ -246,7 +246,8 @@ final class BearyLoginViewController: UIViewController {
             stackView.trailingAnchor.constraint(lessThanOrEqualTo: contentView.trailingAnchor, constant: -22),
             stackView.centerXAnchor.constraint(equalTo: contentView.centerXAnchor),
             stackView.widthAnchor.constraint(lessThanOrEqualToConstant: 432),
-            closeRow.heightAnchor.constraint(equalToConstant: 32),
+            // Hit44：行高放开到 44（钮 32 居中，上下各留 6），热区不再被 32 高行截断；钮视觉尺寸不变。
+            closeRow.heightAnchor.constraint(equalToConstant: 44),
             closeButton.widthAnchor.constraint(equalToConstant: 32),
             closeButton.heightAnchor.constraint(equalToConstant: 32),
             closeButton.trailingAnchor.constraint(equalTo: closeRow.trailingAnchor),
@@ -263,9 +264,11 @@ final class BearyLoginViewController: UIViewController {
             sendButton.heightAnchor.constraint(equalToConstant: 44),
             codeContainer.trailingAnchor.constraint(equalTo: sendButton.leadingAnchor, constant: -9),
             agreeButton.leadingAnchor.constraint(equalTo: agreeRow.leadingAnchor),
-            agreeButton.topAnchor.constraint(equalTo: agreeRow.topAnchor, constant: 2),
+            // Hit44：行高放开到 44（钮 22 上 11 下 11），热区不再被约 24 高行截断；文案 UITextView 顶对齐，位置不动。
+            agreeButton.topAnchor.constraint(equalTo: agreeRow.topAnchor, constant: 11),
             agreeButton.widthAnchor.constraint(equalToConstant: 22),
             agreeButton.heightAnchor.constraint(equalToConstant: 22),
+            agreeButton.bottomAnchor.constraint(equalTo: agreeRow.bottomAnchor, constant: -11),
             agreeLabel.leadingAnchor.constraint(equalTo: agreeButton.trailingAnchor, constant: 10),
             agreeLabel.trailingAnchor.constraint(equalTo: agreeRow.trailingAnchor),
             agreeLabel.topAnchor.constraint(equalTo: agreeRow.topAnchor),

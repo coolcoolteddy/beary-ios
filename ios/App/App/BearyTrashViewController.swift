@@ -300,6 +300,8 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate {
     private func buildConstraints() {
         closeButton.widthAnchor.constraint(equalToConstant: 32).isActive = true
         closeButton.heightAnchor.constraint(equalToConstant: 32).isActive = true
+        // Hit44：头行高放开到 44（钮 32 在 stack 内居中，上下各留 6），热区不再被 32 高行截断；钮视觉尺寸不变。
+        headerRow.heightAnchor.constraint(equalToConstant: 44).isActive = true
         emptyIconView.widthAnchor.constraint(equalToConstant: 36).isActive = true
         emptyIconView.heightAnchor.constraint(equalToConstant: 36).isActive = true
         // P2-1：列宽 = 全宽减 32（两侧各 16），宽 ≥821 时 600 上限（必需）胜出居中；
