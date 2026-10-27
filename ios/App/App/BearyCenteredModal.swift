@@ -51,7 +51,7 @@ private final class BearyCenteredPresentationController: UIPresentationControlle
     /// 故每次布局与深浅切换时都按当前 trait 重解一次。
     private func applyCardChrome() {
         guard let presentedView = presentedView else { return }
-        presentedView.layer.cornerRadius = 20
+        presentedView.layer.cornerRadius = BearySheetChrome.topCornerRadius
         presentedView.layer.maskedCorners = [.layerMinXMinYCorner, .layerMaxXMinYCorner, .layerMinXMaxYCorner, .layerMaxXMaxYCorner]
         presentedView.layer.borderWidth = 1
         presentedView.layer.borderColor = BearyColors.line.resolvedColor(with: traitCollection).cgColor
@@ -67,7 +67,7 @@ private final class BearyCenteredPresentationController: UIPresentationControlle
 
     override func presentationTransitionWillBegin() {
         guard let container = containerView else { return }
-        dimmingView.backgroundColor = UIColor(white: 0, alpha: 0.45)
+        dimmingView.backgroundColor = BearySheetChrome.scrimColor
         dimmingView.alpha = 0
         dimmingView.translatesAutoresizingMaskIntoConstraints = false
         container.addSubview(dimmingView)

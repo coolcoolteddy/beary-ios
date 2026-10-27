@@ -65,8 +65,9 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate {
     private let emptyIconView = UIImageView()
     private let emptyLabel = UILabel()
     private let failureWrap = UIStackView()
-    private let failureLabel = UILabel()
-    private let retryButton = UIButton(type: .custom)
+    // B 批示范接入：失败态改走统一 BearyStateView（错误重试态），失败文案与重试动作不变；
+    // 空态 emptyWrap 与登录态 loginWrap 本批不动；Feed/Profile 各页的接入留给卡片线。
+    private let failureStateView = BearyStateView()
     private let moreSpinner = UIActivityIndicatorView(style: .medium)
     private let loginWrap = UIStackView()
     private let loginButton = UIButton(type: .custom)
@@ -102,9 +103,9 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate {
 
     override func traitCollectionDidChange(_ previousTraitCollection: UITraitCollection?) {
         super.traitCollectionDidChange(previousTraitCollection)
-        // CGColor 只在赋值时解析一次：深浅切换时重刷重试钮、行框与行内两钮描边。
+        // CGColor 只在赋值时解析一次：深浅切换时重刷行框与行内两钮描边；
+        // 失败态重试钮边框改由 BearyStateView 内 trait 处理，本页不再重刷。
         if previousTraitCollection?.userInterfaceStyle != traitCollection.userInterfaceStyle {
-            retryButton.layer.borderColor = BearyColors.line.cgColor
             for rowView in rowViewsByIdentifier.values {
                 rowView.layer.borderColor = BearyColors.line.cgColor
             }
@@ -215,19 +216,10 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate {
         failureWrap.alignment = .center
         failureWrap.spacing = 12
         failureWrap.isHidden = true
-        failureLabel.text = "加载失败"
-        failureLabel.font = UIFont.systemFont(ofSize: 15)
-        failureLabel.textColor = BearyColors.ink
-        failureLabel.textAlignment = .center
-        retryButton.setTitle("点击重试", for: .normal)
-        retryButton.setTitleColor(BearyColors.ink, for: .normal)
-        retryButton.titleLabel?.font = UIFont.systemFont(ofSize: 14)
-        retryButton.layer.borderWidth = 1
-        retryButton.layer.borderColor = BearyColors.line.cgColor
-        retryButton.layer.cornerRadius = 17
-        retryButton.contentEdgeInsets = UIEdgeInsets(top: 8, left: 20, bottom: 8, right: 20)
-        retryButton.addTarget(self, action: #selector(retryTapped), for: .touchUpInside)
-        retryButton.bearyAddPressFeedback()
+        // B 批示范：失败态由 BearyStateView 承载（标题“加载失败”+ 紧凑描边重试钮，
+        // 动作复用 retryTapped；钮边框深浅重刷改由组件内 trait 处理，不再由本页重刷）。
+        failureStateView.translatesAutoresizingMaskIntoConstraints = false
+        failureStateView.configure(kind: .error, title: "加载失败", subtitle: nil, iconName: nil, actionTitle: "点击重试", onAction: { [weak self] in self?.retryTapped() })
 
         moreSpinner.color = BearyColors.gray
         moreSpinner.isHidden = true
@@ -287,8 +279,7 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate {
         contentStack.addArrangedSubview(moreSpinner)
         emptyWrap.addArrangedSubview(emptyIconView)
         emptyWrap.addArrangedSubview(emptyLabel)
-        failureWrap.addArrangedSubview(failureLabel)
-        failureWrap.addArrangedSubview(retryButton)
+        failureWrap.addArrangedSubview(failureStateView)
         view.addSubview(toastWrap)
         toastWrap.addSubview(toastLabel)
 

@@ -2,8 +2,9 @@ import UIKit
 
 // ===== 草稿箱弹层（网页草稿箱移植；对应审计 G1）=====
 // 网页对照：~/workspace/teddy_site/beary.html 内 #draftModal。
-// 形态：overFullScreen 自包含呈现；遮罩为选人 sheet 同款 0.45 scrim、点遮罩关闭
-// （backdrop 点击走 closeDraftBox，行为不变）；
+// 形态：overFullScreen 自包含呈现；遮罩有意全透明（网页 #draftModal .backdrop 即透明，
+// P2-7 scrim 已按网页对齐回滚——不走选人 sheet 同款 0.45 scrim，见 buildViews 注释）；
+// 点遮罩关闭（backdrop 点击走 closeDraftBox，行为不变）；
 // iPhone 为底部 sheet、最大高度 82vh；iPad（宽 ≥821）为居中 440 宽卡片。
 // 数据只读草稿 v3（BearyDraftFiles.swift）：v3 存储是多槽数组文件 beary_draft_v3.json，
 // 本弹层按 updatedAt 倒序列出全部草稿；旧 v2 单槽由存储层首次读取时迁入 v3，
@@ -82,7 +83,7 @@ final class BearyDraftBoxViewController: UIViewController {
     private let handleView = UIView()
     private let headerWrap = UIView()
     private let titleLabel = UILabel()
-    private let closeButton = BearyHit44Button(type: .custom)
+    private let closeButton = BearyButton.closeButton()
     private let subWrap = UIView()
     private let subLabel = UILabel()
     private let newButton = BearyDraftBoxDashedButton(type: .custom)
@@ -191,11 +192,11 @@ final class BearyDraftBoxViewController: UIViewController {
         view.addSubview(backdropButton)
 
         sheetView.backgroundColor = .clear
-        sheetView.layer.cornerRadius = 20
+        sheetView.layer.cornerRadius = BearySheetChrome.topCornerRadius
         sheetView.layer.shadowColor = UIColor.black.cgColor
         // 玻璃批：玻璃只钉在 sheetView 内部（index 0，在 topBorder/scrollView 之下），
         // 玻璃自身圆角 20 + clipsToBounds；sheetView 本身不裁剪，阴影保留。
-        sheetGlassView.layer.cornerRadius = 20
+        sheetGlassView.layer.cornerRadius = BearySheetChrome.topCornerRadius
         sheetGlassView.clipsToBounds = true
         sheetGlassView.translatesAutoresizingMaskIntoConstraints = false
         sheetView.insertSubview(sheetGlassView, at: 0)
@@ -223,15 +224,15 @@ final class BearyDraftBoxViewController: UIViewController {
         sheetScrollView.addSubview(contentStack)
 
         handleView.backgroundColor = BearyColors.line
-        handleView.layer.cornerRadius = 2
+        handleView.layer.cornerRadius = BearySheetChrome.grabberCornerRadius
         handleView.translatesAutoresizingMaskIntoConstraints = false
         handleWrapView.translatesAutoresizingMaskIntoConstraints = false
         handleWrapView.addSubview(handleView)
         NSLayoutConstraint.activate([
-            handleView.widthAnchor.constraint(equalToConstant: 40),
-            handleView.heightAnchor.constraint(equalToConstant: 4),
+            handleView.widthAnchor.constraint(equalToConstant: BearySheetChrome.grabberWidth),
+            handleView.heightAnchor.constraint(equalToConstant: BearySheetChrome.grabberHeight),
             handleView.centerXAnchor.constraint(equalTo: handleWrapView.centerXAnchor),
-            handleView.topAnchor.constraint(equalTo: handleWrapView.topAnchor, constant: 10),
+            handleView.topAnchor.constraint(equalTo: handleWrapView.topAnchor, constant: BearySheetChrome.grabberTop),
             handleView.bottomAnchor.constraint(equalTo: handleWrapView.bottomAnchor),
         ])
         // U18：把手加下滑关闭手势（与 closeBox 同动画）；遮罩点按关闭保留。
@@ -245,19 +246,8 @@ final class BearyDraftBoxViewController: UIViewController {
         titleLabel.textAlignment = .center
         titleLabel.translatesAutoresizingMaskIntoConstraints = false
         headerWrap.addSubview(titleLabel)
-        closeButton.backgroundColor = BearyColors.faint
-        closeButton.layer.cornerRadius = 16
-        closeButton.tintColor = BearyColors.ink
-        closeButton.accessibilityLabel = "关闭"
-        if let closeImage = BearyIconImages.image(named: "icon_close", pointSize: 15) {
-            closeButton.setImage(closeImage, for: .normal)
-        } else {
-            // I15：icon_close 资产随包发布（Assets.xcassets/icon_close.imageset），
-            // 正常路径恒取到图；此文字分支仅作资产缺失时的兜底，保留以保证关闭入口永在。
-            closeButton.setTitle("✕", for: .normal)
-            closeButton.setTitleColor(BearyColors.ink, for: .normal)
-            closeButton.titleLabel?.font = UIFont.systemFont(ofSize: 15)
-        }
+        // 关闭钮视觉由 BearyButton.iconCircleClose 工厂定（faint 底 32 圆钮 + icon_close 15，
+        // 资产缺失时工厂自带“✕”文字兜底）；这里只保留动作与按压反馈。
         closeButton.addTarget(self, action: #selector(closeBox), for: .touchUpInside)
         closeButton.bearyAddPressFeedback()
         closeButton.translatesAutoresizingMaskIntoConstraints = false

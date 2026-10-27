@@ -39,7 +39,7 @@ final class BearyRecipientPickerViewController: UIViewController, UITextFieldDel
     private let headerIconWrap = UIView()
     private let headerIcon = UIImageView()
     private let headerTitle = UILabel()
-    private let closeButton = BearyHit44Button(type: .system)
+    private let closeButton = BearyButton.closeButton()
     private let searchBox = UIView()
     private let searchIcon = UIImageView()
     private let searchField = UITextField()
@@ -107,19 +107,19 @@ final class BearyRecipientPickerViewController: UIViewController, UITextFieldDel
     }
 
     private func buildViews() {
-        backdropButton.backgroundColor = BearyColors.scrim.withAlphaComponent(0.45)
+        backdropButton.backgroundColor = BearySheetChrome.scrimColor
         backdropButton.accessibilityLabel = "关闭"
         backdropButton.addTarget(self, action: #selector(didTapClose), for: .touchUpInside)
         backdropButton.bearyAddPressFeedback()
 
         sheetView.backgroundColor = BearyColors.bg
-        sheetView.layer.cornerRadius = 20
+        sheetView.layer.cornerRadius = BearySheetChrome.topCornerRadius
         sheetView.layer.shadowColor = UIColor.black.cgColor
 
         topBorderView.backgroundColor = BearyColors.line
 
         grabberView.backgroundColor = BearyColors.line
-        grabberView.layer.cornerRadius = 2
+        grabberView.layer.cornerRadius = BearySheetChrome.grabberCornerRadius
 
         // 头图底色：网页 color-mix(in srgb, orange 20%, surface)——以 surface 为底混 20% 橙，
         // 深色下 surface 为 #26262c 而非 bg 的 #000，故比直接 alpha 叠 bg 更亮；另补内圈 28% 橙描边。
@@ -135,13 +135,8 @@ final class BearyRecipientPickerViewController: UIViewController, UITextFieldDel
         headerTitle.text = "写给谁"
         headerTitle.font = UIFont.boldSystemFont(ofSize: 16)
         headerTitle.textColor = BearyColors.ink
-        if let closeImage = BearyIconImages.image(named: "icon_close", pointSize: 15) {
-            closeButton.setImage(closeImage, for: .normal)
-        }
-        closeButton.tintColor = BearyColors.ink
-        closeButton.backgroundColor = BearyColors.faint
-        closeButton.layer.cornerRadius = 16
-        closeButton.layer.masksToBounds = true
+        // 关闭钮视觉由 BearyButton.iconCircleClose 工厂定（faint 底 32 圆钮 + icon_close 15）；
+        // 这里只保留动作与按压反馈，不再重复写底色/圆角。
         closeButton.addTarget(self, action: #selector(didTapClose), for: .touchUpInside)
         closeButton.bearyAddPressFeedback()
         searchBox.backgroundColor = BearyColors.faint
@@ -235,10 +230,10 @@ final class BearyRecipientPickerViewController: UIViewController, UITextFieldDel
             grabberWrap.topAnchor.constraint(equalTo: sheetView.topAnchor),
             grabberWrap.leadingAnchor.constraint(equalTo: sheetView.leadingAnchor),
             grabberWrap.trailingAnchor.constraint(equalTo: sheetView.trailingAnchor),
-            grabberView.widthAnchor.constraint(equalToConstant: 40),
-            grabberView.heightAnchor.constraint(equalToConstant: 4),
+            grabberView.widthAnchor.constraint(equalToConstant: BearySheetChrome.grabberWidth),
+            grabberView.heightAnchor.constraint(equalToConstant: BearySheetChrome.grabberHeight),
             grabberView.centerXAnchor.constraint(equalTo: grabberWrap.centerXAnchor),
-            grabberView.topAnchor.constraint(equalTo: grabberWrap.topAnchor, constant: 10),
+            grabberView.topAnchor.constraint(equalTo: grabberWrap.topAnchor, constant: BearySheetChrome.grabberTop),
             grabberView.bottomAnchor.constraint(equalTo: grabberWrap.bottomAnchor),
             headerIconWrap.topAnchor.constraint(equalTo: grabberWrap.bottomAnchor, constant: 4),
             headerIconWrap.leadingAnchor.constraint(equalTo: sheetView.leadingAnchor, constant: 16),
