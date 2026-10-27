@@ -1968,6 +1968,16 @@ final class BearyChromeViewController: UIViewController {
     private func presentSettings() {
         let vc = BearySettingsViewController()
         vc.modalPresentationStyle = .fullScreen
+        // 设置页进场宽度三段变修：fadeRise 只定根视图帧 + 播淡入上移，不做
+        // 内部布局；本页每次呈现新建，呈现前从未在最终帧布局过，首批内部
+        // 布局（scrollView frameLayoutGuide → 内容列宽、821 上限开关）会落在
+        // 0.25s 淡入窗口里分步完成，卡片宽度随之分段跳变。此处呈现前先在
+        // 最终帧布局一次定帧，进场动画只剩淡入上移，卡片首帧即正常宽度；
+        // 只布局不动数据（loadAll 照常由 viewDidLoad 触发）与过渡本身。
+        vc.loadViewIfNeeded()
+        vc.view.frame = topmostViewController().view.window?.bounds ?? UIScreen.main.bounds
+        vc.view.setNeedsLayout()
+        vc.view.layoutIfNeeded()
         // 94 包：与草稿箱同款淡入 + 上移（只改过渡，不改页内容）。
         vc.transitioningDelegate = fadeRiseTransitionDelegate
         vc.onClose = { [weak vc] in vc?.dismiss(animated: true) }
