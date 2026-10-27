@@ -1907,6 +1907,17 @@ class BearyProfileViewController: UIViewController {
             DispatchQueue.main.async { [weak self] in
                 guard let self = self, row < self.diaryEntries.count, self.diaryEntries[row].id == entryId else { return }
                 guard let cell = self.tableView.cellForRow(at: path) else { return }
+                // E3：定位落定后，目标统一卡片天气标播 Lottie；先停其他可见卡，
+                // 避免上一次落点仍在视野内时两行同播。减动效下播放器只置静态帧，
+                // 故此调用放在减动效提前返回之前，不随高亮闪烁一并跳过。
+                if let cardCell = cell as? BearyDiaryCardCell {
+                    for visibleCell in self.tableView.visibleCells {
+                        if let visibleCard = visibleCell as? BearyDiaryCardCell, visibleCard !== cardCell {
+                            visibleCard.stopWeatherLottie()
+                        }
+                    }
+                    cardCell.playWeatherLottie()
+                }
                 if UIAccessibility.isReduceMotionEnabled { return }
                 cell.contentView.backgroundColor = BearyColors.faint
                 UIView.animate(withDuration: 0.6, delay: 0.5, options: [], animations: {
