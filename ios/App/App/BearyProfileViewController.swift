@@ -2454,7 +2454,8 @@ class BearyProfileViewController: UIViewController {
             var optimistic = entry
             optimistic.likedByMe = true
             optimistic.likeCount = (entry.likeCount ?? 0) + 1
-            syncVisibleCell(entry: optimistic)
+            // 方案一：先行同步显式不禁用，防重入只靠 likeBusyIds 守卫。
+            syncVisibleCell(entry: optimistic, interactionDisabled: false)
         }
         BearyAPI.shared.toggleLike(id: entryId, liked: wantLiked) { [weak self] result in
             DispatchQueue.main.async {
@@ -2502,7 +2503,8 @@ class BearyProfileViewController: UIViewController {
         var optimistic = entry
         optimistic.bookmarkedByMe = wantBookmarked
         updateEntryInAllTabs(entry: optimistic)
-        syncVisibleCell(entry: optimistic)?.playBookmarkPop()
+        // 方案一：先行同步显式不禁用，防重入只靠 bookmarkBusyIds 守卫。
+        syncVisibleCell(entry: optimistic, interactionDisabled: false)?.playBookmarkPop()
         BearyAPI.shared.toggleBookmark(id: entryId) { [weak self] result in
             DispatchQueue.main.async {
                 guard let strongSelf = self else { return }

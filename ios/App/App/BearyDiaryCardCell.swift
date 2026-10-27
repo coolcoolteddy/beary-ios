@@ -2126,7 +2126,8 @@ class BearyDiaryCardCell: UITableViewCell {
             updateLikeButton()
         }
         isLikeBusy = true
-        updateActionInteractivity()
+        // 方案一（Li 2026-10-28 定）：先行期间不禁用按钮，防重入只靠 isLikeBusy 守卫；
+        // 若此处调 updateActionInteractivity，按钮禁用减淡会盖住刚写好的先行填色。
         BearyAPI.shared.toggleLike(id: entryIdValue, liked: currentlyLiked == false) { [weak self] result in
             DispatchQueue.main.async {
                 guard let strongSelf = self else { return }
@@ -2172,7 +2173,8 @@ class BearyDiaryCardCell: UITableViewCell {
         self.feedBookmarkTapped()
     }
 
-    /// F8（首页模式）：收藏先行切换、失败回滚 + 拒绝动效；pending 态为半透明（E3-2），
+    /// F8（首页模式）：收藏先行切换、失败回滚 + 拒绝动效；先行期间不再半透明/禁用
+    /// （方案一，Li 2026-10-28 定），防重入只靠 isBookmarkBusy 守卫；
     /// 成功后以服务端值为准并经控制器全副本同步。
     private func feedBookmarkTapped() {
         guard let entryIdValue = cellEntryId, !entryIdValue.isEmpty else { return }
@@ -2188,8 +2190,7 @@ class BearyDiaryCardCell: UITableViewCell {
         updateBookmarkButton()
         BearyIconMotion.playBookmarkPop(on: bookmarkButton)
         isBookmarkBusy = true
-        bookmarkButton.alpha = 0.6
-        bookmarkButton.isEnabled = false
+        // 方案一：先行期间不压暗、不禁用，防重入只靠 isBookmarkBusy 守卫。
         BearyAPI.shared.toggleBookmark(id: entryIdValue) { [weak self] result in
             DispatchQueue.main.async {
                 guard let strongSelf = self else { return }
