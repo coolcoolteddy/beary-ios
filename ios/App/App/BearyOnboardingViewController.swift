@@ -418,7 +418,7 @@ final class BearyOnboardingViewController: UIViewController {
     private var nightOverlay: UIView?
     private var nightOn = false
     private var quizSelected: Set<Int> = []
-    private var quizCards: [UIButton] = []
+    private var quizCards: [UIView] = []
     private var quizToasted = false
     private var trialTextView: UITextView?
     private var trialCountLabel: UILabel?
@@ -1131,13 +1131,13 @@ extension BearyOnboardingViewController {
         guard let textView = trialTextView else { return }
         let text = textView.text ?? ""
         if text == "写下今天…" || text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { return }
-        if trialDraftId == nil { trialDraftId = BearyDraftFiles.newDraftId() }
+        if trialDraftId == nil { trialDraftId = BearyDraftStore.newDraftId() }
         let draft = BearyDraft(
             draftId: trialDraftId!,
             content: text,
             mood: moodSelected,
             images: [],
-            clientReq: BearyDraftFiles.newClientReq(),
+            clientReq: BearyDraftStore.newClientReq(),
             updatedAt: Date().timeIntervalSince1970,
             weather: weatherSelected,
             recipientId: nil,
@@ -1153,13 +1153,13 @@ extension BearyOnboardingViewController {
             quoteIsPublic: nil,
             quoteDeleted: false
         )
-        if BearyDraftFiles.currentAccountId != nil {
-            BearyDraftFiles.saveAsync(draft) { [weak self] in
+        if BearyDraftStore.currentAccountId != nil {
+            BearyDraftStore.saveAsync(draft) { [weak self] in
                 self?.trialStatusLabel?.text = "草稿已保存到本设备"
             }
         } else {
             // 未登录：写旧全局文件，登录时由账号隔离迁移归入该账号草稿箱。
-            BearyDraftFiles.saveTrialDraftToLegacyGlobal(draft)
+            BearyDraftStore.saveTrialDraftToLegacyGlobal(draft)
             trialStatusLabel?.text = "草稿已保存到本设备"
         }
     }
