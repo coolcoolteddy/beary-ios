@@ -5,8 +5,7 @@ import UIKit
 // 实现。两页卡片骨架相同（头像 40 + 右列：写给行 / 标题行 / 正文 / 折叠 /
 // 引用卡 / 图片条 216 / 操作行 / 回应行 / 底线 2），但互动架构与若干视觉
 // 本就不同，合并时以 cardMode 区分，不擅自统一：
-//  - 标题行对齐（待 Li 定方向的未决项，各自保留）：feed = .firstBaseline
-//    （网页口径有意为之），profile = .center，合并后不统一成一边。
+//  - 标题行对齐（Li 2026-10-27 定：两页统一 .firstBaseline，按文字基线对齐）。
 //  - 互动架构：feed 模式 cell 内直发 API（点赞/收藏/回应，成功失败路径
 //    就地同步）；profile 模式 cell 只转发回调（onLike/onBookmark/onEmoteTap
 //    等），API 与就地同步归控制器（syncInteraction(entry:interactionDisabled:)）。
@@ -558,10 +557,10 @@ class BearyDiaryCardCell: UITableViewCell {
         st.translatesAutoresizingMaskIntoConstraints = false
         st.axis = .horizontal
         st.spacing = 8
-        // 标题行对齐（未决项，各自保留，绝不统一）：feed = 网页口径
-        // display:flex;align-items:baseline（16.5 名与 14 时间、天气、心情按基线对齐）；
-        // profile = .center。
-        st.alignment = self.cardMode == .feed ? .firstBaseline : .center
+        // 标题行对齐（Li 2026-10-27 定：两页统一按文字基线对齐）：feed 与
+        // profile 均为 .firstBaseline（网页口径 display:flex;align-items:baseline，
+        // 16.5 名与 14 时间、天气、心情按基线对齐）。
+        st.alignment = .firstBaseline
         st.distribution = .fill
         return st
     }()
