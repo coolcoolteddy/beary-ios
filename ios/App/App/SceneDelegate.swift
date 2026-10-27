@@ -2170,7 +2170,23 @@ final class BearyChromeViewController: UIViewController {
         }
     }
 
+    /// 录屏批 (a)：编辑器已在栈上时不再叠 present——编辑器 view 是 clear 底 +
+    /// 玻璃背板，两层全屏编辑器叠加会把下半区（附加选项/字数/引用/说明）透印成
+    /// 两套错位重叠；编辑器内各区经 grep 只挂载一次，叠 present 是唯一能把整页
+    /// 下半区渲染两遍的路径（连点 FAB/空态 CTA 与 FAB 同一触摸已互斥，但两次
+    /// 独立触摸在首个 present 动画未完成时仍能叠上）。正常流程里编辑器之上
+    /// 不会再开编辑器，守卫不影响登录后补开等路径（那时栈上无编辑器）。
+    private func isComposerPresented() -> Bool {
+        var top: UIViewController = self
+        while let next = top.presentedViewController {
+            if next is BearyComposerViewController { return true }
+            top = next
+        }
+        return false
+    }
+
     private func presentComposer() {
+        if isComposerPresented() { return }
         // 闪退诊断打点（容器侧，只记日志不改行为）：本文件此前无日志，循仓内
         // NSLog("[Tag] ...") 惯例（BearyEmotePlayer 等同款），每调用一次记一行。
         NSLog("[Diag] presentComposer-enter")
@@ -2236,6 +2252,7 @@ final class BearyChromeViewController: UIViewController {
     /// 时间线重拉（C4 网页 closeEditor + loadFeed 同口径）；发布时登录失效 →
     /// 登录页盖在编辑器上层，编辑器不关（D7）。
     private func presentComposerForEdit(entry: Entry) {
+        if isComposerPresented() { return }
         guard SessionManager.shared.isLoggedIn else {
             presentLogin()
             return
