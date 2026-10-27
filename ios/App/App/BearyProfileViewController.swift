@@ -3048,6 +3048,36 @@ private class BearyProfileEntryCell: UITableViewCell {
     private var imageHeightConstraint: NSLayoutConstraint?
     private var emoteHeightConstraint: NSLayoutConstraint?
 
+    /// 94 包：图片槽位复用——9 只槽位在 init 时一次建好挂进 imagesStack
+    /// （条目图片上限 9 张），configure 只改图/宽/显隐，prepareForReuse
+    /// 只取消在途加载并隐藏，不再每次销毁重建 UIImageView。
+    private var imageSlots: [UIImageView] = []
+    private var imageSlotWidthConstraints: [NSLayoutConstraint] = []
+
+    private func makeImageSlots() {
+        guard imageSlots.isEmpty else { return }
+        for index in 0..<9 {
+            let slot = UIImageView()
+            slot.translatesAutoresizingMaskIntoConstraints = false
+            slot.backgroundColor = BearyColors.faint
+            slot.contentMode = .scaleAspectFill
+            slot.clipsToBounds = true
+            slot.layer.cornerRadius = 12
+            slot.isUserInteractionEnabled = true
+            slot.tag = index
+            slot.addGestureRecognizer(UITapGestureRecognizer(target: self, action: #selector(imageTapped(_:))))
+            slot.isHidden = true
+            imagesStack.addArrangedSubview(slot)
+            let widthConstraint = slot.widthAnchor.constraint(equalToConstant: 280)
+            imageSlotWidthConstraints.append(widthConstraint)
+            NSLayoutConstraint.activate([
+                widthConstraint,
+                slot.heightAnchor.constraint(equalToConstant: 216),
+            ])
+            imageSlots.append(slot)
+        }
+    }
+
     override init(style: UITableViewCell.CellStyle, reuseIdentifier: String?) {
         super.init(style: style, reuseIdentifier: reuseIdentifier)
         selectionStyle = .none
@@ -3066,6 +3096,7 @@ private class BearyProfileEntryCell: UITableViewCell {
         contentView.addGestureRecognizer(cardLongPress)
         imagesScrollView.addSubview(imagesStack)
         emoteScrollView.addSubview(emoteStack)
+        makeImageSlots()
         rightStack.setCustomSpacing(4, after: recipientRow)
         rightStack.setCustomSpacing(4, after: titleStack)
         rightStack.setCustomSpacing(6, after: bodyLabel)
@@ -3166,9 +3197,10 @@ private class BearyProfileEntryCell: UITableViewCell {
         onTapImages = nil
         chipKeys = []
         currentImageKeys = []
-        for arrangedView in imagesStack.arrangedSubviews {
-            imagesStack.removeArrangedSubview(arrangedView)
-            arrangedView.removeFromSuperview()
+        // 94 包：槽位复用——只取消在途加载并隐藏，不摘不销毁。
+        for slot in imageSlots {
+            slot.bearySetImage(url: nil)
+            slot.isHidden = true
         }
         for arrangedView in emoteStack.arrangedSubviews {
             emoteStack.removeArrangedSubview(arrangedView)
@@ -3397,29 +3429,24 @@ private class BearyProfileEntryCell: UITableViewCell {
         // 必须显式开启；手势截获此次点按，行点按（定位）不再触发）。本文件不自复制查看器。
         let imageKeys = entry.images ?? []
         currentImageKeys = imageKeys
+        if imageSlots.isEmpty { makeImageSlots() }
         if imageKeys.isEmpty {
             imagesScrollView.isHidden = true
             imageHeightConstraint?.constant = 0
         } else {
             imagesScrollView.isHidden = false
             imageHeightConstraint?.constant = 216
+            // 94 包：槽位复用——只给用到的槽位换图/换宽/显形，其余隐藏。
             for (imageIndex, imageKey) in imageKeys.enumerated() {
-                let imageViewValue = UIImageView()
-                imageViewValue.translatesAutoresizingMaskIntoConstraints = false
-                imageViewValue.backgroundColor = BearyColors.faint
-                imageViewValue.contentMode = .scaleAspectFill
-                imageViewValue.clipsToBounds = true
-                imageViewValue.layer.cornerRadius = 12
-                imageViewValue.isUserInteractionEnabled = true
-                imageViewValue.tag = imageIndex
-                imageViewValue.addGestureRecognizer(UITapGestureRecognizer(target: self, action: #selector(imageTapped(_:))))
+                let slot = imageSlots[imageIndex]
+                slot.tag = imageIndex
                 let strip = stripWidth(key: imageKey, dims: entry.imgDims, height: 216)
-                imageViewValue.bearySetImage(url: BearyImageURLs.imageURL(key: imageKey, thumb: true), placeholder: nil, downsampleToWidth: strip * UIScreen.main.scale)
-                imagesStack.addArrangedSubview(imageViewValue)
-                NSLayoutConstraint.activate([
-                    imageViewValue.widthAnchor.constraint(equalToConstant: strip),
-                    imageViewValue.heightAnchor.constraint(equalToConstant: 216),
-                ])
+                slot.bearySetImage(url: BearyImageURLs.imageURL(key: imageKey, thumb: true), placeholder: nil, downsampleToWidth: strip * UIScreen.main.scale)
+                imageSlotWidthConstraints[imageIndex].constant = strip
+                slot.isHidden = false
+            }
+            for slot in imageSlots.dropFirst(imageKeys.count) {
+                slot.isHidden = true
             }
         }
         // 点赞 / 收藏 / 分享（已赞、已收藏为橙色；忙时整行互动禁用）。

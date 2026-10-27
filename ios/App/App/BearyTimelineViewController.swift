@@ -1718,16 +1718,27 @@ final class BearyTimelineCell: UITableViewCell {
         let nowMs = Int(Date().timeIntervalSince1970 * 1000)
         let isPending = (entry.publishPendingUntil ?? 0) > nowMs
         let isDelivered = (entry.publishAt ?? 0) > 0 && (entry.publishAt ?? 0) <= nowMs
+        // 94 包：归零转公开时行文案变化加 crossDissolve（首现直接写，
+        // 之后文案变了才过渡，每秒 tick 文案不变时不重播）。
+        let newText: String
+        let hideHourglass: Bool
         if isPending || isDelivered {
-            pillLabel.text = "未公开"
-            hourglassView.isHidden = true
-            pillLabelLeadingWithIcon?.isActive = false
-            pillLabelLeadingWithoutIcon?.isActive = true
+            newText = "未公开"
+            hideHourglass = true
         } else {
-            pillLabel.text = BearyTimelineCell.privCountdownText(publishAtMs: entry.publishAt)
-            hourglassView.isHidden = false
-            pillLabelLeadingWithoutIcon?.isActive = false
-            pillLabelLeadingWithIcon?.isActive = true
+            newText = BearyTimelineCell.privCountdownText(publishAtMs: entry.publishAt)
+            hideHourglass = false
+        }
+        let apply = {
+            self.pillLabel.text = newText
+            self.hourglassView.isHidden = hideHourglass
+            self.pillLabelLeadingWithIcon?.isActive = !hideHourglass
+            self.pillLabelLeadingWithoutIcon?.isActive = hideHourglass
+        }
+        if let old = pillLabel.text, !old.isEmpty, old != newText {
+            UIView.transition(with: pillBackground, duration: 0.22, options: .transitionCrossDissolve, animations: apply)
+        } else {
+            apply()
         }
     }
 

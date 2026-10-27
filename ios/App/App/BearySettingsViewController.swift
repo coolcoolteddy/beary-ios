@@ -624,6 +624,16 @@ final class BearySettingsViewController: UIViewController {
         contentStack.addArrangedSubview(loginWrap)
         contentStack.addArrangedSubview(contentWrap)
         contentStack.addArrangedSubview(settingsExtraWrap)
+        // 94 包：设置页底部构建号（Bundle 实值，不写死）。
+        let buildFooterLabel = UILabel()
+        buildFooterLabel.translatesAutoresizingMaskIntoConstraints = false
+        buildFooterLabel.font = UIFont.systemFont(ofSize: 13)
+        buildFooterLabel.textColor = BearyColors.gray
+        buildFooterLabel.textAlignment = .center
+        let shortVersion = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "—"
+        let buildNumber = Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "—"
+        buildFooterLabel.text = "版本 \(shortVersion)（构建号 \(buildNumber)）"
+        contentStack.addArrangedSubview(buildFooterLabel)
 
         toastWrap.backgroundColor = BearyColors.ink
         toastWrap.layer.cornerRadius = 16
@@ -1860,6 +1870,14 @@ final class BearySettingsViewController: UIViewController {
         let versionDetail = makeLabel(font: UIFont.systemFont(ofSize: 13), color: BearyColors.gray)
         versionDetail.text = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "—"
         rows.append(makeRow(title: "版本", detailLabel: versionDetail))
+        // 94 包：诊断日志行（点进专门页面看全部日志，不再只给 20 行尾巴）。
+        let diagDetail = makeLabel(font: UIFont.systemFont(ofSize: 13), color: BearyColors.gray)
+        diagDetail.text = "查看"
+        let diagContent = makeRow(title: "诊断日志", detailLabel: diagDetail)
+        let diagButton = UIButton(type: .custom)
+        diagButton.addTarget(self, action: #selector(openDiagnosticsPage), for: .touchUpInside)
+        diagButton.bearyAddPressHaptic()
+        rows.append(makeSettingsTappableRow(content: diagContent, button: diagButton))
         let group = makeGroupCard(title: "通用", rows: rows)
         settingsExtraWrap.addArrangedSubview(group.card)
     }
@@ -1891,6 +1909,14 @@ final class BearySettingsViewController: UIViewController {
     @objc private func openSystemSettings() {
         guard let url = URL(string: UIApplication.openSettingsURLString) else { return }
         UIApplication.shared.open(url)
+    }
+
+    /// 94 包：诊断日志专门页（与设置页同款淡入 + 上移；chrome 不在时退系统过渡）。
+    @objc private func openDiagnosticsPage() {
+        let vc = BearyDiagnosticsViewController()
+        vc.modalPresentationStyle = .fullScreen
+        vc.transitioningDelegate = SceneDelegate.chrome?.fadeRiseTransitionDelegate
+        present(vc, animated: true)
     }
 
     @objc private func themeRowTapped(_ sender: UIButton) {
@@ -2533,4 +2559,127 @@ MC 服务器为免费公益服，不保证 7×24 在线。
 
 紧急安全问题：请在邮件标题注明
 """
+}
+
+// 94 包：诊断日志专门页（设置页通用分区进入；显示 DiagFile 全部保留日志，
+// 打开时重读最新；复制全部进剪贴板，清空需二次确认）。
+private final class BearyDiagnosticsViewController: UIViewController {
+    private let textView = UITextView()
+    private let copyButton = UIButton(type: .system)
+    private let clearButton = UIButton(type: .system)
+
+    override func viewDidLoad() {
+        super.viewDidLoad()
+        view.backgroundColor = BearyColors.bg
+
+        let closeButton = UIButton(type: .system)
+        closeButton.translatesAutoresizingMaskIntoConstraints = false
+        closeButton.setTitle("关闭", for: .normal)
+        closeButton.setTitleColor(BearyColors.ink, for: .normal)
+        closeButton.titleLabel?.font = UIFont.systemFont(ofSize: 15)
+        closeButton.addTarget(self, action: #selector(closeTapped), for: .touchUpInside)
+        closeButton.bearyAddPressFeedback()
+
+        let titleLabel = UILabel()
+        titleLabel.translatesAutoresizingMaskIntoConstraints = false
+        titleLabel.font = UIFont.systemFont(ofSize: 17, weight: .bold)
+        titleLabel.textColor = BearyColors.ink
+        titleLabel.textAlignment = .center
+        titleLabel.text = "诊断日志"
+
+        let topBar = UIView()
+        topBar.translatesAutoresizingMaskIntoConstraints = false
+        topBar.addSubview(closeButton)
+        topBar.addSubview(titleLabel)
+        NSLayoutConstraint.activate([
+            topBar.heightAnchor.constraint(equalToConstant: 52),
+            closeButton.leadingAnchor.constraint(equalTo: topBar.leadingAnchor, constant: 16),
+            closeButton.centerYAnchor.constraint(equalTo: topBar.centerYAnchor),
+            titleLabel.centerXAnchor.constraint(equalTo: topBar.centerXAnchor),
+            titleLabel.centerYAnchor.constraint(equalTo: topBar.centerYAnchor),
+        ])
+
+        copyButton.translatesAutoresizingMaskIntoConstraints = false
+        copyButton.setTitle("复制全部", for: .normal)
+        copyButton.setTitleColor(BearyColors.ink, for: .normal)
+        copyButton.titleLabel?.font = UIFont.systemFont(ofSize: 15, weight: .bold)
+        copyButton.addTarget(self, action: #selector(copyTapped), for: .touchUpInside)
+        copyButton.bearyAddPressFeedback()
+        clearButton.translatesAutoresizingMaskIntoConstraints = false
+        clearButton.setTitle("清空", for: .normal)
+        clearButton.setTitleColor(BearyColors.red, for: .normal)
+        clearButton.titleLabel?.font = UIFont.systemFont(ofSize: 15)
+        clearButton.addTarget(self, action: #selector(clearTapped), for: .touchUpInside)
+        clearButton.bearyAddPressFeedback()
+        let actionRow = UIStackView(arrangedSubviews: [copyButton, clearButton])
+        actionRow.translatesAutoresizingMaskIntoConstraints = false
+        actionRow.axis = .horizontal
+        actionRow.spacing = 24
+        actionRow.alignment = .center
+
+        textView.translatesAutoresizingMaskIntoConstraints = false
+        textView.isEditable = false
+        textView.isSelectable = true
+        textView.font = UIFont.monospacedSystemFont(ofSize: 12, weight: .regular)
+        textView.textColor = BearyColors.ink
+        textView.backgroundColor = .clear
+        textView.textContainerInset = UIEdgeInsets(top: 12, left: 16, bottom: 12, right: 16)
+
+        view.addSubview(topBar)
+        view.addSubview(actionRow)
+        view.addSubview(textView)
+        NSLayoutConstraint.activate([
+            topBar.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
+            topBar.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            topBar.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            actionRow.topAnchor.constraint(equalTo: topBar.bottomAnchor, constant: 8),
+            actionRow.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 20),
+            textView.topAnchor.constraint(equalTo: actionRow.bottomAnchor, constant: 8),
+            textView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            textView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            textView.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor),
+        ])
+    }
+
+    override func viewDidAppear(_ animated: Bool) {
+        super.viewDidAppear(animated)
+        reloadLog()
+    }
+
+    private func reloadLog() {
+        DiagFile.linesAsync { [weak self] lines in
+            guard let self = self else { return }
+            if lines.isEmpty {
+                self.textView.text = "暂无诊断日志"
+                self.textView.textColor = BearyColors.gray
+            } else {
+                self.textView.text = lines.joined(separator: "\n")
+                self.textView.textColor = BearyColors.ink
+            }
+        }
+    }
+
+    @objc private func closeTapped() {
+        dismiss(animated: true)
+    }
+
+    @objc private func copyTapped() {
+        DiagFile.linesAsync { [weak self] lines in
+            UIPasteboard.general.string = lines.joined(separator: "\n")
+            self?.copyButton.setTitle("已复制", for: .normal)
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in
+                self?.copyButton.setTitle("复制全部", for: .normal)
+            }
+        }
+    }
+
+    @objc private func clearTapped() {
+        let alert = UIAlertController(title: "确定清空诊断日志？", message: "清空后无法恢复。", preferredStyle: .alert)
+        alert.addAction(UIAlertAction(title: "清空", style: .destructive) { [weak self] _ in
+            DiagFile.clear()
+            self?.reloadLog()
+        })
+        alert.addAction(UIAlertAction(title: "取消", style: .cancel))
+        present(alert, animated: true)
+    }
 }

@@ -89,8 +89,10 @@ class SceneDelegate: UIResponder, UIWindowSceneDelegate {
 
 final class BearyChromeViewController: UIViewController {
     private var topGlass: UIVisualEffectView!
-    // 临时诊断（81 包，定根因后删除）：卡点弹窗每进程只弹一次。
-    private var diagStuckAlertChecked = false
+    /// 94 包：淡入 + 上移模态过渡共享实例（他人主页/设置页/回收站/诊断页共用；
+    /// transitioningDelegate 为弱引用，实例由容器长期持有防提前释放；
+    /// 类型写协议，实体类保持文件私有，跨文件只传协议值）。
+    let fadeRiseTransitionDelegate: UIViewControllerTransitioningDelegate = BearyFadeRiseTransitioningDelegate()
     /// 52 批 header 高度开关：显示 = 安全区顶 + 60，收起 = 0；页顶约束同步 60↔0，收起后不留空占区。
     /// 顶栏透度批：页顶约束恒为 view.top（常量 0），不再随栏态改顶距；栏态改走各页
     /// 主滚动视图的顶部内边距（见 applyHeaderTopInsets），内容滑过时才透出玻璃。
@@ -865,11 +867,6 @@ final class BearyChromeViewController: UIViewController {
         // 教程首次启动自动弹出（审计 N1 容器侧）：容器首次出现时检查 seen 标记。
         maybePresentOnboardingOnFirstLaunch()
         runLaunchVeilIfNeeded()
-        // 临时诊断（81 包，定根因后删除）：每进程只查一次上次是否卡在打开流程，查到则下个 runloop 弹窗报卡点。
-        if !diagStuckAlertChecked {
-            diagStuckAlertChecked = true
-            DiagFile.maybeShowStuckAlert(from: self)
-        }
     }
 
     /// 64 包反馈修（第 18 项）：挂启动 veil 首帧静态画面（网页 launchVeil 口径：
@@ -1971,6 +1968,8 @@ final class BearyChromeViewController: UIViewController {
     private func presentSettings() {
         let vc = BearySettingsViewController()
         vc.modalPresentationStyle = .fullScreen
+        // 94 包：与草稿箱同款淡入 + 上移（只改过渡，不改页内容）。
+        vc.transitioningDelegate = fadeRiseTransitionDelegate
         vc.onClose = { [weak vc] in vc?.dismiss(animated: true) }
         vc.onRequireLogin = { [weak self] in self?.presentLogin() }
         vc.onAccountDeleted = { [weak self, weak vc] in
@@ -2065,6 +2064,8 @@ final class BearyChromeViewController: UIViewController {
     private func presentTrash() {
         let vc = BearyTrashViewController()
         vc.modalPresentationStyle = .fullScreen
+        // 94 包：与草稿箱同款淡入 + 上移（只改过渡，不改页内容）。
+        vc.transitioningDelegate = fadeRiseTransitionDelegate
         vc.onClose = { [weak self] in self?.dismiss(animated: true) }
         vc.onRequireLogin = { [weak self] in self?.presentLogin() }
         // TR-1（收尾）：恢复/彻底删除后刷新时间线、首页与我页（角标随时间线重拉更新）。
@@ -2109,6 +2110,8 @@ final class BearyChromeViewController: UIViewController {
         let nav = UINavigationController(rootViewController: vc)
         nav.isNavigationBarHidden = true
         nav.modalPresentationStyle = .fullScreen
+        // 94 包：与草稿箱同款淡入 + 上移（只改过渡，不改页内容；代理挂 nav 上）。
+        nav.transitioningDelegate = fadeRiseTransitionDelegate
         present(nav, animated: true)
     }
 
@@ -2984,55 +2987,110 @@ private final class BearyBadgeLabel: UILabel {
     }
 }
 
-// 临时诊断（81 包，定根因后删除）：定位“点加号后整个 App 全卡住”的主线程卡死位置。
+// 94 包：淡入 + 上移模态过渡（他人主页/设置页/回收站/诊断页共用，
+// 与草稿箱入场同款手感：0.25s easeOut 淡入上移；只做动画不改帧，
+// 全屏页仍按 .fullScreen 布局）。减动效时瞬时完成。
+private final class BearyFadeRiseTransitioningDelegate: NSObject, UIViewControllerTransitioningDelegate {
+    func animationController(forPresented presented: UIViewController, presenting: UIViewController, source: UIViewController) -> UIViewControllerAnimatedTransitioning? {
+        return BearyFadeRiseAnimator(isPresenting: true)
+    }
+    func animationController(forDismissed dismissed: UIViewController) -> UIViewControllerAnimatedTransitioning? {
+        return BearyFadeRiseAnimator(isPresenting: false)
+    }
+}
+
+private final class BearyFadeRiseAnimator: NSObject, UIViewControllerAnimatedTransitioning {
+    private let isPresenting: Bool
+    init(isPresenting: Bool) {
+        self.isPresenting = isPresenting
+        super.init()
+    }
+    func transitionDuration(using transitionContext: UIViewControllerContextTransitioning?) -> TimeInterval {
+        return UIAccessibility.isReduceMotionEnabled ? 0 : 0.25
+    }
+    func animateTransition(using transitionContext: UIViewControllerContextTransitioning) {
+        let container = transitionContext.containerView
+        if isPresenting {
+            guard let toVC = transitionContext.viewController(forKey: .to),
+                  let toView = transitionContext.view(forKey: .to) else {
+                transitionContext.completeTransition(false)
+                return
+            }
+            toView.frame = transitionContext.finalFrame(for: toVC)
+            container.addSubview(toView)
+            if UIAccessibility.isReduceMotionEnabled {
+                transitionContext.completeTransition(!transitionContext.transitionWasCancelled)
+                return
+            }
+            toView.alpha = 0
+            toView.transform = CGAffineTransform(translationX: 0, y: 16)
+            UIView.animate(withDuration: 0.25, delay: 0, options: .curveEaseOut, animations: {
+                toView.alpha = 1
+                toView.transform = .identity
+            }, completion: { _ in
+                transitionContext.completeTransition(!transitionContext.transitionWasCancelled)
+            })
+        } else {
+            guard let fromView = transitionContext.view(forKey: .from) else {
+                transitionContext.completeTransition(false)
+                return
+            }
+            if UIAccessibility.isReduceMotionEnabled {
+                fromView.removeFromSuperview()
+                transitionContext.completeTransition(!transitionContext.transitionWasCancelled)
+                return
+            }
+            UIView.animate(withDuration: 0.25, delay: 0, options: .curveEaseOut, animations: {
+                fromView.alpha = 0
+                fromView.transform = CGAffineTransform(translationX: 0, y: 16)
+            }, completion: { _ in
+                fromView.removeFromSuperview()
+                transitionContext.completeTransition(!transitionContext.transitionWasCancelled)
+            })
+        }
+    }
+}
+
+// 诊断埋点（81 包起）：定位“点加号后整个 App 全卡住”的主线程卡死位置。
 // 只记日志不改业务逻辑；用户无 Mac 看不到 NSLog 控制台，改走文件埋点。
 // 文件 Documents/beary-diag.log，每行 "HH:mm:ss.SSS stage"，只保留最后 200 行。
-// 重启后若上次卡在打开流程（最后一行落在非终态集合），弹窗报出最后 20 行。
+// 94 包起诊断常驻：设置页通用分区“诊断日志”行点进专门页面看全部日志，
+// 启动弹窗不再弹；写入改后台串行队列（见 mark），主线程只取时间戳并入队。
 enum DiagFile {
     static let fileName = "beary-diag.log"
     static let maxLines = 200
-    static let stuckStages: Set<String> = [
-        "didTapWrite", "fabLongPress-open", "presentComposer-enter",
-        "sheetAnimator-enter", "viewDidLoad-enter", "viewDidLoad-exit",
-        // 引导继续链路的非终态（ob-appeared 是走完的终态，不在集合里）。
-        "ob-primaryTapped", "ob-goTo", "ob-screen",
-        "ob-welcome-enter", "ob-welcome-exit", "ob-updateChrome", "ob-entrance",
-        // 82 包追加的转场/布局非终态（animator-completed 是转场终态，不在集合里）。
-        "animator-added", "animator-framed",
-        // 83 包追加：completion 入口（completeTransition 之前），仍属非终态。
-        "animator-animate-call", "animator-completion-enter",
-        // 84 包追加：动画参数快照与 1 秒后 runloop 存活探针，仍属非终态。
-        "animator-anim-params", "animator-1s-later",
-        // 86 包追加：死堵边界再劈一半（animate 返回、闭包、呈现控制器、willAppear）。
-        "animator-animate-returned", "animator-closure-enter", "animator-closure-exit",
-        "sheet-willBegin", "sheet-didComplete", "composer-willAppear",
-        // 86 包追加（扩网）：present 链路、关闭闭包、布局方法出口、主线程看门狗。
-        "presentComposer-authed", "presentComposer-willPresent",
-        "animator-dismiss-closure-enter", "animator-dismiss-closure-exit",
-        "sheet-layout-exit", "composer-layout-exit", "composer-prefSize-exit",
-        "watchdog-main-silent",
-        // 87 包追加：转场里跳过同步布局触发的标记（若死在转场里，它就是最后的非终态）。
-        "composer-prefSize-skipTrans",
-        "sheet-layout", "composer-layout", "composer-prefSize",
-    ]
-
     static var url: URL {
         FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
             .appendingPathComponent(fileName)
     }
 
-    /// 同步追加一行；卡死前来不及落盘是异步写法的死穴，故不用任何异步队列。
-    /// 写操作由 diagLock 串行化（看门狗后台线程同写一文件）；appendLine/trimIfNeeded
-    /// 假定调用方已持锁，禁止嵌套加锁（NSLock 不可重入）。
+    /// 94 包：写入改后台串行队列——主线程只取时间戳并入队，不再同步
+    /// 开文件/全量读文件；appendLine/trimIfNeeded 只在 diagQueue 上跑。
+    /// （81 包同步写是为卡死前落盘留证；整页编辑器已绕开 sheet 卡死路径，
+    /// 诊断常驻后后台写是正确取舍；看门狗静默事件仍由后台循环记入。）
+    private static let diagQueue = DispatchQueue(label: "beary.diag.io", qos: .utility)
+    private static var writesSinceTrim = 0
+    /// 仅 diagQueue 上使用，串行故安全（DateFormatter 非线程安全，不可跨队列共用）。
+    private static let diagTimeFormatter: DateFormatter = {
+        let f = DateFormatter()
+        f.dateFormat = "HH:mm:ss.SSS"
+        return f
+    }()
+
     static func mark(_ stage: String) {
         ensureWatchdogStarted()
-        diagLock.lock()
-        appendLine("\(timestamp()) \(stage)\n")
-        trimIfNeeded()
-        diagLock.unlock()
+        let now = Date()
+        diagQueue.async {
+            appendLine("\(diagTimeFormatter.string(from: now)) \(stage)\n")
+            writesSinceTrim += 1
+            if writesSinceTrim >= 50 {
+                writesSinceTrim = 0
+                trimIfNeeded()
+            }
+        }
     }
 
-    /// 不加锁的文件追加（调用方须持 diagLock）。
+    /// 文件追加（调用方须在 diagQueue 上）。
     private static func appendLine(_ line: String) {
         guard let data = line.data(using: .utf8) else { return }
         let u = url
@@ -3047,11 +3105,11 @@ enum DiagFile {
         }
     }
 
-    // 临时诊断（86 包，定根因后删除）：主线程心跳看门狗。
+    // 主线程心跳看门狗（86 包起，94 包起常驻供诊断页用）。
     // 主线程 50ms Timer（common modes，滑动时也不停）只写时间戳、不碰 UI；
     // 后台线程每 100ms 查一次，心跳陈旧超 500ms 即记 watchdog-main-silent
-    // （附最后心跳时间戳），同一静默段 2 秒时再补记一次。被堵的主线程不持
-    // diagLock（堵点不在写日志里），故后台写不会被主线程卡住。
+    // （附最后心跳时间戳），同一静默段 2 秒时再补记一次。
+    // diagLock 只保护心跳/启动态等内存状态，不再罩文件 I/O（写全走 diagQueue）。
     static let diagLock = NSLock()
     private static var heartbeat: TimeInterval = 0
     private static var watchdogStarted = false
@@ -3088,96 +3146,70 @@ enum DiagFile {
         while true {
             Thread.sleep(forTimeInterval: 0.1)
             let now = Date().timeIntervalSince1970
+            // 锁内只读/写内存状态，文件写一律入 diagQueue。
             diagLock.lock()
-            if now - heartbeat > 0.5 {
+            let beat = heartbeat
+            var silenceBeat: TimeInterval? = nil
+            var supplement = false
+            if now - beat > 0.5 {
                 if silenceStart == nil {
-                    silenceStart = heartbeat
-                    appendLine("\(timestamp()) watchdog-main-silent since=\(formatTime(heartbeat))\n")
-                    trimIfNeeded()
+                    silenceStart = beat
+                    silenceBeat = beat
                 } else if !silenceSupplementLogged, now - (silenceStart ?? now) >= 2.0 {
                     silenceSupplementLogged = true
-                    appendLine("\(timestamp()) watchdog-main-silent still-silent 2s\n")
-                    trimIfNeeded()
+                    supplement = true
                 }
             } else {
                 silenceStart = nil
                 silenceSupplementLogged = false
             }
             diagLock.unlock()
+            if let beatValue = silenceBeat {
+                diagQueue.async {
+                    let since = diagTimeFormatter.string(from: Date(timeIntervalSince1970: beatValue))
+                    appendLine("\(diagTimeFormatter.string(from: Date())) watchdog-main-silent since=\(since)\n")
+                    writesSinceTrim += 1
+                    if writesSinceTrim >= 50 { writesSinceTrim = 0; trimIfNeeded() }
+                }
+            } else if supplement {
+                diagQueue.async {
+                    appendLine("\(diagTimeFormatter.string(from: Date())) watchdog-main-silent still-silent 2s\n")
+                    writesSinceTrim += 1
+                    if writesSinceTrim >= 50 { writesSinceTrim = 0; trimIfNeeded() }
+                }
+            }
         }
     }
 
-    private static func formatTime(_ t: TimeInterval) -> String {
-        let formatter = DateFormatter()
-        formatter.dateFormat = "HH:mm:ss.SSS"
-        return formatter.string(from: Date(timeIntervalSince1970: t))
-    }
-
-    static func lines() -> [String] {
+    /// 读日志（调用方须在 diagQueue 上；trim 与 linesAsync 共用）。
+    private static func lines() -> [String] {
         guard let text = try? String(contentsOf: url, encoding: .utf8) else { return [] }
         return text.components(separatedBy: "\n").filter { !$0.isEmpty }
     }
 
-    static func trimIfNeeded() {
+    /// 节流裁剪（调用方须在 diagQueue 上）：每 50 次写入才检查一次，
+    /// 不再每次 mark 全量读文件；超限才保留最后 maxLines 行。
+    private static func trimIfNeeded() {
         let ls = lines()
         guard ls.count > maxLines + 20 else { return }
         let kept = ls.suffix(maxLines).joined(separator: "\n") + "\n"
         try? kept.write(to: url, atomically: true, encoding: .utf8)
     }
 
-    static func clear() {
-        try? FileManager.default.removeItem(at: url)
-    }
-
-    static func timestamp() -> String {
-        let formatter = DateFormatter()
-        formatter.dateFormat = "HH:mm:ss.SSS"
-        return formatter.string(from: Date())
-    }
-
-    /// 上次运行是否卡在打开流程：本次 launch 之前最后一行的 stage 落在非终态集合即算卡住，
-    /// 返回上次运行的最后 20 行（不含本次 launch 行）。
-    static func stuckTail() -> [String]? {
-        let ls = lines()
-        guard ls.count >= 2, ls.last?.hasSuffix(" launch") == true else { return nil }
-        let prev = ls[ls.count - 2]
-        // stage 取时间戳后的第一个 token：单 token 旧埋点与原来 .last 口径一致，
-        // 带 total= 数值的埋点（如 composer-prefSize total=456.0）也能对上集合。
-        let parts = prev.components(separatedBy: " ")
-        let stage = parts.count >= 2 ? parts[1] : (parts.last ?? "")
-        guard stuckStages.contains(stage) else { return nil }
-        return Array(ls.dropLast().suffix(20))
-    }
-
-    /// 主界面已出现后的下一个 runloop 再弹，避开引导页与登录页（有 modal 在前时晚 1.5 秒再试一次）。
-    static func maybeShowStuckAlert(from vc: UIViewController) {
-        guard let tail = stuckTail() else { return }
-        DispatchQueue.main.async {
-            if vc.presentedViewController != nil {
-                DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
-                    guard vc.presentedViewController == nil else { return }
-                    showAlert(tail, from: vc)
-                }
-                return
-            }
-            showAlert(tail, from: vc)
+    /// 诊断页读日志：走写入队列读，回调回主线程（与写入串行，无撕裂）。
+    static func linesAsync(completion: @escaping ([String]) -> Void) {
+        diagQueue.async {
+            let ls = lines()
+            DispatchQueue.main.async { completion(ls) }
         }
     }
 
-    private static func showAlert(_ tail: [String], from vc: UIViewController) {
-        let alert = UIAlertController(
-            title: "诊断：上次卡在打开流程",
-            message: tail.joined(separator: "\n"),
-            preferredStyle: .alert
-        )
-        alert.addAction(UIAlertAction(title: "复制", style: .default) { _ in
-            UIPasteboard.general.string = tail.joined(separator: "\n")
-        })
-        alert.addAction(UIAlertAction(title: "清除日志", style: .destructive) { _ in
-            clear()
-        })
-        alert.addAction(UIAlertAction(title: "好", style: .cancel))
-        vc.present(alert, animated: true)
+    /// 诊断页清空：同步进写入队列（先排空在途写入再删，不复活旧行）。
+    static func clear() {
+        diagQueue.sync {
+            writesSinceTrim = 0
+            try? FileManager.default.removeItem(at: url)
+        }
     }
 }
 
