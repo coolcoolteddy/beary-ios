@@ -1654,54 +1654,13 @@ final class BearyNotificationsViewController: UIViewController {
         }
     }
 
-    /// toast（详情页同款：ink 底、圆角 12、2 秒后淡出移除）。
+    /// toast：委托 B 批统一 BearyToast（A5-3 减动效口径由统一组件承接，
+    /// 三处调用点请先登录 / 加载失败 / 操作失败仍走本方法）。消息页是
+    /// Chrome 主 tab，FAB 为容器常驻 chrome、本页不藏栏，FAB 可见性在
+    /// 本页拿不到 Chrome 的私有 fabContainerView，故调用方明确传
+    /// aboveFAB=true；调用签名与文案、触发时机不变。
     private func showToast(message: String) {
-        let toastView = UIView()
-        toastView.backgroundColor = BearyColors.ink
-        toastView.layer.cornerRadius = 12
-        toastView.clipsToBounds = true
-        toastView.translatesAutoresizingMaskIntoConstraints = false
-        let label = UILabel()
-        label.text = message
-        label.font = UIFont.systemFont(ofSize: 14)
-        label.textColor = BearyColors.bg
-        label.textAlignment = .center
-        label.numberOfLines = 0
-        label.translatesAutoresizingMaskIntoConstraints = false
-        toastView.addSubview(label)
-        NSLayoutConstraint.activate([
-            label.topAnchor.constraint(equalTo: toastView.topAnchor, constant: 12),
-            label.bottomAnchor.constraint(equalTo: toastView.bottomAnchor, constant: -12),
-            label.leadingAnchor.constraint(equalTo: toastView.leadingAnchor, constant: 16),
-            label.trailingAnchor.constraint(equalTo: toastView.trailingAnchor, constant: -16),
-        ])
-        view.addSubview(toastView)
-        NSLayoutConstraint.activate([
-            toastView.leadingAnchor.constraint(greaterThanOrEqualTo: view.leadingAnchor, constant: 32),
-            toastView.trailingAnchor.constraint(lessThanOrEqualTo: view.trailingAnchor, constant: -32),
-            toastView.centerXAnchor.constraint(equalTo: view.centerXAnchor),
-            toastView.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor, constant: -158),
-        ])
-        // A5-3：三处 toast（请先登录 / 加载失败 / 操作失败）都走本方法，
-        // 在此一处查减动效开关即全覆盖——减动效时直接显隐，不播淡入淡出。
-        if UIAccessibility.isReduceMotionEnabled {
-            toastView.alpha = 1
-            DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
-                toastView.removeFromSuperview()
-            }
-        } else {
-            toastView.alpha = 0
-            UIView.animate(withDuration: 0.25) {
-                toastView.alpha = 1
-            }
-            DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
-                UIView.animate(withDuration: 0.25, animations: {
-                    toastView.alpha = 0
-                }, completion: { _ in
-                    toastView.removeFromSuperview()
-                })
-            }
-        }
+        BearyToast.show(in: view, message: message, aboveFAB: true)
     }
 
     /// 系统信模态：容器接了 onSystemNotificationSelected 则先交容器，
