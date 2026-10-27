@@ -2232,7 +2232,12 @@ class BearyTimelineViewController: UIViewController {
             merged.likedByMe = freshEntry.likedByMe
             merged.bookmarkCount = freshEntry.bookmarkCount
             merged.bookmarkedByMe = freshEntry.bookmarkedByMe
-            merged.emotes = freshEntry.emotes
+            // 表情排序批同款：重拉回包不直接覆盖已显示顺序（新贴追加末尾），
+            // 否则顺序敏感的互动签名会误触发跨页同步、把刚贴的顶到前面；
+            // 回包缺 emotes 字段时保留旧值，不清空。
+            if let freshEmotes = freshEntry.emotes {
+                merged.emotes = BearyEmoteOrder.merged(previous: old.emotes, server: freshEmotes)
+            }
             merged.isPublic = freshEntry.isPublic
             merged.publishAt = freshEntry.publishAt
             merged.publishPendingUntil = freshEntry.publishPendingUntil

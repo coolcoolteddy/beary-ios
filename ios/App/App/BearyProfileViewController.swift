@@ -2357,12 +2357,21 @@ class BearyProfileViewController: UIViewController {
         }
     }
 
-    private func reloadVisibleRow(entryId: String) {
-        for index in currentEntries.indices where currentEntries[index].id == entryId {
-            tableView.reloadRows(at: [IndexPath(row: index, section: 0)], with: .none)
-            return
-        }
-        tableView.reloadData()
+    /// 卡顿批：可见行互动就地同步（互动路径不再整行重建：
+    /// 重建会重设图片槽/引用卡并重启全部表情播放器）。返回可见 cell
+    /// （供成功后直接补爆点/pop）；行不可见时返回 nil，模型已由
+    /// updateEntryInAllTabs 改好，滑回显示时 configure 自然取新值。
+    /// interactionDisabled 未传时按三组 busy 集合现算（调用点须已先清
+    /// 本次 busy 标记，忙碌中调本方法时禁用态才正确）。
+    @discardableResult
+    private func syncVisibleCell(entry: Entry, interactionDisabled: Bool? = nil) -> BearyProfileEntryCell? {
+        guard let entryId = entry.id,
+              let index = currentEntries.firstIndex(where: { $0.id == entryId }),
+              let cell = tableView.cellForRow(at: IndexPath(row: index, section: 0)) as? BearyProfileEntryCell,
+              cell.cellEntryId == entryId else { return nil }
+        let disabled = interactionDisabled ?? (likeBusyIds.contains(entryId) || bookmarkBusyIds.contains(entryId) || emoteBusyIds.contains(entryId))
+        cell.syncInteraction(entry: entry, interactionDisabled: disabled)
+        return cell
     }
 
     /// 收尾跨页同步：首页/详情取消赞过或收藏后，对应页签摘卡（日记页签不受影响，
@@ -2411,19 +2420,12 @@ class BearyProfileViewController: UIViewController {
                     }
                     strongSelf.updateEntryInAllTabs(entry: updated)
                     strongSelf.notifyInteraction(entry: updated)
-                    strongSelf.reloadVisibleRow(entryId: entryId)
-                    // 点赞成功（填充确认）才对新 cell 补液体爆点，mirror 收藏 pop 口径；
-                    // 取消点赞不炸，已滑走则 cell 为空，跳过无害。
+                    // 卡顿批：就地同步后直接对同 cell 补液体爆点（取消点赞不炸，
+                    // 已滑走则 cell 为空，跳过无害）；不再 reload 换 cell。
                     if wantLiked {
-                        DispatchQueue.main.async { [weak self] in
-                            guard let strongSelf = self else { return }
-                            for case let cell as BearyProfileEntryCell in strongSelf.tableView.visibleCells {
-                                if cell.cellEntryId == entryId {
-                                    cell.playLikeBurst()
-                                    break
-                                }
-                            }
-                        }
+                        strongSelf.syncVisibleCell(entry: updated)?.playLikeBurst()
+                    } else {
+                        strongSelf.syncVisibleCell(entry: updated)
                     }
                 case .failure(let err):
                     if case .unauthorized = err {
@@ -2431,7 +2433,9 @@ class BearyProfileViewController: UIViewController {
                     } else {
                         strongSelf.presentSimpleAlert(message: "操作失败")
                     }
-                    strongSelf.reloadVisibleRow(entryId: entryId)
+                    // 失败复原：按下预览（预取消赞）由就地同步按原 entry 刷回，
+                    // 不再整行重建。
+                    strongSelf.syncVisibleCell(entry: entry)
                 }
             }
         }
@@ -2442,23 +2446,14 @@ class BearyProfileViewController: UIViewController {
         guard requireLoginForCellAction() else { return }
         guard !bookmarkBusyIds.contains(entryId) else { return }
         bookmarkBusyIds.insert(entryId)
-        // 跟手批：先行翻转 + 立即 reload（图标切换不等服务端，Feed 同款口径）；
-        // reload 换掉旧 cell，下一 runloop 对新 cell 补弹一下；已滑走则 cell 为空，跳过无害。
-        // 失败回滚：把原始 entry 写回各页再 reload，提示口径（未登录走登录页、其他弹“操作失败”）一字不动。
+        // 跟手批：先行翻转 + 就地同步（图标切换不等服务端，Feed 同款口径）；
+        // pop 直接补在同 cell 上；已滑走则 cell 为空，跳过无害。
+        // 失败回滚：把原始 entry 写回各页再就地同步，提示口径（未登录走登录页、其他弹“操作失败”）一字不动。
         let wantBookmarked = !(entry.bookmarkedByMe ?? false)
         var optimistic = entry
         optimistic.bookmarkedByMe = wantBookmarked
         updateEntryInAllTabs(entry: optimistic)
-        reloadVisibleRow(entryId: entryId)
-        DispatchQueue.main.async { [weak self] in
-            guard let strongSelf = self else { return }
-            for case let cell as BearyProfileEntryCell in strongSelf.tableView.visibleCells {
-                if cell.cellEntryId == entryId {
-                    cell.playBookmarkPop()
-                    break
-                }
-            }
-        }
+        syncVisibleCell(entry: optimistic)?.playBookmarkPop()
         BearyAPI.shared.toggleBookmark(id: entryId) { [weak self] result in
             DispatchQueue.main.async {
                 guard let strongSelf = self else { return }
@@ -2480,8 +2475,8 @@ class BearyProfileViewController: UIViewController {
                             strongSelf.tableView.reloadData()
                         }
                     } else if updated.bookmarkedByMe != wantBookmarked {
-                        // 服务端值与先行值不一致时以服务端为准重绘；一致时不 reload，避免打断 pop。
-                        strongSelf.reloadVisibleRow(entryId: entryId)
+                        // 服务端值与先行值不一致时以服务端为准就地同步；一致时不动，避免打断 pop。
+                        strongSelf.syncVisibleCell(entry: updated)
                     }
                 case .failure(let err):
                     strongSelf.updateEntryInAllTabs(entry: entry)
@@ -2490,7 +2485,7 @@ class BearyProfileViewController: UIViewController {
                     } else {
                         strongSelf.presentSimpleAlert(message: "操作失败")
                     }
-                    strongSelf.reloadVisibleRow(entryId: entryId)
+                    strongSelf.syncVisibleCell(entry: entry)
                 }
             }
         }
@@ -2561,7 +2556,9 @@ class BearyProfileViewController: UIViewController {
         guard entry.isPublic == true else { return }
         guard !emoteBusyIds.contains(entryId) else { return }
         emoteBusyIds.insert(entryId)
-        reloadVisibleRow(entryId: entryId)
+        // 卡顿批：忙碌态只就地禁用按钮，不整行重建（旧 reload 只为
+        // interactionDisabled 生效，却重建了图片/引用/回应整行）。
+        syncVisibleCell(entry: entry)
         postCellEmote(entry: entry, key: key)
     }
 
@@ -2575,18 +2572,20 @@ class BearyProfileViewController: UIViewController {
                 case .success(let resp):
                     var updated = entry
                     if let emotes = resp.emotes {
-                        updated.emotes = emotes
+                        // 表情排序批：回包先按已显示顺序合并（新贴追加末尾），
+                        // 再同步；直接覆盖回包顺序会把刚贴的顶到前面。
+                        updated.emotes = BearyEmoteOrder.merged(previous: entry.emotes, server: emotes)
                     }
                     strongSelf.updateEntryInAllTabs(entry: updated)
                     strongSelf.notifyInteraction(entry: updated)
-                    strongSelf.reloadVisibleRow(entryId: entryId)
+                    strongSelf.syncVisibleCell(entry: updated)
                 case .failure(let err):
                     if case .unauthorized = err {
                         strongSelf.onRequireLogin?()
                     } else {
                         strongSelf.presentSimpleAlert(message: "操作失败，请重试")
                     }
-                    strongSelf.reloadVisibleRow(entryId: entryId)
+                    strongSelf.syncVisibleCell(entry: entry)
                 }
             }
         }
@@ -2599,7 +2598,7 @@ class BearyProfileViewController: UIViewController {
             expandedEntryIds.insert(entryId)
         }
         // L21（91 包）：展开/收起专用——cell 就地改显示 + 正文淡入，行高由 batch 平滑伸缩；
-        // 其他路径仍走 reloadVisibleRow，不动。
+        // 互动路径走 syncVisibleCell 就地同步，不动。
         let expanded = expandedEntryIds.contains(entryId)
         guard let index = currentEntries.firstIndex(where: { $0.id == entryId }),
               let cell = tableView.cellForRow(at: IndexPath(row: index, section: 0)) as? BearyProfileEntryCell else { return }
@@ -2967,6 +2966,11 @@ private class BearyProfileEntryCell: UITableViewCell {
     /// 跟手批：控制器先行翻转后找可见 cell 补 pop 用（fileprivate：控制器同文件访问）。
     fileprivate var cellEntryId: String?
     private var cellLikedByMe = false
+    /// 就地同步用已显示态（configure 写入、syncInteraction 维护）：点赞数、
+    /// 收藏态、回应行显示签名，供判等与失败复原用，不另建模型副本。
+    private var cellLikeCount = 0
+    private var cellBookmarkedByMe = false
+    private var cellEmoteSignature = ""
     private lazy var likeButton: UIButton = {
         let buttonValue = BearyHit44Button(type: .system)
         buttonValue.translatesAutoresizingMaskIntoConstraints = false
@@ -3184,6 +3188,9 @@ private class BearyProfileEntryCell: UITableViewCell {
         likePressPreviewActive = false
         cellEntryId = nil
         cellLikedByMe = false
+        cellLikeCount = 0
+        cellBookmarkedByMe = false
+        cellEmoteSignature = ""
         likeButton.imageView?.transform = .identity
         bookmarkButton.imageView?.transform = .identity
         onLike = nil
@@ -3288,12 +3295,63 @@ private class BearyProfileEntryCell: UITableViewCell {
         BearyIconMotion.animateIconScale(on: sender, to: 1)
     }
 
-    /// 跟手批：供控制器先行翻转 reload 后对新 cell 补弹一下（旧 cell 已被 reload 换掉）。
+    /// 点赞钮渲染（原 configure 内联块抽出，口径一字不动）：configure 与
+    /// 就地同步共用；同步侧先调它再播爆点，爆点不被 transform 复位打断。
+    private func applyLikeButtonState(liked: Bool, count: Int) {
+        let likedImageName = liked ? "icon_heart_fill" : "icon_heart"
+        let likedImage = BearyIconImages.image(named: likedImageName, pointSize: 22)
+        likeButton.setImage(likedImage, for: .normal)
+        let imageWidth = likedImage?.size.width ?? 22
+        if count <= 0 {
+            likeButton.setTitle(nil, for: .normal)
+            likeButtonWidthConstraint?.constant = imageWidth
+        } else {
+            let titleText = "\(count)"
+            let titleWidth = ceil((titleText as NSString).size(withAttributes: [NSAttributedString.Key.font: UIFont.systemFont(ofSize: 14)]).width)
+            likeButton.setTitle(titleText, for: .normal)
+            likeButtonWidthConstraint?.constant = imageWidth + 6 + titleWidth
+        }
+        let likeColor = liked ? BearyColors.orange : BearyColors.gray
+        likeButton.tintColor = likeColor
+        likeButton.setTitleColor(likeColor, for: .normal)
+        likeButton.imageView?.transform = .identity
+    }
+
+    /// 互动就地同步（卡顿批）：只改点赞/收藏/回应三处与按钮启用态，
+    /// 不重建图片/引用/正文、不重算行高。点赞/收藏恒按 entry 重绘
+    /// （失败复原靠它把按下预览刷回原态）；回应只在显示签名变化时
+    /// 重绘 chip 行（签名相等即跳过，避免无谓重启播放器）。
+    /// 调用方保证先改模型再调本方法；行不可见时控制器不调（模型已改，
+    /// 滑回显示时 configure 自然取新值）。
+    func syncInteraction(entry: Entry, interactionDisabled: Bool) {
+        guard cellEntryId == entry.id else { return }
+        cellLikedByMe = entry.likedByMe ?? false
+        cellLikeCount = entry.likeCount ?? 0
+        applyLikeButtonState(liked: cellLikedByMe, count: cellLikeCount)
+        cellBookmarkedByMe = entry.bookmarkedByMe ?? false
+        let bookmarkImageName = cellBookmarkedByMe ? "icon_bookmark_fill" : "icon_bookmark"
+        bookmarkButton.setImage(BearyIconImages.image(named: bookmarkImageName, pointSize: 21), for: .normal)
+        bookmarkButton.tintColor = cellBookmarkedByMe ? BearyColors.orange : BearyColors.gray
+        likeButton.isEnabled = !interactionDisabled
+        bookmarkButton.isEnabled = !interactionDisabled
+        shareButton.isEnabled = !interactionDisabled
+        let candidate = BearyEmoteOrder.signature((entry.emotes ?? []).sorted { ($0.count ?? 0) > ($1.count ?? 0) }.filter { ($0.emote ?? "").isEmpty == false })
+        if candidate != cellEmoteSignature {
+            configureEmotes(entry: entry, interactionDisabled: interactionDisabled)
+        } else {
+            for chip in emoteStack.arrangedSubviews {
+                chip.subviews.compactMap({ $0 as? UIButton }).forEach { $0.isEnabled = !interactionDisabled }
+            }
+            emoteAddButton?.isEnabled = !interactionDisabled
+        }
+    }
+
+    /// 卡顿批：就地同步后直接对同 cell 补弹（不再 reload 换 cell）。
     func playBookmarkPop() {
         BearyIconMotion.playBookmarkPop(on: bookmarkButton)
     }
 
-    /// 点赞成功爆点（Li 2026-10-27 新规格）：控制器回包 reload 后对新 cell 补播，
+    /// 点赞成功爆点（Li 2026-10-27 新规格）：控制器回包就地同步后对同 cell 补播，
     /// 爱心回弹 + 液体爆点；取消点赞不调用。
     func playLikeBurst() {
         BearyIconMotion.playLikeBurst(on: likeButton)
@@ -3353,6 +3411,8 @@ private class BearyProfileEntryCell: UITableViewCell {
         // 跟手批：记下本卡赞态，供按下预览与取消复原用（configure 是唯一写入点）。
         cellEntryId = entry.id
         cellLikedByMe = entry.likedByMe ?? false
+        cellLikeCount = entry.likeCount ?? 0
+        cellBookmarkedByMe = entry.bookmarkedByMe ?? false
         let authorNameValue = entry.authorName ?? "beary 用户"
         nameLabel.text = authorNameValue
         if let createdMs = entry.createdAt, createdMs > 0 {
@@ -3450,27 +3510,10 @@ private class BearyProfileEntryCell: UITableViewCell {
             }
         }
         // 点赞 / 收藏 / 分享（已赞、已收藏为橙色；忙时整行互动禁用）。
-        let likedByMe = entry.likedByMe ?? false
-        let likedImageName = likedByMe ? "icon_heart_fill" : "icon_heart"
-        let likedImage = BearyIconImages.image(named: likedImageName, pointSize: 22)
-        likeButton.setImage(likedImage, for: .normal)
         // 计数位宽度由显式约束定，不靠按钮固有宽：按钮固有宽不含标题边距，
         // 栈按固有宽给帧时标题框只剩边距差，数字会被裁成左半弧。
         // 0 赞隐藏数字位，只剩爱心；非 0 按实测字宽给足整段标题宽。
-        let likeCountValue = entry.likeCount ?? 0
-        let imageWidth = likedImage?.size.width ?? 22
-        if likeCountValue <= 0 {
-            likeButton.setTitle(nil, for: .normal)
-            likeButtonWidthConstraint?.constant = imageWidth
-        } else {
-            let titleText = "\(likeCountValue)"
-            let titleWidth = ceil((titleText as NSString).size(withAttributes: [NSAttributedString.Key.font: UIFont.systemFont(ofSize: 14)]).width)
-            likeButton.setTitle(titleText, for: .normal)
-            likeButtonWidthConstraint?.constant = imageWidth + 6 + titleWidth
-        }
-        let likeColor = likedByMe ? BearyColors.orange : BearyColors.gray
-        likeButton.tintColor = likeColor
-        likeButton.setTitleColor(likeColor, for: .normal)
+        applyLikeButtonState(liked: entry.likedByMe ?? false, count: entry.likeCount ?? 0)
         let bookmarkedByMe = entry.bookmarkedByMe ?? false
         let bookmarkImageName = bookmarkedByMe ? "icon_bookmark_fill" : "icon_bookmark"
         bookmarkButton.setImage(BearyIconImages.image(named: bookmarkImageName, pointSize: 21), for: .normal)
@@ -3726,6 +3769,9 @@ private class BearyProfileEntryCell: UITableViewCell {
             emoteStack.addArrangedSubview(chip)
             emoteChipPool.append(chip)
         }
+        // 就地同步判等用：本轮实际渲染的 chip 签名（与 syncInteraction 的
+        // candidate 同算法：count 降序稳定排、空 key 不建 chip）。
+        cellEmoteSignature = BearyEmoteOrder.signature(sorted.filter { ($0.emote ?? "").isEmpty == false })
         // 本轮未复用的池 chip 彻底离树（留池供下轮），不残留绘制。
         // 以 chipKeys 计（空 key 项不建 chip，sorted.count 会多算）。
         for surplus in emoteChipPool.dropFirst(chipKeys.count) {

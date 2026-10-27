@@ -1050,7 +1050,7 @@ class BearyFeedViewController: UIViewController {
                 if let v = likeCount { deliveredAll[index].likeCount = v }
                 if let v = likedByMe { deliveredAll[index].likedByMe = v }
                 if let v = bookmarkedByMe { deliveredAll[index].bookmarkedByMe = v }
-                if let v = emotes { deliveredAll[index].emotes = v }
+                if let v = emotes { deliveredAll[index].emotes = BearyEmoteOrder.merged(previous: deliveredAll[index].emotes, server: v) }
                 updated = true
             }
         }
@@ -1061,7 +1061,7 @@ class BearyFeedViewController: UIViewController {
                 if let v = likeCount { plazaRaw[index].likeCount = v }
                 if let v = likedByMe { plazaRaw[index].likedByMe = v }
                 if let v = bookmarkedByMe { plazaRaw[index].bookmarkedByMe = v }
-                if let v = emotes { plazaRaw[index].emotes = v }
+                if let v = emotes { plazaRaw[index].emotes = BearyEmoteOrder.merged(previous: plazaRaw[index].emotes, server: v) }
                 updated = true
             }
         }
@@ -1072,13 +1072,17 @@ class BearyFeedViewController: UIViewController {
                 if let v = likeCount { recentPublished[index].likeCount = v }
                 if let v = likedByMe { recentPublished[index].likedByMe = v }
                 if let v = bookmarkedByMe { recentPublished[index].bookmarkedByMe = v }
-                if let v = emotes { recentPublished[index].emotes = v }
+                if let v = emotes { recentPublished[index].emotes = BearyEmoteOrder.merged(previous: recentPublished[index].emotes, server: v) }
                 updated = true
             }
         }
         if !updated { return }
+        // 卡顿批：可见行只就地同步三处控件，不 reloadRows——reload 会重建
+        // 图片栈/正文/引用并重启全部表情播放器，等于把刚播的爆点/chip-in
+        // 连同整行一起闪掉；不可见行只改模型，滑回显示时 configure 取新值。
         for path in indexPaths(for: entryId) {
-            reloadRowIfVisible(path)
+            guard let cell = tableView.cellForRow(at: path) as? BearyFeedCell else { continue }
+            cell.syncInteraction(entryId: entryId, likeCount: likeCount, likedByMe: likedByMe, bookmarkedByMe: bookmarkedByMe, emotes: emotes)
         }
         if likeRemoved || bookmarkRemoved {
             onInteractionRemoved?(entryId, likeRemoved, bookmarkRemoved)
@@ -2901,6 +2905,38 @@ class BearyFeedCell: UITableViewCell {
         bookmarkButton.tintColor = bookmarked ? BearyColors.orange : BearyColors.gray
     }
 
+    /// 互动就地同步（卡顿批）：只改点赞/收藏/回应三处控件，不重建图片/
+    /// 正文/引用、不重算行高。控制器同步（跨页回传）与自家回包共用：
+    /// 与当前显示相等时跳过——自家回包不再打断正在播的点赞爆点与 chip-in；
+    /// 回应先按已显示顺序合并回包（见 BearyEmoteOrder），再判等；
+    /// 不可见行不调用（模型已由控制器改好，滑回显示时 configure 自然取新值）。
+    func syncInteraction(entryId: String, likeCount: Int?, likedByMe: Bool?, bookmarkedByMe: Bool?, emotes: [EmoteCount]?) {
+        guard currentEntryIdValue == entryId else { return }
+        var likeChanged = false
+        if let v = likeCount, v != (currentEntry?.likeCount ?? 0) {
+            currentEntry?.likeCount = v
+            likeChanged = true
+        }
+        if let v = likedByMe, v != (currentEntry?.likedByMe ?? false) {
+            currentEntry?.likedByMe = v
+            likeChanged = true
+        }
+        if likeChanged { updateLikeButton() }
+        var bookmarkChanged = false
+        if let v = bookmarkedByMe, v != (currentEntry?.bookmarkedByMe ?? false) {
+            currentEntry?.bookmarkedByMe = v
+            bookmarkChanged = true
+        }
+        if bookmarkChanged { updateBookmarkButton() }
+        if let server = emotes {
+            let merged = BearyEmoteOrder.merged(previous: currentEntry?.emotes, server: server)
+            if BearyEmoteOrder.signature(merged) != BearyEmoteOrder.signature(currentEntry?.emotes) {
+                currentEntry?.emotes = merged
+                renderEmotes()
+            }
+        }
+    }
+
     /// F9：心情 = 灰字 + 熊图 20px；无心情时整行隐藏。深浅变体由播放器内部切换。
     private func refreshMoodView() {
         guard let moodKey = currentEntry?.mood, let moodName = BearyText.moodNames[moodKey] else {
@@ -3808,26 +3844,29 @@ class BearyFeedCell: UITableViewCell {
                 strongSelf.pendingRemovingEmoteKey = nil
                 switch result {
                 case .success(let resp):
-                    if let emotes = resp.emotes {
-                        strongSelf.currentEntry?.emotes = emotes
+                    // 表情排序批：回包先按已显示顺序合并（新贴追加末尾），再渲染；
+                    // 直接覆盖回包顺序会把刚贴的 count=1 按聚合顺序顶到前面。
+                    let mergedEmotes = resp.emotes.map { BearyEmoteOrder.merged(previous: strongSelf.currentEntry?.emotes, server: $0) }
+                    if let merged = mergedEmotes {
+                        strongSelf.currentEntry?.emotes = merged
                     }
                     // F7：成功后补 chip-in（贴上）/chip-out（摘下）动效，详情页同款。
                     // 摘下动画期间保持 busy，动画结束才放开并重绘，避免动画中途被点乱。
                     if animAdded == false, let outKey = animKey {
-                        strongSelf.playChipOutThenRender(forKey: outKey, entryIdValue: entryIdValue, emotes: resp.emotes)
+                        strongSelf.playChipOutThenRender(forKey: outKey, entryIdValue: entryIdValue, emotes: mergedEmotes)
                     } else {
                         strongSelf.isEmoteBusy = false
                         strongSelf.renderEmotes()
                         strongSelf.updateEmoteInteractivity()
                         if let inKey = animKey, animAdded == true {
                             // P3-8：onEmoteChanged 推迟到 chip-in 完成回调之后——此前立即回传会经
-                            // applyInteraction → reloadRowIfVisible 重建整行，丢弃正在播的 0.45s chip-in。
+                            // applyInteraction 就地同步判等跳过（已渲染一致），不重建整行；
                             // 无动画（reduced-motion）或 chip 未找到时 playChipIn 立即调 completion，不拖延。
                             strongSelf.playChipIn(forKey: inKey) {
-                                strongSelf.onEmoteChanged?(entryIdValue, resp.emotes)
+                                strongSelf.onEmoteChanged?(entryIdValue, mergedEmotes)
                             }
                         } else {
-                            strongSelf.onEmoteChanged?(entryIdValue, resp.emotes)
+                            strongSelf.onEmoteChanged?(entryIdValue, mergedEmotes)
                         }
                     }
                 case .failure(let err):

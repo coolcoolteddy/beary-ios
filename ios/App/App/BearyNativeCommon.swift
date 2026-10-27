@@ -486,6 +486,41 @@ struct EmoteResponse: Decodable {
     var emotes: [EmoteCount]?
 }
 
+/// 回应顺序（互动批）：服务端聚合无 ORDER BY，平手时回包顺序≠已显示顺序；
+/// 直接覆盖会把刚贴的（count=1）按回包顺序顶到前面。合并口径与网页
+/// applyEmoteToggle + 稳定 count 降序等价：旧顺序先行（只改计数/mine、
+/// 掉出聚合的摘掉），服务端新增 key 按回包顺序追加在末尾；渲染层再做
+/// 稳定 count 降序时，新贴的 count=1 在平手组里自然留在末尾，不抢前面。
+/// 幂等：对同一回包重复合并结果不变，跨页回传可复用同一合并。
+enum BearyEmoteOrder {
+    static func merged(previous: [EmoteCount]?, server: [EmoteCount]) -> [EmoteCount] {
+        var serverByKey: [String: EmoteCount] = [:]
+        var serverOrder: [String] = []
+        for item in server {
+            guard let key = item.emote, !key.isEmpty, serverByKey[key] == nil else { continue }
+            serverByKey[key] = item
+            serverOrder.append(key)
+        }
+        var out: [EmoteCount] = []
+        var seen = Set<String>()
+        for item in previous ?? [] {
+            guard let key = item.emote, !key.isEmpty, seen.contains(key) == false else { continue }
+            seen.insert(key)
+            if let fresh = serverByKey[key] { out.append(fresh) }
+        }
+        for key in serverOrder where seen.contains(key) == false {
+            seen.insert(key)
+            if let fresh = serverByKey[key] { out.append(fresh) }
+        }
+        return out
+    }
+
+    /// 顺序敏感签名（key:count:mine 逗号串），供就地同步判等：相等即跳过重绘。
+    static func signature(_ list: [EmoteCount]?) -> String {
+        (list ?? []).map { "\($0.emote ?? ""):\($0.count ?? 0):\($0.mine ?? false)" }.joined(separator: ",")
+    }
+}
+
 struct UploadResponse: Decodable {
     var key: String?
 }
