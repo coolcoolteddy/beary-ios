@@ -5,13 +5,13 @@ import PhotosUI
 // 只负责写日记：正文 + 心情 + 天气 + 写给 + 引用 + 图片（上限 9 张）。
 // 编辑模式复用同一界面：正文/心情/天气/图片/引用可改，写给锁定不可改，
 // 不走新日记草稿流（不读不写 beary_draft_v3、不复用新篇 client_req）。
-// 段落顺序按网页版：正文 → 图片预览 → 工具栏 → 附加选项（收起）→ 天气 → 状态行
-// → 写给 → 心情 → 引用 → 规则框；天气/写给/心情三区收进附加选项栏（默认收起）。
-// 清单第 9 项：工具栏已钉在顶栏下方、移出滚动内容栈（始终可见，不随正文滚动）；
-// 代价是视觉顺序变化——工具栏现位于正文之前（原先在图片条之后），其余区顺序不变。
+// C1 段落顺序：正文 → 已选 Chip 行 → 图片预览 → 状态行 → 引用 → 规则框；
+// 工具栏贴键盘上方（始终可见，不随正文滚动），心情/天气/写给改工具栏上方选择条
+// （同一时刻只展开一条，点工具栏钮切换、点 Chip 行打开对应条）。
 // 约束：部署目标 iOS 15.0、Swift 5.0——只用闭包回调，不用 async/await，不用 if-let 简写。
 // 文案一律中文；深浅色一律用 BearyColors 的动态色（含语义红 red 与图片上深色衬底 scrim）。
-// 网络数据一律不用 force unwrap；图片移除只动本地与 key 列表，不调服务端。
+// 网络数据一律不用 force unwrap；图片移除只动本地与 key 列表，不调服务端；
+// C11：删图无确认，删后 10 秒内可撤销（缓冲提交后才删本地文件，见 deleteImageItemWithUndo）。
 
 /// 64 包反馈修（第 14 项）+ 编辑器批修正：正文段落 lineHeightMultiple=1.7
 /// 会把系统 caret 拉到行片段高（约 32pt），比 16pt 字大一圈；64 包的“居中收敛”
@@ -159,16 +159,24 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     /// 正文 UITextView 关滚动、随内容生长，故无 textarea 内部滚动需要另存）。
     private var quotePanelSavedScrollOffset = CGPoint.zero
     private var quotePanelSavedScrollValid = false
-    /// 天气行独立开关（工具栏天气钮拨动）：为 true 时天气行不依赖附加选项栏展开而单独显示。
-    private var weatherRowVisible = false
-    /// D-G1：天气行是否曾被工具钮打开过。网页口径：extras-open 只解除
-    /// “附加栏收起时隐藏天气行”的 CSS 规则，行本身初始 display:none，
-    /// 须经工具钮打开（toggleWxRow 置 flex）或已有选中（syncEdExtras 置 flex）
-    /// 才显；故附加栏展开 alone 不显示天气行。
-    private var weatherRowEverOpened = false
-    /// 工具钮单独收起天气行时的压制标记：附加栏展开也会撑着显示天气行，单靠
-    /// weatherRowVisible 关不掉它；压制标记由工具钮置位、附加栏每次切换时清掉。
-    private var weatherRowHiddenByTool = false
+    /// C1：工具栏上方选择条：同一时刻最多展开一条（心情/天气/写给），nil=全部收起。
+    /// 旧附加栏三态（天气行独立开关／曾打开标记／工具压制标记／附加栏展开态）随双重入口删除而整组拆除，不再有“附加栏撑着显示天气行”的
+    /// 压制状态机；天气 Lottie 显隐只看本值 + quotePanelOpen（见 updateWeatherPlayback）。
+    private enum ToolStrip {
+        case mood, weather, recipient
+    }
+    private var activeToolStrip: ToolStrip?
+    /// C11：删图撤销缓冲（单槽，只留最近一次删除）：项本身不改字段（key/localFile/
+    /// uploading/failed 原样保留），本地文件在提交前不删；10 秒内点撤销即按原位恢复。
+    private struct PendingRemovedImage {
+        let item: ComposerImageItem
+        let index: Int
+    }
+    private var pendingRemovedImage: PendingRemovedImage?
+    private var pendingUndoTimer: Timer?
+    /// C11：撤销保留时长（秒）。到期未撤销即彻底删除：本地文件删除、key 丢弃（不调
+    /// 服务端，与旧直接删除同款孤 key 口径），撤销入口随之消失。
+    private static let imageUndoSeconds: TimeInterval = 10
     /// 草稿 pill / 写给选人钮的 present 在途标记（与 presentedViewController 守卫并用，防连点叠页）。
     private var isDraftBoxPresenting = false
     private var isRecipientPickerPresenting = false
@@ -189,7 +197,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     /// 心情条单项：按钮 + 44 圆环 + 环内熊图 + 环内缺图回退名 + 下方名。
     private var moodItems: [(key: String, button: UIButton, ringView: UIView, emoteView: BearyEmoteView, fallbackLabel: UILabel, nameLabel: UILabel)] = []
     /// A2-4/B6-1 播放控制上次状态：面板可见性 + 选中心情；一致时 updateMoodPlayback
-    /// 直接返回，避免 refreshExtras 重复调用把选中动画反复从 0 重播。
+    /// 直接返回，避免选择条刷新重复调用把选中动画反复从 0 重播。
     private var moodPlaybackPanelVisible: Bool?
     private var moodPlaybackSelected: String?
     private var weatherButtons: [(key: String, button: UIButton)] = []
@@ -200,11 +208,9 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     /// 播放权统一交给 updateWeatherPlayback（心情 updateMoodPlayback 同款口径）。
     private var weatherEmoteViews: [(key: String, emoteView: BearyEmoteView)] = []
     /// 天气播放控制上次状态（心情 moodPlaybackPanelVisible/Selected 同款缓存）：
-    /// 一致时直接返回，避免每次 refreshExtras 都把选中动画从 0 帧重播。
+    /// 一致时直接返回，避免每次选择条刷新都把选中动画从 0 帧重播。
     private var weatherPlaybackVisible: Bool?
     private var weatherPlaybackSelected: String?
-    /// 附加选项栏是否展开（默认收起；展开时才显示天气/写给/心情三区）。
-    private var extrasExpanded = false
     /// 草稿保存级别：nil=未显示；2=草稿已保存；1=文字已保存，图片未保存；0=保存失败（红字）。
     private var draftStatusLevel: Int?
     /// 引用内嵌面板状态：当前 tab（timeline/liked/saved）与每 tab 缓存、加载序号。
@@ -237,12 +243,14 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     // 图片预览（无标题、无 + 块；空时整条隐藏，添加走工具栏图片钮）
     private let imageScrollView = UIScrollView()
     private let imageStackView = UIStackView()
-    // 工具栏：图片/天气/引用图标钮 + 草稿 pill（网页 3 钮口径；编辑模式 pill 可见但点开无动作，引用钮保留）
-    // 清单第 9 项：工具栏钉在顶栏下方（见 buildLayout），不随正文滚动；引用面板打开时
-    // 它隐藏，scrollView 顶锚随之改回顶栏（见 updateToolbarScrollAnchoring），不留空隙。
+    // C1：工具栏贴键盘上方（见 buildLayout：底锚 keyboardLayoutGuide.topAnchor），
+    // 不随正文滚动；选择条（toolStripStack）贴在它上方，引用面板打开时两者同藏，
+    // scrollView 底锚随之在工具栏/选择条/整页三档切换（见 updateScrollBottomAnchoring）。
     private let toolbarContainer = UIView()
-    private var scrollTopToToolbarConstraint: NSLayoutConstraint?
-    private var scrollTopToTopBarConstraint: NSLayoutConstraint?
+    private let toolStripStack = UIStackView()
+    private var scrollBottomToToolbarConstraint: NSLayoutConstraint?
+    private var scrollBottomToStripConstraint: NSLayoutConstraint?
+    private var scrollBottomToViewConstraint: NSLayoutConstraint?
     /// 92 包整页列宽：窄屏贴边、宽 ≥821 时三件居中（顶栏/滚动区 640、工具栏 608，
     /// 与旧居中卡几何一致：卡 640、工具栏卡内边距 16）。只换外层水平约束，
     /// 不碰内容栈/心情/天气/引用/草稿/键盘逻辑；状态变化时才切换，避免每轮布局重算。
@@ -264,14 +272,20 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     private var draftPillWidthConstraint: NSLayoutConstraint?
     private let toolbarSeparator = UIView()
     private let imageToolButton = BearyHit44Button(type: .system)
+    private let moodToolButton = BearyHit44Button(type: .system)
     private let weatherToolButton = BearyHit44Button(type: .system)
+    private let recipientToolButton = BearyHit44Button(type: .system)
     private let quoteToolButton = BearyHit44Button(type: .system)
     private let draftPillButton = UIButton(type: .system)
-    // 附加选项栏（默认收起）
-    private let extrasBarContainer = UIView()
-    private let extrasSummaryLabel = UILabel()
-    private let extrasChevronImageView = UIImageView()
-    private let extrasBarButton = UIButton(type: .system)
+    // C1：已选中项轻量 Chip 行（正文下方）：心情/天气/写给各一枚，点 chip 打开对应选择条。
+    private let selectedChipsRow = UIStackView()
+    private let moodChipButton = BearyHit44Button(type: .system)
+    private let weatherChipButton = BearyHit44Button(type: .system)
+    private let recipientChipButton = BearyHit44Button(type: .system)
+    // C11：删图撤销条（图片条下方）：文案 + 撤销钮，10 秒到期自动消失并提交删除。
+    private let imageUndoBar = UIView()
+    private let imageUndoLabel = UILabel()
+    private let imageUndoButton = BearyHit44Button(type: .system)
     // 天气（图标 + 名 chip，首项“无”，选中墨色边框）
     private let weatherScrollView = UIScrollView()
     private let weatherStackView = UIStackView()
@@ -283,6 +297,8 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     private let draftStatusLabel = UILabel()
     private let charRingView = UIView()
     private let charCountLabel = UILabel()
+    /// C1：字数圆环 + 数字的横向组（工具栏右端，环与数字 gap 6；见 buildToolbarRow）。
+    private let charGroupStack = UIStackView()
     private var charTrackLayer: CAShapeLayer?
     private var charProgressLayer: CAShapeLayer?
     // 写给（@ 在 pick 钮内的“写给某个人”钮 / chip + 通知行）
@@ -297,16 +313,13 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     private let notifyGroup = UIStackView()
     private let notifyCheckButton = BearyHit44Button(type: .system)
     private let notifyLabel = UILabel()
-    // 心情（熊图条 + 动态标题“心情 · <选中名>”）
-    private let moodSection = UIStackView()
-    private let moodTitleRow = UIStackView()
-    private let moodTitleIcon = UIImageView()
-    private let moodTitleLabel = UILabel()
+    // 心情：熊图条本身即选择条（标题行已删，选中名改由正文下方 Chip 行承载）。
     private let moodScrollView = UIScrollView()
     private let moodStackView = UIStackView()
-    // 引用（挑钮 / lite 卡）+ 内嵌展开面板
+    // 引用（lite 卡）+ 内嵌展开面板
+    // C1：正文中部“引用一篇日记”全宽大按钮已删，引用唯一入口改工具栏引用钮；
+    // 无引用时 quoteSection 只剩隐藏的 lite 卡与已删行，栈自动塌掉不留空位。
     private let quoteSection = UIStackView()
-    private let pickQuoteButton = UIButton(type: .system)
     private let quoteCard = UIView()
     private let quoteDeliveringPill = UILabel()
     private let quoteContentLabel = UILabel()
@@ -316,7 +329,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     private let quoteCardBottomLine = UIView()
     private let quoteCardRemoveButton = BearyHit44Button(type: .system)
     /// 引用已删态行：灰字“引用的日记已删除”+ 右端“移除”钮（lite 卡隐藏时仍可清除引用，
-    /// 否则已删引用会堵住挑钮，用户无法再选引用）。
+    /// 否则已删引用会堵住引用入口，用户无法再选引用）。
     private let quoteDeletedRow = UIStackView()
     private let quoteDeletedLabel = UILabel()
     private let quoteDeletedRemoveButton = UIButton(type: .system)
@@ -360,9 +373,10 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         buildLayout()
         buildTopBar()
         buildTextArea()
+        buildSelectedChipsRow()
         buildImageRow()
+        buildImageUndoBar()
         buildToolbarRow()
-        buildExtrasBar()
         buildWeatherRow()
         buildStatusRow()
         buildRecipientRow()
@@ -377,7 +391,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         }
         updateCountLabel()
         updatePublishState()
-        refreshExtras()
+        refreshToolStrip()
         updateDraftPillCount()
         // 首帧高度预先算好（D-12 编辑器部分）：viewDidLoad 末尾即按内容栈 fitting
         // 定一次 preferredContentSize，呈现层首帧不再以 0 占位走 80%/88% 满高封顶；
@@ -477,6 +491,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     deinit {
         draftTimer?.invalidate()
         editTimer?.invalidate()
+        pendingUndoTimer?.invalidate()
         NotificationCenter.default.removeObserver(self)
     }
 
@@ -502,15 +517,22 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         contentStack.layoutMargins = UIEdgeInsets(top: 14, left: 16, bottom: 14, right: 16)
         view.addSubview(topBar)
         view.addSubview(toolbarContainer)
+        view.addSubview(toolStripStack)
         view.addSubview(scrollView)
         scrollView.addSubview(contentView)
         contentView.addSubview(contentStack)
-        // 工具栏固定：它不在内容栈里，scrollView 顶锚在它之下（常态）；面板打开时
-        // 工具栏隐藏，改锚到顶栏（见 updateToolbarScrollAnchoring，初始锚工具栏）。
-        let scrollToToolbar = scrollView.topAnchor.constraint(equalTo: toolbarContainer.bottomAnchor)
-        scrollToToolbar.isActive = true
-        scrollTopToToolbarConstraint = scrollToToolbar
-        scrollTopToTopBarConstraint = scrollView.topAnchor.constraint(equalTo: topBar.bottomAnchor)
+        // C1：正文从顶栏下方直接开始（scrollView 顶锚顶栏）；工具栏贴键盘上方，
+        // 选择条贴工具栏上方；scrollView 底锚三档切换（见 updateScrollBottomAnchoring），初始锚工具栏。
+        scrollBottomToToolbarConstraint = scrollView.bottomAnchor.constraint(equalTo: toolbarContainer.topAnchor)
+        scrollBottomToStripConstraint = scrollView.bottomAnchor.constraint(equalTo: toolStripStack.topAnchor)
+        scrollBottomToViewConstraint = scrollView.bottomAnchor.constraint(equalTo: view.bottomAnchor)
+        scrollBottomToToolbarConstraint?.isActive = true
+        // 选择条：竖栈，子项（心情条/天气条/写给区）同一时刻只显其一、其余隐藏即自动塌高；
+        // 全藏时栈高为 0，不占位。左右与工具栏同宽（跟随居中 608）。
+        toolStripStack.axis = .vertical
+        toolStripStack.spacing = 0
+        toolStripStack.alignment = .fill
+        toolStripStack.translatesAutoresizingMaskIntoConstraints = false
         // 92 包整页列宽：贴边约束与居中约束二选一，由 updateColumnConstraints 按宽切换
         //（个人主页同款：lazy 式成对约束、状态变化时才切换）。居中约束初始不激活。
         topBarLeadingConstraint = topBar.leadingAnchor.constraint(equalTo: view.leadingAnchor)
@@ -530,12 +552,15 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             topBarLeadingConstraint!,
             topBarTrailingConstraint!,
             topBar.heightAnchor.constraint(equalToConstant: 44),
-            toolbarContainer.topAnchor.constraint(equalTo: topBar.bottomAnchor),
+            scrollView.topAnchor.constraint(equalTo: topBar.bottomAnchor),
+            toolbarContainer.bottomAnchor.constraint(equalTo: view.keyboardLayoutGuide.topAnchor),
+            toolStripStack.leadingAnchor.constraint(equalTo: toolbarContainer.leadingAnchor),
+            toolStripStack.trailingAnchor.constraint(equalTo: toolbarContainer.trailingAnchor),
+            toolStripStack.bottomAnchor.constraint(equalTo: toolbarContainer.topAnchor),
             toolbarLeadingConstraint!,
             toolbarTrailingConstraint!,
             scrollLeadingConstraint!,
             scrollTrailingConstraint!,
-            scrollView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
             contentView.topAnchor.constraint(equalTo: scrollView.contentLayoutGuide.topAnchor),
             contentView.leadingAnchor.constraint(equalTo: scrollView.contentLayoutGuide.leadingAnchor),
             contentView.trailingAnchor.constraint(equalTo: scrollView.contentLayoutGuide.trailingAnchor),
@@ -578,8 +603,8 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     /// 呈现层（SceneDelegate 的底 sheet / 居中卡片，本文件不动它）把 preferred 当整页高、
     /// 再与 88%/80% 封顶取小，故只给栈高会少 44、短内容仍需内滚 44；顶栏必须计入。
     /// 量取口径：contentStack.systemLayoutSizeFitting（给定当前宽、纵向压缩），
-    /// 栈内隐藏的 arranged 子项自动塌掉，正文/图片/工具栏/附加选项/天气/写给/心情/
-    /// 引用（挑钮或 lite 卡）/引用面板/规则框各区当前可见高度全计入；栈边距由 fitting 自带。
+    /// 栈内隐藏的 arranged 子项自动塌掉，正文/已选 Chip 行/图片/状态行/
+    /// 引用（lite 卡）/引用面板/规则框各区当前可见高度全计入；栈边距由 fitting 自带。
     /// 变化小于 0.5pt 不赋值，避免改 preferred → 容器重布局 → viewDidLayoutSubviews 的循环。
     private func updatePreferredContentSize() {
         guard isViewLoaded else { return }
@@ -799,7 +824,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     }
 
     /// 正文区动态高度：随内容撑高（下限 140），上限按 sheet 可用高度封顶，
-    /// 让工具栏与附加栏始终可见、超长只在区内滚动。
+    /// 让工具栏始终可见、超长只在区内滚动。
     /// 封顶依据（不拍脑袋）：呈现层封顶见 SceneDelegate.configureComposerPresentation
     /// （宽 ≥821 居中卡）与 BearyCenteredModal.frameOfPresentedViewInContainerView
     /// （卡高 = 容器高 × 0.80）；窄屏底 sheet 为容器高 × 0.88（同函数注释）。
@@ -866,37 +891,20 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     }
 
     // MARK: - 心情（网页 mood-strip：54 宽单项，44 圆环 + 熊图 35 + 10.5 名；
-    // 选中：圆环橙 12% 底 + 橙色描边、名变橙；标题动态带选中名）
+    // 选中：圆环橙 12% 底 + 橙色描边、名变橙；选中名改由正文下方 Chip 行显示）
 
     private func buildMoodRow() {
-        moodSection.axis = .vertical
-        // 标题与圆环间距 10 = 网页 lab 下 4 + strip 上 6。
-        moodSection.spacing = 10
+        // C1：心情条本身即工具栏上方选择条（单行横滑），标题行已删，选中名走 Chip 行。
         moodScrollView.showsHorizontalScrollIndicator = false
         moodStackView.axis = .horizontal
         moodStackView.spacing = 4
         moodStackView.alignment = .top
-        // 标题行：17×17 灰色图标 + “心情”（网页 beary-mood 自定义图标，现用 icon_mood 同款 PNG）。
-        moodTitleRow.axis = .horizontal
-        moodTitleRow.spacing = 6
-        moodTitleRow.alignment = .center
-        moodTitleIcon.image = BearyIconImages.image(named: "icon_mood", pointSize: 17)
-        moodTitleIcon.tintColor = BearyColors.gray
-        moodTitleIcon.contentMode = .scaleAspectFit
-        moodTitleRow.translatesAutoresizingMaskIntoConstraints = false
-        moodTitleIcon.translatesAutoresizingMaskIntoConstraints = false
-        moodTitleLabel.translatesAutoresizingMaskIntoConstraints = false
         moodScrollView.translatesAutoresizingMaskIntoConstraints = false
         moodStackView.translatesAutoresizingMaskIntoConstraints = false
-        moodTitleRow.addArrangedSubview(moodTitleIcon)
-        moodTitleRow.addArrangedSubview(moodTitleLabel)
-        moodSection.addArrangedSubview(moodTitleRow)
-        moodSection.addArrangedSubview(moodScrollView)
         moodScrollView.addSubview(moodStackView)
-        contentStack.addArrangedSubview(moodSection)
+        moodScrollView.isHidden = true
+        toolStripStack.addArrangedSubview(moodScrollView)
         NSLayoutConstraint.activate([
-            moodTitleIcon.widthAnchor.constraint(equalToConstant: 17),
-            moodTitleIcon.heightAnchor.constraint(equalToConstant: 17),
             // 滚动区高内容驱动：单项高 = 圆环 44 + gap 4 + 名字行高，约 59–60。
             moodScrollView.heightAnchor.constraint(equalTo: moodStackView.heightAnchor),
             moodStackView.topAnchor.constraint(equalTo: moodScrollView.contentLayoutGuide.topAnchor),
@@ -917,8 +925,8 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             // 此处不设描边，选中双环由 refreshMoodButtons 的形层画（见 moodRingAnnulus）。
             ringView.layer.borderWidth = 0
             // A2-4 启动源修法：建条时不自动播。原 animated:true 使 40 只在
-            // 面板收起（moodSection.isHidden）时已全量起播；didMoveToWindow 拦不住，
-            // 因为面板隐藏只是 isHidden、视图仍在 window 内。播放权交给 updateMoodPlayback。
+            // 选择条收起时条虽 isHidden、视图仍在 window 内，didMoveToWindow 拦不住起播；
+            // 播放权交给 updateMoodPlayback（见 activeToolStrip 门）。
             let emoteView = BearyEmoteView(key: key, animated: false)
             emoteView.translatesAutoresizingMaskIntoConstraints = false
             let fallbackLabel = UILabel()
@@ -963,7 +971,6 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             moodStackView.addArrangedSubview(button)
         }
         refreshMoodButtons()
-        contentStack.setCustomSpacing(12, after: moodSection)
     }
 
     /// 深浅切换时播放器内部自动换变体，这里只保证环内图可见、不重建条、不丢选中态。
@@ -978,8 +985,10 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     /// 的 1 只，其余冻结静态帧（完成帧，不占播放）。“40 个 CADisplayLink”
     /// 未在代码中证实（Lottie 走 CoreAnimation，非每只一个 CADisplayLink），
     /// 故不按此数施工，只按实际并发播放修；48MB 缓存预算数值不动。
+    /// C1：心情播放门改看选择条（旧心情区 isHidden 已随标题行删除）：
+    /// 仅心情条展开且引用面板未打开时播选中 1 只，其余一律冻结静态帧。
     private func updateMoodPlayback() {
-        let panelVisible = !moodSection.isHidden
+        let panelVisible = activeToolStrip == .mood && !quotePanelOpen
         if moodPlaybackPanelVisible == panelVisible && moodPlaybackSelected == selectedMood {
             return
         }
@@ -1005,8 +1014,9 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         weatherStackView.alignment = .center
         weatherScrollView.translatesAutoresizingMaskIntoConstraints = false
         weatherStackView.translatesAutoresizingMaskIntoConstraints = false
-        contentStack.addArrangedSubview(weatherScrollView)
+        toolStripStack.addArrangedSubview(weatherScrollView)
         weatherScrollView.addSubview(weatherStackView)
+        weatherScrollView.isHidden = true
         NSLayoutConstraint.activate([
             // 天气行内容驱动约 40 = chip 高 + 上 10 + 下 2（左右 16 已由 contentStack 边距提供）。
             weatherScrollView.heightAnchor.constraint(equalTo: weatherStackView.heightAnchor, constant: 12),
@@ -1026,7 +1036,6 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             weatherStackView.addArrangedSubview(button)
         }
         refreshWeatherButtons()
-        contentStack.setCustomSpacing(8, after: weatherScrollView)
     }
 
     /// 天气 key → Lottie 资源 key：选择器 key 与 Lottie 包基本同名，唯 night 对应 moon。
@@ -1107,29 +1116,15 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         }
     }
 
-    /// 天气行显隐（D-G1 网页条件）：工具钮独立开关打开时显示；
-    /// 附加栏展开时仅当天气行曾打开过或已有选中才显示；
-    /// 工具钮单独收起时压制显示（附加栏切换会清掉压制）。
-    private func refreshWeatherRowVisibility() {
-        if quotePanelOpen {
-            weatherScrollView.isHidden = true
-            updateWeatherPlayback()
-            return
-        }
-        let extrasShowsWeather = extrasExpanded && (weatherRowEverOpened || selectedWeather != nil)
-        weatherScrollView.isHidden = weatherRowHiddenByTool || !(extrasShowsWeather || weatherRowVisible)
-        updateWeatherPlayback()
-    }
-
     /// Gemini 第一批：天气播放控制（心情 updateMoodPlayback 同款口径）。
-    /// 行隐藏（附加栏收起/工具钮收起/引用面板打开）时 9 只全部冻结静态帧，
+    /// C1：行隐藏改看选择条（选择条收起/引用面板打开）时 9 只全部冻结静态帧，
     /// 不再后台循环；行可见时仅当前选中的 1 只播，其余 8 只冻结静态帧。
     /// 94 接线的“9 项全循环”计划至此作废（Li 点“按这个分批修”即点头改）。
     /// 减动效、深浅切换、失败回退 wx 静态图的既有兜底不动：play() 在减动效下
     /// 本就只置静态帧不播；深浅变体由播放器 trait 切换内处理；加载失败回退
     /// 的是 PNG 图，play/showStaticFrame 对它均为空操作。
     private func updateWeatherPlayback() {
-        let rowVisible = !weatherScrollView.isHidden
+        let rowVisible = activeToolStrip == .weather && !quotePanelOpen
         if weatherPlaybackVisible == rowVisible && weatherPlaybackSelected == selectedWeather {
             return
         }
@@ -1162,7 +1157,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         }
         refreshWeatherButtons()
         updateWeatherPlayback()
-        refreshExtrasSummary()
+        refreshSelectedChips()
         // 天气在草稿 v3 字段里，改动即走防抖保存，杀 App 后可恢复。
         scheduleDraftSave()
     }
@@ -1251,7 +1246,8 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         recipientChipName.translatesAutoresizingMaskIntoConstraints = false
         recipientClearButton.translatesAutoresizingMaskIntoConstraints = false
         notifyCheckButton.translatesAutoresizingMaskIntoConstraints = false
-        contentStack.addArrangedSubview(recipientSection)
+        toolStripStack.addArrangedSubview(recipientSection)
+        recipientSection.isHidden = true
         recipientSection.addArrangedSubview(recipientLine)
         recipientSection.addArrangedSubview(notifyGroup)
         recipientLine.addArrangedSubview(recipientPickButton)
@@ -1281,11 +1277,10 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             notifyCheckButton.heightAnchor.constraint(equalToConstant: 16),
         ])
         refreshRecipientRow()
-        contentStack.setCustomSpacing(8, after: recipientSection)
     }
 
     /// 写给行状态：新建未选 → @ + “写给某个人”钮；新建已选 → chip + × + 通知行；
-    /// 编辑模式 → 锁定的 chip（无 ×、无通知行）；编辑且无收信人 → 整区隐藏（见 refreshExtras）。
+    /// 编辑模式 → 锁定的 chip（无 ×、无通知行）；编辑且无收信人 → 选择条打开时也无内容（栈自动塌高）。
     private func refreshRecipientRow() {
         if isEditMode {
             recipientPickButton.isHidden = true
@@ -1304,7 +1299,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                 recipientChipView.isHidden = true
             }
             refreshNotifyCheck()
-            refreshExtrasSummary()
+            refreshSelectedChips()
             return
         }
         if let user = selectedRecipient {
@@ -1336,7 +1331,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             notifyGroup.isHidden = true
         }
         refreshNotifyCheck()
-        refreshExtrasSummary()
+        refreshSelectedChips()
     }
 
     /// 通知复选框只改本地状态与自身外观，不重建行（网页版同款规矩）。
@@ -1363,7 +1358,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             self.selectedRecipient = user
             self.notifyRecipient = true
             self.refreshRecipientRow()
-            self.refreshExtras()
+            self.refreshToolStrip()
             // 网页选人即 saveDraftQuiet 立即落盘，不走防抖（500ms 内杀 App 会丢改动）。
             self.saveDraftNow()
         }
@@ -1392,14 +1387,6 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     private func buildQuoteSection() {
         quoteSection.axis = .vertical
         quoteSection.spacing = 0
-        pickQuoteButton.setTitle("引用一篇日记", for: .normal)
-        pickQuoteButton.setTitleColor(BearyColors.blue, for: .normal)
-        pickQuoteButton.titleLabel?.font = UIFont.systemFont(ofSize: 15)
-        pickQuoteButton.backgroundColor = BearyColors.faint
-        pickQuoteButton.layer.cornerRadius = 12
-        pickQuoteButton.layer.masksToBounds = true
-        pickQuoteButton.addTarget(self, action: #selector(didTapPickQuote), for: .touchUpInside)
-        pickQuoteButton.bearyAddPressFeedback()
         // D-G3：编辑器引用卡 = 网页 quoteChip 外框（1px line 边框、圆角 14），
         // 不再是 qp-card 的无圆角 + 底部单线；底线随整框边框改单线框后隐藏，
         // 避免底边双线。头像/名不加回（Li 已拍板 lite 卡去头像名）。
@@ -1433,7 +1420,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         quoteCardRemoveButton.tintColor = BearyColors.gray
         quoteCardRemoveButton.addTarget(self, action: #selector(didTapRemoveQuote), for: .touchUpInside)
         quoteCardRemoveButton.bearyAddPressFeedback()
-        for v in [quoteSection, pickQuoteButton, quoteCard, quoteDeliveringPill, quoteContentLabel, quoteDateLabel, quoteImagesScrollView, quoteImagesStackView, quoteCardBottomLine, quoteCardRemoveButton, quoteDeletedRow, quoteDeletedLabel, quoteDeletedRemoveButton] {
+        for v in [quoteSection, quoteCard, quoteDeliveringPill, quoteContentLabel, quoteDateLabel, quoteImagesScrollView, quoteImagesStackView, quoteCardBottomLine, quoteCardRemoveButton, quoteDeletedRow, quoteDeletedLabel, quoteDeletedRemoveButton] {
             v.translatesAutoresizingMaskIntoConstraints = false
         }
         // 已删态行（恢复用）：灰字 + “移除”钮，默认隐藏；见 refreshQuoteSection。
@@ -1456,7 +1443,6 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         quoteDeletedRow.addArrangedSubview(quoteDeletedRemoveButton)
         quoteDeletedRow.isHidden = true
         contentStack.addArrangedSubview(quoteSection)
-        quoteSection.addArrangedSubview(pickQuoteButton)
         quoteSection.addArrangedSubview(quoteCard)
         quoteSection.addArrangedSubview(quoteDeletedRow)
         quoteCard.addSubview(quoteDeliveringPill)
@@ -1467,7 +1453,6 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         quoteCard.addSubview(quoteCardBottomLine)
         quoteCard.addSubview(quoteCardRemoveButton)
         NSLayoutConstraint.activate([
-            pickQuoteButton.heightAnchor.constraint(equalToConstant: 44),
             // 52 批：lite 卡不带头像名——pill 顶行贴卡左（原头像 40 + 名 54 链已删），日期/正文/图片条同贴卡左 14。
             // D-G3：日期不再另起一行，改与 pill 同行（pill 可见时日期贴 pill 右 +8、与 pill 垂直居中；
             // pill 隐藏时日期独占顶行 top 16 / leading 14）。日期的 top/leading 约束改由
@@ -1537,9 +1522,8 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     /// 以图片条隐藏为准——见下方 refreshQuoteCardImages 的约束切换）。
     private func refreshQuoteSection() {
         let quote = isEditMode ? lockedQuote : selectedQuote
-        // C6：编辑模式引用可改可删，挑钮显隐与新建同款（有引用则藏挑钮、露 lite 卡 + ×，
-        // 无引用则露挑钮）；写给仍锁定，不在此改。
-        pickQuoteButton.isHidden = quote != nil
+        // C6：编辑模式引用可改可删（有引用露 lite 卡 + ×，无引用则本区塌掉）；
+        // 引用改走工具栏引用钮；写给仍锁定，不在此改。
         guard let shown = quote else {
             quoteCard.isHidden = true
             quoteDeletedRow.isHidden = true
@@ -1548,8 +1532,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         }
         if shown.isDeleted {
             // 已删态：不画 lite 卡（无作者/正文/图片可信），只留灰字行 + “移除”钮；
-            // 挑钮仍隐藏（引用槽位被已删引用占着，清除后才可再选）。
-            pickQuoteButton.isHidden = true
+            // 已删引用仍占槽位（清除后才可经工具栏引用钮再选）。
             quoteCard.isHidden = true
             quoteDeletedRow.isHidden = false
             updatePreferredContentSize()
@@ -1650,10 +1633,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         }
     }
 
-    /// 挑钮与工具栏引用钮都开关 qp-mode 面板（C6：编辑模式也可改引用，不再早退）。
-    @objc private func didTapPickQuote() {
-        setQuotePanelOpen(!quotePanelOpen)
-    }
+    /// C1：引用唯一入口为工具栏引用钮（见 didTapQuoteTool）；正文中部挑钮已删。
 
     /// lite 卡右上 × / 已删行“移除”：清除已选引用（网页 quoteChipX 口径；C6：编辑模式
     /// 同样可删，PUT 时 lockedQuote 为空即清旧引用；新建模式清除后立即落盘）。
@@ -1814,14 +1794,14 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             textView.isHidden = true
             imageScrollView.isHidden = true
             toolbarContainer.isHidden = true
-            updateToolbarScrollAnchoring()
-            extrasBarContainer.isHidden = true
-            weatherScrollView.isHidden = true
+            toolStripStack.isHidden = true
+            selectedChipsRow.isHidden = true
+            imageUndoBar.isHidden = true
             statusRow.isHidden = true
-            recipientSection.isHidden = true
-            moodSection.isHidden = true
+            updateScrollBottomAnchoring()
             updateMoodPlayback()
             updateWeatherPlayback()
+            refreshImageUndoBar()
             quoteSection.isHidden = true
             ruleBoxView.isHidden = true
             // 间隙修复（只动布局）：滚动归零不影响开头已保存的恢复偏移；面板前各区栈间距显式置 0，
@@ -1830,11 +1810,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             scrollView.contentOffset = CGPoint.zero
             contentStack.setCustomSpacing(0, after: textView)
             contentStack.setCustomSpacing(0, after: imageScrollView)
-            contentStack.setCustomSpacing(0, after: extrasBarContainer)
-            contentStack.setCustomSpacing(0, after: weatherScrollView)
             contentStack.setCustomSpacing(0, after: statusRow)
-            contentStack.setCustomSpacing(0, after: recipientSection)
-            contentStack.setCustomSpacing(0, after: moodSection)
             contentStack.setCustomSpacing(0, after: quoteSection)
             quoteTabBarContainer.isHidden = false
             view.layoutIfNeeded()
@@ -1873,8 +1849,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                 }
                 self.textView.isHidden = false
                 self.toolbarContainer.isHidden = false
-                self.updateToolbarScrollAnchoring()
-                self.extrasBarContainer.isHidden = false
+                self.selectedChipsRow.isHidden = false
                 self.statusRow.isHidden = false
                 self.quoteSection.isHidden = false
                 self.ruleBoxView.isHidden = false
@@ -1883,17 +1858,14 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                 // 间隙修复的关闭恢复：把打开时置 0 的栈间距按 build 时原值还原（其余区同 build 原值）。
                 self.contentStack.setCustomSpacing(12, after: self.textView)
                 self.contentStack.setCustomSpacing(4, after: self.imageScrollView)
-                self.contentStack.setCustomSpacing(4, after: self.extrasBarContainer)
-                self.contentStack.setCustomSpacing(8, after: self.weatherScrollView)
                 self.contentStack.setCustomSpacing(8, after: self.statusRow)
-                self.contentStack.setCustomSpacing(8, after: self.recipientSection)
-                self.contentStack.setCustomSpacing(12, after: self.moodSection)
                 self.contentStack.setCustomSpacing(0, after: self.quoteSection)
-                // 各区显隐按正常态重算（天气行含独立开关、写给含编辑态通知行、引用含 pill 约束）。
-                self.refreshExtras()
+                // 各区显隐按正常态重算（选择条、写给含编辑态通知行、引用含 pill 约束）。
+                self.refreshToolStrip()
                 self.refreshRecipientRow()
                 self.refreshQuoteSection()
                 self.refreshImageStripVisibility()
+                self.refreshImageUndoBar()
                 if self.quotePanelSavedScrollValid {
                     self.quotePanelSavedScrollValid = false
                     self.view.layoutIfNeeded()
@@ -1915,17 +1887,14 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         updatePreferredContentSize()
     }
 
-    /// 工具栏钉住后的顶锚切换：工具栏隐藏时（引用面板打开）scrollView 顶锚改回顶栏，
-    /// 否则隐藏的工具栏仍按内容高占位、面板上方会空一段；显示时锚回工具栏底部。
-    /// 工具栏显隐只在这两处改（grep toolbarContainer.isHidden 仅此两处），故不另做监听。
-    private func updateToolbarScrollAnchoring() {
-        if toolbarContainer.isHidden {
-            scrollTopToToolbarConstraint?.isActive = false
-            scrollTopToTopBarConstraint?.isActive = true
-        } else {
-            scrollTopToTopBarConstraint?.isActive = false
-            scrollTopToToolbarConstraint?.isActive = true
-        }
+    /// C1：scrollView 底锚三档切换——引用面板打开时锚整页底（工具栏与选择条都藏，
+    /// 不留空隙）；选择条展开时锚选择条顶（条不盖住正文尾部）；其余时锚工具栏顶。
+    /// 改锚只发生在这两处：选择条刷新（refreshToolStrip）与引用面板开关。
+    private func updateScrollBottomAnchoring() {
+        let stripOpen = activeToolStrip != nil && !quotePanelOpen
+        scrollBottomToToolbarConstraint?.isActive = !quotePanelOpen && !stripOpen
+        scrollBottomToStripConstraint?.isActive = stripOpen
+        scrollBottomToViewConstraint?.isActive = quotePanelOpen
     }
 
     @objc private func didTapQuoteTab(_ sender: UIButton) {
@@ -2287,8 +2256,8 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         contentStack.addArrangedSubview(imageScrollView)
         imageScrollView.addSubview(imageStackView)
         NSLayoutConstraint.activate([
-            // 条高 84 = 单项 72 + 下 padding 12（顶 0）。
-            imageScrollView.heightAnchor.constraint(equalToConstant: 84),
+            // C11：条高 96 = 单项 84 + 下 padding 12（顶 0）。
+            imageScrollView.heightAnchor.constraint(equalToConstant: 96),
             imageStackView.topAnchor.constraint(equalTo: imageScrollView.contentLayoutGuide.topAnchor),
             imageStackView.bottomAnchor.constraint(equalTo: imageScrollView.contentLayoutGuide.bottomAnchor, constant: -12),
             imageStackView.leadingAnchor.constraint(equalTo: imageScrollView.contentLayoutGuide.leadingAnchor),
@@ -2303,9 +2272,9 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         imageScrollView.isHidden = imageItems.isEmpty
     }
 
-    // MARK: - 工具栏（网页 editor-tools：图片/天气/引用图标钮 + 右端草稿 pill；
-    // 清单第 9 项：容器已钉在顶栏下方、不在内容栈里，见 buildLayout；本函数只布
-    // 容器内部，分隔线 + 工具行约束不变，工具行左右仍与内容栈边距同宽 16）
+    // MARK: - 工具栏（C1：左 [图片][心情][天气][写给][引用]、右 [字数圆环][草稿 pill]；
+    // 容器贴键盘上方、不在内容栈里，见 buildLayout；本函数只布容器内部，
+    // 分隔线 + 工具行约束不变，工具行左右仍与内容栈边距同宽 16）
 
     private func buildToolbarRow() {
         toolbarSeparator.backgroundColor = BearyColors.line
@@ -2318,11 +2287,19 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         imageToolButton.tintColor = BearyColors.ink
         imageToolButton.addTarget(self, action: #selector(didTapAddImage), for: .touchUpInside)
         imageToolButton.bearyAddPressFeedback()
+        moodToolButton.setImage(BearyIconImages.image(named: "icon_mood", pointSize: 24), for: .normal)
+        moodToolButton.tintColor = BearyColors.ink
+        moodToolButton.addTarget(self, action: #selector(didTapMoodTool), for: .touchUpInside)
+        moodToolButton.bearyAddPressFeedback()
         // 天气钮图标随选中天气变（见 refreshWeatherButtons 的 syncWxBtn 同款同步）。
         weatherToolButton.setImage(BearyIconImages.image(named: "icon_weather_tool", pointSize: 24), for: .normal)
         weatherToolButton.tintColor = BearyColors.ink
         weatherToolButton.addTarget(self, action: #selector(didTapWeatherTool), for: .touchUpInside)
         weatherToolButton.bearyAddPressFeedback()
+        recipientToolButton.setImage(BearyIconImages.image(named: "icon_at", pointSize: 24), for: .normal)
+        recipientToolButton.tintColor = BearyColors.ink
+        recipientToolButton.addTarget(self, action: #selector(didTapRecipientTool), for: .touchUpInside)
+        recipientToolButton.bearyAddPressFeedback()
         quoteToolButton.setImage(BearyIconImages.image(named: "icon_quote", pointSize: 24), for: .normal)
         quoteToolButton.tintColor = BearyColors.ink
         quoteToolButton.addTarget(self, action: #selector(didTapQuoteTool), for: .touchUpInside)
@@ -2345,7 +2322,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         toolbarContainer.translatesAutoresizingMaskIntoConstraints = false
         toolbarSeparator.translatesAutoresizingMaskIntoConstraints = false
         toolRow.translatesAutoresizingMaskIntoConstraints = false
-        for button in [imageToolButton, weatherToolButton, quoteToolButton] {
+        for button in [imageToolButton, moodToolButton, weatherToolButton, recipientToolButton, quoteToolButton] {
             button.translatesAutoresizingMaskIntoConstraints = false
             button.widthAnchor.constraint(equalToConstant: 24).isActive = true
             button.heightAnchor.constraint(equalToConstant: 24).isActive = true
@@ -2355,10 +2332,22 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         toolbarContainer.addSubview(toolbarSeparator)
         toolbarContainer.addSubview(toolRow)
         toolRow.addArrangedSubview(imageToolButton)
+        toolRow.addArrangedSubview(moodToolButton)
         toolRow.addArrangedSubview(weatherToolButton)
+        toolRow.addArrangedSubview(recipientToolButton)
         toolRow.addArrangedSubview(quoteToolButton)
         let spacer = UIView()
         toolRow.addArrangedSubview(spacer)
+        // C1：字数圆环 + 数字由状态行移入工具栏右端（charGroupStack：环与数字 gap 6）。
+        charGroupStack.axis = .horizontal
+        charGroupStack.spacing = 6
+        charGroupStack.alignment = .center
+        charGroupStack.translatesAutoresizingMaskIntoConstraints = false
+        charRingView.translatesAutoresizingMaskIntoConstraints = false
+        charCountLabel.translatesAutoresizingMaskIntoConstraints = false
+        charGroupStack.addArrangedSubview(charRingView)
+        charGroupStack.addArrangedSubview(charCountLabel)
+        toolRow.addArrangedSubview(charGroupStack)
         toolRow.addArrangedSubview(draftPillButton)
         NSLayoutConstraint.activate([
             toolbarSeparator.topAnchor.constraint(equalTo: toolbarContainer.topAnchor),
@@ -2428,166 +2417,171 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         draftPillWidthConstraint?.constant = draftPillButton.contentEdgeInsets.left + imageWidth + draftPillButton.titleEdgeInsets.left + titleWidth + draftPillButton.titleEdgeInsets.right + draftPillButton.contentEdgeInsets.right
     }
 
-    /// 天气工具钮：单独开关天气行（网页 toggleWxRow 同款：可独立于附加选项栏开关；
-    /// 打开时滚动到天气行，关闭时只收起该行，不动附加栏展开态）。
-    @objc private func didTapWeatherTool() {
-        // P3-5：引用面板打开时天气工具钮仍不切换（行为不变），给提示不再静默 return。
-        if quotePanelOpen {
-            showToast(message: "请先关闭引用面板")
-            return
-        }
-        // 真开关：当前可见则收起（附加栏撑着显示时用压制标记收起），当前隐藏则打开。
-        if !weatherScrollView.isHidden {
-            weatherRowVisible = false
-            weatherRowHiddenByTool = true
-        } else {
-            weatherRowVisible = true
-            weatherRowEverOpened = true
-            weatherRowHiddenByTool = false
-        }
-        refreshWeatherRowVisibility()
-        updatePreferredContentSize()
-        if !weatherScrollView.isHidden {
-            // 看门狗修法（2026-10-27）+ 编辑器批：同步强制布局仍不在 preferred 刚改写
-            // 的当口做（重入测量最不稳定的时刻），故滚动仍放到下一 runloop；但下一
-            // runloop 的 async 块跑在布局之前，weatherScrollView.frame 仍是收起态旧帧
-            // （长文/键盘顶起时行在可视区外，拿旧帧滚等于没滚，看起来就是“点了没出现”），
-            // 故块内先 layoutIfNeeded 落到开行后的几何再量帧。转换口径不动：
-            // frame 在 contentStack 系内、contentView 系与 scroll 内容系原点同为 (0,0)，
-            // 故 contentView.convert(frame, from: contentStack) 正是 scrollRectToVisible
-            // 要的内容坐标；改向 scrollView.convert(bounds, from:) 反而会被 contentOffset
-            // 抵掉一截。滚动语义与动画门（减动效）不变。
-            DispatchQueue.main.async { [weak self] in
-                guard let self = self else { return }
-                self.view.layoutIfNeeded()
-                guard !self.weatherScrollView.isHidden else { return }
-                let animated = !UIAccessibility.isReduceMotionEnabled
-                let target = self.contentView.convert(self.weatherScrollView.frame, from: self.contentStack)
-                self.scrollView.scrollRectToVisible(target, animated: animated)
-            }
-        }
-    }
-
+    /// C1：引用唯一入口（工具栏引用钮）开关 qp-mode 面板（C6：编辑模式也可改引用，不再早退）。
     @objc private func didTapQuoteTool() {
         setQuotePanelOpen(!quotePanelOpen)
     }
 
-    // MARK: - 附加选项栏（默认收起；收起时天气/写给/心情三区隐藏）
+    // MARK: - C1 选择条与已选 Chip 行（替代旧附加选项栏）
 
-    private func buildExtrasBar() {
-        // 容器：摘要左、chevron 右（网页 extras-bar space-between 同款）；
-        // 透明按钮整层覆盖接点击，避免 UIButton 图文排布随语义方向走偏。
-        extrasSummaryLabel.text = "附加选项"
-        extrasSummaryLabel.font = UIFont.systemFont(ofSize: 13)
-        extrasSummaryLabel.textColor = BearyColors.gray
-        extrasSummaryLabel.lineBreakMode = .byTruncatingTail
-        extrasChevronImageView.image = BearyIconImages.image(named: "icon_chevron_down", pointSize: 16)
-        extrasChevronImageView.tintColor = BearyColors.gray
-        extrasChevronImageView.contentMode = .scaleAspectFit
-        extrasBarButton.addTarget(self, action: #selector(didTapExtrasBar), for: .touchUpInside)
-        extrasBarButton.bearyAddPressFeedback()
-        extrasBarContainer.translatesAutoresizingMaskIntoConstraints = false
-        extrasSummaryLabel.translatesAutoresizingMaskIntoConstraints = false
-        extrasChevronImageView.translatesAutoresizingMaskIntoConstraints = false
-        extrasBarButton.translatesAutoresizingMaskIntoConstraints = false
-        contentStack.addArrangedSubview(extrasBarContainer)
-        extrasBarContainer.addSubview(extrasSummaryLabel)
-        extrasBarContainer.addSubview(extrasChevronImageView)
-        extrasBarContainer.addSubview(extrasBarButton)
-        NSLayoutConstraint.activate([
-            // 栏高内容驱动约 32 = 摘要行高 + 上下各 8（左右 16 已由 contentStack 边距提供）。
-            extrasSummaryLabel.leadingAnchor.constraint(equalTo: extrasBarContainer.leadingAnchor),
-            extrasSummaryLabel.topAnchor.constraint(equalTo: extrasBarContainer.topAnchor, constant: 8),
-            extrasSummaryLabel.bottomAnchor.constraint(equalTo: extrasBarContainer.bottomAnchor, constant: -8),
-            extrasSummaryLabel.trailingAnchor.constraint(lessThanOrEqualTo: extrasChevronImageView.leadingAnchor, constant: -8),
-            extrasChevronImageView.trailingAnchor.constraint(equalTo: extrasBarContainer.trailingAnchor),
-            extrasChevronImageView.centerYAnchor.constraint(equalTo: extrasBarContainer.centerYAnchor),
-            extrasChevronImageView.widthAnchor.constraint(equalToConstant: 16),
-            extrasChevronImageView.heightAnchor.constraint(equalToConstant: 16),
-            extrasBarButton.topAnchor.constraint(equalTo: extrasBarContainer.topAnchor),
-            extrasBarButton.bottomAnchor.constraint(equalTo: extrasBarContainer.bottomAnchor),
-            extrasBarButton.leadingAnchor.constraint(equalTo: extrasBarContainer.leadingAnchor),
-            extrasBarButton.trailingAnchor.constraint(equalTo: extrasBarContainer.trailingAnchor),
-        ])
-        contentStack.setCustomSpacing(4, after: extrasBarContainer)
-    }
-
-    @objc private func didTapExtrasBar() {
-        setExtrasExpanded(!extrasExpanded)
-    }
-
-    private func setExtrasExpanded(_ expanded: Bool) {
-        extrasExpanded = expanded
-        // 附加栏每次切换都清掉工具钮的单独收起压制：展开时天气行重新随附加栏显示。
-        weatherRowHiddenByTool = false
-        let angle: CGFloat = expanded ? CGFloat.pi : 0
-        if UIAccessibility.isReduceMotionEnabled {
-            extrasChevronImageView.transform = CGAffineTransform(rotationAngle: angle)
-        } else {
-            UIView.animate(withDuration: 0.2) { [weak self] in
-                self?.extrasChevronImageView.transform = CGAffineTransform(rotationAngle: angle)
-            }
-        }
-        refreshExtras()
-        updatePreferredContentSize()
-    }
-
-    /// 附加选项显隐 + 摘要（网页 syncExtrasBar 口径：展开显“收起附加选项”，
-    /// 收起显“附加选项：心情名 · 天气名 · 写给 X”，空时只显“附加选项”）。
-    private func refreshExtras() {
-        // qp-mode 整编形态下各区显隐由 setQuotePanelOpen 统管，这里不许把它顶回正常态。
+    /// 工具栏钮：再点已展开的条即收起，点另一条直接切换；引用面板打开时不切换。
+    private func setToolStrip(_ strip: ToolStrip?) {
         if quotePanelOpen {
-            refreshExtrasSummary()
-            updateMoodPlayback()
-            updatePreferredContentSize()
+            showToast(message: "请先关闭引用面板")
             return
         }
-        refreshWeatherRowVisibility()
-        moodSection.isHidden = !extrasExpanded
-        // 写给区：展开才显；编辑模式无收信人时整区隐藏（网页编辑态同款）。
+        activeToolStrip = (activeToolStrip == strip) ? nil : strip
+        refreshToolStrip()
+    }
+
+    /// Chip 行点按：只打开对应条（不做收起切换，Chip 本身就是“已选”指示）。
+    private func openToolStrip(_ strip: ToolStrip) {
+        if quotePanelOpen { return }
+        activeToolStrip = strip
+        refreshToolStrip()
+    }
+
+    /// 选择条显隐总口：同一时刻只显一条；面板打开时整栈隐藏（播放门另见
+    /// updateMoodPlayback/updateWeatherPlayback 的 quotePanelOpen 条件）。
+    private func refreshToolStrip() {
+        toolStripStack.isHidden = quotePanelOpen || activeToolStrip == nil
+        moodScrollView.isHidden = activeToolStrip != .mood
+        weatherScrollView.isHidden = activeToolStrip != .weather
+        // 写给区：编辑模式无收信人时条内无内容（pick 钮与通知行皆藏），栈自动塌高，
+        // 不另弹提示；其余态按条开关显隐。
         if isEditMode && lockedRecipientName == nil && selectedRecipient == nil {
             recipientSection.isHidden = true
         } else {
-            recipientSection.isHidden = !extrasExpanded
+            recipientSection.isHidden = activeToolStrip != .recipient
         }
         updateMoodPlayback()
-        refreshExtrasSummary()
+        updateWeatherPlayback()
+        updateScrollBottomAnchoring()
+        refreshSelectedChips()
         updatePreferredContentSize()
     }
 
-    private func refreshExtrasSummary() {
-        if extrasExpanded {
-            extrasSummaryLabel.text = "收起附加选项"
-            return
-        }
-        var parts: [String] = []
+    /// 已选 Chip 行：只显示已选项（心情/天气/写给各一枚），无已选时整行塌掉；
+    /// 间距随显隐切换（隐藏时置 0，否则隐藏行仍残留 8pt 空隙，见面板间隙修复同款）。
+    private func refreshSelectedChips() {
         if let mood = selectedMood, let name = BearyText.moodNames[mood] {
-            parts.append(name)
+            moodChipButton.isHidden = false
+            moodChipButton.setTitle("心情 · " + name, for: .normal)
+        } else {
+            moodChipButton.isHidden = true
         }
         if let weather = selectedWeather, let name = BearyText.weatherNames[weather] {
-            parts.append(name)
-        }
-        if let user = selectedRecipient {
-            let name: String
-            if let display = user.displayName {
-                name = display
-            } else if let handle = user.handle {
-                name = "@" + handle
-            } else {
-                name = "用户"
-            }
-            parts.append("写给 " + name)
-        } else if let locked = lockedRecipientName {
-            parts.append("写给 " + locked)
-        }
-        if parts.isEmpty {
-            extrasSummaryLabel.text = "附加选项"
+            weatherChipButton.isHidden = false
+            weatherChipButton.setTitle("天气 · " + name, for: .normal)
         } else {
-            extrasSummaryLabel.text = "附加选项：" + parts.joined(separator: " · ")
+            weatherChipButton.isHidden = true
         }
+        let recipientName: String?
+        if let user = selectedRecipient {
+            if let display = user.displayName {
+                recipientName = display
+            } else if let handle = user.handle {
+                recipientName = "@" + handle
+            } else {
+                recipientName = "用户"
+            }
+        } else {
+            recipientName = lockedRecipientName
+        }
+        if let name = recipientName {
+            recipientChipButton.isHidden = false
+            recipientChipButton.setTitle("写给 " + name, for: .normal)
+        } else {
+            recipientChipButton.isHidden = true
+        }
+        let anyChipVisible = !moodChipButton.isHidden || !weatherChipButton.isHidden || !recipientChipButton.isHidden
+        contentStack.setCustomSpacing(anyChipVisible ? 8 : 0, after: selectedChipsRow)
     }
 
-    // MARK: - 状态行（编辑倒计时 + 草稿状态 + 字数圆环）
+    private func buildSelectedChipsRow() {
+        selectedChipsRow.axis = .horizontal
+        selectedChipsRow.spacing = 8
+        selectedChipsRow.alignment = .center
+        selectedChipsRow.translatesAutoresizingMaskIntoConstraints = false
+        let chips: [(button: BearyHit44Button, action: Selector)] = [
+            (moodChipButton, #selector(didTapMoodChip)),
+            (weatherChipButton, #selector(didTapWeatherChip)),
+            (recipientChipButton, #selector(didTapRecipientChip)),
+        ]
+        for chip in chips {
+            chip.button.titleLabel?.font = UIFont.systemFont(ofSize: 13)
+            chip.button.setTitleColor(BearyColors.ink, for: .normal)
+            chip.button.backgroundColor = BearyColors.faint
+            chip.button.layer.cornerRadius = 999
+            chip.button.layer.masksToBounds = true
+            chip.button.contentEdgeInsets = UIEdgeInsets(top: 7, left: 12, bottom: 7, right: 12)
+            chip.button.addTarget(self, action: chip.action, for: .touchUpInside)
+            chip.button.bearyAddPressFeedback()
+            chip.button.isHidden = true
+            chip.button.translatesAutoresizingMaskIntoConstraints = false
+            selectedChipsRow.addArrangedSubview(chip.button)
+        }
+        contentStack.addArrangedSubview(selectedChipsRow)
+        contentStack.setCustomSpacing(0, after: selectedChipsRow)
+    }
+
+    /// C11：删图撤销条（图片条下方）：文案 + 撤销钮；显隐与间距由 refreshImageUndoBar 管。
+    private func buildImageUndoBar() {
+        imageUndoBar.backgroundColor = BearyColors.faint
+        imageUndoBar.layer.cornerRadius = 12
+        imageUndoBar.layer.masksToBounds = true
+        imageUndoLabel.text = "图片已删除"
+        imageUndoLabel.font = UIFont.systemFont(ofSize: 13)
+        imageUndoLabel.textColor = BearyColors.ink
+        imageUndoButton.setTitle("撤销", for: .normal)
+        imageUndoButton.setTitleColor(BearyColors.blue, for: .normal)
+        imageUndoButton.titleLabel?.font = UIFont.systemFont(ofSize: 13, weight: .semibold)
+        imageUndoButton.contentEdgeInsets = UIEdgeInsets(top: 10, left: 14, bottom: 10, right: 14)
+        imageUndoButton.addTarget(self, action: #selector(didTapUndoRemovedImage), for: .touchUpInside)
+        imageUndoButton.bearyAddPressFeedback()
+        imageUndoBar.translatesAutoresizingMaskIntoConstraints = false
+        imageUndoLabel.translatesAutoresizingMaskIntoConstraints = false
+        imageUndoButton.translatesAutoresizingMaskIntoConstraints = false
+        contentStack.addArrangedSubview(imageUndoBar)
+        imageUndoBar.addSubview(imageUndoLabel)
+        imageUndoBar.addSubview(imageUndoButton)
+        NSLayoutConstraint.activate([
+            imageUndoLabel.leadingAnchor.constraint(equalTo: imageUndoBar.leadingAnchor, constant: 14),
+            imageUndoLabel.topAnchor.constraint(equalTo: imageUndoBar.topAnchor, constant: 10),
+            imageUndoLabel.bottomAnchor.constraint(equalTo: imageUndoBar.bottomAnchor, constant: -10),
+            imageUndoButton.trailingAnchor.constraint(equalTo: imageUndoBar.trailingAnchor, constant: -14),
+            imageUndoButton.centerYAnchor.constraint(equalTo: imageUndoBar.centerYAnchor),
+            imageUndoButton.leadingAnchor.constraint(greaterThanOrEqualTo: imageUndoLabel.trailingAnchor, constant: 8),
+        ])
+        imageUndoBar.isHidden = true
+        contentStack.setCustomSpacing(0, after: imageUndoBar)
+    }
+
+    @objc private func didTapMoodTool() {
+        setToolStrip(.mood)
+    }
+
+    @objc private func didTapWeatherTool() {
+        setToolStrip(.weather)
+    }
+
+    @objc private func didTapRecipientTool() {
+        setToolStrip(.recipient)
+    }
+
+    @objc private func didTapMoodChip() {
+        openToolStrip(.mood)
+    }
+
+    @objc private func didTapWeatherChip() {
+        openToolStrip(.weather)
+    }
+
+    @objc private func didTapRecipientChip() {
+        openToolStrip(.recipient)
+    }
+
+    // MARK: - 状态行（编辑倒计时 + 草稿状态；字数圆环已移入工具栏右端）
 
     private func buildStatusRow() {
         editTimerLabel.font = UIFont.boldSystemFont(ofSize: 12)
@@ -2619,11 +2613,8 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         statusRow.addArrangedSubview(draftStatusGroup)
         let spacer = UIView()
         statusRow.addArrangedSubview(spacer)
-        statusRow.addArrangedSubview(charRingView)
-        statusRow.addArrangedSubview(charCountLabel)
-        // D-G15：网页 .char-count gap 6（圆环与数字之间）；状态行其余间距保持 10
-        // （左侧编辑倒计时/草稿状态 gap 网页为 10），故只改环后这一处定制间距。
-        statusRow.setCustomSpacing(6, after: charRingView)
+        // C1：字数圆环与数字已移入工具栏右端 charGroupStack（gap 6 在彼处），
+        // 状态行只留编辑倒计时与草稿状态；圆环尺寸与形层仍在此处创建（视图归属不影响形层）。
         NSLayoutConstraint.activate([
             draftStatusIcon.widthAnchor.constraint(equalToConstant: 15),
             draftStatusIcon.heightAnchor.constraint(equalToConstant: 15),
@@ -2846,11 +2837,12 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             pair.button.isEnabled = !frozen
         }
         weatherToolButton.isEnabled = !frozen
-        extrasBarButton.isEnabled = !frozen
+        moodToolButton.isEnabled = !frozen
+        recipientToolButton.isEnabled = !frozen
+        imageUndoButton.isEnabled = !frozen
         imageToolButton.isEnabled = !frozen
         for item in imageItems {
             item.removeButton.isEnabled = !frozen
-            item.cropButton.isEnabled = !frozen
             item.container.isUserInteractionEnabled = !frozen
         }
     }
@@ -2876,7 +2868,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         refreshPublishButtonWidth()
     }
 
-    // MARK: - 心情（选中态与标题跟随选中值；标题动态带选中名）
+    // MARK: - 心情（选中态；选中名改由正文下方 Chip 行显示）
 
     private func refreshMoodButtons() {
         refreshMoodImages()
@@ -2898,14 +2890,8 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             // 尺寸钉死 44（环约束即 44，与布局时序无关，布局前刷新也不塌）。
             setMoodRingShadow(item.ringView, selected: isSelected)
         }
-        // 标题：未选只显“心情”，已选显“心情 · <选中名>”（网页 mood-lab 同款）。
-        if let mood = selectedMood, let name = BearyText.moodNames[mood] {            let title = NSMutableAttributedString(string: "心情", attributes: [.font: UIFont.systemFont(ofSize: 13, weight: .semibold), .foregroundColor: BearyColors.ink])
-            title.append(NSAttributedString(string: " · " + name, attributes: [.font: UIFont.systemFont(ofSize: 13), .foregroundColor: BearyColors.gray]))
-            moodTitleLabel.attributedText = title
-        } else {
-            moodTitleLabel.attributedText = NSAttributedString(string: "心情", attributes: [.font: UIFont.systemFont(ofSize: 13, weight: .semibold), .foregroundColor: BearyColors.ink])
-        }
-        refreshExtrasSummary()
+        // C1：选中名不再由心情标题行承载（标题行已删），改由正文下方 Chip 行显示。
+        refreshSelectedChips()
     }
 
     /// D-G4：心情选中双环。网页 `.mood-it.on .ring` 的 box-shadow 是
@@ -3024,27 +3010,14 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         removeButton.layer.masksToBounds = true
         removeButton.addTarget(self, action: #selector(didTapRemoveImage(_:)), for: .touchUpInside)
         removeButton.bearyAddPressFeedback()
-        // 裁剪钮（清单第 3 项）：左下角，与移除钮同款 20×20 scrim 圆钮；无裁剪资产，
-        // 复用 icon_edit（编辑）+ 无障碍文案“裁剪图片”，不碰 Assets、不新开文件。
-        let cropButton = BearyHit44Button(type: .system)
-        cropButton.translatesAutoresizingMaskIntoConstraints = false
-        cropButton.setImage(BearyIconImages.image(named: "icon_edit", pointSize: 12), for: .normal)
-        cropButton.tintColor = UIColor.white
-        cropButton.backgroundColor = BearyColors.scrim
-        cropButton.layer.cornerRadius = 10
-        cropButton.layer.masksToBounds = true
-        cropButton.accessibilityLabel = "裁剪图片"
-        cropButton.addTarget(self, action: #selector(didTapCropImage(_:)), for: .touchUpInside)
-        cropButton.bearyAddPressFeedback()
-        cropButton.isHidden = uploading || failed
+        // C11：左下角独立裁剪钮已删，点缩略图主体直接进裁剪页（见 didTapImageItem）。
         container.addSubview(imageView)
         container.addSubview(spinner)
         container.addSubview(failView)
         container.addSubview(removeButton)
-        container.addSubview(cropButton)
         NSLayoutConstraint.activate([
-            container.widthAnchor.constraint(equalToConstant: 72),
-            container.heightAnchor.constraint(equalToConstant: 72),
+            container.widthAnchor.constraint(equalToConstant: 84),
+            container.heightAnchor.constraint(equalToConstant: 84),
             imageView.topAnchor.constraint(equalTo: container.topAnchor),
             imageView.bottomAnchor.constraint(equalTo: container.bottomAnchor),
             imageView.leadingAnchor.constraint(equalTo: container.leadingAnchor),
@@ -3065,10 +3038,6 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             removeButton.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -4),
             removeButton.widthAnchor.constraint(equalToConstant: 22),
             removeButton.heightAnchor.constraint(equalToConstant: 22),
-            cropButton.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 2),
-            cropButton.bottomAnchor.constraint(equalTo: container.bottomAnchor, constant: -2),
-            cropButton.widthAnchor.constraint(equalToConstant: 20),
-            cropButton.heightAnchor.constraint(equalToConstant: 20),
         ])
         if uploading {
             spinner.startAnimating()
@@ -3076,7 +3045,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         if failed {
             imageView.isHidden = true
         }
-        let item = ComposerImageItem(key: key, uploading: uploading, localFile: localFile, failed: failed, container: container, imageView: imageView, spinner: spinner, failView: failView, removeButton: removeButton, cropButton: cropButton)
+        let item = ComposerImageItem(key: key, uploading: uploading, localFile: localFile, failed: failed, container: container, imageView: imageView, spinner: spinner, failView: failView, removeButton: removeButton)
         return item
     }
 
@@ -3088,7 +3057,6 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         item.failView.isHidden = true
         item.imageView.isHidden = false
         item.imageView.alpha = 1.0
-        item.cropButton.isHidden = true
         item.spinner.startAnimating()
     }
 
@@ -3099,7 +3067,6 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         item.failView.isHidden = true
         item.imageView.isHidden = false
         item.imageView.alpha = 1.0
-        item.cropButton.isHidden = false
         item.spinner.stopAnimating()
     }
 
@@ -3108,7 +3075,6 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         item.failed = true
         item.failView.isHidden = false
         item.imageView.isHidden = true
-        item.cropButton.isHidden = true
         item.spinner.stopAnimating()
     }
 
@@ -3142,9 +3108,45 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                         // 无本地文件又无 key：无物可传，移除该项。
                         removeImageItem(item)
                     }
+                    return
                 }
+                // C11：点缩略图主体直接进预览/裁剪页（左下角独立裁剪钮已删）；
+                // 上传中不进（裁剪源未落定），与旧裁剪钮守卫同款。
+                if item.uploading { return }
+                openCropEditorForImageItem(item)
                 return
             }
+        }
+    }
+
+    /// C11：裁剪源解析（旧裁剪钮处理同款）：优先本地原图，其次条内图。
+    private func openCropEditorForImageItem(_ item: ComposerImageItem) {
+        if presentedViewController != nil { return }
+        if let name = item.localFile {
+            imagePrepQueue.async { [weak self, weak item] in
+                let diskImage = BearyDraftImageStore.image(for: name)
+                DispatchQueue.main.async {
+                    guard let self = self, let item = item else { return }
+                    var stillThere = false
+                    for existing in self.imageItems {
+                        if existing === item {
+                            stillThere = true
+                        }
+                    }
+                    if !stillThere {
+                        return
+                    }
+                    if let source = diskImage ?? item.imageView.image {
+                        self.presentCropEditor(for: item, source: source)
+                    } else {
+                        self.showToast(message: "图片还没加载好，稍后再试")
+                    }
+                }
+            }
+        } else if let source = item.imageView.image {
+            presentCropEditor(for: item, source: source)
+        } else {
+            showToast(message: "图片还没加载好，稍后再试")
         }
     }
 
@@ -3177,56 +3179,125 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         updatePreferredContentSize()
     }
 
+    /// C11：删图不再弹确认：先入单槽缓冲、条内即时消失、撤销条可见 10 秒。
+    /// 期间草稿已按删除后状态落盘（scheduleDraftSave），本地文件暂不删；
+    /// 点撤销即按原位恢复（含 key/localFile/上传态），恢复后重新落盘。
+    private func deleteImageItemWithUndo(_ item: ComposerImageItem) {
+        var index = imageItems.count
+        for (i, existing) in imageItems.enumerated() {
+            if existing === item {
+                index = i
+            }
+        }
+        // 新删除顶掉旧缓冲：旧项先彻底提交（删本地文件），缓冲永不积压两项。
+        commitPendingRemoval()
+        var kept: [ComposerImageItem] = []
+        for existing in imageItems {
+            if existing !== item {
+                kept.append(existing)
+            }
+        }
+        imageItems = kept
+        imageStackView.removeArrangedSubview(item.container)
+        item.container.removeFromSuperview()
+        pendingRemovedImage = PendingRemovedImage(item: item, index: index)
+        pendingUndoTimer = Timer.scheduledTimer(withTimeInterval: Self.imageUndoSeconds, repeats: false) { [weak self] _ in
+            self?.commitPendingRemoval()
+        }
+        refreshImageUndoBar()
+        refreshImageStripVisibility()
+        updatePublishState()
+        scheduleDraftSave()
+        updatePreferredContentSize()
+    }
+
+    @objc private func didTapUndoRemovedImage() {
+        guard let pending = pendingRemovedImage else { return }
+        pendingUndoTimer?.invalidate()
+        pendingUndoTimer = nil
+        pendingRemovedImage = nil
+        let item = pending.item
+        let index = min(pending.index, imageItems.count)
+        imageItems.insert(item, at: index)
+        imageStackView.insertArrangedSubview(item.container, at: index)
+        refreshImageUndoBar()
+        refreshImageStripVisibility()
+        updatePublishState()
+        scheduleDraftSave()
+        updatePreferredContentSize()
+        // 上传中途被删又撤销：删期间到账的上传回调因“不在条里”已丢弃，
+        // 恢复后若仍是上传态，从本地/条内图重启一次上传，避免永久卡上传中。
+        if item.uploading {
+            restartUploadForRestoredItem(item)
+        }
+    }
+
+    private func restartUploadForRestoredItem(_ item: ComposerImageItem) {
+        if let name = item.localFile {
+            imagePrepQueue.async { [weak self, weak item] in
+                let image = BearyDraftImageStore.image(for: name)
+                DispatchQueue.main.async {
+                    guard let self = self, let item = item else { return }
+                    var stillThere = false
+                    for existing in self.imageItems {
+                        if existing === item {
+                            stillThere = true
+                        }
+                    }
+                    if !stillThere {
+                        return
+                    }
+                    if let image = image {
+                        self.startUpload(for: item, image: image)
+                    } else {
+                        self.markFailed(item)
+                        self.updatePublishState()
+                    }
+                }
+            }
+        } else if let image = item.imageView.image {
+            startUpload(for: item, image: image)
+        } else {
+            markFailed(item)
+            updatePublishState()
+        }
+    }
+
+    /// 提交缓冲删除（彻底删除）：计时到期、新删除顶替、发布/保存成功、取消、
+    /// 切草稿时调用。本地文件删除、key 丢弃（不调服务端，与旧直接删除同款
+    /// 孤 key 口径）；无缓冲时为空操作（只清计时器与撤销条）。
+    private func commitPendingRemoval() {
+        pendingUndoTimer?.invalidate()
+        pendingUndoTimer = nil
+        guard let pending = pendingRemovedImage else {
+            refreshImageUndoBar()
+            return
+        }
+        pendingRemovedImage = nil
+        if let name = pending.item.localFile {
+            BearyDraftImageStore.deletePair(fullName: name)
+        }
+        refreshImageUndoBar()
+    }
+
+    private func refreshImageUndoBar() {
+        let visible = pendingRemovedImage != nil && !quotePanelOpen
+        imageUndoBar.isHidden = !visible
+        contentStack.setCustomSpacing(visible ? 8 : 0, after: imageUndoBar)
+    }
+
     @objc private func didTapRemoveImage(_ sender: UIButton) {
         for item in imageItems {
             if item.removeButton == sender {
-                // 只去本地与 key 列表，不调服务端；未发布的孤 key 残留是已知可接受项。
-                removeImageItem(item)
+                // C11：不再直接删，改删后 10 秒撤销（见 deleteImageItemWithUndo）；
+                // 提交后仍只去本地与 key 列表，不调服务端（孤 key 残留同旧口径）。
+                deleteImageItemWithUndo(item)
                 return
             }
         }
     }
 
-    // MARK: - 裁剪调整（清单第 3 项：预览图左下角裁剪钮进页；确认替换、取消不动）
-
-    @objc private func didTapCropImage(_ sender: UIButton) {
-        if presentedViewController != nil { return }
-        for item in imageItems {
-            if item.cropButton == sender {
-                // 上传中/失败态不进裁剪（失败态点图走重试，见 didTapImageItem）。
-                if item.uploading || item.failed { return }
-                // 裁剪源优先本地原图（全分辨率），其次条内图；两者皆无时只提示、不进页。
-                // 本地文件读盘走后台队列（与失败重试同款），条内图直接可用。
-                if let name = item.localFile {
-                    imagePrepQueue.async { [weak self, weak item] in
-                        let diskImage = BearyDraftImageStore.image(for: name)
-                        DispatchQueue.main.async {
-                            guard let self = self, let item = item else { return }
-                            var stillThere = false
-                            for existing in self.imageItems {
-                                if existing === item {
-                                    stillThere = true
-                                }
-                            }
-                            if !stillThere {
-                                return
-                            }
-                            if let source = diskImage ?? item.imageView.image {
-                                self.presentCropEditor(for: item, source: source)
-                            } else {
-                                self.showToast(message: "图片还没加载好，稍后再试")
-                            }
-                        }
-                    }
-                } else if let source = item.imageView.image {
-                    presentCropEditor(for: item, source: source)
-                } else {
-                    showToast(message: "图片还没加载好，稍后再试")
-                }
-                return
-            }
-        }
-    }
+    // MARK: - 裁剪调整（C11：点缩略图主体进页；确认替换、取消不动）
 
     private func presentCropEditor(for item: ComposerImageItem, source: UIImage) {
         // 磁盘读图是异步的：回到主线程时若已有弹窗在上（草稿箱等），不再叠页。
@@ -3527,7 +3598,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             }
             refreshRecipientRow()
             refreshQuoteSection()
-            refreshExtras()
+            refreshToolStrip()
             BearyAPI.shared.fetchEntry(id: entryId) { [weak self] result in
                 DispatchQueue.main.async {
                     guard let self = self else { return }
@@ -3549,14 +3620,14 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         }
         refreshRecipientRow()
         refreshQuoteSection()
-        refreshExtras()
+        refreshToolStrip()
         startEditTimer()
         for key in entry.images ?? [] {
             let item = createImageItem(localImage: nil, key: key, uploading: false, localFile: nil, failed: false)
             insertImageItem(item)
             if let url = BearyImageURLs.imageURL(key: key, thumb: true) {
-                // B3-2：图片条单项 72×72，下采样到显示尺寸。
-                item.imageView.bearySetImage(url: url, placeholder: nil, downsampleToWidth: 72 * UIScreen.main.scale)
+                // B3-2：图片条单项 84×84，下采样到显示尺寸。
+                item.imageView.bearySetImage(url: url, placeholder: nil, downsampleToWidth: 84 * UIScreen.main.scale)
             }
         }
         refreshImageStripVisibility()
@@ -3800,16 +3871,16 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                     // 只有 key 的老项（v1 迁移而来）走远程缩略图；有本地文件的项等后台解码后填图。
                     if img.localFile == nil, let key = img.serverKey,
                        let url = BearyImageURLs.imageURL(key: key, thumb: true) {
-                        item.imageView.bearySetImage(url: url, placeholder: nil, downsampleToWidth: 72 * UIScreen.main.scale)
+                        item.imageView.bearySetImage(url: url, placeholder: nil, downsampleToWidth: 84 * UIScreen.main.scale)
                     }
                 }
                 self.updateCountLabel()
-                self.refreshExtras()
+                self.refreshToolStrip()
                 self.updateDraftPillCount()
                 self.updateTextViewHeight()
                 self.updatePreferredContentSize()
                 // 录屏批 (c)：恢复草稿后同步一次发布启用态，且放在全部刷新之后当
-                // 最后一句——旧代码的 updatePublishState 在 refreshExtras 之前，恢复
+                // 最后一句——旧代码的 updatePublishState 在选择条刷新之前，恢复
                 // 流程收尾时发布态不是最后一句，恢复后发布钮仍留空态灰，直到用户
                 // 重新输入触发 textViewDidChange 才变白；放末尾保证收尾态即终态。
                 self.updatePublishState()
@@ -3836,7 +3907,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                                         item.imageView.image = image
                                     } else if let key = item.key,
                                               let url = BearyImageURLs.imageURL(key: key, thumb: true) {
-                                        item.imageView.bearySetImage(url: url, placeholder: nil, downsampleToWidth: 72 * UIScreen.main.scale)
+                                        item.imageView.bearySetImage(url: url, placeholder: nil, downsampleToWidth: 84 * UIScreen.main.scale)
                                     }
                                 }
                             }
@@ -3884,7 +3955,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                     if case .notFound = fetchError {
                         self.selectedQuote = SelectedQuote(entryId: currentQuote.entryId, content: "", createdAt: nil, authorName: nil, authorAvatar: nil, images: [], isPublic: nil, publishAt: nil, imgDims: nil, isDeleted: true)
                         self.refreshQuoteSection()
-                        self.refreshExtras()
+                        self.refreshToolStrip()
                         self.saveDraftNow()
                     }
                 }
@@ -4031,7 +4102,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         refreshWeatherButtons()
         refreshRecipientRow()
         refreshQuoteSection()
-        refreshExtras()
+        refreshToolStrip()
         updateDraftStatusLabel()
         updateDraftPillCount()
     }
@@ -4059,7 +4130,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             // 只有 key 的老项走远程缩略图；有本地文件的项等后台解码后填图。
             if img.localFile == nil, let key = img.serverKey,
                let url = BearyImageURLs.imageURL(key: key, thumb: true) {
-                item.imageView.bearySetImage(url: url, placeholder: nil, downsampleToWidth: 72 * UIScreen.main.scale)
+                item.imageView.bearySetImage(url: url, placeholder: nil, downsampleToWidth: 84 * UIScreen.main.scale)
             }
         }
         refreshImageStripVisibility()
@@ -4082,7 +4153,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                                 item.imageView.image = image
                             } else if let key = item.key,
                                       let url = BearyImageURLs.imageURL(key: key, thumb: true) {
-                                item.imageView.bearySetImage(url: url, placeholder: nil, downsampleToWidth: 72 * UIScreen.main.scale)
+                                item.imageView.bearySetImage(url: url, placeholder: nil, downsampleToWidth: 84 * UIScreen.main.scale)
                             }
                         }
                     }
@@ -4097,7 +4168,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         refreshWeatherButtons()
         refreshRecipientRow()
         refreshQuoteSection()
-        refreshExtras()
+        refreshToolStrip()
         updateDraftPillCount()
         verifyRestoredQuote()
         // 录屏批 (c) 同款：草稿箱恢复后同步一次发布启用态，放全部刷新之后。
@@ -4106,6 +4177,8 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
 
     /// 只拆视图不删文件（切草稿时旧篇文件仍归旧篇所有，删文件只在丢弃/发布成功时做）。
     private func removeAllImageViews() {
+        // 切草稿/重置时撤销缓冲一并提交（旧缓冲项不跟进新篇，见 commitPendingRemoval）。
+        commitPendingRemoval()
         for item in imageItems {
             imageStackView.removeArrangedSubview(item.container)
             item.container.removeFromSuperview()
@@ -4132,6 +4205,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         if presentedViewController != nil { return }
         if isEditMode {
             // 决议第 4 项 B：取消直接关，不弹确认；只清本地临时图文件，不删原日记、不碰草稿。
+            commitPendingRemoval()
             deleteEditLocalFiles()
             onCancelled?()
             return
@@ -4145,6 +4219,8 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         if hasUploadingImage() {
             showToastAfterClose(message: "还有图片没上传完，上传中的图片没存进草稿")
         }
+        // 关闭即提交缓冲删除（草稿随即按删除后状态落盘，见 saveDraftNow）。
+        commitPendingRemoval()
         saveDraftNow {
             self.onCancelled?()
         }
@@ -4223,6 +4299,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                     if let entryId = resp.id {
                         // 只有拿到 entry id 才清草稿与本地图片。
                         self.clearDraftAndFiles()
+                        self.commitPendingRemoval()
                         // D-G2：网页发布成功 showMsg「已发布 · 7 天后送达」。
                         // toast 挂在 presenting 方视图上（showToastAfterClose），
                         // 容器随后 dismiss 本页 + 切时间线时 toast 不随编辑器消失。
@@ -4289,6 +4366,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                 switch result {
                 case .success:
                     self.deleteEditLocalFiles()
+                    self.commitPendingRemoval()
                     // D2：把编辑器终态写回原 Entry 副本传给容器（引用已清时 quoteId/quote
                     /// 均为 nil，容器据此清行内引用卡；已删引用不按正常 quote 回传）。
                     if var updated = self.editingEntry {
@@ -4468,10 +4546,8 @@ private final class ComposerImageItem {
     let spinner: UIActivityIndicatorView
     let failView: UIView
     let removeButton: UIButton
-    /// 清单第 3 项：左下角裁剪钮（与右上角移除钮同款 20×20 scrim 圆钮）。
-    let cropButton: UIButton
 
-    init(key: String?, uploading: Bool, localFile: String?, failed: Bool, container: UIView, imageView: UIImageView, spinner: UIActivityIndicatorView, failView: UIView, removeButton: UIButton, cropButton: UIButton) {
+    init(key: String?, uploading: Bool, localFile: String?, failed: Bool, container: UIView, imageView: UIImageView, spinner: UIActivityIndicatorView, failView: UIView, removeButton: UIButton) {
         self.key = key
         self.uploading = uploading
         self.localFile = localFile
@@ -4481,7 +4557,6 @@ private final class ComposerImageItem {
         self.spinner = spinner
         self.failView = failView
         self.removeButton = removeButton
-        self.cropButton = cropButton
     }
 }
 
@@ -4510,8 +4585,8 @@ private final class ComposerImageItem {
 //    图片 × 衬底用 BearyColors.scrim（固定深色半透明，深色下 ink 是近白、白字会看不清）；
 //    上传失败图为行内红底块（红 10% 底 + “失败，点我重试”），发布时有失败图 toast 拦截不发。
 //    其余白字只出现在恒定橙底上（心情 chip 回退名）与墨底上（发布 pill），浅深皆可读。
-// 8. 网页对齐批：段落顺序与网页版一致（正文 → 图片 → 工具栏 → 附加选项 → 天气 → 状态行
-//    → 写给 → 心情 → 引用 → 规则框）；附加选项默认收起，收起天气/写给/心情三区；
+// 8. C1：段落顺序改为正文 → 已选 Chip 行 → 图片 → 状态行 → 引用 → 规则框；
+//    工具栏贴键盘上方，心情/天气/写给为工具栏上方单行选择条（旧附加选项栏已删）；
 //    草稿 pill 计数按 v3 多槽篇数，0 篇时只留“草稿”二字、计数段隐藏；
 //    引用面板为网页 qp-mode 整编形态（打开只留面板、发布钮隐藏、取消变“返回”只退面板、
 //    进出保存/恢复滚动位置、每 tab 缓存 + 序号守卫、选篇立即落盘）；
@@ -4519,7 +4594,8 @@ private final class ComposerImageItem {
 //    列表刷新需容器侧接线，本文件不碰 SceneDelegate）。
 //    草稿箱弹层 BearyDraftBoxViewController 与熊图 BearyEmoteImages 均由其他代理新建文件提供，
 //    本文件只调用、不定义；两者未落地前本文件单独编译会缺符号，待齐套后由 CI 验证。
-// 3. 图片 × 只移除本地与 key 列表，不调服务端；未发布的孤 key 残留是已知可接受项。
+// 3. 图片 × 只移除本地与 key 列表，不调服务端；未发布的孤 key 残留是已知可接受项；
+//    C11：× 改为删后 10 秒撤销（单槽缓冲，到期/顶替/发布/取消/切草稿时提交删除）。
 // 4. 草稿 v3（BearyDraftFiles.swift）：v2 字段 + 天气 + 写给 + 引用快照，每篇独立 draftId，
 //    多篇存一个 v3 数组文件（updatedAt 倒序），JSON 文件原子写；
 //    旧 v2 单槽首次读取迁入 v3（有内容才迁），成功后删旧 v2 文件；
