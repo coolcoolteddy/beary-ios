@@ -33,7 +33,7 @@ private final class BearyBodyTextView: UITextView {
 
     private func lineHeightMultiple(at position: UITextPosition) -> CGFloat? {
         let offset = self.offset(from: beginningOfDocument, to: position)
-        let text = attributedText
+        let text = attributedText ?? NSAttributedString()
         if text.length > 0 {
             let index = min(max(offset - 1, 0), text.length - 1)
             if let style = text.attribute(.paragraphStyle, at: index, effectiveRange: nil) as? NSParagraphStyle,
