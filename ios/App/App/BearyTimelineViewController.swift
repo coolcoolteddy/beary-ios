@@ -2261,6 +2261,8 @@ class BearyTimelineViewController: UIViewController {
     }
 
     @objc private func pullToRefresh() {
+        // M12（91 包）：下拉刷新触发给一次轻触觉。
+        BearyHaptics.press()
         // G16：刷新时先保存选中日（reloadTimeline keepDay 分支内保留），
         // 跳过当日拉取，只拉一次最终选中日；不再先拉今天再拉回原选中日。
         // 第 2 项 A 调用点 2/2（下拉刷新）：keepSelectedDay 下守卫接在刷新

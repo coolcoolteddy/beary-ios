@@ -1954,6 +1954,8 @@ extension BearyNotificationsViewController: UITableViewDataSource, UITableViewDe
         let fingerRaw = max(0, panTranslation - (pullEngageTranslation ?? panTranslation))
         pullEngageTranslation = nil
         if fingerRaw >= 205 && !isLoadingFirstPage && !isCustomPullRefreshing {
+            // M12（91 包）：自定义下拉触发（满 205px 松手）给一次轻触觉；程序触发的 refresh() 不走这里。
+            BearyHaptics.press()
             beginCustomPullRefresh()
         }
     }
