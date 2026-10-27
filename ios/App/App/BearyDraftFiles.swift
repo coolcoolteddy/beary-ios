@@ -128,7 +128,7 @@ enum BearyDraftImageStore {
     private static func isAllowedDraftFileName(_ name: String) -> Bool {
         // UUID：8-4-4-4-12 位十六进制（大小写均可，UUID().uuidString 为大写）。
         let uuid = "[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}"
-        let pattern = "^(?:\(uuid)\.jpg|\(uuid)_t\.jpg)$"
+        let pattern = "^(?:\(uuid)\\.jpg|\(uuid)_t\\.jpg)$"
         return name.range(of: pattern, options: .regularExpression) != nil
     }
 
