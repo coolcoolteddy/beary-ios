@@ -180,6 +180,7 @@ final class BearyTurnstilePage: NSObject {
         cancelButton.setTitleColor(BearyColors.ink, for: .normal)
         cancelButton.titleLabel?.font = UIFont.systemFont(ofSize: 15, weight: .semibold)
         cancelButton.addTarget(self, action: #selector(challengeCancelTapped), for: .touchUpInside)
+        cancelButton.bearyAddPressFeedback()
         view.translatesAutoresizingMaskIntoConstraints = false
         host.addSubview(overlay)
         overlay.addSubview(card)

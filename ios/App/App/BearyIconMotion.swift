@@ -87,6 +87,37 @@ enum BearyIconMotion {
         UIView.animate(withDuration: duration, animations: { imageView.transform = transform })
     }
 
+    /// 通用按压反馈（80 包 W6 全量推广）：按下缩 .84 + .light 轻震，松手回 1。
+    /// 有图缩 imageView（iconTouchDown 同款）；无图缩整颗（行级全宽钮与
+    /// imageView 自带旋转的钮不用它，改走 haptic-only，见各页接线）。
+    /// 减动效：缩放直达终值（animateIconScale 同口径）；震动不拿减动效门控
+    ///（BearyHaptics 头注释既定口径：两者不是一回事）。
+    static func pressDown(on button: UIButton) {
+        if button.imageView != nil {
+            animateIconScale(on: button, to: 0.84)
+        } else {
+            scaleButton(button, to: 0.84)
+        }
+        BearyHaptics.press()
+    }
+
+    static func pressUp(on button: UIButton) {
+        if button.imageView != nil {
+            animateIconScale(on: button, to: 1)
+        } else {
+            scaleButton(button, to: 1)
+        }
+    }
+
+    private static func scaleButton(_ button: UIButton, to scale: CGFloat) {
+        let transform = scale == 1 ? CGAffineTransform.identity : CGAffineTransform(scaleX: scale, y: scale)
+        if UIAccessibility.isReduceMotionEnabled {
+            button.transform = transform
+            return
+        }
+        UIView.animate(withDuration: 0.13, animations: { button.transform = transform })
+    }
+
     /// 无限旋转（网页 .spin 1s / .official-spin .9s 由调用方传 duration；
     /// 减动效不转，见网页 prefers-reduced-motion 下 .spin{animation:none}）。
     static func startSpin(on view: UIView, duration: TimeInterval, key: String) {
@@ -103,4 +134,23 @@ enum BearyIconMotion {
     static func stopSpin(on view: UIView, key: String) {
         view.layer.removeAnimation(forKey: key)
     }
+}
+
+extension UIButton {
+    /// W6：挂通用按压反馈（touchDown 缩+震；松手/滑出/取消回弹）。不改原有
+    /// touchUpInside 逻辑与布局；钮自身作 target，不依赖所在 VC 的方法。
+    func bearyAddPressFeedback() {
+        addTarget(self, action: #selector(bearyPressDown), for: .touchDown)
+        addTarget(self, action: #selector(bearyPressUp), for: [.touchUpInside, .touchUpOutside, .touchCancel])
+    }
+
+    /// W6：行级全宽钮专用——只给按下轻震，不缩放（全宽行缩 .84 会像整行抖动；
+    /// 已有底色按压反馈的行也只补震动，不叠加缩放）。
+    func bearyAddPressHaptic() {
+        addTarget(self, action: #selector(bearyPressDownHapticOnly), for: .touchDown)
+    }
+
+    @objc func bearyPressDown() { BearyIconMotion.pressDown(on: self) }
+    @objc func bearyPressUp() { BearyIconMotion.pressUp(on: self) }
+    @objc func bearyPressDownHapticOnly() { BearyHaptics.press() }
 }

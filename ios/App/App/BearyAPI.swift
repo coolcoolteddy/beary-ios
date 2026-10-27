@@ -497,13 +497,13 @@ final class BearyAPI {
         }
     }
 
-    /// 发码：body 必须带 turnstileToken（accounts enforce 模式下缺 token 必被拒）。
+    /// 发码：body 只带 email，不再带人机验证 token。
     /// 失败时 .server 携带服务端 message 展示文案（不是通用 mapStatus 的 error 码），
     /// 调用方直接展示即可；网络失败为 .network，取消为 .cancelled。
     /// 完成回调不在主线程发（与本文件其他方法同口径），调用方碰 UI 前自行回主线程。
     @discardableResult
-    func sendCode(email: String, turnstileToken: String, completion: @escaping (Result<Void, APIError>) -> Void) -> URLSessionDataTask? {
-        return perform("/api/account/send-code", method: "POST", jsonBody: ["email": email, "turnstileToken": turnstileToken]) { [weak self] data, status, error in
+    func sendCode(email: String, completion: @escaping (Result<Void, APIError>) -> Void) -> URLSessionDataTask? {
+        return perform("/api/account/send-code", method: "POST", jsonBody: ["email": email]) { [weak self] data, status, error in
             guard let self = self else { return }
             if let apiErr = self.accountActionError(status, data: data, error: error, fallback: "发送失败") {
                 completion(.failure(apiErr))
