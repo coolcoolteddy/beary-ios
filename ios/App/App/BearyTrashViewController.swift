@@ -42,8 +42,9 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate {
     private var restoreEntries: [(button: UIButton, trashValue: TrashItem)] = []
     private var purgeEntries: [(button: UIButton, trashValue: TrashItem)] = []
     private var rowViewsByIdentifier: [String: UIView] = [:]
-    /// P2-1：600 列上限约束（宽 ≥821 才激活，开关在 viewDidLayoutSubviews）。
-    private var trashColCapConstraint: NSLayoutConstraint?
+    /// 列宽必需约束（宽 ≥821 取 600、宽 ≤820 取全宽减 32，值由 updateColumnWidth 在
+    /// viewDidLayoutSubviews 里按 bounds 直接派生；设置页 #92 同款，不再走 @750 协商）。
+    private var trashColWidthConstraint: NSLayoutConstraint?
 
     // MARK: - 视图
 
@@ -91,11 +92,20 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate {
 
     override func viewDidLayoutSubviews() {
         super.viewDidLayoutSubviews()
-        // P2-1：同 Feed 的 821 断点——宽 ≥821 才激活 600 上限，宽 ≤820 时关掉走全宽；
-        // 状态不变不开关，避免布局循环。
-        let wantColCap = view.bounds.width >= 821
-        if trashColCapConstraint?.isActive != wantColCap {
-            trashColCapConstraint?.isActive = wantColCap
+        // 列宽由 bounds 直接派生（见 updateColumnWidth）；值不变时不写，避免布局循环。
+        updateColumnWidth()
+    }
+
+    /// 列宽直派：宽 ≥821 取 600 居中、宽 ≤820 取全宽减 32（两侧各 16），与旧口径一致。
+    /// 95 包实证：@750 协商宽 + 上限开关在加载态（无列表行撑宽）仍退化成内容拟合宽
+    /// （列约 92pt、说明文案被截断），故改必需约束，协商余地清零。
+    private func updateColumnWidth() {
+        guard let widthConstraint = trashColWidthConstraint else { return }
+        let boundsWidth = view.bounds.width
+        guard boundsWidth > 0 else { return }
+        let constant: CGFloat = boundsWidth >= 821 ? 600 - boundsWidth : -32
+        if widthConstraint.constant != constant {
+            widthConstraint.constant = constant
         }
     }
 
@@ -277,18 +287,12 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate {
         headerRow.heightAnchor.constraint(equalToConstant: 44).isActive = true
         emptyIconView.widthAnchor.constraint(equalToConstant: 36).isActive = true
         emptyIconView.heightAnchor.constraint(equalToConstant: 36).isActive = true
-        // P2-1：列宽 = 全宽减 32（两侧各 16），宽 ≥821 时 600 上限（必需）胜出居中；
-        // 上限开关在 viewDidLayoutSubviews。
-        // 64 包反馈修（第 5 项）：旧式子是 width == contentWrap.width（@750），与必需的
-        // centerX + 两侧 ≥16 不等式联立无解（居中满宽时 leading=0 < 16）——求解器只能
-        // 丢掉 @750 的宽约束，列宽于是退化成内容拟合：打开时只有标题/说明/转圈，列被
-        // 挤得很细，几秒后列表行到了才随内容撑开（截图即此态）。改成 width == wrap - 32
-        // 后与 centerX + 两侧 16 恰好联立有解，约束从首帧就定住全宽，不再先窄后撑；
-        // iPad 侧 600 上限（必需）仍高于 @750，照常胜出。
+        // 列宽 = 全宽减 32（两侧各 16），宽 ≥821 时取 600 居中；值由 updateColumnWidth
+        // 在 viewDidLayoutSubviews 里按 bounds 直派（必需约束，设置页 #92 同款）。
+        // 旧 @750 协商宽 + 上限开关在 95 包加载态实证失效（列退化成约 92pt 内容拟合宽，
+        // 说明文案被截断），故整段替换，不再保留协商路径。
         let trashColWidth = contentStack.widthAnchor.constraint(equalTo: contentWrap.widthAnchor, constant: -32)
-        trashColWidth.priority = .defaultHigh
-        let trashColCap = contentStack.widthAnchor.constraint(lessThanOrEqualToConstant: 600)
-        trashColCapConstraint = trashColCap
+        trashColWidthConstraint = trashColWidth
         NSLayoutConstraint.activate([
             scrollView.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
             scrollView.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor),
@@ -302,7 +306,6 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate {
             contentStack.topAnchor.constraint(equalTo: contentWrap.topAnchor, constant: 0),
             contentStack.bottomAnchor.constraint(equalTo: contentWrap.bottomAnchor, constant: -16),
             contentStack.centerXAnchor.constraint(equalTo: contentWrap.centerXAnchor),
-            trashColCap,
             trashColWidth,
             contentStack.leadingAnchor.constraint(greaterThanOrEqualTo: contentWrap.leadingAnchor, constant: 16),
             contentStack.trailingAnchor.constraint(lessThanOrEqualTo: contentWrap.trailingAnchor, constant: -16),
