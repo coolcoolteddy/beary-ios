@@ -6,8 +6,8 @@ import UIKit
 // 批二 / 批三逐页替换为真实现时，容器按页删对应 case，不改接线。
 // W11：标题不再是死参——标题与说明同时画出（标题 17 semibold 墨色在上、说明 15 灰色在下）；
 // 容器侧他人主页回退已改走“用户不存在，请重试”空态（见 SceneDelegate.ensurePlaceholder）。
-// L19：文案组按内容区（顶栏底至胶囊顶）居中——页 view 顶已是顶栏底，底直通容器底，
-// 故 centerY 偏移取 -(安全区底 + 胶囊 50 + 底距 12) / 2，随布局重算。
+// L19（已被 E2 取代）：文案组曾按内容区（顶栏底至胶囊顶）居中，随布局重算；
+// E2：空态与加载态统一放可视区中心往上 30pt，本页文案组固定 centerY -30。
 
 final class BearyPlaceholderViewController: UIViewController {
     private let titleText: String
@@ -58,13 +58,10 @@ final class BearyPlaceholderViewController: UIViewController {
 
     override func viewDidLayoutSubviews() {
         super.viewDidLayoutSubviews()
-        // L19：内容区底 = 容器底 - (安全区底 + 胶囊 62)，内容区中心相对页中心的上移量即其一半。
-        // 顶栏透度批：页顶已改 view.top（页高变大），内容区顶仍为顶栏底——旧公式只含安全区底，
-        // 是按旧页高（顶 = 安全区顶 + 60/0）推的；新页高下须把安全区顶也计入，否则文案中心上移安全区顶/2。
-        // 本占位页为居中内容、不在顶栏下方，故只改此居中偏移，不加顶部内边距。
-        let offset = (view.safeAreaInsets.top - view.safeAreaInsets.bottom - 62) / 2
-        if centerYConstraint?.constant != offset {
-            centerYConstraint?.constant = offset
+        // E2：空态与加载态统一放可视区中心往上 30pt——本占位页文案组固定 -30，
+        // 取代 L19 按内容区（顶栏底至胶囊顶）算的变量偏移（安全区变化时不再重算）。
+        if centerYConstraint?.constant != -30 {
+            centerYConstraint?.constant = -30
         }
     }
 }
