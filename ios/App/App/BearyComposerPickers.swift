@@ -110,6 +110,7 @@ final class BearyRecipientPickerViewController: UIViewController, UITextFieldDel
         backdropButton.backgroundColor = BearyColors.scrim.withAlphaComponent(0.45)
         backdropButton.accessibilityLabel = "关闭"
         backdropButton.addTarget(self, action: #selector(didTapClose), for: .touchUpInside)
+        backdropButton.bearyAddPressFeedback()
 
         sheetView.backgroundColor = BearyColors.bg
         sheetView.layer.cornerRadius = 20
@@ -142,6 +143,7 @@ final class BearyRecipientPickerViewController: UIViewController, UITextFieldDel
         closeButton.layer.cornerRadius = 16
         closeButton.layer.masksToBounds = true
         closeButton.addTarget(self, action: #selector(didTapClose), for: .touchUpInside)
+        closeButton.bearyAddPressFeedback()
         searchBox.backgroundColor = BearyColors.faint
         searchBox.layer.cornerRadius = 999
         searchBox.layer.masksToBounds = true
@@ -187,6 +189,7 @@ final class BearyRecipientPickerViewController: UIViewController, UITextFieldDel
         stateRetryButton.titleLabel?.font = UIFont.systemFont(ofSize: 15)
         stateRetryButton.isHidden = true
         stateRetryButton.addTarget(self, action: #selector(didTapStateRetry), for: .touchUpInside)
+        stateRetryButton.bearyAddPressFeedback()
         for v in [backdropButton, sheetView, topBorderView, grabberWrap, grabberView, headerIconWrap, headerIcon, headerTitle, closeButton, searchBox, searchIcon, searchField, listContainer, listScrollView, rowsStack, resultsLabelWrap, resultsLabel, stateView, stateCircle, stateIcon, stateTitle, stateSubtitle, stateRetryButton] {
             v.translatesAutoresizingMaskIntoConstraints = false
         }
@@ -679,7 +682,8 @@ final class BearyRecipientPickerViewController: UIViewController, UITextFieldDel
                 handleLabel.isHidden = true
             }
             if let avatarPath = user.avatarUrl, let url = BearyImageURLs.avatarURL(avatarPath) {
-                avatarView.bearySetImage(url: url, placeholder: nil)
+                // B3-2：选人行头像 44×44，下采样到显示尺寸。
+                avatarView.bearySetImage(url: url, placeholder: nil, downsampleToWidth: 44 * UIScreen.main.scale)
                 avatarView.isHidden = false
                 fallbackLabel.isHidden = true
             } else {
@@ -725,6 +729,7 @@ final class BearyRecipientPickerViewController: UIViewController, UITextFieldDel
                 separator.heightAnchor.constraint(equalToConstant: 1),
             ])
             row.addTarget(self, action: #selector(didTapRow(_:)), for: .touchUpInside)
+            row.bearyAddPressHaptic()
             row.accessibilityLabel = name
             rowsStack.addArrangedSubview(row)
             rowButtons.append(row)

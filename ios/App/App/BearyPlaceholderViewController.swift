@@ -159,6 +159,7 @@ final class BearyTutorialViewController: UIViewController, UIScrollViewDelegate 
         closeButton.titleLabel?.font = UIFont.systemFont(ofSize: 16)
         closeButton.setTitleColor(BearyColors.gray, for: .normal)
         closeButton.addTarget(self, action: #selector(closeTapped), for: .touchUpInside)
+        closeButton.bearyAddPressFeedback()
         closeButton.translatesAutoresizingMaskIntoConstraints = false
         view.addSubview(closeButton)
 
@@ -275,6 +276,7 @@ final class BearyTutorialViewController: UIViewController, UIScrollViewDelegate 
         nextButton.backgroundColor = BearyColors.orange
         nextButton.layer.cornerRadius = 22
         nextButton.addTarget(self, action: #selector(nextTapped), for: .touchUpInside)
+        nextButton.bearyAddPressFeedback()
         nextButton.translatesAutoresizingMaskIntoConstraints = false
         view.addSubview(nextButton)
         updateChrome()
@@ -286,9 +288,6 @@ final class BearyTutorialViewController: UIViewController, UIScrollViewDelegate 
             pageControl.centerXAnchor.constraint(equalTo: view.centerXAnchor),
             pageControl.bottomAnchor.constraint(equalTo: nextButton.topAnchor, constant: -16),
             nextButton.centerXAnchor.constraint(equalTo: view.centerXAnchor),
-            nextButton.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor, constant: -158),
-            nextButton.widthAnchor.constraint(equalToConstant: 200),
-            nextButton.heightAnchor.constraint(equalToConstant: 44),
         ])
     }
 

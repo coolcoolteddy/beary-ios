@@ -151,6 +151,10 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     private var imageItems: [ComposerImageItem] = []
     /// 心情条单项：按钮 + 44 圆环 + 环内熊图 + 环内缺图回退名 + 下方名。
     private var moodItems: [(key: String, button: UIButton, ringView: UIView, emoteView: BearyEmoteView, fallbackLabel: UILabel, nameLabel: UILabel)] = []
+    /// A2-4/B6-1 播放控制上次状态：面板可见性 + 选中心情；一致时 updateMoodPlayback
+    /// 直接返回，避免 refreshExtras 重复调用把选中动画反复从 0 重播。
+    private var moodPlaybackPanelVisible: Bool?
+    private var moodPlaybackSelected: String?
     private var weatherButtons: [(key: String, button: UIButton)] = []
     /// 附加选项栏是否展开（默认收起；展开时才显示天气/写给/心情三区）。
     private var extrasExpanded = false
@@ -270,6 +274,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
 
     override func viewDidLoad() {
         super.viewDidLoad()
+        NSLog("[Diag] composer-viewDidLoad-enter")
         // 玻璃批：view 自身即 modal 卡片，底改 clear，玻璃背板钉满 bounds 垫在最底层（index 0），
         // 后续 build* 加的子视图自然在其上；呈现层文件不动。
         view.backgroundColor = UIColor.clear
@@ -312,6 +317,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         NotificationCenter.default.addObserver(self, selector: #selector(keyboardWillShow(_:)), name: UIResponder.keyboardWillShowNotification, object: nil)
         NotificationCenter.default.addObserver(self, selector: #selector(keyboardWillHide(_:)), name: UIResponder.keyboardWillHideNotification, object: nil)
         NotificationCenter.default.addObserver(self, selector: #selector(keyboardWillChangeFrame(_:)), name: UIResponder.keyboardWillChangeFrameNotification, object: nil)
+        NSLog("[Diag] composer-viewDidLoad-exit")
     }
 
     override func traitCollectionDidChange(_ previousTraitCollection: UITraitCollection?) {
@@ -345,8 +351,29 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         updatePreferredContentSize()
     }
 
+    override func viewWillAppear(_ animated: Bool) {
+        super.viewWillAppear(animated)
+        // B5-3 配套：viewWillDisappear 失效了编辑倒计时，回到页面时重起，
+        // 否则从选图/弹窗回来后倒计时永久停摆；startEditTimer 本身幂等
+        // （先 invalidate 旧计时器，非编辑态直接隐藏 label 返回）。
+        if isEditMode {
+            startEditTimer()
+        }
+    }
+
+    override func viewWillDisappear(_ animated: Bool) {
+        super.viewWillDisappear(animated)
+        // B5-3：重复计时器（编辑倒计时 1s）在页面关闭/被 modal 盖住时即失效，
+        // 不再只靠 deinit——否则切出后到点仍走 onCancelled 关编辑器。
+        // draftTimer 是 0.4s 一次性防抖，到点自释，不在这里失效（否则会丢
+        // 一笔待保存的草稿）；deinit 仍保留作兜底。
+        editTimer?.invalidate()
+        editTimer = nil
+    }
+
     override func viewDidAppear(_ animated: Bool) {
         super.viewDidAppear(animated)
+        NSLog("[Diag] composer-viewDidAppear")
         // 打开即聚焦正文：编辑器唯一目的就是写，首屏就绪后直接可打字；只做一次，
         // 从选图/弹窗回来不抢焦点；有草稿时光标置末尾，接着写。
         // 与草稿恢复/图片续传无冲突：恢复在 viewDidLoad 已完成，续传是后台任务。
@@ -487,6 +514,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         cancelButton.titleLabel?.font = UIFont.systemFont(ofSize: 14)
         cancelButton.contentEdgeInsets = UIEdgeInsets(top: 0, left: 8, bottom: 0, right: 8)
         cancelButton.addTarget(self, action: #selector(didTapCancel), for: .touchUpInside)
+        cancelButton.bearyAddPressFeedback()
         titleLabel.text = isEditMode ? "编辑日记" : "新日记"
         titleLabel.font = UIFont.boldSystemFont(ofSize: 15)
         titleLabel.textColor = BearyColors.ink
@@ -735,7 +763,10 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             // D-G4：网页选中态无描边，环外是两层 box-shadow（2px bg + 2.5px 橙）；
             // 此处不设描边，选中双环由 refreshMoodButtons 的形层画（见 moodRingAnnulus）。
             ringView.layer.borderWidth = 0
-            let emoteView = BearyEmoteView(key: key, animated: true)
+            // A2-4 启动源修法：建条时不自动播。原 animated:true 使 40 只在
+            // 面板收起（moodSection.isHidden）时已全量起播；didMoveToWindow 拦不住，
+            // 因为面板隐藏只是 isHidden、视图仍在 window 内。播放权交给 updateMoodPlayback。
+            let emoteView = BearyEmoteView(key: key, animated: false)
             emoteView.translatesAutoresizingMaskIntoConstraints = false
             let fallbackLabel = UILabel()
             fallbackLabel.translatesAutoresizingMaskIntoConstraints = false
@@ -774,6 +805,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                 nameLabel.bottomAnchor.constraint(equalTo: button.bottomAnchor),
             ])
             button.addTarget(self, action: #selector(didTapMood(_:)), for: .touchUpInside)
+            button.bearyAddPressFeedback()
             moodItems.append((key: key, button: button, ringView: ringView, emoteView: emoteView, fallbackLabel: fallbackLabel, nameLabel: nameLabel))
             moodStackView.addArrangedSubview(button)
         }
@@ -786,6 +818,28 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         for item in moodItems {
             item.emoteView.isHidden = false
             item.fallbackLabel.isHidden = true
+        }
+    }
+
+    /// A2-4 + B6-1 心情播放控制：面板隐藏时全部 stop；面板可见时只播选中
+    /// 的 1 只，其余冻结静态帧（完成帧，不占播放）。“40 个 CADisplayLink”
+    /// 未在代码中证实（Lottie 走 CoreAnimation，非每只一个 CADisplayLink），
+    /// 故不按此数施工，只按实际并发播放修；48MB 缓存预算数值不动。
+    private func updateMoodPlayback() {
+        let panelVisible = !moodSection.isHidden
+        if moodPlaybackPanelVisible == panelVisible && moodPlaybackSelected == selectedMood {
+            return
+        }
+        moodPlaybackPanelVisible = panelVisible
+        moodPlaybackSelected = selectedMood
+        for item in moodItems {
+            if !panelVisible {
+                item.emoteView.stop()
+            } else if item.key == selectedMood {
+                item.emoteView.play()
+            } else {
+                item.emoteView.showStaticFrame()
+            }
         }
     }
 
@@ -837,6 +891,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         button.layer.borderWidth = 1.5
         button.accessibilityLabel = title
         button.addTarget(self, action: #selector(didTapWeather(_:)), for: .touchUpInside)
+        button.bearyAddPressFeedback()
         return button
     }
 
@@ -925,6 +980,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         recipientPickButton.contentEdgeInsets = UIEdgeInsets(top: 7, left: 14, bottom: 7, right: 14)
         recipientPickButton.layer.cornerRadius = 999
         recipientPickButton.addTarget(self, action: #selector(didTapPickRecipient), for: .touchUpInside)
+        recipientPickButton.bearyAddPressFeedback()
         // 已选 chip：橙 13% 底 + 22 头像/首字母 + “写给 名” + ×。
         // D-G8：网页 addr-chip 底是 color-mix（橙 13% + surface），深色下 surface
         // 为 #26262c；App 原 13% 透明橙叠在纯黑页底上偏暗。改按当前主题把橙与
@@ -960,12 +1016,14 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         recipientClearButton.layer.cornerRadius = 9
         recipientClearButton.layer.masksToBounds = true
         recipientClearButton.addTarget(self, action: #selector(didTapClearRecipient), for: .touchUpInside)
+        recipientClearButton.bearyAddPressFeedback()
         notifyCheckButton.layer.cornerRadius = 6
         notifyCheckButton.layer.masksToBounds = true
         notifyCheckButton.layer.borderWidth = 1.5
         notifyCheckButton.layer.borderColor = BearyColors.line.cgColor
         notifyCheckButton.titleLabel?.font = UIFont.boldSystemFont(ofSize: 14)
         notifyCheckButton.addTarget(self, action: #selector(didTapNotifyCheck), for: .touchUpInside)
+        notifyCheckButton.bearyAddPressFeedback()
         notifyLabel.text = "通知对方"
         notifyLabel.font = UIFont.systemFont(ofSize: 13)
         notifyLabel.textColor = BearyColors.ink
@@ -1051,7 +1109,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             recipientPickButton.isHidden = true
             recipientChipView.isHidden = false
             if let avatarPath = user.avatarUrl, let url = BearyImageURLs.avatarURL(avatarPath) {
-                recipientChipAvatar.bearySetImage(url: url, placeholder: nil)
+                recipientChipAvatar.bearySetImage(url: url, placeholder: nil, downsampleToWidth: 22 * UIScreen.main.scale)
                 recipientChipAvatar.isHidden = false
                 recipientChipFallback.isHidden = true
             } else {
@@ -1131,6 +1189,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         pickQuoteButton.layer.cornerRadius = 12
         pickQuoteButton.layer.masksToBounds = true
         pickQuoteButton.addTarget(self, action: #selector(didTapPickQuote), for: .touchUpInside)
+        pickQuoteButton.bearyAddPressFeedback()
         // D-G3：编辑器引用卡 = 网页 quoteChip 外框（1px line 边框、圆角 14），
         // 不再是 qp-card 的无圆角 + 底部单线；底线随整框边框改单线框后隐藏，
         // 避免底边双线。头像/名不加回（Li 已拍板 lite 卡去头像名）。
@@ -1163,6 +1222,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         quoteCardRemoveButton.setImage(BearyIconImages.image(named: "icon_close", pointSize: 15), for: .normal)
         quoteCardRemoveButton.tintColor = BearyColors.gray
         quoteCardRemoveButton.addTarget(self, action: #selector(didTapRemoveQuote), for: .touchUpInside)
+        quoteCardRemoveButton.bearyAddPressFeedback()
         for v in [quoteSection, pickQuoteButton, quoteCard, quoteDeliveringPill, quoteContentLabel, quoteDateLabel, quoteImagesScrollView, quoteImagesStackView, quoteCardBottomLine, quoteCardRemoveButton, quoteDeletedRow, quoteDeletedLabel, quoteDeletedRemoveButton] {
             v.translatesAutoresizingMaskIntoConstraints = false
         }
@@ -1179,6 +1239,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         quoteDeletedRemoveButton.setTitleColor(BearyColors.blue, for: .normal)
         quoteDeletedRemoveButton.titleLabel?.font = UIFont.systemFont(ofSize: 13)
         quoteDeletedRemoveButton.addTarget(self, action: #selector(didTapRemoveQuote), for: .touchUpInside)
+        quoteDeletedRemoveButton.bearyAddPressFeedback()
         quoteDeletedRow.addArrangedSubview(quoteDeletedLabel)
         let deletedSpacer = UIView()
         quoteDeletedRow.addArrangedSubview(deletedSpacer)
@@ -1363,7 +1424,9 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                 imageView.layer.cornerRadius = 10
                 imageView.layer.masksToBounds = true
                 if let url = BearyImageURLs.imageURL(key: key, thumb: true) {
-                    imageView.bearySetImage(url: url, placeholder: nil)
+                    // B3-2：引用条高 118、宽 65–262 夹取，取上限 262 作下采样宽
+                    // （ImageIO 取最大边，262 覆盖宽高两向，不模糊）；查看器已传的不动。
+                    imageView.bearySetImage(url: url, placeholder: nil, downsampleToWidth: 262 * UIScreen.main.scale)
                 }
                 quoteImagesStackView.addArrangedSubview(imageView)
                 // 高 118、宽按原图比例（网页 stripW 口径：65–262 夹取）；无尺寸时兜底 153。
@@ -1419,6 +1482,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             tabButton.layer.cornerRadius = 999
             tabButton.layer.masksToBounds = true
             tabButton.addTarget(self, action: #selector(didTapQuoteTab(_:)), for: .touchUpInside)
+            tabButton.bearyAddPressFeedback()
             quoteTabButtons.append(tabButton)
             quoteTabStack.addArrangedSubview(tabButton)
         }
@@ -1438,6 +1502,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         quotePanelRetryButton.titleLabel?.font = UIFont.systemFont(ofSize: 15)
         quotePanelRetryButton.isHidden = true
         quotePanelRetryButton.addTarget(self, action: #selector(didTapQuotePanelRetry), for: .touchUpInside)
+        quotePanelRetryButton.bearyAddPressFeedback()
         quotePanelRows.translatesAutoresizingMaskIntoConstraints = false
         quotePanelRows.axis = .vertical
         quotePanelRows.spacing = 0
@@ -1535,6 +1600,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             statusRow.isHidden = true
             recipientSection.isHidden = true
             moodSection.isHidden = true
+            updateMoodPlayback()
             quoteSection.isHidden = true
             ruleBoxView.isHidden = true
             // 间隙修复（只动布局）：滚动归零不影响开头已保存的恢复偏移；面板前各区栈间距显式置 0，
@@ -1738,7 +1804,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             avatarFallback.layer.cornerRadius = 20
             avatarFallback.layer.masksToBounds = true
             if let avatarPath = entry.authorAvatar, let url = BearyImageURLs.avatarURL(avatarPath) {
-                avatarView.bearySetImage(url: url, placeholder: nil)
+                avatarView.bearySetImage(url: url, placeholder: nil, downsampleToWidth: 40 * UIScreen.main.scale)
                 avatarView.isHidden = false
                 avatarFallback.isHidden = true
             } else {
@@ -1856,7 +1922,8 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                     imageView.layer.cornerRadius = 10
                     imageView.layer.masksToBounds = true
                     if let url = BearyImageURLs.imageURL(key: key, thumb: true) {
-                        imageView.bearySetImage(url: url, placeholder: nil)
+                        // B3-2：面板行图与引用条同规格（高 118、宽 65–262），取上限 262。
+                        imageView.bearySetImage(url: url, placeholder: nil, downsampleToWidth: 262 * UIScreen.main.scale)
                     }
                     imagesStack.addArrangedSubview(imageView)
                     // 高 118、宽按原图比例（网页 stripW 口径：65–262 夹取）；无尺寸时兜底 153。
@@ -1903,6 +1970,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                 separator.bottomAnchor.constraint(equalTo: rowButton.bottomAnchor),
             ])
             rowButton.addTarget(self, action: #selector(didTapQuotePanelRow(_:)), for: .touchUpInside)
+            rowButton.bearyAddPressHaptic()
             rowButton.accessibilityLabel = entry.content ?? ""
             quotePanelRows.addArrangedSubview(rowButton)
             // 行与日记的并行映射：渲染时同步重建，点行时按按钮身份取对应日记。
@@ -1996,13 +2064,16 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         // D-G7：网页 .icon-btn 默认墨色（editor-tools 的 .nb 灰规则不适用这三个钮），工具钮灰改墨。
         imageToolButton.tintColor = BearyColors.ink
         imageToolButton.addTarget(self, action: #selector(didTapAddImage), for: .touchUpInside)
+        imageToolButton.bearyAddPressFeedback()
         // 天气钮图标随选中天气变（见 refreshWeatherButtons 的 syncWxBtn 同款同步）。
         weatherToolButton.setImage(BearyIconImages.image(named: "icon_weather_tool", pointSize: 24), for: .normal)
         weatherToolButton.tintColor = BearyColors.ink
         weatherToolButton.addTarget(self, action: #selector(didTapWeatherTool), for: .touchUpInside)
+        weatherToolButton.bearyAddPressFeedback()
         quoteToolButton.setImage(BearyIconImages.image(named: "icon_quote", pointSize: 24), for: .normal)
         quoteToolButton.tintColor = BearyColors.ink
         quoteToolButton.addTarget(self, action: #selector(didTapQuoteTool), for: .touchUpInside)
+        quoteToolButton.bearyAddPressFeedback()
         draftPillButton.setTitle("草稿", for: .normal)
         // D-G6：网页草稿 pill 用 beary-diary（书本形），App 原 icon_draft（折角文档）换 icon_diary；
         // 资产 icon_diary.imageset 已存在（个人页日记 tab 同款）。pill 图标网页为灰色，tint 保持灰不动。
@@ -2017,6 +2088,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         draftPillButton.layer.borderWidth = 1.5
         draftPillButton.layer.borderColor = BearyColors.line.cgColor
         draftPillButton.addTarget(self, action: #selector(didTapDraftBox), for: .touchUpInside)
+        draftPillButton.bearyAddPressFeedback()
         toolbarContainer.translatesAutoresizingMaskIntoConstraints = false
         toolbarSeparator.translatesAutoresizingMaskIntoConstraints = false
         toolRow.translatesAutoresizingMaskIntoConstraints = false
@@ -2152,6 +2224,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         extrasChevronImageView.tintColor = BearyColors.gray
         extrasChevronImageView.contentMode = .scaleAspectFit
         extrasBarButton.addTarget(self, action: #selector(didTapExtrasBar), for: .touchUpInside)
+        extrasBarButton.bearyAddPressFeedback()
         extrasBarContainer.translatesAutoresizingMaskIntoConstraints = false
         extrasSummaryLabel.translatesAutoresizingMaskIntoConstraints = false
         extrasChevronImageView.translatesAutoresizingMaskIntoConstraints = false
@@ -2204,6 +2277,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         // qp-mode 整编形态下各区显隐由 setQuotePanelOpen 统管，这里不许把它顶回正常态。
         if quotePanelOpen {
             refreshExtrasSummary()
+            updateMoodPlayback()
             updatePreferredContentSize()
             return
         }
@@ -2215,6 +2289,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         } else {
             recipientSection.isHidden = !extrasExpanded
         }
+        updateMoodPlayback()
         refreshExtrasSummary()
         updatePreferredContentSize()
     }
@@ -2611,6 +2686,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             selectedMood = key
         }
         refreshMoodButtons()
+        updateMoodPlayback()
         scheduleDraftSave()
     }
 
@@ -2672,6 +2748,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         removeButton.layer.cornerRadius = 11
         removeButton.layer.masksToBounds = true
         removeButton.addTarget(self, action: #selector(didTapRemoveImage(_:)), for: .touchUpInside)
+        removeButton.bearyAddPressFeedback()
         // 裁剪钮（清单第 3 项）：左下角，与移除钮同款 20×20 scrim 圆钮；无裁剪资产，
         // 复用 icon_edit（编辑）+ 无障碍文案“裁剪图片”，不碰 Assets、不新开文件。
         let cropButton = BearyHit44Button(type: .system)
@@ -2683,6 +2760,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         cropButton.layer.masksToBounds = true
         cropButton.accessibilityLabel = "裁剪图片"
         cropButton.addTarget(self, action: #selector(didTapCropImage(_:)), for: .touchUpInside)
+        cropButton.bearyAddPressFeedback()
         cropButton.isHidden = uploading || failed
         container.addSubview(imageView)
         container.addSubview(spinner)
@@ -3189,7 +3267,8 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             let item = createImageItem(localImage: nil, key: key, uploading: false, localFile: nil, failed: false)
             insertImageItem(item)
             if let url = BearyImageURLs.imageURL(key: key, thumb: true) {
-                item.imageView.bearySetImage(url: url, placeholder: nil)
+                // B3-2：图片条单项 72×72，下采样到显示尺寸。
+                item.imageView.bearySetImage(url: url, placeholder: nil, downsampleToWidth: 72 * UIScreen.main.scale)
             }
         }
         refreshImageStripVisibility()
@@ -3430,7 +3509,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                     // 只有 key 的老项（v1 迁移而来）走远程缩略图；有本地文件的项等后台解码后填图。
                     if img.localFile == nil, let key = img.serverKey,
                        let url = BearyImageURLs.imageURL(key: key, thumb: true) {
-                        item.imageView.bearySetImage(url: url, placeholder: nil)
+                        item.imageView.bearySetImage(url: url, placeholder: nil, downsampleToWidth: 72 * UIScreen.main.scale)
                     }
                 }
                 self.updateCountLabel()
@@ -3462,7 +3541,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                                         item.imageView.image = image
                                     } else if let key = item.key,
                                               let url = BearyImageURLs.imageURL(key: key, thumb: true) {
-                                        item.imageView.bearySetImage(url: url, placeholder: nil)
+                                        item.imageView.bearySetImage(url: url, placeholder: nil, downsampleToWidth: 72 * UIScreen.main.scale)
                                     }
                                 }
                             }
@@ -3681,7 +3760,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             // 只有 key 的老项走远程缩略图；有本地文件的项等后台解码后填图。
             if img.localFile == nil, let key = img.serverKey,
                let url = BearyImageURLs.imageURL(key: key, thumb: true) {
-                item.imageView.bearySetImage(url: url, placeholder: nil)
+                item.imageView.bearySetImage(url: url, placeholder: nil, downsampleToWidth: 72 * UIScreen.main.scale)
             }
         }
         refreshImageStripVisibility()
@@ -3704,7 +3783,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                                 item.imageView.image = image
                             } else if let key = item.key,
                                       let url = BearyImageURLs.imageURL(key: key, thumb: true) {
-                                item.imageView.bearySetImage(url: url, placeholder: nil)
+                                item.imageView.bearySetImage(url: url, placeholder: nil, downsampleToWidth: 72 * UIScreen.main.scale)
                             }
                         }
                     }
@@ -3980,6 +4059,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     // MARK: - 键盘
 
     @objc private func keyboardWillShow(_ notification: Notification) {
+        NSLog("[Diag] composer-keyboard-willShow")
         applyKeyboard(notification, showing: true)
     }
 
@@ -4088,6 +4168,14 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             toastView.centerXAnchor.constraint(equalTo: container.centerXAnchor),
             toastView.bottomAnchor.constraint(equalTo: container.safeAreaLayoutGuide.bottomAnchor, constant: -158),
         ])
+        // A5-3：减动效时直接现身、到点直接移除，不播淡入淡出。
+        if UIAccessibility.isReduceMotionEnabled {
+            toastView.alpha = 1
+            DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
+                toastView.removeFromSuperview()
+            }
+            return
+        }
         toastView.alpha = 0
         UIView.animate(withDuration: 0.25, animations: {
             toastView.alpha = 1
@@ -4182,6 +4270,7 @@ private final class BearyComposerCropViewController: UIViewController, UIScrollV
         cancelButton.setTitleColor(UIColor.white, for: .normal)
         cancelButton.titleLabel?.font = UIFont.systemFont(ofSize: 16)
         cancelButton.addTarget(self, action: #selector(didTapCancel), for: .touchUpInside)
+        cancelButton.bearyAddPressFeedback()
         titleLabel.text = "裁剪"
         titleLabel.font = UIFont.boldSystemFont(ofSize: 16)
         titleLabel.textColor = UIColor.white
@@ -4190,6 +4279,7 @@ private final class BearyComposerCropViewController: UIViewController, UIScrollV
         confirmButton.setTitleColor(BearyColors.orange, for: .normal)
         confirmButton.titleLabel?.font = UIFont.boldSystemFont(ofSize: 16)
         confirmButton.addTarget(self, action: #selector(didTapConfirm), for: .touchUpInside)
+        confirmButton.bearyAddPressFeedback()
         scrollView.delegate = self
         scrollView.showsHorizontalScrollIndicator = false
         scrollView.showsVerticalScrollIndicator = false

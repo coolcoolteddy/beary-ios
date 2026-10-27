@@ -174,6 +174,7 @@ final class BearyDraftBoxViewController: UIViewController {
         backdropButton.backgroundColor = .clear
         backdropButton.accessibilityLabel = "关闭"
         backdropButton.addTarget(self, action: #selector(closeBox), for: .touchUpInside)
+        backdropButton.bearyAddPressFeedback()
         backdropButton.translatesAutoresizingMaskIntoConstraints = false
         view.addSubview(backdropButton)
 
@@ -246,6 +247,7 @@ final class BearyDraftBoxViewController: UIViewController {
             closeButton.titleLabel?.font = UIFont.systemFont(ofSize: 15)
         }
         closeButton.addTarget(self, action: #selector(closeBox), for: .touchUpInside)
+        closeButton.bearyAddPressFeedback()
         closeButton.translatesAutoresizingMaskIntoConstraints = false
         headerWrap.addSubview(closeButton)
         NSLayoutConstraint.activate([
@@ -307,6 +309,7 @@ final class BearyDraftBoxViewController: UIViewController {
         undoButton.titleLabel?.font = UIFont.systemFont(ofSize: 13.5, weight: .semibold)
         undoButton.translatesAutoresizingMaskIntoConstraints = false
         undoButton.addTarget(self, action: #selector(undoDeleteTapped), for: .touchUpInside)
+        undoButton.bearyAddPressFeedback()
         undoWrap.addSubview(undoBar)
         undoBar.addSubview(undoLabel)
         undoBar.addSubview(undoButton)
@@ -677,6 +680,7 @@ final class BearyDraftBoxViewController: UIViewController {
         openButton.contentEdgeInsets = UIEdgeInsets(top: 5, left: 12, bottom: 5, right: 12)
         openButton.accessibilityLabel = "打开这份草稿"
         openButton.addTarget(self, action: #selector(openTapped(_:)), for: .touchUpInside)
+        openButton.bearyAddPressFeedback()
         topRow.addArrangedSubview(openButton)
         openEntries.append((button: openButton, draftValue: draftValue))
         let deleteButton = UIButton(type: .custom)
@@ -693,6 +697,7 @@ final class BearyDraftBoxViewController: UIViewController {
             deleteButton.heightAnchor.constraint(equalToConstant: 44),
         ])
         deleteButton.addTarget(self, action: #selector(deleteTapped(_:)), for: .touchUpInside)
+        deleteButton.bearyAddPressFeedback()
         topRow.addArrangedSubview(deleteButton)
         deleteEntries.append((button: deleteButton, draftValue: draftValue))
         inner.addArrangedSubview(topRow)
@@ -744,6 +749,7 @@ final class BearyDraftBoxViewController: UIViewController {
             lostButton.contentEdgeInsets = UIEdgeInsets(top: 2.5, left: 9, bottom: 2.5, right: 9)
             lostButton.accessibilityLabel = "图片未保存，点一下清除这条提示"
             lostButton.addTarget(self, action: #selector(clearLostTapped(_:)), for: .touchUpInside)
+            lostButton.bearyAddPressFeedback()
             metaRow.addArrangedSubview(lostButton)
             lostEntries.append((button: lostButton, draftValue: draftValue))
         }
@@ -1064,6 +1070,8 @@ final class BearyDraftBoxViewController: UIViewController {
     // M19：新建钮按压底色（与卡片 cardTouchDown/cardTouchUp 同口径）。
     @objc private func newButtonTouchDown(_ sender: UIButton) {
         sender.backgroundColor = BearyColors.faint
+        // W6：已有底色按压反馈，只补 .light 轻震，不叠加缩放。
+        BearyHaptics.press()
     }
 
     @objc private func newButtonTouchUp(_ sender: UIButton) {
@@ -1175,6 +1183,8 @@ final class BearyDraftBoxViewController: UIViewController {
 
     @objc private func cardTouchDown(_ sender: UIButton) {
         sender.backgroundColor = BearyColors.faint
+        // W6：已有底色按压反馈，只补 .light 轻震，不叠加缩放。
+        BearyHaptics.press()
     }
 
     @objc private func cardTouchUp(_ sender: UIButton) {

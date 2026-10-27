@@ -19,6 +19,9 @@ public final class BearyEmoteView: UIView {
     public let emoteKey: String
 
     private var isPlaying: Bool
+    /// 静态帧持有态：showStaticFrame() 置真，play()/stop() 清掉；attach 时若为真，
+    /// 未播放的视图停在循环段末帧而非 0 帧（0 帧是首播描线起点，未完成态）。
+    private var heldStaticFrame: Bool = false
     private var playbackGeneration: Int = 0
     /// ①专用加载代次：只在 teardownContent（即每次 loadEmote / 主题切换）时递增，
     /// stop()/startPlayback() 不动它——后台解析完成时凭它判断视图是否仍在等同一批内容。
@@ -204,6 +207,7 @@ public final class BearyEmoteView: UIView {
     /// 挂接时 attachCachedEmote 见 isPlaying 为真即起播，不丢这次 play；
     /// 永久回退（解析失败）时该意图无动画可播，无害。
     public func play() {
+        heldStaticFrame = false
         guard fallbackImageView == nil else {
             isPlaying = UIAccessibility.isReduceMotionEnabled == false
             return
@@ -219,19 +223,34 @@ public final class BearyEmoteView: UIView {
         startPlayback()
     }
 
-    /// 停止播放：正常模式回到首帧；减动效开启时停在循环段末帧（完成帧），
-    /// 这也是减动效通知观察者调用本方法时应有的静态态。
+    /// 停止播放：停在当前帧，不回 0 帧。资产口径：首播是 0→op 的描线过程，
+    /// 0 帧是描线未完成态（线未画完），停回 0 帧会把已画完的熊退回未完成态；
+    /// 当前帧才是用户最后看到的完成/进行态。减动效开启时停在循环段末帧
+    /// （完成帧），这也是减动效通知观察者调用本方法时应有的静态态。
     /// 回退静态图时为空操作。
     public func stop() {
         isPlaying = false
+        heldStaticFrame = false
         playbackGeneration += 1
         if let view = animationView {
             view.stop()
             if UIAccessibility.isReduceMotionEnabled, let cached = currentEmote {
                 view.currentFrame = cached.staticFrame
-            } else {
-                view.currentFrame = 0
             }
+        }
+    }
+
+    /// 冻结静态帧：不播放，只停在循环段末帧（完成帧）。未加载完成时先记
+    /// heldStaticFrame，后台挂接时 attachCachedEmote 按此置静态帧，不回 0 帧；
+    /// 已是 PNG 回退时本身就是静态图，无操作。供心情面板“只播选中、其余
+    /// 冻结”用，与 stop()（停在当前帧）不同。
+    public func showStaticFrame() {
+        isPlaying = false
+        heldStaticFrame = true
+        playbackGeneration += 1
+        if let view = animationView, let cached = currentEmote {
+            view.stop()
+            view.currentFrame = cached.staticFrame
         }
     }
 
@@ -290,6 +309,8 @@ public final class BearyEmoteView: UIView {
             view.currentFrame = cached.staticFrame
         } else if isPlaying {
             startPlayback()
+        } else if heldStaticFrame {
+            view.currentFrame = cached.staticFrame
         } else {
             view.currentFrame = 0
         }

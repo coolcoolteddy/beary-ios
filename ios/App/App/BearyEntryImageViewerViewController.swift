@@ -88,6 +88,7 @@ class BearyEntryImageViewerViewController: UIViewController, UIGestureRecognizer
         closeButton.clipsToBounds = true
         closeButton.translatesAutoresizingMaskIntoConstraints = false
         closeButton.addTarget(self, action: #selector(closeTapped), for: .touchUpInside)
+        closeButton.bearyAddPressFeedback()
         closeButton.accessibilityLabel = "关闭"
         view.addSubview(closeButton)
         let singleTap = UITapGestureRecognizer(target: self, action: #selector(stageTapped(_:)))

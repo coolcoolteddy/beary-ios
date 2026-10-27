@@ -203,6 +203,7 @@ final class BearyNotificationsViewController: UIViewController {
         button.contentEdgeInsets = UIEdgeInsets(top: 4, left: 6, bottom: 4, right: 6)
         button.titleEdgeInsets = UIEdgeInsets(top: 0, left: 4, bottom: 0, right: 0)
         button.addTarget(self, action: #selector(readAllTapped), for: .touchUpInside)
+        button.bearyAddPressFeedback()
         let titleWidth = ceil(("全部已读" as NSString).size(withAttributes: [NSAttributedString.Key.font: UIFont.systemFont(ofSize: 14, weight: .semibold)]).width)
         let width = button.widthAnchor.constraint(equalToConstant: 6 + (button.currentImage?.size.width ?? 14) + 4 + titleWidth + 6)
         width.isActive = true
@@ -360,6 +361,7 @@ final class BearyNotificationsViewController: UIViewController {
         button.layer.borderColor = BearyColors.line.cgColor
         button.layer.cornerRadius = 22
         button.addTarget(self, action: #selector(stateButtonTapped), for: .touchUpInside)
+        button.bearyAddPressFeedback()
         return button
     }()
 
@@ -919,12 +921,18 @@ final class BearyNotificationsViewController: UIViewController {
         pullSpinner.alpha = 1
         pullSpinner.transform = CGAffineTransform(scaleX: 1.6, y: 1.6)
         pullSpinner.startAnimating()
-        UIView.animate(withDuration: 0.32, animations: {
+        // A5-3：下拉刷新进场查减动效开关——减动效时直接落位，不播 0.32s 动画。
+        let pullIn = {
             self.tableView.contentInset.top = 84
             self.tableView.scrollIndicatorInsets.top = 84
             self.tableView.contentOffset = CGPoint(x: 0, y: -84)
             self.pullView.frame = CGRect(x: 0, y: -84, width: self.tableView.bounds.width, height: 84)
-        })
+        }
+        if UIAccessibility.isReduceMotionEnabled {
+            pullIn()
+        } else {
+            UIView.animate(withDuration: 0.32, animations: pullIn)
+        }
         loadFirstPage(completion: { [weak self] in
             guard let strongSelf = self else { return }
             let elapsed = strongSelf.customPullStartTime.map({ Date().timeIntervalSince($0) }) ?? 0.5
@@ -940,15 +948,23 @@ final class BearyNotificationsViewController: UIViewController {
             return
         }
         isCustomPullRefreshing = false
-        UIView.animate(withDuration: 0.32, animations: {
+        // A5-3：下拉刷新收回同样查减动效开关——减动效时直接复位并停圈。
+        let pullOut = {
             self.tableView.contentInset.top = 0
             self.tableView.scrollIndicatorInsets.top = 0
             self.tableView.contentOffset = CGPoint(x: 0, y: 0)
             self.pullView.frame = CGRect(x: 0, y: -116, width: self.tableView.bounds.width, height: 116)
-        }, completion: { _ in
+        }
+        if UIAccessibility.isReduceMotionEnabled {
+            pullOut()
             self.pullSpinner.alpha = 0
             self.pullSpinner.stopAnimating()
-        })
+        } else {
+            UIView.animate(withDuration: 0.32, animations: pullOut, completion: { _ in
+                self.pullSpinner.alpha = 0
+                self.pullSpinner.stopAnimating()
+            })
+        }
     }
 
     /// 行表重建：letter 扁平置顶 → 系统卡（+ 展开时的系统行）→ 互动卡（+ 展开时的互动行）。
@@ -1666,16 +1682,25 @@ final class BearyNotificationsViewController: UIViewController {
             toastView.centerXAnchor.constraint(equalTo: view.centerXAnchor),
             toastView.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor, constant: -158),
         ])
-        toastView.alpha = 0
-        UIView.animate(withDuration: 0.25) {
+        // A5-3：三处 toast（请先登录 / 加载失败 / 操作失败）都走本方法，
+        // 在此一处查减动效开关即全覆盖——减动效时直接显隐，不播淡入淡出。
+        if UIAccessibility.isReduceMotionEnabled {
             toastView.alpha = 1
-        }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
-            UIView.animate(withDuration: 0.25, animations: {
-                toastView.alpha = 0
-            }, completion: { _ in
+            DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
                 toastView.removeFromSuperview()
-            })
+            }
+        } else {
+            toastView.alpha = 0
+            UIView.animate(withDuration: 0.25) {
+                toastView.alpha = 1
+            }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
+                UIView.animate(withDuration: 0.25, animations: {
+                    toastView.alpha = 0
+                }, completion: { _ in
+                    toastView.removeFromSuperview()
+                })
+            }
         }
     }
 
@@ -1881,6 +1906,8 @@ extension BearyNotificationsViewController: UITableViewDataSource, UITableViewDe
             // 哨兵行不可见、无点击行为；翻页只由 willDisplay / 滚动触发。
             return
         }
+        // W6：行点按补 .light 轻震（哨兵行已提前返回，不震动）。
+        BearyHaptics.press()
         let row = displayRows[indexPath.row]
         switch row.kind {
         case .sysCard:
@@ -2079,7 +2106,9 @@ private class BearyLetterModal {
             buttonRatioConstraint = ratioConstraint
         }
         secondaryButton.addTarget(self, action: #selector(dismissTapped), for: .touchUpInside)
+        secondaryButton.bearyAddPressFeedback()
         primaryButton.addTarget(self, action: #selector(goTapped), for: .touchUpInside)
+        primaryButton.bearyAddPressFeedback()
         let tap = UITapGestureRecognizer(target: self, action: #selector(overlayTapped(_:)))
         tap.cancelsTouchesInView = false
         overlayView.addGestureRecognizer(tap)
@@ -2312,6 +2341,7 @@ private class BearyNotificationCell: UITableViewCell {
         button.accessibilityLabel = "点击重试"
         button.accessibilityHint = "重新加载头像"
         button.addTarget(self, action: #selector(avatarRetryTapped), for: .touchUpInside)
+        button.bearyAddPressFeedback()
         return button
     }()
 

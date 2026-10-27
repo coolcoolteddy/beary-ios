@@ -154,6 +154,7 @@ final class BearyInviteViewController: UIViewController {
         closeButton.setImage(BearyIconImages.image(named: "icon_close", pointSize: 15), for: .normal)
         closeButton.accessibilityLabel = "关闭"
         closeButton.addTarget(self, action: #selector(closeTapped), for: .touchUpInside)
+        closeButton.bearyAddPressFeedback()
         let closeRow = UIView()
         closeRow.translatesAutoresizingMaskIntoConstraints = false
         closeRow.addSubview(closeButton)
@@ -185,6 +186,7 @@ final class BearyInviteViewController: UIViewController {
         copyButton.titleLabel?.font = UIFont.systemFont(ofSize: 14, weight: .semibold)
         copyButton.contentEdgeInsets = UIEdgeInsets(top: 0, left: 16, bottom: 0, right: 16)
         copyButton.addTarget(self, action: #selector(copyTapped), for: .touchUpInside)
+        copyButton.bearyAddPressFeedback()
         codeBox.addSubview(codeLabel)
         codeBox.addSubview(copyButton)
 
@@ -232,6 +234,7 @@ final class BearyInviteViewController: UIViewController {
         bindButton.titleLabel?.font = UIFont.systemFont(ofSize: 14, weight: .semibold)
         bindButton.contentEdgeInsets = UIEdgeInsets(top: 0, left: 16, bottom: 0, right: 16)
         bindButton.addTarget(self, action: #selector(bindTapped), for: .touchUpInside)
+        bindButton.bearyAddPressFeedback()
         bindRow.addSubview(bindContainer)
         bindRow.addSubview(bindButton)
         bindField.font = UIFont.systemFont(ofSize: 16)
@@ -263,6 +266,7 @@ final class BearyInviteViewController: UIViewController {
         retryButton.titleLabel?.font = UIFont.systemFont(ofSize: 14, weight: .semibold)
         retryButton.isHidden = true
         retryButton.addTarget(self, action: #selector(retryTapped), for: .touchUpInside)
+        retryButton.bearyAddPressFeedback()
 
         stackView.addArrangedSubview(closeRow)
         stackView.addArrangedSubview(titleLabel)

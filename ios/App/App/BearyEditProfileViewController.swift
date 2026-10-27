@@ -96,6 +96,7 @@ class BearyEditProfileViewController: UIViewController {
         buttonValue.setTitleColor(BearyColors.ink, for: .normal)
         buttonValue.titleLabel?.font = UIFont.systemFont(ofSize: 15)
         buttonValue.addTarget(self, action: #selector(closeButtonTapped), for: .touchUpInside)
+        buttonValue.bearyAddPressFeedback()
         return buttonValue
     }()
 
@@ -106,6 +107,7 @@ class BearyEditProfileViewController: UIViewController {
         buttonValue.setTitleColor(BearyColors.ink, for: .normal)
         buttonValue.titleLabel?.font = UIFont.systemFont(ofSize: 15, weight: .bold)
         buttonValue.addTarget(self, action: #selector(saveButtonTapped), for: .touchUpInside)
+        buttonValue.bearyAddPressFeedback()
         return buttonValue
     }()
 
@@ -177,6 +179,7 @@ class BearyEditProfileViewController: UIViewController {
         let buttonValue = UIButton(type: .custom)
         buttonValue.translatesAutoresizingMaskIntoConstraints = false
         buttonValue.addTarget(self, action: #selector(avatarButtonTapped), for: .touchUpInside)
+        buttonValue.bearyAddPressFeedback()
         buttonValue.accessibilityLabel = "更换头像"
         return buttonValue
     }()
@@ -276,6 +279,7 @@ class BearyEditProfileViewController: UIViewController {
         buttonValue.layer.borderColor = BearyColors.line.cgColor
         buttonValue.layer.cornerRadius = 16
         buttonValue.addTarget(self, action: #selector(copyLinkButtonTapped), for: .touchUpInside)
+        buttonValue.bearyAddPressFeedback()
         return buttonValue
     }()
 
@@ -283,6 +287,7 @@ class BearyEditProfileViewController: UIViewController {
         let buttonValue = UIButton(type: .custom)
         buttonValue.translatesAutoresizingMaskIntoConstraints = false
         buttonValue.addTarget(self, action: #selector(accountRowButtonTapped), for: .touchUpInside)
+        buttonValue.bearyAddPressHaptic()
         return buttonValue
     }()
 
@@ -296,6 +301,7 @@ class BearyEditProfileViewController: UIViewController {
         buttonValue.layer.borderWidth = 1
         buttonValue.layer.cornerRadius = 22
         buttonValue.addTarget(self, action: action, for: .touchUpInside)
+        buttonValue.bearyAddPressFeedback()
         return buttonValue
     }
 
@@ -1099,6 +1105,7 @@ private final class BearyEditProfileCropViewController: UIViewController, UIScro
         cancelButton.setTitleColor(UIColor.white, for: .normal)
         cancelButton.titleLabel?.font = UIFont.systemFont(ofSize: 16)
         cancelButton.addTarget(self, action: #selector(didTapCancel), for: .touchUpInside)
+        cancelButton.bearyAddPressFeedback()
         titleLabel.text = "裁剪"
         titleLabel.font = UIFont.boldSystemFont(ofSize: 16)
         titleLabel.textColor = UIColor.white
@@ -1107,6 +1114,7 @@ private final class BearyEditProfileCropViewController: UIViewController, UIScro
         confirmButton.setTitleColor(BearyColors.orange, for: .normal)
         confirmButton.titleLabel?.font = UIFont.boldSystemFont(ofSize: 16)
         confirmButton.addTarget(self, action: #selector(didTapConfirm), for: .touchUpInside)
+        confirmButton.bearyAddPressFeedback()
         scrollView.delegate = self
         scrollView.showsHorizontalScrollIndicator = false
         scrollView.showsVerticalScrollIndicator = false

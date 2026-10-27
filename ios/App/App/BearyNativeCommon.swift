@@ -204,8 +204,21 @@ final class BearyImageLoader {
         try? FileManager.default.removeItem(at: dir)
     }
 
+    /// B3-3 显式并发上限：图片下载每 host 最多 6 并发（URLSession 层排队，
+    /// 不改调用方取消语义：bearySetImage 的 old.cancel 与各页 generation/URL
+    /// 校验均不动）。注入自定义 session 的调用点不受此限，当前仓内无注入调用点。
+    private static let maxConcurrentDownloads = 6
+    /// B1 后台解码队列：磁盘读 + ImageIO 解码只走这里，不占主线程。
+    private static let diskAndDecodeQueue = DispatchQueue(label: "com.beary.image-disk-decode", qos: .userInitiated, attributes: .concurrent)
+
     init(session: URLSession = .shared) {
-        self.session = session
+        if session === URLSession.shared {
+            let config = URLSessionConfiguration.default
+            config.httpMaximumConnectionsPerHost = Self.maxConcurrentDownloads
+            self.session = URLSession(configuration: config)
+        } else {
+            self.session = session
+        }
         // G23：缓存按像素计 cost 并设上限，避免无界增长。
         // 20_000_000 像素 ≈ 最坏 80MB（RGBA 4 字节/像素）；站内图以缩略图
         // 与头像为主，日常占用远低于此。
@@ -220,21 +233,23 @@ final class BearyImageLoader {
     // 一份磁盘数据、解码时再按需下采样。不做过期淘汰，不新增清理状态机。
     // 顺序：内存 NSCache → 磁盘 → 网络；网络成功后同时写内存与磁盘。
     // 内存 NSCache 的上限与行为保持原样（G23 的 totalCostLimit 不动）。
-    private func diskFileURL(for url: URL) -> URL? {
+    /// S2：bucket 由调用方在请求发起时固定后传入，不在异步执行时再读
+    /// currentAccountId——切号夹在请求与回包之间时不再写进新号桶。
+    private func diskFileURL(for url: URL, bucket: Int?) -> URL? {
         guard let caches = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first else { return nil }
-        let bucket = currentAccountId.map(String.init) ?? "guest"
+        let bucket = bucket.map(String.init) ?? "guest"
         let digest = SHA256.hash(data: Data(url.absoluteString.utf8))
         let key = digest.map { String(format: "%02x", $0) }.joined()
         return caches.appendingPathComponent("BearyImageCache").appendingPathComponent(bucket).appendingPathComponent(key)
     }
 
-    private func diskData(for url: URL) -> Data? {
-        guard let file = diskFileURL(for: url) else { return nil }
+    private func diskData(for url: URL, bucket: Int?) -> Data? {
+        guard let file = diskFileURL(for: url, bucket: bucket) else { return nil }
         return try? Data(contentsOf: file)
     }
 
-    private func writeDisk(data: Data, for url: URL) {
-        guard let file = diskFileURL(for: url) else { return }
+    private func writeDisk(data: Data, for url: URL, bucket: Int?) {
+        guard let file = diskFileURL(for: url, bucket: bucket) else { return }
         try? FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
         try? data.write(to: file, options: .atomic)
     }
@@ -281,24 +296,23 @@ final class BearyImageLoader {
         }
     }
 
-    /// 带失败原因的加载（F10 钩子的底层）：缓存命中时同步回调成功；
-    /// 网络/脏数据/取消均以 Result 回调（主线程），失败时不写缓存。
+    /// 带失败原因的加载（F10 钩子的底层）：所有回调统一回主线程（内存命中、
+    /// 磁盘命中、网络三支一致，不再有同步回调碰 UIKit）；磁盘读与解码走后台
+    /// diskAndDecodeQueue；网络分支验 HTTP 200–299 + image/* MIME，不符按
+    /// 脏数据失败，不写缓存；其余失败时不写缓存。
+    /// 返回值：内存命中返回 nil；其余路径返回预建的网络任务——磁盘命中时该
+    /// 任务永不 resume（调用方 old.cancel 对它无害），磁盘未命中时由后台队列
+    /// resume 它；调用方在后台队列 resume 前已取消则不再 resume。
     @discardableResult
     func loadDetailed(url: URL, downsampleToWidth: CGFloat? = nil, completion: @escaping (Result<UIImage, BearyImageLoadError>) -> Void) -> URLSessionDataTask? {
         let key = memoryKey(for: url, downsampleToWidth: downsampleToWidth)
         if let img = cache.object(forKey: key) {
-            completion(.success(img))
+            DispatchQueue.main.async { completion(.success(img)) }
             return nil
         }
-        if let disk = diskData(for: url), let img = BearyImageLoader.decodedImage(data: disk, downsampleToWidth: downsampleToWidth) {
-            // G23：cost 按像素计（pt 尺寸 × scale 的平方方向取整边长之积）。
-            let scale = img.scale
-            let cost = max(Int(img.size.width * scale) * Int(img.size.height * scale), 1)
-            cache.setObject(img, forKey: key, cost: cost)
-            completion(.success(img))
-            return nil
-        }
-        let task = session.dataTask(with: url) { [weak self] data, _, error in
+        // S2：请求发起时固定 bucket，整条链路（磁盘读 / 网络写盘）都用它。
+        let bucket = currentAccountId
+        let task = session.dataTask(with: url) { [weak self] data, response, error in
             if let e = error as NSError?, e.code == NSURLErrorCancelled {
                 DispatchQueue.main.async { completion(.failure(.cancelled)) }
                 return
@@ -307,7 +321,10 @@ final class BearyImageLoader {
                 DispatchQueue.main.async { completion(.failure(.network(e))) }
                 return
             }
-            guard let data = data, let img = BearyImageLoader.decodedImage(data: data, downsampleToWidth: downsampleToWidth) else {
+            // S1：验 HTTP 状态与 MIME，不符走失败分支（错误页/HTML 误当图片不再入库）。
+            guard let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode),
+                  let mime = http.mimeType, mime.hasPrefix("image/"),
+                  let data = data, let img = BearyImageLoader.decodedImage(data: data, downsampleToWidth: downsampleToWidth) else {
                 DispatchQueue.main.async { completion(.failure(.invalidData)) }
                 return
             }
@@ -315,10 +332,28 @@ final class BearyImageLoader {
             let scale = img.scale
             let cost = max(Int(img.size.width * scale) * Int(img.size.height * scale), 1)
             self?.cache.setObject(img, forKey: key, cost: cost)
-            self?.writeDisk(data: data, for: url)
+            self?.writeDisk(data: data, for: url, bucket: bucket)
             DispatchQueue.main.async { completion(.success(img)) }
         }
-        task.resume()
+        // B1：磁盘读 + 解码放后台线程，命中后回主线程回调；未命中再 resume 网络任务。
+        Self.diskAndDecodeQueue.async { [weak self] in
+            if task.state == .canceling || task.state == .completed {
+                return
+            }
+            if let disk = self?.diskData(for: url, bucket: bucket),
+               let img = BearyImageLoader.decodedImage(data: disk, downsampleToWidth: downsampleToWidth) {
+                // G23：cost 按像素计（pt 尺寸 × scale 的平方方向取整边长之积）。
+                let scale = img.scale
+                let cost = max(Int(img.size.width * scale) * Int(img.size.height * scale), 1)
+                self?.cache.setObject(img, forKey: key, cost: cost)
+                DispatchQueue.main.async { completion(.success(img)) }
+                return
+            }
+            if task.state == .canceling || task.state == .completed {
+                return
+            }
+            task.resume()
+        }
         return task
     }
 }
@@ -624,6 +659,8 @@ final class BearyMailView: UIView {
     private var speedLayers: [CAShapeLayer] = []
     private var builtSize: CGSize = .zero
     private var animating = false
+    /// A10：减动效开关变化的订阅 token（矩阵部分 SceneDelegate.reduceMotionObserver 同口径）。
+    private var reduceMotionObserver: NSObjectProtocol?
 
     override init(frame: CGRect) {
         super.init(frame: frame)
@@ -720,6 +757,7 @@ final class BearyMailView: UIView {
     /// 开始循环动画；减动效时只留静态信封 + 可见速度线。
     func start() {
         animating = true
+        installReduceMotionObserver()
         guard bounds.width > 0 else { return }
         if builtSize != bounds.size {
             buildLayers()
@@ -767,6 +805,31 @@ final class BearyMailView: UIView {
             slide.beginTime = CACurrentMediaTime() + Double(index) * 0.4
             slide.repeatCount = .infinity
             speedLayer.add(slide, forKey: "bearyMailSpdSlide")
+        }
+    }
+
+    deinit {
+        if let observer = reduceMotionObserver {
+            NotificationCenter.default.removeObserver(observer)
+        }
+    }
+
+    /// A10：订阅减动效开关变化（矩阵部分同口径）：开启停循环（信封回正、
+    /// 速度线留可见静态态，与 start() 的减动效分支一致）；关闭且仍在播
+    /// （animating）时重启动循环；已 stop 的不自动恢复。
+    private func installReduceMotionObserver() {
+        guard reduceMotionObserver == nil else { return }
+        reduceMotionObserver = NotificationCenter.default.addObserver(forName: UIAccessibility.reduceMotionStatusDidChangeNotification, object: nil, queue: .main) { [weak self] _ in
+            guard let self = self, self.animating else { return }
+            if UIAccessibility.isReduceMotionEnabled {
+                self.envelopeLayer.removeAllAnimations()
+                for speedLayer in self.speedLayers {
+                    speedLayer.removeAllAnimations()
+                    speedLayer.opacity = 1
+                }
+            } else {
+                self.start()
+            }
         }
     }
 
@@ -1065,6 +1128,11 @@ final class BearyBookmarkView: UIView {
 enum BearyHaptics {
     /// 点赞 tap 瞬间（配描边先行画出的那一刻）；失败回滚时不调用。
     static func likeTap() {
+        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+    }
+    /// 通用按压轻震（80 包 W6 全量推广）：与点赞 tap 同款 .light，不自创档位；
+    /// 不拿减动效门控（见本 enum 头注释：震动与减动效不是一回事）。
+    static func press() {
         UIImpactFeedbackGenerator(style: .light).impactOccurred()
     }
     /// 发布成功：服务端确认、成功反馈出现时。

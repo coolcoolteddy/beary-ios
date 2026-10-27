@@ -14,10 +14,10 @@ import UIKit
 // 登录钮高 49 圆角 12 墨底白字。颜色一律走 BearyColors，不新增字面量颜色；
 // 图标走 icon_close/icon_check 资产；不使用液态玻璃效果。
 //
-// 发码/验码一律走 BearyAPI（BearyAPI.sendCode 带 turnstileToken，
+// 发码/验码一律走 BearyAPI（BearyAPI.sendCode、
 // BearyAPI.verify 返回完整响应体含 pending_delete）：本页不再有本地账户请求实现。
-// 发码链路保持串行：先 BearyTurnstilePage.requestToken，再 BearyAPI.sendCode，
-// 按钮文案“验证中…/发送中…”保持。登录成功判定只认验码 {ok: true}，
+// 发码直接走 BearyAPI.sendCode，不再经过人机验证页，
+// 按钮文案“发送中…”保持。登录成功判定只认验码 {ok: true}，
 // 不认 refreshMe（容器随后才刷新）；BearyAPI 的发码/验码不触发 onUnauthorized，
 // 不会触发 401 清用户态的连锁。
 // 登录钮启用条件与网页 lgSyncGo 同口径：复选框勾选 + 邮箱合法 + 验证码 6 位。
@@ -26,10 +26,6 @@ import UIKit
 // 协议链接说明：网页复选框文案里的《隐私政策》/《用户协议》链向 /privacy、/terms；
 // 原生不走系统浏览器：点链接 present 设置页同款 App 内原生法律页 BearyLegalTextViewController
 //（BearyLegalTexts.privacy / .terms，设置页 presentLegalText 同款全屏 modal）；点文案其他位置仍切换勾选。
-// Turnstile 互动挑战过渡方案见 BearyTurnstilePage 头注释。清单第 12 项：可见验证
-// 卡片移除已记为 blocked（无感失败且必须人工交互的用户拿掉卡片后无路可走），
-// 卡片行为本次不动；与卡片去留无关的失败原因区分已落地（超时／取消有各自文案，
-// 登录页展示 TokenError.message，不另拼文案，不静默循环）。
 
 final class BearyLoginViewController: UIViewController {
     /// 登录成功（验码 {ok: true}）。容器随后刷新登录态并关闭本页。
@@ -72,13 +68,12 @@ final class BearyLoginViewController: UIViewController {
     }()
     private var isAgreed = false
 
-    private var isRequestingToken = false
     private var isSendingCode = false
     private var isVerifying = false
     private var countdownRemaining: Int?
+    private var currentLoginTitle: String?
     private var countdownTimer: Timer?
     private var currentTask: URLSessionDataTask?
-    private var activeTurnstilePage: BearyTurnstilePage?
 
     init() {
         super.init(nibName: nil, bundle: nil)
@@ -93,7 +88,6 @@ final class BearyLoginViewController: UIViewController {
         NotificationCenter.default.removeObserver(self)
         countdownTimer?.invalidate()
         currentTask?.cancel()
-        activeTurnstilePage?.cancel()
     }
 
     override func viewDidLoad() {
@@ -158,6 +152,7 @@ final class BearyLoginViewController: UIViewController {
         closeButton.setImage(BearyIconImages.image(named: "icon_close", pointSize: 15), for: .normal)
         closeButton.accessibilityLabel = "关闭"
         closeButton.addTarget(self, action: #selector(closeTapped), for: .touchUpInside)
+        closeButton.bearyAddPressFeedback()
         let closeRow = UIView()
         closeRow.translatesAutoresizingMaskIntoConstraints = false
         closeRow.addSubview(closeButton)
@@ -182,6 +177,7 @@ final class BearyLoginViewController: UIViewController {
         sendButton.layer.cornerRadius = 12
         sendButton.contentEdgeInsets = UIEdgeInsets(top: 0, left: 15, bottom: 0, right: 15)
         sendButton.addTarget(self, action: #selector(sendCodeTapped), for: .touchUpInside)
+        sendButton.bearyAddPressFeedback()
 
         messageLabel.translatesAutoresizingMaskIntoConstraints = false
         messageLabel.font = UIFont.systemFont(ofSize: 13)
@@ -192,6 +188,7 @@ final class BearyLoginViewController: UIViewController {
         loginButton.backgroundColor = BearyColors.ink
         loginButton.layer.cornerRadius = 12
         loginButton.addTarget(self, action: #selector(loginTapped), for: .touchUpInside)
+        loginButton.bearyAddPressFeedback()
         loginButton.addSubview(loginSpinner)
         NSLayoutConstraint.activate([
             loginSpinner.centerYAnchor.constraint(equalTo: loginButton.centerYAnchor),
@@ -374,6 +371,7 @@ final class BearyLoginViewController: UIViewController {
         agreeButton.backgroundColor = BearyColors.faint
         agreeButton.accessibilityLabel = "我已阅读并同意《隐私政策》和《用户协议》"
         agreeButton.addTarget(self, action: #selector(agreeTapped), for: .touchUpInside)
+        agreeButton.bearyAddPressFeedback()
         // 协议文案里的两个协议名是真链接（App 内原生法律页打开），其余文字点按仍切换勾选。
         agreeLabel.translatesAutoresizingMaskIntoConstraints = false
         agreeLabel.isEditable = false
@@ -486,16 +484,14 @@ final class BearyLoginViewController: UIViewController {
     private func updateButtonStates() {
         let emailValid = isEmailValid(normalizedEmail())
         let code = codeField.text ?? ""
-        if isRequestingToken {
-            sendButton.setTitle("验证中…", for: .normal)
-        } else if isSendingCode {
+        if isSendingCode {
             sendButton.setTitle("发送中…", for: .normal)
         } else if let remaining = countdownRemaining {
             sendButton.setTitle("\(remaining)s", for: .normal)
         } else {
             sendButton.setTitle("获取验证码", for: .normal)
         }
-        let sendEnabled = emailValid && !isRequestingToken && !isSendingCode && countdownRemaining == nil
+        let sendEnabled = emailValid && !isSendingCode && countdownRemaining == nil
         sendButton.isEnabled = sendEnabled
         sendButton.backgroundColor = sendEnabled ? BearyColors.ink : BearyColors.faint
         let sendTitleColor = sendEnabled ? BearyColors.bg : BearyColors.gray
@@ -512,7 +508,13 @@ final class BearyLoginViewController: UIViewController {
         } else {
             loginSpinner.stopAnimating()
         }
-        setLoginTitle(isVerifying ? "处理中…" : "登录")
+        // 登录文案只在真正变文案时重建：之前每次按键、每秒倒计时都重建一次
+        // attributed title，按钮标题每下都重绘闪一下。
+        let loginTitle = isVerifying ? "处理中…" : "登录"
+        if currentLoginTitle != loginTitle {
+            currentLoginTitle = loginTitle
+            setLoginTitle(loginTitle)
+        }
     }
 
     private func startCountdown() {
@@ -546,8 +548,6 @@ final class BearyLoginViewController: UIViewController {
     }
 
     @objc private func closeTapped() {
-        activeTurnstilePage?.cancel()
-        activeTurnstilePage = nil
         countdownTimer?.invalidate()
         countdownTimer = nil
         currentTask?.cancel()
@@ -562,48 +562,29 @@ final class BearyLoginViewController: UIViewController {
             return
         }
         showMessage("")
-        isRequestingToken = true
+        isSendingCode = true
         updateButtonStates()
-        let page = BearyTurnstilePage()
-        // U0：把本页视图交给验证页作挑战宿主——无感验证失败/超时时挑战框
-        // 在此挂出可见尺寸供用户完成，不再空循环重试。
-        page.challengeHostView = view
-        activeTurnstilePage = page
-        page.requestToken { [weak self] result in
-            guard let strongSelf = self else { return }
-            strongSelf.activeTurnstilePage = nil
-            switch result {
-            case .failure(let tokenError):
-                strongSelf.isRequestingToken = false
-                strongSelf.updateButtonStates()
-                strongSelf.showMessage(tokenError.message)
-            case .success(let token):
-                strongSelf.isRequestingToken = false
-                strongSelf.isSendingCode = true
-                strongSelf.updateButtonStates()
-                strongSelf.currentTask = BearyAPI.shared.sendCode(email: email, turnstileToken: token) { [weak strongSelf] result in
-                    DispatchQueue.main.async {
-                        guard let strongSelf = strongSelf else { return }
-                        strongSelf.currentTask = nil
-                        strongSelf.isSendingCode = false
-                        switch result {
-                        case .success:
-                            strongSelf.showMessage("验证码已发送，请查收邮件", ok: true)
-                            strongSelf.startCountdown()
-                            strongSelf.codeField.becomeFirstResponder()
-                        case .failure(.cancelled):
-                            strongSelf.updateButtonStates()
-                        case .failure(.server(let message)):
-                            strongSelf.showMessage(message)
-                            strongSelf.updateButtonStates()
-                        case .failure(.network):
-                            strongSelf.showMessage("网络错误，请重试")
-                            strongSelf.updateButtonStates()
-                        case .failure:
-                            strongSelf.showMessage("发送失败")
-                            strongSelf.updateButtonStates()
-                        }
-                    }
+        currentTask = BearyAPI.shared.sendCode(email: email) { [weak self] result in
+            DispatchQueue.main.async {
+                guard let strongSelf = self else { return }
+                strongSelf.currentTask = nil
+                strongSelf.isSendingCode = false
+                switch result {
+                case .success:
+                    strongSelf.showMessage("验证码已发送，请查收邮件", ok: true)
+                    strongSelf.startCountdown()
+                    strongSelf.codeField.becomeFirstResponder()
+                case .failure(.cancelled):
+                    strongSelf.updateButtonStates()
+                case .failure(.server(let message)):
+                    strongSelf.showMessage(message)
+                    strongSelf.updateButtonStates()
+                case .failure(.network):
+                    strongSelf.showMessage("网络错误，请重试")
+                    strongSelf.updateButtonStates()
+                case .failure:
+                    strongSelf.showMessage("发送失败")
+                    strongSelf.updateButtonStates()
                 }
             }
         }
