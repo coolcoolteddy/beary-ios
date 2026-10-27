@@ -161,6 +161,7 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate {
         closeButton.backgroundColor = BearyColors.faint
         closeButton.layer.cornerRadius = 16
         closeButton.addTarget(self, action: #selector(closeTapped), for: .touchUpInside)
+        closeButton.bearyAddPressFeedback()
 
         noteLabel.font = UIFont.systemFont(ofSize: 12.5)
         noteLabel.textColor = BearyColors.gray
@@ -226,6 +227,7 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate {
         retryButton.layer.cornerRadius = 17
         retryButton.contentEdgeInsets = UIEdgeInsets(top: 8, left: 20, bottom: 8, right: 20)
         retryButton.addTarget(self, action: #selector(retryTapped), for: .touchUpInside)
+        retryButton.bearyAddPressFeedback()
 
         moreSpinner.color = BearyColors.gray
         moreSpinner.isHidden = true
@@ -244,6 +246,7 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate {
         loginButton.setTitleColor(BearyColors.blue, for: .normal)
         loginButton.titleLabel?.font = UIFont.systemFont(ofSize: 14)
         loginButton.addTarget(self, action: #selector(loginTapped), for: .touchUpInside)
+        loginButton.bearyAddPressFeedback()
         loginWrap.addArrangedSubview(loginTitleLabel)
         loginWrap.addArrangedSubview(loginButton)
 
@@ -372,7 +375,7 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate {
                 case .success(let list):
                     self.trashItems = list.items
                     self.trashHasMore = list.hasMore
-                    self.rebuildListRows()
+                    self.updateListRowsIncrementally()
                     self.renderStateViews()
                     // 内容不足一屏时滚不到底，主动续拉下一页（有更多页才触发）。
                     DispatchQueue.main.async {
@@ -494,15 +497,66 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate {
         // this page no longer renders one.
     }
 
-    private func rebuildListRows() {
-        for arranged in listStack.arrangedSubviews {
+    /// B4-3：刷新改增量（分页追加仍走 appendListRows，不动）。
+    /// 仍在新列表里的行复用原视图——不重建、不重播入场、不丢进行中的按钮态；
+    /// 只建新增行（新行走追加同款错峰）、只删消失行，并按新顺序重排。
+    /// 回收站条目删后内容不变，复用行不刷新文案；无 identifier 的行无法按键，
+    /// 每次刷新重建（服务端条目正常都有 identifier，此为兜底）。
+    private func updateListRowsIncrementally() {
+        // 无 identifier 的旧行未登记在 rowViewsByIdentifier，先移除，随后按新行重建。
+        let registeredViews = Set(rowViewsByIdentifier.values.map({ ObjectIdentifier($0) }))
+        for arranged in listStack.arrangedSubviews where registeredViews.contains(ObjectIdentifier(arranged)) == false {
             listStack.removeArrangedSubview(arranged)
             arranged.removeFromSuperview()
         }
-        restoreEntries = []
-        purgeEntries = []
-        rowViewsByIdentifier = [:]
-        appendListRows(trashItems)
+        // 未登记行只有无 identifier 的行：其按钮登记随行重建一并清掉，避免每刷攒一笔已离场按钮。
+        restoreEntries.removeAll(where: { $0.trashValue.entryIdentifier.isEmpty })
+        purgeEntries.removeAll(where: { $0.trashValue.entryIdentifier.isEmpty })
+        let newIdentifiers = Set(trashItems.compactMap({ rowIdentifier(of: $0) }))
+        for identifier in Array(rowViewsByIdentifier.keys) where newIdentifiers.contains(identifier) == false {
+            if let rowView = rowViewsByIdentifier[identifier] {
+                listStack.removeArrangedSubview(rowView)
+                rowView.removeFromSuperview()
+            }
+            rowViewsByIdentifier[identifier] = nil
+            restoreEntries.removeAll(where: { $0.trashValue.entryIdentifier == identifier })
+            purgeEntries.removeAll(where: { $0.trashValue.entryIdentifier == identifier })
+        }
+        let staggerEnabled = UIAccessibility.isReduceMotionEnabled == false
+        var placedIdentifiers = Set<String>()
+        for (index, trashValue) in trashItems.enumerated() {
+            if let identifier = rowIdentifier(of: trashValue),
+               placedIdentifiers.contains(identifier) == false,
+               let existing = rowViewsByIdentifier[identifier] {
+                placedIdentifiers.insert(identifier)
+                // 已在正确位置不动；否则移到新位置（按新顺序从左到右处理，
+                // 每次落位后前 index + 1 行即为最终顺序）。
+                if let current = listStack.arrangedSubviews.firstIndex(where: { $0 === existing }),
+                   current != index {
+                    listStack.removeArrangedSubview(existing)
+                    listStack.insertArrangedSubview(existing, at: index)
+                }
+                continue
+            }
+            // 新增行（含重复 identifier 的第二行、无 identifier 行）：新建不登记，
+            // 避免同一视图被两次移位、同一 identifier 被两行共用。
+            let rowView = makeRowView(trashValue: trashValue)
+            if let identifier = rowIdentifier(of: trashValue),
+               placedIdentifiers.contains(identifier) == false {
+                rowViewsByIdentifier[identifier] = rowView
+                placedIdentifiers.insert(identifier)
+            }
+            listStack.insertArrangedSubview(rowView, at: index)
+            if staggerEnabled {
+                let delay = min(Double(index) * 0.03, 0.3)
+                rowView.alpha = 0
+                rowView.transform = CGAffineTransform(translationX: 0, y: 6)
+                UIView.animate(withDuration: 0.32, delay: delay, options: .curveEaseOut, animations: {
+                    rowView.alpha = 1
+                    rowView.transform = .identity
+                }, completion: nil)
+            }
+        }
     }
 
     private func appendListRows(_ rows: [TrashItem]) {
@@ -590,6 +644,7 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate {
         // B-G14: button fixed height 44 (was >= 44).
         restoreButton.heightAnchor.constraint(equalToConstant: 44).isActive = true
         restoreButton.addTarget(self, action: #selector(restoreTapped(_:)), for: .touchUpInside)
+        restoreButton.bearyAddPressFeedback()
         // P2-4：照抄点赞钮修法——显式给足实测字宽，否则标题被裁：图宽 + titleEdgeInsets 左 5
         // + 实测标题宽 + contentEdgeInsets 左右各 14；取闲/忙两文案之宽的最大值，两态均不裁。
         let restoreTitleWidth = max(
@@ -619,6 +674,7 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate {
         // B-G14: button fixed height 44 (was >= 44).
         purgeButton.heightAnchor.constraint(equalToConstant: 44).isActive = true
         purgeButton.addTarget(self, action: #selector(purgeTapped(_:)), for: .touchUpInside)
+        purgeButton.bearyAddPressFeedback()
         // P2-4：同恢复钮修法——图宽 + titleEdgeInsets 左 5 + 实测标题宽 + contentEdgeInsets 左右各 14，
         // 取闲/忙两文案之宽的最大值，两态均不裁。
         let purgeTitleWidth = max(

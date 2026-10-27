@@ -24,6 +24,8 @@ final class BearyPressButton: BearyHit44Button {
     }
 
     @objc private func pressDown() {
+        // W6：引导钮（BearyPressButton 全量）补 .light 按压震动；缩放仍走本类 .92 定版不动。
+        BearyHaptics.press()
         if UIAccessibility.isReduceMotionEnabled { return }
         UIView.animate(withDuration: 0.13) { self.transform = CGAffineTransform(scaleX: 0.92, y: 0.92) }
     }
@@ -62,6 +64,16 @@ final class BearyBearView: UIView {
 
     required init?(coder: NSCoder) {
         fatalError("init(coder:) has not been implemented")
+    }
+
+    // 次要项：CGColor 只在赋值时解析一次，深浅切换时重刷（UIColor 背景色自动跟随，不用管）。
+    override func traitCollectionDidChange(_ previousTraitCollection: UITraitCollection?) {
+        super.traitCollectionDidChange(previousTraitCollection)
+        guard traitCollection.hasDifferentColorAppearance(comparedTo: previousTraitCollection) else { return }
+        outlineLayer.strokeColor = BearyColors.ink.cgColor
+        leftEye.fillColor = BearyColors.ink.cgColor
+        rightEye.fillColor = BearyColors.ink.cgColor
+        noseLayer.fillColor = BearyColors.orange.cgColor
     }
 
     private func bearPath() -> UIBezierPath {
@@ -481,6 +493,29 @@ final class BearyOnboardingViewController: UIViewController {
         pubLink?.invalidate()
     }
 
+    // 次要项：审计列出的 5 处 CGColor（问答卡边框、心情/天气选中圈、公开圆环、
+    // 回应选中边框）深浅切换时重刷；clear 色与 UIColor 背景色不受影响，不用管。
+    override func traitCollectionDidChange(_ previousTraitCollection: UITraitCollection?) {
+        super.traitCollectionDidChange(previousTraitCollection)
+        guard traitCollection.hasDifferentColorAppearance(comparedTo: previousTraitCollection) else { return }
+        for card in quizCards {
+            card.layer.borderColor = BearyColors.orange.cgColor
+        }
+        for face in moodFaceViews.values {
+            face.layer.borderColor = BearyColors.orange.cgColor
+        }
+        for (_, button) in weatherButtons {
+            guard let chip = button.superview as? UIStackView,
+                  let circle = chip.arrangedSubviews.first else { continue }
+            circle.layer.borderColor = BearyColors.ink.cgColor
+        }
+        pubRingLayer?.strokeColor = BearyColors.orange.cgColor
+        for (_, button) in rxnButtons {
+            guard let face = button.superview else { continue }
+            face.layer.borderColor = BearyColors.orange.cgColor
+        }
+    }
+
     private func markSeen() {
         UserDefaults.standard.set(true, forKey: BearyTutorialViewController.tutorialSeenKey)
     }
@@ -641,8 +676,11 @@ final class BearyOnboardingViewController: UIViewController {
         ]
         NSLayoutConstraint.activate(currentScreenConstraints)
         updateChrome()
-        if !playedScreens.contains(index) {
-            playedScreens.insert(index)
+        // A1-5：goTo 须兑现 animated 参数——animated=false 时直接落位不播入场；
+        // 已播标记照常记（已有屏切回不重播），减动效仍由 playEntrance 内部守门。
+        let firstTime = !playedScreens.contains(index)
+        playedScreens.insert(index)
+        if animated && firstTime {
             playEntrance(for: screen.stack)
         }
         screenDidAppear(index)
@@ -953,11 +991,16 @@ extension BearyOnboardingViewController {
                 overlay.addSubview(star)
                 let x = CGFloat((i * 37) % 100) / 100.0
                 let y = CGFloat((i * 53) % 100) / 100.0
+                // 次要项：星星改相对布局——原 300×500 固定格在 iPad 宽屏上全挤左上角。
+                // 用 centerX/centerY 倍率锚到 overlay（倍率 2x/2y 使中心落在 x/y 比例处），
+                // 常数保留原 20pt 左右边距、60pt 上下边距的意图；星星尺寸与闪烁美术不动。
                 NSLayoutConstraint.activate([
                     star.widthAnchor.constraint(equalToConstant: size),
                     star.heightAnchor.constraint(equalToConstant: size),
-                    star.leadingAnchor.constraint(equalTo: overlay.leadingAnchor, constant: x * 300 + 20),
-                    star.topAnchor.constraint(equalTo: overlay.topAnchor, constant: y * 500 + 60),
+                ])
+                NSLayoutConstraint.activate([
+                    NSLayoutConstraint(item: star, attribute: .centerX, relatedBy: .equal, toItem: overlay, attribute: .centerX, multiplier: 2 * x, constant: 20 - 40 * x),
+                    NSLayoutConstraint(item: star, attribute: .centerY, relatedBy: .equal, toItem: overlay, attribute: .centerY, multiplier: 2 * y, constant: 60 - 120 * y),
                 ])
                 if !UIAccessibility.isReduceMotionEnabled {
                     UIView.animate(withDuration: 1.6 + Double(i % 5) * 0.3, delay: Double(i) * 0.05, options: [.autoreverse, .repeat, .allowUserInteraction]) {

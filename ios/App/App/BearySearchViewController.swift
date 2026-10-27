@@ -289,6 +289,7 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         backButton.tintColor = BearyColors.ink
         backButton.accessibilityLabel = "返回"
         backButton.addTarget(self, action: #selector(backTapped), for: .touchUpInside)
+        backButton.bearyAddPressFeedback()
         backRowView.addSubview(backButton)
 
         backTitleLabel.translatesAutoresizingMaskIntoConstraints = false
@@ -362,6 +363,7 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         clearButton.tintColor = BearyColors.gray
         clearButton.isHidden = true
         clearButton.addTarget(self, action: #selector(clearTapped), for: .touchUpInside)
+        clearButton.bearyAddPressFeedback()
         searchBoxView.addSubview(clearButton)
 
         // 状态区（初始/加载/无结果/失败四态共用一处容器，互斥显示）
@@ -423,6 +425,7 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         retryButton.layer.masksToBounds = true
         retryButton.contentEdgeInsets = UIEdgeInsets(top: 7, left: 20, bottom: 7, right: 20)
         retryButton.addTarget(self, action: #selector(retryTapped), for: .touchUpInside)
+        retryButton.bearyAddPressFeedback()
         stateStack.addArrangedSubview(retryButton)
 
         // Q5 无结果 CTA：pill 口径（高 44、圆角 22、左右内边距 20），默认隐藏，
@@ -440,6 +443,7 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         clearSearchButton.heightAnchor.constraint(equalToConstant: 44).isActive = true
         clearSearchButton.isHidden = true
         clearSearchButton.addTarget(self, action: #selector(clearSearchTapped), for: .touchUpInside)
+        clearSearchButton.bearyAddPressFeedback()
         stateStack.addArrangedSubview(clearSearchButton)
 
         // Q9 最近搜索区：标题 + 本机记录行（行高 44、圆角 14 卡片口径）；
@@ -863,6 +867,7 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
             button.heightAnchor.constraint(equalToConstant: 44).isActive = true
             button.accessibilityLabel = "搜索" + term
             button.addTarget(self, action: #selector(recentSearchTapped(_:)), for: .touchUpInside)
+            button.bearyAddPressFeedback()
             recentStack.addArrangedSubview(button)
             recentButtons.append(button)
         }
@@ -939,6 +944,7 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         button.layer.masksToBounds = true
         button.contentEdgeInsets = UIEdgeInsets(top: 7, left: 20, bottom: 7, right: 20)
         button.addTarget(self, action: #selector(retryTapped), for: .touchUpInside)
+        button.bearyAddPressFeedback()
         row.addSubview(button)
         NSLayoutConstraint.activate([
             button.centerXAnchor.constraint(equalTo: row.centerXAnchor),
@@ -1449,6 +1455,8 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
     /// 按下态底色：网页 .srch-user:active 用 hov；日记行同口径跟随。
     @objc private func rowTouchDown(_ sender: UIButton) {
         sender.backgroundColor = BearyColors.hov
+        // W6：搜索行已有底色按压反馈，只补 .light 轻震，不叠加缩放。
+        BearyHaptics.press()
     }
 
     @objc private func rowTouchUp(_ sender: UIButton) {
@@ -1548,6 +1556,7 @@ private final class BearySearchImageRetry: NSObject {
         self.imageURL = imageURL
         super.init()
         retryButton.addTarget(self, action: #selector(retryTapped), for: .touchUpInside)
+        retryButton.bearyAddPressFeedback()
     }
 
     func load() {

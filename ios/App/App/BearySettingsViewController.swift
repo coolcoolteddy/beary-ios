@@ -514,6 +514,7 @@ final class BearySettingsViewController: UIViewController {
         closeButton.setTitleColor(BearyColors.ink, for: .normal)
         closeButton.titleLabel?.font = UIFont.systemFont(ofSize: 15)
         closeButton.addTarget(self, action: #selector(closeButtonTapped), for: .touchUpInside)
+        closeButton.bearyAddPressFeedback()
         titleLabel.translatesAutoresizingMaskIntoConstraints = false
         titleLabel.font = UIFont.systemFont(ofSize: 17, weight: .bold)
         titleLabel.textColor = BearyColors.ink
@@ -570,6 +571,7 @@ final class BearySettingsViewController: UIViewController {
         retryButton.setTitleColor(BearyColors.ink, for: .normal)
         retryButton.titleLabel?.font = UIFont.systemFont(ofSize: 15, weight: .bold)
         retryButton.addTarget(self, action: #selector(retryButtonTapped), for: .touchUpInside)
+        retryButton.bearyAddPressFeedback()
         failureWrap.translatesAutoresizingMaskIntoConstraints = false
         failureWrap.axis = .vertical
         failureWrap.spacing = 12
@@ -587,6 +589,7 @@ final class BearySettingsViewController: UIViewController {
         loginButton.setTitleColor(BearyColors.ink, for: .normal)
         loginButton.titleLabel?.font = UIFont.systemFont(ofSize: 15, weight: .bold)
         loginButton.addTarget(self, action: #selector(loginButtonTapped), for: .touchUpInside)
+        loginButton.bearyAddPressFeedback()
         loginWrap.translatesAutoresizingMaskIntoConstraints = false
         loginWrap.axis = .vertical
         loginWrap.spacing = 12
@@ -787,6 +790,7 @@ final class BearySettingsViewController: UIViewController {
         copyHandleButton.setTitleColor(BearyColors.ink, for: .normal)
         copyHandleButton.titleLabel?.font = UIFont.systemFont(ofSize: 14)
         copyHandleButton.addTarget(self, action: #selector(copyHandleButtonTapped), for: .touchUpInside)
+        copyHandleButton.bearyAddPressFeedback()
         accountEmailLabel.font = UIFont.systemFont(ofSize: 14)
         accountEmailLabel.textColor = BearyColors.gray
         accountEmailLabel.numberOfLines = 0
@@ -839,6 +843,7 @@ final class BearySettingsViewController: UIViewController {
         buttonValue.setTitleColor(BearyColors.ink, for: .normal)
         buttonValue.titleLabel?.font = UIFont.systemFont(ofSize: 14)
         buttonValue.addTarget(self, action: action, for: .touchUpInside)
+        buttonValue.bearyAddPressFeedback()
         return buttonValue
     }
 
@@ -866,6 +871,7 @@ final class BearySettingsViewController: UIViewController {
         logoutOthersButton.layer.borderColor = BearyColors.alpha(BearyColors.red, 0.45).cgColor
         logoutOthersButton.layer.cornerRadius = 12
         logoutOthersButton.addTarget(self, action: #selector(logoutOthersButtonTapped), for: .touchUpInside)
+        logoutOthersButton.bearyAddPressFeedback()
         NSLayoutConstraint.activate([
             logoutOthersButton.heightAnchor.constraint(equalToConstant: 36),
         ])
@@ -890,6 +896,7 @@ final class BearySettingsViewController: UIViewController {
         logoutRow.alignment = .center
         logoutRowButton.translatesAutoresizingMaskIntoConstraints = false
         logoutRowButton.addTarget(self, action: #selector(logoutButtonTapped), for: .touchUpInside)
+        logoutRowButton.bearyAddPressHaptic()
         let logoutRowWrap = UIView()
         logoutRowWrap.translatesAutoresizingMaskIntoConstraints = false
         logoutRowWrap.addSubview(logoutRow)
@@ -915,6 +922,7 @@ final class BearySettingsViewController: UIViewController {
         exportStack.spacing = 4
         exportRowButton.translatesAutoresizingMaskIntoConstraints = false
         exportRowButton.addTarget(self, action: #selector(exportButtonTapped), for: .touchUpInside)
+        exportRowButton.bearyAddPressHaptic()
         let exportRow = UIStackView(arrangedSubviews: [makeRowIcon("icon_download"), exportStack])
         exportRow.translatesAutoresizingMaskIntoConstraints = false
         exportRow.axis = .horizontal
@@ -945,6 +953,7 @@ final class BearySettingsViewController: UIViewController {
         deleteStack.spacing = 4
         deleteRowButton.translatesAutoresizingMaskIntoConstraints = false
         deleteRowButton.addTarget(self, action: #selector(deleteButtonTapped), for: .touchUpInside)
+        deleteRowButton.bearyAddPressHaptic()
         deleteRow.translatesAutoresizingMaskIntoConstraints = false
         deleteStack.translatesAutoresizingMaskIntoConstraints = false
         let deleteRowContent = UIStackView(arrangedSubviews: [makeRowIcon("icon_trash"), deleteStack])
@@ -1304,6 +1313,7 @@ final class BearySettingsViewController: UIViewController {
             retryButton.titleLabel?.font = UIFont.systemFont(ofSize: 14, weight: .bold)
             retryButton.contentHorizontalAlignment = .left
             retryButton.addTarget(self, action: #selector(retrySessionsButtonTapped), for: .touchUpInside)
+            retryButton.bearyAddPressFeedback()
             sessionsStack.addArrangedSubview(failedLabel)
             sessionsStack.addArrangedSubview(retryButton)
             fadeInNewStackRows(sessionsStack)
@@ -1609,7 +1619,10 @@ final class BearySettingsViewController: UIViewController {
             pop.sourceView = self.exportRowButton
             pop.sourceRect = self.exportRowButton.bounds
         }
+        // S3：分享结束即删本次临时文件——完成、取消、失败路径都清，
+        // 不留导出 JSON 在 tmp 里；完成回调在分享面板收起后才跑，活动方已读完文件。
         activity.completionWithItemsHandler = { [weak self] _, completed, _, _ in
+            try? FileManager.default.removeItem(at: fileURL)
             if completed { self?.showToast("导出完成") }
         }
         self.present(activity, animated: true)
@@ -1820,6 +1833,7 @@ final class BearySettingsViewController: UIViewController {
         let systemContent = makeRow(title: "系统通知设置", detailLabel: systemDetail, iconName: "icon_settings")
         let systemButton = UIButton(type: .custom)
         systemButton.addTarget(self, action: #selector(openSystemSettings), for: .touchUpInside)
+        systemButton.bearyAddPressHaptic()
         let systemRow = makeSettingsTappableRow(content: systemContent, button: systemButton)
 
         let group = makeGroupCard(title: "消息与通知", rows: [badgeRow, systemRow])
@@ -1839,6 +1853,7 @@ final class BearySettingsViewController: UIViewController {
             let button = UIButton(type: .custom)
             button.tag = index
             button.addTarget(self, action: #selector(themeRowTapped(_:)), for: .touchUpInside)
+            button.bearyAddPressHaptic()
             rows.append(makeSettingsTappableRow(content: content, button: button))
         }
         // 版本行：Bundle 实值，只展示不跳转。
@@ -1855,12 +1870,14 @@ final class BearySettingsViewController: UIViewController {
         let privacyContent = makeRow(title: "隐私政策", detailLabel: privacyDetail)
         let privacyButton = UIButton(type: .custom)
         privacyButton.addTarget(self, action: #selector(openPrivacyText), for: .touchUpInside)
+        privacyButton.bearyAddPressHaptic()
         let privacyRow = makeSettingsTappableRow(content: privacyContent, button: privacyButton)
         let termsDetail = makeLabel(font: UIFont.systemFont(ofSize: 13), color: BearyColors.gray)
         termsDetail.text = "查看"
         let termsContent = makeRow(title: "用户协议", detailLabel: termsDetail)
         let termsButton = UIButton(type: .custom)
         termsButton.addTarget(self, action: #selector(openTermsText), for: .touchUpInside)
+        termsButton.bearyAddPressHaptic()
         let termsRow = makeSettingsTappableRow(content: termsContent, button: termsButton)
         let group = makeGroupCard(title: "隐私", rows: [privacyRow, termsRow])
         settingsExtraWrap.addArrangedSubview(group.card)
@@ -1929,6 +1946,7 @@ final class BearyLegalTextViewController: UIViewController {
         closeButton.setTitleColor(BearyColors.ink, for: .normal)
         closeButton.titleLabel?.font = UIFont.systemFont(ofSize: 15)
         closeButton.addTarget(self, action: #selector(closeTapped), for: .touchUpInside)
+        closeButton.bearyAddPressFeedback()
         titleLabel.translatesAutoresizingMaskIntoConstraints = false
         titleLabel.font = UIFont.systemFont(ofSize: 17, weight: .bold)
         titleLabel.textColor = BearyColors.ink
