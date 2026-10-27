@@ -659,6 +659,8 @@ final class BearyOnboardingViewController: UIViewController {
 
     private func goTo(_ index: Int, animated: Bool = true) {
         guard index >= 0 && index < totalScreens else { return }
+        // 临时诊断（81 包，定根因后删除）：引导换屏入口。
+        DiagFile.mark("ob-goTo")
         stopScreenAnimations()
         currentIndex = index
         let screen = screen(for: index)
@@ -687,6 +689,8 @@ final class BearyOnboardingViewController: UIViewController {
     }
 
     private func playEntrance(for stack: UIStackView) {
+        // 临时诊断（81 包，定根因后删除）。
+        DiagFile.mark("ob-entrance")
         if UIAccessibility.isReduceMotionEnabled { return }
         let items = stack.arrangedSubviews
         for (i, item) in items.enumerated() {
@@ -700,6 +704,8 @@ final class BearyOnboardingViewController: UIViewController {
     }
 
     private func updateChrome() {
+        // 临时诊断（81 包，定根因后删除）。
+        DiagFile.mark("ob-updateChrome")
         backButton.isHidden = currentIndex == 0
         skipButton.isHidden = currentIndex >= ctaIndex
         closeButton.isHidden = mode != .replay
@@ -729,6 +735,8 @@ final class BearyOnboardingViewController: UIViewController {
     }
 
     private func screenDidAppear(_ index: Int) {
+        // 临时诊断（81 包，定根因后删除）：换屏走完的终态，落在它上面不算卡住。
+        DiagFile.mark("ob-appeared")
         if index == 5 { startDeliveryDemo() }
         if index == prepIndex { refreshPrepScreen() }
     }
@@ -761,6 +769,8 @@ final class BearyOnboardingViewController: UIViewController {
     }
 
     @objc private func primaryTapped() {
+        // 临时诊断（81 包，定根因后删除）：引导继续钮入口。
+        DiagFile.mark("ob-primaryTapped")
         if currentIndex == ctaIndex {
             markSeen()
             onStartWriting?()
@@ -826,6 +836,8 @@ final class BearyOnboardingViewController: UIViewController {
     // MARK: 屏构建通用件
 
     private func screen(for index: Int) -> (scroll: UIScrollView, stack: UIStackView) {
+        // 临时诊断（81 包，定根因后删除）。
+        DiagFile.mark("ob-screen")
         if let cached = screenCache[index] { return cached }
         let scroll = UIScrollView()
         scroll.showsVerticalScrollIndicator = false
@@ -1015,10 +1027,13 @@ extension BearyOnboardingViewController {
     }
 
     private func buildWelcomeScreen(_ stack: UIStackView) {
+        // 临时诊断（81 包，定根因后删除）。
+        DiagFile.mark("ob-welcome-enter")
         stack.addArrangedSubview(titleLabel("这里是一个安静的\n日记角落"))
         stack.addArrangedSubview(bodyLabel("写下今天，先私密保存 7 天，送达后由你决定是否公开——给每篇日记一点沉淀的时间。"))
         stack.addArrangedSubview(ruleCard(stack, title: "先私密保存 7 天", body: "发布后不会立刻公开，在时间线里能看到离送达还剩多久。"))
         stack.addArrangedSubview(ruleCard(stack, title: "送达后，你说了算", body: "送达后它只属于你自己；想公开时点「公开」，确认后进入倒计时。"))
+        DiagFile.mark("ob-welcome-exit")
     }
 
     private func ruleCard(_ stack: UIStackView, title: String, body: String) -> UIView {
