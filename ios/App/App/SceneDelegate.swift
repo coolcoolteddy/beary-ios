@@ -59,6 +59,15 @@ class SceneDelegate: UIResponder, UIWindowSceneDelegate {
         }
     }
 
+    /// B10：退后台停 matrix 动画、回前台恢复（此前无此处理）；经容器 chrome 转发。
+    func sceneDidEnterBackground(_ scene: UIScene) {
+        (window?.rootViewController as? BearyChromeViewController)?.pauseSideMatrixAnimation()
+    }
+
+    func sceneWillEnterForeground(_ scene: UIScene) {
+        (window?.rootViewController as? BearyChromeViewController)?.resumeSideMatrixAnimation()
+    }
+
     /// 栏显隐查找（#47 修正）：setChromeHidden 在容器 VC 上，不在 SceneDelegate 上；
     /// 这里找 scene delegate，再取其窗口的容器 VC 返回。上一轮把 helper 放进了容器 VC，
     /// 导致旧调用编译报无此成员（#47 根因）。
@@ -167,6 +176,13 @@ final class BearyChromeViewController: UIViewController {
     /// 教程首次启动自动弹出（审计 N1 容器侧）：每进程只自动弹一次，
     /// 避免教程页未置 seen 标记时 viewDidAppear 重复触发。
     private var tutorialAutoPresented = false
+    /// 登录循环修：自动弹登录定时器（401 后 1.2 秒延迟弹 + .me 门延迟弹）同一时刻
+    /// 只排一个——排队时已有待触发的直接跳过，触发时先清标记再走原有守卫；显式
+    /// 登录路径（顶栏 pill、onRequireLogin、编辑器未登录）不受影响。
+    private var autoLoginPromptPending = false
+    /// 登录循环修（401 无限重载）：onUserChanged 上次见到的用户 id；只有 id 真变了
+    /// 才走时间线/消息/首页三处重载，nil→nil（已是游客态、401 重复触发）直接跳过。
+    private var lastUserChangedUserId: Int?
     /// G11：首次会话同步只是恢复态、不是登录/退出翻转——首页已在首拉，
     /// 首次同步跳过翻转刷新，避免启动双拉；第二次起的 onUserChanged 才走翻转刷新。
     private var sessionFlipArmed = false
@@ -206,6 +222,8 @@ final class BearyChromeViewController: UIViewController {
     private var sideDecoRightWidth: NSLayoutConstraint?
     /// 上次建 matrix 时的容器尺寸（bounds 变化才重建，避免布局回调里反复建图）。
     private var sideDecoBuiltSize: CGSize?
+    /// 减动效变化观察者（A10）：减动效开关翻转时停/启 matrix 动画；与 unreadObserver 同口径持有。
+    private var reduceMotionObserver: NSObjectProtocol?
     /// 居中 640 编辑器模态的 transitioningDelegate（弱引用，必须强持有到 dismiss 完成）
     private var centeredModal: BearyCenteredTransitioningDelegate?
     /// iPhone 底 sheet 编辑器模态的 transitioningDelegate（弱引用，强持有口径同 centeredModal）
@@ -291,6 +309,7 @@ final class BearyChromeViewController: UIViewController {
         b.tintColor = tint
         b.layer.cornerRadius = 12
         b.addTarget(self, action: action, for: .touchUpInside)
+        b.bearyAddPressFeedback()
         b.translatesAutoresizingMaskIntoConstraints = false
         NSLayoutConstraint.activate([
             b.widthAnchor.constraint(equalToConstant: 40),
@@ -325,6 +344,7 @@ final class BearyChromeViewController: UIViewController {
         logo.setImage(UIImage(named: "LogoHorizontal"), for: .normal)
         logo.imageView?.contentMode = .scaleAspectFit
         logo.addTarget(self, action: #selector(didTapLogo), for: .touchUpInside)
+        logo.bearyAddPressFeedback()
         logo.accessibilityLabel = "beary 首页"
         logo.translatesAutoresizingMaskIntoConstraints = false
         topLogoButton = logo
@@ -342,6 +362,7 @@ final class BearyChromeViewController: UIViewController {
         login.backgroundColor = .clear
         login.layer.cornerRadius = 16
         login.addTarget(self, action: #selector(didTapLogin), for: .touchUpInside)
+        login.bearyAddPressFeedback()
         login.translatesAutoresizingMaskIntoConstraints = false
         login.sizeToFit()
         NSLayoutConstraint.activate([
@@ -627,6 +648,9 @@ final class BearyChromeViewController: UIViewController {
                 self.bellBadge.alpha = 0
                 self.bellBadge.transform = CGAffineTransform(scaleX: 0.8, y: 0.8)
             }) { _ in
+                // A7：隐藏完成时若动画途中已有新未读，不再无条件藏起角标。
+                let effectiveUnread = (UserDefaults.standard.object(forKey: "beary_unread_badge_enabled") as? Bool ?? true) ? self.lastUnreadCount : 0
+                guard effectiveUnread <= 0 else { return }
                 self.bellBadge.isHidden = true
                 self.bellBadge.alpha = 1
                 self.bellBadge.transform = .identity
@@ -646,6 +670,18 @@ final class BearyChromeViewController: UIViewController {
                     self.bellBadge.alpha = 1
                     self.bellBadge.transform = .identity
                 })
+            } else if bellBadge.alpha < 1 || !bellBadge.transform.isIdentity {
+                // A7：在途隐藏动画未取消时，已显示的角标不能只改数字——把 alpha/transform
+                // 动画回可见态，否则隐藏动画跑完会把它留在透明态；隐藏完成回调已按最新未读数条件执行（见上）。
+                if UIAccessibility.isReduceMotionEnabled {
+                    bellBadge.alpha = 1
+                    bellBadge.transform = .identity
+                } else {
+                    UIView.animate(withDuration: 0.2, delay: 0, options: [.beginFromCurrentState], animations: {
+                        self.bellBadge.alpha = 1
+                        self.bellBadge.transform = .identity
+                    })
+                }
             }
         }
         layoutBellBadge()
@@ -704,6 +740,14 @@ final class BearyChromeViewController: UIViewController {
         buildChrome()
         // 审计 2：两侧背景层在栏之后建（插 view 最底层），布局由 viewDidLayoutSubviews 驱动。
         buildSideDeco()
+        // A10：订阅减动效开关变化（与 EmotePlayer 同口径的通知名）；开启停播、关闭重建恢复。
+        reduceMotionObserver = NotificationCenter.default.addObserver(forName: UIAccessibility.reduceMotionStatusDidChangeNotification, object: nil, queue: .main) { [weak self] _ in
+            if UIAccessibility.isReduceMotionEnabled {
+                self?.pauseSideMatrixAnimation()
+            } else {
+                self?.resumeSideMatrixAnimation()
+            }
+        }
         // 初始态：本地有有效会话 cookie 时首帧直接按缓存登录态出（登录钮藏），
         // 后台验出 401 才切游客态；无 cookie 时仍按游客首帧。旧口径“恒按未登录首帧”
         // 会让已登录用户每次重开都先见登录钮、几秒后才翻态，体感即“检测几秒是否登录”。
@@ -725,6 +769,10 @@ final class BearyChromeViewController: UIViewController {
         SessionManager.shared.onUserChanged = { [weak self] user in
             self?.applyLoginState(user)
             guard let self = self else { return }
+            // 登录循环修（401 无限重载）：先记本次用户 id 是否真变了；nil→nil 时
+            // 下面三处重载全部跳过，断掉 401→重载→再 401 的循环。
+            let userChanged = self.lastUserChangedUserId != user?.id
+            self.lastUserChangedUserId = user?.id
             // 账号隔离 1/4 号：登录态每次变化先切草稿桶与图片桶（分桶路径
             // 随账号自动切换，内存态不跨账号）；旧全局草稿首启迁移到当前
             // 账号时 toast 明示一次（迁移后旧文件消失，不再触发）。
@@ -756,17 +804,21 @@ final class BearyChromeViewController: UIViewController {
                 } else if let profile = self.profileVC, profile.isViewLoaded {
                     profile.reloadProfile()
                 }
-                if let tl = self.timelineVC, tl.isViewLoaded { tl.reloadTimeline() }
-                if let nt = self.notifVC, nt.isViewLoaded { nt.refresh() }
-                if let feed = self.feedVC, feed.isViewLoaded { feed.refreshFeed() }
+                if userChanged {
+                    if let tl = self.timelineVC, tl.isViewLoaded { tl.reloadTimeline() }
+                    if let nt = self.notifVC, nt.isViewLoaded { nt.refresh() }
+                    if let feed = self.feedVC, feed.isViewLoaded { feed.refreshFeed() }
+                }
             } else {
                 // 退出翻转：当前页是我页且非 gated 时回首页（原有口径）；其余页各走已存在的方法刷新为游客态。
                 if self.currentPage == .me && !self.profileGated {
                     self.showPage(.home)
                 }
-                if let tl = self.timelineVC, tl.isViewLoaded { tl.reloadTimeline() }
-                if let nt = self.notifVC, nt.isViewLoaded { nt.refresh() }
-                if let feed = self.feedVC, feed.isViewLoaded { feed.refreshFeed() }
+                if userChanged {
+                    if let tl = self.timelineVC, tl.isViewLoaded { tl.reloadTimeline() }
+                    if let nt = self.notifVC, nt.isViewLoaded { nt.refresh() }
+                    if let feed = self.feedVC, feed.isViewLoaded { feed.refreshFeed() }
+                }
             }
         }
         // G10 + F7：容器接线 SessionManager.onUnauthorized——401 后 toast“请先登录”，
@@ -779,9 +831,14 @@ final class BearyChromeViewController: UIViewController {
             }
             self.showToast(message: "请先登录")
             let triggerPage = self.currentPage
+            // 登录循环修：已有待触发的自动弹登录定时器时不再排队，避免多个 401
+            // 各排一个定时器、关掉一个又弹一个。
+            guard !autoLoginPromptPending else { return }
+            autoLoginPromptPending = true
             DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) { [weak self] in
-                guard let self = self,
-                      SessionManager.shared.isLoggedIn == false,
+                guard let self = self else { return }
+                self.autoLoginPromptPending = false
+                guard SessionManager.shared.isLoggedIn == false,
                       self.currentPage == triggerPage,
                       self.presentedViewController == nil else { return }
                 self.presentLogin()
@@ -919,15 +976,20 @@ final class BearyChromeViewController: UIViewController {
         headerVisible = visible
         let height: CGFloat = visible ? view.safeAreaInsets.top + 60 : 0
         if topHeightConstraint?.constant != height { topHeightConstraint?.constant = height }
-        applyHeaderTopInsets(visible: visible)
-        topGlass.alpha = visible ? 1 : 0
         topGlass.isUserInteractionEnabled = visible
+        // A1/A1-2：顶栏 alpha 与各页 contentInset（applyHeaderTopInsets）必须与高度约束
+        // 在同一动画块内同步——此前 alpha 与 inset 在块外直设、高度在块内动画，首帧跳变。
+        // A5-2：动画块内布局只做到顶栏容器（topGlass）作用域，不再整棵根视图布局。
         if animated && !UIAccessibility.isReduceMotionEnabled {
             UIView.animate(withDuration: 0.25, delay: 0, options: [.beginFromCurrentState, .allowUserInteraction], animations: {
-                self.view.layoutIfNeeded()
+                self.applyHeaderTopInsets(visible: visible)
+                self.topGlass.alpha = visible ? 1 : 0
+                self.topGlass.layoutIfNeeded()
             })
         } else {
-            view.layoutIfNeeded()
+            applyHeaderTopInsets(visible: visible)
+            topGlass.alpha = visible ? 1 : 0
+            topGlass.layoutIfNeeded()
         }
     }
 
@@ -947,7 +1009,13 @@ final class BearyChromeViewController: UIViewController {
     private func setBarsVisible(_ visible: Bool, animated: Bool) {
         // 52 批：header 高度走 setHeaderVisible——首页才显示、他页恒收起（各页 setChromeHidden(false)
         // 强制显示调用至此即按新规则收敛：他页只恢复底栏分段器与 FAB，不恢复 header）。
-        setHeaderVisible(visible && currentPage == .home, animated: animated)
+        // A1-1（搜索回首页不打断顶栏动画）：若再以 animated:false 调 setHeaderVisible，
+        // 会立即 layoutIfNeeded 把 showPage 刚启动的 0.25s 顶栏动画首帧硬切到终态；
+        // 目标与当前 headerVisible 一致时跳过（动画继续走完），底栏/FAB 恢复仍按原口径走。
+        let headerTarget = visible && currentPage == .home
+        if headerTarget != headerVisible {
+            setHeaderVisible(headerTarget, animated: animated)
+        }
         let applyBars = {
             if let seg = self.bottomSegmented {
                 seg.alpha = visible ? 1 : 0
@@ -1167,6 +1235,8 @@ final class BearyChromeViewController: UIViewController {
     /// 底栏分段切换：只在选段变化时触发（点已选段不触发），逐段沿用旧钮的导航调用，
     /// home 走 showPage、其余走 navigator.goTab，与旧钮行为完全一致。
     @objc private func bottomSegmentChanged() {
+        // W6：分段器无 touchDown 事件，切换瞬间补 .light（与重拍手势各管一种点按，不重叠）。
+        BearyHaptics.press()
         switch bottomSegmented.selectedSegmentIndex {
         case 0: didTapHome()
         case 1: didTapTimeline()
@@ -1184,6 +1254,8 @@ final class BearyChromeViewController: UIViewController {
         let segmentWidth = seg.bounds.width / 3
         let tapped = min(2, max(0, Int(gesture.location(in: seg).x / segmentWidth)))
         guard tapped == segmentIndexAtTouchDown else { return }
+        // W6：重拍（点已选段，valueChanged 不发）补 .light；切段时本分支已提前返回，不与上条重叠。
+        BearyHaptics.press()
         switch tapped {
         case 0: didTapHome()
         case 1: didTapTimeline()
@@ -1273,9 +1345,13 @@ final class BearyChromeViewController: UIViewController {
             // U21：延迟回调里校验仍停留在触发页（触发时 currentPage 未变，仍为触发前页）、
             // 仍未登录且无其他 modal 在前，否则取消本次自动弹登录。
             let triggerPage = currentPage
+            // 登录循环修：与 401 回调共用待触发标记，已有定时器在排队时不再重复排队。
+            guard !autoLoginPromptPending else { return }
+            autoLoginPromptPending = true
             DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) { [weak self] in
-                guard let self = self,
-                      SessionManager.shared.isLoggedIn == false,
+                guard let self = self else { return }
+                self.autoLoginPromptPending = false
+                guard SessionManager.shared.isLoggedIn == false,
                       self.currentPage == triggerPage,
                       self.presentedViewController == nil else { return }
                 self.presentLogin()
@@ -1305,10 +1381,16 @@ final class BearyChromeViewController: UIViewController {
             return
         }
         let previousPage = currentPage
+        // 淡入复加（Li 拍板，0.14s 只做透明度）：先记下离场页视图，暂不立即隐藏，
+        // 下方与入场页做交叉淡入；减动效时仍走旧的即时显隐。M4 删的是整页淡入+滑动，
+        // 这里只动 alpha，不加位移、不改转场代理。
+        let outgoingView: UIView?
         if currentPage == .home {
-            feedVC?.view.isHidden = true
+            outgoingView = feedVC?.view
         } else if let prev = currentPage {
-            pageView(for: prev).view.isHidden = true
+            outgoingView = pageView(for: prev).view
+        } else {
+            outgoingView = nil
         }
         // 切离时间线页时清掉未播的错峰队列（见 Timeline.clearStaggerEntries）：
         // 分页追加后未显示的行若带着 stagger 条目切走，切回时 willDisplay 会补播
@@ -1345,11 +1427,8 @@ final class BearyChromeViewController: UIViewController {
         // 覆盖整棵子树（含搜索框），与 window?.endEditing 等效；裸 window 在此作用域编不过。
         view.endEditing(true)
         currentPage = page
-        if page == .home {
-            ensureFeedVC().view.isHidden = false
-        } else {
-            pageView(for: page).view.isHidden = false
-        }
+        let incomingView: UIView = (page == .home) ? ensureFeedVC().view : pageView(for: page).view
+        incomingView.isHidden = false
         // 首次切入飞入修：懒建页首亮时帧仍为 .zero（addPageVC 只加约束未布局），
         // 下方 setHeaderVisible 的 0.25s layoutIfNeeded 动画会把整页从左上零帧动画到满帧；
         // 此处先非动画布局一次定帧，动画只剩顶栏高度变化。只布局不动数据/分页/错峰滑入。
@@ -1359,14 +1438,48 @@ final class BearyChromeViewController: UIViewController {
         if page == .timeline {
             timelineVC?.pageDidEnter()
         }
-        // 2026-10-26 切 tab 滑动重播排查：M4 全页淡入已删——缓存页每次切 tab 都
-        // 重播入场动效，违背“已有元素不重播”；切 tab 只留顶栏高度结构动画
-        //（setHeaderVisible，见下），页本身即时显示，alpha 恒 1。
+        // A5 返页表情恢复（容器侧，只加调用不改进入逻辑）：userVC 与 profileVC
+        // 共用 BearyProfileViewController 实现，页侧已有 resumeVisibleEmotes，这里只补容器调用。
+        if page == .home {
+            feedVC?.resumeVisibleEmotes()
+        } else if page == .timeline {
+            timelineVC?.resumeVisibleEmotes()
+        } else if page == .me {
+            profileVC?.resumeVisibleEmotes()
+        } else if page == .user {
+            userVC?.resumeVisibleEmotes()
+        }
+        // 淡入复加：主 tab 0.14s 交叉淡入、搜索页淡入、二级页（.user 等容器页）推入淡入，
+        // 均走同一条 showPage 路径；只做透明度动画。减动效或首亮（无离场页）时直接显隐。
+        if UIAccessibility.isReduceMotionEnabled || outgoingView == nil {
+            outgoingView?.isHidden = true
+            outgoingView?.alpha = 1
+            incomingView.alpha = 1
+        } else if let outgoing = outgoingView, outgoing !== incomingView {
+            incomingView.alpha = 0
+            UIView.animate(withDuration: 0.14, delay: 0, options: [.beginFromCurrentState, .allowUserInteraction], animations: {
+                incomingView.alpha = 1
+                outgoing.alpha = 0
+            }) { _ in
+                // 快速连续切页时：离场页若已被重新亮起（即当前页），不隐藏、不复位；
+                // 入场页若已不是当前页，不强制拉回 alpha=1（由它自己的离场动画收尾）。
+                if self.currentPage != previousPage {
+                    outgoing.isHidden = true
+                    outgoing.alpha = 1
+                }
+                if self.currentPage == page {
+                    incomingView.alpha = 1
+                }
+            }
+        }
+        // 2026-10-26 切 tab 滑动重播排查：M4 的整页淡入+滑动仍不恢复（见上方 0.14s
+        // 纯透明度交叉淡入，Li 拍板复加）；除该透明度淡入与顶栏高度结构动画外，
+        // 页本身不做位移、不重播其他入场动效。
         updateTabSelection()
         updateDesktopLayout()
         // 64 包反馈修：52 批“他页恒收起无动画”决定作废——切页时顶栏收起/展开一并走
-        // setHeaderVisible 的 0.25s 高度动效（减动效时内部直达）；页本身即时显示，
-        // 不再播 M4 淡入（见上，缓存页切 tab 不重播入场动效）。
+        // setHeaderVisible 的 0.25s 高度动效（减动效时内部直达）；页的透明度淡入
+        // 见上方复加段（仅 alpha，不含 M4 的滑动）。
         setHeaderVisible(page == .home, animated: true)
         // E 批搜索藏栏（Li 2026-10-24 拍板：搜索页打开时 bnav + FAB 都藏）：
         // 容器切页只改 isHidden、不触发子页 appearance 回调，故藏/恢复只能落
@@ -1376,9 +1489,15 @@ final class BearyChromeViewController: UIViewController {
         // 时间线/个人主页/消息的原口径保持原样）。setBarsVisible 内 header
         // 与上面一行同值收敛，无额外 header 变化。
         if page == .search {
-            setBarsVisible(false, animated: false)
+            setBarsVisible(false, animated: true)
         } else if previousPage == .search {
-            setBarsVisible(true, animated: false)
+            setBarsVisible(true, animated: true)
+        }
+        // A1-3：滚隐后跳页时恢复栏可见态——此前 showPage 只在离搜索时恢复底栏，
+        // 其他页滚隐（setChromeHidden(true)）后跳页，底栏/FAB 会一直藏着。
+        // 搜索页本身仍走上方的隐藏分支；离搜索时已用 animated:false 恢复，不重复调。
+        if page != .search && previousPage != .search {
+            setBarsVisible(true, animated: true)
         }
         // 功能完善批接线：切回消息页瞬间必刷（门控口径：未读数变了才整页重拉，
         // 不变时零请求，不违背“切 tab 不重复拉取”；重拍分支已有无条件刷新，不走这里）。
@@ -1685,6 +1804,7 @@ final class BearyChromeViewController: UIViewController {
         toast.translatesAutoresizingMaskIntoConstraints = false
         let label = UILabel()
         label.text = message
+        label.numberOfLines = 0
         label.font = UIFont.systemFont(ofSize: 14)
         label.textColor = BearyColors.bg
         label.textAlignment = .center
@@ -1707,10 +1827,18 @@ final class BearyChromeViewController: UIViewController {
             toast.trailingAnchor.constraint(lessThanOrEqualTo: view.trailingAnchor, constant: -20),
         ])
         toast.alpha = 0
-        UIView.animate(withDuration: 0.25) { toast.alpha = 1 }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
-            UIView.animate(withDuration: 0.25, animations: { toast.alpha = 0 }) { _ in
+        // A5-3（容器部分）：减动效时直接现身/直接消失，不播淡入淡出。
+        if UIAccessibility.isReduceMotionEnabled {
+            toast.alpha = 1
+            DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
                 toast.removeFromSuperview()
+            }
+        } else {
+            UIView.animate(withDuration: 0.25) { toast.alpha = 1 }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
+                UIView.animate(withDuration: 0.25, animations: { toast.alpha = 0 }) { _ in
+                    toast.removeFromSuperview()
+                }
             }
         }
     }
@@ -1742,8 +1870,42 @@ final class BearyChromeViewController: UIViewController {
                     guard let self = self else { return }
                     switch result {
                     case .success:
-                        SessionManager.shared.clearLocalCookies()
-                        SessionManager.shared.signOutLocally()
+                        // A6-2：退出登录的界面过渡（站内 showPage 0.14s 淡入同款时长；
+                        // 减动效直换）：当前页内容先淡出，态翻转后的原地刷新落在淡出中，
+                        // 再淡回。登出逻辑本身不动：API 成功→清 cookie→本地退出→失败 toast 原样。
+                        let clearLogoutState = {
+                            SessionManager.shared.clearLocalCookies()
+                            SessionManager.shared.signOutLocally()
+                        }
+                        if UIAccessibility.isReduceMotionEnabled || self.currentPage == .me {
+                            // 减动效直换；.me 页由 onUserChanged→showPage 的 0.14s 交叉淡入承接，不双驱动。
+                            clearLogoutState()
+                        } else {
+                            let logoutPageView: UIView? = {
+                                guard let page = self.currentPage else { return nil }
+                                switch page {
+                                case .home: return self.feedVC?.view
+                                case .timeline: return self.timelineVC?.view
+                                case .notif: return self.notifVC?.view
+                                case .me: return self.profileVC?.view
+                                case .search: return self.searchVC?.view
+                                case .user: return self.userVC?.view
+                                default: return nil
+                                }
+                            }()
+                            if let pageView = logoutPageView {
+                                UIView.animate(withDuration: 0.14, delay: 0, options: [.beginFromCurrentState, .allowUserInteraction], animations: {
+                                    pageView.alpha = 0
+                                    clearLogoutState()
+                                }) { _ in
+                                    UIView.animate(withDuration: 0.14, delay: 0, options: [.beginFromCurrentState, .allowUserInteraction], animations: {
+                                        pageView.alpha = 1
+                                    })
+                                }
+                            } else {
+                                clearLogoutState()
+                            }
+                        }
                     case .failure:
                         self.showToast(message: "退出失败，请重试")
                     }
@@ -1818,12 +1980,17 @@ final class BearyChromeViewController: UIViewController {
             vc.preloadSteps = [
                 BearyOnboardingViewController.PreloadStep(title: "时间线首屏", run: { [weak self] done in
                     guard let self = self else { done(); return }
-                    self.ensureTimelineVC().reloadTimeline()
+                    // B2：ensure 已触发 viewDidLoad 首拉时不再复发（首启仍由首拉供数）；
+                    // 万一 viewDidLoad 未发首拉（防御），才显式拉一次；步骤语义与进度不变。
+                    let timelineVC = self.ensureTimelineVC()
+                    if !timelineVC.initialLoadStarted { timelineVC.reloadTimeline() }
                     done()
                 }),
                 BearyOnboardingViewController.PreloadStep(title: "广场首屏", run: { [weak self] done in
                     guard let self = self else { done(); return }
-                    self.ensureFeedVC().refreshAll()
+                    // B2：同时间线步骤，viewDidLoad 首拉已发起时去重。
+                    let feedVC = self.ensureFeedVC()
+                    if !feedVC.initialLoadStarted { feedVC.refreshAll() }
                     done()
                 }),
                 BearyOnboardingViewController.PreloadStep(title: "表情与图标资源", run: { done in
@@ -1985,6 +2152,9 @@ final class BearyChromeViewController: UIViewController {
     }
 
     private func presentComposer() {
+        // 闪退诊断打点（容器侧，只记日志不改行为）：本文件此前无日志，循仓内
+        // NSLog("[Tag] ...") 惯例（BearyEmotePlayer 等同款），每调用一次记一行。
+        NSLog("[Diag] presentComposer-enter")
         // 未登录不再走网页登录，弹原生登录页；原生编辑器只接已登录态
         guard SessionManager.shared.isLoggedIn else {
             presentLogin()
@@ -2182,6 +2352,23 @@ final class BearyChromeViewController: UIViewController {
         UIView.animate(withDuration: 30, delay: 0, options: [.repeat, .curveLinear], animations: {
             matrix.transform = CGAffineTransform(translationX: 344, y: 328)
         })
+    }
+
+    /// A10/B10：退后台 / 减动效开启时停 matrix 动画——正在循环的 30s 位移动画直接
+    /// 移除并复位，不留半程位移；恢复时按当前尺寸重建（rebuild 自带减动效守卫）。
+    fileprivate func pauseSideMatrixAnimation() {
+        for container in [sideDecoLeft, sideDecoRight] {
+            for matrix in container?.subviews ?? [] {
+                matrix.layer.removeAllAnimations()
+                matrix.transform = .identity
+            }
+        }
+    }
+
+    fileprivate func resumeSideMatrixAnimation() {
+        guard !UIAccessibility.isReduceMotionEnabled, isDesktopLayout() else { return }
+        sideDecoBuiltSize = nil
+        updateSideDecoLayout()
     }
 
     // MARK: - 桌面式布局（宽 ≥821，与网页 @media 断点一致）
@@ -2417,6 +2604,7 @@ final class BearyThemeSwitchCardViewController: UIViewController {
         doneButton.titleLabel?.font = .systemFont(ofSize: 15, weight: .semibold)
         doneButton.setTitleColor(BearyColors.ink, for: .normal)
         doneButton.addTarget(self, action: #selector(doneTapped), for: .touchUpInside)
+        doneButton.bearyAddPressFeedback()
         doneButton.translatesAutoresizingMaskIntoConstraints = false
         doneButton.heightAnchor.constraint(equalToConstant: 44).isActive = true
         let stack = UIStackView(arrangedSubviews: [titleLabel, switchWrap, caption, doneButton])
@@ -2436,6 +2624,8 @@ final class BearyThemeSwitchCardViewController: UIViewController {
 
     @objc private func switchTapped() {
         guard let newMode = onThemeCycle?() else { return }
+        // W6：主题开关（UIControl 非 UIButton）切换瞬间补 .light。
+        BearyHaptics.press()
         themeMode = newMode
         themeSwitch.setMode(newMode, animated: !UIAccessibility.isReduceMotionEnabled)
         captionLabel.text = BearyThemeSwitchView.displayName(for: newMode)
@@ -2660,6 +2850,7 @@ private final class BearyComposerSheetAnimator: NSObject, UIViewControllerAnimat
     }
 
     func animateTransition(using transitionContext: UIViewControllerContextTransitioning) {
+        NSLog("[Diag] sheetAnimator-enter")
         let container = transitionContext.containerView
         let duration = transitionDuration(using: transitionContext)
         if isPresenting {
