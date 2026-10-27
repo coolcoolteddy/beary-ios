@@ -411,6 +411,8 @@ final class BearyCalendarCardView: UIView {
     }
 
     var onSelectDay: ((BearyCalendarDay) -> Void)?
+    /// 图例行高落定后透传给 VC（VC 再跑 refreshHeaderHeight）。
+    var onLegendHeightSettled: (() -> Void)?
     var onToggleView: (() -> Void)?
     var onPrevious: (() -> Void)?
     var onNext: (() -> Void)?
@@ -536,6 +538,7 @@ final class BearyCalendarCardView: UIView {
         monthLegendStack.alignment = .fill
         monthLegendStack.spacing = 2
         let legendFlowView = BearyCalendarLegendFlowView()
+        legendFlowView.onHeightSettled = { [weak self] in self?.onLegendHeightSettled?() }
         legendFlowView.setPairs([
             legendPair(marks: BearyCalendarMarks.marks(published: 1, unpublished: 0), text: "1 篇"),
             legendPair(marks: BearyCalendarMarks.marks(published: 2, unpublished: 0), text: "2 篇"),
@@ -757,6 +760,11 @@ final class BearyCalendarCardView: UIView {
 private final class BearyCalendarLegendFlowView: UIView {
     private var pairs: [UIView] = []
     private var heightConstraint: NSLayoutConstraint?
+    /// 图例行高落定回调：行高随宽度最终落定后（可能晚于 VC 的布局检查），
+    /// 通知 VC 再跑一次表头高度，避免统计行被压。回调经主队列合并投递，
+    /// 不在布局过程中同步重入表头计算。
+    var onHeightSettled: (() -> Void)?
+    private var settledCallbackPending = false
 
     override init(frame: CGRect) {
         super.init(frame: frame)
@@ -825,6 +833,13 @@ private final class BearyCalendarLegendFlowView: UIView {
         }
         if heightConstraint?.constant != y {
             heightConstraint?.constant = y
+            if !settledCallbackPending {
+                settledCallbackPending = true
+                DispatchQueue.main.async { [weak self] in
+                    self?.settledCallbackPending = false
+                    self?.onHeightSettled?()
+                }
+            }
         }
     }
 }
@@ -1268,6 +1283,10 @@ final class BearyTimelineCell: UITableViewCell {
         // 80 包 A4/A2-3④：错峰改 cell.alpha/transform，对称复位，防复用残留。
         alpha = 1
         transform = .identity
+        // 按压缩放残留复位：通用按压反馈把按钮 imageView 缩到 .84，
+        // 触摸序列异常打断时回弹没跑到，复用会把 .84 带到下一行。
+        deleteButton.imageView?.transform = .identity
+        editButton.imageView?.transform = .identity
         setTimelineLineEdges(isFirstInDay: true, isLastInDay: true)
         currentEntry = nil
         cardView.backgroundColor = BearyColors.bg
@@ -2020,6 +2039,10 @@ class BearyTimelineViewController: UIViewController {
         super.viewDidLayoutSubviews()
         // 顶栏透度批：安全区变化时按已存栏态重算（容器 viewDidLayoutSubviews 也会重发，双重 no-op）。
         applyHeaderTopInset(visible: headerTopInsetVisible)
+        // 宽为 0 时丢弃的表头高度重算在此消费：宽一就绪即重算。
+        if headerHeightNeedsRefresh, tableView.bounds.width > 0 {
+            refreshHeaderHeight()
+        }
         if abs(tableView.bounds.width - lastHeaderWidth) > 0.5 {
             refreshHeaderHeight()
             return
@@ -2413,6 +2436,9 @@ class BearyTimelineViewController: UIViewController {
         calendarCard.onSelectDay = { [weak self] day in
             self?.didSelectCalendarDay(day)
         }
+        calendarCard.onLegendHeightSettled = { [weak self] in
+            self?.refreshHeaderHeight()
+        }
         calendarCard.onToggleView = { [weak self] in
             self?.toggleCalendarView()
         }
@@ -2444,9 +2470,17 @@ class BearyTimelineViewController: UIViewController {
         tableView.tableHeaderView = headerContainer
     }
 
+    /// 表头高度待重算：refreshHeaderHeight 在表宽为 0 时置位，
+    /// 宽一就绪即由 viewDidLayoutSubviews 消费重算，不静默丢弃。
+    private var headerHeightNeedsRefresh = false
+
     private func refreshHeaderHeight() {
         let width = tableView.bounds.width
-        guard width > 0 else { return }
+        guard width > 0 else {
+            headerHeightNeedsRefresh = true
+            return
+        }
+        headerHeightNeedsRefresh = false
         lastHeaderWidth = width
         headerContainer.frame = CGRect(x: 0, y: 0, width: width, height: 0)
         let size = headerContainer.systemLayoutSizeFitting(
@@ -2496,7 +2530,7 @@ class BearyTimelineViewController: UIViewController {
                 }, completion: { _ in strongSelf.refreshHeaderHeight() })
                 return
             }
-            UIView.animate(withDuration: 0.24, animations: {
+            UIView.animate(withDuration: 0.24, delay: 0, options: [.beginFromCurrentState], animations: {
                 strongSelf.headerContainer.frame = CGRect(x: 0, y: 0, width: strongSelf.tableView.bounds.width, height: newHeight)
                 strongSelf.tableView.tableHeaderView = strongSelf.headerContainer
                 strongSelf.calendarCard.alpha = 1
