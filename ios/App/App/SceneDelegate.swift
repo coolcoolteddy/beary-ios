@@ -228,12 +228,8 @@ final class BearyChromeViewController: UIViewController {
     private var sideDecoBuiltSize: CGSize?
     /// 减动效变化观察者（A10）：减动效开关翻转时停/启 matrix 动画；与 unreadObserver 同口径持有。
     private var reduceMotionObserver: NSObjectProtocol?
-    /// 居中 640 编辑器模态的 transitioningDelegate（弱引用，必须强持有到 dismiss 完成）
-    private var centeredModal: BearyCenteredTransitioningDelegate?
-    /// iPhone 底 sheet 编辑器模态的 transitioningDelegate（弱引用，强持有口径同 centeredModal）
-    private var composerSheet: BearyComposerSheetTransitioningDelegate?
-    /// 邀请弹窗模态的 transitioningDelegate（弱引用，强持有口径同 centeredModal/composerSheet；
-    /// 宽屏居中与窄屏底 sheet 各持一个，与编辑器分开，避免互相覆盖持有）
+    /// 邀请弹窗模态的 transitioningDelegate（弱引用，必须强持有到 dismiss 完成；
+    /// 宽屏居中与窄屏底 sheet 各持一个，互不覆盖持有）
     private var inviteCentered: BearyCenteredTransitioningDelegate?
     private var inviteSheet: BearyComposerSheetTransitioningDelegate?
 
@@ -2208,22 +2204,14 @@ final class BearyChromeViewController: UIViewController {
         DiagFile.mark("present-returned")
     }
 
-    /// 新建与编辑共用：宽 ≥821 时居中 640 模态（对应网页编辑器 ≥821px 居中 640px）；
-    /// 宽 ≤820 时改回底 sheet（对应网页编辑器手机端 88vh 底 sheet：带抓手、0.45 遮罩、
-    /// 下滑可关闭，取消仍走编辑器自身取消流程）。forEdit 仅保留参数位（两模式同路径，
-    /// 不再按编辑态分 edge 持有——底 sheet 不碰详情的 edge delegate）。
+    /// 92 包：新建与编辑共用整页——iPhone 与 iPad 一律 .fullScreen + 系统默认上滑过渡，
+    /// 不再按宽分流、不再用底 sheet 与居中卡片两套自定义转场（底 sheet 转场在 iPhone 上
+    /// 有主线程卡死问题，90 包修法未生效，整页直接绕开该路径）。iPad 列居中由编辑器
+    /// 自身 updateColumnConstraints 定（宽 ≥821 时 640 居中），不在此定宽。forEdit 仅保留
+    /// 参数位（两模式同路径）。底 sheet/居中卡片类本身保留，邀请弹窗仍在用，不要删。
     private func configureComposerPresentation(_ composer: BearyComposerViewController, forEdit: Bool) {
-        if view.bounds.width >= 821 {
-            let centered = BearyCenteredTransitioningDelegate()
-            composer.modalPresentationStyle = .custom
-            composer.transitioningDelegate = centered
-            centeredModal = centered
-        } else {
-            let sheet = BearyComposerSheetTransitioningDelegate()
-            composer.modalPresentationStyle = .custom
-            composer.transitioningDelegate = sheet
-            composerSheet = sheet
-        }
+        composer.modalPresentationStyle = .fullScreen
+        composer.transitioningDelegate = nil
     }
 
     /// 沿 presentedViewController 链走到最上层：编辑器从详情 nav 上 present，而不是从根 VC 起，

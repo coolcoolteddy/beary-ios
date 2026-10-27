@@ -196,6 +196,22 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     private let toolbarContainer = UIView()
     private var scrollTopToToolbarConstraint: NSLayoutConstraint?
     private var scrollTopToTopBarConstraint: NSLayoutConstraint?
+    /// 92 包整页列宽：窄屏贴边、宽 ≥821 时三件居中（顶栏/滚动区 640、工具栏 608，
+    /// 与旧居中卡几何一致：卡 640、工具栏卡内边距 16）。只换外层水平约束，
+    /// 不碰内容栈/心情/天气/引用/草稿/键盘逻辑；状态变化时才切换，避免每轮布局重算。
+    private var topBarLeadingConstraint: NSLayoutConstraint?
+    private var topBarTrailingConstraint: NSLayoutConstraint?
+    private var toolbarLeadingConstraint: NSLayoutConstraint?
+    private var toolbarTrailingConstraint: NSLayoutConstraint?
+    private var scrollLeadingConstraint: NSLayoutConstraint?
+    private var scrollTrailingConstraint: NSLayoutConstraint?
+    private var topBarCenterXConstraint: NSLayoutConstraint?
+    private var topBarWidthConstraint: NSLayoutConstraint?
+    private var toolbarCenterXConstraint: NSLayoutConstraint?
+    private var toolbarWidthConstraint: NSLayoutConstraint?
+    private var scrollCenterXConstraint: NSLayoutConstraint?
+    private var scrollWidthConstraint: NSLayoutConstraint?
+    private var isColumnCentered = false
     /// 清单第 15 项：发布钮 / 草稿 pill 的显式宽度约束（点赞钮同款修法，见各自刷新函数）。
     private var publishWidthConstraint: NSLayoutConstraint?
     private var draftPillWidthConstraint: NSLayoutConstraint?
@@ -358,6 +374,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             return
         }
         lastLayoutWidth = w
+        updateColumnConstraints()
         updatePreferredContentSize()
         // 临时诊断（86 包，定根因后删除）：布局方法出口。
         DiagFile.mark("composer-layout-exit")
@@ -442,16 +459,30 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         scrollToToolbar.isActive = true
         scrollTopToToolbarConstraint = scrollToToolbar
         scrollTopToTopBarConstraint = scrollView.topAnchor.constraint(equalTo: topBar.bottomAnchor)
+        // 92 包整页列宽：贴边约束与居中约束二选一，由 updateColumnConstraints 按宽切换
+        //（个人主页同款：lazy 式成对约束、状态变化时才切换）。居中约束初始不激活。
+        topBarLeadingConstraint = topBar.leadingAnchor.constraint(equalTo: view.leadingAnchor)
+        topBarTrailingConstraint = topBar.trailingAnchor.constraint(equalTo: view.trailingAnchor)
+        toolbarLeadingConstraint = toolbarContainer.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 16)
+        toolbarTrailingConstraint = toolbarContainer.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -16)
+        scrollLeadingConstraint = scrollView.leadingAnchor.constraint(equalTo: view.leadingAnchor)
+        scrollTrailingConstraint = scrollView.trailingAnchor.constraint(equalTo: view.trailingAnchor)
+        topBarCenterXConstraint = topBar.centerXAnchor.constraint(equalTo: view.centerXAnchor)
+        topBarWidthConstraint = topBar.widthAnchor.constraint(equalToConstant: 640)
+        toolbarCenterXConstraint = toolbarContainer.centerXAnchor.constraint(equalTo: view.centerXAnchor)
+        toolbarWidthConstraint = toolbarContainer.widthAnchor.constraint(equalToConstant: 608)
+        scrollCenterXConstraint = scrollView.centerXAnchor.constraint(equalTo: view.centerXAnchor)
+        scrollWidthConstraint = scrollView.widthAnchor.constraint(equalToConstant: 640)
         NSLayoutConstraint.activate([
             topBar.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
-            topBar.leadingAnchor.constraint(equalTo: view.leadingAnchor),
-            topBar.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            topBarLeadingConstraint!,
+            topBarTrailingConstraint!,
             topBar.heightAnchor.constraint(equalToConstant: 44),
             toolbarContainer.topAnchor.constraint(equalTo: topBar.bottomAnchor),
-            toolbarContainer.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 16),
-            toolbarContainer.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -16),
-            scrollView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
-            scrollView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            toolbarLeadingConstraint!,
+            toolbarTrailingConstraint!,
+            scrollLeadingConstraint!,
+            scrollTrailingConstraint!,
             scrollView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
             contentView.topAnchor.constraint(equalTo: scrollView.contentLayoutGuide.topAnchor),
             contentView.leadingAnchor.constraint(equalTo: scrollView.contentLayoutGuide.leadingAnchor),
@@ -465,6 +496,29 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         ])
     }
 
+    /// 92 包整页列宽：宽 ≥821 时顶栏/滚动区 640 居中、工具栏 608 居中（与旧居中卡几何一致），
+    /// 窄屏恢复贴边；只在跨阈值时切换一次，分屏/旋转由 viewDidLayoutSubviews 的宽门驱动。
+    private func updateColumnConstraints() {
+        let centered = view.bounds.width >= 821
+        guard centered != isColumnCentered else { return }
+        isColumnCentered = centered
+        topBarLeadingConstraint?.isActive = !centered
+        topBarTrailingConstraint?.isActive = !centered
+        toolbarLeadingConstraint?.isActive = !centered
+        toolbarTrailingConstraint?.isActive = !centered
+        scrollLeadingConstraint?.isActive = !centered
+        scrollTrailingConstraint?.isActive = !centered
+        topBarCenterXConstraint?.isActive = centered
+        topBarWidthConstraint?.isActive = centered
+        toolbarCenterXConstraint?.isActive = centered
+        toolbarWidthConstraint?.isActive = centered
+        scrollCenterXConstraint?.isActive = centered
+        scrollWidthConstraint?.isActive = centered
+    }
+
+    /// 92 包注：编辑器已改整页，下述“呈现层取宽/取高”不再适用于编辑器（仅邀请弹窗仍走
+    /// 旧呈现层）；iPad 列宽现由本文件 updateColumnConstraints 定，preferredContentSize
+    /// 不再决定外框尺寸，仅保留计算。
     /// L9 已确认：iPad 640 宽不在 preferredContentSize 里定——呈现层 BearyCenteredModal 的
     /// frameOfPresentedViewInContainerView 已写死 min(640, 容器宽 - 80) 居中，preferredContentSize
     /// 只被呈现层取高（宽由呈现层框定）；故本文件不另在呈现层定宽，宽口径以呈现层为准。
