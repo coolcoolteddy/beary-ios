@@ -5,7 +5,7 @@ import UIKit
 // 公开演示 → 互动演示 → 消息与主页 → 小工具 → CTA → 预加载准备屏 →
 // 真实主页）；使用指南重播版去掉准备屏、CTA 改「关闭 / 开始写第一篇」。
 // 绝不用 WKWebView、不加载任何网页；文案逐字对齐现行指南源码
-// （BearyPlaceholderViewController.swift 的 BearyTutorialViewController）。
+// （旧 BearyTutorialViewController 已删，seen 键现归本类 tutorialSeenKey）。
 // 尺寸铁律（v3 原型前车之鉴）：熊 200×200、熊掌 44×44 各自显式限定，
 // 不许用宽泛约束让熊掌被撑大压住标题。
 // 关闭/完成都会把 beary_tutorial_seen_v1 置 true（与旧教程同键同语义），
@@ -377,6 +377,9 @@ extension BearyBearView {
 // MARK: - 引导容器
 
 final class BearyOnboardingViewController: UIViewController {
+    /// 旧新手教程的 seen 标记键（原 BearyTutorialViewController.tutorialSeenKey，教程类已删后移入本类；同键同语义）。
+    static let tutorialSeenKey = "beary_tutorial_seen_v1"
+
     enum Mode { case firstLaunch, replay }
 
     struct PreloadStep {
@@ -517,7 +520,7 @@ final class BearyOnboardingViewController: UIViewController {
     }
 
     private func markSeen() {
-        UserDefaults.standard.set(true, forKey: BearyTutorialViewController.tutorialSeenKey)
+        UserDefaults.standard.set(true, forKey: BearyOnboardingViewController.tutorialSeenKey)
     }
 
     // MARK: 顶栏 / 内容列 / 底栏

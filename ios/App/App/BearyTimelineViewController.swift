@@ -1037,7 +1037,7 @@ final class BearyTimelineCell: UITableViewCell {
             editButton.setImage(editImage, for: .normal)
         }
         editButton.tintColor = BearyColors.gray
-        editButton.alpha = 0.5
+        editButton.alpha = 1
         editButton.addTarget(self, action: #selector(editTapped), for: .touchUpInside)
         editButton.bearyAddPressFeedback()
         if let trashImage = BearyIconImages.image(named: "icon_trash", pointSize: 17) {
@@ -1045,7 +1045,7 @@ final class BearyTimelineCell: UITableViewCell {
         }
         deleteButton.imageView?.contentMode = .scaleAspectFit
         deleteButton.tintColor = BearyColors.red
-        deleteButton.alpha = 0.5
+        deleteButton.alpha = 0.85
         deleteButton.addTarget(self, action: #selector(deleteTapped), for: .touchUpInside)
         deleteButton.bearyAddPressFeedback()
         publishButton.translatesAutoresizingMaskIntoConstraints = false
@@ -1073,7 +1073,7 @@ final class BearyTimelineCell: UITableViewCell {
         cancelPublishButton.isHidden = true
         actsStack.translatesAutoresizingMaskIntoConstraints = false
         actsStack.axis = .horizontal
-        actsStack.spacing = 6
+        actsStack.spacing = 14
         actsStack.alignment = .center
         let actsSpacer = UIView()
         // B-G6: publish button sits inline right after the edit status (web tl-acts
@@ -2350,7 +2350,8 @@ class BearyTimelineViewController: UIViewController {
         // 显式 aspectFit + 方形图，任何压缩都不改变宽高比。
         trashButton.imageView?.contentMode = .scaleAspectFit
         trashButton.tintColor = BearyColors.ink
-        trashButton.imageEdgeInsets = UIEdgeInsets(top: 0, left: 0, bottom: 0, right: 6)
+        trashButton.imageEdgeInsets = UIEdgeInsets.zero
+        trashButton.titleEdgeInsets = UIEdgeInsets(top: 0, left: 6, bottom: 0, right: 0)
         trashButton.addTarget(self, action: #selector(didTapTrash), for: .touchUpInside)
         trashButton.bearyAddPressFeedback()
         updateTrashTitle()
@@ -2627,7 +2628,8 @@ class BearyTimelineViewController: UIViewController {
         lastStatsMonthTotal = monthTotal
         statsButton.setImage(BearyIconImages.image(named: "icon_fire", pointSize: 16), for: .normal)
         statsButton.tintColor = BearyColors.orange
-        statsButton.imageEdgeInsets = UIEdgeInsets(top: 0, left: 0, bottom: 0, right: 6)
+        statsButton.imageEdgeInsets = UIEdgeInsets.zero
+        statsButton.titleEdgeInsets = UIEdgeInsets(top: 0, left: 6, bottom: 0, right: 0)
         let baseAttributes: [NSAttributedString.Key: Any] = [
             .font: UIFont.systemFont(ofSize: 13.5),
             .foregroundColor: BearyColors.gray,

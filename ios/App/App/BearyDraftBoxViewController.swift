@@ -264,13 +264,15 @@ final class BearyDraftBoxViewController: UIViewController {
         headerWrap.addSubview(closeButton)
         NSLayoutConstraint.activate([
             titleLabel.centerXAnchor.constraint(equalTo: headerWrap.centerXAnchor),
-            // 头高内容驱动：标题 15/700 + 上 6 + 下 4，约 29（原固定 42）。
+            // Hit44：头高改由关闭钮链驱动（钮 32 + 上 6 + 下 6 = 44），热区不再被约 34 高头截断；
+            // 标题底改 ≤，标题仍顶锚 6、位置不动。
             titleLabel.topAnchor.constraint(equalTo: headerWrap.topAnchor, constant: 6),
-            titleLabel.bottomAnchor.constraint(equalTo: headerWrap.bottomAnchor, constant: -4),
+            titleLabel.bottomAnchor.constraint(lessThanOrEqualTo: headerWrap.bottomAnchor, constant: -4),
             closeButton.widthAnchor.constraint(equalToConstant: 32),
             closeButton.heightAnchor.constraint(equalToConstant: 32),
             closeButton.trailingAnchor.constraint(equalTo: headerWrap.trailingAnchor, constant: -14),
-            closeButton.topAnchor.constraint(equalTo: headerWrap.topAnchor, constant: 2),
+            closeButton.topAnchor.constraint(equalTo: headerWrap.topAnchor, constant: 6),
+            closeButton.bottomAnchor.constraint(equalTo: headerWrap.bottomAnchor, constant: -6),
         ])
         contentStack.addArrangedSubview(headerWrap)
 

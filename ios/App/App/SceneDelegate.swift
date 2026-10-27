@@ -2039,7 +2039,7 @@ final class BearyChromeViewController: UIViewController {
     private func maybePresentOnboardingOnFirstLaunch() {
         guard !tutorialAutoPresented else { return }
         tutorialAutoPresented = true
-        guard !UserDefaults.standard.bool(forKey: BearyTutorialViewController.tutorialSeenKey) else { return }
+        guard !UserDefaults.standard.bool(forKey: BearyOnboardingViewController.tutorialSeenKey) else { return }
         guard presentedViewController == nil else { return }
         presentOnboarding(mode: .firstLaunch)
     }

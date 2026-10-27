@@ -1468,20 +1468,20 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         quoteCard.addSubview(quoteCardRemoveButton)
         NSLayoutConstraint.activate([
             pickQuoteButton.heightAnchor.constraint(equalToConstant: 44),
-            // 52 批：lite 卡不带头像名——pill 顶行贴卡左（原头像 40 + 名 54 链已删），日期/正文/图片条同贴卡左 2。
+            // 52 批：lite 卡不带头像名——pill 顶行贴卡左（原头像 40 + 名 54 链已删），日期/正文/图片条同贴卡左 14。
             // D-G3：日期不再另起一行，改与 pill 同行（pill 可见时日期贴 pill 右 +8、与 pill 垂直居中；
-            // pill 隐藏时日期独占顶行 top 16 / leading 2）。日期的 top/leading 约束改由
+            // pill 隐藏时日期独占顶行 top 16 / leading 14）。日期的 top/leading 约束改由
             // 下方持有的 quoteDate* 约束在 refreshQuoteSection 里按 pill 可见态切换，
             // 此处不再静态激活 top/leading。
             quoteDeliveringPill.topAnchor.constraint(equalTo: quoteCard.topAnchor, constant: 16),
-            quoteDeliveringPill.leadingAnchor.constraint(equalTo: quoteCard.leadingAnchor, constant: 2),
+            quoteDeliveringPill.leadingAnchor.constraint(equalTo: quoteCard.leadingAnchor, constant: 14),
             quoteDeliveringPill.heightAnchor.constraint(equalToConstant: 17),
-            quoteDateLabel.trailingAnchor.constraint(lessThanOrEqualTo: quoteCard.trailingAnchor, constant: -2),
+            quoteDateLabel.trailingAnchor.constraint(lessThanOrEqualTo: quoteCard.trailingAnchor, constant: -14),
             quoteContentLabel.topAnchor.constraint(equalTo: quoteDateLabel.bottomAnchor, constant: 4),
-            quoteContentLabel.leadingAnchor.constraint(equalTo: quoteCard.leadingAnchor, constant: 2),
-            quoteContentLabel.trailingAnchor.constraint(equalTo: quoteCard.trailingAnchor, constant: -2),
-            quoteImagesScrollView.leadingAnchor.constraint(equalTo: quoteCard.leadingAnchor, constant: 2),
-            quoteImagesScrollView.trailingAnchor.constraint(equalTo: quoteCard.trailingAnchor, constant: -2),
+            quoteContentLabel.leadingAnchor.constraint(equalTo: quoteCard.leadingAnchor, constant: 14),
+            quoteContentLabel.trailingAnchor.constraint(equalTo: quoteCard.trailingAnchor, constant: -14),
+            quoteImagesScrollView.leadingAnchor.constraint(equalTo: quoteCard.leadingAnchor, constant: 14),
+            quoteImagesScrollView.trailingAnchor.constraint(equalTo: quoteCard.trailingAnchor, constant: -14),
             quoteImagesScrollView.heightAnchor.constraint(equalToConstant: 118),
             quoteImagesStackView.topAnchor.constraint(equalTo: quoteImagesScrollView.contentLayoutGuide.topAnchor),
             quoteImagesStackView.bottomAnchor.constraint(equalTo: quoteImagesScrollView.contentLayoutGuide.bottomAnchor),
@@ -1504,13 +1504,13 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         quoteImagesTopConstraint?.isActive = true
         quoteImagesBottomConstraint?.isActive = true
         // pill 约束单独持有：仅可见时激活（见 refreshQuoteSection 的 D-8 切换）。
-        // 52 批：pill 贴卡左（原“名后 +8”链随名删除而改贴卡左 2），宽随倒计时文本撑开。
-        quotePillLeadingConstraint = quoteDeliveringPill.leadingAnchor.constraint(equalTo: quoteCard.leadingAnchor, constant: 2)
+        // 52 批：pill 贴卡左（原“名后 +8”链随名删除而改贴卡左 14），宽随倒计时文本撑开。
+        quotePillLeadingConstraint = quoteDeliveringPill.leadingAnchor.constraint(equalTo: quoteCard.leadingAnchor, constant: 14)
         quotePillWidthConstraint = quoteDeliveringPill.widthAnchor.constraint(equalToConstant: 48)
         quotePillTrailingConstraint = quoteDeliveringPill.trailingAnchor.constraint(lessThanOrEqualTo: quoteCardRemoveButton.leadingAnchor, constant: -8)
-        // D-G3：日期行约束（pill 可见时：与 pill 垂直居中 + pill 右 8；否则：顶行 top 16 + 卡左 2）。
+        // D-G3：日期行约束（pill 可见时：与 pill 垂直居中 + pill 右 8；否则：顶行 top 16 + 卡左 14）。
         quoteDateTopConstraint = quoteDateLabel.topAnchor.constraint(equalTo: quoteCard.topAnchor, constant: 16)
-        quoteDateLeadingAloneConstraint = quoteDateLabel.leadingAnchor.constraint(equalTo: quoteCard.leadingAnchor, constant: 2)
+        quoteDateLeadingAloneConstraint = quoteDateLabel.leadingAnchor.constraint(equalTo: quoteCard.leadingAnchor, constant: 14)
         quoteDateLeadingWithPillConstraint = quoteDateLabel.leadingAnchor.constraint(equalTo: quoteDeliveringPill.trailingAnchor, constant: 8)
         quoteDateCenterYConstraint = quoteDateLabel.centerYAnchor.constraint(equalTo: quoteDeliveringPill.centerYAnchor)
         refreshQuoteSection()
@@ -1596,8 +1596,8 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     private var quoteCardContentBottomConstraint: NSLayoutConstraint?
     private var quoteImagesTopConstraint: NSLayoutConstraint?
     private var quoteImagesBottomConstraint: NSLayoutConstraint?
-    /// D-8（52 批）：投递中 pill / 右上 × 的防重叠约束。pill 贴卡左 2；
-    /// pill 仅在可见时激活 leading（卡左 2）与 trailing（× 左侧 -8），不出界、
+    /// D-8（52 批）：投递中 pill / 右上 × 的防重叠约束。pill 贴卡左 14；
+    /// pill 仅在可见时激活 leading（卡左 14）与 trailing（× 左侧 -8），不出界、
     /// 不被卡片 masksToBounds 裁掉；pill 隐藏时停用其 leading/宽约束。
     private var quotePillLeadingConstraint: NSLayoutConstraint?
     private var quotePillWidthConstraint: NSLayoutConstraint?

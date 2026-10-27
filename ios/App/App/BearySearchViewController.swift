@@ -530,10 +530,10 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
             contentStack.centerXAnchor.constraint(equalTo: columnWrap.centerXAnchor),
             contentStack.bottomAnchor.constraint(equalTo: columnWrap.bottomAnchor),
 
-            // 页顶返回行：按钮 28 + gap 10 + 标题，上下 padding 4/2。
+            // 页顶返回行：按钮 28 + gap 10 + 标题，上下 padding 8/8（行高 44，Hit44 热区不再被 34 高行截断）。
             backButton.leadingAnchor.constraint(equalTo: backRowView.leadingAnchor),
-            backButton.topAnchor.constraint(equalTo: backRowView.topAnchor, constant: 4),
-            backButton.bottomAnchor.constraint(equalTo: backRowView.bottomAnchor, constant: -2),
+            backButton.topAnchor.constraint(equalTo: backRowView.topAnchor, constant: 8),
+            backButton.bottomAnchor.constraint(equalTo: backRowView.bottomAnchor, constant: -8),
             backButton.widthAnchor.constraint(equalToConstant: 28),
             backButton.heightAnchor.constraint(equalToConstant: 28),
             backTitleLabel.leadingAnchor.constraint(equalTo: backButton.trailingAnchor, constant: 10),

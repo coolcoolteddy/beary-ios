@@ -306,7 +306,8 @@ final class BearyInviteViewController: UIViewController {
             stackView.trailingAnchor.constraint(lessThanOrEqualTo: contentView.trailingAnchor, constant: -22),
             stackView.centerXAnchor.constraint(equalTo: contentView.centerXAnchor),
             stackView.widthAnchor.constraint(lessThanOrEqualToConstant: 432),
-            closeRow.heightAnchor.constraint(equalToConstant: 32),
+            // Hit44：行高放开到 44（钮 32 居中，上下各留 6），热区不再被 32 高行截断；钮视觉尺寸不变。
+            closeRow.heightAnchor.constraint(equalToConstant: 44),
             closeButton.widthAnchor.constraint(equalToConstant: 32),
             closeButton.heightAnchor.constraint(equalToConstant: 32),
             closeButton.trailingAnchor.constraint(equalTo: closeRow.trailingAnchor),
