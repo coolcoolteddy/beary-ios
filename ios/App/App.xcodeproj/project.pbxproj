@@ -125,6 +125,30 @@
 		7EC7184A822E299D4AE5A95D /* wish_dark.json in Resources */ = {isa = PBXBuildFile; fileRef = 66A30D087D0C4BE318AD4C46 /* wish_dark.json */; };
 		80708F8472B7D2F81E42B791 /* zap.json in Resources */ = {isa = PBXBuildFile; fileRef = D1FEDAEE06536713E0B7515C /* zap.json */; };
 		D54F707D67D52AB5B0EE1DFA /* zap_dark.json in Resources */ = {isa = PBXBuildFile; fileRef = 29302F6301B0882F2EA91CF7 /* zap_dark.json */; };
+		0CC2B09EA5C0247B1FD88D3E /* cloud.json in Resources */ = {isa = PBXBuildFile; fileRef = 274223731E414EBC184C3A98 /* cloud.json */; };
+		4036FBDF16015B74D58AAFD4 /* cloud_dark.json in Resources */ = {isa = PBXBuildFile; fileRef = DFEC5479701750C541F6EFB1 /* cloud_dark.json */; };
+		5AE09E67012EFBA1E2780A7A /* cloudy.json in Resources */ = {isa = PBXBuildFile; fileRef = 437B037295D240991CE4E4D0 /* cloudy.json */; };
+		CFF90FF5771A9EB7E40F36D2 /* cloudy_dark.json in Resources */ = {isa = PBXBuildFile; fileRef = 289200E4B9A54FBB97E73001 /* cloudy_dark.json */; };
+		622286B5CA5B3DA651827236 /* drizzle.json in Resources */ = {isa = PBXBuildFile; fileRef = E0A62C09FE5287950C702672 /* drizzle.json */; };
+		3A2DFA1EE5886FEFCE4A8B8B /* drizzle_dark.json in Resources */ = {isa = PBXBuildFile; fileRef = 0A748AD7FDAC870A714876CF /* drizzle_dark.json */; };
+		911A0C85097C3C6C04F55D05 /* fog.json in Resources */ = {isa = PBXBuildFile; fileRef = ADC89D7CD647617BD62474DE /* fog.json */; };
+		B863094593446EAB175AC590 /* fog_dark.json in Resources */ = {isa = PBXBuildFile; fileRef = 964F3624C831A721605C64AF /* fog_dark.json */; };
+		D72071AB07BC2ABEDF1395BC /* hail.json in Resources */ = {isa = PBXBuildFile; fileRef = EE902F53A8B18D00C0F0858B /* hail.json */; };
+		043B34574B4328EB89034A5F /* hail_dark.json in Resources */ = {isa = PBXBuildFile; fileRef = C13E2165A20D47244813E707 /* hail_dark.json */; };
+		45924E271EC9FCE1B2DD4C32 /* moon.json in Resources */ = {isa = PBXBuildFile; fileRef = DD146A77ED71FA28307F9432 /* moon.json */; };
+		72EA5ED229445E4127C019E3 /* moon_dark.json in Resources */ = {isa = PBXBuildFile; fileRef = C4DA75ACF0C3AA7FD026DE2D /* moon_dark.json */; };
+		1C2D6A2433CB211CDB567C8C /* overcast.json in Resources */ = {isa = PBXBuildFile; fileRef = 676E1FB125E7232A460671BD /* overcast.json */; };
+		305DA3D050E7A5963038EC81 /* overcast_dark.json in Resources */ = {isa = PBXBuildFile; fileRef = 47D0A131E637721E425069FD /* overcast_dark.json */; };
+		141D0470F6912984E35B8584 /* rain.json in Resources */ = {isa = PBXBuildFile; fileRef = 47E29410AA0A681805ED1261 /* rain.json */; };
+		3C00265722FDAB95211F082D /* rain_dark.json in Resources */ = {isa = PBXBuildFile; fileRef = 447190B90C8F80805D554DFF /* rain_dark.json */; };
+		1E63C97D6AC9CCA3E2411C9F /* snow.json in Resources */ = {isa = PBXBuildFile; fileRef = 8CE82B4A7209CE26878764E2 /* snow.json */; };
+		5E87BFAAB5E442DB360C6AA0 /* snow_dark.json in Resources */ = {isa = PBXBuildFile; fileRef = C822D5CAC19650A48811DEC9 /* snow_dark.json */; };
+		C011F207F4CE0022FC5D4808 /* sun.json in Resources */ = {isa = PBXBuildFile; fileRef = A2488697CC5B49DA0AA38EB0 /* sun.json */; };
+		674FA3556CBB336D7DBD5E29 /* sun_dark.json in Resources */ = {isa = PBXBuildFile; fileRef = 9A6D73ED0872B1E24610C381 /* sun_dark.json */; };
+		F290D7163941D825D80B719D /* thunder.json in Resources */ = {isa = PBXBuildFile; fileRef = 8597D7B82B85217295E1A6B6 /* thunder.json */; };
+		A8EF45815191B108240F2EF6 /* thunder_dark.json in Resources */ = {isa = PBXBuildFile; fileRef = 45881594E960A6B0FA3F7F01 /* thunder_dark.json */; };
+		743DDD59C1DDF3E1E5BC5B9F /* wind.json in Resources */ = {isa = PBXBuildFile; fileRef = D71FED10C8283242D7CCA681 /* wind.json */; };
+		E01FDB6571892FC10218BA49 /* wind_dark.json in Resources */ = {isa = PBXBuildFile; fileRef = 6B04F15CD20E4F1195CD5362 /* wind_dark.json */; };
 		79F247252364A4DF73EEBDA2 /* BearyEmotePlayer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 073AE0417A7BFF6FD0034CE0 /* BearyEmotePlayer.swift */; };
 /* End PBXBuildFile section */
 
@@ -249,6 +273,30 @@
 		66A30D087D0C4BE318AD4C46 /* wish_dark.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = LottieEmotes/wish_dark.json; sourceTree = "<group>"; };
 		D1FEDAEE06536713E0B7515C /* zap.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = LottieEmotes/zap.json; sourceTree = "<group>"; };
 		29302F6301B0882F2EA91CF7 /* zap_dark.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = LottieEmotes/zap_dark.json; sourceTree = "<group>"; };
+		274223731E414EBC184C3A98 /* cloud.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = LottieWeather/cloud.json; sourceTree = "<group>"; };
+		DFEC5479701750C541F6EFB1 /* cloud_dark.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = LottieWeather/cloud_dark.json; sourceTree = "<group>"; };
+		437B037295D240991CE4E4D0 /* cloudy.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = LottieWeather/cloudy.json; sourceTree = "<group>"; };
+		289200E4B9A54FBB97E73001 /* cloudy_dark.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = LottieWeather/cloudy_dark.json; sourceTree = "<group>"; };
+		E0A62C09FE5287950C702672 /* drizzle.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = LottieWeather/drizzle.json; sourceTree = "<group>"; };
+		0A748AD7FDAC870A714876CF /* drizzle_dark.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = LottieWeather/drizzle_dark.json; sourceTree = "<group>"; };
+		ADC89D7CD647617BD62474DE /* fog.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = LottieWeather/fog.json; sourceTree = "<group>"; };
+		964F3624C831A721605C64AF /* fog_dark.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = LottieWeather/fog_dark.json; sourceTree = "<group>"; };
+		EE902F53A8B18D00C0F0858B /* hail.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = LottieWeather/hail.json; sourceTree = "<group>"; };
+		C13E2165A20D47244813E707 /* hail_dark.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = LottieWeather/hail_dark.json; sourceTree = "<group>"; };
+		DD146A77ED71FA28307F9432 /* moon.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = LottieWeather/moon.json; sourceTree = "<group>"; };
+		C4DA75ACF0C3AA7FD026DE2D /* moon_dark.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = LottieWeather/moon_dark.json; sourceTree = "<group>"; };
+		676E1FB125E7232A460671BD /* overcast.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = LottieWeather/overcast.json; sourceTree = "<group>"; };
+		47D0A131E637721E425069FD /* overcast_dark.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = LottieWeather/overcast_dark.json; sourceTree = "<group>"; };
+		47E29410AA0A681805ED1261 /* rain.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = LottieWeather/rain.json; sourceTree = "<group>"; };
+		447190B90C8F80805D554DFF /* rain_dark.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = LottieWeather/rain_dark.json; sourceTree = "<group>"; };
+		8CE82B4A7209CE26878764E2 /* snow.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = LottieWeather/snow.json; sourceTree = "<group>"; };
+		C822D5CAC19650A48811DEC9 /* snow_dark.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = LottieWeather/snow_dark.json; sourceTree = "<group>"; };
+		A2488697CC5B49DA0AA38EB0 /* sun.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = LottieWeather/sun.json; sourceTree = "<group>"; };
+		9A6D73ED0872B1E24610C381 /* sun_dark.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = LottieWeather/sun_dark.json; sourceTree = "<group>"; };
+		8597D7B82B85217295E1A6B6 /* thunder.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = LottieWeather/thunder.json; sourceTree = "<group>"; };
+		45881594E960A6B0FA3F7F01 /* thunder_dark.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = LottieWeather/thunder_dark.json; sourceTree = "<group>"; };
+		D71FED10C8283242D7CCA681 /* wind.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = LottieWeather/wind.json; sourceTree = "<group>"; };
+		6B04F15CD20E4F1195CD5362 /* wind_dark.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = LottieWeather/wind_dark.json; sourceTree = "<group>"; };
 		5F509C857697461EBD1A11F9 /* BearyEntryImageViewerViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BearyEntryImageViewerViewController.swift; sourceTree = "<group>"; };
 		073AE0417A7BFF6FD0034CE0 /* BearyEmotePlayer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BearyEmotePlayer.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
@@ -410,6 +458,30 @@
 				66A30D087D0C4BE318AD4C46 /* wish_dark.json */,
 				D1FEDAEE06536713E0B7515C /* zap.json */,
 				29302F6301B0882F2EA91CF7 /* zap_dark.json */,
+				274223731E414EBC184C3A98 /* cloud.json */,
+				DFEC5479701750C541F6EFB1 /* cloud_dark.json */,
+				437B037295D240991CE4E4D0 /* cloudy.json */,
+				289200E4B9A54FBB97E73001 /* cloudy_dark.json */,
+				E0A62C09FE5287950C702672 /* drizzle.json */,
+				0A748AD7FDAC870A714876CF /* drizzle_dark.json */,
+				ADC89D7CD647617BD62474DE /* fog.json */,
+				964F3624C831A721605C64AF /* fog_dark.json */,
+				EE902F53A8B18D00C0F0858B /* hail.json */,
+				C13E2165A20D47244813E707 /* hail_dark.json */,
+				DD146A77ED71FA28307F9432 /* moon.json */,
+				C4DA75ACF0C3AA7FD026DE2D /* moon_dark.json */,
+				676E1FB125E7232A460671BD /* overcast.json */,
+				47D0A131E637721E425069FD /* overcast_dark.json */,
+				47E29410AA0A681805ED1261 /* rain.json */,
+				447190B90C8F80805D554DFF /* rain_dark.json */,
+				8CE82B4A7209CE26878764E2 /* snow.json */,
+				C822D5CAC19650A48811DEC9 /* snow_dark.json */,
+				A2488697CC5B49DA0AA38EB0 /* sun.json */,
+				9A6D73ED0872B1E24610C381 /* sun_dark.json */,
+				8597D7B82B85217295E1A6B6 /* thunder.json */,
+				45881594E960A6B0FA3F7F01 /* thunder_dark.json */,
+				D71FED10C8283242D7CCA681 /* wind.json */,
+				6B04F15CD20E4F1195CD5362 /* wind_dark.json */,
 			);
 			path = App;
 			sourceTree = "<group>";
@@ -588,6 +660,30 @@
 				7EC7184A822E299D4AE5A95D /* wish_dark.json in Resources */,
 				80708F8472B7D2F81E42B791 /* zap.json in Resources */,
 				D54F707D67D52AB5B0EE1DFA /* zap_dark.json in Resources */,
+				0CC2B09EA5C0247B1FD88D3E /* cloud.json in Resources */,
+				4036FBDF16015B74D58AAFD4 /* cloud_dark.json in Resources */,
+				5AE09E67012EFBA1E2780A7A /* cloudy.json in Resources */,
+				CFF90FF5771A9EB7E40F36D2 /* cloudy_dark.json in Resources */,
+				622286B5CA5B3DA651827236 /* drizzle.json in Resources */,
+				3A2DFA1EE5886FEFCE4A8B8B /* drizzle_dark.json in Resources */,
+				911A0C85097C3C6C04F55D05 /* fog.json in Resources */,
+				B863094593446EAB175AC590 /* fog_dark.json in Resources */,
+				D72071AB07BC2ABEDF1395BC /* hail.json in Resources */,
+				043B34574B4328EB89034A5F /* hail_dark.json in Resources */,
+				45924E271EC9FCE1B2DD4C32 /* moon.json in Resources */,
+				72EA5ED229445E4127C019E3 /* moon_dark.json in Resources */,
+				1C2D6A2433CB211CDB567C8C /* overcast.json in Resources */,
+				305DA3D050E7A5963038EC81 /* overcast_dark.json in Resources */,
+				141D0470F6912984E35B8584 /* rain.json in Resources */,
+				3C00265722FDAB95211F082D /* rain_dark.json in Resources */,
+				1E63C97D6AC9CCA3E2411C9F /* snow.json in Resources */,
+				5E87BFAAB5E442DB360C6AA0 /* snow_dark.json in Resources */,
+				C011F207F4CE0022FC5D4808 /* sun.json in Resources */,
+				674FA3556CBB336D7DBD5E29 /* sun_dark.json in Resources */,
+				F290D7163941D825D80B719D /* thunder.json in Resources */,
+				A8EF45815191B108240F2EF6 /* thunder_dark.json in Resources */,
+				743DDD59C1DDF3E1E5BC5B9F /* wind.json in Resources */,
+				E01FDB6571892FC10218BA49 /* wind_dark.json in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
