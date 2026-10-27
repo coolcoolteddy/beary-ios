@@ -693,18 +693,31 @@ final class BearyChromeViewController: UIViewController {
     /// 页级滚动视图（Profile 的 tableView、Search 的 scrollView）均为 view 的直接子视图，
     /// 嵌套的横向小滚动条在更深层，故 BFS 首个命中的即页级滚动视图。
     private func scrollPageToTop(_ vc: UIViewController?) {
-        guard let root = vc?.view else { return }
+        guard let scrollView = pageScrollView(vc) else { return }
+        scrollView.setContentOffset(CGPoint(x: 0, y: -scrollView.contentInset.top), animated: !UIAccessibility.isReduceMotionEnabled)
+    }
+
+    /// 再点当前 tab 口径：页级滚动视图 offset 是否已在顶部容差（1pt）内；
+    /// 找不到滚动视图时返回 false（走回顶分支，无害 no-op）。
+    private func isPageAtTop(_ vc: UIViewController?) -> Bool {
+        guard let scrollView = pageScrollView(vc) else { return false }
+        return scrollView.contentOffset.y <= -scrollView.contentInset.top + 1
+    }
+
+    /// F5 回顶共用：BFS 找页级滚动视图（原 scrollPageToTop 内联逻辑抽出，行为不变）。
+    private func pageScrollView(_ vc: UIViewController?) -> UIScrollView? {
+        guard let root = vc?.view else { return nil }
         var queue: [UIView] = [root]
         var index = 0
         while index < queue.count {
             let candidate = queue[index]
             index += 1
             if let scrollView = candidate as? UIScrollView, candidate !== root {
-                scrollView.setContentOffset(CGPoint(x: 0, y: -scrollView.contentInset.top), animated: !UIAccessibility.isReduceMotionEnabled)
-                return
+                return scrollView
             }
             queue.append(contentsOf: candidate.subviews)
         }
+        return nil
     }
 
     /// F8：容器启动且已登录时主动拉一次未读数（轻量接口 limit:1），
@@ -1385,21 +1398,24 @@ final class BearyChromeViewController: UIViewController {
             return
         }
         if page == currentPage {
+            // 再点当前 tab（Li 新口径，覆盖旧“回顶再刷新”无条件一起做）：
+            // 不在顶部只回顶，已在顶部（offset 在顶部容差内）才触发该页已有刷新入口。
+            // 切别的 tab 仍走下方正常切换，不触发任何刷新、不重拉缓存。
             if page == .home {
                 guard let feed = feedVC else { return }
-                feed.scrollToTop()
-                feed.refreshFeed()
+                if feed.isAtTop { feed.refreshFeed() } else { feed.scrollToTop() }
             } else if page == .notif {
                 notifVC?.scrollToTop()
                 notifVC?.refresh()
             } else if page == .timeline {
-                // 账号隔离 9 号：重拍时间线 tab 保留选中日与旧内容（与下拉刷新同口径），
-                // 不再先清空闪白；登录翻转等其他调用点仍走默认清表路径。
-                timelineVC?.reloadTimeline(keepSelectedDay: true)
+                if let timeline = timelineVC {
+                    // 账号隔离 9 号：刷新分支保留选中日与旧内容（与下拉刷新同口径），
+                    // 不再先清空闪白；登录翻转等其他调用点仍走默认清表路径。
+                    if timeline.isAtTop { timeline.reloadTimeline(keepSelectedDay: true) } else { timeline.scrollToTop() }
+                }
             } else if page == .me {
-                // F5：重拍“我”页回顶 + reloadProfile（回顶走 scrollPageToTop，见该函数注释）。
-                scrollPageToTop(profileVC)
-                profileVC?.reloadProfile()
+                // F5：回顶走 scrollPageToTop，见该函数注释。
+                if isPageAtTop(profileVC) { profileVC?.reloadProfile() } else { scrollPageToTop(profileVC) }
             } else if page == .search {
                 // F5：重拍搜索页回顶。
                 scrollPageToTop(searchVC)
