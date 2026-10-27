@@ -182,7 +182,7 @@ final class BearyNotificationsViewController: UIViewController {
         let label = UILabel()
         label.translatesAutoresizingMaskIntoConstraints = false
         label.text = "消息"
-        label.font = UIFont.systemFont(ofSize: 19, weight: .heavy)
+        label.font = UIFont.boldSystemFont(ofSize: 19)
         label.textColor = BearyColors.ink
         return label
     }()
