@@ -2961,7 +2961,7 @@ private final class BearyBadgeLabel: UILabel {
 // 临时诊断（81 包，定根因后删除）：定位“点加号后整个 App 全卡住”的主线程卡死位置。
 // 只记日志不改业务逻辑；用户无 Mac 看不到 NSLog 控制台，改走文件埋点。
 // 文件 Documents/beary-diag.log，每行 "HH:mm:ss.SSS stage"，只保留最后 200 行。
-// 重启后若上次卡在打开流程（最后一行落在非终态集合），弹窗报出最后 5 行。
+// 重启后若上次卡在打开流程（最后一行落在非终态集合），弹窗报出最后 20 行。
 enum DiagFile {
     static let fileName = "beary-diag.log"
     static let maxLines = 200
@@ -2985,6 +2985,8 @@ enum DiagFile {
         "animator-dismiss-closure-enter", "animator-dismiss-closure-exit",
         "sheet-layout-exit", "composer-layout-exit", "composer-prefSize-exit",
         "watchdog-main-silent",
+        // 87 包追加：转场里跳过同步布局触发的标记（若死在转场里，它就是最后的非终态）。
+        "composer-prefSize-skipTrans",
         "sheet-layout", "composer-layout", "composer-prefSize",
     ]
 
@@ -3108,7 +3110,7 @@ enum DiagFile {
     }
 
     /// 上次运行是否卡在打开流程：本次 launch 之前最后一行的 stage 落在非终态集合即算卡住，
-    /// 返回上次运行的最后 5 行（不含本次 launch 行）。
+    /// 返回上次运行的最后 20 行（不含本次 launch 行）。
     static func stuckTail() -> [String]? {
         let ls = lines()
         guard ls.count >= 2, ls.last?.hasSuffix(" launch") == true else { return nil }
@@ -3118,7 +3120,7 @@ enum DiagFile {
         let parts = prev.components(separatedBy: " ")
         let stage = parts.count >= 2 ? parts[1] : (parts.last ?? "")
         guard stuckStages.contains(stage) else { return nil }
-        return Array(ls.dropLast().suffix(5))
+        return Array(ls.dropLast().suffix(20))
     }
 
     /// 主界面已出现后的下一个 runloop 再弹，避开引导页与登录页（有 modal 在前时晚 1.5 秒再试一次）。
