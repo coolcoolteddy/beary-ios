@@ -349,6 +349,8 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
 
     override func viewDidLayoutSubviews() {
         super.viewDidLayoutSubviews()
+        // 临时诊断（82 包追加，定根因后删除）：入口每调一次记一次，不节流。
+        DiagFile.mark("composer-layout")
         let w = view.bounds.width
         guard w > 0, w != lastLayoutWidth else { return }
         lastLayoutWidth = w
@@ -506,6 +508,8 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         let targetSize = CGSize(width: fittingWidth, height: UIView.layoutFittingCompressedSize.height)
         let fitted = contentStack.systemLayoutSizeFitting(targetSize, withHorizontalFittingPriority: .required, verticalFittingPriority: .fittingSizeLevel)
         let total = fitted.height + 44 + toolbarHeight
+        // 临时诊断（82 包追加，定根因后删除）：total 每轮都记，看是否漂移。
+        DiagFile.mark("composer-prefSize total=\(String(format: "%.1f", total))")
         guard abs(preferredContentSize.height - total) > 0.5 else { return }
         preferredContentSize = CGSize(width: fittingWidth, height: total)
         view.superview?.setNeedsLayout()
