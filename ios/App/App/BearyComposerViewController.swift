@@ -50,8 +50,10 @@ private final class BearyBodyTextView: UITextView {
 
     override func caretRect(for position: UITextPosition) -> CGRect {
         var rect = super.caretRect(for: position)
-        guard rect.height > 0, let caretFont = caretFont(), caretFont.lineHeight > 0,
-              abs(rect.height - caretFont.lineHeight) > 0.5 else { return rect }
+        // 打字光标下移修：不再用系统 caret 高度与行高之差守门是否锚定——空行/拼音
+        // 组合中系统 caret 约 19pt 时旧守卫不通过、落字后约 32pt 时才通过，落字瞬间
+        // 高位→低位切换即光标下掉一截；只要倍数 > 1 就无条件按基线锚定，三态基线一致。
+        guard rect.height > 0, let caretFont = caretFont(), caretFont.lineHeight > 0 else { return rect }
         if let multiple = lineHeightMultiple(at: position), multiple > 1.0 {
             let height = caretFont.ascender - caretFont.descender
             guard height > 0 else { return rect }
