@@ -242,7 +242,7 @@ class BearyEditProfileViewController: UIViewController {
     // C4：邮箱行与账户与安全行已删除，onOpenAccount 回调、emailLabel、
     // accountRowButton、openAccountPage 一并移除（全仓 grep 确认无调用方）。
 
-    /// /me 补到的用户 id（主页链接用 /beary/u/<id> 口径，网页 edCopyLink 同款）。
+    /// /me 补到的用户 id（主页链接优先 @handle、无 handle 才回退 /beary/u/<id>）。
     private var fetchedUserId: Int?
 
     private let linkLabel: UILabel = {
@@ -325,13 +325,13 @@ class BearyEditProfileViewController: UIViewController {
         }
     }
 
-    /// F12：主页链接文案（网页 edFillForm/edCopyLink 口径：有 id 用 /u/id，
-    /// 无 id 回退 @handle，再无回退 @用户名；复制只认 /u/id，无 id 时先登录）。
+    /// F12：主页链接文案（@handle 优先口径：有 handle 用 @handle，无 handle
+    /// 才回退 /u/id，再无回退 @用户名；与个人主页分享、设置页隐私文案一致）。
     private func updateLinkRow() {
-        if let id = fetchedUserId {
-            linkLabel.text = "主页链接 teddyhn.com/beary/u/\(id)"
-        } else if !effectiveHandle.isEmpty {
+        if !effectiveHandle.isEmpty {
             linkLabel.text = "主页链接 teddyhn.com/beary/@\(effectiveHandle)"
+        } else if let id = fetchedUserId {
+            linkLabel.text = "主页链接 teddyhn.com/beary/u/\(id)"
         } else {
             linkLabel.text = "主页链接 teddyhn.com/beary/@用户名"
         }
@@ -597,13 +597,17 @@ class BearyEditProfileViewController: UIViewController {
         presentImagePicker()
     }
 
-    /// F12：主页链接复制（网页 edCopyLink 口径：只认 /u/id，无 id 时先登录）。
+    /// F12：主页链接复制（@handle 优先口径：有 handle 复制 @handle 链，无 handle
+    /// 才回退 /u/id，两者皆无时先登录；与个人主页分享口径一致）。
     @objc private func copyLinkButtonTapped() {
-        guard let id = fetchedUserId else {
+        if !effectiveHandle.isEmpty {
+            UIPasteboard.general.string = "https://teddyhn.com/beary/@\(effectiveHandle)"
+        } else if let id = fetchedUserId {
+            UIPasteboard.general.string = "https://teddyhn.com/beary/u/\(id)"
+        } else {
             presentSimpleAlert(message: "先登录")
             return
         }
-        UIPasteboard.general.string = "https://teddyhn.com/beary/u/\(id)"
         copyLinkButton.setTitle("已复制", for: .normal)
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in
             self?.copyLinkButton.setTitle("复制", for: .normal)

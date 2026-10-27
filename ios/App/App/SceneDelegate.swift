@@ -186,6 +186,11 @@ final class BearyChromeViewController: UIViewController {
     /// 只排一个——排队时已有待触发的直接跳过，触发时先清标记再走原有守卫；显式
     /// 登录路径（顶栏 pill、onRequireLogin、编辑器未登录）不受影响。
     private var autoLoginPromptPending = false
+    /// P1-1：启动期首个 /me 是否已回包——成功与 401 经 onUserChanged、网络失败
+    /// 经 onNetworkUnstable 标记；任一终态都算回包，之后 FAB 直接按登录态判。
+    private var startupMeResolved = false
+    /// P1-1：FAB 已在等 /me 回包时不再重复排队等（等的过程中再点 FAB 直接返回）。
+    private var composerMeWaitPending = false
     /// 登录循环修（401 无限重载）：onUserChanged 上次见到的用户 id；只有 id 真变了
     /// 才走时间线/消息/首页三处重载，nil→nil（已是游客态、401 重复触发）直接跳过。
     private var lastUserChangedUserId: Int?
@@ -203,8 +208,14 @@ final class BearyChromeViewController: UIViewController {
         case .search: self.showPage(.search)
         case .editor: self.presentComposer()
         case .entry(let entryId): self.gotoEntry(entryId: entryId)
-        case .userByHandle(let handle): self.pendingUserTarget = .handle(handle); self.showPage(.user)
-        case .userById(let userId): self.pendingUserTarget = .id(userId); self.showPage(.user)
+        // P1-13：目标是本人时走 .me（网页“自己 @ 链直达换址到 /beary/profile”同口径），
+        // 不进 .user 页；同时清掉旧 pendingUserTarget，防 stale 目标日后复用。
+        case .userByHandle(let handle):
+            if self.isSelfUser(userId: nil, handle: handle) { self.pendingUserTarget = nil; self.showPage(.me) }
+            else { self.pendingUserTarget = .handle(handle); self.showPage(.user) }
+        case .userById(let userId):
+            if self.isSelfUser(userId: userId, handle: nil) { self.pendingUserTarget = nil; self.showPage(.me) }
+            else { self.pendingUserTarget = .id(userId); self.showPage(.user) }
         case .trash: self.presentTrash()
         }
     })
@@ -784,6 +795,12 @@ final class BearyChromeViewController: UIViewController {
         SessionManager.shared.onUserChanged = { [weak self] user in
             self?.applyLoginState(user)
             guard let self = self else { return }
+            // P1-1：首个 /me 回包（成功或 401 映射的 nil）即标记已回包；FAB 若在
+            // 等回包，待本次回调走完再恢复（defer 到下一 runloop，防重入）。
+            if !self.startupMeResolved { self.startupMeResolved = true }
+            if self.composerMeWaitPending {
+                DispatchQueue.main.async { [weak self] in self?.resumePendingComposerAfterMe() }
+            }
             // 登录循环修（401 无限重载）：先记本次用户 id 是否真变了；nil→nil 时
             // 下面三处重载全部跳过，断掉 401→重载→再 401 的循环。
             let userChanged = self.lastUserChangedUserId != user?.id
@@ -862,6 +879,12 @@ final class BearyChromeViewController: UIViewController {
         // G26：refreshMe 网络失败时只 toast，不弹登录页、不按游客渲染
         //（SessionManager 侧网络失败不发 onUserChanged，currentUser 保持旧值）。
         SessionManager.shared.onNetworkUnstable = { [weak self] in
+            // P1-1：网络失败同样是 /me 终态（G26：未证实游客），标记已回包；
+            // FAB 若在等回包，恢复时见 authUnknown 不弹登录页（只留本 toast）。
+            self?.startupMeResolved = true
+            if self?.composerMeWaitPending == true {
+                DispatchQueue.main.async { [weak self] in self?.resumePendingComposerAfterMe() }
+            }
             self?.showToast(message: "网络不稳定，请稍后再试")
         }
         SessionManager.shared.refreshMe()
@@ -1484,6 +1507,12 @@ final class BearyChromeViewController: UIViewController {
         // 共用 BearyProfileViewController 实现，页侧已有 resumeVisibleEmotes，这里只补容器调用。
         if page == .home {
             feedVC?.resumeVisibleEmotes()
+            // P1-5（首页组收尾）：时间线分支同款一行，正式接 pageDidEnter；
+            // 首页组在 resumeVisibleEmotes 内顺带的 handlePageEnter 兜底保留
+            // （在 BearyFeedViewController 内，不属本文件集，不摘；双跑由
+            // revalidate 门控去重、无害）。注意：本行依赖首页组在 Feed 侧
+            // 落地 pageDidEnter，合入前须以 rebase 后 main 为准复核存在性。
+            feedVC?.pageDidEnter()
         } else if page == .timeline {
             timelineVC?.resumeVisibleEmotes()
         } else if page == .me {
@@ -1772,6 +1801,9 @@ final class BearyChromeViewController: UIViewController {
             self?.gotoEntry(entry: entry)
         }
         vc.onRequireLogin = { [weak self] in self?.presentLogin() }
+        // P1-10：容器 .user 页同样接线（.me 页与 modal 页已有），否则空态 CTA
+        // 与本人按钮（写一篇/编辑资料/齿轮等）点按无反应。
+        wireProfileVC(vc, modal: false)
         addPageVC(vc, page: .user)
         userVC = vc
         userTargetKey = key
@@ -2021,8 +2053,8 @@ final class BearyChromeViewController: UIViewController {
     /// 引导页弹出（v4 原生版，替代旧 6 页教程）：引导 UI 在
     /// BearyOnboardingViewController.swift 内定义；容器只负责全屏模态弹出，
     /// 关闭／完成时由引导页自己置 beary_tutorial_seen_v1，容器不写该标记。
-    /// 首启版带后台预加载三步（时间线首屏 / 广场首屏 / 表情预热），
-    /// 步骤触发完成即计入准备屏进度；重播版（我的页三个点 → 使用指南）无预加载。
+    /// 首启版带后台预加载三步（时间线首屏 / 广场首屏 / 表情预热），只暖数据、
+    /// 不再有准备屏进度、不自动推进（P1-2）；重播版（我的页三个点 → 使用指南）无预加载。
     private func presentOnboarding(mode: BearyOnboardingViewController.Mode) {
         let vc = BearyOnboardingViewController(mode: mode)
         vc.modalPresentationStyle = .fullScreen
@@ -2120,14 +2152,39 @@ final class BearyChromeViewController: UIViewController {
     }
 
     /// 他人主页：全屏 modal + 关闭钮；点日记先关主页再开详情（关闭顺序与详情一致）。
+    /// P1-13：目标是本人时不建 modal，改走 .me（网页“自己 @ 链直达换址到
+    /// /beary/profile”同口径）；未登录时 currentUser 为 nil，自查恒为假，不影响游客路径。
     private func presentUserProfile(userId: Int) {
+        if isSelfUser(userId: userId, handle: nil) { routeToOwnProfile(); return }
         let vc = BearyProfileViewController(userIdValue: userId, viewerUserIdValue: SessionManager.shared.currentUser?.id)
         presentUserProfileVC(vc)
     }
 
     private func presentUserProfile(handle: String) {
+        if isSelfUser(userId: nil, handle: handle) { routeToOwnProfile(); return }
         let vc = BearyProfileViewController(handleValue: handle, viewerUserIdValue: SessionManager.shared.currentUser?.id)
         presentUserProfileVC(vc)
+    }
+
+    /// P1-13 自查：id 相等即本人；handle 比较去前导 @ 后不区分大小写
+    /// （服务端 handle 格式为小写，防御性容忍深链/搜索侧的大小写差异）。
+    private func isSelfUser(userId: Int?, handle: String?) -> Bool {
+        let me = SessionManager.shared.currentUser
+        if let userId = userId, let myId = me?.id, userId == myId { return true }
+        if let handle = handle, !handle.isEmpty, let myHandle = me?.handle, !myHandle.isEmpty {
+            let norm = handle.hasPrefix("@") ? String(handle.dropFirst()) : handle
+            return norm.lowercased() == myHandle.lowercased()
+        }
+        return false
+    }
+
+    /// P1-13：本人路由落点——已有 modal 在前时先关再切 .me，否则直接切 .me。
+    private func routeToOwnProfile() {
+        if presentedViewController != nil {
+            dismiss(animated: true) { [weak self] in self?.showPage(.me) }
+        } else {
+            showPage(.me)
+        }
     }
 
     private func presentUserProfileVC(_ vc: BearyProfileViewController) {
@@ -2201,8 +2258,14 @@ final class BearyChromeViewController: UIViewController {
                         return
                     }
                     self.gotoEntry(entry: fetched)
-                case .failure:
-                    self.showToast(message: "这篇日记不存在或已被删除")
+                case .failure(let apiError):
+                    // 消息页组：取日记失败按 APIError 分流——网络失败报网络文案
+                    // （与 onNetworkUnstable 同款），其余失败才报不存在或已被删除。
+                    if case .network = apiError {
+                        self.showToast(message: "网络不稳定，请稍后再试")
+                    } else {
+                        self.showToast(message: "这篇日记不存在或已被删除")
+                    }
                 }
             }
         }
@@ -2230,8 +2293,20 @@ final class BearyChromeViewController: UIViewController {
         NSLog("[Diag] presentComposer-enter")
         // 临时诊断（81 包，定根因后删除）：文件级埋点，与 NSLog 点一一对应（用户无 Mac 看不到控制台，改走文件）。
         DiagFile.mark("presentComposer-enter")
-        // 未登录不再走网页登录，弹原生登录页；原生编辑器只接已登录态
-        guard SessionManager.shared.isLoggedIn else {
+        // 未登录不再走网页登录，弹原生登录页；原生编辑器只接已登录态。
+        // P1-1：启动期首个 /me 未回包且本地有有效会话 cookie 时，currentUser
+        // 仍为 nil 不能断定是游客——等一次 refreshMe 回包再判，避免把已登录
+        // 用户误弹登录页；无 cookie 时按游客直走登录页，不多等。
+        if !SessionManager.shared.isLoggedIn {
+            // 已在等回包时再点 FAB：直接返回，不叠等、更不绕过等待误弹登录页。
+            if composerMeWaitPending { return }
+            if !startupMeResolved && SessionManager.shared.hasCachedSession {
+                composerMeWaitPending = true
+                SessionManager.shared.refreshMe { [weak self] _ in
+                    DispatchQueue.main.async { [weak self] in self?.resumePendingComposerAfterMe() }
+                }
+                return
+            }
             presentLogin()
             return
         }
@@ -2259,6 +2334,24 @@ final class BearyChromeViewController: UIViewController {
         present(c, animated: true)
         // 临时诊断（81 包，定根因后删除）：present 调用已返回（动画是异步的，返回只证明调用本身没堵住）。
         DiagFile.mark("present-returned")
+    }
+
+    /// P1-1：FAB 等 /me 回包后的再判（复用我页延迟三重复核口径的语义，不用
+    /// 固定 1.2s 定时——回包本身即权威判定，定时反而可能早于/晚于回包）：
+    /// ① 已登录 → 开编辑器；② authUnknown（网络失败未证实游客）→ 不弹登录页，
+    /// 只留 onNetworkUnstable 的 toast；③ 仍未登录且无编辑器在栈、无 modal 在前
+    /// → 弹登录页；已有 modal 在前则放弃本次，不叠弹。
+    private func resumePendingComposerAfterMe() {
+        guard composerMeWaitPending else { return }
+        composerMeWaitPending = false
+        startupMeResolved = true
+        if SessionManager.shared.isLoggedIn {
+            presentComposer()
+        } else if SessionManager.shared.authUnknown {
+            // G26：网络失败不按游客处理，onNetworkUnstable 已 toast，此处不再弹登录页。
+        } else if !isComposerPresented() && presentedViewController == nil {
+            presentLogin()
+        }
     }
 
     /// 92 包：新建与编辑共用整页——iPhone 与 iPad 一律 .fullScreen + 系统默认上滑过渡，

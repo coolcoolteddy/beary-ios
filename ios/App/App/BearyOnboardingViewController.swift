@@ -1,9 +1,9 @@
 import UIKit
 
 // ===== 首次启动欢迎引导 v4（原生版，引导 + 现行使用指南合并）=====
-// 13 屏首启版（开场钩子 → 欢迎 → 问答 → 试写 → 心情天气 → 送达演示 →
-// 公开演示 → 互动演示 → 消息与主页 → 小工具 → CTA → 预加载准备屏 →
-// 真实主页）；使用指南重播版去掉准备屏、CTA 改「关闭 / 开始写第一篇」。
+// 11 屏版（开场钩子 → 欢迎 → 问答 → 试写 → 心情天气 → 送达演示 →
+// 公开演示 → 互动演示 → 消息与主页 → 小工具 → CTA）；首启与重播同为
+// 11 屏，准备屏已删（P1-2）；CTA 改「关闭 / 开始写第一篇」。
 // 绝不用 WKWebView、不加载任何网页；文案逐字对齐现行指南源码
 // （旧 BearyTutorialViewController 已删，seen 键现归本类 tutorialSeenKey）。
 // 尺寸铁律（v3 原型前车之鉴）：熊 200×200、熊掌 44×44 各自显式限定，
@@ -394,8 +394,8 @@ final class BearyOnboardingViewController: UIViewController {
     var preloadSteps: [PreloadStep] = []
 
     private let flowCount = 11
-    private var prepIndex: Int { flowCount }
-    private var totalScreens: Int { mode == .firstLaunch ? flowCount + 1 : flowCount }
+    // P1-2：准备屏已删，首启不再 +1，首启与重播同为 11 屏。
+    private var totalScreens: Int { flowCount }
     private var ctaIndex: Int { flowCount - 1 }
 
     private var currentIndex = 0
@@ -417,12 +417,9 @@ final class BearyOnboardingViewController: UIViewController {
     private let primaryButton = BearyPressButton(type: .system)
     private let secondaryButton = BearyPressButton(type: .system)
 
-    // 预加载状态（首启版）：步骤触发完成即计 1，准备屏真实反映该计数。
-    private var preloadDone = 0
+    // 预加载状态（首启版）：后台暖数据（时间线/广场首屏/表情预热），不再有
+    // 准备屏进度 UI；步骤完成无任何界面副作用，纯暖数据、不自动推进。
     private var preloadStarted = false
-    private var prepAdvanced = false
-    private var prepPctLabel: UILabel?
-    private var prepRows: [(row: UIView, check: UIView, label: UILabel)] = []
 
     // 演示屏状态
     private var bearView: BearyBearView?
@@ -434,9 +431,6 @@ final class BearyOnboardingViewController: UIViewController {
     private var quizToasted = false
     private var trialTextView: UITextView?
     private var trialCountLabel: UILabel?
-    private var trialStatusLabel: UILabel?
-    private var trialDraftId: String?
-    private var trialSaveWork: DispatchWorkItem?
     private var moodSelected: String?
     private var moodButtons: [String: UIButton] = [:]
     private var moodFaceViews: [String: UIView] = [:]
@@ -555,6 +549,7 @@ final class BearyOnboardingViewController: UIViewController {
 
         closeButton.setImage(BearyIconImages.image(named: "icon_close", pointSize: 24), for: .normal)
         closeButton.tintColor = BearyColors.ink
+        closeButton.accessibilityLabel = "关闭"
         closeButton.addTarget(self, action: #selector(closeTapped), for: .touchUpInside)
         closeButton.translatesAutoresizingMaskIntoConstraints = false
         topBar.addSubview(closeButton)
@@ -619,8 +614,9 @@ final class BearyOnboardingViewController: UIViewController {
             contentContainer.bottomAnchor.constraint(equalTo: contentWrap.bottomAnchor),
             contentContainer.leadingAnchor.constraint(equalTo: contentWrap.leadingAnchor),
             contentContainer.trailingAnchor.constraint(equalTo: contentWrap.trailingAnchor),
-            bottomBar.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 32),
-            bottomBar.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -32),
+            // P1-3：底栏锚 contentWrap（已 ≤600 居中），iPad 端不再直接锚 view 左右各 32。
+            bottomBar.leadingAnchor.constraint(equalTo: contentWrap.leadingAnchor),
+            bottomBar.trailingAnchor.constraint(equalTo: contentWrap.trailingAnchor),
             bottomBar.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor, constant: -16),
         ])
     }
@@ -694,11 +690,8 @@ final class BearyOnboardingViewController: UIViewController {
         for (i, seg) in segmentViews.enumerated() {
             seg.backgroundColor = i < filled ? BearyColors.orange : BearyColors.line
         }
-        if currentIndex == prepIndex {
-            primaryButton.isHidden = true
-            secondaryButton.isHidden = true
-            bottomBar.isHidden = true
-        } else {
+        // P1-2：准备屏已删，底栏恒显示。
+        do {
             bottomBar.isHidden = false
             primaryButton.isHidden = false
             if currentIndex == ctaIndex {
@@ -716,7 +709,6 @@ final class BearyOnboardingViewController: UIViewController {
         // 临时诊断（81 包，定根因后删除）：换屏走完的终态，落在它上面不算卡住。
         DiagFile.mark("ob-appeared")
         if index == 5 { startDeliveryDemo() }
-        if index == prepIndex { refreshPrepScreen() }
     }
 
     override func viewDidAppear(_ animated: Bool) {
@@ -767,48 +759,17 @@ final class BearyOnboardingViewController: UIViewController {
         }
     }
 
-    // MARK: 预加载（首启版）：引导期间后台跑，不阻塞流程
+    // MARK: 预加载（首启版）：引导期间后台跑，不阻塞流程、不自动推进
+    // P1-2：准备屏已删，步骤完成不再刷新准备屏、不自动进主页；只暖数据，
+    // 首启 CTA（开始写第一篇 / 进入主页）仍由用户点按触发，markSeen 行为不变。
 
     private func startPreload() {
         guard !preloadStarted else { return }
         preloadStarted = true
         if preloadSteps.isEmpty { return }
-        for (i, step) in preloadSteps.enumerated() {
-            step.run { [weak self] in
-                DispatchQueue.main.async {
-                    guard let self = self else { return }
-                    if self.preloadDone <= i { self.preloadDone = i + 1 }
-                    self.refreshPrepScreen()
-                }
-            }
+        for step in preloadSteps {
+            step.run { }
         }
-    }
-
-    private func refreshPrepScreen() {
-        guard currentIndex == prepIndex else { return }
-        let total = max(preloadSteps.count, 1)
-        let done = min(preloadDone, total)
-        let pct = preloadSteps.isEmpty ? 100 : done * 100 / total
-        prepPctLabel?.text = "\(pct)"
-        for (i, row) in prepRows.enumerated() {
-            let finished = i < done || preloadSteps.isEmpty
-            row.check.backgroundColor = finished ? BearyColors.orange : BearyColors.line
-            row.label.textColor = finished ? BearyColors.ink : BearyColors.gray
-        }
-        if (done >= total || preloadSteps.isEmpty) && !prepAdvanced {
-            prepAdvanced = true
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.7) { [weak self] in
-                guard let self = self, self.currentIndex == self.prepIndex else { return }
-                self.markSeen()
-                self.onEnterHome?()
-            }
-        }
-    }
-
-    @objc private func prepTapped() {
-        guard currentIndex == prepIndex else { return }
-        markSeen()
-        onEnterHome?()
     }
 
     // MARK: 屏构建通用件
@@ -844,7 +805,6 @@ final class BearyOnboardingViewController: UIViewController {
         case 8: buildMessagesScreen(stack)
         case 9: buildToolsScreen(stack)
         case 10: buildCTAScreen(stack)
-        case 11: buildPrepScreen(stack)
         default: break
         }
         let built = (scroll, stack)
@@ -1161,47 +1121,8 @@ extension BearyOnboardingViewController {
         stack.addArrangedSubview(countRow)
 
         stack.addArrangedSubview(ruleLabel("15 分钟内可修改，超时就锁死"))
-        stack.addArrangedSubview(bodyLabel("写到一半也没关系：草稿会自动保存到这台设备，在编辑器工具栏点「草稿」就能接着写。"))
-        let status = ruleLabel("")
-        trialStatusLabel = status
-        stack.addArrangedSubview(status)
-    }
-
-    private func saveTrialDraft() {
-        guard let textView = trialTextView else { return }
-        let text = textView.text ?? ""
-        if text == "写下今天…" || text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { return }
-        if trialDraftId == nil { trialDraftId = BearyDraftStore.newDraftId() }
-        let draft = BearyDraft(
-            draftId: trialDraftId!,
-            content: text,
-            mood: moodSelected,
-            images: [],
-            clientReq: BearyDraftStore.newClientReq(),
-            updatedAt: Date().timeIntervalSince1970,
-            weather: weatherSelected,
-            recipientId: nil,
-            recipientName: nil,
-            recipientAvatar: nil,
-            notifyRecipient: true,
-            quoteId: nil,
-            quoteAuthorName: nil,
-            quoteAuthorAvatar: nil,
-            quoteCreatedAt: nil,
-            quoteContent: nil,
-            quoteImages: [],
-            quoteIsPublic: nil,
-            quoteDeleted: false
-        )
-        if BearyDraftStore.currentAccountId != nil {
-            BearyDraftStore.saveAsync(draft) { [weak self] in
-                self?.trialStatusLabel?.text = "草稿已保存到本设备"
-            }
-        } else {
-            // 未登录：写旧全局文件，登录时由账号隔离迁移归入该账号草稿箱。
-            BearyDraftStore.saveTrialDraftToLegacyGlobal(draft)
-            trialStatusLabel?.text = "草稿已保存到本设备"
-        }
+        // 试写仅本页体验：不写真实草稿箱、不进编辑器草稿列表（P1-2 试写断链）。
+        stack.addArrangedSubview(bodyLabel("试写只在本页体验，不会进入草稿箱；正式写一篇请走 CTA「开始写第一篇」。"))
     }
 
     private func buildMoodScreen(_ stack: UIStackView) {
@@ -2023,71 +1944,7 @@ extension BearyOnboardingViewController {
             stack.addArrangedSubview(logoView)
         }
         stack.addArrangedSubview(titleLabel("写下来，\n就不会弄丢"))
-        stack.addArrangedSubview(bodyLabel("15 分钟内可修改，超时就锁死。\n落笔之前，先写给自己。"))
-    }
-
-    private func buildPrepScreen(_ stack: UIStackView) {
-        let pctRow = UIStackView()
-        pctRow.axis = .horizontal
-        pctRow.spacing = 0
-        pctRow.alignment = .bottom
-        let pctNumber = UILabel()
-        pctNumber.text = "0"
-        pctNumber.font = UIFont.boldSystemFont(ofSize: 48)
-        pctNumber.textColor = BearyColors.ink
-        let pctMark = UILabel()
-        pctMark.text = "%"
-        pctMark.font = UIFont.boldSystemFont(ofSize: 24)
-        pctMark.textColor = BearyColors.ink
-        pctRow.addArrangedSubview(pctNumber)
-        pctRow.addArrangedSubview(pctMark)
-        prepPctLabel = pctNumber
-        stack.addArrangedSubview(pctRow)
-        stack.addArrangedSubview(bodyLabel("正在为你准备主页…"))
-        let titles = preloadSteps.isEmpty ? ["时间线首屏", "广场首屏", "表情与图标资源"] : preloadSteps.map { $0.title }
-        prepRows = []
-        for title in titles {
-            let row = UIStackView()
-            row.axis = .horizontal
-            row.spacing = 10
-            row.alignment = .center
-            let check = UIView()
-            check.backgroundColor = BearyColors.line
-            check.layer.cornerRadius = 12
-            check.layer.masksToBounds = true
-            check.translatesAutoresizingMaskIntoConstraints = false
-            check.widthAnchor.constraint(equalToConstant: 24).isActive = true
-            check.heightAnchor.constraint(equalToConstant: 24).isActive = true
-            let checkIcon = UIImageView(image: BearyIconImages.image(named: "icon_check", pointSize: 14))
-            checkIcon.tintColor = .white
-            checkIcon.translatesAutoresizingMaskIntoConstraints = false
-            check.addSubview(checkIcon)
-            NSLayoutConstraint.activate([
-                checkIcon.centerXAnchor.constraint(equalTo: check.centerXAnchor),
-                checkIcon.centerYAnchor.constraint(equalTo: check.centerYAnchor),
-                checkIcon.widthAnchor.constraint(equalToConstant: 14),
-                checkIcon.heightAnchor.constraint(equalToConstant: 14),
-            ])
-            let label = UILabel()
-            label.text = title
-            label.font = UIFont.systemFont(ofSize: 15)
-            label.textColor = BearyColors.gray
-            row.addArrangedSubview(check)
-            row.addArrangedSubview(label)
-            prepRows.append((row, check, label))
-            stack.addArrangedSubview(row)
-        }
-        let skip = BearyPressButton(type: .system)
-        skip.setTitle("直接进入主页", for: .normal)
-        skip.titleLabel?.font = UIFont.systemFont(ofSize: 15, weight: .medium)
-        skip.setTitleColor(BearyColors.ink, for: .normal)
-        skip.backgroundColor = BearyColors.faint
-        skip.layer.cornerRadius = 22
-        skip.addTarget(self, action: #selector(prepTapped), for: .touchUpInside)
-        skip.translatesAutoresizingMaskIntoConstraints = false
-        skip.heightAnchor.constraint(equalToConstant: 44).isActive = true
-        stack.addArrangedSubview(skip)
-        stack.addArrangedSubview(ruleLabel("点一下屏幕可跳过"))
+        stack.addArrangedSubview(bodyLabel("超时不可再改，私密期内仍可删除。\n落笔之前，先写给自己。"))
     }
 }
 
@@ -2110,11 +1967,8 @@ extension BearyOnboardingViewController: UITextViewDelegate {
     }
 
     func textViewDidChange(_ textView: UITextView) {
+        // 试写只计字数、不再自动保存进草稿箱。
         let count = textView.text.count
         trialCountLabel?.text = "\(count)"
-        trialSaveWork?.cancel()
-        let work = DispatchWorkItem { [weak self] in self?.saveTrialDraft() }
-        trialSaveWork = work
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.8, execute: work)
     }
 }
