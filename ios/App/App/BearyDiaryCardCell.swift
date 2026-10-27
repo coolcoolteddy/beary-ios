@@ -274,36 +274,6 @@ final class BearyDiaryCardDashedAddButton: BearyHit44Button {
     }
 }
 
-// MARK: - 实心 + 钮：个人主页原 32×32 圆钮（faint 底 + line 边框 + 灰色加号）
-
-/// 个人主页原 emoteAddButton（普通 UIButton）升级版：父类换为
-/// BearyHit44Button（视觉 32×32 不变，热区扩到 44），边框自带 trait 重刷
-/// （原普通钮深浅切换后边框停留旧色的问题一并根治）。
-final class BearyDiaryCardSolidAddButton: BearyHit44Button {
-
-    override init(frame: CGRect) {
-        super.init(frame: frame)
-        setImage(BearyIconImages.image(named: "icon_plus", pointSize: 16), for: .normal)
-        tintColor = BearyColors.gray
-        backgroundColor = BearyColors.faint
-        layer.cornerRadius = 16
-        layer.borderWidth = 1
-        layer.borderColor = BearyColors.line.cgColor
-        clipsToBounds = true
-    }
-
-    required init?(coder: NSCoder) {
-        fatalError("init(coder:) has not been implemented")
-    }
-
-    override func traitCollectionDidChange(_ previousTraitCollection: UITraitCollection?) {
-        super.traitCollectionDidChange(previousTraitCollection)
-        if traitCollection.hasDifferentColorAppearance(comparedTo: previousTraitCollection) {
-            layer.borderColor = BearyColors.line.cgColor
-        }
-    }
-}
-
 // MARK: - 日记卡片 cell（首页 F1–F13 ＋个人主页列表行合并体）
 
 class BearyDiaryCardCell: UITableViewCell {
@@ -670,8 +640,8 @@ class BearyDiaryCardCell: UITableViewCell {
 
     /// 首页模式 + 钮：虚线 34 圆圈（原 BearyFeedDashedAddButton，父类已换 Hit44）。
     private var feedAddButton: BearyDiaryCardDashedAddButton?
-    /// 个人主页模式 + 钮：实心 32 圆钮（原普通 UIButton，父类已换 Hit44 + 自带 trait 重刷）。
-    private var profileAddButton: BearyDiaryCardSolidAddButton?
+    /// 个人主页模式 + 钮：与首页同款虚线 34 圆圈（原实心 32 圆钮已随本修统一删除）。
+    private var profileAddButton: BearyDiaryCardDashedAddButton?
 
     /// D2：公开行视图（首页模式；网页 pubActionInnerHtml 口径；渲染见 refreshPubRow）。
     private let pubCountdownLabel: UILabel = {
@@ -960,11 +930,11 @@ class BearyDiaryCardCell: UITableViewCell {
 
     override func layoutSubviews() {
         super.layoutSubviews()
-        // 首页模式：回应行高随 flow 实测走；折叠判定以实测行宽为准，初次
+        // 回应行高随 flow 实测走（两模式）；折叠判定以实测行宽为准，初次
         // configure 时 cell 宽可能尚未落位（用屏宽估算），布局落位后若溢出
         // 结论变了，在此纠正一次（结论稳定后不再变动，不会往复）。
-        guard cardMode == .feed else { return }
         updateEmoteRowHeight()
+        guard cardMode == .feed else { return }
         if currentEntry != nil, contentLabel.bounds.width > 0 {
             let overflow = measuredFoldOverflow(contentWidth: contentLabel.bounds.width)
             if overflow != foldOverflow {
@@ -2374,23 +2344,24 @@ class BearyDiaryCardCell: UITableViewCell {
             emoteFlowView.addSubview(addButton)
             updateEmoteRowHeight()
         } else {
-            let addButton: BearyDiaryCardSolidAddButton
+            let addButton: BearyDiaryCardDashedAddButton
             if let reused = profileAddButton {
                 addButton = reused
             } else {
-                let made = BearyDiaryCardSolidAddButton(frame: .zero)
+                let made = BearyDiaryCardDashedAddButton(frame: .zero)
                 made.translatesAutoresizingMaskIntoConstraints = false
+                made.setImage(BearyFeedIconCache.image(named: "icon_plus", pointSize: 16), for: .normal)
+                made.tintColor = BearyColors.gray
+                made.accessibilityLabel = "贴一只小熊"
+                made.widthAnchor.constraint(equalToConstant: 34).isActive = true
+                made.heightAnchor.constraint(equalToConstant: 34).isActive = true
                 made.addTarget(self, action: #selector(emoteAddTapped), for: .touchUpInside)
                 made.bearyAddPressFeedback()
-                NSLayoutConstraint.activate([
-                    made.widthAnchor.constraint(equalToConstant: 32),
-                    made.heightAnchor.constraint(equalToConstant: 32),
-                ])
                 profileAddButton = made
                 addButton = made
             }
             emoteFlowView.addSubview(addButton)
-            emoteRowHeightConstraint?.constant = 32
+            updateEmoteRowHeight()
         }
         updateEmoteInteractivity()
     }
