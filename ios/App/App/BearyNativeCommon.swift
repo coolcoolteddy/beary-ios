@@ -169,6 +169,19 @@ final class BearyHit44SegmentedControl: UISegmentedControl {
 enum BearyImageURLs {
     static let base = "https://teddyhn.com"
 
+    /// D4-App 头像/封面 URL 白名单（纵深防御；服务端现行只下发站内路径
+    /// /beary/api/users/:id/avatar|cover，资料更新接口也只接受 data: 图片、
+    /// 已拒绝外链 URL，本白名单不改变任何正常路径）。
+    /// 放行口径 = teddyhn.com 系：主域 teddyhn.com（含头像/封面/日记图）
+    /// 与全部 *.teddyhn.com 子域（含图片 CDN img.teddyhn.com、www）。
+    /// 严格后缀匹配，绝不用 contains：evilteddyhn.com、teddyhn.com.evil.com、
+    /// teddyhn.com@evil.com（URL.host 解析后为 evil.com）一律拒绝。
+    /// host 比对前统一小写，URL.host 本身已做大小写规范化，此处再兜底一次。
+    static func isAllowedImageHost(_ host: String?) -> Bool {
+        guard let h = host?.lowercased(), !h.isEmpty else { return false }
+        return h == "teddyhn.com" || h.hasSuffix(".teddyhn.com")
+    }
+
     /// 日记图：key 是 R2 key（含 /）；thumb=true 取 key+'_t' 缩略图。
     static func imageURL(key: String, thumb: Bool) -> URL? {
         let full = thumb ? (key + "_t") : key
@@ -176,10 +189,24 @@ enum BearyImageURLs {
         return URL(string: base + "/beary/api/images/" + encoded)
     }
 
-    /// 头像：服务端给的是 /beary/api/users/:id/avatar?v=N 这样的路径，拼域名；已是完整 URL 则原样用。
+    /// 头像/封面：服务端给的是 /beary/api/users/:id/avatar?v=N 这样的路径，拼域名；
+    /// 已是完整 URL 时只放行白名单 http(s) 地址，非白名单一律返回 nil，
+    /// 调用方随即走占位（首字母/空图），不发起请求、不进缓存、不亮失败态。
+    /// 其他 scheme（data:/javascript:/file:/blob: 等）一律拒绝：data: 头像
+    /// 由上传接口处理，不走本函数；旧版把 data: 拼成站内 URL 的旁路就此堵住。
     static func avatarURL(_ path: String?) -> URL? {
         guard let p = path, !p.isEmpty else { return nil }
-        if p.hasPrefix("http://") || p.hasPrefix("https://") { return URL(string: p) }
+        let lower = p.lowercased()
+        if lower.hasPrefix("http://") || lower.hasPrefix("https://") {
+            guard let url = URL(string: p), isAllowedImageHost(url.host) else { return nil }
+            return url
+        }
+        if let colon = p.firstIndex(of: ":") {
+            let schemePart = p[..<colon]
+            if !schemePart.contains("/") {
+                return nil
+            }
+        }
         if p.hasPrefix("/") { return URL(string: base + p) }
         return URL(string: base + "/" + p)
     }
@@ -193,6 +220,30 @@ enum BearyImageLoadError: Error {
     case network(Error)
     case invalidData
     case cancelled
+}
+
+/// D4-App 图片重定向守门：BearyImageLoader 默认会话的 task delegate。
+/// URLSession 默认自动跟随重定向，入口白名单（avatarURL）拦不住
+/// teddyhn.com → 站外 的 302 跳转，故最终落地 host 也必须在白名单内。
+/// 不跟随白名单外重定向时先 task.cancel() 再 completionHandler(nil)：
+/// 只调 completionHandler(nil) 会把 3xx 响应当最终响应交付，调用方按
+/// invalidData 亮重试；cancel 后走 .cancelled 分支，调用方按复用取消处理、
+/// 静默保留占位图，与入口拒绝的占位行为一致。
+/// 单独成类而不让 BearyImageLoader 自己当 delegate：init 内 self 尚未
+/// 完成初始化，不能把 self 传给 URLSession；单例守门无状态，不改缓存与解码。
+/// 注意：注入自定义 session 的 BearyImageLoader 不走本守门（仓内现无注入
+/// 调用点，唯一入口是 shared 默认会话）。
+final class BearyImageRedirectGuard: NSObject, URLSessionTaskDelegate {
+    static let shared = BearyImageRedirectGuard()
+
+    func urlSession(_ session: URLSession, task: URLSessionTask, willPerformHTTPRedirection response: HTTPURLResponse, newRequest request: URLRequest, completionHandler: @escaping (URLRequest?) -> Void) {
+        guard let host = request.url?.host, BearyImageURLs.isAllowedImageHost(host) else {
+            task.cancel()
+            completionHandler(nil)
+            return
+        }
+        completionHandler(request)
+    }
 }
 
 final class BearyImageLoader {
@@ -234,7 +285,9 @@ final class BearyImageLoader {
         if session === URLSession.shared {
             let config = URLSessionConfiguration.default
             config.httpMaximumConnectionsPerHost = Self.maxConcurrentDownloads
-            self.session = URLSession(configuration: config)
+            // D4-App：默认会话挂重定向守门（见 BearyImageRedirectGuard）；
+            // delegateQueue=nil 走系统串行队列，不改 dataTask 完成回调语义。
+            self.session = URLSession(configuration: config, delegate: BearyImageRedirectGuard.shared, delegateQueue: nil)
         } else {
             self.session = session
         }
