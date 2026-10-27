@@ -1213,3 +1213,129 @@ enum BearyHaptics {
         UINotificationFeedbackGenerator().notificationOccurred(.warning)
     }
 }
+
+// MARK: - C8/C9：Dynamic Type 与骨架屏（C 批视觉线）
+
+/// C8 审计口径（只此两处，不扩大）：
+/// - 日记正文 16pt、卡片标题 16.5pt 粗体：走 UIFontMetrics scaledFont，label 侧须配
+///   adjustsFontForContentSizeCategory = true；富文本 attributed 内的字号在下次
+///   configure/reload 时重解（系统字号切换当下不自动重绘富文本，属已知局限）。
+/// - 固定高度容器（Profile modal 顶栏 44pt，顶栏名 17pt）：cappedFont 上限 20pt 防撑破；
+///   默认字号下与原字号完全一致（17 -> 17），只在超大字号档截断。
+/// 全工程其余硬编码 systemFont 本批不动，见 PR 描述后续清单。
+enum BearyDynamicType {
+    /// 固定高度容器字号上限（C8 口径示例值 20pt）。
+    static let fixedContainerMaxPointSize: CGFloat = 20
+
+    static func scaledFont(for base: UIFont) -> UIFont {
+        UIFontMetrics.default.scaledFont(for: base)
+    }
+
+    /// 日记正文 16pt（Feed/Timeline/Search 渲染态卡片正文）。
+    static func diaryBodyFont() -> UIFont {
+        scaledFont(for: UIFont.systemFont(ofSize: 16))
+    }
+
+    /// 卡片标题 16.5pt 粗体（Feed/Profile 卡片作者名行）。
+    static func cardTitleFont() -> UIFont {
+        scaledFont(for: UIFont.boldSystemFont(ofSize: 16.5))
+    }
+
+    /// 固定高度容器用：先缩放、超上限则截断到上限（withSize 保留原字重）。
+    static func cappedFont(for base: UIFont, maximumPointSize: CGFloat = fixedContainerMaxPointSize) -> UIFont {
+        let scaled = UIFontMetrics.default.scaledFont(for: base)
+        guard scaled.pointSize > maximumPointSize else { return scaled }
+        return base.withSize(maximumPointSize)
+    }
+}
+
+/// C9 首屏骨架屏占位卡（轻量原生视图，无图无文案，仅占位形）：
+/// 40pt 圆形头像占位 + 3 条圆角矩形文本条；呼吸动画为占位区透明度 0.8 <-> 0.4；
+/// 减动效开启时静态展示（不播呼吸动画）。调用方负责 3 张堆叠与显隐时序
+/// （显隐只跟数据到达回调走，见 Feed.updateOverlayState / Profile.handleTabResult）。
+final class BearySkeletonCardView: UIView {
+    private let breathingStack = UIStackView()
+    private let avatarPlaceholder = UIView()
+    private var breathing = false
+
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        backgroundColor = BearyColors.surface
+        layer.borderWidth = 1
+        layer.borderColor = BearyColors.line.cgColor
+        layer.cornerRadius = 14
+        layer.masksToBounds = true
+        accessibilityElementsHidden = true
+        isUserInteractionEnabled = false
+        translatesAutoresizingMaskIntoConstraints = false
+
+        avatarPlaceholder.translatesAutoresizingMaskIntoConstraints = false
+        avatarPlaceholder.backgroundColor = BearyColors.alpha(BearyColors.gray, 0.25)
+        avatarPlaceholder.layer.cornerRadius = 20
+        avatarPlaceholder.layer.masksToBounds = true
+        NSLayoutConstraint.activate([
+            avatarPlaceholder.widthAnchor.constraint(equalToConstant: 40),
+            avatarPlaceholder.heightAnchor.constraint(equalToConstant: 40),
+        ])
+
+        let linesStack = UIStackView()
+        linesStack.translatesAutoresizingMaskIntoConstraints = false
+        linesStack.axis = .vertical
+        linesStack.spacing = 8
+        // .leading（不用 .fill）：文本条宽 = 栈宽 × 系数，.fill 会另加等宽约束冲突。
+        linesStack.alignment = .leading
+        for multiplier in [0.9, 0.65, 0.45] as [CGFloat] {
+            let bar = UIView()
+            bar.translatesAutoresizingMaskIntoConstraints = false
+            bar.backgroundColor = BearyColors.alpha(BearyColors.gray, 0.25)
+            bar.layer.cornerRadius = 6
+            bar.layer.masksToBounds = true
+            linesStack.addArrangedSubview(bar)
+            NSLayoutConstraint.activate([
+                bar.heightAnchor.constraint(equalToConstant: 12),
+                bar.widthAnchor.constraint(equalTo: linesStack.widthAnchor, multiplier: multiplier),
+            ])
+        }
+
+        breathingStack.translatesAutoresizingMaskIntoConstraints = false
+        breathingStack.axis = .horizontal
+        breathingStack.spacing = 12
+        breathingStack.alignment = .top
+        breathingStack.addArrangedSubview(avatarPlaceholder)
+        breathingStack.addArrangedSubview(linesStack)
+        breathingStack.alpha = 0.8
+        addSubview(breathingStack)
+        NSLayoutConstraint.activate([
+            breathingStack.topAnchor.constraint(equalTo: topAnchor, constant: 14),
+            breathingStack.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 14),
+            breathingStack.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -14),
+            breathingStack.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -14),
+        ])
+    }
+
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    /// 开始呼吸动画；减动效下保持静态 0.8，不播动画。
+    func startBreathing() {
+        guard breathing == false else { return }
+        breathing = true
+        guard UIAccessibility.isReduceMotionEnabled == false else { return }
+        let animation = CABasicAnimation(keyPath: "opacity")
+        animation.fromValue = 0.8
+        animation.toValue = 0.4
+        animation.duration = 1.0
+        animation.autoreverses = true
+        animation.repeatCount = .infinity
+        animation.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+        breathingStack.layer.add(animation, forKey: "bearySkeletonBreath")
+    }
+
+    /// 停呼吸动画并复位占位区透明度（显隐动画由调用方做，见各页 hideSkeleton）。
+    func stopBreathing() {
+        breathing = false
+        breathingStack.layer.removeAnimation(forKey: "bearySkeletonBreath")
+        breathingStack.alpha = 0.8
+    }
+}

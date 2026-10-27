@@ -227,6 +227,76 @@ class BearyFeedViewController: UIViewController {
     private var headerTopInsetVisible = true
     private var centralSpinnerTopConstraint: NSLayoutConstraint?
 
+    /// C9 首屏骨架屏：只覆盖无缓存首屏加载（isFirstLoad 且两流均未回包）。
+    /// 已有内容/后台重拉/下拉刷新/分页一律不走这里；显隐只由 updateOverlayState
+    /// 根据 deliveredFirstDone/plazaFirstDone 决定，与数据到达回调严格对应，
+    /// 骨架与真实卡片不叠加（隐藏时先 reloadData 落真实行，再交叉溶解）。
+    private var skeletonVisible = false
+    /// C9：骨架内栈顶距 = tableView.contentInset.top（首卡顶），由 applyHeaderTopInset
+    /// 与 showSkeleton 同步，顶栏显隐/安全区变化时骨架与真实首卡不错位。
+    private var skeletonStackTopConstraint: NSLayoutConstraint?
+    private lazy var skeletonView: UIView = {
+        let container = UIView()
+        container.translatesAutoresizingMaskIntoConstraints = false
+        container.backgroundColor = BearyColors.bg
+        container.isHidden = true
+        container.isUserInteractionEnabled = false
+        let stack = UIStackView()
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        stack.axis = .vertical
+        stack.spacing = 12
+        for _ in 0..<3 {
+            let card = BearySkeletonCardView()
+            stack.addArrangedSubview(card)
+        }
+        container.addSubview(stack)
+        let stackTop = stack.topAnchor.constraint(equalTo: container.topAnchor, constant: 0)
+        self.skeletonStackTopConstraint = stackTop
+        NSLayoutConstraint.activate([
+            stackTop,
+            stack.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 16),
+            stack.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -16),
+            stack.bottomAnchor.constraint(equalTo: container.bottomAnchor),
+        ])
+        return container
+    }()
+    private var skeletonCards: [BearySkeletonCardView] {
+        guard let stack = skeletonView.subviews.first as? UIStackView else { return [] }
+        return stack.arrangedSubviews.compactMap { $0 as? BearySkeletonCardView }
+    }
+
+    /// C9：首屏骨架显（幂等；首屏菊花在此路径下停掉，不与骨架叠加；
+    /// 菊花其他触发路径——后台重拉/分页加载——不在此函数分支内，一律不动）。
+    private func showSkeleton() {
+        guard skeletonVisible == false else { return }
+        skeletonVisible = true
+        skeletonStackTopConstraint?.constant = tableView.contentInset.top
+        centralSpinner.stopAnimating()
+        skeletonView.isHidden = false
+        skeletonView.alpha = 1
+        skeletonCards.forEach { $0.startBreathing() }
+    }
+
+    /// C9：骨架隐（幂等；调用时真实行已 reloadData 落表）。
+    /// 减动效直隐，其余 0.28s 交叉溶解为真实卡片。
+    private func hideSkeleton() {
+        guard skeletonVisible else { return }
+        skeletonVisible = false
+        skeletonCards.forEach { $0.stopBreathing() }
+        if UIAccessibility.isReduceMotionEnabled {
+            skeletonView.isHidden = true
+            skeletonView.alpha = 1
+        } else {
+            UIView.transition(with: skeletonView, duration: 0.28, options: [.transitionCrossDissolve, .curveEaseInOut], animations: {
+                self.skeletonView.alpha = 0
+            }, completion: { [weak self] _ in
+                guard let strongSelf = self, strongSelf.skeletonVisible == false else { return }
+                strongSelf.skeletonView.isHidden = true
+                strongSelf.skeletonView.alpha = 1
+            })
+        }
+    }
+
     // MARK: - 生命周期
 
     override func viewDidLoad() {
@@ -235,6 +305,7 @@ class BearyFeedViewController: UIViewController {
         view.addSubview(ptrView)
         view.addSubview(tableView)
         view.addSubview(centralSpinner)
+        view.addSubview(skeletonView)
         view.addSubview(newContentPill)
         // P2-1：内容列走网页 821 断点——宽 ≥821 时 600 居中，宽 ≤820 时 iPhone 式全宽
         //（600 上限只在 ≥821 激活，开关在 viewDidLayoutSubviews；容器层 SceneDelegate 同断点开关，
@@ -267,6 +338,10 @@ class BearyFeedViewController: UIViewController {
             tableView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
             centralSpinner.centerXAnchor.constraint(equalTo: view.centerXAnchor),
             spinnerTop,
+            skeletonView.topAnchor.constraint(equalTo: view.topAnchor),
+            skeletonView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            skeletonView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            skeletonView.bottomAnchor.constraint(lessThanOrEqualTo: view.bottomAnchor),
             newContentPill.centerXAnchor.constraint(equalTo: view.centerXAnchor),
             newContentPill.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor, constant: -92),
         ])
@@ -330,6 +405,9 @@ class BearyFeedViewController: UIViewController {
         let spinnerTop = safeTop + (visible ? 60 : 0) + 46
         if centralSpinnerTopConstraint?.constant != spinnerTop {
             centralSpinnerTopConstraint?.constant = spinnerTop
+        }
+        if skeletonStackTopConstraint?.constant != top {
+            skeletonStackTopConstraint?.constant = top
         }
     }
 
@@ -1358,12 +1436,12 @@ class BearyFeedViewController: UIViewController {
     /// 任一流失败时由失败行承担，不叠加空态；加载中不闪空态。
     private func updateOverlayState() {
         if isFirstLoad && (!deliveredFirstDone || !plazaFirstDone) {
-            centralSpinner.isHidden = false
-            centralSpinner.startAnimating()
+            showSkeleton()
             setEmptyVisible(false)
             updateFootLogo()
             return
         }
+        hideSkeleton()
         centralSpinner.stopAnimating()
         if deliveredLoading || plazaLoading {
             setEmptyVisible(false)
