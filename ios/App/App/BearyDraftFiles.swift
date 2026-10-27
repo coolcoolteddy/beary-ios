@@ -38,6 +38,8 @@ struct BearyDraftImageItem: Codable {
 
 struct BearyDraft: Codable {
     var draftId: String
+    /// A4-App：标题（nil = 无标题；旧草稿 JSON 无此键时按默认 nil 解码，不中断迁移）。
+    var title: String? = nil
     var content: String
     var mood: String?
     var images: [BearyDraftImageItem]
@@ -63,6 +65,10 @@ struct BearyDraft: Codable {
     /// G19：写给口径与草稿箱摘要兜底统一——recipientId != nil 或
     /// recipientName 非空即算有内容（只存了收信人快照、尚未写字也算）。
     var hasContent: Bool {
+        // A4-App：只填标题也算有内容（与编辑器 saveDraftNow 的空判定同口径）。
+        if let title = title, !title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return true
+        }
         if !content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             return true
         }

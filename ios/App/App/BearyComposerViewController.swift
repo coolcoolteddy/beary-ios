@@ -68,7 +68,7 @@ private final class BearyBodyTextView: UITextView {
     }
 }
 
-final class BearyComposerViewController: UIViewController, UITextViewDelegate, PHPickerViewControllerDelegate, UIGestureRecognizerDelegate {
+final class BearyComposerViewController: UIViewController, UITextViewDelegate, UITextFieldDelegate, PHPickerViewControllerDelegate, UIGestureRecognizerDelegate {
 
     // MARK: - 公开接口
 
@@ -234,6 +234,12 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     private let scrollView = UIScrollView()
     private let contentView = UIView()
     private let contentStack = UIStackView()
+    /// A4-App 标题输入框（正文上方，单行）：30 字上限见 shouldChangeCharactersIn；
+    /// 占位文案未定——本批不设 placeholder（空标题占位待定，见报告暂缓项），
+    /// 仅设 accessibilityLabel 供无障碍读出。
+    private let titleField = UITextField()
+    /// A4-App 标题字数上限（Li 未填数字时用建议值 30，可改，见报告）。
+    private static let maxTitleLength = 30
     private let textView = BearyBodyTextView()
     /// 正文区高度约束（正式修法：随内容动态走，下限 140、上限由 updateTextViewHeight 按 sheet 封顶算）。
     private var textViewHeightConstraint: NSLayoutConstraint?
@@ -303,7 +309,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     private let charGroupStack = UIStackView()
     private var charTrackLayer: CAShapeLayer?
     private var charProgressLayer: CAShapeLayer?
-    // 写给（@ 在 pick 钮内的“写给某个人”钮 / chip + 通知行）
+    // 写给（@ 在 pick 钮内的“写给某个人”钮 / chip；通知开关在选人面板内，见 A2）
     private let recipientSection = UIStackView()
     private let recipientLine = UIStackView()
     private let recipientPickButton = BearyComposerDashedPickButton()
@@ -312,9 +318,8 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     private let recipientChipFallback = UILabel()
     private let recipientChipName = UILabel()
     private let recipientClearButton = BearyHit44Button(type: .system)
-    private let notifyGroup = UIStackView()
-    private let notifyCheckButton = BearyHit44Button(type: .system)
-    private let notifyLabel = UILabel()
+    // A2：通知开关已移入选人面板（BearyRecipientPickerViewController 内），
+    // 写给选择条不再含通知行；选后改通知需清除收信人重选。
     // 心情：熊图条本身即选择条（标题行已删，选中名改由正文下方 Chip 行承载）。
     private let moodScrollView = UIScrollView()
     private let moodStackView = UIStackView()
@@ -411,13 +416,12 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     override func traitCollectionDidChange(_ previousTraitCollection: UITraitCollection?) {
         super.traitCollectionDidChange(previousTraitCollection)
         // 深浅切换时 CGColor 只在赋值时解析一次，必须重赋：心情环描边、
-        // 天气 chip 描边、通知复选框描边、草稿 pill 描边、字数圆环轨道色
+        // 天气 chip 描边、草稿 pill 描边、字数圆环轨道色
         // 全走已有刷新函数重算（心情熊图深浅变体由播放器内部切换，不重建条）。
+        // A2：通知开关已移入选人面板，本文件不再有通知复选框描边要重赋。
         if previousTraitCollection?.userInterfaceStyle != traitCollection.userInterfaceStyle {
             refreshMoodButtons()
             refreshWeatherButtons()
-            refreshNotifyCheck()
-            notifyCheckButton.layer.borderColor = BearyColors.line.cgColor
             draftPillButton.layer.borderColor = BearyColors.line.cgColor
             charTrackLayer?.strokeColor = BearyColors.line.cgColor
             updateCountLabel()
@@ -444,6 +448,8 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         lastLayoutWidth = w
         updateColumnConstraints()
         updatePreferredContentSize()
+        // A3：首个非 0 宽布局时提示卡宽已落定，补算滚动底边距（viewDidLoad 时宽为 0 算不出）。
+        updateRuleBoxScrollInset()
         // 临时诊断（86 包，定根因后删除）：布局方法出口。
         DiagFile.mark("composer-layout-exit")
     }
@@ -606,7 +612,9 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     /// 再与 88%/80% 封顶取小，故只给栈高会少 44、短内容仍需内滚 44；顶栏必须计入。
     /// 量取口径：contentStack.systemLayoutSizeFitting（给定当前宽、纵向压缩），
     /// 栈内隐藏的 arranged 子项自动塌掉，正文/已选 Chip 行/图片/状态行/
-    /// 引用（lite 卡）/引用面板/规则框各区当前可见高度全计入；栈边距由 fitting 自带。
+    /// 引用（lite 卡）/引用面板各区当前可见高度全计入；栈边距由 fitting 自带。
+    /// A3：规则框已移出内容栈、常驻工具栏上方，不再计入栈高（滚动底边距另见
+    /// updateRuleBoxScrollInset，不走 preferredContentSize）。
     /// 变化小于 0.5pt 不赋值，避免改 preferred → 容器重布局 → viewDidLayoutSubviews 的循环。
     private func updatePreferredContentSize() {
         guard isViewLoaded else { return }
@@ -807,6 +815,17 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         placeholderLabel.textColor = BearyColors.gray.withAlphaComponent(0.7)
         textView.translatesAutoresizingMaskIntoConstraints = false
         placeholderLabel.translatesAutoresizingMaskIntoConstraints = false
+        // A4-App：标题输入框在正文上方（内容栈首位）；单行、无占位文案（待定），
+        // 改动走防抖草稿保存（编辑模式下 scheduleDraftSave 本身 no-op）。
+        titleField.font = UIFont.boldSystemFont(ofSize: 17)
+        titleField.textColor = BearyColors.ink
+        titleField.accessibilityLabel = "标题"
+        titleField.returnKeyType = .next
+        titleField.delegate = self
+        titleField.addTarget(self, action: #selector(titleFieldChanged), for: .editingChanged)
+        titleField.translatesAutoresizingMaskIntoConstraints = false
+        contentStack.addArrangedSubview(titleField)
+        contentStack.setCustomSpacing(8, after: titleField)
         contentStack.addArrangedSubview(textView)
         textView.addSubview(placeholderLabel)
         let textHeightConstraint = textView.heightAnchor.constraint(equalToConstant: 140)
@@ -929,7 +948,9 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             // A2-4 启动源修法：建条时不自动播。原 animated:true 使 40 只在
             // 选择条收起时条虽 isHidden、视图仍在 window 内，didMoveToWindow 拦不住起播；
             // 播放权交给 updateMoodPlayback（见 activeToolStrip 门）。
-            let emoteView = BearyEmoteView(key: key, animated: false)
+            // E4：再进一步——建条时只挂静态图、不解析 Lottie，点开心情条时
+            // refreshToolStrip 的 ensureLoaded 才加载（见 refreshToolStrip）。
+            let emoteView = BearyEmoteView(key: key, animated: false, fallbackImage: nil, deferLoad: true)
             emoteView.translatesAutoresizingMaskIntoConstraints = false
             let fallbackLabel = UILabel()
             fallbackLabel.translatesAutoresizingMaskIntoConstraints = false
@@ -1062,8 +1083,10 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             button.titleEdgeInsets = UIEdgeInsets(top: 0, left: 5, bottom: 0, right: 0)
             // 天气 Lottie：动画贴在 imageView 上（随 imageView 走位，布局与静态图一致，不拦截点按）；
             // 减动效时播放器内置静态帧不播；加载失败回退 wx 静态图；拿不到 imageView 时回静态图。
+            // E4：建条时只挂 wx 静态回退图、不解析 Lottie，点开天气条时
+            // refreshToolStrip 的 ensureLoaded 才加载（69 批播放管控口径不动）。
             if let imageView = button.imageView {
-                let lottie = BearyEmoteView(key: Self.weatherLottieKey(for: key), animated: true, fallbackImage: staticImage)
+                let lottie = BearyEmoteView(key: Self.weatherLottieKey(for: key), animated: true, fallbackImage: staticImage, deferLoad: true)
                 weatherEmoteViews.append((key: key, emoteView: lottie))
                 lottie.isUserInteractionEnabled = false
                 lottie.translatesAutoresizingMaskIntoConstraints = false
@@ -1164,8 +1187,8 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         scheduleDraftSave()
     }
 
-    // MARK: - 写给（网页 addr-row：@ 图标 + “写给某个人”钮 / chip + 通知行；
-    // 只选一人；编辑模式锁定只展示，无 ×、无通知行）
+    // MARK: - 写给（网页 addr-row：@ 图标 + “写给某个人”钮 / chip；
+    // 只选一人；编辑模式锁定只展示，无 ×；通知开关在选人面板内，见 A2）
 
     private func buildRecipientRow() {
         recipientSection.axis = .vertical
@@ -1224,21 +1247,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         recipientClearButton.layer.masksToBounds = true
         recipientClearButton.addTarget(self, action: #selector(didTapClearRecipient), for: .touchUpInside)
         recipientClearButton.bearyAddPressFeedback()
-        notifyCheckButton.layer.cornerRadius = 6
-        notifyCheckButton.layer.masksToBounds = true
-        notifyCheckButton.layer.borderWidth = 1.5
-        notifyCheckButton.layer.borderColor = BearyColors.line.cgColor
-        notifyCheckButton.titleLabel?.font = UIFont.boldSystemFont(ofSize: 14)
-        notifyCheckButton.addTarget(self, action: #selector(didTapNotifyCheck), for: .touchUpInside)
-        notifyCheckButton.bearyAddPressFeedback()
-        notifyLabel.text = "通知对方"
-        notifyLabel.font = UIFont.systemFont(ofSize: 13)
-        notifyLabel.textColor = BearyColors.ink
-        notifyGroup.axis = .horizontal
-        notifyGroup.spacing = 6
-        notifyGroup.alignment = .center
-        notifyGroup.addArrangedSubview(notifyCheckButton)
-        notifyGroup.addArrangedSubview(notifyLabel)
+        // A2：通知行已移入选人面板，此处不再建通知复选框与文案。
         recipientSection.translatesAutoresizingMaskIntoConstraints = false
         recipientLine.translatesAutoresizingMaskIntoConstraints = false
         recipientPickButton.translatesAutoresizingMaskIntoConstraints = false
@@ -1247,11 +1256,9 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         recipientChipFallback.translatesAutoresizingMaskIntoConstraints = false
         recipientChipName.translatesAutoresizingMaskIntoConstraints = false
         recipientClearButton.translatesAutoresizingMaskIntoConstraints = false
-        notifyCheckButton.translatesAutoresizingMaskIntoConstraints = false
         toolStripStack.addArrangedSubview(recipientSection)
         recipientSection.isHidden = true
         recipientSection.addArrangedSubview(recipientLine)
-        recipientSection.addArrangedSubview(notifyGroup)
         recipientLine.addArrangedSubview(recipientPickButton)
         recipientLine.addArrangedSubview(recipientChipView)
         recipientChipView.addSubview(recipientChipAvatar)
@@ -1275,21 +1282,16 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             recipientClearButton.widthAnchor.constraint(equalToConstant: 18),
             recipientClearButton.heightAnchor.constraint(equalToConstant: 18),
             recipientChipView.heightAnchor.constraint(equalToConstant: 30),
-            notifyCheckButton.widthAnchor.constraint(equalToConstant: 16),
-            notifyCheckButton.heightAnchor.constraint(equalToConstant: 16),
         ])
         refreshRecipientRow()
     }
 
-    /// 写给行状态：新建未选 → @ + “写给某个人”钮；新建已选 → chip + × + 通知行；
-    /// 编辑模式 → 锁定的 chip（无 ×、无通知行）；编辑且无收信人 → 选择条打开时也无内容（栈自动塌高）。
+    /// 写给行状态：新建未选 → @ + “写给某个人”钮；新建已选 → chip + ×；
+    /// 编辑模式 → 锁定的 chip（无 ×）；编辑且无收信人 → 选择条打开时也无内容（栈自动塌高）。
+    /// A2：通知行已移入选人面板（含编辑态原 disabled 通知行一并移除；编辑 PUT 本就不接受通知字段）。
     private func refreshRecipientRow() {
         if isEditMode {
             recipientPickButton.isHidden = true
-            // 编辑态通知行可见但 disabled（网页 syncAddrNotify 同款：行显示、复选框禁用）；
-            // 无收信人时整行仍隐藏（网页编辑态无收信人时整区隐藏）。
-            notifyGroup.isHidden = lockedRecipientName == nil
-            notifyCheckButton.isEnabled = false
             if let name = lockedRecipientName {
                 recipientChipView.isHidden = false
                 recipientChipAvatar.isHidden = true
@@ -1300,7 +1302,6 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             } else {
                 recipientChipView.isHidden = true
             }
-            refreshNotifyCheck()
             refreshSelectedChips()
             return
         }
@@ -1326,39 +1327,26 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             }
             recipientChipName.text = "写给 " + name
             recipientClearButton.isHidden = false
-            notifyGroup.isHidden = false
         } else {
             recipientPickButton.isHidden = false
             recipientChipView.isHidden = true
-            notifyGroup.isHidden = true
         }
-        refreshNotifyCheck()
         refreshSelectedChips()
     }
 
-    /// 通知复选框只改本地状态与自身外观，不重建行（网页版同款规矩）。
-    private func refreshNotifyCheck() {
-        if notifyRecipient {
-            notifyCheckButton.backgroundColor = BearyColors.ink
-            // I6：通知复选改用 icon_check 资产；底是 ink、对勾须取反色 bg（深色下 ink 近白）。
-            notifyCheckButton.setImage(BearyIconImages.image(named: "icon_check", pointSize: 14), for: .normal)
-            notifyCheckButton.tintColor = BearyColors.bg
-        } else {
-            notifyCheckButton.backgroundColor = UIColor.clear
-            notifyCheckButton.setImage(nil, for: .normal)
-        }
-    }
-
-    @objc private func didTapPickRecipient() {
+    /// A2：选人面板唯一 present 口（工具栏 @ 钮与选择条内 pick 钮共用）：
+    /// 直接 present BearyRecipientPickerViewController，不再经写给选择条中转；
+    /// 通知值取面板内开关（默认开，与旧 onPick 写死 true 一致），不再写死。
+    private func presentRecipientPicker() {
         if isEditMode { return }
         // presented 守卫 + 在途标记（E4-3）：连点不叠开两个选人器。
         if presentedViewController != nil || isRecipientPickerPresenting { return }
         isRecipientPickerPresenting = true
         let picker = BearyRecipientPickerViewController()
-        picker.onPick = { [weak self] user in
+        picker.onPick = { [weak self] user, notify in
             guard let self = self else { return }
             self.selectedRecipient = user
-            self.notifyRecipient = true
+            self.notifyRecipient = notify
             self.refreshRecipientRow()
             self.refreshToolStrip()
             // 网页选人即 saveDraftQuiet 立即落盘，不走防抖（500ms 内杀 App 会丢改动）。
@@ -1369,17 +1357,14 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         }
     }
 
+    @objc private func didTapPickRecipient() {
+        presentRecipientPicker()
+    }
+
     @objc private func didTapClearRecipient() {
         if isEditMode { return }
         selectedRecipient = nil
         refreshRecipientRow()
-        saveDraftNow()
-    }
-
-    @objc private func didTapNotifyCheck() {
-        if isEditMode { return }
-        notifyRecipient.toggle()
-        refreshNotifyCheck()
         saveDraftNow()
     }
 
@@ -1862,7 +1847,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                 self.contentStack.setCustomSpacing(4, after: self.imageScrollView)
                 self.contentStack.setCustomSpacing(8, after: self.statusRow)
                 self.contentStack.setCustomSpacing(0, after: self.quoteSection)
-                // 各区显隐按正常态重算（选择条、写给含编辑态通知行、引用含 pill 约束）。
+                // 各区显隐按正常态重算（选择条、写给、引用含 pill 约束）。
                 self.refreshToolStrip()
                 self.refreshRecipientRow()
                 self.refreshQuoteSection()
@@ -2449,18 +2434,57 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         toolStripStack.isHidden = quotePanelOpen || activeToolStrip == nil
         moodScrollView.isHidden = activeToolStrip != .mood
         weatherScrollView.isHidden = activeToolStrip != .weather
-        // 写给区：编辑模式无收信人时条内无内容（pick 钮与通知行皆藏），栈自动塌高，
+        // 写给区：编辑模式无收信人时条内无内容（pick 钮藏），栈自动塌高，
         // 不另弹提示；其余态按条开关显隐。
         if isEditMode && lockedRecipientName == nil && selectedRecipient == nil {
             recipientSection.isHidden = true
         } else {
             recipientSection.isHidden = activeToolStrip != .recipient
         }
+        // A3：提示卡常驻工具栏上方、与选择条同占工具栏上方空间，条开时暂隐、
+        // 条关且引用面板未开时复现；引用面板打开时 setQuotePanelOpen 已置隐，
+        // 此处 quotePanelOpen 条件保证任何经本函数的重算都不会把它顶回。
+        ruleBoxView.isHidden = quotePanelOpen || activeToolStrip != nil
+        updateRuleBoxScrollInset()
+        // E4：心情/天气 Lottie 只在对应选择条点开时加载（本函数是选择条显隐
+        // 的唯一总口；编辑器打开时 activeToolStrip 为 nil，不触发加载）。
+        // 加载发生在播放门之前：ensureLoaded 后的 play/showStaticFrame 才有动画可播，
+        // 未加载前播放门对静态图均为空操作，C1 选择条行为与 69 批天气管控口径不动。
+        if activeToolStrip == .mood && !quotePanelOpen {
+            for item in moodItems {
+                item.emoteView.ensureLoaded()
+            }
+        } else if activeToolStrip == .weather && !quotePanelOpen {
+            for item in weatherEmoteViews {
+                item.emoteView.ensureLoaded()
+            }
+        }
         updateMoodPlayback()
         updateWeatherPlayback()
         updateScrollBottomAnchoring()
         refreshSelectedChips()
         updatePreferredContentSize()
+    }
+
+    /// A3：提示卡常驻在滚动区底部上方，滚动内容底边须留出提示卡高 + 12 间距，
+    /// 否则最后一行内容会被提示卡盖住；提示卡隐藏（选择条/引用面板打开）时底边距归零。
+    /// 布局前宽为 0 时跳过（viewDidLayoutSubviews 的宽变化分支会再算一次）。
+    private func updateRuleBoxScrollInset() {
+        guard isViewLoaded else { return }
+        if ruleBoxView.isHidden {
+            if scrollView.contentInset.bottom != 0 {
+                scrollView.contentInset.bottom = 0
+            }
+            return
+        }
+        let width = toolbarContainer.bounds.width > 0 ? toolbarContainer.bounds.width : view.bounds.width - 32
+        guard width > 0 else { return }
+        let height = ruleBoxView.systemLayoutSizeFitting(
+            CGSize(width: width, height: UIView.layoutFittingCompressedSize.height),
+            withHorizontalFittingPriority: .required,
+            verticalFittingPriority: .fittingSizeLevel
+        ).height
+        scrollView.contentInset.bottom = height + 12
     }
 
     /// 已选 Chip 行：只显示已选项（心情/天气/写给各一枚），无已选时整行塌掉；
@@ -2568,7 +2592,14 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     }
 
     @objc private func didTapRecipientTool() {
-        setToolStrip(.recipient)
+        // A2：工具栏 @ 钮直接 present 选人面板，跳过写给选择条。
+        // 编辑态例外：收信人锁定、选人面板本身禁入（presentRecipientPicker 会早退），
+        // 此时仍走选择条展示锁定 chip，与旧行为一致。
+        if isEditMode {
+            setToolStrip(.recipient)
+        } else {
+            presentRecipientPicker()
+        }
     }
 
     @objc private func didTapMoodChip() {
@@ -2724,10 +2755,17 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         ruleBoxView.translatesAutoresizingMaskIntoConstraints = false
         ruleIconImageView.translatesAutoresizingMaskIntoConstraints = false
         ruleLabel.translatesAutoresizingMaskIntoConstraints = false
-        contentStack.addArrangedSubview(ruleBoxView)
+        // A3：提示卡移出内容栈，改为常驻锚在工具栏上方（左右与工具栏同宽，
+        // 窄屏贴边 16、宽屏居中 608 均由 toolbarContainer 的边约束带走）；
+        // 工具栏底锚 keyboardLayoutGuide，键盘顶起工具栏时提示卡跟走、收起时跟回原位。
+        // 文案一字不动。选择条打开时会与提示卡重叠，故条开时提示卡暂隐（见 refreshToolStrip）。
+        view.addSubview(ruleBoxView)
         ruleBoxView.addSubview(ruleIconImageView)
         ruleBoxView.addSubview(ruleLabel)
         NSLayoutConstraint.activate([
+            ruleBoxView.leadingAnchor.constraint(equalTo: toolbarContainer.leadingAnchor),
+            ruleBoxView.trailingAnchor.constraint(equalTo: toolbarContainer.trailingAnchor),
+            ruleBoxView.bottomAnchor.constraint(equalTo: toolbarContainer.topAnchor, constant: -12),
             ruleIconImageView.topAnchor.constraint(equalTo: ruleBoxView.topAnchor, constant: 13),
             ruleIconImageView.leadingAnchor.constraint(equalTo: ruleBoxView.leadingAnchor, constant: 14),
             ruleIconImageView.widthAnchor.constraint(equalToConstant: 18),
@@ -2758,6 +2796,35 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
 
     private func trimmedContent() -> String {
         return textView.text.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    /// A4-App：标题 trim 后值（空即无标题；发布/编辑透传时空按 nil 处理，见调用点）。
+    private func trimmedTitle() -> String {
+        return (titleField.text ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    @objc private func titleFieldChanged() {
+        scheduleDraftSave()
+    }
+
+    // MARK: - UITextFieldDelegate（标题 30 字上限）
+
+    func textField(_ textField: UITextField, shouldChangeCharactersIn range: NSRange, replacementString string: String) -> Bool {
+        guard textField === titleField else { return true }
+        // 组词中（marked text）不拦，避免拼音输入被上限截断。
+        if textField.markedTextRange != nil { return true }
+        let current = textField.text ?? ""
+        guard let swiftRange = Range(range, in: current) else { return true }
+        let updated = current.replacingCharacters(in: swiftRange, with: string)
+        return updated.count <= BearyComposerViewController.maxTitleLength
+    }
+
+    func textFieldShouldReturn(_ textField: UITextField) -> Bool {
+        if textField === titleField {
+            textView.becomeFirstResponder()
+            return false
+        }
+        return true
     }
 
     /// 落字数：拼音组合串（marked text，如未落字的 "nihao"）不计入字数——
@@ -2832,6 +2899,8 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     private func refreshPublishingInputFreeze() {
         let frozen = isPublishing
         textView.isEditable = !frozen
+        // A4-App：发布/保存请求在途时标题输入框同正文一起冻结。
+        titleField.isEnabled = !frozen
         for item in moodItems {
             item.button.isEnabled = !frozen
         }
@@ -3578,6 +3647,8 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         } else {
             titleLabel.text = "编辑日记"
         }
+        // A4-App：编辑回填标题（原篇无标题时为空，不设占位）。
+        titleField.text = entry.title ?? ""
         textView.text = entry.content ?? ""
         applyBodyLineHeight()
         selectedMood = entry.mood
@@ -3659,6 +3730,8 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     /// 编辑是否改过东西（正文按 trim 后比，服务端落库时同样 trim；C6：引用改动也算）。
     private func isEditDirty() -> Bool {
         guard let entry = editingEntry else { return false }
+        // A4-App：标题改动也算改过（按 trim 后比，与正文同口径）。
+        if trimmedTitle() != (entry.title ?? "") { return true }
         if trimmedContent() != (entry.content ?? "") { return true }
         if selectedMood != entry.mood { return true }
         if selectedWeather != entry.weather { return true }
@@ -3720,7 +3793,8 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                 uploadedItems.append(item)
             }
         }
-        let hasRealContent = !trimmedContent().isEmpty || !uploadedItems.isEmpty
+        // A4-App：只填标题也算有实质内容（与正文同口径按 trim 算），不丢标题草稿。
+        let hasRealContent = !trimmedTitle().isEmpty || !trimmedContent().isEmpty || !uploadedItems.isEmpty
             || selectedWeather != nil || selectedRecipient != nil || selectedQuote != nil
         if !hasRealContent {
             let deletingId = draftIdValue
@@ -3758,8 +3832,10 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                 recipientNameValue = "用户"
             }
         }
+        let draftTitle = trimmedTitle()
         let draft = BearyDraft(
             draftId: draftIdValue,
+            title: draftTitle.isEmpty ? nil : draftTitle,
             content: textView.text,
             mood: selectedMood,
             images: images,
@@ -3846,10 +3922,12 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                 // 52 批补充：恢复竞态门——恢复是异步读盘，落地时用户可能已经打过字；
                 // 此时整段覆盖会抹掉刚打的字（拼音组词中还会被 attributedText 重设打散）。
                 // 用户已打字时整单跳过恢复（旧草稿仍在草稿箱，不丢），只字为空时才应用。
-                let wasEmptyBeforeRestore = self.textView.text.isEmpty
+                // A4-App：恢复竞态门同样看标题——用户已填标题时整单跳过恢复，不抹标题。
+                let wasEmptyBeforeRestore = self.textView.text.isEmpty && self.trimmedTitle().isEmpty
                 guard wasEmptyBeforeRestore else { return }
                 self.currentDraftId = draft.draftId
                 self.draftClientReq = draft.clientReq
+                self.titleField.text = draft.title ?? ""
                 self.textView.text = draft.content
                 self.applyBodyLineHeight()
                 // 恢复后光标置末尾（接着写）：未出现时由 viewDidAppear 兜底，已聚焦且
@@ -4072,6 +4150,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     /// 编辑器有无实质内容（C10：心情是常驻选择、不算内容——纯心情不建草稿；
     /// 注意正文这里按非空算，落盘时的空判定另按 trim，见 saveDraftNow）。
     private func hasEditorContent() -> Bool {
+        if !trimmedTitle().isEmpty { return true }
         if !textView.text.isEmpty { return true }
         if selectedWeather != nil { return true }
         if selectedRecipient != nil { return true }
@@ -4085,6 +4164,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     /// 这里只清视图与槽位，不重复删存文件）。
     private func resetEditorToBlank() {
         draftTimer?.invalidate()
+        titleField.text = ""
         textView.text = ""
         selectedMood = nil
         selectedWeather = nil
@@ -4117,6 +4197,8 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         removeAllImageViews()
         currentDraftId = draft.draftId
         draftClientReq = draft.clientReq
+        // A4-App：草稿箱打开某篇时标题同正文一起恢复。
+        titleField.text = draft.title ?? ""
         textView.text = draft.content
         applyBodyLineHeight()
         selectedMood = draft.mood
@@ -4291,7 +4373,9 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         // 已删引用不传 quoteId：只剩 id 的引用服务端会拒，发布应按无引用走，
         // 展示态仍保留到发布成功清本篇草稿为止。
         let publishQuoteId = (selectedQuote?.isDeleted == true) ? nil : selectedQuote?.entryId
-        BearyAPI.shared.publishEntry(content: trimmed, images: uploadedImageKeys(), mood: selectedMood, weather: selectedWeather, quoteId: publishQuoteId, recipientId: selectedRecipient?.id, notifyRecipient: selectedRecipient != nil ? (notifyRecipient ? 1 : 0) : nil, clientReq: req) { [weak self] result in
+        // A4-App：标题透传（空标题按 nil 省略，与服务端无标题口径一致）。
+        let publishTitle = trimmedTitle()
+        BearyAPI.shared.publishEntry(content: trimmed, images: uploadedImageKeys(), mood: selectedMood, weather: selectedWeather, quoteId: publishQuoteId, recipientId: selectedRecipient?.id, notifyRecipient: selectedRecipient != nil ? (notifyRecipient ? 1 : 0) : nil, title: publishTitle.isEmpty ? nil : publishTitle, clientReq: req) { [weak self] result in
             DispatchQueue.main.async {
                 guard let self = self else { return }
                 self.isPublishing = false
@@ -4360,7 +4444,11 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         }
         isPublishing = true
         updatePublishState()
-        BearyAPI.shared.updateEntry(id: entryId, content: trimmed, images: uploadedImageKeys(), mood: selectedMood, weather: selectedWeather, quoteId: lockedQuote?.entryId) { [weak self] result in
+        // A4-App：标题差分透传——与原篇标题相同（包括原无标题且未填）时不传，
+        // 改了才传（含清空时传空串，服务端按空标题处理）；避免无标题旧篇每次编辑误发空标题。
+        let newTitle = trimmedTitle()
+        let updateTitle: String? = (newTitle == (editingEntry?.title ?? "")) ? nil : newTitle
+        BearyAPI.shared.updateEntry(id: entryId, content: trimmed, images: uploadedImageKeys(), mood: selectedMood, weather: selectedWeather, quoteId: lockedQuote?.entryId, title: updateTitle) { [weak self] result in
             DispatchQueue.main.async {
                 guard let self = self else { return }
                 self.isPublishing = false
@@ -4372,6 +4460,10 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                     // D2：把编辑器终态写回原 Entry 副本传给容器（引用已清时 quoteId/quote
                     /// 均为 nil，容器据此清行内引用卡；已删引用不按正常 quote 回传）。
                     if var updated = self.editingEntry {
+                        // A4-App：编辑成功后本地 Entry 副本同步标题终态（空即无标题），
+                        // 容器据此刷新各面；卡片渲染未做，模型先行。
+                        let finalTitle = self.trimmedTitle()
+                        updated.title = finalTitle.isEmpty ? nil : finalTitle
                         updated.content = trimmed
                         updated.images = self.uploadedImageKeys()
                         updated.mood = self.selectedMood
@@ -4567,8 +4659,8 @@ private final class ComposerImageItem {
 //    再点已选项不取消；publish 传 weather；不选不传（服务端 validWeather 对缺失值置 null，
 //    与网页同口径）。publishEntry 同步补齐 quote_id/recipient_id/notify_recipient
 //    （默认参数，旧调用点不受影响）。天气图标见 icon_wx_<key>（与网页 WX_ICON 同款）。
-// 2. 写给：新建模式只选一人（搜索接口 users 组），@ 图标 + “写给某个人”钮 / chip + 通知行
-//    （复选框只写本地状态，不触发重渲染）；编辑模式锁定只展示（服务端 PUT 不接受 recipient，
+// 2. 写给：新建模式只选一人（搜索接口 users 组），@ 图标 + “写给某个人”钮 / chip；
+//    通知开关在选人面板内（点行回传时带走开关值，默认开）；编辑模式锁定只展示（服务端 PUT 不接受 recipient，
 //    改不了；无收信人时整区隐藏，网页编辑态同款）。
 //    引用：qp-mode 面板三 tab（我的日记 timeline / 赞过的 liked / 收藏的 saved），行是完整
 //    lite 卡（头像 40 + 名 + 日期 + 全文 + 118 图片条 + 投递中 pill；Plus 皇冠已取消显示）；服务端

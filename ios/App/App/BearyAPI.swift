@@ -48,6 +48,9 @@ struct Quote: Decodable {
 
 struct Entry: Decodable {
     var id: String?
+    /// A4-App：标题（服务端字段 title；无标题时服务端不返回或为空，解码为 nil；
+    /// 卡片渲染未做，本批只做模型与编辑器透传）。
+    var title: String? = nil
     var authorId: Int?
     var authorName: String?
     var authorAvatar: String?

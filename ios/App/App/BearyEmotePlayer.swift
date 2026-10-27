@@ -23,6 +23,10 @@ public final class BearyEmoteView: UIView {
     public var fallbackImageOverride: UIImage?
 
     private var isPlaying: Bool
+    /// E4 延迟加载态：deferLoad 构造的视图在 ensureLoaded() 前不解析；
+    /// hasLoadedEmote 防止重复加载与主题切换时误触发加载。
+    private var deferLoad: Bool = false
+    private var hasLoadedEmote: Bool = false
     /// 静态帧持有态：showStaticFrame() 置真，play()/stop() 清掉；attach 时若为真，
     /// 未播放的视图停在循环段末帧而非 0 帧（0 帧是首播描线起点，未完成态）。
     private var heldStaticFrame: Bool = false
@@ -109,9 +113,13 @@ public final class BearyEmoteView: UIView {
         self.init(key: key, animated: animated, fallbackImage: nil)
     }
 
-    public init(key: String, animated: Bool, fallbackImage: UIImage?) {
+    /// E4 编辑器懒加载：deferLoad 为真时构造只挂 PNG 静态图，不解析 Lottie、
+    /// 不调度预热；首次用到时调用方调 ensureLoaded() 才走正常加载路径。
+    /// 非编辑器调用方一律走默认 false，行为不变。
+    public init(key: String, animated: Bool, fallbackImage: UIImage?, deferLoad: Bool = false) {
         self.emoteKey = key
         self.isPlaying = animated && UIAccessibility.isReduceMotionEnabled == false
+        self.deferLoad = deferLoad
         super.init(frame: .zero)
         self.fallbackImageOverride = fallbackImage
         backgroundColor = .clear
@@ -119,8 +127,22 @@ public final class BearyEmoteView: UIView {
         Self.registerLivePlayer(self)
         Self.installReduceMotionObserver()
         Self.installMemoryWarningObserver()
+        if deferLoad {
+            showFallback(dark: self.isDark)
+        } else {
+            hasLoadedEmote = true
+            loadEmote()
+            Self.schedulePrewarm(dark: self.isDark)
+        }
+    }
+
+    /// E4：延迟加载的视图首次用到时调一次；已加载或非延迟视图为空操作。
+    /// 加载前调用方已调的 play()/showStaticFrame() 意图（isPlaying/heldStaticFrame）
+    /// 在 loadEmote 的挂接分支里原样兑现，不丢意图。
+    public func ensureLoaded() {
+        guard deferLoad, !hasLoadedEmote else { return }
+        hasLoadedEmote = true
         loadEmote()
-        Self.schedulePrewarm(dark: self.isDark)
     }
 
     deinit {
@@ -203,6 +225,13 @@ public final class BearyEmoteView: UIView {
         super.traitCollectionDidChange(previousTraitCollection)
         guard let previous = previousTraitCollection else { return }
         guard traitCollection.hasDifferentColorAppearance(comparedTo: previous) else { return }
+        // E4：延迟视图在首次加载前只换静态图的深浅变体，不触发 Lottie 解析与预热。
+        if deferLoad && !hasLoadedEmote {
+            fallbackImageView?.removeFromSuperview()
+            fallbackImageView = nil
+            showFallback(dark: self.isDark)
+            return
+        }
         let wasPlaying = isPlaying
         teardownContent()
         isPlaying = wasPlaying
