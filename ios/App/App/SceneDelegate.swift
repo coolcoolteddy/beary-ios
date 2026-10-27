@@ -232,8 +232,6 @@ final class BearyChromeViewController: UIViewController {
     private var centeredModal: BearyCenteredTransitioningDelegate?
     /// iPhone 底 sheet 编辑器模态的 transitioningDelegate（弱引用，强持有口径同 centeredModal）
     private var composerSheet: BearyComposerSheetTransitioningDelegate?
-    /// 临时诊断开关（89 包）：为真时 iPhone 也走居中 delegate，排查底 sheet 转场死堵；定根因后删除，恢复只需关开关。
-    private var forceCenteredForDiag = true
     /// 邀请弹窗模态的 transitioningDelegate（弱引用，强持有口径同 centeredModal/composerSheet；
     /// 宽屏居中与窄屏底 sheet 各持一个，与编辑器分开，避免互相覆盖持有）
     private var inviteCentered: BearyCenteredTransitioningDelegate?
@@ -2212,8 +2210,7 @@ final class BearyChromeViewController: UIViewController {
     /// 下滑可关闭，取消仍走编辑器自身取消流程）。forEdit 仅保留参数位（两模式同路径，
     /// 不再按编辑态分 edge 持有——底 sheet 不碰详情的 edge delegate）。
     private func configureComposerPresentation(_ composer: BearyComposerViewController, forEdit: Bool) {
-        // 临时诊断（89 包）：forceCenteredForDiag 开时 iPhone 也走居中分支；底 sheet 分支原样保留在 else 里，恢复只需关开关。
-        if view.bounds.width >= 821 || forceCenteredForDiag {
+        if view.bounds.width >= 821 {
             let centered = BearyCenteredTransitioningDelegate()
             composer.modalPresentationStyle = .custom
             composer.transitioningDelegate = centered
@@ -2716,6 +2713,9 @@ private final class BearyComposerSheetPresentationController: UIPresentationCont
     private let sheetTopBorderView = UIView()
     private var grabberInstalled = false
     private var sheetHeight: CGFloat = 0
+    // 90 包修法：转场进行中跳过 presentedView.frame 重写（transform 未归位时 frame 未定义，
+    // 坏写会算坏 center、动画第一帧再也出不来）；转场结束后恢复正常写帧。
+    private var isTransitioning = false
 
     override var frameOfPresentedViewInContainerView: CGRect {
         guard let container = containerView else { return .zero }
@@ -2727,6 +2727,7 @@ private final class BearyComposerSheetPresentationController: UIPresentationCont
     }
 
     override func presentationTransitionWillBegin() {
+        isTransitioning = true
         // 临时诊断（86 包，定根因后删除）。
         DiagFile.mark("sheet-willBegin")
         guard let container = containerView else { return }
@@ -2768,6 +2769,7 @@ private final class BearyComposerSheetPresentationController: UIPresentationCont
     }
 
     override func presentationTransitionDidEnd(_ completed: Bool) {
+        isTransitioning = false
         // 临时诊断（86 包，定根因后删除；UIKit 无 presentationTransitionDidComplete，此为最接近的结束点）。
         DiagFile.mark("sheet-didComplete")
         if !completed {
@@ -2794,7 +2796,11 @@ private final class BearyComposerSheetPresentationController: UIPresentationCont
         // 看门狗修法（2026-10-27，第二层）：等值帧不再重复赋值与带阴影层重算，
         // 防止等值帧设置本身反复脏化呈现子树；与 Composer 宽门互为备份。
         if presentedView.frame != frame {
-            presentedView.frame = frame
+            // 90 包修法：转场进行中 transform 未归位，frame 未定义，跳过这次写帧；
+            // sheetHeight 与阴影层照常从局部变量 frame 更新，转场结束后恢复正常写帧。
+            if !isTransitioning {
+                presentedView.frame = frame
+            }
             sheetHeight = frame.height
             // 阴影层与 sheet 同框、跟 sheet 帧走（跟手下滑时 transform 由 pan 回调同步）。
             sheetShadowView.frame = frame
