@@ -400,6 +400,9 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             }
             textView.becomeFirstResponder()
         }
+        // 87 包修法：转场里被跳过的 setNeedsLayout 在此补一次，让高度 settle；
+        // 此时转场已完成，单次布局请求不重入，宽门仍兜底。
+        view.superview?.setNeedsLayout()
     }
 
     deinit {
@@ -510,7 +513,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             let target = windowWidth >= 821 ? min(620, viewportHeight * 0.82) : viewportHeight * 0.86
             guard abs(preferredContentSize.height - target) > 0.5 else { return }
             preferredContentSize = CGSize(width: fittingWidth, height: target)
-            view.superview?.setNeedsLayout()
+            setNeedsLayoutUnlessPresenting()
             return
         }
         let targetSize = CGSize(width: fittingWidth, height: UIView.layoutFittingCompressedSize.height)
@@ -524,9 +527,24 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             return
         }
         preferredContentSize = CGSize(width: fittingWidth, height: total)
-        view.superview?.setNeedsLayout()
+        setNeedsLayoutUnlessPresenting()
         // 临时诊断（86 包，定根因后删除）：方法出口。
         DiagFile.mark("composer-prefSize-exit")
+    }
+
+    /// 87 包修法：转场进行中只改 preferredContentSize，不同步触发 superview 布局。
+    /// 转场里 setNeedsLayout 会重入呈现层布局（天气看门狗事故同源）；且此时 sheet
+    /// 容器布局本就从 preferredContentSize 读高，不会丢高度；转场结束后 viewDidAppear
+    /// 补一次 setNeedsLayout 让高度 settle。判定用 UIKit 现成的 isBeingPresented，
+    /// 不新增状态（呈现控制器类是 SceneDelegate.swift 文件私有的，跨文件读 flag
+    /// 要改可见性，反而更重）。
+    private func setNeedsLayoutUnlessPresenting() {
+        if isBeingPresented {
+            // 临时诊断（87 包，定根因后删除）：证明转场里确实走了跳过分支。
+            DiagFile.mark("composer-prefSize-skipTrans")
+        } else {
+            view.superview?.setNeedsLayout()
+        }
     }
 
     private func buildTopBar() {
