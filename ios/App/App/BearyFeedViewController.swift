@@ -1496,7 +1496,7 @@ class BearyFeedViewController: UIViewController {
         }
     }
 
-    /// “公开”钮：先弹网页 openPubConfirm 同款确认框（公开后不能撤回删除），确认后走
+    /// “公开”钮：先弹网页 openPubConfirm 同款确认框（公开后无法撤回或删除），确认后走
     /// POST /beary/api/entries/:id/publish；仅已送达未公开态进确认框。
     private func handlePublishTap(entryId: String) {
         guard !entryId.isEmpty, let entry = entryModel(for: entryId), entry.isMine == true, entry.isPublic != true else { return }
@@ -1504,7 +1504,7 @@ class BearyFeedViewController: UIViewController {
         if let pend = entry.publishPendingUntil, pend > nowMs { return }
         guard let publishAt = entry.publishAt, publishAt <= nowMs else { return }
         if pubBusyIds.contains(entryId) { return }
-        let alert = UIAlertController(title: "确认公开？", message: "公开后不能撤回删除。确认后开始 24 小时倒计时，倒计时结束即公开，期间可以取消。", preferredStyle: .alert)
+        let alert = UIAlertController(title: "确认公开？", message: "公开后无法撤回或删除。确认后开始 24 小时倒计时，期间可以取消公开。", preferredStyle: .alert)
         alert.addAction(UIAlertAction(title: "取消", style: .cancel))
         alert.addAction(UIAlertAction(title: "公开", style: .default) { [weak self] _ in
             guard let strongSelf = self else { return }
