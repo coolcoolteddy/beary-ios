@@ -414,8 +414,13 @@ final class BearyCalendarCardView: UIView {
     var onToggleView: (() -> Void)?
     var onPrevious: (() -> Void)?
     var onNext: (() -> Void)?
+    var onGoToday: (() -> Void)?
 
     private let titleLabel = UILabel()
+    private let todayButton = BearyHit44Button(type: .system)
+    /// “今”钮与标题之间的 8pt 间隔垫片：与钮同显同隐，隐藏时栈内
+    /// 不占位，标题 → 切换钮间距与改前（custom 0）完全一致。
+    private let todaySpacer = UIView()
     private let toggleButton = BearyHit44Button(type: .system)
     private let prevButton = BearyHit44Button(type: .system)
     private let nextButton = BearyHit44Button(type: .system)
@@ -448,6 +453,23 @@ final class BearyCalendarCardView: UIView {
         toggleButton.addTarget(self, action: #selector(didTapToggle), for: .touchUpInside)
         toggleButton.bearyAddPressFeedback()
 
+        // C10 回到今天：轻量胶囊“今”，与翻页钮同款（faint 底、32×32、
+        // 圆角 16、12.5 粗体），默认隐藏，只由 VC 的 setTodayButtonVisible
+        // 在显示月份/周不含今天或选中日不是今天时浮现；无障碍名“回到今天”。
+        todayButton.translatesAutoresizingMaskIntoConstraints = false
+        todayButton.backgroundColor = BearyColors.faint
+        todayButton.layer.cornerRadius = 16
+        todayButton.titleLabel?.font = UIFont.boldSystemFont(ofSize: 12.5)
+        todayButton.setTitleColor(BearyColors.ink, for: .normal)
+        todayButton.setTitle("今", for: .normal)
+        todayButton.accessibilityLabel = "回到今天"
+        todayButton.addTarget(self, action: #selector(didTapToday), for: .touchUpInside)
+        todayButton.bearyAddPressFeedback()
+        todayButton.isHidden = true
+        todayButton.alpha = 0
+        todaySpacer.translatesAutoresizingMaskIntoConstraints = false
+        todaySpacer.isHidden = true
+
         prevButton.translatesAutoresizingMaskIntoConstraints = false
         prevButton.backgroundColor = BearyColors.faint
         prevButton.layer.cornerRadius = 16
@@ -477,7 +499,7 @@ final class BearyCalendarCardView: UIView {
         nextButton.addTarget(self, action: #selector(didTapNext), for: .touchUpInside)
         nextButton.bearyAddPressFeedback()
 
-        let topRow = UIStackView(arrangedSubviews: [titleLabel, toggleButton, prevButton, nextButton])
+        let topRow = UIStackView(arrangedSubviews: [titleLabel, todaySpacer, todayButton, toggleButton, prevButton, nextButton])
         topRow.translatesAutoresizingMaskIntoConstraints = false
         topRow.axis = .horizontal
         topRow.alignment = .center
@@ -545,6 +567,9 @@ final class BearyCalendarCardView: UIView {
             outer.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 14),
             outer.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -14),
             outer.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -10),
+            todaySpacer.widthAnchor.constraint(equalToConstant: 8),
+            todayButton.widthAnchor.constraint(equalToConstant: 32),
+            todayButton.heightAnchor.constraint(equalToConstant: 32),
             toggleButton.heightAnchor.constraint(equalToConstant: 32),
             // 64 包反馈修（第 6 项）：周/月切换钮等宽——旧代码宽度随标题内容走，
             // “月视图”/“周视图”两态渲染宽不一致；固定 64（内边距 12+12 + 3 字×12.5 + 余量），
@@ -594,6 +619,38 @@ final class BearyCalendarCardView: UIView {
         nextButton.isEnabled = nextEnabled
         prevButton.alpha = prevEnabled ? 1 : 0.35
         nextButton.alpha = nextEnabled ? 1 : 0.35
+    }
+
+    /// C10 “今”钮显隐（VC 在每次 renderCalendar 末尾重算）：浮现 0.2s
+    /// 淡入、隐藏 0.2s 淡出后才 isHidden（栈内不占位）；减动效直设终值。
+    /// 重复调用同态时直接返回，不重播淡入淡出。
+    func setTodayButtonVisible(_ visible: Bool) {
+        if visible {
+            guard todayButton.isHidden || todayButton.alpha < 1 else { return }
+            todayButton.isHidden = false
+            todaySpacer.isHidden = false
+            if UIAccessibility.isReduceMotionEnabled {
+                todayButton.alpha = 1
+            } else {
+                UIView.animate(withDuration: 0.2, animations: {
+                    self.todayButton.alpha = 1
+                })
+            }
+        } else {
+            guard !todayButton.isHidden else { return }
+            if UIAccessibility.isReduceMotionEnabled {
+                todayButton.alpha = 0
+                todayButton.isHidden = true
+                todaySpacer.isHidden = true
+            } else {
+                UIView.animate(withDuration: 0.2, animations: {
+                    self.todayButton.alpha = 0
+                }, completion: { _ in
+                    self.todayButton.isHidden = true
+                    self.todaySpacer.isHidden = true
+                })
+            }
+        }
     }
 
     /// weekKeys：月视图入场错峰时要跳过的本周日期 key（网页 calStaggerMonthCells
@@ -671,6 +728,10 @@ final class BearyCalendarCardView: UIView {
 
     @objc private func didTapToggle() {
         onToggleView?()
+    }
+
+    @objc private func didTapToday() {
+        onGoToday?()
     }
 
     @objc private func didTapPrevious() {
@@ -2360,6 +2421,9 @@ class BearyTimelineViewController: UIViewController {
         calendarCard.onNext = { [weak self] in
             self?.stepCalendar(delta: 1)
         }
+        calendarCard.onGoToday = { [weak self] in
+            self?.goToToday()
+        }
 
         let stack = UIStackView(arrangedSubviews: [titleRow, countsLabel, statsButton, calendarCard])
         stack.translatesAutoresizingMaskIntoConstraints = false
@@ -3062,6 +3126,7 @@ class BearyTimelineViewController: UIViewController {
             calendarCard.render(days: days, mode: .month, weekKeys: currentWeekKeys())
         }
         updateStatsLine()
+        updateCalendarTodayButton()
     }
 
     private func isCurrentWeek(monday: (year: Int, month: Int, day: Int)) -> Bool {
@@ -3316,6 +3381,53 @@ class BearyTimelineViewController: UIViewController {
             _ = tryStepFollowSelection()
         }
         refreshHeaderHeight()
+    }
+
+    /// C10 “今”钮显隐：显示月份/周不含今天，或选中日不是今天时浮现；
+    /// 回到今天后 renderCalendar 重算即隐藏。只读 anchor/displayed/
+    /// selected，不改任何已有状态；renderCalendar 是唯一漏斗（翻页、
+    /// 切换视图、月份回包、点选日全经此），故挂在末尾即全覆盖。
+    private func updateCalendarTodayButton() {
+        guard let today = BearyBeijingDay.todayComponents() else {
+            calendarCard.setTodayButtonVisible(false)
+            return
+        }
+        let todayKey = BearyBeijingDay.dayKey(year: today.year, month: today.month, day: today.day)
+        let containsToday: Bool
+        switch calendarMode {
+        case .week:
+            if let anchor = calendarAnchor,
+               let monday = BearyBeijingDay.mondayOf(year: anchor.year, month: anchor.month, day: anchor.day) {
+                containsToday = isCurrentWeek(monday: monday)
+            } else {
+                containsToday = false
+            }
+        case .month:
+            if let displayed = calendarDisplayedMonth {
+                containsToday = isCurrentMonth(displayed: displayed)
+            } else {
+                containsToday = false
+            }
+        }
+        calendarCard.setTodayButtonVisible(!containsToday || selectedDayKey != todayKey)
+    }
+
+    /// C10 回到今天：先把锚点与显示月归到今天（月视图下 selectDay
+    /// 的同日分支不碰 displayed 月，光调它回不到当月；周视图下
+    /// selectDay 本就同步锚点，此处同值无害），再复用 selectDay 切日
+    /// + 补拉当月圆点，不另写切日路径。切日动效即现有口径：网格复用
+    /// 钮不重播错峰、新格子走既有 0.32s 错峰，不另加转场动画（翻页
+    /// 64 包反馈修已定“只外科更新网格、不整卡转场”）。
+    /// 手动点“今”作废翻页跟随挂起（与手动点选日作废定位挂起同口径），
+    /// 防在途月份回包把选区跟回旧视图；reload 守卫挂起不动，与点选
+    /// 当日格子同语义（见未决风险）。
+    private func goToToday() {
+        guard let today = BearyBeijingDay.todayComponents() else { return }
+        pendingStepFollow = false
+        calendarAnchor = (year: today.year, month: today.month, day: today.day)
+        calendarDisplayedMonth = (year: today.year, month: today.month)
+        selectDay(key: BearyBeijingDay.dayKey(year: today.year, month: today.month, day: today.day))
+        fetchCalendarMonthsForCurrentView()
     }
 
     // MARK: - 当日面板（TL-7/TL-8）
