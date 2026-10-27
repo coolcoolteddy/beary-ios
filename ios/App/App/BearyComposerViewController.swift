@@ -236,9 +236,11 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, U
     private let contentView = UIView()
     private let contentStack = UIStackView()
     /// A4-App：编辑器标题输入框（App 端，不依赖卡片渲染子项）。上限 30 字为建议值，
-    /// Li 未填数字时先用它，可改（见 maxTitleLength）；空标题不做占位决定，
-    /// 发布/编辑时空标题省略不传，卡片侧空标题展示另行定。标题以 titleField
-    /// 文本为准（trimmedTitle() 归一化），不另设镜像状态。
+    /// Li 未填数字时先用它，可改（见 maxTitleLength）；空标题不做占位决定。
+    /// R1：新建空标题仍省略不传（trimmedTitle() 为 nil）；编辑已有标题的日记
+    /// 清空标题时 PUT 显式传空串（performUpdate 传 trimmedTitle() ?? ""），
+    /// 后端按显式空串清为 NULL。标题以 titleField 文本为准（trimmedTitle()
+    /// 归一化），不另设镜像状态。
     private static let maxTitleLength = 30
     private let titleField = UITextField()
     private let textView = BearyBodyTextView()
@@ -808,7 +810,8 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, U
         contentStack.setCustomSpacing(8, after: titleField)
     }
 
-    /// 标题归一化：trim 后空串按 nil（发布/编辑/草稿均按“无标题”处理，不发空串）。
+    /// 标题归一化：trim 后空串按 nil（新建发布/草稿均按“无标题”处理，不发空串；
+    /// 仅编辑 PUT 调用方在传参时把 nil 转为空串，见 performUpdate 的 R1 注释）。
     private func trimmedTitle() -> String? {
         let trimmed = (titleField.text ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
         return trimmed.isEmpty ? nil : trimmed
@@ -1731,6 +1734,10 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, U
         quotePanel.translatesAutoresizingMaskIntoConstraints = false
         // 自定义 tab 条（网页 qp-seg-in）：容器 padding 3、faint 底、圆角 999；
         // 钮 13.5/600、padding 6/16；选中墨字 + surface 底（网页滑块指示的静态等价），未选灰字无底。
+        // R7(a)：tab 条此前无显式高度、高度全靠钮固有高撑开，任一固有高异常即帧
+        // 塌陷成 0 高不可见；现给容器显式高度 36（padding 3×2 + 钮高 30，钮上下
+        // 内边距 6×2 + 13.5 字高，栈 fill 拉满不裁字）。faint 为不透明实色
+        // （alpha 1），不是透明/玻璃，选中态文字仍为深色 ink，排除渲染不可见。
         quoteTabBarContainer.translatesAutoresizingMaskIntoConstraints = false
         quoteTabBarContainer.backgroundColor = BearyColors.faint
         quoteTabBarContainer.layer.cornerRadius = 999
@@ -1791,6 +1798,8 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, U
             // 整段 padding 10/16/4：顶距面板顶 10、左右 16 已由 contentStack 边距提供、
             // 行顶距 tab 条底 4；容器在面板内居中（网页 qp-seg justify-content:center）。
             quoteTabBarContainer.topAnchor.constraint(equalTo: quotePanel.topAnchor, constant: 10),
+            // R7(a)：tab 条显式高度，不再只靠钮固有高撑开。
+            quoteTabBarContainer.heightAnchor.constraint(equalToConstant: 36),
             quoteTabBarContainer.centerXAnchor.constraint(equalTo: quotePanel.centerXAnchor),
             quoteTabBarContainer.leadingAnchor.constraint(greaterThanOrEqualTo: quotePanel.leadingAnchor),
             quoteTabBarContainer.trailingAnchor.constraint(lessThanOrEqualTo: quotePanel.trailingAnchor),
@@ -1813,23 +1822,17 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, U
             quotePanelRows.trailingAnchor.constraint(equalTo: quotePanel.trailingAnchor),
             quotePanelRows.bottomAnchor.constraint(equalTo: quotePanel.bottomAnchor),
         ])
-        // 玻璃批：面板自身底改 clear，玻璃背板插 index 0 钉满面板 bounds；圆角沿用面板现有值，不新编。
-        quotePanel.backgroundColor = UIColor.clear
-        let quoteGlass = BearyGlass.effectView(tint: BearyGlass.neutralTint)
-        quoteGlass.translatesAutoresizingMaskIntoConstraints = false
-        quotePanel.insertSubview(quoteGlass, at: 0)
-        NSLayoutConstraint.activate([
-            quoteGlass.topAnchor.constraint(equalTo: quotePanel.topAnchor),
-            quoteGlass.bottomAnchor.constraint(equalTo: quotePanel.bottomAnchor),
-            quoteGlass.leadingAnchor.constraint(equalTo: quotePanel.leadingAnchor),
-            quoteGlass.trailingAnchor.constraint(equalTo: quotePanel.trailingAnchor),
-        ])
+        // R7(b)：面板背板由透明玻璃改实色底 surface（不透明变量色，浅白/深 #26262c，
+        // 深浅跟随）；玻璃背板整段删除，不再透出下层内容，面板边界清晰。
+        // tab 条 faint 底在 surface 面板上仍有灰白区分，选中钮 surface 底在 faint 条上亦可见。
+        quotePanel.backgroundColor = BearyColors.surface
         quotePanel.isHidden = true
         contentStack.setCustomSpacing(16, after: quotePanel)
     }
 
     /// 自定义 tab 选中态：选中墨字 + surface 底，未选灰字无底（与旧系统分段控件的
     /// 选中序号语义一一对应，tab 值仍走 quotePanelTab）。
+    /// R7(a) 复核：选中态文字为深色 ink（非灰/非透明），在 faint 实色条上可读。
     /// D-G17：网页选中滑块带阴影（0 1px 6px 黑 12% + 0 0 0 1px 黑 4%）；
     /// App 选中钮补同值阴影（单层 shadow 画不出双层，故 1px 环用同色描边近似，
     /// 描边在内侧 1px）；选中态须关 masksToBounds 否则阴影被裁，未选恢复。
@@ -2266,7 +2269,9 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, U
                 contentLabel.leadingAnchor.constraint(equalTo: rowButton.leadingAnchor, constant: 54),
                 contentLabel.trailingAnchor.constraint(equalTo: rowButton.trailingAnchor, constant: -2),
                 separator.topAnchor.constraint(equalTo: lastBottomAnchor, constant: lastBottomConstant),
-                separator.leadingAnchor.constraint(equalTo: rowButton.leadingAnchor, constant: 2),
+                // R7(c)：分隔线 leading 与正文左边缘对齐：正文/头行 leading 均为 54
+                //（头像 40 + 左距 2 + 间距 12），此前分隔线从头像左边缘（2）起。
+                separator.leadingAnchor.constraint(equalTo: rowButton.leadingAnchor, constant: 54),
                 separator.trailingAnchor.constraint(equalTo: rowButton.trailingAnchor, constant: -2),
                 separator.heightAnchor.constraint(equalToConstant: 1),
                 separator.bottomAnchor.constraint(equalTo: rowButton.bottomAnchor),
@@ -4393,6 +4398,8 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, U
         // 已删引用不传 quoteId：只剩 id 的引用服务端会拒，发布应按无引用走，
         // 展示态仍保留到发布成功清本篇草稿为止。
         let publishQuoteId = (selectedQuote?.isDeleted == true) ? nil : selectedQuote?.entryId
+        // R1 复核：新建仍传 trimmedTitle()（空时为 nil，API 省略不传），新建
+        // 不填标题的行为不变；显式空串清标题只发生在编辑 PUT（performUpdate）。
         BearyAPI.shared.publishEntry(content: trimmed, images: uploadedImageKeys(), mood: selectedMood, weather: selectedWeather, quoteId: publishQuoteId, recipientId: selectedRecipient?.id, notifyRecipient: selectedRecipient != nil ? (notifyRecipient ? 1 : 0) : nil, title: trimmedTitle(), clientReq: req) { [weak self] result in
             DispatchQueue.main.async {
                 guard let self = self else { return }
@@ -4462,7 +4469,10 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, U
         }
         isPublishing = true
         updatePublishState()
-        BearyAPI.shared.updateEntry(id: entryId, content: trimmed, images: uploadedImageKeys(), mood: selectedMood, weather: selectedWeather, quoteId: lockedQuote?.entryId, title: trimmedTitle()) { [weak self] result in
+        // R1：编辑时标题清空必须显式传空串，不能省略不传（省略=服务端
+        // 保留旧标题）。trimmedTitle() 空时为 nil，此处转 ""；有标题时原样传。
+        // 新建走 performPublish，仍传 trimmedTitle()（空时 nil 省略），行为不变。
+        BearyAPI.shared.updateEntry(id: entryId, content: trimmed, images: uploadedImageKeys(), mood: selectedMood, weather: selectedWeather, quoteId: lockedQuote?.entryId, title: trimmedTitle() ?? "") { [weak self] result in
             DispatchQueue.main.async {
                 guard let self = self else { return }
                 self.isPublishing = false
@@ -4475,9 +4485,10 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, U
                     /// 均为 nil，容器据此清行内引用卡；已删引用不按正常 quote 回传）。
                     if var updated = self.editingEntry {
                         updated.content = trimmed
-                        // A4-App：编辑透传空标题时接口省略不传，故本地副本只在有标题时更新，
-                        // 清空标题不改服务端已有标题（清标题口径未定，不在此处决定）。
-                        if let t = self.trimmedTitle() { updated.title = t }
+                        // R1：编辑 PUT 已显式传空串清标题，故本地副本直接跟随终态：
+                        // 有标题写标题，清空写 nil（与服务端清为 NULL 一致），否则
+                        // 保存后列表仍显示旧标题，与服务端不一致。
+                        updated.title = self.trimmedTitle()
                         updated.images = self.uploadedImageKeys()
                         updated.mood = self.selectedMood
                         updated.weather = self.selectedWeather

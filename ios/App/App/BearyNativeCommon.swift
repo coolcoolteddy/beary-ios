@@ -645,8 +645,10 @@ extension BearyAPI {
     /// create_ip_limit(429) / create_dup / recipient_invalid。
     func publishEntry(content: String, images: [String], mood: String?, weather: String? = nil, quoteId: String? = nil, recipientId: Int? = nil, notifyRecipient: Int? = nil, title: String? = nil, clientReq: String, completion: @escaping (Result<CreateResponse, APIError>) -> Void) {
         var body: [String: Any] = ["content": content, "images": images, "client_req": clientReq]
-        // A4-App：标题透传；空标题省略不传（不做空标题占位决定，服务端按缺失处理）。
-        if let t = title, !t.isEmpty { body["title"] = t }
+        // R1：标题透传，nil=省略不传；非 nil（含空串）原样传。新建调用方传
+        // trimmedTitle()（空时为 nil），故新建不填标题仍省略不传，行为不变；
+        // 显式空串只由编辑 PUT 调用方在清空标题时传，见 updateEntry。
+        if let t = title { body["title"] = t }
         if let m = mood { body["mood"] = m }
         if let w = weather { body["weather"] = w }
         if let q = quoteId { body["quote_id"] = q }
@@ -665,8 +667,10 @@ extension BearyAPI {
     func updateEntry(id: String, content: String, images: [String], mood: String?, weather: String?, quoteId: String?, title: String? = nil, completion: @escaping (Result<Void, APIError>) -> Void) {
         let safe = id.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? id
         var body: [String: Any] = ["content": content, "images": images]
-        // A4-App：标题透传；空标题省略不传（编辑时不以此清标题，服务端按缺失处理）。
-        if let t = title, !t.isEmpty { body["title"] = t }
+        // R1：标题透传，nil=省略不传（不改服务端标题）；显式空串 "" 原样传，
+        // 后端按显式空串清为 NULL。编辑调用方在标题清空时传 ""（见 performUpdate），
+        // 故编辑已有标题的日记清空后保存，标题真正消失；新建不走本函数。
+        if let t = title { body["title"] = t }
         if let m = mood { body["mood"] = m }
         if let w = weather { body["weather"] = w }
         if let q = quoteId { body["quote_id"] = q }
