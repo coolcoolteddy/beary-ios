@@ -2621,7 +2621,7 @@ class BearyTimelineViewController: UIViewController {
         var current: Int?
         for index in 0..<count {
             let headerTop = tableView.rectForHeader(inSection: index).minY
-            let sectionBottom = tableView.rectForSection(index).maxY
+            let sectionBottom = tableView.rect(forSection: index).maxY
             if headerTop <= top && sectionBottom > top {
                 current = index
             }
