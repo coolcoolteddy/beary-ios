@@ -1015,7 +1015,8 @@ final class BearyChromeViewController: UIViewController {
     /// 栏显隐：动画可中断、可交互，reduced-motion 下直接设终值（与原栏动画同口径）。
     private func setBarsVisible(_ visible: Bool, animated: Bool) {
         // 52 批：header 高度走 setHeaderVisible——首页才显示、他页恒收起（各页 setChromeHidden(false)
-        // 强制显示调用至此即按新规则收敛：他页只恢复底栏分段器与 FAB，不恢复 header）。
+        // 强制显示调用至此即按新规则收敛：他页只恢复底栏分段器，不恢复 header；
+        // C5-B：FAB 亦只在首页/时间线恢复，他页不恢复）。
         // A1-1（搜索回首页不打断顶栏动画）：若再以 animated:false 调 setHeaderVisible，
         // 会立即 layoutIfNeeded 把 showPage 刚启动的 0.25s 顶栏动画首帧硬切到终态；
         // 目标与当前 headerVisible 一致时跳过（动画继续走完），底栏/FAB 恢复仍按原口径走。
@@ -1023,6 +1024,14 @@ final class BearyChromeViewController: UIViewController {
         if headerTarget != headerVisible {
             setHeaderVisible(headerTarget, animated: animated)
         }
+        // C5-B 折中（Li 亲口限定，4 段底栏、移除 FAB 均不做）：FAB 仅首页与
+        // 时间线显示，“我”/消息页自动隐藏、切回即恢复。底栏 3 段官方分段器、
+        // 顶栏只在首页、玻璃 52 tint 一律不动；非 tab 页（他人主页等）同样
+        // 无 FAB（“仅”口径）。滚隐/恢复、搜索藏栏仍走同一条，恢复时按当前
+        // 页重算 FAB，不再与底栏同进退。启动时 currentPage 尚为 nil，首个
+        // setBarsVisible(true) 先藏 FAB，随后 showPage(.home) 末尾的恢复
+        // 调用即按首页重算为可见，首帧不留残态。
+        let fabVisible = visible && (currentPage == .home || currentPage == .timeline)
         let applyBars = {
             if let seg = self.bottomSegmented {
                 seg.alpha = visible ? 1 : 0
@@ -1030,8 +1039,8 @@ final class BearyChromeViewController: UIViewController {
             }
             self.bottomBlurView?.alpha = visible ? 1 : 0
             self.bottomBlurView?.transform = visible ? .identity : CGAffineTransform(translationX: 0, y: 80)
-            self.fabContainerView?.alpha = visible ? 1 : 0
-            self.fabContainerView?.transform = visible ? .identity : CGAffineTransform(translationX: 0, y: 80)
+            self.fabContainerView?.alpha = fabVisible ? 1 : 0
+            self.fabContainerView?.transform = fabVisible ? .identity : CGAffineTransform(translationX: 0, y: 80)
         }
         if !animated || UIAccessibility.isReduceMotionEnabled {
             applyBars()
@@ -1039,7 +1048,7 @@ final class BearyChromeViewController: UIViewController {
             UIView.animate(withDuration: 0.25, delay: 0, options: [.beginFromCurrentState, .allowUserInteraction], animations: applyBars)
         }
         bottomSegmented?.isUserInteractionEnabled = visible
-        fabContainerView?.isUserInteractionEnabled = visible
+        fabContainerView?.isUserInteractionEnabled = fabVisible
         // 模糊衬底永不参与触摸（isUserInteractionEnabled 恒 false），不在此同步，
         // 否则衬底会在显示时吞掉下方内容的触摸。
     }
@@ -1812,7 +1821,9 @@ final class BearyChromeViewController: UIViewController {
     /// 容器级轻提示（A11 未登录“我”页、时间线删除失败等）：委托 B 批统一
     /// BearyToast。落点走现有栏显隐逻辑：FAB 容器由 setBarsVisible 同步
     /// alpha + isUserInteractionEnabled，FAB 可见时抬至 FAB 顶之上（-158），
-    /// 栏隐藏时（搜索页等）落 -32，不再悬空。调用签名与文案不变。
+    /// 栏隐藏时（搜索页等）落 -32，不再悬空。C5-B 后“我”/消息页 FAB
+    /// 本就隐藏，此处读到的 fabVisible 即为 false，落点自动跟到 -32，
+    /// 无需另传信号。调用签名与文案不变。
     private func showToast(message: String) {
         let fabVisible = (fabContainerView?.alpha ?? 0) > 0
             && (fabContainerView?.isUserInteractionEnabled == true)

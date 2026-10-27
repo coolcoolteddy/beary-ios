@@ -1655,12 +1655,12 @@ final class BearyNotificationsViewController: UIViewController {
     }
 
     /// toast：委托 B 批统一 BearyToast（A5-3 减动效口径由统一组件承接，
-    /// 三处调用点请先登录 / 加载失败 / 操作失败仍走本方法）。消息页是
-    /// Chrome 主 tab，FAB 为容器常驻 chrome、本页不藏栏，FAB 可见性在
-    /// 本页拿不到 Chrome 的私有 fabContainerView，故调用方明确传
-    /// aboveFAB=true；调用签名与文案、触发时机不变。
+    /// 三处调用点请先登录 / 加载失败 / 操作失败仍走本方法）。C5-B 后
+    /// FAB 仅首页/时间线显示，消息页无 FAB（底栏分段器仍在），故落点
+    /// 从 aboveFAB=true 改为 false（安全区 -32），不再悬空；调用签名
+    /// 与文案、触发时机不变。
     private func showToast(message: String) {
-        BearyToast.show(in: view, message: message, aboveFAB: true)
+        BearyToast.show(in: view, message: message, aboveFAB: false)
     }
 
     /// 系统信模态：容器接了 onSystemNotificationSelected 则先交容器，
