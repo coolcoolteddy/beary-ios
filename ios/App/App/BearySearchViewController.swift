@@ -77,10 +77,12 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
     private var lastQuery: String = ""
     private var showingResults: Bool = false
     private var searchBoxFocused: Bool = false
-    // S7：有旧结果时失败保留旧结果，行内重试行（复用失败态 retryButton 样式，
-    // 不新增组件）；随 clearResultRows 重建而丢弃，见 showFailedStateKeepingResults。
-    private var searchInlineRetryRow: UIView?
-    private var searchInlineRetryButton: UIButton?
+    // 88 包 M13：结果区底部常驻尾行（对齐时间线/个人主页尾行形态；搜索后端
+    // 只返回一批、无分页参数，故尾行只承载加载态与失败重试，不做加载更多）。
+    private let searchFooterRow = UIView()
+    private let searchFooterSpinner = UIActivityIndicatorView(style: .medium)
+    private let searchFooterLabel = UILabel()
+    private let searchFooterRetryButton = UIButton(type: .custom)
     /// Q9 最近搜索：只存本机 UserDefaults，不走服务端；最多 8 条，新在前、去重。
     private let recentSearchesKey = "bearyRecentSearches"
     private var recentButtons: [UIButton] = []
@@ -468,6 +470,42 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         resultsStack.spacing = 0
         contentStack.addArrangedSubview(resultsStack)
 
+        // 88 包 M13：结果区尾行（加载态转圈＋失败重试），平时隐藏；高度 44
+        // 与时间线尾行同口径，内容居中，避免显隐两态约束冲突。
+        searchFooterRow.translatesAutoresizingMaskIntoConstraints = false
+        searchFooterRow.isHidden = true
+        contentStack.addArrangedSubview(searchFooterRow)
+        searchFooterSpinner.translatesAutoresizingMaskIntoConstraints = false
+        searchFooterSpinner.color = BearyColors.gray
+        searchFooterLabel.translatesAutoresizingMaskIntoConstraints = false
+        searchFooterLabel.text = "正在搜索…"
+        searchFooterLabel.font = UIFont.systemFont(ofSize: 14)
+        searchFooterLabel.textColor = BearyColors.gray
+        searchFooterRetryButton.translatesAutoresizingMaskIntoConstraints = false
+        searchFooterRetryButton.setTitle("重试", for: .normal)
+        searchFooterRetryButton.setTitleColor(BearyColors.ink, for: .normal)
+        searchFooterRetryButton.titleLabel?.font = UIFont.systemFont(ofSize: 13)
+        searchFooterRetryButton.backgroundColor = BearyColors.surface
+        searchFooterRetryButton.layer.borderWidth = 1
+        searchFooterRetryButton.layer.borderColor = BearyColors.line.cgColor
+        searchFooterRetryButton.layer.cornerRadius = 15
+        searchFooterRetryButton.layer.masksToBounds = true
+        searchFooterRetryButton.contentEdgeInsets = UIEdgeInsets(top: 7, left: 20, bottom: 7, right: 20)
+        searchFooterRetryButton.addTarget(self, action: #selector(retryTapped), for: .touchUpInside)
+        searchFooterRetryButton.bearyAddPressFeedback()
+        searchFooterRow.addSubview(searchFooterSpinner)
+        searchFooterRow.addSubview(searchFooterLabel)
+        searchFooterRow.addSubview(searchFooterRetryButton)
+        NSLayoutConstraint.activate([
+            searchFooterRow.heightAnchor.constraint(equalToConstant: 44),
+            searchFooterSpinner.centerYAnchor.constraint(equalTo: searchFooterRow.centerYAnchor),
+            searchFooterSpinner.trailingAnchor.constraint(equalTo: searchFooterLabel.leadingAnchor, constant: -6),
+            searchFooterLabel.centerYAnchor.constraint(equalTo: searchFooterRow.centerYAnchor),
+            searchFooterLabel.centerXAnchor.constraint(equalTo: searchFooterRow.centerXAnchor, constant: 12),
+            searchFooterRetryButton.centerXAnchor.constraint(equalTo: searchFooterRow.centerXAnchor),
+            searchFooterRetryButton.centerYAnchor.constraint(equalTo: searchFooterRow.centerYAnchor),
+        ])
+
         updateBorderColors()
     }
 
@@ -596,7 +634,7 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         stateCircle.layer.borderColor = BearyColors.orange.withAlphaComponent(0.25).cgColor
         retryButton.layer.borderColor = BearyColors.line.cgColor
         clearSearchButton.layer.borderColor = BearyColors.line.cgColor
-        searchInlineRetryButton?.layer.borderColor = BearyColors.line.cgColor
+        searchFooterRetryButton.layer.borderColor = BearyColors.line.cgColor
         updateSearchBoxShadow()
     }
 
@@ -732,6 +770,7 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         if showingResults {
             setBoxBusy(true)
             setSearchingHint(true)
+            setSearchFooter(loading: true, failed: false)
         } else {
             setSearchingHint(false)
             showLoadingState()
@@ -779,6 +818,7 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         let wasStateHidden = stateWrap.isHidden
         showingResults = false
         resultsStack.isHidden = true
+        setSearchFooter(loading: false, failed: false)
         // Q9：最近搜索只属于初始态，其他状态一律隐藏（初始态由 showInitialState 重亮）。
         recentWrap.isHidden = true
         clearResultRows()
@@ -913,47 +953,38 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
     }
 
     /// S7：有旧结果时的失败处理——不调 showState（它会清结果区），
-    /// 旧结果行原样保留，只在结果区末尾加一行内重试入口。
+    /// 旧结果行原样保留，失败重试改走结果区尾行。
     /// 样式与动作复用失败态 retryButton（标题“重试”/13 ink/surface 底/
     /// 1 line 边框/圆角 15/padding 7/20，点按走同一 retryTapped 立即重跑
-    /// lastQuery，不走防抖；重复失败先摘旧行，不叠加。成功/清状态时
-    /// clearResultRows 会连同此行一起摘掉并置空引用。
+    /// lastQuery，不走防抖。成功/清状态时尾行隐藏。
     private func showFailedStateKeepingResults() {
-        if let oldRow = searchInlineRetryRow {
-            resultsStack.removeArrangedSubview(oldRow)
-            oldRow.removeFromSuperview()
-            searchInlineRetryRow = nil
-            searchInlineRetryButton = nil
-        }
         showingResults = true
         stateWrap.isHidden = true
         // 结果出现时最近搜索区隐藏（只属于初始态）。
         recentWrap.isHidden = true
         resultsStack.isHidden = false
-        let row = UIView()
-        row.translatesAutoresizingMaskIntoConstraints = false
-        let button = UIButton(type: .custom)
-        button.translatesAutoresizingMaskIntoConstraints = false
-        button.setTitle("重试", for: .normal)
-        button.setTitleColor(BearyColors.ink, for: .normal)
-        button.titleLabel?.font = UIFont.systemFont(ofSize: 13)
-        button.backgroundColor = BearyColors.surface
-        button.layer.borderWidth = 1
-        button.layer.borderColor = BearyColors.line.cgColor
-        button.layer.cornerRadius = 15
-        button.layer.masksToBounds = true
-        button.contentEdgeInsets = UIEdgeInsets(top: 7, left: 20, bottom: 7, right: 20)
-        button.addTarget(self, action: #selector(retryTapped), for: .touchUpInside)
-        button.bearyAddPressFeedback()
-        row.addSubview(button)
-        NSLayoutConstraint.activate([
-            button.centerXAnchor.constraint(equalTo: row.centerXAnchor),
-            button.topAnchor.constraint(equalTo: row.topAnchor, constant: 12),
-            button.bottomAnchor.constraint(equalTo: row.bottomAnchor, constant: -12),
-        ])
-        resultsStack.addArrangedSubview(row)
-        searchInlineRetryRow = row
-        searchInlineRetryButton = button
+        // 88 包 M13：失败重试改走结果区尾行（原行内重试行已并入尾行）。
+        setSearchFooter(loading: false, failed: true)
+    }
+
+    /// 88 包 M13：尾行三态（加载／失败重试／隐藏），与时间线/个人主页尾行同形态。
+    private func setSearchFooter(loading: Bool, failed: Bool) {
+        if loading {
+            searchFooterRow.isHidden = false
+            searchFooterSpinner.isHidden = false
+            searchFooterSpinner.startAnimating()
+            searchFooterLabel.isHidden = false
+            searchFooterRetryButton.isHidden = true
+        } else if failed {
+            searchFooterRow.isHidden = false
+            searchFooterSpinner.stopAnimating()
+            searchFooterSpinner.isHidden = true
+            searchFooterLabel.isHidden = true
+            searchFooterRetryButton.isHidden = false
+        } else {
+            searchFooterSpinner.stopAnimating()
+            searchFooterRow.isHidden = true
+        }
     }
 
     private func showNoneState(query: String) {
@@ -973,9 +1004,8 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         entryButtons = []
         rowEntryIds = []
         imageRetryHolders = []
-        // S7 行内重试行随结果区重建而丢弃（成功重渲 / showState 清状态均走此地）。
-        searchInlineRetryRow = nil
-        searchInlineRetryButton = nil
+        // 88 包 M13：尾行不属于结果区，随结果区重建而隐藏（成功重渲末尾亦会隐藏）。
+        setSearchFooter(loading: false, failed: false)
     }
 
     private func renderResults(data: SearchResult, query: String) {
@@ -1047,6 +1077,8 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         }
         // M11：结果区首次出现/换批时行错峰滑入；同一批仅内容变化的行淡入。
         animateResultRows(query: query)
+        // 88 包 M13：成功重渲后尾行隐藏。
+        setSearchFooter(loading: false, failed: false)
     }
 
     /// M11 入场口径：换关键词（新一批）→ 全部行错峰滑入；同关键词重渲

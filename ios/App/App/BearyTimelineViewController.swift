@@ -878,7 +878,8 @@ final class BearyTimelineCell: UITableViewCell {
         pillBackground.layer.cornerRadius = 10
         pillBackground.layer.masksToBounds = true
         pillLabel.translatesAutoresizingMaskIntoConstraints = false
-        pillLabel.font = UIFont.boldSystemFont(ofSize: 11.5)
+        // 88 包 L18：倒计时每秒改文案，等宽数字防宽度抖动（只影响数字字形）。
+        pillLabel.font = UIFont.monospacedDigitSystemFont(ofSize: 11.5, weight: .bold)
         hourglassView.translatesAutoresizingMaskIntoConstraints = false
         pillBackground.addSubview(hourglassView)
         pillBackground.addSubview(pillLabel)
@@ -2123,6 +2124,65 @@ class BearyTimelineViewController: UIViewController {
     /// 首屏时间线 + 日历月份（强制重拉，日历圆点/统计重算）+ 当日面板重拉，
     /// 不重置选中日、不清当日面板；互动字段变化时按详情口径发 onInteractionChanged。
     /// 选中日由有篇变空时走 TL-8 的 calFixSel 等价逻辑（见 fetchDayEntries）。
+    /// 88 包 M14：删帖行级退场——模型里删掉该篇后按旧分区定位做 deleteRows，
+    /// 分区空了则 deleteSections，不再整页首拉重载。日历点与统计行仍走强制
+    /// 月份重拉刷新（与 refreshAfterDetailChange 同口径），选中日空了由
+    /// pendingFixSelCheck 走原有跳转/取消逻辑；总数行本地递减。
+    func removeDeletedEntry(_ entry: Entry) {
+        guard let entryId = entry.id else { return }
+        let oldSections = currentSections()
+        var occurrences: [(section: Int, row: Int)] = []
+        for (section, sec) in oldSections.enumerated() {
+            for (row, e) in sec.entries.enumerated() where e.id == entryId {
+                occurrences.append((section, row))
+            }
+        }
+        guard !occurrences.isEmpty else {
+            // 模型里没有（已被别处清掉），退回原有整页重拉保底。
+            refreshAfterDetailChange()
+            return
+        }
+        timelineEntries.removeAll { $0.id == entryId }
+        dayEntries.removeAll { $0.id == entryId }
+        let newSections = currentSections()
+        var rowDeletes: [IndexPath] = []
+        var sectionDeletes = IndexSet()
+        var panelAffected = false
+        for occ in occurrences {
+            let oldKey = oldSections[occ.section].dayKey
+            if occ.section == 0 && selectedDayKey != nil { panelAffected = true }
+            if occ.section < newSections.count && newSections[occ.section].dayKey == oldKey && !newSections[occ.section].entries.isEmpty {
+                rowDeletes.append(IndexPath(row: occ.row, section: occ.section))
+            } else {
+                sectionDeletes.insert(occ.section)
+            }
+        }
+        if var counts = countsValue {
+            counts.total = max(0, (counts.total ?? 0) - 1)
+            if entry.isPublic == true {
+                counts.pub = max(0, (counts.pub ?? 0) - 1)
+            } else {
+                counts.priv = max(0, (counts.priv ?? 0) - 1)
+            }
+            countsValue = counts
+            updateCountsLabel()
+        }
+        tableView.performBatchUpdates({
+            if !rowDeletes.isEmpty { self.tableView.deleteRows(at: rowDeletes, with: .fade) }
+            if !sectionDeletes.isEmpty { self.tableView.deleteSections(sectionDeletes, with: .fade) }
+        }, completion: { [weak self] _ in
+            guard let self = self else { return }
+            // 面板头含计数（“N篇”），需重建头视图；日期组头无计数，不用动。
+            if panelAffected {
+                self.tableView.reloadSections(IndexSet(integer: 0), with: .none)
+            }
+        })
+        pendingFixSelCheck = true
+        for key in monthKeysForCurrentView() {
+            fetchCalendarMonth(key: key, force: true)
+        }
+    }
+
     func refreshAfterDetailChange() {
         // 第 4 项删除后守卫：详情/回收站改动后，月份强制重拉到达时
         // 按日历计数复核选中日（空则跳转/取消），不只靠当日面板变空。
@@ -2778,15 +2838,16 @@ class BearyTimelineViewController: UIViewController {
                     }
                     strongSelf.timelineHasMore = fresh.count >= strongSelf.pageLimit
                     strongSelf.timelinePageFailed = false
-                    if let inserts = strongSelf.appendedRowIndexPaths(oldSections: oldSections),
+                    if let diff = strongSelf.appendedPageDiff(oldSections: oldSections),
                        strongSelf.tableView.window != nil {
                         // 减动效时不排错峰队列，直接插行终值。
                         if UIAccessibility.isReduceMotionEnabled == false {
-                            strongSelf.staggerInsertOrder = Dictionary(uniqueKeysWithValues: inserts.enumerated().map { ($0.element, $0.offset) })
+                            strongSelf.staggerInsertOrder = Dictionary(uniqueKeysWithValues: diff.stagger.enumerated().map { ($0.element, $0.offset) })
                             strongSelf.staggerQueueGeneration = strongSelf.staggerGeneration
                         }
                         strongSelf.tableView.performBatchUpdates({
-                            strongSelf.tableView.insertRows(at: inserts, with: .none)
+                            if !diff.sections.isEmpty { strongSelf.tableView.insertSections(diff.sections, with: .none) }
+                            if !diff.rows.isEmpty { strongSelf.tableView.insertRows(at: diff.rows, with: .none) }
                         }, completion: nil)
                     } else {
                         strongSelf.tableView.reloadData()
@@ -2804,10 +2865,13 @@ class BearyTimelineViewController: UIViewController {
 
     /// 分页追加的行 diff：追加页只能出现在尾部分区（旧分区键序列必须是新分区的前缀，
     /// 旧分区内旧行 id 顺序不变且新增行只在分区尾部），否则返回 nil 回落 reloadData。
-    private func appendedRowIndexPaths(oldSections: [DaySection]) -> [IndexPath]? {
+    /// 分页追加 diff：返回旧分区尾部追加行 + 新增分区 + 全部新增行（供错峰映射）。
+    /// 88 包 H3：新分区必须先插区、其行随区而来，不再单独插行——只插行属非法更新。
+    private func appendedPageDiff(oldSections: [DaySection]) -> (rows: [IndexPath], sections: IndexSet, stagger: [IndexPath])? {
         let newSections = currentSections()
         guard newSections.count >= oldSections.count else { return nil }
-        var inserts: [IndexPath] = []
+        var rows: [IndexPath] = []
+        var stagger: [IndexPath] = []
         for section in 0..<oldSections.count {
             guard oldSections[section].dayKey == newSections[section].dayKey else { return nil }
             let oldRows = oldSections[section].entries
@@ -2817,15 +2881,19 @@ class BearyTimelineViewController: UIViewController {
                 guard oldRows[row].id != nil, oldRows[row].id == newRows[row].id else { return nil }
             }
             for row in oldRows.count..<newRows.count {
-                inserts.append(IndexPath(row: row, section: section))
+                let ip = IndexPath(row: row, section: section)
+                rows.append(ip)
+                stagger.append(ip)
             }
         }
+        var sections = IndexSet()
         for section in oldSections.count..<newSections.count {
+            sections.insert(section)
             for row in 0..<newSections[section].entries.count {
-                inserts.append(IndexPath(row: row, section: section))
+                stagger.append(IndexPath(row: row, section: section))
             }
         }
-        return inserts
+        return (rows, sections, stagger)
     }
 
     private func notifyLoginOnce() {

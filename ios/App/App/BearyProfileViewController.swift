@@ -3133,7 +3133,9 @@ private class BearyProfileEntryCell: UITableViewCell {
         // 80 包 A4：animateNewRows 改 cell.alpha/transform，对称复位。
         alpha = 1
         transform = .identity
-        avatarImageView.image = nil
+        // 88 包 M6：bearySetImage(url: nil) 会先取消在途任务再清图（与直接 image = nil
+        // 等价显示，但旧头像回调不再串位）；不新造取消 API。
+        avatarImageView.bearySetImage(url: nil)
         likeButton.setTitle(nil, for: .normal)
         likeButtonWidthConstraint?.constant = 22
         // 跟手批：复用时清掉按下预览残留（标记、按压缩放），不带到下一卡。
@@ -3791,7 +3793,7 @@ private class BearyProfileEmoteSheetViewController: UIViewController, UICollecti
             sheetView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
             sheetView.centerXAnchor.constraint(equalTo: view.centerXAnchor),
             sheetView.leadingAnchor.constraint(greaterThanOrEqualTo: view.leadingAnchor),
-            sheetView.trailingAnchor.constraint(greaterThanOrEqualTo: view.trailingAnchor),
+            sheetView.trailingAnchor.constraint(lessThanOrEqualTo: view.trailingAnchor),
             widthLimit,
             widthFull,
             sheetView.heightAnchor.constraint(equalToConstant: 480),
