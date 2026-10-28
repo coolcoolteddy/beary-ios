@@ -2111,11 +2111,6 @@ final class BearyChromeViewController: UIViewController {
         presentOnboarding(mode: .firstLaunch)
     }
 
-    /// 立即应用主题档位到 window（只应用不写存档；存档由选择框写，建窗时由 SceneDelegate 读存档应用）。
-    private func applyThemeMode(_ mode: String) {
-        view.window?.overrideUserInterfaceStyle = bearyUserInterfaceStyle(forThemeMode: mode)
-    }
-
     /// 回收站：全屏 modal，关闭钮由 TrashVC 自带（onClose 设置后才显示）。
     private func presentTrash() {
         let vc = BearyTrashViewController()
