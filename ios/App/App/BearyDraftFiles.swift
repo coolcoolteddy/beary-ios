@@ -210,7 +210,7 @@ enum BearyDraftImageStore {
             let dir = base.appendingPathComponent(name, isDirectory: true)
             let files = (try? FileManager.default.contentsOfDirectory(atPath: dir.path)) ?? []
             for file in files {
-                let url = dir.appendingPathComponent(file)
+                var url = dir.appendingPathComponent(file)
                 guard let values = try? url.resourceValues(forKeys: [.isExcludedFromBackupKey]),
                       values.isExcludedFromBackup == true else { continue }
                 do {
