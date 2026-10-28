@@ -1182,6 +1182,10 @@ class BearyFeedViewController: UIViewController {
         cell.onActionFailed = { [weak self] in
             self?.presentActionFailedAlert()
         }
+        cell.onEmoteFailed = { [weak self] in
+            guard let strongSelf = self else { return }
+            BearyToast.show(in: strongSelf.view, message: "操作失败，请重试", aboveFAB: true)
+        }
         cell.onShareRequested = { [weak self] entryValue in
             self?.presentShareSheet(for: entryValue)
         }

@@ -2516,13 +2516,13 @@ class BearyProfileViewController: UIViewController {
     /// interactionDisabled 未传时按三组 busy 集合现算（调用点须已先清
     /// 本次 busy 标记，忙碌中调本方法时禁用态才正确）。
     @discardableResult
-    private func syncVisibleCell(entry: Entry, interactionDisabled: Bool? = nil) -> BearyDiaryCardCell? {
+    private func syncVisibleCell(entry: Entry, interactionDisabled: Bool? = nil, animatedEmoteLayout: Bool = false) -> BearyDiaryCardCell? {
         guard let entryId = entry.id,
               let index = currentEntries.firstIndex(where: { $0.id == entryId }),
               let cell = tableView.cellForRow(at: IndexPath(row: index, section: 0)) as? BearyDiaryCardCell,
               cell.cellEntryId == entryId else { return nil }
         let disabled = interactionDisabled ?? (likeBusyIds.contains(entryId) || bookmarkBusyIds.contains(entryId) || emoteBusyIds.contains(entryId))
-        cell.syncInteraction(entry: entry, interactionDisabled: disabled)
+        cell.syncInteraction(entry: entry, interactionDisabled: disabled, animatedEmoteLayout: animatedEmoteLayout)
         return cell
     }
 
@@ -2747,21 +2747,78 @@ class BearyProfileViewController: UIViewController {
     }
 
     /// 多选回应：POST 同一回应即撤下该只，POST 未贴过的回应只新增该只；
-    /// 已贴的其他回应不动。不做乐观更新，只在服务端返回聚合后重绘。
+    /// 已贴的其他回应不动。先行反馈（点赞/收藏同款口径）：贴上立即进场、
+    /// 摘下先播退场动画再离行，API 在后台跑；成功对齐、失败回滚 + 拒绝动效。
     private func handleCellEmote(entry: Entry, key: String) {
         guard let entryId = entry.id, !entryId.isEmpty, !key.isEmpty else { return }
         guard requireLoginForCellAction() else { return }
         guard entry.isPublic == true else { return }
         guard !emoteBusyIds.contains(entryId) else { return }
         emoteBusyIds.insert(entryId)
-        // 卡顿批：忙碌态只就地禁用按钮，不整行重建（旧 reload 只为
-        // interactionDisabled 生效，却重建了图片/引用/回应整行）。
-        syncVisibleCell(entry: entry)
+        let mine = (entry.emotes ?? []).contains(where: { ($0.emote ?? "") == key && ($0.mine ?? false) })
+        var optimistic = entry
+        optimistic.emotes = emoteDelta(entry.emotes ?? [], key: key, added: mine == false)
+        if mine {
+            // 摘下：可见行先播退场动画再离行；无可见行时直接发请求。
+            if let cell = visibleCell(for: entryId) {
+                cell.animateEmoteChipOut(key: key) { [weak self] in
+                    guard let strongSelf = self else { return }
+                    strongSelf.syncVisibleCell(entry: optimistic, interactionDisabled: false, animatedEmoteLayout: true)
+                    strongSelf.postCellEmote(entry: entry, key: key)
+                }
+                return
+            }
+            postCellEmote(entry: entry, key: key)
+            return
+        }
+        // 贴上：可见行立即进场 + 计数 +1（位移带动画），无可见行只发请求。
+        if let cell = syncVisibleCell(entry: optimistic, interactionDisabled: false, animatedEmoteLayout: true) {
+            cell.animateEmoteChipIn(key: key)
+        }
         postCellEmote(entry: entry, key: key)
+    }
+
+    /// 先行增量（与 cell 内 emoteDelta 同款口径）：贴上 +1/mine，摘下 −1（到 0 消失）。
+    private func emoteDelta(_ list: [EmoteCount], key: String, added: Bool) -> [EmoteCount] {
+        var out: [EmoteCount] = []
+        var found = false
+        for var item in list {
+            guard let itemKey = item.emote, !itemKey.isEmpty else { continue }
+            if itemKey == key {
+                found = true
+                if added {
+                    item.count = (item.count ?? 0) + 1
+                    item.mine = true
+                    out.append(item)
+                } else {
+                    let next = (item.count ?? 0) - 1
+                    if next > 0 {
+                        item.count = next
+                        item.mine = false
+                        out.append(item)
+                    }
+                }
+            } else {
+                out.append(item)
+            }
+        }
+        if added && found == false {
+            out.append(EmoteCount(emote: key, count: 1, mine: true))
+        }
+        return out
+    }
+
+    /// 可见行查找（不改模型、不重绘）：供摘下先行动画用。
+    private func visibleCell(for entryId: String) -> BearyDiaryCardCell? {
+        guard let index = currentEntries.firstIndex(where: { $0.id == entryId }),
+              let cell = tableView.cellForRow(at: IndexPath(row: index, section: 0)) as? BearyDiaryCardCell,
+              cell.cellEntryId == entryId else { return nil }
+        return cell
     }
 
     private func postCellEmote(entry: Entry, key: String) {
         guard let entryId = entry.id else { return }
+        let mine = (entry.emotes ?? []).contains(where: { ($0.emote ?? "") == key && ($0.mine ?? false) })
         BearyAPI.shared.postEmote(id: entryId, emote: key) { [weak self] result in
             DispatchQueue.main.async {
                 guard let strongSelf = self else { return }
@@ -2776,14 +2833,25 @@ class BearyProfileViewController: UIViewController {
                     }
                     strongSelf.updateEntryInAllTabs(entry: updated)
                     strongSelf.notifyInteraction(entry: updated)
+                    // 先行值与服务端值一致时 syncInteraction 判等跳过，不重建不重播。
                     strongSelf.syncVisibleCell(entry: updated)
                 case .failure(let err):
                     if case .unauthorized = err {
+                        // 未登录：先行态静默复原，再走登录页。
+                        strongSelf.syncVisibleCell(entry: entry)
                         strongSelf.onRequireLogin?()
-                    } else {
-                        strongSelf.presentSimpleAlert(message: "操作失败，请重试")
+                        return
                     }
-                    strongSelf.syncVisibleCell(entry: entry)
+                    // 失败回滚：可见行恢复原值（位移带动画），摘下失败时被摘 chip
+                    // 带出现动画回来，再补拒绝动效（摇头 + toast）。
+                    let cell = strongSelf.syncVisibleCell(entry: entry, animatedEmoteLayout: true)
+                    if mine {
+                        cell?.animateEmoteChipIn(key: key)
+                        cell?.shakeEmoteChip(key: key)
+                    } else {
+                        cell?.shakeEmoteAddButton()
+                    }
+                    BearyToast.show(in: strongSelf.view, message: "操作失败，请重试", aboveFAB: true)
                 }
             }
         }

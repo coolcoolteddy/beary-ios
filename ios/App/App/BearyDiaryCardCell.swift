@@ -232,6 +232,14 @@ final class BearyEmoteChipView: UIView {
         fatalError("init(coder:) has not been implemented")
     }
 
+    /// 胶囊形兜底：圆角恒取高的一半，任何高度下都是胶囊（32 高时即 16，与旧值一致）；
+    /// 即使某路残留 transform 使 bounds 翻倍，显示圆角仍为显示高的一半。
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        if bounds.height > 0 {
+            layer.cornerRadius = bounds.height / 2
+        }
+    }
     /// 池化渲染：样式/计数/tag 由调用方随后写 overlayButton；key 不变时重播
     /// 播放器、key 变了才换播放器；不重建容器与约束。
     func render(key: String, count: Int, mine: Bool) {
@@ -336,6 +344,8 @@ class BearyDiaryCardCell: UITableViewCell {
     var onEmoteAddRequested: (() -> Void)?
     var onRequireLogin: (() -> Void)?
     var onActionFailed: (() -> Void)?
+    /// 回应失败后回传（控制器弹 toast；点赞/收藏失败仍走 onActionFailed 的 alert，不混用）。
+    var onEmoteFailed: (() -> Void)?
     var onShareRequested: ((Entry) -> Void)?
     var onPublishTapped: (() -> Void)?
     var onPublishCancelTapped: (() -> Void)?
@@ -405,11 +415,18 @@ class BearyDiaryCardCell: UITableViewCell {
     /// 80 包 B4-1：回应胶囊池——chip 容器留池复用，只在 key 变化时换播放器。
     private var emoteChipPool: [BearyEmoteChipView] = []
     private var isEmoteBusy = false
-    /// 回应 pending 视觉（首页模式）：新 key（贴上中）与旧 key（摘下中），只做透明度提示，
-    /// 不做乐观计数/选中（E3-3）。
-    private var pendingEmoteKey: String?
-    private var pendingEmoteAdded = false
-    private var pendingRemovingEmoteKey: String?
+    /// 回应先行反馈在途态（首页模式，点赞/收藏同款口径）：点选后 chip 行立即按
+    /// 先行值重绘、API 在后台跑，成功对齐服务端值、失败回滚。旧 E3-3 pending
+    /// 半透明视觉随先行反馈废止（先行 chip 全量显示，不再 0.6 置灰）。
+    private var emoteFlightKey: String?
+    private var emoteFlightAdded = false
+    private var emoteFlightOriginal: [EmoteCount]?
+    private var emoteFlightServerEmotes: [EmoteCount]?
+    private var emoteFlightFailed = false
+    private var emoteFlightUnauthorized = false
+    private var emoteFlightAPIDone = false
+    /// 摘下在途：退场动画播完前回包到达时先记结果、不抢动画中的 chip。
+    private var emoteFlightRemovalStaged = false
     /// 表情 sheet 选中锁（首页模式）：选定后 140ms 内再选直接丢弃（网页 emotePickLock 同口径）。
     private var emotePickLocked = false
     /// 引用卡点按态：gone/locked 不动作；加载失败点按重试；其余按 isPublic 分流。
@@ -1064,15 +1081,25 @@ class BearyDiaryCardCell: UITableViewCell {
         alpha = 1
         transform = .identity
         // 80 包 B4-1：池 chip 离树时先停其播放器，复用分支按 key 决定重播或重建。
+        // 圆角长方形根治：chip-out 会把摘下 chip 缩到 0.5 后留池，复用时若不复位
+        // transform，flow 按帧设 frame 会使 bounds 翻倍、固定 16 圆角显示成 8、
+        // 内容缩半——截图第三只 chip 即此状；此处与 renderEmotes 复用处双重复位。
         for chip in emoteChipPool {
             chip.stopPlayer()
+            chip.transform = .identity
+            chip.alpha = 1
         }
         currentEmoteList = []
         chipKeys = []
         isEmoteBusy = false
-        pendingEmoteKey = nil
-        pendingEmoteAdded = false
-        pendingRemovingEmoteKey = nil
+        emoteFlightKey = nil
+        emoteFlightAdded = false
+        emoteFlightOriginal = nil
+        emoteFlightServerEmotes = nil
+        emoteFlightFailed = false
+        emoteFlightUnauthorized = false
+        emoteFlightAPIDone = false
+        emoteFlightRemovalStaged = false
         emotePickLocked = false
         quoteTapId = nil
         quoteTapIsPublic = nil
@@ -2085,7 +2112,7 @@ class BearyDiaryCardCell: UITableViewCell {
     /// 重绘 chip 行（签名相等即跳过，避免无谓重启播放器）。
     /// 调用方保证先改模型再调本方法；行不可见时控制器不调（模型已改，
     /// 滑回显示时 configure 自然取新值）。
-    func syncInteraction(entry: Entry, interactionDisabled: Bool) {
+    func syncInteraction(entry: Entry, interactionDisabled: Bool, animatedEmoteLayout: Bool = false) {
         guard cellEntryId == entry.id else { return }
         currentEntry = entry
         cellLikedByMe = entry.likedByMe ?? false
@@ -2099,7 +2126,7 @@ class BearyDiaryCardCell: UITableViewCell {
         profileDisabled = interactionDisabled
         let candidate = BearyEmoteOrder.signature((entry.emotes ?? []).sorted { ($0.count ?? 0) > ($1.count ?? 0) }.filter { ($0.emote ?? "").isEmpty == false })
         if candidate != cellEmoteSignature {
-            renderEmotes()
+            renderEmotes(animatedLayout: animatedEmoteLayout)
         } else {
             // A1：签名未变时就地同步也须走同一公开门控，否则会把
             // updateEmoteInteractivity 置灰/禁用的 chip 重新放行。
@@ -2415,39 +2442,54 @@ class BearyDiaryCardCell: UITableViewCell {
         }
     }
 
-    /// 摘下动效：chip-out 缩没（详情页同款口径，网页 .chip-out .2s），动画结束后再重绘行。
-    private func playChipOutThenRender(forKey key: String, entryIdValue: String, emotes: [EmoteCount]?) {
+    /// 摘下动效：chip-out 缩没（网页 .chip-out .2s），只播动画、不重绘行；
+    /// 离行与否由调用方在 completion 里决定（先行摘下：动画完再离行）。
+    /// 减动效或 chip 已不在行时立即调 completion。
+    func animateEmoteChipOut(key: String, completion: @escaping () -> Void) {
         if UIAccessibility.isReduceMotionEnabled {
-            isEmoteBusy = false
-            renderEmotes()
-            updateEmoteInteractivity()
-            onEmoteChanged?(entryIdValue, emotes)
+            completion()
             return
         }
         guard let chip = chipView(forKey: key) else {
-            isEmoteBusy = false
-            renderEmotes()
-            updateEmoteInteractivity()
-            onEmoteChanged?(entryIdValue, emotes)
+            completion()
             return
         }
-        updateEmoteInteractivity()
         UIView.animate(withDuration: 0.2, animations: {
             chip.transform = CGAffineTransform(scaleX: 0.5, y: 0.5)
             chip.alpha = 0
-        }, completion: { [weak self] _ in
-            guard let strongSelf = self else { return }
-            strongSelf.isEmoteBusy = false
-            strongSelf.renderEmotes()
-            strongSelf.updateEmoteInteractivity()
-            strongSelf.onEmoteChanged?(entryIdValue, emotes)
-        })
+        }, completion: { _ in completion() })
+    }
+
+    /// 贴上动效外部入口（个人页控制器先行反馈用）：与 playChipIn 同款。
+    func animateEmoteChipIn(key: String) {
+        playChipIn(forKey: key)
+    }
+
+    /// 拒绝动效：摇指定 chip（找不到时摇 + 钮；失败回滚用）。
+    func shakeEmoteChip(key: String) {
+        if let chip = chipView(forKey: key) {
+            playDenyShake(on: chip.overlayButton)
+        } else {
+            shakeEmoteAddButton()
+        }
+    }
+
+    /// 拒绝动效：摇行末 + 钮（先行贴上失败回滚用）。
+    func shakeEmoteAddButton() {
+        for sub in emoteFlowView.subviews {
+            if let button = sub as? BearyDiaryCardDashedAddButton {
+                playDenyShake(on: button)
+                return
+            }
+        }
     }
 
     /// 回应行统一渲染：count 降序（网页 emoteChipsHtml 同口径），mine 高亮，末尾常驻 + 按钮。
     /// 80 包 B4-1：胶囊池化——只把 chip 从 flow 摘下留池，不销毁；本轮未复用
     /// 的池 chip 不再上树（仍留池供下轮）；key 不变时重播播放器、key 变了才换播放器。
-    private func renderEmotes() {
+    /// animatedLayout：用户动作（先行贴/摘、回滚）时 + 钮与已存 chip 随新布局平滑移位
+    /// （flow 帧动画，只动位置，不重播已有 chip）；服务端对齐与初始渲染走瞬时。
+    private func renderEmotes(animatedLayout: Bool = false) {
         for sub in emoteFlowView.subviews {
             sub.removeFromSuperview()
         }
@@ -2467,6 +2509,9 @@ class BearyDiaryCardCell: UITableViewCell {
             let chip: BearyEmoteChipView
             if chipIndex < emoteChipPool.count {
                 chip = emoteChipPool[chipIndex]
+                // 圆角长方形根治：复用 chip 须先复位 transform（chip-out 残留 0.5
+                // 会使 flow 设 frame 时 bounds 翻倍、圆角与内容同缩一半）。
+                chip.transform = .identity
                 chip.render(key: key, count: count, mine: mine)
                 chip.overlayButton.tag = chipIndex
             } else {
@@ -2524,10 +2569,20 @@ class BearyDiaryCardCell: UITableViewCell {
             updateEmoteRowHeight()
         }
         updateEmoteInteractivity()
+        // 用户动作位移：+ 钮与已存 chip 随新布局帧动画滑到新位（只动位置，
+        // 不重播已有 chip；新 chip 的出现动画由 playChipIn 另播，不冲突）。
+        // 减动效下瞬时布局；行高约束本身瞬时改（换行数变化时行高仍瞬变，
+        // 仅行内横向移位带动画）。
+        if animatedLayout, UIAccessibility.isReduceMotionEnabled == false {
+            emoteFlowView.setNeedsLayout()
+            UIView.animate(withDuration: 0.25, delay: 0, options: [.curveEaseOut]) {
+                self.emoteFlowView.layoutIfNeeded()
+            }
+        }
     }
 
-    /// F7：互动门控与详情一致（首页模式 isPublic == true 才可互动）；E3-3 pending 视觉：
-    /// 进行中的新/旧 chip 半透明，其余不变；不做乐观计数/选中。
+    /// F7：互动门控与详情一致（首页模式 isPublic == true 才可互动）；先行反馈后
+    /// 在途 chip 全量显示（旧 E3-3 pending 0.6 已废止，点赞/收藏同款口径）。
     /// A1（个人主页模式）：照抄首页口径——非公开日记的回应 chip 置灰禁用
     ///（overlay isEnabled=false + chip alpha=0.4），作者本人对自己私密日记
     /// 的回应同样不放行（无 isMine 例外）；“+”钮只控 busy 不按公开态
@@ -2559,14 +2614,8 @@ class BearyDiaryCardCell: UITableViewCell {
             guard let chip = sub as? BearyEmoteChipView else { continue }
             let overlay = chip.overlayButton
             overlay.isEnabled = publicOK && isEmoteBusy == false
-            var chipKey: String?
-            if overlay.tag >= 0, overlay.tag < chipKeys.count {
-                chipKey = chipKeys[overlay.tag]
-            }
             if publicOK == false {
                 sub.alpha = 0.4
-            } else if isEmoteBusy, let key = chipKey, key == pendingEmoteKey || key == pendingRemovingEmoteKey {
-                sub.alpha = 0.6
             } else {
                 sub.alpha = 1.0
             }
@@ -2638,7 +2687,8 @@ class BearyDiaryCardCell: UITableViewCell {
     /// 贴/摘回应的唯一入口（首页模式；chip 与首贴面板共用，多选）：
     /// 同只再点即撤下那只；点自己没贴过的只直接 POST 新增，绝不因点新回应
     /// 而摘掉用户已贴的另一只；只有被点的那只计数变化。
-    /// 从不做乐观更新——行只在服务端成功返回聚合后重绘，失败保持原样。
+    /// 先行反馈（点赞/收藏同款口径）：贴上立即进场 + 计数 +1，摘下先播退场
+    /// 动画再离行，API 在后台跑；成功对齐服务端值，失败回滚 + 拒绝动效。
     private func chooseEmote(key: String) {
         if key.isEmpty || isEmoteBusy { return }
         guard let entryIdValue = cellEntryId, !entryIdValue.isEmpty else { return }
@@ -2654,66 +2704,170 @@ class BearyDiaryCardCell: UITableViewCell {
                 tappedMine = true
             }
         }
+        emoteFlightKey = key
+        emoteFlightAdded = tappedMine == false
+        emoteFlightOriginal = currentEntry?.emotes ?? []
+        emoteFlightServerEmotes = nil
+        emoteFlightFailed = false
+        emoteFlightUnauthorized = false
+        emoteFlightAPIDone = false
+        emoteFlightRemovalStaged = false
+        isEmoteBusy = true
+        updateEmoteInteractivity()
         if tappedMine {
-            pendingEmoteKey = key
-            pendingEmoteAdded = false
+            // 摘下：先播退场动画再离行；API 立即发出，回包到达若动画未完
+            // 先记结果、不抢动画中的 chip，动画完再对齐或回滚。
+            emoteFlightRemovalStaged = true
+            animateEmoteChipOut(key: key) { [weak self] in
+                guard let strongSelf = self, strongSelf.cellEntryId == entryIdValue else { return }
+                strongSelf.emoteFlightRemovalStaged = false
+                if strongSelf.emoteFlightFailed {
+                    if strongSelf.emoteFlightUnauthorized {
+                        // 未登录：先行态静默复原，再走登录页（不摇不 toast）。
+                        strongSelf.currentEntry?.emotes = strongSelf.emoteFlightOriginal ?? []
+                        strongSelf.renderEmotes()
+                        strongSelf.onEmoteChanged?(entryIdValue, strongSelf.emoteFlightOriginal)
+                        strongSelf.clearEmoteFlight()
+                        strongSelf.onRequireLogin?()
+                    } else {
+                        strongSelf.rollbackEmoteFlight(entryIdValue: entryIdValue)
+                    }
+                    return
+                }
+                let removal = strongSelf.emoteDelta((strongSelf.emoteFlightOriginal ?? []), key: key, added: false)
+                strongSelf.currentEntry?.emotes = removal
+                strongSelf.renderEmotes(animatedLayout: true)
+                strongSelf.onEmoteChanged?(entryIdValue, removal)
+                if strongSelf.emoteFlightAPIDone {
+                    strongSelf.alignEmoteFlight(entryIdValue: entryIdValue)
+                }
+            }
             postEmoteOnce(key: key)
             return
         }
-        pendingEmoteKey = key
-        pendingEmoteAdded = true
+        let optimistic = emoteDelta((currentEntry?.emotes ?? []), key: key, added: true)
+        currentEntry?.emotes = optimistic
+        renderEmotes(animatedLayout: true)
+        playChipIn(forKey: key)
+        onEmoteChanged?(entryIdValue, optimistic)
         postEmoteOnce(key: key)
     }
 
+    /// 先行增量：贴上时该 key 计数 +1（无此 key 则 mine 新建 1）；摘下时
+    /// 计数 −1（到 0 即整项消失，mine 恒 false 化——服务端同只 POST 即撤下）。
+    private func emoteDelta(_ list: [EmoteCount], key: String, added: Bool) -> [EmoteCount] {
+        var out: [EmoteCount] = []
+        var found = false
+        for var item in list {
+            guard let itemKey = item.emote, !itemKey.isEmpty else { continue }
+            if itemKey == key {
+                found = true
+                if added {
+                    item.count = (item.count ?? 0) + 1
+                    item.mine = true
+                    out.append(item)
+                } else {
+                    let next = (item.count ?? 0) - 1
+                    if next > 0 {
+                        item.count = next
+                        item.mine = false
+                        out.append(item)
+                    }
+                }
+            } else {
+                out.append(item)
+            }
+        }
+        if added && found == false {
+            out.append(EmoteCount(emote: key, count: 1, mine: true))
+        }
+        return out
+    }
+
+    /// 在途 POST（首页模式）：只发请求与终态处理，先行渲染由 chooseEmote 做。
+    /// cell 复用后回包到达时直接丢弃（不碰新条目）。
     private func postEmoteOnce(key: String) {
         guard let entryIdValue = cellEntryId, !entryIdValue.isEmpty else { return }
-        isEmoteBusy = true
-        updateEmoteInteractivity()
         BearyAPI.shared.postEmote(id: entryIdValue, emote: key) { [weak self] result in
             DispatchQueue.main.async {
-                guard let strongSelf = self else { return }
-                let animKey = strongSelf.pendingEmoteKey
-                let animAdded = strongSelf.pendingEmoteAdded
-                strongSelf.pendingEmoteKey = nil
-                strongSelf.pendingRemovingEmoteKey = nil
+                guard let strongSelf = self, strongSelf.cellEntryId == entryIdValue else { return }
                 switch result {
                 case .success(let resp):
-                    // 表情排序批：回包先按已显示顺序合并（新贴追加末尾），再渲染；
+                    // 表情排序批：回包先按已显示顺序合并（新贴追加末尾），再对齐；
                     // 直接覆盖回包顺序会把刚贴的 count=1 按聚合顺序顶到前面。
-                    let mergedEmotes = resp.emotes.map { BearyEmoteOrder.merged(previous: strongSelf.currentEntry?.emotes, server: $0) }
-                    if let merged = mergedEmotes {
-                        strongSelf.currentEntry?.emotes = merged
+                    let merged = resp.emotes.map { BearyEmoteOrder.merged(previous: strongSelf.currentEntry?.emotes, server: $0) }
+                    strongSelf.emoteFlightServerEmotes = merged
+                    strongSelf.emoteFlightAPIDone = true
+                    if strongSelf.emoteFlightRemovalStaged {
+                        return
                     }
-                    // F7：成功后补 chip-in（贴上）/chip-out（摘下）动效，详情页同款。
-                    // 摘下动画期间保持 busy，动画结束才放开并重绘，避免动画中途被点乱。
-                    if animAdded == false, let outKey = animKey {
-                        strongSelf.playChipOutThenRender(forKey: outKey, entryIdValue: entryIdValue, emotes: mergedEmotes)
-                    } else {
-                        strongSelf.isEmoteBusy = false
-                        strongSelf.renderEmotes()
-                        strongSelf.updateEmoteInteractivity()
-                        if let inKey = animKey, animAdded == true {
-                            // P3-8：onEmoteChanged 推迟到 chip-in 完成回调之后——此前立即回传会经
-                            // applyInteraction 就地同步判等跳过（已渲染一致），不重建整行；
-                            // 无动画（reduced-motion）或 chip 未找到时 playChipIn 立即调 completion，不拖延。
-                            strongSelf.playChipIn(forKey: inKey) {
-                                strongSelf.onEmoteChanged?(entryIdValue, mergedEmotes)
-                            }
-                        } else {
-                            strongSelf.onEmoteChanged?(entryIdValue, mergedEmotes)
-                        }
-                    }
+                    strongSelf.alignEmoteFlight(entryIdValue: entryIdValue)
                 case .failure(let err):
-                    strongSelf.isEmoteBusy = false
-                    if case .unauthorized = err {
-                        strongSelf.onRequireLogin?()
-                    } else {
-                        strongSelf.onActionFailed?()
+                    if strongSelf.emoteFlightRemovalStaged {
+                        strongSelf.emoteFlightFailed = true
+                        if case .unauthorized = err {
+                            strongSelf.emoteFlightUnauthorized = true
+                        }
+                        strongSelf.emoteFlightAPIDone = true
+                        return
                     }
-                    strongSelf.updateEmoteInteractivity()
+                    if case .unauthorized = err {
+                        // 未登录：先行态静默复原，再走登录页（不摇不 toast）。
+                        strongSelf.currentEntry?.emotes = strongSelf.emoteFlightOriginal ?? []
+                        strongSelf.renderEmotes()
+                        strongSelf.onEmoteChanged?(entryIdValue, strongSelf.emoteFlightOriginal)
+                        strongSelf.clearEmoteFlight()
+                        strongSelf.onRequireLogin?()
+                        return
+                    }
+                    strongSelf.rollbackEmoteFlight(entryIdValue: entryIdValue)
                 }
             }
         }
+    }
+
+    /// 成功对齐：服务端值与先行值一致时不动（不重建、不重播已有 chip）；
+    /// 不一致时瞬时重绘（非用户动作，不带位移动画）并通知容器。
+    private func alignEmoteFlight(entryIdValue: String) {
+        let merged = emoteFlightServerEmotes ?? currentEntry?.emotes
+        if let merged = merged, BearyEmoteOrder.signature(merged) != BearyEmoteOrder.signature(currentEntry?.emotes) {
+            currentEntry?.emotes = merged
+            renderEmotes()
+            onEmoteChanged?(entryIdValue, merged)
+        }
+        clearEmoteFlight()
+    }
+
+    /// 失败回滚：恢复点选前快照（位移带动画），摘下失败时被摘 chip 带出现
+    /// 动画回来，再补拒绝动效（摇头 + toast）；容器同步回滚值。
+    private func rollbackEmoteFlight(entryIdValue: String) {
+        let key = emoteFlightKey
+        let wasAdded = emoteFlightAdded
+        let original = emoteFlightOriginal ?? []
+        currentEntry?.emotes = original
+        renderEmotes(animatedLayout: true)
+        if wasAdded == false, let backKey = key {
+            playChipIn(forKey: backKey)
+            shakeEmoteChip(key: backKey)
+        } else {
+            shakeEmoteAddButton()
+        }
+        onEmoteFailed?()
+        onEmoteChanged?(entryIdValue, original)
+        clearEmoteFlight()
+    }
+
+    private func clearEmoteFlight() {
+        isEmoteBusy = false
+        emoteFlightKey = nil
+        emoteFlightAdded = false
+        emoteFlightOriginal = nil
+        emoteFlightServerEmotes = nil
+        emoteFlightFailed = false
+        emoteFlightUnauthorized = false
+        emoteFlightAPIDone = false
+        emoteFlightRemovalStaged = false
+        updateEmoteInteractivity()
     }
 }
 
