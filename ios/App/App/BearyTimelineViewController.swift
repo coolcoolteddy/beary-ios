@@ -2129,6 +2129,9 @@ class BearyTimelineViewController: UIViewController {
     /// 缓存是“先显示、后台再对齐”的底子，过期由每次切日的静默刷新纠正，
     /// 不设 TTL（当日数据变化只来自本人的写/删/公开操作，见删除时的清缓存）。
     private var dayEntriesCache: [String: [Entry]] = [:]
+    /// 相邻日预取在途集合（key=北京日）：独立通道专用，与正向单槽
+    /// （dayKeyForLoad + dayState）完全分开；同日只发一次，失败不留痕。
+    private var dayPrefetchInFlight: Set<String> = []
     /// N3：切日入场错峰队列（willDisplay 起播，播过即摘；代际见
     /// daySwitchGeneration，与分页 staggerInsertOrder 同机制不同队列，
     /// 步进 0.05s、封顶 0.5s）。selectDay / 清选区 / 整表重载时清掉。
@@ -4081,6 +4084,9 @@ class BearyTimelineViewController: UIViewController {
                     timelinePatchChanged = timelineBefore != strongSelf.timelineEntries.map { strongSelf.entrySignature($0) }
                     strongSelf.dayEntriesKey = key
                     strongSelf.dayState = .loaded
+                    // 相邻日预取触发点：正向加载成功后才触发（失败不触发）；
+                    // 预取只写日缓存，不动面板与时间线行（见 prefetchAdjacentDays）。
+                    strongSelf.prefetchAdjacentDays(for: key)
                     if wasNonEmptyForKey && strongSelf.dayEntries.isEmpty {
                         // 第 2 项 A 的活已由本次跳转完成，挂起标志随之清掉，
                         // 避免之后某次月份到达时对新选区再跑一次初次/刷新守卫。
@@ -4144,6 +4150,53 @@ class BearyTimelineViewController: UIViewController {
                 // 6A：当日回包尾部消费定位挂起（成功与失败都走：失败时 dayEntries
                 // 不变，若目标仍在已加载行里照常滚到，找不到则静默清掉）。
                 strongSelf.consumePendingLocate()
+            }
+        }
+    }
+
+    /// 相邻日预取：选中日 ±1 天（独立通道，不抢正向单槽）。
+    /// 隔离方式：不碰 dayKeyForLoad / dayState / dayEntries / dayEntriesKey，
+    /// 只读写 dayPrefetchInFlight 与 dayEntriesCache；回包只写缓存，不 reload、
+    /// 不 updateChrome、不弹 toast、不影响当前日显示。
+    /// 让路规则：触发时正向加载在途（dayState == .loading）则整体跳过，
+    /// 等下次正向成功再触发；单日回包时若正向后来居上（同日正向在途），
+    /// 本次预取不写缓存，正向成功回包自会写。
+    /// 去重规则：已缓存的日、已在途的日一律跳过；失败静默（不记失败态、
+    /// 不写缓存），下次切日走正常正向路径。
+    /// 缓存语义与 #116 日缓存一致：先显示、切日静默刷新再对齐。
+    private func adjacentDayKeys(for key: String) -> [String] {
+        let parts = key.split(separator: "-")
+        guard parts.count == 3, let year = Int(parts[0]), let month = Int(parts[1]), let day = Int(parts[2]),
+              let base = BearyBeijingDay.date(year: year, month: month, day: day) else { return [] }
+        var keys: [String] = []
+        for delta in [-1, 1] {
+            guard let shifted = BearyBeijingDay.calendar.date(byAdding: .day, value: delta, to: base) else { continue }
+            let comps = BearyBeijingDay.calendar.dateComponents([.year, .month, .day], from: shifted)
+            guard let yy = comps.year, let mm = comps.month, let dd = comps.day else { continue }
+            keys.append(BearyBeijingDay.dayKey(year: yy, month: mm, day: dd))
+        }
+        return keys
+    }
+
+    private func prefetchAdjacentDays(for key: String) {
+        guard tableView.window != nil else { return }
+        guard dayState != .loading else { return }
+        for next in adjacentDayKeys(for: key) {
+            guard dayEntriesCache[next] == nil, !dayPrefetchInFlight.contains(next) else { continue }
+            if dayKeyForLoad == next && dayState == .loading { continue }
+            dayPrefetchInFlight.insert(next)
+            BearyAPI.shared.fetchTimelineDay(date: next) { [weak self] result in
+                DispatchQueue.main.async {
+                    guard let strongSelf = self else { return }
+                    strongSelf.dayPrefetchInFlight.remove(next)
+                    switch result {
+                    case .success(let list):
+                        if strongSelf.dayKeyForLoad == next && strongSelf.dayState == .loading { return }
+                        strongSelf.dayEntriesCache[next] = list.entries ?? []
+                    case .failure:
+                        break
+                    }
+                }
             }
         }
     }
