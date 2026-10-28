@@ -889,6 +889,7 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate {
             return
         }
         // M17：移除行先淡出 + 高度收起再移除（网页 collapseOut 口径），其余行跟随补位。
+        // 2026-10-28 Li 定：高度收到 0 允许改约束，算例外——能走 transform 的走 transform，高度必须收到 0 的例外。
         rowView.clipsToBounds = true
         let heightConstraint = rowView.heightAnchor.constraint(equalToConstant: rowHeight)
         heightConstraint.isActive = true

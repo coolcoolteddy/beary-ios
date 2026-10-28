@@ -51,9 +51,8 @@ enum BearyColors {
 
 /// 底 sheet 与居中模态的共享 chrome：顶部圆角 20、抓手 40×4（顶距 10、圆角 2）、
 /// 遮罩 scrim 0.45。B 批前四处各写各的数值（恰好同值），改一处即全跟走，防再分裂。
-/// 例外一律不动：草稿箱遮罩有意全透明（网页口径回滚，见 BearyDraftBoxViewController
-/// 文件头）；回应 Sheet（Feed/Profile 内，卡片线范围）圆角 22 / 抓手 38×4 / Profile
-/// 遮罩 scrim 全值（0.6）不在此列。
+/// 2026-10-28 Li 令：回应 Sheet 与草稿箱 Sheet 统一走本 chrome（此前草稿箱遮罩全透明、
+/// 回应 Sheet 圆角 22 / 抓手 38×4 的例外一律撤销）；遮罩出现时 0.25s 淡入。
 /// 注意：CenteredModal 旧值 UIColor(white: 0, alpha: 0.45) 与 scrimColor 等值
 /// （scrim 本就是 white 0，withAlphaComponent 只换 alpha），改写后视觉不变。
 enum BearySheetChrome {
