@@ -365,22 +365,19 @@ final class BearyNotificationsViewController: UIViewController {
         return label
     }()
 
-    /// 态内按钮（Q1 对照表：高 44、圆角 22、1px line 描边、14 ink、图标 15、图标右 gap 6）。
+    /// 态内按钮走 BearyButton 工厂 secondaryOutline 常规款（高 44、圆角 22、
+    /// 1px line 描边、ink 字；字号事后覆为原 14，与 Q1 对照表一致）。
     /// 宽度约束不在此创建：标题与图标只在失败态才赋值（见 applyVisibleState），
     /// 由 updateStateButtonWidth 在赋值后按实测字宽创建/更新（点赞按钮同款修法）。
     private var stateButtonWidthConstraint: NSLayoutConstraint?
 
-    private lazy var stateButton: UIButton = {
-        let button = UIButton(type: .system)
+    private lazy var stateButton: BearyButton = {
+        let button = BearyButton(style: .secondaryOutline(.regular))
         button.translatesAutoresizingMaskIntoConstraints = false
-        button.titleLabel?.font = UIFont.systemFont(ofSize: 14)
-        button.setTitleColor(BearyColors.ink, for: .normal)
-        button.tintColor = BearyColors.ink
+        button.titleLabel?.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 14))
+        button.titleLabel?.adjustsFontForContentSizeCategory = true
         button.contentEdgeInsets = UIEdgeInsets(top: 0, left: 12, bottom: 0, right: 12)
         button.titleEdgeInsets = UIEdgeInsets(top: 0, left: 6, bottom: 0, right: 0)
-        button.layer.borderWidth = 1
-        button.layer.borderColor = BearyColors.line.cgColor
-        button.layer.cornerRadius = 22
         button.addTarget(self, action: #selector(stateButtonTapped), for: .touchUpInside)
         button.bearyAddPressFeedback()
         return button
@@ -575,7 +572,7 @@ final class BearyNotificationsViewController: UIViewController {
     /// P3-4：个人主页 updateDynamicLayerColors 同款——本 VC 直接持有的 CGColor 描边集中在此重赋。
     /// 信件模态按钮另由 BearyLetterModalButton 自身 trait 回调重刷（模态非 VC、VC 侧无引用，见该类注释），不重复持有。
     private func updateDynamicLayerColors() {
-        stateButton.layer.borderColor = BearyColors.line.cgColor
+        stateButton.refreshChrome()
     }
 
     /// 60 秒轮询：只做轻量刷新（见 refreshUnreadCountLightly），cadence 不变。

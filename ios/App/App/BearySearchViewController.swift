@@ -910,7 +910,25 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         titleLabel.text = "最近搜索"
         titleLabel.font = UIFont.systemFont(ofSize: 13, weight: .semibold)
         titleLabel.textColor = BearyColors.gray
-        recentStack.addArrangedSubview(titleLabel)
+        // A7：一键清除入口（标题行右侧弱化文字钮；只清当前账号桶记录，
+        // 记录机制与 8 条上限不动；清除后同步重建本区，无记录时整区隐藏）。
+        let clearButton = UIButton(type: .system)
+        clearButton.translatesAutoresizingMaskIntoConstraints = false
+        clearButton.setTitle("清除", for: .normal)
+        clearButton.titleLabel?.font = UIFont.systemFont(ofSize: 13)
+        clearButton.setTitleColor(BearyColors.gray, for: .normal)
+        clearButton.contentEdgeInsets = UIEdgeInsets(top: 6, left: 8, bottom: 6, right: 8)
+        clearButton.addTarget(self, action: #selector(clearRecentSearchesTapped), for: .touchUpInside)
+        clearButton.bearyAddPressFeedback()
+        clearButton.accessibilityLabel = "清除最近搜索"
+        let headerSpacer = UIView()
+        headerSpacer.translatesAutoresizingMaskIntoConstraints = false
+        headerSpacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        let headerRow = UIStackView(arrangedSubviews: [titleLabel, headerSpacer, clearButton])
+        headerRow.translatesAutoresizingMaskIntoConstraints = false
+        headerRow.axis = .horizontal
+        headerRow.alignment = .center
+        recentStack.addArrangedSubview(headerRow)
         for term in terms {
             let button = UIButton(type: .custom)
             button.translatesAutoresizingMaskIntoConstraints = false
@@ -946,6 +964,12 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         updateClearButtonVisibility()
         searchTimer?.invalidate()
         runSearch(query: term)
+    }
+
+    /// A7：一键清除最近搜索（当前账号桶；未登录时即旧单键），随后同步重建本区。
+    @objc private func clearRecentSearchesTapped() {
+        UserDefaults.standard.removeObject(forKey: recentSearchesKey)
+        renderRecentSearches()
     }
 
     @objc private func clearSearchTapped() {

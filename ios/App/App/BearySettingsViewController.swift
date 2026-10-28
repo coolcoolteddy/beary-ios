@@ -2642,11 +2642,11 @@ private final class BearyDiagnosticsViewController: UIViewController {
 
     @objc private func clearTapped() {
         let alert = UIAlertController(title: "确定清空诊断日志？", message: "清空后无法恢复。", preferredStyle: .alert)
+        alert.addAction(UIAlertAction(title: "取消", style: .cancel))
         alert.addAction(UIAlertAction(title: "清空", style: .destructive) { [weak self] _ in
             DiagFile.clear()
             self?.reloadLog()
         })
-        alert.addAction(UIAlertAction(title: "取消", style: .cancel))
         present(alert, animated: true)
     }
 }

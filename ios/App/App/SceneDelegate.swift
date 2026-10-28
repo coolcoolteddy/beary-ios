@@ -1653,7 +1653,7 @@ final class BearyChromeViewController: UIViewController {
     /// 时间线滑动删除均走此方法，不另写执行逻辑。
     private func confirmAndDeleteEntry(_ entry: Entry) {
         guard let entryId = entry.id else { return }
-        let alert = UIAlertController(title: "确认删除？", message: "删除后会移入回收站，30 天内可以在「时间线」里恢复。", preferredStyle: .alert)
+        let alert = UIAlertController(title: "确认删除？", message: "删除后会移入回收站，30 天内可在「回收站」里恢复。", preferredStyle: .alert)
         alert.addAction(UIAlertAction(title: "取消", style: .cancel, handler: nil))
         alert.addAction(UIAlertAction(title: "删除", style: .destructive) { [weak self] _ in
             BearyAPI.shared.deleteEntry(id: entryId) { [weak self] result in

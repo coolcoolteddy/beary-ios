@@ -746,6 +746,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, U
         NSLayoutConstraint.activate([
             cancelButton.leadingAnchor.constraint(equalTo: topBar.leadingAnchor, constant: 16),
             cancelButton.centerYAnchor.constraint(equalTo: topBar.centerYAnchor),
+            cancelButton.heightAnchor.constraint(equalToConstant: 44),
             titleLabel.centerXAnchor.constraint(equalTo: topBar.centerXAnchor),
             titleLabel.centerYAnchor.constraint(equalTo: topBar.centerYAnchor),
             // L10：标题左右不等式——左右各离钮 8pt，窄屏先截断标题不断言。

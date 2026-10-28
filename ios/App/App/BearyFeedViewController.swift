@@ -1467,20 +1467,15 @@ class BearyFeedErrorCell: UITableViewCell {
         return lb
     }()
 
-    private lazy var retryButton: UIButton = {
-        let btn = UIButton(type: .system)
+    private lazy var retryButton: BearyButton = {
+        let btn = BearyButton(style: .secondaryOutline(.regular))
         btn.translatesAutoresizingMaskIntoConstraints = false
         btn.setImage(BearyFeedIconCache.image(named: "icon_refresh", pointSize: 15), for: .normal)
         btn.setTitle("重试", for: .normal)
         btn.titleLabel?.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 14))
         btn.titleLabel?.adjustsFontForContentSizeCategory = true
-        btn.setTitleColor(BearyColors.ink, for: .normal)
-        btn.tintColor = BearyColors.ink
         btn.contentEdgeInsets = UIEdgeInsets(top: 0, left: 12, bottom: 0, right: 12)
         btn.titleEdgeInsets = UIEdgeInsets(top: 0, left: 6, bottom: 0, right: 0)
-        btn.layer.borderWidth = 1
-        btn.layer.borderColor = BearyColors.line.cgColor
-        btn.layer.cornerRadius = 20
         btn.addTarget(self, action: #selector(retryTapped), for: .touchUpInside)
         btn.bearyAddPressFeedback()
         // P2-4：照抄点赞钮修法——按钮固有宽不含标题边距，显式给足实测字宽，
@@ -1507,7 +1502,7 @@ class BearyFeedErrorCell: UITableViewCell {
         NSLayoutConstraint.activate([
             iconView.widthAnchor.constraint(equalToConstant: 36),
             iconView.heightAnchor.constraint(equalToConstant: 36),
-            retryButton.heightAnchor.constraint(greaterThanOrEqualToConstant: 40),
+            retryButton.heightAnchor.constraint(greaterThanOrEqualToConstant: 44),
             stack.centerXAnchor.constraint(equalTo: contentView.centerXAnchor),
             stack.leadingAnchor.constraint(greaterThanOrEqualTo: contentView.leadingAnchor, constant: 16),
             stack.trailingAnchor.constraint(lessThanOrEqualTo: contentView.trailingAnchor, constant: -16),
@@ -1528,12 +1523,11 @@ class BearyFeedErrorCell: UITableViewCell {
         onRetry = nil
     }
 
-    /// 边框深浅切换重刷：CALayer borderColor 赋值时固化，不重赋即停留在旧主题色
-    /// （40/20 非工厂尺寸，故不走 BearyButton，直接补 trait 重刷，二选一单机制）。
+    /// 边框深浅切换重刷走工厂 refreshChrome（secondaryOutline 描边色重赋）。
     override func traitCollectionDidChange(_ previousTraitCollection: UITraitCollection?) {
         super.traitCollectionDidChange(previousTraitCollection)
         if traitCollection.hasDifferentColorAppearance(comparedTo: previousTraitCollection) {
-            retryButton.layer.borderColor = BearyColors.line.cgColor
+            retryButton.refreshChrome()
         }
     }
 

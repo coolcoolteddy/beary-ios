@@ -473,7 +473,7 @@ class BearyEditProfileViewController: UIViewController {
             linkRow.leadingAnchor.constraint(equalTo: linkWrap.leadingAnchor),
             linkRow.trailingAnchor.constraint(equalTo: linkWrap.trailingAnchor),
             linkRow.bottomAnchor.constraint(equalTo: linkWrap.bottomAnchor),
-            copyLinkButton.heightAnchor.constraint(equalToConstant: 32),
+            copyLinkButton.heightAnchor.constraint(equalToConstant: 44),
         ])
         // C4：跳设置页的「账户与安全」行已删除（设置页入口现为个人主页齿轮
         // 直达，不再经编辑页中转；本页只保留 [封面与头像][昵称][用户名 @handle]

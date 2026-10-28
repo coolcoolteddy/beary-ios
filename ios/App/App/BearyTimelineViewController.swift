@@ -1161,7 +1161,7 @@ final class BearyTimelineCell: UITableViewCell {
         }
         deleteButton.imageView?.contentMode = .scaleAspectFit
         deleteButton.tintColor = BearyColors.red
-        deleteButton.alpha = 0.85
+        deleteButton.alpha = 1
         deleteButton.addTarget(self, action: #selector(deleteTapped), for: .touchUpInside)
         deleteButton.bearyAddPressFeedback()
         publishButton.translatesAutoresizingMaskIntoConstraints = false
@@ -1700,7 +1700,7 @@ final class BearyTimelineCell: UITableViewCell {
             // TL-3 私密行操作行（网页 .tl-acts 口径）：编辑倒计时或“编辑已结束”
             // + 编辑钮（仅未锁定时）+ 删除钮。删除本身不由本页发请求：走容器回调，
             // 容器按网页 confirmDelete 流程弹“确认删除？/ 删除后会移入回收站，
-            // 30 天内可以在「时间线」里恢复。”再调删除接口。
+            // 30 天内可在「回收站」里恢复。”再调删除接口。
             updateEditRow(entry: entry)
             actsStack.isHidden = false
         }
