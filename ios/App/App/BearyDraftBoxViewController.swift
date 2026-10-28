@@ -676,20 +676,23 @@ final class BearyDraftBoxViewController: UIViewController {
         openButton.layer.borderColor = BearyColors.line.cgColor
         openButton.layer.cornerRadius = 999
         openButton.contentEdgeInsets = UIEdgeInsets(top: 5, left: 12, bottom: 5, right: 12)
+        // 8-15：打开钮补最小 44 高约束（原仅 contentEdgeInsets，实测高约 25，
+        // 未达 44 热区口径；视觉上 pill 变高一档，属任务指定改动）。
+        openButton.heightAnchor.constraint(greaterThanOrEqualToConstant: 44).isActive = true
         openButton.accessibilityLabel = "打开这份草稿"
         openButton.addTarget(self, action: #selector(openTapped(_:)), for: .touchUpInside)
         openButton.bearyAddPressFeedback()
         topRow.addArrangedSubview(openButton)
         openEntries.append((button: openButton, draftValue: draftValue))
         let deleteButton = UIButton(type: .custom)
-        if let trashImage = BearyIconImages.image(named: "icon_trash", pointSize: 17) {
+        if let trashImage = BearyIconImages.image(named: "icon_trash", pointSize: 21) {
             deleteButton.setImage(trashImage, for: .normal)
         }
         deleteButton.imageView?.contentMode = .scaleAspectFit
         deleteButton.tintColor = BearyColors.red
         deleteButton.accessibilityLabel = "删除草稿"
         deleteButton.translatesAutoresizingMaskIntoConstraints = false
-        // U19：删除钮触摸区域扩到 44×44（图标本身仍是 17pt，视觉不变）。
+        // U19：删除钮触摸区域扩到 44×44（图标 8-12 改为 21pt 档，视觉随档变大）。
         NSLayoutConstraint.activate([
             deleteButton.widthAnchor.constraint(equalToConstant: 44),
             deleteButton.heightAnchor.constraint(equalToConstant: 44),
@@ -701,12 +704,13 @@ final class BearyDraftBoxViewController: UIViewController {
         inner.addArrangedSubview(topRow)
 
         let summaryLabel = UILabel()
-        summaryLabel.font = UIFont.systemFont(ofSize: 16)
+        summaryLabel.font = BearyDynamicType.diaryBodyFont()
+        summaryLabel.adjustsFontForContentSizeCategory = true
         summaryLabel.textColor = BearyColors.ink
         summaryLabel.numberOfLines = 2
         summaryLabel.textAlignment = .left
         let summary = summaryText(for: draftValue)
-        if let attributed = attributedText(summary, lineHeightMultiple: 1.65, font: summaryLabel.font) {
+        if let attributed = attributedText(summary, lineHeightMultiple: 1.6, font: summaryLabel.font) {
             summaryLabel.attributedText = attributed
         } else {
             summaryLabel.text = summary
@@ -882,14 +886,24 @@ final class BearyDraftBoxViewController: UIViewController {
             ])
             row.addArrangedSubview(imageView)
         }
+        // 2-5：收信人名拆成独立 label 单行截断、最大宽 80pt（“写给”前缀
+        // 另起一 label 保全不截断）；长名不再把 meta 行状态文案顶到换行边缘，
+        // 状态文案的 required 抗压缩不动。chip 整体 180 上限保留作兜底。
+        let prefixLabel = UILabel()
+        prefixLabel.text = "写给"
+        prefixLabel.font = UIFont.systemFont(ofSize: 11.5, weight: .semibold)
+        prefixLabel.textColor = BearyColors.ink
+        prefixLabel.setContentCompressionResistancePriority(.required, for: .horizontal)
+        row.addArrangedSubview(prefixLabel)
         let label = UILabel()
-        label.text = "写给 \(name)"
+        label.text = name
         label.font = UIFont.systemFont(ofSize: 11.5, weight: .semibold)
         label.textColor = BearyColors.ink
-        // L7：与心情 chip 同口径——省略号 + 低压缩 + chip 最大宽。
         label.numberOfLines = 1
         label.lineBreakMode = .byTruncatingTail
         label.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        label.translatesAutoresizingMaskIntoConstraints = false
+        label.widthAnchor.constraint(lessThanOrEqualToConstant: 80).isActive = true
         row.addArrangedSubview(label)
         chip.addSubview(row)
         NSLayoutConstraint.activate([
@@ -902,9 +916,16 @@ final class BearyDraftBoxViewController: UIViewController {
         return chip
     }
 
+    /// 5-19：无物可续传的唯一判定（失败且本地文件与服务端 key 皆无）——
+    /// chip 显隐（hasUnrecoverableImage）与清除过滤共用同一判定，口径差一位
+    /// 就可能清掉可续传图或漏清，本处收敛为一处。
+    private func isUnrecoverableImage(_ item: BearyDraftImageItem) -> Bool {
+        return item.state == .failed && item.localFile == nil && item.serverKey == nil
+    }
+
     private func hasUnrecoverableImage(for draftValue: BearyDraft) -> Bool {
         for item in draftValue.images {
-            if item.state == .failed && item.localFile == nil && item.serverKey == nil {
+            if isUnrecoverableImage(item) {
                 return true
             }
         }
@@ -921,14 +942,19 @@ final class BearyDraftBoxViewController: UIViewController {
             }
         }
         guard var draftValue = targetDraft else { return }
-        draftValue.images = draftValue.images.filter { item in
-            return !(item.state == .failed && item.localFile == nil && item.serverKey == nil)
+        draftValue.images = draftValue.images.filter { [weak self] item in
+            guard let strongSelf = self else { return true }
+            return strongSelf.isUnrecoverableImage(item) == false
         }
         for offset in 0..<drafts.count {
             if drafts[offset].draftId == draftValue.draftId {
                 drafts[offset] = draftValue
             }
         }
+        // 5-19：清除后立即重渲（renderDrafts 内按新 images 重算 saveStatus
+        // 刷新状态行），不等磁盘写盘回包；写盘失败时原失败分支仍从磁盘
+        // 重读恢复并 toast，不让“已清除”的 UI 盖住实际仍在的内容。
+        renderDrafts()
         // G5：改用带 Bool 回调的写盘；失败时从磁盘重读恢复内存态并 toast，
         // 不让“已清除”的 UI 盖住实际仍在的磁盘内容。
         BearyDraftStore.saveAsyncReporting(draftValue) { [weak self] ok in
