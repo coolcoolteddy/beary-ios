@@ -837,6 +837,14 @@ final class BearyChromeViewController: UIViewController {
             if draftMigrated {
                 self.showToast(message: "旧草稿已归到当前账号")
             }
+            // 登录后全量同步落盘：登录成功与冷启动的 refreshMe 都汇到本回调；
+            // user != nil 时 kick（同一启动同一账号只跑一次，在途不重复），
+            // nil 时复位（下次登录重跑）；放 sessionFlipArmed 早退之前，冷启动也不跳过。
+            if let uid = user?.id {
+                BearyEntrySync.shared.kickIfNeeded(userId: uid)
+            } else {
+                BearyEntrySync.shared.noteLoggedOut()
+            }
             // 首次同步只恢复态：礼物门控由 applyLoginState 从 refreshMe 结果复用，不再单独拉；启动未读照常拉，翻转刷新跳过（见 sessionFlipArmed 注释）。
             if !self.sessionFlipArmed {
                 self.sessionFlipArmed = true
@@ -2304,7 +2312,7 @@ final class BearyChromeViewController: UIViewController {
         // 临时诊断（86 包，定根因后删除）：登录守卫已过。
         DiagFile.mark("presentComposer-authed")
         let c = BearyComposerViewController()
-        c.onPublished = { [weak self] _ in
+        c.onPublished = { [weak self] entryId in
             self?.dismiss(animated: true) {
                 // 发帖落点是原生时间线，顺带刷新原生列表与时间线备下次回访。
                 // 64 包反馈修（第 3 项）：写新日记使统计失效（清签名 + 丢当月缓存），
@@ -2313,6 +2321,11 @@ final class BearyChromeViewController: UIViewController {
                 self?.showPage(.timeline)
                 self?.timelineVC?.reloadTimeline()
                 self?.feedVC?.refreshAll()
+                // 发布成功落盘：单篇拉取后 upsert 到该北京日文件（失败静默，
+                // 下次同步/切日刷新纠正）；内存日缓存由切日静默刷新接管，不在此处碰。
+                if let uid = SessionManager.shared.currentUser?.id {
+                    BearyEntrySync.shared.upsertPublished(entryId: entryId, accountId: uid)
+                }
             }
         }
         c.onCancelled = { [weak c] in c?.dismiss(animated: true) }
@@ -2386,6 +2399,10 @@ final class BearyChromeViewController: UIViewController {
                 self.feedVC?.applyEditedEntry(updated)
                 self.timelineVC?.refreshAfterDetailChange()
                 self.profileVC?.reloadProfile()
+                // 编辑成功落盘：完整 Entry 直接 upsert 到该北京日文件。
+                if let uid = SessionManager.shared.currentUser?.id {
+                    BearyEntrySync.shared.upsertEdited(entry: updated, accountId: uid)
+                }
             }
         }
         c.onCancelled = { [weak self, weak c] in

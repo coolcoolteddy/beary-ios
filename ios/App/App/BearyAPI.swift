@@ -20,13 +20,13 @@ enum APIError: Error {
 
 // MARK: - 数据模型
 
-struct EmoteCount: Decodable {
+struct EmoteCount: Codable {
     var emote: String?
     var count: Int?
     var mine: Bool?
 }
 
-struct Quote: Decodable {
+struct Quote: Codable {
     var id: String?
     var content: String?
     var images: [String]?
@@ -46,7 +46,9 @@ struct Quote: Decodable {
     var authorPlus: Int?
 }
 
-struct Entry: Decodable {
+/// 全量同步落盘用：Entry 加 Encodable（只补编码能力，不改字段语义；
+/// 解码仍走 convertFromSnakeCase，编码配 convertToSnakeCase 往返）。
+struct Entry: Codable {
     var id: String?
     var authorId: Int?
     var authorName: String?
