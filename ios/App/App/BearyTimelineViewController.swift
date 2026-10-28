@@ -742,6 +742,25 @@ final class BearyTimelineCell: UITableViewCell {
     static let reuseIdentifier = "BearyTimelineCell"
 
     private let cardView = UIView()
+    /// 限时倒计时行（meta 行 pill 之后；仅存活期显示，灰字 12pt）。
+    private let ephemeralLabel: UILabel = {
+        let l = UILabel()
+        l.translatesAutoresizingMaskIntoConstraints = false
+        l.font = UIFont.systemFont(ofSize: 12)
+        l.textColor = BearyColors.gray
+        l.isHidden = true
+        return l
+    }()
+    /// 限时卡虚线边框（1.5pt dashed、line 色；路径圆角跟卡片自身 14，避免虚线溢出卡角）。
+    private let ephemeralBorderLayer: CAShapeLayer = {
+        let layer = CAShapeLayer()
+        layer.fillColor = UIColor.clear.cgColor
+        layer.lineWidth = 1.5
+        layer.lineDashPattern = [4, 3]
+        layer.strokeColor = BearyColors.line.cgColor
+        layer.isHidden = true
+        return layer
+    }()
     private let metaStack = UIStackView()
     private let timeLabel = UILabel()
     private let pillBackground = UIView()
@@ -838,6 +857,8 @@ final class BearyTimelineCell: UITableViewCell {
         cardView.layer.borderColor = BearyColors.alpha(BearyColors.line, 0.5).cgColor
         cardView.layer.cornerRadius = 14
         cardView.layer.masksToBounds = true
+        // 限时虚线边框层（存活期显、实线边框归零；布局时重画路径，见 layoutSubviews）。
+        cardView.layer.addSublayer(ephemeralBorderLayer)
 
         // 8-3：meta 时间（正文类）走 scaledFont + adjusts。
         timeLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13))
@@ -1133,12 +1154,19 @@ final class BearyTimelineCell: UITableViewCell {
         if let moodRow = metaMoodRow, moodRow.isHidden != narrow {
             moodRow.isHidden = narrow
         }
+        // 限时虚线边框：路径跟卡片自身圆角 14（不跟任务书的 16，避免虚线溢出卡角）。
+        if !ephemeralBorderLayer.isHidden {
+            ephemeralBorderLayer.frame = cardView.bounds
+            ephemeralBorderLayer.path = UIBezierPath(roundedRect: cardView.bounds, cornerRadius: 14).cgPath
+        }
     }
 
     override func traitCollectionDidChange(_ previousTraitCollection: UITraitCollection?) {
         super.traitCollectionDidChange(previousTraitCollection)
         // 追加 6④：卡片边框减淡与 init 同款（line 色 50% 透明度）。
         cardView.layer.borderColor = BearyColors.alpha(BearyColors.line, 0.5).cgColor
+        // 限时虚线描边色是 cgColor 快照，主题切换须重刷。
+        ephemeralBorderLayer.strokeColor = BearyColors.line.cgColor
         // 追加 6②：pill 描边主题切换重刷（cgColor 快照，须按当前态重解）。
         pillBackground.layer.borderColor = pillBorderColor.cgColor
         timelineLineView.backgroundColor = BearyColors.line
@@ -1147,7 +1175,8 @@ final class BearyTimelineCell: UITableViewCell {
         // 不得无条件写 bg（否则主题切换后私密蓝圈变隐形）。
         // N1：已公开圆点填充改橙色（与 configure 同口径），主题切换后仍是橙。
         if let entry = currentEntry {
-            let published = entry.isPublic ?? false
+            // 限时已到期按私密算（与 configure 同口径）。
+            let published = BearyEphemeral.isEffectivelyPublic(entry)
             dotView.backgroundColor = BearyColors.bg
             dotView.layer.borderColor = (published ? BearyColors.orange : BearyColors.blue).cgColor
         } else {
@@ -1304,7 +1333,8 @@ final class BearyTimelineCell: UITableViewCell {
             timeLabel.text = ""
         }
         metaStack.addArrangedSubview(timeLabel)
-        let published = entry.isPublic ?? false
+        // 限时已到期按私密算（pill/圆点/公开钮一律走有效态，不只看服务端 isPublic）。
+        let published = BearyEphemeral.isEffectivelyPublic(entry)
         if published {
             // N1：已公开 pill 改橙色——文字走 BearyColors.orange（网页 --orange
             // #ff9500），底色为橙色两态透明底（浅 12% / 深 18%，见
@@ -1348,6 +1378,18 @@ final class BearyTimelineCell: UITableViewCell {
             dotRingView.isHidden = true
         }
         metaStack.addArrangedSubview(pillBackground)
+        // 限时存活期：meta 行追加灰字倒计时（只留这一行，不另加标签）+ 卡片改虚线边框；
+        // 到期或非限时按普通卡（pill/dot 已按有效态走私密分支）。
+        if BearyEphemeral.isLive(entry), let until = entry.ephemeralUntil {
+            ephemeralLabel.text = BearyEphemeral.remainingText(until: until)
+            ephemeralLabel.isHidden = false
+            metaStack.addArrangedSubview(ephemeralLabel)
+        } else {
+            ephemeralLabel.isHidden = true
+        }
+        let ephemeralLive = BearyEphemeral.isLive(entry)
+        cardView.layer.borderWidth = ephemeralLive ? 0 : 1
+        ephemeralBorderLayer.isHidden = !ephemeralLive
         // I3：天气用 icon_wx_* 图标、心情用 14px BearyEmoteView（播 Lottie 循环，
         // 与 Feed/主页心情位静态首帧不同，时间线卡片心情是动的；减动效下只显完成帧）。
         if let weatherKey = entry.weather, let weatherName = BearyText.weatherNames[weatherKey] {
@@ -1661,7 +1703,7 @@ final class BearyTimelineCell: UITableViewCell {
             editStatusGroup.isHidden = true
         }
         // 已结束且已消失后：后续 tick 不再碰本行（editRowEndedShown 守卫）。
-        let isPublic = entry.isPublic == true
+        let isPublic = BearyEphemeral.isEffectivelyPublic(entry)
         publishButton.isHidden = false
         publishButton.tintColor = BearyColors.gray
         publishButton.accessibilityLabel = isPublic ? "改回私密" : "公开"
@@ -4580,10 +4622,13 @@ class BearyTimelineViewController: UIViewController {
     private func applyVisibilityLocally(entryId: String, isPublic: Bool, publishedAt: Int?) {
         for index in timelineEntries.indices where timelineEntries[index].id == entryId {
             timelineEntries[index].isPublic = isPublic
+            // 手动翻转清限时标记（服务端同口径），否则本地仍画虚线边框。
+            timelineEntries[index].ephemeralUntil = nil
             if let publishedAt = publishedAt { timelineEntries[index].publishedAt = publishedAt }
         }
         for index in dayEntries.indices where dayEntries[index].id == entryId {
             dayEntries[index].isPublic = isPublic
+            dayEntries[index].ephemeralUntil = nil
             if let publishedAt = publishedAt { dayEntries[index].publishedAt = publishedAt }
         }
         for key in dayEntriesCache.keys {
@@ -4591,6 +4636,7 @@ class BearyTimelineViewController: UIViewController {
             var changed = false
             for index in list.indices where list[index].id == entryId {
                 list[index].isPublic = isPublic
+                list[index].ephemeralUntil = nil
                 if let publishedAt = publishedAt { list[index].publishedAt = publishedAt }
                 changed = true
             }

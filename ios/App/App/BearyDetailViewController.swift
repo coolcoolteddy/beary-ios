@@ -91,6 +91,28 @@ final class BearyDetailViewController: UIViewController {
     private var emoteFlowHeight: NSLayoutConstraint?
     private let writeResponseButton = UIButton(type: .custom)
     private let placeholderLabel = UILabel()
+
+    private let ephemeralLabel: UILabel = {
+        let l = UILabel()
+        l.translatesAutoresizingMaskIntoConstraints = false
+        l.font = UIFont.systemFont(ofSize: 12)
+        l.textColor = BearyColors.gray
+        l.isHidden = true
+        return l
+    }()
+
+    /// 限时详情虚线边框（CAShapeLayer，1.5pt dashed、line 色、圆角 16；
+    /// 布局时按 containerView bounds 重画路径，主题切换重刷描边色；
+    /// 插在 containerView 图层最底层，不盖内容）。
+    private let ephemeralBorderLayer: CAShapeLayer = {
+        let layer = CAShapeLayer()
+        layer.fillColor = UIColor.clear.cgColor
+        layer.lineWidth = 1.5
+        layer.lineDashPattern = [4, 3]
+        layer.strokeColor = BearyColors.line.cgColor
+        layer.isHidden = true
+        return layer
+    }()
     private var imageKeys: [String] = []
 
     init(entry: Entry, isGuest: Bool) {
@@ -139,6 +161,7 @@ final class BearyDetailViewController: UIViewController {
 
     override func viewDidLayoutSubviews() {
         super.viewDidLayoutSubviews()
+        updateEphemeralBorderPath()
         let width = containerView.bounds.width
         guard width > 0, width != lastFlowWidth else { return }
         lastFlowWidth = width
@@ -194,6 +217,7 @@ final class BearyDetailViewController: UIViewController {
         ])
 
         buildAuthorRow()
+        buildEphemeralRow()
         buildBody()
         buildImages()
         buildChips()
@@ -334,6 +358,13 @@ final class BearyDetailViewController: UIViewController {
         }
         authorRow.addArrangedSubview(moreButton)
         stackView.addArrangedSubview(authorRow)
+    }
+
+    private func buildEphemeralRow() {
+        // 限时倒计时行：只留倒计时灰字，位置在作者行下方、正文上方（与卡片同口径）；
+        // 虚线边框插 containerView 图层最底层，框住整个内容列。
+        stackView.addArrangedSubview(ephemeralLabel)
+        containerView.layer.insertSublayer(ephemeralBorderLayer, at: 0)
     }
 
     private func buildBody() {
@@ -492,6 +523,7 @@ final class BearyDetailViewController: UIViewController {
             avatarImageView.bearySetImage(url: url, downsampleToWidth: 80)
         }
         refreshVisibilityViews()
+        refreshEphemeralViews()
         refreshAuthorActions()
 
         // 正文 16pt（diaryBodyFont 即 scaled 16），行高 1.6（首页卡片口径）。
@@ -513,8 +545,9 @@ final class BearyDetailViewController: UIViewController {
     }
 
     /// 可见性图标 + pill：锁 = 私密（蓝），地球 = 公开（橙）；点按即时切换。
+    /// 限时已到期按私密算（与卡片同口径，走 BearyEphemeral 有效态）。
     private func refreshVisibilityViews() {
-        let isPublic = entry.isPublic == true
+        let isPublic = BearyEphemeral.isEffectivelyPublic(entry)
         visibilityButton.setImage(
             BearyFeedIconCache.image(named: isPublic ? "icon_globe" : "icon_lock", pointSize: 22),
             for: .normal)
@@ -523,6 +556,28 @@ final class BearyDetailViewController: UIViewController {
         let pillColor = isPublic ? BearyColors.orange : BearyColors.blue
         pillLabel.textColor = pillColor
         pillContainer.layer.borderColor = pillColor.cgColor
+    }
+
+    /// 限时详情：存活期虚线边框 + 倒计时灰字（只留倒计时行）；
+    /// 到期或非限时按普通详情（边框与倒计时行均藏）。
+    private func refreshEphemeralViews() {
+        let live = BearyEphemeral.isLive(entry)
+        if live, let until = entry.ephemeralUntil {
+            ephemeralLabel.text = BearyEphemeral.remainingText(until: until)
+            ephemeralLabel.isHidden = false
+        } else {
+            ephemeralLabel.text = nil
+            ephemeralLabel.isHidden = true
+        }
+        ephemeralBorderLayer.isHidden = !live
+        updateEphemeralBorderPath()
+    }
+
+    private func updateEphemeralBorderPath() {
+        guard !ephemeralBorderLayer.isHidden else { return }
+        ephemeralBorderLayer.strokeColor = BearyColors.line.cgColor
+        ephemeralBorderLayer.frame = containerView.bounds
+        ephemeralBorderLayer.path = UIBezierPath(roundedRect: containerView.bounds, cornerRadius: 16).cgPath
     }
 
     /// 作者行右侧显隐：游客无可见性图标（游客永非作者）；⋯ 始终在（游客点按走登录提示）。
@@ -662,7 +717,7 @@ final class BearyDetailViewController: UIViewController {
             dims: quote.imgDims,
             createdAt: quote.createdAt,
             allowThumbs: quote.isPublic == true || quoteIsMine,
-            showOnlyYouBadge: quoteIsMine && quote.isPublic != true && entry.isPublic == true
+            showOnlyYouBadge: quoteIsMine && quote.isPublic != true && BearyEphemeral.isEffectivelyPublic(entry)
         )
         quoteView.isHidden = false
     }
@@ -704,7 +759,8 @@ final class BearyDetailViewController: UIViewController {
         bookmarkButton.setTitleColor(bookmarked ? BearyColors.orange : BearyColors.gray, for: .highlighted)
 
         // 卡片互动门控同口径：非公开时点赞／收藏压暗、分享隐藏（私密不交出正文与链接）。
-        let publicOK = entry.isPublic == true
+        // 限时已到期按私密算（与卡片同口径）。
+        let publicOK = BearyEphemeral.isEffectivelyPublic(entry)
         likeButton.alpha = publicOK ? 1.0 : 0.4
         bookmarkButton.alpha = publicOK ? 1.0 : 0.4
         shareButton.isHidden = !publicOK
@@ -785,7 +841,7 @@ final class BearyDetailViewController: UIViewController {
     /// 失败回滚＋拒绝动效；未登录走登录提示（先行态复原），非公开弹“公开后才能回应”。
     private func chooseEmote(key: String) {
         guard let entryId = entry.id, !entryId.isEmpty else { return }
-        if entry.isPublic != true {
+        if !BearyEphemeral.isEffectivelyPublic(entry) {
             BearyToast.show(in: view, message: "公开后才能回应", aboveFAB: false)
             return
         }
@@ -847,7 +903,8 @@ final class BearyDetailViewController: UIViewController {
 
     private func presentShareSheet() {
         // 现有分享流程同口径：私密直接 return，不交出正文与链接。
-        if entry.isPublic != true { return }
+        // 限时已到期按私密算。
+        if !BearyEphemeral.isEffectivelyPublic(entry) { return }
         guard let entryId = entry.id, !entryId.isEmpty,
               let url = URL(string: "https://teddyhn.com/beary/d/" + entryId) else { return }
         let shareText = (entry.content ?? "").replacingOccurrences(of: "\\s+", with: " ", options: .regularExpression)
@@ -910,7 +967,8 @@ final class BearyDetailViewController: UIViewController {
         guard let entryId = entry.id, !entryId.isEmpty else { return }
         if isVisibilityBusy { return }
         // 游客永非作者，到不了这里；未登录同样到不了（作者必登录）。
-        let target = entry.isPublic == true ? 0 : 1
+        // 目标态按有效态算：已到期限时篇 stored 仍为公开，但按私密算，点按应是公开（目标 1）。
+        let target = BearyEphemeral.isEffectivelyPublic(entry) ? 0 : 1
         isVisibilityBusy = true
         BearyAPI.shared.setVisibility(id: entryId, published: target) { [weak self] result in
             DispatchQueue.main.async {
@@ -923,8 +981,11 @@ final class BearyDetailViewController: UIViewController {
                     if let publishedAt = resp.publishedAt {
                         self.entry.publishedAt = publishedAt
                     }
+                    // 手动翻转清限时标记（与后端规则、时间线本地同步点同口径）。
+                    self.entry.ephemeralUntil = nil
                     BearyHaptics.publishSuccess()
                     self.refreshVisibilityViews()
+                    self.refreshEphemeralViews()
                     self.refreshActionRow()
                     self.onVisibilityChanged?(self.entry)
                 case .failure:
@@ -941,7 +1002,7 @@ final class BearyDetailViewController: UIViewController {
 
     @objc private func likeTapped() {
         guard let entryId = entry.id, !entryId.isEmpty else { return }
-        if entry.isPublic != true { return }
+        if !BearyEphemeral.isEffectivelyPublic(entry) { return }
         if !SessionManager.shared.isLoggedIn {
             onRequireLogin?()
             return
@@ -998,7 +1059,7 @@ final class BearyDetailViewController: UIViewController {
 
     @objc private func bookmarkTapped() {
         guard let entryId = entry.id, !entryId.isEmpty else { return }
-        if entry.isPublic != true { return }
+        if !BearyEphemeral.isEffectivelyPublic(entry) { return }
         if !SessionManager.shared.isLoggedIn {
             onRequireLogin?()
             return
@@ -1047,7 +1108,7 @@ final class BearyDetailViewController: UIViewController {
             onRequireLogin?()
             return
         }
-        if entry.isPublic != true {
+        if !BearyEphemeral.isEffectivelyPublic(entry) {
             BearyToast.show(in: view, message: "公开后才能回应", aboveFAB: false)
             return
         }

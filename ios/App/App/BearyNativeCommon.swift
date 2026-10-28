@@ -682,12 +682,13 @@ extension BearyAPI {
     /// 发帖：content 必填 ≤2000 字；images 是已上传的 R2 key 数组（须归属本人且存在）；
     /// mood/weather/quote_id 省略即不传（服务端 validMood/validWeather 对缺失值置 null，与网页同口径）；
     /// iCity：published（0 私密 / 1 公开，默认 0）与 mentioned_user_id（@ 一人，可空）随新建 POST 发出；
+    /// 限时：ephemeral=1 时服务端强制公开并写 24 小时到期（ephemeral_until），nil 即普通新建。
     /// recipient_id / notify_recipient 已停写（送达旁路全拆，@ 提醒无按篇开关、公开即提醒）。client_req 须匹配
     /// ^[A-Za-z0-9_-]{8,64}$，用于发布幂等。
     /// 成功 201 返回 {id, publish_at, edit_deadline}；失败码：content required / content too long /
     /// invalid image ownership / image unavailable(409) / create_gap / create_day_limit /
     /// create_ip_limit(429) / create_dup。
-    func publishEntry(content: String, images: [String], mood: String?, weather: String? = nil, quoteId: String? = nil, published: Int? = nil, mentionedUserId: Int? = nil, title: String? = nil, clientReq: String, completion: @escaping (Result<CreateResponse, APIError>) -> Void) {
+    func publishEntry(content: String, images: [String], mood: String?, weather: String? = nil, quoteId: String? = nil, published: Int? = nil, mentionedUserId: Int? = nil, title: String? = nil, ephemeral: Int? = nil, clientReq: String, completion: @escaping (Result<CreateResponse, APIError>) -> Void) {
         var body: [String: Any] = ["content": content, "images": images, "client_req": clientReq]
         // R1：标题透传，nil=省略不传；非 nil（含空串）原样传。新建调用方传
         // trimmedTitle()（空时为 nil），故新建不填标题仍省略不传，行为不变；
@@ -697,6 +698,7 @@ extension BearyAPI {
         if let w = weather { body["weather"] = w }
         if let q = quoteId { body["quote_id"] = q }
         if let p = published { body["published"] = p }
+        if let e = ephemeral { body["ephemeral"] = e }
         if let mentioned = mentionedUserId { body["mentioned_user_id"] = mentioned }
         request("/beary/api/entries", method: "POST", jsonBody: body, completion: completion)
     }
@@ -1453,6 +1455,32 @@ final class BearySkeletonCardView: UIView {
 
 /// 广场卡公开相对时间：“X 分钟 / 小时 / 天前公开”；1 分钟内为“刚刚公开”。
 /// publishedAt 缺失时返回 nil（调用方回退绝对时间）。
+/// 限时日记有效态（客户端唯一口径）：ephemeralUntil 非空且未到期 = 存活期；
+/// 已到期 = 普通私密（不建 sweep，读时按时间判定；手动翻转可见性时服务端清标记，
+/// 本地同步点同样清 ephemeralUntil，见三处 applyVisibility* 与详情页可见性切换）。
+enum BearyEphemeral {
+    static func isLive(_ entry: Entry, nowMs: Int? = nil) -> Bool {
+        guard let until = entry.ephemeralUntil else { return false }
+        let now = nowMs ?? Int(Date().timeIntervalSince1970 * 1000)
+        return until > now
+    }
+    static func isExpired(_ entry: Entry, nowMs: Int? = nil) -> Bool {
+        guard let until = entry.ephemeralUntil else { return false }
+        let now = nowMs ?? Int(Date().timeIntervalSince1970 * 1000)
+        return until <= now
+    }
+    static func isEffectivelyPublic(_ entry: Entry) -> Bool {
+        entry.isPublic == true && !isExpired(entry)
+    }
+    /// 存活期倒计时灰字（只留这一行，不另加“限时日记”小标签）。
+    static func remainingText(until: Int, nowMs: Int? = nil) -> String {
+        let ms = until - (nowMs ?? Int(Date().timeIntervalSince1970 * 1000))
+        if ms < 3_600_000 { return "限时 · 还剩不到 1 小时" }
+        let hours = (ms + 3_599_999) / 3_600_000
+        return "限时 · 还剩 \(hours) 小时"
+    }
+}
+
 enum BearyVisibilityText {
     static func publishedRelativeString(publishedAtMs: Int?) -> String? {
         guard let ms = publishedAtMs, ms > 0 else { return nil }
