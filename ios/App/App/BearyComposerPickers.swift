@@ -517,6 +517,8 @@ final class BearyRecipientPickerViewController: UIViewController, UITextFieldDel
     }
 
     /// M8：sheet 高度/位置变化走键盘动画同曲线（duration + curve 均取键盘通知，不再固定 0.25 线性）。
+    /// 6-3 例外：本函数内 layoutIfNeeded 在键盘动画内、duration/curve 均取键盘通知，
+    /// 属系统曲线同步，保留不重写（不要当作通用约束动画口径扩散）。
     private func animateKeyboardLayout(_ note: Notification) {
         var duration: TimeInterval = 0.25
         var options: UIView.AnimationOptions = []
@@ -754,7 +756,9 @@ final class BearyRecipientPickerViewController: UIViewController, UITextFieldDel
             }
             let separator = UIView()
             separator.translatesAutoresizingMaskIntoConstraints = false
-            separator.backgroundColor = BearyColors.line.withAlphaComponent(0.55)
+            // 8-4：分隔线收进统一样式——基线厚已是 1pt，0.55 是颜色透明度（非厚度），
+            // 现改全强度 line 色（动态色本身，不走 withAlphaComponent，8-1 同款）。
+            separator.backgroundColor = BearyColors.line
             separator.isHidden = (index == 0)
             row.addSubview(avatarView)
             row.addSubview(fallbackLabel)
@@ -780,12 +784,16 @@ final class BearyRecipientPickerViewController: UIViewController, UITextFieldDel
                 handleLabel.leadingAnchor.constraint(equalTo: row.leadingAnchor, constant: 68),
                 handleLabel.trailingAnchor.constraint(lessThanOrEqualTo: chevron.leadingAnchor, constant: -8),
                 handleLabel.bottomAnchor.constraint(lessThanOrEqualTo: row.bottomAnchor, constant: -12),
-                chevron.centerYAnchor.constraint(equalTo: row.centerYAnchor),
+                // 8-15：可点行最小 44 高约束（现由头像 44 + 上下 10 撑到 64，已达标；本约束防内容变矮时跌破 44）。
+            row.heightAnchor.constraint(greaterThanOrEqualToConstant: 44),
+            chevron.centerYAnchor.constraint(equalTo: row.centerYAnchor),
                 chevron.trailingAnchor.constraint(equalTo: row.trailingAnchor, constant: -12),
                 chevron.widthAnchor.constraint(equalToConstant: 16),
                 chevron.heightAnchor.constraint(equalToConstant: 16),
                 separator.topAnchor.constraint(equalTo: row.topAnchor),
-                separator.leadingAnchor.constraint(equalTo: row.leadingAnchor, constant: 68),
+                // 8-4 例外：左 68 = 头像左 12 + 宽 44 + 间隙 12，即正文列起点（与名/ handle 左 68 同列），
+            // 属头像对齐，不收进通用分隔线左距，保持不动。
+            separator.leadingAnchor.constraint(equalTo: row.leadingAnchor, constant: 68),
                 separator.trailingAnchor.constraint(equalTo: row.trailingAnchor, constant: -12),
                 separator.heightAnchor.constraint(equalToConstant: 1),
             ])
