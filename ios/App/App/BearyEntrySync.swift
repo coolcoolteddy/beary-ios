@@ -231,8 +231,32 @@ final class BearyEntrySync {
     // 回收站腿（与日记腿同批触发、各自独立成败：日记已同步不影响回收站重试，反之亦然）。
     private var trashSyncingAccountId: Int?
     private var trashSyncedAccountIdThisLaunch: Int?
+    /// 日记写盘代际：每次日记落盘写（发布/编辑 upsert、删帖、日加载写透）
+    /// 都在同步串行队列上 +1；全量同步开始时记下基线，提交前比对——
+    /// 拉取开始后发生过写盘即旧快照已过期，跳过本次提交保旧盘，下次 kick 重跑。
+    private var diaryWriteSequence = 0
+    private var diarySyncStartSequence: [Int: Int] = [:]
+    /// 全量同步宽松上限：40 页 / 2000 条（每页 50 条；现行用户约 21 篇，
+    /// 远未触及）。超限中止本次同步且不覆写落盘，保旧盘、下次重跑。
+    private static let maxSyncPages = 40
+    private static let maxSyncItems = 2000
 
     private init() {}
+
+    /// 主线程落盘写统一投递口：JSON 编解码 + 写盘走同步串行队列，不卡主线程；
+    /// 调用方内存态已同步更新，落盘随后跟进（下次静默刷新/重跑自对齐）。
+    func runDiskWrite(_ work: @escaping () -> Void) {
+        queue.async(execute: work)
+    }
+
+    /// 日记落盘写投递口：与 runDiskWrite 同款走同步队列，另记写盘代际，
+    /// 供全量同步提交守卫判断快照是否过期。
+    func runDiaryDiskWrite(_ work: @escaping () -> Void) {
+        queue.async { [weak self] in
+            self?.diaryWriteSequence += 1
+            work()
+        }
+    }
 
     func kickIfNeeded(userId: Int) {
         queue.async { [weak self] in
@@ -240,6 +264,8 @@ final class BearyEntrySync {
             // 日记腿（守卫口径与原来完全一致：同一启动同一账号只跑一次，在途不重复）。
             if self.syncingAccountId != userId && self.syncedAccountIdThisLaunch != userId {
                 self.syncingAccountId = userId
+                // 提交守卫基线：记下拉取开始时的写盘代际。
+                self.diarySyncStartSequence[userId] = self.diaryWriteSequence
                 self.fetchPage(accountId: userId, before: nil, beforeId: nil, accumulated: [])
             }
             // 回收站腿：同批触发，失败不拖日记腿，下次 kick 独立重跑。
@@ -256,17 +282,21 @@ final class BearyEntrySync {
             self?.syncedAccountIdThisLaunch = nil
             self?.trashSyncingAccountId = nil
             self?.trashSyncedAccountIdThisLaunch = nil
+            self?.diarySyncStartSequence.removeAll()
         }
     }
 
     /// 发布成功：onPublished 只给 entryId，单篇拉取后 upsert 落盘（失败静默）。
     func upsertPublished(entryId: String, accountId: Int) {
         BearyAPI.shared.fetchEntry(id: entryId) { result in
-            // 回调线程不固定；账号守卫与落盘都在主线程做（与全站 currentUser 读取口径一致）。
+            // 回调线程不固定；账号守卫在主线程做（与全站 currentUser 读取口径一致），
+            // 落盘写走同步队列（不卡主线程，同时记写盘代际供提交守卫判断）。
             DispatchQueue.main.async {
                 guard SessionManager.shared.currentUser?.id == accountId else { return }
                 guard case .success(let entry) = result else { return }
-                BearyEntrySyncStore.upsertEntry(accountId: accountId, entry: entry)
+                BearyEntrySync.shared.runDiaryDiskWrite {
+                    BearyEntrySyncStore.upsertEntry(accountId: accountId, entry: entry)
+                }
             }
         }
     }
@@ -275,11 +305,13 @@ final class BearyEntrySync {
     func upsertEdited(entry: Entry, accountId: Int) {
         DispatchQueue.main.async {
             guard SessionManager.shared.currentUser?.id == accountId else { return }
-            BearyEntrySyncStore.upsertEntry(accountId: accountId, entry: entry)
+            BearyEntrySync.shared.runDiaryDiskWrite {
+                BearyEntrySyncStore.upsertEntry(accountId: accountId, entry: entry)
+            }
         }
     }
 
-    private func fetchPage(accountId: Int, before: Int?, beforeId: String?, accumulated: [Entry]) {
+    private func fetchPage(accountId: Int, before: Int?, beforeId: String?, accumulated: [Entry], pageCount: Int = 0) {
         BearyAPI.shared.fetchEntries(scope: .timeline, limit: 50, before: before, beforeId: beforeId) { [weak self] result in
             guard let self = self else { return }
             switch result {
@@ -294,6 +326,13 @@ final class BearyEntrySync {
                 if page.count < 50 {
                     self.finishSync(accountId: accountId, entries: all)
                 } else {
+                    // 宽松上限：超限中止且不覆写落盘（保旧盘、下次重跑，不静默丢数据）。
+                    if pageCount + 1 >= Self.maxSyncPages || all.count >= Self.maxSyncItems {
+                        self.queue.async {
+                            if self.syncingAccountId == accountId { self.syncingAccountId = nil }
+                        }
+                        return
+                    }
                     guard let last = page.last, let lastCreated = last.createdAt, let lastId = last.id else {
                         // 游标缺失无法续翻：中止且不写盘（半截页不进本地）。
                         self.queue.async {
@@ -301,7 +340,7 @@ final class BearyEntrySync {
                         }
                         return
                     }
-                    self.fetchPage(accountId: accountId, before: lastCreated, beforeId: lastId, accumulated: all)
+                    self.fetchPage(accountId: accountId, before: lastCreated, beforeId: lastId, accumulated: all, pageCount: pageCount + 1)
                 }
             }
         }
@@ -318,6 +357,15 @@ final class BearyEntrySync {
                 return
             }
             self.queue.async {
+                // 提交守卫：拉取开始后发生过本地写盘（发布/编辑/删帖/日加载写透），
+                // 旧快照已过期——跳过本次提交保旧盘（不丢新发布、不复活已删帖），
+                // 不记已同步，下次 kick 重跑；无基线记录时不拦截（只走正常提交）。
+                if let start = self.diarySyncStartSequence[accountId], start != self.diaryWriteSequence {
+                    self.diarySyncStartSequence[accountId] = nil
+                    self.syncingAccountId = nil
+                    return
+                }
+                self.diarySyncStartSequence[accountId] = nil
                 let grouped = BearyEntrySyncStore.groupByDay(entries)
                 BearyEntrySyncStore.commitFullSync(accountId: accountId, grouped: grouped)
                 self.syncingAccountId = nil
@@ -327,7 +375,7 @@ final class BearyEntrySync {
     }
 
     /// 回收站翻页链（与日记腿同款失败口径：任一页失败、游标缺失即中止且不写盘，下次触发重跑）。
-    private func fetchTrashPage(accountId: Int, before: String?, beforeId: String?, accumulated: [TrashItem]) {
+    private func fetchTrashPage(accountId: Int, before: String?, beforeId: String?, accumulated: [TrashItem], pageCount: Int = 0) {
         BearyAPI.shared.fetchTrash(before: before, beforeId: beforeId) { [weak self] result in
             guard let self = self else { return }
             switch result {
@@ -342,6 +390,13 @@ final class BearyEntrySync {
                 if items.count < 50 {
                     self.finishTrashSync(accountId: accountId, items: all)
                 } else {
+                    // 宽松上限（与日记腿同款）：超限中止且不覆写落盘，保旧盘、下次重跑。
+                    if pageCount + 1 >= Self.maxSyncPages || all.count >= Self.maxSyncItems {
+                        self.queue.async {
+                            if self.trashSyncingAccountId == accountId { self.trashSyncingAccountId = nil }
+                        }
+                        return
+                    }
                     guard let last = items.last, let lastDeletedAt = last.deletedAt else {
                         // 游标缺失无法续翻：中止且不写盘（半截不进本地；无 before 时服务端回第一页，续拉只会原地打转）。
                         self.queue.async {
@@ -349,7 +404,7 @@ final class BearyEntrySync {
                         }
                         return
                     }
-                    self.fetchTrashPage(accountId: accountId, before: "\(lastDeletedAt)", beforeId: last.id, accumulated: all)
+                    self.fetchTrashPage(accountId: accountId, before: "\(lastDeletedAt)", beforeId: last.id, accumulated: all, pageCount: pageCount + 1)
                 }
             }
         }
