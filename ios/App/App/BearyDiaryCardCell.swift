@@ -123,6 +123,46 @@ final class BearyActionStackView: UIStackView {
         return false
     }
 
+    /// 追加 1（B 法）：重叠带命中优先级——收藏/分享的 44pt 扩后热区在两钮之间
+    /// 重叠（个人主页约 7pt、首页约 3pt），UIKit 默认按子视图逆序命中，重叠带
+    /// 一律落到右侧钮；此处多钮同时命中时按视觉中心最近者胜（重叠带中线分流），
+    /// 单钮命中时走默认路径，spacer、公开行等其他视图行为一字不动。
+    override func hitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? {
+        guard self.point(inside: point, with: event) else { return nil }
+        var claimants: [UIButton] = []
+        collectClaimingButtons(in: self, point: point, event: event, into: &claimants)
+        if claimants.count >= 2 {
+            var best: UIButton?
+            var bestDistance: CGFloat = .greatestFiniteMagnitude
+            for button in claimants {
+                let center = button.convert(CGPoint(x: button.bounds.midX, y: button.bounds.midY), to: self)
+                let distance = abs(center.x - point.x)
+                if distance < bestDistance {
+                    bestDistance = distance
+                    best = button
+                }
+            }
+            return best
+        }
+        return super.hitTest(point, with: event)
+    }
+
+    /// 递归收集扩后热区命中该点的 UIButton 子孙（隐藏/不可交互/透明者不算，
+    /// 与 UIKit hitTest 的可达条件一致；isEnabled 不参与判定，禁用钮仍占位吞点，
+    /// 与现行行为一致）。
+    private func collectClaimingButtons(in view: UIView, point: CGPoint, event: UIEvent?, into out: inout [UIButton]) {
+        for sub in view.subviews {
+            guard sub.isHidden == false, sub.alpha >= 0.01, sub.isUserInteractionEnabled else { continue }
+            if let button = sub as? UIButton {
+                let local = sub.convert(point, from: self)
+                if button.point(inside: local, with: event) {
+                    out.append(button)
+                }
+            }
+            collectClaimingButtons(in: sub, point: point, event: event, into: &out)
+        }
+    }
+
     private func hitExpandedButton(in view: UIView, point: CGPoint) -> Bool {
         if view.isHidden {
             return false
