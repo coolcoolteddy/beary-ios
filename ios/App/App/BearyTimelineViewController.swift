@@ -2472,6 +2472,9 @@ class BearyTimelineViewController: UIViewController {
         // 落盘同清：否则切回该日会先闪出已删的旧行（静默刷新虽会纠正，但先闪后纠同样要修）。
         if let uid = SessionManager.shared.currentUser?.id {
             BearyEntrySyncStore.removeEntry(accountId: uid, entryId: entryId)
+            // 回收站桶同增：删帖即进回收站，下次进回收站页先读本地就能看到该条
+            //（桶不存在时不建半截桶，进页走网络首拉；下次静默刷新用服务端值纠正残差）。
+            BearyTrashSyncStore.prependDeleted(accountId: uid, entry: entry)
         }
         let newSections = currentSections()
         var rowDeletes: [IndexPath] = []
