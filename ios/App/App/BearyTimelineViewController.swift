@@ -1229,6 +1229,8 @@ final class BearyTimelineCell: UITableViewCell {
         super.prepareForReuse()
         stopWeatherLottie()
         weatherIconView = nil
+        // 投递中沙漏旋转复位：移除动画并复位 transform，防复用残留到下一行。
+        setHourglassSpinning(false)
         // 80 包 A4/A2-3④：错峰改 cell.alpha/transform，对称复位，防复用残留。
         alpha = 1
         transform = .identity
@@ -1303,6 +1305,7 @@ final class BearyTimelineCell: UITableViewCell {
             pillBorderColor = BearyColors.alpha(BearyColors.orange, 0.4)
             pillBackground.layer.borderColor = pillBorderColor.cgColor
             hourglassView.isHidden = true
+            setHourglassSpinning(false)
             pillLabelLeadingWithIcon?.isActive = false
             pillLabelLeadingWithoutIcon?.isActive = true
             // 竖线圆点统一用未公开的尺寸和结构（9pt 空心 + 12pt 环），只变颜色：
@@ -1765,6 +1768,26 @@ final class BearyTimelineCell: UITableViewCell {
         }
     }
 
+    /// 投递中沙漏旋转：仅倒计时态（投递中）播，绕中心 360° 持续缓慢旋转
+    /// （2 秒一圈，线性匀速，只动 transform）；切出倒计时态时停转；
+    /// 减动效开启时不播、保持静态沙漏。已在播时不再重复添加（每秒 tick
+    /// 反复调 updatePill 也不会重启动画）；停转时移除动画并复位 transform。
+    private func setHourglassSpinning(_ spinning: Bool) {
+        if spinning, UIAccessibility.isReduceMotionEnabled == false {
+            guard hourglassView.layer.animation(forKey: "beary-hourglass-spin") == nil else { return }
+            let spin = CABasicAnimation(keyPath: "transform.rotation.z")
+            spin.fromValue = 0
+            spin.toValue = CGFloat.pi * 2
+            spin.duration = 2.0
+            spin.timingFunction = CAMediaTimingFunction(name: .linear)
+            spin.repeatCount = .infinity
+            hourglassView.layer.add(spin, forKey: "beary-hourglass-spin")
+        } else {
+            hourglassView.layer.removeAnimation(forKey: "beary-hourglass-spin")
+            hourglassView.transform = .identity
+        }
+    }
+
     private func updatePill(entry: Entry) {
         let nowMs = Int(Date().timeIntervalSince1970 * 1000)
         let isPending = (entry.publishPendingUntil ?? 0) > nowMs
@@ -1827,6 +1850,8 @@ final class BearyTimelineCell: UITableViewCell {
         } else {
             apply()
         }
+        // 投递中沙漏旋转：仅倒计时态播，切出倒计时态时停转（见 setHourglassSpinning）。
+        setHourglassSpinning(isCountdown)
         // A-3：送达翻转检测——同一篇 pill 由投递中翻为未公开时回调一次。
         // pillEntryId 防复用串篇：仅当本行上一次渲染的也是同一篇时才算翻转
         // （复用后首渲染旧文案属于上一篇，不算）；待公开倒计时态（pending）
