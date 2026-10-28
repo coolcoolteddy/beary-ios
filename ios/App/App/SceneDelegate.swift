@@ -872,6 +872,9 @@ final class BearyChromeViewController: UIViewController {
                     profile.reloadProfile()
                 }
                 if userChanged {
+                    // 账号隔离：先清时间线日缓存再重载（登录与退出两个方向都覆盖；
+                    // 时间线 VC 换账号不重建，只 reload 会先闪出旧账号的日缓存）。
+                    if let tl = self.timelineVC { tl.clearDayCacheForAccountChange() }
                     if let tl = self.timelineVC, tl.isViewLoaded { tl.reloadTimeline() }
                     if let nt = self.notifVC, nt.isViewLoaded { nt.refresh() }
                     if let feed = self.feedVC, feed.isViewLoaded { feed.refreshFeed() }
@@ -882,6 +885,9 @@ final class BearyChromeViewController: UIViewController {
                     self.showPage(.home)
                 }
                 if userChanged {
+                    // 账号隔离：先清时间线日缓存再重载（登录与退出两个方向都覆盖；
+                    // 时间线 VC 换账号不重建，只 reload 会先闪出旧账号的日缓存）。
+                    if let tl = self.timelineVC { tl.clearDayCacheForAccountChange() }
                     if let tl = self.timelineVC, tl.isViewLoaded { tl.reloadTimeline() }
                     if let nt = self.notifVC, nt.isViewLoaded { nt.refresh() }
                     if let feed = self.feedVC, feed.isViewLoaded { feed.refreshFeed() }
