@@ -7,9 +7,10 @@ import UIKit
 //   - onLoggedIn：验码成功（服务端 {ok: true}，会话 cookie 已由 URLSession.shared 存入
 //     共享存储）；容器随后调 SessionManager.refreshMe 刷新登录态。
 //   - onCancelled：用户点关闭钮；容器负责 dismiss。
+//   - onGuestMode：用户点“先逛逛（游客模式）”；容器负责 dismiss 并进入游客态。
 // 页面元素（对照网页版登录框 beary.html 的 lgm 系列）：邮箱输入 + 获取验证码 +
-// 6 位验证码输入 + 邀请码输入（选填）+ 隐私协议复选框 + 登录钮 + 关闭钮。
-// 文案与尺寸：标题“登录 beary”21/800、副标题“邮箱验证码登录，无需密码；新邮箱登录即注册”
+// 6 位验证码输入 + 邀请码输入（选填）+ 隐私协议复选框 + 登录钮 + 游客钮 + 关闭钮。
+// 文案与尺寸：wordmark 为 LogoHorizontal 官方资产（高 28，左对齐）、副标题“邮箱验证码登录，无需密码；新邮箱登录即注册”
 // 14 灰、字段 label 11/600、输入框高 48 圆角 12 faint 底、发码钮高 44（行高 48 内居中）圆角 12、
 // 登录钮高 44 圆角 12 墨底白字。颜色一律走 BearyColors，不新增字面量颜色；
 // 图标走 icon_close/icon_check 资产；不使用液态玻璃效果。
@@ -32,17 +33,22 @@ final class BearyLoginViewController: UIViewController {
     var onLoggedIn: (() -> Void)?
     /// 用户关闭。本页不自己 dismiss，容器负责关闭。
     var onCancelled: (() -> Void)?
+    /// 用户点“先逛逛（游客模式）”。本页不自己 dismiss，容器负责关闭并进入游客态。
+    var onGuestMode: (() -> Void)?
 
     private let scrollView = UIScrollView()
     private let contentView = UIView()
     private let stackView = UIStackView()
     private let closeButton = BearyHit44Button(type: .system)
-    private let titleLabel = UILabel()
+    private let logoRow = UIView()
+    private let logoImageView = UIImageView()
     private let subtitleLabel = UILabel()
     private let emailField = UITextField()
     private let codeField = UITextField()
     private let sendButton = UIButton(type: .system)
     private let loginButton = UIButton(type: .system)
+    private let guestButton = UIButton(type: .custom)
+    private let guestNoteLabel = UILabel()
     private let inviteField = UITextField()
     private let messageLabel = UILabel()
     private let agreeButton = BearyHit44Button(type: .system)
@@ -161,10 +167,13 @@ final class BearyLoginViewController: UIViewController {
         closeRow.translatesAutoresizingMaskIntoConstraints = false
         closeRow.addSubview(closeButton)
 
-        titleLabel.translatesAutoresizingMaskIntoConstraints = false
-        titleLabel.text = "登录 beary"
-        titleLabel.font = UIFont.systemFont(ofSize: 21, weight: .heavy)
-        titleLabel.textColor = BearyColors.ink
+        // wordmark 走 LogoHorizontal 官方资产（imageset 自带深色 logo-white 变体，
+        // 深色自动切换，不手动判断）；logoRow 承接原标题的 stack 槽位以保证左对齐。
+        logoRow.translatesAutoresizingMaskIntoConstraints = false
+        logoImageView.translatesAutoresizingMaskIntoConstraints = false
+        logoImageView.image = UIImage(named: "LogoHorizontal")
+        logoImageView.contentMode = .scaleAspectFit
+        logoRow.addSubview(logoImageView)
 
         subtitleLabel.translatesAutoresizingMaskIntoConstraints = false
         subtitleLabel.text = "邮箱验证码登录，无需密码；新邮箱登录即注册"
@@ -199,6 +208,24 @@ final class BearyLoginViewController: UIViewController {
             loginSpinner.leadingAnchor.constraint(equalTo: loginButton.leadingAnchor, constant: 16),
         ])
 
+        // 游客次钮：sendButton 未启用态的次级口径（faint 底 + gray 字），
+        // .custom 类型避免 system 钮的点按标题变暗；不受登录钮启用条件约束，任何时候可点。
+        guestButton.translatesAutoresizingMaskIntoConstraints = false
+        guestButton.backgroundColor = BearyColors.faint
+        guestButton.layer.cornerRadius = 12
+        guestButton.setTitle("先逛逛（游客模式）", for: .normal)
+        guestButton.setTitleColor(BearyColors.gray, for: .normal)
+        guestButton.setTitleColor(BearyColors.gray, for: .disabled)
+        guestButton.titleLabel?.font = UIFont.systemFont(ofSize: 16, weight: .semibold)
+        guestButton.addTarget(self, action: #selector(guestTapped), for: .touchUpInside)
+        guestButton.bearyAddPressFeedback()
+
+        guestNoteLabel.translatesAutoresizingMaskIntoConstraints = false
+        guestNoteLabel.text = "游客模式只能看别人的日记，登录后解锁完整版。"
+        guestNoteLabel.font = UIFont.systemFont(ofSize: 13)
+        guestNoteLabel.textColor = BearyColors.gray
+        guestNoteLabel.numberOfLines = 0
+
         let emailContainer = makeFieldContainer(field: emailField)
         let codeContainer = makeFieldContainer(field: codeField)
         let codeRow = UIView()
@@ -211,7 +238,7 @@ final class BearyLoginViewController: UIViewController {
         let codeLabel = makeFieldLabel(text: "验证码")
         let inviteLabel = makeFieldLabel(text: "邀请码（选填）")
         stackView.addArrangedSubview(closeRow)
-        stackView.addArrangedSubview(titleLabel)
+        stackView.addArrangedSubview(logoRow)
         stackView.addArrangedSubview(subtitleLabel)
         stackView.addArrangedSubview(emailLabel)
         stackView.addArrangedSubview(emailContainer)
@@ -222,8 +249,10 @@ final class BearyLoginViewController: UIViewController {
         stackView.addArrangedSubview(messageLabel)
         stackView.addArrangedSubview(agreeRow)
         stackView.addArrangedSubview(loginButton)
+        stackView.addArrangedSubview(guestButton)
+        stackView.addArrangedSubview(guestNoteLabel)
         stackView.setCustomSpacing(18, after: closeRow)
-        stackView.setCustomSpacing(5, after: titleLabel)
+        stackView.setCustomSpacing(5, after: logoRow)
         stackView.setCustomSpacing(20, after: subtitleLabel)
         stackView.setCustomSpacing(7, after: emailLabel)
         stackView.setCustomSpacing(14, after: emailContainer)
@@ -233,6 +262,8 @@ final class BearyLoginViewController: UIViewController {
         stackView.setCustomSpacing(8, after: inviteContainer)
         stackView.setCustomSpacing(8, after: messageLabel)
         stackView.setCustomSpacing(12, after: agreeRow)
+        stackView.setCustomSpacing(12, after: loginButton)
+        stackView.setCustomSpacing(8, after: guestButton)
 
         NSLayoutConstraint.activate([
             scrollView.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
@@ -256,8 +287,14 @@ final class BearyLoginViewController: UIViewController {
             closeButton.heightAnchor.constraint(equalToConstant: 32),
             closeButton.trailingAnchor.constraint(equalTo: closeRow.trailingAnchor),
             closeButton.centerYAnchor.constraint(equalTo: closeRow.centerYAnchor),
+            logoRow.heightAnchor.constraint(equalToConstant: 28),
+            logoImageView.leadingAnchor.constraint(equalTo: logoRow.leadingAnchor),
+            logoImageView.topAnchor.constraint(equalTo: logoRow.topAnchor),
+            logoImageView.bottomAnchor.constraint(equalTo: logoRow.bottomAnchor),
+            logoImageView.widthAnchor.constraint(equalTo: logoImageView.heightAnchor, multiplier: logoAspectRatio()),
             messageLabel.heightAnchor.constraint(greaterThanOrEqualToConstant: 18),
             loginButton.heightAnchor.constraint(equalToConstant: 44),
+            guestButton.heightAnchor.constraint(equalToConstant: 44),
             codeRow.heightAnchor.constraint(equalToConstant: 48),
             codeContainer.leadingAnchor.constraint(equalTo: codeRow.leadingAnchor),
             codeContainer.topAnchor.constraint(equalTo: codeRow.topAnchor),
@@ -279,6 +316,14 @@ final class BearyLoginViewController: UIViewController {
             agreeLabel.topAnchor.constraint(equalTo: agreeRow.topAnchor),
             agreeLabel.bottomAnchor.constraint(equalTo: agreeRow.bottomAnchor),
         ])
+    }
+
+    /// wordmark 宽高比：取 LogoHorizontal 资产实际尺寸；资产缺失时退 1，避免布局歧义。
+    private func logoAspectRatio() -> CGFloat {
+        if let image = logoImageView.image, image.size.height > 0 {
+            return image.size.width / image.size.height
+        }
+        return 1
     }
 
     private func makeFieldLabel(text: String) -> UILabel {
@@ -570,6 +615,11 @@ final class BearyLoginViewController: UIViewController {
         loginFeedbackWorkItem = nil
         isWaitingFeedback = false
         onCancelled?()
+    }
+
+    /// 游客次钮：只交回 onGuestMode，不 dismiss、不做任何登录逻辑（容器负责关闭与进游客态）。
+    @objc private func guestTapped() {
+        onGuestMode?()
     }
 
     @objc private func sendCodeTapped() {

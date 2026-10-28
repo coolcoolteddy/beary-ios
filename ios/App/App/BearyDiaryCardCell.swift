@@ -797,9 +797,34 @@ class BearyDiaryCardCell: UITableViewCell {
         return st
     }()
 
+    /// 游客详情（作者主页展开态）：登录提示条，lazy 只创建一次，默认隐藏，
+    /// 仅由个人主页模式 configure 在游客展开态时显示（见该方法末尾的游客分支；
+    /// Feed 的 configure(with:) 从不碰它）。整行 44pt 可点，点按走 onRequireLogin
+    ///（容器接登录提示 Sheet，本 cell 不建 Sheet）；isGuestMode 由协调员在
+    /// SessionManager 加，只读、不在本文件定义。
+    private lazy var guestLoginPromptButton: UIButton = {
+        let btn = BearyHit44Button(type: .system)
+        btn.translatesAutoresizingMaskIntoConstraints = false
+        btn.titleLabel?.font = UIFont.systemFont(ofSize: 15)
+        btn.setTitle("登录后可点赞、回应、收藏 ›", for: .normal)
+        btn.setTitleColor(BearyColors.gray, for: .normal)
+        btn.setTitleColor(BearyColors.gray, for: .highlighted)
+        btn.adjustsImageWhenHighlighted = false
+        btn.contentHorizontalAlignment = .left
+        btn.heightAnchor.constraint(equalToConstant: 44).isActive = true
+        btn.isHidden = true
+        btn.addTarget(self, action: #selector(guestLoginPromptTapped), for: .touchUpInside)
+        btn.bearyAddPressFeedback()
+        return btn
+    }()
+
+    @objc private func guestLoginPromptTapped() {
+        onRequireLogin?()
+    }
+
     private lazy var rightStack: UIStackView = {
         quoteView.translatesAutoresizingMaskIntoConstraints = false
-        let st = UIStackView(arrangedSubviews: [recipientRow, titleStack, entryTitleLabel, contentLabel, foldButton, quoteView, imagesScrollView, actionStack, emoteFlowView])
+        let st = UIStackView(arrangedSubviews: [recipientRow, titleStack, entryTitleLabel, contentLabel, foldButton, quoteView, imagesScrollView, actionStack, guestLoginPromptButton, emoteFlowView])
         st.translatesAutoresizingMaskIntoConstraints = false
         st.axis = .vertical
         st.alignment = .fill
@@ -1134,6 +1159,11 @@ class BearyDiaryCardCell: UITableViewCell {
         emoteRowHeightConstraint?.constant = 0
         likeButton.setTitle(nil, for: .normal)
         pubStack.isHidden = true
+        // 游客详情复位：提示条默认藏、操作行与回应行默认显，防游客展开态
+        // 串位到复用的下一张卡；下一次 configure 的游客分支会重新定显隐。
+        guestLoginPromptButton.isHidden = true
+        actionStack.isHidden = false
+        emoteFlowView.isHidden = false
         likeButtonWidthConstraint?.constant = 22
         likeButton.isEnabled = true
         bookmarkButton.isEnabled = true
@@ -1583,6 +1613,14 @@ class BearyDiaryCardCell: UITableViewCell {
         let publicOK = entry.isPublic == true
         shareButton.isHidden = publicOK == false
         renderEmotes()
+        // 游客详情（只读）：游客展开态藏操作行与回应行，改显登录提示条
+        //（提示条占操作行原位：操作行隐藏后 stack 将其压为 0，提示条紧接
+        // 图片条后、间距沿用图片条后的 10）；非展开、登录态一律恢复原样。
+        // Feed 的 configure(with:) 不走本分支，行为不动。
+        let guestExpanded = SessionManager.shared.isGuestMode && isExpanded
+        actionStack.isHidden = guestExpanded
+        emoteFlowView.isHidden = guestExpanded
+        guestLoginPromptButton.isHidden = !guestExpanded
         updateRightStackSpacing()
     }
 

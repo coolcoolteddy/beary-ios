@@ -870,6 +870,9 @@ final class BearyChromeViewController: UIViewController {
                 return
             }
             if user != nil {
+                // 游客登录后恢复完整 chrome：FAB 在游客态由 setBarsVisible 藏起，
+                // 登录本身不切页，故在此显式恢复一次（按当前页重算，.me 等无 FAB 页仍为藏）。
+                setBarsVisible(true, animated: BearyMotion.animated(true))
                 // S10：礼物门控已由 applyLoginState 从 refreshMe 结果复用，此处不再单独拉；F8 启动/登录未读照常拉。
                 self.fetchInitialUnread()
                 // 账号隔离 2 号：我页按建造时账号钉死，账号变化时重建
@@ -1121,7 +1124,7 @@ final class BearyChromeViewController: UIViewController {
         // 页重算 FAB，不再与底栏同进退。启动时 currentPage 尚为 nil，首个
         // setBarsVisible(true) 先藏 FAB，随后 showPage(.home) 末尾的恢复
         // 调用即按首页重算为可见，首帧不留残态。
-        let fabVisible = visible && (currentPage == .home || currentPage == .timeline)
+        let fabVisible = visible && (currentPage == .home || currentPage == .timeline) && !SessionManager.shared.isGuestMode
         let applyBars = {
             if let seg = self.bottomSegmented {
                 seg.alpha = visible ? 1 : 0
@@ -1252,6 +1255,15 @@ final class BearyChromeViewController: UIViewController {
     /// 登录态 → 顶栏：已登录显礼物钮、藏登录钮；未登录反之。铃铛钮常显（消息入口不依赖登录态，未登录点按由消息页引导登录）。
     /// M21：显隐走 alpha 动画（setTopButtonVisible，减动效直设终值）。
     private func applyLoginState(_ user: MeUser?) {
+        // 游客模式（只读）：顶栏只留登录（搜索是“看”的延伸，游客开放故保留；
+        // 铃铛/礼物隐藏，FAB 由 setBarsVisible 的游客分支隐藏）。
+        // 放 authUnknown 守卫之前：游客态不依赖 /me 结果，网络失败也不得把铃铛翻回来。
+        if SessionManager.shared.isGuestMode {
+            setTopButtonVisible(loginButton, visible: true)
+            setTopButtonVisible(giftButton, visible: false)
+            setTopButtonVisible(bellButton, visible: false)
+            return
+        }
         // G26：登录态未知（网络失败）时不按游客渲染，保持旧顶栏。
         // 401 与显式退出都会先清 authUnknown，故此守卫不影响真实登出/过期路径。
         if user == nil && SessionManager.shared.authUnknown { return }
@@ -1381,7 +1393,7 @@ final class BearyChromeViewController: UIViewController {
         // 收尾补线（总协调）：Feed 卡片内点赞/收藏未登录时走登录页，与详情/编辑器同口径；
         // Feed 是底层常驻页、无需先 dismiss，直接 present 登录页。
         f.onRequireLogin = { [weak self] in
-            self?.presentLogin()
+            self?.presentLoginGate()
         }
         // Q5 空态 CTA 接线：Feed 空态“写一篇”与 FAB 同去向（未登录时 presentComposer 内弹原生登录页）。
         f.onComposeRequested = { [weak self] in
@@ -1439,6 +1451,17 @@ final class BearyChromeViewController: UIViewController {
     /// 原生页切换：首页与新页均为常驻子 VC（hide/show 保留滚动位置）。
     /// 重拍当前 tab：首页先回顶再刷新（与网页 topThen 同口径），消息页回顶再刷新，时间线重拉。
     private func showPage(_ page: ContainerPage) {
+        // 游客模式（只读）：时间线/我页/消息页不对游客开放，点按一律走登录提示 Sheet，
+        // 不进页、不弹原登录页；首页/搜索/他人主页（.user）游客可看，直放行。
+        if SessionManager.shared.isGuestMode {
+            switch page {
+            case .timeline, .me, .notif:
+                presentGuestLoginSheet()
+                return
+            default:
+                break
+            }
+        }
         // A11（收尾）：未登录“我”页不亮 gated 占位页，toast + 1200ms 后弹登录（网页同口径）。
         if page == .me && SessionManager.shared.isLoggedIn == false {
             showToast(message: "请先登录")
@@ -1661,7 +1684,7 @@ final class BearyChromeViewController: UIViewController {
         vc.onEntrySelected = { [weak self] entryId in
             self?.gotoEntry(entryId: entryId)
         }
-        vc.onRequireLogin = { [weak self] in self?.presentLogin() }
+        vc.onRequireLogin = { [weak self] in self?.presentLoginGate() }
         addPageVC(vc, page: .notif)
         notifVC = vc
         vc.applyHeaderTopInset(visible: headerVisible)
@@ -1719,7 +1742,7 @@ final class BearyChromeViewController: UIViewController {
         vc.onInteractionChanged = { [weak self] changedId, likeCount, liked, bookmarked, emotes in
             self?.feedVC?.applyInteraction(entryId: changedId, likeCount: likeCount, likedByMe: liked, bookmarkedByMe: bookmarked, emotes: emotes)
         }
-        vc.onRequireLogin = { [weak self] in self?.presentLogin() }
+        vc.onRequireLogin = { [weak self] in self?.presentLoginGate() }
         addPageVC(vc, page: .timeline)
         timelineVC = vc
         vc.applyHeaderTopInset(visible: headerVisible)
@@ -1741,7 +1764,7 @@ final class BearyChromeViewController: UIViewController {
         vc.onOpenEntry = { [weak self] entry in
             self?.gotoEntry(entry: entry)
         }
-        vc.onRequireLogin = { [weak self] in self?.presentLogin() }
+        vc.onRequireLogin = { [weak self] in self?.presentLoginGate() }
         // 收尾接线：返回/退出/编辑资料/齿轮菜单/行内互动（P3/P11，见 wireProfileVC）。
         wireProfileVC(vc, modal: false)
         addPageVC(vc, page: .me)
@@ -1796,7 +1819,7 @@ final class BearyChromeViewController: UIViewController {
     private func presentInvite() {
         let vc = BearyInviteViewController()
         vc.onClose = { [weak vc] in vc?.dismiss(animated: BearyMotion.animated(true)) }
-        vc.onRequireLogin = { [weak self] in self?.presentLogin() }
+        vc.onRequireLogin = { [weak self] in self?.presentLoginGate() }
         if view.bounds.width >= 821 {
             let centered = BearyCenteredTransitioningDelegate()
             // F9：邀请弹窗宽屏版单独给 dim 加点击关闭（编辑器保持不动，见 BearyCenteredModal）。
@@ -1840,7 +1863,7 @@ final class BearyChromeViewController: UIViewController {
         vc.onOpenEntry = { [weak self] entry in
             self?.gotoEntry(entry: entry)
         }
-        vc.onRequireLogin = { [weak self] in self?.presentLogin() }
+        vc.onRequireLogin = { [weak self] in self?.presentLoginGate() }
         // P1-10：容器 .user 页同样接线（.me 页与 modal 页已有），否则空态 CTA
         // 与本人按钮（写一篇/编辑资料/齿轮等）点按无反应。
         wireProfileVC(vc, modal: false)
@@ -1918,7 +1941,168 @@ final class BearyChromeViewController: UIViewController {
                 SessionManager.shared.refreshMe()
             }
         }
+        // 游客模式入口：登录页“先逛逛”回调；容器负责关登录页后进游客态。
+        vc.onGuestMode = { [weak self, weak vc] in
+            vc?.dismiss(animated: BearyMotion.animated(true)) {
+                self?.enterGuestMode()
+            }
+        }
         topmostViewController().present(vc, animated: BearyMotion.animated(true))
+    }
+
+    // MARK: - 游客模式（只读）门控
+
+    /// 受限动作统一入口：游客态走登录提示 Sheet，非游客走原登录页。
+    /// 原有 onRequireLogin 调用点一律改走本方法（非游客行为与原来一字不动）；
+    /// 顶栏登录钮（didTapLogin）与登录页本身仍直走 presentLogin。
+    private func presentLoginGate() {
+        if SessionManager.shared.isGuestMode {
+            presentGuestLoginSheet()
+        } else {
+            presentLogin()
+        }
+    }
+
+    /// 进入游客模式：置游客旗（SessionManager 内存态），刷游客 chrome，进首页广场。
+    /// 调用点：登录页“先逛逛”回调（登录页已关闭后执行）。
+    private func enterGuestMode() {
+        SessionManager.shared.isGuestMode = true
+        applyLoginState(nil)
+        setBarsVisible(true, animated: BearyMotion.animated(true))
+        showPage(.home)
+    }
+
+    /// 游客登录提示 Sheet 的覆盖层（容器内子视图，非 modal VC，避免与登录页 present 层级纠缠）。
+    private var guestSheetScrim: UIView?
+    private var guestSheetView: UIView?
+
+    /// 游客登录提示 Sheet：统一 BearySheetChrome（顶圆角 20、抓手 40×4、遮罩 0.45 淡入 0.25s）；
+    /// 标题“登录后解锁完整版”，文案“写日记、公开、点赞、回应、收藏都需要登录”，钮 登录/暂不；
+    /// 登录 → 关 Sheet 后弹登录页，暂不/点遮罩 → 只关 Sheet。重复调用不叠加。
+    /// 动效只走 transform/opacity；减动效直显终值。
+    private func presentGuestLoginSheet() {
+        guard guestSheetView == nil else { return }
+        let scrim = UIView()
+        scrim.backgroundColor = BearySheetChrome.scrimColor
+        scrim.alpha = 0
+        scrim.translatesAutoresizingMaskIntoConstraints = false
+        scrim.addGestureRecognizer(UITapGestureRecognizer(target: self, action: #selector(guestSheetDismissTapped)))
+        let sheet = UIView()
+        sheet.backgroundColor = BearyColors.bg
+        sheet.layer.cornerRadius = BearySheetChrome.topCornerRadius
+        sheet.layer.maskedCorners = [.layerMinXMinYCorner, .layerMaxXMinYCorner]
+        sheet.clipsToBounds = true
+        sheet.translatesAutoresizingMaskIntoConstraints = false
+        let grabber = UIView()
+        grabber.backgroundColor = BearyColors.line
+        grabber.layer.cornerRadius = BearySheetChrome.grabberCornerRadius
+        grabber.translatesAutoresizingMaskIntoConstraints = false
+        let titleLabel = UILabel()
+        titleLabel.text = "登录后解锁完整版"
+        titleLabel.font = UIFont.systemFont(ofSize: 17, weight: .bold)
+        titleLabel.textColor = BearyColors.ink
+        titleLabel.textAlignment = .center
+        titleLabel.translatesAutoresizingMaskIntoConstraints = false
+        let bodyLabel = UILabel()
+        bodyLabel.text = "写日记、公开、点赞、回应、收藏都需要登录。"
+        bodyLabel.font = UIFont.systemFont(ofSize: 15)
+        bodyLabel.textColor = BearyColors.gray
+        bodyLabel.textAlignment = .center
+        bodyLabel.numberOfLines = 0
+        bodyLabel.translatesAutoresizingMaskIntoConstraints = false
+        let sheetLoginButton = UIButton(type: .system)
+        sheetLoginButton.setTitle("登录", for: .normal)
+        sheetLoginButton.titleLabel?.font = UIFont.systemFont(ofSize: 17, weight: .semibold)
+        sheetLoginButton.setTitleColor(BearyColors.bg, for: .normal)
+        sheetLoginButton.backgroundColor = BearyColors.ink
+        sheetLoginButton.layer.cornerRadius = 22
+        sheetLoginButton.translatesAutoresizingMaskIntoConstraints = false
+        sheetLoginButton.addTarget(self, action: #selector(guestSheetLoginTapped), for: .touchUpInside)
+        sheetLoginButton.bearyAddPressFeedback()
+        let sheetLaterButton = UIButton(type: .system)
+        sheetLaterButton.setTitle("暂不", for: .normal)
+        sheetLaterButton.titleLabel?.font = UIFont.systemFont(ofSize: 17, weight: .semibold)
+        sheetLaterButton.setTitleColor(BearyColors.ink, for: .normal)
+        sheetLaterButton.backgroundColor = .clear
+        sheetLaterButton.layer.cornerRadius = 22
+        sheetLaterButton.layer.borderWidth = 1
+        sheetLaterButton.layer.borderColor = BearyColors.line.cgColor
+        sheetLaterButton.translatesAutoresizingMaskIntoConstraints = false
+        sheetLaterButton.addTarget(self, action: #selector(guestSheetDismissTapped), for: .touchUpInside)
+        sheetLaterButton.bearyAddPressFeedback()
+        let stack = UIStackView(arrangedSubviews: [grabber, titleLabel, bodyLabel, sheetLoginButton, sheetLaterButton])
+        stack.axis = .vertical
+        stack.alignment = .fill
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        stack.setCustomSpacing(16, after: grabber)
+        stack.setCustomSpacing(10, after: titleLabel)
+        stack.setCustomSpacing(18, after: bodyLabel)
+        stack.setCustomSpacing(12, after: sheetLoginButton)
+        sheet.addSubview(stack)
+        view.addSubview(scrim)
+        view.addSubview(sheet)
+        NSLayoutConstraint.activate([
+            scrim.topAnchor.constraint(equalTo: view.topAnchor),
+            scrim.bottomAnchor.constraint(equalTo: view.bottomAnchor),
+            scrim.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            scrim.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            sheet.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            sheet.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            sheet.bottomAnchor.constraint(equalTo: view.bottomAnchor),
+            grabber.widthAnchor.constraint(equalToConstant: BearySheetChrome.grabberWidth),
+            grabber.heightAnchor.constraint(equalToConstant: BearySheetChrome.grabberHeight),
+            grabber.centerXAnchor.constraint(equalTo: stack.centerXAnchor),
+            sheetLoginButton.heightAnchor.constraint(equalToConstant: 44),
+            sheetLaterButton.heightAnchor.constraint(equalToConstant: 44),
+            stack.topAnchor.constraint(equalTo: sheet.topAnchor, constant: BearySheetChrome.grabberTop),
+            stack.leadingAnchor.constraint(equalTo: sheet.leadingAnchor, constant: 20),
+            stack.trailingAnchor.constraint(equalTo: sheet.trailingAnchor, constant: -20),
+            stack.bottomAnchor.constraint(equalTo: sheet.safeAreaLayoutGuide.bottomAnchor, constant: -16),
+        ])
+        guestSheetScrim = scrim
+        guestSheetView = sheet
+        view.layoutIfNeeded()
+        if UIAccessibility.isReduceMotionEnabled {
+            scrim.alpha = 1
+            return
+        }
+        let sheetHeight = sheet.bounds.height
+        sheet.transform = CGAffineTransform(translationX: 0, y: sheetHeight)
+        UIView.animate(withDuration: 0.25, delay: 0, options: [.beginFromCurrentState], animations: {
+            scrim.alpha = 1
+            sheet.transform = .identity
+        })
+    }
+
+    @objc private func guestSheetDismissTapped() {
+        dismissGuestLoginSheet(completion: nil)
+    }
+
+    @objc private func guestSheetLoginTapped() {
+        dismissGuestLoginSheet { [weak self] in self?.presentLogin() }
+    }
+
+    private func dismissGuestLoginSheet(completion: (() -> Void)?) {
+        guard let scrim = guestSheetScrim, let sheet = guestSheetView else {
+            completion?()
+            return
+        }
+        guestSheetScrim = nil
+        guestSheetView = nil
+        let finish = {
+            scrim.removeFromSuperview()
+            sheet.removeFromSuperview()
+            completion?()
+        }
+        if UIAccessibility.isReduceMotionEnabled {
+            finish()
+            return
+        }
+        let sheetHeight = sheet.bounds.height
+        UIView.animate(withDuration: 0.25, delay: 0, options: [.beginFromCurrentState], animations: {
+            scrim.alpha = 0
+            sheet.transform = CGAffineTransform(translationX: 0, y: sheetHeight)
+        }) { _ in finish() }
     }
 
     /// 容器级轻提示（A11 未登录“我”页、时间线删除失败等）：委托 B 批统一
@@ -1993,6 +2177,9 @@ final class BearyChromeViewController: UIViewController {
                                 clearLogoutState()
                             }
                         }
+                        // 退出登录后回首启登录页（可再先逛逛）：下一 runloop 弹，
+                        // 让 onUserChanged 的回首页先落位。
+                        DispatchQueue.main.async { [weak self] in self?.presentLogin() }
                     case .failure:
                         self.showToast(message: "退出失败，请重试")
                     }
@@ -2032,7 +2219,7 @@ final class BearyChromeViewController: UIViewController {
             }
         }
         vc.onCancel = { [weak vc] in vc?.dismiss(animated: BearyMotion.animated(true)) }
-        vc.onRequireLogin = { [weak self] in self?.presentLogin() }
+        vc.onRequireLogin = { [weak self] in self?.presentLoginGate() }
         // G1：边缘返回（Li 批准的原生返回口径）：进出动画为 EdgeDismiss 自带的
         // slide 右滑入；attach 须在 present 之前，调用方强持有防手势中途失效。
         let editProfileEdgeDismiss = BearyEdgeDismissController()
@@ -2066,7 +2253,13 @@ final class BearyChromeViewController: UIViewController {
         vc.transitioningDelegate = settingsEdgeDismiss
         self.settingsEdgeDismiss = settingsEdgeDismiss
         vc.onClose = { [weak vc] in vc?.dismiss(animated: BearyMotion.animated(true)) }
-        vc.onRequireLogin = { [weak self] in self?.presentLogin() }
+        vc.onRequireLogin = { [weak self] in self?.presentLoginGate() }
+        // 退出登录后回首启登录页（可再先逛逛）：设置页退出成功后先关本页再弹登录页。
+        vc.onLoggedOut = { [weak self, weak vc] in
+            vc?.dismiss(animated: BearyMotion.animated(true)) {
+                self?.presentLogin()
+            }
+        }
         // C2：设置页通用组内「使用指南」行 → 教程重播页（原齿轮菜单项迁移）。
         vc.onShowTutorial = { [weak self] in self?.presentOnboarding(mode: .replay) }
         vc.onAccountDeleted = { [weak self, weak vc] in
@@ -2133,6 +2326,11 @@ final class BearyChromeViewController: UIViewController {
 
     /// 回收站：全屏 modal，关闭钮由 TrashVC 自带（onClose 设置后才显示）。
     private func presentTrash() {
+        // 游客模式（只读）：回收站不对游客开放，深链到此一律走登录提示。
+        if SessionManager.shared.isGuestMode {
+            presentGuestLoginSheet()
+            return
+        }
         let vc = BearyTrashViewController()
         vc.modalPresentationStyle = .fullScreen
         // G1：边缘返回（Li 批准的原生返回口径）：进出动画由 fadeRise 淡入上移
@@ -2142,7 +2340,7 @@ final class BearyChromeViewController: UIViewController {
         vc.transitioningDelegate = trashEdgeDismiss
         self.trashEdgeDismiss = trashEdgeDismiss
         vc.onClose = { [weak self] in self?.dismiss(animated: BearyMotion.animated(true)) }
-        vc.onRequireLogin = { [weak self] in self?.presentLogin() }
+        vc.onRequireLogin = { [weak self] in self?.presentLoginGate() }
         // TR-1（收尾）：恢复/彻底删除后刷新时间线、首页与我页（角标随时间线重拉更新）。
         vc.onRestored = { [weak self] _ in
             self?.timelineVC?.refreshAfterDetailChange()
@@ -2201,7 +2399,7 @@ final class BearyChromeViewController: UIViewController {
             }
         }
         vc.onRequireLogin = { [weak self] in
-            self?.presentLogin()
+            self?.presentLoginGate()
         }
         // 收尾接线：返回/退出/编辑资料/齿轮菜单/行内互动（P3/P11，见 wireProfileVC）。
         wireProfileVC(vc, modal: true)
@@ -2328,7 +2526,7 @@ final class BearyChromeViewController: UIViewController {
                 }
                 return
             }
-            presentLogin()
+            presentLoginGate()
             return
         }
         // 临时诊断（86 包，定根因后删除）：登录守卫已过。
@@ -2352,7 +2550,7 @@ final class BearyChromeViewController: UIViewController {
         }
         c.onCancelled = { [weak c] in c?.dismiss(animated: BearyMotion.animated(true)) }
         c.onRequireLogin = { [weak self] in
-            self?.presentLogin()
+            self?.presentLoginGate()
         }
         configureComposerPresentation(c, forEdit: false)
         // 临时诊断（86 包，定根因后删除）：present 调用之前。
@@ -2376,7 +2574,7 @@ final class BearyChromeViewController: UIViewController {
         } else if SessionManager.shared.authUnknown {
             // G26：网络失败不按游客处理，onNetworkUnstable 已 toast，此处不再弹登录页。
         } else if !isComposerPresented() && presentedViewController == nil {
-            presentLogin()
+            presentLoginGate()
         }
     }
 
@@ -2411,7 +2609,7 @@ final class BearyChromeViewController: UIViewController {
     private func presentComposerForEdit(entry: Entry) {
         if isComposerPresented() { return }
         guard SessionManager.shared.isLoggedIn else {
-            presentLogin()
+            presentLoginGate()
             return
         }
         let c = BearyComposerViewController(entry: entry)
@@ -2434,7 +2632,7 @@ final class BearyChromeViewController: UIViewController {
             }
         }
         c.onRequireLogin = { [weak self] in
-            self?.presentLogin()
+            self?.presentLoginGate()
         }
         configureComposerPresentation(c, forEdit: true)
         topmostViewController().present(c, animated: BearyMotion.animated(true))

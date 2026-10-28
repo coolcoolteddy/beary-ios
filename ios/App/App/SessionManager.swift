@@ -15,6 +15,11 @@ final class SessionManager {
 
     private(set) var currentUser: MeUser?
     var isLoggedIn: Bool { currentUser != nil }
+    /// 游客模式（只读）：用户在登录页点“先逛逛”进入的无账号浏览态，只能看公开日记。
+    /// 内存态，不持久化（重开 App 回登录页）；登录成功与显式退出时清零。
+    /// 游客态与未登录态的区别：未登录可能是会话过期等被动状态，游客是用户主动选的浏览态；
+    /// 容器据此决定顶栏（只留登录）、FAB（隐藏）、受限动作（走登录提示 Sheet 而非直弹登录页）。
+    var isGuestMode = false
     /// 64 包反馈修（第 17 项）：本地有效会话 cookie（teddy_session 且未过期）——
     /// 首帧缓存态依据，同步读存储、不发网络；后台 refreshMe 验出 401 才切游客态。
     /// 注意：只判断 cookie 存在与过期，不证明服务端会话仍有效，401 回来即纠正。
@@ -99,6 +104,10 @@ final class SessionManager {
                 } else {
                     self.currentUser = user
                 }
+                // 游客模式结束：登录成功即不再是游客（容器随后恢复完整 chrome）。
+                if user != nil {
+                    self.isGuestMode = false
+                }
                 self.notifyUserChanged(user)
                 completion?(.success(user))
             case .failure(let e):
@@ -148,6 +157,7 @@ final class SessionManager {
         api.bumpAuthEpoch()
         currentUser = nil
         authUnknown = false
+        isGuestMode = false
         notifyUserChanged(nil)
     }
 
