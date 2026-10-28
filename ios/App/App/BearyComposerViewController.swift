@@ -1630,8 +1630,8 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, U
     }
 
     /// W2：带倒计时版“投递中”pill（与详情 countdownText 同口径：天 > 小时 > 分钟，分钟向上取整、至少 1 分钟）；
-    /// 无 publishAt 时回退 plain“投递中”。引用面板行仍用它；编辑器引用卡本身复用共享卡后
-    /// 走共享卡 plain pill，不再用本函数（见 refreshQuoteSection 说明）。
+    /// 无 publishAt 时回退 plain“投递中”。引用面板行用它；共享卡内有逐字同口径的副本
+    /// （BearyQuoteCardView.countdownText），编辑器引用卡经 publishAt 入口走共享卡副本。
     private func quoteCountdownText(publishAt: Int?) -> String {
         guard let publishAt = publishAt else { return "投递中" }
         let remainMs = max(0, publishAt - Int(Date().timeIntervalSince1970 * 1000))
@@ -1648,8 +1648,9 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, U
     /// 编辑 → 锁定的共享卡（面板入口锁定，× 仍可删）或都不显示。
     /// 共享卡口径变化（相对原自绘卡）：正文 13.5 且最多 3 行（原不限行 16.5）、
     /// 图条 42（原 118）、日期走共享卡 feedTimeString（原 BearyText.timeString）、
-    /// 投递中 pill 为共享卡 plain 文案——原带倒计时“还剩 X 天/小时/分钟”随复用取消，
-    /// 因共享卡无 publishAt 入口；要恢复倒计时须 W3 给共享卡加 publishAt 入口（本批文件外，不动）。
+    /// 投递中 pill 经共享卡 publishAt 入口恢复倒计时（fixall-quote-countdown：
+    /// 有 publishAt 时“投递中 · 还剩 X 天/小时/分钟”，与 quoteCountdownText 同口径；
+    /// 草稿恢复/编辑锁定引用无 publishAt 时为 nil，回退 plain“投递中”，不推算）。
     private func refreshQuoteSection() {
         let quote = isEditMode ? lockedQuote : selectedQuote
         // C6：编辑模式引用可改可删（有引用露共享卡 + ×，无引用则本区塌掉）；
@@ -1672,7 +1673,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, U
         quoteCardWrap.isHidden = false
         // allowThumbs: true 沿用旧编辑器行为——已选引用在本地草稿预览中恒出图；
         // 列表侧的 isPublic/本人门控不适用于编辑器预览（预览不出公开发布）。
-        quoteCard.configure(authorName: shown.authorName ?? "", authorAvatar: shown.authorAvatar, content: shown.content, images: shown.images, dims: shown.imgDims, createdAt: shown.createdAt, showDeliveringPill: shown.isPublic != true, allowThumbs: true)
+        quoteCard.configure(authorName: shown.authorName ?? "", authorAvatar: shown.authorAvatar, content: shown.content, images: shown.images, dims: shown.imgDims, createdAt: shown.createdAt, showDeliveringPill: shown.isPublic != true, allowThumbs: true, publishAt: shown.publishAt)
         updatePreferredContentSize()
     }
 
