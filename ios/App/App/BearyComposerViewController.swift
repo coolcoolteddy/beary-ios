@@ -818,10 +818,23 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, U
         contentStack.setCustomSpacing(8, after: titleField)
     }
 
-    /// 标题归一化：trim 后空串按 nil（新建发布/草稿均按“无标题”处理，不发空串；
-    /// 仅编辑 PUT 调用方在传参时把 nil 转为空串，见 performUpdate 的 R1 注释）。
+    /// 标题归一化：先去掉拼音组合串（marked range，与正文 committedContent() 同款
+    /// offset 切除，只作快照读取、不改 titleField、不调 unmarkText，组词中的输入法
+    /// 状态不受影响），再 trim；trim 后空串按 nil（新建发布/草稿均按“无标题”处理，
+    /// 不发空串；仅编辑 PUT 调用方在传参时把 nil 转为空串，见 performUpdate 的 R1 注释）。
     private func trimmedTitle() -> String? {
-        let trimmed = (titleField.text ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        let full = titleField.text ?? ""
+        var committed = full
+        if let marked = titleField.markedTextRange {
+            let startOffset = titleField.offset(from: titleField.beginningOfDocument, to: marked.start)
+            let endOffset = titleField.offset(from: titleField.beginningOfDocument, to: marked.end)
+            if startOffset >= 0, endOffset <= full.count, startOffset <= endOffset {
+                let start = committed.index(committed.startIndex, offsetBy: startOffset)
+                let end = committed.index(committed.startIndex, offsetBy: endOffset)
+                committed.removeSubrange(start..<end)
+            }
+        }
+        let trimmed = committed.trimmingCharacters(in: .whitespacesAndNewlines)
         return trimmed.isEmpty ? nil : trimmed
     }
 

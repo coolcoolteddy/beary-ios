@@ -1285,22 +1285,6 @@ final class BearyChromeViewController: UIViewController {
         })
     }
 
-
-    /// 三档主题拨档（审计 5，网页 cycleTheme 口径 beary.html:1491-1493）：
-    /// 点按即按 system → light → dark → system 循环（网页 auto → light → dark → auto），
-    /// 持久化 beary_theme_mode 并立即应用到 window，返回新档位供开关视觉跟进。
-    /// 原外观 Popover 的三档逻辑（存档键与 applyThemeMode）原样保留，
-    /// 只把 actionSheet + ✓ 标记换成拨动开关（菜单行内与外观卡共用本方法）。
-    private func cycleThemeMode() -> String {
-        let current = UserDefaults.standard.string(forKey: "beary_theme_mode") ?? "system"
-        let order = ["system", "light", "dark"]
-        let index = order.firstIndex(of: current) ?? 0
-        let next = order[(index + 1) % order.count]
-        UserDefaults.standard.set(next, forKey: "beary_theme_mode")
-        applyThemeMode(next)
-        return next
-    }
-
     @objc private func didTapHome() { showPage(.home) }
     @objc private func didTapTimeline() { navigator.goTab("timeline") }
     @objc private func didTapMe() { navigator.goTab("me") }
@@ -2125,11 +2109,6 @@ final class BearyChromeViewController: UIViewController {
         guard !UserDefaults.standard.bool(forKey: BearyOnboardingViewController.tutorialSeenKey) else { return }
         guard presentedViewController == nil else { return }
         presentOnboarding(mode: .firstLaunch)
-    }
-
-    /// 立即应用主题档位到 window（只应用不写存档；存档由选择框写，建窗时由 SceneDelegate 读存档应用）。
-    private func applyThemeMode(_ mode: String) {
-        view.window?.overrideUserInterfaceStyle = bearyUserInterfaceStyle(forThemeMode: mode)
     }
 
     /// 回收站：全屏 modal，关闭钮由 TrashVC 自带（onClose 设置后才显示）。
