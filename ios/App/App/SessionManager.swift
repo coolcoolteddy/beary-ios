@@ -7,6 +7,7 @@ import Foundation
 // 401 只清原生用户态，不动 cookie（避免误踢尚有效的登录态）。
 // G26：refreshMe 网络失败时不按游客处理——置 authUnknown 并回调
 // onNetworkUnstable（容器接“网络不稳定，请稍后再试”提示），currentUser 保持旧值。
+// 5-29：5xx 与解析失败同此口径（同样未证实游客），4xx（除 401 外）与业务码沿旧口径。
 // 回调一律回主线程发，界面层不用再 dispatch。
 
 final class SessionManager {
@@ -29,12 +30,14 @@ final class SessionManager {
     /// 用户变化时调用（登录/退出/刷新后）。
     var onUserChanged: ((MeUser?) -> Void)?
 
-    /// G26：最近一次 refreshMe 是否因网络失败而“登录态未知”。
+    /// G26：最近一次 refreshMe 是否因“登录态未知”而未证实游客。
     /// 401 不走这里（401 由 api.onUnauthorized 清用户态、走游客路径）；
-    /// 只有网络失败才置 true，成功或 401 后清零。顶栏/操作处见到
-    /// authUnknown 为真时，须给“网络不稳定，请稍后再试”式提示，
+    /// 网络失败、5xx、解析失败置 true，成功或 401 后清零。顶栏/操作处
+    /// 见到 authUnknown 为真时，须给“网络不稳定，请稍后再试”式提示，
     /// 不得直接按游客处理（接线归容器 lane，本文件只提供状态与回调；
     /// 失败时 currentUser 保持旧值不动，同样不得按游客渲染）。
+    /// 5-29：5xx 与解析失败与网络失败同口径（同置未知、同调
+    /// onNetworkUnstable），仍不按游客处理、不弹登录页。
     private(set) var authUnknown: Bool = false
     /// G26：网络失败时的回调（容器可接 toast；默认不弹登录页）。
     var onNetworkUnstable: (() -> Void)?
@@ -111,9 +114,23 @@ final class SessionManager {
                     self.authUnknown = false
                 case .cancelled:
                     break
-                case .http, .server, .decoding, .notFound:
-                    // 服务端/解析类失败同样未证实游客：保持旧用户态不动，
-                    // 不置 authUnknown（该标记只属于网络失败），不弹登录页。
+                case .http(let status, _):
+                    // 5-29：5xx 同网络失败口径——置未知并给轻提示（容器
+                    // onNetworkUnstable 的 toast，不弹登录页）；4xx（/me
+                    // 除 401 外的异常码）沿旧口径：不置未知、不提示，
+                    // 只保持旧用户态不动。
+                    if status >= 500 {
+                        self.authUnknown = true
+                        self.notifyNetworkUnstable()
+                    }
+                case .decoding:
+                    // 5-29：解析失败同样未证实游客（体已到但解不出，不能
+                    // 反推会话过期），与网络失败同口径给轻提示。
+                    self.authUnknown = true
+                    self.notifyNetworkUnstable()
+                case .server, .notFound:
+                    // 业务码 / 404 同样未证实游客：保持旧用户态不动，
+                    // 不置未知、不弹登录页（沿旧口径）。
                     break
                 }
                 completion?(.failure(e))
