@@ -751,6 +751,27 @@ final class BearyTimelineCell: UITableViewCell {
         l.isHidden = true
         return l
     }()
+    /// 限时倒计时行图标（14pt 模板灰，仅存活期随倒计时行一起出现；已过期按普通私密，不画图标）。
+    private let ephemeralIconView: UIImageView = {
+        let v = UIImageView(image: BearyIconImages.image(named: "icon_limited", pointSize: 14))
+        v.translatesAutoresizingMaskIntoConstraints = false
+        v.tintColor = BearyColors.gray
+        v.contentMode = .scaleAspectFit
+        NSLayoutConstraint.activate([
+            v.widthAnchor.constraint(equalToConstant: 14),
+            v.heightAnchor.constraint(equalToConstant: 14),
+        ])
+        return v
+    }()
+    private lazy var ephemeralRow: UIStackView = {
+        let st = UIStackView(arrangedSubviews: [ephemeralIconView, ephemeralLabel])
+        st.translatesAutoresizingMaskIntoConstraints = false
+        st.axis = .horizontal
+        st.spacing = 3
+        st.alignment = .center
+        st.isHidden = true
+        return st
+    }()
     /// 限时卡虚线边框（1.5pt dashed、line 色；路径圆角跟卡片自身 14，避免虚线溢出卡角）。
     private let ephemeralBorderLayer: CAShapeLayer = {
         let layer = CAShapeLayer()
@@ -1382,10 +1403,10 @@ final class BearyTimelineCell: UITableViewCell {
         // 到期或非限时按普通卡（pill/dot 已按有效态走私密分支）。
         if BearyEphemeral.isLive(entry), let until = entry.ephemeralUntil {
             ephemeralLabel.text = BearyEphemeral.remainingText(until: until)
-            ephemeralLabel.isHidden = false
-            metaStack.addArrangedSubview(ephemeralLabel)
+            ephemeralRow.isHidden = false
+            metaStack.addArrangedSubview(ephemeralRow)
         } else {
-            ephemeralLabel.isHidden = true
+            ephemeralRow.isHidden = true
         }
         let ephemeralLive = BearyEphemeral.isLive(entry)
         cardView.layer.borderWidth = ephemeralLive ? 0 : 1

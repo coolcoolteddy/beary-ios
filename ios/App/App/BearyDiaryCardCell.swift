@@ -791,7 +791,7 @@ class BearyDiaryCardCell: UITableViewCell {
 
     private lazy var rightStack: UIStackView = {
         quoteView.translatesAutoresizingMaskIntoConstraints = false
-        let st = UIStackView(arrangedSubviews: [recipientRow, titleStack, ephemeralLabel, entryTitleLabel, contentLabel, foldButton, quoteView, imagesScrollView, actionStack, guestLoginPromptButton, emoteFlowView])
+        let st = UIStackView(arrangedSubviews: [recipientRow, titleStack, ephemeralRow, entryTitleLabel, contentLabel, foldButton, quoteView, imagesScrollView, actionStack, guestLoginPromptButton, emoteFlowView])
         st.translatesAutoresizingMaskIntoConstraints = false
         st.axis = .vertical
         st.alignment = .fill
@@ -817,6 +817,29 @@ class BearyDiaryCardCell: UITableViewCell {
         l.textColor = BearyColors.gray
         l.isHidden = true
         return l
+    }()
+
+    /// 限时倒计时行图标（14pt 模板灰，仅存活期随倒计时行一起出现；已过期按普通私密，不画图标）。
+    private let ephemeralIconView: UIImageView = {
+        let v = UIImageView(image: BearyIconImages.image(named: "icon_limited", pointSize: 14))
+        v.translatesAutoresizingMaskIntoConstraints = false
+        v.tintColor = BearyColors.gray
+        v.contentMode = .scaleAspectFit
+        NSLayoutConstraint.activate([
+            v.widthAnchor.constraint(equalToConstant: 14),
+            v.heightAnchor.constraint(equalToConstant: 14),
+        ])
+        return v
+    }()
+
+    private lazy var ephemeralRow: UIStackView = {
+        let st = UIStackView(arrangedSubviews: [ephemeralIconView, ephemeralLabel])
+        st.translatesAutoresizingMaskIntoConstraints = false
+        st.axis = .horizontal
+        st.spacing = 4
+        st.alignment = .center
+        st.isHidden = true
+        return st
     }()
 
     /// 限时卡虚线边框（CAShapeLayer，1.5pt dashed、line 色、圆角 16；
@@ -1088,7 +1111,7 @@ class BearyDiaryCardCell: UITableViewCell {
         contentView.alpha = 1
         contentView.transform = .identity
         // 限时态复位：倒计时行与虚线边框藏起、底线恢复，防残留到下一行。
-        ephemeralLabel.isHidden = true
+        ephemeralRow.isHidden = true
         ephemeralLabel.text = nil
         ephemeralBorderLayer.isHidden = true
         separatorView.isHidden = false
@@ -1323,7 +1346,7 @@ class BearyDiaryCardCell: UITableViewCell {
         rightStackTopConstraint?.constant = cardMode == .feed ? (recipientRow.isHidden ? 22 : 23) : 14
         rightStack.setCustomSpacing(4, after: recipientRow)
         rightStack.setCustomSpacing(4, after: titleStack)
-        rightStack.setCustomSpacing(4, after: ephemeralLabel)
+        rightStack.setCustomSpacing(4, after: ephemeralRow)
         // R4 App：作者行→标题 4、标题→正文 4，均与原作者行→正文 4 一致；
         // 标题隐藏时其后间距置 0（无论 stack 按前一可见项还是按累计算间距，
         // 作者行→正文均为上行 4，不留空行高度）。
@@ -2136,10 +2159,10 @@ class BearyDiaryCardCell: UITableViewCell {
         let live = BearyEphemeral.isLive(entry)
         if live, let until = entry.ephemeralUntil {
             ephemeralLabel.text = BearyEphemeral.remainingText(until: until)
-            ephemeralLabel.isHidden = false
+            ephemeralRow.isHidden = false
         } else {
             ephemeralLabel.text = nil
-            ephemeralLabel.isHidden = true
+            ephemeralRow.isHidden = true
         }
         separatorView.isHidden = live
         ephemeralBorderLayer.isHidden = !live
