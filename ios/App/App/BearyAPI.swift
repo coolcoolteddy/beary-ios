@@ -409,7 +409,7 @@ final class BearyAPI {
         var req = URLRequest(url: url)
         req.httpMethod = method
         if let t = timeout ?? defaultTimeout(for: path, method: method) {
-            req.timeoutIntervalForRequest = t
+            req.timeoutInterval = t
         }
         req.setValue("https://teddyhn.com", forHTTPHeaderField: "Origin")
         if let body = jsonBody {
