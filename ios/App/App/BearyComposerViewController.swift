@@ -986,7 +986,10 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, U
         moodScrollView.isHidden = true
         toolStripStack.addArrangedSubview(moodScrollView)
         NSLayoutConstraint.activate([
-            // 滚动区高内容驱动：单项高 = 圆环 44 + gap 4 + 名字行高，约 59–60。
+            // 滚动区高内容驱动：单项高 = 顶余 8 + 圆环 44 + gap 4 + 名字行高，约 67–68。
+            // 顶余 8 的原因：选中双环外扩 4.5pt 到环外、表情涂鸦（如嗯嗯的对勾）
+            // 也会画到环外（BearyEmoteView 全链 clipsToBounds=false），而 moodScrollView
+            // 默认裁剪——环若顶到按钮顶边，环顶与涂鸦顶都会被滚动区顶边横切。
             moodScrollView.heightAnchor.constraint(equalTo: moodStackView.heightAnchor),
             moodStackView.topAnchor.constraint(equalTo: moodScrollView.contentLayoutGuide.topAnchor),
             moodStackView.bottomAnchor.constraint(equalTo: moodScrollView.contentLayoutGuide.bottomAnchor),
@@ -1038,7 +1041,8 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, U
             ringView.addSubview(fallbackLabel)
             NSLayoutConstraint.activate([
                 button.widthAnchor.constraint(equalToConstant: 54),
-                ringView.topAnchor.constraint(equalTo: button.topAnchor),
+                // 心情条顶部余量（见上）：环顶离按钮顶边 8pt，选中外环与涂鸦不再被切。
+                ringView.topAnchor.constraint(equalTo: button.topAnchor, constant: 8),
                 ringView.centerXAnchor.constraint(equalTo: button.centerXAnchor),
                 ringView.widthAnchor.constraint(equalToConstant: 44),
                 ringView.heightAnchor.constraint(equalToConstant: 44),
