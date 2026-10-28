@@ -418,6 +418,9 @@ final class BearyAPI {
         }
         let task = session.dataTask(with: req) { data, response, error in
             let status = (response as? HTTPURLResponse)?.statusCode ?? 0
+            // 反馈日志：只记方法 + path + 状态码（path 本身不含 query，见 perform
+            // 入参；query / body / header 一律不记，见 BearyAppLog 排除清单）。
+            BearyAppLog.api(method: method, path: path, status: status)
             completion(data, status, error)
         }
         task.resume()

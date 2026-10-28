@@ -1446,3 +1446,90 @@ final class BearySkeletonCardView: UIView {
         breathingStack.alpha = 0.8
     }
 }
+
+// MARK: - 反馈日志（2026-10-28 反馈 v3，路线 A：不做后端，走邮件附件）
+
+/// App 通用日志：反馈页日志包（zip）的日志来源。只记事件名与 API 方法 /
+/// 路径 / 状态码，绝不记用户内容——调用方只能传固定事件名，禁止把正文、
+/// 标题、邮箱、token、会话值、错误描述原文拼进事件；API 日志只记 path（不记
+/// query、不记 body、不记 header），query 里可能含搜索词等用户输入。
+/// 文件 beary-app.log 写 Documents 目录，上限 1MB，超了截旧留新（保留后
+/// 512KB、从首个换行处起）；不进设备备份（与 DiagFile 同口径）。
+/// 与 DiagFile 的区别：DiagFile 是诊断打点（可由设置页开关关闭），本日志是
+/// 反馈日志管线，始终开启——否则用户关了诊断开关后反馈 zip 里就没有日志。
+/// 部署目标 iOS 15.0、Swift 5.0：只用闭包回调，不用 async/await，不用 if-let 简写。
+enum BearyAppLog {
+    static let fileName = "beary-app.log"
+    static let maxBytes = 1_048_576
+    private static let keepBytes = 524_288
+    private static let queue = DispatchQueue(label: "beary.applog.io", qos: .utility)
+    private static var writesSinceTrim = 0
+    /// 仅 queue 上使用，串行故安全（DateFormatter 非线程安全，不可跨队列共用）。
+    private static let timeFormatter: DateFormatter = {
+        let f = DateFormatter()
+        f.dateFormat = "yyyy-MM-dd HH:mm:ss"
+        return f
+    }()
+
+    static var url: URL {
+        FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent(fileName)
+    }
+
+    /// 固定事件名日志（如 "app launch"、"feedback mail sent"）。
+    static func event(_ name: String) {
+        let now = Date()
+        queue.async {
+            appendLine("\(timeFormatter.string(from: now)) \(name)\n")
+            writesSinceTrim += 1
+            if writesSinceTrim >= 50 {
+                writesSinceTrim = 0
+                trimIfNeeded()
+            }
+        }
+    }
+
+    /// API 调用日志：只记方法 + path + 状态码（path 本身不含 query，见 perform）。
+    static func api(method: String, path: String, status: Int) {
+        event("api \(method) \(path) -> \(status)")
+    }
+
+    /// 供 zip 打包读取：调用方须在后台队列调用（同步读文件，不上主线程）。
+    static func readData() -> Data? {
+        return try? Data(contentsOf: url)
+    }
+
+    /// 调用方须在 queue 上（见 event）。
+    private static func appendLine(_ line: String) {
+        guard let data = line.data(using: .utf8) else { return }
+        let u = url
+        if FileManager.default.fileExists(atPath: u.path) {
+            if let handle = try? FileHandle(forWritingTo: u) {
+                handle.seekToEndOfFile()
+                handle.write(data)
+                try? handle.close()
+            }
+        } else {
+            try? data.write(to: u, options: .atomic)
+        }
+        var values = URLResourceValues()
+        values.isExcludedFromBackup = true
+        var mutable = u
+        try? mutable.setResourceValues(values)
+    }
+
+    /// 调用方须在 queue 上（见 event）：超上限时保留后 512KB，从首个换行处起。
+    private static func trimIfNeeded() {
+        let u = url
+        guard let attrs = try? FileManager.default.attributesOfItem(atPath: u.path),
+              let size = attrs[.size] as? NSNumber, size.intValue > maxBytes else { return }
+        guard let data = try? Data(contentsOf: u) else { return }
+        let tail = data.suffix(keepBytes)
+        if let newlineIndex = tail.firstIndex(of: UInt8(ascii: "\n")) {
+            let trimmed = tail[tail.index(after: newlineIndex)...]
+            try? Data(trimmed).write(to: u, options: .atomic)
+        } else {
+            try? Data(tail).write(to: u, options: .atomic)
+        }
+    }
+}
