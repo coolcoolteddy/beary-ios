@@ -23,6 +23,9 @@ public final class BearyEmoteView: UIView {
     public var fallbackImageOverride: UIImage?
 
     private var isPlaying: Bool
+    /// 是否正在播放（供 chip 复用时判断：同 key 已在播时不再重播，避免每次
+    /// 渲染都从 0 帧重画描线；停播态仍需 play() 恢复，见 BearyEmoteChipView.render）。
+    var isPlayingNow: Bool { isPlaying }
     /// 静态帧持有态：showStaticFrame() 置真，play()/stop() 清掉；attach 时若为真，
     /// 未播放的视图停在循环段末帧而非 0 帧（0 帧是首播描线起点，未完成态）。
     private var heldStaticFrame: Bool = false

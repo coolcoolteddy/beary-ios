@@ -745,9 +745,9 @@ class BearyProfileViewController: UIViewController {
     /// 弹性封面顶约束（下拉时顶边上伸用；平时恒 0，底边不动）。
     private lazy var coverTopConstraint: NSLayoutConstraint = coverImageView.topAnchor.constraint(equalTo: headerView.topAnchor)
     /// 弹性封面模糊层：下拉时随拉量淡入（alpha 过渡），不拦截触摸（点背景换封面不受影响）；
-    /// 系统 material 效果，随深浅模式自适应。
+    /// 微模糊口径：最薄一档 systemUltraThinMaterial + alpha 上限 0.5，随深浅模式自适应。
     private let coverBlurView: UIVisualEffectView = {
-        let blurViewValue = UIVisualEffectView(effect: UIBlurEffect(style: .systemMaterial))
+        let blurViewValue = UIVisualEffectView(effect: UIBlurEffect(style: .systemUltraThinMaterial))
         blurViewValue.translatesAutoresizingMaskIntoConstraints = false
         blurViewValue.isUserInteractionEnabled = false
         blurViewValue.alpha = 0
@@ -1342,7 +1342,7 @@ class BearyProfileViewController: UIViewController {
             // F14：改名信号页内提示一次（容器未接线，见 movedToHandle 注释）。
             if !isOwnProfile, let moved = profileValue.movedTo, !moved.isEmpty, lastMovedToastHandle != moved {
                 lastMovedToastHandle = moved
-                BearyToast.show(in: view, message: "对方已改名为 @\(moved)", aboveFAB: true)
+                BearyToast.show(in: view, message: "对方已改名为 @\(moved)", aboveFAB: false)
             }
             applyProfile()
             applyMode()
@@ -1361,7 +1361,7 @@ class BearyProfileViewController: UIViewController {
             if profile == nil {
                 nameLabel.text = "—"
             } else {
-                BearyToast.show(in: view, message: "资料刷新失败，显示的是上次内容，下拉可重试", aboveFAB: true)
+                BearyToast.show(in: view, message: "资料刷新失败，显示的是上次内容，下拉可重试", aboveFAB: false)
             }
             tableView.refreshControl?.endRefreshing()
             refreshFooter()
@@ -1750,9 +1750,9 @@ class BearyProfileViewController: UIViewController {
                     strongSelf.renderBadges()
                     // 网页佩戴成功 toast 口径：已佩戴「名」/ 已取消佩戴，名取 displayName。
                     if let wornKey = wearValue.worn, !wornKey.isEmpty {
-                        BearyToast.show(in: strongSelf.view, message: "已佩戴「\(BearyBadgeImages.displayName(for: wornKey))」", aboveFAB: true)
+                        BearyToast.show(in: strongSelf.view, message: "已佩戴「\(BearyBadgeImages.displayName(for: wornKey))」", aboveFAB: false)
                     } else {
-                        BearyToast.show(in: strongSelf.view, message: "已取消佩戴", aboveFAB: true)
+                        BearyToast.show(in: strongSelf.view, message: "已取消佩戴", aboveFAB: false)
                     }
                 case .failure(let err):
                     if case .unauthorized = err {
@@ -2631,7 +2631,7 @@ class BearyProfileViewController: UIViewController {
                         // syncInteraction 不刷公开行：就地同步后补刷，倒计时行随新数据渲染。
                         strongSelf.syncVisibleCell(entry: updated)?.refreshPublishRow()
                     case .failure:
-                        BearyToast.show(in: strongSelf.view, message: "公开失败，请重试", aboveFAB: true)
+                        BearyToast.show(in: strongSelf.view, message: "公开失败，请重试", aboveFAB: false)
                     }
                 }
             }
@@ -2658,7 +2658,7 @@ class BearyProfileViewController: UIViewController {
                     // syncInteraction 不刷公开行：就地同步后补刷，取消后公开钮随新数据复现。
                     strongSelf.syncVisibleCell(entry: updated)?.refreshPublishRow()
                 case .failure:
-                    BearyToast.show(in: strongSelf.view, message: "取消失败，请重试", aboveFAB: true)
+                    BearyToast.show(in: strongSelf.view, message: "取消失败，请重试", aboveFAB: false)
                 }
             }
         }
@@ -2851,7 +2851,7 @@ class BearyProfileViewController: UIViewController {
                     } else {
                         cell?.shakeEmoteAddButton()
                     }
-                    BearyToast.show(in: strongSelf.view, message: "操作失败，请重试", aboveFAB: true)
+                    BearyToast.show(in: strongSelf.view, message: "操作失败，请重试", aboveFAB: false)
                 }
             }
         }
@@ -2894,7 +2894,7 @@ class BearyProfileViewController: UIViewController {
             }
             // 定位进行中的轻量指示：拉取往返期间卡片无反应是本次反馈的体感来源之一；
             // toast 2 秒自清，不做乐观假定位。
-            BearyToast.show(in: view, message: "正在打开…", aboveFAB: true)
+            BearyToast.show(in: view, message: "正在打开…", aboveFAB: false)
             BearyAPI.shared.fetchEntry(id: quoteId) { [weak self] result in
                 DispatchQueue.main.async {
                     guard let strongSelf = self else { return }
@@ -2947,7 +2947,7 @@ extension BearyProfileViewController: UITableViewDataSource, UITableViewDelegate
         // A1：个人主页非公开卡片点“+”不打开选择器，弹 toast 并返回。
         cellValue.onEmoteAddNotPublic = { [weak self] in
             if let strongSelf = self {
-                BearyToast.show(in: strongSelf.view, message: "公开后才能回应", aboveFAB: true)
+                BearyToast.show(in: strongSelf.view, message: "公开后才能回应", aboveFAB: false)
             }
         }
         cellValue.onQuoteTap = { [weak self] in self?.handleCellQuoteTap(entry: entryValue) }
@@ -3030,7 +3030,8 @@ extension BearyProfileViewController: UITableViewDataSource, UITableViewDelegate
         }
         coverTopConstraint.constant = -pull
         coverHeightConstraint.constant = 180 + pull
-        setCoverBlurAlpha(min(pull / 120, 1))
+        // 微模糊：ramp 仍按 pull/120，上限从 1.0 降到 0.5（到顶也只有半透薄雾）。
+        setCoverBlurAlpha(min(pull / 120, 0.5))
     }
 
     /// 弹性封面复位（自然态：顶 0、高 180/0、无模糊）。

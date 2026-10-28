@@ -428,7 +428,10 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate {
                         var seen: Set<String> = []
                         let deduped = all.filter { seen.insert($0.id).inserted }
                         // uid 启动时捕获一路透传：中途切号也不把旧账号数据写进新账号桶。
-                        BearyTrashSyncStore.saveAll(accountId: accountId, items: deduped)
+                        // 落盘写走同步队列（不卡主线程）；内存态已同步更新，UI 不等落盘。
+                        BearyEntrySync.shared.runDiskWrite {
+                            BearyTrashSyncStore.saveAll(accountId: accountId, items: deduped)
+                        }
                         // 增量更新：无变化时各行原地不动（见 updateListRowsIncrementally）。
                         self.trashItems = deduped
                         self.trashHasMore = false
