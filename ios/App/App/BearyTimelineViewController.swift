@@ -1268,8 +1268,8 @@ final class BearyTimelineCell: UITableViewCell {
         // N1：已公开圆点填充改橙色（与 configure 同口径），主题切换后仍是橙。
         if let entry = currentEntry {
             let published = entry.isPublic ?? false
-            dotView.backgroundColor = published ? BearyColors.orange : BearyColors.blue
-            dotView.layer.borderColor = BearyColors.bg.cgColor
+            dotView.backgroundColor = BearyColors.bg
+            dotView.layer.borderColor = (published ? BearyColors.orange : BearyColors.blue).cgColor
         } else {
             dotView.layer.borderColor = BearyColors.bg.cgColor
         }
@@ -1426,28 +1426,27 @@ final class BearyTimelineCell: UITableViewCell {
             hourglassView.isHidden = true
             pillLabelLeadingWithIcon?.isActive = false
             pillLabelLeadingWithoutIcon?.isActive = true
-            dotSizeConstraint?.constant = 14
-            dotRingSizeConstraint?.constant = 17
-            dotTopConstraint?.constant = 12
-            dotView.backgroundColor = BearyColors.orange
+            // 竖线圆点统一用未公开的尺寸和结构（9pt 空心 + 12pt 环），只变颜色：
+            // 已公开橙边、未公开蓝边（2026-10-28 Li 定，覆盖 #125 的已公开几何口径）。
+            dotSizeConstraint?.constant = 9
+            dotRingSizeConstraint?.constant = 12
+            dotTopConstraint?.constant = 14.5
+            dotView.backgroundColor = BearyColors.bg
             dotView.layer.borderWidth = 2.5
-            dotView.layer.borderColor = BearyColors.bg.cgColor
-            dotView.layer.cornerRadius = 7
-            dotRingView.isHidden = false
-            dotRingView.layer.cornerRadius = 8.5
+            dotView.layer.borderColor = BearyColors.orange.cgColor
+            dotView.layer.cornerRadius = 4.5
+            dotRingView.isHidden = true
         } else {
             updatePill(entry: entry)
-            // 未公开圆点与已公开同几何（14pt 实心 + 17pt 外环），只差颜色：
-            // 蓝色实心 vs 橙色实心，竖线蓝橙两区外观一致。
-            dotSizeConstraint?.constant = 14
-            dotRingSizeConstraint?.constant = 17
-            dotTopConstraint?.constant = 12
-            dotView.backgroundColor = BearyColors.blue
+            // 未公开圆点即统一口径（9pt 空心 + 12pt 环，蓝边）；已公开只换边色为橙。
+            dotSizeConstraint?.constant = 9
+            dotRingSizeConstraint?.constant = 12
+            dotTopConstraint?.constant = 14.5
+            dotView.backgroundColor = BearyColors.bg
             dotView.layer.borderWidth = 2.5
-            dotView.layer.borderColor = BearyColors.bg.cgColor
-            dotView.layer.cornerRadius = 7
-            dotRingView.isHidden = false
-            dotRingView.layer.cornerRadius = 8.5
+            dotView.layer.borderColor = BearyColors.blue.cgColor
+            dotView.layer.cornerRadius = 4.5
+            dotRingView.isHidden = true
         }
         metaStack.addArrangedSubview(pillBackground)
         // I3：天气用 icon_wx_* 图标、心情用 14px BearyEmoteView（播 Lottie 循环，
