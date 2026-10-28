@@ -26,6 +26,9 @@ class BearyEntryImageViewerViewController: UIViewController, UIGestureRecognizer
     private var panTy0: CGFloat = 0
     private var pinchScale0: CGFloat = 1
     private var pinchActive: Bool = false
+    /// 拖动手势引用：旋转中途重算相邻图位置时，凭它判断手指是否仍在拖动
+    /// （回弹/翻页动画中的 transform 由动画自身驱动，不干扰）。
+    private var panGesture: UIPanGestureRecognizer?
     private var isNavigating: Bool = false
     private var isFailed: Bool = false
     private var loadingKey: String?
@@ -111,6 +114,7 @@ class BearyEntryImageViewerViewController: UIViewController, UIGestureRecognizer
         pinch.delegate = self
         let pan = UIPanGestureRecognizer(target: self, action: #selector(panChanged(_:)))
         pan.delegate = self
+        panGesture = pan
         view.addGestureRecognizer(singleTap)
         view.addGestureRecognizer(doubleTap)
         view.addGestureRecognizer(pinch)
@@ -270,6 +274,17 @@ class BearyEntryImageViewerViewController: UIViewController, UIGestureRecognizer
         neighborDirection = 0
         neighborImageView.isHidden = true
         neighborImageView.transform = .identity
+    }
+
+    /// 旋转中途重算：拖动过程中旋转屏幕时，相邻图按新宽度重贴边（只动相邻图
+    /// 位置，不动当前图）；仅手指仍在拖动时重算——回弹/翻页动画中的 transform
+    /// 由动画自身驱动，不干扰；未拖动时相邻图隐藏，本分支自然跳过。
+    override func viewDidLayoutSubviews() {
+        super.viewDidLayoutSubviews()
+        guard scale == 1, neighborIndex != nil, neighborImageView.isHidden == false,
+              let pan = panGesture, pan.state == .began || pan.state == .changed else { return }
+        let w = pageWidthValue()
+        neighborImageView.transform = CGAffineTransform(translationX: tx + CGFloat(neighborDirection) * w, y: 0)
     }
 
     // MARK: - E-G12 淡入淡出转场

@@ -1986,7 +1986,11 @@ class BearyTimelineViewController: UIViewController {
     private func cacheDayEntries(key: String, entries: [Entry]) {
         dayEntriesCache[key] = entries
         if let uid = SessionManager.shared.currentUser?.id {
-            BearyEntrySyncStore.saveDay(accountId: uid, dayKey: key, entries: entries)
+            // 落盘写走同步队列（不卡主线程，同时记写盘代际供全量同步提交守卫判断）；
+            // 内存态已同步更新，UI 不等落盘。
+            BearyEntrySync.shared.runDiaryDiskWrite {
+                BearyEntrySyncStore.saveDay(accountId: uid, dayKey: key, entries: entries)
+            }
         }
     }
     /// 落盘读：命中则同步回填内存（调用方按内存命中同款处理 + 静默刷新）。
@@ -2332,8 +2336,11 @@ class BearyTimelineViewController: UIViewController {
             dayEntriesCache[key]?.removeAll { $0.id == entryId }
         }
         // 落盘同清：否则切回该日会先闪出已删的旧行（静默刷新虽会纠正，但先闪后纠同样要修）。
+        // 删帖落盘写走同步队列（不卡主线程，同时记写盘代际）。
         if let uid = SessionManager.shared.currentUser?.id {
-            BearyEntrySyncStore.removeEntry(accountId: uid, entryId: entryId)
+            BearyEntrySync.shared.runDiaryDiskWrite {
+                BearyEntrySyncStore.removeEntry(accountId: uid, entryId: entryId)
+            }
             // 回收站桶同增：删帖即进回收站，下次进回收站页先读本地就能看到该条
             //（桶不存在时不建半截桶，进页走网络首拉；下次静默刷新用服务端值纠正残差）。
             BearyTrashSyncStore.prependDeleted(accountId: uid, entry: entry)

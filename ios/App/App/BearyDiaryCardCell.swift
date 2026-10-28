@@ -240,15 +240,18 @@ final class BearyEmoteChipView: UIView {
             layer.cornerRadius = bounds.height / 2
         }
     }
-    /// 池化渲染：样式/计数/tag 由调用方随后写 overlayButton；key 不变时重播
-    /// 播放器、key 变了才换播放器；不重建容器与约束。
+    /// 池化渲染：样式/计数/tag 由调用方随后写 overlayButton；key 不变且已在播时
+    /// 不重播（每次渲染都 play() 会从 0 帧重画描线）、停播时恢复播放；key 变了
+    /// 才换播放器；不重建容器与约束。
     func render(key: String, count: Int, mine: Bool) {
         mineFlag = mine
         countLabel.font = UIFont.systemFont(ofSize: 12, weight: mine ? .bold : .regular)
         countLabel.textColor = mine ? BearyColors.ink : BearyColors.gray
         countLabel.text = "\(count)"
         if let current = emotePlayer, current.emoteKey == key {
-            current.play()
+            if current.isPlayingNow == false {
+                current.play()
+            }
         } else {
             emotePlayer?.stop()
             emotePlayer?.removeFromSuperview()
