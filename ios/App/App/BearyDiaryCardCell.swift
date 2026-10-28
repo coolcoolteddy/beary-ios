@@ -791,7 +791,7 @@ class BearyDiaryCardCell: UITableViewCell {
 
     private lazy var rightStack: UIStackView = {
         quoteView.translatesAutoresizingMaskIntoConstraints = false
-        let st = UIStackView(arrangedSubviews: [recipientRow, titleStack, entryTitleLabel, contentLabel, foldButton, quoteView, imagesScrollView, actionStack, guestLoginPromptButton, emoteFlowView])
+        let st = UIStackView(arrangedSubviews: [recipientRow, titleStack, ephemeralLabel, entryTitleLabel, contentLabel, foldButton, quoteView, imagesScrollView, actionStack, guestLoginPromptButton, emoteFlowView])
         st.translatesAutoresizingMaskIntoConstraints = false
         st.axis = .vertical
         st.alignment = .fill
@@ -807,6 +807,28 @@ class BearyDiaryCardCell: UITableViewCell {
         v.translatesAutoresizingMaskIntoConstraints = false
         v.backgroundColor = BearyColors.line
         return v
+    }()
+
+    /// 限时倒计时行（右列作者行下方、标题上方；仅存活期显示，灰字 12pt）。
+    private let ephemeralLabel: UILabel = {
+        let l = UILabel()
+        l.translatesAutoresizingMaskIntoConstraints = false
+        l.font = UIFont.systemFont(ofSize: 12)
+        l.textColor = BearyColors.gray
+        l.isHidden = true
+        return l
+    }()
+
+    /// 限时卡虚线边框（CAShapeLayer，1.5pt dashed、line 色、圆角 16；
+    /// 布局时按 contentView 内缩矩形重画路径，主题切换重刷描边色）。
+    private let ephemeralBorderLayer: CAShapeLayer = {
+        let layer = CAShapeLayer()
+        layer.fillColor = UIColor.clear.cgColor
+        layer.lineWidth = 1.5
+        layer.lineDashPattern = [4, 3]
+        layer.strokeColor = BearyColors.line.cgColor
+        layer.isHidden = true
+        return layer
     }()
 
     private var imageHeightConstraint: NSLayoutConstraint?
@@ -902,6 +924,8 @@ class BearyDiaryCardCell: UITableViewCell {
         contentView.addSubview(rightStack)
         imagesScrollView.addSubview(imagesStack)
         contentView.addSubview(separatorView)
+        // 限时虚线边框层（挂 contentView 层，布局时重画；平时隐藏，不影响普通卡）。
+        contentView.layer.addSublayer(ephemeralBorderLayer)
         // C6 卡片上下文菜单：UIContextMenuInteraction 挂 contentView（原位浮起
         // 整卡预览 + 系统毛玻璃 UIMenu），取代 Q9 长按手势 + actionSheet；
         // 按钮/图片/引用/头像上的长按排除见文件末尾 contextMenuInteraction 代理
@@ -1028,6 +1052,11 @@ class BearyDiaryCardCell: UITableViewCell {
         // configure 时 cell 宽可能尚未落位（用屏宽估算），布局落位后若溢出
         // 结论变了，在此纠正一次（结论稳定后不再变动，不会往复）。
         updateEmoteRowHeight()
+        // 限时虚线边框：存活期按 contentView 内缩矩形重画（圆角 16），两模式同款。
+        if !ephemeralBorderLayer.isHidden {
+            ephemeralBorderLayer.frame = contentView.bounds
+            ephemeralBorderLayer.path = UIBezierPath(roundedRect: contentView.bounds.insetBy(dx: 8, dy: 6), cornerRadius: 16).cgPath
+        }
         guard cardMode == .feed else { return }
         if currentEntry != nil, contentLabel.bounds.width > 0 {
             let overflow = measuredFoldOverflow(contentWidth: contentLabel.bounds.width)
@@ -1041,6 +1070,8 @@ class BearyDiaryCardCell: UITableViewCell {
 
     override func traitCollectionDidChange(_ previousTraitCollection: UITraitCollection?) {
         super.traitCollectionDidChange(previousTraitCollection)
+        // 限时虚线描边色是 cgColor 快照，主题切换须重刷（两模式同款，不受下方 feed 门控影响）。
+        ephemeralBorderLayer.strokeColor = BearyColors.line.cgColor
         // 首页模式：心情与公开行边框需重刷（chip 边框已由 BearyEmoteChipView
         // 自带 trait 重刷，此处不再调 renderEmotes——两套并存已摘掉一套）。
         guard cardMode == .feed else { return }
@@ -1056,6 +1087,11 @@ class BearyDiaryCardCell: UITableViewCell {
         // iCity 举报退场动画只动 contentView（alpha/transform），复用时复位，防残留到下一行。
         contentView.alpha = 1
         contentView.transform = .identity
+        // 限时态复位：倒计时行与虚线边框藏起、底线恢复，防残留到下一行。
+        ephemeralLabel.isHidden = true
+        ephemeralLabel.text = nil
+        ephemeralBorderLayer.isHidden = true
+        separatorView.isHidden = false
         onImageTapped = nil
         onQuoteSelected = nil
         onInteractionChanged = nil
@@ -1287,6 +1323,7 @@ class BearyDiaryCardCell: UITableViewCell {
         rightStackTopConstraint?.constant = cardMode == .feed ? (recipientRow.isHidden ? 22 : 23) : 14
         rightStack.setCustomSpacing(4, after: recipientRow)
         rightStack.setCustomSpacing(4, after: titleStack)
+        rightStack.setCustomSpacing(4, after: ephemeralLabel)
         // R4 App：作者行→标题 4、标题→正文 4，均与原作者行→正文 4 一致；
         // 标题隐藏时其后间距置 0（无论 stack 按前一可见项还是按累计算间距，
         // 作者行→正文均为上行 4，不留空行高度）。
@@ -1452,8 +1489,8 @@ class BearyDiaryCardCell: UITableViewCell {
         }
         crownImageView.isHidden = (entry.authorPlus ?? 0) != 1 || crownImageView.image == nil
 
-        // F3：时间。广场卡：已公开且有 publishedAt 时显公开相对时间（“X 分钟前公开”），否则绝对时间。
-        if entry.isPublic == true, let relative = BearyVisibilityText.publishedRelativeString(publishedAtMs: entry.publishedAt) {
+        // F3：时间。广场卡：有效公开（未过期）且有 publishedAt 时显公开相对时间（“X 分钟前公开”），否则绝对时间。
+        if BearyEphemeral.isEffectivelyPublic(entry), let relative = BearyVisibilityText.publishedRelativeString(publishedAtMs: entry.publishedAt) {
             timeLabel.text = relative
         } else {
             timeLabel.text = BearyDiaryCardCell.feedTimeString(ms: entry.createdAt ?? 0)
@@ -1494,6 +1531,7 @@ class BearyDiaryCardCell: UITableViewCell {
         updateBookmarkButton()
         updateActionInteractivity()
         refreshPubRow()
+        refreshEphemeralState(entry: entry)
         // 回应行：操作行下方、行上边距 10（见 updateRightStackSpacing）。
         renderEmotes()
         updateRightStackSpacing()
@@ -1590,7 +1628,7 @@ class BearyDiaryCardCell: UITableViewCell {
         likeButton.isEnabled = !interactionDisabled
         bookmarkButton.isEnabled = !interactionDisabled
         shareButton.isEnabled = !interactionDisabled
-        let publicOK = entry.isPublic == true
+        let publicOK = BearyEphemeral.isEffectivelyPublic(entry)
         shareButton.isHidden = publicOK == false
         renderEmotes()
         // 游客详情（只读）：游客展开态藏操作行与回应行，改显登录提示条
@@ -1601,6 +1639,7 @@ class BearyDiaryCardCell: UITableViewCell {
         actionStack.isHidden = guestExpanded
         emoteFlowView.isHidden = guestExpanded
         guestLoginPromptButton.isHidden = !guestExpanded
+        refreshEphemeralState(entry: entry)
         updateRightStackSpacing()
     }
 
@@ -2092,6 +2131,21 @@ class BearyDiaryCardCell: UITableViewCell {
     func refreshPublishRow() {
         refreshPubRow()
     }
+    private func refreshEphemeralState(entry: Entry) {
+        // 限时存活期：倒计时行显 + 虚线边框显 + 底线藏（边框代之）；到期或非限时一律按普通卡。
+        let live = BearyEphemeral.isLive(entry)
+        if live, let until = entry.ephemeralUntil {
+            ephemeralLabel.text = BearyEphemeral.remainingText(until: until)
+            ephemeralLabel.isHidden = false
+        } else {
+            ephemeralLabel.text = nil
+            ephemeralLabel.isHidden = true
+        }
+        separatorView.isHidden = live
+        ephemeralBorderLayer.isHidden = !live
+        setNeedsLayout()
+    }
+
     private func refreshPubRow() {
         guard let entry = currentEntry, entry.isMine == true else {
             publishButton.isHidden = true
@@ -2099,7 +2153,7 @@ class BearyDiaryCardCell: UITableViewCell {
             return
         }
         publishButton.isHidden = false
-        publishButton.accessibilityLabel = entry.isPublic == true ? "改回私密" : "公开"
+        publishButton.accessibilityLabel = BearyEphemeral.isEffectivelyPublic(entry) ? "改回私密" : "公开"
         rightStackTrailingConstraint?.constant = -52
     }
 

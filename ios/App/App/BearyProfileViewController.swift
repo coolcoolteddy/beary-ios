@@ -2893,6 +2893,8 @@ class BearyProfileViewController: UIViewController {
                 case .success(let resp):
                     var updated = entry
                     if let published = resp.published { updated.isPublic = published == 1 }
+                    // 手动翻转清限时标记（服务端同口径），否则本地仍画虚线边框。
+                    updated.ephemeralUntil = nil
                     if let publishedAt = resp.publishedAt { updated.publishedAt = publishedAt }
                     strongSelf.updateEntryInAllTabs(entry: updated)
                     if updated.isPublic != true {

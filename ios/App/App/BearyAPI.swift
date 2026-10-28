@@ -84,6 +84,9 @@ struct Entry: Codable {
     var isPublic: Bool?
     /// iCity：最近一次公开时间（毫秒；私密态为 nil；服务端按 24 小时冷却刷新）。
     var publishedAt: Int?
+    /// 限时日记：到期时间戳（毫秒）；nil = 非限时。存活期（now < 该值）才算限时态，
+    /// 到期后按普通私密渲染（见 BearyEphemeral）。
+    var ephemeralUntil: Int?
     /// iCity @：被 @ 者 id（可空）与显示名（卡片/详情 @ 标签用）。
     var mentionedUserId: Int?
     var mentionedName: String?

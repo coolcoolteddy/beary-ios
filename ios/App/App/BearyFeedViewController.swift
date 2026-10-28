@@ -1169,6 +1169,8 @@ class BearyFeedViewController: UIViewController {
     private func applyVisibilityState(entryId: String, isPublic: Bool, publishedAt: Int?) {
         for index in plazaRaw.indices where plazaRaw[index].id == entryId {
             plazaRaw[index].isPublic = isPublic
+            // 手动翻转清限时标记（服务端同口径），否则本地仍画虚线边框。
+            plazaRaw[index].ephemeralUntil = nil
             if let publishedAt = publishedAt { plazaRaw[index].publishedAt = publishedAt }
         }
         if isPublic == false {

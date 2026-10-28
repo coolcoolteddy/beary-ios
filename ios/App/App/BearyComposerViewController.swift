@@ -273,6 +273,11 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, U
     /// iCity：工具栏上方固定一行“私密／公开”分段（新建模式可见，编辑模式隐藏、高度归零）。
     private let visibilityBar = UIView()
     private let visibilitySegmented = UISegmentedControl(items: ["私密", "公开"])
+    /// 限时日记行（可见范围段正下方，同属 visibilityBar；编辑模式随整行隐藏）。
+    private let ephemeralRow = UIView()
+    private let ephemeralSwitch = UISwitch()
+    private let ephemeralTitleLabel = UILabel()
+    private let ephemeralSubtitleLabel = UILabel()
     private var visibilityBarHeightConstraint: NSLayoutConstraint?
     private var scrollBottomToVisibilityConstraint: NSLayoutConstraint?
     private var scrollBottomToToolbarConstraint: NSLayoutConstraint?
@@ -623,12 +628,43 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, U
         visibilitySegmented.selectedSegmentIndex = 0
         visibilitySegmented.addTarget(self, action: #selector(didTapVisibilitySegment), for: .valueChanged)
         visibilityBar.addSubview(visibilitySegmented)
-        visibilityBarHeightConstraint = visibilityBar.heightAnchor.constraint(equalToConstant: isEditMode ? 0 : 36)
+        // 限时行：分段正下方（系统 UISwitch + 两行文案）；开 = 强制公开且分段禁用，
+        // 关 = 回私密且分段恢复可选。草稿模型不存限时态，重进编辑器默认关 + 私密。
+        ephemeralRow.translatesAutoresizingMaskIntoConstraints = false
+        ephemeralSwitch.translatesAutoresizingMaskIntoConstraints = false
+        ephemeralSwitch.isOn = false
+        ephemeralSwitch.addTarget(self, action: #selector(didToggleEphemeral), for: .valueChanged)
+        ephemeralTitleLabel.translatesAutoresizingMaskIntoConstraints = false
+        ephemeralTitleLabel.font = UIFont.systemFont(ofSize: 15, weight: .medium)
+        ephemeralTitleLabel.textColor = BearyColors.ink
+        ephemeralTitleLabel.text = "限时日记"
+        ephemeralSubtitleLabel.translatesAutoresizingMaskIntoConstraints = false
+        ephemeralSubtitleLabel.font = UIFont.systemFont(ofSize: 12)
+        ephemeralSubtitleLabel.textColor = BearyColors.gray
+        ephemeralSubtitleLabel.text = "公开 24 小时后自动转私密"
+        let ephemeralLabels = UIStackView(arrangedSubviews: [ephemeralTitleLabel, ephemeralSubtitleLabel])
+        ephemeralLabels.translatesAutoresizingMaskIntoConstraints = false
+        ephemeralLabels.axis = .vertical
+        ephemeralLabels.spacing = 1
+        ephemeralRow.addSubview(ephemeralLabels)
+        ephemeralRow.addSubview(ephemeralSwitch)
+        visibilityBar.addSubview(ephemeralRow)
+        visibilityBarHeightConstraint = visibilityBar.heightAnchor.constraint(equalToConstant: isEditMode ? 0 : 84)
         visibilityBar.isHidden = isEditMode
         NSLayoutConstraint.activate([
             visibilitySegmented.leadingAnchor.constraint(equalTo: visibilityBar.leadingAnchor, constant: 16),
             visibilitySegmented.trailingAnchor.constraint(equalTo: visibilityBar.trailingAnchor, constant: -16),
-            visibilitySegmented.centerYAnchor.constraint(equalTo: visibilityBar.centerYAnchor),
+            visibilitySegmented.topAnchor.constraint(equalTo: visibilityBar.topAnchor),
+            visibilitySegmented.heightAnchor.constraint(equalToConstant: 36),
+            ephemeralRow.leadingAnchor.constraint(equalTo: visibilityBar.leadingAnchor, constant: 16),
+            ephemeralRow.trailingAnchor.constraint(equalTo: visibilityBar.trailingAnchor, constant: -16),
+            ephemeralRow.topAnchor.constraint(equalTo: visibilitySegmented.bottomAnchor),
+            ephemeralRow.bottomAnchor.constraint(equalTo: visibilityBar.bottomAnchor),
+            ephemeralLabels.leadingAnchor.constraint(equalTo: ephemeralRow.leadingAnchor),
+            ephemeralLabels.centerYAnchor.constraint(equalTo: ephemeralRow.centerYAnchor),
+            ephemeralSwitch.leadingAnchor.constraint(greaterThanOrEqualTo: ephemeralLabels.trailingAnchor, constant: 8),
+            ephemeralSwitch.trailingAnchor.constraint(equalTo: ephemeralRow.trailingAnchor),
+            ephemeralSwitch.centerYAnchor.constraint(equalTo: ephemeralRow.centerYAnchor),
             visibilityBarHeightConstraint!,
         ])
         // 选择条：竖栈，子项（心情条/天气条/写给区）同一时刻只显其一、其余隐藏即自动塌高；
@@ -1995,6 +2031,19 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, U
 
     @objc private func didTapVisibilitySegment() {
         selectedVisibilityPublished = visibilitySegmented.selectedSegmentIndex == 1
+    }
+
+    @objc private func didToggleEphemeral() {
+        if ephemeralSwitch.isOn {
+            // 限时即公开：分段定公开且锁死，改不了私密（限时 + 私密本身无意义）。
+            visibilitySegmented.selectedSegmentIndex = 1
+            selectedVisibilityPublished = true
+            visibilitySegmented.isEnabled = false
+        } else {
+            visibilitySegmented.selectedSegmentIndex = 0
+            selectedVisibilityPublished = false
+            visibilitySegmented.isEnabled = true
+        }
     }
 
     @objc private func didTapQuoteTab(_ sender: UIButton) {
@@ -4464,8 +4513,9 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, U
         // R1 复核：新建仍传 trimmedTitle()（空时为 nil，API 省略不传），新建
         // 不填标题的行为不变；显式空串清标题只发生在编辑 PUT（performUpdate）。
         // iCity：分段值即 visibility（published 0/1）；@ 以 mentioned_user_id 发出，无按篇通知开关。
+        // 限时：开关开时分段必为公开，ephemeral=1 随新建发出（服务端写 24 小时到期）。
         let publishVisibility = selectedVisibilityPublished ? 1 : 0
-        BearyAPI.shared.publishEntry(content: trimmed, images: uploadedImageKeys(), mood: selectedMood, weather: selectedWeather, quoteId: publishQuoteId, published: publishVisibility, mentionedUserId: selectedRecipient?.id, title: trimmedTitle(), clientReq: req) { [weak self] result in
+        BearyAPI.shared.publishEntry(content: trimmed, images: uploadedImageKeys(), mood: selectedMood, weather: selectedWeather, quoteId: publishQuoteId, published: publishVisibility, mentionedUserId: selectedRecipient?.id, title: trimmedTitle(), ephemeral: ephemeralSwitch.isOn ? 1 : nil, clientReq: req) { [weak self] result in
             DispatchQueue.main.async {
                 guard let self = self else { return }
                 self.isPublishing = false
