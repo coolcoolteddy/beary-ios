@@ -1015,6 +1015,47 @@ final class BearySettingsViewController: UIViewController {
     private func loadAll() {
         guard !isLoadingMe else { return }
         isLoadingMe = true
+        // 缓存优先：登录态下本机已有同一份用户信息（SessionManager.currentUser），
+        // 先显缓存、不转菊花，随后静默 fetchMe 对齐；无缓存时走现行加载态路径。
+        if let cached = SessionManager.shared.currentUser {
+            meUser = cached
+            failureWrap.isHidden = true
+            loginWrap.isHidden = true
+            loadingView.stopAnimating()
+            loadingView.isHidden = true
+            contentWrap.isHidden = false
+            accountSecurityWrap.isHidden = false
+            logoutWrap.isHidden = false
+            fillIdCard(user: cached)
+            // 注销入口：只用 is_admin，缓存与刷新后同一口径（见下）。
+            deleteBottomWrap.isHidden = cached.isAdmin == true
+            loadPlusDetail()
+            loadSessions()
+            BearyAPI.shared.fetchMe { [weak self] result in
+                DispatchQueue.main.async {
+                    guard let self = self else { return }
+                    self.isLoadingMe = false
+                    switch result {
+                    case .success(let user):
+                        guard let userValue = user else {
+                            // 服务端回空：保持缓存内容不变，不弹登录态
+                            // （会话存亡走全局 401 流程，不由本页静默刷新改写）。
+                            return
+                        }
+                        self.meUser = userValue
+                        self.fillIdCard(user: userValue)
+                        self.deleteBottomWrap.isHidden = userValue.isAdmin == true
+                        self.loadPlusDetail()
+                        self.loadSessions()
+                    case .failure(let error):
+                        if case .cancelled = error { return }
+                        // 静默刷新失败：保持缓存内容不变，不显示 failureWrap。
+                        return
+                    }
+                }
+            }
+            return
+        }
         loadingView.startAnimating()
         loadingView.isHidden = false
         failureWrap.isHidden = true
@@ -1107,10 +1148,14 @@ final class BearySettingsViewController: UIViewController {
     // 注册时间四行不再渲染；ID 卡 fillIdCard 仍呈现名 / 邮箱 / 注册时间 / 会员）。
 
     private func loadPlusDetail() {
-        plusStatusLabel.text = "–"
-        plusFreeLabel.text = "–"
-        plusPersonalLabel.text = "–"
-        rebuildGrants(grants: nil, failed: false)
+        // 静默刷新：已有旧值时不先清标签/发放行，新值到了再覆盖；
+        // 首拉（plusDetail 为 nil）才走现行置“–”+ 空发放态。
+        if plusDetail == nil {
+            plusStatusLabel.text = "–"
+            plusFreeLabel.text = "–"
+            plusPersonalLabel.text = "–"
+            rebuildGrants(grants: nil, failed: false)
+        }
         BearyAPI.shared.fetchPlusDetail { [weak self] result in
             DispatchQueue.main.async {
                 guard let self = self else { return }
@@ -1124,6 +1169,7 @@ final class BearySettingsViewController: UIViewController {
                         return
                     }
                     if case .cancelled = error { return }
+                    if self.plusDetail != nil { return }
                     self.plusStatusLabel.text = "加载失败"
                     self.rebuildGrants(grants: nil, failed: true)
                 }
@@ -1210,8 +1256,8 @@ final class BearySettingsViewController: UIViewController {
     }
 
     private func loadSessions() {
-        deviceCountLabel.text = "–"
-        rebuildSessions(sessions: nil, failed: false)
+        // 首拉前不再预先 rebuildSessions(nil)：空标签只在拉取返回空后出现，
+        // 失败态只在拉取失败后出现（现行失败分支不动）；静默刷新不再先清旧内容。
         BearyAPI.shared.fetchAccountSessions { [weak self] result in
             DispatchQueue.main.async {
                 guard let self = self else { return }
