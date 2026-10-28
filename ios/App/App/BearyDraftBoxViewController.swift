@@ -77,7 +77,6 @@ final class BearyDraftBoxViewController: UIViewController {
     private let sheetGlassView = BearyGlass.effectView(tint: BearyGlass.neutralTint)
     private let sheetScrollView = UIScrollView()
     private let contentStack = UIStackView()
-    private let topBorderView = UIView()
     private let handleView = UIView()
     private let headerWrap = UIView()
     private let titleLabel = UILabel()
@@ -192,7 +191,7 @@ final class BearyDraftBoxViewController: UIViewController {
         sheetView.backgroundColor = .clear
         sheetView.layer.cornerRadius = BearySheetChrome.topCornerRadius
         sheetView.layer.shadowColor = UIColor.black.cgColor
-        // 玻璃批：玻璃只钉在 sheetView 内部（index 0，在 topBorder/scrollView 之下），
+        // 玻璃批：玻璃只钉在 sheetView 内部（index 0，在 scrollView 之下），
         // 玻璃自身圆角 20 + clipsToBounds；sheetView 本身不裁剪，阴影保留。
         sheetGlassView.layer.cornerRadius = BearySheetChrome.topCornerRadius
         sheetGlassView.clipsToBounds = true
@@ -206,10 +205,6 @@ final class BearyDraftBoxViewController: UIViewController {
         ])
         sheetView.translatesAutoresizingMaskIntoConstraints = false
         view.addSubview(sheetView)
-
-        topBorderView.backgroundColor = BearyColors.line
-        topBorderView.translatesAutoresizingMaskIntoConstraints = false
-        sheetView.addSubview(topBorderView)
 
         sheetScrollView.showsVerticalScrollIndicator = false
         sheetScrollView.translatesAutoresizingMaskIntoConstraints = false
@@ -388,10 +383,6 @@ final class BearyDraftBoxViewController: UIViewController {
         sheetScrollView.layer.cornerRadius = 20
         sheetScrollView.layer.masksToBounds = true
         NSLayoutConstraint.activate([
-            topBorderView.topAnchor.constraint(equalTo: sheetView.topAnchor),
-            topBorderView.leadingAnchor.constraint(equalTo: sheetView.leadingAnchor),
-            topBorderView.trailingAnchor.constraint(equalTo: sheetView.trailingAnchor),
-            topBorderView.heightAnchor.constraint(equalToConstant: 1),
             sheetScrollView.topAnchor.constraint(equalTo: sheetView.topAnchor),
             sheetScrollView.bottomAnchor.constraint(equalTo: sheetView.bottomAnchor),
             sheetScrollView.leadingAnchor.constraint(equalTo: sheetView.leadingAnchor),
@@ -452,7 +443,6 @@ final class BearyDraftBoxViewController: UIViewController {
             // 网页 60 → 30、32 → 16，旧值 60/32 直写会把阴影晕得比网页大一倍。
             sheetView.layer.shadowRadius = 30
             sheetView.layer.shadowOffset = CGSize(width: 0, height: 24)
-            topBorderView.isHidden = true
             sheetScrollView.layer.maskedCorners = [.layerMinXMinYCorner, .layerMaxXMinYCorner, .layerMinXMaxYCorner, .layerMaxXMaxYCorner]
         } else {
             sheetView.layer.maskedCorners = [.layerMinXMinYCorner, .layerMaxXMinYCorner]
@@ -460,7 +450,6 @@ final class BearyDraftBoxViewController: UIViewController {
             sheetView.layer.shadowOpacity = 0.22
             sheetView.layer.shadowRadius = 16
             sheetView.layer.shadowOffset = CGSize(width: 0, height: -12)
-            topBorderView.isHidden = false
             sheetScrollView.layer.maskedCorners = [.layerMinXMinYCorner, .layerMaxXMinYCorner]
         }
         // 玻璃批：玻璃圆角裁剪跟随 sheet（手机仅顶圆角 / iPad 四圆角），仍只裁玻璃。
