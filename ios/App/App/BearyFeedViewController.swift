@@ -177,7 +177,7 @@ class BearyFeedViewController: UIViewController {
         titleLabel.textAlignment = .center
         let subtitleLabel = UILabel()
         subtitleLabel.translatesAutoresizingMaskIntoConstraints = false
-        subtitleLabel.text = "每篇日记都会经过 7 天的沉淀，才会在这里与你见面"
+        subtitleLabel.text = "公开的日记会出现在这里，写一篇并公开试试"
         subtitleLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13))
         subtitleLabel.adjustsFontForContentSizeCategory = true
         subtitleLabel.textColor = BearyColors.gray
@@ -526,7 +526,7 @@ class BearyFeedViewController: UIViewController {
     /// 回退（原生能力映射）：① 系统分享 sheet；② 已有 presented 时复制到剪贴板 + toast；
     /// ③ sheet 回调带错时同样复制 + toast。
     private func presentShareSheet(for entry: Entry) {
-        // B3：未公开直接 return，不进分享 sheet、不交出正文前 60 字、不走剪贴板回退。
+        // B3：私密直接 return，不进分享 sheet、不交出正文前 60 字、不走剪贴板回退。
         if entry.isPublic != true { return }
         guard let entryIdValue = entry.id, !entryIdValue.isEmpty,
               let urlValue = URL(string: "https://teddyhn.com/beary/d/" + entryIdValue) else { return }

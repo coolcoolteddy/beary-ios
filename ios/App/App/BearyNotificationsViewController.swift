@@ -32,8 +32,8 @@ import UIKit
 // 点击行为（与网页 onclick 同口径）：
 // - 点一条先乐观标已读（失败回滚，与网页 ntMarkRead 一致），再按类型分流：
 //   letter 行带 entry_id → onEntrySelected(entry_id) 直接进详情；
-//   system 行带 entry_id → 本页送达信模态（mail 图、“稍后 / 去看看”+
-//   引用预览：正文前 90 字 + fmtDay 写下日期 + 回应/点赞数）；
+//   system 行带 entry_id → 同样 onEntrySelected（容器校验可见性再定位/占位，
+//   iCity 起不再弹送达信模态）；
 //   无 entry_id 的 system/letter 行 → 先交 onSystemNotificationSelected，
 //   容器未接时本页就地弹系统信模态（title/body，标题含“成就/徽章”换 popper 图）。
 // - 互动行带 entry_id → onEntrySelected；无 entry_id 只标已读不跳转。
@@ -2292,7 +2292,7 @@ private class BearyLetterModal {
         return NSAttributedString(string: string, attributes: [.font: font, .foregroundColor: color, .paragraphStyle: paragraph])
     }
 
-    /// 送达信引用预览随后补全：有正文才显示引用区，按钮行随之改贴引用区。
+    /// 信件模态引用预览随后补全：有正文才显示引用区，按钮行随之改贴引用区。
     func fillQuote(text: String, meta: String) {
         // C-G17：随后补全的引用同样带 1.75 行高（与 init 分支一致）。
         quoteTextLabel.attributedText = BearyLetterModal.lineHeightText(text, font: UIFont.systemFont(ofSize: 16), color: BearyColors.ink, multiple: 1.75)
@@ -2792,7 +2792,7 @@ private class BearyNotificationCell: UITableViewCell {
         return formatter.string(from: date)
     }
 
-    /// 网页 fmtDay 口径：M月d日（无空格，送达信引用 meta 用它）。
+    /// 网页 fmtDay 口径：M月d日（无空格，信件引用 meta 用它）。
     static func dayText(ms: Int?) -> String {
         guard let msValue = ms else { return "" }
         let date = Date(timeIntervalSince1970: TimeInterval(msValue) / 1000.0)
