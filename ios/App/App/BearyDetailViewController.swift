@@ -749,7 +749,7 @@ final class BearyDetailViewController: UIViewController {
         }
         emoteFlowView.isHidden = list.isEmpty
         lastFlowWidth = 0
-        setNeedsLayout()
+        view.setNeedsLayout()
     }
 
     private func emoteDelta(_ list: [EmoteCount], key: String, added: Bool) -> [EmoteCount] {
