@@ -1754,10 +1754,12 @@ final class BearyChromeViewController: UIViewController {
     private func ensureSearchVC() -> BearySearchViewController {
         if let vc = searchVC { return vc }
         let vc = BearySearchViewController(onOpenUser: { [weak self] user in
-            if let handle = user.handle, !handle.isEmpty {
-                self?.presentUserProfile(handle: handle)
-            } else if let userId = user.id {
+            // 验证组⑤：搜索跳转优先用 id（搜索 handle 不保证非空，旧 handle 优先在改名后会走偏）；
+            // 无 id 时才回退 handle。
+            if let userId = user.id {
                 self?.presentUserProfile(userId: userId)
+            } else if let handle = user.handle, !handle.isEmpty {
+                self?.presentUserProfile(handle: handle)
             }
         }, onOpenEntry: { [weak self] entryId in
             self?.gotoEntry(entryId: entryId)

@@ -903,8 +903,9 @@ final class BearyTimelineCell: UITableViewCell {
     // 走 BearyColors.orange），私密 9px 蓝空心圆（无外环）。
     // 第 14 项 B：竖线按日通长连续（网页 .tl:before 口径：每个日期组容器一条线，
     // top 8 / bottom 8，组头 .date-h 在组外、线不穿头）。原生无组容器，改为按行
-    // 拼线：组内首行 top 8、末行 bottom -8、中间行 top/bottom 均为 0——相邻行
-    // 的线在 cell 交界处恰好相接，组内不断；组与组之间由组头隔开，线自然断开。
+    // 拼线：追加 6⑤后首行 top 0（竖线连到第一张卡片）、末行 bottom -8、
+    // 中间行 top/bottom 均为 0——相邻行的线在 cell 交界处恰好相接，组内不断；
+    // 组与组之间由组头隔开，线自然断开。
     // 边距由 VC 在 cellForRowAt 按行在组内的位置设定（setTimelineLineEdges），
     // 分页向同组追加行时旧末行由 updateChrome 的可见行重刷改回中间行边距。
     private let timelineLineView = UIView()
@@ -928,6 +929,8 @@ final class BearyTimelineCell: UITableViewCell {
     }()
     private var pillLabelLeadingWithIcon: NSLayoutConstraint?
     private var pillLabelLeadingWithoutIcon: NSLayoutConstraint?
+    /// 追加 6②：当前 pill 描边色（configure/updatePill 按态写，主题切换重刷用）。
+    private var pillBorderColor: UIColor = .clear
     // TL-3 引用卡与私密操作行。
     private let quoteButton = UIButton(type: .custom)
     // B-G1: left 3px line (web .tl-qcard border-left; full border removed).
@@ -976,7 +979,9 @@ final class BearyTimelineCell: UITableViewCell {
         cardView.translatesAutoresizingMaskIntoConstraints = false
         cardView.backgroundColor = BearyColors.bg
         cardView.layer.borderWidth = 1
-        cardView.layer.borderColor = BearyColors.line.cgColor
+        // 追加 6④：卡片边框减淡——line 色降 50% 透明度（动态色，深浅跟随）；
+        // trait 切换重刷见 traitCollectionDidChange 同款。
+        cardView.layer.borderColor = BearyColors.alpha(BearyColors.line, 0.5).cgColor
         cardView.layer.cornerRadius = 14
         cardView.layer.masksToBounds = true
 
@@ -992,6 +997,11 @@ final class BearyTimelineCell: UITableViewCell {
         pillBackground.setContentHuggingPriority(.required, for: .horizontal)
         pillBackground.layer.cornerRadius = 10
         pillBackground.layer.masksToBounds = true
+        // 追加 6②：pill 描边区分——带填充的两态（已公开橙、未公开蓝）加同色描边，
+        // 倒计时态（清底灰字）无描边；描边色由 configure/updatePill 按态写入
+        // pillBorderColor，主题切换时 traitCollectionDidChange 重刷。
+        pillBackground.layer.borderWidth = 1
+        pillBackground.layer.borderColor = UIColor.clear.cgColor
         pillLabel.translatesAutoresizingMaskIntoConstraints = false
         // 88 包 L18：倒计时每秒改文案，等宽数字防宽度抖动（只影响数字字形）。
         pillLabel.font = UIFont.monospacedDigitSystemFont(ofSize: 11.5, weight: .bold)
@@ -1231,7 +1241,7 @@ final class BearyTimelineCell: UITableViewCell {
         dotSizeConstraint = dotView.widthAnchor.constraint(equalToConstant: 14)
         dotRingSizeConstraint = dotRingView.widthAnchor.constraint(equalToConstant: 17)
         dotTopConstraint = dotView.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 12)
-        timelineLineTopConstraint = timelineLineView.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 8)
+        timelineLineTopConstraint = timelineLineView.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 0)
         timelineLineBottomConstraint = timelineLineView.bottomAnchor.constraint(equalTo: contentView.bottomAnchor, constant: -8)
         NSLayoutConstraint.activate([
             timelineLineView.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 11),
@@ -1269,7 +1279,10 @@ final class BearyTimelineCell: UITableViewCell {
 
     override func traitCollectionDidChange(_ previousTraitCollection: UITraitCollection?) {
         super.traitCollectionDidChange(previousTraitCollection)
-        cardView.layer.borderColor = BearyColors.line.cgColor
+        // 追加 6④：卡片边框减淡与 init 同款（line 色 50% 透明度）。
+        cardView.layer.borderColor = BearyColors.alpha(BearyColors.line, 0.5).cgColor
+        // 追加 6②：pill 描边主题切换重刷（cgColor 快照，须按当前态重解）。
+        pillBackground.layer.borderColor = pillBorderColor.cgColor
         timelineLineView.backgroundColor = BearyColors.line
         dotRingView.backgroundColor = BearyColors.line
         // C1：私密圆点边框按当前 isPublic 重设（公开 bg、私密蓝），
@@ -1350,11 +1363,13 @@ final class BearyTimelineCell: UITableViewCell {
         })
     }
 
-    /// 第 14 项 B：按行在日组内的位置定竖线边距。首行 top 8、末行 bottom -8、
-    /// 中间行 0/0；单行组同时是首末行，即恢复旧的 8/-8。VC 在 cellForRowAt
-    /// 设定，复用前 prepareForReuse 复位为 8/-8，防中间行状态漏到单行组。
+    /// 第 14 项 B：按行在日组内的位置定竖线边距。追加 6⑤：竖线连到第一张卡片——
+    /// 首行 top 由 8 改 0，线顶抵到 cell 顶缘（组头与首卡之间不再留 8pt 缺口）；
+    /// 末行 bottom 仍 -8；中间行 0/0；单行组 top 0、bottom -8。VC 在 cellForRowAt
+    /// 设定，复用前 prepareForReuse 复位为 0/-8，防中间行状态漏到单行组。
+    /// isFirstInDay 保留供调用方语义（顶边现已恒为 0，不再按首行区分）。
     func setTimelineLineEdges(isFirstInDay: Bool, isLastInDay: Bool) {
-        timelineLineTopConstraint?.constant = isFirstInDay ? 8 : 0
+        timelineLineTopConstraint?.constant = 0
         timelineLineBottomConstraint?.constant = isLastInDay ? -8 : 0
     }
 
@@ -1432,6 +1447,9 @@ final class BearyTimelineCell: UITableViewCell {
             pillLabel.textColor = BearyColors.orange
             pillLabel.font = UIFont.monospacedDigitSystemFont(ofSize: 11.5, weight: .bold)
             pillLabel.text = "已公开"
+            // 追加 6②：已公开 pill 加橙色描边（与填充同色系，倒计时态无描边）。
+            pillBorderColor = BearyColors.alpha(BearyColors.orange, 0.4)
+            pillBackground.layer.borderColor = pillBorderColor.cgColor
             hourglassView.isHidden = true
             pillLabelLeadingWithIcon?.isActive = false
             pillLabelLeadingWithoutIcon?.isActive = true
@@ -1737,6 +1755,9 @@ final class BearyTimelineCell: UITableViewCell {
     private func updateEditRow(entry: Entry) {
         editStatusLabel.text = editStatusText(entry: entry)
         let locked = isEditLocked(entry: entry)
+        // 追加 6③：“编辑已结束”弱化——锁定时文字降 60% 透明度，与倒计时态的
+        // 正常灰色区分；图标与按钮显隐不动。
+        editStatusLabel.textColor = locked ? BearyColors.alpha(BearyColors.gray, 0.6) : BearyColors.gray
         // I11：文案前 13px 图标与状态同步（已结束锁 / 可编辑笔）。
         statusIconView.image = BearyIconImages.image(named: locked ? "icon_lock" : "icon_edit", pointSize: 13)
         editButton.isHidden = locked
@@ -1918,11 +1939,15 @@ final class BearyTimelineCell: UITableViewCell {
         let pillTextColor: UIColor
         let pillFont: UIFont
         let hourglassTint: UIColor
+        // 追加 6②：pill 描边按态区分——蓝 pill（未公开）加蓝描边，倒计时态
+        // （清底灰字）无描边；已公开橙描边在 configure 分支。
+        let pillStroke: UIColor
         if isCountdown {
             pillBg = .clear
             pillTextColor = BearyColors.gray
             pillFont = UIFont.systemFont(ofSize: 13)
             hourglassTint = BearyColors.gray
+            pillStroke = .clear
         } else {
             // C6：动态色上的 0.13 透明度走 BearyColors.alpha（Common lane 提供），
             // 不再对动态色直接 withAlphaComponent（深浅解析会失真）。
@@ -1930,12 +1955,15 @@ final class BearyTimelineCell: UITableViewCell {
             pillTextColor = BearyColors.blue
             pillFont = UIFont.monospacedDigitSystemFont(ofSize: 11.5, weight: .bold)
             hourglassTint = BearyColors.blue
+            pillStroke = BearyColors.alpha(BearyColors.blue, 0.4)
         }
         let apply = {
             self.pillBackground.backgroundColor = pillBg
             self.pillLabel.textColor = pillTextColor
             self.pillLabel.font = pillFont
             self.hourglassView.tintColor = hourglassTint
+            self.pillBorderColor = pillStroke
+            self.pillBackground.layer.borderColor = pillStroke.cgColor
             self.pillLabel.text = newText
             self.hourglassView.isHidden = hideHourglass
             self.pillLabelLeadingWithIcon?.isActive = !hideHourglass
@@ -4296,18 +4324,12 @@ class BearyTimelineViewController: UIViewController {
         return sections
     }
 
+    /// 追加 6①：日组标题统一格式——此前今天/昨天带“今天 · / 昨天 · ”前缀、
+    /// 更早的日期没有前缀，同页内格式不统一；统一为一律“X 月 X 日”
+    /// （当日面板表头是另一组件，口径不动）。
     private func dayTitleForMs(_ ms: Int) -> String {
         guard let comps = BearyBeijingDay.components(ofMs: ms) else { return "" }
-        let label = "\(comps.month) 月 \(comps.day) 日"
-        guard let today = BearyBeijingDay.todayComponents() else { return label }
-        if today.year == comps.year && today.month == comps.month && today.day == comps.day {
-            return "今天 · \(label)"
-        }
-        guard let yesterday = BearyBeijingDay.shifted(year: today.year, month: today.month, day: today.day, byDays: -1) else { return label }
-        if yesterday.year == comps.year && yesterday.month == comps.month && yesterday.day == comps.day {
-            return "昨天 · \(label)"
-        }
-        return label
+        return "\(comps.month) 月 \(comps.day) 日"
     }
 
     private func emptyView(title: String, subtitle: String, actionTitle: String?, action: (() -> Void)?, iconName: String = "icon_tray", actionOutlined: Bool = false) -> UIView {
@@ -4662,7 +4684,7 @@ extension BearyTimelineViewController: UITableViewDataSource, UITableViewDelegat
             return UITableViewCell()
         }
         cell.configure(entry: sections[indexPath.section].entries[indexPath.row])
-        // 第 14 项 B：竖线按日组拼线——首行 top 8、末行 bottom -8、中间行 0/0。
+        // 第 14 项 B：竖线按日组拼线——追加 6⑤后首行 top 0（连到第一张卡片）、末行 bottom -8、中间行 0/0。
         cell.setTimelineLineEdges(
             isFirstInDay: indexPath.row == 0,
             isLastInDay: indexPath.row == sections[indexPath.section].entries.count - 1

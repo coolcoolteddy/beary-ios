@@ -233,6 +233,9 @@ class BearyProfileViewController: UIViewController {
     /// 头像失败时恢复的首字母（与当前显示名同源）。
     private var avatarFallbackLetter: String?
     private var profileLoadFailed = false
+    /// 验证组⑨：仅 profile 接口 404 才判“用户不存在”；断网等其他失败仍属“加载失败”。
+    /// 与 profileLoadFailed 分开：后者仍用于空态门控（2155 行），不受 404 区分影响。
+    private var profileNotFound = false
     private var currentTab: ProfileTab = .diary
     private var diaryEntries: [Entry] = []
     private var likedEntries: [Entry] = []
@@ -1315,6 +1318,7 @@ class BearyProfileViewController: UIViewController {
         switch result {
         case .success(let profileValue):
             profileLoadFailed = false
+            profileNotFound = false
             profile = profileValue
             movedToHandle = profileValue.movedTo
             // F14：改名信号页内提示一次（容器未接线，见 movedToHandle 注释）。
@@ -1331,8 +1335,9 @@ class BearyProfileViewController: UIViewController {
                 // handle 目标的标签列表必须等 profile 解析出 id 才能拉。
                 loadTab(forceReload: true)
             }
-        case .failure:
+        case .failure(let error):
             profileLoadFailed = true
+            profileNotFound = { if case .notFound = error { return true } else { return false } }()
             // G12：二选一取“保留整套旧头”：已有旧资料时名字/头像/封面/统计一律不动，
             // 仅 toast 说明并以脚部重试/下拉刷新作重试入口；无旧资料时才落到统一失败态。
             if profile == nil {
@@ -2315,7 +2320,7 @@ class BearyProfileViewController: UIViewController {
         titleLabel.adjustsFontForContentSizeCategory = true
         titleLabel.textColor = BearyColors.ink
         titleLabel.textAlignment = .center
-        titleLabel.text = profileLoadFailed && profile == nil ? "该用户不存在" : "加载失败"
+        titleLabel.text = profileNotFound && profile == nil ? "该用户不存在" : "加载失败"
         let retryButton = UIButton(type: .system)
         retryButton.translatesAutoresizingMaskIntoConstraints = false
         retryButton.setTitle("重试", for: .normal)
@@ -2344,7 +2349,7 @@ class BearyProfileViewController: UIViewController {
         // 80 包重试统一：失败脚部补“网络好像不太顺”副标题（与时间线失败态同文案），
         // 用户不存在时不补副标题；按钮已与首页失败行同款描边 pill。
         var errorArranged: [UIView] = [iconView, titleLabel]
-        if !(profileLoadFailed && profile == nil) {
+        if !(profileNotFound && profile == nil) {
             let subtitleLabel = UILabel()
             subtitleLabel.translatesAutoresizingMaskIntoConstraints = false
             subtitleLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13))

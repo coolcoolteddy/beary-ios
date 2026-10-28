@@ -1386,7 +1386,12 @@ final class BearySettingsViewController: UIViewController {
             DispatchQueue.main.async {
                 guard let self = self else { return }
                 switch result {
-                case .success:
+                case .success(let resp):
+                    // 验证组④：注销返回的 delete_at 必须持久化——/me 不下发该字段，
+                    // 不存则退出后冷静期截止日无从得知；登录成功（注销取消）时清除，见登录页。
+                    if let deleteAt = resp.deleteAt {
+                        UserDefaults.standard.set(deleteAt, forKey: "bearyPendingDeleteAt")
+                    }
                     // 网页口径：提示后 1.2 秒回首页；原生等价为提示后走 onAccountDeleted（容器清态并关闭本页）。
                     // 审计 P2：1.2 秒窗口内 isDeleting 保持 true，直至 onAccountDeleted 执行后才复位，
                     // 防止窗口内重复点注销。
