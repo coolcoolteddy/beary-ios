@@ -1807,9 +1807,10 @@ final class BearySettingsViewController: UIViewController {
         badgeRow.alignment = .center
 
         // 系统通知设置：无推送后端，不编推送开关；只给打开 iOS 设置的真实入口。
+        // 2026-10-28 Li 令：设置里通知按钮图标换成铃铛（icon_bell），不再用齿轮。
         let systemDetail = makeLabel(font: UIFont.systemFont(ofSize: 13), color: BearyColors.gray)
         systemDetail.text = "去系统设置"
-        let systemContent = makeRow(title: "系统通知设置", detailLabel: systemDetail, iconName: "icon_settings")
+        let systemContent = makeRow(title: "系统通知设置", detailLabel: systemDetail, iconName: "icon_bell")
         let systemButton = UIButton(type: .custom)
         systemButton.accessibilityLabel = "系统通知设置"
         systemButton.addTarget(self, action: #selector(openSystemSettings), for: .touchUpInside)
