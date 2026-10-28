@@ -36,6 +36,7 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate {
     private var trashHasMore = false
     private var trashLoading = false
     private var trashLoadingMore = false
+    private var trashSilentRefreshing = false
     private var trashFirstLoadFailed = false
     private var trashLoginEmpty = false
     private var trashBusyIdentifiers: Set<String> = []
@@ -334,6 +335,19 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate {
         if trashLoading {
             return
         }
+        // 回收站同步落盘：桶已存在时先读本地秒显（不转菊花），再静默整桶重拉对齐；
+        // 桶不存在时走现行网络首拉（菊花 + 失败态口径一字不动）。
+        if let uid = SessionManager.shared.currentUser?.id,
+           let localItems = BearyTrashSyncStore.loadAll(accountId: uid) {
+            trashFirstLoadFailed = false
+            trashLoginEmpty = false
+            trashHasMore = false
+            trashItems = localItems
+            updateListRowsIncrementally()
+            renderStateViews()
+            silentRefreshTrash()
+            return
+        }
         trashLoading = true
         trashFirstLoadFailed = false
         trashLoginEmpty = false
@@ -375,8 +389,61 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate {
         }
     }
 
+    /// 静默刷新对齐：整桶重拉（deleted_at DESC 游标翻页到空）后整批覆盖本地，
+    /// 行变化走增量更新（无变化时各行原地不动，不碰表）；失败静默（401 仍走登录态），不弹 toast、不动菊花。
+    private func silentRefreshTrash() {
+        if trashSilentRefreshing || trashLoading || trashLoadingMore {
+            return
+        }
+        guard let uid = SessionManager.shared.currentUser?.id else { return }
+        trashSilentRefreshing = true
+        fetchTrashSilentPage(accountId: uid, before: nil, beforeId: nil, accumulated: [])
+    }
+
+    private func fetchTrashSilentPage(accountId: Int, before: String?, beforeId: String?, accumulated: [TrashItem]) {
+        BearyAPI.shared.fetchTrash(before: before, beforeId: beforeId) { [weak self] result in
+            DispatchQueue.main.async {
+                guard let self = self else { return }
+                switch result {
+                case .failure(let error):
+                    self.trashSilentRefreshing = false
+                    if case .unauthorized = error {
+                        self.onRequireLogin?()
+                    }
+                    // 其他失败静默：保留本地显示，下次进页重刷。
+                case .success(let page):
+                    let all = accumulated + page.items
+                    if page.items.count < 50 {
+                        self.trashSilentRefreshing = false
+                        // 去重保底（游标页理论上不交叠；重复 id 进桶会在页内渲染成两行，故先清掉）。
+                        var seen: Set<String> = []
+                        let deduped = all.filter { seen.insert($0.id).inserted }
+                        // uid 启动时捕获一路透传：中途切号也不把旧账号数据写进新账号桶。
+                        BearyTrashSyncStore.saveAll(accountId: accountId, items: deduped)
+                        // 增量更新：无变化时各行原地不动（见 updateListRowsIncrementally）。
+                        self.trashItems = deduped
+                        self.trashHasMore = false
+                        self.updateListRowsIncrementally()
+                        self.renderStateViews()
+                    } else {
+                        guard let last = page.items.last, let lastDeletedAt = last.deletedAt else {
+                            // 游标缺失无法续翻：丢弃半截结果，保留旧桶与旧显示。
+                            self.trashSilentRefreshing = false
+                            return
+                        }
+                        self.fetchTrashSilentPage(accountId: accountId, before: "\(lastDeletedAt)", beforeId: last.id, accumulated: all)
+                    }
+                }
+            }
+        }
+    }
+
     private func loadMoreIfNeeded() {
         if trashLoading || trashLoadingMore || trashHasMore == false {
+            return
+        }
+        // 静默刷新在途时不互动续拉（它本来就要拉全桶，续拉只会交错写表）。
+        if trashSilentRefreshing {
             return
         }
         guard let lastItem = trashItems.last else { return }
@@ -735,6 +802,9 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate {
                     // by publish_at (a restored diary is private, never public).
                     self.showToast(message: "已恢复为私密")
                     self.removeRow(identifier: identifier)
+                    if let uid = SessionManager.shared.currentUser?.id {
+                        BearyTrashSyncStore.removeItem(accountId: uid, entryId: identifier)
+                    }
                     self.onRestored?(trashValue)
                 case .failure(let error):
                     if case .unauthorized = error {
@@ -772,6 +842,9 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate {
                     switch result {
                     case .success:
                         self.removeRow(identifier: identifier)
+                        if let uid = SessionManager.shared.currentUser?.id {
+                            BearyTrashSyncStore.removeItem(accountId: uid, entryId: identifier)
+                        }
                         self.onPurged?(trashValue)
                     case .failure(let error):
                         if case .unauthorized = error {

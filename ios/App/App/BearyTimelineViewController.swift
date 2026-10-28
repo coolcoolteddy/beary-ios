@@ -2129,6 +2129,21 @@ class BearyTimelineViewController: UIViewController {
     /// 缓存是“先显示、后台再对齐”的底子，过期由每次切日的静默刷新纠正，
     /// 不设 TTL（当日数据变化只来自本人的写/删/公开操作，见删除时的清缓存）。
     private var dayEntriesCache: [String: [Entry]] = [:]
+    /// 全量同步落盘：落盘是 dayEntriesCache 的持久层，不是第二套真相——
+    /// 读顺序永远是内存 → 落盘 → 网络；每次网络日成功都同时写内存与落盘。
+    private func cacheDayEntries(key: String, entries: [Entry]) {
+        dayEntriesCache[key] = entries
+        if let uid = SessionManager.shared.currentUser?.id {
+            BearyEntrySyncStore.saveDay(accountId: uid, dayKey: key, entries: entries)
+        }
+    }
+    /// 落盘读：命中则同步回填内存（调用方按内存命中同款处理 + 静默刷新）。
+    private func diskCachedDayEntries(key: String) -> [Entry]? {
+        guard let uid = SessionManager.shared.currentUser?.id,
+              let disk = BearyEntrySyncStore.loadDay(accountId: uid, dayKey: key) else { return nil }
+        dayEntriesCache[key] = disk
+        return disk
+    }
     /// 相邻日预取在途集合（key=北京日）：独立通道专用，与正向单槽
     /// （dayKeyForLoad + dayState）完全分开；同日只发一次，失败不留痕。
     private var dayPrefetchInFlight: Set<String> = []
@@ -2453,6 +2468,13 @@ class BearyTimelineViewController: UIViewController {
         // （后台刷新虽会纠正，但“先闪后纠”本身就是要修的闪烁）。
         for key in dayEntriesCache.keys {
             dayEntriesCache[key]?.removeAll { $0.id == entryId }
+        }
+        // 落盘同清：否则切回该日会先闪出已删的旧行（静默刷新虽会纠正，但先闪后纠同样要修）。
+        if let uid = SessionManager.shared.currentUser?.id {
+            BearyEntrySyncStore.removeEntry(accountId: uid, entryId: entryId)
+            // 回收站桶同增：删帖即进回收站，下次进回收站页先读本地就能看到该条
+            //（桶不存在时不建半截桶，进页走网络首拉；下次静默刷新用服务端值纠正残差）。
+            BearyTrashSyncStore.prependDeleted(accountId: uid, entry: entry)
         }
         let newSections = currentSections()
         var rowDeletes: [IndexPath] = []
@@ -3899,7 +3921,9 @@ class BearyTimelineViewController: UIViewController {
         let reduceMotion = UIAccessibility.isReduceMotionEnabled
         let commitDaySwitch = { [weak self] in
             guard let self = self, self.staggerGeneration == switchGeneration, self.selectedDayKey == key else { return }
-            if let cached = self.dayEntriesCache[key] {
+            // 缓存分两层：内存命中，或落盘命中（全量同步/既往日拉取已落盘；
+            // 落盘命中时同步回填内存，同款处理 + 静默刷新）。
+            if let cached = self.dayEntriesCache[key] ?? self.diskCachedDayEntries(key: key) {
                 // N2 缓存命中：整表重载仍保留——换日整表重载是 66 包闪退修法，
                 // 本批不动该回归点；缓存使重载直接渲染出数据，不再有
                 // “空面板等网络”的白屏，时间线行因数据未变不闪（reloadData
@@ -4075,7 +4099,8 @@ class BearyTimelineViewController: UIViewController {
                 case .success(let list):
                     strongSelf.dayEntries = list.entries ?? []
                     // N2：成功回包写入日缓存（失败不写）；静默刷新比对签名。
-                    strongSelf.dayEntriesCache[key] = strongSelf.dayEntries
+                    // 写透：内存与落盘同写（见 cacheDayEntries）。
+                    strongSelf.cacheDayEntries(key: key, entries: strongSelf.dayEntries)
                     dayUnchanged = (clear == false && oldDaySignatures == strongSelf.dayEntries.map { strongSelf.entrySignature($0) })
                     // B-G7: patch the timeline copy from the fresh day-panel copy
                     // before reload, so both copies render the same state.
@@ -4192,7 +4217,7 @@ class BearyTimelineViewController: UIViewController {
                     switch result {
                     case .success(let list):
                         if strongSelf.dayKeyForLoad == next && strongSelf.dayState == .loading { return }
-                        strongSelf.dayEntriesCache[next] = list.entries ?? []
+                        strongSelf.cacheDayEntries(key: next, entries: list.entries ?? [])
                     case .failure:
                         break
                     }

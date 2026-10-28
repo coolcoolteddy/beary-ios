@@ -20,13 +20,13 @@ enum APIError: Error {
 
 // MARK: - 数据模型
 
-struct EmoteCount: Decodable {
+struct EmoteCount: Codable {
     var emote: String?
     var count: Int?
     var mine: Bool?
 }
 
-struct Quote: Decodable {
+struct Quote: Codable {
     var id: String?
     var content: String?
     var images: [String]?
@@ -46,7 +46,9 @@ struct Quote: Decodable {
     var authorPlus: Int?
 }
 
-struct Entry: Decodable {
+/// 全量同步落盘用：Entry 加 Encodable（只补编码能力，不改字段语义；
+/// 解码仍走 convertFromSnakeCase，编码配 convertToSnakeCase 往返）。
+struct Entry: Codable {
     var id: String?
     var authorId: Int?
     var authorName: String?
@@ -215,7 +217,9 @@ struct VerifyResponse: Decodable {
 /// 回收站页（服务端 GET /beary/api/trash：{items, has_more}）。
 /// TrashItem / TrashPage 的唯一定义在本文件；BearyTrashViewController 只调方法，
 /// 不再自带同名模型（TR-3 收尾已去重）。
-struct TrashItem: Decodable {
+/// 落盘用：Codable（解码沿用自定义 init 容 String/Int 两种 id；编码固定写 String id，
+/// 与 convertToSnakeCase 配对往返）；删帖进桶用 memberwise init 本地构造。
+struct TrashItem: Codable {
     var id: String
     var content: String?
     var createdAt: Int?
@@ -249,6 +253,29 @@ struct TrashItem: Decodable {
         publishAt = try container.decodeIfPresent(Int.self, forKey: .publishAt)
         deletedAt = try container.decodeIfPresent(Int.self, forKey: .deletedAt)
         daysLeft = try container.decodeIfPresent(Int.self, forKey: .daysLeft)
+    }
+
+    /// 本地构造（删帖进回收站桶）：id 即 entryIdentifier；deletedAt 为删除时刻毫秒，
+    /// daysLeft 按服务端 30 天保留口径；下次静默刷新用服务端值纠正残差。
+    init(id: String, content: String?, createdAt: Int?, publishAt: Int?, deletedAt: Int?, daysLeft: Int?) {
+        self.id = id
+        self.content = content
+        self.createdAt = createdAt
+        self.publishAt = publishAt
+        self.deletedAt = deletedAt
+        self.daysLeft = daysLeft
+    }
+
+    /// 落盘编码：id 固定写 String（解码端 String 分支命中）；其余字段与解码同名，
+    /// 编码策略 convertToSnakeCase 与解码端 convertFromSnakeCase 配对。
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(id, forKey: .id)
+        try container.encodeIfPresent(content, forKey: .content)
+        try container.encodeIfPresent(createdAt, forKey: .createdAt)
+        try container.encodeIfPresent(publishAt, forKey: .publishAt)
+        try container.encodeIfPresent(deletedAt, forKey: .deletedAt)
+        try container.encodeIfPresent(daysLeft, forKey: .daysLeft)
     }
 }
 
