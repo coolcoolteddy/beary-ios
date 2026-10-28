@@ -742,6 +742,18 @@ class BearyProfileViewController: UIViewController {
     }()
 
     private lazy var coverHeightConstraint: NSLayoutConstraint = coverImageView.heightAnchor.constraint(equalToConstant: 0)
+    /// 弹性封面顶约束（下拉时顶边上伸用；平时恒 0，底边不动）。
+    private lazy var coverTopConstraint: NSLayoutConstraint = coverImageView.topAnchor.constraint(equalTo: headerView.topAnchor)
+    /// 弹性封面模糊层：下拉时随拉量淡入（alpha 过渡），不拦截触摸（点背景换封面不受影响）；
+    /// 系统 material 效果，随深浅模式自适应。
+    private let coverBlurView: UIVisualEffectView = {
+        let blurViewValue = UIVisualEffectView(effect: UIBlurEffect(style: .systemMaterial))
+        blurViewValue.translatesAutoresizingMaskIntoConstraints = false
+        blurViewValue.isUserInteractionEnabled = false
+        blurViewValue.alpha = 0
+        blurViewValue.isHidden = true
+        return blurViewValue
+    }()
     /// 头像上压量（Li 2026-10-26 真机观感定）：-28，头像下沿 = 封面下沿 +56，
     /// 按钮（高 40、底对齐头像底）顶部 = 封面下沿 +16，完全落到封面下方。
     /// 注意：此组数值与网页（-52/按钮压封面 8pt）拉开差距，系 Li 亲眼定版，勿以“对齐网页”改回。
@@ -966,6 +978,13 @@ class BearyProfileViewController: UIViewController {
     private func buildHeader() {
         headerView.backgroundColor = BearyColors.bg
         headerView.addSubview(coverImageView)
+        coverImageView.addSubview(coverBlurView)
+        NSLayoutConstraint.activate([
+            coverBlurView.topAnchor.constraint(equalTo: coverImageView.topAnchor),
+            coverBlurView.leadingAnchor.constraint(equalTo: coverImageView.leadingAnchor),
+            coverBlurView.trailingAnchor.constraint(equalTo: coverImageView.trailingAnchor),
+            coverBlurView.bottomAnchor.constraint(equalTo: coverImageView.bottomAnchor),
+        ])
         headerView.addSubview(avatarImageView)
         headerView.addSubview(avatarLetterLabel)
         headerView.addSubview(avatarRetryButton)
@@ -1017,7 +1036,7 @@ class BearyProfileViewController: UIViewController {
         nameTrailingConstraint = nameLabel.trailingAnchor.constraint(lessThanOrEqualTo: headerView.trailingAnchor, constant: -28)
         nameTrailingConstraint?.isActive = true
         NSLayoutConstraint.activate([
-            coverImageView.topAnchor.constraint(equalTo: headerView.topAnchor),
+            coverTopConstraint,
             coverImageView.leadingAnchor.constraint(equalTo: headerView.leadingAnchor),
             coverImageView.trailingAnchor.constraint(equalTo: headerView.trailingAnchor),
 
@@ -1162,6 +1181,9 @@ class BearyProfileViewController: UIViewController {
     }
 
     private func layoutHeaderForced(widthValue: CGFloat) {
+        // 弹性封面复位：强制量高须按自然态（180/0）量，拉伸态量出的高度会虚增
+        // （下拉刷新回包时量高即此场景）；若仍在下拉中，下一次滚动事件会重新施加拉伸。
+        resetCoverStretch()
         // F17：每次强制布局前先按显隐刷新间距链（隐藏容器间隙归零）。
         updateHeaderSpacing()
         headerLaidOutWidth = widthValue
@@ -2927,10 +2949,40 @@ extension BearyProfileViewController: UITableViewDataSource, UITableViewDelegate
     /// 且本扩展遵循 UITableViewDelegate，故 UIScrollViewDelegate 的
     /// scrollViewDidScroll 由主表滚动触发；横滑墙（wall/badges）未设 delegate，
     /// 即便触发也被 `=== tableView` 守卫挡下。
+    /// 弹性封面：下拉超滚时封面顶边上伸、底边不动（高度 = 180 + 下拉量），
+    /// 宽度仍满头宽、aspectFill 等比铺满，任何下拉量下顶部都不露白；
+    /// 模糊层 alpha = 下拉量 / 120，上限 1，回弹时随拉量同步淡出。
+    /// 只改两条约束常量与模糊层 alpha（尺寸/透明度），不碰其他属性。
+    /// 基线取 -contentInset.top（与顶栏判定同口径，收起态为 0 时即 y < 0）。
+    private func updateCoverStretch(offsetY y: CGFloat, topBaseline: CGFloat) {
+        let pull = topBaseline - y
+        if coverImageView.isHidden || pull <= 0 {
+            resetCoverStretch()
+            return
+        }
+        coverTopConstraint.constant = -pull
+        coverHeightConstraint.constant = 180 + pull
+        setCoverBlurAlpha(min(pull / 120, 1))
+    }
+
+    /// 弹性封面复位（自然态：顶 0、高 180/0、无模糊）。
+    private func resetCoverStretch() {
+        coverTopConstraint.constant = 0
+        coverHeightConstraint.constant = coverImageView.isHidden ? 0 : 180
+        setCoverBlurAlpha(0)
+    }
+
+    private func setCoverBlurAlpha(_ alpha: CGFloat) {
+        coverBlurView.alpha = alpha
+        coverBlurView.isHidden = (alpha == 0)
+    }
+
     func scrollViewDidScroll(_ scrollView: UIScrollView) {
         guard scrollView === tableView else { return }
         let y = scrollView.contentOffset.y
         defer { profileLastScrollOffsetY = y }
+        // 弹性封面（下拉伸缩 + 模糊）：须在顶栏回弹区早退之前跑，否则下拉区永远量不到。
+        updateCoverStretch(offsetY: y, topBaseline: -scrollView.contentInset.top)
         // 顶栏透度批：在顶判定改以 -contentInset.top 为基准（现行收起态内边距 0 时与旧 y<=0 等价）。
         if y <= -scrollView.contentInset.top {
             if profileChromeHidden {
