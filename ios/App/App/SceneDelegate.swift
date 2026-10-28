@@ -530,6 +530,9 @@ final class BearyChromeViewController: UIViewController {
         fab.setImage(topIconImage(named: "IconPlus", systemFallback: "plus"), for: .normal)
         fab.tintColor = .white
         fab.backgroundColor = .clear
+        // FAB 点按只留容器缩放：关掉系统默认高亮压暗（adjustsImageWhenHighlighted
+        // 默认为 true，按下会把白加号画深）；缩放仍走下方的 setFabPressed。
+        fab.adjustsImageWhenHighlighted = false
         fab.addTarget(self, action: #selector(didTapWrite), for: .touchUpInside)
         // F21：FAB 按压缩放（网页 .fab:active scale(.93)，beary.html:371）。
         // 缩放改在容器层：玻璃+阴影+按钮一起缩；拖动变形时容器 transform 只留
