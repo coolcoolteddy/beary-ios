@@ -223,7 +223,7 @@ class BearyEditProfileViewController: UIViewController {
         return fieldValue
     }()
 
-    /// F15：网页 ed-subnote 口径——12 灰、仅「改名后 7 天内不能再改」一行；
+    /// F15：网页 ed-subnote 口径——12 灰、仅「修改后 7 天内不能更改」一行；
     /// 旧三规则合并长提示取消（格式规则改由占位文案 + 保存校验承担）。
     private let hintLabel: UILabel = {
         let labelValue = UILabel()
@@ -232,7 +232,7 @@ class BearyEditProfileViewController: UIViewController {
         labelValue.textColor = BearyColors.gray
         labelValue.numberOfLines = 0
         labelValue.lineBreakMode = .byCharWrapping
-        labelValue.text = "改名后 7 天内不能再改"
+        labelValue.text = "修改后 7 天内不能更改"
         return labelValue
     }()
 
@@ -443,7 +443,8 @@ class BearyEditProfileViewController: UIViewController {
             hintRow.topAnchor.constraint(equalTo: hintWrap.topAnchor, constant: 8),
             hintRow.leadingAnchor.constraint(equalTo: hintWrap.leadingAnchor),
             hintRow.trailingAnchor.constraint(equalTo: hintWrap.trailingAnchor),
-            hintRow.bottomAnchor.constraint(equalTo: hintWrap.bottomAnchor),
+            // 提示行下垫 8pt：文案不再贴着下方的分隔线（原 bottom 0 直贴分隔线）。
+            hintRow.bottomAnchor.constraint(equalTo: hintWrap.bottomAnchor, constant: -8),
         ])
         // C4：只读邮箱行已删除（标签 + 灰值 + 「不在这里修改」整行移除；
         // 邮箱仍在设置页 ID 卡呈现，不在这里改）。
@@ -516,6 +517,10 @@ class BearyEditProfileViewController: UIViewController {
         coverImageView.isUserInteractionEnabled = true
         coverImageView.addGestureRecognizer(UITapGestureRecognizer(target: self, action: #selector(coverTapped)))
         scrollView.addSubview(coverImageView)
+        // 头像半压封面：封面后加会盖住头像的上半 40pt（内容列先加、封面后加，
+        // 层级上封面在内容列之上），故内容列须提至封面之上，头像整圆才可见；
+        // 点按按钮在其后加入、仍保持最上层，换头像点按不受影响。
+        scrollView.bringSubviewToFront(contentStack)
         scrollView.addSubview(avatarTapButton)
         NSLayoutConstraint.activate([
             coverImageView.topAnchor.constraint(equalTo: topRow.bottomAnchor, constant: 16),
