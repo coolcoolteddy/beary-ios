@@ -4,6 +4,7 @@ import Foundation
 // Route 是全 App 统一的页面地址；协调器不再持有网页视图、不执行任何 JS、不加载任何地址，
 // 只把路由交给容器 handler（批一：tab → 原生页切换，单篇 → 原生详情，编辑器 → 原生编辑器）。
 // webURL 保留：它是纯值地址构造（测试断言在用），批一不再有任何调用点加载它。
+// 例外：.editor 的 webURL 为 nil——网页无 /beary/editor 路由（见 webURL 分支注释）。
 
 enum BearyRoute: Equatable {
     case home
@@ -27,6 +28,10 @@ enum BearyRoute: Equatable {
         if path == "/beary/profile" { return .profile }
         if path == "/beary/search" { return .search }
         if path == "/beary/trash" { return .trash }
+        // 5-32：补 /beary/editor 解析——handler 侧 case .editor 早已接
+        // presentComposer（SceneDelegate），此前只是 parse 漏了本分支导致
+        // 深链不可达；本分支补上后即接通，无需改 handler。
+        if path == "/beary/editor" { return .editor }
         if path.hasPrefix("/beary/d/") {
             let id = String(path.dropFirst("/beary/d/".count))
             return id.isEmpty || id.contains("/") ? nil : .entry(id)
@@ -54,7 +59,13 @@ enum BearyRoute: Equatable {
         case .profile: return URL(string: "https://teddyhn.com/beary/profile")
         case .search: return URL(string: "https://teddyhn.com/beary/search")
         case .trash: return URL(string: "https://teddyhn.com/beary/trash")
-        case .editor: return URL(string: "https://teddyhn.com/beary")
+        // 5-32：原值误指回 /beary，现删为 nil——网页端并无 /beary/editor
+        // 独立路由（teddy_beary worker 静态页白名单只含 /beary、/@、/d/、
+        // notifications|timeline|trash|profile；编辑器是 /beary 页内的
+        // #editorModal 弹窗，不是路由）。误指的 URL 比无值更有害，
+        // 故按任务条件删值而非改指 /beary/editor；测试只断言
+        // entry/handle/id 三支的 webURL，本支改 nil 不影响测试。
+        case .editor: return nil
         case .entry(let id): return URL(string: "https://teddyhn.com/beary/d/\(id)")
         case .userByHandle(let handle): return URL(string: "https://teddyhn.com/beary/@\(handle)")
         case .userById(let id): return URL(string: "https://teddyhn.com/beary/u/\(id)")
@@ -76,7 +87,8 @@ final class BearyNavigationCoordinator {
         case "notif": handler(.notifications)
         case "timeline": handler(.timeline)
         case "me": handler(.profile)
-        default: break
+        // 9-2：未知 key 原先静默 break，联调时难发现——记一条日志。
+        default: NSLog("[BearyNavigator] goTab unknown key: %@", key)
         }
     }
 
