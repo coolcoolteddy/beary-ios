@@ -608,8 +608,9 @@ class BearyProfileViewController: UIViewController {
         // （每侧 2pt）；右侧 editButton 间距 8pt，横扩 2pt 后仍余 6pt，不重叠；视觉不变。
         let buttonValue = BearyHit44Button(type: .system)
         buttonValue.translatesAutoresizingMaskIntoConstraints = false
-        // I1：齿轮改图标钮（网页 pfGearBtn 用 beary-more；icon_more 由该 symbol 渲染）。
-        buttonValue.setImage(BearyIconImages.image(named: "icon_more", pointSize: 19), for: .normal)
+        // 2026-10-28 Li 令：设置钮图标语义换回齿轮（icon_settings），不再用三点
+        // （此前 I1 按网页 pfGearBtn 的 beary-more 用 icon_more；现以 Li 口径为准）。
+        buttonValue.setImage(BearyIconImages.image(named: "icon_settings", pointSize: 19), for: .normal)
         buttonValue.tintColor = BearyColors.ink
         buttonValue.accessibilityLabel = "设置"
         buttonValue.layer.borderWidth = 1
