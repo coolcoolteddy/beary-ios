@@ -2192,6 +2192,10 @@ class BearyTimelineViewController: UIViewController {
     /// 的独立覆盖层，只跟随滚动偏移显隐与顶替，不参与表布局、不拦截触摸。
     private let stickyHeaderView = UIView()
     private let stickyHeaderLabel = UILabel()
+    /// 吸顶日期换日过渡标签：与主标签同样式同约束、搭建时一次建好常驻复用
+    /// （不重建）；换日时承载旧日期退场（上滑淡出），主标签承载新日期出场
+    /// （从下方滑入淡入），两者同时走。
+    private let stickyHeaderTransitionLabel = UILabel()
     // 吸顶头状态栏区底色：只盖 view 顶到安全区顶沿这一段（吸顶头自身已盖安全区下方），
     // 与吸顶头同显同隐，滚动内容不再从状态栏区透出。
     private let statusBarBgView = UIView()
@@ -2665,6 +2669,20 @@ class BearyTimelineViewController: UIViewController {
             stickyHeaderLabel.trailingAnchor.constraint(equalTo: stickyHeaderView.trailingAnchor, constant: -16),
             stickyHeaderLabel.bottomAnchor.constraint(equalTo: stickyHeaderView.bottomAnchor, constant: -8),
         ])
+        stickyHeaderTransitionLabel.translatesAutoresizingMaskIntoConstraints = false
+        stickyHeaderTransitionLabel.font = BearyDynamicType.scaledFont(for: UIFont.boldSystemFont(ofSize: 13))
+        stickyHeaderTransitionLabel.adjustsFontForContentSizeCategory = true
+        stickyHeaderTransitionLabel.textColor = BearyColors.gray
+        stickyHeaderTransitionLabel.numberOfLines = 1
+        stickyHeaderTransitionLabel.isUserInteractionEnabled = false
+        stickyHeaderTransitionLabel.isHidden = true
+        stickyHeaderView.addSubview(stickyHeaderTransitionLabel)
+        NSLayoutConstraint.activate([
+            stickyHeaderTransitionLabel.topAnchor.constraint(equalTo: stickyHeaderView.topAnchor, constant: 18),
+            stickyHeaderTransitionLabel.leadingAnchor.constraint(equalTo: stickyHeaderView.leadingAnchor, constant: 36),
+            stickyHeaderTransitionLabel.trailingAnchor.constraint(equalTo: stickyHeaderView.trailingAnchor, constant: -16),
+            stickyHeaderTransitionLabel.bottomAnchor.constraint(equalTo: stickyHeaderView.bottomAnchor, constant: -8),
+        ])
         statusBarBgView.translatesAutoresizingMaskIntoConstraints = false
         statusBarBgView.backgroundColor = BearyColors.bg
         statusBarBgView.isUserInteractionEnabled = false
@@ -2678,8 +2696,9 @@ class BearyTimelineViewController: UIViewController {
         ])
     }
 
-    /// 追加项二：悬浮日期头跟随。只走位置计算、不做 UIView 动画
-    /// （减动效下同样是跟随，无需分支；动画只会出现在滚动驱动的位置变化里）。
+    /// 追加项二：悬浮日期头跟随。位置跟随只走位置计算、不做 UIView 动画
+    /// （减动效下同样是跟随，无需分支）；日期变化时的新旧交替走
+    /// animateStickyDateChange（transform/opacity，减动效下直接换字）。
     /// 当前分区 = 组头已越过悬浮区顶沿、且分区底仍在顶沿下方的最末分区；
     /// 第 0 分区是当日面板时悬浮头全程不出现（面板组头可见时不重复，
     /// 面板行仍占顶时也不抢；面板整体滚出、后续分区接管时才出现）。
@@ -2706,7 +2725,7 @@ class BearyTimelineViewController: UIViewController {
         if current == 0 && selectedDayKey != nil { hideStickyHeader(); return }
         let title = sections[current].title
         if stickyHeaderCurrentSection != current || stickyHeaderCurrentTitle != title {
-            stickyHeaderLabel.text = title
+            animateStickyDateChange(to: title)
             stickyHeaderCurrentSection = current
             stickyHeaderCurrentTitle = title
         }
@@ -2727,6 +2746,51 @@ class BearyTimelineViewController: UIViewController {
         }
     }
 
+    /// 吸顶日期换日动效：旧日期上滑淡出、新日期从下方滑入淡入，同时走、
+    /// 只动 transform/opacity，不改布局属性。只在日期真正变化时调用
+    /// （updateStickyHeader 的变化分支）；快速连续换日时先打断在途动效
+    /// 再起新动效，不排队、不拖滚动、不残留旧日期。减动效下直接换字。
+    private func animateStickyDateChange(to title: String) {
+        // 打断在途动效并复位（旧动效 completion 以 finished=false 回调，
+        // 其清理分支会跳过，状态由这里统一复位）。
+        stickyHeaderLabel.layer.removeAllAnimations()
+        stickyHeaderTransitionLabel.layer.removeAllAnimations()
+        stickyHeaderLabel.transform = .identity
+        stickyHeaderLabel.alpha = 1
+        stickyHeaderTransitionLabel.isHidden = true
+        stickyHeaderTransitionLabel.transform = .identity
+        stickyHeaderTransitionLabel.alpha = 1
+        let wasHidden = stickyHeaderView.isHidden
+        let oldTitle = stickyHeaderLabel.text
+        stickyHeaderLabel.text = title
+        guard !UIAccessibility.isReduceMotionEnabled else { return }
+        guard !wasHidden, let oldTitle = oldTitle, !oldTitle.isEmpty else {
+            // 首次出现（刚从隐藏恢复）：只有出场（从下方滑入淡入），无旧日期可退。
+            stickyHeaderLabel.transform = CGAffineTransform(translationX: 0, y: 8)
+            stickyHeaderLabel.alpha = 0
+            UIView.animate(withDuration: 0.25, delay: 0, options: [.curveEaseOut]) {
+                self.stickyHeaderLabel.transform = .identity
+                self.stickyHeaderLabel.alpha = 1
+            }
+            return
+        }
+        stickyHeaderTransitionLabel.text = oldTitle
+        stickyHeaderTransitionLabel.isHidden = false
+        stickyHeaderLabel.transform = CGAffineTransform(translationX: 0, y: 8)
+        stickyHeaderLabel.alpha = 0
+        UIView.animate(withDuration: 0.25, delay: 0, options: [.curveEaseOut]) {
+            self.stickyHeaderTransitionLabel.transform = CGAffineTransform(translationX: 0, y: -8)
+            self.stickyHeaderTransitionLabel.alpha = 0
+            self.stickyHeaderLabel.transform = .identity
+            self.stickyHeaderLabel.alpha = 1
+        } completion: { finished in
+            guard finished else { return }
+            self.stickyHeaderTransitionLabel.isHidden = true
+            self.stickyHeaderTransitionLabel.transform = .identity
+            self.stickyHeaderTransitionLabel.alpha = 1
+        }
+    }
+
     private func hideStickyHeader() {
         if stickyHeaderView.isHidden == false {
             stickyHeaderView.isHidden = true
@@ -2734,6 +2798,14 @@ class BearyTimelineViewController: UIViewController {
         statusBarBgView.isHidden = true
         stickyHeaderCurrentSection = nil
         stickyHeaderCurrentTitle = nil
+        // 换日动效复位：隐藏时在途动效一律打断，不留残影给下次出现。
+        stickyHeaderLabel.layer.removeAllAnimations()
+        stickyHeaderTransitionLabel.layer.removeAllAnimations()
+        stickyHeaderLabel.transform = .identity
+        stickyHeaderLabel.alpha = 1
+        stickyHeaderTransitionLabel.isHidden = true
+        stickyHeaderTransitionLabel.transform = .identity
+        stickyHeaderTransitionLabel.alpha = 1
         if let topConstraint = stickyHeaderTopConstraint, topConstraint.constant != 0 {
             topConstraint.constant = 0
         }
