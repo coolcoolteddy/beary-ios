@@ -47,6 +47,13 @@ enum BearyColors {
     }
 }
 
+/// 6-10 减动效门控 helper（全修批统一口径，签名固定）：调用点把
+/// `animated: true` 改成 `animated: BearyMotion.animated(true)`；开启系统
+/// 减动效时一律返回 false，present/dismiss 即瞬时落终值。
+enum BearyMotion {
+    static func animated(_ animated: Bool) -> Bool { UIAccessibility.isReduceMotionEnabled ? false : animated }
+}
+
 // MARK: - Sheet/居中模态统一口径（B 批）
 
 /// 底 sheet 与居中模态的共享 chrome：顶部圆角 20、抓手 40×4（顶距 10、圆角 2）、
@@ -90,7 +97,7 @@ enum BearyGlass {
     }
 
     /// 中性玻璃 tint：bg 52%（顶栏/底栏同款）。
-    static var neutralTint: UIColor { BearyColors.bg.withAlphaComponent(0.52) }
+    static var neutralTint: UIColor { BearyColors.alpha(BearyColors.bg, 0.52) }
 }
 
 /// 玻璃按钮：BearyHit44Button + 背部玻璃底。只换按钮底质，不动图标/文字/尺寸/44pt 热区；
