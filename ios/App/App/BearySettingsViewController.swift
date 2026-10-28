@@ -1916,8 +1916,23 @@ final class BearySettingsViewController: UIViewController {
         termsButton.addTarget(self, action: #selector(openTermsText), for: .touchUpInside)
         termsButton.bearyAddPressHaptic()
         let termsRow = makeSettingsTappableRow(content: termsContent, button: termsButton)
-        let group = makeGroupCard(title: "隐私", rows: [privacyRow, termsRow])
+        // iCity：已拉黑用户行（解除入口，不放他人主页）。
+        let blockedDetail = makeLabel(font: UIFont.systemFont(ofSize: 13), color: BearyColors.gray)
+        blockedDetail.text = "查看"
+        let blockedContent = makeRow(title: "已拉黑用户", detailLabel: blockedDetail)
+        let blockedButton = UIButton(type: .custom)
+        blockedButton.accessibilityLabel = "已拉黑用户"
+        blockedButton.addTarget(self, action: #selector(openBlockedUsers), for: .touchUpInside)
+        blockedButton.bearyAddPressHaptic()
+        let blockedRow = makeSettingsTappableRow(content: blockedContent, button: blockedButton)
+        let group = makeGroupCard(title: "隐私", rows: [privacyRow, termsRow, blockedRow])
         privacyWrap.addArrangedSubview(group.card)
+    }
+
+    @objc private func openBlockedUsers() {
+        let vc = BearyBlockedUsersViewController()
+        vc.modalPresentationStyle = .fullScreen
+        present(vc, animated: BearyMotion.animated(true))
     }
 
     @objc private func badgeSwitchValueChanged(_ sender: UISwitch) {
@@ -2103,7 +2118,7 @@ enum BearyLegalTexts {
 
 信息说明
 
-beary 日记文字、图片。私密期仅本人可见，7 天后只送达给自己，不自动公开；作者主动公开后进入 24 小时倒计时，期间可取消
+beary 日记文字、图片。默认私密，仅本人可见；写完即按所选可见，公开与私密可随时切换
 
 点赞记录你点赞的日记 ID、时间
 
@@ -2112,6 +2127,8 @@ beary 日记文字、图片。私密期仅本人可见，7 天后只送达给自
 收藏记录你收藏的日记 ID、时间。收藏列表仅你本人可见，但收藏动作会通知日记作者
 
 通知记录点赞、收藏、回应产生的互动通知，以及我们发送的系统通知
+
+行为记录仅记操作类型、目标 ID 与时间（如打开 App、详情阅读停留时长、搜索结果点按），不记日记正文、标题与搜索词原文；游客阅读仅记匿名计数，用于年度报告与风控
 
 MC 白名单申请Minecraft 用户名、申请时间、审批状态（站长可见，用于审批；保留 1 年）
 
@@ -2207,9 +2224,9 @@ teddy-theme主题偏好普通1 年
 
 账户信息账户存续期间注销申请后 7 天冷静期，期满自动软删除
 
-私密日记你删除后立即清除
+私密日记删除后进回收站 30 天，期满彻底删除
 
-公开日记永久（设计如此）不可删除
+公开日记删除后进回收站 30 天，期满彻底删除
 
 互动与通知记录账户存续期间随账户注销处理
 
@@ -2245,11 +2262,11 @@ Cookie见 2.4过期自动失效
 
 6.3 删除权
 
-私密日记：beary 私密期内可自行删除；
+私密日记与公开日记：均可自行删除，进回收站 30 天；
 
 账户注销：登录后在 /account 自助注销。注销有 7 天冷静期：期间登录可取消，7 天后正式生效。生效后你的邮箱将被清空，日记保留但作者显示为"已注销用户"；
 
-注意：已公开的日记按设计不可删除，发布前请确认。
+注意：公开后仍可改回私密，但公开期间已被查看或转载的内容无法收回，发布前请确认。
 
 6.4 撤回同意权
 
@@ -2379,13 +2396,13 @@ Cookie见 2.4过期自动失效
 
 发布登录后可发布，文字上限 2000 字，图片最多 9 张
 
-私密期发布后 7 天，仅本人可见
+私密期默认私密，仅本人可见，可随时公开或改回私密
 
-送达与公开7 天到期只送达给自己，不自动公开；作者主动公开后进入 24 小时倒计时，期间可取消，倒计时到期公开后不可撤销
+公开与私密写完选公开或私密，默认私密；公开与私密可随时切换
 
 编辑期发布后 15 分钟内可编辑，超时锁死
 
-删除私密期内可删；公开后不可删除、不可修改
+删除公开与私密均可删除，进回收站 30 天；编辑仅 15 分钟内
 
 评论本站不设文字评论功能
 
@@ -2397,13 +2414,13 @@ Cookie见 2.4过期自动失效
 
 分享已公开日记可通过单篇链接分享给任何人
 
-主动公开已送达的私密日记可主动公开，公开前有 24 小时倒计时，期间可取消；倒计时到期公开后不可撤销、不可删除
+主动公开私密日记可随时公开，公开后仍可改回私密；但公开期间已被查看或转载的内容无法收回
 
 通知点赞、收藏、小熊回应会生成通知告知作者；我们也可通过通知栏发送系统消息（如欢迎信、重要变更）
 
 2.2 发布前确认
 
-因公开后不可删除、不可修改，发布前请务必确认：
+因公开后仍可改回私密，但公开期间已被查看或转载的内容无法收回，发布前请务必确认：
 
 内容不含隐私信息（身份证号、住址、电话等）；
 
@@ -2731,5 +2748,138 @@ private final class BearyDiagnosticsViewController: UIViewController {
             self?.reloadLog()
         })
         present(alert, animated: BearyMotion.animated(true))
+    }
+}
+
+/// iCity 已拉黑用户列表（设置页内页，不新开文件）：GET /beary/api/blocks 只返回 id，
+/// 无用户查询接口，故行内仅显示“用户 + id”；每行“解除拉黑”调 DELETE 后刷新列表。
+/// 解除成功同时发 bearyDidBlockUser 广播？不——解除是反向操作，不触发各页清理；
+/// 各页的拉黑清理只由拉黑广播驱动，解除后下次拉取即恢复显示。
+final class BearyBlockedUsersViewController: UIViewController, UITableViewDataSource, UITableViewDelegate {
+    private let tableView = UITableView(frame: .zero, style: .plain)
+    private let closeButton = BearyHit44Button(type: .system)
+    private let titleLabel = UILabel()
+    private let emptyLabel = UILabel()
+    private var blockedIds: [Int] = []
+    private var unblockingIds: Set<Int> = []
+
+    override func viewDidLoad() {
+        super.viewDidLoad()
+        view.backgroundColor = BearyColors.bg
+        closeButton.translatesAutoresizingMaskIntoConstraints = false
+        closeButton.setTitle("关闭", for: .normal)
+        closeButton.setTitleColor(BearyColors.ink, for: .normal)
+        closeButton.titleLabel?.font = UIFont.systemFont(ofSize: 15)
+        closeButton.addTarget(self, action: #selector(closeTapped), for: .touchUpInside)
+        closeButton.bearyAddPressFeedback()
+        titleLabel.translatesAutoresizingMaskIntoConstraints = false
+        titleLabel.font = UIFont.systemFont(ofSize: 17, weight: .bold)
+        titleLabel.textColor = BearyColors.ink
+        titleLabel.textAlignment = .center
+        titleLabel.text = "已拉黑用户"
+        let topBar = UIView()
+        topBar.translatesAutoresizingMaskIntoConstraints = false
+        topBar.addSubview(closeButton)
+        topBar.addSubview(titleLabel)
+        emptyLabel.translatesAutoresizingMaskIntoConstraints = false
+        emptyLabel.font = UIFont.systemFont(ofSize: 15)
+        emptyLabel.textColor = BearyColors.gray
+        emptyLabel.textAlignment = .center
+        emptyLabel.text = "暂无已拉黑用户"
+        emptyLabel.isHidden = true
+        tableView.translatesAutoresizingMaskIntoConstraints = false
+        tableView.dataSource = self
+        tableView.delegate = self
+        tableView.backgroundColor = BearyColors.bg
+        tableView.separatorColor = BearyColors.line
+        tableView.register(UITableViewCell.self, forCellReuseIdentifier: "BearyBlockedCell")
+        view.addSubview(topBar)
+        view.addSubview(tableView)
+        view.addSubview(emptyLabel)
+        NSLayoutConstraint.activate([
+            topBar.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
+            topBar.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            topBar.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            topBar.heightAnchor.constraint(equalToConstant: 52),
+            closeButton.leadingAnchor.constraint(equalTo: topBar.leadingAnchor, constant: 16),
+            closeButton.centerYAnchor.constraint(equalTo: topBar.centerYAnchor),
+            titleLabel.centerXAnchor.constraint(equalTo: topBar.centerXAnchor),
+            titleLabel.centerYAnchor.constraint(equalTo: topBar.centerYAnchor),
+            tableView.topAnchor.constraint(equalTo: topBar.bottomAnchor),
+            tableView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            tableView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            tableView.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor),
+            emptyLabel.centerXAnchor.constraint(equalTo: view.centerXAnchor),
+            emptyLabel.centerYAnchor.constraint(equalTo: view.centerYAnchor),
+        ])
+        reloadBlocked()
+    }
+
+    private func reloadBlocked() {
+        BearyAPI.shared.fetchBlocks { [weak self] result in
+            DispatchQueue.main.async {
+                guard let self = self else { return }
+                switch result {
+                case .success(let resp):
+                    self.blockedIds = resp.blocked ?? []
+                    self.emptyLabel.isHidden = !self.blockedIds.isEmpty
+                    self.tableView.reloadData()
+                case .failure:
+                    BearyToast.show(in: self.view, message: "加载失败，请重试", aboveFAB: false)
+                }
+            }
+        }
+    }
+
+    func tableView(_ tableView: UITableView, numberOfRowsInSection section: Int) -> Int {
+        return blockedIds.count
+    }
+
+    func tableView(_ tableView: UITableView, cellForRowAt indexPath: IndexPath) -> UITableViewCell {
+        let cell = tableView.dequeueReusableCell(withIdentifier: "BearyBlockedCell", for: indexPath)
+        cell.backgroundColor = BearyColors.bg
+        cell.selectionStyle = .none
+        let userId = blockedIds[indexPath.row]
+        cell.textLabel?.text = "用户 \(userId)"
+        cell.textLabel?.font = UIFont.systemFont(ofSize: 15)
+        cell.textLabel?.textColor = BearyColors.ink
+        let button = UIButton(type: .system)
+        button.setTitle("解除拉黑", for: .normal)
+        button.setTitleColor(BearyColors.blue, for: .normal)
+        button.titleLabel?.font = UIFont.systemFont(ofSize: 15)
+        button.tag = userId
+        button.isEnabled = !unblockingIds.contains(userId)
+        button.addTarget(self, action: #selector(unblockTapped(_:)), for: .touchUpInside)
+        button.bearyAddPressFeedback()
+        button.sizeToFit()
+        cell.accessoryView = button
+        return cell
+    }
+
+    @objc private func unblockTapped(_ sender: UIButton) {
+        let userId = sender.tag
+        guard !unblockingIds.contains(userId) else { return }
+        unblockingIds.insert(userId)
+        sender.isEnabled = false
+        BearyAPI.shared.unblockUser(userId: userId) { [weak self] result in
+            DispatchQueue.main.async {
+                guard let self = self else { return }
+                self.unblockingIds.remove(userId)
+                switch result {
+                case .success:
+                    self.blockedIds.removeAll { $0 == userId }
+                    self.emptyLabel.isHidden = !self.blockedIds.isEmpty
+                    self.tableView.reloadData()
+                    BearyToast.show(in: self.view, message: "已解除拉黑", aboveFAB: false)
+                case .failure:
+                    BearyToast.show(in: self.view, message: "解除失败，请重试", aboveFAB: false)
+                    self.tableView.reloadData()
+                }
+            }
+        }
+    }
+
+    @objc private func closeTapped() {
+        dismiss(animated: BearyMotion.animated(true))
     }
 }
