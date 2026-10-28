@@ -348,7 +348,6 @@ final class BearyCalendarDayButton: UIButton {
             // P1-9：标记行宽上限 = 本格宽（fillEqually 均分后的格宽，随屏宽走，
             // 不写死 pt 值，避免窄屏 320 下 37pt 格被 42pt+ 双状态标记撑出、
             // 宽屏下又无谓裁剪）；超宽部分由 markView 居中裁剪消化。
-            // 图例行 markView 不在此约束内（图例走自然换行，不裁剪）。
             markView.widthAnchor.constraint(lessThanOrEqualTo: widthAnchor),
             heightAnchor.constraint(equalToConstant: 50),
         ])
@@ -431,8 +430,6 @@ final class BearyCalendarCardView: UIView {
     }
 
     var onSelectDay: ((BearyCalendarDay) -> Void)?
-    /// 图例行高落定后透传给 VC（VC 再跑 refreshHeaderHeight）。
-    var onLegendHeightSettled: (() -> Void)?
     var onToggleView: (() -> Void)?
     var onPrevious: (() -> Void)?
     var onNext: (() -> Void)?
@@ -447,8 +444,6 @@ final class BearyCalendarCardView: UIView {
     private let prevButton = BearyHit44Button(type: .system)
     private let nextButton = BearyHit44Button(type: .system)
     private let gridStack = UIStackView()
-    private let weekNoteLabel = UILabel()
-    private let monthLegendStack = UIStackView()
     private var dayButtons: [BearyCalendarDayButton] = []
     /// 按日期 key 复用的日期按钮（网页 calReuseGrid 口径）：切换视图/数据刷新时
     /// 只移动/新建格子，不整表重建；复用节点不重播月格入场错峰。
@@ -544,46 +539,12 @@ final class BearyCalendarCardView: UIView {
         gridStack.translatesAutoresizingMaskIntoConstraints = false
         gridStack.axis = .vertical
 
-        weekNoteLabel.translatesAutoresizingMaskIntoConstraints = false
-        weekNoteLabel.text = "橙 = 已公开 · 蓝 = 未公开"
-        weekNoteLabel.font = UIFont.systemFont(ofSize: 12)
-        weekNoteLabel.textColor = BearyColors.gray
-        weekNoteLabel.textAlignment = .center
-
-        monthLegendStack.translatesAutoresizingMaskIntoConstraints = false
-        monthLegendStack.axis = .vertical
-        // B-G13: legend no longer forced into 4+3 rows; it wraps naturally
-        // (web .cal-legend flex-wrap + justify-content:center), row count decided
-        // by width. Stack is .fill so the flow view gets full width.
-        monthLegendStack.alignment = .fill
-        monthLegendStack.spacing = 2
-        let legendFlowView = BearyCalendarLegendFlowView()
-        legendFlowView.onHeightSettled = { [weak self] in self?.onLegendHeightSettled?() }
-        legendFlowView.setPairs([
-            legendPair(marks: BearyCalendarMarks.marks(published: 1, unpublished: 0), text: "1 篇"),
-            legendPair(marks: BearyCalendarMarks.marks(published: 2, unpublished: 0), text: "2 篇"),
-            legendPair(marks: BearyCalendarMarks.marks(published: 3, unpublished: 0), text: "3 篇"),
-            legendPair(marks: BearyCalendarMarks.marks(published: 4, unpublished: 0), text: "4 篇"),
-            legendPair(marks: BearyCalendarMarks.marks(published: 5, unpublished: 0), text: "5 篇"),
-            legendPair(marks: BearyCalendarMarks.marks(published: 6, unpublished: 0), text: "6 篇"),
-            legendPair(marks: BearyCalendarMarks.marks(published: 7, unpublished: 0), text: "7 篇起"),
-        ])
-        monthLegendStack.addArrangedSubview(legendFlowView)
-        let legendNote = UILabel()
-        legendNote.text = "橙 = 已公开 · 蓝 = 未公开 · 形状旁的异色小点 = 两种状态都有"
-        legendNote.font = UIFont.systemFont(ofSize: 12)
-        legendNote.textColor = BearyColors.gray
-        legendNote.textAlignment = .center
-        legendNote.numberOfLines = 0
-        monthLegendStack.addArrangedSubview(legendNote)
-
-        let outer = UIStackView(arrangedSubviews: [topRow, weekdayRow, gridStack, weekNoteLabel, monthLegendStack])
+        let outer = UIStackView(arrangedSubviews: [topRow, weekdayRow, gridStack])
         outer.translatesAutoresizingMaskIntoConstraints = false
         outer.axis = .vertical
         outer.spacing = 0
         outer.setCustomSpacing(8, after: topRow)
         outer.setCustomSpacing(6, after: weekdayRow)
-        outer.setCustomSpacing(10, after: gridStack)
         addSubview(outer)
         NSLayoutConstraint.activate([
             outer.topAnchor.constraint(equalTo: topAnchor, constant: 14),
@@ -612,20 +573,6 @@ final class BearyCalendarCardView: UIView {
     override func traitCollectionDidChange(_ previousTraitCollection: UITraitCollection?) {
         super.traitCollectionDidChange(previousTraitCollection)
         layer.borderColor = BearyColors.line.cgColor
-    }
-
-    private func legendPair(marks: [BearyCalendarMark], text: String) -> UIStackView {
-        let markView = BearyCalendarMarkView()
-        markView.marks = marks
-        let label = UILabel()
-        label.text = text
-        label.font = UIFont.systemFont(ofSize: 12)
-        label.textColor = BearyColors.gray
-        let pair = UIStackView(arrangedSubviews: [markView, label])
-        pair.axis = .horizontal
-        pair.spacing = 5
-        pair.alignment = .center
-        return pair
     }
 
     func setTitle(_ text: String) {
@@ -754,8 +701,6 @@ final class BearyCalendarCardView: UIView {
             }
             gridStack.addArrangedSubview(row)
         }
-        weekNoteLabel.isHidden = (mode != .week)
-        monthLegendStack.isHidden = (mode != .month)
     }
 
     @objc private func didTapToggle() {
@@ -777,99 +722,6 @@ final class BearyCalendarCardView: UIView {
     @objc private func didTapDay(_ sender: BearyCalendarDayButton) {
         guard let day = sender.dayValue else { return }
         onSelectDay?(day)
-    }
-}
-
-/// B-G13 legend natural-wrap container (native equivalent of web .cal-legend
-/// flex-wrap): column gap 14, row gap 8, each line centered; row count is decided
-/// by the actual width, never forced. Height is an explicit constraint updated in
-/// layoutSubviews once the width is known (the parent stack is .fill, so width is
-/// exact); the view controller re-checks header height after layout (see
-/// viewDidLayoutSubviews) so the legend is never clipped on first layout.
-private final class BearyCalendarLegendFlowView: UIView {
-    private var pairs: [UIView] = []
-    private var heightConstraint: NSLayoutConstraint?
-    /// 图例行高落定回调：行高随宽度最终落定后（可能晚于 VC 的布局检查），
-    /// 通知 VC 再跑一次表头高度，避免统计行被压。回调经主队列合并投递，
-    /// 不在布局过程中同步重入表头计算。
-    var onHeightSettled: (() -> Void)?
-    private var settledCallbackPending = false
-
-    override init(frame: CGRect) {
-        super.init(frame: frame)
-        backgroundColor = .clear
-        isOpaque = false
-        heightConstraint = heightAnchor.constraint(equalToConstant: 15)
-        heightConstraint?.isActive = true
-    }
-
-    required init?(coder: NSCoder) {
-        return nil
-    }
-
-    func setPairs(_ pairs: [UIView]) {
-        for old in self.pairs {
-            old.removeFromSuperview()
-        }
-        self.pairs = pairs
-        for pair in pairs {
-            addSubview(pair)
-        }
-        setNeedsLayout()
-    }
-
-    private func pairSize(_ pair: UIView) -> CGSize {
-        let size = pair.systemLayoutSizeFitting(UIView.layoutFittingCompressedSize)
-        return CGSize(width: ceil(size.width), height: ceil(size.height))
-    }
-
-    private func lines(forWidth width: CGFloat) -> [[UIView]] {
-        var lines: [[UIView]] = [[]]
-        var lineWidth: CGFloat = 0
-        for pair in pairs {
-            let size = pairSize(pair)
-            let extra = lines[lines.count - 1].isEmpty ? size.width : 14 + size.width
-            if lineWidth + extra > width && !lines[lines.count - 1].isEmpty {
-                lines.append([pair])
-                lineWidth = size.width
-            } else {
-                lines[lines.count - 1].append(pair)
-                lineWidth += extra
-            }
-        }
-        return lines
-    }
-
-    override func layoutSubviews() {
-        super.layoutSubviews()
-        let width = bounds.width
-        guard width > 0 else { return }
-        let broken = lines(forWidth: width)
-        var y: CGFloat = 0
-        for (lineIndex, line) in broken.enumerated() {
-            let sizes = line.map { pairSize($0) }
-            let totalWidth = sizes.reduce(0) { $0 + $1.width } + CGFloat(max(0, line.count - 1)) * 14
-            let lineHeight = sizes.map { $0.height }.max() ?? 0
-            var x = (width - totalWidth) / 2
-            if x < 0 { x = 0 }
-            for (index, pair) in line.enumerated() {
-                let size = sizes[index]
-                pair.frame = CGRect(x: x, y: y + (lineHeight - size.height) / 2, width: size.width, height: size.height)
-                x += size.width + 14
-            }
-            y += lineHeight
-            if lineIndex < broken.count - 1 { y += 8 }
-        }
-        if heightConstraint?.constant != y {
-            heightConstraint?.constant = y
-            if !settledCallbackPending {
-                settledCallbackPending = true
-                DispatchQueue.main.async { [weak self] in
-                    self?.settledCallbackPending = false
-                    self?.onHeightSettled?()
-                }
-            }
-        }
     }
 }
 
@@ -2254,11 +2106,9 @@ class BearyTimelineViewController: UIViewController {
             updateStickyHeader()
             return
         }
-        // B-G13: legend flow height is only final after layout (row count depends
-        // on width). If the fitting height now differs from the header height,
-        // refresh it so the legend is never clipped; if it matches, just restore
-        // the height that fittingHeaderHeight temporarily zeroed (no reassign, so
-        // this cannot loop: after a refresh the heights already match).
+        // 表头拟合高度只在布局后才最终落定（随宽度走）。若拟合高度与当前
+        // 表头高度不一致则刷新；若一致，只恢复 fittingHeaderHeight 临时
+        // 清零的高度（不重赋值，不会循环：刷新后高度已一致）。
         let oldHeight = headerContainer.frame.height
         let fitting = fittingHeaderHeight()
         if abs(fitting - oldHeight) > 0.5 {
@@ -2800,9 +2650,6 @@ class BearyTimelineViewController: UIViewController {
         calendarCard.translatesAutoresizingMaskIntoConstraints = false
         calendarCard.onSelectDay = { [weak self] day in
             self?.didSelectCalendarDay(day)
-        }
-        calendarCard.onLegendHeightSettled = { [weak self] in
-            self?.refreshHeaderHeight()
         }
         calendarCard.onToggleView = { [weak self] in
             self?.toggleCalendarView()
