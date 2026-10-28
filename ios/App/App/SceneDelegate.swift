@@ -1912,16 +1912,6 @@ final class BearyChromeViewController: UIViewController {
                 self?.showPage(.home)
             }
         }
-        // A 批空态 CTA 接线：个人主页日记（本人）空态“写一篇”与 FAB 同去向（未登录时 presentComposer 内弹原生登录页）；modal 时先 dismiss 再开编辑器。
-        vc.onWriteEntry = { [weak self] in
-            if modal {
-                self?.dismiss(animated: true) {
-                    self?.presentComposer()
-                }
-            } else {
-                self?.presentComposer()
-            }
-        }
         // C6 卡片上下文菜单编辑/删除：与时间线同口径（编辑→编辑器，删除→确认流程）。
         vc.onEditEntry = { [weak self] entry in
             self?.presentComposerForEdit(entry: entry)

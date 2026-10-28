@@ -163,10 +163,6 @@ class BearyProfileViewController: UIViewController {
     /// C2：齿轮直达设置页，容器接线到设置页（presentSettings）。
     var onOpenAccountSettings: (() -> Void)?
 
-    /// 日记（本人）空态“写一篇”：容器接线到编辑器（与首页 onComposeRequested 同去向）。
-    /// 本批只加按钮与回调，不改 SceneDelegate（容器接线由父级统一处理，避免多线同改 SceneDelegate 冲突）。
-    var onWriteEntry: (() -> Void)?
-
     /// 行内互动成功后调用（详情页 onInteractionChanged 同款签名）：
     /// entryId、点赞数、已赞、已收藏、回应聚合。
     var onInteractionChanged: ((String, Int?, Bool?, Bool?, [EmoteCount]?) -> Void)?
@@ -2260,28 +2256,6 @@ class BearyProfileViewController: UIViewController {
         } else {
             constraints.append(stack.bottomAnchor.constraint(equalTo: container.bottomAnchor, constant: -8))
         }
-        // 空态 CTA（高 44、圆角 22 pill 口径，走 BearyButton 工厂，边框深浅切换
-        // 由工厂 trait 重刷）：仅日记（本人）→ “写一篇”（回调 onWriteEntry，容器接线到编辑器）；
-        // 赞过/收藏空态无 CTA；他人日记空态不加。
-        var emptyCTA: (title: String, action: Selector)?
-        switch currentTab {
-        case .diary:
-            if isOwnProfile { emptyCTA = ("写一篇", #selector(emptyWriteTapped)) }
-        case .liked, .saved:
-            break
-        }
-        if let cta = emptyCTA {
-            let ctaButton = BearyButton(style: .secondaryOutline(.regular))
-            ctaButton.translatesAutoresizingMaskIntoConstraints = false
-            ctaButton.setTitle(cta.title, for: .normal)
-            ctaButton.titleLabel?.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 14, weight: .semibold))
-            ctaButton.titleLabel?.adjustsFontForContentSizeCategory = true
-            ctaButton.contentEdgeInsets = UIEdgeInsets(top: 0, left: 20, bottom: 0, right: 20)
-            ctaButton.heightAnchor.constraint(greaterThanOrEqualToConstant: 44).isActive = true
-            ctaButton.addTarget(self, action: cta.action, for: .touchUpInside)
-            ctaButton.bearyAddPressFeedback()
-            stack.addArrangedSubview(ctaButton)
-        }
         NSLayoutConstraint.activate(constraints)
         // footer 每次渲染新建视图：diary 态的铅笔每次渲染播一次（与网页 innerHTML 重建同款）。
         if let pencilView = graphicView as? BearyPencilView {
@@ -2300,11 +2274,6 @@ class BearyProfileViewController: UIViewController {
             container.frame = CGRect(x: 0, y: 0, width: footerWidth, height: fitted.height)
         }
         return container
-    }
-
-    /// 日记（本人）空态 CTA：只转发 onWriteEntry，跳转归容器。
-    @objc private func emptyWriteTapped() {
-        onWriteEntry?()
     }
 
     private func makeErrorFooter() -> UIView {
