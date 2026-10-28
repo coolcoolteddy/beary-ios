@@ -754,6 +754,80 @@ class BearyProfileViewController: UIViewController {
         blurViewValue.isHidden = true
         return blurViewValue
     }()
+
+    // MARK: - 个人页上滑 header（吸顶背景 + 渐变实色 + 用户名淡入）
+    /// 编排（2026-10-28 Li 点头预览一致）：上滑留一截背景当 header → 继续上滑 header
+    /// 渐变为实色（浅色白 / 深色黑）→ 用户名触到 header 后按遮挡比例在 header 上淡入 →
+    /// 完全上滑后 header 实色 + 用户名完整显示。滚动回调里只改 alpha，不碰约束、
+    /// 不调 layoutIfNeeded、不做图片加载、不改文案；几何只在布局变化时算一次。
+    /// header 是 table 的兄弟视图（不进 table），全程不拦截触摸；modal 顶栏已自带
+    /// 名字时新 header 全程隐藏，避免遮挡返回 / 分享。
+    private let stickyHeaderView: UIView = {
+        let viewValue = UIView()
+        viewValue.translatesAutoresizingMaskIntoConstraints = false
+        viewValue.backgroundColor = BearyColors.bg
+        viewValue.clipsToBounds = true
+        viewValue.isUserInteractionEnabled = false
+        viewValue.isHidden = true
+        return viewValue
+    }()
+
+    /// header 背景图：与封面同一张 UIImage（布局时同步引用，不加载），aspectFill、
+    /// 与封面自然态同框（表框左 / 顶、表宽、180 高），由 header 容器裁剪；
+    /// y=0 时 header 区域像素与封面顶部完全相同、无跳变；上滑后封面走了、header
+    /// 仍留着这截背景。无封面时隐藏，露页面底色。
+    private let stickyHeaderBgImageView: UIImageView = {
+        let imageViewValue = UIImageView()
+        imageViewValue.translatesAutoresizingMaskIntoConstraints = false
+        imageViewValue.backgroundColor = BearyColors.bg
+        imageViewValue.contentMode = .scaleAspectFill
+        imageViewValue.clipsToBounds = true
+        imageViewValue.isUserInteractionEnabled = false
+        return imageViewValue
+    }()
+
+    /// 渐变实色层：UIColor 动态色（浅色白 / 深色黑，随模式自动变），alpha 随上滑
+    /// 在 y 40→140 区间 0→1；分隔线 alpha 跟随它。
+    private let stickyHeaderOverlayView: UIView = {
+        let viewValue = UIView()
+        viewValue.translatesAutoresizingMaskIntoConstraints = false
+        viewValue.backgroundColor = BearyColors.bg
+        viewValue.alpha = 0
+        viewValue.isUserInteractionEnabled = false
+        return viewValue
+    }()
+
+    /// header 用户名：左对齐 17pt 粗体（与内容用户名同文案），alpha = 被 header
+    /// 遮挡的比例；x 与内容用户名同列（表框左 + 28，iPad 600 居中列下自动对齐）。
+    private let stickyHeaderNameLabel: UILabel = {
+        let labelValue = UILabel()
+        labelValue.translatesAutoresizingMaskIntoConstraints = false
+        labelValue.font = UIFont.systemFont(ofSize: 17, weight: .bold)
+        labelValue.textColor = BearyColors.ink
+        labelValue.alpha = 0
+        labelValue.text = "—"
+        labelValue.isUserInteractionEnabled = false
+        return labelValue
+    }()
+
+    private let stickyHeaderDividerView: UIView = {
+        let viewValue = UIView()
+        viewValue.translatesAutoresizingMaskIntoConstraints = false
+        viewValue.backgroundColor = BearyColors.line
+        viewValue.alpha = 0
+        viewValue.isUserInteractionEnabled = false
+        return viewValue
+    }()
+
+    private lazy var stickyHeaderHeightConstraint: NSLayoutConstraint = stickyHeaderView.heightAnchor.constraint(equalToConstant: 56)
+    private lazy var stickyHeaderBgLeadingConstraint: NSLayoutConstraint = stickyHeaderBgImageView.leadingAnchor.constraint(equalTo: stickyHeaderView.leadingAnchor)
+    private lazy var stickyHeaderBgTopConstraint: NSLayoutConstraint = stickyHeaderBgImageView.topAnchor.constraint(equalTo: stickyHeaderView.topAnchor)
+    private lazy var stickyHeaderBgWidthConstraint: NSLayoutConstraint = stickyHeaderBgImageView.widthAnchor.constraint(equalToConstant: 0)
+    private lazy var stickyHeaderNameLeadingConstraint: NSLayoutConstraint = stickyHeaderNameLabel.leadingAnchor.constraint(equalTo: stickyHeaderView.leadingAnchor)
+    private lazy var stickyHeaderNameCenterYConstraint: NSLayoutConstraint = stickyHeaderNameLabel.centerYAnchor.constraint(equalTo: stickyHeaderView.topAnchor, constant: 28)
+    /// 布局时算一次、滚动回调只读：header 底边（view 坐标）与 modal 禁用态。
+    private var stickyHeaderBottom: CGFloat = 0
+    private var stickyHeaderModalDisabled = false
     /// 头像上压量（Li 2026-10-26 真机观感定）：-28，头像下沿 = 封面下沿 +56，
     /// 按钮（高 40、底对齐头像底）顶部 = 封面下沿 +16，完全落到封面下方。
     /// 注意：此组数值与网页（-52/按钮压封面 8pt）拉开差距，系 Li 亲眼定版，勿以“对齐网页”改回。
@@ -841,6 +915,8 @@ class BearyProfileViewController: UIViewController {
             tableView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
         ])
         tableView.tableHeaderView = headerView
+        buildStickyHeader()
+        view.bringSubviewToFront(topBarView)
         view.addSubview(profileSkeletonView)
         let skeletonTop = profileSkeletonView.topAnchor.constraint(equalTo: tableView.topAnchor, constant: 0)
         self.profileSkeletonTopConstraint = skeletonTop
@@ -871,6 +947,7 @@ class BearyProfileViewController: UIViewController {
         layoutHeader()
         updateProfileSkeletonTop()
         updateDynamicLayerColors()
+        updateStickyHeaderLayout()
     }
 
     override func viewWillAppear(_ animated: Bool) {
@@ -941,6 +1018,129 @@ class BearyProfileViewController: UIViewController {
             headerShareToHeaderConstraint.isActive = false
         }
         layoutHeaderForced(widthValue: headerWidthValue)
+        // 上滑 header：modal 顶栏已自带名字时禁用新 header，并按当前 offset 刷新一次态。
+        stickyHeaderModalDisabled = !topBarView.isHidden
+        updateStickyHeaderScroll(offsetY: tableView.contentOffset.y, topBaseline: -tableView.contentInset.top)
+    }
+
+    /// 上滑 header 搭建：容器钉页顶（通宽、高 = 安全区顶 + 56），层级在 table
+    /// 之上、modal 顶栏之下（modal 顶栏在前，返回 / 分享不受影响）；骨架屏后加，
+    /// 故骨架屏在 header 之上（加载态 header 被骨架盖住，无干扰）。
+    private func buildStickyHeader() {
+        view.addSubview(stickyHeaderView)
+        stickyHeaderView.addSubview(stickyHeaderBgImageView)
+        stickyHeaderView.addSubview(stickyHeaderOverlayView)
+        stickyHeaderView.addSubview(stickyHeaderNameLabel)
+        stickyHeaderView.addSubview(stickyHeaderDividerView)
+        NSLayoutConstraint.activate([
+            stickyHeaderView.topAnchor.constraint(equalTo: view.topAnchor),
+            stickyHeaderView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            stickyHeaderView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            stickyHeaderHeightConstraint,
+            stickyHeaderBgLeadingConstraint,
+            stickyHeaderBgTopConstraint,
+            stickyHeaderBgWidthConstraint,
+            stickyHeaderBgImageView.heightAnchor.constraint(equalToConstant: 180),
+            stickyHeaderOverlayView.topAnchor.constraint(equalTo: stickyHeaderView.topAnchor),
+            stickyHeaderOverlayView.leadingAnchor.constraint(equalTo: stickyHeaderView.leadingAnchor),
+            stickyHeaderOverlayView.trailingAnchor.constraint(equalTo: stickyHeaderView.trailingAnchor),
+            stickyHeaderOverlayView.bottomAnchor.constraint(equalTo: stickyHeaderView.bottomAnchor),
+            stickyHeaderNameLeadingConstraint,
+            stickyHeaderNameCenterYConstraint,
+            stickyHeaderNameLabel.trailingAnchor.constraint(lessThanOrEqualTo: stickyHeaderView.trailingAnchor, constant: -16),
+            stickyHeaderNameLabel.heightAnchor.constraint(equalToConstant: 22),
+            stickyHeaderDividerView.leadingAnchor.constraint(equalTo: stickyHeaderView.leadingAnchor),
+            stickyHeaderDividerView.trailingAnchor.constraint(equalTo: stickyHeaderView.trailingAnchor),
+            stickyHeaderDividerView.bottomAnchor.constraint(equalTo: stickyHeaderView.bottomAnchor),
+            stickyHeaderDividerView.heightAnchor.constraint(equalToConstant: 0.5),
+        ])
+    }
+
+    /// 上滑 header 布局：只在布局变化时跑（viewDidLayoutSubviews），滚动回调不进这里。
+    /// 约束常量带变化守卫（不变不赋值），避免布局轮次成环；背景图与文案只在
+    /// 变化时同步（同引用 / 同文案不重复赋值），覆盖异步头像 / 封面加载完成态。
+    private func updateStickyHeaderLayout() {
+        let safeTop = view.safeAreaInsets.top
+        let width = view.bounds.width
+        let tableFrame = tableView.frame
+        guard width > 0, tableFrame.width > 0 else { return }
+        stickyHeaderModalDisabled = !topBarView.isHidden
+        // 容器高 = 安全区顶 + 56；底边存下来供滚动回调只读。
+        let headerHeight = safeTop + 56
+        if stickyHeaderHeightConstraint.constant != headerHeight {
+            stickyHeaderHeightConstraint.constant = headerHeight
+        }
+        stickyHeaderBottom = headerHeight
+        // 背景图与封面自然态同框（表框左 / 顶、表宽、180 高），由容器裁剪到
+        // header 范围；y=0 时与封面顶部像素完全相同、无跳变。
+        if stickyHeaderBgLeadingConstraint.constant != tableFrame.minX {
+            stickyHeaderBgLeadingConstraint.constant = tableFrame.minX
+        }
+        if stickyHeaderBgTopConstraint.constant != tableFrame.minY {
+            stickyHeaderBgTopConstraint.constant = tableFrame.minY
+        }
+        if stickyHeaderBgWidthConstraint.constant != tableFrame.width {
+            stickyHeaderBgWidthConstraint.constant = tableFrame.width
+        }
+        // 封面图同步：无封面时藏图、露页面底色；有封面时同引用赋值（不加载）。
+        if coverImageView.isHidden || coverImageView.image == nil {
+            stickyHeaderBgImageView.isHidden = true
+        } else {
+            stickyHeaderBgImageView.isHidden = false
+            if stickyHeaderBgImageView.image !== coverImageView.image {
+                stickyHeaderBgImageView.image = coverImageView.image
+            }
+        }
+        // 用户名：x 与内容用户名同列（表框左 + 28，iPad 600 居中列下自动对齐），
+        // 垂直居中于 56 条带；文案同步（赋值点同步 + 此处兜底）。
+        let nameX = tableFrame.minX + 28
+        if stickyHeaderNameLeadingConstraint.constant != nameX {
+            stickyHeaderNameLeadingConstraint.constant = nameX
+        }
+        let nameCenterY = safeTop + 28
+        if stickyHeaderNameCenterYConstraint.constant != nameCenterY {
+            stickyHeaderNameCenterYConstraint.constant = nameCenterY
+        }
+        if stickyHeaderNameLabel.text != nameLabel.text {
+            stickyHeaderNameLabel.text = nameLabel.text
+        }
+        // modal 顶栏可见时新 header 全程隐藏（顶栏已自带名字）。
+        if stickyHeaderModalDisabled {
+            stickyHeaderView.isHidden = true
+        }
+    }
+
+    /// 上滑 header 滚动态：只改 alpha 与显隐（overlay、header 名、分隔线），
+    /// 不碰约束、不调 layoutIfNeeded、不做图片加载、不改文案；几何取布局时
+    /// 存好的 stickyHeaderBottom，不在滚动回调里重算。须在顶栏回弹区早退之前跑，
+    /// 否则下拉区（y≤0）header 藏不住。
+    private func updateStickyHeaderScroll(offsetY y: CGFloat, topBaseline: CGFloat) {
+        guard !stickyHeaderModalDisabled else {
+            stickyHeaderView.isHidden = true
+            return
+        }
+        let up = y - topBaseline
+        guard up > 0 else {
+            // y≤0（顶部回弹 / 下拉伸缩区）：header 整体隐藏，不与封面拉伸打架。
+            stickyHeaderView.isHidden = true
+            return
+        }
+        stickyHeaderView.isHidden = false
+        // 渐变实色：y 40→140 连续 0→1，不分档量化；分隔线 alpha 跟随。
+        let overlayAlpha = min(max((up - 40) / 100, 0), 1)
+        stickyHeaderOverlayView.alpha = overlayAlpha
+        stickyHeaderDividerView.alpha = overlayAlpha
+        // 用户名淡入：被 header 遮挡的比例（内容用户名换算到页坐标的 top，
+        // header 底边减去它，除以名高，钳制 0…1；下滑对称恢复）。
+        let nameTop = nameLabel.convert(nameLabel.bounds, to: view).origin.y
+        let nameHeight = nameLabel.bounds.height
+        let occlusion: CGFloat
+        if nameHeight > 0 {
+            occlusion = min(max((stickyHeaderBottom - nameTop) / nameHeight, 0), 1)
+        } else {
+            occlusion = 0
+        }
+        stickyHeaderNameLabel.alpha = occlusion
     }
 
     private func buildTopBar() {
@@ -1360,6 +1560,7 @@ class BearyProfileViewController: UIViewController {
             // 仅 toast 说明并以脚部重试/下拉刷新作重试入口；无旧资料时才落到统一失败态。
             if profile == nil {
                 nameLabel.text = "—"
+                stickyHeaderNameLabel.text = "—"
             } else {
                 BearyToast.show(in: view, message: "资料刷新失败，显示的是上次内容，下拉可重试", aboveFAB: false)
             }
@@ -1375,6 +1576,7 @@ class BearyProfileViewController: UIViewController {
             ?? (profileValue.handle.map { "@" + $0 })
             ?? "TA"
         nameLabel.text = displayNameValue
+        stickyHeaderNameLabel.text = displayNameValue
         if let handle = profileValue.handle, !handle.isEmpty {
             handleLabel.text = "@" + handle
             handleLabel.isHidden = false
@@ -3052,6 +3254,8 @@ extension BearyProfileViewController: UITableViewDataSource, UITableViewDelegate
         defer { profileLastScrollOffsetY = y }
         // 弹性封面（下拉伸缩 + 模糊）：须在顶栏回弹区早退之前跑，否则下拉区永远量不到。
         updateCoverStretch(offsetY: y, topBaseline: -scrollView.contentInset.top)
+        // 上滑 header（滚动态只改 alpha）：同样须在早退之前跑，否则下拉区 header 藏不住。
+        updateStickyHeaderScroll(offsetY: y, topBaseline: -scrollView.contentInset.top)
         // 顶栏透度批：在顶判定改以 -contentInset.top 为基准（现行收起态内边距 0 时与旧 y<=0 等价）。
         if y <= -scrollView.contentInset.top {
             if profileChromeHidden {
