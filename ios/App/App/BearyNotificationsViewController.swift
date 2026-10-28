@@ -142,6 +142,16 @@ final class BearyNotificationsViewController: UIViewController {
     private var displayRows: [NotificationDisplayRow] = []
     private var isSysExpanded = false
     private var isActExpanded = false
+    /// seen 水印（fix 3）：未读高亮与未读点分离——点只看 read，未读即亮；
+    /// 高亮只给“上次进页后新到”的未读。进页时：displayWatermark 取上次
+    /// 进页存下的时间戳（无存值 = 首次进页，高亮全部未读），随后把本次
+    /// 进页时间存回；离页（pageDidLeave）只清进页旗，不清水印——
+    /// 同一次访问内（弹信件框等遮盖不算离页）水印不动。纯本地表现层，
+    /// 不调已读接口、不改服务端状态；“全部已读”行为不变。
+    /// 键按账号隔离（SessionManager.currentUser.id），防切号后旧水印
+    /// 压住新号旧消息的高亮。
+    private var displayHighlightWatermarkMs: Int64?
+    private var notifPageEntered = false
     private var totalCount: Int?
     private var unreadTotal = 0
     private var sysUnreadTotal = 0
@@ -512,6 +522,7 @@ final class BearyNotificationsViewController: UIViewController {
     /// 故容器 showPage 在离页时显式调本钩子，只覆盖缓存写回（进页刷新
     /// 已有 showPage 的 refreshListIfUnreadChanged，不重复）。
     func pageDidLeave() {
+        notifPageEntered = false
         saveNotificationCache()
     }
 
@@ -748,10 +759,43 @@ final class BearyNotificationsViewController: UIViewController {
         }
     }
 
+    /// seen 水印键（按账号隔离；未登录时用无账号键）。
+    private var seenWatermarkKey: String {
+        if let uid = SessionManager.shared.currentUser?.id {
+            return "beary_notif_seen_ms_\(uid)"
+        }
+        return "beary_notif_seen_ms"
+    }
+
+    /// 进页标记（fix 3）：同一次访问内只记一次——容器 showPage 与
+    /// viewWillAppear 可能同一次访问内各调一次 refreshListIfUnreadChanged，
+    /// 第二次不得把水印刷成现在（否则本 visit 的高亮当场全灭）。
+    /// 记完立即刷可见行高亮（无服务端变化时不整页重拉，行也不闪）。
+    private func markNotifPageEntered() {
+        guard !notifPageEntered else { return }
+        notifPageEntered = true
+        displayHighlightWatermarkMs = (UserDefaults.standard.object(forKey: seenWatermarkKey) as? NSNumber)?.int64Value
+        UserDefaults.standard.set(Int64(Date().timeIntervalSince1970 * 1000), forKey: seenWatermarkKey)
+        applyReadAppearanceToVisibleRows()
+    }
+
+    /// 高亮判定：未读 且（首次进页 或 创建时间晚于上次进页水印）。
+    private func shouldHighlight(item: NotificationItem) -> Bool {
+        guard (item.read ?? true) == false else { return false }
+        guard let watermark = displayHighlightWatermarkMs else { return true }
+        return Int64(item.createdAt ?? 0) > watermark
+    }
+
+    /// 卡面高亮：组内任一未读满足 shouldHighlight 即亮（点仍看任一未读）。
+    private func shouldHighlightCard(indices: [Int]) -> Bool {
+        return indices.contains(where: { $0 < items.count && shouldHighlight(item: items[$0]) })
+    }
+
     /// 门控重拉入口（供容器未来在 showPage(.notif) 时调用，本次未改容器）：
     /// 未读数变了才整页重拉，没变只刷角标；与无条件 refresh() 不同——
     /// 重拍 tab 与登录翻转仍走 refresh()，不走这里。
     func refreshListIfUnreadChanged() {
+        markNotifPageEntered()
         // C-G4：401 清场后（hasSuccessfulLoad 已复位 false）仍要能拉新账号
         // 首拉——旗立起时无条件整页拉取，不走“未成功加载过则返回”的早退。
         if needsReloadAfterUnauthorized {
@@ -888,6 +932,8 @@ final class BearyNotificationsViewController: UIViewController {
         lastFullLoadVersion = nil
         lastFullLoadLatestId = nil
         needsReloadAfterUnauthorized = true
+        notifPageEntered = false
+        displayHighlightWatermarkMs = nil
         publishUnread(0)
         cancelCardAnimation()
         BearyAPI.shared.bumpAuthEpoch()
@@ -1103,9 +1149,9 @@ final class BearyNotificationsViewController: UIViewController {
         displayRows = rows
     }
 
-    /// 点卡只展开/收起：整区高度生长（网页 .nt-syslist grid-template-rows
-    /// 0fr→1fr .34s 缓动口径），不是逐行插入；chevron 转 .3s。
-    /// 展开：先插行（高 0）再整体长到满高；收起：先整体缩到 0 再删行。
+    /// 点卡只展开/收起：展开是整区高度生长（网页 .nt-syslist grid-template-rows
+    /// 0fr→1fr .34s 缓动口径），chevron 转 .3s；收起无动画、直接删行落终值
+    /// （多行高度插值必留残影，见收起分支注释）。
     /// 减动效直接重载，不播动画；C-G11：动画中同卡再点可反转（网页
     /// grid-template-rows 过渡天然可反转），异卡仍忽略、防坐标错乱。
     private func toggleCard(kind: NotificationRowKind) {
@@ -1201,42 +1247,25 @@ final class BearyNotificationsViewController: UIViewController {
                 tableView.reloadData()
                 return
             }
-            isCardAnimating = true
-            cardAnimatingKind = kind
-            cardAnimatingExpanding = false
-            for index in collapsing {
-                zeroHeightRows.insert(index)
+            // 收起无动画：多行高度插值动画在约束打架下必留残影——
+            // 行高往 0 缩时头像 42 + 上下 16 的内容装不进，bottomGuard
+            // （999）与行高约束互斥，文本被纵向压扁；几十行同时插值，
+            // 蓝底与竖线逐帧上移叠出拖影；App 动效铁律亦禁高度逐帧动画。
+            // 故收起直接落终值（与减动效路径一致）：先改展开态、重建行表、
+            // 再 .none 删行；chevron 同步直落，不转。
+            if isSysKind {
+                isSysExpanded = false
+            } else {
+                isActExpanded = false
             }
+            let deleted = collapsing.map({ IndexPath(row: $0, section: 0) })
+            rebuildDisplayRows()
+            tableView.performBatchUpdates({
+                self.tableView.deleteRows(at: deleted, with: .none)
+            }, completion: nil)
             if let cardCell = tableView.cellForRow(at: IndexPath(row: cardRow, section: 0)) as? BearyNotificationCell {
-                UIView.animate(withDuration: 0.30) {
-                    cardCell.setChevronExpanded(false)
-                }
+                cardCell.setChevronExpanded(false)
             }
-            cardAnimationGeneration += 1
-            let generation = cardAnimationGeneration
-            let animator = UIViewPropertyAnimator(duration: 0.34, timingParameters: UICubicTimingParameters(controlPoint1: CGPoint(x: 0.32, y: 0.72), controlPoint2: CGPoint(x: 0.35, y: 1)))
-            animator.addAnimations({
-                self.tableView.beginUpdates()
-                self.tableView.endUpdates()
-            })
-            animator.addCompletion({ [weak self] _ in
-                guard let strongSelf = self, generation == strongSelf.cardAnimationGeneration else { return }
-                strongSelf.zeroHeightRows.removeAll()
-                if isSysKind {
-                    strongSelf.isSysExpanded = false
-                } else {
-                    strongSelf.isActExpanded = false
-                }
-                let deleted = collapsing.map({ IndexPath(row: $0, section: 0) })
-                strongSelf.rebuildDisplayRows()
-                strongSelf.tableView.performBatchUpdates({
-                    strongSelf.tableView.deleteRows(at: deleted, with: .none)
-                }, completion: nil)
-                strongSelf.cardAnimatingKind = nil
-                strongSelf.isCardAnimating = false
-            })
-            cardAnimator = animator
-            animator.startAnimation()
         }
     }
 
@@ -1591,14 +1620,16 @@ final class BearyNotificationsViewController: UIViewController {
                 if let itemIndex = row.itemIndex, itemIndex < items.count {
                     let item = items[itemIndex]
                     let isSystemStyle = item.type == "system" || item.type == "letter"
-                    cell.setReadAppearance(isUnread: (item.read ?? true) == false, isSystemStyle: isSystemStyle)
+                    cell.setReadAppearance(isUnread: (item.read ?? true) == false, isSystemStyle: isSystemStyle, highlight: shouldHighlight(item: item))
                 }
             case .sysCard:
-                let anyUnread = items.contains(where: { $0.type == "system" && ($0.read ?? true) == false })
-                cell.setCardReadAppearance(anyUnread: anyUnread)
+                let sysIndices = items.indices.filter({ items[$0].type == "system" })
+                let anyUnread = sysIndices.contains(where: { (items[$0].read ?? true) == false })
+                cell.setCardReadAppearance(anyUnread: anyUnread, highlight: shouldHighlightCard(indices: Array(sysIndices)))
             case .actCard:
-                let anyUnread = items.contains(where: { ($0.type ?? "") != "system" && ($0.type ?? "") != "letter" && ($0.read ?? true) == false })
-                cell.setCardReadAppearance(anyUnread: anyUnread)
+                let actIndices = items.indices.filter({ (items[$0].type ?? "") != "system" && (items[$0].type ?? "") != "letter" })
+                let anyUnread = actIndices.contains(where: { (items[$0].read ?? true) == false })
+                cell.setCardReadAppearance(anyUnread: anyUnread, highlight: shouldHighlightCard(indices: Array(actIndices)))
             }
         }
     }
@@ -1952,7 +1983,8 @@ extension BearyNotificationsViewController: UITableViewDataSource, UITableViewDe
                     timeMs: latest.createdAt,
                     anyUnread: anyUnread,
                     isSystem: true,
-                    expanded: isSysExpanded
+                    expanded: isSysExpanded,
+                    highlight: shouldHighlightCard(indices: Array(sysIndices))
                 )
             }
         case .actCard:
@@ -1968,16 +2000,17 @@ extension BearyNotificationsViewController: UITableViewDataSource, UITableViewDe
                     timeMs: latest.createdAt,
                     anyUnread: anyUnread,
                     isSystem: false,
-                    expanded: isActExpanded
+                    expanded: isActExpanded,
+                    highlight: shouldHighlightCard(indices: Array(actIndices))
                 )
             }
         case .letter:
             if let itemIndex = row.itemIndex {
-                cell.configure(with: items[itemIndex], nested: false)
+                cell.configure(with: items[itemIndex], nested: false, highlight: shouldHighlight(item: items[itemIndex]))
             }
         case .sysItem, .actItem:
             if let itemIndex = row.itemIndex {
-                cell.configure(with: items[itemIndex], nested: true)
+                cell.configure(with: items[itemIndex], nested: true, highlight: shouldHighlight(item: items[itemIndex]))
             }
         }
         return cell
@@ -2523,6 +2556,17 @@ private class BearyNotificationCell: UITableViewCell {
         return separator
     }()
 
+    /// 未读高亮专用底 view（fix 1）：不再用 contentView 全幅底色——
+    /// 嵌套行高亮从竖线右侧（x=18）起，竖线左侧 gutter 永远是页面底色；
+    /// 顶层行/卡面从行左缘（x=0）起，与旧观感一致。
+    private let unreadBgView: UIView = {
+        let v = UIView()
+        v.translatesAutoresizingMaskIntoConstraints = false
+        v.backgroundColor = .clear
+        return v
+    }()
+    private var unreadBgLeadingConstraint: NSLayoutConstraint?
+
     /// 嵌套行左侧竖线（网页 .nt-sysin border-left 2px line 色，x=20 起，
     /// 随展开区整列连续；仅嵌套行显示，卡面/顶层行隐藏）。
     private let nestedLineView: UIView = {
@@ -2546,6 +2590,8 @@ private class BearyNotificationCell: UITableViewCell {
         bodyStack.axis = .vertical
         bodyStack.spacing = 2
         kindBadgeView.addSubview(kindIconView)
+        contentView.addSubview(unreadBgView)
+        contentView.sendSubviewToBack(unreadBgView)
         contentView.addSubview(avatarImageView)
         contentView.addSubview(avatarFallbackLabel)
         contentView.addSubview(avatarIconView)
@@ -2568,7 +2614,12 @@ private class BearyNotificationCell: UITableViewCell {
         separatorLeadingConstraint?.isActive = true
         dotTrailingToContentConstraint?.isActive = true
         dotTrailingToChevronConstraint?.isActive = false
+        unreadBgLeadingConstraint = unreadBgView.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 0)
+        unreadBgLeadingConstraint?.isActive = true
         NSLayoutConstraint.activate([
+            unreadBgView.topAnchor.constraint(equalTo: contentView.topAnchor),
+            unreadBgView.bottomAnchor.constraint(equalTo: contentView.bottomAnchor),
+            unreadBgView.trailingAnchor.constraint(equalTo: contentView.trailingAnchor),
             avatarImageView.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 14),
             avatarImageView.widthAnchor.constraint(equalToConstant: 42),
             avatarImageView.heightAnchor.constraint(equalToConstant: 42),
@@ -2664,6 +2715,8 @@ private class BearyNotificationCell: UITableViewCell {
         avatarLeadingConstraint?.constant = 16
         separatorLeadingConstraint?.constant = 0
         nestedLineView.isHidden = true
+        unreadBgView.backgroundColor = .clear
+        unreadBgLeadingConstraint?.constant = 0
         dotTrailingToContentConstraint?.isActive = true
         dotTrailingToChevronConstraint?.isActive = false
     }
@@ -2719,37 +2772,38 @@ private class BearyNotificationCell: UITableViewCell {
         chevronView.transform = expanded ? CGAffineTransform(rotationAngle: CGFloat.pi) : CGAffineTransform.identity
     }
 
-    /// C-G10：已读态直接改 class——只动背景与未读点，不重载行。
-    /// 普通行未读底蓝 7%、sys 行蓝 9%（与 configure 同口径）。
-    func setReadAppearance(isUnread: Bool, isSystemStyle: Bool) {
-        let background = isUnread ? BearyColors.alpha(BearyColors.blue, isSystemStyle ? 0.09 : 0.07) : BearyColors.bg
-        contentView.backgroundColor = background
-        backgroundColor = background
+    /// 未读高亮与未读点分离：高亮只画在 unreadBgView（嵌套行从竖线右侧
+    /// x=18 起，顶层行/卡面从行左缘起），cell 与 contentView 永远是页面底色；
+    /// 点仍只看未读（highlight=false 时点照常亮，见 seen 水印规则）。
+    private func applyUnreadHighlight(highlight: Bool, blueAlpha: CGFloat, nested: Bool) {
+        unreadBgLeadingConstraint?.constant = nested ? 18 : 0
+        unreadBgView.backgroundColor = highlight ? BearyColors.alpha(BearyColors.blue, blueAlpha) : .clear
+        contentView.backgroundColor = BearyColors.bg
+        backgroundColor = BearyColors.bg
+    }
+
+    /// C-G10：已读态直接改 class——只动高亮与未读点，不重载行。
+    /// 普通行未读底蓝 7%、sys 行蓝 9%（与 configure 同口径）；highlight
+    /// 由调用方按 seen 水印算（未读但已 seen 时高亮灭、点仍亮）。
+    func setReadAppearance(isUnread: Bool, isSystemStyle: Bool, highlight: Bool) {
+        applyUnreadHighlight(highlight: highlight, blueAlpha: isSystemStyle ? 0.09 : 0.07, nested: !nestedLineView.isHidden)
         unreadDotView.isHidden = !isUnread
     }
 
-    /// C-G10：卡面已读态直接改 class——未读底一律蓝 9%。
-    func setCardReadAppearance(anyUnread: Bool) {
-        let background = anyUnread ? BearyColors.alpha(BearyColors.blue, 0.09) : BearyColors.bg
-        contentView.backgroundColor = background
-        backgroundColor = background
+    /// C-G10：卡面已读态直接改 class——未读底一律蓝 9%；highlight 同上。
+    func setCardReadAppearance(anyUnread: Bool, highlight: Bool) {
+        applyUnreadHighlight(highlight: highlight, blueAlpha: 0.09, nested: false)
         unreadDotView.isHidden = !anyUnread
     }
 
     /// 折叠卡卡面：系统卡橙 14% 底 + mail 图，互动卡蓝 12% 底 + heart 图；
     /// 未读底一律蓝 9%（网页 .nt-item.sys.unread，互动卡同样带 sys 类）。
-    func configureAsCard(title: String, excerpt: String, timeMs: Int?, anyUnread: Bool, isSystem: Bool, expanded: Bool) {
+    func configureAsCard(title: String, excerpt: String, timeMs: Int?, anyUnread: Bool, isSystem: Bool, expanded: Bool, highlight: Bool) {
         cancelAvatarLoad()
         avatarRetryURL = nil
         avatarRetryActorName = ""
         avatarRetryButton.isHidden = true
-        if anyUnread {
-            contentView.backgroundColor = BearyColors.alpha(BearyColors.blue, 0.09)
-            backgroundColor = BearyColors.alpha(BearyColors.blue, 0.09)
-        } else {
-            contentView.backgroundColor = BearyColors.bg
-            backgroundColor = BearyColors.bg
-        }
+        applyUnreadHighlight(highlight: highlight, blueAlpha: 0.09, nested: false)
         unreadDotView.isHidden = !anyUnread
         avatarImageView.backgroundColor = isSystem ? BearyColors.alpha(BearyColors.orange, 0.14) : BearyColors.alpha(BearyColors.blue, 0.12)
         popperView.stop()
@@ -2815,7 +2869,7 @@ private class BearyNotificationCell: UITableViewCell {
         return "给你的日记贴了小熊回应"
     }
 
-    func configure(with item: NotificationItem, nested: Bool) {
+    func configure(with item: NotificationItem, nested: Bool, highlight: Bool) {
         let itemType = item.type ?? ""
         let isSystemStyle = itemType == "system" || itemType == "letter"
         let isUnread = (item.read ?? true) == false
@@ -2832,13 +2886,8 @@ private class BearyNotificationCell: UITableViewCell {
         dotTrailingToChevronConstraint?.isActive = false
 
         // 未读底：普通行蓝 7%、sys 行（含信件行）蓝 9%（网页 .nt-item.unread / .sys.unread）。
-        if isUnread {
-            contentView.backgroundColor = BearyColors.alpha(BearyColors.blue, isSystemStyle ? 0.09 : 0.07)
-            backgroundColor = BearyColors.alpha(BearyColors.blue, isSystemStyle ? 0.09 : 0.07)
-        } else {
-            contentView.backgroundColor = BearyColors.bg
-            backgroundColor = BearyColors.bg
-        }
+        // 高亮走 unreadBgView（嵌套行从竖线右侧起），点只看未读。
+        applyUnreadHighlight(highlight: highlight, blueAlpha: isSystemStyle ? 0.09 : 0.07, nested: nested)
         unreadDotView.isHidden = !isUnread
 
         if isSystemStyle {
