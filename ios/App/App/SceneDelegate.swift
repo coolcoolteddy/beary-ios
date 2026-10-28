@@ -1817,6 +1817,14 @@ final class BearyChromeViewController: UIViewController {
     /// presentLogin，与整页版同路径）。每次点开新建一页，viewDidLoad 拉取最新
     /// 邀请码与统计，不复用旧页；关闭只关弹窗，回到弹窗下的原页（不再强制回首页）。
     private func presentInvite() {
+        // 游客模式：邀请入口全藏——礼物钮已隐藏，此处再拦一道：任何路径进邀请页
+        // 都走登录门，不建 VC、不拉邀请码与统计（Invite VC 自身 load() 的
+        // onRequireLogin 是第二道门，非游客未登录时仍走原登录页）；
+        // 登录后恢复（游客旗已清，本分支不再触发，礼物钮由 applyLoginState 恢复）。
+        if SessionManager.shared.isGuestMode {
+            presentGuestLoginSheet()
+            return
+        }
         let vc = BearyInviteViewController()
         vc.onClose = { [weak vc] in vc?.dismiss(animated: BearyMotion.animated(true)) }
         vc.onRequireLogin = { [weak self] in self?.presentLoginGate() }
