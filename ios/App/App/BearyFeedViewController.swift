@@ -1,7 +1,7 @@
 import UIKit
 
 // ===== beary 原生列表页（广场）=====
-// 一张 UITableView：单 section 广场流（今日送达 section 已于 B 方案撤掉）。
+// 一张 UITableView：单 section 广场流（iCity：最近公开模块已删，主列表按 published_at 排序）。
 // 约束：部署目标 iOS 15.0、Swift 5.0——只用闭包回调，不用 async/await，
 // 不用 if-let 简写；UIKit 纯代码布局；Entry 字段全部 optional，取值一律 ?? 兜底。
 // 对齐口径（对照 ~/workspace/teddy_site/beary.html 的 renderPublic）：
@@ -21,8 +21,8 @@ class BearyFeedViewController: UIViewController {
     /// 未登录点赞/收藏时转发（详情页同款接线：SceneDelegate 可接登录占位）。
     var onRequireLogin: (() -> Void)?
 
-    /// 引用卡点按：data-pub=1 时走 gotoEntry 等价（容器接线：按 id 进详情/作者主页定位）。
-    /// gone/locked 卡不触发；未公开卡走 toast，不触发。
+    /// 引用卡点按：走 gotoEntry 等价（容器接线：按 id 进详情/作者主页定位，先校验再放行）。
+    /// gone/locked 卡不触发；私密卡经容器显占位。
     var onQuoteEntrySelected: ((String) -> Void)?
 
     /// 赞过/收藏页签取消时摘卡：容器接线（总协调收尾），本文件只通知。
@@ -52,10 +52,8 @@ class BearyFeedViewController: UIViewController {
     private var plazaError = false
     private var plazaFirstDone = false
 
-    /// D1：广场响应附加的 recent_published（published=1 按 published_at DESC 最新 5 条，
-    /// 仅 scope=plaza 返回；广场流最顶部单独成模块，卡片走同一 feedCell；今日送达 section 不动）。
-    private var recentPublished: [Entry] = []
-    private var pendingRecentPublished: [Entry]?
+    /// iCity：最近公开模块已删（主列表改 published_at 排序后模块与主列表头部重合），
+    /// 服务端 recent_published 字段不再消费。
 
     /// D2：公开/取消在途去重（网页 pubBusy 同口径：同一篇一次只发一请求）。
     private var pubBusyIds: Set<String> = []
@@ -75,11 +73,7 @@ class BearyFeedViewController: UIViewController {
     private var isRevalidating = false
     /// revalidate 代际：下拉刷新时 +1，在途重拉回来发现代际已变则丢弃，不覆盖新数据。
     private var revalidateGeneration = 0
-    /// B 视觉文案：首页公开倒计时 60 秒定时器（文案粒度为小时，60 秒足够；
-    /// 时间线用 1 秒是因为其倒计时精确到秒）。viewDidLoad 启动、deinit 停；
-    /// 容器切页只改 isHidden 不触发 appearance，故不依赖 viewWillAppear 启停，
-    /// 否则切 tab 回首页时定时器可能一直停着。
-    private var publishCountdownTimer: Timer?
+    /// iCity：公开倒计时 60 秒定时器已删（切换钮文案不随时间变，无需定时重算）。
     /// 后台重拉发现新头条、且用户已读到深处时暂存，等点 pill 才换上（不打断阅读）。
     private var pendingPlaza: [Entry]?
     /// 行/图点按防连点：上次导航时间，0.8 秒内重复点按直接丢弃。
@@ -335,12 +329,13 @@ class BearyFeedViewController: UIViewController {
             newContentPill.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor, constant: -92),
         ])
         initialLoadStarted = true
-        startPublishCountdownTimer()
+        NotificationCenter.default.addObserver(self, selector: #selector(handleReportedEntryNotification(_:)), name: .bearyDidReportEntry, object: nil)
+        NotificationCenter.default.addObserver(self, selector: #selector(handleBlockedUserNotification(_:)), name: .bearyDidBlockUser, object: nil)
         refreshAll()
     }
 
     deinit {
-        publishCountdownTimer?.invalidate()
+        NotificationCenter.default.removeObserver(self)
     }
 
     override func viewWillAppear(_ animated: Bool) {
@@ -450,7 +445,6 @@ class BearyFeedViewController: UIViewController {
         isRevalidating = false
         hideNewContentPill()
         pendingPlaza = nil
-        pendingRecentPublished = nil
         plazaReachedEnd = false
         plazaHasMore = true
         plazaError = false
@@ -599,7 +593,7 @@ class BearyFeedViewController: UIViewController {
     // MARK: - 广场流
 
     /// 清单第 7 项首页部分记为 deferred（不在此硬发明筛选）：网页端广场本无筛选入口，
-    /// 服务端只给 created_at DESC 顺序（fetchEntries 仅 scope/limit/before/before_id/author_id，
+    /// 服务端广场给 published_at DESC 顺序（fetchEntries 仅 scope/limit/before/before_id/author_id，
     /// 无 sort/filter 参数）；客户端自排会打断 before 分页游标、且与网页口径脱节。
     private func loadPlazaFirstPage() {
         // 80 包 B4：首拉带代际（revalidate 同口径），旧首拉回包直接丢弃。
@@ -619,7 +613,6 @@ class BearyFeedViewController: UIViewController {
                 case .success(let list):
                     let entries = list.entries ?? []
                     strongSelf.plazaRaw = entries
-                    strongSelf.recentPublished = list.recentPublished ?? []
                     strongSelf.plazaHasMore = entries.count >= strongSelf.pageLimit
                     strongSelf.plazaReachedEnd = entries.count < strongSelf.pageLimit
                     strongSelf.plazaError = false
@@ -661,7 +654,8 @@ class BearyFeedViewController: UIViewController {
         // 期间若有 refreshAll，旧分页回包只复位 loading，不覆盖新首拉的 hasMore。
         let nextPageGeneration = revalidateGeneration
         plazaLoading = true
-        BearyAPI.shared.fetchEntries(scope: .plaza, limit: pageLimit, before: last.createdAt, beforeId: lastEntryIdValue) { [weak self] result in
+        // iCity：广场服务端按 published_at DESC 排序，分页游标同步用 publishedAt（缺失时回退 createdAt）。
+        BearyAPI.shared.fetchEntries(scope: .plaza, limit: pageLimit, before: last.publishedAt ?? last.createdAt, beforeId: lastEntryIdValue) { [weak self] result in
             DispatchQueue.main.async {
                 guard let strongSelf = self else { return }
                 guard nextPageGeneration == strongSelf.revalidateGeneration else {
@@ -698,30 +692,10 @@ class BearyFeedViewController: UIViewController {
         }
     }
 
-    /// D1：广场 section 顶部的“最近公开”模块占行——有数据时 1 行模块头 + N 行卡片；
-    /// 无数据时 0 行（模块整体不出现，与网页 recentPublishedSectionHtml 空时返回空串一致）。
-    /// 广场正流行的行号 = 模块占行 + 其在 plazaEntries() 中的下标。
-    private var recentHeaderRowCount: Int { recentPublished.isEmpty ? 0 : 1 }
-    private var plazaSectionRowOffset: Int { recentHeaderRowCount + recentPublished.count }
-
-    /// 广场行过滤：去掉已出现在“最近公开”模块里的 id（P1-6：模块保留、
-    /// 正流去重，同篇不在广场出现两次）。今日送达 section 已撤，不再过滤送达 id。
+    /// iCity：最近公开模块已删，广场正流即 plazaRaw 本身（服务端 published_at DESC 顺序，
+    /// 客户端不自排，否则打断 before 分页游标）。
     private func plazaEntries() -> [Entry] {
-        var excluded = Set<String>()
-        for entry in recentPublished {
-            if let entryIdValue = entry.id { excluded.insert(entryIdValue) }
-        }
-        if excluded.isEmpty { return plazaRaw }
-        var result: [Entry] = []
-        for entry in plazaRaw {
-            if let entryIdValue = entry.id {
-                if excluded.contains(entryIdValue) { continue }
-                result.append(entry)
-            } else {
-                result.append(entry)
-            }
-        }
-        return result
+        return plazaRaw
     }
 
     // MARK: - 互动/编辑定向刷新（不整表刷新）
@@ -745,17 +719,6 @@ class BearyFeedViewController: UIViewController {
                 updated = true
             }
         }
-        for index in recentPublished.indices {
-            if recentPublished[index].id == entryId {
-                if likedByMe == false, recentPublished[index].likedByMe == true { likeRemoved = true }
-                if bookmarkedByMe == false, recentPublished[index].bookmarkedByMe == true { bookmarkRemoved = true }
-                if let v = likeCount { recentPublished[index].likeCount = v }
-                if let v = likedByMe { recentPublished[index].likedByMe = v }
-                if let v = bookmarkedByMe { recentPublished[index].bookmarkedByMe = v }
-                if let v = emotes { recentPublished[index].emotes = BearyEmoteOrder.merged(previous: recentPublished[index].emotes, server: v) }
-                updated = true
-            }
-        }
         if !updated { return }
         // 卡顿批：可见行只就地同步三处控件，不 reloadRows——reload 会重建
         // 图片栈/正文/引用并重启全部表情播放器，等于把刚播的爆点/chip-in
@@ -771,17 +734,12 @@ class BearyFeedViewController: UIViewController {
 
     /// 编辑保存后回传：传更新后的完整 Entry（D2，容器接线）。正文/图片/心情/
     /// 天气/引用按编辑器终态原地替换（引用已清时 quoteId 与 quote 均为 nil，即清卡），
-    /// 广场与最近公开里的全部副本都改，全部可见行都刷；publishAt/editDeadline/
-    /// isPublic 仅在新值非空时覆盖（编辑不改这些字段时沿用原值）。
+    /// 全部可见行都刷；editDeadline/isPublic 仅在新值非空时覆盖（编辑不改这些字段时沿用原值）。
     func applyEditedEntry(_ entry: Entry) {
         guard let entryId = entry.id else { return }
         var updated = false
         for index in plazaRaw.indices where plazaRaw[index].id == entryId {
             applyEditedFields(to: &plazaRaw[index], from: entry)
-            updated = true
-        }
-        for index in recentPublished.indices where recentPublished[index].id == entryId {
-            applyEditedFields(to: &recentPublished[index], from: entry)
             updated = true
         }
         if !updated { return }
@@ -797,35 +755,28 @@ class BearyFeedViewController: UIViewController {
         target.weather = updated.weather
         target.quoteId = updated.quoteId
         target.quote = updated.quote
-        if let v = updated.publishAt { target.publishAt = v }
+        if let v = updated.publishedAt { target.publishedAt = v }
         if let v = updated.editDeadline { target.editDeadline = v }
         if let v = updated.isPublic { target.isPublic = v }
     }
 
-    /// 按 id 取更新后的模型副本（广场优先，次选最近公开），供容器同步已打开的详情。
+    /// 按 id 取更新后的模型副本，供容器同步已打开的详情。
     private func entryModel(for entryId: String) -> Entry? {
-        if let found = plazaRaw.first(where: { $0.id == entryId }) { return found }
-        return recentPublished.first(where: { $0.id == entryId })
+        return plazaRaw.first(where: { $0.id == entryId })
     }
 
-    /// 按 id 反查当前可见行：plaza 行取过滤后下标再加最近公开模块占行
-    /// （模块头 + 卡片行在广场正流之前）；单 section，section 恒为 0。
+    /// 按 id 反查当前可见行；单 section，section 恒为 0。
     private func indexPath(for entryId: String) -> IndexPath? {
         return indexPaths(for: entryId).first
     }
 
-    /// F8：同一篇的全部可见行（广场与最近公开可能同时持有同一 id 时两行都返回）。
+    /// F8：同一篇的全部可见行。
     private func indexPaths(for entryId: String) -> [IndexPath] {
         var paths: [IndexPath] = []
-        for row in recentPublished.indices {
-            if recentPublished[row].id == entryId {
-                paths.append(IndexPath(row: recentHeaderRowCount + row, section: 0))
-            }
-        }
         let entries = plazaEntries()
         for row in entries.indices {
             if entries[row].id == entryId {
-                paths.append(IndexPath(row: plazaSectionRowOffset + row, section: 0))
+                paths.append(IndexPath(row: row, section: 0))
             }
         }
         return paths
@@ -840,14 +791,13 @@ class BearyFeedViewController: UIViewController {
         isRevalidating = true
         let generation = revalidateGeneration
         var freshPlaza: [Entry]?
-        var freshRecent: [Entry]?
         var plazaDone = false
         let finish = { [weak self] in
             guard let strongSelf = self else { return }
             if plazaDone == false { return }
             strongSelf.isRevalidating = false
             if generation != strongSelf.revalidateGeneration { return }
-            guard let newPlaza = freshPlaza, let newRecent = freshRecent else { return }
+            guard let newPlaza = freshPlaza else { return }
             strongSelf.lastFeedLoadAt = Date()
             let oldPlazaHead = strongSelf.plazaEntries().first?.id
             let headChanged = (newPlaza.first?.id != nil && newPlaza.first?.id != oldPlazaHead)
@@ -855,17 +805,15 @@ class BearyFeedViewController: UIViewController {
             // 否则静默换上（reloadData 不动滚动位）。
             if headChanged && strongSelf.tableView.contentOffset.y > 600 {
                 strongSelf.pendingPlaza = newPlaza
-                strongSelf.pendingRecentPublished = newRecent
                 strongSelf.showNewContentPill()
                 return
             }
-            strongSelf.applyRevalidated(plaza: newPlaza, recent: newRecent)
+            strongSelf.applyRevalidated(plaza: newPlaza)
         }
         BearyAPI.shared.fetchEntries(scope: .plaza, limit: pageLimit) { [weak self] result in
             DispatchQueue.main.async {
                 if case .success(let list) = result {
                     freshPlaza = list.entries ?? []
-                    freshRecent = list.recentPublished ?? []
                 }
                 plazaDone = true
                 finish()
@@ -874,9 +822,8 @@ class BearyFeedViewController: UIViewController {
     }
 
     /// 静默换上重拉结果：去重集合重建。
-    private func applyRevalidated(plaza: [Entry], recent: [Entry]) {
+    private func applyRevalidated(plaza: [Entry]) {
         plazaRaw = plaza
-        recentPublished = recent
         plazaHasMore = plaza.count >= pageLimit
         plazaReachedEnd = plaza.count < pageLimit
         plazaError = false
@@ -930,27 +877,18 @@ class BearyFeedViewController: UIViewController {
             return
         }
         pendingPlaza = nil
-        let recent = pendingRecentPublished ?? []
-        pendingRecentPublished = nil
         hideNewContentPill()
         // 2026-10-28 定版：重校验不再整表 crossDissolve——先记旧 id 集，再换数据回顶，
         // 只让本批新行错峰（已有行不动，与 Profile animateNewRows 同口径；减动效直换）。
-        let oldIds = Set(plazaEntries().compactMap { $0.id }).union(recentPublished.compactMap { $0.id })
-        applyRevalidated(plaza: newPlaza, recent: recent)
+        let oldIds = Set(plazaEntries().compactMap { $0.id })
+        applyRevalidated(plaza: newPlaza)
         tableView.setContentOffset(CGPoint(x: 0, y: -tableView.contentInset.top), animated: false)
         tableView.layoutIfNeeded()
         var newPaths: [IndexPath] = []
-        if !recentPublished.isEmpty {
-            for (index, entry) in recentPublished.enumerated() {
-                if let id = entry.id, !oldIds.contains(id) {
-                    newPaths.append(IndexPath(row: 1 + index, section: 0))
-                }
-            }
-        }
         let plaza = plazaEntries()
         for (index, entry) in plaza.enumerated() {
             if let id = entry.id, !oldIds.contains(id) {
-                newPaths.append(IndexPath(row: plazaSectionRowOffset + index, section: 0))
+                newPaths.append(IndexPath(row: index, section: 0))
             }
         }
         staggerFadeCells(at: newPaths)
@@ -987,49 +925,11 @@ class BearyFeedViewController: UIViewController {
         guard section < tableView.numberOfSections else { return false }
         let newCount = plazaEntries().count
         guard newCount > oldCount else { return false }
-        let inserted = (oldCount..<newCount).map { IndexPath(row: plazaSectionRowOffset + $0, section: section) }
+        let inserted = (oldCount..<newCount).map { IndexPath(row: $0, section: section) }
         tableView.performBatchUpdates({
             self.tableView.insertRows(at: inserted, with: .none)
         }, completion: { [weak self] _ in self?.staggerFadeCells(at: inserted) })
         return true
-    }
-
-    /// D1：“最近公开”模块头（网页 .rec-head 口径：橙色 mail-check 图标 17 + “最近公开”16.5 粗体，
-    /// 内边距 14/20/0、间距 7；模块头本身是一行，卡片另起行走同一 feedCell）。
-    private func recentHeaderCell(for tableView: UITableView) -> UITableViewCell {
-        let cell = tableView.dequeueReusableCell(withIdentifier: "BearyRecentHeaderCell") ?? UITableViewCell(style: .default, reuseIdentifier: "BearyRecentHeaderCell")
-        cell.selectionStyle = .none
-        cell.backgroundColor = BearyColors.bg
-        cell.contentView.backgroundColor = BearyColors.bg
-        if cell.contentView.viewWithTag(104) == nil {
-            let iconView = UIImageView()
-            iconView.translatesAutoresizingMaskIntoConstraints = false
-            iconView.image = BearyFeedIconCache.image(named: "icon_mail_check", pointSize: 17)
-            iconView.tintColor = BearyColors.orange
-            iconView.contentMode = .scaleAspectFit
-            let titleLabel = UILabel()
-            titleLabel.translatesAutoresizingMaskIntoConstraints = false
-            titleLabel.font = BearyDynamicType.cardTitleFont()
-            titleLabel.adjustsFontForContentSizeCategory = true
-            titleLabel.textColor = BearyColors.ink
-            titleLabel.text = "最近公开"
-            let stack = UIStackView(arrangedSubviews: [iconView, titleLabel])
-            stack.tag = 104
-            stack.translatesAutoresizingMaskIntoConstraints = false
-            stack.axis = .horizontal
-            stack.spacing = 7
-            stack.alignment = .center
-            cell.contentView.addSubview(stack)
-            NSLayoutConstraint.activate([
-                iconView.widthAnchor.constraint(equalToConstant: 17),
-                iconView.heightAnchor.constraint(equalToConstant: 17),
-                stack.leadingAnchor.constraint(equalTo: cell.contentView.leadingAnchor, constant: 20),
-                stack.trailingAnchor.constraint(lessThanOrEqualTo: cell.contentView.trailingAnchor, constant: -20),
-                stack.topAnchor.constraint(equalTo: cell.contentView.topAnchor, constant: 14),
-                stack.bottomAnchor.constraint(equalTo: cell.contentView.bottomAnchor),
-            ])
-        }
-        return cell
     }
 
     /// 只刷新可见行：不可见时不调用 reloadRows（避免 UITableView 对屏外行做无用功与潜在警告）。
@@ -1128,7 +1028,7 @@ class BearyFeedViewController: UIViewController {
         if plazaLoading {
             setEmptyVisible(false)
         } else {
-            let hasEntries = !plazaEntries().isEmpty || !recentPublished.isEmpty
+            let hasEntries = !plazaEntries().isEmpty
             setEmptyVisible(hasEntries == false && plazaError == false)
         }
         updateFootLogo()
@@ -1175,14 +1075,9 @@ class BearyFeedViewController: UIViewController {
             let keys = entry.images ?? []
             self?.presentImageViewer(imageKeys: keys, startIndex: index)
         }
-        // F2：引用卡 data-pub=1 时经容器走 gotoEntry 等价；未公开时 toast。
+        // F2：引用卡点按经容器走 gotoEntry 等价（容器先 fetchEntry 校验可见性再放行，私密显占位）。
         cell.onQuoteSelected = { [weak self] quoteId in
             self?.onQuoteEntrySelected?(quoteId)
-        }
-        cell.onQuoteNotPublic = { [weak self] in
-            if let strongSelf = self {
-                BearyToast.show(in: strongSelf.view, message: "引用的这篇还没公开", aboveFAB: strongSelf.toastAboveFAB)
-            }
         }
         cell.onInteractionChanged = { [weak self] changedEntryIdValue, likeCountValue, likedValue, bookmarkedValue in
             self?.applyInteraction(entryId: changedEntryIdValue, likeCount: likeCountValue, likedByMe: likedValue, bookmarkedByMe: bookmarkedValue, emotes: nil)
@@ -1222,10 +1117,11 @@ class BearyFeedViewController: UIViewController {
             self?.onDeleteEntry?(entry)
         }
         cell.onPublishTapped = { [weak self] in
-            self?.handlePublishTap(entryId: entry.id ?? "")
+            self?.handleVisibilityToggle(entryId: entry.id ?? "")
         }
-        cell.onPublishCancelTapped = { [weak self] in
-            self?.handlePublishCancelTap(entryId: entry.id ?? "")
+        cell.onReportRequested = { [weak self] entryValue in
+            guard let strongSelf = self, let entryId = entryValue.id else { return }
+            BearyReportFlow.present(from: strongSelf, entryId: entryId, entryLabel: nil)
         }
         cell.onAuthorTapped = { [weak self] in
             if let authorId = entry.authorId {
@@ -1259,66 +1155,81 @@ class BearyFeedViewController: UIViewController {
         }
     }
 
-    // MARK: - B 方案公开 / 取消（D2）
+    // MARK: - iCity 可见性切换（显式目标态，无确认框）
 
-    /// 公开态同步：同一篇在广场 / 最近公开里的全部副本都改，可见行都刷。
-    private func applyPublishState(entryId: String, pending: Int?, clearPending: Bool, isPublic: Bool?) {
+    /// 可见性同步：按响应目标态改模型（isPublic + publishedAt），可见行都刷；
+    /// 翻私密时同步清掉该篇的引用缓存（否则旧引用卡仍按旧可见性渲染）。
+    private func applyVisibilityState(entryId: String, isPublic: Bool, publishedAt: Int?) {
         for index in plazaRaw.indices where plazaRaw[index].id == entryId {
-            if clearPending { plazaRaw[index].publishPendingUntil = nil } else if let p = pending { plazaRaw[index].publishPendingUntil = p }
-            if let v = isPublic { plazaRaw[index].isPublic = v }
+            plazaRaw[index].isPublic = isPublic
+            if let publishedAt = publishedAt { plazaRaw[index].publishedAt = publishedAt }
         }
-        for index in recentPublished.indices where recentPublished[index].id == entryId {
-            if clearPending { recentPublished[index].publishPendingUntil = nil } else if let p = pending { recentPublished[index].publishPendingUntil = p }
-            if let v = isPublic { recentPublished[index].isPublic = v }
+        if isPublic == false {
+            BearyDiaryCardCell.quoteCache.removeValue(forKey: entryId)
         }
         for path in indexPaths(for: entryId) {
             reloadRowIfVisible(path)
         }
     }
 
-    /// “公开”钮：先弹网页 openPubConfirm 同款确认框（公开后无法撤回或删除），确认后走
-    /// POST /beary/api/entries/:id/publish；仅已送达未公开态进确认框。
-    private func handlePublishTap(entryId: String) {
-        guard !entryId.isEmpty, let entry = entryModel(for: entryId), entry.isMine == true, entry.isPublic != true else { return }
-        let nowMs = Int(Date().timeIntervalSince1970 * 1000)
-        if let pend = entry.publishPendingUntil, pend > nowMs { return }
-        guard let publishAt = entry.publishAt, publishAt <= nowMs else { return }
+    /// 切换钮：显式目标态（当前公开→改回私密，当前私密→公开），无需确认；
+    /// 在途去重（pubBusyIds 复用），失败不改本地态、只 toast。
+    private func handleVisibilityToggle(entryId: String) {
+        guard !entryId.isEmpty, let entry = entryModel(for: entryId), entry.isMine == true else { return }
         if pubBusyIds.contains(entryId) { return }
-        let alert = UIAlertController(title: BearyText.publishConfirmTitle, message: BearyText.publishConfirmMessage, preferredStyle: .alert)
-        alert.addAction(UIAlertAction(title: "取消", style: .cancel))
-        alert.addAction(UIAlertAction(title: "公开", style: .default) { [weak self] _ in
-            guard let strongSelf = self else { return }
-            strongSelf.pubBusyIds.insert(entryId)
-            BearyAPI.shared.requestPublish(id: entryId) { result in
-                DispatchQueue.main.async {
-                    strongSelf.pubBusyIds.remove(entryId)
-                    switch result {
-                    case .success(let resp):
-                        strongSelf.applyPublishState(entryId: entryId, pending: resp.publishPendingUntil, clearPending: false, isPublic: resp.published.map { $0 == 1 })
-                    case .failure:
-                        BearyToast.show(in: strongSelf.view, message: "公开失败，请重试", aboveFAB: strongSelf.toastAboveFAB)
-                    }
-                }
-            }
-        })
-        present(alert, animated: true)
-    }
-
-    /// “取消”钮：直接走 POST /beary/api/entries/:id/publish/cancel（网页 doPublishCancel 无确认框）。
-    private func handlePublishCancelTap(entryId: String) {
-        guard !entryId.isEmpty, pubBusyIds.contains(entryId) == false else { return }
+        let target = entry.isPublic == true ? 0 : 1
         pubBusyIds.insert(entryId)
-        BearyAPI.shared.cancelPublish(id: entryId) { [weak self] result in
+        BearyAPI.shared.setVisibility(id: entryId, published: target) { [weak self] result in
             DispatchQueue.main.async {
                 guard let strongSelf = self else { return }
                 strongSelf.pubBusyIds.remove(entryId)
                 switch result {
                 case .success(let resp):
-                    strongSelf.applyPublishState(entryId: entryId, pending: nil, clearPending: true, isPublic: resp.published.map { $0 == 1 })
+                    let isPublic = resp.published.map { $0 == 1 } ?? (target == 1)
+                    strongSelf.applyVisibilityState(entryId: entryId, isPublic: isPublic, publishedAt: resp.publishedAt)
                 case .failure:
-                    BearyToast.show(in: strongSelf.view, message: "取消失败，请重试", aboveFAB: strongSelf.toastAboveFAB)
+                    BearyToast.show(in: strongSelf.view, message: "切换失败，请重试", aboveFAB: strongSelf.toastAboveFAB)
                 }
             }
+        }
+    }
+
+    /// 举报成功广播：该日记从举报人广场消失（退场动画 transform/opacity 0.25s ease-out
+    /// + 高度收到 0 的既有删卡口径由 deleteRows 动画承载；减动效直接消失；不留占位行）。
+    @objc private func handleReportedEntryNotification(_ note: Notification) {
+        guard let entryId = note.object as? String, !entryId.isEmpty else { return }
+        guard let row = plazaRaw.firstIndex(where: { $0.id == entryId }) else { return }
+        plazaRaw.remove(at: row)
+        let path = IndexPath(row: row, section: 0)
+        guard tableView.numberOfRows(inSection: 0) > row else {
+            tableView.reloadData()
+            return
+        }
+        if UIAccessibility.isReduceMotionEnabled {
+            tableView.deleteRows(at: [path], with: .none)
+            return
+        }
+        if let cell = tableView.cellForRow(at: path) {
+            UIView.animate(withDuration: 0.25, delay: 0, options: [.curveEaseOut], animations: {
+                cell.contentView.alpha = 0
+                cell.contentView.transform = CGAffineTransform(translationX: 0, y: -8).scaledBy(x: 0.98, y: 0.98)
+            }, completion: { [weak self] _ in
+                self?.tableView.deleteRows(at: [path], with: .fade)
+                self?.updateOverlayState()
+            })
+        } else {
+            tableView.deleteRows(at: [path], with: .fade)
+        }
+    }
+
+    /// 拉黑成功广播：过滤该作者的全部广场条目（服务端列表本就排除，本地同步清掉残留行）。
+    @objc private func handleBlockedUserNotification(_ note: Notification) {
+        guard let userId = note.object as? Int else { return }
+        let before = plazaRaw.count
+        plazaRaw.removeAll { $0.authorId == userId }
+        if plazaRaw.count != before {
+            tableView.reloadData()
+            updateOverlayState()
         }
     }
 
@@ -1345,25 +1256,15 @@ extension BearyFeedViewController: UITableViewDataSource, UITableViewDelegate {
 
     func tableView(_ tableView: UITableView, numberOfRowsInSection section: Int) -> Int {
         let count = plazaEntries().count
-        if plazaError { return plazaSectionRowOffset + count + 1 }
-        return plazaSectionRowOffset + count
+        if plazaError { return count + 1 }
+        return count
     }
 
     func tableView(_ tableView: UITableView, cellForRowAt indexPath: IndexPath) -> UITableViewCell {
-        // D1：广场 section 行序 = [最近公开头（有数据时 1 行）][最近公开卡][广场正流][失败行]；
-        // 末页无文字行（网页 moreBtnHtml 无更多时返回空串）。
-        if recentHeaderRowCount > 0 {
-            if indexPath.row == 0 {
-                return recentHeaderCell(for: tableView)
-            }
-            if indexPath.row <= recentPublished.count {
-                return feedCell(for: tableView, entry: recentPublished[indexPath.row - 1], indexPath: indexPath)
-            }
-        }
+        // iCity：最近公开模块已删，行序 = [广场正流][失败行]；末页无文字行。
         let entries = plazaEntries()
-        let plazaRow = indexPath.row - plazaSectionRowOffset
-        if plazaRow >= 0, plazaRow < entries.count {
-            return feedCell(for: tableView, entry: entries[plazaRow], indexPath: indexPath)
+        if indexPath.row >= 0, indexPath.row < entries.count {
+            return feedCell(for: tableView, entry: entries[indexPath.row], indexPath: indexPath)
         }
         return errorCell(for: tableView) { [weak self] in
             guard let strongSelf = self else { return }
@@ -1378,17 +1279,9 @@ extension BearyFeedViewController: UITableViewDataSource, UITableViewDelegate {
         tableView.deselectRow(at: indexPath, animated: !UIAccessibility.isReduceMotionEnabled)
         // W6：行点按补 .light 轻震（行本身无按钮，点按即导航/展开均属一次确认）。
         BearyHaptics.press()
-        if recentHeaderRowCount > 0 {
-            if indexPath.row == 0 { return }
-            if indexPath.row <= recentPublished.count {
-                tryNavigateEntry(recentPublished[indexPath.row - 1])
-                return
-            }
-        }
         let entries = plazaEntries()
-        let plazaRow = indexPath.row - plazaSectionRowOffset
-        if plazaRow >= 0, plazaRow < entries.count {
-            tryNavigateEntry(entries[plazaRow])
+        if indexPath.row >= 0, indexPath.row < entries.count {
+            tryNavigateEntry(entries[indexPath.row])
             return
         }
         if plazaError && !plazaLoading {
@@ -1401,7 +1294,7 @@ extension BearyFeedViewController: UITableViewDataSource, UITableViewDelegate {
         let entries = plazaEntries()
         if entries.isEmpty { return }
         // S9：距末尾 3 行即预取（倒数第 3 行显示时触发）；loading 守卫与后续条件不动。
-        if indexPath.row < plazaSectionRowOffset + entries.count - 3 { return }
+        if indexPath.row < entries.count - 3 { return }
         if plazaError || plazaLoading || !plazaHasMore { return }
         loadPlazaNextPage()
     }
@@ -1435,22 +1328,6 @@ extension BearyFeedViewController: UITableViewDataSource, UITableViewDelegate {
             for sub in view.subviews { resume(sub) }
         }
         for cell in tableView.visibleCells { resume(cell) }
-    }
-
-    /// B 视觉文案：公开倒计时 60 秒定时器——只重算可见行文案（cell 内 refreshPubRow
-    /// 已按 feed 模式守卫），不重拉、不重建行；过期瞬间翻公开态仍靠下一次重拉换模型。
-    private func startPublishCountdownTimer() {
-        if publishCountdownTimer != nil { return }
-        publishCountdownTimer = Timer.scheduledTimer(withTimeInterval: 60, repeats: true) { [weak self] _ in
-            self?.publishCountdownTick()
-        }
-    }
-
-    private func publishCountdownTick() {
-        for cell in tableView.visibleCells {
-            guard let cardCell = cell as? BearyDiaryCardCell else { continue }
-            cardCell.refreshPublishRow()
-        }
     }
 
     /// 滚动藏栏（清单第 2 项首页部分）：主滚动视图向下相对位移超过 120pt 后藏栏、
