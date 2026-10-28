@@ -676,20 +676,22 @@ final class BearyNotificationsViewController: UIViewController {
     /// 若随任何消息变更递增，则已读态变化也在版本号口径内）；快照尚无版本
     /// 号、轻量响应已带时，视为变化（版本号口径刚接通，拉一次整页落快照，
     /// 此后以版本号为准）。任一版本号口径不成立时，退到最新消息 ID 比对：
-    /// 最新 ID 变了即有新消息（或旧最新一条被删），门开；最新 ID 不变则门关，
-    /// 未读数本身不再单独开门。
+    /// 最新 ID 变了即有新消息（或旧最新一条被删），门开。
+    /// 审计 A 批：门控条件 OR 未读数变化——轻量刷新已先把最新未读数写进
+    /// unreadTotal/sysUnreadTotal（见 refreshUnreadCountLightly），与快照比对
+    /// 不一致即开门；跨设备仅改已读状态（最新 ID 不变）时，列表已读态同步刷新。
     private func hasMessageChangedSinceFullLoad(version: Int?, latestId: Int?) -> Bool {
-        guard lastFullLoadUnread != nil, lastFullLoadSysUnread != nil else {
+        guard let snapUnread = lastFullLoadUnread, let snapSys = lastFullLoadSysUnread else {
             return false
+        }
+        if unreadTotal != snapUnread || sysUnreadTotal != snapSys {
+            return true
         }
         if let versionValue = version {
             if lastFullLoadVersion == nil {
                 return true
             }
-            if versionValue != lastFullLoadVersion {
-                return true
-            }
-            return false
+            return versionValue != lastFullLoadVersion
         }
         return latestId != lastFullLoadLatestId
     }

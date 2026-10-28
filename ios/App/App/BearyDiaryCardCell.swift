@@ -13,7 +13,7 @@ import UIKit
 //    显示“0”、profile 隐藏数字位；未赞色 feed 爱心 ink + 计数灰、profile
 //    爱心与计数同灰；取消赞预态 feed ink / profile 灰；写给行字号 feed
 //    12 粗体 / profile 13 常规；心情行间距 feed 3 / profile 4；操作行
-//    feed 带公开行 pubStack、profile 无；折叠 feed 实测溢出（300 字 +
+//    feed 带公开行 pubStack、profile 同款（A-2 补齐）；折叠 feed 实测溢出（300 字 +
 //    实测超 6 行）/ profile 只计 300 字；图片槽底色 feed line / profile faint。
 //  - 统一项：回应流一律 Feed 流式换行 BearyEmoteFlowView（profile 单行横滑
 //    emoteScrollView 废弃）；图片失败重试一律 Feed 口径（头像/主图均有重试钮，
@@ -844,9 +844,9 @@ class BearyDiaryCardCell: UITableViewCell {
         // 按钮/图片/引用/头像上的长按排除见文件末尾 contextMenuInteraction 代理
         // （头像/名字排除仅首页模式，个人主页模式各保各的，与旧口径一致）。
         contentView.addInteraction(UIContextMenuInteraction(delegate: self))
-        // D2（首页模式）：公开行插在点赞钮与 spacer 之间
+        // D2（首页/个人主页模式）：公开行插在点赞钮与 spacer 之间
         // （网页操作行：likeBtn + pubAction + spacer + bmBtn + shBtn）。
-        if cardMode == .feed {
+        if cardMode == .feed || cardMode == .profile {
             actionStack.insertArrangedSubview(pubStack, at: 1)
         }
         // F1（首页模式）：正文点击不导航——正文 label 自带空点按手势，把点按截住，
@@ -1962,17 +1962,13 @@ class BearyDiaryCardCell: UITableViewCell {
         button.layer.add(shake, forKey: "bearyDenyShake")
     }
 
-    /// D2：公开行渲染（首页模式；网页 pubState / pubCountdownText 口径）。
+    /// D2：公开行渲染（首页/个人主页模式；网页 pubState / pubCountdownText 口径）。
     /// B 视觉文案：控制器 60 秒定时器对可见行调 refreshPublishRow 重算文案，
     /// 跨小时边界时“剩 N 小时”不再 stale；本函数自身仍是纯渲染，不持有定时器。
     func refreshPublishRow() {
         refreshPubRow()
     }
     private func refreshPubRow() {
-        guard cardMode == .feed else {
-            pubStack.isHidden = true
-            return
-        }
         guard let entry = currentEntry, entry.isMine == true, entry.isPublic != true else {
             pubStack.isHidden = true
             return

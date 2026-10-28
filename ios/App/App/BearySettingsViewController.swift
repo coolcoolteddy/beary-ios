@@ -1065,7 +1065,14 @@ final class BearySettingsViewController: UIViewController {
         heroEmailLabel.text = user.email ?? "–"
         avatarInitialLabel.text = String(displayName.prefix(1))
         avatarImageView.image = nil
-        if let avatar = user.avatar, !avatar.isEmpty, !avatar.hasPrefix("data:") {
+        // 审计追加：与编辑页同法——/me 下发的 avatar 本就是 data:image;base64，
+        // 直接解码显示，不再跳过 data: 只剩首字母占位；解码失败回落原路径。
+        if let avatar = user.avatar, !avatar.isEmpty, avatar.hasPrefix("data:"),
+           let commaIndex = avatar.firstIndex(of: ","),
+           let avatarData = Data(base64Encoded: String(avatar[avatar.index(after: commaIndex)...])),
+           let avatarImage = UIImage(data: avatarData) {
+            avatarImageView.image = avatarImage
+        } else if let avatar = user.avatar, !avatar.isEmpty {
             avatarImageView.bearySetImage(url: BearyImageURLs.avatarURL(avatar))
         }
         idCreatedLabel.text = BearyAccountText.dateString(ms: user.createdAt)
@@ -1440,7 +1447,6 @@ final class BearySettingsViewController: UIViewController {
     }
 
     private func exportWithUser(_ user: MeUser) {
-        let group = DispatchGroup()
         var sessionsResp: BearyAccountSessionsResponse?
         var mineEntries: [Entry] = []
         var mailboxEntries: [Entry] = []
@@ -1449,58 +1455,21 @@ final class BearySettingsViewController: UIViewController {
         // 任一 scope 触顶即整单走部分导出标注；失败优先于触顶（先判失败）。
         var exportFailedReason: String?
         var exportTruncated = false
-        group.enter()
         var sessionsFailed = false
-        BearyAPI.shared.fetchAccountSessions { result in
-            // 审计 P1-23：会话拉取失败不得静默丢弃 sessions 让 JSON 看似完整——
-            // 整单 fail-closed，只 toast、不拼 JSON、不出文件（与三个日记 scope 同口径）。
-            if case .success(let resp) = result {
-                sessionsResp = resp
-            } else {
-                sessionsFailed = true
-            }
-            group.leave()
-        }
-        let scopes: [(BearyAPI.Scope, (BearyExportPageResult) -> Void)] = [
-            (.mine, { result in
-                mineEntries = result.entries
-                if !result.complete {
-                    if result.reason == "已达 20 页上限" {
-                        exportTruncated = true
-                    } else {
-                        exportFailedReason = result.reason ?? "分页失败"
-                    }
+        // 审计 B 批：4 路并行回调改串行汇集——会话 → 我的 → 信箱 → 赞过依次
+        // 拉取，共享变量只在同一串行链上写，不再并发；判定口径不变（失败
+        // 优先于触顶；分页失败与触顶同现时以失败为准，不出文件）。
+        let applyScopeResult: (BearyExportPageResult, inout [Entry]) -> Void = { result, entries in
+            entries = result.entries
+            if !result.complete {
+                if result.reason == "已达 20 页上限" {
+                    exportTruncated = true
+                } else {
+                    exportFailedReason = result.reason ?? "分页失败"
                 }
-            }),
-            (.mailbox, { result in
-                mailboxEntries = result.entries
-                if !result.complete {
-                    if result.reason == "已达 20 页上限" {
-                        exportTruncated = true
-                    } else {
-                        exportFailedReason = result.reason ?? "分页失败"
-                    }
-                }
-            }),
-            (.liked, { result in
-                likedEntries = result.entries
-                if !result.complete {
-                    if result.reason == "已达 20 页上限" {
-                        exportTruncated = true
-                    } else {
-                        exportFailedReason = result.reason ?? "分页失败"
-                    }
-                }
-            }),
-        ]
-        for item in scopes {
-            group.enter()
-            fetchAllEntries(scope: item.0) { result in
-                item.1(result)
-                group.leave()
             }
         }
-        group.notify(queue: .main) { [weak self] in
+        let finish: () -> Void = { [weak self] in
             guard let self = self else { return }
             self.isExporting = false
             self.exportRowButton.isEnabled = true
@@ -1526,6 +1495,26 @@ final class BearySettingsViewController: UIViewController {
                 return
             }
             self.buildAndShareExport(user: user, sessionsResp: sessionsResp, mineEntries: mineEntries, mailboxEntries: mailboxEntries, likedEntries: likedEntries)
+        }
+        BearyAPI.shared.fetchAccountSessions { [weak self] result in
+            guard let self = self else { return }
+            // 审计 P1-23：会话拉取失败不得静默丢弃 sessions 让 JSON 看似完整——
+            // 整单 fail-closed，只 toast、不拼 JSON、不出文件（与三个日记 scope 同口径）。
+            if case .success(let resp) = result {
+                sessionsResp = resp
+            } else {
+                sessionsFailed = true
+            }
+            self.fetchAllEntries(scope: .mine) { result in
+                applyScopeResult(result, &mineEntries)
+                self.fetchAllEntries(scope: .mailbox) { result in
+                    applyScopeResult(result, &mailboxEntries)
+                    self.fetchAllEntries(scope: .liked) { result in
+                        applyScopeResult(result, &likedEntries)
+                        DispatchQueue.main.async { finish() }
+                    }
+                }
+            }
         }
     }
 
@@ -2061,7 +2050,7 @@ teddy_session登录会话凭证HttpOnly, Secure30 天
 
 teddy-theme主题偏好普通1 年
 
-管理：你可以在浏览器设置中清除 Cookie。清除 teddy_session 将退出登录；清除 teddy-theme 将重置主题偏好。
+管理：在 App 设置页退出登录即可清除登录会话；在 App 设置页外观主题中切换档位即可重置主题偏好。
 
 2.5 我们不收集的信息
 
@@ -2181,7 +2170,7 @@ Cookie见 2.4过期自动失效
 
 6.4 撤回同意权
 
-清除 Cookie 即可撤回主题偏好、退出登录；
+在 App 设置页切换外观主题档位即可重置主题偏好，退出登录即可退出登录；
 
 注销账户即撤回全部授权。
 

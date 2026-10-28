@@ -334,6 +334,7 @@ class BearyProfileViewController: UIViewController {
     private var likeBusyIds: Set<String> = []
     private var bookmarkBusyIds: Set<String> = []
     private var emoteBusyIds: Set<String> = []
+    private var pubBusyIds: Set<String> = []
     private var badgeWearBusy = false
     private var unlockedBadges: [String] = []
     private var wornBadgeKey: String?
@@ -2286,6 +2287,18 @@ class BearyProfileViewController: UIViewController {
         if let pencilView = graphicView as? BearyPencilView {
             pencilView.start()
         }
+        // 审计 A 批：tableFooterView 不按约束自动定高，零 frame 赋值即被压扁；
+        // 赋值前按目标宽度算 fitting 高、设 frame 再返回，调用方直接赋即可。
+        let footerWidth = headerWidthValue > 0 ? headerWidthValue : tableView.bounds.width
+        if footerWidth > 0 {
+            container.frame = CGRect(x: 0, y: 0, width: footerWidth, height: 0)
+            let fitted = container.systemLayoutSizeFitting(
+                CGSize(width: footerWidth, height: UIView.layoutFittingCompressedSize.height),
+                withHorizontalFittingPriority: .required,
+                verticalFittingPriority: .fittingSizeLevel
+            )
+            container.frame = CGRect(x: 0, y: 0, width: footerWidth, height: fitted.height)
+        }
         return container
     }
 
@@ -2599,6 +2612,67 @@ class BearyProfileViewController: UIViewController {
         }
     }
 
+    /// A-2：个人主页卡片公开入口（首页/时间线同款流程）：确认框（BearyText 共享常量）
+    /// → POST publish → 成功后以服务端 pending/已公开态同步模型与可见行（倒计时行随新数据
+    /// 渲染）；失败 toast“公开失败，请重试”。在途去重，同一篇重复点按只发一次。
+    /// 仅本人未公开且已送达（publishAt <= now、未在倒计时中）的行才出公开钮，见卡片 refreshPubRow。
+    private func handleCellPublish(entry: Entry) {
+        guard let entryId = entry.id, !entryId.isEmpty else { return }
+        guard entry.isMine == true, entry.isPublic != true else { return }
+        let nowMs = Int(Date().timeIntervalSince1970 * 1000)
+        if let pend = entry.publishPendingUntil, pend > nowMs { return }
+        guard let publishAt = entry.publishAt, publishAt <= nowMs else { return }
+        guard !pubBusyIds.contains(entryId) else { return }
+        let alert = UIAlertController(title: BearyText.publishConfirmTitle, message: BearyText.publishConfirmMessage, preferredStyle: .alert)
+        alert.addAction(UIAlertAction(title: "取消", style: .cancel))
+        alert.addAction(UIAlertAction(title: "公开", style: .default) { [weak self] _ in
+            guard let strongSelf = self else { return }
+            strongSelf.pubBusyIds.insert(entryId)
+            BearyAPI.shared.requestPublish(id: entryId) { result in
+                DispatchQueue.main.async {
+                    strongSelf.pubBusyIds.remove(entryId)
+                    switch result {
+                    case .success(let resp):
+                        var updated = entry
+                        if let pend = resp.publishPendingUntil { updated.publishPendingUntil = pend }
+                        if let published = resp.published { updated.isPublic = published == 1 }
+                        strongSelf.updateEntryInAllTabs(entry: updated)
+                        // syncInteraction 不刷公开行：就地同步后补刷，倒计时行随新数据渲染。
+                        strongSelf.syncVisibleCell(entry: updated)?.refreshPublishRow()
+                    case .failure:
+                        BearyToast.show(in: strongSelf.view, message: "公开失败，请重试", aboveFAB: true)
+                    }
+                }
+            }
+        })
+        present(alert, animated: true)
+    }
+
+    /// A-2：“取消”钮：直接走 POST /beary/api/entries/:id/publish/cancel（网页 doPublishCancel 无确认框），
+    /// 成功后清倒计时并同步模型与可见行，失败 toast“取消失败，请重试”。
+    private func handleCellCancelPublish(entry: Entry) {
+        guard let entryId = entry.id, !entryId.isEmpty else { return }
+        guard !pubBusyIds.contains(entryId) else { return }
+        pubBusyIds.insert(entryId)
+        BearyAPI.shared.cancelPublish(id: entryId) { [weak self] result in
+            DispatchQueue.main.async {
+                guard let strongSelf = self else { return }
+                strongSelf.pubBusyIds.remove(entryId)
+                switch result {
+                case .success(let resp):
+                    var updated = entry
+                    updated.publishPendingUntil = nil
+                    if let published = resp.published { updated.isPublic = published == 1 }
+                    strongSelf.updateEntryInAllTabs(entry: updated)
+                    // syncInteraction 不刷公开行：就地同步后补刷，取消后公开钮随新数据复现。
+                    strongSelf.syncVisibleCell(entry: updated)?.refreshPublishRow()
+                case .failure:
+                    BearyToast.show(in: strongSelf.view, message: "取消失败，请重试", aboveFAB: true)
+                }
+            }
+        }
+    }
+
     private func handleCellBookmark(entry: Entry) {
         guard let entryId = entry.id, !entryId.isEmpty else { return }
         guard requireLoginForCellAction() else { return }
@@ -2805,6 +2879,8 @@ extension BearyProfileViewController: UITableViewDataSource, UITableViewDelegate
         cellValue.onLike = { [weak self] in self?.handleCellLike(entry: entryValue) }
         cellValue.onBookmark = { [weak self] in self?.handleCellBookmark(entry: entryValue) }
         cellValue.onShare = { [weak self] in self?.handleCellShare(entry: entryValue) }
+        cellValue.onPublishTapped = { [weak self] in self?.handleCellPublish(entry: entryValue) }
+        cellValue.onPublishCancelTapped = { [weak self] in self?.handleCellCancelPublish(entry: entryValue) }
         cellValue.onContextMenuEdit = { [weak self] in self?.onEditEntry?(entryValue) }
         cellValue.onContextMenuDelete = { [weak self] in self?.onDeleteEntry?(entryValue) }
         cellValue.onEmoteTap = { [weak self] key in self?.handleCellEmote(entry: entryValue, key: key) }

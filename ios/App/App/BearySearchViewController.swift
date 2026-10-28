@@ -84,7 +84,33 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
     private let searchFooterLabel = UILabel()
     private let searchFooterRetryButton = BearyButton.retryPill()
     /// Q9 最近搜索：只存本机 UserDefaults，不走服务端；最多 8 条，新在前、去重。
-    private let recentSearchesKey = "bearyRecentSearches"
+    /// 按账号分桶：登录时键为 bearyRecentSearches_<uid>；未登录时读旧单键
+    /// （升级迁移前暂留，登录后迁移见 migrateLegacyRecentSearchesIfNeeded）。
+    private let legacyRecentSearchesKey = "bearyRecentSearches"
+    private var recentSearchesKey: String {
+        if let uid = SessionManager.shared.currentUser?.id {
+            return "bearyRecentSearches_\(uid)"
+        }
+        return legacyRecentSearchesKey
+    }
+
+    /// 升级迁移（一次性、幂等）：已登录且旧单键仍有记录时，把旧记录并到
+    /// 当前账号桶后（去重、上限 8 条），清旧键；旧记录不擅自删除——合并
+    /// 后才清键，桶已有记录时旧记录排在桶记录之后。未登录时不迁移。
+    private func migrateLegacyRecentSearchesIfNeeded() {
+        guard SessionManager.shared.currentUser?.id != nil else { return }
+        let legacy = UserDefaults.standard.stringArray(forKey: legacyRecentSearchesKey) ?? []
+        guard !legacy.isEmpty else { return }
+        var merged = UserDefaults.standard.stringArray(forKey: recentSearchesKey) ?? []
+        for item in legacy where !merged.contains(item) {
+            merged.append(item)
+        }
+        if merged.count > 8 {
+            merged = Array(merged.prefix(8))
+        }
+        UserDefaults.standard.set(merged, forKey: recentSearchesKey)
+        UserDefaults.standard.removeObject(forKey: legacyRecentSearchesKey)
+    }
     private var recentButtons: [UIButton] = []
 
     private var userButtons: [UIButton] = []
@@ -853,6 +879,7 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
 
     /// Q9 最近搜索：读本机记录，重建标题 + 行；点行直接搜（不走服务端）。
     private func loadRecentSearches() -> [String] {
+        migrateLegacyRecentSearchesIfNeeded()
         return UserDefaults.standard.stringArray(forKey: recentSearchesKey) ?? []
     }
 

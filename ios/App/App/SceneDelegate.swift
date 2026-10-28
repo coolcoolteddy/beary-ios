@@ -68,6 +68,8 @@ class SceneDelegate: UIResponder, UIWindowSceneDelegate {
 
     func sceneWillEnterForeground(_ scene: UIScene) {
         (window?.rootViewController as? BearyChromeViewController)?.resumeSideMatrixAnimation()
+        // 审计 B 批：消息页未创建时回前台补一次角标轻量拉取（已创建则页内刷新已覆盖）。
+        (window?.rootViewController as? BearyChromeViewController)?.foregroundBadgeRefreshIfNotifAbsent()
     }
 
     /// 栏显隐查找（#47 修正）：setChromeHidden 在容器 VC 上，不在 SceneDelegate 上；
@@ -738,9 +740,11 @@ final class BearyChromeViewController: UIViewController {
     /// 以消息页同一机制发 BearyUnreadChanged（同名 + 同 payload 格式 ["unread": Int, "sysUnread": Int]），
     /// 铃铛角标观察者复用，不另起角标通道；失败静默（消息页首拉时自会再拉）。
     private func fetchInitialUnread() {
-        guard SessionManager.shared.isLoggedIn else { return }
-        BearyAPI.shared.fetchNotifications(limit: 1) { result in
+        guard SessionManager.shared.isLoggedIn, !unreadFetchInFlight else { return }
+        unreadFetchInFlight = true
+        BearyAPI.shared.fetchNotifications(limit: 1) { [weak self] result in
             DispatchQueue.main.async {
+                self?.unreadFetchInFlight = false
                 guard case .success(let list) = result else { return }
                 NotificationCenter.default.post(
                     name: BearyNotificationsViewController.unreadChangedNotificationName,
@@ -749,6 +753,16 @@ final class BearyChromeViewController: UIViewController {
                 )
             }
         }
+    }
+
+    /// 审计 B 批：容器级回前台角标补刷——仅当消息页尚未创建时（已创建则页内
+    /// 60 秒轮询 + 回前台刷新已覆盖），做一次去重轻量拉取（在途跳过，见
+    /// fetchInitialUnread 的 unreadFetchInFlight），只补角标，不进列表。
+    /// 未登录时 fetchInitialUnread 自身守卫，不发请求。
+    private var unreadFetchInFlight = false
+    func foregroundBadgeRefreshIfNotifAbsent() {
+        guard notifVC == nil else { return }
+        fetchInitialUnread()
     }
 
 

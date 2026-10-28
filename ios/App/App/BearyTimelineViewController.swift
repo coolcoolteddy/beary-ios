@@ -941,6 +941,8 @@ final class BearyTimelineCell: UITableViewCell {
     private let quoteThumbsScrollView = UIScrollView()
     private var quoteThumbImageViews: [UIImageView] = []
     private var currentEntry: Entry?
+    /// A-3：上一次 updatePill 渲染的 entry id（防复用串篇，见 updatePill 末尾）。
+    private var pillEntryId: String?
     var onEditEntry: ((Entry) -> Void)?
     var onDeleteEntry: ((Entry) -> Void)?
     var onQuoteEntry: ((String) -> Void)?
@@ -961,6 +963,9 @@ final class BearyTimelineCell: UITableViewCell {
     private let cancelPublishButton = UIButton(type: .system)
     var onPublishEntry: ((Entry) -> Void)?
     var onCancelPublishEntry: ((Entry) -> Void)?
+    /// A-3：本行 pill 由投递中翻为未公开（送达）时回调一次（传 entry id），
+    /// 由控制器决定是否弹 toast（仅时间线页可见时）。
+    var onDelivered: ((String) -> Void)?
 
     override init(style: UITableViewCell.CellStyle, reuseIdentifier: String?) {
         super.init(style: style, reuseIdentifier: reuseIdentifier)
@@ -1936,11 +1941,22 @@ final class BearyTimelineCell: UITableViewCell {
             self.pillLabelLeadingWithIcon?.isActive = !hideHourglass
             self.pillLabelLeadingWithoutIcon?.isActive = hideHourglass
         }
-        if let old = pillLabel.text, !old.isEmpty, old != newText {
+        let oldPillText = pillLabel.text
+        if let old = oldPillText, !old.isEmpty, old != newText {
             UIView.transition(with: pillBackground, duration: 0.22, options: .transitionCrossDissolve, animations: apply)
         } else {
             apply()
         }
+        // A-3：送达翻转检测——同一篇 pill 由投递中翻为未公开时回调一次。
+        // pillEntryId 防复用串篇：仅当本行上一次渲染的也是同一篇时才算翻转
+        // （复用后首渲染旧文案属于上一篇，不算）；待公开倒计时态（pending）
+        // 不算送达，排除。回调后文案已是未公开，tick 重复调用不再触发；
+        // 控制器侧另有 Set 去重兜底。
+        if isDelivered && !isPending, let entryId = entry.id, pillEntryId == entryId,
+           let old = oldPillText, old.hasPrefix("投递中") {
+            onDelivered?(entryId)
+        }
+        pillEntryId = entry.id
     }
 
     static func privCountdownText(publishAtMs: Int?) -> String {
@@ -2092,6 +2108,8 @@ class BearyTimelineViewController: UIViewController {
     private var daySwitchGeneration = 0
     /// N3：切日组头淡入一次性标志（willDisplayHeaderView 消费一次，不重播）。
     private var daySwitchTitleFade = false
+    /// A-3：已弹过送达 toast 的 entry id（同篇只弹一次，翻转回调重复触发时兜底）。
+    private var deliveredToastedIds: Set<String> = []
     /// N3：切日回包到达时的入场错峰归属（仅 clear:true 的换日回包设置，
     /// 回包消费后清掉；非换日回包不设，避免旧队列在刷新行上重播）。
     private var daySwitchArrivalKey: String?
@@ -4549,6 +4567,17 @@ class BearyTimelineViewController: UIViewController {
         onOpenTrash?()
     }
 
+    /// A-3：送达提醒——时间线页内某篇 pill 由投递中翻为未公开时弹一次
+    /// 「有日记已送达」toast。仅当页可见时弹（view.window != nil）；
+    /// 翻转发生在其他页时只记已提醒、不补弹、不打扰（pill 本身已翻为未公开）。
+    /// 同篇只弹一次（deliveredToastedIds 兜底）。
+    private func notifyDelivered(entryId: String) {
+        guard !deliveredToastedIds.contains(entryId) else { return }
+        deliveredToastedIds.insert(entryId)
+        guard isViewLoaded, view.window != nil else { return }
+        showTimelineToast(message: "有日记已送达")
+    }
+
     /// 第 5 项公开：网页 doPublish 口径 POST /beary/api/entries/:id/publish，
     /// 先弹网页同款确认框（“确认公开？/ 公开后无法撤回或删除。确认后开始 24 小时倒计时，
     /// 期间可以取消公开。”），成功后整页刷新（倒计时态随新数据回来）；
@@ -4556,7 +4585,7 @@ class BearyTimelineViewController: UIViewController {
     private func handlePublishEntry(_ entry: Entry) {
         guard let entryId = entry.id, !entryId.isEmpty else { return }
         if publishBusyIds.contains(entryId) { return }
-        let alert = UIAlertController(title: "确认公开？", message: "公开后无法撤回或删除。确认后开始 24 小时倒计时，期间可以取消公开。", preferredStyle: .alert)
+        let alert = UIAlertController(title: BearyText.publishConfirmTitle, message: BearyText.publishConfirmMessage, preferredStyle: .alert)
         alert.addAction(UIAlertAction(title: "取消", style: .cancel, handler: nil))
         alert.addAction(UIAlertAction(title: "公开", style: .default, handler: { [weak self] _ in
             guard let strongSelf = self else { return }
@@ -4643,6 +4672,7 @@ extension BearyTimelineViewController: UITableViewDataSource, UITableViewDelegat
         cell.onQuoteEntry = onQuoteEntry
         cell.onPublishEntry = { [weak self] entry in self?.handlePublishEntry(entry) }
         cell.onCancelPublishEntry = { [weak self] entry in self?.handleCancelPublishEntry(entry) }
+        cell.onDelivered = { [weak self] entryId in self?.notifyDelivered(entryId: entryId) }
         // N7：复用独立文件内的查看器，全屏模态弹出（已弹出时不叠加、减动效直显）。
         cell.onTapImages = { [weak self] keys, index in
             guard let self = self, self.presentedViewController == nil else { return }

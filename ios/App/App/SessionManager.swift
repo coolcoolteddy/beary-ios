@@ -47,6 +47,8 @@ final class SessionManager {
     private var sessionGeneration = 0
     /// refreshMe 请求序号：每次调用 +1，回包只认最新一次，旧请求回包
     /// （含成功与 401 映射的 success(nil)）直接丢弃、不调 completion。
+    /// 显式退出时同样 +1（见 signOutLocally），使退出时在途的旧 /me
+    /// 成功回包被 seq 守卫丢弃，不得把旧用户写回。
     private var meSeq = 0
 
     private init() {
@@ -120,9 +122,12 @@ final class SessionManager {
     }
 
     /// 显式退出：服务端会话已清后调（登出接口成功后），清本地用户态并通知界面。
+    /// 同步递增 meSeq：在途旧 /me 成功回包到达时 seq 已变、被守卫丢弃，
+    /// 不得把旧用户写回（登录/切号路径本就靠 refreshMe 调用递增，不动）。
     func signOutLocally() {
         purgeImageCacheForCurrentAccount()
         sessionGeneration += 1
+        meSeq += 1
         api.bumpAuthEpoch()
         currentUser = nil
         authUnknown = false
