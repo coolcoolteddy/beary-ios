@@ -13,7 +13,7 @@ import UIKit
 //    显示“0”、profile 隐藏数字位；未赞色 feed 爱心 ink + 计数灰、profile
 //    爱心与计数同灰；取消赞预态 feed ink / profile 灰；写给行字号 feed
 //    12 粗体 / profile 13 常规；心情行间距 feed 3 / profile 4；操作行
-//    feed 带公开行 pubStack、profile 同款（A-2 补齐）；折叠 feed 实测溢出（300 字 +
+//    feed 右上角公开小地球、profile 同款（A-2 补齐）；折叠 feed 实测溢出（300 字 +
 //    实测超 6 行）/ profile 只计 300 字；图片槽底色 feed line / profile faint。
 //  - 统一项：回应流一律 Feed 流式换行 BearyEmoteFlowView（profile 单行横滑
 //    emoteScrollView 废弃）；图片失败重试一律 Feed 口径（头像/主图均有重试钮，
@@ -444,6 +444,9 @@ class BearyDiaryCardCell: UITableViewCell {
     private var quoteTapLoadFailed = false
     private var emoteRowHeightConstraint: NSLayoutConstraint?
     private var rightStackTopConstraint: NSLayoutConstraint?
+    /// 2026-10-28 23:56：右上角小地球 reserve——本人卡时 rightStack 右缩进 −52
+    ///（16 边距 + 28 图标 + 8 间隙），他人卡恢复 −16；由 refreshPubRow 与复用复位。
+    private var rightStackTrailingConstraint: NSLayoutConstraint?
     /// L21（91 包，个人主页模式）：本卡正文是否超过 300 字（折叠按钮是否适用），
     /// configure 时记下，供 setFoldDisplay 就地切换显示用，不再每次重算。
     private var foldApplies = false
@@ -734,41 +737,26 @@ class BearyDiaryCardCell: UITableViewCell {
     /// 个人主页模式 + 钮：与首页同款虚线 34 圆圈（原实心 32 圆钮已随本修统一删除）。
     private var profileAddButton: BearyDiaryCardDashedAddButton?
 
-    /// iCity：公开行视图（双向切换钮；渲染见 refreshPubRow）。
+    /// iCity：公开切换钮（2026-10-28 23:56 改为卡片右上角小地球，见 refreshPubRow）：
+    /// 21pt 灰色 globe 图标、28×28 帧（BearyHit44Button 扩后热区仍 44），无文字、无边框；
+    /// 目标态只以无障碍文案表达（“公开”/“改回私密”），挂 contentView 右上角对齐标题行。
     private lazy var publishButton: UIButton = {
         let btn = BearyHit44Button(type: .system)
         btn.translatesAutoresizingMaskIntoConstraints = false
-        btn.titleLabel?.font = UIFont.systemFont(ofSize: 14, weight: .semibold)
-        btn.setTitle("公开", for: .normal)
-        btn.setTitleColor(BearyColors.ink, for: .normal)
-        btn.contentEdgeInsets = UIEdgeInsets(top: 6, left: 12, bottom: 6, right: 12)
-        // 网页 .obtn 口径：高 44、圆角 22（Q1 按钮高/pill 圆角统一；此前高 40、圆角 20）。
-        btn.layer.cornerRadius = 22
-        btn.heightAnchor.constraint(equalToConstant: 44).isActive = true
-        btn.layer.borderWidth = 1
-        btn.layer.borderColor = BearyColors.line.cgColor
+        btn.setImage(BearyFeedIconCache.image(named: "icon_globe", pointSize: 21), for: .normal)
+        btn.tintColor = BearyColors.gray
+        btn.widthAnchor.constraint(equalToConstant: 28).isActive = true
+        btn.heightAnchor.constraint(equalToConstant: 28).isActive = true
         btn.addTarget(self, action: #selector(publishTapped), for: .touchUpInside)
         btn.bearyAddPressFeedback()
+        btn.isHidden = true
         return btn
     }()
 
-    /// iCity：公开行只剩一枚双向切换钮（公开卡“改回私密”/私密卡“公开”），倒计时文案与取消钮已删。
-    private lazy var pubStack: UIStackView = {
-        let st = UIStackView(arrangedSubviews: [publishButton])
-        st.translatesAutoresizingMaskIntoConstraints = false
-        st.axis = .horizontal
-        st.spacing = 8
-        st.alignment = .center
-        st.isHidden = true
-        return st
-    }()
-
     private lazy var actionStack: BearyActionStackView = {
-        let spacer = UIView()
-        spacer.translatesAutoresizingMaskIntoConstraints = false
-        spacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
-        spacer.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-        let st = BearyActionStackView(arrangedSubviews: [likeButton, spacer, bookmarkButton, shareButton])
+        // 2026-10-28 23:51 左聚：点赞、收藏、分享三项放左侧一起，不再用 spacer 顶右；
+        // 顺序不变（点赞、收藏、分享），间距与详情页操作行一致（16）。
+        let st = BearyActionStackView(arrangedSubviews: [likeButton, bookmarkButton, shareButton])
         st.translatesAutoresizingMaskIntoConstraints = false
         st.axis = .horizontal
         st.spacing = 16
@@ -919,11 +907,13 @@ class BearyDiaryCardCell: UITableViewCell {
         // 按钮/图片/引用/头像上的长按排除见文件末尾 contextMenuInteraction 代理
         // （头像/名字排除仅首页模式，个人主页模式各保各的，与旧口径一致）。
         contentView.addInteraction(UIContextMenuInteraction(delegate: self))
-        // D2（首页/个人主页模式）：公开行插在点赞钮与 spacer 之间
-        // （网页操作行：likeBtn + pubAction + spacer + bmBtn + shBtn）。
-        if cardMode == .feed || cardMode == .profile {
-            actionStack.insertArrangedSubview(pubStack, at: 1)
-        }
+        // 2026-10-28 23:56：公开钮不再插操作行，改挂 contentView 右上角（对齐标题行），
+        // 本人卡时 rightStack 右缩进让出 28 + 8 的位置（见 refreshPubRow），他人卡恢复 −16。
+        contentView.addSubview(publishButton)
+        NSLayoutConstraint.activate([
+            publishButton.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -16),
+            publishButton.centerYAnchor.constraint(equalTo: titleStack.centerYAnchor),
+        ])
         // F1（首页模式）：正文点击不导航——正文 label 自带空点按手势，把点按截住，
         // 使其不到达 tableView 的 didSelectRowAt（行其余区域点按仍进详情）。
         if cardMode == .feed {
@@ -990,6 +980,9 @@ class BearyDiaryCardCell: UITableViewCell {
             extraConstraints.append(weatherWidth)
             extraConstraints.append(weatherImageView.heightAnchor.constraint(equalToConstant: 15))
         }
+        if rightStackTrailingConstraint == nil {
+            rightStackTrailingConstraint = rightStack.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -16)
+        }
         NSLayoutConstraint.activate([
             avatarContainer.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 14),
             avatarContainer.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 16),
@@ -1007,7 +1000,7 @@ class BearyDiaryCardCell: UITableViewCell {
             avatarRetryButton.heightAnchor.constraint(equalToConstant: 44),
             rightTop,
             rightStack.leadingAnchor.constraint(equalTo: avatarContainer.trailingAnchor, constant: 12),
-            rightStack.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -16),
+            rightStackTrailingConstraint!,
             imageHeight,
             emoteHeight,
             imagesStack.topAnchor.constraint(equalTo: imagesScrollView.contentLayoutGuide.topAnchor),
@@ -1138,7 +1131,8 @@ class BearyDiaryCardCell: UITableViewCell {
         }
         emoteRowHeightConstraint?.constant = 0
         likeButton.setTitle(nil, for: .normal)
-        pubStack.isHidden = true
+        publishButton.isHidden = true
+        rightStackTrailingConstraint?.constant = -16
         // 游客详情复位：提示条默认藏、操作行与回应行默认显，防游客展开态
         // 串位到复用的下一张卡；下一次 configure 的游客分支会重新定显隐。
         guestLoginPromptButton.isHidden = true
@@ -2092,19 +2086,21 @@ class BearyDiaryCardCell: UITableViewCell {
         button.layer.add(shake, forKey: "bearyDenyShake")
     }
 
-    /// iCity：公开行渲染（首页/个人主页模式）：本人卡片恒显一枚双向切换钮，
-    /// 文案表意目标态（公开卡“改回私密”/私密卡“公开”）；他人卡片无切换钮。
+    /// iCity：公开切换渲染（2026-10-28 23:56 改为右上角小地球）：仅本人卡显；
+    /// 本人卡时 rightStack 右缩进 −52 给小地球让位（16 边距 + 28 图标 + 8 间隙），
+    /// 他人卡藏钮并恢复 −16。目标态只以无障碍文案表达，图标恒灰色 21pt。
     func refreshPublishRow() {
         refreshPubRow()
     }
     private func refreshPubRow() {
         guard let entry = currentEntry, entry.isMine == true else {
-            pubStack.isHidden = true
+            publishButton.isHidden = true
+            rightStackTrailingConstraint?.constant = -16
             return
         }
-        publishButton.setTitle(entry.isPublic == true ? "改回私密" : "公开", for: .normal)
-        publishButton.layer.borderColor = BearyColors.line.cgColor
-        pubStack.isHidden = false
+        publishButton.isHidden = false
+        publishButton.accessibilityLabel = entry.isPublic == true ? "改回私密" : "公开"
+        rightStackTrailingConstraint?.constant = -52
     }
 
     @objc private func publishTapped() {

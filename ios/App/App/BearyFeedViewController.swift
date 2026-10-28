@@ -770,6 +770,13 @@ class BearyFeedViewController: UIViewController {
         return indexPaths(for: entryId).first
     }
 
+    /// 详情返回定位（guarded）：只滚已在列表里的 id，绝不插入、不拉取；
+    /// 不在列表里时什么都不做。
+    func scrollToEntryId(_ entryId: String) {
+        guard let path = indexPath(for: entryId) else { return }
+        tableView.scrollToRow(at: path, at: .middle, animated: false)
+    }
+
     /// F8：同一篇的全部可见行。
     private func indexPaths(for entryId: String) -> [IndexPath] {
         var paths: [IndexPath] = []

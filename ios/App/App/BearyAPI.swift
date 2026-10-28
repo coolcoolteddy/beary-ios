@@ -89,6 +89,9 @@ struct Entry: Codable {
     var mentionedName: String?
     var isLocked: Bool?
     var isMine: Bool?
+    /// iCity 私密占位：服务端对非作者的私密单篇只下发 {placeholder: true, id, published: 0}，
+    /// 详情页凭此只显一句“该日记已设为私密”，不带标题／封面／时间／作者名。
+    var placeholder: Bool?
     var likeCount: Int?
     var likedByMe: Bool?
     var bookmarkedByMe: Bool?
