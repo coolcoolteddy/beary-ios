@@ -490,7 +490,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, U
                 if let emoteView = sunEmoteView {
                     emoteDesc = "frame=\(emoteView.frame) bounds=\(emoteView.bounds) hidden=\(emoteView.isHidden) alpha=\(emoteView.alpha) windowIsNil=\(emoteView.window == nil) superviewIsImageView=\(emoteView.superview === sunButton.imageView)"
                     let state = emoteView.diagContentState()
-                    contentDesc = "kind=\(state.kind) frame=\(state.frame) imageIsNil=\(String(describing: state.imageIsNil))"
+                    contentDesc = "kind=\(state.kind) frame=\(state.frame) imageIsNil=\(String(describing: state.imageIsNil)) currentFrame=\(String(describing: state.currentFrame))"
                     if postAttach {
                         frameSuffix = " currentFrame=\(String(describing: state.currentFrame)) staticFrame=\(String(describing: state.staticFrame))"
                     }
@@ -1198,7 +1198,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, U
     }
 
     /// 天气 Lottie 占位图：16×16 全透明，仅占住按钮 imageView 槽位（布局与原来 16pt 静态图一致），
-    /// 真正内容由贴在 imageView 上的 BearyEmoteView 画；加载失败时它回退 wx 静态图，永不留白。
+    /// 真正内容由按钮内独立 16×16 图标容器里的 BearyEmoteView 画；加载失败时它回退 wx 静态图，永不留白。
     private static let weatherPlaceholderImage: UIImage = {
         UIGraphicsImageRenderer(size: CGSize(width: 16, height: 16)).image { _ in }
     }()
@@ -1212,21 +1212,33 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, U
             let staticImage = BearyIconImages.image(named: name, pointSize: 16)
             button.setImage(Self.weatherPlaceholderImage, for: .normal)
             button.titleEdgeInsets = UIEdgeInsets(top: 0, left: 5, bottom: 0, right: 0)
-            // 天气 Lottie：动画贴在 imageView 上（随 imageView 走位，布局与静态图一致，不拦截点按）；
-            // 减动效时播放器内置静态帧不播；加载失败回退 wx 静态图；拿不到 imageView 时回静态图。
+            // 天气 Lottie：独立 16×16 图标容器（心情条同款显式约束宿主），不再挂
+            // UIButton 内部 imageView——过去动画贴在 imageView 上，是全仓唯一一处
+            // imageView.addSubview，也是天气图标不显示剩下的唯一结构差异。
+            // 容器锚定 imageView 槽位（占位图仍占住槽位，按钮内在尺寸/点按范围与原来一致），
+            // 容器本身不拦截点按；减动效时播放器内置静态帧不播；加载失败回退 wx 静态图；
+            // 拿不到 imageView 时回静态图。
             // E4：建钮时不解析（deferred，静态图先行），点开天气条时
             // updateWeatherPlayback 调 ensureLoaded 才加载；69 批播放管控本身不动。
             if let imageView = button.imageView {
                 let lottie = BearyEmoteView(key: Self.weatherLottieKey(for: key), animated: true, fallbackImage: staticImage, deferred: true)
                 weatherEmoteViews.append((key: key, emoteView: lottie))
+                let iconHost = UIView()
+                iconHost.isUserInteractionEnabled = false
+                iconHost.translatesAutoresizingMaskIntoConstraints = false
+                button.addSubview(iconHost)
                 lottie.isUserInteractionEnabled = false
                 lottie.translatesAutoresizingMaskIntoConstraints = false
-                imageView.addSubview(lottie)
+                iconHost.addSubview(lottie)
                 NSLayoutConstraint.activate([
-                    lottie.leadingAnchor.constraint(equalTo: imageView.leadingAnchor),
-                    lottie.trailingAnchor.constraint(equalTo: imageView.trailingAnchor),
-                    lottie.topAnchor.constraint(equalTo: imageView.topAnchor),
-                    lottie.bottomAnchor.constraint(equalTo: imageView.bottomAnchor),
+                    iconHost.leadingAnchor.constraint(equalTo: imageView.leadingAnchor),
+                    iconHost.topAnchor.constraint(equalTo: imageView.topAnchor),
+                    iconHost.widthAnchor.constraint(equalToConstant: 16),
+                    iconHost.heightAnchor.constraint(equalToConstant: 16),
+                    lottie.leadingAnchor.constraint(equalTo: iconHost.leadingAnchor),
+                    lottie.trailingAnchor.constraint(equalTo: iconHost.trailingAnchor),
+                    lottie.topAnchor.constraint(equalTo: iconHost.topAnchor),
+                    lottie.bottomAnchor.constraint(equalTo: iconHost.bottomAnchor),
                 ])
             } else {
                 button.setImage(staticImage, for: .normal)
