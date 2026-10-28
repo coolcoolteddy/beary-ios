@@ -89,6 +89,12 @@ class BearyFeedViewController: UIViewController {
     /// 态不变时不重复调容器，避免滚动事件刷屏。
     private var lastFeedScrollOffsetY: CGFloat = 0
     private var feedChromeHidden = false
+    /// 8-7 Toast 落点：读容器栏态——feedChromeHidden 即本页下发给容器的栏态
+    /// （scrollViewDidScroll 里调 SceneDelegate.chrome?.setChromeHidden 同步），
+    /// 栏藏时 FAB 已同步隐藏，toast 落 -32；栏显时落 -158。不走
+    /// SceneDelegate.showToast（其为容器私有，改公开还会把 toast 换到容器层，
+    /// 层级与本页视图不同），本页 8 处调用点统一读此值。
+    private var toastAboveFAB: Bool { !feedChromeHidden }
 
     /// 有新内容 pill（网页 #newPill 口径：ink 底、bg 字、13 semibold、999 圆角、padding 9/16，
     /// 阴影 0 6px 18px rgba(0,0,0,.22)，
@@ -105,7 +111,8 @@ class BearyFeedViewController: UIViewController {
         btn.tintColor = BearyColors.bg
         btn.titleEdgeInsets.left = 6
         btn.backgroundColor = BearyColors.ink
-        btn.layer.cornerRadius = 17
+        // 8-11：圆角取半高，见 viewDidLayoutSubviews（跟 bounds 走，不手写 17；
+        // Dynamic Type 变高后仍为胶囊）。
         btn.clipsToBounds = false
         btn.layer.shadowColor = UIColor.black.cgColor
         btn.layer.shadowOpacity = 0.22
@@ -386,6 +393,10 @@ class BearyFeedViewController: UIViewController {
         updateFootLogo()
         // 顶栏透度批：安全区变化时按已存栏态重算（容器 viewDidLayoutSubviews 也会重发，双重 no-op）。
         applyHeaderTopInset(visible: headerTopInsetVisible)
+        // 8-11：新内容 pill 圆角取半高（只写 layer 值，不改约束，不触发布局循环）。
+        if newContentPill.bounds.height > 0 {
+            newContentPill.layer.cornerRadius = newContentPill.bounds.height / 2
+        }
     }
 
     /// 顶栏透度批（容器调用，见 SceneDelegate.applyHeaderTopInsets）：主滚动视图即 tableView，
@@ -533,7 +544,7 @@ class BearyFeedViewController: UIViewController {
         items.append(urlValue)
         if presentedViewController != nil {
             UIPasteboard.general.string = urlValue.absoluteString
-            BearyToast.show(in: view, message: "链接已复制", aboveFAB: true)
+            BearyToast.show(in: view, message: "链接已复制", aboveFAB: self.toastAboveFAB)
             return
         }
         let activity = UIActivityViewController(activityItems: items, applicationActivities: nil)
@@ -541,7 +552,7 @@ class BearyFeedViewController: UIViewController {
             if completed == false, error != nil {
                 UIPasteboard.general.string = urlValue.absoluteString
                 if let strongSelf = self {
-                    BearyToast.show(in: strongSelf.view, message: "链接已复制", aboveFAB: true)
+                    BearyToast.show(in: strongSelf.view, message: "链接已复制", aboveFAB: strongSelf.toastAboveFAB)
                 }
             }
         }
@@ -619,7 +630,7 @@ class BearyFeedViewController: UIViewController {
                         strongSelf.plazaHasMore = false
                         strongSelf.plazaError = true
                     } else {
-                        BearyToast.show(in: strongSelf.view, message: "刷新失败", aboveFAB: true)
+                        BearyToast.show(in: strongSelf.view, message: "刷新失败", aboveFAB: strongSelf.toastAboveFAB)
                     }
                 }
                 strongSelf.plazaLoading = false
@@ -946,6 +957,10 @@ class BearyFeedViewController: UIViewController {
     }
 
     /// M1：新行错峰淡入 + 轻微上滑（只针对本批新行，已有行不重播；减动效直设终值）。
+    /// 6-9 核查（2026-10-28）：调用方只传新行——分页走 insertPlazaRows 的 inserted
+    ///（oldCount..<newCount）、重校验走 diff 出的 newPaths（旧 id 集过滤）、首屏走
+    /// isFirstLoad 一次性可见行；其余 reloadData 路径不调本函数。故无需
+    /// animatedRowIds 防重播集合，stagger 现状无问题。
     private func staggerFadeCells(at paths: [IndexPath]) {
         if UIAccessibility.isReduceMotionEnabled { return }
         let visible = tableView.indexPathsForVisibleRows ?? []
@@ -1166,7 +1181,7 @@ class BearyFeedViewController: UIViewController {
         }
         cell.onQuoteNotPublic = { [weak self] in
             if let strongSelf = self {
-                BearyToast.show(in: strongSelf.view, message: "引用的这篇还没公开", aboveFAB: true)
+                BearyToast.show(in: strongSelf.view, message: "引用的这篇还没公开", aboveFAB: strongSelf.toastAboveFAB)
             }
         }
         cell.onInteractionChanged = { [weak self] changedEntryIdValue, likeCountValue, likedValue, bookmarkedValue in
@@ -1184,7 +1199,7 @@ class BearyFeedViewController: UIViewController {
             // 此处是操作点的即时反馈，不与容器回调冲突（本文件不赋值 onNetworkUnstable）。
             if SessionManager.shared.authUnknown {
                 if let strongSelf = self {
-                    BearyToast.show(in: strongSelf.view, message: "网络不稳定，请稍后再试", aboveFAB: true)
+                    BearyToast.show(in: strongSelf.view, message: "网络不稳定，请稍后再试", aboveFAB: strongSelf.toastAboveFAB)
                 }
                 return
             }
@@ -1195,7 +1210,7 @@ class BearyFeedViewController: UIViewController {
         }
         cell.onEmoteFailed = { [weak self] in
             guard let strongSelf = self else { return }
-            BearyToast.show(in: strongSelf.view, message: "操作失败，请重试", aboveFAB: true)
+            BearyToast.show(in: strongSelf.view, message: "操作失败，请重试", aboveFAB: strongSelf.toastAboveFAB)
         }
         cell.onShareRequested = { [weak self] entryValue in
             self?.presentShareSheet(for: entryValue)
@@ -1272,7 +1287,7 @@ class BearyFeedViewController: UIViewController {
                     case .success(let resp):
                         strongSelf.applyPublishState(entryId: entryId, pending: resp.publishPendingUntil, clearPending: false, isPublic: resp.published.map { $0 == 1 })
                     case .failure:
-                        BearyToast.show(in: strongSelf.view, message: "公开失败，请重试", aboveFAB: true)
+                        BearyToast.show(in: strongSelf.view, message: "公开失败，请重试", aboveFAB: strongSelf.toastAboveFAB)
                     }
                 }
             }
@@ -1292,7 +1307,7 @@ class BearyFeedViewController: UIViewController {
                 case .success(let resp):
                     strongSelf.applyPublishState(entryId: entryId, pending: nil, clearPending: true, isPublic: resp.published.map { $0 == 1 })
                 case .failure:
-                    BearyToast.show(in: strongSelf.view, message: "取消失败，请重试", aboveFAB: true)
+                    BearyToast.show(in: strongSelf.view, message: "取消失败，请重试", aboveFAB: strongSelf.toastAboveFAB)
                 }
             }
         }
