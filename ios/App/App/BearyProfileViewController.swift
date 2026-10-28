@@ -32,7 +32,7 @@ import UIKit
 //   BearyEditProfileViewController）；页内返回走 onBack；
 //   C2：齿轮不再弹菜单，直接走 onOpenAccountSettings 打开设置页；使用指南 /
 //   外观切换 / 退出登录改由设置页内入口承载（通用与通知、独立退出钮），
-//   onShowTutorial / onToggleAppearance / onLogout 回调保留作容器兼容，
+//   onShowTutorial / onLogout 回调保留作容器兼容，
 //   齿轮路径不再触发它们；行内互动成功后走
 //   onInteractionChanged（与详情页同款签名：id、点赞数、已赞、已收藏、回应聚合）。
 // - 小熊回应墙：标题“小熊回应”+ 横滑表情 × 计数 + “共收到 N 只”，
@@ -162,11 +162,6 @@ class BearyProfileViewController: UIViewController {
 
     /// C2：齿轮直达设置页，容器接线到设置页（presentSettings）。
     var onOpenAccountSettings: (() -> Void)?
-
-    /// C2 保留（齿轮路径不再触发）：原齿轮菜单「外观」，容器接线到外观切换
-    /// （BearyThemeSwitchCardViewController Popover）；外观切换现为设置页
-    /// 通用组内三档行，Popover 类保留不断开其他调用方（见回执：无其他调用方）。
-    var onToggleAppearance: (() -> Void)?
 
     /// 日记（本人）空态“写一篇”：容器接线到编辑器（与首页 onComposeRequested 同去向）。
     /// 本批只加按钮与回调，不改 SceneDelegate（容器接线由父级统一处理，避免多线同改 SceneDelegate 冲突）。

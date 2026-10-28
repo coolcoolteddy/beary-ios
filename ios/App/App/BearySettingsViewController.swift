@@ -237,7 +237,7 @@ final class BearySettingsViewController: UIViewController {
 
     private let scrollView = UIScrollView()
     private let contentStack = UIStackView()
-    private let closeButton = UIButton(type: .system)
+    private let closeButton = BearyHit44Button(type: .system)
     private let titleLabel = UILabel()
     private let loadingView = UIActivityIndicatorView(style: .medium)
     private let failureWrap = UIStackView()
@@ -1909,7 +1909,7 @@ final class BearySettingsViewController: UIViewController {
 final class BearyLegalTextViewController: UIViewController {
     private let pageTitle: String
     private let pageText: String
-    private let closeButton = UIButton(type: .system)
+    private let closeButton = BearyHit44Button(type: .system)
     private let titleLabel = UILabel()
     private let textView = UITextView()
 
@@ -2531,7 +2531,7 @@ private final class BearyDiagnosticsViewController: UIViewController {
         super.viewDidLoad()
         view.backgroundColor = BearyColors.bg
 
-        let closeButton = UIButton(type: .system)
+        let closeButton = BearyHit44Button(type: .system)
         closeButton.translatesAutoresizingMaskIntoConstraints = false
         closeButton.setTitle("关闭", for: .normal)
         closeButton.setTitleColor(BearyColors.ink, for: .normal)

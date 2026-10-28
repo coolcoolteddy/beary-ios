@@ -89,8 +89,8 @@ class BearyEditProfileViewController: UIViewController {
         return stackValue
     }()
 
-    private lazy var closeButton: UIButton = {
-        let buttonValue = UIButton(type: .system)
+    private lazy var closeButton: BearyHit44Button = {
+        let buttonValue = BearyHit44Button(type: .system)
         buttonValue.translatesAutoresizingMaskIntoConstraints = false
         buttonValue.setTitle("关闭", for: .normal)
         buttonValue.setTitleColor(BearyColors.ink, for: .normal)
