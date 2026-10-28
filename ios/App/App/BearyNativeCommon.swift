@@ -580,10 +580,7 @@ enum BearyText {
         "fog": "雾", "thunder": "雷阵雨", "wind": "风", "night": "夜晚",
     ]
 
-    /// 公开确认框文案（Feed / Timeline / 个人主页三处共用，文案本身逐字不动；
-    /// 抽常量只为防三处再漂移，见审计 A 批第 9 条与 B 方案 A-4）。
-    static let publishConfirmTitle = "确认公开？"
-    static let publishConfirmMessage = "公开后无法撤回或删除。确认后开始 24 小时倒计时，期间可以取消公开。"
+    /// iCity：可见性切换无需确认（选择本身即确认，翻回即撤销），旧公开确认框常量已删除。
 }
 
 // MARK: - 写接口响应模型（BearyAPI 用 convertFromSnakeCase 解码）
@@ -684,12 +681,13 @@ extension BearyAPI {
 
     /// 发帖：content 必填 ≤2000 字；images 是已上传的 R2 key 数组（须归属本人且存在）；
     /// mood/weather/quote_id 省略即不传（服务端 validMood/validWeather 对缺失值置 null，与网页同口径）；
-    /// recipient_id 有值时必带 notify_recipient（1 开 / 0 关，网页同款）；client_req 须匹配
+    /// iCity：published（0 私密 / 1 公开，默认 0）与 mentioned_user_id（@ 一人，可空）随新建 POST 发出；
+    /// recipient_id / notify_recipient 已停写（送达旁路全拆，@ 提醒无按篇开关、公开即提醒）。client_req 须匹配
     /// ^[A-Za-z0-9_-]{8,64}$，用于发布幂等。
     /// 成功 201 返回 {id, publish_at, edit_deadline}；失败码：content required / content too long /
     /// invalid image ownership / image unavailable(409) / create_gap / create_day_limit /
-    /// create_ip_limit(429) / create_dup / recipient_invalid。
-    func publishEntry(content: String, images: [String], mood: String?, weather: String? = nil, quoteId: String? = nil, recipientId: Int? = nil, notifyRecipient: Int? = nil, title: String? = nil, clientReq: String, completion: @escaping (Result<CreateResponse, APIError>) -> Void) {
+    /// create_ip_limit(429) / create_dup。
+    func publishEntry(content: String, images: [String], mood: String?, weather: String? = nil, quoteId: String? = nil, published: Int? = nil, mentionedUserId: Int? = nil, title: String? = nil, clientReq: String, completion: @escaping (Result<CreateResponse, APIError>) -> Void) {
         var body: [String: Any] = ["content": content, "images": images, "client_req": clientReq]
         // R1：标题透传，nil=省略不传；非 nil（含空串）原样传。新建调用方传
         // trimmedTitle()（空时为 nil），故新建不填标题仍省略不传，行为不变；
@@ -698,19 +696,18 @@ extension BearyAPI {
         if let m = mood { body["mood"] = m }
         if let w = weather { body["weather"] = w }
         if let q = quoteId { body["quote_id"] = q }
-        if let r = recipientId {
-            body["recipient_id"] = r
-            body["notify_recipient"] = notifyRecipient ?? 1
-        }
+        if let p = published { body["published"] = p }
+        if let mentioned = mentionedUserId { body["mentioned_user_id"] = mentioned }
         request("/beary/api/entries", method: "POST", jsonBody: body, completion: completion)
     }
 
     /// 编辑已发日记：PUT /beary/api/entries/:id，字段与网页编辑同款（content/images/mood/weather/quote_id；
-    /// 写给与通知不在 PUT 字段里，发布即锁定、编辑不可改）。
-    /// 服务端 15 分钟规则：已公开 403 'already public'、过编辑期 403 'edit window expired' 或
-    /// 'already public or expired'；成功只返回 {ok: true}，调用方成功后自行重拉单篇。
+    /// iCity：@ 可改，mentioned_user_id 随 PUT 发出；clearMentioned 时显式发 null 清掉 @）。
+    /// 服务端 15 分钟规则：过编辑期 403 'edit window expired'；编辑锁只看时间，不看可见性
+    /// （公开后 15 分钟内仍可编辑；可见性只走 visibility 接口，不可经此接口改）。
+    /// 成功只返回 {ok: true}，调用方成功后自行重拉单篇。
     /// 图片须归属本人且存在，否则 400 'invalid image ownership' / 409 'image unavailable'。
-    func updateEntry(id: String, content: String, images: [String], mood: String?, weather: String?, quoteId: String?, title: String? = nil, completion: @escaping (Result<Void, APIError>) -> Void) {
+    func updateEntry(id: String, content: String, images: [String], mood: String?, weather: String?, quoteId: String?, title: String? = nil, mentionedUserId: Int? = nil, clearMentioned: Bool = false, completion: @escaping (Result<Void, APIError>) -> Void) {
         let safe = id.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? id
         var body: [String: Any] = ["content": content, "images": images]
         // R1：标题透传，nil=省略不传（不改服务端标题）；显式空串 "" 原样传，
@@ -720,6 +717,11 @@ extension BearyAPI {
         if let m = mood { body["mood"] = m }
         if let w = weather { body["weather"] = w }
         if let q = quoteId { body["quote_id"] = q }
+        if clearMentioned {
+            body["mentioned_user_id"] = NSNull()
+        } else if let mentioned = mentionedUserId {
+            body["mentioned_user_id"] = mentioned
+        }
         requestVoid("/beary/api/entries/\(safe)", method: "PUT", jsonBody: body, completion: completion)
     }
 }
@@ -1444,5 +1446,115 @@ final class BearySkeletonCardView: UIView {
         breathing = false
         breathingStack.layer.removeAnimation(forKey: "bearySkeletonBreath")
         breathingStack.alpha = 0.8
+    }
+}
+
+// MARK: - iCity 共享助手（可见性相对时间 / 已举报本地态 / 举报与拉黑流程）
+
+/// 广场卡公开相对时间：“X 分钟 / 小时 / 天前公开”；1 分钟内为“刚刚公开”。
+/// publishedAt 缺失时返回 nil（调用方回退绝对时间）。
+enum BearyVisibilityText {
+    static func publishedRelativeString(publishedAtMs: Int?) -> String? {
+        guard let ms = publishedAtMs, ms > 0 else { return nil }
+        let diff = Date().timeIntervalSince1970 - TimeInterval(ms) / 1000.0
+        if diff < 60 { return "刚刚公开" }
+        if diff < 3600 { return "\(Int(diff / 60)) 分钟前公开" }
+        if diff < 86400 { return "\(Int(diff / 3600)) 小时前公开" }
+        return "\(Int(diff / 86400)) 天前公开"
+    }
+}
+
+/// 已举报日记 id 本地集（UserDefaults）：服务端“每人每篇一次”去重后，
+/// 客户端据此在搜索结果与卡片菜单里显“已举报”置灰态。仅存 id，不存正文与理由。
+enum BearyReportedStore {
+    private static let key = "beary.reportedEntryIds"
+    private static var cached: Set<String>?
+
+    static func isReported(entryId: String) -> Bool {
+        if cached == nil {
+            cached = Set(UserDefaults.standard.stringArray(forKey: key) ?? [])
+        }
+        return cached?.contains(entryId) ?? false
+    }
+
+    static func markReported(entryId: String) {
+        if cached == nil {
+            cached = Set(UserDefaults.standard.stringArray(forKey: key) ?? [])
+        }
+        cached?.insert(entryId)
+        UserDefaults.standard.set(Array(cached ?? []), forKey: key)
+    }
+}
+
+extension Notification.Name {
+    /// 举报成功后广播（object = entryId）：各列表页据此把该日记从举报人被动表面移除。
+    static let bearyDidReportEntry = Notification.Name("bearyDidReportEntry")
+    /// 拉黑成功后广播（object = blockedUserId Int）：各列表页据此过滤该作者条目。
+    static let bearyDidBlockUser = Notification.Name("bearyDidBlockUser")
+}
+
+/// 举报理由：复用封禁五类（服务端 reasons 枚举同款文案）。
+enum BearyReportReason {
+    static let all = ["违规内容", "刷量", "人身攻击", "spam", "其他"]
+}
+
+/// 举报流程（卡片菜单 / 他人主页“更多”共用）：理由单选 → 提交 → 服务端确认后
+/// 才消失（失败只 toast、不消失；重复举报同样按已举报处理并消失）。
+enum BearyReportFlow {
+    static func present(from vc: UIViewController, entryId: String, entryLabel: String? = nil) {
+        guard !entryId.isEmpty else { return }
+        if BearyReportedStore.isReported(entryId: entryId) {
+            BearyToast.show(in: vc.view, message: "已举报", aboveFAB: false)
+            return
+        }
+        let title = entryLabel == nil ? "举报这篇日记？" : "举报\(entryLabel!)？"
+        let sheet = UIAlertController(title: title, message: "举报后这篇日记将从你的信息流消失，不可撤销。", preferredStyle: .actionSheet)
+        for reason in BearyReportReason.all {
+            sheet.addAction(UIAlertAction(title: reason, style: .default) { _ in
+                BearyAPI.shared.reportEntry(entryId: entryId, reason: reason) { result in
+                    DispatchQueue.main.async {
+                        switch result {
+                        case .success:
+                            BearyReportedStore.markReported(entryId: entryId)
+                            NotificationCenter.default.post(name: .bearyDidReportEntry, object: entryId)
+                            BearyToast.show(in: vc.view, message: "已举报，谢谢反馈", aboveFAB: false)
+                        case .failure:
+                            BearyToast.show(in: vc.view, message: "举报失败，请重试", aboveFAB: false)
+                        }
+                    }
+                }
+            })
+        }
+        sheet.addAction(UIAlertAction(title: "取消", style: .cancel, handler: nil))
+        if let popover = sheet.popoverPresentationController {
+            popover.sourceView = vc.view
+            popover.sourceRect = CGRect(x: vc.view.bounds.midX, y: vc.view.bounds.midY, width: 0, height: 0)
+        }
+        vc.present(sheet, animated: BearyMotion.animated(true))
+    }
+}
+
+/// 拉黑流程（他人主页“更多”共用）：确认 → 提交 → 成功后广播，调用方据此清理条目与离场。
+enum BearyBlockFlow {
+    static func block(from vc: UIViewController, userId: Int, userName: String?, onDone: ((Bool) -> Void)? = nil) {
+        let name = (userName ?? "").isEmpty ? "这位用户" : userName!
+        let alert = UIAlertController(title: "拉黑\(name)？", message: "拉黑后将不再看到 TA 的日记，可在设置页「已拉黑用户」里解除。", preferredStyle: .alert)
+        alert.addAction(UIAlertAction(title: "取消", style: .cancel, handler: nil))
+        alert.addAction(UIAlertAction(title: "拉黑", style: .destructive) { _ in
+            BearyAPI.shared.blockUser(userId: userId) { result in
+                DispatchQueue.main.async {
+                    switch result {
+                    case .success:
+                        NotificationCenter.default.post(name: .bearyDidBlockUser, object: userId)
+                        BearyToast.show(in: vc.view, message: "已拉黑", aboveFAB: false)
+                        onDone?(true)
+                    case .failure:
+                        BearyToast.show(in: vc.view, message: "拉黑失败，请重试", aboveFAB: false)
+                        onDone?(false)
+                    }
+                }
+            }
+        })
+        vc.present(alert, animated: BearyMotion.animated(true))
     }
 }

@@ -5,7 +5,8 @@ import Foundation
 // 约定：
 // - 所有请求带 Origin: https://teddyhn.com（写接口 CSRF 校验要求；读接口无害）。
 // - 会话 cookie teddy_session 走共享 HTTPCookieStorage，由 SessionManager 原生侧独占（批一删网页同步）。
-// - 分页一律游标式（before + before_id），与网页端同口径；服务端排序 created_at DESC, id DESC。
+// - 分页一律游标式（before + before_id），与网页端同口径；广场服务端排序 published_at DESC, id DESC
+//   （iCity：客户端不自排，游标同步用 published_at）；其他 scope 排序口径不变。
 // - 模型字段全部 optional：服务端增减字段不断解码；调用方用 ?? 兜底。
 
 enum APIError: Error {
@@ -47,6 +48,10 @@ struct Quote: Codable {
     var authorAvatar: String?
     var authorBadge: String?
     var authorPlus: Int?
+    /// iCity viewer 判定用：被引篇作者 id / 是否为当前查看者本人（服务端按 viewer 下发；
+    /// 缺失时调用方按 fail-closed 处理，不凭正文非空推断作者身份）。
+    var authorId: Int?
+    var isMine: Bool?
 }
 
 /// 全量同步落盘用：Entry 加 Encodable（只补编码能力，不改字段语义；
@@ -71,11 +76,16 @@ struct Entry: Codable {
     var quote: Quote?
     var createdAt: Int?
     var publishAt: Int?
-    /// B 方案公开倒计时截止（毫秒时间戳；nil = 不在倒计时中）。服务端仅对作者本人返回该字段，
-    /// 他人视角下该字段被剥离；解码走 convertFromSnakeCase（publish_pending_until），不要写 snake_case CodingKeys。
+    /// 旧 B 方案公开倒计时截止（iCity 已废弃：服务端不再写 pending，字段仅保留解码兼容，
+    /// 不得再用于任何 UI 或门控判断；可见性唯一事实来源是 isPublic + publishedAt）。
     var publishPendingUntil: Int?
     var editDeadline: Int?
     var isPublic: Bool?
+    /// iCity：最近一次公开时间（毫秒；私密态为 nil；服务端按 24 小时冷却刷新）。
+    var publishedAt: Int?
+    /// iCity @：被 @ 者 id（可空）与显示名（卡片/详情 @ 标签用）。
+    var mentionedUserId: Int?
+    var mentionedName: String?
     var isLocked: Bool?
     var isMine: Bool?
     var likeCount: Int?
@@ -105,17 +115,61 @@ struct EntryList: Decodable {
     var trashCount: Int?
     var tlCounts: TlCounts?
     var deliveredTotal: Int?
-    /// B 方案广场附加字段：published=1 按 published_at DESC 最新 5 条（仅 scope=plaza 返回，
-    /// 条目形状与 entries 列表项一致；其他 scope 下服务端不返回本字段，解码为 nil）。
+    /// 旧广场附加字段（iCity 已删模块：客户端不再渲染它；字段仅保留解码兼容，
+    /// 服务端停发后自然为 nil）。
     var recentPublished: [Entry]?
 }
 
 /// B 方案公开/取消响应：服务端 POST /publish 与 /publish/cancel 均返回
 /// {ok, publish_pending_until, published}（published 为 0/1 数字；取消成功时 publish_pending_until 为 null）。
+/// 旧公开/取消响应（iCity：调用方改走 setVisibility 的 VisibilityResponse；本结构仅保留解码兼容）。
 struct PublishResponse: Decodable {
     var ok: Bool?
     var publishPendingUntil: Int?
     var published: Int?
+    var publishedAt: Int?
+}
+
+/// iCity 可见性切换响应：POST /beary/api/entries/:id/visibility → {published, published_at}。
+struct VisibilityResponse: Decodable {
+    var ok: Bool?
+    var published: Int?
+    var publishedAt: Int?
+}
+
+/// iCity 举报响应：成功 {ok: true}；重复举报 {ok: true, duplicate: true, reported: true}。
+struct ReportResponse: Decodable {
+    var ok: Bool?
+    var duplicate: Bool?
+    var reported: Bool?
+}
+
+/// iCity 拉黑列表响应：{blocked: [ids]}（id 可能是数字或字符串，兼容两种写法）。
+struct BlocksResponse: Decodable {
+    var blocked: [Int]?
+
+    enum CodingKeys: String, CodingKey {
+        case blocked
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        if let ints = try? container.decode([Int].self, forKey: .blocked) {
+            blocked = ints
+        } else if let texts = try? container.decode([String].self, forKey: .blocked) {
+            blocked = texts.compactMap { Int($0) }
+        } else {
+            blocked = nil
+        }
+    }
+}
+
+/// iCity 回收站恢复响应：服务端返回恢复后的实际可见性（published 0/1 或 is_public 二选一，
+/// 均缺失时调用方按“已恢复”通用文案 + 时间线重拉为准，不猜原态）。
+struct RestoreResponse: Decodable {
+    var ok: Bool?
+    var published: Int?
+    var isPublic: Bool?
 }
 
 struct NotificationItem: Decodable {
@@ -227,6 +281,8 @@ struct TrashItem: Codable {
     var content: String?
     var createdAt: Int?
     var publishAt: Int?
+    /// iCity：回收站原可见性（服务端 trash 列表返回；旧行缺失时为 nil，恢复按私密处理）。
+    var published: Int?
     var deletedAt: Int?
     var daysLeft: Int?
 
@@ -238,6 +294,7 @@ struct TrashItem: Codable {
         case content
         case createdAt
         case publishAt
+        case published
         case deletedAt
         case daysLeft
     }
@@ -254,17 +311,19 @@ struct TrashItem: Codable {
         content = try container.decodeIfPresent(String.self, forKey: .content)
         createdAt = try container.decodeIfPresent(Int.self, forKey: .createdAt)
         publishAt = try container.decodeIfPresent(Int.self, forKey: .publishAt)
+        published = try container.decodeIfPresent(Int.self, forKey: .published)
         deletedAt = try container.decodeIfPresent(Int.self, forKey: .deletedAt)
         daysLeft = try container.decodeIfPresent(Int.self, forKey: .daysLeft)
     }
 
     /// 本地构造（删帖进回收站桶）：id 即 entryIdentifier；deletedAt 为删除时刻毫秒，
     /// daysLeft 按服务端 30 天保留口径；下次静默刷新用服务端值纠正残差。
-    init(id: String, content: String?, createdAt: Int?, publishAt: Int?, deletedAt: Int?, daysLeft: Int?) {
+    init(id: String, content: String?, createdAt: Int?, publishAt: Int?, deletedAt: Int?, daysLeft: Int?, published: Int? = nil) {
         self.id = id
         self.content = content
         self.createdAt = createdAt
         self.publishAt = publishAt
+        self.published = published
         self.deletedAt = deletedAt
         self.daysLeft = daysLeft
     }
@@ -277,6 +336,7 @@ struct TrashItem: Codable {
         try container.encodeIfPresent(content, forKey: .content)
         try container.encodeIfPresent(createdAt, forKey: .createdAt)
         try container.encodeIfPresent(publishAt, forKey: .publishAt)
+        try container.encodeIfPresent(published, forKey: .published)
         try container.encodeIfPresent(deletedAt, forKey: .deletedAt)
         try container.encodeIfPresent(daysLeft, forKey: .daysLeft)
     }
@@ -724,24 +784,71 @@ final class BearyAPI {
 
     // MARK: - B 方案公开 / 取消（网页 doPublish / doPublishCancel 同款端点，见 teddy_beary/worker.js）
 
-    /// 公开：POST /beary/api/entries/:id/publish（作者对已送达未公开日记发起 24h 公开倒计时）。
-    /// 已在倒计时中服务端 403 already pending；成功后调用方以 publishPendingUntil 覆盖本地态。
+    /// 旧公开端点（iCity 已废弃：调用方改走 setVisibility；仅保留，调用点已全部迁移）。
+    /// 服务端兼容语义改为立即公开，但 App 不再使用。
     func requestPublish(id: String, completion: @escaping (Result<PublishResponse, APIError>) -> Void) {
         let safe = id.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? id
         request("/beary/api/entries/\(safe)/publish", method: "POST", completion: completion)
     }
 
-    /// 取消公开：POST /beary/api/entries/:id/publish/cancel（倒计时内取消，清 pending 回未公开）。
-    /// 不在倒计时中服务端 403 not pending；成功后调用方将本地 publishPendingUntil 清为 nil。
+    /// 旧取消公开端点（iCity 已废弃：调用方改走 setVisibility 显式目标态；仅保留，调用点已全部迁移）。
     func cancelPublish(id: String, completion: @escaping (Result<PublishResponse, APIError>) -> Void) {
         let safe = id.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? id
         request("/beary/api/entries/\(safe)/publish/cancel", method: "POST", completion: completion)
     }
 
+    // MARK: - iCity 可见性切换 / 举报 / 拉黑 / 行为事件
+
+    /// 可见性切换：POST /beary/api/entries/:id/visibility {published: 0|1}（显式目标态，禁 toggle）。
+    /// 响应回权威 {published, published_at}，调用方以响应目标态为准同步本地模型。
+    func setVisibility(id: String, published: Int, completion: @escaping (Result<VisibilityResponse, APIError>) -> Void) {
+        let safe = id.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? id
+        request("/beary/api/entries/\\(safe)/visibility", method: "POST", jsonBody: ["published": published], completion: completion)
+    }
+
+    /// 举报：POST /beary/api/reports {entry_id, reason}（reason 为封禁五类之一）。
+    /// 重复举报返回已举报态，不建新行、不重复计数。
+    func reportEntry(entryId: String, reason: String, completion: @escaping (Result<ReportResponse, APIError>) -> Void) {
+        request("/beary/api/reports", method: "POST", jsonBody: ["entry_id": entryId, "reason": reason], completion: completion)
+    }
+
+    /// 拉黑：POST /beary/api/blocks {user_id}。
+    func blockUser(userId: Int, completion: @escaping (Result<Void, APIError>) -> Void) {
+        requestVoid("/beary/api/blocks", method: "POST", jsonBody: ["user_id": userId], completion: completion)
+    }
+
+    /// 解除拉黑：DELETE /beary/api/blocks/:user。
+    func unblockUser(userId: Int, completion: @escaping (Result<Void, APIError>) -> Void) {
+        requestVoid("/beary/api/blocks/\\(userId)", method: "DELETE", completion: completion)
+    }
+
+    /// 我的拉黑列表：GET /beary/api/blocks → {blocked: [ids]}。
+    func fetchBlocks(completion: @escaping (Result<BlocksResponse, APIError>) -> Void) {
+        request("/beary/api/blocks", completion: completion)
+    }
+
+    /// 行为事件：POST /beary/api/events {event_type, target_id?, duration_ms?}。
+    /// 仅 app_open / dwell / search_click 由客户端上报（阅读、翻转、搜索计数由后端记）。
+    /// 上报失败不得阻塞流程、不得弹 toast：调用方忽略失败；suppressUnauthorized 避免
+    /// 游客态 401 触发全局 onUnauthorized（游客事件服务端记 user_id NULL）。
+    func sendEvent(eventType: String, targetId: String? = nil, durationMs: Int? = nil, completion: ((Result<Void, APIError>) -> Void)? = nil) {
+        var body: [String: Any] = ["event_type": eventType]
+        if let targetId = targetId { body["target_id"] = targetId }
+        if let durationMs = durationMs { body["duration_ms"] = durationMs }
+        requestVoid("/beary/api/events", method: "POST", jsonBody: body, suppressUnauthorized: true) { result in
+            completion?(result)
+        }
+    }
+
+    /// 回收站恢复（带原可见性回包）：POST /beary/api/trash/:id/restore。
+    func restoreTrashDetail(id: String, completion: @escaping (Result<RestoreResponse, APIError>) -> Void) {
+        let safe = id.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? id
+        request("/beary/api/trash/\\(safe)/restore", method: "POST", completion: completion)
+    }
+
     // MARK: - 日记删除与回收站
 
-    /// 删帖：DELETE /beary/api/entries/:id（beary Worker：仅私密期、仅作者可删，
-    /// 成功后日记进回收站；已公开返回 403 cannot delete public entry）。
+    /// 删帖：DELETE /beary/api/entries/:id（iCity：公开/私密均可删进回收站，仅作者可删）。
     func deleteEntry(id: String, completion: @escaping (Result<Void, APIError>) -> Void) {
         let safe = id.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? id
         requestVoid("/beary/api/entries/\(safe)", method: "DELETE", completion: completion)
@@ -757,7 +864,8 @@ final class BearyAPI {
         request("/beary/api/trash", query: q, completion: completion)
     }
 
-    /// 恢复：POST /beary/api/trash/:id/restore（恢复后公开倒计时按原 publish_at 继续）。
+    /// 恢复（旧无回包版；回收站页改走 restoreTrashDetail 按原可见性分流 toast）。
+    /// 服务端按 trash 原值写回 published + published_at（旧行按私密 + NULL 恢复）。
     func restoreTrash(id: String, completion: @escaping (Result<Void, APIError>) -> Void) {
         let safe = id.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? id
         requestVoid("/beary/api/trash/\(safe)/restore", method: "POST", completion: completion)

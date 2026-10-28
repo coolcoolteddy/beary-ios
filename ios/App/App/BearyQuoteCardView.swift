@@ -2,7 +2,7 @@ import UIKit
 
 // ===== BearyQuoteCardView 共享引用卡（B 批卡片合并）=====
 // 来源二合一：首页的独立 BearyFeedQuoteView（F11 lite 卡：左侧 3pt 线、
-// faint 底、圆角 8、15px 引号图标、投递中 pill、日期行内末位、42px 缩略图条
+// faint 底、圆角 8、15px 引号图标、「仅你可见」角标、日期行内末位、42px 缩略图条
 // flex 分配、gone/locked/加载失败三态）＋个人主页 cell 内 quoteContainer
 // 手写卡（同款 faint 底、9/12 内边距、15px 图标、13.5 正文、42px 缩略图、
 // 日期、gone 两文案）。统一后两页视觉以 Feed 卡为准（个人主页侧圆角
@@ -31,15 +31,12 @@ final class BearyQuoteCardView: UIView {
         return v
     }()
 
-    /// 投递中 pill（lite 卡口径）：11/600/blue、blue 13% 底、圆角 6、padding 2/7。
-    /// W2 口径说明：列表侧服务端 attachQuotes 直传的 Quote 模型无 publishAt 字段
-    /// （见 BearyAPI.swift，publishAt 只在 Entry 上），算不出倒计时，故不传 publishAt
-    /// 时仍显示 plain“投递中”；编辑器侧 SelectedQuote.publishAt 取自 Entry（毫秒），
-    /// 经 configure 的可选 publishAt 入口传进来时显示带倒计时的同款文案。
-    private let deliveringPillButton: UIButton = {
+    /// iCity“仅你可见”角标（lite 卡口径）：11/600/blue、blue 13% 底、圆角 6、padding 2/7。
+    /// 仅当作者本人看自己私密日记被引用进公开日记时显示；别人看同一张卡时是占位，见不到它。
+    private let onlyYouBadgeButton: UIButton = {
         let btn = UIButton(type: .system)
         btn.translatesAutoresizingMaskIntoConstraints = false
-        btn.setTitle("投递中", for: .normal)
+        btn.setTitle("仅你可见", for: .normal)
         btn.titleLabel?.font = UIFont.systemFont(ofSize: 11, weight: .semibold)
         btn.setTitleColor(BearyColors.blue, for: .normal)
         btn.backgroundColor = BearyColors.alpha(BearyColors.blue, 0.13)
@@ -51,9 +48,9 @@ final class BearyQuoteCardView: UIView {
         return btn
     }()
 
-    // 52 批：lite 卡不带头像名——nameRow 只剩投递中 pill（pill 隐藏时该行自动塌掉）。
+    // 52 批：lite 卡不带头像名——nameRow 只剩“仅你可见”角标（隐藏时该行自动塌掉）。
     private lazy var nameRow: UIStackView = {
-        let st = UIStackView(arrangedSubviews: [deliveringPillButton])
+        let st = UIStackView(arrangedSubviews: [onlyYouBadgeButton])
         st.translatesAutoresizingMaskIntoConstraints = false
         st.axis = .horizontal
         st.spacing = 8
@@ -152,7 +149,7 @@ final class BearyQuoteCardView: UIView {
         st.axis = .vertical
         st.alignment = .fill
         st.distribution = .fill
-        // 正文栈只剩 [投递中 pill 行][正文]（日期与缩略图已移到横向行栈，见 rowStack）。
+        // 正文栈只剩 [角标行][正文]（日期与缩略图已移到横向行栈，见 rowStack）。
         st.spacing = 6
         return st
     }()
@@ -201,10 +198,10 @@ final class BearyQuoteCardView: UIView {
         let rowWidth = bounds.width - 24
         if rowWidth <= 0 { return }
         let dateWidth = dateLabel.isHidden ? 0 : dateLabel.intrinsicContentSize.width
-        // 正文自然宽（单行实测；投递中 pill 行宽取大者）与缩略图条按 flex:1 分享剩余空间：
+        // 正文自然宽（单行实测；角标行宽取大者）与缩略图条按 flex:1 分享剩余空间：
         // 正文短时条带拿剩余全部，正文长时两者对半、正文换行。
         let contentSingleLine = contentLabel.sizeThatFits(CGSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)).width
-        let pillWidth = deliveringPillButton.isHidden ? 0 : deliveringPillButton.intrinsicContentSize.width
+        let pillWidth = onlyYouBadgeButton.isHidden ? 0 : onlyYouBadgeButton.intrinsicContentSize.width
         let textNatural = max(contentSingleLine, pillWidth)
         if bounds.width == lastThumbsLayoutBoundsWidth,
            thumbsTotalWidth == lastThumbsLayoutTotalWidth,
@@ -267,7 +264,7 @@ final class BearyQuoteCardView: UIView {
         goneRowTop.priority = UILayoutPriority(999)
         let goneRowBottom = goneRowStack.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -9)
         goneRowBottom.priority = UILayoutPriority(999)
-        deliveringPillButton.setContentCompressionResistancePriority(.required, for: .horizontal)
+        onlyYouBadgeButton.setContentCompressionResistancePriority(.required, for: .horizontal)
         dateLabel.setContentCompressionResistancePriority(.required, for: .horizontal)
         NSLayoutConstraint.activate([
             leftBorderView.leadingAnchor.constraint(equalTo: leadingAnchor),
@@ -323,7 +320,7 @@ final class BearyQuoteCardView: UIView {
         contentLabel.text = nil
         dateLabel.text = nil
         dateLabel.isHidden = true
-        deliveringPillButton.isHidden = true
+        onlyYouBadgeButton.isHidden = true
         goneLabel.text = nil
         goneLabel.isHidden = true
         goneIconView.image = nil
@@ -371,34 +368,17 @@ final class BearyQuoteCardView: UIView {
     // D8c：网页 .quote-thumbs 口径为固定 42x42（不按 stripW 算宽），故 strip 宽函数已删；
     // configure 的 dims 参数保留（调用点仍传被引用篇自己的 imgDims），宽不再由它驱动。
 
-    /// fixall-quote-countdown：带倒计时版“投递中”pill，与编辑器
-    /// quoteCountdownText（BearyComposerViewController.swift）逐字同口径：
-    /// publishAt 为毫秒，天 > 小时 > 分钟，分钟向上取整、至少 1 分钟；
-    /// publishAt 为 nil 时回退 plain“投递中”。
-    private func countdownText(publishAt: Int?) -> String {
-        guard let publishAt = publishAt else { return "投递中" }
-        let remainMs = max(0, publishAt - Int(Date().timeIntervalSince1970 * 1000))
-        let days = remainMs / 86400000
-        let hours = (remainMs % 86400000) / 3600000
-        let minutes = (remainMs % 3600000 + 59999) / 60000
-        if days > 0 { return "投递中 · 还剩 \(days) 天" }
-        if hours > 0 { return "投递中 · 还剩 \(hours) 小时" }
-        return "投递中 · 还剩 \(max(1, minutes)) 分钟"
-    }
-
-    func configure(authorName: String, authorAvatar: String?, content: String, images: [String], dims: [String: [Int]]?, createdAt: Int? = nil, showDeliveringPill: Bool = false, allowThumbs: Bool = true, publishAt: Int? = nil) {
+    /// iCity：configure 不再接受 showDeliveringPill / publishAt（投递 pill 与倒计时已删）；
+    /// 私密被引角标改走 showOnlyYouBadge。占位态（showGone）不带日期与缩略图：
+    /// clear() 已把日期行与缩略图区藏起，showGone 只显图标 + 占位文案。
+    func configure(authorName: String, authorAvatar: String?, content: String, images: [String], dims: [String: [Int]]?, createdAt: Int? = nil, allowThumbs: Bool = true, showOnlyYouBadge: Bool = false) {
         clear()
         // 52 批：lite 卡不带头像名——authorName/authorAvatar 参数仅为调用点兼容保留，不再赋值给任何视图。
         if let createdAt = createdAt, createdAt > 0 {
             dateLabel.text = BearyDiaryCardCell.feedTimeString(ms: createdAt)
             dateLabel.isHidden = false
         }
-        deliveringPillButton.isHidden = showDeliveringPill == false
-        // fixall-quote-countdown：有 publishAt 时 pill 标题用倒计时文案，否则
-        // plain“投递中”（nil 入口 = 列表侧旧行为；每次 configure 都重设标题，
-        // 避免复用卡残留上一张的倒计时文案；pill 可见性仍由上一行守门）。
-        // 标题在 refreshThumbsWidth 之前定，pill 固有宽即按倒计时文本算。
-        deliveringPillButton.setTitle(countdownText(publishAt: publishAt), for: .normal)
+        onlyYouBadgeButton.isHidden = showOnlyYouBadge == false
         if content.isEmpty {
             contentLabel.isHidden = true
         } else {
