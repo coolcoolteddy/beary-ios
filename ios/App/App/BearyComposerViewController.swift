@@ -2,12 +2,13 @@ import UIKit
 import PhotosUI
 
 // ===== beary 原生编辑器（第二阶段 + 主线闭环第一块 + 网页对齐批）=====
-// 只负责写日记：正文 + 心情 + 天气 + 写给 + 引用 + 图片（上限 9 张）。
-// 编辑模式复用同一界面：正文/心情/天气/图片/引用可改，写给锁定不可改，
+// 只负责写日记：正文 + 心情 + 天气 + @ + 引用 + 图片（上限 9 张）。
+// 编辑模式复用同一界面：正文/心情/天气/图片/引用/@ 可改，
 // 不走新日记草稿流（不读不写 beary_draft_v3、不复用新篇 client_req）。
+// iCity：新建工具栏上方固定一行“私密／公开”分段（默认私密），编辑模式隐藏。
 // C1 段落顺序：正文 → 已选 Chip 行 → 图片预览 → 状态行 → 引用；
 // A3：规则框已移出内容栈，锚在工具栏上方（不随正文滚动，键盘顶起工具栏时跟走）；
-// 工具栏贴键盘上方（始终可见，不随正文滚动），心情/天气/写给改工具栏上方选择条
+// 工具栏贴键盘上方（始终可见，不随正文滚动），心情/天气/@ 改工具栏上方选择条
 // （同一时刻只展开一条，点工具栏钮切换、点 Chip 行打开对应条）。
 // 约束：部署目标 iOS 15.0、Swift 5.0——只用闭包回调，不用 async/await，不用 if-let 简写。
 // 文案一律中文；深浅色一律用 BearyColors 的动态色（含语义红 red 与图片上深色衬底 scrim）。
@@ -85,7 +86,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, U
 
     // MARK: - 编辑模式
 
-    /// 非 nil 即编辑模式：回填正文/心情/天气/图片；写给与引用只展示不改。
+    /// 非 nil 即编辑模式：回填正文/心情/天气/图片/@；引用可改可删。
     private var editingEntry: Entry?
     private var isEditMode: Bool { editingEntry != nil }
 
@@ -128,8 +129,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, U
         let authorAvatar: String?
         let images: [String]
         let isPublic: Bool?
-        /// W2：送达时间（面板选篇时取 Entry.publishAt；草稿恢复/编辑锁定引用无此字段时为 nil，
-        /// pill 回退 plain“投递中”，不凭 createdAt + 7 天推算，避免口径造假）。
+        /// iCity：旧送达时间字段已废（面板选篇行不再挂 pill）；保留字段仅作解码兼容。
         let publishAt: Int?
         let imgDims: [String: [Int]]?
         /// 已删态：原日记已删时只剩 id，恢复时不按正常 lite 卡显示，见 refreshQuoteSection。
@@ -144,14 +144,21 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, U
 
     private var selectedMood: String?
     private var selectedWeather: String?
-    /// 新建模式的收信人（编辑模式不用它，写给锁定，见 lockedRecipientName）。
+    /// 新建模式的 @ 对象（编辑模式经 selectedRecipient 改选，见 refreshRecipientRow 编辑分支）。
     private var selectedRecipient: SearchUser?
-    /// 通知对方：默认开；只在新建且已选收信人时有意义，复选框只改它，不触发重渲染。
+    /// 通知对方：iCity @ 提醒无按篇开关——选人面板的开关值不再用于发布，
+    /// 仅作面板初值占位保留，不触发重渲染、不进请求。
     private var notifyRecipient = true
     /// 新建模式的引用（编辑模式不用它，引用锁定，见 lockedQuote）。
     private var selectedQuote: SelectedQuote?
-    /// 编辑模式锁定的写给展示名（服务端 PUT 不接受 recipient，改不了，只展示）。
+    /// 编辑模式原 @ 展示名（未动时回填展示；改选/清除后以 selectedRecipient/editMentionCleared 为准）。
     private var lockedRecipientName: String?
+    /// 编辑模式原 @ 用户 id（未动时 PUT 省略 mentioned_user_id，服务端保留原值）。
+    private var lockedMentionedUserId: Int?
+    /// 编辑模式已清除 @（且未重新选人）：PUT 显式清 mentioned_user_id。
+    private var editMentionCleared = false
+    /// iCity：新建编辑器可见性分段初值硬编码私密（false），不读 UserDefaults、不记住上次选择。
+    private var selectedVisibilityPublished = false
     /// 编辑模式的引用：初始为原值，可改可删（网页 PUT 同款：body 带新 quote_id；
     /// 删为空时 updateEntry 省略 quote_id，服务端按 null 写，旧引用即清掉）。
     private var lockedQuote: SelectedQuote?
@@ -263,6 +270,11 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, U
     // scrollView 底锚随之在工具栏/选择条/整页三档切换（见 updateScrollBottomAnchoring）。
     private let toolbarContainer = UIView()
     private let toolStripStack = UIStackView()
+    /// iCity：工具栏上方固定一行“私密／公开”分段（新建模式可见，编辑模式隐藏、高度归零）。
+    private let visibilityBar = UIView()
+    private let visibilitySegmented = UISegmentedControl(items: ["私密", "公开"])
+    private var visibilityBarHeightConstraint: NSLayoutConstraint?
+    private var scrollBottomToVisibilityConstraint: NSLayoutConstraint?
     private var scrollBottomToToolbarConstraint: NSLayoutConstraint?
     private var scrollBottomToStripConstraint: NSLayoutConstraint?
     private var scrollBottomToViewConstraint: NSLayoutConstraint?
@@ -320,7 +332,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, U
     private let charGroupStack = UIStackView()
     private var charTrackLayer: CAShapeLayer?
     private var charProgressLayer: CAShapeLayer?
-    // 写给（@ 在 pick 钮内的“写给某个人”钮 / chip + 通知行）
+    // @（pick 钮内的“@ 谁”钮 / chip；无按篇通知行）
     private let recipientSection = UIStackView()
     private let recipientLine = UIStackView()
     private let recipientPickButton = BearyComposerDashedPickButton()
@@ -591,6 +603,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, U
         contentStack.layoutMargins = UIEdgeInsets(top: 14, left: 16, bottom: 14, right: 16)
         view.addSubview(topBar)
         view.addSubview(toolbarContainer)
+        view.addSubview(visibilityBar)
         view.addSubview(toolStripStack)
         view.addSubview(scrollView)
         scrollView.addSubview(contentView)
@@ -598,9 +611,26 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, U
         // C1：正文从顶栏下方直接开始（scrollView 顶锚顶栏）；工具栏贴键盘上方，
         // 选择条贴工具栏上方；scrollView 底锚三档切换（见 updateScrollBottomAnchoring），初始锚工具栏。
         scrollBottomToToolbarConstraint = scrollView.bottomAnchor.constraint(equalTo: toolbarContainer.topAnchor)
+        scrollBottomToVisibilityConstraint = scrollView.bottomAnchor.constraint(equalTo: visibilityBar.topAnchor)
         scrollBottomToStripConstraint = scrollView.bottomAnchor.constraint(equalTo: toolStripStack.topAnchor)
         scrollBottomToViewConstraint = scrollView.bottomAnchor.constraint(equalTo: view.bottomAnchor)
-        scrollBottomToToolbarConstraint?.isActive = true
+        scrollBottomToToolbarConstraint?.isActive = isEditMode
+        scrollBottomToVisibilityConstraint?.isActive = !isEditMode
+        // iCity 可见性分段：工具栏上方固定行；新建默认私密（selectedSegmentIndex 0），
+        // 编辑模式整行隐藏（高度 0，选择条底锚随之回到工具栏顶）。
+        visibilityBar.translatesAutoresizingMaskIntoConstraints = false
+        visibilitySegmented.translatesAutoresizingMaskIntoConstraints = false
+        visibilitySegmented.selectedSegmentIndex = 0
+        visibilitySegmented.addTarget(self, action: #selector(didTapVisibilitySegment), for: .valueChanged)
+        visibilityBar.addSubview(visibilitySegmented)
+        visibilityBarHeightConstraint = visibilityBar.heightAnchor.constraint(equalToConstant: isEditMode ? 0 : 36)
+        visibilityBar.isHidden = isEditMode
+        NSLayoutConstraint.activate([
+            visibilitySegmented.leadingAnchor.constraint(equalTo: visibilityBar.leadingAnchor, constant: 16),
+            visibilitySegmented.trailingAnchor.constraint(equalTo: visibilityBar.trailingAnchor, constant: -16),
+            visibilitySegmented.centerYAnchor.constraint(equalTo: visibilityBar.centerYAnchor),
+            visibilityBarHeightConstraint!,
+        ])
         // 选择条：竖栈，子项（心情条/天气条/写给区）同一时刻只显其一、其余隐藏即自动塌高；
         // 全藏时栈高为 0，不占位。左右与工具栏同宽（跟随居中 608）。
         toolStripStack.axis = .vertical
@@ -628,9 +658,12 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, U
             topBar.heightAnchor.constraint(equalToConstant: 44),
             scrollView.topAnchor.constraint(equalTo: topBar.bottomAnchor),
             toolbarContainer.bottomAnchor.constraint(equalTo: view.keyboardLayoutGuide.topAnchor),
+            visibilityBar.leadingAnchor.constraint(equalTo: toolbarContainer.leadingAnchor),
+            visibilityBar.trailingAnchor.constraint(equalTo: toolbarContainer.trailingAnchor),
+            visibilityBar.bottomAnchor.constraint(equalTo: toolbarContainer.topAnchor),
             toolStripStack.leadingAnchor.constraint(equalTo: toolbarContainer.leadingAnchor),
             toolStripStack.trailingAnchor.constraint(equalTo: toolbarContainer.trailingAnchor),
-            toolStripStack.bottomAnchor.constraint(equalTo: toolbarContainer.topAnchor),
+            toolStripStack.bottomAnchor.constraint(equalTo: visibilityBar.topAnchor),
             toolbarLeadingConstraint!,
             toolbarTrailingConstraint!,
             scrollLeadingConstraint!,
@@ -1341,8 +1374,8 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, U
         scheduleDraftSave()
     }
 
-    // MARK: - 写给（网页 addr-row：@ 图标 + “写给某个人”钮 / chip + 通知行；
-    // 只选一人；编辑模式锁定只展示，无 ×、无通知行）
+    // MARK: - @（网页 addr-row：@ 图标 + “@ 谁”钮 / chip；只选一人、不可 @ 自己；
+    // @ 提醒无按篇开关；编辑模式可改选可清除，见 refreshRecipientRow 编辑分支）
 
     private func buildRecipientRow() {
         recipientSection.axis = .vertical
@@ -1358,14 +1391,14 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, U
         recipientPickButton.setImage(BearyIconImages.image(named: "icon_at", pointSize: 15), for: .normal)
         recipientPickButton.tintColor = BearyColors.gray
         recipientPickButton.imageEdgeInsets = UIEdgeInsets(top: 0, left: 0, bottom: 0, right: 6)
-        recipientPickButton.setTitle("写给谁", for: .normal)
+        recipientPickButton.setTitle("@ 谁", for: .normal)
         recipientPickButton.titleLabel?.font = UIFont.systemFont(ofSize: 13)
         recipientPickButton.setTitleColor(BearyColors.gray, for: .normal)
         recipientPickButton.contentEdgeInsets = UIEdgeInsets(top: 7, left: 14, bottom: 7, right: 14)
         recipientPickButton.layer.cornerRadius = 999
         recipientPickButton.addTarget(self, action: #selector(didTapPickRecipient), for: .touchUpInside)
         recipientPickButton.bearyAddPressFeedback()
-        // 已选 chip：橙 13% 底 + 22 头像/首字母 + “写给 名” + ×。
+        // 已选 chip：橙 13% 底 + 22 头像/首字母 + “@名” + ×。
         // D-G8：网页 addr-chip 底是 color-mix（橙 13% + surface），深色下 surface
         // 为 #26262c；App 原 13% 透明橙叠在纯黑页底上偏暗。改按当前主题把橙与
         // surface 混色（浅色 surface 为白，与原效果一致；仅深色变亮）。
@@ -1458,26 +1491,49 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, U
         refreshRecipientRow()
     }
 
-    /// 写给行状态：新建未选 → @ + “写给某个人”钮；新建已选 → chip + × + 通知行；
-    /// 编辑模式 → 锁定的 chip（无 ×、无通知行）；编辑且无收信人 → 选择条打开时也无内容（栈自动塌高）。
+    /// @ 行状态：新建未选 → @ + “@ 谁”钮；新建已选 → chip + ×；
+    /// 编辑模式 → 可改选可清除：已清除且未重选 → “@ 谁”钮；已改选 → 新 chip + ×；
+    /// 未动 → 原 @ chip + ×；编辑且无 @ → “@ 谁”钮。@ 提醒无按篇开关，通知行一律隐藏。
     private func refreshRecipientRow() {
         if isEditMode {
-            recipientPickButton.isHidden = true
-            // 编辑态通知行可见但 disabled（网页 syncAddrNotify 同款：行显示、复选框禁用）；
-            // 无收信人时整行仍隐藏（网页编辑态无收信人时整区隐藏）。
-            notifyGroup.isHidden = lockedRecipientName == nil
-            notifyCheckButton.isEnabled = false
-            if let name = lockedRecipientName {
+            notifyGroup.isHidden = true
+            if editMentionCleared, selectedRecipient == nil {
+                recipientPickButton.isHidden = false
+                recipientChipView.isHidden = true
+            } else if let user = selectedRecipient {
+                let name: String
+                if let display = user.displayName {
+                    name = display
+                } else if let handle = user.handle {
+                    name = handle
+                } else {
+                    name = "用户"
+                }
+                recipientPickButton.isHidden = true
+                recipientChipView.isHidden = false
+                if let avatarPath = user.avatarUrl, let url = BearyImageURLs.avatarURL(avatarPath) {
+                    recipientChipAvatar.bearySetImage(url: url, placeholder: nil, downsampleToWidth: 22 * UIScreen.main.scale)
+                    recipientChipAvatar.isHidden = false
+                    recipientChipFallback.isHidden = true
+                } else {
+                    recipientChipAvatar.isHidden = true
+                    recipientChipFallback.isHidden = false
+                    recipientChipFallback.text = String(name.prefix(1)).uppercased()
+                }
+                recipientChipName.text = "@" + name
+                recipientClearButton.isHidden = false
+            } else if let name = lockedRecipientName {
+                recipientPickButton.isHidden = true
                 recipientChipView.isHidden = false
                 recipientChipAvatar.isHidden = true
                 recipientChipFallback.isHidden = false
                 recipientChipFallback.text = String(name.prefix(1)).uppercased()
-                recipientChipName.text = "写给 " + name
-                recipientClearButton.isHidden = true
+                recipientChipName.text = "@" + name
+                recipientClearButton.isHidden = false
             } else {
+                recipientPickButton.isHidden = false
                 recipientChipView.isHidden = true
             }
-            refreshNotifyCheck()
             refreshSelectedChips()
             return
         }
@@ -1501,10 +1557,9 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, U
                 recipientChipFallback.isHidden = false
                 recipientChipFallback.text = String(name.prefix(1)).uppercased()
             }
-            recipientChipName.text = "写给 " + name
+            recipientChipName.text = "@" + name
             recipientClearButton.isHidden = false
-            // A2：新建态通知开关已移入选人面板，选择条内不再显示通知行
-            // （编辑态锁定展示行见上分支，不动）。
+            // iCity：@ 提醒无按篇开关，选择条内不显示通知行。
             notifyGroup.isHidden = true
         } else {
             recipientPickButton.isHidden = false
@@ -1529,18 +1584,18 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, U
     }
 
     @objc private func didTapPickRecipient() {
-        if isEditMode { return }
+        // iCity：编辑模式也可改选 @（旧“编辑锁定”已废）；不可 @ 自己由选人器自过滤。
         // presented 守卫 + 在途标记（E4-3）：连点不叠开两个选人器。
         if presentedViewController != nil || isRecipientPickerPresenting { return }
         isRecipientPickerPresenting = true
         let picker = BearyRecipientPickerViewController()
-        // A2：面板开关初值取当前 notifyRecipient（新编辑器默认 true，与旧“选人即通知开启”一致）；
-        // 点行回传的开关值即本次通知值，不再写死 true。
         picker.notifyRecipient = self.notifyRecipient
         picker.onPick = { [weak self] user, notify in
             guard let self = self else { return }
             self.selectedRecipient = user
-            self.notifyRecipient = notify
+            // iCity：@ 提醒无按篇开关——面板回传的开关值忽略，不进发布请求。
+            _ = notify
+            self.editMentionCleared = false
             self.refreshRecipientRow()
             self.refreshToolStrip()
             // 网页选人即 saveDraftQuiet 立即落盘，不走防抖（500ms 内杀 App 会丢改动）。
@@ -1552,9 +1607,14 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, U
     }
 
     @objc private func didTapClearRecipient() {
-        if isEditMode { return }
-        selectedRecipient = nil
+        // iCity：编辑模式可清除 @——已改选过则清改选，否则记 editMentionCleared（PUT 显式清）。
+        if isEditMode, selectedRecipient == nil {
+            editMentionCleared = true
+        } else {
+            selectedRecipient = nil
+        }
         refreshRecipientRow()
+        refreshToolStrip()
         saveDraftNow()
     }
 
@@ -1566,7 +1626,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, U
     }
 
     // MARK: - 引用 lite 卡（网页 diaryCardLite：头像 40 + 名 + 正文 + 图片 +
-    // 未公开时“投递中”pill + 外层 ×（fixall-composer：卡已复用共享卡，× 在 wrap 层）；
+    // 外层 ×（fixall-composer：卡已复用共享卡，× 在 wrap 层）；
     // 编辑模式引用可改可删，× 同样显示）
 
     private func buildQuoteSection() {
@@ -1629,32 +1689,16 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, U
         contentStack.setCustomSpacing(0, after: quoteSection)
     }
 
-    /// W2：带倒计时版“投递中”pill（与详情 countdownText 同口径：天 > 小时 > 分钟，分钟向上取整、至少 1 分钟）；
-    /// 无 publishAt 时回退 plain“投递中”。引用面板行用它；共享卡内有逐字同口径的副本
-    /// （BearyQuoteCardView.countdownText），编辑器引用卡经 publishAt 入口走共享卡副本。
-    private func quoteCountdownText(publishAt: Int?) -> String {
-        guard let publishAt = publishAt else { return "投递中" }
-        let remainMs = max(0, publishAt - Int(Date().timeIntervalSince1970 * 1000))
-        let days = remainMs / 86400000
-        let hours = (remainMs % 86400000) / 3600000
-        let minutes = (remainMs % 3600000 + 59999) / 60000
-        if days > 0 { return "投递中 · 还剩 \(days) 天" }
-        if hours > 0 { return "投递中 · 还剩 \(hours) 小时" }
-        return "投递中 · 还剩 \(max(1, minutes)) 分钟"
-    }
-
     /// 引用区状态：stack 内的隐藏项自动塌掉（UIStackView 口径），无需改约束。
     /// 新建未选 → 挑按钮；新建已选 → 共享卡 + 右上 15px ×（网页 quoteChipX 口径，点即清除引用）；
     /// 编辑 → 锁定的共享卡（面板入口锁定，× 仍可删）或都不显示。
     /// 共享卡口径变化（相对原自绘卡）：正文 13.5 且最多 3 行（原不限行 16.5）、
-    /// 图条 42（原 118）、日期走共享卡 feedTimeString（原 BearyText.timeString）、
-    /// 投递中 pill 经共享卡 publishAt 入口恢复倒计时（fixall-quote-countdown：
-    /// 有 publishAt 时“投递中 · 还剩 X 天/小时/分钟”，与 quoteCountdownText 同口径；
-    /// 草稿恢复/编辑锁定引用无 publishAt 时为 nil，回退 plain“投递中”，不推算）。
+    /// 图条 42（原 118）、日期走共享卡 feedTimeString（原 BearyText.timeString）。
+    /// iCity：私密引用在将公开的宿主里挂“仅你可见”角标（viewer 即作者本人时）。
     private func refreshQuoteSection() {
         let quote = isEditMode ? lockedQuote : selectedQuote
         // C6：编辑模式引用可改可删（有引用露共享卡 + ×，无引用则本区塌掉）；
-        // 引用改走工具栏引用钮；写给仍锁定，不在此改。
+        // 引用改走工具栏引用钮；@ 改走工具栏 @ 钮。
         guard let shown = quote else {
             quoteCardWrap.isHidden = true
             quoteDeletedRow.isHidden = true
@@ -1673,7 +1717,9 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, U
         quoteCardWrap.isHidden = false
         // allowThumbs: true 沿用旧编辑器行为——已选引用在本地草稿预览中恒出图；
         // 列表侧的 isPublic/本人门控不适用于编辑器预览（预览不出公开发布）。
-        quoteCard.configure(authorName: shown.authorName ?? "", authorAvatar: shown.authorAvatar, content: shown.content, images: shown.images, dims: shown.imgDims, createdAt: shown.createdAt, showDeliveringPill: shown.isPublic != true, allowThumbs: true, publishAt: shown.publishAt)
+        // 仅你可见角标：被引私密 + 宿主将公开（新建看分段，编辑看原可见性）。
+        let hostWillBePublic = isEditMode ? (editingEntry?.isPublic == true) : selectedVisibilityPublished
+        quoteCard.configure(authorName: shown.authorName ?? "", authorAvatar: shown.authorAvatar, content: shown.content, images: shown.images, dims: shown.imgDims, createdAt: shown.createdAt, allowThumbs: true, showOnlyYouBadge: shown.isPublic != true && hostWillBePublic)
         updatePreferredContentSize()
     }
 
@@ -1907,7 +1953,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, U
                 self.contentStack.setCustomSpacing(4, after: self.imageScrollView)
                 self.contentStack.setCustomSpacing(8, after: self.statusRow)
                 self.contentStack.setCustomSpacing(0, after: self.quoteSection)
-                // 各区显隐按正常态重算（选择条、写给含编辑态通知行、引用含 pill 约束）。
+                // 各区显隐按正常态重算（选择条、@ 行、引用区）。
                 self.refreshToolStrip()
                 self.refreshRecipientRow()
                 self.refreshQuoteSection()
@@ -1939,9 +1985,16 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, U
     /// 改锚只发生在这两处：选择条刷新（refreshToolStrip）与引用面板开关。
     private func updateScrollBottomAnchoring() {
         let stripOpen = activeToolStrip != nil && !quotePanelOpen
-        scrollBottomToToolbarConstraint?.isActive = !quotePanelOpen && !stripOpen
+        // iCity：新建模式滚动区底锚可见性分段顶（分段行在工具栏上方）；
+        // 编辑模式分段行隐藏，底锚回到工具栏顶；选择条展开时仍锚选择条顶。
+        scrollBottomToToolbarConstraint?.isActive = !quotePanelOpen && !stripOpen && isEditMode
+        scrollBottomToVisibilityConstraint?.isActive = !quotePanelOpen && !stripOpen && !isEditMode
         scrollBottomToStripConstraint?.isActive = stripOpen
         scrollBottomToViewConstraint?.isActive = quotePanelOpen
+    }
+
+    @objc private func didTapVisibilitySegment() {
+        selectedVisibilityPublished = visibilitySegmented.selectedSegmentIndex == 1
     }
 
     @objc private func didTapQuoteTab(_ sender: UIButton) {
@@ -2040,7 +2093,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, U
     }
 
     /// 面板行：完整 lite 卡（网页 diaryCardLite 同款：头像 40 + 名 + 日期 + 全文 +
-    /// 118 图片条 + 未公开“投递中”pill + 天气图标；名截断优先；Plus 皇冠已按清单取消显示）。
+    /// 118 图片条 + 天气图标；名截断优先；Plus 皇冠已按清单取消显示；iCity：无 pill）。
     private func renderQuotePanelRows(entries: [Entry]) {
         for arranged in quotePanelRows.arrangedSubviews {
             quotePanelRows.removeArrangedSubview(arranged)
@@ -2081,7 +2134,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, U
                 avatarFallback.isHidden = false
                 avatarFallback.text = String(authorName.prefix(1)).uppercased()
             }
-            // 头行：名（截断优先）+ 皇冠 + 日期 + 天气 + 投递中 pill，横向 stack。
+            // 头行：名（截断优先）+ 皇冠 + 日期 + 天气，横向 stack（iCity：无 pill）。
             let headerStack = UIStackView()
             headerStack.translatesAutoresizingMaskIntoConstraints = false
             headerStack.axis = .horizontal
@@ -2130,26 +2183,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, U
                     weatherView.heightAnchor.constraint(equalToConstant: 15),
                 ])
             }
-            if entry.isPublic != true {
-                let pill = UILabel()
-                pill.translatesAutoresizingMaskIntoConstraints = false
-                pill.font = UIFont.systemFont(ofSize: 11, weight: .semibold)
-                pill.textColor = BearyColors.blue
-                pill.backgroundColor = BearyColors.alpha(BearyColors.blue, 0.13)
-                pill.textAlignment = .center
-                pill.layer.cornerRadius = 6
-                pill.layer.masksToBounds = true
-                // W2：面板行 pill 同样带倒计时版（Entry 自带 publishAt）；宽随文本撑开，不再固定 48。
-                let panelPillText = quoteCountdownText(publishAt: entry.publishAt)
-                pill.text = panelPillText
-                pill.setContentCompressionResistancePriority(.required, for: .horizontal)
-                headerStack.addArrangedSubview(pill)
-                let panelPillWidth = ceil((panelPillText as NSString).size(withAttributes: [NSAttributedString.Key.font: UIFont.systemFont(ofSize: 11, weight: .semibold)]).width) + 14
-                NSLayoutConstraint.activate([
-                    pill.widthAnchor.constraint(equalToConstant: panelPillWidth),
-                    pill.heightAnchor.constraint(equalToConstant: 17),
-                ])
-            }
+            // iCity：选篇行不再挂倒计时 pill（送达模型已废）；私密与公开行均无 pill。
             let contentLabel = UILabel()
             contentLabel.translatesAutoresizingMaskIntoConstraints = false
             contentLabel.numberOfLines = 0
@@ -2321,7 +2355,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, U
         imageScrollView.isHidden = imageItems.isEmpty
     }
 
-    // MARK: - 工具栏（C1：左 [图片][心情][天气][写给][引用]、右 [字数圆环][草稿 pill]；
+    // MARK: - 工具栏（C1：左 [图片][心情][天气][@][引用]、右 [字数圆环][草稿 pill]；
     // 容器贴键盘上方、不在内容栈里，见 buildLayout；本函数只布容器内部，
     // 分隔线 + 工具行约束不变，工具行左右仍与内容栈边距同宽 16）
 
@@ -2350,7 +2384,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, U
         weatherToolButton.addTarget(self, action: #selector(didTapWeatherTool), for: .touchUpInside)
         weatherToolButton.bearyAddPressFeedback()
         recipientToolButton.setImage(BearyIconImages.image(named: "icon_at", pointSize: 24), for: .normal)
-        recipientToolButton.accessibilityLabel = "写给某个人"
+        recipientToolButton.accessibilityLabel = "@ 谁"
         recipientToolButton.tintColor = BearyColors.ink
         recipientToolButton.addTarget(self, action: #selector(didTapRecipientTool), for: .touchUpInside)
         recipientToolButton.bearyAddPressFeedback()
@@ -2513,13 +2547,9 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, U
         ruleBoxView.isHidden = quotePanelOpen || activeToolStrip != nil
         moodScrollView.isHidden = activeToolStrip != .mood
         weatherScrollView.isHidden = activeToolStrip != .weather
-        // 写给区：编辑模式无收信人时条内无内容（pick 钮与通知行皆藏），栈自动塌高，
-        // 不另弹提示；其余态按条开关显隐。
-        if isEditMode && lockedRecipientName == nil && selectedRecipient == nil {
-            recipientSection.isHidden = true
-        } else {
-            recipientSection.isHidden = activeToolStrip != .recipient
-        }
+        // iCity：编辑模式 @ 可新增——无 @ 时条内仍有“@ 谁”钮，不再整区隐藏；
+        // 其余态按条开关显隐。
+        recipientSection.isHidden = activeToolStrip != .recipient
         updateMoodPlayback()
         updateWeatherPlayback()
         updateScrollBottomAnchoring()
@@ -2548,16 +2578,18 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, U
             if let display = user.displayName {
                 recipientName = display
             } else if let handle = user.handle {
-                recipientName = "@" + handle
+                recipientName = handle
             } else {
                 recipientName = "用户"
             }
+        } else if isEditMode, editMentionCleared {
+            recipientName = nil
         } else {
             recipientName = lockedRecipientName
         }
         if let name = recipientName {
             recipientChipButton.isHidden = false
-            recipientChipButton.setTitle("写给 " + name, for: .normal)
+            recipientChipButton.setTitle("@" + name, for: .normal)
         } else {
             recipientChipButton.isHidden = true
         }
@@ -2634,8 +2666,8 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, U
     }
 
     @objc private func didTapRecipientTool() {
-        // A2：工具栏 @ 直连选人面板，跳过写给选择条（选择条仍由正文下方写给 chip
-        // 打开，供已选态清除/重选；通知开关已移入选人面板，不再经选择条改）。
+        // A2：工具栏 @ 直连选人面板，跳过 @ 选择条（选择条仍由正文下方 @ chip
+        // 打开，供已选态清除/重选；@ 提醒无按篇开关）。
         // 引用面板打开时工具栏本身已藏，此处不再走 setToolStrip 的面板守卫。
         didTapPickRecipient()
     }
@@ -2788,7 +2820,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, U
         ruleIconImageView.contentMode = .scaleAspectFit
         let paragraph = NSMutableParagraphStyle()
         paragraph.lineHeightMultiple = 1.7
-        ruleLabel.attributedText = NSAttributedString(string: "发布后 7 天送达给自己 · 15 分钟内可修改 · 公开后不能再删改。", attributes: [.font: UIFont.systemFont(ofSize: 12), .foregroundColor: BearyColors.gray, .paragraphStyle: paragraph])
+        ruleLabel.attributedText = NSAttributedString(string: "默认私密，写完即按所选可见，公开与私密可随时切换 · 15 分钟内可修改 · 公开与私密均可删除（进回收站 30 天）。", attributes: [.font: UIFont.systemFont(ofSize: 12), .foregroundColor: BearyColors.gray, .paragraphStyle: paragraph])
         ruleLabel.numberOfLines = 0
         ruleBoxView.translatesAutoresizingMaskIntoConstraints = false
         ruleIconImageView.translatesAutoresizingMaskIntoConstraints = false
@@ -2929,7 +2961,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, U
         textView.isEditable = !frozen
         titleField.isEnabled = !frozen
         // P1-14：冻结清单补齐全部入口——草稿 pill、引用钮、三枚已选 Chip、
-        // 写给 pick/清除/通知、引用卡 ×（含已删行“移除”）；其余入口见下。
+        // @ pick/清除、引用卡 ×（含已删行“移除”）；其余入口见下。
         draftPillButton.isEnabled = !frozen
         quoteToolButton.isEnabled = !frozen
         moodChipButton.isEnabled = !frozen
@@ -3698,7 +3730,13 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, U
         refreshMoodButtons()
         selectedWeather = entry.weather
         refreshWeatherButtons()
-        lockedRecipientName = entry.recipientName
+        // 补拉重填（setupEditContent 二次调用）不碰 @ 态：用户可能已在加载期间改选/清除，
+        // 首次回填时才以服务端原 @ 为准（editQuoteFetchAttempted 此时仍为 false）。
+        if !editQuoteFetchAttempted {
+            lockedRecipientName = entry.mentionedName
+            lockedMentionedUserId = entry.mentionedUserId
+            editMentionCleared = false
+        }
         let quoteBodyMissing: Bool
         if let quote = entry.quote {
             quoteBodyMissing = quote.id != nil && quote.content == nil
@@ -3815,7 +3853,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, U
             completion?()
             return
         }
-        // C10 空判定（心情不算内容）：正文 trim 为空、且无已上传图、无天气、无写给、
+        // C10 空判定（心情不算内容）：正文 trim 为空、且无已上传图、无天气、无 @、
         // 无引用时，整篇视为空——已有草稿删篇并隐藏状态，不新建空草稿。
         // 上传中/失败图不进草稿（网页 draftImgList 同款：up_ 占位一律排除），故空判定
         // 与落盘图片都只看已上传图；内存里的上传中/失败项仍留在图片条里可续传/重试。
@@ -3849,8 +3887,8 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, U
         for item in uploadedItems {
             images.append(BearyDraftImageItem(localFile: item.localFile, serverKey: item.key, state: .uploaded))
         }
-        // 写给展示名口径与 refreshRecipientRow 一致（展示名 / @handle / “用户”兜底），
-        // 只为恢复 chip 显示；发布仍以 recipientId 为准。
+        // @ 展示名口径与 refreshRecipientRow 一致（展示名 / @handle / “用户”兜底），
+        // 只为恢复 chip 显示；发布仍以 mentioned_user_id 为准。
         var recipientNameValue: String?
         var recipientUserId: Int?
         if let recipient = selectedRecipient {
@@ -4034,7 +4072,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, U
         }
     }
 
-    /// v3 写给快照还原为选人对象：id 为空即无收信人；展示名/头像只供 chip 显示。
+    /// v3 @ 快照还原为选人对象：id 为空即无 @；展示名/头像只供 chip 显示。
     private func restoredRecipient(from draft: BearyDraft) -> SearchUser? {
         guard let recipientUserId = draft.recipientId else { return nil }
         return SearchUser(id: recipientUserId, displayName: draft.recipientName, handle: nil, avatarUrl: draft.recipientAvatar, coverUrl: nil)
@@ -4234,7 +4272,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, U
         updatePreferredContentSize()
     }
 
-    /// 草稿箱打开某篇：正文/心情/图片/天气/写给/引用按 v3 原样恢复；之后再保存、
+    /// 草稿箱打开某篇：正文/心情/图片/天气/@/引用按 v3 原样恢复；之后再保存、
     /// 发布、丢弃都只针对这一篇（currentDraftId 已切到该篇）。
     private func loadDraftFromBox(_ draft: BearyDraft) {
         if isEditMode { return }
@@ -4425,7 +4463,9 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, U
         let publishQuoteId = (selectedQuote?.isDeleted == true) ? nil : selectedQuote?.entryId
         // R1 复核：新建仍传 trimmedTitle()（空时为 nil，API 省略不传），新建
         // 不填标题的行为不变；显式空串清标题只发生在编辑 PUT（performUpdate）。
-        BearyAPI.shared.publishEntry(content: trimmed, images: uploadedImageKeys(), mood: selectedMood, weather: selectedWeather, quoteId: publishQuoteId, recipientId: selectedRecipient?.id, notifyRecipient: selectedRecipient != nil ? (notifyRecipient ? 1 : 0) : nil, title: trimmedTitle(), clientReq: req) { [weak self] result in
+        // iCity：分段值即 visibility（published 0/1）；@ 以 mentioned_user_id 发出，无按篇通知开关。
+        let publishVisibility = selectedVisibilityPublished ? 1 : 0
+        BearyAPI.shared.publishEntry(content: trimmed, images: uploadedImageKeys(), mood: selectedMood, weather: selectedWeather, quoteId: publishQuoteId, published: publishVisibility, mentionedUserId: selectedRecipient?.id, title: trimmedTitle(), clientReq: req) { [weak self] result in
             DispatchQueue.main.async {
                 guard let self = self else { return }
                 self.isPublishing = false
@@ -4436,12 +4476,13 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, U
                         // 只有拿到 entry id 才清草稿与本地图片。
                         self.clearDraftAndFiles()
                         self.commitPendingRemoval()
-                        // D-G2：网页发布成功 showMsg「已发布 · 7 天后送达」。
-                        // toast 挂在 presenting 方视图上（showToastAfterClose），
-                        // 容器随后 dismiss 本页 + 切时间线时 toast 不随编辑器消失。
+                        // iCity：成功 toast 按目标态动态（创建响应不带可见性字段，
+                        // 以本次发送的分段值为准）；toast 挂在 presenting 方视图上
+                        //（showToastAfterClose），容器随后 dismiss 本页 + 切时间线时
+                        // toast 不随编辑器消失。
                         // 落点高亮见交回说明：时间线无现成按 id 高亮入口，接线在
                         // SceneDelegate.onPublished（D 路禁改），本处不硬编。
-                        self.showToastAfterClose(message: "已发布 · 7 天后送达")
+                        self.showToastAfterClose(message: self.selectedVisibilityPublished ? "已发布 · 已公开" : "已发布 · 已设为私密")
                         BearyHaptics.publishSuccess()
                         self.onPublished?(entryId)
                     } else {
@@ -4476,8 +4517,8 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, U
                 return "正文最多 2000 字"
             case "image unavailable":
                 return "图片已失效，请重新添加"
-            case "recipient_invalid":
-                return "收信人无效，请重新选择"
+            case "recipient_invalid", "mentioned_user_invalid":
+                return "提到的人无效，请重新选择"
             default:
                 return "发布失败，请重试"
             }
@@ -4497,7 +4538,10 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, U
         // R1：编辑时标题清空必须显式传空串，不能省略不传（省略=服务端
         // 保留旧标题）。trimmedTitle() 空时为 nil，此处转 ""；有标题时原样传。
         // 新建走 performPublish，仍传 trimmedTitle()（空时 nil 省略），行为不变。
-        BearyAPI.shared.updateEntry(id: entryId, content: trimmed, images: uploadedImageKeys(), mood: selectedMood, weather: selectedWeather, quoteId: lockedQuote?.entryId, title: trimmedTitle() ?? "") { [weak self] result in
+        // iCity：编辑 @ 三态——已改选发新 id；已清除发 clearMentioned；未动则两者皆空、服务端保留原值。
+        let updateMentionedId: Int? = selectedRecipient?.id
+        let updateClearMentioned: Bool = (selectedRecipient == nil && editMentionCleared)
+        BearyAPI.shared.updateEntry(id: entryId, content: trimmed, images: uploadedImageKeys(), mood: selectedMood, weather: selectedWeather, quoteId: lockedQuote?.entryId, title: trimmedTitle() ?? "", mentionedUserId: updateMentionedId, clearMentioned: updateClearMentioned) { [weak self] result in
             DispatchQueue.main.async {
                 guard let self = self else { return }
                 self.isPublishing = false
@@ -4518,11 +4562,24 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, U
                         updated.mood = self.selectedMood
                         updated.weather = self.selectedWeather
                         updated.quoteId = self.lockedQuote?.entryId
+                        // iCity：编辑回传的 @ 终态同步进本地副本（改选→新 id/名，清除→nil，未动→保留原值）。
+                        if let picked = self.selectedRecipient {
+                            updated.mentionedUserId = picked.id
+                            if let display = picked.displayName {
+                                updated.mentionedName = display
+                            } else if let handle = picked.handle {
+                                updated.mentionedName = handle
+                            }
+                        } else if self.editMentionCleared {
+                            updated.mentionedUserId = nil
+                            updated.mentionedName = nil
+                        }
                         if let locked = self.lockedQuote, locked.isDeleted == false {
                             updated.quote = Quote(
                                 id: locked.entryId,
                                 content: locked.content,
                                 images: locked.images,
+                                imgDims: locked.imgDims,
                                 createdAt: locked.createdAt,
                                 isPublic: locked.isPublic,
                                 gone: nil,
@@ -4530,7 +4587,9 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, U
                                 authorName: locked.authorName,
                                 authorAvatar: locked.authorAvatar,
                                 authorBadge: nil,
-                                authorPlus: nil
+                                authorPlus: nil,
+                                authorId: nil,
+                                isMine: nil
                             )
                         } else {
                             updated.quote = nil
@@ -4543,16 +4602,9 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, U
                     } else if case .server(let code) = error, code == "edit window expired" {
                         // C5：编辑期过期只 toast“超过 15 分钟，已无法编辑”，编辑器保持打开、
                         // 不删本地文件、不关编辑器（网页 PUT 失败同款收尾）。
+                        // iCity：编辑锁只看 15 分钟、与可见性无关——旧“已公开”分支已删，
+                        // 万一服务端仍回该码，走通用失败文案，不擅自关编辑器。
                         self.showToast(message: "超过 15 分钟，已无法编辑")
-                    } else if case .server(let code) = error, ["already public", "already public or expired"].contains(code) {
-                        // 已公开：再存也一定失败，告知后直接关编辑器（详情重拉后显示最新态）。
-                        let alert = UIAlertController(title: nil, message: "已超过 15 分钟编辑期或日记已公开，无法再修改", preferredStyle: .alert)
-                        alert.addAction(UIAlertAction(title: "确定", style: .default) { [weak self] _ in
-                            guard let self = self else { return }
-                            self.deleteEditLocalFiles()
-                            self.onCancelled?()
-                        })
-                        self.present(alert, animated: BearyMotion.animated(true))
                     } else if case .network = error {
                         self.showAlert(message: "网络不可用，修改未保存，请联网后重试")
                     } else {
@@ -4721,22 +4773,21 @@ private final class ComposerImageItem {
 // 注：
 // 1. 天气（weather）：图标 + 名 chip，首项“无”，选中墨色边框（无底，与网页 wx-chip.on 同款），
 //    再点已选项不取消；publish 传 weather；不选不传（服务端 validWeather 对缺失值置 null，
-//    与网页同口径）。publishEntry 同步补齐 quote_id/recipient_id/notify_recipient
+//    与网页同口径）。publishEntry 同步补齐 quote_id/published/mentioned_user_id
 //    （默认参数，旧调用点不受影响）。天气图标见 icon_wx_<key>（与网页 WX_ICON 同款）。
-// 2. 写给：新建模式只选一人（搜索接口 users 组），@ 图标 + “写给某个人”钮 / chip + 通知行
-//    （复选框只写本地状态，不触发重渲染）；编辑模式锁定只展示（服务端 PUT 不接受 recipient，
-//    改不了；无收信人时整区隐藏，网页编辑态同款）。
+// 2. @：新建模式只选一人（搜索接口 users 组），@ 图标 + “@ 谁”钮 / chip；
+//    @ 提醒无按篇开关；编辑模式可改选可清除（PUT 带 mentioned_user_id，清除发 clearMentioned）。
 //    引用：qp-mode 面板三 tab（我的日记 timeline / 赞过的 liked / 收藏的 saved），行是完整
-//    lite 卡（头像 40 + 名 + 日期 + 全文 + 118 图片条 + 投递中 pill；Plus 皇冠已取消显示）；服务端
+//    lite 卡（头像 40 + 名 + 日期 + 全文 + 118 图片条；Plus 皇冠已取消显示）；服务端
 //    validQuoteId 只接受本人日记，非本人 picks 仍会被服务端静默丢弃（与网页行为一致）；
 //    编辑模式引用可改可删（PUT 带新 quote_id，删为空时服务端按 null 写）；内容为空的引用
 //    视为已删，不回填、保存时即丢弃（与网页编辑同款）。
-// 3. 编辑模式：init(entry:) 进入；正文/心情/天气/图片/引用可改，写给锁定；不读不写 beary_draft_v3（
+// 3. 编辑模式：init(entry:) 进入；正文/心情/天气/图片/引用/@ 可改；不读不写 beary_draft_v3（
 //    scheduleDraftSave/saveDraftNow 在编辑模式直接 return）；取消时不删原日记，直接关（决议第 4 项 B）；
 //    保存走 PUT，15 分钟规则只由服务端判定（edit window expired 只 toast 且编辑器保持打开，
-//    already public 类过期码仍告知后关编辑器）；
+//    与可见性无关；旧 already public 分支已删）；
 //    成功后删本轮新选图的本地文件（原日记的图 localFile 为 nil，不受影响），失败不删、留着重试。
-// 4. 草稿 v3 多槽：正文/心情/图片/天气/写给/引用全部进草稿，杀 App 后原样恢复；
+// 4. 草稿 v3 多槽：正文/心情/图片/天气/@/引用全部进草稿，杀 App 后原样恢复；
 //    发布成功与丢弃只清本篇（currentDraftId），不碰其他篇。
 // 5. 发布/保存无确认弹框（决议第 3 项 B）：点发布/保存直接发；有失败图时 toast 拦截不发（决议第 5 项 A）。
 // 6. 超 2000 字红字提示用 BearyColors.red（网页 --red #e5484d，浅深同值），字数圆环同步变红；
@@ -4744,7 +4795,7 @@ private final class ComposerImageItem {
 //    上传失败图为行内红底块（红 10% 底 + “失败，点我重试”），发布时有失败图 toast 拦截不发。
 //    其余白字只出现在恒定橙底上（心情 chip 回退名）与墨底上（发布 pill），浅深皆可读。
 // 8. C1：段落顺序改为正文 → 已选 Chip 行 → 图片 → 状态行 → 引用 → 规则框；
-//    工具栏贴键盘上方，心情/天气/写给为工具栏上方单行选择条（旧附加选项栏已删）；
+//    工具栏贴键盘上方，心情/天气/@ 为工具栏上方单行选择条（旧附加选项栏已删）；
 //    草稿 pill 计数按 v3 多槽篇数，0 篇时只留“草稿”二字、计数段隐藏；
 //    引用面板为网页 qp-mode 整编形态（打开只留面板、发布钮隐藏、取消变“返回”只退面板、
 //    进出保存/恢复滚动位置、每 tab 缓存 + 序号守卫、选篇立即落盘）；

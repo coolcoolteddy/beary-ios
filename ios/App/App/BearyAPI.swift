@@ -50,8 +50,9 @@ struct Quote: Codable {
     var authorPlus: Int?
     /// iCity viewer 判定用：被引篇作者 id / 是否为当前查看者本人（服务端按 viewer 下发；
     /// 缺失时调用方按 fail-closed 处理，不凭正文非空推断作者身份）。
-    var authorId: Int?
-    var isMine: Bool?
+    /// 默认 nil：本地构造引用体（如编辑器回传）可省略，解码缺失时同为 nil。
+    var authorId: Int? = nil
+    var isMine: Bool? = nil
 }
 
 /// 全量同步落盘用：Entry 加 Encodable（只补编码能力，不改字段语义；
