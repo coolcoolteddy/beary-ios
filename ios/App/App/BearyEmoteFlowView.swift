@@ -14,8 +14,12 @@ final class BearyEmoteFlowView: UIView {
     var itemSpacing: CGFloat = 8
     var lineSpacing: CGFloat = 8
 
-    func height(forWidth width: CGFloat) -> CGFloat {
-        if width <= 0 || subviews.isEmpty {
+    /// 唯一换行布局算法（5-18）：height(forWidth:) 与 layoutSubviews 同调此处。
+    /// gap（itemSpacing / lineSpacing）、最小高 32、换行条件只在此一处定义，
+    /// 任一处改口径即两处同步，行高与实测不再错位。applyFrames 为 false 时
+    /// 只算总高不写 frame（供 height(forWidth:) 用），为 true 时落位子视图。
+    private func layoutItems(forWidth width: CGFloat, applyFrames: Bool) -> CGFloat {
+        if width <= 0 {
             return 0
         }
         var x: CGFloat = 0
@@ -36,6 +40,9 @@ final class BearyEmoteFlowView: UIView {
             if firstInRow == false {
                 x += itemSpacing
             }
+            if applyFrames {
+                sub.frame = CGRect(x: x, y: y, width: itemWidth, height: itemHeight)
+            }
             x += itemWidth
             rowHeight = max(rowHeight, itemHeight)
             firstInRow = false
@@ -43,35 +50,16 @@ final class BearyEmoteFlowView: UIView {
         return y + rowHeight
     }
 
+    func height(forWidth width: CGFloat) -> CGFloat {
+        if width <= 0 || subviews.isEmpty {
+            return 0
+        }
+        return self.layoutItems(forWidth: width, applyFrames: false)
+    }
+
     override func layoutSubviews() {
         super.layoutSubviews()
-        let width = bounds.width
-        if width <= 0 {
-            return
-        }
-        var x: CGFloat = 0
-        var y: CGFloat = 0
-        var rowHeight: CGFloat = 0
-        var firstInRow = true
-        for sub in subviews {
-            if sub.isHidden { continue }
-            let size = sub.systemLayoutSizeFitting(UIView.layoutFittingCompressedSize)
-            let itemWidth = size.width
-            let itemHeight = max(size.height, 32)
-            if firstInRow == false && x + itemSpacing + itemWidth > width {
-                y += rowHeight + lineSpacing
-                x = 0
-                rowHeight = 0
-                firstInRow = true
-            }
-            if firstInRow == false {
-                x += itemSpacing
-            }
-            sub.frame = CGRect(x: x, y: y, width: itemWidth, height: itemHeight)
-            x += itemWidth
-            rowHeight = max(rowHeight, itemHeight)
-            firstInRow = false
-        }
+        _ = self.layoutItems(forWidth: bounds.width, applyFrames: true)
     }
 
     /// 热区透传：点落在自身 bounds 内照常；落在外时只当它命中了某个
