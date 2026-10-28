@@ -444,11 +444,23 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, U
     // 正文/引用等各入口都直接调 updatePreferredContentSize，不走这里，不会丢更新。
     // 首帧：viewDidLoad 已算一次，首个非 0 宽布局再纠正一次（lastLayoutWidth 初值 -1）。
     private var lastLayoutWidth: CGFloat = -1
+    // 临时诊断（天气条 10/28，定根因后删除）：上一次已记录的布局后条带签名，
+    // 用于 postLayout mark 只在条带状态/几何变化时记一次，避免每次布局都刷屏。
+    private var lastPostLayoutStripSig: String = ""
 
     override func viewDidLayoutSubviews() {
         super.viewDidLayoutSubviews()
         // 临时诊断（82 包追加，定根因后删除）：入口每调一次记一次，不节流。
         DiagFile.mark("composer-layout")
+        // 临时诊断（天气条 10/28，定根因后删除）：布局后实测帧。refreshToolStrip 里的
+        // weather-diag 是布局前的值（开日志恒为上一关闭态、关日志恒为上一打开态），
+        // 本 mark 在 viewDidLayoutSubviews（布局已完成）后记，只在条带签名变化时记，
+        // 用于钉死打开态到底是 370×40 还是塌掉。
+        let stripSig = "\(String(describing: activeToolStrip))|\(quotePanelOpen)|\(weatherScrollView.isHidden)|\(weatherScrollView.frame)|\(toolStripStack.frame)|\(weatherScrollView.contentSize)|\(weatherEmoteViews.count)|\(weatherStackView.arrangedSubviews.first?.frame ?? .zero)"
+        if stripSig != lastPostLayoutStripSig {
+            lastPostLayoutStripSig = stripSig
+            DiagFile.mark("weather-diag postLayout weatherHidden=\(weatherScrollView.isHidden) weatherFrame=\(weatherScrollView.frame) stackFrame=\(toolStripStack.frame) contentSize=\(weatherScrollView.contentSize) btnCount=\(weatherEmoteViews.count) firstBtnFrame=\(weatherStackView.arrangedSubviews.first?.frame ?? .zero)")
+        }
         let w = view.bounds.width
         guard w > 0, w != lastLayoutWidth else {
             // 临时诊断（86 包，定根因后删除）：布局方法出口（宽门挡住的早退路径）。
