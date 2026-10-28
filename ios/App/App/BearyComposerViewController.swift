@@ -2557,7 +2557,9 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, U
             showToast(message: "请先关闭引用面板")
             return
         }
+        let oldStrip = activeToolStrip
         activeToolStrip = (activeToolStrip == strip) ? nil : strip
+        DiagFile.mark("weather-diag setToolStrip \(String(describing: oldStrip)) -> \(String(describing: activeToolStrip))")
         refreshToolStrip()
     }
 
@@ -2590,6 +2592,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, U
         updateScrollBottomAnchoring()
         refreshSelectedChips()
         updatePreferredContentSize()
+        DiagFile.mark("weather-diag refreshToolStrip weatherHidden=\(weatherScrollView.isHidden) weatherFrame=\(weatherScrollView.frame) stackFrame=\(toolStripStack.frame)")
     }
 
     /// 已选 Chip 行：只显示已选项（心情/天气/写给各一枚），无已选时整行塌掉；
@@ -2693,6 +2696,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, U
     }
 
     @objc private func didTapWeatherTool() {
+        DiagFile.mark("weather-diag didTapWeatherTool")
         setToolStrip(.weather)
     }
 
