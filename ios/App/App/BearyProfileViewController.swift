@@ -481,13 +481,9 @@ class BearyProfileViewController: UIViewController {
         return imageViewValue
     }()
 
-    private let crownImageView: UIImageView = {
-        let imageViewValue = UIImageView()
+    private let crownView: BearyCrownView = {
+        let imageViewValue = BearyCrownView()
         imageViewValue.translatesAutoresizingMaskIntoConstraints = false
-        imageViewValue.contentMode = .scaleAspectFit
-        if let crownImage = UIImage(named: "crown") {
-            imageViewValue.image = crownImage
-        }
         // 皇冠会员标按 plus 数据显示（网页 pfPlusPill 口径：d.plus 才显示）；
         // 工厂态先隐藏，避免资料加载前首帧闪出皇冠，applyProfile / refreshWornBadge 按 plus 复核。
         imageViewValue.isHidden = true
@@ -1229,7 +1225,7 @@ class BearyProfileViewController: UIViewController {
         headerView.addSubview(headerShareButton)
         headerView.addSubview(nameLabel)
         headerView.addSubview(badgeImageView)
-        headerView.addSubview(crownImageView)
+        headerView.addSubview(crownView)
         headerView.addSubview(handleLabel)
         headerView.addSubview(joinedIconView)
         headerView.addSubview(joinedLabel)
@@ -1264,8 +1260,8 @@ class BearyProfileViewController: UIViewController {
             badgesHeightConstraint,
         ])
 
-        crownLeadingToBadgeConstraint = crownImageView.leadingAnchor.constraint(equalTo: badgeImageView.trailingAnchor, constant: 8)
-        crownLeadingToNameConstraint = crownImageView.leadingAnchor.constraint(equalTo: nameLabel.trailingAnchor, constant: 8)
+        crownLeadingToBadgeConstraint = crownView.leadingAnchor.constraint(equalTo: badgeImageView.trailingAnchor, constant: 8)
+        crownLeadingToNameConstraint = crownView.leadingAnchor.constraint(equalTo: nameLabel.trailingAnchor, constant: 8)
         crownLeadingToBadgeConstraint?.isActive = true
         // L16：名字右缘上限不再固定预留 90pt，改由该约束按徽章/皇冠实际显隐
         // 动态取值（见 updateNameTrailingLimit）。
@@ -1307,10 +1303,10 @@ class BearyProfileViewController: UIViewController {
             badgeImageView.centerYAnchor.constraint(equalTo: nameLabel.centerYAnchor),
             badgeImageView.widthAnchor.constraint(equalToConstant: 23),
             badgeImageView.heightAnchor.constraint(equalToConstant: 23),
-            crownImageView.centerYAnchor.constraint(equalTo: nameLabel.centerYAnchor),
-            crownImageView.widthAnchor.constraint(equalToConstant: 23),
-            crownImageView.heightAnchor.constraint(equalToConstant: 23),
-            crownImageView.trailingAnchor.constraint(lessThanOrEqualTo: headerView.trailingAnchor, constant: -28),
+            crownView.centerYAnchor.constraint(equalTo: nameLabel.centerYAnchor),
+            crownView.widthAnchor.constraint(equalToConstant: 23),
+            crownView.heightAnchor.constraint(equalToConstant: 23),
+            crownView.trailingAnchor.constraint(lessThanOrEqualTo: headerView.trailingAnchor, constant: -28),
 
             handleLabel.topAnchor.constraint(equalTo: nameLabel.bottomAnchor, constant: 8),
             handleLabel.leadingAnchor.constraint(equalTo: headerView.leadingAnchor, constant: 28),
@@ -1540,7 +1536,7 @@ class BearyProfileViewController: UIViewController {
         if badgeImageView.isHidden == false {
             reserve += 31
         }
-        if crownImageView.isHidden == false {
+        if crownView.isHidden == false {
             reserve += 31
         }
         nameTrailingConstraint?.constant = -reserve
@@ -1708,7 +1704,8 @@ class BearyProfileViewController: UIViewController {
             badgeImageView.isHidden = true
         }
         // 1:1 复刻（推翻清单 14）：皇冠按 profile.plus 显示，plus 数据已到位。
-        crownImageView.isHidden = !(profileValue.plus ?? false)
+        crownView.isHidden = !(profileValue.plus ?? false)
+        if crownView.isHidden { crownView.stop() } else { crownView.start() }
         // 无佩戴徽章时皇冠改贴名字，避免隐藏徽章占位造成的 39pt 空隙。
         let badgeVisible = badgeImageView.isHidden == false
         crownLeadingToBadgeConstraint?.isActive = badgeVisible
@@ -2046,7 +2043,8 @@ class BearyProfileViewController: UIViewController {
         crownLeadingToBadgeConstraint?.isActive = badgeVisible
         crownLeadingToNameConstraint?.isActive = !badgeVisible
         // 1:1 复刻：佩戴刷新时皇冠仍按 profile.plus 显示（不复活/不写死隐藏）。
-        crownImageView.isHidden = !(profileValue.plus ?? false)
+        crownView.isHidden = !(profileValue.plus ?? false)
+        if crownView.isHidden { crownView.stop() } else { crownView.start() }
         updateNameTrailingLimit()
         layoutHeaderForced(widthValue: headerWidthValue)
     }

@@ -542,14 +542,9 @@ class BearyDiaryCardCell: UITableViewCell {
         return v
     }()
 
-    private let crownImageView: UIImageView = {
-        let v = UIImageView()
+    private let crownView: BearyCrownView = {
+        let v = BearyCrownView()
         v.translatesAutoresizingMaskIntoConstraints = false
-        // I4：与编辑器口径统一——只走 crown 资产，缺失即隐藏，不留灰色 crown.fill 回退。
-        if let crown = UIImage(named: "crown") {
-            v.image = crown
-        }
-        v.contentMode = .scaleAspectFit
         v.isHidden = true
         return v
     }()
@@ -599,7 +594,7 @@ class BearyDiaryCardCell: UITableViewCell {
     }()
 
     private lazy var titleStack: UIStackView = {
-        let st = UIStackView(arrangedSubviews: [nameLabel, badgeImageView, crownImageView, titleSpacerLabel, timeLabel, weatherImageView, moodStack])
+        let st = UIStackView(arrangedSubviews: [nameLabel, badgeImageView, crownView, titleSpacerLabel, timeLabel, weatherImageView, moodStack])
         st.translatesAutoresizingMaskIntoConstraints = false
         st.axis = .horizontal
         st.spacing = 8
@@ -791,7 +786,7 @@ class BearyDiaryCardCell: UITableViewCell {
 
     private lazy var rightStack: UIStackView = {
         quoteView.translatesAutoresizingMaskIntoConstraints = false
-        let st = UIStackView(arrangedSubviews: [recipientRow, titleStack, ephemeralLabel, entryTitleLabel, contentLabel, foldButton, quoteView, imagesScrollView, actionStack, guestLoginPromptButton, emoteFlowView])
+        let st = UIStackView(arrangedSubviews: [recipientRow, titleStack, ephemeralRow, entryTitleLabel, contentLabel, foldButton, quoteView, imagesScrollView, actionStack, guestLoginPromptButton, emoteFlowView])
         st.translatesAutoresizingMaskIntoConstraints = false
         st.axis = .vertical
         st.alignment = .fill
@@ -817,6 +812,29 @@ class BearyDiaryCardCell: UITableViewCell {
         l.textColor = BearyColors.gray
         l.isHidden = true
         return l
+    }()
+
+    /// 限时倒计时行图标（14pt 模板灰，仅存活期随倒计时行一起出现；已过期按普通私密，不画图标）。
+    private let ephemeralIconView: UIImageView = {
+        let v = UIImageView(image: BearyIconImages.image(named: "icon_limited", pointSize: 14))
+        v.translatesAutoresizingMaskIntoConstraints = false
+        v.tintColor = BearyColors.gray
+        v.contentMode = .scaleAspectFit
+        NSLayoutConstraint.activate([
+            v.widthAnchor.constraint(equalToConstant: 14),
+            v.heightAnchor.constraint(equalToConstant: 14),
+        ])
+        return v
+    }()
+
+    private lazy var ephemeralRow: UIStackView = {
+        let st = UIStackView(arrangedSubviews: [ephemeralIconView, ephemeralLabel])
+        st.translatesAutoresizingMaskIntoConstraints = false
+        st.axis = .horizontal
+        st.spacing = 4
+        st.alignment = .center
+        st.isHidden = true
+        return st
     }()
 
     /// 限时卡虚线边框（CAShapeLayer，1.5pt dashed、line 色、圆角 16；
@@ -907,10 +925,10 @@ class BearyDiaryCardCell: UITableViewCell {
         recipientLabel.text = nil
         // 首页皇冠带网页 drop-shadow（0 1px 1px 黑 30%），个人主页无阴影。
         if cardMode == .feed {
-            crownImageView.layer.shadowColor = UIColor.black.cgColor
-            crownImageView.layer.shadowOpacity = 0.30
-            crownImageView.layer.shadowOffset = CGSize(width: 0, height: 1)
-            crownImageView.layer.shadowRadius = 1
+            crownView.layer.shadowColor = UIColor.black.cgColor
+            crownView.layer.shadowOpacity = 0.30
+            crownView.layer.shadowOffset = CGSize(width: 0, height: 1)
+            crownView.layer.shadowRadius = 1
         }
         // 引用卡点按分流：首页 gone/locked 不动作、加载失败重试、公开/未公开分流；
         // 个人主页 gone 卡也透传（allowGoneTap），控制器弹提示。
@@ -950,7 +968,7 @@ class BearyDiaryCardCell: UITableViewCell {
         titleSpacerLabel.setContentHuggingPriority(UILayoutPriority(1), for: .horizontal)
         titleSpacerLabel.setContentCompressionResistancePriority(UILayoutPriority(1), for: .horizontal)
         badgeImageView.setContentCompressionResistancePriority(.required, for: .horizontal)
-        crownImageView.setContentCompressionResistancePriority(.required, for: .horizontal)
+        crownView.setContentCompressionResistancePriority(.required, for: .horizontal)
         weatherImageView.setContentCompressionResistancePriority(.required, for: .horizontal)
         moodStack.setContentCompressionResistancePriority(.required, for: .horizontal)
         let imageHeight = imagesScrollView.heightAnchor.constraint(equalToConstant: 0)
@@ -974,8 +992,8 @@ class BearyDiaryCardCell: UITableViewCell {
             extraConstraints.append(recipientIconView.heightAnchor.constraint(equalToConstant: 13))
             extraConstraints.append(badgeImageView.widthAnchor.constraint(equalToConstant: 17))
             extraConstraints.append(badgeImageView.heightAnchor.constraint(equalToConstant: 17))
-            extraConstraints.append(crownImageView.widthAnchor.constraint(equalToConstant: 19))
-            extraConstraints.append(crownImageView.heightAnchor.constraint(equalToConstant: 19))
+            extraConstraints.append(crownView.widthAnchor.constraint(equalToConstant: 19))
+            extraConstraints.append(crownView.heightAnchor.constraint(equalToConstant: 19))
             extraConstraints.append(weatherImageView.widthAnchor.constraint(equalToConstant: 15))
             extraConstraints.append(weatherImageView.heightAnchor.constraint(equalToConstant: 15))
         } else {
@@ -991,7 +1009,7 @@ class BearyDiaryCardCell: UITableViewCell {
             recipientIconHeight.priority = UILayoutPriority(999)
             let badgeWidth = badgeImageView.widthAnchor.constraint(equalToConstant: 17)
             badgeWidth.priority = UILayoutPriority(999)
-            let crownWidth = crownImageView.widthAnchor.constraint(equalToConstant: 19)
+            let crownWidth = crownView.widthAnchor.constraint(equalToConstant: 19)
             crownWidth.priority = UILayoutPriority(999)
             let weatherWidth = weatherImageView.widthAnchor.constraint(equalToConstant: 15)
             weatherWidth.priority = UILayoutPriority(999)
@@ -1000,7 +1018,7 @@ class BearyDiaryCardCell: UITableViewCell {
             extraConstraints.append(badgeWidth)
             extraConstraints.append(badgeImageView.heightAnchor.constraint(equalToConstant: 17))
             extraConstraints.append(crownWidth)
-            extraConstraints.append(crownImageView.heightAnchor.constraint(equalToConstant: 19))
+            extraConstraints.append(crownView.heightAnchor.constraint(equalToConstant: 19))
             extraConstraints.append(weatherWidth)
             extraConstraints.append(weatherImageView.heightAnchor.constraint(equalToConstant: 15))
         }
@@ -1088,10 +1106,12 @@ class BearyDiaryCardCell: UITableViewCell {
         contentView.alpha = 1
         contentView.transform = .identity
         // 限时态复位：倒计时行与虚线边框藏起、底线恢复，防残留到下一行。
-        ephemeralLabel.isHidden = true
+        ephemeralRow.isHidden = true
         ephemeralLabel.text = nil
         ephemeralBorderLayer.isHidden = true
         separatorView.isHidden = false
+        // 皇冠动效复用时停播，防串位到下一行。
+        crownView.stop()
         onImageTapped = nil
         onQuoteSelected = nil
         onInteractionChanged = nil
@@ -1207,7 +1227,8 @@ class BearyDiaryCardCell: UITableViewCell {
         quoteView.isHidden = true
         badgeImageView.image = nil
         badgeImageView.isHidden = true
-        crownImageView.isHidden = true
+        crownView.isHidden = true
+        crownView.stop()
         stopWeatherLottie()
         weatherImageView.image = nil
         weatherImageView.isHidden = true
@@ -1323,7 +1344,7 @@ class BearyDiaryCardCell: UITableViewCell {
         rightStackTopConstraint?.constant = cardMode == .feed ? (recipientRow.isHidden ? 22 : 23) : 14
         rightStack.setCustomSpacing(4, after: recipientRow)
         rightStack.setCustomSpacing(4, after: titleStack)
-        rightStack.setCustomSpacing(4, after: ephemeralLabel)
+        rightStack.setCustomSpacing(4, after: ephemeralRow)
         // R4 App：作者行→标题 4、标题→正文 4，均与原作者行→正文 4 一致；
         // 标题隐藏时其后间距置 0（无论 stack 按前一可见项还是按累计算间距，
         // 作者行→正文均为上行 4，不留空行高度）。
@@ -1477,7 +1498,7 @@ class BearyDiaryCardCell: UITableViewCell {
 
         // F2/F13：名 16.5 粗体 + BETA 徽章图。Plus 皇冠按网页复刻：authorPlus==1 时显示
         //（清单 14 的首页取消显示已被“按网页复刻”覆盖；BETA 徽章不动）。
-        // 无残留空位：crownImageView 是 titleStack 的 arrangedSubview，隐藏后 stack 自动
+        // 无残留空位：crownView 是 titleStack 的 arrangedSubview，隐藏后 stack 自动
         // 将其尺寸压为 0，间距只算在可见项之间；19pt 宽约束是 999 优先级，不与压零冲突。
         nameLabel.text = authorNameValue
         if let badgeKey = entry.authorBadge, !badgeKey.isEmpty, let badgeImage = BearyBadgeImages.image(for: badgeKey) {
@@ -1487,7 +1508,8 @@ class BearyDiaryCardCell: UITableViewCell {
             badgeImageView.image = nil
             badgeImageView.isHidden = true
         }
-        crownImageView.isHidden = (entry.authorPlus ?? 0) != 1 || crownImageView.image == nil
+        crownView.isHidden = (entry.authorPlus ?? 0) != 1 || !crownView.hasCrown
+        if crownView.isHidden { crownView.stop() } else { crownView.start() }
 
         // F3：时间。广场卡：有效公开（未过期）且有 publishedAt 时显公开相对时间（“X 分钟前公开”），否则绝对时间。
         if BearyEphemeral.isEffectivelyPublic(entry), let relative = BearyVisibilityText.publishedRelativeString(publishedAtMs: entry.publishedAt) {
@@ -1646,7 +1668,8 @@ class BearyDiaryCardCell: UITableViewCell {
     private func rowCrownHiddenUpdate(entry: Entry) {
         // 个人主页原口径：authorPlus==0 即隐藏；合并后补 Feed 的资产缺失守卫
         // （资产缺失时不再留 19pt 空盒，资产在时行为一字不动）。
-        crownImageView.isHidden = (entry.authorPlus ?? 0) == 0 || crownImageView.image == nil
+        crownView.isHidden = (entry.authorPlus ?? 0) == 0 || !crownView.hasCrown
+        if crownView.isHidden { crownView.stop() } else { crownView.start() }
     }
 
     // MARK: - 图片条（94 包槽位复用，两页同款；失败重试 Feed 口径）
@@ -2136,10 +2159,10 @@ class BearyDiaryCardCell: UITableViewCell {
         let live = BearyEphemeral.isLive(entry)
         if live, let until = entry.ephemeralUntil {
             ephemeralLabel.text = BearyEphemeral.remainingText(until: until)
-            ephemeralLabel.isHidden = false
+            ephemeralRow.isHidden = false
         } else {
             ephemeralLabel.text = nil
-            ephemeralLabel.isHidden = true
+            ephemeralRow.isHidden = true
         }
         separatorView.isHidden = live
         ephemeralBorderLayer.isHidden = !live

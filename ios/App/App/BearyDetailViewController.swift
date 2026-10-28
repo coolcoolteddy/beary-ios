@@ -100,6 +100,27 @@ final class BearyDetailViewController: UIViewController {
         l.isHidden = true
         return l
     }()
+    /// 限时倒计时行图标（14pt 模板灰，仅存活期随倒计时行一起出现；已过期按普通私密，不画图标）。
+    private let ephemeralIconView: UIImageView = {
+        let v = UIImageView(image: BearyFeedIconCache.image(named: "icon_limited", pointSize: 14))
+        v.translatesAutoresizingMaskIntoConstraints = false
+        v.tintColor = BearyColors.gray
+        v.contentMode = .scaleAspectFit
+        NSLayoutConstraint.activate([
+            v.widthAnchor.constraint(equalToConstant: 14),
+            v.heightAnchor.constraint(equalToConstant: 14),
+        ])
+        return v
+    }()
+    private lazy var ephemeralRow: UIStackView = {
+        let st = UIStackView(arrangedSubviews: [ephemeralIconView, ephemeralLabel])
+        st.translatesAutoresizingMaskIntoConstraints = false
+        st.axis = .horizontal
+        st.spacing = 4
+        st.alignment = .center
+        st.isHidden = true
+        return st
+    }()
 
     /// 限时详情虚线边框（CAShapeLayer，1.5pt dashed、line 色、圆角 16；
     /// 布局时按 containerView bounds 重画路径，主题切换重刷描边色；
@@ -363,7 +384,7 @@ final class BearyDetailViewController: UIViewController {
     private func buildEphemeralRow() {
         // 限时倒计时行：只留倒计时灰字，位置在作者行下方、正文上方（与卡片同口径）；
         // 虚线边框插 containerView 图层最底层，框住整个内容列。
-        stackView.addArrangedSubview(ephemeralLabel)
+        stackView.addArrangedSubview(ephemeralRow)
         containerView.layer.insertSublayer(ephemeralBorderLayer, at: 0)
     }
 
@@ -564,10 +585,10 @@ final class BearyDetailViewController: UIViewController {
         let live = BearyEphemeral.isLive(entry)
         if live, let until = entry.ephemeralUntil {
             ephemeralLabel.text = BearyEphemeral.remainingText(until: until)
-            ephemeralLabel.isHidden = false
+            ephemeralRow.isHidden = false
         } else {
             ephemeralLabel.text = nil
-            ephemeralLabel.isHidden = true
+            ephemeralRow.isHidden = true
         }
         ephemeralBorderLayer.isHidden = !live
         updateEphemeralBorderPath()

@@ -278,6 +278,14 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, U
     private let ephemeralSwitch = UISwitch()
     private let ephemeralTitleLabel = UILabel()
     private let ephemeralSubtitleLabel = UILabel()
+    /// 限时行首图标（22pt 模板灰，开关行本身的标识，不属卡片/详情范围）。
+    private let ephemeralIconView: UIImageView = {
+        let v = UIImageView(image: BearyIconImages.image(named: "icon_limited", pointSize: 22))
+        v.translatesAutoresizingMaskIntoConstraints = false
+        v.tintColor = BearyColors.gray
+        v.contentMode = .scaleAspectFit
+        return v
+    }()
     private var visibilityBarHeightConstraint: NSLayoutConstraint?
     private var scrollBottomToVisibilityConstraint: NSLayoutConstraint?
     private var scrollBottomToToolbarConstraint: NSLayoutConstraint?
@@ -647,6 +655,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, U
         ephemeralLabels.axis = .vertical
         ephemeralLabels.spacing = 1
         ephemeralRow.addSubview(ephemeralLabels)
+        ephemeralRow.addSubview(ephemeralIconView)
         ephemeralRow.addSubview(ephemeralSwitch)
         visibilityBar.addSubview(ephemeralRow)
         visibilityBarHeightConstraint = visibilityBar.heightAnchor.constraint(equalToConstant: isEditMode ? 0 : 84)
@@ -660,7 +669,11 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, U
             ephemeralRow.trailingAnchor.constraint(equalTo: visibilityBar.trailingAnchor, constant: -16),
             ephemeralRow.topAnchor.constraint(equalTo: visibilitySegmented.bottomAnchor),
             ephemeralRow.bottomAnchor.constraint(equalTo: visibilityBar.bottomAnchor),
-            ephemeralLabels.leadingAnchor.constraint(equalTo: ephemeralRow.leadingAnchor),
+            ephemeralIconView.leadingAnchor.constraint(equalTo: ephemeralRow.leadingAnchor),
+            ephemeralIconView.centerYAnchor.constraint(equalTo: ephemeralRow.centerYAnchor),
+            ephemeralIconView.widthAnchor.constraint(equalToConstant: 22),
+            ephemeralIconView.heightAnchor.constraint(equalToConstant: 22),
+            ephemeralLabels.leadingAnchor.constraint(equalTo: ephemeralIconView.trailingAnchor, constant: 8),
             ephemeralLabels.centerYAnchor.constraint(equalTo: ephemeralRow.centerYAnchor),
             ephemeralSwitch.leadingAnchor.constraint(greaterThanOrEqualTo: ephemeralLabels.trailingAnchor, constant: 8),
             ephemeralSwitch.trailingAnchor.constraint(equalTo: ephemeralRow.trailingAnchor),
