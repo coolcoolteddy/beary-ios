@@ -444,11 +444,64 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, U
     // 正文/引用等各入口都直接调 updatePreferredContentSize，不走这里，不会丢更新。
     // 首帧：viewDidLoad 已算一次，首个非 0 宽布局再纠正一次（lastLayoutWidth 初值 -1）。
     private var lastLayoutWidth: CGFloat = -1
+    // 临时诊断（天气条 10/28，定根因后删除）：上一次已记录的布局后条带签名，
+    // 用于 postLayout mark 只在条带状态/几何变化时记一次，避免每次布局都刷屏。
+    private var lastPostLayoutStripSig: String = ""
+    // 临时诊断（天气条 10/28 第二批，定根因后删除）：上一次已记录的“晴”钮展开详情签名，
+    // 与 postLayout mark 同频（仅签名变化时记第一时点），避免每布局刷屏。
+    private var lastWeatherDetailSig: String = ""
 
     override func viewDidLayoutSubviews() {
         super.viewDidLayoutSubviews()
         // 临时诊断（82 包追加，定根因后删除）：入口每调一次记一次，不节流。
         DiagFile.mark("composer-layout")
+        // 临时诊断（天气条 10/28，定根因后删除）：布局后实测帧。refreshToolStrip 里的
+        // weather-diag 是布局前的值（开日志恒为上一关闭态、关日志恒为上一打开态），
+        // 本 mark 在 viewDidLayoutSubviews（布局已完成）后记，只在条带签名变化时记，
+        // 用于钉死打开态到底是 370×40 还是塌掉。
+        let stripSig = "\(String(describing: activeToolStrip))|\(quotePanelOpen)|\(weatherScrollView.isHidden)|\(weatherScrollView.frame)|\(toolStripStack.frame)|\(weatherScrollView.contentSize)|\(weatherEmoteViews.count)|\(weatherStackView.arrangedSubviews.first?.frame ?? .zero)"
+        if stripSig != lastPostLayoutStripSig {
+            lastPostLayoutStripSig = stripSig
+            DiagFile.mark("weather-diag postLayout weatherHidden=\(weatherScrollView.isHidden) weatherFrame=\(weatherScrollView.frame) stackFrame=\(toolStripStack.frame) contentSize=\(weatherScrollView.contentSize) btnCount=\(weatherEmoteViews.count) firstBtnFrame=\(weatherStackView.arrangedSubviews.first?.frame ?? .zero)")
+        }
+        // 临时诊断（天气条 10/28 第二批，定根因后删除）：“晴”钮两时点全量状态。
+        // 展开口径与 updateWeatherPlayback 的 rowVisible 一致；对象取 weatherButtons[1]
+        //（[0] 为无图标的“无”，[1] 为首个带图标钮“晴”），对应播放器按 key 映射，不硬编码。
+        // 第一时点：条带展开后的布局完成时，与 postLayout mark 同频（仅签名变化时记）。
+        // 第二时点：attachCachedEmote 完成后的下一次布局完成时（一次性标志取后即清零，
+        // 每布局都取、避免条带关闭后残留旧标志）；含当前动画帧与静态帧，其余字段与第一时点相同。
+        if weatherButtons.count > 1 {
+            let sunKey = weatherButtons[1].key
+            let sunEmoteView = weatherEmoteViews.first(where: { $0.key == sunKey })?.emoteView
+            let postAttach = sunEmoteView?.diagTakeAttachPending() ?? false
+            let stripExpanded = activeToolStrip == .weather && !quotePanelOpen && !weatherScrollView.isHidden
+            if stripExpanded, (postAttach || stripSig != lastWeatherDetailSig) {
+                lastWeatherDetailSig = stripSig
+                let sunButton = weatherButtons[1].button
+                let imageViewDesc: String
+                if let iv = sunButton.imageView {
+                    imageViewDesc = "frame=\(iv.frame) bounds=\(iv.bounds) hidden=\(iv.isHidden) alpha=\(iv.alpha) clips=\(iv.clipsToBounds) imageIsNil=\(iv.image == nil)"
+                } else {
+                    imageViewDesc = "nil"
+                }
+                let emoteDesc: String
+                let contentDesc: String
+                var frameSuffix = ""
+                if let emoteView = sunEmoteView {
+                    emoteDesc = "frame=\(emoteView.frame) bounds=\(emoteView.bounds) hidden=\(emoteView.isHidden) alpha=\(emoteView.alpha) windowIsNil=\(emoteView.window == nil) superviewIsImageView=\(emoteView.superview === sunButton.imageView)"
+                    let state = emoteView.diagContentState()
+                    contentDesc = "kind=\(state.kind) frame=\(state.frame) imageIsNil=\(String(describing: state.imageIsNil))"
+                    if postAttach {
+                        frameSuffix = " currentFrame=\(String(describing: state.currentFrame)) staticFrame=\(String(describing: state.staticFrame))"
+                    }
+                } else {
+                    emoteDesc = "nil"
+                    contentDesc = "nil"
+                }
+                let tag = postAttach ? "postAttach-detail" : "expanded-detail"
+                DiagFile.mark("weather-diag \(tag) scrollFrame=\(weatherScrollView.frame) scrollBounds=\(weatherScrollView.bounds) scrollContentSize=\(weatherScrollView.contentSize) scrollContentOffset=\(weatherScrollView.contentOffset) scrollHidden=\(weatherScrollView.isHidden) scrollAlpha=\(weatherScrollView.alpha) stackFrame=\(weatherStackView.frame) stackBounds=\(weatherStackView.bounds) stackHidden=\(weatherStackView.isHidden) stackAlpha=\(weatherStackView.alpha) btnFrame=\(sunButton.frame) btnBounds=\(sunButton.bounds) btnHidden=\(sunButton.isHidden) btnAlpha=\(sunButton.alpha) btnClips=\(sunButton.clipsToBounds) btnImageIsNil=\(sunButton.currentImage == nil) imageView[\(imageViewDesc)] emote[\(emoteDesc)] content[\(contentDesc)]\(frameSuffix)")
+            }
+        }
         let w = view.bounds.width
         guard w > 0, w != lastLayoutWidth else {
             // 临时诊断（86 包，定根因后删除）：布局方法出口（宽门挡住的早退路径）。
