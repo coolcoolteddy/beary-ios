@@ -602,6 +602,21 @@ class BearyProfileViewController: UIViewController {
         return buttonValue
     }()
 
+    /// iCity：他人主页顶栏“更多”钮（官方 icon_more，24pt；本人主页隐藏，见 applyMode）。
+    private lazy var topMoreButton: UIButton = {
+        let buttonValue = UIButton(type: .system)
+        buttonValue.translatesAutoresizingMaskIntoConstraints = false
+        buttonValue.setImage(BearyIconImages.image(named: "icon_more", pointSize: 24), for: .normal)
+        buttonValue.tintColor = BearyColors.ink
+        buttonValue.accessibilityLabel = "更多"
+        buttonValue.addTarget(self, action: #selector(topMoreButtonTapped), for: .touchUpInside)
+        buttonValue.bearyAddPressFeedback()
+        return buttonValue
+    }()
+
+    /// iCity：拉黑成功后容器接线（离页 + 刷新信息流）；容器未接线时本页清列表兜底。
+    var onBlockedUser: ((Int) -> Void)?
+
     // MARK: - 头像行动作：齿轮（仅本人）；头像行分享已按 1:1 去掉，modal 态走顶栏分享
 
     private lazy var gearButton: UIButton = {
@@ -908,6 +923,11 @@ class BearyProfileViewController: UIViewController {
 
     // MARK: - 生命周期
 
+    deinit {
+        NotificationCenter.default.removeObserver(self, name: .bearyDidReportEntry, object: nil)
+        NotificationCenter.default.removeObserver(self, name: .bearyDidBlockUser, object: nil)
+    }
+
     override func viewDidLoad() {
         super.viewDidLoad()
         view.backgroundColor = BearyColors.bg
@@ -923,6 +943,9 @@ class BearyProfileViewController: UIViewController {
         tableView.tableHeaderView = headerView
         buildStickyHeader()
         view.bringSubviewToFront(topBarView)
+        // iCity：举报/拉黑广播——本页同步清掉对应条目（拉黑本页作者时离页由 onBlockedUser 容器接线）。
+        NotificationCenter.default.addObserver(self, selector: #selector(handleReportedEntryNotification(_:)), name: .bearyDidReportEntry, object: nil)
+        NotificationCenter.default.addObserver(self, selector: #selector(handleBlockedUserNotification(_:)), name: .bearyDidBlockUser, object: nil)
         view.addSubview(profileSkeletonView)
         let skeletonTop = profileSkeletonView.topAnchor.constraint(equalTo: tableView.topAnchor, constant: 0)
         self.profileSkeletonTopConstraint = skeletonTop
@@ -1153,6 +1176,7 @@ class BearyProfileViewController: UIViewController {
         view.addSubview(topBarView)
         topBarView.addSubview(topBackButton)
         topBarView.addSubview(topNameLabel)
+        topBarView.addSubview(topMoreButton)
         topBarView.addSubview(topShareButton)
         NSLayoutConstraint.activate([
             topBarView.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
@@ -1166,7 +1190,11 @@ class BearyProfileViewController: UIViewController {
             topNameLabel.centerXAnchor.constraint(equalTo: topBarView.centerXAnchor),
             topNameLabel.centerYAnchor.constraint(equalTo: topBarView.centerYAnchor),
             topNameLabel.leadingAnchor.constraint(greaterThanOrEqualTo: topBackButton.trailingAnchor, constant: 8),
-            topNameLabel.trailingAnchor.constraint(lessThanOrEqualTo: topShareButton.leadingAnchor, constant: -8),
+            topNameLabel.trailingAnchor.constraint(lessThanOrEqualTo: topMoreButton.leadingAnchor, constant: -8),
+            topMoreButton.trailingAnchor.constraint(equalTo: topShareButton.leadingAnchor, constant: -8),
+            topMoreButton.centerYAnchor.constraint(equalTo: topBarView.centerYAnchor),
+            topMoreButton.widthAnchor.constraint(equalToConstant: 44),
+            topMoreButton.heightAnchor.constraint(equalToConstant: 44),
             topShareButton.trailingAnchor.constraint(equalTo: topBarView.trailingAnchor, constant: -20),
             topShareButton.centerYAnchor.constraint(equalTo: topBarView.centerYAnchor),
             topShareButton.widthAnchor.constraint(equalToConstant: 44),
@@ -1431,6 +1459,8 @@ class BearyProfileViewController: UIViewController {
         let own = isOwnProfile
         editButton.isHidden = !own
         gearButton.isHidden = !own
+        // iCity：更多菜单只属他人主页（举报/拉黑均以他人为对象）。
+        topMoreButton.isHidden = own
         if !own {
             badgesContainer.isHidden = true
             badgesHeightConstraint.isActive = true
@@ -2158,6 +2188,9 @@ class BearyProfileViewController: UIViewController {
             return
         }
         if diaryEntries.isEmpty {
+            // iCity：挂起前同样先守可见性——私密落点不挂起、不重插。
+            let viewerIsAuthor = entry.isMine == true || (entry.authorId != nil && entry.authorId == SessionManager.shared.currentUser?.id)
+            if viewerIsAuthor == false && entry.isPublic != true { return }
             pendingDirectEntry = entry
             if !tabLoading && !tabLoadMore {
                 loadTab(forceReload: true)
@@ -2168,8 +2201,11 @@ class BearyProfileViewController: UIViewController {
     }
 
     /// 按 createdAt 降序把单篇插进日记 tab 合适位置并滚动高亮。
+    /// iCity：服务端列表本就排除他人私密篇——非本人非公开的直接落点一律丢弃，绝不重插。
     private func insertDirectEntry(_ entry: Entry) {
         guard let targetId = entry.id, !targetId.isEmpty else { return }
+        let viewerIsAuthor = entry.isMine == true || (entry.authorId != nil && entry.authorId == SessionManager.shared.currentUser?.id)
+        if viewerIsAuthor == false && entry.isPublic != true { return }
         let targetMs = entry.createdAt ?? 0
         let idx = diaryEntries.firstIndex(where: { ($0.createdAt ?? 0) < targetMs }) ?? diaryEntries.count
         diaryEntries.insert(entry, at: idx)
@@ -2454,7 +2490,7 @@ class BearyProfileViewController: UIViewController {
         case .diary:
             // 网页 beary.html:2690 的 nb-once 口径：一次性描画铅笔。
             titleText = "还没有公开的日记"
-            subtitleText = isOwnProfile ? "写下第一篇，7 天后送达给自己" : ""
+            subtitleText = isOwnProfile ? "写下第一篇，默认私密" : ""
             let pencilView = BearyPencilView()
             pencilView.strokeColor = BearyColors.gray
             graphicView = pencilView
@@ -2834,64 +2870,99 @@ class BearyProfileViewController: UIViewController {
         }
     }
 
-    /// A-2：个人主页卡片公开入口（首页/时间线同款流程）：确认框（BearyText 共享常量）
-    /// → POST publish → 成功后以服务端 pending/已公开态同步模型与可见行（倒计时行随新数据
-    /// 渲染）；失败 toast“公开失败，请重试”。在途去重，同一篇重复点按只发一次。
-    /// 仅本人未公开且已送达（publishAt <= now、未在倒计时中）的行才出公开钮，见卡片 refreshPubRow。
-    private func handleCellPublish(entry: Entry) {
+    /// iCity：个人主页卡片操作行双向切换钮——显式目标态（当前公开→改回私密，当前私密→公开），无确认框；
+    /// pubBusyIds 复用防重入；翻转后清掉该篇引用缓存（旧引用卡不按旧可见性渲染）。
+    private func handleCellVisibilityToggle(entry: Entry) {
         guard let entryId = entry.id, !entryId.isEmpty else { return }
-        guard entry.isMine == true, entry.isPublic != true else { return }
-        let nowMs = Int(Date().timeIntervalSince1970 * 1000)
-        if let pend = entry.publishPendingUntil, pend > nowMs { return }
-        guard let publishAt = entry.publishAt, publishAt <= nowMs else { return }
+        guard entry.isMine == true else { return }
         guard !pubBusyIds.contains(entryId) else { return }
-        let alert = UIAlertController(title: BearyText.publishConfirmTitle, message: BearyText.publishConfirmMessage, preferredStyle: .alert)
-        alert.addAction(UIAlertAction(title: "取消", style: .cancel))
-        alert.addAction(UIAlertAction(title: "公开", style: .default) { [weak self] _ in
-            guard let strongSelf = self else { return }
-            strongSelf.pubBusyIds.insert(entryId)
-            BearyAPI.shared.requestPublish(id: entryId) { result in
-                DispatchQueue.main.async {
-                    strongSelf.pubBusyIds.remove(entryId)
-                    switch result {
-                    case .success(let resp):
-                        var updated = entry
-                        if let pend = resp.publishPendingUntil { updated.publishPendingUntil = pend }
-                        if let published = resp.published { updated.isPublic = published == 1 }
-                        strongSelf.updateEntryInAllTabs(entry: updated)
-                        // syncInteraction 不刷公开行：就地同步后补刷，倒计时行随新数据渲染。
-                        strongSelf.syncVisibleCell(entry: updated)?.refreshPublishRow()
-                    case .failure:
-                        BearyToast.show(in: strongSelf.view, message: "公开失败，请重试", aboveFAB: false)
-                    }
-                }
-            }
-        })
-        present(alert, animated: BearyMotion.animated(true))
-    }
-
-    /// A-2：“取消”钮：直接走 POST /beary/api/entries/:id/publish/cancel（网页 doPublishCancel 无确认框），
-    /// 成功后清倒计时并同步模型与可见行，失败 toast“取消失败，请重试”。
-    private func handleCellCancelPublish(entry: Entry) {
-        guard let entryId = entry.id, !entryId.isEmpty else { return }
-        guard !pubBusyIds.contains(entryId) else { return }
+        let target = entry.isPublic == true ? 0 : 1
         pubBusyIds.insert(entryId)
-        BearyAPI.shared.cancelPublish(id: entryId) { [weak self] result in
+        BearyAPI.shared.setVisibility(id: entryId, published: target) { [weak self] result in
             DispatchQueue.main.async {
                 guard let strongSelf = self else { return }
                 strongSelf.pubBusyIds.remove(entryId)
                 switch result {
                 case .success(let resp):
                     var updated = entry
-                    updated.publishPendingUntil = nil
                     if let published = resp.published { updated.isPublic = published == 1 }
+                    if let publishedAt = resp.publishedAt { updated.publishedAt = publishedAt }
                     strongSelf.updateEntryInAllTabs(entry: updated)
-                    // syncInteraction 不刷公开行：就地同步后补刷，取消后公开钮随新数据复现。
+                    if updated.isPublic != true {
+                        BearyDiaryCardCell.quoteCache.removeValue(forKey: entryId)
+                    }
                     strongSelf.syncVisibleCell(entry: updated)?.refreshPublishRow()
                 case .failure:
-                    BearyToast.show(in: strongSelf.view, message: "取消失败，请重试", aboveFAB: false)
+                    BearyToast.show(in: strongSelf.view, message: "切换失败，请重试", aboveFAB: false)
                 }
             }
+        }
+    }
+
+    // MARK: - iCity 他人主页“更多”：举报与拉黑
+
+    /// 个人页级举报目标：举报 API 需要 entry_id。取已落点的直接条目，次取首篇公开日记；
+    /// 两者皆无时菜单不放举报项（不以私密篇为目标）。
+    private var reportTargetEntry: Entry? {
+        if let landed = directLandedEntries.values.first, landed.isPublic == true { return landed }
+        return diaryEntries.first(where: { $0.isPublic == true })
+    }
+
+    @objc private func topMoreButtonTapped() {
+        guard isOwnProfile == false, let targetUserId = targetUserIdValue else { return }
+        let sheet = UIAlertController(title: nil, message: nil, preferredStyle: .actionSheet)
+        if let target = reportTargetEntry, let targetId = target.id {
+            sheet.addAction(UIAlertAction(title: "举报", style: .default) { [weak self] _ in
+                guard let strongSelf = self else { return }
+                BearyReportFlow.present(from: strongSelf, entryId: targetId, entryLabel: nil)
+            })
+        }
+        sheet.addAction(UIAlertAction(title: "拉黑", style: .destructive) { [weak self] _ in
+            guard let strongSelf = self else { return }
+            BearyBlockFlow.block(from: strongSelf, userId: targetUserId, userName: strongSelf.topNameLabel.text) { [weak self] success in
+                guard success, let strongSelf = self else { return }
+                if let onBlocked = strongSelf.onBlockedUser {
+                    onBlocked(targetUserId)
+                } else {
+                    strongSelf.diaryEntries.removeAll()
+                    strongSelf.likedEntries.removeAll()
+                    strongSelf.savedEntries.removeAll()
+                    strongSelf.tableView.reloadData()
+                }
+            }
+        })
+        sheet.addAction(UIAlertAction(title: "取消", style: .cancel))
+        present(sheet, animated: true)
+    }
+
+    @objc private func handleReportedEntryNotification(_ note: Notification) {
+        guard let entryId = note.object as? String, !entryId.isEmpty else { return }
+        var changed = false
+        let before = diaryEntries.count + likedEntries.count + savedEntries.count
+        diaryEntries.removeAll { $0.id == entryId }
+        likedEntries.removeAll { $0.id == entryId }
+        savedEntries.removeAll { $0.id == entryId }
+        changed = (diaryEntries.count + likedEntries.count + savedEntries.count) != before
+        if changed { tableView.reloadData() }
+    }
+
+    @objc private func handleBlockedUserNotification(_ note: Notification) {
+        guard let userId = note.object as? Int else { return }
+        if userId == targetUserIdValue {
+            // 本页作者被拉黑：离页由 onBlockedUser 容器接线（本页发起时已在 onDone 回调里走过）；
+            // 广播再到时仅清列表兜底，不重复导航。
+            diaryEntries.removeAll()
+            likedEntries.removeAll()
+            savedEntries.removeAll()
+            tableView.reloadData()
+            return
+        }
+        let before = diaryEntries.count + likedEntries.count + savedEntries.count
+        diaryEntries.removeAll { $0.authorId == userId }
+        likedEntries.removeAll { $0.authorId == userId }
+        savedEntries.removeAll { $0.authorId == userId }
+        if (diaryEntries.count + likedEntries.count + savedEntries.count) != before {
+            tableView.reloadData()
         }
     }
 
@@ -3105,24 +3176,13 @@ class BearyProfileViewController: UIViewController {
 
     private func handleCellQuoteTap(entry: Entry) {
         if let quoteValue = entry.quote {
-            // 64 包反馈修（第 16 项）：gone 引用体只有 {id, gone:true}、无 is_public 字段，
-            // 旧代码只查 isPublic == false，gone 会漏网走到 fetch 再弹提示；与时间线/
-            // 首页看齐：gone 与 locked 都直接按网页口径给提示，不再尝试打开目标。
+            // iCity：gone 直接按已删除提示；其余一律先 fetchEntry 校验服务端可见性再放行
+            //（quoteCache 快路径已删——缓存可见性可能滞后于翻转）。
             if quoteValue.gone == true {
                 presentSimpleAlert(message: "引用的日记已删除")
                 return
             }
-            if quoteValue.locked == true || quoteValue.isPublic == false {
-                presentSimpleAlert(message: "引用的这篇还没公开")
-                return
-            }
             guard let quoteId = quoteValue.id, !quoteId.isEmpty else { return }
-            // 引用点按快路径：同篇引用已在首页渲染进 quoteCache 时直接用缓存定作者，不再拉一次。
-            if let cached = BearyDiaryCardCell.quoteCache[quoteId],
-               cached.authorId != nil || cached.isMine == true {
-                onOpenEntry?(cached)
-                return
-            }
             // 定位进行中的轻量指示：拉取往返期间卡片无反应是本次反馈的体感来源之一；
             // toast 2 秒自清，不做乐观假定位。
             BearyToast.show(in: view, message: "正在打开…", aboveFAB: false)
@@ -3131,7 +3191,12 @@ class BearyProfileViewController: UIViewController {
                     guard let strongSelf = self else { return }
                     switch result {
                     case .success(let fetched):
-                        strongSelf.onOpenEntry?(fetched)
+                        let viewerIsAuthor = fetched.isMine == true || (fetched.authorId != nil && fetched.authorId == SessionManager.shared.currentUser?.id)
+                        if viewerIsAuthor || fetched.isPublic == true {
+                            strongSelf.onOpenEntry?(fetched)
+                        } else {
+                            strongSelf.presentSimpleAlert(message: "该日记未公开")
+                        }
                     case .failure:
                         strongSelf.presentSimpleAlert(message: "引用的日记已删除")
                     }
@@ -3169,8 +3234,11 @@ extension BearyProfileViewController: UITableViewDataSource, UITableViewDelegate
         cellValue.onLike = { [weak self] in self?.handleCellLike(entry: entryValue) }
         cellValue.onBookmark = { [weak self] in self?.handleCellBookmark(entry: entryValue) }
         cellValue.onShare = { [weak self] in self?.handleCellShare(entry: entryValue) }
-        cellValue.onPublishTapped = { [weak self] in self?.handleCellPublish(entry: entryValue) }
-        cellValue.onPublishCancelTapped = { [weak self] in self?.handleCellCancelPublish(entry: entryValue) }
+        cellValue.onPublishTapped = { [weak self] in self?.handleCellVisibilityToggle(entry: entryValue) }
+        cellValue.onReportRequested = { [weak self] entryValue in
+            guard let strongSelf = self, let entryId = entryValue.id else { return }
+            BearyReportFlow.present(from: strongSelf, entryId: entryId, entryLabel: nil)
+        }
         cellValue.onContextMenuEdit = { [weak self] in self?.onEditEntry?(entryValue) }
         cellValue.onContextMenuDelete = { [weak self] in self?.onDeleteEntry?(entryValue) }
         cellValue.onEmoteTap = { [weak self] key in self?.handleCellEmote(entry: entryValue, key: key) }
