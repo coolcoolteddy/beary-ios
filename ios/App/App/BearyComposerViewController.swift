@@ -447,6 +447,9 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, U
     // 临时诊断（天气条 10/28，定根因后删除）：上一次已记录的布局后条带签名，
     // 用于 postLayout mark 只在条带状态/几何变化时记一次，避免每次布局都刷屏。
     private var lastPostLayoutStripSig: String = ""
+    // 临时诊断（天气条 10/28 第二批，定根因后删除）：上一次已记录的“晴”钮展开详情签名，
+    // 与 postLayout mark 同频（仅签名变化时记第一时点），避免每布局刷屏。
+    private var lastWeatherDetailSig: String = ""
 
     override func viewDidLayoutSubviews() {
         super.viewDidLayoutSubviews()
@@ -460,6 +463,44 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, U
         if stripSig != lastPostLayoutStripSig {
             lastPostLayoutStripSig = stripSig
             DiagFile.mark("weather-diag postLayout weatherHidden=\(weatherScrollView.isHidden) weatherFrame=\(weatherScrollView.frame) stackFrame=\(toolStripStack.frame) contentSize=\(weatherScrollView.contentSize) btnCount=\(weatherEmoteViews.count) firstBtnFrame=\(weatherStackView.arrangedSubviews.first?.frame ?? .zero)")
+        }
+        // 临时诊断（天气条 10/28 第二批，定根因后删除）：“晴”钮两时点全量状态。
+        // 展开口径与 updateWeatherPlayback 的 rowVisible 一致；对象取 weatherButtons[1]
+        //（[0] 为无图标的“无”，[1] 为首个带图标钮“晴”），对应播放器按 key 映射，不硬编码。
+        // 第一时点：条带展开后的布局完成时，与 postLayout mark 同频（仅签名变化时记）。
+        // 第二时点：attachCachedEmote 完成后的下一次布局完成时（一次性标志取后即清零，
+        // 每布局都取、避免条带关闭后残留旧标志）；含当前动画帧与静态帧，其余字段与第一时点相同。
+        if weatherButtons.count > 1 {
+            let sunKey = weatherButtons[1].key
+            let sunEmoteView = weatherEmoteViews.first(where: { $0.key == sunKey })?.emoteView
+            let postAttach = sunEmoteView?.diagTakeAttachPending() ?? false
+            let stripExpanded = activeToolStrip == .weather && !quotePanelOpen && !weatherScrollView.isHidden
+            if stripExpanded, (postAttach || stripSig != lastWeatherDetailSig) {
+                lastWeatherDetailSig = stripSig
+                let sunButton = weatherButtons[1].button
+                let imageViewDesc: String
+                if let iv = sunButton.imageView {
+                    imageViewDesc = "frame=\(iv.frame) bounds=\(iv.bounds) hidden=\(iv.isHidden) alpha=\(iv.alpha) clips=\(iv.clipsToBounds) imageIsNil=\(iv.image == nil)"
+                } else {
+                    imageViewDesc = "nil"
+                }
+                let emoteDesc: String
+                let contentDesc: String
+                var frameSuffix = ""
+                if let emoteView = sunEmoteView {
+                    emoteDesc = "frame=\(emoteView.frame) bounds=\(emoteView.bounds) hidden=\(emoteView.isHidden) alpha=\(emoteView.alpha) windowIsNil=\(emoteView.window == nil) superviewIsImageView=\(emoteView.superview === sunButton.imageView)"
+                    let state = emoteView.diagContentState()
+                    contentDesc = "kind=\(state.kind) frame=\(state.frame) imageIsNil=\(String(describing: state.imageIsNil))"
+                    if postAttach {
+                        frameSuffix = " currentFrame=\(String(describing: state.currentFrame)) staticFrame=\(String(describing: state.staticFrame))"
+                    }
+                } else {
+                    emoteDesc = "nil"
+                    contentDesc = "nil"
+                }
+                let tag = postAttach ? "postAttach-detail" : "expanded-detail"
+                DiagFile.mark("weather-diag \(tag) scrollFrame=\(weatherScrollView.frame) scrollBounds=\(weatherScrollView.bounds) scrollContentSize=\(weatherScrollView.contentSize) scrollContentOffset=\(weatherScrollView.contentOffset) scrollHidden=\(weatherScrollView.isHidden) scrollAlpha=\(weatherScrollView.alpha) stackFrame=\(weatherStackView.frame) stackBounds=\(weatherStackView.bounds) stackHidden=\(weatherStackView.isHidden) stackAlpha=\(weatherStackView.alpha) btnFrame=\(sunButton.frame) btnBounds=\(sunButton.bounds) btnHidden=\(sunButton.isHidden) btnAlpha=\(sunButton.alpha) btnClips=\(sunButton.clipsToBounds) btnImageIsNil=\(sunButton.currentImage == nil) imageView[\(imageViewDesc)] emote[\(emoteDesc)] content[\(contentDesc)]\(frameSuffix)")
+            }
         }
         let w = view.bounds.width
         guard w > 0, w != lastLayoutWidth else {
