@@ -8,6 +8,12 @@ class BearyEntryImageViewerViewController: UIViewController, UIGestureRecognizer
     private let imageKeys: [String]
     private var currentIndex: Int
     private let imageView = UIImageView()
+    // 灯箱相邻图：拖动时贴在当前图边上同步跟手的那一张（见 updateNeighbor）。
+    // 单图轨道没有分页容器，旧路径是当前图先滑出、再换图滑入，两图从不同时
+    // 在屏、中间只剩黑底——即“不连贯、中间有间隙”的根因。
+    private let neighborImageView = UIImageView()
+    private var neighborIndex: Int?
+    private var neighborDirection: Int = 0
     private let retryLabel = UILabel()
     private let counterLabel = UILabel()
     private let closeButton = BearyHit44Button(type: .system)
@@ -48,6 +54,11 @@ class BearyEntryImageViewerViewController: UIViewController, UIGestureRecognizer
         imageView.backgroundColor = .clear
         imageView.translatesAutoresizingMaskIntoConstraints = false
         view.addSubview(imageView)
+        neighborImageView.contentMode = .scaleAspectFit
+        neighborImageView.backgroundColor = .clear
+        neighborImageView.translatesAutoresizingMaskIntoConstraints = false
+        neighborImageView.isHidden = true
+        view.addSubview(neighborImageView)
         retryLabel.text = "图片加载失败，重试"
         retryLabel.textColor = .white
         retryLabel.font = UIFont.systemFont(ofSize: 14)
@@ -109,6 +120,10 @@ class BearyEntryImageViewerViewController: UIViewController, UIGestureRecognizer
             imageView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
             imageView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             imageView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            neighborImageView.topAnchor.constraint(equalTo: view.topAnchor),
+            neighborImageView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
+            neighborImageView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            neighborImageView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
             retryLabel.centerXAnchor.constraint(equalTo: view.centerXAnchor),
             // E2：图片加载失败重试态按可视区中心往上 30pt 统一放（原正中心）。
             retryLabel.centerYAnchor.constraint(equalTo: view.centerYAnchor, constant: -30),
@@ -141,6 +156,7 @@ class BearyEntryImageViewerViewController: UIViewController, UIGestureRecognizer
     }
 
     private func resetZoom(animated: Bool) {
+        hideNeighbor()
         scale = 1
         tx = 0
         ty = 0
@@ -220,6 +236,42 @@ class BearyEntryImageViewerViewController: UIViewController, UIGestureRecognizer
         }
     }
 
+    private func pageWidthValue() -> CGFloat {
+        view.bounds.width > 0 ? view.bounds.width : UIScreen.main.bounds.width
+    }
+
+    /// 拖动时相邻图跟手：相邻图静止时贴在当前图外侧（下一张在右、上一张在左），
+    /// 随当前图同量平移，两图始终相邻无间隙；拖动回 0 或方向翻转时重算/隐藏。
+    /// 相邻图通常已由 prefetchAdjacent 暖过缓存，加载失败时该槽位留空（不比旧路径差）。
+    private func updateNeighbor(forDragX dragX: CGFloat) {
+        guard imageKeys.count > 1, scale == 1 else { hideNeighbor(); return }
+        if dragX == 0 { hideNeighbor(); return }
+        let direction = dragX < 0 ? 1 : -1
+        let target = (currentIndex + direction + imageKeys.count) % imageKeys.count
+        if neighborIndex != target || neighborDirection != direction {
+            neighborIndex = target
+            neighborDirection = direction
+            neighborImageView.image = nil
+            neighborImageView.isHidden = false
+            if let url = BearyImageURLs.imageURL(key: imageKeys[target], thumb: false) {
+                let w = pageWidthValue()
+                BearyImageLoader.shared.load(url: url, downsampleToWidth: w * UIScreen.main.scale) { [weak self] img in
+                    guard let self = self, self.neighborIndex == target else { return }
+                    self.neighborImageView.image = img
+                }
+            }
+        }
+        let w = pageWidthValue()
+        neighborImageView.transform = CGAffineTransform(translationX: dragX + CGFloat(direction) * w, y: 0)
+    }
+
+    private func hideNeighbor() {
+        neighborIndex = nil
+        neighborDirection = 0
+        neighborImageView.isHidden = true
+        neighborImageView.transform = .identity
+    }
+
     // MARK: - E-G12 淡入淡出转场
 
     func animationController(forPresented presented: UIViewController, presenting: UIViewController, source: UIViewController) -> UIViewControllerAnimatedTransitioning? {
@@ -247,6 +299,7 @@ class BearyEntryImageViewerViewController: UIViewController, UIGestureRecognizer
         if isNavigating == true {
             return
         }
+        hideNeighbor()
         if scale > 1 {
             resetZoom(animated: true)
         } else {
@@ -263,6 +316,7 @@ class BearyEntryImageViewerViewController: UIViewController, UIGestureRecognizer
         }
         if sender.state == .began {
             pinchActive = true
+            hideNeighbor()
             pinchScale0 = scale
         } else if sender.state == .changed {
             pinchActive = true
@@ -295,9 +349,10 @@ class BearyEntryImageViewerViewController: UIViewController, UIGestureRecognizer
                 ty = panTy0 + translation.y
                 clampPan()
             } else {
-                // 未放大：轨道跟手，只跟横向。
+                // 未放大：轨道跟手，只跟横向；相邻图同步贴在边上跟手（见 updateNeighbor）。
                 tx = translation.x
                 ty = 0
+                updateNeighbor(forDragX: tx)
             }
             applyTransform(animated: false)
         } else if sender.state == .ended || sender.state == .cancelled {
@@ -315,7 +370,21 @@ class BearyEntryImageViewerViewController: UIViewController, UIGestureRecognizer
             } else {
                 tx = 0
                 ty = 0
-                applyTransform(animated: true)
+                if UIAccessibility.isReduceMotionEnabled {
+                    applyTransform(animated: false)
+                    hideNeighbor()
+                } else {
+                    // 回弹时相邻图同步退回屏外再隐藏，避免回弹瞬间相邻图闪没。
+                    let w = pageWidthValue()
+                    let dir = neighborDirection
+                    let hasNeighbor = neighborIndex != nil
+                    UIView.animate(withDuration: 0.25, animations: {
+                        self.applyTransform(animated: false)
+                        if hasNeighbor {
+                            self.neighborImageView.transform = CGAffineTransform(translationX: CGFloat(dir) * w, y: 0)
+                        }
+                    }, completion: { _ in self.hideNeighbor() })
+                }
             }
         }
     }
@@ -335,6 +404,42 @@ class BearyEntryImageViewerViewController: UIViewController, UIGestureRecognizer
             loadCurrent()
             return
         }
+        // 连续翻页：拖动时相邻图已贴在边上跟手（updateNeighbor），直接把两图
+        // 一次动画到终位再交接——当前图出屏、相邻图正好居中，全程相邻无间隙。
+        // 相邻图未就绪时回落旧的两段式路径（行为不变）。
+        if neighborIndex == wrapped && neighborImageView.image != nil {
+            isNavigating = true
+            let width = pageWidthValue()
+            let offX: CGFloat = direction > 0 ? -width : width
+            let reduceMotion = UIAccessibility.isReduceMotionEnabled
+            let commit: () -> Void = { [weak self] in
+                guard let self = self else { return }
+                self.currentIndex = wrapped
+                self.scale = 1
+                self.tx = 0
+                self.ty = 0
+                self.imageView.image = self.neighborImageView.image
+                self.imageView.transform = .identity
+                self.hideNeighbor()
+                self.updateCounter()
+                self.prefetchAdjacent()
+                self.isNavigating = false
+            }
+            if reduceMotion == true {
+                commit()
+                return
+            }
+            UIView.animate(withDuration: 0.25, animations: {
+                self.tx = offX
+                self.ty = 0
+                self.applyTransform(animated: false)
+                self.neighborImageView.transform = .identity
+            }, completion: { _ in
+                commit()
+            })
+            return
+        }
+        hideNeighbor()
         isNavigating = true
         let width = view.bounds.width > 0 ? view.bounds.width : UIScreen.main.bounds.width
         let offX: CGFloat = direction > 0 ? -width : width
