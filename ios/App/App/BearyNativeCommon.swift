@@ -1457,7 +1457,7 @@ final class BearySkeletonCardView: UIView {
 /// publishedAt 缺失时返回 nil（调用方回退绝对时间）。
 /// 限时日记有效态（客户端唯一口径）：ephemeralUntil 非空且未到期 = 存活期；
 /// 已到期 = 普通私密（不建 sweep，读时按时间判定；手动翻转可见性时服务端清标记，
-/// 本地同步点同样清 ephemeralUntil，见三处 applyVisibility*）。
+/// 本地同步点同样清 ephemeralUntil，见三处 applyVisibility* 与详情页可见性切换）。
 enum BearyEphemeral {
     static func isLive(_ entry: Entry, nowMs: Int? = nil) -> Bool {
         guard let until = entry.ephemeralUntil else { return false }
