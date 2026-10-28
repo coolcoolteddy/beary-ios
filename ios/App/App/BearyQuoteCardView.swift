@@ -32,9 +32,10 @@ final class BearyQuoteCardView: UIView {
     }()
 
     /// 投递中 pill（lite 卡口径）：11/600/blue、blue 13% 底、圆角 6、padding 2/7。
-    /// W2 口径说明：此处只显示不带倒计时的“投递中”是有意区分——服务端 attachQuotes 直传的
-    /// Quote 模型无 publishAt 字段（见 BearyAPI.swift，publishAt 只在 Entry 上），算不出倒计时；
-    /// 详情页与编辑器 lite 卡有 publishAt，走带倒计时版。Quote 补 publishAt 后此处再统一。
+    /// W2 口径说明：列表侧服务端 attachQuotes 直传的 Quote 模型无 publishAt 字段
+    /// （见 BearyAPI.swift，publishAt 只在 Entry 上），算不出倒计时，故不传 publishAt
+    /// 时仍显示 plain“投递中”；编辑器侧 SelectedQuote.publishAt 取自 Entry（毫秒），
+    /// 经 configure 的可选 publishAt 入口传进来时显示带倒计时的同款文案。
     private let deliveringPillButton: UIButton = {
         let btn = UIButton(type: .system)
         btn.translatesAutoresizingMaskIntoConstraints = false
@@ -370,7 +371,22 @@ final class BearyQuoteCardView: UIView {
     // D8c：网页 .quote-thumbs 口径为固定 42x42（不按 stripW 算宽），故 strip 宽函数已删；
     // configure 的 dims 参数保留（调用点仍传被引用篇自己的 imgDims），宽不再由它驱动。
 
-    func configure(authorName: String, authorAvatar: String?, content: String, images: [String], dims: [String: [Int]]?, createdAt: Int? = nil, showDeliveringPill: Bool = false, allowThumbs: Bool = true) {
+    /// fixall-quote-countdown：带倒计时版“投递中”pill，与编辑器
+    /// quoteCountdownText（BearyComposerViewController.swift）逐字同口径：
+    /// publishAt 为毫秒，天 > 小时 > 分钟，分钟向上取整、至少 1 分钟；
+    /// publishAt 为 nil 时回退 plain“投递中”。
+    private func countdownText(publishAt: Int?) -> String {
+        guard let publishAt = publishAt else { return "投递中" }
+        let remainMs = max(0, publishAt - Int(Date().timeIntervalSince1970 * 1000))
+        let days = remainMs / 86400000
+        let hours = (remainMs % 86400000) / 3600000
+        let minutes = (remainMs % 3600000 + 59999) / 60000
+        if days > 0 { return "投递中 · 还剩 \(days) 天" }
+        if hours > 0 { return "投递中 · 还剩 \(hours) 小时" }
+        return "投递中 · 还剩 \(max(1, minutes)) 分钟"
+    }
+
+    func configure(authorName: String, authorAvatar: String?, content: String, images: [String], dims: [String: [Int]]?, createdAt: Int? = nil, showDeliveringPill: Bool = false, allowThumbs: Bool = true, publishAt: Int? = nil) {
         clear()
         // 52 批：lite 卡不带头像名——authorName/authorAvatar 参数仅为调用点兼容保留，不再赋值给任何视图。
         if let createdAt = createdAt, createdAt > 0 {
@@ -378,6 +394,11 @@ final class BearyQuoteCardView: UIView {
             dateLabel.isHidden = false
         }
         deliveringPillButton.isHidden = showDeliveringPill == false
+        // fixall-quote-countdown：有 publishAt 时 pill 标题用倒计时文案，否则
+        // plain“投递中”（nil 入口 = 列表侧旧行为；每次 configure 都重设标题，
+        // 避免复用卡残留上一张的倒计时文案；pill 可见性仍由上一行守门）。
+        // 标题在 refreshThumbsWidth 之前定，pill 固有宽即按倒计时文本算。
+        deliveringPillButton.setTitle(countdownText(publishAt: publishAt), for: .normal)
         if content.isEmpty {
             contentLabel.isHidden = true
         } else {
