@@ -1905,17 +1905,7 @@ final class BearyChromeViewController: UIViewController {
                 self?.showPage(.home)
             }
         }
-        // Q5 空态 CTA 接线：主页“赞过”空态“去广场看看”回首页；modal 他人主页时先 dismiss 再切首页（他人主页 saved tab 本就强制回 diary，正常走不到这里，纯防御）。
-        vc.onGoToPlaza = { [weak self] in
-            if modal {
-                self?.dismiss(animated: true) {
-                    self?.showPage(.home)
-                }
-            } else {
-                self?.showPage(.home)
-            }
-        }
-        // A 批空态 CTA 接线：个人主页日记（本人）空态“写一篇”与 FAB 同去向（未登录时 presentComposer 内弹原生登录页）；modal 时先 dismiss 再开编辑器，与 onGoToPlaza 同款。
+        // A 批空态 CTA 接线：个人主页日记（本人）空态“写一篇”与 FAB 同去向（未登录时 presentComposer 内弹原生登录页）；modal 时先 dismiss 再开编辑器。
         vc.onWriteEntry = { [weak self] in
             if modal {
                 self?.dismiss(animated: true) {

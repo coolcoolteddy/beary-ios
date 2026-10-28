@@ -132,11 +132,9 @@ class BearyEditProfileViewController: UIViewController {
         return imageViewValue
     }()
 
-    private lazy var changeCoverButton: UIButton = {
-        return makeSecondaryButton(title: "更换封面", action: #selector(changeCoverButtonTapped))
-    }()
-
-    /// F14：头像包容器（80 半压封面 + 右下角相机角标，网页 ed-ava 口径）。
+    /// F14：头像包容器（80 头像 + 相机角标），封面下半压 40；头像点按钮
+    /// 为 scrollView 级覆盖层（约束锚头像框、后加层级在封面之上，见 buildLayout 末尾），
+    /// 故头像区点按仍走换头像、不与封面点按冲突。
     private let avatarWrap = UIView()
 
     private let avatarImageView: UIImageView = {
@@ -271,20 +269,6 @@ class BearyEditProfileViewController: UIViewController {
         return buttonValue
     }()
 
-    private func makeSecondaryButton(title: String, action: Selector) -> UIButton {
-        let buttonValue = UIButton(type: .system)
-        buttonValue.translatesAutoresizingMaskIntoConstraints = false
-        buttonValue.setTitle(title, for: .normal)
-        buttonValue.setTitleColor(BearyColors.ink, for: .normal)
-        buttonValue.titleLabel?.font = UIFont.systemFont(ofSize: 14)
-        buttonValue.contentEdgeInsets = UIEdgeInsets(top: 0, left: 12, bottom: 0, right: 12)
-        buttonValue.layer.borderWidth = 1
-        buttonValue.layer.cornerRadius = 22
-        buttonValue.addTarget(self, action: action, for: .touchUpInside)
-        buttonValue.bearyAddPressFeedback()
-        return buttonValue
-    }
-
     deinit {
         NotificationCenter.default.removeObserver(self)
     }
@@ -303,8 +287,17 @@ class BearyEditProfileViewController: UIViewController {
         NotificationCenter.default.addObserver(self, selector: #selector(editKeyboardWillHide(_:)), name: UIResponder.keyboardWillHideNotification, object: nil)
         nameField.text = initialDisplayName
         handleField.text = initialHandle
-        if let avatarPath = initialAvatarUrl, let avatarURLValue = BearyImageURLs.avatarURL(avatarPath) {
-            avatarImageView.bearySetImage(url: avatarURLValue, placeholder: nil)
+        if let avatarPath = initialAvatarUrl, !avatarPath.isEmpty {
+            if avatarPath.hasPrefix("data:"),
+               let commaIndex = avatarPath.firstIndex(of: ","),
+               let avatarData = Data(base64Encoded: String(avatarPath[avatarPath.index(after: commaIndex)...])),
+               let avatarImage = UIImage(data: avatarData) {
+                // /me 下发的 avatar 本就是 data:image;base64（账户 Worker 直接存 dataURL），
+                // BearyImageURLs.avatarURL 遇 data: 会返回 nil，故这里直接解码显示。
+                avatarImageView.image = avatarImage
+            } else if let avatarURLValue = BearyImageURLs.avatarURL(avatarPath) {
+                avatarImageView.bearySetImage(url: avatarURLValue, placeholder: nil)
+            }
         }
         if let coverPath = initialCoverUrl, let coverURLValue = BearyImageURLs.avatarURL(coverPath) {
             coverImageView.bearySetImage(url: coverURLValue, placeholder: nil)
@@ -349,7 +342,6 @@ class BearyEditProfileViewController: UIViewController {
     }
 
     private func updateDynamicLayerColors() {
-        changeCoverButton.layer.borderColor = BearyColors.line.cgColor
         copyLinkButton.layer.borderColor = BearyColors.line.cgColor
         avatarCamBadge.layer.borderColor = BearyColors.bg.cgColor
     }
@@ -399,11 +391,11 @@ class BearyEditProfileViewController: UIViewController {
         topRow.translatesAutoresizingMaskIntoConstraints = false
         topRow.axis = .horizontal
         topRow.alignment = .center
-        // F14：头像包容器（80 头像 + 相机角标 + 全幅点按），封面下半压 40。
+        // F14：头像包容器（80 头像 + 相机角标），封面下半压 40；头像点按钮
+        // 改为 scrollView 级覆盖层（见本函数末尾），不放在 wrap 内。
         avatarWrap.translatesAutoresizingMaskIntoConstraints = false
         avatarWrap.addSubview(avatarImageView)
         avatarWrap.addSubview(avatarCamBadge)
-        avatarWrap.addSubview(avatarTapButton)
         NSLayoutConstraint.activate([
             avatarImageView.topAnchor.constraint(equalTo: avatarWrap.topAnchor),
             avatarImageView.leadingAnchor.constraint(equalTo: avatarWrap.leadingAnchor),
@@ -414,21 +406,6 @@ class BearyEditProfileViewController: UIViewController {
             avatarCamBadge.heightAnchor.constraint(equalToConstant: 27),
             avatarCamBadge.trailingAnchor.constraint(equalTo: avatarWrap.leadingAnchor, constant: 80 + 2),
             avatarCamBadge.bottomAnchor.constraint(equalTo: avatarWrap.bottomAnchor, constant: 2),
-            avatarTapButton.topAnchor.constraint(equalTo: avatarWrap.topAnchor),
-            avatarTapButton.leadingAnchor.constraint(equalTo: avatarWrap.leadingAnchor),
-            avatarTapButton.trailingAnchor.constraint(equalTo: avatarImageView.trailingAnchor),
-            avatarTapButton.bottomAnchor.constraint(equalTo: avatarWrap.bottomAnchor),
-        ])
-        // F14：更换封面钮保留（仅移除「移除封面」钮），移到头像行下方。
-        let coverButtonWrap = UIView()
-        coverButtonWrap.translatesAutoresizingMaskIntoConstraints = false
-        coverButtonWrap.addSubview(changeCoverButton)
-        changeCoverButton.translatesAutoresizingMaskIntoConstraints = false
-        NSLayoutConstraint.activate([
-            changeCoverButton.topAnchor.constraint(equalTo: coverButtonWrap.topAnchor),
-            changeCoverButton.leadingAnchor.constraint(equalTo: coverButtonWrap.leadingAnchor),
-            changeCoverButton.bottomAnchor.constraint(equalTo: coverButtonWrap.bottomAnchor),
-            changeCoverButton.heightAnchor.constraint(equalToConstant: 44),
         ])
         // F15：表单（网页 ed-form 口径：顶边线 + 58 标签行 + 行分隔线）。
         let nameRow = UIStackView(arrangedSubviews: [makeFormLabel("昵称"), nameField])
@@ -502,13 +479,15 @@ class BearyEditProfileViewController: UIViewController {
         // 直达，不再经编辑页中转；本页只保留 [封面与头像][昵称][用户名 @handle]
         // [主页链接复制]）。
         contentStack.addArrangedSubview(topRow)
-        contentStack.addArrangedSubview(coverImageView)
         contentStack.addArrangedSubview(avatarWrap)
-        contentStack.addArrangedSubview(coverButtonWrap)
         contentStack.addArrangedSubview(formStack)
         contentStack.addArrangedSubview(linkWrap)
-        // F14：头像半压封面（网页 ed-ava-row margin-top:-40 口径）。
-        contentStack.setCustomSpacing(-40, after: coverImageView)
+        // 封面已移出内容列（scrollView 级通栏，见下方 coverImageView 约束，不再吃
+        // 内容列左右 20 内边距）；头像半压封面改由顶行后 156 间距实现
+        // （180 封面高 + 16 行距 − 40 半压）。
+        // F14：头像半压封面（网页 ed-ava-row margin-top:-40 口径），
+        // 封面已在内容列外，故这里直接给定行后间距。
+        contentStack.setCustomSpacing(156, after: topRow)
         // F12：表单→链接行距 0（链接包容器自带 14 上边距 = 网页 margin-top:14）；
         // C4：链接行已为末行，旧「链接行→账户行距 26」随账户行一并删除。
         contentStack.setCustomSpacing(0, after: formStack)
@@ -530,6 +509,22 @@ class BearyEditProfileViewController: UIViewController {
             coverImageView.heightAnchor.constraint(equalToConstant: 180),
             nameField.heightAnchor.constraint(equalToConstant: 28),
             handleField.heightAnchor.constraint(equalToConstant: 28),
+        ])
+        // 封面通栏 + 点按：封面挂 scrollView、左右贴 frameLayoutGuide（与个人主页
+        // 封面同款通栏）；点封面走原更换流程（选图/裁剪/上传链路不变，见 coverTapped）。
+        // 头像按钮后加（层级在封面之上），故头像区点按仍走换头像、不与封面冲突。
+        coverImageView.isUserInteractionEnabled = true
+        coverImageView.addGestureRecognizer(UITapGestureRecognizer(target: self, action: #selector(coverTapped)))
+        scrollView.addSubview(coverImageView)
+        scrollView.addSubview(avatarTapButton)
+        NSLayoutConstraint.activate([
+            coverImageView.topAnchor.constraint(equalTo: topRow.bottomAnchor, constant: 16),
+            coverImageView.leadingAnchor.constraint(equalTo: scrollView.frameLayoutGuide.leadingAnchor),
+            coverImageView.trailingAnchor.constraint(equalTo: scrollView.frameLayoutGuide.trailingAnchor),
+            avatarTapButton.topAnchor.constraint(equalTo: avatarImageView.topAnchor),
+            avatarTapButton.leadingAnchor.constraint(equalTo: avatarImageView.leadingAnchor),
+            avatarTapButton.trailingAnchor.constraint(equalTo: avatarImageView.trailingAnchor),
+            avatarTapButton.bottomAnchor.constraint(equalTo: avatarImageView.bottomAnchor),
         ])
         // L2（续）：窄屏时内容列宽 = 屏宽 - 40（750 优先级；宽 ≥821 时被 600 上限压住）。
         let columnWidth = contentStack.widthAnchor.constraint(equalTo: scrollView.frameLayoutGuide.widthAnchor, constant: -40)
@@ -591,9 +586,9 @@ class BearyEditProfileViewController: UIViewController {
         presentImagePicker()
     }
 
-    @objc private func changeCoverButtonTapped() {
+    @objc private func coverTapped() {
         pickingAvatar = false
-        lastPickerSourceView = changeCoverButton
+        lastPickerSourceView = coverImageView
         presentImagePicker()
     }
 
