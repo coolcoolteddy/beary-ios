@@ -18,6 +18,8 @@ class SceneDelegate: UIResponder, UIWindowSceneDelegate {
         DiagFile.mark("launch")
         // 反馈日志：生命周期只记固定事件名（不含任何用户内容）。
         BearyAppLog.event("app launch")
+        // iCity §12：App 启动记 app_open 事件（fire-and-forget，失败不阻塞、不 toast）。
+        BearyAPI.shared.sendEvent(eventType: "app_open")
         guard let windowScene = scene as? UIWindowScene else { return }
 
         window = UIWindow(windowScene: windowScene)
@@ -1451,6 +1453,19 @@ final class BearyChromeViewController: UIViewController {
     /// 原生页切换：首页与新页均为常驻子 VC（hide/show 保留滚动位置）。
     /// 重拍当前 tab：首页先回顶再刷新（与网页 topThen 同口径），消息页回顶再刷新，时间线重拉。
     private func showPage(_ page: ContainerPage) {
+        // iCity：切 tab 时私密占位子页先藏（占位不是 tab 页，任何切页都离开它；
+        // 占位关闭按钮本身也走 showPage 回原页，同样经此收口）。
+        // 藏占位时同步恢复当前页视图可见（占位打开时把它藏了；同页分支假定页可见，
+        // 不恢复会在同页点按后留白；切新页时离场逻辑随后会正常藏起它）。
+        if privatePlaceholderVC?.view.isHidden == false {
+            privatePlaceholderVC?.view.isHidden = true
+            privatePlaceholderReturnPage = nil
+            if currentPage == .home {
+                feedVC?.view.isHidden = false
+            } else if let page = currentPage {
+                pageView(for: page).view.isHidden = false
+            }
+        }
         // 游客模式（只读）：时间线/我页/消息页不对游客开放，点按一律走登录提示 Sheet，
         // 不进页、不弹原登录页；首页/搜索/他人主页（.user）游客可看，直放行。
         if SessionManager.shared.isGuestMode {
@@ -1872,6 +1887,8 @@ final class BearyChromeViewController: UIViewController {
             self?.gotoEntry(entry: entry)
         }
         vc.onRequireLogin = { [weak self] in self?.presentLoginGate() }
+        // iCity：拉黑后离页（回首页；信息流侧由广播自行清行）。
+        vc.onBlockedUser = { [weak self] _ in self?.leaveBlockedProfile() }
         // P1-10：容器 .user 页同样接线（.me 页与 modal 页已有），否则空态 CTA
         // 与本人按钮（写一篇/编辑资料/齿轮等）点按无反应。
         wireProfileVC(vc, modal: false)
@@ -2409,6 +2426,8 @@ final class BearyChromeViewController: UIViewController {
         vc.onRequireLogin = { [weak self] in
             self?.presentLoginGate()
         }
+        // iCity：拉黑后离页（modal 先关、再回首页；信息流侧由广播自行清行）。
+        vc.onBlockedUser = { [weak self] _ in self?.leaveBlockedProfile() }
         // 收尾接线：返回/退出/编辑资料/齿轮菜单/行内互动（P3/P11，见 wireProfileVC）。
         wireProfileVC(vc, modal: true)
         // P2-2：系统导航栏在 modal 态真实可见（全仓无 setNavigationBarHidden），与个人主页自有 44pt 顶栏成双顶栏。
@@ -2430,47 +2449,12 @@ final class BearyChromeViewController: UIViewController {
     }
 
     // MARK: - 6A gotoEntry（详情页已删，卡片点开的唯一落点）
-    /// 网页 gotoEntry 口径：自己篇→时间线定位高亮；他人篇→作者主页定位高亮。
-    /// 作者判定优先 authorId，缺失时回退 isMine；两者皆空时拉单篇再定（极端兜底）。
+    /// iCity：一切入口先 fetchEntry 校验服务端可见性再定位/插行——对象直传与
+    /// quoteCache 快路径均已删除（缓存可见性可能滞后于翻转）。
+    /// 自己篇→时间线定位高亮；他人公开篇→作者主页定位高亮；
+    /// 他人私密篇→仅一句文案的占位（不带标题/封面/时间/作者名）。
     private func gotoEntry(entry: Entry) {
         guard let entryId = entry.id, !entryId.isEmpty else { return }
-        let viewerId = SessionManager.shared.currentUser?.id
-        if (entry.authorId != nil && viewerId != nil && entry.authorId == viewerId) || entry.isMine == true {
-            // 已在时间线时不走 showPage（同页分支会整表重拉），直接定位。
-            if currentPage != .timeline {
-                showPage(.timeline)
-            }
-            timelineVC?.locateEntry(entryId: entryId, createdAt: entry.createdAt)
-            return
-        }
-        if let authorId = entry.authorId {
-            pendingUserTarget = .id(authorId)
-            if currentPage != .user {
-                showPage(.user)
-            } else {
-                // 已在他人页时 showPage 同页分支不重建：ensureUserVC 按 key 换作者。
-                _ = ensureUserVC()
-                userVC?.view.isHidden = false
-            }
-            // 引用点按快路径：已拉到的单篇直接落点（按序插入日记 tab 并滚动高亮），
-            // 不再逐页翻查；之后正常翻页追加时按 id 去重，不会重复行。
-            userVC?.locateEntry(entry: entry)
-            return
-        }
-        gotoEntry(entryId: entryId)
-    }
-
-    /// 只有 id 时（搜索/消息/深链/引用卡）：先拉单篇定作者，再走 gotoEntry；
-    /// 拉不到（已删/无权）时 toast，不跳页。
-    private func gotoEntry(entryId: String) {
-        guard !entryId.isEmpty else { return }
-        // 引用点按快路径：引用卡渲染时已拉过单篇并进了 quoteCache（带 authorId/isMine/createdAt），
-        // 直接用缓存定作者，不再为定作者多发一次请求；缓存缺失或无作者信息时走原有拉取路径。
-        if let cached = BearyDiaryCardCell.quoteCache[entryId],
-           cached.authorId != nil || cached.isMine == true {
-            gotoEntry(entry: cached)
-            return
-        }
         // 定位进行中的轻量指示：拉取往返期间卡片无反应是本次反馈的体感来源之一；
         // toast 2 秒自清、后到的失败 toast 会清掉它，不做乐观假定位。
         showToast(message: "正在打开…")
@@ -2479,12 +2463,7 @@ final class BearyChromeViewController: UIViewController {
                 guard let self = self else { return }
                 switch result {
                 case .success(let fetched):
-                    // 拉回后仍定不出作者时不再递归（避免 fetch 死循环），直接提示。
-                    if fetched.authorId == nil && fetched.isMine != true {
-                        self.showToast(message: "这篇日记不存在或已被删除")
-                        return
-                    }
-                    self.gotoEntry(entry: fetched)
+                    self.routeFetchedEntry(fetched)
                 case .failure(let apiError):
                     // 消息页组：取日记失败按 APIError 分流——网络失败报网络文案
                     // （与 onNetworkUnstable 同款），其余失败才报不存在或已被删除。
@@ -2496,6 +2475,120 @@ final class BearyChromeViewController: UIViewController {
                 }
             }
         }
+    }
+
+    /// 只有 id 时（搜索/消息/深链/引用卡）：先拉单篇，再走同一可见性门；
+    /// 拉不到（已删/无权）时 toast，不跳页。
+    private func gotoEntry(entryId: String) {
+        guard !entryId.isEmpty else { return }
+        showToast(message: "正在打开…")
+        BearyAPI.shared.fetchEntry(id: entryId) { [weak self] result in
+            DispatchQueue.main.async {
+                guard let self = self else { return }
+                switch result {
+                case .success(let fetched):
+                    self.routeFetchedEntry(fetched)
+                case .failure(let apiError):
+                    if case .network = apiError {
+                        self.showToast(message: "网络不稳定，请稍后再试")
+                    } else {
+                        self.showToast(message: "这篇日记不存在或已被删除")
+                    }
+                }
+            }
+        }
+    }
+
+    /// fetch 后的统一路由（可见性门）：作者判定优先 authorId，缺失时回退 isMine；
+    /// 定不出作者的公开篇与私密篇分别走提示与占位，不递归、不直传旧对象。
+    private func routeFetchedEntry(_ fetched: Entry) {
+        guard let entryId = fetched.id, !entryId.isEmpty else {
+            showToast(message: "这篇日记不存在或已被删除")
+            return
+        }
+        let viewerId = SessionManager.shared.currentUser?.id
+        let viewerIsAuthor = fetched.isMine == true || (fetched.authorId != nil && viewerId != nil && fetched.authorId == viewerId)
+        if viewerIsAuthor {
+            // 已在时间线时不走 showPage（同页分支会整表重拉），直接定位。
+            if currentPage != .timeline {
+                showPage(.timeline)
+            }
+            timelineVC?.locateEntry(entryId: entryId, createdAt: fetched.createdAt)
+            return
+        }
+        if fetched.isPublic == true, let authorId = fetched.authorId {
+            pendingUserTarget = .id(authorId)
+            if currentPage != .user {
+                showPage(.user)
+            } else {
+                // 已在他人页时 showPage 同页分支不重建：ensureUserVC 按 key 换作者。
+                _ = ensureUserVC()
+                userVC?.view.isHidden = false
+            }
+            // 已校验公开的单篇直接落点（按序插入日记 tab 并滚动高亮），
+            // 之后正常翻页追加时按 id 去重，不会重复行；Profile 侧另有可见性守卫。
+            userVC?.locateEntry(entry: fetched)
+            return
+        }
+        if fetched.isPublic == true {
+            // 公开但定不出作者：无法路由到作者主页，按不存在处理（不递归）。
+            showToast(message: "这篇日记不存在或已被删除")
+            return
+        }
+        presentPrivatePlaceholder()
+    }
+
+    /// iCity：拉黑后离页——modal 主页先 dismiss 再回首页，.user 页直接回首页；
+    /// 信息流侧由 bearyDidBlockUser 广播自行清行，容器不重拉。
+    private func leaveBlockedProfile() {
+        if let nav = presentedViewController as? UINavigationController,
+           nav.viewControllers.first is BearyProfileViewController {
+            dismiss(animated: BearyMotion.animated(true)) { [weak self] in
+                self?.showPage(.home)
+            }
+        } else {
+            showPage(.home)
+        }
+    }
+
+    /// iCity 私密占位子页（容器子页，非 modal）：仅一句文案，不带标题/封面/
+    /// 时间/作者名；关闭回到进入前的页（切 tab 时 showPage 顶部的收口同样会藏它）。
+    private var privatePlaceholderVC: BearyPrivatePlaceholderViewController?
+    private var privatePlaceholderReturnPage: ContainerPage?
+
+    private func presentPrivatePlaceholder() {
+        if privatePlaceholderVC == nil {
+            let vc = BearyPrivatePlaceholderViewController()
+            vc.onClose = { [weak self] in
+                guard let self = self else { return }
+                if let returnPage = self.privatePlaceholderReturnPage {
+                    self.privatePlaceholderReturnPage = nil
+                    self.showPage(returnPage)
+                } else {
+                    self.privatePlaceholderVC?.view.isHidden = true
+                }
+            }
+            addChild(vc)
+            vc.view.translatesAutoresizingMaskIntoConstraints = false
+            view.addSubview(vc.view)
+            NSLayoutConstraint.activate([
+                vc.view.topAnchor.constraint(equalTo: view.topAnchor),
+                vc.view.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+                vc.view.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+                vc.view.bottomAnchor.constraint(equalTo: view.bottomAnchor),
+            ])
+            vc.didMove(toParent: self)
+            vc.view.isHidden = true
+            privatePlaceholderVC = vc
+        }
+        privatePlaceholderReturnPage = currentPage
+        if currentPage == .home {
+            feedVC?.view.isHidden = true
+        } else if let page = currentPage {
+            pageView(for: page).view.isHidden = true
+        }
+        privatePlaceholderVC?.view.isHidden = false
+        bringChromeToFront()
     }
 
     /// 录屏批 (a)：编辑器已在栈上时不再叠 present——编辑器 view 是 clear 底 +
@@ -3426,3 +3519,41 @@ enum DiagFile {
     }
 }
 
+
+/// iCity 私密单篇占位页：仅一句居中文案，不带标题/封面/时间/作者名；
+/// 顶栏只留一个关闭钮（ chrome，不属日记内容）。由容器以子页方式挂载，非 modal。
+final class BearyPrivatePlaceholderViewController: UIViewController {
+    var onClose: (() -> Void)?
+
+    override func viewDidLoad() {
+        super.viewDidLoad()
+        view.backgroundColor = BearyColors.bg
+        let closeButton = BearyHit44Button(type: .system)
+        closeButton.translatesAutoresizingMaskIntoConstraints = false
+        closeButton.setTitle("关闭", for: .normal)
+        closeButton.setTitleColor(BearyColors.ink, for: .normal)
+        closeButton.titleLabel?.font = UIFont.systemFont(ofSize: 15)
+        closeButton.addTarget(self, action: #selector(closeTapped), for: .touchUpInside)
+        closeButton.bearyAddPressFeedback()
+        let label = UILabel()
+        label.translatesAutoresizingMaskIntoConstraints = false
+        label.text = "该日记已设为私密"
+        label.font = UIFont.systemFont(ofSize: 15)
+        label.textColor = BearyColors.gray
+        label.textAlignment = .center
+        view.addSubview(closeButton)
+        view.addSubview(label)
+        NSLayoutConstraint.activate([
+            closeButton.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 4),
+            closeButton.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 16),
+            label.centerXAnchor.constraint(equalTo: view.centerXAnchor),
+            label.centerYAnchor.constraint(equalTo: view.centerYAnchor),
+            label.leadingAnchor.constraint(greaterThanOrEqualTo: view.leadingAnchor, constant: 20),
+            label.trailingAnchor.constraint(lessThanOrEqualTo: view.trailingAnchor, constant: -20),
+        ])
+    }
+
+    @objc private func closeTapped() {
+        onClose?()
+    }
+}

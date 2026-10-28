@@ -1527,7 +1527,8 @@ final class BearyNotificationsViewController: UIViewController {
     /// 点开一条：已读的不再发标已读；未读的先乐观置已读再发请求，失败回滚
     /// （网页 ntMarkRead 同款：本页已读、重进又未读是不允许的）。
     /// 分流（网页 onclick 绑定顺序同口径，data-ntentry 优先）：
-    /// - letter 带 entry_id → 直接进详情；system 带 entry_id → 送达信模态；
+    /// - letter 带 entry_id → 直接进详情；system 带 entry_id → 直接进详情
+    ///   （容器先 fetchEntry 校验可见性，私密显占位；送达信模态已随送达模型废除）；
     /// - 无 entry_id 的 system/letter → 系统信模态（容器接了回调则先交容器）；
     /// - 互动行带 entry_id → 进详情，无 entry_id 只标已读不跳转。
     private func openNotification(_ item: NotificationItem, at index: Int) {
@@ -1561,7 +1562,9 @@ final class BearyNotificationsViewController: UIViewController {
         }
         if itemType == "system" {
             if let entryIdValue = item.entryId, !entryIdValue.isEmpty {
-                presentDeliveryLetter(for: item, entryId: entryIdValue)
+                // iCity：带 entry 的系统信（@ 提醒、强制转私密通知等）直接走深链，
+                // 容器校验可见性后再定位/占位，不再弹送达信模态、不展示 payload 正文。
+                onEntrySelected?(entryIdValue)
             } else {
                 presentSystemLetter(for: item)
             }
@@ -1851,63 +1854,6 @@ final class BearyNotificationsViewController: UIViewController {
             quoteMeta: nil,
             goEntryId: nil
         )
-    }
-
-    /// 送达信模态（网页 openDeliveryLetter 同口径）：恒 mail 图，
-    /// “稍后 / 去看看”两钮；引用预览随后拉单篇补全（失败则不显示引用区）。
-    private func presentDeliveryLetter(for item: NotificationItem, entryId: String) {
-        // C-G2：同 presentSystemLetter，空串标题回退默认文案。
-        let rawTitle = item.title ?? ""
-        let titleText = rawTitle.isEmpty ? "你的一篇日记今天公开了" : rawTitle
-        let rawBody = item.body ?? ""
-        // U8：送达信空正文时给默认文案（模态仍有“去看看”与引用预览价值，不改 toast）。
-        let bodyText = rawBody.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "这篇日记今天公开了，去看看吧。" : rawBody
-        let modal = presentLetterModal(
-            title: titleText,
-            body: bodyText,
-            iconName: "icon_mail",
-            quoteText: nil,
-            quoteMeta: nil,
-            goEntryId: entryId
-        )
-        // 引用预览随后补全：modal 句柄由本次闭包持有，关闭后补全无害（不回贴视图）。
-        // P1-21：代次校验——切账号后旧回包不往新账号模态里贴引用。
-        let requestEpoch = BearyAPI.shared.authEpoch
-        BearyAPI.shared.fetchEntry(id: entryId) { [weak self] result in
-            DispatchQueue.main.async {
-                guard let strongSelf = self else { return }
-                if strongSelf.isStaleRequestEpoch(requestEpoch) {
-                    return
-                }
-                switch result {
-                case .success(let entry):
-                    let collapsed = (entry.content ?? "").components(separatedBy: CharacterSet.whitespacesAndNewlines).filter({ !$0.isEmpty }).joined(separator: " ")
-                    let quoteText = String(collapsed.prefix(90))
-                    var meta = ""
-                    if let created = entry.createdAt {
-                        meta = BearyNotificationCell.dayText(ms: created) + " 写下"
-                    }
-                    var emoteTotal = 0
-                    for emote in entry.emotes ?? [] {
-                        emoteTotal += emote.count ?? 0
-                    }
-                    if emoteTotal > 0 {
-                        meta += " · 已有 \(emoteTotal) 只小熊回应"
-                    }
-                    if let likeCount = entry.likeCount, likeCount > 0 {
-                        meta += " · \(likeCount) 个点赞"
-                    }
-                    modal.fillQuote(text: quoteText, meta: meta)
-                case .failure(let apiError):
-                    // P2：取日记失败按 APIError 分流——网络失败报网络文案；
-                    // 其余失败（不存在/无权/服务端等）只缺引用区，不谎报
-                    // “不存在或已被删除”（引用缺失≠日记已删，模态正文仍在）。
-                    if case APIError.network = apiError {
-                        strongSelf.showToast(message: "网络好像不太顺")
-                    }
-                }
-            }
-        }
     }
 
     /// 信件模态本体：返回可随后补引用预览的 modal 句柄（无引用时传 nil 两钮参数）。
