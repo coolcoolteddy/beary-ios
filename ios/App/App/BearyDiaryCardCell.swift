@@ -13,7 +13,7 @@ import UIKit
 //    显示“0”、profile 隐藏数字位；未赞色 feed 爱心 ink + 计数灰、profile
 //    爱心与计数同灰；取消赞预态 feed ink / profile 灰；写给行字号 feed
 //    12 粗体 / profile 13 常规；心情行间距 feed 3 / profile 4；操作行
-//    feed 带公开行 pubStack、profile 无；折叠 feed 实测溢出（300 字 +
+//    feed 带公开行 pubStack、profile 同款（A-2 补齐）；折叠 feed 实测溢出（300 字 +
 //    实测超 6 行）/ profile 只计 300 字；图片槽底色 feed line / profile faint。
 //  - 统一项：回应流一律 Feed 流式换行 BearyEmoteFlowView（profile 单行横滑
 //    emoteScrollView 废弃）；图片失败重试一律 Feed 口径（头像/主图均有重试钮，
@@ -121,6 +121,46 @@ final class BearyActionStackView: UIStackView {
             }
         }
         return false
+    }
+
+    /// 追加 1（B 法）：重叠带命中优先级——收藏/分享的 44pt 扩后热区在两钮之间
+    /// 重叠（个人主页约 7pt、首页约 3pt），UIKit 默认按子视图逆序命中，重叠带
+    /// 一律落到右侧钮；此处多钮同时命中时按视觉中心最近者胜（重叠带中线分流），
+    /// 单钮命中时走默认路径，spacer、公开行等其他视图行为一字不动。
+    override func hitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? {
+        guard self.point(inside: point, with: event) else { return nil }
+        var claimants: [UIButton] = []
+        collectClaimingButtons(in: self, point: point, event: event, into: &claimants)
+        if claimants.count >= 2 {
+            var best: UIButton?
+            var bestDistance: CGFloat = .greatestFiniteMagnitude
+            for button in claimants {
+                let center = button.convert(CGPoint(x: button.bounds.midX, y: button.bounds.midY), to: self)
+                let distance = abs(center.x - point.x)
+                if distance < bestDistance {
+                    bestDistance = distance
+                    best = button
+                }
+            }
+            return best
+        }
+        return super.hitTest(point, with: event)
+    }
+
+    /// 递归收集扩后热区命中该点的 UIButton 子孙（隐藏/不可交互/透明者不算，
+    /// 与 UIKit hitTest 的可达条件一致；isEnabled 不参与判定，禁用钮仍占位吞点，
+    /// 与现行行为一致）。
+    private func collectClaimingButtons(in view: UIView, point: CGPoint, event: UIEvent?, into out: inout [UIButton]) {
+        for sub in view.subviews {
+            guard sub.isHidden == false, sub.alpha >= 0.01, sub.isUserInteractionEnabled else { continue }
+            if let button = sub as? UIButton {
+                let local = sub.convert(point, from: self)
+                if button.point(inside: local, with: event) {
+                    out.append(button)
+                }
+            }
+            collectClaimingButtons(in: sub, point: point, event: event, into: &out)
+        }
     }
 
     private func hitExpandedButton(in view: UIView, point: CGPoint) -> Bool {
@@ -844,9 +884,9 @@ class BearyDiaryCardCell: UITableViewCell {
         // 按钮/图片/引用/头像上的长按排除见文件末尾 contextMenuInteraction 代理
         // （头像/名字排除仅首页模式，个人主页模式各保各的，与旧口径一致）。
         contentView.addInteraction(UIContextMenuInteraction(delegate: self))
-        // D2（首页模式）：公开行插在点赞钮与 spacer 之间
+        // D2（首页/个人主页模式）：公开行插在点赞钮与 spacer 之间
         // （网页操作行：likeBtn + pubAction + spacer + bmBtn + shBtn）。
-        if cardMode == .feed {
+        if cardMode == .feed || cardMode == .profile {
             actionStack.insertArrangedSubview(pubStack, at: 1)
         }
         // F1（首页模式）：正文点击不导航——正文 label 自带空点按手势，把点按截住，
@@ -1962,17 +2002,13 @@ class BearyDiaryCardCell: UITableViewCell {
         button.layer.add(shake, forKey: "bearyDenyShake")
     }
 
-    /// D2：公开行渲染（首页模式；网页 pubState / pubCountdownText 口径）。
+    /// D2：公开行渲染（首页/个人主页模式；网页 pubState / pubCountdownText 口径）。
     /// B 视觉文案：控制器 60 秒定时器对可见行调 refreshPublishRow 重算文案，
     /// 跨小时边界时“剩 N 小时”不再 stale；本函数自身仍是纯渲染，不持有定时器。
     func refreshPublishRow() {
         refreshPubRow()
     }
     private func refreshPubRow() {
-        guard cardMode == .feed else {
-            pubStack.isHidden = true
-            return
-        }
         guard let entry = currentEntry, entry.isMine == true, entry.isPublic != true else {
             pubStack.isHidden = true
             return

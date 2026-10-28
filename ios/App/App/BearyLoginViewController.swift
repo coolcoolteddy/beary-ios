@@ -640,9 +640,11 @@ final class BearyLoginViewController: UIViewController {
                             // 二次确认后仍回 pending_delete 不应出现：不断循环，直接报失败。
                             strongSelf.showMessage("验证失败，请重试")
                         } else {
-                            strongSelf.presentPendingDeleteConfirm(email: email, code: code, deleteAt: resp.deleteAt ?? 0)
+                            strongSelf.presentPendingDeleteConfirm(email: email, code: code, deleteAt: resp.deleteAt)
                         }
                     } else if resp.ok == true {
+                        // 验证组④：登录成功即注销已取消（冷静期登录即取消），清掉注销时持久化的 delete_at。
+                        UserDefaults.standard.removeObject(forKey: "bearyPendingDeleteAt")
                         // 会话 cookie 已由共享 URLSession 存好；容器随后刷新登录态。
                         // 审计 P1-25：先按 referral 绑定结果给一句反馈再 dismiss。
                         strongSelf.handleLoginReferralFeedback(resp: resp)
@@ -690,28 +692,34 @@ final class BearyLoginViewController: UIViewController {
     }
 
     /// 注销冷静期确认：文案与网页端 lgDelCfm 同款（“暂不登录 / 继续登录”）。
-    private func presentPendingDeleteConfirm(email: String, code: String, deleteAt: Int) {
+    private func presentPendingDeleteConfirm(email: String, code: String, deleteAt: Int?) {
         let nowMs = Int(Date().timeIntervalSince1970 * 1000)
-        let remainingMs = max(0, deleteAt - nowMs)
-        let days = remainingMs / 86400000
-        let hours = (remainingMs % 86400000) / 3600000
-        let minutes = (remainingMs % 3600000) / 60000
-        var leftText = ""
-        // W6：剩余不足 1 分钟时不再显示“0 分钟”。
-        if remainingMs < 60000 {
-            leftText = "不到 1 分钟"
-        } else {
-            if days > 0 { leftText += "\(days) 天 " }
-            if hours > 0 { leftText += "\(hours) 小时 " }
-            leftText += "\(minutes) 分钟"
+        // 验证组⑧：deleteAt 缺失时不得按 epoch 渲染（1970 年）；无截止日时
+        // 只提示注销中，不拼倒计时与日期（缺失字段不等于 1970）。
+        var message = "账号正在注销中。继续登录将取消注销。"
+        if let deleteAt = deleteAt {
+            let remainingMs = max(0, deleteAt - nowMs)
+            let days = remainingMs / 86400000
+            let hours = (remainingMs % 86400000) / 3600000
+            let minutes = (remainingMs % 3600000) / 60000
+            var leftText = ""
+            // W6：剩余不足 1 分钟时不再显示“0 分钟”。
+            if remainingMs < 60000 {
+                leftText = "不到 1 分钟"
+            } else {
+                if days > 0 { leftText += "\(days) 天 " }
+                if hours > 0 { leftText += "\(hours) 小时 " }
+                leftText += "\(minutes) 分钟"
+            }
+            let formatter = DateFormatter()
+            formatter.locale = Locale(identifier: "zh_CN")
+            formatter.dateFormat = "yyyy/M/d HH:mm"
+            let dateText = formatter.string(from: Date(timeIntervalSince1970: TimeInterval(deleteAt) / 1000.0))
+            message = "距离正式注销还剩：\(leftText)（\(dateText)）。继续登录将取消注销。"
         }
-        let formatter = DateFormatter()
-        formatter.locale = Locale(identifier: "zh_CN")
-        formatter.dateFormat = "yyyy/M/d HH:mm"
-        let dateText = formatter.string(from: Date(timeIntervalSince1970: TimeInterval(deleteAt) / 1000.0))
         let alert = UIAlertController(
             title: "账号正在注销中",
-            message: "距离正式注销还剩：\(leftText)（\(dateText)）。继续登录将取消注销。",
+            message: message,
             preferredStyle: .alert
         )
         alert.addAction(UIAlertAction(title: "暂不登录", style: .cancel, handler: nil))

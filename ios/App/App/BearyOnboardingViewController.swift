@@ -1120,7 +1120,7 @@ extension BearyOnboardingViewController {
         trialCountLabel = number
         stack.addArrangedSubview(countRow)
 
-        stack.addArrangedSubview(ruleLabel("15 分钟内可修改，超时就锁死"))
+        stack.addArrangedSubview(ruleLabel("15 分钟内可修改，私密期内仍可删除"))
         // 试写仅本页体验：不写真实草稿箱、不进编辑器草稿列表（P1-2 试写断链）。
         stack.addArrangedSubview(bodyLabel("试写只在本页体验，不会进入草稿箱；正式写一篇请走 CTA「开始写第一篇」。"))
     }

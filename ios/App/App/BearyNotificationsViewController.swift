@@ -187,7 +187,7 @@ final class BearyNotificationsViewController: UIViewController {
     /// clearItemsAfterUnauthorized 与 refreshListIfUnreadChanged / 轻量刷新成功分支）。
     private var needsReloadAfterUnauthorized = false
     private var zeroHeightRows: Set<Int> = []
-    private var headerHeight: CGFloat = 41
+    private var headerHeight: CGFloat = 48
     private var stateContainerTopConstraint: NSLayoutConstraint?
 
     // MARK: - 视图
@@ -208,8 +208,9 @@ final class BearyNotificationsViewController: UIViewController {
 
     private lazy var readAllButton: UIButton = {
         // R9-A：图标+文字小钮、高约 25（14 字 + 上下各 4 内边距）：换 Hit44 后
-        // 热区竖向扩向 44；受 41 高 header 框限，实际可达约 38（仍大于原 25），
-        // 要满 44 需改 header 高（属布局改动，本批不动）；宽已超 44 不横扩；视觉不动。
+        // 热区竖向扩向 44；header 高 48（见 headerView 高度约束），热区上下
+        // 均在框内、满 44 不裁（此前 header 41 时实际可达约 38）。
+        // 宽已超 44 不横扩；视觉不动（标题顶距不变，多余高度落到底部留白）。
         let button = BearyHit44Button(type: .system)
         button.translatesAutoresizingMaskIntoConstraints = false
         button.setImage(BearyIconImages.image(named: "icon_check", pointSize: 14), for: .normal)
@@ -232,6 +233,10 @@ final class BearyNotificationsViewController: UIViewController {
         let header = UIView()
         header.translatesAutoresizingMaskIntoConstraints = false
         header.backgroundColor = BearyColors.bg
+        // 追加 3：header 定高 48（按钮满 44 热区所需；标题顶距 14 不变，
+        // 多余高度落到底部留白，标题本身不移位）。fitting 高度由本约束钉死，
+        // viewDidLayoutSubviews 重算后仍为 48，不会缩回 41。
+        header.heightAnchor.constraint(equalToConstant: 48).isActive = true
         header.addSubview(titleLabel)
         header.addSubview(readAllButton)
         NSLayoutConstraint.activate([
@@ -360,22 +365,19 @@ final class BearyNotificationsViewController: UIViewController {
         return label
     }()
 
-    /// 态内按钮（Q1 对照表：高 44、圆角 22、1px line 描边、14 ink、图标 15、图标右 gap 6）。
+    /// 态内按钮走 BearyButton 工厂 secondaryOutline 常规款（高 44、圆角 22、
+    /// 1px line 描边、ink 字；字号事后覆为原 14，与 Q1 对照表一致）。
     /// 宽度约束不在此创建：标题与图标只在失败态才赋值（见 applyVisibleState），
     /// 由 updateStateButtonWidth 在赋值后按实测字宽创建/更新（点赞按钮同款修法）。
     private var stateButtonWidthConstraint: NSLayoutConstraint?
 
-    private lazy var stateButton: UIButton = {
-        let button = UIButton(type: .system)
+    private lazy var stateButton: BearyButton = {
+        let button = BearyButton(style: .secondaryOutline(.regular))
         button.translatesAutoresizingMaskIntoConstraints = false
-        button.titleLabel?.font = UIFont.systemFont(ofSize: 14)
-        button.setTitleColor(BearyColors.ink, for: .normal)
-        button.tintColor = BearyColors.ink
+        button.titleLabel?.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 14))
+        button.titleLabel?.adjustsFontForContentSizeCategory = true
         button.contentEdgeInsets = UIEdgeInsets(top: 0, left: 12, bottom: 0, right: 12)
         button.titleEdgeInsets = UIEdgeInsets(top: 0, left: 6, bottom: 0, right: 0)
-        button.layer.borderWidth = 1
-        button.layer.borderColor = BearyColors.line.cgColor
-        button.layer.cornerRadius = 22
         button.addTarget(self, action: #selector(stateButtonTapped), for: .touchUpInside)
         button.bearyAddPressFeedback()
         return button
@@ -570,7 +572,7 @@ final class BearyNotificationsViewController: UIViewController {
     /// P3-4：个人主页 updateDynamicLayerColors 同款——本 VC 直接持有的 CGColor 描边集中在此重赋。
     /// 信件模态按钮另由 BearyLetterModalButton 自身 trait 回调重刷（模态非 VC、VC 侧无引用，见该类注释），不重复持有。
     private func updateDynamicLayerColors() {
-        stateButton.layer.borderColor = BearyColors.line.cgColor
+        stateButton.refreshChrome()
     }
 
     /// 60 秒轮询：只做轻量刷新（见 refreshUnreadCountLightly），cadence 不变。
@@ -676,20 +678,22 @@ final class BearyNotificationsViewController: UIViewController {
     /// 若随任何消息变更递增，则已读态变化也在版本号口径内）；快照尚无版本
     /// 号、轻量响应已带时，视为变化（版本号口径刚接通，拉一次整页落快照，
     /// 此后以版本号为准）。任一版本号口径不成立时，退到最新消息 ID 比对：
-    /// 最新 ID 变了即有新消息（或旧最新一条被删），门开；最新 ID 不变则门关，
-    /// 未读数本身不再单独开门。
+    /// 最新 ID 变了即有新消息（或旧最新一条被删），门开。
+    /// 审计 A 批：门控条件 OR 未读数变化——轻量刷新已先把最新未读数写进
+    /// unreadTotal/sysUnreadTotal（见 refreshUnreadCountLightly），与快照比对
+    /// 不一致即开门；跨设备仅改已读状态（最新 ID 不变）时，列表已读态同步刷新。
     private func hasMessageChangedSinceFullLoad(version: Int?, latestId: Int?) -> Bool {
-        guard lastFullLoadUnread != nil, lastFullLoadSysUnread != nil else {
+        guard let snapUnread = lastFullLoadUnread, let snapSys = lastFullLoadSysUnread else {
             return false
+        }
+        if unreadTotal != snapUnread || sysUnreadTotal != snapSys {
+            return true
         }
         if let versionValue = version {
             if lastFullLoadVersion == nil {
                 return true
             }
-            if versionValue != lastFullLoadVersion {
-                return true
-            }
-            return false
+            return versionValue != lastFullLoadVersion
         }
         return latestId != lastFullLoadLatestId
     }

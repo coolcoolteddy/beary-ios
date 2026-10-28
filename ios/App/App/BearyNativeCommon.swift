@@ -190,14 +190,16 @@ enum BearyImageURLs {
     }
 
     /// 头像/封面：服务端给的是 /beary/api/users/:id/avatar?v=N 这样的路径，拼域名；
-    /// 已是完整 URL 时只放行白名单 http(s) 地址，非白名单一律返回 nil，
+    /// 已是完整 URL 时只放行白名单 https 地址，非白名单一律返回 nil，
     /// 调用方随即走占位（首字母/空图），不发起请求、不进缓存、不亮失败态。
     /// 其他 scheme（data:/javascript:/file:/blob: 等）一律拒绝：data: 头像
     /// 由上传接口处理，不走本函数；旧版把 data: 拼成站内 URL 的旁路就此堵住。
+    /// 审计 A 批：入口只接受 https://，http:// 明文直接拒绝（ATS 兜底之外
+    /// 再加代码层约束；站内相对路径与本域拼接路径不受影响）。
     static func avatarURL(_ path: String?) -> URL? {
         guard let p = path, !p.isEmpty else { return nil }
         let lower = p.lowercased()
-        if lower.hasPrefix("http://") || lower.hasPrefix("https://") {
+        if lower.hasPrefix("https://") {
             guard let url = URL(string: p), isAllowedImageHost(url.host) else { return nil }
             return url
         }
@@ -237,7 +239,10 @@ final class BearyImageRedirectGuard: NSObject, URLSessionTaskDelegate {
     static let shared = BearyImageRedirectGuard()
 
     func urlSession(_ session: URLSession, task: URLSessionTask, willPerformHTTPRedirection response: HTTPURLResponse, newRequest request: URLRequest, completionHandler: @escaping (URLRequest?) -> Void) {
-        guard let host = request.url?.host, BearyImageURLs.isAllowedImageHost(host) else {
+        // 审计 A 批：重定向守卫补 scheme 校验——落地必须是 https，白名单 host +
+        // 明文 http 一律不跟随（host 白名单本身不动）。
+        guard let url = request.url, url.scheme?.lowercased() == "https",
+              let host = url.host, BearyImageURLs.isAllowedImageHost(host) else {
             task.cancel()
             completionHandler(nil)
             return
@@ -302,7 +307,8 @@ final class BearyImageLoader {
     // 绝不跨账号命中；旧版无子目录的缓存文件自然失效、不再被读到）。
     // 键 = URL 字符串的 SHA256 十六进制（CryptoKit，系统框架）；存的是网络
     // 返回的原始字节，与下采样参数无关，同一 URL 的完整图与下采样图共用
-    // 一份磁盘数据、解码时再按需下采样。不做过期淘汰，不新增清理状态机。
+    // 一份磁盘数据、解码时再按需下采样。审计 B 批：每账号桶磁盘上限 200MB，
+    // 写时超了删最旧文件直至回落（enforceDiskCacheCap，简单 sweep，不新增清理状态机）。
     // 顺序：内存 NSCache → 磁盘 → 网络；网络成功后同时写内存与磁盘。
     // 内存 NSCache 的上限与行为保持原样（G23 的 totalCostLimit 不动）。
     /// S2：bucket 由调用方在请求发起时固定后传入，不在异步执行时再读
@@ -324,6 +330,35 @@ final class BearyImageLoader {
         guard let file = diskFileURL(for: url, bucket: bucket) else { return }
         try? FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
         try? data.write(to: file, options: .atomic)
+        enforceDiskCacheCap(bucket: bucket)
+    }
+
+    /// 审计 B 批：图片磁盘缓存上限 200MB（按账号桶分别算，不跨桶删别人的文件）。
+    /// 写时超了删最旧文件直至回落（按修改时间升序删，刚写入的最新文件天然在最后、
+    /// 不会被误删）；简单 sweep，不新增清理状态机。并发写时两次 sweep 可能
+    /// 各删一批最旧文件，总量仍收敛到上限内，无正确性问题。
+    private static let diskCacheCapBytes: Int64 = 200 * 1024 * 1024
+    private func enforceDiskCacheCap(bucket: Int?) {
+        guard let caches = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first else { return }
+        let bucketName = bucket.map(String.init) ?? "guest"
+        let dir = caches.appendingPathComponent("BearyImageCache").appendingPathComponent(bucketName)
+        guard let names = try? FileManager.default.contentsOfDirectory(atPath: dir.path) else { return }
+        var entries: [(url: URL, size: Int64, mtime: Date)] = []
+        var total: Int64 = 0
+        for name in names {
+            let url = dir.appendingPathComponent(name)
+            guard let values = try? url.resourceValues(forKeys: [.fileSizeKey, .contentModificationDateKey]),
+                  let size = values.fileSize, let mtime = values.contentModificationDate else { continue }
+            entries.append((url: url, size: Int64(size), mtime: mtime))
+            total += Int64(size)
+        }
+        guard total > Self.diskCacheCapBytes else { return }
+        entries.sort { $0.mtime < $1.mtime }
+        for entry in entries {
+            if total <= Self.diskCacheCapBytes { break }
+            try? FileManager.default.removeItem(at: entry.url)
+            total -= entry.size
+        }
     }
 
     /// 内存键：账号隔离 4 号——键首含账号维度（未登录为 guest），同 URL
@@ -538,6 +573,11 @@ enum BearyText {
         "sun": "晴", "cloud": "多云", "cloudy": "阴", "rain": "雨", "snow": "雪",
         "fog": "雾", "thunder": "雷阵雨", "wind": "风", "night": "夜晚",
     ]
+
+    /// 公开确认框文案（Feed / Timeline / 个人主页三处共用，文案本身逐字不动；
+    /// 抽常量只为防三处再漂移，见审计 A 批第 9 条与 B 方案 A-4）。
+    static let publishConfirmTitle = "确认公开？"
+    static let publishConfirmMessage = "公开后无法撤回或删除。确认后开始 24 小时倒计时，期间可以取消公开。"
 }
 
 // MARK: - 写接口响应模型（BearyAPI 用 convertFromSnakeCase 解码）

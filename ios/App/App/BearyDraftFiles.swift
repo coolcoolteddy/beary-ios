@@ -193,6 +193,39 @@ enum BearyDraftImageStore {
             }
         }
     }
+
+    /// 审计 A 批：一次性幂等 sweep，清除存量旧图的 isExcludedFromBackup 属性。
+    /// #96 之前旧代码在目录与每个文件上都设了排除属性，#96 只删了设置动作；
+    /// 同卷 moveItem 保留 xattr，旧图迁入新账号目录后仍被排除备份。本函数
+    /// 遍历全部 beary_draft_images* 目录，只对当前确实带有该属性的文件清属性
+    /// （#96 之后的新文件从不设该属性，读值即 false、不写不动）；成功后写完成
+    /// 标记，后续 setAccount 直接跳过；任一文件失败则不写标记，下次登录再试。
+    static func sweepClearExcludedFromBackupIfNeeded() {
+        let flagKey = "bearyDraftBackupAttrSweepDone"
+        guard UserDefaults.standard.bool(forKey: flagKey) == false else { return }
+        guard let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first else { return }
+        let names = (try? FileManager.default.contentsOfDirectory(atPath: base.path)) ?? []
+        var failed = false
+        for name in names where name == directoryName || name.hasPrefix(directoryName + "_") {
+            let dir = base.appendingPathComponent(name, isDirectory: true)
+            let files = (try? FileManager.default.contentsOfDirectory(atPath: dir.path)) ?? []
+            for file in files {
+                let url = dir.appendingPathComponent(file)
+                guard let values = try? url.resourceValues(forKeys: [.isExcludedFromBackupKey]),
+                      values.isExcludedFromBackup == true else { continue }
+                do {
+                    var newValues = URLResourceValues()
+                    newValues.isExcludedFromBackup = false
+                    try url.setResourceValues(newValues)
+                } catch {
+                    failed = true
+                }
+            }
+        }
+        if !failed {
+            UserDefaults.standard.set(true, forKey: flagKey)
+        }
+    }
 }
 
 // MARK: - 草稿文件存储（原子写 + v2/v1 迁移）
@@ -271,35 +304,21 @@ enum BearyDraftStore {
     /// 此时 fileURL() 为 nil、loadAllResult() 直接返回空，不读任何账号文件。
     private(set) static var currentAccountId: Int?
 
-    /// 引导试写（未登录时）：写旧全局 v3 文件（[BearyDraft] JSON，与登录迁
-    /// 移解码口径一致）；登录后 setAccount 把整文件迁入该账号草稿箱（若该
-    /// 账号已有草稿文件则本次不迁移，试写句仅作演示、不保证续写）。
-    static func saveTrialDraftToLegacyGlobal(_ draft: BearyDraft) {
-        ioQueue.async {
-            guard let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first else { return }
-            if !FileManager.default.fileExists(atPath: base.path) {
-                try? FileManager.default.createDirectory(at: base, withIntermediateDirectories: true, attributes: nil)
-            }
-            let url = base.appendingPathComponent(fileName)
-            var drafts: [BearyDraft] = []
-            if let data = try? Data(contentsOf: url),
-               let decoded = try? JSONDecoder().decode([BearyDraft].self, from: data) {
-                drafts = decoded.filter { $0.draftId != draft.draftId }
-            }
-            drafts.append(draft)
-            guard let data = try? JSONEncoder().encode(drafts) else { return }
-            try? data.write(to: url, options: .atomic)
-        }
-    }
+    /// 引导试写旧写盘口 saveTrialDraftToLegacyGlobal 已删：试写屏现只计字数
+    /// （见 BearyOnboardingViewController），不再写旧全局文件；该函数已无调用点，
+    /// 审计追加清理即删。登录迁移（setAccount）只服务真实旧全局草稿。
 
     /// 账号隔离 1 号：切换账号时调用。分桶路径随 currentAccountId 自动切换，
     /// 本存储无内存态故无需清内存；返回 true = 本次把旧全局 v3 文件迁移到了
     /// 该账号名下（调用方据此首启一次 toast 明示，之后旧文件已消失不再触发）。
-    /// 旧全局图片目录一并合并进该账号图片目录（重名文件跳过，旧目录尽力删除）。
+    /// 旧全局图片目录一并合并进该账号图片目录（全部移走且目录为空才删旧目录，
+    /// 任一失败/重名跳过即保留旧目录 + 记诊断日志，不在登录流程弹 toast）。
     @discardableResult
     static func setAccount(_ id: Int?) -> Bool {
         currentAccountId = id
         guard let id = id else { return false }
+        // 审计 A 批：登录/切号时跑一次旧图排除备份属性 sweep（幂等，见函数注释）。
+        BearyDraftImageStore.sweepClearExcludedFromBackupIfNeeded()
         guard let legacyURL = legacyGlobalFileURL(),
               FileManager.default.fileExists(atPath: legacyURL.path) else { return false }
         guard let targetURL = fileURL(), !FileManager.default.fileExists(atPath: targetURL.path) else { return false }
@@ -311,7 +330,9 @@ enum BearyDraftStore {
                   saveAll(drafts) else { return false }
             try? FileManager.default.removeItem(at: legacyURL)
         }
-        // 图片目录合并：旧全局目录文件逐个移入账号目录（重名跳过），移完删旧目录。
+        // 图片目录合并：旧全局目录文件逐个移入账号目录；审计 A 批：仅当旧目录
+        // 已空（全部移走）才删旧目录——重名跳过与移走失败的文件都会留在旧目录，
+        // 此时保留旧目录 + 记诊断日志，不在登录流程弹 toast。
         if let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first {
             let legacyDir = base.appendingPathComponent(BearyDraftImageStore.directoryName, isDirectory: true)
             if let names = try? FileManager.default.contentsOfDirectory(atPath: legacyDir.path),
@@ -324,7 +345,12 @@ enum BearyDraftStore {
                         try? FileManager.default.moveItem(at: src, to: dst)
                     }
                 }
-                try? FileManager.default.removeItem(at: legacyDir)
+                let remaining = (try? FileManager.default.contentsOfDirectory(atPath: legacyDir.path)) ?? []
+                if remaining.isEmpty {
+                    try? FileManager.default.removeItem(at: legacyDir)
+                } else {
+                    DiagFile.mark("draft-migrate legacy images retained: \(remaining.count) files")
+                }
             }
         }
         return true

@@ -32,7 +32,7 @@ import UIKit
 //   BearyEditProfileViewController）；页内返回走 onBack；
 //   C2：齿轮不再弹菜单，直接走 onOpenAccountSettings 打开设置页；使用指南 /
 //   外观切换 / 退出登录改由设置页内入口承载（通用与通知、独立退出钮），
-//   onShowTutorial / onToggleAppearance / onLogout 回调保留作容器兼容，
+//   onShowTutorial / onLogout 回调保留作容器兼容，
 //   齿轮路径不再触发它们；行内互动成功后走
 //   onInteractionChanged（与详情页同款签名：id、点赞数、已赞、已收藏、回应聚合）。
 // - 小熊回应墙：标题“小熊回应”+ 横滑表情 × 计数 + “共收到 N 只”，
@@ -163,11 +163,6 @@ class BearyProfileViewController: UIViewController {
     /// C2：齿轮直达设置页，容器接线到设置页（presentSettings）。
     var onOpenAccountSettings: (() -> Void)?
 
-    /// C2 保留（齿轮路径不再触发）：原齿轮菜单「外观」，容器接线到外观切换
-    /// （BearyThemeSwitchCardViewController Popover）；外观切换现为设置页
-    /// 通用组内三档行，Popover 类保留不断开其他调用方（见回执：无其他调用方）。
-    var onToggleAppearance: (() -> Void)?
-
     /// 日记（本人）空态“写一篇”：容器接线到编辑器（与首页 onComposeRequested 同去向）。
     /// 本批只加按钮与回调，不改 SceneDelegate（容器接线由父级统一处理，避免多线同改 SceneDelegate 冲突）。
     var onWriteEntry: (() -> Void)?
@@ -238,6 +233,9 @@ class BearyProfileViewController: UIViewController {
     /// 头像失败时恢复的首字母（与当前显示名同源）。
     private var avatarFallbackLetter: String?
     private var profileLoadFailed = false
+    /// 验证组⑨：仅 profile 接口 404 才判“用户不存在”；断网等其他失败仍属“加载失败”。
+    /// 与 profileLoadFailed 分开：后者仍用于空态门控（2155 行），不受 404 区分影响。
+    private var profileNotFound = false
     private var currentTab: ProfileTab = .diary
     private var diaryEntries: [Entry] = []
     private var likedEntries: [Entry] = []
@@ -334,6 +332,7 @@ class BearyProfileViewController: UIViewController {
     private var likeBusyIds: Set<String> = []
     private var bookmarkBusyIds: Set<String> = []
     private var emoteBusyIds: Set<String> = []
+    private var pubBusyIds: Set<String> = []
     private var badgeWearBusy = false
     private var unlockedBadges: [String] = []
     private var wornBadgeKey: String?
@@ -1319,6 +1318,7 @@ class BearyProfileViewController: UIViewController {
         switch result {
         case .success(let profileValue):
             profileLoadFailed = false
+            profileNotFound = false
             profile = profileValue
             movedToHandle = profileValue.movedTo
             // F14：改名信号页内提示一次（容器未接线，见 movedToHandle 注释）。
@@ -1335,8 +1335,9 @@ class BearyProfileViewController: UIViewController {
                 // handle 目标的标签列表必须等 profile 解析出 id 才能拉。
                 loadTab(forceReload: true)
             }
-        case .failure:
+        case .failure(let error):
             profileLoadFailed = true
+            profileNotFound = { if case .notFound = error { return true } else { return false } }()
             // G12：二选一取“保留整套旧头”：已有旧资料时名字/头像/封面/统计一律不动，
             // 仅 toast 说明并以脚部重试/下拉刷新作重试入口；无旧资料时才落到统一失败态。
             if profile == nil {
@@ -2286,6 +2287,18 @@ class BearyProfileViewController: UIViewController {
         if let pencilView = graphicView as? BearyPencilView {
             pencilView.start()
         }
+        // 审计 A 批：tableFooterView 不按约束自动定高，零 frame 赋值即被压扁；
+        // 赋值前按目标宽度算 fitting 高、设 frame 再返回，调用方直接赋即可。
+        let footerWidth = headerWidthValue > 0 ? headerWidthValue : tableView.bounds.width
+        if footerWidth > 0 {
+            container.frame = CGRect(x: 0, y: 0, width: footerWidth, height: 0)
+            let fitted = container.systemLayoutSizeFitting(
+                CGSize(width: footerWidth, height: UIView.layoutFittingCompressedSize.height),
+                withHorizontalFittingPriority: .required,
+                verticalFittingPriority: .fittingSizeLevel
+            )
+            container.frame = CGRect(x: 0, y: 0, width: footerWidth, height: fitted.height)
+        }
         return container
     }
 
@@ -2307,7 +2320,7 @@ class BearyProfileViewController: UIViewController {
         titleLabel.adjustsFontForContentSizeCategory = true
         titleLabel.textColor = BearyColors.ink
         titleLabel.textAlignment = .center
-        titleLabel.text = profileLoadFailed && profile == nil ? "该用户不存在" : "加载失败"
+        titleLabel.text = profileNotFound && profile == nil ? "该用户不存在" : "加载失败"
         let retryButton = UIButton(type: .system)
         retryButton.translatesAutoresizingMaskIntoConstraints = false
         retryButton.setTitle("重试", for: .normal)
@@ -2336,7 +2349,7 @@ class BearyProfileViewController: UIViewController {
         // 80 包重试统一：失败脚部补“网络好像不太顺”副标题（与时间线失败态同文案），
         // 用户不存在时不补副标题；按钮已与首页失败行同款描边 pill。
         var errorArranged: [UIView] = [iconView, titleLabel]
-        if !(profileLoadFailed && profile == nil) {
+        if !(profileNotFound && profile == nil) {
             let subtitleLabel = UILabel()
             subtitleLabel.translatesAutoresizingMaskIntoConstraints = false
             subtitleLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13))
@@ -2599,6 +2612,67 @@ class BearyProfileViewController: UIViewController {
         }
     }
 
+    /// A-2：个人主页卡片公开入口（首页/时间线同款流程）：确认框（BearyText 共享常量）
+    /// → POST publish → 成功后以服务端 pending/已公开态同步模型与可见行（倒计时行随新数据
+    /// 渲染）；失败 toast“公开失败，请重试”。在途去重，同一篇重复点按只发一次。
+    /// 仅本人未公开且已送达（publishAt <= now、未在倒计时中）的行才出公开钮，见卡片 refreshPubRow。
+    private func handleCellPublish(entry: Entry) {
+        guard let entryId = entry.id, !entryId.isEmpty else { return }
+        guard entry.isMine == true, entry.isPublic != true else { return }
+        let nowMs = Int(Date().timeIntervalSince1970 * 1000)
+        if let pend = entry.publishPendingUntil, pend > nowMs { return }
+        guard let publishAt = entry.publishAt, publishAt <= nowMs else { return }
+        guard !pubBusyIds.contains(entryId) else { return }
+        let alert = UIAlertController(title: BearyText.publishConfirmTitle, message: BearyText.publishConfirmMessage, preferredStyle: .alert)
+        alert.addAction(UIAlertAction(title: "取消", style: .cancel))
+        alert.addAction(UIAlertAction(title: "公开", style: .default) { [weak self] _ in
+            guard let strongSelf = self else { return }
+            strongSelf.pubBusyIds.insert(entryId)
+            BearyAPI.shared.requestPublish(id: entryId) { result in
+                DispatchQueue.main.async {
+                    strongSelf.pubBusyIds.remove(entryId)
+                    switch result {
+                    case .success(let resp):
+                        var updated = entry
+                        if let pend = resp.publishPendingUntil { updated.publishPendingUntil = pend }
+                        if let published = resp.published { updated.isPublic = published == 1 }
+                        strongSelf.updateEntryInAllTabs(entry: updated)
+                        // syncInteraction 不刷公开行：就地同步后补刷，倒计时行随新数据渲染。
+                        strongSelf.syncVisibleCell(entry: updated)?.refreshPublishRow()
+                    case .failure:
+                        BearyToast.show(in: strongSelf.view, message: "公开失败，请重试", aboveFAB: true)
+                    }
+                }
+            }
+        })
+        present(alert, animated: true)
+    }
+
+    /// A-2：“取消”钮：直接走 POST /beary/api/entries/:id/publish/cancel（网页 doPublishCancel 无确认框），
+    /// 成功后清倒计时并同步模型与可见行，失败 toast“取消失败，请重试”。
+    private func handleCellCancelPublish(entry: Entry) {
+        guard let entryId = entry.id, !entryId.isEmpty else { return }
+        guard !pubBusyIds.contains(entryId) else { return }
+        pubBusyIds.insert(entryId)
+        BearyAPI.shared.cancelPublish(id: entryId) { [weak self] result in
+            DispatchQueue.main.async {
+                guard let strongSelf = self else { return }
+                strongSelf.pubBusyIds.remove(entryId)
+                switch result {
+                case .success(let resp):
+                    var updated = entry
+                    updated.publishPendingUntil = nil
+                    if let published = resp.published { updated.isPublic = published == 1 }
+                    strongSelf.updateEntryInAllTabs(entry: updated)
+                    // syncInteraction 不刷公开行：就地同步后补刷，取消后公开钮随新数据复现。
+                    strongSelf.syncVisibleCell(entry: updated)?.refreshPublishRow()
+                case .failure:
+                    BearyToast.show(in: strongSelf.view, message: "取消失败，请重试", aboveFAB: true)
+                }
+            }
+        }
+    }
+
     private func handleCellBookmark(entry: Entry) {
         guard let entryId = entry.id, !entryId.isEmpty else { return }
         guard requireLoginForCellAction() else { return }
@@ -2805,6 +2879,8 @@ extension BearyProfileViewController: UITableViewDataSource, UITableViewDelegate
         cellValue.onLike = { [weak self] in self?.handleCellLike(entry: entryValue) }
         cellValue.onBookmark = { [weak self] in self?.handleCellBookmark(entry: entryValue) }
         cellValue.onShare = { [weak self] in self?.handleCellShare(entry: entryValue) }
+        cellValue.onPublishTapped = { [weak self] in self?.handleCellPublish(entry: entryValue) }
+        cellValue.onPublishCancelTapped = { [weak self] in self?.handleCellCancelPublish(entry: entryValue) }
         cellValue.onContextMenuEdit = { [weak self] in self?.onEditEntry?(entryValue) }
         cellValue.onContextMenuDelete = { [weak self] in self?.onDeleteEntry?(entryValue) }
         cellValue.onEmoteTap = { [weak self] key in self?.handleCellEmote(entry: entryValue, key: key) }

@@ -89,8 +89,8 @@ class BearyEditProfileViewController: UIViewController {
         return stackValue
     }()
 
-    private lazy var closeButton: UIButton = {
-        let buttonValue = UIButton(type: .system)
+    private lazy var closeButton: BearyHit44Button = {
+        let buttonValue = BearyHit44Button(type: .system)
         buttonValue.translatesAutoresizingMaskIntoConstraints = false
         buttonValue.setTitle("关闭", for: .normal)
         buttonValue.setTitleColor(BearyColors.ink, for: .normal)
@@ -473,7 +473,7 @@ class BearyEditProfileViewController: UIViewController {
             linkRow.leadingAnchor.constraint(equalTo: linkWrap.leadingAnchor),
             linkRow.trailingAnchor.constraint(equalTo: linkWrap.trailingAnchor),
             linkRow.bottomAnchor.constraint(equalTo: linkWrap.bottomAnchor),
-            copyLinkButton.heightAnchor.constraint(equalToConstant: 32),
+            copyLinkButton.heightAnchor.constraint(equalToConstant: 44),
         ])
         // C4：跳设置页的「账户与安全」行已删除（设置页入口现为个人主页齿轮
         // 直达，不再经编辑页中转；本页只保留 [封面与头像][昵称][用户名 @handle]

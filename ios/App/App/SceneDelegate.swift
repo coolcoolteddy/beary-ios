@@ -68,6 +68,8 @@ class SceneDelegate: UIResponder, UIWindowSceneDelegate {
 
     func sceneWillEnterForeground(_ scene: UIScene) {
         (window?.rootViewController as? BearyChromeViewController)?.resumeSideMatrixAnimation()
+        // 审计 B 批：消息页未创建时回前台补一次角标轻量拉取（已创建则页内刷新已覆盖）。
+        (window?.rootViewController as? BearyChromeViewController)?.foregroundBadgeRefreshIfNotifAbsent()
     }
 
     /// 栏显隐查找（#47 修正）：setChromeHidden 在容器 VC 上，不在 SceneDelegate 上；
@@ -89,10 +91,17 @@ class SceneDelegate: UIResponder, UIWindowSceneDelegate {
 
 final class BearyChromeViewController: UIViewController {
     private var topGlass: UIVisualEffectView!
-    /// 94 包：淡入 + 上移模态过渡共享实例（他人主页/设置页/回收站/诊断页共用；
+    /// 94 包：淡入 + 上移模态过渡共享实例（现仅诊断页用；他人主页/设置页/
+    /// 回收站已改走 EdgeDismiss，见 G1；
     /// transitioningDelegate 为弱引用，实例由容器长期持有防提前释放；
     /// 类型写协议，实体类保持文件私有，跨文件只传协议值）。
     let fadeRiseTransitionDelegate: UIViewControllerTransitioningDelegate = BearyFadeRiseTransitioningDelegate()
+    /// G1：边缘返回控制器强持有（transitioningDelegate 弱引用，present 期间必须活着；
+    /// 每页一个，呈现时新建；关闭后由下次同页呈现覆盖，不主动清）。
+    private var settingsEdgeDismiss: BearyEdgeDismissController?
+    private var trashEdgeDismiss: BearyEdgeDismissController?
+    private var editProfileEdgeDismiss: BearyEdgeDismissController?
+    private var userProfileEdgeDismiss: BearyEdgeDismissController?
     /// 52 批 header 高度开关：显示 = 安全区顶 + 60，收起 = 0；页顶约束同步 60↔0，收起后不留空占区。
     /// 顶栏透度批：页顶约束恒为 view.top（常量 0），不再随栏态改顶距；栏态改走各页
     /// 主滚动视图的顶部内边距（见 applyHeaderTopInsets），内容滑过时才透出玻璃。
@@ -738,9 +747,11 @@ final class BearyChromeViewController: UIViewController {
     /// 以消息页同一机制发 BearyUnreadChanged（同名 + 同 payload 格式 ["unread": Int, "sysUnread": Int]），
     /// 铃铛角标观察者复用，不另起角标通道；失败静默（消息页首拉时自会再拉）。
     private func fetchInitialUnread() {
-        guard SessionManager.shared.isLoggedIn else { return }
-        BearyAPI.shared.fetchNotifications(limit: 1) { result in
+        guard SessionManager.shared.isLoggedIn, !unreadFetchInFlight else { return }
+        unreadFetchInFlight = true
+        BearyAPI.shared.fetchNotifications(limit: 1) { [weak self] result in
             DispatchQueue.main.async {
+                self?.unreadFetchInFlight = false
                 guard case .success(let list) = result else { return }
                 NotificationCenter.default.post(
                     name: BearyNotificationsViewController.unreadChangedNotificationName,
@@ -749,6 +760,16 @@ final class BearyChromeViewController: UIViewController {
                 )
             }
         }
+    }
+
+    /// 审计 B 批：容器级回前台角标补刷——仅当消息页尚未创建时（已创建则页内
+    /// 60 秒轮询 + 回前台刷新已覆盖），做一次去重轻量拉取（在途跳过，见
+    /// fetchInitialUnread 的 unreadFetchInFlight），只补角标，不进列表。
+    /// 未登录时 fetchInitialUnread 自身守卫，不发请求。
+    private var unreadFetchInFlight = false
+    func foregroundBadgeRefreshIfNotifAbsent() {
+        guard notifVC == nil else { return }
+        fetchInitialUnread()
     }
 
 
@@ -1268,7 +1289,7 @@ final class BearyChromeViewController: UIViewController {
     /// 三档主题拨档（审计 5，网页 cycleTheme 口径 beary.html:1491-1493）：
     /// 点按即按 system → light → dark → system 循环（网页 auto → light → dark → auto），
     /// 持久化 beary_theme_mode 并立即应用到 window，返回新档位供开关视觉跟进。
-    /// 原 presentAppearanceSheet 的三档逻辑（存档键与 applyThemeMode）原样保留，
+    /// 原外观 Popover 的三档逻辑（存档键与 applyThemeMode）原样保留，
     /// 只把 actionSheet + ✓ 标记换成拨动开关（菜单行内与外观卡共用本方法）。
     private func cycleThemeMode() -> String {
         let current = UserDefaults.standard.string(forKey: "beary_theme_mode") ?? "system"
@@ -1639,7 +1660,7 @@ final class BearyChromeViewController: UIViewController {
     /// 时间线滑动删除均走此方法，不另写执行逻辑。
     private func confirmAndDeleteEntry(_ entry: Entry) {
         guard let entryId = entry.id else { return }
-        let alert = UIAlertController(title: "确认删除？", message: "删除后会移入回收站，30 天内可以在「时间线」里恢复。", preferredStyle: .alert)
+        let alert = UIAlertController(title: "确认删除？", message: "删除后会移入回收站，30 天内可在「回收站」里恢复。", preferredStyle: .alert)
         alert.addAction(UIAlertAction(title: "取消", style: .cancel, handler: nil))
         alert.addAction(UIAlertAction(title: "删除", style: .destructive) { [weak self] _ in
             BearyAPI.shared.deleteEntry(id: entryId) { [weak self] result in
@@ -1733,10 +1754,12 @@ final class BearyChromeViewController: UIViewController {
     private func ensureSearchVC() -> BearySearchViewController {
         if let vc = searchVC { return vc }
         let vc = BearySearchViewController(onOpenUser: { [weak self] user in
-            if let handle = user.handle, !handle.isEmpty {
-                self?.presentUserProfile(handle: handle)
-            } else if let userId = user.id {
+            // 验证组⑤：搜索跳转优先用 id（搜索 handle 不保证非空，旧 handle 优先在改名后会走偏）；
+            // 无 id 时才回退 handle。
+            if let userId = user.id {
                 self?.presentUserProfile(userId: userId)
+            } else if let handle = user.handle, !handle.isEmpty {
+                self?.presentUserProfile(handle: handle)
             }
         }, onOpenEntry: { [weak self] entryId in
             self?.gotoEntry(entryId: entryId)
@@ -1975,10 +1998,9 @@ final class BearyChromeViewController: UIViewController {
         vc.onEditProfile = { [weak self] in self?.presentEditProfile() }
         // C2：齿轮不再弹菜单，直接开设置页；教程与外观改由设置页内入口承载
         // （设置页通用组：使用指南行走 onShowTutorial、主题三档行；外观 Popover
-        // 类与本接线保留，齿轮路径不再触发，见设置页回执）。
+        // 已随 G3 删除，齿轮路径不再触发）。
         vc.onShowTutorial = { [weak self] in self?.presentOnboarding(mode: .replay) }
         vc.onOpenAccountSettings = { [weak self] in self?.presentSettings() }
-        vc.onToggleAppearance = { [weak self] in self?.presentAppearanceSheet() }
         vc.onInteractionChanged = { [weak self] changedId, likeCount, liked, bookmarked, emotes in
             self?.feedVC?.applyInteraction(entryId: changedId, likeCount: likeCount, likedByMe: liked, bookmarkedByMe: bookmarked, emotes: emotes)
         }
@@ -2007,6 +2029,12 @@ final class BearyChromeViewController: UIViewController {
         }
         vc.onCancel = { [weak vc] in vc?.dismiss(animated: true) }
         vc.onRequireLogin = { [weak self] in self?.presentLogin() }
+        // G1：边缘返回（Li 批准的原生返回口径）：进出动画为 EdgeDismiss 自带的
+        // slide 右滑入；attach 须在 present 之前，调用方强持有防手势中途失效。
+        let editProfileEdgeDismiss = BearyEdgeDismissController()
+        editProfileEdgeDismiss.attach(to: vc)
+        vc.transitioningDelegate = editProfileEdgeDismiss
+        self.editProfileEdgeDismiss = editProfileEdgeDismiss
         topmostViewController().present(vc, animated: true)
     }
 
@@ -2027,8 +2055,12 @@ final class BearyChromeViewController: UIViewController {
         vc.view.frame = topmostViewController().view.window?.bounds ?? UIScreen.main.bounds
         vc.view.setNeedsLayout()
         vc.view.layoutIfNeeded()
-        // 94 包：与草稿箱同款淡入 + 上移（只改过渡，不改页内容）。
-        vc.transitioningDelegate = fadeRiseTransitionDelegate
+        // G1：边缘返回（Li 批准的原生返回口径）：进出动画由 fadeRise 淡入上移
+        // 换成 EdgeDismiss 自带的 slide 右滑入；呈现前定帧布局不动（首帧宽度仍靠它）。
+        let settingsEdgeDismiss = BearyEdgeDismissController()
+        settingsEdgeDismiss.attach(to: vc)
+        vc.transitioningDelegate = settingsEdgeDismiss
+        self.settingsEdgeDismiss = settingsEdgeDismiss
         vc.onClose = { [weak vc] in vc?.dismiss(animated: true) }
         vc.onRequireLogin = { [weak self] in self?.presentLogin() }
         // C2：设置页通用组内「使用指南」行 → 教程重播页（原齿轮菜单项迁移）。
@@ -2095,29 +2127,6 @@ final class BearyChromeViewController: UIViewController {
         presentOnboarding(mode: .firstLaunch)
     }
 
-    /// 外观手动切换（审计 5）：不再是 UIAlertController actionSheet + ✓ 标记，
-    /// 改为三档拨动开关卡（网页 .switch-btn 口径 beary.html:176-181、:1081，
-    /// tmode=auto 中档为半黑渐变，见 BearyThemeSwitchView）。点开关即按
-    /// system → light → dark 循环（cycleThemeMode，网页 cycleTheme 同款顺序），
-    /// 存档键 beary_theme_mode 与 applyThemeMode 逻辑原样保留；卡内文案同步显示当前档名。
-    /// C2：齿轮路径已断开（外观切换改由设置页通用组三档行承载），本方法与
-    /// BearyThemeSwitchCardViewController 类保留不删，唯一原调用链为齿轮 →
-    /// onToggleAppearance → 本方法，现无活跃调用方。
-    private func presentAppearanceSheet() {
-        let current = UserDefaults.standard.string(forKey: "beary_theme_mode") ?? "system"
-        let card = BearyThemeSwitchCardViewController(themeMode: current)
-        card.modalPresentationStyle = .popover
-        card.onThemeCycle = { [weak self] in self?.cycleThemeMode() ?? "system" }
-        let top = topmostViewController()
-        if let popover = card.popoverPresentationController {
-            popover.sourceView = top.view
-            popover.sourceRect = CGRect(x: top.view.bounds.midX, y: top.view.bounds.midY, width: 0, height: 0)
-            popover.permittedArrowDirections = []
-            popover.delegate = self
-        }
-        top.present(card, animated: true)
-    }
-
     /// 立即应用主题档位到 window（只应用不写存档；存档由选择框写，建窗时由 SceneDelegate 读存档应用）。
     private func applyThemeMode(_ mode: String) {
         view.window?.overrideUserInterfaceStyle = bearyUserInterfaceStyle(forThemeMode: mode)
@@ -2127,8 +2136,12 @@ final class BearyChromeViewController: UIViewController {
     private func presentTrash() {
         let vc = BearyTrashViewController()
         vc.modalPresentationStyle = .fullScreen
-        // 94 包：与草稿箱同款淡入 + 上移（只改过渡，不改页内容）。
-        vc.transitioningDelegate = fadeRiseTransitionDelegate
+        // G1：边缘返回（Li 批准的原生返回口径）：进出动画由 fadeRise 淡入上移
+        // 换成 EdgeDismiss 自带的 slide 右滑入。
+        let trashEdgeDismiss = BearyEdgeDismissController()
+        trashEdgeDismiss.attach(to: vc)
+        vc.transitioningDelegate = trashEdgeDismiss
+        self.trashEdgeDismiss = trashEdgeDismiss
         vc.onClose = { [weak self] in self?.dismiss(animated: true) }
         vc.onRequireLogin = { [weak self] in self?.presentLogin() }
         // TR-1（收尾）：恢复/彻底删除后刷新时间线、首页与我页（角标随时间线重拉更新）。
@@ -2198,8 +2211,12 @@ final class BearyChromeViewController: UIViewController {
         let nav = UINavigationController(rootViewController: vc)
         nav.isNavigationBarHidden = true
         nav.modalPresentationStyle = .fullScreen
-        // 94 包：与草稿箱同款淡入 + 上移（只改过渡，不改页内容；代理挂 nav 上）。
-        nav.transitioningDelegate = fadeRiseTransitionDelegate
+        // G1：边缘返回（Li 批准的原生返回口径）：进出动画由 fadeRise 淡入上移
+        // 换成 EdgeDismiss 自带的 slide 右滑入；代理与手势均挂 nav 容器上（详情同款）。
+        let userProfileEdgeDismiss = BearyEdgeDismissController()
+        userProfileEdgeDismiss.attach(to: nav)
+        nav.transitioningDelegate = userProfileEdgeDismiss
+        self.userProfileEdgeDismiss = userProfileEdgeDismiss
         present(nav, animated: true)
     }
 
@@ -2629,202 +2646,6 @@ private func bearyMenuGlassView() -> UIVisualEffectView {
     // 撤回批（2026-10-27）：外观卡背板只做视觉，永不拦截触摸；卡内开关/按钮在上层接管。
     view.isUserInteractionEnabled = false
     return view
-}
-
-/// 三档拨动开关（网页 .switch-btn 口径 beary.html:176-181）：
-/// 52×30 轨道、24 圆钮（左右留 3）；档位 → 钮位：浅色左（leading 3）、
-/// 跟随系统中（leading 14）、深色右（leading 25）；跟随系统档轨道为半黑渐变
-/// （左半 ink 14%、右半 ink 全值，硬切分，非平滑渐变，与 :180 一致）。
-/// 钮内无月亮/太阳 glyph——catalog 内无此二主题资产（仅 icon_theme_auto），
-/// 不冒充 SF 符号，档位由钮位 + 轨道 + 卡片文案共同表达。
-/// 点按循环顺序由调用方（cycleThemeMode，网页 cycleTheme 同款）决定，本控件只呈现档位。
-final class BearyThemeSwitchView: UIControl {
-    private(set) var mode: String
-    private let trackView = UIView()
-    private let knobView = UIView()
-    private let gradientLayer = CAGradientLayer()
-
-    static func displayName(for mode: String) -> String {
-        switch mode {
-        case "light": return "浅色"
-        case "dark": return "深色"
-        default: return "跟随系统"
-        }
-    }
-
-    init(mode: String) {
-        self.mode = mode
-        super.init(frame: .zero)
-        trackView.backgroundColor = .clear
-        trackView.layer.cornerRadius = 15
-        trackView.clipsToBounds = true
-        trackView.isUserInteractionEnabled = false
-        trackView.layer.addSublayer(gradientLayer)
-        trackView.translatesAutoresizingMaskIntoConstraints = false
-        addSubview(trackView)
-        knobView.backgroundColor = BearyColors.bg
-        knobView.layer.cornerRadius = 12
-        knobView.layer.shadowColor = UIColor.black.cgColor
-        knobView.layer.shadowOpacity = 0.25
-        knobView.layer.shadowRadius = 4
-        knobView.layer.shadowOffset = CGSize(width: 0, height: 1)
-        knobView.isUserInteractionEnabled = false
-        addSubview(knobView)
-        NSLayoutConstraint.activate([
-            trackView.leadingAnchor.constraint(equalTo: leadingAnchor),
-            trackView.trailingAnchor.constraint(equalTo: trailingAnchor),
-            trackView.topAnchor.constraint(equalTo: topAnchor),
-            trackView.bottomAnchor.constraint(equalTo: bottomAnchor),
-        ])
-        accessibilityLabel = "外观"
-        updateTrack()
-    }
-
-    required init?(coder: NSCoder) { return nil }
-
-    override var intrinsicContentSize: CGSize { CGSize(width: 52, height: 30) }
-
-    private func knobCenterX(for mode: String) -> CGFloat {
-        switch mode {
-        case "light": return 15
-        case "dark": return 37
-        default: return 26
-        }
-    }
-
-    private func updateTrack() {
-        if mode == "system" {
-            trackView.backgroundColor = .clear
-            gradientLayer.isHidden = false
-        } else {
-            gradientLayer.isHidden = true
-            trackView.backgroundColor = (mode == "dark") ? BearyColors.ink : BearyColors.alpha(BearyColors.ink, 0.14)
-        }
-        accessibilityValue = BearyThemeSwitchView.displayName(for: mode)
-    }
-
-    func setMode(_ mode: String, animated: Bool) {
-        self.mode = mode
-        updateTrack()
-        let target = CGRect(x: knobCenterX(for: mode) - 12, y: 3, width: 24, height: 24)
-        if animated {
-            UIView.animate(withDuration: 0.3, delay: 0, options: [.beginFromCurrentState], animations: {
-                self.knobView.frame = target
-            })
-        } else {
-            knobView.frame = target
-        }
-    }
-
-    override func layoutSubviews() {
-        super.layoutSubviews()
-        gradientLayer.frame = trackView.bounds
-        let faintInk = BearyColors.alpha(BearyColors.ink, 0.14).resolvedColor(with: traitCollection).cgColor
-        let fullInk = BearyColors.ink.resolvedColor(with: traitCollection).cgColor
-        gradientLayer.colors = [faintInk, faintInk, fullInk, fullInk]
-        gradientLayer.locations = [0, 0.5, 0.5, 1]
-        gradientLayer.startPoint = CGPoint(x: 0, y: 0.5)
-        gradientLayer.endPoint = CGPoint(x: 1, y: 0.5)
-        knobView.frame = CGRect(x: knobCenterX(for: mode) - 12, y: 3, width: 24, height: 24)
-    }
-}
-
-/// 三档外观开关（审计 5）：system → light → dark 循环拨档；
-/// 外观开关卡内嵌本开关（齿轮菜单“外观”行的落点）。
-/// 外观开关卡（齿轮菜单调 presentAppearanceSheet 时弹出）：玻璃卡 + 三档开关 +
-/// 当前档名文案 + 完成钮；点开关即 cycleThemeMode 循环拨档并立即应用，文案同步更新。
-final class BearyThemeSwitchCardViewController: UIViewController {
-    var onThemeCycle: (() -> String)?
-
-    private var themeMode: String
-    private var themeSwitch: BearyThemeSwitchView!
-    private var captionLabel: UILabel!
-
-    init(themeMode: String) {
-        self.themeMode = themeMode
-        super.init(nibName: nil, bundle: nil)
-        self.preferredContentSize = CGSize(width: 280, height: 180)
-    }
-
-    required init?(coder: NSCoder) { return nil }
-
-    override func viewDidLoad() {
-        super.viewDidLoad()
-        view.backgroundColor = .clear
-        view.layer.cornerRadius = 16
-        view.layer.shadowColor = UIColor.black.cgColor
-        view.layer.shadowOpacity = 0.18
-        view.layer.shadowRadius = 20
-        view.layer.shadowOffset = CGSize(width: 0, height: 12)
-        let glass = bearyMenuGlassView()
-        glass.layer.cornerRadius = 16
-        glass.clipsToBounds = true
-        glass.translatesAutoresizingMaskIntoConstraints = false
-        view.addSubview(glass)
-        NSLayoutConstraint.activate([
-            glass.leadingAnchor.constraint(equalTo: view.leadingAnchor),
-            glass.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-            glass.topAnchor.constraint(equalTo: view.topAnchor),
-            glass.bottomAnchor.constraint(equalTo: view.bottomAnchor),
-        ])
-        let titleLabel = UILabel()
-        titleLabel.text = "外观"
-        titleLabel.font = .systemFont(ofSize: 17, weight: .semibold)
-        titleLabel.textColor = BearyColors.ink
-        titleLabel.textAlignment = .center
-        let switchWrap = UIView()
-        switchWrap.translatesAutoresizingMaskIntoConstraints = false
-        switchWrap.heightAnchor.constraint(equalToConstant: 30).isActive = true
-        let switchView = BearyThemeSwitchView(mode: themeMode)
-        switchView.addTarget(self, action: #selector(switchTapped), for: .touchUpInside)
-        switchView.translatesAutoresizingMaskIntoConstraints = false
-        switchWrap.addSubview(switchView)
-        themeSwitch = switchView
-        NSLayoutConstraint.activate([
-            switchView.centerXAnchor.constraint(equalTo: switchWrap.centerXAnchor),
-            switchView.centerYAnchor.constraint(equalTo: switchWrap.centerYAnchor),
-            switchView.widthAnchor.constraint(equalToConstant: 52),
-            switchView.heightAnchor.constraint(equalToConstant: 30),
-        ])
-        let caption = UILabel()
-        caption.text = BearyThemeSwitchView.displayName(for: themeMode)
-        caption.font = .systemFont(ofSize: 13)
-        caption.textColor = BearyColors.gray
-        caption.textAlignment = .center
-        captionLabel = caption
-        let doneButton = UIButton(type: .custom)
-        doneButton.setTitle("完成", for: .normal)
-        doneButton.titleLabel?.font = .systemFont(ofSize: 15, weight: .semibold)
-        doneButton.setTitleColor(BearyColors.ink, for: .normal)
-        doneButton.addTarget(self, action: #selector(doneTapped), for: .touchUpInside)
-        doneButton.bearyAddPressFeedback()
-        doneButton.translatesAutoresizingMaskIntoConstraints = false
-        doneButton.heightAnchor.constraint(equalToConstant: 44).isActive = true
-        let stack = UIStackView(arrangedSubviews: [titleLabel, switchWrap, caption, doneButton])
-        stack.axis = .vertical
-        stack.spacing = 12
-        stack.translatesAutoresizingMaskIntoConstraints = false
-        stack.isLayoutMarginsRelativeArrangement = true
-        stack.layoutMargins = UIEdgeInsets(top: 16, left: 16, bottom: 16, right: 16)
-        glass.contentView.addSubview(stack)
-        NSLayoutConstraint.activate([
-            stack.leadingAnchor.constraint(equalTo: glass.contentView.leadingAnchor),
-            stack.trailingAnchor.constraint(equalTo: glass.contentView.trailingAnchor),
-            stack.topAnchor.constraint(equalTo: glass.contentView.topAnchor),
-            stack.bottomAnchor.constraint(equalTo: glass.contentView.bottomAnchor),
-        ])
-    }
-
-    @objc private func switchTapped() {
-        guard let newMode = onThemeCycle?() else { return }
-        // W6：主题开关（UIControl 非 UIButton）切换瞬间补 .light。
-        BearyHaptics.press()
-        themeMode = newMode
-        themeSwitch.setMode(newMode, animated: !UIAccessibility.isReduceMotionEnabled)
-        captionLabel.text = BearyThemeSwitchView.displayName(for: newMode)
-    }
-
-    @objc private func doneTapped() { dismiss(animated: true) }
 }
 
 extension BearyChromeViewController: UIPopoverPresentationControllerDelegate {
