@@ -255,6 +255,9 @@ final class BearySettingsViewController: UIViewController {
     private let generalNotifyWrap = UIStackView()
     private let accountSecurityWrap = UIStackView()
     private let privacyWrap = UIStackView()
+    /// 数据与反馈组（2026-10-28 反馈 v3）：只剩「反馈与改进」一行；与通用 /
+    /// 隐私组同款恒可见，不随登录态切换（游客进不了设置页，见任务说明）。
+    private let dataFeedbackWrap = UIStackView()
     /// C3：退出登录独立居中钮与页底注销入口的包容器（均登录态相关，
     /// 未登录 / 加载失败时隐藏；注销包另按 is_admin 隐藏）。
     private let logoutWrap = UIView()
@@ -645,6 +648,12 @@ final class BearySettingsViewController: UIViewController {
         privacyWrap.alignment = .fill
         buildPrivacySection()
 
+        dataFeedbackWrap.translatesAutoresizingMaskIntoConstraints = false
+        dataFeedbackWrap.axis = .vertical
+        dataFeedbackWrap.spacing = 20
+        dataFeedbackWrap.alignment = .fill
+        buildDataFeedbackSection()
+
         buildLogoutSection()
         buildDeleteBottomSection()
 
@@ -655,6 +664,7 @@ final class BearySettingsViewController: UIViewController {
         contentStack.addArrangedSubview(generalNotifyWrap)
         contentStack.addArrangedSubview(accountSecurityWrap)
         contentStack.addArrangedSubview(privacyWrap)
+        contentStack.addArrangedSubview(dataFeedbackWrap)
         contentStack.addArrangedSubview(logoutWrap)
         contentStack.addArrangedSubview(deleteBottomWrap)
         // 全修 3-1：页底版本脚注已删，版本只留通用组版本行一处（同值同格式，
@@ -1924,6 +1934,28 @@ final class BearySettingsViewController: UIViewController {
     /// 94 包：诊断日志专门页（与设置页同款淡入 + 上移；chrome 不在时退系统过渡）。
     @objc private func openDiagnosticsPage() {
         let vc = BearyDiagnosticsViewController()
+        vc.modalPresentationStyle = .fullScreen
+        vc.transitioningDelegate = SceneDelegate.chrome?.fadeRiseTransitionDelegate
+        present(vc, animated: BearyMotion.animated(true))
+    }
+
+    // MARK: - 数据与反馈（2026-10-28 反馈 v3，路线 A）
+
+    private func buildDataFeedbackSection() {
+        let feedbackDetail = makeLabel(font: UIFont.systemFont(ofSize: 13), color: BearyColors.gray)
+        feedbackDetail.text = "查看"
+        let feedbackContent = makeRow(title: "反馈与改进", detailLabel: feedbackDetail)
+        let feedbackButton = UIButton(type: .custom)
+        feedbackButton.accessibilityLabel = "反馈与改进"
+        feedbackButton.addTarget(self, action: #selector(openFeedbackPage), for: .touchUpInside)
+        feedbackButton.bearyAddPressHaptic()
+        let rows: [UIView] = [makeSettingsTappableRow(content: feedbackContent, button: feedbackButton)]
+        let group = makeGroupCard(title: "数据与反馈", rows: rows)
+        dataFeedbackWrap.addArrangedSubview(group.card)
+    }
+
+    @objc private func openFeedbackPage() {
+        let vc = BearyFeedbackViewController()
         vc.modalPresentationStyle = .fullScreen
         vc.transitioningDelegate = SceneDelegate.chrome?.fadeRiseTransitionDelegate
         present(vc, animated: BearyMotion.animated(true))

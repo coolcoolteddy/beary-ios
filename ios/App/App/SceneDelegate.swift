@@ -16,6 +16,8 @@ class SceneDelegate: UIResponder, UIWindowSceneDelegate {
     func scene(_ scene: UIScene, willConnectTo session: UISceneSession, options connectionOptions: UIScene.ConnectionOptions) {
         // 临时诊断（81 包，定根因后删除）：冷启动先记一行 launch，供下次启动判断上次是否卡在打开流程。
         DiagFile.mark("launch")
+        // 反馈日志：生命周期只记固定事件名（不含任何用户内容）。
+        BearyAppLog.event("app launch")
         guard let windowScene = scene as? UIWindowScene else { return }
 
         window = UIWindow(windowScene: windowScene)
@@ -40,6 +42,15 @@ class SceneDelegate: UIResponder, UIWindowSceneDelegate {
                 }
             }
         }
+    }
+
+    // 反馈日志：前后台切换只记固定事件名（不含任何用户内容）。
+    func sceneDidBecomeActive(_ scene: UIScene) {
+        BearyAppLog.event("app foreground")
+    }
+
+    func sceneWillResignActive(_ scene: UIScene) {
+        BearyAppLog.event("app background")
     }
 
     func scene(_ scene: UIScene, openURLContexts URLContexts: Set<UIOpenURLContext>) {
