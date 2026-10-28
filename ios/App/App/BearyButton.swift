@@ -105,6 +105,7 @@ final class BearyButton: BearyHit44Button {
     }
 
     /// 快捷构造：关闭圆钮（faint 底 32 圆钮 + icon_close 15；资产缺失时“✕”文字兜底）。
+    /// 关闭两套定版（2026-10-28 定）：全屏页用文字关闭、弹窗页用本图标圆钮，两套并存，不再强求统一成一种。
     static func closeButton() -> BearyButton {
         return BearyButton(style: .iconCircleClose)
     }

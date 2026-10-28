@@ -192,6 +192,7 @@ final class BearyNotificationsViewController: UIViewController {
 
     // MARK: - 视图
 
+    /// 标题三档（2026-10-28 定）：弹窗 21 heavy / 全屏页 17 bold / tab 头 19 bold；消息头属 tab 头档，保留 19。
     private lazy var titleLabel: UILabel = {
         let label = UILabel()
         label.translatesAutoresizingMaskIntoConstraints = false
@@ -1743,7 +1744,7 @@ final class BearyNotificationsViewController: UIViewController {
             stateTitleLabel.isHidden = false
             stateTitleLabel.text = "还没有消息"
             stateSubtitleLabel.isHidden = false
-            stateSubtitleLabel.text = "有人赞、收藏或回应你的日记时，会出现在这里；我们写给你的信也会送到这里"
+            stateSubtitleLabel.text = "有人赞、收藏或回应你的日记时，会出现在这里；我们发来的消息也会送到这里"
             stateButton.isHidden = true
         case .error:
             centralSpinner.stopAnimating()
@@ -1801,10 +1802,10 @@ final class BearyNotificationsViewController: UIViewController {
             handler(item)
             return
         }
-        // C-G2：网页 n.title||'通知'/'一封信' 的 || 语义下空字符串同样回退；
+        // C-G2：网页 n.title||'通知'/'一封信' 的 || 语义下空字符串同样回退；App 侧 letter 空标题默认 2026-10-28 起改“消息”（信字样不用）。
         // App 原 ?? 只防 nil，空串标题会原样透传为空标题，此处与下两处同改。
         let rawTitle = item.title ?? ""
-        let titleText = rawTitle.isEmpty ? (item.type == "letter" ? "一封信" : "通知") : rawTitle
+        let titleText = rawTitle.isEmpty ? (item.type == "letter" ? "消息" : "通知") : rawTitle
         // 网页 openLetter 口径：不论 body 是否为空都弹信件模态（空正文只显标题）。
         let isBadgeLetter = titleText.contains("成就") || titleText.contains("徽章")
         presentLetterModal(
@@ -2167,7 +2168,7 @@ private class BearyLetterModal {
         primaryButton.translatesAutoresizingMaskIntoConstraints = false
         primaryButton.titleLabel?.font = UIFont.systemFont(ofSize: 16, weight: .semibold)
         primaryButton.setTitleColor(BearyColors.bg, for: .normal)
-        primaryButton.backgroundColor = BearyColors.orange
+        primaryButton.backgroundColor = BearyColors.ink
         primaryButton.layer.cornerRadius = 22
         primaryButton.setTitle("去看看", for: .normal)
         primaryButton.isHidden = goEntryId == nil
@@ -2872,7 +2873,7 @@ private class BearyNotificationCell: UITableViewCell {
             avatarIconView.tintColor = BearyColors.orange
             // C-G2：同上，空串标题回退（网页 || 语义）。
             let rawTitle = item.title ?? ""
-            let titleText = rawTitle.isEmpty ? (itemType == "letter" ? "一封信" : "通知") : rawTitle
+            let titleText = rawTitle.isEmpty ? (itemType == "letter" ? "消息" : "通知") : rawTitle
             // 第 17 项 B：system 行标题含“成就/徽章”时不再用静态 icon_popper，
             // 改 BearyPopperView 按网页 NB.popper 动态画；否则仍为 mail 静态图。
             if itemType == "system" && (titleText.contains("成就") || titleText.contains("徽章")) {

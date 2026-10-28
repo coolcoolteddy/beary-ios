@@ -2256,15 +2256,9 @@ class BearyProfileViewController: UIViewController {
         if tab == .saved && !isOwnProfile { return }
         currentTab = tab
         applyTabSelection()
-        // 80 包 A6-1：内容切换与指示条同动画——0.28s crossDissolve（指示条同款时长），
-        // 减动效直换；行错峰（animateNewRows）仍只针对未播过的新行。
-        if UIAccessibility.isReduceMotionEnabled {
-            tableView.reloadData()
-        } else {
-            UIView.transition(with: tableView, duration: 0.28, options: [.transitionCrossDissolve, .curveEaseInOut], animations: {
-                self.tableView.reloadData()
-            }, completion: nil)
-        }
+        // 2026-10-28 定版：切 tab 不再整表 crossDissolve——直接换数据，新行错峰
+        // （animateNewRows 只针对未播过的新行；指示条仍走自己的 0.28s 动画）。
+        tableView.reloadData()
         // M9：新列表行错峰滑入，已有行不重播（见 animateNewRows）。
         animateNewRows()
         if tabEntriesEmpty(tab: tab) {

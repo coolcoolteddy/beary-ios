@@ -88,6 +88,8 @@ enum BearyIconMotion {
     }
 
     /// 通用按压反馈（80 包 W6 全量推广）：按下缩 .84 + .light 轻震，松手回 1。
+    /// 口径（2026-10-28 定）：按压轻震通用，所有挂 bearyAddPressFeedback 的按钮都发；
+    /// 点赞/发布/拒绝三处专属反馈（成功/警告）另算，不与按压轻震混淆。
     /// 有图缩 imageView（iconTouchDown 同款）；无图缩整颗（行级全宽钮与
     /// imageView 自带旋转的钮不用它，改走 haptic-only，见各页接线）。
     /// 减动效：缩放直达终值（animateIconScale 同口径）；震动不拿减动效门控

@@ -410,7 +410,7 @@ final class BearyOnboardingViewController: UIViewController {
     private let segmentStack = UIStackView()
     private var segmentViews: [UIView] = []
     private let skipButton = BearyPressButton(type: .system)
-    private let closeButton = BearyPressButton(type: .system)
+    private let closeButton = BearyButton.closeButton()
     private let contentWrap = UIView()
     private let contentContainer = UIView()
     private let bottomBar = UIStackView()
@@ -547,13 +547,11 @@ final class BearyOnboardingViewController: UIViewController {
         skipWidthConstraint = skipButton.widthAnchor.constraint(equalToConstant: 44)
         skipWidthConstraint?.isActive = true
 
-        closeButton.setImage(BearyIconImages.image(named: "icon_close", pointSize: 24), for: .normal)
-        closeButton.tintColor = BearyColors.ink
-        closeButton.accessibilityLabel = "关闭"
         closeButton.addTarget(self, action: #selector(closeTapped), for: .touchUpInside)
+        closeButton.bearyAddPressFeedback()
         closeButton.translatesAutoresizingMaskIntoConstraints = false
         topBar.addSubview(closeButton)
-        closeWidthConstraint = closeButton.widthAnchor.constraint(equalToConstant: 44)
+        closeWidthConstraint = closeButton.widthAnchor.constraint(equalToConstant: 32)
         closeWidthConstraint?.isActive = true
 
         topBar.translatesAutoresizingMaskIntoConstraints = false
@@ -568,8 +566,8 @@ final class BearyOnboardingViewController: UIViewController {
         bottomBar.spacing = 10
         bottomBar.translatesAutoresizingMaskIntoConstraints = false
         primaryButton.titleLabel?.font = UIFont.systemFont(ofSize: 17, weight: .semibold)
-        primaryButton.setTitleColor(.white, for: .normal)
-        primaryButton.backgroundColor = BearyColors.orange
+        primaryButton.setTitleColor(BearyColors.bg, for: .normal)
+        primaryButton.backgroundColor = BearyColors.ink
         primaryButton.layer.cornerRadius = 22
         primaryButton.addTarget(self, action: #selector(primaryTapped), for: .touchUpInside)
         primaryButton.translatesAutoresizingMaskIntoConstraints = false
@@ -603,7 +601,7 @@ final class BearyOnboardingViewController: UIViewController {
             skipButton.centerYAnchor.constraint(equalTo: topBar.centerYAnchor),
             closeButton.trailingAnchor.constraint(equalTo: topBar.trailingAnchor),
             closeButton.centerYAnchor.constraint(equalTo: topBar.centerYAnchor),
-            closeButton.heightAnchor.constraint(equalToConstant: 44),
+            closeButton.heightAnchor.constraint(equalToConstant: 32),
             contentWrap.topAnchor.constraint(equalTo: topBar.bottomAnchor, constant: 8),
             contentWrap.bottomAnchor.constraint(equalTo: bottomBar.topAnchor, constant: -8),
             contentWrap.centerXAnchor.constraint(equalTo: view.centerXAnchor),
@@ -685,7 +683,7 @@ final class BearyOnboardingViewController: UIViewController {
         closeButton.isHidden = mode != .replay
         // 隐藏钮仍参与布局会留空位：宽约束同步归零，布局才不留空。
         skipWidthConstraint?.constant = skipButton.isHidden ? 0 : 44
-        closeWidthConstraint?.constant = closeButton.isHidden ? 0 : 44
+        closeWidthConstraint?.constant = closeButton.isHidden ? 0 : 32
         let filled = min(currentIndex + 1, flowCount)
         for (i, seg) in segmentViews.enumerated() {
             seg.backgroundColor = i < filled ? BearyColors.orange : BearyColors.line
@@ -730,6 +728,17 @@ final class BearyOnboardingViewController: UIViewController {
     }
 
     @objc private func skipTapped() {
+        // 2026-10-28 定版：首启第一屏的“跳过”直接退出进主页（按已完成引导处理），
+        // 其余屏仍跳到 CTA；顶栏已有灰色小字“跳过”，不新增第二个入口。
+        if mode == .firstLaunch && currentIndex == 0 {
+            markSeen()
+            if let enterHome = onEnterHome {
+                enterHome()
+            } else {
+                onClosed?()
+            }
+            return
+        }
         goTo(ctaIndex)
     }
 
@@ -914,7 +923,7 @@ extension BearyOnboardingViewController {
         }
         title.attributedText = attributed
         stack.addArrangedSubview(title)
-        stack.addArrangedSubview(bodyLabel("一篇日记，一封寄给未来的信。\n不用发出去，也不用给任何人看。"))
+        stack.addArrangedSubview(bodyLabel("一篇日记，留给未来的自己。\n不用发出去，也不用给任何人看。"))
     }
 
     private func toggleNight() {
@@ -1768,7 +1777,7 @@ extension BearyOnboardingViewController {
         stack.addArrangedSubview(likeRow)
         stack.addArrangedSubview(messageRow(
             iconName: "icon_mail", iconColor: BearyColors.orange,
-            title: "beary 写给你的信",
+            title: "beary 发来的消息",
             body: "橙色信封，重要的事都在里面",
             showDot: false
         ))
