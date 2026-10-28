@@ -22,6 +22,19 @@ final class BearyEmotePickerSheetViewController: UIViewController, UICollectionV
 
     var onPick: ((String) -> Void)?
 
+    /// 本 Sheet 专属过渡（遮罩渐变与弹窗滑入解耦）；强持有，transitioningDelegate 弱引用。
+    private let sheetTransition = BearyEmoteSheetTransition()
+
+    override init(nibName nibNameOrNil: String?, bundle nibBundleOrNil: Bundle?) {
+        super.init(nibName: nibNameOrNil, bundle: nibBundleOrNil)
+        modalPresentationStyle = .overFullScreen
+        transitioningDelegate = sheetTransition
+    }
+
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
     private let scrimView = UIView()
     private let sheetView = UIView()
     private let grabView = UIView()
@@ -146,6 +159,22 @@ final class BearyEmotePickerSheetViewController: UIViewController, UICollectionV
         dismiss(animated: reduceMotion == false, completion: nil)
     }
 
+    /// 过渡动画用：遮罩 alpha（色值本身含 0.45，动画只动 view alpha 0↔1）。
+    func transitionSetScrimAlpha(_ alpha: CGFloat) {
+        scrimView.alpha = alpha
+    }
+
+    /// 过渡动画用：弹窗下滑位移（约束不动，只动 transform；归位即 identity）。
+    func transitionSetSheetOffset(_ offsetY: CGFloat) {
+        sheetView.transform = offsetY == 0 ? .identity : CGAffineTransform(translationX: 0, y: offsetY)
+    }
+
+    /// 过渡动画用：弹窗当前高（布局后实测；宽屏浮起卡片同样适用）。
+    func transitionSheetHeight() -> CGFloat {
+        view.layoutIfNeeded()
+        return sheetView.bounds.height
+    }
+
     func collectionView(_ collectionView: UICollectionView, numberOfItemsInSection section: Int) -> Int {
         return BearyEmoteKeys.all.count
     }
@@ -168,6 +197,70 @@ final class BearyEmotePickerSheetViewController: UIViewController, UICollectionV
     func collectionView(_ collectionView: UICollectionView, didSelectItemAt indexPath: IndexPath) {
         let pickedKey = BearyEmoteKeys.all[indexPath.item]
         onPick?(pickedKey)
+    }
+}
+
+// MARK: - 回应 Sheet 过渡：遮罩与弹窗解耦
+/// 旧默认过渡把整个 presented view（含已满暗的遮罩）一起滑上来，看着像遮罩
+/// 跟着弹窗升起；此处只给回应 Sheet 用（不走共用底座，不拖坏其他弹窗）：
+/// 弹窗仍从下方滑入，遮罩 alpha 0→1 同步渐变；关闭时反向渐变淡出。
+/// 减动效下直接落终态；非动画 present/dismiss 不走本过渡。
+final class BearyEmoteSheetTransition: NSObject, UIViewControllerTransitioningDelegate, UIViewControllerAnimatedTransitioning {
+
+    private var presenting = true
+
+    func animationController(forPresented presented: UIViewController, presenting: UIViewController, source: UIViewController) -> UIViewControllerAnimatedTransitioning? {
+        self.presenting = true
+        return self
+    }
+
+    func animationController(forDismissed dismissed: UIViewController) -> UIViewControllerAnimatedTransitioning? {
+        self.presenting = false
+        return self
+    }
+
+    func transitionDuration(using transitionContext: UIViewControllerContextTransitioning?) -> TimeInterval {
+        if UIAccessibility.isReduceMotionEnabled { return 0 }
+        return presenting ? 0.35 : 0.3
+    }
+
+    func animateTransition(using transitionContext: UIViewControllerContextTransitioning) {
+        let key: UITransitionContextViewControllerKey = presenting ? .to : .from
+        guard let sheet = transitionContext.viewController(forKey: key) as? BearyEmotePickerSheetViewController else {
+            transitionContext.completeTransition(false)
+            return
+        }
+        if presenting {
+            guard let toView = transitionContext.view(forKey: .to) else {
+                transitionContext.completeTransition(false)
+                return
+            }
+            transitionContext.containerView.addSubview(toView)
+            toView.frame = transitionContext.containerView.bounds
+            let height = sheet.transitionSheetHeight()
+            sheet.transitionSetScrimAlpha(0)
+            sheet.transitionSetSheetOffset(height)
+            if UIAccessibility.isReduceMotionEnabled {
+                sheet.transitionSetScrimAlpha(1)
+                sheet.transitionSetSheetOffset(0)
+                transitionContext.completeTransition(true)
+                return
+            }
+            UIView.animate(withDuration: 0.35, delay: 0, options: [.curveEaseOut], animations: {
+                sheet.transitionSetScrimAlpha(1)
+                sheet.transitionSetSheetOffset(0)
+            }, completion: { _ in transitionContext.completeTransition(true) })
+            return
+        }
+        let height = sheet.transitionSheetHeight()
+        if UIAccessibility.isReduceMotionEnabled {
+            transitionContext.completeTransition(true)
+            return
+        }
+        UIView.animate(withDuration: 0.3, delay: 0, options: [.curveEaseIn], animations: {
+            sheet.transitionSetScrimAlpha(0)
+            sheet.transitionSetSheetOffset(height)
+        }, completion: { _ in transitionContext.completeTransition(true) })
     }
 }
 
