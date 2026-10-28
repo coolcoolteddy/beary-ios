@@ -2,8 +2,8 @@ import UIKit
 
 // ===== 草稿箱弹层（网页草稿箱移植；对应审计 G1）=====
 // 网页对照：~/workspace/teddy_site/beary.html 内 #draftModal。
-// 形态：overFullScreen 自包含呈现；遮罩有意全透明（网页 #draftModal .backdrop 即透明，
-// P2-7 scrim 已按网页对齐回滚——不走选人 sheet 同款 0.45 scrim，见 buildViews 注释）；
+// 形态：overFullScreen 自包含呈现；遮罩统一走 BearySheetChrome scrim 0.45、出现时 0.25s 淡入
+// （2026-10-28 Li 令统一，此前全透明例外已撤销，见 buildViews 注释）；
 // 点遮罩关闭（backdrop 点击走 closeDraftBox，行为不变）；
 // iPhone 为底部 sheet、最大高度 82vh；iPad（宽 ≥821）为居中 440 宽卡片。
 // 数据只读草稿 v3（BearyDraftFiles.swift）：v3 存储是多槽数组文件 beary_draft_v3.json，
@@ -15,7 +15,7 @@ import UIKit
 // 调用约定：点“新建日记”只回调 onNew，点卡片/打开钮只回调 onOpen 并传出该篇草稿，
 // 弹层本身不 dismiss——由编辑器代理在打开编辑器时负责 dismiss，避免呈现链冲突；
 // 只有关闭钮与遮罩点击会直接 dismiss，且不删任何草稿。
-// 约束：颜色只用 BearyColors（遮罩透明用 .clear）；不新增液态玻璃效果；
+// 约束：颜色只用 BearyColors（遮罩走 BearySheetChrome.scrimColor）；不新增液态玻璃效果；
 // 动画遵守 reduced-motion；部署目标 iOS 15.0、Swift 5.0——只用闭包回调，
 // 不用 async/await，不用 if-let 简写。
 
@@ -129,6 +129,8 @@ final class BearyDraftBoxViewController: UIViewController {
     /// 88 包 M8：入场错峰只在“已 Appear 且首轮 loadDrafts 已渲染”时播一次；
     /// 减动效与已播过时与原来一致，直接返回。
     private func tryPlayEntrance() {
+        // 2026-10-28 Li 令：遮罩出现时 0.25s 淡入；减动效直显终值。
+        if UIAccessibility.isReduceMotionEnabled { backdropButton.alpha = 1 }
         guard !didPlayEntrance, draftBoxAppeared, draftsInitialLoaded,
               !UIAccessibility.isReduceMotionEnabled else { return }
         didPlayEntrance = true
@@ -153,6 +155,10 @@ final class BearyDraftBoxViewController: UIViewController {
                 })
                 delay += 0.04
             }
+        })
+        // 遮罩 0.25s 淡入（与卡片滑入解耦）。
+        UIView.animate(withDuration: 0.25, delay: 0, options: .curveEaseOut, animations: {
+            self.backdropButton.alpha = 1
         })
     }
 
@@ -180,8 +186,9 @@ final class BearyDraftBoxViewController: UIViewController {
     // MARK: - 视图搭建
 
     private func buildViews() {
-        // 草稿箱遮罩与网页端一致：全透明（网页 #draftModal .backdrop 即透明，P2-7 scrim 已按网页对齐回滚）。
-        backdropButton.backgroundColor = .clear
+        // 草稿箱遮罩统一走 BearySheetChrome scrim 0.45，出现时 0.25s 淡入（2026-10-28 Li 令统一，全透明例外已撤销）。
+        backdropButton.backgroundColor = BearySheetChrome.scrimColor
+        backdropButton.alpha = 0
         backdropButton.accessibilityLabel = "关闭"
         backdropButton.addTarget(self, action: #selector(closeBox), for: .touchUpInside)
         backdropButton.bearyAddPressFeedback()
@@ -1056,6 +1063,8 @@ final class BearyDraftBoxViewController: UIViewController {
         }
         let duration = isPadLayout ? 0.25 : 0.32
         UIView.animate(withDuration: duration, delay: 0, options: .curveEaseIn, animations: {
+            // 遮罩随 sheet 同步淡出（与出现时 0.25s 淡入对称，避免关闭时遮罩瞬消）。
+            self.backdropButton.alpha = 0
             if self.isPadLayout {
                 self.sheetView.alpha = 0
                 self.sheetView.transform = CGAffineTransform(translationX: 0, y: self.sheetView.bounds.height * 0.04)
@@ -1182,6 +1191,7 @@ final class BearyDraftBoxViewController: UIViewController {
         pendingDeletedDraft = draftValue
         pendingDeletedIndex = draftIndex
         // M3：删卡先高度收起动画再移除，其余卡在栈内原地补位；减动效直接移除。
+        // 2026-10-28 Li 定：高度收到 0 允许改约束，算例外——能走 transform 的走 transform，高度必须收到 0 的例外。
         guard !UIAccessibility.isReduceMotionEnabled,
               let cardView = cardEntries.first(where: { $0.draftValue.draftId == draftValue.draftId })?.button,
               cardView.bounds.height > 0 else {

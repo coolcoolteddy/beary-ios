@@ -46,13 +46,13 @@ final class BearyEmotePickerSheetViewController: UIViewController, UICollectionV
     override func viewDidLoad() {
         super.viewDidLoad()
         view.backgroundColor = .clear
-        scrimView.backgroundColor = BearyColors.scrim.withAlphaComponent(0.45)
+        scrimView.backgroundColor = BearySheetChrome.scrimColor
         scrimView.translatesAutoresizingMaskIntoConstraints = false
         let scrimTap = UITapGestureRecognizer(target: self, action: #selector(closeTapped))
         scrimView.addGestureRecognizer(scrimTap)
         view.addSubview(scrimView)
         sheetView.backgroundColor = BearyColors.surface
-        sheetView.layer.cornerRadius = 22
+        sheetView.layer.cornerRadius = BearySheetChrome.topCornerRadius
         sheetView.layer.maskedCorners = [.layerMinXMinYCorner, .layerMaxXMinYCorner]
         sheetView.clipsToBounds = true
         sheetView.translatesAutoresizingMaskIntoConstraints = false
@@ -109,7 +109,7 @@ final class BearyEmotePickerSheetViewController: UIViewController, UICollectionV
             heightConstraint,
             grabView.topAnchor.constraint(equalTo: sheetView.topAnchor, constant: 10),
             grabView.centerXAnchor.constraint(equalTo: sheetView.centerXAnchor),
-            grabView.widthAnchor.constraint(equalToConstant: 38),
+            grabView.widthAnchor.constraint(equalToConstant: BearySheetChrome.grabberWidth),
             grabView.heightAnchor.constraint(equalToConstant: 4),
             titleLabel.topAnchor.constraint(equalTo: grabView.bottomAnchor, constant: 14),
             titleLabel.leadingAnchor.constraint(equalTo: sheetView.leadingAnchor, constant: 18),
@@ -159,7 +159,7 @@ final class BearyEmotePickerSheetViewController: UIViewController, UICollectionV
         dismiss(animated: reduceMotion == false, completion: nil)
     }
 
-    /// 过渡动画用：遮罩 alpha（色值本身含 0.45，动画只动 view alpha 0↔1）。
+    /// 过渡动画用：遮罩 alpha（色值走 BearySheetChrome.scrimColor，含 0.45，动画只动 view alpha 0↔1）。
     func transitionSetScrimAlpha(_ alpha: CGFloat) {
         scrimView.alpha = alpha
     }
@@ -203,7 +203,7 @@ final class BearyEmotePickerSheetViewController: UIViewController, UICollectionV
 // MARK: - 回应 Sheet 过渡：遮罩与弹窗解耦
 /// 旧默认过渡把整个 presented view（含已满暗的遮罩）一起滑上来，看着像遮罩
 /// 跟着弹窗升起；此处只给回应 Sheet 用（不走共用底座，不拖坏其他弹窗）：
-/// 弹窗仍从下方滑入，遮罩 alpha 0→1 同步渐变；关闭时反向渐变淡出。
+/// 弹窗仍从下方滑入，遮罩 0.25s 淡入（与滑入解耦，2026-10-28 Li 令）；关闭时反向渐变淡出。
 /// 减动效下直接落终态；非动画 present/dismiss 不走本过渡。
 final class BearyEmoteSheetTransition: NSObject, UIViewControllerTransitioningDelegate, UIViewControllerAnimatedTransitioning {
 
@@ -247,9 +247,12 @@ final class BearyEmoteSheetTransition: NSObject, UIViewControllerTransitioningDe
                 return
             }
             UIView.animate(withDuration: 0.35, delay: 0, options: [.curveEaseOut], animations: {
-                sheet.transitionSetScrimAlpha(1)
                 sheet.transitionSetSheetOffset(0)
             }, completion: { _ in transitionContext.completeTransition(true) })
+            // 遮罩出现时 0.25s 淡入（与弹窗滑入解耦）。
+            UIView.animate(withDuration: 0.25, delay: 0, options: [.curveEaseOut], animations: {
+                sheet.transitionSetScrimAlpha(1)
+            })
             return
         }
         let height = sheet.transitionSheetHeight()
