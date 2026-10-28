@@ -811,16 +811,22 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate {
         }
         trashBusyIdentifiers.insert(identifier)
         setRowButtonBusy(sender, busy: true, busyTitle: "恢复中…", idleTitle: "恢复")
-        BearyAPI.shared.restoreTrash(id: identifier) { [weak self] result in
+        BearyAPI.shared.restoreTrashDetail(id: identifier) { [weak self] result in
             DispatchQueue.main.async {
                 guard let self = self else { return }
                 self.trashBusyIdentifiers.remove(identifier)
                 self.setRowButtonBusy(sender, busy: false, busyTitle: "恢复中…", idleTitle: "恢复")
                 switch result {
-                case .success:
-                    // B-G3: web restoreTrash always toasts "已恢复为私密"; never split
-                    // by publish_at (a restored diary is private, never public).
-                    self.showToast(message: "已恢复为私密")
+                case .success(let resp):
+                    // iCity：恢复回原可见性——服务端返回 published/isPublic 时按其分流，
+                    // 均缺失时用通用文案，时间线重拉为准，不猜原态。
+                    if resp.published == 1 || resp.isPublic == true {
+                        self.showToast(message: "已恢复为公开")
+                    } else if resp.published == 0 || resp.isPublic == false {
+                        self.showToast(message: "已恢复为私密")
+                    } else {
+                        self.showToast(message: "已恢复")
+                    }
                     self.removeRow(identifier: identifier)
                     if let uid = SessionManager.shared.currentUser?.id {
                         BearyTrashSyncStore.removeItem(accountId: uid, entryId: identifier)
