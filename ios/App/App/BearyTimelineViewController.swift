@@ -2570,6 +2570,8 @@ class BearyTimelineViewController: UIViewController {
         // 完成后——当日/月份回包到达时消费本标志，选中日已空即跳最近有篇日。
         pendingEntryJumpCheck = true
         reloadTimeline(keepSelectedDay: true)
+        // fixall-sync 5-27 集成接线：被守卫挡下的同步在下拉刷新时重跑（内部去重已覆盖已同步/在途）。
+        BearyEntrySync.shared.kickForCurrentUser()
         refreshHeaderHeight()
     }
 

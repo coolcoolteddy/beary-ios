@@ -70,6 +70,8 @@ class SceneDelegate: UIResponder, UIWindowSceneDelegate {
         (window?.rootViewController as? BearyChromeViewController)?.resumeSideMatrixAnimation()
         // 审计 B 批：消息页未创建时回前台补一次角标轻量拉取（已创建则页内刷新已覆盖）。
         (window?.rootViewController as? BearyChromeViewController)?.foregroundBadgeRefreshIfNotifAbsent()
+        // fixall-sync 5-27 集成接线：被守卫挡下的同步在回前台时重跑（内部去重已覆盖已同步/在途）。
+        BearyEntrySync.shared.kickForCurrentUser()
     }
 
     /// 栏显隐查找（#47 修正）：setChromeHidden 在容器 VC 上，不在 SceneDelegate 上；

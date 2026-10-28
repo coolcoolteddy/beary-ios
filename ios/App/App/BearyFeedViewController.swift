@@ -1248,6 +1248,15 @@ class BearyFeedViewController: UIViewController {
                 strongSelf.tableView.performBatchUpdates(nil)
             }
         }
+        // fixall-cell 6-4 集成接线：回应行高变化走 batch（折叠同款口径），
+        // cell 内不再播 flow 位移动画，防双动画叠加；未接线时 cell 保留 0.25s 兜底。
+        cell.onNeedsEmoteRowAnimation = { [weak self, weak cell] in
+            guard let strongSelf = self, let targetCell = cell else { return }
+            guard let path = strongSelf.tableView.indexPath(for: targetCell) else { return }
+            if strongSelf.tableView.indexPathsForVisibleRows?.contains(path) == true {
+                strongSelf.tableView.performBatchUpdates(nil)
+            }
+        }
     }
 
     // MARK: - B 方案公开 / 取消（D2）
