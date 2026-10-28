@@ -47,6 +47,7 @@
 		59C4999D08314B03875423D3 /* BearyImageCropViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2C97D9B83C248279A057463 /* BearyImageCropViewController.swift */; };
 		C7BB560646D1F3B2BF41E8CE /* BearyInviteViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = BC25E34F7F1469439164AB6F /* BearyInviteViewController.swift */; };
 		2A79C023905A6DE2078D5D28 /* BearyFeedbackViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 665D4F35E8824A24A86F9DB5 /* BearyFeedbackViewController.swift */; };
+		0DF17DFC39734CBE9118F087 /* BearyDetailViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0B7C99F453D645B0BBF9896F /* BearyDetailViewController.swift */; };
 		58697AC315BA4F4EA10C3DEB /* BearySettingsViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 262626061B9648ED8774C313 /* BearySettingsViewController.swift */; };
 		455A4C8BA2D150C518BD7A1F /* BearyIconMotion.swift in Sources */ = {isa = PBXBuildFile; fileRef = AE1004189D604B60D3CDB019 /* BearyIconMotion.swift */; };
 		79157599BFD08B6E2FD7418C /* BearyTimelineViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = D009B72CD3812F4FDC1F520A /* BearyTimelineViewController.swift */; };
@@ -204,6 +205,7 @@
 		A2C97D9B83C248279A057463 /* BearyImageCropViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BearyImageCropViewController.swift; sourceTree = "<group>"; };
 		BC25E34F7F1469439164AB6F /* BearyInviteViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BearyInviteViewController.swift; sourceTree = "<group>"; };
 		665D4F35E8824A24A86F9DB5 /* BearyFeedbackViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BearyFeedbackViewController.swift; sourceTree = "<group>"; };
+		0B7C99F453D645B0BBF9896F /* BearyDetailViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BearyDetailViewController.swift; sourceTree = "<group>"; };
 		262626061B9648ED8774C313 /* BearySettingsViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BearySettingsViewController.swift; sourceTree = "<group>"; };
 		AE1004189D604B60D3CDB019 /* BearyIconMotion.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BearyIconMotion.swift; sourceTree = "<group>"; };
 		D009B72CD3812F4FDC1F520A /* BearyTimelineViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BearyTimelineViewController.swift; sourceTree = "<group>"; };
@@ -391,6 +393,7 @@
 				A2C97D9B83C248279A057463 /* BearyImageCropViewController.swift */,
 				BC25E34F7F1469439164AB6F /* BearyInviteViewController.swift */,
 				665D4F35E8824A24A86F9DB5 /* BearyFeedbackViewController.swift */,
+				0B7C99F453D645B0BBF9896F /* BearyDetailViewController.swift */,
 				262626061B9648ED8774C313 /* BearySettingsViewController.swift */,
 				AE1004189D604B60D3CDB019 /* BearyIconMotion.swift */,
 				D009B72CD3812F4FDC1F520A /* BearyTimelineViewController.swift */,
@@ -753,6 +756,7 @@
 				59C4999D08314B03875423D3 /* BearyImageCropViewController.swift in Sources */,
 				C7BB560646D1F3B2BF41E8CE /* BearyInviteViewController.swift in Sources */,
 				2A79C023905A6DE2078D5D28 /* BearyFeedbackViewController.swift in Sources */,
+				0DF17DFC39734CBE9118F087 /* BearyDetailViewController.swift in Sources */,
 				58697AC315BA4F4EA10C3DEB /* BearySettingsViewController.swift in Sources */,
 				455A4C8BA2D150C518BD7A1F /* BearyIconMotion.swift in Sources */,
 				79157599BFD08B6E2FD7418C /* BearyTimelineViewController.swift in Sources */,

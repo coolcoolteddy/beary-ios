@@ -2239,6 +2239,13 @@ class BearyProfileViewController: UIViewController {
         tryLocatePending()
     }
 
+    /// 详情返回定位（guarded）：只在已加载的日记列表里找，找到即按现行定位体验滚动；
+    /// 不在列表里时什么都不做（不插入、不切 tab、不追拉）。
+    func scrollToEntryIdIfPresent(_ entryId: String) {
+        guard let row = diaryEntries.firstIndex(where: { $0.id == entryId }) else { return }
+        scrollToProfileRow(row: row, entryId: entryId)
+    }
+
     private func tryLocatePending() {
         guard let target = pendingLocateEntryId else { return }
         guard currentTab == .diary else {

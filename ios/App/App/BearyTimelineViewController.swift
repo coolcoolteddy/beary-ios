@@ -807,13 +807,21 @@ final class BearyTimelineCell: UITableViewCell {
     /// 引用卡小图不走此路（点按引用卡仍走 onQuoteEntry 打开被引用日记）。
     var onTapImages: (([String], Int) -> Void)?
     private let actsStack = UIStackView()
-    private let statusIconView = UIImageView()
     private let editStatusLabel = UILabel()
-    private let editButton = BearyHit44Button(type: .custom)
+    /// 2026-10-29 Li 定编辑态口径：无图标、只留文字；可编辑期内左侧为倒计时灰字 +
+    /// 可点按的“编辑”二字（本行唯一的编辑入口，旧图标编辑钮已摘）；到期 live 翻转时
+    /// 同位置变“编辑已结束”，3 秒后淡出消失；首渲染已过期则直接不留。
+    private let editStatusGroup = UIStackView()
+    private let editTextButton = BearyHit44Button(type: .custom)
+    private var editRowSawEditable = false
+    private var editRowEndedShown = false
+    private var editRowEndTimer: Timer?
     private let deleteButton = BearyHit44Button(type: .custom)
     // iCity 双向切换钮：图标化 globe（Li 2026-10-26 定 v3 public globe 口径不变），
-    // 切换态以 tint + 无障碍文案表达（公开态橙 tint / “改回私密”，私密态墨 tint / “公开”）。
-    private let publishButton = UIButton(type: .system)
+    // 2026-10-28 23:56 Li 定：从底部操作行挪到卡片顶行右端（meta 行末），视觉 21pt
+    // 灰色（不再墨黑/公开橙），44pt 热区由 BearyHit44Button 的 28 帧扩后保证；
+    // 切换态只以无障碍文案表达（“改回私密”/“公开”）。
+    private let publishButton = BearyHit44Button(type: .custom)
     var onPublishEntry: ((Entry) -> Void)?
 
     override init(style: UITableViewCell.CellStyle, reuseIdentifier: String?) {
@@ -1000,39 +1008,35 @@ final class BearyTimelineCell: UITableViewCell {
         editStatusLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 12))
         editStatusLabel.adjustsFontForContentSizeCategory = true
         editStatusLabel.textColor = BearyColors.gray
-        // I11：私密操作行文案前加 13px 状态图标（可编辑 icon_edit / 已结束 icon_lock）。
-        statusIconView.translatesAutoresizingMaskIntoConstraints = false
-        statusIconView.tintColor = BearyColors.gray
-        statusIconView.contentMode = .scaleAspectFit
-        NSLayoutConstraint.activate([
-            statusIconView.widthAnchor.constraint(equalToConstant: 13),
-            statusIconView.heightAnchor.constraint(equalToConstant: 13),
-        ])
-        if let editImage = BearyIconImages.image(named: "icon_edit", pointSize: 17) {
-            editButton.setImage(editImage, for: .normal)
-        }
-        editButton.tintColor = BearyColors.gray
-        editButton.alpha = 1
-        editButton.addTarget(self, action: #selector(editTapped), for: .touchUpInside)
-        editButton.bearyAddPressFeedback()
-        if let trashImage = BearyIconImages.image(named: "icon_trash", pointSize: 17) {
+        // 2026-10-29 编辑态口径：倒计时灰字 + 可点按的“编辑”二字（12pt 灰字按钮，
+        // BearyHit44Button 扩后热区 44；点按即进编辑器，与旧图标编辑钮同一回调）。
+        editTextButton.translatesAutoresizingMaskIntoConstraints = false
+        editTextButton.titleLabel?.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 12))
+        editTextButton.setTitle("编辑", for: .normal)
+        editTextButton.setTitleColor(BearyColors.gray, for: .normal)
+        editTextButton.addTarget(self, action: #selector(editTapped), for: .touchUpInside)
+        editTextButton.bearyAddPressFeedback()
+        editTextButton.isHidden = true
+        if let trashImage = BearyIconImages.image(named: "icon_trash", pointSize: 21) {
             deleteButton.setImage(trashImage, for: .normal)
         }
         deleteButton.imageView?.contentMode = .scaleAspectFit
-        deleteButton.tintColor = BearyColors.red
+        // 2026-10-28 23:56 去亮度：删除不再用红，一律灰色，与小地球同档 21pt。
+        deleteButton.tintColor = BearyColors.gray
         deleteButton.alpha = 1
         deleteButton.addTarget(self, action: #selector(deleteTapped), for: .touchUpInside)
         deleteButton.bearyAddPressFeedback()
         publishButton.translatesAutoresizingMaskIntoConstraints = false
-        // 公开钮图标化（Li 2026-10-26 定：v3 public globe）：22pt 墨色图标、44×44，与编辑/删除同行齐平；无边框、无文字。
-        if let globeImage = BearyIconImages.image(named: "icon_globe", pointSize: 22) {
+        // 公开钮图标化（Li 2026-10-26 定：v3 public globe）：2026-10-28 23:56 改为
+        // 21pt 灰色图标、28×28 帧（BearyHit44Button 扩后热区仍 44），不再墨黑/公开橙。
+        if let globeImage = BearyIconImages.image(named: "icon_globe", pointSize: 21) {
             publishButton.setImage(globeImage, for: .normal)
         }
-        publishButton.tintColor = BearyColors.ink
+        publishButton.tintColor = BearyColors.gray
         publishButton.imageView?.contentMode = .scaleAspectFit
         publishButton.accessibilityLabel = "公开"
-        publishButton.heightAnchor.constraint(equalToConstant: 44).isActive = true
-        publishButton.widthAnchor.constraint(equalToConstant: 44).isActive = true
+        publishButton.heightAnchor.constraint(equalToConstant: 28).isActive = true
+        publishButton.widthAnchor.constraint(equalToConstant: 28).isActive = true
         publishButton.addTarget(self, action: #selector(publishTapped), for: .touchUpInside)
         publishButton.bearyAddPressFeedback()
         publishButton.isHidden = true
@@ -1041,21 +1045,17 @@ final class BearyTimelineCell: UITableViewCell {
         actsStack.spacing = 14
         actsStack.alignment = .center
         let actsSpacer = UIView()
-        // B-G6: publish button sits inline right after the edit status (web tl-acts
-        // puts pub-acts before the flex spacer); the spacer only pushes edit/delete right.
-        // 锁图标与状态文案成组相邻（组内间距 4），不再吃 actsStack 的 14 间距。
-        let statusGroup = UIStackView(arrangedSubviews: [statusIconView, editStatusLabel])
-        statusGroup.axis = .horizontal
-        statusGroup.spacing = 4
-        statusGroup.alignment = .center
-        actsStack.addArrangedSubview(statusGroup)
-        actsStack.addArrangedSubview(publishButton)
+        // 2026-10-29：操作行只剩编辑态文字组 + 删除钮（旧图标编辑钮已摘，编辑只走
+        // 文字“编辑”；小地球已挪到 meta 行末，不再占操作行位置）。
+        editStatusGroup.axis = .horizontal
+        editStatusGroup.spacing = 8
+        editStatusGroup.alignment = .center
+        editStatusGroup.addArrangedSubview(editStatusLabel)
+        editStatusGroup.addArrangedSubview(editTextButton)
+        actsStack.addArrangedSubview(editStatusGroup)
         actsStack.addArrangedSubview(actsSpacer)
-        actsStack.addArrangedSubview(editButton)
         actsStack.addArrangedSubview(deleteButton)
         NSLayoutConstraint.activate([
-            editButton.widthAnchor.constraint(equalToConstant: 28),
-            editButton.heightAnchor.constraint(equalToConstant: 28),
             deleteButton.widthAnchor.constraint(equalToConstant: 28),
             deleteButton.heightAnchor.constraint(equalToConstant: 28),
         ])
@@ -1241,7 +1241,14 @@ final class BearyTimelineCell: UITableViewCell {
         // 按压缩放残留复位：通用按压反馈把按钮 imageView 缩到 .84，
         // 触摸序列异常打断时回弹没跑到，复用会把 .84 带到下一行。
         deleteButton.imageView?.transform = .identity
-        editButton.imageView?.transform = .identity
+        editTextButton.imageView?.transform = .identity
+        // 2026-10-29 编辑态复位：live 翻转计时与“已结束”态不得串位到下一行。
+        editRowEndTimer?.invalidate()
+        editRowEndTimer = nil
+        editRowSawEditable = false
+        editRowEndedShown = false
+        editStatusGroup.alpha = 1
+        editTextButton.isHidden = true
         setTimelineLineEdges(isFirstInDay: true, isLastInDay: true)
         currentEntry = nil
         cardView.backgroundColor = BearyColors.bg
@@ -1398,6 +1405,9 @@ final class BearyTimelineCell: UITableViewCell {
         metaSpacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
         metaSpacer.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         metaStack.addArrangedSubview(metaSpacer)
+        // 2026-10-28 23:56：小地球挪到卡片顶行右端——meta 行末 spacer 之后追加，
+        // 即顶到右端；显隐与无障碍文案仍由 updateEditRow 定（时间线行均为本人行）。
+        metaStack.addArrangedSubview(publishButton)
         // 8-13 保留 1.75（不统一 1.6）：网页版时间线正文 .tl-text 即
         // 16.5px/1.75（worker.js 前端快照 :435，2026-10-27 版，与本行
         // 16.5/1.75 同值；首页卡片 1.6 是另一口径，不混用）。
@@ -1583,15 +1593,15 @@ final class BearyTimelineCell: UITableViewCell {
             footStack.addArrangedSubview(footSpacer)
             footStack.isHidden = false
         } else {
-            // TL-3 私密行操作行（网页 .tl-acts 口径）：编辑倒计时或“编辑已结束”
-            // + 编辑钮（仅未锁定时）+ 删除钮。删除本身不由本页发请求：走容器回调，
-            // 容器按网页 confirmDelete 流程弹“确认删除？/ 删除后会移入回收站，
+            // TL-3 私密行操作行（2026-10-29 口径）：编辑态文字组（倒计时 + “编辑”）
+            // + 删除钮；小地球已挪 meta 行末，不在操作行。删除本身不由本页发请求：
+            // 走容器回调，容器按网页 confirmDelete 流程弹“确认删除？/ 删除后会移入回收站，
             // 30 天内可在「回收站」里恢复。”再调删除接口。
             updateEditRow(entry: entry)
             actsStack.isHidden = false
         }
         // iCity：公开行与私密行共用操作行——公开行在计数足行之外同样出操作行
-        //（双向切换钮 + 编辑/删除，编辑仅 15 分钟内，删除公开/私密均可）。
+        //（编辑态文字组 + 删除，编辑仅 15 分钟内，删除公开/私密均可）。
         if published {
             updateEditRow(entry: entry)
             actsStack.isHidden = false
@@ -1609,38 +1619,68 @@ final class BearyTimelineCell: UITableViewCell {
         onTapImages?(keys, index)
     }
 
-    /// 网页 tlItemHtml 私密操作行口径：edit_deadline 缺失按 0 计，即已锁。
-    private func isEditLocked(entry: Entry) -> Bool {
-        guard let deadline = entry.editDeadline else { return true }
-        let nowMs = Int(Date().timeIntervalSince1970 * 1000)
-        return nowMs >= deadline
-    }
-
-    private func editStatusText(entry: Entry) -> String {
-        guard let deadline = entry.editDeadline else { return "编辑已结束" }
-        let remainingSeconds = Int(Date(timeIntervalSince1970: TimeInterval(deadline) / 1000.0).timeIntervalSinceNow)
-        if remainingSeconds <= 0 { return "编辑已结束" }
-        let minutes = remainingSeconds / 60
-        let seconds = remainingSeconds % 60
-        let secondsText = seconds < 10 ? "0\(seconds)" : "\(seconds)"
-        return "可编辑 \(minutes):\(secondsText)"
-    }
-
+    /// 2026-10-29 Li 定编辑态口径（无图标、只留文字、状态会变）：
+    /// - 可编辑期内：左侧“还剩 N 分钟”灰字（按分钟刷新，向上取整，至少 1 分钟）+
+    ///   可点按的“编辑”二字（本行唯一的编辑入口）；数字变化只改 label 文本。
+    /// - 到期那一刻（本行此前已渲染过可编辑态，即看着它过期）：同位置变
+    ///   “编辑已结束”灰字，约 3 秒后淡出消失（减动效下直接消失），什么都不留。
+    /// - 首渲染已过期（含 deadline 缺失即已锁）：不闪“编辑已结束”，直接什么都不留。
+    /// - 小地球显隐与无障碍文案同在此定（已挪 meta 行末，恒灰色 21pt）。
     private func updateEditRow(entry: Entry) {
-        editStatusLabel.text = editStatusText(entry: entry)
-        let locked = isEditLocked(entry: entry)
-        // 追加 6③：“编辑已结束”弱化——锁定时文字降 60% 透明度，与倒计时态的
-        // 正常灰色区分；图标与按钮显隐不动。
-        editStatusLabel.textColor = locked ? BearyColors.alpha(BearyColors.gray, 0.6) : BearyColors.gray
-        // I11：文案前 13px 图标与状态同步（已结束锁 / 可编辑笔）。
-        statusIconView.image = BearyIconImages.image(named: locked ? "icon_lock" : "icon_edit", pointSize: 13)
-        editButton.isHidden = locked
-        // iCity 双向切换钮：公开/私密行都出；公开态橙 tint + “改回私密”无障碍文案，
-        // 私密态墨 tint + “公开”无障碍文案（按钮本身图标化无文字标题）。
+        let nowMs = Int(Date().timeIntervalSince1970 * 1000)
+        if let deadline = entry.editDeadline, nowMs < deadline {
+            editRowSawEditable = true
+            editRowEndTimer?.invalidate()
+            editRowEndTimer = nil
+            editStatusGroup.isHidden = false
+            editStatusGroup.alpha = 1
+            editStatusLabel.textColor = BearyColors.gray
+            let remainingSeconds = (deadline - nowMs) / 1000
+            let minutes = max(1, (remainingSeconds + 59) / 60)
+            let text = "还剩 \(minutes) 分钟"
+            if editStatusLabel.text != text {
+                editStatusLabel.text = text
+            }
+            editTextButton.isHidden = false
+        } else if editRowSawEditable && !editRowEndedShown {
+            // live 翻转：此前见过可编辑态，才走“编辑已结束 → 3 秒消失”这一段。
+            editRowEndedShown = true
+            editStatusGroup.isHidden = false
+            editStatusGroup.alpha = 1
+            editStatusLabel.text = "编辑已结束"
+            editStatusLabel.textColor = BearyColors.gray
+            editTextButton.isHidden = true
+            editRowEndTimer?.invalidate()
+            editRowEndTimer = Timer.scheduledTimer(withTimeInterval: 3, repeats: false) { [weak self] _ in
+                self?.hideEditEndedRow()
+            }
+        } else if !editRowSawEditable && !editRowEndedShown {
+            // 首渲染已过期：不闪提示，直接什么都不留。
+            editRowEndTimer?.invalidate()
+            editRowEndTimer = nil
+            editStatusGroup.isHidden = true
+        }
+        // 已结束且已消失后：后续 tick 不再碰本行（editRowEndedShown 守卫）。
         let isPublic = entry.isPublic == true
         publishButton.isHidden = false
-        publishButton.tintColor = isPublic ? BearyColors.orange : BearyColors.ink
+        publishButton.tintColor = BearyColors.gray
         publishButton.accessibilityLabel = isPublic ? "改回私密" : "公开"
+    }
+
+    /// “编辑已结束”3 秒后的退场：淡出（transform/opacity 口径；减动效直接消失）。
+    private func hideEditEndedRow() {
+        editRowEndTimer = nil
+        if UIAccessibility.isReduceMotionEnabled {
+            editStatusGroup.isHidden = true
+            editStatusGroup.alpha = 1
+            return
+        }
+        UIView.animate(withDuration: 0.25, animations: { [weak self] in
+            self?.editStatusGroup.alpha = 0
+        }, completion: { [weak self] _ in
+            self?.editStatusGroup.isHidden = true
+            self?.editStatusGroup.alpha = 1
+        })
     }
 
     @objc private func publishTapped() {
@@ -3869,6 +3909,12 @@ class BearyTimelineViewController: UIViewController {
             }
         }
         return false
+    }
+
+    /// 详情返回定位（guarded）：只在已加载分区里找，找到即按现行定位体验滚动高亮；
+    /// 未加载时什么都不做（不插入、不追拉）。
+    func scrollToEntryIdIfPresent(_ entryId: String) {
+        _ = tryLocateInLoadedSections(entryId: entryId)
     }
 
     /// 6A：滚动到指定行并闪一下（两段 async：先等重载落定，再等滚动落定取 cell）。
