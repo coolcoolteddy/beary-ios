@@ -53,6 +53,7 @@ final class BearyBearView: UIView {
     private let blushRight = UIView()
     private let pawView = UIImageView()
     private var sequenceStarted = false
+    private var floatRunning = false
     private var tapCount = 0
     private var tapResetWork: DispatchWorkItem?
     private var rainLayer: CAEmitterLayer?
@@ -276,11 +277,29 @@ extension BearyBearView {
         }
     }
 
-    private func startFloat() {
+    /// 6-11：2.4s 往复浮动——减动效门控已有（下行守门）；离页停播
+    /// 由容器 stopScreenAnimations 调 stopFloat，返回第 0 屏由
+    /// resumeFloatIfNeeded 重启；floatRunning 防重复起播叠加。
+    func startFloat() {
         if UIAccessibility.isReduceMotionEnabled { return }
+        guard !floatRunning else { return }
+        floatRunning = true
         UIView.animate(withDuration: 2.4, delay: 0, options: [.autoreverse, .repeat, .allowUserInteraction]) {
             self.bearBox.transform = CGAffineTransform(translationX: 0, y: -5)
         }
+    }
+
+    /// 6-11：离页停播浮动（停 bearBox 全部动画并落回原位）。
+    func stopFloat() {
+        bearBox.layer.removeAllAnimations()
+        bearBox.transform = .identity
+        floatRunning = false
+    }
+
+    /// 6-11：回第 0 屏时重启浮动；首启开场序列未开始时不提前起播。
+    func resumeFloatIfNeeded() {
+        guard sequenceStarted else { return }
+        startFloat()
     }
 
     private func dotImage(color: UIColor, diameter: CGFloat) -> CGImage? {
@@ -694,7 +713,9 @@ final class BearyOnboardingViewController: UIViewController {
             primaryButton.isHidden = false
             if currentIndex == ctaIndex {
                 primaryButton.setTitle("开始写第一篇", for: .normal)
-                secondaryButton.isHidden = false
+                // 3-3：重播 CTA 删次按钮“关闭”，只留顶栏关闭 + 主按钮；
+                // 首启次按钮“进入主页”保留（首启顶栏无关闭，仍需进主页出口）。
+                secondaryButton.isHidden = mode == .replay
                 secondaryButton.setTitle(mode == .firstLaunch ? "进入主页" : "关闭", for: .normal)
             } else {
                 primaryButton.setTitle("继续", for: .normal)
@@ -707,6 +728,7 @@ final class BearyOnboardingViewController: UIViewController {
         // 临时诊断（81 包，定根因后删除）：换屏走完的终态，落在它上面不算卡住。
         DiagFile.mark("ob-appeared")
         if index == 5 { startDeliveryDemo() }
+        if index == 0 { bearView?.resumeFloatIfNeeded() }
     }
 
     override func viewDidAppear(_ animated: Bool) {
@@ -721,6 +743,13 @@ final class BearyOnboardingViewController: UIViewController {
         deliveryTimer = nil
         pubLink?.invalidate()
         pubLink = nil
+        // 5-2：星空 overlay 只在第 0 屏生效，切屏即移除（含星星往复动画
+        // 随视图释放而停）；nightOn 同步复位，回第 0 屏长按可重开。
+        nightOverlay?.removeFromSuperview()
+        nightOverlay = nil
+        nightOn = false
+        // 6-11：离页停播小熊浮动往复动画（回第 0 屏时 screenDidAppear 重启）。
+        bearView?.stopFloat()
     }
 
     @objc private func backTapped() {
@@ -903,7 +932,7 @@ extension BearyOnboardingViewController {
         stack.addArrangedSubview(bear)
 
         let hint = UILabel()
-        hint.text = "点一点小熊试试"
+        hint.text = "点一点小熊试试，长按可看夜空"
         hint.font = UIFont.systemFont(ofSize: 13)
         hint.textColor = BearyColors.gray
         hint.textAlignment = .center
@@ -1801,6 +1830,10 @@ extension BearyOnboardingViewController {
         copyButton.titleLabel?.font = UIFont.systemFont(ofSize: 15, weight: .semibold)
         copyButton.setTitleColor(BearyColors.orange, for: .normal)
         copyButton.addTarget(self, action: #selector(copyHomeLinkTapped), for: .touchUpInside)
+        // 5-1：无 handle 时复制钮置灰禁用（与复制守门双保险）。
+        let hasHomeHandle = SessionManager.shared.currentUser?.handle != nil
+        copyButton.isEnabled = hasHomeHandle
+        copyButton.alpha = hasHomeHandle ? 1 : 0.5
         let linkInner = UIStackView(arrangedSubviews: [linkLabel, copyButton])
         linkInner.axis = .vertical
         linkInner.spacing = 8
@@ -1884,7 +1917,11 @@ extension BearyOnboardingViewController {
     }
 
     @objc private func copyHomeLinkTapped() {
-        let handle = SessionManager.shared.currentUser?.handle ?? "你的用户名"
+        // 5-1：无 handle 时绝不复制占位 URL，提示登录后可复制。
+        guard let handle = SessionManager.shared.currentUser?.handle else {
+            showToast("登录后可复制主页链接")
+            return
+        }
         UIPasteboard.general.string = "https://teddyhn.com/beary/@\(handle)"
         showToast("链接已复制")
     }
@@ -1893,7 +1930,7 @@ extension BearyOnboardingViewController {
         stack.addArrangedSubview(titleLabel("顺手的小工具，\n写起来更顺"))
         stack.addArrangedSubview(toolRow(iconName: "icon_user", title: "写给某位朋友", body: "发布前选一位收信人，对方要等送达那天才能打开。"))
         stack.addArrangedSubview(toolRow(iconName: "icon_calendar", title: "日历与小火苗", body: "时间线顶部有日历和连续天数，写得越勤，小火苗越旺。"))
-        stack.addArrangedSubview(toolRow(iconName: "IconSearch", title: "放大镜搜索", body: "想找以前的日记或朋友，点顶栏的放大镜搜一搜。"))
+        stack.addArrangedSubview(toolRow(iconName: "icon_search", title: "放大镜搜索", body: "想找以前的日记或朋友，点顶栏的放大镜搜一搜。"))
     }
 
     private func toolRow(iconName: String, title: String, body: String) -> UIView {
