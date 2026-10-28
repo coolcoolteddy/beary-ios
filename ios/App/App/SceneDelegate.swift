@@ -70,6 +70,8 @@ class SceneDelegate: UIResponder, UIWindowSceneDelegate {
         (window?.rootViewController as? BearyChromeViewController)?.resumeSideMatrixAnimation()
         // 审计 B 批：消息页未创建时回前台补一次角标轻量拉取（已创建则页内刷新已覆盖）。
         (window?.rootViewController as? BearyChromeViewController)?.foregroundBadgeRefreshIfNotifAbsent()
+        // fixall-sync 5-27 集成接线：被守卫挡下的同步在回前台时重跑（内部去重已覆盖已同步/在途）。
+        BearyEntrySync.shared.kickForCurrentUser()
     }
 
     /// 栏显隐查找（#47 修正）：setChromeHidden 在容器 VC 上，不在 SceneDelegate 上；
@@ -345,7 +347,7 @@ final class BearyChromeViewController: UIViewController {
         // ---- 顶栏：整宽玻璃，内容区 60pt 贴安全区下方 ----
         // 顶栏玻璃 tint：网页 .nav 底色 bg 52%，与下方白色内容同色系（浅色为白玻璃）；
         // 只改本调用的参数；底栏已改系统分段器，无玻璃调用；不加边框与阴影（网页 .nav 亦无，见 parity_values §7）。
-        let top = makeGlassView(tint: BearyColors.bg.withAlphaComponent(0.52))
+        let top = makeGlassView(tint: BearyColors.alpha(BearyColors.bg, 0.52))
         top.translatesAutoresizingMaskIntoConstraints = false
         view.addSubview(top)
         topGlass = top
@@ -432,7 +434,7 @@ final class BearyChromeViewController: UIViewController {
         // 故衬底不再比控件大，只盖住分段器本身；
         // 永不拦截触摸，藏显与位移只跟 setBarsVisible；层级在分段器之下
         // （bringChromeToFront 里 blur 先于分段器提至最前，防后挂页盖住它）。
-        let blur = makeGlassView(tint: BearyColors.bg.withAlphaComponent(0.52))
+        let blur = makeGlassView(tint: BearyColors.alpha(BearyColors.bg, 0.52))
         blur.layer.cornerRadius = 29
         blur.clipsToBounds = true
         blur.isUserInteractionEnabled = false
@@ -1681,7 +1683,7 @@ final class BearyChromeViewController: UIViewController {
                 }
             }
         })
-        present(alert, animated: true)
+        present(alert, animated: BearyMotion.animated(true))
     }
 
     private func ensureTimelineVC() -> BearyTimelineViewController {
@@ -1782,7 +1784,7 @@ final class BearyChromeViewController: UIViewController {
     /// 邀请码与统计，不复用旧页；关闭只关弹窗，回到弹窗下的原页（不再强制回首页）。
     private func presentInvite() {
         let vc = BearyInviteViewController()
-        vc.onClose = { [weak vc] in vc?.dismiss(animated: true) }
+        vc.onClose = { [weak vc] in vc?.dismiss(animated: BearyMotion.animated(true)) }
         vc.onRequireLogin = { [weak self] in self?.presentLogin() }
         if view.bounds.width >= 821 {
             let centered = BearyCenteredTransitioningDelegate()
@@ -1797,7 +1799,7 @@ final class BearyChromeViewController: UIViewController {
             vc.transitioningDelegate = sheet
             inviteSheet = sheet
         }
-        present(vc, animated: true)
+        present(vc, animated: BearyMotion.animated(true))
     }
 
     private func ensureUserVC() -> UIViewController {
@@ -1899,13 +1901,13 @@ final class BearyChromeViewController: UIViewController {
         }
         let vc = BearyLoginViewController()
         vc.modalPresentationStyle = .fullScreen
-        vc.onCancelled = { [weak vc] in vc?.dismiss(animated: true) }
+        vc.onCancelled = { [weak vc] in vc?.dismiss(animated: BearyMotion.animated(true)) }
         vc.onLoggedIn = { [weak self, weak vc] in
-            vc?.dismiss(animated: true) {
+            vc?.dismiss(animated: BearyMotion.animated(true)) {
                 SessionManager.shared.refreshMe()
             }
         }
-        topmostViewController().present(vc, animated: true)
+        topmostViewController().present(vc, animated: BearyMotion.animated(true))
     }
 
     /// 容器级轻提示（A11 未登录“我”页、时间线删除失败等）：委托 B 批统一
@@ -1924,7 +1926,7 @@ final class BearyChromeViewController: UIViewController {
     private func wireProfileVC(_ vc: BearyProfileViewController, modal: Bool) {
         vc.onBack = { [weak self] in
             if modal {
-                self?.dismiss(animated: true)
+                self?.dismiss(animated: BearyMotion.animated(true))
             } else {
                 self?.showPage(.home)
             }
@@ -2013,12 +2015,12 @@ final class BearyChromeViewController: UIViewController {
         let vc = BearyEditProfileViewController(displayName: user?.displayName, handle: user?.handle, avatarUrl: user?.avatar, coverUrl: coverUrl)
         vc.modalPresentationStyle = .fullScreen
         vc.onSaved = { [weak self, weak vc] in
-            vc?.dismiss(animated: true) {
+            vc?.dismiss(animated: BearyMotion.animated(true)) {
                 self?.profileVC?.reloadProfile()
                 self?.feedVC?.refreshAll()
             }
         }
-        vc.onCancel = { [weak vc] in vc?.dismiss(animated: true) }
+        vc.onCancel = { [weak vc] in vc?.dismiss(animated: BearyMotion.animated(true)) }
         vc.onRequireLogin = { [weak self] in self?.presentLogin() }
         // G1：边缘返回（Li 批准的原生返回口径）：进出动画为 EdgeDismiss 自带的
         // slide 右滑入；attach 须在 present 之前，调用方强持有防手势中途失效。
@@ -2026,7 +2028,7 @@ final class BearyChromeViewController: UIViewController {
         editProfileEdgeDismiss.attach(to: vc)
         vc.transitioningDelegate = editProfileEdgeDismiss
         self.editProfileEdgeDismiss = editProfileEdgeDismiss
-        topmostViewController().present(vc, animated: true)
+        topmostViewController().present(vc, animated: BearyMotion.animated(true))
     }
 
     /// 设置页（modal 全屏，与编辑资料页同款呈现；2026-10-26：原独立账户页
@@ -2052,18 +2054,18 @@ final class BearyChromeViewController: UIViewController {
         settingsEdgeDismiss.attach(to: vc)
         vc.transitioningDelegate = settingsEdgeDismiss
         self.settingsEdgeDismiss = settingsEdgeDismiss
-        vc.onClose = { [weak vc] in vc?.dismiss(animated: true) }
+        vc.onClose = { [weak vc] in vc?.dismiss(animated: BearyMotion.animated(true)) }
         vc.onRequireLogin = { [weak self] in self?.presentLogin() }
         // C2：设置页通用组内「使用指南」行 → 教程重播页（原齿轮菜单项迁移）。
         vc.onShowTutorial = { [weak self] in self?.presentOnboarding(mode: .replay) }
         vc.onAccountDeleted = { [weak self, weak vc] in
             SessionManager.shared.clearLocalCookies()
             SessionManager.shared.signOutLocally()
-            vc?.dismiss(animated: true) {
+            vc?.dismiss(animated: BearyMotion.animated(true)) {
                 self?.showPage(.home)
             }
         }
-        topmostViewController().present(vc, animated: true)
+        topmostViewController().present(vc, animated: BearyMotion.animated(true))
     }
 
     /// 引导页弹出（v4 原生版，替代旧 6 页教程）：引导 UI 在
@@ -2099,13 +2101,13 @@ final class BearyChromeViewController: UIViewController {
             ]
         }
         vc.onStartWriting = { [weak self, weak vc] in
-            vc?.dismiss(animated: true) { self?.presentComposer() }
+            vc?.dismiss(animated: BearyMotion.animated(true)) { self?.presentComposer() }
         }
         vc.onEnterHome = { [weak self, weak vc] in
-            vc?.dismiss(animated: true) { self?.showPage(.home) }
+            vc?.dismiss(animated: BearyMotion.animated(true)) { self?.showPage(.home) }
         }
-        vc.onClosed = { [weak vc] in vc?.dismiss(animated: true) }
-        topmostViewController().present(vc, animated: true)
+        vc.onClosed = { [weak vc] in vc?.dismiss(animated: BearyMotion.animated(true)) }
+        topmostViewController().present(vc, animated: BearyMotion.animated(true))
     }
 
     /// 首次启动自动弹出：容器首次出现且 seen 未置位时弹一次；每进程只尝试一次，
@@ -2128,7 +2130,7 @@ final class BearyChromeViewController: UIViewController {
         trashEdgeDismiss.attach(to: vc)
         vc.transitioningDelegate = trashEdgeDismiss
         self.trashEdgeDismiss = trashEdgeDismiss
-        vc.onClose = { [weak self] in self?.dismiss(animated: true) }
+        vc.onClose = { [weak self] in self?.dismiss(animated: BearyMotion.animated(true)) }
         vc.onRequireLogin = { [weak self] in self?.presentLogin() }
         // TR-1（收尾）：恢复/彻底删除后刷新时间线、首页与我页（角标随时间线重拉更新）。
         vc.onRestored = { [weak self] _ in
@@ -2140,7 +2142,7 @@ final class BearyChromeViewController: UIViewController {
             self?.timelineVC?.refreshAfterDetailChange()
             self?.profileVC?.reloadProfile()
         }
-        present(vc, animated: true)
+        present(vc, animated: BearyMotion.animated(true))
     }
 
     /// 他人主页：全屏 modal + 关闭钮；点日记先关主页再开详情（关闭顺序与详情一致）。
@@ -2173,7 +2175,7 @@ final class BearyChromeViewController: UIViewController {
     /// P1-13：本人路由落点——已有 modal 在前时先关再切 .me，否则直接切 .me。
     private func routeToOwnProfile() {
         if presentedViewController != nil {
-            dismiss(animated: true) { [weak self] in self?.showPage(.me) }
+            dismiss(animated: BearyMotion.animated(true)) { [weak self] in self?.showPage(.me) }
         } else {
             showPage(.me)
         }
@@ -2183,7 +2185,7 @@ final class BearyChromeViewController: UIViewController {
         vc.title = "个人主页"
         vc.onOpenEntry = { [weak self] entry in
             // 6A：modal 他人主页里点卡片：先关 modal，再走 gotoEntry（同作者则回 .user 页定位）。
-            self?.dismiss(animated: true) {
+            self?.dismiss(animated: BearyMotion.animated(true)) {
                 self?.gotoEntry(entry: entry)
             }
         }
@@ -2203,11 +2205,11 @@ final class BearyChromeViewController: UIViewController {
         userProfileEdgeDismiss.attach(to: nav)
         nav.transitioningDelegate = userProfileEdgeDismiss
         self.userProfileEdgeDismiss = userProfileEdgeDismiss
-        present(nav, animated: true)
+        present(nav, animated: BearyMotion.animated(true))
     }
 
     @objc private func didTapUserProfileClose() {
-        dismiss(animated: true)
+        dismiss(animated: BearyMotion.animated(true))
     }
 
     // MARK: - 6A gotoEntry（详情页已删，卡片点开的唯一落点）
@@ -2322,7 +2324,7 @@ final class BearyChromeViewController: UIViewController {
         DiagFile.mark("presentComposer-authed")
         let c = BearyComposerViewController()
         c.onPublished = { [weak self] entryId in
-            self?.dismiss(animated: true) {
+            self?.dismiss(animated: BearyMotion.animated(true)) {
                 // 发帖落点是原生时间线，顺带刷新原生列表与时间线备下次回访。
                 // 64 包反馈修（第 3 项）：写新日记使统计失效（清签名 + 丢当月缓存），
                 // 否则 reloadTimeline 的非强制月份拉取命中旧缓存、统计恒旧。
@@ -2337,14 +2339,14 @@ final class BearyChromeViewController: UIViewController {
                 }
             }
         }
-        c.onCancelled = { [weak c] in c?.dismiss(animated: true) }
+        c.onCancelled = { [weak c] in c?.dismiss(animated: BearyMotion.animated(true)) }
         c.onRequireLogin = { [weak self] in
             self?.presentLogin()
         }
         configureComposerPresentation(c, forEdit: false)
         // 临时诊断（86 包，定根因后删除）：present 调用之前。
         DiagFile.mark("presentComposer-willPresent")
-        present(c, animated: true)
+        present(c, animated: BearyMotion.animated(true))
         // 临时诊断（81 包，定根因后删除）：present 调用已返回（动画是异步的，返回只证明调用本身没堵住）。
         DiagFile.mark("present-returned")
     }
@@ -2404,7 +2406,7 @@ final class BearyChromeViewController: UIViewController {
         let c = BearyComposerViewController(entry: entry)
         c.onUpdated = { [weak self, weak c] updated in
             guard let self = self else { return }
-            c?.dismiss(animated: true) {
+            c?.dismiss(animated: BearyMotion.animated(true)) {
                 self.feedVC?.applyEditedEntry(updated)
                 self.timelineVC?.refreshAfterDetailChange()
                 self.profileVC?.reloadProfile()
@@ -2415,7 +2417,7 @@ final class BearyChromeViewController: UIViewController {
             }
         }
         c.onCancelled = { [weak self, weak c] in
-            c?.dismiss(animated: true) {
+            c?.dismiss(animated: BearyMotion.animated(true)) {
                 self?.feedVC?.refreshFeed()
                 self?.timelineVC?.reloadTimeline()
             }
@@ -2424,7 +2426,7 @@ final class BearyChromeViewController: UIViewController {
             self?.presentLogin()
         }
         configureComposerPresentation(c, forEdit: true)
-        topmostViewController().present(c, animated: true)
+        topmostViewController().present(c, animated: BearyMotion.animated(true))
     }
 
     // MARK: - 审计 2 两侧 side-matrix 背景层（仅宽 ≥821）
@@ -2632,11 +2634,11 @@ private func bearyMenuGlassView() -> UIVisualEffectView {
     let view: UIVisualEffectView
     if #available(iOS 26.0, *) {
         let effect = UIGlassEffect()
-        effect.tintColor = BearyColors.bg.withAlphaComponent(0.52)
+        effect.tintColor = BearyColors.alpha(BearyColors.bg, 0.52)
         view = UIVisualEffectView(effect: effect)
     } else {
         view = UIVisualEffectView(effect: UIBlurEffect(style: .systemMaterial))
-        view.contentView.backgroundColor = BearyColors.bg.withAlphaComponent(0.52)
+        view.contentView.backgroundColor = BearyColors.alpha(BearyColors.bg, 0.52)
     }
     // 撤回批（2026-10-27）：外观卡背板只做视觉，永不拦截触摸；卡内开关/按钮在上层接管。
     view.isUserInteractionEnabled = false
@@ -2843,7 +2845,7 @@ private final class BearyComposerSheetPresentationController: UIPresentationCont
             let velocity = pan.velocity(in: container).y
             let height = sheetHeight > 0 ? sheetHeight : presentedView.bounds.height
             if translation > height * 0.25 || velocity > 800 {
-                presentedViewController.dismiss(animated: true)
+                presentedViewController.dismiss(animated: BearyMotion.animated(true))
             } else {
                 let restore = {
                     presentedView.transform = .identity

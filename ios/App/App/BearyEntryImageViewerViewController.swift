@@ -163,9 +163,21 @@ class BearyEntryImageViewerViewController: UIViewController, UIGestureRecognizer
     }
 
     private func clampPan() {
-        let lim = 120 * scale
-        tx = max(-lim, min(lim, tx))
-        ty = max(-lim, min(lim, ty))
+        // 1-1：按 imageView 缩放后尺寸与视口尺寸算限幅（原 120*scale 固定值
+        // 与图实际显示尺寸无关：小图放大后拖出大片黑边、大图边缘提前顶住）。
+        // imageView 全屏约束 + scaleAspectFit：显示尺寸 = 图按视口等比适配；
+        // 未加载出图时回退视口尺寸。transform 为平移后缩放，tx/ty 本身即
+        // 屏上点数，故限幅 = 缩放后尺寸超出视口的一半；图小于视口的轴钳为 0。
+        let viewport = view.bounds
+        var displayed = viewport.size
+        if let image = imageView.image, image.size.width > 0, image.size.height > 0, viewport.width > 0, viewport.height > 0 {
+            let fit = min(viewport.width / image.size.width, viewport.height / image.size.height)
+            displayed = CGSize(width: image.size.width * fit, height: image.size.height * fit)
+        }
+        let limX = max(0, (displayed.width * scale - viewport.width) / 2)
+        let limY = max(0, (displayed.height * scale - viewport.height) / 2)
+        tx = max(-limX, min(limX, tx))
+        ty = max(-limY, min(limY, ty))
     }
 
     private func updateCounter() {
@@ -354,7 +366,7 @@ class BearyEntryImageViewerViewController: UIViewController, UIGestureRecognizer
             panTy0 = ty
         } else if sender.state == .changed {
             if scale > 1 {
-                // 放大后平移，限幅 120*scale（网页 clampPan 口径）。
+                // 放大后平移，限幅按缩放后图尺寸算（见 clampPan）。
                 tx = panTx0 + translation.x
                 ty = panTy0 + translation.y
                 clampPan()
@@ -431,6 +443,13 @@ class BearyEntryImageViewerViewController: UIViewController, UIGestureRecognizer
                 self.imageView.image = self.neighborImageView.image
                 self.imageView.transform = .identity
                 self.hideNeighbor()
+                // 5-16（选 commit 内同步清态，不走 loadCurrent 重载闪图）：
+                // 相邻图既已成功显示，上一张的失败态必须同步清除，否则
+                // 成功图上仍压着“图片加载失败，重试”；loadingKey 同步
+                // 跟进为当前图 key，后续 loadCurrent 回包代次校验才对得上。
+                self.isFailed = false
+                self.retryLabel.isHidden = true
+                self.loadingKey = self.imageKeys[wrapped]
                 self.updateCounter()
                 self.prefetchAdjacent()
                 self.isNavigating = false

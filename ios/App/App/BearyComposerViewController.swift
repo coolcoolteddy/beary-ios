@@ -284,6 +284,10 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, U
     private var isColumnCentered = false
     /// 清单第 15 项：发布钮 / 草稿 pill 的显式宽度约束（点赞钮同款修法，见各自刷新函数）。
     private var publishWidthConstraint: NSLayoutConstraint?
+    /// 5-21：发布中 spinner 位宽（发布中态 title 左边距）：spinner 图 18 + 与标题间隙 6。
+    /// 赋值点（refreshPublishBusyState）与宽度重算注释（refreshPublishButtonWidth）两处同引本常量，
+    /// 不再各自写死 24；宽度重算本身仍读 live 的 titleEdgeInsets（常态 6 / 发布中态本常量）。
+    private static let publishSpinnerTitleInset: CGFloat = 24
     private var draftPillWidthConstraint: NSLayoutConstraint?
     private let toolbarSeparator = UIView()
     private let imageToolButton = BearyHit44Button(type: .system)
@@ -335,13 +339,11 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, U
     // C1：正文中部“引用一篇日记”全宽大按钮已删，引用唯一入口改工具栏引用钮；
     // 无引用时 quoteSection 只剩隐藏的 lite 卡与已删行，栈自动塌掉不留空位。
     private let quoteSection = UIStackView()
-    private let quoteCard = UIView()
-    private let quoteDeliveringPill = UILabel()
-    private let quoteContentLabel = UILabel()
-    private let quoteDateLabel = UILabel()
-    private let quoteImagesScrollView = UIScrollView()
-    private let quoteImagesStackView = UIStackView()
-    private let quoteCardBottomLine = UIView()
+    /// 2-4+8-10（fixall-composer）：引用区复用共享 BearyQuoteCardView，自绘卡已删；
+    /// 字号 13.5 / 图高 42 / 圆角 8 / 左 3pt 线随共享卡走。移除钮不进卡内，叠加在外层 wrap 上，
+    /// 故卡本身点按不进详情（onTapped/onRetryTapped 均不接，见 buildQuoteSection）。
+    private let quoteCardWrap = UIView()
+    private let quoteCard = BearyQuoteCardView()
     private let quoteCardRemoveButton = BearyHit44Button(type: .system)
     /// 引用已删态行：灰字“引用的日记已删除”+ 右端“移除”钮（lite 卡隐藏时仍可清除引用，
     /// 否则已删引用会堵住引用入口，用户无法再选引用）。
@@ -775,7 +777,8 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, U
         publishButton.setImage(BearyIconImages.image(named: "icon_send", pointSize: 22), for: .normal)
         publishButton.contentEdgeInsets = UIEdgeInsets(top: 0, left: 12, bottom: 0, right: 12)
         publishButton.titleEdgeInsets = UIEdgeInsets(top: 0, left: 6, bottom: 0, right: 0)
-        publishButton.layer.cornerRadius = 20
+        // 8-11：发布钮为 pill，高 44 的一半取 22（原 20 与高不成 pill 口径）。
+        publishButton.layer.cornerRadius = 22
         publishButton.layer.masksToBounds = true
         publishButton.addTarget(self, action: #selector(didTapPublish), for: .touchUpInside)
         // 发布中 spinner：平时停在发送图标位，发布/保存中时替下发送图标转圈（E3-4）。
@@ -811,6 +814,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, U
             topSeparator.leadingAnchor.constraint(equalTo: topBar.leadingAnchor),
             topSeparator.trailingAnchor.constraint(equalTo: topBar.trailingAnchor),
             topSeparator.bottomAnchor.constraint(equalTo: topBar.bottomAnchor),
+            // 8-4 例外：编辑器顶栏分隔线保持 0.5pt（iOS 细线惯例），不收进 1pt 行间分隔档。
             topSeparator.heightAnchor.constraint(equalToConstant: 0.5),
         ])
         // 清单第 15 项：发布钮显式宽度约束（初值由 refreshPublishButtonWidth 按当前标题算出，
@@ -825,7 +829,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, U
     /// 发布钮显式宽度（点赞钮同款修法）：UIButton 固有宽不含 titleEdgeInsets，
     /// 前沿自由的按钮按固有宽给帧时，标题会被左边距吃掉尾部（常态 6pt、发布中态 24pt，
     /// 后者会把“发布中…”裁成残字）。宽度按实测字宽重算：左右 content 边距 +
-    /// 图宽 + 左右 title 边距 + 字宽；发布中态图为 nil、title 左边距 24 已含 spinner 位。
+    /// 图宽 + 左右 title 边距 + 字宽；发布中态图为 nil、title 左边距取 publishSpinnerTitleInset 已含 spinner 位。
     private func refreshPublishButtonWidth() {
         let title = publishButton.title(for: .normal) ?? ""
         let titleWidth = ceil((title as NSString).size(withAttributes: [NSAttributedString.Key.font: UIFont.systemFont(ofSize: 14)]).width)
@@ -933,7 +937,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, U
         textView.textContainerInset = UIEdgeInsets(top: 0, left: 0, bottom: 0, right: 0)
         placeholderLabel.text = "记录今天…"
         placeholderLabel.font = UIFont.systemFont(ofSize: 16)
-        placeholderLabel.textColor = BearyColors.gray.withAlphaComponent(0.7)
+        placeholderLabel.textColor = BearyColors.alpha(BearyColors.gray, 0.7)
         textView.translatesAutoresizingMaskIntoConstraints = false
         placeholderLabel.translatesAutoresizingMaskIntoConstraints = false
         contentStack.addArrangedSubview(textView)
@@ -1392,7 +1396,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, U
         // D-G8：网页 .addr-x 图标 11px（钮框仍 18），原 12 改 11。
         recipientClearButton.setImage(BearyIconImages.image(named: "icon_close", pointSize: 11), for: .normal)
         recipientClearButton.tintColor = BearyColors.gray
-        recipientClearButton.backgroundColor = BearyColors.ink.withAlphaComponent(0.10)
+        recipientClearButton.backgroundColor = BearyColors.alpha(BearyColors.ink, 0.10)
         recipientClearButton.layer.cornerRadius = 9
         recipientClearButton.layer.masksToBounds = true
         recipientClearButton.addTarget(self, action: #selector(didTapClearRecipient), for: .touchUpInside)
@@ -1562,45 +1566,28 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, U
     }
 
     // MARK: - 引用 lite 卡（网页 diaryCardLite：头像 40 + 名 + 正文 + 图片 +
-    // 未公开时“投递中”pill + 右上 ×；编辑模式引用可改可删，× 同样显示）
+    // 未公开时“投递中”pill + 外层 ×（fixall-composer：卡已复用共享卡，× 在 wrap 层）；
+    // 编辑模式引用可改可删，× 同样显示）
 
     private func buildQuoteSection() {
         quoteSection.axis = .vertical
         quoteSection.spacing = 0
-        // D-G3：编辑器引用卡 = 网页 quoteChip 外框（1px line 边框、圆角 14），
-        // 不再是 qp-card 的无圆角 + 底部单线；底线随整框边框改单线框后隐藏，
-        // 避免底边双线。头像/名不加回（Li 已拍板 lite 卡去头像名）。
-        quoteCard.layer.cornerRadius = 14
-        quoteCard.layer.masksToBounds = true
-        quoteCard.layer.borderWidth = 1
-        quoteCard.layer.borderColor = BearyColors.line.cgColor
-        quoteCardBottomLine.isHidden = true
-        quoteCardBottomLine.backgroundColor = BearyColors.line
-        quoteDeliveringPill.setContentCompressionResistancePriority(.required, for: .horizontal)
-        quoteDeliveringPill.font = UIFont.systemFont(ofSize: 11, weight: .semibold)
-        quoteDeliveringPill.textColor = BearyColors.blue
-        quoteDeliveringPill.backgroundColor = BearyColors.alpha(BearyColors.blue, 0.13)
-        quoteDeliveringPill.textAlignment = .center
-        quoteDeliveringPill.layer.cornerRadius = 6
-        quoteDeliveringPill.layer.masksToBounds = true
-        quoteDeliveringPill.text = "投递中"
-        quoteContentLabel.numberOfLines = 0
-        quoteContentLabel.font = UIFont.systemFont(ofSize: 16.5)
-        quoteContentLabel.textColor = BearyColors.ink
-        quoteDateLabel.font = UIFont.systemFont(ofSize: 14)
-        quoteDateLabel.textColor = BearyColors.gray
-        quoteImagesScrollView.showsHorizontalScrollIndicator = false
-        quoteImagesStackView.axis = .horizontal
-        quoteImagesStackView.spacing = 8
-        quoteImagesStackView.alignment = .center
-        // 注意：网页 lite 卡右上角有 15px 的 ×（quoteChipX，移除引用），上一批误删后新建模式下已选引用无法清除，
-        // 本处按网页口径恢复：图标 15pt 位于卡片右上（top 8 / right 8），按钮框 28×28 居中套住图标以保证触摸区；
-        // 编辑模式引用锁定，不显示 ×。
+        // 2-4+8-10：引用区复用共享 BearyQuoteCardView，自绘卡（圆角 14 单线框、
+        // 正文 16.5、日期 14、图条高 118）已删；字号 13.5 / 图高 42 / 圆角 8 /
+        // 左 3pt 线 / faint 底随共享卡走。头像/名不加回（lite 卡去头像名口径不变）。
+        // 移除钮作为外层叠加：放在 wrap 层、不进共享卡内部；编辑模式引用仍可删
+        // （PUT 清 quote_id，见 didTapRemoveQuote），引用面板入口在编辑态仍锁定
+        // （见工具栏守卫），不动。位置注意：共享卡日期在行内右上角，若 × 叠在卡内
+        // 右上（原自绘卡 top 8 / right 8）会压住日期尾字，故卡右缩 36（钮宽 28 + 间隙 8），
+        // × 落在卡右侧条带、仍顶右对齐，卡内日期/正文/图条零遮挡。
+        // 编辑器内引用卡不导航：卡本身交互关闭（onTapped/onRetryTapped 均不接），
+        // 移除钮是 wrap 的兄弟视图，故关卡交互不影响移除点按。
+        quoteCard.isUserInteractionEnabled = false
         quoteCardRemoveButton.setImage(BearyIconImages.image(named: "icon_close", pointSize: 15), for: .normal)
         quoteCardRemoveButton.tintColor = BearyColors.gray
         quoteCardRemoveButton.addTarget(self, action: #selector(didTapRemoveQuote), for: .touchUpInside)
         quoteCardRemoveButton.bearyAddPressFeedback()
-        for v in [quoteSection, quoteCard, quoteDeliveringPill, quoteContentLabel, quoteDateLabel, quoteImagesScrollView, quoteImagesStackView, quoteCardBottomLine, quoteCardRemoveButton, quoteDeletedRow, quoteDeletedLabel, quoteDeletedRemoveButton] {
+        for v in [quoteSection, quoteCardWrap, quoteCard, quoteCardRemoveButton, quoteDeletedRow, quoteDeletedLabel, quoteDeletedRemoveButton] {
             v.translatesAutoresizingMaskIntoConstraints = false
         }
         // 已删态行（恢复用）：灰字 + “移除”钮，默认隐藏；见 refreshQuoteSection。
@@ -1623,67 +1610,28 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, U
         quoteDeletedRow.addArrangedSubview(quoteDeletedRemoveButton)
         quoteDeletedRow.isHidden = true
         contentStack.addArrangedSubview(quoteSection)
-        quoteSection.addArrangedSubview(quoteCard)
+        quoteSection.addArrangedSubview(quoteCardWrap)
         quoteSection.addArrangedSubview(quoteDeletedRow)
-        quoteCard.addSubview(quoteDeliveringPill)
-        quoteCard.addSubview(quoteContentLabel)
-        quoteCard.addSubview(quoteDateLabel)
-        quoteCard.addSubview(quoteImagesScrollView)
-        quoteImagesScrollView.addSubview(quoteImagesStackView)
-        quoteCard.addSubview(quoteCardBottomLine)
-        quoteCard.addSubview(quoteCardRemoveButton)
+        quoteCardWrap.addSubview(quoteCard)
+        quoteCardWrap.addSubview(quoteCardRemoveButton)
         NSLayoutConstraint.activate([
-            // 52 批：lite 卡不带头像名——pill 顶行贴卡左（原头像 40 + 名 54 链已删），日期/正文/图片条同贴卡左 14。
-            // D-G3：日期不再另起一行，改与 pill 同行（pill 可见时日期贴 pill 右 +8、与 pill 垂直居中；
-            // pill 隐藏时日期独占顶行 top 16 / leading 14）。日期的 top/leading 约束改由
-            // 下方持有的 quoteDate* 约束在 refreshQuoteSection 里按 pill 可见态切换，
-            // 此处不再静态激活 top/leading。
-            quoteDeliveringPill.topAnchor.constraint(equalTo: quoteCard.topAnchor, constant: 16),
-            quoteDeliveringPill.leadingAnchor.constraint(equalTo: quoteCard.leadingAnchor, constant: 14),
-            quoteDeliveringPill.heightAnchor.constraint(equalToConstant: 17),
-            quoteDateLabel.trailingAnchor.constraint(lessThanOrEqualTo: quoteCard.trailingAnchor, constant: -14),
-            quoteContentLabel.topAnchor.constraint(equalTo: quoteDateLabel.bottomAnchor, constant: 4),
-            quoteContentLabel.leadingAnchor.constraint(equalTo: quoteCard.leadingAnchor, constant: 14),
-            quoteContentLabel.trailingAnchor.constraint(equalTo: quoteCard.trailingAnchor, constant: -14),
-            quoteImagesScrollView.leadingAnchor.constraint(equalTo: quoteCard.leadingAnchor, constant: 14),
-            quoteImagesScrollView.trailingAnchor.constraint(equalTo: quoteCard.trailingAnchor, constant: -14),
-            quoteImagesScrollView.heightAnchor.constraint(equalToConstant: 118),
-            quoteImagesStackView.topAnchor.constraint(equalTo: quoteImagesScrollView.contentLayoutGuide.topAnchor),
-            quoteImagesStackView.bottomAnchor.constraint(equalTo: quoteImagesScrollView.contentLayoutGuide.bottomAnchor),
-            quoteImagesStackView.leadingAnchor.constraint(equalTo: quoteImagesScrollView.contentLayoutGuide.leadingAnchor),
-            quoteImagesStackView.trailingAnchor.constraint(equalTo: quoteImagesScrollView.contentLayoutGuide.trailingAnchor),
-            quoteImagesStackView.heightAnchor.constraint(equalTo: quoteImagesScrollView.frameLayoutGuide.heightAnchor),
-            quoteCardBottomLine.leadingAnchor.constraint(equalTo: quoteCard.leadingAnchor),
-            quoteCardBottomLine.trailingAnchor.constraint(equalTo: quoteCard.trailingAnchor),
-            quoteCardBottomLine.bottomAnchor.constraint(equalTo: quoteCard.bottomAnchor),
-            quoteCardBottomLine.heightAnchor.constraint(equalToConstant: 1),
-            // D-G3：× 改网页 quoteChipX 口径 top 8 / right 8（原 top 2 / right -2）。
-            quoteCardRemoveButton.topAnchor.constraint(equalTo: quoteCard.topAnchor, constant: 8),
-            quoteCardRemoveButton.trailingAnchor.constraint(equalTo: quoteCard.trailingAnchor, constant: -8),
+            quoteCard.topAnchor.constraint(equalTo: quoteCardWrap.topAnchor),
+            quoteCard.leadingAnchor.constraint(equalTo: quoteCardWrap.leadingAnchor),
+            // 卡右缩 36 给外层移除钮留条带（见上注：卡内叠 × 会压日期），钮仍顶右。
+            quoteCard.trailingAnchor.constraint(equalTo: quoteCardWrap.trailingAnchor, constant: -36),
+            quoteCard.bottomAnchor.constraint(equalTo: quoteCardWrap.bottomAnchor),
+            quoteCardRemoveButton.topAnchor.constraint(equalTo: quoteCardWrap.topAnchor, constant: 8),
+            quoteCardRemoveButton.trailingAnchor.constraint(equalTo: quoteCardWrap.trailingAnchor, constant: -8),
             quoteCardRemoveButton.widthAnchor.constraint(equalToConstant: 28),
             quoteCardRemoveButton.heightAnchor.constraint(equalToConstant: 28),
         ])
-        // 图片条链约束单独持有：无图时停用（见 refreshQuoteCardImages）。
-        quoteImagesTopConstraint = quoteImagesScrollView.topAnchor.constraint(equalTo: quoteContentLabel.bottomAnchor, constant: 10)
-        quoteImagesBottomConstraint = quoteImagesScrollView.bottomAnchor.constraint(equalTo: quoteCard.bottomAnchor, constant: -14)
-        quoteImagesTopConstraint?.isActive = true
-        quoteImagesBottomConstraint?.isActive = true
-        // pill 约束单独持有：仅可见时激活（见 refreshQuoteSection 的 D-8 切换）。
-        // 52 批：pill 贴卡左（原“名后 +8”链随名删除而改贴卡左 14），宽随倒计时文本撑开。
-        quotePillLeadingConstraint = quoteDeliveringPill.leadingAnchor.constraint(equalTo: quoteCard.leadingAnchor, constant: 14)
-        quotePillWidthConstraint = quoteDeliveringPill.widthAnchor.constraint(equalToConstant: 48)
-        quotePillTrailingConstraint = quoteDeliveringPill.trailingAnchor.constraint(lessThanOrEqualTo: quoteCardRemoveButton.leadingAnchor, constant: -8)
-        // D-G3：日期行约束（pill 可见时：与 pill 垂直居中 + pill 右 8；否则：顶行 top 16 + 卡左 14）。
-        quoteDateTopConstraint = quoteDateLabel.topAnchor.constraint(equalTo: quoteCard.topAnchor, constant: 16)
-        quoteDateLeadingAloneConstraint = quoteDateLabel.leadingAnchor.constraint(equalTo: quoteCard.leadingAnchor, constant: 14)
-        quoteDateLeadingWithPillConstraint = quoteDateLabel.leadingAnchor.constraint(equalTo: quoteDeliveringPill.trailingAnchor, constant: 8)
-        quoteDateCenterYConstraint = quoteDateLabel.centerYAnchor.constraint(equalTo: quoteDeliveringPill.centerYAnchor)
         refreshQuoteSection()
         contentStack.setCustomSpacing(0, after: quoteSection)
     }
 
     /// W2：带倒计时版“投递中”pill（与详情 countdownText 同口径：天 > 小时 > 分钟，分钟向上取整、至少 1 分钟）；
-    /// 无 publishAt 时回退 plain“投递中”。
+    /// 无 publishAt 时回退 plain“投递中”。引用面板行用它；共享卡内有逐字同口径的副本
+    /// （BearyQuoteCardView.countdownText），编辑器引用卡经 publishAt 入口走共享卡副本。
     private func quoteCountdownText(publishAt: Int?) -> String {
         guard let publishAt = publishAt else { return "投递中" }
         let remainMs = max(0, publishAt - Int(Date().timeIntervalSince1970 * 1000))
@@ -1696,121 +1644,37 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, U
     }
 
     /// 引用区状态：stack 内的隐藏项自动塌掉（UIStackView 口径），无需改约束。
-    /// 新建未选 → 挑按钮；新建已选 → lite 卡 + 右上 15px ×（网页 quoteChipX 口径，点即清除引用）；
-    /// 编辑 → 锁定的 lite 卡或都不显示（无 ×）。
-    /// 无图时图片条隐藏：此时正文底部直接贴卡底（图片条 bottom 约束与内容 bottom 约束冲突时
-    /// 以图片条隐藏为准——见下方 refreshQuoteCardImages 的约束切换）。
+    /// 新建未选 → 挑按钮；新建已选 → 共享卡 + 右上 15px ×（网页 quoteChipX 口径，点即清除引用）；
+    /// 编辑 → 锁定的共享卡（面板入口锁定，× 仍可删）或都不显示。
+    /// 共享卡口径变化（相对原自绘卡）：正文 13.5 且最多 3 行（原不限行 16.5）、
+    /// 图条 42（原 118）、日期走共享卡 feedTimeString（原 BearyText.timeString）、
+    /// 投递中 pill 经共享卡 publishAt 入口恢复倒计时（fixall-quote-countdown：
+    /// 有 publishAt 时“投递中 · 还剩 X 天/小时/分钟”，与 quoteCountdownText 同口径；
+    /// 草稿恢复/编辑锁定引用无 publishAt 时为 nil，回退 plain“投递中”，不推算）。
     private func refreshQuoteSection() {
         let quote = isEditMode ? lockedQuote : selectedQuote
-        // C6：编辑模式引用可改可删（有引用露 lite 卡 + ×，无引用则本区塌掉）；
+        // C6：编辑模式引用可改可删（有引用露共享卡 + ×，无引用则本区塌掉）；
         // 引用改走工具栏引用钮；写给仍锁定，不在此改。
         guard let shown = quote else {
-            quoteCard.isHidden = true
+            quoteCardWrap.isHidden = true
             quoteDeletedRow.isHidden = true
             updatePreferredContentSize()
             return
         }
         if shown.isDeleted {
-            // 已删态：不画 lite 卡（无作者/正文/图片可信），只留灰字行 + “移除”钮；
+            // 已删态：不画共享卡（无作者/正文/图片可信），只留灰字行 + “移除”钮；
             // 已删引用仍占槽位（清除后才可经工具栏引用钮再选）。
-            quoteCard.isHidden = true
+            quoteCardWrap.isHidden = true
             quoteDeletedRow.isHidden = false
             updatePreferredContentSize()
             return
         }
         quoteDeletedRow.isHidden = true
-        quoteCard.isHidden = false
-        // 52 批：lite 卡不带头像名——作者名/头像不再赋值（shown.authorName/authorAvatar 字段保留在模型里，不删）。
-        quoteDeliveringPill.isHidden = (shown.isPublic == true)
-        // W2：lite 卡 pill 统一为带倒计时版；倒计时文本变长时 pill 宽随文本撑开（原 48 固定宽只够“投递中”三字）。
-        let pillText = quoteCountdownText(publishAt: shown.publishAt)
-        quoteDeliveringPill.text = pillText
-        if let widthConstraint = quotePillWidthConstraint {
-            let textWidth = (pillText as NSString).size(withAttributes: [NSAttributedString.Key.font: UIFont.systemFont(ofSize: 11, weight: .semibold)]).width
-            widthConstraint.constant = ceil(textWidth) + 14
-        }
-        // D-8：pill 可见时才激活 leading/宽/trailing 三约束（pill 贴卡左 + × 左侧 -8；
-        // pill 隐藏时停用，日期行仍以 pill 底锚定（pill 帧仍在 16 高处，日期位置与原来名行下方一致），不留空位。
-        let pillVisible = !quoteDeliveringPill.isHidden
-        quotePillLeadingConstraint?.isActive = pillVisible
-        quotePillWidthConstraint?.isActive = pillVisible
-        quotePillTrailingConstraint?.isActive = pillVisible
-        // D-G3：日期与 pill 同行（pill 可见时）或独占顶行（pill 隐藏时）。
-        quoteDateCenterYConstraint?.isActive = pillVisible
-        quoteDateLeadingWithPillConstraint?.isActive = pillVisible
-        quoteDateTopConstraint?.isActive = !pillVisible
-        quoteDateLeadingAloneConstraint?.isActive = !pillVisible
-        // 正文 16.5、行高 1.75（28.9）。
-        let quoteParagraph = NSMutableParagraphStyle()
-        quoteParagraph.lineHeightMultiple = 1.75
-        quoteContentLabel.attributedText = NSAttributedString(string: shown.content, attributes: [.font: UIFont.systemFont(ofSize: 16.5), .foregroundColor: BearyColors.ink, .paragraphStyle: quoteParagraph])
-        if let ms = shown.createdAt {
-            quoteDateLabel.text = BearyText.timeString(ms: ms)
-        } else {
-            quoteDateLabel.text = nil
-        }
-        refreshQuoteCardImages(images: shown.images, dims: shown.imgDims)
+        quoteCardWrap.isHidden = false
+        // allowThumbs: true 沿用旧编辑器行为——已选引用在本地草稿预览中恒出图；
+        // 列表侧的 isPublic/本人门控不适用于编辑器预览（预览不出公开发布）。
+        quoteCard.configure(authorName: shown.authorName ?? "", authorAvatar: shown.authorAvatar, content: shown.content, images: shown.images, dims: shown.imgDims, createdAt: shown.createdAt, showDeliveringPill: shown.isPublic != true, allowThumbs: true, publishAt: shown.publishAt)
         updatePreferredContentSize()
-    }
-
-    /// lite 卡图片条：有图才显示；无图时把正文底部约束改贴卡底，避免留白。
-    /// 注意：隐藏的 UIView 约束仍生效，故无图时必须同时停用图片条的 top/bottom 约束，
-    /// 否则正文贴底约束与图片条链约束冲突。
-    private var quoteCardContentBottomConstraint: NSLayoutConstraint?
-    private var quoteImagesTopConstraint: NSLayoutConstraint?
-    private var quoteImagesBottomConstraint: NSLayoutConstraint?
-    /// D-8（52 批）：投递中 pill / 右上 × 的防重叠约束。pill 贴卡左 14；
-    /// pill 仅在可见时激活 leading（卡左 14）与 trailing（× 左侧 -8），不出界、
-    /// 不被卡片 masksToBounds 裁掉；pill 隐藏时停用其 leading/宽约束。
-    private var quotePillLeadingConstraint: NSLayoutConstraint?
-    private var quotePillWidthConstraint: NSLayoutConstraint?
-    private var quotePillTrailingConstraint: NSLayoutConstraint?
-    /// D-G3：日期行约束（见 buildQuoteSection 末尾创建与 refreshQuoteSection 切换）。
-    private var quoteDateTopConstraint: NSLayoutConstraint?
-    private var quoteDateLeadingAloneConstraint: NSLayoutConstraint?
-    private var quoteDateLeadingWithPillConstraint: NSLayoutConstraint?
-    private var quoteDateCenterYConstraint: NSLayoutConstraint?
-    private func refreshQuoteCardImages(images: [String], dims: [String: [Int]]?) {
-        for arranged in quoteImagesStackView.arrangedSubviews {
-            quoteImagesStackView.removeArrangedSubview(arranged)
-            arranged.removeFromSuperview()
-        }
-        if quoteCardContentBottomConstraint == nil {
-            quoteCardContentBottomConstraint = quoteContentLabel.bottomAnchor.constraint(equalTo: quoteCard.bottomAnchor, constant: -14)
-        }
-        guard let bottomConstraint = quoteCardContentBottomConstraint else { return }
-        if images.isEmpty {
-            quoteImagesScrollView.isHidden = true
-            quoteImagesTopConstraint?.isActive = false
-            quoteImagesBottomConstraint?.isActive = false
-            bottomConstraint.isActive = true
-        } else {
-            quoteImagesScrollView.isHidden = false
-            bottomConstraint.isActive = false
-            quoteImagesTopConstraint?.isActive = true
-            quoteImagesBottomConstraint?.isActive = true
-            for key in images {
-                let imageView = UIImageView()
-                imageView.translatesAutoresizingMaskIntoConstraints = false
-                imageView.contentMode = .scaleAspectFill
-                imageView.clipsToBounds = true
-                imageView.layer.cornerRadius = 10
-                imageView.layer.masksToBounds = true
-                if let url = BearyImageURLs.imageURL(key: key, thumb: true) {
-                    // B3-2：引用条高 118、宽 65–262 夹取，取上限 262 作下采样宽
-                    // （ImageIO 取最大边，262 覆盖宽高两向，不模糊）；查看器已传的不动。
-                    imageView.bearySetImage(url: url, placeholder: nil, downsampleToWidth: 262 * UIScreen.main.scale)
-                }
-                quoteImagesStackView.addArrangedSubview(imageView)
-                // 高 118、宽按原图比例（网页 stripW 口径：65–262 夹取）；无尺寸时兜底 153。
-                var thumbWidth: CGFloat = 153
-                if let dims = dims, let pair = dims[key], pair.count >= 2, pair[0] > 0, pair[1] > 0 {
-                    thumbWidth = min(262, max(65, round(118 * CGFloat(pair[0]) / CGFloat(pair[1]))))
-                }
-                imageView.widthAnchor.constraint(equalToConstant: thumbWidth).isActive = true
-                imageView.heightAnchor.constraint(equalToConstant: 118).isActive = true
-            }
-        }
     }
 
     /// C1：引用唯一入口为工具栏引用钮（见 didTapQuoteTool）；正文中部挑钮已删。
@@ -3101,7 +2965,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, U
         if isPublishing {
             publishButton.setTitle(isEditMode ? "保存中…" : "发布中…", for: .normal)
             publishButton.setImage(nil, for: .normal)
-            publishButton.titleEdgeInsets = UIEdgeInsets(top: 0, left: 24, bottom: 0, right: 0)
+            publishButton.titleEdgeInsets = UIEdgeInsets(top: 0, left: Self.publishSpinnerTitleInset, bottom: 0, right: 0)
             publishRingView.isHidden = false
             BearyIconMotion.startSpin(on: publishRingView, duration: 0.9, key: "bearyPublishSpin")
         } else {
@@ -3630,11 +3494,11 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, U
         config.selection = .ordered
         let picker = PHPickerViewController(configuration: config)
         picker.delegate = self
-        present(picker, animated: true)
+        present(picker, animated: BearyMotion.animated(true))
     }
 
     func picker(_ picker: PHPickerViewController, didFinishPicking results: [PHPickerResult]) {
-        picker.dismiss(animated: true)
+        picker.dismiss(animated: BearyMotion.animated(true))
         for result in results {
             if imageItems.count >= BearyComposerViewController.maxImages {
                 break
@@ -4688,7 +4552,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, U
                             self.deleteEditLocalFiles()
                             self.onCancelled?()
                         })
-                        self.present(alert, animated: true)
+                        self.present(alert, animated: BearyMotion.animated(true))
                     } else if case .network = error {
                         self.showAlert(message: "网络不可用，修改未保存，请联网后重试")
                     } else {
@@ -4785,6 +4649,8 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, U
             self.scrollView.scrollIndicatorInsets.bottom = height
             // 封顶重算走同一键盘曲线；layoutIfNeeded 使高度约束变化随键盘动画走，
             // 而非下一布局帧跳变。外层 inset 保留不动（供其他内容外层滚动）。
+            // 6-3 例外：本 layoutIfNeeded 在键盘动画内、duration/curve 均取键盘通知，
+            // 属系统曲线同步，保留不重写（不要当作通用约束动画口径扩散）。
             self.updateTextViewHeight()
             self.view.layoutIfNeeded()
             // 64 包反馈修（第 13 项）：不再给 textView 内层加键盘底 inset——旧代码内外两层
@@ -4822,7 +4688,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, U
     private func showAlert(message: String) {
         let alert = UIAlertController(title: nil, message: message, preferredStyle: .alert)
         alert.addAction(UIAlertAction(title: "确定", style: .default, handler: nil))
-        present(alert, animated: true)
+        present(alert, animated: BearyMotion.animated(true))
     }
 }
 

@@ -363,6 +363,12 @@ class BearyDiaryCardCell: UITableViewCell {
     /// L21（91 包）：仅展开/收起路径用——控制器改走 performBatchUpdates 平滑伸缩，
     /// 正文 0.22s 交叉淡入在 cell 内做；引用异步落位仍走 onNeedsRowReload。
     var onNeedsFoldAnimation: (() -> Void)?
+    /// fixall-cell 6-4：回应行高变化时的控制器 batch 口径（与折叠同款）。
+    /// 控制器接线后 renderEmotes(animatedLayout:) 不再在 cell 内播 flow 位移动画，
+    /// 而是调本回调、由控制器 performBatchUpdates 平滑伸缩行高；未接线时
+    /// （本分支单独合入前）仍走 cell 内原有 0.25s flow 位移动画，不回退为瞬变。
+    /// 减动效下两种路径均为直设终值。
+    var onNeedsEmoteRowAnimation: (() -> Void)?
 
     // MARK: 个人主页模式回调（cell 只转发，API 归控制器）
 
@@ -478,7 +484,7 @@ class BearyDiaryCardCell: UITableViewCell {
         v.contentMode = .scaleAspectFill
         v.clipsToBounds = true
         v.layer.cornerRadius = 20
-        v.backgroundColor = BearyColors.line.withAlphaComponent(0)
+        v.backgroundColor = BearyColors.alpha(BearyColors.line, 0)
         return v
     }()
 
@@ -549,7 +555,8 @@ class BearyDiaryCardCell: UITableViewCell {
     private let timeLabel: UILabel = {
         let lb = UILabel()
         lb.translatesAutoresizingMaskIntoConstraints = false
-        lb.font = UIFont.systemFont(ofSize: 13)
+        lb.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13))
+        lb.adjustsFontForContentSizeCategory = true
         lb.textColor = BearyColors.gray
         lb.numberOfLines = 1
         return lb
@@ -572,7 +579,8 @@ class BearyDiaryCardCell: UITableViewCell {
     private let moodLabel: UILabel = {
         let lb = UILabel()
         lb.translatesAutoresizingMaskIntoConstraints = false
-        lb.font = UIFont.systemFont(ofSize: 13)
+        lb.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13))
+        lb.adjustsFontForContentSizeCategory = true
         lb.textColor = BearyColors.gray
         lb.numberOfLines = 1
         return lb
@@ -641,7 +649,8 @@ class BearyDiaryCardCell: UITableViewCell {
     private lazy var foldButton: UIButton = {
         let btn = UIButton(type: .system)
         btn.translatesAutoresizingMaskIntoConstraints = false
-        btn.titleLabel?.font = UIFont.systemFont(ofSize: 14)
+        btn.titleLabel?.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 14))
+        btn.titleLabel?.adjustsFontForContentSizeCategory = true
         btn.setTitleColor(BearyColors.gray, for: .normal)
         btn.tintColor = BearyColors.gray
         btn.setImage(BearyFeedIconCache.image(named: "icon_chevron_down", pointSize: 14), for: .normal)
@@ -680,7 +689,8 @@ class BearyDiaryCardCell: UITableViewCell {
     private lazy var likeButton: UIButton = {
         let btn = BearyHit44Button(type: .system)
         btn.translatesAutoresizingMaskIntoConstraints = false
-        btn.titleLabel?.font = UIFont.systemFont(ofSize: 14)
+        btn.titleLabel?.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 14))
+        btn.titleLabel?.adjustsFontForContentSizeCategory = true
         btn.contentEdgeInsets = UIEdgeInsets.zero
         btn.titleEdgeInsets = UIEdgeInsets(top: 0, left: 6, bottom: 0, right: 0)
         btn.addTarget(self, action: #selector(likeButtonTapped), for: .touchUpInside)
@@ -794,8 +804,9 @@ class BearyDiaryCardCell: UITableViewCell {
         st.axis = .vertical
         st.alignment = .fill
         st.distribution = .fill
-        // 首页口径 spacing 0 + 逐行 customSpacing；个人主页口径 spacing 10 + 部分 customSpacing。
-        st.spacing = self.cardMode == .feed ? 0 : 10
+        // fixall-cell 2-2：两模式共用 spacing 0 + 一张对照表（见 updateRightStackSpacing），
+        // 不再靠个人页的基底 spacing 10 补 quote/images/action 三处空缺。
+        st.spacing = 0
         return st
     }()
 
@@ -950,10 +961,14 @@ class BearyDiaryCardCell: UITableViewCell {
             extraConstraints.append(weatherImageView.widthAnchor.constraint(equalToConstant: 15))
             extraConstraints.append(weatherImageView.heightAnchor.constraint(equalToConstant: 15))
         } else {
-            // 首页口径：收藏/分享带 2pt 内边距、无尺寸约束；标题行内可隐藏子视图
-            // 的固定尺寸用 999 优先级，避免与 stack 的零尺寸约束冲突出警告。
-            bookmarkButton.contentEdgeInsets = UIEdgeInsets(top: 2, left: 2, bottom: 2, right: 2)
-            shareButton.contentEdgeInsets = UIEdgeInsets(top: 2, left: 2, bottom: 2, right: 2)
+            // fixall-cell 8-12：首页收藏/分享与个人页同款 21×21 尺寸约束，
+            // 原 2pt 内边距依赖删除（内边距 + 无约束曾使图标框随内容浮动）。
+            // 标题行内可隐藏子视图的固定尺寸用 999 优先级，避免与 stack 的
+            // 零尺寸约束冲突出警告。
+            extraConstraints.append(bookmarkButton.widthAnchor.constraint(equalToConstant: 21))
+            extraConstraints.append(bookmarkButton.heightAnchor.constraint(equalToConstant: 21))
+            extraConstraints.append(shareButton.widthAnchor.constraint(equalToConstant: 21))
+            extraConstraints.append(shareButton.heightAnchor.constraint(equalToConstant: 21))
             let recipientIconHeight = recipientIconView.heightAnchor.constraint(equalToConstant: 13)
             recipientIconHeight.priority = UILayoutPriority(999)
             let badgeWidth = badgeImageView.widthAnchor.constraint(equalToConstant: 17)
@@ -1055,6 +1070,11 @@ class BearyDiaryCardCell: UITableViewCell {
         onAuthorTapped = nil
         onNeedsRowReload = nil
         onNeedsFoldAnimation = nil
+        onNeedsEmoteRowAnimation = nil
+        // fixall-cell 6-12：复用时清点赞残留态——爆点微粒层与填充淡入
+        // （0.55s 动画窗口内复用曾使微粒串位到新篇按钮上）。
+        BearyIconMotion.clearLikeBurst(on: likeButton)
+        BearyIconMotion.clearFillFade(on: likeButton)
         onContextMenuEdit = nil
         onContextMenuDelete = nil
         onLike = nil
@@ -1250,31 +1270,28 @@ class BearyDiaryCardCell: UITableViewCell {
         return 280
     }
 
+    /// fixall-cell 2-2：两模式共用一张对照表。收敛前差异逐项核查结果：
+    /// - 写给行后：feed 3 / profile 4，无网页口径引文 → 统一为 4。
+    /// - 正文后：feed 为折叠显 6 / 隐 10，profile 恒 6；但 profile 折叠隐藏时
+    ///   实际落点是基底 spacing 10，与 feed 隐 10 一致 → 统一为折叠显 6 / 隐 10。
+    /// - 折叠后：feed 显式 10，profile 落点基底 10 → 统一显式 10。
+    /// - 引用/图片/操作行后：两模式实际均为 10 → 统一显式 10。
+    /// - 顶距：feed 22（写给行可见 23）/ profile 14，代码内无网页口径引文，
+    ///   且 feed 顶距牵动已上线标题基线视觉，不擅自统一为 14；保留为唯一
+    ///   模式差异，列入真机清单（两页同屏对比顶距）待视觉确认后再定。
     private func updateRightStackSpacing() {
-        if cardMode == .feed {
-            // 写给行上边距 1：右列顶距 22，写给行可见时改为 23（其余行不变）。
-            rightStackTopConstraint?.constant = recipientRow.isHidden ? 22 : 23
-            rightStack.setCustomSpacing(3, after: recipientRow)
-            rightStack.setCustomSpacing(4, after: titleStack)
-            // R4 App：作者行→标题 4、标题→正文 4，均与原作者行→正文 4 一致；
-            // 标题隐藏时其后间距置 0（无论 stack 按前一可见项还是按累计算间距，
-            // 作者行→正文均为上行 4，不留空行高度）。
-            rightStack.setCustomSpacing(entryTitleLabel.isHidden ? 0 : 4, after: entryTitleLabel)
-            rightStack.setCustomSpacing(foldButton.isHidden ? 10 : 6, after: contentLabel)
-            rightStack.setCustomSpacing(10, after: foldButton)
-            rightStack.setCustomSpacing(10, after: quoteView)
-            rightStack.setCustomSpacing(10, after: imagesScrollView)
-            rightStack.setCustomSpacing(10, after: actionStack)
-        } else {
-            rightStackTopConstraint?.constant = 14
-            rightStack.setCustomSpacing(4, after: recipientRow)
-            rightStack.setCustomSpacing(4, after: titleStack)
-            // R4 App：同 feed，作者行→标题 4、标题→正文 4；标题隐藏时其后间距置 0，
-            // 作者行→正文仍为 4。
-            rightStack.setCustomSpacing(entryTitleLabel.isHidden ? 0 : 4, after: entryTitleLabel)
-            rightStack.setCustomSpacing(6, after: contentLabel)
-            rightStack.setCustomSpacing(0, after: foldButton)
-        }
+        rightStackTopConstraint?.constant = cardMode == .feed ? (recipientRow.isHidden ? 22 : 23) : 14
+        rightStack.setCustomSpacing(4, after: recipientRow)
+        rightStack.setCustomSpacing(4, after: titleStack)
+        // R4 App：作者行→标题 4、标题→正文 4，均与原作者行→正文 4 一致；
+        // 标题隐藏时其后间距置 0（无论 stack 按前一可见项还是按累计算间距，
+        // 作者行→正文均为上行 4，不留空行高度）。
+        rightStack.setCustomSpacing(entryTitleLabel.isHidden ? 0 : 4, after: entryTitleLabel)
+        rightStack.setCustomSpacing(foldButton.isHidden ? 10 : 6, after: contentLabel)
+        rightStack.setCustomSpacing(10, after: foldButton)
+        rightStack.setCustomSpacing(10, after: quoteView)
+        rightStack.setCustomSpacing(10, after: imagesScrollView)
+        rightStack.setCustomSpacing(10, after: actionStack)
     }
 
     /// 右列内容宽：头像列 20 + 40 + 间距 12，右 20，共 92。
@@ -1935,11 +1952,11 @@ class BearyDiaryCardCell: UITableViewCell {
         let imageWidth = heartImage?.size.width ?? 22
         if countValue <= 0 {
             likeButton.setTitle("0", for: .normal)
-            let zeroWidth = ceil(("0" as NSString).size(withAttributes: [NSAttributedString.Key.font: UIFont.systemFont(ofSize: 14)]).width)
+            let zeroWidth = ceil(("0" as NSString).size(withAttributes: [NSAttributedString.Key.font: likeButton.titleLabel?.font ?? BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 14))]).width)
             likeButtonWidthConstraint?.constant = imageWidth + 6 + zeroWidth
         } else {
             let titleText = "\(countValue)"
-            let titleWidth = ceil((titleText as NSString).size(withAttributes: [NSAttributedString.Key.font: UIFont.systemFont(ofSize: 14)]).width)
+            let titleWidth = ceil((titleText as NSString).size(withAttributes: [NSAttributedString.Key.font: likeButton.titleLabel?.font ?? BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 14))]).width)
             likeButton.setTitle(titleText, for: .normal)
             likeButtonWidthConstraint?.constant = imageWidth + 6 + titleWidth
         }
@@ -1951,25 +1968,28 @@ class BearyDiaryCardCell: UITableViewCell {
         refreshActionAccessibility()
     }
 
-    /// 点赞钮渲染（个人主页模式；原 configure 内联块抽出，口径一字不动）：
-    /// configure 与就地同步共用；同步侧先调它再播爆点，爆点不被 transform 复位打断。
+    /// 点赞钮渲染（个人主页模式；configure 与就地同步共用；同步侧先调它
+    /// 再播爆点，爆点不被 transform 复位打断）。
+    /// fixall-cell 8-9：未赞态统一为首页口径——未赞爱心墨色（ink，非灰）、
+    /// 计数灰、0 赞恒显“0”（原个人页：爱心与计数同灰、0 赞只剩图标）。
+    /// 已赞态两模式本来一致（爱心与计数同橙），不动。
     private func applyLikeButtonState(liked: Bool, count: Int) {
         let likedImageName = liked ? "icon_heart_fill" : "icon_heart"
         let likedImage = BearyFeedIconCache.image(named: likedImageName, pointSize: 22)
         likeButton.setImage(likedImage, for: .normal)
         let imageWidth = likedImage?.size.width ?? 22
         if count <= 0 {
-            likeButton.setTitle(nil, for: .normal)
-            likeButtonWidthConstraint?.constant = imageWidth
+            likeButton.setTitle("0", for: .normal)
+            let zeroWidth = ceil(("0" as NSString).size(withAttributes: [NSAttributedString.Key.font: likeButton.titleLabel?.font ?? BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 14))]).width)
+            likeButtonWidthConstraint?.constant = imageWidth + 6 + zeroWidth
         } else {
             let titleText = "\(count)"
-            let titleWidth = ceil((titleText as NSString).size(withAttributes: [NSAttributedString.Key.font: UIFont.systemFont(ofSize: 14)]).width)
+            let titleWidth = ceil((titleText as NSString).size(withAttributes: [NSAttributedString.Key.font: likeButton.titleLabel?.font ?? BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 14))]).width)
             likeButton.setTitle(titleText, for: .normal)
             likeButtonWidthConstraint?.constant = imageWidth + 6 + titleWidth
         }
-        let likeColor = liked ? BearyColors.orange : BearyColors.gray
-        likeButton.tintColor = likeColor
-        likeButton.setTitleColor(likeColor, for: .normal)
+        likeButton.tintColor = liked ? BearyColors.orange : BearyColors.ink
+        likeButton.setTitleColor(liked ? BearyColors.orange : BearyColors.gray, for: .normal)
         likeButton.imageView?.transform = .identity
         refreshActionAccessibility()
     }
@@ -1991,11 +2011,11 @@ class BearyDiaryCardCell: UITableViewCell {
         BearyIconMotion.animateIconScale(on: likeButton, to: 0.8)
     }
 
-    /// 取消赞预态（个人主页模式；首页 applyPreUnlike 同款，颜色按本页口径：未赞灰色）：
-    /// 先换空心图 + 灰色 + 缩 .8，失败由控制器 reload 复原。
+    /// 取消赞预态（个人主页模式；首页 applyPreUnlike 同款，8-9 统一后未赞爱心为墨色）：
+    /// 先换空心图 + 墨色 + 缩 .8，失败由控制器 reload 复原。
     private func applyCellPreUnlike() {
         likeButton.setImage(BearyFeedIconCache.image(named: "icon_heart", pointSize: 22), for: .normal)
-        likeButton.tintColor = BearyColors.gray
+        likeButton.tintColor = BearyColors.ink
         likeButton.setTitleColor(BearyColors.gray, for: .normal)
         BearyIconMotion.animateIconScale(on: likeButton, to: 0.8)
     }
@@ -2392,10 +2412,16 @@ class BearyDiaryCardCell: UITableViewCell {
     // MARK: - 回应行（网页 .emote-row 口径；两页统一流式换行）
 
     /// 回应行高（首页模式）：flow 实测换行高；行宽取 flow 实测宽，落位前用右列宽估算。
+    /// fixall-cell 5-18（cell 侧）：行高约束只在变化超 0.5pt 时写（原判等保留并
+    /// 收紧为 0.5pt 门限，与引用卡同款，防布局抖动反复写约束）。
+    /// 注意：height(forWidth:) 与 BearyEmoteFlowView.layoutSubviews 的双份换行
+    /// 算法抽取需改 BearyEmoteFlowView.swift，不在本批三个文件内，未动；
+    /// 请协调人另派该文件（两处循环除设 frame 外完全一致，抽成同一
+    /// layoutItems(forWidth:) 即可，cell 侧调用口径不变）。
     private func updateEmoteRowHeight() {
         let width = emoteFlowView.bounds.width > 0 ? emoteFlowView.bounds.width : rightColumnWidthEstimate()
         let height = emoteFlowView.height(forWidth: width)
-        if emoteRowHeightConstraint?.constant != height {
+        if let current = emoteRowHeightConstraint?.constant, abs(current - height) > 0.5 {
             emoteRowHeightConstraint?.constant = height
         }
     }
@@ -2574,12 +2600,18 @@ class BearyDiaryCardCell: UITableViewCell {
         updateEmoteInteractivity()
         // 用户动作位移：+ 钮与已存 chip 随新布局帧动画滑到新位（只动位置，
         // 不重播已有 chip；新 chip 的出现动画由 playChipIn 另播，不冲突）。
-        // 减动效下瞬时布局；行高约束本身瞬时改（换行数变化时行高仍瞬变，
-        // 仅行内横向移位带动画）。
+        // fixall-cell 6-4：行高变化走控制器 performBatchUpdates（折叠同款口径）——
+        // 控制器接线 onNeedsEmoteRowAnimation 后，此处只调回调、不再播 cell 内
+        // flow 位移动画（batch 内行高与 chip 位置同动画，防双动画叠加）；
+        // 未接线时保留原有 0.25s flow 位移动画；减动效下两种路径均为直设终值。
         if animatedLayout, UIAccessibility.isReduceMotionEnabled == false {
-            emoteFlowView.setNeedsLayout()
-            UIView.animate(withDuration: 0.25, delay: 0, options: [.curveEaseOut]) {
-                self.emoteFlowView.layoutIfNeeded()
+            if let batchAnimation = onNeedsEmoteRowAnimation {
+                batchAnimation()
+            } else {
+                emoteFlowView.setNeedsLayout()
+                UIView.animate(withDuration: 0.25, delay: 0, options: [.curveEaseOut]) {
+                    self.emoteFlowView.layoutIfNeeded()
+                }
             }
         }
     }

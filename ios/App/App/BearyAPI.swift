@@ -10,7 +10,10 @@ import Foundation
 
 enum APIError: Error {
     case network(Error)
-    case http(Int)
+    /// 5-31：非标准错误体时也携带服务端原始信息片段（截断后，供 toast/日志
+    /// 用；分流不变，仍是 .http 不升 .server）。标准错误体仍走 .server(码)。
+    /// 无片段时为 nil；现有裸 `case .http:` 匹配不受第二值影响。
+    case http(Int, String?)
     case server(String)
     case decoding(Error)
     case unauthorized
@@ -372,12 +375,26 @@ final class BearyAPI {
         }
     }
 
+    /// 5-28 端点超时（只覆盖上传与发布两个长耗时端点，其余走 URLSession 默认 60s）：
+    /// 上传为 base64 dataURL 大体（原图 ≤5MB + 缩略图 ≤2MB，编码后更大），
+    /// 慢网下默认 60s 不够；发布体小但服务端落库 + 幂等校验，同样放宽。
+    /// 显式 timeout 参数优先于本表；上传/发布方法本体在 BearyNativeCommon
+    /// 的 BearyAPI 扩展里，调用方不传 timeout 即自动命中本表，无需改调用方。
+    private static let uploadTimeout: TimeInterval = 180
+    private static let publishTimeout: TimeInterval = 120
+    private func defaultTimeout(for path: String, method: String) -> TimeInterval? {
+        if method == "POST" && path == "/beary/api/images/upload" { return Self.uploadTimeout }
+        if method == "POST" && path == "/beary/api/entries" { return Self.publishTimeout }
+        return nil
+    }
+
     // 原始请求：只负责发请求，不做业务映射
     private func perform(
         _ path: String,
         query: [String: String] = [:],
         method: String = "GET",
         jsonBody: [String: Any]? = nil,
+        timeout: TimeInterval? = nil,
         completion: @escaping (Data?, Int, Error?) -> Void
     ) -> URLSessionDataTask? {
         guard var url = URL(string: path, relativeTo: Self.baseURL)?.absoluteURL else {
@@ -391,6 +408,9 @@ final class BearyAPI {
         }
         var req = URLRequest(url: url)
         req.httpMethod = method
+        if let t = timeout ?? defaultTimeout(for: path, method: method) {
+            req.timeoutInterval = t
+        }
         req.setValue("https://teddyhn.com", forHTTPHeaderField: "Origin")
         if let body = jsonBody {
             req.setValue("application/json", forHTTPHeaderField: "Content-Type")
@@ -419,9 +439,39 @@ final class BearyAPI {
             if let data = data, let eb = try? decoder.decode(ServerErrorBody.self, from: data), let code = eb.error {
                 return .server(code)
             }
-            return .http(status)
+            return .http(status, errorSnippet(from: data))
         }
         return nil
+    }
+
+    /// 5-31：非标准错误体的原始信息片段（截断 120 字，供 toast/日志用）。
+    /// 优先体里的 message / error 文本（error 码已在上层升 .server 时用过，
+    /// 走到这里说明 error 为空，此时 message 仍有价值），否则原始体文本；
+    /// 空体 / 非文本体返回 nil。只做信息携带，不改任何分流。
+    private func errorSnippet(from data: Data?) -> String? {
+        guard let data = data, !data.isEmpty else { return nil }
+        if let eb = try? decoder.decode(ServerErrorBody.self, from: data) {
+            for text in [eb.message, eb.error] {
+                if let t = text?.trimmingCharacters(in: .whitespacesAndNewlines), !t.isEmpty {
+                    return String(t.prefix(120))
+                }
+            }
+        }
+        guard let raw = String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !raw.isEmpty else { return nil }
+        return String(raw.prefix(120))
+    }
+
+    /// 5-28 发布重试可重试的失败：网络失败（请求未达或回包丢失，服务端
+    /// 即使已落库也有 clientReq 幂等兜底）与 5xx。401 / 404 / 业务码
+    /// （create_dup 等）/ 解析失败不重试：前者重发无意义且 401 回调不得
+    /// 重复触发，后者靠调用方手动重试（草稿 clientReq 全程复用）。
+    private static func isTransientPublishError(_ error: APIError) -> Bool {
+        switch error {
+        case .network: return true
+        case .http(let status, _): return status >= 500
+        default: return false
+        }
     }
 
     @discardableResult
@@ -431,17 +481,47 @@ final class BearyAPI {
         method: String = "GET",
         jsonBody: [String: Any]? = nil,
         suppressUnauthorized: Bool = false,
+        timeout: TimeInterval? = nil,
         completion: @escaping (Result<T, APIError>) -> Void
     ) -> URLSessionDataTask? {
         let epoch = authEpoch
-        return perform(path, query: query, method: method, jsonBody: jsonBody) { [weak self] data, status, error in
+        // 5-28：发布（POST /beary/api/entries，publishEntry 唯一调用方）自动
+        // 重试一次；上传（POST /beary/api/images/upload）只加超时、不重试
+        // （重发会重复落图）。返回值是首发任务，重试任务不经返回值返回
+        // （发布流程不中途取消在途请求）；epoch 沿用首发值，账户已切换时
+        // 重试回包的 401 同样被 epoch 守卫压住，不踢新号。
+        let retryTransientOnce = (method == "POST" && path == "/beary/api/entries")
+        return requestAttempt(path, query: query, method: method, jsonBody: jsonBody,
+                              suppressUnauthorized: suppressUnauthorized, timeout: timeout,
+                              epoch: epoch, retriesLeft: retryTransientOnce ? 1 : 0,
+                              completion: completion)
+    }
+
+    private func requestAttempt<T: Decodable>(
+        _ path: String,
+        query: [String: String],
+        method: String,
+        jsonBody: [String: Any]?,
+        suppressUnauthorized: Bool,
+        timeout: TimeInterval?,
+        epoch: Int,
+        retriesLeft: Int,
+        completion: @escaping (Result<T, APIError>) -> Void
+    ) -> URLSessionDataTask? {
+        return perform(path, query: query, method: method, jsonBody: jsonBody, timeout: timeout) { [weak self] data, status, error in
             guard let self = self else { return }
             if let apiErr = self.mapStatus(status, data: data, error: error, suppressUnauthorized: suppressUnauthorized, epoch: epoch) {
+                if retriesLeft > 0 && Self.isTransientPublishError(apiErr) {
+                    _ = self.requestAttempt(path, query: query, method: method, jsonBody: jsonBody,
+                                            suppressUnauthorized: suppressUnauthorized, timeout: timeout,
+                                            epoch: epoch, retriesLeft: retriesLeft - 1, completion: completion)
+                    return
+                }
                 completion(.failure(apiErr))
                 return
             }
             guard let data = data else {
-                completion(.failure(.http(status)))
+                completion(.failure(.http(status, nil)))
                 return
             }
             do {
@@ -577,7 +657,7 @@ final class BearyAPI {
                 return
             }
             if !(200...299).contains(status) {
-                completion(.failure(.http(status)))
+                completion(.failure(.http(status, self.errorSnippet(from: data))))
                 return
             }
             completion(.failure(.decoding(NSError(domain: "BearyAPI", code: -1, userInfo: nil))))
@@ -593,7 +673,7 @@ final class BearyAPI {
             if let message = body.message, !message.isEmpty { return .server(message) }
             if let code = body.error, !code.isEmpty { return .server(code) }
         }
-        return .http(status)
+        return .http(status, errorSnippet(from: data))
     }
 
     /// 登出：网页 pmLogout 走 POST /beary/api/logout（beary Worker，清会话并清 cookie），
@@ -632,7 +712,7 @@ final class BearyAPI {
                 return
             }
             if !(200...299).contains(status) {
-                completion(.failure(.http(status)))
+                completion(.failure(.http(status, self.errorSnippet(from: data))))
                 return
             }
             completion(.failure(.decoding(NSError(domain: "BearyAPI", code: -1, userInfo: nil))))

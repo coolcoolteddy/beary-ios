@@ -2,8 +2,9 @@ import UIKit
 
 /// B 批统一轻提示：此前 10 处 toast 各写一套（圆角 20/16/12、内边距
 /// 8/16、9/16、10/14、12/16、时长 1.6/2.0/2.2 分裂，且 10 处 bottom 全是
-/// -158、含无 FAB 的页），本组件收敛为一处。Feed/Profile 的 toast 不在此
-/// 改（卡片线另有专人，合并卡片时统一委托）。
+/// -158、含无 FAB 的页），本组件收敛为一处。Feed/Profile 现已广泛调用
+/// 本组件（Feed 8 处、Profile 9 处），落点由调用方 aboveFAB 决定；
+/// 旧“Feed/Profile 的 toast 不在此改”表述已过期，2026-10-28 全修批删改。
 ///
 /// 统一样式：ink 底、bg 字、14pt medium、内边距 top 10 / left 18 /
 /// bottom 10 / right 18、两侧留 20pt 上限、居中；胶囊圆角取半高
@@ -33,6 +34,9 @@ enum BearyToast {
                 equalTo: container.safeAreaLayoutGuide.bottomAnchor,
                 constant: aboveFAB ? -158 : -32),
         ])
+        // 8-8：VoiceOver 播报——toast 仅为普通 UIView + UILabel 时 VoiceOver
+        // 用户可能错过反馈，显示时同步发 announcement（减动效与否同播）。
+        UIAccessibility.post(notification: .announcement, argument: message)
         if UIAccessibility.isReduceMotionEnabled {
             toast.alpha = 1
             DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {

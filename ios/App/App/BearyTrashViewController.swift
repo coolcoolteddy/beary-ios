@@ -19,10 +19,10 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate {
 
     /// 未登录（401）时调用：调用方接登录页（与详情/列表页的 onRequireLogin 同口径）。
     var onRequireLogin: (() -> Void)?
-    /// 关闭钮回调；为 nil 时不显示关闭钮（由调用方的导航栏返回负责关闭）。
-    /// didSet 即时刷新显隐：调用方在呈现后才接线时，按钮不再等到下次出现才现身。
+    /// 关闭钮回调；7-5 常驻：为 nil 时不再藏钮（未来调用点漏接线即无按钮页），
+    /// 点按走默认 dismiss；didSet 不再改显隐。
     var onClose: (() -> Void)? {
-        didSet { closeButton.isHidden = onClose == nil }
+        didSet { closeButton.isHidden = false }
     }
     /// TR-1：恢复/彻底删除成功后通知容器（容器接线由总协调收尾，本页只留回调）：
     /// 容器收到后应刷新时间线、回收站角标与日历圆点/统计（网页 restoreTrash /
@@ -87,8 +87,8 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate {
 
     override func viewWillAppear(_ animated: Bool) {
         super.viewWillAppear(animated)
-        // 关闭钮只在调用方给了 onClose 时出现（调用方可能在呈现后才接线）。
-        closeButton.isHidden = onClose == nil
+        // 7-5：关闭钮常驻，不再随 onClose 有无显隐。
+        closeButton.isHidden = false
     }
 
     override func viewDidLayoutSubviews() {
@@ -158,7 +158,7 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate {
         titleLabel.text = "回收站"
         titleLabel.font = UIFont.boldSystemFont(ofSize: 16)
         titleLabel.textColor = BearyColors.ink
-        closeButton.isHidden = true
+        closeButton.isHidden = false
         if let closeImage = BearyIconImages.image(named: "icon_close", pointSize: 15) {
             closeButton.setImage(closeImage, for: .normal)
         } else {
@@ -175,12 +175,13 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate {
         closeButton.addTarget(self, action: #selector(closeTapped), for: .touchUpInside)
         closeButton.bearyAddPressFeedback()
 
-        noteLabel.font = UIFont.systemFont(ofSize: 12.5)
+        noteLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 12.5))
+        noteLabel.adjustsFontForContentSizeCategory = true
         noteLabel.textColor = BearyColors.gray
         noteLabel.numberOfLines = 0
         noteLabel.attributedText = TrashText.lineSpaced(
             text: "删除的日记在这里保留 30 天，到期自动彻底删除。",
-            fontSize: 12.5,
+            font: BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 12.5)),
             lineHeightMultiple: 1.6,
             color: BearyColors.gray
         )
@@ -327,7 +328,12 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate {
     // MARK: - 交互
 
     @objc private func closeTapped() {
-        onClose?()
+        // 7-5：无 onClose 时默认 dismiss，不留无出口页（现行容器有接线，走原回调）。
+        if let handler = onClose {
+            handler()
+        } else {
+            dismiss(animated: UIAccessibility.isReduceMotionEnabled == false, completion: nil)
+        }
     }
 
     @objc private func retryTapped() {
@@ -654,20 +660,22 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate {
 
         let summaryLabel = UILabel()
         summaryLabel.numberOfLines = 2
-        summaryLabel.font = UIFont.systemFont(ofSize: 16)
+        summaryLabel.font = BearyDynamicType.diaryBodyFont()
+        summaryLabel.adjustsFontForContentSizeCategory = true
         summaryLabel.textColor = BearyColors.ink
         // P3-3：日记摘要长串按字符断行，不溢出；字号行高不动（富文本段落同步见 TrashText.lineSpaced）。
         summaryLabel.lineBreakMode = .byCharWrapping
         summaryLabel.attributedText = TrashText.lineSpaced(
             text: trashValue.content ?? "",
-            fontSize: 16,
+            font: BearyDynamicType.diaryBodyFont(),
             lineHeightMultiple: 1.6,
             color: BearyColors.ink
         )
 
         let metaLabel = UILabel()
         metaLabel.numberOfLines = 0
-        metaLabel.font = UIFont.systemFont(ofSize: 13)
+        metaLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13))
+        metaLabel.adjustsFontForContentSizeCategory = true
         metaLabel.textColor = BearyColors.gray
         metaLabel.text = TrashText.metaLine(trashValue: trashValue)
 
@@ -680,7 +688,7 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate {
         restoreButton.setTitle("恢复", for: .normal)
         // C2：恢复钮文字与图标走 ink（此前错用蓝色）；彻底删除保持红。
         restoreButton.setTitleColor(BearyColors.ink, for: .normal)
-        if let undoImage = BearyIconImages.image(named: "icon_undo", pointSize: 14) {
+        if let undoImage = BearyIconImages.image(named: "icon_undo", pointSize: 21) {
             restoreButton.setImage(undoImage, for: .normal)
         }
         restoreButton.imageView?.contentMode = .scaleAspectFit
@@ -702,7 +710,7 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate {
             ceil(("恢复" as NSString).size(withAttributes: [NSAttributedString.Key.font: UIFont.systemFont(ofSize: 13)]).width),
             ceil(("恢复中…" as NSString).size(withAttributes: [NSAttributedString.Key.font: UIFont.systemFont(ofSize: 13)]).width)
         )
-        restoreButton.widthAnchor.constraint(equalToConstant: (restoreButton.currentImage?.size.width ?? 14) + 5 + restoreTitleWidth + 28).isActive = true
+        restoreButton.widthAnchor.constraint(equalToConstant: (restoreButton.currentImage?.size.width ?? 21) + 5 + restoreTitleWidth + 28).isActive = true
 
         let spacerView = UIView()
         spacerView.setContentHuggingPriority(.defaultLow, for: .horizontal)
@@ -918,13 +926,13 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate {
 
 private enum TrashText {
 
-    static func lineSpaced(text: String, fontSize: CGFloat, lineHeightMultiple: CGFloat, color: UIColor) -> NSAttributedString {
+    static func lineSpaced(text: String, font: UIFont, lineHeightMultiple: CGFloat, color: UIColor) -> NSAttributedString {
         let style = NSMutableParagraphStyle()
         style.lineHeightMultiple = lineHeightMultiple
         // P3-3：富文本段落样式会覆盖 label 的 lineBreakMode，此处同步按字符断行（字号行高不动）。
         style.lineBreakMode = .byCharWrapping
         let attributes: [NSAttributedString.Key: Any] = [
-            .font: UIFont.systemFont(ofSize: fontSize),
+            .font: font,
             .foregroundColor: color,
             .paragraphStyle: style,
         ]

@@ -10,8 +10,8 @@ import UIKit
 // 页面元素（对照网页版登录框 beary.html 的 lgm 系列）：邮箱输入 + 获取验证码 +
 // 6 位验证码输入 + 邀请码输入（选填）+ 隐私协议复选框 + 登录钮 + 关闭钮。
 // 文案与尺寸：标题“登录 beary”21/800、副标题“邮箱验证码登录，无需密码；新邮箱登录即注册”
-// 13.5 灰、字段 label 11/600、输入框高 48 圆角 12 faint 底、发码钮高 48 圆角 12、
-// 登录钮高 49 圆角 12 墨底白字。颜色一律走 BearyColors，不新增字面量颜色；
+// 14 灰、字段 label 11/600、输入框高 48 圆角 12 faint 底、发码钮高 44（行高 48 内居中）圆角 12、
+// 登录钮高 44 圆角 12 墨底白字。颜色一律走 BearyColors，不新增字面量颜色；
 // 图标走 icon_close/icon_check 资产；不使用液态玻璃效果。
 //
 // 发码/验码一律走 BearyAPI（BearyAPI.sendCode、
@@ -70,6 +70,10 @@ final class BearyLoginViewController: UIViewController {
 
     private var isSendingCode = false
     private var isVerifying = false
+    /// 5-6：验码成功后的 1.2 秒绑定反馈窗口内，登录钮保持禁用；
+    /// 关闭时取消延迟回调，只发 onCancelled，不再随后补发 onLoggedIn。
+    private var isWaitingFeedback = false
+    private var loginFeedbackWorkItem: DispatchWorkItem?
     private var countdownRemaining: Int?
     private var currentLoginTitle: String?
     private var countdownTimer: Timer?
@@ -128,7 +132,7 @@ final class BearyLoginViewController: UIViewController {
         }
     }
 
-    // MARK: - 布局（网页 lgm 尺寸：左右 22、输入框高 48、登录钮高 49；iPad 内容列宽 ≤432）
+    // MARK: - 布局（网页 lgm 尺寸：左右 22、输入框高 48、登录钮高 44；iPad 内容列宽 ≤432）
 
     private func buildLayout() {
         scrollView.translatesAutoresizingMaskIntoConstraints = false
@@ -164,7 +168,7 @@ final class BearyLoginViewController: UIViewController {
 
         subtitleLabel.translatesAutoresizingMaskIntoConstraints = false
         subtitleLabel.text = "邮箱验证码登录，无需密码；新邮箱登录即注册"
-        subtitleLabel.font = UIFont.systemFont(ofSize: 13.5)
+        subtitleLabel.font = UIFont.systemFont(ofSize: 14)
         subtitleLabel.textColor = BearyColors.gray
         subtitleLabel.numberOfLines = 0
 
@@ -259,8 +263,9 @@ final class BearyLoginViewController: UIViewController {
             codeContainer.topAnchor.constraint(equalTo: codeRow.topAnchor),
             codeContainer.bottomAnchor.constraint(equalTo: codeRow.bottomAnchor),
             sendButton.trailingAnchor.constraint(equalTo: codeRow.trailingAnchor),
-            sendButton.topAnchor.constraint(equalTo: codeRow.topAnchor),
-            sendButton.bottomAnchor.constraint(equalTo: codeRow.bottomAnchor),
+            // 1-7：发码钮有底色（ink/faint），不跟行高拉满 48；
+            // 删上下锚、只留居中 + 高 44，消除与行高 48 的过约束。
+            sendButton.centerYAnchor.constraint(equalTo: codeRow.centerYAnchor),
             sendButton.heightAnchor.constraint(equalToConstant: 44),
             codeContainer.trailingAnchor.constraint(equalTo: sendButton.leadingAnchor, constant: -9),
             agreeButton.leadingAnchor.constraint(equalTo: agreeRow.leadingAnchor),
@@ -382,7 +387,7 @@ final class BearyLoginViewController: UIViewController {
         agreeLabel.backgroundColor = UIColor.clear
         agreeLabel.textContainerInset = UIEdgeInsets.zero
         agreeLabel.textContainer.lineFragmentPadding = 0
-        agreeLabel.font = UIFont.systemFont(ofSize: 13.5)
+        agreeLabel.font = UIFont.systemFont(ofSize: 14)
         agreeLabel.textColor = BearyColors.gray
         agreeLabel.linkTextAttributes = [
             .foregroundColor: BearyColors.blue,
@@ -390,7 +395,7 @@ final class BearyLoginViewController: UIViewController {
         ]
         let fullText = "我已阅读并同意《隐私政策》和《用户协议》"
         let attributed = NSMutableAttributedString(string: fullText, attributes: [
-            .font: UIFont.systemFont(ofSize: 13.5),
+            .font: UIFont.systemFont(ofSize: 14),
             .foregroundColor: BearyColors.gray,
         ])
         let privacyRange = (fullText as NSString).range(of: "隐私政策")
@@ -481,7 +486,7 @@ final class BearyLoginViewController: UIViewController {
 
     private func setLoginTitle(_ text: String) {
         let title = NSAttributedString(string: text, attributes: [
-            .font: UIFont.systemFont(ofSize: 15.5, weight: .bold),
+            .font: UIFont.systemFont(ofSize: 16, weight: .bold),
             .foregroundColor: BearyColors.bg,
             .kern: 5.43,
         ])
@@ -507,7 +512,7 @@ final class BearyLoginViewController: UIViewController {
         sendButton.setTitleColor(sendTitleColor, for: .disabled)
         sendButton.titleLabel?.font = UIFont.systemFont(ofSize: 14, weight: sendEnabled ? .semibold : .medium)
 
-        let loginEnabled = isAgreed && emailValid && code.count == 6 && !isVerifying
+        let loginEnabled = isAgreed && emailValid && code.count == 6 && !isVerifying && !isWaitingFeedback
         loginButton.isEnabled = loginEnabled
         loginButton.alpha = loginEnabled ? 1 : 0.35
         // M14：进行态 = “处理中…”文案 + 圈转指示，不再只有 alpha 变化。
@@ -560,6 +565,10 @@ final class BearyLoginViewController: UIViewController {
         countdownTimer = nil
         currentTask?.cancel()
         currentTask = nil
+        // 5-6：关闭即取消延迟的 onLoggedIn，只发 onCancelled。
+        loginFeedbackWorkItem?.cancel()
+        loginFeedbackWorkItem = nil
+        isWaitingFeedback = false
         onCancelled?()
     }
 
@@ -686,9 +695,20 @@ final class BearyLoginViewController: UIViewController {
             }
             showMessage(text)
         }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) { [weak self] in
-            self?.onLoggedIn?()
+        // 5-6：延迟期间登录钮禁用（见 updateButtonStates 的 isWaitingFeedback 门）；
+        // 用 WorkItem 承载延迟，关闭时可取消，不再出现“先取消后登录”双回调。
+        loginFeedbackWorkItem?.cancel()
+        isWaitingFeedback = true
+        updateButtonStates()
+        let workItem = DispatchWorkItem { [weak self] in
+            guard let strongSelf = self else { return }
+            strongSelf.loginFeedbackWorkItem = nil
+            strongSelf.isWaitingFeedback = false
+            strongSelf.updateButtonStates()
+            strongSelf.onLoggedIn?()
         }
+        loginFeedbackWorkItem = workItem
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.2, execute: workItem)
     }
 
     /// 注销冷静期确认：文案与网页端 lgDelCfm 同款（“暂不登录 / 继续登录”）。
@@ -729,7 +749,7 @@ final class BearyLoginViewController: UIViewController {
             strongSelf.updateButtonStates()
             strongSelf.verify(email: email, code: code, confirmCancel: true)
         }))
-        present(alert, animated: true)
+        present(alert, animated: BearyMotion.animated(true))
     }
 
     // MARK: - 键盘
@@ -753,16 +773,25 @@ final class BearyLoginViewController: UIViewController {
 
 extension BearyLoginViewController: UITextFieldDelegate {
     func textField(_ textField: UITextField, shouldChangeCharactersIn range: NSRange, replacementString string: String) -> Bool {
+        // 5-13：与编辑页同口径的截断式处理（组字中不截断），超长粘贴截断到上限而非整段拒绝。
+        if textField.markedTextRange != nil { return true }
         let current = textField.text ?? ""
         guard let swiftRange = Range(range, in: current) else { return false }
         let next = current.replacingCharacters(in: swiftRange, with: string)
         if textField === inviteField {
-            return next.count <= 8
+            if next.count <= 8 { return true }
+            textField.text = String(next.prefix(8))
+            textChanged()
+            return false
         }
         guard textField === codeField else { return true }
-        guard next.count <= 6 else { return false }
         if string.isEmpty { return true }
-        return string.unicodeScalars.allSatisfy({ $0.value >= 48 && $0.value <= 57 })
+        if next.count <= 6 && string.unicodeScalars.allSatisfy({ $0.value >= 48 && $0.value <= 57 }) { return true }
+        // 验证码：只留数字并截断到 6 位（如粘贴含字母/超长内容，取其中的前 6 位数字）。
+        let digits = next.filter({ $0 >= "0" && $0 <= "9" })
+        textField.text = String(digits.prefix(6))
+        textChanged()
+        return false
     }
 
     func textFieldShouldReturn(_ textField: UITextField) -> Bool {
@@ -795,7 +824,7 @@ extension BearyLoginViewController: UITextViewDelegate {
         }
         let vc = BearyLegalTextViewController(pageTitle: title, pageText: text)
         vc.modalPresentationStyle = .fullScreen
-        present(vc, animated: true)
+        present(vc, animated: BearyMotion.animated(true))
         return false
     }
 }

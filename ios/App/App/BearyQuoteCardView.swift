@@ -32,9 +32,10 @@ final class BearyQuoteCardView: UIView {
     }()
 
     /// 投递中 pill（lite 卡口径）：11/600/blue、blue 13% 底、圆角 6、padding 2/7。
-    /// W2 口径说明：此处只显示不带倒计时的“投递中”是有意区分——服务端 attachQuotes 直传的
-    /// Quote 模型无 publishAt 字段（见 BearyAPI.swift，publishAt 只在 Entry 上），算不出倒计时；
-    /// 详情页与编辑器 lite 卡有 publishAt，走带倒计时版。Quote 补 publishAt 后此处再统一。
+    /// W2 口径说明：列表侧服务端 attachQuotes 直传的 Quote 模型无 publishAt 字段
+    /// （见 BearyAPI.swift，publishAt 只在 Entry 上），算不出倒计时，故不传 publishAt
+    /// 时仍显示 plain“投递中”；编辑器侧 SelectedQuote.publishAt 取自 Entry（毫秒），
+    /// 经 configure 的可选 publishAt 入口传进来时显示带倒计时的同款文案。
     private let deliveringPillButton: UIButton = {
         let btn = UIButton(type: .system)
         btn.translatesAutoresizingMaskIntoConstraints = false
@@ -175,22 +176,52 @@ final class BearyQuoteCardView: UIView {
     /// 引用缩略图池（#70 个人主页池化口径的共享版）：复用视图起新图即先取消
     /// 在途任务；clear 时先取消全部在途加载，视图留池不销毁。
     private var quoteThumbPool: [UIImageView] = []
+    /// fixall-cell 5-17“本轮已算”标记：上次算过缩略图条宽时的输入快照。
+    /// 布局输入（卡宽/图条总宽/日期显隐与宽度/正文自然宽）全未变时，
+    /// layoutSubviews 不再重算、不再写约束，只读返回。
+    private var lastThumbsLayoutBoundsWidth: CGFloat = -1
+    private var lastThumbsLayoutTotalWidth: CGFloat = -1
+    private var lastThumbsLayoutDateHidden = true
+    private var lastThumbsLayoutDateWidth: CGFloat = -1
+    private var lastThumbsLayoutTextNatural: CGFloat = -1
 
-    override func layoutSubviews() {
-        super.layoutSubviews()
+    private func invalidateThumbsLayoutCache() {
+        lastThumbsLayoutBoundsWidth = -1
+        lastThumbsLayoutTotalWidth = -1
+        lastThumbsLayoutDateHidden = true
+        lastThumbsLayoutDateWidth = -1
+        lastThumbsLayoutTextNatural = -1
+    }
+
+    /// fixall-cell 5-17：缩略图条宽的唯一计算入口（原 layoutSubviews 内联块抽出）。
+    /// 正文自然宽与 pill 宽与卡宽无关，configure 时已可算出，此处只在输入
+    /// 快照变化时重算；快照未变时直接返回，layoutSubviews 因此不再每轮写约束。
+    private func refreshThumbsWidth() {
         guard thumbsScrollView.isHidden == false, thumbsTotalWidth > 0 else { return }
         let rowWidth = bounds.width - 24
         if rowWidth <= 0 { return }
         let dateWidth = dateLabel.isHidden ? 0 : dateLabel.intrinsicContentSize.width
-        let visibleCount = 3 + (dateLabel.isHidden ? 0 : 1)
-        let gaps = CGFloat(visibleCount - 1) * 8
-        let avail = rowWidth - 15 - dateWidth - gaps
-        if avail <= 0 { return }
         // 正文自然宽（单行实测；投递中 pill 行宽取大者）与缩略图条按 flex:1 分享剩余空间：
         // 正文短时条带拿剩余全部，正文长时两者对半、正文换行。
         let contentSingleLine = contentLabel.sizeThatFits(CGSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)).width
         let pillWidth = deliveringPillButton.isHidden ? 0 : deliveringPillButton.intrinsicContentSize.width
         let textNatural = max(contentSingleLine, pillWidth)
+        if bounds.width == lastThumbsLayoutBoundsWidth,
+           thumbsTotalWidth == lastThumbsLayoutTotalWidth,
+           dateLabel.isHidden == lastThumbsLayoutDateHidden,
+           dateWidth == lastThumbsLayoutDateWidth,
+           textNatural == lastThumbsLayoutTextNatural {
+            return
+        }
+        lastThumbsLayoutBoundsWidth = bounds.width
+        lastThumbsLayoutTotalWidth = thumbsTotalWidth
+        lastThumbsLayoutDateHidden = dateLabel.isHidden
+        lastThumbsLayoutDateWidth = dateWidth
+        lastThumbsLayoutTextNatural = textNatural
+        let visibleCount = 3 + (dateLabel.isHidden ? 0 : 1)
+        let gaps = CGFloat(visibleCount - 1) * 8
+        let avail = rowWidth - 15 - dateWidth - gaps
+        if avail <= 0 { return }
         let thumbsWidth: CGFloat
         if textNatural < avail / 2 {
             thumbsWidth = min(thumbsTotalWidth, avail - textNatural)
@@ -200,6 +231,13 @@ final class BearyQuoteCardView: UIView {
         if let current = thumbsWidthConstraint?.constant, abs(current - thumbsWidth) > 0.5 {
             thumbsWidthConstraint?.constant = thumbsWidth
         }
+    }
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        // fixall-cell 5-17：布局回调只调带缓存守卫的 refreshThumbsWidth，
+        // 输入未变时不写约束（原 0.5pt 门限保留在 refresh 内）。
+        refreshThumbsWidth()
     }
 
     override init(frame: CGRect) {
@@ -304,6 +342,7 @@ final class BearyQuoteCardView: UIView {
         thumbsScrollView.isHidden = true
         thumbsHeightConstraint?.constant = 0
         thumbsWidthConstraint?.constant = 0
+        invalidateThumbsLayoutCache()
     }
 
     /// 失效态：隐藏正常行、显示 15px 图标 + 13px 灰字文案（卡片本身不隐藏）。
@@ -332,7 +371,22 @@ final class BearyQuoteCardView: UIView {
     // D8c：网页 .quote-thumbs 口径为固定 42x42（不按 stripW 算宽），故 strip 宽函数已删；
     // configure 的 dims 参数保留（调用点仍传被引用篇自己的 imgDims），宽不再由它驱动。
 
-    func configure(authorName: String, authorAvatar: String?, content: String, images: [String], dims: [String: [Int]]?, createdAt: Int? = nil, showDeliveringPill: Bool = false, allowThumbs: Bool = true) {
+    /// fixall-quote-countdown：带倒计时版“投递中”pill，与编辑器
+    /// quoteCountdownText（BearyComposerViewController.swift）逐字同口径：
+    /// publishAt 为毫秒，天 > 小时 > 分钟，分钟向上取整、至少 1 分钟；
+    /// publishAt 为 nil 时回退 plain“投递中”。
+    private func countdownText(publishAt: Int?) -> String {
+        guard let publishAt = publishAt else { return "投递中" }
+        let remainMs = max(0, publishAt - Int(Date().timeIntervalSince1970 * 1000))
+        let days = remainMs / 86400000
+        let hours = (remainMs % 86400000) / 3600000
+        let minutes = (remainMs % 3600000 + 59999) / 60000
+        if days > 0 { return "投递中 · 还剩 \(days) 天" }
+        if hours > 0 { return "投递中 · 还剩 \(hours) 小时" }
+        return "投递中 · 还剩 \(max(1, minutes)) 分钟"
+    }
+
+    func configure(authorName: String, authorAvatar: String?, content: String, images: [String], dims: [String: [Int]]?, createdAt: Int? = nil, showDeliveringPill: Bool = false, allowThumbs: Bool = true, publishAt: Int? = nil) {
         clear()
         // 52 批：lite 卡不带头像名——authorName/authorAvatar 参数仅为调用点兼容保留，不再赋值给任何视图。
         if let createdAt = createdAt, createdAt > 0 {
@@ -340,6 +394,11 @@ final class BearyQuoteCardView: UIView {
             dateLabel.isHidden = false
         }
         deliveringPillButton.isHidden = showDeliveringPill == false
+        // fixall-quote-countdown：有 publishAt 时 pill 标题用倒计时文案，否则
+        // plain“投递中”（nil 入口 = 列表侧旧行为；每次 configure 都重设标题，
+        // 避免复用卡残留上一张的倒计时文案；pill 可见性仍由上一行守门）。
+        // 标题在 refreshThumbsWidth 之前定，pill 固有宽即按倒计时文本算。
+        deliveringPillButton.setTitle(countdownText(publishAt: publishAt), for: .normal)
         if content.isEmpty {
             contentLabel.isHidden = true
         } else {
@@ -398,5 +457,9 @@ final class BearyQuoteCardView: UIView {
                 surplus.removeFromSuperview()
             }
         }
+        // fixall-cell 5-17：父布局前算一次——卡宽已落位时 configure 即把
+        // 条宽算到 flex 值，不必等 layoutSubviews；卡宽未落位（0）时
+        // refresh 提前返回，仍由 layoutSubviews 首轮算出。
+        refreshThumbsWidth()
     }
 }

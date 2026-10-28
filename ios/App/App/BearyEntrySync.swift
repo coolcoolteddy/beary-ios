@@ -15,10 +15,14 @@ import Foundation
 //   全量同步只写落盘（时间线页的内存由切日时的落盘读取与静默刷新接管，
 //   当日新鲜度仍由切日静默刷新保证，不由同步推送）。
 //
-// 触发点唯一：SceneDelegate 的 onUserChanged 回调——登录成功后的 refreshMe
+// 触发点：SceneDelegate 的 onUserChanged 回调——登录成功后的 refreshMe
 // 与冷启动的 refreshMe 都汇到这里。user != nil 时 kick，nil 时复位。
 // 节流：同一启动内同一账号只跑一次（onUserChanged 在每次 refreshMe 成功时都触发，
 // 前台刷新不重复跑）；账号变化时重跑；在途时不重复触发。
+// 5-27 重跑入口：被写盘守卫挡下的同步未置 synced 标志，前台恢复 / 时间线
+// 下拉刷新时调 kickForCurrentUser() 即可补一次 kick（内部去重已覆盖已同步
+// 与在途两种情况）；接线点在 SceneDelegate / 时间线文件，不在本文件，见
+// kickForCurrentUser 的注释（待协调人转交 W10 / W2 接线）。
 //
 // 失败静默：任一页失败、401、游标缺失即中止，不写盘、不弹 toast、不阻塞，
 // 下次触发重跑；半截页绝不进本地（整批拉完才分组提交）。
@@ -38,6 +42,8 @@ import Foundation
 //     与日记桶绝不混写；空数组文件即“已同步、回收站为空”，只有缺失/损坏才回网络；
 //   - 读：回收站页进页先读本地秒显（不转菊花），再静默整桶重拉对齐；
 //   - 写：删帖进桶（removeDeletedEntry 旁路）、恢复/彻底删除清桶；失败回滚靠下次刷新纠正。
+//   - 提交守卫（5-26）：与日记腿同款写盘代际——同步拉取开始后发生过任何
+//     trash.json 写盘，本次提交跳过保旧盘（不抹同步途中删帖进桶的记录），下次 kick 重跑。
 
 /// 时间线日缓存的磁盘持久层：按账号分桶、按北京日归档。
 /// 目录：Application Support / beary_entry_sync_<uid>/，文件 <YYYY-MM-DD>.json（Entry 数组）。
@@ -88,7 +94,12 @@ enum BearyEntrySyncStore {
     static func groupByDay(_ entries: [Entry]) -> [String: [Entry]] {
         var grouped: [String: [Entry]] = [:]
         for entry in entries {
-            guard let createdAt = entry.createdAt, let dayKey = BearyBeijingDay.dayKey(ofMs: createdAt) else { continue }
+            guard let createdAt = entry.createdAt, let dayKey = BearyBeijingDay.dayKey(ofMs: createdAt) else {
+                // 5-30：静默丢条改记一条日志——若服务端某天漏发或改名字段，
+                // 联调时能从日志发现，而不是无声少篇。
+                NSLog("[BearyEntrySync] groupByDay dropped entry without createdAt: id=%@", entry.id ?? "-")
+                continue
+            }
             grouped[dayKey, default: []].append(entry)
         }
         for key in grouped.keys {
@@ -191,8 +202,32 @@ enum BearyTrashSyncStore {
         return try? makeDecoder().decode([TrashItem].self, from: data)
     }
 
+    /// 5-26 回收站写盘代际（与日记腿同款守卫的计数端）：任何 trash.json 写
+    /// （删帖进桶、恢复/彻底删除清桶、回收站页静默刷新对齐）都先 +1；
+    /// 全量回收站同步开始时记基线，提交前比对——拉取开始后发生过写盘
+    /// 即旧快照已过期，跳过本次提交保旧盘，下次 kick 重跑。
+    /// 计数放桶上而不用同步实例的队列：删帖进桶 prependDeleted 是桶的静态
+    /// 入口、调用方在主线程，锁内计数保证主线程写与同步队列提交读之间
+    /// 不丢代际；静默刷新写盘同样记代际（其数据更新鲜，跳过旧快照提交
+    /// 是正确的保守选择，下次 kick 再对齐）。
+    private static let writeSequenceLock = NSLock()
+    private static var writeSequence = 0
+    static func noteTrashWrite() {
+        writeSequenceLock.lock()
+        writeSequence += 1
+        writeSequenceLock.unlock()
+    }
+    static func currentWriteSequence() -> Int {
+        writeSequenceLock.lock()
+        defer { writeSequenceLock.unlock() }
+        return writeSequence
+    }
+
     /// 整桶写（全量同步提交与静默刷新对齐均走这里：服务端派生数据，整批覆盖）。
+    /// 先记写盘代际（见 noteTrashWrite）：全量同步自身的提交写也在提交
+    /// 守卫比对之后发生，不影响本次判定。
     static func saveAll(accountId: Int, items: [TrashItem]) {
+        noteTrashWrite()
         guard let url = fileURL(accountId: accountId),
               let data = try? makeEncoder().encode(items) else { return }
         try? FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
@@ -236,6 +271,9 @@ final class BearyEntrySync {
     /// 拉取开始后发生过写盘即旧快照已过期，跳过本次提交保旧盘，下次 kick 重跑。
     private var diaryWriteSequence = 0
     private var diarySyncStartSequence: [Int: Int] = [:]
+    /// 5-26 回收站腿提交守卫基线：kick 时记下 BearyTrashSyncStore 的写盘
+    /// 代际（见桶的 noteTrashWrite），finishTrashSync 提交前比对。
+    private var trashSyncStartSequence: [Int: Int] = [:]
     /// 全量同步宽松上限：40 页 / 2000 条（每页 50 条；现行用户约 21 篇，
     /// 远未触及）。超限中止本次同步且不覆写落盘，保旧盘、下次重跑。
     private static let maxSyncPages = 40
@@ -258,6 +296,30 @@ final class BearyEntrySync {
         }
     }
 
+    /// 回收站落盘写投递口（与 runDiaryDiskWrite 同款）：走同步队列并记
+    /// 写盘代际，供回收站提交守卫判断。现行调用方（回收站页静默刷新走
+    /// runDiskWrite、删帖进桶走 prependDeleted）均经 saveAll 记代际，
+    /// 故本入口现阶段无调用方，供后续调用方统一走队列时用。
+    func runTrashDiskWrite(_ work: @escaping () -> Void) {
+        queue.async {
+            BearyTrashSyncStore.noteTrashWrite()
+            work()
+        }
+    }
+
+    /// 5-27 重跑入口：前台恢复 / 时间线下拉刷新时调本方法即可补一次 kick。
+    /// 内部去重已覆盖：已同步（synced 标志）→ 不跑；在途 → 不重复；
+    /// 曾被写盘守卫挡下（未置 synced）→ 重跑。无登录态时不做任何事。
+    /// 接线（须在主线程调；currentUser 读取口径与全站一致）：
+    ///   SceneDelegate.sceneWillEnterForeground 内加一行：
+    ///       BearyEntrySync.shared.kickForCurrentUser()
+    ///   BearyTimelineViewController.pullToRefresh 内加一行：同上。
+    /// 接线点在他人文件内，本支不改，待协调人转交 W10 / W2。
+    func kickForCurrentUser() {
+        guard let uid = SessionManager.shared.currentUser?.id else { return }
+        kickIfNeeded(userId: uid)
+    }
+
     func kickIfNeeded(userId: Int) {
         queue.async { [weak self] in
             guard let self = self else { return }
@@ -271,6 +333,8 @@ final class BearyEntrySync {
             // 回收站腿：同批触发，失败不拖日记腿，下次 kick 独立重跑。
             if self.trashSyncingAccountId != userId && self.trashSyncedAccountIdThisLaunch != userId {
                 self.trashSyncingAccountId = userId
+                // 5-26 提交守卫基线：记下拉取开始时的回收站写盘代际。
+                self.trashSyncStartSequence[userId] = BearyTrashSyncStore.currentWriteSequence()
                 self.fetchTrashPage(accountId: userId, before: nil, beforeId: nil, accumulated: [])
             }
         }
@@ -283,6 +347,7 @@ final class BearyEntrySync {
             self?.trashSyncingAccountId = nil
             self?.trashSyncedAccountIdThisLaunch = nil
             self?.diarySyncStartSequence.removeAll()
+            self?.trashSyncStartSequence.removeAll()
         }
     }
 
@@ -421,6 +486,17 @@ final class BearyEntrySync {
                 return
             }
             self.queue.async {
+                // 5-26 提交守卫（与日记腿同款）：拉取开始后发生过回收站写盘
+                // （删帖进桶 prependDeleted、恢复/彻底删除、静默刷新对齐均经
+                // saveAll 记代际），旧快照已过期——跳过本次提交保旧盘
+                // （不抹掉同步途中删帖进桶的记录），不记已同步，下次 kick
+                // 重跑；无基线记录时不拦截（只走正常提交）。
+                if let start = self.trashSyncStartSequence[accountId], start != BearyTrashSyncStore.currentWriteSequence() {
+                    self.trashSyncStartSequence[accountId] = nil
+                    self.trashSyncingAccountId = nil
+                    return
+                }
+                self.trashSyncStartSequence[accountId] = nil
                 // 去重保底（游标页理论上不交叠；重复 id 进桶会在页内渲染成两行，故先清掉）。
                 var seen: Set<String> = []
                 let deduped = items.filter { seen.insert($0.id).inserted }

@@ -111,6 +111,16 @@ class BearyEditProfileViewController: UIViewController {
         return buttonValue
     }()
 
+    /// 1-8：保存进行态圈转指示（贴在保存钮左侧钮外空隙，不占钮内 44 宽，
+    /// 故标题恒为“保存”，不再改“保存中…”而被裁字）。
+    private lazy var savingSpinner: UIActivityIndicatorView = {
+        let spinner = UIActivityIndicatorView(style: .medium)
+        spinner.translatesAutoresizingMaskIntoConstraints = false
+        spinner.color = BearyColors.ink
+        spinner.hidesWhenStopped = true
+        return spinner
+    }()
+
     private let titleLabel: UILabel = {
         let labelValue = UILabel()
         labelValue.translatesAutoresizingMaskIntoConstraints = false
@@ -242,11 +252,13 @@ class BearyEditProfileViewController: UIViewController {
 
     /// /me 补到的用户 id（主页链接优先 @handle、无 handle 才回退 /beary/u/<id>）。
     private var fetchedUserId: Int?
+    /// 5-4：/me 加载失败标记（与“未登录”区分：失败=success(nil) 之外的 failure）。
+    private var meFetchFailed = false
 
     private let linkLabel: UILabel = {
         let labelValue = UILabel()
         labelValue.translatesAutoresizingMaskIntoConstraints = false
-        labelValue.font = UIFont.systemFont(ofSize: 12.5)
+        labelValue.font = UIFont.systemFont(ofSize: 13)
         labelValue.textColor = BearyColors.gray
         labelValue.numberOfLines = 1
         labelValue.lineBreakMode = .byTruncatingTail
@@ -307,12 +319,33 @@ class BearyEditProfileViewController: UIViewController {
         updateDynamicLayerColors()
         // F12：id 不在 init 入参里（不改容器调用点），页内调既有 /me 补齐；
         // C4：邮箱行已删，/me 不再为本页补邮箱（邮箱只在设置页 ID 卡呈现）。
+        refreshLinkRowFromMe()
+    }
+
+    /// F12：/me 刷新链接行（首启与复制重试共用）：成功记 id、失败记
+    /// meFetchFailed；thenCopy 时拿到 handle/id 即补复制，否则按
+    /// “未登录”或“加载失败”分别提示，不静默。
+    private func refreshLinkRowFromMe(thenCopy: Bool = false) {
         BearyAPI.shared.fetchMe { [weak self] result in
             DispatchQueue.main.async {
                 guard let strongSelf = self else { return }
-                if case .success(let user) = result, let userValue = user {
-                    strongSelf.fetchedUserId = userValue.id
+                switch result {
+                case .success(let user):
+                    strongSelf.meFetchFailed = false
+                    strongSelf.fetchedUserId = user?.id
                     strongSelf.updateLinkRow()
+                    if thenCopy {
+                        if !strongSelf.effectiveHandle.isEmpty || strongSelf.fetchedUserId != nil {
+                            strongSelf.copyLinkButtonTapped()
+                        } else {
+                            strongSelf.presentSimpleAlert(message: "先登录")
+                        }
+                    }
+                case .failure:
+                    strongSelf.meFetchFailed = true
+                    if thenCopy {
+                        strongSelf.presentSimpleAlert(message: "加载失败，请重试")
+                    }
                 }
             }
         }
@@ -480,6 +513,14 @@ class BearyEditProfileViewController: UIViewController {
         // 直达，不再经编辑页中转；本页只保留 [封面与头像][昵称][用户名 @handle]
         // [主页链接复制]）。
         contentStack.addArrangedSubview(topRow)
+        // 1-8：圈转贴在保存钮左侧钮外空隙（不挤占 44 宽标题）。
+        saveButton.addSubview(savingSpinner)
+        NSLayoutConstraint.activate([
+            savingSpinner.widthAnchor.constraint(equalToConstant: 20),
+            savingSpinner.heightAnchor.constraint(equalToConstant: 20),
+            savingSpinner.centerYAnchor.constraint(equalTo: saveButton.centerYAnchor),
+            savingSpinner.centerXAnchor.constraint(equalTo: saveButton.leadingAnchor, constant: -12),
+        ])
         contentStack.addArrangedSubview(avatarWrap)
         contentStack.addArrangedSubview(formStack)
         contentStack.addArrangedSubview(linkWrap)
@@ -569,7 +610,7 @@ class BearyEditProfileViewController: UIViewController {
         alert.addAction(UIAlertAction(title: "放弃", style: .destructive, handler: { [weak self] _ in
             self?.onCancel?()
         }))
-        present(alert, animated: true, completion: nil)
+        present(alert, animated: BearyMotion.animated(true), completion: nil)
     }
 
     // U3：键盘顶起时调 inset（与登录页同口径：扣掉底部安全区后的键盘高）。
@@ -604,6 +645,16 @@ class BearyEditProfileViewController: UIViewController {
             UIPasteboard.general.string = "https://teddyhn.com/beary/@\(effectiveHandle)"
         } else if let id = fetchedUserId {
             UIPasteboard.general.string = "https://teddyhn.com/beary/u/\(id)"
+        } else if meFetchFailed {
+            // 5-4：已登录但 /me 加载失败时不误报“先登录”，给重试
+            // （重新拉 /me 再刷新链接行，拿到 id/handle 即补复制）。
+            let alert = UIAlertController(title: nil, message: "主页链接加载失败", preferredStyle: .alert)
+            alert.addAction(UIAlertAction(title: "取消", style: .cancel, handler: nil))
+            alert.addAction(UIAlertAction(title: "重试", style: .default, handler: { [weak self] _ in
+                self?.refreshLinkRowFromMe(thenCopy: true)
+            }))
+            present(alert, animated: BearyMotion.animated(true), completion: nil)
+            return
         } else {
             presentSimpleAlert(message: "先登录")
             return
@@ -626,13 +677,13 @@ class BearyEditProfileViewController: UIViewController {
             popover.sourceView = sourceView
             popover.sourceRect = sourceView.bounds
         }
-        present(picker, animated: true, completion: nil)
+        present(picker, animated: BearyMotion.animated(true), completion: nil)
     }
 
     private func presentSimpleAlert(message: String) {
         let alert = UIAlertController(title: nil, message: message, preferredStyle: .alert)
         alert.addAction(UIAlertAction(title: "知道了", style: .default, handler: nil))
-        present(alert, animated: true, completion: nil)
+        present(alert, animated: BearyMotion.animated(true), completion: nil)
     }
 
     // MARK: - 保存（网页 edSaveAll 顺序：先 handle、后 profile）
@@ -667,6 +718,8 @@ class BearyEditProfileViewController: UIViewController {
                         // G3：handle 成功后立即记下已提交 handle；第二步资料失败时
                         // 重试以它为准，跳过已成功的 handle 步，不再重发同一 handle。
                         strongSelf.submittedHandle = handleValue
+                        // 5-3：改名成功后立即刷新链接行，否则复制新链、显示旧链分裂。
+                        strongSelf.updateLinkRow()
                         strongSelf.saveProfile(nameValue: nameValue)
                     case .failure(let err):
                         strongSelf.finishSavingWithError(message: strongSelf.handleErrorMessage(err: err))
@@ -678,10 +731,16 @@ class BearyEditProfileViewController: UIViewController {
         }
     }
 
-    /// M14：保存进行态 = “保存中…”文案 + 禁用，不再只有禁用/alpha 变化。
+    /// M14 改（1-8）：保存进行态标题恒为“保存”，只加左侧圈转指示；
+    /// 旧“保存中…”4 字在 44 宽钮内会被裁字，故不再改标题，另加禁用。
     private func updateSaveButtonState() {
         saveButton.isEnabled = !isSaving
-        saveButton.setTitle(isSaving ? "保存中…" : "保存", for: .normal)
+        saveButton.setTitle("保存", for: .normal)
+        if isSaving {
+            savingSpinner.startAnimating()
+        } else {
+            savingSpinner.stopAnimating()
+        }
     }
 
     private func saveProfile(nameValue: String) {
@@ -693,6 +752,10 @@ class BearyEditProfileViewController: UIViewController {
             body["avatar"] = avatarDataURL
         }
         if coverChanged {
+            // 5-15 死分支标注：coverRemoved 当前不可达——移除入口已删
+            // （见 viewDidLoad F14 注释），全文件没有任何地方置 true，
+            // 仅在裁剪确认时复位 false；保留作将来移除入口复用，
+            // 清理时须连同本分支的 cover = NSNull() 一起处理。
             if coverRemoved {
                 body["cover"] = NSNull()
             } else if let coverDataURL = pendingCoverDataURL {
@@ -844,7 +907,7 @@ class BearyEditProfileViewController: UIViewController {
 
 extension BearyEditProfileViewController: UIImagePickerControllerDelegate, UINavigationControllerDelegate {
     func imagePickerController(_ picker: UIImagePickerController, didFinishPickingMediaWithInfo info: [UIImagePickerController.InfoKey: Any]) {
-        dismiss(animated: true) { [weak self] in
+        dismiss(animated: BearyMotion.animated(true)) { [weak self] in
             guard let strongSelf = self else { return }
             guard let image = info[.originalImage] as? UIImage else {
                 strongSelf.presentSimpleAlert(message: "图片读取失败")
@@ -901,11 +964,11 @@ extension BearyEditProfileViewController: UIImagePickerControllerDelegate, UINav
                 strongSelf.coverImageView.image = cropped
             }
         }
-        present(cropVC, animated: !UIAccessibility.isReduceMotionEnabled)
+        present(cropVC, animated: BearyMotion.animated(true))
     }
 
     func imagePickerControllerDidCancel(_ picker: UIImagePickerController) {
-        dismiss(animated: true, completion: nil)
+        dismiss(animated: BearyMotion.animated(true), completion: nil)
     }
 }
 

@@ -257,7 +257,7 @@ final class BearyNotificationsViewController: UIViewController {
         table.separatorStyle = .none
         table.rowHeight = UITableView.automaticDimension
         table.estimatedRowHeight = 78
-        table.contentInset = UIEdgeInsets(top: 0, left: 0, bottom: 120, right: 0)
+        table.contentInset = UIEdgeInsets(top: 0, left: 0, bottom: 80, right: 0)
         table.scrollIndicatorInsets = table.contentInset
         table.register(BearyNotificationCell.self, forCellReuseIdentifier: "BearyNotificationCell")
         table.register(BearyNotificationTrailingCell.self, forCellReuseIdentifier: "BearyNotificationTrailingCell")
@@ -384,6 +384,17 @@ final class BearyNotificationsViewController: UIViewController {
         return button
     }()
 
+    /// 8-6：错误重试态改走统一 BearyStateView（与回收站失败态同款组件）；
+    /// 无图标（iconName nil，图标圆整行隐藏）、标题/副文案与原 bespoke
+    /// 错误态一致、动作钮用 secondaryOutline 常规款（高 44，与原失败态
+    /// 统一后的按钮高一致）。其余态（加载/空）仍走原 stack，不动。
+    private lazy var errorStateView: BearyStateView = {
+        let stateView = BearyStateView()
+        stateView.translatesAutoresizingMaskIntoConstraints = false
+        stateView.isHidden = true
+        return stateView
+    }()
+
     /// 加载 / 空 / 失败 / 登录四态共用容器（盖在表区上，顶栏“消息”始终可见）。
     private lazy var stateContainer: UIView = {
         let container = UIView()
@@ -397,6 +408,7 @@ final class BearyNotificationsViewController: UIViewController {
         stack.setCustomSpacing(14, after: stateSubtitleLabel)
         container.addSubview(centralSpinner)
         container.addSubview(stack)
+        container.addSubview(errorStateView)
         NSLayoutConstraint.activate([
             stateIconView.widthAnchor.constraint(equalToConstant: 36),
             stateIconView.heightAnchor.constraint(equalToConstant: 36),
@@ -408,6 +420,9 @@ final class BearyNotificationsViewController: UIViewController {
             stack.topAnchor.constraint(equalTo: container.topAnchor, constant: 26),
             stack.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 20),
             stack.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -20),
+            errorStateView.topAnchor.constraint(equalTo: container.topAnchor, constant: 26),
+            errorStateView.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 20),
+            errorStateView.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -20),
         ])
         return container
     }()
@@ -502,9 +517,10 @@ final class BearyNotificationsViewController: UIViewController {
 
     /// 表头高度实测：标题 19 + 上 14 下 4；实测后写回 tableHeaderView frame
     /// 与态容器顶锚，宽度变化时同步下拉指示器宽。
-    /// C-G14：底部留白按网页 .pf-col 口径随视口宽分档——宽 >=821 时 44（网页
-    /// 宽屏档无 safe-area 叠加），窄屏时 120 + safe-area 下边距（网页
-    /// max-width:820 档 calc(120px + safe-area-inset-bottom)）。contentView
+    /// C-G14：底部留白随视口宽分档——宽 >=821 时 44。窄屏档实测底栏：
+    /// SceneDelegate 底栏分段器高 58、底锚 safeArea 底 -6，即底栏占位
+    /// 64（58 + 6），不足旧 120，故窄屏档改为 80 + safe-area 下边距
+    /// （64 占位 + 16 余量）；消息页无 FAB，无需再留 FAB 位。contentView
     /// 底锚 view.bottom（非 safeArea），故窄屏档需显式叠加 safeAreaInsets.bottom。
     /// 断点与全工程其余断点统一为 >=821（P2；原 >820 在整数点宽下等价，但口径不一）。
     private func updateTableBottomInset() {
@@ -512,7 +528,7 @@ final class BearyNotificationsViewController: UIViewController {
         if view.bounds.width >= 821 {
             bottom = 44
         } else {
-            bottom = 120 + view.safeAreaInsets.bottom
+            bottom = 80 + view.safeAreaInsets.bottom
         }
         tableView.contentInset.bottom = bottom
         tableView.scrollIndicatorInsets.bottom = bottom
@@ -1516,7 +1532,9 @@ final class BearyNotificationsViewController: UIViewController {
     /// - 互动行带 entry_id → 进详情，无 entry_id 只标已读不跳转。
     private func openNotification(_ item: NotificationItem, at index: Int) {
         let isUnread = (item.read ?? true) == false
-        if isUnread {
+        // 5-11：无 id 的行不做乐观已读——标已读函数遇 nil 直接 return
+        // 不发 POST、不回滚，乐观改动会与服务端未读数脱节；有 id 才乐观。
+        if isUnread && item.id != nil {
             items[index].read = true
             unreadTotal = max(0, unreadTotal - 1)
             if item.type == "system" {
@@ -1724,11 +1742,13 @@ final class BearyNotificationsViewController: UIViewController {
         }
         if showsList {
             centralSpinner.stopAnimating()
+            errorStateView.isHidden = true
             return
         }
         switch visibleState {
         case .loading:
             centralSpinner.startAnimating()
+            errorStateView.isHidden = true
             stateIconView.isHidden = true
             stateMailView.isHidden = true
             stateMailView.stop()
@@ -1737,6 +1757,7 @@ final class BearyNotificationsViewController: UIViewController {
             stateButton.isHidden = true
         case .empty:
             centralSpinner.stopAnimating()
+            errorStateView.isHidden = true
             stateIconView.isHidden = true
             // 网页 .empty svg.nb 是 40x40（其余空态数值已对上，不动）；空态用 NB.mail 动态信封。
             stateMailView.isHidden = false
@@ -1745,18 +1766,10 @@ final class BearyNotificationsViewController: UIViewController {
             stateTitleLabel.text = "还没有消息"
             stateSubtitleLabel.isHidden = false
             stateSubtitleLabel.text = "有人赞、收藏或回应你的日记时，会出现在这里；我们发来的消息也会送到这里"
-            stateButton.isHidden = true
-        case .error:
-            centralSpinner.stopAnimating()
-            // 网页 ntLoadError：无图标 + .load-more 13px pill（1px line 描边、
-            // 左右 24、上 9），标题/副文案与现行一致。
-            stateIconView.isHidden = true
-            stateMailView.isHidden = true
-            stateMailView.stop()
-            stateTitleLabel.isHidden = false
-            stateTitleLabel.text = "加载失败"
-            stateSubtitleLabel.isHidden = false
-            stateSubtitleLabel.text = "网络好像不太顺"
+            // 5-8：空态加失败态同款重试/刷新按钮——空态下态容器盖住表区、
+            // 下拉手势到不了列表，空态恢复此前只靠轮询/回前台/切 tab。
+            // 按钮样式与失败态同款（13 灰字、1px 描边、左右 24、上 9、
+            // 高统一 44），标题用“刷新”（空态非失败，语义区分）。
             stateButton.isHidden = false
             stateButton.setImage(nil, for: .normal)
             stateButton.titleLabel?.font = UIFont.systemFont(ofSize: 13)
@@ -1765,14 +1778,35 @@ final class BearyNotificationsViewController: UIViewController {
             stateButton.contentEdgeInsets = UIEdgeInsets(top: 9, left: 24, bottom: 9, right: 24)
             stateButton.titleEdgeInsets = UIEdgeInsets(top: 0, left: 0, bottom: 0, right: 0)
             stateButton.layer.borderWidth = 1
-            stateButton.setTitle("重试", for: .normal)
+            stateButton.setTitle("刷新", for: .normal)
             for constraint in stateButton.constraints {
                 if constraint.firstAttribute == .height {
-                    // Q1 对照表：按钮高统一 44（失败态小 pill 原 36 已按表统一）。
                     constraint.constant = 44
                 }
             }
             updateStateButtonWidth()
+        case .error:
+            centralSpinner.stopAnimating()
+            // 8-6：错误重试态改走统一 BearyStateView——原 bespoke stack
+            // 全藏（栈内子视图全隐藏后栈高塌为 0，不占位），错误视图单独
+            // 显现；标题/副文案与原错误态一致，无图标，动作钮“重试”
+            // 走 loadFirstPage（与原 stateButtonTapped 的 error 路一致）。
+            stateIconView.isHidden = true
+            stateMailView.isHidden = true
+            stateMailView.stop()
+            stateTitleLabel.isHidden = true
+            stateSubtitleLabel.isHidden = true
+            stateButton.isHidden = true
+            errorStateView.isHidden = false
+            errorStateView.configure(
+                kind: .error,
+                title: "加载失败",
+                subtitle: "网络好像不太顺",
+                iconName: nil,
+                actionTitle: "重试",
+                actionStyle: .secondaryOutline(.regular),
+                onAction: { [weak self] in self?.loadFirstPage() }
+            )
         case .list:
             centralSpinner.stopAnimating()
             stateMailView.isHidden = true
@@ -1781,7 +1815,8 @@ final class BearyNotificationsViewController: UIViewController {
     }
 
     @objc private func stateButtonTapped() {
-        if visibleState == .error {
+        // 错误态重试已改走 errorStateView 的 onAction；此处只剩空态“刷新”。
+        if visibleState == .empty {
             loadFirstPage()
         }
     }
@@ -2140,7 +2175,7 @@ private class BearyLetterModal {
         quoteBar.translatesAutoresizingMaskIntoConstraints = false
         quoteBar.backgroundColor = BearyColors.line
         quoteTextLabel.translatesAutoresizingMaskIntoConstraints = false
-        quoteTextLabel.font = UIFont.systemFont(ofSize: 15.5)
+        quoteTextLabel.font = UIFont.systemFont(ofSize: 16)
         quoteTextLabel.textColor = BearyColors.ink
         quoteTextLabel.numberOfLines = 0
         quoteTextLabel.lineBreakMode = .byCharWrapping
@@ -2150,7 +2185,7 @@ private class BearyLetterModal {
         quoteMetaLabel.numberOfLines = 0
         if let quoteText = quoteText, let quoteMeta = quoteMeta {
             // C-G17：网页 .lq-txt line-height 1.75，App 原无行高。
-            quoteTextLabel.attributedText = BearyLetterModal.lineHeightText(quoteText, font: UIFont.systemFont(ofSize: 15.5), color: BearyColors.ink, multiple: 1.75)
+            quoteTextLabel.attributedText = BearyLetterModal.lineHeightText(quoteText, font: UIFont.systemFont(ofSize: 16), color: BearyColors.ink, multiple: 1.75)
             quoteMetaLabel.text = quoteMeta
             quoteWrap.isHidden = false
         } else {
@@ -2314,7 +2349,7 @@ private class BearyLetterModal {
     /// 送达信引用预览随后补全：有正文才显示引用区，按钮行随之改贴引用区。
     func fillQuote(text: String, meta: String) {
         // C-G17：随后补全的引用同样带 1.75 行高（与 init 分支一致）。
-        quoteTextLabel.attributedText = BearyLetterModal.lineHeightText(text, font: UIFont.systemFont(ofSize: 15.5), color: BearyColors.ink, multiple: 1.75)
+        quoteTextLabel.attributedText = BearyLetterModal.lineHeightText(text, font: UIFont.systemFont(ofSize: 16), color: BearyColors.ink, multiple: 1.75)
         quoteMetaLabel.text = meta
         quoteWrap.isHidden = false
         buttonTopToBody?.isActive = false
@@ -2741,7 +2776,7 @@ private class BearyNotificationCell: UITableViewCell {
     /// C-G10：已读态直接改 class——只动背景与未读点，不重载行。
     /// 普通行未读底蓝 7%、sys 行蓝 9%（与 configure 同口径）。
     func setReadAppearance(isUnread: Bool, isSystemStyle: Bool) {
-        let background = isUnread ? BearyColors.blue.withAlphaComponent(isSystemStyle ? 0.09 : 0.07) : BearyColors.bg
+        let background = isUnread ? BearyColors.alpha(BearyColors.blue, isSystemStyle ? 0.09 : 0.07) : BearyColors.bg
         contentView.backgroundColor = background
         backgroundColor = background
         unreadDotView.isHidden = !isUnread
@@ -2749,7 +2784,7 @@ private class BearyNotificationCell: UITableViewCell {
 
     /// C-G10：卡面已读态直接改 class——未读底一律蓝 9%。
     func setCardReadAppearance(anyUnread: Bool) {
-        let background = anyUnread ? BearyColors.blue.withAlphaComponent(0.09) : BearyColors.bg
+        let background = anyUnread ? BearyColors.alpha(BearyColors.blue, 0.09) : BearyColors.bg
         contentView.backgroundColor = background
         backgroundColor = background
         unreadDotView.isHidden = !anyUnread
@@ -2763,14 +2798,14 @@ private class BearyNotificationCell: UITableViewCell {
         avatarRetryActorName = ""
         avatarRetryButton.isHidden = true
         if anyUnread {
-            contentView.backgroundColor = BearyColors.blue.withAlphaComponent(0.09)
-            backgroundColor = BearyColors.blue.withAlphaComponent(0.09)
+            contentView.backgroundColor = BearyColors.alpha(BearyColors.blue, 0.09)
+            backgroundColor = BearyColors.alpha(BearyColors.blue, 0.09)
         } else {
             contentView.backgroundColor = BearyColors.bg
             backgroundColor = BearyColors.bg
         }
         unreadDotView.isHidden = !anyUnread
-        avatarImageView.backgroundColor = isSystem ? BearyColors.orange.withAlphaComponent(0.14) : BearyColors.blue.withAlphaComponent(0.12)
+        avatarImageView.backgroundColor = isSystem ? BearyColors.alpha(BearyColors.orange, 0.14) : BearyColors.alpha(BearyColors.blue, 0.12)
         popperView.stop()
         popperView.isHidden = true
         avatarIconView.isHidden = false
@@ -2852,8 +2887,8 @@ private class BearyNotificationCell: UITableViewCell {
 
         // 未读底：普通行蓝 7%、sys 行（含信件行）蓝 9%（网页 .nt-item.unread / .sys.unread）。
         if isUnread {
-            contentView.backgroundColor = BearyColors.blue.withAlphaComponent(isSystemStyle ? 0.09 : 0.07)
-            backgroundColor = BearyColors.blue.withAlphaComponent(isSystemStyle ? 0.09 : 0.07)
+            contentView.backgroundColor = BearyColors.alpha(BearyColors.blue, isSystemStyle ? 0.09 : 0.07)
+            backgroundColor = BearyColors.alpha(BearyColors.blue, isSystemStyle ? 0.09 : 0.07)
         } else {
             contentView.backgroundColor = BearyColors.bg
             backgroundColor = BearyColors.bg
@@ -2869,7 +2904,7 @@ private class BearyNotificationCell: UITableViewCell {
             avatarRetryButton.isHidden = true
             // system 行标题含“成就/徽章”时用 popper（礼花）图，否则 mail 图；
             // letter 行恒为 mail 图（网页 ntOne 两分支同口径）。
-            avatarImageView.backgroundColor = BearyColors.orange.withAlphaComponent(0.14)
+            avatarImageView.backgroundColor = BearyColors.alpha(BearyColors.orange, 0.14)
             avatarIconView.tintColor = BearyColors.orange
             // C-G2：同上，空串标题回退（网页 || 语义）。
             let rawTitle = item.title ?? ""

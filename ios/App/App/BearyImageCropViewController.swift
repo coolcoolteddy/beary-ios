@@ -27,9 +27,9 @@ final class BearyImageCropViewController: UIViewController, UIScrollViewDelegate
     private let sourceImage: UIImage
     private let aspectRatio: CGFloat
     private let topBar = UIView()
-    private let cancelButton = UIButton(type: .system)
+    private let cancelButton = BearyHit44Button(type: .system)
     private let titleLabel = UILabel()
-    private let confirmButton = UIButton(type: .system)
+    private let confirmButton = BearyHit44Button(type: .system)
     private let scrollView = UIScrollView()
     private let imageView = UIImageView()
     private let hintLabel = UILabel()
@@ -39,6 +39,12 @@ final class BearyImageCropViewController: UIViewController, UIScrollViewDelegate
     private var cropRect = CGRect.zero
     private var didSetupZoom = false
     private var lastZoomBounds = CGSize.zero
+    /// 1-3：尺寸变化前抓的旧裁剪窗中心（图内相对位置 0...1）与相对缩放倍率（zoom/minZoom），
+    /// 尺寸变化后按它换算新 zoomScale/contentOffset；首帧无旧态，走盖满居中。
+    private struct CropPreservedState {
+        let centerFraction: CGPoint
+        let zoomRatio: CGFloat
+    }
 
     init(image: UIImage, aspectRatio: CGFloat) {
         self.sourceImage = image
@@ -124,12 +130,34 @@ final class BearyImageCropViewController: UIViewController, UIScrollViewDelegate
 
     override func viewDidLayoutSubviews() {
         super.viewDidLayoutSubviews()
+        // 1-3：尺寸变化前先抓旧裁剪窗中心（layoutCropWindow 会覆写 cropRect，
+        // 故必须在它之前抓）；首帧无旧态、尺寸未变时不抓。
+        let boundsChanged = didSetupZoom && scrollView.bounds.size != lastZoomBounds
+        let preserved = boundsChanged ? captureCropCenter() : nil
         layoutCropWindow()
-        // 首帧与旋转后（滚动区尺寸变了）都重算缩放、回到盖满居中。
-        if !didSetupZoom || scrollView.bounds.size != lastZoomBounds {
+        if !didSetupZoom {
             didSetupZoom = true
             setupImageZoom()
+        } else if boundsChanged {
+            // 抓不到旧态（如旧窗为零）时 preserved 为 nil，setupImageZoom 内回退盖满居中。
+            setupImageZoom(preserving: preserved)
         }
+    }
+
+    /// 1-3：旧裁剪窗中心在图内的相对位置与相对缩放倍率。view→scrollView→imageView
+    /// 两段 convert：scrollView 坐标系即内容坐标（含 contentOffset），imageView 的
+    /// 缩放变换由 convert 计入，故结果是未缩放图坐标，可跨尺寸复用。
+    private func captureCropCenter() -> CropPreservedState? {
+        guard cropRect.width > 0, cropRect.height > 0 else { return nil }
+        guard imageView.bounds.width > 0, imageView.bounds.height > 0 else { return nil }
+        guard scrollView.minimumZoomScale > 0 else { return nil }
+        let centerInView = CGPoint(x: cropRect.midX, y: cropRect.midY)
+        let inScroll = scrollView.convert(centerInView, from: view)
+        let inImage = imageView.convert(inScroll, from: scrollView)
+        let fraction = CGPoint(
+            x: min(max(inImage.x / imageView.bounds.width, 0), 1),
+            y: min(max(inImage.y / imageView.bounds.height, 0), 1))
+        return CropPreservedState(centerFraction: fraction, zoomRatio: scrollView.zoomScale / scrollView.minimumZoomScale)
     }
 
     /// 裁剪窗：按 aspectRatio（宽/高），在滚动区内留 16pt 边距的前提下
@@ -160,7 +188,9 @@ final class BearyImageCropViewController: UIViewController, UIScrollViewDelegate
     }
 
     /// 图按滚动区等比适配；最小缩放 = 刚好盖满裁剪窗（窗内永不露底），初始即该缩放并居中。
-    private func setupImageZoom() {
+    /// 尺寸变化时（preserving 非 nil）：不回盖满居中，按旧窗中心比例换算新 zoomScale
+    /// 与 contentOffset；preserving 为 nil 时走首帧盖满居中（与旧行为一致）。
+    private func setupImageZoom(preserving preserved: CropPreservedState? = nil) {
         let bounds = scrollView.bounds
         guard bounds.width > 0 && bounds.height > 0 else { return }
         let imageSize = sourceImage.size
@@ -175,10 +205,25 @@ final class BearyImageCropViewController: UIViewController, UIScrollViewDelegate
         let coverScale = max(windowWidth / fitted.width, windowHeight / fitted.height)
         scrollView.minimumZoomScale = coverScale
         scrollView.maximumZoomScale = max(coverScale * 4, coverScale + 1)
-        scrollView.zoomScale = coverScale
-        let offsetX = max((scrollView.contentSize.width - bounds.width) / 2, 0)
-        let offsetY = max((scrollView.contentSize.height - bounds.height) / 2, 0)
-        scrollView.contentOffset = CGPoint(x: offsetX, y: offsetY)
+        if let preserved = preserved {
+            // 旧相对倍率换算到新盖满基准并夹到新 min/max 之间；再把旧窗中心对应的
+            // 图点对准新裁剪窗中心。offset 夹到可滚范围；内容小于视口的轴无滚动量，
+            // offset 夹 0 后由 scrollViewDidZoom 的居中补位接管（该轴本来也滚不动）。
+            let targetZoom = min(max(coverScale * preserved.zoomRatio, coverScale), scrollView.maximumZoomScale)
+            scrollView.zoomScale = targetZoom
+            let target = CGPoint(x: preserved.centerFraction.x * fitted.width, y: preserved.centerFraction.y * fitted.height)
+            let cropCenterInScrollFrame = CGPoint(x: cropRect.midX - scrollView.frame.minX, y: cropRect.midY - scrollView.frame.minY)
+            let maxOffsetX = max(fitted.width * targetZoom - bounds.width, 0)
+            let maxOffsetY = max(fitted.height * targetZoom - bounds.height, 0)
+            scrollView.contentOffset = CGPoint(
+                x: min(max(target.x * targetZoom - cropCenterInScrollFrame.x, 0), maxOffsetX),
+                y: min(max(target.y * targetZoom - cropCenterInScrollFrame.y, 0), maxOffsetY))
+        } else {
+            scrollView.zoomScale = coverScale
+            let offsetX = max((scrollView.contentSize.width - bounds.width) / 2, 0)
+            let offsetY = max((scrollView.contentSize.height - bounds.height) / 2, 0)
+            scrollView.contentOffset = CGPoint(x: offsetX, y: offsetY)
+        }
     }
 
     func viewForZooming(in scrollView: UIScrollView) -> UIView? {

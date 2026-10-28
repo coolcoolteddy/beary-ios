@@ -287,9 +287,10 @@ class BearyProfileViewController: UIViewController {
         return stack.arrangedSubviews.compactMap { $0 as? BearySkeletonCardView }
     }
 
-    /// C9：骨架顶 = 资料头高度（骨架只盖日记列表区，不盖资料头）。
+    /// C9（全修 1-5，取“全盖”二选一）：骨架顶贴 tableView.top（constant 恒 0），
+    /// 连资料头一并盖住，不再只盖表体、留表头空资料占位（名“—”/空头像）割裂首屏。
     private func updateProfileSkeletonTop() {
-        profileSkeletonTopConstraint?.constant = tableView.tableHeaderView?.frame.height ?? 0
+        profileSkeletonTopConstraint?.constant = 0
     }
 
     /// C9：首屏骨架显（幂等，本页只显一次）。
@@ -868,7 +869,11 @@ class BearyProfileViewController: UIViewController {
     private lazy var topBarCenterXConstraint: NSLayoutConstraint = topBarView.centerXAnchor.constraint(equalTo: view.centerXAnchor)
     private lazy var topBarWidthConstraint: NSLayoutConstraint = topBarView.widthAnchor.constraint(equalToConstant: 600)
     private var underlineLeadingConstraint: NSLayoutConstraint?
-    private var underlineTrailingConstraint: NSLayoutConstraint?
+    private var underlineWidthConstraint: NSLayoutConstraint?
+    /// 全修 6-3 下划线 transform 基座：首次落位时定的容器锚点 (x, 宽)；
+    /// 之后切 tab 只改 transform，不再改约束（见 updateUnderlinePosition）。
+    private var underlineBaseX: CGFloat = 0
+    private var underlineBaseWidth: CGFloat = 0
     /// L16：名字右缘上限约束，constant 由 updateNameTrailingLimit 按徽章/皇冠实际显隐动态取值。
     private var nameTrailingConstraint: NSLayoutConstraint?
 
@@ -1172,6 +1177,8 @@ class BearyProfileViewController: UIViewController {
     override func traitCollectionDidChange(_ previousTraitCollection: UITraitCollection?) {
         super.traitCollectionDidChange(previousTraitCollection)
         updateDynamicLayerColors()
+        // 全修 6-3 同步点：大字号/深浅切换后页签钮宽可能变化，下划线直设终值重算一次。
+        updateUnderlinePosition(animated: false)
     }
 
     // MARK: - 头部搭建
@@ -1400,6 +1407,10 @@ class BearyProfileViewController: UIViewController {
             headerView.frame = CGRect(x: 0, y: 0, width: widthValue, height: fittingHeight)
             tableView.tableHeaderView = headerView
         }
+        // 全修 6-3 同步点：头部重布局（转屏/显隐变化）后下划线基座几何已变，
+        // 约束锚点不再自动跟随，须直设终值 transform 重算一次（非动画；切 tab
+        // 动画不在此路径，reloadData 时 layoutHeader 宽不变直接返回，不会冲动画）。
+        updateUnderlinePosition(animated: false)
     }
 
     private func updateDynamicLayerColors() {
@@ -1446,26 +1457,49 @@ class BearyProfileViewController: UIViewController {
         diaryTabButton.tintColor = currentTab == .diary ? BearyColors.ink : BearyColors.gray
         likedTabButton.tintColor = currentTab == .liked ? BearyColors.ink : BearyColors.gray
         savedTabButton.tintColor = currentTab == .saved ? BearyColors.ink : BearyColors.gray
+        let hadUnderline = underlineLeadingConstraint != nil
+        // M9：下划线 0.28s transform 动画；首建（无旧下划线）/减动效/未进窗口直设终值。
+        updateUnderlinePosition(animated: hadUnderline && view.window != nil && !UIAccessibility.isReduceMotionEnabled)
+    }
+
+    /// 全修 6-3：下划线位置只走 transform + 宽度缩放，不再约束动画。
+    /// 基座约束只在首次落位时创建（锚 tabsContainer.leading，宽 = 目标宽）；
+    /// 之后目标变时算 scaleX = targetWidth / baseWidth、tx = targetX - scaleX * baseX，
+    /// 视觉矩形恰好 = 目标钮左右各缩 10 的范围；转屏/大字号后重算同一公式仍精确落位。
+    /// 动画块外先 layoutIfNeeded 量帧（仅量取，不在动画块内改约束）；布局同步路径
+    /// （layoutHeaderForced / traitCollectionDidChange）以 animated:false 直设终值。
+    private func updateUnderlinePosition(animated: Bool) {
         let selectedButton: UIButton
         switch currentTab {
         case .diary: selectedButton = diaryTabButton
         case .liked: selectedButton = likedTabButton
         case .saved: selectedButton = savedTabButton
         }
-        let hadUnderline = underlineLeadingConstraint != nil
-        underlineLeadingConstraint?.isActive = false
-        underlineTrailingConstraint?.isActive = false
-        underlineLeadingConstraint = tabsUnderline.leadingAnchor.constraint(equalTo: selectedButton.leadingAnchor, constant: 10)
-        underlineTrailingConstraint = tabsUnderline.trailingAnchor.constraint(equalTo: selectedButton.trailingAnchor, constant: -10)
-        underlineLeadingConstraint?.isActive = true
-        underlineTrailingConstraint?.isActive = true
-        // M9：下划线用 0.28s 约束动画；首建（无旧下划线）/减动效直设终值。
-        if hadUnderline && view.window != nil && !UIAccessibility.isReduceMotionEnabled {
-            UIView.animate(withDuration: 0.28, delay: 0, options: .curveEaseInOut, animations: {
-                self.tabsContainer.layoutIfNeeded()
+        tabsContainer.layoutIfNeeded()
+        let targetX = selectedButton.frame.minX + 10
+        let targetWidth = selectedButton.frame.width - 20
+        if underlineLeadingConstraint == nil {
+            // 首建：帧未出时先占位（x 0、宽 1），待布局同步路径重算纠正；帧已出则直接落位。
+            let baseX: CGFloat = targetWidth > 0 ? targetX : 0
+            let baseWidth: CGFloat = targetWidth > 0 ? targetWidth : 1
+            underlineLeadingConstraint = tabsUnderline.leadingAnchor.constraint(equalTo: tabsContainer.leadingAnchor, constant: baseX)
+            underlineWidthConstraint = tabsUnderline.widthAnchor.constraint(equalToConstant: baseWidth)
+            underlineLeadingConstraint?.isActive = true
+            underlineWidthConstraint?.isActive = true
+            underlineBaseX = baseX
+            underlineBaseWidth = baseWidth
+            tabsUnderline.transform = .identity
+            return
+        }
+        guard targetWidth > 0, underlineBaseWidth > 0 else { return }
+        let scaleX = targetWidth / underlineBaseWidth
+        let targetTransform = CGAffineTransform(a: scaleX, b: 0, c: 0, d: 1, tx: targetX - scaleX * underlineBaseX, ty: 0)
+        if animated {
+            UIView.animate(withDuration: 0.28, delay: 0, options: [.curveEaseInOut, .beginFromCurrentState], animations: {
+                self.tabsUnderline.transform = targetTransform
             })
         } else {
-            tabsContainer.layoutIfNeeded()
+            tabsUnderline.transform = targetTransform
         }
     }
 
@@ -1990,7 +2024,7 @@ class BearyProfileViewController: UIViewController {
     private func presentSimpleAlert(message: String) {
         let alert = UIAlertController(title: nil, message: message, preferredStyle: .alert)
         alert.addAction(UIAlertAction(title: "知道了", style: .default, handler: nil))
-        present(alert, animated: true, completion: nil)
+        present(alert, animated: BearyMotion.animated(true), completion: nil)
     }
 
     // MARK: - 数据：标签列表
@@ -2674,7 +2708,7 @@ class BearyProfileViewController: UIViewController {
             popover.sourceView = sender
             popover.sourceRect = sender.bounds
         }
-        present(sheet, animated: true, completion: nil)
+        present(sheet, animated: BearyMotion.animated(true), completion: nil)
     }
 
     /// C2：齿轮不再弹 ActionSheet，直接打开设置页（BearySettingsViewController，
@@ -2833,7 +2867,7 @@ class BearyProfileViewController: UIViewController {
                 }
             }
         })
-        present(alert, animated: true)
+        present(alert, animated: BearyMotion.animated(true))
     }
 
     /// A-2：“取消”钮：直接走 POST /beary/api/entries/:id/publish/cancel（网页 doPublishCancel 无确认框），
@@ -2927,7 +2961,7 @@ class BearyProfileViewController: UIViewController {
             popover.sourceRect = CGRect(x: view.bounds.midX, y: view.bounds.midY, width: 0, height: 0)
             popover.permittedArrowDirections = []
         }
-        present(sheet, animated: true, completion: nil)
+        present(sheet, animated: BearyMotion.animated(true), completion: nil)
     }
 
     private func handleCellEmoteAdd(entry: Entry) {
@@ -2936,11 +2970,11 @@ class BearyProfileViewController: UIViewController {
         let sheet = BearyEmotePickerSheetViewController()
         sheet.modalPresentationStyle = .overFullScreen
         sheet.onPick = { [weak self] pickedKey in
-            self?.dismiss(animated: true) {
+            self?.dismiss(animated: BearyMotion.animated(true)) {
                 self?.handleCellEmote(entry: entry, key: pickedKey)
             }
         }
-        present(sheet, animated: true, completion: nil)
+        present(sheet, animated: BearyMotion.animated(true), completion: nil)
     }
 
     /// 多选回应：POST 同一回应即撤下该只，POST 未贴过的回应只新增该只；
@@ -3149,12 +3183,21 @@ extension BearyProfileViewController: UITableViewDataSource, UITableViewDelegate
         }
         cellValue.onQuoteTap = { [weak self] in self?.handleCellQuoteTap(entry: entryValue) }
         cellValue.onFoldToggle = { [weak self] in self?.handleCellFoldToggle(entryId: entryId) }
+        // fixall-cell 6-4 集成接线：回应行高变化走 batch（首页折叠同款口径），
+        // cell 内不再播 flow 位移动画，防双动画叠加；未接线时 cell 保留 0.25s 兜底。
+        cellValue.onNeedsEmoteRowAnimation = { [weak self, weak cellValue] in
+            guard let strongSelf = self, let targetCell = cellValue else { return }
+            guard let path = strongSelf.tableView.indexPath(for: targetCell) else { return }
+            if strongSelf.tableView.indexPathsForVisibleRows?.contains(path) == true {
+                strongSelf.tableView.performBatchUpdates(nil)
+            }
+        }
         // N7 主页图片灯箱：复用独立文件内的查看器，全屏模态弹出，弹出方式与时间线同款（已弹出时不叠加、减动效直显）。
         cellValue.onTapImages = { [weak self] keys, index in
             guard let self = self, self.presentedViewController == nil else { return }
             let viewer = BearyEntryImageViewerViewController(imageKeys: keys, startIndex: index)
             viewer.modalPresentationStyle = .fullScreen
-            self.present(viewer, animated: UIAccessibility.isReduceMotionEnabled == false, completion: nil)
+            self.present(viewer, animated: BearyMotion.animated(true), completion: nil)
         }
         return cellValue
     }

@@ -333,6 +333,7 @@ final class BearyCalendarDayButton: UIButton {
         numberLabel.isOpaque = false
         numberLabel.translatesAutoresizingMaskIntoConstraints = false
         numberLabel.textAlignment = .center
+        // 8-3 例外：日历格数字钉在 30pt 圆 / 50pt 格里，缩放会撑破格几何，不缩放。
         numberLabel.font = UIFont.systemFont(ofSize: 15)
         markView.translatesAutoresizingMaskIntoConstraints = false
         addSubview(numberLabel)
@@ -530,6 +531,7 @@ final class BearyCalendarCardView: UIView {
         for weekdayName in ["一", "二", "三", "四", "五", "六", "日"] {
             let label = UILabel()
             label.text = weekdayName
+            // 8-3 例外：星期单字属日历格装饰头，不缩放。
             label.font = UIFont.systemFont(ofSize: 12)
             label.textColor = BearyColors.gray
             label.textAlignment = .center
@@ -654,8 +656,14 @@ final class BearyCalendarCardView: UIView {
         dayButtons = []
         let staggerEnabled = !UIAccessibility.isReduceMotionEnabled
         // 本批 4b：错峰不再只限月视图——周视图切周时新格子此前静默弹出，
-        // 现与月视图同口径（0.32s、每格 0.018s 错峰、curveEaseOut；复用格子
-        // 仍不重播，见下方 isNewButton 分支）。已有月视图时长曲线不动。
+        // 现与月视图同口径（0.25s、每格 0.03s 错峰、封顶 0.24s、curveEaseOut；
+        // 复用格子仍不重播，见下方 isNewButton 分支）。
+        // 6-5：快速连点翻页时先清掉在途错峰动画，再起新错峰，避免新旧格
+        // 动画叠加残影（UIView 动画的模型值已是终值，清动画即落终值，
+        // 复用格下方还会显式复位 alpha/transform）。
+        for button in buttonByKey.values {
+            button.layer.removeAllAnimations()
+        }
         var staggerIndex = 0
         var index = 0
         while index < days.count {
@@ -684,11 +692,11 @@ final class BearyCalendarCardView: UIView {
                     row.addArrangedSubview(button)
                     dayButtons.append(button)
                     if staggerEnabled && isNewButton && !weekKeys.contains(day.key) {
-                        let delay = min(Double(staggerIndex) * 0.018, 0.24)
+                        let delay = min(Double(staggerIndex) * 0.03, 0.24)
                         staggerIndex += 1
                         button.alpha = 0
                         button.transform = CGAffineTransform(translationX: 0, y: 6)
-                        UIView.animate(withDuration: 0.32, delay: delay, options: .curveEaseOut, animations: {
+                        UIView.animate(withDuration: 0.25, delay: delay, options: .curveEaseOut, animations: {
                             button.alpha = 1
                             button.transform = .identity
                         }, completion: nil)
@@ -721,6 +729,9 @@ final class BearyCalendarCardView: UIView {
 
     @objc private func didTapDay(_ sender: BearyCalendarDayButton) {
         guard let day = sender.dayValue else { return }
+        // 5-22 第二道守卫：跨月占位格即使上层 isEnabled 漏算仍不可点，
+        // 此处直接返回，不进 selectDay。
+        guard !day.isOffMonth else { return }
         onSelectDay?(day)
     }
 }
@@ -741,6 +752,10 @@ final class BearyTimelineCell: UITableViewCell {
     private var weatherIconView: UIImageView?
     private var weatherEmoteView: BearyEmoteView?
     private let moodLabel = UILabel()
+    /// 2-1：本行天气/心情行视图（configure 现建现存；复用/重配即清），
+    /// 供 layoutSubviews 在窄屏下隐藏天气/心情用（见该函数注释）。
+    private var metaWeatherRow: UIView?
+    private var metaMoodRow: UIView?
     private let recipientLabel = UILabel()
     private let contentLabel = UILabel()
     private let thumbsScrollView = UIScrollView()
@@ -837,7 +852,9 @@ final class BearyTimelineCell: UITableViewCell {
         cardView.layer.cornerRadius = 14
         cardView.layer.masksToBounds = true
 
-        timeLabel.font = UIFont.systemFont(ofSize: 13)
+        // 8-3：meta 时间（正文类）走 scaledFont + adjusts。
+        timeLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13))
+        timeLabel.adjustsFontForContentSizeCategory = true
         timeLabel.textColor = BearyColors.gray
         timeLabel.setContentCompressionResistancePriority(.required, for: .horizontal)
         // 6A pill 左 packed：时间横向抗拉伸同样提到 required，否则时间会吸 slack。
@@ -873,14 +890,17 @@ final class BearyTimelineCell: UITableViewCell {
         ])
         pillLabelLeadingWithoutIcon?.isActive = true
 
-        weatherLabel.font = UIFont.systemFont(ofSize: 13)
+        // 8-3：天气/心情（正文类）走 scaledFont + adjusts。
+        weatherLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13))
+        weatherLabel.adjustsFontForContentSizeCategory = true
         weatherLabel.textColor = BearyColors.gray
         // 2026-10-28 Li 定：天气/心情文字一律单行（多行换行会把两字词挤成竖排，
         // 如“心动”上下排）；空间不足时由写给（单行截断）承接挤压，时间与 pill 不动。
         weatherLabel.numberOfLines = 1
         weatherLabel.lineBreakMode = .byTruncatingTail
         weatherLabel.setContentCompressionResistancePriority(.defaultHigh, for: .horizontal)
-        moodLabel.font = UIFont.systemFont(ofSize: 13)
+        moodLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13))
+        moodLabel.adjustsFontForContentSizeCategory = true
         moodLabel.textColor = BearyColors.gray
         moodLabel.numberOfLines = 1
         moodLabel.lineBreakMode = .byTruncatingTail
@@ -950,11 +970,14 @@ final class BearyTimelineCell: UITableViewCell {
         quoteIconView.translatesAutoresizingMaskIntoConstraints = false
         quoteIconView.tintColor = BearyColors.gray
         quoteTitleLabel.translatesAutoresizingMaskIntoConstraints = false
+        // 8-3 例外：引用标题 11.5 属装饰性小字（同 pill 11.5 口径），不缩放。
         quoteTitleLabel.font = UIFont.systemFont(ofSize: 11.5)
         quoteTitleLabel.textColor = BearyColors.gray
         quoteBodyLabel.translatesAutoresizingMaskIntoConstraints = false
         // B-G1: web .tl-qt 13.5/1.6, clamped to 2 lines.
-        quoteBodyLabel.font = UIFont.systemFont(ofSize: 13.5)
+        // 8-3：引用正文（正文类）走 scaledFont（富文本侧见 configure 内同款）。
+        quoteBodyLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13.5))
+        quoteBodyLabel.adjustsFontForContentSizeCategory = true
         quoteBodyLabel.textColor = BearyColors.ink
         quoteBodyLabel.numberOfLines = 2
         quoteBodyLabel.lineBreakMode = .byTruncatingTail
@@ -1001,7 +1024,9 @@ final class BearyTimelineCell: UITableViewCell {
             quoteLeftLineView.widthAnchor.constraint(equalToConstant: 3),
         ])
 
-        editStatusLabel.font = UIFont.systemFont(ofSize: 12)
+        // 8-3：私密操作行状态文案（正文类）走 scaledFont + adjusts。
+        editStatusLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 12))
+        editStatusLabel.adjustsFontForContentSizeCategory = true
         editStatusLabel.textColor = BearyColors.gray
         // I11：私密操作行文案前加 13px 状态图标（可编辑 icon_edit / 已结束 icon_lock）。
         statusIconView.translatesAutoresizingMaskIntoConstraints = false
@@ -1038,11 +1063,14 @@ final class BearyTimelineCell: UITableViewCell {
         publishButton.widthAnchor.constraint(equalToConstant: 44).isActive = true
         publishButton.addTarget(self, action: #selector(publishTapped), for: .touchUpInside)
         publishButton.bearyAddPressFeedback()
-        pendingCountdownLabel.font = UIFont.systemFont(ofSize: 13)
+        // 8-3：倒计时文案与取消钮标题（正文类）走 scaledFont + adjusts。
+        pendingCountdownLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13))
+        pendingCountdownLabel.adjustsFontForContentSizeCategory = true
         pendingCountdownLabel.textColor = BearyColors.gray
         cancelPublishButton.translatesAutoresizingMaskIntoConstraints = false
         cancelPublishButton.setTitle("取消", for: .normal)
-        cancelPublishButton.titleLabel?.font = UIFont.systemFont(ofSize: 13)
+        cancelPublishButton.titleLabel?.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13))
+        cancelPublishButton.titleLabel?.adjustsFontForContentSizeCategory = true
         cancelPublishButton.setTitleColor(BearyColors.gray, for: .normal)
         cancelPublishButton.addTarget(self, action: #selector(cancelPublishTapped), for: .touchUpInside)
         cancelPublishButton.bearyAddPressFeedback()
@@ -1127,6 +1155,27 @@ final class BearyTimelineCell: UITableViewCell {
 
     required init?(coder: NSCoder) {
         return nil
+    }
+
+    /// 2-1 降级（不折行）：metaStack 是单行横向 UIStackView，本身无换行
+    /// 能力；改双行需按实测宽在布局时搬运天气/心情行，复用 + 旋转下
+    /// 易震荡且本机无法验真机，故按简报降级为窄屏隐藏。窄屏判定用
+    /// meta 实测宽 < 260（卡片左右各 16 内边距：320 屏 meta 约 236、
+    /// 375 屏约 291，阈值卡在两者之间；iPad 600 居中列远高于阈值，
+    /// 永不触发）。窄屏只藏天气/心情行，时间 + pill + 写给全保；
+    /// 宽屏/旋转回宽时恢复显示。只改 isHidden（栈自动排除隐藏项），
+    /// 不改约束、不碰滚动回调；isHidden 不变时不重复写，避免布局循环。
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        let metaWidth = metaStack.bounds.width
+        guard metaWidth > 0 else { return }
+        let narrow = metaWidth < 260
+        if let weatherRow = metaWeatherRow, weatherRow.isHidden != narrow {
+            weatherRow.isHidden = narrow
+        }
+        if let moodRow = metaMoodRow, moodRow.isHidden != narrow {
+            moodRow.isHidden = narrow
+        }
     }
 
     override func traitCollectionDidChange(_ previousTraitCollection: UITraitCollection?) {
@@ -1261,6 +1310,8 @@ final class BearyTimelineCell: UITableViewCell {
             metaStack.removeArrangedSubview(arranged)
             arranged.removeFromSuperview()
         }
+        metaWeatherRow = nil
+        metaMoodRow = nil
     }
 
     /// 主图条定宽：广场卡 stripWidth 同口径（网页 stripW）——0.55–2.22 倍高夹取，
@@ -1278,6 +1329,8 @@ final class BearyTimelineCell: UITableViewCell {
     func configure(entry: Entry) {
         stopWeatherLottie()
         weatherIconView = nil
+        metaWeatherRow = nil
+        metaMoodRow = nil
         currentEntry = entry
         for arranged in metaStack.arrangedSubviews {
             metaStack.removeArrangedSubview(arranged)
@@ -1356,6 +1409,7 @@ final class BearyTimelineCell: UITableViewCell {
             weatherRow.setContentCompressionResistancePriority(.defaultHigh, for: .horizontal)
             // 6A pill 左 packed：天气行横向抗拉伸提到 required，不吸 slack。
             weatherRow.setContentHuggingPriority(.required, for: .horizontal)
+            metaWeatherRow = weatherRow
             metaStack.addArrangedSubview(weatherRow)
         }
         if let moodKey = entry.mood, let moodName = BearyText.moodNames[moodKey] {
@@ -1373,6 +1427,7 @@ final class BearyTimelineCell: UITableViewCell {
             moodRow.setContentCompressionResistancePriority(.defaultHigh, for: .horizontal)
             // 6A pill 左 packed：心情行横向抗拉伸提到 required，不吸 slack。
             moodRow.setContentHuggingPriority(.required, for: .horizontal)
+            metaMoodRow = moodRow
             metaStack.addArrangedSubview(moodRow)
         }
         if let recipientName = entry.recipientName, entry.recipientId != nil {
@@ -1386,6 +1441,9 @@ final class BearyTimelineCell: UITableViewCell {
         metaSpacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
         metaSpacer.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         metaStack.addArrangedSubview(metaSpacer)
+        // 8-13 保留 1.75（不统一 1.6）：网页版时间线正文 .tl-text 即
+        // 16.5px/1.75（worker.js 前端快照 :435，2026-10-27 版，与本行
+        // 16.5/1.75 同值；首页卡片 1.6 是另一口径，不混用）。
         let paragraph = NSMutableParagraphStyle()
         paragraph.lineHeightMultiple = 1.75
         paragraph.lineBreakMode = .byCharWrapping
@@ -1467,7 +1525,7 @@ final class BearyTimelineCell: UITableViewCell {
                 quoteParagraph.lineHeightMultiple = 1.6
                 quoteParagraph.lineBreakMode = .byTruncatingTail
                 quoteBodyLabel.attributedText = NSAttributedString(string: quoteBody, attributes: [
-                    .font: UIFont.systemFont(ofSize: 13.5),
+                    .font: BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13.5)),
                     .foregroundColor: BearyColors.ink,
                     .paragraphStyle: quoteParagraph,
                 ])
@@ -1546,7 +1604,8 @@ final class BearyTimelineCell: UITableViewCell {
             }
             if emoteTotal > 0 {
                 let emoteLabel = UILabel()
-                emoteLabel.font = UIFont.systemFont(ofSize: 13)
+                emoteLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13))
+                emoteLabel.adjustsFontForContentSizeCategory = true
                 emoteLabel.textColor = BearyColors.gray
                 emoteLabel.text = "小熊回应 \(emoteTotal)"
                 emoteLabel.setContentHuggingPriority(.required, for: .horizontal)
@@ -1741,7 +1800,8 @@ final class BearyTimelineCell: UITableViewCell {
         row.addArrangedSubview(iconView)
         if let text = text {
             let label = UILabel()
-            label.font = UIFont.systemFont(ofSize: 13)
+            label.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13))
+            label.adjustsFontForContentSizeCategory = true
             label.textColor = BearyColors.gray
             label.text = text
             row.addArrangedSubview(label)
@@ -1820,7 +1880,9 @@ final class BearyTimelineCell: UITableViewCell {
         if isCountdown {
             pillBg = .clear
             pillTextColor = BearyColors.gray
-            pillFont = UIFont.systemFont(ofSize: 13)
+            // 8-3：倒计时态 pill 文案（正文类句子）走 scaledFont；蓝 pill /
+            // 已公开态仍走等宽 11.5（数字宽度防抖，不动）。
+            pillFont = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13))
             hourglassTint = BearyColors.gray
             pillStroke = .clear
         } else {
@@ -2508,6 +2570,8 @@ class BearyTimelineViewController: UIViewController {
         // 完成后——当日/月份回包到达时消费本标志，选中日已空即跳最近有篇日。
         pendingEntryJumpCheck = true
         reloadTimeline(keepSelectedDay: true)
+        // fixall-sync 5-27 集成接线：被守卫挡下的同步在下拉刷新时重跑（内部去重已覆盖已同步/在途）。
+        BearyEntrySync.shared.kickForCurrentUser()
         refreshHeaderHeight()
     }
 
@@ -2863,6 +2927,13 @@ class BearyTimelineViewController: UIViewController {
     /// TL-4 翻页/切换动效：先 180ms 淡出 + 横移 8px（网页 .cal-fading 口径），
     /// 再执行变更并以 .24s 高度 FLIP 过渡到新表头高度（网页 calHeightAnim 口径），
     /// 同时淡回。reduced-motion 时直接变更、无动效。
+    /// 6-3 例外（日历高度部分，定版不改 transform）：表头高度本身就是
+    /// tableHeaderView 的布局高度，表体各行必须随高度差整体平移——只对
+    /// calendarCard 做 scaleY 会把格子/日期圆压扁（30pt 圆、50pt 行高失真），
+    /// 只做平移 + 裁剪则新月多出的行会被裁掉、或与表体行重叠；高度差只能
+    /// 由 frame + layoutIfNeeded 带过去。卡片自身的淡入/横移仍只动
+    /// alpha/transform，不在此例外内。删行高度收起不在本文件（回收站
+    /// 文件，#5 批已定例外），此处不动。
     private func performCalendarTransition(mutate: @escaping () -> Void) {
         if UIAccessibility.isReduceMotionEnabled {
             mutate()
@@ -3847,7 +3918,7 @@ class BearyTimelineViewController: UIViewController {
     /// 的同日分支不碰 displayed 月，光调它回不到当月；周视图下
     /// selectDay 本就同步锚点，此处同值无害），再复用 selectDay 切日
     /// + 补拉当月圆点，不另写切日路径。切日动效即现有口径：网格复用
-    /// 钮不重播错峰、新格子走既有 0.32s 错峰，不另加转场动画（翻页
+    /// 钮不重播错峰、新格子走既有 0.25s / 0.03 步进错峰，不另加转场动画（翻页
     /// 64 包反馈修已定“只外科更新网格、不整卡转场”）。
     /// 手动点“今”作废翻页跟随挂起（与手动点选日作废定位挂起同口径），
     /// 防在途月份回包把选区跟回旧视图；reload 守卫挂起不动，与点选
@@ -4535,14 +4606,15 @@ class BearyTimelineViewController: UIViewController {
         } else {
             tableView.backgroundView = nil
         }
-        // 本批 4b：空态切换补入场动效——种类变化且新背景非空时 0.2s 淡入
-        // （站内 toast 同款淡入时长；已有动效的时长曲线一律不动）。
+        // 本批 4b：空态切换补入场动效——种类变化且新背景非空时淡入
+        // （6-7 收敛到 0.25s alpha 过渡；只动 backgroundView 的 alpha，
+        // 已有表行不重播、不重载）。
         if let backgroundView = tableView.backgroundView,
            newBackgroundKind != "none",
            newBackgroundKind != lastChromeBackgroundKind,
            UIAccessibility.isReduceMotionEnabled == false {
             backgroundView.alpha = 0
-            UIView.animate(withDuration: 0.2, animations: {
+            UIView.animate(withDuration: 0.25, animations: {
                 backgroundView.alpha = 1
             }, completion: nil)
         }

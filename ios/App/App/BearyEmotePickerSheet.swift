@@ -18,7 +18,7 @@ enum BearyEmoteKeys {
     static let all: [String] = ["agree", "happy", "applause", "candle", "love", "comfort", "confused", "cheer", "determined", "facepalm", "flower", "sleepy", "goodnight", "hug", "cry", "idea", "kiss", "thinking", "letter", "listening", "lonely", "wink", "nope", "paperplane", "shy", "pat", "peek", "surprised", "proud", "shrug", "sorry", "angry", "sprout", "tea", "speechless", "thanks", "umbrella", "zap", "wave", "wish"]
 }
 
-final class BearyEmotePickerSheetViewController: UIViewController, UICollectionViewDataSource, UICollectionViewDelegateFlowLayout {
+final class BearyEmotePickerSheetViewController: UIViewController, UICollectionViewDataSource, UICollectionViewDelegateFlowLayout, UIGestureRecognizerDelegate {
 
     var onPick: ((String) -> Void)?
 
@@ -57,6 +57,10 @@ final class BearyEmotePickerSheetViewController: UIViewController, UICollectionV
         sheetView.clipsToBounds = true
         sheetView.translatesAutoresizingMaskIntoConstraints = false
         view.addSubview(sheetView)
+        // 5-23：下滑关闭（与草稿箱 handlePan 同口径，见 sheetPanGesture）。
+        let sheetPan = UIPanGestureRecognizer(target: self, action: #selector(sheetPanGesture(_:)))
+        sheetPan.delegate = self
+        sheetView.addGestureRecognizer(sheetPan)
         grabView.backgroundColor = BearyColors.line
         grabView.layer.cornerRadius = 2
         grabView.clipsToBounds = true
@@ -157,6 +161,41 @@ final class BearyEmotePickerSheetViewController: UIViewController, UICollectionV
     @objc private func closeTapped() {
         let reduceMotion = UIAccessibility.isReduceMotionEnabled
         dismiss(animated: reduceMotion == false, completion: nil)
+    }
+
+    /// 5-23 下滑关闭的起手门：只在头部区（抓手/标题/关闭行，y < 70）
+    /// 起手，列表区滑动仍归 collectionView，不抢滚动。
+    func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
+        guard gestureRecognizer.view === sheetView else { return true }
+        let point = gestureRecognizer.location(in: sheetView)
+        return point.y < 70
+    }
+
+    /// 5-23：下滑关闭，与草稿箱 handlePan 同口径——下滑跟手（只动
+    /// transform，不改约束）、超过 80pt 或快速下滑（速度 > 600）时走
+    /// closeTapped，否则 0.25s 弹回原位；取消/失败同样弹回。
+    @objc private func sheetPanGesture(_ gesture: UIPanGestureRecognizer) {
+        let translation = gesture.translation(in: view)
+        switch gesture.state {
+        case .changed:
+            let offset = max(0, translation.y)
+            sheetView.transform = CGAffineTransform(translationX: 0, y: offset)
+        case .ended:
+            let velocity = gesture.velocity(in: view).y
+            if translation.y > 80 || velocity > 600 {
+                closeTapped()
+            } else {
+                UIView.animate(withDuration: 0.25, animations: {
+                    self.sheetView.transform = .identity
+                })
+            }
+        case .cancelled, .failed:
+            UIView.animate(withDuration: 0.25, animations: {
+                self.sheetView.transform = .identity
+            })
+        default:
+            break
+        }
     }
 
     /// 过渡动画用：遮罩 alpha（色值走 BearySheetChrome.scrimColor，含 0.45，动画只动 view alpha 0↔1）。
@@ -270,17 +309,29 @@ final class BearyEmoteSheetTransition: NSObject, UIViewControllerTransitioningDe
 final class BearyEmotePickerSheetCell: UICollectionViewCell {
 
     private let emoteSlot = UIView()
+    /// 1-6：按压高亮底片——只盖 46 槽位、圆角 12，画在槽位之后、熊图之下；
+    /// 原整格 faint 底（格宽约 96.5、槽位仅 46）按压面远大于熊图，已撤。
+    private let highlightView = UIView()
     private var emoteView: BearyEmoteView?
     private let nameLabel = UILabel()
 
     override init(frame: CGRect) {
         super.init(frame: frame)
+        highlightView.translatesAutoresizingMaskIntoConstraints = false
+        highlightView.backgroundColor = .clear
+        highlightView.layer.cornerRadius = 12
+        highlightView.layer.masksToBounds = true
+        contentView.addSubview(highlightView)
         emoteSlot.translatesAutoresizingMaskIntoConstraints = false
         contentView.addSubview(emoteSlot)
         nameLabel.translatesAutoresizingMaskIntoConstraints = false
         nameLabel.textAlignment = .center
         contentView.addSubview(nameLabel)
         NSLayoutConstraint.activate([
+            highlightView.topAnchor.constraint(equalTo: contentView.topAnchor),
+            highlightView.centerXAnchor.constraint(equalTo: contentView.centerXAnchor),
+            highlightView.widthAnchor.constraint(equalToConstant: 46),
+            highlightView.heightAnchor.constraint(equalToConstant: 46),
             emoteSlot.topAnchor.constraint(equalTo: contentView.topAnchor),
             emoteSlot.centerXAnchor.constraint(equalTo: contentView.centerXAnchor),
             emoteSlot.widthAnchor.constraint(equalToConstant: 46),
@@ -301,9 +352,10 @@ final class BearyEmotePickerSheetCell: UICollectionViewCell {
     }
 
     /// U9：回应 sheet cell 按压态（faint 底），首页与个人主页统一都有。
+    /// 1-6：高亮只画在 46 槽位圆角底片上，不再铺满整格。
     override var isHighlighted: Bool {
         didSet {
-            contentView.backgroundColor = isHighlighted ? BearyColors.faint : .clear
+            highlightView.backgroundColor = isHighlighted ? BearyColors.faint : .clear
         }
     }
 
