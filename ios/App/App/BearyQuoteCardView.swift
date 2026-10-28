@@ -175,22 +175,52 @@ final class BearyQuoteCardView: UIView {
     /// 引用缩略图池（#70 个人主页池化口径的共享版）：复用视图起新图即先取消
     /// 在途任务；clear 时先取消全部在途加载，视图留池不销毁。
     private var quoteThumbPool: [UIImageView] = []
+    /// fixall-cell 5-17“本轮已算”标记：上次算过缩略图条宽时的输入快照。
+    /// 布局输入（卡宽/图条总宽/日期显隐与宽度/正文自然宽）全未变时，
+    /// layoutSubviews 不再重算、不再写约束，只读返回。
+    private var lastThumbsLayoutBoundsWidth: CGFloat = -1
+    private var lastThumbsLayoutTotalWidth: CGFloat = -1
+    private var lastThumbsLayoutDateHidden = true
+    private var lastThumbsLayoutDateWidth: CGFloat = -1
+    private var lastThumbsLayoutTextNatural: CGFloat = -1
 
-    override func layoutSubviews() {
-        super.layoutSubviews()
+    private func invalidateThumbsLayoutCache() {
+        lastThumbsLayoutBoundsWidth = -1
+        lastThumbsLayoutTotalWidth = -1
+        lastThumbsLayoutDateHidden = true
+        lastThumbsLayoutDateWidth = -1
+        lastThumbsLayoutTextNatural = -1
+    }
+
+    /// fixall-cell 5-17：缩略图条宽的唯一计算入口（原 layoutSubviews 内联块抽出）。
+    /// 正文自然宽与 pill 宽与卡宽无关，configure 时已可算出，此处只在输入
+    /// 快照变化时重算；快照未变时直接返回，layoutSubviews 因此不再每轮写约束。
+    private func refreshThumbsWidth() {
         guard thumbsScrollView.isHidden == false, thumbsTotalWidth > 0 else { return }
         let rowWidth = bounds.width - 24
         if rowWidth <= 0 { return }
         let dateWidth = dateLabel.isHidden ? 0 : dateLabel.intrinsicContentSize.width
-        let visibleCount = 3 + (dateLabel.isHidden ? 0 : 1)
-        let gaps = CGFloat(visibleCount - 1) * 8
-        let avail = rowWidth - 15 - dateWidth - gaps
-        if avail <= 0 { return }
         // 正文自然宽（单行实测；投递中 pill 行宽取大者）与缩略图条按 flex:1 分享剩余空间：
         // 正文短时条带拿剩余全部，正文长时两者对半、正文换行。
         let contentSingleLine = contentLabel.sizeThatFits(CGSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)).width
         let pillWidth = deliveringPillButton.isHidden ? 0 : deliveringPillButton.intrinsicContentSize.width
         let textNatural = max(contentSingleLine, pillWidth)
+        if bounds.width == lastThumbsLayoutBoundsWidth,
+           thumbsTotalWidth == lastThumbsLayoutTotalWidth,
+           dateLabel.isHidden == lastThumbsLayoutDateHidden,
+           dateWidth == lastThumbsLayoutDateWidth,
+           textNatural == lastThumbsLayoutTextNatural {
+            return
+        }
+        lastThumbsLayoutBoundsWidth = bounds.width
+        lastThumbsLayoutTotalWidth = thumbsTotalWidth
+        lastThumbsLayoutDateHidden = dateLabel.isHidden
+        lastThumbsLayoutDateWidth = dateWidth
+        lastThumbsLayoutTextNatural = textNatural
+        let visibleCount = 3 + (dateLabel.isHidden ? 0 : 1)
+        let gaps = CGFloat(visibleCount - 1) * 8
+        let avail = rowWidth - 15 - dateWidth - gaps
+        if avail <= 0 { return }
         let thumbsWidth: CGFloat
         if textNatural < avail / 2 {
             thumbsWidth = min(thumbsTotalWidth, avail - textNatural)
@@ -200,6 +230,13 @@ final class BearyQuoteCardView: UIView {
         if let current = thumbsWidthConstraint?.constant, abs(current - thumbsWidth) > 0.5 {
             thumbsWidthConstraint?.constant = thumbsWidth
         }
+    }
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        // fixall-cell 5-17：布局回调只调带缓存守卫的 refreshThumbsWidth，
+        // 输入未变时不写约束（原 0.5pt 门限保留在 refresh 内）。
+        refreshThumbsWidth()
     }
 
     override init(frame: CGRect) {
@@ -304,6 +341,7 @@ final class BearyQuoteCardView: UIView {
         thumbsScrollView.isHidden = true
         thumbsHeightConstraint?.constant = 0
         thumbsWidthConstraint?.constant = 0
+        invalidateThumbsLayoutCache()
     }
 
     /// 失效态：隐藏正常行、显示 15px 图标 + 13px 灰字文案（卡片本身不隐藏）。
@@ -398,5 +436,9 @@ final class BearyQuoteCardView: UIView {
                 surplus.removeFromSuperview()
             }
         }
+        // fixall-cell 5-17：父布局前算一次——卡宽已落位时 configure 即把
+        // 条宽算到 flex 值，不必等 layoutSubviews；卡宽未落位（0）时
+        // refresh 提前返回，仍由 layoutSubviews 首轮算出。
+        refreshThumbsWidth()
     }
 }
