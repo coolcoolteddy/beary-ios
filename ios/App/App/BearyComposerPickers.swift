@@ -1,8 +1,8 @@
 import UIKit
 
-// ===== 编辑器写给选人（网页对齐批）=====
-// 写给选人：调 GET /beary/api/search?q=，只取 users 组（display_name/handle 匹配，≤8 条，
-// 与网页搜索同口径），结果过滤掉本人；点行即回传 SearchUser，调用方负责写给 chip 与通知开关。
+// ===== 编辑器 @ 选人（网页对齐批）=====
+// @ 选人：调 GET /beary/api/search?q=，只取 users 组（display_name/handle 匹配，≤8 条，
+// 与网页搜索同口径），结果过滤掉本人；点行即回传 SearchUser，调用方负责 @ chip。
 // 呈现：自定义底 sheet（文件内自包含，不碰 SceneDelegate）：手机端 max-height 82vh 底 sheet、
 // 圆角 20/20/0/0、阴影 0 −12 32 rgba(0,0,0,.22)；宽 ≥821 时居中 440
 // 全圆角 20 + 边框 1 + 阴影 0 24 60 rgba(0,0,0,.30)；自定义抓手 40×4（不用系统抓手）。
@@ -45,7 +45,7 @@ final class BearyRecipientPickerViewController: UIViewController, UITextFieldDel
     private let searchBox = UIView()
     private let searchIcon = UIImageView()
     private let searchField = UITextField()
-    /// A2：面板内通知开关（16 复选 + “通知对方”文案，编辑器写给行同款外观）。
+    /// A2：面板内通知开关（16 复选 + “通知对方”文案；iCity 起行隐藏，仅保留代码）。
     private let notifyRow = UIStackView()
     private let notifyCheckButton = UIButton(type: .custom)
     private let notifyLabel = UILabel()
@@ -145,8 +145,8 @@ final class BearyRecipientPickerViewController: UIViewController, UITextFieldDel
         headerIcon.image = BearyIconImages.image(named: "icon_at", pointSize: 20)
         headerIcon.tintColor = BearyColors.orange
         headerIcon.contentMode = .scaleAspectFit
-        // 决议第 16 项 B：选人 sheet 标题改“写给谁”。
-        headerTitle.text = "写给谁"
+        // iCity：选人 sheet 标题改“@ 谁”。
+        headerTitle.text = "@ 谁"
         headerTitle.font = UIFont.boldSystemFont(ofSize: 16)
         headerTitle.textColor = BearyColors.ink
         // 关闭钮视觉由 BearyButton.iconCircleClose 工厂定（faint 底 32 圆钮 + icon_close 15）；
@@ -177,7 +177,7 @@ final class BearyRecipientPickerViewController: UIViewController, UITextFieldDel
         searchField.contentVerticalAlignment = .center
         searchField.delegate = self
         searchField.returnKeyType = .search
-        // A2：面板内通知开关（默认开；外观与编辑器写给行复选同款：16 圆角 6、
+        // A2：面板内通知开关（默认开；外观与编辑器 @ 行复选同款：16 圆角 6、
         // 1.5 描边、开态 ink 底 + bg 色对勾）。
         notifyRow.axis = .horizontal
         notifyRow.spacing = 6
@@ -539,7 +539,7 @@ final class BearyRecipientPickerViewController: UIViewController, UITextFieldDel
         dismiss(animated: !UIAccessibility.isReduceMotionEnabled)
     }
 
-    /// A2：面板内通知开关只改本地值与自身外观（与编辑器写给行复选同款），
+    /// A2：面板内通知开关只改本地值与自身外观（与编辑器 @ 行复选同款；iCity 起行隐藏），
     /// 真正生效在点行回传时（onPick 第二参）。
     private func refreshNotifyCheck() {
         if notifyRecipient {
