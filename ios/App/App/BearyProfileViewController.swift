@@ -3183,6 +3183,9 @@ extension BearyProfileViewController: UITableViewDataSource, UITableViewDelegate
         }
         cellValue.onQuoteTap = { [weak self] in self?.handleCellQuoteTap(entry: entryValue) }
         cellValue.onFoldToggle = { [weak self] in self?.handleCellFoldToggle(entryId: entryId) }
+        // 游客详情：卡片上的登录提示条与未登录互动点按走本页的 onRequireLogin
+        //（容器接登录提示 Sheet）；此前 cellForRowAt 未接此回调，现补上。
+        cellValue.onRequireLogin = { [weak self] in self?.onRequireLogin?() }
         // fixall-cell 6-4 集成接线：回应行高变化走 batch（首页折叠同款口径），
         // cell 内不再播 flow 位移动画，防双动画叠加；未接线时 cell 保留 0.25s 兜底。
         cellValue.onNeedsEmoteRowAnimation = { [weak self, weak cellValue] in
