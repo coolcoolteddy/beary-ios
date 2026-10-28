@@ -1324,6 +1324,11 @@ final class BearySettingsViewController: UIViewController {
                 curPill.layer.borderColor = BearyColors.green.cgColor
                 curPill.layer.cornerRadius = 8
                 curPill.clipsToBounds = true
+                // 拉伸根因：curPill 是无内在尺寸的裸 UIView，lineRow 默认 .fill 分配
+                // 下它成了吸 slack 的那一个，内层 label 跟着被拉长、边框画满整行。
+                // 修法：pill 横向抗拉伸提到 defaultHigh、行尾补一个无边框 spacer 吸 slack，
+                // pill 只剩 label 内在宽 + 左右 7，左对齐跟在设备名后；描边/字色/圆角/字号不动。
+                curPill.setContentHuggingPriority(.defaultHigh, for: .horizontal)
                 curLabel.translatesAutoresizingMaskIntoConstraints = false
                 curPill.addSubview(curLabel)
                 NSLayoutConstraint.activate([
@@ -1333,6 +1338,7 @@ final class BearySettingsViewController: UIViewController {
                     curLabel.bottomAnchor.constraint(equalTo: curPill.bottomAnchor, constant: -1),
                 ])
                 lineParts.append(curPill)
+                lineParts.append(UIView())
             }
             let lineRow = UIStackView(arrangedSubviews: lineParts)
             lineRow.axis = .horizontal
@@ -1750,9 +1756,6 @@ final class BearySettingsViewController: UIViewController {
 
     // MARK: - 设置页新增三区（2026-10-26，第二阶段）
 
-    /// 主题行右侧对勾（mode → label），选档后刷新显隐；本页每次呈现新建，无需跨呈现复用。
-    private var themeCheckmarkLabels: [String: UILabel] = [:]
-
     private func settingsInterfaceStyle(for mode: String) -> UIUserInterfaceStyle {
         switch mode {
         case "light": return .light
@@ -1820,20 +1823,15 @@ final class BearySettingsViewController: UIViewController {
     private func buildGeneralSection() {
         let current = UserDefaults.standard.string(forKey: "beary_theme_mode") ?? "system"
         let modes: [(value: String, title: String)] = [("system", "跟随系统"), ("light", "浅色"), ("dark", "深色")]
-        var rows: [UIView] = []
-        for (index, mode) in modes.enumerated() {
-            let checkmark = makeLabel(font: UIFont.systemFont(ofSize: 15), color: BearyColors.ink)
-            checkmark.text = "✓"
-            checkmark.isHidden = (mode.value != current)
-            themeCheckmarkLabels[mode.value] = checkmark
-            let content = makeRow(title: mode.title, detailLabel: checkmark, iconName: "icon_theme_auto")
-            let button = UIButton(type: .custom)
-            button.tag = index
-            button.accessibilityLabel = mode.title
-            button.addTarget(self, action: #selector(themeRowTapped(_:)), for: .touchUpInside)
-            button.bearyAddPressHaptic()
-            rows.append(makeSettingsTappableRow(content: content, button: button))
-        }
+        // 主题三行合并为一段三段滑块：跟随系统 / 浅色 / 深色全保留，
+        // 选中档位与旧三行同款持久化与应用路径（见 themeSegmentChanged），
+        // 滑块指示动画只走系统分段动画。
+        let themeSegmented = UISegmentedControl(items: modes.map { $0.title })
+        themeSegmented.translatesAutoresizingMaskIntoConstraints = false
+        themeSegmented.selectedSegmentIndex = modes.firstIndex(where: { $0.value == current }) ?? 0
+        themeSegmented.setTitleTextAttributes([.font: UIFont.systemFont(ofSize: 15)], for: .normal)
+        themeSegmented.addTarget(self, action: #selector(themeSegmentChanged(_:)), for: .valueChanged)
+        var rows: [UIView] = [themeSegmented]
         // C2：使用指南行（原齿轮菜单项，改由设置页承载；容器接线到教程重播页）。
         let tutorialDetail = makeLabel(font: UIFont.systemFont(ofSize: 13), color: BearyColors.gray)
         tutorialDetail.text = "查看"
@@ -1929,15 +1927,15 @@ final class BearySettingsViewController: UIViewController {
         present(vc, animated: true)
     }
 
-    @objc private func themeRowTapped(_ sender: UIButton) {
+    /// 主题滑块档位变化：与旧三行同款持久化与应用路径
+    ///（写 beary_theme_mode + 窗口 overrideUserInterfaceStyle），仅去掉了对勾刷新
+    ///（选中态改由滑块自身的 selectedSegmentIndex 呈现）。
+    @objc private func themeSegmentChanged(_ sender: UISegmentedControl) {
         let modes = ["system", "light", "dark"]
-        guard sender.tag >= 0, sender.tag < modes.count else { return }
-        let mode = modes[sender.tag]
+        guard sender.selectedSegmentIndex >= 0, sender.selectedSegmentIndex < modes.count else { return }
+        let mode = modes[sender.selectedSegmentIndex]
         UserDefaults.standard.set(mode, forKey: "beary_theme_mode")
         view.window?.overrideUserInterfaceStyle = settingsInterfaceStyle(for: mode)
-        for (value, label) in themeCheckmarkLabels {
-            label.isHidden = (value != mode)
-        }
     }
 
     @objc private func openPrivacyText() {
