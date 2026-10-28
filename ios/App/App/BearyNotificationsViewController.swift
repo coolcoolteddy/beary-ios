@@ -187,7 +187,7 @@ final class BearyNotificationsViewController: UIViewController {
     /// clearItemsAfterUnauthorized 与 refreshListIfUnreadChanged / 轻量刷新成功分支）。
     private var needsReloadAfterUnauthorized = false
     private var zeroHeightRows: Set<Int> = []
-    private var headerHeight: CGFloat = 41
+    private var headerHeight: CGFloat = 48
     private var stateContainerTopConstraint: NSLayoutConstraint?
 
     // MARK: - 视图
@@ -208,8 +208,9 @@ final class BearyNotificationsViewController: UIViewController {
 
     private lazy var readAllButton: UIButton = {
         // R9-A：图标+文字小钮、高约 25（14 字 + 上下各 4 内边距）：换 Hit44 后
-        // 热区竖向扩向 44；受 41 高 header 框限，实际可达约 38（仍大于原 25），
-        // 要满 44 需改 header 高（属布局改动，本批不动）；宽已超 44 不横扩；视觉不动。
+        // 热区竖向扩向 44；header 高 48（见 headerView 高度约束），热区上下
+        // 均在框内、满 44 不裁（此前 header 41 时实际可达约 38）。
+        // 宽已超 44 不横扩；视觉不动（标题顶距不变，多余高度落到底部留白）。
         let button = BearyHit44Button(type: .system)
         button.translatesAutoresizingMaskIntoConstraints = false
         button.setImage(BearyIconImages.image(named: "icon_check", pointSize: 14), for: .normal)
@@ -232,6 +233,10 @@ final class BearyNotificationsViewController: UIViewController {
         let header = UIView()
         header.translatesAutoresizingMaskIntoConstraints = false
         header.backgroundColor = BearyColors.bg
+        // 追加 3：header 定高 48（按钮满 44 热区所需；标题顶距 14 不变，
+        // 多余高度落到底部留白，标题本身不移位）。fitting 高度由本约束钉死，
+        // viewDidLayoutSubviews 重算后仍为 48，不会缩回 41。
+        header.heightAnchor.constraint(equalToConstant: 48).isActive = true
         header.addSubview(titleLabel)
         header.addSubview(readAllButton)
         NSLayoutConstraint.activate([
