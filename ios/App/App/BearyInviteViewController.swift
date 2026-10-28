@@ -7,7 +7,7 @@ import UIKit
 // 内容口径与网页一致：
 //   - 标题“邀请好友”+ 副标题“好友注册时填你的邀请码，成功后你们各得 1 个月 Plus”；
 //   - 邀请码展示 + “复制”钮（复制后 1.6 秒内显示“已复制”，与网页 ivCopied 同口径）；
-//   - 提示“异常情况需站长审核后发放”；
+//   - 提示“触发风控时需站长审核后发放”；
 //   - 统计“已邀请 N 人 · 累计获得 M 个月 Plus”（accounts /me 的 referral
 //     invited_count / reward_months，只数 granted/pending/granting/flagged）；
 //   - 绑定区三态：已绑定 → “已通过 X 的邀请加入 beary”（status 为 cancelled/expired
@@ -59,6 +59,8 @@ final class BearyInviteViewController: UIViewController {
 
     private var inviteCode: String?
     private var referral: ReferralInfo?
+    /// 5-12：load 时一并存 /me 的 plusUntil（毫秒 epoch），granted 文案据此补到期日。
+    private var plusUntil: Int?
     /// 审计 P2：绑定成功文案先行状态——render() 会清空消息行，成功文案须在
     /// render 后仍保留；二次 fetchMe 失败时也不得以失败文案覆盖它。
     private var pendingBindMessage: String?
@@ -175,7 +177,7 @@ final class BearyInviteViewController: UIViewController {
 
         subtitleLabel.translatesAutoresizingMaskIntoConstraints = false
         subtitleLabel.text = "好友注册时填你的邀请码，成功后你们各得 1 个月 Plus"
-        subtitleLabel.font = UIFont.systemFont(ofSize: 13.5)
+        subtitleLabel.font = UIFont.systemFont(ofSize: 14)
         subtitleLabel.textColor = BearyColors.gray
         subtitleLabel.numberOfLines = 0
 
@@ -200,8 +202,8 @@ final class BearyInviteViewController: UIViewController {
         codeBox.addSubview(copyButton)
 
         hintLabel.translatesAutoresizingMaskIntoConstraints = false
-        hintLabel.text = "异常情况需站长审核后发放"
-        hintLabel.font = UIFont.systemFont(ofSize: 12.5)
+        hintLabel.text = "触发风控时需站长审核后发放"
+        hintLabel.font = UIFont.systemFont(ofSize: 13)
         hintLabel.textColor = BearyColors.gray
         hintLabel.numberOfLines = 0
 
@@ -259,7 +261,7 @@ final class BearyInviteViewController: UIViewController {
         bindField.addTarget(self, action: #selector(bindTextChanged), for: .editingChanged)
 
         bindHintLabel.translatesAutoresizingMaskIntoConstraints = false
-        bindHintLabel.font = UIFont.systemFont(ofSize: 12.5)
+        bindHintLabel.font = UIFont.systemFont(ofSize: 13)
         bindHintLabel.textColor = BearyColors.gray
         bindHintLabel.numberOfLines = 0
         bindHintLabel.isHidden = true
@@ -387,6 +389,7 @@ final class BearyInviteViewController: UIViewController {
                     }
                     strongSelf.inviteCode = user.inviteCode
                     strongSelf.referral = user.referral
+                    strongSelf.plusUntil = user.plusUntil
                     strongSelf.render()
                     afterRender?()
                 case .failure(.unauthorized):
@@ -509,6 +512,22 @@ final class BearyInviteViewController: UIViewController {
         bindButton.setTitle(isBinding ? "绑定中…" : "绑定", for: .normal)
     }
 
+    /// 5-12：granted 文案补“Plus 至 YYYY/M/d”。plusUntil 为 /me 下发的毫秒 epoch；
+    /// 永久阈值与设置页 BearyAccountText.permanentThreshold 同值（该 enum 为设置页私有，此处不跨文件引用）。
+    private func appendGrantedPlusUntil(baseText: String) {
+        guard messageLabel.text == baseText else { return }
+        guard let until = plusUntil, until > 0 else { return }
+        if until >= 4102444800000 {
+            messageLabel.text = baseText + "，Plus 永久有效"
+            return
+        }
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "zh_CN")
+        formatter.dateFormat = "yyyy/M/d"
+        let dateText = formatter.string(from: Date(timeIntervalSince1970: TimeInterval(until) / 1000.0))
+        messageLabel.text = baseText + "，Plus 至 \(dateText)"
+    }
+
     // MARK: - 动作
 
     @objc private func closeTapped() {
@@ -577,7 +596,15 @@ final class BearyInviteViewController: UIViewController {
                         strongSelf.pendingBindMessage = okText
                         strongSelf.pendingBindMessageOK = true
                         strongSelf.showMessage(okText, ok: true)
-                        strongSelf.load()
+                        if resp.status == "granted" {
+                            // 5-12：绑定后刷新 /me 拿到新的 plusUntil，再在文案后补到期日；
+                            // 刷新失败（afterRender 不跑）时只留基础文案，不编造日期。
+                            strongSelf.load(afterRender: { [weak strongSelf] in
+                                strongSelf?.appendGrantedPlusUntil(baseText: okText)
+                            })
+                        } else {
+                            strongSelf.load()
+                        }
                     }
                 case .failure(.cancelled):
                     break
@@ -597,10 +624,15 @@ final class BearyInviteViewController: UIViewController {
 
 extension BearyInviteViewController: UITextFieldDelegate {
     func textField(_ textField: UITextField, shouldChangeCharactersIn range: NSRange, replacementString string: String) -> Bool {
+        // 5-13：与编辑页同口径的截断式处理（组字中不截断），超长粘贴截断到 8 位而非整段拒绝。
+        if textField.markedTextRange != nil { return true }
         let current = textField.text ?? ""
         guard let swiftRange = Range(range, in: current) else { return false }
         let next = current.replacingCharacters(in: swiftRange, with: string)
-        return next.count <= 8
+        if next.count <= 8 { return true }
+        textField.text = String(next.prefix(8))
+        bindTextChanged()
+        return false
     }
 
     func textFieldShouldReturn(_ textField: UITextField) -> Bool {
