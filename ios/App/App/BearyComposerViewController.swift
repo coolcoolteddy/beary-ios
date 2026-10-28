@@ -246,6 +246,10 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, U
     private let textView = BearyBodyTextView()
     /// 正文区高度约束（正式修法：随内容动态走，下限 140、上限由 updateTextViewHeight 按 sheet 封顶算）。
     private var textViewHeightConstraint: NSLayoutConstraint?
+    /// 当前键盘高度（applyKeyboard 算出，编辑器批第 5 项）：updateTextViewHeight 的封顶
+    /// 须再减它，否则正文帧底伸到键盘下方、末行被盖且内层滚到头也露不出来；
+    /// 键盘收起/移出屏时为 0，WillChangeFrame 路径同值幂等。
+    private var currentKeyboardHeight: CGFloat = 0
     /// S10：textViewDidChange 高度缓存（contentSize 高度作判据）；高度不变时跳过
     /// updateTextViewHeight + updatePreferredContentSize 的重算。注意不用换行符
     /// 计行：长段落视觉折行不产生换行符，用换行符判会漏掉折行导致编辑器不跟长。
@@ -929,7 +933,10 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, U
         let sheetCap = containerHeight * (windowWidth >= 821 ? 0.80 : 0.88)
         // 顶栏 44 同 updatePreferredContentSize 口径；封顶不足 140 时仍保下限，
         // 此时 sheet 走呈现层封顶、外层滚动兜底，与正式修法前行为一致。
-        let cap = sheetCap - 44 - toolbarHeight - othersHeight
+        // 编辑器批第 5 项：封顶再减当前键盘高（收起时为 0）。不减时正文帧底伸到键盘
+        // 下方，末行被盖；内层已滚到头时外层 pan 被饿死，即“被盖住 + 手动上滑也滑不动”。
+        // 下限仍保 140（不足时外层滚动兜底，口径不变）。
+        let cap = sheetCap - 44 - toolbarHeight - othersHeight - currentKeyboardHeight
         let target = min(max(contentHeight, 140), max(140, cap))
         guard abs(heightConstraint.constant - target) > 0.5 else { return }
         heightConstraint.constant = target
@@ -978,6 +985,11 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, U
             button.translatesAutoresizingMaskIntoConstraints = false
             let ringView = UIView()
             ringView.translatesAutoresizingMaskIntoConstraints = false
+            // 编辑器批第 3 项：环必须禁交互——UIView 默认可交互，盖在按钮上会吞点按
+            // （publishRingView 与天气 Lottie 已有同款显式 false，心情条漏了）；
+            // 不禁时点熊只命中环/动画视图、按钮收不到 touchUpInside，即“心情无法选择”
+            // （名字 label 默认不交互，故只有点名字才偶然成功）。
+            ringView.isUserInteractionEnabled = false
             ringView.backgroundColor = BearyColors.faint
             ringView.layer.cornerRadius = 22
             ringView.layer.masksToBounds = true
@@ -991,6 +1003,8 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, U
             // 调 ensureLoaded 才加载；未点开时只显示静态回退图。
             let emoteView = BearyEmoteView(key: key, animated: false, deferred: true)
             emoteView.translatesAutoresizingMaskIntoConstraints = false
+            // 同上：BearyEmoteView 类内未禁交互，35×35 盖在环中央，同样吞点按。
+            emoteView.isUserInteractionEnabled = false
             let fallbackLabel = UILabel()
             fallbackLabel.translatesAutoresizingMaskIntoConstraints = false
             fallbackLabel.text = name
@@ -4639,10 +4653,17 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, U
         view.endEditing(true)
     }
 
-    /// 手势代理：落在正文 textView（含占位 label 子视图）内的点按不触发收键盘，交给 textView 正常聚焦/选区；
-    /// 其余空白与控件点按照常收键盘（cancelsTouchesInView=false，控件自身点按不受影响）。
+    /// 手势代理：落在正文 textView（含占位 label 子视图）与标题 titleField 内的点按
+    /// 不触发收键盘，交给输入框正常聚焦/选区；其余空白与控件点按照常收键盘
+    /// （cancelsTouchesInView=false，控件自身点按不受影响）。
+    /// 标题必须排除（编辑器批第 4 项）：titleField 在 contentStack 内、属 scrollView 子树，
+    /// 不排除时点标题先聚焦（touch down）又被本手势立即 endEditing（touch up），
+    /// 键盘/工具栏/inset 上下弹跳一次，用户感知为“点标题页面自动往上跑”。
     func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldReceive touch: UITouch) -> Bool {
         if let touchedView = touch.view, touchedView.isDescendant(of: textView) || touchedView === textView {
+            return false
+        }
+        if let touchedView = touch.view, touchedView.isDescendant(of: titleField) || touchedView === titleField {
             return false
         }
         return true
@@ -4668,11 +4689,17 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, U
                 curveRaw = c.uintValue
             }
         }
+        // 编辑器批第 5 项：键盘高度存属性供 updateTextViewHeight 封顶扣减。
+        currentKeyboardHeight = height
         let options = UIView.AnimationOptions(rawValue: curveRaw << 16)
         UIView.animate(withDuration: duration, delay: 0, options: [options, .beginFromCurrentState], animations: { [weak self] in
             guard let self = self else { return }
             self.scrollView.contentInset.bottom = height
             self.scrollView.scrollIndicatorInsets.bottom = height
+            // 封顶重算走同一键盘曲线；layoutIfNeeded 使高度约束变化随键盘动画走，
+            // 而非下一布局帧跳变。外层 inset 保留不动（供其他内容外层滚动）。
+            self.updateTextViewHeight()
+            self.view.layoutIfNeeded()
             // 64 包反馈修（第 13 项）：不再给 textView 内层加键盘底 inset——旧代码内外两层
             // 同加 keyboardHeight，空态下内层可视高 =  bounds 高 − 键盘高成负值，caret
             // 可见性计算退化、contentOffset 自己往上跳（占位 label 随之下滑），即 Li 报的

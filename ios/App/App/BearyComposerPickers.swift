@@ -52,15 +52,9 @@ final class BearyRecipientPickerViewController: UIViewController, UITextFieldDel
     private let notifyRow = UIStackView()
     private let notifyCheckButton = UIButton(type: .custom)
     private let notifyLabel = UILabel()
-    /// A2 搜索框可见性：底色与边框各比原值对比加深一级——浅色向暗一档
-    /// （底 0.96→0.92、边框 line 0.86→0.80），深色向亮一档（底 0.08→0.14、
-    /// 边框 58→74），均朝远离页底方向一档，否则深色下更暗反而更看不见。
-    private static var searchBoxBackgroundColor: UIColor {
-        UIColor { t in t.userInterfaceStyle == .dark ? UIColor(white: 0.14, alpha: 1) : UIColor(white: 0.92, alpha: 1) }
-    }
-    private static var searchBoxBorderColor: UIColor {
-        UIColor { t in t.userInterfaceStyle == .dark ? UIColor(red: 74.0/255.0, green: 74.0/255.0, blue: 80.0/255.0, alpha: 1) : UIColor(white: 0.80, alpha: 1) }
-    }
+    /// 搜索框配色（编辑器批）：原 A2 自定义动态底色/边框已删——96 包真机上搜索框
+    /// 整棵子树不画（帧 44pt 证实存在、预测区像素纯白），改走全站已证实可见的
+    /// BearyColors.faint/line，圆角取精确半高 22（见 buildViews）。
     private let listContainer = UIView()
     private let listScrollView = UIScrollView()
     private let rowsStack = UIStackView()
@@ -99,6 +93,12 @@ final class BearyRecipientPickerViewController: UIViewController, UITextFieldDel
         showState(kind: "init", query: "")
         NotificationCenter.default.addObserver(self, selector: #selector(keyboardWillShow(_:)), name: UIResponder.keyboardWillShowNotification, object: nil)
         NotificationCenter.default.addObserver(self, selector: #selector(keyboardWillHide(_:)), name: UIResponder.keyboardWillHideNotification, object: nil)
+    }
+
+    override func viewDidAppear(_ animated: Bool) {
+        super.viewDidAppear(animated)
+        // 编辑器批：viewDidLoad 时 view 尚未挂窗，首次响应者可能静默失败
+        // （96 包截图里面板弹出却无键盘）；移到 viewDidAppear，面板已上屏、键盘必起。
         searchField.becomeFirstResponder()
     }
 
@@ -113,7 +113,7 @@ final class BearyRecipientPickerViewController: UIViewController, UITextFieldDel
         // CGColor 只在赋值时解析一次：深浅切换时重刷 sheet 边框与搜索框/头图圈/空态圈描边。
         if previousTraitCollection?.userInterfaceStyle != traitCollection.userInterfaceStyle {
             applySheetChrome()
-            searchBox.layer.borderColor = Self.searchBoxBorderColor.cgColor
+            searchBox.layer.borderColor = BearyColors.line.cgColor
             notifyCheckButton.layer.borderColor = BearyColors.line.cgColor
             headerIconWrap.layer.borderColor = BearyColors.orange.withAlphaComponent(0.28).cgColor
             stateCircle.layer.borderColor = BearyColors.orange.withAlphaComponent(0.25).cgColor
@@ -158,14 +158,16 @@ final class BearyRecipientPickerViewController: UIViewController, UITextFieldDel
         // 这里只保留动作与按压反馈，不再重复写底色/圆角。
         closeButton.addTarget(self, action: #selector(didTapClose), for: .touchUpInside)
         closeButton.bearyAddPressFeedback()
-        // A2：搜索框底色/边框加深一级（见 searchBoxBackgroundColor/searchBoxBorderColor），
-        // 显式高度 44pt 见下方约束（内容驱动在 sheet fitting 下会被压高，图标与占位
-        // 文案随之看不见；定高后两者按原有 18 图标 + 16 占位正常渲染，不另改图与文案）。
-        searchBox.backgroundColor = Self.searchBoxBackgroundColor
-        searchBox.layer.cornerRadius = 999
+        // 编辑器批搜索框去 exotic 化：原自定义动态底色/边框 + 999 圆角在 96 包真机上
+        // 整棵子树不画（帧 44pt 证实存在、预测区像素纯白；静态查不到隐藏/透明/遮挡路径）。
+        // 改走全站已证实可见的 BearyColors.faint/line，圆角取精确半高 22；
+        // 显式 44 高、18 图标、16 占位均不动。若真机仍不可见，下一步须诊断包记录
+        // searchBox.frame/alpha/isHidden，而非继续盲改。
+        searchBox.backgroundColor = BearyColors.faint
+        searchBox.layer.cornerRadius = 22
         searchBox.layer.masksToBounds = true
         searchBox.layer.borderWidth = 1
-        searchBox.layer.borderColor = Self.searchBoxBorderColor.cgColor
+        searchBox.layer.borderColor = BearyColors.line.cgColor
         searchIcon.image = BearyIconImages.image(named: "icon_search", pointSize: 18)
         searchIcon.tintColor = BearyColors.gray
         searchIcon.contentMode = .scaleAspectFit
