@@ -168,9 +168,6 @@ class BearyProfileViewController: UIViewController {
     /// 通用组内三档行，Popover 类保留不断开其他调用方（见回执：无其他调用方）。
     var onToggleAppearance: (() -> Void)?
 
-    /// Q5 “赞过”空态“去广场看看”：容器接线到广场页（切 tab/回首页），本文件只通知。
-    var onGoToPlaza: (() -> Void)?
-
     /// 日记（本人）空态“写一篇”：容器接线到编辑器（与首页 onComposeRequested 同去向）。
     /// 本批只加按钮与回调，不改 SceneDelegate（容器接线由父级统一处理，避免多线同改 SceneDelegate 冲突）。
     var onWriteEntry: (() -> Void)?
@@ -2263,17 +2260,14 @@ class BearyProfileViewController: UIViewController {
             constraints.append(stack.bottomAnchor.constraint(equalTo: container.bottomAnchor, constant: -8))
         }
         // 空态 CTA（高 44、圆角 22 pill 口径，走 BearyButton 工厂，边框深浅切换
-        // 由工厂 trait 重刷）：赞过/收藏 → “去广场看看”（回调 onGoToPlaza，跳转归容器）；
-        // 日记（本人）→ “写一篇”（回调 onWriteEntry，容器接线到编辑器）；
-        // 他人日记空态不加。
+        // 由工厂 trait 重刷）：仅日记（本人）→ “写一篇”（回调 onWriteEntry，容器接线到编辑器）；
+        // 赞过/收藏空态无 CTA；他人日记空态不加。
         var emptyCTA: (title: String, action: Selector)?
         switch currentTab {
         case .diary:
             if isOwnProfile { emptyCTA = ("写一篇", #selector(emptyWriteTapped)) }
-        case .liked:
-            emptyCTA = ("去广场看看", #selector(emptyGoPlazaTapped))
-        case .saved:
-            emptyCTA = ("去广场看看", #selector(emptyGoPlazaTapped))
+        case .liked, .saved:
+            break
         }
         if let cta = emptyCTA {
             let ctaButton = BearyButton(style: .secondaryOutline(.regular))
@@ -2293,11 +2287,6 @@ class BearyProfileViewController: UIViewController {
             pencilView.start()
         }
         return container
-    }
-
-    /// Q5 “赞过”空态 CTA：只转发 onGoToPlaza，跳转归容器。
-    @objc private func emptyGoPlazaTapped() {
-        onGoToPlaza?()
     }
 
     /// 日记（本人）空态 CTA：只转发 onWriteEntry，跳转归容器。

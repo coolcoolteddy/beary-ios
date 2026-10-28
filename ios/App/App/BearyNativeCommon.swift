@@ -758,7 +758,7 @@ private enum BearyNBPath {
         let cx = (Double(from.x) + Double(to.x)) / 2 + h * (-uy)
         let cy = (Double(from.y) + Double(to.y)) / 2 + h * ux
         let a0 = atan2(Double(from.y) - cy, Double(from.x) - cx)
-        var a1 = atan2(Double(to.y) - cy, Double(from.x) - cx)
+        var a1 = atan2(Double(to.y) - cy, Double(to.x) - cx)
         while a1 <= a0 { a1 += 2 * Double.pi }
         var a = a0
         while a < a1 - 1e-6 {
