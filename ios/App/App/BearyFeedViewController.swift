@@ -922,16 +922,27 @@ class BearyFeedViewController: UIViewController {
         let recent = pendingRecentPublished ?? []
         pendingRecentPublished = nil
         hideNewContentPill()
-        // M5：点按后内容替换同样带过渡（减动效下直接换 + 回顶）。
-        if UIAccessibility.isReduceMotionEnabled {
-            applyRevalidated(plaza: newPlaza, recent: recent)
-            scrollToTop()
-        } else {
-            UIView.transition(with: tableView, duration: 0.25, options: .transitionCrossDissolve, animations: {
-                self.applyRevalidated(plaza: newPlaza, recent: recent)
-                self.tableView.setContentOffset(CGPoint(x: 0, y: -self.tableView.contentInset.top), animated: false)
-            }, completion: nil)
+        // 2026-10-28 定版：重校验不再整表 crossDissolve——先记旧 id 集，再换数据回顶，
+        // 只让本批新行错峰（已有行不动，与 Profile animateNewRows 同口径；减动效直换）。
+        let oldIds = Set(plazaEntries().compactMap { $0.id }).union(recentPublished.compactMap { $0.id })
+        applyRevalidated(plaza: newPlaza, recent: recent)
+        tableView.setContentOffset(CGPoint(x: 0, y: -tableView.contentInset.top), animated: false)
+        tableView.layoutIfNeeded()
+        var newPaths: [IndexPath] = []
+        if !recentPublished.isEmpty {
+            for (index, entry) in recentPublished.enumerated() {
+                if let id = entry.id, !oldIds.contains(id) {
+                    newPaths.append(IndexPath(row: 1 + index, section: 0))
+                }
+            }
         }
+        let plaza = plazaEntries()
+        for (index, entry) in plaza.enumerated() {
+            if let id = entry.id, !oldIds.contains(id) {
+                newPaths.append(IndexPath(row: plazaSectionRowOffset + index, section: 0))
+            }
+        }
+        staggerFadeCells(at: newPaths)
     }
 
     /// M1：新行错峰淡入 + 轻微上滑（只针对本批新行，已有行不重播；减动效直设终值）。

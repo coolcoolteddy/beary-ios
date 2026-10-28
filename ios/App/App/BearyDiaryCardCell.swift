@@ -2901,7 +2901,7 @@ extension BearyDiaryCardCell: UIContextMenuInteractionDelegate {
             guard let self = self else { return UIMenu(title: "", children: []) }
             var actions: [UIAction] = []
             if entry.isPublic == true {
-                actions.append(UIAction(title: "分享", image: UIImage(systemName: "square.and.arrow.up")) { [weak self] _ in
+                actions.append(UIAction(title: "分享", image: BearyIconImages.image(named: "icon_share", pointSize: 20)) { [weak self] _ in
                     self?.shareFromCardMenu()
                 })
             }
@@ -2913,17 +2913,18 @@ extension BearyDiaryCardCell: UIContextMenuInteractionDelegate {
             // 个人主页模式 cellBookmarkedByMe 由 syncInteraction 维护。
             if entry.isPublic == true || self.cardMode == .profile {
                 let bookmarked = self.cardMode == .profile ? self.cellBookmarkedByMe : (self.currentEntry?.bookmarkedByMe ?? false)
-                actions.append(UIAction(title: bookmarked ? "取消收藏" : "收藏", image: UIImage(systemName: bookmarked ? "bookmark.slash" : "bookmark")) { [weak self] _ in
+                // 2026-10-28 定版：菜单图标走手绘 icon_bookmark（无 bookmark.slash 手绘资产，取消态以标题区分，图标同款）。
+                actions.append(UIAction(title: bookmarked ? "取消收藏" : "收藏", image: BearyIconImages.image(named: "icon_bookmark", pointSize: 20)) { [weak self] _ in
                     self?.bookmarkFromCardMenu()
                 })
             }
             if self.isCardMenuEditAvailable(entry: entry) {
-                actions.append(UIAction(title: "编辑", image: UIImage(systemName: "pencil")) { [weak self] _ in
+                actions.append(UIAction(title: "编辑", image: BearyIconImages.image(named: "icon_edit", pointSize: 20)) { [weak self] _ in
                     self?.onContextMenuEdit?()
                 })
             }
             if entry.isMine == true, entry.isPublic != true {
-                actions.append(UIAction(title: "删除", image: UIImage(systemName: "trash"), attributes: .destructive) { [weak self] _ in
+                actions.append(UIAction(title: "删除", image: BearyIconImages.image(named: "icon_trash", pointSize: 20), attributes: .destructive) { [weak self] _ in
                     self?.onContextMenuDelete?()
                 })
             }

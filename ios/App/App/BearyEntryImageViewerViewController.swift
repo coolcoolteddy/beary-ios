@@ -16,7 +16,7 @@ class BearyEntryImageViewerViewController: UIViewController, UIGestureRecognizer
     private var neighborDirection: Int = 0
     private let retryLabel = UILabel()
     private let counterLabel = UILabel()
-    private let closeButton = BearyHit44Button(type: .system)
+    private let closeButton = BearyButton.closeButton()
     private let dotsStack = UIStackView()
     private var dotViews: [UIView] = []
     private var scale: CGFloat = 1
@@ -52,6 +52,7 @@ class BearyEntryImageViewerViewController: UIViewController, UIGestureRecognizer
 
     override func viewDidLoad() {
         super.viewDidLoad()
+        // 灯箱底色 0.92 黑为例外（2026-10-28 定）：透 8% 保留底层上下文，不改纯黑；深色背景纯黑定版不覆盖灯箱。
         view.backgroundColor = UIColor(white: 0, alpha: 0.92)
         imageView.contentMode = .scaleAspectFit
         imageView.backgroundColor = .clear
@@ -95,15 +96,9 @@ class BearyEntryImageViewerViewController: UIViewController, UIGestureRecognizer
             dotViews.append(dot)
         }
         view.addSubview(dotsStack)
-        closeButton.setImage(BearyIconImages.image(named: "icon_close", pointSize: 20), for: .normal)
-        closeButton.tintColor = .white
-        closeButton.backgroundColor = UIColor(white: 1, alpha: 0.15)
-        closeButton.layer.cornerRadius = 18
-        closeButton.clipsToBounds = true
         closeButton.translatesAutoresizingMaskIntoConstraints = false
         closeButton.addTarget(self, action: #selector(closeTapped), for: .touchUpInside)
         closeButton.bearyAddPressFeedback()
-        closeButton.accessibilityLabel = "关闭"
         view.addSubview(closeButton)
         let singleTap = UITapGestureRecognizer(target: self, action: #selector(stageTapped(_:)))
         singleTap.numberOfTapsRequired = 1
@@ -137,8 +132,8 @@ class BearyEntryImageViewerViewController: UIViewController, UIGestureRecognizer
             dotsStack.centerXAnchor.constraint(equalTo: view.centerXAnchor),
             closeButton.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 12),
             closeButton.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -16),
-            closeButton.widthAnchor.constraint(equalToConstant: 36),
-            closeButton.heightAnchor.constraint(equalToConstant: 36),
+            closeButton.widthAnchor.constraint(equalToConstant: 32),
+            closeButton.heightAnchor.constraint(equalToConstant: 32),
         ])
         updateCounter()
         loadCurrent()

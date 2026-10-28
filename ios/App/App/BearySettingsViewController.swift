@@ -1831,9 +1831,9 @@ final class BearySettingsViewController: UIViewController {
         themeSegmented.translatesAutoresizingMaskIntoConstraints = false
         themeSegmented.selectedSegmentIndex = modes.firstIndex(where: { $0.value == current }) ?? 0
         themeSegmented.setTitleTextAttributes([.font: UIFont.systemFont(ofSize: 15)], for: .normal)
-        // 三色制：选中段走品牌橙底 + 白字半粗体（旧三行无选中态样式，滑块系统默认与此不一致）。
-        themeSegmented.setTitleTextAttributes([.font: UIFont.systemFont(ofSize: 15, weight: .semibold), .foregroundColor: UIColor.white], for: .selected)
-        themeSegmented.selectedSegmentTintColor = BearyColors.orange
+        // 三色制：选中段走墨底 + 反色字（2026-10-28 定版：墨=行动/选中，橙底已改回墨；反色字取 bg，浅白深黑，与 ink 互为反色，深浅两态都可读）。
+        themeSegmented.setTitleTextAttributes([.font: UIFont.systemFont(ofSize: 15, weight: .semibold), .foregroundColor: BearyColors.bg], for: .selected)
+        themeSegmented.selectedSegmentTintColor = BearyColors.ink
         themeSegmented.addTarget(self, action: #selector(themeSegmentChanged(_:)), for: .valueChanged)
         var rows: [UIView] = [themeSegmented]
         // C2：使用指南行（原齿轮菜单项，改由设置页承载；容器接线到教程重播页）。
