@@ -1,8 +1,8 @@
 import UIKit
 
-// ===== 编辑器写给选人（网页对齐批）=====
-// 写给选人：调 GET /beary/api/search?q=，只取 users 组（display_name/handle 匹配，≤8 条，
-// 与网页搜索同口径），结果过滤掉本人；点行即回传 SearchUser，调用方负责写给 chip 与通知开关。
+// ===== 编辑器 @ 选人（网页对齐批）=====
+// @ 选人：调 GET /beary/api/search?q=，只取 users 组（display_name/handle 匹配，≤8 条，
+// 与网页搜索同口径），结果过滤掉本人；点行即回传 SearchUser，调用方负责 @ chip。
 // 呈现：自定义底 sheet（文件内自包含，不碰 SceneDelegate）：手机端 max-height 82vh 底 sheet、
 // 圆角 20/20/0/0、阴影 0 −12 32 rgba(0,0,0,.22)；宽 ≥821 时居中 440
 // 全圆角 20 + 边框 1 + 阴影 0 24 60 rgba(0,0,0,.30)；自定义抓手 40×4（不用系统抓手）。
@@ -15,16 +15,14 @@ import UIKit
 // 本文件旧的 BearyQuotePickerViewController 已删除。
 // 约束：部署目标 iOS 15.0、Swift 5.0——只用闭包回调，不用 async/await，不用 if-let 简写。
 
-// MARK: - 写给选人（底 sheet）
+// MARK: - @ 选人（底 sheet；单选、本人已过滤）
 
 final class BearyRecipientPickerViewController: UIViewController, UITextFieldDelegate {
 
-    /// 点行回传（调用方写 selectedRecipient 与 notifyRecipient；本页随后自行 dismiss）。
-    /// A2：通知开关移入本面板——onPick 第二参即开关当前值；此前调用方在 onPick 里
-    /// 写死 notifyRecipient = true，现改由面板内开关控制。
+    /// 点行回传（调用方写 selectedRecipient；本页随后自行 dismiss）。
+    /// iCity：@ 提醒无按篇开关——第二参仅为签名兼容保留，调用方忽略。
     var onPick: ((SearchUser, Bool) -> Void)?
-    /// A2：面板内通知开关当前值；默认值 true（与旧“选人即通知开启”行为一致）。
-    /// 调用方 present 前可按当前 notifyRecipient 覆写初值（新编辑器默认即 true）。
+    /// 旧面板内通知开关当前值；iCity 起开关行隐藏，本字段仅作初值占位保留。
     var notifyRecipient = true
 
     override init(nibName: String?, bundle: Bundle?) {
@@ -47,7 +45,7 @@ final class BearyRecipientPickerViewController: UIViewController, UITextFieldDel
     private let searchBox = UIView()
     private let searchIcon = UIImageView()
     private let searchField = UITextField()
-    /// A2：面板内通知开关（16 复选 + “通知对方”文案，编辑器写给行同款外观）。
+    /// A2：面板内通知开关（16 复选 + “通知对方”文案；iCity 起行隐藏，仅保留代码）。
     private let notifyRow = UIStackView()
     private let notifyCheckButton = UIButton(type: .custom)
     private let notifyLabel = UILabel()
@@ -147,8 +145,8 @@ final class BearyRecipientPickerViewController: UIViewController, UITextFieldDel
         headerIcon.image = BearyIconImages.image(named: "icon_at", pointSize: 20)
         headerIcon.tintColor = BearyColors.orange
         headerIcon.contentMode = .scaleAspectFit
-        // 决议第 16 项 B：选人 sheet 标题改“写给谁”。
-        headerTitle.text = "写给谁"
+        // iCity：选人 sheet 标题改“@ 谁”。
+        headerTitle.text = "@ 谁"
         headerTitle.font = UIFont.boldSystemFont(ofSize: 16)
         headerTitle.textColor = BearyColors.ink
         // 关闭钮视觉由 BearyButton.iconCircleClose 工厂定（faint 底 32 圆钮 + icon_close 15）；
@@ -179,11 +177,13 @@ final class BearyRecipientPickerViewController: UIViewController, UITextFieldDel
         searchField.contentVerticalAlignment = .center
         searchField.delegate = self
         searchField.returnKeyType = .search
-        // A2：面板内通知开关（默认开；外观与编辑器写给行复选同款：16 圆角 6、
+        // A2：面板内通知开关（默认开；外观与编辑器 @ 行复选同款：16 圆角 6、
         // 1.5 描边、开态 ink 底 + bg 色对勾）。
         notifyRow.axis = .horizontal
         notifyRow.spacing = 6
         notifyRow.alignment = .center
+        // iCity：@ 提醒无按篇开关——通知行隐藏（约束与高度计算见下文同步改，不留空隙）。
+        notifyRow.isHidden = true
         notifyCheckButton.layer.cornerRadius = 6
         notifyCheckButton.layer.masksToBounds = true
         notifyCheckButton.layer.borderWidth = 1.5
@@ -298,13 +298,14 @@ final class BearyRecipientPickerViewController: UIViewController, UITextFieldDel
             searchField.trailingAnchor.constraint(equalTo: searchBox.trailingAnchor, constant: -14),
             searchField.topAnchor.constraint(equalTo: searchBox.topAnchor, constant: 12),
             searchField.bottomAnchor.constraint(equalTo: searchBox.bottomAnchor, constant: -12),
-            // A2：通知行夹在搜索框与列表之间（搜索框下 8、列表在其下 10）。
+            // iCity：通知行隐藏——列表直接贴搜索框下 10pt；通知行约束保留、
+            // 行本身隐藏（不绘图、不接手势），与列表区的少量重叠不可见、无害。
             notifyRow.topAnchor.constraint(equalTo: searchBox.bottomAnchor, constant: 8),
             notifyRow.leadingAnchor.constraint(equalTo: sheetView.leadingAnchor, constant: 16),
             notifyRow.trailingAnchor.constraint(lessThanOrEqualTo: sheetView.trailingAnchor, constant: -16),
             notifyCheckButton.widthAnchor.constraint(equalToConstant: 16),
             notifyCheckButton.heightAnchor.constraint(equalToConstant: 16),
-            listContainer.topAnchor.constraint(equalTo: notifyRow.bottomAnchor, constant: 10),
+            listContainer.topAnchor.constraint(equalTo: searchBox.bottomAnchor, constant: 10),
             listContainer.leadingAnchor.constraint(equalTo: sheetView.leadingAnchor, constant: 10),
             listContainer.trailingAnchor.constraint(equalTo: sheetView.trailingAnchor, constant: -10),
             listScrollView.topAnchor.constraint(equalTo: listContainer.topAnchor),
@@ -422,12 +423,7 @@ final class BearyRecipientPickerViewController: UIViewController, UITextFieldDel
             withHorizontalFittingPriority: .required,
             verticalFittingPriority: .fittingSizeLevel
         ).height
-        // A2：通知行高计入 sheet 高（搜索框下 8 + 通知行高 + 通知行到列表 10）。
-        let notifyHeight = notifyRow.systemLayoutSizeFitting(
-            CGSize(width: max(sheetWidth - 32, 0), height: 0),
-            withHorizontalFittingPriority: .required,
-            verticalFittingPriority: .fittingSizeLevel
-        ).height
+        // iCity：通知行已隐藏，不计入 sheet 高（列表直接贴搜索框下 10pt，见下方约束）。
         let listWidth = max(sheetWidth - 20, 0)
         let listHeight: CGFloat
         if !listScrollView.isHidden {
@@ -444,9 +440,9 @@ final class BearyRecipientPickerViewController: UIViewController, UITextFieldDel
             ).height
         }
         let bottomPad = 14 + (isPadLayout ? 0 : view.safeAreaInsets.bottom)
-        // 抓手 14 + 头顶 4 + 头图 40 + 头到搜索 12 + 搜索框高 + 搜索到通知 8 + 通知行高
-        // + 通知到列表 10 + 列表高 + 底 padding。
-        let fittingHeight = 14 + 4 + 40 + 12 + searchHeight + 8 + notifyHeight + 10 + listHeight + bottomPad
+        // 抓手 14 + 头顶 4 + 头图 40 + 头到搜索 12 + 搜索框高 + 搜索到列表 10
+        // + 列表高 + 底 padding（iCity：通知行隐藏后不再占 8 + 行高 + 10）。
+        let fittingHeight = 14 + 4 + 40 + 12 + searchHeight + 10 + listHeight + bottomPad
         let visibleHeight = containerHeight - (isPadLayout ? 0 : keyboardHeight)
         let maxHeight = max(visibleHeight * 0.82, 0)
         let target = min(fittingHeight, maxHeight)
@@ -543,7 +539,7 @@ final class BearyRecipientPickerViewController: UIViewController, UITextFieldDel
         dismiss(animated: !UIAccessibility.isReduceMotionEnabled)
     }
 
-    /// A2：面板内通知开关只改本地值与自身外观（与编辑器写给行复选同款），
+    /// A2：面板内通知开关只改本地值与自身外观（与编辑器 @ 行复选同款；iCity 起行隐藏），
     /// 真正生效在点行回传时（onPick 第二参）。
     private func refreshNotifyCheck() {
         if notifyRecipient {
@@ -613,8 +609,8 @@ final class BearyRecipientPickerViewController: UIViewController, UITextFieldDel
             stateRetryBottomConstraint?.isActive = true
         } else {
             stateIcon.image = BearyIconImages.image(named: "icon_at", pointSize: 25)
-            stateTitle.text = "写给谁"
-            stateSubtitle.text = "这篇 7 天后才送达"
+            stateTitle.text = "@ 谁"
+            stateSubtitle.text = "公开后对方会收到提醒"
         }
     }
 

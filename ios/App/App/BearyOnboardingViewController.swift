@@ -1,9 +1,10 @@
 import UIKit
 
 // ===== 首次启动欢迎引导 v4（原生版，引导 + 现行使用指南合并）=====
-// 11 屏版（开场钩子 → 欢迎 → 问答 → 试写 → 心情天气 → 送达演示 →
-// 公开演示 → 互动演示 → 消息与主页 → 小工具 → CTA）；首启与重播同为
-// 11 屏，准备屏已删（P1-2）；CTA 改「关闭 / 开始写第一篇」。
+// iCity 10 屏版（开场钩子 → 欢迎 → 问答 → 试写 → 心情天气 → 可见范围 →
+// 互动演示 → 消息与主页 → 小工具 → CTA）；首启与重播同为
+// 10 屏，准备屏已删（P1-2）；送达演示与公开演示倒计时屏已随送达模型废除；
+// CTA 改「关闭 / 开始写第一篇」。
 // 绝不用 WKWebView、不加载任何网页；文案逐字对齐现行指南源码
 // （旧 BearyTutorialViewController 已删，seen 键现归本类 tutorialSeenKey）。
 // 尺寸铁律（v3 原型前车之鉴）：熊 200×200、熊掌 44×44 各自显式限定，
@@ -412,8 +413,8 @@ final class BearyOnboardingViewController: UIViewController {
     var onClosed: (() -> Void)?
     var preloadSteps: [PreloadStep] = []
 
-    private let flowCount = 11
-    // P1-2：准备屏已删，首启不再 +1，首启与重播同为 11 屏。
+    private let flowCount = 10
+    // P1-2：准备屏已删，首启不再 +1，首启与重播同为 10 屏（iCity：送达/公开演示屏已删）。
     private var totalScreens: Int { flowCount }
     private var ctaIndex: Int { flowCount - 1 }
 
@@ -455,22 +456,7 @@ final class BearyOnboardingViewController: UIViewController {
     private var moodFaceViews: [String: UIView] = [:]
     private var weatherSelected: String?
     private var weatherButtons: [String: UIButton] = [:]
-    private var deliveryTimer: Timer?
-    private var deliveryDay = 7
-    private var deliveryState = 0 // 0 未开始 1 倒计时 2 已送达
-    private var deliveryDayLabel: UILabel?
-    private var deliveryStateLabel: UILabel?
-    private var deliveryReplayButton: UIButton?
-    private var pubLink: CADisplayLink?
-    private var pubStartTime: CFTimeInterval = 0
-    private var pubProgress: CGFloat = 0
-    private var pubState = 0 // 0 未公开 1 倒计时 2 已公开
-    private var pubRingLayer: CAShapeLayer?
-    private var pubTimeLabel: UILabel?
-    private var pubStateLabel: UILabel?
-    private var pubStartButton: UIButton?
-    private var pubCancelButton: UIButton?
-    private var pubReplayButton: UIButton?
+
     private var likeSelected = false
     private var likeCount = 12
     private var likeButton: BearyPressButton?
@@ -501,12 +487,7 @@ final class BearyOnboardingViewController: UIViewController {
         if mode == .firstLaunch { startPreload() }
     }
 
-    deinit {
-        deliveryTimer?.invalidate()
-        pubLink?.invalidate()
-    }
-
-    // 次要项：审计列出的 5 处 CGColor（问答卡边框、心情/天气选中圈、公开圆环、
+    // 次要项：审计列出的 4 处 CGColor（问答卡边框、心情/天气选中圈、
     // 回应选中边框）深浅切换时重刷；clear 色与 UIColor 背景色不受影响，不用管。
     override func traitCollectionDidChange(_ previousTraitCollection: UITraitCollection?) {
         super.traitCollectionDidChange(previousTraitCollection)
@@ -522,7 +503,6 @@ final class BearyOnboardingViewController: UIViewController {
                   let circle = chip.arrangedSubviews.first else { continue }
             circle.layer.borderColor = BearyColors.ink.cgColor
         }
-        pubRingLayer?.strokeColor = BearyColors.orange.cgColor
         for (_, button) in rxnButtons {
             guard let face = button.superview else { continue }
             face.layer.borderColor = BearyColors.orange.cgColor
@@ -727,7 +707,6 @@ final class BearyOnboardingViewController: UIViewController {
     private func screenDidAppear(_ index: Int) {
         // 临时诊断（81 包，定根因后删除）：换屏走完的终态，落在它上面不算卡住。
         DiagFile.mark("ob-appeared")
-        if index == 5 { startDeliveryDemo() }
         if index == 0 { bearView?.resumeFloatIfNeeded() }
     }
 
@@ -739,10 +718,6 @@ final class BearyOnboardingViewController: UIViewController {
     }
 
     private func stopScreenAnimations() {
-        deliveryTimer?.invalidate()
-        deliveryTimer = nil
-        pubLink?.invalidate()
-        pubLink = nil
         // 5-2：星空 overlay 只在第 0 屏生效，切屏即移除（含星星往复动画
         // 随视图释放而停）；nightOn 同步复位，回第 0 屏长按可重开。
         nightOverlay?.removeFromSuperview()
@@ -837,12 +812,11 @@ final class BearyOnboardingViewController: UIViewController {
         case 2: buildQuizScreen(stack)
         case 3: buildTrialScreen(stack)
         case 4: buildMoodScreen(stack)
-        case 5: buildDeliveryScreen(stack)
-        case 6: buildPublishScreen(stack)
-        case 7: buildInteractScreen(stack)
-        case 8: buildMessagesScreen(stack)
-        case 9: buildToolsScreen(stack)
-        case 10: buildCTAScreen(stack)
+        case 5: buildPublishScreen(stack)
+        case 6: buildInteractScreen(stack)
+        case 7: buildMessagesScreen(stack)
+        case 8: buildToolsScreen(stack)
+        case 9: buildCTAScreen(stack)
         default: break
         }
         let built = (scroll, stack)
@@ -942,12 +916,12 @@ extension BearyOnboardingViewController {
         let title = UILabel()
         title.numberOfLines = 0
         title.textAlignment = .center
-        let titleText = "有些话，现在说不出口，\n写给 7 天后的自己刚刚好"
+        let titleText = "有些话，现在说不出口，\n写下来刚刚好"
         let attributed = NSMutableAttributedString(string: titleText, attributes: [
             .font: UIFont.boldSystemFont(ofSize: 24),
             .foregroundColor: BearyColors.ink,
         ])
-        if let range = titleText.range(of: "7 天后的自己") {
+        if let range = titleText.range(of: "写下来刚刚好") {
             attributed.addAttribute(.foregroundColor, value: BearyColors.orange, range: NSRange(range, in: titleText))
         }
         title.attributedText = attributed
@@ -1006,11 +980,11 @@ extension BearyOnboardingViewController {
         // 临时诊断（81 包，定根因后删除）。
         DiagFile.mark("ob-welcome-enter")
         stack.addArrangedSubview(titleLabel("这里是一个安静的\n日记角落"))
-        stack.addArrangedSubview(bodyLabel("写下今天，先私密保存 7 天，送达后由你决定是否公开——给每篇日记一点沉淀的时间。"))
-        let card1 = ruleCard(stack, title: "先私密保存 7 天", body: "发布后不会立刻公开，在时间线里能看到离送达还剩多久。")
+        stack.addArrangedSubview(bodyLabel("写完选可见范围，默认私密，公开与私密随时切换。"))
+        let card1 = ruleCard(stack, title: "默认私密", body: "写完即按所选可见；不公开时，只有你能看到。")
         stack.addArrangedSubview(card1)
         card1.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
-        let card2 = ruleCard(stack, title: "送达后，你说了算", body: "送达后它只属于你自己；想公开时点「公开」，确认后进入倒计时。")
+        let card2 = ruleCard(stack, title: "随时切换", body: "公开与私密可在卡片操作行随时切换，无需等待。")
         stack.addArrangedSubview(card2)
         card2.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
         DiagFile.mark("ob-welcome-exit")
@@ -1326,244 +1300,24 @@ extension BearyOnboardingViewController {
         }
     }
 
-    private func buildDeliveryScreen(_ stack: UIStackView) {
-        stack.addArrangedSubview(titleLabel("7 天后，它会\n准时回到你手里"))
-        stack.addArrangedSubview(ruleLabel("不早一秒，不公开给任何人 · 演示已加速"))
-        let circle = UIView()
-        circle.backgroundColor = BearyColors.faint
-        circle.layer.cornerRadius = 37
-        circle.layer.masksToBounds = true
-        circle.translatesAutoresizingMaskIntoConstraints = false
-        let mailIcon = UIImageView()
-        mailIcon.image = BearyIconImages.image(named: "icon_mail", pointSize: 36)
-        mailIcon.tintColor = BearyColors.orange
-        mailIcon.contentMode = .scaleAspectFit
-        mailIcon.translatesAutoresizingMaskIntoConstraints = false
-        circle.addSubview(mailIcon)
-        NSLayoutConstraint.activate([
-            circle.widthAnchor.constraint(equalToConstant: 74),
-            circle.heightAnchor.constraint(equalToConstant: 74),
-            mailIcon.centerXAnchor.constraint(equalTo: circle.centerXAnchor),
-            mailIcon.centerYAnchor.constraint(equalTo: circle.centerYAnchor),
-            mailIcon.widthAnchor.constraint(equalToConstant: 36),
-            mailIcon.heightAnchor.constraint(equalToConstant: 36),
-        ])
-        stack.addArrangedSubview(circle)
-
-        let dayLabel = UILabel()
-        dayLabel.text = "还有 7 天"
-        dayLabel.font = UIFont.boldSystemFont(ofSize: 28)
-        dayLabel.textColor = BearyColors.ink
-        dayLabel.textAlignment = .center
-        deliveryDayLabel = dayLabel
-        stack.addArrangedSubview(dayLabel)
-
-        let stateLabel = UILabel()
-        stateLabel.text = "送达 · 私密保存，只有你能看到"
-        stateLabel.font = UIFont.systemFont(ofSize: 14)
-        stateLabel.textColor = BearyColors.gray
-        stateLabel.textAlignment = .center
-        stateLabel.numberOfLines = 0
-        deliveryStateLabel = stateLabel
-        stack.addArrangedSubview(stateLabel)
-
-        let replay = BearyPressButton(type: .system)
-        replay.setTitle("再演示一次", for: .normal)
-        replay.titleLabel?.font = UIFont.systemFont(ofSize: 15, weight: .medium)
-        replay.setTitleColor(BearyColors.ink, for: .normal)
-        replay.backgroundColor = BearyColors.faint
-        replay.layer.cornerRadius = 22
-        replay.addTarget(self, action: #selector(deliveryReplayTapped), for: .touchUpInside)
-        replay.translatesAutoresizingMaskIntoConstraints = false
-        replay.heightAnchor.constraint(equalToConstant: 44).isActive = true
-        replay.isHidden = true
-        deliveryReplayButton = replay
-        stack.addArrangedSubview(replay)
-
-        stack.addArrangedSubview(ruleLabel("15 分钟内可编辑，整个私密期内都能删除；超 15 分钟内容锁定。"))
-    }
-
-    private func startDeliveryDemo() {
-        guard deliveryState == 0 else { return }
-        deliveryState = 1
-        deliveryDay = 7
-        deliveryDayLabel?.text = "还有 7 天"
-        deliveryReplayButton?.isHidden = true
-        if UIAccessibility.isReduceMotionEnabled {
-            deliveryDay = 0
-            deliveryState = 2
-            deliveryDayLabel?.text = "已送达"
-            deliveryStateLabel?.text = "已送达 · 私密保存，只有你能看到"
-            deliveryReplayButton?.isHidden = false
-            return
-        }
-        deliveryTimer?.invalidate()
-        deliveryTimer = Timer.scheduledTimer(withTimeInterval: 0.45, repeats: true) { [weak self] timer in
-            guard let self = self else { timer.invalidate(); return }
-            self.deliveryDay -= 1
-            if self.deliveryDay <= 0 {
-                timer.invalidate()
-                self.deliveryState = 2
-                self.deliveryDayLabel?.text = "已送达"
-                self.deliveryStateLabel?.text = "已送达 · 私密保存，只有你能看到"
-                self.deliveryReplayButton?.isHidden = false
-            } else {
-                self.deliveryDayLabel?.text = "还有 \(self.deliveryDay) 天"
-            }
-        }
-    }
-
-    @objc private func deliveryReplayTapped() {
-        deliveryState = 0
-        startDeliveryDemo()
-    }
 }
 
 
-// MARK: - 引导屏 6–11
+// MARK: - 引导屏（可见范围起）
 
 extension BearyOnboardingViewController {
+    /// iCity 可见范围屏（静态，无演示状态机）：写完选可见范围，默认私密，
+    /// 公开与私密随时切换；15 分钟内可编辑，公开与私密均可删除（进回收站 30 天）。
     private func buildPublishScreen(_ stack: UIStackView) {
         stack.addArrangedSubview(titleLabel("公开不公开，\n你说了算"))
-        stack.addArrangedSubview(ruleLabel("24 小时内随时可以反悔 · 演示已加速"))
-
-        let ringBox = UIView()
-        ringBox.translatesAutoresizingMaskIntoConstraints = false
-        ringBox.widthAnchor.constraint(equalToConstant: 120).isActive = true
-        ringBox.heightAnchor.constraint(equalToConstant: 120).isActive = true
-        let ring = CAShapeLayer()
-        ring.path = UIBezierPath(ovalIn: CGRect(x: 8, y: 8, width: 104, height: 104)).cgPath
-        ring.strokeColor = BearyColors.orange.cgColor
-        ring.fillColor = UIColor.clear.cgColor
-        ring.lineWidth = 8
-        ring.lineCap = .round
-        ring.strokeEnd = 0
-        ring.frame = CGRect(x: 0, y: 0, width: 120, height: 120)
-        ringBox.layer.addSublayer(ring)
-        pubRingLayer = ring
-        let timeLabel = UILabel()
-        timeLabel.text = "24:00"
-        timeLabel.font = UIFont.boldSystemFont(ofSize: 24)
-        timeLabel.textColor = BearyColors.ink
-        timeLabel.textAlignment = .center
-        timeLabel.translatesAutoresizingMaskIntoConstraints = false
-        ringBox.addSubview(timeLabel)
-        NSLayoutConstraint.activate([
-            timeLabel.centerXAnchor.constraint(equalTo: ringBox.centerXAnchor),
-            timeLabel.centerYAnchor.constraint(equalTo: ringBox.centerYAnchor),
-        ])
-        pubTimeLabel = timeLabel
-        stack.addArrangedSubview(ringBox)
-
-        let stateLabel = UILabel()
-        stateLabel.text = "未公开 · 随时可以公开"
-        stateLabel.font = UIFont.systemFont(ofSize: 14)
-        stateLabel.textColor = BearyColors.gray
-        stateLabel.textAlignment = .center
-        pubStateLabel = stateLabel
-        stack.addArrangedSubview(stateLabel)
-
-        let start = BearyPressButton(type: .system)
-        start.setTitle("开始倒计时", for: .normal)
-        start.titleLabel?.font = UIFont.systemFont(ofSize: 15, weight: .medium)
-        start.setTitleColor(.white, for: .normal)
-        start.backgroundColor = BearyColors.orange
-        start.layer.cornerRadius = 22
-        start.addTarget(self, action: #selector(pubStartTapped), for: .touchUpInside)
-        start.translatesAutoresizingMaskIntoConstraints = false
-        start.heightAnchor.constraint(equalToConstant: 44).isActive = true
-        pubStartButton = start
-        stack.addArrangedSubview(start)
-
-        let cancel = BearyPressButton(type: .system)
-        cancel.setTitle("取消公开，回到未公开", for: .normal)
-        cancel.titleLabel?.font = UIFont.systemFont(ofSize: 15, weight: .medium)
-        cancel.setTitleColor(BearyColors.ink, for: .normal)
-        cancel.backgroundColor = BearyColors.faint
-        cancel.layer.cornerRadius = 22
-        cancel.addTarget(self, action: #selector(pubCancelTapped), for: .touchUpInside)
-        cancel.translatesAutoresizingMaskIntoConstraints = false
-        cancel.heightAnchor.constraint(equalToConstant: 44).isActive = true
-        cancel.isHidden = true
-        pubCancelButton = cancel
-        stack.addArrangedSubview(cancel)
-
-        let replay = BearyPressButton(type: .system)
-        replay.setTitle("再演示一次", for: .normal)
-        replay.titleLabel?.font = UIFont.systemFont(ofSize: 15, weight: .medium)
-        replay.setTitleColor(BearyColors.ink, for: .normal)
-        replay.backgroundColor = BearyColors.faint
-        replay.layer.cornerRadius = 22
-        replay.addTarget(self, action: #selector(pubReplayTapped), for: .touchUpInside)
-        replay.translatesAutoresizingMaskIntoConstraints = false
-        replay.heightAnchor.constraint(equalToConstant: 44).isActive = true
-        replay.isHidden = true
-        pubReplayButton = replay
-        stack.addArrangedSubview(replay)
-
-        stack.addArrangedSubview(ruleLabel("倒计时期间可以取消，到期后公开且不能撤回删除。"))
-    }
-
-    private func resetPublishDemo() {
-        pubLink?.invalidate()
-        pubLink = nil
-        pubProgress = 0
-        pubState = 0
-        pubRingLayer?.strokeEnd = 0
-        pubTimeLabel?.text = "24:00"
-        pubStateLabel?.text = "未公开 · 随时可以公开"
-        pubStartButton?.isHidden = false
-        pubCancelButton?.isHidden = true
-        pubReplayButton?.isHidden = true
-    }
-
-    @objc private func pubStartTapped() {
-        guard pubState == 0 else { return }
-        if UIAccessibility.isReduceMotionEnabled {
-            pubProgress = 1
-            pubState = 2
-            pubRingLayer?.strokeEnd = 1
-            pubTimeLabel?.text = "0:00"
-            pubStateLabel?.text = "已公开 · 已锁死"
-            pubStartButton?.isHidden = true
-            pubCancelButton?.isHidden = true
-            pubReplayButton?.isHidden = false
-            return
-        }
-        pubState = 1
-        pubStateLabel?.text = "倒计时中 · 随时可以取消"
-        pubStartButton?.isHidden = true
-        pubCancelButton?.isHidden = false
-        pubStartTime = CACurrentMediaTime()
-        let link = CADisplayLink(target: self, selector: #selector(pubTick))
-        link.add(to: .main, forMode: .common)
-        pubLink = link
-    }
-
-    @objc private func pubTick() {
-        let elapsed = CACurrentMediaTime() - pubStartTime
-        let progress = min(CGFloat(elapsed / 4.0), 1)
-        pubProgress = progress
-        pubRingLayer?.strokeEnd = progress
-        let remainingMinutes = Int((1 - progress) * 24 * 60)
-        pubTimeLabel?.text = "\(remainingMinutes / 60):\(String(format: "%02d", remainingMinutes % 60))"
-        if progress >= 1 {
-            pubLink?.invalidate()
-            pubLink = nil
-            pubState = 2
-            pubTimeLabel?.text = "0:00"
-            pubStateLabel?.text = "已公开 · 已锁死"
-            pubCancelButton?.isHidden = true
-            pubReplayButton?.isHidden = false
-        }
-    }
-
-    @objc private func pubCancelTapped() {
-        resetPublishDemo()
-    }
-
-    @objc private func pubReplayTapped() {
-        resetPublishDemo()
+        stack.addArrangedSubview(ruleLabel("写完选可见范围，默认私密，公开与私密随时切换"))
+        let card1 = ruleCard(stack, title: "默认私密", body: "写完即按所选可见；不公开时，只有你能看到。")
+        stack.addArrangedSubview(card1)
+        card1.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
+        let card2 = ruleCard(stack, title: "随时切换", body: "公开与私密可在卡片操作行随时切换，无需等待。")
+        stack.addArrangedSubview(card2)
+        card2.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
+        stack.addArrangedSubview(ruleLabel("15 分钟内可编辑，公开与私密均可删除（进回收站 30 天）。"))
     }
 
     private func buildInteractScreen(_ stack: UIStackView) {
@@ -1596,7 +1350,7 @@ extension BearyOnboardingViewController {
             avatarIcon.heightAnchor.constraint(equalToConstant: 22),
         ])
         let headText = UILabel()
-        headText.text = "你 · 今天 · 送达给自己"
+        headText.text = "你 · 今天"
         headText.font = UIFont.systemFont(ofSize: 13)
         headText.textColor = BearyColors.gray
         headRow.addArrangedSubview(avatar)
@@ -1928,7 +1682,7 @@ extension BearyOnboardingViewController {
 
     private func buildToolsScreen(_ stack: UIStackView) {
         stack.addArrangedSubview(titleLabel("顺手的小工具，\n写起来更顺"))
-        stack.addArrangedSubview(toolRow(iconName: "icon_user", title: "写给某位朋友", body: "发布前选一位收信人，对方要等送达那天才能打开。"))
+        stack.addArrangedSubview(toolRow(iconName: "icon_user", title: "@ 一位朋友", body: "写日记时可以 @ 一位朋友，公开后对方会收到提醒。"))
         stack.addArrangedSubview(toolRow(iconName: "icon_calendar", title: "日历与小火苗", body: "时间线顶部有日历和连续天数，写得越勤，小火苗越旺。"))
         stack.addArrangedSubview(toolRow(iconName: "icon_search", title: "放大镜搜索", body: "想找以前的日记或朋友，点顶栏的放大镜搜一搜。"))
     }

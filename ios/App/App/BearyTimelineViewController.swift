@@ -171,11 +171,11 @@ struct BearyCalendarMark {
 
 enum BearyCalendarMarks {
     /// 64 包反馈修（第 4 项，Li 混色方案）：旧“全天同色多数判定”整段删除——
-    /// 每种状态各自按数量拆现有图形词汇（公开=橙、未公开=蓝），一天内先画公开组、
-    /// 再画未公开组拼进同一格：1→1 点、2→2 点、3→三角形、4→正方形、5→五边形、
+    /// 每种状态各自按数量拆现有图形词汇（公开=橙、私密=蓝），一天内先画公开组、
+    /// 再画私密组拼进同一格：1→1 点、2→2 点、3→三角形、4→正方形、5→五边形、
     /// 6→五边形+1 点、7→五边形+2 点、单状态 8+ 按 7 封顶。
     /// 逐一核对 Li 的例子：2 篇 1 公开 = 1 橙点 + 1 蓝点；3 篇 2 公开 = 2 橙点 + 1 蓝点；
-    /// 10 篇 7 公开 3 未公开 = 橙五边形 + 橙 2 点 + 蓝三角形。
+    /// 10 篇 7 公开 3 私密 = 橙五边形 + 橙 2 点 + 蓝三角形。
     static func marks(published: Int, unpublished: Int) -> [BearyCalendarMark] {
         return marksForCount(published, color: .published) + marksForCount(unpublished, color: .unpublished)
     }
@@ -376,7 +376,7 @@ final class BearyCalendarDayButton: UIButton {
         // 故文案不得报篇数（即使该日邻月本身有篇，当前占位格也未呈现）。
         let dayTotal = day.isOffMonth ? 0 : day.published + day.unpublished
         if dayTotal > 0 {
-            accessibilityLabel = "\(day.month)月\(day.day)日，共 \(dayTotal) 篇，其中 \(day.unpublished) 篇未公开"
+            accessibilityLabel = "\(day.month)月\(day.day)日，共 \(dayTotal) 篇，其中 \(day.unpublished) 篇私密"
         } else {
             accessibilityLabel = "\(day.month)月\(day.day)日，无日记"
         }
@@ -783,20 +783,8 @@ final class BearyTimelineCell: UITableViewCell {
     private var dotSizeConstraint: NSLayoutConstraint?
     private var dotRingSizeConstraint: NSLayoutConstraint?
     private var dotTopConstraint: NSLayoutConstraint?
-    // TL-2 沙漏：官方 icon_hourglass 资产（beary-ui-2.zip 内有 hourglass.svg，
-    // 按 compass 同款工艺渲染入 catalog；此前查 beary-ui.zip 无沙漏是查错了包）。
-    // 12pt 模板图 + 蓝色 tint，与原自绘 BearyHourglassView 同色同形，自绘类已删。
-    private let hourglassView: UIImageView = {
-        let imageViewValue = UIImageView()
-        imageViewValue.translatesAutoresizingMaskIntoConstraints = false
-        imageViewValue.image = BearyIconImages.image(named: "icon_hourglass", pointSize: 12)
-        imageViewValue.tintColor = BearyColors.blue
-        imageViewValue.contentMode = .scaleAspectFit
-        return imageViewValue
-    }()
-    private var pillLabelLeadingWithIcon: NSLayoutConstraint?
     private var pillLabelLeadingWithoutIcon: NSLayoutConstraint?
-    /// 追加 6②：当前 pill 描边色（configure/updatePill 按态写，主题切换重刷用）。
+    /// 追加 6②：当前 pill 描边色（configure 按态写，主题切换重刷用）。
     private var pillBorderColor: UIColor = .clear
     // TL-3 引用卡与私密操作行。
     private let quoteButton = UIButton(type: .custom)
@@ -811,8 +799,6 @@ final class BearyTimelineCell: UITableViewCell {
     private let quoteThumbsScrollView = UIScrollView()
     private var quoteThumbImageViews: [UIImageView] = []
     private var currentEntry: Entry?
-    /// A-3：上一次 updatePill 渲染的 entry id（防复用串篇，见 updatePill 末尾）。
-    private var pillEntryId: String?
     var onEditEntry: ((Entry) -> Void)?
     var onDeleteEntry: ((Entry) -> Void)?
     var onQuoteEntry: ((String) -> Void)?
@@ -825,17 +811,10 @@ final class BearyTimelineCell: UITableViewCell {
     private let editStatusLabel = UILabel()
     private let editButton = BearyHit44Button(type: .custom)
     private let deleteButton = BearyHit44Button(type: .custom)
-    // B 方案公开操作（网页 pubActionInnerHtml 口径）：已送达未公开出“公开”钮，
-    // 倒计时中出剩余时间 + “取消”钮；未送达时三者全隐。字段约定见 D 路：
-    // Entry.publishPendingUntil（Int? 毫秒时间戳，nil = 不在倒计时中）。
+    // iCity 双向切换钮：图标化 globe（Li 2026-10-26 定 v3 public globe 口径不变），
+    // 切换态以 tint + 无障碍文案表达（公开态橙 tint / “改回私密”，私密态墨 tint / “公开”）。
     private let publishButton = UIButton(type: .system)
-    private let pendingCountdownLabel = UILabel()
-    private let cancelPublishButton = UIButton(type: .system)
     var onPublishEntry: ((Entry) -> Void)?
-    var onCancelPublishEntry: ((Entry) -> Void)?
-    /// A-3：本行 pill 由投递中翻为未公开（送达）时回调一次（传 entry id），
-    /// 由控制器决定是否弹 toast（仅时间线页可见时）。
-    var onDelivered: ((String) -> Void)?
 
     override init(style: UITableViewCell.CellStyle, reuseIdentifier: String?) {
         super.init(style: style, reuseIdentifier: reuseIdentifier)
@@ -866,24 +845,17 @@ final class BearyTimelineCell: UITableViewCell {
         pillBackground.setContentHuggingPriority(.required, for: .horizontal)
         pillBackground.layer.cornerRadius = 10
         pillBackground.layer.masksToBounds = true
-        // 追加 6②：pill 描边区分——带填充的两态（已公开橙、未公开蓝）加同色描边，
-        // 倒计时态（清底灰字）无描边；描边色由 configure/updatePill 按态写入
+        // 追加 6②：pill 描边区分——带填充的两态（已公开橙、私密蓝）加同色描边，
+        // 描边色由 configure 按态写入
         // pillBorderColor，主题切换时 traitCollectionDidChange 重刷。
         pillBackground.layer.borderWidth = 1
         pillBackground.layer.borderColor = UIColor.clear.cgColor
         pillLabel.translatesAutoresizingMaskIntoConstraints = false
-        // 88 包 L18：倒计时每秒改文案，等宽数字防宽度抖动（只影响数字字形）。
+        // 88 包 L18：pill 文案等宽数字防宽度抖动（只影响数字字形）。
         pillLabel.font = UIFont.monospacedDigitSystemFont(ofSize: 11.5, weight: .bold)
-        hourglassView.translatesAutoresizingMaskIntoConstraints = false
-        pillBackground.addSubview(hourglassView)
         pillBackground.addSubview(pillLabel)
-        pillLabelLeadingWithIcon = pillLabel.leadingAnchor.constraint(equalTo: hourglassView.trailingAnchor, constant: 4)
         pillLabelLeadingWithoutIcon = pillLabel.leadingAnchor.constraint(equalTo: pillBackground.leadingAnchor, constant: 9)
         NSLayoutConstraint.activate([
-            hourglassView.leadingAnchor.constraint(equalTo: pillBackground.leadingAnchor, constant: 9),
-            hourglassView.centerYAnchor.constraint(equalTo: pillBackground.centerYAnchor),
-            hourglassView.widthAnchor.constraint(equalToConstant: 12),
-            hourglassView.heightAnchor.constraint(equalToConstant: 12),
             pillLabel.topAnchor.constraint(equalTo: pillBackground.topAnchor, constant: 2.5),
             pillLabel.trailingAnchor.constraint(equalTo: pillBackground.trailingAnchor, constant: -9),
             pillLabel.bottomAnchor.constraint(equalTo: pillBackground.bottomAnchor, constant: -2.5),
@@ -1063,20 +1035,7 @@ final class BearyTimelineCell: UITableViewCell {
         publishButton.widthAnchor.constraint(equalToConstant: 44).isActive = true
         publishButton.addTarget(self, action: #selector(publishTapped), for: .touchUpInside)
         publishButton.bearyAddPressFeedback()
-        // 8-3：倒计时文案与取消钮标题（正文类）走 scaledFont + adjusts。
-        pendingCountdownLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13))
-        pendingCountdownLabel.adjustsFontForContentSizeCategory = true
-        pendingCountdownLabel.textColor = BearyColors.gray
-        cancelPublishButton.translatesAutoresizingMaskIntoConstraints = false
-        cancelPublishButton.setTitle("取消", for: .normal)
-        cancelPublishButton.titleLabel?.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13))
-        cancelPublishButton.titleLabel?.adjustsFontForContentSizeCategory = true
-        cancelPublishButton.setTitleColor(BearyColors.gray, for: .normal)
-        cancelPublishButton.addTarget(self, action: #selector(cancelPublishTapped), for: .touchUpInside)
-        cancelPublishButton.bearyAddPressFeedback()
         publishButton.isHidden = true
-        pendingCountdownLabel.isHidden = true
-        cancelPublishButton.isHidden = true
         actsStack.translatesAutoresizingMaskIntoConstraints = false
         actsStack.axis = .horizontal
         actsStack.spacing = 14
@@ -1091,8 +1050,6 @@ final class BearyTimelineCell: UITableViewCell {
         statusGroup.alignment = .center
         actsStack.addArrangedSubview(statusGroup)
         actsStack.addArrangedSubview(publishButton)
-        actsStack.addArrangedSubview(pendingCountdownLabel)
-        actsStack.addArrangedSubview(cancelPublishButton)
         actsStack.addArrangedSubview(actsSpacer)
         actsStack.addArrangedSubview(editButton)
         actsStack.addArrangedSubview(deleteButton)
@@ -1278,8 +1235,6 @@ final class BearyTimelineCell: UITableViewCell {
         super.prepareForReuse()
         stopWeatherLottie()
         weatherIconView = nil
-        // 投递中沙漏旋转复位：移除动画并复位 transform，防复用残留到下一行。
-        setHourglassSpinning(false)
         // 80 包 A4/A2-3④：错峰改 cell.alpha/transform，对称复位，防复用残留。
         alpha = 1
         transform = .identity
@@ -1295,8 +1250,6 @@ final class BearyTimelineCell: UITableViewCell {
         clearQuoteThumbs()
         actsStack.isHidden = true
         publishButton.isHidden = true
-        pendingCountdownLabel.isHidden = true
-        cancelPublishButton.isHidden = true
         for imageView in thumbImageViews {
             imageView.bearySetImage(url: nil)
             imageView.removeFromSuperview()
@@ -1349,20 +1302,17 @@ final class BearyTimelineCell: UITableViewCell {
             // N1：已公开 pill 改橙色——文字走 BearyColors.orange（网页 --orange
             // #ff9500），底色为橙色两态透明底（浅 12% / 深 18%，见
             // publishedPillBackground，动态色、主题切换自动跟随）。
-            // 未公开口径不动（蓝 pill / 蓝圆点见 updatePill 与 else 分支）。
+            // 私密口径不动（蓝 pill / 蓝圆点见 else 分支）。
             pillBackground.backgroundColor = Self.publishedPillBackground()
             pillLabel.textColor = BearyColors.orange
             pillLabel.font = UIFont.monospacedDigitSystemFont(ofSize: 11.5, weight: .bold)
             pillLabel.text = "已公开"
-            // 追加 6②：已公开 pill 加橙色描边（与填充同色系，倒计时态无描边）。
+            // 追加 6②：已公开 pill 加橙色描边（与填充同色系）。
             pillBorderColor = BearyColors.alpha(BearyColors.orange, 0.4)
             pillBackground.layer.borderColor = pillBorderColor.cgColor
-            hourglassView.isHidden = true
-            setHourglassSpinning(false)
-            pillLabelLeadingWithIcon?.isActive = false
             pillLabelLeadingWithoutIcon?.isActive = true
-            // 竖线圆点统一用未公开的尺寸和结构（9pt 空心 + 12pt 环），只变颜色：
-            // 已公开橙边、未公开蓝边（2026-10-28 Li 定，覆盖 #125 的已公开几何口径）。
+            // 竖线圆点统一用私密的尺寸和结构（9pt 空心 + 12pt 环），只变颜色：
+            // 已公开橙边、私密蓝边（2026-10-28 Li 定，覆盖 #125 的已公开几何口径）。
             dotSizeConstraint?.constant = 9
             dotRingSizeConstraint?.constant = 12
             dotTopConstraint?.constant = 14.5
@@ -1372,8 +1322,15 @@ final class BearyTimelineCell: UITableViewCell {
             dotView.layer.cornerRadius = 4.5
             dotRingView.isHidden = true
         } else {
-            updatePill(entry: entry)
-            // 未公开圆点即统一口径（9pt 空心 + 12pt 环，蓝边）；已公开只换边色为橙。
+            // iCity 私密 pill：蓝底蓝字蓝描边，文案固定“私密”（无倒计时、无沙漏）。
+            pillBackground.backgroundColor = BearyColors.alpha(BearyColors.blue, 0.13)
+            pillLabel.textColor = BearyColors.blue
+            pillLabel.font = UIFont.monospacedDigitSystemFont(ofSize: 11.5, weight: .bold)
+            pillLabel.text = "私密"
+            pillBorderColor = BearyColors.alpha(BearyColors.blue, 0.4)
+            pillBackground.layer.borderColor = pillBorderColor.cgColor
+            pillLabelLeadingWithoutIcon?.isActive = true
+            // 私密圆点即统一口径（9pt 空心 + 12pt 环，蓝边）；已公开只换边色为橙。
             dotSizeConstraint?.constant = 9
             dotRingSizeConstraint?.constant = 12
             dotTopConstraint?.constant = 14.5
@@ -1430,8 +1387,8 @@ final class BearyTimelineCell: UITableViewCell {
             metaMoodRow = moodRow
             metaStack.addArrangedSubview(moodRow)
         }
-        if let recipientName = entry.recipientName, entry.recipientId != nil {
-            recipientLabel.text = "写给 \(recipientName)"
+        if let mentionedName = entry.mentionedName, !mentionedName.isEmpty {
+            recipientLabel.text = "@\(mentionedName)"
             metaStack.addArrangedSubview(recipientLabel)
         }
         // 6A pill 左 packed：行末 defaultLow 吸宽 spacer（足行 footSpacer 同款口径），
@@ -1461,7 +1418,7 @@ final class BearyTimelineCell: UITableViewCell {
         // Missing fields fall back to the old heuristic. A visibility gate also applies:
         // a non-public quote on someone else's entry never shows body, even if the
         // server passed body through (fail-closed, see below).
-        // quoteId 有而 quote 体缺失 → 已删除；quote 体无正文且未公开 → 尚未公开。
+        // quoteId 有而 quote 体缺失 → 已删除；quote 体无正文且未公开 → 未公开占位。
         // 引用缩略图见下方 F2 分支（仅有正文的公开/自己的引用才配图）。
         quoteButton.isHidden = true
         quoteBodyLabel.isHidden = false
@@ -1484,7 +1441,7 @@ final class BearyTimelineCell: UITableViewCell {
                 quoteButton.isEnabled = false
                 quoteButton.isHidden = false
             } else if quote.locked == true {
-                quoteTitleLabel.text = "引用了一篇尚未公开的日记"
+                quoteTitleLabel.text = "该日记未公开"
                 quoteIconView.image = BearyIconImages.image(named: "icon_lock", pointSize: 12)
                 quoteBodyLabel.isHidden = true
                 quoteButton.isEnabled = false
@@ -1494,20 +1451,17 @@ final class BearyTimelineCell: UITableViewCell {
                     quoteTitleLabel.text = "引用的日记已删除"
                     quoteIconView.image = BearyIconImages.image(named: "icon_quote", pointSize: 12)
                 } else {
-                    quoteTitleLabel.text = "引用了一篇尚未公开的日记"
+                    quoteTitleLabel.text = "该日记未公开"
                     quoteIconView.image = BearyIconImages.image(named: "icon_lock", pointSize: 12)
                 }
                 quoteBodyLabel.isHidden = true
                 quoteButton.isEnabled = false
                 quoteButton.isHidden = false
-            } else if quote.isPublic != true && entry.isMine != true {
-                // B-G2 visibility gate (the computable subset of web quoteVisible):
-                // a non-public quote is visible only when public or the host entry is
-                // mine. From another user's perspective, even server-passed body is
-                // replaced by the locked placeholder - never leak body or images.
-                // Quote has no author_id field, so the "quoted author is the viewer"
-                // branch cannot be evaluated here; fail closed to locked state.
-                quoteTitleLabel.text = "引用了一篇尚未公开的日记"
+            } else if quote.isPublic != true && !(quote.isMine == true || (quote.authorId != nil && quote.authorId == SessionManager.shared.currentUser?.id)) {
+                // iCity viewer 实时判定：被引篇非公开且 viewer 不是被引作者时，
+                // 即使服务端透传了正文也以占位替代，绝不泄漏正文与图片
+                //（旧口径以宿主是否本人为代理，已作废；Quote 现有 authorId/isMine 字段）。
+                quoteTitleLabel.text = "该日记未公开"
                 quoteIconView.image = BearyIconImages.image(named: "icon_lock", pointSize: 12)
                 quoteBodyLabel.isHidden = true
                 quoteButton.isEnabled = false
@@ -1531,8 +1485,8 @@ final class BearyTimelineCell: UITableViewCell {
                 ])
                 quoteIconView.image = BearyIconImages.image(named: "icon_quote", pointSize: 12)
                 // F2：引用卡内补一行 42px 小缩略图（网页 tl-qcard 内 .quote-thumbs 口径）；
-                // 仅公开引用或自己的引用才配图（网页 quoteThumbsHtml 口径），无图不占位。
-                if quote.isPublic == true || entry.isMine == true {
+                // 仅公开引用或 viewer 是被引作者时才配图，无图不占位。
+                if quote.isPublic == true || quote.isMine == true || (quote.authorId != nil && quote.authorId == SessionManager.shared.currentUser?.id) {
                     let quoteKeys = (quote.images ?? []).filter { !$0.isEmpty }
                     for key in quoteKeys {
                         let imageView = UIImageView()
@@ -1636,6 +1590,12 @@ final class BearyTimelineCell: UITableViewCell {
             updateEditRow(entry: entry)
             actsStack.isHidden = false
         }
+        // iCity：公开行与私密行共用操作行——公开行在计数足行之外同样出操作行
+        //（双向切换钮 + 编辑/删除，编辑仅 15 分钟内，删除公开/私密均可）。
+        if published {
+            updateEditRow(entry: entry)
+            actsStack.isHidden = false
+        }
     }
 
     /// N7 主图条点按：下标取自 imageView.tag，keys 从 currentEntry 按
@@ -1675,50 +1635,17 @@ final class BearyTimelineCell: UITableViewCell {
         // I11：文案前 13px 图标与状态同步（已结束锁 / 可编辑笔）。
         statusIconView.image = BearyIconImages.image(named: locked ? "icon_lock" : "icon_edit", pointSize: 13)
         editButton.isHidden = locked
-        // B 方案公开操作：pending 优先于已送达（字段有值即倒计时态）；
-        // 字段为 nil 时看是否已送达（publishAt != nil 且 <= now）才出“公开”钮，
-        // 未送达则三者全隐。publishPendingUntil 为可选字段，缺失按 nil 计、不崩。
-        // 注意：本引用在 D 路补字段前编译不过，见回执说明。
-        let nowMs = Int(Date().timeIntervalSince1970 * 1000)
-        // B-G5: an expired countdown (pendingUntil <= now) must NOT stick on
-        // "剩不到 1 小时"; it falls through to delivered/undelivered state here,
-        // and the 1s tick (refreshCountdowns) flips it without waiting for reload.
-        if let pendingUntil = entry.publishPendingUntil, pendingUntil > nowMs {
-            publishButton.isHidden = true
-            pendingCountdownLabel.isHidden = false
-            pendingCountdownLabel.text = BearyTimelineCell.pubCountdownText(pendingMs: pendingUntil)
-            cancelPublishButton.isHidden = false
-        } else if let publishAt = entry.publishAt, publishAt <= nowMs {
-            publishButton.isHidden = false
-            pendingCountdownLabel.isHidden = true
-            cancelPublishButton.isHidden = true
-        } else {
-            publishButton.isHidden = true
-            pendingCountdownLabel.isHidden = true
-            cancelPublishButton.isHidden = true
-        }
-    }
-
-    /// 网页 pubCountdownText 口径（定死粒度）：>=1 小时显示“剩 X 小时”
-    /// （X = 剩余毫秒 / 3600000 向上取整），<1 小时显示“剩不到 1 小时”。
-    /// 只在渲染/进入时算一次；每秒 tick 经 refreshCountdowns → updateEditRow 重算。
-    static func pubCountdownText(pendingMs: Int) -> String {
-        let ms = max(0, pendingMs - Int(Date().timeIntervalSince1970 * 1000))
-        if ms >= 3600000 {
-            let hours = Int(ceil(Double(ms) / 3600000.0))
-            return "剩 \(hours) 小时"
-        }
-        return "剩不到 1 小时"
+        // iCity 双向切换钮：公开/私密行都出；公开态橙 tint + “改回私密”无障碍文案，
+        // 私密态墨 tint + “公开”无障碍文案（按钮本身图标化无文字标题）。
+        let isPublic = entry.isPublic == true
+        publishButton.isHidden = false
+        publishButton.tintColor = isPublic ? BearyColors.orange : BearyColors.ink
+        publishButton.accessibilityLabel = isPublic ? "改回私密" : "公开"
     }
 
     @objc private func publishTapped() {
         guard let entry = currentEntry else { return }
         onPublishEntry?(entry)
-    }
-
-    @objc private func cancelPublishTapped() {
-        guard let entry = currentEntry else { return }
-        onCancelPublishEntry?(entry)
     }
 
     /// F2 引用缩略图清理（复用与重配时先清，避免旧图残留）。
@@ -1731,13 +1658,10 @@ final class BearyTimelineCell: UITableViewCell {
         quoteThumbsScrollView.isHidden = true
     }
 
-    /// TL-2/TL-3 的 1 秒 tick 入口：只改本行 pill 与编辑倒计时文案，不重建行。
+    /// TL-2/TL-3 的 1 秒 tick 入口：只改本行编辑倒计时文案，不重建行
+    ///（pill 现为静态两态，公开/私密行都跑编辑倒计时）。
     func refreshCountdowns() {
         guard let entry = currentEntry else { return }
-        if entry.isPublic == true { return }
-        // B-G4/B-G5: 1s tick recomputes pill + action row, so delivery / countdown
-        // expiry flips state locally without waiting for a reload.
-        updatePill(entry: entry)
         updateEditRow(entry: entry)
     }
 
@@ -1753,10 +1677,8 @@ final class BearyTimelineCell: UITableViewCell {
 
     @objc private func quoteTapped() {
         guard let entry = currentEntry, let quoteId = entry.quote?.id else { return }
-        // B-G2 second lock: gone/locked/other-user-unpublished never navigates,
-        // even if the button was somehow left enabled.
+        // iCity：gone/locked 卡不导航；其余一律转发 id，容器先 fetchEntry 校验再放行。
         if entry.quote?.gone == true || entry.quote?.locked == true { return }
-        if entry.quote?.isPublic != true && entry.isMine != true { return }
         onQuoteEntry?(quoteId)
     }
 
@@ -1809,16 +1731,6 @@ final class BearyTimelineCell: UITableViewCell {
         return row
     }
 
-    /// 私密 pill 倒计时文案（网页 privCdText 口径，一字不差）：
-    /// “投递中 · 还剩 X 天/小时/分钟”，天取整、小时取余数、分钟余数向上取整至少 1。
-    /// 到点（remaining <= 0）时网页当即触发重拉、不会出现该文案；原生在重拉完成前
-    /// 短暂显示“即将公开”，随后 tick 的重拉会把行翻为“已公开”。
-    /// B-G4: private pill (web tlItemHtml / pubState) - pending (countdown not yet
-    /// expired) and delivered-but-unpublished both show blue "未公开" with NO hourglass;
-    /// only undelivered shows the hourglass + delivery countdown (the original private
-    /// countdown pill, verbatim). publishAt missing falls back to the old "未公开".
-    /// NOTE: this pill is NOT the detail countdown pill; each is handled separately,
-    /// and this change does not touch the detail file.
     /// N1：已公开 pill 两态透明底——浅色橙 12%、深色橙 18%，动态色解析，
     /// 主题切换自动跟随（不用 BearyColors.alpha 固定透明度，后者两态同值）。
     static func publishedPillBackground() -> UIColor {
@@ -1828,115 +1740,6 @@ final class BearyTimelineCell: UITableViewCell {
         }
     }
 
-    /// 投递中沙漏旋转：仅倒计时态（投递中）播，绕中心 360° 持续缓慢旋转
-    /// （2 秒一圈，线性匀速，只动 transform）；切出倒计时态时停转；
-    /// 减动效开启时不播、保持静态沙漏。已在播时不再重复添加（每秒 tick
-    /// 反复调 updatePill 也不会重启动画）；停转时移除动画并复位 transform。
-    private func setHourglassSpinning(_ spinning: Bool) {
-        if spinning, UIAccessibility.isReduceMotionEnabled == false {
-            guard hourglassView.layer.animation(forKey: "beary-hourglass-spin") == nil else { return }
-            let spin = CABasicAnimation(keyPath: "transform.rotation.z")
-            spin.fromValue = 0
-            spin.toValue = CGFloat.pi * 2
-            spin.duration = 2.0
-            spin.timingFunction = CAMediaTimingFunction(name: .linear)
-            spin.repeatCount = .infinity
-            hourglassView.layer.add(spin, forKey: "beary-hourglass-spin")
-        } else {
-            hourglassView.layer.removeAnimation(forKey: "beary-hourglass-spin")
-            hourglassView.transform = .identity
-        }
-    }
-
-    private func updatePill(entry: Entry) {
-        let nowMs = Int(Date().timeIntervalSince1970 * 1000)
-        let isPending = (entry.publishPendingUntil ?? 0) > nowMs
-        let isDelivered = (entry.publishAt ?? 0) > 0 && (entry.publishAt ?? 0) <= nowMs
-        // 94 包：归零转公开时行文案变化加 crossDissolve（首现直接写，
-        // 之后文案变了才过渡，每秒 tick 文案不变时不重播）。
-        let newText: String
-        let hideHourglass: Bool
-        if isPending || isDelivered {
-            newText = "未公开"
-            hideHourglass = true
-        } else {
-            newText = BearyTimelineCell.privCountdownText(publishAtMs: entry.publishAt)
-            hideHourglass = false
-        }
-        // 追加项（投递中去色）：倒计时态（“投递中 · 还剩 X 天/小时/分钟”与
-        // “即将公开”）去掉蓝色填充，改与时间文字同级的灰色次要文字显示，
-        // 沙漏图标同样改灰色；文案与倒计时计算一字不动，正文重新成为重点。
-        // “未公开”三字（待公开倒计时中、已送达未公开、publishAt 缺失回退）
-        // 一律保持原蓝色 pill 不动；已公开橙色（N1，configure 分支）也不动。
-        // 字体按态显式复位，防复用把倒计时的 13 系统字带到蓝 pill / 已公开。
-        let isCountdown = !(isPending || isDelivered) && newText != "未公开"
-        let pillBg: UIColor
-        let pillTextColor: UIColor
-        let pillFont: UIFont
-        let hourglassTint: UIColor
-        // 追加 6②：pill 描边按态区分——蓝 pill（未公开）加蓝描边，倒计时态
-        // （清底灰字）无描边；已公开橙描边在 configure 分支。
-        let pillStroke: UIColor
-        if isCountdown {
-            pillBg = .clear
-            pillTextColor = BearyColors.gray
-            // 8-3：倒计时态 pill 文案（正文类句子）走 scaledFont；蓝 pill /
-            // 已公开态仍走等宽 11.5（数字宽度防抖，不动）。
-            pillFont = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13))
-            hourglassTint = BearyColors.gray
-            pillStroke = .clear
-        } else {
-            // C6：动态色上的 0.13 透明度走 BearyColors.alpha（Common lane 提供），
-            // 不再对动态色直接 withAlphaComponent（深浅解析会失真）。
-            pillBg = BearyColors.alpha(BearyColors.blue, 0.13)
-            pillTextColor = BearyColors.blue
-            pillFont = UIFont.monospacedDigitSystemFont(ofSize: 11.5, weight: .bold)
-            hourglassTint = BearyColors.blue
-            pillStroke = BearyColors.alpha(BearyColors.blue, 0.4)
-        }
-        let apply = {
-            self.pillBackground.backgroundColor = pillBg
-            self.pillLabel.textColor = pillTextColor
-            self.pillLabel.font = pillFont
-            self.hourglassView.tintColor = hourglassTint
-            self.pillBorderColor = pillStroke
-            self.pillBackground.layer.borderColor = pillStroke.cgColor
-            self.pillLabel.text = newText
-            self.hourglassView.isHidden = hideHourglass
-            self.pillLabelLeadingWithIcon?.isActive = !hideHourglass
-            self.pillLabelLeadingWithoutIcon?.isActive = hideHourglass
-        }
-        let oldPillText = pillLabel.text
-        if let old = oldPillText, !old.isEmpty, old != newText {
-            UIView.transition(with: pillBackground, duration: 0.22, options: .transitionCrossDissolve, animations: apply)
-        } else {
-            apply()
-        }
-        // 投递中沙漏旋转：仅倒计时态播，切出倒计时态时停转（见 setHourglassSpinning）。
-        setHourglassSpinning(isCountdown)
-        // A-3：送达翻转检测——同一篇 pill 由投递中翻为未公开时回调一次。
-        // pillEntryId 防复用串篇：仅当本行上一次渲染的也是同一篇时才算翻转
-        // （复用后首渲染旧文案属于上一篇，不算）；待公开倒计时态（pending）
-        // 不算送达，排除。回调后文案已是未公开，tick 重复调用不再触发；
-        // 控制器侧另有 Set 去重兜底。
-        if isDelivered && !isPending, let entryId = entry.id, pillEntryId == entryId,
-           let old = oldPillText, old.hasPrefix("投递中") {
-            onDelivered?(entryId)
-        }
-        pillEntryId = entry.id
-    }
-
-    static func privCountdownText(publishAtMs: Int?) -> String {
-        guard let publishAtMs = publishAtMs else { return "未公开" }
-        let remaining = Double(publishAtMs) / 1000.0 - Date().timeIntervalSince1970
-        if remaining <= 0 { return "即将公开" }
-        let days = Int(remaining / 86400)
-        if days > 0 { return "投递中 · 还剩 \(days) 天" }
-        let hours = Int(remaining.truncatingRemainder(dividingBy: 86400) / 3600)
-        if hours > 0 { return "投递中 · 还剩 \(hours) 小时" }
-        let minutes = max(1, Int(ceil(remaining.truncatingRemainder(dividingBy: 3600) / 60)))
-        return "投递中 · 还剩 \(minutes) 分钟"
-    }
 }
 
 
@@ -2105,20 +1908,13 @@ class BearyTimelineViewController: UIViewController {
     private var daySwitchGeneration = 0
     /// N3：切日组头淡入一次性标志（willDisplayHeaderView 消费一次，不重播）。
     private var daySwitchTitleFade = false
-    /// A-3：已弹过送达 toast 的 entry id（同篇只弹一次，翻转回调重复触发时兜底）。
-    private var deliveredToastedIds: Set<String> = []
     /// N3：切日回包到达时的入场错峰归属（仅 clear:true 的换日回包设置，
     /// 回包消费后清掉；非换日回包不设，避免旧队列在刷新行上重播）。
     private var daySwitchArrivalKey: String?
     private var showJumpNote = false
     private var jumpNoteTimer: Timer?
-    /// TL-2 1 秒 tick + 到点重拉（网页 startCountdowns 口径：同篇最多 3 次、间隔 ≥3 秒）。
+    /// TL-2 1 秒 tick（仅刷编辑倒计时文案）。
     private var countdownTimer: Timer?
-    private var publishFireCounts: [String: Int] = [:]
-    /// 80 包 B6：待公开子集快照（id → publishAt），由 updateChrome 在模型变化时
-    /// 重建；仅含快照时刻 publishPendingUntil 仍在未来的未公开条目；tick 只扫它。
-    private var pendingPublishDue: [String: Int] = [:]
-    private var publishFireLast: [String: Date] = [:]
 
     // MARK: - 视图
 
@@ -2255,7 +2051,7 @@ class BearyTimelineViewController: UIViewController {
     }
 
     /// 切页生命周期 7 号（最小化）：容器切页只改 isHidden，本回调不触发，
-    /// 故容器 showPage 在离页/进页时显式调这两个钩子；只覆盖倒计时启停
+    /// 故容器 showPage 在离页/进页时显式调这两个钩子；只覆盖 tick 启停
     ///（栏恢复已有 showPage 的 setBarsVisible/setHeaderVisible 兜底，不重复）。
     func pageDidEnter() {
         startCountdownTimer()
@@ -2501,7 +2297,7 @@ class BearyTimelineViewController: UIViewController {
     /// source reloads, copy interaction/publication state into the other source so
     /// a copy whose own reload failed does not stay split from the fresh state.
     /// Only interaction + publication fields are patched (like/bookmark/emotes/
-    /// isPublic/publishAt/publishPendingUntil); body and images still require a
+    /// isPublic/publishAt/publishedAt); body and images still require a
     /// full reload. Calendar month counts are monthly aggregates that paginated
     /// lists cannot recompute, so they keep syncing via refreshAfterDetailChange's
     /// forced month refetch; this patch deliberately does not touch calendarCache.
@@ -2525,7 +2321,7 @@ class BearyTimelineViewController: UIViewController {
             }
             merged.isPublic = freshEntry.isPublic
             merged.publishAt = freshEntry.publishAt
-            merged.publishPendingUntil = freshEntry.publishPendingUntil
+            if let publishedAt = freshEntry.publishedAt { merged.publishedAt = publishedAt }
             return merged
         }
     }
@@ -2590,29 +2386,11 @@ class BearyTimelineViewController: UIViewController {
     }
 
     private func countdownTick() {
-        var needsReload = false
-        let nowMs = Int(Date().timeIntervalSince1970 * 1000)
+        // iCity：1 秒 tick 只刷编辑倒计时文案（refreshCountdowns）；送达/待公开
+        // 到点重拉机制已随送达模型一并删除，不再扫描 pending 子集。
         for cell in tableView.visibleCells {
             guard let timelineCell = cell as? BearyTimelineCell else { continue }
             timelineCell.refreshCountdowns()
-        }
-        // 80 包 B6：到点判定只扫待公开子集快照（id 唯一，无需再建 Set）；
-        // 子集为空时直接跳过扫描；可见行倒计时文案仍由上方 refreshCountdowns
-        // 每秒刷新，不受此跳过影响。触发规则与网页 cdFired 一致：同篇最多 3 次、间隔 ≥3 秒。
-        if pendingPublishDue.isEmpty { return }
-        for (entryId, publishAt) in pendingPublishDue {
-            guard publishAt > 0, publishAt <= nowMs else { continue }
-            let fireKey = entryId + "@\(publishAt)"
-            let count = publishFireCounts[fireKey] ?? 0
-            let last = publishFireLast[fireKey]
-            if count < 3 && (last == nil || Date().timeIntervalSince(last ?? Date()) >= 3) {
-                publishFireCounts[fireKey] = count + 1
-                publishFireLast[fireKey] = Date()
-                needsReload = true
-            }
-        }
-        if needsReload {
-            refreshAfterDetailChange()
         }
     }
 
@@ -4399,7 +4177,7 @@ class BearyTimelineViewController: UIViewController {
 
     /// TL-7 当日面板表头（第 7 项两段式 + 第 15 项网页口径）：
     /// 日期一段（15pt 加粗墨色，如“10 月 25 日”，星期不在此段）；
-    /// 星期·篇数·状态一段（12.5pt 灰色，如“周日 · 1 篇 · 都未公开”，篇数带空格）。
+    /// 星期·篇数·状态一段（12.5pt 灰色，如“周日 · 1 篇 · 都私密”，篇数带空格）。
     /// 失败时只写“加载失败，点一下日期再试”，重试靠再点日期（无头旁重试钮）；
     /// 加载中/未加载时不写“加载中…”，只出日期一段。
     /// head/suffix 分段供表头富文本使用（日期加粗 15 + 后段灰色 12.5）。
@@ -4436,7 +4214,7 @@ class BearyTimelineViewController: UIViewController {
             if allPublic {
                 suffix += " · 都已公开"
             } else if allPrivate {
-                suffix += " · 都未公开"
+                suffix += " · 都私密"
             }
         }
         return (head, suffix)
@@ -4561,17 +4339,6 @@ class BearyTimelineViewController: UIViewController {
     private var lastChromeBackgroundKind: String?
 
     private func updateChrome() {
-        // 80 包 B6：模型变化时重建待公开子集（timeline + day 去重，id 唯一）。
-        do {
-            let nowMs = Int(Date().timeIntervalSince1970 * 1000)
-            var snapshot: [String: Int] = [:]
-            for entry in timelineEntries + dayEntries {
-                guard let entryId = entry.id, entry.isPublic != true,
-                      let pendingUntil = entry.publishPendingUntil, pendingUntil > nowMs else { continue }
-                if snapshot[entryId] == nil { snapshot[entryId] = entry.publishAt ?? 0 }
-            }
-            pendingPublishDue = snapshot
-        }
         // TL-7：当日面板的加载/失败/空态只反映在面板表头里，不再用整表背景空态
         // 覆盖时间线；背景空态只在时间线与当日面板双双无行时出现。
         let sections = currentSections()
@@ -4737,65 +4504,57 @@ class BearyTimelineViewController: UIViewController {
         onOpenTrash?()
     }
 
-    /// A-3：送达提醒——时间线页内某篇 pill 由投递中翻为未公开时弹一次
-    /// 「有日记已送达」toast。仅当页可见时弹（view.window != nil）；
-    /// 翻转发生在其他页时只记已提醒、不补弹、不打扰（pill 本身已翻为未公开）。
-    /// 同篇只弹一次（deliveredToastedIds 兜底）。
-    private func notifyDelivered(entryId: String) {
-        guard !deliveredToastedIds.contains(entryId) else { return }
-        deliveredToastedIds.insert(entryId)
-        guard isViewLoaded, view.window != nil else { return }
-        showTimelineToast(message: "有日记已送达")
-    }
-
-    /// 第 5 项公开：网页 doPublish 口径 POST /beary/api/entries/:id/publish，
-    /// 先弹网页同款确认框（“确认公开？/ 公开后无法撤回或删除。确认后开始 24 小时倒计时，
-    /// 期间可以取消公开。”），成功后整页刷新（倒计时态随新数据回来）；
-    /// 失败 toast“公开失败，请重试”。在途去重，同一篇重复点按只发一次。
+    /// iCity：操作行双向切换钮——显式目标态（当前公开→改回私密，当前私密→公开），
+    /// 无确认框；publishBusyIds 复用防重入；成功先就地同步缓存（timeline/day/
+    /// 日缓存/落盘 + 引用缓存清理），再整页重拉以服务端为准；失败只 toast。
     private func handlePublishEntry(_ entry: Entry) {
         guard let entryId = entry.id, !entryId.isEmpty else { return }
         if publishBusyIds.contains(entryId) { return }
-        let alert = UIAlertController(title: BearyText.publishConfirmTitle, message: BearyText.publishConfirmMessage, preferredStyle: .alert)
-        alert.addAction(UIAlertAction(title: "取消", style: .cancel, handler: nil))
-        alert.addAction(UIAlertAction(title: "公开", style: .default, handler: { [weak self] _ in
-            guard let strongSelf = self else { return }
-            if strongSelf.publishBusyIds.contains(entryId) { return }
-            strongSelf.publishBusyIds.insert(entryId)
-            let safe = entryId.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? entryId
-            BearyAPI.shared.requestVoid("/beary/api/entries/\(safe)/publish", method: "POST") { [weak self] result in
-                DispatchQueue.main.async {
-                    guard let strongSelf = self else { return }
-                    strongSelf.publishBusyIds.remove(entryId)
-                    switch result {
-                    case .success:
-                        strongSelf.refreshAfterDetailChange()
-                    case .failure:
-                        strongSelf.showTimelineToast(message: "公开失败，请重试")
-                    }
-                }
-            }
-        }))
-        present(alert, animated: true, completion: nil)
-    }
-
-    /// 第 5 项取消公开：网页 doPublishCancel 口径 POST /beary/api/entries/:id/publish/cancel，
-    /// 无确认框（网页取消即直接发请求），成功后整页刷新，失败 toast“取消失败，请重试”。
-    private func handleCancelPublishEntry(_ entry: Entry) {
-        guard let entryId = entry.id, !entryId.isEmpty else { return }
-        if publishBusyIds.contains(entryId) { return }
+        let target = entry.isPublic == true ? 0 : 1
         publishBusyIds.insert(entryId)
-        let safe = entryId.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? entryId
-        BearyAPI.shared.requestVoid("/beary/api/entries/\(safe)/publish/cancel", method: "POST") { [weak self] result in
+        BearyAPI.shared.setVisibility(id: entryId, published: target) { [weak self] result in
             DispatchQueue.main.async {
                 guard let strongSelf = self else { return }
                 strongSelf.publishBusyIds.remove(entryId)
                 switch result {
-                case .success:
+                case .success(let resp):
+                    let isPublic = resp.published.map { $0 == 1 } ?? (target == 1)
+                    strongSelf.applyVisibilityLocally(entryId: entryId, isPublic: isPublic, publishedAt: resp.publishedAt)
                     strongSelf.refreshAfterDetailChange()
                 case .failure:
-                    strongSelf.showTimelineToast(message: "取消失败，请重试")
+                    strongSelf.showTimelineToast(message: "切换失败，请重试")
                 }
             }
+        }
+    }
+
+    /// 翻转本地同步（removeDeletedEntry 式清理口径，改的是可见性不是删除）：
+    /// timeline/day 列表与日缓存里的副本就地改 isPublic/publishedAt，
+    /// 改动的日缓存同步写落盘；引用缓存清掉该篇（旧引用卡不按旧可见性渲染）。
+    private func applyVisibilityLocally(entryId: String, isPublic: Bool, publishedAt: Int?) {
+        for index in timelineEntries.indices where timelineEntries[index].id == entryId {
+            timelineEntries[index].isPublic = isPublic
+            if let publishedAt = publishedAt { timelineEntries[index].publishedAt = publishedAt }
+        }
+        for index in dayEntries.indices where dayEntries[index].id == entryId {
+            dayEntries[index].isPublic = isPublic
+            if let publishedAt = publishedAt { dayEntries[index].publishedAt = publishedAt }
+        }
+        for key in dayEntriesCache.keys {
+            var list = dayEntriesCache[key] ?? []
+            var changed = false
+            for index in list.indices where list[index].id == entryId {
+                list[index].isPublic = isPublic
+                if let publishedAt = publishedAt { list[index].publishedAt = publishedAt }
+                changed = true
+            }
+            if changed {
+                dayEntriesCache[key] = list
+                cacheDayEntries(key: key, entries: list)
+            }
+        }
+        if isPublic == false {
+            BearyDiaryCardCell.quoteCache.removeValue(forKey: entryId)
         }
     }
 
@@ -4841,8 +4600,6 @@ extension BearyTimelineViewController: UITableViewDataSource, UITableViewDelegat
         cell.onDeleteEntry = onDeleteEntry
         cell.onQuoteEntry = onQuoteEntry
         cell.onPublishEntry = { [weak self] entry in self?.handlePublishEntry(entry) }
-        cell.onCancelPublishEntry = { [weak self] entry in self?.handleCancelPublishEntry(entry) }
-        cell.onDelivered = { [weak self] entryId in self?.notifyDelivered(entryId: entryId) }
         // N7：复用独立文件内的查看器，全屏模态弹出（已弹出时不叠加、减动效直显）。
         cell.onTapImages = { [weak self] keys, index in
             guard let self = self, self.presentedViewController == nil else { return }
@@ -4946,10 +4703,10 @@ extension BearyTimelineViewController: UITableViewDataSource, UITableViewDelegat
         onOpenEntry?(sections[indexPath.section].entries[indexPath.row])
     }
 
-    /// C7 滑动操作资格与私密操作行按钮完全一致：删除仅私密行（公开行无
-    /// 删除钮），编辑仅私密且未过编辑期（与编辑钮显隐同口径：editDeadline
-    /// 缺失即已锁）。触发后只复用 onDeleteEntry/onEditEntry（容器确认/
-    /// 编辑器流程），不另写执行逻辑；不符资格的行返回 nil，即不可滑动。
+    /// C7 滑动操作资格（iCity）：删除公开/私密均可，编辑仅看 15 分钟编辑期
+    ///（与编辑钮显隐同口径：editDeadline 缺失即已锁），与可见性无关。
+    /// 触发后只复用 onDeleteEntry/onEditEntry（容器确认/编辑器流程），
+    /// 不另写执行逻辑；不符资格的行返回 nil，即不可滑动。
     private static func isTimelineSwipeEditUnlocked(entry: Entry) -> Bool {
         guard let deadline = entry.editDeadline else { return false }
         let nowMs = Int(Date().timeIntervalSince1970 * 1000)
@@ -4960,7 +4717,6 @@ extension BearyTimelineViewController: UITableViewDataSource, UITableViewDelegat
         let sections = currentSections()
         guard indexPath.section < sections.count, indexPath.row < sections[indexPath.section].entries.count else { return nil }
         let entry = sections[indexPath.section].entries[indexPath.row]
-        guard entry.isPublic != true else { return nil }
         let delete = UIContextualAction(style: .destructive, title: "删除") { [weak self] _, _, completion in
             self?.onDeleteEntry?(entry)
             completion(true)
@@ -4972,7 +4728,7 @@ extension BearyTimelineViewController: UITableViewDataSource, UITableViewDelegat
         let sections = currentSections()
         guard indexPath.section < sections.count, indexPath.row < sections[indexPath.section].entries.count else { return nil }
         let entry = sections[indexPath.section].entries[indexPath.row]
-        guard entry.isPublic != true, Self.isTimelineSwipeEditUnlocked(entry: entry) else { return nil }
+        guard Self.isTimelineSwipeEditUnlocked(entry: entry) else { return nil }
         let edit = UIContextualAction(style: .normal, title: "编辑") { [weak self] _, _, completion in
             self?.onEditEntry?(entry)
             completion(true)

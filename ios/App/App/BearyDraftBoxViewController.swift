@@ -886,11 +886,11 @@ final class BearyDraftBoxViewController: UIViewController {
             ])
             row.addArrangedSubview(imageView)
         }
-        // 2-5：收信人名拆成独立 label 单行截断、最大宽 80pt（“写给”前缀
+        // 2-5：@ 名拆成独立 label 单行截断、最大宽 80pt（“@”前缀
         // 另起一 label 保全不截断）；长名不再把 meta 行状态文案顶到换行边缘，
         // 状态文案的 required 抗压缩不动。chip 整体 180 上限保留作兜底。
         let prefixLabel = UILabel()
-        prefixLabel.text = "写给"
+        prefixLabel.text = "@"
         prefixLabel.font = UIFont.systemFont(ofSize: 11.5, weight: .semibold)
         prefixLabel.textColor = BearyColors.ink
         prefixLabel.setContentCompressionResistancePriority(.required, for: .horizontal)

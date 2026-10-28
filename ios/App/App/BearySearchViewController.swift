@@ -11,7 +11,7 @@ import CoreText
 // 页结构（网页 #searchPage 同口径）：页顶返回行（返回钮 + “搜索”标题，随内容滚出）
 //   + 搜索框（sticky：滚出后贴在安全区顶 6px 处）+ 框下恒高 24px 预留行
 //   （已有结果时搜索中显示“正在搜索…”，平时占位透明）+ 状态区 / 结果区。
-// 分区顺序（网页 renderSrchResults 同口径）：我的日记 · 未公开 → 公开日记 → 用户。
+// 分区顺序（网页 renderSrchResults 同口径）：我的日记 · 私密 → 公开日记 → 用户。
 // 约束：颜色只用 BearyColors；图标只走 icon_* 资产 + BearyIconImages；
 //   不新增 UIGlassEffect，不用 SF Symbol；部署目标 iOS 15.0、Swift 5.0——
 //   只用闭包回调，不用 async/await，不用 if-let 简写；无 force unwrap；
@@ -30,7 +30,7 @@ import CoreText
 //     author_badge（仅 'beta' 才给）/like_count。
 //   - mine：仅登录会话返回（未登录为 null），本人全部日记按正文匹配，LIMIT 20；
 //     字段 id/content/images/created_at/publish_at/is_public；
-//     本页只取其中未公开（is_public != true）的篇目进“我的日记 · 未公开”组，
+//     本页只取其中未公开（is_public != true）的篇目进“我的日记 · 私密”组，
 //     与网页 renderSrchResults 的 mine 过滤口径一致；未登录时服务端不给 mine，
 //     私密分组自然不出现，不靠客户端登录态再拦一道。
 //   - 免登录可搜公开内容：该接口本身不要求会话（无 session 时只缺 mine）。
@@ -1165,7 +1165,7 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         BearyIconMotion.stopSpin(on: stateRingView, key: "bearyStateSpin")
         clearResultRows()
         // G13：先建行、行数 >0 时再加分区头，避免全部行被跳过时空挂分区头。
-        // 分区顺序与标题按网页 renderSrchResults：我的日记 · 未公开 → 公开日记 → 用户。
+        // 分区顺序与标题按网页 renderSrchResults：我的日记 · 私密 → 公开日记 → 用户。
         var mineRows: [UIView] = []
         for entry in mineEntries {
             if let row = makeEntryRow(entry: entry, query: query, isMineGroup: true) {
@@ -1191,7 +1191,7 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
             userRows.append(makeUserRow(user: user, query: query))
         }
         if !mineRows.isEmpty {
-            resultsStack.addArrangedSubview(makeSectionHeader(title: "我的日记 · 未公开"))
+            resultsStack.addArrangedSubview(makeSectionHeader(title: "我的日记 · 私密"))
             for row in mineRows {
                 resultsStack.addArrangedSubview(row)
             }
@@ -1537,6 +1537,18 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
             }
         }
 
+        // iCity 已举报态：搜索是刻意搜索例外，行保留（不删除），但置灰并标“已举报”。
+        if BearyReportedStore.isReported(entryId: entryId) {
+            let reportedLabel = UILabel()
+            reportedLabel.translatesAutoresizingMaskIntoConstraints = false
+            reportedLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13))
+            reportedLabel.adjustsFontForContentSizeCategory = true
+            reportedLabel.textColor = BearyColors.gray
+            reportedLabel.text = "已举报"
+            metaStack.addArrangedSubview(reportedLabel)
+            row.alpha = 0.6
+        }
+
         let column = UIStackView(arrangedSubviews: [metaStack, bodyRow])
         column.translatesAutoresizingMaskIntoConstraints = false
         column.axis = .vertical
@@ -1619,6 +1631,8 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
     @objc private func entryRowTapped(_ sender: UIButton) {
         for index in 0..<entryButtons.count {
             if index < rowEntryIds.count && entryButtons[index] == sender {
+                // iCity §12：搜索结果点按记 search_click（只记 id，不记查询词；失败静默）。
+                BearyAPI.shared.sendEvent(eventType: "search_click", targetId: rowEntryIds[index])
                 onOpenEntryHandler(rowEntryIds[index])
                 return
             }
