@@ -1996,6 +1996,14 @@ class BearyTimelineViewController: UIViewController {
         dayEntriesCache[key] = disk
         return disk
     }
+    /// 账号切换时清日缓存：内存日缓存与预取在途集合都不跨账号（落盘已按 uid
+    /// 分桶，不动）；由 SceneDelegate onUserChanged 的 userChanged 分支在
+    /// reloadTimeline 之前调用，登录与退出两个方向都覆盖。时间线 VC 换账号
+    /// 不重建，故必须显式清，否则新账号当日面板会先闪出旧账号的日缓存。
+    func clearDayCacheForAccountChange() {
+        dayEntriesCache.removeAll()
+        dayPrefetchInFlight.removeAll()
+    }
     /// 相邻日预取在途集合（key=北京日）：独立通道专用，与正向单槽
     /// （dayKeyForLoad + dayState）完全分开；同日只发一次，失败不留痕。
     private var dayPrefetchInFlight: Set<String> = []
@@ -4027,10 +4035,14 @@ class BearyTimelineViewController: UIViewController {
             dayEntriesKey = nil
             tableView.reloadData()
         }
+        // 账号代际：请求时捕获 uid，回包写缓存/落盘前比对——中途切号到达的
+        // 旧账号回包直接丢弃（新账号的 reloadTimeline 会重拉，不靠旧回包对齐）。
+        let requestUid = SessionManager.shared.currentUser?.id
         BearyAPI.shared.fetchTimelineDay(date: key) { [weak self] result in
             DispatchQueue.main.async {
                 guard let strongSelf = self else { return }
                 if strongSelf.dayKeyForLoad != key { return }
+                if SessionManager.shared.currentUser?.id != requestUid { return }
                 // N2/N3 回包快照：静默刷新比对用旧签名；换日到达标志在此消费
                 // （早退分支如 fixSel 跳转也不留残标志，避免后一次回包误错峰）。
                 let oldDaySignatures = strongSelf.dayEntries.map { strongSelf.entrySignature($0) }
@@ -4151,6 +4163,8 @@ class BearyTimelineViewController: UIViewController {
     private func prefetchAdjacentDays(for key: String) {
         guard tableView.window != nil else { return }
         guard dayState != .loading else { return }
+        // 账号代际：与正向加载同款，请求时捕获 uid，回包写缓存前比对。
+        let requestUid = SessionManager.shared.currentUser?.id
         for next in adjacentDayKeys(for: key) {
             guard dayEntriesCache[next] == nil, !dayPrefetchInFlight.contains(next) else { continue }
             if dayKeyForLoad == next && dayState == .loading { continue }
@@ -4159,6 +4173,7 @@ class BearyTimelineViewController: UIViewController {
                 DispatchQueue.main.async {
                     guard let strongSelf = self else { return }
                     strongSelf.dayPrefetchInFlight.remove(next)
+                    if SessionManager.shared.currentUser?.id != requestUid { return }
                     switch result {
                     case .success(let list):
                         if strongSelf.dayKeyForLoad == next && strongSelf.dayState == .loading { return }
