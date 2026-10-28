@@ -117,6 +117,18 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
     private var rowUsers: [SearchUser] = []
     private var entryButtons: [UIButton] = []
     private var rowEntryIds: [String] = []
+    /// 5-20：行身份 -> 视图映射（同批动画按 key 查表，不按下标配对）。
+    private var entryRowById: [String: UIButton] = [:]
+    private var userRowByKey: [String: UIButton] = [:]
+    /// 用户行 key 口径与 animateResultRows 的 nextKeys 一致：id 优先，无 id 则 @handle，无两者则无 key。
+    private func userKey(for user: SearchUser) -> String? {
+        if let userId = user.id {
+            return "user:\(userId)"
+        } else if let handle = user.handle, !handle.isEmpty {
+            return "user:@\(handle)"
+        }
+        return nil
+    }
     // 图片失败重试槽位（用户头像 / 日记首图各一）：随行重建而丢弃，见文件末尾
     // BearySearchImageRetry；clearResultRows 时连同行一起清空。
     private var imageRetryHolders: [BearySearchImageRetry] = []
@@ -127,8 +139,9 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
     private let contentStack = UIStackView()
     private let columnWrap = UIView()
 
-    // 页顶返回行：网页 .tl-backrow——返回钮 28 + gap 10 + “搜索”标题 16/700，
-    // 上下 padding 4/2；返回钮用 beary-back 24 墨（icon_back 资产，网页
+    // 页顶返回行：网页 .tl-backrow——返回钮 44 + gap 10 + “搜索”标题 16/700，
+    // 上下 padding 0（行高仍 44，图标 24 居中，视觉不变；7-3 约束写法改 44×44）；
+    // 返回钮用 beary-back 24 墨（icon_back 资产，网页
     // #srchBack .icon-btn 口径：.icon 24 + .icon-btn ink 色；.tl-acts 的
     // 17px 规则只管 .tl-acts 内按钮，不适用于搜索返回行）。
     private let backRowView = UIView()
@@ -164,6 +177,13 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
     private let stateTitleLabel = UILabel()
     private let stateSubLabel = UILabel()
     private let retryButton = BearyButton.retryPill()
+    /// 8-6：搜索错误重试态改走统一 BearyStateView（标题“搜索失败”+ 副文案 +
+    /// 紧凑描边重试钮，动作复用 retryTapped）；其余状态仍走 bespoke stateStack。
+    /// errorStateView 放在 errorStateWrap 内（与 stateWrap 同槽位、互斥显隐）：
+    /// wrap 作 contentStack 的 arranged subview，隐藏时栈自动塌掉，不用在
+    /// stateWrap 内做约束组互换（隐藏视图 + 失活约束易留布局歧义）。
+    private let errorStateWrap = UIView()
+    private let errorStateView = BearyStateView()
     /// Q5 无结果 CTA：只在无结果态显示，点按复用 clearTapped（清空并回初始态）。
     private let clearSearchButton = UIButton(type: .custom)
     /// Q9 最近搜索容器：插在状态区与结果区之间，只在初始态有记录时显示。
@@ -198,6 +218,11 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         super.viewDidLayoutSubviews()
         updateColumnLayout()
         updateStickyBoxPosition()
+        // 8-11：状态圆圆角走高/2（54 圆 -> 27），不再只靠手写 27；
+        // bounds 在首次布局后才定，故此处跟随布局刷新（只动 layer，不改约束）。
+        if stateCircle.bounds.height > 0 {
+            stateCircle.layer.cornerRadius = stateCircle.bounds.height / 2
+        }
         // 旋转/列宽变化后刷新阴影 path（path 与 bounds 绑定，旧 path 会错位）。
         updateSearchBoxShadow()
     }
@@ -216,15 +241,16 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         updateStickyBoxPosition()
     }
 
-    /// sticky 框体顶距：占位在视野内时贴占位，滚出后贴安全区顶 6px（网页 top:6px）。
+    /// sticky 框体吸顶（6-2）：顶约束固定 48（栈顶 4 + 返回行 44，见 1-4），
+    /// 吸顶位移只走 transform，滚动回调不再改约束：占位在视野内时框体跟随占位，
+    /// 占位滚出后框体贴安全区顶 6px（网页 top:6px）。占位高度 50 不变。
+    /// 框体无 transform 时顶在安全区顶 +48 处，故 transform.y = 目标顶距 - 48：
+    /// 占位可见时 >= 0（跟随占位），滚出后 -42（贴顶 6）。
     private func updateStickyBoxPosition() {
-        guard let boxTop = boxTopConstraint else { return }
         let safeTop = view.safeAreaLayoutGuide.layoutFrame.minY
         let placeholderTop = boxPlaceholderView.convert(CGPoint.zero, to: view).y
         let target = max(6, placeholderTop - safeTop)
-        if abs(boxTop.constant - target) > 0.5 {
-            boxTop.constant = target
-        }
+        searchBoxView.transform = CGAffineTransform(translationX: 0, y: target - 48)
     }
 
     @objc private func backTapped() {
@@ -321,7 +347,8 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         backRowView.addSubview(backButton)
 
         backTitleLabel.translatesAutoresizingMaskIntoConstraints = false
-        backTitleLabel.font = UIFont.boldSystemFont(ofSize: 16)
+        backTitleLabel.font = BearyDynamicType.cappedFont(for: UIFont.boldSystemFont(ofSize: 16))
+        backTitleLabel.adjustsFontForContentSizeCategory = true
         backTitleLabel.textColor = BearyColors.ink
         backTitleLabel.text = "搜索"
         backRowView.addSubview(backTitleLabel)
@@ -341,7 +368,8 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         hintRowView.addSubview(hintSpinner)
 
         hintLabel.translatesAutoresizingMaskIntoConstraints = false
-        hintLabel.font = UIFont.systemFont(ofSize: 12.5)
+        hintLabel.font = BearyDynamicType.cappedFont(for: UIFont.systemFont(ofSize: 12.5))
+        hintLabel.adjustsFontForContentSizeCategory = true
         hintLabel.textColor = BearyColors.gray
         hintLabel.text = "正在搜索…"
         hintRowView.addSubview(hintLabel)
@@ -357,25 +385,26 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         view.addSubview(searchBoxView)
 
         searchIconView.translatesAutoresizingMaskIntoConstraints = false
-        searchIconView.image = BearyIconImages.image(named: "icon_search", pointSize: 19)
+        searchIconView.image = BearyIconImages.image(named: "icon_search", pointSize: 21)
         searchIconView.tintColor = BearyColors.gray
         searchIconView.contentMode = .scaleAspectFit
         searchBoxView.addSubview(searchIconView)
 
         boxRingView.translatesAutoresizingMaskIntoConstraints = false
-        boxRingView.image = BearyIconImages.image(named: "icon_loading", pointSize: 19)
+        boxRingView.image = BearyIconImages.image(named: "icon_loading", pointSize: 21)
         boxRingView.tintColor = BearyColors.gray
         boxRingView.contentMode = .scaleAspectFit
         boxRingView.isHidden = true
         searchBoxView.addSubview(boxRingView)
 
         searchField.translatesAutoresizingMaskIntoConstraints = false
-        searchField.font = UIFont.systemFont(ofSize: 16)
+        searchField.font = BearyDynamicType.cappedFont(for: UIFont.systemFont(ofSize: 16))
+        searchField.adjustsFontForContentSizeCategory = true
         searchField.textColor = BearyColors.ink
         // 占位色走 BearyColors.gray（与登录/邀请页 attributedPlaceholder 同口径）。
         searchField.attributedPlaceholder = NSAttributedString(string: "搜索日记或用户", attributes: [
             .foregroundColor: BearyColors.gray,
-            .font: UIFont.systemFont(ofSize: 16),
+            .font: BearyDynamicType.cappedFont(for: UIFont.systemFont(ofSize: 16)),
         ])
         searchField.returnKeyType = .search
         searchField.autocorrectionType = .no
@@ -409,11 +438,15 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         // 深色下 bg 纯黑、surface #26262c，两者差一档）。
         stateCircle.backgroundColor = BearySearchViewController.mixedColor(BearyColors.orange, 0.18, over: BearyColors.surface)
         stateCircle.layer.borderWidth = 1
+        // 8-11：初值 27 = 54/2（首次布局前 bounds 未定时的正确帧；布局后由
+        // viewDidLayoutSubviews 按高/2 重算，见该处注释）。
         stateCircle.layer.cornerRadius = 27
         stateCircle.layer.masksToBounds = true
         stateStack.addArrangedSubview(stateCircle)
 
         stateIconView.translatesAutoresizingMaskIntoConstraints = false
+        // 8-12 例外：状态圆内图标 25 不归 21 档——它是 54 圆的圆内比例，
+        // 统一组件 BearyStateView 同款 54 圆亦用 25，故保留。
         stateIconView.image = BearyIconImages.image(named: "icon_search", pointSize: 25)
         stateIconView.tintColor = BearyColors.orange
         stateIconView.contentMode = .scaleAspectFit
@@ -427,7 +460,8 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         stateCircle.addSubview(stateRingView)
 
         stateTitleLabel.translatesAutoresizingMaskIntoConstraints = false
-        stateTitleLabel.font = UIFont.boldSystemFont(ofSize: 15)
+        stateTitleLabel.font = BearyDynamicType.scaledFont(for: UIFont.boldSystemFont(ofSize: 15))
+        stateTitleLabel.adjustsFontForContentSizeCategory = true
         stateTitleLabel.textColor = BearyColors.ink
         stateTitleLabel.textAlignment = .center
         stateTitleLabel.numberOfLines = 0
@@ -435,7 +469,8 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         stateStack.addArrangedSubview(stateTitleLabel)
 
         stateSubLabel.translatesAutoresizingMaskIntoConstraints = false
-        stateSubLabel.font = UIFont.systemFont(ofSize: 12.5)
+        stateSubLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 12.5))
+        stateSubLabel.adjustsFontForContentSizeCategory = true
         stateSubLabel.textColor = BearyColors.gray
         stateSubLabel.textAlignment = .center
         stateSubLabel.numberOfLines = 0
@@ -457,7 +492,8 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         clearSearchButton.translatesAutoresizingMaskIntoConstraints = false
         clearSearchButton.setTitle("清空搜索", for: .normal)
         clearSearchButton.setTitleColor(BearyColors.ink, for: .normal)
-        clearSearchButton.titleLabel?.font = UIFont.systemFont(ofSize: 14, weight: .semibold)
+        clearSearchButton.titleLabel?.font = BearyDynamicType.cappedFont(for: UIFont.systemFont(ofSize: 14, weight: .semibold))
+        clearSearchButton.titleLabel?.adjustsFontForContentSizeCategory = true
         clearSearchButton.backgroundColor = BearyColors.surface
         clearSearchButton.layer.borderWidth = 1
         clearSearchButton.layer.borderColor = BearyColors.line.cgColor
@@ -469,6 +505,22 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         clearSearchButton.addTarget(self, action: #selector(clearSearchTapped), for: .touchUpInside)
         clearSearchButton.bearyAddPressFeedback()
         stateStack.addArrangedSubview(clearSearchButton)
+
+        // 8-6：错误态 BearyStateView（wrap 与 stateWrap 同槽位、互斥显隐；
+        // 内边距 28/20/20 与 bespoke stateStack 同口径，切换只在 showState /
+        // showFailedState 做显隐，不在滚动回调里动约束）。
+        errorStateWrap.translatesAutoresizingMaskIntoConstraints = false
+        errorStateWrap.isHidden = true
+        contentStack.addArrangedSubview(errorStateWrap)
+        errorStateView.translatesAutoresizingMaskIntoConstraints = false
+        errorStateView.configure(kind: .error, title: "搜索失败", subtitle: "网络好像不太顺", iconName: "icon_search", actionTitle: "重试", onAction: { [weak self] in self?.retryTapped() })
+        errorStateWrap.addSubview(errorStateView)
+        NSLayoutConstraint.activate([
+            errorStateView.topAnchor.constraint(equalTo: errorStateWrap.topAnchor, constant: 28),
+            errorStateView.leadingAnchor.constraint(equalTo: errorStateWrap.leadingAnchor, constant: 20),
+            errorStateView.trailingAnchor.constraint(equalTo: errorStateWrap.trailingAnchor, constant: -20),
+            errorStateView.bottomAnchor.constraint(equalTo: errorStateWrap.bottomAnchor, constant: -20),
+        ])
 
         // Q9 最近搜索区：标题 + 本机记录行（行高 44、圆角 14 卡片口径）；
         // 内容由 renderRecentSearches 重建，初始态外一律隐藏（见 showState）。
@@ -501,7 +553,8 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         searchFooterSpinner.color = BearyColors.gray
         searchFooterLabel.translatesAutoresizingMaskIntoConstraints = false
         searchFooterLabel.text = "正在搜索…"
-        searchFooterLabel.font = UIFont.systemFont(ofSize: 14)
+        searchFooterLabel.font = BearyDynamicType.cappedFont(for: UIFont.systemFont(ofSize: 14))
+        searchFooterLabel.adjustsFontForContentSizeCategory = true
         searchFooterLabel.textColor = BearyColors.gray
         // 审计 P2：与失败态重试钮同为 BearyButton 工厂紧凑档，不再各写一套尺寸。
         searchFooterRetryButton.translatesAutoresizingMaskIntoConstraints = false
@@ -547,12 +600,12 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
             contentStack.centerXAnchor.constraint(equalTo: columnWrap.centerXAnchor),
             contentStack.bottomAnchor.constraint(equalTo: columnWrap.bottomAnchor),
 
-            // 页顶返回行：按钮 28 + gap 10 + 标题，上下 padding 8/8（行高 44，Hit44 热区不再被 34 高行截断）。
+            // 页顶返回行：按钮 44 + gap 10 + 标题，上下 padding 0（行高仍 44，图标 24 居中，视觉不变）。
             backButton.leadingAnchor.constraint(equalTo: backRowView.leadingAnchor),
-            backButton.topAnchor.constraint(equalTo: backRowView.topAnchor, constant: 8),
-            backButton.bottomAnchor.constraint(equalTo: backRowView.bottomAnchor, constant: -8),
-            backButton.widthAnchor.constraint(equalToConstant: 28),
-            backButton.heightAnchor.constraint(equalToConstant: 28),
+            backButton.topAnchor.constraint(equalTo: backRowView.topAnchor, constant: 0),
+            backButton.bottomAnchor.constraint(equalTo: backRowView.bottomAnchor, constant: 0),
+            backButton.widthAnchor.constraint(equalToConstant: 44),
+            backButton.heightAnchor.constraint(equalToConstant: 44),
             backTitleLabel.leadingAnchor.constraint(equalTo: backButton.trailingAnchor, constant: 10),
             backTitleLabel.centerYAnchor.constraint(equalTo: backButton.centerYAnchor),
             backTitleLabel.trailingAnchor.constraint(lessThanOrEqualTo: backRowView.trailingAnchor),
@@ -569,7 +622,7 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
             hintLabel.centerYAnchor.constraint(equalTo: hintRowView.centerYAnchor),
             hintLabel.trailingAnchor.constraint(lessThanOrEqualTo: hintRowView.trailingAnchor),
 
-            // sticky 框体：与列内容同宽（16 边距 + ≤568 居中），顶距动态更新。
+            // sticky 框体：与列内容同宽（16 边距 + ≤568 居中），顶距固定 48、吸顶位移走 transform。
             searchBoxView.heightAnchor.constraint(equalToConstant: 50),
             searchBoxView.leadingAnchor.constraint(greaterThanOrEqualTo: view.leadingAnchor, constant: 16),
             searchBoxView.trailingAnchor.constraint(lessThanOrEqualTo: view.trailingAnchor, constant: -16),
@@ -577,13 +630,13 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
 
             searchIconView.leadingAnchor.constraint(equalTo: searchBoxView.leadingAnchor, constant: 16),
             searchIconView.centerYAnchor.constraint(equalTo: searchBoxView.centerYAnchor),
-            searchIconView.widthAnchor.constraint(equalToConstant: 19),
-            searchIconView.heightAnchor.constraint(equalToConstant: 19),
+            searchIconView.widthAnchor.constraint(equalToConstant: 21),
+            searchIconView.heightAnchor.constraint(equalToConstant: 21),
 
             boxRingView.leadingAnchor.constraint(equalTo: searchBoxView.leadingAnchor, constant: 16),
             boxRingView.centerYAnchor.constraint(equalTo: searchBoxView.centerYAnchor),
-            boxRingView.widthAnchor.constraint(equalToConstant: 19),
-            boxRingView.heightAnchor.constraint(equalToConstant: 19),
+            boxRingView.widthAnchor.constraint(equalToConstant: 21),
+            boxRingView.heightAnchor.constraint(equalToConstant: 21),
 
             searchField.leadingAnchor.constraint(equalTo: searchBoxView.leadingAnchor, constant: 44),
             searchField.topAnchor.constraint(equalTo: searchBoxView.topAnchor),
@@ -622,8 +675,8 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         searchBoxWidthCap?.isActive = true
         searchBoxFullWidth = searchBoxView.widthAnchor.constraint(equalTo: view.widthAnchor, constant: -32)
         searchBoxFullWidth?.isActive = false
-        // sticky 框体顶距：初始按返回行后位置估算，首次布局与滚动时校准。
-        boxTopConstraint = searchBoxView.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 38)
+        // sticky 框体顶距固定 48（1-4：栈顶 4 + 返回行 44）；吸顶位移走 transform，约束此后不再改动。
+        boxTopConstraint = searchBoxView.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 48)
         boxTopConstraint?.isActive = true
         // 输入框右缘：清空钮显示时贴清空钮、无清空钮时贴框右 16（两条约束互斥切换）。
         searchFieldToBoxTrailing = searchField.trailingAnchor.constraint(equalTo: searchBoxView.trailingAnchor, constant: -16)
@@ -832,6 +885,9 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
     // MARK: - 状态渲染（网页 srchStateHtml 四态口径）
 
     private func showState(title: String?, sub: String?, showRetry: Bool, loading: Bool, showClear: Bool = false) {
+        // 8-6：非错误态一律藏起错误 wrap（stack arranged subview，隐藏即塌掉）。
+        errorStateWrap.isHidden = true
+        errorStateWrap.alpha = 1
         let wasStateHidden = stateWrap.isHidden
         showingResults = false
         resultsStack.isHidden = true
@@ -908,14 +964,16 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         let titleLabel = UILabel()
         titleLabel.translatesAutoresizingMaskIntoConstraints = false
         titleLabel.text = "最近搜索"
-        titleLabel.font = UIFont.systemFont(ofSize: 13, weight: .semibold)
+        titleLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13, weight: .semibold))
+        titleLabel.adjustsFontForContentSizeCategory = true
         titleLabel.textColor = BearyColors.gray
         // A7：一键清除入口（标题行右侧弱化文字钮；只清当前账号桶记录，
         // 记录机制与 8 条上限不动；清除后同步重建本区，无记录时整区隐藏）。
         let clearButton = UIButton(type: .system)
         clearButton.translatesAutoresizingMaskIntoConstraints = false
         clearButton.setTitle("清除", for: .normal)
-        clearButton.titleLabel?.font = UIFont.systemFont(ofSize: 13)
+        clearButton.titleLabel?.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13))
+        clearButton.titleLabel?.adjustsFontForContentSizeCategory = true
         clearButton.setTitleColor(BearyColors.gray, for: .normal)
         clearButton.contentEdgeInsets = UIEdgeInsets(top: 6, left: 8, bottom: 6, right: 8)
         clearButton.addTarget(self, action: #selector(clearRecentSearchesTapped), for: .touchUpInside)
@@ -934,7 +992,8 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
             button.translatesAutoresizingMaskIntoConstraints = false
             button.setTitle(term, for: .normal)
             button.setTitleColor(BearyColors.ink, for: .normal)
-            button.titleLabel?.font = UIFont.systemFont(ofSize: 15)
+            button.titleLabel?.font = BearyDynamicType.cappedFont(for: UIFont.systemFont(ofSize: 15))
+            button.titleLabel?.adjustsFontForContentSizeCategory = true
             button.backgroundColor = BearyColors.surface
             button.layer.cornerRadius = 14
             button.layer.masksToBounds = true
@@ -990,8 +1049,26 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
     }
 
     private func showFailedState() {
-        // 网页 fail 态：标题“搜索失败”+ 副文案“网络好像不太顺”+ 重试钮。
-        showState(title: "搜索失败", sub: "网络好像不太顺", showRetry: true, loading: false)
+        // 8-6：无旧结果的失败态改走统一 BearyStateView（文案与重试动作不变，
+        // 仍是标题“搜索失败”+ 副文案“网络好像不太顺”+ 重试钮走 retryTapped）；
+        // 有旧结果的失败仍走结果区尾行重试（showFailedStateKeepingResults），不动。
+        let wasErrorHidden = errorStateWrap.isHidden
+        showingResults = false
+        resultsStack.isHidden = true
+        setSearchFooter(loading: false, failed: false)
+        recentWrap.isHidden = true
+        clearResultRows()
+        stateWrap.isHidden = true
+        errorStateWrap.isHidden = false
+        // 新规矩 (b) 同口径：错误态首次出现淡入（同态内不重播；减动效直显）。
+        if wasErrorHidden && !UIAccessibility.isReduceMotionEnabled {
+            errorStateWrap.alpha = 0
+            UIView.animate(withDuration: 0.2, animations: {
+                self.errorStateWrap.alpha = 1
+            })
+        } else {
+            errorStateWrap.alpha = 1
+        }
     }
 
     /// S7：有旧结果时的失败处理——不调 showState（它会清结果区），
@@ -1002,6 +1079,8 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
     private func showFailedStateKeepingResults() {
         showingResults = true
         stateWrap.isHidden = true
+        // 8-6 不变量：错误 wrap 只在 showFailedState 可见，其余路径一律藏起。
+        errorStateWrap.isHidden = true
         // 结果出现时最近搜索区隐藏（只属于初始态）。
         recentWrap.isHidden = true
         resultsStack.isHidden = false
@@ -1045,6 +1124,8 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         rowUsers = []
         entryButtons = []
         rowEntryIds = []
+        entryRowById = [:]
+        userRowByKey = [:]
         imageRetryHolders = []
         // 88 包 M13：尾行不属于结果区，随结果区重建而隐藏（成功重渲末尾亦会隐藏）。
         setSearchFooter(loading: false, failed: false)
@@ -1072,6 +1153,8 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         }
         showingResults = true
         stateWrap.isHidden = true
+        // 8-6 不变量：成功渲染时错误 wrap 必藏（它与 stateWrap 分属两个 arranged subview）。
+        errorStateWrap.isHidden = true
         // 结果出现时最近搜索区隐藏（只属于初始态）。
         recentWrap.isHidden = true
         // 64 包回归修：成功路径必须把 resultsStack 改回可见——showState（加载/失败/
@@ -1087,12 +1170,20 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         for entry in mineEntries {
             if let row = makeEntryRow(entry: entry, query: query, isMineGroup: true) {
                 mineRows.append(row)
+            } else {
+                // 5-20 nil 同步：makeEntryRow 在 id 缺失时返回 nil，且返回前未向
+                // entryButtons / rowEntryIds / entryRowById 追加任何表项（追加只在
+                // 成功末尾原子进行），故三表同步、无需插视觉占位行（插占位行会
+                // 破坏 G13“全部行被跳过时不挂空分区头”）；animateResultRows 按 key
+                // 查表，nil 行天然不在动画表中，不会错位到旧行。
             }
         }
         var publicRows: [UIView] = []
         for entry in publicEntries {
             if let row = makeEntryRow(entry: entry, query: query, isMineGroup: false) {
                 publicRows.append(row)
+            } else {
+                // 5-20 nil 同步：同上，公开组 nil 行亦不进任何表、不插视觉占位行。
             }
         }
         var userRows: [UIView] = []
@@ -1135,10 +1226,8 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
             nextKeys.insert("entry:" + entryId)
         }
         for user in rowUsers {
-            if let userId = user.id {
-                nextKeys.insert("user:\(userId)")
-            } else if let handle = user.handle, !handle.isEmpty {
-                nextKeys.insert("user:@\(handle)")
+            if let key = userKey(for: user) {
+                nextKeys.insert(key)
             }
         }
         let rowViews: [UIView] = entryButtons + userButtons
@@ -1159,35 +1248,35 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
                 delay += 0.03
             }
         } else {
-            // 同批：按行身份找新行淡入；entryButtons 与 rowEntryIds、userButtons 与
-            // rowUsers 各自按下标一一对应（见 clearResultRows / make 行追加处）。
-            for offset in 0..<entryButtons.count {
-                guard offset < rowEntryIds.count else { continue }
-                let key = "entry:" + rowEntryIds[offset]
-                if !lastResultRowKeys.contains(key) {
-                    let rowView = entryButtons[offset]
+            // 同批（5-20 / 6-6 / 6-9）：按行身份 key 查视图，不按下标配对；
+            // 仅新行错峰滑入（alpha + y+8、0.25s、0.03 步进封顶 0.24s，与新批同口径），
+            // 已有行不动；查表不到（nil 跳过行）即跳过，不会把动画落到旧行。
+            // 新旧区分走 lastResultRowKeys（Profile animatedRowIds 同款集合口径），
+            // 故 6-9 不需“无法区分则不加”的兜底：区分在静态上已证实。
+            var order = 0
+            for entryId in rowEntryIds {
+                let key = "entry:" + entryId
+                if !lastResultRowKeys.contains(key), let rowView = entryRowById[entryId] {
                     rowView.alpha = 0
-                    UIView.animate(withDuration: 0.2, animations: {
+                    rowView.transform = CGAffineTransform(translationX: 0, y: 8)
+                    let delay = min(Double(order) * 0.03, 0.24)
+                    order += 1
+                    UIView.animate(withDuration: 0.25, delay: delay, options: .curveEaseOut, animations: {
                         rowView.alpha = 1
+                        rowView.transform = .identity
                     })
                 }
             }
-            for offset in 0..<userButtons.count {
-                guard offset < rowUsers.count else { continue }
-                let user = rowUsers[offset]
-                var key: String?
-                if let userId = user.id {
-                    key = "user:\(userId)"
-                } else if let handle = user.handle, !handle.isEmpty {
-                    key = "user:@\(handle)"
-                }
-                if let keyValue = key, !lastResultRowKeys.contains(keyValue) {
-                    let rowView = userButtons[offset]
-                    rowView.alpha = 0
-                    UIView.animate(withDuration: 0.2, animations: {
-                        rowView.alpha = 1
-                    })
-                }
+            for user in rowUsers {
+                guard let key = userKey(for: user), !lastResultRowKeys.contains(key), let rowView = userRowByKey[key] else { continue }
+                rowView.alpha = 0
+                rowView.transform = CGAffineTransform(translationX: 0, y: 8)
+                let delay = min(Double(order) * 0.03, 0.24)
+                order += 1
+                UIView.animate(withDuration: 0.25, delay: delay, options: .curveEaseOut, animations: {
+                    rowView.alpha = 1
+                    rowView.transform = .identity
+                })
             }
         }
         lastResultQuery = query
@@ -1200,7 +1289,8 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         wrap.translatesAutoresizingMaskIntoConstraints = false
         let label = UILabel()
         label.translatesAutoresizingMaskIntoConstraints = false
-        label.font = UIFont.boldSystemFont(ofSize: 12.5)
+        label.font = BearyDynamicType.scaledFont(for: UIFont.boldSystemFont(ofSize: 12.5))
+        label.adjustsFontForContentSizeCategory = true
         label.textColor = BearyColors.gray
         label.text = title
         wrap.addSubview(label)
@@ -1230,7 +1320,8 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
 
         let fallbackLabel = UILabel()
         fallbackLabel.translatesAutoresizingMaskIntoConstraints = false
-        fallbackLabel.font = UIFont.boldSystemFont(ofSize: 17)
+        fallbackLabel.font = BearyDynamicType.cappedFont(for: UIFont.boldSystemFont(ofSize: 17))
+        fallbackLabel.adjustsFontForContentSizeCategory = true
         fallbackLabel.textColor = BearyColors.orange
         fallbackLabel.backgroundColor = BearyColors.orange.withAlphaComponent(0.14)
         fallbackLabel.textAlignment = .center
@@ -1239,14 +1330,14 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
 
         let nameLabel = BearyRoundedMarkLabel()
         nameLabel.translatesAutoresizingMaskIntoConstraints = false
-        nameLabel.font = UIFont.boldSystemFont(ofSize: 16.5)
+        nameLabel.font = BearyDynamicType.cardTitleFont()
         nameLabel.textColor = BearyColors.ink
         nameLabel.numberOfLines = 1
         nameLabel.clipsToBounds = true
 
         let handleLabel = BearyRoundedMarkLabel()
         handleLabel.translatesAutoresizingMaskIntoConstraints = false
-        handleLabel.font = UIFont.systemFont(ofSize: 13)
+        handleLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13))
         handleLabel.textColor = BearyColors.gray
         handleLabel.numberOfLines = 1
         handleLabel.clipsToBounds = true
@@ -1257,10 +1348,10 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         chevron.contentMode = .scaleAspectFit
 
         let displayName = userDisplayName(user: user)
-        nameLabel.attributedText = highlightedText(displayName, query: query, font: UIFont.boldSystemFont(ofSize: 16.5), color: BearyColors.ink)
+        nameLabel.attributedText = highlightedText(displayName, query: query, font: BearyDynamicType.cardTitleFont(), color: BearyColors.ink)
         if let handle = user.handle, !handle.isEmpty {
             let handleText = NSMutableAttributedString(string: "@")
-            handleText.append(highlightedText(handle, query: query, font: UIFont.systemFont(ofSize: 13), color: BearyColors.gray))
+            handleText.append(highlightedText(handle, query: query, font: BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13)), color: BearyColors.gray))
             handleLabel.attributedText = handleText
             handleLabel.isHidden = false
         } else {
@@ -1321,6 +1412,8 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
             chevron.trailingAnchor.constraint(equalTo: row.trailingAnchor, constant: -16),
             chevron.widthAnchor.constraint(equalToConstant: 16),
             chevron.heightAnchor.constraint(equalToConstant: 16),
+            // 8-15：用户行最小 44 高约束（现行行高 72，视觉不变，只保热区下限）。
+            row.heightAnchor.constraint(greaterThanOrEqualToConstant: 44),
         ])
         row.addTarget(self, action: #selector(userRowTapped(_:)), for: .touchUpInside)
         row.addTarget(self, action: #selector(rowTouchDown(_:)), for: .touchDown)
@@ -1328,12 +1421,16 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         row.accessibilityLabel = displayName
         userButtons.append(row)
         rowUsers.append(user)
+        if let key = userKey(for: user) {
+            userRowByKey[key] = row
+        }
         return row
     }
 
     /// 日记行：网页 .srch-entry——padding 14/16（Q1 行内边距统一）、底边 1 line；meta 行 gap 7（作者 13.5 bold、
     /// 日期 13 gray）；正文 16、行高 1.6、最多 3 行；首图 44×44 圆角 12 居右。
-    /// 私密组 meta 为“日期 + 私密 pill + · 未公开”；公开组 meta 为“作者 + 日期 + · 我的（本人时）”。
+    /// 私密组 meta 为“日期 + 私密 pill”（2-3：只留 pill，“· 未公开”文字已删）；
+    /// 公开组 meta 为“作者 + 日期 + · 我的（本人时）”。
     private func makeEntryRow(entry: Entry, query: String, isMineGroup: Bool) -> UIButton? {
         guard let entryId = entry.id else { return nil }
         let row = UIButton(type: .custom)
@@ -1347,7 +1444,8 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
 
         let dateLabel = UILabel()
         dateLabel.translatesAutoresizingMaskIntoConstraints = false
-        dateLabel.font = UIFont.systemFont(ofSize: 13)
+        dateLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13))
+        dateLabel.adjustsFontForContentSizeCategory = true
         dateLabel.textColor = BearyColors.gray
         if let created = entry.createdAt {
             dateLabel.text = searchDateString(ms: created)
@@ -1414,29 +1512,25 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         separator.backgroundColor = BearyColors.line
 
         if isMineGroup {
+            // 2-3：私密行只留 pill，不再拼“· 未公开”文字（双重状态文案已删）。
             metaStack.addArrangedSubview(dateLabel)
             metaStack.addArrangedSubview(makePrivatePill())
-            let unpubLabel = UILabel()
-            unpubLabel.translatesAutoresizingMaskIntoConstraints = false
-            unpubLabel.font = UIFont.systemFont(ofSize: 13)
-            unpubLabel.textColor = BearyColors.gray
-            unpubLabel.text = "· 未公开"
-            metaStack.addArrangedSubview(unpubLabel)
         } else {
             let authorLabel = BearyRoundedMarkLabel()
             authorLabel.translatesAutoresizingMaskIntoConstraints = false
-            authorLabel.font = UIFont.boldSystemFont(ofSize: 13.5)
+            authorLabel.font = BearyDynamicType.scaledFont(for: UIFont.boldSystemFont(ofSize: 13.5))
             authorLabel.textColor = BearyColors.ink
             authorLabel.numberOfLines = 1
             authorLabel.clipsToBounds = true
             authorLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-            authorLabel.attributedText = highlightedText(entry.authorName ?? "", query: query, font: UIFont.boldSystemFont(ofSize: 13.5), color: BearyColors.ink)
+            authorLabel.attributedText = highlightedText(entry.authorName ?? "", query: query, font: BearyDynamicType.scaledFont(for: UIFont.boldSystemFont(ofSize: 13.5)), color: BearyColors.ink)
             metaStack.addArrangedSubview(authorLabel)
             metaStack.addArrangedSubview(dateLabel)
             if let authorId = entry.authorId, let myUserId = SessionManager.shared.currentUser?.id, authorId == myUserId {
                 let mineLabel = UILabel()
                 mineLabel.translatesAutoresizingMaskIntoConstraints = false
-                mineLabel.font = UIFont.systemFont(ofSize: 13)
+                mineLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13))
+                mineLabel.adjustsFontForContentSizeCategory = true
                 mineLabel.textColor = BearyColors.gray
                 mineLabel.text = "· 我的"
                 metaStack.addArrangedSubview(mineLabel)
@@ -1463,8 +1557,11 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
             constraints.append(thumbWrap.widthAnchor.constraint(equalToConstant: 44))
             constraints.append(thumbWrap.heightAnchor.constraint(equalToConstant: 44))
         }
+        // 8-15：日记行最小 44 高约束（现行行高远超 44，视觉不变，只保热区下限）。
+        constraints.append(row.heightAnchor.constraint(greaterThanOrEqualToConstant: 44))
         NSLayoutConstraint.activate(constraints)
 
+        entryRowById[entryId] = row
         row.addTarget(self, action: #selector(entryRowTapped(_:)), for: .touchUpInside)
         row.addTarget(self, action: #selector(rowTouchDown(_:)), for: .touchDown)
         row.addTarget(self, action: #selector(rowTouchUp(_:)), for: [.touchUpInside, .touchUpOutside, .touchCancel])
@@ -1474,8 +1571,10 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         return row
     }
 
-    /// 私密 pill：网页 .tl-pill.priv——11.5 semibold 蓝字、蓝 13% 底、圆角 999、
-    /// padding 2.5/9、锁图标 12、gap 4。
+    /// 私密 pill：网页 .tl-pill.priv——11.5 semibold 蓝字、蓝 13% 底、圆角 11、
+    /// padding 2.5/9、锁图标 12、gap 4。圆角注（2-3 注释与代码对齐）：
+    /// 实测高约 19（11.5 字 + 上下 2.5），圆角 11 已超半高 9.5，视觉近似 pill，
+    /// 故代码保持 11、只改注释，不写 999。11.5 属装饰性小字，不走 Dynamic Type（8-3 豁免）。
     private func makePrivatePill() -> UIView {
         let pill = UIView()
         pill.translatesAutoresizingMaskIntoConstraints = false
