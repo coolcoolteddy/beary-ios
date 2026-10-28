@@ -1268,8 +1268,8 @@ final class BearyTimelineCell: UITableViewCell {
         // N1：已公开圆点填充改橙色（与 configure 同口径），主题切换后仍是橙。
         if let entry = currentEntry {
             let published = entry.isPublic ?? false
-            dotView.backgroundColor = published ? BearyColors.orange : BearyColors.bg
-            dotView.layer.borderColor = (published ? BearyColors.bg : BearyColors.blue).cgColor
+            dotView.backgroundColor = published ? BearyColors.orange : BearyColors.blue
+            dotView.layer.borderColor = BearyColors.bg.cgColor
         } else {
             dotView.layer.borderColor = BearyColors.bg.cgColor
         }
@@ -1437,14 +1437,17 @@ final class BearyTimelineCell: UITableViewCell {
             dotRingView.layer.cornerRadius = 8.5
         } else {
             updatePill(entry: entry)
-            dotSizeConstraint?.constant = 9
-            dotRingSizeConstraint?.constant = 12
-            dotTopConstraint?.constant = 14.5
-            dotView.backgroundColor = BearyColors.bg
+            // 未公开圆点与已公开同几何（14pt 实心 + 17pt 外环），只差颜色：
+            // 蓝色实心 vs 橙色实心，竖线蓝橙两区外观一致。
+            dotSizeConstraint?.constant = 14
+            dotRingSizeConstraint?.constant = 17
+            dotTopConstraint?.constant = 12
+            dotView.backgroundColor = BearyColors.blue
             dotView.layer.borderWidth = 2.5
-            dotView.layer.borderColor = BearyColors.blue.cgColor
-            dotView.layer.cornerRadius = 4.5
-            dotRingView.isHidden = true
+            dotView.layer.borderColor = BearyColors.bg.cgColor
+            dotView.layer.cornerRadius = 7
+            dotRingView.isHidden = false
+            dotRingView.layer.cornerRadius = 8.5
         }
         metaStack.addArrangedSubview(pillBackground)
         // I3：天气用 icon_wx_* 图标、心情用 14px BearyEmoteView（播 Lottie 循环，
@@ -2137,6 +2140,9 @@ class BearyTimelineViewController: UIViewController {
     /// 的独立覆盖层，只跟随滚动偏移显隐与顶替，不参与表布局、不拦截触摸。
     private let stickyHeaderView = UIView()
     private let stickyHeaderLabel = UILabel()
+    // 吸顶头状态栏区底色：只盖 view 顶到安全区顶沿这一段（吸顶头自身已盖安全区下方），
+    // 与吸顶头同显同隐，滚动内容不再从状态栏区透出。
+    private let statusBarBgView = UIView()
     private var stickyHeaderTopConstraint: NSLayoutConstraint?
     private var stickyHeaderCurrentSection: Int?
     private var stickyHeaderCurrentTitle: String?
@@ -2214,6 +2220,9 @@ class BearyTimelineViewController: UIViewController {
 
     override func viewWillAppear(_ animated: Bool) {
         super.viewWillAppear(animated)
+        // 回收站 pill 图标按压缩放残留复位（通用按压反馈 .84 的已知残留类问题，
+        // 回页时复位，保证图标回到满尺寸）。
+        trashButton.imageView?.transform = .identity
         startCountdownTimer()
         // 回到本页时栏恢复可见（不带动画，避免进页先闪一下栏）。
         // setChromeHidden 由容器 lane 在 SceneDelegate.swift 提供，本文件只调用。
@@ -2421,6 +2430,9 @@ class BearyTimelineViewController: UIViewController {
             }
             countsValue = counts
             updateCountsLabel()
+            // 计数文案写入后表头高度必须重算（首屏 fitted 时计数为空，高度算短了，
+            // 统计行会被 stack 压缩、上下裁剪；2423/3112 两路写入后都补）。
+            refreshHeaderHeight()
         }
         tableView.performBatchUpdates({
             if !rowDeletes.isEmpty { self.tableView.deleteRows(at: rowDeletes, with: .fade) }
@@ -2601,6 +2613,17 @@ class BearyTimelineViewController: UIViewController {
             stickyHeaderLabel.trailingAnchor.constraint(equalTo: stickyHeaderView.trailingAnchor, constant: -16),
             stickyHeaderLabel.bottomAnchor.constraint(equalTo: stickyHeaderView.bottomAnchor, constant: -8),
         ])
+        statusBarBgView.translatesAutoresizingMaskIntoConstraints = false
+        statusBarBgView.backgroundColor = BearyColors.bg
+        statusBarBgView.isUserInteractionEnabled = false
+        statusBarBgView.isHidden = true
+        view.insertSubview(statusBarBgView, belowSubview: stickyHeaderView)
+        NSLayoutConstraint.activate([
+            statusBarBgView.topAnchor.constraint(equalTo: view.topAnchor),
+            statusBarBgView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            statusBarBgView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            statusBarBgView.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
+        ])
     }
 
     /// 追加项二：悬浮日期头跟随。只走位置计算、不做 UIView 动画
@@ -2648,6 +2671,7 @@ class BearyTimelineViewController: UIViewController {
         }
         if stickyHeaderView.isHidden {
             stickyHeaderView.isHidden = false
+            statusBarBgView.isHidden = false
         }
     }
 
@@ -2655,6 +2679,7 @@ class BearyTimelineViewController: UIViewController {
         if stickyHeaderView.isHidden == false {
             stickyHeaderView.isHidden = true
         }
+        statusBarBgView.isHidden = true
         stickyHeaderCurrentSection = nil
         stickyHeaderCurrentTitle = nil
         if let topConstraint = stickyHeaderTopConstraint, topConstraint.constant != 0 {
@@ -2680,7 +2705,7 @@ class BearyTimelineViewController: UIViewController {
         trashButton.translatesAutoresizingMaskIntoConstraints = false
         trashButton.backgroundColor = BearyColors.faint
         trashButton.layer.cornerRadius = 17
-        trashButton.contentEdgeInsets = UIEdgeInsets(top: 8, left: 13, bottom: 8, right: 13)
+        trashButton.contentEdgeInsets = UIEdgeInsets(top: 8, left: 10, bottom: 8, right: 10)
         if let trashImage = BearyIconImages.image(named: "icon_trash", pointSize: 16) {
             trashButton.setImage(trashImage, for: .normal)
         }
@@ -2690,6 +2715,8 @@ class BearyTimelineViewController: UIViewController {
         trashButton.tintColor = BearyColors.ink
         trashButton.imageEdgeInsets = UIEdgeInsets.zero
         trashButton.titleEdgeInsets = UIEdgeInsets(top: 0, left: 6, bottom: 0, right: 0)
+        // pill 宽度不得被 stack 压缩（否则图标被 aspectFit 缩小、标题中部截断）。
+        trashButton.setContentCompressionResistancePriority(.required, for: .horizontal)
         // R8：回收站按钮标题走 scaledFont（见 updateTrashTitle 各段属性）+ adjusts。
         trashButton.titleLabel?.adjustsFontForContentSizeCategory = true
         trashButton.addTarget(self, action: #selector(didTapTrash), for: .touchUpInside)
@@ -3110,6 +3137,8 @@ class BearyTimelineViewController: UIViewController {
                     strongSelf.timelinePageFailed = false
                     strongSelf.updateTrashTitle()
                     strongSelf.updateCountsLabel()
+                    // 同上：计数写入后重算表头高度，防统计行被压缩裁剪。
+                    strongSelf.refreshHeaderHeight()
                 case .failure(let error):
                     strongSelf.timelineState = .failed
                     if case .unauthorized = error {
