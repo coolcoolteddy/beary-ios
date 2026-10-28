@@ -7,9 +7,31 @@ enum BearyIconMotion {
     /// 点赞成功爆点（Li 2026-10-27 新规格，替代描边画出）：爱心轻微放大再回弹，
     /// 同时向外炸出 7 滴橙色液体微粒（20–30pt 后淡出）。只在点赞成功（填充确认）
     /// 的那一刻播；取消点赞不炸。点亮色沿用现行橙，不改真红。减动效不播。
+    /// fixall-cell 6-12：清点赞爆点残留——按钮层上本轮/旧轮的微粒层
+    /// （按 name 认领）与爆点缩放动画。cell 复用时调（prepareForReuse），
+    /// 新一轮爆点开始前也先清，防止 0.55s 窗口内复用串位或多轮堆叠。
+    static func clearLikeBurst(on button: UIButton) {
+        button.imageView?.layer.removeAnimation(forKey: "bearyLikeBurstPop")
+        guard let sublayers = button.layer.sublayers else { return }
+        for layer in sublayers where layer.name == "bearyLikeBurstDrop" {
+            layer.removeFromSuperlayer()
+        }
+    }
+
+    /// fixall-cell 6-12：清填充淡入残留——移除在途淡入动画并把图标
+    /// alpha 复位为 1，防止中途换图/复用时图标停在半透明淡入态。
+    static func clearFillFade(on button: UIButton) {
+        button.imageView?.layer.removeAnimation(forKey: "bearyFillFade")
+        if let imageView = button.imageView, imageView.alpha != 1 {
+            imageView.alpha = 1
+        }
+    }
+
     static func playLikeBurst(on button: UIButton) {
         if UIAccessibility.isReduceMotionEnabled { return }
         guard let imageView = button.imageView else { return }
+        // 先清上一轮残留微粒（快速连点/复用窗口内旧滴不再堆叠串位）。
+        clearLikeBurst(on: button)
         // 爱心先轻微放大再回弹（1 → 1.22 → 1，.32s）。
         let pop = CAKeyframeAnimation(keyPath: "transform.scale")
         pop.values = [1, 1.22, 1]
@@ -26,9 +48,10 @@ enum BearyIconMotion {
             let rad = angles[i] * .pi / 180
             let size = sizes[i]
             let dot = CALayer()
+            dot.name = "bearyLikeBurstDrop"
             dot.frame = CGRect(x: center.x - size / 2, y: center.y - size / 2, width: size, height: size)
             dot.cornerRadius = size / 2
-            dot.backgroundColor = (i % 2 == 0 ? BearyColors.orange : BearyColors.orange.withAlphaComponent(0.6)).cgColor
+            dot.backgroundColor = (i % 2 == 0 ? BearyColors.orange : BearyColors.alpha(BearyColors.orange, 0.6)).cgColor
             button.layer.addSublayer(dot)
             let target = CGPoint(x: center.x + cos(rad) * distances[i], y: center.y + sin(rad) * distances[i])
             let group = CAAnimationGroup()
@@ -56,11 +79,21 @@ enum BearyIconMotion {
     /// 点赞填充淡入（网页 .fill transition fill .3s）。
     /// 网页另有 .25s 延迟（与描边后半段重叠），原生因网络时序已与描边解耦，
     /// 故成功到达时直接淡入 .3s，不再额外延迟。
+    /// fixall-cell 6-12：点赞填充淡入（网页 .fill transition fill .3s）。
+    /// 中途换图处理：先按 key 清掉在途淡入（旧图淡入不再与新图叠加），
+    /// 再以 keyed CA 淡入从 0 → 1；模型 alpha 全程保持 1，新图不会在
+    /// 淡入前以满透明度闪一下，也不会停在半透明态。
     static func playFillFade(on button: UIButton) {
         guard let imageView = button.imageView else { return }
+        imageView.layer.removeAnimation(forKey: "bearyFillFade")
+        imageView.alpha = 1
         if UIAccessibility.isReduceMotionEnabled { return }
-        imageView.alpha = 0
-        UIView.animate(withDuration: 0.3, animations: { imageView.alpha = 1 })
+        let fade = CABasicAnimation(keyPath: "opacity")
+        fade.fromValue = 0
+        fade.toValue = 1
+        fade.duration = 0.3
+        fade.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+        imageView.layer.add(fade, forKey: "bearyFillFade")
     }
 
     /// 收藏弹一下（网页 bmPop：.28s ease，scale 1→1.3→1，作用于图标本身）。
