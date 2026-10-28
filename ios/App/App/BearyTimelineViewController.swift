@@ -1008,16 +1008,16 @@ final class BearyTimelineCell: UITableViewCell {
 
         weatherLabel.font = UIFont.systemFont(ofSize: 13)
         weatherLabel.textColor = BearyColors.gray
-        // 网页 .tl-meta 可 flex-wrap 口径：天气/心情允许多行换行（不截断），
-        // 横向低压缩，空间不足时先缩它们，时间（required）与 pill 绝不被挤到重叠。
-        weatherLabel.numberOfLines = 0
-        weatherLabel.lineBreakMode = .byWordWrapping
-        weatherLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        // 2026-10-28 Li 定：天气/心情文字一律单行（多行换行会把两字词挤成竖排，
+        // 如“心动”上下排）；空间不足时由写给（单行截断）承接挤压，时间与 pill 不动。
+        weatherLabel.numberOfLines = 1
+        weatherLabel.lineBreakMode = .byTruncatingTail
+        weatherLabel.setContentCompressionResistancePriority(.defaultHigh, for: .horizontal)
         moodLabel.font = UIFont.systemFont(ofSize: 13)
         moodLabel.textColor = BearyColors.gray
-        moodLabel.numberOfLines = 0
-        moodLabel.lineBreakMode = .byWordWrapping
-        moodLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        moodLabel.numberOfLines = 1
+        moodLabel.lineBreakMode = .byTruncatingTail
+        moodLabel.setContentCompressionResistancePriority(.defaultHigh, for: .horizontal)
         recipientLabel.font = UIFont.boldSystemFont(ofSize: 12.5)
         recipientLabel.textColor = BearyColors.orange
         // B-G12 (web .tl-to): max-width 170 + single-line ellipsis, never wrap.
@@ -1189,8 +1189,12 @@ final class BearyTimelineCell: UITableViewCell {
         let actsSpacer = UIView()
         // B-G6: publish button sits inline right after the edit status (web tl-acts
         // puts pub-acts before the flex spacer); the spacer only pushes edit/delete right.
-        actsStack.addArrangedSubview(statusIconView)
-        actsStack.addArrangedSubview(editStatusLabel)
+        // 锁图标与状态文案成组相邻（组内间距 4），不再吃 actsStack 的 14 间距。
+        let statusGroup = UIStackView(arrangedSubviews: [statusIconView, editStatusLabel])
+        statusGroup.axis = .horizontal
+        statusGroup.spacing = 4
+        statusGroup.alignment = .center
+        actsStack.addArrangedSubview(statusGroup)
         actsStack.addArrangedSubview(publishButton)
         actsStack.addArrangedSubview(pendingCountdownLabel)
         actsStack.addArrangedSubview(cancelPublishButton)
@@ -1471,7 +1475,7 @@ final class BearyTimelineCell: UITableViewCell {
             weatherRow.axis = .horizontal
             weatherRow.spacing = 3
             weatherRow.alignment = .center
-            weatherRow.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+            weatherRow.setContentCompressionResistancePriority(.defaultHigh, for: .horizontal)
             // 6A pill 左 packed：天气行横向抗拉伸提到 required，不吸 slack。
             weatherRow.setContentHuggingPriority(.required, for: .horizontal)
             metaStack.addArrangedSubview(weatherRow)
@@ -1488,7 +1492,7 @@ final class BearyTimelineCell: UITableViewCell {
             moodRow.axis = .horizontal
             moodRow.spacing = 3
             moodRow.alignment = .center
-            moodRow.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+            moodRow.setContentCompressionResistancePriority(.defaultHigh, for: .horizontal)
             // 6A pill 左 packed：心情行横向抗拉伸提到 required，不吸 slack。
             moodRow.setContentHuggingPriority(.required, for: .horizontal)
             metaStack.addArrangedSubview(moodRow)
