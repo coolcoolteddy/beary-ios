@@ -4,7 +4,7 @@ import UIKit
 // 写给选人：调 GET /beary/api/search?q=，只取 users 组（display_name/handle 匹配，≤8 条，
 // 与网页搜索同口径），结果过滤掉本人；点行即回传 SearchUser，调用方负责写给 chip 与通知开关。
 // 呈现：自定义底 sheet（文件内自包含，不碰 SceneDelegate）：手机端 max-height 82vh 底 sheet、
-// 圆角 20/20/0/0、border-top 1px line、阴影 0 −12 32 rgba(0,0,0,.22)；宽 ≥821 时居中 440
+// 圆角 20/20/0/0、阴影 0 −12 32 rgba(0,0,0,.22)；宽 ≥821 时居中 440
 // 全圆角 20 + 边框 1 + 阴影 0 24 60 rgba(0,0,0,.30)；自定义抓手 40×4（不用系统抓手）。
 // 遮罩为通用 0.45 黑遮罩（网页 .modal .backdrop 口径），点遮罩关闭；键盘弹出时 sheet
 // 底边抬到键盘上方（此前由 UISheet 承担的避让，改自定义 sheet 后在本文件内补上）。
@@ -38,7 +38,6 @@ final class BearyRecipientPickerViewController: UIViewController, UITextFieldDel
 
     private let backdropButton = UIButton(type: .custom)
     private let sheetView = UIView()
-    private let topBorderView = UIView()
     private let grabberWrap = UIView()
     private let grabberView = UIView()
     private let headerIconWrap = UIView()
@@ -135,8 +134,6 @@ final class BearyRecipientPickerViewController: UIViewController, UITextFieldDel
         sheetView.layer.cornerRadius = BearySheetChrome.topCornerRadius
         sheetView.layer.shadowColor = UIColor.black.cgColor
 
-        topBorderView.backgroundColor = BearyColors.line
-
         grabberView.backgroundColor = BearyColors.line
         grabberView.layer.cornerRadius = BearySheetChrome.grabberCornerRadius
 
@@ -228,12 +225,11 @@ final class BearyRecipientPickerViewController: UIViewController, UITextFieldDel
         stateRetryButton.isHidden = true
         stateRetryButton.addTarget(self, action: #selector(didTapStateRetry), for: .touchUpInside)
         stateRetryButton.bearyAddPressFeedback()
-        for v in [backdropButton, sheetView, topBorderView, grabberWrap, grabberView, headerIconWrap, headerIcon, headerTitle, closeButton, searchBox, searchIcon, searchField, notifyRow, notifyCheckButton, listContainer, listScrollView, rowsStack, resultsLabelWrap, resultsLabel, stateView, stateCircle, stateIcon, stateTitle, stateSubtitle, stateRetryButton] {
+        for v in [backdropButton, sheetView, grabberWrap, grabberView, headerIconWrap, headerIcon, headerTitle, closeButton, searchBox, searchIcon, searchField, notifyRow, notifyCheckButton, listContainer, listScrollView, rowsStack, resultsLabelWrap, resultsLabel, stateView, stateCircle, stateIcon, stateTitle, stateSubtitle, stateRetryButton] {
             v.translatesAutoresizingMaskIntoConstraints = false
         }
         view.addSubview(backdropButton)
         view.addSubview(sheetView)
-        sheetView.addSubview(topBorderView)
         sheetView.addSubview(grabberWrap)
         grabberWrap.addSubview(grabberView)
         sheetView.addSubview(headerIconWrap)
@@ -267,10 +263,6 @@ final class BearyRecipientPickerViewController: UIViewController, UITextFieldDel
             backdropButton.bottomAnchor.constraint(equalTo: view.bottomAnchor),
             backdropButton.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             backdropButton.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-            topBorderView.topAnchor.constraint(equalTo: sheetView.topAnchor),
-            topBorderView.leadingAnchor.constraint(equalTo: sheetView.leadingAnchor),
-            topBorderView.trailingAnchor.constraint(equalTo: sheetView.trailingAnchor),
-            topBorderView.heightAnchor.constraint(equalToConstant: 1),
             grabberWrap.topAnchor.constraint(equalTo: sheetView.topAnchor),
             grabberWrap.leadingAnchor.constraint(equalTo: sheetView.leadingAnchor),
             grabberWrap.trailingAnchor.constraint(equalTo: sheetView.trailingAnchor),
@@ -404,14 +396,12 @@ final class BearyRecipientPickerViewController: UIViewController, UITextFieldDel
             // 网页 60 → 30、32 → 16，旧值 60/32 直写会把阴影晕得比网页大一倍。
             sheetView.layer.shadowRadius = 30
             sheetView.layer.shadowOffset = CGSize(width: 0, height: 24)
-            topBorderView.isHidden = true
         } else {
             sheetView.layer.maskedCorners = [.layerMinXMinYCorner, .layerMaxXMinYCorner]
             sheetView.layer.borderWidth = 0
             sheetView.layer.shadowOpacity = 0.22
             sheetView.layer.shadowRadius = 16
             sheetView.layer.shadowOffset = CGSize(width: 0, height: -12)
-            topBorderView.isHidden = false
         }
     }
 

@@ -190,16 +190,25 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate {
         noteRow.axis = .horizontal
         noteRow.spacing = 4
         noteRow.alignment = .top
+        noteRow.isLayoutMarginsRelativeArrangement = true
+        noteRow.layoutMargins = .zero
         if let clockImage = BearyIconImages.image(named: "icon_clock", pointSize: 13) {
             let clockView = UIImageView(image: clockImage)
             clockView.translatesAutoresizingMaskIntoConstraints = false
             clockView.tintColor = BearyColors.gray
             clockView.contentMode = .scaleAspectFit
+            // 光学居中：12.5pt×1.6 行框内字墨中心在行顶下约 16.5pt（10/28 截图实测），
+            // 13pt 图标半高 6.5，故图标顶 = 行顶 + 10；图标不进 stack 布局
+            //（stack .top 会把它顶到行顶，即截图里高出 10pt 的样子），改普通子视图
+            // + 显式约束，label 经 layoutMargins 左让 17（图标 13 + 间距 4）。
+            noteRow.addSubview(clockView)
             NSLayoutConstraint.activate([
+                clockView.leadingAnchor.constraint(equalTo: noteRow.leadingAnchor),
+                clockView.topAnchor.constraint(equalTo: noteRow.topAnchor, constant: 10),
                 clockView.widthAnchor.constraint(equalToConstant: 13),
                 clockView.heightAnchor.constraint(equalToConstant: 13),
             ])
-            noteRow.addArrangedSubview(clockView)
+            noteRow.layoutMargins = UIEdgeInsets(top: 0, left: 17, bottom: 0, right: 0)
         }
         noteRow.addArrangedSubview(noteLabel)
 

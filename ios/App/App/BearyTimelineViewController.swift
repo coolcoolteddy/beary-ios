@@ -2642,6 +2642,8 @@ class BearyTimelineViewController: UIViewController {
         // pill 宽度不得被 stack 压缩（否则图标被 aspectFit 缩小、标题中部截断）。
         trashButton.setContentCompressionResistancePriority(.required, for: .horizontal)
         // R8：回收站按钮标题走 scaledFont（见 updateTrashTitle 各段属性）+ adjusts。
+        // 标题万一再溢出也只尾部截断，不中部截断（UIButton 默认中部截断即“回…12篇”的样子）。
+        trashButton.titleLabel?.lineBreakMode = .byTruncatingTail
         trashButton.titleLabel?.adjustsFontForContentSizeCategory = true
         trashButton.addTarget(self, action: #selector(didTapTrash), for: .touchUpInside)
         trashButton.bearyAddPressFeedback()
@@ -2789,6 +2791,28 @@ class BearyTimelineViewController: UIViewController {
     /// 回收站标题上次渲染的计数值（本批新规矩：数值不变不重建标题；
     /// 数值变时只动“ N篇”数字段，静态段“回收站”不动，见 updateTrashSuffixOnly）。
     private var lastTrashCount: Int?
+    /// 回收站 pill 宽度下限约束：按钮 intrinsic 会把双段富文本标题算短约 2pt
+    /// （13.5/12.5 双字号，浮点尾巴），标题在 68pt 标签里差 2pt 即中部截断；
+    /// 本约束按标题实测宽重算，保证按钮永远不比内容窄（≥ 约束，只扩不缩）。
+    private var trashButtonMinWidthConstraint: NSLayoutConstraint?
+
+    private func fitTrashButtonWidth() {
+        guard let title = trashButton.attributedTitle(for: .normal) else { return }
+        let titleWidth = title.boundingRect(
+            with: CGSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude),
+            options: [.usesLineFragmentOrigin],
+            context: nil
+        ).width
+        // 按钮宽 = 左右内边距 20 + 图标 16 + 图文间距 6 + 标题实宽（向上取整盖住浮点尾巴）。
+        let needed = ceil(titleWidth) + 20 + 16 + 6
+        if let c = trashButtonMinWidthConstraint {
+            c.constant = needed
+        } else {
+            let c = trashButton.widthAnchor.constraint(greaterThanOrEqualToConstant: needed)
+            c.isActive = true
+            trashButtonMinWidthConstraint = c
+        }
+    }
 
     private func updateTrashTitle() {
         // P1-26：回收站钮按功能命名（计数同步更新，含数字段-only 与
@@ -2802,6 +2826,7 @@ class BearyTimelineViewController: UIViewController {
            let current = trashButton.attributedTitle(for: .normal),
            updateTrashSuffixOnly(current, oldCount: last, newCount: trashCountValue) {
             lastTrashCount = trashCountValue
+            fitTrashButtonWidth()
             return
         }
         let base = NSMutableAttributedString(string: "回收站", attributes: [
@@ -2816,6 +2841,7 @@ class BearyTimelineViewController: UIViewController {
         }
         trashButton.setAttributedTitle(base, for: .normal)
         lastTrashCount = trashCountValue
+        fitTrashButtonWidth()
     }
 
     /// 回收站标题数字段-only 更新：静态段“回收站”不动，只增/改/删
