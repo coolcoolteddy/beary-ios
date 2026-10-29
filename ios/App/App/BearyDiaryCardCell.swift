@@ -719,6 +719,21 @@ class BearyDiaryCardCell: UITableViewCell {
         return btn
     }()
 
+    /// 分享钮隐藏时的槽位占位：非公开卡没有分享钮，但 UIStackView 会把隐藏
+    /// 子视图排除出布局，收藏钮会滑到最右边缘——自己日记默认私密、别人日记
+    /// 只看得到公开的，两边脚栏位置就系统性地不一样。此 spacer 与分享钮同
+    /// 宽 21pt、与分享钮显隐相反切换，让收藏钮在所有卡上 x 位置完全一致。
+    /// 空白 UIView 默认不拦截触摸、不进无障碍；只占位，不画任何东西。
+    private lazy var shareSlotSpacer: UIView = {
+        let v = UIView()
+        v.translatesAutoresizingMaskIntoConstraints = false
+        v.isHidden = true
+        v.isAccessibilityElement = false
+        v.widthAnchor.constraint(equalToConstant: 21).isActive = true
+        v.heightAnchor.constraint(equalToConstant: 21).isActive = true
+        return v
+    }()
+
     // MARK: 回应行（网页 .emote-row 口径：chip + 行末 + 钮，自动换行；两页统一流式）
 
     private let emoteFlowView: BearyEmoteFlowView = {
@@ -758,7 +773,7 @@ class BearyDiaryCardCell: UITableViewCell {
         let actionSpacer = UIView()
         actionSpacer.setContentHuggingPriority(UILayoutPriority(1), for: .horizontal)
         actionSpacer.setContentCompressionResistancePriority(UILayoutPriority(1), for: .horizontal)
-        let st = BearyActionStackView(arrangedSubviews: [likeButton, actionSpacer, bookmarkButton, shareButton])
+        let st = BearyActionStackView(arrangedSubviews: [likeButton, actionSpacer, bookmarkButton, shareButton, shareSlotSpacer])
         st.translatesAutoresizingMaskIntoConstraints = false
         st.axis = .horizontal
         st.spacing = 16
@@ -1646,6 +1661,7 @@ class BearyDiaryCardCell: UITableViewCell {
         shareButton.isEnabled = !interactionDisabled
         let publicOK = BearyEphemeral.isEffectivelyPublic(entry)
         shareButton.isHidden = publicOK == false
+        shareSlotSpacer.isHidden = !shareButton.isHidden
         // 2026-10-29 100 包反馈第 4 项根因 A：个人页 configure 此前从未调
         // refreshPubRow，而 prepareForReuse 把 publishButton 藏起，导致本人
         // 卡在个人页上根本没有地球切换钮（广场 configure 有此调用，故只坏
@@ -2135,6 +2151,7 @@ class BearyDiaryCardCell: UITableViewCell {
         bookmarkButton.alpha = publicOK ? 1.0 : 0.4
         // 网页口径：shBtn 仅 is_public 时输出——非公开卡直接没有分享钮（不禁用占位）。
         shareButton.isHidden = publicOK == false
+        shareSlotSpacer.isHidden = !shareButton.isHidden
     }
 
     /// 拒绝动效（首页模式；网页 .deny shakeX .4s 同口径）：左右小幅抖动，reduced-motion 时跳过。
@@ -2257,6 +2274,7 @@ class BearyDiaryCardCell: UITableViewCell {
         // 此处按新 entry 的有效态同步两处（与 profile configure 同款口径；
         // 控制器失败回滚同样走本方法，文案随之回到原态）。
         shareButton.isHidden = BearyEphemeral.isEffectivelyPublic(entry) == false
+        shareSlotSpacer.isHidden = !shareButton.isHidden
         refreshPubRow()
         profileDisabled = interactionDisabled
         let candidate = BearyEmoteOrder.signature((entry.emotes ?? []).sorted { ($0.count ?? 0) > ($1.count ?? 0) }.filter { ($0.emote ?? "").isEmpty == false })
