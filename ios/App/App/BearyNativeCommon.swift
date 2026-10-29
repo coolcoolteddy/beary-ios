@@ -974,12 +974,12 @@ final class BearyRefreshIconView: UIImageView {
         anim.toValue = Double.pi * 2
         anim.duration = 1.0
         anim.repeatCount = .infinity
-        layer.add(anim, forKey: "beary-refresh-spin")
+        layer.add(anim, forKey: "refresh-spin")
     }
 
     func stopSpinning() {
         spinning = false
-        layer.removeAnimation(forKey: "beary-refresh-spin")
+        layer.removeAnimation(forKey: "refresh-spin")
         transform = .identity
         alpha = 0
     }
