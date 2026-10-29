@@ -16,7 +16,7 @@ import UIKit
 final class BearyInputContainer: UIView {
     private let content: UIView
     private let normalBorderColor: UIColor
-    private var isFocused = false
+    private var contentEditingFocused = false
 
     /// 错误态：红边优先于聚焦蓝边；复位后回到聚焦 / 常态。
     var isError = false {
@@ -67,19 +67,19 @@ final class BearyInputContainer: UIView {
     }
 
     @objc private func editingBegan() {
-        isFocused = true
+        contentEditingFocused = true
         refreshBorder()
     }
 
     @objc private func editingEnded() {
-        isFocused = false
+        contentEditingFocused = false
         refreshBorder()
     }
 
     private func refreshBorder() {
         if isError {
             layer.borderColor = BearyColors.red.cgColor
-        } else if isFocused {
+        } else if contentEditingFocused {
             layer.borderColor = BearyColors.blue.cgColor
         } else {
             layer.borderColor = normalBorderColor.cgColor
