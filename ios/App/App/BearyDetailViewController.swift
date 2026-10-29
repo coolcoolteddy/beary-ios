@@ -62,6 +62,9 @@ final class BearyDetailViewController: UIViewController {
     private var dwellReported = false
     private var dismissedFired = false
     private var chipKeys: [String] = []
+    /// 审计三轮第三批 26：上次 renderEmotes 渲染的排序后签名（key:count:mine 串），
+    /// 相等即无变化、直接返回，不重建 chip；nil 表示尚未渲染过一次。
+    private var renderedEmoteSignature: String?
     private var lastFlowWidth: CGFloat = 0
 
     // MARK: - 视图
@@ -1073,6 +1076,19 @@ final class BearyDetailViewController: UIViewController {
 
     // MARK: - 回应行
 
+    /// 审计三轮第三批 26：详情回应 chip 按 key 复用，不再全删全建。
+    /// 旧实现每次先删全部 subviews 再逐个新建 chip：乐观先行、失败回滚与
+    /// update 变化都会触发重建（成功路径虽有 signature 门控，乐观与失败
+    /// 路径没有），chip 播放器从 0 帧重画、target 重挂。现改为：
+    /// - 排序后签名（key:count:mine 串）与上次渲染一致时直接返回，什么都不动；
+    /// - 已在场的 chip 按 key 复用，只调 render 更新计数与选中态（同 key 时
+    ///   播放器不重播，只在停播时恢复），不重建、不重挂 target；
+    /// - 新增 chip 从 transform 缩放＋opacity 淡入，删除 chip 先 transform
+    ///   缩放＋opacity 淡出、动画结束再移出（减动效时直设终值／直删）；
+    /// - 排序变化只调 subviews 顺序（依次置顶），不动 chip 本身；
+    /// - 首渲染与旧实现一致即时出现，不播入场动画。
+    /// 外观、排序（count 降序）、点按行为（tag 对齐 chipKeys）一律不变；
+    /// 占位口径不动（占位时内容栈整藏，本函数不碰占位逻辑）。
     private func renderEmotes() {
         if isGuest {
             // 游客无回应区（分隔线／回应头／回应行／写回应入口一并藏，提示条已在操作行位置）。
@@ -1082,22 +1098,124 @@ final class BearyDetailViewController: UIViewController {
             writeResponseButton.isHidden = true
             return
         }
-        for sub in emoteFlowView.subviews {
-            sub.removeFromSuperview()
+        // 空 key 不建 chip（旧循环内 guard 跳过同口径）；同 key 只留首个
+        // （模型侧 merged／emoteDelta 已按 key 去重，防重复 key 建出双 chip）。
+        var seenKeys = Set<String>()
+        var list: [EmoteCount] = []
+        for item in (entry.emotes ?? []).sorted(by: { ($0.count ?? 0) > ($1.count ?? 0) }) {
+            guard let key = item.emote, !key.isEmpty, !seenKeys.contains(key) else { continue }
+            seenKeys.insert(key)
+            list.append(item)
         }
-        let list = (entry.emotes ?? []).sorted(by: { ($0.count ?? 0) > ($1.count ?? 0) })
-        chipKeys = []
+        let newSignature = BearyEmoteOrder.signature(list)
+        if newSignature == renderedEmoteSignature {
+            return
+        }
+        let isFirstRender = renderedEmoteSignature == nil
+        let reduceMotion = UIAccessibility.isReduceMotionEnabled
+        // 现存 chip：在场 chip 以播放器 key 为准（淡出中的 chip 已不在
+        // chipKeys 里，仍凭播放器 key 认回、可复活）；播放器为空时回退
+        // 旧 chipKeys＋tag 对齐。重复 key 只留首个，其余按孤 chip 处理。
+        var allChips: [BearyEmoteChipView] = []
+        var existing: [String: BearyEmoteChipView] = [:]
+        for sub in emoteFlowView.subviews {
+            guard let chip = sub as? BearyEmoteChipView else { continue }
+            allChips.append(chip)
+            if let key = chip.player?.emoteKey, !key.isEmpty {
+                if existing[key] == nil { existing[key] = chip }
+            } else if chip.overlayButton.tag >= 0, chip.overlayButton.tag < chipKeys.count {
+                let key = chipKeys[chip.overlayButton.tag]
+                if existing[key] == nil { existing[key] = chip }
+            }
+        }
+        // 新增／复用：复用 chip 只更新计数与选中态，不重挂 target；新 chip
+        // 建后先置 transform／opacity 起态再入场（首渲染与减动效直设终值）。
+        var placed: [BearyEmoteChipView] = []
         for (index, item) in list.enumerated() {
             guard let key = item.emote, !key.isEmpty else { continue }
-            chipKeys.append(key)
-            let chip = BearyEmoteChipView()
-            chip.render(key: key, count: item.count ?? 0, mine: item.mine ?? false)
-            chip.overlayButton.tag = index
-            chip.overlayButton.addTarget(self, action: #selector(emoteChipTapped(_:)), for: .touchUpInside)
-            chip.overlayButton.bearyAddPressFeedback()
-            emoteFlowView.addSubview(chip)
+            if let chip = existing[key] {
+                // 淡出中复活：先恢复可点按，再从当前态播回正态
+                // （beginFromCurrentState 防跳变）；常态复用 transform／alpha
+                // 已是终值，不播无用动画。
+                chip.overlayButton.isEnabled = true
+                if chip.transform != .identity || chip.alpha != 1.0 {
+                    if reduceMotion {
+                        chip.transform = .identity
+                        chip.alpha = 1.0
+                    } else {
+                        UIView.animate(withDuration: 0.25, delay: 0, options: [.beginFromCurrentState, .curveEaseOut]) {
+                            chip.transform = .identity
+                            chip.alpha = 1.0
+                        }
+                    }
+                }
+                chip.render(key: key, count: item.count ?? 0, mine: item.mine ?? false)
+                chip.overlayButton.tag = index
+                placed.append(chip)
+            } else {
+                let chip = BearyEmoteChipView()
+                chip.render(key: key, count: item.count ?? 0, mine: item.mine ?? false)
+                chip.overlayButton.tag = index
+                chip.overlayButton.addTarget(self, action: #selector(emoteChipTapped(_:)), for: .touchUpInside)
+                chip.overlayButton.bearyAddPressFeedback()
+                if isFirstRender || reduceMotion {
+                    chip.transform = .identity
+                    chip.alpha = 1.0
+                } else {
+                    chip.transform = CGAffineTransform(scaleX: 0.5, y: 0.5)
+                    chip.alpha = 0
+                }
+                emoteFlowView.addSubview(chip)
+                placed.append(chip)
+                if !isFirstRender && !reduceMotion {
+                    UIView.animate(withDuration: 0.25, delay: 0, options: [.beginFromCurrentState, .curveEaseOut]) {
+                        chip.transform = .identity
+                        chip.alpha = 1.0
+                    }
+                }
+            }
         }
-        emoteFlowView.isHidden = list.isEmpty
+        // 排序：只调 subviews 顺序，不动 chip 本身（依次置顶即得新顺序）。
+        for chip in placed {
+            emoteFlowView.bringSubviewToFront(chip)
+        }
+        chipKeys = list.map { $0.emote ?? "" }
+        renderedEmoteSignature = newSignature
+        // 删除：未被本轮留用的现存 chip（含孤 chip）走 transform／opacity
+        // 淡出，结束再移出；淡出期间先禁点按，防旧 tag 错指新 chipKeys。
+        // 移出时若该 key 已复活（chipKeys 又含它）则不动。减动效直删。
+        let departing = allChips.filter { chip in
+            !placed.contains(where: { $0 === chip })
+        }
+        if departing.isEmpty {
+            emoteFlowView.isHidden = list.isEmpty
+        } else if reduceMotion {
+            for chip in departing { chip.removeFromSuperview() }
+            emoteFlowView.isHidden = list.isEmpty
+        } else {
+            // 淡出期间 flow 仍可见（否则淡出不可见）；空列表时待全部移出后再藏。
+            emoteFlowView.isHidden = false
+            for chip in departing {
+                chip.overlayButton.isEnabled = false
+                UIView.animate(withDuration: 0.25, delay: 0, options: [.beginFromCurrentState, .curveEaseIn], animations: {
+                    chip.transform = CGAffineTransform(scaleX: 0.5, y: 0.5)
+                    chip.alpha = 0
+                }, completion: { [weak self] _ in
+                    guard let self = self else { return }
+                    // 动画期内复活过的 chip 不动（chipKeys 已含该 key 即复活）。
+                    if let key = chip.player?.emoteKey, !key.isEmpty, self.chipKeys.contains(key) {
+                        return
+                    }
+                    chip.removeFromSuperview()
+                    // 移出改变行高：强制下次布局重算（旧实现 render 末尾同款）。
+                    self.lastFlowWidth = 0
+                    self.view.setNeedsLayout()
+                    if self.chipKeys.isEmpty {
+                        self.emoteFlowView.isHidden = true
+                    }
+                })
+            }
+        }
         lastFlowWidth = 0
         view.setNeedsLayout()
     }
