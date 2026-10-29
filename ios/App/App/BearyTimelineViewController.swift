@@ -2098,10 +2098,21 @@ class BearyTimelineViewController: UIViewController {
         tv.delegate = self
         tv.dataSource = self
         let rc = UIRefreshControl()
+        rc.tintColor = .clear
         rc.addTarget(self, action: #selector(pullToRefresh), for: .valueChanged)
+        rc.addSubview(refreshIconView)
+        NSLayoutConstraint.activate([
+            refreshIconView.centerXAnchor.constraint(equalTo: rc.centerXAnchor),
+            refreshIconView.centerYAnchor.constraint(equalTo: rc.centerYAnchor),
+            refreshIconView.widthAnchor.constraint(equalToConstant: 32),
+            refreshIconView.heightAnchor.constraint(equalToConstant: 32),
+        ])
         tv.refreshControl = rc
         return tv
     }()
+
+    /// 下拉刷新指示：官方刷新图标（tintColor .clear 藏默认菊花）。
+    private let refreshIconView = BearyRefreshIconView()
 
     /// 表头容器：标题行 + 统计小字 + 连续写作行 + 日历卡。
     /// 用 tableHeaderView 承载（随列表一起滚走，不常驻占位）；高度每次渲染后重算。
@@ -2563,6 +2574,7 @@ class BearyTimelineViewController: UIViewController {
     @objc private func pullToRefresh() {
         // M12（91 包）：下拉刷新触发给一次轻触觉。
         BearyHaptics.press()
+        refreshIconView.startSpinning()
         // G16：刷新时先保存选中日（reloadTimeline keepDay 分支内保留），
         // 跳过当日拉取，只拉一次最终选中日；不再先拉今天再拉回原选中日。
         // 第 2 项 A 调用点 2/2（下拉刷新）：keepSelectedDay 下守卫接在刷新
@@ -2776,6 +2788,11 @@ class BearyTimelineViewController: UIViewController {
 
     func scrollViewDidScroll(_ scrollView: UIScrollView) {
         guard scrollView === tableView else { return }
+        // 下拉刷新图标跟随：未刷新时按拉出距离跟随旋转（60pt 拉满一圈）。
+        if tableView.refreshControl?.isRefreshing != true {
+            let pull = max(0, -(scrollView.contentOffset.y + scrollView.contentInset.top))
+            refreshIconView.setPullProgress(min(1, pull / 60))
+        }
         updateStickyHeader()
     }
 
@@ -3269,6 +3286,7 @@ class BearyTimelineViewController: UIViewController {
                     strongSelf.tableView.reloadData()
                 }
                 strongSelf.updateChrome()
+                strongSelf.refreshIconView.stopSpinning()
                 strongSelf.tableView.refreshControl?.endRefreshing()
                 completion?()
             }

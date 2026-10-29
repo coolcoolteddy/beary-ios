@@ -934,6 +934,57 @@ enum BearyIconImages {
     }
 }
 
+/// 下拉刷新官方图标视图：icon_refresh 32pt（BearyIconImages 模板渲染＋灰 tint，
+/// 深浅随 BearyColors.gray 自动切换，无需深色变体）。
+/// 只走 transform／layer 旋转动画，不动布局、不改刷新阈值与手势语义：
+/// 下拉跟随旋转 progress 0...1 → 0...2π，刷新中连续旋转，结束复位。
+final class BearyRefreshIconView: UIImageView {
+
+    init() {
+        super.init(frame: .zero)
+        translatesAutoresizingMaskIntoConstraints = false
+        image = BearyIconImages.image(named: "icon_refresh", pointSize: 32)
+        tintColor = BearyColors.gray
+        contentMode = .scaleAspectFit
+        isUserInteractionEnabled = false
+        alpha = 0
+    }
+
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    private var spinning = false
+
+    /// 下拉跟随：刷新中调用无效（连续旋转动画接管）。
+    func setPullProgress(_ progress: CGFloat) {
+        guard !spinning else { return }
+        let p = min(1, max(0, progress))
+        alpha = p
+        transform = CGAffineTransform(rotationAngle: p * 2 * .pi)
+    }
+
+    func startSpinning() {
+        guard !spinning else { return }
+        spinning = true
+        alpha = 1
+        transform = .identity
+        let anim = CABasicAnimation(keyPath: "transform.rotation.z")
+        anim.fromValue = 0
+        anim.toValue = Double.pi * 2
+        anim.duration = 1.0
+        anim.repeatCount = .infinity
+        layer.add(anim, forKey: "beary-refresh-spin")
+    }
+
+    func stopSpinning() {
+        spinning = false
+        layer.removeAnimation(forKey: "beary-refresh-spin")
+        transform = .identity
+        alpha = 0
+    }
+}
+
 // MARK: - NB 动态图标（网页 beary.html:1340 的 NB 定义 + :75-:99 关键帧口径）
 //
 // 48 盒、描边 2.2、圆头圆角；路径坐标均为 48 盒单位，buildLayers 时等比缩放到框宽。

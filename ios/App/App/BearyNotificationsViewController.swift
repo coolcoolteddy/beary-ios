@@ -285,18 +285,9 @@ final class BearyNotificationsViewController: UIViewController {
         return table
     }()
 
-    /// 自定义下拉转圈（网页 #ptrIn 口径：32 视觉、灰色；平时 alpha 0，
-    /// 指示高 ≥80 时淡入放大，刷新中常亮转圈）。
-    private lazy var pullSpinner: UIActivityIndicatorView = {
-        let spinner = UIActivityIndicatorView(style: .medium)
-        spinner.translatesAutoresizingMaskIntoConstraints = false
-        // E1：四页菊花统一灰（覆盖旧 C-G9 墨口径）；翻页哨兵圈本已是灰。
-        spinner.color = BearyColors.gray
-        spinner.hidesWhenStopped = false
-        spinner.transform = CGAffineTransform(scaleX: 1.6, y: 1.6)
-        spinner.alpha = 0
-        return spinner
-    }()
+    /// 自定义下拉指示器图标（网页 #ptrIn 口径：32pt 官方刷新图标、灰色；平时 alpha 0，
+    /// 下拉时淡入＋跟随旋转，刷新中常亮连续旋转）。
+    private lazy var pullIconView = BearyRefreshIconView()
 
     /// 自定义下拉指示器（网页 #ptr 口径）：固定高 116、藏在表内容上方
     /// （content y=-116..0），指示高按手指行程 ×0.48 阻尼（上限 116），
@@ -306,12 +297,12 @@ final class BearyNotificationsViewController: UIViewController {
         pull.backgroundColor = BearyColors.bg
         pull.isUserInteractionEnabled = false
         pull.frame = CGRect(x: 0, y: -116, width: 0, height: 116)
-        pull.addSubview(pullSpinner)
+        pull.addSubview(pullIconView)
         NSLayoutConstraint.activate([
-            pullSpinner.centerXAnchor.constraint(equalTo: pull.centerXAnchor),
-            pullSpinner.bottomAnchor.constraint(equalTo: pull.bottomAnchor, constant: -14),
-            pullSpinner.widthAnchor.constraint(equalToConstant: 20),
-            pullSpinner.heightAnchor.constraint(equalToConstant: 20),
+            pullIconView.centerXAnchor.constraint(equalTo: pull.centerXAnchor),
+            pullIconView.bottomAnchor.constraint(equalTo: pull.bottomAnchor, constant: -14),
+            pullIconView.widthAnchor.constraint(equalToConstant: 32),
+            pullIconView.heightAnchor.constraint(equalToConstant: 32),
         ])
         return pull
     }()
@@ -341,7 +332,7 @@ final class BearyNotificationsViewController: UIViewController {
     private lazy var centralSpinner: UIActivityIndicatorView = {
         let spinner = UIActivityIndicatorView(style: .medium)
         spinner.translatesAutoresizingMaskIntoConstraints = false
-        // E1：同 pullSpinner，四页菊花统一灰（覆盖旧 C-G9 墨口径）。
+        // E1：同下拉指示器，四页刷新指示统一灰（覆盖旧 C-G9 墨口径）。
         spinner.color = BearyColors.gray
         spinner.hidesWhenStopped = true
         spinner.transform = CGAffineTransform(scaleX: 1.6, y: 1.6)
@@ -1088,8 +1079,7 @@ final class BearyNotificationsViewController: UIViewController {
         if !tableView.isDragging {
             pullEngageTranslation = nil
             pullView.frame = CGRect(x: 0, y: -116, width: tableView.bounds.width, height: 116)
-            pullSpinner.alpha = 0
-            pullSpinner.stopAnimating()
+            pullIconView.setPullProgress(0)
             return
         }
         // 顶栏透度批：在顶/下拉判定改以 -contentInset.top 为基准（现行收起态内边距 0 时与旧 y<=0/>0 等价）。
@@ -1104,14 +1094,10 @@ final class BearyNotificationsViewController: UIViewController {
         let indicatorHeight = min(fingerRaw * 0.48, 116)
         pullView.frame = CGRect(x: 0, y: indicatorHeight - 116 - contentRaw, width: tableView.bounds.width, height: 116)
         if indicatorHeight <= 0 {
-            pullSpinner.alpha = 0
-            pullSpinner.stopAnimating()
+            pullIconView.setPullProgress(0)
         } else {
             let progress = min(1, indicatorHeight / 80)
-            pullSpinner.alpha = progress
-            let scale = 1.6 * (0.6 + 0.4 * progress)
-            pullSpinner.transform = CGAffineTransform(scaleX: scale, y: scale)
-            pullSpinner.startAnimating()
+            pullIconView.setPullProgress(progress)
         }
     }
 
@@ -1123,9 +1109,7 @@ final class BearyNotificationsViewController: UIViewController {
         }
         isCustomPullRefreshing = true
         customPullStartTime = Date()
-        pullSpinner.alpha = 1
-        pullSpinner.transform = CGAffineTransform(scaleX: 1.6, y: 1.6)
-        pullSpinner.startAnimating()
+        pullIconView.startSpinning()
         // A5-3：下拉刷新进场查减动效开关——减动效时直接落位，不播 0.32s 动画。
         let pullIn = {
             self.tableView.contentInset.top = 84
@@ -1162,12 +1146,10 @@ final class BearyNotificationsViewController: UIViewController {
         }
         if UIAccessibility.isReduceMotionEnabled {
             pullOut()
-            self.pullSpinner.alpha = 0
-            self.pullSpinner.stopAnimating()
+            self.pullIconView.stopSpinning()
         } else {
             UIView.animate(withDuration: 0.32, animations: pullOut, completion: { _ in
-                self.pullSpinner.alpha = 0
-                self.pullSpinner.stopAnimating()
+                self.pullIconView.stopSpinning()
             })
         }
     }

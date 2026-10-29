@@ -316,10 +316,21 @@ class BearyProfileViewController: UIViewController {
         tableViewValue.delegate = self
         tableViewValue.dataSource = self
         let refreshControlValue = UIRefreshControl()
+        refreshControlValue.tintColor = .clear
         refreshControlValue.addTarget(self, action: #selector(pullToRefresh), for: .valueChanged)
+        refreshControlValue.addSubview(refreshIconView)
+        NSLayoutConstraint.activate([
+            refreshIconView.centerXAnchor.constraint(equalTo: refreshControlValue.centerXAnchor),
+            refreshIconView.centerYAnchor.constraint(equalTo: refreshControlValue.centerYAnchor),
+            refreshIconView.widthAnchor.constraint(equalToConstant: 32),
+            refreshIconView.heightAnchor.constraint(equalToConstant: 32),
+        ])
         tableViewValue.refreshControl = refreshControlValue
         return tableViewValue
     }()
+
+    /// 下拉刷新指示：官方刷新图标（tintColor .clear 藏默认菊花）。
+    private let refreshIconView = BearyRefreshIconView()
 
     // MARK: - 头部视图（封面带 + 头像半压 + 名字 / 加入时间 / 统计 + 小熊回应墙 + 徽章架 + 三标签）
 
@@ -1709,6 +1720,7 @@ class BearyProfileViewController: UIViewController {
             } else {
                 BearyToast.show(in: view, message: "资料刷新失败，显示的是上次内容，下拉可重试", aboveFAB: false)
             }
+            refreshIconView.stopSpinning()
             tableView.refreshControl?.endRefreshing()
             refreshFooter()
             layoutHeaderForced(widthValue: headerWidthValue)
@@ -2256,6 +2268,7 @@ class BearyProfileViewController: UIViewController {
             tableView.reloadData()
         }
         refreshFooter()
+        refreshIconView.stopSpinning()
         tableView.refreshControl?.endRefreshing()
         // 引用点按直接落点：首屏回包后消费挂起的单篇（成功与失败路径都消费；
         // 失败时列表为空，单篇本身是已拉到的真实内容，仍可落点展示）。
@@ -2778,6 +2791,7 @@ class BearyProfileViewController: UIViewController {
         // P1-11：gated 页（targetUserIdValue 与 targetHandleValue 双空）无请求可发，
         // 直接结束刷新，否则转圈永远不消失；handle 页仍走下方正常拉取路径。
         if targetUserIdValue == nil && targetHandleValue == nil {
+            refreshIconView.stopSpinning()
             tableView.refreshControl?.endRefreshing()
             return
         }
@@ -2787,6 +2801,7 @@ class BearyProfileViewController: UIViewController {
         // 只靠 didEndDragging 兜底会漏；刷新期间滚动事件不再拉伸（见 updateCoverStretch），
         // 故此次动画不会被打架，封面一次平滑回自然态。
         resetCoverStretchAnimated()
+        refreshIconView.startSpinning()
         // G2：下拉刷新保留旧内容（顶部加载态由 UIRefreshControl 提供），
         // 成功后替换、失败保留旧内容（见 handleProfileResult / handleTabResult）。
         diaryHasMore = true
@@ -3652,6 +3667,11 @@ extension BearyProfileViewController: UITableViewDataSource, UITableViewDelegate
     func scrollViewDidScroll(_ scrollView: UIScrollView) {
         guard scrollView === tableView else { return }
         let y = scrollView.contentOffset.y
+        // 下拉刷新图标跟随：未刷新时按拉出距离跟随旋转（60pt 拉满一圈）。
+        if tableView.refreshControl?.isRefreshing != true {
+            let pull = max(0, -(y + scrollView.contentInset.top))
+            refreshIconView.setPullProgress(min(1, pull / 60))
+        }
         defer { profileLastScrollOffsetY = y }
         // 弹性封面（下拉伸缩 + 模糊）：须在顶栏回弹区早退之前跑，否则下拉区永远量不到。
         updateCoverStretch(offsetY: y, topBaseline: -scrollView.contentInset.top)
