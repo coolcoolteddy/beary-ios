@@ -905,7 +905,6 @@ final class BearyAPI {
     func markWishDone(id: Int, completion: @escaping (Result<Void, APIError>) -> Void) {
         requestVoid("/beary/api/wishes/\(id)/status", method: "POST", jsonBody: ["status": "done"], completion: completion)
     }
-    }
 
     /// 我的拉黑列表：GET /beary/api/blocks → {blocked: [ids]}。
     func fetchBlocks(completion: @escaping (Result<BlocksResponse, APIError>) -> Void) {
