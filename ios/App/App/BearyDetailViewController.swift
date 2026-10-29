@@ -11,7 +11,7 @@
 // 正文 16pt；图片圆角 12，点图进现有灯箱；心情／天气／@ 用 faint 底小 chip；
 // 引用卡复用 BearyQuoteCardView（viewer 实时判定，私密被引加“仅你可见”角标）。
 // 操作行：点赞／回应／收藏／分享四项全部放左侧一起（不要 spacer 顶右），
-// 点赞／收藏点亮走橙色与现有先行反馈口径（守卫通过即填色＋计数，失败回滚＋拒绝动效）。
+// 点赞点亮走红色、收藏点亮走橙色，与现有先行反馈口径（守卫通过即填色＋计数，失败回滚＋拒绝动效）。
 // 回应区：App 现行回应模型是 emote chips（无文字回应 UI），故此处接现有回应流程——
 // emote chips + “写回应…”入口开 picker，不另造文字回应功能（与 v5 mock 的文字回应行
 // 不一致处，见 PR 说明，待 Li 确认）。
@@ -66,6 +66,12 @@ final class BearyDetailViewController: UIViewController {
     /// 相等即无变化、直接返回，不重建 chip；nil 表示尚未渲染过一次。
     private var renderedEmoteSignature: String?
     private var lastFlowWidth: CGFloat = 0
+    /// 第 2 项（100 包第 16 项返修，P2-1 同口径）：600 列上限约束——
+    /// 只在宽 ≥821 时激活；宽 ≤820 时停用，改由 750 优先级的屏宽 −32 撑满。
+    /// 旧实现把 ≤600 常驻激活，633–820 档（iPhone 横屏、iPad 竖屏）被压成
+    /// 600 居中、两侧各空 70–120pt，看起来就是“左右被挤压”；开关在
+    /// viewDidLayoutSubviews（与 Feed／编辑资料同款，状态不变不开关）。
+    private var detailColCapConstraint: NSLayoutConstraint?
 
     // MARK: - 视图
 
@@ -233,6 +239,12 @@ final class BearyDetailViewController: UIViewController {
 
     override func viewDidLayoutSubviews() {
         super.viewDidLayoutSubviews()
+        // 第 2 项：600 上限只在宽 ≥821 时激活（P2-1 开关，状态不变不开关，
+        // 避免布局循环）；宽 ≤820 时上限停用、列宽 = 屏宽 −32 撑满。
+        let wantColCap = view.bounds.width >= 821
+        if detailColCapConstraint?.isActive != wantColCap {
+            detailColCapConstraint?.isActive = wantColCap
+        }
         updateEphemeralBorderPath()
         let width = containerView.bounds.width
         guard width > 0, width != lastFlowWidth else { return }
@@ -267,6 +279,10 @@ final class BearyDetailViewController: UIViewController {
         stackView.alignment = .fill
         containerView.addSubview(stackView)
 
+        // 第 2 项（P2-1）：600 上限改为可开关约束（初始激活，
+        // viewDidLayoutSubviews 按实际宽度纠正：≥821 才激活，≤820 停用）。
+        let colCap = containerView.widthAnchor.constraint(lessThanOrEqualToConstant: 600)
+        detailColCapConstraint = colCap
         NSLayoutConstraint.activate([
             closeButton.leadingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.leadingAnchor, constant: 16),
             closeButton.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
@@ -277,16 +293,17 @@ final class BearyDetailViewController: UIViewController {
             scrollView.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor),
             containerView.topAnchor.constraint(equalTo: scrollView.contentLayoutGuide.topAnchor),
             containerView.bottomAnchor.constraint(equalTo: scrollView.contentLayoutGuide.bottomAnchor),
-            // iPad 铁律：内容列 600 居中；窄屏时左右各留 16。
+            // iPad 铁律：宽 ≥821 时内容列 600 居中；宽 ≤820 时 iPhone 式全宽（两侧各 16）。
             containerView.centerXAnchor.constraint(equalTo: scrollView.frameLayoutGuide.centerXAnchor),
-            containerView.widthAnchor.constraint(lessThanOrEqualToConstant: 600),
+            colCap,
             containerView.leadingAnchor.constraint(greaterThanOrEqualTo: scrollView.frameLayoutGuide.leadingAnchor, constant: 16),
             containerView.trailingAnchor.constraint(lessThanOrEqualTo: scrollView.frameLayoutGuide.trailingAnchor, constant: -16),
             // 2026-10-29 第 16 项：窄列根因——原约束只有 centerX + ≤600 + 两侧
             // ≥/≤ 不等式、没有宽度等式，UIScrollView 内容宽由内容内在宽决定，
             // 正文极短时容器被压塌成窄列并居中。补宽度等式（750，非 required：
-            // iPhone 宽 390 时得 358 = 全宽减两侧 16；iPad 宽 ≥821 时 required
-            // 的 ≤600 压住等式、得 600 居中；两侧不等式保留作护栏）。
+            // iPhone 宽 390 时得 358 = 全宽减两侧 16；宽 ≥821 时 required
+            // 的 ≤600（已激活）压住等式、得 600 居中；宽 ≤820 时上限停用、
+            // 等式撑满得屏宽 −32；两侧不等式保留作护栏）。
             {
                 let c = containerView.widthAnchor.constraint(equalTo: scrollView.frameLayoutGuide.widthAnchor, constant: -32)
                 c.priority = UILayoutPriority(750)
@@ -410,7 +427,13 @@ final class BearyDetailViewController: UIViewController {
                     guard let self = self else { return }
                     self.onEdit?(self.entry)
                 })
-                actions.append(UIAction(title: "删除", image: BearyFeedIconCache.image(named: "icon_trash", pointSize: 20), attributes: .destructive) { [weak self] _ in
+                // 第 8 项详情面：删除图标钉死 BearyColors.red（#e5484d，不自造红；
+                // withTintColor 返回新图，不污染 BearyFeedIconCache 的 template 缓存）。
+                // 说明：UIMenu 标题色公开 API 改不了——.destructive 标题仍由系统染红，
+                // 图标是本文件内唯一能钉死 token 红的部分；拉黑项不动，点赞点亮走 token 红。
+                let deleteIcon = BearyFeedIconCache.image(named: "icon_trash", pointSize: 20)?
+                    .withTintColor(BearyColors.red, renderingMode: .alwaysOriginal)
+                actions.append(UIAction(title: "删除", image: deleteIcon, attributes: .destructive) { [weak self] _ in
                     guard let self = self else { return }
                     self.onDelete?(self.entry)
                 })
@@ -1020,7 +1043,7 @@ final class BearyDetailViewController: UIViewController {
 
     // MARK: - 操作行
 
-    /// 点赞／收藏点亮走橙色与现有先行反馈口径；数字只 setTitle，不重建行。
+    /// 点赞点亮走红色、收藏点亮走橙色，与现有先行反馈口径；数字只 setTitle，不重建行。
     private func refreshActionRow() {
         if isGuest {
             actionStack.isHidden = true
@@ -1036,9 +1059,9 @@ final class BearyDetailViewController: UIViewController {
             ?? BearyFeedIconCache.image(named: "icon_heart", pointSize: 22)
         likeButton.setImage(heartImage, for: .normal)
         likeButton.setTitle("\(likeCount)", for: .normal)
-        likeButton.tintColor = liked ? BearyColors.orange : BearyColors.ink
-        likeButton.setTitleColor(liked ? BearyColors.orange : BearyColors.gray, for: .normal)
-        likeButton.setTitleColor(liked ? BearyColors.orange : BearyColors.gray, for: .highlighted)
+        likeButton.tintColor = liked ? BearyColors.red : BearyColors.ink
+        likeButton.setTitleColor(liked ? BearyColors.red : BearyColors.gray, for: .normal)
+        likeButton.setTitleColor(liked ? BearyColors.red : BearyColors.gray, for: .highlighted)
 
         var emoteTotal = 0
         for emote in entry.emotes ?? [] {
@@ -1457,7 +1480,7 @@ final class BearyDetailViewController: UIViewController {
         if isLikeBusy { return }
         let currentlyLiked = entry.likedByMe ?? false
         let originalCount = entry.likeCount ?? 0
-        // 先行反馈（卡片口径）：点赞即填橙＋计数 +1，取消即褪色＋计数 −1；
+        // 先行反馈（卡片口径）：点赞即填红＋计数 +1，取消即褪色＋计数 −1；
         // 成功回包对齐服务端值，失败回滚＋拒绝动效。
         if !currentlyLiked {
             BearyHaptics.likeTap()

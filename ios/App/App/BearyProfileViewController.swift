@@ -718,14 +718,35 @@ class BearyProfileViewController: UIViewController {
         return blurViewValue
     }()
 
-    // MARK: - 个人页上滑 header（背景随之上滑、末段停住当 header + 用户名淡入）
-    /// 编排（2026-10-29 第 6 项，覆盖 #149 的 overlay 淡入做法——Li 明确说不是
-    /// 从中间剪开）：开始上滑时背景也随之上滑（与列表 1:1 一起走）→ 滑到只剩
-    /// header 距离后，最后那段背景停住当 header（带模糊的背景尾 + 用户名在上面）
-    /// → 用户名触到 header 后按遮挡比例在 header 上淡入。不许用实色 overlay
-    /// 淡入盖掉图片、不许中间裁切线。滚动回调里只改一条背景顶约束常量与 alpha，
-    /// 不调 layoutIfNeeded、不做图片加载、不改文案；几何只在布局变化时算一次
-    /// （背景自然顶存字段，滚动回调只读）。header 是 table 的兄弟视图
+    /// 2026-10-29 第 7 项：封面“洗向底色”层——底色实色块（BearyColors.bg，
+    /// 随深浅模式自适应），贴整幅封面、上滑时随行程淡入（alpha 0→1），
+    /// 与 header 跟踪图上的同名层同 alpha，保证 band 内外像素连续、无接缝；
+    /// 下拉区（up≤0）恒 alpha 0，不与第 5 项下拉模糊打架（两者行程互斥）。
+    private let coverFadeView: UIView = {
+        let fadeViewValue = UIView()
+        fadeViewValue.translatesAutoresizingMaskIntoConstraints = false
+        fadeViewValue.backgroundColor = BearyColors.bg
+        fadeViewValue.isUserInteractionEnabled = false
+        fadeViewValue.alpha = 0
+        fadeViewValue.isHidden = true
+        return fadeViewValue
+    }()
+
+    // MARK: - 个人页上滑 header（背景随之上滑、向底色渐隐 + 用户名淡入）
+    /// 编排（2026-10-29 第 7 项，改向第 6 / 29 项那套）：开始上滑时背景也
+    /// 随之上滑（与列表 1:1 一起走），但不再“滑到只剩 header 高时尾停住充当
+    /// header”（旧 pin 机制与 systemMaterial 模糊层、分隔线、分段式整块淡入
+    /// 随本项整删——Li 明确不要“一块 56 高预留 header 形状渐渐出现”的效果）。
+    /// 新机制：封面图本身随上滑进度向页面底色（BearyColors.bg，浅色白 /
+    /// 深色黑）均匀渐隐——真封面与 header 跟踪图各盖一层同 alpha 的底色块，
+    /// 行程终点恰为跟踪图底贴到 header 带底边时（容器态上滑 124pt），此后
+    /// 带内只剩底色，用户名按遮挡比例淡入、终态落在底色上保持可读。
+    /// 注意口径变化：第 6 项“不许实色 overlay 盖图”被本项新决定覆盖，但做法
+    /// 不同于 #149（不是在 header 区凭空淡入一块 overlay，而是封面整体随行程
+    /// 均匀洗向底色，band 内外同 alpha、无接缝、无裁切线）。
+    /// 滚动回调里只改一条背景顶约束常量与 alpha，不调 layoutIfNeeded、
+    /// 不做图片加载、不改文案；几何只在布局变化时算一次（背景自然顶与
+    /// header 底边存字段，滚动回调只读）。header 是 table 的兄弟视图
     /// （不进 table），全程不拦截触摸；modal 顶栏已自带名字时新 header 全程
     /// 隐藏，避免遮挡返回 / 分享。
     private let stickyHeaderView: UIView = {
@@ -740,8 +761,9 @@ class BearyProfileViewController: UIViewController {
 
     /// header 背景图：与封面同一张 UIImage（布局时同步引用，不加载），aspectFill、
     /// 与封面自然态同框（表框左 / 顶、表宽、180 高），由 header 容器裁剪；
-    /// y=0 时 header 区域像素与封面顶部完全相同、无跳变；上滑后封面走了、header
-    /// 仍留着这截背景。无封面时隐藏，露页面底色。
+    /// y=0 时 header 区域像素与封面顶部完全相同、无跳变；上滑时与封面 1:1
+    /// 同步上移（2026-10-29 第 7 项：不再停住），并与真封面同 alpha 洗向底色。
+    /// 无封面时隐藏，露页面底色。
     private let stickyHeaderBgImageView: UIImageView = {
         let imageViewValue = UIImageView()
         imageViewValue.translatesAutoresizingMaskIntoConstraints = false
@@ -752,15 +774,18 @@ class BearyProfileViewController: UIViewController {
         return imageViewValue
     }()
 
-    /// 2026-10-29 第 6 项：header 停住段的模糊层（systemMaterial，alpha 随 pin
-    /// 进度 0→1；无封面时容器底色不透明、模糊不可见，仍露页面底色）。
-    /// （旧实色 overlay 已随本项整删：Li 否决“实色淡入盖图、中间剪开”。）
-    private let stickyHeaderBlurView: UIVisualEffectView = {
-        let blurValue = UIVisualEffectView(effect: UIBlurEffect(style: .systemMaterial))
-        blurValue.translatesAutoresizingMaskIntoConstraints = false
-        blurValue.isUserInteractionEnabled = false
-        blurValue.alpha = 0
-        return blurValue
+    /// 2026-10-29 第 7 项：header 跟踪图上的“洗向底色”层——底色实色块，
+    /// 贴整个 header 带、盖在跟踪图之上、用户名之下；alpha 与真封面上的
+    /// coverFadeView 严格同步（同一次滚动回调同值），band 内外无接缝；
+    /// 终态 alpha 1 时带内只剩底色（无模糊、无分隔线、无图片尾），用户名
+    /// 落在底色上。无封面时跟踪图隐藏，本层盖在底色容器上、视觉上无差。
+    private let stickyHeaderFadeView: UIView = {
+        let fadeViewValue = UIView()
+        fadeViewValue.translatesAutoresizingMaskIntoConstraints = false
+        fadeViewValue.backgroundColor = BearyColors.bg
+        fadeViewValue.isUserInteractionEnabled = false
+        fadeViewValue.alpha = 0
+        return fadeViewValue
     }()
 
     /// header 用户名：左对齐 17pt 粗体（与内容用户名同文案），alpha = 被 header
@@ -774,15 +799,6 @@ class BearyProfileViewController: UIViewController {
         labelValue.text = "—"
         labelValue.isUserInteractionEnabled = false
         return labelValue
-    }()
-
-    private let stickyHeaderDividerView: UIView = {
-        let viewValue = UIView()
-        viewValue.translatesAutoresizingMaskIntoConstraints = false
-        viewValue.backgroundColor = BearyColors.line
-        viewValue.alpha = 0
-        viewValue.isUserInteractionEnabled = false
-        return viewValue
     }()
 
     /// 背景图自然顶（布局时存的 tableFrame.minY，滚动回调 1:1 跟踪的起点）。
@@ -997,12 +1013,14 @@ class BearyProfileViewController: UIViewController {
     /// 上滑 header 搭建：容器钉页顶（通宽、高 = 安全区顶 + 56），层级在 table
     /// 之上、modal 顶栏之下（modal 顶栏在前，返回 / 分享不受影响）；骨架屏后加，
     /// 故骨架屏在 header 之上（加载态 header 被骨架盖住，无干扰）。
+    /// 2026-10-29 第 7 项：层级 = 跟踪图 → 底色渐隐层 → 用户名（无模糊层、
+    /// 无分隔线）；容器底色即页面底色，终态带内除用户名外与页面无差，
+    /// 不构成一块形状分明的 header。
     private func buildStickyHeader() {
         view.addSubview(stickyHeaderView)
         stickyHeaderView.addSubview(stickyHeaderBgImageView)
-        stickyHeaderView.addSubview(stickyHeaderBlurView)
+        stickyHeaderView.addSubview(stickyHeaderFadeView)
         stickyHeaderView.addSubview(stickyHeaderNameLabel)
-        stickyHeaderView.addSubview(stickyHeaderDividerView)
         NSLayoutConstraint.activate([
             stickyHeaderView.topAnchor.constraint(equalTo: view.topAnchor),
             stickyHeaderView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
@@ -1012,18 +1030,14 @@ class BearyProfileViewController: UIViewController {
             stickyHeaderBgTopConstraint,
             stickyHeaderBgWidthConstraint,
             stickyHeaderBgImageView.heightAnchor.constraint(equalToConstant: 180),
-            stickyHeaderBlurView.topAnchor.constraint(equalTo: stickyHeaderView.topAnchor),
-            stickyHeaderBlurView.leadingAnchor.constraint(equalTo: stickyHeaderView.leadingAnchor),
-            stickyHeaderBlurView.trailingAnchor.constraint(equalTo: stickyHeaderView.trailingAnchor),
-            stickyHeaderBlurView.bottomAnchor.constraint(equalTo: stickyHeaderView.bottomAnchor),
+            stickyHeaderFadeView.topAnchor.constraint(equalTo: stickyHeaderView.topAnchor),
+            stickyHeaderFadeView.leadingAnchor.constraint(equalTo: stickyHeaderView.leadingAnchor),
+            stickyHeaderFadeView.trailingAnchor.constraint(equalTo: stickyHeaderView.trailingAnchor),
+            stickyHeaderFadeView.bottomAnchor.constraint(equalTo: stickyHeaderView.bottomAnchor),
             stickyHeaderNameLeadingConstraint,
             stickyHeaderNameCenterYConstraint,
             stickyHeaderNameLabel.trailingAnchor.constraint(lessThanOrEqualTo: stickyHeaderView.trailingAnchor, constant: -16),
             stickyHeaderNameLabel.heightAnchor.constraint(equalToConstant: 22),
-            stickyHeaderDividerView.leadingAnchor.constraint(equalTo: stickyHeaderView.leadingAnchor),
-            stickyHeaderDividerView.trailingAnchor.constraint(equalTo: stickyHeaderView.trailingAnchor),
-            stickyHeaderDividerView.bottomAnchor.constraint(equalTo: stickyHeaderView.bottomAnchor),
-            stickyHeaderDividerView.heightAnchor.constraint(equalToConstant: 0.5),
         ])
     }
 
@@ -1082,45 +1096,47 @@ class BearyProfileViewController: UIViewController {
         }
     }
 
-    /// 上滑 header 滚动态（2026-10-29 第 6 项）：背景随列表 1:1 上移、到 pin 点
-    /// 停住当 header；只改一条背景顶约束常量与 alpha（与弹性封面同款滚动回调
-    /// 改常量口径，不调 layoutIfNeeded、不做图片加载、不改文案）；几何取布局时
-    /// 存好的 stickyHeaderBottom / stickyHeaderBgNaturalTop，不在滚动回调里重算。
-    /// 须在顶栏回弹区早退之前跑，否则下拉区（y≤0）header 藏不住。
+    /// 上滑 header 滚动态（2026-10-29 第 7 项，取代第 6 项 pin 与第 29 项
+    /// 整块淡入）：背景随列表 1:1 上移、全程不停住；只改一条背景顶约束常量
+    /// 与 alpha（与弹性封面同款滚动回调改常量口径，不调 layoutIfNeeded、
+    /// 不做图片加载、不改文案）；几何取布局时存好的 stickyHeaderBottom /
+    /// stickyHeaderBgNaturalTop，不在滚动回调里重算。
+    /// 须在顶栏回弹区早退之前跑，否则下拉区（y≤0）header 藏不住、渐隐层复位不了。
+    /// 渐隐行程：跟踪图底贴到 header 带底边时的上滑量 = 图高 180 －带底边与
+    /// 封面自然顶的落差（容器态 56，得 124）。渐隐须在此点前走完：若图底已出
+    /// 带而下方残图仍未洗净，带底边会切出一条底色/残图分界线；走完后带内只剩
+    /// 底色、带外封面亦已洗净，上下仍连续。两处底色层同值同写，无接缝。
+    /// 容器自身 alpha 恒 1、不再整体淡入（第 29 项整块淡入即“预留 header 形状
+    /// 渐渐出现”，随本项删除）：初现帧跟踪图像素与下方封面完全相同，故显现
+    /// 不可见；之后唯一渐显的是用户名（遮挡比例驱动，属内容、非形状）。
     private func updateStickyHeaderScroll(offsetY y: CGFloat, topBaseline: CGFloat) {
         guard !stickyHeaderModalDisabled else {
             stickyHeaderView.isHidden = true
+            setCoverFadeAlpha(0)
             return
         }
         let up = y - topBaseline
         guard up > 0 else {
-            // y≤0（顶部回弹 / 下拉伸缩区）：header 整体隐藏，不与封面拉伸打架。
+            // y≤0（顶部回弹 / 下拉伸缩区）：header 整体隐藏，渐隐层复位，
+            // 不与封面拉伸（第 5 项下拉模糊）打架。
             stickyHeaderView.isHidden = true
+            setCoverFadeAlpha(0)
             return
         }
         stickyHeaderView.isHidden = false
-        // 2026-10-29 第 29 项：退场动画——header 整体 alpha 按上滑量占 header 高
-        // 的比例渐变（0→H：0→1），只走 opacity。回顶过程中按同一比例渐隐，
-        // 到顶时 alpha 已为 0，up≤0 的 isHidden 切换不可见，不再阈值瞬间没掉；
-        // 出现与退场同方向、同曲线（滚动驱动，无定时）。背景与下方封面像素
-        // 相同，淡出不重影。
-        stickyHeaderView.alpha = min(up / max(stickyHeaderBottom, 1), 1)
-        // 背景 1:1 上移：自然顶减上滑量；pin 点 = header 底边减图高 180（图底贴
-        // 住 header 底边时停住，之后即“带模糊的背景尾”当 header，不再上滑）。
-        let headerHeight = stickyHeaderBottom
-        let pinTop = headerHeight - 180
-        let bgTop = max(stickyHeaderBgNaturalTop - up, pinTop)
+        // 背景 1:1 上移：自然顶减上滑量，不设下限、不停住。
+        let bgTop = stickyHeaderBgNaturalTop - up
         if stickyHeaderBgTopConstraint.constant != bgTop {
             stickyHeaderBgTopConstraint.constant = bgTop
         }
-        // pin 进度 0→1：模糊与分隔线跟它走（未 pin 时背景清晰、随行程渐糊，
-        // pin 住时全糊；无封面时容器底色不透明、模糊不可见）。
-        let travel = max(stickyHeaderBgNaturalTop - pinTop, 1)
-        let pinProgress = min(max((stickyHeaderBgNaturalTop - bgTop) / travel, 0), 1)
-        stickyHeaderBlurView.alpha = pinProgress
-        stickyHeaderDividerView.alpha = pinProgress
+        // 封面向底色渐隐：0→fadeTravel 线性走完（滚动驱动，无定时），
+        // 回顶按同一比例对称恢复；深浅模式下底色块自动取白/黑。
+        let fadeTravel = max(180 - (stickyHeaderBottom - stickyHeaderBgNaturalTop), 1)
+        let fade = min(max(up / fadeTravel, 0), 1)
+        setCoverFadeAlpha(fade)
         // 用户名淡入：被 header 遮挡的比例（内容用户名换算到页坐标的 top，
         // header 底边减去它，除以名高，钳制 0…1；下滑对称恢复）。
+        // 终态（内容名已滑出带外）alpha 1，用户名落在底色上、保持可读。
         let nameTop = nameLabel.convert(nameLabel.bounds, to: view).origin.y
         let nameHeight = nameLabel.bounds.height
         let occlusion: CGFloat
@@ -1130,6 +1146,22 @@ class BearyProfileViewController: UIViewController {
             occlusion = 0
         }
         stickyHeaderNameLabel.alpha = occlusion
+    }
+
+    /// 两处“洗向底色”层同值写入（真封面层 + header 跟踪图层）：只走
+    /// opacity；变化守卫避免滚动每帧重复赋值。真封面层沿用下拉模糊层的
+    /// isHidden 口径（alpha 0 即隐藏），header 层由容器显隐统管、只改 alpha。
+    private func setCoverFadeAlpha(_ alpha: CGFloat) {
+        if stickyHeaderFadeView.alpha != alpha {
+            stickyHeaderFadeView.alpha = alpha
+        }
+        if coverFadeView.alpha != alpha {
+            coverFadeView.alpha = alpha
+        }
+        let coverHidden = (alpha == 0)
+        if coverFadeView.isHidden != coverHidden {
+            coverFadeView.isHidden = coverHidden
+        }
     }
 
     private func buildTopBar() {
@@ -1175,11 +1207,18 @@ class BearyProfileViewController: UIViewController {
         headerView.backgroundColor = BearyColors.bg
         headerView.addSubview(coverImageView)
         coverImageView.addSubview(coverBlurView)
+        // 2026-10-29 第 7 项：封面洗向底色层贴整幅封面（在下拉模糊层之上，
+        // 两者行程互斥、不会同现）；点封面查看热区在 headerView 层、仍在其上。
+        coverImageView.addSubview(coverFadeView)
         NSLayoutConstraint.activate([
             coverBlurView.topAnchor.constraint(equalTo: coverImageView.topAnchor),
             coverBlurView.leadingAnchor.constraint(equalTo: coverImageView.leadingAnchor),
             coverBlurView.trailingAnchor.constraint(equalTo: coverImageView.trailingAnchor),
             coverBlurView.bottomAnchor.constraint(equalTo: coverImageView.bottomAnchor),
+            coverFadeView.topAnchor.constraint(equalTo: coverImageView.topAnchor),
+            coverFadeView.leadingAnchor.constraint(equalTo: coverImageView.leadingAnchor),
+            coverFadeView.trailingAnchor.constraint(equalTo: coverImageView.trailingAnchor),
+            coverFadeView.bottomAnchor.constraint(equalTo: coverImageView.bottomAnchor),
         ])
         headerView.addSubview(avatarImageView)
         // 2026-10-29 第 15 项：查看热区——封面钮贴整幅封面、头像钮贴整张头像
@@ -2825,7 +2864,7 @@ class BearyProfileViewController: UIViewController {
         // 忙碌重入由 likeBusyIds 挡；轻震已由 cell 按下时给，控制器不再重复给。
         let wantLiked = !(entry.likedByMe ?? false)
         if wantLiked {
-            // 点赞全量先行（Li 2026-10-27 定）：可见行立即填橙色、计数 +1；
+            // 点赞全量先行（Li 2026-10-27 定）：可见行立即填红色、计数 +1；
             // 只同步可见行，页签模型不动——回包成功后以服务端值为准对齐并通知，
             // 失败按原 entry 复原可见行（既有失败路径，原样沿用）。
             var optimistic = entry

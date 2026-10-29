@@ -1063,8 +1063,8 @@ final class BearyTimelineCell: UITableViewCell {
             deleteButton.setImage(trashImage, for: .normal)
         }
         deleteButton.imageView?.contentMode = .scaleAspectFit
-        // 2026-10-28 23:56 去亮度：删除不再用红，一律灰色，与小地球同档 21pt。
-        deleteButton.tintColor = BearyColors.gray
+        // 2026-10-29 第 8 项：删除按钮全 App 统一红色，与草稿箱／回收站彻底删除同口径。
+        deleteButton.tintColor = BearyColors.red
         deleteButton.alpha = 1
         deleteButton.addTarget(self, action: #selector(deleteTapped), for: .touchUpInside)
         deleteButton.bearyAddPressFeedback()

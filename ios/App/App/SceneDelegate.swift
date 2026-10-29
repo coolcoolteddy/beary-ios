@@ -1650,6 +1650,13 @@ final class BearyChromeViewController: UIViewController {
         // setHeaderVisible 的 0.25s 高度动效（减动效时内部直达）；页的透明度淡入
         // 见上方复加段（仅 alpha，不含 M4 的滑动）。
         setHeaderVisible(page == .home, animated: true)
+        // 100 包消息页顶部空隙修：22(b) Plan A 后 setHeaderVisible 不再发 inset，
+        // 而切页前 ensure* 与 view.layoutIfNeeded 已按旧栏态（从首页来时为真）
+        // 把消息页 inset 钉在 60，切页本身不触发容器 viewDidLayoutSubviews，
+        // 故 60 残态一直留到下次旋转/分屏——消息页顶多出 60pt 空白。
+        // 只在切页点（离散状态切换，非滚动动画）补发一次：他页得收起态 0、
+        // 首页得显示态 60；滚动藏栏仍走 setHeaderVisible，不经此，不回跳内容。
+        applyHeaderTopInsets(visible: page == .home)
         // E 批搜索藏栏（Li 2026-10-24 拍板：搜索页打开时 bnav + FAB 都藏）：
         // 容器切页只改 isHidden、不触发子页 appearance 回调，故藏/恢复只能落
         // 在唯一切页点 showPage，不走 SearchVC 生命周期（详情/登录等模态盖在
