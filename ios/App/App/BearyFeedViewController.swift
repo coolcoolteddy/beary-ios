@@ -141,10 +141,21 @@ class BearyFeedViewController: UIViewController {
         tv.delegate = self
         tv.dataSource = self
         let rc = UIRefreshControl()
+        rc.tintColor = .clear
         rc.addTarget(self, action: #selector(pullToRefresh), for: .valueChanged)
+        rc.addSubview(refreshIconView)
+        NSLayoutConstraint.activate([
+            refreshIconView.centerXAnchor.constraint(equalTo: rc.centerXAnchor),
+            refreshIconView.centerYAnchor.constraint(equalTo: rc.centerYAnchor),
+            refreshIconView.widthAnchor.constraint(equalToConstant: 32),
+            refreshIconView.heightAnchor.constraint(equalToConstant: 32),
+        ])
         tv.refreshControl = rc
         return tv
     }()
+
+    /// 下拉刷新指示：官方刷新图标（tintColor .clear 藏默认菊花）。
+    private let refreshIconView = BearyRefreshIconView()
 
     /// 首拉加载：网页 #feed .loading 口径——32px 转圈 + 上 padding 40。
     /// 系统 medium 圈为 20pt，放大 1.6 倍后视觉为 32；布局顶距取 46（40 + 半边放大差 6），
@@ -348,10 +359,11 @@ class BearyFeedViewController: UIViewController {
     }
 
     /// 下拉刷新触发口：标准 UIRefreshControl 的 valueChanged 目标（与时间线、个人主页同款）。
-    /// 手势刷新时 refreshControl 自带转圈，中央菊花不启动（B 视觉文案项）。
+    /// 手势刷新时 refreshControl 内官方刷新图标旋转，中央菊花不启动（B 视觉文案项）。
     @objc private func pullToRefresh() {
         // M12（91 包）：下拉刷新触发给一次轻触觉（已批点赞/发布/拒绝三处不动）。
         BearyHaptics.press()
+        refreshIconView.startSpinning()
         refreshAllInternal(showCentralSpinner: false)
     }
 
@@ -999,6 +1011,7 @@ class BearyFeedViewController: UIViewController {
 
     private func maybeEndRefreshing() {
         if plazaLoading { return }
+        refreshIconView.stopSpinning()
         tableView.refreshControl?.endRefreshing()
     }
 
@@ -1317,6 +1330,11 @@ extension BearyFeedViewController: UITableViewDataSource, UITableViewDelegate {
     func scrollViewDidScroll(_ scrollView: UIScrollView) {
         guard scrollView === tableView else { return }
         let y = scrollView.contentOffset.y
+        // 下拉刷新图标跟随：未刷新时按拉出距离跟随旋转（60pt 拉满一圈）。
+        if tableView.refreshControl?.isRefreshing != true {
+            let pull = max(0, -(y + scrollView.contentInset.top))
+            refreshIconView.setPullProgress(min(1, pull / 60))
+        }
         let delta = y - lastFeedScrollOffsetY
         if delta > 2 {
             lastFeedScrollOffsetY = y
