@@ -256,6 +256,7 @@ final class BearyFeedbackViewController: UIViewController, UITextViewDelegate, P
 
     deinit {
         NotificationCenter.default.removeObserver(self)
+        cleanupZip()
     }
 
     // MARK: - 顶栏（诊断页同款：52 高、左上文字关闭 15、标题 17 居中）
@@ -624,12 +625,6 @@ final class BearyFeedbackViewController: UIViewController, UITextViewDelegate, P
         }
         zipURL = nil
         zipReady = false
-    }
-
-    deinit {
-        if let url = zipURL {
-            try? FileManager.default.removeItem(at: url)
-        }
     }
 
     private func ensureZip(completion: @escaping (Bool) -> Void) {
