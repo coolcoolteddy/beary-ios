@@ -85,6 +85,10 @@ final class BearyButton: BearyHit44Button {
 
     let style: BearyButtonStyle
 
+    /// 投票选中态（仅许愿墙两票钮经 applyVoteSelected 设定后非 nil；其余工厂钮恒 nil，
+    /// refreshChrome 仍走原样式边框，不受影响）。
+    private var voteSelected: Bool?
+
     init(style: BearyButtonStyle) {
         self.style = style
         super.init(frame: .zero)
@@ -114,6 +118,22 @@ final class BearyButton: BearyHit44Button {
     /// 搜索页两处重试钮共用本工厂，不再各写一套尺寸。
     static func retryPill() -> BearyButton {
         return BearyButton(style: .secondaryOutline(.compact))
+    }
+
+    /// 投票选中态公共样式（许愿墙赞成/反对钮共用）：选中 = ink 底 + bg 字——bg 与 ink
+    /// 恒成反色（深浅下 bg 自动跟随，不写死 .white）；未选中 = 透明底 + ink 字 + 25% ink 边框。
+    /// 只管投票选中文字/底色；公开 pill 橙色、donePill 绿色不在此方法管辖内，一律不动。
+    func applyVoteSelected(_ selected: Bool) {
+        voteSelected = selected
+        if selected {
+            backgroundColor = BearyColors.ink
+            setTitleColor(BearyColors.bg, for: .normal)
+            layer.borderColor = BearyColors.ink.cgColor
+        } else {
+            backgroundColor = .clear
+            setTitleColor(BearyColors.ink, for: .normal)
+            layer.borderColor = BearyColors.ink.withAlphaComponent(0.25).cgColor
+        }
     }
 
     private func applyStyle() {
@@ -163,7 +183,12 @@ final class BearyButton: BearyHit44Button {
 
     /// 深浅切换重刷：CALayer borderColor 赋值时固化，不重赋即停留在旧主题色。
     /// 背景/字色是 UIColor 动态色，系统自动跟随，无需重赋；红 45% 是固定色，重赋无害。
+    /// 投票钮例外：边框须按投票态重赋，否则会被下面 secondaryOutline 分支刷回 line 色。
     func refreshChrome() {
+        if let selected = voteSelected {
+            applyVoteSelected(selected)
+            return
+        }
         switch style {
         case .secondaryOutline:
             layer.borderColor = BearyColors.line.cgColor

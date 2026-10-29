@@ -55,6 +55,9 @@ final class BearyDetailViewController: UIViewController {
     private var isBookmarkBusy = false
     private var isEmoteBusy = false
     private var isVisibilityBusy = false
+    /// 审计三轮第二批 9：限时到期单次定时器（只按最近 ephemeralUntil 排一次，
+    /// 绝不按秒/按分钟全量刷新；到点只重算有效态，见 applyEphemeralExpiryIfNeeded）。
+    private var ephemeralExpiryTimer: Timer?
     private var dwellStart: Date?
     private var dwellReported = false
     private var dismissedFired = false
@@ -166,11 +169,20 @@ final class BearyDetailViewController: UIViewController {
         // 审计 P2-20：详情页监听拉黑/举报——页内命中时转占位（不得继续出全文）。
         NotificationCenter.default.addObserver(self, selector: #selector(handleBlockedUserNotification(_:)), name: .bearyDidBlockUser, object: nil)
         NotificationCenter.default.addObserver(self, selector: #selector(handleReportedEntryNotification(_:)), name: .bearyDidReportEntry, object: nil)
+        // 审计三轮第二批 9：回前台复核限时到期（后台期间定时器不触发时补位）。
+        NotificationCenter.default.addObserver(self, selector: #selector(handleForegroundEphemeralCheck(_:)), name: UIApplication.willEnterForegroundNotification, object: nil)
+        // 已到期（打开时即过期）直接按有效态落定，未到期才排单次定时。
+        if !applyEphemeralExpiryIfNeeded() {
+            scheduleEphemeralExpiry()
+        }
     }
 
     deinit {
+        ephemeralExpiryTimer?.invalidate()
+        ephemeralExpiryTimer = nil
         NotificationCenter.default.removeObserver(self, name: .bearyDidBlockUser, object: nil)
         NotificationCenter.default.removeObserver(self, name: .bearyDidReportEntry, object: nil)
+        NotificationCenter.default.removeObserver(self, name: UIApplication.willEnterForegroundNotification, object: nil)
     }
 
     /// 审计 P2-20：页内拉黑/举报后钉死的占位态——后台补齐回包不得把全文顶回来
@@ -189,6 +201,8 @@ final class BearyDetailViewController: UIViewController {
 
     private func flipToModerationPlaceholder() {
         locallyHiddenByModeration = true
+        ephemeralExpiryTimer?.invalidate()
+        ephemeralExpiryTimer = nil
         entry.placeholder = true
         showPlaceholder()
     }
@@ -205,6 +219,8 @@ final class BearyDetailViewController: UIViewController {
         super.viewDidDisappear(animated)
         // 只在详情本身被 dismiss 时上报与回调（其上弹灯箱／picker 不触发）。
         guard isBeingDismissed else { return }
+        ephemeralExpiryTimer?.invalidate()
+        ephemeralExpiryTimer = nil
         reportDwell()
         if !dismissedFired, let entryId = entry.id, !entryId.isEmpty {
             dismissedFired = true
@@ -644,77 +660,170 @@ final class BearyDetailViewController: UIViewController {
     /// 2026-10-29 第 17 项：后台补齐入口——卡片点按即时呈现后，后台 fetch 回包调它。
     /// 只更新变化处（字段级比对，变了才刷对应区），不重建栈、不重播已有元素的
     /// 动效、不闪 skeleton；弱网/失败时不调本函数，改走 showFetchFailed 清为无正文态。
-    /// 在途乐观互动保护：点赞/收藏/回应/可见性任一在途时，对应区不刷（不冲掉
-    /// 先行态；互动自己的成功回包再对齐）；私密占位切换（内容→占位）不受此限，
-    /// 隐私优先。id 不符的回包直接忽略（防御）。
+    /// 审计三轮第二批 10：按字段合并，不再整体覆盖——在途乐观互动的字段
+    /// （点赞 likedByMe/likeCount、收藏 bookmarkedByMe/bookmarkCount、回应 emotes、
+    /// 可见性 isPublic/publishedAt/ephemeralUntil）保留本地值，模型不再被回包
+    /// 冲掉；第二条刷新路径（互动成功回包、onInteractionChanged 同步等）读到的
+    /// 仍是先行态，而非已被覆盖的服务端旧值。字段级比对以合并后模型为准，
+    /// 在途字段天然与旧值相等、不会误刷对应区；私密占位切换（内容→占位）
+    /// 不受在途保护限制，隐私优先。id 不符的回包直接忽略（防御）。
     func update(with fetched: Entry) {
         // 审计 P2-20：页内已因拉黑/举报转占位时，后台补齐一律忽略，不得复活全文。
         if locallyHiddenByModeration { return }
         guard fetched.id == entry.id else { return }
         let old = entry
-        entry = fetched
         if fetched.placeholder == true {
+            // 占位优先：只立占位旗，不整体覆盖模型（在途先行态不受占位回包冲掉；
+            // 内容栈已整藏，占位期间模型其余字段不可见；后续内容回包再按合并恢复）。
+            ephemeralExpiryTimer?.invalidate()
+            ephemeralExpiryTimer = nil
+            entry.placeholder = true
             showPlaceholder()
             return
         }
+        // 按字段合并：先取服务端全量，再把在途字段写回本地值。
+        var merged = fetched
+        if isLikeBusy {
+            merged.likedByMe = old.likedByMe
+            merged.likeCount = old.likeCount
+        }
+        if isBookmarkBusy {
+            merged.bookmarkedByMe = old.bookmarkedByMe
+            merged.bookmarkCount = old.bookmarkCount
+        }
+        if isEmoteBusy {
+            merged.emotes = old.emotes
+        }
+        if isVisibilityBusy {
+            merged.isPublic = old.isPublic
+            merged.publishedAt = old.publishedAt
+            merged.ephemeralUntil = old.ephemeralUntil
+        }
+        entry = merged
         // 内容页本身被占位过时（本路径不会发生：卡片数据恒为内容态），先恢复内容栈。
         stackView.isHidden = false
         placeholderLabel.isHidden = true
-        if old.authorName != fetched.authorName || old.createdAt != fetched.createdAt || old.authorAvatar != fetched.authorAvatar {
-            nameButton.setTitle(fetched.authorName ?? "beary 用户", for: .normal)
-            if let createdAt = fetched.createdAt {
+        if old.authorName != merged.authorName || old.createdAt != merged.createdAt || old.authorAvatar != merged.authorAvatar {
+            nameButton.setTitle(merged.authorName ?? "beary 用户", for: .normal)
+            if let createdAt = merged.createdAt {
                 timeLabel.text = BearyDiaryCardCell.feedTimeString(ms: createdAt)
             } else {
                 timeLabel.text = nil
             }
-            if let avatarPath = fetched.authorAvatar, let url = BearyImageURLs.avatarURL(avatarPath) {
+            if let avatarPath = merged.authorAvatar, let url = BearyImageURLs.avatarURL(avatarPath) {
                 bearyFeedLoadImage(into: avatarImageView, url: url, retryButton: avatarRetryButton, downsampleToWidth: 80)
             }
         }
-        if old.title != fetched.title {
-            let trimmedTitle = (fetched.title ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        if old.title != merged.title {
+            let trimmedTitle = (merged.title ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
             titleLabel.text = trimmedTitle.isEmpty ? nil : trimmedTitle
             titleLabel.isHidden = trimmedTitle.isEmpty
         }
-        if old.content != fetched.content {
+        if old.content != merged.content {
             let paragraph = NSMutableParagraphStyle()
             paragraph.lineHeightMultiple = 1.6
             paragraph.lineBreakMode = .byCharWrapping
-            bodyLabel.attributedText = NSAttributedString(string: fetched.content ?? "", attributes: [
+            bodyLabel.attributedText = NSAttributedString(string: merged.content ?? "", attributes: [
                 .font: BearyDynamicType.diaryBodyFont(),
                 .foregroundColor: BearyColors.ink,
                 .paragraphStyle: paragraph,
             ])
-            bodyLabel.isHidden = (fetched.content ?? "").isEmpty
+            bodyLabel.isHidden = (merged.content ?? "").isEmpty
         }
-        if (old.images ?? []) != (fetched.images ?? []) {
+        if (old.images ?? []) != (merged.images ?? []) {
             renderImages()
         }
-        if old.mood != fetched.mood || old.weather != fetched.weather || old.mentionedName != fetched.mentionedName || old.mentionedUserId != fetched.mentionedUserId {
+        if old.mood != merged.mood || old.weather != merged.weather || old.mentionedName != merged.mentionedName || old.mentionedUserId != merged.mentionedUserId {
             renderChips()
         }
         let oldQuote = old.quote
-        let newQuote = fetched.quote
+        let newQuote = merged.quote
         if oldQuote?.id != newQuote?.id || oldQuote?.content != newQuote?.content || oldQuote?.gone != newQuote?.gone || oldQuote?.locked != newQuote?.locked || oldQuote?.isPublic != newQuote?.isPublic {
             renderQuote()
         }
-        if !isLikeBusy && !isBookmarkBusy && !isEmoteBusy {
-            // 元组数组无 Equatable，逐项比对（nil 与空均视作无回应，渲染同态，不多刷）。
-            let oldEmoteList = old.emotes ?? []
-            let newEmoteList = fetched.emotes ?? []
-            let emotesChanged = oldEmoteList.count != newEmoteList.count || zip(oldEmoteList, newEmoteList).contains { $0.emote != $1.emote || $0.count != $1.count || $0.mine != $1.mine }
-            if old.likedByMe != fetched.likedByMe || old.likeCount != fetched.likeCount || old.bookmarkedByMe != fetched.bookmarkedByMe || emotesChanged {
-                refreshActionRow()
-                renderEmotes()
-            }
+        // 元组数组无 Equatable，逐项比对（nil 与空均视作无回应，渲染同态，不多刷）。
+        // 在途字段已在合并时保留本地值，故此处比对天然跳过在途区，无需另设 busy 门控。
+        let oldEmoteList = old.emotes ?? []
+        let newEmoteList = merged.emotes ?? []
+        let emotesChanged = oldEmoteList.count != newEmoteList.count || zip(oldEmoteList, newEmoteList).contains { $0.emote != $1.emote || $0.count != $1.count || $0.mine != $1.mine }
+        if old.likedByMe != merged.likedByMe || old.likeCount != merged.likeCount || old.bookmarkedByMe != merged.bookmarkedByMe || emotesChanged {
+            refreshActionRow()
+            renderEmotes()
         }
-        if !isVisibilityBusy {
-            if old.isPublic != fetched.isPublic || old.publishedAt != fetched.publishedAt || old.ephemeralUntil != fetched.ephemeralUntil {
-                refreshVisibilityViews()
-                refreshEphemeralViews()
-                refreshAuthorActions()
-            }
+        if old.isPublic != merged.isPublic || old.publishedAt != merged.publishedAt || old.ephemeralUntil != merged.ephemeralUntil {
+            refreshVisibilityViews()
+            refreshEphemeralViews()
+            refreshAuthorActions()
+            // 有效公开态同时决定操作行压暗／分享显隐与引用卡“仅你可见”角标，
+            // 可见性变化时一并刷这两处，否则 pill 已变、私密门控仍停在旧态。
+            refreshActionRow()
+            renderQuote()
         }
+        // 限时到期重排：回包可能带来新的 ephemeralUntil（或已过期），按新模型复核一次。
+        if !applyEphemeralExpiryIfNeeded() {
+            scheduleEphemeralExpiry()
+        }
+    }
+
+    // MARK: - 限时到期（审计三轮第二批 9）
+
+    /// 按最近 ephemeralUntil 排一次单次刷新：非限时／已占位／已拉黑钉死时不排；
+    /// 已过期不在此排（调用方先走 applyEphemeralExpiryIfNeeded 落定）。
+    /// 不做重复定时、不按秒轮询——倒计时文案本身是小时粒度，无需逐秒重刷。
+    private func scheduleEphemeralExpiry() {
+        ephemeralExpiryTimer?.invalidate()
+        ephemeralExpiryTimer = nil
+        guard !locallyHiddenByModeration, entry.placeholder != true else { return }
+        guard BearyEphemeral.isLive(entry), let until = entry.ephemeralUntil else { return }
+        let nowMs = Int(Date().timeIntervalSince1970 * 1000)
+        let interval = TimeInterval(until - nowMs) / 1000.0
+        guard interval > 0 else { return }
+        ephemeralExpiryTimer = Timer.scheduledTimer(withTimeInterval: interval, repeats: false) { [weak self] _ in
+            self?.handleEphemeralExpiry()
+        }
+    }
+
+    private func handleEphemeralExpiry() {
+        ephemeralExpiryTimer = nil
+        if !applyEphemeralExpiryIfNeeded() {
+            // 定时器误触（模型已变、如手动翻转清了标记）：按当前模型重排，不丢后续到期点。
+            scheduleEphemeralExpiry()
+        }
+    }
+
+    /// 回前台复核：后台期间定时器未触发时，到期在此补位；未到期则重排单次定时。
+    @objc private func handleForegroundEphemeralCheck(_ note: Notification) {
+        if !applyEphemeralExpiryIfNeeded() {
+            scheduleEphemeralExpiry()
+        }
+    }
+
+    /// 到点重算有效态（纯本地重算，不发网络请求）：
+    /// 已到期（ephemeralUntil 非空且已过）时，有效公开态恒为私密——
+    /// 作者：切私密显示（pill 蓝、限时行与边框藏、操作行按私密压暗／分享藏、引用角标重算）；
+    /// 非作者：切私密占位（内容栈整藏，只显一句私密文案）。
+    /// 未到期／非限时／已占位／已拉黑钉死时返回 false（调用方据此重排定时）。
+    @discardableResult
+    private func applyEphemeralExpiryIfNeeded() -> Bool {
+        guard !locallyHiddenByModeration else { return false }
+        guard entry.placeholder != true else { return false }
+        // 失败态（showFetchFailed 藏了内容栈）不动：失败态本身不露内容，
+        // 且文案约定是“关闭重进即重试”，到期刷新不得把它改写成私密文案。
+        guard !stackView.isHidden else { return false }
+        guard entry.ephemeralUntil != nil, !BearyEphemeral.isLive(entry) else { return false }
+        ephemeralExpiryTimer?.invalidate()
+        ephemeralExpiryTimer = nil
+        if isAuthor {
+            refreshVisibilityViews()
+            refreshEphemeralViews()
+            refreshAuthorActions()
+            refreshActionRow()
+            renderQuote()
+            return true
+        }
+        entry.placeholder = true
+        showPlaceholder()
+        return true
     }
 
     /// 可见性图标 + pill：锁 = 私密（蓝），地球 = 公开（橙）；点按即时切换。
@@ -1180,10 +1289,14 @@ final class BearyDetailViewController: UIViewController {
                     self.refreshVisibilityViews()
                     self.refreshEphemeralViews()
                     self.refreshActionRow()
+                    // 手动翻转已清限时标记：旧到期定时作废（schedule 内先取消、nil 则不排）。
+                    self.scheduleEphemeralExpiry()
                     self.onVisibilityChanged?(self.entry)
                 case .failure(let err):
                     self.entry = original
                     self.refreshVisibilityViews()
+                    // 失败回滚原态：原限时标记若在，按原到期点重排单次定时。
+                    self.scheduleEphemeralExpiry()
                     // 失败原因透传：限流时服务端 message 比通用文案有用（entry_write
                     // 120/小时打满即 429）；其余失败仍走通用文案。
                     let message: String

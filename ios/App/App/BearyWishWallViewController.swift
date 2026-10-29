@@ -58,20 +58,25 @@ private final class WishRowView: UIView {
         let voteRow = UIStackView(arrangedSubviews: [upButton, downButton])
         voteRow.axis = .horizontal
         voteRow.spacing = 8
-        let stack = UIStackView(arrangedSubviews: [titleLabel, detailLabel, metaLabel, netLabel, voteRow, doneButton])
+        // 15：标题与 donePill 放同一横向容器——pill 占 56 宽时标题只剩剩余宽换行，
+        // 首行不再被右上角悬浮 pill 盖住；未完成时 pill 隐藏，stack 自动不占位，标题回满宽。
+        titleLabel.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        donePill.setContentHuggingPriority(.required, for: .horizontal)
+        donePill.setContentCompressionResistancePriority(.required, for: .horizontal)
+        let titleRow = UIStackView(arrangedSubviews: [titleLabel, donePill])
+        titleRow.axis = .horizontal
+        titleRow.spacing = 8
+        titleRow.alignment = .top
+        let stack = UIStackView(arrangedSubviews: [titleRow, detailLabel, metaLabel, netLabel, voteRow, doneButton])
         stack.axis = .vertical
         stack.spacing = 8
         stack.translatesAutoresizingMaskIntoConstraints = false
         addSubview(stack)
-        addSubview(donePill)
-        donePill.translatesAutoresizingMaskIntoConstraints = false
         NSLayoutConstraint.activate([
             stack.topAnchor.constraint(equalTo: topAnchor, constant: 14),
             stack.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 16),
             stack.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -16),
             stack.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -14),
-            donePill.topAnchor.constraint(equalTo: topAnchor, constant: 14),
-            donePill.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -16),
             donePill.widthAnchor.constraint(equalToConstant: 56),
             donePill.heightAnchor.constraint(equalToConstant: 18),
             upButton.heightAnchor.constraint(equalToConstant: BearyButtonStyle.secondaryOutline(.compact).height),
@@ -112,20 +117,16 @@ private final class WishRowView: UIView {
         doneButton.isHidden = !(isAdmin && !done)
     }
 
+    /// 投票选中态走按钮公共样式（BearyButton.applyVoteSelected）；本处只转发，不再各写一套颜色。
     private func setVoteSelected(_ button: BearyButton, selected: Bool) {
-        if selected {
-            button.backgroundColor = BearyColors.ink
-            button.setTitleColor(.white, for: .normal)
-            button.layer.borderColor = BearyColors.ink.cgColor
-        } else {
-            button.backgroundColor = .clear
-            button.setTitleColor(BearyColors.ink, for: .normal)
-            button.layer.borderColor = BearyColors.ink.withAlphaComponent(0.25).cgColor
-        }
+        button.applyVoteSelected(selected)
     }
 
     /// 拒绝摇头（transform 平移关键帧，不动布局；与即时性总口径的拒绝动效同款）。
+    /// 22(a)：补减动效早退——与标准 playDenyShake 一致，减动效时只跳视觉抖动；
+    /// 本处调用点（voteTapped 失败分支）已另给 warning 震动，shake 本身不补震动/音效。
     func shake() {
+        if UIAccessibility.isReduceMotionEnabled { return }
         let anim = CAKeyframeAnimation(keyPath: "transform.translation.x")
         anim.values = [0, -8, 8, -5, 5, 0]
         anim.duration = 0.35
@@ -147,6 +148,8 @@ final class BearyWishWallViewController: UIViewController {
     private var voteGeneration: [Int: Int] = [:] // 2026-10-29：每条许愿投票代次，旧回包丢弃用
     private var shownWishIds: Set<Int> = []
     private var isLoading = false
+    /// 13：600 上限约束（宽 ≥821 才激活，开关在 viewDidLayoutSubviews；Feed 断点同款）。
+    private var colCapConstraints: [NSLayoutConstraint] = []
     var onCreated: ((BearyAPI.WishItem) -> Void)?
 
     override func viewDidLoad() {
@@ -176,11 +179,20 @@ final class BearyWishWallViewController: UIViewController {
         scrollView.addSubview(contentStack)
         view.addSubview(topBar)
         view.addSubview(scrollView)
-        // 顶栏与内容列同宽居中（P2-17 口径：iPad ≤600，iPhone 全宽-32）。
+        // 13：Feed 断点模式——600 上限只在宽 ≥821 激活（开关在 viewDidLayoutSubviews），
+        // ≤820 时走 == 屏宽-32 的 iPhone 式全宽（左右 16），不再被常驻 600 上限收窄。
+        let topBarWidth = topBar.widthAnchor.constraint(equalTo: view.widthAnchor, constant: -32)
+        topBarWidth.priority = .defaultHigh
+        let topBarCap = topBar.widthAnchor.constraint(lessThanOrEqualToConstant: 600)
+        let scrollWidth = scrollView.widthAnchor.constraint(equalTo: view.widthAnchor, constant: -32)
+        scrollWidth.priority = .defaultHigh
+        let scrollCap = scrollView.widthAnchor.constraint(lessThanOrEqualToConstant: 600)
+        colCapConstraints = [topBarCap, scrollCap]
         NSLayoutConstraint.activate([
             topBar.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
             topBar.centerXAnchor.constraint(equalTo: view.centerXAnchor),
-            topBar.widthAnchor.constraint(lessThanOrEqualToConstant: 600),
+            topBarCap,
+            topBarWidth,
             topBar.leadingAnchor.constraint(greaterThanOrEqualTo: view.leadingAnchor, constant: 16),
             topBar.trailingAnchor.constraint(lessThanOrEqualTo: view.trailingAnchor, constant: -16),
             topBar.heightAnchor.constraint(equalToConstant: 52),
@@ -191,7 +203,8 @@ final class BearyWishWallViewController: UIViewController {
             scrollView.topAnchor.constraint(equalTo: topBar.bottomAnchor),
             scrollView.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor),
             scrollView.centerXAnchor.constraint(equalTo: view.centerXAnchor),
-            scrollView.widthAnchor.constraint(lessThanOrEqualToConstant: 600),
+            scrollCap,
+            scrollWidth,
             scrollView.leadingAnchor.constraint(greaterThanOrEqualTo: view.leadingAnchor, constant: 16),
             scrollView.trailingAnchor.constraint(lessThanOrEqualTo: view.trailingAnchor, constant: -16),
             contentStack.topAnchor.constraint(equalTo: scrollView.topAnchor, constant: 8),
@@ -225,6 +238,15 @@ final class BearyWishWallViewController: UIViewController {
             retryButton.heightAnchor.constraint(equalToConstant: BearyButtonStyle.secondaryOutline(.compact).height),
         ])
         loadWishes()
+    }
+
+    override func viewDidLayoutSubviews() {
+        super.viewDidLayoutSubviews()
+        // 13：Feed 同款断点开关——状态不变不开关，避免布局循环。
+        let wantCap = view.bounds.width >= 821
+        for cap in colCapConstraints where cap.isActive != wantCap {
+            cap.isActive = wantCap
+        }
     }
 
     @objc private func closeTapped() { dismiss(animated: BearyMotion.animated(true), completion: nil) }
@@ -401,10 +423,17 @@ final class BearyWishWallViewController: UIViewController {
 // MARK: - 发起页（标题必填 + 详情可选两项；服务端再校验 Plus 与长度）
 
 final class BearyWishCreateViewController: UIViewController, UITextViewDelegate {
+    private let scrollView = UIScrollView()
     private let titleField = UITextField()
     private let detailView = UITextView()
     private let detailPlaceholder = UILabel()
     private let submitButton = BearyButton.make(style: .primaryPill(.ink), title: "发布许愿")
+    /// 11：提交锁——锁期间 titleChanged 不得重新启用提交钮（服务端幂等另有工人做）。
+    private var isSubmitting = false
+    /// 13：600 上限约束（宽 ≥821 才激活，开关在 viewDidLayoutSubviews；与列表页同款）。
+    private var colCapConstraints: [NSLayoutConstraint] = []
+    /// 17：当前焦点框（键盘弹出时把它滚到可见区）。
+    private weak var activeField: UIView?
     var onCreated: ((BearyAPI.WishItem) -> Void)?
 
     override func viewDidLoad() {
@@ -449,14 +478,30 @@ final class BearyWishCreateViewController: UIViewController, UITextViewDelegate 
         submitButton.addTarget(self, action: #selector(submitTapped), for: .touchUpInside)
         submitButton.isEnabled = false
         submitButton.alpha = 0.4
+        titleField.addTarget(self, action: #selector(titleFieldDidBegin), for: .editingDidBegin)
+        titleField.addTarget(self, action: #selector(fieldDidEnd), for: .editingDidEnd)
+        scrollView.translatesAutoresizingMaskIntoConstraints = false
         view.addSubview(topBar)
-        view.addSubview(titleField)
-        view.addSubview(detailView)
-        view.addSubview(submitButton)
+        view.addSubview(scrollView)
+        scrollView.addSubview(titleField)
+        scrollView.addSubview(detailView)
+        scrollView.addSubview(submitButton)
+        NotificationCenter.default.addObserver(self, selector: #selector(keyboardWillShow), name: UIResponder.keyboardWillShowNotification, object: nil)
+        NotificationCenter.default.addObserver(self, selector: #selector(keyboardWillShow), name: UIResponder.keyboardWillChangeFrameNotification, object: nil)
+        // 13：发起页上限统一到 600（原字段/按钮 568），断点开关与列表页同款。
+        let topBarWidth = topBar.widthAnchor.constraint(equalTo: view.widthAnchor, constant: -32)
+        topBarWidth.priority = .defaultHigh
+        let topBarCap = topBar.widthAnchor.constraint(lessThanOrEqualToConstant: 600)
+        colCapConstraints.append(topBarCap)
+        // 17：表单入滚动容器，底部跟随 keyboardLayoutGuide（键盘弹出时滚动区收缩、
+        // 内容可滚；键盘收起时 ≤ 安全区底约束兜底，不致伸到 Home 条下）。
+        let scrollBottomToKeyboard = scrollView.bottomAnchor.constraint(equalTo: view.keyboardLayoutGuide.topAnchor)
+        scrollBottomToKeyboard.priority = .defaultHigh
         NSLayoutConstraint.activate([
             topBar.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
             topBar.centerXAnchor.constraint(equalTo: view.centerXAnchor),
-            topBar.widthAnchor.constraint(lessThanOrEqualToConstant: 600),
+            topBarCap,
+            topBarWidth,
             topBar.leadingAnchor.constraint(greaterThanOrEqualTo: view.leadingAnchor, constant: 16),
             topBar.trailingAnchor.constraint(lessThanOrEqualTo: view.trailingAnchor, constant: -16),
             topBar.heightAnchor.constraint(equalToConstant: 52),
@@ -464,32 +509,60 @@ final class BearyWishCreateViewController: UIViewController, UITextViewDelegate 
             closeButton.centerYAnchor.constraint(equalTo: topBar.centerYAnchor),
             titleLabel.centerXAnchor.constraint(equalTo: topBar.centerXAnchor),
             titleLabel.centerYAnchor.constraint(equalTo: topBar.centerYAnchor),
-            titleField.topAnchor.constraint(equalTo: topBar.bottomAnchor, constant: 16),
-            titleField.centerXAnchor.constraint(equalTo: view.centerXAnchor),
-            titleField.widthAnchor.constraint(lessThanOrEqualToConstant: 568),
-            titleField.leadingAnchor.constraint(greaterThanOrEqualTo: view.leadingAnchor, constant: 16),
-            titleField.trailingAnchor.constraint(lessThanOrEqualTo: view.trailingAnchor, constant: -16),
+            scrollView.topAnchor.constraint(equalTo: topBar.bottomAnchor),
+            scrollView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            scrollView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            scrollView.bottomAnchor.constraint(lessThanOrEqualTo: view.safeAreaLayoutGuide.bottomAnchor),
+            scrollBottomToKeyboard,
+            titleField.topAnchor.constraint(equalTo: scrollView.contentLayoutGuide.topAnchor, constant: 16),
             titleField.heightAnchor.constraint(equalToConstant: 44),
             detailView.topAnchor.constraint(equalTo: titleField.bottomAnchor, constant: 12),
-            detailView.centerXAnchor.constraint(equalTo: view.centerXAnchor),
-            detailView.widthAnchor.constraint(lessThanOrEqualToConstant: 568),
-            detailView.leadingAnchor.constraint(greaterThanOrEqualTo: view.leadingAnchor, constant: 16),
-            detailView.trailingAnchor.constraint(lessThanOrEqualTo: view.trailingAnchor, constant: -16),
             detailView.heightAnchor.constraint(equalToConstant: 160),
             detailPlaceholder.topAnchor.constraint(equalTo: detailView.topAnchor, constant: 8),
             detailPlaceholder.leadingAnchor.constraint(equalTo: detailView.leadingAnchor, constant: 8),
             submitButton.topAnchor.constraint(equalTo: detailView.bottomAnchor, constant: 20),
-            submitButton.centerXAnchor.constraint(equalTo: view.centerXAnchor),
-            submitButton.widthAnchor.constraint(lessThanOrEqualToConstant: 568),
-            submitButton.leadingAnchor.constraint(greaterThanOrEqualTo: view.leadingAnchor, constant: 16),
-            submitButton.trailingAnchor.constraint(lessThanOrEqualTo: view.trailingAnchor, constant: -16),
             submitButton.heightAnchor.constraint(equalToConstant: BearyButtonStyle.primaryPill(.ink).height),
-        ])
+            // 内容底含提交钮 +16 边距——键盘顶起后提交钮也可滚到可见区。
+            submitButton.bottomAnchor.constraint(equalTo: scrollView.contentLayoutGuide.bottomAnchor, constant: -16),
+        ] + fieldColumnConstraints(for: titleField)
+          + fieldColumnConstraints(for: detailView)
+          + fieldColumnConstraints(for: submitButton))
+    }
+
+    deinit {
+        NotificationCenter.default.removeObserver(self)
+    }
+
+    override func viewDidLayoutSubviews() {
+        super.viewDidLayoutSubviews()
+        // 13：Feed 同款断点开关——状态不变不开关，避免布局循环。
+        let wantCap = view.bounds.width >= 821
+        for cap in colCapConstraints where cap.isActive != wantCap {
+            cap.isActive = wantCap
+        }
+    }
+
+    /// 13：表单字段居中列约束——宽 == 滚动容器 frame 宽-32（defaultHigh，≤820 全宽-32）
+    /// + 600 上限（存入 colCapConstraints，≥821 才激活）+ 左右 ≥16 + 居中。
+    private func fieldColumnConstraints(for field: UIView) -> [NSLayoutConstraint] {
+        let fullWidth = field.widthAnchor.constraint(equalTo: scrollView.frameLayoutGuide.widthAnchor, constant: -32)
+        fullWidth.priority = .defaultHigh
+        let cap = field.widthAnchor.constraint(lessThanOrEqualToConstant: 600)
+        colCapConstraints.append(cap)
+        return [
+            field.centerXAnchor.constraint(equalTo: scrollView.frameLayoutGuide.centerXAnchor),
+            cap,
+            fullWidth,
+            field.leadingAnchor.constraint(greaterThanOrEqualTo: scrollView.frameLayoutGuide.leadingAnchor, constant: 16),
+            field.trailingAnchor.constraint(lessThanOrEqualTo: scrollView.frameLayoutGuide.trailingAnchor, constant: -16),
+        ]
     }
 
     @objc private func closeTapped() { dismiss(animated: BearyMotion.animated(true), completion: nil) }
 
+    /// 11：提交钮启用态唯一入口——提交锁期间直接返回，标题变化不得重新启用提交钮。
     @objc private func titleChanged() {
+        guard !isSubmitting else { return }
         let ok = !(titleField.text ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         submitButton.isEnabled = ok
         submitButton.alpha = ok ? 1 : 0.4
@@ -499,11 +572,31 @@ final class BearyWishCreateViewController: UIViewController, UITextViewDelegate 
         detailPlaceholder.isHidden = !textView.text.isEmpty
     }
 
+    @objc private func titleFieldDidBegin() { activeField = titleField }
+    @objc private func fieldDidEnd() { activeField = nil }
+
+    func textViewDidBeginEditing(_ textView: UITextView) { activeField = textView }
+    func textViewDidEndEditing(_ textView: UITextView) { activeField = nil }
+
+    /// 17：键盘弹出/变框后（keyboardLayoutGuide 已收缩滚动区），下一 runloop 待布局
+    /// 完成后再把焦点框滚到可见区，避免按旧 bounds 算错；减动效时瞬时落位。
+    @objc private func keyboardWillShow() {
+        DispatchQueue.main.async { [weak self] in
+            guard let self = self, let field = self.activeField else { return }
+            self.view.layoutIfNeeded()
+            let rect = field.convert(field.bounds, to: self.scrollView)
+            self.scrollView.scrollRectToVisible(rect.insetBy(dx: 0, dy: -8), animated: BearyMotion.animated(true))
+        }
+    }
+
     @objc private func submitTapped() {
+        guard !isSubmitting else { return }
         let title = (titleField.text ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
         guard !title.isEmpty else { return }
         let detail = detailView.text ?? ""
+        isSubmitting = true
         submitButton.isEnabled = false
+        submitButton.alpha = 0.4
         BearyAPI.shared.createWish(title: title, detail: detail) { [weak self] result in
             DispatchQueue.main.async {
                 guard let self = self else { return }
@@ -512,7 +605,10 @@ final class BearyWishCreateViewController: UIViewController, UITextViewDelegate 
                     self.onCreated?(wish)
                     self.dismiss(animated: BearyMotion.animated(true), completion: nil)
                 case .failure(let err):
-                    self.submitButton.isEnabled = true
+                    // 11：解锁后按当前标题重新评估启用态，不再无条件 isEnabled = true
+                    //（提交期间标题被清空时，失败后提交钮仍应保持禁用）。
+                    self.isSubmitting = false
+                    self.titleChanged()
                     let message: String
                     if case .server(let code) = err, code == "not_plus" {
                         message = "仅 Plus 会员可发起许愿"

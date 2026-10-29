@@ -1471,45 +1471,113 @@ enum BearyReportedStore {
     }
 }
 
-/// 审计 P0-1/P0-21：拉黑 id 共享缓存（UserDefaults 持久化 + 内存集）。
+/// 审计三轮第 7 项：拉黑 id 按账号分桶缓存（UserDefaults 持久化 + 内存集）。
 /// 服务端是拉黑真相源（列表/广场已由服务端过滤）；本缓存只用于详情/主页等
 /// 单点入口的同步比对（点按路径不发网络）。登录时 refresh 拉全量，拉黑/解除
-/// 成功时即时增删，退出/游客时 clear（防上个账号的表漏到下个身份）。
+/// 成功时即时增删，退出/游客时 clear 只清内存（各桶落盘互不干扰，切回原号
+/// 仍可复用；防漏靠桶切换而非删盘，与 BearyReportedStore 同口径）。
+/// 旧单键 beary.blockedUserIds 无法归属到任一账号，故不迁移、不删除
+/// （残留即孤儿键，不再被读）；新桶由登录后 refresh 重新播种。
+/// 旧请求写回：refresh 发起时捕获发起桶 + 刷新代次，回包时桶或代次任一
+/// 不匹配即丢弃——切号/退出夹在请求与回包之间时，旧号回包绝不写进新号
+/// 桶；代次另防同号连续 refresh 时旧回包覆盖新回包。判断全在 NativeCommon
+/// 内部自包含（现取 SessionManager.currentUser.id），不依赖 SceneDelegate
+/// 调用点传参；单向语义不变：只查“我拉黑作者”，不查反向。
 enum BearyBlockedStore {
-    private static let key = "beary.blockedUserIds"
+    private static let baseKey = "beary.blockedUserIds"
     private static var cached: Set<Int>?
+    private static var cachedBucket: String?
+    private static var refreshSeq = 0
+    private static var accountChangeObserver: NSObjectProtocol?
+
+    /// 当前桶：调用时现取 SessionManager.currentUser 的 id，不经调用点传 uid，
+    /// 故旧调用点签名不动；无登录态（游客/退出）走独立 guest 桶，与任何登录
+    /// 账号桶互不命中（uid 为数字串，guest 不可能撞号）。
+    private static func currentBucket() -> String {
+        if let id = SessionManager.shared.currentUser?.id {
+            return String(id)
+        }
+        return "guest"
+    }
+
+    private static func key(for bucket: String) -> String {
+        return baseKey + "." + bucket
+    }
+
+    /// 账号变化观测：bearyUserDidChange 由 SceneDelegate onUserChanged 在 id 真变
+    /// 时才发（重复 /me 不误发）；收到即清内存，下次调用按新桶重读落盘。
+    /// token 由静态变量持有，防 block 观察者随 token 释放而失效。非必需兜底：
+    /// 即使广播未到，ensureLoaded 的桶比对与 refresh 的回包比对同样防漏。
+    private static func observeAccountChanges() {
+        guard accountChangeObserver == nil else { return }
+        accountChangeObserver = NotificationCenter.default.addObserver(forName: .bearyUserDidChange, object: nil, queue: .main) { _ in
+            BearyBlockedStore.clearMemory()
+        }
+    }
+
+    /// 仅清内存（不碰 UserDefaults）：账号变化时与桶切换时复用；各桶落盘互不
+    /// 干扰，绝不删其他账号的持久化记录。
+    static func clearMemory() {
+        cached = nil
+        cachedBucket = nil
+    }
+
+    /// 桶一致才复用内存：账号已变而内存仍是旧桶时直接丢弃旧集、按新桶重读，
+    /// 换号后绝不沿用旧号结论；首次调用前尚未注册观测也不影响（此时内存为空）。
+    private static func ensureLoaded() {
+        observeAccountChanges()
+        let bucket = currentBucket()
+        if cached == nil || cachedBucket != bucket {
+            cachedBucket = bucket
+            cached = Set(UserDefaults.standard.array(forKey: key(for: bucket)) as? [Int] ?? [])
+        }
+    }
 
     static func isBlocked(_ userId: Int) -> Bool {
-        if cached == nil {
-            let arr = UserDefaults.standard.array(forKey: key) as? [Int] ?? []
-            cached = Set(arr)
-        }
+        ensureLoaded()
         return cached?.contains(userId) ?? false
     }
 
     static func markBlocked(_ userId: Int) {
-        if cached == nil { cached = Set(UserDefaults.standard.array(forKey: key) as? [Int] ?? []) }
+        ensureLoaded()
         cached?.insert(userId)
-        UserDefaults.standard.set(Array(cached ?? []), forKey: key)
+        if let bucket = cachedBucket {
+            UserDefaults.standard.set(Array(cached ?? []), forKey: key(for: bucket))
+        }
     }
 
     static func removeBlocked(_ userId: Int) {
-        if cached == nil { cached = Set(UserDefaults.standard.array(forKey: key) as? [Int] ?? []) }
+        ensureLoaded()
         cached?.remove(userId)
-        UserDefaults.standard.set(Array(cached ?? []), forKey: key)
+        if let bucket = cachedBucket {
+            UserDefaults.standard.set(Array(cached ?? []), forKey: key(for: bucket))
+        }
     }
 
+    /// 退出/游客时清内存（SceneDelegate applyLoginState 调用点不动）：
+    /// 内存一清，下次调用即按当前桶重读落盘，旧号结论绝不漏到新身份；
+    /// 各桶落盘保留，切回原号时 refresh 重拉前仍有旧表可用（服务端为真相源，
+    /// 登录后 refresh 随即刷新）。旧单键残留不再被读，不在此删除。
     static func clear() {
-        cached = []
-        UserDefaults.standard.removeObject(forKey: key)
+        clearMemory()
     }
 
     static func refresh() {
+        // 发起时捕获：发起桶 + 本次刷新代次。游客（无登录态）不拉——
+        // 游客本无拉黑表，登录后 SceneDelegate applyLoginState 登录分支会再调一次 refresh。
+        let requestBucket = currentBucket()
+        guard SessionManager.shared.currentUser?.id != nil else { return }
+        refreshSeq += 1
+        let seq = refreshSeq
         BearyAPI.shared.fetchBlocks { result in
             DispatchQueue.main.async {
                 guard case .success(let resp) = result, let ids = resp.blocked else { return }
+                // 回包比对：桶已变（切号/退出）或已有更新的 refresh 在途
+                // （代次已超前）时直接丢弃，绝不写进当前桶。
+                guard seq == refreshSeq, currentBucket() == requestBucket else { return }
                 cached = Set(ids)
-                UserDefaults.standard.set(ids, forKey: key)
+                cachedBucket = requestBucket
+                UserDefaults.standard.set(ids, forKey: key(for: requestBucket))
             }
         }
     }
