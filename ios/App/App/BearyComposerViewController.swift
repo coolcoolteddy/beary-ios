@@ -1351,43 +1351,48 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, U
         button.translatesAutoresizingMaskIntoConstraints = false
         button.setTitle(title, for: .normal)
         button.titleLabel?.font = UIFont.systemFont(ofSize: 13)
+        // 内边距先定：图标槽位左锚取它（见下），避免两处 12 硬编码脱节。
+        button.contentEdgeInsets = UIEdgeInsets(top: 6, left: 12, bottom: 6, right: 12)
         if let name = iconName {
             let staticImage = BearyIconImages.image(named: name, pointSize: 16)
             button.setImage(Self.weatherPlaceholderImage, for: .normal)
             button.titleEdgeInsets = UIEdgeInsets(top: 0, left: 5, bottom: 0, right: 0)
-            // 天气 Lottie：独立 16×16 图标容器（心情条同款显式约束宿主），不再挂
-            // UIButton 内部 imageView——过去动画贴在 imageView 上，是全仓唯一一处
-            // imageView.addSubview，也是天气图标不显示剩下的唯一结构差异。
-            // 容器锚定 imageView 槽位（占位图仍占住槽位，按钮内在尺寸/点按范围与原来一致），
-            // 容器本身不拦截点按；减动效时播放器内置静态帧不播；加载失败回退 wx 静态图；
-            // 拿不到 imageView 时回静态图。
+            // 天气 Lottie：独立 16×16 图标容器（心情条同款显式约束宿主）。
+            // 100 包根因修法：此前容器锚定 UIButton 内部 imageView（#147 由
+            // imageView.addSubview 改为锚 imageView 的兄弟容器），但 imageView
+            // 的帧由 UIButton 手工布局、不走 Auto Layout——建钮时帧恒为 0，
+            // 约束驱动的容器跟随不到它后来的真实槽位，全仓仅此一处锚内部
+            // imageView，而心情条 35pt 环锚点 + 显式尺寸同款结构正常显示；
+            // Lottie JSON（LottieWeather/，Resources 已含）与 icon_wx_* 静态图
+            // （Assets.xcassets，CI 资产校验通过）均已排除，剩下的唯一几何
+            // 依赖就是这一锚点。故容器改锚按钮本体：横向取 contentEdgeInsets
+            // 左（横滑栈内按钮恒为内在宽，组左缘即该值，与占位图槽位像素
+            // 一致）、纵向取按钮中心（与占位图纵向居中一致），尺寸显式 16。
+            // 占位图仍占住槽位，按钮内在尺寸/点按范围与原来一致；容器本身
+            // 不拦截点按；减动效时播放器内置静态帧不播；加载失败时播放器
+            // 内回退 wx 静态图（与原来一致，仍在容器内显示）。
             // E4：建钮时不解析（deferred，静态图先行），点开天气条时
             // updateWeatherPlayback 调 ensureLoaded 才加载；69 批播放管控本身不动。
-            if let imageView = button.imageView {
-                let lottie = BearyEmoteView(key: Self.weatherLottieKey(for: key), animated: true, fallbackImage: staticImage, deferred: true)
-                weatherEmoteViews.append((key: key, emoteView: lottie))
-                let iconHost = UIView()
-                iconHost.isUserInteractionEnabled = false
-                iconHost.translatesAutoresizingMaskIntoConstraints = false
-                button.addSubview(iconHost)
-                lottie.isUserInteractionEnabled = false
-                lottie.translatesAutoresizingMaskIntoConstraints = false
-                iconHost.addSubview(lottie)
-                NSLayoutConstraint.activate([
-                    iconHost.leadingAnchor.constraint(equalTo: imageView.leadingAnchor),
-                    iconHost.topAnchor.constraint(equalTo: imageView.topAnchor),
-                    iconHost.widthAnchor.constraint(equalToConstant: 16),
-                    iconHost.heightAnchor.constraint(equalToConstant: 16),
-                    lottie.leadingAnchor.constraint(equalTo: iconHost.leadingAnchor),
-                    lottie.trailingAnchor.constraint(equalTo: iconHost.trailingAnchor),
-                    lottie.topAnchor.constraint(equalTo: iconHost.topAnchor),
-                    lottie.bottomAnchor.constraint(equalTo: iconHost.bottomAnchor),
-                ])
-            } else {
-                button.setImage(staticImage, for: .normal)
-            }
+            let lottie = BearyEmoteView(key: Self.weatherLottieKey(for: key), animated: true, fallbackImage: staticImage, deferred: true)
+            weatherEmoteViews.append((key: key, emoteView: lottie))
+            let iconHost = UIView()
+            iconHost.isUserInteractionEnabled = false
+            iconHost.translatesAutoresizingMaskIntoConstraints = false
+            button.addSubview(iconHost)
+            lottie.isUserInteractionEnabled = false
+            lottie.translatesAutoresizingMaskIntoConstraints = false
+            iconHost.addSubview(lottie)
+            NSLayoutConstraint.activate([
+                iconHost.leadingAnchor.constraint(equalTo: button.leadingAnchor, constant: button.contentEdgeInsets.left),
+                iconHost.centerYAnchor.constraint(equalTo: button.centerYAnchor),
+                iconHost.widthAnchor.constraint(equalToConstant: 16),
+                iconHost.heightAnchor.constraint(equalToConstant: 16),
+                lottie.leadingAnchor.constraint(equalTo: iconHost.leadingAnchor),
+                lottie.trailingAnchor.constraint(equalTo: iconHost.trailingAnchor),
+                lottie.topAnchor.constraint(equalTo: iconHost.topAnchor),
+                lottie.bottomAnchor.constraint(equalTo: iconHost.bottomAnchor),
+            ])
         }
-        button.contentEdgeInsets = UIEdgeInsets(top: 6, left: 12, bottom: 6, right: 12)
         button.layer.cornerRadius = 999
         button.layer.masksToBounds = true
         button.layer.borderWidth = 1.5
@@ -3108,6 +3113,15 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, U
         let frozen = isPublishing
         textView.isEditable = !frozen
         titleField.isEnabled = !frozen
+        // 100 包编辑器面修法：发布在途时可见性分段亦冻结——此前冻结清单
+        // 漏了它，在途点段只改旗标不改已发送值（performPublish 已在请求
+        // 前捕获 publishVisibility），视觉上“切成功了”实则无效；解冻时
+        // 仍受限时锁制约（限时开时分段本就禁用，不得由解冻误解开）。
+        visibilitySegmented.isEnabled = !frozen && !ephemeralSwitch.isOn
+        // 同款：限时开关本身亦随冻结禁用，否则在途拨动限时会连带改段
+        // 与旗标，同样只改视觉不改已发送值；它在别处无禁用逻辑，解冻
+        // 直接恢复可用。
+        ephemeralSwitch.isEnabled = !frozen
         // P1-14：冻结清单补齐全部入口——草稿 pill、引用钮、三枚已选 Chip、
         // @ pick/清除、引用卡 ×（含已删行“移除”）；其余入口见下。
         draftPillButton.isEnabled = !frozen
@@ -4657,7 +4671,12 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, U
                         // toast 不随编辑器消失。
                         // 落点高亮见交回说明：时间线无现成按 id 高亮入口，接线在
                         // SceneDelegate.onPublished（D 路禁改），本处不硬编。
-                        self.showToastAfterClose(message: self.selectedVisibilityPublished ? "已发布 · 已公开" : "已发布 · 已设为私密")
+                        // 100 包编辑器面修法：toast 必须用本次发送的分段值
+                        // publishVisibility，而非回包时的 live 旗标——分段在
+                        // 发布在途时此前未冻结（见 refreshPublishingInputFreeze），
+                        // 在途改段会使 toast 与实际发出态相反；现分段已随冻结
+                        // 禁用，此处仍以发送值为准，双保险。
+                        self.showToastAfterClose(message: publishVisibility == 1 ? "已发布 · 已公开" : "已发布 · 已设为私密")
                         BearyHaptics.publishSuccess()
                         BearySoundPlayer.play(.publishSuccess)
                         self.onPublished?(entryId)
