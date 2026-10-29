@@ -283,6 +283,10 @@ final class BearyImageLoader {
         guard let caches = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first else { return }
         let dir = caches.appendingPathComponent("BearyImageCache").appendingPathComponent("\(id)")
         try? FileManager.default.removeItem(at: dir)
+        // 审计三轮 23 项：目录已删，累计字节随之作废（下次写该桶时重新校准一次）。
+        diskCacheLock.lock()
+        diskCacheTotals["\(id)"] = nil
+        diskCacheLock.unlock()
     }
 
     /// B3-3 显式并发上限：图片下载每 host 最多 6 并发（URLSession 层排队，
@@ -332,23 +336,54 @@ final class BearyImageLoader {
         return try? Data(contentsOf: file)
     }
 
+    /// 审计三轮 23 项：磁盘累计字节（按桶）。本进程内每桶只在首次写入时
+    /// 枚举校准一次，之后写盘只做单文件 stat + 累加（O(1)），不再每写必扫
+    /// 目录；只有累计值越过上限时才重新枚举、按真实大小与修改时间淘汰。
+    /// 累计值只可能高估（系统清缓存删文件、purgeAccount 删目录时已重置或
+    /// 下次越限即重校准），高估只会提前触发一次校准，淘汰决策永远用枚举
+    /// 出的真实值，故不会误删；低估时至多延迟到下一次越限校准即纠正。
+    /// 读写线程：writeDisk 仍在 URLSession 回调（非主线程）执行，枚举与
+    /// 删除也在同一把锁内、同一非主线程完成，绝不上主线程。
+    private let diskCacheLock = NSLock()
+    private var diskCacheTotals: [String: Int64] = [:]
+
     private func writeDisk(data: Data, for url: URL, bucket: Int?) {
         guard let file = diskFileURL(for: url, bucket: bucket) else { return }
         try? FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
+        let oldSize = (try? FileManager.default.attributesOfItem(atPath: file.path)[.size] as? NSNumber)?.int64Value ?? 0
         try? data.write(to: file, options: .atomic)
-        enforceDiskCacheCap(bucket: bucket)
+        // 原子写失败时旧文件仍在，newSize == oldSize，delta 为 0，不污染累计值。
+        let newSize = (try? FileManager.default.attributesOfItem(atPath: file.path)[.size] as? NSNumber)?.int64Value ?? 0
+        enforceDiskCacheCap(bucket: bucket, writtenDelta: newSize - oldSize)
     }
 
     /// 审计 B 批：图片磁盘缓存上限 200MB（按账号桶分别算，不跨桶删别人的文件）。
-    /// 写时超了删最旧文件直至回落（按修改时间升序删，刚写入的最新文件天然在最后、
-    /// 不会被误删）；简单 sweep，不新增清理状态机。并发写时两次 sweep 可能
-    /// 各删一批最旧文件，总量仍收敛到上限内，无正确性问题。
+    /// 上限语义与淘汰策略不变：超了按修改时间升序删最旧文件直至回落，刚写入
+    /// 的最新文件天然在最后、不会被误删；简单 sweep，不新增清理状态机。
+    /// 审计三轮 23 项改动只在触发时机：稳态写盘不枚举，仅累计值越限（或本进程
+    /// 首写校准）时枚举一次，枚举出的真实总量写回累计值。
     private static let diskCacheCapBytes: Int64 = 200 * 1024 * 1024
-    private func enforceDiskCacheCap(bucket: Int?) {
+    private func enforceDiskCacheCap(bucket: Int?, writtenDelta: Int64) {
         guard let caches = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first else { return }
         let bucketName = bucket.map(String.init) ?? "guest"
         let dir = caches.appendingPathComponent("BearyImageCache").appendingPathComponent(bucketName)
-        guard let names = try? FileManager.default.contentsOfDirectory(atPath: dir.path) else { return }
+        diskCacheLock.lock()
+        defer { diskCacheLock.unlock() }
+        var hadKnownTotal = false
+        if let known = diskCacheTotals[bucketName] {
+            hadKnownTotal = true
+            let tracked = known + writtenDelta
+            diskCacheTotals[bucketName] = tracked
+            guard tracked > Self.diskCacheCapBytes else { return }
+        }
+        // 越限（或本进程首写、累计值未知）才枚举：首写时枚举值已含本次写入，
+        // 不再另加 writtenDelta；越限时枚举值同样是写后真实总量。
+        guard let names = try? FileManager.default.contentsOfDirectory(atPath: dir.path) else {
+            // 枚举失败不静默低估：已知累计已是越限值、保持它则下次写重试；
+            // 未知时置为越限值，同样保证下次写重试枚举，而非长期不淘汰。
+            if !hadKnownTotal { diskCacheTotals[bucketName] = Self.diskCacheCapBytes + 1 }
+            return
+        }
         var entries: [(url: URL, size: Int64, mtime: Date)] = []
         var total: Int64 = 0
         for name in names {
@@ -358,13 +393,21 @@ final class BearyImageLoader {
             entries.append((url: url, size: Int64(size), mtime: mtime))
             total += Int64(size)
         }
-        guard total > Self.diskCacheCapBytes else { return }
+        guard total > Self.diskCacheCapBytes else {
+            diskCacheTotals[bucketName] = total
+            return
+        }
         entries.sort { $0.mtime < $1.mtime }
         for entry in entries {
             if total <= Self.diskCacheCapBytes { break }
-            try? FileManager.default.removeItem(at: entry.url)
-            total -= entry.size
+            do {
+                try FileManager.default.removeItem(at: entry.url)
+                total -= entry.size
+            } catch {
+                // 删失败不扣账，累计值保持真实总量，下次越限再枚举重试。
+            }
         }
+        diskCacheTotals[bucketName] = total
     }
 
     /// 内存键：账号隔离 4 号——键首含账号维度（未登录为 guest），同 URL
@@ -424,13 +467,67 @@ final class BearyImageLoader {
         }
     }
 
+    /// 审计三轮 23 项：在途合并表。键 = memoryKey（已含账号桶与下采样宽度，
+    /// 同 URL 不同桶/不同下采样宽度绝不合并）；一条在途记录只建一个网络任务、
+    /// 只做一次磁盘读与写盘，结果分发给全部订阅者。订阅者表只在 inFlightLock
+    /// 内读写，回调分发前先取快照、清表，再回主线程逐个回调，锁内绝不回调。
+    private let inFlightLock = NSLock()
+    private var inFlight: [NSString: InFlightImageLoad] = [:]
+
+    private final class InFlightImageLoad {
+        var task: URLSessionDataTask?
+        var subscribers: [(id: UUID, completion: (Result<UIImage, BearyImageLoadError>) -> Void)] = []
+    }
+
+    /// 审计三轮 23 项：每订阅者的取消句柄。调用方只用它调 cancel()（存取与
+    /// 取消方式与旧返回任务完全一致，bearySetImage 的 old.cancel 不用改）；
+    /// 它本身不承载下载，cancel() 只把本订阅者从在途表摘除——共享下载只在
+    /// 最后一个订阅者取消时才被取消，列表里同头像多 cell 共存时，某个 cell
+    /// 复用取消不会掐断其他仍可见 cell 的下载。resume() 调用方从不调用，
+    /// 真正的 resume 只由后台队列对底层任务做一次。
+    private final class CoalescedImageTask: URLSessionDataTask {
+        private weak var loader: BearyImageLoader?
+        private let key: NSString
+        private let id: UUID
+        init(loader: BearyImageLoader, key: NSString, id: UUID) {
+            self.loader = loader
+            self.key = key
+            self.id = id
+            super.init()
+        }
+        override func cancel() {
+            loader?.cancelInFlight(key: key, id: id)
+        }
+    }
+
+    private func cancelInFlight(key: NSString, id: UUID) {
+        inFlightLock.lock()
+        guard let entry = inFlight[key] else {
+            inFlightLock.unlock()
+            return
+        }
+        entry.subscribers.removeAll { $0.id == id }
+        guard entry.subscribers.isEmpty else {
+            inFlightLock.unlock()
+            return
+        }
+        inFlight[key] = nil
+        let task = entry.task
+        inFlightLock.unlock()
+        // 锁外取消：底层任务的完成回调到时按对象身份核对，已摘除的表项
+        // 不再分发，恰在此时新建的同键在途记录也不会被旧回调误清。
+        task?.cancel()
+    }
+
     /// 带失败原因的加载（F10 钩子的底层）：所有回调统一回主线程（内存命中、
     /// 磁盘命中、网络三支一致，不再有同步回调碰 UIKit）；磁盘读与解码走后台
     /// diskAndDecodeQueue；网络分支验 HTTP 200–299 + image/* MIME，不符按
     /// 脏数据失败，不写缓存；其余失败时不写缓存。
-    /// 返回值：内存命中返回 nil；其余路径返回预建的网络任务——磁盘命中时该
-    /// 任务永不 resume（调用方 old.cancel 对它无害），磁盘未命中时由后台队列
-    /// resume 它；调用方在后台队列 resume 前已取消则不再 resume。
+    /// 返回值：内存命中返回 nil；其余路径返回每订阅者独立的取消句柄
+    /// （CoalescedImageTask，仍是 URLSessionDataTask 类型，调用方 cancel
+    /// 方式不变）。同键在途时不再新建 dataTask、不再重复磁盘读与下载：
+    /// 磁盘命中时底层任务永不 resume，磁盘未命中时由后台队列 resume 一次；
+    /// 调用方在后台队列 resume 前已全部取消则不再 resume。
     @discardableResult
     func loadDetailed(url: URL, downsampleToWidth: CGFloat? = nil, completion: @escaping (Result<UIImage, BearyImageLoadError>) -> Void) -> URLSessionDataTask? {
         let key = memoryKey(for: url, downsampleToWidth: downsampleToWidth)
@@ -440,49 +537,99 @@ final class BearyImageLoader {
         }
         // S2：请求发起时固定 bucket，整条链路（磁盘读 / 网络写盘）都用它。
         let bucket = currentAccountId
-        let task = session.dataTask(with: url) { [weak self] data, response, error in
+        let subscriberId = UUID()
+        let proxy = CoalescedImageTask(loader: self, key: key, id: subscriberId)
+        inFlightLock.lock()
+        if let existing = inFlight[key] {
+            existing.subscribers.append((id: subscriberId, completion: completion))
+            inFlightLock.unlock()
+            return proxy
+        }
+        inFlightLock.unlock()
+        let entry = InFlightImageLoad()
+        let task = session.dataTask(with: url) { [weak self, weak entry] data, response, error in
+            guard let self = self, let entry = entry else { return }
+            self.inFlightLock.lock()
+            guard self.inFlight[key] === entry, !entry.subscribers.isEmpty else {
+                self.inFlightLock.unlock()
+                return
+            }
+            let subs = entry.subscribers
+            self.inFlight[key] = nil
+            self.inFlightLock.unlock()
+            let deliver: (Result<UIImage, BearyImageLoadError>) -> Void = { result in
+                DispatchQueue.main.async {
+                    for sub in subs { sub.completion(result) }
+                }
+            }
             if let e = error as NSError?, e.code == NSURLErrorCancelled {
-                DispatchQueue.main.async { completion(.failure(.cancelled)) }
+                deliver(.failure(.cancelled))
                 return
             }
             if let e = error {
-                DispatchQueue.main.async { completion(.failure(.network(e))) }
+                deliver(.failure(.network(e)))
                 return
             }
             // S1：验 HTTP 状态与 MIME，不符走失败分支（错误页/HTML 误当图片不再入库）。
             guard let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode),
                   let mime = http.mimeType, mime.hasPrefix("image/"),
                   let data = data, let img = BearyImageLoader.decodedImage(data: data, downsampleToWidth: downsampleToWidth) else {
-                DispatchQueue.main.async { completion(.failure(.invalidData)) }
+                deliver(.failure(.invalidData))
                 return
             }
             // G23：cost 按像素计（pt 尺寸 × scale 的平方方向取整边长之积）。
             let scale = img.scale
             let cost = max(Int(img.size.width * scale) * Int(img.size.height * scale), 1)
-            self?.cache.setObject(img, forKey: key, cost: cost)
-            self?.writeDisk(data: data, for: url, bucket: bucket)
-            DispatchQueue.main.async { completion(.success(img)) }
+            self.cache.setObject(img, forKey: key, cost: cost)
+            self.writeDisk(data: data, for: url, bucket: bucket)
+            deliver(.success(img))
         }
+        entry.task = task
+        entry.subscribers.append((id: subscriberId, completion: completion))
+        inFlightLock.lock()
+        if let existing = inFlight[key] {
+            // 建任务与插表之间的竞态：已有后来者先插表，本次新建的任务直接丢弃
+            // （从未 resume，闭包弱引 entry，不形成循环），订阅挂到已有的记录上。
+            existing.subscribers.append((id: subscriberId, completion: completion))
+            inFlightLock.unlock()
+            return proxy
+        }
+        inFlight[key] = entry
+        inFlightLock.unlock()
         // B1：磁盘读 + 解码放后台线程，命中后回主线程回调；未命中再 resume 网络任务。
-        Self.diskAndDecodeQueue.async { [weak self] in
-            if task.state == .canceling || task.state == .completed {
-                return
-            }
-            if let disk = self?.diskData(for: url, bucket: bucket),
+        // 线程归属不变：磁盘读与解码只走 diskAndDecodeQueue，枚举与写盘不在主线程。
+        Self.diskAndDecodeQueue.async { [weak self, weak entry] in
+            guard let self = self, let entry = entry, let task = entry.task else { return }
+            self.inFlightLock.lock()
+            let alive = self.inFlight[key] === entry && !entry.subscribers.isEmpty
+            self.inFlightLock.unlock()
+            guard alive, task.state != .canceling, task.state != .completed else { return }
+            if let disk = self.diskData(for: url, bucket: bucket),
                let img = BearyImageLoader.decodedImage(data: disk, downsampleToWidth: downsampleToWidth) {
+                self.inFlightLock.lock()
+                guard self.inFlight[key] === entry, !entry.subscribers.isEmpty else {
+                    self.inFlightLock.unlock()
+                    return
+                }
+                let subs = entry.subscribers
+                self.inFlight[key] = nil
+                self.inFlightLock.unlock()
                 // G23：cost 按像素计（pt 尺寸 × scale 的平方方向取整边长之积）。
                 let scale = img.scale
                 let cost = max(Int(img.size.width * scale) * Int(img.size.height * scale), 1)
-                self?.cache.setObject(img, forKey: key, cost: cost)
-                DispatchQueue.main.async { completion(.success(img)) }
+                self.cache.setObject(img, forKey: key, cost: cost)
+                DispatchQueue.main.async {
+                    for sub in subs { sub.completion(.success(img)) }
+                }
                 return
             }
-            if task.state == .canceling || task.state == .completed {
-                return
-            }
+            self.inFlightLock.lock()
+            let stillAlive = self.inFlight[key] === entry && !entry.subscribers.isEmpty
+            self.inFlightLock.unlock()
+            guard stillAlive, task.state != .canceling, task.state != .completed else { return }
             task.resume()
         }
-        return task
+        return proxy
     }
 }
 
