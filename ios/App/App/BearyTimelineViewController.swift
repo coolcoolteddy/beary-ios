@@ -742,6 +742,21 @@ final class BearyTimelineCell: UITableViewCell {
     static let reuseIdentifier = "BearyTimelineCell"
 
     private let cardView = UIView()
+    /// B 方案浅色阴影层：卡片自身 masksToBounds 会裁掉挂它身上的阴影，
+    /// 故阴影挂独立层、钉在卡片下方（与 CenteredModal 的 cardShadowView 同口径）；
+    /// 仅浅色有效（深色下黑阴影在黑底上看不见，不硬加，见 traitCollectionDidChange）。
+    private let cardShadowView: UIView = {
+        let v = UIView()
+        v.translatesAutoresizingMaskIntoConstraints = false
+        v.backgroundColor = .clear
+        v.isUserInteractionEnabled = false
+        v.layer.cornerRadius = 14
+        v.layer.shadowColor = UIColor.black.cgColor
+        v.layer.shadowOpacity = 0.08
+        v.layer.shadowOffset = CGSize(width: 0, height: 2)
+        v.layer.shadowRadius = 6
+        return v
+    }()
     /// 限时倒计时行（meta 行 pill 之后；仅存活期显示，灰字 12pt）。
     private let ephemeralLabel: UILabel = {
         let l = UILabel()
@@ -879,13 +894,15 @@ final class BearyTimelineCell: UITableViewCell {
         contentView.backgroundColor = BearyColors.bg
 
         cardView.translatesAutoresizingMaskIntoConstraints = false
-        // 2026-10-29 A 方案：卡片底色高一级（timelineCard），边线去掉、只用底色区分；
+        // 2026-10-29 B 方案：卡片底色回页面底（bg），改边线区分；
+        // 边线 1px 走 timelineBorder（浅 gray／深 surface，均比 line 深一档）；
         // 限时卡的虚线边框层（ephemeralBorderLayer）是独立语义指示，不动。
-        cardView.backgroundColor = BearyColors.timelineCard
-        cardView.layer.borderWidth = 0
-        // 追加 6④：卡片边框减淡——line 色降 50% 透明度（动态色，深浅跟随）；
-        // trait 切换重刷见 traitCollectionDidChange 同款（现宽为 0，仅作保留）。
-        cardView.layer.borderColor = BearyColors.alpha(BearyColors.line, 0.5).cgColor
+        cardView.backgroundColor = BearyColors.bg
+        cardView.layer.borderWidth = 1
+        cardView.layer.borderColor = BearyColors.timelineBorder.cgColor
+        // B 方案阴影仅浅色：深色下黑阴影在黑底上看不见，不硬加；
+        // trait 切换重刷见 traitCollectionDidChange 同款。
+        cardShadowView.layer.shadowOpacity = traitCollection.userInterfaceStyle == .dark ? 0 : 0.08
         cardView.layer.cornerRadius = 14
         cardView.layer.masksToBounds = true
         // 限时虚线边框层（存活期显、实线边框归零；布局时重画路径，见 layoutSubviews）。
@@ -989,8 +1006,8 @@ final class BearyTimelineCell: UITableViewCell {
         dotView.layer.masksToBounds = true
 
         quoteButton.translatesAutoresizingMaskIntoConstraints = false
-        // 2026-10-29 A 方案同步进一级：引用卡底色跟卡片底同步提一级，否则融进新卡片底。
-        quoteButton.backgroundColor = BearyColors.timelineQuote
+        // 2026-10-29 B 方案：引用卡底色同步回 #183 之前的值（faint），A 方案的同步进一级一并 revert。
+        quoteButton.backgroundColor = BearyColors.faint
         // B-G1: web .tl-qcard has no full border, only left 3px line + radius 8.
         quoteButton.layer.borderWidth = 0
         quoteButton.layer.cornerRadius = 8
@@ -1111,6 +1128,8 @@ final class BearyTimelineCell: UITableViewCell {
         cardStackReference = cardStack
         cardView.addSubview(cardStack)
         contentView.addSubview(cardView)
+        // B 方案阴影层钉在卡片下方（须在卡片之后、卡片之下插入，盖住卡片就错了）。
+        contentView.insertSubview(cardShadowView, belowSubview: cardView)
         contentView.addSubview(timelineLineView)
         contentView.addSubview(dotRingView)
         contentView.addSubview(dotView)
@@ -1139,6 +1158,11 @@ final class BearyTimelineCell: UITableViewCell {
             cardView.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 36),
             cardView.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -16),
             cardView.bottomAnchor.constraint(equalTo: contentView.bottomAnchor, constant: -8),
+            // B 方案阴影层四边钉卡片（与卡片同框，阴影形状由 layoutSubviews 的 path 定）。
+            cardShadowView.topAnchor.constraint(equalTo: cardView.topAnchor),
+            cardShadowView.leadingAnchor.constraint(equalTo: cardView.leadingAnchor),
+            cardShadowView.trailingAnchor.constraint(equalTo: cardView.trailingAnchor),
+            cardShadowView.bottomAnchor.constraint(equalTo: cardView.bottomAnchor),
             cardStack.topAnchor.constraint(equalTo: cardView.topAnchor, constant: 14),
             cardStack.leadingAnchor.constraint(equalTo: cardView.leadingAnchor, constant: 16),
             cardStack.trailingAnchor.constraint(equalTo: cardView.trailingAnchor, constant: -16),
@@ -1163,6 +1187,9 @@ final class BearyTimelineCell: UITableViewCell {
     /// 不改约束、不碰滚动回调；isHidden 不变时不重复写，避免布局循环。
     override func layoutSubviews() {
         super.layoutSubviews()
+        // B 方案阴影路径跟卡片圆角 14（无 path 时滚动期离屏渲染贵，须给定 path）；
+        // 放 metaWidth 守卫之前，保证窄屏/首帧也能落路径（与虚线层同款写法）。
+        cardShadowView.layer.shadowPath = UIBezierPath(roundedRect: cardShadowView.bounds, cornerRadius: 14).cgPath
         let metaWidth = metaStack.bounds.width
         guard metaWidth > 0 else { return }
         let narrow = metaWidth < 260
@@ -1181,8 +1208,10 @@ final class BearyTimelineCell: UITableViewCell {
 
     override func traitCollectionDidChange(_ previousTraitCollection: UITraitCollection?) {
         super.traitCollectionDidChange(previousTraitCollection)
-        // 追加 6④：卡片边框减淡与 init 同款（line 色 50% 透明度）。
-        cardView.layer.borderColor = BearyColors.alpha(BearyColors.line, 0.5).cgColor
+        // B 方案：卡片边线色是 cgColor 快照，主题切换须重刷 timelineBorder；
+        // 阴影仅浅色，深色归零（黑阴影在黑底上看不见）。
+        cardView.layer.borderColor = BearyColors.timelineBorder.cgColor
+        cardShadowView.layer.shadowOpacity = traitCollection.userInterfaceStyle == .dark ? 0 : 0.08
         // 限时虚线描边色是 cgColor 快照，主题切换须重刷。
         ephemeralBorderLayer.strokeColor = BearyColors.line.cgColor
         // 追加 6②：pill 描边主题切换重刷（cgColor 快照，须按当前态重解）。
@@ -1212,7 +1241,7 @@ final class BearyTimelineCell: UITableViewCell {
     override func setHighlighted(_ highlighted: Bool, animated: Bool) {
         super.setHighlighted(highlighted, animated: animated)
         let apply = {
-            self.cardView.backgroundColor = highlighted ? BearyColors.faint : BearyColors.timelineCard
+            self.cardView.backgroundColor = highlighted ? BearyColors.faint : BearyColors.bg
         }
         if animated {
             UIView.animate(withDuration: 0.15, animations: apply)
@@ -1264,10 +1293,10 @@ final class BearyTimelineCell: UITableViewCell {
         let flashedId = currentEntry?.id
         cardView.backgroundColor = BearyColors.faint
         UIView.animate(withDuration: 0.6, delay: 0.5, options: [], animations: {
-            self.cardView.backgroundColor = BearyColors.timelineCard
+            self.cardView.backgroundColor = BearyColors.bg
         }, completion: { _ in
             if self.currentEntry?.id == flashedId {
-                self.cardView.backgroundColor = BearyColors.timelineCard
+                self.cardView.backgroundColor = BearyColors.bg
             }
         })
     }
@@ -1303,7 +1332,9 @@ final class BearyTimelineCell: UITableViewCell {
         currentEntry = nil
         titleLabel.text = nil
         titleLabel.isHidden = true
-        cardView.backgroundColor = BearyColors.timelineCard
+        cardView.backgroundColor = BearyColors.bg
+        // B 方案：限时卡实线边线归零不得串位到下一行，复用先复位 1，configure 再按存活期定。
+        cardView.layer.borderWidth = 1
         quoteButton.isHidden = true
         pillIconView.image = nil
         quoteBodyLabel.isHidden = false
@@ -1410,7 +1441,9 @@ final class BearyTimelineCell: UITableViewCell {
             ephemeralRow.isHidden = true
         }
         let ephemeralLive = BearyEphemeral.isLive(entry)
-        // 2026-10-29 A 方案：卡片边线去掉（init 已置 0），限时虚线层仍按存活期显隐。
+        // 2026-10-29 B 方案：实线边线恢复（#183 之前口径）——虚线层亮起时实线归零，
+        // 否则 1；虚线层本身仍按存活期显隐，不动。
+        cardView.layer.borderWidth = ephemeralLive ? 0 : 1
         ephemeralBorderLayer.isHidden = !ephemeralLive
         // I3：天气用 icon_wx_* 图标、心情用 14px BearyEmoteView（播 Lottie 循环，
         // 与 Feed/主页心情位静态首帧不同，时间线卡片心情是动的；减动效下只显完成帧）。
