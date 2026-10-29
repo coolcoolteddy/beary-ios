@@ -227,6 +227,9 @@ class BearyProfileViewController: UIViewController {
     /// 头像重试目标：applyProfile 写入，失败回退与重试共用（旧失败不覆盖
     /// 新图靠 onFailure 内的 URL 比对）。
     private var headerAvatarURL: URL?
+    /// 封面当前 URL：刷新回包同 URL 且已有图时跳过重下（见 applyProfile），
+    /// 防封面背景闪；换图（URL 变）或无图（上次失败）时照常重下。
+    private var coverImageURL: URL?
     /// 头像失败时恢复的首字母（与当前显示名同源）。
     private var avatarFallbackLetter: String?
     private var profileLoadFailed = false
@@ -1689,9 +1692,14 @@ class BearyProfileViewController: UIViewController {
         // 头像：有图盖住首字母位，无图透出首字母（与列表页同款回退）；
         // 有图时的加载与失败回退走 startHeaderAvatarLoad（失败显式恢复首字母 + 出重试图标）。
         if let avatarPath = profileValue.avatarUrl, let avatarURLValue = BearyImageURLs.avatarURL(avatarPath) {
-            headerAvatarURL = avatarURLValue
             avatarFallbackLetter = String(displayNameValue.prefix(1)).uppercased()
-            startHeaderAvatarLoad()
+            // 刷新回包同 URL 不重下：bearySetImage 会先把图清成 placeholder（nil）
+            // 再异步回填，每次刷新都清一次 = 头像区闪一下；URL 未变且已有图时复用，
+            // 换头像（URL 变）或无图（上次失败，刷新即重试）时照常重下。
+            if headerAvatarURL != avatarURLValue || avatarImageView.image == nil {
+                headerAvatarURL = avatarURLValue
+                startHeaderAvatarLoad()
+            }
         } else {
             headerAvatarURL = nil
             avatarFallbackLetter = String(displayNameValue.prefix(1)).uppercased()
@@ -1706,8 +1714,16 @@ class BearyProfileViewController: UIViewController {
         // L17：空字符串不再算有封面——须非空且能拼出 URL 才算。
         let hasCover = !(profileValue.coverUrl ?? "").isEmpty && BearyImageURLs.avatarURL(profileValue.coverUrl) != nil
         if let coverPath = profileValue.coverUrl, let coverURLValue = BearyImageURLs.avatarURL(coverPath) {
-            coverImageView.bearySetImage(url: coverURLValue, placeholder: nil, downsampleToWidth: (headerWidthValue > 0 ? headerWidthValue : UIScreen.main.bounds.width) * UIScreen.main.scale)
+            // 刷新回包同 URL 不重下：bearySetImage 会先把图清成 placeholder（nil）
+            // 再异步回填（全部回调均为 main.async，内存命中也至少空一帧），
+            // 每次刷新都清一次 = 封面背景闪一下；URL 未变且已有图时复用，
+            // 换封面（URL 变）或无图（上次失败）时照常重下。
+            if coverImageURL != coverURLValue || coverImageView.image == nil {
+                coverImageURL = coverURLValue
+                coverImageView.bearySetImage(url: coverURLValue, placeholder: nil, downsampleToWidth: (headerWidthValue > 0 ? headerWidthValue : UIScreen.main.bounds.width) * UIScreen.main.scale)
+            }
         } else {
+            coverImageURL = nil
             coverImageView.image = nil
         }
         coverImageView.isHidden = !hasCover
@@ -2708,6 +2724,10 @@ class BearyProfileViewController: UIViewController {
         }
         // M12（91 包）：下拉刷新触发给一次轻触觉。
         BearyHaptics.press()
+        // 刷新触发即启动封面复位动画：松手事件里 isRefreshing 可能尚未置位，
+        // 只靠 didEndDragging 兜底会漏；刷新期间滚动事件不再拉伸（见 updateCoverStretch），
+        // 故此次动画不会被打架，封面一次平滑回自然态。
+        resetCoverStretchAnimated()
         // G2：下拉刷新保留旧内容（顶部加载态由 UIRefreshControl 提供），
         // 成功后替换、失败保留旧内容（见 handleProfileResult / handleTabResult）。
         diaryHasMore = true
@@ -3422,6 +3442,14 @@ extension BearyProfileViewController: UITableViewDataSource, UITableViewDelegate
     /// 只改约束常量与模糊层 alpha（尺寸/透明度），不碰其他属性。
     /// 基线取 -contentInset.top（与顶栏判定同口径，收起态为 0 时即 y < 0）。
     private func updateCoverStretch(offsetY y: CGFloat, topBaseline: CGFloat) {
+        // 刷新接管期间：滚动事件只来自刷新控件的 offset 动画，不再由手指驱动；
+        // 此时若继续按拉量拉伸，会与松手／触发时启动的复位动画打架（约束常量
+        // 两处写，封面几何与模糊 alpha 来回跳 = 下拉刷新时背景闪）。刷新期间
+        // 滚动事件一律不动封面，复位只由触发点走一次动画；刷新结束后 offset
+        // 回落、isRefreshing 为 false，滚动事件恢复 1:1 跟随。
+        if tableView.refreshControl?.isRefreshing == true {
+            return
+        }
         let pull = topBaseline - y
         if coverImageView.isHidden || pull <= 0 {
             // 拖动中 1:1 即时跟随；松手后（回弹/刷新接管）走动画复位，防一帧闪回。
