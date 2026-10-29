@@ -18,6 +18,10 @@ enum APIError: Error {
     case server(String)
     case decoding(Error)
     case unauthorized
+    /// 审计 P1-7：带原因的 401（/me 专用）：服务端体含 reason（banned/kicked/expired）
+    /// 与 message；revoked 原因一次性发放，fetchMe 处解出后经 refreshMe 透传界面层分流提示。
+    /// 其余请求仍走裸 .unauthorized（全局 onUnauthorized 口径不变）。
+    case authFailure(reason: String?, message: String?)
     case notFound
     case cancelled
 }
@@ -199,12 +203,13 @@ struct NotificationList: Decodable {
     var unread: Int?
     var sysUnread: Int?
     var total: Int?
-    /// D3-App 门控用服务端消息版本号（现行后端未下发，见
-    /// BearyNotificationsViewController 门控注释；后端将来下发时优先用它）。
-    /// 字段名未定稿前兼容两种写法：version 或 message_version
-    /// （decoder 用 convertFromSnakeCase，后者解为 messageVersion）。
+    /// D3-App 门控用服务端消息版本号：服务端实际下发 msg_version
+    /// （convertFromSnakeCase 解为 msgVersion）；审计 P2-19 前 App 只认
+    /// version/messageVersion，实测永远接不到，门控恒走 latestId 回落。
+    /// 三写法全兼容，优先 msgVersion。
     var version: Int?
     var messageVersion: Int?
+    var msgVersion: Int?
 }
 
 struct SearchUser: Decodable {
@@ -376,6 +381,8 @@ struct ReferralBindResponse: Decodable {
 struct ServerErrorBody: Decodable {
     var error: String?
     var message: String?
+    /// /me 401 体带 reason（expired/kicked/banned）；其余接口无此字段时为 nil。
+    var reason: String?
 }
 
 // MARK: - 客户端
@@ -672,13 +679,36 @@ final class BearyAPI {
 
     // MARK: - 账户与会话
 
-    /// 401 = 未登录，不是错误：返回 nil。
+    /// 401 = 未登录，不是错误：无 reason 的通用 401 返回 nil（旧口径不变）。
+    /// 审计 P1-7：带 reason 的 401（封禁/踢下线/过期）透传 .authFailure——revoked
+    /// 原因服务端一次性发放（读后即删），此处不经通用 mapStatus（它会丢体），
+    /// 直接 perform 解体；且不触发全局 onUnauthorized（登录态变迁走 refreshMe）。
     func fetchMe(completion: @escaping (Result<MeUser?, APIError>) -> Void) {
-        request("/api/account/me", suppressUnauthorized: true) { (result: Result<MeResponse, APIError>) in
-            switch result {
-            case .success(let resp): completion(.success(resp.user))
-            case .failure(.unauthorized): completion(.success(nil))
-            case .failure(let e): completion(.failure(e))
+        perform("/api/account/me", method: "GET") { [weak self] data, status, error in
+            guard let self = self else { return }
+            if let e = error as NSError?, e.code == NSURLErrorCancelled { completion(.failure(.cancelled)); return }
+            if let e = error { completion(.failure(.network(e))); return }
+            if status == 401 {
+                if let data = data, let eb = try? self.decoder.decode(ServerErrorBody.self, from: data),
+                   let reason = eb.reason, !reason.isEmpty {
+                    completion(.failure(.authFailure(reason: reason, message: eb.message)))
+                } else {
+                    completion(.success(nil))
+                }
+                return
+            }
+            guard (200...299).contains(status), let data = data else {
+                if let data = data, let eb = try? self.decoder.decode(ServerErrorBody.self, from: data), let code = eb.error {
+                    completion(.failure(.server(code)))
+                } else {
+                    completion(.failure(.http(status, self.errorSnippet(from: data))))
+                }
+                return
+            }
+            do {
+                completion(.success(try self.decoder.decode(MeResponse.self, from: data).user))
+            } catch {
+                completion(.failure(.decoding(error)))
             }
         }
     }
@@ -826,7 +856,54 @@ final class BearyAPI {
 
     /// 解除拉黑：DELETE /beary/api/blocks/:user。
     func unblockUser(userId: Int, completion: @escaping (Result<Void, APIError>) -> Void) {
-        requestVoid("/beary/api/blocks/\\(userId)", method: "DELETE", completion: completion)
+        requestVoid("/beary/api/blocks/\(userId)", method: "DELETE", completion: completion)
+    }
+
+    // MARK: - 功能许愿墙（2026-10-29 补缺第 21 项；后端备改动未部署前 404 即走失败态）
+    /// 许愿条目（服务端 beary_wishes 行 + 聚合计数；myVote：1 赞成 / -1 反对 / nil 未投）。
+    struct WishItem: Decodable {
+        var id: Int?
+        var authorId: Int?
+        var authorName: String?
+        var authorAvatar: String?
+        var title: String?
+        var detail: String?
+        var status: String?
+        var upCount: Int?
+        var downCount: Int?
+        var myVote: Int?
+        var createdAt: Int?
+    }
+    /// 列表回包（服务端按净赞成降序排好，App 不再重排）。
+    struct WishListResponse: Decodable {
+        var wishes: [WishItem]?
+    }
+    /// 投票回包（服务端权威计数，乐观更新后以此对齐）。
+    struct WishVoteResponse: Decodable {
+        var ok: Bool?
+        var up: Int?
+        var down: Int?
+        var myVote: Int?
+    }
+
+    /// 列表：GET /beary/api/wishes（游客可看，myVote 仅登录态下发）。
+    func fetchWishes(completion: @escaping (Result<WishListResponse, APIError>) -> Void) {
+        request("/beary/api/wishes", completion: completion)
+    }
+
+    /// 发起：POST /beary/api/wishes {title, detail}（仅 Plus，服务端校验；回包为新建条目）。
+    func createWish(title: String, detail: String, completion: @escaping (Result<WishItem, APIError>) -> Void) {
+        request("/beary/api/wishes", method: "POST", jsonBody: ["title": title, "detail": detail], completion: completion)
+    }
+
+    /// 投票：POST /beary/api/wishes/:id/vote {vote: 1|-1|0}（0 = 取消本票；每人每条一票）。
+    func voteWish(id: Int, vote: Int, completion: @escaping (Result<WishVoteResponse, APIError>) -> Void) {
+        request("/beary/api/wishes/\(id)/vote", method: "POST", jsonBody: ["vote": vote], completion: completion)
+    }
+
+    /// 管理员标记已完成：POST /beary/api/wishes/:id/status {status: "done"}。
+    func markWishDone(id: Int, completion: @escaping (Result<Void, APIError>) -> Void) {
+        requestVoid("/beary/api/wishes/\(id)/status", method: "POST", jsonBody: ["status": "done"], completion: completion)
     }
 
     /// 我的拉黑列表：GET /beary/api/blocks → {blocked: [ids]}。

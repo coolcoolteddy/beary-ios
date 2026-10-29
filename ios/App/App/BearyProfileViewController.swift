@@ -247,81 +247,6 @@ class BearyProfileViewController: UIViewController {
     private var savedHasMore = true
     private var tabLoading = false
 
-    /// C9 首屏骨架屏：只覆盖本页首屏无缓存加载（首个 loadTab 发起时当前标签尚无
-    /// 条目）。有缓存的标签切换走 loadTabBackground 回填、分页走 loadMoreIfNeeded、
-    /// 下拉刷新时已有内容——三者一律不显骨架；profileSkeletonShown 保证本页一生只显一次。
-    /// 显隐只跟 handleTabResult 回包走（成功/失败都隐，失败后由页脚错误态接管，
-    /// 骨架不滞留）；隐藏时真实行已 reloadData 落表，再交叉溶解，不与真实卡片叠加。
-    private var profileSkeletonVisible = false
-    private var profileSkeletonShown = false
-    private var profileSkeletonTopConstraint: NSLayoutConstraint?
-    private lazy var profileSkeletonView: UIView = {
-        let container = UIView()
-        container.translatesAutoresizingMaskIntoConstraints = false
-        container.backgroundColor = BearyColors.bg
-        container.isHidden = true
-        container.isUserInteractionEnabled = false
-        let stack = UIStackView()
-        stack.translatesAutoresizingMaskIntoConstraints = false
-        stack.axis = .vertical
-        stack.spacing = 12
-        for _ in 0..<3 {
-            let card = BearySkeletonCardView()
-            stack.addArrangedSubview(card)
-        }
-        container.addSubview(stack)
-        // 底约束降一档：小屏上资料头 + 3 张骨架可能超屏高，宁可骨架伸出容器
-        // （容器不裁剪，仍完整绘制），不触发约束冲突日志。
-        let stackBottom = stack.bottomAnchor.constraint(equalTo: container.bottomAnchor)
-        stackBottom.priority = .defaultHigh
-        NSLayoutConstraint.activate([
-            stack.topAnchor.constraint(equalTo: container.topAnchor, constant: 12),
-            stack.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 16),
-            stack.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -16),
-            stackBottom,
-        ])
-        return container
-    }()
-    private var profileSkeletonCards: [BearySkeletonCardView] {
-        guard let stack = profileSkeletonView.subviews.first as? UIStackView else { return [] }
-        return stack.arrangedSubviews.compactMap { $0 as? BearySkeletonCardView }
-    }
-
-    /// C9（全修 1-5，取“全盖”二选一）：骨架顶贴 tableView.top（constant 恒 0），
-    /// 连资料头一并盖住，不再只盖表体、留表头空资料占位（名“—”/空头像）割裂首屏。
-    private func updateProfileSkeletonTop() {
-        profileSkeletonTopConstraint?.constant = 0
-    }
-
-    /// C9：首屏骨架显（幂等，本页只显一次）。
-    private func showProfileSkeleton() {
-        guard profileSkeletonVisible == false, profileSkeletonShown == false else { return }
-        profileSkeletonVisible = true
-        profileSkeletonShown = true
-        updateProfileSkeletonTop()
-        profileSkeletonView.isHidden = false
-        profileSkeletonView.alpha = 1
-        profileSkeletonCards.forEach { $0.startBreathing() }
-    }
-
-    /// C9：骨架隐（幂等；调用时真实行已落表）。减动效直隐，其余 0.28s 交叉溶解。
-    private func hideProfileSkeleton() {
-        guard profileSkeletonVisible else { return }
-        profileSkeletonVisible = false
-        profileSkeletonCards.forEach { $0.stopBreathing() }
-        if UIAccessibility.isReduceMotionEnabled {
-            profileSkeletonView.isHidden = true
-            profileSkeletonView.alpha = 1
-        } else {
-            UIView.transition(with: profileSkeletonView, duration: 0.28, options: [.transitionCrossDissolve, .curveEaseInOut], animations: {
-                self.profileSkeletonView.alpha = 0
-            }, completion: { [weak self] _ in
-                guard let strongSelf = self, strongSelf.profileSkeletonVisible == false else { return }
-                strongSelf.profileSkeletonView.isHidden = true
-                strongSelf.profileSkeletonView.alpha = 1
-            })
-        }
-    }
     private var tabLoadMore = false
     private var tabError = false
     private var headerLaidOutWidth: CGFloat = 0
@@ -412,6 +337,28 @@ class BearyProfileViewController: UIViewController {
         imageViewValue.contentMode = .scaleAspectFill
         imageViewValue.clipsToBounds = true
         return imageViewValue
+    }()
+
+    /// 2026-10-29 第 15 项：头像/封面大图查看热区（整张头像整圆区、整幅封面区，
+    /// 不只小角落；复用现有灯箱纯查看，不带编辑入口）。头像钮后加、层级最上，
+    /// 与封面重叠 28pt 区点按仍走头像；封面区内无其他可点钮（编辑/齿轮/
+    /// 分享均在头像行高度之下），整幅封面热区不挡交互。
+    private lazy var avatarViewButton: UIButton = {
+        let buttonValue = UIButton(type: .custom)
+        buttonValue.translatesAutoresizingMaskIntoConstraints = false
+        buttonValue.addTarget(self, action: #selector(avatarViewTapped), for: .touchUpInside)
+        buttonValue.bearyAddPressFeedback()
+        buttonValue.accessibilityLabel = "查看头像大图"
+        return buttonValue
+    }()
+
+    private lazy var coverViewButton: UIButton = {
+        let buttonValue = UIButton(type: .custom)
+        buttonValue.translatesAutoresizingMaskIntoConstraints = false
+        buttonValue.addTarget(self, action: #selector(coverViewTapped), for: .touchUpInside)
+        buttonValue.bearyAddPressFeedback()
+        buttonValue.accessibilityLabel = "查看封面大图"
+        return buttonValue
     }()
 
     private let avatarLetterLabel: UILabel = {
@@ -757,10 +704,13 @@ class BearyProfileViewController: UIViewController {
     private lazy var coverHeightConstraint: NSLayoutConstraint = coverImageView.heightAnchor.constraint(equalToConstant: 0)
     /// 弹性封面顶约束（下拉时顶边上伸用；平时恒 0，底边不动）。
     private lazy var coverTopConstraint: NSLayoutConstraint = coverImageView.topAnchor.constraint(equalTo: headerView.topAnchor)
+    /// 弹性封面左右约束（2026-10-29 第 5 项：下拉时双向放大用；平时恒贴 header 边缘）。
+    private lazy var coverLeadingConstraint: NSLayoutConstraint = coverImageView.leadingAnchor.constraint(equalTo: headerView.leadingAnchor)
+    private lazy var coverTrailingConstraint: NSLayoutConstraint = coverImageView.trailingAnchor.constraint(equalTo: headerView.trailingAnchor)
     /// 弹性封面模糊层：下拉时随拉量淡入（alpha 过渡），不拦截触摸（点背景换封面不受影响）；
-    /// 微模糊口径：最薄一档 systemUltraThinMaterial + alpha 上限 0.5，随深浅模式自适应。
+    /// 2026-10-29 第 5 项：比现行微模糊强一档——systemMaterial + alpha 上限 0.85，随深浅模式自适应。
     private let coverBlurView: UIVisualEffectView = {
-        let blurViewValue = UIVisualEffectView(effect: UIBlurEffect(style: .systemUltraThinMaterial))
+        let blurViewValue = UIVisualEffectView(effect: UIBlurEffect(style: .systemMaterial))
         blurViewValue.translatesAutoresizingMaskIntoConstraints = false
         blurViewValue.isUserInteractionEnabled = false
         blurViewValue.alpha = 0
@@ -768,13 +718,16 @@ class BearyProfileViewController: UIViewController {
         return blurViewValue
     }()
 
-    // MARK: - 个人页上滑 header（吸顶背景 + 渐变实色 + 用户名淡入）
-    /// 编排（2026-10-28 Li 点头预览一致）：上滑留一截背景当 header → 继续上滑 header
-    /// 渐变为实色（浅色白 / 深色黑）→ 用户名触到 header 后按遮挡比例在 header 上淡入 →
-    /// 完全上滑后 header 实色 + 用户名完整显示。滚动回调里只改 alpha，不碰约束、
-    /// 不调 layoutIfNeeded、不做图片加载、不改文案；几何只在布局变化时算一次。
-    /// header 是 table 的兄弟视图（不进 table），全程不拦截触摸；modal 顶栏已自带
-    /// 名字时新 header 全程隐藏，避免遮挡返回 / 分享。
+    // MARK: - 个人页上滑 header（背景随之上滑、末段停住当 header + 用户名淡入）
+    /// 编排（2026-10-29 第 6 项，覆盖 #149 的 overlay 淡入做法——Li 明确说不是
+    /// 从中间剪开）：开始上滑时背景也随之上滑（与列表 1:1 一起走）→ 滑到只剩
+    /// header 距离后，最后那段背景停住当 header（带模糊的背景尾 + 用户名在上面）
+    /// → 用户名触到 header 后按遮挡比例在 header 上淡入。不许用实色 overlay
+    /// 淡入盖掉图片、不许中间裁切线。滚动回调里只改一条背景顶约束常量与 alpha，
+    /// 不调 layoutIfNeeded、不做图片加载、不改文案；几何只在布局变化时算一次
+    /// （背景自然顶存字段，滚动回调只读）。header 是 table 的兄弟视图
+    /// （不进 table），全程不拦截触摸；modal 顶栏已自带名字时新 header 全程
+    /// 隐藏，避免遮挡返回 / 分享。
     private let stickyHeaderView: UIView = {
         let viewValue = UIView()
         viewValue.translatesAutoresizingMaskIntoConstraints = false
@@ -799,15 +752,15 @@ class BearyProfileViewController: UIViewController {
         return imageViewValue
     }()
 
-    /// 渐变实色层：UIColor 动态色（浅色白 / 深色黑，随模式自动变），alpha 随上滑
-    /// 在 y 40→140 区间 0→1；分隔线 alpha 跟随它。
-    private let stickyHeaderOverlayView: UIView = {
-        let viewValue = UIView()
-        viewValue.translatesAutoresizingMaskIntoConstraints = false
-        viewValue.backgroundColor = BearyColors.bg
-        viewValue.alpha = 0
-        viewValue.isUserInteractionEnabled = false
-        return viewValue
+    /// 2026-10-29 第 6 项：header 停住段的模糊层（systemMaterial，alpha 随 pin
+    /// 进度 0→1；无封面时容器底色不透明、模糊不可见，仍露页面底色）。
+    /// （旧实色 overlay 已随本项整删：Li 否决“实色淡入盖图、中间剪开”。）
+    private let stickyHeaderBlurView: UIVisualEffectView = {
+        let blurValue = UIVisualEffectView(effect: UIBlurEffect(style: .systemMaterial))
+        blurValue.translatesAutoresizingMaskIntoConstraints = false
+        blurValue.isUserInteractionEnabled = false
+        blurValue.alpha = 0
+        return blurValue
     }()
 
     /// header 用户名：左对齐 17pt 粗体（与内容用户名同文案），alpha = 被 header
@@ -831,6 +784,9 @@ class BearyProfileViewController: UIViewController {
         viewValue.isUserInteractionEnabled = false
         return viewValue
     }()
+
+    /// 背景图自然顶（布局时存的 tableFrame.minY，滚动回调 1:1 跟踪的起点）。
+    private var stickyHeaderBgNaturalTop: CGFloat = 0
 
     private lazy var stickyHeaderHeightConstraint: NSLayoutConstraint = stickyHeaderView.heightAnchor.constraint(equalToConstant: 56)
     private lazy var stickyHeaderBgLeadingConstraint: NSLayoutConstraint = stickyHeaderBgImageView.leadingAnchor.constraint(equalTo: stickyHeaderView.leadingAnchor)
@@ -942,15 +898,6 @@ class BearyProfileViewController: UIViewController {
         // iCity：举报/拉黑广播——本页同步清掉对应条目（拉黑本页作者时离页由 onBlockedUser 容器接线）。
         NotificationCenter.default.addObserver(self, selector: #selector(handleReportedEntryNotification(_:)), name: .bearyDidReportEntry, object: nil)
         NotificationCenter.default.addObserver(self, selector: #selector(handleBlockedUserNotification(_:)), name: .bearyDidBlockUser, object: nil)
-        view.addSubview(profileSkeletonView)
-        let skeletonTop = profileSkeletonView.topAnchor.constraint(equalTo: tableView.topAnchor, constant: 0)
-        self.profileSkeletonTopConstraint = skeletonTop
-        NSLayoutConstraint.activate([
-            skeletonTop,
-            profileSkeletonView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
-            profileSkeletonView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-            profileSkeletonView.bottomAnchor.constraint(lessThanOrEqualTo: view.bottomAnchor),
-        ])
         if selfGate && viewerUserIdValue == nil {
             // U7：二选一取“只铺页脚”：不拉任何本人数据、不直接弹登录，
             // 弹登录交给页脚“去登录”按钮（loginButtonTapped → onRequireLogin）。
@@ -970,7 +917,6 @@ class BearyProfileViewController: UIViewController {
         super.viewDidLayoutSubviews()
         updateColumnLayout()
         layoutHeader()
-        updateProfileSkeletonTop()
         updateDynamicLayerColors()
         updateStickyHeaderLayout()
     }
@@ -1054,7 +1000,7 @@ class BearyProfileViewController: UIViewController {
     private func buildStickyHeader() {
         view.addSubview(stickyHeaderView)
         stickyHeaderView.addSubview(stickyHeaderBgImageView)
-        stickyHeaderView.addSubview(stickyHeaderOverlayView)
+        stickyHeaderView.addSubview(stickyHeaderBlurView)
         stickyHeaderView.addSubview(stickyHeaderNameLabel)
         stickyHeaderView.addSubview(stickyHeaderDividerView)
         NSLayoutConstraint.activate([
@@ -1066,10 +1012,10 @@ class BearyProfileViewController: UIViewController {
             stickyHeaderBgTopConstraint,
             stickyHeaderBgWidthConstraint,
             stickyHeaderBgImageView.heightAnchor.constraint(equalToConstant: 180),
-            stickyHeaderOverlayView.topAnchor.constraint(equalTo: stickyHeaderView.topAnchor),
-            stickyHeaderOverlayView.leadingAnchor.constraint(equalTo: stickyHeaderView.leadingAnchor),
-            stickyHeaderOverlayView.trailingAnchor.constraint(equalTo: stickyHeaderView.trailingAnchor),
-            stickyHeaderOverlayView.bottomAnchor.constraint(equalTo: stickyHeaderView.bottomAnchor),
+            stickyHeaderBlurView.topAnchor.constraint(equalTo: stickyHeaderView.topAnchor),
+            stickyHeaderBlurView.leadingAnchor.constraint(equalTo: stickyHeaderView.leadingAnchor),
+            stickyHeaderBlurView.trailingAnchor.constraint(equalTo: stickyHeaderView.trailingAnchor),
+            stickyHeaderBlurView.bottomAnchor.constraint(equalTo: stickyHeaderView.bottomAnchor),
             stickyHeaderNameLeadingConstraint,
             stickyHeaderNameCenterYConstraint,
             stickyHeaderNameLabel.trailingAnchor.constraint(lessThanOrEqualTo: stickyHeaderView.trailingAnchor, constant: -16),
@@ -1104,6 +1050,7 @@ class BearyProfileViewController: UIViewController {
         if stickyHeaderBgTopConstraint.constant != tableFrame.minY {
             stickyHeaderBgTopConstraint.constant = tableFrame.minY
         }
+        stickyHeaderBgNaturalTop = tableFrame.minY
         if stickyHeaderBgWidthConstraint.constant != tableFrame.width {
             stickyHeaderBgWidthConstraint.constant = tableFrame.width
         }
@@ -1135,10 +1082,11 @@ class BearyProfileViewController: UIViewController {
         }
     }
 
-    /// 上滑 header 滚动态：只改 alpha 与显隐（overlay、header 名、分隔线），
-    /// 不碰约束、不调 layoutIfNeeded、不做图片加载、不改文案；几何取布局时
-    /// 存好的 stickyHeaderBottom，不在滚动回调里重算。须在顶栏回弹区早退之前跑，
-    /// 否则下拉区（y≤0）header 藏不住。
+    /// 上滑 header 滚动态（2026-10-29 第 6 项）：背景随列表 1:1 上移、到 pin 点
+    /// 停住当 header；只改一条背景顶约束常量与 alpha（与弹性封面同款滚动回调
+    /// 改常量口径，不调 layoutIfNeeded、不做图片加载、不改文案）；几何取布局时
+    /// 存好的 stickyHeaderBottom / stickyHeaderBgNaturalTop，不在滚动回调里重算。
+    /// 须在顶栏回弹区早退之前跑，否则下拉区（y≤0）header 藏不住。
     private func updateStickyHeaderScroll(offsetY y: CGFloat, topBaseline: CGFloat) {
         guard !stickyHeaderModalDisabled else {
             stickyHeaderView.isHidden = true
@@ -1151,10 +1099,26 @@ class BearyProfileViewController: UIViewController {
             return
         }
         stickyHeaderView.isHidden = false
-        // 渐变实色：y 40→140 连续 0→1，不分档量化；分隔线 alpha 跟随。
-        let overlayAlpha = min(max((up - 40) / 100, 0), 1)
-        stickyHeaderOverlayView.alpha = overlayAlpha
-        stickyHeaderDividerView.alpha = overlayAlpha
+        // 2026-10-29 第 29 项：退场动画——header 整体 alpha 按上滑量占 header 高
+        // 的比例渐变（0→H：0→1），只走 opacity。回顶过程中按同一比例渐隐，
+        // 到顶时 alpha 已为 0，up≤0 的 isHidden 切换不可见，不再阈值瞬间没掉；
+        // 出现与退场同方向、同曲线（滚动驱动，无定时）。背景与下方封面像素
+        // 相同，淡出不重影。
+        stickyHeaderView.alpha = min(up / max(stickyHeaderBottom, 1), 1)
+        // 背景 1:1 上移：自然顶减上滑量；pin 点 = header 底边减图高 180（图底贴
+        // 住 header 底边时停住，之后即“带模糊的背景尾”当 header，不再上滑）。
+        let headerHeight = stickyHeaderBottom
+        let pinTop = headerHeight - 180
+        let bgTop = max(stickyHeaderBgNaturalTop - up, pinTop)
+        if stickyHeaderBgTopConstraint.constant != bgTop {
+            stickyHeaderBgTopConstraint.constant = bgTop
+        }
+        // pin 进度 0→1：模糊与分隔线跟它走（未 pin 时背景清晰、随行程渐糊，
+        // pin 住时全糊；无封面时容器底色不透明、模糊不可见）。
+        let travel = max(stickyHeaderBgNaturalTop - pinTop, 1)
+        let pinProgress = min(max((stickyHeaderBgNaturalTop - bgTop) / travel, 0), 1)
+        stickyHeaderBlurView.alpha = pinProgress
+        stickyHeaderDividerView.alpha = pinProgress
         // 用户名淡入：被 header 遮挡的比例（内容用户名换算到页坐标的 top，
         // header 底边减去它，除以名高，钳制 0…1；下滑对称恢复）。
         let nameTop = nameLabel.convert(nameLabel.bounds, to: view).origin.y
@@ -1218,6 +1182,10 @@ class BearyProfileViewController: UIViewController {
             coverBlurView.bottomAnchor.constraint(equalTo: coverImageView.bottomAnchor),
         ])
         headerView.addSubview(avatarImageView)
+        // 2026-10-29 第 15 项：查看热区——封面钮贴整幅封面、头像钮贴整张头像
+        // 且后加（头像重叠区点按走头像）；无图时处理函数内守卫、不 present。
+        headerView.addSubview(coverViewButton)
+        headerView.addSubview(avatarViewButton)
         headerView.addSubview(avatarLetterLabel)
         headerView.addSubview(avatarRetryButton)
         headerView.addSubview(editButton)
@@ -1269,9 +1237,17 @@ class BearyProfileViewController: UIViewController {
         nameTrailingConstraint?.isActive = true
         NSLayoutConstraint.activate([
             coverTopConstraint,
-            coverImageView.leadingAnchor.constraint(equalTo: headerView.leadingAnchor),
-            coverImageView.trailingAnchor.constraint(equalTo: headerView.trailingAnchor),
+            coverLeadingConstraint,
+            coverTrailingConstraint,
 
+            coverViewButton.topAnchor.constraint(equalTo: coverImageView.topAnchor),
+            coverViewButton.leadingAnchor.constraint(equalTo: coverImageView.leadingAnchor),
+            coverViewButton.trailingAnchor.constraint(equalTo: coverImageView.trailingAnchor),
+            coverViewButton.bottomAnchor.constraint(equalTo: coverImageView.bottomAnchor),
+            avatarViewButton.topAnchor.constraint(equalTo: avatarImageView.topAnchor),
+            avatarViewButton.leadingAnchor.constraint(equalTo: avatarImageView.leadingAnchor),
+            avatarViewButton.trailingAnchor.constraint(equalTo: avatarImageView.trailingAnchor),
+            avatarViewButton.bottomAnchor.constraint(equalTo: avatarImageView.bottomAnchor),
             avatarImageView.leadingAnchor.constraint(equalTo: headerView.leadingAnchor, constant: 28),
             avatarImageView.widthAnchor.constraint(equalToConstant: 84),
             avatarImageView.heightAnchor.constraint(equalToConstant: 84),
@@ -1841,6 +1817,7 @@ class BearyProfileViewController: UIViewController {
                     case .server: badgeErrorCategory = "server"
                     case .decoding: badgeErrorCategory = "decoding"
                     case .unauthorized: badgeErrorCategory = "unauthorized"
+                    case .authFailure: badgeErrorCategory = "authFailure"
                     case .notFound: badgeErrorCategory = "notFound"
                     case .cancelled: badgeErrorCategory = "cancelled"
                     }
@@ -2075,7 +2052,7 @@ class BearyProfileViewController: UIViewController {
         if tabLoading || tabLoadMore { return }
         if forceReload {
             if currentEntries.isEmpty {
-                showProfileSkeleton()
+                // 骨架屏已删：首屏无缓存时等数据到后直接显。
             }
             tabLoading = true
             tabError = false
@@ -2155,7 +2132,6 @@ class BearyProfileViewController: UIViewController {
             tabError = true
             tableView.reloadData()
         }
-        hideProfileSkeleton()
         refreshFooter()
         tableView.refreshControl?.endRefreshing()
         // 引用点按直接落点：首屏回包后消费挂起的单篇（成功与失败路径都消费；
@@ -2290,13 +2266,24 @@ class BearyProfileViewController: UIViewController {
                     cardCell.playWeatherLottie()
                 }
                 if UIAccessibility.isReduceMotionEnabled { return }
-                cell.contentView.backgroundColor = BearyColors.faint
+                // 审计 P2-18：定位高亮改 opacity 口径——背景色动画违背只走 transform/opacity；
+                // faint 底 overlay 淡出（alpha 1→0），动画结束自移除；复用时 overlay 随
+                // 动画结束自动消失，不污染新行（旧 backgroundColor 写法复用后会残留）。
+                let flash = UIView()
+                flash.backgroundColor = BearyColors.faint
+                flash.translatesAutoresizingMaskIntoConstraints = false
+                flash.isUserInteractionEnabled = false
+                cell.contentView.addSubview(flash)
+                NSLayoutConstraint.activate([
+                    flash.topAnchor.constraint(equalTo: cell.contentView.topAnchor),
+                    flash.leadingAnchor.constraint(equalTo: cell.contentView.leadingAnchor),
+                    flash.trailingAnchor.constraint(equalTo: cell.contentView.trailingAnchor),
+                    flash.bottomAnchor.constraint(equalTo: cell.contentView.bottomAnchor),
+                ])
                 UIView.animate(withDuration: 0.6, delay: 0.5, options: [], animations: {
-                    cell.contentView.backgroundColor = .clear
+                    flash.alpha = 0
                 }, completion: { _ in
-                    if row < self.diaryEntries.count, self.diaryEntries[row].id == entryId {
-                        cell.contentView.backgroundColor = .clear
-                    }
+                    flash.removeFromSuperview()
                 })
             }
         }
@@ -2826,6 +2813,12 @@ class BearyProfileViewController: UIViewController {
     private func handleCellLike(entry: Entry) {
         guard let entryId = entry.id, !entryId.isEmpty else { return }
         guard requireLoginForCellAction() else { return }
+        // 审计 P2-23：个人页点赞补有效态门控（卡片 profile 分支直通控制器，控制器是唯一门控位）。
+        guard BearyEphemeral.isEffectivelyPublic(entry) else {
+            syncVisibleCell(entry: entry)?.playLikeDenyShake()
+            BearyToast.show(in: view, message: "公开后才能互动", aboveFAB: false)
+            return
+        }
         guard !likeBusyIds.contains(entryId) else { return }
         likeBusyIds.insert(entryId)
         // 跟手批：不再立即 reload——立即 reload 会换掉刚播按下预览的 cell，预览当场消失；
@@ -2839,6 +2832,14 @@ class BearyProfileViewController: UIViewController {
             optimistic.likedByMe = true
             optimistic.likeCount = (entry.likeCount ?? 0) + 1
             // 方案一：先行同步显式不禁用，防重入只靠 likeBusyIds 守卫。
+            syncVisibleCell(entry: optimistic, interactionDisabled: false)
+        } else {
+            // 取消点赞双向即时（2026-10-29 定版）：可见行立即褪色、计数 -1；
+            // 按下预览（applyCellPreUnlike）与新模型渲染一致，不闪；
+            // 失败按原 entry 复原可见行（既有失败路径，原样沿用）。
+            var optimistic = entry
+            optimistic.likedByMe = false
+            optimistic.likeCount = max(0, (entry.likeCount ?? 0) - 1)
             syncVisibleCell(entry: optimistic, interactionDisabled: false)
         }
         BearyAPI.shared.toggleLike(id: entryId, liked: wantLiked) { [weak self] result in
@@ -2875,14 +2876,25 @@ class BearyProfileViewController: UIViewController {
         }
     }
 
-    /// iCity：个人主页卡片操作行双向切换钮——显式目标态（当前公开→改回私密，当前私密→公开），无确认框；
+    /// iCity：个人主页卡片操作行双向切换钮——显式目标态，无确认框；
     /// pubBusyIds 复用防重入；翻转后清掉该篇引用缓存（旧引用卡不按旧可见性渲染）。
+    /// 目标态按有效态算（2026-10-29 第 18 项根因修法，与详情页对齐；过期限时篇
+    /// stored 仍公开，旧口径会把“公开”点成“私密”）。
+    /// 即时反馈（2026-10-29 定版）：点按瞬间先按目标态同步可见行（图标与 pill
+    /// 立即变），回包成功对齐服务端值；失败回滚原态 + 拒绝动效。
     private func handleCellVisibilityToggle(entry: Entry) {
         guard let entryId = entry.id, !entryId.isEmpty else { return }
         guard entry.isMine == true else { return }
         guard !pubBusyIds.contains(entryId) else { return }
-        let target = entry.isPublic == true ? 0 : 1
+        let target = BearyEphemeral.isEffectivelyPublic(entry) ? 0 : 1
         pubBusyIds.insert(entryId)
+        var optimistic = entry
+        optimistic.isPublic = target == 1
+        optimistic.ephemeralUntil = nil
+        // 先行：目标态立即落地（可见行 + 页签模型同步改；成功路径再以服务端值对齐）。
+        updateEntryInAllTabs(entry: optimistic)
+        syncVisibleCell(entry: optimistic)?.refreshPublishRow()
+        BearySoundPlayer.play(.visibilityClick)
         BearyAPI.shared.setVisibility(id: entryId, published: target) { [weak self] result in
             DispatchQueue.main.async {
                 guard let strongSelf = self else { return }
@@ -2899,8 +2911,15 @@ class BearyProfileViewController: UIViewController {
                         BearyDiaryCardCell.quoteCache.removeValue(forKey: entryId)
                     }
                     strongSelf.syncVisibleCell(entry: updated)?.refreshPublishRow()
-                case .failure:
-                    BearyToast.show(in: strongSelf.view, message: "切换失败，请重试", aboveFAB: false)
+                case .failure(let err):
+                    // 回滚：原 entry 写回各页并同步可见行（页签模型先行时已改，需复原）。
+                    strongSelf.updateEntryInAllTabs(entry: entry)
+                    let message: String
+                    if case .server(let code) = err, code == "rate_limited" { message = "操作太频繁，请稍后再试" }
+                    else if case .http(let status, _) = err, status == 429 { message = "操作太频繁，请稍后再试" }
+                    else { message = "切换失败，请重试" }
+                    BearyToast.show(in: strongSelf.view, message: message, aboveFAB: false)
+                    strongSelf.syncVisibleCell(entry: entry)?.playPublishDenyShake()
                 }
             }
         }
@@ -2916,7 +2935,9 @@ class BearyProfileViewController: UIViewController {
     }
 
     @objc private func topMoreButtonTapped() {
-        guard isOwnProfile == false, let targetUserId = targetUserIdValue else { return }
+        // 审计 P1-10：handle 直达时 targetUserIdValue 为 nil，更多菜单全死——
+        // 改与 2040 行同口径：已加载的 profile id 优先，次取直达 id。
+        guard isOwnProfile == false, let targetUserId = profile?.profileIdValue ?? targetUserIdValue else { return }
         let sheet = UIAlertController(title: nil, message: nil, preferredStyle: .actionSheet)
         if let target = reportTargetEntry, let targetId = target.id {
             sheet.addAction(UIAlertAction(title: "举报", style: .default) { [weak self] _ in
@@ -2976,6 +2997,12 @@ class BearyProfileViewController: UIViewController {
     private func handleCellBookmark(entry: Entry) {
         guard let entryId = entry.id, !entryId.isEmpty else { return }
         guard requireLoginForCellAction() else { return }
+        // 审计 P2-23：个人页收藏补有效态门控（与点赞同理，控制器是唯一门控位）。
+        guard BearyEphemeral.isEffectivelyPublic(entry) else {
+            syncVisibleCell(entry: entry)?.playBookmarkDenyShake()
+            BearyToast.show(in: view, message: "公开后才能互动", aboveFAB: false)
+            return
+        }
         guard !bookmarkBusyIds.contains(entryId) else { return }
         bookmarkBusyIds.insert(entryId)
         // 跟手批：先行翻转 + 就地同步（图标切换不等服务端，Feed 同款口径）；
@@ -2987,6 +3014,7 @@ class BearyProfileViewController: UIViewController {
         updateEntryInAllTabs(entry: optimistic)
         // 方案一：先行同步显式不禁用，防重入只靠 bookmarkBusyIds 守卫。
         syncVisibleCell(entry: optimistic, interactionDisabled: false)?.playBookmarkPop()
+        if wantBookmarked { BearySoundPlayer.play(.bookmarkTick) } else { BearySoundPlayer.play(.unlikeSoft) }
         BearyAPI.shared.toggleBookmark(id: entryId) { [weak self] result in
             DispatchQueue.main.async {
                 guard let strongSelf = self else { return }
@@ -3026,7 +3054,8 @@ class BearyProfileViewController: UIViewController {
 
     private func handleCellShare(entry: Entry) {
         guard let entryId = entry.id, !entryId.isEmpty else { return }
-        guard entry.isPublic == true else { return }
+        // 审计 P0-4：有效态门控（过期限时篇不放行分享/回应）。
+        guard BearyEphemeral.isEffectivelyPublic(entry) else { return }
         guard let shareURL = URL(string: "https://teddyhn.com/beary/d/\(entryId)") else { return }
         var items: [Any] = []
         if let content = entry.content, !content.isEmpty {
@@ -3044,7 +3073,8 @@ class BearyProfileViewController: UIViewController {
 
     private func handleCellEmoteAdd(entry: Entry) {
         guard requireLoginForCellAction() else { return }
-        guard entry.isPublic == true else { return }
+        // 审计 P0-4：有效态门控（过期限时篇不放行分享/回应）。
+        guard BearyEphemeral.isEffectivelyPublic(entry) else { return }
         let sheet = BearyEmotePickerSheetViewController()
         sheet.modalPresentationStyle = .overFullScreen
         sheet.onPick = { [weak self] pickedKey in
@@ -3061,7 +3091,8 @@ class BearyProfileViewController: UIViewController {
     private func handleCellEmote(entry: Entry, key: String) {
         guard let entryId = entry.id, !entryId.isEmpty, !key.isEmpty else { return }
         guard requireLoginForCellAction() else { return }
-        guard entry.isPublic == true else { return }
+        // 审计 P0-4：有效态门控（过期限时篇不放行分享/回应）。
+        guard BearyEphemeral.isEffectivelyPublic(entry) else { return }
         guard !emoteBusyIds.contains(entryId) else { return }
         emoteBusyIds.insert(entryId)
         let mine = (entry.emotes ?? []).contains(where: { ($0.emote ?? "") == key && ($0.mine ?? false) })
@@ -3202,7 +3233,7 @@ class BearyProfileViewController: UIViewController {
                         if viewerIsAuthor || fetched.isPublic == true {
                             strongSelf.onOpenEntry?(fetched)
                         } else {
-                            strongSelf.presentSimpleAlert(message: "该日记未公开")
+                            strongSelf.presentSimpleAlert(message: "该日记已设为私密")
                         }
                     case .failure:
                         strongSelf.presentSimpleAlert(message: "引用的日记已删除")
@@ -3336,9 +3367,10 @@ extension BearyProfileViewController: UITableViewDataSource, UITableViewDelegate
     /// scrollViewDidScroll 由主表滚动触发；横滑墙（wall/badges）未设 delegate，
     /// 即便触发也被 `=== tableView` 守卫挡下。
     /// 弹性封面：下拉超滚时封面顶边上伸、底边不动（高度 = 180 + 下拉量），
-    /// 宽度仍满头宽、aspectFill 等比铺满，任何下拉量下顶部都不露白；
-    /// 模糊层 alpha = 下拉量 / 120，上限 1，回弹时随拉量同步淡出。
-    /// 只改两条约束常量与模糊层 alpha（尺寸/透明度），不碰其他属性。
+    /// 2026-10-29 第 5 项：左右同步外扩（各扩拉量一半，aspectFill 等比铺满 =
+    /// 双向放大，不只纵向拉伸），任何下拉量下顶部都不露白；
+    /// 模糊层 alpha = 下拉量 / 120，上限 0.85（强一档），回弹时随拉量同步淡出。
+    /// 只改约束常量与模糊层 alpha（尺寸/透明度），不碰其他属性。
     /// 基线取 -contentInset.top（与顶栏判定同口径，收起态为 0 时即 y < 0）。
     private func updateCoverStretch(offsetY y: CGFloat, topBaseline: CGFloat) {
         let pull = topBaseline - y
@@ -3348,20 +3380,38 @@ extension BearyProfileViewController: UITableViewDataSource, UITableViewDelegate
         }
         coverTopConstraint.constant = -pull
         coverHeightConstraint.constant = 180 + pull
-        // 微模糊：ramp 仍按 pull/120，上限从 1.0 降到 0.5（到顶也只有半透薄雾）。
-        setCoverBlurAlpha(min(pull / 120, 0.5))
+        coverLeadingConstraint.constant = -pull / 2
+        coverTrailingConstraint.constant = pull / 2
+        setCoverBlurAlpha(min(pull / 120, 0.85))
     }
 
-    /// 弹性封面复位（自然态：顶 0、高 180/0、无模糊）。
+    /// 弹性封面复位（自然态：顶 0、高 180/0、左右贴边、无模糊）。
     private func resetCoverStretch() {
         coverTopConstraint.constant = 0
         coverHeightConstraint.constant = coverImageView.isHidden ? 0 : 180
+        coverLeadingConstraint.constant = 0
+        coverTrailingConstraint.constant = 0
         setCoverBlurAlpha(0)
     }
 
     private func setCoverBlurAlpha(_ alpha: CGFloat) {
         coverBlurView.alpha = alpha
         coverBlurView.isHidden = (alpha == 0)
+    }
+
+    /// 2026-10-29 第 15 项：点头像 / 点封面弹出大图查看（复用现有灯箱本地图
+    /// 模式，纯查看、无编辑入口；自己与他人个人页同走 buildHeader，故双面生效）。
+    /// 无图（字母头像占位 / 无封面）时不 present。
+    @objc private func avatarViewTapped() {
+        guard let image = avatarImageView.image else { return }
+        let viewer = BearyEntryImageViewerViewController(images: [image], startIndex: 0)
+        present(viewer, animated: BearyMotion.animated(true), completion: nil)
+    }
+
+    @objc private func coverViewTapped() {
+        guard !coverImageView.isHidden, let image = coverImageView.image else { return }
+        let viewer = BearyEntryImageViewerViewController(images: [image], startIndex: 0)
+        present(viewer, animated: BearyMotion.animated(true), completion: nil)
     }
 
     func scrollViewDidScroll(_ scrollView: UIScrollView) {

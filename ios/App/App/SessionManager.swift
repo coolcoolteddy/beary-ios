@@ -118,9 +118,20 @@ final class SessionManager {
                     self.authUnknown = true
                     self.notifyNetworkUnstable()
                 case .unauthorized:
-                    // fetchMe 已把 401 映射为 success(nil)，此处理论上到不了；
+                    // fetchMe 已把无 reason 的 401 映射为 success(nil)，此处理论上到不了；
                     // 万一到达，按已证实的游客处理并清未知标记。
                     self.authUnknown = false
+                case .authFailure:
+                    // 审计 P1-7：封禁/踢下线/过期——与 success(nil) 同口径清用户态
+                    // （id 变化即代际推进，防在途旧请求 401 回调误踢新号），
+                    // 原因与文案经 completion 透传给容器分流提示（见 SceneDelegate 冷启动处）。
+                    self.authUnknown = false
+                    if previousUserId != nil {
+                        self.sessionGeneration += 1
+                        self.api.bumpAuthEpoch()
+                    }
+                    self.currentUser = nil
+                    self.notifyUserChanged(nil)
                 case .cancelled:
                     break
                 case .http(let status, _):
@@ -150,8 +161,15 @@ final class SessionManager {
     /// 显式退出：服务端会话已清后调（登出接口成功后），清本地用户态并通知界面。
     /// 同步递增 meSeq：在途旧 /me 成功回包到达时 seq 已变、被守卫丢弃，
     /// 不得把旧用户写回（登录/切号路径本就靠 refreshMe 调用递增，不动）。
+    /// 审计 P2-22：退出/注销时清该账号服务端派生落盘（日记缓存、回收站缓存、
+    /// 图片缓存）；草稿桶刻意保留——草稿是用户未发布的本地作品，退出即删
+    /// 属丢数据，且草稿按账号分桶、换号不可见，留存情况在设置页账号操作卡下明示。
     func signOutLocally() {
         purgeImageCacheForCurrentAccount()
+        if let id = currentUser?.id {
+            BearyEntrySyncStore.purgeAccount(accountId: id)
+            BearyTrashSyncStore.purgeAccount(accountId: id)
+        }
         sessionGeneration += 1
         meSeq += 1
         api.bumpAuthEpoch()

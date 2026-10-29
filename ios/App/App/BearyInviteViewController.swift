@@ -7,7 +7,7 @@ import UIKit
 // 内容口径与网页一致：
 //   - 标题“邀请好友”+ 副标题“好友注册时填你的邀请码，成功后你们各得 1 个月 Plus”；
 //   - 邀请码展示 + “复制”钮（复制后 1.6 秒内显示“已复制”，与网页 ivCopied 同口径）；
-//   - 提示“触发风控时需站长审核后发放”；
+//   - （2026-10-29 第 4 项：风控提示行已删，零残留；风控逻辑本身不动。）
 //   - 统计“已邀请 N 人 · 累计获得 M 个月 Plus”（accounts /me 的 referral
 //     invited_count / reward_months，只数 granted/pending/granting/flagged）；
 //   - 绑定区三态：已绑定 → “已通过 X 的邀请加入 beary”（status 为 cancelled/expired
@@ -44,7 +44,6 @@ final class BearyInviteViewController: UIViewController {
     private let codeBox = UIView()
     private let codeLabel = UILabel()
     private let copyButton = UIButton(type: .system)
-    private let hintLabel = UILabel()
     private let statsLabel = UILabel()
     private let boundLabel = UILabel()
     // 绑定行：16pt 绿圆圈勾 + 文字，gap 7（网页 .iv-bound 口径）；显隐由行容器控制。
@@ -176,7 +175,7 @@ final class BearyInviteViewController: UIViewController {
         titleLabel.textColor = BearyColors.ink
 
         subtitleLabel.translatesAutoresizingMaskIntoConstraints = false
-        subtitleLabel.text = "好友注册时填你的邀请码，成功后你们各得 1 个月 Plus"
+        subtitleLabel.text = "好友注册时填你的邀请码，成功后你们各得 30 天 Plus"
         subtitleLabel.font = UIFont.systemFont(ofSize: 14)
         subtitleLabel.textColor = BearyColors.gray
         subtitleLabel.numberOfLines = 0
@@ -200,12 +199,6 @@ final class BearyInviteViewController: UIViewController {
         copyButton.bearyAddPressFeedback()
         codeBox.addSubview(codeLabel)
         codeBox.addSubview(copyButton)
-
-        hintLabel.translatesAutoresizingMaskIntoConstraints = false
-        hintLabel.text = "触发风控时需站长审核后发放"
-        hintLabel.font = UIFont.systemFont(ofSize: 13)
-        hintLabel.textColor = BearyColors.gray
-        hintLabel.numberOfLines = 0
 
         statsLabel.translatesAutoresizingMaskIntoConstraints = false
         // U6：加载中不再先显示“已邀请 0 人”假零值，拿到数据后 render() 再写数字。
@@ -283,7 +276,6 @@ final class BearyInviteViewController: UIViewController {
         stackView.addArrangedSubview(titleLabel)
         stackView.addArrangedSubview(subtitleLabel)
         stackView.addArrangedSubview(codeBox)
-        stackView.addArrangedSubview(hintLabel)
         stackView.addArrangedSubview(statsLabel)
         stackView.addArrangedSubview(boundRow)
         stackView.addArrangedSubview(bindRow)
@@ -294,7 +286,6 @@ final class BearyInviteViewController: UIViewController {
         stackView.setCustomSpacing(5, after: titleLabel)
         stackView.setCustomSpacing(20, after: subtitleLabel)
         stackView.setCustomSpacing(10, after: codeBox)
-        stackView.setCustomSpacing(14, after: hintLabel)
         stackView.setCustomSpacing(16, after: statsLabel)
         stackView.setCustomSpacing(8, after: boundRow)
         stackView.setCustomSpacing(8, after: bindRow)
@@ -439,7 +430,7 @@ final class BearyInviteViewController: UIViewController {
         if let ref = referral {
             let invited = ref.invitedCount ?? 0
             let months = ref.rewardMonths ?? 0
-            statsLabel.text = "已邀请 \(invited) 人 · 累计获得 \(months) 个月 Plus"
+            statsLabel.text = "已邀请 \(invited) 人 · 累计获得 \(months * 30) 天 Plus"
         } else {
             statsLabel.text = "加载中…"
         }
@@ -448,13 +439,22 @@ final class BearyInviteViewController: UIViewController {
         bindHintLabel.isHidden = true
         if referral?.bound == true {
             let status = referral?.status ?? ""
+            let inviterName = referral?.inviterName ?? "好友"
             if status == "cancelled" || status == "expired" {
                 boundLabel.text = "邀请已作废"
                 // 审计 P2：作废态不写死绿勾，图标隐藏。
                 boundCheckIcon.isHidden = true
-            } else {
-                boundLabel.text = "已通过 \(referral?.inviterName ?? "好友") 的邀请加入 beary"
+            } else if status == "granted" {
+                boundLabel.text = "已通过 \(inviterName) 的邀请加入 beary"
                 boundCheckIcon.isHidden = false
+            } else if status == "flagged" || status == "granting" {
+                // 补缺 P3-32：pending/flagged/granting 不再一律“已通过”；绿勾只属 granted。
+                boundLabel.text = "待发放 · \(inviterName) 的邀请"
+                boundCheckIcon.isHidden = true
+            } else {
+                // pending 与未知态保守显“待审核”，不谎称已通过。
+                boundLabel.text = "待审核 · \(inviterName) 的邀请"
+                boundCheckIcon.isHidden = true
             }
             boundRow.isHidden = false
         } else if let ref = referral, ref.bindOpen == true {
@@ -587,9 +587,9 @@ final class BearyInviteViewController: UIViewController {
                     } else {
                         let okText: String
                         if resp.status == "granted" {
-                            okText = "绑定成功，1 个月 Plus 已到账"
+                            okText = "绑定成功，30 天 Plus 已到账"
                         } else if resp.status == "flagged" {
-                            okText = "绑定已提交，站长审核通过后，你们各得 1 个月 Plus"
+                            okText = "绑定已提交，站长审核通过后，你们各得 30 天 Plus"
                         } else {
                             okText = "绑定成功"
                         }

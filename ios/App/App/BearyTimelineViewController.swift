@@ -751,20 +751,8 @@ final class BearyTimelineCell: UITableViewCell {
         l.isHidden = true
         return l
     }()
-    /// 限时倒计时行图标（14pt 模板灰，仅存活期随倒计时行一起出现；已过期按普通私密，不画图标）。
-    private let ephemeralIconView: UIImageView = {
-        let v = UIImageView(image: BearyIconImages.image(named: "icon_limited", pointSize: 14))
-        v.translatesAutoresizingMaskIntoConstraints = false
-        v.tintColor = BearyColors.gray
-        v.contentMode = .scaleAspectFit
-        NSLayoutConstraint.activate([
-            v.widthAnchor.constraint(equalToConstant: 14),
-            v.heightAnchor.constraint(equalToConstant: 14),
-        ])
-        return v
-    }()
     private lazy var ephemeralRow: UIStackView = {
-        let st = UIStackView(arrangedSubviews: [ephemeralIconView, ephemeralLabel])
+        let st = UIStackView(arrangedSubviews: [ephemeralLabel])
         st.translatesAutoresizingMaskIntoConstraints = false
         st.axis = .horizontal
         st.spacing = 3
@@ -798,6 +786,18 @@ final class BearyTimelineCell: UITableViewCell {
     private var metaMoodRow: UIView?
     private let recipientLabel = UILabel()
     private let contentLabel = UILabel()
+    /// 审计 P2-12：时间线补标题行（卡片同款 16.5 粗体、单行截断，空标题不占位）。
+    private let titleLabel: UILabel = {
+        let lb = UILabel()
+        lb.translatesAutoresizingMaskIntoConstraints = false
+        lb.font = BearyDynamicType.cardTitleFont()
+        lb.adjustsFontForContentSizeCategory = true
+        lb.textColor = BearyColors.ink
+        lb.numberOfLines = 1
+        lb.lineBreakMode = .byTruncatingTail
+        lb.isHidden = true
+        return lb
+    }()
     private let thumbsScrollView = UIScrollView()
     private let thumbsStack = UIStackView()
     private let footStack = UIStackView()
@@ -1102,11 +1102,12 @@ final class BearyTimelineCell: UITableViewCell {
             deleteButton.heightAnchor.constraint(equalToConstant: 28),
         ])
 
-        let cardStack = UIStackView(arrangedSubviews: [metaStack, contentLabel, quoteButton, thumbsScrollView, footStack, actsStack])
+        let cardStack = UIStackView(arrangedSubviews: [metaStack, titleLabel, contentLabel, quoteButton, thumbsScrollView, footStack, actsStack])
         cardStack.translatesAutoresizingMaskIntoConstraints = false
         cardStack.axis = .vertical
         cardStack.spacing = 0
         cardStack.setCustomSpacing(6, after: metaStack)
+        cardStack.setCustomSpacing(4, after: titleLabel)
         cardStack.setCustomSpacing(9, after: contentLabel)
         cardStack.setCustomSpacing(10, after: quoteButton)
         cardStack.setCustomSpacing(9, after: thumbsScrollView)
@@ -1301,6 +1302,8 @@ final class BearyTimelineCell: UITableViewCell {
         editTextButton.isHidden = true
         setTimelineLineEdges(isFirstInDay: true, isLastInDay: true)
         currentEntry = nil
+        titleLabel.text = nil
+        titleLabel.isHidden = true
         cardView.backgroundColor = BearyColors.bg
         quoteButton.isHidden = true
         quoteBodyLabel.isHidden = false
@@ -1478,6 +1481,10 @@ final class BearyTimelineCell: UITableViewCell {
         paragraph.lineHeightMultiple = 1.75
         paragraph.lineBreakMode = .byCharWrapping
         let body = entry.content ?? ""
+        // 审计 P2-12：标题行（卡片同款，空标题不占位；stack 里隐藏行不占高）。
+        let trimmedTitle = (entry.title ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        titleLabel.text = trimmedTitle.isEmpty ? nil : trimmedTitle
+        titleLabel.isHidden = trimmedTitle.isEmpty
         contentLabel.attributedText = NSAttributedString(string: body, attributes: [
             .font: BearyDynamicType.diaryBodyFont(),
             .foregroundColor: BearyColors.ink,
@@ -1514,7 +1521,7 @@ final class BearyTimelineCell: UITableViewCell {
                 quoteButton.isEnabled = false
                 quoteButton.isHidden = false
             } else if quote.locked == true {
-                quoteTitleLabel.text = "该日记未公开"
+                quoteTitleLabel.text = "该日记已设为私密"
                 quoteIconView.image = BearyIconImages.image(named: "icon_lock", pointSize: 12)
                 quoteBodyLabel.isHidden = true
                 quoteButton.isEnabled = false
@@ -1524,7 +1531,7 @@ final class BearyTimelineCell: UITableViewCell {
                     quoteTitleLabel.text = "引用的日记已删除"
                     quoteIconView.image = BearyIconImages.image(named: "icon_quote", pointSize: 12)
                 } else {
-                    quoteTitleLabel.text = "该日记未公开"
+                    quoteTitleLabel.text = "该日记已设为私密"
                     quoteIconView.image = BearyIconImages.image(named: "icon_lock", pointSize: 12)
                 }
                 quoteBodyLabel.isHidden = true
@@ -1534,7 +1541,7 @@ final class BearyTimelineCell: UITableViewCell {
                 // iCity viewer 实时判定：被引篇非公开且 viewer 不是被引作者时，
                 // 即使服务端透传了正文也以占位替代，绝不泄漏正文与图片
                 //（旧口径以宿主是否本人为代理，已作废；Quote 现有 authorId/isMine 字段）。
-                quoteTitleLabel.text = "该日记未公开"
+                quoteTitleLabel.text = "该日记已设为私密"
                 quoteIconView.image = BearyIconImages.image(named: "icon_lock", pointSize: 12)
                 quoteBodyLabel.isHidden = true
                 quoteButton.isEnabled = false
@@ -1608,8 +1615,18 @@ final class BearyTimelineCell: UITableViewCell {
                 imageView.heightAnchor.constraint(equalToConstant: 216),
             ])
             thumbImageViews.append(imageView)
+            // 审计 P2-14：主图条补广场同款失败重试钮（居中 28pt 圆盘，失败时亮；
+            // 复用时 imageView 连同重试钮一并移除，无残留）。
+            let thumbRetry = bearyFeedRetryButton(target: self, action: #selector(timelineThumbRetryTapped(_:)))
+            imageView.addSubview(thumbRetry)
+            NSLayoutConstraint.activate([
+                thumbRetry.centerXAnchor.constraint(equalTo: imageView.centerXAnchor),
+                thumbRetry.centerYAnchor.constraint(equalTo: imageView.centerYAnchor),
+                thumbRetry.widthAnchor.constraint(equalToConstant: 28),
+                thumbRetry.heightAnchor.constraint(equalToConstant: 28),
+            ])
             if let url = BearyImageURLs.imageURL(key: key, thumb: true) {
-                imageView.bearySetImage(url: url, downsampleToWidth: strip * UIScreen.main.scale)
+                bearyFeedLoadImage(into: imageView, url: url, retryButton: thumbRetry, downsampleToWidth: strip * UIScreen.main.scale)
             }
         }
         footStack.isHidden = true
@@ -1674,6 +1691,11 @@ final class BearyTimelineCell: UITableViewCell {
     /// N7 主图条点按：下标取自 imageView.tag，keys 从 currentEntry 按
     /// configure 同一过滤口径（去空）重算；复用后手势随旧 imageView 一并移除，
     /// configure 重建时重新挂接，不留跨条目残留回调。
+    /// 审计 P2-14：主图条重试（广场同款 bearyFeedPerformRetry）。
+    @objc private func timelineThumbRetryTapped(_ sender: BearyFeedRetryButton) {
+        bearyFeedPerformRetry(sender)
+    }
+
     @objc private func didTapThumb(_ sender: UITapGestureRecognizer) {
         guard let entry = currentEntry else { return }
         let keys = (entry.images ?? []).filter { !$0.isEmpty }
@@ -1751,6 +1773,20 @@ final class BearyTimelineCell: UITableViewCell {
         onPublishEntry?(entry)
     }
 
+    /// 可见性切换失败的拒绝动效：globe 钮摇头 + warning 震动（与卡片
+    /// playDenyShake 同口径：减动效只跳视觉抖动，震动照常给）。
+    func playPublishDenyShake() {
+        BearyHaptics.rejectionWarning()
+        BearySoundPlayer.play(.refuseBonk)
+        if UIAccessibility.isReduceMotionEnabled { return }
+        publishButton.layer.removeAnimation(forKey: "bearyDenyShake")
+        let shake = CAKeyframeAnimation(keyPath: "transform.translation.x")
+        shake.values = [0, -8, 8, -5, 5, 0]
+        shake.keyTimes = [0, 0.2, 0.4, 0.6, 0.8, 1]
+        shake.duration = 0.4
+        publishButton.layer.add(shake, forKey: "bearyDenyShake")
+    }
+
     /// F2 引用缩略图清理（复用与重配时先清，避免旧图残留）。
     private func clearQuoteThumbs() {
         for imageView in quoteThumbImageViews {
@@ -1793,11 +1829,12 @@ final class BearyTimelineCell: UITableViewCell {
         f.dateFormat = "HH:mm"
         return f
     }()
+    // 补缺 P3-29：引用日期全站统一 F3 口径 M月d日 H:mm（卡片/详情引用卡已用该口径；原 M 月 d 日无时间且带空格）。
     private static let timelineQuoteDateFormatter: DateFormatter = {
         let f = DateFormatter()
         f.locale = Locale(identifier: "zh_CN")
         f.timeZone = TimeZone(secondsFromGMT: 8 * 3600)
-        f.dateFormat = "M 月 d 日"
+        f.dateFormat = "M月d日 H:mm"
         return f
     }()
 
@@ -2098,6 +2135,9 @@ class BearyTimelineViewController: UIViewController {
         loadMoreButton.setTitleColor(BearyColors.gray, for: .normal)
         loadMoreButton.addTarget(self, action: #selector(didTapFooter), for: .touchUpInside)
         loadMoreButton.bearyAddPressHaptic()
+        // 审计 P2-20：时间线监听拉黑/举报即时清行并清 quoteCache。
+        NotificationCenter.default.addObserver(self, selector: #selector(handleBlockedUserNotification(_:)), name: .bearyDidBlockUser, object: nil)
+        NotificationCenter.default.addObserver(self, selector: #selector(handleReportedEntryNotification(_:)), name: .bearyDidReportEntry, object: nil)
         footerSpinner.color = BearyColors.gray
         // G15 toast 已委托 B 批统一 BearyToast（见 showTimelineToast），
         // 此处不再建常驻 toast 容器。
@@ -2192,6 +2232,46 @@ class BearyTimelineViewController: UIViewController {
     deinit {
         countdownTimer?.invalidate()
         jumpNoteTimer?.invalidate()
+        NotificationCenter.default.removeObserver(self, name: .bearyDidBlockUser, object: nil)
+        NotificationCenter.default.removeObserver(self, name: .bearyDidReportEntry, object: nil)
+    }
+
+    /// 审计 P2-20：拉黑/举报广播到后即时清行——内存三处（timelineEntries/dayEntries/
+    /// dayEntriesCache）与落盘同清（不进回收站：这只是隐藏，不是删除），引用缓存同清。
+    @objc private func handleBlockedUserNotification(_ note: Notification) {
+        guard let userId = note.object as? Int else { return }
+        var removedIds: [String] = []
+        for list in dayEntriesCache.values {
+            for e in list where e.authorId == userId {
+                if let id = e.id { removedIds.append(id) }
+            }
+        }
+        for e in timelineEntries where e.authorId == userId {
+            if let id = e.id, !removedIds.contains(id) { removedIds.append(id) }
+        }
+        guard !removedIds.isEmpty else { return }
+        for id in removedIds { purgeTimelineEntry(entryId: id) }
+        tableView.reloadData()
+    }
+
+    @objc private func handleReportedEntryNotification(_ note: Notification) {
+        guard let entryId = note.object as? String, !entryId.isEmpty else { return }
+        purgeTimelineEntry(entryId: entryId)
+        BearyDiaryCardCell.quoteCache.removeValue(forKey: entryId)
+        tableView.reloadData()
+    }
+
+    private func purgeTimelineEntry(entryId: String) {
+        timelineEntries.removeAll { $0.id == entryId }
+        dayEntries.removeAll { $0.id == entryId }
+        for key in dayEntriesCache.keys {
+            dayEntriesCache[key]?.removeAll { $0.id == entryId }
+        }
+        if let uid = SessionManager.shared.currentUser?.id {
+            BearyEntrySync.shared.runDiaryDiskWrite {
+                BearyEntrySyncStore.removeEntry(accountId: uid, entryId: entryId)
+            }
+        }
     }
 
     // MARK: - 对外入口（容器在 tab 切入/重进时调用）
@@ -4613,14 +4693,28 @@ class BearyTimelineViewController: UIViewController {
         onOpenTrash?()
     }
 
-    /// iCity：操作行双向切换钮——显式目标态（当前公开→改回私密，当前私密→公开），
-    /// 无确认框；publishBusyIds 复用防重入；成功先就地同步缓存（timeline/day/
-    /// 日缓存/落盘 + 引用缓存清理），再整页重拉以服务端为准；失败只 toast。
+    /// iCity：操作行双向切换钮——显式目标态，无确认框；
+    /// publishBusyIds 复用防重入；成功先就地同步缓存（timeline/day/
+    /// 日缓存/落盘 + 引用缓存清理），再整页重拉以服务端为准。
+    /// 目标态按有效态算（2026-10-29 第 18 项根因修法，与详情页对齐；过期限时篇
+    /// stored 仍公开，旧口径会把“公开”点成“私密”）。
+    /// 即时反馈（2026-10-29 定版）：点按瞬间先按目标态就地同步并只刷可见行
+    /// （图标立即变，不整页重拉、不重播动效），回包成功再整页对齐；
+    /// 失败回滚原态 + 拒绝动效。
     private func handlePublishEntry(_ entry: Entry) {
         guard let entryId = entry.id, !entryId.isEmpty else { return }
+        // 审计 P2-23：公开钮是作者动作——非作者不执行（时间线本只列本人日记，此为纵深门控）。
+        let viewerId = SessionManager.shared.currentUser?.id
+        guard entry.isMine == true || (entry.authorId != nil && viewerId != nil && entry.authorId == viewerId) else { return }
         if publishBusyIds.contains(entryId) { return }
-        let target = entry.isPublic == true ? 0 : 1
+        let target = BearyEphemeral.isEffectivelyPublic(entry) ? 0 : 1
+        let originalPublic = entry.isPublic ?? false
+        let originalPublishedAt = entry.publishedAt
         publishBusyIds.insert(entryId)
+        // 先行：目标态立即落地（模型 + 可见行，不整页重拉）。
+        applyVisibilityLocally(entryId: entryId, isPublic: target == 1, publishedAt: nil)
+        BearySoundPlayer.play(.visibilityClick)
+        reloadVisibleTimelineRow(entryId: entryId)
         BearyAPI.shared.setVisibility(id: entryId, published: target) { [weak self] result in
             DispatchQueue.main.async {
                 guard let strongSelf = self else { return }
@@ -4630,10 +4724,43 @@ class BearyTimelineViewController: UIViewController {
                     let isPublic = resp.published.map { $0 == 1 } ?? (target == 1)
                     strongSelf.applyVisibilityLocally(entryId: entryId, isPublic: isPublic, publishedAt: resp.publishedAt)
                     strongSelf.refreshAfterDetailChange()
-                case .failure:
-                    strongSelf.showTimelineToast(message: "切换失败，请重试")
+                case .failure(let err):
+                    strongSelf.applyVisibilityLocally(entryId: entryId, isPublic: originalPublic, publishedAt: originalPublishedAt)
+                    strongSelf.reloadVisibleTimelineRow(entryId: entryId)
+                    let message: String
+                    if case .server(let code) = err, code == "rate_limited" { message = "操作太频繁，请稍后再试" }
+                    else if case .http(let status, _) = err, status == 429 { message = "操作太频繁，请稍后再试" }
+                    else { message = "切换失败，请重试" }
+                    strongSelf.showTimelineToast(message: message)
+                    strongSelf.shakeVisibleTimelinePublishButton(entryId: entryId)
                 }
             }
+        }
+    }
+
+    /// 可见行单行重刷（.none，不播行动画、不重播已有元素动效）：按 currentSections
+    /// 定位该篇所在组行，仅行在视野内时刷。
+    private func reloadVisibleTimelineRow(entryId: String) {
+        let sections = currentSections()
+        for (sectionIndex, section) in sections.enumerated() {
+            guard let row = section.entries.firstIndex(where: { $0.id == entryId }) else { continue }
+            let path = IndexPath(row: row, section: sectionIndex)
+            if tableView.indexPathsForVisibleRows?.contains(path) == true {
+                tableView.reloadRows(at: [path], with: .none)
+            }
+            return
+        }
+    }
+
+    /// 可见行 globe 钮拒绝动效：摇头 + warning 震动（与卡片 playDenyShake 同口径）。
+    private func shakeVisibleTimelinePublishButton(entryId: String) {
+        let sections = currentSections()
+        for (sectionIndex, section) in sections.enumerated() {
+            guard let row = section.entries.firstIndex(where: { $0.id == entryId }) else { continue }
+            let path = IndexPath(row: row, section: sectionIndex)
+            guard let cell = tableView.cellForRow(at: path) as? BearyTimelineCell else { return }
+            cell.playPublishDenyShake()
+            return
         }
     }
 
@@ -4846,6 +4973,8 @@ extension BearyTimelineViewController: UITableViewDataSource, UITableViewDelegat
             self?.onEditEntry?(entry)
             completion(true)
         }
+        // 补缺 P3-30：左滑编辑钮底色显式设墨色（原未指定，随系统默认）。
+        edit.backgroundColor = BearyColors.ink
         return UISwipeActionsConfiguration(actions: [edit])
     }
 

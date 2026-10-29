@@ -53,9 +53,16 @@ final class BearyDraftBoxViewController: UIViewController {
     /// DF-2：箱内删掉正在写的那篇时通知编辑器（编辑器侧清 draftId、换新 req，
     /// 即网页 deleteDraft 里 edDraftId=null 的等价动作）。容器接线由总协调收尾。
     var onDeleteCurrentDraft: ((String) -> Void)?
-    private var pendingDeletedDraft: BearyDraft?
-    private var pendingDeletedIndex: Int = 0
-    private var undoTimer: Timer?
+    /// 审计 P1-9：箱内撤销恢复草稿时通知容器（恢复写盘成功后才发，容器按 clearedCurrentDraftId 过滤绑回）。
+    var onUndoCurrentDraft: ((BearyDraft) -> Void)?
+    /// 审计 P1-8：撤销槽改多笔队列（LIFO）——连续删多篇时新删不再杀上一笔的撤销；
+    /// 每笔自带 6 秒计时器，到期只清本笔；撤销恢复最近一笔，余笔仍在队列里。
+    private struct PendingUndo {
+        let draft: BearyDraft
+        let index: Int
+        var timer: Timer?
+    }
+    private var pendingUndos: [PendingUndo] = []
     private var didPlayEntrance = false
     // 88 包 M8：入场错峰交汇门控——首轮 loadDrafts 回调完成 + 已 Appear 才播，
     // 避免 viewDidAppear 对尚未渲染的空栈空跑、卡片随后硬切出现。
@@ -137,7 +144,9 @@ final class BearyDraftBoxViewController: UIViewController {
         view.layoutIfNeeded()
         applyEntranceStartState()
         // M20：开箱卡片错峰滑入（仅首次开箱；卡片先置初态，sheet 到位后再逐张播）。
-        let cardViews = listStack.arrangedSubviews
+        // 审计 P2-24：复用 renderDrafts 的 draftCardsAnimatedOnce——首轮渲染已播过
+        // 的卡片不再由 tryPlayEntrance 重置 alpha 重播（此前首开双播）；sheet 与遮罩照常播。
+        let cardViews = draftCardsAnimatedOnce ? [] : listStack.arrangedSubviews
         for cardView in cardViews {
             cardView.alpha = 0
             cardView.transform = CGAffineTransform(translationX: 0, y: 8)
@@ -1088,9 +1097,11 @@ final class BearyDraftBoxViewController: UIViewController {
             return
         }
         let duration = isPadLayout ? 0.25 : 0.32
-        UIView.animate(withDuration: duration, delay: 0, options: .curveEaseIn, animations: {
-            // 遮罩随 sheet 同步淡出（与出现时 0.25s 淡入对称，避免关闭时遮罩瞬消）。
+        // 第 30 项：遮罩 0.25s 单独淡出（与面板滑出解耦；面板仍走原时长 0.25/0.32）。
+        UIView.animate(withDuration: 0.25, delay: 0, options: .curveEaseOut, animations: {
             self.backdropButton.alpha = 0
+        })
+        UIView.animate(withDuration: duration, delay: 0, options: .curveEaseIn, animations: {
             if self.isPadLayout {
                 self.sheetView.alpha = 0
                 self.sheetView.transform = CGAffineTransform(translationX: 0, y: self.sheetView.bounds.height * 0.04)
@@ -1212,10 +1223,9 @@ final class BearyDraftBoxViewController: UIViewController {
         guard let draftValue = targetDraft else { return }
         // G17：按 draftId 查找下标，不再依赖删除钮数组与草稿数组的下标对齐。
         guard let draftIndex = drafts.firstIndex(where: { $0.draftId == draftValue.draftId }) else { return }
-        // 若上一笔删除仍在撤销期内，先使其过期（不再可恢复），再暂存新的一笔。
-        expirePendingUndo()
-        pendingDeletedDraft = draftValue
-        pendingDeletedIndex = draftIndex
+        // 审计 P1-8：多笔队列——新删只追加本笔，不再使上一笔过期。
+        pendingUndos.removeAll { $0.draft.draftId == draftValue.draftId }
+        pendingUndos.append(PendingUndo(draft: draftValue, index: draftIndex, timer: nil))
         // M3：删卡先高度收起动画再移除，其余卡在栈内原地补位；减动效直接移除。
         // 2026-10-28 Li 定：高度收到 0 允许改约束，算例外——能走 transform 的走 transform，高度必须收到 0 的例外。
         guard !UIAccessibility.isReduceMotionEnabled,
@@ -1246,14 +1256,15 @@ final class BearyDraftBoxViewController: UIViewController {
     /// 延迟毫秒级，视觉上与原来无差）。
     private func finishDelete(draftValue: BearyDraft) {
         // 失败恢复用：记下当前下标；删盘失败且内存里已没它时按此插回原位。
-        let restoreIndex = drafts.firstIndex(where: { $0.draftId == draftValue.draftId }) ?? pendingDeletedIndex
+        let restoreIndex = drafts.firstIndex(where: { $0.draftId == draftValue.draftId }) ?? pendingUndos.first(where: { $0.draft.draftId == draftValue.draftId })?.index ?? 0
         BearyDraftStore.deleteAsyncReporting(draftId: draftValue.draftId) { [weak self] ok in
             guard let strongSelf = self else { return }
             if !ok {
-                // 失败：本笔仍是待撤销的那笔时清掉暂存（撤销条尚未出，
-                // 此处只清暂存与计时器，不动后一笔的暂存）。
-                if strongSelf.pendingDeletedDraft?.draftId == draftValue.draftId {
-                    strongSelf.expirePendingUndo()
+                // 失败：只清本笔的暂存与计时器（撤销条尚未出），不动队列里其余笔。
+                if let idx = strongSelf.pendingUndos.firstIndex(where: { $0.draft.draftId == draftValue.draftId }) {
+                    strongSelf.pendingUndos[idx].timer?.invalidate()
+                    strongSelf.pendingUndos.remove(at: idx)
+                    strongSelf.refreshUndoBar()
                 }
                 if strongSelf.drafts.firstIndex(where: { $0.draftId == draftValue.draftId }) == nil {
                     strongSelf.drafts.insert(draftValue, at: min(restoreIndex, strongSelf.drafts.count))
@@ -1287,37 +1298,38 @@ final class BearyDraftBoxViewController: UIViewController {
                 strongSelf.lostEntries.removeAll { $0.draftValue.draftId == draftValue.draftId }
                 strongSelf.subLabel.text = "共 \(strongSelf.drafts.count) 份 · 写的时候自动保存 · 仅保存在本设备"
             }
-            // 顶掉时，后一笔自己的回调会出它的撤销条，这里只静默移除。
-            if strongSelf.pendingDeletedDraft?.draftId == draftValue.draftId {
-                strongSelf.showUndoAnimated()
-                strongSelf.undoTimer?.invalidate()
-                strongSelf.undoTimer = Timer.scheduledTimer(withTimeInterval: 6, repeats: false) { [weak self] _ in
-                    self?.expirePendingUndo()
+            // 本笔在队列里且计时未起时出条并起 6 秒计时；其余笔的计时互不干扰。
+            if let idx = strongSelf.pendingUndos.firstIndex(where: { $0.draft.draftId == draftValue.draftId }),
+               strongSelf.pendingUndos[idx].timer == nil {
+                strongSelf.refreshUndoBar()
+                strongSelf.pendingUndos[idx].timer = Timer.scheduledTimer(withTimeInterval: 6, repeats: false) { [weak self] _ in
+                    self?.expireUndo(draftId: draftValue.draftId)
                 }
             }
         }
     }
 
     /// 6 秒撤销：把暂存草稿插回原位并写回 v3 多槽文件（仅恢复该篇，同 draftId 覆盖）。
+    /// 审计 P1-8：撤销恢复最近一笔（LIFO）；余笔仍在队列里时条不消失，只改份数。
     @objc private func undoDeleteTapped() {
-        guard let draftValue = pendingDeletedDraft else {
-            expirePendingUndo()
+        guard let last = pendingUndos.last else {
+            refreshUndoBar()
             return
         }
-        undoTimer?.invalidate()
-        undoTimer = nil
-        pendingDeletedDraft = nil
-        let insertIndex = min(pendingDeletedIndex, drafts.count)
+        last.timer?.invalidate()
+        pendingUndos.removeLast()
+        let draftValue = last.draft
+        let insertIndex = min(last.index, drafts.count)
         drafts.insert(draftValue, at: insertIndex)
         // E1-4：整库写回走后台队列，主线程只更新 UI。
-        undoWrap.isHidden = true
-        undoWrap.alpha = 1
-        undoWrap.transform = .identity
+        refreshUndoBar()
         // G5：恢复写盘带 Bool 回调；失败时从磁盘重读并 toast，不让内存态冒充已恢复。
         BearyDraftStore.saveAsyncReporting(draftValue) { [weak self] ok in
             guard let strongSelf = self else { return }
             if ok {
                 strongSelf.renderDrafts()
+                // 审计 P1-9：撤销写盘成功后才通知容器绑回（容器按 clearedCurrentDraftId 过滤）。
+                strongSelf.onUndoCurrentDraft?(draftValue)
             } else {
                 strongSelf.loadDrafts {
                     strongSelf.renderDrafts()
@@ -1327,18 +1339,32 @@ final class BearyDraftBoxViewController: UIViewController {
         }
     }
 
-    /// 撤销过期：只丢弃暂存（草稿文件在删除时已清），不重建列表。
-    private func expirePendingUndo() {
-        undoTimer?.invalidate()
-        undoTimer = nil
-        pendingDeletedDraft = nil
-        undoWrap.isHidden = true
-        undoWrap.alpha = 1
-        undoWrap.transform = .identity
+    /// 撤销条刷新：队列空→藏条；非空→显条并写份数（多笔时“N 份草稿已删除”），
+    /// 条已在屏时只改文案不重播入场动效（已有元素不重播）。
+    private func refreshUndoBar() {
+        guard !pendingUndos.isEmpty else {
+            undoWrap.isHidden = true
+            undoWrap.alpha = 1
+            undoWrap.transform = .identity
+            return
+        }
+        undoLabel.text = pendingUndos.count == 1 ? "草稿已删除" : "\(pendingUndos.count) 份草稿已删除"
+        if undoWrap.isHidden {
+            showUndoAnimated()
+        }
+    }
+
+    /// 单笔撤销过期：只丢弃本笔（草稿文件在删除时已清），不重建列表、不动其余笔。
+    private func expireUndo(draftId: String?) {
+        guard let draftId = draftId,
+              let idx = pendingUndos.firstIndex(where: { $0.draft.draftId == draftId }) else { return }
+        pendingUndos[idx].timer?.invalidate()
+        pendingUndos.remove(at: idx)
+        refreshUndoBar()
     }
 
     deinit {
-        undoTimer?.invalidate()
+        for pending in pendingUndos { pending.timer?.invalidate() }
     }
 }
 

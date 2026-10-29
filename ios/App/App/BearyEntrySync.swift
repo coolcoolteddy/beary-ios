@@ -129,6 +129,12 @@ enum BearyEntrySyncStore {
         }
     }
 
+    /// 审计 P2-22：退出/注销时清该账号全部日记落盘（整目录删；草稿桶不在此列，见 signOutLocally）。
+    static func purgeAccount(accountId: Int) {
+        guard let dir = accountDir(accountId: accountId) else { return }
+        try? FileManager.default.removeItem(at: dir)
+    }
+
     /// 删帖：从全部落盘日里清除该 id（空了的日文件直接删掉）。
     static func removeEntry(accountId: Int, entryId: String) {
         guard let dir = accountDir(accountId: accountId) else { return }
@@ -235,6 +241,12 @@ enum BearyTrashSyncStore {
     }
 
     /// 恢复/彻底删除：按 id 清桶（桶不存在时不建桶；空桶保留空数组文件）。
+    /// 审计 P2-22：退出/注销时清该账号全部回收站落盘（整目录删）。
+    static func purgeAccount(accountId: Int) {
+        guard let dir = accountDir(accountId: accountId) else { return }
+        try? FileManager.default.removeItem(at: dir)
+    }
+
     static func removeItem(accountId: Int, entryId: String) {
         guard var items = loadAll(accountId: accountId) else { return }
         let beforeCount = items.count

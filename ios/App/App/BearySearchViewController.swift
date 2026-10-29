@@ -9,8 +9,8 @@ import CoreText
 //   与其他内容页同口径）；点用户只回调 onOpenUser、点日记只回调 onOpenEntry，
 //   点返回只回调 onBack，跳转与个人主页打开一律由容器接线，本页不 present、不 push、不碰导航。
 // 页结构（网页 #searchPage 同口径）：页顶返回行（返回钮 + “搜索”标题，随内容滚出）
-//   + 搜索框（sticky：滚出后贴在安全区顶 6px 处）+ 框下恒高 24px 预留行
-//   （已有结果时搜索中显示“正在搜索…”，平时占位透明）+ 状态区 / 结果区。
+//   + 搜索框（sticky：滚出后贴在安全区顶 6px 处）+ 状态区 / 结果区。
+//   （2026-10-29 第 21 项：框下“正在搜索…”行已删；搜索进行时只转框内圈，尾行仅用于失败重试。）
 // 分区顺序（网页 renderSrchResults 同口径）：我的日记 · 私密 → 公开日记 → 用户。
 // 约束：颜色只用 BearyColors；图标只走 icon_* 资产 + BearyIconImages；
 //   不新增 UIGlassEffect，不用 SF Symbol；部署目标 iOS 15.0、Swift 5.0——
@@ -80,8 +80,6 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
     // 88 包 M13：结果区底部常驻尾行（对齐时间线/个人主页尾行形态；搜索后端
     // 只返回一批、无分页参数，故尾行只承载加载态与失败重试，不做加载更多）。
     private let searchFooterRow = UIView()
-    private let searchFooterSpinner = UIActivityIndicatorView(style: .medium)
-    private let searchFooterLabel = UILabel()
     private let searchFooterRetryButton = BearyButton.retryPill()
     /// Q9 最近搜索：只存本机 UserDefaults，不走服务端；最多 8 条，新在前、去重。
     /// 按账号分桶：登录时键为 bearyRecentSearches_<uid>；未登录时读旧单键
@@ -152,11 +150,6 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
     private let boxPlaceholderView = UIView()
 
     // 框下预留行：网页 .srch-hint——恒高 24、12.5 灰、gap 6、左右 padding 4，
-    // 平时透明占位（opacity 0），已有结果搜索中才显示“正在搜索…”；
-    // 转圈用官方 beary-loading 15（icon_loading 资产，1s 旋转），不用系统菊花。
-    private let hintRowView = UIView()
-    private let hintSpinner = UIImageView()
-    private let hintLabel = UILabel()
 
     // 搜索框：网页 .srch-box——高 50、边框 1.5 line、圆角 999（半高 25）、左右 16、gap 9。
     private let searchBoxView = UIView()
@@ -198,6 +191,51 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         buildViews()
         buildConstraints()
         showInitialState()
+        // 审计 P2-20：搜索页监听拉黑/举报即时清行并清 quoteCache。
+        NotificationCenter.default.addObserver(self, selector: #selector(handleBlockedUserNotification(_:)), name: .bearyDidBlockUser, object: nil)
+        NotificationCenter.default.addObserver(self, selector: #selector(handleReportedEntryNotification(_:)), name: .bearyDidReportEntry, object: nil)
+    }
+
+    /// 补缺 P2-21：搜索拉黑判定（与 SceneDelegate isBlockedAuthor 同口径：游客不承接拉黑表，
+    /// 作者本人永不命中；其余走 BearyBlockedStore 同步缓存，点按路径不发网络）。
+    private func isBlockedForSearch(userId: Int?) -> Bool {
+        if SessionManager.shared.isGuestMode { return false }
+        guard let userId = userId else { return false }
+        if let viewerId = SessionManager.shared.currentUser?.id, viewerId == userId { return false }
+        return BearyBlockedStore.isBlocked(userId)
+    }
+
+    /// 审计 P2-20：拉黑作者——用户行与该作者全部日记行一并清掉，引用缓存同清。
+    @objc private func handleBlockedUserNotification(_ note: Notification) {
+        guard let userId = note.object as? Int else { return }
+        removeBlockedUserFromResults(userId: userId)
+    }
+
+    /// 拉黑清行共用路径（广播与点按守卫同走）：从上次渲染数据中摘掉该用户与该作者全部日记行并重渲染。
+    private func removeBlockedUserFromResults(userId: Int) {
+        guard var data = lastRenderedData, let query = lastRenderedQuery, showingResults else { return }
+        var removedIds: [String] = []
+        for list in [data.entries, data.mine] {
+            for e in list ?? [] where e.authorId == userId {
+                if let id = e.id { removedIds.append(id) }
+            }
+        }
+        data.users?.removeAll { $0.id == userId }
+        data.entries?.removeAll { $0.authorId == userId }
+        data.mine?.removeAll { $0.authorId == userId }
+        lastRenderedData = data
+        for id in removedIds { BearyDiaryCardCell.quoteCache.removeValue(forKey: id) }
+        renderResults(data: data, query: query)
+    }
+
+    /// 审计 P2-20：举报日记——公开组与我的组里该篇一并清掉，引用缓存同清。
+    @objc private func handleReportedEntryNotification(_ note: Notification) {
+        guard let entryId = note.object as? String, !entryId.isEmpty, var data = lastRenderedData, let query = lastRenderedQuery, showingResults else { return }
+        data.entries?.removeAll { $0.id == entryId }
+        data.mine?.removeAll { $0.id == entryId }
+        lastRenderedData = data
+        BearyDiaryCardCell.quoteCache.removeValue(forKey: entryId)
+        renderResults(data: data, query: query)
     }
 
     /// 顶栏透度批（容器调用，见 SceneDelegate.applyHeaderTopInsets）：主滚动视图即 scrollView。
@@ -257,18 +295,6 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         onBack?()
     }
 
-    /// 框下预留行显隐：只改透明度（.18s，网页 .srch-hint transition 同口径），高度恒 24。
-    /// 转圈是 beary-loading 图（网页 .srch-hint .icon.spin 1s 旋转），开/关同步起停。
-    private func setSearchingHint(_ on: Bool) {
-        if on {
-            BearyIconMotion.startSpin(on: hintSpinner, duration: 1.0, key: "bearyHintSpin")
-        } else {
-            BearyIconMotion.stopSpin(on: hintSpinner, key: "bearyHintSpin")
-        }
-        UIView.animate(withDuration: 0.18) {
-            self.hintRowView.alpha = on ? 1 : 0
-        }
-    }
 
     /// U4：仅首次出现聚焦输入框；从详情返回时不再重弹键盘。
     private var searchFieldFocusedOnce = false
@@ -304,6 +330,8 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
 
     deinit {
         searchTimer?.invalidate()
+        NotificationCenter.default.removeObserver(self, name: .bearyDidBlockUser, object: nil)
+        NotificationCenter.default.removeObserver(self, name: .bearyDidReportEntry, object: nil)
     }
 
     override func traitCollectionDidChange(_ previousTraitCollection: UITraitCollection?) {
@@ -353,26 +381,9 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         backTitleLabel.text = "搜索"
         backRowView.addSubview(backTitleLabel)
 
-        // 搜索框占位（流内 50 高）与框下预留行（恒高 24）。
+        // 搜索框占位（流内 50 高）。
         boxPlaceholderView.translatesAutoresizingMaskIntoConstraints = false
         contentStack.addArrangedSubview(boxPlaceholderView)
-
-        hintRowView.translatesAutoresizingMaskIntoConstraints = false
-        hintRowView.alpha = 0
-        contentStack.addArrangedSubview(hintRowView)
-
-        hintSpinner.translatesAutoresizingMaskIntoConstraints = false
-        hintSpinner.image = BearyIconImages.image(named: "icon_loading", pointSize: 15)
-        hintSpinner.tintColor = BearyColors.gray
-        hintSpinner.contentMode = .scaleAspectFit
-        hintRowView.addSubview(hintSpinner)
-
-        hintLabel.translatesAutoresizingMaskIntoConstraints = false
-        hintLabel.font = BearyDynamicType.cappedFont(for: UIFont.systemFont(ofSize: 12.5))
-        hintLabel.adjustsFontForContentSizeCategory = true
-        hintLabel.textColor = BearyColors.gray
-        hintLabel.text = "正在搜索…"
-        hintRowView.addSubview(hintLabel)
 
         // 搜索框：view 级视图（sticky 用，见 updateStickyBoxPosition），
         // 后于 scrollView 加入视图层级，滚动内容从它下方滑过时被盖住。
@@ -549,13 +560,6 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         searchFooterRow.translatesAutoresizingMaskIntoConstraints = false
         searchFooterRow.isHidden = true
         contentStack.addArrangedSubview(searchFooterRow)
-        searchFooterSpinner.translatesAutoresizingMaskIntoConstraints = false
-        searchFooterSpinner.color = BearyColors.gray
-        searchFooterLabel.translatesAutoresizingMaskIntoConstraints = false
-        searchFooterLabel.text = "正在搜索…"
-        searchFooterLabel.font = BearyDynamicType.cappedFont(for: UIFont.systemFont(ofSize: 14))
-        searchFooterLabel.adjustsFontForContentSizeCategory = true
-        searchFooterLabel.textColor = BearyColors.gray
         // 审计 P2：与失败态重试钮同为 BearyButton 工厂紧凑档，不再各写一套尺寸。
         searchFooterRetryButton.translatesAutoresizingMaskIntoConstraints = false
         searchFooterRetryButton.setTitle("重试", for: .normal)
@@ -563,15 +567,9 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         searchFooterRetryButton.heightAnchor.constraint(equalToConstant: BearyButtonStyle.secondaryOutline(.compact).height).isActive = true
         searchFooterRetryButton.addTarget(self, action: #selector(retryTapped), for: .touchUpInside)
         searchFooterRetryButton.bearyAddPressFeedback()
-        searchFooterRow.addSubview(searchFooterSpinner)
-        searchFooterRow.addSubview(searchFooterLabel)
         searchFooterRow.addSubview(searchFooterRetryButton)
         NSLayoutConstraint.activate([
             searchFooterRow.heightAnchor.constraint(equalToConstant: 44),
-            searchFooterSpinner.centerYAnchor.constraint(equalTo: searchFooterRow.centerYAnchor),
-            searchFooterSpinner.trailingAnchor.constraint(equalTo: searchFooterLabel.leadingAnchor, constant: -6),
-            searchFooterLabel.centerYAnchor.constraint(equalTo: searchFooterRow.centerYAnchor),
-            searchFooterLabel.centerXAnchor.constraint(equalTo: searchFooterRow.centerXAnchor, constant: 12),
             searchFooterRetryButton.centerXAnchor.constraint(equalTo: searchFooterRow.centerXAnchor),
             searchFooterRetryButton.centerYAnchor.constraint(equalTo: searchFooterRow.centerYAnchor),
         ])
@@ -612,15 +610,6 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
 
             boxPlaceholderView.heightAnchor.constraint(equalToConstant: 50),
 
-            // 框下预留行：恒高 24（不随显隐改高度，只改透明度）。
-            hintRowView.heightAnchor.constraint(equalToConstant: 24),
-            hintSpinner.leadingAnchor.constraint(equalTo: hintRowView.leadingAnchor, constant: 4),
-            hintSpinner.centerYAnchor.constraint(equalTo: hintRowView.centerYAnchor),
-            hintSpinner.widthAnchor.constraint(equalToConstant: 15),
-            hintSpinner.heightAnchor.constraint(equalToConstant: 15),
-            hintLabel.leadingAnchor.constraint(equalTo: hintSpinner.trailingAnchor, constant: 6),
-            hintLabel.centerYAnchor.constraint(equalTo: hintRowView.centerYAnchor),
-            hintLabel.trailingAnchor.constraint(lessThanOrEqualTo: hintRowView.trailingAnchor),
 
             // sticky 框体：与列内容同宽（16 边距 + ≤568 居中），顶距固定 48、吸顶位移走 transform。
             searchBoxView.heightAnchor.constraint(equalToConstant: 50),
@@ -831,18 +820,14 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         currentSearchTask = nil
         if trimmed.isEmpty {
             setBoxBusy(false)
-            setSearchingHint(false)
             showInitialState()
             return
         }
-        // 网页口径：已有结果时保持结果区、框内圈转 + 框下预留行显示“正在搜索…”；
-        // 无结果时结果区改加载态（含登录提示），预留行不亮。
+        // 网页口径：已有结果时保持结果区、框内圈转（2026-10-29 第 21 项：框下“正在搜索…”行已删，搜索进行时不再显示尾行）；
+        // 无结果时结果区改加载态（含登录提示）。
         if showingResults {
             setBoxBusy(true)
-            setSearchingHint(true)
-            setSearchFooter(loading: true, failed: false)
         } else {
-            setSearchingHint(false)
             showLoadingState()
         }
         currentSearchTask = BearyAPI.shared.search(q: trimmed) { [weak self] result in
@@ -851,7 +836,6 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
                 guard let self = self else { return }
                 if seq != self.searchSeq { return }
                 self.setBoxBusy(false)
-                self.setSearchingHint(false)
                 switch result {
                 case .success(let data):
                     self.recordRecentSearch(trimmed)
@@ -870,8 +854,8 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         }
     }
 
-    /// 框内圈：加载时以转圈替换放大镜（网页 srchSetIconBusy 同款语义），
-    /// 已有结果时另有框下预留行“正在搜索…”（见 setSearchingHint）。
+    /// 框内圈：加载时以转圈替换放大镜（网页 srchSetIconBusy 同款语义）。
+    /// （2026-10-29 第 21 项：框下“正在搜索…”行已删，只留框内圈；尾行仅用于失败重试。）
     private func setBoxBusy(_ busy: Bool) {
         searchIconView.isHidden = busy
         boxRingView.isHidden = !busy
@@ -891,7 +875,7 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         let wasStateHidden = stateWrap.isHidden
         showingResults = false
         resultsStack.isHidden = true
-        setSearchFooter(loading: false, failed: false)
+        setSearchFooter(failed: false)
         // Q9：最近搜索只属于初始态，其他状态一律隐藏（初始态由 showInitialState 重亮）。
         recentWrap.isHidden = true
         clearResultRows()
@@ -1055,7 +1039,7 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         let wasErrorHidden = errorStateWrap.isHidden
         showingResults = false
         resultsStack.isHidden = true
-        setSearchFooter(loading: false, failed: false)
+        setSearchFooter(failed: false)
         recentWrap.isHidden = true
         clearResultRows()
         stateWrap.isHidden = true
@@ -1085,25 +1069,15 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         recentWrap.isHidden = true
         resultsStack.isHidden = false
         // 88 包 M13：失败重试改走结果区尾行（原行内重试行已并入尾行）。
-        setSearchFooter(loading: false, failed: true)
+        setSearchFooter(failed: true)
     }
 
-    /// 88 包 M13：尾行三态（加载／失败重试／隐藏），与时间线/个人主页尾行同形态。
-    private func setSearchFooter(loading: Bool, failed: Bool) {
-        if loading {
+    /// 尾行两态（失败重试／隐藏），与时间线/个人主页尾行同形态；搜索进行时不显示尾行（只转框内圈）。
+    private func setSearchFooter(failed: Bool) {
+        if failed {
             searchFooterRow.isHidden = false
-            searchFooterSpinner.isHidden = false
-            searchFooterSpinner.startAnimating()
-            searchFooterLabel.isHidden = false
-            searchFooterRetryButton.isHidden = true
-        } else if failed {
-            searchFooterRow.isHidden = false
-            searchFooterSpinner.stopAnimating()
-            searchFooterSpinner.isHidden = true
-            searchFooterLabel.isHidden = true
             searchFooterRetryButton.isHidden = false
         } else {
-            searchFooterSpinner.stopAnimating()
             searchFooterRow.isHidden = true
         }
     }
@@ -1128,15 +1102,23 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         userRowByKey = [:]
         imageRetryHolders = []
         // 88 包 M13：尾行不属于结果区，随结果区重建而隐藏（成功重渲末尾亦会隐藏）。
-        setSearchFooter(loading: false, failed: false)
+        setSearchFooter(failed: false)
     }
 
+    /// 审计 P2-20：最近一次成功渲染的原始结果（供拉黑/举报广播过滤后重渲；重渲走
+    /// 同 query 的 lastResultRowKeys，行入场不重播）。
+    private var lastRenderedData: SearchResult?
+    private var lastRenderedQuery: String?
+
     private func renderResults(data: SearchResult, query: String) {
-        // 我的组只取未公开篇（is_public != true，与网页 !e.is_public 同语义）。
+        lastRenderedData = data
+        lastRenderedQuery = query
+        // 补缺 P3-40：我的组只取确认为私密篇（is_public == false）；缺失字段（nil）不进私密组
+        //（服务端对 mine 下发 is_public，未下发时不按私密误标；原 != true 把缺失也划进私密组）。
         var mineEntries: [Entry] = []
         if let mine = data.mine {
             for entry in mine {
-                if entry.isPublic != true {
+                if entry.isPublic == false {
                     mineEntries.append(entry)
                 }
             }
@@ -1145,8 +1127,11 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         // 且公开条目不下发 is_public 字段（2026-10-26 curl 实测 /beary/api/search?q=的 返回
         // entries 均无 is_public）；旧的 isPublic == true 二次过滤把全部公开条目滤掉，
         // 导致公开组恒空。我的组保留 is_public 过滤（服务端对 mine 下发 is_public）。
-        let publicEntries = data.entries ?? []
-        let users = data.users ?? []
+        // 审计 P0-3 核实：服务端搜索 SQL 已含 ephemeral_until > now 条件（worker.js
+        // 搜索段）与拉黑过滤，故后端无需补；App 侧再加一道有效态过滤作防御
+        // （时钟/缓存边缘下过期限时篇也不进公开组）。
+        let publicEntries = (data.entries ?? []).filter { BearyEphemeral.isEffectivelyPublic($0) }.filter { !isBlockedForSearch(userId: $0.authorId) }
+        let users = (data.users ?? []).filter { !isBlockedForSearch(userId: $0.id) }
         if mineEntries.isEmpty && publicEntries.isEmpty && users.isEmpty {
             showNoneState(query: query)
             return
@@ -1211,7 +1196,7 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         // M11：结果区首次出现/换批时行错峰滑入；同一批仅内容变化的行淡入。
         animateResultRows(query: query)
         // 88 包 M13：成功重渲后尾行隐藏。
-        setSearchFooter(loading: false, failed: false)
+        setSearchFooter(failed: false)
     }
 
     /// M11 入场口径：换关键词（新一批）→ 全部行错峰滑入；同关键词重渲
@@ -1622,7 +1607,15 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
     @objc private func userRowTapped(_ sender: UIButton) {
         for index in 0..<userButtons.count {
             if index < rowUsers.count && userButtons[index] == sender {
-                onOpenUserHandler(rowUsers[index])
+                // 补缺 P2-21：点按前比对拉黑表（渲染后新拉黑的竞态兜底）：命中则不行进主页，
+                // 行即时摘掉并 toast，首渲染过滤与广播清行已覆盖常规路径。
+                let user = rowUsers[index]
+                if isBlockedForSearch(userId: user.id) {
+                    if let userId = user.id { removeBlockedUserFromResults(userId: userId) }
+                    BearyToast.show(in: view, message: "该用户已被拉黑", aboveFAB: false)
+                    return
+                }
+                onOpenUserHandler(user)
                 return
             }
         }

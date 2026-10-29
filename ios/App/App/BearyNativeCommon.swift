@@ -1360,100 +1360,9 @@ enum BearyDynamicType {
     }
 }
 
-/// C9 首屏骨架屏占位卡（轻量原生视图，无图无文案，仅占位形）：
-/// 40pt 圆形头像占位 + 3 条圆角矩形文本条；呼吸动画为占位区透明度 0.8 <-> 0.4；
-/// 减动效开启时静态展示（不播呼吸动画）。调用方负责 3 张堆叠与显隐时序
-/// （显隐只跟数据到达回调走，见 Feed.updateOverlayState / Profile.handleTabResult）。
-final class BearySkeletonCardView: UIView {
-    private let breathingStack = UIStackView()
-    private let avatarPlaceholder = UIView()
-    private var breathing = false
-
-    override init(frame: CGRect) {
-        super.init(frame: frame)
-        backgroundColor = BearyColors.surface
-        layer.borderWidth = 1
-        layer.borderColor = BearyColors.line.cgColor
-        layer.cornerRadius = 14
-        layer.masksToBounds = true
-        accessibilityElementsHidden = true
-        isUserInteractionEnabled = false
-        translatesAutoresizingMaskIntoConstraints = false
-
-        avatarPlaceholder.translatesAutoresizingMaskIntoConstraints = false
-        avatarPlaceholder.backgroundColor = BearyColors.alpha(BearyColors.gray, 0.25)
-        avatarPlaceholder.layer.cornerRadius = 20
-        avatarPlaceholder.layer.masksToBounds = true
-        NSLayoutConstraint.activate([
-            avatarPlaceholder.widthAnchor.constraint(equalToConstant: 40),
-            avatarPlaceholder.heightAnchor.constraint(equalToConstant: 40),
-        ])
-
-        let linesStack = UIStackView()
-        linesStack.translatesAutoresizingMaskIntoConstraints = false
-        linesStack.axis = .vertical
-        linesStack.spacing = 8
-        // .leading（不用 .fill）：文本条宽 = 栈宽 × 系数，.fill 会另加等宽约束冲突。
-        linesStack.alignment = .leading
-        for multiplier in [0.9, 0.65, 0.45] as [CGFloat] {
-            let bar = UIView()
-            bar.translatesAutoresizingMaskIntoConstraints = false
-            bar.backgroundColor = BearyColors.alpha(BearyColors.gray, 0.25)
-            bar.layer.cornerRadius = 6
-            bar.layer.masksToBounds = true
-            linesStack.addArrangedSubview(bar)
-            NSLayoutConstraint.activate([
-                bar.heightAnchor.constraint(equalToConstant: 12),
-                bar.widthAnchor.constraint(equalTo: linesStack.widthAnchor, multiplier: multiplier),
-            ])
-        }
-
-        breathingStack.translatesAutoresizingMaskIntoConstraints = false
-        breathingStack.axis = .horizontal
-        breathingStack.spacing = 12
-        breathingStack.alignment = .top
-        breathingStack.addArrangedSubview(avatarPlaceholder)
-        breathingStack.addArrangedSubview(linesStack)
-        breathingStack.alpha = 0.8
-        addSubview(breathingStack)
-        NSLayoutConstraint.activate([
-            breathingStack.topAnchor.constraint(equalTo: topAnchor, constant: 14),
-            breathingStack.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 14),
-            breathingStack.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -14),
-            breathingStack.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -14),
-        ])
-    }
-
-    required init?(coder: NSCoder) {
-        fatalError("init(coder:) has not been implemented")
-    }
-
-    /// 开始呼吸动画；减动效下保持静态 0.8，不播动画。
-    func startBreathing() {
-        guard breathing == false else { return }
-        breathing = true
-        guard UIAccessibility.isReduceMotionEnabled == false else { return }
-        let animation = CABasicAnimation(keyPath: "opacity")
-        animation.fromValue = 0.8
-        animation.toValue = 0.4
-        animation.duration = 1.0
-        animation.autoreverses = true
-        animation.repeatCount = .infinity
-        animation.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
-        breathingStack.layer.add(animation, forKey: "bearySkeletonBreath")
-    }
-
-    /// 停呼吸动画并复位占位区透明度（显隐动画由调用方做，见各页 hideSkeleton）。
-    func stopBreathing() {
-        breathing = false
-        breathingStack.layer.removeAnimation(forKey: "bearySkeletonBreath")
-        breathingStack.alpha = 0.8
-    }
-}
-
 // MARK: - iCity 共享助手（可见性相对时间 / 已举报本地态 / 举报与拉黑流程）
 
-/// 广场卡公开相对时间：“X 分钟 / 小时 / 天前公开”；1 分钟内为“刚刚公开”。
+/// 广场卡相对时间：“X 分钟 / 小时 / 天前”；1 分钟内为“刚刚”。
 /// publishedAt 缺失时返回 nil（调用方回退绝对时间）。
 /// 限时日记有效态（客户端唯一口径）：ephemeralUntil 非空且未到期 = 存活期；
 /// 已到期 = 普通私密（不建 sweep，读时按时间判定；手动翻转可见性时服务端清标记，
@@ -1485,10 +1394,10 @@ enum BearyVisibilityText {
     static func publishedRelativeString(publishedAtMs: Int?) -> String? {
         guard let ms = publishedAtMs, ms > 0 else { return nil }
         let diff = Date().timeIntervalSince1970 - TimeInterval(ms) / 1000.0
-        if diff < 60 { return "刚刚公开" }
-        if diff < 3600 { return "\(Int(diff / 60)) 分钟前公开" }
-        if diff < 86400 { return "\(Int(diff / 3600)) 小时前公开" }
-        return "\(Int(diff / 86400)) 天前公开"
+        if diff < 60 { return "刚刚" }
+        if diff < 3600 { return "\(Int(diff / 60)) 分钟前" }
+        if diff < 86400 { return "\(Int(diff / 3600)) 小时前" }
+        return "\(Int(diff / 86400)) 天前"
     }
 }
 
@@ -1514,11 +1423,57 @@ enum BearyReportedStore {
     }
 }
 
+/// 审计 P0-1/P0-21：拉黑 id 共享缓存（UserDefaults 持久化 + 内存集）。
+/// 服务端是拉黑真相源（列表/广场已由服务端过滤）；本缓存只用于详情/主页等
+/// 单点入口的同步比对（点按路径不发网络）。登录时 refresh 拉全量，拉黑/解除
+/// 成功时即时增删，退出/游客时 clear（防上个账号的表漏到下个身份）。
+enum BearyBlockedStore {
+    private static let key = "beary.blockedUserIds"
+    private static var cached: Set<Int>?
+
+    static func isBlocked(_ userId: Int) -> Bool {
+        if cached == nil {
+            let arr = UserDefaults.standard.array(forKey: key) as? [Int] ?? []
+            cached = Set(arr)
+        }
+        return cached?.contains(userId) ?? false
+    }
+
+    static func markBlocked(_ userId: Int) {
+        if cached == nil { cached = Set(UserDefaults.standard.array(forKey: key) as? [Int] ?? []) }
+        cached?.insert(userId)
+        UserDefaults.standard.set(Array(cached ?? []), forKey: key)
+    }
+
+    static func removeBlocked(_ userId: Int) {
+        if cached == nil { cached = Set(UserDefaults.standard.array(forKey: key) as? [Int] ?? []) }
+        cached?.remove(userId)
+        UserDefaults.standard.set(Array(cached ?? []), forKey: key)
+    }
+
+    static func clear() {
+        cached = []
+        UserDefaults.standard.removeObject(forKey: key)
+    }
+
+    static func refresh() {
+        BearyAPI.shared.fetchBlocks { result in
+            DispatchQueue.main.async {
+                guard case .success(let resp) = result, let ids = resp.blocked else { return }
+                cached = Set(ids)
+                UserDefaults.standard.set(ids, forKey: key)
+            }
+        }
+    }
+}
+
 extension Notification.Name {
     /// 举报成功后广播（object = entryId）：各列表页据此把该日记从举报人被动表面移除。
     static let bearyDidReportEntry = Notification.Name("bearyDidReportEntry")
     /// 拉黑成功后广播（object = blockedUserId Int）：各列表页据此过滤该作者条目。
     static let bearyDidBlockUser = Notification.Name("bearyDidBlockUser")
+    /// 补缺 P3-38：账号真变广播（SceneDelegate onUserChanged 去重后发，无 object）：通知页据此复位 seen 水印。
+    static let bearyUserDidChange = Notification.Name("bearyUserDidChange")
 }
 
 /// 举报理由：复用封禁五类（服务端 reasons 枚举同款文案）。
@@ -1542,10 +1497,12 @@ enum BearyReportFlow {
                 BearyAPI.shared.reportEntry(entryId: entryId, reason: reason) { result in
                     DispatchQueue.main.async {
                         switch result {
-                        case .success:
+                        case .success(let resp):
                             BearyReportedStore.markReported(entryId: entryId)
                             NotificationCenter.default.post(name: .bearyDidReportEntry, object: entryId)
-                            BearyToast.show(in: vc.view, message: "已举报，谢谢反馈", aboveFAB: false)
+                            // 补缺 P3-39：重复举报（服务端 duplicate 成功态）按已举报处理并置灰下次菜单，
+                            // 文案不谎称“谢谢反馈”，改“已举报”。
+                            BearyToast.show(in: vc.view, message: resp.duplicate == true ? "已举报" : "已举报，谢谢反馈", aboveFAB: false)
                         case .failure:
                             BearyToast.show(in: vc.view, message: "举报失败，请重试", aboveFAB: false)
                         }
@@ -1573,6 +1530,7 @@ enum BearyBlockFlow {
                 DispatchQueue.main.async {
                     switch result {
                     case .success:
+                        BearyBlockedStore.markBlocked(userId)
                         NotificationCenter.default.post(name: .bearyDidBlockUser, object: userId)
                         BearyToast.show(in: vc.view, message: "已拉黑", aboveFAB: false)
                         onDone?(true)

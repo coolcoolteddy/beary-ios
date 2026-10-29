@@ -9,7 +9,7 @@ import Darwin
 // 「关闭」15pt 墨字、标题 17；顶部状态行「反馈数据已准备就绪」+ beary 绿勾；
 // 问题描述区：系统 UISegmentedControl（问题反馈 / 优化建议，选中段墨底 +
 // 反色字，既定样式，不自造分段控件）+ 编辑器正文同款 UITextView；图片或视频
-// （可选，最多 5 个）添加卡（手绘 icon_image）；设备信息卡 9 行；底部依次为
+// （可选，最多 5 个）添加卡（手绘 icon_image）；设备信息卡 8 行；底部依次为
 // 墨底主钮「提交反馈」、secondaryOutline「在其他应用打开」（手绘 icon_share）、
 // 「诊断」分组 + secondaryOutline「仅上传日志」、footnote。
 // 组件规矩（2026-10-28 Li 定，长期有效）：组件一律走 iOS 系统组件
@@ -53,9 +53,11 @@ enum BearyFeedbackDeviceInfo {
         } else {
             diskText = "未知"
         }
-        let appVersion = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "—"
+        let appVersionShort = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "—"
+        let appVersionBuild = Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "—"
+        // 补缺 P3-34：设备信息补构建号（设置页脚注同款两值）；补缺 P3-35：设备名称行删除（用户自定名称进附件属隐私）。
+        let appVersion = "\(appVersionShort)（构建号 \(appVersionBuild)）"
         return [
-            ("设备名称", device.name),
             ("设备型号", machineIdentifier()),
             ("系统名称", device.systemName),
             ("系统版本", device.systemVersion),
@@ -254,6 +256,7 @@ final class BearyFeedbackViewController: UIViewController, UITextViewDelegate, P
 
     deinit {
         NotificationCenter.default.removeObserver(self)
+        cleanupZip()
     }
 
     // MARK: - 顶栏（诊断页同款：52 高、左上文字关闭 15、标题 17 居中）
@@ -281,10 +284,16 @@ final class BearyFeedbackViewController: UIViewController, UITextViewDelegate, P
         topBar.addSubview(closeButton)
         topBar.addSubview(titleLabel)
         view.addSubview(topBar)
+        // 补缺 P2-17：顶栏与内容列同宽居中（详情页同款：iPhone 全宽减 32，iPad 600 居中）。
+        let topBarWidthEquality = topBar.widthAnchor.constraint(equalTo: view.widthAnchor, constant: -32)
+        topBarWidthEquality.priority = UILayoutPriority(750)
         NSLayoutConstraint.activate([
             topBar.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
-            topBar.leadingAnchor.constraint(equalTo: view.leadingAnchor),
-            topBar.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            topBar.centerXAnchor.constraint(equalTo: view.centerXAnchor),
+            topBar.widthAnchor.constraint(lessThanOrEqualToConstant: 600),
+            topBar.leadingAnchor.constraint(greaterThanOrEqualTo: view.leadingAnchor, constant: 16),
+            topBar.trailingAnchor.constraint(lessThanOrEqualTo: view.trailingAnchor, constant: -16),
+            topBarWidthEquality,
             topBar.heightAnchor.constraint(equalToConstant: 52),
             closeButton.leadingAnchor.constraint(equalTo: topBar.leadingAnchor, constant: 16),
             closeButton.centerYAnchor.constraint(equalTo: topBar.centerYAnchor),
@@ -306,12 +315,17 @@ final class BearyFeedbackViewController: UIViewController, UITextViewDelegate, P
         contentStack.spacing = 0
         contentStack.alignment = .fill
         scrollView.addSubview(contentStack)
+        // 补缺 P2-17：iPad 600 居中（详情页同款，含 750 宽度等式防短内容压塌）。
+        let contentWidthEquality = contentStack.widthAnchor.constraint(equalTo: scrollView.frameLayoutGuide.widthAnchor, constant: -32)
+        contentWidthEquality.priority = UILayoutPriority(750)
         NSLayoutConstraint.activate([
             contentStack.topAnchor.constraint(equalTo: scrollView.topAnchor, constant: 12),
-            contentStack.leadingAnchor.constraint(equalTo: scrollView.leadingAnchor, constant: 16),
-            contentStack.trailingAnchor.constraint(equalTo: scrollView.trailingAnchor, constant: -16),
+            contentStack.centerXAnchor.constraint(equalTo: scrollView.frameLayoutGuide.centerXAnchor),
+            contentStack.widthAnchor.constraint(lessThanOrEqualToConstant: 600),
+            contentStack.leadingAnchor.constraint(greaterThanOrEqualTo: scrollView.frameLayoutGuide.leadingAnchor, constant: 16),
+            contentStack.trailingAnchor.constraint(lessThanOrEqualTo: scrollView.frameLayoutGuide.trailingAnchor, constant: -16),
             contentStack.bottomAnchor.constraint(equalTo: scrollView.bottomAnchor, constant: -20),
-            contentStack.widthAnchor.constraint(equalTo: scrollView.widthAnchor, constant: -32),
+            contentWidthEquality,
         ])
     }
 
@@ -327,12 +341,11 @@ final class BearyFeedbackViewController: UIViewController, UITextViewDelegate, P
         statusLabel.font = UIFont.systemFont(ofSize: 16, weight: .medium)
         statusLabel.textColor = BearyColors.ink
         statusLabel.text = "反馈数据准备中…"
-        let badgeCheck = UILabel()
+        // 补缺 P3-34：绿勾走官方包 icon_check，不用“✓”文本。
+        let badgeCheck = UIImageView(image: BearyIconImages.image(named: "icon_check", pointSize: 16))
         badgeCheck.translatesAutoresizingMaskIntoConstraints = false
-        badgeCheck.text = "✓"
-        badgeCheck.font = UIFont.systemFont(ofSize: 16, weight: .bold)
-        badgeCheck.textColor = .white
-        badgeCheck.textAlignment = .center
+        badgeCheck.tintColor = .white
+        badgeCheck.contentMode = .scaleAspectFit
         statusBadge.translatesAutoresizingMaskIntoConstraints = false
         statusBadge.backgroundColor = BearyColors.green
         statusBadge.layer.cornerRadius = 13
@@ -344,6 +357,8 @@ final class BearyFeedbackViewController: UIViewController, UITextViewDelegate, P
             statusBadge.heightAnchor.constraint(equalToConstant: 26),
             badgeCheck.centerXAnchor.constraint(equalTo: statusBadge.centerXAnchor),
             badgeCheck.centerYAnchor.constraint(equalTo: statusBadge.centerYAnchor),
+            badgeCheck.widthAnchor.constraint(equalToConstant: 16),
+            badgeCheck.heightAnchor.constraint(equalToConstant: 16),
         ])
         statusRow.addArrangedSubview(statusLabel)
         statusRow.addArrangedSubview(UIView())
@@ -603,11 +618,21 @@ final class BearyFeedbackViewController: UIViewController, UITextViewDelegate, P
         }
     }
 
+    /// 补缺 P3-34：tmp zip 清理（发送/分享完成与页面关闭时删；文件已删则 zipReady 视为失效，下次 ensureZip 重生成）。
+    private func cleanupZip() {
+        if let url = zipURL {
+            try? FileManager.default.removeItem(at: url)
+        }
+        zipURL = nil
+        zipReady = false
+    }
+
     private func ensureZip(completion: @escaping (Bool) -> Void) {
-        if zipReady, zipURL != nil {
+        if zipReady, let url = zipURL, FileManager.default.fileExists(atPath: url.path) {
             completion(true)
             return
         }
+        zipReady = false
         generateZip { [weak self] url in
             guard let self = self else { return }
             if let urlValue = url {
@@ -658,12 +683,20 @@ final class BearyFeedbackViewController: UIViewController, UITextViewDelegate, P
         if zipReady {
             presentMailComposer()
         } else {
-            // zip 缺失时发送仍可继续（不带 zip）：先 toast 明说，待 toast 可见
-            // 后再弹出邮件撰写框，避免撰写框盖住 toast 导致说明不可见。
-            BearyToast.show(in: view, message: "日志包准备失败，本次反馈不含日志包", aboveFAB: false)
-            DispatchQueue.main.asyncAfter(deadline: .now() + 2.1) { [weak self] in
-                guard let self = self, self.presentedViewController == nil else { return }
-                self.presentMailComposer()
+            // 清理后二次提交先重生成（不直接判失败）；重生成失败才走无 zip 发送。
+            ensureZip { [weak self] ready in
+                guard let self = self else { return }
+                if ready {
+                    self.presentMailComposer()
+                } else {
+                    // zip 缺失时发送仍可继续（不带 zip）：先 toast 明说，待 toast 可见
+                    // 后再弹出邮件撰写框，避免撰写框盖住 toast 导致说明不可见。
+                    BearyToast.show(in: self.view, message: "日志包准备失败，本次反馈不含日志包", aboveFAB: false)
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 2.1) { [weak self] in
+                        guard let self = self, self.presentedViewController == nil else { return }
+                        self.presentMailComposer()
+                    }
+                }
             }
         }
     }
@@ -680,8 +713,9 @@ final class BearyFeedbackViewController: UIViewController, UITextViewDelegate, P
             let sheet = UIActivityViewController(activityItems: [url], applicationActivities: nil)
             sheet.popoverPresentationController?.sourceView = self.shareButton
             sheet.popoverPresentationController?.sourceRect = self.shareButton.bounds
-            sheet.completionWithItemsHandler = { _, completed, _, _ in
+            sheet.completionWithItemsHandler = { [weak self] _, completed, _, _ in
                 BearyAppLog.event(completed ? "feedback share completed" : "feedback share cancelled")
+                self?.cleanupZip()
             }
             self.present(sheet, animated: BearyMotion.animated(true))
         }
@@ -710,8 +744,8 @@ final class BearyFeedbackViewController: UIViewController, UITextViewDelegate, P
 
     private func presentMailComposer() {
         guard MFMailComposeViewController.canSendMail() else {
-            // 提交反馈的复制 fallback：只复制文字内容，附件不随复制发出，toast 明说。
-            UIPasteboard.general.string = submitBodyText()
+            // 补缺 P3-34：复制 fallback 只复制描述文字，设备信息与附件不随复制发出，toast 明说。
+            UIPasteboard.general.string = textView.text.trimmingCharacters(in: .whitespacesAndNewlines)
             BearyToast.show(in: view, message: "未配置邮箱，已复制反馈内容，附件不随复制发出", aboveFAB: false)
             BearyAppLog.event("feedback mail no account copy fallback")
             return
@@ -746,6 +780,8 @@ final class BearyFeedbackViewController: UIViewController, UITextViewDelegate, P
         let kind = pendingMailKind
         controller.dismiss(animated: BearyMotion.animated(true)) { [weak self] in
             guard let self = self else { return }
+            // 邮件流程结束即删 tmp zip（撰写框持有的是附件数据副本，不读文件）。
+            self.cleanupZip()
             let noun = kind == .logOnly ? "日志" : "反馈"
             switch result {
             case .sent:
@@ -778,6 +814,8 @@ final class BearyFeedbackViewController: UIViewController, UITextViewDelegate, P
         let lock = NSLock()
         var loaded: [Attachment?] = Array(repeating: nil, count: results.count)
         var failedCount = 0
+        /// 审计 P2-26：超限视频计数（单视频上限 50MB，见 movie 分支先查大小再读）。
+        var oversizedCount = 0
         for (index, result) in results.enumerated() {
             let provider = result.itemProvider
             group.enter()
@@ -798,7 +836,23 @@ final class BearyFeedbackViewController: UIViewController, UITextViewDelegate, P
             } else if provider.hasItemConformingToTypeIdentifier(UTType.movie.identifier) {
                 provider.loadFileRepresentation(forTypeIdentifier: UTType.movie.identifier) { url, _ in
                     defer { group.leave() }
-                    guard let urlValue = url, let data = try? Data(contentsOf: urlValue) else {
+                    guard let urlValue = url else {
+                        lock.lock()
+                        failedCount += 1
+                        lock.unlock()
+                        return
+                    }
+                    // 审计 P2-26：视频先查大小再读——超过 50MB 不读入内存（邮箱附件与
+                    // 内存双重保护），计失败并在汇总提示里单独说明超限个数。
+                    if let attrs = try? FileManager.default.attributesOfItem(atPath: urlValue.path),
+                       let size = attrs[.size] as? NSNumber, size.intValue > 50 * 1024 * 1024 {
+                        lock.lock()
+                        failedCount += 1
+                        oversizedCount += 1
+                        lock.unlock()
+                        return
+                    }
+                    guard let data = try? Data(contentsOf: urlValue) else {
                         lock.lock()
                         failedCount += 1
                         lock.unlock()
@@ -830,7 +884,10 @@ final class BearyFeedbackViewController: UIViewController, UITextViewDelegate, P
             self.attachments = loaded.compactMap { $0 }
             self.refreshAttachUI()
             if failedCount > 0 {
-                BearyToast.show(in: self.view, message: "有 \(failedCount) 个附件未能加载", aboveFAB: false)
+                let message = oversizedCount > 0
+                    ? "有 \(failedCount) 个附件未能加载，其中 \(oversizedCount) 个视频超过 50MB"
+                    : "有 \(failedCount) 个附件未能加载"
+                BearyToast.show(in: self.view, message: message, aboveFAB: false)
             }
         }
     }

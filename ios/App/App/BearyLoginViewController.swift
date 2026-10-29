@@ -306,11 +306,14 @@ final class BearyLoginViewController: UIViewController {
             sendButton.heightAnchor.constraint(equalToConstant: 44),
             codeContainer.trailingAnchor.constraint(equalTo: sendButton.leadingAnchor, constant: -9),
             agreeButton.leadingAnchor.constraint(equalTo: agreeRow.leadingAnchor),
-            // Hit44：行高放开到 44（钮 22 上 11 下 11），热区不再被约 24 高行截断；文案 UITextView 顶对齐，位置不动。
-            agreeButton.topAnchor.constraint(equalTo: agreeRow.topAnchor, constant: 11),
+            // 2026-10-29 第 8 项：勾选框与文案首行垂直居中对齐。旧口径 top+11 /
+            // bottom−11 把钮中心钉在行顶下 22pt，而文案首行中心在 label 顶下
+            // 约半行高处（14pt 字约 8.5pt），故钮比首行低约 13pt（photo-14 实证）。
+            // 改锚：钮 centerY = label 顶 + 14pt 字行高/2（多行文案时以首行为准，
+            // 行高改由 label 决定）；44 热区由 BearyHit44Button 保证。
+            agreeButton.centerYAnchor.constraint(equalTo: agreeLabel.topAnchor, constant: UIFont.systemFont(ofSize: 14).lineHeight / 2),
             agreeButton.widthAnchor.constraint(equalToConstant: 22),
             agreeButton.heightAnchor.constraint(equalToConstant: 22),
-            agreeButton.bottomAnchor.constraint(equalTo: agreeRow.bottomAnchor, constant: -11),
             agreeLabel.leadingAnchor.constraint(equalTo: agreeButton.trailingAnchor, constant: 10),
             agreeLabel.trailingAnchor.constraint(equalTo: agreeRow.trailingAnchor),
             agreeLabel.topAnchor.constraint(equalTo: agreeRow.topAnchor),
@@ -707,6 +710,7 @@ final class BearyLoginViewController: UIViewController {
                         // 会话 cookie 已由共享 URLSession 存好；容器随后刷新登录态。
                         // 审计 P1-25：先按 referral 绑定结果给一句反馈再 dismiss。
                         strongSelf.handleLoginReferralFeedback(resp: resp)
+                        BearySoundPlayer.play(.loginChime)
                     } else {
                         strongSelf.showMessage(resp.message ?? resp.error ?? "验证失败")
                     }
@@ -735,9 +739,25 @@ final class BearyLoginViewController: UIViewController {
         }
         let status = resp.referral?.status ?? ""
         if resp.referral?.ok == true || status == "granted" {
-            showMessage("邀请码绑定成功，1 个月 Plus 已到账", ok: true)
+            let grantedText = "邀请码绑定成功，30 天 Plus 已到账"
+            showMessage(grantedText, ok: true)
+            // 补缺 P3-33：登录成功文案补 Plus 到期日（邀请页 granted 同款口径；/me 失败时只留基础文案）。
+            BearyAPI.shared.fetchMe { [weak self] result in
+                DispatchQueue.main.async {
+                    guard let strongSelf = self, strongSelf.messageLabel.text == grantedText else { return }
+                    guard case .success(let user) = result, let until = user?.plusUntil, until > 0 else { return }
+                    if until >= 4102444800000 {
+                        strongSelf.messageLabel.text = grantedText + "，Plus 永久有效"
+                    } else {
+                        let formatter = DateFormatter()
+                        formatter.locale = Locale(identifier: "zh_CN")
+                        formatter.dateFormat = "yyyy/M/d"
+                        strongSelf.messageLabel.text = grantedText + "，Plus 至 " + formatter.string(from: Date(timeIntervalSince1970: TimeInterval(until) / 1000.0))
+                    }
+                }
+            }
         } else if status == "flagged" {
-            showMessage("邀请码已提交，站长审核通过后各得 1 个月 Plus", ok: true)
+            showMessage("邀请码已提交，站长审核通过后各得 30 天 Plus", ok: true)
         } else {
             var text = "邀请码未绑定成功"
             if let err = resp.referral?.error, !err.isEmpty, err != text {
@@ -874,6 +894,8 @@ extension BearyLoginViewController: UITextViewDelegate {
         }
         let vc = BearyLegalTextViewController(pageTitle: title, pageText: text)
         vc.modalPresentationStyle = .fullScreen
+        // 审计 P2-16：全屏 modal 补 fadeRise（与设置页法律文本页同款）。
+        vc.transitioningDelegate = SceneDelegate.chrome?.fadeRiseTransitionDelegate
         present(vc, animated: BearyMotion.animated(true))
         return false
     }
