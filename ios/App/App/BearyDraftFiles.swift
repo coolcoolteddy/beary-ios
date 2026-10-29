@@ -319,6 +319,9 @@ enum BearyDraftStore {
         guard let id = id else { return false }
         // 审计 A 批：登录/切号时跑一次旧图排除备份属性 sweep（幂等，见函数注释）。
         BearyDraftImageStore.sweepClearExcludedFromBackupIfNeeded()
+        // 2026-10-29 修：图片目录合并从 JSON 迁移条件里拆出来——每次切号都跑，旧目录存在就重试，
+        // 不再因 JSON 已迁走而跳过（此前失败留下的旧图再无重试机会）。
+        mergeLegacyImageDir()
         guard let legacyURL = legacyGlobalFileURL(),
               FileManager.default.fileExists(atPath: legacyURL.path) else { return false }
         guard let targetURL = fileURL(), !FileManager.default.fileExists(atPath: targetURL.path) else { return false }
@@ -330,30 +333,31 @@ enum BearyDraftStore {
                   saveAll(drafts) else { return false }
             try? FileManager.default.removeItem(at: legacyURL)
         }
-        // 图片目录合并：旧全局目录文件逐个移入账号目录；审计 A 批：仅当旧目录
-        // 已空（全部移走）才删旧目录——重名跳过与移走失败的文件都会留在旧目录，
-        // 此时保留旧目录 + 记诊断日志，不在登录流程弹 toast。
-        if let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first {
-            let legacyDir = base.appendingPathComponent(BearyDraftImageStore.directoryName, isDirectory: true)
-            if let names = try? FileManager.default.contentsOfDirectory(atPath: legacyDir.path),
-               let targetDir = BearyDraftImageStore.directory() {
-                try? FileManager.default.createDirectory(at: targetDir, withIntermediateDirectories: true, attributes: nil)
-                for name in names {
-                    let src = legacyDir.appendingPathComponent(name)
-                    let dst = targetDir.appendingPathComponent(name)
-                    if !FileManager.default.fileExists(atPath: dst.path) {
-                        try? FileManager.default.moveItem(at: src, to: dst)
-                    }
-                }
-                let remaining = (try? FileManager.default.contentsOfDirectory(atPath: legacyDir.path)) ?? []
-                if remaining.isEmpty {
-                    try? FileManager.default.removeItem(at: legacyDir)
-                } else {
-                    DiagFile.mark("draft-migrate legacy images retained: \(remaining.count) files")
-                }
+        return true
+    }
+
+    /// 旧全局图片目录合并（2026-10-29 从 setAccount 拆出独立函数）：旧全局目录文件逐个移入账号目录；
+    /// 审计 A 批：仅当旧目录已空（全部移走）才删旧目录——重名跳过与移走失败的文件都会留在旧目录，
+    /// 此时保留旧目录 + 记诊断日志，不在登录流程弹 toast；下次切号再跑即重试。
+    private static func mergeLegacyImageDir() {
+        guard let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first else { return }
+        let legacyDir = base.appendingPathComponent(BearyDraftImageStore.directoryName, isDirectory: true)
+        guard let names = try? FileManager.default.contentsOfDirectory(atPath: legacyDir.path),
+              let targetDir = BearyDraftImageStore.directory() else { return }
+        try? FileManager.default.createDirectory(at: targetDir, withIntermediateDirectories: true, attributes: nil)
+        for name in names {
+            let src = legacyDir.appendingPathComponent(name)
+            let dst = targetDir.appendingPathComponent(name)
+            if !FileManager.default.fileExists(atPath: dst.path) {
+                try? FileManager.default.moveItem(at: src, to: dst)
             }
         }
-        return true
+        let remaining = (try? FileManager.default.contentsOfDirectory(atPath: legacyDir.path)) ?? []
+        if remaining.isEmpty {
+            try? FileManager.default.removeItem(at: legacyDir)
+        } else {
+            DiagFile.mark("draft-migrate legacy images retained: \(remaining.count) files")
+        }
     }
 
     private static func fileURL() -> URL? {

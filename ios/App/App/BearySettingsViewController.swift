@@ -230,6 +230,7 @@ final class BearySettingsViewController: UIViewController {
     private var isLoggingOutOthers = false
     private var isDeleting = false
     private var isExporting = false
+    private var exportDetailLabel: UILabel? // 2026-10-29：导出进度提示落点（导出行副文案）
     /// 内容列宽：直接由 view.bounds 派生的必需约束（替代旧的
     /// frameLayoutGuide 750 宽约束 + 600 上限开关两约束协商）。列宽是
     /// view.bounds 的纯函数，首个布局轮次即最终值，不再经多轮约束收敛
@@ -889,6 +890,7 @@ final class BearySettingsViewController: UIViewController {
         exportTitle.text = "导出我的数据"
         let exportDetail = makeLabel(font: UIFont.systemFont(ofSize: 13), color: BearyColors.gray, lines: 0)
         exportDetail.text = "下载 JSON，含账户、日记、点赞记录"
+        exportDetailLabel = exportDetail
         let exportStack = UIStackView(arrangedSubviews: [exportTitle, exportDetail])
         exportStack.axis = .vertical
         exportStack.spacing = 4
@@ -1464,6 +1466,7 @@ final class BearySettingsViewController: UIViewController {
         isExporting = true
         exportRowButton.isEnabled = false
         showToast("正在导出…")
+        setExportProgress("正在导出…")
         BearyAPI.shared.fetchMe { [weak self] result in
             guard let self = self else { return }
             switch result {
@@ -1488,7 +1491,16 @@ final class BearySettingsViewController: UIViewController {
     private func finishExportFailed() {
         isExporting = false
         exportRowButton.isEnabled = true
+        setExportProgress(nil)
         showToast("导出失败，请重试")
+    }
+
+    /// 2026-10-29（P2-13）：导出进度提示——串行四阶段在行副文案上轮换，结束（成功/失败/触顶确认前）复原；
+    /// 只改副文案文字，不重建行、不播动效；nil = 复原默认文案。
+    private func setExportProgress(_ text: String?) {
+        DispatchQueue.main.async { [weak self] in
+            self?.exportDetailLabel?.text = text ?? "下载 JSON，含账户、日记、点赞记录"
+        }
     }
 
     private func exportWithUser(_ user: MeUser) {
@@ -1518,6 +1530,7 @@ final class BearySettingsViewController: UIViewController {
             guard let self = self else { return }
             self.isExporting = false
             self.exportRowButton.isEnabled = true
+            self.setExportProgress(nil)
             // 失败 fail-closed：只 toast、不拼 JSON、不出文件、不出分享面板。
             if sessionsFailed {
                 self.showToast("导出失败（登录设备拉取失败），未生成文件")
@@ -1541,6 +1554,7 @@ final class BearySettingsViewController: UIViewController {
             }
             self.buildAndShareExport(user: user, sessionsResp: sessionsResp, mineEntries: mineEntries, mailboxEntries: mailboxEntries, likedEntries: likedEntries)
         }
+        setExportProgress("正在导出（1/4）登录设备…")
         BearyAPI.shared.fetchAccountSessions { [weak self] result in
             guard let self = self else { return }
             // 审计 P1-23：会话拉取失败不得静默丢弃 sessions 让 JSON 看似完整——
@@ -1550,10 +1564,13 @@ final class BearySettingsViewController: UIViewController {
             } else {
                 sessionsFailed = true
             }
+            self.setExportProgress("正在导出（2/4）我的日记…")
             self.fetchAllEntries(scope: .mine) { result in
                 applyScopeResult(result, &mineEntries)
+                self.setExportProgress("正在导出（3/4）信箱…")
                 self.fetchAllEntries(scope: .mailbox) { result in
                     applyScopeResult(result, &mailboxEntries)
+                    self.setExportProgress("正在导出（4/4）赞过…")
                     self.fetchAllEntries(scope: .liked) { result in
                         applyScopeResult(result, &likedEntries)
                         DispatchQueue.main.async { finish() }
