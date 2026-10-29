@@ -118,12 +118,17 @@ final class BearyChromeViewController: UIViewController {
     private var editProfileEdgeDismiss: BearyEdgeDismissController?
     private var userProfileEdgeDismiss: BearyEdgeDismissController?
     /// 22(b) Plan A：顶栏高恒为安全区顶 + 60，显隐不再塌高（收起态只上移 +
-    /// 淡出，见 setHeaderVisible）；页顶约束恒为 view.top（常量 0），顶栏是
-    /// 覆盖层而非把页往下推的栈元素。显隐不再驱动各页 contentInset：
+    /// 淡出，见 setHeaderVisible）；页顶约束恒为 view.top，但常量为 -12：
+    /// 液态玻璃顶边自带高光恰落在屏幕顶边即用户报的那条白线，顶边推出屏外
+    /// 12pt 后高光落在屏外，底边仍为安全区顶 + 60（高同步 +12 补回）。
+    /// 顶栏是覆盖层而非把页往下推的栈元素。显隐不再驱动各页 contentInset：
     /// 容器版 applyHeaderTopInsets 仅剩 viewDidLayoutSubviews 布局纠正一处
     /// 调用，各页懒建初值仍走页侧 helper。
     private var headerVisible = true
     private var topHeightConstraint: NSLayoutConstraint?
+    /// 顶栏玻璃顶边推出屏外的量（见上）：只推顶边，不动 tint、高度内容区与 Plan A 显隐。
+    private let topGlassTopOvershoot: CGFloat = 12
+    private var topTopConstraint: NSLayoutConstraint?
     private var feedTopConstraint: NSLayoutConstraint?
     private var pageTopConstraints: [ContainerPage: NSLayoutConstraint] = [:]
     /// 底栏：官方分段选择器（BearyHit44SegmentedControl 仅扩热区至 44pt，
@@ -371,11 +376,15 @@ final class BearyChromeViewController: UIViewController {
         top.isUserInteractionEnabled = false
         // 22(b) Plan A：顶栏高恒为安全区顶 + 60（viewDidLayoutSubviews 按真实安全区纠正），
         // 显隐不再塌高（收起只上移 + 淡出，见 setHeaderVisible）；内容栈在玻璃内，裁剪防溢出。
+        // 顶边推出屏外 topGlassTopOvershoot：玻璃顶边自带高光落在屏幕顶边即白线，
+        // 推出的量由高度同步补回，底边仍为安全区顶 + 60、内容栈锚底边不动。
         top.clipsToBounds = true
         let topHeight = top.heightAnchor.constraint(equalToConstant: 60)
         topHeightConstraint = topHeight
+        let topTop = top.topAnchor.constraint(equalTo: view.topAnchor, constant: -topGlassTopOvershoot)
+        topTopConstraint = topTop
         NSLayoutConstraint.activate([
-            top.topAnchor.constraint(equalTo: view.topAnchor),
+            topTop,
             top.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             top.trailingAnchor.constraint(equalTo: view.trailingAnchor),
             topHeight,
@@ -1360,8 +1369,9 @@ final class BearyChromeViewController: UIViewController {
         // 22(b) Plan A：顶栏高恒为安全区顶 + 60（显隐不再塌高）；安全区变化
         // （旋转/分屏）时恒纠正高度，收起态同步把上移量纠正为新高度，
         // 否则 transform 仍是旧高度、顶栏会露出半截。
+        // 高 = 安全区顶 + 60 + 顶边推出量：底边仍为安全区顶 + 60 不变。
         if let heightConstraint = topHeightConstraint {
-            let corrected = view.safeAreaInsets.top + 60
+            let corrected = view.safeAreaInsets.top + 60 + topGlassTopOvershoot
             if heightConstraint.constant != corrected { heightConstraint.constant = corrected }
             if !headerVisible {
                 topGlass.transform = CGAffineTransform(translationX: 0, y: -corrected)
