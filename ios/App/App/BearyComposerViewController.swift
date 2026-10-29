@@ -21,11 +21,18 @@ import PhotosUI
 /// 字形基线在行片段内并不居中（基线 = 片段顶 + ascender × 倍数），居中 caret
 /// 会比字形偏上约 4pt、底部也够不着字形底。故 caret 改按基线锚定：
 /// 高 = ascender − descender，顶 = 基线 − ascender（即片段顶 + ascender × (倍数 − 1)），
-/// 宽与 x 不动；选区手柄不走 caretRect，不受影响。倍数取光标处实际段落样式
-/// （已填文本取该处属性、空文本取 typingAttributes），取不到时回退居中旧口径；
+/// 宽与 x 不动；选区手柄不走 caretRect，不受影响。倍数优先取编辑器设定的固定值
+/// （见 fixedLineHeightMultiple）：光标处属性 lookup 在输入法提交文本上不可靠——
+/// 提交文本可能不带段落样式，且 UITextView 会把 typingAttributes 同步成光标处属性，
+/// 两路同时失效就会回退到居中旧口径、光标偏上约 4pt（99 包真机实测正是此状）；
+/// 未设定固定值时才走光标处 lookup（已填文本取该处属性、空文本取 typingAttributes），
+/// 取不到时回退居中旧口径；
 /// 字体取 typingAttributes 优先（attributedText 回填后 textView.font 可能取不到，
 /// 此时旧守卫会直接返回 32pt 高 caret，正是对不准的另一半原因）。
 private final class BearyBodyTextView: UITextView {
+    /// 正文编辑器恒定的行高倍数，由 Composer 在 buildTextArea 里与 typingAttributes
+    /// 用同一个 bodyParagraph 一并设定；本类只用于正文编辑器，倍数恒定。
+    var fixedLineHeightMultiple: CGFloat?
     private func caretFont() -> UIFont? {
         if let typed = typingAttributes[.font] as? UIFont {
             return typed
@@ -56,7 +63,8 @@ private final class BearyBodyTextView: UITextView {
         // 组合中系统 caret 约 19pt 时旧守卫不通过、落字后约 32pt 时才通过，落字瞬间
         // 高位→低位切换即光标下掉一截；只要倍数 > 1 就无条件按基线锚定，三态基线一致。
         guard rect.height > 0, let caretFont = caretFont(), caretFont.lineHeight > 0 else { return rect }
-        if let multiple = lineHeightMultiple(at: position), multiple > 1.0 {
+        let multiple = fixedLineHeightMultiple ?? lineHeightMultiple(at: position)
+        if let multiple = multiple, multiple > 1.0 {
             let height = caretFont.ascender - caretFont.descender
             guard height > 0 else { return rect }
             rect.origin.y = rect.origin.y + caretFont.ascender * (multiple - 1)
@@ -492,6 +500,9 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, U
 
     override func viewDidLayoutSubviews() {
         super.viewDidLayoutSubviews()
+        // 草稿 pill 宽度兜底（2026-10-29，同上）：每次布局后按当前标题重算一次宽度
+        // 约束常量，约束若在某次布局中被打破也能在下次布局恢复；同值重设不触发重排。
+        refreshDraftPillWidth()
         // 临时诊断（82 包追加，定根因后删除）：入口每调一次记一次，不节流。
         DiagFile.mark("composer-layout")
         // 临时诊断（天气条 10/28，定根因后删除）：布局后实测帧。refreshToolStrip 里的
@@ -1031,6 +1042,9 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, U
         let bodyParagraph = NSMutableParagraphStyle()
         bodyParagraph.lineHeightMultiple = bodyLineMultiple
         textView.typingAttributes = [.font: UIFont.systemFont(ofSize: 16), .foregroundColor: BearyColors.ink, .paragraphStyle: bodyParagraph]
+        // caret 锚定同用该倍数（见 BearyBodyTextView.fixedLineHeightMultiple）：光标处
+        // 属性 lookup 在输入法提交文本上不可靠，固定倍数优先，防回退居中致光标偏上。
+        textView.fixedLineHeightMultiple = bodyLineMultiple
         textView.backgroundColor = UIColor.clear
         textView.layer.cornerRadius = 0
         textView.isScrollEnabled = true
@@ -2615,6 +2629,10 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, U
         draftPillWidth.isActive = true
         draftPillWidthConstraint = draftPillWidth
         refreshDraftPillWidth()
+        // 草稿 pill 抗压钉死（2026-10-29）：99 包真机上 pill 在工具栏右端完全不渲染，
+        // 静态排查已排除隐藏/移除/宽度为 0/溢出；剩余疑似布局引擎在某次布局中压没了它，
+        // 故把水平抗压提到 required，让栈在任何溢出下都先压 spacer 而不是 pill。
+        draftPillButton.setContentCompressionResistancePriority(.required, for: .horizontal)
         // 编辑模式：无草稿流，但 pill 可见（DF-3：网页 openDraftBox 在 editingId 时
         // 直接 return，pill 可见但点开无动作；didTapDraftBox 编辑态已直接 return，
         // 故这里不再隐藏 pill）；引用钮保留（C6：编辑模式引用可改可删）。
