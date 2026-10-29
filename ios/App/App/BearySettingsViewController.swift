@@ -1847,6 +1847,26 @@ final class BearySettingsViewController: UIViewController {
         tutorialButton.addTarget(self, action: #selector(tutorialButtonTapped), for: .touchUpInside)
         tutorialButton.bearyAddPressHaptic()
         rows.append(makeSettingsTappableRow(content: tutorialContent, button: tutorialButton))
+        // 2026-10-29 音效包接入：音效开关行（默认开，关后全部音效静默；只门控音效，不动震动）。
+        let soundSwitchTitle = makeLabel(font: UIFont.systemFont(ofSize: 15), color: BearyColors.ink)
+        soundSwitchTitle.text = "音效"
+        let soundSwitchDetail = makeLabel(font: UIFont.systemFont(ofSize: 12), color: BearyColors.gray, lines: 0)
+        soundSwitchDetail.text = "点按、发布等操作的提示音"
+        let soundSwitchTextStack = UIStackView(arrangedSubviews: [soundSwitchTitle, soundSwitchDetail])
+        soundSwitchTextStack.axis = .vertical
+        soundSwitchTextStack.spacing = 2
+        soundSwitchTextStack.alignment = .fill
+        let soundSwitch = UISwitch()
+        soundSwitch.isOn = BearySoundPlayer.isEnabled
+        soundSwitch.setContentHuggingPriority(.required, for: .horizontal)
+        soundSwitch.setContentCompressionResistancePriority(.required, for: .horizontal)
+        soundSwitch.addTarget(self, action: #selector(soundSwitchValueChanged(_:)), for: .valueChanged)
+        let soundSwitchRow = UIStackView(arrangedSubviews: [soundSwitchTextStack, soundSwitch])
+        soundSwitchRow.translatesAutoresizingMaskIntoConstraints = false
+        soundSwitchRow.axis = .horizontal
+        soundSwitchRow.spacing = 12
+        soundSwitchRow.alignment = .center
+        rows.append(soundSwitchRow)
         // 2026-10-29 第 10 项：通用组版本行已删，版本只留页底脚注一处
         // （见 buildVersionFooter，Bundle 动态读，不写死）。
         // D2：诊断日志开关行（复用消息角标开关行样式：标题 + 说明 + UISwitch；
@@ -1928,6 +1948,10 @@ final class BearySettingsViewController: UIViewController {
     @objc private func badgeSwitchValueChanged(_ sender: UISwitch) {
         UserDefaults.standard.set(sender.isOn, forKey: "beary_unread_badge_enabled")
         SceneDelegate.chrome?.reapplyBellBadge()
+    }
+
+    @objc private func soundSwitchValueChanged(_ sender: UISwitch) {
+        UserDefaults.standard.set(sender.isOn, forKey: BearySoundPlayer.enabledDefaultsKey)
     }
 
     /// D2：诊断日志开关——只存档；DiagFile 每次写入时实时读档，关后新写入即停

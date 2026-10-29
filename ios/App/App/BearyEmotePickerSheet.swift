@@ -235,6 +235,7 @@ final class BearyEmotePickerSheetViewController: UIViewController, UICollectionV
 
     func collectionView(_ collectionView: UICollectionView, didSelectItemAt indexPath: IndexPath) {
         let pickedKey = BearyEmoteKeys.all[indexPath.item]
+        BearySoundPlayer.play(.emoteChirp)
         onPick?(pickedKey)
     }
 }

@@ -1243,7 +1243,7 @@ final class BearyChromeViewController: UIViewController {
             // 识别失败（快点已走按钮路径）均不补开。同一次触摸里 touchUpInside
             // 与 .ended 互斥，故与快点路径不会重复开两次。
             // 临时诊断（81 包，定根因后删除）：慢按补开入口。
-            if wasEnded && !wasDragged { DiagFile.mark("fabLongPress-open"); presentComposer() }
+            if wasEnded && !wasDragged { DiagFile.mark("fabLongPress-open"); BearySoundPlayer.play(.fabPop); presentComposer() }
             // 下一 runloop 再清：保证 didTapWrite 开头的检查（若其触发）仍能看到标志。
             DispatchQueue.main.async { self.fabDraggedThisTouch = false }
         default:
@@ -1334,6 +1334,7 @@ final class BearyChromeViewController: UIViewController {
         DiagFile.mark("didTapWrite")
         // 拖完松手不误开：本次触摸已记为拖动时直接 return（与手势 .ended 补开路径互斥）。
         guard !fabDraggedThisTouch else { return }
+        BearySoundPlayer.play(.fabPop)
         presentComposer()
     }
     @objc private func fabPressedDown() { setFabPressed(true) }
@@ -1736,6 +1737,7 @@ final class BearyChromeViewController: UIViewController {
                     guard let self = self else { return }
                     switch result {
                     case .success:
+                        BearySoundPlayer.play(.deleteSwoosh)
                         // 88 包 M14：时间线走行级退场，不再整页首拉重载；
                         // 首页与个人主页仍用原有重拉同步（其列表非日期分区，
                         // 且个人主页无删除入口，只是跟随同步）。

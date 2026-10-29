@@ -710,6 +710,7 @@ final class BearyLoginViewController: UIViewController {
                         // 会话 cookie 已由共享 URLSession 存好；容器随后刷新登录态。
                         // 审计 P1-25：先按 referral 绑定结果给一句反馈再 dismiss。
                         strongSelf.handleLoginReferralFeedback(resp: resp)
+                        BearySoundPlayer.play(.loginChime)
                     } else {
                         strongSelf.showMessage(resp.message ?? resp.error ?? "验证失败")
                     }

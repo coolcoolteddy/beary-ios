@@ -1777,6 +1777,7 @@ final class BearyTimelineCell: UITableViewCell {
     /// playDenyShake 同口径：减动效只跳视觉抖动，震动照常给）。
     func playPublishDenyShake() {
         BearyHaptics.rejectionWarning()
+        BearySoundPlayer.play(.refuseBonk)
         if UIAccessibility.isReduceMotionEnabled { return }
         publishButton.layer.removeAnimation(forKey: "bearyDenyShake")
         let shake = CAKeyframeAnimation(keyPath: "transform.translation.x")
@@ -4712,6 +4713,7 @@ class BearyTimelineViewController: UIViewController {
         publishBusyIds.insert(entryId)
         // 先行：目标态立即落地（模型 + 可见行，不整页重拉）。
         applyVisibilityLocally(entryId: entryId, isPublic: target == 1, publishedAt: nil)
+        BearySoundPlayer.play(.visibilityClick)
         reloadVisibleTimelineRow(entryId: entryId)
         BearyAPI.shared.setVisibility(id: entryId, published: target) { [weak self] result in
             DispatchQueue.main.async {

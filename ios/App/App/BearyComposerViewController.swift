@@ -4634,6 +4634,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, U
                         // SceneDelegate.onPublished（D 路禁改），本处不硬编。
                         self.showToastAfterClose(message: self.selectedVisibilityPublished ? "已发布 · 已公开" : "已发布 · 已设为私密")
                         BearyHaptics.publishSuccess()
+                        BearySoundPlayer.play(.publishSuccess)
                         self.onPublished?(entryId)
                     } else {
                         self.saveDraftNow()

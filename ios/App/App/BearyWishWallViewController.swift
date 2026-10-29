@@ -328,6 +328,7 @@ final class BearyWishWallViewController: UIViewController {
         next.myVote = newVote
         wishes[index] = next
         rowViews[wishId]?.configure(item: next, isAdmin: isAdmin)
+        BearySoundPlayer.play(.wishDing)
         let sendVote = newVote ?? 0
         BearyAPI.shared.voteWish(id: wishId, vote: sendVote) { [weak self] result in
             DispatchQueue.main.async {

@@ -2150,6 +2150,7 @@ class BearyDiaryCardCell: UITableViewCell {
     private func playDenyShake(on button: UIButton) {
         // 拒绝震动不拿减动效门控：减动效只跳过视觉抖动，震动照常给。
         BearyHaptics.rejectionWarning()
+        BearySoundPlayer.play(.refuseBonk)
         if UIAccessibility.isReduceMotionEnabled { return }
         button.layer.removeAnimation(forKey: "bearyDenyShake")
         let shake = CAKeyframeAnimation(keyPath: "transform.translation.x")
@@ -2306,9 +2307,11 @@ class BearyDiaryCardCell: UITableViewCell {
             guard SessionManager.shared.isLoggedIn else { return }
             if cellLikedByMe {
                 applyCellPreUnlike()
+                BearySoundPlayer.play(.unlikeSoft)
             } else {
                 // 描边已撤：按下只给轻震，按压缩放由 iconTouchDown 的 .84 给。
                 BearyHaptics.likeTap()
+                BearySoundPlayer.play(.likePop)
             }
             likePressPreviewActive = true
             return
@@ -2319,9 +2322,11 @@ class BearyDiaryCardCell: UITableViewCell {
         guard let entryIdValue = cellEntryId, !entryIdValue.isEmpty else { return }
         if currentEntry?.likedByMe == true {
             applyPreUnlike()
+            BearySoundPlayer.play(.unlikeSoft)
         } else {
             // 描边已撤：按下只给轻震，按压缩放由 iconTouchDown 的 .84 给。
             BearyHaptics.likeTap()
+            BearySoundPlayer.play(.likePop)
         }
         likePressPreviewActive = true
     }
@@ -2392,8 +2397,10 @@ class BearyDiaryCardCell: UITableViewCell {
         if hadPressPreview == false {
             if currentlyLiked == false {
                 BearyHaptics.likeTap()
+                BearySoundPlayer.play(.likePop)
             } else {
                 applyPreUnlike()
+                BearySoundPlayer.play(.unlikeSoft)
             }
         }
         if currentlyLiked == false {
@@ -2475,6 +2482,7 @@ class BearyDiaryCardCell: UITableViewCell {
         currentEntry?.bookmarkedByMe = flipped
         updateBookmarkButton()
         BearyIconMotion.playBookmarkPop(on: bookmarkButton)
+        if flipped { BearySoundPlayer.play(.bookmarkTick) }
         isBookmarkBusy = true
         // 方案一：先行期间不压暗、不禁用，防重入只靠 isBookmarkBusy 守卫。
         BearyAPI.shared.toggleBookmark(id: entryIdValue) { [weak self] result in

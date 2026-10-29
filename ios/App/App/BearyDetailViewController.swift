@@ -939,6 +939,7 @@ final class BearyDetailViewController: UIViewController {
 
     private func playDenyShake(on button: UIButton) {
         BearyHaptics.rejectionWarning()
+        BearySoundPlayer.play(.refuseBonk)
         if UIAccessibility.isReduceMotionEnabled { return }
         button.layer.removeAnimation(forKey: "bearyDetailDenyShake")
         let shake = CAKeyframeAnimation(keyPath: "transform.translation.x")
@@ -1148,6 +1149,7 @@ final class BearyDetailViewController: UIViewController {
         entry.isPublic = target == 1
         entry.ephemeralUntil = nil
         refreshVisibilityViews()
+        BearySoundPlayer.play(.visibilityClick)
         BearyAPI.shared.setVisibility(id: entryId, published: target) { [weak self] result in
             DispatchQueue.main.async {
                 guard let self = self else { return }
@@ -1177,6 +1179,7 @@ final class BearyDetailViewController: UIViewController {
                     else { message = "切换失败，请重试" }
                     BearyToast.show(in: self.view, message: message, aboveFAB: false)
                     BearyHaptics.rejectionWarning()
+                    BearySoundPlayer.play(.refuseBonk)
                     if UIAccessibility.isReduceMotionEnabled == false {
                         self.visibilityButton.layer.removeAnimation(forKey: "bearyDenyShake")
                         let shake = CAKeyframeAnimation(keyPath: "transform.translation.x")
@@ -1214,6 +1217,9 @@ final class BearyDetailViewController: UIViewController {
         // 成功回包对齐服务端值，失败回滚＋拒绝动效。
         if !currentlyLiked {
             BearyHaptics.likeTap()
+            BearySoundPlayer.play(.likePop)
+        } else {
+            BearySoundPlayer.play(.unlikeSoft)
         }
         entry.likedByMe = !currentlyLiked
         entry.likeCount = max(0, originalCount + (currentlyLiked ? -1 : 1))
@@ -1275,6 +1281,7 @@ final class BearyDetailViewController: UIViewController {
         entry.bookmarkedByMe = flipped
         refreshActionRow()
         BearyIconMotion.playBookmarkPop(on: bookmarkButton)
+        if flipped { BearySoundPlayer.play(.bookmarkTick) }
         isBookmarkBusy = true
         BearyAPI.shared.toggleBookmark(id: entryId) { [weak self] result in
             DispatchQueue.main.async {

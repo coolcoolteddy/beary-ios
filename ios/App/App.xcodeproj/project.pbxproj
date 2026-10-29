@@ -165,6 +165,18 @@
 		743DDD59C1DDF3E1E5BC5B9F /* wind.json in Resources */ = {isa = PBXBuildFile; fileRef = D71FED10C8283242D7CCA681 /* wind.json */; };
 		E01FDB6571892FC10218BA49 /* wind_dark.json in Resources */ = {isa = PBXBuildFile; fileRef = 6B04F15CD20E4F1195CD5362 /* wind_dark.json */; };
 		79F247252364A4DF73EEBDA2 /* BearyEmotePlayer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 073AE0417A7BFF6FD0034CE0 /* BearyEmotePlayer.swift */; };
+		4EAA1C4842C3484C9FBB6FDE /* fab_pop.wav in Resources */ = {isa = PBXBuildFile; fileRef = 4504AE28999244BFB8ECE420 /* fab_pop.wav */; };
+		6E63482FF1C149EE976D2F68 /* publish_success.wav in Resources */ = {isa = PBXBuildFile; fileRef = 7E317F55140C45E3A494F8C3 /* publish_success.wav */; };
+		F13A4995ED1B4F2A80842969 /* like_pop.wav in Resources */ = {isa = PBXBuildFile; fileRef = 6BFEB400C5D74F1F89AFEE5A /* like_pop.wav */; };
+		DE48FCDF27C54AE68D45DE7D /* unlike_soft.wav in Resources */ = {isa = PBXBuildFile; fileRef = E7025C9FF69449589CB6C49D /* unlike_soft.wav */; };
+		378F1871D16C4297B70B3C51 /* bookmark_tick.wav in Resources */ = {isa = PBXBuildFile; fileRef = 049260A5098442959FD704DE /* bookmark_tick.wav */; };
+		7BA27BD5B679407399E66F87 /* visibility_click.wav in Resources */ = {isa = PBXBuildFile; fileRef = 28FFC6C39BB6415589CC455E /* visibility_click.wav */; };
+		675A37DFF5F04B30A0FC26D8 /* emote_chirp.wav in Resources */ = {isa = PBXBuildFile; fileRef = 5222898C33CF41D8B8174444 /* emote_chirp.wav */; };
+		CE32A98F67D94BCEB20B96D0 /* delete_swoosh.wav in Resources */ = {isa = PBXBuildFile; fileRef = 8FA1DAD57B484F17AAFF531F /* delete_swoosh.wav */; };
+		335A64EC9511442B9BFDD12C /* refuse_bonk.wav in Resources */ = {isa = PBXBuildFile; fileRef = 175C78792D8E4FBD9D7252E3 /* refuse_bonk.wav */; };
+		63E7BE34FACB4C479339AC77 /* login_chime.wav in Resources */ = {isa = PBXBuildFile; fileRef = 95A3FF88EA434AFDA9EB8AC2 /* login_chime.wav */; };
+		944DC3B7D92A46DE85A0C6F1 /* wish_ding.wav in Resources */ = {isa = PBXBuildFile; fileRef = 385C474CEBF54A899F891334 /* wish_ding.wav */; };
+		3AA12B2885B64262BB5A9AD8 /* BearySoundPlayer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0AB06C47E08A427BB03EDF69 /* BearySoundPlayer.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -329,6 +341,18 @@
 		6B04F15CD20E4F1195CD5362 /* wind_dark.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = LottieWeather/wind_dark.json; sourceTree = "<group>"; };
 		5F509C857697461EBD1A11F9 /* BearyEntryImageViewerViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BearyEntryImageViewerViewController.swift; sourceTree = "<group>"; };
 		073AE0417A7BFF6FD0034CE0 /* BearyEmotePlayer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BearyEmotePlayer.swift; sourceTree = "<group>"; };
+		4504AE28999244BFB8ECE420 /* fab_pop.wav */ = {isa = PBXFileReference; lastKnownFileType = audio.wav; path = Sounds/fab_pop.wav; sourceTree = "<group>"; };
+		7E317F55140C45E3A494F8C3 /* publish_success.wav */ = {isa = PBXFileReference; lastKnownFileType = audio.wav; path = Sounds/publish_success.wav; sourceTree = "<group>"; };
+		6BFEB400C5D74F1F89AFEE5A /* like_pop.wav */ = {isa = PBXFileReference; lastKnownFileType = audio.wav; path = Sounds/like_pop.wav; sourceTree = "<group>"; };
+		E7025C9FF69449589CB6C49D /* unlike_soft.wav */ = {isa = PBXFileReference; lastKnownFileType = audio.wav; path = Sounds/unlike_soft.wav; sourceTree = "<group>"; };
+		049260A5098442959FD704DE /* bookmark_tick.wav */ = {isa = PBXFileReference; lastKnownFileType = audio.wav; path = Sounds/bookmark_tick.wav; sourceTree = "<group>"; };
+		28FFC6C39BB6415589CC455E /* visibility_click.wav */ = {isa = PBXFileReference; lastKnownFileType = audio.wav; path = Sounds/visibility_click.wav; sourceTree = "<group>"; };
+		5222898C33CF41D8B8174444 /* emote_chirp.wav */ = {isa = PBXFileReference; lastKnownFileType = audio.wav; path = Sounds/emote_chirp.wav; sourceTree = "<group>"; };
+		8FA1DAD57B484F17AAFF531F /* delete_swoosh.wav */ = {isa = PBXFileReference; lastKnownFileType = audio.wav; path = Sounds/delete_swoosh.wav; sourceTree = "<group>"; };
+		175C78792D8E4FBD9D7252E3 /* refuse_bonk.wav */ = {isa = PBXFileReference; lastKnownFileType = audio.wav; path = Sounds/refuse_bonk.wav; sourceTree = "<group>"; };
+		95A3FF88EA434AFDA9EB8AC2 /* login_chime.wav */ = {isa = PBXFileReference; lastKnownFileType = audio.wav; path = Sounds/login_chime.wav; sourceTree = "<group>"; };
+		385C474CEBF54A899F891334 /* wish_ding.wav */ = {isa = PBXFileReference; lastKnownFileType = audio.wav; path = Sounds/wish_ding.wav; sourceTree = "<group>"; };
+		0AB06C47E08A427BB03EDF69 /* BearySoundPlayer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BearySoundPlayer.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -527,6 +551,18 @@
 				45881594E960A6B0FA3F7F01 /* thunder_dark.json */,
 				D71FED10C8283242D7CCA681 /* wind.json */,
 				6B04F15CD20E4F1195CD5362 /* wind_dark.json */,
+				4504AE28999244BFB8ECE420 /* fab_pop.wav */,
+				7E317F55140C45E3A494F8C3 /* publish_success.wav */,
+				6BFEB400C5D74F1F89AFEE5A /* like_pop.wav */,
+				E7025C9FF69449589CB6C49D /* unlike_soft.wav */,
+				049260A5098442959FD704DE /* bookmark_tick.wav */,
+				28FFC6C39BB6415589CC455E /* visibility_click.wav */,
+				5222898C33CF41D8B8174444 /* emote_chirp.wav */,
+				8FA1DAD57B484F17AAFF531F /* delete_swoosh.wav */,
+				175C78792D8E4FBD9D7252E3 /* refuse_bonk.wav */,
+				95A3FF88EA434AFDA9EB8AC2 /* login_chime.wav */,
+				385C474CEBF54A899F891334 /* wish_ding.wav */,
+				0AB06C47E08A427BB03EDF69 /* BearySoundPlayer.swift */,
 			);
 			path = App;
 			sourceTree = "<group>";
@@ -731,6 +767,17 @@
 				A8EF45815191B108240F2EF6 /* thunder_dark.json in Resources */,
 				743DDD59C1DDF3E1E5BC5B9F /* wind.json in Resources */,
 				E01FDB6571892FC10218BA49 /* wind_dark.json in Resources */,
+				4EAA1C4842C3484C9FBB6FDE /* fab_pop.wav in Resources */,
+				6E63482FF1C149EE976D2F68 /* publish_success.wav in Resources */,
+				F13A4995ED1B4F2A80842969 /* like_pop.wav in Resources */,
+				DE48FCDF27C54AE68D45DE7D /* unlike_soft.wav in Resources */,
+				378F1871D16C4297B70B3C51 /* bookmark_tick.wav in Resources */,
+				7BA27BD5B679407399E66F87 /* visibility_click.wav in Resources */,
+				675A37DFF5F04B30A0FC26D8 /* emote_chirp.wav in Resources */,
+				CE32A98F67D94BCEB20B96D0 /* delete_swoosh.wav in Resources */,
+				335A64EC9511442B9BFDD12C /* refuse_bonk.wav in Resources */,
+				63E7BE34FACB4C479339AC77 /* login_chime.wav in Resources */,
+				944DC3B7D92A46DE85A0C6F1 /* wish_ding.wav in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -784,6 +831,7 @@
 				2B5FFB899357ED2A2FA2E05E /* BearySearchViewController.swift in Sources */,
 				A23C53DAC03E8C03962E6498 /* BearyNotificationsViewController.swift in Sources */,
 				EA84A3E04072B1309A399108 /* BearyEmoteImages.swift in Sources */,
+				3AA12B2885B64262BB5A9AD8 /* BearySoundPlayer.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

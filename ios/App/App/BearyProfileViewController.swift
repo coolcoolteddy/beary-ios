@@ -2894,6 +2894,7 @@ class BearyProfileViewController: UIViewController {
         // 先行：目标态立即落地（可见行 + 页签模型同步改；成功路径再以服务端值对齐）。
         updateEntryInAllTabs(entry: optimistic)
         syncVisibleCell(entry: optimistic)?.refreshPublishRow()
+        BearySoundPlayer.play(.visibilityClick)
         BearyAPI.shared.setVisibility(id: entryId, published: target) { [weak self] result in
             DispatchQueue.main.async {
                 guard let strongSelf = self else { return }
@@ -3013,6 +3014,7 @@ class BearyProfileViewController: UIViewController {
         updateEntryInAllTabs(entry: optimistic)
         // 方案一：先行同步显式不禁用，防重入只靠 bookmarkBusyIds 守卫。
         syncVisibleCell(entry: optimistic, interactionDisabled: false)?.playBookmarkPop()
+        if wantBookmarked { BearySoundPlayer.play(.bookmarkTick) }
         BearyAPI.shared.toggleBookmark(id: entryId) { [weak self] result in
             DispatchQueue.main.async {
                 guard let strongSelf = self else { return }
