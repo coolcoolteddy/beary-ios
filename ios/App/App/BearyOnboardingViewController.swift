@@ -1,473 +1,176 @@
 import UIKit
 
-// ===== 首次启动欢迎引导 v4（原生版，引导 + 现行使用指南合并）=====
-// iCity 10 屏版（开场钩子 → 欢迎 → 问答 → 试写 → 心情天气 → 可见范围 →
-// 互动演示 → 消息与主页 → 小工具 → CTA）；首启与重播同为
-// 10 屏，准备屏已删（P1-2）；送达演示与公开演示倒计时屏已随送达模型废除；
-// CTA 改「关闭 / 开始写第一篇」。
-// 绝不用 WKWebView、不加载任何网页；文案逐字对齐现行指南源码
-// （旧 BearyTutorialViewController 已删，seen 键现归本类 tutorialSeenKey）。
-// 尺寸铁律（v3 原型前车之鉴）：熊 200×200、熊掌 44×44 各自显式限定，
-// 不许用宽泛约束让熊掌被撑大压住标题。
-// 关闭/完成都会把 beary_tutorial_seen_v1 置 true（与旧教程同键同语义），
-// 容器只负责弹出，不写该标记。
+// ===== beary 新手引导 v3（原生版，4 页）=====
+// 骨架＋四页本体（第 1 棒）。预览基准：~/workspace/onboarding-preview/preview-v3.html，
+// v1/v2 与旧 10 屏版一律作废；旧文件只作资产名与 API 名的参考，旧规则一律不用。
+// 公开契约（第 2 棒按此接线，改名即断链）：
+// - final class BearyOnboardingViewController: UIViewController
+// - enum Mode { firstLaunch, replay }，init(mode: Mode)
+// - static let seenKey = "beary_onboarding_v3_seen"（新 key，绝不复用旧教程的 seen key）
+// - 四个可选闭包 onRequestLogin / onRequestGuestBrowse / onRequestCompose / onRequestBrowse：
+//   触发时只回调、不自行 dismiss，dismiss 由 SceneDelegate 控制；闭包未设置时才回退为
+//   写 seenKey + 自行 dismiss（兜底，避免按钮无反应）。
+// - 跳过：写 seenKey = true 后自行 dismiss（modal 下方就是主页或设置页，直接露出即可）。
+// 旧 VC 的预加载步骤 API 已随整文件替换而消失，SceneDelegate 的 presentOnboarding 会暂时
+// 无法编译——这是预期的，第 2 棒会重写它，本文件不碰 SceneDelegate。
+// 注意：本页不调任何写接口、不改用户默认设置；第 2 页演示只改示例态，第 3 页不产生真实回应。
+// 星环装饰：仓库内没有主站 hero 星环同款资产（仅有单颗 icon_star，非星环），按任务要求去掉，
+// 不自绘、不拿 SF Symbol 做主图标。
 
-/// 按压统一缩到 .92 回弹的 44pt 按钮（BearyHit44Button 已摘 final，可继承）。
-final class BearyPressButton: BearyHit44Button {
-    override init(frame: CGRect) {
-        super.init(frame: frame)
-        addTarget(self, action: #selector(pressDown), for: .touchDown)
-        addTarget(self, action: #selector(pressUp), for: [.touchUpInside, .touchUpOutside, .touchCancel])
-    }
+// MARK: - 动效与布局常量（文件内私有）
 
-    required init?(coder: NSCoder) {
-        fatalError("init(coder:) has not been implemented")
-    }
+private enum OnboardingAnim {
+    /// 切页总时长（出 0.14 + 入 0.14，落在 0.25–0.32 秒口径内）。
+    static let pageHalfDuration: TimeInterval = 0.14
+    /// 切页横移幅度（轻微横移＋淡入淡出）。
+    static let pageSlide: CGFloat = 20
+    /// 入场错峰间隔；总入场 0.5 秒内（0.15 末位延迟 + 0.25 播长 = 0.40）。
+    static let staggerStep: TimeInterval = 0.05
+    static let entranceDuration: TimeInterval = 0.25
+    /// 第 1 页两张卡片的错位：后卡左右各缩 10，前卡下压 80、微转 0.5°，后卡微转 -3.5°。
+    static let cardBackInset: CGFloat = 10
+    static let cardFrontOffset: CGFloat = 80
+    static let cardBackRotation: CGFloat = -3.5 * CGFloat.pi / 180
+    static let cardFrontRotation: CGFloat = 0.5 * CGFloat.pi / 180
+}
 
-    @objc private func pressDown() {
-        // W6：引导钮（BearyPressButton 全量）补 .light 按压震动；缩放仍走本类 .92 定版不动。
-        BearyHaptics.press()
-        if UIAccessibility.isReduceMotionEnabled { return }
-        UIView.animate(withDuration: 0.13) { self.transform = CGAffineTransform(scaleX: 0.92, y: 0.92) }
-    }
+// MARK: - 圆角胶囊容器（pill / 回应 chip 共用：圆角恒为半高，深浅与字号变化时自动跟随）
 
-    @objc private func pressUp() {
-        if UIAccessibility.isReduceMotionEnabled { return }
-        UIView.animate(withDuration: 0.13) { self.transform = .identity }
+private final class OnboardingCapsuleView: UIView {
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        layer.cornerRadius = bounds.height / 2
     }
 }
 
-/// 开场小熊：主站 hero 熊同一条一笔画描边（100 盒坐标 ×2 到 200 盒）。
-/// 眼睛圆形揭示（mask 圆半径动画，不许弹出）、橙鼻最后出现、眨眼 + 熊掌挥手。
-final class BearyBearView: UIView {
-    var onBearTapped: (() -> Void)?
-    var onBearLongPressed: (() -> Void)?
+// MARK: - 可见范围演示态（第 2 页）
 
-    private let bearBox = UIView()
-    private let outlineLayer = CAShapeLayer()
-    private let leftEye = CAShapeLayer()
-    private let rightEye = CAShapeLayer()
-    private let leftEyeMask = CAShapeLayer()
-    private let rightEyeMask = CAShapeLayer()
-    private let noseLayer = CAShapeLayer()
-    private let blushLeft = UIView()
-    private let blushRight = UIView()
-    private let pawView = UIImageView()
-    private var sequenceStarted = false
-    private var floatRunning = false
-    private var tapCount = 0
-    private var tapResetWork: DispatchWorkItem?
-    private var rainLayer: CAEmitterLayer?
+private enum OnboardingVisibilityDemo: Int, CaseIterable {
+    case `private` = 0
+    case `public` = 1
+    case ephemeral = 2
 
-    override init(frame: CGRect) {
-        super.init(frame: frame)
-        setupBear()
+    /// 官方图标资产名（beary-ui，仓库已核实）。
+    var iconName: String {
+        switch self {
+        case .private: return "icon_lock"
+        case .public: return "icon_globe"
+        case .ephemeral: return "icon_clock"
+        }
     }
 
-    required init?(coder: NSCoder) {
-        fatalError("init(coder:) has not been implemented")
+    var title: String {
+        switch self {
+        case .private: return "私密"
+        case .public: return "公开"
+        case .ephemeral: return "限时日记"
+        }
     }
 
-    // 次要项：CGColor 只在赋值时解析一次，深浅切换时重刷（UIColor 背景色自动跟随，不用管）。
-    override func traitCollectionDidChange(_ previousTraitCollection: UITraitCollection?) {
-        super.traitCollectionDidChange(previousTraitCollection)
-        guard traitCollection.hasDifferentColorAppearance(comparedTo: previousTraitCollection) else { return }
-        outlineLayer.strokeColor = BearyColors.ink.cgColor
-        leftEye.fillColor = BearyColors.ink.cgColor
-        rightEye.fillColor = BearyColors.ink.cgColor
-        noseLayer.fillColor = BearyColors.orange.cgColor
+    /// 副文案：限时一句以编辑器源码为准（BearyComposerViewController ephemeralSubtitleLabel），不得编造。
+    var subtitle: String {
+        switch self {
+        case .private: return "仅自己可见"
+        case .public: return "所有人可见"
+        case .ephemeral: return "公开 24 小时后自动转私密"
+        }
     }
 
-    private func bearPath() -> UIBezierPath {
-        let path = UIBezierPath()
-        path.move(to: CGPoint(x: 92, y: 170))
-        path.addCurve(to: CGPoint(x: 62, y: 164), controlPoint1: CGPoint(x: 87, y: 169), controlPoint2: CGPoint(x: 70.4, y: 169.4))
-        path.addCurve(to: CGPoint(x: 42, y: 138), controlPoint1: CGPoint(x: 53.6, y: 158.6), controlPoint2: CGPoint(x: 46, y: 148))
-        path.addCurve(to: CGPoint(x: 38, y: 104), controlPoint1: CGPoint(x: 38, y: 128), controlPoint2: CGPoint(x: 38, y: 113.4))
-        path.addCurve(to: CGPoint(x: 42, y: 82), controlPoint1: CGPoint(x: 38, y: 94.6), controlPoint2: CGPoint(x: 43.6, y: 89))
-        path.addCurve(to: CGPoint(x: 28, y: 62), controlPoint1: CGPoint(x: 40.4, y: 75), controlPoint2: CGPoint(x: 28, y: 69))
-        path.addCurve(to: CGPoint(x: 42, y: 40), controlPoint1: CGPoint(x: 28, y: 55), controlPoint2: CGPoint(x: 35.6, y: 43))
-        path.addCurve(to: CGPoint(x: 66, y: 44), controlPoint1: CGPoint(x: 48.4, y: 37), controlPoint2: CGPoint(x: 59.6, y: 40.4))
-        path.addCurve(to: CGPoint(x: 80, y: 62), controlPoint1: CGPoint(x: 72.4, y: 47.6), controlPoint2: CGPoint(x: 74.4, y: 59.6))
-        path.addCurve(to: CGPoint(x: 100, y: 58), controlPoint1: CGPoint(x: 85.6, y: 64.4), controlPoint2: CGPoint(x: 93.4, y: 58.4))
-        path.addCurve(to: CGPoint(x: 120, y: 60), controlPoint1: CGPoint(x: 106.6, y: 57.6), controlPoint2: CGPoint(x: 114.4, y: 62.4))
-        path.addCurve(to: CGPoint(x: 134, y: 44), controlPoint1: CGPoint(x: 125.6, y: 57.6), controlPoint2: CGPoint(x: 127.6, y: 47.4))
-        path.addCurve(to: CGPoint(x: 158, y: 40), controlPoint1: CGPoint(x: 140.4, y: 40.6), controlPoint2: CGPoint(x: 151.6, y: 37.4))
-        path.addCurve(to: CGPoint(x: 172, y: 60), controlPoint1: CGPoint(x: 164.4, y: 42.6), controlPoint2: CGPoint(x: 172, y: 53))
-        path.addCurve(to: CGPoint(x: 158, y: 82), controlPoint1: CGPoint(x: 172, y: 67), controlPoint2: CGPoint(x: 159.6, y: 74.6))
-        path.addCurve(to: CGPoint(x: 162, y: 104), controlPoint1: CGPoint(x: 156.4, y: 89.4), controlPoint2: CGPoint(x: 162, y: 94.6))
-        path.addCurve(to: CGPoint(x: 158, y: 138), controlPoint1: CGPoint(x: 162, y: 113.4), controlPoint2: CGPoint(x: 161.6, y: 128))
-        path.addCurve(to: CGPoint(x: 140, y: 164), controlPoint1: CGPoint(x: 154.4, y: 148), controlPoint2: CGPoint(x: 148, y: 158.4))
-        path.addCurve(to: CGPoint(x: 110, y: 172), controlPoint1: CGPoint(x: 132, y: 169.6), controlPoint2: CGPoint(x: 115, y: 170.6))
-        return path
+    /// 状态标签：只用私密蓝 / 公开橙两种 pill；限时存活期即公开态，故用公开橙 pill。
+    var pillText: String {
+        switch self {
+        case .private: return "私密"
+        case .public: return "公开"
+        case .ephemeral: return "公开"
+        }
     }
+
+    var pillColor: UIColor {
+        switch self {
+        case .private: return BearyColors.blue
+        case .public: return BearyColors.orange
+        case .ephemeral: return BearyColors.orange
+        }
+    }
+
+    var explain: String { subtitle }
 }
-
-extension BearyBearView {
-    private func setupBear() {
-        bearBox.translatesAutoresizingMaskIntoConstraints = false
-        addSubview(bearBox)
-        NSLayoutConstraint.activate([
-            bearBox.widthAnchor.constraint(equalToConstant: 200),
-            bearBox.heightAnchor.constraint(equalToConstant: 200),
-            bearBox.centerXAnchor.constraint(equalTo: centerXAnchor),
-            bearBox.topAnchor.constraint(equalTo: topAnchor),
-        ])
-
-        outlineLayer.path = bearPath().cgPath
-        outlineLayer.strokeColor = BearyColors.ink.cgColor
-        outlineLayer.fillColor = UIColor.clear.cgColor
-        outlineLayer.lineWidth = 4.5
-        outlineLayer.lineCap = .round
-        outlineLayer.lineJoin = .round
-        outlineLayer.strokeEnd = 0
-        outlineLayer.frame = CGRect(x: 0, y: 0, width: 200, height: 200)
-        bearBox.layer.addSublayer(outlineLayer)
-
-        // 眼睛：圆形揭示（mask 圆半径动画），绝不弹出。
-        // 图层用紧贴眼睛的框（非 200 大框），否则眨眼 scaleY 会绕框中心压、眼睛移位。
-        let leftRect = CGRect(x: 76 - 6.6, y: 114 - 6.6, width: 13.2, height: 13.2)
-        let rightRect = CGRect(x: 124 - 6.6, y: 114 - 6.6, width: 13.2, height: 13.2)
-        let eyeBounds = CGRect(x: 0, y: 0, width: 13.2, height: 13.2)
-        leftEye.path = UIBezierPath(ovalIn: eyeBounds).cgPath
-        leftEye.fillColor = BearyColors.ink.cgColor
-        leftEye.frame = leftRect
-        rightEye.path = UIBezierPath(ovalIn: eyeBounds).cgPath
-        rightEye.fillColor = BearyColors.ink.cgColor
-        rightEye.frame = rightRect
-        let tinyEye = UIBezierPath(ovalIn: CGRect(x: 6.1, y: 6.1, width: 1, height: 1)).cgPath
-        leftEyeMask.path = tinyEye
-        leftEyeMask.frame = eyeBounds
-        rightEyeMask.path = tinyEye
-        rightEyeMask.frame = eyeBounds
-        leftEye.mask = leftEyeMask
-        rightEye.mask = rightEyeMask
-        bearBox.layer.addSublayer(leftEye)
-        bearBox.layer.addSublayer(rightEye)
-
-        // 橙鼻：最后出现。
-        noseLayer.path = UIBezierPath(ovalIn: CGRect(x: 0, y: 0, width: 12.8, height: 12.8)).cgPath
-        noseLayer.fillColor = BearyColors.orange.cgColor
-        noseLayer.opacity = 0
-        noseLayer.frame = CGRect(x: 100 - 6.4, y: 134 - 6.4, width: 12.8, height: 12.8)
-        bearBox.layer.addSublayer(noseLayer)
-
-        for (blush, cx) in [(blushLeft, 58.0), (blushRight, 142.0)] {
-            blush.translatesAutoresizingMaskIntoConstraints = false
-            blush.backgroundColor = BearyColors.orange.withAlphaComponent(0.25)
-            blush.layer.cornerRadius = 5
-            blush.alpha = 0
-            bearBox.addSubview(blush)
-            NSLayoutConstraint.activate([
-                blush.widthAnchor.constraint(equalToConstant: 20),
-                blush.heightAnchor.constraint(equalToConstant: 10),
-                blush.leadingAnchor.constraint(equalTo: bearBox.leadingAnchor, constant: cx),
-                blush.topAnchor.constraint(equalTo: bearBox.topAnchor, constant: 128),
-            ])
-        }
-
-        // 熊掌：44×44 显式限定（v3 教训：不许被撑大）。
-        pawView.translatesAutoresizingMaskIntoConstraints = false
-        pawView.image = BearyIconImages.image(named: "icon_paw", pointSize: 44)
-        pawView.tintColor = BearyColors.orange
-        pawView.contentMode = .scaleAspectFit
-        addSubview(pawView)
-        NSLayoutConstraint.activate([
-            pawView.widthAnchor.constraint(equalToConstant: 44),
-            pawView.heightAnchor.constraint(equalToConstant: 44),
-            pawView.trailingAnchor.constraint(equalTo: bearBox.trailingAnchor, constant: -2),
-            pawView.bottomAnchor.constraint(equalTo: bearBox.bottomAnchor, constant: -26),
-        ])
-
-        let tap = UITapGestureRecognizer(target: self, action: #selector(bearTapped))
-        addGestureRecognizer(tap)
-        let longPress = UILongPressGestureRecognizer(target: self, action: #selector(bearLongPressed(_:)))
-        longPress.minimumPressDuration = 0.5
-        addGestureRecognizer(longPress)
-    }
-
-    /// 开场序列：描边生长 → 眼睛圆形揭示 → 橙鼻 → 眨眼 + 熊掌挥手两次 + 星星。
-    func playDrawSequence() {
-        guard !sequenceStarted else { return }
-        sequenceStarted = true
-        if UIAccessibility.isReduceMotionEnabled {
-            outlineLayer.strokeEnd = 1
-            let fullEye = UIBezierPath(ovalIn: CGRect(x: 0, y: 0, width: 13.2, height: 13.2)).cgPath
-            leftEyeMask.path = fullEye
-            rightEyeMask.path = fullEye
-            noseLayer.opacity = 1
-            blushLeft.alpha = 1
-            blushRight.alpha = 1
-            return
-        }
-        let draw = CABasicAnimation(keyPath: "strokeEnd")
-        draw.fromValue = 0
-        draw.toValue = 1
-        draw.duration = 1.3
-        draw.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
-        draw.fillMode = .forwards
-        draw.isRemovedOnCompletion = false
-        outlineLayer.add(draw, forKey: "bearDraw")
-        outlineLayer.strokeEnd = 1
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1.35) { [weak self] in
-            guard let self = self, self.window != nil else { return }
-            self.revealEyes()
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.45) { [weak self] in
-                guard let self = self, self.window != nil else { return }
-                UIView.animate(withDuration: 0.3) {
-                    self.noseLayer.opacity = 1
-                    self.blushLeft.alpha = 1
-                    self.blushRight.alpha = 1
-                }
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) { [weak self] in
-                    guard let self = self, self.window != nil else { return }
-                    self.wink()
-                    self.wavePaw()
-                    self.starBurst()
-                    self.startFloat()
-                }
-            }
-        }
-    }
-
-    private func revealEyes() {
-        for mask in [leftEyeMask, rightEyeMask] {
-            let from = UIBezierPath(ovalIn: CGRect(x: 6.1, y: 6.1, width: 1, height: 1)).cgPath
-            let to = UIBezierPath(ovalIn: CGRect(x: 0, y: 0, width: 13.2, height: 13.2)).cgPath
-            let anim = CABasicAnimation(keyPath: "path")
-            anim.fromValue = from
-            anim.toValue = to
-            anim.duration = 0.4
-            anim.timingFunction = CAMediaTimingFunction(name: .easeOut)
-            anim.fillMode = .forwards
-            anim.isRemovedOnCompletion = false
-            mask.add(anim, forKey: "eyeReveal")
-            mask.path = to
-        }
-    }
-
-    private func wink() {
-        if UIAccessibility.isReduceMotionEnabled { return }
-        UIView.animateKeyframes(withDuration: 0.5, delay: 0, options: []) {
-            UIView.addKeyframe(withRelativeStartTime: 0, relativeDuration: 0.4) {
-                self.leftEye.transform = CATransform3DMakeScale(1, 0.1, 1)
-                self.rightEye.transform = CATransform3DMakeScale(1, 0.1, 1)
-            }
-            UIView.addKeyframe(withRelativeStartTime: 0.5, relativeDuration: 0.5) {
-                self.leftEye.transform = CATransform3DIdentity
-                self.rightEye.transform = CATransform3DIdentity
-            }
-        }
-    }
-
-    private func wavePaw() {
-        if UIAccessibility.isReduceMotionEnabled { return }
-        UIView.animateKeyframes(withDuration: 0.9, delay: 0, options: []) {
-            UIView.addKeyframe(withRelativeStartTime: 0, relativeDuration: 0.25) {
-                self.pawView.transform = CGAffineTransform(rotationAngle: -0.28)
-            }
-            UIView.addKeyframe(withRelativeStartTime: 0.25, relativeDuration: 0.25) {
-                self.pawView.transform = CGAffineTransform(rotationAngle: 0.28)
-            }
-            UIView.addKeyframe(withRelativeStartTime: 0.5, relativeDuration: 0.25) {
-                self.pawView.transform = CGAffineTransform(rotationAngle: -0.28)
-            }
-            UIView.addKeyframe(withRelativeStartTime: 0.75, relativeDuration: 0.25) {
-                self.pawView.transform = .identity
-            }
-        }
-    }
-
-    /// 6-11：2.4s 往复浮动——减动效门控已有（下行守门）；离页停播
-    /// 由容器 stopScreenAnimations 调 stopFloat，返回第 0 屏由
-    /// resumeFloatIfNeeded 重启；floatRunning 防重复起播叠加。
-    func startFloat() {
-        if UIAccessibility.isReduceMotionEnabled { return }
-        guard !floatRunning else { return }
-        floatRunning = true
-        UIView.animate(withDuration: 2.4, delay: 0, options: [.autoreverse, .repeat, .allowUserInteraction]) {
-            self.bearBox.transform = CGAffineTransform(translationX: 0, y: -5)
-        }
-    }
-
-    /// 6-11：离页停播浮动（停 bearBox 全部动画并落回原位）。
-    func stopFloat() {
-        bearBox.layer.removeAllAnimations()
-        bearBox.transform = .identity
-        floatRunning = false
-    }
-
-    /// 6-11：回第 0 屏时重启浮动；首启开场序列未开始时不提前起播。
-    func resumeFloatIfNeeded() {
-        guard sequenceStarted else { return }
-        startFloat()
-    }
-
-    private func dotImage(color: UIColor, diameter: CGFloat) -> CGImage? {
-        let format = UIGraphicsImageRendererFormat()
-        format.scale = 1
-        let renderer = UIGraphicsImageRenderer(size: CGSize(width: diameter, height: diameter), format: format)
-        return renderer.image { _ in
-            color.setFill()
-            UIBezierPath(ovalIn: CGRect(x: 0, y: 0, width: diameter, height: diameter)).fill()
-        }.cgImage
-    }
-
-    private func starBurst() {
-        if UIAccessibility.isReduceMotionEnabled { return }
-        let emitter = CAEmitterLayer()
-        emitter.emitterPosition = CGPoint(x: bounds.midX, y: 60)
-        emitter.emitterSize = CGSize(width: 120, height: 20)
-        emitter.emitterShape = .line
-        var cells: [CAEmitterCell] = []
-        for color in [BearyColors.orange, UIColor.systemYellow, BearyColors.orange] {
-            let cell = CAEmitterCell()
-            cell.contents = dotImage(color: color, diameter: 8)
-            cell.birthRate = 40
-            cell.lifetime = 0.9
-            cell.velocity = 90
-            cell.velocityRange = 50
-            cell.emissionRange = .pi * 2
-            cell.scale = 0.7
-            cell.alphaSpeed = -1.1
-            cells.append(cell)
-        }
-        emitter.emitterCells = cells
-        layer.addSublayer(emitter)
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) { emitter.birthRate = 0 }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1.3) { emitter.removeFromSuperlayer() }
-    }
-
-    /// 彩蛋 E1：连点 5 下 → 转圈 + 表情雨。
-    private func emoteRain() {
-        if UIAccessibility.isReduceMotionEnabled { return }
-        let spin = CABasicAnimation(keyPath: "transform.rotation.z")
-        spin.fromValue = 0
-        spin.toValue = CGFloat.pi * 2
-        spin.duration = 0.6
-        spin.timingFunction = CAMediaTimingFunction(name: .easeOut)
-        bearBox.layer.add(spin, forKey: "bearSpin")
-        let emitter = CAEmitterLayer()
-        emitter.emitterPosition = CGPoint(x: bounds.midX, y: -10)
-        emitter.emitterSize = CGSize(width: bounds.width, height: 1)
-        emitter.emitterShape = .line
-        var cells: [CAEmitterCell] = []
-        for key in ["happy", "love", "hug", "wave", "applause"] {
-            guard let cg = UIImage(named: "emote_\(key)")?.cgImage else { continue }
-            let cell = CAEmitterCell()
-            cell.contents = cg
-            cell.birthRate = 2.5
-            cell.lifetime = 2.4
-            cell.velocity = 130
-            cell.yAcceleration = 60
-            cell.scale = 0.35
-            cell.scaleRange = 0.12
-            cells.append(cell)
-        }
-        emitter.emitterCells = cells
-        layer.addSublayer(emitter)
-        rainLayer = emitter
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1.6) { emitter.birthRate = 0 }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 3.2) { [weak self] in
-            emitter.removeFromSuperlayer()
-            if self?.rainLayer === emitter { self?.rainLayer = nil }
-        }
-    }
-
-    @objc private func bearTapped() {
-        onBearTapped?()
-        tapCount += 1
-        tapResetWork?.cancel()
-        let work = DispatchWorkItem { [weak self] in self?.tapCount = 0 }
-        tapResetWork = work
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0, execute: work)
-        if tapCount >= 5 {
-            tapCount = 0
-            emoteRain()
-        }
-    }
-
-    @objc private func bearLongPressed(_ gesture: UILongPressGestureRecognizer) {
-        guard gesture.state == .began else { return }
-        onBearLongPressed?()
-    }
-}
-
 
 // MARK: - 引导容器
 
 final class BearyOnboardingViewController: UIViewController {
-    /// 旧新手教程的 seen 标记键（原 BearyTutorialViewController.tutorialSeenKey，教程类已删后移入本类；同键同语义）。
-    static let tutorialSeenKey = "beary_tutorial_seen_v1"
+    static let seenKey = "beary_onboarding_v3_seen"
 
     enum Mode { case firstLaunch, replay }
 
-    struct PreloadStep {
-        let title: String
-        let run: (@escaping () -> Void) -> Void
-    }
-
     let mode: Mode
-    var onStartWriting: (() -> Void)?
-    var onEnterHome: (() -> Void)?
-    var onClosed: (() -> Void)?
-    var preloadSteps: [PreloadStep] = []
+    var onRequestLogin: (() -> Void)?
+    var onRequestGuestBrowse: (() -> Void)?
+    var onRequestCompose: (() -> Void)?
+    var onRequestBrowse: (() -> Void)?
 
-    private let flowCount = 10
-    // P1-2：准备屏已删，首启不再 +1，首启与重播同为 10 屏（iCity：送达/公开演示屏已删）。
-    private var totalScreens: Int { flowCount }
-    private var ctaIndex: Int { flowCount - 1 }
+    // MARK: - 翻页状态机（按钮与左右滑动共用；动画只改 transform 与 opacity）
 
-    private var currentIndex = 0
-    private var screenCache: [Int: (scroll: UIScrollView, stack: UIStackView)] = [:]
-    private var playedScreens: Set<Int> = []
-    private var currentScreenConstraints: [NSLayoutConstraint] = []
-    private var skipWidthConstraint: NSLayoutConstraint?
-    private var closeWidthConstraint: NSLayoutConstraint?
+    private var currentPage = 0
+    private var isTransitioning = false
+    private var pendingPage: Int?
+    private var finished = false
+    private var entrancePlayedPages: Set<Int> = []
+    private var chipAppeared = false
 
-    private let topBar = UIView()
-    private let backButton = BearyPressButton(type: .system)
+    // 第 2 页演示态（默认私密；只改示例，不调写接口、不改用户默认设置）。
+    private var selectedVisibility: OnboardingVisibilityDemo = .private
+    // 第 3 页演示态（只记本地选择，不产生真实回应）。
+    private var selectedEmote: String?
+
+    // MARK: - 骨架视图
+
+    private let topWrap = UIView()
+    private let backButton = BearyHit44Button(type: .system)
     private let segmentStack = UIStackView()
     private var segmentViews: [UIView] = []
-    private let skipButton = BearyPressButton(type: .system)
-    private let closeButton = BearyButton.closeButton()
-    private let contentWrap = UIView()
-    private let contentContainer = UIView()
-    private let bottomBar = UIStackView()
-    private let primaryButton = BearyPressButton(type: .system)
-    private let secondaryButton = BearyPressButton(type: .system)
+    private let skipButton = BearyHit44Button(type: .system)
+    private let heroScroll = UIScrollView()
+    private let heroContent = UIView()
+    private let columnView = UIView()
+    private let bottomCard = UIView()
+    private let bottomStack = UIStackView()
+    private let titleLabel = UILabel()
+    private let subtitleLabel = UILabel()
+    private let primaryButton = BearyHit44Button(type: .system)
+    private let secondaryButton = BearyHit44Button(type: .system)
 
-    // 预加载状态（首启版）：后台暖数据（时间线/广场首屏/表情预热），不再有
-    // 准备屏进度 UI；步骤完成无任何界面副作用，纯暖数据、不自动推进。
-    private var preloadStarted = false
+    // 600 居中上限（宽 ≥821 才激活，≤820 停用；口径同 BearyDetailViewController）。
+    private var topCap: NSLayoutConstraint?
+    private var columnCap: NSLayoutConstraint?
+    private var bottomCap: NSLayoutConstraint?
 
-    // 演示屏状态
-    private var bearView: BearyBearView?
-    private var bearHintLabel: UILabel?
-    private var nightOverlay: UIView?
-    private var nightOn = false
-    private var quizSelected: Set<Int> = []
-    private var quizCards: [UIView] = []
-    private var quizToasted = false
-    private var trialTextView: UITextView?
-    private var trialCountLabel: UILabel?
-    private var moodSelected: String?
-    private var moodButtons: [String: UIButton] = [:]
-    private var moodFaceViews: [String: UIView] = [:]
-    private var weatherSelected: String?
-    private var weatherButtons: [String: UIButton] = [:]
+    // 四页视图及其边缘约束（同一时刻只激活当前页的一组，避免多页高度冲突）。
+    private var pageViews: [UIView] = []
+    private var pageEdgeConstraints: [[NSLayoutConstraint]] = []
 
-    private var likeSelected = false
-    private var likeCount = 12
-    private var likeButton: BearyPressButton?
-    private var likeCountLabel: UILabel?
-    private var rxnSelected: Set<String> = []
-    private var rxnCounts: [String: Int] = ["happy": 0, "love": 0, "sleepy": 0, "shy": 0]
-    private var rxnCountLabel: UILabel?
-    private var rxnButtons: [String: UIButton] = [:]
-    private var bookmarkSelected = false
-    private var bookmarkButton: BearyPressButton?
-    private var msgBlueDot: UIView?
+    // 第 1 页元素（入场错峰用；卡片最终 transform 含旋转，入场只叠加位移）。
+    private let bearWrap = UIView()
+    private let bearImageView = UIImageView()
+    private let cardBack = UIView()
+    private let cardFront = UIView()
+    private let cardBackFinalTransform = CGAffineTransform(rotationAngle: OnboardingAnim.cardBackRotation)
+    private let cardFrontFinalTransform = CGAffineTransform(rotationAngle: OnboardingAnim.cardFrontRotation)
+
+    // 第 2 页元素。
+    private var optionButtons: [OnboardingOptionButton] = []
+    private let demoIconView = UIImageView()
+    private let demoPill = OnboardingCapsuleView()
+    private let demoPillLabel = UILabel()
+    private let demoBodyLabel = UILabel()
+    private let demoExplainLabel = UILabel()
+
+    // 第 3 页元素。
+    private let responseChip = OnboardingCapsuleView()
+    private let responseChipIcon = UIImageView()
+    private let responseChipCount = UILabel()
+    private var emoteButtons: [String: UIButton] = [:]
+    private var emoteViews: [String: BearyEmoteView] = [:]
 
     init(mode: Mode) {
         self.mode = mode
@@ -478,1297 +181,996 @@ final class BearyOnboardingViewController: UIViewController {
         fatalError("init(coder:) has not been implemented")
     }
 
+    // MARK: - 生命周期
+
     override func viewDidLoad() {
         super.viewDidLoad()
         view.backgroundColor = BearyColors.bg
         isModalInPresentation = true
         buildChrome()
-        goTo(0, animated: false)
-        if mode == .firstLaunch { startPreload() }
-    }
-
-    // 次要项：审计列出的 4 处 CGColor（问答卡边框、心情/天气选中圈、
-    // 回应选中边框）深浅切换时重刷；clear 色与 UIColor 背景色不受影响，不用管。
-    override func traitCollectionDidChange(_ previousTraitCollection: UITraitCollection?) {
-        super.traitCollectionDidChange(previousTraitCollection)
-        guard traitCollection.hasDifferentColorAppearance(comparedTo: previousTraitCollection) else { return }
-        for card in quizCards {
-            card.layer.borderColor = BearyColors.orange.cgColor
+        buildPages()
+        // 首帧即落在第 0 页（无动画）；第 1 页入场错峰在 viewDidAppear 播，避免首帧闪现终态。
+        showPageImmediately(0)
+        if !UIAccessibility.isReduceMotionEnabled {
+            preparePageOneEntrance()
         }
-        for face in moodFaceViews.values {
-            face.layer.borderColor = BearyColors.orange.cgColor
-        }
-        for (_, button) in weatherButtons {
-            guard let chip = button.superview as? UIStackView,
-                  let circle = chip.arrangedSubviews.first else { continue }
-            circle.layer.borderColor = BearyColors.ink.cgColor
-        }
-        for (_, button) in rxnButtons {
-            guard let face = button.superview else { continue }
-            face.layer.borderColor = BearyColors.orange.cgColor
-        }
-    }
-
-    private func markSeen() {
-        UserDefaults.standard.set(true, forKey: BearyOnboardingViewController.tutorialSeenKey)
-    }
-
-    // MARK: 顶栏 / 内容列 / 底栏
-
-    private func buildChrome() {
-        backButton.setImage(BearyIconImages.image(named: "icon_back", pointSize: 24), for: .normal)
-        backButton.tintColor = BearyColors.ink
-        backButton.addTarget(self, action: #selector(backTapped), for: .touchUpInside)
-        backButton.translatesAutoresizingMaskIntoConstraints = false
-        topBar.addSubview(backButton)
-
-        segmentStack.axis = .horizontal
-        segmentStack.spacing = 4
-        segmentStack.distribution = .fillEqually
-        segmentStack.translatesAutoresizingMaskIntoConstraints = false
-        for _ in 0..<flowCount {
-            let seg = UIView()
-            seg.backgroundColor = BearyColors.line
-            seg.layer.cornerRadius = 2
-            seg.translatesAutoresizingMaskIntoConstraints = false
-            seg.heightAnchor.constraint(equalToConstant: 4).isActive = true
-            segmentStack.addArrangedSubview(seg)
-            segmentViews.append(seg)
-        }
-        topBar.addSubview(segmentStack)
-
-        skipButton.setTitle("跳过", for: .normal)
-        skipButton.titleLabel?.font = UIFont.systemFont(ofSize: 16)
-        skipButton.setTitleColor(BearyColors.gray, for: .normal)
-        skipButton.addTarget(self, action: #selector(skipTapped), for: .touchUpInside)
-        skipButton.translatesAutoresizingMaskIntoConstraints = false
-        topBar.addSubview(skipButton)
-        skipWidthConstraint = skipButton.widthAnchor.constraint(equalToConstant: 44)
-        skipWidthConstraint?.isActive = true
-
-        closeButton.addTarget(self, action: #selector(closeTapped), for: .touchUpInside)
-        closeButton.bearyAddPressFeedback()
-        closeButton.translatesAutoresizingMaskIntoConstraints = false
-        topBar.addSubview(closeButton)
-        closeWidthConstraint = closeButton.widthAnchor.constraint(equalToConstant: 32)
-        closeWidthConstraint?.isActive = true
-
-        topBar.translatesAutoresizingMaskIntoConstraints = false
-        view.addSubview(topBar)
-
-        contentWrap.translatesAutoresizingMaskIntoConstraints = false
-        view.addSubview(contentWrap)
-        contentContainer.translatesAutoresizingMaskIntoConstraints = false
-        contentWrap.addSubview(contentContainer)
-
-        bottomBar.axis = .vertical
-        bottomBar.spacing = 10
-        bottomBar.translatesAutoresizingMaskIntoConstraints = false
-        primaryButton.titleLabel?.font = UIFont.systemFont(ofSize: 17, weight: .semibold)
-        primaryButton.setTitleColor(BearyColors.bg, for: .normal)
-        primaryButton.backgroundColor = BearyColors.ink
-        primaryButton.layer.cornerRadius = 22
-        primaryButton.addTarget(self, action: #selector(primaryTapped), for: .touchUpInside)
-        primaryButton.translatesAutoresizingMaskIntoConstraints = false
-        primaryButton.heightAnchor.constraint(equalToConstant: 44).isActive = true
-        secondaryButton.titleLabel?.font = UIFont.systemFont(ofSize: 17, weight: .semibold)
-        secondaryButton.setTitleColor(BearyColors.ink, for: .normal)
-        secondaryButton.backgroundColor = BearyColors.faint
-        secondaryButton.layer.cornerRadius = 22
-        secondaryButton.addTarget(self, action: #selector(secondaryTapped), for: .touchUpInside)
-        secondaryButton.translatesAutoresizingMaskIntoConstraints = false
-        secondaryButton.heightAnchor.constraint(equalToConstant: 44).isActive = true
-        bottomBar.addArrangedSubview(secondaryButton)
-        bottomBar.addArrangedSubview(primaryButton)
-        view.addSubview(bottomBar)
-
-        // toast 已委托 B 批统一 BearyToast（见 showToast），此处不再建常驻容器。
-
-        NSLayoutConstraint.activate([
-            topBar.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 8),
-            topBar.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 16),
-            topBar.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -16),
-            topBar.heightAnchor.constraint(equalToConstant: 44),
-            backButton.leadingAnchor.constraint(equalTo: topBar.leadingAnchor),
-            backButton.centerYAnchor.constraint(equalTo: topBar.centerYAnchor),
-            backButton.widthAnchor.constraint(equalToConstant: 44),
-            backButton.heightAnchor.constraint(equalToConstant: 44),
-            segmentStack.leadingAnchor.constraint(equalTo: backButton.trailingAnchor, constant: 8),
-            segmentStack.trailingAnchor.constraint(equalTo: skipButton.leadingAnchor, constant: -8),
-            segmentStack.centerYAnchor.constraint(equalTo: topBar.centerYAnchor),
-            skipButton.trailingAnchor.constraint(equalTo: closeButton.leadingAnchor, constant: -4),
-            skipButton.centerYAnchor.constraint(equalTo: topBar.centerYAnchor),
-            closeButton.trailingAnchor.constraint(equalTo: topBar.trailingAnchor),
-            closeButton.centerYAnchor.constraint(equalTo: topBar.centerYAnchor),
-            closeButton.heightAnchor.constraint(equalToConstant: 32),
-            contentWrap.topAnchor.constraint(equalTo: topBar.bottomAnchor, constant: 8),
-            contentWrap.bottomAnchor.constraint(equalTo: bottomBar.topAnchor, constant: -8),
-            contentWrap.centerXAnchor.constraint(equalTo: view.centerXAnchor),
-            contentWrap.leadingAnchor.constraint(greaterThanOrEqualTo: view.leadingAnchor, constant: 16),
-            contentWrap.trailingAnchor.constraint(lessThanOrEqualTo: view.trailingAnchor, constant: -16),
-            contentWrap.widthAnchor.constraint(lessThanOrEqualToConstant: 600),
-            contentContainer.topAnchor.constraint(equalTo: contentWrap.topAnchor),
-            contentContainer.bottomAnchor.constraint(equalTo: contentWrap.bottomAnchor),
-            contentContainer.leadingAnchor.constraint(equalTo: contentWrap.leadingAnchor),
-            contentContainer.trailingAnchor.constraint(equalTo: contentWrap.trailingAnchor),
-            // P1-3：底栏锚 contentWrap（已 ≤600 居中），iPad 端不再直接锚 view 左右各 32。
-            bottomBar.leadingAnchor.constraint(equalTo: contentWrap.leadingAnchor),
-            bottomBar.trailingAnchor.constraint(equalTo: contentWrap.trailingAnchor),
-            bottomBar.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor, constant: -16),
-        ])
-    }
-
-    /// 引导页轻提示：委托 B 批统一 BearyToast。旧 DispatchWorkItem 取消语义
-    /// 由统一组件“新 toast 先清旧 toast”承接。引导页是全屏模态，盖住
-    /// Chrome 的 FAB，本页无可见 FAB，故 aboveFAB=false（落 -32，原 -158
-    /// 悬空修掉）；展示时长由旧 2.2s 统一为 2.0s，调用签名与文案、触发时机不变。
-    private func showToast(_ text: String) {
-        BearyToast.show(in: view, message: text, aboveFAB: false)
-    }
-
-    // MARK: 换屏
-
-    private func goTo(_ index: Int, animated: Bool = true) {
-        guard index >= 0 && index < totalScreens else { return }
-        // 临时诊断（81 包，定根因后删除）：引导换屏入口。
-        DiagFile.mark("ob-goTo")
-        stopScreenAnimations()
-        currentIndex = index
-        let screen = screen(for: index)
-        // 跨视图约束不随 removeFromSuperview 消失，必须先显式反激活，否则残留约束会
-        // 引用已离场的旧 scroll 视图、干扰下次布局。
-        NSLayoutConstraint.deactivate(currentScreenConstraints)
-        for sub in contentContainer.subviews { sub.removeFromSuperview() }
-        screen.scroll.translatesAutoresizingMaskIntoConstraints = false
-        contentContainer.addSubview(screen.scroll)
-        currentScreenConstraints = [
-            screen.scroll.topAnchor.constraint(equalTo: contentContainer.topAnchor),
-            screen.scroll.bottomAnchor.constraint(equalTo: contentContainer.bottomAnchor),
-            screen.scroll.leadingAnchor.constraint(equalTo: contentContainer.leadingAnchor),
-            screen.scroll.trailingAnchor.constraint(equalTo: contentContainer.trailingAnchor),
-        ]
-        NSLayoutConstraint.activate(currentScreenConstraints)
-        updateChrome()
-        // A1-5：goTo 须兑现 animated 参数——animated=false 时直接落位不播入场；
-        // 已播标记照常记（已有屏切回不重播），减动效仍由 playEntrance 内部守门。
-        let firstTime = !playedScreens.contains(index)
-        playedScreens.insert(index)
-        if animated && firstTime {
-            playEntrance(for: screen.stack)
-        }
-        screenDidAppear(index)
-    }
-
-    private func playEntrance(for stack: UIStackView) {
-        // 临时诊断（81 包，定根因后删除）。
-        DiagFile.mark("ob-entrance")
-        if UIAccessibility.isReduceMotionEnabled { return }
-        let items = stack.arrangedSubviews
-        for (i, item) in items.enumerated() {
-            item.alpha = 0
-            item.transform = CGAffineTransform(translationX: 0, y: 12)
-            UIView.animate(withDuration: 0.4, delay: 0.05 + Double(i) * 0.06, options: [.curveEaseOut]) {
-                item.alpha = 1
-                item.transform = .identity
-            }
-        }
-    }
-
-    private func updateChrome() {
-        // 临时诊断（81 包，定根因后删除）。
-        DiagFile.mark("ob-updateChrome")
-        backButton.isHidden = currentIndex == 0
-        skipButton.isHidden = currentIndex >= ctaIndex
-        closeButton.isHidden = mode != .replay
-        // 隐藏钮仍参与布局会留空位：宽约束同步归零，布局才不留空。
-        skipWidthConstraint?.constant = skipButton.isHidden ? 0 : 44
-        closeWidthConstraint?.constant = closeButton.isHidden ? 0 : 32
-        let filled = min(currentIndex + 1, flowCount)
-        for (i, seg) in segmentViews.enumerated() {
-            seg.backgroundColor = i < filled ? BearyColors.orange : BearyColors.line
-        }
-        // P1-2：准备屏已删，底栏恒显示。
-        do {
-            bottomBar.isHidden = false
-            primaryButton.isHidden = false
-            if currentIndex == ctaIndex {
-                primaryButton.setTitle("开始写第一篇", for: .normal)
-                // 3-3：重播 CTA 删次按钮“关闭”，只留顶栏关闭 + 主按钮；
-                // 首启次按钮“进入主页”保留（首启顶栏无关闭，仍需进主页出口）。
-                secondaryButton.isHidden = mode == .replay
-                secondaryButton.setTitle(mode == .firstLaunch ? "进入主页" : "关闭", for: .normal)
-            } else {
-                primaryButton.setTitle("继续", for: .normal)
-                secondaryButton.isHidden = true
-            }
-        }
-    }
-
-    private func screenDidAppear(_ index: Int) {
-        // 临时诊断（81 包，定根因后删除）：换屏走完的终态，落在它上面不算卡住。
-        DiagFile.mark("ob-appeared")
-        if index == 0 { bearView?.resumeFloatIfNeeded() }
     }
 
     override func viewDidAppear(_ animated: Bool) {
         super.viewDidAppear(animated)
-        // 开场描边等模态完全落定再播，避免播在转场动画里被吃掉一半；
-        // sequenceStarted 保证切回第 0 屏不重播。
-        if currentIndex == 0 { bearView?.playDrawSequence() }
+        playEntranceIfNeeded(0)
     }
 
-    private func stopScreenAnimations() {
-        // 5-2：星空 overlay 只在第 0 屏生效，切屏即移除（含星星往复动画
-        // 随视图释放而停）；nightOn 同步复位，回第 0 屏长按可重开。
-        nightOverlay?.removeFromSuperview()
-        nightOverlay = nil
-        nightOn = false
-        // 6-11：离页停播小熊浮动往复动画（回第 0 屏时 screenDidAppear 重启）。
-        bearView?.stopFloat()
+    override func viewDidDisappear(_ animated: Bool) {
+        super.viewDidDisappear(animated)
+        stopAllEmotes()
     }
+
+    override func viewDidLayoutSubviews() {
+        super.viewDidLayoutSubviews()
+        // 821 断点：宽 ≥821 时 600 上限激活、内容居中；≤820 时停用、可用宽度＋边距撑满。
+        let wantCap = view.bounds.width >= 821
+        if topCap?.isActive != wantCap { topCap?.isActive = wantCap }
+        if columnCap?.isActive != wantCap { columnCap?.isActive = wantCap }
+        if bottomCap?.isActive != wantCap { bottomCap?.isActive = wantCap }
+    }
+
+    override func traitCollectionDidChange(_ previousTraitCollection: UITraitCollection?) {
+        super.traitCollectionDidChange(previousTraitCollection)
+        guard traitCollection.hasDifferentColorAppearance(comparedTo: previousTraitCollection) else { return }
+        // 动态色背景自动跟随；CGColor 快照的边框须手动重刷。
+        refreshDynamicBorders()
+    }
+
+    // MARK: - 字体口径（仓库既有：BearyDynamicType.scaledFont / cappedFont）
+
+    private func scaledFont(size: CGFloat, weight: UIFont.Weight = .regular) -> UIFont {
+        return BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: size, weight: weight))
+    }
+
+    private func makeLabel(size: CGFloat, weight: UIFont.Weight = .regular, color: UIColor, alignment: NSTextAlignment = .left) -> UILabel {
+        let label = UILabel()
+        label.translatesAutoresizingMaskIntoConstraints = false
+        label.font = scaledFont(size: size, weight: weight)
+        label.textColor = color
+        label.textAlignment = alignment
+        label.numberOfLines = 0
+        label.adjustsFontForContentSizeCategory = true
+        return label
+    }
+
+    // MARK: - 骨架搭建
+
+    private func buildChrome() {
+        // 顶栏：返回（第 2 页起才可用）＋ 四段细进度 ＋ 跳过。
+        backButton.translatesAutoresizingMaskIntoConstraints = false
+        backButton.setImage(BearyIconImages.image(named: "icon_back", pointSize: 24), for: .normal)
+        backButton.tintColor = BearyColors.ink
+        backButton.addTarget(self, action: #selector(backTapped), for: .touchUpInside)
+        backButton.bearyAddPressFeedback()
+
+        segmentStack.translatesAutoresizingMaskIntoConstraints = false
+        segmentStack.axis = .horizontal
+        segmentStack.spacing = 6
+        segmentStack.distribution = .fillEqually
+        for _ in 0..<4 {
+            let seg = UIView()
+            seg.translatesAutoresizingMaskIntoConstraints = false
+            seg.layer.cornerRadius = 1.5
+            seg.backgroundColor = BearyColors.line
+            segmentStack.addArrangedSubview(seg)
+            segmentViews.append(seg)
+        }
+
+        skipButton.translatesAutoresizingMaskIntoConstraints = false
+        skipButton.setTitle("跳过", for: .normal)
+        skipButton.setTitleColor(BearyColors.gray, for: .normal)
+        skipButton.setTitleColor(BearyColors.gray, for: .highlighted)
+        skipButton.titleLabel?.font = scaledFont(size: 15)
+        skipButton.titleLabel?.adjustsFontForContentSizeCategory = true
+        skipButton.addTarget(self, action: #selector(skipTapped), for: .touchUpInside)
+        skipButton.bearyAddPressFeedback()
+
+        let topStack = UIStackView(arrangedSubviews: [backButton, segmentStack, skipButton])
+        topStack.translatesAutoresizingMaskIntoConstraints = false
+        topStack.axis = .horizontal
+        topStack.alignment = .center
+        topStack.spacing = 12
+        topWrap.translatesAutoresizingMaskIntoConstraints = false
+        topWrap.addSubview(topStack)
+        view.addSubview(topWrap)
+
+        // 主视觉区在上（白底＝ BearyColors.bg）；高度不足时中部可滚动。
+        heroScroll.translatesAutoresizingMaskIntoConstraints = false
+        heroScroll.showsVerticalScrollIndicator = false
+        heroScroll.contentInsetAdjustmentBehavior = .never
+        view.addSubview(heroScroll)
+        heroContent.translatesAutoresizingMaskIntoConstraints = false
+        heroScroll.addSubview(heroContent)
+        columnView.translatesAutoresizingMaskIntoConstraints = false
+        heroContent.addSubview(columnView)
+
+        // 底部圆角卡片：BearyColors faint 底、顶部圆角 28、通栏。
+        bottomCard.translatesAutoresizingMaskIntoConstraints = false
+        bottomCard.backgroundColor = BearyColors.faint
+        bottomCard.layer.cornerRadius = 28
+        bottomCard.layer.maskedCorners = [.layerMinXMinYCorner, .layerMaxXMinYCorner]
+        view.addSubview(bottomCard)
+
+        bottomStack.translatesAutoresizingMaskIntoConstraints = false
+        bottomStack.axis = .vertical
+        bottomStack.alignment = .fill
+        bottomCard.addSubview(bottomStack)
+
+        titleLabel.translatesAutoresizingMaskIntoConstraints = false
+        titleLabel.font = scaledFont(size: 26, weight: .bold)
+        titleLabel.textColor = BearyColors.ink
+        titleLabel.textAlignment = .center
+        titleLabel.numberOfLines = 0
+        titleLabel.adjustsFontForContentSizeCategory = true
+        subtitleLabel.translatesAutoresizingMaskIntoConstraints = false
+        subtitleLabel.font = scaledFont(size: 16)
+        subtitleLabel.textColor = BearyColors.gray
+        subtitleLabel.textAlignment = .center
+        subtitleLabel.numberOfLines = 0
+        subtitleLabel.adjustsFontForContentSizeCategory = true
+        bottomStack.addArrangedSubview(titleLabel)
+        bottomStack.addArrangedSubview(subtitleLabel)
+        bottomStack.setCustomSpacing(12, after: titleLabel)
+
+        primaryButton.translatesAutoresizingMaskIntoConstraints = false
+        primaryButton.backgroundColor = BearyColors.ink
+        primaryButton.setTitleColor(BearyColors.bg, for: .normal)
+        primaryButton.setTitleColor(BearyColors.bg, for: .highlighted)
+        // 固定高度容器：字号上限 20 防撑破（BearyDynamicType.cappedFont 口径）。
+        primaryButton.titleLabel?.font = BearyDynamicType.cappedFont(for: UIFont.systemFont(ofSize: 17, weight: .semibold))
+        primaryButton.titleLabel?.adjustsFontForContentSizeCategory = true
+        primaryButton.layer.cornerRadius = 28
+        primaryButton.addTarget(self, action: #selector(primaryTapped), for: .touchUpInside)
+        primaryButton.bearyAddPressFeedback()
+        bottomStack.addArrangedSubview(primaryButton)
+        bottomStack.setCustomSpacing(20, after: subtitleLabel)
+
+        secondaryButton.translatesAutoresizingMaskIntoConstraints = false
+        secondaryButton.setTitleColor(BearyColors.ink, for: .normal)
+        secondaryButton.setTitleColor(BearyColors.ink, for: .highlighted)
+        secondaryButton.titleLabel?.font = BearyDynamicType.cappedFont(for: UIFont.systemFont(ofSize: 16, weight: .regular))
+        secondaryButton.titleLabel?.adjustsFontForContentSizeCategory = true
+        secondaryButton.addTarget(self, action: #selector(secondaryTapped), for: .touchUpInside)
+        secondaryButton.bearyAddPressFeedback()
+        bottomStack.addArrangedSubview(secondaryButton)
+        bottomStack.setCustomSpacing(4, after: primaryButton)
+        secondaryButton.isHidden = true
+
+        // 左右滑动与按钮共用翻页状态机（UISwipe 手势，不拦截点按）。
+        let swipeLeft = UISwipeGestureRecognizer(target: self, action: #selector(swipedLeft))
+        swipeLeft.direction = .left
+        swipeLeft.cancelsTouchesInView = false
+        view.addGestureRecognizer(swipeLeft)
+        let swipeRight = UISwipeGestureRecognizer(target: self, action: #selector(swipedRight))
+        swipeRight.direction = .right
+        swipeRight.cancelsTouchesInView = false
+        view.addGestureRecognizer(swipeRight)
+
+        topCap = topWrap.widthAnchor.constraint(lessThanOrEqualToConstant: 600)
+        columnCap = columnView.widthAnchor.constraint(lessThanOrEqualToConstant: 600)
+        bottomCap = bottomStack.widthAnchor.constraint(lessThanOrEqualToConstant: 600)
+        NSLayoutConstraint.activate([
+            topWrap.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
+            topWrap.centerXAnchor.constraint(equalTo: view.centerXAnchor),
+            topWrap.leadingAnchor.constraint(greaterThanOrEqualTo: view.safeAreaLayoutGuide.leadingAnchor, constant: 16).withPriority(750),
+            topWrap.trailingAnchor.constraint(lessThanOrEqualTo: view.safeAreaLayoutGuide.trailingAnchor, constant: -16).withPriority(750),
+            topStack.topAnchor.constraint(equalTo: topWrap.topAnchor),
+            topStack.leadingAnchor.constraint(equalTo: topWrap.leadingAnchor),
+            topStack.trailingAnchor.constraint(equalTo: topWrap.trailingAnchor),
+            topStack.bottomAnchor.constraint(equalTo: topWrap.bottomAnchor),
+            backButton.widthAnchor.constraint(equalToConstant: 44),
+            backButton.heightAnchor.constraint(equalToConstant: 44),
+            skipButton.heightAnchor.constraint(equalToConstant: 44),
+            segmentStack.heightAnchor.constraint(equalToConstant: 3),
+
+            heroScroll.topAnchor.constraint(equalTo: topWrap.bottomAnchor),
+            heroScroll.leadingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.leadingAnchor),
+            heroScroll.trailingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.trailingAnchor),
+            heroScroll.bottomAnchor.constraint(equalTo: bottomCard.topAnchor),
+
+            heroContent.topAnchor.constraint(equalTo: heroScroll.contentLayoutGuide.topAnchor),
+            heroContent.leadingAnchor.constraint(equalTo: heroScroll.contentLayoutGuide.leadingAnchor),
+            heroContent.trailingAnchor.constraint(equalTo: heroScroll.contentLayoutGuide.trailingAnchor),
+            heroContent.bottomAnchor.constraint(equalTo: heroScroll.contentLayoutGuide.bottomAnchor),
+            heroContent.widthAnchor.constraint(equalTo: heroScroll.frameLayoutGuide.widthAnchor),
+            heroContent.heightAnchor.constraint(greaterThanOrEqualTo: heroScroll.frameLayoutGuide.heightAnchor),
+
+            columnView.topAnchor.constraint(greaterThanOrEqualTo: heroContent.topAnchor, constant: 8),
+            columnView.bottomAnchor.constraint(lessThanOrEqualTo: heroContent.bottomAnchor, constant: -8),
+            columnView.centerYAnchor.constraint(equalTo: heroContent.centerYAnchor).withPriority(250),
+            columnView.centerXAnchor.constraint(equalTo: heroContent.centerXAnchor),
+            columnView.leadingAnchor.constraint(greaterThanOrEqualTo: heroContent.leadingAnchor, constant: 16).withPriority(750),
+            columnView.trailingAnchor.constraint(lessThanOrEqualTo: heroContent.trailingAnchor, constant: -16).withPriority(750),
+
+            bottomCard.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            bottomCard.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            bottomCard.bottomAnchor.constraint(equalTo: view.bottomAnchor),
+            bottomStack.topAnchor.constraint(equalTo: bottomCard.topAnchor, constant: 24),
+            bottomStack.centerXAnchor.constraint(equalTo: bottomCard.centerXAnchor),
+            bottomStack.leadingAnchor.constraint(greaterThanOrEqualTo: bottomCard.safeAreaLayoutGuide.leadingAnchor, constant: 24).withPriority(750),
+            bottomStack.trailingAnchor.constraint(lessThanOrEqualTo: bottomCard.safeAreaLayoutGuide.trailingAnchor, constant: -24).withPriority(750),
+            bottomStack.bottomAnchor.constraint(equalTo: bottomCard.safeAreaLayoutGuide.bottomAnchor, constant: -16),
+            primaryButton.heightAnchor.constraint(equalToConstant: 56),
+            secondaryButton.heightAnchor.constraint(equalToConstant: 44),
+        ])
+    }
+
+    // MARK: - 四页搭建（公共骨架＋示例卡片，不复制四套布局样式）
+
+    private func buildPages() {
+        pageViews = [buildPageOne(), buildPageTwo(), buildPageThree(), buildPageFour()]
+        for page in pageViews {
+            page.translatesAutoresizingMaskIntoConstraints = false
+            page.isHidden = true
+            columnView.addSubview(page)
+            let edges = [
+                page.topAnchor.constraint(equalTo: columnView.topAnchor),
+                page.leadingAnchor.constraint(equalTo: columnView.leadingAnchor),
+                page.trailingAnchor.constraint(equalTo: columnView.trailingAnchor),
+                page.bottomAnchor.constraint(equalTo: columnView.bottomAnchor),
+            ]
+            pageEdgeConstraints.append(edges)
+        }
+    }
+
+    /// 示例日记卡片（faint 底、圆角 16）：日期行＋官方天气图标＋正文。
+    private func makeDiaryCard(dateText: String, bodyText: String) -> UIView {
+        let card = UIView()
+        card.translatesAutoresizingMaskIntoConstraints = false
+        card.backgroundColor = BearyColors.faint
+        card.layer.cornerRadius = 16
+        let stack = UIStackView()
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        stack.axis = .vertical
+        stack.spacing = 8
+        let dateRow = UIStackView()
+        dateRow.translatesAutoresizingMaskIntoConstraints = false
+        dateRow.axis = .horizontal
+        dateRow.spacing = 6
+        dateRow.alignment = .center
+        let dateLabel = makeLabel(size: 13, color: BearyColors.gray)
+        dateLabel.text = dateText
+        let weatherView = UIImageView()
+        weatherView.translatesAutoresizingMaskIntoConstraints = false
+        weatherView.image = BearyIconImages.image(named: "icon_wx_sun", pointSize: 18)
+        weatherView.tintColor = BearyColors.ink
+        dateRow.addArrangedSubview(dateLabel)
+        dateRow.addArrangedSubview(weatherView)
+        stack.addArrangedSubview(dateRow)
+        let body = makeLabel(size: 16, color: BearyColors.ink)
+        body.text = bodyText
+        stack.addArrangedSubview(body)
+        card.addSubview(stack)
+        NSLayoutConstraint.activate([
+            weatherView.widthAnchor.constraint(equalToConstant: 18),
+            weatherView.heightAnchor.constraint(equalToConstant: 18),
+            stack.topAnchor.constraint(equalTo: card.topAnchor, constant: 16),
+            stack.leadingAnchor.constraint(equalTo: card.leadingAnchor, constant: 16),
+            stack.trailingAnchor.constraint(equalTo: card.trailingAnchor, constant: -16),
+            stack.bottomAnchor.constraint(equalTo: card.bottomAnchor, constant: -16),
+        ])
+        return card
+    }
+
+    private func makeDateRowCard(bodyText: String) -> UIView {
+        return makeDiaryCard(dateText: "今天", bodyText: bodyText)
+    }
+
+    // 第 1 页：认识 beary。
+    private func buildPageOne() -> UIView {
+        let page = UIView()
+        let stack = UIStackView()
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        stack.axis = .vertical
+        stack.spacing = 24
+        page.addSubview(stack)
+        NSLayoutConstraint.activate([
+            stack.topAnchor.constraint(equalTo: page.topAnchor),
+            stack.leadingAnchor.constraint(equalTo: page.leadingAnchor),
+            stack.trailingAnchor.constraint(equalTo: page.trailingAnchor),
+            stack.bottomAnchor.constraint(equalTo: page.bottomAnchor),
+        ])
+
+        // 官方抱信封小熊：side_beary_icon（预览 bear.png 与该资产字节一致），放大至约 212pt 高。
+        // 星环装饰：仓库无同款资产，已去掉（见文件头注释）。
+        bearWrap.translatesAutoresizingMaskIntoConstraints = false
+        bearImageView.translatesAutoresizingMaskIntoConstraints = false
+        bearImageView.image = UIImage(named: "side_beary_icon")
+        bearImageView.contentMode = .scaleAspectFit
+        bearWrap.addSubview(bearImageView)
+        NSLayoutConstraint.activate([
+            bearImageView.centerXAnchor.constraint(equalTo: bearWrap.centerXAnchor),
+            bearImageView.topAnchor.constraint(equalTo: bearWrap.topAnchor),
+            bearImageView.bottomAnchor.constraint(equalTo: bearWrap.bottomAnchor),
+            bearImageView.heightAnchor.constraint(equalToConstant: 212),
+            bearImageView.widthAnchor.constraint(equalTo: bearImageView.heightAnchor, multiplier: 235.0 / 247.0),
+        ])
+        stack.addArrangedSubview(bearWrap)
+
+        // 两张轻微错位叠放的日记卡片（真实产品组件构成主视觉，不做成一张图片）。
+        let cardsHost = UIView()
+        cardsHost.translatesAutoresizingMaskIntoConstraints = false
+        cardBack.translatesAutoresizingMaskIntoConstraints = false
+        cardFront.translatesAutoresizingMaskIntoConstraints = false
+        let backCard = makeDateRowCard(bodyText: "今天绕了一点远路。")
+        backCard.translatesAutoresizingMaskIntoConstraints = false
+        let frontCard = makeDateRowCard(bodyText: "刚好看见了很好看的晚霞。")
+        frontCard.translatesAutoresizingMaskIntoConstraints = false
+        cardBack.addSubview(backCard)
+        cardFront.addSubview(frontCard)
+        cardsHost.addSubview(cardBack)
+        cardsHost.addSubview(cardFront)
+        NSLayoutConstraint.activate([
+            backCard.topAnchor.constraint(equalTo: cardBack.topAnchor),
+            backCard.leadingAnchor.constraint(equalTo: cardBack.leadingAnchor),
+            backCard.trailingAnchor.constraint(equalTo: cardBack.trailingAnchor),
+            backCard.bottomAnchor.constraint(equalTo: cardBack.bottomAnchor),
+            frontCard.topAnchor.constraint(equalTo: cardFront.topAnchor),
+            frontCard.leadingAnchor.constraint(equalTo: cardFront.leadingAnchor),
+            frontCard.trailingAnchor.constraint(equalTo: cardFront.trailingAnchor),
+            frontCard.bottomAnchor.constraint(equalTo: cardFront.bottomAnchor),
+            cardBack.topAnchor.constraint(equalTo: cardsHost.topAnchor),
+            cardBack.leadingAnchor.constraint(equalTo: cardsHost.leadingAnchor, constant: OnboardingAnim.cardBackInset),
+            cardBack.trailingAnchor.constraint(equalTo: cardsHost.trailingAnchor, constant: -OnboardingAnim.cardBackInset),
+            cardFront.topAnchor.constraint(equalTo: cardsHost.topAnchor, constant: OnboardingAnim.cardFrontOffset),
+            cardFront.leadingAnchor.constraint(equalTo: cardsHost.leadingAnchor),
+            cardFront.trailingAnchor.constraint(equalTo: cardsHost.trailingAnchor),
+            cardFront.bottomAnchor.constraint(equalTo: cardsHost.bottomAnchor),
+        ])
+        cardBack.transform = cardBackFinalTransform
+        cardFront.transform = cardFrontFinalTransform
+        stack.addArrangedSubview(cardsHost)
+        return page
+    }
+
+    // 第 2 页：理解可见范围（演示用卡片列表，不是真实编辑器的分段控件样子）。
+    private func buildPageTwo() -> UIView {
+        let page = UIView()
+        let stack = UIStackView()
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        stack.axis = .vertical
+        stack.spacing = 12
+        page.addSubview(stack)
+        NSLayoutConstraint.activate([
+            stack.topAnchor.constraint(equalTo: page.topAnchor),
+            stack.leadingAnchor.constraint(equalTo: page.leadingAnchor),
+            stack.trailingAnchor.constraint(equalTo: page.trailingAnchor),
+            stack.bottomAnchor.constraint(equalTo: page.bottomAnchor),
+        ])
+        optionButtons = []
+        for demo in OnboardingVisibilityDemo.allCases {
+            let button = OnboardingOptionButton(demo: demo)
+            button.addTarget(self, action: #selector(optionTapped(_:)), for: .touchUpInside)
+            button.bearyAddPressFeedback()
+            optionButtons.append(button)
+            stack.addArrangedSubview(button)
+        }
+
+        // 下方示例日记：随点选同步变官方图标、状态标签、解释文字。
+        let demoCard = UIView()
+        demoCard.translatesAutoresizingMaskIntoConstraints = false
+        demoCard.backgroundColor = BearyColors.faint
+        demoCard.layer.cornerRadius = 16
+        let demoStack = UIStackView()
+        demoStack.translatesAutoresizingMaskIntoConstraints = false
+        demoStack.axis = .vertical
+        demoStack.spacing = 10
+        let pillRow = UIStackView()
+        pillRow.translatesAutoresizingMaskIntoConstraints = false
+        pillRow.axis = .horizontal
+        pillRow.spacing = 8
+        pillRow.alignment = .center
+        demoIconView.translatesAutoresizingMaskIntoConstraints = false
+        demoIconView.tintColor = BearyColors.ink
+        demoPill.translatesAutoresizingMaskIntoConstraints = false
+        demoPillLabel.translatesAutoresizingMaskIntoConstraints = false
+        demoPillLabel.font = scaledFont(size: 13, weight: .semibold)
+        demoPillLabel.textAlignment = .center
+        demoPillLabel.adjustsFontForContentSizeCategory = true
+        demoPill.addSubview(demoPillLabel)
+        pillRow.addArrangedSubview(demoIconView)
+        pillRow.addArrangedSubview(demoPill)
+        demoBodyLabel.translatesAutoresizingMaskIntoConstraints = false
+        demoBodyLabel.font = BearyDynamicType.diaryBodyFont()
+        demoBodyLabel.textColor = BearyColors.ink
+        demoBodyLabel.numberOfLines = 0
+        demoBodyLabel.adjustsFontForContentSizeCategory = true
+        demoBodyLabel.text = "今天绕了一点远路。"
+        demoExplainLabel.translatesAutoresizingMaskIntoConstraints = false
+        demoExplainLabel.font = scaledFont(size: 13)
+        demoExplainLabel.textColor = BearyColors.gray
+        demoExplainLabel.numberOfLines = 0
+        demoExplainLabel.adjustsFontForContentSizeCategory = true
+        demoStack.addArrangedSubview(pillRow)
+        demoStack.addArrangedSubview(demoBodyLabel)
+        demoStack.addArrangedSubview(demoExplainLabel)
+        demoCard.addSubview(demoStack)
+        NSLayoutConstraint.activate([
+            demoIconView.widthAnchor.constraint(equalToConstant: 20),
+            demoIconView.heightAnchor.constraint(equalToConstant: 20),
+            demoPillLabel.topAnchor.constraint(equalTo: demoPill.topAnchor, constant: 3),
+            demoPillLabel.leadingAnchor.constraint(equalTo: demoPill.leadingAnchor, constant: 11),
+            demoPillLabel.trailingAnchor.constraint(equalTo: demoPill.trailingAnchor, constant: -11),
+            demoPillLabel.bottomAnchor.constraint(equalTo: demoPill.bottomAnchor, constant: -3),
+            demoStack.topAnchor.constraint(equalTo: demoCard.topAnchor, constant: 16),
+            demoStack.leadingAnchor.constraint(equalTo: demoCard.leadingAnchor, constant: 16),
+            demoStack.trailingAnchor.constraint(equalTo: demoCard.trailingAnchor, constant: -16),
+            demoStack.bottomAnchor.constraint(equalTo: demoCard.bottomAnchor, constant: -16),
+        ])
+        stack.addArrangedSubview(demoCard)
+        stack.setCustomSpacing(18, after: optionButtons.last!)
+        let note = makeLabel(size: 12, color: BearyColors.gray, alignment: .center)
+        note.text = "示例，不会发布"
+        stack.addArrangedSubview(note)
+        stack.setCustomSpacing(14, after: demoCard)
+        applyVisibilitySelection()
+        return page
+    }
+
+    // 第 3 页：体验小熊回应。
+    private func buildPageThree() -> UIView {
+        let page = UIView()
+        let stack = UIStackView()
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        stack.axis = .vertical
+        stack.spacing = 20
+        stack.alignment = .fill
+        page.addSubview(stack)
+        NSLayoutConstraint.activate([
+            stack.topAnchor.constraint(equalTo: page.topAnchor),
+            stack.leadingAnchor.constraint(equalTo: page.leadingAnchor),
+            stack.trailingAnchor.constraint(equalTo: page.trailingAnchor),
+            stack.bottomAnchor.constraint(equalTo: page.bottomAnchor),
+        ])
+
+        // 中央示例公开日记（公开橙 pill＋日期＋官方天气图标）。
+        let demoCard = UIView()
+        demoCard.translatesAutoresizingMaskIntoConstraints = false
+        demoCard.backgroundColor = BearyColors.faint
+        demoCard.layer.cornerRadius = 16
+        let demoStack = UIStackView()
+        demoStack.translatesAutoresizingMaskIntoConstraints = false
+        demoStack.axis = .vertical
+        demoStack.spacing = 10
+        let pillWrap = UIStackView()
+        pillWrap.translatesAutoresizingMaskIntoConstraints = false
+        pillWrap.axis = .horizontal
+        pillWrap.alignment = .center
+        let pill = OnboardingCapsuleView()
+        pill.translatesAutoresizingMaskIntoConstraints = false
+        pill.layer.borderWidth = 1
+        pill.layer.borderColor = BearyColors.alpha(BearyColors.orange, 0.45).cgColor
+        let pillLabel = UILabel()
+        pillLabel.translatesAutoresizingMaskIntoConstraints = false
+        pillLabel.font = scaledFont(size: 13, weight: .semibold)
+        pillLabel.textColor = BearyColors.orange
+        pillLabel.textAlignment = .center
+        pillLabel.adjustsFontForContentSizeCategory = true
+        pillLabel.text = "公开"
+        pill.addSubview(pillLabel)
+        pillWrap.addArrangedSubview(pill)
+        let demoBody = makeLabel(size: 16, color: BearyColors.ink)
+        demoBody.text = "今天绕了一点远路。"
+        let dateRow = UIStackView()
+        dateRow.translatesAutoresizingMaskIntoConstraints = false
+        dateRow.axis = .horizontal
+        dateRow.spacing = 6
+        dateRow.alignment = .center
+        let dateLabel = makeLabel(size: 13, color: BearyColors.gray)
+        dateLabel.text = "今天"
+        let weatherView = UIImageView()
+        weatherView.translatesAutoresizingMaskIntoConstraints = false
+        weatherView.image = BearyIconImages.image(named: "icon_wx_sun", pointSize: 18)
+        weatherView.tintColor = BearyColors.ink
+        dateRow.addArrangedSubview(dateLabel)
+        dateRow.addArrangedSubview(weatherView)
+        demoStack.addArrangedSubview(pillWrap)
+        demoStack.addArrangedSubview(demoBody)
+        demoStack.addArrangedSubview(dateRow)
+        demoCard.addSubview(demoStack)
+        NSLayoutConstraint.activate([
+            pillLabel.topAnchor.constraint(equalTo: pill.topAnchor, constant: 3),
+            pillLabel.leadingAnchor.constraint(equalTo: pill.leadingAnchor, constant: 11),
+            pillLabel.trailingAnchor.constraint(equalTo: pill.trailingAnchor, constant: -11),
+            pillLabel.bottomAnchor.constraint(equalTo: pill.bottomAnchor, constant: -3),
+            weatherView.widthAnchor.constraint(equalToConstant: 18),
+            weatherView.heightAnchor.constraint(equalToConstant: 18),
+            demoStack.topAnchor.constraint(equalTo: demoCard.topAnchor, constant: 16),
+            demoStack.leadingAnchor.constraint(equalTo: demoCard.leadingAnchor, constant: 16),
+            demoStack.trailingAnchor.constraint(equalTo: demoCard.trailingAnchor, constant: -16),
+            demoStack.bottomAnchor.constraint(equalTo: demoCard.bottomAnchor, constant: -16),
+        ])
+        stack.addArrangedSubview(demoCard)
+
+        // 回应标签：点选后才出现；只让新增元素入场一次，后续改选只换内容、不重播。
+        responseChip.translatesAutoresizingMaskIntoConstraints = false
+        responseChip.backgroundColor = BearyColors.alpha(BearyColors.orange, 0.07)
+        responseChip.isHidden = true
+        responseChipIcon.translatesAutoresizingMaskIntoConstraints = false
+        responseChipCount.translatesAutoresizingMaskIntoConstraints = false
+        responseChipCount.font = scaledFont(size: 14, weight: .semibold)
+        responseChipCount.textColor = BearyColors.ink
+        responseChipCount.adjustsFontForContentSizeCategory = true
+        responseChip.addSubview(responseChipIcon)
+        responseChip.addSubview(responseChipCount)
+        NSLayoutConstraint.activate([
+            responseChipIcon.leadingAnchor.constraint(equalTo: responseChip.leadingAnchor, constant: 8),
+            responseChipIcon.centerYAnchor.constraint(equalTo: responseChip.centerYAnchor),
+            responseChipIcon.widthAnchor.constraint(equalToConstant: 24),
+            responseChipIcon.heightAnchor.constraint(equalToConstant: 24),
+            responseChipCount.leadingAnchor.constraint(equalTo: responseChipIcon.trailingAnchor, constant: 6),
+            responseChipCount.trailingAnchor.constraint(equalTo: responseChip.trailingAnchor, constant: -14),
+            responseChipCount.centerYAnchor.constraint(equalTo: responseChip.centerYAnchor),
+            responseChip.heightAnchor.constraint(equalToConstant: 36),
+        ])
+        let chipWrap = UIStackView(arrangedSubviews: [responseChip])
+        chipWrap.translatesAutoresizingMaskIntoConstraints = false
+        chipWrap.axis = .horizontal
+        chipWrap.alignment = .center
+        stack.addArrangedSubview(chipWrap)
+        stack.setCustomSpacing(20, after: demoCard)
+
+        // 官方 hug、love、cheer 表情：复杂表情复用现有 Lottie，点一只播一次，不自动轮播。
+        let emoteRow = UIStackView()
+        emoteRow.translatesAutoresizingMaskIntoConstraints = false
+        emoteRow.axis = .horizontal
+        emoteRow.spacing = 24
+        emoteRow.alignment = .center
+        for key in ["hug", "love", "cheer"] {
+            let button = BearyHit44Button(type: .system)
+            button.translatesAutoresizingMaskIntoConstraints = false
+            button.backgroundColor = BearyColors.faint
+            button.layer.cornerRadius = 42
+            button.layer.borderWidth = 0
+            button.accessibilityLabel = BearyText.moodNames[key] ?? key
+            button.addTarget(self, action: #selector(emoteTapped(_:)), for: .touchUpInside)
+            button.bearyAddPressFeedback()
+            let emoteView = BearyEmoteView(key: key, animated: false)
+            emoteView.translatesAutoresizingMaskIntoConstraints = false
+            emoteView.isUserInteractionEnabled = false
+            button.addSubview(emoteView)
+            NSLayoutConstraint.activate([
+                button.widthAnchor.constraint(equalToConstant: 84),
+                button.heightAnchor.constraint(equalToConstant: 84),
+                emoteView.centerXAnchor.constraint(equalTo: button.centerXAnchor),
+                emoteView.centerYAnchor.constraint(equalTo: button.centerYAnchor),
+                emoteView.widthAnchor.constraint(equalToConstant: 56),
+                emoteView.heightAnchor.constraint(equalToConstant: 56),
+            ])
+            emoteButtons[key] = button
+            emoteViews[key] = emoteView
+            emoteRow.addArrangedSubview(button)
+        }
+        let emoteWrap = UIStackView(arrangedSubviews: [emoteRow])
+        emoteWrap.translatesAutoresizingMaskIntoConstraints = false
+        emoteWrap.axis = .horizontal
+        emoteWrap.alignment = .center
+        stack.addArrangedSubview(emoteWrap)
+        stack.setCustomSpacing(28, after: chipWrap)
+
+        let note = makeLabel(size: 12, color: BearyColors.gray, alignment: .center)
+        note.text = "示例，不会产生真实回应"
+        stack.addArrangedSubview(note)
+        stack.setCustomSpacing(14, after: emoteWrap)
+        return page
+    }
+
+    // 第 4 页：开始使用（中央一张收拢的日记卡片＋示例提示）。
+    private func buildPageFour() -> UIView {
+        let page = UIView()
+        let stack = UIStackView()
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        stack.axis = .vertical
+        page.addSubview(stack)
+        NSLayoutConstraint.activate([
+            stack.topAnchor.constraint(equalTo: page.topAnchor),
+            stack.leadingAnchor.constraint(equalTo: page.leadingAnchor),
+            stack.trailingAnchor.constraint(equalTo: page.trailingAnchor),
+            stack.bottomAnchor.constraint(equalTo: page.bottomAnchor),
+        ])
+        let promptCard = UIView()
+        promptCard.translatesAutoresizingMaskIntoConstraints = false
+        promptCard.backgroundColor = BearyColors.faint
+        promptCard.layer.cornerRadius = 16
+        let prompt = makeLabel(size: 17, color: BearyColors.gray, alignment: .center)
+        prompt.text = "今天，想记住什么？"
+        promptCard.addSubview(prompt)
+        NSLayoutConstraint.activate([
+            prompt.topAnchor.constraint(equalTo: promptCard.topAnchor, constant: 48),
+            prompt.leadingAnchor.constraint(equalTo: promptCard.leadingAnchor, constant: 20),
+            prompt.trailingAnchor.constraint(equalTo: promptCard.trailingAnchor, constant: -20),
+            prompt.bottomAnchor.constraint(equalTo: promptCard.bottomAnchor, constant: -48),
+        ])
+        stack.addArrangedSubview(promptCard)
+        return page
+    }
+
+    // MARK: - 顶栏与底部文案（随页切换；已有元素不重播入场动效，只换文案）
+
+    private func pageTitle(_ page: Int) -> String {
+        switch page {
+        case 0: return "把今天，交给小熊。"
+        case 1: return "写下来，也选好谁能看。"
+        case 2: return "有些心情，一只小熊就懂。"
+        default: return "从今天的一小件事开始。"
+        }
+    }
+
+    private func pageSubtitle(_ page: Int) -> String {
+        switch page {
+        case 0: return "记下一点生活，也留住当时的心情。"
+        case 1: return "发布前，确认这篇日记的可见范围。"
+        case 2: return "用小熊回应，让一句日常被温柔接住。"
+        default: return "不必写得完整，想记下的就值得留下。"
+        }
+    }
+
+    private func pagePrimaryTitle(_ page: Int) -> String {
+        switch page {
+        case 0: return "认识 beary"
+        case 1: return "继续"
+        case 2: return "继续"
+        default: return SessionManager.shared.isLoggedIn ? "写下第一篇" : "登录，开始记录"
+        }
+    }
+
+    private func pageSecondaryTitle() -> String {
+        return SessionManager.shared.isLoggedIn ? "先逛逛" : "先看看公开日记"
+    }
+
+    private func updateChrome() {
+        for (index, seg) in segmentViews.enumerated() {
+            // 预览口径：只有当前段填充，其余为线色（不做已走过的累计填充）。
+            seg.backgroundColor = index == currentPage ? BearyColors.ink : BearyColors.line
+        }
+        let showBack = currentPage >= 1
+        backButton.alpha = showBack ? 1 : 0
+        backButton.isEnabled = showBack
+        backButton.accessibilityElementsHidden = !showBack
+        titleLabel.text = pageTitle(currentPage)
+        subtitleLabel.text = pageSubtitle(currentPage)
+        primaryButton.setTitle(pagePrimaryTitle(currentPage), for: .normal)
+        if currentPage == 3 {
+            secondaryButton.setTitle(pageSecondaryTitle(), for: .normal)
+            secondaryButton.isHidden = false
+        } else {
+            secondaryButton.isHidden = true
+        }
+    }
+
+    // MARK: - 翻页状态机
+
+    private func showPageImmediately(_ page: Int) {
+        for (index, edges) in pageEdgeConstraints.enumerated() {
+            let active = index == page
+            for constraint in edges { constraint.isActive = active }
+            pageViews[index].isHidden = !active
+            pageViews[index].alpha = active ? 1 : 0
+            pageViews[index].transform = .identity
+        }
+        currentPage = page
+        updateChrome()
+        view.layoutIfNeeded()
+    }
+
+    private func goTo(_ page: Int, animated: Bool) {
+        let target = max(0, min(3, page))
+        guard !finished else { return }
+        if isTransitioning {
+            // 转场中再点：只记最后一次目标，当前转场结束后再走，避免动画叠加与页码错乱。
+            pendingPage = target
+            return
+        }
+        guard target != currentPage else { return }
+        let fromView = pageViews[currentPage]
+        let forward = target > currentPage
+        guard animated && BearyMotion.animated(true) else {
+            showPageImmediately(target)
+            playEntranceIfNeeded(target)
+            return
+        }
+        isTransitioning = true
+        UIView.animate(withDuration: OnboardingAnim.pageHalfDuration, animations: {
+            fromView.transform = CGAffineTransform(translationX: forward ? -OnboardingAnim.pageSlide : OnboardingAnim.pageSlide)
+            fromView.alpha = 0
+        }, completion: { [weak self] _ in
+            guard let self = self else { return }
+            // 转场中已跳过／已走完：直接收尾，不再续播、不再处理挂起页码。
+            if self.finished {
+                self.isTransitioning = false
+                self.pendingPage = nil
+                return
+            }
+            if self.currentPage == 3 { self.stopAllEmotes() }
+            self.showPageImmediately(target)
+            let toView = self.pageViews[target]
+            toView.transform = CGAffineTransform(translationX: forward ? OnboardingAnim.pageSlide : -OnboardingAnim.pageSlide)
+            toView.alpha = 0
+            UIView.animate(withDuration: OnboardingAnim.pageHalfDuration, animations: {
+                toView.transform = .identity
+                toView.alpha = 1
+            }, completion: { [weak self] _ in
+                guard let self = self else { return }
+                self.isTransitioning = false
+                self.playEntranceIfNeeded(target)
+                if let pending = self.pendingPage {
+                    self.pendingPage = nil
+                    if pending != self.currentPage && !self.finished {
+                        self.goTo(pending, animated: true)
+                    }
+                }
+            })
+        })
+    }
+
+    private func finish() {
+        guard !finished else { return }
+        finished = true
+        pendingPage = nil
+        stopAllEmotes()
+        UserDefaults.standard.set(true, forKey: Self.seenKey)
+        dismiss(animated: BearyMotion.animated(true), completion: nil)
+    }
+
+    // MARK: - 入场错峰（只改 transform 与 opacity；每页演示结束后安静）
+
+    private func preparePageOneEntrance() {
+        // 首帧前先摆好入场起点：小熊轻微缩小＋下沉、卡片淡出＋下沉、底部卡片淡出＋下沉。
+        bearWrap.alpha = 0
+        bearWrap.transform = CGAffineTransform(scaleX: 0.96, y: 0.96).translatedBy(x: 0, y: 6)
+        cardBack.alpha = 0
+        cardBack.transform = cardBackFinalTransform.translatedBy(x: 0, y: 10)
+        cardFront.alpha = 0
+        cardFront.transform = cardFrontFinalTransform.translatedBy(x: 0, y: 10)
+        bottomCard.alpha = 0
+        bottomCard.transform = CGAffineTransform(translationX: 0, y: 8)
+    }
+
+    private func playEntranceIfNeeded(_ page: Int) {
+        guard page == 0, !entrancePlayedPages.contains(0), !UIAccessibility.isReduceMotionEnabled else { return }
+        entrancePlayedPages.insert(0)
+        // Logo（小熊）→ 卡片 → 标题（底部卡片）依次自然出现；小熊轻动一次后安静停留，不循环。
+        let items: [(view: UIView, delay: TimeInterval, finalTransform: CGAffineTransform)] = [
+            (bearWrap, 0, .identity),
+            (cardBack, OnboardingAnim.staggerStep, cardBackFinalTransform),
+            (cardFront, OnboardingAnim.staggerStep * 2, cardFrontFinalTransform),
+            (bottomCard, OnboardingAnim.staggerStep * 3, .identity),
+        ]
+        for item in items {
+            UIView.animate(withDuration: OnboardingAnim.entranceDuration, delay: item.delay, options: [.curveEaseOut], animations: {
+                item.view.alpha = 1
+                item.view.transform = item.finalTransform
+            }, completion: nil)
+        }
+    }
+
+    // MARK: - 第 2 页演示
+
+    private func applyVisibilitySelection() {
+        for button in optionButtons {
+            button.setSelected(button.demo == selectedVisibility)
+        }
+        demoIconView.image = BearyIconImages.image(named: selectedVisibility.iconName, pointSize: 20)
+        demoPillLabel.text = selectedVisibility.pillText
+        demoPillLabel.textColor = selectedVisibility.pillColor
+        demoExplainLabel.text = selectedVisibility.explain
+        refreshDynamicBorders()
+    }
+
+    private func refreshDynamicBorders() {
+        for button in optionButtons {
+            button.refreshBorder()
+        }
+        demoPill.layer.borderWidth = 1
+        demoPill.layer.borderColor = BearyColors.alpha(selectedVisibility.pillColor, 0.45).cgColor
+    }
+
+    // MARK: - 第 3 页演示（离屏立即停播）
+
+    private func stopAllEmotes() {
+        for emoteView in emoteViews.values {
+            emoteView.stop()
+        }
+    }
+
+    private func selectEmote(_ key: String) {
+        // 其余先冻结为静态帧，再把点中的一只从头播一次；不自动轮播、不加满屏粒子。
+        for (otherKey, otherView) in emoteViews {
+            if otherKey != key { otherView.showStaticFrame() }
+        }
+        if let current = emoteViews[key] {
+            current.stop()
+            current.play()
+        }
+        for (buttonKey, button) in emoteButtons {
+            let selected = buttonKey == key
+            button.layer.borderWidth = selected ? 2 : 0
+            button.layer.borderColor = BearyColors.orange.cgColor
+            button.backgroundColor = selected ? BearyColors.alpha(BearyColors.orange, 0.07) : BearyColors.faint
+        }
+        selectedEmote = key
+        let isDark = traitCollection.userInterfaceStyle == .dark
+        if let icon = BearyEmoteImages.image(for: key, dark: isDark) {
+            responseChipIcon.image = icon
+        } else {
+            responseChipIcon.image = nil
+        }
+        responseChipCount.text = "1"
+        if !chipAppeared {
+            chipAppeared = true
+            responseChip.isHidden = false
+            responseChip.alpha = 0
+            responseChip.transform = CGAffineTransform(scaleX: 0.9, y: 0.9)
+            if BearyMotion.animated(true) {
+                UIView.animate(withDuration: 0.2, animations: {
+                    self.responseChip.alpha = 1
+                    self.responseChip.transform = .identity
+                })
+            } else {
+                responseChip.alpha = 1
+                responseChip.transform = .identity
+            }
+        }
+    }
+
+    // MARK: - 动作
 
     @objc private func backTapped() {
-        goTo(currentIndex - 1)
+        goTo(currentPage - 1, animated: true)
     }
 
     @objc private func skipTapped() {
-        // 2026-10-28 定版：首启第一屏的“跳过”直接退出进主页（按已完成引导处理），
-        // 其余屏仍跳到 CTA；顶栏已有灰色小字“跳过”，不新增第二个入口。
-        if mode == .firstLaunch && currentIndex == 0 {
-            markSeen()
-            if let enterHome = onEnterHome {
-                enterHome()
-            } else {
-                onClosed?()
-            }
-            return
-        }
-        goTo(ctaIndex)
+        finish()
     }
 
-    @objc private func closeTapped() {
-        markSeen()
-        onClosed?()
+    @objc private func swipedLeft() {
+        goTo(currentPage + 1, animated: true)
+    }
+
+    @objc private func swipedRight() {
+        goTo(currentPage - 1, animated: true)
     }
 
     @objc private func primaryTapped() {
-        // 临时诊断（81 包，定根因后删除）：引导继续钮入口。
-        DiagFile.mark("ob-primaryTapped")
-        if currentIndex == ctaIndex {
-            markSeen()
-            onStartWriting?()
-        } else if currentIndex < ctaIndex {
-            goTo(currentIndex + 1)
+        if currentPage < 3 {
+            goTo(currentPage + 1, animated: true)
+            return
+        }
+        // 第 4 页：只回调、不自行 dismiss；闭包未设置时回退为走完（写 seenKey＋dismiss）。
+        if SessionManager.shared.isLoggedIn {
+            if let action = onRequestCompose { action() } else { finish() }
+        } else {
+            if let action = onRequestLogin { action() } else { finish() }
         }
     }
 
     @objc private func secondaryTapped() {
-        if currentIndex != ctaIndex { return }
-        markSeen()
-        if mode == .firstLaunch {
-            onEnterHome?()
+        guard currentPage == 3 else { return }
+        if SessionManager.shared.isLoggedIn {
+            if let action = onRequestBrowse { action() } else { finish() }
         } else {
-            onClosed?()
+            if let action = onRequestGuestBrowse { action() } else { finish() }
         }
     }
 
-    // MARK: 预加载（首启版）：引导期间后台跑，不阻塞流程、不自动推进
-    // P1-2：准备屏已删，步骤完成不再刷新准备屏、不自动进主页；只暖数据，
-    // 首启 CTA（开始写第一篇 / 进入主页）仍由用户点按触发，markSeen 行为不变。
-
-    private func startPreload() {
-        guard !preloadStarted else { return }
-        preloadStarted = true
-        if preloadSteps.isEmpty { return }
-        for step in preloadSteps {
-            step.run { }
-        }
+    @objc private func optionTapped(_ sender: OnboardingOptionButton) {
+        selectedVisibility = sender.demo
+        applyVisibilitySelection()
     }
 
-    // MARK: 屏构建通用件
-
-    private func screen(for index: Int) -> (scroll: UIScrollView, stack: UIStackView) {
-        // 临时诊断（81 包，定根因后删除）。
-        DiagFile.mark("ob-screen")
-        if let cached = screenCache[index] { return cached }
-        let scroll = UIScrollView()
-        scroll.showsVerticalScrollIndicator = false
-        let stack = UIStackView()
-        stack.axis = .vertical
-        stack.spacing = 16
-        stack.alignment = .center
-        stack.translatesAutoresizingMaskIntoConstraints = false
-        scroll.addSubview(stack)
-        NSLayoutConstraint.activate([
-            stack.topAnchor.constraint(equalTo: scroll.contentLayoutGuide.topAnchor, constant: 8),
-            stack.bottomAnchor.constraint(equalTo: scroll.contentLayoutGuide.bottomAnchor, constant: -8),
-            stack.leadingAnchor.constraint(equalTo: scroll.contentLayoutGuide.leadingAnchor, constant: 16),
-            stack.trailingAnchor.constraint(equalTo: scroll.contentLayoutGuide.trailingAnchor, constant: -16),
-            stack.widthAnchor.constraint(equalTo: scroll.frameLayoutGuide.widthAnchor, constant: -32),
-        ])
-        switch index {
-        case 0: buildHookScreen(stack)
-        case 1: buildWelcomeScreen(stack)
-        case 2: buildQuizScreen(stack)
-        case 3: buildTrialScreen(stack)
-        case 4: buildMoodScreen(stack)
-        case 5: buildPublishScreen(stack)
-        case 6: buildInteractScreen(stack)
-        case 7: buildMessagesScreen(stack)
-        case 8: buildToolsScreen(stack)
-        case 9: buildCTAScreen(stack)
-        default: break
-        }
-        let built = (scroll, stack)
-        screenCache[index] = built
-        return built
-    }
-
-    private func titleLabel(_ text: String, size: CGFloat = 24) -> UILabel {
-        let label = UILabel()
-        label.text = text
-        label.font = UIFont.boldSystemFont(ofSize: size)
-        label.textColor = BearyColors.ink
-        label.textAlignment = .center
-        label.numberOfLines = 0
-        return label
-    }
-
-    private func bodyLabel(_ text: String, color: UIColor? = nil) -> UILabel {
-        let label = UILabel()
-        let paragraph = NSMutableParagraphStyle()
-        paragraph.alignment = .center
-        paragraph.lineHeightMultiple = 1.7
-        label.attributedText = NSAttributedString(string: text, attributes: [
-            .font: UIFont.systemFont(ofSize: 15),
-            .foregroundColor: color ?? BearyColors.gray,
-            .paragraphStyle: paragraph,
-        ])
-        label.textAlignment = .center
-        label.numberOfLines = 0
-        return label
-    }
-
-    private func cardView() -> UIView {
-        let card = UIView()
-        card.backgroundColor = BearyColors.faint
-        card.layer.cornerRadius = 14
-        card.translatesAutoresizingMaskIntoConstraints = false
-        return card
-    }
-
-    private func iconCircle(iconName: String, iconSize: CGFloat = 36) -> UIView {
-        let circle = UIView()
-        circle.backgroundColor = BearyColors.faint
-        circle.layer.cornerRadius = 37
-        circle.layer.masksToBounds = true
-        circle.translatesAutoresizingMaskIntoConstraints = false
-        let iconView = UIImageView()
-        iconView.image = BearyIconImages.image(named: iconName, pointSize: iconSize)
-        iconView.tintColor = BearyColors.ink
-        iconView.contentMode = .scaleAspectFit
-        iconView.translatesAutoresizingMaskIntoConstraints = false
-        circle.addSubview(iconView)
-        NSLayoutConstraint.activate([
-            circle.widthAnchor.constraint(equalToConstant: 74),
-            circle.heightAnchor.constraint(equalToConstant: 74),
-            iconView.centerXAnchor.constraint(equalTo: circle.centerXAnchor),
-            iconView.centerYAnchor.constraint(equalTo: circle.centerYAnchor),
-            iconView.widthAnchor.constraint(equalToConstant: iconSize),
-            iconView.heightAnchor.constraint(equalToConstant: iconSize),
-        ])
-        return circle
-    }
-
-    private func ruleLabel(_ text: String) -> UILabel {
-        let label = UILabel()
-        label.text = text
-        label.font = UIFont.systemFont(ofSize: 13)
-        label.textColor = BearyColors.gray
-        label.textAlignment = .center
-        label.numberOfLines = 0
-        return label
-    }
-}
-
-
-// MARK: - 引导屏 0–5
-
-extension BearyOnboardingViewController {
-    private func buildHookScreen(_ stack: UIStackView) {
-        let bear = BearyBearView()
-        bear.translatesAutoresizingMaskIntoConstraints = false
-        bear.widthAnchor.constraint(equalToConstant: 240).isActive = true
-        bear.heightAnchor.constraint(equalToConstant: 200).isActive = true
-        bear.onBearTapped = { [weak self] in self?.bearHintLabel?.alpha = 0 }
-        bear.onBearLongPressed = { [weak self] in self?.toggleNight() }
-        bearView = bear
-        stack.addArrangedSubview(bear)
-
-        let hint = UILabel()
-        hint.text = "点一点小熊试试，长按可看夜空"
-        hint.font = UIFont.systemFont(ofSize: 13)
-        hint.textColor = BearyColors.gray
-        hint.textAlignment = .center
-        bearHintLabel = hint
-        stack.addArrangedSubview(hint)
-
-        let title = UILabel()
-        title.numberOfLines = 0
-        title.textAlignment = .center
-        let titleText = "有些话，现在说不出口，\n写下来刚刚好"
-        let attributed = NSMutableAttributedString(string: titleText, attributes: [
-            .font: UIFont.boldSystemFont(ofSize: 24),
-            .foregroundColor: BearyColors.ink,
-        ])
-        if let range = titleText.range(of: "写下来刚刚好") {
-            attributed.addAttribute(.foregroundColor, value: BearyColors.orange, range: NSRange(range, in: titleText))
-        }
-        title.attributedText = attributed
-        stack.addArrangedSubview(title)
-        stack.addArrangedSubview(bodyLabel("一篇日记，留给未来的自己。\n不用发出去，也不用给任何人看。"))
-    }
-
-    private func toggleNight() {
-        nightOn.toggle()
-        if nightOverlay == nil {
-            let overlay = UIView()
-            overlay.backgroundColor = UIColor.black
-            // 纯装饰：不拦截触摸，顶栏与底栏按钮保持可点。
-            overlay.isUserInteractionEnabled = false
-            overlay.translatesAutoresizingMaskIntoConstraints = false
-            view.insertSubview(overlay, aboveSubview: contentWrap)
-            NSLayoutConstraint.activate([
-                overlay.topAnchor.constraint(equalTo: view.topAnchor),
-                overlay.bottomAnchor.constraint(equalTo: view.bottomAnchor),
-                overlay.leadingAnchor.constraint(equalTo: view.leadingAnchor),
-                overlay.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-            ])
-            for i in 0..<24 {
-                let star = UIView()
-                let size = CGFloat(2 + (i % 3) * 2)
-                star.backgroundColor = .white
-                star.layer.cornerRadius = size / 2
-                star.translatesAutoresizingMaskIntoConstraints = false
-                overlay.addSubview(star)
-                let x = CGFloat((i * 37) % 100) / 100.0
-                let y = CGFloat((i * 53) % 100) / 100.0
-                // 次要项：星星改相对布局——原 300×500 固定格在 iPad 宽屏上全挤左上角。
-                // 用 centerX/centerY 倍率锚到 overlay（倍率 2x/2y 使中心落在 x/y 比例处），
-                // 常数保留原 20pt 左右边距、60pt 上下边距的意图；星星尺寸与闪烁美术不动。
-                NSLayoutConstraint.activate([
-                    star.widthAnchor.constraint(equalToConstant: size),
-                    star.heightAnchor.constraint(equalToConstant: size),
-                ])
-                NSLayoutConstraint.activate([
-                    NSLayoutConstraint(item: star, attribute: .centerX, relatedBy: .equal, toItem: overlay, attribute: .centerX, multiplier: 2 * x, constant: 20 - 40 * x),
-                    NSLayoutConstraint(item: star, attribute: .centerY, relatedBy: .equal, toItem: overlay, attribute: .centerY, multiplier: 2 * y, constant: 60 - 120 * y),
-                ])
-                if !UIAccessibility.isReduceMotionEnabled {
-                    UIView.animate(withDuration: 1.6 + Double(i % 5) * 0.3, delay: Double(i) * 0.05, options: [.autoreverse, .repeat, .allowUserInteraction]) {
-                        star.alpha = 0.25
-                    }
-                }
-            }
-            nightOverlay = overlay
-        }
-        nightOverlay?.isHidden = !nightOn
-        showToast(nightOn ? "夜空模式已开启" : "夜空模式已关闭")
-    }
-
-    private func buildWelcomeScreen(_ stack: UIStackView) {
-        // 临时诊断（81 包，定根因后删除）。
-        DiagFile.mark("ob-welcome-enter")
-        stack.addArrangedSubview(titleLabel("这里是一个安静的\n日记角落"))
-        stack.addArrangedSubview(bodyLabel("写完选可见范围，默认私密，公开与私密随时切换。"))
-        let card1 = ruleCard(stack, title: "默认私密", body: "写完即按所选可见；不公开时，只有你能看到。")
-        stack.addArrangedSubview(card1)
-        card1.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
-        let card2 = ruleCard(stack, title: "随时切换", body: "公开与私密可在卡片操作行随时切换，无需等待。")
-        stack.addArrangedSubview(card2)
-        card2.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
-        DiagFile.mark("ob-welcome-exit")
-    }
-
-    private func ruleCard(_ stack: UIStackView, title: String, body: String) -> UIView {
-        let card = cardView()
-        let titleLabel = UILabel()
-        titleLabel.text = title
-        titleLabel.font = UIFont.boldSystemFont(ofSize: 16)
-        titleLabel.textColor = BearyColors.ink
-        titleLabel.textAlignment = .center
-        titleLabel.numberOfLines = 0
-        let bodyLabel = self.bodyLabel(body)
-        let inner = UIStackView(arrangedSubviews: [titleLabel, bodyLabel])
-        inner.axis = .vertical
-        inner.spacing = 6
-        inner.translatesAutoresizingMaskIntoConstraints = false
-        card.addSubview(inner)
-        NSLayoutConstraint.activate([
-            inner.topAnchor.constraint(equalTo: card.topAnchor, constant: 14),
-            inner.bottomAnchor.constraint(equalTo: card.bottomAnchor, constant: -14),
-            inner.leadingAnchor.constraint(equalTo: card.leadingAnchor, constant: 16),
-            inner.trailingAnchor.constraint(equalTo: card.trailingAnchor, constant: -16),
-        ])
-        // 宽度约束由调用方在挂载后绑定：卡片未放进 stack 时激活跨视图宽度约束会抛错。
-        return card
-    }
-
-    private func buildQuizScreen(_ stack: UIStackView) {
-        stack.addArrangedSubview(titleLabel("你写日记，\n最想留住什么？"))
-        stack.addArrangedSubview(ruleLabel("可以多选，点一下选中，再点取消"))
-        let options: [(String, String)] = [("灵感", "icon_bolt"), ("心情", "icon_mood"), ("成长", "icon_chart"), ("日常小事", "icon_coffee")]
-        var row: UIStackView?
-        for (i, option) in options.enumerated() {
-            if i % 2 == 0 {
-                row = UIStackView()
-                row?.axis = .horizontal
-                row?.spacing = 12
-                row?.distribution = .fillEqually
-                row?.translatesAutoresizingMaskIntoConstraints = false
-                stack.addArrangedSubview(row!)
-                row?.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
-            }
-            let card = cardView()
-            card.tag = i
-            card.layer.borderWidth = 0
-            card.layer.borderColor = BearyColors.orange.cgColor
-            let iconView = UIImageView()
-            iconView.image = BearyIconImages.image(named: option.1, pointSize: 28)
-            iconView.tintColor = BearyColors.ink
-            iconView.contentMode = .scaleAspectFit
-            iconView.translatesAutoresizingMaskIntoConstraints = false
-            let label = UILabel()
-            label.text = option.0
-            label.font = UIFont.systemFont(ofSize: 15, weight: .medium)
-            label.textColor = BearyColors.ink
-            label.textAlignment = .center
-            let inner = UIStackView(arrangedSubviews: [iconView, label])
-            inner.axis = .vertical
-            inner.spacing = 8
-            inner.alignment = .center
-            inner.translatesAutoresizingMaskIntoConstraints = false
-            card.addSubview(inner)
-            NSLayoutConstraint.activate([
-                iconView.widthAnchor.constraint(equalToConstant: 28),
-                iconView.heightAnchor.constraint(equalToConstant: 28),
-                inner.topAnchor.constraint(equalTo: card.topAnchor, constant: 16),
-                inner.bottomAnchor.constraint(equalTo: card.bottomAnchor, constant: -16),
-                inner.centerXAnchor.constraint(equalTo: card.centerXAnchor),
-            ])
-            let tap = UITapGestureRecognizer(target: self, action: #selector(quizCardTapped(_:)))
-            card.addGestureRecognizer(tap)
-            quizCards.append(card)
-            row?.addArrangedSubview(card)
-        }
-    }
-
-    @objc private func quizCardTapped(_ gesture: UITapGestureRecognizer) {
-        guard let card = gesture.view else { return }
-        let index = card.tag
-        if quizSelected.contains(index) {
-            quizSelected.remove(index)
-            quizToasted = false
-            card.layer.borderWidth = 0
-        } else {
-            quizSelected.insert(index)
-            card.layer.borderWidth = 2
-            if !UIAccessibility.isReduceMotionEnabled {
-                UIView.animate(withDuration: 0.15, animations: { card.transform = CGAffineTransform(scaleX: 1.06, y: 1.06) }) { _ in
-                    UIView.animate(withDuration: 0.2) { card.transform = .identity }
-                }
-            }
-        }
-        // 彩蛋 E3：4 张全选 → 依次弹跳 + 贪心文案（只 toast 一次）。
-        if quizSelected.count == 4 && !quizToasted {
-            quizToasted = true
-            for (i, quizCard) in quizCards.enumerated() {
-                DispatchQueue.main.asyncAfter(deadline: .now() + Double(i) * 0.09) { [weak self] in
-                    guard let self = self, !UIAccessibility.isReduceMotionEnabled else { return }
-                    UIView.animate(withDuration: 0.15, animations: { quizCard.transform = CGAffineTransform(scaleX: 1.08, y: 1.08) }) { _ in
-                        UIView.animate(withDuration: 0.2) { quizCard.transform = .identity }
-                    }
-                }
-            }
-            showToast("全都要，贪心的小熊也喜欢，全都替你留着")
-        }
-    }
-
-    private func buildTrialScreen(_ stack: UIStackView) {
-        stack.addArrangedSubview(titleLabel("先试写一句，\n手感就是这样"))
-        stack.addArrangedSubview(ruleLabel("真的能打字，字数会跟着涨"))
-        let textView = UITextView()
-        textView.font = UIFont.systemFont(ofSize: 16)
-        textView.textColor = BearyColors.gray
-        textView.text = "写下今天…"
-        textView.backgroundColor = BearyColors.faint
-        textView.layer.cornerRadius = 14
-        textView.textContainerInset = UIEdgeInsets(top: 14, left: 12, bottom: 14, right: 12)
-        textView.delegate = self
-        textView.translatesAutoresizingMaskIntoConstraints = false
-        textView.heightAnchor.constraint(equalToConstant: 140).isActive = true
-        stack.addArrangedSubview(textView)
-        textView.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
-        trialTextView = textView
-
-        let countRow = UIStackView()
-        countRow.axis = .horizontal
-        countRow.spacing = 0
-        let prefix = UILabel()
-        prefix.text = "已写 "
-        prefix.font = UIFont.systemFont(ofSize: 14)
-        prefix.textColor = BearyColors.gray
-        let number = UILabel()
-        number.text = "0"
-        number.font = UIFont.systemFont(ofSize: 14, weight: .semibold)
-        number.textColor = BearyColors.ink
-        let suffix = UILabel()
-        suffix.text = " 字"
-        suffix.font = UIFont.systemFont(ofSize: 14)
-        suffix.textColor = BearyColors.gray
-        countRow.addArrangedSubview(prefix)
-        countRow.addArrangedSubview(number)
-        countRow.addArrangedSubview(suffix)
-        trialCountLabel = number
-        stack.addArrangedSubview(countRow)
-
-        stack.addArrangedSubview(ruleLabel("15 分钟内可修改，私密期内仍可删除"))
-        // 试写仅本页体验：不写真实草稿箱、不进编辑器草稿列表（P1-2 试写断链）。
-        stack.addArrangedSubview(bodyLabel("试写只在本页体验，不会进入草稿箱；正式写一篇请走 CTA「开始写第一篇」。"))
-    }
-
-    private func buildMoodScreen(_ stack: UIStackView) {
-        stack.addArrangedSubview(titleLabel("今天的心情和天气，\n贴上去再走"))
-        stack.addArrangedSubview(ruleLabel("心情 · 点一个试试，选中的会活过来"))
-        let moodRow = UIStackView()
-        moodRow.axis = .horizontal
-        moodRow.spacing = 12
-        moodRow.distribution = .fillEqually
-        moodRow.translatesAutoresizingMaskIntoConstraints = false
-        stack.addArrangedSubview(moodRow)
-        moodRow.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
-        let moods: [(key: String, name: String)] = [("happy", "开心"), ("love", "心动"), ("sleepy", "困倦"), ("shy", "害羞")]
-        for mood in moods {
-            let chip = UIStackView()
-            chip.axis = .vertical
-            chip.spacing = 6
-            chip.alignment = .center
-            let face = UIView()
-            face.backgroundColor = BearyColors.faint
-            face.layer.cornerRadius = 32
-            face.layer.masksToBounds = true
-            face.layer.borderWidth = 0
-            face.layer.borderColor = BearyColors.orange.cgColor
-            face.translatesAutoresizingMaskIntoConstraints = false
-            face.widthAnchor.constraint(equalToConstant: 64).isActive = true
-            face.heightAnchor.constraint(equalToConstant: 64).isActive = true
-            // 脸内容用 frame（不走约束）：选中切换会摘掉重建，约束会残留。
-            let frozen = UIImageView(image: UIImage(named: "emote_\(mood.key)"))
-            frozen.contentMode = .scaleAspectFit
-            frozen.frame = CGRect(x: 4, y: 4, width: 56, height: 56)
-            face.addSubview(frozen)
-            moodFaceViews[mood.key] = face
-            let label = UILabel()
-            label.text = mood.name
-            label.font = UIFont.systemFont(ofSize: 13)
-            label.textColor = BearyColors.ink
-            label.textAlignment = .center
-            chip.addArrangedSubview(face)
-            chip.addArrangedSubview(label)
-            let button = BearyPressButton(type: .system)
-            button.tag = moods.firstIndex(where: { $0.key == mood.key }) ?? 0
-            button.addTarget(self, action: #selector(moodChipTapped(_:)), for: .touchUpInside)
-            // 用透明按钮盖住整片 chip 接收触摸（chip 本身不接 target）。
-            button.translatesAutoresizingMaskIntoConstraints = false
-            chip.addSubview(button)
-            NSLayoutConstraint.activate([
-                button.topAnchor.constraint(equalTo: chip.topAnchor),
-                button.bottomAnchor.constraint(equalTo: chip.bottomAnchor),
-                button.leadingAnchor.constraint(equalTo: chip.leadingAnchor),
-                button.trailingAnchor.constraint(equalTo: chip.trailingAnchor),
-            ])
-            moodButtons[mood.key] = button
-            moodRow.addArrangedSubview(chip)
-        }
-        stack.addArrangedSubview(ruleLabel("天气 · 也是正式版会用的那套图标"))
-        let wxRow = UIStackView()
-        wxRow.axis = .horizontal
-        wxRow.spacing = 12
-        wxRow.distribution = .fillEqually
-        wxRow.translatesAutoresizingMaskIntoConstraints = false
-        stack.addArrangedSubview(wxRow)
-        wxRow.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
-        let weathers: [(key: String, name: String, icon: String)] = [
-            ("sun", "晴", "icon_wx_sun"),
-            ("cloudy", "多云", "icon_wx_cloudy"),
-            ("rain", "雨", "icon_wx_rain"),
-            ("night", "夜", "icon_wx_night"),
-        ]
-        for weather in weathers {
-            let chip = UIStackView()
-            chip.axis = .vertical
-            chip.spacing = 6
-            chip.alignment = .center
-            let circle = UIView()
-            circle.backgroundColor = BearyColors.faint
-            circle.layer.cornerRadius = 28
-            circle.layer.masksToBounds = true
-            circle.layer.borderWidth = 0
-            circle.layer.borderColor = BearyColors.ink.cgColor
-            circle.translatesAutoresizingMaskIntoConstraints = false
-            circle.widthAnchor.constraint(equalToConstant: 56).isActive = true
-            circle.heightAnchor.constraint(equalToConstant: 56).isActive = true
-            let iconView = UIImageView()
-            iconView.image = BearyIconImages.image(named: weather.icon, pointSize: 28)
-            iconView.tintColor = BearyColors.ink
-            iconView.contentMode = .scaleAspectFit
-            iconView.translatesAutoresizingMaskIntoConstraints = false
-            circle.addSubview(iconView)
-            NSLayoutConstraint.activate([
-                iconView.centerXAnchor.constraint(equalTo: circle.centerXAnchor),
-                iconView.centerYAnchor.constraint(equalTo: circle.centerYAnchor),
-                iconView.widthAnchor.constraint(equalToConstant: 28),
-                iconView.heightAnchor.constraint(equalToConstant: 28),
-            ])
-            let label = UILabel()
-            label.text = weather.name
-            label.font = UIFont.systemFont(ofSize: 13)
-            label.textColor = BearyColors.ink
-            label.textAlignment = .center
-            chip.addArrangedSubview(circle)
-            chip.addArrangedSubview(label)
-            let button = BearyPressButton(type: .system)
-            button.translatesAutoresizingMaskIntoConstraints = false
-            button.addTarget(self, action: #selector(weatherChipTapped(_:)), for: .touchUpInside)
-            chip.addSubview(button)
-            NSLayoutConstraint.activate([
-                button.topAnchor.constraint(equalTo: chip.topAnchor),
-                button.bottomAnchor.constraint(equalTo: chip.bottomAnchor),
-                button.leadingAnchor.constraint(equalTo: chip.leadingAnchor),
-                button.trailingAnchor.constraint(equalTo: chip.trailingAnchor),
-            ])
-            weatherButtons[weather.key] = button
-            // 天气选中圈画在 circle 上：用 button 的 tag 记 key，circle 存在 chip 的首个子视图。
-            button.accessibilityIdentifier = weather.key
-            wxRow.addArrangedSubview(chip)
-        }
-        stack.addArrangedSubview(bodyLabel("发布时选的心情，会和日记一起出现。"))
-    }
-
-    @objc private func moodChipTapped(_ sender: UIButton) {
-        let keys = ["happy", "love", "sleepy", "shy"]
-        guard sender.tag < keys.count else { return }
-        let key = keys[sender.tag]
-        if moodSelected == key {
-            moodSelected = nil
-        } else {
-            moodSelected = key
-        }
-        for moodKey in keys {
-            guard let face = moodFaceViews[moodKey] else { continue }
-            let selected = moodSelected == moodKey
-            face.layer.borderWidth = selected ? 2 : 0
-            for sub in face.subviews { sub.removeFromSuperview() }
-            if selected {
-                let player = BearyEmoteView(key: moodKey, animated: true)
-                player.frame = CGRect(x: 4, y: 4, width: 56, height: 56)
-                face.addSubview(player)
-                player.play()
-                if !UIAccessibility.isReduceMotionEnabled {
-                    UIView.animate(withDuration: 0.15, animations: { face.transform = CGAffineTransform(scaleX: 1.12, y: 1.12) }) { _ in
-                        UIView.animate(withDuration: 0.2) { face.transform = .identity }
-                    }
-                }
-            } else {
-                let frozen = UIImageView(image: UIImage(named: "emote_\(moodKey)"))
-                frozen.contentMode = .scaleAspectFit
-                frozen.frame = CGRect(x: 4, y: 4, width: 56, height: 56)
-                face.addSubview(frozen)
-            }
-        }
-    }
-
-    @objc private func weatherChipTapped(_ sender: UIButton) {
-        guard let key = sender.accessibilityIdentifier else { return }
-        weatherSelected = weatherSelected == key ? nil : key
-        // 选中圈在 chip 的 circle 子视图上：按按钮的父 chip 找回 circle。
-        for (_, button) in weatherButtons {
-            guard let chip = button.superview as? UIStackView,
-                  let circle = chip.arrangedSubviews.first else { continue }
-            let buttonKey = button.accessibilityIdentifier ?? ""
-            circle.layer.borderWidth = weatherSelected == buttonKey ? 2 : 0
-        }
-    }
-
-}
-
-
-// MARK: - 引导屏（可见范围起）
-
-extension BearyOnboardingViewController {
-    /// iCity 可见范围屏（静态，无演示状态机）：写完选可见范围，默认私密，
-    /// 公开与私密随时切换；15 分钟内可编辑，公开与私密均可删除（进回收站 30 天）。
-    private func buildPublishScreen(_ stack: UIStackView) {
-        stack.addArrangedSubview(titleLabel("公开不公开，\n你说了算"))
-        stack.addArrangedSubview(ruleLabel("写完选可见范围，默认私密，公开与私密随时切换"))
-        let card1 = ruleCard(stack, title: "默认私密", body: "写完即按所选可见；不公开时，只有你能看到。")
-        stack.addArrangedSubview(card1)
-        card1.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
-        let card2 = ruleCard(stack, title: "随时切换", body: "公开与私密可在卡片操作行随时切换，无需等待。")
-        stack.addArrangedSubview(card2)
-        card2.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
-        stack.addArrangedSubview(ruleLabel("15 分钟内可编辑，公开与私密均可删除（进回收站 30 天）。"))
-    }
-
-    private func buildInteractScreen(_ stack: UIStackView) {
-        stack.addArrangedSubview(titleLabel("没有文字评论区，\n喜欢就这样表达"))
-        let card = cardView()
-        card.backgroundColor = BearyColors.faint
-        let inner = UIStackView()
-        inner.axis = .vertical
-        inner.spacing = 10
-        inner.translatesAutoresizingMaskIntoConstraints = false
-        let headRow = UIStackView()
-        headRow.axis = .horizontal
-        headRow.spacing = 8
-        headRow.alignment = .center
-        let avatar = UIView()
-        avatar.backgroundColor = BearyColors.line
-        avatar.layer.cornerRadius = 20
-        avatar.layer.masksToBounds = true
-        avatar.translatesAutoresizingMaskIntoConstraints = false
-        avatar.widthAnchor.constraint(equalToConstant: 40).isActive = true
-        avatar.heightAnchor.constraint(equalToConstant: 40).isActive = true
-        let avatarIcon = UIImageView(image: BearyIconImages.image(named: "icon_user", pointSize: 22))
-        avatarIcon.tintColor = BearyColors.ink
-        avatarIcon.translatesAutoresizingMaskIntoConstraints = false
-        avatar.addSubview(avatarIcon)
-        NSLayoutConstraint.activate([
-            avatarIcon.centerXAnchor.constraint(equalTo: avatar.centerXAnchor),
-            avatarIcon.centerYAnchor.constraint(equalTo: avatar.centerYAnchor),
-            avatarIcon.widthAnchor.constraint(equalToConstant: 22),
-            avatarIcon.heightAnchor.constraint(equalToConstant: 22),
-        ])
-        let headText = UILabel()
-        headText.text = "你 · 今天"
-        headText.font = UIFont.systemFont(ofSize: 13)
-        headText.textColor = BearyColors.gray
-        headRow.addArrangedSubview(avatar)
-        headRow.addArrangedSubview(headText)
-        let body = UILabel()
-        body.text = "今天走了很远的路，风很好。"
-        body.font = UIFont.systemFont(ofSize: 16)
-        body.textColor = BearyColors.ink
-        body.numberOfLines = 0
-        let actionRow = UIStackView()
-        actionRow.axis = .horizontal
-        actionRow.spacing = 16
-        actionRow.alignment = .center
-        let like = BearyPressButton(type: .system)
-        like.setImage(BearyIconImages.image(named: "icon_heart", pointSize: 22), for: .normal)
-        like.tintColor = BearyColors.ink
-        like.addTarget(self, action: #selector(demoLikeTapped), for: .touchUpInside)
-        like.translatesAutoresizingMaskIntoConstraints = false
-        like.widthAnchor.constraint(equalToConstant: 44).isActive = true
-        like.heightAnchor.constraint(equalToConstant: 44).isActive = true
-        likeButton = like
-        let count = UILabel()
-        count.text = "12"
-        count.font = UIFont.systemFont(ofSize: 15, weight: .semibold)
-        count.textColor = BearyColors.ink
-        likeCountLabel = count
-        let likeGroup = UIStackView(arrangedSubviews: [like, count])
-        likeGroup.axis = .horizontal
-        likeGroup.spacing = 2
-        likeGroup.alignment = .center
-        let bookmark = BearyPressButton(type: .system)
-        bookmark.setImage(BearyIconImages.image(named: "icon_bookmark", pointSize: 21), for: .normal)
-        bookmark.tintColor = BearyColors.ink
-        bookmark.addTarget(self, action: #selector(demoBookmarkTapped), for: .touchUpInside)
-        bookmark.translatesAutoresizingMaskIntoConstraints = false
-        bookmark.widthAnchor.constraint(equalToConstant: 44).isActive = true
-        bookmark.heightAnchor.constraint(equalToConstant: 44).isActive = true
-        bookmarkButton = bookmark
-        let bookmarkLabel = UILabel()
-        bookmarkLabel.text = "收藏"
-        bookmarkLabel.font = UIFont.systemFont(ofSize: 14)
-        bookmarkLabel.textColor = BearyColors.gray
-        let bookmarkGroup = UIStackView(arrangedSubviews: [bookmark, bookmarkLabel])
-        bookmarkGroup.axis = .horizontal
-        bookmarkGroup.spacing = 2
-        bookmarkGroup.alignment = .center
-        let share = BearyPressButton(type: .system)
-        share.setImage(BearyIconImages.image(named: "icon_share", pointSize: 21), for: .normal)
-        share.tintColor = BearyColors.ink
-        share.addTarget(self, action: #selector(demoShareTapped), for: .touchUpInside)
-        share.translatesAutoresizingMaskIntoConstraints = false
-        share.widthAnchor.constraint(equalToConstant: 44).isActive = true
-        share.heightAnchor.constraint(equalToConstant: 44).isActive = true
-        let shareLabel = UILabel()
-        shareLabel.text = "分享"
-        shareLabel.font = UIFont.systemFont(ofSize: 14)
-        shareLabel.textColor = BearyColors.gray
-        let shareGroup = UIStackView(arrangedSubviews: [share, shareLabel])
-        shareGroup.axis = .horizontal
-        shareGroup.spacing = 2
-        shareGroup.alignment = .center
-        actionRow.addArrangedSubview(likeGroup)
-        actionRow.addArrangedSubview(bookmarkGroup)
-        actionRow.addArrangedSubview(shareGroup)
-        inner.addArrangedSubview(headRow)
-        inner.addArrangedSubview(body)
-        inner.addArrangedSubview(actionRow)
-        card.addSubview(inner)
-        stack.addArrangedSubview(card)
-        NSLayoutConstraint.activate([
-            inner.topAnchor.constraint(equalTo: card.topAnchor, constant: 14),
-            inner.bottomAnchor.constraint(equalTo: card.bottomAnchor, constant: -14),
-            inner.leadingAnchor.constraint(equalTo: card.leadingAnchor, constant: 16),
-            inner.trailingAnchor.constraint(equalTo: card.trailingAnchor, constant: -16),
-            card.widthAnchor.constraint(equalTo: stack.widthAnchor),
-        ])
-
-        stack.addArrangedSubview(ruleLabel("小熊回应 · 可同时贴好几种，再点一次摘下"))
-        let rxnRow = UIStackView()
-        rxnRow.axis = .horizontal
-        rxnRow.spacing = 12
-        rxnRow.distribution = .fillEqually
-        for key in ["happy", "love", "sleepy", "shy"] {
-            let face = UIView()
-            face.backgroundColor = BearyColors.faint
-            face.layer.cornerRadius = 24
-            face.layer.masksToBounds = true
-            face.layer.borderWidth = 0
-            face.layer.borderColor = BearyColors.orange.cgColor
-            face.translatesAutoresizingMaskIntoConstraints = false
-            face.widthAnchor.constraint(equalToConstant: 48).isActive = true
-            face.heightAnchor.constraint(equalToConstant: 48).isActive = true
-            let frozen = UIImageView(image: UIImage(named: "emote_\(key)"))
-            frozen.contentMode = .scaleAspectFit
-            frozen.frame = CGRect(x: 4, y: 4, width: 40, height: 40)
-            face.addSubview(frozen)
-            let button = BearyPressButton(type: .system)
-            button.accessibilityIdentifier = key
-            button.addTarget(self, action: #selector(demoRxnTapped(_:)), for: .touchUpInside)
-            button.translatesAutoresizingMaskIntoConstraints = false
-            face.addSubview(button)
-            NSLayoutConstraint.activate([
-                button.topAnchor.constraint(equalTo: face.topAnchor),
-                button.bottomAnchor.constraint(equalTo: face.bottomAnchor),
-                button.leadingAnchor.constraint(equalTo: face.leadingAnchor),
-                button.trailingAnchor.constraint(equalTo: face.trailingAnchor),
-            ])
-            rxnButtons[key] = button
-            // face 视图需从按钮找回：存在按钮的父视图上。
-            rxnRow.addArrangedSubview(face)
-        }
-        stack.addArrangedSubview(rxnRow)
-        let rxnCountRow = UIStackView()
-        rxnCountRow.axis = .horizontal
-        rxnCountRow.spacing = 0
-        let rxnPrefix = UILabel()
-        rxnPrefix.text = "已贴 "
-        rxnPrefix.font = UIFont.systemFont(ofSize: 14)
-        rxnPrefix.textColor = BearyColors.gray
-        let rxnNumber = UILabel()
-        rxnNumber.text = "0"
-        rxnNumber.font = UIFont.systemFont(ofSize: 14, weight: .semibold)
-        rxnNumber.textColor = BearyColors.ink
-        let rxnSuffix = UILabel()
-        rxnSuffix.text = " 种回应"
-        rxnSuffix.font = UIFont.systemFont(ofSize: 14)
-        rxnSuffix.textColor = BearyColors.gray
-        rxnCountRow.addArrangedSubview(rxnPrefix)
-        rxnCountRow.addArrangedSubview(rxnNumber)
-        rxnCountRow.addArrangedSubview(rxnSuffix)
-        rxnCountLabel = rxnNumber
-        stack.addArrangedSubview(rxnCountRow)
-        stack.addArrangedSubview(bodyLabel("收藏列表只有你能看到；单篇日记的链接可以分享给朋友。"))
-    }
-
-    @objc private func demoLikeTapped() {
-        guard let button = likeButton else { return }
-        likeSelected.toggle()
-        if likeSelected {
-            likeCount = 13
-            button.setImage(BearyIconImages.image(named: "icon_heart_fill", pointSize: 22), for: .normal)
-            button.tintColor = BearyColors.red
-            BearyIconMotion.playFillFade(on: button)
-            BearyIconMotion.playLikeBurst(on: button)
-        } else {
-            likeCount = 12
-            button.setImage(BearyIconImages.image(named: "icon_heart", pointSize: 22), for: .normal)
-            button.tintColor = BearyColors.ink
-        }
-        likeCountLabel?.text = "\(likeCount)"
-    }
-
-    @objc private func demoBookmarkTapped() {
-        guard let button = bookmarkButton else { return }
-        bookmarkSelected.toggle()
-        if bookmarkSelected {
-            button.setImage(BearyIconImages.image(named: "icon_bookmark_fill", pointSize: 21), for: .normal)
-            button.tintColor = BearyColors.orange
-            BearyIconMotion.playBookmarkPop(on: button)
-        } else {
-            button.setImage(BearyIconImages.image(named: "icon_bookmark", pointSize: 21), for: .normal)
-            button.tintColor = BearyColors.ink
-        }
-    }
-
-    @objc private func demoShareTapped() {
-        UIPasteboard.general.string = "https://teddyhn.com/beary/d/demo"
-        showToast("链接已复制")
-    }
-
-    @objc private func demoRxnTapped(_ sender: UIButton) {
-        guard let key = sender.accessibilityIdentifier,
-              let face = sender.superview else { return }
-        if rxnSelected.contains(key) {
-            rxnSelected.remove(key)
-        } else {
-            rxnSelected.insert(key)
-        }
-        let selected = rxnSelected.contains(key)
-        face.layer.borderWidth = selected ? 2 : 0
-        // 注意：透明按钮是 face 的子视图，需保留；下面一行只清图片与播放器。
-        for sub in face.subviews where sub is UIImageView || sub is BearyEmoteView { sub.removeFromSuperview() }
-        if selected {
-            let player = BearyEmoteView(key: key, animated: true)
-            player.frame = CGRect(x: 4, y: 4, width: 40, height: 40)
-            face.insertSubview(player, at: 0)
-            player.play()
-        } else {
-            let frozen = UIImageView(image: UIImage(named: "emote_\(key)"))
-            frozen.contentMode = .scaleAspectFit
-            frozen.frame = CGRect(x: 4, y: 4, width: 40, height: 40)
-            face.insertSubview(frozen, at: 0)
-        }
-        rxnCountLabel?.text = "\(rxnSelected.count)"
-    }
-
-    private func buildMessagesScreen(_ stack: UIStackView) {
-        stack.addArrangedSubview(titleLabel("消息来了，\n一眼就知道"))
-        let likeRow = messageRow(
-            iconName: "icon_heart", iconColor: BearyColors.orange,
-            title: "有人点赞了你的日记",
-            body: "新消息会带一个蓝点，点开就标为已读",
-            showDot: true
-        )
-        let likeTap = UITapGestureRecognizer(target: self, action: #selector(messageLikeTapped))
-        likeRow.addGestureRecognizer(likeTap)
-        stack.addArrangedSubview(likeRow)
-        stack.addArrangedSubview(messageRow(
-            iconName: "icon_mail", iconColor: BearyColors.orange,
-            title: "beary 发来的消息",
-            body: "橙色信封，重要的事都在里面",
-            showDot: false
-        ))
-        stack.addArrangedSubview(messageRow(
-            iconName: "icon_info", iconColor: BearyColors.blue,
-            title: "系统消息",
-            body: "合并成一张卡，点开就能看全部",
-            showDot: false
-        ))
-        let linkCard = cardView()
-        let linkLabel = UILabel()
-        let handle = SessionManager.shared.currentUser?.handle
-        let linkText = handle != nil ? "teddyhn.com/beary/@\(handle!)" : "teddyhn.com/beary/@你的用户名"
-        linkLabel.text = linkText
-        linkLabel.font = UIFont.systemFont(ofSize: 15, weight: .medium)
-        linkLabel.textColor = BearyColors.ink
-        linkLabel.textAlignment = .center
-        linkLabel.numberOfLines = 0
-        let copyButton = BearyPressButton(type: .system)
-        copyButton.setTitle("复制", for: .normal)
-        copyButton.titleLabel?.font = UIFont.systemFont(ofSize: 15, weight: .semibold)
-        copyButton.setTitleColor(BearyColors.orange, for: .normal)
-        copyButton.addTarget(self, action: #selector(copyHomeLinkTapped), for: .touchUpInside)
-        // 5-1：无 handle 时复制钮置灰禁用（与复制守门双保险）。
-        let hasHomeHandle = SessionManager.shared.currentUser?.handle != nil
-        copyButton.isEnabled = hasHomeHandle
-        copyButton.alpha = hasHomeHandle ? 1 : 0.5
-        let linkInner = UIStackView(arrangedSubviews: [linkLabel, copyButton])
-        linkInner.axis = .vertical
-        linkInner.spacing = 8
-        linkInner.alignment = .center
-        linkInner.translatesAutoresizingMaskIntoConstraints = false
-        linkCard.addSubview(linkInner)
-        stack.addArrangedSubview(linkCard)
-        NSLayoutConstraint.activate([
-            linkInner.topAnchor.constraint(equalTo: linkCard.topAnchor, constant: 14),
-            linkInner.bottomAnchor.constraint(equalTo: linkCard.bottomAnchor, constant: -14),
-            linkInner.leadingAnchor.constraint(equalTo: linkCard.leadingAnchor, constant: 16),
-            linkInner.trailingAnchor.constraint(equalTo: linkCard.trailingAnchor, constant: -16),
-            linkCard.widthAnchor.constraint(equalTo: stack.widthAnchor),
-        ])
-    }
-
-    private func messageRow(iconName: String, iconColor: UIColor, title: String, body: String, showDot: Bool) -> UIView {
-        let row = cardView()
-        let iconBox = UIView()
-        iconBox.backgroundColor = BearyColors.faint
-        iconBox.layer.cornerRadius = 22
-        iconBox.layer.masksToBounds = true
-        iconBox.translatesAutoresizingMaskIntoConstraints = false
-        iconBox.widthAnchor.constraint(equalToConstant: 44).isActive = true
-        iconBox.heightAnchor.constraint(equalToConstant: 44).isActive = true
-        let iconView = UIImageView(image: BearyIconImages.image(named: iconName, pointSize: 24))
-        iconView.tintColor = iconColor
-        iconView.translatesAutoresizingMaskIntoConstraints = false
-        iconBox.addSubview(iconView)
-        NSLayoutConstraint.activate([
-            iconView.centerXAnchor.constraint(equalTo: iconBox.centerXAnchor),
-            iconView.centerYAnchor.constraint(equalTo: iconBox.centerYAnchor),
-            iconView.widthAnchor.constraint(equalToConstant: 24),
-            iconView.heightAnchor.constraint(equalToConstant: 24),
-        ])
-        let titleLabel = UILabel()
-        titleLabel.text = title
-        titleLabel.font = UIFont.systemFont(ofSize: 15, weight: .semibold)
-        titleLabel.textColor = BearyColors.ink
-        titleLabel.numberOfLines = 0
-        let bodyLabel = UILabel()
-        bodyLabel.text = body
-        bodyLabel.font = UIFont.systemFont(ofSize: 13)
-        bodyLabel.textColor = BearyColors.gray
-        bodyLabel.numberOfLines = 0
-        let texts = UIStackView(arrangedSubviews: [titleLabel, bodyLabel])
-        texts.axis = .vertical
-        texts.spacing = 4
-        let inner = UIStackView(arrangedSubviews: [iconBox, texts])
-        inner.axis = .horizontal
-        inner.spacing = 12
-        inner.alignment = .center
-        inner.translatesAutoresizingMaskIntoConstraints = false
-        row.addSubview(inner)
-        if showDot {
-            let dot = UIView()
-            dot.backgroundColor = BearyColors.blue
-            dot.layer.cornerRadius = 6
-            dot.translatesAutoresizingMaskIntoConstraints = false
-            dot.widthAnchor.constraint(equalToConstant: 12).isActive = true
-            dot.heightAnchor.constraint(equalToConstant: 12).isActive = true
-            row.addSubview(dot)
-            NSLayoutConstraint.activate([
-                dot.topAnchor.constraint(equalTo: row.topAnchor, constant: 14),
-                dot.trailingAnchor.constraint(equalTo: row.trailingAnchor, constant: -14),
-            ])
-            msgBlueDot = dot
-        }
-        NSLayoutConstraint.activate([
-            inner.topAnchor.constraint(equalTo: row.topAnchor, constant: 14),
-            inner.bottomAnchor.constraint(equalTo: row.bottomAnchor, constant: -14),
-            inner.leadingAnchor.constraint(equalTo: row.leadingAnchor, constant: 16),
-            inner.trailingAnchor.constraint(equalTo: row.trailingAnchor, constant: -16),
-        ])
-        return row
-    }
-
-    @objc private func messageLikeTapped() {
-        msgBlueDot?.isHidden = true
-        showToast("已标为已读")
-    }
-
-    @objc private func copyHomeLinkTapped() {
-        // 5-1：无 handle 时绝不复制占位 URL，提示登录后可复制。
-        guard let handle = SessionManager.shared.currentUser?.handle else {
-            showToast("登录后可复制主页链接")
+    @objc private func emoteTapped(_ sender: UIButton) {
+        for (key, button) in emoteButtons where button == sender {
+            selectEmote(key)
             return
         }
-        UIPasteboard.general.string = "https://teddyhn.com/beary/@\(handle)"
-        showToast("链接已复制")
-    }
-
-    private func buildToolsScreen(_ stack: UIStackView) {
-        stack.addArrangedSubview(titleLabel("顺手的小工具，\n写起来更顺"))
-        stack.addArrangedSubview(toolRow(iconName: "icon_user", title: "@ 一位朋友", body: "写日记时可以 @ 一位朋友，公开后对方会收到提醒。"))
-        stack.addArrangedSubview(toolRow(iconName: "icon_calendar", title: "日历与小火苗", body: "时间线顶部有日历和连续天数，写得越勤，小火苗越旺。"))
-        stack.addArrangedSubview(toolRow(iconName: "icon_search", title: "放大镜搜索", body: "想找以前的日记或朋友，点顶栏的放大镜搜一搜。"))
-    }
-
-    private func toolRow(iconName: String, title: String, body: String) -> UIView {
-        let row = cardView()
-        let iconBox = UIView()
-        iconBox.backgroundColor = BearyColors.faint
-        iconBox.layer.cornerRadius = 24
-        iconBox.layer.masksToBounds = true
-        iconBox.translatesAutoresizingMaskIntoConstraints = false
-        iconBox.widthAnchor.constraint(equalToConstant: 48).isActive = true
-        iconBox.heightAnchor.constraint(equalToConstant: 48).isActive = true
-        let iconView = UIImageView(image: BearyIconImages.image(named: iconName, pointSize: 26))
-        iconView.tintColor = BearyColors.ink
-        iconView.translatesAutoresizingMaskIntoConstraints = false
-        iconBox.addSubview(iconView)
-        NSLayoutConstraint.activate([
-            iconView.centerXAnchor.constraint(equalTo: iconBox.centerXAnchor),
-            iconView.centerYAnchor.constraint(equalTo: iconBox.centerYAnchor),
-            iconView.widthAnchor.constraint(equalToConstant: 26),
-            iconView.heightAnchor.constraint(equalToConstant: 26),
-        ])
-        let titleLabel = UILabel()
-        titleLabel.text = title
-        titleLabel.font = UIFont.systemFont(ofSize: 15, weight: .semibold)
-        titleLabel.textColor = BearyColors.ink
-        let bodyLabel = UILabel()
-        bodyLabel.text = body
-        bodyLabel.font = UIFont.systemFont(ofSize: 13)
-        bodyLabel.textColor = BearyColors.gray
-        bodyLabel.numberOfLines = 0
-        let texts = UIStackView(arrangedSubviews: [titleLabel, bodyLabel])
-        texts.axis = .vertical
-        texts.spacing = 4
-        let inner = UIStackView(arrangedSubviews: [iconBox, texts])
-        inner.axis = .horizontal
-        inner.spacing = 12
-        inner.alignment = .center
-        inner.translatesAutoresizingMaskIntoConstraints = false
-        row.addSubview(inner)
-        NSLayoutConstraint.activate([
-            inner.topAnchor.constraint(equalTo: row.topAnchor, constant: 14),
-            inner.bottomAnchor.constraint(equalTo: row.bottomAnchor, constant: -14),
-            inner.leadingAnchor.constraint(equalTo: row.leadingAnchor, constant: 16),
-            inner.trailingAnchor.constraint(equalTo: row.trailingAnchor, constant: -16),
-        ])
-        return row
-    }
-
-    private func buildCTAScreen(_ stack: UIStackView) {
-        if let logo = UIImage(named: "LogoHorizontal") {
-            let logoView = UIImageView(image: logo)
-            logoView.contentMode = .scaleAspectFit
-            logoView.translatesAutoresizingMaskIntoConstraints = false
-            let aspect = logo.size.height > 0 ? logo.size.width / logo.size.height : 1
-            logoView.heightAnchor.constraint(equalToConstant: 32).isActive = true
-            logoView.widthAnchor.constraint(equalToConstant: 32 * aspect).isActive = true
-            stack.addArrangedSubview(logoView)
-        }
-        stack.addArrangedSubview(titleLabel("写下来，\n就不会弄丢"))
-        stack.addArrangedSubview(bodyLabel("超时不可再改，私密期内仍可删除。\n落笔之前，先写给自己。"))
     }
 }
 
-// MARK: - 试写输入
+// MARK: - 演示用选项卡片（第 2 页；不是真实编辑器的分段控件样子）
 
-extension BearyOnboardingViewController: UITextViewDelegate {
-    func textViewDidBeginEditing(_ textView: UITextView) {
-        if textView.text == "写下今天…" {
-            textView.text = ""
-            textView.textColor = BearyColors.ink
-        }
+private final class OnboardingOptionButton: BearyHit44Button {
+    let demo: OnboardingVisibilityDemo
+    private let iconView = UIImageView()
+    private let titleLabel = UILabel()
+    private let subtitleLabel = UILabel()
+    private let checkView = UIView()
+    private let checkImageView = UIImageView()
+    private var isOptionSelected = false
+
+    init(demo: OnboardingVisibilityDemo) {
+        self.demo = demo
+        super.init(frame: .zero)
+        translatesAutoresizingMaskIntoConstraints = false
+        backgroundColor = BearyColors.surface
+        layer.cornerRadius = 16
+        layer.borderWidth = 1.5
+        layer.borderColor = BearyColors.line.cgColor
+
+        iconView.translatesAutoresizingMaskIntoConstraints = false
+        iconView.image = BearyIconImages.image(named: demo.iconName, pointSize: 28)
+        iconView.tintColor = BearyColors.ink
+        addSubview(iconView)
+
+        let textStack = UIStackView()
+        textStack.translatesAutoresizingMaskIntoConstraints = false
+        textStack.axis = .vertical
+        textStack.spacing = 2
+        titleLabel.translatesAutoresizingMaskIntoConstraints = false
+        titleLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 15, weight: .semibold))
+        titleLabel.textColor = BearyColors.ink
+        titleLabel.adjustsFontForContentSizeCategory = true
+        titleLabel.text = demo.title
+        subtitleLabel.translatesAutoresizingMaskIntoConstraints = false
+        subtitleLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13))
+        subtitleLabel.textColor = BearyColors.gray
+        subtitleLabel.numberOfLines = 0
+        subtitleLabel.adjustsFontForContentSizeCategory = true
+        subtitleLabel.text = demo.subtitle
+        textStack.addArrangedSubview(titleLabel)
+        textStack.addArrangedSubview(subtitleLabel)
+        addSubview(textStack)
+
+        checkView.translatesAutoresizingMaskIntoConstraints = false
+        checkView.layer.cornerRadius = 12
+        checkView.layer.borderWidth = 2
+        checkView.layer.borderColor = BearyColors.line.cgColor
+        checkImageView.translatesAutoresizingMaskIntoConstraints = false
+        checkImageView.image = BearyIconImages.image(named: "icon_check", pointSize: 14)
+        checkImageView.tintColor = BearyColors.bg
+        checkView.addSubview(checkImageView)
+        addSubview(checkView)
+
+        NSLayoutConstraint.activate([
+            iconView.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 16),
+            iconView.centerYAnchor.constraint(equalTo: centerYAnchor),
+            iconView.widthAnchor.constraint(equalToConstant: 28),
+            iconView.heightAnchor.constraint(equalToConstant: 28),
+            textStack.leadingAnchor.constraint(equalTo: iconView.trailingAnchor, constant: 12),
+            textStack.topAnchor.constraint(equalTo: topAnchor, constant: 14),
+            textStack.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -14),
+            checkView.leadingAnchor.constraint(equalTo: textStack.trailingAnchor, constant: 12),
+            checkView.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -16),
+            checkView.centerYAnchor.constraint(equalTo: centerYAnchor),
+            checkView.widthAnchor.constraint(equalToConstant: 24),
+            checkView.heightAnchor.constraint(equalToConstant: 24),
+            checkImageView.centerXAnchor.constraint(equalTo: checkView.centerXAnchor),
+            checkImageView.centerYAnchor.constraint(equalTo: checkView.centerYAnchor),
+            checkImageView.widthAnchor.constraint(equalToConstant: 14),
+            checkImageView.heightAnchor.constraint(equalToConstant: 14),
+        ])
+        setSelected(false)
     }
 
-    func textViewDidEndEditing(_ textView: UITextView) {
-        if textView.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            textView.text = "写下今天…"
-            textView.textColor = BearyColors.gray
-            trialCountLabel?.text = "0"
-        }
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
     }
 
-    func textViewDidChange(_ textView: UITextView) {
-        // 试写只计字数、不再自动保存进草稿箱。
-        let count = textView.text.count
-        trialCountLabel?.text = "\(count)"
+    func setSelected(_ selected: Bool) {
+        isOptionSelected = selected
+        backgroundColor = selected ? BearyColors.alpha(BearyColors.orange, 0.07) : BearyColors.surface
+        checkView.backgroundColor = selected ? BearyColors.orange : .clear
+        checkImageView.isHidden = !selected
+        refreshBorder()
+    }
+
+    func refreshBorder() {
+        layer.borderWidth = isOptionSelected ? 2 : 1.5
+        layer.borderColor = isOptionSelected ? BearyColors.orange.cgColor : BearyColors.line.cgColor
+        checkView.layer.borderColor = isOptionSelected ? BearyColors.orange.cgColor : BearyColors.line.cgColor
+    }
+}
+
+// MARK: - 约束优先级小助手（文件内私有）
+
+private extension NSLayoutConstraint {
+    func withPriority(_ priority: UILayoutPriority) -> NSLayoutConstraint {
+        self.priority = priority
+        return self
     }
 }
