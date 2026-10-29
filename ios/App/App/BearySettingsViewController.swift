@@ -1827,13 +1827,13 @@ final class BearySettingsViewController: UIViewController {
         return dict
     }
 
-    // MARK: - 轻提示：委托 B 批统一 BearyToast。旧 Timer 重置语义由统一
-    // 组件“新 toast 先清旧 toast”承接。设置页是全屏模态，盖住 Chrome 的
-    // FAB，本页无可见 FAB，故 aboveFAB=false（落 -32，原 -158 悬空修掉）；
-    // 展示时长由旧 1.6s 统一为 2.0s，调用签名与文案、触发时机不变。
+    // MARK: - 轻提示：委托统一 BearyToast。旧 Timer 重置语义由统一
+    // 组件“新 toast 先清旧 toast”承接。设置页是全屏模态，盖住 Chrome，
+    // 落点由组件回落安全区 -32；展示时长由旧 1.6s 统一为 2.0s，
+    // 调用签名与文案、触发时机不变。
 
     private func showToast(_ text: String) {
-        BearyToast.show(in: view, message: text, aboveFAB: false)
+        BearyToast.show(in: view, message: text)
     }
 
     // MARK: - 设置页新增三区（2026-10-26，第二阶段）
@@ -3005,7 +3005,7 @@ final class BearyBlockedUsersViewController: UIViewController, UITableViewDataSo
                     self.emptyLabel.isHidden = !self.blockedIds.isEmpty
                     self.tableView.reloadData()
                 case .failure:
-                    BearyToast.show(in: self.view, message: "加载失败，请重试", aboveFAB: false)
+                    BearyToast.show(in: self.view, message: "加载失败，请重试")
                 }
             }
         }
@@ -3051,9 +3051,9 @@ final class BearyBlockedUsersViewController: UIViewController, UITableViewDataSo
                     self.blockedIds.removeAll { $0 == userId }
                     self.emptyLabel.isHidden = !self.blockedIds.isEmpty
                     self.tableView.reloadData()
-                    BearyToast.show(in: self.view, message: "已解除拉黑", aboveFAB: false)
+                    BearyToast.show(in: self.view, message: "已解除拉黑")
                 case .failure:
-                    BearyToast.show(in: self.view, message: "解除失败，请重试", aboveFAB: false)
+                    BearyToast.show(in: self.view, message: "解除失败，请重试")
                     self.tableView.reloadData()
                 }
             }

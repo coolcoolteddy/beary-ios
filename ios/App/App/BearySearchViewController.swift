@@ -1612,7 +1612,7 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
                 let user = rowUsers[index]
                 if isBlockedForSearch(userId: user.id) {
                     if let userId = user.id { removeBlockedUserFromResults(userId: userId) }
-                    BearyToast.show(in: view, message: "该用户已被拉黑", aboveFAB: false)
+                    BearyToast.show(in: view, message: "该用户已被拉黑")
                     return
                 }
                 onOpenUserHandler(user)

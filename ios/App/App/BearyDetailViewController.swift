@@ -1328,7 +1328,7 @@ final class BearyDetailViewController: UIViewController {
     private func chooseEmote(key: String) {
         guard let entryId = entry.id, !entryId.isEmpty else { return }
         if !BearyEphemeral.isEffectivelyPublic(entry) {
-            BearyToast.show(in: view, message: "公开后才能回应", aboveFAB: false)
+            BearyToast.show(in: view, message: "公开后才能回应")
             return
         }
         if !SessionManager.shared.isLoggedIn {
@@ -1366,7 +1366,7 @@ final class BearyDetailViewController: UIViewController {
                         self.onRequireLogin?()
                     } else {
                         self.playDenyShake(on: self.commentButton)
-                        BearyToast.show(in: self.view, message: "操作失败，请重试", aboveFAB: false)
+                        BearyToast.show(in: self.view, message: "操作失败，请重试")
                     }
                 }
             }
@@ -1401,7 +1401,7 @@ final class BearyDetailViewController: UIViewController {
         items.append(url)
         if presentedViewController != nil {
             UIPasteboard.general.string = url.absoluteString
-            BearyToast.show(in: view, message: "链接已复制", aboveFAB: false)
+            BearyToast.show(in: view, message: "链接已复制")
             return
         }
         let activity = UIActivityViewController(activityItems: items, applicationActivities: nil)
@@ -1409,7 +1409,7 @@ final class BearyDetailViewController: UIViewController {
             if completed == false, error != nil {
                 UIPasteboard.general.string = url.absoluteString
                 if let self = self {
-                    BearyToast.show(in: self.view, message: "链接已复制", aboveFAB: false)
+                    BearyToast.show(in: self.view, message: "链接已复制")
                 }
             }
         }
@@ -1495,7 +1495,7 @@ final class BearyDetailViewController: UIViewController {
                     if case .server(let code) = err, code == "rate_limited" { message = "操作太频繁，请稍后再试" }
                     else if case .http(let status, _) = err, status == 429 { message = "操作太频繁，请稍后再试" }
                     else { message = "切换失败，请重试" }
-                    BearyToast.show(in: self.view, message: message, aboveFAB: false)
+                    BearyToast.show(in: self.view, message: message)
                     BearyHaptics.rejectionWarning()
                     BearySoundPlayer.play(.refuseBonk)
                     if UIAccessibility.isReduceMotionEnabled == false {
@@ -1521,7 +1521,7 @@ final class BearyDetailViewController: UIViewController {
         // 审计 P2-11：非公开时不再静默 return——拒绝动效＋“公开后才能互动”。
         if !BearyEphemeral.isEffectivelyPublic(entry) {
             playDenyShake(on: likeButton)
-            BearyToast.show(in: view, message: "公开后才能互动", aboveFAB: false)
+            BearyToast.show(in: view, message: "公开后才能互动")
             return
         }
         if !SessionManager.shared.isLoggedIn {
@@ -1579,7 +1579,7 @@ final class BearyDetailViewController: UIViewController {
                         self.onRequireLogin?()
                     } else {
                         self.playDenyShake(on: self.likeButton)
-                        BearyToast.show(in: self.view, message: "操作失败，请重试", aboveFAB: false)
+                        BearyToast.show(in: self.view, message: "操作失败，请重试")
                     }
                 }
             }
@@ -1596,7 +1596,7 @@ final class BearyDetailViewController: UIViewController {
         // 审计 P2-11：非公开时不再静默 return——拒绝动效＋“公开后才能互动”。
         if !BearyEphemeral.isEffectivelyPublic(entry) {
             playDenyShake(on: bookmarkButton)
-            BearyToast.show(in: view, message: "公开后才能互动", aboveFAB: false)
+            BearyToast.show(in: view, message: "公开后才能互动")
             return
         }
         if !SessionManager.shared.isLoggedIn {
@@ -1633,7 +1633,7 @@ final class BearyDetailViewController: UIViewController {
                         self.onRequireLogin?()
                     } else {
                         self.playDenyShake(on: self.bookmarkButton)
-                        BearyToast.show(in: self.view, message: "操作失败，请重试", aboveFAB: false)
+                        BearyToast.show(in: self.view, message: "操作失败，请重试")
                     }
                 }
             }
@@ -1654,7 +1654,7 @@ final class BearyDetailViewController: UIViewController {
             return
         }
         if !BearyEphemeral.isEffectivelyPublic(entry) {
-            BearyToast.show(in: view, message: "公开后才能回应", aboveFAB: false)
+            BearyToast.show(in: view, message: "公开后才能回应")
             return
         }
         if !SessionManager.shared.isLoggedIn {

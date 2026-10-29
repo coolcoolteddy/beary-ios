@@ -4666,12 +4666,12 @@ class BearyTimelineViewController: UIViewController {
         return container
     }
 
-    /// G15 分页失败 toast：委托 B 批统一 BearyToast。时间线是 Chrome 主 tab，
-    /// FAB 常驻（下滑藏栏已拆除；搜索藏栏只针对搜索页），FAB 可见性在本页
-    /// 拿不到 Chrome 的私有 fabContainerView，故调用方明确传 aboveFAB=true；
-    /// 展示时长由旧 1.6s 统一为 2.0s，调用签名与文案、触发时机不变。
+    /// G15 分页失败 toast：委托统一 BearyToast。时间线是 Chrome 主 tab，
+    /// FAB 常驻（下滑藏栏已拆除；搜索藏栏只针对搜索页），落点由组件按
+    /// Chrome 实际 chrome 态算；展示时长由旧 1.6s 统一为 2.0s，
+    /// 调用签名与文案、触发时机不变。
     private func showTimelineToast(message: String) {
-        BearyToast.show(in: view, message: message, aboveFAB: true)
+        BearyToast.show(in: view, message: message)
     }
 
     private func updateFooter() {

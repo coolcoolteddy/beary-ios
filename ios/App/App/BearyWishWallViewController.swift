@@ -386,7 +386,7 @@ final class BearyWishWallViewController: UIViewController {
             guard let self = self else { return }
             self.wishes.insert(wish, at: 0)
             self.renderWishes()
-            BearyToast.show(in: self.view, message: "许愿已发布", aboveFAB: false)
+            BearyToast.show(in: self.view, message: "许愿已发布")
             self.onCreated?(wish)
         }
         present(vc, animated: BearyMotion.animated(true), completion: nil)
@@ -505,7 +505,7 @@ final class BearyWishWallViewController: UIViewController {
                     self.rowViews[wishId]?.configure(item: old, isAdmin: self.isAdmin)
                     self.rowViews[wishId]?.shake()
                     UINotificationFeedbackGenerator().notificationOccurred(.warning)
-                    BearyToast.show(in: self.view, message: "投票失败，请稍后再试", aboveFAB: false)
+                    BearyToast.show(in: self.view, message: "投票失败，请稍后再试")
                 }
             }
         }
@@ -523,11 +523,11 @@ final class BearyWishWallViewController: UIViewController {
                 guard let self = self, let idx = self.indexOfWish(wishId) else { return }
                 switch result {
                 case .success:
-                    BearyToast.show(in: self.view, message: "已标记完成", aboveFAB: false)
+                    BearyToast.show(in: self.view, message: "已标记完成")
                 case .failure:
                     self.wishes[idx] = old
                     self.rowViews[wishId]?.configure(item: old, isAdmin: self.isAdmin)
-                    BearyToast.show(in: self.view, message: "标记失败，请稍后再试", aboveFAB: false)
+                    BearyToast.show(in: self.view, message: "标记失败，请稍后再试")
                 }
             }
         }
@@ -851,7 +851,7 @@ final class BearyWishCreateViewController: UIViewController, UITextViewDelegate 
                     } else {
                         message = "发布失败，请稍后再试"
                     }
-                    BearyToast.show(in: self.view, message: message, aboveFAB: false)
+                    BearyToast.show(in: self.view, message: message)
                 }
             }
         }

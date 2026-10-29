@@ -5532,22 +5532,21 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, U
 
     // MARK: - 通用
 
-    /// 轻提示：委托 B 批统一 BearyToast。编辑器是全屏模态，盖住 Chrome
-    /// 的 FAB，编辑器页自身无可见 FAB，故 aboveFAB=false（落 -32）。
+    /// 轻提示：委托统一 BearyToast。编辑器是全屏模态，不在 Chrome
+    /// 子页内，落点由组件回落安全区 -32。
     /// 调用签名与文案、触发时机不变。
     private func showToast(message: String) {
-        BearyToast.show(in: view, message: message, aboveFAB: false)
+        BearyToast.show(in: view, message: message)
     }
 
     /// 关编辑器后仍可见的 toast：挂在 presenting 方视图上（网页 toast 在页面层、
     /// 不随编辑器关闭而消失的等价处理），调用方随后走 onCancelled 关闭本页。
-    /// 若无 presenting 方（如已被 dismiss），退回本页 toast。落点按呈现方
-    /// 分流：呈现方是 Chrome 容器时 toast 落在带 FAB 的主 tab 页上（-158），
-    /// 其他呈现方（详情等无 FAB 的页）落 -32。
+    /// 若无 presenting 方（如已被 dismiss），退回本页 toast。落点由组件按
+    /// 呈现方实际 chrome 算：呈现方是 Chrome 容器时落 FAB／底栏之上，
+    /// 其他呈现方（详情等）落 -32。
     private func showToastAfterClose(message: String) {
         if let parent = presentingViewController {
-            let aboveFAB = parent is BearyChromeViewController
-            BearyToast.show(in: parent.view, message: message, aboveFAB: aboveFAB)
+            BearyToast.show(in: parent.view, message: message)
         } else {
             showToast(message: message)
         }
