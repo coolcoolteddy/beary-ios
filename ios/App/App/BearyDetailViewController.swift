@@ -100,20 +100,8 @@ final class BearyDetailViewController: UIViewController {
         l.isHidden = true
         return l
     }()
-    /// 限时倒计时行图标（14pt 模板灰，仅存活期随倒计时行一起出现；已过期按普通私密，不画图标）。
-    private let ephemeralIconView: UIImageView = {
-        let v = UIImageView(image: BearyFeedIconCache.image(named: "icon_limited", pointSize: 14))
-        v.translatesAutoresizingMaskIntoConstraints = false
-        v.tintColor = BearyColors.gray
-        v.contentMode = .scaleAspectFit
-        NSLayoutConstraint.activate([
-            v.widthAnchor.constraint(equalToConstant: 14),
-            v.heightAnchor.constraint(equalToConstant: 14),
-        ])
-        return v
-    }()
     private lazy var ephemeralRow: UIStackView = {
-        let st = UIStackView(arrangedSubviews: [ephemeralIconView, ephemeralLabel])
+        let st = UIStackView(arrangedSubviews: [ephemeralLabel])
         st.translatesAutoresizingMaskIntoConstraints = false
         st.axis = .horizontal
         st.spacing = 4
@@ -231,6 +219,16 @@ final class BearyDetailViewController: UIViewController {
             containerView.widthAnchor.constraint(lessThanOrEqualToConstant: 600),
             containerView.leadingAnchor.constraint(greaterThanOrEqualTo: scrollView.frameLayoutGuide.leadingAnchor, constant: 16),
             containerView.trailingAnchor.constraint(lessThanOrEqualTo: scrollView.frameLayoutGuide.trailingAnchor, constant: -16),
+            // 2026-10-29 第 16 项：窄列根因——原约束只有 centerX + ≤600 + 两侧
+            // ≥/≤ 不等式、没有宽度等式，UIScrollView 内容宽由内容内在宽决定，
+            // 正文极短时容器被压塌成窄列并居中。补宽度等式（750，非 required：
+            // iPhone 宽 390 时得 358 = 全宽减两侧 16；iPad 宽 ≥821 时 required
+            // 的 ≤600 压住等式、得 600 居中；两侧不等式保留作护栏）。
+            {
+                let c = containerView.widthAnchor.constraint(equalTo: scrollView.frameLayoutGuide.widthAnchor, constant: -32)
+                c.priority = UILayoutPriority(750)
+                return c
+            }(),
             stackView.topAnchor.constraint(equalTo: containerView.topAnchor, constant: 8),
             stackView.leadingAnchor.constraint(equalTo: containerView.leadingAnchor),
             stackView.trailingAnchor.constraint(equalTo: containerView.trailingAnchor),
@@ -458,10 +456,17 @@ final class BearyDetailViewController: UIViewController {
         shareButton.addTarget(self, action: #selector(shareTapped), for: .touchUpInside)
         shareButton.bearyAddPressFeedback()
 
+        // 2026-10-29 第 2 项：尾部 spacer（最低 hugging / 最低抗压）吸掉全部剩余
+        // 宽度，与卡片同款修法——默认 .fill 会把剩余宽度撑到点赞钮上致钮位漂移；
+        // 四钮只占固有宽、一律左侧贴齐、每篇位置固定一致。
+        let actionSpacer = UIView()
+        actionSpacer.setContentHuggingPriority(UILayoutPriority(1), for: .horizontal)
+        actionSpacer.setContentCompressionResistancePriority(UILayoutPriority(1), for: .horizontal)
         actionStack.addArrangedSubview(likeButton)
         actionStack.addArrangedSubview(commentButton)
         actionStack.addArrangedSubview(bookmarkButton)
         actionStack.addArrangedSubview(shareButton)
+        actionStack.addArrangedSubview(actionSpacer)
         stackView.addArrangedSubview(actionStack)
 
         // 游客提示条：与卡片游客展开态同文案，点按走登录提示。
@@ -563,6 +568,71 @@ final class BearyDetailViewController: UIViewController {
         renderQuote()
         refreshActionRow()
         renderEmotes()
+    }
+
+    /// 2026-10-29 第 17 项：后台补齐入口——卡片点按即时呈现后，后台 fetch 回包调它。
+    /// 只更新变化处（字段级比对，变了才刷对应区），不重建栈、不重播已有元素的
+    /// 动效、不闪 skeleton；弱网/失败时不调，首屏卡片数据原样可看。
+    /// 在途乐观互动保护：点赞/收藏/回应/可见性任一在途时，对应区不刷（不冲掉
+    /// 先行态；互动自己的成功回包再对齐）；私密占位切换（内容→占位）不受此限，
+    /// 隐私优先。id 不符的回包直接忽略（防御）。
+    func update(with fetched: Entry) {
+        guard fetched.id == entry.id else { return }
+        let old = entry
+        entry = fetched
+        if fetched.placeholder == true {
+            showPlaceholder()
+            return
+        }
+        // 内容页本身被占位过时（本路径不会发生：卡片数据恒为内容态），先恢复内容栈。
+        stackView.isHidden = false
+        placeholderLabel.isHidden = true
+        if old.authorName != fetched.authorName || old.createdAt != fetched.createdAt || old.authorAvatar != fetched.authorAvatar {
+            nameButton.setTitle(fetched.authorName ?? "beary 用户", for: .normal)
+            if let createdAt = fetched.createdAt {
+                timeLabel.text = BearyDiaryCardCell.feedTimeString(ms: createdAt)
+            } else {
+                timeLabel.text = nil
+            }
+            if let avatarPath = fetched.authorAvatar, let url = BearyImageURLs.avatarURL(avatarPath) {
+                avatarImageView.bearySetImage(url: url, downsampleToWidth: 80)
+            }
+        }
+        if old.content != fetched.content {
+            let paragraph = NSMutableParagraphStyle()
+            paragraph.lineHeightMultiple = 1.6
+            paragraph.lineBreakMode = .byCharWrapping
+            bodyLabel.attributedText = NSAttributedString(string: fetched.content ?? "", attributes: [
+                .font: BearyDynamicType.diaryBodyFont(),
+                .foregroundColor: BearyColors.ink,
+                .paragraphStyle: paragraph,
+            ])
+            bodyLabel.isHidden = (fetched.content ?? "").isEmpty
+        }
+        if (old.images ?? []) != (fetched.images ?? []) {
+            renderImages()
+        }
+        if old.mood != fetched.mood || old.weather != fetched.weather || old.mentionedName != fetched.mentionedName || old.mentionedUserId != fetched.mentionedUserId {
+            renderChips()
+        }
+        let oldQuote = old.quote
+        let newQuote = fetched.quote
+        if oldQuote?.id != newQuote?.id || oldQuote?.content != newQuote?.content || oldQuote?.gone != newQuote?.gone || oldQuote?.locked != newQuote?.locked || oldQuote?.isPublic != newQuote?.isPublic {
+            renderQuote()
+        }
+        if !isLikeBusy && !isBookmarkBusy && !isEmoteBusy {
+            if old.likedByMe != fetched.likedByMe || old.likeCount != fetched.likeCount || old.bookmarkedByMe != fetched.bookmarkedByMe || old.emotes?.map({ ($0.emote, $0.count, $0.mine) }) != fetched.emotes?.map({ ($0.emote, $0.count, $0.mine) }) {
+                refreshActionRow()
+                renderEmotes()
+            }
+        }
+        if !isVisibilityBusy {
+            if old.isPublic != fetched.isPublic || old.publishedAt != fetched.publishedAt || old.ephemeralUntil != fetched.ephemeralUntil {
+                refreshVisibilityViews()
+                refreshEphemeralViews()
+                refreshAuthorActions()
+            }
+        }
     }
 
     /// 可见性图标 + pill：锁 = 私密（蓝），地球 = 公开（橙）；点按即时切换。
@@ -989,8 +1059,15 @@ final class BearyDetailViewController: UIViewController {
         if isVisibilityBusy { return }
         // 游客永非作者，到不了这里；未登录同样到不了（作者必登录）。
         // 目标态按有效态算：已到期限时篇 stored 仍为公开，但按私密算，点按应是公开（目标 1）。
+        // （2026-10-29 第 18 项核实：详情页目标态本已正确，三处列表入口与之对齐，详情页不动算法。）
         let target = BearyEphemeral.isEffectivelyPublic(entry) ? 0 : 1
+        let original = entry
         isVisibilityBusy = true
+        // 即时反馈（2026-10-29 定版）：点按瞬间先按目标态刷 pill 与地球图标
+        // （refreshVisibilityViews 只动这两处，不重建栈、不重播动效），失败回滚原态 + 拒绝动效。
+        entry.isPublic = target == 1
+        entry.ephemeralUntil = nil
+        refreshVisibilityViews()
         BearyAPI.shared.setVisibility(id: entryId, published: target) { [weak self] result in
             DispatchQueue.main.async {
                 guard let self = self else { return }
@@ -1009,8 +1086,25 @@ final class BearyDetailViewController: UIViewController {
                     self.refreshEphemeralViews()
                     self.refreshActionRow()
                     self.onVisibilityChanged?(self.entry)
-                case .failure:
-                    BearyToast.show(in: self.view, message: "切换失败，请重试", aboveFAB: false)
+                case .failure(let err):
+                    self.entry = original
+                    self.refreshVisibilityViews()
+                    // 失败原因透传：限流时服务端 message 比通用文案有用（entry_write
+                    // 120/小时打满即 429）；其余失败仍走通用文案。
+                    let message: String
+                    if case .server(let code) = err, code == "rate_limited" { message = "操作太频繁，请稍后再试" }
+                    else if case .http(let status, _) = err, status == 429 { message = "操作太频繁，请稍后再试" }
+                    else { message = "切换失败，请重试" }
+                    BearyToast.show(in: self.view, message: message, aboveFAB: false)
+                    BearyHaptics.rejectionWarning()
+                    if UIAccessibility.isReduceMotionEnabled == false {
+                        self.visibilityButton.layer.removeAnimation(forKey: "bearyDenyShake")
+                        let shake = CAKeyframeAnimation(keyPath: "transform.translation.x")
+                        shake.values = [0, -8, 8, -5, 5, 0]
+                        shake.keyTimes = [0, 0.2, 0.4, 0.6, 0.8, 1]
+                        shake.duration = 0.4
+                        self.visibilityButton.layer.add(shake, forKey: "bearyDenyShake")
+                    }
                 }
             }
         }

@@ -1386,7 +1386,7 @@ final class BearyChromeViewController: UIViewController {
         let f = BearyFeedViewController()
         f.onEntrySelected = { [weak self] entry in
             // 6A：卡片点开不再进详情，走 gotoEntry（自己→时间线定位，他人→作者主页定位）。
-            self?.gotoEntry(entry: entry)
+            self?.gotoEntryImmediately(entry: entry)
         }
         // 点头像或作者名开作者主页（modal，与详情作者点击同口径）。
         f.onOpenUser = { [weak self] userId in
@@ -1729,7 +1729,7 @@ final class BearyChromeViewController: UIViewController {
         // Q5 空态 CTA 接线：时间线空态“写一篇”与 FAB 同去向（未登录时 presentComposer 内弹原生登录页）。
         vc.onCompose = { [weak self] in self?.presentComposer() }
         vc.onOpenEntry = { [weak self] entry in
-            self?.gotoEntry(entry: entry)
+            self?.gotoEntryImmediately(entry: entry)
         }
         // 收尾接线：编辑（无详情宿主）、删除（网页确认流程）、引用定位、互动同步首页。
         vc.onEditEntry = { [weak self] entry in
@@ -1764,7 +1764,7 @@ final class BearyChromeViewController: UIViewController {
         }
         profileBuiltForUserId = SessionManager.shared.currentUser?.id
         vc.onOpenEntry = { [weak self] entry in
-            self?.gotoEntry(entry: entry)
+            self?.gotoEntryImmediately(entry: entry)
         }
         vc.onRequireLogin = { [weak self] in self?.presentLoginGate() }
         // 收尾接线：返回/退出/编辑资料/齿轮菜单/行内互动（P3/P11，见 wireProfileVC）。
@@ -1871,7 +1871,7 @@ final class BearyChromeViewController: UIViewController {
             vc = BearyProfileViewController(handleValue: value, viewerUserIdValue: SessionManager.shared.currentUser?.id)
         }
         vc.onOpenEntry = { [weak self] entry in
-            self?.gotoEntry(entry: entry)
+            self?.gotoEntryImmediately(entry: entry)
         }
         vc.onRequireLogin = { [weak self] in self?.presentLoginGate() }
         // iCity：拉黑后离页（回首页；信息流侧由广播自行清行）。
@@ -2407,7 +2407,7 @@ final class BearyChromeViewController: UIViewController {
         vc.onOpenEntry = { [weak self] entry in
             // 6A：modal 他人主页里点卡片：先关 modal，再走 gotoEntry（同作者则回 .user 页定位）。
             self?.dismiss(animated: BearyMotion.animated(true)) {
-                self?.gotoEntry(entry: entry)
+                self?.gotoEntryImmediately(entry: entry)
             }
         }
         vc.onRequireLogin = { [weak self] in
@@ -2435,31 +2435,48 @@ final class BearyChromeViewController: UIViewController {
         dismiss(animated: BearyMotion.animated(true))
     }
 
-    // MARK: - 6A gotoEntry（详情页已删，卡片点开的唯一落点）
-    /// iCity：一切入口先 fetchEntry 校验服务端可见性再定位/插行——对象直传与
-    /// quoteCache 快路径均已删除（缓存可见性可能滞后于翻转）。
-    /// 自己篇→时间线定位高亮；他人公开篇→作者主页定位高亮；
-    /// 他人私密篇→仅一句文案的占位（不带标题/封面/时间/作者名）。
-    private func gotoEntry(entry: Entry) {
+    // MARK: - 6A gotoEntry（卡片点开的唯一落点）
+    /// 2026-10-29 第 17 项：卡片点按即时呈现——用卡片已有数据（作者、正文、
+    /// 图片、计数）先渲染详情页，后台静默拉取最新数据补齐（回应、计数对齐），
+    /// 数据到了只更新变化处（detail.update(with:)）、不重播已有元素动效、
+    /// 不闪 skeleton；弱网/失败时先出的页面仍可正常看，已有数据不受影响。
+    /// 后台可见性门（与 routeFetchedEntry 同口径）：回包为私密非作者时切详情
+    /// 私密占位（不带标题/封面/时间/作者名）；公开但定不出作者时保持卡片页
+    /// （不比旧“不存在”toast 更差，且不丢用户刚点开的内容）。
+    /// id-only 入口（搜索/消息/深链/引用卡）无卡片数据，仍走 fetch-first 的
+    /// gotoEntry(entryId:) 不变；旧 fetch-first 的 gotoEntry(entry:) 已随本项退役。
+    private func gotoEntryImmediately(entry: Entry) {
         guard let entryId = entry.id, !entryId.isEmpty else { return }
-        // 定位进行中的轻量指示：拉取往返期间卡片无反应是本次反馈的体感来源之一；
-        // toast 2 秒自清、后到的失败 toast 会清掉它，不做乐观假定位。
-        showToast(message: "正在打开…")
-        BearyAPI.shared.fetchEntry(id: entryId) { [weak self] result in
+        guard let detail = presentDetail(entry: entry) else { return }
+        BearyAPI.shared.fetchEntry(id: entryId) { [weak self, weak detail] result in
             DispatchQueue.main.async {
-                guard let self = self else { return }
-                switch result {
-                case .success(let fetched):
-                    self.routeFetchedEntry(fetched)
-                case .failure(let apiError):
-                    // 消息页组：取日记失败按 APIError 分流——网络失败报网络文案
-                    // （与 onNetworkUnstable 同款），其余失败才报不存在或已被删除。
-                    if case .network = apiError {
-                        self.showToast(message: "网络不稳定，请稍后再试")
-                    } else {
-                        self.showToast(message: "这篇日记不存在或已被删除")
-                    }
+                guard let self = self, let detail = detail else { return }
+                guard case .success(let fetched) = result else {
+                    // 失败（弱网/已删）：先出的页面仍可正常看，已有数据不受影响，不 toast 盖内容。
+                    return
                 }
+                let viewerId = SessionManager.shared.currentUser?.id
+                let viewerIsAuthor = fetched.isMine == true || (fetched.authorId != nil && viewerId != nil && fetched.authorId == viewerId)
+                if viewerIsAuthor {
+                    detail.update(with: fetched)
+                    return
+                }
+                if fetched.isPublic == true, fetched.authorId != nil {
+                    detail.update(with: fetched)
+                    return
+                }
+                if fetched.placeholder == true {
+                    detail.update(with: fetched)
+                    return
+                }
+                if fetched.isPublic == true {
+                    // 公开但定不出作者：保持卡片页（见本函数注释），不更新、不 toast。
+                    return
+                }
+                // 私密非作者：切详情私密占位。
+                var placeholderEntry = fetched
+                placeholderEntry.placeholder = true
+                detail.update(with: placeholderEntry)
             }
         }
     }
@@ -2523,8 +2540,9 @@ final class BearyChromeViewController: UIViewController {
     /// 日记详情页（2026-10-28 v5 mock 定版）：全屏 fadeRise 模态；回调接线：
     /// 关闭后各列表 guarded 定位回该卡；编辑／删除先关详情再走既有流程；
     /// 作者／引用点按先关详情再路由（防 modal 叠 modal）；可见性与互动变化同步各列表。
-    private func presentDetail(entry: Entry) {
-        if topmostViewController() is BearyDetailViewController { return }
+    @discardableResult
+    private func presentDetail(entry: Entry) -> BearyDetailViewController? {
+        if topmostViewController() is BearyDetailViewController { return nil }
         let detail = BearyDetailViewController(entry: entry, isGuest: SessionManager.shared.isGuestMode)
         detail.modalPresentationStyle = .fullScreen
         detail.transitioningDelegate = SceneDelegate.chrome?.fadeRiseTransitionDelegate
@@ -2563,6 +2581,7 @@ final class BearyChromeViewController: UIViewController {
         }
         detail.onRequireLogin = { [weak self] in self?.presentLoginGate() }
         topmostViewController().present(detail, animated: BearyMotion.animated(true))
+        return detail
     }
 
     /// iCity：拉黑后离页——modal 主页先 dismiss 再回首页，.user 页直接回首页；

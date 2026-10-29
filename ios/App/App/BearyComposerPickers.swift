@@ -578,7 +578,7 @@ final class BearyRecipientPickerViewController: UIViewController, UITextFieldDel
         return true
     }
 
-    /// 四态：init（未搜）/ loading（搜索图标位旋转 + 列表态文案）/ none / fail；有结果时态视图隐藏。
+    /// 四态：init（未搜）/ loading（中央大 @ 旋转 + 列表态文案，见第 22 项规则）/ none / fail；有结果时态视图隐藏。
     private func showState(kind: String, query: String) {
         if kind == "results" {
             stateView.isHidden = true
@@ -594,7 +594,9 @@ final class BearyRecipientPickerViewController: UIViewController, UITextFieldDel
         stateRetryButton.isHidden = true
         stateRetryBottomConstraint?.isActive = false
         if kind == "loading" {
-            stateIcon.image = BearyIconImages.image(named: "icon_search", pointSize: 25)
+            // 2026-10-29 第 22 项：加载态中央图标即大 @（转圈由 setCenterBusy 加旋转，
+            // 与搜索日记页“中央可见转中央”同规则；框里放大镜此时静态）。
+            stateIcon.image = BearyIconImages.image(named: "icon_at", pointSize: 25)
             stateTitle.text = "正在找"
             stateSubtitle.text = "马上就来"
         } else if kind == "none" {
@@ -634,12 +636,28 @@ final class BearyRecipientPickerViewController: UIViewController, UITextFieldDel
         }
     }
 
+    /// 中央大 @ 转圈（2026-10-29 第 22 项，搜索日记页同规则）：搜索中且结果未盖住
+    /// 中央态时转中央大 @（0.9s 线性无限旋转，与框内圈同口径）；同一时间只转一个，
+    /// 停转时摘动画（图标由 showState 重置）；减动效下换图不转（与框内圈同口径）。
+    private func setCenterBusy(_ busy: Bool) {
+        stateIcon.layer.removeAnimation(forKey: "bearyCenterSpin")
+        if busy, !UIAccessibility.isReduceMotionEnabled {
+            let spin = CABasicAnimation(keyPath: "transform.rotation.z")
+            spin.fromValue = 0
+            spin.toValue = CGFloat.pi * 2
+            spin.duration = 0.9
+            spin.repeatCount = .infinity
+            stateIcon.layer.add(spin, forKey: "bearyCenterSpin")
+        }
+    }
+
     private func runSearch(query: String) {
         let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
         if trimmed.isEmpty {
             users = []
             lastQuery = ""
             setSearchBusy(false)
+            setCenterBusy(false)
             renderRows()
             showState(kind: "init", query: "")
             return
@@ -647,12 +665,23 @@ final class BearyRecipientPickerViewController: UIViewController, UITextFieldDel
         lastQuery = trimmed
         searchSeq += 1
         let seq = searchSeq
-        setSearchBusy(true)
-        showState(kind: "loading", query: trimmed)
+        // 2026-10-29 第 22 项（搜索日记页同规则）：同一时间只转一个——
+        // 结果已在屏（stateView 已藏、中央态被结果盖住）时转框里放大镜，
+        // 结果区保持可见、不调 showState(loading)（它会把结果区换走）；
+        // 否则转中央大 @、框里放大镜静态。
+        if stateView.isHidden {
+            setCenterBusy(false)
+            setSearchBusy(true)
+        } else {
+            setSearchBusy(false)
+            showState(kind: "loading", query: trimmed)
+            setCenterBusy(true)
+        }
         BearyAPI.shared.search(q: trimmed) { [weak self] result in
             DispatchQueue.main.async {
                 guard let self = self, seq == self.searchSeq else { return }
                 self.setSearchBusy(false)
+                self.setCenterBusy(false)
                 switch result {
                 case .success(let resp):
                     // 网页同款：结果过滤掉本人。

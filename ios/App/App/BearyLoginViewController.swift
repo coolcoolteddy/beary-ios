@@ -306,11 +306,14 @@ final class BearyLoginViewController: UIViewController {
             sendButton.heightAnchor.constraint(equalToConstant: 44),
             codeContainer.trailingAnchor.constraint(equalTo: sendButton.leadingAnchor, constant: -9),
             agreeButton.leadingAnchor.constraint(equalTo: agreeRow.leadingAnchor),
-            // Hit44：行高放开到 44（钮 22 上 11 下 11），热区不再被约 24 高行截断；文案 UITextView 顶对齐，位置不动。
-            agreeButton.topAnchor.constraint(equalTo: agreeRow.topAnchor, constant: 11),
+            // 2026-10-29 第 8 项：勾选框与文案首行垂直居中对齐。旧口径 top+11 /
+            // bottom−11 把钮中心钉在行顶下 22pt，而文案首行中心在 label 顶下
+            // 约半行高处（14pt 字约 8.5pt），故钮比首行低约 13pt（photo-14 实证）。
+            // 改锚：钮 centerY = label 顶 + 14pt 字行高/2（多行文案时以首行为准，
+            // 行高改由 label 决定）；44 热区由 BearyHit44Button 保证。
+            agreeButton.centerYAnchor.constraint(equalTo: agreeLabel.topAnchor, constant: UIFont.systemFont(ofSize: 14).lineHeight / 2),
             agreeButton.widthAnchor.constraint(equalToConstant: 22),
             agreeButton.heightAnchor.constraint(equalToConstant: 22),
-            agreeButton.bottomAnchor.constraint(equalTo: agreeRow.bottomAnchor, constant: -11),
             agreeLabel.leadingAnchor.constraint(equalTo: agreeButton.trailingAnchor, constant: 10),
             agreeLabel.trailingAnchor.constraint(equalTo: agreeRow.trailingAnchor),
             agreeLabel.topAnchor.constraint(equalTo: agreeRow.topAnchor),

@@ -7,7 +7,7 @@ import UIKit
 // 内容口径与网页一致：
 //   - 标题“邀请好友”+ 副标题“好友注册时填你的邀请码，成功后你们各得 1 个月 Plus”；
 //   - 邀请码展示 + “复制”钮（复制后 1.6 秒内显示“已复制”，与网页 ivCopied 同口径）；
-//   - 提示“触发风控时需站长审核后发放”；
+//   - （2026-10-29 第 4 项：风控提示行已删，零残留；风控逻辑本身不动。）
 //   - 统计“已邀请 N 人 · 累计获得 M 个月 Plus”（accounts /me 的 referral
 //     invited_count / reward_months，只数 granted/pending/granting/flagged）；
 //   - 绑定区三态：已绑定 → “已通过 X 的邀请加入 beary”（status 为 cancelled/expired
@@ -44,7 +44,6 @@ final class BearyInviteViewController: UIViewController {
     private let codeBox = UIView()
     private let codeLabel = UILabel()
     private let copyButton = UIButton(type: .system)
-    private let hintLabel = UILabel()
     private let statsLabel = UILabel()
     private let boundLabel = UILabel()
     // 绑定行：16pt 绿圆圈勾 + 文字，gap 7（网页 .iv-bound 口径）；显隐由行容器控制。
@@ -201,12 +200,6 @@ final class BearyInviteViewController: UIViewController {
         codeBox.addSubview(codeLabel)
         codeBox.addSubview(copyButton)
 
-        hintLabel.translatesAutoresizingMaskIntoConstraints = false
-        hintLabel.text = "触发风控时需站长审核后发放"
-        hintLabel.font = UIFont.systemFont(ofSize: 13)
-        hintLabel.textColor = BearyColors.gray
-        hintLabel.numberOfLines = 0
-
         statsLabel.translatesAutoresizingMaskIntoConstraints = false
         // U6：加载中不再先显示“已邀请 0 人”假零值，拿到数据后 render() 再写数字。
         statsLabel.text = "加载中…"
@@ -283,7 +276,6 @@ final class BearyInviteViewController: UIViewController {
         stackView.addArrangedSubview(titleLabel)
         stackView.addArrangedSubview(subtitleLabel)
         stackView.addArrangedSubview(codeBox)
-        stackView.addArrangedSubview(hintLabel)
         stackView.addArrangedSubview(statsLabel)
         stackView.addArrangedSubview(boundRow)
         stackView.addArrangedSubview(bindRow)
@@ -294,7 +286,6 @@ final class BearyInviteViewController: UIViewController {
         stackView.setCustomSpacing(5, after: titleLabel)
         stackView.setCustomSpacing(20, after: subtitleLabel)
         stackView.setCustomSpacing(10, after: codeBox)
-        stackView.setCustomSpacing(14, after: hintLabel)
         stackView.setCustomSpacing(16, after: statsLabel)
         stackView.setCustomSpacing(8, after: boundRow)
         stackView.setCustomSpacing(8, after: bindRow)

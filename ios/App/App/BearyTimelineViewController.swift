@@ -751,20 +751,8 @@ final class BearyTimelineCell: UITableViewCell {
         l.isHidden = true
         return l
     }()
-    /// 限时倒计时行图标（14pt 模板灰，仅存活期随倒计时行一起出现；已过期按普通私密，不画图标）。
-    private let ephemeralIconView: UIImageView = {
-        let v = UIImageView(image: BearyIconImages.image(named: "icon_limited", pointSize: 14))
-        v.translatesAutoresizingMaskIntoConstraints = false
-        v.tintColor = BearyColors.gray
-        v.contentMode = .scaleAspectFit
-        NSLayoutConstraint.activate([
-            v.widthAnchor.constraint(equalToConstant: 14),
-            v.heightAnchor.constraint(equalToConstant: 14),
-        ])
-        return v
-    }()
     private lazy var ephemeralRow: UIStackView = {
-        let st = UIStackView(arrangedSubviews: [ephemeralIconView, ephemeralLabel])
+        let st = UIStackView(arrangedSubviews: [ephemeralLabel])
         st.translatesAutoresizingMaskIntoConstraints = false
         st.axis = .horizontal
         st.spacing = 3
@@ -1749,6 +1737,19 @@ final class BearyTimelineCell: UITableViewCell {
     @objc private func publishTapped() {
         guard let entry = currentEntry else { return }
         onPublishEntry?(entry)
+    }
+
+    /// 可见性切换失败的拒绝动效：globe 钮摇头 + warning 震动（与卡片
+    /// playDenyShake 同口径：减动效只跳视觉抖动，震动照常给）。
+    func playPublishDenyShake() {
+        BearyHaptics.rejectionWarning()
+        if UIAccessibility.isReduceMotionEnabled { return }
+        publishButton.layer.removeAnimation(forKey: "bearyDenyShake")
+        let shake = CAKeyframeAnimation(keyPath: "transform.translation.x")
+        shake.values = [0, -8, 8, -5, 5, 0]
+        shake.keyTimes = [0, 0.2, 0.4, 0.6, 0.8, 1]
+        shake.duration = 0.4
+        publishButton.layer.add(shake, forKey: "bearyDenyShake")
     }
 
     /// F2 引用缩略图清理（复用与重配时先清，避免旧图残留）。
@@ -4613,14 +4614,24 @@ class BearyTimelineViewController: UIViewController {
         onOpenTrash?()
     }
 
-    /// iCity：操作行双向切换钮——显式目标态（当前公开→改回私密，当前私密→公开），
-    /// 无确认框；publishBusyIds 复用防重入；成功先就地同步缓存（timeline/day/
-    /// 日缓存/落盘 + 引用缓存清理），再整页重拉以服务端为准；失败只 toast。
+    /// iCity：操作行双向切换钮——显式目标态，无确认框；
+    /// publishBusyIds 复用防重入；成功先就地同步缓存（timeline/day/
+    /// 日缓存/落盘 + 引用缓存清理），再整页重拉以服务端为准。
+    /// 目标态按有效态算（2026-10-29 第 18 项根因修法，与详情页对齐；过期限时篇
+    /// stored 仍公开，旧口径会把“公开”点成“私密”）。
+    /// 即时反馈（2026-10-29 定版）：点按瞬间先按目标态就地同步并只刷可见行
+    /// （图标立即变，不整页重拉、不重播动效），回包成功再整页对齐；
+    /// 失败回滚原态 + 拒绝动效。
     private func handlePublishEntry(_ entry: Entry) {
         guard let entryId = entry.id, !entryId.isEmpty else { return }
         if publishBusyIds.contains(entryId) { return }
-        let target = entry.isPublic == true ? 0 : 1
+        let target = BearyEphemeral.isEffectivelyPublic(entry) ? 0 : 1
+        let originalPublic = entry.isPublic ?? false
+        let originalPublishedAt = entry.publishedAt
         publishBusyIds.insert(entryId)
+        // 先行：目标态立即落地（模型 + 可见行，不整页重拉）。
+        applyVisibilityLocally(entryId: entryId, isPublic: target == 1, publishedAt: nil)
+        reloadVisibleTimelineRow(entryId: entryId)
         BearyAPI.shared.setVisibility(id: entryId, published: target) { [weak self] result in
             DispatchQueue.main.async {
                 guard let strongSelf = self else { return }
@@ -4630,10 +4641,43 @@ class BearyTimelineViewController: UIViewController {
                     let isPublic = resp.published.map { $0 == 1 } ?? (target == 1)
                     strongSelf.applyVisibilityLocally(entryId: entryId, isPublic: isPublic, publishedAt: resp.publishedAt)
                     strongSelf.refreshAfterDetailChange()
-                case .failure:
-                    strongSelf.showTimelineToast(message: "切换失败，请重试")
+                case .failure(let err):
+                    strongSelf.applyVisibilityLocally(entryId: entryId, isPublic: originalPublic, publishedAt: originalPublishedAt)
+                    strongSelf.reloadVisibleTimelineRow(entryId: entryId)
+                    let message: String
+                    if case .server(let code) = err, code == "rate_limited" { message = "操作太频繁，请稍后再试" }
+                    else if case .http(let status, _) = err, status == 429 { message = "操作太频繁，请稍后再试" }
+                    else { message = "切换失败，请重试" }
+                    strongSelf.showTimelineToast(message: message)
+                    strongSelf.shakeVisibleTimelinePublishButton(entryId: entryId)
                 }
             }
+        }
+    }
+
+    /// 可见行单行重刷（.none，不播行动画、不重播已有元素动效）：按 currentSections
+    /// 定位该篇所在组行，仅行在视野内时刷。
+    private func reloadVisibleTimelineRow(entryId: String) {
+        let sections = currentSections()
+        for (sectionIndex, section) in sections.enumerated() {
+            guard let row = section.entries.firstIndex(where: { $0.id == entryId }) else { continue }
+            let path = IndexPath(row: row, section: sectionIndex)
+            if tableView.indexPathsForVisibleRows?.contains(path) == true {
+                tableView.reloadRows(at: [path], with: .none)
+            }
+            return
+        }
+    }
+
+    /// 可见行 globe 钮拒绝动效：摇头 + warning 震动（与卡片 playDenyShake 同口径）。
+    private func shakeVisibleTimelinePublishButton(entryId: String) {
+        let sections = currentSections()
+        for (sectionIndex, section) in sections.enumerated() {
+            guard let row = section.entries.firstIndex(where: { $0.id == entryId }) else { continue }
+            let path = IndexPath(row: row, section: sectionIndex)
+            guard let cell = tableView.cellForRow(at: path) as? BearyTimelineCell else { return }
+            cell.playPublishDenyShake()
+            return
         }
     }
 

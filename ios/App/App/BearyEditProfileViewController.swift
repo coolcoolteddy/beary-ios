@@ -1,4 +1,5 @@
 import UIKit
+import PhotosUI
 
 // ===== beary 原生编辑资料页（只此一文件；不改 BearyAPI.swift、不改 SceneDelegate、不改 pbxproj）=====
 // 对照源（均已先读核实，以服务端为准）：
@@ -61,7 +62,6 @@ class BearyEditProfileViewController: UIViewController {
     private var coverChanged = false
     private var coverRemoved = false
     private var pickingAvatar = false
-    private var lastPickerSourceView: UIView?
     private var isSaving = false
     /// G3：handle POST 成功后立即记下的已提交 handle（initialHandle 是 let，不可改；
     /// 重试时以它为准，不再重发已成功的 handle 步）。
@@ -180,6 +180,17 @@ class BearyEditProfileViewController: UIViewController {
             icon.heightAnchor.constraint(equalToConstant: 14),
         ])
         return badge
+    }()
+
+    /// 2026-10-29 第 14 项：封面透明点按钮（avatarTapButton 同款模式）——
+    /// 封面区被提到最上层的内容列间隙盖住时，点按仍能走到换封面。
+    private lazy var coverTapButton: UIButton = {
+        let buttonValue = UIButton(type: .custom)
+        buttonValue.translatesAutoresizingMaskIntoConstraints = false
+        buttonValue.addTarget(self, action: #selector(coverTapped), for: .touchUpInside)
+        buttonValue.bearyAddPressFeedback()
+        buttonValue.accessibilityLabel = "更换封面"
+        return buttonValue
     }()
 
     /// F14：头像本身就是更换入口（网页 edAvaBtn 口径）；旧并排「更换头像」文字钮取消。
@@ -562,11 +573,19 @@ class BearyEditProfileViewController: UIViewController {
         // 层级上封面在内容列之上），故内容列须提至封面之上，头像整圆才可见；
         // 点按按钮在其后加入、仍保持最上层，换头像点按不受影响。
         scrollView.bringSubviewToFront(contentStack)
+        // 2026-10-29 第 14 项：封面点按钮贴整幅封面、层级在内容列之上、
+        // 头像钮之下——间隙区点按走换封面，头像区仍走换头像；封面原手势保留作兜底
+        // （按钮盖住整幅封面时手势实际不触发）。
+        scrollView.addSubview(coverTapButton)
         scrollView.addSubview(avatarTapButton)
         NSLayoutConstraint.activate([
             coverImageView.topAnchor.constraint(equalTo: topRow.bottomAnchor, constant: 16),
             coverImageView.leadingAnchor.constraint(equalTo: scrollView.frameLayoutGuide.leadingAnchor),
             coverImageView.trailingAnchor.constraint(equalTo: scrollView.frameLayoutGuide.trailingAnchor),
+            coverTapButton.topAnchor.constraint(equalTo: coverImageView.topAnchor),
+            coverTapButton.leadingAnchor.constraint(equalTo: coverImageView.leadingAnchor),
+            coverTapButton.trailingAnchor.constraint(equalTo: coverImageView.trailingAnchor),
+            coverTapButton.bottomAnchor.constraint(equalTo: coverImageView.bottomAnchor),
             avatarTapButton.topAnchor.constraint(equalTo: avatarImageView.topAnchor),
             avatarTapButton.leadingAnchor.constraint(equalTo: avatarImageView.leadingAnchor),
             avatarTapButton.trailingAnchor.constraint(equalTo: avatarImageView.trailingAnchor),
@@ -628,13 +647,11 @@ class BearyEditProfileViewController: UIViewController {
 
     @objc private func avatarButtonTapped() {
         pickingAvatar = true
-        lastPickerSourceView = avatarTapButton
         presentImagePicker()
     }
 
     @objc private func coverTapped() {
         pickingAvatar = false
-        lastPickerSourceView = coverImageView
         presentImagePicker()
     }
 
@@ -665,18 +682,17 @@ class BearyEditProfileViewController: UIViewController {
         }
     }
 
+    /// 2026-10-29 第 13 项：老式 UIImagePickerController 进程内加载图库才出界面，
+    /// 是“点头像等一会才弹出”的根源（点按与 present 之间并无权限/网络异步，
+    /// 慢在 picker 自身的图库加载）。改走 PHPickerViewController（编辑器与反馈页
+    /// 同款）：系统外进程、点按即 present、无权限门；图片加载放选后做。
+    /// 选后仍走现有 presentCropEditor（头像 1:1、封面按预览比例）与上传链路。
     private func presentImagePicker() {
-        guard UIImagePickerController.isSourceTypeAvailable(.photoLibrary) else {
-            presentSimpleAlert(message: "相册不可用")
-            return
-        }
-        let picker = UIImagePickerController()
-        picker.sourceType = .photoLibrary
+        var config = PHPickerConfiguration()
+        config.selectionLimit = 1
+        config.filter = .images
+        let picker = PHPickerViewController(configuration: config)
         picker.delegate = self
-        if let popover = picker.popoverPresentationController, let sourceView = lastPickerSourceView {
-            popover.sourceView = sourceView
-            popover.sourceRect = sourceView.bounds
-        }
         present(picker, animated: BearyMotion.animated(true), completion: nil)
     }
 
@@ -905,21 +921,31 @@ class BearyEditProfileViewController: UIViewController {
 
 // MARK: - 图片选择
 
-extension BearyEditProfileViewController: UIImagePickerControllerDelegate, UINavigationControllerDelegate {
-    func imagePickerController(_ picker: UIImagePickerController, didFinishPickingMediaWithInfo info: [UIImagePickerController.InfoKey: Any]) {
-        dismiss(animated: BearyMotion.animated(true)) { [weak self] in
-            guard let strongSelf = self else { return }
-            guard let image = info[.originalImage] as? UIImage else {
-                strongSelf.presentSimpleAlert(message: "图片读取失败")
-                return
+extension BearyEditProfileViewController: PHPickerViewControllerDelegate {
+    func picker(_ picker: PHPickerViewController, didFinishPicking results: [PHPickerResult]) {
+        picker.dismiss(animated: BearyMotion.animated(true))
+        // 取消（空结果）不弹任何提示、不碰状态；选图后加载放选后做。
+        guard let result = results.first else { return }
+        let provider = result.itemProvider
+        guard provider.canLoadObject(ofClass: UIImage.self) else {
+            presentSimpleAlert(message: "图片读取失败")
+            return
+        }
+        provider.loadObject(ofClass: UIImage.self) { [weak self] object, _ in
+            DispatchQueue.main.async {
+                guard let strongSelf = self else { return }
+                guard let image = object as? UIImage else {
+                    strongSelf.presentSimpleAlert(message: "图片读取失败")
+                    return
+                }
+                // 清单第 3 项（编辑资料部分）：选图后先过通用裁剪页，
+                // 不再像以前那样直接用原图走压缩。裁剪确认才走原有换图/保存流程
+                // （dataURL 压缩 + pending 标记 + 预览替换，保存仍走 PUT
+                // /api/account/profile）；裁剪取消不回调、不碰任何待保存状态。
+                // 裁剪走通用 BearyImageCropViewController（B 批合并）：
+                // 头像 1:1、封面按本页预览比例，见下方 presentCropEditor。
+                strongSelf.presentCropEditor(image: image)
             }
-            // 清单第 3 项（编辑资料部分）：选图后先过通用裁剪页，
-            // 不再像以前那样直接用原图走压缩。裁剪确认才走原有换图/保存流程
-            // （dataURL 压缩 + pending 标记 + 预览替换，保存仍走 PUT
-            // /api/account/profile）；裁剪取消不回调、不碰任何待保存状态。
-            // 裁剪走通用 BearyImageCropViewController（B 批合并）：
-            // 头像 1:1、封面按本页预览比例，见下方 presentCropEditor。
-            strongSelf.presentCropEditor(image: image)
         }
     }
 
@@ -965,10 +991,6 @@ extension BearyEditProfileViewController: UIImagePickerControllerDelegate, UINav
             }
         }
         present(cropVC, animated: BearyMotion.animated(true))
-    }
-
-    func imagePickerControllerDidCancel(_ picker: UIImagePickerController) {
-        dismiss(animated: BearyMotion.animated(true), completion: nil)
     }
 }
 

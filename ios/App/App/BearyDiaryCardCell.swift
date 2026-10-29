@@ -751,7 +751,15 @@ class BearyDiaryCardCell: UITableViewCell {
     private lazy var actionStack: BearyActionStackView = {
         // 2026-10-28 23:51 左聚：点赞、收藏、分享三项放左侧一起，不再用 spacer 顶右；
         // 顺序不变（点赞、收藏、分享），间距与详情页操作行一致（16）。
-        let st = BearyActionStackView(arrangedSubviews: [likeButton, bookmarkButton, shareButton])
+        // 2026-10-29 三钮左聚修法：.fill 分布会把栈剩余宽度撑到点赞钮上（按钮
+        // 内容居中，爱心随篇飘移；本人卡右缩进 -52、他人卡 -16 使栈宽不同，
+        // 位置随篇变化）。尾部 spacer（最低 hugging / 最低抗压）吸掉全部剩余
+        // 宽度，三钮只占固有宽、每篇位置固定一致；与 23:51 删掉的“顶右 spacer”
+        // （夹在点赞与收藏之间）不是同一个位置、不是同一种用法。
+        let actionSpacer = UIView()
+        actionSpacer.setContentHuggingPriority(UILayoutPriority(1), for: .horizontal)
+        actionSpacer.setContentCompressionResistancePriority(UILayoutPriority(1), for: .horizontal)
+        let st = BearyActionStackView(arrangedSubviews: [likeButton, bookmarkButton, shareButton, actionSpacer])
         st.translatesAutoresizingMaskIntoConstraints = false
         st.axis = .horizontal
         st.spacing = 16
@@ -814,21 +822,9 @@ class BearyDiaryCardCell: UITableViewCell {
         return l
     }()
 
-    /// 限时倒计时行图标（14pt 模板灰，仅存活期随倒计时行一起出现；已过期按普通私密，不画图标）。
-    private let ephemeralIconView: UIImageView = {
-        let v = UIImageView(image: BearyIconImages.image(named: "icon_limited", pointSize: 14))
-        v.translatesAutoresizingMaskIntoConstraints = false
-        v.tintColor = BearyColors.gray
-        v.contentMode = .scaleAspectFit
-        NSLayoutConstraint.activate([
-            v.widthAnchor.constraint(equalToConstant: 14),
-            v.heightAnchor.constraint(equalToConstant: 14),
-        ])
-        return v
-    }()
 
     private lazy var ephemeralRow: UIStackView = {
-        let st = UIStackView(arrangedSubviews: [ephemeralIconView, ephemeralLabel])
+        let st = UIStackView(arrangedSubviews: [ephemeralLabel])
         st.translatesAutoresizingMaskIntoConstraints = false
         st.axis = .horizontal
         st.spacing = 4
@@ -1511,7 +1507,7 @@ class BearyDiaryCardCell: UITableViewCell {
         crownView.isHidden = (entry.authorPlus ?? 0) != 1 || !crownView.hasCrown
         if crownView.isHidden { crownView.stop() } else { crownView.start() }
 
-        // F3：时间。广场卡：有效公开（未过期）且有 publishedAt 时显公开相对时间（“X 分钟前公开”），否则绝对时间。
+        // F3：时间。广场卡：有效公开（未过期）且有 publishedAt 时显相对时间（“X 分钟前”），否则绝对时间。
         if BearyEphemeral.isEffectivelyPublic(entry), let relative = BearyVisibilityText.publishedRelativeString(publishedAtMs: entry.publishedAt) {
             timeLabel.text = relative
         } else {
@@ -2136,6 +2132,12 @@ class BearyDiaryCardCell: UITableViewCell {
     }
 
     /// 拒绝动效（首页模式；网页 .deny shakeX .4s 同口径）：左右小幅抖动，reduced-motion 时跳过。
+    /// 可见性切换失败的拒绝动效：摇头 + warning 震动（playDenyShake 内含），
+    /// 控制器回滚本地态后调用，toast 由控制器发。
+    func playPublishDenyShake() {
+        playDenyShake(on: publishButton)
+    }
+
     private func playDenyShake(on button: UIButton) {
         // 拒绝震动不拿减动效门控：减动效只跳过视觉抖动，震动照常给。
         BearyHaptics.rejectionWarning()
@@ -2349,7 +2351,8 @@ class BearyDiaryCardCell: UITableViewCell {
     /// F8（首页模式）：点赞——Li 2026-10-27 定全量先行：抬起确认时立即填橙色、
     /// 计数 +1，不等服务端；回包后以服务端值为准对齐，成功补爆点（填充已先行，
     /// 不再重播填充淡入）；失败按原模型回滚 + 拒绝动效 + 通用提示。
-    /// 取消点赞 pre-unlike 口径不变（只改视图，失败由回包复原）。
+    /// 取消点赞双向即时（2026-10-29 定版，覆盖 pre-unlike 只改视图旧口径）：
+    /// 抬起确认时立即褪色、计数 -1，失败同样回滚。
     private func feedLikeTapped() {
         // 按下已给过先行反馈时抬起不再重播（否则震动来两次）；
         // 守卫失败时把按下预览复原（按下与抬起之间状态几乎不可能变，纯防御）。
@@ -2390,6 +2393,13 @@ class BearyDiaryCardCell: UITableViewCell {
             // 失败按 originalCount / currentlyLiked 复原（见失败分支）。
             currentEntry?.likedByMe = true
             currentEntry?.likeCount = originalCount + 1
+            updateLikeButton()
+        } else {
+            // 取消点赞双向即时（2026-10-29 定版）：抬起确认时立即褪色、计数 -1；
+            // 按下预览（applyPreUnlike 的空心 + .8）与新模型渲染一致，不闪；
+            // 回包成功对齐服务端值，失败按原模型复原（见失败分支）。
+            currentEntry?.likedByMe = false
+            currentEntry?.likeCount = max(0, originalCount - 1)
             updateLikeButton()
         }
         isLikeBusy = true

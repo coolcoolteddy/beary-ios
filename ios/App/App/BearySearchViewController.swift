@@ -9,8 +9,8 @@ import CoreText
 //   与其他内容页同口径）；点用户只回调 onOpenUser、点日记只回调 onOpenEntry，
 //   点返回只回调 onBack，跳转与个人主页打开一律由容器接线，本页不 present、不 push、不碰导航。
 // 页结构（网页 #searchPage 同口径）：页顶返回行（返回钮 + “搜索”标题，随内容滚出）
-//   + 搜索框（sticky：滚出后贴在安全区顶 6px 处）+ 框下恒高 24px 预留行
-//   （已有结果时搜索中显示“正在搜索…”，平时占位透明）+ 状态区 / 结果区。
+//   + 搜索框（sticky：滚出后贴在安全区顶 6px 处）+ 状态区 / 结果区。
+//   （2026-10-29 第 21 项：框下“正在搜索…”行已删。）
 // 分区顺序（网页 renderSrchResults 同口径）：我的日记 · 私密 → 公开日记 → 用户。
 // 约束：颜色只用 BearyColors；图标只走 icon_* 资产 + BearyIconImages；
 //   不新增 UIGlassEffect，不用 SF Symbol；部署目标 iOS 15.0、Swift 5.0——
@@ -152,11 +152,6 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
     private let boxPlaceholderView = UIView()
 
     // 框下预留行：网页 .srch-hint——恒高 24、12.5 灰、gap 6、左右 padding 4，
-    // 平时透明占位（opacity 0），已有结果搜索中才显示“正在搜索…”；
-    // 转圈用官方 beary-loading 15（icon_loading 资产，1s 旋转），不用系统菊花。
-    private let hintRowView = UIView()
-    private let hintSpinner = UIImageView()
-    private let hintLabel = UILabel()
 
     // 搜索框：网页 .srch-box——高 50、边框 1.5 line、圆角 999（半高 25）、左右 16、gap 9。
     private let searchBoxView = UIView()
@@ -257,18 +252,6 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         onBack?()
     }
 
-    /// 框下预留行显隐：只改透明度（.18s，网页 .srch-hint transition 同口径），高度恒 24。
-    /// 转圈是 beary-loading 图（网页 .srch-hint .icon.spin 1s 旋转），开/关同步起停。
-    private func setSearchingHint(_ on: Bool) {
-        if on {
-            BearyIconMotion.startSpin(on: hintSpinner, duration: 1.0, key: "bearyHintSpin")
-        } else {
-            BearyIconMotion.stopSpin(on: hintSpinner, key: "bearyHintSpin")
-        }
-        UIView.animate(withDuration: 0.18) {
-            self.hintRowView.alpha = on ? 1 : 0
-        }
-    }
 
     /// U4：仅首次出现聚焦输入框；从详情返回时不再重弹键盘。
     private var searchFieldFocusedOnce = false
@@ -353,26 +336,9 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         backTitleLabel.text = "搜索"
         backRowView.addSubview(backTitleLabel)
 
-        // 搜索框占位（流内 50 高）与框下预留行（恒高 24）。
+        // 搜索框占位（流内 50 高）。
         boxPlaceholderView.translatesAutoresizingMaskIntoConstraints = false
         contentStack.addArrangedSubview(boxPlaceholderView)
-
-        hintRowView.translatesAutoresizingMaskIntoConstraints = false
-        hintRowView.alpha = 0
-        contentStack.addArrangedSubview(hintRowView)
-
-        hintSpinner.translatesAutoresizingMaskIntoConstraints = false
-        hintSpinner.image = BearyIconImages.image(named: "icon_loading", pointSize: 15)
-        hintSpinner.tintColor = BearyColors.gray
-        hintSpinner.contentMode = .scaleAspectFit
-        hintRowView.addSubview(hintSpinner)
-
-        hintLabel.translatesAutoresizingMaskIntoConstraints = false
-        hintLabel.font = BearyDynamicType.cappedFont(for: UIFont.systemFont(ofSize: 12.5))
-        hintLabel.adjustsFontForContentSizeCategory = true
-        hintLabel.textColor = BearyColors.gray
-        hintLabel.text = "正在搜索…"
-        hintRowView.addSubview(hintLabel)
 
         // 搜索框：view 级视图（sticky 用，见 updateStickyBoxPosition），
         // 后于 scrollView 加入视图层级，滚动内容从它下方滑过时被盖住。
@@ -612,15 +578,6 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
 
             boxPlaceholderView.heightAnchor.constraint(equalToConstant: 50),
 
-            // 框下预留行：恒高 24（不随显隐改高度，只改透明度）。
-            hintRowView.heightAnchor.constraint(equalToConstant: 24),
-            hintSpinner.leadingAnchor.constraint(equalTo: hintRowView.leadingAnchor, constant: 4),
-            hintSpinner.centerYAnchor.constraint(equalTo: hintRowView.centerYAnchor),
-            hintSpinner.widthAnchor.constraint(equalToConstant: 15),
-            hintSpinner.heightAnchor.constraint(equalToConstant: 15),
-            hintLabel.leadingAnchor.constraint(equalTo: hintSpinner.trailingAnchor, constant: 6),
-            hintLabel.centerYAnchor.constraint(equalTo: hintRowView.centerYAnchor),
-            hintLabel.trailingAnchor.constraint(lessThanOrEqualTo: hintRowView.trailingAnchor),
 
             // sticky 框体：与列内容同宽（16 边距 + ≤568 居中），顶距固定 48、吸顶位移走 transform。
             searchBoxView.heightAnchor.constraint(equalToConstant: 50),
@@ -831,18 +788,15 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         currentSearchTask = nil
         if trimmed.isEmpty {
             setBoxBusy(false)
-            setSearchingHint(false)
             showInitialState()
             return
         }
-        // 网页口径：已有结果时保持结果区、框内圈转 + 框下预留行显示“正在搜索…”；
-        // 无结果时结果区改加载态（含登录提示），预留行不亮。
+        // 网页口径：已有结果时保持结果区、框内圈转（2026-10-29 第 21 项：框下“正在搜索…”行已删）；
+        // 无结果时结果区改加载态（含登录提示）。
         if showingResults {
             setBoxBusy(true)
-            setSearchingHint(true)
             setSearchFooter(loading: true, failed: false)
         } else {
-            setSearchingHint(false)
             showLoadingState()
         }
         currentSearchTask = BearyAPI.shared.search(q: trimmed) { [weak self] result in
@@ -851,7 +805,6 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
                 guard let self = self else { return }
                 if seq != self.searchSeq { return }
                 self.setBoxBusy(false)
-                self.setSearchingHint(false)
                 switch result {
                 case .success(let data):
                     self.recordRecentSearch(trimmed)
@@ -870,8 +823,8 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         }
     }
 
-    /// 框内圈：加载时以转圈替换放大镜（网页 srchSetIconBusy 同款语义），
-    /// 已有结果时另有框下预留行“正在搜索…”（见 setSearchingHint）。
+    /// 框内圈：加载时以转圈替换放大镜（网页 srchSetIconBusy 同款语义）。
+    /// （2026-10-29 第 21 项：框下“正在搜索…”行已删，只留框内圈。）
     private func setBoxBusy(_ busy: Bool) {
         searchIconView.isHidden = busy
         boxRingView.isHidden = !busy

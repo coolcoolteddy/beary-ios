@@ -103,6 +103,10 @@ public final class BearyEmoteView: UIView {
     private static var reduceMotionObserverInstalled = false
     /// M23：减动效通知观察者 token（App 生命周期内常驻，不移除）。
     private static var reduceMotionObserver: NSObjectProtocol?
+    /// 2026-10-29 第 24 项：前台恢复观察者 token（App 生命周期内常驻，不移除，
+    /// 与减动效观察者同模式）；后台切回前台时对全部存活播放器调 resumeAfterForeground。
+    private static var foregroundResumeObserverInstalled = false
+    private static var foregroundResumeObserver: NSObjectProtocol?
     /// 内存警告时清解析缓存（只清缓存字典，不停正在播的视图：视图自持 CachedEmote，
     /// 下次加载重新解析；清掉后大文件不再常驻内存）。
     private static var memoryWarningObserver: NSObjectProtocol?
@@ -130,6 +134,7 @@ public final class BearyEmoteView: UIView {
         clipsToBounds = false
         Self.registerLivePlayer(self)
         Self.installReduceMotionObserver()
+        Self.installForegroundResumeObserver()
         Self.installMemoryWarningObserver()
         if deferred {
             self.isDeferredLoad = true
@@ -183,6 +188,55 @@ public final class BearyEmoteView: UIView {
             for player in players {
                 player.stop()
             }
+        }
+    }
+
+    /// 2026-10-29 第 24 项：前台恢复观察者（只装一次，常驻不移除；与减动效
+    /// 观察者同模式）。根因：Lottie 的 playOnce→循环接力在 App 后台挂起时
+    /// 可能被打断——completion 以 finished=false 回调即不再进循环，isPlaying
+    /// 仍为真但动画已死，切回前台后全部表情停住。恢复时只对 isPlaying 为真
+    /// 且仍在窗口内的播放器续播（resumeAfterForeground 内再守门），各面
+    /// （Feed/时间线/详情/个人页/编辑器心情条等）共用此一处逻辑，不各处另造。
+    private static func installForegroundResumeObserver() {
+        cacheLock.lock()
+        let installed = foregroundResumeObserverInstalled
+        if !installed {
+            foregroundResumeObserverInstalled = true
+        }
+        cacheLock.unlock()
+        guard !installed else { return }
+        foregroundResumeObserver = NotificationCenter.default.addObserver(forName: UIApplication.willEnterForegroundNotification, object: nil, queue: .main) { _ in
+            cacheLock.lock()
+            let players = livePlayers.allObjects
+            cacheLock.unlock()
+            for player in players {
+                player.resumeAfterForeground()
+            }
+        }
+    }
+
+    /// 前台恢复：后台挂起可能打断 playOnce→循环的接力（见上），isPlaying 仍为真
+    /// 但动画已死。本方法从当前帧续播到 op 再进循环，不回 0 帧重画描线；
+    /// 减动效下不恢复播放（仍停完成帧，口径不变）；冻结静态帧
+    /// （heldStaticFrame，如心情条未选中项旧口径）的与已离窗的不动。
+    func resumeAfterForeground() {
+        guard isPlaying, window != nil else { return }
+        guard UIAccessibility.isReduceMotionEnabled == false else { return }
+        guard let view = animationView, let cached = currentEmote else {
+            // 仍在后台解析或 PNG 占位：只保住起播意图，挂接时兑现，不丢。
+            if fallbackImageView != nil { isPlaying = true }
+            return
+        }
+        playbackGeneration += 1
+        let generation = playbackGeneration
+        let fromFrame = view.currentFrame
+        view.play(fromFrame: fromFrame, toFrame: cached.endFrame, loopMode: .playOnce) { [weak self] finished in
+            guard let self = self else { return }
+            guard finished else { return }
+            guard self.playbackGeneration == generation else { return }
+            guard self.isPlaying else { return }
+            guard UIAccessibility.isReduceMotionEnabled == false else { return }
+            self.animationView?.play(fromFrame: cached.loopStart, toFrame: cached.loopEnd, loopMode: .loop) { _ in }
         }
     }
 

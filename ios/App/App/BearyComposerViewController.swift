@@ -206,10 +206,10 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, U
     private var imageItems: [ComposerImageItem] = []
     /// 心情条单项：按钮 + 44 圆环 + 环内熊图 + 环内缺图回退名 + 下方名。
     private var moodItems: [(key: String, button: UIButton, ringView: UIView, emoteView: BearyEmoteView, fallbackLabel: UILabel, nameLabel: UILabel)] = []
-    /// A2-4/B6-1 播放控制上次状态：面板可见性 + 选中心情；一致时 updateMoodPlayback
-    /// 直接返回，避免选择条刷新重复调用把选中动画反复从 0 重播。
+    /// A2-4/B6-1 播放控制上次状态：面板可见性；一致时 updateMoodPlayback
+    /// 直接返回，避免选择条刷新重复调用把动画反复从 0 重播。
+    /// （2026-10-29 第 25 项：全播口径下选中态不再影响播放，选中心情缓存已删。）
     private var moodPlaybackPanelVisible: Bool?
-    private var moodPlaybackSelected: String?
     private var weatherButtons: [(key: String, button: UIButton)] = []
     /// Gemini 第一批（天气 Lottie 后台空转修）：94 接线时 9 个天气 Lottie 以
     /// animated:true 建在按钮 imageView 上，却无任何登记；refreshWeatherRowVisibility
@@ -257,6 +257,10 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, U
     /// 须再减它，否则正文帧底伸到键盘下方、末行被盖且内层滚到头也露不出来；
     /// 键盘收起/移出屏时为 0，WillChangeFrame 路径同值幂等。
     private var currentKeyboardHeight: CGFloat = 0
+    /// 2026-10-29 第 28 项：键盘弹出前保存的滚动位置（收起时恢复原位）与
+    /// 键盘可见跟踪（帧变化通知不重复保存，避免覆盖弹出时刻的原位）。
+    private var keyboardSavedContentOffset: CGPoint?
+    private var keyboardVisible = false
     /// S10：textViewDidChange 高度缓存（contentSize 高度作判据）；高度不变时跳过
     /// updateTextViewHeight + updatePreferredContentSize 的重算。注意不用换行符
     /// 计行：长段落视觉折行不产生换行符，用换行符判会漏掉折行导致编辑器不跟长。
@@ -291,6 +295,11 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, U
     private var scrollBottomToToolbarConstraint: NSLayoutConstraint?
     private var scrollBottomToStripConstraint: NSLayoutConstraint?
     private var scrollBottomToViewConstraint: NSLayoutConstraint?
+    /// 2026-10-29 第 27 项：回应面板（心情条）改锚小熊按钮本体——条底贴工具栏顶
+    /// （触发按钮行正上方），不再随 toolStripStack 锚在可见性分段上方；
+    /// 可见性分段底锚随心情条开关在工具栏顶 / 心情条顶之间切换。
+    private var visibilityBarBottomToToolbarConstraint: NSLayoutConstraint?
+    private var visibilityBarBottomToMoodStripConstraint: NSLayoutConstraint?
     /// 92 包整页列宽：窄屏贴边、宽 ≥821 时三件居中（顶栏/滚动区 640、工具栏 608，
     /// 与旧居中卡几何一致：卡 640、工具栏卡内边距 16）。只换外层水平约束，
     /// 不碰内容栈/心情/天气/引用/草稿/键盘逻辑；状态变化时才切换，避免每轮布局重算。
@@ -388,10 +397,6 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, U
     /// 录屏批 (b)：引用页标题保存/恢复——打开面板时标题改“选择引用”，关闭时
     /// 还原打开前的标题（“新日记”/“编辑日记”/“加载日记…”均按原样回，不硬编码）。
     private var quotePanelSavedTitle: String?
-    // 规则框
-    private let ruleBoxView = UIView()
-    private let ruleIconImageView = UIImageView()
-    private let ruleLabel = UILabel()
 
     // MARK: - 生命周期
 
@@ -426,7 +431,6 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, U
         buildMoodRow()
         buildQuoteSection()
         buildQuotePanel()
-        buildRuleBox()
         if isEditMode {
             setupEditContent()
         } else {
@@ -627,6 +631,10 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, U
         scrollBottomToVisibilityConstraint = scrollView.bottomAnchor.constraint(equalTo: visibilityBar.topAnchor)
         scrollBottomToStripConstraint = scrollView.bottomAnchor.constraint(equalTo: toolStripStack.topAnchor)
         scrollBottomToViewConstraint = scrollView.bottomAnchor.constraint(equalTo: view.bottomAnchor)
+        visibilityBarBottomToToolbarConstraint = visibilityBar.bottomAnchor.constraint(equalTo: toolbarContainer.topAnchor)
+        visibilityBarBottomToMoodStripConstraint = visibilityBar.bottomAnchor.constraint(equalTo: moodScrollView.topAnchor)
+        visibilityBarBottomToToolbarConstraint?.isActive = true
+        visibilityBarBottomToMoodStripConstraint?.isActive = false
         scrollBottomToToolbarConstraint?.isActive = isEditMode
         scrollBottomToVisibilityConstraint?.isActive = !isEditMode
         // iCity 可见性分段：工具栏上方固定行；新建默认私密（selectedSegmentIndex 0），
@@ -709,7 +717,10 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, U
             toolbarContainer.bottomAnchor.constraint(equalTo: view.keyboardLayoutGuide.topAnchor),
             visibilityBar.leadingAnchor.constraint(equalTo: toolbarContainer.leadingAnchor),
             visibilityBar.trailingAnchor.constraint(equalTo: toolbarContainer.trailingAnchor),
-            visibilityBar.bottomAnchor.constraint(equalTo: toolbarContainer.topAnchor),
+            // 2026-10-29 第 27 项：可见性分段底锚两档（见声明注释）；此处只激活 toolbar 档，
+            // mood 档由创建处设为不激活、refreshToolStrip 按心情条开关切换——两档同
+            // 时激活会互斥（分段底不能既贴工具栏顶又贴心情条顶）。
+            visibilityBarBottomToToolbarConstraint!,
             toolStripStack.leadingAnchor.constraint(equalTo: toolbarContainer.leadingAnchor),
             toolStripStack.trailingAnchor.constraint(equalTo: toolbarContainer.trailingAnchor),
             toolStripStack.bottomAnchor.constraint(equalTo: visibilityBar.topAnchor),
@@ -1123,7 +1134,17 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, U
         moodStackView.translatesAutoresizingMaskIntoConstraints = false
         moodScrollView.addSubview(moodStackView)
         moodScrollView.isHidden = true
-        toolStripStack.addArrangedSubview(moodScrollView)
+        // 2026-10-29 第 27 项：心情条（回应面板）不再进 toolStripStack（栈底锚可见性
+        // 分段上方 = 弹在私密/公开按钮上方）；改为独立浮条，底贴工具栏顶——即小熊
+        // 按钮本体正上方，以触发按钮行为锚点；左右与工具栏同宽；其余行为不变
+        //（横滑、选中、播放门、Chip 行均走原逻辑）。buildToolbarRow 已先跑，
+        // toolbarContainer 已入 view，约束可直接激活。
+        view.addSubview(moodScrollView)
+        NSLayoutConstraint.activate([
+            moodScrollView.leadingAnchor.constraint(equalTo: toolbarContainer.leadingAnchor),
+            moodScrollView.trailingAnchor.constraint(equalTo: toolbarContainer.trailingAnchor),
+            moodScrollView.bottomAnchor.constraint(equalTo: toolbarContainer.topAnchor),
+        ])
         NSLayoutConstraint.activate([
             // 滚动区高内容驱动：单项高 = 顶余 8 + 圆环 44 + gap 4 + 名字行高，约 67–68。
             // 顶余 8 的原因：选中双环外扩 4.5pt 到环外、表情涂鸦（如嗯嗯的对勾）
@@ -1214,12 +1235,14 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, U
         }
     }
 
-    /// A2-4 + B6-1 心情播放控制：面板隐藏时全部 stop；面板可见时只播选中
-    /// 的 1 只，其余冻结静态帧（完成帧，不占播放）。“40 个 CADisplayLink”
+    /// A2-4 + B6-1 心情播放控制（2026-10-29 第 25 项改动态口径）：面板隐藏时全部
+    /// stop；面板可见时全部播 Lottie（与列表里表情同一套 BearyEmoteView 资源与
+    /// 播放口径，不再只播选中 1 只、其余冻结静态帧）。已在播的不重播
+    /// （isPlayingNow 门，避免选心情时全部重画描线）；“40 个 CADisplayLink”
     /// 未在代码中证实（Lottie 走 CoreAnimation，非每只一个 CADisplayLink），
     /// 故不按此数施工，只按实际并发播放修；48MB 缓存预算数值不动。
     /// C1：心情播放门改看选择条（旧心情区 isHidden 已随标题行删除）：
-    /// 仅心情条展开且引用面板未打开时播选中 1 只，其余一律冻结静态帧。
+    /// 仅心情条展开且引用面板未打开时播，其余一律停播。
     private func updateMoodPlayback() {
         let panelVisible = activeToolStrip == .mood && !quotePanelOpen
         // E4：点开心情条时才加载对应动画（ensureLoaded 幂等，未点开不解析）；
@@ -1229,18 +1252,15 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, U
                 item.emoteView.ensureLoaded()
             }
         }
-        if moodPlaybackPanelVisible == panelVisible && moodPlaybackSelected == selectedMood {
+        if moodPlaybackPanelVisible == panelVisible {
             return
         }
         moodPlaybackPanelVisible = panelVisible
-        moodPlaybackSelected = selectedMood
         for item in moodItems {
             if !panelVisible {
                 item.emoteView.stop()
-            } else if item.key == selectedMood {
+            } else if !item.emoteView.isPlayingNow {
                 item.emoteView.play()
-            } else {
-                item.emoteView.showStaticFrame()
             }
         }
     }
@@ -1249,6 +1269,9 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, U
 
     private func buildWeatherRow() {
         weatherScrollView.showsHorizontalScrollIndicator = false
+        // 2026-10-29 第 20 项：横滑条内小 chip 点按易被 scroll 误判为滑动而取消，
+        // 致“选项点不了”；关掉触摸延迟，点按立即响应（诊断日志代码不动）。
+        weatherScrollView.delaysContentTouches = false
         weatherStackView.axis = .horizontal
         weatherStackView.spacing = 8
         weatherStackView.alignment = .center
@@ -1854,9 +1877,10 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, U
         quotePanel.addSubview(quotePanelRetryButton)
         quotePanel.addSubview(quotePanelRows)
         NSLayoutConstraint.activate([
-            // 整段 padding 10/16/4：顶距面板顶 10、左右 16 已由 contentStack 边距提供、
-            // 行顶距 tab 条底 4；容器在面板内居中（网页 qp-seg justify-content:center）。
-            quoteTabBarContainer.topAnchor.constraint(equalTo: quotePanel.topAnchor, constant: 10),
+            // 2026-10-29 第 26 项：列表顶贴导航栏、无顶隙——tab 条顶距面板顶 0
+            //（原 10）、行顶距 tab 条底 0（原 4）；左右 16 仍由 contentStack 边距提供，
+            // 容器在面板内居中（网页 qp-seg justify-content:center）。
+            quoteTabBarContainer.topAnchor.constraint(equalTo: quotePanel.topAnchor, constant: 0),
             // R7(a)：tab 条显式高度，不再只靠钮固有高撑开。
             quoteTabBarContainer.heightAnchor.constraint(equalToConstant: 36),
             quoteTabBarContainer.centerXAnchor.constraint(equalTo: quotePanel.centerXAnchor),
@@ -1876,15 +1900,15 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, U
             quotePanelEmptyLabel.trailingAnchor.constraint(equalTo: quotePanel.trailingAnchor),
             quotePanelRetryButton.topAnchor.constraint(equalTo: quoteTabBarContainer.bottomAnchor, constant: 16),
             quotePanelRetryButton.centerXAnchor.constraint(equalTo: quotePanel.centerXAnchor),
-            quotePanelRows.topAnchor.constraint(equalTo: quoteTabBarContainer.bottomAnchor, constant: 4),
+            quotePanelRows.topAnchor.constraint(equalTo: quoteTabBarContainer.bottomAnchor, constant: 0),
             quotePanelRows.leadingAnchor.constraint(equalTo: quotePanel.leadingAnchor),
             quotePanelRows.trailingAnchor.constraint(equalTo: quotePanel.trailingAnchor),
             quotePanelRows.bottomAnchor.constraint(equalTo: quotePanel.bottomAnchor),
         ])
-        // R7(b)：面板背板由透明玻璃改实色底 surface（不透明变量色，浅白/深 #26262c，
-        // 深浅跟随）；玻璃背板整段删除，不再透出下层内容，面板边界清晰。
-        // tab 条 faint 底在 surface 面板上仍有灰白区分，选中钮 surface 底在 faint 条上亦可见。
-        quotePanel.backgroundColor = BearyColors.surface
+        // 2026-10-29 第 26 项：面板背板改回页面底色 bg（不再是内缩的灰色容器；
+        // 原 surface 底在深色下呈 #26262c 灰框，与页底黑底形成方框感）。
+        // tab 条 faint 底在 bg 面板上仍有区分，选中钮 surface 底在 faint 条上亦可见。
+        quotePanel.backgroundColor = BearyColors.bg
         quotePanel.isHidden = true
         contentStack.setCustomSpacing(16, after: quotePanel)
     }
@@ -1944,11 +1968,13 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, U
             updateWeatherPlayback()
             refreshImageUndoBar()
             quoteSection.isHidden = true
-            ruleBoxView.isHidden = true
             // 间隙修复（只动布局）：滚动归零不影响开头已保存的恢复偏移；面板前各区栈间距显式置 0，
             // 否则隐藏区塌掉后残留 customSpacing 会在面板上方留空隙；tab 条显式可见后先落一次布局，
             // 再显示面板，首帧即按无间隙高度算。
             scrollView.contentOffset = CGPoint.zero
+            // 2026-10-29 第 26 项：补漏——titleField 的 8 间距此前打开时未置 0
+            //（其余四处已在间隙修复中置 0），隐藏区塌掉后残留间距会在面板上方留空隙。
+            contentStack.setCustomSpacing(0, after: titleField)
             contentStack.setCustomSpacing(0, after: textView)
             contentStack.setCustomSpacing(0, after: imageScrollView)
             contentStack.setCustomSpacing(0, after: statusRow)
@@ -1994,10 +2020,10 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, U
                 self.selectedChipsRow.isHidden = false
                 self.statusRow.isHidden = false
                 self.quoteSection.isHidden = false
-                self.ruleBoxView.isHidden = false
                 self.cancelButton.setTitle("取消", for: .normal)
                 self.publishButton.isHidden = false
                 // 间隙修复的关闭恢复：把打开时置 0 的栈间距按 build 时原值还原（其余区同 build 原值）。
+                self.contentStack.setCustomSpacing(8, after: self.titleField)
                 self.contentStack.setCustomSpacing(12, after: self.textView)
                 self.contentStack.setCustomSpacing(4, after: self.imageScrollView)
                 self.contentStack.setCustomSpacing(8, after: self.statusRow)
@@ -2033,12 +2059,14 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, U
     /// 不留空隙）；选择条展开时锚选择条顶（条不盖住正文尾部）；其余时锚工具栏顶。
     /// 改锚只发生在这两处：选择条刷新（refreshToolStrip）与引用面板开关。
     private func updateScrollBottomAnchoring() {
-        let stripOpen = activeToolStrip != nil && !quotePanelOpen
-        // iCity：新建模式滚动区底锚可见性分段顶（分段行在工具栏上方）；
-        // 编辑模式分段行隐藏，底锚回到工具栏顶；选择条展开时仍锚选择条顶。
-        scrollBottomToToolbarConstraint?.isActive = !quotePanelOpen && !stripOpen && isEditMode
-        scrollBottomToVisibilityConstraint?.isActive = !quotePanelOpen && !stripOpen && !isEditMode
-        scrollBottomToStripConstraint?.isActive = stripOpen
+        // 2026-10-29 第 27 项：心情条开时滚动区底锚可见性分段顶——分段此时在条上方，
+        // 故滚动区停在分段顶即停在条顶之上（编辑模式分段高 0，顶 = 条顶，同值）；
+        // 其余选择条仍锚栈顶（栈在分段上方）。
+        let moodOpen = activeToolStrip == .mood && !quotePanelOpen
+        let otherStripOpen = activeToolStrip != nil && activeToolStrip != .mood && !quotePanelOpen
+        scrollBottomToToolbarConstraint?.isActive = !quotePanelOpen && !moodOpen && !otherStripOpen && isEditMode
+        scrollBottomToVisibilityConstraint?.isActive = !quotePanelOpen && (moodOpen || (!otherStripOpen && !isEditMode))
+        scrollBottomToStripConstraint?.isActive = otherStripOpen
         scrollBottomToViewConstraint?.isActive = quotePanelOpen
     }
 
@@ -2333,7 +2361,9 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, U
                 //（头像 40 + 左距 2 + 间距 12），此前分隔线从头像左边缘（2）起。
                 separator.leadingAnchor.constraint(equalTo: rowButton.leadingAnchor, constant: 54),
                 separator.trailingAnchor.constraint(equalTo: rowButton.trailingAnchor, constant: -2),
-                separator.heightAnchor.constraint(equalToConstant: 1),
+                // 2026-10-29 第 26 项：行间分隔线按详情页口径用 2pt（原 1pt）；
+                // leading/trailing 不动（行内内容：头像、名字、时间、正文一字不动）。
+                separator.heightAnchor.constraint(equalToConstant: 2),
                 separator.bottomAnchor.constraint(equalTo: rowButton.bottomAnchor),
             ])
             rowButton.addTarget(self, action: #selector(didTapQuotePanelRow(_:)), for: .touchUpInside)
@@ -2602,12 +2632,14 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, U
     /// 选择条显隐总口：同一时刻只显一条；面板打开时整栈隐藏（播放门另见
     /// updateMoodPlayback/updateWeatherPlayback 的 quotePanelOpen 条件）。
     private func refreshToolStrip() {
-        toolStripStack.isHidden = quotePanelOpen || activeToolStrip == nil
-        // A3：规则框锚在工具栏上方（与选择条同区），选择条展开或引用面板打开时
-        // 让位隐藏，避免与选择条重叠；其余时正常显示（引用面板关闭路径先把
-        // ruleBox 置回可见、再调本函数，本行即最终态，不冲突）。
-        ruleBoxView.isHidden = quotePanelOpen || activeToolStrip != nil
-        moodScrollView.isHidden = activeToolStrip != .mood
+        // 2026-10-29 第 27 项：心情条已脱离栈——栈在仅心情条时也整藏（其余子项本就全藏）；
+        // 心情条显隐另由自身 isHidden 管（含引用面板打开时必藏，旧栈藏整栈的同款效果）。
+        toolStripStack.isHidden = quotePanelOpen || activeToolStrip == nil || activeToolStrip == .mood
+        moodScrollView.isHidden = quotePanelOpen || activeToolStrip != .mood
+        // 心情条开时可见性分段上移至条顶（条在工具栏与分段之间）；关时分段回落工具栏顶。
+        let moodOpen = activeToolStrip == .mood && !quotePanelOpen
+        visibilityBarBottomToToolbarConstraint?.isActive = !moodOpen
+        visibilityBarBottomToMoodStripConstraint?.isActive = moodOpen
         weatherScrollView.isHidden = activeToolStrip != .weather
         // iCity：编辑模式 @ 可新增——无 @ 时条内仍有“@ 谁”钮，不再整区隐藏；
         // 其余态按条开关显隐。
@@ -2871,43 +2903,6 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, U
         editTimer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { _ in tickBlock() }
     }
 
-    // MARK: - 规则框（网页 rule-box 原文：淡底 + info 图标 + 12px 灰字）
-
-    private func buildRuleBox() {
-        ruleBoxView.backgroundColor = BearyColors.faint
-        ruleBoxView.layer.cornerRadius = 12
-        ruleBoxView.layer.masksToBounds = true
-        ruleIconImageView.image = BearyIconImages.image(named: "icon_info", pointSize: 18)
-        ruleIconImageView.tintColor = BearyColors.gray
-        ruleIconImageView.contentMode = .scaleAspectFit
-        let paragraph = NSMutableParagraphStyle()
-        paragraph.lineHeightMultiple = 1.7
-        ruleLabel.attributedText = NSAttributedString(string: "默认私密，写完即按所选可见，公开与私密可随时切换 · 15 分钟内可修改 · 公开与私密均可删除（进回收站 30 天）。", attributes: [.font: UIFont.systemFont(ofSize: 12), .foregroundColor: BearyColors.gray, .paragraphStyle: paragraph])
-        ruleLabel.numberOfLines = 0
-        ruleBoxView.translatesAutoresizingMaskIntoConstraints = false
-        ruleIconImageView.translatesAutoresizingMaskIntoConstraints = false
-        ruleLabel.translatesAutoresizingMaskIntoConstraints = false
-        // A3：规则框移出内容栈，不再随正文滚动；改为锚到工具栏上方——
-        // 工具栏底锚 keyboardLayoutGuide，键盘顶起工具栏时规则框跟走、
-        // 收起时跟回原位。左右与内容栈内宽一致（滚动区左右各 16 内边距）；
-        // 文案一字不动。选择条展开时由 refreshToolStrip 让位隐藏（同区防重叠）。
-        view.addSubview(ruleBoxView)
-        ruleBoxView.addSubview(ruleIconImageView)
-        ruleBoxView.addSubview(ruleLabel)
-        NSLayoutConstraint.activate([
-            ruleBoxView.leadingAnchor.constraint(equalTo: scrollView.leadingAnchor, constant: 16),
-            ruleBoxView.trailingAnchor.constraint(equalTo: scrollView.trailingAnchor, constant: -16),
-            ruleBoxView.bottomAnchor.constraint(equalTo: toolbarContainer.topAnchor, constant: -12),
-            ruleIconImageView.topAnchor.constraint(equalTo: ruleBoxView.topAnchor, constant: 13),
-            ruleIconImageView.leadingAnchor.constraint(equalTo: ruleBoxView.leadingAnchor, constant: 14),
-            ruleIconImageView.widthAnchor.constraint(equalToConstant: 18),
-            ruleIconImageView.heightAnchor.constraint(equalToConstant: 18),
-            ruleLabel.topAnchor.constraint(equalTo: ruleBoxView.topAnchor, constant: 12),
-            ruleLabel.leadingAnchor.constraint(equalTo: ruleBoxView.leadingAnchor, constant: 42),
-            ruleLabel.trailingAnchor.constraint(equalTo: ruleBoxView.trailingAnchor, constant: -14),
-            ruleLabel.bottomAnchor.constraint(equalTo: ruleBoxView.bottomAnchor, constant: -12),
-        ])
-    }
 
     // MARK: - 正文与字数
 
@@ -4696,6 +4691,61 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, U
 
     // MARK: - 键盘
 
+    /// 2026-10-29 第 28 项：焦点切换时（键盘已在上、无键盘通知）立即做最小滚动修正；
+    /// 键盘刚弹出时的修正走 applyKeyboard 动画完成回调（inset 落定后再算，不与
+    /// 系统自动 caret 滚动打架；已在位时修正为 no-op）。
+    func textFieldDidBeginEditing(_ textField: UITextField) {
+        if currentKeyboardHeight > 0 {
+            scrollFocusedFieldIntoView(animated: true)
+        }
+    }
+
+    func textViewDidBeginEditing(_ textView: UITextView) {
+        if currentKeyboardHeight > 0 {
+            scrollFocusedFieldIntoView(animated: true)
+        }
+    }
+
+    /// 2026-10-29 第 28 项：只滚到刚好让焦点框完整可见的最小滚动——焦点框在可视区
+    /// 上方时上滚到其顶恰贴可视区顶（绝不顶出顶部），在可视区下方时下滚到其底恰贴
+    /// 键盘顶；已完整可见时不动。标题栏用整框（单行短框），正文用 caret 矩形
+    /// （整框可能高于可视区，整框口径会乱滚）。可视区按当前 contentInset 算
+    /// （键盘高已计入 bottom inset），目标偏移 clamp 到内容合法范围。
+    private func scrollFocusedFieldIntoView(animated: Bool) {
+        let targetRect: CGRect?
+        if titleField.isFirstResponder {
+            targetRect = contentView.convert(titleField.bounds, from: titleField)
+        } else if textView.isFirstResponder {
+            if let selectedRange = textView.selectedTextRange {
+                let caret = textView.caretRect(for: selectedRange.end)
+                targetRect = contentView.convert(caret, from: textView)
+            } else {
+                targetRect = contentView.convert(textView.bounds, from: textView)
+            }
+        } else {
+            targetRect = nil
+        }
+        guard let fieldFrame = targetRect else { return }
+        let topInset = scrollView.contentInset.top
+        let bottomInset = scrollView.contentInset.bottom
+        let visibleTop = scrollView.contentOffset.y + topInset
+        let visibleBottom = scrollView.contentOffset.y + scrollView.bounds.height - bottomInset
+        var targetY = scrollView.contentOffset.y
+        if fieldFrame.minY < visibleTop {
+            targetY = fieldFrame.minY - topInset
+        } else if fieldFrame.maxY > visibleBottom {
+            targetY = fieldFrame.maxY - (scrollView.bounds.height - bottomInset)
+        } else {
+            return
+        }
+        let minY = -topInset
+        let maxY = max(minY, scrollView.contentSize.height + bottomInset - scrollView.bounds.height)
+        targetY = min(max(targetY, minY), maxY)
+        if targetY != scrollView.contentOffset.y {
+            scrollView.setContentOffset(CGPoint(x: scrollView.contentOffset.x, y: targetY), animated: animated)
+        }
+    }
+
     @objc private func keyboardWillShow(_ notification: Notification) {
         NSLog("[Diag] composer-keyboard-willShow")
         // 临时诊断（81 包，定根因后删除）。
@@ -4757,6 +4807,16 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, U
         }
         // 编辑器批第 5 项：键盘高度存属性供 updateTextViewHeight 封顶扣减。
         currentKeyboardHeight = height
+        // 2026-10-29 第 28 项：弹出跃迁（此前不可见 → 现在有高度）时保存原位；
+        // 帧变化不重复保存；收起时在完成回调里恢复原位（clamp 到收起后的合法范围）。
+        let wasVisible = keyboardVisible
+        let isHiding = !showing || height == 0
+        if showing && height > 0 && !wasVisible {
+            keyboardSavedContentOffset = scrollView.contentOffset
+            keyboardVisible = true
+        } else if isHiding && wasVisible {
+            keyboardVisible = false
+        }
         let options = UIView.AnimationOptions(rawValue: curveRaw << 16)
         UIView.animate(withDuration: duration, delay: 0, options: [options, .beginFromCurrentState], animations: { [weak self] in
             guard let self = self else { return }
@@ -4774,7 +4834,22 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, U
             // “什么都没写也会往上滑一下”。外层 inset 已把整区抬到键盘上方，内层 inset
             // 是冗余的；去掉后空态 caret 本就在可视区内，打开与空态 contentOffset 全程不动，
             // 长文 caret 仍走系统标准 caret 可见滚动（只在用户打到可视区外时动）。
-        }, completion: nil)
+        }, completion: { [weak self] _ in
+            guard let self = self else { return }
+            // 2026-10-29 第 28 项：inset 落定后再修正焦点框——系统自动 caret 滚动若把
+            // 标题顶出顶部，此处按最小滚动口径拉回（已在位时 no-op）；收起时恢复原位。
+            if isHiding {
+                if let saved = self.keyboardSavedContentOffset {
+                    self.keyboardSavedContentOffset = nil
+                    let minY = -self.scrollView.contentInset.top
+                    let maxY = max(minY, self.scrollView.contentSize.height + self.scrollView.contentInset.bottom - self.scrollView.bounds.height)
+                    let restoredY = min(max(saved.y, minY), maxY)
+                    self.scrollView.setContentOffset(CGPoint(x: self.scrollView.contentOffset.x, y: restoredY), animated: false)
+                }
+            } else {
+                self.scrollFocusedFieldIntoView(animated: false)
+            }
+        })
     }
 
     // MARK: - 通用

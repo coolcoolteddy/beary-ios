@@ -6,6 +6,10 @@ import UIKit
 class BearyEntryImageViewerViewController: UIViewController, UIGestureRecognizerDelegate, UIViewControllerTransitioningDelegate {
 
     private let imageKeys: [String]
+    /// 2026-10-29 第 15 项：本地图模式（个人页头像/封面查看，不新造查看器）——
+    /// 非空时以 UIImage 直显，不走服务端 key 加载；单图查看，翻页全程以
+    /// imageKeys.count > 1 守门，本地模式自然不翻页；计数/圆点按 count ≤ 1 隐藏。
+    private let localImages: [UIImage]
     private var currentIndex: Int
     private let imageView = UIImageView()
     // 灯箱相邻图：拖动时贴在当前图边上同步跟手的那一张（见 updateNeighbor）。
@@ -35,6 +39,7 @@ class BearyEntryImageViewerViewController: UIViewController, UIGestureRecognizer
 
     init(imageKeys: [String], startIndex: Int) {
         self.imageKeys = imageKeys
+        self.localImages = []
         if startIndex >= 0 && startIndex < imageKeys.count {
             self.currentIndex = startIndex
         } else {
@@ -42,6 +47,25 @@ class BearyEntryImageViewerViewController: UIViewController, UIGestureRecognizer
         }
         super.init(nibName: nil, bundle: nil)
         // E-G12：网页灯箱开场 200ms 淡入、关场 160ms 淡出，不用默认滑入滑出。
+        modalPresentationStyle = .fullScreen
+        transitioningDelegate = self
+    }
+
+    /// 本地图模式入口（个人页头像/封面）：与服务端 key 模式同一查看器、
+    /// 同一淡入淡出转场与捏合/拖动，纯查看、无编辑入口。
+    convenience init(images: [UIImage], startIndex: Int) {
+        self.init(imageKeys: [], localImages: images, startIndex: startIndex)
+    }
+
+    init(imageKeys: [String], localImages: [UIImage], startIndex: Int) {
+        self.imageKeys = imageKeys
+        self.localImages = localImages
+        if startIndex >= 0 && startIndex < max(imageKeys.count, localImages.count) {
+            self.currentIndex = startIndex
+        } else {
+            self.currentIndex = 0
+        }
+        super.init(nibName: nil, bundle: nil)
         modalPresentationStyle = .fullScreen
         transitioningDelegate = self
     }
@@ -188,6 +212,16 @@ class BearyEntryImageViewerViewController: UIViewController, UIGestureRecognizer
     }
 
     private func loadCurrent() {
+        // 2026-10-29 第 15 项：本地图模式——UIImage 直显，不走网络、不预取、
+        // 不置失败态（本地图恒有图，失败重试入口不适用）。
+        if !localImages.isEmpty {
+            guard currentIndex >= 0 && currentIndex < localImages.count else { return }
+            loadingKey = nil
+            isFailed = false
+            retryLabel.isHidden = true
+            imageView.image = localImages[currentIndex]
+            return
+        }
         if imageKeys.isEmpty || currentIndex < 0 || currentIndex >= imageKeys.count {
             return
         }

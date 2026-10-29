@@ -227,72 +227,6 @@ class BearyFeedViewController: UIViewController {
     /// 已有内容/后台重拉/下拉刷新/分页一律不走这里；显隐只由 updateOverlayState
     /// 根据 plazaFirstDone 决定，与数据到达回调严格对应，
     /// 骨架与真实卡片不叠加（隐藏时先 reloadData 落真实行，再交叉溶解）。
-    private var skeletonVisible = false
-    /// C9：骨架内栈顶距 = tableView.contentInset.top（首卡顶），由 applyHeaderTopInset
-    /// 与 showSkeleton 同步，顶栏显隐/安全区变化时骨架与真实首卡不错位。
-    private var skeletonStackTopConstraint: NSLayoutConstraint?
-    private lazy var skeletonView: UIView = {
-        let container = UIView()
-        container.translatesAutoresizingMaskIntoConstraints = false
-        container.backgroundColor = BearyColors.bg
-        container.isHidden = true
-        container.isUserInteractionEnabled = false
-        let stack = UIStackView()
-        stack.translatesAutoresizingMaskIntoConstraints = false
-        stack.axis = .vertical
-        stack.spacing = 12
-        for _ in 0..<3 {
-            let card = BearySkeletonCardView()
-            stack.addArrangedSubview(card)
-        }
-        container.addSubview(stack)
-        let stackTop = stack.topAnchor.constraint(equalTo: container.topAnchor, constant: 0)
-        self.skeletonStackTopConstraint = stackTop
-        NSLayoutConstraint.activate([
-            stackTop,
-            stack.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 16),
-            stack.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -16),
-            stack.bottomAnchor.constraint(equalTo: container.bottomAnchor),
-        ])
-        return container
-    }()
-    private var skeletonCards: [BearySkeletonCardView] {
-        guard let stack = skeletonView.subviews.first as? UIStackView else { return [] }
-        return stack.arrangedSubviews.compactMap { $0 as? BearySkeletonCardView }
-    }
-
-    /// C9：首屏骨架显（幂等；首屏菊花在此路径下停掉，不与骨架叠加；
-    /// 菊花其他触发路径——后台重拉/分页加载——不在此函数分支内，一律不动）。
-    private func showSkeleton() {
-        guard skeletonVisible == false else { return }
-        skeletonVisible = true
-        skeletonStackTopConstraint?.constant = tableView.contentInset.top
-        centralSpinner.stopAnimating()
-        skeletonView.isHidden = false
-        skeletonView.alpha = 1
-        skeletonCards.forEach { $0.startBreathing() }
-    }
-
-    /// C9：骨架隐（幂等；调用时真实行已 reloadData 落表）。
-    /// 减动效直隐，其余 0.28s 交叉溶解为真实卡片。
-    private func hideSkeleton() {
-        guard skeletonVisible else { return }
-        skeletonVisible = false
-        skeletonCards.forEach { $0.stopBreathing() }
-        if UIAccessibility.isReduceMotionEnabled {
-            skeletonView.isHidden = true
-            skeletonView.alpha = 1
-        } else {
-            UIView.transition(with: skeletonView, duration: 0.28, options: [.transitionCrossDissolve, .curveEaseInOut], animations: {
-                self.skeletonView.alpha = 0
-            }, completion: { [weak self] _ in
-                guard let strongSelf = self, strongSelf.skeletonVisible == false else { return }
-                strongSelf.skeletonView.isHidden = true
-                strongSelf.skeletonView.alpha = 1
-            })
-        }
-    }
-
     // MARK: - 生命周期
 
     override func viewDidLoad() {
@@ -300,7 +234,6 @@ class BearyFeedViewController: UIViewController {
         view.backgroundColor = BearyColors.bg
         view.addSubview(tableView)
         view.addSubview(centralSpinner)
-        view.addSubview(skeletonView)
         view.addSubview(newContentPill)
         // P2-1：内容列走网页 821 断点——宽 ≥821 时 600 居中，宽 ≤820 时 iPhone 式全宽
         //（600 上限只在 ≥821 激活，开关在 viewDidLayoutSubviews；容器层 SceneDelegate 同断点开关，
@@ -321,10 +254,6 @@ class BearyFeedViewController: UIViewController {
             tableView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
             centralSpinner.centerXAnchor.constraint(equalTo: view.centerXAnchor),
             spinnerTop,
-            skeletonView.topAnchor.constraint(equalTo: view.topAnchor),
-            skeletonView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
-            skeletonView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-            skeletonView.bottomAnchor.constraint(lessThanOrEqualTo: view.bottomAnchor),
             newContentPill.centerXAnchor.constraint(equalTo: view.centerXAnchor),
             newContentPill.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor, constant: -92),
         ])
@@ -416,9 +345,6 @@ class BearyFeedViewController: UIViewController {
         if centralSpinnerTopConstraint?.constant != spinnerTop {
             centralSpinnerTopConstraint?.constant = spinnerTop
         }
-        if skeletonStackTopConstraint?.constant != top {
-            skeletonStackTopConstraint?.constant = top
-        }
     }
 
     /// 下拉刷新触发口：标准 UIRefreshControl 的 valueChanged 目标（与时间线、个人主页同款）。
@@ -449,8 +375,7 @@ class BearyFeedViewController: UIViewController {
         plazaHasMore = true
         plazaError = false
         // B 视觉文案：中央菊花此前从未 startAnimating（死代码指示器），现改为
-        // 非手势刷新时启动；首屏骨架路径会在 updateOverlayState 里经 showSkeleton
-        // 停掉它（骨架优先），后台重拉 revalidate 不走这里、继续不闪菊花。
+        // 非手势刷新时启动；后台重拉 revalidate 不走这里、继续不闪菊花。
         if showCentralSpinner {
             centralSpinner.startAnimating()
         }
@@ -1021,12 +946,11 @@ class BearyFeedViewController: UIViewController {
     /// 任一流失败时由失败行承担，不叠加空态；加载中不闪空态。
     private func updateOverlayState() {
         if isFirstLoad && !plazaFirstDone {
-            showSkeleton()
+            // 骨架屏已删：首拉完成前不留占位块，等数据到后直接显。
             setEmptyVisible(false)
             updateFootLogo()
             return
         }
-        hideSkeleton()
         // B 视觉文案：菊花只在首拉落袋后停；在途时不截停，否则非手势刷新
         // 一启动就被 refreshAll 末尾的本次调用同步停掉、永远转不起来。
         if plazaLoading == false {
@@ -1181,13 +1105,21 @@ class BearyFeedViewController: UIViewController {
         }
     }
 
-    /// 切换钮：显式目标态（当前公开→改回私密，当前私密→公开），无需确认；
-    /// 在途去重（pubBusyIds 复用），失败不改本地态、只 toast。
+    /// 切换钮：显式目标态，无需确认；在途去重（pubBusyIds 复用）。
+    /// 目标态按有效态算（2026-10-29 第 18 项根因修法）：过期限时篇 stored 仍为
+    /// 公开、有效态为私密，旧口径按 stored 算会把“公开”点成“私密”（用户看
+    /// 到的仍是私密 = “实际没公开”）；详情页一直用有效态，三处与之对齐。
+    /// 即时反馈（2026-10-29 定版）：点按瞬间先按目标态同步本地（图标与操作行
+    /// 门控立即变），回包成功对齐服务端值；失败回滚原态 + 拒绝动效。
     private func handleVisibilityToggle(entryId: String) {
         guard !entryId.isEmpty, let entry = entryModel(for: entryId), entry.isMine == true else { return }
         if pubBusyIds.contains(entryId) { return }
-        let target = entry.isPublic == true ? 0 : 1
+        let target = BearyEphemeral.isEffectivelyPublic(entry) ? 0 : 1
+        let originalPublic = entry.isPublic ?? false
+        let originalPublishedAt = entry.publishedAt
         pubBusyIds.insert(entryId)
+        // 先行：目标态立即落地（与成功路径同一同步函数，不重建行、不重播动效）。
+        applyVisibilityState(entryId: entryId, isPublic: target == 1, publishedAt: nil)
         BearyAPI.shared.setVisibility(id: entryId, published: target) { [weak self] result in
             DispatchQueue.main.async {
                 guard let strongSelf = self else { return }
@@ -1196,8 +1128,18 @@ class BearyFeedViewController: UIViewController {
                 case .success(let resp):
                     let isPublic = resp.published.map { $0 == 1 } ?? (target == 1)
                     strongSelf.applyVisibilityState(entryId: entryId, isPublic: isPublic, publishedAt: resp.publishedAt)
-                case .failure:
-                    BearyToast.show(in: strongSelf.view, message: "切换失败，请重试", aboveFAB: strongSelf.toastAboveFAB)
+                case .failure(let err):
+                    strongSelf.applyVisibilityState(entryId: entryId, isPublic: originalPublic, publishedAt: originalPublishedAt)
+                    // 失败原因透传：限流时服务端 message 比通用文案有用（entry_write
+                    // 120/小时打满即 429）；其余失败仍走通用文案。
+                    let message: String
+                    if case .server(let code) = err, code == "rate_limited" { message = "操作太频繁，请稍后再试" }
+                    else if case .http(let status, _) = err, status == 429 { message = "操作太频繁，请稍后再试" }
+                    else { message = "切换失败，请重试" }
+                    BearyToast.show(in: strongSelf.view, message: message, aboveFAB: strongSelf.toastAboveFAB)
+                    for path in strongSelf.indexPaths(for: entryId) {
+                        (strongSelf.tableView.cellForRow(at: path) as? BearyDiaryCardCell)?.playPublishDenyShake()
+                    }
                 }
             }
         }
