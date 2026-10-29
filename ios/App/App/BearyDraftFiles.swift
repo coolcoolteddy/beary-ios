@@ -103,7 +103,13 @@ enum BearyDraftImageStore {
     /// 按账号分桶的图片目录：已登录为 beary_draft_images_<uid>，未登录为 nil
     ///（调用方 save/image/delete/sweep 均已对 nil 做了无操作降级，见各函数守卫）。
     static func directory() -> URL? {
-        guard let accountId = BearyDraftStore.currentAccountId else { return nil }
+        return directory(forAccount: BearyDraftStore.currentAccountId)
+    }
+
+    /// 捕获账号版图片目录：后台写任务归一化时按入队账号查图，
+    /// 执行中不再重读全局 currentAccountId；其余调用方仍用 directory()。
+    private static func directory(forAccount accountId: Int?) -> URL? {
+        guard let accountId = accountId else { return nil }
         guard let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first else { return nil }
         let dir = base.appendingPathComponent("\(directoryName)_\(accountId)", isDirectory: true)
         if !FileManager.default.fileExists(atPath: dir.path) {
@@ -117,7 +123,13 @@ enum BearyDraftImageStore {
     /// 派生的 <uuid>_t.jpg；其余（含 ../、/ 等路径穿越名）一律拒绝，返回 nil。
     /// 另校验最终路径仍在草稿目录内（standardized 前缀比对），双重兜底。
     static func fileURL(for name: String) -> URL? {
-        guard isAllowedDraftFileName(name), let dir = directory() else { return nil }
+        return fileURL(for: name, accountId: BearyDraftStore.currentAccountId)
+    }
+
+    /// 捕获账号版（fileprivate：同文件 BearyDraftStore 的归一化在后台写任务内
+    /// 按捕获账号查图；其余调用方仍用 fileURL(for:) 读当前账号）。
+    fileprivate static func fileURL(for name: String, accountId: Int?) -> URL? {
+        guard isAllowedDraftFileName(name), let dir = directory(forAccount: accountId) else { return nil }
         let url = dir.appendingPathComponent(name)
         let dirPath = dir.standardized.path
         let filePath = url.standardized.path
@@ -247,9 +259,14 @@ enum BearyDraftStore {
     /// 老签名保留作兼容（编辑器两处调用仍用它，见 BearyComposerViewController）；
     /// 需成败回传的新调用方请用 deleteAsyncReporting（与 saveAsync /
     /// saveAsyncReporting 的新旧并行口径一致）。
+    // 审计三轮第 2 项：入队时（调用线程，通常为主线程）立即捕获
+    // currentAccountId 并带进 ioQueue 闭包；队列内所有路径一律用捕获值计算，
+    // 执行中绝不再重读全局 currentAccountId——排队保存期间切号/退出，
+    // 旧账号草稿仍写回旧账号目录，不会串到新账号。
     static func deleteAsync(draftId: String, completion: (() -> Void)? = nil) {
+        let accountId = currentAccountId
         ioQueue.async {
-            delete(draftId: draftId)
+            delete(draftId: draftId, forAccount: accountId)
             if let completion = completion {
                 DispatchQueue.main.async {
                     completion()
@@ -262,8 +279,9 @@ enum BearyDraftStore {
     /// 草稿库已损坏（此时原文件被保留、未被覆盖），调用方须按失败处理
     /// （草稿箱：卡片原地恢复 + toast，不得按成功出撤销条）。
     static func deleteAsyncReporting(draftId: String, completion: @escaping (Bool) -> Void) {
+        let accountId = currentAccountId
         ioQueue.async {
-            let ok = delete(draftId: draftId)
+            let ok = delete(draftId: draftId, forAccount: accountId)
             DispatchQueue.main.async {
                 completion(ok)
             }
@@ -274,8 +292,9 @@ enum BearyDraftStore {
     /// 老签名保留作兼容（成败仍可通过回读验证）；需成败回传的新调用方
     /// 请用 saveAsyncReporting，失败时出红字/toast（见 G5 交接说明）。
     static func saveAsync(_ draft: BearyDraft, completion: (() -> Void)? = nil) {
+        let accountId = currentAccountId
         ioQueue.async {
-            _ = save(draft)
+            _ = save(draft, forAccount: accountId)
             if let completion = completion {
                 DispatchQueue.main.async {
                     completion()
@@ -288,8 +307,9 @@ enum BearyDraftStore {
     /// 草稿库已损坏（此时原文件被保留、未被覆盖），调用方须出红字/toast，
     /// 不得按成功处理。
     static func saveAsyncReporting(_ draft: BearyDraft, completion: @escaping (Bool) -> Void) {
+        let accountId = currentAccountId
         ioQueue.async {
-            let ok = save(draft)
+            let ok = save(draft, forAccount: accountId)
             DispatchQueue.main.async {
                 completion(ok)
             }
@@ -319,6 +339,15 @@ enum BearyDraftStore {
         guard let id = id else { return false }
         // 审计 A 批：登录/切号时跑一次旧图排除备份属性 sweep（幂等，见函数注释）。
         BearyDraftImageStore.sweepClearExcludedFromBackupIfNeeded()
+        // 审计三轮第 2 项（setAccount 协调）：已排队写任务在 ioQueue 内持 writeLock
+        // 做读改写；本函数的文件迁移（旧图合并 + 旧全局 JSON 迁移）持同一把锁执行，
+        // 不插队到同账号排队写任务之前。未改走 ioQueue.sync：setAccount 须同步返回
+        // Bool 供调用方决定迁移 toast，async 会破坏该语义；sync 则会让登录态回调
+        // （主线程）阻塞等排队写任务排空。捕获账号已使跨账号任务互不干扰，
+        // 本锁只补同账号同文件的竞态；mergeLegacyImageDir 每次切号重试旧图片目录
+        // 的语义不变（仍逐个移、重名跳过、非空保留旧目录待下次重试）。
+        writeLock.lock()
+        defer { writeLock.unlock() }
         // 2026-10-29 修：图片目录合并从 JSON 迁移条件里拆出来——每次切号都跑，旧目录存在就重试，
         // 不再因 JSON 已迁走而跳过（此前失败留下的旧图再无重试机会）。
         mergeLegacyImageDir()
@@ -361,7 +390,12 @@ enum BearyDraftStore {
     }
 
     private static func fileURL() -> URL? {
-        guard let accountId = currentAccountId else { return nil }
+        return fileURL(for: currentAccountId)
+    }
+
+    /// 捕获账号版路径：后台写任务专用，目的目录只由入队时捕获的账号决定。
+    private static func fileURL(for accountId: Int?) -> URL? {
+        guard let accountId = accountId else { return nil }
         guard let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first else { return nil }
         if !FileManager.default.fileExists(atPath: base.path) {
             try? FileManager.default.createDirectory(at: base, withIntermediateDirectories: true, attributes: nil)
@@ -408,17 +442,27 @@ enum BearyDraftStore {
     /// v3 文件存在却读不出/解不出时：原文件保留不动、另存一份备份、返回失败；
     /// 旧源存在却解不出时同样返回失败（v2 备份同理，v1 在 UserDefaults 内无文件可备）。
     static func loadAllResult() -> Result<[BearyDraft], LoadError> {
+        return loadAllResult(forAccount: currentAccountId)
+    }
+
+    /// 捕获账号版读库（后台写任务专用）：读路径与归一化一律用捕获账号，
+    /// 执行中不再重读 currentAccountId；迁移判定逻辑本身与读路径版一致
+    /// （v3 优先、无 v3 走旧源迁移、损坏保原文件并返回失败）。
+    /// 读路径 loadAll/loadAllResult() 保持现行语义（读当前账号），不受影响。
+    private static func loadAllResult(forAccount accountId: Int?) -> Result<[BearyDraft], LoadError> {
         // 账号隔离 1 号：未登录不读任何账号文件（也不触发 v2/v1 迁移，
-        // 迁移只在登录后的账号分桶里发生）。
-        guard currentAccountId != nil else {
+        // 迁移只在登录后的账号分桶里发生）。此处判的是入队时捕获的账号：
+        // 入队时未登录则写任务按失败处理（见 save/delete 捕获版），不因
+        // 执行时已登录而改写进新登录的账号。
+        guard accountId != nil else {
             lastLoadError = nil
             return .success([])
         }
-        if let url = fileURL(), FileManager.default.fileExists(atPath: url.path) {
+        if let url = fileURL(for: accountId), FileManager.default.fileExists(atPath: url.path) {
             if let data = try? Data(contentsOf: url),
                let drafts = try? JSONDecoder().decode([BearyDraft].self, from: data) {
                 lastLoadError = nil
-                return .success(sortedNormalized(drafts))
+                return .success(sortedNormalized(drafts, forAccount: accountId))
             }
             let backup = backupCorruptFile(at: url)
             NSLog("[BearyDraft] corrupt v3 store, original kept")
@@ -430,12 +474,12 @@ enum BearyDraftStore {
         if migrated.foundLegacy {
             if migrated.drafts.isEmpty {
                 removeLegacySources()
-            } else if saveAll(migrated.drafts) {
+            } else if saveAll(migrated.drafts, forAccount: accountId) {
                 removeLegacySources()
             }
             // 写盘失败：保留旧源，下次启动重试迁移，不丢数据。
             lastLoadError = nil
-            return .success(sortedNormalized(migrated.drafts))
+            return .success(sortedNormalized(migrated.drafts, forAccount: accountId))
         }
         if let v2url = legacyV2FileURL(), FileManager.default.fileExists(atPath: v2url.path) {
             let backup = backupCorruptFile(at: v2url)
@@ -457,6 +501,17 @@ enum BearyDraftStore {
     /// 调用方不得把该 [] 当成“无草稿”。
     static func loadAll() -> [BearyDraft] {
         switch loadAllResult() {
+        case .success(let drafts):
+            return drafts
+        case .failure:
+            return []
+        }
+    }
+
+    /// 捕获账号版整库读（编辑器直接 ioQueue 块专用）：与 loadAll() 同款失败返回 []，
+    /// 但读盘账号取入队时捕获值，执行中不再重读 currentAccountId。
+    static func loadAll(forAccount accountId: Int?) -> [BearyDraft] {
+        switch loadAllResult(forAccount: accountId) {
         case .success(let drafts):
             return drafts
         case .failure:
@@ -491,9 +546,15 @@ enum BearyDraftStore {
     /// 老调用方（忽略返回值、靠回读验证）无需改动即可编译。
     @discardableResult
     static func save(_ draft: BearyDraft) -> Bool {
+        return save(draft, forAccount: currentAccountId)
+    }
+
+    /// 捕获账号版增改（saveAsync 系专用）：读库、归一化、写盘全程用捕获账号。
+    @discardableResult
+    static func save(_ draft: BearyDraft, forAccount accountId: Int?) -> Bool {
         writeLock.lock()
         defer { writeLock.unlock() }
-        guard case .success(let all) = loadAllResult() else {
+        guard case .success(let all) = loadAllResult(forAccount: accountId) else {
             return false
         }
         var kept: [BearyDraft] = []
@@ -501,7 +562,7 @@ enum BearyDraftStore {
             kept.append(existing)
         }
         kept.append(draft)
-        return saveAll(kept)
+        return saveAll(kept, forAccount: accountId)
     }
 
     /// 只删一篇：其余篇不受影响；删到空时直接删 v3 文件，不留空数组文件。
@@ -511,9 +572,17 @@ enum BearyDraftStore {
     /// 即可编译，与 save(_:) 的 Bool 返回口径一致。
     @discardableResult
     static func delete(draftId: String) -> Bool {
+        return delete(draftId: draftId, forAccount: currentAccountId)
+    }
+
+    /// 捕获账号版删除（deleteAsync 系专用）：读库、删文件、写盘全程用捕获账号。
+    /// 失败语义不变：库损坏/写盘失败返回 false，reporting 变体原样回传，调用方
+    /// 按失败处理（卡片恢复 + toast），不静默丢数据。
+    @discardableResult
+    static func delete(draftId: String, forAccount accountId: Int?) -> Bool {
         writeLock.lock()
         defer { writeLock.unlock() }
-        guard case .success(let all) = loadAllResult() else {
+        guard case .success(let all) = loadAllResult(forAccount: accountId) else {
             return false
         }
         var kept: [BearyDraft] = []
@@ -521,7 +590,7 @@ enum BearyDraftStore {
             kept.append(draftValue)
         }
         if kept.isEmpty {
-            guard let url = fileURL() else { return false }
+            guard let url = fileURL(for: accountId) else { return false }
             if !FileManager.default.fileExists(atPath: url.path) {
                 return true
             }
@@ -532,7 +601,7 @@ enum BearyDraftStore {
                 return false
             }
         }
-        return saveAll(kept)
+        return saveAll(kept, forAccount: accountId)
     }
 
     /// 整库清空（删全部草稿文件）：日常丢弃与发布成功只用 delete(draftId:)，
@@ -547,9 +616,13 @@ enum BearyDraftStore {
     /// 草稿箱按此三元组识别并出“图片未保存”提示，不得直接丢弃，见 G6）；
     /// 同秒按 draftId 升序兜底。
     private static func sortedNormalized(_ drafts: [BearyDraft]) -> [BearyDraft] {
+        return sortedNormalized(drafts, forAccount: currentAccountId)
+    }
+
+    private static func sortedNormalized(_ drafts: [BearyDraft], forAccount accountId: Int?) -> [BearyDraft] {
         var out: [BearyDraft] = []
         for draftValue in drafts {
-            out.append(normalized(draftValue))
+            out.append(normalized(draftValue, forAccount: accountId))
         }
         out.sort(by: { first, second in
             if first.updatedAt != second.updatedAt {
@@ -561,11 +634,15 @@ enum BearyDraftStore {
     }
 
     private static func normalized(_ draft: BearyDraft) -> BearyDraft {
+        return normalized(draft, forAccount: currentAccountId)
+    }
+
+    private static func normalized(_ draft: BearyDraft, forAccount accountId: Int?) -> BearyDraft {
         var out = draft
         var kept: [BearyDraftImageItem] = []
         for item in draft.images {
             if let name = item.localFile {
-                if let url = BearyDraftImageStore.fileURL(for: name),
+                if let url = BearyDraftImageStore.fileURL(for: name, accountId: accountId),
                    FileManager.default.fileExists(atPath: url.path) {
                     kept.append(item)
                 } else if let key = item.serverKey {
@@ -588,7 +665,11 @@ enum BearyDraftStore {
     /// 供迁移判断是否可删旧源；save 的 Bool 返回即源于此（日常调用方也可忽略返回值、
     /// 靠回读验证，但失败时应优先用返回值出红字/toast）。
     private static func saveAll(_ drafts: [BearyDraft]) -> Bool {
-        guard let url = fileURL(), let data = try? JSONEncoder().encode(drafts) else { return false }
+        return saveAll(drafts, forAccount: currentAccountId)
+    }
+
+    private static func saveAll(_ drafts: [BearyDraft], forAccount accountId: Int?) -> Bool {
+        guard let url = fileURL(for: accountId), let data = try? JSONEncoder().encode(drafts) else { return false }
         let tmp = url.appendingPathExtension("tmp")
         do {
             try data.write(to: tmp, options: .atomic)

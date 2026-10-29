@@ -2646,8 +2646,10 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, U
     private func updateDraftPillCount() {
         if isEditMode { return }
         // 整库读走 BearyDraftStore.ioQueue（与写同一串行队列，读不到写一半的库）。
+        // 审计三轮第 2 项：入队前捕获账号，执行中不重读全局账号，排队期间切号不串桶。
+        let pillAccountId = BearyDraftStore.currentAccountId
         BearyDraftStore.ioQueue.async { [weak self] in
-            let count = BearyDraftStore.loadAll().count
+            let count = BearyDraftStore.loadAll(forAccount: pillAccountId).count
             DispatchQueue.main.async {
                 self?.setDraftPillCount(count)
             }
@@ -4082,20 +4084,25 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, U
         // 写 + 回读验证都在 BearyDraftStore.ioQueue 内完成（saveAsync 只管写、不回
         // 传验证结果，故这里直接用同一队列；与草稿箱的写删串行，不会旧读回写复活
         // 已删草稿；快照本身只是单篇 struct，不含整库旧状态）。
+        // 审计三轮第 2 项：入队前捕获账号，写与回读一律用捕获值，排队期间切号不串桶。
+        let saveAccountId = BearyDraftStore.currentAccountId
         BearyDraftStore.ioQueue.async { [weak self] in
-            BearyDraftStore.save(draft)
+            let writeSucceeded = BearyDraftStore.save(draft, forAccount: saveAccountId)
             // 保存级别跟随图片状态：有失败/未上传的图 = 1（文字已保存，图片未保存），否则 2；
-            // 落盘后回读不到本篇 = 0（失败红字）。save 现返回 Bool（G5），
-            // 但此处仍以回读为准（与写盘失败时不覆盖旧库的语义一致）；
-            // 多槽下必须按 draftId 查本篇，不能用“库非空”当成功信号。
-            var savedCurrentDraft = false
+            // 落盘失败 = 0（失败红字）。saveAll 是原子写，失败时旧库原样保留，
+            // 故已有草稿更新失败时回读仍命中旧版本——必须以 save 的 Bool 为准，
+            // 回读只作辅助确认（save 成功仍回读不到本篇同样判失败），不得以回读
+            // 命中掩盖写失败；多槽下必须按 draftId 查本篇，不能用“库非空”当成功信号。
+            var foundCurrentDraft = false
             var totalCount = 0
-            for savedDraft in BearyDraftStore.loadAll() {
+            for savedDraft in BearyDraftStore.loadAll(forAccount: saveAccountId) {
                 totalCount += 1
                 if savedDraft.draftId == draftIdValue {
-                    savedCurrentDraft = true
+                    foundCurrentDraft = true
                 }
             }
+            // 成功 = 写盘成功且回读确认本篇存在；任一不成立均为失败。
+            let savedCurrentDraft = writeSucceeded && foundCurrentDraft
             DispatchQueue.main.async {
                 guard let self = self else { return }
                 // 状态只在仍是本篇时写：落盘期间编辑器已切篇（如保留后新建）时，
