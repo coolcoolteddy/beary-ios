@@ -840,7 +840,7 @@ final class BearyAPI {
     /// 响应回权威 {published, published_at}，调用方以响应目标态为准同步本地模型。
     func setVisibility(id: String, published: Int, completion: @escaping (Result<VisibilityResponse, APIError>) -> Void) {
         let safe = id.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? id
-        request("/beary/api/entries/\\(safe)/visibility", method: "POST", jsonBody: ["published": published], completion: completion)
+        request("/beary/api/entries/\(safe)/visibility", method: "POST", jsonBody: ["published": published], completion: completion)
     }
 
     /// 举报：POST /beary/api/reports {entry_id, reason}（reason 为封禁五类之一）。
@@ -927,7 +927,7 @@ final class BearyAPI {
     /// 回收站恢复（带原可见性回包）：POST /beary/api/trash/:id/restore。
     func restoreTrashDetail(id: String, completion: @escaping (Result<RestoreResponse, APIError>) -> Void) {
         let safe = id.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? id
-        request("/beary/api/trash/\\(safe)/restore", method: "POST", completion: completion)
+        request("/beary/api/trash/\(safe)/restore", method: "POST", completion: completion)
     }
 
     // MARK: - 日记删除与回收站

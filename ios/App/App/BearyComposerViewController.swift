@@ -346,6 +346,16 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, U
     private let recipientToolButton = BearyHit44Button(type: .system)
     private let quoteToolButton = BearyHit44Button(type: .system)
     private let draftPillButton = UIButton(type: .system)
+    // 编辑器改版（2026-10-29）：心情/天气尖角弹出框（取代旧选择条）+ 框外收起层。
+    private let moodCallout = BearyCalloutPickerView()
+    private let weatherCallout = BearyCalloutPickerView()
+    private let calloutDismissView = BearyCalloutDismissView()
+    private enum CalloutKind { case mood, weather }
+    private var activeCallout: CalloutKind?
+    private var calloutTransitionGeneration = 0
+    private static let calloutTransitionDuration: TimeInterval = 0.20
+    private static let calloutTransitionOffset: CGFloat = 6
+    private static let calloutHeight: CGFloat = 78
     // C1：已选中项轻量 Chip 行（正文下方）：心情/天气/写给各一枚，点 chip 打开对应选择条。
     private let selectedChipsRow = UIStackView()
     /// 审计 P1-3：Chip 行首行（心情/天气/写给单行态）；写给换行时脱离本行、改作
@@ -451,6 +461,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, U
         buildImageRow()
         buildImageUndoBar()
         buildToolbarRow()
+        buildCallouts()
         buildWeatherRow()
         buildStatusRow()
         buildRecipientRow()
@@ -516,6 +527,12 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, U
         // 草稿 pill 宽度兜底（2026-10-29，同上）：每次布局后按当前标题重算一次宽度
         // 约束常量，约束若在某次布局中被打破也能在下次布局恢复；同值重设不触发重排。
         refreshDraftPillWidth()
+        // 编辑器改版（2026-10-29）：弹出框打开时，尖角跟随工具栏图标中心；
+        // 放宽门之前（键盘只动工具栏纵向时宽门会早退，但锚点仍需每轮重算；
+        // 仅改尖角图层路径与收起层穿透区，不触发布局环）。
+        if activeCallout != nil {
+            updateCalloutArrowPositions()
+        }
         // 审计 P1-3：宽变化（旋转/分屏/居中列切换）时重算 Chip 行换行；同宽不重算，
         // 移行本身触发布局也不会再进本分支，不成环。宽门限 0.5pt 与 sheet 高同款。
         if selectedChipsRow.bounds.width > 0,
@@ -930,6 +947,25 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, U
             v.translatesAutoresizingMaskIntoConstraints = false
             topBar.addSubview(v)
         }
+        // 编辑器改版（2026-10-29）：草稿 pill 从工具栏移到顶栏、发布钮左边；
+        // 样式与目标（didTapDraftBox：编辑态 toast 拦截、发布在途 toast 拦截）全搬过来，行为不变。
+        draftPillButton.setTitle("草稿", for: .normal)
+        // D-G6：网页草稿 pill 用 beary-diary（书本形），App 原 icon_draft（折角文档）换 icon_diary；
+        // 资产 icon_diary.imageset 已存在（个人页日记 tab 同款）。pill 图标网页为灰色，tint 保持灰不动。
+        draftPillButton.setImage(BearyIconImages.image(named: "icon_diary", pointSize: 16), for: .normal)
+        draftPillButton.titleLabel?.font = UIFont.systemFont(ofSize: 13)
+        draftPillButton.setTitleColor(BearyColors.ink, for: .normal)
+        draftPillButton.tintColor = BearyColors.gray
+        draftPillButton.titleEdgeInsets = UIEdgeInsets(top: 0, left: 6, bottom: 0, right: 0)
+        draftPillButton.contentEdgeInsets = UIEdgeInsets(top: 6, left: 12, bottom: 6, right: 12)
+        draftPillButton.layer.cornerRadius = 999
+        draftPillButton.layer.masksToBounds = true
+        draftPillButton.layer.borderWidth = 1.5
+        draftPillButton.layer.borderColor = BearyColors.line.cgColor
+        draftPillButton.addTarget(self, action: #selector(didTapDraftBox), for: .touchUpInside)
+        draftPillButton.bearyAddPressFeedback()
+        draftPillButton.translatesAutoresizingMaskIntoConstraints = false
+        topBar.addSubview(draftPillButton)
         NSLayoutConstraint.activate([
             cancelButton.leadingAnchor.constraint(equalTo: topBar.leadingAnchor, constant: 16),
             cancelButton.centerYAnchor.constraint(equalTo: topBar.centerYAnchor),
@@ -938,7 +974,9 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, U
             titleLabel.centerYAnchor.constraint(equalTo: topBar.centerYAnchor),
             // L10：标题左右不等式——左右各离钮 8pt，窄屏先截断标题不断言。
             titleLabel.leadingAnchor.constraint(greaterThanOrEqualTo: cancelButton.trailingAnchor, constant: 8),
-            titleLabel.trailingAnchor.constraint(lessThanOrEqualTo: publishButton.leadingAnchor, constant: -8),
+            titleLabel.trailingAnchor.constraint(lessThanOrEqualTo: draftPillButton.leadingAnchor, constant: -8),
+            draftPillButton.trailingAnchor.constraint(equalTo: publishButton.leadingAnchor, constant: -8),
+            draftPillButton.centerYAnchor.constraint(equalTo: topBar.centerYAnchor),
             publishButton.trailingAnchor.constraint(equalTo: topBar.trailingAnchor, constant: -16),
             publishButton.centerYAnchor.constraint(equalTo: topBar.centerYAnchor),
             publishButton.heightAnchor.constraint(equalToConstant: 44),
@@ -955,6 +993,16 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, U
         publishWidthConstraint = publishWidth
         refreshPublishButtonWidth()
         refreshPublishAppearance()
+        // 清单第 15 项：草稿 pill 显式宽度约束（随 pill 从工具栏搬到顶栏，口径不变；
+        // 初值按当前“草稿”标题算出，此后计数每次变化都经 setDraftPillCount 重算）。
+        let draftPillWidth = draftPillButton.widthAnchor.constraint(equalToConstant: 0)
+        draftPillWidth.isActive = true
+        draftPillWidthConstraint = draftPillWidth
+        refreshDraftPillWidth()
+        // 草稿 pill 抗压钉死（2026-10-29）：99 包真机上 pill 在工具栏右端完全不渲染，
+        // 静态排查已排除隐藏/移除/宽度为 0/溢出；剩余疑似布局引擎在某次布局中压没了它，
+        // 故把水平抗压提到 required，让标题先截断而不是 pill 被压没。
+        draftPillButton.setContentCompressionResistancePriority(.required, for: .horizontal)
     }
 
     /// 发布钮显式宽度（点赞钮同款修法）：UIButton 固有宽不含 titleEdgeInsets，
@@ -2049,6 +2097,10 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, U
             titleLabel.text = "选择引用"
             cancelButton.setTitle("返回", for: .normal)
             publishButton.isHidden = true
+            // 编辑器改版：引用面板打开时顶栏草稿 pill 随发布钮同藏（旧时工具栏整体藏，pill 在其中）；
+            // 弹出框若开着也一并收起，不让它浮在面板上。
+            draftPillButton.isHidden = true
+            hideCallout(animated: false)
             refreshQuoteTabs()
             // 录屏批 (e)：原顺序先 layout 再显示面板，转圈在 load 里起在面板布局
             // 落定之前，首帧会落在面板收起态位置（编辑器中央一闪）再跳到面板里；
@@ -2084,6 +2136,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, U
                 self.quoteSection.isHidden = false
                 self.cancelButton.setTitle("取消", for: .normal)
                 self.publishButton.isHidden = false
+                self.draftPillButton.isHidden = false
                 // 间隙修复的关闭恢复：把打开时置 0 的栈间距按 build 时原值还原（其余区同 build 原值）。
                 self.contentStack.setCustomSpacing(8, after: self.titleField)
                 self.contentStack.setCustomSpacing(12, after: self.textView)
@@ -2554,7 +2607,8 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, U
         imageScrollView.isHidden = imageItems.isEmpty
     }
 
-    // MARK: - 工具栏（C1：左 [图片][心情][天气][@][引用]、右 [字数圆环][草稿 pill]；
+    // MARK: - 工具栏（C1：左 [图片][心情][天气][@][引用]、右 [字数圆环]；
+    // 草稿 pill 已随编辑器改版（2026-10-29）移到顶栏发布钮左边，不再在此处；
     // 容器贴键盘上方、不在内容栈里，见 buildLayout；本函数只布容器内部，
     // 分隔线 + 工具行约束不变，工具行左右仍与内容栈边距同宽 16）
 
@@ -2592,21 +2646,6 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, U
         quoteToolButton.tintColor = BearyColors.ink
         quoteToolButton.addTarget(self, action: #selector(didTapQuoteTool), for: .touchUpInside)
         quoteToolButton.bearyAddPressFeedback()
-        draftPillButton.setTitle("草稿", for: .normal)
-        // D-G6：网页草稿 pill 用 beary-diary（书本形），App 原 icon_draft（折角文档）换 icon_diary；
-        // 资产 icon_diary.imageset 已存在（个人页日记 tab 同款）。pill 图标网页为灰色，tint 保持灰不动。
-        draftPillButton.setImage(BearyIconImages.image(named: "icon_diary", pointSize: 16), for: .normal)
-        draftPillButton.titleLabel?.font = UIFont.systemFont(ofSize: 13)
-        draftPillButton.setTitleColor(BearyColors.ink, for: .normal)
-        draftPillButton.tintColor = BearyColors.gray
-        draftPillButton.titleEdgeInsets = UIEdgeInsets(top: 0, left: 6, bottom: 0, right: 0)
-        draftPillButton.contentEdgeInsets = UIEdgeInsets(top: 6, left: 12, bottom: 6, right: 12)
-        draftPillButton.layer.cornerRadius = 999
-        draftPillButton.layer.masksToBounds = true
-        draftPillButton.layer.borderWidth = 1.5
-        draftPillButton.layer.borderColor = BearyColors.line.cgColor
-        draftPillButton.addTarget(self, action: #selector(didTapDraftBox), for: .touchUpInside)
-        draftPillButton.bearyAddPressFeedback()
         toolbarContainer.translatesAutoresizingMaskIntoConstraints = false
         toolbarSeparator.translatesAutoresizingMaskIntoConstraints = false
         toolRow.translatesAutoresizingMaskIntoConstraints = false
@@ -2615,7 +2654,6 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, U
             button.widthAnchor.constraint(equalToConstant: 24).isActive = true
             button.heightAnchor.constraint(equalToConstant: 24).isActive = true
         }
-        draftPillButton.translatesAutoresizingMaskIntoConstraints = false
         // 容器已由 buildLayout 加到 view 顶栏下方（固定），这里不再进内容栈。
         toolbarContainer.addSubview(toolbarSeparator)
         toolbarContainer.addSubview(toolRow)
@@ -2636,7 +2674,6 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, U
         charGroupStack.addArrangedSubview(charRingView)
         charGroupStack.addArrangedSubview(charCountLabel)
         toolRow.addArrangedSubview(charGroupStack)
-        toolRow.addArrangedSubview(draftPillButton)
         NSLayoutConstraint.activate([
             toolbarSeparator.topAnchor.constraint(equalTo: toolbarContainer.topAnchor),
             toolbarSeparator.leadingAnchor.constraint(equalTo: toolbarContainer.leadingAnchor),
@@ -2647,16 +2684,6 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, U
             toolRow.trailingAnchor.constraint(equalTo: toolbarContainer.trailingAnchor),
             toolRow.bottomAnchor.constraint(equalTo: toolbarContainer.bottomAnchor, constant: -6),
         ])
-        // 清单第 15 项：草稿 pill 显式宽度约束（初值按当前“草稿”标题算出，此后计数
-        // 每次变化都经 setDraftPillCount 重算，见该函数末尾）。
-        let draftPillWidth = draftPillButton.widthAnchor.constraint(equalToConstant: 0)
-        draftPillWidth.isActive = true
-        draftPillWidthConstraint = draftPillWidth
-        refreshDraftPillWidth()
-        // 草稿 pill 抗压钉死（2026-10-29）：99 包真机上 pill 在工具栏右端完全不渲染，
-        // 静态排查已排除隐藏/移除/宽度为 0/溢出；剩余疑似布局引擎在某次布局中压没了它，
-        // 故把水平抗压提到 required，让栈在任何溢出下都先压 spacer 而不是 pill。
-        draftPillButton.setContentCompressionResistancePriority(.required, for: .horizontal)
         // 编辑模式：无草稿流，但 pill 可见（DF-3：网页 openDraftBox 在 editingId 时
         // 直接 return，pill 可见但点开无动作；didTapDraftBox 编辑态已直接 return，
         // 故这里不再隐藏 pill）；引用钮保留（C6：编辑模式引用可改可删）。
@@ -2695,11 +2722,13 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, U
         refreshDraftPillWidth()
     }
 
-    /// 草稿 pill 显式宽度（点赞钮同款修法）：titleEdgeInsets.left=6 不进固有宽，
-    /// 工具行栈按固有宽给帧会把标题尾部裁掉（“草稿 · N”的数字最先遭殃）。宽度按
-    /// 实测字宽重算：左右 content 边距 + 图宽 + title 左边距 + 字宽；计数态标题
-    /// 是 attributed（数字段单独加粗），直接量 attributed 宽，不按单字号估算。
+    /// 草稿 pill 显式宽度（顶栏版）：旧工具栏下手算宽度曾把 pill 压成“...”
+    /// （只剩省略号、看似消失）；新位置取“按钮自测 fitting 宽”与
+    /// “手算全量宽（字宽 + 图标 + 全部边距）”两者的大值——无论哪种 UIKit 口径
+    /// 都足额给宽，不出省略号。“草稿”与“草稿 · N”两态都在计数变化与每次布局时重算。
+    /// 顶栏横向链里标题先截断（标题压缩优先级低于 pill 的 required），pill 永不被压。
     private func refreshDraftPillWidth() {
+        let fittingWidth = draftPillButton.sizeThatFits(CGSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)).width
         let titleWidth: CGFloat
         if let attributed = draftPillButton.attributedTitle(for: .normal) {
             titleWidth = ceil(attributed.size().width)
@@ -2708,11 +2737,14 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, U
             titleWidth = ceil((title as NSString).size(withAttributes: [NSAttributedString.Key.font: UIFont.systemFont(ofSize: 13)]).width)
         }
         let imageWidth = draftPillButton.image(for: .normal)?.size.width ?? 16
-        draftPillWidthConstraint?.constant = draftPillButton.contentEdgeInsets.left + imageWidth + draftPillButton.titleEdgeInsets.left + titleWidth + draftPillButton.titleEdgeInsets.right + draftPillButton.contentEdgeInsets.right
+        let manualWidth = draftPillButton.contentEdgeInsets.left + imageWidth + draftPillButton.titleEdgeInsets.left + titleWidth + draftPillButton.titleEdgeInsets.right + draftPillButton.contentEdgeInsets.right
+        draftPillWidthConstraint?.constant = ceil(max(fittingWidth, manualWidth))
     }
 
     /// C1：引用唯一入口（工具栏引用钮）开关 qp-mode 面板（C6：编辑模式也可改引用，不再早退）。
     @objc private func didTapQuoteTool() {
+        // 编辑器改版：弹出框打开时点其他工具钮，先收起框再走各自处理。
+        hideCallout(animated: false)
         // P1-14：冻结之外的第二道守卫（按钮禁用本已拦点按，防其他调用路径）。
         if isPublishing {
             showToast(message: isEditMode ? "保存中…" : "发布中…")
@@ -2738,6 +2770,9 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, U
     /// Chip 行点按：只打开对应条（不做收起切换，Chip 本身就是“已选”指示）。
     private func openToolStrip(_ strip: ToolStrip) {
         if quotePanelOpen { return }
+        // 编辑器改版：同一时刻只开一个选择器——开写给条时若弹出框开着，先收起框
+        //（旧时切条即关上一条，弹出框不走 activeToolStrip，故此处显式收）。
+        hideCallout(animated: false)
         activeToolStrip = strip
         refreshToolStrip()
     }
@@ -2756,17 +2791,15 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, U
     /// （首帧）直接置终值，不播动画。引用面板打开时的瞬藏走 setQuotePanelOpen
     /// 专属路径（面板盖住条带、无可见转场），此处不动它。
     private func refreshToolStrip() {
-        // 2026-10-29 第 27 项：心情条已脱离栈；补缺 P2-20：天气条亦已脱离栈（独立条贴工具栏顶）。
-        // 栈内只剩写给区：栈显隐只看写给条；天气条显隐由自身 isHidden 管（含引用面板打开时必藏）。
+        // 编辑器改版（2026-10-29）：心情/天气旧条已由尖角弹出框取代，旧条永久隐藏；
+        // 可见性分段底锚恒贴工具栏顶（心情/天气档不再激活）；栈内只剩写给区。
+        // 旧条视图与天气诊断 mark 行原样保留（诊断代码不动），仅不再由本函数显隐。
         let stackHidden = quotePanelOpen || activeToolStrip != .recipient
-        let moodHidden = quotePanelOpen || activeToolStrip != .mood
-        // 分段三档：心情条开时上移至心情条顶，天气条开时上移至天气条顶，其余回落工具栏顶。
-        let moodOpen = activeToolStrip == .mood && !quotePanelOpen
-        let weatherOpen = activeToolStrip == .weather && !quotePanelOpen
-        visibilityBarBottomToToolbarConstraint?.isActive = !moodOpen && !weatherOpen
-        visibilityBarBottomToMoodStripConstraint?.isActive = moodOpen
-        visibilityBarBottomToWeatherConstraint?.isActive = weatherOpen
-        let weatherHidden = !weatherOpen
+        let moodHidden = true
+        let weatherHidden = true
+        visibilityBarBottomToToolbarConstraint?.isActive = true
+        visibilityBarBottomToMoodStripConstraint?.isActive = false
+        visibilityBarBottomToWeatherConstraint?.isActive = false
         // iCity：编辑模式 @ 可新增——无 @ 时条内仍有“@ 谁”钮，不再整区隐藏；
         // 其余态按条开关显隐。
         recipientSection.isHidden = activeToolStrip != .recipient
@@ -2856,6 +2889,182 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, U
         // 的塌高由 completion 里的重算接管。
         updatePreferredContentSize()
         DiagFile.mark("weather-diag refreshToolStrip weatherHidden=\(weatherScrollView.isHidden) weatherFrame=\(weatherScrollView.frame) stackFrame=\(toolStripStack.frame)")
+    }
+
+    // MARK: - 编辑器改版（2026-10-29）：心情/天气尖角弹出框
+
+    /// 弹出框搭建：框体与框外收起层常驻 view（隐藏时 isHidden），约束一次激活；
+    /// 框左右与工具栏同宽（iPad 居中 608 列下自动跟随），框底贴工具栏顶 8pt 上方；
+    /// 框是覆盖层（不推可见性分段、不改 sheet 高），打开时短暂盖住分段行，点框外即收起。
+    private func buildCallouts() {
+        moodCallout.translatesAutoresizingMaskIntoConstraints = false
+        weatherCallout.translatesAutoresizingMaskIntoConstraints = false
+        calloutDismissView.translatesAutoresizingMaskIntoConstraints = false
+        moodCallout.isHidden = true
+        weatherCallout.isHidden = true
+        calloutDismissView.isHidden = true
+        calloutDismissView.onTapOutside = { [weak self] in self?.hideCallout(animated: true) }
+        moodCallout.configure(
+            options: moodOrder.map { key in
+                BearyCalloutPickerView.Option(key: key, accessibilityLabel: "心情：" + (BearyText.moodNames[key] ?? key))
+            },
+            onSelect: { [weak self] key in self?.didSelectMoodFromCallout(key) },
+            imageProvider: { [weak self] key, dark in self?.calloutMoodImage(for: key, dark: dark) }
+        )
+        // 预览 v1 口径：天气框只含 9 种天气（旧条首项“无”不进框，见 didSelectWeatherFromCallout 的说明）。
+        weatherCallout.configure(
+            options: weatherOrder.map { key in
+                BearyCalloutPickerView.Option(key: key, accessibilityLabel: "天气：" + (BearyText.weatherNames[key] ?? key))
+            },
+            onSelect: { [weak self] key in self?.didSelectWeatherFromCallout(key) },
+            imageProvider: { key, _ in BearyIconImages.image(named: "icon_wx_\(key)", pointSize: 40) }
+        )
+        // 收起层先加、框后加：框在收起层之上，框内点按不触发框外收起。
+        view.addSubview(calloutDismissView)
+        view.addSubview(moodCallout)
+        view.addSubview(weatherCallout)
+        NSLayoutConstraint.activate([
+            calloutDismissView.topAnchor.constraint(equalTo: view.topAnchor),
+            calloutDismissView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
+            calloutDismissView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            calloutDismissView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            moodCallout.leadingAnchor.constraint(equalTo: toolbarContainer.leadingAnchor),
+            moodCallout.trailingAnchor.constraint(equalTo: toolbarContainer.trailingAnchor),
+            moodCallout.bottomAnchor.constraint(equalTo: toolbarContainer.topAnchor, constant: -8),
+            moodCallout.heightAnchor.constraint(equalToConstant: Self.calloutHeight),
+            weatherCallout.leadingAnchor.constraint(equalTo: toolbarContainer.leadingAnchor),
+            weatherCallout.trailingAnchor.constraint(equalTo: toolbarContainer.trailingAnchor),
+            weatherCallout.bottomAnchor.constraint(equalTo: toolbarContainer.topAnchor, constant: -8),
+            weatherCallout.heightAnchor.constraint(equalToConstant: Self.calloutHeight),
+        ])
+    }
+
+    /// 弹出框心情图：官方 emote 静态 PNG 按 44pt 重绘（与已选 chip 的 16pt 同款做法）；
+    /// 深色走 _dark 资产，缺失时 BearyEmoteImages 按 C3 上报并返回 nil（不回退浅色版）。
+    private func calloutMoodImage(for key: String, dark: Bool) -> UIImage? {
+        guard let base = BearyEmoteImages.image(for: key, dark: dark) else { return nil }
+        let size = CGSize(width: 44, height: 44)
+        let format = UIGraphicsImageRendererFormat()
+        format.scale = UIScreen.main.scale
+        return UIGraphicsImageRenderer(size: size, format: format).image { _ in
+            base.draw(in: CGRect(origin: .zero, size: size))
+        }
+    }
+
+    /// 工具栏钮：再点已打开的框即收起，点另一框直接切换（与旧 setToolStrip 同口径）。
+    private func toggleCallout(_ kind: CalloutKind) {
+        if activeCallout == kind {
+            hideCallout(animated: true)
+        } else {
+            showCallout(kind)
+        }
+    }
+
+    /// Chip 行点按：只打开对应框（不做收起切换，Chip 本身就是“已选”指示；
+    /// 与旧 openToolStrip 同口径）。
+    private func showCallout(_ kind: CalloutKind) {
+        if quotePanelOpen { return }
+        if activeCallout == kind { return }
+        // 同一时刻只开一个选择器：写给条若开着，先关条再开框（旧时切条即关上一条）。
+        if activeToolStrip == .recipient {
+            activeToolStrip = nil
+            refreshToolStrip()
+        }
+        calloutTransitionGeneration += 1
+        activeCallout = kind
+        let target = kind == .mood ? moodCallout : weatherCallout
+        let other = kind == .mood ? weatherCallout : moodCallout
+        other.isHidden = true
+        other.alpha = 1
+        other.transform = .identity
+        calloutDismissView.isHidden = false
+        target.isHidden = false
+        view.layoutIfNeeded()
+        updateCalloutArrowPositions()
+        if UIAccessibility.isReduceMotionEnabled || view.window == nil {
+            target.alpha = 1
+            target.transform = .identity
+            return
+        }
+        target.alpha = 0
+        target.transform = CGAffineTransform(translationX: 0, y: Self.calloutTransitionOffset)
+        UIView.animate(
+            withDuration: Self.calloutTransitionDuration,
+            delay: 0,
+            options: [.beginFromCurrentState, .allowUserInteraction, .curveEaseOut],
+            animations: {
+                target.alpha = 1
+                target.transform = .identity
+            }
+        )
+    }
+
+    private func hideCallout(animated: Bool) {
+        guard let kind = activeCallout else { return }
+        activeCallout = nil
+        calloutTransitionGeneration += 1
+        let generation = calloutTransitionGeneration
+        let target = kind == .mood ? moodCallout : weatherCallout
+        if !animated || UIAccessibility.isReduceMotionEnabled || view.window == nil {
+            target.isHidden = true
+            target.alpha = 1
+            target.transform = .identity
+            calloutDismissView.isHidden = true
+            return
+        }
+        UIView.animate(
+            withDuration: Self.calloutTransitionDuration,
+            delay: 0,
+            options: [.beginFromCurrentState, .allowUserInteraction, .curveEaseOut],
+            animations: {
+                target.alpha = 0
+                target.transform = CGAffineTransform(translationX: 0, y: Self.calloutTransitionOffset)
+            },
+            completion: { [weak self] finished in
+                guard let self = self, finished, generation == self.calloutTransitionGeneration else { return }
+                target.isHidden = true
+                target.alpha = 1
+                target.transform = .identity
+                self.calloutDismissView.isHidden = true
+            }
+        )
+    }
+
+    /// 尖角跟随触发图标中心：图标中心转到框坐标系；收起层穿透区同步为工具栏帧
+    /// （工具栏按钮仍可点按，其余区域点按收起）。iPad 居中列下框与工具栏同宽同列，
+    /// 换算自动对齐，不另算居中偏移。
+    private func updateCalloutArrowPositions() {
+        guard let kind = activeCallout else { return }
+        let callout = kind == .mood ? moodCallout : weatherCallout
+        let anchor = kind == .mood ? moodToolButton : weatherToolButton
+        let center = anchor.convert(CGPoint(x: anchor.bounds.midX, y: anchor.bounds.midY), to: callout)
+        callout.arrowCenterX = center.x
+        calloutDismissView.passthroughRects = [toolbarContainer.convert(toolbarContainer.bounds, to: calloutDismissView)]
+    }
+
+    /// 弹出框点选心情：沿用旧条口径（再点已选项取消）；点选即收起。
+    private func didSelectMoodFromCallout(_ key: String) {
+        if selectedMood == key {
+            selectedMood = nil
+        } else {
+            selectedMood = key
+        }
+        refreshMoodButtons()
+        updateMoodPlayback()
+        scheduleDraftSave()
+        hideCallout(animated: true)
+    }
+
+    /// 弹出框点选天气：沿用旧条口径（点即选中、再点不取消）；点选即收起。
+    /// 注意：旧条首项“无”（清空）未进弹出框（预览 v1 只含 9 种天气），
+    /// 选定天气后暂无清除路径，待 Li 定夺是否在框内补“无”。
+    private func didSelectWeatherFromCallout(_ key: String) {
+        selectedWeather = key
+        refreshWeatherButtons()
+        updateWeatherPlayback()
+        refreshSelectedChips()
+        scheduleDraftSave()
+        hideCallout(animated: true)
     }
 
     /// 审计 16 项：心情 chip 图标——官方 emote 静态 PNG 按 16pt 重绘。
@@ -3072,27 +3281,29 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, U
     }
 
     @objc private func didTapMoodTool() {
-        setToolStrip(.mood)
+        toggleCallout(.mood)
     }
 
     @objc private func didTapWeatherTool() {
         DiagFile.mark("weather-diag didTapWeatherTool")
-        setToolStrip(.weather)
+        toggleCallout(.weather)
     }
 
     @objc private func didTapRecipientTool() {
         // A2：工具栏 @ 直连选人面板，跳过 @ 选择条（选择条仍由正文下方 @ chip
         // 打开，供已选态清除/重选；@ 提醒无按篇开关）。
         // 引用面板打开时工具栏本身已藏，此处不再走 setToolStrip 的面板守卫。
+        // 编辑器改版：弹出框打开时点其他工具钮，先收起框再走各自处理。
+        hideCallout(animated: false)
         didTapPickRecipient()
     }
 
     @objc private func didTapMoodChip() {
-        openToolStrip(.mood)
+        showCallout(.mood)
     }
 
     @objc private func didTapWeatherChip() {
-        openToolStrip(.weather)
+        showCallout(.weather)
     }
 
     @objc private func didTapRecipientChip() {
@@ -3902,6 +4113,8 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, U
     }
 
     @objc private func didTapAddImage() {
+        // 编辑器改版：弹出框打开时点其他工具钮，先收起框再走各自处理。
+        hideCallout(animated: false)
         // P2：9 图上限到达时不再完全静默，给 toast（不改按钮置灰口径）。
         if imageItems.count >= BearyComposerViewController.maxImages {
             showToast(message: "最多 9 张图片")
