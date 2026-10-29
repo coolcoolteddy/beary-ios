@@ -20,7 +20,14 @@ final class BearyCalloutDismissView: UIView {
         fatalError("init(coder:) has not been implemented")
     }
 
+    // hitTest 自定义必须先复刻系统默认门：isHidden / alpha /
+    // isUserInteractionEnabled / bounds 任一不满足即返回 nil，否则隐藏的收起层
+    // 也会拦截全屏触摸（102 真机事故：收起层建时即隐藏，但自定义 hitTest 未查
+    // isHidden，从 viewDidLoad 起就吃掉编辑器全部点按，而 tap 手势的 hideCallout
+    // 因 activeCallout 为 nil 直接早退，表面上什么都不发生；光标仍闪是因为第一
+    // 响应者与键盘不受触摸拦截影响）。穿透区语义不变：工具栏点返回 nil 落到下层钮。
     override func hitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? {
+        guard !isHidden, alpha > 0.01, isUserInteractionEnabled, self.point(inside: point, with: event) else { return nil }
         for rect in passthroughRects where rect.contains(point) {
             return nil
         }
