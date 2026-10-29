@@ -828,14 +828,21 @@ final class BearyRecipientPickerViewController: UIViewController, UITextFieldDel
             rowsStack.addArrangedSubview(row)
             rowButtons.append(row)
         }
-        // M8：搜索结果行淡入错峰（减动效跳过）；sheet 高度由 viewDidLayoutSubviews 的
-        // updateSheetHeight 跟进，键盘事件下的高度变化走 animateKeyboardLayout 的键盘曲线。
+        // M8：搜索结果行淡入错峰（减动效跳过；审计 P2-24：只播新 key 行——
+        // 同一选人会话内多次搜索，已播过的行不重播；错峰序号按本轮新行动）。
+        // sheet 高度由 viewDidLayoutSubviews 的 updateSheetHeight 跟进，键盘事件下的
+        // 高度变化走 animateKeyboardLayout 的键盘曲线。
         if UIAccessibility.isReduceMotionEnabled == false {
+            var animIndex = 0
             for (index, button) in rowButtons.enumerated() {
+                let key = index < rowUsers.count ? (rowUsers[index].id.map(String.init) ?? "row-\(index)") : "row-\(index)"
+                guard !animatedRowKeys.contains(key) else { continue }
+                animatedRowKeys.insert(key)
                 button.alpha = 0
-                UIView.animate(withDuration: 0.25, delay: Double(index) * 0.03, options: [], animations: {
+                UIView.animate(withDuration: 0.25, delay: Double(animIndex) * 0.03, options: [], animations: {
                     button.alpha = 1
                 }, completion: nil)
+                animIndex += 1
             }
         }
         // 行按钮与 rowUsers 按顺序对应（渲染时同步重建）；点行时按按钮身份取用户。
@@ -843,6 +850,9 @@ final class BearyRecipientPickerViewController: UIViewController, UITextFieldDel
 
     private var rowButtons: [UIButton] = []
     private var rowUsers: [SearchUser] = []
+    /// 审计 P2-24：@ 选人已播入场行的键集（搜索页 lastResultRowKeys 同口径）——
+    /// 同一选人会话内多次搜索只播新 key 行；选人页每次新建实例，键集随实例生灭。
+    private var animatedRowKeys: Set<String> = []
 
     @objc private func didTapRow(_ sender: UIButton) {
         var picked: SearchUser?

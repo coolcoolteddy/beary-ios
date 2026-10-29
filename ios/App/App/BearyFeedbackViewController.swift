@@ -778,6 +778,8 @@ final class BearyFeedbackViewController: UIViewController, UITextViewDelegate, P
         let lock = NSLock()
         var loaded: [Attachment?] = Array(repeating: nil, count: results.count)
         var failedCount = 0
+        /// 审计 P2-26：超限视频计数（单视频上限 50MB，见 movie 分支先查大小再读）。
+        var oversizedCount = 0
         for (index, result) in results.enumerated() {
             let provider = result.itemProvider
             group.enter()
@@ -798,7 +800,23 @@ final class BearyFeedbackViewController: UIViewController, UITextViewDelegate, P
             } else if provider.hasItemConformingToTypeIdentifier(UTType.movie.identifier) {
                 provider.loadFileRepresentation(forTypeIdentifier: UTType.movie.identifier) { url, _ in
                     defer { group.leave() }
-                    guard let urlValue = url, let data = try? Data(contentsOf: urlValue) else {
+                    guard let urlValue = url else {
+                        lock.lock()
+                        failedCount += 1
+                        lock.unlock()
+                        return
+                    }
+                    // 审计 P2-26：视频先查大小再读——超过 50MB 不读入内存（邮箱附件与
+                    // 内存双重保护），计失败并在汇总提示里单独说明超限个数。
+                    if let attrs = try? FileManager.default.attributesOfItem(atPath: urlValue.path),
+                       let size = attrs[.size] as? NSNumber, size.intValue > 50 * 1024 * 1024 {
+                        lock.lock()
+                        failedCount += 1
+                        oversizedCount += 1
+                        lock.unlock()
+                        return
+                    }
+                    guard let data = try? Data(contentsOf: urlValue) else {
                         lock.lock()
                         failedCount += 1
                         lock.unlock()
@@ -830,7 +848,10 @@ final class BearyFeedbackViewController: UIViewController, UITextViewDelegate, P
             self.attachments = loaded.compactMap { $0 }
             self.refreshAttachUI()
             if failedCount > 0 {
-                BearyToast.show(in: self.view, message: "有 \(failedCount) 个附件未能加载", aboveFAB: false)
+                let message = oversizedCount > 0
+                    ? "有 \(failedCount) 个附件未能加载，其中 \(oversizedCount) 个视频超过 50MB"
+                    : "有 \(failedCount) 个附件未能加载"
+                BearyToast.show(in: self.view, message: message, aboveFAB: false)
             }
         }
     }

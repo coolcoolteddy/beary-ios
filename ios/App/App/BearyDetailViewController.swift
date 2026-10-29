@@ -69,6 +69,10 @@ final class BearyDetailViewController: UIViewController {
     private let closeButton = UIButton(type: .custom)
     private let avatarButton = BearyHit44Button(type: .custom)
     private let avatarImageView = UIImageView()
+    /// 审计 P2-14：头像失败重试钮（广场同款，28pt 圆盘）。
+    private lazy var avatarRetryButton: BearyFeedRetryButton = {
+        bearyFeedRetryButton(target: self, action: #selector(detailImageRetryTapped(_:)))
+    }()
     private let nameButton = UIButton(type: .custom)
     private let pillContainer = UIView()
     private let pillLabel = UILabel()
@@ -76,6 +80,18 @@ final class BearyDetailViewController: UIViewController {
     private let visibilityButton = BearyHit44Button(type: .custom)
     private let moreButton = BearyHit44Button(type: .custom)
     private let bodyLabel = UILabel()
+    /// 审计 P2-12：详情补标题行（卡片同款 16.5 粗体、单行截断，空标题不占位）。
+    private let titleLabel: UILabel = {
+        let lb = UILabel()
+        lb.translatesAutoresizingMaskIntoConstraints = false
+        lb.font = BearyDynamicType.cardTitleFont()
+        lb.adjustsFontForContentSizeCategory = true
+        lb.textColor = BearyColors.ink
+        lb.numberOfLines = 1
+        lb.lineBreakMode = .byTruncatingTail
+        lb.isHidden = true
+        return lb
+    }()
     private let imagesStack = UIStackView()
     private let chipsStack = UIStackView()
     private let quoteView = BearyQuoteCardView(frame: .zero)
@@ -147,6 +163,34 @@ final class BearyDetailViewController: UIViewController {
         } else {
             renderAll()
         }
+        // 审计 P2-20：详情页监听拉黑/举报——页内命中时转占位（不得继续出全文）。
+        NotificationCenter.default.addObserver(self, selector: #selector(handleBlockedUserNotification(_:)), name: .bearyDidBlockUser, object: nil)
+        NotificationCenter.default.addObserver(self, selector: #selector(handleReportedEntryNotification(_:)), name: .bearyDidReportEntry, object: nil)
+    }
+
+    deinit {
+        NotificationCenter.default.removeObserver(self, name: .bearyDidBlockUser, object: nil)
+        NotificationCenter.default.removeObserver(self, name: .bearyDidReportEntry, object: nil)
+    }
+
+    /// 审计 P2-20：页内拉黑/举报后钉死的占位态——后台补齐回包不得把全文顶回来
+    /// （服务端单篇拉黑过滤为后端项，App 侧先以本地钉死兜底）。
+    private var locallyHiddenByModeration = false
+
+    @objc private func handleBlockedUserNotification(_ note: Notification) {
+        guard let userId = note.object as? Int, let authorId = entry.authorId, authorId == userId else { return }
+        flipToModerationPlaceholder()
+    }
+
+    @objc private func handleReportedEntryNotification(_ note: Notification) {
+        guard let entryId = note.object as? String, entryId == entry.id else { return }
+        flipToModerationPlaceholder()
+    }
+
+    private func flipToModerationPlaceholder() {
+        locallyHiddenByModeration = true
+        entry.placeholder = true
+        showPlaceholder()
     }
 
     override func viewDidAppear(_ animated: Bool) {
@@ -260,6 +304,14 @@ final class BearyDetailViewController: UIViewController {
         avatarImageView.backgroundColor = BearyColors.faint
         avatarButton.translatesAutoresizingMaskIntoConstraints = false
         avatarButton.addSubview(avatarImageView)
+        // 审计 P2-14：头像补广场同款失败重试钮（失败时亮在头像中央，点按重试）。
+        avatarButton.addSubview(avatarRetryButton)
+        NSLayoutConstraint.activate([
+            avatarRetryButton.centerXAnchor.constraint(equalTo: avatarButton.centerXAnchor),
+            avatarRetryButton.centerYAnchor.constraint(equalTo: avatarButton.centerYAnchor),
+            avatarRetryButton.widthAnchor.constraint(equalToConstant: 28),
+            avatarRetryButton.heightAnchor.constraint(equalToConstant: 28),
+        ])
         NSLayoutConstraint.activate([
             avatarImageView.topAnchor.constraint(equalTo: avatarButton.topAnchor),
             avatarImageView.leadingAnchor.constraint(equalTo: avatarButton.leadingAnchor),
@@ -387,6 +439,7 @@ final class BearyDetailViewController: UIViewController {
     }
 
     private func buildBody() {
+        stackView.addArrangedSubview(titleLabel)
         bodyLabel.translatesAutoresizingMaskIntoConstraints = false
         bodyLabel.numberOfLines = 0
         bodyLabel.lineBreakMode = .byCharWrapping
@@ -546,11 +599,16 @@ final class BearyDetailViewController: UIViewController {
             timeLabel.text = nil
         }
         if let avatarPath = entry.authorAvatar, let url = BearyImageURLs.avatarURL(avatarPath) {
-            avatarImageView.bearySetImage(url: url, downsampleToWidth: 80)
+            bearyFeedLoadImage(into: avatarImageView, url: url, retryButton: avatarRetryButton, downsampleToWidth: 80)
         }
         refreshVisibilityViews()
         refreshEphemeralViews()
         refreshAuthorActions()
+
+        // 审计 P2-12：标题行（卡片同款，空标题不占位）。
+        let trimmedTitle = (entry.title ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        titleLabel.text = trimmedTitle.isEmpty ? nil : trimmedTitle
+        titleLabel.isHidden = trimmedTitle.isEmpty
 
         // 正文 16pt（diaryBodyFont 即 scaled 16），行高 1.6（首页卡片口径）。
         let paragraph = NSMutableParagraphStyle()
@@ -577,6 +635,8 @@ final class BearyDetailViewController: UIViewController {
     /// 先行态；互动自己的成功回包再对齐）；私密占位切换（内容→占位）不受此限，
     /// 隐私优先。id 不符的回包直接忽略（防御）。
     func update(with fetched: Entry) {
+        // 审计 P2-20：页内已因拉黑/举报转占位时，后台补齐一律忽略，不得复活全文。
+        if locallyHiddenByModeration { return }
         guard fetched.id == entry.id else { return }
         let old = entry
         entry = fetched
@@ -595,8 +655,13 @@ final class BearyDetailViewController: UIViewController {
                 timeLabel.text = nil
             }
             if let avatarPath = fetched.authorAvatar, let url = BearyImageURLs.avatarURL(avatarPath) {
-                avatarImageView.bearySetImage(url: url, downsampleToWidth: 80)
+                bearyFeedLoadImage(into: avatarImageView, url: url, retryButton: avatarRetryButton, downsampleToWidth: 80)
             }
+        }
+        if old.title != fetched.title {
+            let trimmedTitle = (fetched.title ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+            titleLabel.text = trimmedTitle.isEmpty ? nil : trimmedTitle
+            titleLabel.isHidden = trimmedTitle.isEmpty
         }
         if old.content != fetched.content {
             let paragraph = NSMutableParagraphStyle()
@@ -704,8 +769,17 @@ final class BearyDetailViewController: UIViewController {
                 ratio = CGFloat(d[1]) / CGFloat(d[0])
             }
             imageView.heightAnchor.constraint(equalTo: imageView.widthAnchor, multiplier: ratio).isActive = true
+            // 审计 P2-14：正文图补广场同款失败重试钮（居中 28pt 圆盘，失败时亮）。
+            let retry = bearyFeedRetryButton(target: self, action: #selector(detailImageRetryTapped(_:)))
+            imageView.addSubview(retry)
+            NSLayoutConstraint.activate([
+                retry.centerXAnchor.constraint(equalTo: imageView.centerXAnchor),
+                retry.centerYAnchor.constraint(equalTo: imageView.centerYAnchor),
+                retry.widthAnchor.constraint(equalToConstant: 28),
+                retry.heightAnchor.constraint(equalToConstant: 28),
+            ])
             if let url = BearyImageURLs.imageURL(key: key, thumb: false) {
-                imageView.bearySetImage(url: url, downsampleToWidth: 1200)
+                bearyFeedLoadImage(into: imageView, url: url, retryButton: retry, downsampleToWidth: 1200)
             }
             imagesStack.addArrangedSubview(imageView)
         }
@@ -1121,7 +1195,12 @@ final class BearyDetailViewController: UIViewController {
 
     @objc private func likeTapped() {
         guard let entryId = entry.id, !entryId.isEmpty else { return }
-        if !BearyEphemeral.isEffectivelyPublic(entry) { return }
+        // 审计 P2-11：非公开时不再静默 return——拒绝动效＋“公开后才能互动”。
+        if !BearyEphemeral.isEffectivelyPublic(entry) {
+            playDenyShake(on: likeButton)
+            BearyToast.show(in: view, message: "公开后才能互动", aboveFAB: false)
+            return
+        }
         if !SessionManager.shared.isLoggedIn {
             onRequireLogin?()
             return
@@ -1178,7 +1257,12 @@ final class BearyDetailViewController: UIViewController {
 
     @objc private func bookmarkTapped() {
         guard let entryId = entry.id, !entryId.isEmpty else { return }
-        if !BearyEphemeral.isEffectivelyPublic(entry) { return }
+        // 审计 P2-11：非公开时不再静默 return——拒绝动效＋“公开后才能互动”。
+        if !BearyEphemeral.isEffectivelyPublic(entry) {
+            playDenyShake(on: bookmarkButton)
+            BearyToast.show(in: view, message: "公开后才能互动", aboveFAB: false)
+            return
+        }
         if !SessionManager.shared.isLoggedIn {
             onRequireLogin?()
             return
@@ -1242,6 +1326,11 @@ final class BearyDetailViewController: UIViewController {
         let index = sender.tag
         guard index >= 0, index < chipKeys.count else { return }
         chooseEmote(key: chipKeys[index])
+    }
+
+    /// 审计 P2-14：图片重试（广场同款 bearyFeedPerformRetry）。
+    @objc private func detailImageRetryTapped(_ sender: BearyFeedRetryButton) {
+        bearyFeedPerformRetry(sender)
     }
 
     @objc private func imageTapped(_ sender: UITapGestureRecognizer) {

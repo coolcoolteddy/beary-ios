@@ -193,6 +193,36 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         buildViews()
         buildConstraints()
         showInitialState()
+        // 审计 P2-20：搜索页监听拉黑/举报即时清行并清 quoteCache。
+        NotificationCenter.default.addObserver(self, selector: #selector(handleBlockedUserNotification(_:)), name: .bearyDidBlockUser, object: nil)
+        NotificationCenter.default.addObserver(self, selector: #selector(handleReportedEntryNotification(_:)), name: .bearyDidReportEntry, object: nil)
+    }
+
+    /// 审计 P2-20：拉黑作者——用户行与该作者全部日记行一并清掉，引用缓存同清。
+    @objc private func handleBlockedUserNotification(_ note: Notification) {
+        guard let userId = note.object as? Int, var data = lastRenderedData, let query = lastRenderedQuery, showingResults else { return }
+        var removedIds: [String] = []
+        for list in [data.entries, data.mine] {
+            for e in list ?? [] where e.authorId == userId {
+                if let id = e.id { removedIds.append(id) }
+            }
+        }
+        data.users?.removeAll { $0.id == userId }
+        data.entries?.removeAll { $0.authorId == userId }
+        data.mine?.removeAll { $0.authorId == userId }
+        lastRenderedData = data
+        for id in removedIds { BearyDiaryCardCell.quoteCache.removeValue(forKey: id) }
+        renderResults(data: data, query: query)
+    }
+
+    /// 审计 P2-20：举报日记——公开组与我的组里该篇一并清掉，引用缓存同清。
+    @objc private func handleReportedEntryNotification(_ note: Notification) {
+        guard let entryId = note.object as? String, !entryId.isEmpty, var data = lastRenderedData, let query = lastRenderedQuery, showingResults else { return }
+        data.entries?.removeAll { $0.id == entryId }
+        data.mine?.removeAll { $0.id == entryId }
+        lastRenderedData = data
+        BearyDiaryCardCell.quoteCache.removeValue(forKey: entryId)
+        renderResults(data: data, query: query)
     }
 
     /// 顶栏透度批（容器调用，见 SceneDelegate.applyHeaderTopInsets）：主滚动视图即 scrollView。
@@ -287,6 +317,8 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
 
     deinit {
         searchTimer?.invalidate()
+        NotificationCenter.default.removeObserver(self, name: .bearyDidBlockUser, object: nil)
+        NotificationCenter.default.removeObserver(self, name: .bearyDidReportEntry, object: nil)
     }
 
     override func traitCollectionDidChange(_ previousTraitCollection: UITraitCollection?) {
@@ -1084,7 +1116,14 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         setSearchFooter(loading: false, failed: false)
     }
 
+    /// 审计 P2-20：最近一次成功渲染的原始结果（供拉黑/举报广播过滤后重渲；重渲走
+    /// 同 query 的 lastResultRowKeys，行入场不重播）。
+    private var lastRenderedData: SearchResult?
+    private var lastRenderedQuery: String?
+
     private func renderResults(data: SearchResult, query: String) {
+        lastRenderedData = data
+        lastRenderedQuery = query
         // 我的组只取未公开篇（is_public != true，与网页 !e.is_public 同语义）。
         var mineEntries: [Entry] = []
         if let mine = data.mine {

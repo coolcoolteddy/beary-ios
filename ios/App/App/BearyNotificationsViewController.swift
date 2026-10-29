@@ -136,7 +136,8 @@ final class BearyNotificationsViewController: UIViewController {
         let hasMore: Bool
     }
 
-    private static var cachedPage: CachedNotificationPage?
+    /// 审计 P2-20：通知缓存按账号分键——旧 static 单槽切号后会把旧账号消息秒显给新号。
+    private static var cachedPages: [Int: CachedNotificationPage] = [:]
 
     private var items: [NotificationItem] = []
     private var displayRows: [NotificationDisplayRow] = []
@@ -473,9 +474,12 @@ final class BearyNotificationsViewController: UIViewController {
             name: UIApplication.willEnterForegroundNotification,
             object: nil
         )
+        // 审计 P2-20：通知页监听拉黑/举报即时清行（服务端补过滤为可选后端，App 侧先行）。
+        NotificationCenter.default.addObserver(self, selector: #selector(handleBlockedUserNotification(_:)), name: .bearyDidBlockUser, object: nil)
+        NotificationCenter.default.addObserver(self, selector: #selector(handleReportedEntryNotification(_:)), name: .bearyDidReportEntry, object: nil)
         // 缓存秒显（网页 openNotifs ntItemsCache 口径）：已打开过先原样显旧列表，
         // 后台 loadFirstPage 刷新、变了才重绘；首次打开才走转圈。
-        if let cached = Self.cachedPage {
+        if let uid = SessionManager.shared.currentUser?.id, let cached = Self.cachedPages[uid] {
             items = cached.items
             unreadTotal = cached.unread
             sysUnreadTotal = cached.sysUnread
@@ -577,15 +581,17 @@ final class BearyNotificationsViewController: UIViewController {
         if !hasSuccessfulLoad {
             return
         }
-        Self.cachedPage = CachedNotificationPage(
-            items: items,
-            unread: unreadTotal,
-            sysUnread: sysUnreadTotal,
-            total: totalCount,
-            isSysExpanded: isSysExpanded,
-            isActExpanded: isActExpanded,
-            hasMore: hasMore
-        )
+        if let uid = SessionManager.shared.currentUser?.id {
+            Self.cachedPages[uid] = CachedNotificationPage(
+                items: items,
+                unread: unreadTotal,
+                sysUnread: sysUnreadTotal,
+                total: totalCount,
+                isSysExpanded: isSysExpanded,
+                isActExpanded: isActExpanded,
+                hasMore: hasMore
+            )
+        }
     }
 
     override func traitCollectionDidChange(_ previousTraitCollection: UITraitCollection?) {
@@ -675,7 +681,7 @@ final class BearyNotificationsViewController: UIViewController {
                     // 门控点：轻量刷新本身绝不写快照；只有这里比对，变了才整页重拉。
                     // 未成功整页加载过（快照 nil）不触发，首拉/重试仍走原有路径；
                     // 整页加载中或自定义下拉刷新中不叠加第二路整页请求。
-                    let lightVersion = list.version ?? list.messageVersion
+                    let lightVersion = list.msgVersion ?? list.version ?? list.messageVersion
                     let lightLatestId = list.items?.first?.id
                     if strongSelf.hasSuccessfulLoad && !strongSelf.isLoadingFirstPage && !strongSelf.isCustomPullRefreshing && strongSelf.hasMessageChangedSinceFullLoad(version: lightVersion, latestId: lightLatestId) {
                         strongSelf.loadFirstPage()
@@ -685,6 +691,31 @@ final class BearyNotificationsViewController: UIViewController {
                 }
             }
         }
+    }
+
+    /// 审计 P2-20：拉黑/举报广播到后即时清行（未读数按被清的未读行扣减并同步铃铛角标）。
+    @objc private func handleBlockedUserNotification(_ note: Notification) {
+        guard let userId = note.object as? Int else { return }
+        removeNotificationRows(where: { $0.actorId == userId })
+    }
+
+    @objc private func handleReportedEntryNotification(_ note: Notification) {
+        guard let entryId = note.object as? String, !entryId.isEmpty else { return }
+        removeNotificationRows(where: { $0.entryId == entryId })
+    }
+
+    private func removeNotificationRows(where matches: (NotificationItem) -> Bool) {
+        let removed = items.filter(matches)
+        guard !removed.isEmpty else { return }
+        items.removeAll(where: matches)
+        let removedUnread = removed.filter { $0.read != true }.count
+        if removedUnread > 0 {
+            unreadTotal = max(0, unreadTotal - removedUnread)
+            publishUnread(unreadTotal)
+        }
+        rebuildDisplayRows()
+        tableView.reloadData()
+        saveNotificationCache()
     }
 
     /// 写门控快照：只在整页成功加载与本页标已读写回处调用（见各调用点注释）。
@@ -856,7 +887,7 @@ final class BearyNotificationsViewController: UIViewController {
                     // 整页成功加载：门控快照与本次未读数同值，之后轻量比对以此为准；
                     // D3-App：同时落版本号（响应未带时为 nil，旧快照版本号保留）
                     // 与最新消息 ID（recordFullLoadUnread 内从 items 首条取）。
-                    strongSelf.recordFullLoadUnread(version: list.version ?? list.messageVersion)
+                    strongSelf.recordFullLoadUnread(version: list.msgVersion ?? list.version ?? list.messageVersion)
                     // P1-22：整页重载前先灭卡片动画（见 cancelCardAnimation），
                     // 否则收起 completion 会按旧下标删行。
                     strongSelf.cancelCardAnimation()
@@ -883,7 +914,7 @@ final class BearyNotificationsViewController: UIViewController {
                         // 退出后重进本页仍能看到旧账号消息。清列表后门控快照与
                         // 成功态一并复位（见 clearItemsAfterUnauthorized），否则
                         // 旧快照会挡住新账号的首拉（轻量比对恒等于旧值、门不开）。
-                        Self.cachedPage = nil
+                        Self.cachedPages.removeAll()
                         if !strongSelf.items.isEmpty {
                             strongSelf.clearItemsAfterUnauthorized()
                             strongSelf.firstLoadFailed = true

@@ -562,6 +562,18 @@ class BearyFeedViewController: UIViewController {
         }
     }
 
+    /// 审计 P2-13：失败行重试不再无条件重拉首页——已有页时按末条游标续拉
+    /// 下一页（保住已加载的页与滚动位置），首拉失败（空列表）时才重拉首页。
+    private func retryPlazaAfterError() {
+        guard !plazaLoading else { return }
+        if plazaRaw.isEmpty {
+            loadPlazaFirstPage()
+        } else {
+            loadPlazaNextPage()
+        }
+        tableView.reloadData()
+    }
+
     private func loadPlazaNextPage() {
         if plazaLoading { return }
         let entries = plazaEntries()
@@ -1238,11 +1250,7 @@ extension BearyFeedViewController: UITableViewDataSource, UITableViewDelegate {
             return feedCell(for: tableView, entry: entries[indexPath.row], indexPath: indexPath)
         }
         return errorCell(for: tableView) { [weak self] in
-            guard let strongSelf = self else { return }
-            if !strongSelf.plazaLoading {
-                strongSelf.loadPlazaFirstPage()
-                strongSelf.tableView.reloadData()
-            }
+            self?.retryPlazaAfterError()
         }
     }
 
@@ -1256,8 +1264,7 @@ extension BearyFeedViewController: UITableViewDataSource, UITableViewDelegate {
             return
         }
         if plazaError && !plazaLoading {
-            loadPlazaFirstPage()
-            tableView.reloadData()
+            retryPlazaAfterError()
         }
     }
 

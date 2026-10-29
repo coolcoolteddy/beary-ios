@@ -2266,13 +2266,24 @@ class BearyProfileViewController: UIViewController {
                     cardCell.playWeatherLottie()
                 }
                 if UIAccessibility.isReduceMotionEnabled { return }
-                cell.contentView.backgroundColor = BearyColors.faint
+                // 审计 P2-18：定位高亮改 opacity 口径——背景色动画违背只走 transform/opacity；
+                // faint 底 overlay 淡出（alpha 1→0），动画结束自移除；复用时 overlay 随
+                // 动画结束自动消失，不污染新行（旧 backgroundColor 写法复用后会残留）。
+                let flash = UIView()
+                flash.backgroundColor = BearyColors.faint
+                flash.translatesAutoresizingMaskIntoConstraints = false
+                flash.isUserInteractionEnabled = false
+                cell.contentView.addSubview(flash)
+                NSLayoutConstraint.activate([
+                    flash.topAnchor.constraint(equalTo: cell.contentView.topAnchor),
+                    flash.leadingAnchor.constraint(equalTo: cell.contentView.leadingAnchor),
+                    flash.trailingAnchor.constraint(equalTo: cell.contentView.trailingAnchor),
+                    flash.bottomAnchor.constraint(equalTo: cell.contentView.bottomAnchor),
+                ])
                 UIView.animate(withDuration: 0.6, delay: 0.5, options: [], animations: {
-                    cell.contentView.backgroundColor = .clear
+                    flash.alpha = 0
                 }, completion: { _ in
-                    if row < self.diaryEntries.count, self.diaryEntries[row].id == entryId {
-                        cell.contentView.backgroundColor = .clear
-                    }
+                    flash.removeFromSuperview()
                 })
             }
         }
@@ -2802,6 +2813,12 @@ class BearyProfileViewController: UIViewController {
     private func handleCellLike(entry: Entry) {
         guard let entryId = entry.id, !entryId.isEmpty else { return }
         guard requireLoginForCellAction() else { return }
+        // 审计 P2-23：个人页点赞补有效态门控（卡片 profile 分支直通控制器，控制器是唯一门控位）。
+        guard BearyEphemeral.isEffectivelyPublic(entry) else {
+            syncVisibleCell(entry: entry)?.playLikeDenyShake()
+            BearyToast.show(in: view, message: "公开后才能互动", aboveFAB: false)
+            return
+        }
         guard !likeBusyIds.contains(entryId) else { return }
         likeBusyIds.insert(entryId)
         // 跟手批：不再立即 reload——立即 reload 会换掉刚播按下预览的 cell，预览当场消失；
@@ -2979,6 +2996,12 @@ class BearyProfileViewController: UIViewController {
     private func handleCellBookmark(entry: Entry) {
         guard let entryId = entry.id, !entryId.isEmpty else { return }
         guard requireLoginForCellAction() else { return }
+        // 审计 P2-23：个人页收藏补有效态门控（与点赞同理，控制器是唯一门控位）。
+        guard BearyEphemeral.isEffectivelyPublic(entry) else {
+            syncVisibleCell(entry: entry)?.playBookmarkDenyShake()
+            BearyToast.show(in: view, message: "公开后才能互动", aboveFAB: false)
+            return
+        }
         guard !bookmarkBusyIds.contains(entryId) else { return }
         bookmarkBusyIds.insert(entryId)
         // 跟手批：先行翻转 + 就地同步（图标切换不等服务端，Feed 同款口径）；

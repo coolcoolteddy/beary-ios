@@ -877,6 +877,8 @@ extension BearyLoginViewController: UITextViewDelegate {
         }
         let vc = BearyLegalTextViewController(pageTitle: title, pageText: text)
         vc.modalPresentationStyle = .fullScreen
+        // 审计 P2-16：全屏 modal 补 fadeRise（与设置页法律文本页同款）。
+        vc.transitioningDelegate = SceneDelegate.chrome?.fadeRiseTransitionDelegate
         present(vc, animated: BearyMotion.animated(true))
         return false
     }

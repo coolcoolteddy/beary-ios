@@ -161,8 +161,15 @@ final class SessionManager {
     /// 显式退出：服务端会话已清后调（登出接口成功后），清本地用户态并通知界面。
     /// 同步递增 meSeq：在途旧 /me 成功回包到达时 seq 已变、被守卫丢弃，
     /// 不得把旧用户写回（登录/切号路径本就靠 refreshMe 调用递增，不动）。
+    /// 审计 P2-22：退出/注销时清该账号服务端派生落盘（日记缓存、回收站缓存、
+    /// 图片缓存）；草稿桶刻意保留——草稿是用户未发布的本地作品，退出即删
+    /// 属丢数据，且草稿按账号分桶、换号不可见，留存情况在设置页账号操作卡下明示。
     func signOutLocally() {
         purgeImageCacheForCurrentAccount()
+        if let id = currentUser?.id {
+            BearyEntrySyncStore.purgeAccount(accountId: id)
+            BearyTrashSyncStore.purgeAccount(accountId: id)
+        }
         sessionGeneration += 1
         meSeq += 1
         api.bumpAuthEpoch()

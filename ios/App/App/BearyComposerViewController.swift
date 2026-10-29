@@ -1954,6 +1954,8 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, U
         }
         quotePanelOpen = open
         if open {
+            // 审计 P2-24：面板新开时入场键集清零（本轮打开内换 tab 不重播，关闭重开再播）。
+            quotePanelAnimatedRowKeys.removeAll()
             quotePanelSavedScrollOffset = scrollView.contentOffset
             quotePanelSavedScrollValid = true
             view.endEditing(true)
@@ -2412,13 +2414,19 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, U
             quotePanelRowEntries.append(entry)
             quotePanelRowButtons.append(rowButton)
         }
-        // M6：行入场错峰淡入（减动效跳过；换 tab 重建时同样只播新行）。
+        // M6：行入场错峰淡入（减动效跳过；审计 P2-24：只播新 key 行——换 tab
+        // 重建时已播过的行不重播，错峰序号按本轮新行动，不按绝对行号）。
         if UIAccessibility.isReduceMotionEnabled == false {
+            var animIndex = 0
             for (index, button) in quotePanelRowButtons.enumerated() {
+                let key = index < quotePanelRowEntries.count ? (quotePanelRowEntries[index].id ?? "row-\(index)") : "row-\(index)"
+                guard !quotePanelAnimatedRowKeys.contains(key) else { continue }
+                quotePanelAnimatedRowKeys.insert(key)
                 button.alpha = 0
-                UIView.animate(withDuration: 0.25, delay: Double(index) * 0.03, options: [], animations: {
+                UIView.animate(withDuration: 0.25, delay: Double(animIndex) * 0.03, options: [], animations: {
                     button.alpha = 1
                 }, completion: nil)
+                animIndex += 1
             }
         }
         updatePreferredContentSize()
@@ -2427,6 +2435,9 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, U
     /// 面板行与日记的并行映射（行按钮按顺序与 entries 对应，渲染时同步重建）。
     private var quotePanelRowEntries: [Entry] = []
     private var quotePanelRowButtons: [UIButton] = []
+    /// 审计 P2-24：引用面板已播入场行的键集（搜索页 lastResultRowKeys 同口径）——
+    /// 换 tab 重建时只播新 key 行，已播行不重播；面板每次打开时清空（见 setQuotePanelOpen）。
+    private var quotePanelAnimatedRowKeys: Set<String> = []
 
     @objc private func didTapQuotePanelRow(_ sender: UIButton) {
         var picked: Entry?

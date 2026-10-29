@@ -229,7 +229,9 @@ class BearyEntryImageViewerViewController: UIViewController, UIGestureRecognizer
         loadingKey = key
         isFailed = false
         retryLabel.isHidden = true
-        imageView.image = nil
+        // 审计 P2-25：切图/重试时不再先置 nil 回落黑屏——旧图保留到新图到达
+        // （首张加载时 imageView 本就为空，无变化；失败时旧图仍在、重试文案在上）。
+        // imageView.image = nil（旧写法，已删）
         // E-G3：网页灯箱建全部 slide 并逐张 decode——本页单图轨道，至少预取相邻两张进
         // 图片缓存（切图时不再等网络，空白只剩解码一帧）；翻页同样走 loadCurrent，预取随之跟进。
         prefetchAdjacent()
@@ -342,6 +344,10 @@ class BearyEntryImageViewerViewController: UIViewController, UIGestureRecognizer
         // 失败图点按重试，不关闭（网页 img-err 口径）；关闭钮点按由按钮自身处理。
         if isFailed == true {
             loadCurrent()
+            return
+        }
+        // 审计 P2-25：放大后单点不关闭（scale > 1 时只做缩放/拖动，关闭走关闭钮或缩回后点按）。
+        if scale > 1 {
             return
         }
         let point = sender.location(in: view)

@@ -968,11 +968,23 @@ final class BearySettingsViewController: UIViewController {
         }
         group.card.translatesAutoresizingMaskIntoConstraints = false
         accountActionWrap.addSubview(group.card)
+        // 审计 P2-22：退出后本机残留明示——日记/回收站/图片缓存随退出清除，
+        // 未发布草稿仍保存在本设备（按账号分桶，换号不可见），登录同一账号可继续编辑。
+        let logoutFootnote = UILabel()
+        logoutFootnote.translatesAutoresizingMaskIntoConstraints = false
+        logoutFootnote.font = UIFont.systemFont(ofSize: 13)
+        logoutFootnote.textColor = BearyColors.gray
+        logoutFootnote.numberOfLines = 0
+        logoutFootnote.text = "退出登录后，已同步的日记与回收站缓存会从本设备清除；未发布的草稿仍保存在本设备，登录同一账号后可继续编辑。"
+        accountActionWrap.addSubview(logoutFootnote)
         NSLayoutConstraint.activate([
             group.card.topAnchor.constraint(equalTo: accountActionWrap.topAnchor),
             group.card.leadingAnchor.constraint(equalTo: accountActionWrap.leadingAnchor),
             group.card.trailingAnchor.constraint(equalTo: accountActionWrap.trailingAnchor),
-            group.card.bottomAnchor.constraint(equalTo: accountActionWrap.bottomAnchor),
+            logoutFootnote.topAnchor.constraint(equalTo: group.card.bottomAnchor, constant: 8),
+            logoutFootnote.leadingAnchor.constraint(equalTo: accountActionWrap.leadingAnchor, constant: 16),
+            logoutFootnote.trailingAnchor.constraint(equalTo: accountActionWrap.trailingAnchor, constant: -16),
+            logoutFootnote.bottomAnchor.constraint(equalTo: accountActionWrap.bottomAnchor),
         ])
     }
 
@@ -1048,6 +1060,8 @@ final class BearySettingsViewController: UIViewController {
         }
         let editVC = BearyEditProfileViewController(displayName: user.displayName, handle: user.handle, avatarUrl: user.avatar, coverUrl: coverUrl)
         editVC.modalPresentationStyle = .fullScreen
+        // 审计 P2-16：全屏 modal 补 fadeRise。
+        editVC.transitioningDelegate = SceneDelegate.chrome?.fadeRiseTransitionDelegate
         editVC.onSaved = { [weak self, weak editVC] in
             editVC?.dismiss(animated: BearyMotion.animated(true)) {
                 self?.loadAll()
@@ -1900,6 +1914,8 @@ final class BearySettingsViewController: UIViewController {
     @objc private func openBlockedUsers() {
         let vc = BearyBlockedUsersViewController()
         vc.modalPresentationStyle = .fullScreen
+        // 审计 P2-16：全屏 modal 补 fadeRise（与诊断/反馈/明细页同款）。
+        vc.transitioningDelegate = SceneDelegate.chrome?.fadeRiseTransitionDelegate
         present(vc, animated: BearyMotion.animated(true))
     }
 
@@ -1991,6 +2007,8 @@ final class BearySettingsViewController: UIViewController {
     private func presentLegalText(title: String, text: String) {
         let vc = BearyLegalTextViewController(pageTitle: title, pageText: text)
         vc.modalPresentationStyle = .fullScreen
+        // 审计 P2-16：全屏 modal 补 fadeRise。
+        vc.transitioningDelegate = SceneDelegate.chrome?.fadeRiseTransitionDelegate
         present(vc, animated: BearyMotion.animated(true))
     }
 }

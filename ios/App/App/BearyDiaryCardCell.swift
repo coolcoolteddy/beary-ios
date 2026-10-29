@@ -1445,17 +1445,16 @@ class BearyDiaryCardCell: UITableViewCell {
         bookmarkButtonTapped()
     }
 
-    /// C6 菜单编辑资格：本人 + 私密 + 未过编辑期；Feed/Profile 载荷未必带
-    /// editDeadline，缺失时仍出编辑项、由编辑器侧“已超过 15 分钟编辑期”拦截
-    /// （与时间线滑动编辑“缺失即锁”的口径不同，见 PR 说明）。
+    /// C6 菜单编辑资格：本人 + 未过编辑期；审计 P2-15 统一为缺失即锁
+    /// （与时间线编辑态文字组、网页端 +edit_deadline||0 算锁同口径；服务端
+    /// 列表 SELECT e.* 本就带 edit_deadline，缺失只剩 legacy 载荷，锁住为稳妥。
+    /// 本条审计已单列供 veto——若 Li 要恢复“缺失仍出编辑项”，改回 return true 即可）。
     /// iCity：编辑锁只看 15 分钟，与可见性无关（公开后 15 分钟内仍可编辑）。
     private func isCardMenuEditAvailable(entry: Entry) -> Bool {
         guard entry.isMine == true else { return false }
-        if let deadline = entry.editDeadline {
-            let nowMs = Int(Date().timeIntervalSince1970 * 1000)
-            return nowMs < deadline
-        }
-        return true
+        guard let deadline = entry.editDeadline else { return false }
+        let nowMs = Int(Date().timeIntervalSince1970 * 1000)
+        return nowMs < deadline
     }
 
     // MARK: - configure（首页模式）
@@ -2137,6 +2136,15 @@ class BearyDiaryCardCell: UITableViewCell {
     /// 控制器回滚本地态后调用，toast 由控制器发。
     func playPublishDenyShake() {
         playDenyShake(on: publishButton)
+    }
+
+    /// 审计 P2-23：个人页控制器侧门控拒绝动效（与详情页同口径：摇头＋warning 震动）。
+    func playLikeDenyShake() {
+        playDenyShake(on: likeButton)
+    }
+
+    func playBookmarkDenyShake() {
+        playDenyShake(on: bookmarkButton)
     }
 
     private func playDenyShake(on button: UIButton) {

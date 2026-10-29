@@ -144,7 +144,9 @@ final class BearyDraftBoxViewController: UIViewController {
         view.layoutIfNeeded()
         applyEntranceStartState()
         // M20：开箱卡片错峰滑入（仅首次开箱；卡片先置初态，sheet 到位后再逐张播）。
-        let cardViews = listStack.arrangedSubviews
+        // 审计 P2-24：复用 renderDrafts 的 draftCardsAnimatedOnce——首轮渲染已播过
+        // 的卡片不再由 tryPlayEntrance 重置 alpha 重播（此前首开双播）；sheet 与遮罩照常播。
+        let cardViews = draftCardsAnimatedOnce ? [] : listStack.arrangedSubviews
         for cardView in cardViews {
             cardView.alpha = 0
             cardView.transform = CGAffineTransform(translationX: 0, y: 8)
