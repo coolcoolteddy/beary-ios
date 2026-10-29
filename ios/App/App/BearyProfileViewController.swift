@@ -3014,7 +3014,7 @@ class BearyProfileViewController: UIViewController {
         updateEntryInAllTabs(entry: optimistic)
         // 方案一：先行同步显式不禁用，防重入只靠 bookmarkBusyIds 守卫。
         syncVisibleCell(entry: optimistic, interactionDisabled: false)?.playBookmarkPop()
-        if wantBookmarked { BearySoundPlayer.play(.bookmarkTick) }
+        if wantBookmarked { BearySoundPlayer.play(.bookmarkTick) } else { BearySoundPlayer.play(.unlikeSoft) }
         BearyAPI.shared.toggleBookmark(id: entryId) { [weak self] result in
             DispatchQueue.main.async {
                 guard let strongSelf = self else { return }

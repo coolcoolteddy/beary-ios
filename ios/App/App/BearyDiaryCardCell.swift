@@ -2482,7 +2482,7 @@ class BearyDiaryCardCell: UITableViewCell {
         currentEntry?.bookmarkedByMe = flipped
         updateBookmarkButton()
         BearyIconMotion.playBookmarkPop(on: bookmarkButton)
-        if flipped { BearySoundPlayer.play(.bookmarkTick) }
+        if flipped { BearySoundPlayer.play(.bookmarkTick) } else { BearySoundPlayer.play(.unlikeSoft) }
         isBookmarkBusy = true
         // 方案一：先行期间不压暗、不禁用，防重入只靠 isBookmarkBusy 守卫。
         BearyAPI.shared.toggleBookmark(id: entryIdValue) { [weak self] result in

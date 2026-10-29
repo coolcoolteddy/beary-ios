@@ -1281,7 +1281,7 @@ final class BearyDetailViewController: UIViewController {
         entry.bookmarkedByMe = flipped
         refreshActionRow()
         BearyIconMotion.playBookmarkPop(on: bookmarkButton)
-        if flipped { BearySoundPlayer.play(.bookmarkTick) }
+        if flipped { BearySoundPlayer.play(.bookmarkTick) } else { BearySoundPlayer.play(.unlikeSoft) }
         isBookmarkBusy = true
         BearyAPI.shared.toggleBookmark(id: entryId) { [weak self] result in
             DispatchQueue.main.async {
