@@ -1,4 +1,5 @@
 import UIKit
+import CoreImage
 
 // ===== beary 原生个人主页（只此一文件；不改 BearyAPI.swift、不改 SceneDelegate、不改 pbxproj）=====
 // 对照源（均已先读核实）：
@@ -707,16 +708,22 @@ class BearyProfileViewController: UIViewController {
     /// 弹性封面左右约束（2026-10-29 第 5 项：下拉时双向放大用；平时恒贴 header 边缘）。
     private lazy var coverLeadingConstraint: NSLayoutConstraint = coverImageView.leadingAnchor.constraint(equalTo: headerView.leadingAnchor)
     private lazy var coverTrailingConstraint: NSLayoutConstraint = coverImageView.trailingAnchor.constraint(equalTo: headerView.trailingAnchor)
-    /// 弹性封面模糊层：下拉时随拉量淡入（alpha 过渡），不拦截触摸（点背景换封面不受影响）；
-    /// 2026-10-29 第 5 项：比现行微模糊强一档——systemMaterial + alpha 上限 0.85，随深浅模式自适应。
-    private let coverBlurView: UIVisualEffectView = {
-        let blurViewValue = UIVisualEffectView(effect: UIBlurEffect(style: .systemMaterial))
-        blurViewValue.translatesAutoresizingMaskIntoConstraints = false
-        blurViewValue.isUserInteractionEnabled = false
-        blurViewValue.alpha = 0
-        blurViewValue.isHidden = true
-        return blurViewValue
+    /// 弹性封面模糊层（下拉时随拉量淡入）：封面预模糊图本身，不拦截触摸；
+    /// 不用磨砂玻璃——systemMaterial 在浅色模式下自带白色霜化，alpha 拉高会把
+    /// 封面洗白；预模糊图只模糊、不染色，深浅色下都不露白。
+    private let coverBlurImageView: UIImageView = {
+        let blurImageViewValue = UIImageView()
+        blurImageViewValue.translatesAutoresizingMaskIntoConstraints = false
+        blurImageViewValue.contentMode = .scaleAspectFill
+        blurImageViewValue.clipsToBounds = true
+        blurImageViewValue.isUserInteractionEnabled = false
+        blurImageViewValue.alpha = 0
+        blurImageViewValue.isHidden = true
+        return blurImageViewValue
     }()
+
+    /// 预模糊图对应的源图（identity 比对：源图变了才重算，不逐帧现算）。
+    private var coverBlurSourceImage: UIImage?
 
     /// 2026-10-29 第 7 项：封面“洗向底色”层——底色实色块（BearyColors.bg，
     /// 随深浅模式自适应），贴整幅封面、上滑时随行程淡入（alpha 0→1），
@@ -1206,15 +1213,15 @@ class BearyProfileViewController: UIViewController {
     private func buildHeader() {
         headerView.backgroundColor = BearyColors.bg
         headerView.addSubview(coverImageView)
-        coverImageView.addSubview(coverBlurView)
+        coverImageView.addSubview(coverBlurImageView)
         // 2026-10-29 第 7 项：封面洗向底色层贴整幅封面（在下拉模糊层之上，
         // 两者行程互斥、不会同现）；点封面查看热区在 headerView 层、仍在其上。
         coverImageView.addSubview(coverFadeView)
         NSLayoutConstraint.activate([
-            coverBlurView.topAnchor.constraint(equalTo: coverImageView.topAnchor),
-            coverBlurView.leadingAnchor.constraint(equalTo: coverImageView.leadingAnchor),
-            coverBlurView.trailingAnchor.constraint(equalTo: coverImageView.trailingAnchor),
-            coverBlurView.bottomAnchor.constraint(equalTo: coverImageView.bottomAnchor),
+            coverBlurImageView.topAnchor.constraint(equalTo: coverImageView.topAnchor),
+            coverBlurImageView.leadingAnchor.constraint(equalTo: coverImageView.leadingAnchor),
+            coverBlurImageView.trailingAnchor.constraint(equalTo: coverImageView.trailingAnchor),
+            coverBlurImageView.bottomAnchor.constraint(equalTo: coverImageView.bottomAnchor),
             coverFadeView.topAnchor.constraint(equalTo: coverImageView.topAnchor),
             coverFadeView.leadingAnchor.constraint(equalTo: coverImageView.leadingAnchor),
             coverFadeView.trailingAnchor.constraint(equalTo: coverImageView.trailingAnchor),
@@ -1705,6 +1712,8 @@ class BearyProfileViewController: UIViewController {
         }
         coverImageView.isHidden = !hasCover
         coverHeightConstraint.constant = hasCover ? 180 : 0
+        // 下拉模糊用预模糊图：缓存命中时直接复用；异步加载的新图在首次下拉时生成。
+        refreshCoverBlurImage()
         avatarTopWithCoverConstraint.isActive = hasCover
         avatarTopWithoutCoverConstraint.isActive = !hasCover
         avatarImageView.layer.borderWidth = hasCover ? 3.5 : 0
@@ -3408,15 +3417,23 @@ extension BearyProfileViewController: UITableViewDataSource, UITableViewDelegate
     /// 弹性封面：下拉超滚时封面顶边上伸、底边不动（高度 = 180 + 下拉量），
     /// 2026-10-29 第 5 项：左右同步外扩（各扩拉量一半，aspectFill 等比铺满 =
     /// 双向放大，不只纵向拉伸），任何下拉量下顶部都不露白；
-    /// 模糊层 alpha = 下拉量 / 120，上限 0.85（强一档），回弹时随拉量同步淡出。
+    /// 模糊层 = 封面预模糊图（加载完成时生成一次），alpha = 下拉量 / 120，
+    /// 上限 0.85，回弹时随拉量同步淡出；不用磨砂玻璃，不染色、不露白。
     /// 只改约束常量与模糊层 alpha（尺寸/透明度），不碰其他属性。
     /// 基线取 -contentInset.top（与顶栏判定同口径，收起态为 0 时即 y < 0）。
     private func updateCoverStretch(offsetY y: CGFloat, topBaseline: CGFloat) {
         let pull = topBaseline - y
         if coverImageView.isHidden || pull <= 0 {
-            resetCoverStretch()
+            // 拖动中 1:1 即时跟随；松手后（回弹/刷新接管）走动画复位，防一帧闪回。
+            if tableView.isDragging {
+                resetCoverStretch()
+            } else {
+                resetCoverStretchAnimated()
+            }
             return
         }
+        // 封面换图后首次下拉时生成预模糊图（源图不变不重算，不逐帧现算）。
+        refreshCoverBlurImage()
         coverTopConstraint.constant = -pull
         coverHeightConstraint.constant = 180 + pull
         coverLeadingConstraint.constant = -pull / 2
@@ -3433,9 +3450,61 @@ extension BearyProfileViewController: UITableViewDataSource, UITableViewDelegate
         setCoverBlurAlpha(0)
     }
 
+    /// 弹性封面复位（动画版）：松手与刷新接管时用——四个常量 + 模糊 alpha
+    /// 一次 ease-out（0.28s）回自然态，用现有约束 + layoutIfNeeded 做动画，
+    /// 不把拉伸改成 transform；减动效时直接归位；已在自然态时不建动画。
+    private func resetCoverStretchAnimated() {
+        let naturalHeight: CGFloat = coverImageView.isHidden ? 0 : 180
+        let alreadyNatural = coverTopConstraint.constant == 0
+            && coverHeightConstraint.constant == naturalHeight
+            && coverLeadingConstraint.constant == 0
+            && coverTrailingConstraint.constant == 0
+            && coverBlurImageView.alpha == 0
+        if alreadyNatural || UIAccessibility.isReduceMotionEnabled {
+            resetCoverStretch()
+            return
+        }
+        coverTopConstraint.constant = 0
+        coverHeightConstraint.constant = naturalHeight
+        coverLeadingConstraint.constant = 0
+        coverTrailingConstraint.constant = 0
+        // 动画块内只淡 alpha；isHidden 在动画结束且仍为 0 时才置 true，
+        // 否则动画一开始就把淡出藏掉。
+        coverBlurImageView.isHidden = false
+        UIView.animate(withDuration: 0.28, delay: 0, options: [.curveEaseOut, .beginFromCurrentState], animations: {
+            self.coverBlurImageView.alpha = 0
+            self.view.layoutIfNeeded()
+        }, completion: { [weak self] _ in
+            guard let self = self else { return }
+            if self.coverBlurImageView.alpha == 0 {
+                self.coverBlurImageView.isHidden = true
+            }
+        })
+    }
+
     private func setCoverBlurAlpha(_ alpha: CGFloat) {
-        coverBlurView.alpha = alpha
-        coverBlurView.isHidden = (alpha == 0)
+        coverBlurImageView.alpha = alpha
+        coverBlurImageView.isHidden = (alpha == 0)
+    }
+
+    /// 预模糊图生成（封面加载完成时调一次）：源图变了才重算，同一源图直接复用；
+    /// 后台算、主线程落图；中途又换封面时旧结果丢弃。
+    private func refreshCoverBlurImage() {
+        guard let coverImage = coverImageView.image else {
+            coverBlurSourceImage = nil
+            coverBlurImageView.image = nil
+            return
+        }
+        if coverBlurSourceImage === coverImage { return }
+        coverBlurSourceImage = coverImage
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            let blurredImage = coverImage.bearyGaussianBlurred(radius: 25)
+            DispatchQueue.main.async { [weak self] in
+                guard let self = self else { return }
+                if self.coverBlurSourceImage !== coverImage { return }
+                self.coverBlurImageView.image = blurredImage
+            }
+        }
     }
 
     /// 2026-10-29 第 15 项：点头像 / 点封面弹出大图查看（复用现有灯箱本地图
@@ -3475,9 +3544,32 @@ extension BearyProfileViewController: UITableViewDataSource, UITableViewDelegate
         }
     }
 
+    func scrollViewDidEndDragging(_ scrollView: UIScrollView, willDecelerate decelerate: Bool) {
+        guard scrollView === tableView else { return }
+        // 下拉刷新已接管时（松手后表被刷新控件钉住、不再回弹），滚动事件不再跟手，
+        // 复位改走动画，防一帧闪回；未触发刷新时回弹由滚动事件 1:1 跟随，不另起动画打架。
+        if tableView.refreshControl?.isRefreshing == true {
+            resetCoverStretchAnimated()
+        }
+    }
+
     private func setProfileChromeHidden(_ hidden: Bool) {
         profileChromeHidden = hidden
         // setChromeHidden 由容器 lane 在 SceneDelegate.swift 提供，本文件只调用。
         SceneDelegate.chrome?.setChromeHidden(hidden, animated: true)
+    }
+}
+
+/// UIImage 高斯模糊（仅个人页封面下拉模糊用；加载完成时现算一次，不逐帧调用）。
+private extension UIImage {
+    func bearyGaussianBlurred(radius: CGFloat) -> UIImage? {
+        guard let inputImage = CIImage(image: self) else { return nil }
+        guard let blurFilter = CIFilter(name: "CIGaussianBlur") else { return nil }
+        blurFilter.setValue(inputImage.clampedToExtent(), forKey: kCIInputImageKey)
+        blurFilter.setValue(radius, forKey: kCIInputRadiusKey)
+        guard let outputImage = blurFilter.outputImage else { return nil }
+        let context = CIContext(options: nil)
+        guard let cgImage = context.createCGImage(outputImage, from: inputImage.extent) else { return nil }
+        return UIImage(cgImage: cgImage, scale: scale, orientation: imageOrientation)
     }
 }
