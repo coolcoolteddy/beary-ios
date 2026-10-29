@@ -358,8 +358,8 @@ final class BearyOnboardingViewController: UIViewController {
         NSLayoutConstraint.activate([
             topWrap.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
             topWrap.centerXAnchor.constraint(equalTo: view.centerXAnchor),
-            topWrap.leadingAnchor.constraint(greaterThanOrEqualTo: view.safeAreaLayoutGuide.leadingAnchor, constant: 16).withPriority(750),
-            topWrap.trailingAnchor.constraint(lessThanOrEqualTo: view.safeAreaLayoutGuide.trailingAnchor, constant: -16).withPriority(750),
+            topWrap.leadingAnchor.constraint(greaterThanOrEqualTo: view.safeAreaLayoutGuide.leadingAnchor, constant: 16).withPriority(.defaultHigh),
+            topWrap.trailingAnchor.constraint(lessThanOrEqualTo: view.safeAreaLayoutGuide.trailingAnchor, constant: -16).withPriority(.defaultHigh),
             topStack.topAnchor.constraint(equalTo: topWrap.topAnchor),
             topStack.leadingAnchor.constraint(equalTo: topWrap.leadingAnchor),
             topStack.trailingAnchor.constraint(equalTo: topWrap.trailingAnchor),
@@ -383,18 +383,18 @@ final class BearyOnboardingViewController: UIViewController {
 
             columnView.topAnchor.constraint(greaterThanOrEqualTo: heroContent.topAnchor, constant: 8),
             columnView.bottomAnchor.constraint(lessThanOrEqualTo: heroContent.bottomAnchor, constant: -8),
-            columnView.centerYAnchor.constraint(equalTo: heroContent.centerYAnchor).withPriority(250),
+            columnView.centerYAnchor.constraint(equalTo: heroContent.centerYAnchor).withPriority(.defaultLow),
             columnView.centerXAnchor.constraint(equalTo: heroContent.centerXAnchor),
-            columnView.leadingAnchor.constraint(greaterThanOrEqualTo: heroContent.leadingAnchor, constant: 16).withPriority(750),
-            columnView.trailingAnchor.constraint(lessThanOrEqualTo: heroContent.trailingAnchor, constant: -16).withPriority(750),
+            columnView.leadingAnchor.constraint(greaterThanOrEqualTo: heroContent.leadingAnchor, constant: 16).withPriority(.defaultHigh),
+            columnView.trailingAnchor.constraint(lessThanOrEqualTo: heroContent.trailingAnchor, constant: -16).withPriority(.defaultHigh),
 
             bottomCard.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             bottomCard.trailingAnchor.constraint(equalTo: view.trailingAnchor),
             bottomCard.bottomAnchor.constraint(equalTo: view.bottomAnchor),
             bottomStack.topAnchor.constraint(equalTo: bottomCard.topAnchor, constant: 24),
             bottomStack.centerXAnchor.constraint(equalTo: bottomCard.centerXAnchor),
-            bottomStack.leadingAnchor.constraint(greaterThanOrEqualTo: bottomCard.safeAreaLayoutGuide.leadingAnchor, constant: 24).withPriority(750),
-            bottomStack.trailingAnchor.constraint(lessThanOrEqualTo: bottomCard.safeAreaLayoutGuide.trailingAnchor, constant: -24).withPriority(750),
+            bottomStack.leadingAnchor.constraint(greaterThanOrEqualTo: bottomCard.safeAreaLayoutGuide.leadingAnchor, constant: 24).withPriority(.defaultHigh),
+            bottomStack.trailingAnchor.constraint(lessThanOrEqualTo: bottomCard.safeAreaLayoutGuide.trailingAnchor, constant: -24).withPriority(.defaultHigh),
             bottomStack.bottomAnchor.constraint(equalTo: bottomCard.safeAreaLayoutGuide.bottomAnchor, constant: -16),
             primaryButton.heightAnchor.constraint(equalToConstant: 56),
             secondaryButton.heightAnchor.constraint(equalToConstant: 44),
@@ -877,7 +877,7 @@ final class BearyOnboardingViewController: UIViewController {
         }
         isTransitioning = true
         UIView.animate(withDuration: OnboardingAnim.pageHalfDuration, animations: {
-            fromView.transform = CGAffineTransform(translationX: forward ? -OnboardingAnim.pageSlide : OnboardingAnim.pageSlide)
+            fromView.transform = CGAffineTransform(translationX: forward ? -OnboardingAnim.pageSlide : OnboardingAnim.pageSlide, y: 0)
             fromView.alpha = 0
         }, completion: { [weak self] _ in
             guard let self = self else { return }
@@ -890,7 +890,7 @@ final class BearyOnboardingViewController: UIViewController {
             if self.currentPage == 3 { self.stopAllEmotes() }
             self.showPageImmediately(target)
             let toView = self.pageViews[target]
-            toView.transform = CGAffineTransform(translationX: forward ? OnboardingAnim.pageSlide : -OnboardingAnim.pageSlide)
+            toView.transform = CGAffineTransform(translationX: forward ? OnboardingAnim.pageSlide : -OnboardingAnim.pageSlide, y: 0)
             toView.alpha = 0
             UIView.animate(withDuration: OnboardingAnim.pageHalfDuration, animations: {
                 toView.transform = .identity
@@ -1077,8 +1077,8 @@ final class BearyOnboardingViewController: UIViewController {
 private final class OnboardingOptionButton: BearyHit44Button {
     let demo: OnboardingVisibilityDemo
     private let iconView = UIImageView()
-    private let titleLabel = UILabel()
-    private let subtitleLabel = UILabel()
+    private let optionTitleLabel = UILabel()
+    private let optionSubtitleLabel = UILabel()
     private let checkView = UIView()
     private let checkImageView = UIImageView()
     private var isOptionSelected = false
@@ -1101,19 +1101,19 @@ private final class OnboardingOptionButton: BearyHit44Button {
         textStack.translatesAutoresizingMaskIntoConstraints = false
         textStack.axis = .vertical
         textStack.spacing = 2
-        titleLabel.translatesAutoresizingMaskIntoConstraints = false
-        titleLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 15, weight: .semibold))
-        titleLabel.textColor = BearyColors.ink
-        titleLabel.adjustsFontForContentSizeCategory = true
-        titleLabel.text = demo.title
-        subtitleLabel.translatesAutoresizingMaskIntoConstraints = false
-        subtitleLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13))
-        subtitleLabel.textColor = BearyColors.gray
-        subtitleLabel.numberOfLines = 0
-        subtitleLabel.adjustsFontForContentSizeCategory = true
-        subtitleLabel.text = demo.subtitle
-        textStack.addArrangedSubview(titleLabel)
-        textStack.addArrangedSubview(subtitleLabel)
+        optionTitleLabel.translatesAutoresizingMaskIntoConstraints = false
+        optionTitleLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 15, weight: .semibold))
+        optionTitleLabel.textColor = BearyColors.ink
+        optionTitleLabel.adjustsFontForContentSizeCategory = true
+        optionTitleLabel.text = demo.title
+        optionSubtitleLabel.translatesAutoresizingMaskIntoConstraints = false
+        optionSubtitleLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13))
+        optionSubtitleLabel.textColor = BearyColors.gray
+        optionSubtitleLabel.numberOfLines = 0
+        optionSubtitleLabel.adjustsFontForContentSizeCategory = true
+        optionSubtitleLabel.text = demo.subtitle
+        textStack.addArrangedSubview(optionTitleLabel)
+        textStack.addArrangedSubview(optionSubtitleLabel)
         addSubview(textStack)
 
         checkView.translatesAutoresizingMaskIntoConstraints = false
