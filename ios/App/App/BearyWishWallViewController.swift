@@ -11,9 +11,8 @@ import UIKit
 // opacity，新行入场错峰、已有行不重播；无骨架屏（已删口径）；组件走 iOS 系统
 // 组件，图标只用官方包（本页无主图标，状态 pill 纯文字）。
 // 后端状态：本文件对应接口（GET /beary/api/wishes、POST /beary/api/wishes、
-// POST /beary/api/wishes/:id/vote、POST /beary/api/wishes/:id/status）与 DDL
-// 已备好在 worker.js（未部署）与 wish-wall-ddl.sql；后端未部署前接口 404，
-// 本页走失败态（重试钮），不编造假数据。
+// POST /beary/api/wishes/:id/vote、POST /beary/api/wishes/:id/status）已于
+// 2026-10-29 部署上线；接口失败时本页走失败态（重试钮），不编造假数据。
 
 // MARK: - 行视图（纯代码行：标题 / 详情 / 发起人时间 / 净赞成 / 两票钮 / 状态 pill）
 
@@ -23,6 +22,10 @@ private final class WishRowView: UIView {
     private let metaLabel = UILabel()
     private let netLabel = UILabel()
     private let donePill = UILabel()
+    private let expandButton = UIButton(type: .system)
+    private var isDetailExpanded = false
+    private var detailFullText = ""
+    private var detailOverflow = false
     private let upButton = BearyButton.make(style: .secondaryOutline(.compact), title: "赞成")
     private let downButton = BearyButton.make(style: .secondaryOutline(.compact), title: "反对")
     private let doneButton = BearyButton.make(style: .secondaryOutline(.compact), title: "标记已完成")
@@ -35,19 +38,29 @@ private final class WishRowView: UIView {
         super.init(frame: frame)
         backgroundColor = BearyColors.surface
         layer.cornerRadius = 16
-        titleLabel.font = UIFont.systemFont(ofSize: 15, weight: .semibold)
+        titleLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 15, weight: .semibold))
+        titleLabel.adjustsFontForContentSizeCategory = true
         titleLabel.textColor = BearyColors.ink
         titleLabel.numberOfLines = 0
-        detailLabel.font = UIFont.systemFont(ofSize: 13)
+        detailLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13))
+        detailLabel.adjustsFontForContentSizeCategory = true
         detailLabel.textColor = BearyColors.gray
         detailLabel.numberOfLines = 3
-        metaLabel.font = UIFont.systemFont(ofSize: 12)
+        metaLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 12))
+        metaLabel.adjustsFontForContentSizeCategory = true
         metaLabel.textColor = BearyColors.gray
-        netLabel.font = UIFont.systemFont(ofSize: 13, weight: .semibold)
+        metaLabel.numberOfLines = 0
+        netLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13, weight: .semibold))
+        netLabel.adjustsFontForContentSizeCategory = true
         netLabel.textColor = BearyColors.ink
-        donePill.font = UIFont.systemFont(ofSize: 12, weight: .semibold)
-        donePill.textColor = UIColor(red: 0.13, green: 0.55, blue: 0.22, alpha: 1)
-        donePill.backgroundColor = UIColor(red: 0.13, green: 0.55, blue: 0.22, alpha: 0.12)
+        // 28：donePill 文字与底色均走动态色（文字 BearyColors.green，底色经
+        // BearyColors.alpha 重解，不再硬编码绿值与 alpha 底）；公开 pill 橙色
+        // 不在本文件，绝不动。固定 56×18 容器配 cappedFont 上限 14（31），
+        // 14pt 行高约 17pt 不撑破 18pt 高，3 字在 56 宽内不截断。
+        donePill.font = BearyDynamicType.cappedFont(for: UIFont.systemFont(ofSize: 12, weight: .semibold), maximumPointSize: 14)
+        donePill.adjustsFontForContentSizeCategory = true
+        donePill.textColor = BearyColors.green
+        donePill.backgroundColor = BearyColors.alpha(BearyColors.green, 0.12)
         donePill.layer.cornerRadius = 9
         donePill.clipsToBounds = true
         donePill.textAlignment = .center
@@ -55,6 +68,15 @@ private final class WishRowView: UIView {
         upButton.addTarget(self, action: #selector(upTapped), for: .touchUpInside)
         downButton.addTarget(self, action: #selector(downTapped), for: .touchUpInside)
         doneButton.addTarget(self, action: #selector(doneTapped), for: .touchUpInside)
+        // 29：详情展开钮——超三行时才出现，点按原位展开/收起，不新增二级页面；
+        // 未超三行时隐藏（见 layoutSubviews 的 updateExpandVisibility）。
+        expandButton.setTitle("展开", for: .normal)
+        expandButton.setTitleColor(BearyColors.blue, for: .normal)
+        expandButton.titleLabel?.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13))
+        expandButton.titleLabel?.adjustsFontForContentSizeCategory = true
+        expandButton.contentHorizontalAlignment = .leading
+        expandButton.isHidden = true
+        expandButton.addTarget(self, action: #selector(expandTapped), for: .touchUpInside)
         let voteRow = UIStackView(arrangedSubviews: [upButton, downButton])
         voteRow.axis = .horizontal
         voteRow.spacing = 8
@@ -67,7 +89,7 @@ private final class WishRowView: UIView {
         titleRow.axis = .horizontal
         titleRow.spacing = 8
         titleRow.alignment = .top
-        let stack = UIStackView(arrangedSubviews: [titleRow, detailLabel, metaLabel, netLabel, voteRow, doneButton])
+        let stack = UIStackView(arrangedSubviews: [titleRow, detailLabel, expandButton, metaLabel, netLabel, voteRow, doneButton])
         stack.axis = .vertical
         stack.spacing = 8
         stack.translatesAutoresizingMaskIntoConstraints = false
@@ -91,11 +113,59 @@ private final class WishRowView: UIView {
     @objc private func downTapped() { onDown?() }
     @objc private func doneTapped() { onMarkDone?() }
 
+    @objc private func expandTapped() {
+        // 29：原位切换行数，不做布局动画（动效只走 transform/opacity，高度变化瞬时落终值）。
+        isDetailExpanded.toggle()
+        updateExpandVisibility()
+    }
+
+    /// 29：布局落定后量详情是否超三行——行宽取行宽减左右 16 内边距（label 帧未稳时
+    /// 亦可用），超三行才显展开钮；展开态行数 0、文案“收起”，收起态行数 3、文案“展开”。
+    /// 仅在取值变化时改属性，避免 layoutSubviews 内改布局引发循环。
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        updateExpandVisibility()
+    }
+
+    private func updateExpandVisibility() {
+        guard !detailLabel.isHidden, !detailFullText.isEmpty else {
+            if !expandButton.isHidden { expandButton.isHidden = true }
+            return
+        }
+        if isDetailExpanded {
+            if detailLabel.numberOfLines != 0 { detailLabel.numberOfLines = 0 }
+            if expandButton.isHidden { expandButton.isHidden = false }
+            if expandButton.title(for: .normal) != "收起" { expandButton.setTitle("收起", for: .normal) }
+            detailOverflow = true
+            return
+        }
+        let availWidth = bounds.width - 32
+        guard availWidth > 0, let font = detailLabel.font else { return }
+        let rect = (detailFullText as NSString).boundingRect(
+            with: CGSize(width: availWidth, height: CGFloat.greatestFiniteMagnitude),
+            options: [.usesLineFragmentOrigin, .usesFontLeading],
+            attributes: [.font: font], context: nil)
+        let lines = Int(ceil(rect.height / max(font.lineHeight, 1)))
+        let overflow = lines > 3
+        if overflow != detailOverflow { detailOverflow = overflow }
+        if detailLabel.numberOfLines != 3 { detailLabel.numberOfLines = 3 }
+        if expandButton.isHidden != !overflow { expandButton.isHidden = !overflow }
+        if overflow, expandButton.title(for: .normal) != "展开" { expandButton.setTitle("展开", for: .normal) }
+    }
+
     /// 只改文案与选中态，不重播入场动效（已有行更新口径）。
     func configure(item: BearyAPI.WishItem, isAdmin: Bool) {
         titleLabel.text = item.title ?? ""
-        detailLabel.text = item.detail ?? ""
-        detailLabel.isHidden = (item.detail ?? "").isEmpty
+        // 29：详情文本变化时展开态复位（投票等仅改文案的 configure 不重置展开态）。
+        let newDetail = item.detail ?? ""
+        if newDetail != detailFullText {
+            detailFullText = newDetail
+            isDetailExpanded = false
+            detailOverflow = false
+            expandButton.isHidden = true
+        }
+        detailLabel.text = newDetail
+        detailLabel.isHidden = newDetail.isEmpty
         let author = item.authorName ?? "beary 用户"
         let time = item.createdAt.map { BearyDiaryCardCell.feedTimeString(ms: $0) } ?? ""
         metaLabel.text = time.isEmpty ? author : "\(author) · \(time)"
@@ -143,6 +213,10 @@ final class BearyWishWallViewController: UIViewController {
     private let emptyLabel = UILabel()
     private let failureLabel = UILabel()
     private let retryButton = BearyButton.retryPill()
+    // 30：轻量加载指示（转圈 + “加载中…”文案，无骨架屏）；加载容器高 32，内栈居中。
+    private let loadingSpinner = UIActivityIndicatorView(style: .medium)
+    private let loadingLabel = UILabel()
+    private let loadingView = UIView()
     private var wishes: [BearyAPI.WishItem] = []
     private var rowViews: [Int: WishRowView] = [:]
     private var voteGeneration: [Int: Int] = [:] // 2026-10-29：每条许愿投票代次，旧回包丢弃用
@@ -161,14 +235,17 @@ final class BearyWishWallViewController: UIViewController {
         closeButton.translatesAutoresizingMaskIntoConstraints = false
         closeButton.setTitle("关闭", for: .normal)
         closeButton.setTitleColor(BearyColors.ink, for: .normal)
-        closeButton.titleLabel?.font = UIFont.systemFont(ofSize: 15)
+        // 31：固定 52 高顶栏配 cappedFont（关闭 15、标题 17，上限 20，不撑破顶栏）。
+        closeButton.titleLabel?.font = BearyDynamicType.cappedFont(for: UIFont.systemFont(ofSize: 15))
+        closeButton.titleLabel?.adjustsFontForContentSizeCategory = true
         closeButton.accessibilityLabel = "关闭"
         closeButton.addTarget(self, action: #selector(closeTapped), for: .touchUpInside)
         closeButton.bearyAddPressFeedback()
         let titleLabel = UILabel()
         titleLabel.translatesAutoresizingMaskIntoConstraints = false
         titleLabel.text = "功能许愿墙"
-        titleLabel.font = UIFont.systemFont(ofSize: 17, weight: .semibold)
+        titleLabel.font = BearyDynamicType.cappedFont(for: UIFont.systemFont(ofSize: 17, weight: .semibold))
+        titleLabel.adjustsFontForContentSizeCategory = true
         titleLabel.textColor = BearyColors.ink
         topBar.addSubview(closeButton)
         topBar.addSubview(titleLabel)
@@ -215,21 +292,42 @@ final class BearyWishWallViewController: UIViewController {
         ])
         createButton.addTarget(self, action: #selector(createTapped), for: .touchUpInside)
         createButton.isHidden = !isCurrentUserPlus()
-        emptyLabel.font = UIFont.systemFont(ofSize: 14)
+        emptyLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 14))
+        emptyLabel.adjustsFontForContentSizeCategory = true
         emptyLabel.textColor = BearyColors.gray
         emptyLabel.textAlignment = .center
         emptyLabel.numberOfLines = 0
         emptyLabel.text = "还没有愿望，Plus 会员可以发起第一个"
         emptyLabel.isHidden = true
-        failureLabel.font = UIFont.systemFont(ofSize: 14)
+        failureLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 14))
+        failureLabel.adjustsFontForContentSizeCategory = true
         failureLabel.textColor = BearyColors.gray
         failureLabel.textAlignment = .center
+        failureLabel.numberOfLines = 0
         failureLabel.text = "加载失败"
         failureLabel.isHidden = true
         retryButton.setTitle("重试", for: .normal)
         retryButton.addTarget(self, action: #selector(retryTapped), for: .touchUpInside)
         retryButton.isHidden = true
+        // 30：加载指示内栈居中于 32 高容器内，加载期外隐藏（栈视图隐藏即不占位）。
+        loadingLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 14))
+        loadingLabel.adjustsFontForContentSizeCategory = true
+        loadingLabel.textColor = BearyColors.gray
+        loadingLabel.text = "加载中…"
+        let loadingInner = UIStackView(arrangedSubviews: [loadingSpinner, loadingLabel])
+        loadingInner.axis = .horizontal
+        loadingInner.spacing = 8
+        loadingInner.alignment = .center
+        loadingInner.translatesAutoresizingMaskIntoConstraints = false
+        loadingView.addSubview(loadingInner)
+        NSLayoutConstraint.activate([
+            loadingInner.centerXAnchor.constraint(equalTo: loadingView.centerXAnchor),
+            loadingInner.centerYAnchor.constraint(equalTo: loadingView.centerYAnchor),
+            loadingView.heightAnchor.constraint(equalToConstant: 32),
+        ])
+        loadingView.isHidden = true
         contentStack.addArrangedSubview(createButton)
+        contentStack.addArrangedSubview(loadingView)
         contentStack.addArrangedSubview(emptyLabel)
         contentStack.addArrangedSubview(failureLabel)
         contentStack.addArrangedSubview(retryButton)
@@ -281,10 +379,15 @@ final class BearyWishWallViewController: UIViewController {
         isLoading = true
         failureLabel.isHidden = true
         retryButton.isHidden = true
+        // 30：加载期显转圈 + “加载中…”；成功/失败回包时统一隐藏（见回调首行）。
+        loadingView.isHidden = false
+        loadingSpinner.startAnimating()
         BearyAPI.shared.fetchWishes { [weak self] result in
             DispatchQueue.main.async {
                 guard let self = self else { return }
                 self.isLoading = false
+                self.loadingSpinner.stopAnimating()
+                self.loadingView.isHidden = true
                 switch result {
                 case .success(let resp):
                     self.wishes = resp.wishes ?? []
@@ -428,6 +531,14 @@ final class BearyWishCreateViewController: UIViewController, UITextViewDelegate 
     private let detailView = UITextView()
     private let detailPlaceholder = UILabel()
     private let submitButton = BearyButton.make(style: .primaryPill(.ink), title: "发布许愿")
+    // 30：长度提示（服务端：标题 1–100、详情 ≤2000）与字段级错误行。
+    private let titleCountLabel = UILabel()
+    private let detailCountLabel = UILabel()
+    private let fieldErrorLabel = UILabel()
+    /// 字段级错误行隐藏时压为 0 高（非栈容器里 hidden 仍占约束位，需显式压高才不留空隙）。
+    private var fieldErrorHeight: NSLayoutConstraint?
+    private static let titleLimit = 100
+    private static let detailLimit = 2000
     /// 11：提交锁——锁期间 titleChanged 不得重新启用提交钮（服务端幂等另有工人做）。
     private var isSubmitting = false
     /// 13：600 上限约束（宽 ≥821 才激活，开关在 viewDidLayoutSubviews；与列表页同款）。
@@ -445,25 +556,32 @@ final class BearyWishCreateViewController: UIViewController, UITextViewDelegate 
         closeButton.translatesAutoresizingMaskIntoConstraints = false
         closeButton.setTitle("关闭", for: .normal)
         closeButton.setTitleColor(BearyColors.ink, for: .normal)
-        closeButton.titleLabel?.font = UIFont.systemFont(ofSize: 15)
+        // 31：固定 52 高顶栏配 cappedFont（与列表页同款）。
+        closeButton.titleLabel?.font = BearyDynamicType.cappedFont(for: UIFont.systemFont(ofSize: 15))
+        closeButton.titleLabel?.adjustsFontForContentSizeCategory = true
         closeButton.accessibilityLabel = "关闭"
         closeButton.addTarget(self, action: #selector(closeTapped), for: .touchUpInside)
         closeButton.bearyAddPressFeedback()
         let titleLabel = UILabel()
         titleLabel.translatesAutoresizingMaskIntoConstraints = false
         titleLabel.text = "发起许愿"
-        titleLabel.font = UIFont.systemFont(ofSize: 17, weight: .semibold)
+        titleLabel.font = BearyDynamicType.cappedFont(for: UIFont.systemFont(ofSize: 17, weight: .semibold))
+        titleLabel.adjustsFontForContentSizeCategory = true
         titleLabel.textColor = BearyColors.ink
         topBar.addSubview(closeButton)
         topBar.addSubview(titleLabel)
         titleField.translatesAutoresizingMaskIntoConstraints = false
         titleField.placeholder = "愿望标题"
-        titleField.font = UIFont.systemFont(ofSize: 16)
+        // 31：44 高单行框配 cappedFont（上限 20，行高不撑破 44 高）；详情框可滚动，
+        // 故走 scaledFont（反馈页 160 框同款），超大字号下框内滚动而非截断。
+        titleField.font = BearyDynamicType.cappedFont(for: UIFont.systemFont(ofSize: 16))
+        titleField.adjustsFontForContentSizeCategory = true
         titleField.textColor = BearyColors.ink
         titleField.borderStyle = .roundedRect
         titleField.addTarget(self, action: #selector(titleChanged), for: .editingChanged)
         detailView.translatesAutoresizingMaskIntoConstraints = false
-        detailView.font = UIFont.systemFont(ofSize: 15)
+        detailView.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 15))
+        detailView.adjustsFontForContentSizeCategory = true
         detailView.textColor = BearyColors.ink
         detailView.layer.borderColor = BearyColors.ink.withAlphaComponent(0.2).cgColor
         detailView.layer.borderWidth = 1
@@ -471,9 +589,29 @@ final class BearyWishCreateViewController: UIViewController, UITextViewDelegate 
         detailView.delegate = self
         detailPlaceholder.translatesAutoresizingMaskIntoConstraints = false
         detailPlaceholder.text = "补充说明（可选）"
-        detailPlaceholder.font = UIFont.systemFont(ofSize: 15)
+        detailPlaceholder.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 15))
+        detailPlaceholder.adjustsFontForContentSizeCategory = true
         detailPlaceholder.textColor = BearyColors.gray
         detailView.addSubview(detailPlaceholder)
+        // 30：计数行右对齐、超限变红；字段级错误行默认隐藏，见 submitTapped 的 bad wish 分支。
+        for label in [titleCountLabel, detailCountLabel] {
+            label.translatesAutoresizingMaskIntoConstraints = false
+            label.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 12))
+            label.adjustsFontForContentSizeCategory = true
+            label.textColor = BearyColors.gray
+            label.textAlignment = .right
+        }
+        titleCountLabel.text = "0/100"
+        detailCountLabel.text = "0/2000"
+        fieldErrorLabel.translatesAutoresizingMaskIntoConstraints = false
+        fieldErrorLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13))
+        fieldErrorLabel.adjustsFontForContentSizeCategory = true
+        fieldErrorLabel.textColor = BearyColors.red
+        fieldErrorLabel.numberOfLines = 0
+        fieldErrorLabel.text = "标题需为 1–100 字，详情最多 2000 字，请检查后重试"
+        fieldErrorLabel.isHidden = true
+        fieldErrorHeight = fieldErrorLabel.heightAnchor.constraint(equalToConstant: 0)
+        fieldErrorHeight?.isActive = true
         submitButton.translatesAutoresizingMaskIntoConstraints = false
         submitButton.addTarget(self, action: #selector(submitTapped), for: .touchUpInside)
         submitButton.isEnabled = false
@@ -484,7 +622,10 @@ final class BearyWishCreateViewController: UIViewController, UITextViewDelegate 
         view.addSubview(topBar)
         view.addSubview(scrollView)
         scrollView.addSubview(titleField)
+        scrollView.addSubview(titleCountLabel)
         scrollView.addSubview(detailView)
+        scrollView.addSubview(detailCountLabel)
+        scrollView.addSubview(fieldErrorLabel)
         scrollView.addSubview(submitButton)
         NotificationCenter.default.addObserver(self, selector: #selector(keyboardWillShow), name: UIResponder.keyboardWillShowNotification, object: nil)
         NotificationCenter.default.addObserver(self, selector: #selector(keyboardWillShow), name: UIResponder.keyboardWillChangeFrameNotification, object: nil)
@@ -516,16 +657,22 @@ final class BearyWishCreateViewController: UIViewController, UITextViewDelegate 
             scrollBottomToKeyboard,
             titleField.topAnchor.constraint(equalTo: scrollView.contentLayoutGuide.topAnchor, constant: 16),
             titleField.heightAnchor.constraint(equalToConstant: 44),
-            detailView.topAnchor.constraint(equalTo: titleField.bottomAnchor, constant: 12),
+            titleCountLabel.topAnchor.constraint(equalTo: titleField.bottomAnchor, constant: 4),
+            detailView.topAnchor.constraint(equalTo: titleCountLabel.bottomAnchor, constant: 8),
             detailView.heightAnchor.constraint(equalToConstant: 160),
             detailPlaceholder.topAnchor.constraint(equalTo: detailView.topAnchor, constant: 8),
             detailPlaceholder.leadingAnchor.constraint(equalTo: detailView.leadingAnchor, constant: 8),
-            submitButton.topAnchor.constraint(equalTo: detailView.bottomAnchor, constant: 20),
+            detailCountLabel.topAnchor.constraint(equalTo: detailView.bottomAnchor, constant: 4),
+            fieldErrorLabel.topAnchor.constraint(equalTo: detailCountLabel.bottomAnchor, constant: 8),
+            submitButton.topAnchor.constraint(equalTo: fieldErrorLabel.bottomAnchor, constant: 12),
             submitButton.heightAnchor.constraint(equalToConstant: BearyButtonStyle.primaryPill(.ink).height),
             // 内容底含提交钮 +16 边距——键盘顶起后提交钮也可滚到可见区。
             submitButton.bottomAnchor.constraint(equalTo: scrollView.contentLayoutGuide.bottomAnchor, constant: -16),
         ] + fieldColumnConstraints(for: titleField)
+          + fieldColumnConstraints(for: titleCountLabel)
           + fieldColumnConstraints(for: detailView)
+          + fieldColumnConstraints(for: detailCountLabel)
+          + fieldColumnConstraints(for: fieldErrorLabel)
           + fieldColumnConstraints(for: submitButton))
     }
 
@@ -560,16 +707,38 @@ final class BearyWishCreateViewController: UIViewController, UITextViewDelegate 
 
     @objc private func closeTapped() { dismiss(animated: BearyMotion.animated(true), completion: nil) }
 
+    /// 30：字段级错误行显隐（显时松开 0 高约束，隐时压回 0 高，见属性注释）。
+    private func setFieldErrorVisible(_ visible: Bool) {
+        fieldErrorLabel.isHidden = !visible
+        fieldErrorHeight?.isActive = !visible
+    }
+
+    /// 30：长度提示唯一刷新点——标题/详情计数与超限变红；超限时提交钮禁用
+    /// （服务端同限，客户端先拦，超长 400 的 bad wish 仍由 submitTapped 字段级映射兜底）。
+    private func updateLengthHints() {
+        let titleCount = (titleField.text ?? "").count
+        let detailCount = detailView.text.count
+        titleCountLabel.text = "\(titleCount)/\(Self.titleLimit)"
+        titleCountLabel.textColor = titleCount > Self.titleLimit ? BearyColors.red : BearyColors.gray
+        detailCountLabel.text = "\(detailCount)/\(Self.detailLimit)"
+        detailCountLabel.textColor = detailCount > Self.detailLimit ? BearyColors.red : BearyColors.gray
+    }
+
     /// 11：提交钮启用态唯一入口——提交锁期间直接返回，标题变化不得重新启用提交钮。
     @objc private func titleChanged() {
+        updateLengthHints()
+        setFieldErrorVisible(false)
         guard !isSubmitting else { return }
-        let ok = !(titleField.text ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        let trimmed = (titleField.text ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        let ok = !trimmed.isEmpty && trimmed.count <= Self.titleLimit && detailView.text.count <= Self.detailLimit
         submitButton.isEnabled = ok
         submitButton.alpha = ok ? 1 : 0.4
     }
 
     func textViewDidChange(_ textView: UITextView) {
         detailPlaceholder.isHidden = !textView.text.isEmpty
+        // 详情变化同样影响提交启用态（超 2000 即禁），复用 titleChanged 的唯一入口。
+        titleChanged()
     }
 
     @objc private func titleFieldDidBegin() { activeField = titleField }
@@ -592,9 +761,10 @@ final class BearyWishCreateViewController: UIViewController, UITextViewDelegate 
     @objc private func submitTapped() {
         guard !isSubmitting else { return }
         let title = (titleField.text ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !title.isEmpty else { return }
+        guard !title.isEmpty, title.count <= Self.titleLimit, detailView.text.count <= Self.detailLimit else { return }
         let detail = detailView.text ?? ""
         isSubmitting = true
+        setFieldErrorVisible(false)
         submitButton.isEnabled = false
         submitButton.alpha = 0.4
         BearyAPI.shared.createWish(title: title, detail: detail) { [weak self] result in
@@ -609,6 +779,12 @@ final class BearyWishCreateViewController: UIViewController, UITextViewDelegate 
                     //（提交期间标题被清空时，失败后提交钮仍应保持禁用）。
                     self.isSubmitting = false
                     self.titleChanged()
+                    // 30：超长 400 'bad wish' 走字段级提示（字段旁红字），不弹通用 toast；
+                    // 其余失败映射不变（not_plus / rate_limited / 通用 toast）。
+                    if case .server(let code) = err, code == "bad wish" {
+                        self.setFieldErrorVisible(true)
+                        return
+                    }
                     let message: String
                     if case .server(let code) = err, code == "not_plus" {
                         message = "仅 Plus 会员可发起许愿"
