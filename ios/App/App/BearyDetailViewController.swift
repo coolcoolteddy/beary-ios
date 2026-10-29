@@ -586,7 +586,20 @@ final class BearyDetailViewController: UIViewController {
 
     private func showPlaceholder() {
         // 私密占位：仅一句文案，不带标题／封面／时间／作者名；内容栈整藏。
+        // 文案每次显式复位：失败态（showFetchFailed）改过同一 label 文案，复位防串味。
+        placeholderLabel.text = "该日记已设为私密"
         stackView.isHidden = true
+        placeholderLabel.isHidden = false
+    }
+
+    /// 2026-10-29 Li 定（P0-3 包括项，推翻第 17 项“弱网/失败先出页面仍可看”）：
+    /// 后台补齐失败时清为无正文态——内容栈整藏，居中一句失败文案，不留卡片旧内容；
+    /// 不用私密占位文案（失败不是私密）；关闭钮仍可用，关了重进即重试。
+    /// 页内已因拉黑/举报转占位时不动（隐私占位优先于失败态）。
+    func showFetchFailed() {
+        if locallyHiddenByModeration { return }
+        stackView.isHidden = true
+        placeholderLabel.text = "加载失败，请稍后再试"
         placeholderLabel.isHidden = false
     }
 
@@ -630,7 +643,7 @@ final class BearyDetailViewController: UIViewController {
 
     /// 2026-10-29 第 17 项：后台补齐入口——卡片点按即时呈现后，后台 fetch 回包调它。
     /// 只更新变化处（字段级比对，变了才刷对应区），不重建栈、不重播已有元素的
-    /// 动效、不闪 skeleton；弱网/失败时不调，首屏卡片数据原样可看。
+    /// 动效、不闪 skeleton；弱网/失败时不调本函数，改走 showFetchFailed 清为无正文态。
     /// 在途乐观互动保护：点赞/收藏/回应/可见性任一在途时，对应区不刷（不冲掉
     /// 先行态；互动自己的成功回包再对齐）；私密占位切换（内容→占位）不受此限，
     /// 隐私优先。id 不符的回包直接忽略（防御）。

@@ -2482,7 +2482,8 @@ final class BearyChromeViewController: UIViewController {
     /// 2026-10-29 第 17 项：卡片点按即时呈现——用卡片已有数据（作者、正文、
     /// 图片、计数）先渲染详情页，后台静默拉取最新数据补齐（回应、计数对齐），
     /// 数据到了只更新变化处（detail.update(with:)）、不重播已有元素动效、
-    /// 不闪 skeleton；弱网/失败时先出的页面仍可正常看，已有数据不受影响。
+    /// 不闪 skeleton；2026-10-29 Li 点“包括”推翻其中失败口径：弱网/失败时不再
+    /// 留卡片旧内容，改清为无正文态（showFetchFailed），旧“先出的页面仍可看”作废。
     /// 后台可见性门（与 routeFetchedEntry 同口径）：回包为私密非作者时切详情
     /// 私密占位（不带标题/封面/时间/作者名）；公开但定不出作者时保持卡片页
     /// （不比旧“不存在”toast 更差，且不丢用户刚点开的内容）。
@@ -2495,7 +2496,8 @@ final class BearyChromeViewController: UIViewController {
             DispatchQueue.main.async {
                 guard let self = self, let detail = detail else { return }
                 guard case .success(let fetched) = result else {
-                    // 失败（弱网/已删）：先出的页面仍可正常看，已有数据不受影响，不 toast 盖内容。
+                    // 2026-10-29 Li 定（P0-3 包括项）：失败不再留卡片旧内容，清为无正文态。
+                    detail.showFetchFailed()
                     return
                 }
                 let viewerId = SessionManager.shared.currentUser?.id
