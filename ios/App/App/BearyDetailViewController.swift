@@ -11,7 +11,7 @@
 // 正文 16pt；图片圆角 12，点图进现有灯箱；心情／天气／@ 用 faint 底小 chip；
 // 引用卡复用 BearyQuoteCardView（viewer 实时判定，私密被引加“仅你可见”角标）。
 // 操作行：点赞／回应／收藏／分享四项全部放左侧一起（不要 spacer 顶右），
-// 点赞／收藏点亮走橙色与现有先行反馈口径（守卫通过即填色＋计数，失败回滚＋拒绝动效）。
+// 点赞点亮走红色、收藏点亮走橙色，与现有先行反馈口径（守卫通过即填色＋计数，失败回滚＋拒绝动效）。
 // 回应区：App 现行回应模型是 emote chips（无文字回应 UI），故此处接现有回应流程——
 // emote chips + “写回应…”入口开 picker，不另造文字回应功能（与 v5 mock 的文字回应行
 // 不一致处，见 PR 说明，待 Li 确认）。
@@ -430,7 +430,7 @@ final class BearyDetailViewController: UIViewController {
                 // 第 8 项详情面：删除图标钉死 BearyColors.red（#e5484d，不自造红；
                 // withTintColor 返回新图，不污染 BearyFeedIconCache 的 template 缓存）。
                 // 说明：UIMenu 标题色公开 API 改不了——.destructive 标题仍由系统染红，
-                // 图标是本文件内唯一能钉死 token 红的部分；拉黑项不动，点赞仍走橙色。
+                // 图标是本文件内唯一能钉死 token 红的部分；拉黑项不动，点赞点亮走 token 红。
                 let deleteIcon = BearyFeedIconCache.image(named: "icon_trash", pointSize: 20)?
                     .withTintColor(BearyColors.red, renderingMode: .alwaysOriginal)
                 actions.append(UIAction(title: "删除", image: deleteIcon, attributes: .destructive) { [weak self] _ in
@@ -1043,7 +1043,7 @@ final class BearyDetailViewController: UIViewController {
 
     // MARK: - 操作行
 
-    /// 点赞／收藏点亮走橙色与现有先行反馈口径；数字只 setTitle，不重建行。
+    /// 点赞点亮走红色、收藏点亮走橙色，与现有先行反馈口径；数字只 setTitle，不重建行。
     private func refreshActionRow() {
         if isGuest {
             actionStack.isHidden = true
@@ -1059,9 +1059,9 @@ final class BearyDetailViewController: UIViewController {
             ?? BearyFeedIconCache.image(named: "icon_heart", pointSize: 22)
         likeButton.setImage(heartImage, for: .normal)
         likeButton.setTitle("\(likeCount)", for: .normal)
-        likeButton.tintColor = liked ? BearyColors.orange : BearyColors.ink
-        likeButton.setTitleColor(liked ? BearyColors.orange : BearyColors.gray, for: .normal)
-        likeButton.setTitleColor(liked ? BearyColors.orange : BearyColors.gray, for: .highlighted)
+        likeButton.tintColor = liked ? BearyColors.red : BearyColors.ink
+        likeButton.setTitleColor(liked ? BearyColors.red : BearyColors.gray, for: .normal)
+        likeButton.setTitleColor(liked ? BearyColors.red : BearyColors.gray, for: .highlighted)
 
         var emoteTotal = 0
         for emote in entry.emotes ?? [] {
@@ -1480,7 +1480,7 @@ final class BearyDetailViewController: UIViewController {
         if isLikeBusy { return }
         let currentlyLiked = entry.likedByMe ?? false
         let originalCount = entry.likeCount ?? 0
-        // 先行反馈（卡片口径）：点赞即填橙＋计数 +1，取消即褪色＋计数 −1；
+        // 先行反馈（卡片口径）：点赞即填红＋计数 +1，取消即褪色＋计数 −1；
         // 成功回包对齐服务端值，失败回滚＋拒绝动效。
         if !currentlyLiked {
             BearyHaptics.likeTap()
