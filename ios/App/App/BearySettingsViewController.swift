@@ -1495,8 +1495,10 @@ final class BearySettingsViewController: UIViewController {
         showToast("导出失败，请重试")
     }
 
-    /// 2026-10-29（P2-13）：导出进度提示——串行四阶段在行副文案上轮换，结束（成功/失败/触顶确认前）复原；
+    /// 2026-10-29（P2-13）：导出进度提示——串行四阶段在行副文案上轮换，结束（失败/触顶确认前）复原；
     /// 只改副文案文字，不重建行、不播动效；nil = 复原默认文案。
+    /// 审计三轮第 24 项：直出成功路径不再于四阶段结束时复原，buildAndShareExport
+    /// 置“正在生成文件…”、文件写完（成功 present 前 / 失败 toast 前）才复原。
     private func setExportProgress(_ text: String?) {
         DispatchQueue.main.async { [weak self] in
             self?.exportDetailLabel?.text = text ?? "下载 JSON，含账户、日记、点赞记录"
@@ -1528,21 +1530,29 @@ final class BearySettingsViewController: UIViewController {
         }
         let finish: () -> Void = { [weak self] in
             guard let self = self else { return }
-            self.isExporting = false
-            self.exportRowButton.isEnabled = true
-            self.setExportProgress(nil)
             // 失败 fail-closed：只 toast、不拼 JSON、不出文件、不出分享面板。
             if sessionsFailed {
+                self.isExporting = false
+                self.exportRowButton.isEnabled = true
+                self.setExportProgress(nil)
                 self.showToast("导出失败（登录设备拉取失败），未生成文件")
                 return
             }
             if let failedReason = exportFailedReason {
+                self.isExporting = false
+                self.exportRowButton.isEnabled = true
+                self.setExportProgress(nil)
                 self.showToast("导出失败（\(failedReason)），未生成文件")
                 return
             }
             // 触顶：分享前先弹明确标注，用户点“继续分享”才拼文件、出分享面板；
             // 点取消则不出文件。N = 三个 scope 已取篇数之和（即文件内总篇数）。
+            // 确认前先复原（与旧口径一致）；确认后 buildAndShareExport 会重新
+            // 置“正在生成文件…”并在文件写完后复原，取消则保持复原态。
             if exportTruncated {
+                self.isExporting = false
+                self.exportRowButton.isEnabled = true
+                self.setExportProgress(nil)
                 let totalCount = mineEntries.count + mailboxEntries.count + likedEntries.count
                 let alert = UIAlertController(title: "部分导出", message: "部分导出（已取 \(totalCount) 篇，已达 20 页上限），是否继续分享部分数据？", preferredStyle: .alert)
                 alert.addAction(UIAlertAction(title: "取消", style: .cancel, handler: nil))
@@ -1583,45 +1593,75 @@ final class BearySettingsViewController: UIViewController {
     /// 导出文件拼装 + 分享面板（原 exportWithUser 内 group.notify 后半段原样挪出，
     /// JSON/写文件两处“导出失败，请重试”文案与触发条件均不动；仅调用点改为
     /// 成功直出、触顶经用户确认后出，失败路径根本不进本方法）。
+    /// 审计三轮第 24 项：字典映射、JSONSerialization、String 转码、fileData.write
+    /// 全移后台队列（userInitiated），主线程只做进度文案、复原与 present 分享面板；
+    /// 后台失败回主线程走原失败分支（同文案 toast + 复原），成功回主线程复原后 present。
+    /// 拼装函数只读传入的模型值（export*Dict 均为纯字典映射，不碰 UI），可安全离主线程。
     private func buildAndShareExport(user: MeUser, sessionsResp: BearyAccountSessionsResponse?, mineEntries: [Entry], mailboxEntries: [Entry], likedEntries: [Entry]) {
-        var data: [String: Any] = [:]
-        data["exported_at"] = ISO8601DateFormatter().string(from: Date())
-        data["site"] = "teddyhn.com"
-        data["profile"] = self.exportProfileDict(user: user)
-        if let resp = sessionsResp, let list = resp.sessions {
-            data["sessions"] = list.map { self.exportSessionDict(session: $0) }
+        // 主线程：进入生成阶段——直出路径沿用已置的 isExporting/禁用态，触顶确认
+        // 路径在此重新置位；两种路径都在文件写完后统一复原。
+        isExporting = true
+        exportRowButton.isEnabled = false
+        setExportProgress("正在生成文件…")
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            guard let self = self else { return }
+            var data: [String: Any] = [:]
+            data["exported_at"] = ISO8601DateFormatter().string(from: Date())
+            data["site"] = "teddyhn.com"
+            data["profile"] = self.exportProfileDict(user: user)
+            if let resp = sessionsResp, let list = resp.sessions {
+                data["sessions"] = list.map { self.exportSessionDict(session: $0) }
+            }
+            data["diaries"] = mineEntries.map { self.exportEntryDict(entry: $0, isPrivate: false) } +
+                mailboxEntries.map { self.exportEntryDict(entry: $0, isPrivate: true) }
+            data["liked_entries"] = likedEntries.map { self.exportEntryDict(entry: $0, isPrivate: false) }
+            guard let jsonData = try? JSONSerialization.data(withJSONObject: data, options: [.prettyPrinted, .sortedKeys]) else {
+                DispatchQueue.main.async { [weak self] in
+                    guard let self = self else { return }
+                    self.isExporting = false
+                    self.exportRowButton.isEnabled = true
+                    self.setExportProgress(nil)
+                    self.showToast("导出失败，请重试")
+                }
+                return
+            }
+            let fmt = DateFormatter()
+            fmt.locale = Locale(identifier: "en_US_POSIX")
+            fmt.dateFormat = "yyyy-MM-dd-HHmmss"
+            // 审计 P2：文件名加时间戳 + UUID 后缀，分享面板未收起时再导出不互相覆盖/删除。
+            let fileName = "teddyhn-data-" + fmt.string(from: Date()) + "-" + String(UUID().uuidString.prefix(8)) + ".json"
+            let fileURL = FileManager.default.temporaryDirectory.appendingPathComponent(fileName)
+            var text = "\u{feff}"
+            text += String(data: jsonData, encoding: .utf8) ?? ""
+            guard let fileData = text.data(using: .utf8), (try? fileData.write(to: fileURL)) != nil else {
+                DispatchQueue.main.async { [weak self] in
+                    guard let self = self else { return }
+                    self.isExporting = false
+                    self.exportRowButton.isEnabled = true
+                    self.setExportProgress(nil)
+                    self.showToast("导出失败，请重试")
+                }
+                return
+            }
+            DispatchQueue.main.async { [weak self] in
+                guard let self = self else { return }
+                self.isExporting = false
+                self.exportRowButton.isEnabled = true
+                self.setExportProgress(nil)
+                let activity = UIActivityViewController(activityItems: [fileURL], applicationActivities: nil)
+                if let pop = activity.popoverPresentationController {
+                    pop.sourceView = self.exportRowButton
+                    pop.sourceRect = self.exportRowButton.bounds
+                }
+                // S3：分享结束即删本次临时文件——完成、取消、失败路径都清，
+                // 不留导出 JSON 在 tmp 里；完成回调在分享面板收起后才跑，活动方已读完文件。
+                activity.completionWithItemsHandler = { [weak self] _, completed, _, _ in
+                    try? FileManager.default.removeItem(at: fileURL)
+                    if completed { self?.showToast("导出完成") }
+                }
+                self.present(activity, animated: BearyMotion.animated(true))
+            }
         }
-        data["diaries"] = mineEntries.map { self.exportEntryDict(entry: $0, isPrivate: false) } +
-            mailboxEntries.map { self.exportEntryDict(entry: $0, isPrivate: true) }
-        data["liked_entries"] = likedEntries.map { self.exportEntryDict(entry: $0, isPrivate: false) }
-        guard let jsonData = try? JSONSerialization.data(withJSONObject: data, options: [.prettyPrinted, .sortedKeys]) else {
-            self.showToast("导出失败，请重试")
-            return
-        }
-        let fmt = DateFormatter()
-        fmt.locale = Locale(identifier: "en_US_POSIX")
-        fmt.dateFormat = "yyyy-MM-dd-HHmmss"
-        // 审计 P2：文件名加时间戳 + UUID 后缀，分享面板未收起时再导出不互相覆盖/删除。
-        let fileName = "teddyhn-data-" + fmt.string(from: Date()) + "-" + String(UUID().uuidString.prefix(8)) + ".json"
-        let fileURL = FileManager.default.temporaryDirectory.appendingPathComponent(fileName)
-        var text = "\u{feff}"
-        text += String(data: jsonData, encoding: .utf8) ?? ""
-        guard let fileData = text.data(using: .utf8), (try? fileData.write(to: fileURL)) != nil else {
-            self.showToast("导出失败，请重试")
-            return
-        }
-        let activity = UIActivityViewController(activityItems: [fileURL], applicationActivities: nil)
-        if let pop = activity.popoverPresentationController {
-            pop.sourceView = self.exportRowButton
-            pop.sourceRect = self.exportRowButton.bounds
-        }
-        // S3：分享结束即删本次临时文件——完成、取消、失败路径都清，
-        // 不留导出 JSON 在 tmp 里；完成回调在分享面板收起后才跑，活动方已读完文件。
-        activity.completionWithItemsHandler = { [weak self] _, completed, _, _ in
-            try? FileManager.default.removeItem(at: fileURL)
-            if completed { self?.showToast("导出完成") }
-        }
-        self.present(activity, animated: BearyMotion.animated(true))
     }
 
     /// 第 7 项分页结果：entries=已取条目；complete=true 时 reason 恒为 nil；
