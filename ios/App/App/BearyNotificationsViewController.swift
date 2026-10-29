@@ -200,6 +200,9 @@ final class BearyNotificationsViewController: UIViewController {
     private var zeroHeightRows: Set<Int> = []
     private var headerHeight: CGFloat = 48
     private var stateContainerTopConstraint: NSLayoutConstraint?
+    /// 审计三轮第 14 项：600 列上限约束（宽 ≥821 才激活，开关在 viewDidLayoutSubviews，
+    /// 与 Feed 的 feedColCapConstraint 同模式；常驻会把 601–820 档也压到 600）。
+    private var notifColCapConstraint: NSLayoutConstraint?
 
     // MARK: - 视图
 
@@ -309,9 +312,10 @@ final class BearyNotificationsViewController: UIViewController {
         return pull
     }()
 
-    /// 内容列：容器已锁 600 列，页内不再二次收窄——宽 = 视图宽（750 优先级）
-    /// + 宽 ≤600 + 居中 + 两侧 ≥0；行内 20 边距改由行 cell 与顶栏自身承担
-    /// （网页 .nt-item padding 16/20、.tl-head padding 14/20/4 同口径），
+    /// 内容列：页内不再二次收窄——宽 = 视图宽（750 优先级）+ 居中 + 两侧 ≥0；
+    /// 600 上限只在宽 ≥821 时激活（Feed 断点模式，开关在 viewDidLayoutSubviews），
+    /// 宽 ≤820 时 750 全宽等式生效、列走满屏宽。行内 20 边距改由行 cell 与顶栏
+    /// 自身承担（网页 .nt-item padding 16/20、.tl-head padding 14/20/4 同口径），
     /// 窄屏下行内边距仍是 20，不随列宽变化。
     private lazy var contentView: UIView = {
         let container = UIView()
@@ -451,9 +455,13 @@ final class BearyNotificationsViewController: UIViewController {
         tableView.tableHeaderView = headerView
         let contentWidth = contentView.widthAnchor.constraint(equalTo: view.widthAnchor, constant: 0)
         contentWidth.priority = UILayoutPriority(750)
+        // 审计三轮第 14 项：600 上限改由 notifColCapConstraint 持有、按 821 断点开关
+        //（Feed 同模式）；此处只建不直判宽，开关在 viewDidLayoutSubviews。
+        let contentColCap = contentView.widthAnchor.constraint(lessThanOrEqualToConstant: 600)
+        notifColCapConstraint = contentColCap
         NSLayoutConstraint.activate([
             contentWidth,
-            contentView.widthAnchor.constraint(lessThanOrEqualToConstant: 600),
+            contentColCap,
             contentView.centerXAnchor.constraint(equalTo: view.centerXAnchor),
             contentView.leadingAnchor.constraint(greaterThanOrEqualTo: view.leadingAnchor),
             contentView.trailingAnchor.constraint(lessThanOrEqualTo: view.trailingAnchor),
@@ -559,6 +567,12 @@ final class BearyNotificationsViewController: UIViewController {
 
     override func viewDidLayoutSubviews() {
         super.viewDidLayoutSubviews()
+        // 审计三轮第 14 项：600 上限只在宽 ≥821 时激活，宽 ≤820 时关掉、
+        // 列走 750 全宽等式回满屏宽；状态不变不开关，避免布局循环（Feed 同款）。
+        let wantColCap = view.bounds.width >= 821
+        if notifColCapConstraint?.isActive != wantColCap {
+            notifColCapConstraint?.isActive = wantColCap
+        }
         updateTableBottomInset()
         let width = tableView.bounds.width
         if width > 0 {
