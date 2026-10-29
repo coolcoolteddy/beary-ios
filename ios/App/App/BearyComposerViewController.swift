@@ -350,7 +350,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, U
     private let moodCallout = BearyCalloutPickerView()
     private let weatherCallout = BearyCalloutPickerView()
     private let calloutDismissView = BearyCalloutDismissView()
-    private enum CalloutKind { case mood, case weather }
+    private enum CalloutKind { case mood, weather }
     private var activeCallout: CalloutKind?
     private var calloutTransitionGeneration = 0
     private static let calloutTransitionDuration: TimeInterval = 0.20
