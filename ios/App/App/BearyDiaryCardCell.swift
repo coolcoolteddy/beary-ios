@@ -406,8 +406,18 @@ class BearyDiaryCardCell: UITableViewCell {
     var cellEntryId: String?
     private var currentImageKeys: [String] = []
     private var isExpanded = false
-    private var isLikeBusy = false
-    private var isBookmarkBusy = false
+    /// 快连点代次（首页模式，2026-10-29 及时性口径）：点按不再锁按钮丢点按，
+    /// 每次点按代次 +1 并立即按本次点按态渲染；在途回包代次落后于最新代次时
+    /// 直接丢弃，不得覆盖更新的点按态；个人主页模式由控制器持代次，cell 不用。
+    private var likeSeq = 0
+    private var likeConfirmedSeq = 0
+    private var bookmarkSeq = 0
+    private var bookmarkConfirmedSeq = 0
+    /// 最后服务端确认态（首页模式）：configure 与服务端同步（syncInteraction）
+    /// 时刷新；最新请求失败时回滚到这里，不回滚到中间态。
+    private var confirmedLiked = false
+    private var confirmedLikeCount = 0
+    private var confirmedBookmarked = false
     /// 跟手批：按下已给过先行反馈（轻震/预取消赞），抬起确认时不再重播。
     private var likePressPreviewActive = false
     /// 点赞钮显式宽约束：见 updateLikeButton / applyLikeButtonState 的宽度算法。
@@ -455,6 +465,10 @@ class BearyDiaryCardCell: UITableViewCell {
     private var cellLikedByMe = false
     private var cellLikeCount = 0
     private var cellBookmarkedByMe = false
+    /// 个人页控制器快连点时读取可见行最新点按态（不依赖 configure 时捕获的旧 entry；
+    /// cellLikedByMe/cellLikeCount 由就地同步维护，恒等于最后一次点按态）。
+    var profileLikeState: (liked: Bool, count: Int) { (cellLikedByMe, cellLikeCount) }
+    var profileBookmarkedState: Bool { cellBookmarkedByMe }
     private var cellEmoteSignature = ""
     /// 个人主页模式互动禁用态（控制器 busy 集合现算后传入，渲染与同步共用）。
     private var profileDisabled = false
@@ -1155,8 +1169,13 @@ class BearyDiaryCardCell: UITableViewCell {
         cellEntryId = nil
         currentImageKeys = []
         isExpanded = false
-        isLikeBusy = false
-        isBookmarkBusy = false
+        likeSeq = 0
+        likeConfirmedSeq = 0
+        bookmarkSeq = 0
+        bookmarkConfirmedSeq = 0
+        confirmedLiked = false
+        confirmedLikeCount = 0
+        confirmedBookmarked = false
         likePressPreviewActive = false
         foldOverflow = nil
         foldApplies = false
@@ -1477,6 +1496,10 @@ class BearyDiaryCardCell: UITableViewCell {
         stopWeatherLottie()
         currentEntry = entry
         cellEntryId = entry.id
+        // 快连点确认态初值：configure 的 entry 来自服务端数据，即确认态。
+        confirmedLiked = entry.likedByMe ?? false
+        confirmedLikeCount = entry.likeCount ?? 0
+        confirmedBookmarked = entry.bookmarkedByMe ?? false
         if let entryIdValue = entry.id {
             isExpanded = BearyDiaryCardCell.expandedEntryIds.contains(entryIdValue)
         } else {
@@ -2059,12 +2082,12 @@ class BearyDiaryCardCell: UITableViewCell {
         likeButton.setImage(heartImage, for: .normal)
         // 计数位宽度由显式约束定，不靠按钮固有宽：按钮固有宽不含标题边距，
         // 栈按固有宽给帧时标题框只剩边距差，数字会被裁成左半弧。
-        // 网页口径：like-n 恒输出 like_count||0，0 赞也显示“0”（爱心 + 0）。
+        // 2026-10-29 Li 定：赞为 0 时只隐藏数字（图标保留且仍可点按，保留点赞入口），
+        // 宽度只剩图标宽，不留数字位；时间线按数显隐（图标＋数字同藏）的地方不动。
         let imageWidth = heartImage?.size.width ?? 22
         if countValue <= 0 {
-            likeButton.setTitle("0", for: .normal)
-            let zeroWidth = ceil(("0" as NSString).size(withAttributes: [NSAttributedString.Key.font: likeButton.titleLabel?.font ?? BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 14))]).width)
-            likeButtonWidthConstraint?.constant = imageWidth + 6 + zeroWidth
+            likeButton.setTitle(nil, for: .normal)
+            likeButtonWidthConstraint?.constant = imageWidth
         } else {
             let titleText = "\(countValue)"
             let titleWidth = ceil((titleText as NSString).size(withAttributes: [NSAttributedString.Key.font: likeButton.titleLabel?.font ?? BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 14))]).width)
@@ -2074,9 +2097,9 @@ class BearyDiaryCardCell: UITableViewCell {
         // 2026-10-29 100 包反馈第 6 项：卡片脚三钮未点亮统一为同一灰
         // （此前爱心未赞为墨色 ink、收藏/分享为灰，三钮色不一致；旧 fixall-cell
         // 8-9 的“未赞爱心墨色”网页口径就此作废，图标与计数同灰）。
-        // 点亮态爱心与计数同为红（BearyColors.red = #e5484d）。
-        likeButton.tintColor = liked ? BearyColors.red : BearyColors.gray
-        likeButton.setTitleColor(liked ? BearyColors.red : BearyColors.gray, for: .normal)
+        // 点亮态爱心与计数同为点赞亮红（BearyColors.likeRed = #ff3b30）。
+        likeButton.tintColor = liked ? BearyColors.likeRed : BearyColors.gray
+        likeButton.setTitleColor(liked ? BearyColors.likeRed : BearyColors.gray, for: .normal)
         likeButton.imageView?.transform = .identity
         refreshActionAccessibility()
     }
@@ -2084,25 +2107,25 @@ class BearyDiaryCardCell: UITableViewCell {
     /// 点赞钮渲染（个人主页模式；configure 与就地同步共用；同步侧先调它
     /// 再播爆点，爆点不被 transform 复位打断）。
     /// 2026-10-29 100 包反馈第 6 项：未赞态两模式统一——爱心与计数同灰
-    /// （旧 fixall-cell 8-9 的未赞爱心墨色口径作废）、0 赞恒显“0”。
-    /// 已赞态两模式本来一致（爱心与计数同橙），不动。
+    /// （旧 fixall-cell 8-9 的未赞爱心墨色口径作废）。
+    /// 2026-10-29 Li 定：赞为 0 时只隐藏数字（图标保留且仍可点按），宽度只剩图标宽。
+    /// 已赞态爱心与计数同为点赞亮红（BearyColors.likeRed = #ff3b30）。
     private func applyLikeButtonState(liked: Bool, count: Int) {
         let likedImageName = liked ? "icon_heart_fill" : "icon_heart"
         let likedImage = BearyFeedIconCache.image(named: likedImageName, pointSize: 22)
         likeButton.setImage(likedImage, for: .normal)
         let imageWidth = likedImage?.size.width ?? 22
         if count <= 0 {
-            likeButton.setTitle("0", for: .normal)
-            let zeroWidth = ceil(("0" as NSString).size(withAttributes: [NSAttributedString.Key.font: likeButton.titleLabel?.font ?? BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 14))]).width)
-            likeButtonWidthConstraint?.constant = imageWidth + 6 + zeroWidth
+            likeButton.setTitle(nil, for: .normal)
+            likeButtonWidthConstraint?.constant = imageWidth
         } else {
             let titleText = "\(count)"
             let titleWidth = ceil((titleText as NSString).size(withAttributes: [NSAttributedString.Key.font: likeButton.titleLabel?.font ?? BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 14))]).width)
             likeButton.setTitle(titleText, for: .normal)
             likeButtonWidthConstraint?.constant = imageWidth + 6 + titleWidth
         }
-        likeButton.tintColor = liked ? BearyColors.red : BearyColors.gray
-        likeButton.setTitleColor(liked ? BearyColors.red : BearyColors.gray, for: .normal)
+        likeButton.tintColor = liked ? BearyColors.likeRed : BearyColors.gray
+        likeButton.setTitleColor(liked ? BearyColors.likeRed : BearyColors.gray, for: .normal)
         likeButton.imageView?.transform = .identity
         refreshActionAccessibility()
     }
@@ -2144,9 +2167,11 @@ class BearyDiaryCardCell: UITableViewCell {
     /// F7/F8（首页模式）：首页与详情互动门控统一为 isPublic == true 才可互动（详情同口径）。
     private func updateActionInteractivity() {
         // 审计 P0-4：有效态门控（过期限时篇不放行点赞/收藏/分享）。
+        // 2026-10-29 及时性口径：在途请求不再禁用按钮——快连点每次都必须立即
+        // 落地，防重入只靠代次守卫，不靠按钮禁用。
         let publicOK = currentEntry.map(BearyEphemeral.isEffectivelyPublic) ?? false
-        likeButton.isEnabled = publicOK && isLikeBusy == false
-        bookmarkButton.isEnabled = publicOK && isBookmarkBusy == false
+        likeButton.isEnabled = publicOK
+        bookmarkButton.isEnabled = publicOK
         likeButton.alpha = publicOK ? 1.0 : 0.4
         bookmarkButton.alpha = publicOK ? 1.0 : 0.4
         // 网页口径：shBtn 仅 is_public 时输出——非公开卡直接没有分享钮（不禁用占位）。
@@ -2236,6 +2261,15 @@ class BearyDiaryCardCell: UITableViewCell {
             likeChanged = true
         }
         if likeChanged { updateLikeButton() }
+        // 控制器经服务端全副本同步的值即确认态：快连点下失败回滚滚到这里，
+        // 不滚到控制器旧模型或本次点按前的中间态。
+        if let v = likedByMe {
+            confirmedLiked = v
+            confirmedLikeCount = currentEntry?.likeCount ?? 0
+        }
+        if let v = bookmarkedByMe {
+            confirmedBookmarked = v
+        }
         var bookmarkChanged = false
         if let v = bookmarkedByMe, v != (currentEntry?.bookmarkedByMe ?? false) {
             currentEntry?.bookmarkedByMe = v
@@ -2292,10 +2326,15 @@ class BearyDiaryCardCell: UITableViewCell {
         BearyIconMotion.playBookmarkPop(on: bookmarkButton)
     }
 
-    /// 点赞成功爆点（Li 2026-10-27 新规格）：控制器回包就地同步后对同 cell 补播，
-    /// 爱心回弹 + 液体爆点；取消点赞不调用。
+    /// 点赞爆点（Li 2026-10-27 新规格）：与填色同起，点按确认时播；
+    /// 取消点赞不调用（取消时由调用方清在飞微粒）。
     func playLikeBurst() {
         BearyIconMotion.playLikeBurst(on: likeButton)
+    }
+
+    /// 清掉在飞的炸开微粒（取消点赞时，屏幕只反映最新点按态）。
+    func clearLikeBurst() {
+        BearyIconMotion.clearLikeBurst(on: likeButton)
     }
 
     // MARK: - 交互
@@ -2347,7 +2386,8 @@ class BearyDiaryCardCell: UITableViewCell {
             likePressPreviewActive = true
             return
         }
-        guard !isLikeBusy else { return }
+        // 及时性口径：按下预览不拿在途请求门控——在途时按下仍按当前
+        // （最新点按态）模型给预览，抬起取消时复原到同一模型。
         guard currentEntry.map(BearyEphemeral.isEffectivelyPublic) ?? false else { return }
         guard SessionManager.shared.isLoggedIn else { return }
         guard let entryIdValue = cellEntryId, !entryIdValue.isEmpty else { return }
@@ -2369,13 +2409,12 @@ class BearyDiaryCardCell: UITableViewCell {
         if cardMode == .profile {
             if cellLikedByMe {
                 likeButton.setImage(BearyFeedIconCache.image(named: "icon_heart_fill", pointSize: 22), for: .normal)
-                likeButton.tintColor = BearyColors.red
-                likeButton.setTitleColor(BearyColors.red, for: .normal)
+                likeButton.tintColor = BearyColors.likeRed
+                likeButton.setTitleColor(BearyColors.likeRed, for: .normal)
             }
             likeButton.imageView?.transform = .identity
             return
         }
-        guard !isLikeBusy else { return }
         updateLikeButton()
     }
 
@@ -2419,10 +2458,9 @@ class BearyDiaryCardCell: UITableViewCell {
             onRequireLogin?()
             return
         }
-        if isLikeBusy {
-            if hadPressPreview { restorePressPreview() }
-            return
-        }
+        // 2026-10-29 及时性口径：快连点不再丢点按——每次点按都立即按本次
+        // 点按后的态渲染（填色＋计数点按瞬间就变，不等服务端）；在途请求只
+        // 带代次，过期回包直接丢弃，不得覆盖更新的点按态。
         let currentlyLiked = currentEntry?.likedByMe ?? false
         let originalCount = currentEntry?.likeCount ?? 0
         if hadPressPreview == false {
@@ -2434,49 +2472,51 @@ class BearyDiaryCardCell: UITableViewCell {
                 BearySoundPlayer.play(.unlikeSoft)
             }
         }
-        if currentlyLiked == false {
-            // 点赞全量先行（Li 2026-10-27 定）：抬起确认时立即填红色、计数 +1；
-            // 模型同步改，updateLikeButton 按新模型渲染；回包成功对齐服务端值，
-            // 失败按 originalCount / currentlyLiked 复原（见失败分支）。
+        let targetLiked = currentlyLiked == false
+        if targetLiked {
+            // 点赞全量先行（Li 2026-10-27 定）：抬起确认时立即填亮红、计数 +1；
+            // 液体炸开与填色同起——点按确认时即播，不再等服务端回包。
             currentEntry?.likedByMe = true
             currentEntry?.likeCount = originalCount + 1
             updateLikeButton()
+            BearyIconMotion.playLikeBurst(on: likeButton)
         } else {
             // 取消点赞双向即时（2026-10-29 定版）：抬起确认时立即褪色、计数 -1；
             // 按下预览（applyPreUnlike 的空心 + .8）与新模型渲染一致，不闪；
-            // 回包成功对齐服务端值，失败按原模型复原（见失败分支）。
+            // 若上一轮炸开微粒还在飞，一并清掉，屏幕只反映最新点按态。
             currentEntry?.likedByMe = false
             currentEntry?.likeCount = max(0, originalCount - 1)
             updateLikeButton()
+            BearyIconMotion.clearLikeBurst(on: likeButton)
         }
-        isLikeBusy = true
-        // 方案一（Li 2026-10-28 定）：先行期间不禁用按钮，防重入只靠 isLikeBusy 守卫；
-        // 若此处调 updateActionInteractivity，按钮禁用减淡会盖住刚写好的先行填色。
-        BearyAPI.shared.toggleLike(id: entryIdValue, liked: currentlyLiked == false) { [weak self] result in
+        likeSeq += 1
+        let reqSeq = likeSeq
+        BearyAPI.shared.toggleLike(id: entryIdValue, liked: targetLiked) { [weak self] result in
             DispatchQueue.main.async {
                 guard let strongSelf = self else { return }
-                strongSelf.isLikeBusy = false
+                // 代次守卫：复用换条或已有更新点按时，过期回包直接丢弃。
+                guard strongSelf.cellEntryId == entryIdValue, reqSeq == strongSelf.likeSeq else { return }
+                strongSelf.likeConfirmedSeq = reqSeq
                 BearyIconMotion.animateIconScale(on: strongSelf.likeButton, to: 1)
                 strongSelf.updateActionInteractivity()
                 switch result {
                 case .success(let resp):
-                    let newLiked = resp.liked ?? (currentlyLiked == false)
+                    let newLiked = resp.liked ?? targetLiked
                     strongSelf.currentEntry?.likedByMe = newLiked
                     if let countValue = resp.count {
                         strongSelf.currentEntry?.likeCount = countValue
                     }
+                    strongSelf.confirmedLiked = newLiked
+                    strongSelf.confirmedLikeCount = strongSelf.currentEntry?.likeCount ?? 0
                     strongSelf.updateLikeButton()
-                    if newLiked {
-                        // 服务端确认的那一刻：爱心回弹 + 液体爆点；填充与计数已先行，
-                        // 不再重播填充淡入（否则已填好的爱心会闪一次）；取消点赞不炸。
-                        BearyIconMotion.playLikeBurst(on: strongSelf.likeButton)
-                    }
+                    // 炸开已在点按时播过，成功回包不再重播（否则已填好的爱心
+                    // 会再炸一次）；取消点赞不炸。
                     strongSelf.onInteractionChanged?(entryIdValue, strongSelf.currentEntry?.likeCount, newLiked, nil)
                 case .failure(let err):
-                    // 失败回滚：先行填色与计数按原模型复原（取消点赞本就只改视图，
-                    // 复原亦无害），再走既有失败路径（拒绝动效 + 通用提示），不另起一套。
-                    strongSelf.currentEntry?.likedByMe = currentlyLiked
-                    strongSelf.currentEntry?.likeCount = originalCount
+                    // 失败回滚到最后服务端确认态（不是本次点按前的中间态），
+                    // 再走既有失败路径（拒绝动效 + 通用提示），不另起一套。
+                    strongSelf.currentEntry?.likedByMe = strongSelf.confirmedLiked
+                    strongSelf.currentEntry?.likeCount = strongSelf.confirmedLikeCount
                     strongSelf.updateLikeButton()
                     if case .unauthorized = err {
                         strongSelf.onRequireLogin?()
@@ -2498,7 +2538,8 @@ class BearyDiaryCardCell: UITableViewCell {
     }
 
     /// F8（首页模式）：收藏先行切换、失败回滚 + 拒绝动效；先行期间不再半透明/禁用
-    /// （方案一，Li 2026-10-28 定），防重入只靠 isBookmarkBusy 守卫；
+    /// （方案一，Li 2026-10-28 定）；2026-10-29 及时性口径：快连点每次都立即
+    /// 落地，防重入只靠代次守卫，过期回包直接丢弃。
     /// 成功后以服务端值为准并经控制器全副本同步。
     private func feedBookmarkTapped() {
         guard let entryIdValue = cellEntryId, !entryIdValue.isEmpty else { return }
@@ -2507,28 +2548,31 @@ class BearyDiaryCardCell: UITableViewCell {
             onRequireLogin?()
             return
         }
-        if isBookmarkBusy { return }
         let currentlyBookmarked = currentEntry?.bookmarkedByMe ?? false
         let flipped = currentlyBookmarked == false
         currentEntry?.bookmarkedByMe = flipped
         updateBookmarkButton()
         BearyIconMotion.playBookmarkPop(on: bookmarkButton)
         if flipped { BearySoundPlayer.play(.bookmarkTick) } else { BearySoundPlayer.play(.unlikeSoft) }
-        isBookmarkBusy = true
-        // 方案一：先行期间不压暗、不禁用，防重入只靠 isBookmarkBusy 守卫。
+        bookmarkSeq += 1
+        let reqSeq = bookmarkSeq
         BearyAPI.shared.toggleBookmark(id: entryIdValue) { [weak self] result in
             DispatchQueue.main.async {
                 guard let strongSelf = self else { return }
-                strongSelf.isBookmarkBusy = false
+                // 代次守卫：复用换条或已有更新点按时，过期回包直接丢弃。
+                guard strongSelf.cellEntryId == entryIdValue, reqSeq == strongSelf.bookmarkSeq else { return }
+                strongSelf.bookmarkConfirmedSeq = reqSeq
                 switch result {
                 case .success(let resp):
                     let newBookmarked = resp.bookmarked ?? flipped
                     strongSelf.currentEntry?.bookmarkedByMe = newBookmarked
+                    strongSelf.confirmedBookmarked = newBookmarked
                     strongSelf.updateBookmarkButton()
                     strongSelf.updateActionInteractivity()
                     strongSelf.onInteractionChanged?(entryIdValue, nil, nil, newBookmarked)
                 case .failure(let err):
-                    strongSelf.currentEntry?.bookmarkedByMe = currentlyBookmarked
+                    // 失败回滚到最后服务端确认态，再走既有失败路径。
+                    strongSelf.currentEntry?.bookmarkedByMe = strongSelf.confirmedBookmarked
                     strongSelf.updateBookmarkButton()
                     strongSelf.updateActionInteractivity()
                     if case .unauthorized = err {

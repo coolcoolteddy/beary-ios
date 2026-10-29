@@ -1648,7 +1648,12 @@ final class BearyTimelineCell: UITableViewCell {
             var footItems: [UIView] = []
             let likeCount = entry.likeCount ?? 0
             if likeCount > 0 {
-                footItems.append(footItem(iconName: "icon_heart", text: "\(likeCount)"))
+                // 2026-10-29 Li 定（第 5 项）：自己点过赞的日记，卡片下方爱心
+                // 须按已点赞态上色——此前足行只按计数渲染、一律空心灰，
+                // likedByMe 被忽略；本人日记自点赞同样计入，不得特殊处理成空心。
+                // 纯展示不动：仍无互动入口，只改颜色态。
+                let liked = entry.likedByMe ?? false
+                footItems.append(footItem(iconName: liked ? "icon_heart_fill" : "icon_heart", text: "\(likeCount)", highlighted: liked))
             }
             var emoteTotal = 0
             for emote in entry.emotes ?? [] {
@@ -1858,7 +1863,7 @@ final class BearyTimelineCell: UITableViewCell {
         return f
     }()
 
-    private func footItem(iconName: String, text: String?) -> UIView {
+    private func footItem(iconName: String, text: String?, highlighted: Bool = false) -> UIView {
         let row = UIStackView()
         row.axis = .horizontal
         row.spacing = 4
@@ -1871,7 +1876,9 @@ final class BearyTimelineCell: UITableViewCell {
         // 本就无变化，万一框再被拉大也不会把心压扁。
         row.setContentHuggingPriority(.required, for: .horizontal)
         let iconView = UIImageView(image: BearyIconImages.image(named: iconName, pointSize: 14))
-        iconView.tintColor = BearyColors.gray
+        // 已点赞态：图标与数字同走点赞亮红（与卡片/详情已点赞态同色）；
+        // 未点赞态仍走灰；收藏足项不传 highlighted，恒灰。
+        iconView.tintColor = highlighted ? BearyColors.likeRed : BearyColors.gray
         iconView.contentMode = .scaleAspectFit
         iconView.setContentHuggingPriority(.required, for: .horizontal)
         iconView.translatesAutoresizingMaskIntoConstraints = false
@@ -1884,7 +1891,7 @@ final class BearyTimelineCell: UITableViewCell {
             let label = UILabel()
             label.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13))
             label.adjustsFontForContentSizeCategory = true
-            label.textColor = BearyColors.gray
+            label.textColor = highlighted ? BearyColors.likeRed : BearyColors.gray
             label.text = text
             row.addArrangedSubview(label)
         }
