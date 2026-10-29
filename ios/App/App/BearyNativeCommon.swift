@@ -1403,23 +1403,71 @@ enum BearyVisibilityText {
 
 /// 已举报日记 id 本地集（UserDefaults）：服务端“每人每篇一次”去重后，
 /// 客户端据此在搜索结果与卡片菜单里显“已举报”置灰态。仅存 id，不存正文与理由。
+/// 审计三轮第 6 项：按账号分桶。旧单键 beary.reportedEntryIds 混用全部账号，
+/// A 举报后退出、B 登录同篇即被误判已举报；现键带账号后缀，内存同样按桶切换。
+/// 旧单键无法归属到任一账号，故不迁移、不删除（残留即孤儿键，不再被读）；
+/// 新桶由服务端确认后的首次举报重新播种，方向是放行而非误拦。
 enum BearyReportedStore {
-    private static let key = "beary.reportedEntryIds"
+    private static let baseKey = "beary.reportedEntryIds"
     private static var cached: Set<String>?
+    private static var cachedBucket: String?
+    private static var accountChangeObserver: NSObjectProtocol?
+
+    /// 当前桶：调用时现取 SessionManager.currentUser 的 id，不经调用点传 uid，
+    /// 故旧调用点签名不动；无登录态（游客/退出）走独立 guest 桶，与任何登录
+    /// 账号桶互不命中（uid 为数字串，guest 不可能撞号）。
+    private static func currentBucket() -> String {
+        if let id = SessionManager.shared.currentUser?.id {
+            return String(id)
+        }
+        return "guest"
+    }
+
+    private static func key(for bucket: String) -> String {
+        return baseKey + "." + bucket
+    }
+
+    /// 仅清内存（不碰 UserDefaults）：账号变化时与桶切换时复用；各桶落盘互不
+    /// 干扰，绝不删其他账号的持久化记录。协调员如需在 SceneDelegate
+    /// onUserChanged 里与 BearyDraftStore.setAccount / BearyImageLoader.shared.setAccount
+    /// 并排显式调用，本方法已留作内部接口，但非必需（下行桶比对与通知观测已兜底）。
+    static func clearMemory() {
+        cached = nil
+        cachedBucket = nil
+    }
+
+    /// 账号变化观测：bearyUserDidChange 由 SceneDelegate onUserChanged 在 id 真变
+    /// 时才发（重复 /me 不误发）；收到即清内存，下次调用按新桶重读落盘。
+    /// token 由静态变量持有，防 block 观察者随 token 释放而失效。
+    private static func observeAccountChanges() {
+        guard accountChangeObserver == nil else { return }
+        accountChangeObserver = NotificationCenter.default.addObserver(forName: .bearyUserDidChange, object: nil, queue: .main) { _ in
+            BearyReportedStore.clearMemory()
+        }
+    }
+
+    /// 桶一致才复用内存：账号已变而内存仍是旧桶时直接丢弃旧集、按新桶重读，
+    /// 换号后绝不沿用旧号结论；首次调用前尚未注册观测也不影响（此时内存为空）。
+    private static func ensureLoaded() {
+        observeAccountChanges()
+        let bucket = currentBucket()
+        if cached == nil || cachedBucket != bucket {
+            cachedBucket = bucket
+            cached = Set(UserDefaults.standard.stringArray(forKey: key(for: bucket)) ?? [])
+        }
+    }
 
     static func isReported(entryId: String) -> Bool {
-        if cached == nil {
-            cached = Set(UserDefaults.standard.stringArray(forKey: key) ?? [])
-        }
+        ensureLoaded()
         return cached?.contains(entryId) ?? false
     }
 
     static func markReported(entryId: String) {
-        if cached == nil {
-            cached = Set(UserDefaults.standard.stringArray(forKey: key) ?? [])
-        }
+        ensureLoaded()
         cached?.insert(entryId)
-        UserDefaults.standard.set(Array(cached ?? []), forKey: key)
+        if let bucket = cachedBucket {
+            UserDefaults.standard.set(Array(cached ?? []), forKey: key(for: bucket))
+        }
     }
 }
 
@@ -1486,6 +1534,9 @@ enum BearyReportReason {
 enum BearyReportFlow {
     static func present(from vc: UIViewController, entryId: String, entryLabel: String? = nil) {
         guard !entryId.isEmpty else { return }
+        // 审计三轮第 6 项：本地集已按账号分桶（markReported 只在服务端成功/duplicate 后调用），
+        // 故当前桶命中即等价于本账号服务端已确认，可直接返回“已举报”；跨号污染已由分桶消除，
+        // 无需每次都走到理由选择与服务端往返。服务端仍是最终权威（换设备等本地未同步时走下行提交，duplicate 态同样按已举报处理）。
         if BearyReportedStore.isReported(entryId: entryId) {
             BearyToast.show(in: vc.view, message: "已举报", aboveFAB: false)
             return
