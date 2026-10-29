@@ -331,6 +331,10 @@ class BearyProfileViewController: UIViewController {
         imageViewValue.backgroundColor = BearyColors.faint
         imageViewValue.contentMode = .scaleAspectFill
         imageViewValue.clipsToBounds = true
+        // 初次加载态：先隐藏，资料到了由 applyProfile 按 hasCover 决定显隐；
+        // 否则首布局的 resetCoverStretch 会按 isHidden=false 把高算成 180，
+        // 在图未到时直接露出一块 faint 灰方块（加载态封面灰块根因）。
+        imageViewValue.isHidden = true
         return imageViewValue
     }()
 
@@ -451,6 +455,11 @@ class BearyProfileViewController: UIViewController {
         labelValue.translatesAutoresizingMaskIntoConstraints = false
         labelValue.font = UIFont.systemFont(ofSize: 13)
         labelValue.textColor = BearyColors.gray
+        // 初次加载占位：与名字／统计行的“—”同口径，占一行高度，
+        // 使统计行在加载态就落在有 handle 时的最终位置（空文本会塌成 0 高，
+        // 统计行与标签整体偏上、资料一到再整体下跳）；applyProfile 两路
+        // （有 handle 赋值／无 handle 置 nil＋隐藏）都会覆盖此占位。
+        labelValue.text = "—"
         return labelValue
     }()
 
