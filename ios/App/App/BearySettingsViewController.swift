@@ -363,7 +363,11 @@ final class BearySettingsViewController: UIViewController {
     private func makeLabel(font: UIFont, color: UIColor, lines: Int = 1, alignment: NSTextAlignment = .left) -> UILabel {
         let label = UILabel()
         label.translatesAutoresizingMaskIntoConstraints = false
-        label.font = font
+        // P1-7：设置页正文 / 辅助 / 分组标题一律走动态字体入口（默认字号下
+        // 与原值一致，大字号档跟随系统缩放）；本工厂只产出上述三类文字，
+        // 故集中在此接 scaledFont + adjusts，不逐处重复。
+        label.font = BearyDynamicType.scaledFont(for: font)
+        label.adjustsFontForContentSizeCategory = true
         label.textColor = color
         label.numberOfLines = lines
         label.textAlignment = alignment
@@ -375,7 +379,10 @@ final class BearySettingsViewController: UIViewController {
     /// 字距 1px（网页 letter-spacing:1px）用 kern 复现。
     private func makeSectionTitle(_ text: String) -> UILabel {
         let label = makeLabel(font: UIFont.systemFont(ofSize: 12), color: BearyColors.gray)
-        label.attributedText = NSAttributedString(string: text, attributes: [.kern: 1])
+        // P1-7：分组标题多行自适应——大字号下可换行，卡内标题包容器
+        // 上下约束已定，行高随文字自动撑开，不钉固定高度。
+        label.numberOfLines = 0
+        label.attributedText = NSAttributedString(string: text, attributes: [.kern: 1, .font: label.font])
         return label
     }
 
@@ -408,6 +415,9 @@ final class BearySettingsViewController: UIViewController {
     private func makeRow(title: String, detailLabel: UILabel, iconName: String? = nil) -> UIView {
         let titleLabelValue = makeLabel(font: UIFont.systemFont(ofSize: 15), color: BearyColors.ink)
         titleLabelValue.text = title
+        // P1-7：行正文标题与行尾辅助文案均可多行，行高由栈自动撑开。
+        titleLabelValue.numberOfLines = 0
+        detailLabel.numberOfLines = 0
         titleLabelValue.setContentHuggingPriority(.defaultHigh, for: .horizontal)
         detailLabel.textAlignment = .right
         var parts: [UIView] = []
@@ -429,7 +439,11 @@ final class BearySettingsViewController: UIViewController {
     private func makeInfoRow(title: String, detailLabel: UILabel, iconName: String) -> UIView {
         let titleLabelValue = makeLabel(font: UIFont.systemFont(ofSize: 15), color: BearyColors.ink)
         titleLabelValue.text = title
-        detailLabel.font = UIFont.systemFont(ofSize: 12)
+        // P1-7：两行式行的标题多行、辅助文案走动态字体（工厂标题已接入口，
+        // 直建的 detail 在此接入口，不在工厂外重复缩放已缩放过的字）。
+        titleLabelValue.numberOfLines = 0
+        detailLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 12))
+        detailLabel.adjustsFontForContentSizeCategory = true
         detailLabel.textColor = BearyColors.gray
         detailLabel.numberOfLines = 0
         detailLabel.textAlignment = .left
@@ -598,7 +612,9 @@ final class BearySettingsViewController: UIViewController {
         updateColumnWidth()
 
         loadingView.translatesAutoresizingMaskIntoConstraints = false
-        failureLabel.font = UIFont.systemFont(ofSize: 14)
+        // P1-7：失败辅助文案走动态字体（已是 0 行，下同：只改字，不改布局）。
+        failureLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 14))
+        failureLabel.adjustsFontForContentSizeCategory = true
         failureLabel.textColor = BearyColors.gray
         failureLabel.numberOfLines = 0
         failureLabel.textAlignment = .center
@@ -616,7 +632,9 @@ final class BearySettingsViewController: UIViewController {
         failureWrap.addArrangedSubview(retryButton)
         failureWrap.isHidden = true
 
-        loginHintLabel.font = UIFont.systemFont(ofSize: 14)
+        // P1-7：登录提示辅助文案走动态字体。
+        loginHintLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 14))
+        loginHintLabel.adjustsFontForContentSizeCategory = true
         loginHintLabel.textColor = BearyColors.gray
         loginHintLabel.numberOfLines = 0
         loginHintLabel.textAlignment = .center
@@ -720,7 +738,9 @@ final class BearySettingsViewController: UIViewController {
         heroNameLabel.textColor = BearyColors.ink
         heroNameLabel.numberOfLines = 0
         heroNameLabel.lineBreakMode = .byCharWrapping
-        heroEmailLabel.font = UIFont.systemFont(ofSize: 14)
+        // P1-7：ID 卡邮箱辅助文案走动态字体（已是 0 行）。
+        heroEmailLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 14))
+        heroEmailLabel.adjustsFontForContentSizeCategory = true
         heroEmailLabel.textColor = BearyColors.gray
         heroEmailLabel.numberOfLines = 0
         heroEmailLabel.lineBreakMode = .byCharWrapping
@@ -742,11 +762,14 @@ final class BearySettingsViewController: UIViewController {
         heroRow.spacing = 16
         heroRow.alignment = .center
 
-        idCreatedLabel.font = UIFont.systemFont(ofSize: 14)
+        // P1-7：ID 卡行尾辅助文案（注册时间 / 会员）走动态字体。
+        idCreatedLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 14))
+        idCreatedLabel.adjustsFontForContentSizeCategory = true
         idCreatedLabel.textColor = BearyColors.gray
         idCreatedLabel.numberOfLines = 0
         idCreatedLabel.textAlignment = .right
-        idPlusLabel.font = UIFont.systemFont(ofSize: 14)
+        idPlusLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 14))
+        idPlusLabel.adjustsFontForContentSizeCategory = true
         idPlusLabel.textColor = BearyColors.gray
         idPlusLabel.numberOfLines = 0
         idPlusLabel.textAlignment = .right
@@ -756,7 +779,7 @@ final class BearySettingsViewController: UIViewController {
         idValueLabel.numberOfLines = 0
         idValueLabel.lineBreakMode = .byCharWrapping
         let idTitleLabel = makeLabel(font: UIFont.monospacedSystemFont(ofSize: 10, weight: .regular), color: BearyColors.gray)
-        idTitleLabel.attributedText = NSAttributedString(string: "ID", attributes: [.kern: 3])
+        idTitleLabel.attributedText = NSAttributedString(string: "ID", attributes: [.kern: 3, .font: idTitleLabel.font])
         let idRow = UIStackView(arrangedSubviews: [idTitleLabel, idValueLabel])
         idRow.axis = .horizontal
         idRow.spacing = 12
@@ -800,15 +823,19 @@ final class BearySettingsViewController: UIViewController {
     }
 
     private func buildPlusSection() {
-        plusStatusLabel.font = UIFont.systemFont(ofSize: 14)
+        // P1-7：Plus 组行尾辅助文案走动态字体（以下三行同）。
+        plusStatusLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 14))
+        plusStatusLabel.adjustsFontForContentSizeCategory = true
         plusStatusLabel.textColor = BearyColors.gray
         plusStatusLabel.numberOfLines = 0
         plusStatusLabel.textAlignment = .right
-        plusFreeLabel.font = UIFont.systemFont(ofSize: 14)
+        plusFreeLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 14))
+        plusFreeLabel.adjustsFontForContentSizeCategory = true
         plusFreeLabel.textColor = BearyColors.gray
         plusFreeLabel.numberOfLines = 0
         plusFreeLabel.textAlignment = .right
-        plusPersonalLabel.font = UIFont.systemFont(ofSize: 14)
+        plusPersonalLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 14))
+        plusPersonalLabel.adjustsFontForContentSizeCategory = true
         plusPersonalLabel.textColor = BearyColors.gray
         plusPersonalLabel.numberOfLines = 0
         plusPersonalLabel.textAlignment = .right
@@ -817,6 +844,7 @@ final class BearySettingsViewController: UIViewController {
         // 官方包右箭头），点击进 BearyPlusGrantsViewController；原内联发放卡已删。
         let grantsTitle = makeLabel(font: UIFont.systemFont(ofSize: 15), color: BearyColors.ink)
         grantsTitle.text = "来源明细"
+        grantsTitle.numberOfLines = 0 // P1-7：行正文标题多行
         grantsTitle.setContentHuggingPriority(.defaultHigh, for: .horizontal)
         let grantsContent = UIStackView(arrangedSubviews: [grantsTitle, makeRowSpacer(), makeRowChevron()])
         grantsContent.translatesAutoresizingMaskIntoConstraints = false
@@ -854,7 +882,10 @@ final class BearySettingsViewController: UIViewController {
         let codeLoginDetail = makeLabel(font: UIFont.systemFont(ofSize: 12), color: BearyColors.gray, lines: 0)
         codeLoginDetail.text = "每次登录发送 6 位验证码，无需密码"
         let codeLoginRow = makeInfoRow(title: "邮箱验证码登录", detailLabel: codeLoginDetail, iconName: "icon_lock")
-        deviceCountLabel.font = UIFont.systemFont(ofSize: 12)
+        // P1-7：登录设备行辅助文案走动态字体；makeInfoRow 会以同基值
+        // systemFont(12) 重写一次（非对已缩放字再缩放），最终只缩放一次。
+        deviceCountLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 12))
+        deviceCountLabel.adjustsFontForContentSizeCategory = true
         deviceCountLabel.textColor = BearyColors.gray
         deviceCountLabel.numberOfLines = 0
         deviceCountLabel.textAlignment = .left
@@ -888,6 +919,7 @@ final class BearySettingsViewController: UIViewController {
         // 仅换组；exportRowButton 的 isEnabled 仍由导出流程控制）。
         let exportTitle = makeLabel(font: UIFont.systemFont(ofSize: 15), color: BearyColors.ink)
         exportTitle.text = "导出我的数据"
+        exportTitle.numberOfLines = 0 // P1-7：行正文标题多行
         let exportDetail = makeLabel(font: UIFont.systemFont(ofSize: 13), color: BearyColors.gray, lines: 0)
         exportDetail.text = "下载 JSON，含账户、日记、点赞记录"
         exportDetailLabel = exportDetail
@@ -980,7 +1012,9 @@ final class BearySettingsViewController: UIViewController {
         // 未发布草稿仍保存在本设备（按账号分桶，换号不可见），登录同一账号可继续编辑。
         let logoutFootnote = UILabel()
         logoutFootnote.translatesAutoresizingMaskIntoConstraints = false
-        logoutFootnote.font = UIFont.systemFont(ofSize: 13)
+        // P1-7：账号操作组脚注辅助文案走动态字体（已是 0 行）。
+        logoutFootnote.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13))
+        logoutFootnote.adjustsFontForContentSizeCategory = true
         logoutFootnote.textColor = BearyColors.gray
         logoutFootnote.numberOfLines = 0
         logoutFootnote.text = "退出登录后，已同步的日记与回收站缓存会从本设备清除；未发布的草稿仍保存在本设备，登录同一账号后可继续编辑。"
@@ -1008,7 +1042,10 @@ final class BearySettingsViewController: UIViewController {
         versionFooterWrap.translatesAutoresizingMaskIntoConstraints = false
         let label = UILabel()
         label.translatesAutoresizingMaskIntoConstraints = false
-        label.font = UIFont.systemFont(ofSize: 13)
+        // P1-7：页底版本脚注辅助文案走动态字体 + 多行（默认 1 行会截断大字号）。
+        label.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13))
+        label.adjustsFontForContentSizeCategory = true
+        label.numberOfLines = 0
         label.textColor = BearyColors.gray
         label.textAlignment = .center
         let versionShort = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "—"
@@ -1855,6 +1892,7 @@ final class BearySettingsViewController: UIViewController {
         // 消息角标：本地开关，门控顶栏消息铃铛未读数显示（SceneDelegate.chrome.updateBellBadge 内查档）。
         let badgeTitle = makeLabel(font: UIFont.systemFont(ofSize: 15), color: BearyColors.ink)
         badgeTitle.text = "消息角标"
+        badgeTitle.numberOfLines = 0 // P1-7：开关行正文标题多行
         let badgeDetail = makeLabel(font: UIFont.systemFont(ofSize: 12), color: BearyColors.gray, lines: 0)
         badgeDetail.text = "顶栏消息铃铛显示未读数"
         let badgeTextStack = UIStackView(arrangedSubviews: [badgeTitle, badgeDetail])
@@ -1907,6 +1945,7 @@ final class BearySettingsViewController: UIViewController {
         // 2026-10-29 音效包接入：音效开关行（默认开，关后全部音效静默；只门控音效，不动震动）。
         let soundSwitchTitle = makeLabel(font: UIFont.systemFont(ofSize: 15), color: BearyColors.ink)
         soundSwitchTitle.text = "音效"
+        soundSwitchTitle.numberOfLines = 0 // P1-7：开关行正文标题多行
         let soundSwitchDetail = makeLabel(font: UIFont.systemFont(ofSize: 12), color: BearyColors.gray, lines: 0)
         soundSwitchDetail.text = "点按、发布等操作的提示音"
         let soundSwitchTextStack = UIStackView(arrangedSubviews: [soundSwitchTitle, soundSwitchDetail])
@@ -1930,6 +1969,7 @@ final class BearySettingsViewController: UIViewController {
         // 放在诊断日志查看行正上方，开关关闭时 DiagFile 不再写入，默认开）。
         let diagSwitchTitle = makeLabel(font: UIFont.systemFont(ofSize: 15), color: BearyColors.ink)
         diagSwitchTitle.text = "记录诊断日志"
+        diagSwitchTitle.numberOfLines = 0 // P1-7：开关行正文标题多行
         let diagSwitchDetail = makeLabel(font: UIFont.systemFont(ofSize: 12), color: BearyColors.gray, lines: 0)
         diagSwitchDetail.text = "关闭后不再写入日志文件"
         let diagSwitchTextStack = UIStackView(arrangedSubviews: [diagSwitchTitle, diagSwitchDetail])
