@@ -68,6 +68,8 @@ private final class WishRowView: UIView {
         upButton.addTarget(self, action: #selector(upTapped), for: .touchUpInside)
         downButton.addTarget(self, action: #selector(downTapped), for: .touchUpInside)
         doneButton.addTarget(self, action: #selector(doneTapped), for: .touchUpInside)
+        // P1-17：展开钮与完成钮补通用按压反馈；两票钮不补——投票已有即时选中
+        // 反馈（configure 立改选中态）＋ wishDing 音效，再挂按压缩放/震动即重复反馈。
         // 29：详情展开钮——超三行时才出现，点按原位展开/收起，不新增二级页面；
         // 未超三行时隐藏（见 layoutSubviews 的 updateExpandVisibility）。
         expandButton.setTitle("展开", for: .normal)
@@ -77,6 +79,8 @@ private final class WishRowView: UIView {
         expandButton.contentHorizontalAlignment = .leading
         expandButton.isHidden = true
         expandButton.addTarget(self, action: #selector(expandTapped), for: .touchUpInside)
+        expandButton.bearyAddPressFeedback()
+        doneButton.bearyAddPressFeedback()
         let voteRow = UIStackView(arrangedSubviews: [upButton, downButton])
         voteRow.axis = .horizontal
         voteRow.spacing = 8
@@ -114,9 +118,39 @@ private final class WishRowView: UIView {
     @objc private func doneTapped() { onMarkDone?() }
 
     @objc private func expandTapped() {
-        // 29：原位切换行数，不做布局动画（动效只走 transform/opacity，高度变化瞬时落终值）。
+        // P2-10：高度一次落终值（不做高度插值动画），视觉衔接走内容淡入/transform；
+        // 收起时恢复滚动偏移，使标题停在原位（内容缩短导致 scrollView 钳制偏移时
+        // 标题本会被顶移，恢复后标题位置不变）。减动效时全部瞬时落位。
         isDetailExpanded.toggle()
+        let expanding = isDetailExpanded
+        var enclosingScroll: UIScrollView?
+        var current: UIView? = superview
+        while let view = current {
+            if let scroll = view as? UIScrollView { enclosingScroll = scroll; break }
+            current = view.superview
+        }
+        let oldOffset = enclosingScroll?.contentOffset
+        detailLabel.layer.removeAllAnimations()
         updateExpandVisibility()
+        // 高度一次落终值：先强制布局到最终态，再起内容动效，不让高度慢慢长出来。
+        // 须连同滚动容器一起布局，否则 contentSize 未刷新、后一步的偏移钳制读到旧值。
+        if let scroll = enclosingScroll { scroll.layoutIfNeeded() } else { superview?.layoutIfNeeded() }
+        if let scroll = enclosingScroll, let old = oldOffset {
+            let minY = -scroll.contentInset.top
+            let maxY = max(scroll.contentSize.height - scroll.bounds.height + scroll.contentInset.bottom, minY)
+            scroll.contentOffset = CGPoint(x: old.x, y: min(max(old.y, minY), maxY))
+        }
+        guard expanding, BearyMotion.animated(true) else {
+            detailLabel.alpha = 1
+            detailLabel.transform = .identity
+            return
+        }
+        detailLabel.alpha = 0
+        detailLabel.transform = CGAffineTransform(translationX: 0, y: 4)
+        UIView.animate(withDuration: 0.2, delay: 0, options: [.curveEaseOut], animations: {
+            self.detailLabel.alpha = 1
+            self.detailLabel.transform = .identity
+        }, completion: nil)
     }
 
     /// 29：布局落定后量详情是否超三行——行宽取行宽减左右 16 内边距（label 帧未稳时
@@ -163,6 +197,10 @@ private final class WishRowView: UIView {
             isDetailExpanded = false
             detailOverflow = false
             expandButton.isHidden = true
+            // P2-10：文本换了，展开淡入动效的残态（alpha/位移）一并清掉，不留半透明行。
+            detailLabel.layer.removeAllAnimations()
+            detailLabel.alpha = 1
+            detailLabel.transform = .identity
         }
         detailLabel.text = newDetail
         detailLabel.isHidden = newDetail.isEmpty
@@ -211,16 +249,12 @@ final class BearyWishWallViewController: UIViewController {
     private let contentStack = UIStackView()
     private let createButton = BearyButton.make(style: .primaryPill(.ink), title: "发起许愿")
     private let emptyLabel = UILabel()
-    private let failureLabel = UILabel()
-    private let retryButton = BearyButton.retryPill()
-    // 30：轻量加载指示（转圈 + “加载中…”文案，无骨架屏）；加载容器高 32，内栈居中。
-    private let loadingSpinner = UIActivityIndicatorView(style: .medium)
-    private let loadingLabel = UILabel()
-    private let loadingView = UIView()
+    // P2-18：加载/失败态迁入已有 BearyStateView（不新建组件）；空态仍走原
+    // emptyLabel，不强迫空态套同一插图——故 stateView 两态均不传 iconName。
+    private let wishStateView = BearyStateView()
     private var wishes: [BearyAPI.WishItem] = []
     private var rowViews: [Int: WishRowView] = [:]
     private var voteGeneration: [Int: Int] = [:] // 2026-10-29：每条许愿投票代次，旧回包丢弃用
-    private var shownWishIds: Set<Int> = []
     private var isLoading = false
     /// 13：600 上限约束（宽 ≥821 才激活，开关在 viewDidLayoutSubviews；Feed 断点同款）。
     private var colCapConstraints: [NSLayoutConstraint] = []
@@ -299,41 +333,15 @@ final class BearyWishWallViewController: UIViewController {
         emptyLabel.numberOfLines = 0
         emptyLabel.text = "还没有愿望，Plus 会员可以发起第一个"
         emptyLabel.isHidden = true
-        failureLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 14))
-        failureLabel.adjustsFontForContentSizeCategory = true
-        failureLabel.textColor = BearyColors.gray
-        failureLabel.textAlignment = .center
-        failureLabel.numberOfLines = 0
-        failureLabel.text = "加载失败"
-        failureLabel.isHidden = true
-        retryButton.setTitle("重试", for: .normal)
-        retryButton.addTarget(self, action: #selector(retryTapped), for: .touchUpInside)
-        retryButton.isHidden = true
-        // 30：加载指示内栈居中于 32 高容器内，加载期外隐藏（栈视图隐藏即不占位）。
-        loadingLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 14))
-        loadingLabel.adjustsFontForContentSizeCategory = true
-        loadingLabel.textColor = BearyColors.gray
-        loadingLabel.text = "加载中…"
-        let loadingInner = UIStackView(arrangedSubviews: [loadingSpinner, loadingLabel])
-        loadingInner.axis = .horizontal
-        loadingInner.spacing = 8
-        loadingInner.alignment = .center
-        loadingInner.translatesAutoresizingMaskIntoConstraints = false
-        loadingView.addSubview(loadingInner)
-        NSLayoutConstraint.activate([
-            loadingInner.centerXAnchor.constraint(equalTo: loadingView.centerXAnchor),
-            loadingInner.centerYAnchor.constraint(equalTo: loadingView.centerYAnchor),
-            loadingView.heightAnchor.constraint(equalToConstant: 32),
-        ])
-        loadingView.isHidden = true
+        // P2-18：加载/失败两态的文案与重试动作与旧口径一致（“加载中…”/“加载失败”/“重试”），
+        // 仅承载体换成 BearyStateView；空态仍走 emptyLabel，不进本视图。
+        wishStateView.translatesAutoresizingMaskIntoConstraints = false
+        wishStateView.isHidden = true
         contentStack.addArrangedSubview(createButton)
-        contentStack.addArrangedSubview(loadingView)
+        contentStack.addArrangedSubview(wishStateView)
         contentStack.addArrangedSubview(emptyLabel)
-        contentStack.addArrangedSubview(failureLabel)
-        contentStack.addArrangedSubview(retryButton)
         NSLayoutConstraint.activate([
             createButton.heightAnchor.constraint(equalToConstant: BearyButtonStyle.primaryPill(.ink).height),
-            retryButton.heightAnchor.constraint(equalToConstant: BearyButtonStyle.secondaryOutline(.compact).height),
         ])
         loadWishes()
     }
@@ -377,49 +385,61 @@ final class BearyWishWallViewController: UIViewController {
     private func loadWishes() {
         guard !isLoading else { return }
         isLoading = true
-        failureLabel.isHidden = true
-        retryButton.isHidden = true
-        // 30：加载期显转圈 + “加载中…”；成功/失败回包时统一隐藏（见回调首行）。
-        loadingView.isHidden = false
-        loadingSpinner.startAnimating()
+        // P2-18：加载态走 BearyStateView（转圈 + “加载中…”）；成功/失败回包时统一收起。
+        wishStateView.configure(kind: .loading, title: "加载中…", subtitle: nil, iconName: nil, actionTitle: nil)
+        wishStateView.isHidden = false
         BearyAPI.shared.fetchWishes { [weak self] result in
             DispatchQueue.main.async {
                 guard let self = self else { return }
                 self.isLoading = false
-                self.loadingSpinner.stopAnimating()
-                self.loadingView.isHidden = true
                 switch result {
                 case .success(let resp):
+                    self.wishStateView.isHidden = true
                     self.wishes = resp.wishes ?? []
                     self.renderWishes()
                 case .failure:
-                    self.failureLabel.isHidden = false
-                    self.retryButton.isHidden = false
+                    // P2-18：失败态走 BearyStateView（“加载失败”+“重试”，动作复用 retryTapped）。
+                    self.wishStateView.configure(kind: .error, title: "加载失败", subtitle: nil, iconName: nil, actionTitle: "重试", onAction: { [weak self] in self?.retryTapped() })
+                    self.wishStateView.isHidden = false
                 }
             }
         }
     }
 
-    /// 渲染：服务端顺序即净赞成降序，不重排；仅新 id 行入场错峰（transform/opacity），已有行只改文案不重播。
+    /// P0-9：按 wish ID 复用行——已有行只 configure 改文案，不重建、不重播入场动效；
+    /// 展开态存在行视图自身，复用即保留（仅详情文本变化时 configure 内部复位）；
+    /// 仅新增 ID 建行并入场错峰；消失 ID 摘除；顺序变化时同批行先摘后按服务端
+    /// 顺序重挂（视图对象不变，展开态与按压态不丢）。服务端顺序即净赞成降序，不重排。
     private func renderWishes() {
-        for (_, row) in rowViews { row.removeFromSuperview() }
-        rowViews = [:]
+        let oldRows = rowViews
         emptyLabel.isHidden = !wishes.isEmpty
         var newRows: [WishRowView] = []
+        var orderedRows: [WishRowView] = []
         for item in wishes {
             guard let id = item.id else { continue }
-            let row = WishRowView()
-            row.configure(item: item, isAdmin: isAdmin)
-            row.onUp = { [weak self] in self?.voteTapped(wishId: id, target: 1) }
-            row.onDown = { [weak self] in self?.voteTapped(wishId: id, target: -1) }
-            row.onMarkDone = { [weak self] in self?.markDoneTapped(wishId: id) }
-            contentStack.addArrangedSubview(row)
-            rowViews[id] = row
-            if !shownWishIds.contains(id) {
-                shownWishIds.insert(id)
+            if let row = oldRows[id] {
+                row.configure(item: item, isAdmin: isAdmin)
+                orderedRows.append(row)
+            } else {
+                let row = WishRowView()
+                row.configure(item: item, isAdmin: isAdmin)
+                row.onUp = { [weak self] in self?.voteTapped(wishId: id, target: 1) }
+                row.onDown = { [weak self] in self?.voteTapped(wishId: id, target: -1) }
+                row.onMarkDone = { [weak self] in self?.markDoneTapped(wishId: id) }
+                rowViews[id] = row
+                orderedRows.append(row)
                 newRows.append(row)
             }
         }
+        let liveIds = Set(wishes.compactMap { $0.id })
+        for (id, row) in oldRows where !liveIds.contains(id) {
+            row.removeFromSuperview()
+            rowViews.removeValue(forKey: id)
+        }
+        // 先摘后重挂：栈内固定位（发起钮/stateView/空态）在前，行按服务端顺序跟后；
+        // 摘除只脱离栈布局，不销毁视图，故复用行的展开态保留。
+        for row in orderedRows { row.removeFromSuperview() }
+        for row in orderedRows { contentStack.addArrangedSubview(row) }
         if !BearyMotion.animated(true) { return }
         for (index, row) in newRows.enumerated() {
             row.alpha = 0
@@ -705,7 +725,22 @@ final class BearyWishCreateViewController: UIViewController, UITextViewDelegate 
         ]
     }
 
-    @objc private func closeTapped() { dismiss(animated: BearyMotion.animated(true), completion: nil) }
+    /// P0-13：关闭未保存提示——空内容（标题与详情均空白）直接关；有修改时先弹
+    /// 确认，“继续编辑”留页、“放弃修改”才关（编辑资料页“放弃未保存的改动？”同款口径）。
+    @objc private func closeTapped() {
+        let hasTitle = !(titleField.text ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        let hasDetail = !detailView.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        guard hasTitle || hasDetail else {
+            dismiss(animated: BearyMotion.animated(true), completion: nil)
+            return
+        }
+        let alert = UIAlertController(title: "放弃未保存的改动？", message: nil, preferredStyle: .alert)
+        alert.addAction(UIAlertAction(title: "继续编辑", style: .cancel, handler: nil))
+        alert.addAction(UIAlertAction(title: "放弃修改", style: .destructive, handler: { [weak self] _ in
+            self?.dismiss(animated: BearyMotion.animated(true), completion: nil)
+        }))
+        present(alert, animated: BearyMotion.animated(true), completion: nil)
+    }
 
     /// 30：字段级错误行显隐（显时松开 0 高约束，隐时压回 0 高，见属性注释）。
     private func setFieldErrorVisible(_ visible: Bool) {
