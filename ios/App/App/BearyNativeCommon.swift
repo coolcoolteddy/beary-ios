@@ -31,10 +31,14 @@ enum BearyColors {
     static var bg: UIColor { UIColor { t in t.userInterfaceStyle == .dark ? .black : .white } }
     /// 网页 --surface：浅 #fff / 深 #26262c。
     static var surface: UIColor { UIColor { t in t.userInterfaceStyle == .dark ? UIColor(red: 38.0/255.0, green: 38.0/255.0, blue: 44.0/255.0, alpha: 1) : .white } }
-    /// 时间线卡片底色（A 方案，2026-10-29 Li 定）：浅 #f5f5f7 / 深 #1c1c1f；页面底仍走 bg（浅白／深黑），只用底色区分、卡片不再画边线。
-    static var timelineCard: UIColor { UIColor { t in t.userInterfaceStyle == .dark ? UIColor(red: 28.0/255.0, green: 28.0/255.0, blue: 31.0/255.0, alpha: 1) : UIColor(red: 245.0/255.0, green: 245.0/255.0, blue: 247.0/255.0, alpha: 1) } }
-    /// 时间线引用卡底色（A 方案同步进一级）：浅 #e9e9ee / 深 #26262c（深色与 surface 同值），否则引用卡融进新卡片底。
-    static var timelineQuote: UIColor { UIColor { t in t.userInterfaceStyle == .dark ? UIColor(red: 38.0/255.0, green: 38.0/255.0, blue: 44.0/255.0, alpha: 1) : UIColor(red: 233.0/255.0, green: 233.0/255.0, blue: 238.0/255.0, alpha: 1) } }
+    /// 时间线卡片边线（B 方案，v3 预览值，2026-10-29 用户批 v3）：
+    /// 1px，浅 #c7c7cc／深 #48484e；色板既有 token 无贴近值（line 是被换掉的旧值，
+    /// gray 深太多），故用 v3 精确值，不凑既有 token。
+    static var timelineBorder: UIColor { UIColor { t in t.userInterfaceStyle == .dark ? UIColor(red: 72.0/255.0, green: 72.0/255.0, blue: 78.0/255.0, alpha: 1) : UIColor(red: 199.0/255.0, green: 199.0/255.0, blue: 204.0/255.0, alpha: 1) } }
+    /// 时间线可见性裸图标灰（v3 预览值，固定值、深浅同值）：#8e8e93；
+    /// 既有 gray 深浅两值（浅 #737373／深 #a8a8a8）均离 v3 值 26 以上且随 trait 变，
+    /// 故用 v3 精确值；时间文字仍走 BearyColors.gray，不跟这个值走。
+    static var timelineIconGray: UIColor { UIColor(red: 142.0/255.0, green: 142.0/255.0, blue: 147.0/255.0, alpha: 1) }
     static var faint: UIColor { UIColor { t in t.userInterfaceStyle == .dark ? UIColor(white: 0.08, alpha: 1) : UIColor(white: 0.96, alpha: 1) } }
     /// 网页 --hov：浅 rgba(17,17,20,.06) / 深 rgba(244,244,248,.08)（悬停/按压底色）。
     static var hov: UIColor { UIColor { t in t.userInterfaceStyle == .dark ? UIColor(red: 244.0/255.0, green: 244.0/255.0, blue: 248.0/255.0, alpha: 0.08) : UIColor(red: 17.0/255.0, green: 17.0/255.0, blue: 20.0/255.0, alpha: 0.06) } }
