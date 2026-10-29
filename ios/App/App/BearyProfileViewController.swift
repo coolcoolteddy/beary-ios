@@ -3231,7 +3231,7 @@ class BearyProfileViewController: UIViewController {
                         if viewerIsAuthor || fetched.isPublic == true {
                             strongSelf.onOpenEntry?(fetched)
                         } else {
-                            strongSelf.presentSimpleAlert(message: "该日记未公开")
+                            strongSelf.presentSimpleAlert(message: "该日记已设为私密")
                         }
                     case .failure:
                         strongSelf.presentSimpleAlert(message: "引用的日记已删除")

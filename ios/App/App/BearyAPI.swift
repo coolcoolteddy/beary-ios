@@ -856,7 +856,55 @@ final class BearyAPI {
 
     /// 解除拉黑：DELETE /beary/api/blocks/:user。
     func unblockUser(userId: Int, completion: @escaping (Result<Void, APIError>) -> Void) {
-        requestVoid("/beary/api/blocks/\\(userId)", method: "DELETE", completion: completion)
+        requestVoid("/beary/api/blocks/\(userId)", method: "DELETE", completion: completion)
+    }
+
+    // MARK: - 功能许愿墙（2026-10-29 补缺第 21 项；后端备改动未部署前 404 即走失败态）
+    /// 许愿条目（服务端 beary_wishes 行 + 聚合计数；myVote：1 赞成 / -1 反对 / nil 未投）。
+    struct WishItem: Decodable {
+        var id: Int?
+        var authorId: Int?
+        var authorName: String?
+        var authorAvatar: String?
+        var title: String?
+        var detail: String?
+        var status: String?
+        var upCount: Int?
+        var downCount: Int?
+        var myVote: Int?
+        var createdAt: Int?
+    }
+    /// 列表回包（服务端按净赞成降序排好，App 不再重排）。
+    struct WishListResponse: Decodable {
+        var wishes: [WishItem]?
+    }
+    /// 投票回包（服务端权威计数，乐观更新后以此对齐）。
+    struct WishVoteResponse: Decodable {
+        var ok: Bool?
+        var up: Int?
+        var down: Int?
+        var myVote: Int?
+    }
+
+    /// 列表：GET /beary/api/wishes（游客可看，myVote 仅登录态下发）。
+    func fetchWishes(completion: @escaping (Result<WishListResponse, APIError>) -> Void) {
+        request("/beary/api/wishes", completion: completion)
+    }
+
+    /// 发起：POST /beary/api/wishes {title, detail}（仅 Plus，服务端校验；回包为新建条目）。
+    func createWish(title: String, detail: String, completion: @escaping (Result<WishItem, APIError>) -> Void) {
+        request("/beary/api/wishes", method: "POST", jsonBody: ["title": title, "detail": detail], completion: completion)
+    }
+
+    /// 投票：POST /beary/api/wishes/:id/vote {vote: 1|-1|0}（0 = 取消本票；每人每条一票）。
+    func voteWish(id: Int, vote: Int, completion: @escaping (Result<WishVoteResponse, APIError>) -> Void) {
+        request("/beary/api/wishes/\(id)/vote", method: "POST", jsonBody: ["vote": vote], completion: completion)
+    }
+
+    /// 管理员标记已完成：POST /beary/api/wishes/:id/status {status: "done"}。
+    func markWishDone(id: Int, completion: @escaping (Result<Void, APIError>) -> Void) {
+        requestVoid("/beary/api/wishes/\(id)/status", method: "POST", jsonBody: ["status": "done"], completion: completion)
+    }
     }
 
     /// 我的拉黑列表：GET /beary/api/blocks → {blocked: [ids]}。

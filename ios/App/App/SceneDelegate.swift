@@ -847,6 +847,10 @@ final class BearyChromeViewController: UIViewController {
             // 下面三处重载全部跳过，断掉 401→重载→再 401 的循环。
             let userChanged = self.lastUserChangedUserId != user?.id
             self.lastUserChangedUserId = user?.id
+            // 补缺 P3-38：账号真变时广播（已用上行去重，重复 /me 不误发；通知页据此复位 seen 水印）。
+            if userChanged {
+                NotificationCenter.default.post(name: .bearyUserDidChange, object: nil)
+            }
             // 账号隔离 1/4 号：登录态每次变化先切草稿桶与图片桶（分桶路径
             // 随账号自动切换，内存态不跨账号）；旧全局草稿首启迁移到当前
             // 账号时 toast 明示一次（迁移后旧文件消失，不再触发）。

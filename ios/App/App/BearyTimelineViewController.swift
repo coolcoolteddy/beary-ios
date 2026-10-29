@@ -1521,7 +1521,7 @@ final class BearyTimelineCell: UITableViewCell {
                 quoteButton.isEnabled = false
                 quoteButton.isHidden = false
             } else if quote.locked == true {
-                quoteTitleLabel.text = "该日记未公开"
+                quoteTitleLabel.text = "该日记已设为私密"
                 quoteIconView.image = BearyIconImages.image(named: "icon_lock", pointSize: 12)
                 quoteBodyLabel.isHidden = true
                 quoteButton.isEnabled = false
@@ -1531,7 +1531,7 @@ final class BearyTimelineCell: UITableViewCell {
                     quoteTitleLabel.text = "引用的日记已删除"
                     quoteIconView.image = BearyIconImages.image(named: "icon_quote", pointSize: 12)
                 } else {
-                    quoteTitleLabel.text = "该日记未公开"
+                    quoteTitleLabel.text = "该日记已设为私密"
                     quoteIconView.image = BearyIconImages.image(named: "icon_lock", pointSize: 12)
                 }
                 quoteBodyLabel.isHidden = true
@@ -1541,7 +1541,7 @@ final class BearyTimelineCell: UITableViewCell {
                 // iCity viewer 实时判定：被引篇非公开且 viewer 不是被引作者时，
                 // 即使服务端透传了正文也以占位替代，绝不泄漏正文与图片
                 //（旧口径以宿主是否本人为代理，已作废；Quote 现有 authorId/isMine 字段）。
-                quoteTitleLabel.text = "该日记未公开"
+                quoteTitleLabel.text = "该日记已设为私密"
                 quoteIconView.image = BearyIconImages.image(named: "icon_lock", pointSize: 12)
                 quoteBodyLabel.isHidden = true
                 quoteButton.isEnabled = false
@@ -1828,11 +1828,12 @@ final class BearyTimelineCell: UITableViewCell {
         f.dateFormat = "HH:mm"
         return f
     }()
+    // 补缺 P3-29：引用日期全站统一 F3 口径 M月d日 H:mm（卡片/详情引用卡已用该口径；原 M 月 d 日无时间且带空格）。
     private static let timelineQuoteDateFormatter: DateFormatter = {
         let f = DateFormatter()
         f.locale = Locale(identifier: "zh_CN")
         f.timeZone = TimeZone(secondsFromGMT: 8 * 3600)
-        f.dateFormat = "M 月 d 日"
+        f.dateFormat = "M月d日 H:mm"
         return f
     }()
 
@@ -4970,6 +4971,8 @@ extension BearyTimelineViewController: UITableViewDataSource, UITableViewDelegat
             self?.onEditEntry?(entry)
             completion(true)
         }
+        // 补缺 P3-30：左滑编辑钮底色显式设墨色（原未指定，随系统默认）。
+        edit.backgroundColor = BearyColors.ink
         return UISwipeActionsConfiguration(actions: [edit])
     }
 

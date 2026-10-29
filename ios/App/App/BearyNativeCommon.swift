@@ -1472,6 +1472,8 @@ extension Notification.Name {
     static let bearyDidReportEntry = Notification.Name("bearyDidReportEntry")
     /// 拉黑成功后广播（object = blockedUserId Int）：各列表页据此过滤该作者条目。
     static let bearyDidBlockUser = Notification.Name("bearyDidBlockUser")
+    /// 补缺 P3-38：账号真变广播（SceneDelegate onUserChanged 去重后发，无 object）：通知页据此复位 seen 水印。
+    static let bearyUserDidChange = Notification.Name("bearyUserDidChange")
 }
 
 /// 举报理由：复用封禁五类（服务端 reasons 枚举同款文案）。
@@ -1495,10 +1497,12 @@ enum BearyReportFlow {
                 BearyAPI.shared.reportEntry(entryId: entryId, reason: reason) { result in
                     DispatchQueue.main.async {
                         switch result {
-                        case .success:
+                        case .success(let resp):
                             BearyReportedStore.markReported(entryId: entryId)
                             NotificationCenter.default.post(name: .bearyDidReportEntry, object: entryId)
-                            BearyToast.show(in: vc.view, message: "已举报，谢谢反馈", aboveFAB: false)
+                            // 补缺 P3-39：重复举报（服务端 duplicate 成功态）按已举报处理并置灰下次菜单，
+                            // 文案不谎称“谢谢反馈”，改“已举报”。
+                            BearyToast.show(in: vc.view, message: resp.duplicate == true ? "已举报" : "已举报，谢谢反馈", aboveFAB: false)
                         case .failure:
                             BearyToast.show(in: vc.view, message: "举报失败，请重试", aboveFAB: false)
                         }

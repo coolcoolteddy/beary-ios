@@ -716,6 +716,8 @@ final class BearyDetailViewController: UIViewController {
         let pillColor = isPublic ? BearyColors.orange : BearyColors.blue
         pillLabel.textColor = pillColor
         pillContainer.layer.borderColor = pillColor.cgColor
+        // 补缺 P3-28：时间线同款填充底（已公开橙 12%/18% 动态底、私密蓝 13%）；此前只有字色+描边。
+        pillContainer.backgroundColor = isPublic ? BearyTimelineCell.publishedPillBackground() : BearyColors.alpha(BearyColors.blue, 0.13)
     }
 
     /// 限时详情：存活期虚线边框 + 倒计时灰字（只留倒计时行）；
@@ -844,7 +846,7 @@ final class BearyDetailViewController: UIViewController {
     }
 
     /// 引用卡 viewer 实时判定（卡片 presentQuoteCard 同口径）：作者本人或已公开才显全文，
-    /// 否则占位；gone → 已删除，locked／未公开 → 该日记未公开；私密被引进公开宿主时
+    /// 否则占位；gone → 已删除，locked／未公开 → 该日记已设为私密；私密被引进公开宿主时
     /// 作者看全文＋“仅你可见”角标。
     private func renderQuote() {
         guard let quote = entry.quote, let quoteId = quote.id, !quoteId.isEmpty else {
@@ -859,14 +861,14 @@ final class BearyDetailViewController: UIViewController {
             return
         }
         if quote.locked == true {
-            quoteView.showGone(message: "该日记未公开", iconName: "icon_lock")
+            quoteView.showGone(message: "该日记已设为私密", iconName: "icon_lock")
             quoteView.isHidden = false
             return
         }
         let content = quote.content ?? ""
         if content.isEmpty {
             if quote.isPublic == false {
-                quoteView.showGone(message: "该日记未公开", iconName: "icon_lock")
+                quoteView.showGone(message: "该日记已设为私密", iconName: "icon_lock")
             } else {
                 quoteView.showGone(message: "引用的日记已删除", iconName: "icon_quote")
             }
@@ -874,7 +876,7 @@ final class BearyDetailViewController: UIViewController {
             return
         }
         guard quoteIsMine || quote.isPublic == true else {
-            quoteView.showGone(message: "该日记未公开", iconName: "icon_lock")
+            quoteView.showGone(message: "该日记已设为私密", iconName: "icon_lock")
             quoteView.isHidden = false
             return
         }

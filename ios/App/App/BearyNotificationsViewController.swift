@@ -477,6 +477,9 @@ final class BearyNotificationsViewController: UIViewController {
         // 审计 P2-20：通知页监听拉黑/举报即时清行（服务端补过滤为可选后端，App 侧先行）。
         NotificationCenter.default.addObserver(self, selector: #selector(handleBlockedUserNotification(_:)), name: .bearyDidBlockUser, object: nil)
         NotificationCenter.default.addObserver(self, selector: #selector(handleReportedEntryNotification(_:)), name: .bearyDidReportEntry, object: nil)
+        // 补缺 P3-38：页内切号监听——账号真变时复位 seen 水印（登出重置同款两字段），
+        // 否则旧号水印会压住新号的高亮；行刷新走既有出现/回前台路径。
+        NotificationCenter.default.addObserver(self, selector: #selector(handleUserChanged), name: .bearyUserDidChange, object: nil)
         // 缓存秒显（网页 openNotifs ntItemsCache 口径）：已打开过先原样显旧列表，
         // 后台 loadFirstPage 刷新、变了才重绘；首次打开才走转圈。
         if let uid = SessionManager.shared.currentUser?.id, let cached = Self.cachedPages[uid] {
@@ -969,6 +972,12 @@ final class BearyNotificationsViewController: UIViewController {
         cancelCardAnimation()
         BearyAPI.shared.bumpAuthEpoch()
         tableView.reloadData()
+    }
+
+    /// 补缺 P3-38：账号变化时复位 seen 水印（与 clearItemsAfterUnauthorized 的登出重置同款两字段）。
+    @objc private func handleUserChanged() {
+        displayHighlightWatermarkMs = nil
+        notifPageEntered = false
     }
 
     /// 未登录提示一集只发一次：toast“请先登录”，1200ms 后走 onRequireLogin。
@@ -2888,7 +2897,7 @@ private class BearyNotificationCell: UITableViewCell {
     }
 
     /// 互动动词（卡面最新一条与行标题共用，须对 VC 可见，故不 private）。
-    /// 网页 ntVerb 口径：非 like / bookmark 一律回退为“给你的日记贴了小熊回应”
+    /// 网页 ntVerb 口径：非 like / bookmark / mention 一律回退为“给你的日记贴了小熊回应”
     ///（未知 type 同 emote 文案，不再返回空串）。
     static func verb(for type: String?) -> String {
         if type == "like" {
@@ -2896,6 +2905,10 @@ private class BearyNotificationCell: UITableViewCell {
         }
         if type == "bookmark" {
             return "收藏了你的日记"
+        }
+        // 补缺 P3-36：@ 通知（服务端 type=mention）不用回应文案，改“@了你”。
+        if type == "mention" {
+            return "@了你"
         }
         return "给你的日记贴了小熊回应"
     }
@@ -2909,7 +2922,9 @@ private class BearyNotificationCell: UITableViewCell {
         // + padding-left 8，再加行内 padding 20——头像 x=20+2+8+20=50，
         // 分隔线（行底边、起于行左缘）x=20+2+8=30；App 原 48/28 各左偏 2px。
         // 竖线本身 x=20（margin 起点）不变。
-        avatarLeadingConstraint?.constant = nested ? 46 : 16
+        // 补缺 P3-37：嵌套头像 x 按文件头注释口径（网页 .nt-sysin：头像 x=50、分隔线起于 30）统一为 50；
+        // 真实像素未经真机截图量取，待 Li 真机核实（不得以本值冒充实测值）。
+        avatarLeadingConstraint?.constant = nested ? 50 : 16
         separatorLeadingConstraint?.constant = nested ? 30 : 0
         nestedLineView.isHidden = !nested
         chevronView.isHidden = true
@@ -2958,12 +2973,14 @@ private class BearyNotificationCell: UITableViewCell {
             popperView.isHidden = true
             avatarIconView.isHidden = true
             kindBadgeView.isHidden = false
-            // 网页 ntOne 口径：非 like / bookmark 的角标一律回退为 mood 图。
+            // 网页 ntOne 口径：非 like / bookmark 的角标一律回退为 mood 图；@ 行补 @ 图标。
             let kindIconName: String
             if itemType == "like" {
                 kindIconName = "icon_heart"
             } else if itemType == "bookmark" {
                 kindIconName = "icon_bookmark"
+            } else if itemType == "mention" {
+                kindIconName = "icon_at"
             } else if itemType == "emote" {
                 kindIconName = "icon_mood"
             } else {

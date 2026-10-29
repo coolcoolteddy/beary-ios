@@ -128,6 +128,9 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, U
         let authorName: String?
         let authorAvatar: String?
         let images: [String]
+        /// 补缺 P3-41：此处存“上次已知有效可见性”（过期即私密），非服务端 is_public 原值；
+        /// 新选与恢复校验以 BearyEphemeral.isEffectivelyPublic 写入；编辑态锁定来自服务端直传
+        /// Quote（无 ephemeral_until 字段，无法算有效态）暂留原值，见 lockedQuote 处注释。
         let isPublic: Bool?
         /// iCity：旧送达时间字段已废（面板选篇行不再挂 pill）；保留字段仅作解码兼容。
         let publishAt: Int?
@@ -303,6 +306,8 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, U
     /// 可见性分段底锚随心情条开关在工具栏顶 / 心情条顶之间切换。
     private var visibilityBarBottomToToolbarConstraint: NSLayoutConstraint?
     private var visibilityBarBottomToMoodStripConstraint: NSLayoutConstraint?
+    /// 补缺 P2-20（天气条独立锚点）：可见性分段天气档底锚（分段底贴天气条顶）。
+    private var visibilityBarBottomToWeatherConstraint: NSLayoutConstraint?
     /// 92 包整页列宽：窄屏贴边、宽 ≥821 时三件居中（顶栏/滚动区 640、工具栏 608，
     /// 与旧居中卡几何一致：卡 640、工具栏卡内边距 16）。只换外层水平约束，
     /// 不碰内容栈/心情/天气/引用/草稿/键盘逻辑；状态变化时才切换，避免每轮布局重算。
@@ -691,7 +696,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, U
             ephemeralSwitch.centerYAnchor.constraint(equalTo: ephemeralRow.centerYAnchor),
             visibilityBarHeightConstraint!,
         ])
-        // 选择条：竖栈，子项（心情条/天气条/写给区）同一时刻只显其一、其余隐藏即自动塌高；
+        // 选择条：竖栈，现只剩写给区（心情条第 27 项、天气条补缺 P2-20 已先后脱离栈）；
         // 全藏时栈高为 0，不占位。左右与工具栏同宽（跟随居中 608）。
         toolStripStack.axis = .vertical
         toolStripStack.spacing = 0
@@ -1280,12 +1285,24 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, U
         weatherStackView.alignment = .center
         weatherScrollView.translatesAutoresizingMaskIntoConstraints = false
         weatherStackView.translatesAutoresizingMaskIntoConstraints = false
-        toolStripStack.addArrangedSubview(weatherScrollView)
+        // 补缺 P2-20：天气条改独立条（心情条第 27 项同款锚点）：底贴工具栏顶、即触发行正上方，
+        // 不再进 toolStripStack（栈在分段上方、高度纯内容驱动，天气条是唯一仍走栈内打开路径的条，
+        // 与分段几何（新建 84／编辑 0）耦合，是“点天气钮选择器出不来”的结构嫌疑）；分段另增天气档锚点。
+        view.addSubview(weatherScrollView)
         weatherScrollView.addSubview(weatherStackView)
         weatherScrollView.isHidden = true
+        visibilityBarBottomToWeatherConstraint = visibilityBar.bottomAnchor.constraint(equalTo: weatherScrollView.topAnchor)
+        visibilityBarBottomToWeatherConstraint?.isActive = false
+        let weatherHeightEquality = weatherScrollView.heightAnchor.constraint(equalTo: weatherStackView.heightAnchor, constant: 12)
+        weatherHeightEquality.priority = .defaultHigh
         NSLayoutConstraint.activate([
-            // 天气行内容驱动约 40 = chip 高 + 上 10 + 下 2（左右 16 已由 contentStack 边距提供）。
-            weatherScrollView.heightAnchor.constraint(equalTo: weatherStackView.heightAnchor, constant: 12),
+            // 天气行内容驱动约 40 = chip 高 + 上 10 + 下 2（左右与工具栏同宽）。
+            // 塌高兜底：等式降档 + 40 下限，保证条带永不塌到 0（诊断曾怀疑打开态塌掉）。
+            weatherHeightEquality,
+            weatherScrollView.heightAnchor.constraint(greaterThanOrEqualToConstant: 40),
+            weatherScrollView.leadingAnchor.constraint(equalTo: toolbarContainer.leadingAnchor),
+            weatherScrollView.trailingAnchor.constraint(equalTo: toolbarContainer.trailingAnchor),
+            weatherScrollView.bottomAnchor.constraint(equalTo: toolbarContainer.topAnchor),
             weatherStackView.topAnchor.constraint(equalTo: weatherScrollView.contentLayoutGuide.topAnchor, constant: 10),
             weatherStackView.bottomAnchor.constraint(equalTo: weatherScrollView.contentLayoutGuide.bottomAnchor, constant: -2),
             weatherStackView.leadingAnchor.constraint(equalTo: weatherScrollView.contentLayoutGuide.leadingAnchor),
@@ -1793,7 +1810,8 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, U
         // allowThumbs: true 沿用旧编辑器行为——已选引用在本地草稿预览中恒出图；
         // 列表侧的 isPublic/本人门控不适用于编辑器预览（预览不出公开发布）。
         // 仅你可见角标：被引私密 + 宿主将公开（新建看分段，编辑看原可见性）。
-        let hostWillBePublic = isEditMode ? (editingEntry?.isPublic == true) : selectedVisibilityPublished
+        // 补缺 P3-42：编辑态宿主可见性走有效态（过期即私密），原 editingEntry?.isPublic 原始值。
+        let hostWillBePublic = isEditMode ? (editingEntry.map { BearyEphemeral.isEffectivelyPublic($0) } == true) : selectedVisibilityPublished
         quoteCard.configure(authorName: shown.authorName ?? "", authorAvatar: shown.authorAvatar, content: shown.content, images: shown.images, dims: shown.imgDims, createdAt: shown.createdAt, allowThumbs: true, showOnlyYouBadge: shown.isPublic != true && hostWillBePublic)
         updatePreferredContentSize()
     }
@@ -1965,6 +1983,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, U
             imageScrollView.isHidden = true
             toolbarContainer.isHidden = true
             toolStripStack.isHidden = true
+            weatherScrollView.isHidden = true
             selectedChipsRow.isHidden = true
             imageUndoBar.isHidden = true
             statusRow.isHidden = true
@@ -2068,9 +2087,10 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, U
         // 故滚动区停在分段顶即停在条顶之上（编辑模式分段高 0，顶 = 条顶，同值）；
         // 其余选择条仍锚栈顶（栈在分段上方）。
         let moodOpen = activeToolStrip == .mood && !quotePanelOpen
-        let otherStripOpen = activeToolStrip != nil && activeToolStrip != .mood && !quotePanelOpen
-        scrollBottomToToolbarConstraint?.isActive = !quotePanelOpen && !moodOpen && !otherStripOpen && isEditMode
-        scrollBottomToVisibilityConstraint?.isActive = !quotePanelOpen && (moodOpen || (!otherStripOpen && !isEditMode))
+        let weatherOpen = activeToolStrip == .weather && !quotePanelOpen
+        let otherStripOpen = activeToolStrip != nil && activeToolStrip != .mood && activeToolStrip != .weather && !quotePanelOpen
+        scrollBottomToToolbarConstraint?.isActive = !quotePanelOpen && !moodOpen && !weatherOpen && !otherStripOpen && isEditMode
+        scrollBottomToVisibilityConstraint?.isActive = !quotePanelOpen && (moodOpen || weatherOpen || (!otherStripOpen && !isEditMode))
         scrollBottomToStripConstraint?.isActive = otherStripOpen
         scrollBottomToViewConstraint?.isActive = quotePanelOpen
     }
@@ -2447,7 +2467,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, U
             }
         }
         guard let entry = picked, let entryId = entry.id, let content = entry.content else { return }
-        let quote = SelectedQuote(entryId: entryId, content: content, createdAt: entry.createdAt, authorName: entry.authorName, authorAvatar: entry.authorAvatar, images: entry.images ?? [], isPublic: entry.isPublic, publishAt: entry.publishAt, imgDims: entry.imgDims, isDeleted: false)
+        let quote = SelectedQuote(entryId: entryId, content: content, createdAt: entry.createdAt, authorName: entry.authorName, authorAvatar: entry.authorAvatar, images: entry.images ?? [], isPublic: BearyEphemeral.isEffectivelyPublic(entry), publishAt: entry.publishAt, imgDims: entry.imgDims, isDeleted: false)
         if isEditMode {
             lockedQuote = quote
         } else {
@@ -2681,15 +2701,17 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, U
     /// 选择条显隐总口：同一时刻只显一条；面板打开时整栈隐藏（播放门另见
     /// updateMoodPlayback/updateWeatherPlayback 的 quotePanelOpen 条件）。
     private func refreshToolStrip() {
-        // 2026-10-29 第 27 项：心情条已脱离栈——栈在仅心情条时也整藏（其余子项本就全藏）；
-        // 心情条显隐另由自身 isHidden 管（含引用面板打开时必藏，旧栈藏整栈的同款效果）。
-        toolStripStack.isHidden = quotePanelOpen || activeToolStrip == nil || activeToolStrip == .mood
+        // 2026-10-29 第 27 项：心情条已脱离栈；补缺 P2-20：天气条亦已脱离栈（独立条贴工具栏顶）。
+        // 栈内只剩写给区：栈显隐只看写给条；天气条显隐由自身 isHidden 管（含引用面板打开时必藏）。
+        toolStripStack.isHidden = quotePanelOpen || activeToolStrip != .recipient
         moodScrollView.isHidden = quotePanelOpen || activeToolStrip != .mood
-        // 心情条开时可见性分段上移至条顶（条在工具栏与分段之间）；关时分段回落工具栏顶。
+        // 分段三档：心情条开时上移至心情条顶，天气条开时上移至天气条顶，其余回落工具栏顶。
         let moodOpen = activeToolStrip == .mood && !quotePanelOpen
-        visibilityBarBottomToToolbarConstraint?.isActive = !moodOpen
+        let weatherOpen = activeToolStrip == .weather && !quotePanelOpen
+        visibilityBarBottomToToolbarConstraint?.isActive = !moodOpen && !weatherOpen
         visibilityBarBottomToMoodStripConstraint?.isActive = moodOpen
-        weatherScrollView.isHidden = activeToolStrip != .weather
+        visibilityBarBottomToWeatherConstraint?.isActive = weatherOpen
+        weatherScrollView.isHidden = !weatherOpen
         // iCity：编辑模式 @ 可新增——无 @ 时条内仍有“@ 谁”钮，不再整区隐藏；
         // 其余态按条开关显隐。
         recipientSection.isHidden = activeToolStrip != .recipient
@@ -3876,7 +3898,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, U
         }
         if let quote = entry.quote, let quoteId = quote.id, let content = quote.content {
             // 内容为空的引用 = 已删（服务端 gone 只剩 id，网页版同款：已删引用不回填，保存时即丢弃）。
-            lockedQuote = SelectedQuote(entryId: quoteId, content: content, createdAt: quote.createdAt, authorName: quote.authorName, authorAvatar: quote.authorAvatar, images: quote.images ?? [], isPublic: quote.isPublic, publishAt: nil, imgDims: nil, isDeleted: false)
+            lockedQuote = SelectedQuote(entryId: quoteId, content: content, createdAt: quote.createdAt, authorName: quote.authorName, authorAvatar: quote.authorAvatar, images: quote.images ?? [], isPublic: quote.isPublic, publishAt: nil, imgDims: nil, isDeleted: false) // P3-41 注：编辑态锁定来自服务端直传 Quote（attachQuotes 不返回 ephemeral_until，算不出有效态），暂留原值；新选/恢复校验两处已走有效态。
         }
         refreshRecipientRow()
         refreshQuoteSection()
@@ -4206,7 +4228,12 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, U
                 guard let self = self else { return }
                 guard let currentQuote = self.selectedQuote, currentQuote.entryId == quoteEntryId, currentQuote.isDeleted == false else { return }
                 switch result {
-                case .success:
+                case .success(let fetched):
+                    // 补缺 P3-41：恢复后以最新有效可见性刷新快照并重算角标（原直接 return，快照恒旧）；
+                    // 落盘使刷新跨杀 App 生效（已删分支同款 saveDraftNow）。
+                    self.selectedQuote = SelectedQuote(entryId: currentQuote.entryId, content: currentQuote.content, createdAt: currentQuote.createdAt, authorName: currentQuote.authorName, authorAvatar: currentQuote.authorAvatar, images: currentQuote.images, isPublic: BearyEphemeral.isEffectivelyPublic(fetched), publishAt: currentQuote.publishAt, imgDims: currentQuote.imgDims, isDeleted: false)
+                    self.refreshQuoteSection()
+                    self.saveDraftNow()
                     return
                 case .failure(let fetchError):
                     if case .notFound = fetchError {

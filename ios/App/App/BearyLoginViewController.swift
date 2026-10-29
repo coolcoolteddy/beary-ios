@@ -738,9 +738,25 @@ final class BearyLoginViewController: UIViewController {
         }
         let status = resp.referral?.status ?? ""
         if resp.referral?.ok == true || status == "granted" {
-            showMessage("邀请码绑定成功，1 个月 Plus 已到账", ok: true)
+            let grantedText = "邀请码绑定成功，30 天 Plus 已到账"
+            showMessage(grantedText, ok: true)
+            // 补缺 P3-33：登录成功文案补 Plus 到期日（邀请页 granted 同款口径；/me 失败时只留基础文案）。
+            BearyAPI.shared.fetchMe { [weak self] result in
+                DispatchQueue.main.async {
+                    guard let strongSelf = self, strongSelf.messageLabel.text == grantedText else { return }
+                    guard case .success(let user) = result, let until = user?.plusUntil, until > 0 else { return }
+                    if until >= 4102444800000 {
+                        strongSelf.messageLabel.text = grantedText + "，Plus 永久有效"
+                    } else {
+                        let formatter = DateFormatter()
+                        formatter.locale = Locale(identifier: "zh_CN")
+                        formatter.dateFormat = "yyyy/M/d"
+                        strongSelf.messageLabel.text = grantedText + "，Plus 至 " + formatter.string(from: Date(timeIntervalSince1970: TimeInterval(until) / 1000.0))
+                    }
+                }
+            }
         } else if status == "flagged" {
-            showMessage("邀请码已提交，站长审核通过后各得 1 个月 Plus", ok: true)
+            showMessage("邀请码已提交，站长审核通过后各得 30 天 Plus", ok: true)
         } else {
             var text = "邀请码未绑定成功"
             if let err = resp.referral?.error, !err.isEmpty, err != text {

@@ -572,10 +572,16 @@ final class BearySettingsViewController: UIViewController {
         view.addSubview(topBar)
         view.addSubview(scrollView)
         scrollView.addSubview(contentStack)
+        // 补缺 P2-17：主页顶栏与内容列同宽居中（内容列为 600／屏宽-40，见 updateColumnWidth）。
+        let mainTopBarWidthEquality = topBar.widthAnchor.constraint(equalTo: view.widthAnchor, constant: -40)
+        mainTopBarWidthEquality.priority = UILayoutPriority(750)
         NSLayoutConstraint.activate([
             topBar.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
-            topBar.leadingAnchor.constraint(equalTo: view.leadingAnchor),
-            topBar.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            topBar.centerXAnchor.constraint(equalTo: view.centerXAnchor),
+            topBar.widthAnchor.constraint(lessThanOrEqualToConstant: 600),
+            topBar.leadingAnchor.constraint(greaterThanOrEqualTo: view.leadingAnchor, constant: 20),
+            topBar.trailingAnchor.constraint(lessThanOrEqualTo: view.trailingAnchor, constant: -20),
+            mainTopBarWidthEquality,
             scrollView.topAnchor.constraint(equalTo: topBar.bottomAnchor),
             scrollView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             scrollView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
@@ -755,8 +761,8 @@ final class BearySettingsViewController: UIViewController {
         idRow.spacing = 12
         idRow.alignment = .center
 
-        let createdRow = makeRow(title: "注册时间", detailLabel: idCreatedLabel)
-        let plusRow = makeRow(title: "会员", detailLabel: idPlusLabel)
+        let createdRow = makeRow(title: "注册时间", detailLabel: idCreatedLabel, iconName: "icon_clock")
+        let plusRow = makeRow(title: "会员", detailLabel: idPlusLabel, iconName: "icon_sparkles")
         // F5：ID 区顶边线（网页 id-badge border-top 口径：线上 18、线下 18）。
         let idSeparator = UIView()
         idSeparator.translatesAutoresizingMaskIntoConstraints = false
@@ -805,7 +811,7 @@ final class BearySettingsViewController: UIViewController {
         plusPersonalLabel.textColor = BearyColors.gray
         plusPersonalLabel.numberOfLines = 0
         plusPersonalLabel.textAlignment = .right
-        plusFreeRow = makeRow(title: "内测限免", detailLabel: plusFreeLabel)
+        plusFreeRow = makeRow(title: "内测限免", detailLabel: plusFreeLabel, iconName: "icon_gift")
         // 2026-10-29 第 7 项：来源明细抽成独立页——组内只留一行（标题 + 行尾
         // 官方包右箭头），点击进 BearyPlusGrantsViewController；原内联发放卡已删。
         let grantsTitle = makeLabel(font: UIFont.systemFont(ofSize: 15), color: BearyColors.ink)
@@ -823,9 +829,9 @@ final class BearySettingsViewController: UIViewController {
         let grantsRow = makeSettingsTappableRow(content: grantsContent, button: grantsButton)
         // F4：标题入卡内（网页 Plus 会员 group-title 口径）；Plus 组网页行本身无图标，不补。
         let plusGroup = makeGroupCard(title: "Plus 会员", rows: [
-            makeRow(title: "当前状态", detailLabel: plusStatusLabel),
+            makeRow(title: "当前状态", detailLabel: plusStatusLabel, iconName: "icon_info"),
             plusFreeRow,
-            makeRow(title: "专属会员", detailLabel: plusPersonalLabel),
+            makeRow(title: "专属会员", detailLabel: plusPersonalLabel, iconName: "icon_star"),
             grantsRow,
         ])
         if plusGroup.wrappers.count > 1 {
@@ -1835,7 +1841,7 @@ final class BearySettingsViewController: UIViewController {
         // C2：使用指南行（原齿轮菜单项，改由设置页承载；容器接线到教程重播页）。
         let tutorialDetail = makeLabel(font: UIFont.systemFont(ofSize: 13), color: BearyColors.gray)
         tutorialDetail.text = "查看"
-        let tutorialContent = makeRow(title: "使用指南", detailLabel: tutorialDetail)
+        let tutorialContent = makeRow(title: "使用指南", detailLabel: tutorialDetail, iconName: "icon_help")
         let tutorialButton = UIButton(type: .custom)
         tutorialButton.accessibilityLabel = "使用指南"
         tutorialButton.addTarget(self, action: #selector(tutorialButtonTapped), for: .touchUpInside)
@@ -1866,7 +1872,7 @@ final class BearySettingsViewController: UIViewController {
         // 94 包：诊断日志行（点进专门页面看全部日志，不再只给 20 行尾巴）。
         let diagDetail = makeLabel(font: UIFont.systemFont(ofSize: 13), color: BearyColors.gray)
         diagDetail.text = "查看"
-        let diagContent = makeRow(title: "诊断日志", detailLabel: diagDetail)
+        let diagContent = makeRow(title: "诊断日志", detailLabel: diagDetail, iconName: "icon_list")
         let diagButton = UIButton(type: .custom)
         diagButton.accessibilityLabel = "诊断日志"
         diagButton.addTarget(self, action: #selector(openDiagnosticsPage), for: .touchUpInside)
@@ -1884,7 +1890,7 @@ final class BearySettingsViewController: UIViewController {
     private func buildPrivacySection() {
         let privacyDetail = makeLabel(font: UIFont.systemFont(ofSize: 13), color: BearyColors.gray)
         privacyDetail.text = "查看"
-        let privacyContent = makeRow(title: "隐私政策", detailLabel: privacyDetail)
+        let privacyContent = makeRow(title: "隐私政策", detailLabel: privacyDetail, iconName: "icon_eye_off")
         let privacyButton = UIButton(type: .custom)
         privacyButton.accessibilityLabel = "隐私政策"
         privacyButton.addTarget(self, action: #selector(openPrivacyText), for: .touchUpInside)
@@ -1892,7 +1898,7 @@ final class BearySettingsViewController: UIViewController {
         let privacyRow = makeSettingsTappableRow(content: privacyContent, button: privacyButton)
         let termsDetail = makeLabel(font: UIFont.systemFont(ofSize: 13), color: BearyColors.gray)
         termsDetail.text = "查看"
-        let termsContent = makeRow(title: "用户协议", detailLabel: termsDetail)
+        let termsContent = makeRow(title: "用户协议", detailLabel: termsDetail, iconName: "icon_file_text")
         let termsButton = UIButton(type: .custom)
         termsButton.accessibilityLabel = "用户协议"
         termsButton.addTarget(self, action: #selector(openTermsText), for: .touchUpInside)
@@ -1901,7 +1907,7 @@ final class BearySettingsViewController: UIViewController {
         // iCity：已拉黑用户行（解除入口，不放他人主页）。
         let blockedDetail = makeLabel(font: UIFont.systemFont(ofSize: 13), color: BearyColors.gray)
         blockedDetail.text = "查看"
-        let blockedContent = makeRow(title: "已拉黑用户", detailLabel: blockedDetail)
+        let blockedContent = makeRow(title: "已拉黑用户", detailLabel: blockedDetail, iconName: "icon_block")
         let blockedButton = UIButton(type: .custom)
         blockedButton.accessibilityLabel = "已拉黑用户"
         blockedButton.addTarget(self, action: #selector(openBlockedUsers), for: .touchUpInside)
@@ -1943,18 +1949,37 @@ final class BearySettingsViewController: UIViewController {
     private func buildDataFeedbackSection() {
         let feedbackDetail = makeLabel(font: UIFont.systemFont(ofSize: 13), color: BearyColors.gray)
         feedbackDetail.text = "查看"
-        let feedbackContent = makeRow(title: "反馈与改进", detailLabel: feedbackDetail)
+        let feedbackContent = makeRow(title: "反馈与改进", detailLabel: feedbackDetail, iconName: "icon_comment")
         let feedbackButton = UIButton(type: .custom)
         feedbackButton.accessibilityLabel = "反馈与改进"
         feedbackButton.addTarget(self, action: #selector(openFeedbackPage), for: .touchUpInside)
         feedbackButton.bearyAddPressHaptic()
-        let rows: [UIView] = [makeSettingsTappableRow(content: feedbackContent, button: feedbackButton)]
+        // 补缺第 21 项：功能许愿墙入口（反馈相邻行；官方包 icon_star，右箭头走 tappableRow 既有口径）。
+        let wishDetail = makeLabel(font: UIFont.systemFont(ofSize: 13), color: BearyColors.gray)
+        wishDetail.text = "查看"
+        let wishContent = makeRow(title: "功能许愿墙", detailLabel: wishDetail, iconName: "icon_star")
+        let wishButton = UIButton(type: .custom)
+        wishButton.accessibilityLabel = "功能许愿墙"
+        wishButton.addTarget(self, action: #selector(openWishWallPage), for: .touchUpInside)
+        wishButton.bearyAddPressHaptic()
+        let rows: [UIView] = [
+            makeSettingsTappableRow(content: feedbackContent, button: feedbackButton),
+            makeSettingsTappableRow(content: wishContent, button: wishButton),
+        ]
         let group = makeGroupCard(title: "数据与反馈", rows: rows)
         dataFeedbackWrap.addArrangedSubview(group.card)
     }
 
     @objc private func openFeedbackPage() {
         let vc = BearyFeedbackViewController()
+        vc.modalPresentationStyle = .fullScreen
+        vc.transitioningDelegate = SceneDelegate.chrome?.fadeRiseTransitionDelegate
+        present(vc, animated: BearyMotion.animated(true))
+    }
+
+    /// 补缺第 21 项：功能许愿墙列表页（反馈页同款全屏 modal + fadeRise）。
+    @objc private func openWishWallPage() {
+        let vc = BearyWishWallViewController()
         vc.modalPresentationStyle = .fullScreen
         vc.transitioningDelegate = SceneDelegate.chrome?.fadeRiseTransitionDelegate
         present(vc, animated: BearyMotion.animated(true))
@@ -2060,18 +2085,25 @@ final class BearyLegalTextViewController: UIViewController {
         textView.textContainerInset = UIEdgeInsets(top: 16, left: 16, bottom: 16, right: 16)
         view.addSubview(topBar)
         view.addSubview(textView)
+        // 补缺 P2-17：子页内容列 600 居中、顶栏同宽居中（iPhone 全宽不变）。
+        let legalTopBarWidthEquality = topBar.widthAnchor.constraint(equalTo: view.widthAnchor)
+        legalTopBarWidthEquality.priority = UILayoutPriority(750)
+        let legalTextWidthEquality = textView.widthAnchor.constraint(equalTo: view.widthAnchor)
+        legalTextWidthEquality.priority = UILayoutPriority(750)
         NSLayoutConstraint.activate([
             topBar.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
-            topBar.leadingAnchor.constraint(equalTo: view.leadingAnchor),
-            topBar.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            topBar.centerXAnchor.constraint(equalTo: view.centerXAnchor),
+            topBar.widthAnchor.constraint(lessThanOrEqualToConstant: 600),
+            legalTopBarWidthEquality,
             topBar.heightAnchor.constraint(equalToConstant: 52),
             closeButton.leadingAnchor.constraint(equalTo: topBar.leadingAnchor, constant: 16),
             closeButton.centerYAnchor.constraint(equalTo: topBar.centerYAnchor),
             titleLabel.centerXAnchor.constraint(equalTo: topBar.centerXAnchor),
             titleLabel.centerYAnchor.constraint(equalTo: topBar.centerYAnchor),
             textView.topAnchor.constraint(equalTo: topBar.bottomAnchor),
-            textView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
-            textView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            textView.centerXAnchor.constraint(equalTo: view.centerXAnchor),
+            textView.widthAnchor.constraint(lessThanOrEqualToConstant: 600),
+            legalTextWidthEquality,
             textView.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor),
         ])
     }
@@ -2698,15 +2730,22 @@ private final class BearyDiagnosticsViewController: UIViewController {
         view.addSubview(topBar)
         view.addSubview(actionRow)
         view.addSubview(textView)
+        // 补缺 P2-17：子页内容列 600 居中、顶栏同宽居中（iPhone 全宽不变；操作行跟顶栏左缘 +20）。
+        let logTopBarWidthEquality = topBar.widthAnchor.constraint(equalTo: view.widthAnchor)
+        logTopBarWidthEquality.priority = UILayoutPriority(750)
+        let logTextWidthEquality = textView.widthAnchor.constraint(equalTo: view.widthAnchor)
+        logTextWidthEquality.priority = UILayoutPriority(750)
         NSLayoutConstraint.activate([
             topBar.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
-            topBar.leadingAnchor.constraint(equalTo: view.leadingAnchor),
-            topBar.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            topBar.centerXAnchor.constraint(equalTo: view.centerXAnchor),
+            topBar.widthAnchor.constraint(lessThanOrEqualToConstant: 600),
+            logTopBarWidthEquality,
             actionRow.topAnchor.constraint(equalTo: topBar.bottomAnchor, constant: 8),
-            actionRow.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 20),
+            actionRow.leadingAnchor.constraint(equalTo: topBar.leadingAnchor, constant: 20),
             textView.topAnchor.constraint(equalTo: actionRow.bottomAnchor, constant: 8),
-            textView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
-            textView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            textView.centerXAnchor.constraint(equalTo: view.centerXAnchor),
+            textView.widthAnchor.constraint(lessThanOrEqualToConstant: 600),
+            logTextWidthEquality,
             textView.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor),
         ])
     }
@@ -2807,18 +2846,27 @@ final class BearyBlockedUsersViewController: UIViewController, UITableViewDataSo
         view.addSubview(topBar)
         view.addSubview(tableView)
         view.addSubview(emptyLabel)
+        // 补缺 P2-17：拉黑列表顶栏与内容列同宽居中（iPhone 全宽不变）。
+        let blockedTopBarWidthEquality = topBar.widthAnchor.constraint(equalTo: view.widthAnchor)
+        blockedTopBarWidthEquality.priority = UILayoutPriority(750)
         NSLayoutConstraint.activate([
             topBar.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
-            topBar.leadingAnchor.constraint(equalTo: view.leadingAnchor),
-            topBar.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            topBar.centerXAnchor.constraint(equalTo: view.centerXAnchor),
+            topBar.widthAnchor.constraint(lessThanOrEqualToConstant: 600),
+            blockedTopBarWidthEquality,
             topBar.heightAnchor.constraint(equalToConstant: 52),
             closeButton.leadingAnchor.constraint(equalTo: topBar.leadingAnchor, constant: 16),
             closeButton.centerYAnchor.constraint(equalTo: topBar.centerYAnchor),
             titleLabel.centerXAnchor.constraint(equalTo: topBar.centerXAnchor),
             titleLabel.centerYAnchor.constraint(equalTo: topBar.centerYAnchor),
             tableView.topAnchor.constraint(equalTo: topBar.bottomAnchor),
-            tableView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
-            tableView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            tableView.centerXAnchor.constraint(equalTo: view.centerXAnchor),
+            tableView.widthAnchor.constraint(lessThanOrEqualToConstant: 600),
+            {
+                let c = tableView.widthAnchor.constraint(equalTo: view.widthAnchor)
+                c.priority = UILayoutPriority(750)
+                return c
+            }(),
             tableView.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor),
             emptyLabel.centerXAnchor.constraint(equalTo: view.centerXAnchor),
             emptyLabel.centerYAnchor.constraint(equalTo: view.centerYAnchor),
