@@ -39,6 +39,7 @@
 		EF7B997969434C45BAEE28A3 /* BearyEmotePickerSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = 16C3C0A0F75C4251A59FA4F6 /* BearyEmotePickerSheet.swift */; };
 		FE6E29AFED3B5E04593AB59C /* BearyPlaceholderViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = AC51784211948B3A8F2F516E /* BearyPlaceholderViewController.swift */; };
 		B19ABAE5D3904C1CBD12AE61 /* BearyComposerPickers.swift in Sources */ = {isa = PBXBuildFile; fileRef = E02EB770843D473AB5D8F4E2 /* BearyComposerPickers.swift */; };
+		365ECEB94E8DFA642DB3CFF7 /* BearyCalloutPicker.swift in Sources */ = {isa = PBXBuildFile; fileRef = 88E0548E916380286E9CA221 /* BearyCalloutPicker.swift */; };
 		E312AC32EA7088A2062A9321 /* BearyDraftBoxViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1D6C94421FC75DA02227F95C /* BearyDraftBoxViewController.swift */; };
 		04769784170F76C24AD9C4FE /* BearyBadgeImages.swift in Sources */ = {isa = PBXBuildFile; fileRef = 262A3F3922B766B8BAC61520 /* BearyBadgeImages.swift */; };
 		1B40E48C5F63F3FCDEDD4C2A /* BearyOnboardingViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5E31FD4CC9E050D5BB9ADFC7 /* BearyOnboardingViewController.swift */; };
@@ -215,6 +216,7 @@
 		16C3C0A0F75C4251A59FA4F6 /* BearyEmotePickerSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BearyEmotePickerSheet.swift; sourceTree = "<group>"; };
 		AC51784211948B3A8F2F516E /* BearyPlaceholderViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BearyPlaceholderViewController.swift; sourceTree = "<group>"; };
 		E02EB770843D473AB5D8F4E2 /* BearyComposerPickers.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BearyComposerPickers.swift; sourceTree = "<group>"; };
+		88E0548E916380286E9CA221 /* BearyCalloutPicker.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BearyCalloutPicker.swift; sourceTree = "<group>"; };
 		1D6C94421FC75DA02227F95C /* BearyDraftBoxViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BearyDraftBoxViewController.swift; sourceTree = "<group>"; };
 		262A3F3922B766B8BAC61520 /* BearyBadgeImages.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BearyBadgeImages.swift; sourceTree = "<group>"; };
 		5E31FD4CC9E050D5BB9ADFC7 /* BearyOnboardingViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BearyOnboardingViewController.swift; sourceTree = "<group>"; };
@@ -421,6 +423,7 @@
 				16C3C0A0F75C4251A59FA4F6 /* BearyEmotePickerSheet.swift */,
 				AC51784211948B3A8F2F516E /* BearyPlaceholderViewController.swift */,
 				E02EB770843D473AB5D8F4E2 /* BearyComposerPickers.swift */,
+				88E0548E916380286E9CA221 /* BearyCalloutPicker.swift */,
 				1D6C94421FC75DA02227F95C /* BearyDraftBoxViewController.swift */,
 				262A3F3922B766B8BAC61520 /* BearyBadgeImages.swift */,
 				5E31FD4CC9E050D5BB9ADFC7 /* BearyOnboardingViewController.swift */,
@@ -815,6 +818,7 @@
 				EF7B997969434C45BAEE28A3 /* BearyEmotePickerSheet.swift in Sources */,
 				FE6E29AFED3B5E04593AB59C /* BearyPlaceholderViewController.swift in Sources */,
 				B19ABAE5D3904C1CBD12AE61 /* BearyComposerPickers.swift in Sources */,
+				365ECEB94E8DFA642DB3CFF7 /* BearyCalloutPicker.swift in Sources */,
 				E312AC32EA7088A2062A9321 /* BearyDraftBoxViewController.swift in Sources */,
 				04769784170F76C24AD9C4FE /* BearyBadgeImages.swift in Sources */,
 				1B40E48C5F63F3FCDEDD4C2A /* BearyOnboardingViewController.swift in Sources */,
