@@ -338,6 +338,19 @@ class BearyProfileViewController: UIViewController {
         return imageViewValue
     }()
 
+    /// 封面视差裁剪区（2026-10-29）：封面图只在此区内平移，区 clip 住，
+    /// 图底永不越过区底分界线；图在区内上下各预留一段（顶 -54、底贴齐），
+    /// 视差位移上限 54（= 0.3 × 180 区高）时区顶区底都不露底；图宽 = 区宽、
+    /// 无缩放，左右永不露白。拉伸约束（顶／高／左右）全部改落在此区上，
+    /// 图只跟区的边走，拉伸与视差互不踩。
+    private let coverClipView: UIView = {
+        let viewValue = UIView()
+        viewValue.translatesAutoresizingMaskIntoConstraints = false
+        viewValue.backgroundColor = BearyColors.faint
+        viewValue.clipsToBounds = true
+        return viewValue
+    }()
+
     private let avatarImageView: UIImageView = {
         let imageViewValue = UIImageView()
         imageViewValue.translatesAutoresizingMaskIntoConstraints = false
@@ -714,12 +727,20 @@ class BearyProfileViewController: UIViewController {
         return viewValue
     }()
 
-    private lazy var coverHeightConstraint: NSLayoutConstraint = coverImageView.heightAnchor.constraint(equalToConstant: 0)
+    // 拉伸约束全部落在裁剪区上（变量名不变，调用方 reset/updateCoverStretch 不动）：
+    // 区高 = 封面高（180/0），图高由区边推导（区高 + 54），拉伸时图自动跟区走。
+    private lazy var coverHeightConstraint: NSLayoutConstraint = coverClipView.heightAnchor.constraint(equalToConstant: 0)
     /// 弹性封面顶约束（下拉时顶边上伸用；平时恒 0，底边不动）。
-    private lazy var coverTopConstraint: NSLayoutConstraint = coverImageView.topAnchor.constraint(equalTo: headerView.topAnchor)
+    private lazy var coverTopConstraint: NSLayoutConstraint = coverClipView.topAnchor.constraint(equalTo: headerView.topAnchor)
     /// 弹性封面左右约束（2026-10-29 第 5 项：下拉时双向放大用；平时恒贴 header 边缘）。
-    private lazy var coverLeadingConstraint: NSLayoutConstraint = coverImageView.leadingAnchor.constraint(equalTo: headerView.leadingAnchor)
-    private lazy var coverTrailingConstraint: NSLayoutConstraint = coverImageView.trailingAnchor.constraint(equalTo: headerView.trailingAnchor)
+    private lazy var coverLeadingConstraint: NSLayoutConstraint = coverClipView.leadingAnchor.constraint(equalTo: headerView.leadingAnchor)
+    private lazy var coverTrailingConstraint: NSLayoutConstraint = coverClipView.trailingAnchor.constraint(equalTo: headerView.trailingAnchor)
+    /// 封面图在裁剪区内的落位：顶比区顶高 54、底与区底贴齐、左右贴齐；
+    /// 视差位移（≤54）只在此区内平移，区顶区底永不露底、左右永不露白。
+    private lazy var coverImageTopConstraint: NSLayoutConstraint = coverImageView.topAnchor.constraint(equalTo: coverClipView.topAnchor, constant: -54)
+    private lazy var coverImageBottomConstraint: NSLayoutConstraint = coverImageView.bottomAnchor.constraint(equalTo: coverClipView.bottomAnchor)
+    private lazy var coverImageLeadingConstraint: NSLayoutConstraint = coverImageView.leadingAnchor.constraint(equalTo: coverClipView.leadingAnchor)
+    private lazy var coverImageTrailingConstraint: NSLayoutConstraint = coverImageView.trailingAnchor.constraint(equalTo: coverClipView.trailingAnchor)
     /// 弹性封面模糊层（下拉时随拉量淡入）：封面预模糊图本身，不拦截触摸；
     /// 不用磨砂玻璃——systemMaterial 在浅色模式下自带白色霜化，alpha 拉高会把
     /// 封面洗白；预模糊图只模糊、不染色，深浅色下都不露白。
@@ -835,7 +856,7 @@ class BearyProfileViewController: UIViewController {
     /// 头像上压量（Li 2026-10-26 真机观感定）：-28，头像下沿 = 封面下沿 +56，
     /// 按钮（高 40、底对齐头像底）顶部 = 封面下沿 +16，完全落到封面下方。
     /// 注意：此组数值与网页（-52/按钮压封面 8pt）拉开差距，系 Li 亲眼定版，勿以“对齐网页”改回。
-    private lazy var avatarTopWithCoverConstraint: NSLayoutConstraint = avatarImageView.topAnchor.constraint(equalTo: coverImageView.bottomAnchor, constant: -28)
+    private lazy var avatarTopWithCoverConstraint: NSLayoutConstraint = avatarImageView.topAnchor.constraint(equalTo: coverClipView.bottomAnchor, constant: -28)
     private lazy var avatarTopWithoutCoverConstraint: NSLayoutConstraint = avatarImageView.topAnchor.constraint(equalTo: headerView.topAnchor, constant: 20)
     private lazy var tabsTopConstraint: NSLayoutConstraint = tabsContainer.topAnchor.constraint(equalTo: badgesContainer.bottomAnchor, constant: 16)
     /// F17：头模块间距链（网页口径：墙 margin-top 10、徽章架 margin-top 16、标签 margin-top 16）。
@@ -1243,7 +1264,8 @@ class BearyProfileViewController: UIViewController {
 
     private func buildHeader() {
         headerView.backgroundColor = BearyColors.bg
-        headerView.addSubview(coverImageView)
+        headerView.addSubview(coverClipView)
+        coverClipView.addSubview(coverImageView)
         coverImageView.addSubview(coverBlurImageView)
         // 2026-10-29 第 7 项：封面洗向底色层贴整幅封面（在下拉模糊层之上，
         // 两者行程互斥、不会同现）；点封面查看热区在 headerView 层、仍在其上。
@@ -1316,11 +1338,15 @@ class BearyProfileViewController: UIViewController {
             coverTopConstraint,
             coverLeadingConstraint,
             coverTrailingConstraint,
+            coverImageTopConstraint,
+            coverImageBottomConstraint,
+            coverImageLeadingConstraint,
+            coverImageTrailingConstraint,
 
-            coverViewButton.topAnchor.constraint(equalTo: coverImageView.topAnchor),
-            coverViewButton.leadingAnchor.constraint(equalTo: coverImageView.leadingAnchor),
-            coverViewButton.trailingAnchor.constraint(equalTo: coverImageView.trailingAnchor),
-            coverViewButton.bottomAnchor.constraint(equalTo: coverImageView.bottomAnchor),
+            coverViewButton.topAnchor.constraint(equalTo: coverClipView.topAnchor),
+            coverViewButton.leadingAnchor.constraint(equalTo: coverClipView.leadingAnchor),
+            coverViewButton.trailingAnchor.constraint(equalTo: coverClipView.trailingAnchor),
+            coverViewButton.bottomAnchor.constraint(equalTo: coverClipView.bottomAnchor),
             avatarViewButton.topAnchor.constraint(equalTo: avatarImageView.topAnchor),
             avatarViewButton.leadingAnchor.constraint(equalTo: avatarImageView.leadingAnchor),
             avatarViewButton.trailingAnchor.constraint(equalTo: avatarImageView.trailingAnchor),
@@ -3456,6 +3482,25 @@ extension BearyProfileViewController: UITableViewDataSource, UITableViewDelegate
     // MARK: - 清单 2 滚动隐藏栏（个人主页部分）
 
     /// 主滚动视图即本表：向下滚过 120pt 藏栏、向上滚显栏；
+    /// 封面视差（2026-10-29，强度 0.3）：上滑量 S = y - topBaseline（> 0 才生效），
+    /// 封面图在裁剪区内下移 0.3 × S（净速度 0.7×），只走 transform，不动约束与布局；
+    /// 位移上限 54（= 0.3 × 180 区高），图顶预留 54 在区外、底贴齐区底，
+    /// 故区顶区底永不露底；图宽 = 区宽、无缩放，左右永不露白。
+    /// 下拉区（S ≤ 0）与刷新期恒 identity：下拉由拉伸约束接管、刷新期封面不动（#187）。
+    private func updateCoverParallax(offsetY y: CGFloat, topBaseline: CGFloat) {
+        let scrollUp = y - topBaseline
+        guard !coverImageView.isHidden,
+              tableView.refreshControl?.isRefreshing != true,
+              scrollUp > 0 else {
+            if coverImageView.transform != .identity {
+                coverImageView.transform = .identity
+            }
+            return
+        }
+        let shift = min(scrollUp * 0.3, 54)
+        coverImageView.transform = CGAffineTransform(translationX: 0, y: shift)
+    }
+
     /// 顶部回弹区（offset ≤ 0）一律显栏。栏态变化时才调容器 helper，
     /// FAB 随栏同隐同现由容器 helper 内部负责，本页不直接碰 FAB。
     /// 回调触发依据：tableView 懒初始化时已设 delegate = self（本文件列表节），
@@ -3584,6 +3629,8 @@ extension BearyProfileViewController: UITableViewDataSource, UITableViewDelegate
         defer { profileLastScrollOffsetY = y }
         // 弹性封面（下拉伸缩 + 模糊）：须在顶栏回弹区早退之前跑，否则下拉区永远量不到。
         updateCoverStretch(offsetY: y, topBaseline: -scrollView.contentInset.top)
+        // 封面视差（上滑 0.3× 区内平移）：同样须在早退之前跑，否则上滑区量不到。
+        updateCoverParallax(offsetY: y, topBaseline: -scrollView.contentInset.top)
         // 上滑 header（滚动态只改 alpha）：同样须在早退之前跑，否则下拉区 header 藏不住。
         updateStickyHeaderScroll(offsetY: y, topBaseline: -scrollView.contentInset.top)
         // 顶栏透度批：在顶判定改以 -contentInset.top 为基准（现行收起态内边距 0 时与旧 y<=0 等价）。
