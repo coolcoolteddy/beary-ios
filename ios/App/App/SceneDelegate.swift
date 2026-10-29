@@ -117,9 +117,11 @@ final class BearyChromeViewController: UIViewController {
     private var trashEdgeDismiss: BearyEdgeDismissController?
     private var editProfileEdgeDismiss: BearyEdgeDismissController?
     private var userProfileEdgeDismiss: BearyEdgeDismissController?
-    /// 52 批 header 高度开关：显示 = 安全区顶 + 60，收起 = 0；页顶约束同步 60↔0，收起后不留空占区。
-    /// 顶栏透度批：页顶约束恒为 view.top（常量 0），不再随栏态改顶距；栏态改走各页
-    /// 主滚动视图的顶部内边距（见 applyHeaderTopInsets），内容滑过时才透出玻璃。
+    /// 22(b) Plan A：顶栏高恒为安全区顶 + 60，显隐不再塌高（收起态只上移 +
+    /// 淡出，见 setHeaderVisible）；页顶约束恒为 view.top（常量 0），顶栏是
+    /// 覆盖层而非把页往下推的栈元素。显隐不再驱动各页 contentInset：
+    /// 容器版 applyHeaderTopInsets 仅剩 viewDidLayoutSubviews 布局纠正一处
+    /// 调用，各页懒建初值仍走页侧 helper。
     private var headerVisible = true
     private var topHeightConstraint: NSLayoutConstraint?
     private var feedTopConstraint: NSLayoutConstraint?
@@ -366,8 +368,8 @@ final class BearyChromeViewController: UIViewController {
         topGlass = top
         top.alpha = 0
         top.isUserInteractionEnabled = false
-        // 52 批：顶栏不再用 bottom=安全区+60 定高（收起时帧不塌、空占 60pt），改用高度约束开关：
-        // 显示 = 安全区顶 + 60（viewDidLayoutSubviews 按真实安全区纠正），收起 = 0；内容栈在玻璃内，裁剪防溢出。
+        // 22(b) Plan A：顶栏高恒为安全区顶 + 60（viewDidLayoutSubviews 按真实安全区纠正），
+        // 显隐不再塌高（收起只上移 + 淡出，见 setHeaderVisible）；内容栈在玻璃内，裁剪防溢出。
         top.clipsToBounds = true
         let topHeight = top.heightAnchor.constraint(equalToConstant: 60)
         topHeightConstraint = topHeight
@@ -1088,30 +1090,31 @@ final class BearyChromeViewController: UIViewController {
         }
     }
 
-    /// 52 批 header 规则：header 只在首页出现；切页与滚动都走高度塌掉而非仅淡出。
-    /// 显示时顶栏高 = 安全区顶 + 60；收起时顶栏高 0，空占区彻底消失。
-    /// 顶栏透度批：页顶约束恒 view.top（见 ensureFeedVC/addPageVC/ensurePlaceholder），
-    /// 不再改顶距；栏态改走各页主滚动视图顶部内边距（applyHeaderTopInsets，视觉顶距
-    /// 显示 = 安全区顶 + 60、收起 = 安全区顶，各页按自身框锚换算属性值，见各页 helper）。
-    /// 底栏分段器/FAB 不走这里（setBarsVisible 原口径不动）。
+    /// 22(b) Plan A：header 只在首页出现（调用点不变：showPage 只在首页传 true，
+    /// setBarsVisible 的 headerTarget 同样只在首页为真），显隐只改顶栏自身的
+    /// transform + alpha——显示 = 位移归零 + alpha 1，收起 = 整块上移自身高度 +
+    /// alpha 0 + 不可点。高度约束恒为安全区顶 + 60 不再动，显隐不再改各页
+    /// contentInset，动画块里不再 layoutIfNeeded：动画期间零布局，内容不跳，
+    /// 也不再有每帧改 inset 触发的重新布局开销。顶栏是覆盖层（页框本就贴
+    /// view.top），恒占位不挤页。减动效分支保留：直设终值。
+    /// 注意：本函数不再调 applyHeaderTopInsets；布局纠正（旋转/分屏/首建）
+    /// 仍走 viewDidLayoutSubviews 与各页懒建初值（原口径不动），真机须复核
+    /// 首访他页顶距是否在交叉淡入内干净收敛（见提交说明）。
     private func setHeaderVisible(_ visible: Bool, animated: Bool) {
         headerVisible = visible
-        let height: CGFloat = visible ? view.safeAreaInsets.top + 60 : 0
-        if topHeightConstraint?.constant != height { topHeightConstraint?.constant = height }
+        // 上移量取顶栏自身当前高度（布局后即安全区顶 + 60）；未布局时
+        // bounds 仍为 buildChrome 初值 60，退回安全区顶 + 60 换算。
+        let hideOffset = topGlass.bounds.height > 0 ? topGlass.bounds.height : view.safeAreaInsets.top + 60
+        let targetTransform = visible ? CGAffineTransform.identity : CGAffineTransform(translationX: 0, y: -hideOffset)
         topGlass.isUserInteractionEnabled = visible
-        // A1/A1-2：顶栏 alpha 与各页 contentInset（applyHeaderTopInsets）必须与高度约束
-        // 在同一动画块内同步——此前 alpha 与 inset 在块外直设、高度在块内动画，首帧跳变。
-        // A5-2：动画块内布局只做到顶栏容器（topGlass）作用域，不再整棵根视图布局。
         if animated && !UIAccessibility.isReduceMotionEnabled {
             UIView.animate(withDuration: 0.25, delay: 0, options: [.beginFromCurrentState, .allowUserInteraction], animations: {
-                self.applyHeaderTopInsets(visible: visible)
+                self.topGlass.transform = targetTransform
                 self.topGlass.alpha = visible ? 1 : 0
-                self.topGlass.layoutIfNeeded()
             })
         } else {
-            applyHeaderTopInsets(visible: visible)
+            topGlass.transform = targetTransform
             topGlass.alpha = visible ? 1 : 0
-            topGlass.layoutIfNeeded()
         }
     }
 
@@ -1313,10 +1316,15 @@ final class BearyChromeViewController: UIViewController {
         // 审计 2：两侧背景层随 bounds 重算（窄屏隐藏、宽屏定宽/重建）。
         updateSideDecoLayout()
         layoutChromeOverlays()
-        // 52 批：安全区变化（旋转/分屏）时把显示态顶栏高纠正为 安全区顶 + 60；收起态保持 0 不动。
-        if headerVisible, let heightConstraint = topHeightConstraint {
+        // 22(b) Plan A：顶栏高恒为安全区顶 + 60（显隐不再塌高）；安全区变化
+        // （旋转/分屏）时恒纠正高度，收起态同步把上移量纠正为新高度，
+        // 否则 transform 仍是旧高度、顶栏会露出半截。
+        if let heightConstraint = topHeightConstraint {
             let corrected = view.safeAreaInsets.top + 60
             if heightConstraint.constant != corrected { heightConstraint.constant = corrected }
+            if !headerVisible {
+                topGlass.transform = CGAffineTransform(translationX: 0, y: -corrected)
+            }
         }
         // 顶栏透度批：安全区顶变了，Feed/时间线的属性内边距（含安全区顶）必须跟变；
         // 各页 helper 自带“值不变跳过”，故此处全量重发是无害 no-op（消息页下拉刷新中被守卫挡下，见其 helper）。
