@@ -50,9 +50,11 @@ private final class WishRowView: UIView {
         metaLabel.adjustsFontForContentSizeCategory = true
         metaLabel.textColor = BearyColors.gray
         metaLabel.numberOfLines = 0
-        netLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13, weight: .semibold))
+        // 15：净赞成缩为操作行末尾的辅助文字——弱化为 12 灰字（与作者时间弱信息行同档），
+        // 不再独占一行；文案本身（“净赞成 ±N”）不变，见 configure。
+        netLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 12))
         netLabel.adjustsFontForContentSizeCategory = true
-        netLabel.textColor = BearyColors.ink
+        netLabel.textColor = BearyColors.gray
         // 28：donePill 文字与底色均走动态色（文字 BearyColors.green，底色经
         // BearyColors.alpha 重解，不再硬编码绿值与 alpha 底）；公开 pill 橙色
         // 不在本文件，绝不动。固定 56×18 容器配 cappedFont 上限 14（31），
@@ -81,9 +83,15 @@ private final class WishRowView: UIView {
         expandButton.addTarget(self, action: #selector(expandTapped), for: .touchUpInside)
         expandButton.bearyAddPressFeedback()
         doneButton.bearyAddPressFeedback()
-        let voteRow = UIStackView(arrangedSubviews: [upButton, downButton])
+        // 15：净赞成进操作行末尾——弹性 spacer 把它顶到行末，赞成/反对钮本身不动；
+        // spacer 抗拉伸与抗压缩均最低，窄屏先压 spacer，不挤按钮与净赞成文案。
+        let voteSpacer = UIView()
+        voteSpacer.setContentHuggingPriority(UILayoutPriority(1), for: .horizontal)
+        voteSpacer.setContentCompressionResistancePriority(UILayoutPriority(1), for: .horizontal)
+        let voteRow = UIStackView(arrangedSubviews: [upButton, downButton, voteSpacer, netLabel])
         voteRow.axis = .horizontal
         voteRow.spacing = 8
+        voteRow.alignment = .center
         // 15：标题与 donePill 放同一横向容器——pill 占 56 宽时标题只剩剩余宽换行，
         // 首行不再被右上角悬浮 pill 盖住；未完成时 pill 隐藏，stack 自动不占位，标题回满宽。
         titleLabel.setContentHuggingPriority(.defaultLow, for: .horizontal)
@@ -93,7 +101,9 @@ private final class WishRowView: UIView {
         titleRow.axis = .horizontal
         titleRow.spacing = 8
         titleRow.alignment = .top
-        let stack = UIStackView(arrangedSubviews: [titleRow, detailLabel, expandButton, metaLabel, netLabel, voteRow, doneButton])
+        // 15：竖向栈减一层——netLabel 已随 voteRow 进操作行，不再单列；作者时间
+        // metaLabel 仍为单独弱信息行，标题与 donePill 的同容器（titleRow）原样不动。
+        let stack = UIStackView(arrangedSubviews: [titleRow, detailLabel, expandButton, metaLabel, voteRow, doneButton])
         stack.axis = .vertical
         stack.spacing = 8
         stack.translatesAutoresizingMaskIntoConstraints = false
