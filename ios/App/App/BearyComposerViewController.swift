@@ -964,7 +964,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, U
         cancelButton.addTarget(self, action: #selector(didTapCancel), for: .touchUpInside)
         cancelButton.bearyAddPressFeedback()
         titleLabel.text = isEditMode ? "编辑日记" : "新日记"
-        titleLabel.font = UIFont.boldSystemFont(ofSize: 15)
+        titleLabel.font = UIFont.systemFont(ofSize: 17, weight: .semibold)
         titleLabel.textColor = BearyColors.ink
         // v6-2：标题靠左对齐、紧贴叉叉右侧 8pt，不再居中（v3 左右钮之间居中口径已推翻，不实施）。
         titleLabel.textAlignment = .left
