@@ -749,17 +749,16 @@ class BearyDiaryCardCell: UITableViewCell {
     }()
 
     private lazy var actionStack: BearyActionStackView = {
-        // 2026-10-28 23:51 左聚：点赞、收藏、分享三项放左侧一起，不再用 spacer 顶右；
-        // 顺序不变（点赞、收藏、分享），间距与详情页操作行一致（16）。
-        // 2026-10-29 三钮左聚修法：.fill 分布会把栈剩余宽度撑到点赞钮上（按钮
-        // 内容居中，爱心随篇飘移；本人卡右缩进 -52、他人卡 -16 使栈宽不同，
-        // 位置随篇变化）。尾部 spacer（最低 hugging / 最低抗压）吸掉全部剩余
-        // 宽度，三钮只占固有宽、每篇位置固定一致；与 23:51 删掉的“顶右 spacer”
-        // （夹在点赞与收藏之间）不是同一个位置、不是同一种用法。
+        // 2026-10-29 100 包反馈第 1 项：点赞留左，收藏＋分享放右侧成组。
+        // 中部 spacer（最低 hugging / 最低抗压）吸掉全部剩余宽度，左右两组
+        // 只占固有宽、每篇位置固定一致；三钮间距仍 16（栈 spacing，作用于
+        // 点赞—spacer 与 spacer—收藏之间时被 spacer 宽度吸收，视觉上只剩
+        // 组内 16）。两模式共用同一 actionStack（广场 .feed / 个人页
+        // .profile 均走此栈），改一处即全覆盖，无分叉面。
         let actionSpacer = UIView()
         actionSpacer.setContentHuggingPriority(UILayoutPriority(1), for: .horizontal)
         actionSpacer.setContentCompressionResistancePriority(UILayoutPriority(1), for: .horizontal)
-        let st = BearyActionStackView(arrangedSubviews: [likeButton, bookmarkButton, shareButton, actionSpacer])
+        let st = BearyActionStackView(arrangedSubviews: [likeButton, actionSpacer, bookmarkButton, shareButton])
         st.translatesAutoresizingMaskIntoConstraints = false
         st.axis = .horizontal
         st.spacing = 16
@@ -1647,6 +1646,11 @@ class BearyDiaryCardCell: UITableViewCell {
         shareButton.isEnabled = !interactionDisabled
         let publicOK = BearyEphemeral.isEffectivelyPublic(entry)
         shareButton.isHidden = publicOK == false
+        // 2026-10-29 100 包反馈第 4 项根因 A：个人页 configure 此前从未调
+        // refreshPubRow，而 prepareForReuse 把 publishButton 藏起，导致本人
+        // 卡在个人页上根本没有地球切换钮（广场 configure 有此调用，故只坏
+        // 个人页一面）。此处补上，与广场 configure 同款。
+        refreshPubRow()
         renderEmotes()
         // 游客详情（只读）：游客展开态藏操作行与回应行，改显登录提示条
         //（提示条占操作行原位：操作行隐藏后 stack 将其压为 0，提示条紧接
@@ -2051,9 +2055,11 @@ class BearyDiaryCardCell: UITableViewCell {
             likeButton.setTitle(titleText, for: .normal)
             likeButtonWidthConstraint?.constant = imageWidth + 6 + titleWidth
         }
-        // 网页口径：未赞时爱心描边跟随正文墨色（.like-btn 无基准色，即继承 ink），
-        // 计数 span.like-n 才灰；点赞后爱心与计数同为橙。
-        likeButton.tintColor = liked ? BearyColors.orange : BearyColors.ink
+        // 2026-10-29 100 包反馈第 6 项：卡片脚三钮未点亮统一为同一灰
+        // （此前爱心未赞为墨色 ink、收藏/分享为灰，三钮色不一致；旧 fixall-cell
+        // 8-9 的“未赞爱心墨色”网页口径就此作废，图标与计数同灰）。
+        // 点亮态爱心与计数同为橙（BearyColors.orange = #ff9500）。
+        likeButton.tintColor = liked ? BearyColors.orange : BearyColors.gray
         likeButton.setTitleColor(liked ? BearyColors.orange : BearyColors.gray, for: .normal)
         likeButton.imageView?.transform = .identity
         refreshActionAccessibility()
@@ -2061,8 +2067,8 @@ class BearyDiaryCardCell: UITableViewCell {
 
     /// 点赞钮渲染（个人主页模式；configure 与就地同步共用；同步侧先调它
     /// 再播爆点，爆点不被 transform 复位打断）。
-    /// fixall-cell 8-9：未赞态统一为首页口径——未赞爱心墨色（ink，非灰）、
-    /// 计数灰、0 赞恒显“0”（原个人页：爱心与计数同灰、0 赞只剩图标）。
+    /// 2026-10-29 100 包反馈第 6 项：未赞态两模式统一——爱心与计数同灰
+    /// （旧 fixall-cell 8-9 的未赞爱心墨色口径作废）、0 赞恒显“0”。
     /// 已赞态两模式本来一致（爱心与计数同橙），不动。
     private func applyLikeButtonState(liked: Bool, count: Int) {
         let likedImageName = liked ? "icon_heart_fill" : "icon_heart"
@@ -2079,7 +2085,7 @@ class BearyDiaryCardCell: UITableViewCell {
             likeButton.setTitle(titleText, for: .normal)
             likeButtonWidthConstraint?.constant = imageWidth + 6 + titleWidth
         }
-        likeButton.tintColor = liked ? BearyColors.orange : BearyColors.ink
+        likeButton.tintColor = liked ? BearyColors.orange : BearyColors.gray
         likeButton.setTitleColor(liked ? BearyColors.orange : BearyColors.gray, for: .normal)
         likeButton.imageView?.transform = .identity
         refreshActionAccessibility()
@@ -2093,20 +2099,20 @@ class BearyDiaryCardCell: UITableViewCell {
     }
 
     /// 取消点赞 pre-unlike（首页模式；网页 .pre-unlike 同款：心形缩 .8 + 填充先清），
-    /// 失败由完成回调调 updateLikeButton 恢复。
+    /// 失败由完成回调调 updateLikeButton 恢复。未赞色与第 6 项统一为灰。
     private func applyPreUnlike() {
         let outlineImage = BearyFeedIconCache.image(named: "icon_heart", pointSize: 22) ?? BearyFeedIconCache.image(named: "icon_heart", pointSize: 22)
         likeButton.setImage(outlineImage, for: .normal)
-        likeButton.tintColor = BearyColors.ink
+        likeButton.tintColor = BearyColors.gray
         likeButton.setTitleColor(BearyColors.gray, for: .normal)
         BearyIconMotion.animateIconScale(on: likeButton, to: 0.8)
     }
 
-    /// 取消赞预态（个人主页模式；首页 applyPreUnlike 同款，8-9 统一后未赞爱心为墨色）：
-    /// 先换空心图 + 墨色 + 缩 .8，失败由控制器 reload 复原。
+    /// 取消赞预态（个人主页模式；首页 applyPreUnlike 同款，未赞色与第 6 项统一为灰）：
+    /// 先换空心图 + 灰色 + 缩 .8，失败由控制器 reload 复原。
     private func applyCellPreUnlike() {
         likeButton.setImage(BearyFeedIconCache.image(named: "icon_heart", pointSize: 22), for: .normal)
-        likeButton.tintColor = BearyColors.ink
+        likeButton.tintColor = BearyColors.gray
         likeButton.setTitleColor(BearyColors.gray, for: .normal)
         BearyIconMotion.animateIconScale(on: likeButton, to: 0.8)
     }
@@ -2245,6 +2251,13 @@ class BearyDiaryCardCell: UITableViewCell {
         likeButton.isEnabled = !interactionDisabled
         bookmarkButton.isEnabled = !interactionDisabled
         shareButton.isEnabled = !interactionDisabled
+        // 2026-10-29 100 包反馈第 4 项根因 B：就地同步此前不跟可见性走——
+        // 个人页原地翻公开/私密后，分享钮显隐仍停在旧态（私密→公开仍藏、
+        // 公开→私密仍显），地球无障碍文案在失败回滚后也停在目标态。
+        // 此处按新 entry 的有效态同步两处（与 profile configure 同款口径；
+        // 控制器失败回滚同样走本方法，文案随之回到原态）。
+        shareButton.isHidden = BearyEphemeral.isEffectivelyPublic(entry) == false
+        refreshPubRow()
         profileDisabled = interactionDisabled
         let candidate = BearyEmoteOrder.signature((entry.emotes ?? []).sorted { ($0.count ?? 0) > ($1.count ?? 0) }.filter { ($0.emote ?? "").isEmpty == false })
         if candidate != cellEmoteSignature {
