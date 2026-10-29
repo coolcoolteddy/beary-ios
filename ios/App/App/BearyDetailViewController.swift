@@ -242,6 +242,19 @@ final class BearyDetailViewController: UIViewController {
         }
     }
 
+    /// 审计 P1-6：私密 pill 边框主题刷新——pillContainer 边框色是
+    /// CGColor（refreshVisibilityViews 内按公开态赋：公开橙固定色、
+    /// 私密蓝动态色，赋值即固化），此前本文件无 traitCollectionDidChange，
+    /// 深浅切换后私密蓝边停留在旧主题色；色貌变化时重调
+    /// refreshVisibilityViews（复用 BearyButton.refreshChrome 范式，
+    /// 仅重赋字色 / 边框 / 填充底，不重建栈、不重播动效）。
+    override func traitCollectionDidChange(_ previousTraitCollection: UITraitCollection?) {
+        super.traitCollectionDidChange(previousTraitCollection)
+        if traitCollection.hasDifferentColorAppearance(comparedTo: previousTraitCollection) {
+            refreshVisibilityViews()
+        }
+    }
+
     override func viewDidLayoutSubviews() {
         super.viewDidLayoutSubviews()
         // 第 2 项：600 上限只在宽 ≥821 时激活（P2-1 开关，状态不变不开关，
