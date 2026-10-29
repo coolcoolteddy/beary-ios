@@ -348,6 +348,16 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, U
     private let draftPillButton = UIButton(type: .system)
     // C1：已选中项轻量 Chip 行（正文下方）：心情/天气/写给各一枚，点 chip 打开对应选择条。
     private let selectedChipsRow = UIStackView()
+    /// 审计 P1-3：Chip 行首行（心情/天气/写给单行态）；写给换行时脱离本行、改作
+    /// selectedChipsRow 的第二行（见 layoutSelectedChips），不另建容器。
+    private let selectedChipsFirstRow = UIStackView()
+    /// 审计 P1-3：写给当前是否在独立第二行；viewDidLayoutSubviews 宽变化时
+    /// 凭此 + 宽门限决定是否重算，避免移行触发布局 → 再移行的循环。
+    private var selectedChipsRecipientOnSecondRow = false
+    private var selectedChipsLastLayoutWidth: CGFloat = -1
+    /// 审计 P1-8：选择条转场代次——每次 refreshToolStrip 显隐变化即 +1；旧转场
+    /// 的 completion 凭代次过期作废，不再碰视图，快速连点只收敛到最后状态。
+    private var toolStripTransitionGeneration = 0
     private let moodChipButton = BearyHit44Button(type: .system)
     private let weatherChipButton = BearyHit44Button(type: .system)
     private let recipientChipButton = BearyHit44Button(type: .system)
@@ -503,6 +513,12 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, U
         // 草稿 pill 宽度兜底（2026-10-29，同上）：每次布局后按当前标题重算一次宽度
         // 约束常量，约束若在某次布局中被打破也能在下次布局恢复；同值重设不触发重排。
         refreshDraftPillWidth()
+        // 审计 P1-3：宽变化（旋转/分屏/居中列切换）时重算 Chip 行换行；同宽不重算，
+        // 移行本身触发布局也不会再进本分支，不成环。宽门限 0.5pt 与 sheet 高同款。
+        if selectedChipsRow.bounds.width > 0,
+           abs(selectedChipsRow.bounds.width - selectedChipsLastLayoutWidth) > 0.5 {
+            layoutSelectedChips()
+        }
         // 临时诊断（82 包追加，定根因后删除）：入口每调一次记一次，不节流。
         DiagFile.mark("composer-layout")
         // 临时诊断（天气条 10/28，定根因后删除）：布局后实测帧。refreshToolStrip 里的
@@ -2723,20 +2739,31 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, U
         refreshToolStrip()
     }
 
+    /// 审计 P1-8：选择条转场常量——0.20s 落在 0.18–0.22s 区间内，
+    /// 透明度 + 6pt 小幅位移（入场自下 6pt 升至原位，出场沉至 6pt 后淡出）。
+    private static let toolStripTransitionDuration: TimeInterval = 0.20
+    private static let toolStripTransitionOffset: CGFloat = 6
+
     /// 选择条显隐总口：同一时刻只显一条；面板打开时整栈隐藏（播放门另见
     /// updateMoodPlayback/updateWeatherPlayback 的 quotePanelOpen 条件）。
+    /// 审计 P1-8：显隐不再瞬切——入场先现身再淡入位移归位，出场先淡出位移、
+    /// 动画跑完才 isHidden（播放门按 activeToolStrip 已在出场前停播，不依赖
+    /// isHidden 时点）。快速连点：新转场 beginFromCurrentState 从当前呈现值
+    /// 接管、代次 +1 使旧 completion 作废，只收敛到最后状态；减动效与未挂窗
+    /// （首帧）直接置终值，不播动画。引用面板打开时的瞬藏走 setQuotePanelOpen
+    /// 专属路径（面板盖住条带、无可见转场），此处不动它。
     private func refreshToolStrip() {
         // 2026-10-29 第 27 项：心情条已脱离栈；补缺 P2-20：天气条亦已脱离栈（独立条贴工具栏顶）。
         // 栈内只剩写给区：栈显隐只看写给条；天气条显隐由自身 isHidden 管（含引用面板打开时必藏）。
-        toolStripStack.isHidden = quotePanelOpen || activeToolStrip != .recipient
-        moodScrollView.isHidden = quotePanelOpen || activeToolStrip != .mood
+        let stackHidden = quotePanelOpen || activeToolStrip != .recipient
+        let moodHidden = quotePanelOpen || activeToolStrip != .mood
         // 分段三档：心情条开时上移至心情条顶，天气条开时上移至天气条顶，其余回落工具栏顶。
         let moodOpen = activeToolStrip == .mood && !quotePanelOpen
         let weatherOpen = activeToolStrip == .weather && !quotePanelOpen
         visibilityBarBottomToToolbarConstraint?.isActive = !moodOpen && !weatherOpen
         visibilityBarBottomToMoodStripConstraint?.isActive = moodOpen
         visibilityBarBottomToWeatherConstraint?.isActive = weatherOpen
-        weatherScrollView.isHidden = !weatherOpen
+        let weatherHidden = !weatherOpen
         // iCity：编辑模式 @ 可新增——无 @ 时条内仍有“@ 谁”钮，不再整区隐藏；
         // 其余态按条开关显隐。
         recipientSection.isHidden = activeToolStrip != .recipient
@@ -2744,6 +2771,86 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, U
         updateWeatherPlayback()
         updateScrollBottomAnchoring()
         refreshSelectedChips()
+        if UIAccessibility.isReduceMotionEnabled || view.window == nil {
+            toolStripTransitionGeneration += 1
+            toolStripStack.isHidden = stackHidden
+            moodScrollView.isHidden = moodHidden
+            weatherScrollView.isHidden = weatherHidden
+            toolStripStack.alpha = 1
+            moodScrollView.alpha = 1
+            weatherScrollView.alpha = 1
+            toolStripStack.transform = .identity
+            moodScrollView.transform = .identity
+            weatherScrollView.transform = .identity
+            updatePreferredContentSize()
+            DiagFile.mark("weather-diag refreshToolStrip weatherHidden=\(weatherScrollView.isHidden) weatherFrame=\(weatherScrollView.frame) stackFrame=\(toolStripStack.frame)")
+            return
+        }
+        toolStripTransitionGeneration += 1
+        let generation = toolStripTransitionGeneration
+        let offset = Self.toolStripTransitionOffset
+        var exitingViews: [UIView] = []
+        var needsAnimation = false
+        for (stripView, shouldHide) in [
+            (toolStripStack, stackHidden),
+            (moodScrollView, moodHidden),
+            (weatherScrollView, weatherHidden),
+        ] as [(UIView, Bool)] {
+            if shouldHide {
+                if !stripView.isHidden {
+                    // 出场：留在层级里淡出位移，completion 才隐藏（见下）。
+                    exitingViews.append(stripView)
+                    needsAnimation = true
+                }
+            } else if stripView.isHidden {
+                // 入场：先现身于淡入起点，再播到终值。
+                stripView.isHidden = false
+                stripView.alpha = 0
+                stripView.transform = CGAffineTransform(translationX: 0, y: offset)
+                needsAnimation = true
+            } else if stripView.alpha < 1 || stripView.transform != .identity {
+                // 曾被出场中断又改回显示：从当前呈现值播回终值，不瞬切。
+                needsAnimation = true
+            }
+        }
+        if !needsAnimation {
+            view.layoutIfNeeded()
+            updatePreferredContentSize()
+            DiagFile.mark("weather-diag refreshToolStrip weatherHidden=\(weatherScrollView.isHidden) weatherFrame=\(weatherScrollView.frame) stackFrame=\(toolStripStack.frame)")
+            return
+        }
+        UIView.animate(
+            withDuration: Self.toolStripTransitionDuration,
+            delay: 0,
+            options: [.beginFromCurrentState, .allowUserInteraction, .curveEaseOut],
+            animations: {
+                for stripView in exitingViews {
+                    stripView.alpha = 0
+                    stripView.transform = CGAffineTransform(translationX: 0, y: offset)
+                }
+                for stripView in [self.toolStripStack, self.moodScrollView, self.weatherScrollView]
+                where !exitingViews.contains(where: { $0 === stripView }) && !stripView.isHidden {
+                    stripView.alpha = 1
+                    stripView.transform = .identity
+                }
+                // 可见性分段与滚动底锚的约束切换随同一转场走，不瞬跳。
+                self.view.layoutIfNeeded()
+            },
+            completion: { [weak self] finished in
+                guard let self = self, finished, generation == self.toolStripTransitionGeneration else { return }
+                // 只有跑完且未被更新转场取代的出场才真正隐藏；隐藏后复位，
+                // 下次入场仍从淡入起点起播，不残留淡出态。
+                for stripView in exitingViews {
+                    stripView.isHidden = true
+                    stripView.alpha = 1
+                    stripView.transform = .identity
+                }
+                // 出场条带占高在动画结束时才塌掉，sheet 高随之重算。
+                self.updatePreferredContentSize()
+            }
+        )
+        // 入场条带在转场期间已可见占高，sheet 高先按含条带算；出场条带
+        // 的塌高由 completion 里的重算接管。
         updatePreferredContentSize()
         DiagFile.mark("weather-diag refreshToolStrip weatherHidden=\(weatherScrollView.isHidden) weatherFrame=\(weatherScrollView.frame) stackFrame=\(toolStripStack.frame)")
     }
@@ -2785,13 +2892,78 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, U
         }
         let anyChipVisible = !moodChipButton.isHidden || !weatherChipButton.isHidden || !recipientChipButton.isHidden
         contentStack.setCustomSpacing(anyChipVisible ? 8 : 0, after: selectedChipsRow)
+        // 审计 P1-3：显隐/文案变化后即重算换行（宽变化另由 viewDidLayoutSubviews 驱动）。
+        layoutSelectedChips()
+    }
+
+    /// 审计 P1-3：三 chip 收缩优先级与换行。
+    /// 单行态：心情/天气自然宽（hugging + 抗压缩双 required，文字不缩小、不截断），
+    /// 写给占剩余（hugging/compression 双 low：有富余则伸满、空间紧则先缩），
+    /// 写给标题单行尾截断、字号固定 13（adjustsFontSizeToFitWidth 关，不缩字）。
+    /// 空间不足（单行总宽 > 行宽）且写给与心情/天气同显时：写给脱离首行、
+    /// 独立成第二行（满宽、尾截断），心情/天气保持自然宽不动——不缩小全部文字。
+    /// 写给单独出现时不换行（满宽即剩余，超长只尾截断）。
+    /// 只在换行态真正变化时移视图；同态重算不碰层级，不触发布局环。
+    private func layoutSelectedChips() {
+        guard isViewLoaded else { return }
+        // 行宽：布局后取实测宽；首帧布局前行宽为 0 时按内容栈边距（左右各 16）
+        // 从视图/屏幕宽估算，与 updatePreferredContentSize 首帧估算同口径。
+        let available: CGFloat
+        if selectedChipsRow.bounds.width > 0 {
+            available = selectedChipsRow.bounds.width
+        } else if view.bounds.width > 0 {
+            available = view.bounds.width - 32
+        } else {
+            let screenWidth = view.window?.bounds.width ?? UIScreen.main.bounds.width
+            available = screenWidth - 32
+        }
+        guard available > 0 else { return }
+        selectedChipsLastLayoutWidth = available
+        let moodVisible = !moodChipButton.isHidden
+        let weatherVisible = !weatherChipButton.isHidden
+        let recipientVisible = !recipientChipButton.isHidden
+        guard recipientVisible, moodVisible || weatherVisible else {
+            // 写给单独出现或未出现：单行态即是终态（未出现时首行只剩隐藏项，塌高为 0）。
+            if selectedChipsRecipientOnSecondRow {
+                selectedChipsRow.removeArrangedSubview(recipientChipButton)
+                selectedChipsFirstRow.addArrangedSubview(recipientChipButton)
+                selectedChipsRecipientOnSecondRow = false
+            }
+            return
+        }
+        // UIButton intrinsicContentSize 已含 contentEdgeInsets 与标题宽，即自然宽。
+        var singleLineWidth: CGFloat = 0
+        var visibleCount = 0
+        for button in [moodChipButton, weatherChipButton, recipientChipButton] where !button.isHidden {
+            singleLineWidth += button.intrinsicContentSize.width
+            visibleCount += 1
+        }
+        if visibleCount > 1 {
+            singleLineWidth += CGFloat(visibleCount - 1) * selectedChipsFirstRow.spacing
+        }
+        let wrapRecipient = singleLineWidth > available
+        guard wrapRecipient != selectedChipsRecipientOnSecondRow else { return }
+        selectedChipsRecipientOnSecondRow = wrapRecipient
+        if wrapRecipient {
+            selectedChipsFirstRow.removeArrangedSubview(recipientChipButton)
+            selectedChipsRow.addArrangedSubview(recipientChipButton)
+        } else {
+            selectedChipsRow.removeArrangedSubview(recipientChipButton)
+            selectedChipsFirstRow.addArrangedSubview(recipientChipButton)
+        }
     }
 
     private func buildSelectedChipsRow() {
-        selectedChipsRow.axis = .horizontal
+        // 外层改竖栈：首行 +（换行时）写给第二行；单行态第二行不存在，竖栈不增高。
+        selectedChipsRow.axis = .vertical
         selectedChipsRow.spacing = 8
-        selectedChipsRow.alignment = .center
+        selectedChipsRow.alignment = .fill
         selectedChipsRow.translatesAutoresizingMaskIntoConstraints = false
+        selectedChipsFirstRow.axis = .horizontal
+        selectedChipsFirstRow.spacing = 8
+        selectedChipsFirstRow.alignment = .center
+        selectedChipsFirstRow.translatesAutoresizingMaskIntoConstraints = false
+        selectedChipsRow.addArrangedSubview(selectedChipsFirstRow)
         let chips: [(button: BearyHit44Button, action: Selector)] = [
             (moodChipButton, #selector(didTapMoodChip)),
             (weatherChipButton, #selector(didTapWeatherChip)),
@@ -2799,6 +2971,9 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, U
         ]
         for chip in chips {
             chip.button.titleLabel?.font = UIFont.systemFont(ofSize: 13)
+            chip.button.titleLabel?.numberOfLines = 1
+            chip.button.titleLabel?.lineBreakMode = .byTruncatingTail
+            chip.button.titleLabel?.adjustsFontSizeToFitWidth = false
             chip.button.setTitleColor(BearyColors.ink, for: .normal)
             chip.button.backgroundColor = BearyColors.faint
             chip.button.layer.cornerRadius = 999
@@ -2808,8 +2983,15 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, U
             chip.button.bearyAddPressFeedback()
             chip.button.isHidden = true
             chip.button.translatesAutoresizingMaskIntoConstraints = false
-            selectedChipsRow.addArrangedSubview(chip.button)
+            selectedChipsFirstRow.addArrangedSubview(chip.button)
         }
+        // 审计 P1-3：心情/天气自然宽不让步；写给低优先级，占剩余、紧时先缩先截断。
+        moodChipButton.setContentHuggingPriority(.required, for: .horizontal)
+        moodChipButton.setContentCompressionResistancePriority(.required, for: .horizontal)
+        weatherChipButton.setContentHuggingPriority(.required, for: .horizontal)
+        weatherChipButton.setContentCompressionResistancePriority(.required, for: .horizontal)
+        recipientChipButton.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        recipientChipButton.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         contentStack.addArrangedSubview(selectedChipsRow)
         contentStack.setCustomSpacing(0, after: selectedChipsRow)
     }
