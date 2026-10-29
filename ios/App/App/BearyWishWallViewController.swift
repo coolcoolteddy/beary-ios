@@ -710,6 +710,19 @@ final class BearyWishCreateViewController: UIViewController, UITextViewDelegate 
         NotificationCenter.default.removeObserver(self)
     }
 
+    /// 审计 P1-5：详情框边框主题刷新——detailView（发起页
+    /// BearyWishCreateViewController 的 UITextView，非按钮）创建时
+    /// borderColor = ink 20%（CGColor 赋值即固化），此前本文件无
+    /// traitCollectionDidChange，深浅切换后边框停留在旧主题色；
+    /// 色貌变化时按创建时原表达式重赋（复用 BearyButton.refreshChrome
+    /// 范式；只重赋边框色，不动占位 / 计数 / 校验）。
+    override func traitCollectionDidChange(_ previousTraitCollection: UITraitCollection?) {
+        super.traitCollectionDidChange(previousTraitCollection)
+        if traitCollection.hasDifferentColorAppearance(comparedTo: previousTraitCollection) {
+            detailView.layer.borderColor = BearyColors.ink.withAlphaComponent(0.2).cgColor
+        }
+    }
+
     override func viewDidLayoutSubviews() {
         super.viewDidLayoutSubviews()
         // 13：Feed 同款断点开关——状态不变不开关，避免布局循环。

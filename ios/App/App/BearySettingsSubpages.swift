@@ -82,6 +82,23 @@ class BearySettingsSubpageViewController: UIViewController {
         dismiss(animated: BearyMotion.animated(true), completion: nil)
     }
 
+    /// 审计第二波 4b 分诊结论：分组卡边框确认 stale——makeGroupCard 内
+    /// borderColor = line.cgColor（line 是动态色，CGColor 赋值即固化），
+    /// 本文件此前无 traitCollectionDidChange，卡片又是局部变量、无处重刷；
+    /// 故按设置页 cardViews + trait 刷新同口径修（追踪卡片、色貌变化时重赋）。
+    /// 行间分隔线 backgroundColor 走动态 UIColor、自动跟随，不用重刷；
+    /// 当前设备 curPill 绿边是固定绿，不动。
+    private var groupCards: [UIView] = []
+
+    override func traitCollectionDidChange(_ previousTraitCollection: UITraitCollection?) {
+        super.traitCollectionDidChange(previousTraitCollection)
+        if traitCollection.hasDifferentColorAppearance(comparedTo: previousTraitCollection) {
+            for card in groupCards {
+                card.layer.borderColor = BearyColors.line.cgColor
+            }
+        }
+    }
+
     /// 分组卡（设置页 makeGroupCard 同款视觉：卡内标题、1px 边框、圆角 20、
     /// 行间 1px 分隔线、行内容左右 16、上下 14）。
     func makeGroupCard(title: String?, rows: [UIView]) -> UIView {
@@ -92,6 +109,7 @@ class BearySettingsSubpageViewController: UIViewController {
         card.layer.borderColor = BearyColors.line.cgColor
         card.layer.cornerRadius = 20
         card.clipsToBounds = true
+        groupCards.append(card)
         let stack = UIStackView()
         stack.translatesAutoresizingMaskIntoConstraints = false
         stack.axis = .vertical
@@ -105,11 +123,10 @@ class BearySettingsSubpageViewController: UIViewController {
             stack.bottomAnchor.constraint(equalTo: card.bottomAnchor),
         ])
         if let titleText = title {
-            let titleLabelValue = UILabel()
+            // 审计第二波 4a：卡内标题改走 makeSectionTitle（P1-7 同口径，
+            // 见本文件 makeSectionTitle；此前内联 12 号固定字、单行）。
+            let titleLabelValue = makeSectionTitle(titleText)
             titleLabelValue.translatesAutoresizingMaskIntoConstraints = false
-            titleLabelValue.font = UIFont.systemFont(ofSize: 12)
-            titleLabelValue.textColor = BearyColors.gray
-            titleLabelValue.attributedText = NSAttributedString(string: titleText, attributes: [.kern: 1])
             let titleWrap = UIView()
             titleWrap.translatesAutoresizingMaskIntoConstraints = false
             titleWrap.addSubview(titleLabelValue)
@@ -144,12 +161,26 @@ class BearySettingsSubpageViewController: UIViewController {
         return card
     }
 
+    /// 审计第二波 4a：按第一波 P1-7（设置页 makeLabel）同口径接动态字体——
+    /// 默认字号下与原值一致，大字号档跟随系统缩放；行尾按字符换行。
     func makeLabel(font: UIFont, color: UIColor, lines: Int = 1) -> UILabel {
         let label = UILabel()
         label.translatesAutoresizingMaskIntoConstraints = false
-        label.font = font
+        label.font = BearyDynamicType.scaledFont(for: font)
+        label.adjustsFontForContentSizeCategory = true
         label.textColor = color
         label.numberOfLines = lines
+        label.lineBreakMode = .byCharWrapping
+        return label
+    }
+
+    /// 审计第二波 4a：卡内分组标题（设置页 makeSectionTitle 同口径）——
+    /// 12px 灰、字距 1px、多行自适应（大字号下可换行，标题包容器上下
+    /// 约束已定、行高随文字自动撑开，不钉固定高度）。
+    func makeSectionTitle(_ text: String) -> UILabel {
+        let label = makeLabel(font: UIFont.systemFont(ofSize: 12), color: BearyColors.gray)
+        label.numberOfLines = 0
+        label.attributedText = NSAttributedString(string: text, attributes: [.kern: 1, .font: label.font])
         return label
     }
 }

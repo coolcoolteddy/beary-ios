@@ -340,21 +340,12 @@ final class BearyLoginViewController: UIViewController {
         return label
     }
 
+    /// 审计 P2-14：三处单行框改走共享输入容器（原内联实现与邀请页
+    /// makeFieldContainer 逐字重复；faint 底 / 圆角 12 / 左右 14 / 48 高
+    /// 均与原值一致，新增常态 line 边框与聚焦蓝边——字段字体 / 占位 /
+    /// 键盘 / delegate / target 与校验逻辑均不动）。
     private func makeFieldContainer(field: UITextField) -> UIView {
-        let container = UIView()
-        container.backgroundColor = BearyColors.faint
-        container.layer.cornerRadius = 12
-        container.translatesAutoresizingMaskIntoConstraints = false
-        field.translatesAutoresizingMaskIntoConstraints = false
-        container.addSubview(field)
-        NSLayoutConstraint.activate([
-            field.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 14),
-            field.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -14),
-            field.topAnchor.constraint(equalTo: container.topAnchor),
-            field.bottomAnchor.constraint(equalTo: container.bottomAnchor),
-            container.heightAnchor.constraint(equalToConstant: 48),
-        ])
-        return container
+        return BearyInputContainer(content: field, fixedHeight: 48)
     }
 
     private func configureEmailField() {
