@@ -356,11 +356,10 @@ class BearyProfileViewController: UIViewController {
         return imageViewValue
     }()
 
-    /// 封面视差裁剪区（2026-10-29）：封面图只在此区内平移，区 clip 住，
-    /// 图底永不越过区底分界线；图在区内上下各预留一段（顶 -54、底贴齐），
-    /// 视差位移上限 54（= 0.3 × 180 区高）时区顶区底都不露底；图宽 = 区宽、
-    /// 无缩放，左右永不露白。拉伸约束（顶／高／左右）全部改落在此区上，
-    /// 图只跟区的边走，拉伸与视差互不踩。
+    /// 封面裁剪区（v22，2026-10-30）：封面图底贴齐区底、顶在区外预留 54，
+    /// 图只跟区的边走（上滑区不再区内平移，视差 0.3 已删）；图宽 = 区宽、
+    /// 无缩放，左右永不露白。下拉拉伸约束（顶／高／左右）全部落在此区上，
+    /// 拉伸与上滑锁定互不踩（拉伸只在下拉区生效，上滑区只走 transform／alpha）。
     private let coverClipView: UIView = {
         let viewValue = UIView()
         viewValue.translatesAutoresizingMaskIntoConstraints = false
@@ -375,6 +374,29 @@ class BearyProfileViewController: UIViewController {
         imageViewValue.backgroundColor = BearyColors.faint
         imageViewValue.contentMode = .scaleAspectFill
         imageViewValue.clipsToBounds = true
+        return imageViewValue
+    }()
+
+    /// 头像外层容器（v22，2026-10-30）：头像的约束（顶／左／84×84）全落在此容器上，
+    /// 内层图只做缩放——位移与缩放分两层，免矩阵顺序歧义。容器不裁剪（缩放后的图
+    /// 仍在容器内），热区钮与重试钮也放容器内、跟位移走、不跟缩放。
+    private let avatarContainerView: UIView = {
+        let viewValue = UIView()
+        viewValue.translatesAutoresizingMaskIntoConstraints = false
+        viewValue.backgroundColor = .clear
+        return viewValue
+    }()
+
+    /// 无封面默认背景的文字 logo（v22，2026-10-30）：官方白色 wordmark 原图
+    ///（beary-wordmark-white imageset，深浅两模式同为白色），150pt 宽、等比、
+    /// 封面居中；仅默认背景时显示，用户照片绝不叠加此 logo。
+    private let defaultWordmarkView: UIImageView = {
+        let imageViewValue = UIImageView()
+        imageViewValue.translatesAutoresizingMaskIntoConstraints = false
+        imageViewValue.contentMode = .scaleAspectFit
+        imageViewValue.isUserInteractionEnabled = false
+        imageViewValue.image = UIImage(named: "beary-wordmark-white")
+        imageViewValue.isHidden = true
         return imageViewValue
     }()
 
@@ -541,6 +563,10 @@ class BearyProfileViewController: UIViewController {
         labelValue.text = "—"
         return labelValue
     }()
+
+    /// 统计行文字标签（v22 位移组用，故提为属性；原为 buildHeader 局部变量）。
+    private var publicTextLabel: UILabel?
+    private var likesTextLabel: UILabel?
 
     // MARK: - 页内顶栏（仅 modal 态显示；容器页态由容器顶栏承担，见 updateTopBarVisibility）
 
@@ -801,11 +827,12 @@ class BearyProfileViewController: UIViewController {
         return viewValue
     }()
 
-    /// header 背景图：与封面同一张 UIImage（布局时同步引用，不加载），aspectFill、
-    /// 与真封面同几何（表框左 / 表宽、234 高、顶 = 自然顶 - 上滑量 - 54 + 视差位移），
+    /// header 背景图（v22，2026-10-30）：与封面同一张 UIImage（布局时同步引用，不加载），
+    /// aspectFill、与真封面同几何（表框左／表宽、234 高、顶 = 自然顶 - 上滑量 - 54），
     /// 由 header 容器裁剪；y=0 时 header 区域像素与真封面完全相同、无跳变；
-    /// 上滑时与真封面同速同框上移（2026-10-29 第 7 项：不再停住）。
-    /// 无封面时隐藏，露页面底色。
+    /// 上滑时与真封面 1:1 同速同框上移（视差 0.3 已删），到锁定点后顶冻结在
+    /// 带底边 - 234、带内恒为封面底部本身（即封面锁定成 header，不另起模糊层）。
+    /// 无封面默认背景时无图、背景色为品牌橙（见 updateStickyHeaderLayout）。
     private let stickyHeaderBgImageView: UIImageView = {
         let imageViewValue = UIImageView()
         imageViewValue.translatesAutoresizingMaskIntoConstraints = false
@@ -816,28 +843,23 @@ class BearyProfileViewController: UIViewController {
         return imageViewValue
     }()
 
-    /// header 模糊层（2026-10-29 视差补充口径）：封面预模糊 18px 图，与跟踪图
-    /// 同框（同顶／同宽／同高 234），盖在跟踪图之上、用户名之下；alpha 随
-    /// 上滑行程 0→1（交叉淡入 ≈ 模糊 0→18px 连续加深），行程走完后顶冻结在
-    /// 带底边 - 234，带内恒为模糊封面本身（不另起白玻璃条、不洗向底色）。
-    /// 预模糊图封面换图时后台算一次（见 refreshStickyHeaderBlurImage），
-    /// 滚动回调只改 alpha 与顶常量。无封面时与跟踪图同隐。
-    private let stickyHeaderBgBlurImageView: UIImageView = {
-        let blurImageViewValue = UIImageView()
-        blurImageViewValue.translatesAutoresizingMaskIntoConstraints = false
-        blurImageViewValue.backgroundColor = BearyColors.bg
-        blurImageViewValue.contentMode = .scaleAspectFill
-        blurImageViewValue.clipsToBounds = true
-        blurImageViewValue.isUserInteractionEnabled = false
-        blurImageViewValue.alpha = 0
-        return blurImageViewValue
+    /// header 内默认背景的文字 logo（v22，2026-10-30）：与封面区 wordmark 同图，
+    /// 放进跟踪图内、中心在图顶 + 144（= 图顶预留 54 + 封面半高 90，即封面中心
+    /// 在跟踪图内的位置；coverH 变了要同步改），故随跟踪图自动 1:1 跟随与锁定；
+    /// 透明度与封面区 wordmark 同值淡出（后半段 1→0），锁定后 header 为纯橙。
+    private let stickyWordmarkView: UIImageView = {
+        let imageViewValue = UIImageView()
+        imageViewValue.translatesAutoresizingMaskIntoConstraints = false
+        imageViewValue.contentMode = .scaleAspectFit
+        imageViewValue.isUserInteractionEnabled = false
+        imageViewValue.image = UIImage(named: "beary-wordmark-white")
+        imageViewValue.isHidden = true
+        return imageViewValue
     }()
 
-    /// 模糊层预模糊图对应的源图（identity 比对：源图变了才重算）。
-    private var stickyHeaderBgBlurSourceImage: UIImage?
-
-    /// header 用户名：左对齐 17pt 粗体（与内容用户名同文案），模糊走完后按
-    /// 被 header 遮挡的比例淡入（模糊未走完时恒 0，即最后才浮上来）；
+    /// header 用户名：左对齐 17pt 粗体（与内容用户名同文案）；v22 转移时机——
+    /// 内容用户名顶边碰到 header 底边时起，往后 20px 内淡入 0→1＋上浮 6→0 到位，
+    /// 往回滑反向淡出＋下落；转移前 header 只有封面、无用户名。
     /// x 与内容用户名同列（表框左 + 28，iPad 600 居中列下自动对齐）。
     private let stickyHeaderNameLabel: UILabel = {
         let labelValue = UILabel()
@@ -853,23 +875,31 @@ class BearyProfileViewController: UIViewController {
     /// 背景图自然顶（布局时存的 tableFrame.minY，滚动回调 1:1 跟踪的起点）。
     private var stickyHeaderBgNaturalTop: CGFloat = 0
 
-    private lazy var stickyHeaderHeightConstraint: NSLayoutConstraint = stickyHeaderView.heightAnchor.constraint(equalToConstant: 56)
+    private lazy var stickyHeaderHeightConstraint: NSLayoutConstraint = stickyHeaderView.heightAnchor.constraint(equalToConstant: 60)
     private lazy var stickyHeaderBgLeadingConstraint: NSLayoutConstraint = stickyHeaderBgImageView.leadingAnchor.constraint(equalTo: stickyHeaderView.leadingAnchor)
     private lazy var stickyHeaderBgTopConstraint: NSLayoutConstraint = stickyHeaderBgImageView.topAnchor.constraint(equalTo: stickyHeaderView.topAnchor)
     private lazy var stickyHeaderBgWidthConstraint: NSLayoutConstraint = stickyHeaderBgImageView.widthAnchor.constraint(equalToConstant: 0)
-    private lazy var stickyHeaderBgBlurLeadingConstraint: NSLayoutConstraint = stickyHeaderBgBlurImageView.leadingAnchor.constraint(equalTo: stickyHeaderView.leadingAnchor)
-    private lazy var stickyHeaderBgBlurTopConstraint: NSLayoutConstraint = stickyHeaderBgBlurImageView.topAnchor.constraint(equalTo: stickyHeaderView.topAnchor)
-    private lazy var stickyHeaderBgBlurWidthConstraint: NSLayoutConstraint = stickyHeaderBgBlurImageView.widthAnchor.constraint(equalToConstant: 0)
     private lazy var stickyHeaderNameLeadingConstraint: NSLayoutConstraint = stickyHeaderNameLabel.leadingAnchor.constraint(equalTo: stickyHeaderView.leadingAnchor)
-    private lazy var stickyHeaderNameCenterYConstraint: NSLayoutConstraint = stickyHeaderNameLabel.centerYAnchor.constraint(equalTo: stickyHeaderView.topAnchor, constant: 28)
+    private lazy var stickyHeaderNameCenterYConstraint: NSLayoutConstraint = stickyHeaderNameLabel.centerYAnchor.constraint(equalTo: stickyHeaderView.topAnchor, constant: 30)
     /// 布局时算一次、滚动回调只读：header 底边（view 坐标）与 modal 禁用态。
     private var stickyHeaderBottom: CGFloat = 0
     private var stickyHeaderModalDisabled = false
+    /// v22 封面自然高（2026-10-30）：代码现行封面高恒 180（applyProfile／resetCoverStretch／
+    /// updateCoverStretch 同值），滚动回调取此常量、不取拉伸中的 live 约束（下拉复位动画
+    /// 0.28s 内 live 值会抖）；改封面高时此处与三处同改，另 stickyWordmark 的 144 也要同步。
+    private let profileCoverHeight: CGFloat = 180
+    /// 资料已到且无封面 URL 时为真：封面区显示橙底默认背景（applyProfile 置位，布局同步用）。
+    private var profileShowsDefaultCover = false
+    /// 封面区是否显示（照片或默认背景任一）：下拉拉伸与复位以此为准，
+    /// 不以 coverImageView.isHidden 为准（默认背景时图视图本身是隐藏的、区仍在）。
+    private var profileShowsCoverArea: Bool {
+        return !coverImageView.isHidden || profileShowsDefaultCover
+    }
     /// 头像上压量（Li 2026-10-26 真机观感定）：-28，头像下沿 = 封面下沿 +56，
     /// 按钮（高 40、底对齐头像底）顶部 = 封面下沿 +16，完全落到封面下方。
     /// 注意：此组数值与网页（-52/按钮压封面 8pt）拉开差距，系 Li 亲眼定版，勿以“对齐网页”改回。
-    private lazy var avatarTopWithCoverConstraint: NSLayoutConstraint = avatarImageView.topAnchor.constraint(equalTo: coverClipView.bottomAnchor, constant: -28)
-    private lazy var avatarTopWithoutCoverConstraint: NSLayoutConstraint = avatarImageView.topAnchor.constraint(equalTo: headerView.topAnchor, constant: 20)
+    private lazy var avatarTopWithCoverConstraint: NSLayoutConstraint = avatarContainerView.topAnchor.constraint(equalTo: coverClipView.bottomAnchor, constant: -28)
+    private lazy var avatarTopWithoutCoverConstraint: NSLayoutConstraint = avatarContainerView.topAnchor.constraint(equalTo: headerView.topAnchor, constant: 20)
     private lazy var tabsTopConstraint: NSLayoutConstraint = tabsContainer.topAnchor.constraint(equalTo: badgesContainer.bottomAnchor, constant: 16)
     /// F17：头模块间距链（网页口径：墙 margin-top 10、徽章架 margin-top 16、标签 margin-top 16）。
     /// 隐藏容器仍占顶部间隙是旧 bug：updateHeaderSpacing 在每次强制布局前按显隐把
@@ -1078,18 +1108,18 @@ class BearyProfileViewController: UIViewController {
         layoutHeaderForced(widthValue: headerWidthValue)
         // 上滑 header：modal 顶栏已自带名字时禁用新 header，并按当前 offset 刷新一次态。
         stickyHeaderModalDisabled = !topBarView.isHidden
-        updateStickyHeaderScroll(offsetY: tableView.contentOffset.y, topBaseline: -tableView.contentInset.top)
+        updateProfileCoverScroll(offsetY: tableView.contentOffset.y, topBaseline: -tableView.contentInset.top)
     }
 
-    /// 上滑 header 搭建：容器钉页顶（通宽、高 = 安全区顶 + 56），层级在 table
+    /// 上滑 header 搭建（v22，2026-10-30）：容器钉页顶（通宽、高 = 安全区顶 + 60），层级在 table
     /// 之上、modal 顶栏之下（modal 顶栏在前，返回 / 分享不受影响）；骨架屏后加，
     /// 故骨架屏在 header 之上（加载态 header 被骨架盖住，无干扰）。
-    /// 2026-10-29 视差补充口径：层级 = 跟踪图 → 模糊层（预模糊 18px 图）→
-    /// 用户名；行程走完后带内恒为模糊封面本身（不另起白玻璃条、不洗向底色）。
+    /// 层级 = 跟踪图（含默认背景 wordmark）→ 用户名；跟踪图到锁定点后顶冻结、
+    /// 带内恒为封面底部本身（不另起模糊层、不洗向底色）。
     private func buildStickyHeader() {
         view.addSubview(stickyHeaderView)
         stickyHeaderView.addSubview(stickyHeaderBgImageView)
-        stickyHeaderView.addSubview(stickyHeaderBgBlurImageView)
+        stickyHeaderBgImageView.addSubview(stickyWordmarkView)
         stickyHeaderView.addSubview(stickyHeaderNameLabel)
         NSLayoutConstraint.activate([
             stickyHeaderView.topAnchor.constraint(equalTo: view.topAnchor),
@@ -1100,10 +1130,11 @@ class BearyProfileViewController: UIViewController {
             stickyHeaderBgTopConstraint,
             stickyHeaderBgWidthConstraint,
             stickyHeaderBgImageView.heightAnchor.constraint(equalToConstant: 234),
-            stickyHeaderBgBlurLeadingConstraint,
-            stickyHeaderBgBlurTopConstraint,
-            stickyHeaderBgBlurWidthConstraint,
-            stickyHeaderBgBlurImageView.heightAnchor.constraint(equalToConstant: 234),
+            // 默认背景 wordmark：跟踪图内封面中心（图顶 + 144），随跟踪图自动跟随与锁定。
+            stickyWordmarkView.centerXAnchor.constraint(equalTo: stickyHeaderBgImageView.centerXAnchor),
+            stickyWordmarkView.centerYAnchor.constraint(equalTo: stickyHeaderBgImageView.topAnchor, constant: 144),
+            stickyWordmarkView.widthAnchor.constraint(equalToConstant: 150),
+            stickyWordmarkView.heightAnchor.constraint(equalToConstant: 150 * (stickyWordmarkView.image?.size.height ?? 117) / (stickyWordmarkView.image?.size.width ?? 305)),
             stickyHeaderNameLeadingConstraint,
             stickyHeaderNameCenterYConstraint,
             stickyHeaderNameLabel.trailingAnchor.constraint(lessThanOrEqualTo: stickyHeaderView.trailingAnchor, constant: -16),
@@ -1120,20 +1151,17 @@ class BearyProfileViewController: UIViewController {
         let tableFrame = tableView.frame
         guard width > 0, tableFrame.width > 0 else { return }
         stickyHeaderModalDisabled = !topBarView.isHidden
-        // 容器高 = 安全区顶 + 56；底边存下来供滚动回调只读。
-        let headerHeight = safeTop + 56
+        // 容器高 = 安全区顶 + 60（v22：标题带 60，用户名落在状态栏下方）；底边存下来供滚动回调只读。
+        let headerHeight = safeTop + 60
         if stickyHeaderHeightConstraint.constant != headerHeight {
             stickyHeaderHeightConstraint.constant = headerHeight
         }
         stickyHeaderBottom = headerHeight
         // 背景图与真封面同几何（表框左 / 表宽、234 高、顶 = 自然顶 - 上滑量
-        // - 54 + 视差位移），由容器裁剪到 header 范围；y=0 时与封面像素完全
-        // 相同、无跳变。模糊层与跟踪图同框，滚动回调里同值驱动。
+        // - 54），由容器裁剪到 header 范围；y=0 时与封面像素完全
+        // 相同、无跳变；锁定后顶由滚动回调冻结在带底边 - 234。
         if stickyHeaderBgLeadingConstraint.constant != tableFrame.minX {
             stickyHeaderBgLeadingConstraint.constant = tableFrame.minX
-        }
-        if stickyHeaderBgBlurLeadingConstraint.constant != tableFrame.minX {
-            stickyHeaderBgBlurLeadingConstraint.constant = tableFrame.minX
         }
         if stickyHeaderBgTopConstraint.constant != tableFrame.minY {
             stickyHeaderBgTopConstraint.constant = tableFrame.minY
@@ -1142,10 +1170,7 @@ class BearyProfileViewController: UIViewController {
         if stickyHeaderBgWidthConstraint.constant != tableFrame.width {
             stickyHeaderBgWidthConstraint.constant = tableFrame.width
         }
-        if stickyHeaderBgBlurWidthConstraint.constant != tableFrame.width {
-            stickyHeaderBgBlurWidthConstraint.constant = tableFrame.width
-        }
-        // 布局时顶复位（静止态几何：自然顶 - 54，与视差裁剪区内图顶一致）；
+        // 布局时顶复位（静止态几何：自然顶 - 54，与裁剪区内图顶一致）；
         // 只在未上滑时复位：已上滑时顶由滚动回调接管，布局复位会把顶打回
         // 静止值、直到下次滚动事件前错位（转屏／深浅切换时无滚动事件）。
         let layoutUp = tableView.contentOffset.y + tableView.contentInset.top
@@ -1153,31 +1178,32 @@ class BearyProfileViewController: UIViewController {
             if stickyHeaderBgTopConstraint.constant != tableFrame.minY - 54 {
                 stickyHeaderBgTopConstraint.constant = tableFrame.minY - 54
             }
-            if stickyHeaderBgBlurTopConstraint.constant != tableFrame.minY - 54 {
-                stickyHeaderBgBlurTopConstraint.constant = tableFrame.minY - 54
-            }
         }
-        // 封面图同步：无封面时藏图、露页面底色；有封面时同引用赋值（不加载），
-        // 模糊层预模糊图随源图换图后台算一次（半径 18，见 refreshStickyHeaderBlurImage）。
-        if coverImageView.isHidden || coverImageView.image == nil {
+        // 封面图同步：照片时同引用赋值（不加载）；默认背景时无图、背景色为品牌橙、
+        // wordmark 显示；加载态（封面区高 0）时跟踪图与 wordmark 同隐。
+        if profileShowsDefaultCover {
+            stickyHeaderBgImageView.isHidden = false
+            stickyHeaderBgImageView.image = nil
+            stickyHeaderBgImageView.backgroundColor = BearyColors.orange
+            stickyWordmarkView.isHidden = false
+        } else if coverImageView.isHidden || coverImageView.image == nil {
             stickyHeaderBgImageView.isHidden = true
-            stickyHeaderBgBlurImageView.isHidden = true
-            stickyHeaderBgBlurImageView.alpha = 0
+            stickyWordmarkView.isHidden = true
         } else {
             stickyHeaderBgImageView.isHidden = false
+            stickyHeaderBgImageView.backgroundColor = BearyColors.bg
             if stickyHeaderBgImageView.image !== coverImageView.image {
                 stickyHeaderBgImageView.image = coverImageView.image
             }
-            stickyHeaderBgBlurImageView.isHidden = false
-            refreshStickyHeaderBlurImage()
+            stickyWordmarkView.isHidden = true
         }
         // 用户名：x 与内容用户名同列（表框左 + 28，iPad 600 居中列下自动对齐），
-        // 垂直居中于 56 条带；文案同步（赋值点同步 + 此处兜底）。
+        // 垂直居中于 60 条带；文案同步（赋值点同步 + 此处兜底）。
         let nameX = tableFrame.minX + 28
         if stickyHeaderNameLeadingConstraint.constant != nameX {
             stickyHeaderNameLeadingConstraint.constant = nameX
         }
-        let nameCenterY = safeTop + 28
+        let nameCenterY = safeTop + 30
         if stickyHeaderNameCenterYConstraint.constant != nameCenterY {
             stickyHeaderNameCenterYConstraint.constant = nameCenterY
         }
@@ -1190,66 +1216,159 @@ class BearyProfileViewController: UIViewController {
         }
     }
 
-    /// 上滑 header 滚动态（2026-10-29 第 7 项 + 视差补充口径，取代第 6 项 pin
-    /// 与第 29 项整块淡入）：跟踪图与真封面同几何上移；模糊层交叉淡入 ≈
-    /// 模糊 0→18px 随行程连续加深，行程走完后模糊层顶冻结，带内恒为模糊封面
-    /// 本身（不另起白玻璃条、不洗向底色）；用户名最后才浮上来。
-    /// 滚动回调只改顶约束常量与 alpha，不调 layoutIfNeeded、不做图片加载、
-    /// 不改文案；几何取布局时存好的 stickyHeaderBottom /
-    /// stickyHeaderBgNaturalTop，不在滚动回调里重算。
-    /// 须在顶栏回弹区早退之前跑，否则下拉区（y≤0）header 藏不住、模糊层复位不了。
-    /// 模糊行程：跟踪图底贴到 header 带底边时的上滑量 =（自然顶 + 180 - 带底边）
-    /// / 0.7（0.7 系数来自视差净速度）；行程内模糊层 alpha 0→1，行程走完后
-    /// 模糊层顶冻结在带底边 - 234，带内恒为模糊封面；容器自身 alpha 恒 1、
-    /// 不再整体淡入：初现帧跟踪图像素与下方封面完全相同，故显现不可见。
-    private func updateStickyHeaderScroll(offsetY y: CGFloat, topBaseline: CGFloat) {
-        guard !stickyHeaderModalDisabled else {
+    /// v22 封面滚动态（2026-10-30，取代视差 0.3＋上滑模糊 header＋旧名字淡入）：
+    /// 跟踪图与真封面 1:1 同速同框上移、底贴 header 底边时锁定成 header
+    ///（顶冻结在带底边 - 234，带内恒为封面底部本身）；头像前半段全尺寸跟随、
+    /// 后半段缩小 84→70＋下落、距分界线间隙 -28→6 后定型、之后随页面 1:1
+    /// 进入 header 后消失；名字以下整段跟头像视觉底边走（后半段 0→20，
+    /// 之后恒定），头像-用户名距离全程锁定（代码现行 14，不改静止态）；
+    /// header 用户名在内容用户名顶边碰到 header 底边时起、往后 20px 内
+    /// 淡入＋上浮到位；默认背景 wordmark 在后半段内 1→0 淡出（用户照片无此处理）。
+    /// 只改 transform／alpha 与跟踪图顶约束常量，不调 layoutIfNeeded、不做图片加载、
+    /// 不改文案；几何取布局时存好的 stickyHeaderBottom／stickyHeaderBgNaturalTop。
+    /// 层级：sticky header 恒在 table 之上——头像滑入带内即自然被 header 盖住消失，
+    /// 预览里的“脱离点翻转＋闩锁”在本架构（表内真封面＋固定跟踪图双元素）下无需代码。
+    /// 须在顶栏回弹区早退之前跑，否则下拉区 header 藏不住。
+    /// modal 态（顶栏自带名字）与加载态（封面区高 0）时 v22 不生效、全部复位自然态。
+    private func updateProfileCoverScroll(offsetY y: CGFloat, topBaseline: CGFloat) {
+        guard !stickyHeaderModalDisabled, coverHeightConstraint.constant > 0 else {
+            resetProfileCoverScroll()
             stickyHeaderView.isHidden = true
-            stickyHeaderBgBlurImageView.alpha = 0
             return
         }
         let up = y - topBaseline
-        guard up > 0 else {
-            // y≤0（顶部回弹 / 下拉伸缩区）：header 整体隐藏，模糊层复位，
-            // 不与封面拉伸（第 5 项下拉模糊）打架。
-            stickyHeaderView.isHidden = true
-            stickyHeaderBgBlurImageView.alpha = 0
-            return
+        let headerHeight = stickyHeaderBottom
+        // 锁定点（上滑量口径）：跟踪图底贴 header 底边时 = 自然顶 + 封面高 - header 高；
+        // 容器态自然顶为 0 时退化为 coverH - headerH（任务公式）；modal 态已在守卫外。
+        let lockUp = max(stickyHeaderBgNaturalTop + profileCoverHeight - headerHeight, 1)
+        let rampStart = lockUp / 2
+        let rampEnd = lockUp
+        let rampProgress: CGFloat
+        if up <= rampStart {
+            rampProgress = 0
+        } else if up >= rampEnd {
+            rampProgress = 1
+        } else {
+            rampProgress = (up - rampStart) / (rampEnd - rampStart)
         }
-        stickyHeaderView.isHidden = false
-        // 跟踪图与真封面同几何：真封面在裁剪区内（区高 180、图顶 -54）随视差
-        // 下移 0.3×，故跟踪图顶 = 自然顶 - 上滑量 - 54 + 视差位移（≤54），
-        // 与真封面像素严格对齐；不设下限、不停住。
-        let parallaxShift = min(max(up * 0.3, 0), 54)
-        let bgTop = stickyHeaderBgNaturalTop - up - 54 + parallaxShift
+        // 头像几何（84→70、压线 28、冻结间隙 6 均为代码／v22 现行值，由此推导
+        // 下落与底边位移，不写死 27／20）：间隙 = -28 + lag + 缩小抬升，
+        // 冻结时 = 6 → lagMax = 27；视觉底边位移 = lag - 缩小抬升 = 20。
+        let avatarFrom: CGFloat = 84
+        let avatarTo: CGFloat = 70
+        let avatarOverlap: CGFloat = 28
+        let frozenGap: CGFloat = 6
+        let shrinkRaise = (avatarFrom - avatarTo) / 2
+        let avatarLagMax = frozenGap + avatarOverlap - shrinkRaise
+        let belowShiftMax = avatarLagMax - shrinkRaise
+        let avatarLag = avatarLagMax * rampProgress
+        let avatarScale = 1 - rampProgress * (avatarFrom - avatarTo) / avatarFrom
+        let belowShift = belowShiftMax * rampProgress
+        // 头像：外层容器位移、内层图与首字母缩放；热区钮与重试钮在容器内、跟位移不跟缩放。
+        avatarContainerView.transform = CGAffineTransform(translationX: 0, y: avatarLag)
+        avatarImageView.transform = CGAffineTransform(scaleX: avatarScale, y: avatarScale)
+        avatarLetterLabel.transform = CGAffineTransform(scaleX: avatarScale, y: avatarScale)
+        applyProfileBelowShift(belowShift)
+        // 默认背景 wordmark：后半段内 1→0 淡出（照片时两视图均隐藏，赋值无可视影响）。
+        defaultWordmarkView.alpha = 1 - rampProgress
+        stickyWordmarkView.alpha = 1 - rampProgress
+        // 跟踪图：1:1 跟随、锁定后顶冻结（底贴 header 底边）；下拉区（up≤0）header 整体隐藏。
+        let bgTop = max(stickyHeaderBgNaturalTop - up - 54, headerHeight - 234)
         if stickyHeaderBgTopConstraint.constant != bgTop {
             stickyHeaderBgTopConstraint.constant = bgTop
         }
-        // 模糊行程 0→1 线性走完（滚动驱动，无定时），回顶按同一比例对称恢复；
-        // 行程走完后模糊层顶冻结在带底边 - 234（恰为行程终点当帧的顶值，无跳变），
-        // 此后带内恒为模糊封面本身。
-        let blurTravel = max((stickyHeaderBgNaturalTop + 180 - stickyHeaderBottom) / 0.7, 1)
-        let blurAlpha = min(max(up / blurTravel, 0), 1)
-        let blurTop = min(bgTop, stickyHeaderBottom - 234)
-        if stickyHeaderBgBlurTopConstraint.constant != blurTop {
-            stickyHeaderBgBlurTopConstraint.constant = blurTop
+        if up <= 0 {
+            stickyHeaderView.isHidden = true
+            stickyHeaderNameLabel.alpha = 0
+            stickyHeaderNameLabel.transform = .identity
+            return
         }
-        if stickyHeaderBgBlurImageView.alpha != blurAlpha {
-            stickyHeaderBgBlurImageView.alpha = blurAlpha
-        }
-        // 用户名最后才浮上来：模糊未走完时恒 0，走完后按遮挡比例淡入
-        // （内容用户名换算到页坐标的 top，header 底边减去它，除以名高，钳制
-        // 0…1；下滑对称恢复）。终态（内容名已滑出带外）alpha 1，用户名落在
-        // 模糊封面上、保持可读。
+        stickyHeaderView.isHidden = false
+        // header 用户名转移：内容用户名顶边（已含 belowShift 位移的实时屏坐标）
+        // 碰到 header 底边时起，往后 20px 内淡入 0→1＋上浮 6→0，往回滑反向恢复。
         let nameTop = nameLabel.convert(nameLabel.bounds, to: view).origin.y
-        let nameHeight = nameLabel.bounds.height
-        let occlusion: CGFloat
-        if nameHeight > 0 {
-            occlusion = min(max((stickyHeaderBottom - nameTop) / nameHeight, 0), 1)
+        let transferProgress = min(max((headerHeight - nameTop) / 20, 0), 1)
+        stickyHeaderNameLabel.alpha = transferProgress
+        stickyHeaderNameLabel.transform = CGAffineTransform(translationX: 0, y: 6 * (1 - transferProgress))
+    }
+
+    /// v22 名字以下整段位移（2026-10-30）：头像行按钮＋名字块＋统计＋墙＋徽章架
+    /// 同值平移（纯位移，各视图相对位置不变，等价于包一层容器平移；不改约束、
+    /// 不重排版，故 header 高不变）。标签容器不移（底贴 header 底、移了会压首张卡，
+    /// 且标签与卡片同定、间距本就恒定）。墙容器自身有入场动画（transform），
+    /// 故只移它的三个子视图、不碰容器 transform，避免与入场动画打架。
+    /// 末位可见视图的位移以到标签顶的布局间隙为上限（现行 16），防压标签：
+    /// 徽章架可见时封顶徽章架，否则封顶墙（子视图同值），再否则封顶统计行。
+    /// 间隙用 center／bounds 量布局位置（不受 transform 影响），故滚动中仍准。
+    private func applyProfileBelowShift(_ shift: CGFloat) {
+        let fullShift = CGAffineTransform(translationX: 0, y: shift)
+        editButton.transform = fullShift
+        gearButton.transform = fullShift
+        headerShareButton.transform = fullShift
+        nameLabel.transform = fullShift
+        badgeImageView.transform = fullShift
+        crownView.transform = fullShift
+        handleLabel.transform = fullShift
+        joinedIconView.transform = fullShift
+        joinedLabel.transform = fullShift
+        emailLabel.transform = fullShift
+        let tabsTop = tabsContainer.center.y - tabsContainer.bounds.height / 2
+        let badgesVisible = !badgesContainer.isHidden && badgesContainer.bounds.height > 0
+        let wallVisible = !wallContainer.isHidden && wallContainer.bounds.height > 0
+        if badgesVisible {
+            let badgesBottom = badgesContainer.center.y + badgesContainer.bounds.height / 2
+            let cappedShift = min(shift, max(tabsTop - badgesBottom, 0))
+            badgesContainer.transform = CGAffineTransform(translationX: 0, y: cappedShift)
+            wallTitleLabel.transform = fullShift
+            wallScrollView.transform = fullShift
+            wallTotalLabel.transform = fullShift
+            publicCountLabel.transform = fullShift
+            likesCountLabel.transform = fullShift
+            publicTextLabel?.transform = fullShift
+            likesTextLabel?.transform = fullShift
+        } else if wallVisible {
+            let wallBottom = wallContainer.center.y + wallContainer.bounds.height / 2
+            let cappedShift = min(shift, max(tabsTop - wallBottom, 0))
+            let cappedTransform = CGAffineTransform(translationX: 0, y: cappedShift)
+            wallTitleLabel.transform = cappedTransform
+            wallScrollView.transform = cappedTransform
+            wallTotalLabel.transform = cappedTransform
+            badgesContainer.transform = fullShift
+            publicCountLabel.transform = fullShift
+            likesCountLabel.transform = fullShift
+            publicTextLabel?.transform = fullShift
+            likesTextLabel?.transform = fullShift
         } else {
-            occlusion = 0
+            let statsBottom = max(
+                publicCountLabel.center.y + publicCountLabel.bounds.height / 2,
+                likesCountLabel.center.y + likesCountLabel.bounds.height / 2,
+                (publicTextLabel?.center.y ?? 0) + (publicTextLabel?.bounds.height ?? 0) / 2,
+                (likesTextLabel?.center.y ?? 0) + (likesTextLabel?.bounds.height ?? 0) / 2
+            )
+            let cappedShift = min(shift, max(tabsTop - statsBottom, 0))
+            let cappedTransform = CGAffineTransform(translationX: 0, y: cappedShift)
+            publicCountLabel.transform = cappedTransform
+            likesCountLabel.transform = cappedTransform
+            publicTextLabel?.transform = cappedTransform
+            likesTextLabel?.transform = cappedTransform
+            wallTitleLabel.transform = fullShift
+            wallScrollView.transform = fullShift
+            wallTotalLabel.transform = fullShift
+            badgesContainer.transform = fullShift
         }
-        stickyHeaderNameLabel.alpha = blurAlpha >= 1 ? occlusion : 0
+    }
+
+    /// v22 复位（modal 态／加载态）：全部 transform 回自然态、wordmark 回不透明、
+    /// header 用户名藏；sticky header 本身由调用方置 hidden。
+    private func resetProfileCoverScroll() {
+        avatarContainerView.transform = .identity
+        avatarImageView.transform = .identity
+        avatarLetterLabel.transform = .identity
+        applyProfileBelowShift(0)
+        defaultWordmarkView.alpha = 1
+        stickyWordmarkView.alpha = 1
+        stickyHeaderNameLabel.alpha = 0
+        stickyHeaderNameLabel.transform = .identity
     }
 
     private func buildTopBar() {
@@ -1295,6 +1414,7 @@ class BearyProfileViewController: UIViewController {
         headerView.backgroundColor = BearyColors.bg
         headerView.addSubview(coverClipView)
         coverClipView.addSubview(coverImageView)
+        coverClipView.addSubview(defaultWordmarkView)
         coverImageView.addSubview(coverBlurImageView)
         // 2026-10-29 第 7 项：点封面查看热区在 headerView 层、仍在其上。
         NSLayoutConstraint.activate([
@@ -1302,14 +1422,22 @@ class BearyProfileViewController: UIViewController {
             coverBlurImageView.leadingAnchor.constraint(equalTo: coverImageView.leadingAnchor),
             coverBlurImageView.trailingAnchor.constraint(equalTo: coverImageView.trailingAnchor),
             coverBlurImageView.bottomAnchor.constraint(equalTo: coverImageView.bottomAnchor),
+            // 默认背景 wordmark：封面居中（下拉拉伸时 clip 长高、中心跟随，即“居中跟随”）。
+            defaultWordmarkView.centerXAnchor.constraint(equalTo: coverClipView.centerXAnchor),
+            defaultWordmarkView.centerYAnchor.constraint(equalTo: coverClipView.centerYAnchor),
+            defaultWordmarkView.widthAnchor.constraint(equalToConstant: 150),
+            defaultWordmarkView.heightAnchor.constraint(equalToConstant: 150 * (defaultWordmarkView.image?.size.height ?? 117) / (defaultWordmarkView.image?.size.width ?? 305)),
         ])
-        headerView.addSubview(avatarImageView)
-        // 2026-10-29 第 15 项：查看热区——封面钮贴整幅封面、头像钮贴整张头像
-        // 且后加（头像重叠区点按走头像）；无图时处理函数内守卫、不 present。
+        // 2026-10-29 第 15 项：查看热区——封面钮贴整幅封面、头像容器后加
+        //（容器内头像钮在封面钮之上，重叠 28pt 区点按仍走头像）；无图时处理函数内守卫、不 present。
         headerView.addSubview(coverViewButton)
-        headerView.addSubview(avatarViewButton)
-        headerView.addSubview(avatarLetterLabel)
-        headerView.addSubview(avatarRetryButton)
+        headerView.addSubview(avatarContainerView)
+        // 容器内层级：图 → 头像钮 → 首字母 → 重试钮（首字母不拦截触摸，
+        // 重试钮在最上，保证失败时可点；与旧 headerView 层相对次序一致）。
+        avatarContainerView.addSubview(avatarImageView)
+        avatarContainerView.addSubview(avatarViewButton)
+        avatarContainerView.addSubview(avatarLetterLabel)
+        avatarContainerView.addSubview(avatarRetryButton)
         headerView.addSubview(editButton)
         headerView.addSubview(gearButton)
         headerView.addSubview(headerShareButton)
@@ -1337,10 +1465,12 @@ class BearyProfileViewController: UIViewController {
         tabsContainer.addSubview(tabsBorder)
         tabsContainer.addSubview(tabsUnderline)
 
-        let publicTextLabel = makeStatTextLabel(text: "公开日记")
-        let likesTextLabel = makeStatTextLabel(text: "获赞")
-        headerView.addSubview(publicTextLabel)
-        headerView.addSubview(likesTextLabel)
+        let publicTextLabelValue = makeStatTextLabel(text: "公开日记")
+        let likesTextLabelValue = makeStatTextLabel(text: "获赞")
+        publicTextLabel = publicTextLabelValue
+        likesTextLabel = likesTextLabelValue
+        headerView.addSubview(publicTextLabelValue)
+        headerView.addSubview(likesTextLabelValue)
 
         NSLayoutConstraint.activate([
             coverHeightConstraint,
@@ -1370,19 +1500,25 @@ class BearyProfileViewController: UIViewController {
             coverViewButton.leadingAnchor.constraint(equalTo: coverClipView.leadingAnchor),
             coverViewButton.trailingAnchor.constraint(equalTo: coverClipView.trailingAnchor),
             coverViewButton.bottomAnchor.constraint(equalTo: coverClipView.bottomAnchor),
-            avatarViewButton.topAnchor.constraint(equalTo: avatarImageView.topAnchor),
-            avatarViewButton.leadingAnchor.constraint(equalTo: avatarImageView.leadingAnchor),
-            avatarViewButton.trailingAnchor.constraint(equalTo: avatarImageView.trailingAnchor),
-            avatarViewButton.bottomAnchor.constraint(equalTo: avatarImageView.bottomAnchor),
-            avatarImageView.leadingAnchor.constraint(equalTo: headerView.leadingAnchor, constant: 28),
-            avatarImageView.widthAnchor.constraint(equalToConstant: 84),
-            avatarImageView.heightAnchor.constraint(equalToConstant: 84),
-            avatarLetterLabel.leadingAnchor.constraint(equalTo: avatarImageView.leadingAnchor),
-            avatarLetterLabel.trailingAnchor.constraint(equalTo: avatarImageView.trailingAnchor),
-            avatarLetterLabel.topAnchor.constraint(equalTo: avatarImageView.topAnchor),
-            avatarLetterLabel.bottomAnchor.constraint(equalTo: avatarImageView.bottomAnchor),
-            avatarRetryButton.centerXAnchor.constraint(equalTo: avatarImageView.centerXAnchor),
-            avatarRetryButton.centerYAnchor.constraint(equalTo: avatarImageView.centerYAnchor),
+            // v22：头像约束全落容器上（顶 -28／左 28／84×84 不变）；内层图与首字母
+            // 贴满容器、只做缩放；热区钮贴满容器、重试钮居中容器——两者跟位移、不跟缩放。
+            avatarContainerView.leadingAnchor.constraint(equalTo: headerView.leadingAnchor, constant: 28),
+            avatarContainerView.widthAnchor.constraint(equalToConstant: 84),
+            avatarContainerView.heightAnchor.constraint(equalToConstant: 84),
+            avatarImageView.topAnchor.constraint(equalTo: avatarContainerView.topAnchor),
+            avatarImageView.leadingAnchor.constraint(equalTo: avatarContainerView.leadingAnchor),
+            avatarImageView.trailingAnchor.constraint(equalTo: avatarContainerView.trailingAnchor),
+            avatarImageView.bottomAnchor.constraint(equalTo: avatarContainerView.bottomAnchor),
+            avatarLetterLabel.topAnchor.constraint(equalTo: avatarContainerView.topAnchor),
+            avatarLetterLabel.leadingAnchor.constraint(equalTo: avatarContainerView.leadingAnchor),
+            avatarLetterLabel.trailingAnchor.constraint(equalTo: avatarContainerView.trailingAnchor),
+            avatarLetterLabel.bottomAnchor.constraint(equalTo: avatarContainerView.bottomAnchor),
+            avatarViewButton.topAnchor.constraint(equalTo: avatarContainerView.topAnchor),
+            avatarViewButton.leadingAnchor.constraint(equalTo: avatarContainerView.leadingAnchor),
+            avatarViewButton.trailingAnchor.constraint(equalTo: avatarContainerView.trailingAnchor),
+            avatarViewButton.bottomAnchor.constraint(equalTo: avatarContainerView.bottomAnchor),
+            avatarRetryButton.centerXAnchor.constraint(equalTo: avatarContainerView.centerXAnchor),
+            avatarRetryButton.centerYAnchor.constraint(equalTo: avatarContainerView.centerYAnchor),
             avatarRetryButton.widthAnchor.constraint(equalToConstant: 44),
             avatarRetryButton.heightAnchor.constraint(equalToConstant: 44),
 
@@ -1426,13 +1562,13 @@ class BearyProfileViewController: UIViewController {
 
             statsTopWithoutEmailConstraint,
             publicCountLabel.leadingAnchor.constraint(equalTo: headerView.leadingAnchor, constant: 28),
-            publicTextLabel.centerYAnchor.constraint(equalTo: publicCountLabel.centerYAnchor),
-            publicTextLabel.leadingAnchor.constraint(equalTo: publicCountLabel.trailingAnchor, constant: 4),
+            publicTextLabelValue.centerYAnchor.constraint(equalTo: publicCountLabel.centerYAnchor),
+            publicTextLabelValue.leadingAnchor.constraint(equalTo: publicCountLabel.trailingAnchor, constant: 4),
             likesCountLabel.centerYAnchor.constraint(equalTo: publicCountLabel.centerYAnchor),
-            likesCountLabel.leadingAnchor.constraint(equalTo: publicTextLabel.trailingAnchor, constant: 22),
-            likesTextLabel.centerYAnchor.constraint(equalTo: publicCountLabel.centerYAnchor),
-            likesTextLabel.leadingAnchor.constraint(equalTo: likesCountLabel.trailingAnchor, constant: 4),
-            likesTextLabel.trailingAnchor.constraint(lessThanOrEqualTo: headerView.trailingAnchor, constant: -28),
+            likesCountLabel.leadingAnchor.constraint(equalTo: publicTextLabelValue.trailingAnchor, constant: 22),
+            likesTextLabelValue.centerYAnchor.constraint(equalTo: publicCountLabel.centerYAnchor),
+            likesTextLabelValue.leadingAnchor.constraint(equalTo: likesCountLabel.trailingAnchor, constant: 4),
+            likesTextLabelValue.trailingAnchor.constraint(lessThanOrEqualTo: headerView.trailingAnchor, constant: -28),
 
             wallContainer.leadingAnchor.constraint(equalTo: headerView.leadingAnchor, constant: 20),
             wallContainer.trailingAnchor.constraint(equalTo: headerView.trailingAnchor, constant: -20),
@@ -1788,9 +1924,11 @@ class BearyProfileViewController: UIViewController {
         }
         applyEmailRow()
 
-        // 封面带：有封面时 180 高 + 头像 -28 半压 + 3.5 bg 边；无封面时头顶距 20。
+        // 封面带（v22，2026-10-30）：资料到了封面区恒 180 高——有封面 URL 时为照片，
+        // 无封面时为橙底默认背景（官方白 wordmark）；加载态（本函数未跑）仍为高 0＋头顶距 20。
         // L17：空字符串不再算有封面——须非空且能拼出 URL 才算。
         let hasCover = !(profileValue.coverUrl ?? "").isEmpty && BearyImageURLs.avatarURL(profileValue.coverUrl) != nil
+        profileShowsDefaultCover = !hasCover
         if let coverPath = profileValue.coverUrl, let coverURLValue = BearyImageURLs.avatarURL(coverPath) {
             // 刷新回包同 URL 不重下：bearySetImage 会先把图清成 placeholder（nil）
             // 再异步回填（全部回调均为 main.async，内存命中也至少空一帧），
@@ -1805,12 +1943,15 @@ class BearyProfileViewController: UIViewController {
             coverImageView.image = nil
         }
         coverImageView.isHidden = !hasCover
-        coverHeightConstraint.constant = hasCover ? 180 : 0
-        // 下拉模糊用预模糊图：缓存命中时直接复用；异步加载的新图在首次下拉时生成。
+        coverClipView.backgroundColor = profileShowsDefaultCover ? BearyColors.orange : BearyColors.faint
+        defaultWordmarkView.isHidden = !profileShowsDefaultCover
+        coverHeightConstraint.constant = profileCoverHeight
+        // 下拉模糊用预模糊图：缓存命中时直接复用；异步加载的新图在首次下拉时生成；
+        // 默认背景无照片、refreshCoverBlurImage 早退，模糊层无可视变化。
         refreshCoverBlurImage()
-        avatarTopWithCoverConstraint.isActive = hasCover
-        avatarTopWithoutCoverConstraint.isActive = !hasCover
-        avatarImageView.layer.borderWidth = hasCover ? 3.5 : 0
+        avatarTopWithCoverConstraint.isActive = true
+        avatarTopWithoutCoverConstraint.isActive = false
+        avatarImageView.layer.borderWidth = 3.5
 
         // BETA 佩戴徽章（23，主页面口径）；皇冠按 plus 显示（网页 pfPlusPill 口径）。
         // I8：取不到图时用占位图（并打日志），不再静默隐藏徽章位。
@@ -3561,24 +3702,9 @@ extension BearyProfileViewController: UITableViewDataSource, UITableViewDelegate
     // MARK: - 清单 2 滚动隐藏栏（个人主页部分）
 
     /// 主滚动视图即本表：向下滚过 120pt 藏栏、向上滚显栏；
-    /// 封面视差（2026-10-29，强度 0.3）：上滑量 S = y - topBaseline（> 0 才生效），
-    /// 封面图在裁剪区内下移 0.3 × S（净速度 0.7×），只走 transform，不动约束与布局；
-    /// 位移上限 54（= 0.3 × 180 区高），图顶预留 54 在区外、底贴齐区底，
-    /// 故区顶区底永不露底；图宽 = 区宽、无缩放，左右永不露白。
-    /// 下拉区（S ≤ 0）与刷新期恒 identity：下拉由拉伸约束接管、刷新期封面不动（#187）。
-    private func updateCoverParallax(offsetY y: CGFloat, topBaseline: CGFloat) {
-        let scrollUp = y - topBaseline
-        guard !coverImageView.isHidden,
-              tableView.refreshControl?.isRefreshing != true,
-              scrollUp > 0 else {
-            if coverImageView.transform != .identity {
-                coverImageView.transform = .identity
-            }
-            return
-        }
-        let shift = min(scrollUp * 0.3, 54)
-        coverImageView.transform = CGAffineTransform(translationX: 0, y: shift)
-    }
+    /// v22 上滑区（2026-10-30）只走 transform／alpha（见 updateProfileCoverScroll），
+    /// 视差 0.3 已删；下拉区（S ≤ 0）与刷新期封面 transform 恒 identity：
+    /// 下拉由拉伸约束接管、刷新期封面不动（#187）。
 
     /// 顶部回弹区（offset ≤ 0）一律显栏。栏态变化时才调容器 helper，
     /// FAB 随栏同隐同现由容器 helper 内部负责，本页不直接碰 FAB。
@@ -3603,7 +3729,7 @@ extension BearyProfileViewController: UITableViewDataSource, UITableViewDelegate
             return
         }
         let pull = topBaseline - y
-        if coverImageView.isHidden || pull <= 0 {
+        if !profileShowsCoverArea || pull <= 0 {
             // 拖动中 1:1 即时跟随；松手后（回弹/刷新接管）走动画复位，防一帧闪回。
             if tableView.isDragging {
                 resetCoverStretch()
@@ -3615,7 +3741,7 @@ extension BearyProfileViewController: UITableViewDataSource, UITableViewDelegate
         // 封面换图后首次下拉时生成预模糊图（源图不变不重算，不逐帧现算）。
         refreshCoverBlurImage()
         coverTopConstraint.constant = -pull
-        coverHeightConstraint.constant = 180 + pull
+        coverHeightConstraint.constant = profileCoverHeight + pull
         coverLeadingConstraint.constant = -pull / 2
         coverTrailingConstraint.constant = pull / 2
         setCoverBlurAlpha(min(pull / 120, 0.85))
@@ -3624,7 +3750,7 @@ extension BearyProfileViewController: UITableViewDataSource, UITableViewDelegate
     /// 弹性封面复位（自然态：顶 0、高 180/0、左右贴边、无模糊）。
     private func resetCoverStretch() {
         coverTopConstraint.constant = 0
-        coverHeightConstraint.constant = coverImageView.isHidden ? 0 : 180
+        coverHeightConstraint.constant = profileShowsCoverArea ? profileCoverHeight : 0
         coverLeadingConstraint.constant = 0
         coverTrailingConstraint.constant = 0
         setCoverBlurAlpha(0)
@@ -3634,7 +3760,7 @@ extension BearyProfileViewController: UITableViewDataSource, UITableViewDelegate
     /// 一次 ease-out（0.28s）回自然态，用现有约束 + layoutIfNeeded 做动画，
     /// 不把拉伸改成 transform；减动效时直接归位；已在自然态时不建动画。
     private func resetCoverStretchAnimated() {
-        let naturalHeight: CGFloat = coverImageView.isHidden ? 0 : 180
+        let naturalHeight: CGFloat = profileShowsCoverArea ? profileCoverHeight : 0
         let alreadyNatural = coverTopConstraint.constant == 0
             && coverHeightConstraint.constant == naturalHeight
             && coverLeadingConstraint.constant == 0
@@ -3687,27 +3813,6 @@ extension BearyProfileViewController: UITableViewDataSource, UITableViewDelegate
         }
     }
 
-    /// header 模糊层预模糊图（半径 18，2026-10-29 视差补充口径）：与下拉模糊
-    /// 同款“换图时后台算一次”口径，源图不变不重算；滚动回调只读 alpha，
-    /// 不在滚动中现算。半径 18 为用户在预览里定的终值，不复用下拉的 25。
-    private func refreshStickyHeaderBlurImage() {
-        guard let coverImage = coverImageView.image else {
-            stickyHeaderBgBlurSourceImage = nil
-            stickyHeaderBgBlurImageView.image = nil
-            return
-        }
-        if stickyHeaderBgBlurSourceImage === coverImage { return }
-        stickyHeaderBgBlurSourceImage = coverImage
-        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-            let blurredImage = coverImage.bearyGaussianBlurred(radius: 18)
-            DispatchQueue.main.async { [weak self] in
-                guard let self = self else { return }
-                if self.stickyHeaderBgBlurSourceImage !== coverImage { return }
-                self.stickyHeaderBgBlurImageView.image = blurredImage
-            }
-        }
-    }
-
     /// 2026-10-29 第 15 项：点头像 / 点封面弹出大图查看（复用现有灯箱本地图
     /// 模式，纯查看、无编辑入口；自己与他人个人页同走 buildHeader，故双面生效）。
     /// 无图（字母头像占位 / 无封面）时不 present。
@@ -3734,10 +3839,8 @@ extension BearyProfileViewController: UITableViewDataSource, UITableViewDelegate
         defer { profileLastScrollOffsetY = y }
         // 弹性封面（下拉伸缩 + 模糊）：须在顶栏回弹区早退之前跑，否则下拉区永远量不到。
         updateCoverStretch(offsetY: y, topBaseline: -scrollView.contentInset.top)
-        // 封面视差（上滑 0.3× 区内平移）：同样须在早退之前跑，否则上滑区量不到。
-        updateCoverParallax(offsetY: y, topBaseline: -scrollView.contentInset.top)
-        // 上滑 header（滚动态只改 alpha）：同样须在早退之前跑，否则下拉区 header 藏不住。
-        updateStickyHeaderScroll(offsetY: y, topBaseline: -scrollView.contentInset.top)
+        // v22 封面滚动态（上滑锁定＋头像＋用户名转移）：同样须在早退之前跑，否则上滑区量不到。
+        updateProfileCoverScroll(offsetY: y, topBaseline: -scrollView.contentInset.top)
         // 顶栏透度批：在顶判定改以 -contentInset.top 为基准（现行收起态内边距 0 时与旧 y<=0 等价）。
         if y <= -scrollView.contentInset.top {
             if profileChromeHidden {
