@@ -218,6 +218,12 @@ final class BearyChromeViewController: UIViewController {
     private var startupMeResolved = false
     /// P1-1：FAB 已在等 /me 回包时不再重复排队等（等的过程中再点 FAB 直接返回）。
     private var composerMeWaitPending = false
+    /// 冷启动竞态修（我页门）：点“我的”时首个 /me 未回包且本地有有效会话
+    /// cookie，currentUser 仍为 nil 不能断定是游客——先等回包再判（FAB 的
+    /// P1-1 同口径）；等的过程中再点“我的”直接返回，不叠等。
+    private var profileMeWaitPending = false
+    /// 等回包期间用户切走了别的页：回包后不再擅自跳回我页（U21 triggerPage 同口径）。
+    private var profileMeWaitTriggerPage: ContainerPage?
     /// 登录循环修（401 无限重载）：onUserChanged 上次见到的用户 id；只有 id 真变了
     /// 才走时间线/消息/首页三处重载，nil→nil（已是游客态、401 重复触发）直接跳过。
     private var lastUserChangedUserId: Int?
@@ -846,6 +852,9 @@ final class BearyChromeViewController: UIViewController {
             if self.composerMeWaitPending {
                 DispatchQueue.main.async { [weak self] in self?.resumePendingComposerAfterMe() }
             }
+            if self.profileMeWaitPending {
+                DispatchQueue.main.async { [weak self] in self?.resumePendingProfileAfterMe() }
+            }
             // 登录循环修（401 无限重载）：先记本次用户 id 是否真变了；nil→nil 时
             // 下面三处重载全部跳过，断掉 401→重载→再 401 的循环。
             let userChanged = self.lastUserChangedUserId != user?.id
@@ -950,6 +959,9 @@ final class BearyChromeViewController: UIViewController {
             self?.startupMeResolved = true
             if self?.composerMeWaitPending == true {
                 DispatchQueue.main.async { [weak self] in self?.resumePendingComposerAfterMe() }
+            }
+            if self?.profileMeWaitPending == true {
+                DispatchQueue.main.async { [weak self] in self?.resumePendingProfileAfterMe() }
             }
             self?.showToast(message: "网络不稳定，请稍后再试")
         }
@@ -1526,6 +1538,26 @@ final class BearyChromeViewController: UIViewController {
         return f
     }
 
+    /// 未登录“我”页门（原 showPage 内联块抽出，行为一字不动）：toast +
+    /// 1200ms 后弹登录（网页同口径）。U21：延迟回调里校验仍停留在触发页
+    /// （触发时 currentPage 未变，仍为触发前页）、仍未登录且无其他 modal 在前，
+    /// 否则取消本次自动弹登录。登录循环修：与 401 回调共用待触发标记，已有
+    /// 定时器在排队时不再重复排队（toast 照常发，只不叠定时器）。
+    private func showMeLoginGate() {
+        showToast(message: "请先登录")
+        let triggerPage = currentPage
+        guard !autoLoginPromptPending else { return }
+        autoLoginPromptPending = true
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) { [weak self] in
+            guard let self = self else { return }
+            self.autoLoginPromptPending = false
+            guard SessionManager.shared.isLoggedIn == false,
+                  self.currentPage == triggerPage,
+                  self.presentedViewController == nil else { return }
+            self.presentLogin()
+        }
+    }
+
     /// 原生页切换：首页与新页均为常驻子 VC（hide/show 保留滚动位置）。
     /// 重拍当前 tab：首页先回顶再刷新（与网页 topThen 同口径），消息页回顶再刷新，时间线重拉。
     private func showPage(_ page: ContainerPage) {
@@ -1541,22 +1573,35 @@ final class BearyChromeViewController: UIViewController {
             }
         }
         // A11（收尾）：未登录“我”页不亮 gated 占位页，toast + 1200ms 后弹登录（网页同口径）。
+        // 冷启动竞态修：首个 /me 未回包且本地有有效会话 cookie 时，currentUser
+        // 仍为 nil 不能断定是游客——等一次 refreshMe 回包再判（FAB 的 P1-1 同口径），
+        // 等的过程中不 toast、不弹登录页、不亮 tab；无 cookie 时按原口径直走登录门。
         if page == .me && SessionManager.shared.isLoggedIn == false {
-            showToast(message: "请先登录")
-            // U21：延迟回调里校验仍停留在触发页（触发时 currentPage 未变，仍为触发前页）、
-            // 仍未登录且无其他 modal 在前，否则取消本次自动弹登录。
-            let triggerPage = currentPage
-            // 登录循环修：与 401 回调共用待触发标记，已有定时器在排队时不再重复排队。
-            guard !autoLoginPromptPending else { return }
-            autoLoginPromptPending = true
-            DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) { [weak self] in
-                guard let self = self else { return }
-                self.autoLoginPromptPending = false
-                guard SessionManager.shared.isLoggedIn == false,
-                      self.currentPage == triggerPage,
-                      self.presentedViewController == nil else { return }
-                self.presentLogin()
+            if profileMeWaitPending { return }
+            if !startupMeResolved && SessionManager.shared.hasCachedSession {
+                profileMeWaitPending = true
+                profileMeWaitTriggerPage = currentPage
+                SessionManager.shared.refreshMe { [weak self] result in
+                    // 封禁/踢下线/过期原因透传：第二路 /me 会顶掉启动路 /me 的回包
+                    // （meSeq 守卫），原因 toast 在此补一次，否则原因文案会被吞掉。
+                    if case .failure(.authFailure(let reason, let message)) = result {
+                        let text: String
+                        if let m = message, !m.isEmpty {
+                            text = m
+                        } else if reason == "banned" {
+                            text = "账号被封禁"
+                        } else if reason == "kicked" {
+                            text = "已在其他设备退出，请重新登录"
+                        } else {
+                            text = "登录已过期，请重新登录"
+                        }
+                        DispatchQueue.main.async { [weak self] in self?.showToast(message: text) }
+                    }
+                    DispatchQueue.main.async { [weak self] in self?.resumePendingProfileAfterMe() }
+                }
+                return
             }
+            showMeLoginGate()
             return
         }
         if page == currentPage {
@@ -2866,6 +2911,27 @@ final class BearyChromeViewController: UIViewController {
             // G26：网络失败不按游客处理，onNetworkUnstable 已 toast，此处不再弹登录页。
         } else if !isComposerPresented() && presentedViewController == nil {
             presentLoginGate()
+        }
+    }
+
+    /// 冷启动竞态修：我页等 /me 回包后的再判（FAB 的 resumePendingComposerAfterMe
+    /// 同口径）：① 已登录 → 进我页；② authUnknown（网络失败未证实游客）→ 不弹
+    /// 登录页，只留 onNetworkUnstable 的 toast；③ 仍未登录 → 走原我页登录门
+    /// （toast + 1200ms 后弹登录）；等的过程中用户已切走别的页 → 静默放弃，
+    /// 不擅自跳回我页；已有 modal 在前时同样放弃（不隔着 modal 发 toast）。
+    private func resumePendingProfileAfterMe() {
+        guard profileMeWaitPending else { return }
+        profileMeWaitPending = false
+        startupMeResolved = true
+        let triggerPage = profileMeWaitTriggerPage
+        profileMeWaitTriggerPage = nil
+        guard currentPage == triggerPage else { return }
+        if SessionManager.shared.isLoggedIn {
+            showPage(.me)
+        } else if SessionManager.shared.authUnknown {
+            // G26：网络失败不按游客处理，onNetworkUnstable 已 toast，此处不再弹登录页。
+        } else if presentedViewController == nil {
+            showMeLoginGate()
         }
     }
 
