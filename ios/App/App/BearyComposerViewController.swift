@@ -4076,6 +4076,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, U
             clientReq: req,
             updatedAt: Date().timeIntervalSince1970,
             weather: selectedWeather,
+            visibilitySegmentIndex: visibilitySegmented.selectedSegmentIndex,
             recipientId: recipientUserId,
             recipientName: recipientNameValue,
             recipientAvatar: selectedRecipient?.avatarUrl,
@@ -4177,6 +4178,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, U
                 self.refreshMoodButtons()
                 self.selectedWeather = draft.weather
                 self.refreshWeatherButtons()
+                self.restoreVisibilitySegment(index: draft.visibilitySegmentIndex)
                 self.selectedRecipient = self.restoredRecipient(from: draft)
                 self.notifyRecipient = draft.notifyRecipient
                 self.selectedQuote = self.restoredQuote(from: draft)
@@ -4246,6 +4248,23 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, U
     private func restoredRecipient(from draft: BearyDraft) -> SearchUser? {
         guard let recipientUserId = draft.recipientId else { return nil }
         return SearchUser(id: recipientUserId, displayName: draft.recipientName, handle: nil, avatarUrl: draft.recipientAvatar, coverUrl: nil)
+    }
+
+    /// 草稿可见性恢复：分段 index 与 selectedVisibilityPublished 同步写（发布
+    /// 即读后者，只写分段不动它仍会发出私密）；限时开时分段锁死公开且禁用
+    /// （didToggleEphemeral 同款锁态），不以草稿值覆盖锁态；非法 index 一律
+    /// 按私密兜底。restoreDraft 与 loadDraftFromBox 两路共用。
+    private func restoreVisibilitySegment(index: Int) {
+        if ephemeralSwitch.isOn {
+            visibilitySegmented.selectedSegmentIndex = 1
+            selectedVisibilityPublished = true
+            visibilitySegmented.isEnabled = false
+        } else {
+            let restoredIndex = index == 1 ? 1 : 0
+            visibilitySegmented.selectedSegmentIndex = restoredIndex
+            selectedVisibilityPublished = restoredIndex == 1
+            visibilitySegmented.isEnabled = true
+        }
     }
 
     /// v3 引用快照还原为选引用对象：quoteId 为空即无引用；已删标记照原样带回，
@@ -4474,6 +4493,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, U
         titleField.text = draft.title ?? ""
         selectedMood = draft.mood
         selectedWeather = draft.weather
+        restoreVisibilitySegment(index: draft.visibilitySegmentIndex)
         selectedRecipient = restoredRecipient(from: draft)
         notifyRecipient = draft.notifyRecipient
         selectedQuote = restoredQuote(from: draft)

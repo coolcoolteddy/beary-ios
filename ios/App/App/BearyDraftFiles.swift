@@ -13,6 +13,7 @@ import UIKit
 // + updatedAt）+ weather + recipientId + notifyRecipient + quoteId
 // + 引用展示快照（作者名 / 作者头像 / 日期 / 正文 / 图片 key / 是否公开 / 已删标记）
 // + 写给展示快照（收信人展示名 / 头像路径；只为恢复 chip 显示，不作身份依据）。
+// + 可见性分段 index（0 私密 / 1 公开；老草稿缺本键时按 0 私密解码）。
 // 排序：updatedAt 倒序（同秒按 draftId 升序兜底，保证顺序稳定）；草稿箱按此顺序列出全部。
 // 迁移：v3 文件不存在时，首次读取把旧 v2 单槽文件 beary_draft_v2.json 迁入 v3
 // （有实质内容才迁：正文非空，或心情、图片、引用、写给、天气任一非空；
@@ -46,6 +47,9 @@ struct BearyDraft: Codable {
     var clientReq: String
     var updatedAt: TimeInterval
     var weather: String?
+    /// 草稿可见性分段 index（0 私密 / 1 公开；老草稿缺本键时按 0 私密解码，
+    /// 与编辑器每次默认私密 D4 口径一致）。
+    var visibilitySegmentIndex: Int = 0
     var recipientId: Int?
     var recipientName: String?
     var recipientAvatar: String?
