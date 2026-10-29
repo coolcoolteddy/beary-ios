@@ -293,7 +293,9 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, U
     private let visibilitySegmented = UISegmentedControl(items: ["私密", "公开"])
     /// 限时日记行（可见范围段正下方，同属 visibilityBar；编辑模式随整行隐藏）。
     private let ephemeralRow = UIView()
-    private let ephemeralSwitch = UISwitch()
+    /// 限时行开关：v6 起为自绘控件（BearyLimitedSwitch，见文件末尾），
+    /// 圆钮内嵌限时图标、轨道黑/白随深浅反转；对外只用 isOn/isEnabled/valueChanged，与 UISwitch 旧调用点同口径。
+    private let ephemeralSwitch = BearyLimitedSwitch()
     private let ephemeralTitleLabel = UILabel()
     private let ephemeralSubtitleLabel = UILabel()
     /// 限时行首图标（22pt 模板灰，开关行本身的标识，不属卡片/详情范围）。
@@ -314,6 +316,12 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, U
     /// 可见性分段底锚随心情条开关在工具栏顶 / 心情条顶之间切换。
     private var visibilityBarBottomToToolbarConstraint: NSLayoutConstraint?
     private var visibilityBarBottomToMoodStripConstraint: NSLayoutConstraint?
+    /// 关闭退场 B 修法：工具栏底锚两档——编辑态钉键盘顶（默认激活），
+    /// 真正被 dismiss 时换钉自身 safeArea 底（初始不激活），簇随页滑走；
+    /// 被其他 modal 盖住时的 viewWillDisappear 不换（见 viewWillDisappear 的 isBeingDismissed 判定）。
+    private var toolbarBottomToKeyboardConstraint: NSLayoutConstraint?
+    private var toolbarBottomToSafeAreaConstraint: NSLayoutConstraint?
+    private var toolbarReanchoredForDismiss = false
     /// 补缺 P2-20（天气条独立锚点）：可见性分段天气档底锚（分段底贴天气条顶）。
     private var visibilityBarBottomToWeatherConstraint: NSLayoutConstraint?
     /// 92 包整页列宽：窄屏贴边、宽 ≥821 时三件居中（顶栏/滚动区 640、工具栏 608，
@@ -606,6 +614,13 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, U
 
     override func viewWillAppear(_ animated: Bool) {
         super.viewWillAppear(animated)
+        // B 修法配套：退场换锚后若页面又出现（仅非交互式退场取消的理论路径），
+        // 把底锚换回键盘顶，编辑态布局不受影响；正常首次出现时旗标为 false，无动作。
+        if toolbarReanchoredForDismiss {
+            toolbarReanchoredForDismiss = false
+            toolbarBottomToKeyboardConstraint?.isActive = true
+            toolbarBottomToSafeAreaConstraint?.isActive = false
+        }
         // 临时诊断（86 包，定根因后删除）。
         DiagFile.mark("composer-willAppear")
         // B5-3 配套：viewWillDisappear 失效了编辑倒计时，回到页面时重起，
@@ -618,12 +633,37 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, U
 
     override func viewWillDisappear(_ animated: Bool) {
         super.viewWillDisappear(animated)
+        // B 修法：只在真正被 dismiss 时换锚（isBeingDismissed 判定）；
+        // 被选图/草稿箱等 modal 盖住时 isBeingDismissed 为 false，不换、不动编辑态布局。
+        if isBeingDismissed {
+            reanchorToolbarForDismiss()
+        }
         // B5-3：重复计时器（编辑倒计时 1s）在页面关闭/被 modal 盖住时即失效，
         // 不再只靠 deinit——否则切出后到点仍走 onCancelled 关编辑器。
         // draftTimer 是 0.4s 一次性防抖，到点自释，不在这里失效（否则会丢
         // 一笔待保存的草稿）；deinit 仍保留作兜底。
         editTimer?.invalidate()
         editTimer = nil
+    }
+
+    /// 关闭退场 B 修法：退场开始时把工具栏底锚从键盘顶换成自身 safeArea 底，
+    /// 整簇（工具栏行、可见性分段＋限时行、展开的写给行、弹出框均锚在工具栏上）
+    /// 钉回视图自身、随页滑走，不再被键盘 0.25s 收 vs 页面 0.5s 滑的时钟差落在屏底。
+    /// 无跳变口径：换锚后的布局沿退场转场协调器同步播（与页面滑走同一时钟），
+    /// 工具栏在视图内平滑滑到底边、随页出屏；无协调器（非动画退场，含减动效路径）
+    /// 则立即落终值，视图本就瞬时消失，无可见跳变。编辑态（键盘立着时）仍钉键盘顶，本函数只在 dismiss 时跑。
+    private func reanchorToolbarForDismiss() {
+        guard !toolbarReanchoredForDismiss else { return }
+        guard let keyboardConstraint = toolbarBottomToKeyboardConstraint,
+              let safeAreaConstraint = toolbarBottomToSafeAreaConstraint else { return }
+        toolbarReanchoredForDismiss = true
+        keyboardConstraint.isActive = false
+        safeAreaConstraint.isActive = true
+        if let coordinator = transitionCoordinator {
+            coordinator.animate(alongsideTransition: { _ in self.view.layoutIfNeeded() }, completion: nil)
+        } else {
+            view.layoutIfNeeded()
+        }
     }
 
     override func viewDidAppear(_ animated: Bool) {
@@ -686,6 +726,11 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, U
         scrollBottomToVisibilityConstraint = scrollView.bottomAnchor.constraint(equalTo: visibilityBar.topAnchor)
         scrollBottomToStripConstraint = scrollView.bottomAnchor.constraint(equalTo: toolStripStack.topAnchor)
         scrollBottomToViewConstraint = scrollView.bottomAnchor.constraint(equalTo: view.bottomAnchor)
+        // B 修法：工具栏底锚两档在此建好（键盘档激活、自身档待命），见声明注释。
+        toolbarBottomToKeyboardConstraint = toolbarContainer.bottomAnchor.constraint(equalTo: view.keyboardLayoutGuide.topAnchor)
+        toolbarBottomToSafeAreaConstraint = toolbarContainer.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor)
+        toolbarBottomToKeyboardConstraint?.isActive = true
+        toolbarBottomToSafeAreaConstraint?.isActive = false
         visibilityBarBottomToToolbarConstraint = visibilityBar.bottomAnchor.constraint(equalTo: toolbarContainer.topAnchor)
         visibilityBarBottomToMoodStripConstraint = visibilityBar.bottomAnchor.constraint(equalTo: moodScrollView.topAnchor)
         visibilityBarBottomToToolbarConstraint?.isActive = true
@@ -767,9 +812,10 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, U
             topBar.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
             topBarLeadingConstraint!,
             topBarTrailingConstraint!,
-            topBar.heightAnchor.constraint(equalToConstant: 44),
+            // v6：顶栏高 60，发布钮 36 居中后底部到分界线净留白 12（见 buildTopBar）。
+            topBar.heightAnchor.constraint(equalToConstant: 60),
             scrollView.topAnchor.constraint(equalTo: topBar.bottomAnchor),
-            toolbarContainer.bottomAnchor.constraint(equalTo: view.keyboardLayoutGuide.topAnchor),
+            toolbarBottomToKeyboardConstraint!,
             visibilityBar.leadingAnchor.constraint(equalTo: toolbarContainer.leadingAnchor),
             visibilityBar.trailingAnchor.constraint(equalTo: toolbarContainer.trailingAnchor),
             // 2026-10-29 第 27 项：可见性分段底锚两档（见声明注释）；此处只激活 toolbar 档，
@@ -821,9 +867,9 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, U
     /// L9 已确认：iPad 640 宽不在 preferredContentSize 里定——呈现层 BearyCenteredModal 的
     /// frameOfPresentedViewInContainerView 已写死 min(640, 容器宽 - 80) 居中，preferredContentSize
     /// 只被呈现层取高（宽由呈现层框定）；故本文件不另在呈现层定宽，宽口径以呈现层为准。
-    /// Sheet 高跟随内容：preferredContentSize.height = 顶栏 44 + 内容栈 fitting 高。
+    /// Sheet 高跟随内容：preferredContentSize.height = 顶栏 60（v6）+ 内容栈 fitting 高。
     /// 呈现层（SceneDelegate 的底 sheet / 居中卡片，本文件不动它）把 preferred 当整页高、
-    /// 再与 88%/80% 封顶取小，故只给栈高会少 44、短内容仍需内滚 44；顶栏必须计入。
+    /// 再与 88%/80% 封顶取小，故只给栈高会少 60（v6 顶栏高）、短内容仍需内滚 60；顶栏必须计入。
     /// 量取口径：contentStack.systemLayoutSizeFitting（给定当前宽、纵向压缩），
     /// 栈内隐藏的 arranged 子项自动塌掉，正文/已选 Chip 行/图片/状态行/
     /// 引用（lite 卡）/引用面板各区当前可见高度全计入；栈边距由 fitting 自带。
@@ -873,7 +919,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, U
         }
         let targetSize = CGSize(width: fittingWidth, height: UIView.layoutFittingCompressedSize.height)
         let fitted = contentStack.systemLayoutSizeFitting(targetSize, withHorizontalFittingPriority: .required, verticalFittingPriority: .fittingSizeLevel)
-        let total = fitted.height + 44 + toolbarHeight
+        let total = fitted.height + 60 + toolbarHeight
         // 临时诊断（82 包追加，定根因后删除）：total 每轮都记，看是否漂移。
         DiagFile.mark("composer-prefSize total=\(String(format: "%.1f", total))")
         guard abs(preferredContentSize.height - total) > 0.5 else {
@@ -906,16 +952,22 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, U
         // 玻璃批：顶栏实色 surface 底会盖住 view 的玻璃背板，改 clear 让玻璃透出来；分隔线不动。
         topBar.backgroundColor = UIColor.clear
         topSeparator.backgroundColor = BearyColors.line
-        cancelButton.setTitle("取消", for: .normal)
-        cancelButton.setTitleColor(BearyColors.ink, for: .normal)
-        cancelButton.titleLabel?.font = UIFont.systemFont(ofSize: 14)
-        cancelButton.contentEdgeInsets = UIEdgeInsets(top: 0, left: 8, bottom: 0, right: 8)
+        // v6-1：左侧“取消”文字 → plain X 叉叉：无文字、无圆圈外框、无底色，
+        // icon_close 24pt 墨色（深色反白走 ink 动态色）、44pt 热区；VoiceOver 仍读“取消”。
+        // 双态行为不变：引用面板打开时本钮是“返回”（只退面板），见 setQuotePanelOpen
+        // 改 accessibilityLabel、didTapCancel 仍按 quotePanelOpen 分支。
+        cancelButton.setTitle(nil, for: .normal)
+        cancelButton.setImage(BearyIconImages.image(named: "icon_close", pointSize: 24), for: .normal)
+        cancelButton.tintColor = BearyColors.ink
+        cancelButton.accessibilityLabel = "取消"
+        cancelButton.contentEdgeInsets = .zero
         cancelButton.addTarget(self, action: #selector(didTapCancel), for: .touchUpInside)
         cancelButton.bearyAddPressFeedback()
         titleLabel.text = isEditMode ? "编辑日记" : "新日记"
         titleLabel.font = UIFont.boldSystemFont(ofSize: 15)
         titleLabel.textColor = BearyColors.ink
-        titleLabel.textAlignment = .center
+        // v6-2：标题靠左对齐、紧贴叉叉右侧 8pt，不再居中（v3 左右钮之间居中口径已推翻，不实施）。
+        titleLabel.textAlignment = .left
         // L10：标题允许截断（单行尾部省略），不与左右钮重叠见下方不等式。
         titleLabel.numberOfLines = 1
         titleLabel.lineBreakMode = .byTruncatingTail
@@ -925,8 +977,8 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, U
         publishButton.setImage(BearyIconImages.image(named: "icon_send", pointSize: 22), for: .normal)
         publishButton.contentEdgeInsets = UIEdgeInsets(top: 0, left: 12, bottom: 0, right: 12)
         publishButton.titleEdgeInsets = UIEdgeInsets(top: 0, left: 6, bottom: 0, right: 0)
-        // 8-11：发布钮为 pill，高 44 的一半取 22（原 20 与高不成 pill 口径）。
-        publishButton.layer.cornerRadius = 22
+        // v6-4：发布钮高 44 → 36、pill 圆角随高取半 18；顶栏高 60 居中后底部到分界线净留白 12。其余样式与行为不动。
+        publishButton.layer.cornerRadius = 18
         publishButton.layer.masksToBounds = true
         publishButton.addTarget(self, action: #selector(didTapPublish), for: .touchUpInside)
         // 发布中 spinner：平时停在发送图标位，发布/保存中时替下发送图标转圈（E3-4）。
@@ -947,21 +999,20 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, U
             v.translatesAutoresizingMaskIntoConstraints = false
             topBar.addSubview(v)
         }
-        // 编辑器改版（2026-10-29）：草稿 pill 从工具栏移到顶栏、发布钮左边；
-        // 样式与目标（didTapDraftBox：编辑态 toast 拦截、发布在途 toast 拦截）全搬过来，行为不变。
-        draftPillButton.setTitle("草稿", for: .normal)
-        // D-G6：网页草稿 pill 用 beary-diary（书本形），App 原 icon_draft（折角文档）换 icon_diary；
-        // 资产 icon_diary.imageset 已存在（个人页日记 tab 同款）。pill 图标网页为灰色，tint 保持灰不动。
-        draftPillButton.setImage(BearyIconImages.image(named: "icon_diary", pointSize: 16), for: .normal)
-        draftPillButton.titleLabel?.font = UIFont.systemFont(ofSize: 13)
-        draftPillButton.setTitleColor(BearyColors.ink, for: .normal)
-        draftPillButton.tintColor = BearyColors.gray
-        draftPillButton.titleEdgeInsets = UIEdgeInsets(top: 0, left: 6, bottom: 0, right: 0)
-        draftPillButton.contentEdgeInsets = UIEdgeInsets(top: 6, left: 12, bottom: 6, right: 12)
-        draftPillButton.layer.cornerRadius = 999
-        draftPillButton.layer.masksToBounds = true
-        draftPillButton.layer.borderWidth = 1.5
-        draftPillButton.layer.borderColor = BearyColors.line.cgColor
+        // v6-3：草稿 pill 文字 → 纯图标：官方 icon_diary 书本形 24pt 墨色（深色反白），
+        // 无文字、无数量角标、44pt 热区，位置仍在发布钮左边；行为全保留（点开草稿箱、
+        // 编辑态点它 toast 拦截、引用面板打开时随发布钮同藏、iPad 动作表单锚点仍为本钮，
+        // 见 didTapDraftBox 与 setQuotePanelOpen）；数量只在草稿箱内可见，不再画在钮上。
+        draftPillButton.setTitle(nil, for: .normal)
+        draftPillButton.setAttributedTitle(nil, for: .normal)
+        draftPillButton.setImage(BearyIconImages.image(named: "icon_diary", pointSize: 24), for: .normal)
+        draftPillButton.tintColor = BearyColors.ink
+        draftPillButton.accessibilityLabel = "草稿"
+        draftPillButton.titleEdgeInsets = .zero
+        draftPillButton.contentEdgeInsets = .zero
+        draftPillButton.layer.cornerRadius = 0
+        draftPillButton.layer.masksToBounds = false
+        draftPillButton.layer.borderWidth = 0
         draftPillButton.addTarget(self, action: #selector(didTapDraftBox), for: .touchUpInside)
         draftPillButton.bearyAddPressFeedback()
         draftPillButton.translatesAutoresizingMaskIntoConstraints = false
@@ -969,17 +1020,18 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, U
         NSLayoutConstraint.activate([
             cancelButton.leadingAnchor.constraint(equalTo: topBar.leadingAnchor, constant: 16),
             cancelButton.centerYAnchor.constraint(equalTo: topBar.centerYAnchor),
+            cancelButton.widthAnchor.constraint(equalToConstant: 44),
             cancelButton.heightAnchor.constraint(equalToConstant: 44),
-            titleLabel.centerXAnchor.constraint(equalTo: topBar.centerXAnchor),
+            // v6-2：标题靠左——左侧钉死叉叉右侧 8pt，右侧仍离草稿钮 8pt 不等式，窄屏先截断标题。
+            titleLabel.leadingAnchor.constraint(equalTo: cancelButton.trailingAnchor, constant: 8),
             titleLabel.centerYAnchor.constraint(equalTo: topBar.centerYAnchor),
-            // L10：标题左右不等式——左右各离钮 8pt，窄屏先截断标题不断言。
-            titleLabel.leadingAnchor.constraint(greaterThanOrEqualTo: cancelButton.trailingAnchor, constant: 8),
             titleLabel.trailingAnchor.constraint(lessThanOrEqualTo: draftPillButton.leadingAnchor, constant: -8),
             draftPillButton.trailingAnchor.constraint(equalTo: publishButton.leadingAnchor, constant: -8),
             draftPillButton.centerYAnchor.constraint(equalTo: topBar.centerYAnchor),
+            draftPillButton.heightAnchor.constraint(equalToConstant: 44),
             publishButton.trailingAnchor.constraint(equalTo: topBar.trailingAnchor, constant: -16),
             publishButton.centerYAnchor.constraint(equalTo: topBar.centerYAnchor),
-            publishButton.heightAnchor.constraint(equalToConstant: 44),
+            publishButton.heightAnchor.constraint(equalToConstant: 36),
             topSeparator.leadingAnchor.constraint(equalTo: topBar.leadingAnchor),
             topSeparator.trailingAnchor.constraint(equalTo: topBar.trailingAnchor),
             topSeparator.bottomAnchor.constraint(equalTo: topBar.bottomAnchor),
@@ -1184,12 +1236,12 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, U
         // S8：桌面判断用窗口宽（同上，居中卡呈现宽 640 不能作判断依据；未挂窗回退屏宽）。
         let windowWidth = view.window?.bounds.width ?? UIScreen.main.bounds.width
         let sheetCap = containerHeight * (windowWidth >= 821 ? 0.80 : 0.88)
-        // 顶栏 44 同 updatePreferredContentSize 口径；封顶不足 140 时仍保下限，
+        // 顶栏 60（v6）同 updatePreferredContentSize 口径；封顶不足 140 时仍保下限，
         // 此时 sheet 走呈现层封顶、外层滚动兜底，与正式修法前行为一致。
         // 编辑器批第 5 项：封顶再减当前键盘高（收起时为 0）。不减时正文帧底伸到键盘
         // 下方，末行被盖；内层已滚到头时外层 pan 被饿死，即“被盖住 + 手动上滑也滑不动”。
         // 下限仍保 140（不足时外层滚动兜底，口径不变）。
-        let cap = sheetCap - 44 - toolbarHeight - othersHeight - currentKeyboardHeight
+        let cap = sheetCap - 60 - toolbarHeight - othersHeight - currentKeyboardHeight
         let target = min(max(contentHeight, 140), max(140, cap))
         guard abs(heightConstraint.constant - target) > 0.5 else { return }
         heightConstraint.constant = target
@@ -2095,7 +2147,8 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, U
             // 录屏批 (b)：面板标题不再沿用“新日记”/“编辑日记”，打开前先存原标题。
             quotePanelSavedTitle = titleLabel.text
             titleLabel.text = "选择引用"
-            cancelButton.setTitle("返回", for: .normal)
+            // v6-1：取消钮已无文字，双态只改 VoiceOver 语义：面板打开时读“返回”，点它仍只退面板（didTapCancel 分支不变）。
+            cancelButton.accessibilityLabel = "返回"
             publishButton.isHidden = true
             // 编辑器改版：引用面板打开时顶栏草稿 pill 随发布钮同藏（旧时工具栏整体藏，pill 在其中）；
             // 弹出框若开着也一并收起，不让它浮在面板上。
@@ -2134,7 +2187,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, U
                 self.selectedChipsRow.isHidden = false
                 self.statusRow.isHidden = false
                 self.quoteSection.isHidden = false
-                self.cancelButton.setTitle("取消", for: .normal)
+                self.cancelButton.accessibilityLabel = "取消"
                 self.publishButton.isHidden = false
                 self.draftPillButton.isHidden = false
                 // 间隙修复的关闭恢复：把打开时置 0 的栈间距按 build 时原值还原（其余区同 build 原值）。
@@ -2662,9 +2715,11 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, U
         toolRow.addArrangedSubview(weatherToolButton)
         toolRow.addArrangedSubview(recipientToolButton)
         toolRow.addArrangedSubview(quoteToolButton)
-        let spacer = UIView()
-        toolRow.addArrangedSubview(spacer)
-        // C1：字数圆环 + 数字由状态行移入工具栏右端（charGroupStack：环与数字 gap 6）。
+        // v6-5：字数圆环并进左侧图标组——不再被 spacer 顶到右端，与图片／心情／天气／@／引用
+        // 同组、同 20pt 间距（toolRow.spacing）；环与数字 gap 6 不变。
+        // v6-6：正文区草稿保存文案组（draftStatusGroup，图标＋文案＋级别逻辑全在 buildStatusRow/
+        // updateDraftStatusLabel）挪到工具栏右端（spacer 之后）；窄屏下文案先截断（见下压缩优先级），
+        // 不挤图标与字数。组本身在 buildStatusRow 里才配好轴向与子项，此处只定它在工具栏里的位置。
         charGroupStack.axis = .horizontal
         charGroupStack.spacing = 6
         charGroupStack.alignment = .center
@@ -2674,6 +2729,9 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, U
         charGroupStack.addArrangedSubview(charRingView)
         charGroupStack.addArrangedSubview(charCountLabel)
         toolRow.addArrangedSubview(charGroupStack)
+        let spacer = UIView()
+        toolRow.addArrangedSubview(spacer)
+        toolRow.addArrangedSubview(draftStatusGroup)
         NSLayoutConstraint.activate([
             toolbarSeparator.topAnchor.constraint(equalTo: toolbarContainer.topAnchor),
             toolbarSeparator.leadingAnchor.constraint(equalTo: toolbarContainer.leadingAnchor),
@@ -2707,38 +2765,18 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, U
         }
     }
 
+    /// v6-3：草稿钮已是纯图标，计数不再画在钮上（只在草稿箱内可见）；
+    /// 本函数保留调用链（计数读取仍走 updateDraftPillCount），只把显式宽度钉死 44，
+    /// 不再设任何标题/富文本标题，避免文字重新出现在图标旁。
     private func setDraftPillCount(_ count: Int) {
         if isEditMode { return }
-        if count > 0 {
-            // 计数字段单独加粗（网页 draft-pill 的 <b>），整串其余 regular。
-            let pillText = NSMutableAttributedString(string: "草稿 · ", attributes: [.font: UIFont.systemFont(ofSize: 13), .foregroundColor: BearyColors.ink])
-            pillText.append(NSAttributedString(string: "\(count)", attributes: [.font: UIFont.boldSystemFont(ofSize: 13), .foregroundColor: BearyColors.ink]))
-            draftPillButton.setAttributedTitle(pillText, for: .normal)
-        } else {
-            draftPillButton.setAttributedTitle(NSAttributedString(string: "草稿", attributes: [.font: UIFont.systemFont(ofSize: 13), .foregroundColor: BearyColors.ink]), for: .normal)
-        }
-        // 标题每次变化都重算显式宽度（标题只在这里与 buildToolbarRow 改，
-        // 故此处是唯一需要跟进的运行时更新点；编辑模式直接 return，不改 pill）。
         refreshDraftPillWidth()
     }
 
-    /// 草稿 pill 显式宽度（顶栏版）：旧工具栏下手算宽度曾把 pill 压成“...”
-    /// （只剩省略号、看似消失）；新位置取“按钮自测 fitting 宽”与
-    /// “手算全量宽（字宽 + 图标 + 全部边距）”两者的大值——无论哪种 UIKit 口径
-    /// 都足额给宽，不出省略号。“草稿”与“草稿 · N”两态都在计数变化与每次布局时重算。
-    /// 顶栏横向链里标题先截断（标题压缩优先级低于 pill 的 required），pill 永不被压。
+    /// 草稿钮显式宽度（v6 纯图标版）：固定 44，与图标热区一致；旧“按标题算宽”
+    /// 口径随文字 pill 一并作废（标题算宽曾把 pill 压成“...”的历史教训不再适用）。
     private func refreshDraftPillWidth() {
-        let fittingWidth = draftPillButton.sizeThatFits(CGSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)).width
-        let titleWidth: CGFloat
-        if let attributed = draftPillButton.attributedTitle(for: .normal) {
-            titleWidth = ceil(attributed.size().width)
-        } else {
-            let title = draftPillButton.title(for: .normal) ?? ""
-            titleWidth = ceil((title as NSString).size(withAttributes: [NSAttributedString.Key.font: UIFont.systemFont(ofSize: 13)]).width)
-        }
-        let imageWidth = draftPillButton.image(for: .normal)?.size.width ?? 16
-        let manualWidth = draftPillButton.contentEdgeInsets.left + imageWidth + draftPillButton.titleEdgeInsets.left + titleWidth + draftPillButton.titleEdgeInsets.right + draftPillButton.contentEdgeInsets.right
-        draftPillWidthConstraint?.constant = ceil(max(fittingWidth, manualWidth))
+        draftPillWidthConstraint?.constant = 44
     }
 
     /// C1：引用唯一入口（工具栏引用钮）开关 qp-mode 面板（C6：编辑模式也可改引用，不再早退）。
@@ -2911,13 +2949,19 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, U
             onSelect: { [weak self] key in self?.didSelectMoodFromCallout(key) },
             imageProvider: { [weak self] key, dark in self?.calloutMoodImage(for: key, dark: dark) }
         )
-        // 预览 v1 口径：天气框只含 9 种天气（旧条首项“无”不进框，见 didSelectWeatherFromCallout 的说明）。
+        // v6-8：天气框首位补“无”（清除）选项，键为 "none"，图为虚线圆圈＋icon_plus 旋转 45 度
+        //（见 weatherNoneImage；大小与其它天气图标一致 40pt、同色墨色模板）；心情框（40 项）不动。
+        // 选中态口径：弹出框既有实现对任何选项均无选中修饰（configure 只设图、不标选中），
+        // 故“无”选中时亦无修饰，不新发明——与已选天气在框内同样无修饰保持一致。
         weatherCallout.configure(
-            options: weatherOrder.map { key in
+            options: [BearyCalloutPickerView.Option(key: "none", accessibilityLabel: "无")] + weatherOrder.map { key in
                 BearyCalloutPickerView.Option(key: key, accessibilityLabel: "天气：" + (BearyText.weatherNames[key] ?? key))
             },
             onSelect: { [weak self] key in self?.didSelectWeatherFromCallout(key) },
-            imageProvider: { key, _ in BearyIconImages.image(named: "icon_wx_\(key)", pointSize: 40) }
+            imageProvider: { [weak self] key, _ in
+                if key == "none" { return self?.weatherNoneImage() }
+                return BearyIconImages.image(named: "icon_wx_\(key)", pointSize: 40)
+            }
         )
         // 收起层先加、框后加：框在收起层之上，框内点按不触发框外收起。
         view.addSubview(calloutDismissView)
@@ -3056,15 +3100,40 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, U
     }
 
     /// 弹出框点选天气：沿用旧条口径（点即选中、再点不取消）；点选即收起。
-    /// 注意：旧条首项“无”（清空）未进弹出框（预览 v1 只含 9 种天气），
-    /// 选定天气后暂无清除路径，待 Li 定夺是否在框内补“无”。
+    /// v6-8：点首位“无”即清除已选天气（weather 置空），工具栏天气钮经
+    /// refreshWeatherButtons 回到无天气态（通用天气图标），chip 行同步隐藏天气 chip。
     private func didSelectWeatherFromCallout(_ key: String) {
-        selectedWeather = key
+        selectedWeather = (key == "none") ? nil : key
         refreshWeatherButtons()
         updateWeatherPlayback()
         refreshSelectedChips()
         scheduleDraftSave()
         hideCallout(animated: true)
+    }
+
+    /// v6-8“无”选项图（40pt，与其它天气图标同尺寸）：虚线圆圈＋圆里的卡片“贴一只小熊”
+    /// 加号资产 icon_plus 旋转 45 度（实线叉形）；整图黑底色绘后转 alwaysTemplate，
+    /// 由弹出框按钮 tint（墨色、深色模板反白）着色，与其它天气模板图同口径。
+    private func weatherNoneImage() -> UIImage? {
+        let size: CGFloat = 40
+        let format = UIGraphicsImageRendererFormat()
+        format.scale = UIScreen.main.scale
+        let drawn = UIGraphicsImageRenderer(size: CGSize(width: size, height: size), format: format).image { ctx in
+            let cg = ctx.cgContext
+            cg.setStrokeColor(UIColor.black.cgColor)
+            cg.setLineWidth(2)
+            cg.setLineDash(phase: 0, lengths: [4, 3])
+            cg.strokeEllipse(in: CGRect(x: 4, y: 4, width: 32, height: 32))
+            cg.setLineDash(phase: 0, lengths: [])
+            if let plus = UIImage(named: "icon_plus") {
+                cg.saveGState()
+                cg.translateBy(x: size / 2, y: size / 2)
+                cg.rotate(by: .pi / 4)
+                plus.draw(in: CGRect(x: -11, y: -11, width: 22, height: 22))
+                cg.restoreGState()
+            }
+        }
+        return drawn.withRenderingMode(.alwaysTemplate)
     }
 
     /// 审计 16 项：心情 chip 图标——官方 emote 静态 PNG 按 16pt 重绘。
@@ -3318,6 +3387,10 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, U
         editTimerLabel.isHidden = true
         draftStatusLabel.font = UIFont.systemFont(ofSize: 12.5)
         draftStatusLabel.textColor = BearyColors.blue
+        // v6-6：文案在工具栏右端窄屏受压时先截断，不挤左侧图标组与字数（字数默认 750，高于此处的 749）。
+        draftStatusLabel.numberOfLines = 1
+        draftStatusLabel.lineBreakMode = .byTruncatingTail
+        draftStatusLabel.setContentCompressionResistancePriority(UILayoutPriority(749), for: .horizontal)
         // 草稿状态组：lvl2 时图标 + 文案 gap 5（网页 draft-status：15×15 对勾 + gap 5，蓝色继承）。
         draftStatusIcon.image = BearyIconImages.image(named: "icon_check", pointSize: 15)
         draftStatusIcon.tintColor = BearyColors.blue
@@ -3339,11 +3412,12 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, U
         statusRow.translatesAutoresizingMaskIntoConstraints = false
         contentStack.addArrangedSubview(statusRow)
         statusRow.addArrangedSubview(editTimerLabel)
-        statusRow.addArrangedSubview(draftStatusGroup)
         let spacer = UIView()
         statusRow.addArrangedSubview(spacer)
-        // C1：字数圆环与数字已移入工具栏右端 charGroupStack（gap 6 在彼处），
-        // 状态行只留编辑倒计时与草稿状态；圆环尺寸与形层仍在此处创建（视图归属不影响形层）。
+        // v6-6：草稿保存文案组已挪到工具栏右端（buildToolbarRow），不再进状态行；
+        // 状态行只留编辑倒计时。组内图标／文案／级别逻辑（updateDraftStatusLabel）一字不动。
+        // C1：字数圆环与数字已移入工具栏左图标组 charGroupStack（gap 6 在彼处），
+        // 圆环尺寸与形层仍在此处创建（视图归属不影响形层）。
         NSLayoutConstraint.activate([
             draftStatusIcon.widthAnchor.constraint(equalToConstant: 15),
             draftStatusIcon.heightAnchor.constraint(equalToConstant: 15),
@@ -3426,6 +3500,8 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, U
                 self.editTimer?.invalidate()
                 self.editTimer = nil
                 self.deleteEditLocalFiles()
+                // B 修法：计时自动关闭退场前先收起弹出框（无动画）。
+                self.hideCallout(animated: false)
                 self.onCancelled?()
                 return
             }
@@ -5021,6 +5097,9 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, U
         }
         // presented 守卫（选人器/裁剪/草稿箱同款）：已有弹层在上时不动作。
         if presentedViewController != nil { return }
+        // B 修法：取消退场前先收起未收的弹出框（无动画，退场不带它滑）；到此已确定退出
+        //（编辑态与新建态两分支随后都走 onCancelled），守卫分支（发布在途／面板态／已有弹层）已在上文返回。
+        hideCallout(animated: false)
         if isEditMode {
             // 决议第 4 项 B：取消直接关，不弹确认；只清本地临时图文件，不删原日记、不碰草稿。
             commitPendingRemoval()
@@ -5137,6 +5216,8 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, U
                         self.showToastAfterClose(message: publishVisibility == 1 ? "已发布 · 已公开" : "已发布 · 已设为私密")
                         BearyHaptics.publishSuccess()
                         BearySoundPlayer.play(.publishSuccess)
+                        // B 修法：发布成功退场前先收起弹出框（无动画）。
+                        self.hideCallout(animated: false)
                         self.onPublished?(entryId)
                     } else {
                         self.saveDraftNow()
@@ -5247,6 +5328,8 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, U
                         } else {
                             updated.quote = nil
                         }
+                        // B 修法：编辑保存成功退场前先收起弹出框（无动画；编辑器不关闭时本分支不跑，不误收）。
+                        self.hideCallout(animated: false)
                         self.onUpdated?(updated)
                     }
                 case .failure(let error):
@@ -5581,5 +5664,100 @@ private final class BearyComposerDashedPickButton: UIButton {
     override func traitCollectionDidChange(_ previousTraitCollection: UITraitCollection?) {
         super.traitCollectionDidChange(previousTraitCollection)
         updateStrokeColor()
+    }
+}
+
+// MARK: - 限时行开关（v6-7：圆钮内嵌限时图标）
+
+/// v6 限时开关：系统 UISwitch 无法在圆钮内嵌图标、也定不了黑轨道，
+/// 故自绘 51×31 控件，对外只暴露 UISwitch 旧调用点用到的口径：
+/// isOn（读写，不发事件）、isEnabled、valueChanged（点按切换后发送）。
+/// 圆钮 27pt、内嵌限时行现有的官方 icon_limited 图标 18pt（熊头＋下半虚线弧，
+/// 不自绘）；浅色黑轨道白圆钮黑图标，深色反转（轨道 ink、白圆钮取 bg、
+/// 图标 ink——ink/bg 均为动态色，深浅切换自动跟随）。
+/// 圆钮位置只由 isOn 与布局决定：点按先改 isOn 再沿当前转场播 layout，
+/// 减动效时瞬时落位；编程式改 isOn 只改无障碍值、不播动画。
+private final class BearyLimitedSwitch: UIControl {
+
+    private static let trackWidth: CGFloat = 51
+    private static let trackHeight: CGFloat = 31
+    private static let thumbDiameter: CGFloat = 27
+    private static let thumbInset: CGFloat = 2
+    private static let iconSize: CGFloat = 18
+
+    var isOn = false {
+        didSet {
+            guard isOn != oldValue else { return }
+            accessibilityValue = isOn ? "开" : "关"
+            setNeedsLayout()
+        }
+    }
+
+    override var isEnabled: Bool {
+        didSet { alpha = isEnabled ? 1 : 0.5 }
+    }
+
+    private let trackView = UIView()
+    private let thumbView = UIView()
+    private let iconView = UIImageView()
+
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        trackView.backgroundColor = BearyColors.ink
+        trackView.layer.cornerRadius = Self.trackHeight / 2
+        trackView.isUserInteractionEnabled = false
+        thumbView.backgroundColor = BearyColors.bg
+        thumbView.layer.cornerRadius = Self.thumbDiameter / 2
+        thumbView.layer.shadowColor = UIColor.black.cgColor
+        thumbView.layer.shadowOpacity = 0.25
+        thumbView.layer.shadowRadius = 2
+        thumbView.layer.shadowOffset = CGSize(width: 0, height: 1)
+        thumbView.isUserInteractionEnabled = false
+        iconView.image = BearyIconImages.image(named: "icon_limited", pointSize: Self.iconSize)
+        iconView.tintColor = BearyColors.ink
+        iconView.contentMode = .scaleAspectFit
+        iconView.isUserInteractionEnabled = false
+        thumbView.addSubview(iconView)
+        addSubview(trackView)
+        addSubview(thumbView)
+        addTarget(self, action: #selector(didTap), for: .touchUpInside)
+        isAccessibilityElement = true
+        accessibilityLabel = "限时日记"
+        accessibilityTraits = [.button]
+        accessibilityValue = "关"
+    }
+
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    override var intrinsicContentSize: CGSize {
+        CGSize(width: Self.trackWidth, height: Self.trackHeight)
+    }
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        trackView.frame = bounds
+        let thumbX = isOn
+            ? bounds.width - Self.thumbInset - Self.thumbDiameter
+            : Self.thumbInset
+        thumbView.frame = CGRect(x: thumbX, y: Self.thumbInset, width: Self.thumbDiameter, height: Self.thumbDiameter)
+        iconView.frame = CGRect(
+            x: (Self.thumbDiameter - Self.iconSize) / 2,
+            y: (Self.thumbDiameter - Self.iconSize) / 2,
+            width: Self.iconSize,
+            height: Self.iconSize
+        )
+    }
+
+    @objc private func didTap() {
+        guard isEnabled else { return }
+        isOn.toggle()
+        sendActions(for: .valueChanged)
+        if UIAccessibility.isReduceMotionEnabled {
+            layoutIfNeeded()
+        } else {
+            UIView.animate(withDuration: 0.25, animations: { self.layoutIfNeeded() })
+        }
     }
 }
