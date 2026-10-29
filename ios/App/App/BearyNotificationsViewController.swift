@@ -178,6 +178,10 @@ final class BearyNotificationsViewController: UIViewController {
     private var lastFullLoadVersion: Int?
     private var lastFullLoadLatestId: Int?
     private var pollTimer: Timer?
+    /// 信件模态持有：BearyLetterModal 是普通类、VC 侧原无引用，show 后除 0.25s
+    /// 入场动画外无人持有，动画一完即释放，按钮／遮罩 target 随之失效、点按静默无反应
+    /// （视图仍在层级里，看着正常）。VC 持住它直到 dismiss 清理，破除该陷阱。
+    private var activeLetterModal: BearyLetterModal?
     private var loginPromptShown = false
     private var visibleState: VisibleState = .loading
     private var hasDisplayedPage = false
@@ -1952,6 +1956,9 @@ final class BearyNotificationsViewController: UIViewController {
         quoteMeta: String?,
         goEntryId: String?
     ) -> BearyLetterModal {
+        // 先清旧模态（遮罩盖住列表时行点按进不来，正常流程不会重入；防御性处理，
+        // 避免旧 overlay 残留且其 modal 已释放成点不了的死层）。
+        activeLetterModal?.dismissNow()
         let modal = BearyLetterModal(
             title: title,
             body: body,
@@ -1964,7 +1971,13 @@ final class BearyNotificationsViewController: UIViewController {
             guard let strongSelf = self else { return }
             strongSelf.onEntrySelected?(entryId)
         }
+        modal.onDismiss = { [weak self, weak modal] in
+            if let modal = modal, self?.activeLetterModal === modal {
+                self?.activeLetterModal = nil
+            }
+        }
         modal.show(in: view)
+        activeLetterModal = modal
         return modal
     }
 }
@@ -2136,6 +2149,8 @@ extension BearyNotificationsViewController: UITableViewDataSource, UITableViewDe
 private class BearyLetterModal {
 
     var onGo: ((String) -> Void)?
+    /// dismiss 完成回调（VC 侧清持有用；身份由调用方校验）。
+    var onDismiss: (() -> Void)?
 
     private let overlayView = UIView()
     private let cardView = UIView()
@@ -2398,6 +2413,7 @@ private class BearyLetterModal {
         let cleanup = {
             self.overlayView.removeFromSuperview()
             afterDismiss?()
+            self.onDismiss?()
         }
         if UIAccessibility.isReduceMotionEnabled {
             cleanup()
@@ -2412,6 +2428,15 @@ private class BearyLetterModal {
 
     @objc private func dismissTapped() {
         dismissModalAnimated()
+    }
+
+    /// 立即移除（供新模态顶替旧模态时用，跳过淡出动画；已在 dismiss 中则不动，
+    /// 其进行中的清理仍会回调 onDismiss）。
+    func dismissNow() {
+        guard !isDismissingModal else { return }
+        isDismissingModal = true
+        overlayView.removeFromSuperview()
+        onDismiss?()
     }
 
     @objc private func goTapped() {
