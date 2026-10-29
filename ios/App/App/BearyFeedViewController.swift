@@ -663,11 +663,28 @@ class BearyFeedViewController: UIViewController {
     func applyEditedEntry(_ entry: Entry) {
         guard let entryId = entry.id else { return }
         var updated = false
+        var becamePrivate = false
         for index in plazaRaw.indices where plazaRaw[index].id == entryId {
             applyEditedFields(to: &plazaRaw[index], from: entry)
             updated = true
+            // 审计 P1-6：翻私密后不得残留广场——同步后按有效态判定去留。
+            if !BearyEphemeral.isEffectivelyPublic(plazaRaw[index]) {
+                becamePrivate = true
+            }
         }
         if !updated { return }
+        if becamePrivate {
+            // 先取行号再摘模型（indexPaths 读 plazaRaw），删行动画只走 opacity（.fade）。
+            let paths = indexPaths(for: entryId)
+            plazaRaw.removeAll { $0.id == entryId }
+            if !paths.isEmpty {
+                tableView.beginUpdates()
+                tableView.deleteRows(at: paths, with: .fade)
+                tableView.endUpdates()
+            }
+            updateOverlayState()
+            return
+        }
         for path in indexPaths(for: entryId) {
             reloadRowIfVisible(path)
         }
@@ -683,6 +700,9 @@ class BearyFeedViewController: UIViewController {
         if let v = updated.publishedAt { target.publishedAt = v }
         if let v = updated.editDeadline { target.editDeadline = v }
         if let v = updated.isPublic { target.isPublic = v }
+        // 审计 P1-6：ephemeralUntil 全量拷贝（nil 有意义——手动翻转清标记时传 nil；
+        // 编辑回传自原 Entry 副本，标记原样保留，两路调用方均带真值）。
+        target.ephemeralUntil = updated.ephemeralUntil
     }
 
     /// 按 id 取更新后的模型副本，供容器同步已打开的详情。

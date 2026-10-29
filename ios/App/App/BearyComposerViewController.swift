@@ -199,6 +199,9 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, U
     /// 当前正在写的草稿篇 id（v3 多槽键）：恢复/从箱打开时取该篇 draftId，
     /// 首次保存时生成；发布成功与丢弃只删这一篇，不碰其他篇。
     private var currentDraftId: String?
+    /// 审计 P1-9：箱内删“正在写”草稿时被清掉的 draftId（onDeleteCurrentDraft 处记下），
+    /// 供箱内撤销恢复时比对——只绑回正是这一篇的恢复，防串篇；新篇接管/重开/发布重置时清掉。
+    private var clearedCurrentDraftId: String?
     private var isPublishing = false
     private var didAutoFocus = false
     private var draftTimer: Timer?
@@ -3940,6 +3943,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, U
         }
         if currentDraftId == nil {
             currentDraftId = BearyDraftStore.newDraftId()
+            clearedCurrentDraftId = nil
         }
         guard let req = draftClientReq, let draftIdValue = currentDraftId else {
             completion?()
@@ -3960,6 +3964,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, U
         if !hasRealContent {
             let deletingId = draftIdValue
             currentDraftId = nil
+            clearedCurrentDraftId = nil
             draftClientReq = nil
             // 删篇走 deleteAsync（ioQueue 内删，完成后回主线程刷新状态与 pill）。
             // 状态只在仍是空篇时清：删盘期间用户已开始写新篇（currentDraftId 已换）
@@ -4087,6 +4092,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, U
                 let wasEmptyBeforeRestore = self.textView.text.isEmpty
                 guard wasEmptyBeforeRestore else { return }
                 self.currentDraftId = draft.draftId
+                self.clearedCurrentDraftId = nil
                 self.draftClientReq = draft.clientReq
                 self.textView.text = draft.content
                 self.applyBodyLineHeight()
@@ -4214,6 +4220,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, U
         }
         let draftIdValue = currentDraftId
         currentDraftId = nil
+        clearedCurrentDraftId = nil
         draftClientReq = nil
         draftStatusLevel = nil
         updateDraftStatusLabel()
@@ -4268,9 +4275,21 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, U
             box.onDeleteCurrentDraft = { [weak self] deletedId in
                 if self?.currentDraftId == deletedId {
                     self?.currentDraftId = nil
+                    // 审计 P1-9：记下被清掉的那篇 id，供撤销恢复时比对绑回。
+                    self?.clearedCurrentDraftId = deletedId
                     // P1-16：只清 currentDraftId 会让新篇复用旧幂等键——
                     // 删“正在写”草稿时 clientReq 一并清掉，下次落盘重新生成。
                     self?.draftClientReq = nil
+                }
+            }
+            // 审计 P1-9：箱内撤销恢复正在写草稿时绑回编辑器——仅当恢复的正是
+            // 刚被清掉的那篇（clearedCurrentDraftId 比对，防串篇）且编辑器未接新篇时；
+            // 不满足时恢复的篇仍在箱里，点开即是原有 onOpen 路径，不丢数据。
+            box.onUndoCurrentDraft = { [weak self] draft in
+                guard let self = self else { return }
+                if self.currentDraftId == nil, let rid = draft.draftId, rid == self.clearedCurrentDraftId {
+                    self.currentDraftId = rid
+                    self.clearedCurrentDraftId = nil
                 }
             }
             self.present(box, animated: !UIAccessibility.isReduceMotionEnabled) { [weak self] in

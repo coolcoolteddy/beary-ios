@@ -946,7 +946,23 @@ final class BearyChromeViewController: UIViewController {
             }
             self?.showToast(message: "网络不稳定，请稍后再试")
         }
-        SessionManager.shared.refreshMe()
+        // 审计 P1-7：冷启动 /me 带原因 401（封禁/踢下线/过期）时，登录态变迁
+        // 已由 refreshMe 的 authFailure 分支处理（清用户态、翻登录 chrome），
+        // 此处只把服务端 message 透传为 toast；无 message 时按 reason 给兜底文案。
+        SessionManager.shared.refreshMe { [weak self] result in
+            guard case .failure(.authFailure(let reason, let message)) = result else { return }
+            let text: String
+            if let m = message, !m.isEmpty {
+                text = m
+            } else if reason == "banned" {
+                text = "账号被封禁"
+            } else if reason == "kicked" {
+                text = "已在其他设备退出，请重新登录"
+            } else {
+                text = "登录已过期，请重新登录"
+            }
+            DispatchQueue.main.async { [weak self] in self?.showToast(message: text) }
+        }
         // 未读角标：消息页发 BearyUnreadChanged，铃铛角标跟数走（0 隐藏；显隐走 M23 动画）。
         unreadObserver = NotificationCenter.default.addObserver(forName: BearyNotificationsViewController.unreadChangedNotificationName, object: nil, queue: .main) { [weak self] note in
             let unread = note.userInfo?["unread"] as? Int ?? 0

@@ -1817,6 +1817,7 @@ class BearyProfileViewController: UIViewController {
                     case .server: badgeErrorCategory = "server"
                     case .decoding: badgeErrorCategory = "decoding"
                     case .unauthorized: badgeErrorCategory = "unauthorized"
+                    case .authFailure: badgeErrorCategory = "authFailure"
                     case .notFound: badgeErrorCategory = "notFound"
                     case .cancelled: badgeErrorCategory = "cancelled"
                     }
@@ -2916,7 +2917,9 @@ class BearyProfileViewController: UIViewController {
     }
 
     @objc private func topMoreButtonTapped() {
-        guard isOwnProfile == false, let targetUserId = targetUserIdValue else { return }
+        // 审计 P1-10：handle 直达时 targetUserIdValue 为 nil，更多菜单全死——
+        // 改与 2040 行同口径：已加载的 profile id 优先，次取直达 id。
+        guard isOwnProfile == false, let targetUserId = profile?.profileIdValue ?? targetUserIdValue else { return }
         let sheet = UIAlertController(title: nil, message: nil, preferredStyle: .actionSheet)
         if let target = reportTargetEntry, let targetId = target.id {
             sheet.addAction(UIAlertAction(title: "举报", style: .default) { [weak self] _ in

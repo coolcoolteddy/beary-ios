@@ -118,9 +118,20 @@ final class SessionManager {
                     self.authUnknown = true
                     self.notifyNetworkUnstable()
                 case .unauthorized:
-                    // fetchMe 已把 401 映射为 success(nil)，此处理论上到不了；
+                    // fetchMe 已把无 reason 的 401 映射为 success(nil)，此处理论上到不了；
                     // 万一到达，按已证实的游客处理并清未知标记。
                     self.authUnknown = false
+                case .authFailure:
+                    // 审计 P1-7：封禁/踢下线/过期——与 success(nil) 同口径清用户态
+                    // （id 变化即代际推进，防在途旧请求 401 回调误踢新号），
+                    // 原因与文案经 completion 透传给容器分流提示（见 SceneDelegate 冷启动处）。
+                    self.authUnknown = false
+                    if previousUserId != nil {
+                        self.sessionGeneration += 1
+                        self.api.bumpAuthEpoch()
+                    }
+                    self.currentUser = nil
+                    self.notifyUserChanged(nil)
                 case .cancelled:
                     break
                 case .http(let status, _):
