@@ -856,6 +856,13 @@ class BearyProfileViewController: UIViewController {
     private lazy var wallHeightConstraint: NSLayoutConstraint = wallContainer.heightAnchor.constraint(equalToConstant: 0)
     private lazy var badgesHeightConstraint: NSLayoutConstraint = badgesContainer.heightAnchor.constraint(equalToConstant: 0)
     private lazy var topBarHeightConstraint: NSLayoutConstraint = topBarView.heightAnchor.constraint(equalToConstant: 0)
+    /// 顶栏顶锚二选一（2026-10-29 封面伸进状态栏）：容器态（tab 页）表顶改
+    /// view.top，封面顶到屏幕顶；modal 态 44 顶栏仍须在安全区下方，锚点不动。
+    private lazy var topBarTopToSafeAreaConstraint: NSLayoutConstraint = topBarView.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor)
+    private lazy var topBarTopToViewConstraint: NSLayoutConstraint = topBarView.topAnchor.constraint(equalTo: view.topAnchor)
+    /// updateTopBarVisibility 定的当前顶栏形态（modal 与否），供 viewDidLayoutSubviews
+    /// 算无封面头像顶距；默认容器态。
+    private var isModalTopBar = false
     private lazy var headerShareToGearConstraint: NSLayoutConstraint = headerShareButton.trailingAnchor.constraint(equalTo: gearButton.leadingAnchor, constant: -8)
     private lazy var headerShareToHeaderConstraint: NSLayoutConstraint = headerShareButton.trailingAnchor.constraint(equalTo: headerView.trailingAnchor, constant: -28)
     /// 统计行顶约束二选一（邮箱行已按 1:1 移除，withEmail 恒不激活、
@@ -950,6 +957,13 @@ class BearyProfileViewController: UIViewController {
 
     override func viewDidLayoutSubviews() {
         super.viewDidLayoutSubviews()
+        // 容器态表顶已改 view.top：无封面时头像顶距须含安全区顶，否则头像顶进
+        // 状态栏区；modal 态表顶仍为安全区顶 + 44，顶距保持 20 不变。
+        // 变化守卫：常量不变不赋值，避免布局轮次成环。
+        let noCoverTop: CGFloat = isModalTopBar ? 20 : view.safeAreaInsets.top + 20
+        if avatarTopWithoutCoverConstraint.constant != noCoverTop {
+            avatarTopWithoutCoverConstraint.constant = noCoverTop
+        }
         updateColumnLayout()
         layoutHeader()
         updateDynamicLayerColors()
@@ -1011,6 +1025,11 @@ class BearyProfileViewController: UIViewController {
     /// modal 判定：被 present 的导航栈根（容器页态的 parent 是容器、navigationController 为 nil）。
     private func updateTopBarVisibility() {
         let modal = navigationController?.presentingViewController != nil || presentingViewController != nil
+        isModalTopBar = modal
+        // 顶锚二选一：容器态表顶改 view.top（封面顶到屏幕顶、伸进状态栏区），
+        // modal 态 44 顶栏仍在安全区下方（表顶 = 安全区顶 + 44，不动）。
+        topBarTopToSafeAreaConstraint.isActive = modal
+        topBarTopToViewConstraint.isActive = !modal
         topBarView.isHidden = !modal
         topBarHeightConstraint.constant = modal ? 44 : 0
         // 1:1 复刻：头像行分享钮去掉——容器页态（贴齿轮左侧 8pt 的那一处）
@@ -1190,7 +1209,7 @@ class BearyProfileViewController: UIViewController {
         topBarView.addSubview(topMoreButton)
         topBarView.addSubview(topShareButton)
         NSLayoutConstraint.activate([
-            topBarView.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
+            topBarTopToSafeAreaConstraint,
             topBarLeadingConstraint,
             topBarTrailingConstraint,
             topBarHeightConstraint,
