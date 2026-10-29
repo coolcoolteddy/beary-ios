@@ -752,9 +752,9 @@ final class BearyTimelineCell: UITableViewCell {
         v.isUserInteractionEnabled = false
         v.layer.cornerRadius = 14
         v.layer.shadowColor = UIColor.black.cgColor
-        v.layer.shadowOpacity = 0.08
+        v.layer.shadowOpacity = 0.06
         v.layer.shadowOffset = CGSize(width: 0, height: 2)
-        v.layer.shadowRadius = 6
+        v.layer.shadowRadius = 12
         return v
     }()
     /// 限时倒计时行（meta 行 pill 之后；仅存活期显示，灰字 12pt）。
@@ -789,7 +789,7 @@ final class BearyTimelineCell: UITableViewCell {
     private let timeLabel = UILabel()
     /// 可见性图标（2026-10-29 改版：公开＝地球、私密＝锁；
     /// 2026-10-29 晚 pill 整个去掉：无背景、无描边、无内边距，只留图标本体，
-    /// 中性灰（与 meta 行时间文字／⋯ 钮同灰），14pt，直接进 metaStack）。
+    /// 固定灰 #8e8e93（v3 值），14pt，直接进 metaStack）。
     private let pillIconView: UIImageView = {
         let v = UIImageView()
         v.translatesAutoresizingMaskIntoConstraints = false
@@ -893,14 +893,14 @@ final class BearyTimelineCell: UITableViewCell {
 
         cardView.translatesAutoresizingMaskIntoConstraints = false
         // 2026-10-29 B 方案：卡片底色回页面底（bg），改边线区分；
-        // 边线 1px 走 timelineBorder（浅 gray／深 surface，均比 line 深一档）；
+        // 边线 1px 走 timelineBorder（v3 值：浅 #c7c7cc／深 #48484e）；
         // 限时卡的虚线边框层（ephemeralBorderLayer）是独立语义指示，不动。
         cardView.backgroundColor = BearyColors.bg
         cardView.layer.borderWidth = 1
         cardView.layer.borderColor = BearyColors.timelineBorder.cgColor
         // B 方案阴影仅浅色：深色下黑阴影在黑底上看不见，不硬加；
-        // trait 切换重刷见 traitCollectionDidChange 同款。
-        cardShadowView.layer.shadowOpacity = traitCollection.userInterfaceStyle == .dark ? 0 : 0.08
+        // v3 值：黑 0.06／半径 12／偏移 (0,2)；trait 切换重刷见 traitCollectionDidChange 同款。
+        cardShadowView.layer.shadowOpacity = traitCollection.userInterfaceStyle == .dark ? 0 : 0.06
         cardView.layer.cornerRadius = 14
         cardView.layer.masksToBounds = true
         // 限时虚线边框层（存活期显、实线边框归零；布局时重画路径，见 layoutSubviews）。
@@ -915,7 +915,7 @@ final class BearyTimelineCell: UITableViewCell {
         timeLabel.setContentHuggingPriority(.required, for: .horizontal)
 
         // 2026-10-29 晚：可见性 pill 整个去掉——无背景、无描边、无内边距，
-        // 只留锁／地球图标本体（14pt，中性灰，configure 按态写图＋灰 tint）；
+        // 只留锁／地球图标本体（14pt，固定灰 #8e8e93，configure 按态写图＋灰 tint）；
         // 图标直接进 metaStack（configure 处），不再经包装视图。
         NSLayoutConstraint.activate([
             pillIconView.widthAnchor.constraint(equalToConstant: 14),
@@ -989,7 +989,9 @@ final class BearyTimelineCell: UITableViewCell {
         dotView.layer.masksToBounds = true
 
         quoteButton.translatesAutoresizingMaskIntoConstraints = false
-        // 2026-10-29 B 方案：引用卡底色同步回 #183 之前的值（faint），A 方案的同步进一级一并 revert。
+        // 2026-10-29 B 方案：引用卡底色同步回 #183 之前的值（faint）；
+        // v3 引用卡值（浅 #f2f2f7／深 #1c1c1e）距 faint（浅 #f5f5f5／深 #141414）仅 Δ≤10，
+        // faint 即最接近的既有 token，故沿用，不另起精确值。
         quoteButton.backgroundColor = BearyColors.faint
         // B-G1: web .tl-qcard has no full border, only left 3px line + radius 8.
         quoteButton.layer.borderWidth = 0
@@ -1194,7 +1196,7 @@ final class BearyTimelineCell: UITableViewCell {
         // B 方案：卡片边线色是 cgColor 快照，主题切换须重刷 timelineBorder；
         // 阴影仅浅色，深色归零（黑阴影在黑底上看不见）。
         cardView.layer.borderColor = BearyColors.timelineBorder.cgColor
-        cardShadowView.layer.shadowOpacity = traitCollection.userInterfaceStyle == .dark ? 0 : 0.08
+        cardShadowView.layer.shadowOpacity = traitCollection.userInterfaceStyle == .dark ? 0 : 0.06
         // 限时虚线描边色是 cgColor 快照，主题切换须重刷。
         ephemeralBorderLayer.strokeColor = BearyColors.line.cgColor
         timelineLineView.backgroundColor = BearyColors.line
@@ -1372,10 +1374,10 @@ final class BearyTimelineCell: UITableViewCell {
         // 限时已到期按私密算（图标/圆点/⋯ 菜单一律走有效态，不只看服务端 isPublic）。
         let published = BearyEphemeral.isEffectivelyPublic(entry)
         if published {
-            // 2026-10-29 晚：pill 已整个去掉，只留图标本体——公开＝地球，中性灰
-            // （与时间文字／⋯ 钮同灰）；圆点口径不动（公开橙边见下）。
+            // 2026-10-29 晚：pill 已整个去掉，只留图标本体——公开＝地球，固定灰 #8e8e93（v3 值）；
+            // 圆点口径不动（公开橙边见下）。
             pillIconView.image = BearyIconImages.image(named: "icon_globe", pointSize: 14)
-            pillIconView.tintColor = BearyColors.gray
+            pillIconView.tintColor = BearyColors.timelineIconGray
             // 竖线圆点统一用私密的尺寸和结构（9pt 空心 + 12pt 环），只变颜色：
             // 已公开橙边、私密蓝边（2026-10-28 Li 定，覆盖 #125 的已公开几何口径）。
             dotSizeConstraint?.constant = 9
@@ -1387,10 +1389,10 @@ final class BearyTimelineCell: UITableViewCell {
             dotView.layer.cornerRadius = 4.5
             dotRingView.isHidden = true
         } else {
-            // 2026-10-29 晚：pill 已整个去掉，只留图标本体——私密＝锁，中性灰；
+            // 2026-10-29 晚：pill 已整个去掉，只留图标本体——私密＝锁，固定灰 #8e8e93（v3 值）；
             // 圆点口径不动（私密蓝边见下）。
             pillIconView.image = BearyIconImages.image(named: "icon_lock", pointSize: 14)
-            pillIconView.tintColor = BearyColors.gray
+            pillIconView.tintColor = BearyColors.timelineIconGray
             // 私密圆点即统一口径（9pt 空心 + 12pt 环，蓝边）；已公开只换边色为橙。
             dotSizeConstraint?.constant = 9
             dotRingSizeConstraint?.constant = 12
