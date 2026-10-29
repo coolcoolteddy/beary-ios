@@ -773,7 +773,14 @@ final class BearyTimelineCell: UITableViewCell {
     private let metaStack = UIStackView()
     private let timeLabel = UILabel()
     private let pillBackground = UIView()
-    private let pillLabel = UILabel()
+    /// 可见性 pill 图标（2026-10-29 改版）：pill 内文字改为图标，公开＝地球、私密＝锁，
+    /// 模板渲染＋pill 色 tint；pill 形状与颜色（公开橙／私密蓝）不变。
+    private let pillIconView: UIImageView = {
+        let v = UIImageView()
+        v.translatesAutoresizingMaskIntoConstraints = false
+        v.contentMode = .scaleAspectFit
+        return v
+    }()
     private let weatherLabel = UILabel()
     /// E3：本行天气图标视图（configure 现建现存；复用/重配即清）与落点
     /// 天气 Lottie 覆盖层（仅 gotoEntry 落点行创建，其他行恒为 nil）。
@@ -823,7 +830,9 @@ final class BearyTimelineCell: UITableViewCell {
     private var dotSizeConstraint: NSLayoutConstraint?
     private var dotRingSizeConstraint: NSLayoutConstraint?
     private var dotTopConstraint: NSLayoutConstraint?
-    private var pillLabelLeadingWithoutIcon: NSLayoutConstraint?
+    /// 底部足行小熊回应图标视图（configure 现建现存；复用/重配即清），
+    /// 供 traitCollectionDidChange 在深浅切换时重刷深浅版 hug 图。
+    private var emoteIconView: UIImageView?
     /// 追加 6②：当前 pill 描边色（configure 按态写，主题切换重刷用）。
     private var pillBorderColor: UIColor = .clear
     // TL-3 引用卡与私密操作行。
@@ -856,13 +865,12 @@ final class BearyTimelineCell: UITableViewCell {
     private var editRowSawEditable = false
     private var editRowEndedShown = false
     private var editRowEndTimer: Timer?
-    private let deleteButton = BearyHit44Button(type: .custom)
-    // iCity 双向切换钮：图标化 globe（Li 2026-10-26 定 v3 public globe 口径不变），
-    // 2026-10-28 23:56 Li 定：从底部操作行挪到卡片顶行右端（meta 行末），视觉 21pt
-    // 灰色（不再墨黑/公开橙），44pt 热区由 BearyHit44Button 的 28 帧扩后保证；
-    // 切换态只以无障碍文案表达（“改回私密”/“公开”）。
-    private let publishButton = BearyHit44Button(type: .custom)
-    var onPublishEntry: ((Entry) -> Void)?
+    // 时间线卡片 ⋯ 菜单钮（2026-10-29 改版）：卡片顶行右端（meta 行末），
+    // 官方 icon_more 横向三点 21pt 灰色，44pt 热区由 BearyHit44Button 的 28 帧扩后保证；
+    // 点开菜单：编辑内容／修改权限／删除（原 meta 行末地球切换钮与右下角删除钮均已摘除，
+    // 可见性切换走菜单“修改权限”，删除走菜单“删除”，回调与原按钮同一路）。
+    private let moreButton = BearyHit44Button(type: .custom)
+    var onMoreEntry: ((Entry, UIView) -> Void)?
 
     override init(style: UITableViewCell.CellStyle, reuseIdentifier: String?) {
         super.init(style: style, reuseIdentifier: reuseIdentifier)
@@ -871,10 +879,12 @@ final class BearyTimelineCell: UITableViewCell {
         contentView.backgroundColor = BearyColors.bg
 
         cardView.translatesAutoresizingMaskIntoConstraints = false
-        cardView.backgroundColor = BearyColors.bg
-        cardView.layer.borderWidth = 1
+        // 2026-10-29 A 方案：卡片底色高一级（timelineCard），边线去掉、只用底色区分；
+        // 限时卡的虚线边框层（ephemeralBorderLayer）是独立语义指示，不动。
+        cardView.backgroundColor = BearyColors.timelineCard
+        cardView.layer.borderWidth = 0
         // 追加 6④：卡片边框减淡——line 色降 50% 透明度（动态色，深浅跟随）；
-        // trait 切换重刷见 traitCollectionDidChange 同款。
+        // trait 切换重刷见 traitCollectionDidChange 同款（现宽为 0，仅作保留）。
         cardView.layer.borderColor = BearyColors.alpha(BearyColors.line, 0.5).cgColor
         cardView.layer.cornerRadius = 14
         cardView.layer.masksToBounds = true
@@ -900,17 +910,17 @@ final class BearyTimelineCell: UITableViewCell {
         // pillBorderColor，主题切换时 traitCollectionDidChange 重刷。
         pillBackground.layer.borderWidth = 1
         pillBackground.layer.borderColor = UIColor.clear.cgColor
-        pillLabel.translatesAutoresizingMaskIntoConstraints = false
-        // 88 包 L18：pill 文案等宽数字防宽度抖动（只影响数字字形）。
-        pillLabel.font = UIFont.monospacedDigitSystemFont(ofSize: 11.5, weight: .bold)
-        pillBackground.addSubview(pillLabel)
-        pillLabelLeadingWithoutIcon = pillLabel.leadingAnchor.constraint(equalTo: pillBackground.leadingAnchor, constant: 9)
+        // 2026-10-29 改版：pill 内容由文字改为图标（公开地球／私密锁），
+        // 图标 14pt、上下各 3pt、左右各 9pt，pill 32×20、两态同高无抖动。
+        pillBackground.addSubview(pillIconView)
         NSLayoutConstraint.activate([
-            pillLabel.topAnchor.constraint(equalTo: pillBackground.topAnchor, constant: 2.5),
-            pillLabel.trailingAnchor.constraint(equalTo: pillBackground.trailingAnchor, constant: -9),
-            pillLabel.bottomAnchor.constraint(equalTo: pillBackground.bottomAnchor, constant: -2.5),
+            pillIconView.leadingAnchor.constraint(equalTo: pillBackground.leadingAnchor, constant: 9),
+            pillIconView.trailingAnchor.constraint(equalTo: pillBackground.trailingAnchor, constant: -9),
+            pillIconView.topAnchor.constraint(equalTo: pillBackground.topAnchor, constant: 3),
+            pillIconView.bottomAnchor.constraint(equalTo: pillBackground.bottomAnchor, constant: -3),
+            pillIconView.widthAnchor.constraint(equalToConstant: 14),
+            pillIconView.heightAnchor.constraint(equalToConstant: 14),
         ])
-        pillLabelLeadingWithoutIcon?.isActive = true
 
         // 8-3：天气/心情（正文类）走 scaledFont + adjusts。
         weatherLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13))
@@ -979,7 +989,8 @@ final class BearyTimelineCell: UITableViewCell {
         dotView.layer.masksToBounds = true
 
         quoteButton.translatesAutoresizingMaskIntoConstraints = false
-        quoteButton.backgroundColor = BearyColors.faint
+        // 2026-10-29 A 方案同步进一级：引用卡底色跟卡片底同步提一级，否则融进新卡片底。
+        quoteButton.backgroundColor = BearyColors.timelineQuote
         // B-G1: web .tl-qcard has no full border, only left 3px line + radius 8.
         quoteButton.layer.borderWidth = 0
         quoteButton.layer.cornerRadius = 8
@@ -1059,36 +1070,26 @@ final class BearyTimelineCell: UITableViewCell {
         editTextButton.addTarget(self, action: #selector(editTapped), for: .touchUpInside)
         editTextButton.bearyAddPressFeedback()
         editTextButton.isHidden = true
-        if let trashImage = BearyIconImages.image(named: "icon_trash", pointSize: 21) {
-            deleteButton.setImage(trashImage, for: .normal)
+        moreButton.translatesAutoresizingMaskIntoConstraints = false
+        // 2026-10-29 改版：⋯ 菜单钮接替原 meta 行末地球钮的位置，
+        // 21pt 灰色图标、28×28 帧（BearyHit44Button 扩后热区仍 44）。
+        if let moreImage = BearyIconImages.image(named: "icon_more", pointSize: 21) {
+            moreButton.setImage(moreImage, for: .normal)
         }
-        deleteButton.imageView?.contentMode = .scaleAspectFit
-        // 2026-10-29 第 8 项：删除按钮全 App 统一红色，与草稿箱／回收站彻底删除同口径。
-        deleteButton.tintColor = BearyColors.red
-        deleteButton.alpha = 1
-        deleteButton.addTarget(self, action: #selector(deleteTapped), for: .touchUpInside)
-        deleteButton.bearyAddPressFeedback()
-        publishButton.translatesAutoresizingMaskIntoConstraints = false
-        // 公开钮图标化（Li 2026-10-26 定：v3 public globe）：2026-10-28 23:56 改为
-        // 21pt 灰色图标、28×28 帧（BearyHit44Button 扩后热区仍 44），不再墨黑/公开橙。
-        if let globeImage = BearyIconImages.image(named: "icon_globe", pointSize: 21) {
-            publishButton.setImage(globeImage, for: .normal)
-        }
-        publishButton.tintColor = BearyColors.gray
-        publishButton.imageView?.contentMode = .scaleAspectFit
-        publishButton.accessibilityLabel = "公开"
-        publishButton.heightAnchor.constraint(equalToConstant: 28).isActive = true
-        publishButton.widthAnchor.constraint(equalToConstant: 28).isActive = true
-        publishButton.addTarget(self, action: #selector(publishTapped), for: .touchUpInside)
-        publishButton.bearyAddPressFeedback()
-        publishButton.isHidden = true
+        moreButton.tintColor = BearyColors.gray
+        moreButton.imageView?.contentMode = .scaleAspectFit
+        moreButton.accessibilityLabel = "更多操作"
+        moreButton.heightAnchor.constraint(equalToConstant: 28).isActive = true
+        moreButton.widthAnchor.constraint(equalToConstant: 28).isActive = true
+        moreButton.addTarget(self, action: #selector(moreTapped), for: .touchUpInside)
+        moreButton.bearyAddPressFeedback()
         actsStack.translatesAutoresizingMaskIntoConstraints = false
         actsStack.axis = .horizontal
         actsStack.spacing = 14
         actsStack.alignment = .center
         let actsSpacer = UIView()
-        // 2026-10-29：操作行只剩编辑态文字组 + 删除钮（旧图标编辑钮已摘，编辑只走
-        // 文字“编辑”；小地球已挪到 meta 行末，不再占操作行位置）。
+        // 2026-10-29 改版：操作行只剩编辑态文字组（旧图标编辑钮已摘，编辑只走
+        // 文字“编辑”）；删除钮已摘除，删除收进卡片右上角 ⋯ 菜单。
         editStatusGroup.axis = .horizontal
         editStatusGroup.spacing = 8
         editStatusGroup.alignment = .center
@@ -1096,11 +1097,6 @@ final class BearyTimelineCell: UITableViewCell {
         editStatusGroup.addArrangedSubview(editTextButton)
         actsStack.addArrangedSubview(editStatusGroup)
         actsStack.addArrangedSubview(actsSpacer)
-        actsStack.addArrangedSubview(deleteButton)
-        NSLayoutConstraint.activate([
-            deleteButton.widthAnchor.constraint(equalToConstant: 28),
-            deleteButton.heightAnchor.constraint(equalToConstant: 28),
-        ])
 
         let cardStack = UIStackView(arrangedSubviews: [metaStack, titleLabel, contentLabel, quoteButton, thumbsScrollView, footStack, actsStack])
         cardStack.translatesAutoresizingMaskIntoConstraints = false
@@ -1205,6 +1201,10 @@ final class BearyTimelineCell: UITableViewCell {
             dotView.layer.borderColor = BearyColors.bg.cgColor
         }
         quoteLeftLineView.backgroundColor = BearyColors.line
+        // 2026-10-29 改版追加：深浅切换时小熊回应 hug 图重刷为对应深浅版。
+        if let emoteView = emoteIconView {
+            emoteView.image = BearyEmoteImages.image(for: "hug", dark: traitCollection.userInterfaceStyle == .dark)
+        }
     }
 
     /// U14：行点按给卡片短暂 faint 底色（selectionStyle 已是 .none，
@@ -1212,7 +1212,7 @@ final class BearyTimelineCell: UITableViewCell {
     override func setHighlighted(_ highlighted: Bool, animated: Bool) {
         super.setHighlighted(highlighted, animated: animated)
         let apply = {
-            self.cardView.backgroundColor = highlighted ? BearyColors.faint : BearyColors.bg
+            self.cardView.backgroundColor = highlighted ? BearyColors.faint : BearyColors.timelineCard
         }
         if animated {
             UIView.animate(withDuration: 0.15, animations: apply)
@@ -1264,10 +1264,10 @@ final class BearyTimelineCell: UITableViewCell {
         let flashedId = currentEntry?.id
         cardView.backgroundColor = BearyColors.faint
         UIView.animate(withDuration: 0.6, delay: 0.5, options: [], animations: {
-            self.cardView.backgroundColor = BearyColors.bg
+            self.cardView.backgroundColor = BearyColors.timelineCard
         }, completion: { _ in
             if self.currentEntry?.id == flashedId {
-                self.cardView.backgroundColor = BearyColors.bg
+                self.cardView.backgroundColor = BearyColors.timelineCard
             }
         })
     }
@@ -1291,7 +1291,6 @@ final class BearyTimelineCell: UITableViewCell {
         transform = .identity
         // 按压缩放残留复位：通用按压反馈把按钮 imageView 缩到 .84，
         // 触摸序列异常打断时回弹没跑到，复用会把 .84 带到下一行。
-        deleteButton.imageView?.transform = .identity
         editTextButton.imageView?.transform = .identity
         // 2026-10-29 编辑态复位：live 翻转计时与“已结束”态不得串位到下一行。
         editRowEndTimer?.invalidate()
@@ -1304,12 +1303,12 @@ final class BearyTimelineCell: UITableViewCell {
         currentEntry = nil
         titleLabel.text = nil
         titleLabel.isHidden = true
-        cardView.backgroundColor = BearyColors.bg
+        cardView.backgroundColor = BearyColors.timelineCard
         quoteButton.isHidden = true
+        pillIconView.image = nil
         quoteBodyLabel.isHidden = false
         clearQuoteThumbs()
         actsStack.isHidden = true
-        publishButton.isHidden = true
         for imageView in thumbImageViews {
             imageView.bearySetImage(url: nil)
             imageView.removeFromSuperview()
@@ -1319,6 +1318,7 @@ final class BearyTimelineCell: UITableViewCell {
             footStack.removeArrangedSubview(arranged)
             arranged.removeFromSuperview()
         }
+        emoteIconView = nil
         for arranged in metaStack.arrangedSubviews {
             metaStack.removeArrangedSubview(arranged)
             arranged.removeFromSuperview()
@@ -1357,21 +1357,20 @@ final class BearyTimelineCell: UITableViewCell {
             timeLabel.text = ""
         }
         metaStack.addArrangedSubview(timeLabel)
-        // 限时已到期按私密算（pill/圆点/公开钮一律走有效态，不只看服务端 isPublic）。
+        // 限时已到期按私密算（pill/圆点/⋯ 菜单一律走有效态，不只看服务端 isPublic）。
         let published = BearyEphemeral.isEffectivelyPublic(entry)
         if published {
-            // N1：已公开 pill 改橙色——文字走 BearyColors.orange（网页 --orange
+            // N1：已公开 pill 改橙色——图标走 BearyColors.orange（网页 --orange
             // #ff9500），底色为橙色两态透明底（浅 12% / 深 18%，见
             // publishedPillBackground，动态色、主题切换自动跟随）。
             // 私密口径不动（蓝 pill / 蓝圆点见 else 分支）。
             pillBackground.backgroundColor = Self.publishedPillBackground()
-            pillLabel.textColor = BearyColors.orange
-            pillLabel.font = UIFont.monospacedDigitSystemFont(ofSize: 11.5, weight: .bold)
-            pillLabel.text = "已公开"
+            // 2026-10-29 改版：pill 内文字改图标——公开＝地球，模板渲染＋橙色 tint。
+            pillIconView.image = BearyIconImages.image(named: "icon_globe", pointSize: 14)
+            pillIconView.tintColor = BearyColors.orange
             // 追加 6②：已公开 pill 加橙色描边（与填充同色系）。
             pillBorderColor = BearyColors.alpha(BearyColors.orange, 0.4)
             pillBackground.layer.borderColor = pillBorderColor.cgColor
-            pillLabelLeadingWithoutIcon?.isActive = true
             // 竖线圆点统一用私密的尺寸和结构（9pt 空心 + 12pt 环），只变颜色：
             // 已公开橙边、私密蓝边（2026-10-28 Li 定，覆盖 #125 的已公开几何口径）。
             dotSizeConstraint?.constant = 9
@@ -1383,14 +1382,13 @@ final class BearyTimelineCell: UITableViewCell {
             dotView.layer.cornerRadius = 4.5
             dotRingView.isHidden = true
         } else {
-            // iCity 私密 pill：蓝底蓝字蓝描边，文案固定“私密”（无倒计时、无沙漏）。
+            // iCity 私密 pill：蓝底蓝图标蓝描边（无倒计时、无沙漏）。
             pillBackground.backgroundColor = BearyColors.alpha(BearyColors.blue, 0.13)
-            pillLabel.textColor = BearyColors.blue
-            pillLabel.font = UIFont.monospacedDigitSystemFont(ofSize: 11.5, weight: .bold)
-            pillLabel.text = "私密"
+            // 2026-10-29 改版：pill 内文字改图标——私密＝锁，模板渲染＋蓝色 tint。
+            pillIconView.image = BearyIconImages.image(named: "icon_lock", pointSize: 14)
+            pillIconView.tintColor = BearyColors.blue
             pillBorderColor = BearyColors.alpha(BearyColors.blue, 0.4)
             pillBackground.layer.borderColor = pillBorderColor.cgColor
-            pillLabelLeadingWithoutIcon?.isActive = true
             // 私密圆点即统一口径（9pt 空心 + 12pt 环，蓝边）；已公开只换边色为橙。
             dotSizeConstraint?.constant = 9
             dotRingSizeConstraint?.constant = 12
@@ -1412,7 +1410,7 @@ final class BearyTimelineCell: UITableViewCell {
             ephemeralRow.isHidden = true
         }
         let ephemeralLive = BearyEphemeral.isLive(entry)
-        cardView.layer.borderWidth = ephemeralLive ? 0 : 1
+        // 2026-10-29 A 方案：卡片边线去掉（init 已置 0），限时虚线层仍按存活期显隐。
         ephemeralBorderLayer.isHidden = !ephemeralLive
         // I3：天气用 icon_wx_* 图标、心情用 14px BearyEmoteView（播 Lottie 循环，
         // 与 Feed/主页心情位静态首帧不同，时间线卡片心情是动的；减动效下只显完成帧）。
@@ -1471,9 +1469,9 @@ final class BearyTimelineCell: UITableViewCell {
         metaSpacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
         metaSpacer.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         metaStack.addArrangedSubview(metaSpacer)
-        // 2026-10-28 23:56：小地球挪到卡片顶行右端——meta 行末 spacer 之后追加，
-        // 即顶到右端；显隐与无障碍文案仍由 updateEditRow 定（时间线行均为本人行）。
-        metaStack.addArrangedSubview(publishButton)
+        // 2026-10-29 改版：⋯ 菜单钮在卡片顶行右端——meta 行末 spacer 之后追加，
+        // 即顶到右端（原地球钮已摘除，位置由 ⋯ 接替；时间线行均为本人行，菜单常驻）。
+        metaStack.addArrangedSubview(moreButton)
         // 8-13 保留 1.75（不统一 1.6）：网页版时间线正文 .tl-text 即
         // 16.5px/1.75（worker.js 前端快照 :435，2026-10-27 版，与本行
         // 16.5/1.75 同值；首页卡片 1.6 是另一口径，不混用）。
@@ -1637,51 +1635,73 @@ final class BearyTimelineCell: UITableViewCell {
             footStack.removeArrangedSubview(arranged)
             arranged.removeFromSuperview()
         }
+        emoteIconView = nil
         if published {
+            // 2026-10-29 改版：足行三项按数量显隐——任一项为 0 就不显示该图标与数字，
+            // 三项全 0 时整行塌掉（footStack 保持隐藏，cardStack 间距自然承接，不留空行）。
             var footItems: [UIView] = []
             let likeCount = entry.likeCount ?? 0
-            let likeRow = footItem(iconName: "icon_heart", text: likeCount > 0 ? "\(likeCount)" : nil)
-            footItems.append(likeRow)
+            if likeCount > 0 {
+                footItems.append(footItem(iconName: "icon_heart", text: "\(likeCount)"))
+            }
             var emoteTotal = 0
             for emote in entry.emotes ?? [] {
                 emoteTotal += emote.count ?? 0
             }
             if emoteTotal > 0 {
-                let emoteLabel = UILabel()
-                emoteLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13))
-                emoteLabel.adjustsFontForContentSizeCategory = true
-                emoteLabel.textColor = BearyColors.gray
-                emoteLabel.text = "小熊回应 \(emoteTotal)"
-                emoteLabel.setContentHuggingPriority(.required, for: .horizontal)
-                footItems.append(emoteLabel)
+                // 小熊回应由文字改图标：官方 hug 拥抱表情（深色用 _dark 版，不 tint）
+                // ＋数字，与足项同款 14pt 图＋13pt 灰字、间距 4。
+                let emoteRow = UIStackView()
+                emoteRow.axis = .horizontal
+                emoteRow.spacing = 4
+                emoteRow.alignment = .center
+                let emoteIcon = UIImageView(image: BearyEmoteImages.image(for: "hug", dark: traitCollection.userInterfaceStyle == .dark))
+                emoteIcon.translatesAutoresizingMaskIntoConstraints = false
+                emoteIcon.contentMode = .scaleAspectFit
+                let emoteCountLabel = UILabel()
+                emoteCountLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13))
+                emoteCountLabel.adjustsFontForContentSizeCategory = true
+                emoteCountLabel.textColor = BearyColors.gray
+                emoteCountLabel.text = "\(emoteTotal)"
+                emoteCountLabel.setContentHuggingPriority(.required, for: .horizontal)
+                emoteRow.addArrangedSubview(emoteIcon)
+                emoteRow.addArrangedSubview(emoteCountLabel)
+                NSLayoutConstraint.activate([
+                    emoteIcon.widthAnchor.constraint(equalToConstant: 14),
+                    emoteIcon.heightAnchor.constraint(equalToConstant: 14),
+                ])
+                emoteIconView = emoteIcon
+                footItems.append(emoteRow)
             }
             let bookmarkCount = entry.bookmarkCount ?? 0
             if bookmarkCount > 0 {
                 footItems.append(footItem(iconName: "icon_bookmark", text: "\(bookmarkCount)"))
             }
-            for item in footItems {
-                footStack.addArrangedSubview(item)
+            if !footItems.isEmpty {
+                for item in footItems {
+                    footStack.addArrangedSubview(item)
+                }
+                // 足行吸宽 spacer（与 actsStack 的 actsSpacer 同款做法）：
+                // footStack 全宽 321pt，足项本身抗拉伸 required 后，多余宽度
+                // 只能被这个 defaultLow 的空视图吃掉，足项贴左、按本宽显示。
+                // spacer 仍在 footStack 内，prepareForReuse 的全清循环会一并移除，
+                // 不新增清理机制。
+                let footSpacer = UIView()
+                footSpacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
+                footSpacer.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+                footStack.addArrangedSubview(footSpacer)
+                footStack.isHidden = false
             }
-            // 足行吸宽 spacer（与 actsStack 的 actsSpacer 同款做法）：
-            // footStack 全宽 321pt，足项本身抗拉伸 required 后，多余宽度
-            // 只能被这个 defaultLow 的空视图吃掉，足项贴左、按本宽显示。
-            // spacer 仍在 footStack 内，prepareForReuse 的全清循环会一并移除，
-            // 不新增清理机制。
-            let footSpacer = UIView()
-            footSpacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
-            footSpacer.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-            footStack.addArrangedSubview(footSpacer)
-            footStack.isHidden = false
         } else {
-            // TL-3 私密行操作行（2026-10-29 口径）：编辑态文字组（倒计时 + “编辑”）
-            // + 删除钮；小地球已挪 meta 行末，不在操作行。删除本身不由本页发请求：
+            // TL-3 私密行操作行（2026-10-29 口径）：只剩编辑态文字组（倒计时 + “编辑”）；
+            // 删除已收进卡片右上角 ⋯ 菜单。删除本身不由本页发请求：
             // 走容器回调，容器按网页 confirmDelete 流程弹“确认删除？/ 删除后会移入回收站，
             // 30 天内可在「回收站」里恢复。”再调删除接口。
             updateEditRow(entry: entry)
             actsStack.isHidden = false
         }
         // iCity：公开行与私密行共用操作行——公开行在计数足行之外同样出操作行
-        //（编辑态文字组 + 删除，编辑仅 15 分钟内，删除公开/私密均可）。
+        //（只剩编辑态文字组，编辑仅 15 分钟内；删除走 ⋯ 菜单，公开/私密均可）。
         if published {
             updateEditRow(entry: entry)
             actsStack.isHidden = false
@@ -1746,10 +1766,8 @@ final class BearyTimelineCell: UITableViewCell {
             editStatusGroup.isHidden = true
         }
         // 已结束且已消失后：后续 tick 不再碰本行（editRowEndedShown 守卫）。
-        let isPublic = BearyEphemeral.isEffectivelyPublic(entry)
-        publishButton.isHidden = false
-        publishButton.tintColor = BearyColors.gray
-        publishButton.accessibilityLabel = isPublic ? "改回私密" : "公开"
+        // 2026-10-29 改版：⋯ 菜单钮常驻 meta 行末，不再按行态显隐或改文案；
+        // 可见性切换走菜单“修改权限”，与原地球钮同一 handlePublishEntry 路径。
     }
 
     /// “编辑已结束”3 秒后的退场：淡出（transform/opacity 口径；减动效直接消失）。
@@ -1768,23 +1786,24 @@ final class BearyTimelineCell: UITableViewCell {
         })
     }
 
-    @objc private func publishTapped() {
+    @objc private func moreTapped() {
         guard let entry = currentEntry else { return }
-        onPublishEntry?(entry)
+        onMoreEntry?(entry, moreButton)
     }
 
-    /// 可见性切换失败的拒绝动效：globe 钮摇头 + warning 震动（与卡片
-    /// playDenyShake 同口径：减动效只跳视觉抖动，震动照常给）。
+    /// 可见性切换失败的拒绝动效：⋯ 钮摇头 + warning 震动（与卡片
+    /// playDenyShake 同口径：减动效只跳视觉抖动，震动照常给；
+    /// 原 globe 钮已摘除，摇头目标改为 ⋯ 菜单钮，调用点与音效/震动不变）。
     func playPublishDenyShake() {
         BearyHaptics.rejectionWarning()
         BearySoundPlayer.play(.refuseBonk)
         if UIAccessibility.isReduceMotionEnabled { return }
-        publishButton.layer.removeAnimation(forKey: "bearyDenyShake")
+        moreButton.layer.removeAnimation(forKey: "bearyDenyShake")
         let shake = CAKeyframeAnimation(keyPath: "transform.translation.x")
         shake.values = [0, -8, 8, -5, 5, 0]
         shake.keyTimes = [0, 0.2, 0.4, 0.6, 0.8, 1]
         shake.duration = 0.4
-        publishButton.layer.add(shake, forKey: "bearyDenyShake")
+        moreButton.layer.add(shake, forKey: "bearyDenyShake")
     }
 
     /// F2 引用缩略图清理（复用与重配时先清，避免旧图残留）。
@@ -1807,11 +1826,6 @@ final class BearyTimelineCell: UITableViewCell {
     @objc private func editTapped() {
         guard let entry = currentEntry else { return }
         onEditEntry?(entry)
-    }
-
-    @objc private func deleteTapped() {
-        guard let entry = currentEntry else { return }
-        onDeleteEntry?(entry)
     }
 
     @objc private func quoteTapped() {
@@ -4703,7 +4717,7 @@ class BearyTimelineViewController: UIViewController {
     /// 失败回滚原态 + 拒绝动效。
     private func handlePublishEntry(_ entry: Entry) {
         guard let entryId = entry.id, !entryId.isEmpty else { return }
-        // 审计 P2-23：公开钮是作者动作——非作者不执行（时间线本只列本人日记，此为纵深门控）。
+        // 审计 P2-23：可见性切换是作者动作——非作者不执行（时间线本只列本人日记，此为纵深门控）。
         let viewerId = SessionManager.shared.currentUser?.id
         guard entry.isMine == true || (entry.authorId != nil && viewerId != nil && entry.authorId == viewerId) else { return }
         if publishBusyIds.contains(entryId) { return }
@@ -4738,6 +4752,32 @@ class BearyTimelineViewController: UIViewController {
         }
     }
 
+    /// 2026-10-29 改版：卡片右上角 ⋯ 菜单（actionSheet）——编辑内容／修改权限／删除。
+    /// 编辑内容仅 15 分钟内出现（与编辑文字钮、左滑编辑同口径：deadline 缺失即已锁）；
+    /// 修改权限走原地球钮同一 handlePublishEntry 路径（含乐观落地、失败回滚、拒绝动效）；
+    /// 删除走原删除回调同一路（容器确认流程不变）；iPad 须设 popover 锚点，否则崩溃。
+    private func presentTimelineMoreMenu(entry: Entry, sourceView: UIView) {
+        let sheet = UIAlertController(title: nil, message: nil, preferredStyle: .actionSheet)
+        let nowMs = Int(Date().timeIntervalSince1970 * 1000)
+        if let deadline = entry.editDeadline, nowMs < deadline {
+            sheet.addAction(UIAlertAction(title: "编辑内容", style: .default) { [weak self] _ in
+                self?.onEditEntry?(entry)
+            })
+        }
+        sheet.addAction(UIAlertAction(title: "修改权限", style: .default) { [weak self] _ in
+            self?.handlePublishEntry(entry)
+        })
+        sheet.addAction(UIAlertAction(title: "删除", style: .destructive) { [weak self] _ in
+            self?.onDeleteEntry?(entry)
+        })
+        sheet.addAction(UIAlertAction(title: "取消", style: .cancel))
+        if let popover = sheet.popoverPresentationController {
+            popover.sourceView = sourceView
+            popover.sourceRect = sourceView.bounds
+        }
+        present(sheet, animated: true)
+    }
+
     /// 可见行单行重刷（.none，不播行动画、不重播已有元素动效）：按 currentSections
     /// 定位该篇所在组行，仅行在视野内时刷。
     private func reloadVisibleTimelineRow(entryId: String) {
@@ -4752,7 +4792,7 @@ class BearyTimelineViewController: UIViewController {
         }
     }
 
-    /// 可见行 globe 钮拒绝动效：摇头 + warning 震动（与卡片 playDenyShake 同口径）。
+    /// 可见行 ⋯ 钮拒绝动效：摇头 + warning 震动（与卡片 playDenyShake 同口径）。
     private func shakeVisibleTimelinePublishButton(entryId: String) {
         let sections = currentSections()
         for (sectionIndex, section) in sections.enumerated() {
@@ -4839,7 +4879,7 @@ extension BearyTimelineViewController: UITableViewDataSource, UITableViewDelegat
         cell.onEditEntry = onEditEntry
         cell.onDeleteEntry = onDeleteEntry
         cell.onQuoteEntry = onQuoteEntry
-        cell.onPublishEntry = { [weak self] entry in self?.handlePublishEntry(entry) }
+        cell.onMoreEntry = { [weak self] entry, sourceView in self?.presentTimelineMoreMenu(entry: entry, sourceView: sourceView) }
         // N7：复用独立文件内的查看器，全屏模态弹出（已弹出时不叠加、减动效直显）。
         cell.onTapImages = { [weak self] keys, index in
             guard let self = self, self.presentedViewController == nil else { return }
