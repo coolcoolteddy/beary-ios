@@ -11,6 +11,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # 审计三轮第 27 项：官方 beary-ui 资产完整性校验（只读，不改 App 行为）。
+      # 代码引用的官方资产缺失时在此失败并报清缺失项，不靠运行时 SF 回退蒙混。
+      - name: Check official beary-ui assets are complete
+        run: python3 scripts/check-beary-assets.py
+
       - uses: actions/setup-node@v4
         with:
           node-version: 22
@@ -38,6 +43,11 @@ jobs:
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
+
+      # 审计三轮第 27 项：官方 beary-ui 资产完整性校验（只读，不改 App 行为）。
+      # 代码引用的官方资产缺失时在此失败并报清缺失项，不靠运行时 SF 回退蒙混。
+      - name: Check official beary-ui assets are complete
+        run: python3 scripts/check-beary-assets.py
 
       - uses: actions/setup-node@v4
         with:
@@ -72,6 +82,11 @@ jobs:
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
+
+      # 审计三轮第 27 项：官方 beary-ui 资产完整性校验（只读，不改 App 行为）。
+      # 代码引用的官方资产缺失时在此失败并报清缺失项，不靠运行时 SF 回退蒙混。
+      - name: Check official beary-ui assets are complete
+        run: python3 scripts/check-beary-assets.py
 
       - uses: actions/setup-node@v4
         with:
