@@ -675,7 +675,7 @@ final class BearyFeedbackViewController: UIViewController, UITextViewDelegate, P
     @objc private func submitTapped() {
         let description = textView.text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !description.isEmpty else {
-            BearyToast.show(in: view, message: "请先填写问题描述", aboveFAB: false)
+            BearyToast.show(in: view, message: "请先填写问题描述")
             BearyHaptics.rejectionWarning()
             return
         }
@@ -691,7 +691,7 @@ final class BearyFeedbackViewController: UIViewController, UITextViewDelegate, P
                 } else {
                     // zip 缺失时发送仍可继续（不带 zip）：先 toast 明说，待 toast 可见
                     // 后再弹出邮件撰写框，避免撰写框盖住 toast 导致说明不可见。
-                    BearyToast.show(in: self.view, message: "日志包准备失败，本次反馈不含日志包", aboveFAB: false)
+                    BearyToast.show(in: self.view, message: "日志包准备失败，本次反馈不含日志包")
                     DispatchQueue.main.asyncAfter(deadline: .now() + 2.1) { [weak self] in
                         guard let self = self, self.presentedViewController == nil else { return }
                         self.presentMailComposer()
@@ -705,7 +705,7 @@ final class BearyFeedbackViewController: UIViewController, UITextViewDelegate, P
         ensureZip { [weak self] ready in
             guard let self = self else { return }
             guard ready, let url = self.zipURL else {
-                BearyToast.show(in: self.view, message: "日志包准备失败", aboveFAB: false)
+                BearyToast.show(in: self.view, message: "日志包准备失败")
                 BearyHaptics.rejectionWarning()
                 return
             }
@@ -725,7 +725,7 @@ final class BearyFeedbackViewController: UIViewController, UITextViewDelegate, P
         ensureZip { [weak self] ready in
             guard let self = self else { return }
             guard ready else {
-                BearyToast.show(in: self.view, message: "日志包准备失败", aboveFAB: false)
+                BearyToast.show(in: self.view, message: "日志包准备失败")
                 BearyHaptics.rejectionWarning()
                 return
             }
@@ -734,7 +734,7 @@ final class BearyFeedbackViewController: UIViewController, UITextViewDelegate, P
                 self.presentLogOnlyComposer()
             } else {
                 // 仅上传日志无文字可复制，不走复制 fallback：toast 明说两条出路。
-                BearyToast.show(in: self.view, message: "请先配置邮箱，或改用“分享诊断日志”", aboveFAB: false)
+                BearyToast.show(in: self.view, message: "请先配置邮箱，或改用“分享诊断日志”")
                 BearyHaptics.rejectionWarning()
             }
         }
@@ -746,7 +746,7 @@ final class BearyFeedbackViewController: UIViewController, UITextViewDelegate, P
         guard MFMailComposeViewController.canSendMail() else {
             // 补缺 P3-34：复制 fallback 只复制描述文字，设备信息与附件不随复制发出，toast 明说。
             UIPasteboard.general.string = textView.text.trimmingCharacters(in: .whitespacesAndNewlines)
-            BearyToast.show(in: view, message: "未配置邮箱，已复制反馈内容，附件不随复制发出", aboveFAB: false)
+            BearyToast.show(in: view, message: "未配置邮箱，已复制反馈内容，附件不随复制发出")
             BearyAppLog.event("feedback mail no account copy fallback")
             return
         }
@@ -785,21 +785,21 @@ final class BearyFeedbackViewController: UIViewController, UITextViewDelegate, P
             let noun = kind == .logOnly ? "日志" : "反馈"
             switch result {
             case .sent:
-                BearyToast.show(in: self.view, message: "\(noun)已发送", aboveFAB: false)
+                BearyToast.show(in: self.view, message: "\(noun)已发送")
                 BearyHaptics.publishSuccess()
                 BearyAppLog.event(kind == .logOnly ? "feedback log mail sent" : "feedback mail sent")
             case .saved:
-                BearyToast.show(in: self.view, message: "\(noun)已保存为草稿", aboveFAB: false)
+                BearyToast.show(in: self.view, message: "\(noun)已保存为草稿")
                 BearyAppLog.event(kind == .logOnly ? "feedback log mail saved" : "feedback mail saved")
             case .cancelled:
-                BearyToast.show(in: self.view, message: "已取消", aboveFAB: false)
+                BearyToast.show(in: self.view, message: "已取消")
                 BearyAppLog.event(kind == .logOnly ? "feedback log mail cancelled" : "feedback mail cancelled")
             case .failed:
-                BearyToast.show(in: self.view, message: "\(noun)发送失败", aboveFAB: false)
+                BearyToast.show(in: self.view, message: "\(noun)发送失败")
                 BearyHaptics.rejectionWarning()
                 BearyAppLog.event(kind == .logOnly ? "feedback log mail failed" : "feedback mail failed")
             @unknown default:
-                BearyToast.show(in: self.view, message: "\(noun)发送失败", aboveFAB: false)
+                BearyToast.show(in: self.view, message: "\(noun)发送失败")
                 BearyHaptics.rejectionWarning()
             }
         }
@@ -887,7 +887,7 @@ final class BearyFeedbackViewController: UIViewController, UITextViewDelegate, P
                 let message = oversizedCount > 0
                     ? "有 \(failedCount) 个附件未能加载，其中 \(oversizedCount) 个视频超过 50MB"
                     : "有 \(failedCount) 个附件未能加载"
-                BearyToast.show(in: self.view, message: message, aboveFAB: false)
+                BearyToast.show(in: self.view, message: message)
             }
         }
     }

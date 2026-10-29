@@ -1705,7 +1705,7 @@ class BearyProfileViewController: UIViewController {
             // F14：改名信号页内提示一次（容器未接线，见 movedToHandle 注释）。
             if !isOwnProfile, let moved = profileValue.movedTo, !moved.isEmpty, lastMovedToastHandle != moved {
                 lastMovedToastHandle = moved
-                BearyToast.show(in: view, message: "对方已改名为 @\(moved)", aboveFAB: false)
+                BearyToast.show(in: view, message: "对方已改名为 @\(moved)")
             }
             applyProfile()
             applyMode()
@@ -1725,7 +1725,7 @@ class BearyProfileViewController: UIViewController {
                 nameLabel.text = "—"
                 stickyHeaderNameLabel.text = "—"
             } else {
-                BearyToast.show(in: view, message: "资料刷新失败，显示的是上次内容，下拉可重试", aboveFAB: false)
+                BearyToast.show(in: view, message: "资料刷新失败，显示的是上次内容，下拉可重试")
             }
             refreshIconView.stopSpinning()
             tableView.refreshControl?.endRefreshing()
@@ -2133,9 +2133,9 @@ class BearyProfileViewController: UIViewController {
                     strongSelf.renderBadges()
                     // 网页佩戴成功 toast 口径：已佩戴「名」/ 已取消佩戴，名取 displayName。
                     if let wornKey = wearValue.worn, !wornKey.isEmpty {
-                        BearyToast.show(in: strongSelf.view, message: "已佩戴「\(BearyBadgeImages.displayName(for: wornKey))」", aboveFAB: false)
+                        BearyToast.show(in: strongSelf.view, message: "已佩戴「\(BearyBadgeImages.displayName(for: wornKey))」")
                     } else {
-                        BearyToast.show(in: strongSelf.view, message: "已取消佩戴", aboveFAB: false)
+                        BearyToast.show(in: strongSelf.view, message: "已取消佩戴")
                     }
                 case .failure(let err):
                     if case .unauthorized = err {
@@ -2965,7 +2965,7 @@ class BearyProfileViewController: UIViewController {
         // 审计 P2-23：个人页点赞补有效态门控（卡片 profile 分支直通控制器，控制器是唯一门控位）。
         guard BearyEphemeral.isEffectivelyPublic(entry) else {
             syncVisibleCell(entry: entry)?.playLikeDenyShake()
-            BearyToast.show(in: view, message: "公开后才能互动", aboveFAB: false)
+            BearyToast.show(in: view, message: "公开后才能互动")
             return
         }
         // 及时性口径：方向按可见行最新点按态算——cell 的 onLike 闭包捕获的是
@@ -3093,7 +3093,7 @@ class BearyProfileViewController: UIViewController {
                     if case .server(let code) = err, code == "rate_limited" { message = "操作太频繁，请稍后再试" }
                     else if case .http(let status, _) = err, status == 429 { message = "操作太频繁，请稍后再试" }
                     else { message = "切换失败，请重试" }
-                    BearyToast.show(in: strongSelf.view, message: message, aboveFAB: false)
+                    BearyToast.show(in: strongSelf.view, message: message)
                     strongSelf.syncVisibleCell(entry: entry)?.playPublishDenyShake()
                 }
             }
@@ -3175,7 +3175,7 @@ class BearyProfileViewController: UIViewController {
         // 审计 P2-23：个人页收藏补有效态门控（与点赞同理，控制器是唯一门控位）。
         guard BearyEphemeral.isEffectivelyPublic(entry) else {
             syncVisibleCell(entry: entry)?.playBookmarkDenyShake()
-            BearyToast.show(in: view, message: "公开后才能互动", aboveFAB: false)
+            BearyToast.show(in: view, message: "公开后才能互动")
             return
         }
         // 及时性口径：方向按可见行最新点按态算——cell 的 onBookmark 闭包捕获
@@ -3392,7 +3392,7 @@ class BearyProfileViewController: UIViewController {
                     } else {
                         cell?.shakeEmoteAddButton()
                     }
-                    BearyToast.show(in: strongSelf.view, message: "操作失败，请重试", aboveFAB: false)
+                    BearyToast.show(in: strongSelf.view, message: "操作失败，请重试")
                 }
             }
         }
@@ -3424,7 +3424,7 @@ class BearyProfileViewController: UIViewController {
             guard let quoteId = quoteValue.id, !quoteId.isEmpty else { return }
             // 定位进行中的轻量指示：拉取往返期间卡片无反应是本次反馈的体感来源之一；
             // toast 2 秒自清，不做乐观假定位。
-            BearyToast.show(in: view, message: "正在打开…", aboveFAB: false)
+            BearyToast.show(in: view, message: "正在打开…")
             BearyAPI.shared.fetchEntry(id: quoteId) { [weak self] result in
                 DispatchQueue.main.async {
                     guard let strongSelf = self else { return }
@@ -3485,7 +3485,7 @@ extension BearyProfileViewController: UITableViewDataSource, UITableViewDelegate
         // A1：个人主页非公开卡片点“+”不打开选择器，弹 toast 并返回。
         cellValue.onEmoteAddNotPublic = { [weak self] in
             if let strongSelf = self {
-                BearyToast.show(in: strongSelf.view, message: "公开后才能回应", aboveFAB: false)
+                BearyToast.show(in: strongSelf.view, message: "公开后才能回应")
             }
         }
         cellValue.onQuoteTap = { [weak self] in self?.handleCellQuoteTap(entry: entryValue) }

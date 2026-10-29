@@ -1815,7 +1815,7 @@ enum BearyReportFlow {
         // 故当前桶命中即等价于本账号服务端已确认，可直接返回“已举报”；跨号污染已由分桶消除，
         // 无需每次都走到理由选择与服务端往返。服务端仍是最终权威（换设备等本地未同步时走下行提交，duplicate 态同样按已举报处理）。
         if BearyReportedStore.isReported(entryId: entryId) {
-            BearyToast.show(in: vc.view, message: "已举报", aboveFAB: false)
+            BearyToast.show(in: vc.view, message: "已举报")
             return
         }
         let title = entryLabel == nil ? "举报这篇日记？" : "举报\(entryLabel!)？"
@@ -1830,9 +1830,9 @@ enum BearyReportFlow {
                             NotificationCenter.default.post(name: .bearyDidReportEntry, object: entryId)
                             // 补缺 P3-39：重复举报（服务端 duplicate 成功态）按已举报处理并置灰下次菜单，
                             // 文案不谎称“谢谢反馈”，改“已举报”。
-                            BearyToast.show(in: vc.view, message: resp.duplicate == true ? "已举报" : "已举报，谢谢反馈", aboveFAB: false)
+                            BearyToast.show(in: vc.view, message: resp.duplicate == true ? "已举报" : "已举报，谢谢反馈")
                         case .failure:
-                            BearyToast.show(in: vc.view, message: "举报失败，请重试", aboveFAB: false)
+                            BearyToast.show(in: vc.view, message: "举报失败，请重试")
                         }
                     }
                 }
@@ -1860,10 +1860,10 @@ enum BearyBlockFlow {
                     case .success:
                         BearyBlockedStore.markBlocked(userId)
                         NotificationCenter.default.post(name: .bearyDidBlockUser, object: userId)
-                        BearyToast.show(in: vc.view, message: "已拉黑", aboveFAB: false)
+                        BearyToast.show(in: vc.view, message: "已拉黑")
                         onDone?(true)
                     case .failure:
-                        BearyToast.show(in: vc.view, message: "拉黑失败，请重试", aboveFAB: false)
+                        BearyToast.show(in: vc.view, message: "拉黑失败，请重试")
                         onDone?(false)
                     }
                 }

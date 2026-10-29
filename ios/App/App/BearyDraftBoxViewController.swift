@@ -1159,12 +1159,12 @@ final class BearyDraftBoxViewController: UIViewController {
         }
     }
 
-    /// G7：箱内轻提示：委托 B 批统一 BearyToast。“新 toast 先清旧 toast”
+    /// G7：箱内轻提示：委托统一 BearyToast。“新 toast 先清旧 toast”
     /// 由统一组件内部承接（同容器旧 toast 先移除）。草稿箱是 overFullScreen
-    /// 模态，盖住 Chrome 的 FAB，本页无可见 FAB，故 aboveFAB=false（落 -32，
-    /// 原 -158 悬空修掉）。调用签名与文案、触发时机不变。
+    /// 模态，盖住 Chrome，落点由组件回落安全区 -32。
+    /// 调用签名与文案、触发时机不变。
     private func showDraftToast(message: String) {
-        BearyToast.show(in: view, message: message, aboveFAB: false)
+        BearyToast.show(in: view, message: message)
     }
 
     /// M20：撤销条淡入/滑入（减动效直接显示）。

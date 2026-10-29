@@ -2265,16 +2265,34 @@ final class BearyChromeViewController: UIViewController {
         }) { _ in finish() }
     }
 
-    /// 容器级轻提示（A11 未登录“我”页、时间线删除失败等）：委托 B 批统一
-    /// BearyToast。落点走现有栏显隐逻辑：FAB 容器由 setBarsVisible 同步
-    /// alpha + isUserInteractionEnabled，FAB 可见时抬至 FAB 顶之上（-158），
-    /// 栏隐藏时（搜索页等）落 -32，不再悬空。C5-B 后“我”/消息页 FAB
-    /// 本就隐藏，此处读到的 fabVisible 即为 false，落点自动跟到 -32，
-    /// 无需另传信号。调用签名与文案不变。
+    /// Toast 落点用：当前可见的底部 chrome（FAB 优先于底栏）在 container
+    /// 坐标系中的顶边；FAB 与底栏均不可见时返回 nil。可见性判据与
+    /// setBarsVisible 的同步口径一致：isUserInteractionEnabled 在动画外
+    /// 同步改，alpha 动画中读到的是目标态；动画中途（≤0.25s）读到的
+    /// 是目标态而非飞行态，toast 至多一瞬偏高／偏低，不会被挡。
+    /// 调用方（BearyToast）只在容器页是 Chrome 子页时调本方法；模态页
+    /// 的 parent 链到不了 Chrome，走 -32 回落，不读这里。
+    func toastObstructionTop(in container: UIView) -> CGFloat? {
+        guard let chromeWindow = view.window, container.window === chromeWindow else { return nil }
+        let barView: UIView? = bottomSegmented
+        let candidates: [UIView?] = [fabContainerView, barView, bottomBlurView]
+        for candidate in candidates {
+            guard let chromeView = candidate,
+                  chromeView.isUserInteractionEnabled,
+                  chromeView.alpha > 0,
+                  chromeView.bounds.width > 0,
+                  chromeView.bounds.height > 0 else { continue }
+            return chromeView.convert(chromeView.bounds, to: container).minY
+        }
+        return nil
+    }
+
+    /// 容器级轻提示（A11 未登录“我”页、时间线删除失败等）：委托统一
+    /// BearyToast。落点由组件按当前 chrome 态算（FAB 可见落 FAB 顶之上、
+    /// 仅底栏可见落底栏顶之上、皆无落 -32），此处不再自算可见性；
+    /// 调用签名与文案不变。
     private func showToast(message: String) {
-        let fabVisible = (fabContainerView?.alpha ?? 0) > 0
-            && (fabContainerView?.isUserInteractionEnabled == true)
-        BearyToast.show(in: view, message: message, aboveFAB: fabVisible)
+        BearyToast.show(in: view, message: message)
     }
 
     /// 个人主页通用回调接线（我页与他人主页 modal 共用；onOpenEntry/onRequireLogin 各处自接）。

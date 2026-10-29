@@ -919,12 +919,12 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate {
         })
     }
 
-    // MARK: - 轻提示：委托 B 批统一 BearyToast。回收站是全屏模态，盖住
-    // Chrome 的 FAB，本页无可见 FAB，故 aboveFAB=false（落 -32，原 -158
-    // 悬空修掉）；展示时长由旧 1.6s 统一为 2.0s，调用签名与文案、触发时机不变。
+    // MARK: - 轻提示：委托统一 BearyToast。回收站是全屏模态，盖住
+    // Chrome，落点由组件回落安全区 -32；展示时长由旧 1.6s 统一为
+    // 2.0s，调用签名与文案、触发时机不变。
 
     private func showToast(message: String) {
-        BearyToast.show(in: view, message: message, aboveFAB: false)
+        BearyToast.show(in: view, message: message)
     }
 }
 

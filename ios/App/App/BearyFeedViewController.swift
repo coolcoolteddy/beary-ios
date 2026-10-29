@@ -83,12 +83,6 @@ class BearyFeedViewController: UIViewController {
     /// 态不变时不重复调容器，避免滚动事件刷屏。
     private var lastFeedScrollOffsetY: CGFloat = 0
     private var feedChromeHidden = false
-    /// 8-7 Toast 落点：读容器栏态——feedChromeHidden 即本页下发给容器的栏态
-    /// （scrollViewDidScroll 里调 SceneDelegate.chrome?.setChromeHidden 同步），
-    /// 栏藏时 FAB 已同步隐藏，toast 落 -32；栏显时落 -158。不走
-    /// SceneDelegate.showToast（其为容器私有，改公开还会把 toast 换到容器层，
-    /// 层级与本页视图不同），本页 8 处调用点统一读此值。
-    private var toastAboveFAB: Bool { !feedChromeHidden }
 
     /// 有新内容 pill（网页 #newPill 口径：ink 底、bg 字、13 semibold、999 圆角、padding 9/16，
     /// 阴影 0 6px 18px rgba(0,0,0,.22)，
@@ -475,7 +469,7 @@ class BearyFeedViewController: UIViewController {
         items.append(urlValue)
         if presentedViewController != nil {
             UIPasteboard.general.string = urlValue.absoluteString
-            BearyToast.show(in: view, message: "链接已复制", aboveFAB: self.toastAboveFAB)
+            BearyToast.show(in: view, message: "链接已复制")
             return
         }
         let activity = UIActivityViewController(activityItems: items, applicationActivities: nil)
@@ -483,7 +477,7 @@ class BearyFeedViewController: UIViewController {
             if completed == false, error != nil {
                 UIPasteboard.general.string = urlValue.absoluteString
                 if let strongSelf = self {
-                    BearyToast.show(in: strongSelf.view, message: "链接已复制", aboveFAB: strongSelf.toastAboveFAB)
+                    BearyToast.show(in: strongSelf.view, message: "链接已复制")
                 }
             }
         }
@@ -560,7 +554,7 @@ class BearyFeedViewController: UIViewController {
                         strongSelf.plazaHasMore = false
                         strongSelf.plazaError = true
                     } else {
-                        BearyToast.show(in: strongSelf.view, message: "刷新失败", aboveFAB: strongSelf.toastAboveFAB)
+                        BearyToast.show(in: strongSelf.view, message: "刷新失败")
                     }
                 }
                 strongSelf.plazaLoading = false
@@ -1070,7 +1064,7 @@ class BearyFeedViewController: UIViewController {
             // 此处是操作点的即时反馈，不与容器回调冲突（本文件不赋值 onNetworkUnstable）。
             if SessionManager.shared.authUnknown {
                 if let strongSelf = self {
-                    BearyToast.show(in: strongSelf.view, message: "网络不稳定，请稍后再试", aboveFAB: strongSelf.toastAboveFAB)
+                    BearyToast.show(in: strongSelf.view, message: "网络不稳定，请稍后再试")
                 }
                 return
             }
@@ -1081,7 +1075,7 @@ class BearyFeedViewController: UIViewController {
         }
         cell.onEmoteFailed = { [weak self] in
             guard let strongSelf = self else { return }
-            BearyToast.show(in: strongSelf.view, message: "操作失败，请重试", aboveFAB: strongSelf.toastAboveFAB)
+            BearyToast.show(in: strongSelf.view, message: "操作失败，请重试")
         }
         cell.onShareRequested = { [weak self] entryValue in
             self?.presentShareSheet(for: entryValue)
@@ -1182,7 +1176,7 @@ class BearyFeedViewController: UIViewController {
                     if case .server(let code) = err, code == "rate_limited" { message = "操作太频繁，请稍后再试" }
                     else if case .http(let status, _) = err, status == 429 { message = "操作太频繁，请稍后再试" }
                     else { message = "切换失败，请重试" }
-                    BearyToast.show(in: strongSelf.view, message: message, aboveFAB: strongSelf.toastAboveFAB)
+                    BearyToast.show(in: strongSelf.view, message: message)
                     for path in strongSelf.indexPaths(for: entryId) {
                         (strongSelf.tableView.cellForRow(at: path) as? BearyDiaryCardCell)?.playPublishDenyShake()
                     }
