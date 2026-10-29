@@ -982,9 +982,14 @@ final class BearyChromeViewController: UIViewController {
 
     override func viewDidAppear(_ animated: Bool) {
         super.viewDidAppear(animated)
-        // 教程首次启动自动弹出（审计 N1 容器侧）：容器首次出现时检查 seen 标记。
-        maybePresentOnboardingOnFirstLaunch()
+        // 引导时序（v3 接线）：旧顺序先弹引导、后跑 veil——引导虽为 modal 不会被
+        // veil 子视图盖住，但 veil 揭开动画会在引导层下空跑；现改为 veil 优先：
+        // veil 仍在时由 removeLaunchVeil 完成时触发自动引导，veil 已不在时
+        // （已播过／4 秒兜底已清）直接触发。
         runLaunchVeilIfNeeded()
+        if launchVeilView == nil {
+            maybePresentOnboardingOnFirstLaunch()
+        }
     }
 
     /// 64 包反馈修（第 18 项）：挂启动 veil 首帧静态画面（网页 launchVeil 口径：
@@ -1101,6 +1106,10 @@ final class BearyChromeViewController: UIViewController {
         launchVeilView?.removeFromSuperview()
         launchVeilView = nil
         launchVeilLogo = nil
+        // veil 完成点（正常揭开／减动效／4 秒兜底三路汇合）：viewDidAppear 里因
+        // veil 仍在而未触发的自动引导，在此补触发；重复调用由
+        // tutorialAutoPresented 守卫挡下。
+        maybePresentOnboardingOnFirstLaunch()
     }
 
     override func traitCollectionDidChange(_ previousTraitCollection: UITraitCollection?) {
@@ -2368,54 +2377,110 @@ final class BearyChromeViewController: UIViewController {
         topmostViewController().present(vc, animated: BearyMotion.animated(true))
     }
 
-    /// 引导页弹出（v4 原生版，替代旧 6 页教程）：引导 UI 在
-    /// BearyOnboardingViewController.swift 内定义；容器只负责全屏模态弹出，
-    /// 关闭／完成时由引导页自己置 beary_tutorial_seen_v1，容器不写该标记。
-    /// 首启版带后台预加载三步（时间线首屏 / 广场首屏 / 表情预热），只暖数据、
-    /// 不再有准备屏进度、不自动推进（P1-2）；重播版（我的页三个点 → 使用指南）无预加载。
+    /// 引导页弹出（v3 四页版）：引导 UI 在 BearyOnboardingViewController.swift
+    /// 内定义；容器只负责全屏模态弹出与四个回调的接线。seen 标记归属：闭包已
+    /// 设置时 VC 不写 seen、不 dismiss，全部由容器负责；跳过由 VC 自己写 seen
+    /// ＋dismiss，不经过这里。旧版预加载与旧版回调均已随 v3 删除，不再引用。
+    /// 退出一律短暂淡出：crossDissolve 使弹出与所有退出（含 VC 自行 dismiss 的
+    /// 跳过与兜底走完）均为淡入淡出，无需改 VC 文件；减动效时 animated:false
+    /// 仍为瞬时切换。不闪白、不重播启动页、不加额外倒计时；数据未加载完用
+    /// 现有加载态，不伪造进度、不加假加载步骤。
     private func presentOnboarding(mode: BearyOnboardingViewController.Mode) {
         let vc = BearyOnboardingViewController(mode: mode)
         vc.modalPresentationStyle = .fullScreen
-        if mode == .firstLaunch {
-            let isDark = traitCollection.userInterfaceStyle == .dark
-            vc.preloadSteps = [
-                BearyOnboardingViewController.PreloadStep(title: "时间线首屏", run: { [weak self] done in
-                    guard let self = self else { done(); return }
-                    // B2：ensure 已触发 viewDidLoad 首拉时不再复发（首启仍由首拉供数）；
-                    // 万一 viewDidLoad 未发首拉（防御），才显式拉一次；步骤语义与进度不变。
-                    let timelineVC = self.ensureTimelineVC()
-                    if !timelineVC.initialLoadStarted { timelineVC.reloadTimeline() }
-                    done()
-                }),
-                BearyOnboardingViewController.PreloadStep(title: "广场首屏", run: { [weak self] done in
-                    guard let self = self else { done(); return }
-                    // B2：同时间线步骤，viewDidLoad 首拉已发起时去重。
-                    let feedVC = self.ensureFeedVC()
-                    if !feedVC.initialLoadStarted { feedVC.refreshAll() }
-                    done()
-                }),
-                BearyOnboardingViewController.PreloadStep(title: "表情与图标资源", run: { done in
-                    BearyEmoteView.prewarmCommonEmotes(dark: isDark)
-                    done()
-                }),
-            ]
+        vc.modalTransitionStyle = .crossDissolve
+        // 登录：盖在引导页之上弹（见 presentLoginOverOnboarding）；取消只关登录页
+        // 即露出引导页，不写 seen——用户仍在引导中，下次冷启动应再次出现。
+        vc.onRequestLogin = { [weak self, weak vc] in
+            guard let self = self, let vc = vc else { return }
+            self.presentLoginOverOnboarding(vc, mode: mode)
         }
-        vc.onStartWriting = { [weak self, weak vc] in
-            vc?.dismiss(animated: BearyMotion.animated(true)) { self?.presentComposer() }
+        // 游客：写 seen，进游客态（主页已在引导层下准备好），淡出引导层即露出主页。
+        vc.onRequestGuestBrowse = { [weak self, weak vc] in
+            guard let self = self, let vc = vc else { return }
+            UserDefaults.standard.set(true, forKey: BearyOnboardingViewController.seenKey)
+            self.enterGuestMode()
+            vc.dismiss(animated: BearyMotion.animated(true))
         }
-        vc.onEnterHome = { [weak self, weak vc] in
-            vc?.dismiss(animated: BearyMotion.animated(true)) { self?.showPage(.home) }
+        // 写第一篇：写 seen，淡出引导层后再开编辑器（dismiss 完成回调里开，避免
+        // 编辑器以引导页为 presenting 方、关闭层级错乱）。
+        vc.onRequestCompose = { [weak self, weak vc] in
+            guard let self = self, let vc = vc else { return }
+            UserDefaults.standard.set(true, forKey: BearyOnboardingViewController.seenKey)
+            vc.dismiss(animated: BearyMotion.animated(true)) { [weak self] in self?.presentComposer() }
         }
-        vc.onClosed = { [weak vc] in vc?.dismiss(animated: BearyMotion.animated(true)) }
+        // 先逛逛：写 seen，淡出引导层；已在主页时不重复 showPage（showPage(.home)
+        // 在已在主页且在顶部时会触发刷新，首启不得多一次拉取），仅不在主页时切过去
+        // （重播场景：从设置页回主页）。
+        vc.onRequestBrowse = { [weak self, weak vc] in
+            guard let self = self, let vc = vc else { return }
+            UserDefaults.standard.set(true, forKey: BearyOnboardingViewController.seenKey)
+            vc.dismiss(animated: BearyMotion.animated(true)) { [weak self] in
+                guard let self = self, self.currentPage != .home else { return }
+                self.showPage(.home)
+            }
+        }
         topmostViewController().present(vc, animated: BearyMotion.animated(true))
     }
 
-    /// 首次启动自动弹出：容器首次出现且 seen 未置位时弹一次；每进程只尝试一次，
-    /// 避免引导页未置标记时 viewDidAppear 循环重弹；已有 modal 在前时不弹。
+    /// 引导页内的登录：与 presentLogin 同款登录页，但以引导页为 presenting 方、
+    /// 盖在引导页之上弹出（不用 topmostViewController，避免登录页落到别层；
+    /// presentLogin 本体不动，其他调用点行为一字不变）。
+    /// 取消：只关登录页（presentLogin 同款），露出引导页，不写 seen。
+    /// 成功：写 seen，连关登录页＋引导页；firstLaunch 在 /me 确认登录后开编辑器
+    /// （原目标操作＝开始记录），replay 仅回设置页（关引导层即露出）。
+    /// 登录页“先逛逛”：同 onRequestGuestBrowse（写 seen＋进游客态＋淡出引导层）。
+    /// 时序注意：登录页只发 onLoggedIn、不直接立 currentUser（容器随后 refreshMe
+    /// 才立），故编辑器必须等 refreshMe 回包确认已登录再开，否则 presentComposer
+    /// 的未登录守卫会把用户弹回登录页；/me 网络失败未证实登录时不开编辑器，
+    /// 只落主页（onNetworkUnstable 已 toast，不伪造进度）。
+    private func presentLoginOverOnboarding(_ onboarding: BearyOnboardingViewController, mode: BearyOnboardingViewController.Mode) {
+        guard !(onboarding.presentedViewController is BearyLoginViewController) else { return }
+        let vc = BearyLoginViewController()
+        vc.modalPresentationStyle = .fullScreen
+        vc.onCancelled = { [weak vc] in vc?.dismiss(animated: BearyMotion.animated(true)) }
+        vc.onLoggedIn = { [weak self, weak vc, weak onboarding] in
+            // 登录页瞬时撤掉（不播滑下，避免成功路径上引导页闪现两次动效），
+            // 随后引导层淡出；seen 写在登录成功时（与 /me 成败无关）。
+            // 引导层立即淡出（不等 /me），避免 /me 等待期间用户在引导页上
+            // 重复点登录；编辑器在 refreshMe 完成回调里按登录态决定开不开。
+            vc?.dismiss(animated: false) { [weak self] in
+                guard let self = self else { return }
+                UserDefaults.standard.set(true, forKey: BearyOnboardingViewController.seenKey)
+                onboarding?.dismiss(animated: BearyMotion.animated(true))
+                SessionManager.shared.refreshMe { [weak self] _ in
+                    DispatchQueue.main.async { [weak self] in
+                        guard let self = self, mode == .firstLaunch,
+                              SessionManager.shared.isLoggedIn else { return }
+                        self.presentComposer()
+                    }
+                }
+            }
+        }
+        vc.onGuestMode = { [weak self, weak vc, weak onboarding] in
+            vc?.dismiss(animated: false) { [weak self] in
+                guard let self = self else { return }
+                UserDefaults.standard.set(true, forKey: BearyOnboardingViewController.seenKey)
+                self.enterGuestMode()
+                onboarding?.dismiss(animated: BearyMotion.animated(true))
+            }
+        }
+        onboarding.present(vc, animated: BearyMotion.animated(true))
+    }
+
+    /// 首次启动自动弹出：只针对真正的新用户——seen 未置位且本地无保存会话。
+    /// 会话判断不用 isLoggedIn：它只是 currentUser != nil，冷启动 /me 未回包时
+    /// 恒为假，会把升级的老登录用户误判为新用户；hasCachedSession 同步读本地
+    /// teddy_session cookie（存在且未过期），/me 回包前即可判定，升级的老登录
+    /// 用户有 cookie→不出现，新装用户无 cookie→出现。
+    /// 每进程只尝试一次；已有 modal 在前时不弹（seen 不写，下次冷启动再试）。
+    /// 呈现时机：只在启动 veil 完成后触发（见 viewDidAppear 与 removeLaunchVeil）。
+    /// 旧版教程 seen key 已废弃，全仓不得再有引用。
     private func maybePresentOnboardingOnFirstLaunch() {
         guard !tutorialAutoPresented else { return }
         tutorialAutoPresented = true
-        guard !UserDefaults.standard.bool(forKey: BearyOnboardingViewController.tutorialSeenKey) else { return }
+        guard !UserDefaults.standard.bool(forKey: BearyOnboardingViewController.seenKey) else { return }
+        guard !SessionManager.shared.hasCachedSession else { return }
         guard presentedViewController == nil else { return }
         presentOnboarding(mode: .firstLaunch)
     }
