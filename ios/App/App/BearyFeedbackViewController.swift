@@ -10,7 +10,7 @@ import Darwin
 // 问题描述区：系统 UISegmentedControl（问题反馈 / 优化建议，选中段墨底 +
 // 反色字，既定样式，不自造分段控件）+ 编辑器正文同款 UITextView；图片或视频
 // （可选，最多 5 个）添加卡（手绘 icon_image）；设备信息卡 8 行；底部依次为
-// 墨底主钮「提交反馈」、secondaryOutline「在其他应用打开」（手绘 icon_share）、
+// 墨底主钮「提交反馈」、secondaryOutline「分享诊断日志」（手绘 icon_share）、
 // 「诊断」分组 + secondaryOutline「仅上传日志」、footnote。
 // 组件规矩（2026-10-28 Li 定，长期有效）：组件一律走 iOS 系统组件
 // （UIButton / UITextView / PHPicker / MFMailCompose / UIActivityViewController），
@@ -217,7 +217,7 @@ final class BearyFeedbackViewController: UIViewController, UITextViewDelegate, P
     private let attachLabelButton = UIButton(type: .custom)
     private let attachClearButton = UIButton(type: .system)
     private let submitButton = BearyButton.make(style: .primaryPill(.ink), title: "提交反馈")
-    private let shareButton = BearyButton.make(style: .secondaryOutline(.regular), title: "在其他应用打开")
+    private let shareButton = BearyButton.make(style: .secondaryOutline(.regular), title: "分享诊断日志")
     private let logOnlyButton = BearyButton.make(style: .secondaryOutline(.regular), title: "仅上传日志")
 
     private var attachments: [Attachment] = []
@@ -519,7 +519,7 @@ final class BearyFeedbackViewController: UIViewController, UITextViewDelegate, P
         footnote.font = UIFont.systemFont(ofSize: 13)
         footnote.textColor = BearyColors.gray
         footnote.numberOfLines = 0
-        footnote.text = "发送走邮件到 hi@teddyhn.com；未配邮箱时复制文字内容，附件不随复制发出；在其他应用打开走系统分享表；仅上传日志只发日志包。"
+        footnote.text = "发送走邮件到 hi@teddyhn.com；未配邮箱时复制文字内容，附件不随复制发出；分享诊断日志走系统分享表，只发日志包，不含描述与附件；仅上传日志只发日志包。"
 
         let views: [UIView] = [statusCard, descLabel, descCard, mediaLabel, attachCard, deviceLabel, deviceCard, submitButton, shareButton, diagLabel, logOnlyButton, footnote]
         for viewItem in views {
@@ -734,7 +734,7 @@ final class BearyFeedbackViewController: UIViewController, UITextViewDelegate, P
                 self.presentLogOnlyComposer()
             } else {
                 // 仅上传日志无文字可复制，不走复制 fallback：toast 明说两条出路。
-                BearyToast.show(in: self.view, message: "请先配置邮箱，或改用“在其他应用打开”", aboveFAB: false)
+                BearyToast.show(in: self.view, message: "请先配置邮箱，或改用“分享诊断日志”", aboveFAB: false)
                 BearyHaptics.rejectionWarning()
             }
         }
