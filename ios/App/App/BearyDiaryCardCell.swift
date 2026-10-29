@@ -1635,7 +1635,7 @@ class BearyDiaryCardCell: UITableViewCell {
         configureQuoteProfile(entry: entry)
         // 图片条 216 高、按宽高比定宽（原 stripW 口径；94 包槽位复用 + 合并后补重试）。
         renderImages(keys: entry.images ?? [], dims: entry.imgDims)
-        // 点赞 / 收藏 / 分享（已赞、已收藏为橙色；忙时整行互动禁用）。
+        // 点赞 / 收藏 / 分享（已赞为红色、已收藏为橙色；忙时整行互动禁用）。
         // 计数位宽度由显式约束定，不靠按钮固有宽：按钮固有宽不含标题边距，
         // 栈按固有宽给帧时标题框只剩边距差，数字会被裁成左半弧。
         // 0 赞隐藏数字位，只剩爱心；非 0 按实测字宽给足整段标题宽。
@@ -2058,9 +2058,9 @@ class BearyDiaryCardCell: UITableViewCell {
         // 2026-10-29 100 包反馈第 6 项：卡片脚三钮未点亮统一为同一灰
         // （此前爱心未赞为墨色 ink、收藏/分享为灰，三钮色不一致；旧 fixall-cell
         // 8-9 的“未赞爱心墨色”网页口径就此作废，图标与计数同灰）。
-        // 点亮态爱心与计数同为橙（BearyColors.orange = #ff9500）。
-        likeButton.tintColor = liked ? BearyColors.orange : BearyColors.gray
-        likeButton.setTitleColor(liked ? BearyColors.orange : BearyColors.gray, for: .normal)
+        // 点亮态爱心与计数同为红（BearyColors.red = #e5484d）。
+        likeButton.tintColor = liked ? BearyColors.red : BearyColors.gray
+        likeButton.setTitleColor(liked ? BearyColors.red : BearyColors.gray, for: .normal)
         likeButton.imageView?.transform = .identity
         refreshActionAccessibility()
     }
@@ -2085,8 +2085,8 @@ class BearyDiaryCardCell: UITableViewCell {
             likeButton.setTitle(titleText, for: .normal)
             likeButtonWidthConstraint?.constant = imageWidth + 6 + titleWidth
         }
-        likeButton.tintColor = liked ? BearyColors.orange : BearyColors.gray
-        likeButton.setTitleColor(liked ? BearyColors.orange : BearyColors.gray, for: .normal)
+        likeButton.tintColor = liked ? BearyColors.red : BearyColors.gray
+        likeButton.setTitleColor(liked ? BearyColors.red : BearyColors.gray, for: .normal)
         likeButton.imageView?.transform = .identity
         refreshActionAccessibility()
     }
@@ -2351,8 +2351,8 @@ class BearyDiaryCardCell: UITableViewCell {
         if cardMode == .profile {
             if cellLikedByMe {
                 likeButton.setImage(BearyFeedIconCache.image(named: "icon_heart_fill", pointSize: 22), for: .normal)
-                likeButton.tintColor = BearyColors.orange
-                likeButton.setTitleColor(BearyColors.orange, for: .normal)
+                likeButton.tintColor = BearyColors.red
+                likeButton.setTitleColor(BearyColors.red, for: .normal)
             }
             likeButton.imageView?.transform = .identity
             return
@@ -2375,7 +2375,7 @@ class BearyDiaryCardCell: UITableViewCell {
         self.feedLikeTapped()
     }
 
-    /// F8（首页模式）：点赞——Li 2026-10-27 定全量先行：抬起确认时立即填橙色、
+    /// F8（首页模式）：点赞——Li 2026-10-27 定全量先行：抬起确认时立即填红色、
     /// 计数 +1，不等服务端；回包后以服务端值为准对齐，成功补爆点（填充已先行，
     /// 不再重播填充淡入）；失败按原模型回滚 + 拒绝动效 + 通用提示。
     /// 取消点赞双向即时（2026-10-29 定版，覆盖 pre-unlike 只改视图旧口径）：
@@ -2417,7 +2417,7 @@ class BearyDiaryCardCell: UITableViewCell {
             }
         }
         if currentlyLiked == false {
-            // 点赞全量先行（Li 2026-10-27 定）：抬起确认时立即填橙色、计数 +1；
+            // 点赞全量先行（Li 2026-10-27 定）：抬起确认时立即填红色、计数 +1；
             // 模型同步改，updateLikeButton 按新模型渲染；回包成功对齐服务端值，
             // 失败按 originalCount / currentlyLiked 复原（见失败分支）。
             currentEntry?.likedByMe = true

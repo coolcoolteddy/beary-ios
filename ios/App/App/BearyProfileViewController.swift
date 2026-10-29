@@ -2864,7 +2864,7 @@ class BearyProfileViewController: UIViewController {
         // 忙碌重入由 likeBusyIds 挡；轻震已由 cell 按下时给，控制器不再重复给。
         let wantLiked = !(entry.likedByMe ?? false)
         if wantLiked {
-            // 点赞全量先行（Li 2026-10-27 定）：可见行立即填橙色、计数 +1；
+            // 点赞全量先行（Li 2026-10-27 定）：可见行立即填红色、计数 +1；
             // 只同步可见行，页签模型不动——回包成功后以服务端值为准对齐并通知，
             // 失败按原 entry 复原可见行（既有失败路径，原样沿用）。
             var optimistic = entry

@@ -1492,7 +1492,7 @@ extension BearyOnboardingViewController {
         if likeSelected {
             likeCount = 13
             button.setImage(BearyIconImages.image(named: "icon_heart_fill", pointSize: 22), for: .normal)
-            button.tintColor = BearyColors.orange
+            button.tintColor = BearyColors.red
             BearyIconMotion.playFillFade(on: button)
             BearyIconMotion.playLikeBurst(on: button)
         } else {
