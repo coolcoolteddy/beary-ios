@@ -487,6 +487,9 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, U
         if previousTraitCollection?.userInterfaceStyle != traitCollection.userInterfaceStyle {
             refreshMoodButtons()
             refreshWeatherButtons()
+            // 审计 16 项：深浅切换时心情 chip 的 emote 深浅变体须重取（浅色线条稿
+            // 不可在深色底上冒充），走 refreshSelectedChips 重算图标与换行。
+            refreshSelectedChips()
             refreshNotifyCheck()
             notifyCheckButton.layer.borderColor = BearyColors.line.cgColor
             draftPillButton.layer.borderColor = BearyColors.line.cgColor
@@ -2855,20 +2858,58 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, U
         DiagFile.mark("weather-diag refreshToolStrip weatherHidden=\(weatherScrollView.isHidden) weatherFrame=\(weatherScrollView.frame) stackFrame=\(toolStripStack.frame)")
     }
 
+    /// 审计 16 项：心情 chip 图标——官方 emote 静态 PNG 按 16pt 重绘。
+    /// UIButton.setImage 不缩放，原图 72pt 会撑爆 chip；重绘保留原色（不用
+    /// BearyIconImages 的 alwaysTemplate，线条稿深浅变体靠 _dark 资产本身）。
+    /// 深色资产缺失时 BearyEmoteImages 已按 C3 上报并返回 nil，此处不另找替代、
+    /// 不回退浅色版、不混 SF Symbol，chip 只剩值文本、无障碍仍读完整表述。
+    private func selectedMoodChipIcon(for key: String) -> UIImage? {
+        let dark = traitCollection.userInterfaceStyle == .dark
+        guard let base = BearyEmoteImages.image(for: key, dark: dark) else { return nil }
+        let size = CGSize(width: 16, height: 16)
+        let format = UIGraphicsImageRendererFormat()
+        format.scale = UIScreen.main.scale
+        return UIGraphicsImageRenderer(size: size, format: format).image { _ in
+            base.draw(in: CGRect(origin: .zero, size: size))
+        }
+    }
+
     /// 已选 Chip 行：只显示已选项（心情/天气/写给各一枚），无已选时整行塌掉；
     /// 间距随显隐切换（隐藏时置 0，否则隐藏行仍残留 8pt 空隙，见面板间隙修复同款）。
+    /// 审计 16 项：心情／天气去“心情 ·”“天气 ·”前缀，改官方图标＋值（心情走
+    /// emote 静态图、天气走 icon_wx_*，40 只深浅与 9 个天气资产已核齐全、无缺款）；
+    /// 写给改“写给 昵称”。图标只是视觉辅助：accessibilityLabel 一律保留完整表述
+    /// （“心情：开心”“天气：晴”“写给：昵称”），不只靠图标传达信息。
+    /// 图标计入按钮 intrinsicContentSize，P1-3 换行总宽自动含图标宽。
     private func refreshSelectedChips() {
         if let mood = selectedMood, let name = BearyText.moodNames[mood] {
             moodChipButton.isHidden = false
-            moodChipButton.setTitle("心情 · " + name, for: .normal)
+            moodChipButton.setTitle(name, for: .normal)
+            let icon = selectedMoodChipIcon(for: mood)
+            if icon == nil {
+                NSLog("[BearyComposer] selected mood chip icon missing key=%@", mood)
+            }
+            moodChipButton.setImage(icon, for: .normal)
+            moodChipButton.titleEdgeInsets = UIEdgeInsets(top: 0, left: icon == nil ? 0 : 5, bottom: 0, right: 0)
+            moodChipButton.accessibilityLabel = "心情：" + name
         } else {
             moodChipButton.isHidden = true
+            moodChipButton.setImage(nil, for: .normal)
         }
         if let weather = selectedWeather, let name = BearyText.weatherNames[weather] {
             weatherChipButton.isHidden = false
-            weatherChipButton.setTitle("天气 · " + name, for: .normal)
+            weatherChipButton.setTitle(name, for: .normal)
+            let icon = BearyIconImages.image(named: "icon_wx_\(weather)", pointSize: 16)
+            if icon == nil {
+                NSLog("[BearyComposer] selected weather chip icon missing key=%@", weather)
+            }
+            weatherChipButton.setImage(icon, for: .normal)
+            weatherChipButton.tintColor = BearyColors.ink
+            weatherChipButton.titleEdgeInsets = UIEdgeInsets(top: 0, left: icon == nil ? 0 : 5, bottom: 0, right: 0)
+            weatherChipButton.accessibilityLabel = "天气：" + name
         } else {
             weatherChipButton.isHidden = true
+            weatherChipButton.setImage(nil, for: .normal)
         }
         let recipientName: String?
         if let user = selectedRecipient {
@@ -2886,7 +2927,9 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, U
         }
         if let name = recipientName {
             recipientChipButton.isHidden = false
-            recipientChipButton.setTitle("@" + name, for: .normal)
+            // 审计 16 项：写给 chip 由“@昵称”改“写给 昵称”（纯文本，不另加图标）。
+            recipientChipButton.setTitle("写给 " + name, for: .normal)
+            recipientChipButton.accessibilityLabel = "写给：" + name
         } else {
             recipientChipButton.isHidden = true
         }
