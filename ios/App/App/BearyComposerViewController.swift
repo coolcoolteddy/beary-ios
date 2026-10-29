@@ -2198,6 +2198,41 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, U
         quotePanelEmptyLabel.isHidden = !entries.isEmpty
         quotePanelRetryButton.isHidden = !quotePanelFailed
         for entry in entries {
+            // 审计 P0-2：选择引用加卡片同款 viewer 门控——赞过/收藏 tab 里翻回私密的
+            // 他人日记不得出全文：只显占位行、不可选（作者本人或有效公开才出全文行）。
+            // 占位文案与审计 P3-27 统一口径“该日记已设为私密”。
+            let viewerId = SessionManager.shared.currentUser?.id
+            let quoteIsAuthor = entry.isMine == true || (entry.authorId != nil && viewerId != nil && entry.authorId == viewerId)
+            if !quoteIsAuthor && !BearyEphemeral.isEffectivelyPublic(entry) {
+                let lockedButton = UIButton(type: .custom)
+                lockedButton.translatesAutoresizingMaskIntoConstraints = false
+                lockedButton.isEnabled = false
+                let lockedLabel = UILabel()
+                lockedLabel.translatesAutoresizingMaskIntoConstraints = false
+                lockedLabel.font = UIFont.systemFont(ofSize: 15)
+                lockedLabel.textColor = BearyColors.gray
+                lockedLabel.text = "该日记已设为私密"
+                let lockedSeparator = UIView()
+                lockedSeparator.translatesAutoresizingMaskIntoConstraints = false
+                lockedSeparator.backgroundColor = BearyColors.line
+                lockedButton.addSubview(lockedLabel)
+                lockedButton.addSubview(lockedSeparator)
+                NSLayoutConstraint.activate([
+                    lockedLabel.topAnchor.constraint(equalTo: lockedButton.topAnchor, constant: 16),
+                    lockedLabel.leadingAnchor.constraint(equalTo: lockedButton.leadingAnchor, constant: 16),
+                    lockedLabel.trailingAnchor.constraint(equalTo: lockedButton.trailingAnchor, constant: -16),
+                    lockedSeparator.topAnchor.constraint(equalTo: lockedLabel.bottomAnchor, constant: 16),
+                    lockedSeparator.leadingAnchor.constraint(equalTo: lockedButton.leadingAnchor, constant: 16),
+                    lockedSeparator.trailingAnchor.constraint(equalTo: lockedButton.trailingAnchor, constant: -16),
+                    lockedSeparator.heightAnchor.constraint(equalToConstant: 2),
+                    lockedSeparator.bottomAnchor.constraint(equalTo: lockedButton.bottomAnchor),
+                ])
+                quotePanelRows.addArrangedSubview(lockedButton)
+                // 平行映射保持对齐（占位行无点按目标，绝不触发选择；入场动画同行）。
+                quotePanelRowEntries.append(entry)
+                quotePanelRowButtons.append(lockedButton)
+                continue
+            }
             let rowButton = UIButton(type: .custom)
             rowButton.translatesAutoresizingMaskIntoConstraints = false
             let authorName = entry.authorName ?? "用户"

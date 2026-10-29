@@ -2122,7 +2122,8 @@ class BearyDiaryCardCell: UITableViewCell {
 
     /// F7/F8（首页模式）：首页与详情互动门控统一为 isPublic == true 才可互动（详情同口径）。
     private func updateActionInteractivity() {
-        let publicOK = currentEntry?.isPublic == true
+        // 审计 P0-4：有效态门控（过期限时篇不放行点赞/收藏/分享）。
+        let publicOK = currentEntry.map(BearyEphemeral.isEffectivelyPublic) ?? false
         likeButton.isEnabled = publicOK && isLikeBusy == false
         bookmarkButton.isEnabled = publicOK && isBookmarkBusy == false
         likeButton.alpha = publicOK ? 1.0 : 0.4
@@ -2305,7 +2306,7 @@ class BearyDiaryCardCell: UITableViewCell {
             return
         }
         guard !isLikeBusy else { return }
-        guard currentEntry?.isPublic == true else { return }
+        guard currentEntry.map(BearyEphemeral.isEffectivelyPublic) ?? false else { return }
         guard SessionManager.shared.isLoggedIn else { return }
         guard let entryIdValue = cellEntryId, !entryIdValue.isEmpty else { return }
         if currentEntry?.likedByMe == true {
@@ -2365,7 +2366,7 @@ class BearyDiaryCardCell: UITableViewCell {
             if hadPressPreview { restorePressPreview() }
             return
         }
-        if currentEntry?.isPublic != true {
+        if !(currentEntry.map(BearyEphemeral.isEffectivelyPublic) ?? false) {
             if hadPressPreview { restorePressPreview() }
             return
         }
@@ -2455,7 +2456,7 @@ class BearyDiaryCardCell: UITableViewCell {
     /// 成功后以服务端值为准并经控制器全副本同步。
     private func feedBookmarkTapped() {
         guard let entryIdValue = cellEntryId, !entryIdValue.isEmpty else { return }
-        if currentEntry?.isPublic != true { return }
+        if !(currentEntry.map(BearyEphemeral.isEffectivelyPublic) ?? false) { return }
         if SessionManager.shared.isLoggedIn == false {
             onRequireLogin?()
             return
@@ -2500,7 +2501,7 @@ class BearyDiaryCardCell: UITableViewCell {
             return
         }
         // 分享用原生分享 sheet（控制器侧 present，payload 见 presentShareSheet）。
-        if currentEntry?.isPublic != true { return }
+        if !(currentEntry.map(BearyEphemeral.isEffectivelyPublic) ?? false) { return }
         if let entryValue = currentEntry {
             onShareRequested?(entryValue)
         }
@@ -2721,7 +2722,8 @@ class BearyDiaryCardCell: UITableViewCell {
     /// 禁用/置灰，否则非公开提示（见 emoteAddTapped）无从触发。
     private func updateEmoteInteractivity() {
         if cardMode == .profile {
-            let publicOK = currentEntry?.isPublic == true
+            // 审计 P0-4：有效态门控（过期限时篇不放行回应）。
+            let publicOK = currentEntry.map(BearyEphemeral.isEffectivelyPublic) ?? false
             for sub in emoteFlowView.subviews {
                 if let chip = sub as? BearyEmoteChipView {
                     chip.overlayButton.isEnabled = publicOK && !profileDisabled
@@ -2732,7 +2734,8 @@ class BearyDiaryCardCell: UITableViewCell {
             }
             return
         }
-        let publicOK = currentEntry?.isPublic == true
+        // 审计 P0-4：有效态门控（过期限时篇不放行回应）。
+        let publicOK = currentEntry.map(BearyEphemeral.isEffectivelyPublic) ?? false
         for sub in emoteFlowView.subviews {
             if let button = sub as? UIButton {
                 button.isEnabled = publicOK && isEmoteBusy == false
@@ -2758,13 +2761,13 @@ class BearyDiaryCardCell: UITableViewCell {
         if cardMode == .profile {
             // A1 纵深守卫：chip 非公开时本已禁用（点按无事件），此处再拦一道，
             // 确保私密日记的回应绝不经本路径转发（含作者本人）。
-            if currentEntry?.isPublic != true { return }
+            if !(currentEntry.map(BearyEphemeral.isEffectivelyPublic) ?? false) { return }
             let index = sender.tag
             guard index >= 0, index < chipKeys.count else { return }
             onEmoteTap?(chipKeys[index])
             return
         }
-        if currentEntry?.isPublic != true { return }
+        if !(currentEntry.map(BearyEphemeral.isEffectivelyPublic) ?? false) { return }
         if SessionManager.shared.isLoggedIn == false {
             onRequireLogin?()
             return
@@ -2781,14 +2784,14 @@ class BearyDiaryCardCell: UITableViewCell {
         if cardMode == .profile {
             // A1：非公开卡片点“+”不打开选择器，改走提示回调（控制器弹 toast）
             // 并返回，杜绝旧静默丢弃；公开卡片原样走 onEmoteAdd。
-            if currentEntry?.isPublic != true {
+            if !(currentEntry.map(BearyEphemeral.isEffectivelyPublic) ?? false) {
                 onEmoteAddNotPublic?()
                 return
             }
             onEmoteAdd?()
             return
         }
-        if currentEntry?.isPublic != true { return }
+        if !(currentEntry.map(BearyEphemeral.isEffectivelyPublic) ?? false) { return }
         if SessionManager.shared.isLoggedIn == false {
             onRequireLogin?()
             return
@@ -2824,7 +2827,7 @@ class BearyDiaryCardCell: UITableViewCell {
     private func chooseEmote(key: String) {
         if key.isEmpty || isEmoteBusy { return }
         guard let entryIdValue = cellEntryId, !entryIdValue.isEmpty else { return }
-        if currentEntry?.isPublic != true { return }
+        if !(currentEntry.map(BearyEphemeral.isEffectivelyPublic) ?? false) { return }
         if SessionManager.shared.isLoggedIn == false {
             onRequireLogin?()
             return
@@ -3029,7 +3032,7 @@ extension BearyDiaryCardCell: UIContextMenuInteractionDelegate {
         return UIContextMenuConfiguration(identifier: nil, previewProvider: nil) { [weak self] _ in
             guard let self = self else { return UIMenu(title: "", children: []) }
             var actions: [UIAction] = []
-            if entry.isPublic == true {
+            if BearyEphemeral.isEffectivelyPublic(entry) {
                 actions.append(UIAction(title: "分享", image: BearyIconImages.image(named: "icon_share", pointSize: 20)) { [weak self] _ in
                     self?.shareFromCardMenu()
                 })
@@ -3040,7 +3043,7 @@ extension BearyDiaryCardCell: UIContextMenuInteractionDelegate {
             // 不在此改动，行为保持原样。
             // 收藏标题取实时态：首页模式 currentEntry 由 cell 内收藏路径就地维护，
             // 个人主页模式 cellBookmarkedByMe 由 syncInteraction 维护。
-            if entry.isPublic == true || self.cardMode == .profile {
+            if BearyEphemeral.isEffectivelyPublic(entry) || self.cardMode == .profile {
                 let bookmarked = self.cardMode == .profile ? self.cellBookmarkedByMe : (self.currentEntry?.bookmarkedByMe ?? false)
                 // 2026-10-28 定版：菜单图标走手绘 icon_bookmark（无 bookmark.slash 手绘资产，取消态以标题区分，图标同款）。
                 actions.append(UIAction(title: bookmarked ? "取消收藏" : "收藏", image: BearyIconImages.image(named: "icon_bookmark", pointSize: 20)) { [weak self] _ in
@@ -3059,7 +3062,7 @@ extension BearyDiaryCardCell: UIContextMenuInteractionDelegate {
             }
             // iCity 举报：仅他人公开卡，菜单末尾；自己日记无举报项；已举报则置灰显“已举报”。
             // 切换钮放操作行、举报放菜单末尾，避免双入口双发。
-            if entry.isMine != true, entry.isPublic == true, let entryId = entry.id {
+            if entry.isMine != true, BearyEphemeral.isEffectivelyPublic(entry), let entryId = entry.id {
                 let reported = BearyReportedStore.isReported(entryId: entryId)
                 actions.append(UIAction(title: reported ? "已举报" : "举报", image: BearyIconImages.image(named: "icon_flag", pointSize: 20), attributes: reported ? [.disabled] : []) { [weak self] _ in
                     guard let self = self, let current = self.currentEntry else { return }

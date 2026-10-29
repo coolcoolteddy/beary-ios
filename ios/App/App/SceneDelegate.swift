@@ -1264,6 +1264,8 @@ final class BearyChromeViewController: UIViewController {
             setTopButtonVisible(loginButton, visible: true)
             setTopButtonVisible(giftButton, visible: false)
             setTopButtonVisible(bellButton, visible: false)
+            // 审计 P0-1：游客不承接任何账号的拉黑表（防上个账号的表漏到游客身份）。
+            BearyBlockedStore.clear()
             return
         }
         // G26：登录态未知（网络失败）时不按游客渲染，保持旧顶栏。
@@ -1276,8 +1278,12 @@ final class BearyChromeViewController: UIViewController {
         setTopButtonVisible(giftButton, visible: user != nil && referralEnabled)
         if user == nil {
             referralEnabled = false
+            // 审计 P0-1：退出后清拉黑缓存（防漏到下个账号；下次登录时 refresh 重拉）。
+            BearyBlockedStore.clear()
             return
         }
+        // 审计 P0-1：登录后拉全量拉黑表，供详情/主页入口同步比对（点按路径不发网络）。
+        BearyBlockedStore.refresh()
     }
 
     override func viewDidLayoutSubviews() {
@@ -2371,6 +2377,12 @@ final class BearyChromeViewController: UIViewController {
     /// /beary/profile”同口径）；未登录时 currentUser 为 nil，自查恒为假，不影响游客路径。
     private func presentUserProfile(userId: Int) {
         if isSelfUser(userId: userId, handle: nil) { routeToOwnProfile(); return }
+        // 审计 P0-21：拉黑用户的主页入口拦截（搜索用户行、作者行均走此漏斗；
+        // handle 路径无 id 可比对，见报告残留）。
+        if BearyBlockedStore.isBlocked(userId) {
+            showToast(message: "该用户已被你拉黑")
+            return
+        }
         let vc = BearyProfileViewController(userIdValue: userId, viewerUserIdValue: SessionManager.shared.currentUser?.id)
         presentUserProfileVC(vc)
     }
@@ -2461,6 +2473,13 @@ final class BearyChromeViewController: UIViewController {
                     detail.update(with: fetched)
                     return
                 }
+                // 审计 P0-1：后台补齐不得把拉黑作者全文顶回先出的页面——转占位。
+                if isBlockedAuthor(fetched) {
+                    var placeholderEntry = fetched
+                    placeholderEntry.placeholder = true
+                    detail.update(with: placeholderEntry)
+                    return
+                }
                 if fetched.isPublic == true, fetched.authorId != nil {
                     detail.update(with: fetched)
                     return
@@ -2517,6 +2536,13 @@ final class BearyChromeViewController: UIViewController {
             presentDetail(entry: fetched)
             return
         }
+        // 审计 P0-1：通知/深链/引用卡直达拉黑作者——只出占位，不出全文。
+        if isBlockedAuthor(fetched) {
+            var placeholderEntry = fetched
+            placeholderEntry.placeholder = true
+            presentDetail(entry: placeholderEntry)
+            return
+        }
         if fetched.isPublic == true, fetched.authorId != nil {
             presentDetail(entry: fetched)
             return
@@ -2540,9 +2566,22 @@ final class BearyChromeViewController: UIViewController {
     /// 日记详情页（2026-10-28 v5 mock 定版）：全屏 fadeRise 模态；回调接线：
     /// 关闭后各列表 guarded 定位回该卡；编辑／删除先关详情再走既有流程；
     /// 作者／引用点按先关详情再路由（防 modal 叠 modal）；可见性与互动变化同步各列表。
+    /// 审计 P0-1：拉黑作者判定（作者本人永不命中；游客不承接拉黑表）。
+    private func isBlockedAuthor(_ entry: Entry) -> Bool {
+        if SessionManager.shared.isGuestMode { return false }
+        guard let authorId = entry.authorId else { return false }
+        if let viewerId = SessionManager.shared.currentUser?.id, viewerId == authorId { return false }
+        return BearyBlockedStore.isBlocked(authorId)
+    }
+
     @discardableResult
     private func presentDetail(entry: Entry) -> BearyDetailViewController? {
         if topmostViewController() is BearyDetailViewController { return nil }
+        // 审计 P0-1：拉黑作者的卡片数据不得出全文——进详情前先转占位。
+        var entry = entry
+        if isBlockedAuthor(entry) {
+            entry.placeholder = true
+        }
         let detail = BearyDetailViewController(entry: entry, isGuest: SessionManager.shared.isGuestMode)
         detail.modalPresentationStyle = .fullScreen
         detail.transitioningDelegate = SceneDelegate.chrome?.fadeRiseTransitionDelegate

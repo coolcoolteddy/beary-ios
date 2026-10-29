@@ -1098,7 +1098,10 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         // 且公开条目不下发 is_public 字段（2026-10-26 curl 实测 /beary/api/search?q=的 返回
         // entries 均无 is_public）；旧的 isPublic == true 二次过滤把全部公开条目滤掉，
         // 导致公开组恒空。我的组保留 is_public 过滤（服务端对 mine 下发 is_public）。
-        let publicEntries = data.entries ?? []
+        // 审计 P0-3 核实：服务端搜索 SQL 已含 ephemeral_until > now 条件（worker.js
+        // 搜索段）与拉黑过滤，故后端无需补；App 侧再加一道有效态过滤作防御
+        // （时钟/缓存边缘下过期限时篇也不进公开组）。
+        let publicEntries = (data.entries ?? []).filter { BearyEphemeral.isEffectivelyPublic($0) }
         let users = data.users ?? []
         if mineEntries.isEmpty && publicEntries.isEmpty && users.isEmpty {
             showNoneState(query: query)

@@ -2860,6 +2860,7 @@ final class BearyBlockedUsersViewController: UIViewController, UITableViewDataSo
                 self.unblockingIds.remove(userId)
                 switch result {
                 case .success:
+                    BearyBlockedStore.removeBlocked(userId)
                     self.blockedIds.removeAll { $0 == userId }
                     self.emptyLabel.isHidden = !self.blockedIds.isEmpty
                     self.tableView.reloadData()

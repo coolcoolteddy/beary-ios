@@ -1423,6 +1423,50 @@ enum BearyReportedStore {
     }
 }
 
+/// 审计 P0-1/P0-21：拉黑 id 共享缓存（UserDefaults 持久化 + 内存集）。
+/// 服务端是拉黑真相源（列表/广场已由服务端过滤）；本缓存只用于详情/主页等
+/// 单点入口的同步比对（点按路径不发网络）。登录时 refresh 拉全量，拉黑/解除
+/// 成功时即时增删，退出/游客时 clear（防上个账号的表漏到下个身份）。
+enum BearyBlockedStore {
+    private static let key = "beary.blockedUserIds"
+    private static var cached: Set<Int>?
+
+    static func isBlocked(_ userId: Int) -> Bool {
+        if cached == nil {
+            let arr = UserDefaults.standard.array(forKey: key) as? [Int] ?? []
+            cached = Set(arr)
+        }
+        return cached?.contains(userId) ?? false
+    }
+
+    static func markBlocked(_ userId: Int) {
+        if cached == nil { cached = Set(UserDefaults.standard.array(forKey: key) as? [Int] ?? []) }
+        cached?.insert(userId)
+        UserDefaults.standard.set(Array(cached ?? []), forKey: key)
+    }
+
+    static func removeBlocked(_ userId: Int) {
+        if cached == nil { cached = Set(UserDefaults.standard.array(forKey: key) as? [Int] ?? []) }
+        cached?.remove(userId)
+        UserDefaults.standard.set(Array(cached ?? []), forKey: key)
+    }
+
+    static func clear() {
+        cached = []
+        UserDefaults.standard.removeObject(forKey: key)
+    }
+
+    static func refresh() {
+        BearyAPI.shared.fetchBlocks { result in
+            DispatchQueue.main.async {
+                guard case .success(let resp) = result, let ids = resp.blocked else { return }
+                cached = Set(ids)
+                UserDefaults.standard.set(ids, forKey: key)
+            }
+        }
+    }
+}
+
 extension Notification.Name {
     /// 举报成功后广播（object = entryId）：各列表页据此把该日记从举报人被动表面移除。
     static let bearyDidReportEntry = Notification.Name("bearyDidReportEntry")
@@ -1482,6 +1526,7 @@ enum BearyBlockFlow {
                 DispatchQueue.main.async {
                     switch result {
                     case .success:
+                        BearyBlockedStore.markBlocked(userId)
                         NotificationCenter.default.post(name: .bearyDidBlockUser, object: userId)
                         BearyToast.show(in: vc.view, message: "已拉黑", aboveFAB: false)
                         onDone?(true)
