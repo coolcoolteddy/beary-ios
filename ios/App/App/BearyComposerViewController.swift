@@ -4298,8 +4298,8 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, U
             // 不满足时恢复的篇仍在箱里，点开即是原有 onOpen 路径，不丢数据。
             box.onUndoCurrentDraft = { [weak self] draft in
                 guard let self = self else { return }
-                if self.currentDraftId == nil, let rid = draft.draftId, rid == self.clearedCurrentDraftId {
-                    self.currentDraftId = rid
+                if self.currentDraftId == nil, draft.draftId == self.clearedCurrentDraftId {
+                    self.currentDraftId = draft.draftId
                     self.clearedCurrentDraftId = nil
                 }
             }

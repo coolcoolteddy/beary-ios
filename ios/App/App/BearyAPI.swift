@@ -706,7 +706,7 @@ final class BearyAPI {
                 return
             }
             do {
-                completion(.success(try self.decoder.decode(MeResponse.self, from: data)))
+                completion(.success(try self.decoder.decode(MeResponse.self, from: data).user))
             } catch {
                 completion(.failure(.decoding(error)))
             }

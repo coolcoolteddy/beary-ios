@@ -2499,7 +2499,7 @@ final class BearyChromeViewController: UIViewController {
                     return
                 }
                 // 审计 P0-1：后台补齐不得把拉黑作者全文顶回先出的页面——转占位。
-                if isBlockedAuthor(fetched) {
+                if self.isBlockedAuthor(fetched) {
                     var placeholderEntry = fetched
                     placeholderEntry.placeholder = true
                     detail.update(with: placeholderEntry)
