@@ -144,6 +144,7 @@ final class BearyWishWallViewController: UIViewController {
     private let retryButton = BearyButton.retryPill()
     private var wishes: [BearyAPI.WishItem] = []
     private var rowViews: [Int: WishRowView] = [:]
+    private var voteGeneration: [Int: Int] = [:] // 2026-10-29：每条许愿投票代次，旧回包丢弃用
     private var shownWishIds: Set<Int> = []
     private var isLoading = false
     var onCreated: ((BearyAPI.WishItem) -> Void)?
@@ -329,10 +330,13 @@ final class BearyWishWallViewController: UIViewController {
         wishes[index] = next
         rowViews[wishId]?.configure(item: next, isAdmin: isAdmin)
         BearySoundPlayer.play(.wishDing)
+        // 2026-10-29 修：每条许愿投票代次——先发回包后到时直接丢弃，不得覆盖后一次的操作与失败回滚。
+        voteGeneration[wishId, default: 0] += 1
+        let gen = voteGeneration[wishId] ?? 0
         let sendVote = newVote ?? 0
         BearyAPI.shared.voteWish(id: wishId, vote: sendVote) { [weak self] result in
             DispatchQueue.main.async {
-                guard let self = self, let idx = self.indexOfWish(wishId) else { return }
+                guard let self = self, let idx = self.indexOfWish(wishId), self.voteGeneration[wishId] == gen else { return }
                 switch result {
                 case .success(let resp):
                     var confirmed = self.wishes[idx]
