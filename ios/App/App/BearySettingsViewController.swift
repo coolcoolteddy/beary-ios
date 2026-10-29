@@ -137,7 +137,9 @@ extension BearyAPI {
 
 // MARK: - 账户页文案与时间口径（与网页 account.html 同款）
 
-private enum BearyAccountText {
+/// 2026-10-29 第 7、11 项：本格式化 helper 改 internal，供独立子页
+/// BearySettingsSubpages.swift 复用（原 private 致子页编译失败）；纯格式化，无状态。
+enum BearyAccountText {
     /// 永久会员阈值：网页与服务端同款常量（plus_until >= 该值即永久）。
     static let permanentThreshold: Int = 4102444800000
 

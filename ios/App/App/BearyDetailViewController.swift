@@ -621,7 +621,11 @@ final class BearyDetailViewController: UIViewController {
             renderQuote()
         }
         if !isLikeBusy && !isBookmarkBusy && !isEmoteBusy {
-            if old.likedByMe != fetched.likedByMe || old.likeCount != fetched.likeCount || old.bookmarkedByMe != fetched.bookmarkedByMe || old.emotes?.map({ ($0.emote, $0.count, $0.mine) }) != fetched.emotes?.map({ ($0.emote, $0.count, $0.mine) }) {
+            // 元组数组无 Equatable，逐项比对（nil 与空均视作无回应，渲染同态，不多刷）。
+            let oldEmoteList = old.emotes ?? []
+            let newEmoteList = fetched.emotes ?? []
+            let emotesChanged = oldEmoteList.count != newEmoteList.count || zip(oldEmoteList, newEmoteList).contains { $0.emote != $1.emote || $0.count != $1.count || $0.mine != $1.mine }
+            if old.likedByMe != fetched.likedByMe || old.likeCount != fetched.likeCount || old.bookmarkedByMe != fetched.bookmarkedByMe || emotesChanged {
                 refreshActionRow()
                 renderEmotes()
             }
