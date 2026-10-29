@@ -2722,11 +2722,13 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, U
         refreshDraftPillWidth()
     }
 
-    /// 草稿 pill 显式宽度（点赞钮同款修法）：titleEdgeInsets.left=6 不进固有宽，
-    /// 工具行栈按固有宽给帧会把标题尾部裁掉（“草稿 · N”的数字最先遭殃）。宽度按
-    /// 实测字宽重算：左右 content 边距 + 图宽 + title 左边距 + 字宽；计数态标题
-    /// 是 attributed（数字段单独加粗），直接量 attributed 宽，不按单字号估算。
+    /// 草稿 pill 显式宽度（顶栏版）：旧工具栏下手算宽度曾把 pill 压成“...”
+    /// （只剩省略号、看似消失）；新位置取“按钮自测 fitting 宽”与
+    /// “手算全量宽（字宽 + 图标 + 全部边距）”两者的大值——无论哪种 UIKit 口径
+    /// 都足额给宽，不出省略号。“草稿”与“草稿 · N”两态都在计数变化与每次布局时重算。
+    /// 顶栏横向链里标题先截断（标题压缩优先级低于 pill 的 required），pill 永不被压。
     private func refreshDraftPillWidth() {
+        let fittingWidth = draftPillButton.sizeThatFits(CGSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)).width
         let titleWidth: CGFloat
         if let attributed = draftPillButton.attributedTitle(for: .normal) {
             titleWidth = ceil(attributed.size().width)
@@ -2735,7 +2737,8 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, U
             titleWidth = ceil((title as NSString).size(withAttributes: [NSAttributedString.Key.font: UIFont.systemFont(ofSize: 13)]).width)
         }
         let imageWidth = draftPillButton.image(for: .normal)?.size.width ?? 16
-        draftPillWidthConstraint?.constant = draftPillButton.contentEdgeInsets.left + imageWidth + draftPillButton.titleEdgeInsets.left + titleWidth + draftPillButton.titleEdgeInsets.right + draftPillButton.contentEdgeInsets.right
+        let manualWidth = draftPillButton.contentEdgeInsets.left + imageWidth + draftPillButton.titleEdgeInsets.left + titleWidth + draftPillButton.titleEdgeInsets.right + draftPillButton.contentEdgeInsets.right
+        draftPillWidthConstraint?.constant = ceil(max(fittingWidth, manualWidth))
     }
 
     /// C1：引用唯一入口（工具栏引用钮）开关 qp-mode 面板（C6：编辑模式也可改引用，不再早退）。
