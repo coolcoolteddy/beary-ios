@@ -1083,7 +1083,7 @@ final class BearyDetailViewController: UIViewController {
             ?? BearyFeedIconCache.image(named: "icon_heart", pointSize: 22)
         likeButton.setImage(heartImage, for: .normal)
         likeButton.setTitle("\(likeCount)", for: .normal)
-        likeButton.tintColor = liked ? BearyColors.red : BearyColors.ink
+        likeButton.tintColor = liked ? BearyColors.red : BearyColors.gray
         likeButton.setTitleColor(liked ? BearyColors.red : BearyColors.gray, for: .normal)
         likeButton.setTitleColor(liked ? BearyColors.red : BearyColors.gray, for: .highlighted)
 
