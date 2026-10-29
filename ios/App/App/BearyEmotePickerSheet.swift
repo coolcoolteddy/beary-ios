@@ -300,9 +300,12 @@ final class BearyEmoteSheetTransition: NSObject, UIViewControllerTransitioningDe
             return
         }
         UIView.animate(withDuration: 0.3, delay: 0, options: [.curveEaseIn], animations: {
-            sheet.transitionSetScrimAlpha(0)
             sheet.transitionSetSheetOffset(height)
         }, completion: { _ in transitionContext.completeTransition(true) })
+        // 第 30 项：关闭时遮罩 0.25s 单独淡出（与打开同口径；此前与面板下滑合写在 0.3s 块里）。
+        UIView.animate(withDuration: 0.25, delay: 0, options: [.curveEaseOut], animations: {
+            sheet.transitionSetScrimAlpha(0)
+        })
     }
 }
 

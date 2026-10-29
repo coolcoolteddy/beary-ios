@@ -1097,9 +1097,11 @@ final class BearyDraftBoxViewController: UIViewController {
             return
         }
         let duration = isPadLayout ? 0.25 : 0.32
-        UIView.animate(withDuration: duration, delay: 0, options: .curveEaseIn, animations: {
-            // 遮罩随 sheet 同步淡出（与出现时 0.25s 淡入对称，避免关闭时遮罩瞬消）。
+        // 第 30 项：遮罩 0.25s 单独淡出（与面板滑出解耦；面板仍走原时长 0.25/0.32）。
+        UIView.animate(withDuration: 0.25, delay: 0, options: .curveEaseOut, animations: {
             self.backdropButton.alpha = 0
+        })
+        UIView.animate(withDuration: duration, delay: 0, options: .curveEaseIn, animations: {
             if self.isPadLayout {
                 self.sheetView.alpha = 0
                 self.sheetView.transform = CGAffineTransform(translationX: 0, y: self.sheetView.bounds.height * 0.04)

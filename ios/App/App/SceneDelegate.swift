@@ -2105,8 +2105,11 @@ final class BearyChromeViewController: UIViewController {
         }
         let sheetHeight = sheet.bounds.height
         sheet.transform = CGAffineTransform(translationX: 0, y: sheetHeight)
+        // 第 30 项：遮罩 0.25s 单独淡入、面板 0.25s 单独上滑（此前合写在一块里）。
         UIView.animate(withDuration: 0.25, delay: 0, options: [.beginFromCurrentState], animations: {
             scrim.alpha = 1
+        })
+        UIView.animate(withDuration: 0.25, delay: 0, options: [.beginFromCurrentState], animations: {
             sheet.transform = .identity
         })
     }
@@ -2136,8 +2139,11 @@ final class BearyChromeViewController: UIViewController {
             return
         }
         let sheetHeight = sheet.bounds.height
+        // 第 30 项：遮罩 0.25s 单独淡出、面板 0.25s 单独下滑（此前合写在一块里）。
         UIView.animate(withDuration: 0.25, delay: 0, options: [.beginFromCurrentState], animations: {
             scrim.alpha = 0
+        })
+        UIView.animate(withDuration: 0.25, delay: 0, options: [.beginFromCurrentState], animations: {
             sheet.transform = CGAffineTransform(translationX: 0, y: sheetHeight)
         }) { _ in finish() }
     }

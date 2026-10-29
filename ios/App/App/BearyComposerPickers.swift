@@ -6,7 +6,9 @@ import UIKit
 // 呈现：自定义底 sheet（文件内自包含，不碰 SceneDelegate）：手机端 max-height 82vh 底 sheet、
 // 圆角 20/20/0/0、阴影 0 −12 32 rgba(0,0,0,.22)；宽 ≥821 时居中 440
 // 全圆角 20 + 边框 1 + 阴影 0 24 60 rgba(0,0,0,.30)；自定义抓手 40×4（不用系统抓手）。
-// 遮罩为通用 0.45 黑遮罩（网页 .modal .backdrop 口径），点遮罩关闭；键盘弹出时 sheet
+// 遮罩为通用 0.45 黑遮罩（网页 .modal .backdrop 口径），点遮罩关闭；第 30 项起遮罩与面板
+// 转场解耦（BearyRecipientSheetTransition）：面板上滑／下滑，遮罩只做 0.25s 透明度淡入／淡出，
+// 遮罩本身永不位移、永不瞬间消失；键盘弹出时 sheet
 // 底边抬到键盘上方（此前由 UISheet 承担的避让，改自定义 sheet 后在本文件内补上）。
 // 搜索框为图标 + “搜索昵称或 @用户名”；init/loading/none/fail 四态齐全；
 // 加载态为搜索图标位 18×18：闲时放大镜，搜索中换 beary-loading 并旋转
@@ -25,9 +27,13 @@ final class BearyRecipientPickerViewController: UIViewController, UITextFieldDel
     /// 旧面板内通知开关当前值；iCity 起开关行隐藏，本字段仅作初值占位保留。
     var notifyRecipient = true
 
+    /// 第 30 项：专属转场强持有（transitioningDelegate 弱引用）。
+    private let sheetTransition = BearyRecipientSheetTransition()
+
     override init(nibName: String?, bundle: Bundle?) {
         super.init(nibName: nibName, bundle: bundle)
         modalPresentationStyle = .overFullScreen
+        transitioningDelegate = sheetTransition
     }
 
     required init?(coder: NSCoder) {
@@ -854,6 +860,20 @@ final class BearyRecipientPickerViewController: UIViewController, UITextFieldDel
     /// 同一选人会话内多次搜索只播新 key 行；选人页每次新建实例，键集随实例生灭。
     private var animatedRowKeys: Set<String> = []
 
+    /// 第 30 项：过渡动画用——遮罩 alpha（只动透明度，永不位移）与面板位移（只动 transform）。
+    func transitionSetScrimAlpha(_ alpha: CGFloat) {
+        backdropButton.alpha = alpha
+    }
+
+    func transitionSetSheetOffset(_ offsetY: CGFloat) {
+        sheetView.transform = offsetY == 0 ? .identity : CGAffineTransform(translationX: 0, y: offsetY)
+    }
+
+    func transitionSheetHeight() -> CGFloat {
+        view.layoutIfNeeded()
+        return sheetView.bounds.height
+    }
+
     @objc private func didTapRow(_ sender: UIButton) {
         var picked: SearchUser?
         for index in 0..<rowButtons.count {
@@ -864,5 +884,74 @@ final class BearyRecipientPickerViewController: UIViewController, UITextFieldDel
         guard let user = picked else { return }
         onPick?(user, notifyRecipient)
         dismiss(animated: !UIAccessibility.isReduceMotionEnabled)
+    }
+}
+
+/// 第 30 项：@ 选人专属过渡——此前本页无 transitioningDelegate，系统默认把整个 view（含遮罩）
+/// 一起从底部滑入，遮罩顶缘的深浅差异线 visibly 从下方扫上来；关闭时遮罩同样随面板下滑。
+/// 改后与回应 Sheet 同口径解耦：面板上滑 0.35s／下滑 0.3s，遮罩只做透明度 0.25s 淡入／淡出，
+/// 遮罩本身永不位移、永不瞬间消失。面板本身的上滑、抓手、圆角一字不动。
+final class BearyRecipientSheetTransition: NSObject, UIViewControllerTransitioningDelegate, UIViewControllerAnimatedTransitioning {
+
+    private var presenting = true
+
+    func animationController(forPresented presented: UIViewController, presenting: UIViewController, source: UIViewController) -> UIViewControllerAnimatedTransitioning? {
+        self.presenting = true
+        return self
+    }
+
+    func animationController(forDismissed dismissed: UIViewController) -> UIViewControllerAnimatedTransitioning? {
+        self.presenting = false
+        return self
+    }
+
+    func transitionDuration(using transitionContext: UIViewControllerContextTransitioning?) -> TimeInterval {
+        if UIAccessibility.isReduceMotionEnabled { return 0 }
+        return presenting ? 0.35 : 0.3
+    }
+
+    func animateTransition(using transitionContext: UIViewControllerContextTransitioning) {
+        let key: UITransitionContextViewControllerKey = presenting ? .to : .from
+        guard let sheet = transitionContext.viewController(forKey: key) as? BearyRecipientPickerViewController else {
+            transitionContext.completeTransition(false)
+            return
+        }
+        if presenting {
+            guard let toView = transitionContext.view(forKey: .to) else {
+                transitionContext.completeTransition(false)
+                return
+            }
+            transitionContext.containerView.addSubview(toView)
+            toView.frame = transitionContext.containerView.bounds
+            let height = sheet.transitionSheetHeight()
+            sheet.transitionSetScrimAlpha(0)
+            sheet.transitionSetSheetOffset(height)
+            if UIAccessibility.isReduceMotionEnabled {
+                sheet.transitionSetScrimAlpha(1)
+                sheet.transitionSetSheetOffset(0)
+                transitionContext.completeTransition(true)
+                return
+            }
+            UIView.animate(withDuration: 0.35, delay: 0, options: [.curveEaseOut], animations: {
+                sheet.transitionSetSheetOffset(0)
+            }, completion: { _ in transitionContext.completeTransition(true) })
+            // 遮罩 0.25s 单独淡入（与面板滑入解耦，遮罩本身不位移）。
+            UIView.animate(withDuration: 0.25, delay: 0, options: [.curveEaseOut], animations: {
+                sheet.transitionSetScrimAlpha(1)
+            })
+            return
+        }
+        let height = sheet.transitionSheetHeight()
+        if UIAccessibility.isReduceMotionEnabled {
+            transitionContext.completeTransition(true)
+            return
+        }
+        UIView.animate(withDuration: 0.3, delay: 0, options: [.curveEaseIn], animations: {
+            sheet.transitionSetSheetOffset(height)
+        }, completion: { _ in transitionContext.completeTransition(true) })
+        // 遮罩 0.25s 单独淡出（与面板下滑解耦，遮罩本身不位移、不瞬间消失）。
+        UIView.animate(withDuration: 0.25, delay: 0, options: [.curveEaseOut], animations: {
+            sheet.transitionSetScrimAlpha(0)
+        })
     }
 }
