@@ -92,15 +92,17 @@ final class BearyDetailViewController: UIViewController {
     private let visibilityButton = BearyHit44Button(type: .custom)
     private let moreButton = BearyHit44Button(type: .custom)
     private let bodyLabel = UILabel()
-    /// 审计 P2-12：详情补标题行（卡片同款 16.5 粗体、单行截断，空标题不占位）。
+    /// 审计 P2-12：详情补标题行（卡片同款 16.5 粗体，空标题不占位）。
+    /// 审计 P1-1（推翻 P2-12 单行决定，仅详情标题这一处）：标题自然换行，
+    /// 不再单行截断；时间线日历 FLIP 例外不动。
     private let titleLabel: UILabel = {
         let lb = UILabel()
         lb.translatesAutoresizingMaskIntoConstraints = false
         lb.font = BearyDynamicType.cardTitleFont()
         lb.adjustsFontForContentSizeCategory = true
         lb.textColor = BearyColors.ink
-        lb.numberOfLines = 1
-        lb.lineBreakMode = .byTruncatingTail
+        lb.numberOfLines = 0
+        lb.lineBreakMode = .byCharWrapping
         lb.isHidden = true
         return lb
     }()
@@ -118,7 +120,10 @@ final class BearyDetailViewController: UIViewController {
     private let emoteFlowView = BearyEmoteFlowView()
     private var emoteFlowHeight: NSLayoutConstraint?
     private let writeResponseButton = UIButton(type: .custom)
-    private let placeholderLabel = UILabel()
+    /// 审计 P2-18（详情部分）：详情占位迁入已有 BearyStateView，不新建组件；
+    /// 无插图（iconName 为 nil 时图标圆整行隐藏），不强迫所有空态用相同插图。
+    /// 失败态与占位共用本视图布局，一并受益（P1-2），不另起一套。
+    private let placeholderStateView = BearyStateView()
 
     private let ephemeralLabel: UILabel = {
         let l = UILabel()
@@ -323,7 +328,7 @@ final class BearyDetailViewController: UIViewController {
         buildQuote()
         buildActionRow()
         buildResponseSection()
-        buildPlaceholder()
+        buildPlaceholderState()
     }
 
     private func buildAuthorRow() {
@@ -482,6 +487,8 @@ final class BearyDetailViewController: UIViewController {
 
     private func buildBody() {
         stackView.addArrangedSubview(titleLabel)
+        // 审计 P1-1：标题与正文间距钉死 16pt，不随 stackView.spacing 未来改动而漂移。
+        stackView.setCustomSpacing(16, after: titleLabel)
         bodyLabel.translatesAutoresizingMaskIntoConstraints = false
         bodyLabel.numberOfLines = 0
         bodyLabel.lineBreakMode = .byCharWrapping
@@ -608,19 +615,20 @@ final class BearyDetailViewController: UIViewController {
         stackView.addArrangedSubview(writeResponseButton)
     }
 
-    private func buildPlaceholder() {
-        placeholderLabel.translatesAutoresizingMaskIntoConstraints = false
-        placeholderLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 16))
-        placeholderLabel.adjustsFontForContentSizeCategory = true
-        placeholderLabel.textColor = BearyColors.gray
-        placeholderLabel.textAlignment = .center
-        placeholderLabel.text = "该日记已设为私密"
-        placeholderLabel.isHidden = true
+    private func buildPlaceholderState() {
+        placeholderStateView.translatesAutoresizingMaskIntoConstraints = false
+        placeholderStateView.isHidden = true
         // 占位不进 stack：整页居中只显一句（mock 私密占位屏同款）。
-        view.addSubview(placeholderLabel)
+        // 审计 P1-2：左右各留至少 24pt 边界、多行居中，锚在安全区内居中；
+        // BearyStateView 副文案本身多行居中（numberOfLines = 0）。
+        // 失败态与占位共用本视图布局，一并受益，不另起一套。
+        view.addSubview(placeholderStateView)
+        let safeArea = view.safeAreaLayoutGuide
         NSLayoutConstraint.activate([
-            placeholderLabel.centerXAnchor.constraint(equalTo: view.centerXAnchor),
-            placeholderLabel.centerYAnchor.constraint(equalTo: view.centerYAnchor),
+            placeholderStateView.centerXAnchor.constraint(equalTo: safeArea.centerXAnchor),
+            placeholderStateView.centerYAnchor.constraint(equalTo: safeArea.centerYAnchor),
+            placeholderStateView.leadingAnchor.constraint(greaterThanOrEqualTo: safeArea.leadingAnchor, constant: 24),
+            placeholderStateView.trailingAnchor.constraint(lessThanOrEqualTo: safeArea.trailingAnchor, constant: -24),
         ])
     }
 
@@ -628,21 +636,24 @@ final class BearyDetailViewController: UIViewController {
 
     private func showPlaceholder() {
         // 私密占位：仅一句文案，不带标题／封面／时间／作者名；内容栈整藏。
-        // 文案每次显式复位：失败态（showFetchFailed）改过同一 label 文案，复位防串味。
-        placeholderLabel.text = "该日记已设为私密"
+        // 文案每次显式配齐：失败态（showFetchFailed）改过同一视图文案，复位防串味。
+        // 副文案灰色多行居中（原 16pt 灰字 → 组件 12.5pt 灰色副文案，统一组件口径）；
+        // 无插图、无动作钮（关闭重进即重试的约定不变）。
+        placeholderStateView.configure(kind: .empty, title: nil, subtitle: "该日记已设为私密", iconName: nil, actionTitle: nil)
         stackView.isHidden = true
-        placeholderLabel.isHidden = false
+        placeholderStateView.isHidden = false
     }
 
     /// 2026-10-29 Li 定（P0-3 包括项，推翻第 17 项“弱网/失败先出页面仍可看”）：
     /// 后台补齐失败时清为无正文态——内容栈整藏，居中一句失败文案，不留卡片旧内容；
     /// 不用私密占位文案（失败不是私密）；关闭钮仍可用，关了重进即重试。
     /// 页内已因拉黑/举报转占位时不动（隐私占位优先于失败态）。
+    /// 与占位共用 BearyStateView 布局（P1-2 一并受益），无重试钮，不另起一套。
     func showFetchFailed() {
         if locallyHiddenByModeration { return }
         stackView.isHidden = true
-        placeholderLabel.text = "加载失败，请稍后再试"
-        placeholderLabel.isHidden = false
+        placeholderStateView.configure(kind: .error, title: nil, subtitle: "加载失败，请稍后再试", iconName: nil, actionTitle: nil)
+        placeholderStateView.isHidden = false
     }
 
     private func renderAll() {
@@ -728,7 +739,7 @@ final class BearyDetailViewController: UIViewController {
         entry = merged
         // 内容页本身被占位过时（本路径不会发生：卡片数据恒为内容态），先恢复内容栈。
         stackView.isHidden = false
-        placeholderLabel.isHidden = true
+        placeholderStateView.isHidden = true
         if old.authorName != merged.authorName || old.createdAt != merged.createdAt || old.authorAvatar != merged.authorAvatar {
             nameButton.setTitle(merged.authorName ?? "beary 用户", for: .normal)
             if let createdAt = merged.createdAt {
