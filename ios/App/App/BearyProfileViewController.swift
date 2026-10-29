@@ -255,8 +255,15 @@ class BearyProfileViewController: UIViewController {
     private var tabError = false
     private var headerLaidOutWidth: CGFloat = 0
     private var expandedEntryIds: Set<String> = []
-    private var likeBusyIds: Set<String> = []
-    private var bookmarkBusyIds: Set<String> = []
+    /// 快连点代次（2026-10-29 及时性口径）：按 entryId 计代次，每次点按 +1 并
+    /// 立即按本次点按态渲染；在途回包代次落后时直接丢弃；失败回滚到确认态。
+    /// 点赞从不先行改页签模型，故页签模型即确认态来源；收藏先行改页签模型，
+    /// 故另记 confirmedBookmarkedById（落定时取页签模型、成功时取服务端值）。
+    private var likeSeqById: [String: Int] = [:]
+    private var likeConfirmedSeqById: [String: Int] = [:]
+    private var bookmarkSeqById: [String: Int] = [:]
+    private var bookmarkConfirmedSeqById: [String: Int] = [:]
+    private var confirmedBookmarkedById: [String: Bool] = [:]
     private var emoteBusyIds: Set<String> = []
     private var pubBusyIds: Set<String> = []
     private var badgeWearBusy = false
@@ -2899,15 +2906,15 @@ class BearyProfileViewController: UIViewController {
     /// 重建会重设图片槽/引用卡并重启全部表情播放器）。返回可见 cell
     /// （供成功后直接补爆点/pop）；行不可见时返回 nil，模型已由
     /// updateEntryInAllTabs 改好，滑回显示时 configure 自然取新值。
-    /// interactionDisabled 未传时按三组 busy 集合现算（调用点须已先清
-    /// 本次 busy 标记，忙碌中调本方法时禁用态才正确）。
+    /// interactionDisabled 未传时只看回应在途——点赞/收藏在途不再禁用
+    /// 按钮，快连点每次都必须立即落地，防重入只靠代次守卫。
     @discardableResult
     private func syncVisibleCell(entry: Entry, interactionDisabled: Bool? = nil, animatedEmoteLayout: Bool = false) -> BearyDiaryCardCell? {
         guard let entryId = entry.id,
               let index = currentEntries.firstIndex(where: { $0.id == entryId }),
               let cell = tableView.cellForRow(at: IndexPath(row: index, section: 0)) as? BearyDiaryCardCell,
               cell.cellEntryId == entryId else { return nil }
-        let disabled = interactionDisabled ?? (likeBusyIds.contains(entryId) || bookmarkBusyIds.contains(entryId) || emoteBusyIds.contains(entryId))
+        let disabled = interactionDisabled ?? emoteBusyIds.contains(entryId)
         cell.syncInteraction(entry: entry, interactionDisabled: disabled, animatedEmoteLayout: animatedEmoteLayout)
         return cell
     }
@@ -2946,58 +2953,84 @@ class BearyProfileViewController: UIViewController {
             BearyToast.show(in: view, message: "公开后才能互动", aboveFAB: false)
             return
         }
-        guard !likeBusyIds.contains(entryId) else { return }
-        likeBusyIds.insert(entryId)
+        // 及时性口径：方向按可见行最新点按态算——cell 的 onLike 闭包捕获的是
+        // configure 时的旧 entry，快连点下第二次点按若用它算方向会算错。
+        let currentLiked: Bool
+        let currentCount: Int
+        if let cell = visibleCell(for: entryId) {
+            let state = cell.profileLikeState
+            currentLiked = state.liked
+            currentCount = state.count
+        } else if let tabEntry = currentEntries.first(where: { $0.id == entryId }) {
+            currentLiked = tabEntry.likedByMe ?? false
+            currentCount = tabEntry.likeCount ?? 0
+        } else {
+            currentLiked = entry.likedByMe ?? false
+            currentCount = entry.likeCount ?? 0
+        }
+        // 确认态来源：点赞从不先行改页签模型，页签模型即最后确认态。
+        let confirmedLiked: Bool
+        let confirmedCount: Int
+        if let tabEntry = currentEntries.first(where: { $0.id == entryId }) {
+            confirmedLiked = tabEntry.likedByMe ?? false
+            confirmedCount = tabEntry.likeCount ?? 0
+        } else {
+            confirmedLiked = entry.likedByMe ?? false
+            confirmedCount = entry.likeCount ?? 0
+        }
+        let wantLiked = !currentLiked
         // 跟手批：不再立即 reload——立即 reload 会换掉刚播按下预览的 cell，预览当场消失；
-        // 忙碌重入由 likeBusyIds 挡；轻震已由 cell 按下时给，控制器不再重复给。
-        let wantLiked = !(entry.likedByMe ?? false)
+        // 轻震已由 cell 按下时给，控制器不再重复给。
+        var optimistic = entry
+        optimistic.likedByMe = wantLiked
+        optimistic.likeCount = wantLiked ? currentCount + 1 : max(0, currentCount - 1)
+        // 方案一：先行同步显式不禁用，防重入只靠代次守卫。
+        let syncedCell = syncVisibleCell(entry: optimistic, interactionDisabled: false)
         if wantLiked {
-            // 点赞全量先行（Li 2026-10-27 定）：可见行立即填红色、计数 +1；
-            // 只同步可见行，页签模型不动——回包成功后以服务端值为准对齐并通知，
-            // 失败按原 entry 复原可见行（既有失败路径，原样沿用）。
-            var optimistic = entry
-            optimistic.likedByMe = true
-            optimistic.likeCount = (entry.likeCount ?? 0) + 1
-            // 方案一：先行同步显式不禁用，防重入只靠 likeBusyIds 守卫。
-            syncVisibleCell(entry: optimistic, interactionDisabled: false)
+            // 点赞全量先行（Li 2026-10-27 定）：可见行立即填亮红、计数 +1；
+            // 液体炸开与填色同起——点按确认时即播，不再等服务端回包；
+            // 只同步可见行，页签模型不动。
+            syncedCell?.playLikeBurst()
         } else {
             // 取消点赞双向即时（2026-10-29 定版）：可见行立即褪色、计数 -1；
             // 按下预览（applyCellPreUnlike）与新模型渲染一致，不闪；
-            // 失败按原 entry 复原可见行（既有失败路径，原样沿用）。
-            var optimistic = entry
-            optimistic.likedByMe = false
-            optimistic.likeCount = max(0, (entry.likeCount ?? 0) - 1)
-            syncVisibleCell(entry: optimistic, interactionDisabled: false)
+            // 上一轮炸开微粒还在飞时一并清掉。
+            syncedCell?.clearLikeBurst()
         }
+        let seq = (likeSeqById[entryId] ?? 0) + 1
+        likeSeqById[entryId] = seq
         BearyAPI.shared.toggleLike(id: entryId, liked: wantLiked) { [weak self] result in
             DispatchQueue.main.async {
                 guard let strongSelf = self else { return }
-                strongSelf.likeBusyIds.remove(entryId)
+                // 代次守卫：已有更新点按时，过期回包直接丢弃。
+                guard seq == strongSelf.likeSeqById[entryId] else { return }
+                strongSelf.likeConfirmedSeqById[entryId] = seq
                 switch result {
                 case .success(let resp):
-                    var updated = entry
+                    var updated = strongSelf.currentEntries.first(where: { $0.id == entryId }) ?? entry
                     updated.likedByMe = resp.liked ?? wantLiked
                     if let count = resp.count {
                         updated.likeCount = count
                     }
                     strongSelf.updateEntryInAllTabs(entry: updated)
                     strongSelf.notifyInteraction(entry: updated)
-                    // 卡顿批：就地同步后直接对同 cell 补液体爆点（取消点赞不炸，
-                    // 已滑走则 cell 为空，跳过无害）；不再 reload 换 cell。
-                    if wantLiked {
-                        strongSelf.syncVisibleCell(entry: updated)?.playLikeBurst()
-                    } else {
-                        strongSelf.syncVisibleCell(entry: updated)
-                    }
+                    // 卡顿批：就地同步（取消点赞不炸，已滑走则 cell 为空，跳过无害）；
+                    // 炸开已在点按时播过，不再重播；不再 reload 换 cell。
+                    strongSelf.syncVisibleCell(entry: updated)
                 case .failure(let err):
+                    // 失败回滚到最后确认态（页签模型从未先行改动，直接取它），
+                    // 按下预览与点赞先行态均由就地同步刷回；再走既有失败路径，
+                    // 并补拒绝动效（未登录走登录页，不另弹框）。
+                    var confirmed = strongSelf.currentEntries.first(where: { $0.id == entryId }) ?? entry
+                    confirmed.likedByMe = confirmedLiked
+                    confirmed.likeCount = confirmedCount
+                    let cell = strongSelf.syncVisibleCell(entry: confirmed)
                     if case .unauthorized = err {
                         strongSelf.onRequireLogin?()
                     } else {
+                        cell?.playLikeDenyShake()
                         strongSelf.presentSimpleAlert(message: "操作失败")
                     }
-                    // 失败复原：按下预览（预取消赞）与点赞先行态均由就地同步按原 entry
-                    // 刷回，不再整行重建；页签模型从未先行改动，无需复原。
-                    strongSelf.syncVisibleCell(entry: entry)
                 }
             }
         }
@@ -3130,26 +3163,46 @@ class BearyProfileViewController: UIViewController {
             BearyToast.show(in: view, message: "公开后才能互动", aboveFAB: false)
             return
         }
-        guard !bookmarkBusyIds.contains(entryId) else { return }
-        bookmarkBusyIds.insert(entryId)
+        // 及时性口径：方向按可见行最新点按态算——cell 的 onBookmark 闭包捕获
+        // 的是 configure 时的旧 entry，快连点下第二次点按若用它算方向会算错。
+        let currentBookmarked: Bool
+        if let cell = visibleCell(for: entryId) {
+            currentBookmarked = cell.profileBookmarkedState
+        } else if let tabEntry = currentEntries.first(where: { $0.id == entryId }) {
+            currentBookmarked = tabEntry.bookmarkedByMe ?? false
+        } else {
+            currentBookmarked = entry.bookmarkedByMe ?? false
+        }
+        // 确认态：落定时页签模型即确认态；有在途请求时沿用上次确认态
+        // （首次在途时回落到本次传入 entry——它就是首请求发出前的页签值）。
+        if bookmarkSeqById[entryId] == bookmarkConfirmedSeqById[entryId] {
+            if let tabEntry = currentEntries.first(where: { $0.id == entryId }) {
+                confirmedBookmarkedById[entryId] = tabEntry.bookmarkedByMe ?? false
+            }
+        }
+        let confirmedBookmarked = confirmedBookmarkedById[entryId] ?? (entry.bookmarkedByMe ?? false)
         // 跟手批：先行翻转 + 就地同步（图标切换不等服务端，Feed 同款口径）；
         // pop 直接补在同 cell 上；已滑走则 cell 为空，跳过无害。
-        // 失败回滚：把原始 entry 写回各页再就地同步，提示口径（未登录走登录页、其他弹“操作失败”）一字不动。
-        let wantBookmarked = !(entry.bookmarkedByMe ?? false)
+        let wantBookmarked = !currentBookmarked
         var optimistic = entry
         optimistic.bookmarkedByMe = wantBookmarked
         updateEntryInAllTabs(entry: optimistic)
-        // 方案一：先行同步显式不禁用，防重入只靠 bookmarkBusyIds 守卫。
+        // 方案一：先行同步显式不禁用，防重入只靠代次守卫。
         syncVisibleCell(entry: optimistic, interactionDisabled: false)?.playBookmarkPop()
         if wantBookmarked { BearySoundPlayer.play(.bookmarkTick) } else { BearySoundPlayer.play(.unlikeSoft) }
+        let seq = (bookmarkSeqById[entryId] ?? 0) + 1
+        bookmarkSeqById[entryId] = seq
         BearyAPI.shared.toggleBookmark(id: entryId) { [weak self] result in
             DispatchQueue.main.async {
                 guard let strongSelf = self else { return }
-                strongSelf.bookmarkBusyIds.remove(entryId)
+                // 代次守卫：已有更新点按时，过期回包直接丢弃。
+                guard seq == strongSelf.bookmarkSeqById[entryId] else { return }
+                strongSelf.bookmarkConfirmedSeqById[entryId] = seq
                 switch result {
                 case .success(let resp):
-                    var updated = entry
+                    var updated = strongSelf.currentEntries.first(where: { $0.id == entryId }) ?? entry
                     updated.bookmarkedByMe = resp.bookmarked ?? wantBookmarked
+                    strongSelf.confirmedBookmarkedById[entryId] = updated.bookmarkedByMe ?? false
                     strongSelf.updateEntryInAllTabs(entry: updated)
                     strongSelf.notifyInteraction(entry: updated)
                     // 收藏页签取消收藏时摘卡（与网页 toggleBookmark 同口径）。
@@ -3167,13 +3220,19 @@ class BearyProfileViewController: UIViewController {
                         strongSelf.syncVisibleCell(entry: updated)
                     }
                 case .failure(let err):
-                    strongSelf.updateEntryInAllTabs(entry: entry)
+                    // 失败回滚到最后确认态（页签模型先行时已改，需把确认态写回各页
+                    // 再就地同步）；提示口径（未登录走登录页、其他弹“操作失败”）一字不动，
+                    // 并补拒绝动效。
+                    var rollback = strongSelf.currentEntries.first(where: { $0.id == entryId }) ?? entry
+                    rollback.bookmarkedByMe = confirmedBookmarked
+                    strongSelf.updateEntryInAllTabs(entry: rollback)
+                    let cell = strongSelf.syncVisibleCell(entry: rollback)
                     if case .unauthorized = err {
                         strongSelf.onRequireLogin?()
                     } else {
+                        cell?.playBookmarkDenyShake()
                         strongSelf.presentSimpleAlert(message: "操作失败")
                     }
-                    strongSelf.syncVisibleCell(entry: entry)
                 }
             }
         }
@@ -3394,7 +3453,7 @@ extension BearyProfileViewController: UITableViewDataSource, UITableViewDelegate
         cellValue.configure(
             entry: entryValue,
             isExpanded: expandedEntryIds.contains(entryId),
-            interactionDisabled: likeBusyIds.contains(entryId) || bookmarkBusyIds.contains(entryId) || emoteBusyIds.contains(entryId)
+            interactionDisabled: emoteBusyIds.contains(entryId)
         )
         cellValue.onLike = { [weak self] in self?.handleCellLike(entry: entryValue) }
         cellValue.onBookmark = { [weak self] in self?.handleCellBookmark(entry: entryValue) }

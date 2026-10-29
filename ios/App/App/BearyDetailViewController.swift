@@ -51,8 +51,16 @@ final class BearyDetailViewController: UIViewController {
     private var entry: Entry
     private let isGuest: Bool
     private let isAuthor: Bool
-    private var isLikeBusy = false
-    private var isBookmarkBusy = false
+    /// 快连点代次（2026-10-29 及时性口径）：点按不再锁按钮丢点按，每次
+    /// 点按代次 +1 并立即按本次点按态渲染；在途回包代次落后于最新代次
+    /// 时直接丢弃，不得覆盖更新的点按态；失败回滚到最后确认态。
+    private var likeSeq = 0
+    private var likeConfirmedSeq = 0
+    private var bookmarkSeq = 0
+    private var bookmarkConfirmedSeq = 0
+    private var confirmedLiked = false
+    private var confirmedLikeCount = 0
+    private var confirmedBookmarked = false
     private var isEmoteBusy = false
     private var isVisibilityBusy = false
     /// 审计三轮第二批 9：限时到期单次定时器（只按最近 ephemeralUntil 排一次，
@@ -160,6 +168,10 @@ final class BearyDetailViewController: UIViewController {
     init(entry: Entry, isGuest: Bool) {
         self.entry = entry
         self.isGuest = isGuest
+        // 传入的 entry 来自服务端数据，即初始确认态。
+        self.confirmedLiked = entry.likedByMe ?? false
+        self.confirmedLikeCount = entry.likeCount ?? 0
+        self.confirmedBookmarked = entry.bookmarkedByMe ?? false
         let viewerId = SessionManager.shared.currentUser?.id
         self.isAuthor = entry.isMine == true || (entry.authorId != nil && viewerId != nil && entry.authorId == viewerId)
         super.init(nibName: nil, bundle: nil)
@@ -733,13 +745,20 @@ final class BearyDetailViewController: UIViewController {
         }
         // 按字段合并：先取服务端全量，再把在途字段写回本地值。
         var merged = fetched
-        if isLikeBusy {
+        // 及时性口径：代次未确认（有在途请求）时护乐观字段；在途请求全部
+        // 落定（代次已确认）时，合并后的服务端值即新确认态。
+        if likeSeq != likeConfirmedSeq {
             merged.likedByMe = old.likedByMe
             merged.likeCount = old.likeCount
+        } else {
+            confirmedLiked = merged.likedByMe ?? false
+            confirmedLikeCount = merged.likeCount ?? 0
         }
-        if isBookmarkBusy {
+        if bookmarkSeq != bookmarkConfirmedSeq {
             merged.bookmarkedByMe = old.bookmarkedByMe
             merged.bookmarkCount = old.bookmarkCount
+        } else {
+            confirmedBookmarked = merged.bookmarkedByMe ?? false
         }
         if isEmoteBusy {
             merged.emotes = old.emotes
@@ -1082,10 +1101,18 @@ final class BearyDetailViewController: UIViewController {
         let heartImage = BearyFeedIconCache.image(named: liked ? "icon_heart_fill" : "icon_heart", pointSize: 22)
             ?? BearyFeedIconCache.image(named: "icon_heart", pointSize: 22)
         likeButton.setImage(heartImage, for: .normal)
-        likeButton.setTitle("\(likeCount)", for: .normal)
-        likeButton.tintColor = liked ? BearyColors.red : BearyColors.gray
-        likeButton.setTitleColor(liked ? BearyColors.red : BearyColors.gray, for: .normal)
-        likeButton.setTitleColor(liked ? BearyColors.red : BearyColors.gray, for: .highlighted)
+        // 2026-10-29 Li 定：赞为 0 时只隐藏数字（图标保留且仍可点按）；
+        // 0 时标题置空并归零左 inset，否则空标题仍留 6pt 尾隙。
+        if likeCount <= 0 {
+            likeButton.setTitle(nil, for: .normal)
+            likeButton.titleEdgeInsets = .zero
+        } else {
+            likeButton.setTitle("\(likeCount)", for: .normal)
+            likeButton.titleEdgeInsets = UIEdgeInsets(top: 0, left: 6, bottom: 0, right: 0)
+        }
+        likeButton.tintColor = liked ? BearyColors.likeRed : BearyColors.gray
+        likeButton.setTitleColor(liked ? BearyColors.likeRed : BearyColors.gray, for: .normal)
+        likeButton.setTitleColor(liked ? BearyColors.likeRed : BearyColors.gray, for: .highlighted)
 
         var emoteTotal = 0
         for emote in entry.emotes ?? [] {
@@ -1501,42 +1528,52 @@ final class BearyDetailViewController: UIViewController {
             onRequireLogin?()
             return
         }
-        if isLikeBusy { return }
+        // 2026-10-29 及时性口径：快连点不再丢点按——每次点按都立即按本次
+        // 点按后的态渲染；在途请求只带代次，过期回包直接丢弃。
         let currentlyLiked = entry.likedByMe ?? false
         let originalCount = entry.likeCount ?? 0
-        // 先行反馈（卡片口径）：点赞即填红＋计数 +1，取消即褪色＋计数 −1；
-        // 成功回包对齐服务端值，失败回滚＋拒绝动效。
+        let targetLiked = !currentlyLiked
+        // 先行反馈（卡片口径）：点赞即填亮红＋计数 +1，取消即褪色＋计数 −1；
+        // 液体炸开与填色同起——点按确认时即播，不再等服务端回包。
         if !currentlyLiked {
             BearyHaptics.likeTap()
             BearySoundPlayer.play(.likePop)
         } else {
             BearySoundPlayer.play(.unlikeSoft)
         }
-        entry.likedByMe = !currentlyLiked
+        entry.likedByMe = targetLiked
         entry.likeCount = max(0, originalCount + (currentlyLiked ? -1 : 1))
         refreshActionRow()
-        isLikeBusy = true
-        BearyAPI.shared.toggleLike(id: entryId, liked: !currentlyLiked) { [weak self] result in
+        if targetLiked {
+            BearyIconMotion.playLikeBurst(on: likeButton)
+        } else {
+            BearyIconMotion.clearLikeBurst(on: likeButton)
+        }
+        likeSeq += 1
+        let reqSeq = likeSeq
+        BearyAPI.shared.toggleLike(id: entryId, liked: targetLiked) { [weak self] result in
             DispatchQueue.main.async {
                 guard let self = self else { return }
-                self.isLikeBusy = false
+                // 代次守卫：已有更新点按时，过期回包直接丢弃。
+                guard reqSeq == self.likeSeq else { return }
+                self.likeConfirmedSeq = reqSeq
                 BearyIconMotion.animateIconScale(on: self.likeButton, to: 1)
                 switch result {
                 case .success(let resp):
-                    let newLiked = resp.liked ?? !currentlyLiked
+                    let newLiked = resp.liked ?? targetLiked
                     self.entry.likedByMe = newLiked
                     if let count = resp.count {
                         self.entry.likeCount = count
                     }
+                    self.confirmedLiked = newLiked
+                    self.confirmedLikeCount = self.entry.likeCount ?? 0
                     self.refreshActionRow()
-                    if newLiked {
-                        // 服务端确认的那一刻：爱心回弹 + 液体爆点；填充与计数已先行，不再重播填充淡入。
-                        BearyIconMotion.playLikeBurst(on: self.likeButton)
-                    }
+                    // 炸开已在点按时播过，成功回包不再重播；取消点赞不炸。
                     self.onInteractionChanged?(entryId, self.entry.likeCount, newLiked, nil, nil)
                 case .failure(let err):
-                    self.entry.likedByMe = currentlyLiked
-                    self.entry.likeCount = originalCount
+                    // 失败回滚到最后服务端确认态（不是本次点按前的中间态）。
+                    self.entry.likedByMe = self.confirmedLiked
+                    self.entry.likeCount = self.confirmedLikeCount
                     self.refreshActionRow()
                     if case .unauthorized = err {
                         self.onRequireLogin?()
@@ -1566,26 +1603,31 @@ final class BearyDetailViewController: UIViewController {
             onRequireLogin?()
             return
         }
-        if isBookmarkBusy { return }
+        // 及时性口径：快连点每次都立即落地，防重入只靠代次守卫。
         let currentlyBookmarked = entry.bookmarkedByMe ?? false
         let flipped = !currentlyBookmarked
         entry.bookmarkedByMe = flipped
         refreshActionRow()
         BearyIconMotion.playBookmarkPop(on: bookmarkButton)
         if flipped { BearySoundPlayer.play(.bookmarkTick) } else { BearySoundPlayer.play(.unlikeSoft) }
-        isBookmarkBusy = true
+        bookmarkSeq += 1
+        let reqSeq = bookmarkSeq
         BearyAPI.shared.toggleBookmark(id: entryId) { [weak self] result in
             DispatchQueue.main.async {
                 guard let self = self else { return }
-                self.isBookmarkBusy = false
+                // 代次守卫：已有更新点按时，过期回包直接丢弃。
+                guard reqSeq == self.bookmarkSeq else { return }
+                self.bookmarkConfirmedSeq = reqSeq
                 switch result {
                 case .success(let resp):
                     let newBookmarked = resp.bookmarked ?? flipped
                     self.entry.bookmarkedByMe = newBookmarked
+                    self.confirmedBookmarked = newBookmarked
                     self.refreshActionRow()
                     self.onInteractionChanged?(entryId, nil, nil, newBookmarked, nil)
                 case .failure(let err):
-                    self.entry.bookmarkedByMe = currentlyBookmarked
+                    // 失败回滚到最后服务端确认态。
+                    self.entry.bookmarkedByMe = self.confirmedBookmarked
                     self.refreshActionRow()
                     if case .unauthorized = err {
                         self.onRequireLogin?()

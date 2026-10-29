@@ -5,8 +5,9 @@ import UIKit
 enum BearyIconMotion {
 
     /// 点赞成功爆点（Li 2026-10-27 新规格，替代描边画出）：爱心轻微放大再回弹，
-    /// 同时向外炸出 7 滴红色液体微粒（20–30pt 后淡出）。只在点赞成功（填充确认）
-    /// 的那一刻播；取消点赞不炸。点亮色为点赞红 BearyColors.red（#e5484d）。减动效不播。
+    /// 同时向外炸出 7 滴红色液体微粒（20–30pt 后淡出）。只在点赞（填色）的那一刻播，
+    /// 与填色同起（调用方在点按确认时与填色一起播，不再等服务端回包）；
+    /// 取消点赞不炸。点亮色为点赞红 BearyColors.likeRed（#ff3b30）。减动效不播。
     /// fixall-cell 6-12：清点赞爆点残留——按钮层上本轮/旧轮的微粒层
     /// （按 name 认领）与爆点缩放动画。cell 复用时调（prepareForReuse），
     /// 新一轮爆点开始前也先清，防止 0.55s 窗口内复用串位或多轮堆叠。
@@ -51,7 +52,7 @@ enum BearyIconMotion {
             dot.name = "bearyLikeBurstDrop"
             dot.frame = CGRect(x: center.x - size / 2, y: center.y - size / 2, width: size, height: size)
             dot.cornerRadius = size / 2
-            dot.backgroundColor = (i % 2 == 0 ? BearyColors.red : BearyColors.alpha(BearyColors.red, 0.6)).cgColor
+            dot.backgroundColor = (i % 2 == 0 ? BearyColors.likeRed : BearyColors.alpha(BearyColors.likeRed, 0.6)).cgColor
             button.layer.addSublayer(dot)
             let target = CGPoint(x: center.x + cos(rad) * distances[i], y: center.y + sin(rad) * distances[i])
             let group = CAAnimationGroup()
