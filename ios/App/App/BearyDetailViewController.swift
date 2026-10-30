@@ -368,6 +368,11 @@ final class BearyDetailViewController: UIViewController {
 
     override func viewDidLoad() {
         super.viewDidLoad()
+        // 详情闪退诊断（2026-10-30）：进页链路审计未找到可复现的强制解包陷阱，
+        // 故在进页关键点留诊断埋点（设置页诊断日志可见）：若真机崩在 present
+        // 之后、viewDidLoad 之前，日志里只有 present、无 viewDidLoad；若崩在
+        // 渲染之后，日志里有 rendered。埋点只写日志，不改 UI 与业务。
+        DiagFile.mark("detail.viewDidLoad id=\(entry.id ?? "?")")
         view.backgroundColor = BearyColors.bg
         buildLayout()
         if entry.placeholder == true {
@@ -375,6 +380,7 @@ final class BearyDetailViewController: UIViewController {
         } else {
             renderAll()
         }
+        DiagFile.mark("detail.rendered id=\(entry.id ?? "?")")
         // 审计 P2-20：详情页监听拉黑/举报——页内命中时转占位（不得继续出全文）。
         NotificationCenter.default.addObserver(self, selector: #selector(handleBlockedUserNotification(_:)), name: .bearyDidBlockUser, object: nil)
         NotificationCenter.default.addObserver(self, selector: #selector(handleReportedEntryNotification(_:)), name: .bearyDidReportEntry, object: nil)
@@ -510,11 +516,19 @@ final class BearyDetailViewController: UIViewController {
         columnWideCenterX = contentColumnView.centerXAnchor.constraint(equalTo: scrollView.frameLayoutGuide.centerXAnchor)
         columnWideWidth?.isActive = false
         columnWideCenterX?.isActive = false
+        // 详情闪退加固（2026-10-30 审计）：本段此前用 4 处强制解包激活约束；
+        // 约束确在上一行刚赋值、正常路径不可能为空，但进页链路是全入口共用、
+        // 一旦某一路异常即全崩，故改本地常量激活、彻底去掉强制解包，行为不变。
+        let narrowLeading = columnNarrowLeading
+        let narrowTrailing = columnNarrowTrailing
         // 批 B：头像顶 14、右列顶 22（有 @ 行时 23，见 updateRightStackSpacing）；
         // 右列右缩进：他人 0、本人 −36（让出小地球 28 + 间隙 8；以内容列为基准，
         // 等价于首页以整屏为基准的 −52，屏上几何一致）。
-        rightStackTopConstraint = rightStack.topAnchor.constraint(equalTo: contentColumnView.topAnchor, constant: 22)
-        rightStackTrailingConstraint = rightStack.trailingAnchor.constraint(equalTo: contentColumnView.trailingAnchor, constant: 0)
+        let rightTop = rightStack.topAnchor.constraint(equalTo: contentColumnView.topAnchor, constant: 22)
+        let rightTrailing = rightStack.trailingAnchor.constraint(equalTo: contentColumnView.trailingAnchor, constant: 0)
+        rightStackTopConstraint = rightTop
+        rightStackTrailingConstraint = rightTrailing
+        guard let narrowLeading = narrowLeading, let narrowTrailing = narrowTrailing else { return }
         NSLayoutConstraint.activate([
             closeButton.leadingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.leadingAnchor, constant: 16),
             closeButton.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
@@ -525,11 +539,11 @@ final class BearyDetailViewController: UIViewController {
             scrollView.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor),
             contentColumnView.topAnchor.constraint(equalTo: scrollView.contentLayoutGuide.topAnchor),
             contentColumnView.bottomAnchor.constraint(equalTo: scrollView.contentLayoutGuide.bottomAnchor),
-            columnNarrowLeading!,
-            columnNarrowTrailing!,
-            rightStackTopConstraint!,
+            narrowLeading,
+            narrowTrailing,
+            rightTop,
             rightStack.leadingAnchor.constraint(equalTo: avatarButton.trailingAnchor, constant: 12),
-            rightStackTrailingConstraint!,
+            rightTrailing,
             separatorView.topAnchor.constraint(equalTo: rightStack.bottomAnchor, constant: 12),
             separatorView.leadingAnchor.constraint(equalTo: contentColumnView.leadingAnchor),
             separatorView.trailingAnchor.constraint(equalTo: contentColumnView.trailingAnchor),
@@ -1222,6 +1236,10 @@ final class BearyDetailViewController: UIViewController {
         imagesScrollView.isHidden = false
         imageHeightConstraint?.constant = 216
         for (imageIndex, imageKey) in keys.enumerated() {
+            // 详情闪退加固：槽位池、重试钮池、宽约束池须同下标，任一池短了都跳过该图、
+            // 不下标越界（正常路径三池同为 9，守卫只防池化异常，不改渲染）。
+            guard imageIndex < imageSlots.count, imageIndex < imageSlotRetryButtons.count,
+                  imageIndex < imageSlotWidthConstraints.count else { continue }
             let slot = imageSlots[imageIndex]
             slot.tag = imageIndex
             let strip = stripWidth(forKey: imageKey, dims: entry.imgDims, height: 216)
