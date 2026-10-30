@@ -770,7 +770,8 @@ final class BearyTimelineCell: UITableViewCell {
         st.isHidden = true
         return st
     }()
-    /// 限时卡虚线边框（1.5pt dashed、line 色；分割线样式下内容区无圆角，路径圆角跟 0）。
+    /// 限时卡虚线边框（首页同款：1.5pt dashed、line 色、圆角 16、内缩 8/6；
+    /// 分割线样式只改卡片本体——卡片无圆角不等于限时语义框跟 0，框自带圆角 16）。
     private let ephemeralBorderLayer: CAShapeLayer = {
         let layer = CAShapeLayer()
         layer.fillColor = UIColor.clear.cgColor
@@ -1172,10 +1173,13 @@ final class BearyTimelineCell: UITableViewCell {
         if let moodRow = metaMoodRow, moodRow.isHidden != narrow {
             moodRow.isHidden = narrow
         }
-        // 限时虚线边框：分割线样式下内容区已无圆角，虚线路径圆角跟 0。
+        // 限时虚线边框：首页同款（BearyDiaryCardCell 布局口径：宿主矩形内缩
+        // dx 8 / dy 6、圆角 16；此处宿主是时间线内容列 cardView，框须裹住
+        // 内容列、不得越过左侧时间线竖线/圆点区，故内缩落在 cardView 内，
+        // 不改卡片本体布局与分割线）。
         if !ephemeralBorderLayer.isHidden {
             ephemeralBorderLayer.frame = cardView.bounds
-            ephemeralBorderLayer.path = UIBezierPath(roundedRect: cardView.bounds, cornerRadius: 0).cgPath
+            ephemeralBorderLayer.path = UIBezierPath(roundedRect: cardView.bounds.insetBy(dx: 8, dy: 6), cornerRadius: 16).cgPath
         }
     }
 
@@ -2600,6 +2604,19 @@ class BearyTimelineViewController: UIViewController {
     /// 顶边随表回弹裁剪；刷新中不跟随。
     private func updateCustomPullIndicator() {
         if isCustomPullRefreshing {
+            return
+        }
+        // 双图标互斥（一向）：首屏/程序加载态（timelineState == .loading）由
+        // 背景加载 spinner 独占指示，下拉跟随在此态一律不画——此前跟随无此
+        // 守卫（触发侧 scrollViewDidEndDragging 有 .loading 守卫，跟随侧没有），
+        // 空表加载中下拉会同时出现背景 spinner（20pt，顶 +40）与下拉图标
+        // （32pt），即“有时候两个刷新图标”。这是状态级禁用（跟随直接返回，
+        // 不计算指示高、不画图标），不是把图标移出可视区假装藏掉。
+        if timelineState == .loading {
+            pullEngageTranslation = nil
+            pullView.frame = CGRect(x: 0, y: -116, width: tableView.bounds.width, height: 116)
+            refreshIconView.setPullProgress(0)
+            refreshIconView.alpha = 0
             return
         }
         if !tableView.isDragging {
@@ -4710,9 +4727,20 @@ class BearyTimelineViewController: UIViewController {
         let isLoginEmpty = (timelineState == .failed && timelineUnauthorized && timelineEntries.isEmpty)
         var newBackgroundKind = "none"
         if timelineState == .loading && timelineEntries.isEmpty && !hasRows {
-            // M2：首屏加载态（此前 backgroundView 置 nil，只有下拉才有 spinner）。
-            tableView.backgroundView = timelineLoadingView()
-            newBackgroundKind = "loading"
+            // 双图标互斥（另一向）：自定义下拉刷新进行中由 pullView 图标独占
+            // 指示，此时即使另有重载把表行清掉、首屏加载分支成立，背景加载
+            // spinner 也不得再挂——否则刷新中同时出现下拉图标与背景 spinner
+            // （空表下拉刷新必复现：下拉进入后 loadTimelineFirstPage 置
+            // .loading 即走本分支）。这是挂载级禁用（backgroundView 置 nil），
+            // 不是把背景 spinner 移出可视区。
+            if isCustomPullRefreshing {
+                tableView.backgroundView = nil
+                newBackgroundKind = "none"
+            } else {
+                // M2：首屏加载态（此前 backgroundView 置 nil，只有下拉才有 spinner）。
+                tableView.backgroundView = timelineLoadingView()
+                newBackgroundKind = "loading"
+            }
         } else if timelineState == .failed && timelineEntries.isEmpty && !hasRows {
             if isLoginEmpty {
                 tableView.backgroundView = emptyView(title: "先登录", subtitle: "时间线只放你自己的日记，登录后就能看", actionTitle: "去登录", action: { [weak self] in
