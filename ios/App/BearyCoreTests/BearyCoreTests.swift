@@ -281,5 +281,121 @@ final class BearyStarMapTests: XCTestCase {
             many.append(try entry("{\"id\":\"b_many\(i)\",\"content\":\"第\(i)篇。\",\"is_public\":true,\"created_at\":\(ms(year: 2026, month: 11, day: 5))}"))
         }
         XCTAssertEqual(BearyStarMap.defaultSlice(for: many), .month(year: 2026, month: 11))
+// ===== 与过去的自己对话：日期 / 串状态 / 可见性 / 存储（纯逻辑；UI 在 ProfileVC）=====
+final class BearyPastSelfTests: XCTestCase {
+    private var calendar: Calendar {
+        var cal = Calendar(identifier: .gregorian)
+        cal.timeZone = TimeZone(secondsFromGMT: 0)!
+        return cal
+    }
+
+    private func ms(year: Int, month: Int, day: Int) -> Int {
+        let date = calendar.date(from: DateComponents(year: year, month: month, day: day, hour: 12))!
+        return Int(date.timeIntervalSince1970 * 1000)
+    }
+
+    private func message(id: String, chain: String, createdMs: Int, deliverOn: String, revokedMs: Int? = nil) -> PastSelfMessage {
+        PastSelfMessage(id: id, originEntryId: chain, chainId: chain, authorId: 1, body: "留话 \(id)",
+                        createdAtMs: createdMs, deliverOn: deliverOn, revokedAtMs: revokedMs,
+                        replyToMessageId: nil, localOnly: false)
+    }
+
+    func testNextYearNormalAndLeapDay() {
+        XCTAssertEqual(PastSelfLogic.nextYearDateString(fromMs: ms(year: 2025, month: 10, day: 30), calendar: calendar), "2026-10-30")
+        // 2 月 29 日不跳 3 月 1 日、不丢推送，退到 2 月 28 日。
+        XCTAssertEqual(PastSelfLogic.nextYearDateString(fromMs: ms(year: 2024, month: 2, day: 29), calendar: calendar), "2025-02-28")
+    }
+
+    func testThreadStateTransitions() {
+        let first = message(id: "m1", chain: "b_1", createdMs: ms(year: 2025, month: 10, day: 30), deliverOn: "2026-10-30")
+        // 未到送达日：等待态（那年今日卡内「已留话 · 明年见」，不进送达卡）。
+        if case .waiting(let waiting) = PastSelfLogic.threadState([first], chainId: "b_1", today: "2026-10-29") {
+            XCTAssertEqual(waiting.id, "m1")
+        } else {
+            XCTFail("expected waiting before deliver day")
+        }
+        // 送达日当天及之后：送达态一直保留，直到再回一句（不只推一天）。
+        if case .due(_, let latest) = PastSelfLogic.threadState([first], chainId: "b_1", today: "2026-11-05") {
+            XCTAssertEqual(latest.id, "m1")
+        } else {
+            XCTFail("expected due after deliver day")
+        }
+        // 再回一句后：最新行等明年，此前有已送达行 → 已回态（不再出「再回一句」）。
+        let second = message(id: "m2", chain: "b_1", createdMs: ms(year: 2026, month: 10, day: 30), deliverOn: "2027-10-30")
+        if case .answered(let waiting, let chain) = PastSelfLogic.threadState([first, second], chainId: "b_1", today: "2026-11-05") {
+            XCTAssertEqual(waiting.id, "m2")
+            XCTAssertEqual(chain.count, 2)
+        } else {
+            XCTFail("expected answered after reply")
+        }
+        // 撤回行不计入链。
+        let revoked = message(id: "m3", chain: "b_1", createdMs: ms(year: 2026, month: 10, day: 31), deliverOn: "2027-10-31", revokedMs: 1)
+        XCTAssertEqual(PastSelfLogic.liveChainMessages([first, second, revoked], chainId: "b_1").map { $0.id }, ["m1", "m2"])
+    }
+
+    func testVisibilityFailClosed() throws {
+        // 语料未到齐不猜：返回 nil，调用方不渲染。
+        XCTAssertNil(PastSelfVisibility.viewerVisibility(origin: nil, viewerIsAuthor: true, corpusComplete: false))
+        // 到齐仍无原篇 = 已删（作者与他人都只见占位，内容不渲染）。
+        XCTAssertEqual(PastSelfVisibility.viewerVisibility(origin: nil, viewerIsAuthor: true, corpusComplete: true), .deleted)
+        // 他人永远只见占位，即使原篇公开（对话只推本人）。
+        var publicEntry = try bearyDecoder().decode(Entry.self, from: Data("{\"id\":\"b_1\",\"is_public\":true}".utf8))
+        XCTAssertEqual(PastSelfVisibility.viewerVisibility(origin: publicEntry, viewerIsAuthor: false, corpusComplete: true), .authorOnly)
+        XCTAssertEqual(PastSelfVisibility.viewerVisibility(origin: publicEntry, viewerIsAuthor: true, corpusComplete: true), .full)
+        // 作者看自己的私密原篇：全文 + 私密提示。
+        publicEntry.isPublic = false
+        XCTAssertEqual(PastSelfVisibility.viewerVisibility(origin: publicEntry, viewerIsAuthor: true, corpusComplete: true), .privateNote)
+        // iCity 私密占位同样按私密处理。
+        publicEntry.placeholder = true
+        XCTAssertEqual(PastSelfVisibility.viewerVisibility(origin: publicEntry, viewerIsAuthor: true, corpusComplete: true), .privateNote)
+    }
+
+    func testStoreDuplicateWaitingAndRevoke() throws {
+        let suite = UserDefaults(suiteName: "beary.pastself.tests")!
+        suite.removePersistentDomain(forName: "beary.pastself.tests")
+        let store = PastSelfStore(userId: 99, defaults: suite)
+        let created = ms(year: 2025, month: 10, day: 30)
+        let first = store.add(originEntryId: "b_9", body: "第一句", createdAtMs: created, calendar: calendar)
+        XCTAssertNotNil(first)
+        XCTAssertEqual(first?.deliverOn, "2026-10-30")
+        // 同一链已有等待中的留话时，第二句被拒（防同一天堆两条同日送达）。
+        XCTAssertNil(store.add(originEntryId: "b_9", body: "第二句", createdAtMs: created, calendar: calendar))
+        // 撤回等待中的最新行成功；已送达行不可撤回。
+        XCTAssertTrue(store.revoke(messageId: first!.id, nowMs: created, today: "2026-01-01"))
+        XCTAssertFalse(store.revoke(messageId: first.id, nowMs: created, today: "2026-01-01"))
+        let delivered = store.add(originEntryId: "b_8", body: "旧句", createdAtMs: created, calendar: calendar)!
+        XCTAssertFalse(store.revoke(messageId: delivered.id, nowMs: created, today: "2026-10-30"))
+        // 按用户隔离：另一用户看不到本用户的留话。
+        XCTAssertTrue(PastSelfStore(userId: 100, defaults: suite).loadAll().isEmpty)
+        suite.removePersistentDomain(forName: "beary.pastself.tests")
+    }
+
+    func testMergePreservesLocalRevoke() throws {
+        let suite = UserDefaults(suiteName: "beary.pastself.tests")!
+        suite.removePersistentDomain(forName: "beary.pastself.tests")
+        let store = PastSelfStore(userId: 98, defaults: suite)
+        let created = ms(year: 2025, month: 10, day: 30)
+        let local = store.add(originEntryId: "b_7", body: "待同步句", createdAtMs: created, calendar: calendar)!
+        XCTAssertTrue(store.revoke(messageId: local.id, nowMs: created, today: "2026-01-01"))
+        // 服务端回包仍是未撤回旧态时，本地撤回标记不被冲掉。
+        var serverRow = local
+        serverRow.revokedAtMs = nil
+        serverRow.localOnly = false
+        store.mergeServerRows([serverRow])
+        XCTAssertEqual(store.loadAll().first?.revokedAtMs, created)
+        suite.removePersistentDomain(forName: "beary.pastself.tests")
+    }
+
+    func testMessageDecoding() throws {
+        let json = """
+        {"id":"ps_1","origin_entry_id":"b_1","chain_id":"b_1","author_id":1,"body":"少熬一点夜",
+        "created_at":1761780000000,"deliver_on":"2026-10-30","revoked_at":null,"reply_to_message_id":null}
+        """
+        let decoded = try bearyDecoder().decode(PastSelfMessage.self, from: Data(json.utf8))
+        XCTAssertEqual(decoded.originEntryId, "b_1")
+        XCTAssertEqual(decoded.body, "少熬一点夜")
+        XCTAssertEqual(decoded.createdAtMs, 1761780000000)
+        XCTAssertEqual(decoded.deliverOn, "2026-10-30")
+        XCTAssertFalse(decoded.localOnly)
     }
 }

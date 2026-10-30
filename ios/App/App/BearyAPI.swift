@@ -185,6 +185,20 @@ struct BlocksResponse: Decodable {
     }
 }
 
+/// 与过去的自己对话响应：列表 / 创建 / 撤回（模型见 BearyPastSelf.swift）。
+struct PastSelfListResponse: Decodable {
+    var messages: [PastSelfMessage]?
+}
+
+struct PastSelfCreateResponse: Decodable {
+    var ok: Bool?
+    var message: PastSelfMessage?
+}
+
+struct PastSelfOkResponse: Decodable {
+    var ok: Bool?
+}
+
 /// iCity 回收站恢复响应：服务端返回恢复后的实际可见性（published 0/1 或 is_public 二选一，
 /// 均缺失时调用方按“已恢复”通用文案 + 时间线重拉为准，不猜原态）。
 struct RestoreResponse: Decodable {
@@ -919,6 +933,29 @@ final class BearyAPI {
     /// 我的拉黑列表：GET /beary/api/blocks → {blocked: [ids]}。
     func fetchBlocks(completion: @escaping (Result<BlocksResponse, APIError>) -> Void) {
         request("/beary/api/blocks", completion: completion)
+    }
+
+    // MARK: - 与过去的自己对话（后端契约；后端未上线时调用方静默走本地存储）
+
+    /// 列表：GET /beary/api/past-self/messages → {messages: [...]}。
+    /// 服务端约束（后端施工时必做）：仅作者本人可读；绝不进广场、不发通知；
+    /// 原篇删除/私密不改行本身，可见性由客户端 viewerVisibility 每渲染重算。
+    func fetchPastSelfMessages(completion: @escaping (Result<PastSelfListResponse, APIError>) -> Void) {
+        request("/beary/api/past-self/messages", completion: completion)
+    }
+
+    /// 留话：POST /beary/api/past-self/messages {origin_entry_id, body, deliver_on}
+    /// → {ok, message}。服务端校验：原篇须为作者本人所有；同一链同一时间
+    /// 只允许一条未送达留话（重复提交返回业务码，调用方不重试、不覆盖）。
+    func createPastSelfMessage(originEntryId: String, body: String, deliverOn: String, completion: @escaping (Result<PastSelfCreateResponse, APIError>) -> Void) {
+        request("/beary/api/past-self/messages", method: "POST", jsonBody: ["origin_entry_id": originEntryId, "body": body, "deliver_on": deliverOn], completion: completion)
+    }
+
+    /// 撤回：POST /beary/api/past-self/messages/:id/revoke → {ok}。
+    /// 服务端校验：仅作者、仅未送达行可撤回；已送达行撤回返回业务码。
+    func revokePastSelfMessage(id: String, completion: @escaping (Result<PastSelfOkResponse, APIError>) -> Void) {
+        let safe = id.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? id
+        request("/beary/api/past-self/messages/\(safe)/revoke", method: "POST", completion: completion)
     }
 
     /// 行为事件：POST /beary/api/events {event_type, target_id?, duration_ms?}。
