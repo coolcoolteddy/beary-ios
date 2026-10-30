@@ -818,6 +818,55 @@ final class BearyTimelineCell: UITableViewCell {
     }()
     private let thumbsScrollView = UIScrollView()
     private let thumbsStack = UIStackView()
+    /// 批 E 补漏（2026-10-30 定位卡片 bug）：时间线卡片此前根本没有位置行，
+    /// 批 E 只做了 BearyDiaryCardCell（首页/个人页）与详情，时间线漏网——
+    /// 作者在时间线看自己带定位的日记时位置行恒不出现，与字段/脱敏无关。
+    /// 本组与卡片同款：官方 icon_location 13 灰 + 13 灰文案，作者本人看自己
+    /// 公开篇时下方再挂一行 12 橙色提示；文案与脱敏全走 BearyLocationDisplay。
+    private let timelineLocationIconView: UIImageView = {
+        let v = UIImageView()
+        v.translatesAutoresizingMaskIntoConstraints = false
+        v.image = BearyLocationIcon.image(pointSize: 13)
+        v.tintColor = BearyColors.gray
+        v.contentMode = .scaleAspectFit
+        return v
+    }()
+    private let timelineLocationLabel: UILabel = {
+        let lb = UILabel()
+        lb.translatesAutoresizingMaskIntoConstraints = false
+        lb.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13))
+        lb.adjustsFontForContentSizeCategory = true
+        lb.textColor = BearyColors.gray
+        lb.numberOfLines = 1
+        lb.lineBreakMode = .byTruncatingTail
+        return lb
+    }()
+    private let timelineLocationNoteLabel: UILabel = {
+        let lb = UILabel()
+        lb.translatesAutoresizingMaskIntoConstraints = false
+        lb.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 12))
+        lb.adjustsFontForContentSizeCategory = true
+        lb.textColor = BearyColors.orange
+        lb.numberOfLines = 0
+        lb.isHidden = true
+        return lb
+    }()
+    private lazy var timelineLocationLineRow: UIStackView = {
+        let st = UIStackView(arrangedSubviews: [timelineLocationIconView, timelineLocationLabel])
+        st.translatesAutoresizingMaskIntoConstraints = false
+        st.axis = .horizontal
+        st.spacing = 4
+        st.alignment = .center
+        return st
+    }()
+    private lazy var timelineLocationStack: UIStackView = {
+        let st = UIStackView(arrangedSubviews: [timelineLocationLineRow, timelineLocationNoteLabel])
+        st.translatesAutoresizingMaskIntoConstraints = false
+        st.axis = .vertical
+        st.spacing = 2
+        st.isHidden = true
+        return st
+    }()
     private let footStack = UIStackView()
     private var thumbsHeightConstraint: NSLayoutConstraint?
     private weak var cardStackReference: UIStackView?
@@ -1092,7 +1141,10 @@ final class BearyTimelineCell: UITableViewCell {
         actsStack.addArrangedSubview(editStatusGroup)
         actsStack.addArrangedSubview(actsSpacer)
 
-        let cardStack = UIStackView(arrangedSubviews: [metaStack, titleLabel, contentLabel, quoteButton, thumbsScrollView, footStack, actsStack])
+        // 批 E 补漏：位置行落点 = 引用卡 → 位置行 → 足行（操作行一带），与卡片
+        // “图片条之后、操作行之前”同序；图片条后的动态间距（configure 内按有图
+        // 9 / 无图 0）现为图片条→位置行间距，位置行隐藏时栈自动塌掉不留空行。
+        let cardStack = UIStackView(arrangedSubviews: [metaStack, titleLabel, contentLabel, quoteButton, thumbsScrollView, timelineLocationStack, footStack, actsStack])
         cardStack.translatesAutoresizingMaskIntoConstraints = false
         cardStack.axis = .vertical
         cardStack.spacing = 0
@@ -1101,6 +1153,7 @@ final class BearyTimelineCell: UITableViewCell {
         cardStack.setCustomSpacing(9, after: contentLabel)
         cardStack.setCustomSpacing(10, after: quoteButton)
         cardStack.setCustomSpacing(9, after: thumbsScrollView)
+        cardStack.setCustomSpacing(9, after: timelineLocationStack)
         cardStack.setCustomSpacing(9, after: footStack)
         cardStackReference = cardStack
         cardView.addSubview(cardStack)
@@ -1144,6 +1197,11 @@ final class BearyTimelineCell: UITableViewCell {
             cardStack.leadingAnchor.constraint(equalTo: cardView.leadingAnchor, constant: 16),
             cardStack.trailingAnchor.constraint(equalTo: cardView.trailingAnchor, constant: -16),
             cardStack.bottomAnchor.constraint(equalTo: cardView.bottomAnchor, constant: -14),
+        ])
+        // 批 E 补漏：位置图标固定 13（详情同款），不靠图片固有尺寸撑行高。
+        NSLayoutConstraint.activate([
+            timelineLocationIconView.widthAnchor.constraint(equalToConstant: 13),
+            timelineLocationIconView.heightAnchor.constraint(equalToConstant: 13),
         ])
         // 无图时把图片条高度约束压到 0（只靠 hidden 不够：显式高度约束仍会撑开 stack）。
         thumbsHeightConstraint = thumbsScrollView.heightAnchor.constraint(equalToConstant: 216)
@@ -1308,6 +1366,11 @@ final class BearyTimelineCell: UITableViewCell {
         currentEntry = nil
         titleLabel.text = nil
         titleLabel.isHidden = true
+        // 批 E 补漏：位置行复用复位，防上一行位置串到下一行无定位日记。
+        timelineLocationStack.isHidden = true
+        timelineLocationLabel.text = nil
+        timelineLocationNoteLabel.text = nil
+        timelineLocationNoteLabel.isHidden = true
         cardView.backgroundColor = BearyColors.bg
         // 分割线样式：实线边线恒为 0（限时态只走虚线层，不再用实线归零区分）。
         cardView.layer.borderWidth = 0
@@ -1332,6 +1395,27 @@ final class BearyTimelineCell: UITableViewCell {
         }
         metaWeatherRow = nil
         metaMoodRow = nil
+    }
+
+    /// 批 E 补漏：时间线位置行刷新，卡片 refreshLocationRow 同款口径
+    /// （display 返回 nil 时整组隐藏，不留空行；note 仅作者本人公开篇）。
+    private func refreshTimelineLocationRow(entry: Entry) {
+        guard let display = BearyLocationDisplay.display(entry: entry) else {
+            timelineLocationStack.isHidden = true
+            timelineLocationLabel.text = nil
+            timelineLocationNoteLabel.text = nil
+            timelineLocationNoteLabel.isHidden = true
+            return
+        }
+        timelineLocationStack.isHidden = false
+        timelineLocationLabel.text = display.line
+        if let note = display.note {
+            timelineLocationNoteLabel.text = note
+            timelineLocationNoteLabel.isHidden = false
+        } else {
+            timelineLocationNoteLabel.text = nil
+            timelineLocationNoteLabel.isHidden = true
+        }
     }
 
     /// 主图条定宽：广场卡 stripWidth 同口径（网页 stripW）——0.55–2.22 倍高夹取，
@@ -1625,6 +1709,11 @@ final class BearyTimelineCell: UITableViewCell {
                 bearyFeedLoadImage(into: imageView, url: url, retryButton: thumbRetry, downsampleToWidth: strip * UIScreen.main.scale)
             }
         }
+        // 批 E 补漏：位置行（引用卡 → 位置行 → 足行）；无位置、或他人视角下
+        // 无区级时整组隐藏，不留空行（文案与脱敏走 BearyLocationDisplay，
+        // 与首页/个人页卡片、详情同一函数，时间线本只列本人日记，故实效为
+        // 私密精确、公开精确 + 橙色提示两态，他人态由 display 兜底）。
+        refreshTimelineLocationRow(entry: entry)
         footStack.isHidden = true
         actsStack.isHidden = true
         // 与 metaStack 在 configure 开头先清后加一致：foot 行只靠
@@ -2607,6 +2696,12 @@ class BearyTimelineViewController: UIViewController {
             merged.isPublic = freshEntry.isPublic
             merged.publishAt = freshEntry.publishAt
             if let publishedAt = freshEntry.publishedAt { merged.publishedAt = publishedAt }
+            // 批 E 补漏：双副本补丁此前不合并定位字段——日面板/时间线任一副本
+            // 先拿到无定位旧值（落盘缓存、旧回包），另一副本重拉拿到定位后也
+            // 同步不过去，位置行恒按旧值渲染。两路回包均来自同一列表接口、
+            // 同为服务端权威行，故无条件跟随新值（含清定位时新值为 nil）。
+            merged.locationName = freshEntry.locationName
+            merged.locationDistrict = freshEntry.locationDistrict
             return merged
         }
     }
@@ -3563,7 +3658,9 @@ class BearyTimelineViewController: UIViewController {
         for emote in entry.emotes ?? [] {
             emoteParts.append("\(emote.emote ?? ""):\(emote.count ?? 0):\(emote.mine ?? false)")
         }
-        return "\(entry.content ?? "")|\(entry.isPublic ?? false)|\(entry.likeCount ?? 0)|\(entry.likedByMe ?? false)|\(entry.bookmarkedByMe ?? false)|\(emoteParts.joined(separator: ","))"
+        // 批 E 补漏：签名此前不含定位——只改定位（编辑加定位、清定位、翻
+        // 可见性改脱敏）的静默刷新会被判“无变化”而跳过重载，位置行恒旧。
+        return "\(entry.content ?? "")|\(entry.isPublic ?? false)|\(entry.likeCount ?? 0)|\(entry.likedByMe ?? false)|\(entry.bookmarkedByMe ?? false)|\(emoteParts.joined(separator: ","))|\(entry.locationName ?? "")|\(entry.locationDistrict ?? "")"
     }
 
     private func loadTimelineNextPage() {
