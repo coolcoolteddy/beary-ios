@@ -977,9 +977,9 @@ class BearyProfileViewController: UIViewController {
         return buttonValue
     }()
 
-    /// 模块容器（回应墙之后、标签之前）：内为纵向 stack，各卡按预览顺序排列；
+    /// 模块容器（tab 区挪位后：标签之后）：内为纵向 stack，各卡按预览顺序排列；
     /// 单卡隐藏即从 stack 塌掉（UIStackView 对 hidden 的 arrangedSubview 不占位），
-    /// 5 卡全隐藏时容器本身以 0 高约束塌掉，不留空标题区。
+    /// 各卡全隐藏时容器本身以 0 高约束塌掉，不留空标题区。
     private let modulesContainer: UIView = {
         let viewValue = UIView()
         viewValue.translatesAutoresizingMaskIntoConstraints = false
@@ -1294,7 +1294,7 @@ class BearyProfileViewController: UIViewController {
 
     /// 批 E 日记地图入口行（挪位后）：不再进 header，改由 refreshFooter 放进
     /// tableFooterView、排在批 C 照片区下方（与 tab 切换无关，不是 tab 内容行；
-    /// tab 按钮/下划线/边线一律不动，header 底锚恢复为 tabsContainer 底）。
+    /// tab 按钮/下划线/边线一律不动，header 底锚在 tab 区挪位后改为模块容器底）。
     /// 行内子视图与内部约束在 refreshFooter 里首次落位时一次接好（见
     /// mapEntryInternalConstraintsActivated），行本身逐次重设 frame 换进新脚部容器。
     /// 图标一律官方包：icon_location + icon_chevron_right（铁律，不用 SF Symbol、不自绘）。
@@ -1558,11 +1558,13 @@ class BearyProfileViewController: UIViewController {
     /// 注意：此组数值与网页（-52/按钮压封面 8pt）拉开差距，系 Li 亲眼定版，勿以“对齐网页”改回。
     private lazy var avatarTopWithCoverConstraint: NSLayoutConstraint = avatarContainerView.topAnchor.constraint(equalTo: coverClipView.bottomAnchor, constant: -28)
     private lazy var avatarTopWithoutCoverConstraint: NSLayoutConstraint = avatarContainerView.topAnchor.constraint(equalTo: headerView.topAnchor, constant: 20)
-    /// 批 D：标签顶改贴模块容器底（模块全塌时容器高为 0，标签距回应墙仍为 16，
-    /// 与改动前一致；模块可见时标签距末卡 16）。
-    private lazy var tabsTopConstraint: NSLayoutConstraint = tabsContainer.topAnchor.constraint(equalTo: modulesContainer.bottomAnchor, constant: 16)
-    /// 批 D：模块容器顶贴回应墙底（隐藏时 updateHeaderSpacing 归零，见墙同款 F17 规矩）。
-    private lazy var modulesTopConstraint: NSLayoutConstraint = modulesContainer.topAnchor.constraint(equalTo: wallContainer.bottomAnchor, constant: 16)
+    /// tab 区挪位（2026-10-30）：标签顶改贴回应墙底——墙隐藏时高为 0，
+    /// 标签距上一可见元素（夜巡 / 统计）仍为 16，与 F17 间隙规矩一致；
+    /// 徽章架已由 #250 删除，模块容器顺延到标签下方。
+    private lazy var tabsTopConstraint: NSLayoutConstraint = tabsContainer.topAnchor.constraint(equalTo: wallContainer.bottomAnchor, constant: 16)
+    /// tab 区挪位（2026-10-30）：模块容器顶改贴标签底（标签恒可见，
+    /// 故模块顶间隙恒为 16；模块隐藏时 updateHeaderSpacing 归零，见墙同款 F17 规矩）。
+    private lazy var modulesTopConstraint: NSLayoutConstraint = modulesContainer.topAnchor.constraint(equalTo: tabsContainer.bottomAnchor, constant: 16)
     private lazy var modulesHeightConstraint: NSLayoutConstraint = modulesContainer.heightAnchor.constraint(equalToConstant: 0)
     /// 批 D：签名容器隐藏时高归零（与墙同款），handle 顶仍贴签名底 +8，
     /// 无签名时 handle 距名字同改动前（8pt），不整体下跳。
@@ -2008,8 +2010,8 @@ class BearyProfileViewController: UIViewController {
 
     /// v22 名字以下整段位移（2026-10-30）：头像行按钮＋名字块＋统计＋墙
     /// 同值平移（纯位移，各视图相对位置不变，等价于包一层容器平移；不改约束、
-    /// 不重排版，故 header 高不变）。标签容器与模块容器不移（底贴 header 底、
-    /// 移了会压首张卡，且标签与卡片同定、间距本就恒定）。墙容器整体跟移
+    /// 不重排版，故 header 高不变）。标签容器与模块容器不移（模块底贴 header 底、
+    /// 移了会压首张卡，且标签与下方内容同定、间距本就恒定）。墙容器整体跟移
     /// （容器与内容同值，相对位置不变）：只移三个子视图、不碰容器时，统计行与
     /// 墙内容下移后会压进不动的容器框（顶压统计数字、底裁表情行），故容器必须同值移；
     /// 入场动画只在墙初现时跑一次（此时位移≈0），且以当前位移为基准收尾，
@@ -2017,9 +2019,11 @@ class BearyProfileViewController: UIViewController {
     /// 重叠根因（2026-10-30 用户报“情绪月历与徽章随滑动重叠”）：旧封顶误用标签顶
     /// （tabsTop − 末位底，含中间模块高度），徽章架下移最大 20pt 时先吃掉 16pt 间隙、
     /// 再压进情绪月历卡顶 4pt；且 transform 只改视觉、不改布局，header 高不变，
-    /// 故重叠只在滚动中出现、静止量高量不出来。本批删徽章架与情绪月历后，
-    /// 封顶改按首个未位移元素算：模块可见时为模块容器顶、模块隐藏时为标签顶，
-    /// 末位可见头元素下移不再压进模块卡；墙/夜巡/统计三分支同理。
+    /// 故重叠只在滚动中出现、静止量高量不出来。#250 删徽章架与情绪月历、
+    /// #246 把 tab 区挪到墙下方后，封顶改按首个未位移元素算：合并后顺序为
+    /// 墙→标签→模块，首个未位移元素恒为标签顶（模块在标签下方，不再作封顶）；
+    /// 墙／夜巡／统计三分支的位移均以到标签顶的布局间隙为上限（现行 16），
+    /// max(..., 0) 保底不为负，末位可见头元素下移不再压进标签。
     /// 间隙用 center／bounds 量布局位置（不受 transform 影响），故滚动中仍准。
     private func applyProfileBelowShift(_ shift: CGFloat) {
         let fullShift = CGAffineTransform(translationX: 0, y: shift)
@@ -2033,10 +2037,12 @@ class BearyProfileViewController: UIViewController {
         joinedIconView.transform = fullShift
         joinedLabel.transform = fullShift
         emailLabel.transform = fullShift
+        // 标签下方的模块容器不跟移（见上）。
+        modulesContainer.transform = .identity
         let tabsTop = tabsContainer.center.y - tabsContainer.bounds.height / 2
-        // 首个未位移元素的顶：模块可见时为模块容器顶，否则为标签顶。
-        let modulesVisible = !modulesContainer.isHidden && modulesContainer.bounds.height > 0
-        let floorTop = modulesVisible ? (modulesContainer.center.y - modulesContainer.bounds.height / 2) : tabsTop
+        // 首个未位移元素的顶：合并后顺序为墙→标签→模块，标签恒可见且在模块上方，
+        // 故恒为标签顶（模块顶不再作封顶，见上）。
+        let floorTop = tabsTop
         let wallVisible = !wallContainer.isHidden && wallContainer.bounds.height > 0
         if wallVisible {
             let wallBottom = wallContainer.center.y + wallContainer.bounds.height / 2
@@ -2052,7 +2058,7 @@ class BearyProfileViewController: UIViewController {
             publicTextLabel?.transform = fullShift
             likesTextLabel?.transform = fullShift
         } else if !nightContainer.isHidden && nightContainer.bounds.height > 0 {
-            // 夜巡入口是墙隐藏时的最末头元素：位移以模块顶（或标签顶）为上限。
+            // 夜巡入口是墙隐藏时的标签上方末位元素：位移以标签顶为上限。
             let nightBottom = nightContainer.center.y + nightContainer.bounds.height / 2
             let cappedShift = min(shift, max(floorTop - nightBottom, 0))
             let cappedTransform = CGAffineTransform(translationX: 0, y: cappedShift)
@@ -2197,9 +2203,9 @@ class BearyProfileViewController: UIViewController {
         nightEntryButton.addTarget(self, action: #selector(nightEntryTapped), for: .touchUpInside)
         nightEntryButton.bearyAddPressFeedback()
         headerView.addSubview(wallContainer)
+        headerView.addSubview(tabsContainer)
         headerView.addSubview(modulesContainer)
         modulesContainer.addSubview(modulesStack)
-        headerView.addSubview(tabsContainer)
         wallContainer.addSubview(wallTitleLabel)
         wallContainer.addSubview(wallScrollView)
         wallContainer.addSubview(wallTotalLabel)
@@ -2396,7 +2402,7 @@ class BearyProfileViewController: UIViewController {
             wallTotalLabel.trailingAnchor.constraint(equalTo: wallContainer.trailingAnchor, constant: -14),
             wallTotalLabel.centerYAnchor.constraint(equalTo: wallTitleLabel.centerYAnchor),
 
-            // 批 D：模块容器与墙同列（左右各 20），顶贴墙底（modulesTopConstraint）。
+            // 批 D：模块容器与墙同列（左右各 20），顶贴标签底（modulesTopConstraint）。
             modulesContainer.leadingAnchor.constraint(equalTo: headerView.leadingAnchor, constant: 20),
             modulesContainer.trailingAnchor.constraint(equalTo: headerView.trailingAnchor, constant: -20),
             modulesTopConstraint,
@@ -2407,10 +2413,11 @@ class BearyProfileViewController: UIViewController {
 
             tabsContainer.leadingAnchor.constraint(equalTo: headerView.leadingAnchor, constant: 20),
             tabsContainer.trailingAnchor.constraint(equalTo: headerView.trailingAnchor, constant: -20),
-            // 批 E（挪位后）：header 底锚恢复为 tabsContainer 底（批 E 合入前原状）；
+            // tab 区挪位（2026-10-30）：header 底锚改到模块容器底——标签在回应墙下方、
+            // 模块容器顺延到标签下方，header 高由末位模块决定；
             // 地图入口行已移到 tableFooterView 照片区下方，见 refreshFooter
             // （行内图标/文案/箭头/热区约束也在那里一次激活，不再进 header 约束组）。
-            tabsContainer.bottomAnchor.constraint(equalTo: headerView.bottomAnchor),
+            modulesContainer.bottomAnchor.constraint(equalTo: headerView.bottomAnchor),
             diaryTabButton.leadingAnchor.constraint(equalTo: tabsContainer.leadingAnchor),
             diaryTabButton.topAnchor.constraint(equalTo: tabsContainer.topAnchor),
             diaryTabButton.bottomAnchor.constraint(equalTo: tabsContainer.bottomAnchor),
