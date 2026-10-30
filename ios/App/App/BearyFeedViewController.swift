@@ -1671,32 +1671,41 @@ class BearyFeedViewController: UIViewController {
         }
     }
 
-    /// 举报成功广播：该日记从举报人广场消失（退场动画 transform/opacity 0.25s ease-out
-    /// + 高度收到 0 的既有删卡口径由 deleteRows 动画承载；减动效直接消失；不留占位行）。
+    /// 举报成功后立即同步模型和表格；可见卡片用快照退场，避免延迟删除时列表已被刷新。
+    /// 快照挂 tableView（frame = cell.frame，表坐标）：0.25s 内用户滚动时快照随表走，
+    /// 不会像挂 view 那样漂在原屏位；下方行 deleteRows .none 已立即上移，快照在其上淡出。
     @objc private func handleReportedEntryNotification(_ note: Notification) {
         guard let entryId = note.object as? String, !entryId.isEmpty else { return }
         guard let row = plazaRaw.firstIndex(where: { $0.id == entryId }) else { return }
+        let path = IndexPath(row: row, section: 0)
+        let snapshot: UIView?
+        if !UIAccessibility.isReduceMotionEnabled,
+           let cell = tableView.cellForRow(at: path),
+           let captured = cell.snapshotView(afterScreenUpdates: false) {
+            captured.frame = cell.frame
+            captured.isUserInteractionEnabled = false
+            tableView.addSubview(captured)
+            snapshot = captured
+        } else {
+            snapshot = nil
+        }
         plazaRaw.remove(at: row)
         persistFeedHead()
-        let path = IndexPath(row: row, section: 0)
         guard tableView.numberOfRows(inSection: 0) > row else {
+            snapshot?.removeFromSuperview()
             tableView.reloadData()
+            updateOverlayState()
             return
         }
-        if UIAccessibility.isReduceMotionEnabled {
-            tableView.deleteRows(at: [path], with: .none)
-            return
-        }
-        if let cell = tableView.cellForRow(at: path) {
+        tableView.deleteRows(at: [path], with: .none)
+        updateOverlayState()
+        if let snapshot = snapshot {
             UIView.animate(withDuration: 0.25, delay: 0, options: [.curveEaseOut], animations: {
-                cell.contentView.alpha = 0
-                cell.contentView.transform = CGAffineTransform(translationX: 0, y: -8).scaledBy(x: 0.98, y: 0.98)
-            }, completion: { [weak self] _ in
-                self?.tableView.deleteRows(at: [path], with: .fade)
-                self?.updateOverlayState()
+                snapshot.alpha = 0
+                snapshot.transform = CGAffineTransform(translationX: 0, y: -8)
+            }, completion: { _ in
+                snapshot.removeFromSuperview()
             })
-        } else {
-            tableView.deleteRows(at: [path], with: .fade)
         }
     }
 

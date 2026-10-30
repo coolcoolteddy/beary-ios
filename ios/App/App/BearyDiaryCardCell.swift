@@ -2303,7 +2303,13 @@ class BearyDiaryCardCell: UITableViewCell {
         refreshMoreRow()
     }
     private func refreshEphemeralState(entry: Entry) {
-        // 限时存活期：倒计时行显 + 虚线边框显 + 底线藏（边框代之）；到期或非限时一律按普通卡。
+        // 限时存活期：倒计时行显 + 虚线边框显；到期或非限时一律按普通卡。
+        // 2026-10-31 107 真机报：首页限时篇下方没有分割线。旧口径是存活期
+        // “底线藏（边框代之）”，即 separatorView.isHidden = live，导致限时篇
+        // 下方与下一篇之间无实线。修法：首页模式（.feed）存活期底线也显，
+        // 与普通篇一致（2pt、BearyColors.line、贴 cell 底、全宽）；虚线框
+        // 内缩 dx 8 / dy 6、底边在 cell 底上方 6pt，底线在 cell 底 2pt 内，
+        // 两者相隔约 3pt 以上，不重叠、不遮盖。个人主页模式保持旧口径不动。
         let live = BearyEphemeral.isLive(entry)
         if live, let until = entry.ephemeralUntil {
             ephemeralLabel.text = BearyEphemeral.remainingText(until: until)
@@ -2312,7 +2318,7 @@ class BearyDiaryCardCell: UITableViewCell {
             ephemeralLabel.text = nil
             ephemeralRow.isHidden = true
         }
-        separatorView.isHidden = live
+        separatorView.isHidden = (cardMode == .feed) ? false : live
         ephemeralBorderLayer.isHidden = !live
         setNeedsLayout()
     }

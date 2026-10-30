@@ -1546,6 +1546,18 @@ class BearyProfileViewController: UIViewController {
     /// refreshFooter 放进 tableFooterView（表格行下方、照片区之前），故
     /// 不再有模块顶约束；模块隐藏时只靠下面的 0 高约束塌掉。
     private lazy var modulesHeightConstraint: NSLayoutConstraint = modulesContainer.heightAnchor.constraint(equalToConstant: 0)
+    /// 脚部模块宽度锚点（2026-10-31 真机报“我的页下方模块右侧被压缩”）：
+    /// #257 前模块容器在 header 里有 leading+20/trailing-20 的宽度锚点；
+    /// 搬到 tableFooterView 后那两个锚点被删，容器只剩内部 stack 边约束
+    /// （+ 隐藏时才激活的 0 高约束），且 translates 仍为 false，
+    /// 故 refreshFooter 手动设的 frame 在下一次布局时被引擎按内容内在宽度
+    /// 重算，卡片缩到最宽一行内容的宽度、右侧被压窄。
+    /// 修法：脚部每次重建容器时用这组约束把模块组宽度锚死在内容列宽上，
+    /// 不再只靠 frame（容器每轮新建，旧约束随旧容器失效，激活前先关掉上一轮的）。
+    private var modulesFooterTopConstraint: NSLayoutConstraint?
+    private var modulesFooterLeadingConstraint: NSLayoutConstraint?
+    private var modulesFooterWidthConstraint: NSLayoutConstraint?
+    private var modulesFooterHeightConstraint: NSLayoutConstraint?
     /// 批 D：签名容器隐藏时高归零（与墙同款），handle 顶仍贴签名底 +8，
     /// 无签名时 handle 距名字同改动前（8pt），不整体下跳。
     private lazy var signatureHeightConstraint: NSLayoutConstraint = signatureContainer.heightAnchor.constraint(equalToConstant: 0)
@@ -4776,8 +4788,17 @@ class BearyProfileViewController: UIViewController {
             // 排在表格行下方、照片区之前。脚部每次重建都是新容器，addSubview
             // 会自动把模块容器从旧脚部摘到新脚部，模块卡本身不重建；
             // 切 tab 时脚部重建、模块组原位不动。隐藏时不占位（脚部与改前一致）。
+            // 上一轮脚部容器已丢弃，锚在它上面的模块约束先关掉，免得残留。
+            modulesFooterTopConstraint?.isActive = false
+            modulesFooterLeadingConstraint?.isActive = false
+            modulesFooterWidthConstraint?.isActive = false
+            modulesFooterHeightConstraint?.isActive = false
             if !modulesContainer.isHidden {
-                let modulesWidth = max(footerWidth - 40, 0)
+                // 模块组宽度 = 表格行内容列宽：≤820 为屏宽−32（左右各 16）、
+                // ≥821 为 600 居中列（脚部容器本身已被表宽锁 600，故 x=0 贴满列宽）；
+                // 与旧 header 口径（列宽−40、左右各 20）不同，按 2026-10-31 任务口径取内容列宽。
+                let modulesWidth = isDesktopColumn ? footerWidth : max(footerWidth - 32, 0)
+                let modulesX = (footerWidth - modulesWidth) / 2
                 container.addSubview(modulesContainer)
                 // 先不量 0 高布局：stack 高由 fitting 算出，0 高先布局会把卡片压扁。
                 let modulesHeight = modulesContainer.systemLayoutSizeFitting(
@@ -4785,7 +4806,20 @@ class BearyProfileViewController: UIViewController {
                     withHorizontalFittingPriority: .required,
                     verticalFittingPriority: .fittingSizeLevel
                 ).height
-                modulesContainer.frame = CGRect(x: 20, y: 0, width: modulesWidth, height: modulesHeight)
+                // 宽度只靠 frame 不够（见模块宽度锚点注释）：用约束锚死
+                // 顶/左/宽/高，布局再跑也不会缩回内容内在宽度；frame 同步写一份，
+                // 供脚部总高计算与首帧落位（约束随后会把 frame 定在同一值）。
+                modulesFooterTopConstraint = modulesContainer.topAnchor.constraint(equalTo: container.topAnchor)
+                modulesFooterLeadingConstraint = modulesContainer.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: modulesX)
+                modulesFooterWidthConstraint = modulesContainer.widthAnchor.constraint(equalToConstant: modulesWidth)
+                modulesFooterHeightConstraint = modulesContainer.heightAnchor.constraint(equalToConstant: modulesHeight)
+                NSLayoutConstraint.activate([
+                    modulesFooterTopConstraint!,
+                    modulesFooterLeadingConstraint!,
+                    modulesFooterWidthConstraint!,
+                    modulesFooterHeightConstraint!,
+                ])
+                modulesContainer.frame = CGRect(x: modulesX, y: 0, width: modulesWidth, height: modulesHeight)
                 totalHeight += modulesHeight
             }
             if let photosView = photosView {
