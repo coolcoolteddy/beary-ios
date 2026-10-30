@@ -61,58 +61,10 @@ enum BearyProfilePersonalLogic {
         }
     }
 
-    /// 本地日（Calendar.current，设备时区）起点的 Date，用作 streak / 月历去重键。
+    /// 本地日（Calendar.current，设备时区）起点的 Date，用作 streak 去重键。
     static func startOfDay(for timestampMs: Int, calendar: Calendar) -> Date? {
         let date = Date(timeIntervalSince1970: TimeInterval(timestampMs) / 1000)
         return calendar.startOfDay(for: date)
-    }
-
-    // MARK: - 情绪月历
-
-    struct MonthDay {
-        var day: Int
-        /// 当天代表心情：当天有心情的条目里创建时间最晚的那篇的心情；当天无心情条目时为 nil
-        /// （当天仍有日记可点，只是无心情图）。
-        var moodKey: String?
-        /// 当天全部条目（createdAt 降序），点按取首篇 = 当天最晚一篇。
-        var entries: [Entry]
-    }
-
-    struct MonthGrid {
-        /// 周一起始的月历：1 号前空白格数（0...6）。
-        var leadingBlanks: Int
-        var days: [MonthDay]
-    }
-
-    static func monthGrid(year: Int, month: Int, entries: [Entry], calendar: Calendar) -> MonthGrid {
-        var components = DateComponents()
-        components.year = year
-        components.month = month
-        components.day = 1
-        guard let firstDay = calendar.date(from: components),
-              let dayCount = calendar.range(of: .day, in: .month, for: firstDay)?.count else {
-            return MonthGrid(leadingBlanks: 0, days: [])
-        }
-        // weekday: 1 = 周日 … 7 = 周六；周一起始时 1 号前空白 = (weekday + 5) % 7。
-        let weekday = calendar.component(.weekday, from: firstDay)
-        let leadingBlanks = (weekday + 5) % 7
-        var byDay: [Int: [Entry]] = [:]
-        for entry in entries {
-            guard let createdAt = entry.createdAt else { continue }
-            let date = Date(timeIntervalSince1970: TimeInterval(createdAt) / 1000)
-            let parts = calendar.dateComponents([.year, .month, .day], from: date)
-            guard parts.year == year, parts.month == month, let day = parts.day else { continue }
-            byDay[day, default: []].append(entry)
-        }
-        var days: [MonthDay] = []
-        for day in 1...dayCount {
-            var dayEntries = byDay[day] ?? []
-            // createdAt 降序：点按取首篇即当天最晚一篇；代表心情取同序首个有心情者。
-            dayEntries.sort { ($0.createdAt ?? 0) > ($1.createdAt ?? 0) }
-            let moodKey = dayEntries.first(where: { ($0.mood ?? "").isEmpty == false })?.mood
-            days.append(MonthDay(day: day, moodKey: moodKey, entries: dayEntries))
-        }
-        return MonthGrid(leadingBlanks: leadingBlanks, days: days)
     }
 
     // MARK: - 写作统计

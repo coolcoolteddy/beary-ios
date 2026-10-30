@@ -295,7 +295,6 @@ class BearyProfileViewController: UIViewController {
     private var confirmedBookmarkedById: [String: Bool] = [:]
     private var emoteBusyIds: Set<String> = []
     private var pubBusyIds: Set<String> = []
-    private var badgeWearBusy = false
     private var signatureSaving = false
     // MARK: - 批 D 个性化模块状态（语料 = 作者 scope 全量分页结果，只走已有字段聚合）
     /// 模块语料所属 profile id；与当前 profile 不一致即视为切账号/换目标，语料与
@@ -307,19 +306,12 @@ class BearyProfileViewController: UIViewController {
     /// 不拿半截语料画「空白 = 没写」——半截语料的空白是假空白，会撒谎。
     private var modulesCorpus: [Entry] = []
     private var modulesCorpusComplete = false
-    /// 月历当前展示年月（默认当月；切账号/换目标时复位当月；月份切换只过滤语料，不重拉）。
-    private var calendarDisplayYear: Int = Calendar.current.component(.year, from: Date())
-    private var calendarDisplayMonth: Int = Calendar.current.component(.month, from: Date())
-    /// 月历日 → 当天条目（renderCalendar 重建，供点按取当天最晚一篇）。
-    private var calendarDayEntries: [Int: [Entry]] = [:]
     /// 随机漫步当前卡片与上一次 id（换篇排除上一篇；语料刷新后当前卡仍在池内则保留，
     /// 不在用户眼皮底下换卡；单篇池换不出新篇时换篇按钮只提示、不跳空卡）。
     private var currentWalkEntry: Entry?
     private var lastWalkId: String?
     /// 那年今日同年多篇展开态（默认收起）。
     private var thisDayExpanded = false
-    private var unlockedBadges: [String] = []
-    private var wornBadgeKey: String?
     private var tabBackgroundTab: ProfileTab?
     private var rowTapGuardUntil: Date?
     /// 清单 2 滚动藏栏（个人主页部分）：与首页／时间线同款 120pt 阈值；
@@ -488,7 +480,7 @@ class BearyProfileViewController: UIViewController {
         headerTopInsetVisible ? 60 : 0
     }
 
-    // MARK: - 头部视图（封面带 + 头像半压 + 名字 / 加入时间 / 统计 + 小熊回应墙 + 徽章架 + 三标签）
+    // MARK: - 头部视图（封面带 + 头像半压 + 名字 / 加入时间 / 统计 + 小熊回应墙 + 三标签）
 
     private let headerView = UIView()
 
@@ -586,7 +578,7 @@ class BearyProfileViewController: UIViewController {
     private lazy var avatarRetryButton: UIButton = {
         let buttonValue = UIButton(type: .system)
         buttonValue.translatesAutoresizingMaskIntoConstraints = false
-        buttonValue.setImage(BearyIconImages.image(named: "icon_restore", pointSize: 20), for: .normal)
+        buttonValue.setImage(BearyIconImages.image(named: "icon_refresh", pointSize: 20), for: .normal)
         buttonValue.tintColor = BearyColors.ink
         buttonValue.accessibilityLabel = "重新加载头像"
         buttonValue.isHidden = true
@@ -808,7 +800,7 @@ class BearyProfileViewController: UIViewController {
         return buttonValue
     }()
 
-    // MARK: - 小熊回应墙（emotes_total > 0 才显示）与徽章架（仅本人）
+    // MARK: - 小熊回应墙（emotes_total > 0 才显示）
 
     private let wallContainer: UIView = {
         let viewValue = UIView()
@@ -930,43 +922,13 @@ class BearyProfileViewController: UIViewController {
     private var nightIsPaused = false
     private var nightHasAnimated = false
 
-    private let badgesContainer: UIView = {
-        let viewValue = UIView()
-        viewValue.translatesAutoresizingMaskIntoConstraints = false
-        viewValue.backgroundColor = BearyColors.bg
-        viewValue.layer.borderWidth = 1
-        viewValue.layer.cornerRadius = 14
-        viewValue.isHidden = true
-        return viewValue
-    }()
-
-    private let badgesTitleLabel: UILabel = {
-        let labelValue = UILabel()
-        labelValue.translatesAutoresizingMaskIntoConstraints = false
-        labelValue.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13, weight: .bold))
-        labelValue.adjustsFontForContentSizeCategory = true
-        labelValue.textColor = BearyColors.ink
-        labelValue.text = "徽章"
-        return labelValue
-    }()
-
-    /// 徽章架：网页 .bdg-shelf flex-wrap 口径——纵向容器内按实测宽分行
-    /// （renderBadges 分行），不再用横滑滚动条；单徽章时单行，外观不变。
-    private let badgesStack: UIStackView = {
-        let stackValue = UIStackView()
-        stackValue.translatesAutoresizingMaskIntoConstraints = false
-        stackValue.axis = .vertical
-        stackValue.spacing = 8
-        stackValue.alignment = .fill
-        return stackValue
-    }()
-
     // MARK: - 批 D：个人签名（名字下方一句话）与个性化模块容器
     //
-    // 位置排法（预览定版）：封面 → 头像 → 名字 → 签名 → 统计 → 回应墙 → 徽章 →
-    // 情绪月历 → 写作统计 → 那年今日 → 随机漫步 → 年度回顾入口 → 日记区（标签 + 列表）。
+    // 位置排法（预览定版）：封面 → 头像 → 名字 → 签名 → 统计 → 回应墙 →
+    // 写作统计 → 那年今日 → 随机漫步 → 年度回顾入口 → 日记区（标签 + 列表）。
+    // （2026-10-30 Li 明令：徽章架与情绪月历模块已删，见本文件删除记录；签名展示、写作统计、那年今日、随机漫步、年度回顾入口不动。）
     // 本基线（063b162）尚无批 C 的三 tab / 最新 3 篇 / 照片区，故「日记区」即现有
-    // 标签 + 列表；模块容器插在徽章架与标签之间，标签与列表本身一字不动。
+    // 标签 + 列表；模块容器插在回应墙与标签之间，标签与列表本身一字不动。
     // 图标铁律：以下只用官方包已有资产（icon_edit / icon_chevron_right /
     // icon_chevron_down / icon_arrow_left / icon_arrow_right / icon_chart /
     // icon_clock / icon_fire / icon_wx_* / emote_*）；「换一篇」洗牌图标已随
@@ -1015,7 +977,7 @@ class BearyProfileViewController: UIViewController {
         return buttonValue
     }()
 
-    /// 模块容器（徽章架之后、标签之前）：内为纵向 stack，5 卡按预览顺序排列；
+    /// 模块容器（回应墙之后、标签之前）：内为纵向 stack，各卡按预览顺序排列；
     /// 单卡隐藏即从 stack 塌掉（UIStackView 对 hidden 的 arrangedSubview 不占位），
     /// 5 卡全隐藏时容器本身以 0 高约束塌掉，不留空标题区。
     private let modulesContainer: UIView = {
@@ -1031,51 +993,6 @@ class BearyProfileViewController: UIViewController {
         stackValue.translatesAutoresizingMaskIntoConstraints = false
         stackValue.axis = .vertical
         stackValue.spacing = 16
-        stackValue.alignment = .fill
-        return stackValue
-    }()
-
-    /// 月历卡：标题行（标题 + 上月 / 年月 / 下月）+ 星期头 + 日期格栈（逐月重建）。
-    private let calendarCard = BearyProfilePersonalModulesCard(title: "情绪月历")
-    private let calendarMonthLabel: UILabel = {
-        let labelValue = UILabel()
-        labelValue.translatesAutoresizingMaskIntoConstraints = false
-        labelValue.font = UIFont.systemFont(ofSize: 13, weight: .bold)
-        labelValue.textColor = BearyColors.ink
-        return labelValue
-    }()
-    private lazy var calendarPrevButton: UIButton = {
-        let buttonValue = UIButton(type: .system)
-        buttonValue.translatesAutoresizingMaskIntoConstraints = false
-        buttonValue.setImage(BearyIconImages.image(named: "icon_arrow_left", pointSize: 16), for: .normal)
-        buttonValue.tintColor = BearyColors.ink
-        buttonValue.accessibilityLabel = "上个月"
-        buttonValue.addTarget(self, action: #selector(calendarPrevMonthTapped), for: .touchUpInside)
-        buttonValue.bearyAddPressFeedback()
-        return buttonValue
-    }()
-    private lazy var calendarNextButton: UIButton = {
-        let buttonValue = UIButton(type: .system)
-        buttonValue.translatesAutoresizingMaskIntoConstraints = false
-        buttonValue.setImage(BearyIconImages.image(named: "icon_arrow_right", pointSize: 16), for: .normal)
-        buttonValue.tintColor = BearyColors.ink
-        buttonValue.accessibilityLabel = "下个月"
-        buttonValue.addTarget(self, action: #selector(calendarNextMonthTapped), for: .touchUpInside)
-        buttonValue.bearyAddPressFeedback()
-        return buttonValue
-    }()
-    private let calendarSubtitleLabel: UILabel = {
-        let labelValue = UILabel()
-        labelValue.translatesAutoresizingMaskIntoConstraints = false
-        labelValue.font = UIFont.systemFont(ofSize: 12)
-        labelValue.textColor = BearyColors.gray
-        return labelValue
-    }()
-    private let calendarGridStack: UIStackView = {
-        let stackValue = UIStackView()
-        stackValue.translatesAutoresizingMaskIntoConstraints = false
-        stackValue.axis = .vertical
-        stackValue.spacing = 6
         stackValue.alignment = .fill
         return stackValue
     }()
@@ -1641,18 +1558,18 @@ class BearyProfileViewController: UIViewController {
     /// 注意：此组数值与网页（-52/按钮压封面 8pt）拉开差距，系 Li 亲眼定版，勿以“对齐网页”改回。
     private lazy var avatarTopWithCoverConstraint: NSLayoutConstraint = avatarContainerView.topAnchor.constraint(equalTo: coverClipView.bottomAnchor, constant: -28)
     private lazy var avatarTopWithoutCoverConstraint: NSLayoutConstraint = avatarContainerView.topAnchor.constraint(equalTo: headerView.topAnchor, constant: 20)
-    /// 批 D：标签顶改贴模块容器底（模块全塌时容器高为 0，标签距徽章仍为 16，
+    /// 批 D：标签顶改贴模块容器底（模块全塌时容器高为 0，标签距回应墙仍为 16，
     /// 与改动前一致；模块可见时标签距末卡 16）。
     private lazy var tabsTopConstraint: NSLayoutConstraint = tabsContainer.topAnchor.constraint(equalTo: modulesContainer.bottomAnchor, constant: 16)
-    /// 批 D：模块容器顶贴徽章架底（隐藏时 updateHeaderSpacing 归零，见墙 / 徽章架同款 F17 规矩）。
-    private lazy var modulesTopConstraint: NSLayoutConstraint = modulesContainer.topAnchor.constraint(equalTo: badgesContainer.bottomAnchor, constant: 16)
+    /// 批 D：模块容器顶贴回应墙底（隐藏时 updateHeaderSpacing 归零，见墙同款 F17 规矩）。
+    private lazy var modulesTopConstraint: NSLayoutConstraint = modulesContainer.topAnchor.constraint(equalTo: wallContainer.bottomAnchor, constant: 16)
     private lazy var modulesHeightConstraint: NSLayoutConstraint = modulesContainer.heightAnchor.constraint(equalToConstant: 0)
-    /// 批 D：签名容器隐藏时高归零（与墙 / 徽章架同款），handle 顶仍贴签名底 +8，
+    /// 批 D：签名容器隐藏时高归零（与墙同款），handle 顶仍贴签名底 +8，
     /// 无签名时 handle 距名字同改动前（8pt），不整体下跳。
     private lazy var signatureHeightConstraint: NSLayoutConstraint = signatureContainer.heightAnchor.constraint(equalToConstant: 0)
     /// 批 D：签名行右缘——本人时留 48 给右上角编辑钮，他人只读时不留（长签名不提前换行）。
     private lazy var signatureLabelTrailingConstraint: NSLayoutConstraint = signatureLabel.trailingAnchor.constraint(lessThanOrEqualTo: signatureContainer.trailingAnchor, constant: -48)
-    /// F17：头模块间距链（网页口径：墙 margin-top 10、徽章架 margin-top 16、标签 margin-top 16）。
+    /// F17：头模块间距链（网页口径：墙 margin-top 10、模块 margin-top 16、标签 margin-top 16）。
     /// 隐藏容器仍占顶部间隙是旧 bug：updateHeaderSpacing 在每次强制布局前按显隐把
     /// 隐藏项的顶部间隙归零，使标签距上一可见元素恒为 16。
     /// F18：无 handle 时日历图标改贴头左缘 28（网页 pf-meta flex 口径：handle
@@ -1662,19 +1579,16 @@ class BearyProfileViewController: UIViewController {
     /// 夜巡入口贴统计行下方、回应墙上方（F17 同款：隐藏时顶间隙归零）。
     private lazy var nightTopConstraint: NSLayoutConstraint = nightContainer.topAnchor.constraint(equalTo: publicCountLabel.bottomAnchor, constant: 10)
     private lazy var wallTopConstraint: NSLayoutConstraint = wallContainer.topAnchor.constraint(equalTo: nightContainer.bottomAnchor, constant: 10)
-    private lazy var badgesTopConstraint: NSLayoutConstraint = badgesContainer.topAnchor.constraint(equalTo: wallContainer.bottomAnchor, constant: 16)
 
     private func updateHeaderSpacing() {
         nightTopConstraint.constant = nightContainer.isHidden ? 0 : 10
         wallTopConstraint.constant = wallContainer.isHidden ? 0 : 10
-        badgesTopConstraint.constant = badgesContainer.isHidden ? 0 : 16
-        // 批 D：模块容器隐藏时顶间隙归零（F17 同款），避免徽章与标签间多出 16pt 空洞。
+        // 批 D：模块容器隐藏时顶间隙归零（F17 同款），避免回应墙与标签间多出 16pt 空洞。
         modulesTopConstraint.constant = modulesContainer.isHidden ? 0 : 16
         tabsTopConstraint.constant = 16
     }
     private lazy var nightHeightConstraint: NSLayoutConstraint = nightContainer.heightAnchor.constraint(equalToConstant: 0)
     private lazy var wallHeightConstraint: NSLayoutConstraint = wallContainer.heightAnchor.constraint(equalToConstant: 0)
-    private lazy var badgesHeightConstraint: NSLayoutConstraint = badgesContainer.heightAnchor.constraint(equalToConstant: 0)
     private lazy var topBarHeightConstraint: NSLayoutConstraint = topBarView.heightAnchor.constraint(equalToConstant: 0)
     /// 顶栏顶锚二选一（2026-10-29 封面伸进状态栏）：容器态（tab 页）表顶改
     /// view.top，封面顶到屏幕顶；modal 态 44 顶栏仍须在安全区下方，锚点不动。
@@ -2092,16 +2006,20 @@ class BearyProfileViewController: UIViewController {
     /// 当前名字以下整段位移（updateProfileCoverScroll 写入，供墙入场动画收尾用）。
     private var currentBelowShift: CGFloat = 0
 
-    /// v22 名字以下整段位移（2026-10-30）：头像行按钮＋名字块＋统计＋墙＋徽章架
+    /// v22 名字以下整段位移（2026-10-30）：头像行按钮＋名字块＋统计＋墙
     /// 同值平移（纯位移，各视图相对位置不变，等价于包一层容器平移；不改约束、
-    /// 不重排版，故 header 高不变）。标签容器不移（底贴 header 底、移了会压首张卡，
-    /// 且标签与卡片同定、间距本就恒定）。墙容器整体跟移（容器与内容同值，
-    /// 相对位置不变）：只移三个子视图、不碰容器时，统计行与墙内容下移后会
-    /// 压进不动的容器框（顶压统计数字、底裁表情行），故容器必须同值移；
+    /// 不重排版，故 header 高不变）。标签容器与模块容器不移（底贴 header 底、
+    /// 移了会压首张卡，且标签与卡片同定、间距本就恒定）。墙容器整体跟移
+    /// （容器与内容同值，相对位置不变）：只移三个子视图、不碰容器时，统计行与
+    /// 墙内容下移后会压进不动的容器框（顶压统计数字、底裁表情行），故容器必须同值移；
     /// 入场动画只在墙初现时跑一次（此时位移≈0），且以当前位移为基准收尾，
     /// 滚动会重新贴合位移，故不打架。
-    /// 末位可见视图的位移以到标签顶的布局间隙为上限（现行 16），防压标签：
-    /// 徽章架可见时封顶徽章架，否则封顶墙，再否则封顶统计行。
+    /// 重叠根因（2026-10-30 用户报“情绪月历与徽章随滑动重叠”）：旧封顶误用标签顶
+    /// （tabsTop − 末位底，含中间模块高度），徽章架下移最大 20pt 时先吃掉 16pt 间隙、
+    /// 再压进情绪月历卡顶 4pt；且 transform 只改视觉、不改布局，header 高不变，
+    /// 故重叠只在滚动中出现、静止量高量不出来。本批删徽章架与情绪月历后，
+    /// 封顶改按首个未位移元素算：模块可见时为模块容器顶、模块隐藏时为标签顶，
+    /// 末位可见头元素下移不再压进模块卡；墙/夜巡/统计三分支同理。
     /// 间隙用 center／bounds 量布局位置（不受 transform 影响），故滚动中仍准。
     private func applyProfileBelowShift(_ shift: CGFloat) {
         let fullShift = CGAffineTransform(translationX: 0, y: shift)
@@ -2116,39 +2034,27 @@ class BearyProfileViewController: UIViewController {
         joinedLabel.transform = fullShift
         emailLabel.transform = fullShift
         let tabsTop = tabsContainer.center.y - tabsContainer.bounds.height / 2
-        let badgesVisible = !badgesContainer.isHidden && badgesContainer.bounds.height > 0
+        // 首个未位移元素的顶：模块可见时为模块容器顶，否则为标签顶。
+        let modulesVisible = !modulesContainer.isHidden && modulesContainer.bounds.height > 0
+        let floorTop = modulesVisible ? (modulesContainer.center.y - modulesContainer.bounds.height / 2) : tabsTop
         let wallVisible = !wallContainer.isHidden && wallContainer.bounds.height > 0
-        if badgesVisible {
-            let badgesBottom = badgesContainer.center.y + badgesContainer.bounds.height / 2
-            let cappedShift = min(shift, max(tabsTop - badgesBottom, 0))
-            badgesContainer.transform = CGAffineTransform(translationX: 0, y: cappedShift)
-            nightContainer.transform = fullShift
-            wallContainer.transform = fullShift
-            wallTitleLabel.transform = .identity
-            wallScrollView.transform = .identity
-            wallTotalLabel.transform = .identity
-            publicCountLabel.transform = fullShift
-            likesCountLabel.transform = fullShift
-            publicTextLabel?.transform = fullShift
-            likesTextLabel?.transform = fullShift
-        } else if wallVisible {
+        if wallVisible {
             let wallBottom = wallContainer.center.y + wallContainer.bounds.height / 2
-            let cappedShift = min(shift, max(tabsTop - wallBottom, 0))
+            let cappedShift = min(shift, max(floorTop - wallBottom, 0))
             let cappedTransform = CGAffineTransform(translationX: 0, y: cappedShift)
             nightContainer.transform = fullShift
             wallContainer.transform = cappedTransform
             wallTitleLabel.transform = .identity
             wallScrollView.transform = .identity
             wallTotalLabel.transform = .identity
-            badgesContainer.transform = fullShift
             publicCountLabel.transform = fullShift
             likesCountLabel.transform = fullShift
             publicTextLabel?.transform = fullShift
             likesTextLabel?.transform = fullShift
         } else if !nightContainer.isHidden && nightContainer.bounds.height > 0 {
-            // 夜巡入口是墙与徽章架都隐藏时的最末头元素：位移以夜巡底为上限。
+            // 夜巡入口是墙隐藏时的最末头元素：位移以模块顶（或标签顶）为上限。
             let nightBottom = nightContainer.center.y + nightContainer.bounds.height / 2
-            let cappedShift = min(shift, max(tabsTop - nightBottom, 0))
+            let cappedShift = min(shift, max(floorTop - nightBottom, 0))
             let cappedTransform = CGAffineTransform(translationX: 0, y: cappedShift)
             nightContainer.transform = cappedTransform
             publicCountLabel.transform = cappedTransform
@@ -2163,7 +2069,7 @@ class BearyProfileViewController: UIViewController {
                 (publicTextLabel?.center.y ?? 0) + (publicTextLabel?.bounds.height ?? 0) / 2,
                 (likesTextLabel?.center.y ?? 0) + (likesTextLabel?.bounds.height ?? 0) / 2
             )
-            let cappedShift = min(shift, max(tabsTop - statsBottom, 0))
+            let cappedShift = min(shift, max(floorTop - statsBottom, 0))
             let cappedTransform = CGAffineTransform(translationX: 0, y: cappedShift)
             publicCountLabel.transform = cappedTransform
             likesCountLabel.transform = cappedTransform
@@ -2174,7 +2080,6 @@ class BearyProfileViewController: UIViewController {
             wallTitleLabel.transform = .identity
             wallScrollView.transform = .identity
             wallTotalLabel.transform = .identity
-            badgesContainer.transform = fullShift
         }
     }
 
@@ -2292,7 +2197,6 @@ class BearyProfileViewController: UIViewController {
         nightEntryButton.addTarget(self, action: #selector(nightEntryTapped), for: .touchUpInside)
         nightEntryButton.bearyAddPressFeedback()
         headerView.addSubview(wallContainer)
-        headerView.addSubview(badgesContainer)
         headerView.addSubview(modulesContainer)
         modulesContainer.addSubview(modulesStack)
         headerView.addSubview(tabsContainer)
@@ -2300,8 +2204,6 @@ class BearyProfileViewController: UIViewController {
         wallContainer.addSubview(wallScrollView)
         wallContainer.addSubview(wallTotalLabel)
         wallScrollView.addSubview(wallStack)
-        badgesContainer.addSubview(badgesTitleLabel)
-        badgesContainer.addSubview(badgesStack)
         tabsContainer.addSubview(diaryTabButton)
         tabsContainer.addSubview(likedTabButton)
         tabsContainer.addSubview(savedTabButton)
@@ -2323,7 +2225,6 @@ class BearyProfileViewController: UIViewController {
             tabsTopConstraint,
             nightHeightConstraint,
             wallHeightConstraint,
-            badgesHeightConstraint,
             modulesHeightConstraint,
             signatureHeightConstraint,
         ])
@@ -2495,17 +2396,7 @@ class BearyProfileViewController: UIViewController {
             wallTotalLabel.trailingAnchor.constraint(equalTo: wallContainer.trailingAnchor, constant: -14),
             wallTotalLabel.centerYAnchor.constraint(equalTo: wallTitleLabel.centerYAnchor),
 
-            badgesContainer.leadingAnchor.constraint(equalTo: headerView.leadingAnchor, constant: 20),
-            badgesContainer.trailingAnchor.constraint(equalTo: headerView.trailingAnchor, constant: -20),
-            badgesTopConstraint,
-            badgesTitleLabel.leadingAnchor.constraint(equalTo: badgesContainer.leadingAnchor, constant: 14),
-            badgesTitleLabel.topAnchor.constraint(equalTo: badgesContainer.topAnchor, constant: 12),
-            badgesStack.leadingAnchor.constraint(equalTo: badgesContainer.leadingAnchor, constant: 14),
-            badgesStack.trailingAnchor.constraint(equalTo: badgesContainer.trailingAnchor, constant: -14),
-            badgesStack.topAnchor.constraint(equalTo: badgesTitleLabel.bottomAnchor, constant: 10),
-            badgesStack.bottomAnchor.constraint(equalTo: badgesContainer.bottomAnchor, constant: -12),
-
-            // 批 D：模块容器与墙 / 徽章架同列（左右各 20），顶贴徽章底（modulesTopConstraint）。
+            // 批 D：模块容器与墙同列（左右各 20），顶贴墙底（modulesTopConstraint）。
             modulesContainer.leadingAnchor.constraint(equalTo: headerView.leadingAnchor, constant: 20),
             modulesContainer.trailingAnchor.constraint(equalTo: headerView.trailingAnchor, constant: -20),
             modulesTopConstraint,
@@ -2601,9 +2492,7 @@ class BearyProfileViewController: UIViewController {
         gearButton.layer.borderColor = BearyColors.line.cgColor
         nightContainer.layer.borderColor = BearyColors.line.cgColor
         wallContainer.layer.borderColor = BearyColors.line.cgColor
-        badgesContainer.layer.borderColor = BearyColors.line.cgColor
         // 批 D：模块卡边线同款重赋（深浅切换时 CGColor 不自动跟随）。
-        calendarCard.layer.borderColor = BearyColors.line.cgColor
         statsCard.layer.borderColor = BearyColors.line.cgColor
         thisDayCard.layer.borderColor = BearyColors.line.cgColor
         randomCard.layer.borderColor = BearyColors.line.cgColor
@@ -2612,8 +2501,8 @@ class BearyProfileViewController: UIViewController {
 
     // MARK: - 本人 / 他人模式
 
-    /// 唯一显隐规则：他人主页隐藏编辑资料、齿轮菜单与徽章架，收藏页签仅本人可见。
-    /// （网页 PF_MODE 表同口径：self 全显、other 藏编辑资料与收藏；徽章架同为本人专属。）
+    /// 唯一显隐规则：他人主页隐藏编辑资料、齿轮菜单，收藏页签仅本人可见。
+    /// （网页 PF_MODE 表同口径：self 全显、other 藏编辑资料与收藏；徽章架已删，不再有本人专属头模块。）
     private func applyMode() {
         let own = isOwnProfile
         editButton.isHidden = !own
@@ -2621,8 +2510,6 @@ class BearyProfileViewController: UIViewController {
         // iCity：更多菜单只属他人主页（举报/拉黑均以他人为对象）。
         topMoreButton.isHidden = own
         if !own {
-            badgesContainer.isHidden = true
-            badgesHeightConstraint.isActive = true
             // 夜巡只给本人看：他人模式下旧夜巡态一律清掉（不留上一位用户的脚印）。
             hideNightPatrol()
         }
@@ -2633,8 +2520,7 @@ class BearyProfileViewController: UIViewController {
         applyTabSelection()
         applyEmailRow()
         updateTopBarVisibility()
-        // F17：他人主页徽章架在此隐藏，须立即重算间距链（否则标签仍按
-        // 徽章架可见时的间隙下偏）；宽未出时跳过，首布局会补算。
+        // F17：他人主页夜巡在此隐藏，须立即重算间距链；宽未出时跳过，首布局会补算。
         if headerWidthValue > 0 {
             layoutHeaderForced(widthValue: headerWidthValue)
         }
@@ -2775,8 +2661,7 @@ class BearyProfileViewController: UIViewController {
             applyProfile()
             applyMode()
             if isOwnProfile {
-                loadBadges()
-                // 夜巡与徽章架同为本人专属：资料回包后另拉夜巡（失败即隐藏，不 toast）。
+                // 夜巡为本人专属：资料回包后另拉夜巡（失败即隐藏，不 toast）；徽章架已删，不再拉徽章。
                 loadNightPatrol()
             }
             // 批 D：签名（名字下方）与模块语料跟资料走同一回包；资料失败时
@@ -2947,7 +2832,7 @@ class BearyProfileViewController: UIViewController {
         statsTopWithoutEmailConstraint.isActive = true
     }
 
-    // MARK: - 小熊回应墙（P1）与徽章架（P2）
+    // MARK: - 小熊回应墙（P1）
 
     /// 回应墙首次出现动效只播一次（网页 pfFillWall 首次出现 300ms 动效口径）。
     private var wallHasAnimated = false
@@ -3220,213 +3105,6 @@ class BearyProfileViewController: UIViewController {
         }
     }
 
-    private func loadBadges() {
-        guard isOwnProfile else { return }
-        BearyAPI.shared.fetchMyBadges { [weak self] result in
-            DispatchQueue.main.async {
-                guard let strongSelf = self, strongSelf.isOwnProfile else { return }
-                switch result {
-                case .success(let badgesValue):
-                    strongSelf.unlockedBadges = badgesValue.unlocked ?? []
-                    strongSelf.wornBadgeKey = badgesValue.worn
-                    strongSelf.renderBadges()
-                case .failure(let error):
-                    let badgeErrorCategory: String
-                    switch error {
-                    case .network: badgeErrorCategory = "network"
-                    case .http: badgeErrorCategory = "http"
-                    case .server: badgeErrorCategory = "server"
-                    case .decoding: badgeErrorCategory = "decoding"
-                    case .unauthorized: badgeErrorCategory = "unauthorized"
-                    case .authFailure: badgeErrorCategory = "authFailure"
-                    case .notFound: badgeErrorCategory = "notFound"
-                    case .cancelled: badgeErrorCategory = "cancelled"
-                    }
-                    NSLog("[BearyProfile] loadBadges failed: %@", badgeErrorCategory)
-                    // P1-5：失败态现形（不再隐藏容器）：徽章 stack 清空后放一个
-                    // 可点重试钮；文案与空态区分——空态是 unlocked 为空时整个
-                    // 容器隐藏、无任何文案（见 renderBadges 空分支）。
-                    for arrangedView in strongSelf.badgesStack.arrangedSubviews {
-                        strongSelf.badgesStack.removeArrangedSubview(arrangedView)
-                        arrangedView.removeFromSuperview()
-                    }
-                    let retryButton = UIButton(type: .system)
-                    retryButton.translatesAutoresizingMaskIntoConstraints = false
-                    retryButton.setTitle("徽章加载失败，点按重试", for: .normal)
-                    retryButton.titleLabel?.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13))
-                    retryButton.titleLabel?.adjustsFontForContentSizeCategory = true
-                    retryButton.setTitleColor(BearyColors.gray, for: .normal)
-                    retryButton.addTarget(strongSelf, action: #selector(BearyProfileViewController.badgeRetryTapped), for: .touchUpInside)
-                    retryButton.bearyAddPressFeedback()
-                    NSLayoutConstraint.activate([
-                        retryButton.heightAnchor.constraint(greaterThanOrEqualToConstant: 32),
-                    ])
-                    strongSelf.badgesStack.addArrangedSubview(retryButton)
-                    strongSelf.badgesContainer.isHidden = false
-                    strongSelf.badgesHeightConstraint.isActive = false
-                    strongSelf.layoutHeaderForced(widthValue: strongSelf.headerWidthValue)
-                }
-            }
-        }
-    }
-
-    private func renderBadges() {
-        guard isOwnProfile else {
-            badgesContainer.isHidden = true
-            badgesHeightConstraint.isActive = true
-            return
-        }
-        // 网页 BADGE_ORDER 口径：排序固定为 ['beta']，只显示该表内已解锁的 key
-        // （接口 unlocked 原顺序不用；表外 key 不展示，与 renderBadgeShelf 一致）。
-        // “暂无徽章”空态分支（下）按例外保留不动。
-        let shown = ["beta"].filter { unlockedBadges.contains($0) }
-        guard !shown.isEmpty else {
-            // 52 批补充：成功返回空时不再直接隐藏，显示“暂无徽章”空态文案，
-            // 让没数据与没渲染一眼分清（失败态重试钮不动）。
-            for arrangedView in badgesStack.arrangedSubviews {
-                badgesStack.removeArrangedSubview(arrangedView)
-                arrangedView.removeFromSuperview()
-            }
-            let emptyLabel = UILabel()
-            emptyLabel.translatesAutoresizingMaskIntoConstraints = false
-            emptyLabel.text = "暂无徽章"
-            emptyLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13))
-            emptyLabel.adjustsFontForContentSizeCategory = true
-            emptyLabel.textColor = BearyColors.gray
-            badgesStack.addArrangedSubview(emptyLabel)
-            badgesContainer.isHidden = false
-            badgesHeightConstraint.isActive = false
-            layoutHeaderForced(widthValue: headerWidthValue)
-            return
-        }
-        for arrangedView in badgesStack.arrangedSubviews {
-            badgesStack.removeArrangedSubview(arrangedView)
-            arrangedView.removeFromSuperview()
-        }
-        var badgeButtons: [UIButton] = []
-        for key in shown {
-            guard let badgeImage = BearyBadgeImages.imageOrPlaceholder(for: key) else { continue }
-            let buttonValue = UIButton(type: .system)
-            buttonValue.translatesAutoresizingMaskIntoConstraints = false
-            buttonValue.accessibilityIdentifier = key
-            let imageViewValue = UIImageView(image: badgeImage)
-            imageViewValue.translatesAutoresizingMaskIntoConstraints = false
-            imageViewValue.contentMode = .scaleAspectFit
-            let worn = wornBadgeKey == key
-            let nameLabelValue = UILabel()
-            nameLabelValue.translatesAutoresizingMaskIntoConstraints = false
-            // 网页 .bdg-cell 口径：图 44、图与名 gap 4；未佩戴灰字，佩戴墨色粗体。
-            nameLabelValue.font = worn ? UIFont.boldSystemFont(ofSize: 11) : UIFont.systemFont(ofSize: 11)
-            nameLabelValue.textColor = worn ? BearyColors.ink : BearyColors.gray
-            nameLabelValue.textAlignment = .center
-            nameLabelValue.text = BearyBadgeImages.displayName(for: key)
-            let cellStack = UIStackView(arrangedSubviews: [imageViewValue, nameLabelValue])
-            cellStack.translatesAutoresizingMaskIntoConstraints = false
-            cellStack.axis = .vertical
-            cellStack.alignment = .center
-            cellStack.spacing = 4
-            cellStack.isUserInteractionEnabled = false
-            buttonValue.addSubview(cellStack)
-            // 网页 .bdg-cell.on 口径：无边框（未佩戴无描边），佩戴态 2px 墨色描边 + faint 底。
-            buttonValue.backgroundColor = worn ? BearyColors.faint : BearyColors.bg
-            buttonValue.layer.borderWidth = worn ? 2 : 0
-            buttonValue.layer.borderColor = BearyColors.ink.cgColor
-            buttonValue.layer.cornerRadius = 12
-            buttonValue.addTarget(self, action: #selector(badgeButtonTapped(_:)), for: .touchUpInside)
-            buttonValue.bearyAddPressFeedback()
-            // 钮宽由下文行内实测宽度约束固定（见行循环），不靠 hugging 猜：
-            // 钮自身无 title/image、intrinsic 宽为 0，hugging required 会与
-            // cellStack 的 required 宽度约束冲突，故只留 compression required 防挤压。
-            buttonValue.setContentCompressionResistancePriority(.required, for: .horizontal)
-            NSLayoutConstraint.activate([
-                imageViewValue.widthAnchor.constraint(equalToConstant: 44),
-                imageViewValue.heightAnchor.constraint(equalToConstant: 44),
-                cellStack.topAnchor.constraint(equalTo: buttonValue.topAnchor, constant: 6),
-                cellStack.leadingAnchor.constraint(equalTo: buttonValue.leadingAnchor, constant: 8),
-                cellStack.trailingAnchor.constraint(equalTo: buttonValue.trailingAnchor, constant: -8),
-                cellStack.bottomAnchor.constraint(equalTo: buttonValue.bottomAnchor, constant: -6),
-            ])
-            badgeButtons.append(buttonValue)
-        }
-        // 网页 .bdg-shelf flex-wrap 口径：按实测宽分行，行内 gap 8；
-        // 架子内宽 = 头宽 − 容器边 20×2 − 架子边 14×2；单徽章时单行，外观不变。
-        let shelfWidth = max((headerWidthValue > 0 ? headerWidthValue : view.bounds.width) - 68, 60)
-        var currentRow: UIStackView?
-        var usedWidth: CGFloat = 0
-        for buttonValue in badgeButtons {
-            let measuredWidth = buttonValue.systemLayoutSizeFitting(UIView.layoutFittingCompressedSize).width
-            let buttonWidth = measuredWidth > 0 ? measuredWidth : 60
-            if currentRow == nil || usedWidth + 8 + buttonWidth > shelfWidth {
-                let newRow = UIStackView()
-                newRow.translatesAutoresizingMaskIntoConstraints = false
-                newRow.axis = .horizontal
-                newRow.spacing = 8
-                newRow.alignment = .center
-                badgesStack.addArrangedSubview(newRow)
-                currentRow = newRow
-                usedWidth = 0
-            } else {
-                usedWidth += 8
-            }
-            currentRow?.addArrangedSubview(buttonValue)
-            // 钮宽定死为实测内容宽：单枚时行 stack（.fill）无法再把它拉满整行，
-            // 剩余宽度由行尾垫片吃掉；钮高仍由 cellStack（图 44 + 名 + 内边距）撑起。
-            buttonValue.widthAnchor.constraint(equalToConstant: buttonWidth).isActive = true
-            usedWidth += buttonWidth
-        }
-        // 行尾垫片：每行末尾补一个最低 hugging 的空 view，吃掉行内剩余宽度，
-        // 单枚徽章不再被 .fill 行拉满整行；换行丈量在垫片加入前已完成，不受影响。
-        for case let row as UIStackView in badgesStack.arrangedSubviews {
-            let spacer = UIView()
-            spacer.translatesAutoresizingMaskIntoConstraints = false
-            spacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
-            row.addArrangedSubview(spacer)
-        }
-        badgesContainer.isHidden = false
-        badgesHeightConstraint.isActive = false
-        layoutHeaderForced(widthValue: headerWidthValue)
-    }
-
-    @objc private func badgeRetryTapped() {
-        loadBadges()
-    }
-
-    @objc private func badgeButtonTapped(_ sender: UIButton) {
-        guard isOwnProfile, !badgeWearBusy else { return }
-        guard let key = sender.accessibilityIdentifier, !key.isEmpty else { return }
-        let next: String? = wornBadgeKey == key ? nil : key
-        badgeWearBusy = true
-        BearyAPI.shared.postWear(badgeKey: next) { [weak self] result in
-            DispatchQueue.main.async {
-                guard let strongSelf = self else { return }
-                strongSelf.badgeWearBusy = false
-                switch result {
-                case .success(let wearValue):
-                    strongSelf.wornBadgeKey = wearValue.worn
-                    if let profileValue = strongSelf.profile {
-                        var updated = profileValue
-                        updated.wornBadge = wearValue.worn
-                        strongSelf.profile = updated
-                    }
-                    strongSelf.refreshWornBadge()
-                    strongSelf.renderBadges()
-                    // 网页佩戴成功 toast 口径：已佩戴「名」/ 已取消佩戴，名取 displayName。
-                    if let wornKey = wearValue.worn, !wornKey.isEmpty {
-                        BearyToast.show(in: strongSelf.view, message: "已佩戴「\(BearyBadgeImages.displayName(for: wornKey))」")
-                    } else {
-                        BearyToast.show(in: strongSelf.view, message: "已取消佩戴")
-                    }
-                case .failure(let err):
-                    if case .unauthorized = err {
-                        strongSelf.onRequireLogin?()
-                    } else {
-                        strongSelf.presentSimpleAlert(message: "佩戴失败，请重试")
-                    }
-                }
-            }
-        }
-    }
-
     /// 只刷新名字旁的佩戴徽章位（不重拉整个头部，避免滚动跳动）。
     private func refreshWornBadge() {
         guard let profileValue = profile else { return }
@@ -3464,40 +3142,6 @@ class BearyProfileViewController: UIViewController {
     // 切账号 / 换目标：modulesProfileId 变化时语料、随机上一次 id、月历月份、展开态全复位。
 
     private func buildPersonalModuleCards() {
-        // —— 情绪月历：标题行（年月 + 上 / 下月）+ 星期头 + 日期格（renderCalendar 重建）。
-        let monthRow = UIStackView()
-        monthRow.translatesAutoresizingMaskIntoConstraints = false
-        monthRow.axis = .horizontal
-        monthRow.alignment = .center
-        let monthSpacer = UIView()
-        monthSpacer.translatesAutoresizingMaskIntoConstraints = false
-        monthRow.addArrangedSubview(calendarMonthLabel)
-        monthRow.addArrangedSubview(monthSpacer)
-        monthRow.addArrangedSubview(calendarPrevButton)
-        monthRow.addArrangedSubview(calendarNextButton)
-        NSLayoutConstraint.activate([
-            calendarPrevButton.widthAnchor.constraint(equalToConstant: 44),
-            calendarPrevButton.heightAnchor.constraint(equalToConstant: 44),
-            calendarNextButton.widthAnchor.constraint(equalToConstant: 44),
-            calendarNextButton.heightAnchor.constraint(equalToConstant: 44),
-        ])
-        let weekdayRow = UIStackView()
-        weekdayRow.translatesAutoresizingMaskIntoConstraints = false
-        weekdayRow.axis = .horizontal
-        weekdayRow.distribution = .fillEqually
-        for weekdayName in ["一", "二", "三", "四", "五", "六", "日"] {
-            let label = UILabel()
-            label.font = UIFont.systemFont(ofSize: 12)
-            label.textColor = BearyColors.gray
-            label.textAlignment = .center
-            label.text = weekdayName
-            weekdayRow.addArrangedSubview(label)
-        }
-        calendarCard.contentStack.addArrangedSubview(monthRow)
-        calendarCard.contentStack.addArrangedSubview(calendarSubtitleLabel)
-        calendarCard.contentStack.addArrangedSubview(weekdayRow)
-        calendarCard.contentStack.addArrangedSubview(calendarGridStack)
-
         // —— 写作统计：2×2 小数字格 + 最常用心情 / 天气行。
         func makeStatTile(valueLabel: UILabel, keyText: String) -> UIView {
             let tile = UIView()
@@ -3602,7 +3246,6 @@ class BearyProfileViewController: UIViewController {
         ])
 
         modulesStack.addArrangedSubview(pastSelfDeliveryCard)
-        modulesStack.addArrangedSubview(calendarCard)
         modulesStack.addArrangedSubview(statsCard)
         modulesStack.addArrangedSubview(thisDayCard)
         modulesStack.addArrangedSubview(randomCard)
@@ -3712,8 +3355,8 @@ class BearyProfileViewController: UIViewController {
     private func scheduleModulesRefresh() {
         guard let profileId = profile?.profileIdValue ?? targetUserIdValue else { return }
         if modulesProfileId != profileId {
-            // 切账号 / 换目标：语料、随机上一次 id、月历月份、展开态全复位，
-            // 旧目标的月历与随机卡绝不带到新目标首帧。
+            // 切账号 / 换目标：语料、随机上一次 id、展开态全复位，
+            // 旧目标的随机卡绝不带到新目标首帧。
             modulesProfileId = profileId
             modulesCorpus = []
             modulesCorpusComplete = false
@@ -3724,9 +3367,6 @@ class BearyProfileViewController: UIViewController {
             pastSelfThisDayDraft = ""
             pastSelfReplyingChainId = nil
             pastSelfReplyDrafts = [:]
-            let now = Date()
-            calendarDisplayYear = Calendar.current.component(.year, from: now)
-            calendarDisplayMonth = Calendar.current.component(.month, from: now)
             renderModules()
         }
         modulesGeneration += 1
@@ -3786,13 +3426,12 @@ class BearyProfileViewController: UIViewController {
             return
         }
         let visible = BearyProfilePersonalLogic.visibleEntries(modulesCorpus, isOwn: isOwnProfile)
-        renderCalendar(visible: visible)
         renderStats(visible: visible)
         renderThisDay(visible: visible)
         renderPastSelf(visible: visible)
         renderRandom(visible: visible)
         renderYear(visible: visible)
-        let anyVisible = [pastSelfDeliveryCard, calendarCard, statsCard, thisDayCard, randomCard, yearCard].contains { !$0.isHidden }
+        let anyVisible = [pastSelfDeliveryCard, statsCard, thisDayCard, randomCard, yearCard].contains { !$0.isHidden }
         modulesContainer.isHidden = !anyVisible
         modulesHeightConstraint.isActive = !anyVisible
         if headerWidthValue > 0 {
@@ -3820,147 +3459,6 @@ class BearyProfileViewController: UIViewController {
         }
         let excerpt = personalExcerpt(entry: entry, limit: 40)
         return excerpt.isEmpty ? "日记" : excerpt
-    }
-
-    // MARK: 批 D —— 情绪月历
-
-    @objc private func calendarPrevMonthTapped() {
-        calendarDisplayMonth -= 1
-        if calendarDisplayMonth < 1 {
-            calendarDisplayMonth = 12
-            calendarDisplayYear -= 1
-        }
-        renderCalendar(visible: BearyProfilePersonalLogic.visibleEntries(modulesCorpus, isOwn: isOwnProfile))
-        if headerWidthValue > 0 { layoutHeaderForced(widthValue: headerWidthValue) }
-    }
-
-    @objc private func calendarNextMonthTapped() {
-        calendarDisplayMonth += 1
-        if calendarDisplayMonth > 12 {
-            calendarDisplayMonth = 1
-            calendarDisplayYear += 1
-        }
-        renderCalendar(visible: BearyProfilePersonalLogic.visibleEntries(modulesCorpus, isOwn: isOwnProfile))
-        if headerWidthValue > 0 { layoutHeaderForced(widthValue: headerWidthValue) }
-    }
-
-    @objc private func calendarDayTapped(_ sender: UIButton) {
-        guard let entries = calendarDayEntries[sender.tag], let latest = entries.first else { return }
-        onOpenEntry?(latest)
-    }
-
-    private func renderCalendar(visible: [Entry]) {
-        // 语料为 0 时整卡隐藏（全新用户不摆空月历）；语料非空时即使当月空白也显示，
-        // 月份导航是去有日记月份的唯一入口，藏卡等于藏路。
-        guard !visible.isEmpty else {
-            calendarCard.isHidden = true
-            return
-        }
-        calendarCard.isHidden = false
-        let grid = BearyProfilePersonalLogic.monthGrid(year: calendarDisplayYear, month: calendarDisplayMonth, entries: visible, calendar: .current)
-        calendarMonthLabel.text = "\(calendarDisplayYear) 年 \(calendarDisplayMonth) 月"
-        let writtenDays = grid.days.filter { !$0.entries.isEmpty }.count
-        var moodCounts: [String: Int] = [:]
-        for day in grid.days {
-            if let mood = day.moodKey { moodCounts[mood, default: 0] += 1 }
-        }
-        let topMood = moodCounts.max(by: { a, b in
-            if a.value != b.value { return a.value < b.value }
-            return a.key > b.key
-        })?.key
-        if writtenDays == 0 {
-            calendarSubtitleLabel.text = "本月还没有日记"
-        } else if let topMood = topMood, let moodName = BearyText.moodNames[topMood] {
-            calendarSubtitleLabel.text = "本月写了 \(writtenDays) 天 · 最多心情：\(moodName)"
-        } else {
-            calendarSubtitleLabel.text = "本月写了 \(writtenDays) 天"
-        }
-        calendarDayEntries = [:]
-        for arrangedView in calendarGridStack.arrangedSubviews {
-            calendarGridStack.removeArrangedSubview(arrangedView)
-            arrangedView.removeFromSuperview()
-        }
-        let isDark = traitCollection.userInterfaceStyle == .dark
-        let todayParts = Calendar.current.dateComponents([.year, .month, .day], from: Date())
-        var cells: [UIView] = []
-        for _ in 0..<grid.leadingBlanks {
-            cells.append(UIView())
-        }
-        for day in grid.days {
-            calendarDayEntries[day.day] = day.entries
-            let button = UIButton(type: .custom)
-            button.translatesAutoresizingMaskIntoConstraints = false
-            button.tag = day.day
-            if !day.entries.isEmpty {
-                button.addTarget(self, action: #selector(calendarDayTapped(_:)), for: .touchUpInside)
-                button.bearyAddPressFeedback()
-            } else {
-                button.isUserInteractionEnabled = false
-            }
-            let cellStack = UIStackView()
-            cellStack.translatesAutoresizingMaskIntoConstraints = false
-            cellStack.axis = .vertical
-            cellStack.alignment = .center
-            cellStack.spacing = 2
-            cellStack.isUserInteractionEnabled = false
-            let numberLabel = UILabel()
-            numberLabel.font = UIFont.systemFont(ofSize: 14, weight: .bold)
-            // 当天（展示月 = 本月时）日期数字走品牌橙，其余墨色；空白天不点。
-            if todayParts.year == calendarDisplayYear, todayParts.month == calendarDisplayMonth, todayParts.day == day.day {
-                numberLabel.textColor = BearyColors.orange
-            } else {
-                numberLabel.textColor = BearyColors.ink
-            }
-            numberLabel.text = "\(day.day)"
-            cellStack.addArrangedSubview(numberLabel)
-            if let moodKey = day.moodKey, let moodImage = BearyEmoteImages.image(for: moodKey, dark: isDark) {
-                let moodImageView = UIImageView(image: moodImage)
-                moodImageView.translatesAutoresizingMaskIntoConstraints = false
-                moodImageView.contentMode = .scaleAspectFit
-                NSLayoutConstraint.activate([
-                    moodImageView.widthAnchor.constraint(equalToConstant: 22),
-                    moodImageView.heightAnchor.constraint(equalToConstant: 22),
-                ])
-                cellStack.addArrangedSubview(moodImageView)
-            } else {
-                // 无心情仍占 22 高：有心情 / 无心情行高一致，格子不参差。
-                let spacer = UIView()
-                spacer.translatesAutoresizingMaskIntoConstraints = false
-                spacer.heightAnchor.constraint(equalToConstant: 22).isActive = true
-                cellStack.addArrangedSubview(spacer)
-            }
-            let countLabel = UILabel()
-            countLabel.font = UIFont.systemFont(ofSize: 10)
-            countLabel.textColor = BearyColors.gray
-            countLabel.text = day.entries.count > 1 ? "\(day.entries.count)篇" : ""
-            countLabel.heightAnchor.constraint(equalToConstant: 13).isActive = true
-            cellStack.addArrangedSubview(countLabel)
-            button.addSubview(cellStack)
-            NSLayoutConstraint.activate([
-                cellStack.topAnchor.constraint(equalTo: button.topAnchor),
-                cellStack.leadingAnchor.constraint(equalTo: button.leadingAnchor),
-                cellStack.trailingAnchor.constraint(equalTo: button.trailingAnchor),
-                cellStack.bottomAnchor.constraint(equalTo: button.bottomAnchor),
-            ])
-            cells.append(button)
-        }
-        var index = 0
-        while index < cells.count {
-            let row = UIStackView()
-            row.translatesAutoresizingMaskIntoConstraints = false
-            row.axis = .horizontal
-            row.distribution = .fillEqually
-            row.spacing = 6
-            for cell in cells[index..<min(index + 7, cells.count)] {
-                row.addArrangedSubview(cell)
-            }
-            // 末行不足 7 格时补空白格，保持列宽与上行对齐。
-            while row.arrangedSubviews.count < 7 {
-                row.addArrangedSubview(UIView())
-            }
-            calendarGridStack.addArrangedSubview(row)
-            index += 7
-        }
     }
 
     // MARK: 批 D —— 写作统计
@@ -5570,7 +5068,7 @@ class BearyProfileViewController: UIViewController {
         retryButton.setTitleColor(BearyColors.ink, for: .normal)
         retryButton.titleLabel?.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 14))
         retryButton.titleLabel?.adjustsFontForContentSizeCategory = true
-        retryButton.setImage(BearyIconImages.image(named: "icon_restore", pointSize: 15), for: .normal)
+        retryButton.setImage(BearyIconImages.image(named: "icon_refresh", pointSize: 15), for: .normal)
         retryButton.tintColor = BearyColors.ink
         retryButton.contentEdgeInsets = UIEdgeInsets(top: 0, left: 12, bottom: 0, right: 12)
         retryButton.titleEdgeInsets = UIEdgeInsets(top: 0, left: 6, bottom: 0, right: 0)
