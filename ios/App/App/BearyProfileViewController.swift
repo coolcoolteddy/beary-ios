@@ -889,8 +889,8 @@ class BearyProfileViewController: UIViewController {
     // 标签 + 列表；模块容器插在徽章架与标签之间，标签与列表本身一字不动。
     // 图标铁律：以下只用官方包已有资产（icon_edit / icon_chevron_right /
     // icon_chevron_down / icon_arrow_left / icon_arrow_right / icon_chart /
-    // icon_clock / icon_fire / icon_wx_* / emote_*）；「换一篇」洗牌图标官方包
-    // 里没有，故换篇按钮只用文字、不找替代顶替，缺图标清单见回报。
+    // icon_clock / icon_fire / icon_wx_* / emote_*）；「换一篇」洗牌图标已随
+    // beary-ui-extension-13 入库（icon_shuffle，深浅双版），不再缺图标。
 
     private let signatureContainer: UIView = {
         let viewValue = UIView()
@@ -1053,8 +1053,8 @@ class BearyProfileViewController: UIViewController {
     }()
     private var thisDayMainEntry: Entry?
 
-    /// 随机漫步卡：点卡片进详情；「换一篇」只换卡片不跳转（文字按钮——
-    /// 洗牌图标官方包缺失，见本批缺图标清单，不用 icon_refresh 顶替）。
+    /// 随机漫步卡：点卡片进详情；「换一篇」只换卡片不跳转（官方 shuffle
+    /// 图标左侧 16pt + 文字，不用 icon_refresh 顶替）。
     private let randomCard = BearyProfilePersonalModulesCard(title: "随机漫步")
     private let randomMetaLabel = BearyProfilePersonalModulesCard.metaLabel()
     private let randomTitleLabel = BearyProfilePersonalModulesCard.entryTitleLabel()
@@ -1072,6 +1072,9 @@ class BearyProfileViewController: UIViewController {
         buttonValue.setTitle("换一篇", for: .normal)
         buttonValue.setTitleColor(.black, for: .normal)
         buttonValue.titleLabel?.font = UIFont.systemFont(ofSize: 14, weight: .bold)
+        buttonValue.setImage(BearyIconImages.image(named: "icon_shuffle", pointSize: 16), for: .normal)
+        buttonValue.tintColor = .black
+        buttonValue.titleEdgeInsets = UIEdgeInsets(top: 0, left: 6, bottom: 0, right: 0)
         buttonValue.backgroundColor = BearyColors.orange
         buttonValue.layer.cornerRadius = 10
         buttonValue.clipsToBounds = true
