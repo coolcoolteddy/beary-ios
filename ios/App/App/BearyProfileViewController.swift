@@ -1015,6 +1015,38 @@ class BearyProfileViewController: UIViewController {
         return labelValue
     }()
 
+    /// 写作统计卡内词汇指纹紧凑版：当年 top 4 + 口径徽标行（他人态「仅公开篇」）。
+    /// 词行本身不点——整卡点按进年度回顾，避免词行手势与整卡手势双触发；
+    /// 点词看篇数只在年报首屏主视觉里。年份取当年，缺当年时取最近有词条目的年，
+    /// 词视图标题行自带年份，绝不把别年的词顶在当年名下。
+    private let statsWordprintView = BearyWordprintView(mode: .compact)
+    private var statsWordprintYear: Int?
+    private let statsEnterRow: UIStackView = {
+        let stackValue = UIStackView()
+        stackValue.translatesAutoresizingMaskIntoConstraints = false
+        stackValue.axis = .horizontal
+        stackValue.spacing = 4
+        stackValue.alignment = .center
+        // 仅作进入提示（非按钮）：真正的手势在整卡上，避免按钮与手势双触发双弹页。
+        stackValue.isUserInteractionEnabled = false
+        let labelValue = UILabel()
+        labelValue.translatesAutoresizingMaskIntoConstraints = false
+        labelValue.font = UIFont.systemFont(ofSize: 14, weight: .bold)
+        labelValue.textColor = BearyColors.ink
+        labelValue.text = "进入年度回顾"
+        let chevronView = UIImageView(image: BearyIconImages.image(named: "icon_chevron_right", pointSize: 14))
+        chevronView.translatesAutoresizingMaskIntoConstraints = false
+        chevronView.contentMode = .scaleAspectFit
+        chevronView.tintColor = BearyColors.ink
+        stackValue.addArrangedSubview(labelValue)
+        stackValue.addArrangedSubview(chevronView)
+        NSLayoutConstraint.activate([
+            chevronView.widthAnchor.constraint(equalToConstant: 14),
+            chevronView.heightAnchor.constraint(equalToConstant: 14),
+        ])
+        return stackValue
+    }()
+
     /// 那年今日卡：主显最近一年当天最晚一篇；同年多篇时展开列表；往年今天
     /// 没写时显示解释性空态（不编造、不拿别的日子顶替），不整卡消失——
     /// 前提是语料非空（全新 0 篇用户整卡隐藏，见 renderThisDay）。
@@ -2952,6 +2984,10 @@ class BearyProfileViewController: UIViewController {
         statsCard.contentStack.addArrangedSubview(statsRowTop)
         statsCard.contentStack.addArrangedSubview(statsRowBottom)
         statsCard.contentStack.addArrangedSubview(statsMoodWeatherLabel)
+        statsCard.contentStack.addArrangedSubview(statsWordprintView)
+        statsCard.contentStack.addArrangedSubview(statsEnterRow)
+        let statsTap = UITapGestureRecognizer(target: self, action: #selector(statsCardTapped))
+        statsCard.addGestureRecognizer(statsTap)
 
         // —— 那年今日：内容栈（点按进主显篇）+ 展开钮 + 同年多篇列表（展开钮在内容栈外，
         // 避免手势与按钮双触发）。
@@ -3346,6 +3382,7 @@ class BearyProfileViewController: UIViewController {
         let stats = BearyProfilePersonalLogic.writingStats(entries: visible, now: Date(), calendar: .current)
         guard stats.total > 0 else {
             statsCard.isHidden = true
+            statsWordprintYear = nil
             return
         }
         statsCard.isHidden = false
@@ -3373,6 +3410,42 @@ class BearyProfileViewController: UIViewController {
             statsMoodWeatherLabel.isHidden = false
             statsMoodWeatherLabel.text = parts.joined(separator: " · ")
         }
+        // 紧凑版词汇指纹：当年 top 4；当年无词条目时取最近有词条目的年，
+        // 年份由词视图标题行明示；当年有篇但无可计词时整节隐藏，不留空标题。
+        // 口径与年报首屏同源：visible 已过滤，wordprint 内部再过滤一次。
+        let currentYear = Calendar.current.component(.year, from: Date())
+        let availableYears = BearyProfilePersonalLogic.availableYears(entries: visible, isOwn: isOwnProfile, calendar: .current)
+        let resolvedYear = availableYears.contains(currentYear) ? currentYear : availableYears.first
+        statsWordprintYear = resolvedYear
+        if let resolvedYear = resolvedYear {
+            let wordprintValue = BearyProfilePersonalLogic.wordprint(entries: visible, year: resolvedYear, isOwn: isOwnProfile, calendar: .current)
+            if wordprintValue.items.isEmpty {
+                statsWordprintView.isHidden = true
+            } else {
+                statsWordprintView.isHidden = false
+                statsWordprintView.configure(with: wordprintValue, scope: isOwnProfile ? .own : .other)
+            }
+        } else {
+            statsWordprintView.isHidden = true
+        }
+    }
+
+    // MARK: 词汇指纹 —— 点写作统计卡进年度回顾（本人与他人均可）
+
+    @objc private func statsCardTapped() {
+        openYearReview()
+    }
+
+    private func openYearReview() {
+        let visible = BearyProfilePersonalLogic.visibleEntries(modulesCorpus, isOwn: isOwnProfile)
+        guard !visible.isEmpty else { return }
+        let currentYear = Calendar.current.component(.year, from: Date())
+        let availableYears = BearyProfilePersonalLogic.availableYears(entries: visible, isOwn: isOwnProfile, calendar: .current)
+        guard let resolvedYear = availableYears.contains(currentYear) ? currentYear : availableYears.first else { return }
+        guard presentedViewController == nil else { return }
+        let sheet = BearyYearReviewViewController(year: resolvedYear, allEntries: visible, isOwn: isOwnProfile)
+        sheet.modalPresentationStyle = .pageSheet
+        present(sheet, animated: BearyMotion.animated(true), completion: nil)
     }
 
     // MARK: 批 D —— 那年今日
@@ -3523,13 +3596,7 @@ class BearyProfileViewController: UIViewController {
     // MARK: 批 D —— 年度回顾入口
 
     @objc private func yearReviewTapped() {
-        let visible = BearyProfilePersonalLogic.visibleEntries(modulesCorpus, isOwn: isOwnProfile)
-        let year = Calendar.current.component(.year, from: Date())
-        let yearEntries = BearyProfilePersonalLogic.yearEntries(entries: visible, year: year, calendar: .current)
-        guard !yearEntries.isEmpty else { return }
-        let sheet = BearyYearReviewViewController(year: year, entries: yearEntries)
-        sheet.modalPresentationStyle = .pageSheet
-        present(sheet, animated: BearyMotion.animated(true), completion: nil)
+        openYearReview()
     }
 
     private func renderYear(visible: [Entry]) {

@@ -12,8 +12,9 @@ import NaturalLanguage
 // - 空态塌掉：调用方（ProfileVC renderModules）按本层返回的空信号整卡隐藏，
 //   不留空标题；唯一例外是「那年今日」空态——预览明确要求显示解释性空态卡
 //   （「往年今天还没有日记，不编造」），那不是空标题，是有文案的空态。
-// - 年度回顾入口只本人可见；常出现的词并入年报首屏示意（点进后），不单独成卡，
-//   故词统计只走本人全口径，不存在他人页公开口径词表。
+// - 年度回顾入口卡仍只本人可见；但词汇指纹（年报首屏主视觉 + 写作统计卡
+//   紧凑版）本人与他人均可见：他人态只按公开篇统计并标注「仅公开篇」，
+//   见 BearyWordprint.swift 与本文件 wordprint() 的双层 fail-closed 过滤。
 // - 主题氛围不是一张卡：见 BearyProfileThemeTint（默认墨色现行，不新增 theme_tint 列，
 //   可自选功能待 Li 另定后再把该列绑到 applyProfileThemeTint 的入参上）。
 
@@ -306,33 +307,91 @@ enum BearyProfilePersonalLogic {
         "哪", "吗", "吧", "呢", "啊", "呀", "哦", "嗯", "哈哈",
     ]
 
-    /// 常出现的词：当年正文走系统 NLTokenizer（zh-Hans，词单位）分词；
-    /// 过滤停用词 / 标点 / 单字 / 纯数字 / emoji；同一篇内重复按实际次数计；
-    /// 按次数倒序取前 10，平手按首次出现顺序（稳定）。不做词云。
+    // MARK: - 词汇指纹
+
+    /// 词汇指纹单条：月份分布按「篇数」计（同一篇内词出现多次，当月只计 1 篇），
+    /// 故 12 个月篇数之和恒等于 docCount；该不变量由构造方式保证（见 wordprint）。
+    struct WordprintItem {
+        var word: String
+        var docCount: Int
+        var totalCount: Int
+        var monthDocCounts: [Int: Int]
+    }
+
+    struct Wordprint {
+        var year: Int
+        var entryCount: Int
+        var items: [WordprintItem]
+    }
+
+    /// 有词条目的年份（降序）：只取年份数字，不算任何一年的词表——
+    /// 看当年不触发旧年重算；切到旧年时只算旧年那一张。
+    static func availableYears(entries: [Entry], isOwn: Bool, calendar: Calendar) -> [Int] {
+        var years = Set<Int>()
+        for entry in visibleEntries(entries, isOwn: isOwn) {
+            guard let createdAt = entry.createdAt else { continue }
+            let date = Date(timeIntervalSince1970: TimeInterval(createdAt) / 1000)
+            years.insert(calendar.component(.year, from: date))
+        }
+        return years.sorted(by: >)
+    }
+
+    /// 词汇指纹：只算指定 year 一年，排序按出现篇数降序（不是总次数），
+    /// 平手时总次数降序、再按首次出现顺序；默认取前 15（任务书 10-20 的中值），
+    /// 紧凑版调用方再取前 4。分词与过滤口径沿用批 D 常出现的词：当年正文走
+    /// 系统 NLTokenizer（zh-Hans，词单位），过滤停用词 / 标点 / 单字 / 纯数字 /
+    /// emoji（见 isCountableWord）；同一篇内重复按实际次数计入总次数，
+    /// 出现篇数与月份分布按篇计（每篇每词每月各计 1 次）。
+    /// fail-closed：入参即使是未过滤的全量语料，本函数也先走 visibleEntries
+    /// 再过滤一次——他人态私密篇独有的词进不了词表，私密篇集中的月份也不会
+    /// 在他人月份分布里冒头；无 createdAt 的条目无法归属年份，不计入。
+    /// 不新增写库：纯内存计算，调用方传入的已是内存语料；切年份只重算当选年份。
     /// 注意：NLTokenizer 是设备端分词，无网络、无新依赖；分词质量以系统为准，
     /// 不自写二元切分（自写切分会把「秋天」切成「秋」「天」或拼出不存在的词）。
-    static func frequentWords(entries: [Entry], limit: Int = 10) -> [(word: String, count: Int)] {
-        var counts: [String: Int] = [:]
+    /// 批 D 的 frequentWords（仅总次数、无篇数、无月份、无他人过滤）已被本函数
+    /// 取代：其唯一调用方年报首屏已改走本函数，故直接删除，不留两套词表。
+    static func wordprint(entries: [Entry], year: Int, isOwn: Bool, limit: Int = 15, calendar: Calendar) -> Wordprint {
+        let visible = visibleEntries(entries, isOwn: isOwn)
+        let yearEntriesValue = yearEntries(entries: visible, year: year, calendar: calendar)
+        var totalCounts: [String: Int] = [:]
+        var docCounts: [String: Int] = [:]
+        var monthDocCounts: [String: [Int: Int]] = [:]
         var firstSeen: [String: Int] = [:]
         var order = 0
         let tokenizer = NLTokenizer(unit: .word)
         tokenizer.setLanguage(.simplifiedChinese)
-        for entry in entries {
-            guard let content = entry.content, !content.isEmpty else { continue }
+        for entry in yearEntriesValue {
+            guard let content = entry.content, !content.isEmpty,
+                  let createdAt = entry.createdAt else { continue }
+            let date = Date(timeIntervalSince1970: TimeInterval(createdAt) / 1000)
+            let month = calendar.component(.month, from: date)
+            var entryCounts: [String: Int] = [:]
             tokenizer.string = content
             tokenizer.enumerateTokens(in: content.startIndex..<content.endIndex) { range, _ in
                 let token = String(content[range])
                 order += 1
                 guard isCountableWord(token) else { return true }
                 if firstSeen[token] == nil { firstSeen[token] = order }
-                counts[token, default: 0] += 1
+                entryCounts[token, default: 0] += 1
                 return true
             }
+            for (word, count) in entryCounts {
+                totalCounts[word, default: 0] += count
+                docCounts[word, default: 0] += 1
+                var months = monthDocCounts[word] ?? [:]
+                months[month, default: 0] += 1
+                monthDocCounts[word] = months
+            }
         }
-        return counts.map { (word: $0.key, count: $0.value) }.sorted {
-            if $0.count != $1.count { return $0.count > $1.count }
+        let effectiveLimit = max(0, limit)
+        let items = docCounts.map { (word: $0.key, docCount: $0.value, totalCount: totalCounts[$0.key] ?? 0, months: monthDocCounts[$0.key] ?? [:]) }.sorted {
+            if $0.docCount != $1.docCount { return $0.docCount > $1.docCount }
+            if $0.totalCount != $1.totalCount { return $0.totalCount > $1.totalCount }
             return (firstSeen[$0.word] ?? 0) < (firstSeen[$1.word] ?? 0)
-        }.prefix(limit).map { $0 }
+        }.prefix(effectiveLimit).map {
+            WordprintItem(word: $0.word, docCount: $0.docCount, totalCount: $0.totalCount, monthDocCounts: $0.months)
+        }
+        return Wordprint(year: year, entryCount: yearEntriesValue.count, items: items)
     }
 
     /// 可计词：长度 ≥2 字符；全部 scalar 为字母（CJK 与拉丁字母均属字母，
@@ -353,15 +412,92 @@ enum BearyProfilePersonalLogic {
 // 传入的当年可见条目，不拉新接口：总篇数 / 最长连续 / 第一篇日期 / 心情分布
 // / 常出现的词。无词时词一节整节省略（不留空标题）。
 
+// MARK: - 年报首屏（词汇指纹为主视觉；年报本身年底另做）
+//
+// 可达性：本人经年度回顾入口卡，他人经写作统计卡（点整卡进本页）——
+// 两路传入的都是调用方已按 visibleEntries 过滤的语料，本页再以
+// filteredEntries（构造时过滤一次）+ wordprint 内部过滤一次兜底；
+// 他人页通篇只按公开篇统计，首屏指纹徽标行明确标注「仅公开篇」。
+// 每年一张：年份选择器只列有词条目的年份（availableYears），切年份时
+// renderSelectedYear 先清空动态栈再重建——旧年词行绝不残留到新年；
+// 每次只算当选年份，不重算、不缓存其他年份，不写库。
+// 无词时指纹一节整节省略（不留空标题），但口径徽标行仍单独出现，
+// 避免他人页在无词年里丢了「仅公开篇」标注。
+
 final class BearyYearReviewViewController: UIViewController {
 
-    private let year: Int
-    private let entries: [Entry]
+    private let filteredEntries: [Entry]
+    private let isOwnFlag: Bool
+    private let availableYearValues: [Int]
+    private var selectedYear: Int
 
-    init(year: Int, entries: [Entry]) {
-        self.year = year
-        self.entries = entries
+    private let titleLabel: UILabel = {
+        let label = UILabel()
+        label.translatesAutoresizingMaskIntoConstraints = false
+        label.font = UIFont.systemFont(ofSize: 22, weight: .heavy)
+        label.textColor = BearyColors.ink
+        return label
+    }()
+
+    private let yearLabel: UILabel = {
+        let label = UILabel()
+        label.translatesAutoresizingMaskIntoConstraints = false
+        label.font = UIFont.systemFont(ofSize: 16, weight: .bold)
+        label.textColor = BearyColors.ink
+        return label
+    }()
+
+    private lazy var prevYearButton: UIButton = {
+        let buttonValue = UIButton(type: .system)
+        buttonValue.translatesAutoresizingMaskIntoConstraints = false
+        buttonValue.setImage(BearyIconImages.image(named: "icon_arrow_left", pointSize: 16), for: .normal)
+        buttonValue.tintColor = BearyColors.ink
+        buttonValue.accessibilityLabel = "前一年"
+        buttonValue.addTarget(self, action: #selector(prevYearTapped), for: .touchUpInside)
+        buttonValue.bearyAddPressFeedback()
+        return buttonValue
+    }()
+
+    private lazy var nextYearButton: UIButton = {
+        let buttonValue = UIButton(type: .system)
+        buttonValue.translatesAutoresizingMaskIntoConstraints = false
+        buttonValue.setImage(BearyIconImages.image(named: "icon_arrow_right", pointSize: 16), for: .normal)
+        buttonValue.tintColor = BearyColors.ink
+        buttonValue.accessibilityLabel = "后一年"
+        buttonValue.addTarget(self, action: #selector(nextYearTapped), for: .touchUpInside)
+        buttonValue.bearyAddPressFeedback()
+        return buttonValue
+    }()
+
+    private let pickerRow: UIStackView = {
+        let stack = UIStackView()
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        stack.axis = .horizontal
+        stack.spacing = 8
+        stack.alignment = .center
+        return stack
+    }()
+
+    private let dynamicStack: UIStackView = {
+        let stack = UIStackView()
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        stack.axis = .vertical
+        stack.spacing = 20
+        return stack
+    }()
+
+    private let wordprintView = BearyWordprintView(mode: .hero)
+
+    init(year: Int, allEntries: [Entry], isOwn: Bool) {
+        self.filteredEntries = BearyProfilePersonalLogic.visibleEntries(allEntries, isOwn: isOwn)
+        self.isOwnFlag = isOwn
+        let years = BearyProfilePersonalLogic.availableYears(entries: allEntries, isOwn: isOwn, calendar: .current)
+        self.availableYearValues = years
+        self.selectedYear = years.contains(year) ? year : (years.first ?? year)
         super.init(nibName: nil, bundle: nil)
+        wordprintView.onSelect = { [weak self] item in
+            self?.presentWordDetail(item: item)
+        }
     }
 
     required init?(coder: NSCoder) {
@@ -404,28 +540,96 @@ final class BearyYearReviewViewController: UIViewController {
             stack.widthAnchor.constraint(equalTo: scrollView.widthAnchor, constant: -40),
         ])
 
-        let calendar = Calendar.current
-        let titleLabel = UILabel()
-        titleLabel.font = UIFont.systemFont(ofSize: 22, weight: .heavy)
-        titleLabel.textColor = BearyColors.ink
-        titleLabel.text = "\(year) 年度回顾"
         stack.addArrangedSubview(titleLabel)
 
-        // 总篇数 / 最长连续 / 第一篇。
+        let calendarIconView = UIImageView(image: BearyIconImages.image(named: "icon_calendar", pointSize: 16))
+        calendarIconView.translatesAutoresizingMaskIntoConstraints = false
+        calendarIconView.contentMode = .scaleAspectFit
+        calendarIconView.tintColor = BearyColors.gray
+        pickerRow.addArrangedSubview(calendarIconView)
+        pickerRow.addArrangedSubview(yearLabel)
+        let pickerSpacer = UIView()
+        pickerSpacer.translatesAutoresizingMaskIntoConstraints = false
+        pickerRow.addArrangedSubview(pickerSpacer)
+        pickerRow.addArrangedSubview(prevYearButton)
+        pickerRow.addArrangedSubview(nextYearButton)
+        NSLayoutConstraint.activate([
+            calendarIconView.widthAnchor.constraint(equalToConstant: 16),
+            calendarIconView.heightAnchor.constraint(equalToConstant: 16),
+            prevYearButton.widthAnchor.constraint(equalToConstant: 44),
+            prevYearButton.heightAnchor.constraint(equalToConstant: 44),
+            nextYearButton.widthAnchor.constraint(equalToConstant: 44),
+            nextYearButton.heightAnchor.constraint(equalToConstant: 44),
+        ])
+        stack.addArrangedSubview(pickerRow)
+        stack.addArrangedSubview(dynamicStack)
+        renderSelectedYear()
+    }
+
+    private var scopeValue: BearyWordprintScope {
+        return isOwnFlag ? .own : .other
+    }
+
+    private func renderSelectedYear() {
+        titleLabel.text = "\(selectedYear) 年度回顾"
+        yearLabel.text = "\(selectedYear) 年"
+        // 只有一年时整行选择器隐藏（年份已在标题里）；多年前后箭头按年份数组
+        // 下标走，不按 year ± 1 算——缺少年份时 ± 1 会指到空年。
+        pickerRow.isHidden = availableYearValues.count <= 1
+        if let index = availableYearValues.firstIndex(of: selectedYear) {
+            // 数组降序：左箭头 = 前一年（更早，下标 +1），右箭头 = 后一年（更晚，下标 -1）。
+            prevYearButton.isEnabled = index + 1 < availableYearValues.count
+            nextYearButton.isEnabled = index > 0
+        } else {
+            prevYearButton.isEnabled = false
+            nextYearButton.isEnabled = false
+        }
+        prevYearButton.alpha = prevYearButton.isEnabled ? 1 : 0.3
+        nextYearButton.alpha = nextYearButton.isEnabled ? 1 : 0.3
+
+        // 先清空再重建：旧年词行、心情条、摘要绝不残留到新年。
+        for arrangedView in dynamicStack.arrangedSubviews {
+            dynamicStack.removeArrangedSubview(arrangedView)
+            arrangedView.removeFromSuperview()
+        }
+
+        let calendar = Calendar.current
+        let yearEntriesValue = BearyProfilePersonalLogic.yearEntries(entries: filteredEntries, year: selectedYear, calendar: calendar)
+        guard !yearEntriesValue.isEmpty else {
+            dynamicStack.addArrangedSubview(bearyMakeWordprintScopeBadge(scope: scopeValue))
+            let emptyLabel = UILabel()
+            emptyLabel.numberOfLines = 0
+            emptyLabel.font = UIFont.systemFont(ofSize: 15)
+            emptyLabel.textColor = BearyColors.gray
+            emptyLabel.text = "这一年还没有日记"
+            dynamicStack.addArrangedSubview(emptyLabel)
+            return
+        }
+
+        // 主视觉：词汇指纹（当年 top 15，点词进详情；无词时整节省略，只留口径行）。
+        let wordprintValue = BearyProfilePersonalLogic.wordprint(entries: filteredEntries, year: selectedYear, isOwn: isOwnFlag, calendar: calendar)
+        if !print.items.isEmpty {
+            wordprintView.configure(with: wordprintValue, scope: scopeValue)
+            dynamicStack.addArrangedSubview(wordprintView)
+        } else {
+            dynamicStack.addArrangedSubview(bearyMakeWordprintScopeBadge(scope: scopeValue))
+        }
+
+        // 总篇数 / 最长连续 / 第一篇（当年）。
         var writtenDays = Set<Date>()
-        for entry in entries {
+        for entry in yearEntriesValue {
             if let createdAt = entry.createdAt {
                 let date = Date(timeIntervalSince1970: TimeInterval(createdAt) / 1000)
                 writtenDays.insert(calendar.startOfDay(for: date))
             }
         }
         let longest = BearyProfilePersonalLogic.longestStreak(writtenDays: writtenDays, calendar: calendar)
-        let first = entries.min(by: { ($0.createdAt ?? 0) < ($1.createdAt ?? 0) })
+        let first = yearEntriesValue.min(by: { ($0.createdAt ?? 0) < ($1.createdAt ?? 0) })
         let summaryLabel = UILabel()
         summaryLabel.numberOfLines = 0
         summaryLabel.font = UIFont.systemFont(ofSize: 15)
         summaryLabel.textColor = BearyColors.ink
-        var summary = "今年已写 \(entries.count) 篇 · 最长连续 \(longest) 天"
+        var summary = "今年已写 \(yearEntriesValue.count) 篇 · 最长连续 \(longest) 天"
         if let firstCreatedAt = first?.createdAt {
             let date = Date(timeIntervalSince1970: TimeInterval(firstCreatedAt) / 1000)
             let parts = calendar.dateComponents([.month, .day], from: date)
@@ -434,16 +638,16 @@ final class BearyYearReviewViewController: UIViewController {
             }
         }
         summaryLabel.text = summary
-        stack.addArrangedSubview(summaryLabel)
+        dynamicStack.addArrangedSubview(summaryLabel)
 
         // 心情分布（条形按最大值归一，纯 UIView，不引图表库）。
-        let distribution = BearyProfilePersonalLogic.moodDistribution(entries: entries)
+        let distribution = BearyProfilePersonalLogic.moodDistribution(entries: yearEntriesValue)
         if let maxCount = distribution.first?.count, maxCount > 0 {
             let moodTitle = UILabel()
             moodTitle.font = UIFont.systemFont(ofSize: 14, weight: .bold)
             moodTitle.textColor = BearyColors.ink
             moodTitle.text = "心情分布"
-            stack.addArrangedSubview(moodTitle)
+            dynamicStack.addArrangedSubview(moodTitle)
             for item in distribution.prefix(8) {
                 let row = UIStackView()
                 row.axis = .horizontal
@@ -476,33 +680,7 @@ final class BearyYearReviewViewController: UIViewController {
                 row.addArrangedSubview(nameLabel)
                 row.addArrangedSubview(barBackground)
                 row.addArrangedSubview(countLabel)
-                stack.addArrangedSubview(row)
-            }
-        }
-
-        // 常出现的词（词 + 次数小列表，不做词云；无词时整节省略）。
-        let words = BearyProfilePersonalLogic.frequentWords(entries: entries)
-        if !words.isEmpty {
-            let wordsTitle = UILabel()
-            wordsTitle.font = UIFont.systemFont(ofSize: 14, weight: .bold)
-            wordsTitle.textColor = BearyColors.ink
-            wordsTitle.text = "常出现的词"
-            stack.addArrangedSubview(wordsTitle)
-            for item in words {
-                let row = UIStackView()
-                row.axis = .horizontal
-                row.distribution = .equalSpacing
-                let wordLabel = UILabel()
-                wordLabel.font = UIFont.systemFont(ofSize: 14)
-                wordLabel.textColor = BearyColors.ink
-                wordLabel.text = item.word
-                let countLabel = UILabel()
-                countLabel.font = UIFont.systemFont(ofSize: 14)
-                countLabel.textColor = BearyColors.gray
-                countLabel.text = "\(item.count) 次"
-                row.addArrangedSubview(wordLabel)
-                row.addArrangedSubview(countLabel)
-                stack.addArrangedSubview(row)
+                dynamicStack.addArrangedSubview(row)
             }
         }
 
@@ -510,8 +688,29 @@ final class BearyYearReviewViewController: UIViewController {
         footnote.numberOfLines = 0
         footnote.font = UIFont.systemFont(ofSize: 12)
         footnote.textColor = BearyColors.gray
-        footnote.text = "完整年度报告年底另做，这里只是今年至今的首屏示意。"
-        stack.addArrangedSubview(footnote)
+        footnote.text = "词汇指纹只按当年正文统计，不展示正文。完整年度报告年底另做。"
+        dynamicStack.addArrangedSubview(footnote)
+    }
+
+    @objc private func prevYearTapped() {
+        guard let index = availableYearValues.firstIndex(of: selectedYear),
+              index + 1 < availableYearValues.count else { return }
+        selectedYear = availableYearValues[index + 1]
+        renderSelectedYear()
+    }
+
+    @objc private func nextYearTapped() {
+        guard let index = availableYearValues.firstIndex(of: selectedYear),
+              index > 0 else { return }
+        selectedYear = availableYearValues[index - 1]
+        renderSelectedYear()
+    }
+
+    private func presentWordDetail(item: BearyProfilePersonalLogic.WordprintItem) {
+        guard presentedViewController == nil else { return }
+        let detail = BearyWordprintDetailViewController(item: item, year: selectedYear, scope: scopeValue)
+        detail.modalPresentationStyle = .pageSheet
+        present(detail, animated: BearyMotion.animated(true), completion: nil)
     }
 
     @objc private func closeTapped() {
