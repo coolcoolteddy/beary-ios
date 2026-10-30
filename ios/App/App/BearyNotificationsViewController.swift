@@ -777,7 +777,14 @@ final class BearyNotificationsViewController: UIViewController {
         beginCustomPullRefresh()
     }
 
-    /// 重拍消息 tab 时先回顶（列表页同款；接线层在已显示时调它，再调 refresh()）。
+    /// 与其他 tab 的重拍行为一致：未到顶部先回顶，已到顶部才刷新。
+    /// 用 contentInset 不用 adjustedContentInset：与 scrollToTop 落点、首页／时间线
+    /// isAtTop 同口径；若系统某天叠加安全区使 adjusted > content，adjusted 口径
+    /// 会在回顶落点处仍判“未到顶”，重拍永远只回顶不刷新。
+    var isAtTop: Bool {
+        tableView.contentOffset.y <= -tableView.contentInset.top + 1
+    }
+
     func scrollToTop() {
         tableView.setContentOffset(CGPoint(x: 0, y: -tableView.contentInset.top), animated: !UIAccessibility.isReduceMotionEnabled)
     }
