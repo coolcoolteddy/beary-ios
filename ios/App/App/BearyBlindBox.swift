@@ -110,7 +110,7 @@ enum BlindBoxPool {
     }
 }
 
-// MARK: - 图标（新图标名只引用，不自绘；未注册时官方暂代 + 待补标注）
+// MARK: - 图标（正式名只引用，不自绘；缺失时返回 nil，不走暂代）
 
 enum BlindBoxIcons {
     // #229 已注册的正式名；人工核对三 imageset 已落袋（见文件头）。
