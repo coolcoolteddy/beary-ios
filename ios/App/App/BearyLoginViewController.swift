@@ -196,6 +196,8 @@ final class BearyLoginViewController: UIViewController {
         loginButton.layer.cornerRadius = 12
         loginButton.addTarget(self, action: #selector(loginTapped), for: .touchUpInside)
         loginButton.bearyAddPressFeedback()
+        // 刷新图标分流：登录处理转圈不用 icon_refresh，改用另一款 icon_restore。
+        loginSpinner.image = BearyIconImages.image(named: "icon_restore", pointSize: 32)
         loginButton.addSubview(loginSpinner)
         NSLayoutConstraint.activate([
             loginSpinner.centerYAnchor.constraint(equalTo: loginButton.centerYAnchor),

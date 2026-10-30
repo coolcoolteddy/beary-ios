@@ -1342,12 +1342,12 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         } else {
             handleLabel.isHidden = true
         }
-        // 图片失败重试：纯图标（icon_refresh 20pt，消息页头像重试同款），
+        // 图片失败重试：纯图标（icon_restore 20pt，消息页头像重试同款），
         // 44×44 点击区居中压在头像上；仅失败态可见，加载中与成功态隐藏
         // （显隐由 BearySearchImageRetry 持有，见文件末尾）。
         let avatarRetryButton = UIButton(type: .custom)
         avatarRetryButton.translatesAutoresizingMaskIntoConstraints = false
-        avatarRetryButton.setImage(BearyIconImages.image(named: "icon_refresh", pointSize: 20), for: .normal)
+        avatarRetryButton.setImage(BearyIconImages.image(named: "icon_restore", pointSize: 20), for: .normal)
         avatarRetryButton.tintColor = BearyColors.ink
         avatarRetryButton.isHidden = true
         avatarRetryButton.accessibilityLabel = "重试"
@@ -1466,7 +1466,7 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
             thumb.layer.masksToBounds = true
             let thumbRetryButton = UIButton(type: .custom)
             thumbRetryButton.translatesAutoresizingMaskIntoConstraints = false
-            thumbRetryButton.setImage(BearyIconImages.image(named: "icon_refresh", pointSize: 20), for: .normal)
+            thumbRetryButton.setImage(BearyIconImages.image(named: "icon_restore", pointSize: 20), for: .normal)
             thumbRetryButton.tintColor = BearyColors.ink
             thumbRetryButton.isHidden = true
             thumbRetryButton.accessibilityLabel = "重试"
@@ -1712,7 +1712,7 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
 
 // MARK: - 图片失败重试槽位（用户头像 / 日记首图共用）
 //
-// 形态（用户定）：纯图标，不带文字按钮——icon_refresh 20pt，消息页头像重试
+// 形态（用户定）：纯图标，不带文字按钮——icon_restore 20pt，消息页头像重试
 // 同款；按钮无背景无描边，图标色取动态 BearyColors.ink，故深浅切换无需重刷。
 // 状态口径：加载中与成功态沿用现有行为（空白图 / 落图，重试图标隐藏）；
 // 仅失败态亮重试图标，点它重新走 load()（先藏图标回到加载态），成功后图标消失。

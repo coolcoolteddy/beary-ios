@@ -1482,7 +1482,7 @@ class BearyFeedErrorCell: UITableViewCell {
     private lazy var retryButton: BearyButton = {
         let btn = BearyButton(style: .secondaryOutline(.regular))
         btn.translatesAutoresizingMaskIntoConstraints = false
-        btn.setImage(BearyFeedIconCache.image(named: "icon_refresh", pointSize: 15), for: .normal)
+        btn.setImage(BearyFeedIconCache.image(named: "icon_restore", pointSize: 15), for: .normal)
         btn.setTitle("重试", for: .normal)
         btn.titleLabel?.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 14))
         btn.titleLabel?.adjustsFontForContentSizeCategory = true

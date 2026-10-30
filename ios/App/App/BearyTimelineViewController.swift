@@ -4694,7 +4694,7 @@ class BearyTimelineViewController: UIViewController {
                 // 80 包重试统一：与首页失败行/主页失败脚部同款描边 pill 钮。
                 button.setTitleColor(BearyColors.ink, for: .normal)
                 button.tintColor = BearyColors.ink
-                button.setImage(BearyIconImages.image(named: "icon_refresh", pointSize: 15), for: .normal)
+                button.setImage(BearyIconImages.image(named: "icon_restore", pointSize: 15), for: .normal)
                 button.titleEdgeInsets = UIEdgeInsets(top: 0, left: 6, bottom: 0, right: 0)
                 button.contentEdgeInsets = UIEdgeInsets(top: 0, left: 12, bottom: 0, right: 12)
                 button.layer.borderWidth = 1

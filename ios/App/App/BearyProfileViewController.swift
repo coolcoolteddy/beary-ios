@@ -466,7 +466,7 @@ class BearyProfileViewController: UIViewController {
     private lazy var avatarRetryButton: UIButton = {
         let buttonValue = UIButton(type: .system)
         buttonValue.translatesAutoresizingMaskIntoConstraints = false
-        buttonValue.setImage(BearyIconImages.image(named: "icon_refresh", pointSize: 20), for: .normal)
+        buttonValue.setImage(BearyIconImages.image(named: "icon_restore", pointSize: 20), for: .normal)
         buttonValue.tintColor = BearyColors.ink
         buttonValue.accessibilityLabel = "重新加载头像"
         buttonValue.isHidden = true
@@ -2915,7 +2915,7 @@ class BearyProfileViewController: UIViewController {
         retryButton.setTitleColor(BearyColors.ink, for: .normal)
         retryButton.titleLabel?.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 14))
         retryButton.titleLabel?.adjustsFontForContentSizeCategory = true
-        retryButton.setImage(BearyIconImages.image(named: "icon_refresh", pointSize: 15), for: .normal)
+        retryButton.setImage(BearyIconImages.image(named: "icon_restore", pointSize: 15), for: .normal)
         retryButton.tintColor = BearyColors.ink
         retryButton.contentEdgeInsets = UIEdgeInsets(top: 0, left: 12, bottom: 0, right: 12)
         retryButton.titleEdgeInsets = UIEdgeInsets(top: 0, left: 6, bottom: 0, right: 0)
