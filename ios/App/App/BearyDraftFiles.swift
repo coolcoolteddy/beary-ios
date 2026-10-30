@@ -57,6 +57,9 @@ struct BearyDraft: Codable {
     /// 草稿可见性分段 index（0 私密 / 1 公开；老草稿缺本键时按 0 私密解码，
     /// 与编辑器每次默认私密 D4 口径一致）。
     var visibilitySegmentIndex: Int = 0
+    /// 草稿限时态（顶栏三态循环的限时档；老草稿缺本键时按 false 解码，
+    /// 即旧私密/公开态，不凭空变限时；编辑态不写草稿，恒为 false）。
+    var ephemeralEnabled: Bool = false
     var recipientId: Int?
     var recipientName: String?
     var recipientAvatar: String?
