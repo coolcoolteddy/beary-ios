@@ -1128,6 +1128,11 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, U
 
     @objc private func titleFieldChanged() {
         scheduleDraftSave()
+        // 2026-10-30 标题打字守卫：打字中标题被系统滚动顶出可视区顶部时，
+        // 按留白口径拉回；在视野内时 scrollFocusedFieldIntoView 自身 no-op。
+        if titleField.isFirstResponder {
+            scrollFocusedFieldIntoView(animated: true)
+        }
     }
 
     func textField(_ textField: UITextField, shouldChangeCharactersIn range: NSRange, replacementString string: String) -> Bool {
@@ -5381,8 +5386,12 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, U
         }
     }
 
+    /// 可见性滚动留白：目标离可视区顶的距离（2026-10-30 滚动留白口径，
+    /// 贴边改留白；已完整可见时仍不动）。
+    private static let focusVisibleTopMargin: CGFloat = 16
+
     /// 2026-10-29 第 28 项：只滚到刚好让焦点框完整可见的最小滚动——焦点框在可视区
-    /// 上方时上滚到其顶恰贴可视区顶（绝不顶出顶部），在可视区下方时下滚到其底恰贴
+    /// 上方时上滚到其顶离可视区顶留 16pt（绝不顶出顶部），在可视区下方时下滚到其底恰贴
     /// 键盘顶；已完整可见时不动。标题栏用整框（单行短框），正文用 caret 矩形
     /// （整框可能高于可视区，整框口径会乱滚）。可视区按当前 contentInset 算
     /// （键盘高已计入 bottom inset），目标偏移 clamp 到内容合法范围。
@@ -5407,7 +5416,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, U
         let visibleBottom = scrollView.contentOffset.y + scrollView.bounds.height - bottomInset
         var targetY = scrollView.contentOffset.y
         if fieldFrame.minY < visibleTop {
-            targetY = fieldFrame.minY - topInset
+            targetY = fieldFrame.minY - topInset - Self.focusVisibleTopMargin
         } else if fieldFrame.maxY > visibleBottom {
             targetY = fieldFrame.maxY - (scrollView.bounds.height - bottomInset)
         } else {
