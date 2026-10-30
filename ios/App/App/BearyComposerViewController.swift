@@ -291,6 +291,14 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     /// 键盘可见跟踪（帧变化通知不重复保存，避免覆盖弹出时刻的原位）。
     private var keyboardSavedContentOffset: CGPoint?
     private var keyboardVisible = false
+    /// 2026-10-31 上滑闪回修：键盘动画在途标志与已落定高度。
+    /// WillShow 与 WillChangeFrame 会对同一次键盘出现各发一次，若两次都跑
+    /// applyKeyboard＋完成回调的瞬时修正，就会先滑后闪回；同一高度重复到
+    /// 达时直接跳过（见 applyKeyboard），动画在途中的焦点滚动只记 pending、
+    /// 由完成回调统一做一次带键盘曲线的动效修正，不多路抢偏移。
+    private var keyboardAnimationInFlight = false
+    private var lastAppliedKeyboardHeight: CGFloat = -1
+    private var pendingFocusScrollAfterKeyboard = false
     /// S10：textViewDidChange 高度缓存（contentSize 高度作判据）；高度不变时跳过
     /// updateTextViewHeight + updatePreferredContentSize 的重算。注意不用换行符
     /// 计行：长段落视觉折行不产生换行符，用换行符判会漏掉折行导致编辑器不跟长。
@@ -5663,6 +5671,13 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     /// 系统自动 caret 滚动打架；已在位时修正为 no-op）。
     func textViewDidBeginEditing(_ textView: UITextView) {
         if currentKeyboardHeight > 0 {
+            // 键盘动画在途时不另起一路滚动：系统 caret 滚动＋键盘 inset
+            // 动画＋本回调三路抢偏移正是闪回的来源之一；只记 pending，
+            // 由 applyKeyboard 完成回调统一做一次带键盘曲线的修正。
+            if keyboardAnimationInFlight {
+                pendingFocusScrollAfterKeyboard = true
+                return
+            }
             scrollFocusedFieldIntoView(animated: true)
         }
     }
@@ -5679,7 +5694,11 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     /// 键盘顶；已完整可见时不动。标题行已去掉，本函数只剩正文 caret 口径
     /// （整框可能高于可视区，整框口径会乱滚，故用 caret 矩形）。可视区按当前 contentInset 算
     /// （键盘高已计入 bottom inset），目标偏移 clamp 到内容合法范围。
-    private func scrollFocusedFieldIntoView(animated: Bool) {
+    /// duration/curveRaw 非空时按给定键盘曲线做动效（applyKeyboard 完成
+    /// 回调专用）；否则走默认 UIView 动画。animated:false 的瞬时修正是
+    /// 闪回的另一来源——键盘动画刚把内容顶上去，完成回调又无动效地
+    /// 把偏移改回去，看起来就是“上滑后闪回来”，故此处不再有无动效修正。
+    private func scrollFocusedFieldIntoView(animated: Bool, duration: TimeInterval? = nil, curveRaw: UInt? = nil) {
         let targetRect: CGRect?
         if textView.isFirstResponder {
             if let selectedRange = textView.selectedTextRange {
@@ -5707,8 +5726,20 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         let minY = -topInset
         let maxY = max(minY, scrollView.contentSize.height + bottomInset - scrollView.bounds.height)
         targetY = min(max(targetY, minY), maxY)
-        if targetY != scrollView.contentOffset.y {
-            scrollView.setContentOffset(CGPoint(x: scrollView.contentOffset.x, y: targetY), animated: animated)
+        // 2pt 死区：目标与现偏移差不到 2pt 时不动，防键盘帧微变、
+        // 内层 caret 微移引发的反复微跳（视觉上也是闪）。
+        if abs(targetY - scrollView.contentOffset.y) < 2 { return }
+        if animated, let duration = duration, let curveRaw = curveRaw {
+            let options = UIView.AnimationOptions(rawValue: curveRaw << 16)
+            UIView.animate(withDuration: duration, delay: 0, options: [options, .beginFromCurrentState], animations: {
+                self.scrollView.setContentOffset(CGPoint(x: self.scrollView.contentOffset.x, y: targetY), animated: false)
+            })
+        } else if animated {
+            scrollView.setContentOffset(CGPoint(x: scrollView.contentOffset.x, y: targetY), animated: true)
+        } else {
+            // 仅内部调用方明确要求时才瞬时改（现行调用方已全部改为动效，
+            // 本分支保留作兜底，不再是键盘路径的默认行为）。
+            scrollView.setContentOffset(CGPoint(x: scrollView.contentOffset.x, y: targetY), animated: false)
         }
     }
 
@@ -5766,6 +5797,13 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                 curveRaw = c.uintValue
             }
         }
+        // 2026-10-31 闪回去重：WillShow 与 WillChangeFrame 对同一次出现
+        // 各发一次，高度与可见态都未变时第二遍直接跳过——不重跑 inset
+        // 动画、不重跑完成回调的偏移修正，否则两遍动画＋瞬时修正打架。
+        if showing && height > 0 && keyboardVisible && (height == lastAppliedKeyboardHeight || height == currentKeyboardHeight) {
+            return
+        }
+        keyboardAnimationInFlight = true
         // 编辑器批第 5 项：键盘高度存属性供 updateTextViewHeight 封顶扣减。
         currentKeyboardHeight = height
         // 2026-10-29 第 28 项：弹出跃迁（此前不可见 → 现在有高度）时保存原位；
@@ -5797,18 +5835,34 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             // 长文 caret 仍走系统标准 caret 可见滚动（只在用户打到可视区外时动）。
         }, completion: { [weak self] _ in
             guard let self = self else { return }
-            // 2026-10-29 第 28 项：inset 落定后再修正焦点框——系统自动 caret 滚动若把
-            // 标题顶出顶部，此处按最小滚动口径拉回（已在位时 no-op）；收起时恢复原位。
+            self.keyboardAnimationInFlight = false
+            if showing && height > 0 {
+                self.lastAppliedKeyboardHeight = height
+            } else if isHiding {
+                self.lastAppliedKeyboardHeight = -1
+            }
+            // 2026-10-31：inset 落定后的修正只做一次、且一律带键盘曲线
+            // 动效——旧代码这里是 animated:false 的瞬时修正，键盘动画刚
+            // 把内容顶上去、完成回调又无动效改回去，就是“上滑后闪回来”。
+            // 收起恢复原位同样带曲线动效，不再瞬时跳回。
             if isHiding {
                 if let saved = self.keyboardSavedContentOffset {
                     self.keyboardSavedContentOffset = nil
                     let minY = -self.scrollView.contentInset.top
                     let maxY = max(minY, self.scrollView.contentSize.height + self.scrollView.contentInset.bottom - self.scrollView.bounds.height)
                     let restoredY = min(max(saved.y, minY), maxY)
-                    self.scrollView.setContentOffset(CGPoint(x: self.scrollView.contentOffset.x, y: restoredY), animated: false)
+                    if abs(restoredY - self.scrollView.contentOffset.y) >= 2 {
+                        let options = UIView.AnimationOptions(rawValue: curveRaw << 16)
+                        UIView.animate(withDuration: duration, delay: 0, options: [options, .beginFromCurrentState], animations: {
+                            self.scrollView.setContentOffset(CGPoint(x: self.scrollView.contentOffset.x, y: restoredY), animated: false)
+                        })
+                    }
                 }
             } else {
-                self.scrollFocusedFieldIntoView(animated: false)
+                // 光标已在可视区时 scrollFocused 内部 no-op；键盘在途
+                // 中点按记下的 pending 在此统一消化，只做一次。
+                self.pendingFocusScrollAfterKeyboard = false
+                self.scrollFocusedFieldIntoView(animated: true, duration: duration, curveRaw: curveRaw)
             }
         })
     }
