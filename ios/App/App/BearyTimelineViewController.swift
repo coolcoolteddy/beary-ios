@@ -1999,7 +1999,7 @@ class BearyTimelineViewController: UIViewController {
     /// 月份补拉到达后，选中日计数为 null/0 时才触发跳转/取消选中；
     /// 平时月份到达不触发，避免空的今天被无故清选区。
     private var pendingFixSelCheck = false
-    /// 第 2 项 A 初次进入 / 下拉刷新跳转守卫：只在 viewDidLoad 与 pullToRefresh
+    /// 第 2 项 A 初次进入 / 下拉刷新跳转守卫：只在 viewDidLoad 与自定义下拉刷新
     /// 两处设置；选中日无日记时走 checkEntryJumpForSelectedDay → applyDayFixSel
     /// 跳最近有篇日并出 jumpNote 提示。故意不用 pendingFixSelCheck 承载，
     /// 避免守卫漏到翻页（tryStepFollowSelection）路径：翻页到全无有篇日时
@@ -2090,22 +2090,44 @@ class BearyTimelineViewController: UIViewController {
         tv.register(BearyTimelineCell.self, forCellReuseIdentifier: BearyTimelineCell.reuseIdentifier)
         tv.delegate = self
         tv.dataSource = self
-        let rc = UIRefreshControl()
-        rc.tintColor = .clear
-        rc.addTarget(self, action: #selector(pullToRefresh), for: .valueChanged)
-        rc.addSubview(refreshIconView)
-        NSLayoutConstraint.activate([
-            refreshIconView.centerXAnchor.constraint(equalTo: rc.centerXAnchor),
-            refreshIconView.centerYAnchor.constraint(equalTo: rc.centerYAnchor),
-            refreshIconView.widthAnchor.constraint(equalToConstant: 32),
-            refreshIconView.heightAnchor.constraint(equalToConstant: 32),
-        ])
-        tv.refreshControl = rc
+        // 自定义下拉头（消息页同款，见 pullView）：表内子视图，平时藏在内容上方，
+        // 不再用 UIRefreshControl——标准刷新头会把 32pt 图标钉在刷新头正中心，
+        // 时间线表框贴页顶 + 收起顶距只有安全区本身时，小拉动图标中心落在
+        // 安全区顶 -30pt 附近，正好被灵动岛遮挡。
+        tv.addSubview(pullView)
         return tv
     }()
 
-    /// 下拉刷新指示：官方刷新图标（tintColor .clear 藏默认菊花）。
+    /// 下拉刷新指示：官方刷新图标（32pt，全 App 统一 icon_refresh）。
     private let refreshIconView = BearyRefreshIconView()
+    /// 自定义下拉刷新进行中标志（消息页 isCustomPullRefreshing 同款）。
+    private var isCustomPullRefreshing = false
+    private var customPullStartTime: Date?
+    private var pullEngageTranslation: CGFloat?
+
+    /// 自定义下拉指示器（消息页 pullView 同款口径）：固定高 116、藏在表内容上方
+    /// （content y=-116..0），指示高按手指行程 ×0.48 阻尼（上限 116），
+    /// 图标底边 -14、不拦截触摸；刷新中改固定 84 高。
+    /// 时间线与消息页的区别只在基线：本页表框贴页顶、contentInset.top 基线是
+    /// 安全区顶（收起态），不是消息页的 0，所以指示器屏内底边 = 安全区顶 + 指示高，
+    /// 满指示 80pt 时图标中心落在安全区顶 +50pt 左右，灵动岛下方。
+    /// 另一区别在裁剪：消息页表框顶 = 安全区顶，早期图标被表框裁掉；本页
+    /// 表框贴页顶裁不掉，故 updateCustomPullIndicator 里用 alpha 门模拟裁剪
+    /// （指示高 ≤30 时图标 alpha 强制 0）。
+    private lazy var pullView: UIView = {
+        let pull = UIView()
+        pull.backgroundColor = BearyColors.bg
+        pull.isUserInteractionEnabled = false
+        pull.frame = CGRect(x: 0, y: -116, width: 0, height: 116)
+        pull.addSubview(refreshIconView)
+        NSLayoutConstraint.activate([
+            refreshIconView.centerXAnchor.constraint(equalTo: pull.centerXAnchor),
+            refreshIconView.bottomAnchor.constraint(equalTo: pull.bottomAnchor, constant: -14),
+            refreshIconView.widthAnchor.constraint(equalToConstant: 32),
+            refreshIconView.heightAnchor.constraint(equalToConstant: 32),
+        ])
+        return pull
+    }
 
     /// 表头容器：标题行 + 统计小字 + 连续写作行 + 日历卡。
     /// 用 tableHeaderView 承载（随列表一起滚走，不常驻占位）；高度每次渲染后重算。
@@ -2177,7 +2199,12 @@ class BearyTimelineViewController: UIViewController {
     override func viewDidLayoutSubviews() {
         super.viewDidLayoutSubviews()
         // 顶栏透度批：安全区变化时按已存栏态重算（容器 viewDidLayoutSubviews 也会重发，双重 no-op）。
+        // 自定义下拉刷新进行中 applyHeaderTopInset 有守卫不改写内边距，但 pullView
+        // 宽度仍需跟随旋转/分屏宽度（消息页同款宽度同步）。
         applyHeaderTopInset(visible: headerTopInsetVisible)
+        if pullView.frame.width != tableView.bounds.width {
+            pullView.frame.size.width = tableView.bounds.width
+        }
         // 宽为 0 时丢弃的表头高度重算在此消费：宽一就绪即重算。
         if headerHeightNeedsRefresh, tableView.bounds.width > 0 {
             refreshHeaderHeight()
@@ -2308,6 +2335,9 @@ class BearyTimelineViewController: UIViewController {
     /// 再点当前 tab 口径（容器重拍分支）：已在顶部才刷新，否则只回顶（见 scrollToTop/isAtTop）。
     func applyHeaderTopInset(visible: Bool) {
         headerTopInsetVisible = visible
+        // 自定义下拉刷新进行中不改写（消息页同款守卫）：刷新中内边距是基线 +84，
+        // 容器重发顶距会打断指示器。
+        guard !isCustomPullRefreshing else { return }
         let top = view.safeAreaInsets.top + (visible ? 60 : 0)
         let bottom = 90 + view.safeAreaInsets.bottom
         if tableView.contentInset.top != top || tableView.contentInset.bottom != bottom {
@@ -2565,10 +2595,75 @@ class BearyTimelineViewController: UIViewController {
         }
     }
 
-    @objc private func pullToRefresh() {
-        // M12（91 包）：下拉刷新触发给一次轻触觉。
-        BearyHaptics.press()
+    /// 自定义下拉指示器跟随（消息页 updateCustomPullIndicator 同款）：
+    /// 手指行程（pan 手势自顶部锚点起算）× 0.48 阻尼、上限 116；指示高 ≥80 时转圈淡入放大。
+    /// 指示器是表内子视图：屏内底边 = 安全区顶 + 指示高（基线内边距已计入 contentRaw），
+    /// 顶边随表回弹裁剪；刷新中不跟随。
+    private func updateCustomPullIndicator() {
+        if isCustomPullRefreshing {
+            return
+        }
+        if !tableView.isDragging {
+            pullEngageTranslation = nil
+            pullView.frame = CGRect(x: 0, y: -116, width: tableView.bounds.width, height: 116)
+            refreshIconView.setPullProgress(0)
+            return
+        }
+        let contentRaw = max(0, -(tableView.contentOffset.y + tableView.contentInset.top))
+        let panTranslation = tableView.panGestureRecognizer.translation(in: tableView).y
+        if tableView.contentOffset.y <= -tableView.contentInset.top && pullEngageTranslation == nil {
+            pullEngageTranslation = panTranslation
+        } else if tableView.contentOffset.y > -tableView.contentInset.top {
+            pullEngageTranslation = nil
+        }
+        let fingerRaw = max(0, panTranslation - (pullEngageTranslation ?? panTranslation))
+        let indicatorHeight = min(fingerRaw * 0.48, 116)
+        pullView.frame = CGRect(x: 0, y: indicatorHeight - 116 - contentRaw, width: tableView.bounds.width, height: 116)
+        if indicatorHeight <= 0 {
+            refreshIconView.setPullProgress(0)
+        } else {
+            let progress = min(1, indicatorHeight / 80)
+            refreshIconView.setPullProgress(progress)
+            // 时间线与消息页的关键差别：消息页表框顶 = 安全区顶，表框裁剪会把
+            // 指示高 <30 时的图标（中心在安全区顶之上）裁掉；本页表框贴页顶，
+            // 表框裁剪裁不掉它，早期图标会 faint 地出现在灵动岛带内。故用 alpha
+            // 门模拟同一裁剪：图标中心在指示高 30 时才越过安全区顶，30 以下
+            // alpha 强制 0，30–80 间按 (指示-30)/50 淡入，80 时满 alpha、转满一圈。
+            if indicatorHeight <= 30 {
+                refreshIconView.alpha = 0
+            } else {
+                refreshIconView.alpha = min(1, (indicatorHeight - 30) / 50)
+            }
+        }
+    }
+
+    /// 自定义下拉刷新进入（消息页 beginCustomPullRefresh 同款，基线适配时间线）：
+    /// 指示固定 84 高 + 转圈，至少展示 500ms（见 loadTimelineFirstPage 完成分支），
+    /// 刷新中内边距 = 基线（安全区顶 + 可见时 60）+ 84，屏内指示底边 = 基线 +84，
+    /// 图标中心 = 基线 +54，灵动岛下方；减动效时直接落位，不播 0.32s 动画。
+    private func beginCustomPullRefresh() {
+        if isCustomPullRefreshing || timelineState == .loading {
+            return
+        }
+        isCustomPullRefreshing = true
+        customPullStartTime = Date()
         refreshIconView.startSpinning()
+        let baseTop = view.safeAreaInsets.top + (headerTopInsetVisible ? 60 : 0)
+        let baseBottom = 90 + view.safeAreaInsets.bottom
+        let pullIn = {
+            self.tableView.contentInset.top = baseTop + 84
+            self.tableView.contentInset.bottom = baseBottom
+            self.tableView.scrollIndicatorInsets.top = baseTop + 84
+            self.tableView.scrollIndicatorInsets.bottom = baseBottom
+            self.tableView.contentOffset = CGPoint(x: 0, y: -(baseTop + 84))
+            self.pullView.frame = CGRect(x: 0, y: -84, width: self.tableView.bounds.width, height: 84)
+        }
+        if UIAccessibility.isReduceMotionEnabled {
+            pullIn()
+        } else {
+            UIView.animate(withDuration: 0.32, animations: pullIn)
+        }
+        // 原 pullToRefresh 体（触觉改由 scrollViewDidEndDragging 给一次，见下）：
         // G16：刷新时先保存选中日（reloadTimeline keepDay 分支内保留），
         // 跳过当日拉取，只拉一次最终选中日；不再先拉今天再拉回原选中日。
         // 第 2 项 A 调用点 2/2（下拉刷新）：keepSelectedDay 下守卫接在刷新
@@ -2578,6 +2673,31 @@ class BearyTimelineViewController: UIViewController {
         // fixall-sync 5-27 集成接线：被守卫挡下的同步在下拉刷新时重跑（内部去重已覆盖已同步/在途）。
         BearyEntrySync.shared.kickForCurrentUser()
         refreshHeaderHeight()
+    }
+
+    private func endCustomPullRefresh() {
+        if !isCustomPullRefreshing {
+            return
+        }
+        isCustomPullRefreshing = false
+        let baseTop = view.safeAreaInsets.top + (headerTopInsetVisible ? 60 : 0)
+        let baseBottom = 90 + view.safeAreaInsets.bottom
+        let pullOut = {
+            self.tableView.contentInset.top = baseTop
+            self.tableView.contentInset.bottom = baseBottom
+            self.tableView.scrollIndicatorInsets.top = baseTop
+            self.tableView.scrollIndicatorInsets.bottom = baseBottom
+            self.tableView.contentOffset = CGPoint(x: 0, y: -baseTop)
+            self.pullView.frame = CGRect(x: 0, y: -116, width: self.tableView.bounds.width, height: 116)
+        }
+        if UIAccessibility.isReduceMotionEnabled {
+            pullOut()
+            self.refreshIconView.stopSpinning()
+        } else {
+            UIView.animate(withDuration: 0.32, animations: pullOut, completion: { _ in
+                self.refreshIconView.stopSpinning()
+            })
+        }
     }
 
     // MARK: - TL-2 1 秒倒计时
@@ -2782,12 +2902,21 @@ class BearyTimelineViewController: UIViewController {
 
     func scrollViewDidScroll(_ scrollView: UIScrollView) {
         guard scrollView === tableView else { return }
-        // 下拉刷新图标跟随：未刷新时按拉出距离跟随旋转（60pt 拉满一圈）。
-        if tableView.refreshControl?.isRefreshing != true {
-            let pull = max(0, -(scrollView.contentOffset.y + scrollView.contentInset.top))
-            refreshIconView.setPullProgress(min(1, pull / 60))
-        }
+        updateCustomPullIndicator()
         updateStickyHeader()
+    }
+
+    func scrollViewDidEndDragging(_ scrollView: UIScrollView, willDecelerate decelerate: Bool) {
+        guard scrollView === tableView else { return }
+        // 自定义下拉触发（消息页同款）：手指原始行程满 205px 松手才刷新。
+        // M12（91 包）：触发给一次轻触觉；程序触发的刷新不走这里。
+        let panTranslation = scrollView.panGestureRecognizer.translation(in: scrollView).y
+        let fingerRaw = max(0, panTranslation - (pullEngageTranslation ?? panTranslation))
+        pullEngageTranslation = nil
+        if fingerRaw >= 205 && timelineState != .loading && !isCustomPullRefreshing {
+            BearyHaptics.press()
+            beginCustomPullRefresh()
+        }
     }
 
     private func buildHeader() {
@@ -3251,7 +3380,14 @@ class BearyTimelineViewController: UIViewController {
             DispatchQueue.main.async {
                 guard let strongSelf = self else { return }
                 // 旧回包直接丢弃（见 timelineFirstPageSeq 注释）：表与模型均已由新加载接管。
-                guard seq == strongSelf.timelineFirstPageSeq else { return }
+                // 卡死路径修法：丢弃时仍结束刷新指示（只跳过模型更新），不让
+                // “旧请求被取代”等于“刷新头永不结束”；后续新加载的完成分支
+                // 因旗标已清而 no-op，不会二次复位。
+                guard seq == strongSelf.timelineFirstPageSeq else {
+                    strongSelf.refreshIconView.stopSpinning()
+                    strongSelf.endCustomPullRefresh()
+                    return
+                }
                 switch result {
                 case .success(let list):
                     strongSelf.timelineEntries = list.entries ?? []
@@ -3280,8 +3416,16 @@ class BearyTimelineViewController: UIViewController {
                     strongSelf.tableView.reloadData()
                 }
                 strongSelf.updateChrome()
-                strongSelf.refreshIconView.stopSpinning()
-                strongSelf.tableView.refreshControl?.endRefreshing()
+                if strongSelf.isCustomPullRefreshing {
+                    // 自定义下拉至少展示 500ms（消息页同款），快回包也要等满再收回。
+                    let elapsed = strongSelf.customPullStartTime.map({ Date().timeIntervalSince($0) }) ?? 0.5
+                    let remaining = max(0, 0.5 - elapsed)
+                    DispatchQueue.main.asyncAfter(deadline: .now() + remaining) {
+                        strongSelf.endCustomPullRefresh()
+                    }
+                } else {
+                    strongSelf.refreshIconView.stopSpinning()
+                }
                 completion?()
             }
         }
