@@ -1235,6 +1235,18 @@ final class BearyTimelineCell: UITableViewCell {
         cardView.layer.shadowRadius = 4
     }
 
+    /// 限时边线二选一（2026-10-31 双框修复，取代 #254「实线恒为 1」口径）：
+    /// 存活期只留虚线框，卡片本体实线边线归零；非限时／到期恢复 1pt 实线。
+    /// 虚线层本身（1.5pt、[4, 3]、圆角 16、内缩 8/6）不动；两层必须成对改，
+    /// 单改一层即复现双框或无框。深浅切换只重刷 borderColor（见
+    /// applyTimelineCardChrome），不碰 borderWidth，故切换不复活实线；
+    /// 点按高亮／定位闪回只改 backgroundColor，亦不碰边线。
+    private func applyEphemeralBorder(live: Bool) {
+        cardView.layer.borderWidth = live ? 0 : 1
+        ephemeralBorderLayer.isHidden = !live
+        if live { setNeedsLayout() }
+    }
+
     override func layoutSubviews() {
         super.layoutSubviews()
         // 卡片阴影按当前圆角矩形裁路径，避免整层模糊溢出与滚动时重算开销。
@@ -1392,8 +1404,9 @@ final class BearyTimelineCell: UITableViewCell {
         // 卡片式复位：外框（底色／边线／阴影）整组重刷，不再回页面底 bg；
         // 分割线式的 bg 回落与 borderWidth=0 在此弃掉（卡片式取代分割线式）。
         applyTimelineCardChrome()
-        // 卡片式：实线边线恒为 1（限时态只走虚线层，不再用实线归零区分）。
-        cardView.layer.borderWidth = 1
+        // 复用复位：回到普通卡配对（实线 1pt、虚线藏），防上一行限时态
+        // 的虚线层串到下一行；configure 会按新一篇重算配对。
+        applyEphemeralBorder(live: false)
         quoteButton.isHidden = true
         pillIconView.image = nil
         quoteBodyLabel.isHidden = false
@@ -1511,9 +1524,8 @@ final class BearyTimelineCell: UITableViewCell {
             ephemeralRow.isHidden = true
         }
         let ephemeralLive = BearyEphemeral.isLive(entry)
-        // 卡片式：实线边线恒为 1；虚线层仍按存活期显隐（限时语义指示）。
-        cardView.layer.borderWidth = 1
-        ephemeralBorderLayer.isHidden = !ephemeralLive
+        // 双框修复：存活期实线归零只留虚线，非限时／到期恢复实线。
+        applyEphemeralBorder(live: ephemeralLive)
         // I3：天气用 icon_wx_* 图标、心情用 14px BearyEmoteView（播 Lottie 循环，
         // 与 Feed/主页心情位静态首帧不同，时间线卡片心情是动的；减动效下只显完成帧）。
         if let weatherKey = entry.weather, let weatherName = BearyText.weatherNames[weatherKey] {
