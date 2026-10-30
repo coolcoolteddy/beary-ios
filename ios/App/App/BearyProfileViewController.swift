@@ -1988,9 +1988,12 @@ class BearyProfileViewController: UIViewController {
     /// 当前名字以下整段位移（updateProfileCoverScroll 写入，供墙入场动画收尾用）。
     private var currentBelowShift: CGFloat = 0
 
-    /// v22 名字以下整段位移（2026-10-30）：头像行按钮＋名字块＋统计＋墙
+    /// v22 名字以下整段位移（2026-10-30）：头像行按钮＋名字块（含签名容器）＋统计＋墙
     /// 同值平移（纯位移，各视图相对位置不变，等价于包一层容器平移；不改约束、
-    /// 不重排版，故 header 高不变）。标签容器与模块容器不移（模块底贴 header 底、
+    /// 不重排版，故 header 高不变）。名字块内任一视图漏移都会在滚动中与邻行错位
+    /// （签名漏移即 2026-10-31 真机报的贴名字，见下文行内注释），新增名字块视图时
+    /// 必须同步补进本函数，不得只改静止约束。
+    /// 标签容器与模块容器不移（模块底贴 header 底、
     /// 移了会压首张卡，且标签与下方内容同定、间距本就恒定）。墙容器整体跟移
     /// （容器与内容同值，相对位置不变）：只移三个子视图、不碰容器时，统计行与
     /// 墙内容下移后会压进不动的容器框（顶压统计数字、底裁表情行），故容器必须同值移；
@@ -2013,6 +2016,16 @@ class BearyProfileViewController: UIViewController {
         nameLabel.transform = fullShift
         badgeImageView.transform = fullShift
         crownView.transform = fullShift
+        // 签名松动修法（2026-10-31 真机报）：签名容器必须与名字同值平移。
+        // 漏移根因：v22（#197）先有名字以下整段位移，批 D（#228）后加签名时只改了
+        // 静止约束链（容器顶贴名字底 0、行内顶留 10、handle 贴签名底 8），却没把签名
+        // 容器补进本函数——名字下移 shift（0→20）时签名原地不动，名字与签名视觉间距
+        // 从 10 缩成 10 − shift，shift > 10 即贴上、满 20 时签名压进名字底 10pt；同时
+        // handle 已跟移 fullShift，签名与 handle 间距反向撑成 8 + shift（满 20 时 28）。
+        // 只移容器、不另移行内 signatureLabel（容器位移已带走子视图，另移会双倍）；
+        // 用 fullShift 而不用下方统计／墙的封顶值：签名上下邻（名字、handle）均为
+        // fullShift，封顶会重新拉开间距，且签名离标签顶尚远、满移也不会压进标签。
+        signatureContainer.transform = fullShift
         handleLabel.transform = fullShift
         joinedIconView.transform = fullShift
         joinedLabel.transform = fullShift
@@ -3264,6 +3277,10 @@ class BearyProfileViewController: UIViewController {
         if headerWidthValue > 0 {
             layoutHeaderForced(widthValue: headerWidthValue)
         }
+        // 签名在已上滑态下出现／消失时，滚动回调未必立即再跑：先按当前位移贴合，
+        // 避免首帧签名仍在原地、与已下移的名字贴上；无签名时容器隐藏，赋值无可视
+        // 影响；复位时 applyProfileBelowShift(0) 会把容器一并归零。
+        signatureContainer.transform = CGAffineTransform(translationX: 0, y: currentBelowShift)
     }
 
     // MARK: 批 D —— 模块语料（作者 scope 全量分页）
