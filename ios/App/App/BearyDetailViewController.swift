@@ -542,7 +542,12 @@ final class BearyDetailViewController: UIViewController {
             narrowLeading,
             narrowTrailing,
             rightTop,
-            rightStack.leadingAnchor.constraint(equalTo: avatarButton.trailingAnchor, constant: 12),
+            // 106 闪退根因（2026-10-31 .ips 实证）：本行原先在此激活，但
+            // avatarButton 要到后面的 buildCardHeader() 才 addSubview 到
+            // contentColumnView——激活时两端无共同祖先，NSLayoutConstraint
+            // 直接抛 AutoLayout 异常 → SIGABRT，全入口进详情必崩。
+            // 故本约束改到 buildCardHeader() 内、avatarButton 入层级后再激活，
+            // 几何（右列左缘 = 头像右缘 + 12）一字不变。
             rightTrailing,
             separatorView.topAnchor.constraint(equalTo: rightStack.bottomAnchor, constant: 12),
             separatorView.leadingAnchor.constraint(equalTo: contentColumnView.leadingAnchor),
@@ -597,6 +602,14 @@ final class BearyDetailViewController: UIViewController {
         ])
         avatarButton.addTarget(self, action: #selector(authorTapped), for: .touchUpInside)
         avatarButton.bearyAddPressFeedback()
+
+        // 106 闪退修复：右列左缘约束必须在此激活——此前它在 buildLayout()
+        // 的大激活列表里、avatarButton 尚未入层级时就被激活，必抛异常。
+        // avatarButton 已在上面 addSubview 到 contentColumnView，两端现已
+        // 同属 contentColumnView 层级，激活安全；几何与旧值一致（+12）。
+        NSLayoutConstraint.activate([
+            rightStack.leadingAnchor.constraint(equalTo: avatarButton.trailingAnchor, constant: 12),
+        ])
 
         // @ 行：有 mentionedName 才显（见 renderHeaderMeta），点按进被 @ 者主页。
         recipientRow.isUserInteractionEnabled = true
