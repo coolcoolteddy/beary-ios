@@ -2395,6 +2395,10 @@ class BearyDiaryCardCell: UITableViewCell {
         shareButton.isHidden = BearyEphemeral.isEffectivelyPublic(entry) == false
         shareSlotSpacer.isHidden = !shareButton.isHidden
         refreshPubRow()
+        // 批 E 补漏：就地同步此前不刷位置行——可见行经本方法同步新模型
+        // （如详情编辑回传带定位的 entry）后，位置行仍停在旧 configure 态，
+        // 直到整行重配才变；此处与 configure 同款刷新，nil 即隐藏不留空行。
+        refreshLocationRow(entry: entry)
         profileDisabled = interactionDisabled
         let candidate = BearyEmoteOrder.signature((entry.emotes ?? []).sorted { ($0.count ?? 0) > ($1.count ?? 0) }.filter { ($0.emote ?? "").isEmpty == false })
         if candidate != cellEmoteSignature {
