@@ -23,7 +23,7 @@ import UIKit
 //   （已核实：248 个 imageset 中无此名；预览页的 fingerprint 是网页 beary-ui
 //   路径，不是 iOS 资产）——此处只引用该名，取不到图时图标位隐藏、只留文字标题，
 //   不用 SF Symbol 顶替、不自绘；Li 补官方包进 xcassets 后自动出现。
-//   仅公开篇徽标只引用 imageset 名 "public-only"，未注册时同样只留文字标注
+//   仅公开篇徽标引用 imageset 名 "icon_public_only"（#229 已注册），未注册时同样只留文字标注
 //   「仅公开篇」，不自绘、不拼 globe + lock 组合顶替单枚徽标。
 
 /// 统计口径：本人 = 全部篇（含私密）；他人 = 仅公开篇。
@@ -49,7 +49,7 @@ enum BearyWordprintMode {
     case compact
 }
 
-/// 仅公开篇徽标行：public-only 资产（若已注册）+ 文字标注；资产未到时只留文字。
+/// 仅公开篇徽标行：icon_public_only 资产（#229 已注册）+ 文字标注；资产未到时只留文字。
 /// 他人口径的蓝色取 BearyColors.blue（提示性元素次色）；本人态为灰色说明文字。
 func bearyMakeWordprintScopeBadge(scope: BearyWordprintScope) -> UIView {
     let row = UIStackView()
@@ -57,7 +57,7 @@ func bearyMakeWordprintScopeBadge(scope: BearyWordprintScope) -> UIView {
     row.axis = .horizontal
     row.spacing = 4
     row.alignment = .center
-    if scope == .other, let badgeImage = UIImage(named: "public-only") {
+    if scope == .other, let badgeImage = UIImage(named: "icon_public_only") {
         let badgeView = UIImageView(image: badgeImage)
         badgeView.translatesAutoresizingMaskIntoConstraints = false
         badgeView.contentMode = .scaleAspectFit
