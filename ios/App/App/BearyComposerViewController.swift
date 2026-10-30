@@ -5,7 +5,8 @@ import PhotosUI
 // 只负责写日记：正文 + 心情 + 天气 + @ + 引用 + 图片（上限 9 张）。
 // 编辑模式复用同一界面：正文/心情/天气/图片/引用/@ 可改，
 // 不走新日记草稿流（不读不写 beary_draft_v3、不复用新篇 client_req）。
-// iCity：新建默认私密（顶栏可见性钮，编辑模式隐藏），限时行在工具栏上方固定一行。
+// iCity：新建默认私密（顶栏可见性钮三态点按循环：私密→公开→限时，编辑模式隐藏）；
+// 限时行已删（2026-10-31）：限时态即公开语义，ephemeral=1 发出后服务端 24 小时后转私密，无日期行。
 // C1 段落顺序：正文 → 已选 Chip 行 → 图片预览 → 状态行 → 引用；
 // A3：规则框已移出内容栈，锚在工具栏上方（不随正文滚动，键盘顶起工具栏时跟走）；
 // 工具栏贴键盘上方（始终可见，不随正文滚动），心情/天气/@ 改工具栏上方选择条
@@ -182,6 +183,9 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     private var editMentionCleared = false
     /// iCity：新建编辑器可见性初值硬编码私密（false），不读 UserDefaults、不记住上次选择。
     private var selectedVisibilityPublished = false
+    /// 顶栏三态循环的限时档：true 恒与 published=true 同行（限时即公开语义）；
+    /// 切到私密或普通公开时即清掉，不残留（见 didTapVisibilityButton）。
+    private var isEphemeral = false
     /// 编辑模式的引用：初始为原值，可改可删（网页 PUT 同款：body 带新 quote_id；
     /// 删为空时 updateEntry 省略 quote_id，服务端按 null 写，旧引用即清掉）。
     private var lockedQuote: SelectedQuote?
@@ -312,33 +316,20 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     // scrollView 底锚随之在工具栏/选择条/整页三档切换（见 updateScrollBottomAnchoring）。
     private let toolbarContainer = UIView()
     private let toolStripStack = UIStackView()
-    /// 工具栏上方固定一行限时行（新建模式可见，编辑模式隐藏、高度归零）。
-    private let visibilityBar = UIView()
-    /// 限时日记行（visibilityBar 唯一内容；编辑模式随整行隐藏）。
-    private let ephemeralRow = UIView()
-    /// 限时行开关：v6 起为自绘控件（BearyLimitedSwitch，见文件末尾），
-    /// 圆钮内嵌限时图标、轨道黑/白随深浅反转；对外只用 isOn/isEnabled/valueChanged，与 UISwitch 旧调用点同口径。
-    private let ephemeralSwitch = BearyLimitedSwitch()
-    private let ephemeralTitleLabel = UILabel()
-    private let ephemeralSubtitleLabel = UILabel()
-    private var visibilityBarHeightConstraint: NSLayoutConstraint?
-    private var scrollBottomToVisibilityConstraint: NSLayoutConstraint?
+    /// 2026-10-31：工具栏上方限时行已整组删除（行、开关、文案、约束全清），
+    /// 限时并进顶栏可见性钮三态循环；滚动区底锚直接走工具栏档（见 updateScrollBottomAnchoring）。
     private var scrollBottomToToolbarConstraint: NSLayoutConstraint?
     private var scrollBottomToStripConstraint: NSLayoutConstraint?
     private var scrollBottomToViewConstraint: NSLayoutConstraint?
     /// 2026-10-29 第 27 项：回应面板（心情条）改锚小熊按钮本体——条底贴工具栏顶
-    /// （触发按钮行正上方），不再随 toolStripStack 锚在限时行上方；
-    /// 限时行底锚随心情条开关在工具栏顶 / 心情条顶之间切换。
-    private var visibilityBarBottomToToolbarConstraint: NSLayoutConstraint?
-    private var visibilityBarBottomToMoodStripConstraint: NSLayoutConstraint?
+    /// （触发按钮行正上方），不再随 toolStripStack 锚在限时行上方。
     /// 关闭退场 B 修法：工具栏底锚两档——编辑态钉键盘顶（默认激活），
     /// 真正被 dismiss 时换钉自身 safeArea 底（初始不激活），簇随页滑走；
     /// 被其他 modal 盖住时的 viewWillDisappear 不换（见 viewWillDisappear 的 isBeingDismissed 判定）。
     private var toolbarBottomToKeyboardConstraint: NSLayoutConstraint?
     private var toolbarBottomToSafeAreaConstraint: NSLayoutConstraint?
     private var toolbarReanchoredForDismiss = false
-    /// 补缺 P2-20（天气条独立锚点）：限时行天气档底锚（行底贴天气条顶）。
-    private var visibilityBarBottomToWeatherConstraint: NSLayoutConstraint?
+    /// 补缺 P2-20（天气条独立锚点）：天气条底贴工具栏顶（2026-10-31 随限时行删除，天气档约束一并清掉）。
     /// 92 包整页列宽：窄屏贴边、宽 ≥821 时三件居中（顶栏/滚动区 640、工具栏 608，
     /// 与旧居中卡几何一致：卡 640、工具栏卡内边距 16）。只换外层水平约束，
     /// 不碰内容栈/心情/天气/引用/草稿/键盘逻辑；状态变化时才切换，避免每轮布局重算。
@@ -371,8 +362,9 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     private let recipientToolButton = BearyHit44Button(type: .system)
     private let quoteToolButton = BearyHit44Button(type: .system)
     private let draftPillButton = UIButton(type: .system)
-    /// 顶栏可见性钮（2026-10-30）：锁＝私密、地球＝公开，点按切换；取代正文区分段，
-    /// 为唯一可见性入口；编辑模式隐藏（编辑不改可见性），限时开时锁死公开。
+    /// 顶栏可见性钮（2026-10-30 建、2026-10-31 改三态）：锁＝私密、地球＝公开、
+    /// 时钟＝限时，点按循环切换；取代正文区分段，为唯一可见性入口；
+    /// 编辑模式隐藏（编辑不改可见性）；限时态即公开语义，不再另设锁定开关。
     private let visibilityButton = UIButton(type: .system)
     // 编辑器改版（2026-10-29）：心情/天气尖角弹出框（取代旧选择条）+ 框外收起层。
     private let moodCallout = BearyCalloutPickerView()
@@ -756,7 +748,6 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         contentStack.layoutMargins = UIEdgeInsets(top: 14, left: 16, bottom: 14, right: 16)
         view.addSubview(topBar)
         view.addSubview(toolbarContainer)
-        view.addSubview(visibilityBar)
         view.addSubview(toolStripStack)
         view.addSubview(scrollView)
         scrollView.addSubview(contentView)
@@ -764,7 +755,6 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         // C1：正文从顶栏下方直接开始（scrollView 顶锚顶栏）；工具栏贴键盘上方，
         // 选择条贴工具栏上方；scrollView 底锚三档切换（见 updateScrollBottomAnchoring），初始锚工具栏。
         scrollBottomToToolbarConstraint = scrollView.bottomAnchor.constraint(equalTo: toolbarContainer.topAnchor)
-        scrollBottomToVisibilityConstraint = scrollView.bottomAnchor.constraint(equalTo: visibilityBar.topAnchor)
         scrollBottomToStripConstraint = scrollView.bottomAnchor.constraint(equalTo: toolStripStack.topAnchor)
         scrollBottomToViewConstraint = scrollView.bottomAnchor.constraint(equalTo: view.bottomAnchor)
         // B 修法：工具栏底锚两档在此建好（键盘档激活、自身档待命），见声明注释。
@@ -772,50 +762,9 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         toolbarBottomToSafeAreaConstraint = toolbarContainer.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor)
         toolbarBottomToKeyboardConstraint?.isActive = true
         toolbarBottomToSafeAreaConstraint?.isActive = false
-        visibilityBarBottomToToolbarConstraint = visibilityBar.bottomAnchor.constraint(equalTo: toolbarContainer.topAnchor)
-        visibilityBarBottomToMoodStripConstraint = visibilityBar.bottomAnchor.constraint(equalTo: moodScrollView.topAnchor)
-        visibilityBarBottomToToolbarConstraint?.isActive = true
-        visibilityBarBottomToMoodStripConstraint?.isActive = false
-        scrollBottomToToolbarConstraint?.isActive = isEditMode
-        scrollBottomToVisibilityConstraint?.isActive = !isEditMode
-        // 限时行：工具栏上方固定行（visibilityBar 唯一内容）；新建默认私密，
-        // 编辑模式整行隐藏（高度 0，选择条底锚随之回到工具栏顶）。
-        visibilityBar.translatesAutoresizingMaskIntoConstraints = false
-        // 限时行：两行文案 + 开关；开 = 强制公开且可见性钮锁定，
-        // 关 = 回私密且可见性钮恢复可选。草稿模型不存限时态，重进编辑器默认关 + 私密。
-        ephemeralRow.translatesAutoresizingMaskIntoConstraints = false
-        ephemeralSwitch.translatesAutoresizingMaskIntoConstraints = false
-        ephemeralSwitch.isOn = false
-        ephemeralSwitch.addTarget(self, action: #selector(didToggleEphemeral), for: .valueChanged)
-        ephemeralTitleLabel.translatesAutoresizingMaskIntoConstraints = false
-        ephemeralTitleLabel.font = UIFont.systemFont(ofSize: 15, weight: .medium)
-        ephemeralTitleLabel.textColor = BearyColors.ink
-        ephemeralTitleLabel.text = "限时日记"
-        ephemeralSubtitleLabel.translatesAutoresizingMaskIntoConstraints = false
-        ephemeralSubtitleLabel.font = UIFont.systemFont(ofSize: 12)
-        ephemeralSubtitleLabel.textColor = BearyColors.gray
-        ephemeralSubtitleLabel.text = "公开 24 小时后自动转私密"
-        let ephemeralLabels = UIStackView(arrangedSubviews: [ephemeralTitleLabel, ephemeralSubtitleLabel])
-        ephemeralLabels.translatesAutoresizingMaskIntoConstraints = false
-        ephemeralLabels.axis = .vertical
-        ephemeralLabels.spacing = 1
-        ephemeralRow.addSubview(ephemeralLabels)
-        ephemeralRow.addSubview(ephemeralSwitch)
-        visibilityBar.addSubview(ephemeralRow)
-        visibilityBarHeightConstraint = visibilityBar.heightAnchor.constraint(equalToConstant: isEditMode ? 0 : 48)
-        visibilityBar.isHidden = isEditMode
-        NSLayoutConstraint.activate([
-            ephemeralRow.leadingAnchor.constraint(equalTo: visibilityBar.leadingAnchor, constant: 16),
-            ephemeralRow.trailingAnchor.constraint(equalTo: visibilityBar.trailingAnchor, constant: -16),
-            ephemeralRow.topAnchor.constraint(equalTo: visibilityBar.topAnchor),
-            ephemeralRow.bottomAnchor.constraint(equalTo: visibilityBar.bottomAnchor),
-            ephemeralLabels.leadingAnchor.constraint(equalTo: ephemeralRow.leadingAnchor),
-            ephemeralLabels.centerYAnchor.constraint(equalTo: ephemeralRow.centerYAnchor),
-            ephemeralSwitch.leadingAnchor.constraint(greaterThanOrEqualTo: ephemeralLabels.trailingAnchor, constant: 8),
-            ephemeralSwitch.trailingAnchor.constraint(equalTo: ephemeralRow.trailingAnchor),
-            ephemeralSwitch.centerYAnchor.constraint(equalTo: ephemeralRow.centerYAnchor),
-            visibilityBarHeightConstraint!,
-        ])
+        // 2026-10-31：限时行已删，滚动区底锚初始即工具栏档（新建/编辑同值，
+        // 后续由 updateScrollBottomAnchoring 按选择条/引用面板切换；原 48pt 限时行空间收回）。
+        scrollBottomToToolbarConstraint?.isActive = true
         // 选择条：竖栈，现只剩写给区（心情条第 27 项、天气条补缺 P2-20 已先后脱离栈）；
         // 全藏时栈高为 0，不占位。左右与工具栏同宽（跟随居中 608）。
         toolStripStack.axis = .vertical
@@ -844,15 +793,10 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             topBar.heightAnchor.constraint(equalToConstant: 60),
             scrollView.topAnchor.constraint(equalTo: topBar.bottomAnchor),
             toolbarBottomToKeyboardConstraint!,
-            visibilityBar.leadingAnchor.constraint(equalTo: toolbarContainer.leadingAnchor),
-            visibilityBar.trailingAnchor.constraint(equalTo: toolbarContainer.trailingAnchor),
-            // 2026-10-29 第 27 项：限时行底锚两档（见声明注释）；此处只激活 toolbar 档，
-            // mood 档由创建处设为不激活、refreshToolStrip 按心情条开关切换——两档同
-            // 时激活会互斥（行底不能既贴工具栏顶又贴心情条顶）。
-            visibilityBarBottomToToolbarConstraint!,
             toolStripStack.leadingAnchor.constraint(equalTo: toolbarContainer.leadingAnchor),
             toolStripStack.trailingAnchor.constraint(equalTo: toolbarContainer.trailingAnchor),
-            toolStripStack.bottomAnchor.constraint(equalTo: visibilityBar.topAnchor),
+            // 2026-10-31：选择条底直接贴工具栏顶（原贴限时行顶，行已删）。
+            toolStripStack.bottomAnchor.constraint(equalTo: toolbarContainer.topAnchor),
             toolbarLeadingConstraint!,
             toolbarTrailingConstraint!,
             scrollLeadingConstraint!,
@@ -1055,6 +999,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         visibilityButton.setImage(BearyIconImages.image(named: "icon_lock", pointSize: 24), for: .normal)
         visibilityButton.tintColor = BearyColors.ink
         visibilityButton.accessibilityLabel = "可见性"
+        visibilityButton.accessibilityHint = "点按切换私密、公开、限时"
         visibilityButton.addTarget(self, action: #selector(didTapVisibilityButton), for: .touchUpInside)
         visibilityButton.bearyAddPressFeedback()
         visibilityButton.translatesAutoresizingMaskIntoConstraints = false
@@ -1419,13 +1364,10 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         weatherScrollView.translatesAutoresizingMaskIntoConstraints = false
         weatherStackView.translatesAutoresizingMaskIntoConstraints = false
         // 补缺 P2-20：天气条改独立条（心情条第 27 项同款锚点）：底贴工具栏顶、即触发行正上方，
-        // 不再进 toolStripStack（栈在限时行上方、高度纯内容驱动，天气条是唯一仍走栈内打开路径的条，
-        // 与限时行几何（新建 48／编辑 0）耦合，是“点天气钮选择器出不来”的结构嫌疑）；限时行另增天气档锚点。
+        // 不再进 toolStripStack（2026-10-31：限时行已删，栈底已直贴工具栏顶，旧耦合随之消失）。
         view.addSubview(weatherScrollView)
         weatherScrollView.addSubview(weatherStackView)
         weatherScrollView.isHidden = true
-        visibilityBarBottomToWeatherConstraint = visibilityBar.bottomAnchor.constraint(equalTo: weatherScrollView.topAnchor)
-        visibilityBarBottomToWeatherConstraint?.isActive = false
         let weatherHeightEquality = weatherScrollView.heightAnchor.constraint(equalTo: weatherStackView.heightAnchor, constant: 12)
         weatherHeightEquality.priority = .defaultHigh
         NSLayoutConstraint.activate([
@@ -2223,46 +2165,50 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     /// C1：scrollView 底锚三档切换——引用面板打开时锚整页底（工具栏与选择条都藏，
     /// 不留空隙）；选择条展开时锚选择条顶（条不盖住正文尾部）；其余时锚工具栏顶。
     /// 改锚只发生在这两处：选择条刷新（refreshToolStrip）与引用面板开关。
+    /// 2026-10-31：限时行已删，原“锚限时行顶”档并入工具栏档（心情/天气旧条
+    /// 已是隐藏的弹出框，不再为其预留行高；新建态滚动区因此下探 48pt）。
     private func updateScrollBottomAnchoring() {
-        // 2026-10-29 第 27 项：心情条开时滚动区底锚限时行顶——行此时在条上方，
-        // 故滚动区停在行顶即停在条顶之上（编辑模式行高 0，顶 = 条顶，同值）；
-        // 其余选择条仍锚栈顶（栈在行上方）。
-        let moodOpen = activeToolStrip == .mood && !quotePanelOpen
-        let weatherOpen = activeToolStrip == .weather && !quotePanelOpen
         let otherStripOpen = activeToolStrip != nil && activeToolStrip != .mood && activeToolStrip != .weather && !quotePanelOpen
-        scrollBottomToToolbarConstraint?.isActive = !quotePanelOpen && !moodOpen && !weatherOpen && !otherStripOpen && isEditMode
-        scrollBottomToVisibilityConstraint?.isActive = !quotePanelOpen && (moodOpen || weatherOpen || (!otherStripOpen && !isEditMode))
+        scrollBottomToToolbarConstraint?.isActive = !quotePanelOpen && !otherStripOpen
         scrollBottomToStripConstraint?.isActive = otherStripOpen
         scrollBottomToViewConstraint?.isActive = quotePanelOpen
     }
 
     @objc private func didTapVisibilityButton() {
-        selectedVisibilityPublished.toggle()
+        // 三态循环：私密 → 公开 → 限时 → 私密。限时态 = 公开 + 限时标记；
+        // 切到私密或普通公开时限时标记即清，不残留到下一篇普通篇。
+        // （旧限时开关的“限时锁死公开钮”随开关删除而作废：循环本身已保证限时恒公开。）
+        if !selectedVisibilityPublished {
+            selectedVisibilityPublished = true
+            isEphemeral = false
+        } else if !isEphemeral {
+            isEphemeral = true
+        } else {
+            selectedVisibilityPublished = false
+            isEphemeral = false
+        }
         refreshVisibilityButton()
         // 批 E：段位切换时位置行副行（公开后他人仅见区级）同步变，防滞后。
         refreshLocationRow()
-    }
-
-    /// 顶栏可见性钮图标：锁＝私密、地球＝公开，随 selectedVisibilityPublished 走；
-    /// 可用态另由限时锁（didToggleEphemeral／restoreVisibility）与发布冻结
-    ///（refreshPublishingInputFreeze）管，本函数不动 isEnabled。
-    private func refreshVisibilityButton() {
-        let published = selectedVisibilityPublished
-        visibilityButton.setImage(BearyIconImages.image(named: published ? "icon_globe" : "icon_lock", pointSize: 24), for: .normal)
-        visibilityButton.accessibilityValue = published ? "公开" : "私密"
-    }
-
-    @objc private func didToggleEphemeral() {
-        if ephemeralSwitch.isOn {
-            // 限时即公开：可见性定公开且钮锁死，改不了私密（限时 + 私密本身无意义）。
-            selectedVisibilityPublished = true
-            visibilityButton.isEnabled = false
-        } else {
-            selectedVisibilityPublished = false
-            visibilityButton.isEnabled = true
+        scheduleDraftSave()
+        if isEphemeral {
+            // 行已删，24 小时规则在编辑器内只剩此处一次提示（恢复草稿进限时态不重复提示）。
+            showToast(message: "限时：公开 24 小时后自动转私密")
         }
-        refreshVisibilityButton()
-        refreshLocationRow()
+    }
+
+    /// 顶栏可见性钮图标：锁＝私密、地球＝公开、时钟＝限时（官方 beary-ui 包内
+    /// icon_clock，与新手引导限时项、回收站限时标同款，不自绘）；
+    /// 可用态只由发布冻结（refreshPublishingInputFreeze）管，本函数不动 isEnabled。
+    private func refreshVisibilityButton() {
+        if isEphemeral {
+            visibilityButton.setImage(BearyIconImages.image(named: "icon_clock", pointSize: 24), for: .normal)
+            visibilityButton.accessibilityValue = "限时"
+        } else {
+            let published = selectedVisibilityPublished
+            visibilityButton.setImage(BearyIconImages.image(named: published ? "icon_globe" : "icon_lock", pointSize: 24), for: .normal)
+            visibilityButton.accessibilityValue = published ? "公开" : "私密"
+        }
     }
 
     @objc private func didTapQuoteTab(_ sender: UIButton) {
@@ -2848,14 +2794,10 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     /// 专属路径（面板盖住条带、无可见转场），此处不动它。
     private func refreshToolStrip() {
         // 编辑器改版（2026-10-29）：心情/天气旧条已由尖角弹出框取代，旧条永久隐藏；
-        // 限时行底锚恒贴工具栏顶（心情/天气档不再激活）；栈内只剩写给区。
-        // 旧条视图与天气诊断 mark 行原样保留（诊断代码不动），仅不再由本函数显隐。
+        // 栈内只剩写给区。2026-10-31：限时行底锚三档随行删除（选择条底已直贴工具栏顶）。
         let stackHidden = quotePanelOpen || activeToolStrip != .recipient
         let moodHidden = true
         let weatherHidden = true
-        visibilityBarBottomToToolbarConstraint?.isActive = true
-        visibilityBarBottomToMoodStripConstraint?.isActive = false
-        visibilityBarBottomToWeatherConstraint?.isActive = false
         // iCity：编辑模式 @ 可新增——无 @ 时条内仍有“@ 谁”钮，不再整区隐藏；
         // 其余态按条开关显隐。
         recipientSection.isHidden = activeToolStrip != .recipient
@@ -3205,7 +3147,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     /// 发布用胶囊载荷：全部校验失败都 toast 并返回 nil（调用方停住不发）。校验顺序按用户可修性：
     /// 限时冲突 → 无区级 → 无日期 → 过去日期。埋点区级取 selectedLocation.district 快照，不取精确地点名。
     private func validatedCapsulePayload() -> (buried: Int, unlockDate: String, district: String)? {
-        if ephemeralSwitch.isOn {
+        if isEphemeral {
             showToast(message: "限时日记不能埋胶囊")
             return nil
         }
@@ -3867,13 +3809,9 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         textView.isEditable = !frozen
         // 100 包编辑器面修法：发布在途时可见性钮亦冻结——此前冻结清单
         // 漏了它，在途点钮只改旗标不改已发送值（performPublish 已在请求
-        // 前捕获 publishVisibility），视觉上“切成功了”实则无效；解冻时
-        // 仍受限时锁制约（限时开时钮本就禁用，不得由解冻误解开）。
-        visibilityButton.isEnabled = !frozen && !ephemeralSwitch.isOn
-        // 同款：限时开关本身亦随冻结禁用，否则在途拨动限时会连带改段
-        // 与旗标，同样只改视觉不改已发送值；它在别处无禁用逻辑，解冻
-        // 直接恢复可用。
-        ephemeralSwitch.isEnabled = !frozen
+        // 前捕获 publishVisibility），视觉上“切成功了”实则无效。
+        // 2026-10-31：限时开关已删，钮冻结只看在途态（限时态本身不再锁钮，循环可继续点按）。
+        visibilityButton.isEnabled = !frozen
         // P1-14：冻结清单补齐全部入口——草稿 pill、引用钮、三枚已选 Chip、
         // @ pick/清除、引用卡 ×（含已删行“移除”）；其余入口见下。
         draftPillButton.isEnabled = !frozen
@@ -4847,6 +4785,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             capsuleEnabled: isEditMode ? false : capsuleEnabled,
             capsuleUnlockDate: (isEditMode || !capsuleEnabled) ? nil : capsuleUnlockDate.map { BearyTimeCapsule.string(from: $0) },
             visibilitySegmentIndex: selectedVisibilityPublished ? 1 : 0,
+            ephemeralEnabled: isEditMode ? false : isEphemeral,
             recipientId: recipientUserId,
             recipientName: recipientNameValue,
             recipientAvatar: selectedRecipient?.avatarUrl,
@@ -4951,7 +4890,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                 self.refreshMoodButtons()
                 self.selectedWeather = draft.weather
                 self.refreshWeatherButtons()
-                self.restoreVisibility(index: draft.visibilitySegmentIndex)
+                self.restoreVisibility(index: draft.visibilitySegmentIndex, ephemeral: draft.ephemeralEnabled)
                 self.selectedRecipient = self.restoredRecipient(from: draft)
                 self.notifyRecipient = draft.notifyRecipient
                 self.selectedQuote = self.restoredQuote(from: draft)
@@ -5037,17 +4976,18 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     }
 
     /// 草稿可见性恢复：index 与 selectedVisibilityPublished 同步写（发布
-    /// 即读后者，只写 index 不动它仍会发出私密）；限时开时钮锁死公开且禁用
-    /// （didToggleEphemeral 同款锁态），不以草稿值覆盖锁态；非法 index 一律
-    /// 按私密兜底。restoreDraft 与 loadDraftFromBox 两路共用。
-    private func restoreVisibility(index: Int) {
-        if ephemeralSwitch.isOn {
+    /// 即读后者，只写 index 不动它仍会发出私密）；ephemeral=true 时恢复为
+    /// 限时态（公开 + 限时标记），老草稿无限时键时缺省 false，走旧私密/公开态；
+    /// 非法 index 一律按私密兜底。restoreDraft 与 loadDraftFromBox 两路共用。
+    /// （旧“限时开时钮锁死”口径随开关删除而作废：恢复后循环仍可点按。）
+    private func restoreVisibility(index: Int, ephemeral: Bool = false) {
+        if ephemeral {
             selectedVisibilityPublished = true
-            visibilityButton.isEnabled = false
+            isEphemeral = true
         } else {
             let restoredIndex = index == 1 ? 1 : 0
             selectedVisibilityPublished = restoredIndex == 1
-            visibilityButton.isEnabled = true
+            isEphemeral = false
         }
         refreshVisibilityButton()
         refreshLocationRow()
@@ -5285,7 +5225,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         preservedTitle = draft.title
         selectedMood = draft.mood
         selectedWeather = draft.weather
-        restoreVisibility(index: draft.visibilitySegmentIndex)
+        restoreVisibility(index: draft.visibilitySegmentIndex, ephemeral: draft.ephemeralEnabled)
         selectedRecipient = restoredRecipient(from: draft)
         notifyRecipient = draft.notifyRecipient
         selectedQuote = restoredQuote(from: draft)
@@ -5484,9 +5424,9 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         // 标题行已去掉：新建标题即 preservedTitle——全新日记为 nil（API 省略不传，
         // 按无标题创建）；续写旧草稿时为旧标题、随发布带回，不静默清掉旧标题。
         // iCity：可见性值即 visibility（published 0/1）；@ 以 mentioned_user_id 发出，无按篇通知开关。
-        // 限时：开关开时可见性必为公开，ephemeral=1 随新建发出（服务端写 24 小时到期）。
+        // 限时：限时态时可见性必为公开，ephemeral=1 随新建发出（服务端写 24 小时到期）。
         let publishVisibility = selectedVisibilityPublished ? 1 : 0
-        BearyAPI.shared.publishEntry(content: trimmed, images: uploadedImageKeys(), mood: selectedMood, weather: selectedWeather, quoteId: publishQuoteId, published: publishVisibility, mentionedUserId: selectedRecipient?.id, title: preservedTitle, ephemeral: ephemeralSwitch.isOn ? 1 : nil, clientReq: req, locationName: selectedLocation?.name, locationDistrict: selectedLocation?.district, capsuleBuried: capsulePayload?.buried, capsuleUnlockDate: capsulePayload?.unlockDate, capsuleDistrict: capsulePayload?.district) { [weak self] result in
+        BearyAPI.shared.publishEntry(content: trimmed, images: uploadedImageKeys(), mood: selectedMood, weather: selectedWeather, quoteId: publishQuoteId, published: publishVisibility, mentionedUserId: selectedRecipient?.id, title: preservedTitle, ephemeral: isEphemeral ? 1 : nil, clientReq: req, locationName: selectedLocation?.name, locationDistrict: selectedLocation?.district, capsuleBuried: capsulePayload?.buried, capsuleUnlockDate: capsulePayload?.unlockDate, capsuleDistrict: capsulePayload?.district) { [weak self] result in
             DispatchQueue.main.async {
                 guard let self = self else { return }
                 self.isPublishing = false
@@ -6007,107 +5947,6 @@ private final class BearyComposerDashedPickButton: UIButton {
     }
 }
 
-// MARK: - 限时行开关（v6-7：圆钮内嵌限时图标）
-
-/// v6 限时开关：系统 UISwitch 无法在圆钮内嵌图标、也定不了黑轨道，
-/// 故自绘 51×31 控件，对外只暴露 UISwitch 旧调用点用到的口径：
-/// isOn（读写，不发事件）、isEnabled、valueChanged（点按切换后发送）。
-/// 圆钮 27pt、内嵌限时行现有的官方 icon_limited 图标 18pt（熊头＋下半虚线弧，
-/// 不自绘）；浅色黑轨道白圆钮黑图标，深色反转（轨道 ink、白圆钮取 bg、
-/// 图标 ink——ink/bg 均为动态色，深浅切换自动跟随）。
-/// 圆钮位置只由 isOn 与布局决定：点按先改 isOn 再沿当前转场播 layout，
-/// 减动效时瞬时落位；编程式改 isOn 只改无障碍值、不播动画。
-private final class BearyLimitedSwitch: UIControl {
-
-    private static let trackWidth: CGFloat = 51
-    private static let trackHeight: CGFloat = 31
-    private static let thumbDiameter: CGFloat = 27
-    private static let thumbInset: CGFloat = 2
-    private static let iconSize: CGFloat = 18
-
-    var isOn = false {
-        didSet {
-            guard isOn != oldValue else { return }
-            accessibilityValue = isOn ? "开" : "关"
-            refreshTrackColor()
-            setNeedsLayout()
-        }
-    }
-
-    override var isEnabled: Bool {
-        didSet { alpha = isEnabled ? 1 : 0.5 }
-    }
-
-    /// track 底色：ON = ink（现行不变），OFF = gray（动态色，深浅模式均与 ink 有区分度）。
-    private func refreshTrackColor() {
-        trackView.backgroundColor = isOn ? BearyColors.ink : BearyColors.gray
-    }
-
-    private let trackView = UIView()
-    private let thumbView = UIView()
-    private let iconView = UIImageView()
-
-    override init(frame: CGRect) {
-        super.init(frame: frame)
-        refreshTrackColor()
-        trackView.layer.cornerRadius = Self.trackHeight / 2
-        trackView.isUserInteractionEnabled = false
-        thumbView.backgroundColor = BearyColors.bg
-        thumbView.layer.cornerRadius = Self.thumbDiameter / 2
-        thumbView.layer.shadowColor = UIColor.black.cgColor
-        thumbView.layer.shadowOpacity = 0.25
-        thumbView.layer.shadowRadius = 2
-        thumbView.layer.shadowOffset = CGSize(width: 0, height: 1)
-        thumbView.isUserInteractionEnabled = false
-        iconView.image = BearyIconImages.image(named: "icon_limited", pointSize: Self.iconSize)
-        iconView.tintColor = BearyColors.ink
-        iconView.contentMode = .scaleAspectFit
-        iconView.isUserInteractionEnabled = false
-        thumbView.addSubview(iconView)
-        addSubview(trackView)
-        addSubview(thumbView)
-        addTarget(self, action: #selector(didTap), for: .touchUpInside)
-        isAccessibilityElement = true
-        accessibilityLabel = "限时日记"
-        accessibilityTraits = [.button]
-        accessibilityValue = "关"
-    }
-
-    required init?(coder: NSCoder) {
-        fatalError("init(coder:) has not been implemented")
-    }
-
-    override var intrinsicContentSize: CGSize {
-        CGSize(width: Self.trackWidth, height: Self.trackHeight)
-    }
-
-    override func layoutSubviews() {
-        super.layoutSubviews()
-        trackView.frame = bounds
-        let thumbX = isOn
-            ? bounds.width - Self.thumbInset - Self.thumbDiameter
-            : Self.thumbInset
-        thumbView.frame = CGRect(x: thumbX, y: Self.thumbInset, width: Self.thumbDiameter, height: Self.thumbDiameter)
-        iconView.frame = CGRect(
-            x: (Self.thumbDiameter - Self.iconSize) / 2,
-            y: (Self.thumbDiameter - Self.iconSize) / 2,
-            width: Self.iconSize,
-            height: Self.iconSize
-        )
-    }
-
-    @objc private func didTap() {
-        guard isEnabled else { return }
-        isOn.toggle()
-        sendActions(for: .valueChanged)
-        if UIAccessibility.isReduceMotionEnabled {
-            layoutIfNeeded()
-        } else {
-            UIView.animate(withDuration: 0.25, animations: { self.layoutIfNeeded() })
-        }
-    }
-}
-
 // MARK: - 批 E 定位气泡回调
 
 extension BearyComposerViewController: BearyLocationPopoverDelegate {
@@ -6141,7 +5980,7 @@ extension BearyComposerViewController: BearyTimeCapsuleRowViewDelegate {
     func timeCapsuleRowDidToggle(on: Bool) {
         if on {
             // 开关点按时即校验前置条件，不满足时开关弹回关态（不靠发布时才拦，用户当场就知道埋不了）。
-            if ephemeralSwitch.isOn {
+            if isEphemeral {
                 capsuleRowView?.isOn = false
                 showToast(message: "限时日记不能埋胶囊")
                 return
