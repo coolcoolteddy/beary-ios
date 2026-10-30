@@ -56,6 +56,9 @@
 		C135069A08D34199AC8F8AF3 /* BearyTimeCapsule.swift in Sources */ = {isa = PBXBuildFile; fileRef = D74D6C1DAD7F40BD8EFCD310 /* BearyTimeCapsule.swift */; };
 		1E362E2D44A34966AE01BAC7 /* BearyTimeCapsuleRowView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 742B8625835E4C439496E239 /* BearyTimeCapsuleRowView.swift */; };
 		18B93E5A06A14597B9AC7E5D /* BearyTimeCapsuleSheetViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 42318F958E9F405E9FAA466E /* BearyTimeCapsuleSheetViewController.swift */; };
+		5392548191C34E7DA72EBEAB /* BearyStarMap.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2D0F219CC32F47C894C1AC12 /* BearyStarMap.swift */; };
+		056BAE1849464C80809141E9 /* BearyDiaryStarMapViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = C12B794417E44D6BB453D151 /* BearyDiaryStarMapViewController.swift */; };
+		161AB80B45864055BCEEFC20 /* BearyStarMap.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2D0F219CC32F47C894C1AC12 /* BearyStarMap.swift */; };
 		8ABB5DF4B35DF3B59999D3A2 /* BearySettingsSubpages.swift in Sources */ = {isa = PBXBuildFile; fileRef = 12F817BD777C96A660F91A83 /* BearySettingsSubpages.swift */; };
 		4286499B01B2367CADFE02E3 /* BearyCrownView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8489888CCB412D0007221576 /* BearyCrownView.swift */; };
 		0DF17DFC39734CBE9118F087 /* BearyDetailViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0B7C99F453D645B0BBF9896F /* BearyDetailViewController.swift */; };
@@ -244,6 +247,8 @@
 		D74D6C1DAD7F40BD8EFCD310 /* BearyTimeCapsule.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BearyTimeCapsule.swift; sourceTree = "<group>"; };
 		742B8625835E4C439496E239 /* BearyTimeCapsuleRowView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BearyTimeCapsuleRowView.swift; sourceTree = "<group>"; };
 		42318F958E9F405E9FAA466E /* BearyTimeCapsuleSheetViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BearyTimeCapsuleSheetViewController.swift; sourceTree = "<group>"; };
+		2D0F219CC32F47C894C1AC12 /* BearyStarMap.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BearyStarMap.swift; sourceTree = "<group>"; };
+		C12B794417E44D6BB453D151 /* BearyDiaryStarMapViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BearyDiaryStarMapViewController.swift; sourceTree = "<group>"; };
 		12F817BD777C96A660F91A83 /* BearySettingsSubpages.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BearySettingsSubpages.swift; sourceTree = "<group>"; };
 		8489888CCB412D0007221576 /* BearyCrownView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BearyCrownView.swift; sourceTree = "<group>"; };
 		0B7C99F453D645B0BBF9896F /* BearyDetailViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BearyDetailViewController.swift; sourceTree = "<group>"; };
@@ -462,6 +467,8 @@
 				D74D6C1DAD7F40BD8EFCD310 /* BearyTimeCapsule.swift */,
 				742B8625835E4C439496E239 /* BearyTimeCapsuleRowView.swift */,
 				42318F958E9F405E9FAA466E /* BearyTimeCapsuleSheetViewController.swift */,
+				2D0F219CC32F47C894C1AC12 /* BearyStarMap.swift */,
+				C12B794417E44D6BB453D151 /* BearyDiaryStarMapViewController.swift */,
 				12F817BD777C96A660F91A83 /* BearySettingsSubpages.swift */,
 				8489888CCB412D0007221576 /* BearyCrownView.swift */,
 				0B7C99F453D645B0BBF9896F /* BearyDetailViewController.swift */,
@@ -869,6 +876,8 @@
 				C135069A08D34199AC8F8AF3 /* BearyTimeCapsule.swift in Sources */,
 				1E362E2D44A34966AE01BAC7 /* BearyTimeCapsuleRowView.swift in Sources */,
 				18B93E5A06A14597B9AC7E5D /* BearyTimeCapsuleSheetViewController.swift in Sources */,
+				5392548191C34E7DA72EBEAB /* BearyStarMap.swift in Sources */,
+				056BAE1849464C80809141E9 /* BearyDiaryStarMapViewController.swift in Sources */,
 				8ABB5DF4B35DF3B59999D3A2 /* BearySettingsSubpages.swift in Sources */,
 				4286499B01B2367CADFE02E3 /* BearyCrownView.swift in Sources */,
 				0DF17DFC39734CBE9118F087 /* BearyDetailViewController.swift in Sources */,
@@ -892,6 +901,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				147711CB4F24122B8270E75F /* BearyCoreTests.swift in Sources */,
+				161AB80B45864055BCEEFC20 /* BearyStarMap.swift in Sources */,
 				A8BEBC6E5F94AF59F6C14DDC /* BearyAPI.swift in Sources */,
 				850D32A1A4CA4E3D088DA61F /* BearyNavigator.swift in Sources */,
 			);

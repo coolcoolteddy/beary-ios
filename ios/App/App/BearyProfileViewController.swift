@@ -1282,6 +1282,68 @@ class BearyProfileViewController: UIViewController {
         return button
     }()
 
+    /// 日记星图入口行（2026-10-30）：排在日记地图行下一行，与地图行同几何
+    /// （左右各 20、高 48、12pt 间隔），本人/他人页同行（星空页内按视角过滤）。
+    /// 图标：连线示意用新图标 constellation（imageset 名 "constellation"，注册由
+    /// 另一工人做；此处只引用名，不自绘、不用 SF Symbol 顶替）。注册未到时
+    /// BearyIconImages 返回 nil，本行改放占位文字“待接图标”（行仍可点、星空页
+    /// 照常进）；图标到货后下次启动自动走官方图分支，布局与地图行对齐。
+    /// 行内子视图与内部约束在 refreshFooter 里首次落位时一次接好（与地图行同机制）。
+    private let starEntryRow: UIView = {
+        let viewValue = UIView()
+        viewValue.translatesAutoresizingMaskIntoConstraints = false
+        viewValue.backgroundColor = BearyColors.faint
+        viewValue.layer.cornerRadius = 12
+        viewValue.clipsToBounds = true
+        return viewValue
+    }()
+
+    private let starEntryIconView: UIImageView = {
+        let v = UIImageView()
+        v.translatesAutoresizingMaskIntoConstraints = false
+        v.image = BearyIconImages.image(named: "constellation", pointSize: 20)
+        v.tintColor = BearyColors.ink
+        v.contentMode = .scaleAspectFit
+        return v
+    }()
+
+    private let starEntryPlaceholderLabel: UILabel = {
+        let lb = UILabel()
+        lb.translatesAutoresizingMaskIntoConstraints = false
+        lb.font = UIFont.systemFont(ofSize: 10)
+        lb.textColor = BearyColors.gray
+        lb.textAlignment = .center
+        lb.text = "待接图标"
+        return lb
+    }()
+
+    private let starEntryLabel: UILabel = {
+        let lb = UILabel()
+        lb.translatesAutoresizingMaskIntoConstraints = false
+        lb.font = UIFont.systemFont(ofSize: 15)
+        lb.textColor = BearyColors.ink
+        lb.text = "日记星图"
+        return lb
+    }()
+
+    private let starEntryChevronView: UIImageView = {
+        let v = UIImageView()
+        v.translatesAutoresizingMaskIntoConstraints = false
+        v.image = BearyIconImages.image(named: "icon_chevron_right", pointSize: 16)
+        v.tintColor = BearyColors.gray
+        v.contentMode = .scaleAspectFit
+        return v
+    }()
+
+    private lazy var starEntryButton: UIButton = {
+        let button = UIButton(type: .custom)
+        button.translatesAutoresizingMaskIntoConstraints = false
+        button.accessibilityLabel = "打开日记星图"
+        button.addTarget(self, action: #selector(openStarMap), for: .touchUpInside)
+        button.bearyAddPressFeedback()
+        return button
+    }()
+
     private lazy var likedTabButton: UIButton = {
         return makeTabButton(title: "赞过", iconName: "icon_heart", action: #selector(likedTabTapped))
     }()
@@ -4378,6 +4440,9 @@ class BearyProfileViewController: UIViewController {
     /// 批 E 挪位：地图入口行内约束（图标/文案/箭头/热区）只激活一次；
     /// 行本身在 refreshFooter 里逐次重设 frame 并换进新脚部容器。
     private var mapEntryInternalConstraintsActivated = false
+    /// 日记星图入口行内约束只激活一次（与地图行同机制；图标/占位分支在首次
+    /// 落位时按 constellation 是否已注册定死，同一安装内资产状态不变）。
+    private var starEntryInternalConstraintsActivated = false
     /// 失败脚部重试钮弱引用：深浅切换时经 updateDynamicLayerColors 重刷边框
     /// （与 editButton/gearButton 同机制，单机制，不另起一套）。
     private weak var profileErrorRetryButton: UIButton?
@@ -4414,6 +4479,8 @@ class BearyProfileViewController: UIViewController {
         // 赞过/收藏 tab 的按钮与下划线一律不动。本人/他人页同行（他人进地图页
         // 仍按只区级聚合口径，见 openDiaryMap）。顺序：照片区（如有）→ 入口行
         // （12pt 间隔、左右各 20、高 48，与原 header 行同几何）→ 状态脚部（如有）。
+        // 日记星图行（2026-10-30）：同机制再接一行，排在地图行下一行、状态脚部
+        // 上方，本人/他人页同行（星空页内按视角过滤，见 openStarMap）。
         // 无照片时入口行仍在脚部顶部，不因无图丢失；无照片且无状态时脚部只剩入口行。
         let footerWidth = headerWidthValue > 0 ? headerWidthValue : tableView.bounds.width
         let photosView = footerWidth > 0 ? makePhotosFooterView() : nil
@@ -4441,9 +4508,47 @@ class BearyProfileViewController: UIViewController {
                 ])
                 mapEntryInternalConstraintsActivated = true
             }
+            if !starEntryInternalConstraintsActivated {
+                // 星图行：图标已注册走地图行同款几何；未注册走占位文字分支
+                // （占位宽 56，文案随其后，不与文案重叠；图标到货后自动对齐）。
+                starEntryRow.addSubview(starEntryLabel)
+                starEntryRow.addSubview(starEntryChevronView)
+                starEntryRow.addSubview(starEntryButton)
+                if starEntryIconView.image != nil {
+                    starEntryRow.addSubview(starEntryIconView)
+                    NSLayoutConstraint.activate([
+                        starEntryIconView.leadingAnchor.constraint(equalTo: starEntryRow.leadingAnchor, constant: 14),
+                        starEntryIconView.centerYAnchor.constraint(equalTo: starEntryRow.centerYAnchor),
+                        starEntryIconView.widthAnchor.constraint(equalToConstant: 20),
+                        starEntryIconView.heightAnchor.constraint(equalToConstant: 20),
+                        starEntryLabel.leadingAnchor.constraint(equalTo: starEntryIconView.trailingAnchor, constant: 10),
+                    ])
+                } else {
+                    starEntryRow.addSubview(starEntryPlaceholderLabel)
+                    NSLayoutConstraint.activate([
+                        starEntryPlaceholderLabel.leadingAnchor.constraint(equalTo: starEntryRow.leadingAnchor, constant: 14),
+                        starEntryPlaceholderLabel.centerYAnchor.constraint(equalTo: starEntryRow.centerYAnchor),
+                        starEntryPlaceholderLabel.widthAnchor.constraint(equalToConstant: 56),
+                        starEntryLabel.leadingAnchor.constraint(equalTo: starEntryPlaceholderLabel.trailingAnchor, constant: 10),
+                    ])
+                }
+                NSLayoutConstraint.activate([
+                    starEntryLabel.centerYAnchor.constraint(equalTo: starEntryRow.centerYAnchor),
+                    starEntryChevronView.trailingAnchor.constraint(equalTo: starEntryRow.trailingAnchor, constant: -14),
+                    starEntryChevronView.centerYAnchor.constraint(equalTo: starEntryRow.centerYAnchor),
+                    starEntryChevronView.widthAnchor.constraint(equalToConstant: 16),
+                    starEntryChevronView.heightAnchor.constraint(equalToConstant: 16),
+                    starEntryButton.topAnchor.constraint(equalTo: starEntryRow.topAnchor),
+                    starEntryButton.leadingAnchor.constraint(equalTo: starEntryRow.leadingAnchor),
+                    starEntryButton.trailingAnchor.constraint(equalTo: starEntryRow.trailingAnchor),
+                    starEntryButton.bottomAnchor.constraint(equalTo: starEntryRow.bottomAnchor),
+                ])
+                starEntryInternalConstraintsActivated = true
+            }
             // 脚部用 frame 落位（与照片区/状态脚部同机制）：行自身走 frame，
             // 行内子视图仍走上面一次激活的约束（按行 bounds 排布）。
             mapEntryRow.translatesAutoresizingMaskIntoConstraints = true
+            starEntryRow.translatesAutoresizingMaskIntoConstraints = true
             let container = UIView(frame: CGRect(x: 0, y: 0, width: footerWidth, height: 0))
             var totalHeight: CGFloat = 0
             if let photosView = photosView {
@@ -4453,6 +4558,10 @@ class BearyProfileViewController: UIViewController {
             }
             mapEntryRow.frame = CGRect(x: 20, y: totalHeight + 12, width: max(footerWidth - 40, 0), height: 48)
             container.addSubview(mapEntryRow)
+            totalHeight += 12 + 48
+            // 星图行：地图行下一行（12pt 间隔、同宽同高），再接状态脚部。
+            starEntryRow.frame = CGRect(x: 20, y: totalHeight + 12, width: max(footerWidth - 40, 0), height: 48)
+            container.addSubview(starEntryRow)
             totalHeight += 12 + 48
             if let stateValue = stateView {
                 let stateHeight = footerFittingHeight(view: stateValue, width: footerWidth)
@@ -5916,6 +6025,30 @@ extension BearyProfileViewController: UITableViewDataSource, UITableViewDelegate
             nav.pushViewController(mapVC, animated: BearyMotion.animated(true))
         } else {
             let nav = UINavigationController(rootViewController: mapVC)
+            present(nav, animated: BearyMotion.animated(true))
+        }
+    }
+
+    /// 日记星图入口（2026-10-30）：与 openDiaryMap 同约定——以 diaryEntries
+    /// 为即时数据源进星空页，星空页内再游标拉全量；点星/点线卡内篇名走本页
+    /// 既有的 onOpenEntry（容器接详情），本页不内置跳转。主页信息未加载出 id
+    /// 时 toast，不进空星空。他人主页同样有本行（星空页内按他人 = 只公开篇、
+    /// 只区级地点键口径渲染，私密篇及其连线一并消失）。
+    @objc private func openStarMap() {
+        guard let profileId = profile?.profileIdValue ?? targetUserIdValue else {
+            BearyToast.show(in: view, message: "主页信息还在加载，请稍后再试")
+            return
+        }
+        let starVC = BearyDiaryStarMapViewController(
+            authorId: profileId,
+            viewerIsAuthor: isOwnProfile,
+            initialEntries: diaryEntries,
+            onOpenEntry: { [weak self] entry in self?.onOpenEntry?(entry) }
+        )
+        if let nav = navigationController {
+            nav.pushViewController(starVC, animated: BearyMotion.animated(true))
+        } else {
+            let nav = UINavigationController(rootViewController: starVC)
             present(nav, animated: BearyMotion.animated(true))
         }
     }
