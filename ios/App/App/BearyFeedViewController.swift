@@ -40,6 +40,21 @@ class BearyFeedViewController: UIViewController {
 
     private let pageLimit = 20
 
+    /// 秒加载（feedfast）：首屏量收小到 12（原 20）。分页量不变（下一页仍 20，
+    /// 游标式 before/before_id 与量无关）；首屏 12 行 + 距末 3 行预取，
+    /// 首屏 cell 构建与服务端返回量同步缩小。末页判定同步改按首屏量
+    /// （首拉回包 <12 即立标），与旧“<20 立标”同口径。
+    private let firstPageLimit = 12
+
+    /// 上次首拉窗口的 id 序列（仅首屏窗口，不含分页续拉的尾部）。
+    /// diff 时只有这个窗口里消失的 id 才判删——尾部行不在本次回包里，
+    /// 不能凭“不在 fresh 里”就删，否则分页已加载的尾部会被误杀。
+    private var firstPageIds: [String] = []
+
+    /// 当前内存列表所属的缓存桶（用户 id 或 "guest"）；切账号/游客切换时
+    /// 换桶，旧桶内容绝不渲染给新身份（见 handleFeedUserChanged）。
+    private var feedCacheOwnerKey: String?
+
     // MARK: - 广场流状态
 
     /// 原始拉取结果；展示时再按最近公开模块去重。
@@ -287,12 +302,13 @@ class BearyFeedViewController: UIViewController {
         NotificationCenter.default.addObserver(self, selector: #selector(handleReportedEntryNotification(_:)), name: .bearyDidReportEntry, object: nil)
         NotificationCenter.default.addObserver(self, selector: #selector(handleBlockedUserNotification(_:)), name: .bearyDidBlockUser, object: nil)
         NotificationCenter.default.addObserver(self, selector: #selector(handleBlindBoxStateChanged), name: .bearyBlindBoxDidChange, object: nil)
+        NotificationCenter.default.addObserver(self, selector: #selector(handleFeedUserChanged), name: .bearyUserDidChange, object: nil)
         blindBoxEntryView.onTap = { [weak self] in
             self?.presentBlindBoxFlow()
         }
         blindBoxHeaderWrap.addSubview(blindBoxEntryView)
         layoutFeedBlindBoxHeader()
-        refreshAll()
+        loadCachedFeedOrRefresh()
     }
 
     deinit {
@@ -490,14 +506,14 @@ class BearyFeedViewController: UIViewController {
         plazaReachedEnd = false
         plazaHasMore = true
         plazaError = false
-        // B 视觉文案：中央菊花此前从未 startAnimating（死代码指示器），现改为
-        // 非手势刷新时启动；后台重拉 revalidate 不走这里、继续不闪菊花。
-        if showCentralSpinner {
+        // feedfast：刷新不再同步重建可见行（旧代码这里 reloadData 把可见行
+        // 全部重建一遍——图片重取、表情播放器重启——再叠加中央菊花）。
+        // 新数据回来前旧行原样展示，回包后走 diff 定向更新；只有确实无内容
+        // 可 show 时才转菊花。
+        if showCentralSpinner && plazaRaw.isEmpty {
             centralSpinner.startSpinning()
         }
-        loadPlazaFirstPage()
-        tableView.reloadData()
-        updateOverlayState()
+        loadPlazaFirstPage(diffMode: !plazaRaw.isEmpty)
     }
 
     /// F16：重拍 tab 接线的一半——作用等同下拉刷新（广场从网络重拉）。
@@ -636,12 +652,16 @@ class BearyFeedViewController: UIViewController {
     /// 清单第 7 项首页部分记为 deferred（不在此硬发明筛选）：网页端广场本无筛选入口，
     /// 服务端广场给 published_at DESC 顺序（fetchEntries 仅 scope/limit/before/before_id/author_id，
     /// 无 sort/filter 参数）；客户端自排会打断 before 分页游标、且与网页口径脱节。
-    private func loadPlazaFirstPage() {
+    /// 首拉。diffMode：已有内容时回包走 diff 定向更新（下拉刷新/重拍/
+    /// 登录翻转都走这里，不再整表替换）；无内容时走旧替换路径。
+    /// silent：后台静默刷新用，失败不 toast、不进错误行（旧内容继续展示，
+    /// 下次进页/下拉再试；旧失败路径的 toast 只留给用户主动触发的刷新）。
+    private func loadPlazaFirstPage(diffMode: Bool = false, silent: Bool = false) {
         // 80 包 B4：首拉带代际（revalidate 同口径），旧首拉回包直接丢弃。
         let firstPageGeneration = revalidateGeneration
         plazaLoading = true
         plazaError = false
-        BearyAPI.shared.fetchEntries(scope: .plaza, limit: pageLimit) { [weak self] result in
+        BearyAPI.shared.fetchEntries(scope: .plaza, limit: firstPageLimit) { [weak self] result in
             DispatchQueue.main.async {
                 guard let strongSelf = self else { return }
                 // 80 包 B4：代际不符时只复位 loading，不动模型与表。
@@ -653,27 +673,40 @@ class BearyFeedViewController: UIViewController {
                 switch result {
                 case .success(let list):
                     let entries = list.entries ?? []
+                    strongSelf.plazaLoading = false
+                    strongSelf.plazaFirstDone = true
+                    if diffMode && !strongSelf.plazaRaw.isEmpty {
+                        strongSelf.applyFirstPageDiff(entries)
+                        return
+                    }
                     strongSelf.plazaRaw = entries
-                    strongSelf.plazaHasMore = entries.count >= strongSelf.pageLimit
-                    strongSelf.plazaReachedEnd = entries.count < strongSelf.pageLimit
+                    strongSelf.firstPageIds = entries.compactMap { $0.id }
+                    strongSelf.plazaHasMore = entries.count >= strongSelf.firstPageLimit
+                    strongSelf.plazaReachedEnd = entries.count < strongSelf.firstPageLimit
                     strongSelf.plazaError = false
                     strongSelf.lastFeedLoadAt = Date()
+                    BearyFeedCache.save(bucket: strongSelf.feedCacheOwnerKey, entries: entries, hasMore: strongSelf.plazaHasMore)
+                    // 80 包 A2-2：先落表再结束首屏标记。
+                    strongSelf.tableView.reloadData()
+                    strongSelf.finishFirstLoadIfNeeded()
+                    strongSelf.updateOverlayState()
+                    strongSelf.maybeEndRefreshing()
                 case .failure:
                     // F6 同口径：广场首拉失败也保留旧模型，空时才进错误行。
+                    // 静默刷新失败不 toast（后台行为不打扰阅读）。
+                    strongSelf.plazaLoading = false
                     if strongSelf.plazaRaw.isEmpty {
                         strongSelf.plazaHasMore = false
                         strongSelf.plazaError = true
-                    } else {
+                        strongSelf.plazaFirstDone = true
+                        strongSelf.tableView.reloadData()
+                        strongSelf.finishFirstLoadIfNeeded()
+                        strongSelf.updateOverlayState()
+                    } else if !silent {
                         BearyToast.show(in: strongSelf.view, message: "刷新失败")
                     }
+                    strongSelf.maybeEndRefreshing()
                 }
-                strongSelf.plazaLoading = false
-                strongSelf.plazaFirstDone = true
-                // 80 包 A2-2：先落表再结束首屏标记。
-                strongSelf.tableView.reloadData()
-                strongSelf.finishFirstLoadIfNeeded()
-                strongSelf.updateOverlayState()
-                strongSelf.maybeEndRefreshing()
             }
         }
     }
@@ -805,6 +838,7 @@ class BearyFeedViewController: UIViewController {
             // 先取行号再摘模型（indexPaths 读 plazaRaw），删行动画只走 opacity（.fade）。
             let paths = indexPaths(for: entryId)
             plazaRaw.removeAll { $0.id == entryId }
+            persistFeedHead()
             if !paths.isEmpty {
                 tableView.beginUpdates()
                 tableView.deleteRows(at: paths, with: .fade)
@@ -862,6 +896,256 @@ class BearyFeedViewController: UIViewController {
         return paths
     }
 
+    // MARK: - feedfast：秒加载缓存 + 首屏 diff 定向更新
+
+    /// 冷启动进页：有缓存先瞬间出缓存（不走网络、不转菊花），再后台静默
+    /// 刷新；无缓存走旧全量路径（菊花 + 网络）。缓存是上次首屏窗口，
+    /// 读取时再过一次有效公开过滤（限时过期/翻私密的旧篇不出缓存）。
+    private func loadCachedFeedOrRefresh() {
+        let bucket = BearyFeedCache.bucket(userId: SessionManager.shared.currentUser?.id ?? BearyFeedCache.lastKnownUserId())
+        feedCacheOwnerKey = bucket
+        if let snap = BearyFeedCache.load(bucket: bucket) {
+            let head = BearyFeedCache.visibleHead(snap.entries)
+            if !head.isEmpty {
+                plazaRaw = head
+                firstPageIds = head.compactMap { $0.id }
+                plazaHasMore = snap.hasMore
+                plazaReachedEnd = !snap.hasMore
+                plazaError = false
+                plazaFirstDone = true
+                isFirstLoad = false
+                lastFeedLoadAt = Date(timeIntervalSince1970: snap.savedAt)
+                tableView.reloadData()
+                updateOverlayState()
+                silentRefreshFirstPage()
+                return
+            }
+        }
+        refreshAll()
+    }
+
+    /// 账号/游客切换（SceneDelegate onUserChanged 在 id 真变时广播）：
+    /// 桶一换，内存列表立即换桶——新身份有缓存即瞬间出缓存 + 静默刷新，
+    /// 无缓存则旧行全清后全量拉取；旧桶的行绝不留给新身份看。
+    /// 冷启动 /me 回包前 currentUser 仍为 nil 时本函数不触发（id 未变），
+    /// 首帧按 lastKnownUserId 桶渲染，/me 回包后这里换桶纠正 viewer 字段。
+    @objc private func handleFeedUserChanged() {
+        guard isViewLoaded else { return }
+        if let uid = SessionManager.shared.currentUser?.id {
+            BearyFeedCache.rememberUserId(uid)
+        } else {
+            BearyFeedCache.forgetUserId()
+        }
+        let newBucket = BearyFeedCache.bucket(userId: SessionManager.shared.currentUser?.id)
+        guard newBucket != feedCacheOwnerKey else { return }
+        lastFeedLoginUserId = SessionManager.shared.currentUser?.id
+        feedCacheOwnerKey = newBucket
+        revalidateGeneration += 1
+        isRevalidating = false
+        hideNewContentPill()
+        pendingPlaza = nil
+        if let snap = BearyFeedCache.load(bucket: newBucket) {
+            let head = BearyFeedCache.visibleHead(snap.entries)
+            if !head.isEmpty {
+                plazaRaw = head
+                firstPageIds = head.compactMap { $0.id }
+                plazaHasMore = snap.hasMore
+                plazaReachedEnd = !snap.hasMore
+                plazaError = false
+                plazaFirstDone = true
+                isFirstLoad = false
+                lastFeedLoadAt = Date(timeIntervalSince1970: snap.savedAt)
+                tableView.reloadData()
+                updateOverlayState()
+                silentRefreshFirstPage()
+                return
+            }
+        }
+        plazaRaw = []
+        firstPageIds = []
+        plazaHasMore = true
+        plazaReachedEnd = false
+        plazaError = false
+        tableView.reloadData()
+        refreshAll()
+    }
+
+    /// 后台静默刷新：不转菊花、不清表、不 toast，失败静默保留旧内容。
+    /// 在途已有首拉/revalidate 时不重复发（代际 + loading 双守卫）。
+    private func silentRefreshFirstPage() {
+        if plazaLoading || isRevalidating { return }
+        revalidateGeneration += 1
+        loadPlazaFirstPage(diffMode: true, silent: true)
+    }
+
+    /// 结构变化后把当前首屏头写回缓存（删篇/举报/拉黑/翻私密）。
+    /// 只存首屏窗口内仍有效公开的篇；翻私密的篇会被过滤掉，
+    /// 下次冷启动绝不从缓存里把它露给他人视角。
+    private func persistFeedHead() {
+        guard let bucket = feedCacheOwnerKey else { return }
+        let head = Array(plazaRaw.prefix(firstPageLimit))
+        BearyFeedCache.save(bucket: bucket, entries: head, hasMore: plazaHasMore)
+    }
+
+    /// 展示字段指纹（内容/图片/心情/天气/标题/引用/作者/公开态/限时）：
+    /// 变了才 reloadRows；只变互动字段时走就地同步，不重建行。
+    private func feedDisplayFingerprint(_ e: Entry) -> String {
+        let images = (e.images ?? []).joined(separator: ",")
+        let dims = (e.imgDims ?? [:]).map { "\($0.key):\($0.value.map(String.init).joined(separator: "x"))" }.sorted().joined(separator: ",")
+        return [e.content ?? "", images, dims, e.mood ?? "", e.weather ?? "", e.title ?? "", e.quoteId ?? "", e.authorName ?? "", e.authorAvatar ?? "", e.authorBadge ?? "", "\(e.authorPlus ?? 0)", "\(e.publishedAt ?? 0)", "\(e.isPublic ?? false)", "\(e.ephemeralUntil ?? 0)", e.mentionedName ?? "", e.locationName ?? "", e.locationDistrict ?? ""].joined(separator: "|")
+    }
+
+    /// 互动字段指纹（赞数/已赞/已收藏/收藏数/回应）：只变这些时，
+    /// 可见行就地 syncInteraction，不 reloadRows（不重建图片栈/正文/
+    /// 引用，不重启表情播放器，不碰展开态）。
+    private func feedInteractionFingerprint(_ e: Entry) -> String {
+        let emotes = (e.emotes ?? []).map { "\($0.emote ?? ""):\($0.count ?? 0):\($0.mine ?? false)" }.joined(separator: ",")
+        return ["\(e.likeCount ?? 0)", "\(e.likedByMe ?? false)", "\(e.bookmarkedByMe ?? false)", "\(e.bookmarkCount ?? 0)", emotes].joined(separator: "|")
+    }
+
+    /// 首屏 diff 定向更新（下拉刷新/静默刷新/revalidate/pill 共用）：
+    /// 新列表 = fresh 头 + 旧尾部（分页已加载的尾部不在回包里，绝不能丢）；
+    /// 删只删旧首屏窗口里消失的行；增按新下标插；顺序变了逐行 move
+    /// （move 保留 cell 实例，展开态不丢）；内容变了只 reload 变了的可见行，
+    /// 仅互动变了就地同步。整表 reloadData 在此路径绝不出现，
+    /// 已展开内容永不折叠（展开态本就由 expandedEntryIds 持久化，
+    /// move/insert/delete 均不重建已有 cell）。
+    private func applyFirstPageDiff(_ fresh: [Entry]) {
+        // 兜底：旧表里有无 id 行时下标模拟不再可靠（服务端正常数据恒有 id），
+        // 此时退回整表替换保正确性，不走 diff（只影响脏数据场景）。
+        if plazaRaw.contains(where: { $0.id == nil || $0.id!.isEmpty }) {
+            plazaRaw = fresh
+            firstPageIds = fresh.compactMap { $0.id }
+            plazaHasMore = fresh.count >= firstPageLimit
+            plazaReachedEnd = fresh.count < firstPageLimit
+            plazaError = false
+            lastFeedLoadAt = Date()
+            BearyFeedCache.save(bucket: feedCacheOwnerKey, entries: fresh, hasMore: plazaHasMore)
+            plazaLoading = false
+            tableView.reloadData()
+            updateOverlayState()
+            maybeEndRefreshing()
+            return
+        }
+        // 去重（服务端不应下发重复 id；万一有取首次出现，防行数对不上）。
+        var seenFresh = Set<String>()
+        var deduped: [Entry] = []
+        for e in fresh {
+            guard let id = e.id, !id.isEmpty, !seenFresh.contains(id) else { continue }
+            seenFresh.insert(id)
+            deduped.append(e)
+        }
+        let freshIds = deduped.compactMap { $0.id }
+        let freshSet = Set(freshIds)
+        let oldEntries = plazaRaw
+        var oldIndexById: [String: Int] = [:]
+        for (i, e) in oldEntries.enumerated() {
+            if let id = e.id, oldIndexById[id] == nil { oldIndexById[id] = i }
+        }
+        var newList: [Entry] = deduped
+        for e in oldEntries {
+            guard let id = e.id, !freshSet.contains(id) else { continue }
+            newList.append(e)
+        }
+        let newIds = newList.compactMap { $0.id }
+        // 行更新判定（按旧模型比对；模型随后整体换新）。
+        struct FeedRowUpdate { let index: Int; let entry: Entry; let interactionOnly: Bool }
+        var updates: [FeedRowUpdate] = []
+        for (newIdx, e) in newList.enumerated() {
+            guard let id = e.id, let oldIdx = oldIndexById[id] else { continue }
+            let old = oldEntries[oldIdx]
+            if feedDisplayFingerprint(old) != feedDisplayFingerprint(e) {
+                updates.append(FeedRowUpdate(index: newIdx, entry: e, interactionOnly: false))
+            } else if feedInteractionFingerprint(old) != feedInteractionFingerprint(e) {
+                updates.append(FeedRowUpdate(index: newIdx, entry: e, interactionOnly: true))
+            }
+        }
+        // 删：旧首屏窗口里消失的行 + 之前挂着的失败行（成功即清失败态）。
+        var deletePaths: [IndexPath] = []
+        var deleteOldIndices: [Int] = []
+        var deletedIdxSeen = Set<Int>()
+        for id in firstPageIds {
+            if freshSet.contains(id) { continue }
+            if let idx = oldIndexById[id], !deletedIdxSeen.contains(idx) {
+                deletedIdxSeen.insert(idx)
+                deletePaths.append(IndexPath(row: idx, section: 0))
+                deleteOldIndices.append(idx)
+            }
+        }
+        if plazaError {
+            deletePaths.append(IndexPath(row: oldEntries.count, section: 0))
+        }
+        // 增：fresh 里旧表没有的 id，按新表下标插。
+        var insertPaths: [IndexPath] = []
+        for (newIdx, e) in newList.enumerated() {
+            guard let id = e.id, oldIndexById[id] == nil else { continue }
+            insertPaths.append(IndexPath(row: newIdx, section: 0))
+        }
+        plazaRaw = newList
+        firstPageIds = freshIds
+        plazaHasMore = deduped.count >= firstPageLimit
+        plazaReachedEnd = deduped.count < firstPageLimit
+        plazaError = false
+        lastFeedLoadAt = Date()
+        BearyFeedCache.save(bucket: feedCacheOwnerKey, entries: deduped, hasMore: plazaHasMore)
+        plazaLoading = false
+        // 删+增一批做（删用旧下标、增用新下标）；随后按模拟出的视觉顺序
+        // 逐行 move 到新顺序，最后只刷内容变了的可见行。
+        let applyMovesAndUpdates = { [weak self] in
+            guard let strongSelf = self else { return }
+            // 模拟批后视觉顺序：旧 id 删掉被删行，再按新下标升序插新行
+            // （升序插时每个新下标恰好等于当前应插位置，见批内注释推导）。
+            var visual = oldEntries.compactMap { $0.id }
+            for idx in deleteOldIndices.sorted(by: >) {
+                if idx < visual.count { visual.remove(at: idx) }
+            }
+            let insertItems = insertPaths.compactMap { (path) -> (row: Int, id: String)? in
+                guard let id = newList[path.row].id else { return nil }
+                return (row: path.row, id: id)
+            }.sorted { $0.row < $1.row }
+            for item in insertItems {
+                if item.row <= visual.count { visual.insert(item.id, at: item.row) }
+            }
+            var guardSteps = 0
+            while visual != newIds && guardSteps < 100 {
+                guardSteps += 1
+                var mismatch = 0
+                while mismatch < min(visual.count, newIds.count) && visual[mismatch] == newIds[mismatch] {
+                    mismatch += 1
+                }
+                if mismatch >= newIds.count || mismatch >= visual.count { break }
+                guard let from = visual[(mismatch + 1)...].firstIndex(of: newIds[mismatch]) else { break }
+                strongSelf.tableView.beginUpdates()
+                strongSelf.tableView.moveRow(at: IndexPath(row: from, section: 0), to: IndexPath(row: mismatch, section: 0))
+                strongSelf.tableView.endUpdates()
+                let movedId = visual.remove(at: from)
+                visual.insert(movedId, at: mismatch)
+            }
+            let visible = strongSelf.tableView.indexPathsForVisibleRows ?? []
+            for u in updates {
+                let path = IndexPath(row: u.index, section: 0)
+                guard visible.contains(path) else { continue }
+                if u.interactionOnly {
+                    if let cell = strongSelf.tableView.cellForRow(at: path) as? BearyDiaryCardCell {
+                        cell.syncInteraction(entryId: u.entry.id ?? "", likeCount: u.entry.likeCount, likedByMe: u.entry.likedByMe, bookmarkedByMe: u.entry.bookmarkedByMe, emotes: u.entry.emotes)
+                    }
+                } else {
+                    strongSelf.tableView.reloadRows(at: [path], with: .none)
+                }
+            }
+            strongSelf.updateOverlayState()
+            strongSelf.maybeEndRefreshing()
+        }
+        if deletePaths.isEmpty && insertPaths.isEmpty {
+            applyMovesAndUpdates()
+            return
+        }
+        tableView.performBatchUpdates({
+            if !deletePaths.isEmpty { self.tableView.deleteRows(at: deletePaths, with: .none) }
+            if !insertPaths.isEmpty { self.tableView.insertRows(at: insertPaths, with: .none) }
+        }, completion: { _ in applyMovesAndUpdates() })
+    }
+
     // MARK: - F10 后台 revalidate 与新内容 pill
 
     /// 回到首页时：首拉已完成且缓存超 60 秒，才在后台重拉（不闪 spinner、不清模型）。
@@ -882,15 +1166,15 @@ class BearyFeedViewController: UIViewController {
             let oldPlazaHead = strongSelf.plazaEntries().first?.id
             let headChanged = (newPlaza.first?.id != nil && newPlaza.first?.id != oldPlazaHead)
             // 读到深处（>600）且头条变了：先挂 pill，点了才换（网页 showNewPill 同口径）；
-            // 否则静默换上（reloadData 不动滚动位）。
+            // 否则静默 diff 换上（只动变了的行，不动滚动位）。
             if headChanged && strongSelf.tableView.contentOffset.y > 600 {
                 strongSelf.pendingPlaza = newPlaza
                 strongSelf.showNewContentPill()
                 return
             }
-            strongSelf.applyRevalidated(plaza: newPlaza)
+            strongSelf.applyFirstPageDiff(newPlaza)
         }
-        BearyAPI.shared.fetchEntries(scope: .plaza, limit: pageLimit) { [weak self] result in
+        BearyAPI.shared.fetchEntries(scope: .plaza, limit: firstPageLimit) { [weak self] result in
             DispatchQueue.main.async {
                 if case .success(let list) = result {
                     freshPlaza = list.entries ?? []
@@ -899,16 +1183,6 @@ class BearyFeedViewController: UIViewController {
                 finish()
             }
         }
-    }
-
-    /// 静默换上重拉结果：去重集合重建。
-    private func applyRevalidated(plaza: [Entry]) {
-        plazaRaw = plaza
-        plazaHasMore = plaza.count >= pageLimit
-        plazaReachedEnd = plaza.count < pageLimit
-        plazaError = false
-        tableView.reloadData()
-        updateOverlayState()
     }
 
     /// M5：“有新内容”pill 出现/消失：0.25s 淡入 + 轻微上滑；减动效直设终值。
@@ -958,20 +1232,12 @@ class BearyFeedViewController: UIViewController {
         }
         pendingPlaza = nil
         hideNewContentPill()
-        // 2026-10-28 定版：重校验不再整表 crossDissolve——先记旧 id 集，再换数据回顶，
-        // 只让本批新行错峰（已有行不动，与 Profile animateNewRows 同口径；减动效直换）。
-        let oldIds = Set(plazaEntries().compactMap { $0.id })
-        applyRevalidated(plaza: newPlaza)
+        // feedfast：pill 换上同样走 diff（只插/删/改变了的行，已有行不重建、
+        // 不重播动效；旧整表 crossDissolve 路径已随 applyRevalidated 删除），
+        // 再回顶。原新行错峰淡入随之取消——pill 本就是用户主动点按，
+        // 内容立即就位比再播一遍入场更重要。
+        applyFirstPageDiff(newPlaza)
         tableView.setContentOffset(CGPoint(x: 0, y: -tableView.contentInset.top), animated: false)
-        tableView.layoutIfNeeded()
-        var newPaths: [IndexPath] = []
-        let plaza = plazaEntries()
-        for (index, entry) in plaza.enumerated() {
-            if let id = entry.id, !oldIds.contains(id) {
-                newPaths.append(IndexPath(row: index, section: 0))
-            }
-        }
-        staggerFadeCells(at: newPaths)
     }
 
     /// M1：新行错峰淡入 + 轻微上滑（只针对本批新行，已有行不重播；减动效直设终值）。
@@ -1316,6 +1582,9 @@ class BearyFeedViewController: UIViewController {
         }
         if isPublic == false {
             BearyDiaryCardCell.quoteCache.removeValue(forKey: entryId)
+            // feedfast：翻私密的篇同步出缓存（写入过滤会把它丢掉），
+            // 下次冷启动不再从旧缓存里露给他人视角。
+            persistFeedHead()
         }
         for path in indexPaths(for: entryId) {
             reloadRowIfVisible(path)
@@ -1369,6 +1638,7 @@ class BearyFeedViewController: UIViewController {
         guard let entryId = note.object as? String, !entryId.isEmpty else { return }
         guard let row = plazaRaw.firstIndex(where: { $0.id == entryId }) else { return }
         plazaRaw.remove(at: row)
+        persistFeedHead()
         let path = IndexPath(row: row, section: 0)
         guard tableView.numberOfRows(inSection: 0) > row else {
             tableView.reloadData()
@@ -1397,6 +1667,7 @@ class BearyFeedViewController: UIViewController {
         let before = plazaRaw.count
         plazaRaw.removeAll { $0.authorId == userId }
         if plazaRaw.count != before {
+            persistFeedHead()
             tableView.reloadData()
             updateOverlayState()
         }
@@ -1627,5 +1898,81 @@ class BearyFeedErrorCell: UITableViewCell {
 
     @objc private func retryTapped() {
         onRetry?()
+    }
+}
+
+// MARK: - feedfast：主页首屏磁盘缓存（与本文件同模块，不新增文件、不改 pbxproj）
+
+/// 缓存 = 上次首拉窗口（首屏 12 篇）+ 保存时间 + 是否还有更多。
+/// 桶按身份隔离：登录用户 id / guest；游客与登录态绝不共桶。
+/// 隐私：写入与读取时双重过滤 BearyEphemeral.isEffectivelyPublic——
+/// 已删/已翻私密/限时过期的一律不进缓存、不出缓存；后台刷新 diff
+/// 会把窗口内消失的篇定向删行（见 applyFirstPageDiff）。
+/// 注意：广场缓存只含公开内容，不含私密日记；点赞/收藏等 viewer
+/// 字段随快照保存、属该桶身份的旧值，后台静默刷新回包即纠正；
+/// 切账号/游客切换时换桶 + 退出/401 时清桶（见 SessionManager），
+/// 旧身份的 viewer 字段绝不渲染给新身份。
+enum BearyFeedCache {
+    private static let filePrefix = "beary_feed_cache_"
+    private static let lastUserIdKey = "beary.feed.lastUserId"
+
+    struct Snapshot: Codable {
+        var savedAt: TimeInterval
+        var entries: [Entry]
+        var hasMore: Bool
+    }
+
+    static func bucket(userId: Int?) -> String {
+        if let id = userId { return "\(id)" }
+        return "guest"
+    }
+
+    /// 上次已知登录用户 id（仅作冷启动桶提示：/me 回包前 currentUser
+    /// 仍为 nil 时，凭它先渲染该用户桶；/me 回包后换桶纠正）。
+    static func lastKnownUserId() -> Int? {
+        let v = UserDefaults.standard.integer(forKey: lastUserIdKey)
+        return v == 0 ? nil : v
+    }
+
+    static func rememberUserId(_ id: Int) {
+        UserDefaults.standard.set(id, forKey: lastUserIdKey)
+    }
+
+    static func forgetUserId() {
+        UserDefaults.standard.removeObject(forKey: lastUserIdKey)
+    }
+
+    static func visibleHead(_ entries: [Entry]) -> [Entry] {
+        return entries.filter { $0.id != nil && !$0.id!.isEmpty && BearyEphemeral.isEffectivelyPublic($0) }
+    }
+
+    private static func fileURL(bucket: String) -> URL? {
+        guard let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first else { return nil }
+        return base.appendingPathComponent("\(filePrefix)\(bucket).json")
+    }
+
+    static func load(bucket: String) -> Snapshot? {
+        guard let url = fileURL(bucket: bucket), let data = try? Data(contentsOf: url) else { return nil }
+        let decoder = JSONDecoder()
+        decoder.keyDecodingStrategy = .convertFromSnakeCase
+        return try? decoder.decode(Snapshot.self, from: data)
+    }
+
+    /// 写缓存：只存有效公开篇（visibleHead 过滤）；hasMore 由调用方按
+    /// 本次首拉回包量给（不能从存后篇数反推——删篇后写回时篇数会缩水）。
+    static func save(bucket: String?, entries: [Entry], hasMore: Bool) {
+        guard let bucket = bucket, !bucket.isEmpty else { return }
+        let head = visibleHead(entries)
+        guard let url = fileURL(bucket: bucket) else { return }
+        let encoder = JSONEncoder()
+        encoder.keyEncodingStrategy = .convertToSnakeCase
+        guard let data = try? encoder.encode(Snapshot(savedAt: Date().timeIntervalSince1970, entries: head, hasMore: hasMore)) else { return }
+        try? FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try? data.write(to: url, options: .atomic)
+    }
+
+    static func purge(bucket: String) {
+        guard let url = fileURL(bucket: bucket) else { return }
+        try? FileManager.default.removeItem(at: url)
     }
 }

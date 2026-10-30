@@ -63,6 +63,7 @@ final class SessionManager {
         api.onUnauthorized = { [weak self] in
             guard let self = self else { return }
             self.purgeImageCacheForCurrentAccount()
+            self.purgeFeedCacheForCurrentAccount()
             self.sessionGeneration += 1
             self.currentUser = nil
             self.authUnknown = false
@@ -166,6 +167,7 @@ final class SessionManager {
     /// 属丢数据，且草稿按账号分桶、换号不可见，留存情况在设置页账号操作卡下明示。
     func signOutLocally() {
         purgeImageCacheForCurrentAccount()
+        purgeFeedCacheForCurrentAccount()
         if let id = currentUser?.id {
             BearyEntrySyncStore.purgeAccount(accountId: id)
             BearyTrashSyncStore.purgeAccount(accountId: id)
@@ -185,6 +187,15 @@ final class SessionManager {
     private func purgeImageCacheForCurrentAccount() {
         guard let id = currentUser?.id else { return }
         BearyImageLoader.shared.purgeAccount(id)
+    }
+
+    /// feedfast：退出/401 清态时清掉该账号的主页首屏缓存桶 + 冷启动桶提示
+    ///（与图片缓存同口径；切换账号不走这里，旧账号磁盘保留、仅由
+    /// feed 换桶隔离，切回可复用——见 BearyFeedCache 说明）。
+    private func purgeFeedCacheForCurrentAccount() {
+        guard let id = currentUser?.id else { return }
+        BearyFeedCache.purge(bucket: "\(id)")
+        BearyFeedCache.forgetUserId()
     }
 
     private func isBearyCookie(_ cookie: HTTPCookie) -> Bool {
