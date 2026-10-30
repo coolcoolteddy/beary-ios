@@ -20,6 +20,14 @@ enum BearySound: String {
     case refuseBonk = "refuse_bonk"
     case loginChime = "login_chime"
     case wishDing = "wish_ding"
+    /// 进入主页音效（2026-10-30 Li 定稿：02 双音音高中间档）。
+    /// 定稿参数：330→415Hz 大三度上行、第二声更轻、时长 0.43s、
+    /// 峰值 0.18、44.1kHz 单声道；源文件 02_soft_dual_up_pitch_mid.wav
+    /// 原样入包，未改音高、音量、时长、结构。
+    /// 触发点占位说明（本批只入包、不接线）：正式接 veil 时，
+    /// 在 veil 淡出完成回调里调用 BearySoundPlayer.play(.homeEntry)，
+    /// 不要挂 Lottie complete 标记；标语动画全程仍静默。
+    case homeEntry = "home_entry"
 }
 
 enum BearySoundPlayer {

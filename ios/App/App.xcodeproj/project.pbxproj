@@ -178,6 +178,7 @@
 		335A64EC9511442B9BFDD12C /* refuse_bonk.wav in Resources */ = {isa = PBXBuildFile; fileRef = 175C78792D8E4FBD9D7252E3 /* refuse_bonk.wav */; };
 		63E7BE34FACB4C479339AC77 /* login_chime.wav in Resources */ = {isa = PBXBuildFile; fileRef = 95A3FF88EA434AFDA9EB8AC2 /* login_chime.wav */; };
 		944DC3B7D92A46DE85A0C6F1 /* wish_ding.wav in Resources */ = {isa = PBXBuildFile; fileRef = 385C474CEBF54A899F891334 /* wish_ding.wav */; };
+		736CD2F34BE84CE79559B921 /* home_entry.wav in Resources */ = {isa = PBXBuildFile; fileRef = 8CD0FEDCB8A14EDDADFB8F81 /* home_entry.wav */; };
 		3AA12B2885B64262BB5A9AD8 /* BearySoundPlayer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0AB06C47E08A427BB03EDF69 /* BearySoundPlayer.swift */; };
 /* End PBXBuildFile section */
 
@@ -356,6 +357,7 @@
 		175C78792D8E4FBD9D7252E3 /* refuse_bonk.wav */ = {isa = PBXFileReference; lastKnownFileType = audio.wav; path = Sounds/refuse_bonk.wav; sourceTree = "<group>"; };
 		95A3FF88EA434AFDA9EB8AC2 /* login_chime.wav */ = {isa = PBXFileReference; lastKnownFileType = audio.wav; path = Sounds/login_chime.wav; sourceTree = "<group>"; };
 		385C474CEBF54A899F891334 /* wish_ding.wav */ = {isa = PBXFileReference; lastKnownFileType = audio.wav; path = Sounds/wish_ding.wav; sourceTree = "<group>"; };
+		8CD0FEDCB8A14EDDADFB8F81 /* home_entry.wav */ = {isa = PBXFileReference; lastKnownFileType = audio.wav; path = Sounds/home_entry.wav; sourceTree = "<group>"; };
 		0AB06C47E08A427BB03EDF69 /* BearySoundPlayer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BearySoundPlayer.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
@@ -568,6 +570,7 @@
 				175C78792D8E4FBD9D7252E3 /* refuse_bonk.wav */,
 				95A3FF88EA434AFDA9EB8AC2 /* login_chime.wav */,
 				385C474CEBF54A899F891334 /* wish_ding.wav */,
+				8CD0FEDCB8A14EDDADFB8F81 /* home_entry.wav */,
 				0AB06C47E08A427BB03EDF69 /* BearySoundPlayer.swift */,
 			);
 			path = App;
@@ -784,6 +787,7 @@
 				335A64EC9511442B9BFDD12C /* refuse_bonk.wav in Resources */,
 				63E7BE34FACB4C479339AC77 /* login_chime.wav in Resources */,
 				944DC3B7D92A46DE85A0C6F1 /* wish_ding.wav in Resources */,
+				736CD2F34BE84CE79559B921 /* home_entry.wav in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
