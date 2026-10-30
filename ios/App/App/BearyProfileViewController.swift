@@ -1116,6 +1116,57 @@ class BearyProfileViewController: UIViewController {
         return makeTabButton(title: "日记", iconName: "icon_diary", action: #selector(diaryTabTapped))
     }()
 
+    /// 批 E 日记地图入口行（挪位后）：不再进 header，改由 refreshFooter 放进
+    /// tableFooterView、排在批 C 照片区下方（与 tab 切换无关，不是 tab 内容行；
+    /// tab 按钮/下划线/边线一律不动，header 底锚恢复为 tabsContainer 底）。
+    /// 行内子视图与内部约束在 refreshFooter 里首次落位时一次接好（见
+    /// mapEntryInternalConstraintsActivated），行本身逐次重设 frame 换进新脚部容器。
+    /// 图标一律官方包：icon_location + icon_chevron_right（铁律，不用 SF Symbol、不自绘）。
+    private let mapEntryRow: UIView = {
+        let viewValue = UIView()
+        viewValue.translatesAutoresizingMaskIntoConstraints = false
+        viewValue.backgroundColor = BearyColors.faint
+        viewValue.layer.cornerRadius = 12
+        viewValue.clipsToBounds = true
+        return viewValue
+    }()
+
+    private let mapEntryIconView: UIImageView = {
+        let v = UIImageView()
+        v.translatesAutoresizingMaskIntoConstraints = false
+        v.image = BearyLocationIcon.image(pointSize: 20)
+        v.tintColor = BearyColors.ink
+        v.contentMode = .scaleAspectFit
+        return v
+    }()
+
+    private let mapEntryLabel: UILabel = {
+        let lb = UILabel()
+        lb.translatesAutoresizingMaskIntoConstraints = false
+        lb.font = UIFont.systemFont(ofSize: 15)
+        lb.textColor = BearyColors.ink
+        lb.text = "日记地图"
+        return lb
+    }()
+
+    private let mapEntryChevronView: UIImageView = {
+        let v = UIImageView()
+        v.translatesAutoresizingMaskIntoConstraints = false
+        v.image = BearyIconImages.image(named: "icon_chevron_right", pointSize: 16)
+        v.tintColor = BearyColors.gray
+        v.contentMode = .scaleAspectFit
+        return v
+    }()
+
+    private lazy var mapEntryButton: UIButton = {
+        let button = UIButton(type: .custom)
+        button.translatesAutoresizingMaskIntoConstraints = false
+        button.accessibilityLabel = "打开日记地图"
+        button.addTarget(self, action: #selector(openDiaryMap), for: .touchUpInside)
+        button.bearyAddPressFeedback()
+        return button
+    }()
+
     private lazy var likedTabButton: UIButton = {
         return makeTabButton(title: "赞过", iconName: "icon_heart", action: #selector(likedTabTapped))
     }()
@@ -1410,6 +1461,16 @@ class BearyProfileViewController: UIViewController {
         }
         updateColumnLayout()
         layoutHeader()
+        // 批 E 挪位：入口行已落位、但宽度与当前列宽失配时（旋转 / iPad 分栏）
+        // 重建脚部；尚未落位时不动（等数据/切 tab 的既有 refreshFooter 落位，
+        // 避免布局早期抢跑出空态脚部）。
+        do {
+            let footerWidth = headerWidthValue > 0 ? headerWidthValue : tableView.bounds.width
+            if footerWidth > 0, mapEntryRow.superview != nil,
+               abs(mapEntryRow.frame.width - max(footerWidth - 40, 0)) > 0.5 {
+                refreshFooter()
+            }
+        }
         // 批 C：列宽变化（旋转 / iPad 分栏）时照片墙格宽跟着变；脚部宽度变了
         // 才重建（签名含宽度，refreshFooter 内复用守卫兜底，不逐帧重建）。
         if cachedPhotosFooterView != nil {
@@ -1897,6 +1958,8 @@ class BearyProfileViewController: UIViewController {
         tabsContainer.addSubview(savedTabButton)
         tabsContainer.addSubview(tabsBorder)
         tabsContainer.addSubview(tabsUnderline)
+        // 批 E（挪位后）：地图入口行不再进 header（行内子视图改在 refreshFooter
+        // 里首次落位时接好）；按钮盖满整行保证热区，见 refreshFooter。
 
         let publicTextLabelValue = makeStatTextLabel(text: "公开日记")
         let likesTextLabelValue = makeStatTextLabel(text: "获赞")
@@ -2069,6 +2132,9 @@ class BearyProfileViewController: UIViewController {
 
             tabsContainer.leadingAnchor.constraint(equalTo: headerView.leadingAnchor, constant: 20),
             tabsContainer.trailingAnchor.constraint(equalTo: headerView.trailingAnchor, constant: -20),
+            // 批 E（挪位后）：header 底锚恢复为 tabsContainer 底（批 E 合入前原状）；
+            // 地图入口行已移到 tableFooterView 照片区下方，见 refreshFooter
+            // （行内图标/文案/箭头/热区约束也在那里一次激活，不再进 header 约束组）。
             tabsContainer.bottomAnchor.constraint(equalTo: headerView.bottomAnchor),
             diaryTabButton.leadingAnchor.constraint(equalTo: tabsContainer.leadingAnchor),
             diaryTabButton.topAnchor.constraint(equalTo: tabsContainer.topAnchor),
@@ -3894,6 +3960,9 @@ class BearyProfileViewController: UIViewController {
 
     /// 80 包 A3-1：脚部种类记忆——空态脚部只在种类变化时淡入，已有空态不重播。
     private var lastProfileFooterKind: String?
+    /// 批 E 挪位：地图入口行内约束（图标/文案/箭头/热区）只激活一次；
+    /// 行本身在 refreshFooter 里逐次重设 frame 并换进新脚部容器。
+    private var mapEntryInternalConstraintsActivated = false
     /// 失败脚部重试钮弱引用：深浅切换时经 updateDynamicLayerColors 重刷边框
     /// （与 editButton/gearButton 同机制，单机制，不另起一套）。
     private weak var profileErrorRetryButton: UIButton?
@@ -3925,11 +3994,51 @@ class BearyProfileViewController: UIViewController {
         // 注意：照片区取数只依赖 diaryEntries 模型，不为取图加轮询或全量重算；
         // 可见性翻转（本人页私密/公开都算）不改变照片集合，删除/举报/拉黑
         // 走 reloadProfile 或通知处理里的 refreshFooter，自然同步。
-        if let photosView = makePhotosFooterView() {
-            let footerWidth = headerWidthValue > 0 ? headerWidthValue : tableView.bounds.width
-            let container = UIView(frame: CGRect(x: 0, y: 0, width: footerWidth, height: photosView.frame.height))
-            container.addSubview(photosView)
-            var totalHeight = photosView.frame.height
+        // 批 E（挪位后）：地图入口行进 tableFooterView，排在照片区下方、状态脚部上方，
+        // 与 tab 切换无关——不是 tab 内容行（不占 diary/liked/saved 的行数），
+        // 赞过/收藏 tab 的按钮与下划线一律不动。本人/他人页同行（他人进地图页
+        // 仍按只区级聚合口径，见 openDiaryMap）。顺序：照片区（如有）→ 入口行
+        // （12pt 间隔、左右各 20、高 48，与原 header 行同几何）→ 状态脚部（如有）。
+        // 无照片时入口行仍在脚部顶部，不因无图丢失；无照片且无状态时脚部只剩入口行。
+        let footerWidth = headerWidthValue > 0 ? headerWidthValue : tableView.bounds.width
+        let photosView = footerWidth > 0 ? makePhotosFooterView() : nil
+        if footerWidth > 0 {
+            if !mapEntryInternalConstraintsActivated {
+                mapEntryRow.addSubview(mapEntryIconView)
+                mapEntryRow.addSubview(mapEntryLabel)
+                mapEntryRow.addSubview(mapEntryChevronView)
+                mapEntryRow.addSubview(mapEntryButton)
+                NSLayoutConstraint.activate([
+                    mapEntryIconView.leadingAnchor.constraint(equalTo: mapEntryRow.leadingAnchor, constant: 14),
+                    mapEntryIconView.centerYAnchor.constraint(equalTo: mapEntryRow.centerYAnchor),
+                    mapEntryIconView.widthAnchor.constraint(equalToConstant: 20),
+                    mapEntryIconView.heightAnchor.constraint(equalToConstant: 20),
+                    mapEntryLabel.leadingAnchor.constraint(equalTo: mapEntryIconView.trailingAnchor, constant: 10),
+                    mapEntryLabel.centerYAnchor.constraint(equalTo: mapEntryRow.centerYAnchor),
+                    mapEntryChevronView.trailingAnchor.constraint(equalTo: mapEntryRow.trailingAnchor, constant: -14),
+                    mapEntryChevronView.centerYAnchor.constraint(equalTo: mapEntryRow.centerYAnchor),
+                    mapEntryChevronView.widthAnchor.constraint(equalToConstant: 16),
+                    mapEntryChevronView.heightAnchor.constraint(equalToConstant: 16),
+                    mapEntryButton.topAnchor.constraint(equalTo: mapEntryRow.topAnchor),
+                    mapEntryButton.leadingAnchor.constraint(equalTo: mapEntryRow.leadingAnchor),
+                    mapEntryButton.trailingAnchor.constraint(equalTo: mapEntryRow.trailingAnchor),
+                    mapEntryButton.bottomAnchor.constraint(equalTo: mapEntryRow.bottomAnchor),
+                ])
+                mapEntryInternalConstraintsActivated = true
+            }
+            // 脚部用 frame 落位（与照片区/状态脚部同机制）：行自身走 frame，
+            // 行内子视图仍走上面一次激活的约束（按行 bounds 排布）。
+            mapEntryRow.translatesAutoresizingMaskIntoConstraints = true
+            let container = UIView(frame: CGRect(x: 0, y: 0, width: footerWidth, height: 0))
+            var totalHeight: CGFloat = 0
+            if let photosView = photosView {
+                photosView.frame = CGRect(x: 0, y: 0, width: footerWidth, height: photosView.frame.height)
+                container.addSubview(photosView)
+                totalHeight += photosView.frame.height
+            }
+            mapEntryRow.frame = CGRect(x: 20, y: totalHeight + 12, width: max(footerWidth - 40, 0), height: 48)
+            container.addSubview(mapEntryRow)
+            totalHeight += 12 + 48
             if let stateValue = stateView {
                 let stateHeight = footerFittingHeight(view: stateValue, width: footerWidth)
                 stateValue.frame = CGRect(x: 0, y: totalHeight, width: footerWidth, height: stateHeight)
@@ -3939,6 +4048,7 @@ class BearyProfileViewController: UIViewController {
             container.frame = CGRect(x: 0, y: 0, width: footerWidth, height: totalHeight)
             tableView.tableFooterView = container
         } else if let stateValue = stateView {
+            // 宽未量出时先按旧路放状态脚部，下一轮 refreshFooter（布局后）再补入口行。
             tableView.tableFooterView = stateValue
         } else {
             tableView.tableFooterView = UIView()
@@ -5370,6 +5480,29 @@ extension BearyProfileViewController: UITableViewDataSource, UITableViewDelegate
         guard !coverImageView.isHidden, let image = coverImageView.image else { return }
         let viewer = BearyEntryImageViewerViewController(images: [image], startIndex: 0)
         present(viewer, animated: BearyMotion.animated(true), completion: nil)
+    }
+
+    /// 批 E 日记地图入口：以作者日记 tab（diaryEntries）为即时数据源进地图页，
+    /// 地图页内再游标拉全量；点列表项走本页既有的 onOpenEntry（容器接详情），
+    /// 本页不内置跳转。主页信息未加载出 id 时 toast，不进空地图。
+    /// 他人主页同样有本行（地图页内按他人 = 只区级聚合、只公开篇口径渲染）。
+    @objc private func openDiaryMap() {
+        guard let profileId = profile?.profileIdValue ?? targetUserIdValue else {
+            BearyToast.show(in: view, message: "主页信息还在加载，请稍后再试")
+            return
+        }
+        let mapVC = BearyDiaryMapViewController(
+            authorId: profileId,
+            viewerIsAuthor: isOwnProfile,
+            initialEntries: diaryEntries,
+            onOpenEntry: { [weak self] entry in self?.onOpenEntry?(entry) }
+        )
+        if let nav = navigationController {
+            nav.pushViewController(mapVC, animated: BearyMotion.animated(true))
+        } else {
+            let nav = UINavigationController(rootViewController: mapVC)
+            present(nav, animated: BearyMotion.animated(true))
+        }
     }
 
     func scrollViewDidScroll(_ scrollView: UIScrollView) {

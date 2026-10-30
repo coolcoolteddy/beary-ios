@@ -133,3 +133,29 @@ final class BearyScopeTests: XCTestCase {
         XCTAssertNil(BearyAPI.Scope.plaza.authorId)
     }
 }
+
+// ===== 批 E 日记位置：模型解码（只验服务端透传字段的解码；展示脱敏与地图聚合
+// 在 BearyLocation.swift，不编进本测试包，见 BearyLocationDisplay / BearyLocationMap）=====
+final class BearyLocationDecodingTests: XCTestCase {
+    func testEntryLocationFields() throws {
+        let json = """
+        {"id":"b_loc1","author_id":1,"content":"今天在这家店坐了一下午。",
+        "location_name":"某某路 123 号 · 示例咖啡馆","location_district":"鄞州区",
+        "created_at":1761000000000,"is_public":true}
+        """
+        let e = try bearyDecoder().decode(Entry.self, from: Data(json.utf8))
+        XCTAssertEqual(e.locationName, "某某路 123 号 · 示例咖啡馆")
+        XCTAssertEqual(e.locationDistrict, "鄞州区")
+    }
+
+    func testEntryLocationFieldsMissing() throws {
+        // 老日记/服务端未透传时两字段缺省为 nil，展示层按无位置处理，不崩解码。
+        let json = """
+        {"id":"b_loc2","author_id":1,"content":"没有位置的日记。",
+        "created_at":1761000000000,"is_public":false}
+        """
+        let e = try bearyDecoder().decode(Entry.self, from: Data(json.utf8))
+        XCTAssertNil(e.locationName)
+        XCTAssertNil(e.locationDistrict)
+    }
+}
