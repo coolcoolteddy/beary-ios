@@ -4587,7 +4587,7 @@ class BearyTimelineViewController: UIViewController {
             // B-G9: web renderTimeline empty state uses beary-diary, not tray.
             // Q5：时间线空态加“写一篇”按钮（走 onCompose 回调，容器接线打开编辑器；
             // 回收站空态不在本文件，不动）。
-            tableView.backgroundView = emptyView(title: "还没有日记", subtitle: "写下第一篇，它会出现在这里", actionTitle: "写一篇", action: { [weak self] in
+            tableView.backgroundView = emptyView(title: "把日子留在这里", subtitle: "写下第一篇，它会出现在这里", actionTitle: "写一篇", action: { [weak self] in
                 self?.onCompose?()
             }, iconName: "icon_diary")
             newBackgroundKind = "empty"

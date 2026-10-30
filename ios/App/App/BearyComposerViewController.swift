@@ -1170,7 +1170,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, U
         textView.isScrollEnabled = true
         textView.textContainer.lineFragmentPadding = 0
         textView.textContainerInset = UIEdgeInsets(top: 0, left: 0, bottom: 0, right: 0)
-        placeholderLabel.text = "记录今天…"
+        placeholderLabel.text = "写一点，留一点"
         placeholderLabel.font = UIFont.systemFont(ofSize: 16)
         placeholderLabel.textColor = BearyColors.alpha(BearyColors.gray, 0.7)
         textView.translatesAutoresizingMaskIntoConstraints = false

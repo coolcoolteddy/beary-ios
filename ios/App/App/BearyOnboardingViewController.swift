@@ -795,7 +795,7 @@ final class BearyOnboardingViewController: UIViewController {
 
     private func pageTitle(_ page: Int) -> String {
         switch page {
-        case 0: return "把今天，交给小熊。"
+        case 0: return "把日子留在这里"
         case 1: return "写下来，也选好谁能看。"
         case 2: return "有些心情，一只小熊就懂。"
         default: return "从今天的一小件事开始。"
