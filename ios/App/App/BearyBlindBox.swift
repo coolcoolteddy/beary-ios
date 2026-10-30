@@ -35,13 +35,12 @@ import UIKit
 //      篇置灰禁用（明日可入池），私密篇置灰禁用。是否必须先入池才能开盒：按任务口径
 //      定为必须先入池（预览页“未入池也能开盒”仅为演示示意，正式流程不采纳）。
 // 图标（只引用 imageset 名，不自绘、不用 SF Symbol 做主图标）：
-//   入口 blind-box、交换流程 exchange、撤回 exchange-recall；三者均未随官方包注册，
-//   故运行时先走 icon_gift / icon_refresh / icon_undo 官方暂代 + 「待补」标注。
-//   ⚠️ 合入前置条件（已实测）：scripts/check-beary-assets.py 只覆盖 beary-* /
-//   icon_* / Icon* 等字面量，blind-box / exchange / exchange-recall 三个名字不在
-//   其扫描范围内——缺资产时 CI 不会拦，运行时只会静默走暂代 + 待补标注。故合入
-//   main 前必须人工核对三个 imageset 已落袋（本分支跑脚本结果为 OK 不代表图已齐）。
-//   本分支不合入 main、不触发构建（工作流只在 push main 时跑），故当前不受影响。
+//   入口 icon_blind_box、交换流程 icon_exchange、撤回 icon_exchange_recall；三者已由
+//   #229 注册进 Assets.xcassets（人工核对三 imageset 均含 6 张 PNG + Contents.json）。
+//   注意：scripts/check-beary-assets.py 只覆盖 beary-* / icon_* / Icon* 字面量，
+//   旧名 blind-box / exchange / exchange-recall 不在其扫描范围内，故旧名缺资产时
+//   CI 不会拦；本批已改正式名并去掉 icon_gift / icon_refresh / icon_undo 暂代，
+//   资产缺失时图标位直接为空（调用方按无图处理），不再静默走暂代。
 // 部署目标 iOS 15.0、Swift 5.0：只用闭包回调，不用 async/await，不用 if-let 简写。
 
 extension Notification.Name {
@@ -114,34 +113,23 @@ enum BlindBoxPool {
 // MARK: - 图标（新图标名只引用，不自绘；未注册时官方暂代 + 待补标注）
 
 enum BlindBoxIcons {
-    // 注意：这三个字面量不在 check-beary-assets.py 的扫描范围内（见文件头警告），
-    // 缺资产时不触发 CI 失败，只走下方暂代 + 待补标注；合入前须人工核对 imageset。
-    static let blindBoxName = "blind-box"
-    static let exchangeName = "exchange"
-    static let recallName = "exchange-recall"
+    // #229 已注册的正式名；人工核对三 imageset 已落袋（见文件头）。
+    // 暂代已全部去掉：资产缺失时直接返回 nil，调用方按无图处理，不走任何替代图标。
+    static let blindBoxName = "icon_blind_box"
+    static let exchangeName = "icon_exchange"
+    static let recallName = "icon_exchange_recall"
 
-    /// 返回 (图, 是否为暂代占位)。暂代链均为官方包已有资产，绝不用 SF Symbol 做主图标。
+    /// 返回 (图, 是否为暂代占位)。暂代已去掉，第二个值恒为 false，仅保留调用方签名。
     static func blindBox(pointSize: CGFloat) -> (UIImage?, Bool) {
-        if let img = BearyIconImages.image(named: blindBoxName, pointSize: pointSize) {
-            return (img, false)
-        }
-        // 暂代：礼物（预览页同款暂代语义）；待补标注由调用方画「待补」chip。
-        return (BearyIconImages.image(named: "icon_gift", pointSize: pointSize), true)
+        return (BearyIconImages.image(named: blindBoxName, pointSize: pointSize), false)
     }
 
     static func exchange(pointSize: CGFloat) -> (UIImage?, Bool) {
-        if let img = BearyIconImages.image(named: exchangeName, pointSize: pointSize) {
-            return (img, false)
-        }
-        return (BearyIconImages.image(named: "icon_refresh", pointSize: pointSize), true)
+        return (BearyIconImages.image(named: exchangeName, pointSize: pointSize), false)
     }
 
     static func recall(pointSize: CGFloat) -> (UIImage?, Bool) {
-        if let img = BearyIconImages.image(named: recallName, pointSize: pointSize) {
-            return (img, false)
-        }
-        // 暂代：通用撤销（预览页同款：beary-undo 可暂代通用撤销，专属图标待 Li 定）。
-        return (BearyIconImages.image(named: "icon_undo", pointSize: pointSize), true)
+        return (BearyIconImages.image(named: recallName, pointSize: pointSize), false)
     }
 }
 

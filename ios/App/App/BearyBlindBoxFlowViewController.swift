@@ -328,7 +328,7 @@ final class BearyBlindBoxFlowViewController: UIViewController {
         poolButton.addTarget(self, action: #selector(poolTapped), for: .touchUpInside)
         poolButton.bearyAddPressFeedback()
 
-        // 交换流程图标：exchange（未注册时 icon_refresh 暂代，不画在按钮标题里，只挂图标位）。
+        // 交换流程图标：icon_exchange（#229 已注册，不画在按钮标题里，只挂图标位）。
         let (exchangeIcon, exchangePlaceholder) = BlindBoxIcons.exchange(pointSize: 20)
         openButton.setImage(exchangeIcon, for: .normal)
         openButton.tintColor = BearyColors.bg
@@ -486,8 +486,8 @@ final class BearyBlindBoxFlowViewController: UIViewController {
         reportButton.addTarget(self, action: #selector(reportTapped), for: .touchUpInside)
         reportButton.bearyAddPressFeedback()
 
-        // 撤回钮图标：exchange-recall（未注册时 icon_undo 暂代；标题不变，图标待补不另挂 chip，
-        // 避免操作行拥挤——暂代事实见本文件与 BearyBlindBox 文件头注释）。
+        // 撤回钮图标：icon_exchange_recall（#229 已注册；标题不变，
+        // 避免操作行拥挤）。
         let (recallIcon, _) = BlindBoxIcons.recall(pointSize: 16)
         withdrawButton.setImage(recallIcon, for: .normal)
         withdrawButton.imageEdgeInsets.left = -4
