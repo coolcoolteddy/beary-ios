@@ -49,6 +49,11 @@ class BearyFeedViewController: UIViewController {
     /// 首拉/重拉时复位。表尾不再出文字行（网页 moreBtnHtml 无更多时返回空串）。
     private var plazaReachedEnd = false
     private var plazaLoading = false
+    /// 自定义下拉刷新（消息页同款，统一手感批）：指示与触发见 updateCustomPullIndicator / beginCustomPullRefresh。
+    private var isCustomPullRefreshing = false
+    private var customPullStartTime: Date?
+    private var pullEngageTranslation: CGFloat?
+    private var customPullEndScheduled = false
     private var plazaError = false
     private var plazaFirstDone = false
 
@@ -134,22 +139,36 @@ class BearyFeedViewController: UIViewController {
         tv.delaysContentTouches = false
         tv.delegate = self
         tv.dataSource = self
-        let rc = UIRefreshControl()
-        rc.tintColor = .clear
-        rc.addTarget(self, action: #selector(pullToRefresh), for: .valueChanged)
-        rc.addSubview(refreshIconView)
-        NSLayoutConstraint.activate([
-            refreshIconView.centerXAnchor.constraint(equalTo: rc.centerXAnchor),
-            refreshIconView.centerYAnchor.constraint(equalTo: rc.centerYAnchor),
-            refreshIconView.widthAnchor.constraint(equalToConstant: 32),
-            refreshIconView.heightAnchor.constraint(equalToConstant: 32),
-        ])
-        tv.refreshControl = rc
+        tv.addSubview(pullView)
         return tv
     }()
 
-    /// 下拉刷新指示：官方刷新图标（tintColor .clear 藏默认菊花）。
+    /// 下拉刷新指示：官方刷新图标（消息页同款自定义下拉头，统一手感批）。
     private let refreshIconView = BearyRefreshIconView()
+
+    /// 自定义下拉指示器（消息页同款）：固定高 116、藏在表内容上方
+    /// （content y=-116..0），指示高按手指行程 ×0.48 阻尼（上限 116），
+    /// 不拦截触摸；刷新中改固定 84 高。
+    private lazy var pullView: UIView = {
+        let pull = UIView()
+        pull.backgroundColor = BearyColors.bg
+        pull.isUserInteractionEnabled = false
+        pull.frame = CGRect(x: 0, y: -116, width: 0, height: 116)
+        pull.addSubview(refreshIconView)
+        NSLayoutConstraint.activate([
+            refreshIconView.centerXAnchor.constraint(equalTo: pull.centerXAnchor),
+            refreshIconView.bottomAnchor.constraint(equalTo: pull.bottomAnchor, constant: -14),
+            refreshIconView.widthAnchor.constraint(equalToConstant: 32),
+            refreshIconView.heightAnchor.constraint(equalToConstant: 32),
+        ])
+        return pull
+    }()
+
+    /// 自定义下拉基线：即 applyHeaderTopInset 算出的属性顶距（安全区顶 + 60/0 + 8），
+    /// 刷新中内边距 = 基线 +84、图标中心 = 基线 +54（消息页同款相对口径）。
+    private func feedPullBaselineTop() -> CGFloat {
+        view.safeAreaInsets.top + (headerTopInsetVisible ? 60 : 0) + 8
+    }
 
     /// 首拉加载：网页 #feed .loading 口径——32pt 官方刷新图标 + 视觉顶边 40。
     /// （2026-10-30 全 App 统一 icon_refresh：32pt 真尺寸，不再用 medium 圈 ×1.6 放大。）
@@ -316,6 +335,9 @@ class BearyFeedViewController: UIViewController {
         updateFootLogo()
         // 顶栏透度批：安全区变化时按已存栏态重算（容器 viewDidLayoutSubviews 也会重发，双重 no-op）。
         applyHeaderTopInset(visible: headerTopInsetVisible)
+        if pullView.frame.width != tableView.bounds.width {
+            pullView.frame.size.width = tableView.bounds.width
+        }
         // 8-11：新内容 pill 圆角取半高（只写 layer 值，不改约束，不触发布局循环）。
         if newContentPill.bounds.height > 0 {
             newContentPill.layer.cornerRadius = newContentPill.bounds.height / 2
@@ -331,6 +353,8 @@ class BearyFeedViewController: UIViewController {
     /// 内边距增大而漂移（P2 首页纯逻辑项）。
     func applyHeaderTopInset(visible: Bool) {
         headerTopInsetVisible = visible
+        // 自定义下拉刷新进行中不改写（刷新中内边距 = 基线 +84，改写会打断指示器）。
+        guard !isCustomPullRefreshing else { return }
         let safeTop = view.safeAreaInsets.top
         let top = safeTop + (visible ? 60 : 0) + 8
         let bottom = 90 + view.safeAreaInsets.bottom
@@ -346,13 +370,88 @@ class BearyFeedViewController: UIViewController {
         }
     }
 
-    /// 下拉刷新触发口：标准 UIRefreshControl 的 valueChanged 目标（与时间线、个人主页同款）。
-    /// 手势刷新时 refreshControl 内官方刷新图标旋转，中央菊花不启动（B 视觉文案项）。
-    @objc private func pullToRefresh() {
-        // M12（91 包）：下拉刷新触发给一次轻触觉（已批点赞/发布/拒绝三处不动）。
-        BearyHaptics.press()
+    /// 自定义下拉指示器跟随（消息页同款）：手指行程 ×0.48 阻尼、上限 116；
+    /// 指示高 ≥80 时转圈淡入放大（BearyRefreshIconView.setPullProgress 口径）。
+    private func updateCustomPullIndicator() {
+        if isCustomPullRefreshing {
+            return
+        }
+        if !tableView.isDragging {
+            pullEngageTranslation = nil
+            pullView.frame = CGRect(x: 0, y: -116, width: tableView.bounds.width, height: 116)
+            refreshIconView.setPullProgress(0)
+            return
+        }
+        let contentRaw = max(0, -(tableView.contentOffset.y + tableView.contentInset.top))
+        let panTranslation = tableView.panGestureRecognizer.translation(in: tableView).y
+        if tableView.contentOffset.y <= -tableView.contentInset.top && pullEngageTranslation == nil {
+            pullEngageTranslation = panTranslation
+        } else if tableView.contentOffset.y > -tableView.contentInset.top {
+            pullEngageTranslation = nil
+        }
+        let fingerRaw = max(0, panTranslation - (pullEngageTranslation ?? panTranslation))
+        let indicatorHeight = min(fingerRaw * 0.48, 116)
+        pullView.frame = CGRect(x: 0, y: indicatorHeight - 116 - contentRaw, width: tableView.bounds.width, height: 116)
+        if indicatorHeight <= 0 {
+            refreshIconView.setPullProgress(0)
+        } else {
+            refreshIconView.setPullProgress(min(1, indicatorHeight / 80))
+        }
+    }
+
+    /// 自定义下拉刷新进入（消息页同款）：指示固定 84 高 + 转圈，
+    /// 至少展示 500ms；完成由 maybeEndRefreshing 收回（见 endCustomPullRefresh）。
+    private func beginCustomPullRefresh() {
+        if isCustomPullRefreshing {
+            return
+        }
+        isCustomPullRefreshing = true
+        customPullStartTime = Date()
         refreshIconView.startSpinning()
+        let baseline = feedPullBaselineTop()
+        let pullIn = {
+            self.tableView.contentInset.top = baseline + 84
+            self.tableView.scrollIndicatorInsets.top = baseline + 84
+            self.tableView.contentOffset = CGPoint(x: 0, y: -(baseline + 84))
+            self.pullView.frame = CGRect(x: 0, y: -84, width: self.tableView.bounds.width, height: 84)
+        }
+        if UIAccessibility.isReduceMotionEnabled {
+            pullIn()
+        } else {
+            UIView.animate(withDuration: 0.32, animations: pullIn)
+        }
         refreshAllInternal(showCentralSpinner: false)
+    }
+
+    /// 自定义下拉刷新结束：至少展示 500ms 后复位到基线内边距；旧回包守卫
+    /// 丢弃时仍走 maybeEndRefreshing 到这里，不让刷新头永不结束。
+    private func endCustomPullRefresh() {
+        if !isCustomPullRefreshing || customPullEndScheduled {
+            return
+        }
+        customPullEndScheduled = true
+        let elapsed = customPullStartTime.map({ Date().timeIntervalSince($0) }) ?? 0.5
+        let remaining = max(0, 0.5 - elapsed)
+        DispatchQueue.main.asyncAfter(deadline: .now() + remaining) { [weak self] in
+            guard let self else { return }
+            self.isCustomPullRefreshing = false
+            self.customPullEndScheduled = false
+            let baseline = self.feedPullBaselineTop()
+            let pullOut = {
+                self.tableView.contentInset.top = baseline
+                self.tableView.scrollIndicatorInsets.top = baseline
+                self.tableView.contentOffset = CGPoint(x: 0, y: -baseline)
+                self.pullView.frame = CGRect(x: 0, y: -116, width: self.tableView.bounds.width, height: 116)
+            }
+            if UIAccessibility.isReduceMotionEnabled {
+                pullOut()
+                self.refreshIconView.stopSpinning()
+            } else {
+                UIView.animate(withDuration: 0.32, animations: pullOut, completion: { _ in
+                    self.refreshIconView.stopSpinning()
+                })
+            }
+        }
     }
 
     // MARK: - 公开接口：下拉刷新与外部调用都走它，重拉广场
@@ -360,7 +459,7 @@ class BearyFeedViewController: UIViewController {
     /// F6：刷新不塌回——旧模型/去重集合都保留，
     /// 新数据回来才替换；首拉失败也保留旧数据（失败路径见首拉函数）。
     /// 非手势刷新（首拉/tab 重拍/登录翻转）走这里，中央菊花启动；手势下拉
-    /// 刷新走 refreshAllInternal(showCentralSpinner: false)，菊花不抢 refreshControl 的戏。
+    /// 刷新走 refreshAllInternal(showCentralSpinner: false)，菊花不抢自定义下拉头的戏。
     func refreshAll() {
         refreshAllInternal(showCentralSpinner: true)
     }
@@ -999,8 +1098,11 @@ class BearyFeedViewController: UIViewController {
 
     private func maybeEndRefreshing() {
         if plazaLoading { return }
+        if isCustomPullRefreshing {
+            endCustomPullRefresh()
+            return
+        }
         refreshIconView.stopSpinning()
-        tableView.refreshControl?.endRefreshing()
     }
 
     // MARK: - 失败行 cell
@@ -1318,11 +1420,8 @@ extension BearyFeedViewController: UITableViewDataSource, UITableViewDelegate {
     func scrollViewDidScroll(_ scrollView: UIScrollView) {
         guard scrollView === tableView else { return }
         let y = scrollView.contentOffset.y
-        // 下拉刷新图标跟随：未刷新时按拉出距离跟随旋转（60pt 拉满一圈）。
-        if tableView.refreshControl?.isRefreshing != true {
-            let pull = max(0, -(y + scrollView.contentInset.top))
-            refreshIconView.setPullProgress(min(1, pull / 60))
-        }
+        // 下拉刷新图标跟随：消息页同款自定义头（手指行程 ×0.48，见 updateCustomPullIndicator）。
+        updateCustomPullIndicator()
         let delta = y - lastFeedScrollOffsetY
         if delta > 2 {
             lastFeedScrollOffsetY = y
@@ -1336,6 +1435,18 @@ extension BearyFeedViewController: UITableViewDataSource, UITableViewDelegate {
                 feedChromeHidden = false
                 SceneDelegate.chrome?.setChromeHidden(false, animated: true)
             }
+        }
+    }
+
+    func scrollViewDidEndDragging(_ scrollView: UIScrollView, willDecelerate decelerate: Bool) {
+        guard scrollView === tableView else { return }
+        // 自定义下拉触发（消息页同款）：手指原始行程满 205pt 松手才刷新。
+        let panTranslation = scrollView.panGestureRecognizer.translation(in: scrollView).y
+        let fingerRaw = max(0, panTranslation - (pullEngageTranslation ?? panTranslation))
+        pullEngageTranslation = nil
+        if fingerRaw >= 205 && !isCustomPullRefreshing {
+            BearyHaptics.press()
+            beginCustomPullRefresh()
         }
     }
 
