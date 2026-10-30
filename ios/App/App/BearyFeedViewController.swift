@@ -230,6 +230,13 @@ class BearyFeedViewController: UIViewController {
         return container
     }()
 
+    /// 盲盒入口（广场顶部）：表头容器内常驻行，空态时仍在空态文案上方；
+    /// 与时间线顶部入口共用 BearyBlindBoxEntryView 与 BlindBoxState，同一当日计数。
+    private let blindBoxEntryView = BearyBlindBoxEntryView()
+    private let blindBoxHeaderWrap = UIView()
+    private var feedBlindBoxHeaderHeight: CGFloat = 0
+    private var feedEmptyVisible = false
+
     /// 游客底部 logo（F19）：只在未登录且首拉完成后出现，登录后撤掉。
     private var footLogoContainer: UIView?
     private var footLogoImageView: UIImageView?
@@ -278,6 +285,12 @@ class BearyFeedViewController: UIViewController {
         initialLoadStarted = true
         NotificationCenter.default.addObserver(self, selector: #selector(handleReportedEntryNotification(_:)), name: .bearyDidReportEntry, object: nil)
         NotificationCenter.default.addObserver(self, selector: #selector(handleBlockedUserNotification(_:)), name: .bearyDidBlockUser, object: nil)
+        NotificationCenter.default.addObserver(self, selector: #selector(handleBlindBoxStateChanged), name: .bearyBlindBoxDidChange, object: nil)
+        blindBoxEntryView.onTap = { [weak self] in
+            self?.presentBlindBoxFlow()
+        }
+        blindBoxHeaderWrap.addSubview(blindBoxEntryView)
+        layoutFeedBlindBoxHeader()
         refreshAll()
     }
 
@@ -292,6 +305,9 @@ class BearyFeedViewController: UIViewController {
 
     /// P1-5：进页逻辑（原 viewWillAppear 体抽出，供 viewWillAppear 与 pageDidEnter 共用）。
     private func handlePageEnter() {
+        // 盲盒计数：进页即按本地镜像刷新（跨日重置 + 流程页回来的已换态），服务端刷新由流程页做。
+        BlindBoxState.shared.resetIfNewDay()
+        blindBoxEntryView.refresh()
         // 滚动藏栏复位：回到本页时栏恢复可见（animated: false）；FAB 同隐同现由容器 helper 负责。
         // 注意：容器 lane 在 SceneDelegate.swift 里提供 setChromeHidden，未落地前本文件单独编译不过（见交回 CI 风险）。
         feedChromeHidden = false
@@ -329,9 +345,8 @@ class BearyFeedViewController: UIViewController {
         if feedColCapConstraint?.isActive != wantColCap {
             feedColCapConstraint?.isActive = wantColCap
         }
-        if tableView.tableHeaderView === emptyView {
-            setEmptyVisible(true)
-        }
+        // 盲盒表头：宽变化时重算入口行 + 空态高度（函数内以高度变化守卫赋值，不致布局循环）。
+        layoutFeedBlindBoxHeader()
         updateFootLogo()
         // 顶栏透度批：安全区变化时按已存栏态重算（容器 viewDidLayoutSubviews 也会重发，双重 no-op）。
         applyHeaderTopInset(visible: headerTopInsetVisible)
@@ -1014,43 +1029,38 @@ class BearyFeedViewController: UIViewController {
 
     /// 空态以 tableHeaderView 承载（网页空态在流顶、游客 logo 在其下方的叠放顺序；
     /// 覆盖层写法会把底部 logo 盖住，故不用覆盖层）。
+    /// 盲盒批：表头改为容器（入口行常驻在上、空态文案在下），空态显隐只改容器内
+    /// 空态行的挂载与否，不再把整个表头置 nil（入口行永不因空态消失）。
     private func setEmptyVisible(_ visible: Bool) {
         if visible == false {
-            if tableView.tableHeaderView === emptyView {
-                // 80 包 A11：空态退出与进入淡入对称——0.25s 淡出后再置 nil；
-                // 减动效直接置 nil；退出中重入空态时 token 作废旧动画（见进入分支）。
-                emptyExitToken += 1
-                let token = emptyExitToken
-                if UIAccessibility.isReduceMotionEnabled {
-                    tableView.tableHeaderView = nil
-                    emptyView.alpha = 1
-                } else {
-                    UIView.animate(withDuration: 0.25, animations: {
-                        self.emptyView.alpha = 0
-                    }, completion: { [weak self] _ in
-                        guard let strongSelf = self, token == strongSelf.emptyExitToken else { return }
-                        if strongSelf.tableView.tableHeaderView === strongSelf.emptyView {
-                            strongSelf.tableView.tableHeaderView = nil
-                        }
-                        strongSelf.emptyView.alpha = 1
-                    })
-                }
+            guard feedEmptyVisible else {
+                layoutFeedBlindBoxHeader()
+                return
+            }
+            // 80 包 A11：空态退出与进入淡入对称——0.25s 淡出后再摘空态行；
+            // 减动效直接摘行；退出中重入空态时 token 作废旧动画（见进入分支）。
+            feedEmptyVisible = false
+            emptyExitToken += 1
+            let token = emptyExitToken
+            if UIAccessibility.isReduceMotionEnabled {
+                layoutFeedBlindBoxHeader()
+                emptyView.alpha = 1
+            } else {
+                UIView.animate(withDuration: 0.25, animations: {
+                    self.emptyView.alpha = 0
+                }, completion: { [weak self] _ in
+                    guard let strongSelf = self, token == strongSelf.emptyExitToken else { return }
+                    strongSelf.layoutFeedBlindBoxHeader()
+                    strongSelf.emptyView.alpha = 1
+                })
             }
             return
         }
-        let width = tableView.bounds.width > 0 ? tableView.bounds.width : view.bounds.width
-        emptyView.frame = CGRect(x: 0, y: 0, width: width, height: 0)
-        emptyView.setNeedsLayout()
-        emptyView.layoutIfNeeded()
-        let height = emptyView.systemLayoutSizeFitting(
-            CGSize(width: width, height: UIView.layoutFittingCompressedSize.height),
-            withHorizontalFittingPriority: .required,
-            verticalFittingPriority: .fittingSizeLevel
-        ).height
-        emptyView.frame = CGRect(x: 0, y: 0, width: width, height: height)
-        if tableView.tableHeaderView !== emptyView {
-            tableView.tableHeaderView = emptyView
-            // 只在首次成为 header 时播一次（viewDidLayoutSubviews 会反复调本函数，
+        let wasVisible = feedEmptyVisible
+        feedEmptyVisible = true
+        layoutFeedBlindBoxHeader()
+        if wasVisible == false {
+            // 只在首次成为 header 时播一次（viewDidLayoutSubviews 会反复调布局函数，
             // 在那里播会陷入布局循环式重播；刷新时先 false 再 true，仍会经此分支重播）。
             feedEmptyPencilView?.start()
             // 新规矩 (b)：空态首次出现淡入（已有空态不重播；减动效直显）。
@@ -1066,6 +1076,59 @@ class BearyFeedViewController: UIViewController {
             emptyExitToken += 1
             emptyView.alpha = 1
         }
+    }
+
+    /// 盲盒表头布局（手动帧 + 高度守卫赋值）：入口行左右 16、上下各 8；空态行在下、
+    /// 高度沿用旧 fitting 口径；高度不变且表头已是容器时不重复赋值，防布局循环。
+    private func layoutFeedBlindBoxHeader() {
+        let width = tableView.bounds.width > 0 ? tableView.bounds.width : view.bounds.width
+        guard width > 0 else { return }
+        if blindBoxEntryView.superview !== blindBoxHeaderWrap {
+            blindBoxHeaderWrap.addSubview(blindBoxEntryView)
+        }
+        if feedEmptyVisible {
+            if emptyView.superview !== blindBoxHeaderWrap {
+                blindBoxHeaderWrap.addSubview(emptyView)
+            }
+        } else if emptyView.superview === blindBoxHeaderWrap {
+            emptyView.removeFromSuperview()
+        }
+        let entryHeight = blindBoxEntryView.systemLayoutSizeFitting(
+            CGSize(width: width - 32, height: UIView.layoutFittingCompressedSize.height),
+            withHorizontalFittingPriority: .required,
+            verticalFittingPriority: .fittingSizeLevel
+        ).height
+        blindBoxEntryView.frame = CGRect(x: 16, y: 8, width: width - 32, height: entryHeight)
+        var totalHeight = 8 + entryHeight + 8
+        if feedEmptyVisible {
+            emptyView.frame = CGRect(x: 0, y: 0, width: width, height: 0)
+            emptyView.setNeedsLayout()
+            emptyView.layoutIfNeeded()
+            let emptyHeight = emptyView.systemLayoutSizeFitting(
+                CGSize(width: width, height: UIView.layoutFittingCompressedSize.height),
+                withHorizontalFittingPriority: .required,
+                verticalFittingPriority: .fittingSizeLevel
+            ).height
+            emptyView.frame = CGRect(x: 0, y: 8 + entryHeight + 8, width: width, height: emptyHeight)
+            totalHeight += emptyHeight
+        }
+        blindBoxHeaderWrap.frame = CGRect(x: 0, y: 0, width: width, height: totalHeight)
+        if tableView.tableHeaderView !== blindBoxHeaderWrap || abs(totalHeight - feedBlindBoxHeaderHeight) > 0.5 {
+            feedBlindBoxHeaderHeight = totalHeight
+            tableView.tableHeaderView = blindBoxHeaderWrap
+        }
+    }
+
+    /// 盲盒流程页（全屏 modal + fadeRise，许愿墙同款；游客态由流程页内登录提示承接）。
+    private func presentBlindBoxFlow() {
+        let vc = BearyBlindBoxFlowViewController()
+        vc.modalPresentationStyle = .fullScreen
+        vc.transitioningDelegate = SceneDelegate.chrome?.fadeRiseTransitionDelegate
+        present(vc, animated: BearyMotion.animated(true), completion: nil)
+    }
+
+    @objc private func handleBlindBoxStateChanged() {
+        blindBoxEntryView.refresh()
     }
 
     /// Q5 空态 CTA：只转发 onComposeRequested，导航归容器。
