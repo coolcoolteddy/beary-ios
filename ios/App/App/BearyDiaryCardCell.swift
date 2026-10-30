@@ -454,8 +454,9 @@ class BearyDiaryCardCell: UITableViewCell {
     private var quoteTapLoadFailed = false
     private var emoteRowHeightConstraint: NSLayoutConstraint?
     private var rightStackTopConstraint: NSLayoutConstraint?
-    /// 2026-10-28 23:56：右上角小地球 reserve——本人卡时 rightStack 右缩进 −52
-    ///（16 边距 + 28 图标 + 8 间隙），他人卡恢复 −16；由 refreshPubRow 与复用复位。
+    /// 2026-10-28 23:56 建、2026-10-31 改：右上角小地球 reserve 不再缩整列——
+    /// rightStack 两边恒 −16，地球钮留白只由标题行末尾 titleTrailingSpacer 承担
+    ///（28 宽 + 行 spacing 8，本人卡标题内容末缘仍为 −52）；由 refreshPubRow 与复用复位。
     private var rightStackTrailingConstraint: NSLayoutConstraint?
     /// L21（91 包，个人主页模式）：本卡正文是否超过 300 字（折叠按钮是否适用），
     /// configure 时记下，供 setFoldDisplay 就地切换显示用，不再每次重算。
@@ -659,7 +660,7 @@ class BearyDiaryCardCell: UITableViewCell {
     }()
 
     private lazy var titleStack: UIStackView = {
-        let st = UIStackView(arrangedSubviews: [nameLabel, badgeImageView, crownView, titleSpacerLabel, timeLabel, weatherImageView, moodStack])
+        let st = UIStackView(arrangedSubviews: [nameLabel, badgeImageView, crownView, titleSpacerLabel, timeLabel, weatherImageView, moodStack, titleTrailingSpacer])
         st.translatesAutoresizingMaskIntoConstraints = false
         st.axis = .horizontal
         st.spacing = 8
@@ -677,6 +678,21 @@ class BearyDiaryCardCell: UITableViewCell {
     private let titleSpacerLabel: UILabel = {
         let lb = UILabel()
         lb.translatesAutoresizingMaskIntoConstraints = false
+        return lb
+    }()
+
+    /// 标题行末尾地球钮留白（2026-10-31 真机报“本人篇与他人篇收藏分享位置不一样”根因修法）：
+    /// 此前 refreshPubRow 靠 rightStack 整列右缩进 −52 给右上角地球钮让位，导致本人卡整列
+    /// （含操作行）比他人卡左移 36pt，收藏/分享 x 系统性地不一样。现改为：rightStack 两边
+    /// 一律 −16，地球钮留白只收进标题行——本 spacer 宽 28，标题行 spacing 8，故本人卡标题
+    /// 内容末缘仍落在 −52（与旧口径一致，地球钮 −44..−16 之前留 8 间隙），操作行与正文、
+    /// 引用、图片、位置行则与他人卡同贴 −16。空 UILabel（沿用 titleSpacerLabel 口径），
+    /// 自带基线不破坏 firstBaseline 对齐；他人卡隐藏后 stack 自动排除，不占位。
+    private let titleTrailingSpacer: UILabel = {
+        let lb = UILabel()
+        lb.translatesAutoresizingMaskIntoConstraints = false
+        lb.widthAnchor.constraint(equalToConstant: 28).isActive = true
+        lb.isHidden = true
         return lb
     }()
 
@@ -1024,8 +1040,9 @@ class BearyDiaryCardCell: UITableViewCell {
         // 按钮/图片/引用/头像上的长按排除见文件末尾 contextMenuInteraction 代理
         // （头像/名字排除仅首页模式，个人主页模式各保各的，与旧口径一致）。
         contentView.addInteraction(UIContextMenuInteraction(delegate: self))
-        // 2026-10-28 23:56：公开钮不再插操作行，改挂 contentView 右上角（对齐标题行），
-        // 本人卡时 rightStack 右缩进让出 28 + 8 的位置（见 refreshPubRow），他人卡恢复 −16。
+        // 2026-10-28 23:56：公开钮不再插操作行，改挂 contentView 右上角（对齐标题行）；
+        // 2026-10-31 改：留白只由标题行末尾 titleTrailingSpacer 承担（见 refreshPubRow），
+        // rightStack 两边一律 −16，不再整列右缩进。
         contentView.addSubview(publishButton)
         NSLayoutConstraint.activate([
             publishButton.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -16),
@@ -1273,6 +1290,7 @@ class BearyDiaryCardCell: UITableViewCell {
         emoteRowHeightConstraint?.constant = 0
         likeButton.setTitle(nil, for: .normal)
         publishButton.isHidden = true
+        titleTrailingSpacer.isHidden = true
         rightStackTrailingConstraint?.constant = -16
         // 游客详情复位：提示条默认藏、操作行与回应行默认显，防游客展开态
         // 串位到复用的下一张卡；下一次 configure 的游客分支会重新定显隐。
@@ -2321,14 +2339,19 @@ class BearyDiaryCardCell: UITableViewCell {
     }
 
     private func refreshPubRow() {
+        // 2026-10-31 根因修法：rightStack 两边一律 −16，操作行本人/他人同贴内容列右沿；
+        // 地球钮留白只由标题行末尾 titleTrailingSpacer（28 + 行 spacing 8）承担，
+        // 本人卡标题内容末缘仍为 −52，与旧口径一致，不再整列左移 36pt。
         guard let entry = currentEntry, entry.isMine == true else {
             publishButton.isHidden = true
+            titleTrailingSpacer.isHidden = true
             rightStackTrailingConstraint?.constant = -16
             return
         }
         publishButton.isHidden = false
+        titleTrailingSpacer.isHidden = false
         publishButton.accessibilityLabel = BearyEphemeral.isEffectivelyPublic(entry) ? "改回私密" : "公开"
-        rightStackTrailingConstraint?.constant = -52
+        rightStackTrailingConstraint?.constant = -16
     }
 
     @objc private func publishTapped() {
