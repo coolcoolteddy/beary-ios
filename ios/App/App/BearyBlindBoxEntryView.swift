@@ -51,11 +51,18 @@ final class BearyBlindBoxEntryView: UIView {
         titleLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 15, weight: .semibold))
         titleLabel.adjustsFontForContentSizeCategory = true
         titleLabel.textColor = BearyColors.ink
+        titleLabel.numberOfLines = 1
+        titleLabel.lineBreakMode = .byTruncatingTail
+        // 挤压口径：标题行里计数与箭头永不被压——计数抱紧且抗压 required，
+        // 标题抗压低于计数（不够宽时标题截断），副标题换行承担宽度收缩。
+        titleLabel.setContentCompressionResistancePriority(.defaultHigh, for: .horizontal)
 
         countLabel.translatesAutoresizingMaskIntoConstraints = false
         countLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13, weight: .semibold))
         countLabel.adjustsFontForContentSizeCategory = true
         countLabel.textColor = BearyColors.gray
+        countLabel.setContentCompressionResistancePriority(.required, for: .horizontal)
+        countLabel.setContentHuggingPriority(.required, for: .horizontal)
 
         subtitleLabel.translatesAutoresizingMaskIntoConstraints = false
         subtitleLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 12))
@@ -66,6 +73,8 @@ final class BearyBlindBoxEntryView: UIView {
         chevronView.translatesAutoresizingMaskIntoConstraints = false
         chevronView.contentMode = .scaleAspectFit
         chevronView.tintColor = BearyColors.gray
+        chevronView.setContentCompressionResistancePriority(.required, for: .horizontal)
+        chevronView.setContentHuggingPriority(.required, for: .horizontal)
         if let chevron = BearyIconImages.image(named: "icon_chevron_right", pointSize: 16) {
             chevronView.image = chevron
         }
@@ -80,12 +89,16 @@ final class BearyBlindBoxEntryView: UIView {
         textStack.axis = .vertical
         textStack.spacing = 2
         textStack.translatesAutoresizingMaskIntoConstraints = false
+        // 文本列先收缩：不够宽时副标题换行（已 numberOfLines=0），不压计数与箭头。
+        textStack.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
 
         let iconStack = UIStackView(arrangedSubviews: [iconView, pendingChip])
         iconStack.axis = .vertical
         iconStack.spacing = 2
         iconStack.alignment = .center
         iconStack.translatesAutoresizingMaskIntoConstraints = false
+        iconStack.setContentCompressionResistancePriority(.required, for: .horizontal)
+        iconStack.setContentHuggingPriority(.required, for: .horizontal)
 
         let row = UIStackView(arrangedSubviews: [iconStack, textStack, chevronView])
         row.axis = .horizontal
