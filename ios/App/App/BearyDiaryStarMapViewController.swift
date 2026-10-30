@@ -38,6 +38,7 @@ final class BearyDiaryStarMapViewController: UIViewController {
     private let scrollView = UIScrollView()
     private let contentView = UIView()
     private let legendLabel = UILabel()
+    private let sliceCalendarIcon = UIImageView()
     private let yearScrollView = UIScrollView()
     private let yearStack = UIStackView()
     private let monthScrollView = UIScrollView()
@@ -149,6 +150,14 @@ final class BearyDiaryStarMapViewController: UIViewController {
         legendLabel.text = "★ 大小 = 字数（字越多星越大）　亮度 = 心情\n连线 = 同心情 / 同地点 / 同词　点星进详情，点线看原因"
         contentView.addSubview(legendLabel)
 
+        // 分片行首日历图标（官方 icon_calendar）：只在分片时出现，与年行同显隐。
+        sliceCalendarIcon.translatesAutoresizingMaskIntoConstraints = false
+        sliceCalendarIcon.image = BearyIconImages.image(named: "icon_calendar", pointSize: 20)
+        sliceCalendarIcon.tintColor = UIColor(white: 0.72, alpha: 1)
+        sliceCalendarIcon.contentMode = .scaleAspectFit
+        sliceCalendarIcon.isHidden = true
+        contentView.addSubview(sliceCalendarIcon)
+
         for (scroll, stack) in [(yearScrollView, yearStack), (monthScrollView, monthStack), (filterScrollView, filterStack)] {
             scroll.translatesAutoresizingMaskIntoConstraints = false
             scroll.showsHorizontalScrollIndicator = false
@@ -243,8 +252,13 @@ final class BearyDiaryStarMapViewController: UIViewController {
             legendLabel.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 16),
             legendLabel.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -16),
 
+            sliceCalendarIcon.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 16),
+            sliceCalendarIcon.centerYAnchor.constraint(equalTo: yearScrollView.centerYAnchor),
+            sliceCalendarIcon.widthAnchor.constraint(equalToConstant: 20),
+            sliceCalendarIcon.heightAnchor.constraint(equalToConstant: 20),
+
             yearScrollView.topAnchor.constraint(equalTo: legendLabel.bottomAnchor, constant: 12),
-            yearScrollView.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 16),
+            yearScrollView.leadingAnchor.constraint(equalTo: sliceCalendarIcon.trailingAnchor, constant: 8),
             yearScrollView.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -16),
 
             monthScrollView.topAnchor.constraint(equalTo: yearScrollView.bottomAnchor, constant: 8),
@@ -334,6 +348,7 @@ final class BearyDiaryStarMapViewController: UIViewController {
         let needsSlicing = filteredEntries.count > BearyStarMap.sliceThreshold
         yearScrollView.isHidden = !needsSlicing
         monthScrollView.isHidden = !needsSlicing
+        sliceCalendarIcon.isHidden = !needsSlicing
         yearRowHeight?.constant = needsSlicing ? 32 : 0
         monthRowHeight?.constant = needsSlicing ? 32 : 0
         if needsSlicing {
