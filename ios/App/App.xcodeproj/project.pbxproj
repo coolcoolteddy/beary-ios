@@ -197,6 +197,10 @@
 		63E7BE34FACB4C479339AC77 /* login_chime.wav in Resources */ = {isa = PBXBuildFile; fileRef = 95A3FF88EA434AFDA9EB8AC2 /* login_chime.wav */; };
 		944DC3B7D92A46DE85A0C6F1 /* wish_ding.wav in Resources */ = {isa = PBXBuildFile; fileRef = 385C474CEBF54A899F891334 /* wish_ding.wav */; };
 		736CD2F34BE84CE79559B921 /* home_entry.wav in Resources */ = {isa = PBXBuildFile; fileRef = 8CD0FEDCB8A14EDDADFB8F81 /* home_entry.wav */; };
+		9FB0341FC0A518046A4837A6 /* keep_v3_light.json in Resources */ = {isa = PBXBuildFile; fileRef = A56F01A12A8C93D5AE44B959 /* keep_v3_light.json */; };
+		11154CAD773B5B9029A42D91 /* keep_v3_dark.json in Resources */ = {isa = PBXBuildFile; fileRef = 0FDA0D1BBB84E45144767D90 /* keep_v3_dark.json */; };
+		CB5D246C81D576E1DC471B44 /* keep_v3_hold_light.png in Resources */ = {isa = PBXBuildFile; fileRef = BE07B090D304A418C102D6C5 /* keep_v3_hold_light.png */; };
+		985366A89C5D0D001010E6BB /* keep_v3_hold_dark.png in Resources */ = {isa = PBXBuildFile; fileRef = BBA0D0BEA2AE929C2EB3A121 /* keep_v3_hold_dark.png */; };
 		3AA12B2885B64262BB5A9AD8 /* BearySoundPlayer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0AB06C47E08A427BB03EDF69 /* BearySoundPlayer.swift */; };
 /* End PBXBuildFile section */
 
@@ -392,6 +396,10 @@
 		95A3FF88EA434AFDA9EB8AC2 /* login_chime.wav */ = {isa = PBXFileReference; lastKnownFileType = audio.wav; path = Sounds/login_chime.wav; sourceTree = "<group>"; };
 		385C474CEBF54A899F891334 /* wish_ding.wav */ = {isa = PBXFileReference; lastKnownFileType = audio.wav; path = Sounds/wish_ding.wav; sourceTree = "<group>"; };
 		8CD0FEDCB8A14EDDADFB8F81 /* home_entry.wav */ = {isa = PBXFileReference; lastKnownFileType = audio.wav; path = Sounds/home_entry.wav; sourceTree = "<group>"; };
+		A56F01A12A8C93D5AE44B959 /* keep_v3_light.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = LottieSlogan/keep_v3_light.json; sourceTree = "<group>"; };
+		0FDA0D1BBB84E45144767D90 /* keep_v3_dark.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = LottieSlogan/keep_v3_dark.json; sourceTree = "<group>"; };
+		BE07B090D304A418C102D6C5 /* keep_v3_hold_light.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = LottieSlogan/keep_v3_hold_light.png; sourceTree = "<group>"; };
+		BBA0D0BEA2AE929C2EB3A121 /* keep_v3_hold_dark.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = LottieSlogan/keep_v3_hold_dark.png; sourceTree = "<group>"; };
 		0AB06C47E08A427BB03EDF69 /* BearySoundPlayer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BearySoundPlayer.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
@@ -621,6 +629,10 @@
 				95A3FF88EA434AFDA9EB8AC2 /* login_chime.wav */,
 				385C474CEBF54A899F891334 /* wish_ding.wav */,
 				8CD0FEDCB8A14EDDADFB8F81 /* home_entry.wav */,
+				A56F01A12A8C93D5AE44B959 /* keep_v3_light.json */,
+				0FDA0D1BBB84E45144767D90 /* keep_v3_dark.json */,
+				BE07B090D304A418C102D6C5 /* keep_v3_hold_light.png */,
+				BBA0D0BEA2AE929C2EB3A121 /* keep_v3_hold_dark.png */,
 				0AB06C47E08A427BB03EDF69 /* BearySoundPlayer.swift */,
 			);
 			path = App;
@@ -838,6 +850,10 @@
 				63E7BE34FACB4C479339AC77 /* login_chime.wav in Resources */,
 				944DC3B7D92A46DE85A0C6F1 /* wish_ding.wav in Resources */,
 				736CD2F34BE84CE79559B921 /* home_entry.wav in Resources */,
+				9FB0341FC0A518046A4837A6 /* keep_v3_light.json in Resources */,
+				11154CAD773B5B9029A42D91 /* keep_v3_dark.json in Resources */,
+				CB5D246C81D576E1DC471B44 /* keep_v3_hold_light.png in Resources */,
+				985366A89C5D0D001010E6BB /* keep_v3_hold_dark.png in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

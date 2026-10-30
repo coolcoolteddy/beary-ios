@@ -1,4 +1,5 @@
 import UIKit
+import Lottie
 
 // ===== 外观手动切换（审计 N3）：主题档位 → window.overrideUserInterfaceStyle =====
 // 存档键 beary_theme_mode，值 system/light/dark；未知值按 system（跟随系统）处理。
@@ -166,15 +167,22 @@ final class BearyChromeViewController: UIViewController {
     private var bellButton: UIButton!
     /// 顶栏 logo 钮（buildChrome 内建，veil 揭开时自身淡入）。
     private var topLogoButton: UIButton?
-    /// 64 包反馈修（第 18 项）启动 veil：系统 LaunchScreen.storyboard 本身有效
-    /// （Info.plist 有 UILaunchStoryboardName、storyboard 已进 Resources、Splash 图集
-    /// 浅/深两套齐全），但侧载覆盖安装时 iOS 常缓存旧启动图、且冷启动快时一闪而过，
-    /// 体感即“启动图没有效果”。App 内 veil 作保底：冷启动首帧必见品牌画面，
-    /// 审计第二阶段推荐 A：出现纯淡入 0.45s → 停 0.15s → veil 原地淡出 0.4s，
-    /// 同时顶栏 logo 淡入、已在屏首屏卡片上滑＋淡入错峰；减动效下静态直出。
+    /// 文字启动图 veil（v3 接线，取代旧熊图 veil）：系统 LaunchScreen.storyboard
+    /// 本身已是纯色空白（文件保留、无熊无字，见 Base.lproj/LaunchScreen.storyboard），
+    /// 侧载覆盖安装时 iOS 常缓存旧启动图、且冷启动快时一闪而过，App 内 veil 作保底：
+    /// 冷启动首帧必见品牌画面。veil 里只留文字动画，不再并存熊图。
+    /// 标语 `Keep your days here.`（K 大写、其余小写、句末句号；Leave 版已否决）。
+    /// 资产：LottieSlogan/keep_v3_light.json（浅）/ keep_v3_dark.json（深），30fps、
+    /// 89 帧约 2.97s（入场 0–47、停留 48–59、退场 60–88，末两帧空白）；
+    /// 减动效与 Lottie 加载失败时用同目录 keep_v3_hold_light/dark.png（停留帧 53 的渲染，
+    /// 绝不用末帧 89——末帧是空白）。中文手绘 v3 仅设计稿、未转 Lottie，本批不接。
+    /// 时序：Lottie 播完 → veil 原地淡出 0.4s 露主页（同时顶栏 logo 淡入、首屏卡片
+    /// 上滑＋淡入错峰）；减动效下静态直出。只冷启动播一次，热启动不播。
     private var launchVeilView: UIView?
-    private var launchVeilLogo: UIImageView?
+    private var launchVeilSloganView: UIView?
+    private var launchVeilSloganAnimation: LottieAnimationView?
     private var launchVeilPlayed = false
+    private var launchVeilHomeEntryPlayed = false
     private var bellBadge: UILabel!
     /// 顶栏图标行（宽度相关间距：≤360 时 4、≤480 时 10，其余 18，见 layoutChromeOverlays）。
     private var topStackView: UIStackView?
@@ -996,8 +1004,9 @@ final class BearyChromeViewController: UIViewController {
             let unread = note.userInfo?["unread"] as? Int ?? 0
             self?.updateBellBadge(unread: unread)
         }
-        // 64 包反馈修（第 18 项）：冷启动品牌 veil（viewDidLoad 挂首帧静态画面，
-        // viewDidAppear 跑出现纯淡入→停顿→veil 原地淡出＋主页首次揭开错峰；只播一次，modal 回落不重播）。
+        // 文字启动图 veil（v3 接线）：viewDidLoad 挂画面（Lottie 未起播时停在第 0 帧，
+        // 减动效则直接挂停留帧 53 静帧），viewDidAppear 起播 Lottie → 播完 veil 淡出＋
+        // 主页首次揭开错峰；只播一次，modal 回落与热启动不重播。
         installLaunchVeil()
     }
 
@@ -1013,14 +1022,16 @@ final class BearyChromeViewController: UIViewController {
         }
     }
 
-    /// 64 包反馈修（第 18 项）：挂启动 veil 首帧静态画面（网页 launchVeil 口径：
-    /// 全屏 bg 底、抱信封小熊 162pt 宽、中心偏上 43% 处；深色由图集 dark 变体承接，
-    /// 与网页 invert(1) 同效）。动画在 viewDidAppear 跑（见 runLaunchVeilIfNeeded 新链路）。
+    /// 文字启动图 veil：挂首帧画面（网页 launchVeil 口径：全屏 bg 底、中心偏上 43% 处；
+    /// 深浅由当前 trait 定，窗口 overrideUserInterfaceStyle 已含手动主题档位，故手动
+    /// 浅/深同样跟随）。Lottie 画布 2135×360 透明底，veil 的 BearyColors.bg 作底色承接。
+    /// 播放不在此触发：Lottie 在 viewDidAppear 的 runLaunchVeilIfNeeded 里起播，
+    /// 避免首帧与出现时机错开。动画在 viewDidAppear 跑（见 runLaunchVeilIfNeeded 新链路）。
     private func installLaunchVeil() {
         guard launchVeilView == nil else { return }
         let veil = UIView()
         veil.backgroundColor = BearyColors.bg
-        // 88 包 H4：veil 默认可交互会吞掉底栏/FAB/顶栏触摸直至 4 秒兜底结束，关掉。
+        // 88 包 H4：veil 默认可交互会吞掉底栏/FAB/顶栏触摸直至兜底结束，关掉。
         veil.isUserInteractionEnabled = false
         veil.translatesAutoresizingMaskIntoConstraints = false
         view.addSubview(veil)
@@ -1030,60 +1041,102 @@ final class BearyChromeViewController: UIViewController {
             veil.trailingAnchor.constraint(equalTo: view.trailingAnchor),
             veil.bottomAnchor.constraint(equalTo: view.bottomAnchor),
         ])
-        // 第 1 项新入图集的抱信封小熊（官方 beary-logos 原图，非主站资产）。
-        let logo = UIImageView(image: UIImage(named: "side_beary_icon"))
-        logo.contentMode = .scaleAspectFit
-        logo.translatesAutoresizingMaskIntoConstraints = false
-        veil.addSubview(logo)
+        // 标语宽度：屏宽 - 64、上限 360（Lottie 画布 2135×360 等比缩放居中）。
+        let baseWidth = view.bounds.width > 0 ? view.bounds.width : UIScreen.main.bounds.width
+        let sloganWidth = min(max(baseWidth - 64, 200), 360)
+        let sloganHeight = sloganWidth * 360 / 2135
+        let dark = traitCollection.userInterfaceStyle == .dark
+        let slogan: UIView
+        if UIAccessibility.isReduceMotionEnabled {
+            // 减动效：不播 Lottie，直接挂停留帧 53 静帧（不是末帧 89，末帧是空白）。
+            let imageView = UIImageView(image: Self.sloganHoldImage(dark: dark))
+            imageView.contentMode = .scaleAspectFit
+            slogan = imageView
+        } else if let animation = Self.sloganAnimation(dark: dark) {
+            let animationView = LottieAnimationView(animation: animation)
+            animationView.backgroundColor = .clear
+            animationView.contentMode = .scaleAspectFit
+            launchVeilSloganAnimation = animationView
+            slogan = animationView
+        } else {
+            // Lottie 解析失败兜底：仍只出文字静帧（帧 53），绝不回落熊图、不留空白 veil。
+            let imageView = UIImageView(image: Self.sloganHoldImage(dark: dark))
+            imageView.contentMode = .scaleAspectFit
+            slogan = imageView
+        }
+        slogan.isUserInteractionEnabled = false
+        slogan.translatesAutoresizingMaskIntoConstraints = false
+        veil.addSubview(slogan)
         NSLayoutConstraint.activate([
-            logo.centerXAnchor.constraint(equalTo: veil.centerXAnchor),
-            logo.widthAnchor.constraint(equalToConstant: 162),
-            logo.heightAnchor.constraint(equalToConstant: 162),
-            // 网页 launchVeil：logo 中心落在 43% 高度处。注意：centerY 是位置属性，
+            slogan.centerXAnchor.constraint(equalTo: veil.centerXAnchor),
+            slogan.widthAnchor.constraint(equalToConstant: sloganWidth),
+            slogan.heightAnchor.constraint(equalToConstant: sloganHeight),
+            // 网页 launchVeil：标语中心落在 43% 高度处。注意：centerY 是位置属性，
             // 只能配另一位置属性——配 .height（尺寸属性）会在 viewDidLoad 直接抛
             // NSInvalidArgumentException 致 SIGABRT（65 包闪退根因，崩溃日志实证）。
             // veil 铺满 view（top = view.top），故 veil.bottom 在 view 坐标系里即 veil 高，
             // centerY = 0.43 × bottom 与原意图完全等价。
-            NSLayoutConstraint(item: logo, attribute: .centerY, relatedBy: .equal,
+            NSLayoutConstraint(item: slogan, attribute: .centerY, relatedBy: .equal,
                                toItem: veil, attribute: .bottom, multiplier: 0.43, constant: 0),
         ])
         launchVeilView = veil
-        launchVeilLogo = logo
+        launchVeilSloganView = slogan
         view.bringSubviewToFront(veil)
-        // 4 秒兜底（网页同口径）：动画链任何一环卡住都不留 veil 挡交互。
-        DispatchQueue.main.asyncAfter(deadline: .now() + 4) { [weak self] in
+        // 6 秒兜底：v3 全长约 2.97s + veil 淡出 0.4s ≈ 3.37s，旧 4 秒兜底
+        // 若 viewDidAppear 稍迟就会把动画拦腰截断；6 秒既盖住正常链又防卡死。
+        DispatchQueue.main.asyncAfter(deadline: .now() + 6) { [weak self] in
             self?.removeLaunchVeil()
         }
     }
 
-    /// 审计第二阶段推荐 A：veil 动画链（跨屏归位路径已删，不再飞向顶栏 logo）——
-    /// 小熊纯淡入 0.45s（无缩放，出现即终值；cubic 0.22,1／0.36,1 曲线保留）
-    /// → 停 0.15s → veil 原地淡出 0.4s，同时顶栏 logo 自身淡入、
-    /// 揭开时已在屏的首屏卡片小幅上滑＋淡入错峰（见 revealHomeWithLaunchVeil）。
-    /// 减动效：veil 直接消失、主页直接出现，无错峰。只播一次。
+    /// 标语 Lottie：深浅两版分别取 keep_v3_dark / keep_v3_light。
+    /// Resources 入包为平铺（与 LottieCrown / LottieEmotes 同款口径），故 forResource
+    /// 不带目录名；加载失败返回 nil，调用方走帧 53 静帧兜底。
+    private static func sloganAnimation(dark: Bool) -> LottieAnimation? {
+        let name = dark ? "keep_v3_dark" : "keep_v3_light"
+        guard let path = Bundle.main.path(forResource: name, ofType: "json") else { return nil }
+        return LottieAnimation.filepath(path)
+    }
+
+    /// 减动效静帧：停留帧 53 的渲染（keep_v3_hold_light/dark.png），与 Lottie
+    /// markers 的 `complete`（53 帧）同帧；末帧 89 是空白，绝不能作静帧。
+    private static func sloganHoldImage(dark: Bool) -> UIImage? {
+        let name = dark ? "keep_v3_hold_dark" : "keep_v3_hold_light"
+        guard let path = Bundle.main.path(forResource: name, ofType: "png") else { return nil }
+        return UIImage(contentsOfFile: path)
+    }
+
+    /// 文字 veil 动画链：Lottie 播完（入场＋停留＋退场，末两帧空白）→
+    /// revealHomeWithLaunchVeil 做 veil 原地淡出 0.4s 露主页。
+    /// 减动效：静帧已挂好，直接揭开，无错峰。只播一次。
+    /// 冷启动判定：install 只在 viewDidLoad 跑一次、launchVeilPlayed 守卫、
+    /// veil 清掉后 viewDidAppear 重进不再触发；热启动（前后台切换、modal 回落）
+    /// 不经过本函数重播，sceneDidBecomeActive 亦不触 veil。
     private func runLaunchVeilIfNeeded() {
-        guard launchVeilPlayed == false, launchVeilView != nil, let logo = launchVeilLogo else { return }
+        guard launchVeilPlayed == false, launchVeilView != nil, launchVeilSloganView != nil else { return }
         launchVeilPlayed = true
         view.layoutIfNeeded()
         if UIAccessibility.isReduceMotionEnabled {
             removeLaunchVeil()
             return
         }
-        let timing = UICubicTimingParameters(controlPoint1: CGPoint(x: 0.22, y: 1), controlPoint2: CGPoint(x: 0.36, y: 1))
-        logo.alpha = 0
-        let fadeIn = UIViewPropertyAnimator(duration: 0.45, timingParameters: timing)
-        fadeIn.addAnimations { logo.alpha = 1 }
-        fadeIn.addCompletion { [weak self] _ in
-            guard let self = self, self.launchVeilView != nil else { return }
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { [weak self] in
+        guard let animationView = launchVeilSloganAnimation, let animation = animationView.animation else {
+            // Lottie 兜底静帧路径：短暂停留后走同一淡出揭开，避免静帧 veil 久留。
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { [weak self] in
                 guard let self = self, let veil = self.launchVeilView else { return }
                 self.revealHomeWithLaunchVeil(veil: veil)
             }
+            return
         }
-        fadeIn.startAnimation()
+        let endFrame = animation.endFrame
+        animationView.play(fromFrame: 0, toFrame: endFrame, loopMode: .playOnce) { [weak self] _ in
+            guard let self = self, let veil = self.launchVeilView else { return }
+            self.revealHomeWithLaunchVeil(veil: veil)
+        }
     }
 
-    /// 审计第二阶段推荐 A：veil 原地淡出＋主页首次揭开错峰。
+    /// 审计第二阶段推荐 A：veil 原地淡出 0.4s＋主页首次揭开错峰。
+    /// 淡出完成 → removeLaunchVeil，该处发 home_entry 一次（见 removeLaunchVeil）。
     /// 揭开时机按时间走，绝不为等内容加载而延长 veil：内容未到时快照为空，
     /// 只淡 veil，不延迟。错峰只做首次揭开：快照只取揭开瞬间已渲染的首屏
     /// 卡片行（按纵向排序，自上而下错峰），后续加载的行不在快照里、正常出现
@@ -1124,10 +1177,21 @@ final class BearyChromeViewController: UIViewController {
     }
 
     private func removeLaunchVeil() {
+        let wasPresent = launchVeilView != nil
         launchVeilView?.removeFromSuperview()
         launchVeilView = nil
-        launchVeilLogo = nil
-        // veil 完成点（正常揭开／减动效／4 秒兜底三路汇合）：viewDidAppear 里因
+        launchVeilSloganView = nil
+        launchVeilSloganAnimation = nil
+        // 进入主页音效（2026-10-30 定稿：330→415Hz、0.43s、峰值 0.18 的
+        // Sounds/home_entry.wav，BearySoundPlayer case homeEntry）：只在 veil
+        // 退场结束、主页露出那一刻调用一次——即本函数真正清掉 veil 时；
+        // 不挂 Lottie complete 标记（标语动画全程静默）、不提前、不重复。
+        // 减动效不门控音效（减动效只管视觉，音效照常给，见 BearySoundPlayer）。
+        if wasPresent, !launchVeilHomeEntryPlayed {
+            launchVeilHomeEntryPlayed = true
+            BearySoundPlayer.play(.homeEntry)
+        }
+        // veil 完成点（正常揭开／减动效／6 秒兜底三路汇合）：viewDidAppear 里因
         // veil 仍在而未触发的自动引导，在此补触发；重复调用由
         // tutorialAutoPresented 守卫挡下。
         maybePresentOnboardingOnFirstLaunch()
