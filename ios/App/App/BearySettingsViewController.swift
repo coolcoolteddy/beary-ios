@@ -243,7 +243,7 @@ final class BearySettingsViewController: UIViewController {
     private let contentStack = UIStackView()
     private let closeButton = BearyHit44Button(type: .system)
     private let titleLabel = UILabel()
-    private let loadingView = UIActivityIndicatorView(style: .medium)
+    private let loadingView = BearyRefreshIconView()
     private let failureWrap = UIStackView()
     private let failureLabel = UILabel()
     private let retryButton = UIButton(type: .system)
@@ -612,6 +612,8 @@ final class BearySettingsViewController: UIViewController {
         updateColumnWidth()
 
         loadingView.translatesAutoresizingMaskIntoConstraints = false
+        // 栈内固有尺寸与旧 medium 圈一致（20pt 图）。
+        loadingView.image = BearyIconImages.image(named: "icon_refresh", pointSize: 20)
         // P1-7：失败辅助文案走动态字体（已是 0 行，下同：只改字，不改布局）。
         failureLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 14))
         failureLabel.adjustsFontForContentSizeCategory = true
@@ -1156,7 +1158,7 @@ final class BearySettingsViewController: UIViewController {
             meUser = cached
             failureWrap.isHidden = true
             loginWrap.isHidden = true
-            loadingView.stopAnimating()
+            loadingView.stopSpinning()
             loadingView.isHidden = true
             contentWrap.isHidden = false
             accountSecurityWrap.isHidden = false
@@ -1191,7 +1193,7 @@ final class BearySettingsViewController: UIViewController {
             }
             return
         }
-        loadingView.startAnimating()
+        loadingView.startSpinning()
         loadingView.isHidden = false
         failureWrap.isHidden = true
         loginWrap.isHidden = true
@@ -1202,7 +1204,7 @@ final class BearySettingsViewController: UIViewController {
             DispatchQueue.main.async {
                 guard let self = self else { return }
                 self.isLoadingMe = false
-                self.loadingView.stopAnimating()
+                self.loadingView.stopSpinning()
                 self.loadingView.isHidden = true
                 switch result {
                 case .success(let user):

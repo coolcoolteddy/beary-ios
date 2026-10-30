@@ -328,16 +328,9 @@ final class BearyNotificationsViewController: UIViewController {
         return container
     }()
 
-    /// 首拉加载：列表页同款——medium 圈放大 1.6 倍后视觉为 32。
-    private lazy var centralSpinner: UIActivityIndicatorView = {
-        let spinner = UIActivityIndicatorView(style: .medium)
-        spinner.translatesAutoresizingMaskIntoConstraints = false
-        // E1：同下拉指示器，四页刷新指示统一灰（覆盖旧 C-G9 墨口径）。
-        spinner.color = BearyColors.gray
-        spinner.hidesWhenStopped = true
-        spinner.transform = CGAffineTransform(scaleX: 1.6, y: 1.6)
-        return spinner
-    }()
+    /// 首拉加载：列表页同款——32pt 官方刷新图标（2026-10-30 全 App 统一 icon_refresh，
+    /// 不再用 medium 圈 ×1.6 放大；视觉顶边与旧放大后一致，约束顶距 40→34）。
+    private let centralSpinner = BearyRefreshIconView()
 
     private lazy var stateIconView: UIImageView = {
         let iconView = UIImageView()
@@ -426,7 +419,9 @@ final class BearyNotificationsViewController: UIViewController {
             stateMailView.heightAnchor.constraint(equalToConstant: 40),
             stateButton.heightAnchor.constraint(equalToConstant: 44),
             centralSpinner.centerXAnchor.constraint(equalTo: container.centerXAnchor),
-            centralSpinner.topAnchor.constraint(equalTo: container.topAnchor, constant: 40),
+            centralSpinner.topAnchor.constraint(equalTo: container.topAnchor, constant: 34),
+            centralSpinner.widthAnchor.constraint(equalToConstant: 32),
+            centralSpinner.heightAnchor.constraint(equalToConstant: 32),
             stack.topAnchor.constraint(equalTo: container.topAnchor, constant: 26),
             stack.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 20),
             stack.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -20),
@@ -1542,7 +1537,7 @@ final class BearyNotificationsViewController: UIViewController {
         isMarkingAllRead = true
         readAllButton.isEnabled = false
         // 网页口径：处理中换成转圈图标 +“处理中…”（check 图标不再保留）。
-        readAllButton.setImage(BearyIconImages.image(named: "icon_loading", pointSize: 14), for: .normal)
+        readAllButton.setImage(BearyIconImages.image(named: "icon_refresh", pointSize: 14), for: .normal)
         readAllButton.setTitle("处理中…", for: .normal)
         updateReadAllButtonWidth()
         readAllButton.layoutIfNeeded()
@@ -1815,13 +1810,13 @@ final class BearyNotificationsViewController: UIViewController {
             tableView.setContentOffset(CGPoint(x: 0, y: -tableView.contentInset.top), animated: false)
         }
         if showsList {
-            centralSpinner.stopAnimating()
+            centralSpinner.stopSpinning()
             errorStateView.isHidden = true
             return
         }
         switch visibleState {
         case .loading:
-            centralSpinner.startAnimating()
+            centralSpinner.startSpinning()
             errorStateView.isHidden = true
             stateIconView.isHidden = true
             stateMailView.isHidden = true
@@ -1830,7 +1825,7 @@ final class BearyNotificationsViewController: UIViewController {
             stateSubtitleLabel.isHidden = true
             stateButton.isHidden = true
         case .empty:
-            centralSpinner.stopAnimating()
+            centralSpinner.stopSpinning()
             errorStateView.isHidden = true
             stateIconView.isHidden = true
             // 网页 .empty svg.nb 是 40x40（其余空态数值已对上，不动）；空态用 NB.mail 动态信封。
@@ -1860,7 +1855,7 @@ final class BearyNotificationsViewController: UIViewController {
             }
             updateStateButtonWidth()
         case .error:
-            centralSpinner.stopAnimating()
+            centralSpinner.stopSpinning()
             // 8-6：错误重试态改走统一 BearyStateView——原 bespoke stack
             // 全藏（栈内子视图全隐藏后栈高塌为 0，不占位），错误视图单独
             // 显现；标题/副文案与原错误态一致，无图标，动作钮“重试”
@@ -1882,7 +1877,7 @@ final class BearyNotificationsViewController: UIViewController {
                 onAction: { [weak self] in self?.loadFirstPage() }
             )
         case .list:
-            centralSpinner.stopAnimating()
+            centralSpinner.stopSpinning()
             stateMailView.isHidden = true
             stateMailView.stop()
         }
@@ -3261,15 +3256,9 @@ private final class BearyPopperView: UIView {
 
 private class BearyNotificationTrailingCell: UITableViewCell {
 
-    /// 忙时仅 16px 转圈（medium 20 × 0.8，与网页 .more-sentinel 16px 同口径）。
-    private let spinner: UIActivityIndicatorView = {
-        let spinner = UIActivityIndicatorView(style: .medium)
-        spinner.translatesAutoresizingMaskIntoConstraints = false
-        spinner.color = BearyColors.gray
-        spinner.hidesWhenStopped = true
-        spinner.transform = CGAffineTransform(scaleX: 0.8, y: 0.8)
-        return spinner
-    }()
+    /// 忙时仅 16pt 官方刷新图标转圈（与网页 .more-sentinel 16px 同口径；2026-10-30
+    /// 全 App 统一 icon_refresh，不再用 medium 圈 ×0.8 缩放）。
+    private let spinner = BearyRefreshIconView()
 
     override init(style: UITableViewCell.CellStyle, reuseIdentifier: String?) {
         super.init(style: style, reuseIdentifier: reuseIdentifier)
@@ -3280,6 +3269,8 @@ private class BearyNotificationTrailingCell: UITableViewCell {
         NSLayoutConstraint.activate([
             spinner.centerXAnchor.constraint(equalTo: contentView.centerXAnchor),
             spinner.centerYAnchor.constraint(equalTo: contentView.centerYAnchor),
+            spinner.widthAnchor.constraint(equalToConstant: 16),
+            spinner.heightAnchor.constraint(equalToConstant: 16),
         ])
     }
 
@@ -3294,17 +3285,17 @@ private class BearyNotificationTrailingCell: UITableViewCell {
 
     override func prepareForReuse() {
         super.prepareForReuse()
-        spinner.stopAnimating()
+        spinner.stopSpinning()
     }
 
     /// 忙时仅 16px 转圈；闲时不可见、无按钮、无点击。
     func configureLoading() {
         spinner.isHidden = false
-        spinner.startAnimating()
+        spinner.startSpinning()
     }
 
     func configureIdle() {
-        spinner.stopAnimating()
+        spinner.stopSpinning()
         spinner.isHidden = true
     }
 }

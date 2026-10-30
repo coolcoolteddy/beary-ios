@@ -600,7 +600,7 @@ final class BearyRecipientPickerViewController: UIViewController, UITextFieldDel
         stateRetryButton.isHidden = true
         stateRetryBottomConstraint?.isActive = false
         if kind == "loading" {
-            // 2026-10-29 第 22 项：加载态中央图标即大 @（转圈由 setCenterBusy 加旋转，
+            // 2026-10-29 第 22 项：加载态中央图标（showState 先置 @，转圈由 setCenterBusy 换官方刷新图标并加旋转，
             // 与搜索日记页“中央可见转中央”同规则；框里放大镜此时静态）。
             stateIcon.image = BearyIconImages.image(named: "icon_at", pointSize: 25)
             stateTitle.text = "正在找"
@@ -624,11 +624,11 @@ final class BearyRecipientPickerViewController: UIViewController, UITextFieldDel
 
     /// 搜索图标位状态（D-G9）：网页 addrSetIconBusy 同款——闲时放大镜，
     /// 搜索中换 beary-loading 并 0.9s 线性无限旋转；减动效下换图不转。
-    /// 资产 icon_loading.imageset 已存在（发布钮/搜索页同款）。
+    /// 资产 icon_refresh.imageset（官方刷新图标，发布钮/搜索页同款）。
     private func setSearchBusy(_ busy: Bool) {
         searchIcon.layer.removeAnimation(forKey: "bearySearchSpin")
         if busy {
-            searchIcon.image = BearyIconImages.image(named: "icon_loading", pointSize: 18)
+            searchIcon.image = BearyIconImages.image(named: "icon_refresh", pointSize: 18)
             if !UIAccessibility.isReduceMotionEnabled {
                 let spin = CABasicAnimation(keyPath: "transform.rotation.z")
                 spin.fromValue = 0
@@ -642,18 +642,24 @@ final class BearyRecipientPickerViewController: UIViewController, UITextFieldDel
         }
     }
 
-    /// 中央大 @ 转圈（2026-10-29 第 22 项，搜索日记页同规则）：搜索中且结果未盖住
-    /// 中央态时转中央大 @（0.9s 线性无限旋转，与框内圈同口径）；同一时间只转一个，
+    /// 中央转圈（2026-10-29 第 22 项，搜索日记页同规则）：搜索中且结果未盖住
+    /// 中央态时转中央官方刷新图标（0.9s 线性无限旋转，与框内圈同口径；2026-10-30
+    /// 全 App 统一 icon_refresh，不再转 @ 字形本身）；同一时间只转一个，
     /// 停转时摘动画（图标由 showState 重置）；减动效下换图不转（与框内圈同口径）。
     private func setCenterBusy(_ busy: Bool) {
         stateIcon.layer.removeAnimation(forKey: "bearyCenterSpin")
-        if busy, !UIAccessibility.isReduceMotionEnabled {
-            let spin = CABasicAnimation(keyPath: "transform.rotation.z")
-            spin.fromValue = 0
-            spin.toValue = CGFloat.pi * 2
-            spin.duration = 0.9
-            spin.repeatCount = .infinity
-            stateIcon.layer.add(spin, forKey: "bearyCenterSpin")
+        if busy {
+            // 中央转圈即官方刷新图标（25pt 灰）；停转后图标由 showState 重置（既有口径）。
+            stateIcon.image = BearyIconImages.image(named: "icon_refresh", pointSize: 25)
+            stateIcon.tintColor = BearyColors.gray
+            if !UIAccessibility.isReduceMotionEnabled {
+                let spin = CABasicAnimation(keyPath: "transform.rotation.z")
+                spin.fromValue = 0
+                spin.toValue = CGFloat.pi * 2
+                spin.duration = 0.9
+                spin.repeatCount = .infinity
+                stateIcon.layer.add(spin, forKey: "bearyCenterSpin")
+            }
         }
     }
 

@@ -113,13 +113,7 @@ class BearyEditProfileViewController: UIViewController {
 
     /// 1-8：保存进行态圈转指示（贴在保存钮左侧钮外空隙，不占钮内 44 宽，
     /// 故标题恒为“保存”，不再改“保存中…”而被裁字）。
-    private lazy var savingSpinner: UIActivityIndicatorView = {
-        let spinner = UIActivityIndicatorView(style: .medium)
-        spinner.translatesAutoresizingMaskIntoConstraints = false
-        spinner.color = BearyColors.ink
-        spinner.hidesWhenStopped = true
-        return spinner
-    }()
+    private let savingSpinner = BearyRefreshIconView()
 
     private let titleLabel: UILabel = {
         let labelValue = UILabel()
@@ -753,9 +747,9 @@ class BearyEditProfileViewController: UIViewController {
         saveButton.isEnabled = !isSaving
         saveButton.setTitle("保存", for: .normal)
         if isSaving {
-            savingSpinner.startAnimating()
+            savingSpinner.startSpinning()
         } else {
-            savingSpinner.stopAnimating()
+            savingSpinner.stopSpinning()
         }
     }
 

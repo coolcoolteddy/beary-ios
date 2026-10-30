@@ -2151,7 +2151,7 @@ class BearyTimelineViewController: UIViewController {
     private var lastHeaderWidth: CGFloat = 0
 
     private let loadMoreButton = UIButton(type: .system)
-    private let footerSpinner = UIActivityIndicatorView(style: .medium)
+    private let footerSpinner = BearyRefreshIconView()
 
     // MARK: - 生命周期
 
@@ -2176,7 +2176,8 @@ class BearyTimelineViewController: UIViewController {
         // 审计 P2-20：时间线监听拉黑/举报即时清行并清 quoteCache。
         NotificationCenter.default.addObserver(self, selector: #selector(handleBlockedUserNotification(_:)), name: .bearyDidBlockUser, object: nil)
         NotificationCenter.default.addObserver(self, selector: #selector(handleReportedEntryNotification(_:)), name: .bearyDidReportEntry, object: nil)
-        footerSpinner.color = BearyColors.gray
+        // 2026-10-30 全 App 统一 icon_refresh：脚部圈取 20pt 图，栈内固有尺寸与旧 medium 圈一致。
+        footerSpinner.image = BearyIconImages.image(named: "icon_refresh", pointSize: 20)
         // G15 toast 已委托 B 批统一 BearyToast（见 showTimelineToast），
         // 此处不再建常驻 toast 容器。
         // 第 2 项 A 调用点 1/2（初次进入）：置跳转守卫挂起，选中日（今天）
@@ -4642,10 +4643,10 @@ class BearyTimelineViewController: UIViewController {
     private func timelineLoadingView() -> UIView {
         let container = UIView()
         container.backgroundColor = BearyColors.bg
-        let spinner = UIActivityIndicatorView(style: .medium)
-        spinner.color = BearyColors.gray
-        spinner.translatesAutoresizingMaskIntoConstraints = false
-        spinner.startAnimating()
+        let spinner = BearyRefreshIconView()
+        // 栈内固有尺寸须与旧 medium 圈一致（20），故图取 20pt。
+        spinner.image = BearyIconImages.image(named: "icon_refresh", pointSize: 20)
+        spinner.startSpinning()
         let label = UILabel()
         label.text = "正在加载…"
         // R8：首屏加载文字（正文类）走 scaledFont + adjusts。
@@ -4677,7 +4678,7 @@ class BearyTimelineViewController: UIViewController {
     private func updateFooter() {
         // 脚部只属于时间线翻页；当日面板的加载/失败态在面板表头里。
         // M18：脚部 spinner 不再是死代码——加载时进脚部层级与文案并排。
-        footerSpinner.stopAnimating()
+        footerSpinner.stopSpinning()
         footerSpinner.removeFromSuperview()
         if timelineLoadingMore {
             tableView.tableFooterView = footerLoadingHolder()
@@ -4705,7 +4706,7 @@ class BearyTimelineViewController: UIViewController {
         label.adjustsFontForContentSizeCategory = true
         label.textColor = BearyColors.gray
         footerSpinner.isHidden = false
-        footerSpinner.startAnimating()
+        footerSpinner.startSpinning()
         let stack = UIStackView(arrangedSubviews: [footerSpinner, label])
         stack.translatesAutoresizingMaskIntoConstraints = false
         stack.axis = .horizontal

@@ -6,8 +6,8 @@ import UIKit
 // 结构（竖向居中栈）：图标圆（54 圈：橙 18% 底 + 1pt 25% 橙圈，选人 sheet 空态圆同款；
 // 无图标时整行隐藏）＋标题（15 粗体 ink）＋副文案（12.5 gray，多行居中）＋
 // 动作钮（BearyButton，默认 secondaryOutline 紧凑 36/18；调用方可传其他工厂样式）。
-// 加载态：图标圆内改转圈（UIActivityIndicatorView medium gray，与回收站 loadingView
-// 同款），不用 icon_loading 资产转圈，避免再挂一套 spin key；加载时动作钮隐藏。
+// 加载态：图标圆内改转圈（官方 icon_refresh 20pt，2026-10-30 全 App 统一，
+// 不再用 UIActivityIndicatorView medium 圈）；加载时动作钮隐藏。
 // 边框重刷：动作钮边框是 CGColor，赋值时固化——traitCollectionDidChange 内重赋
 // （钮自身也会重刷；本视图再兜底一层，空态按钮边框深浅切换不跟随的问题不再复发）。
 // 调用：configure(...) 一次配齐；无标题/副文案/动作时对应行自动隐藏；动作走闭包 onAction。
@@ -27,7 +27,7 @@ final class BearyStateView: UIView {
     private let stack = UIStackView()
     private let iconCircle = UIView()
     private let iconView = UIImageView()
-    private let spinner = UIActivityIndicatorView(style: .medium)
+    private let spinner = BearyRefreshIconView()
     private let titleLabel = UILabel()
     private let subtitleLabel = UILabel()
     private var actionButton: BearyButton = BearyButton(style: .secondaryOutline(.compact))
@@ -63,7 +63,6 @@ final class BearyStateView: UIView {
         iconView.contentMode = .scaleAspectFit
         iconView.translatesAutoresizingMaskIntoConstraints = false
 
-        spinner.color = BearyColors.gray
         spinner.translatesAutoresizingMaskIntoConstraints = false
 
         titleLabel.font = UIFont.boldSystemFont(ofSize: 15)
@@ -110,6 +109,8 @@ final class BearyStateView: UIView {
             iconView.heightAnchor.constraint(equalToConstant: 25),
             spinner.centerXAnchor.constraint(equalTo: iconCircle.centerXAnchor),
             spinner.centerYAnchor.constraint(equalTo: iconCircle.centerYAnchor),
+            spinner.widthAnchor.constraint(equalToConstant: 20),
+            spinner.heightAnchor.constraint(equalToConstant: 20),
         ])
     }
 
@@ -122,18 +123,18 @@ final class BearyStateView: UIView {
             iconCircle.isHidden = false
             iconView.isHidden = false
             spinner.isHidden = true
-            spinner.stopAnimating()
+            spinner.stopSpinning()
             iconView.image = BearyIconImages.image(named: name, pointSize: 25)
         } else if isLoading {
             iconCircle.isHidden = false
             iconView.isHidden = true
             spinner.isHidden = false
-            spinner.startAnimating()
+            spinner.startSpinning()
         } else {
             iconCircle.isHidden = true
             iconView.isHidden = true
             spinner.isHidden = true
-            spinner.stopAnimating()
+            spinner.stopSpinning()
         }
         titleLabel.text = title
         titleLabel.isHidden = (title == nil)
