@@ -66,6 +66,7 @@
 		2B5FFB899357ED2A2FA2E05E /* BearySearchViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = EF90ED3AC360C339FA2BAEFC /* BearySearchViewController.swift */; };
 		A23C53DAC03E8C03962E6498 /* BearyNotificationsViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5E158D917D57FA5831A2069F /* BearyNotificationsViewController.swift */; };
 		EA84A3E04072B1309A399108 /* BearyEmoteImages.swift in Sources */ = {isa = PBXBuildFile; fileRef = B67362B50D4D2A91E59412D2 /* BearyEmoteImages.swift */; };
+		248993E9EF7C4D73A470CCE9 /* BearyNightPatrol.swift in Sources */ = {isa = PBXBuildFile; fileRef = 60F7AC7C7B59449186BD24AF /* BearyNightPatrol.swift */; };
 		93F45F628E22C5045A1EF58F /* agree.json in Resources */ = {isa = PBXBuildFile; fileRef = DAE48A2C16A1E3B2821093EB /* agree.json */; };
 		4497343DBC967B83178641E1 /* agree_dark.json in Resources */ = {isa = PBXBuildFile; fileRef = 37B9943EDEF2C3A792782E9E /* agree_dark.json */; };
 		7089387273580DA6004FDF8A /* crown.json in Resources */ = {isa = PBXBuildFile; fileRef = 4ED6BF206A0F34DF117D855A /* crown.json */; };
@@ -250,6 +251,7 @@
 		EF90ED3AC360C339FA2BAEFC /* BearySearchViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BearySearchViewController.swift; sourceTree = "<group>"; };
 		5E158D917D57FA5831A2069F /* BearyNotificationsViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BearyNotificationsViewController.swift; sourceTree = "<group>"; };
 		B67362B50D4D2A91E59412D2 /* BearyEmoteImages.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BearyEmoteImages.swift; sourceTree = "<group>"; };
+		60F7AC7C7B59449186BD24AF /* BearyNightPatrol.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BearyNightPatrol.swift; sourceTree = "<group>"; };
 		DAE48A2C16A1E3B2821093EB /* agree.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = LottieEmotes/agree.json; sourceTree = "<group>"; };
 		37B9943EDEF2C3A792782E9E /* agree_dark.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = LottieEmotes/agree_dark.json; sourceTree = "<group>"; };
 		4ED6BF206A0F34DF117D855A /* crown.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = LottieCrown/crown.json; sourceTree = "<group>"; };
@@ -464,6 +466,7 @@
 				EF90ED3AC360C339FA2BAEFC /* BearySearchViewController.swift */,
 				5E158D917D57FA5831A2069F /* BearyNotificationsViewController.swift */,
 				B67362B50D4D2A91E59412D2 /* BearyEmoteImages.swift */,
+				60F7AC7C7B59449186BD24AF /* BearyNightPatrol.swift */,
 				504EC3071FED79650016851F /* AppDelegate.swift */,
 				504EC30B1FED79650016851F /* Main.storyboard */,
 				504EC30E1FED79650016851F /* Assets.xcassets */,
@@ -867,6 +870,7 @@
 				2B5FFB899357ED2A2FA2E05E /* BearySearchViewController.swift in Sources */,
 				A23C53DAC03E8C03962E6498 /* BearyNotificationsViewController.swift in Sources */,
 				EA84A3E04072B1309A399108 /* BearyEmoteImages.swift in Sources */,
+				248993E9EF7C4D73A470CCE9 /* BearyNightPatrol.swift in Sources */,
 				3AA12B2885B64262BB5A9AD8 /* BearySoundPlayer.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
