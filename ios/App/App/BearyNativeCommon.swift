@@ -83,6 +83,31 @@ enum BearySheetChrome {
     static var scrimColor: UIColor { BearyColors.scrim.withAlphaComponent(scrimAlpha) }
 }
 
+// MARK: - 抓手拖动统一口径（2026-10-30 抓手批）
+
+/// 抓手热区透传视图：透明覆盖在抓手行上方时，只把 passthroughView
+/// （如右上角关闭钮）那一块的触摸放过去，其余触摸归自己（挂在其上的
+/// pan 手势接管）。视觉不动：本视图自身不画任何东西。
+final class BearyGrabHitView: UIView {
+    weak var passthroughView: UIView?
+    override func hitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? {
+        if let target = passthroughView, let parent = superview {
+            let pointInParent = convert(point, to: parent)
+            if target.frame.contains(pointInParent) { return nil }
+        }
+        return super.hitTest(point, with: event)
+    }
+}
+
+/// 抓手跟手位移统一口径：下滑原样跟手；上滑不扩高、不关闭，只按
+/// 0.25 阻尼跟手微移、上限 24pt，松手 0.25s 弹回原位。
+enum BearySheetDrag {
+    static func offset(for translationY: CGFloat) -> CGFloat {
+        if translationY >= 0 { return translationY }
+        return max(translationY * 0.25, -24)
+    }
+}
+
 // MARK: - 液态玻璃（与 SceneDelegate.makeGlassView 同配方，勿另起 tint）
 
 /// 玻璃配方唯一口径：iOS 26+ 为 UIGlassEffect，低版本降级系统毛玻璃；

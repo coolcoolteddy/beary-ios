@@ -181,11 +181,15 @@ final class BearyEmotePickerSheetViewController: UIViewController, UICollectionV
     /// 5-23：下滑关闭，与草稿箱 handlePan 同口径——下滑跟手（只动
     /// transform，不改约束）、超过 80pt 或快速下滑（速度 > 600）时走
     /// closeTapped，否则 0.25s 弹回原位；取消/失败同样弹回。
+    /// 2026-10-30 抓手批：核对过，列表区不盖住抓手行（列表顶约 y58–60，
+    /// 抓手在 y10–14），且 pan 是手势而非覆盖视图，不会吞列表点按；
+    /// 故此处只补上滑统一口径（阻尼微移后回弹，不扩高、不关闭），
+    /// 门控 y<70 与阈值 80/600 均不动。
     @objc private func sheetPanGesture(_ gesture: UIPanGestureRecognizer) {
         let translation = gesture.translation(in: view)
         switch gesture.state {
         case .changed:
-            let offset = max(0, translation.y)
+            let offset = BearySheetDrag.offset(for: translation.y)
             sheetView.transform = CGAffineTransform(translationX: 0, y: offset)
         case .ended:
             let velocity = gesture.velocity(in: view).y

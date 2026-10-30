@@ -44,6 +44,11 @@ final class BearyRecipientPickerViewController: UIViewController, UITextFieldDel
     private let sheetView = UIView()
     private let grabberWrap = UIView()
     private let grabberView = UIView()
+    /// 2026-10-30 抓手批：此前只有抓手视觉、没有 pan 手势。透明热区
+    /// 盖在 sheet 顶部 70pt（抓手行 + 标题行），右上角关闭钮经
+    /// BearyGrabHitView 透传，不会被误吞；搜索框顶在 y70，正在热区
+    /// 边界之外，不受影响。
+    private let grabHitView = BearyGrabHitView()
     private let headerIconWrap = UIView()
     private let headerIcon = UIImageView()
     private let headerTitle = UILabel()
@@ -231,12 +236,16 @@ final class BearyRecipientPickerViewController: UIViewController, UITextFieldDel
         stateRetryButton.isHidden = true
         stateRetryButton.addTarget(self, action: #selector(didTapStateRetry), for: .touchUpInside)
         stateRetryButton.bearyAddPressFeedback()
-        for v in [backdropButton, sheetView, grabberWrap, grabberView, headerIconWrap, headerIcon, headerTitle, closeButton, searchBox, searchIcon, searchField, notifyRow, notifyCheckButton, listContainer, listScrollView, rowsStack, resultsLabelWrap, resultsLabel, stateView, stateCircle, stateIcon, stateTitle, stateSubtitle, stateRetryButton] {
+        for v in [backdropButton, sheetView, grabberWrap, grabberView, grabHitView, headerIconWrap, headerIcon, headerTitle, closeButton, searchBox, searchIcon, searchField, notifyRow, notifyCheckButton, listContainer, listScrollView, rowsStack, resultsLabelWrap, resultsLabel, stateView, stateCircle, stateIcon, stateTitle, stateSubtitle, stateRetryButton] {
             v.translatesAutoresizingMaskIntoConstraints = false
         }
         view.addSubview(backdropButton)
         view.addSubview(sheetView)
         sheetView.addSubview(grabberWrap)
+        // 2026-10-30 抓手批：热区挂在 sheetView 顶部，关闭钮透传。
+        grabHitView.passthroughView = closeButton
+        grabHitView.addGestureRecognizer(UIPanGestureRecognizer(target: self, action: #selector(grabberPanGesture(_:))))
+        sheetView.addSubview(grabHitView)
         grabberWrap.addSubview(grabberView)
         sheetView.addSubview(headerIconWrap)
         headerIconWrap.addSubview(headerIcon)
@@ -277,6 +286,10 @@ final class BearyRecipientPickerViewController: UIViewController, UITextFieldDel
             grabberView.centerXAnchor.constraint(equalTo: grabberWrap.centerXAnchor),
             grabberView.topAnchor.constraint(equalTo: grabberWrap.topAnchor, constant: BearySheetChrome.grabberTop),
             grabberView.bottomAnchor.constraint(equalTo: grabberWrap.bottomAnchor),
+            grabHitView.topAnchor.constraint(equalTo: sheetView.topAnchor),
+            grabHitView.leadingAnchor.constraint(equalTo: sheetView.leadingAnchor),
+            grabHitView.trailingAnchor.constraint(equalTo: sheetView.trailingAnchor),
+            grabHitView.heightAnchor.constraint(equalToConstant: 70),
             headerIconWrap.topAnchor.constraint(equalTo: grabberWrap.bottomAnchor, constant: 4),
             headerIconWrap.leadingAnchor.constraint(equalTo: sheetView.leadingAnchor, constant: 16),
             headerIconWrap.widthAnchor.constraint(equalToConstant: 40),
@@ -543,6 +556,40 @@ final class BearyRecipientPickerViewController: UIViewController, UITextFieldDel
 
     @objc private func didTapClose() {
         dismiss(animated: !UIAccessibility.isReduceMotionEnabled)
+    }
+
+    /// 2026-10-30 抓手批：@ 选人 sheet 抓手下滑跟手——下滑超 80pt
+    /// 或快速下滑（速度 > 600）关闭，否则 0.25s 弹回原位；上滑阻尼
+    /// 微移后回弹，不扩高、不关闭。遮罩点按关闭与关闭钮均不动。
+    /// 注意：键盘抬升走约束（phoneBottomConstraint / padCenterY），
+    /// 本处理只动 transform，不改约束，两者不打架。
+    @objc private func grabberPanGesture(_ gesture: UIPanGestureRecognizer) {
+        let translation = gesture.translation(in: view)
+        switch gesture.state {
+        case .changed:
+            sheetView.transform = CGAffineTransform(translationX: 0, y: BearySheetDrag.offset(for: translation.y))
+        case .ended:
+            let velocity = gesture.velocity(in: view).y
+            if translation.y > 80 || velocity > 600 {
+                didTapClose()
+            } else {
+                let restore = { self.sheetView.transform = .identity }
+                if UIAccessibility.isReduceMotionEnabled {
+                    restore()
+                } else {
+                    UIView.animate(withDuration: 0.25, animations: restore)
+                }
+            }
+        case .cancelled, .failed:
+            let restore = { self.sheetView.transform = .identity }
+            if UIAccessibility.isReduceMotionEnabled {
+                restore()
+            } else {
+                UIView.animate(withDuration: 0.25, animations: restore)
+            }
+        default:
+            break
+        }
     }
 
     /// A2：面板内通知开关只改本地值与自身外观（与编辑器 @ 行复选同款；iCity 起行隐藏），

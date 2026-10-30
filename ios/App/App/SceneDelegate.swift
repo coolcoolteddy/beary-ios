@@ -2213,6 +2213,19 @@ final class BearyChromeViewController: UIViewController {
             stack.trailingAnchor.constraint(equalTo: sheet.trailingAnchor, constant: -20),
             stack.bottomAnchor.constraint(equalTo: sheet.safeAreaLayoutGuide.bottomAnchor, constant: -16),
         ])
+        // 2026-10-30 抓手批：此前只有抓手视觉、没有 pan 手势，抓手拖不动。
+        // 透明热区盖在 sheet 顶部 32pt（抓手 10–14 + 上下余量），该区内
+        // 只有不拦截触摸的标题文字，登录/暂不钮在底部，不会被误吞。
+        let grabHit = BearyGrabHitView()
+        grabHit.translatesAutoresizingMaskIntoConstraints = false
+        grabHit.addGestureRecognizer(UIPanGestureRecognizer(target: self, action: #selector(guestSheetPanGesture(_:))))
+        sheet.addSubview(grabHit)
+        NSLayoutConstraint.activate([
+            grabHit.topAnchor.constraint(equalTo: sheet.topAnchor),
+            grabHit.leadingAnchor.constraint(equalTo: sheet.leadingAnchor),
+            grabHit.trailingAnchor.constraint(equalTo: sheet.trailingAnchor),
+            grabHit.heightAnchor.constraint(equalToConstant: 32),
+        ])
         guestSheetScrim = scrim
         guestSheetView = sheet
         view.layoutIfNeeded()
@@ -2233,6 +2246,48 @@ final class BearyChromeViewController: UIViewController {
 
     @objc private func guestSheetDismissTapped() {
         dismissGuestLoginSheet(completion: nil)
+    }
+
+    /// 2026-10-30 抓手批：游客 Sheet 抓手下滑跟手——下滑超 80pt 或
+    /// 快速下滑（速度 > 600）关闭，否则 0.25s 弹回原位；上滑阻尼微移
+    /// 后回弹，不扩高、不关闭。遮罩点按关闭与登录/暂不钮均不动。
+    @objc private func guestSheetPanGesture(_ gesture: UIPanGestureRecognizer) {
+        guard let sheet = guestSheetView, let scrim = guestSheetScrim else { return }
+        let translation = gesture.translation(in: view).y
+        switch gesture.state {
+        case .changed:
+            let offset = BearySheetDrag.offset(for: translation)
+            sheet.transform = CGAffineTransform(translationX: 0, y: offset)
+            let height = sheet.bounds.height > 0 ? sheet.bounds.height : 1
+            scrim.alpha = max(0, 1 - max(0, offset) / height)
+        case .ended:
+            let velocity = gesture.velocity(in: view).y
+            if translation > 80 || velocity > 600 {
+                dismissGuestLoginSheet(completion: nil)
+            } else {
+                let restore = {
+                    sheet.transform = .identity
+                    scrim.alpha = 1
+                }
+                if UIAccessibility.isReduceMotionEnabled {
+                    restore()
+                } else {
+                    UIView.animate(withDuration: 0.25, animations: restore)
+                }
+            }
+        case .cancelled, .failed:
+            let restore = {
+                sheet.transform = .identity
+                scrim.alpha = 1
+            }
+            if UIAccessibility.isReduceMotionEnabled {
+                restore()
+            } else {
+                UIView.animate(withDuration: 0.25, animations: restore)
+            }
+        default:
+            break
+        }
     }
 
     @objc private func guestSheetLoginTapped() {
@@ -3273,14 +3328,19 @@ final class BearyComposerSheetTransitioningDelegate: NSObject, UIViewControllerT
     }
 }
 
-/// P1-3：抓手条命中穿透——条带帧仍为全宽×44（布局/无障碍帧不动），
-/// 但命中只认 pill 本体：pill 外的触摸返回 nil，落到下方的编辑器顶栏
-/// （取消/发布钮），不再被条带空吞；pill 上的触摸仍走条带 pan 手势，
-/// 滑动关闭的起始区与原来 pill 位置完全一致。
+/// P1-3：抓手条命中穿透——条带帧仍为全宽×44（布局/无障碍帧不动）。
+/// 2026-10-30 抓手批：原先命中只认 40×4 的 pill 本体，手指稍偏就穿透、
+/// 体感就是“抓手拖不动”。现扩为以 pill 为中心的 120×28 热区
+/// （横向 pill 中心 ±60、纵向 y 0–28）：编辑器顶栏的取消钮在左边缘、
+/// 草稿/发布钮在右边缘、邀请页关闭钮在左边缘，居中 120 区在 ≥375 宽
+/// 的设备上都不与任何按钮重叠（中间只有不拦截触摸的标题文字）；
+/// 热区外的触摸仍穿透到下方顶栏按钮，P1-3 的防误吞口径不变。
 private final class BearyGrabberHitView: UIView {
     weak var pillView: UIView?
     override func hitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? {
-        guard let pill = pillView, pill.frame.contains(point) else { return nil }
+        guard let pill = pillView else { return nil }
+        let expanded = CGRect(x: pill.frame.midX - 60, y: 0, width: 120, height: 28)
+        guard expanded.contains(point) else { return nil }
         return super.hitTest(point, with: event)
     }
 }
@@ -3411,9 +3471,10 @@ private final class BearyComposerSheetPresentationController: UIPresentationCont
             presentedView.addSubview(sheetTopBorderView)
             grabberInstalled = true
         }
-        // P1-3：条带帧仍为全宽×44（视觉/布局不动），但 BearyGrabberHitView
-        // 只在 pill 矩形内命中：pill 外触摸穿透到编辑器顶栏（取消/发布钮），
-        // 不再被条带空吞；pan 手势仍挂在条带上，滑动关闭只从 pill 起手。
+        // P1-3（2026-10-30 抓手批扩热区后）：条带帧仍为全宽×44（视觉/布局不动），
+        // BearyGrabberHitView 只在 pill 居中 120×28 热区内命中：热区外触摸
+        // 穿透到编辑器顶栏（取消/发布钮），不再被条带空吞；pan 手势仍挂在
+        // 条带上，滑动关闭从扩大的热区起手。
         grabberStrip.frame = CGRect(x: 0, y: 0, width: presentedView.bounds.width, height: 44)
         let pillWidth: CGFloat = BearySheetChrome.grabberWidth
         grabberPill.frame = CGRect(x: (presentedView.bounds.width - pillWidth) / 2, y: BearySheetChrome.grabberTop, width: pillWidth, height: BearySheetChrome.grabberHeight)
@@ -3429,11 +3490,12 @@ private final class BearyComposerSheetPresentationController: UIPresentationCont
         let translation = pan.translation(in: container).y
         switch pan.state {
         case .changed:
-            let drag = max(0, translation)
+            // 抓手批统一口径：下滑跟手，上滑阻尼微移（不扩高、不关闭）。
+            let drag = BearySheetDrag.offset(for: translation)
             presentedView.transform = CGAffineTransform(translationX: 0, y: drag)
             sheetShadowView.transform = presentedView.transform
             if sheetHeight > 0 {
-                dimmingView.alpha = max(0, 1 - drag / sheetHeight)
+                dimmingView.alpha = max(0, 1 - max(0, drag) / sheetHeight)
             }
         case .ended, .cancelled:
             let velocity = pan.velocity(in: container).y
@@ -3449,14 +3511,21 @@ private final class BearyComposerSheetPresentationController: UIPresentationCont
                 if UIAccessibility.isReduceMotionEnabled {
                     restore()
                 } else {
-                    UIView.animate(withDuration: 0.3, animations: restore)
+                    UIView.animate(withDuration: 0.25, animations: restore)
                 }
             }
         case .failed:
-            // 手势失败时跟手位移可能已产生，直接复位，不触发关闭。
-            presentedView.transform = .identity
-            sheetShadowView.transform = .identity
-            dimmingView.alpha = 1
+            // 手势失败时跟手位移可能已产生，0.25s 弹回原位，不触发关闭。
+            let restore = {
+                presentedView.transform = .identity
+                self.sheetShadowView.transform = .identity
+                self.dimmingView.alpha = 1
+            }
+            if UIAccessibility.isReduceMotionEnabled {
+                restore()
+            } else {
+                UIView.animate(withDuration: 0.25, animations: restore)
+            }
         default:
             break
         }
