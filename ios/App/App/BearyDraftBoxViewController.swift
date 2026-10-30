@@ -87,6 +87,12 @@ final class BearyDraftBoxViewController: UIViewController {
     private let sheetScrollView = UIScrollView()
     private let contentStack = UIStackView()
     private let handleView = UIView()
+    /// 2026-10-30 抓手批：把手行本身只有 14pt 高（顶距 10 + 抓手 4），
+    /// 且挂在 sheetScrollView 内的把手行上，手指稍偏或列表可滚时
+    /// 滚动视图会抢走竖向 pan。另加一块不进 stack 的透明热区，
+    /// 直接钉在 sheetView 顶部（滚动视图之上，不会被抢），视觉与
+    /// 其余布局完全不动，见 buildViews。
+    private let grabHitView = UIView()
     private let headerWrap = UIView()
     private let titleLabel = UILabel()
     private let closeButton = BearyButton.closeButton()
@@ -249,6 +255,22 @@ final class BearyDraftBoxViewController: UIViewController {
         // U18：把手加下滑关闭手势（与 closeBox 同动画）；遮罩点按关闭保留。
         handleWrapView.addGestureRecognizer(UIPanGestureRecognizer(target: self, action: #selector(handlePanGesture(_:))))
         contentStack.addArrangedSubview(handleWrapView)
+        // 2026-10-30 抓手批：把手行只有 14pt 高，手指很难稳定抓中。
+        // 热区以抓手为中心、宽 120、高 32（抓手 10–14 上下各扩余量），
+        // 该区内只有不拦截触摸的把手与居中标题，右上角关闭钮在区外，
+        // 不会被误吞；热区不进 stack、不推开标题，布局与视觉不动。
+        // 热区直接挂在 sheetView 上（在滚动视图之上），竖向 pan 不再
+        // 被 sheetScrollView 抢走；原把手行手势保留，两者同走
+        // handlePanGesture，位移口径一致。
+        grabHitView.translatesAutoresizingMaskIntoConstraints = false
+        grabHitView.addGestureRecognizer(UIPanGestureRecognizer(target: self, action: #selector(handlePanGesture(_:))))
+        sheetView.addSubview(grabHitView)
+        NSLayoutConstraint.activate([
+            grabHitView.topAnchor.constraint(equalTo: sheetView.topAnchor),
+            grabHitView.centerXAnchor.constraint(equalTo: sheetView.centerXAnchor),
+            grabHitView.widthAnchor.constraint(equalToConstant: 120),
+            grabHitView.heightAnchor.constraint(equalToConstant: 32),
+        ])
 
         headerWrap.translatesAutoresizingMaskIntoConstraints = false
         titleLabel.text = "草稿箱"
@@ -1172,13 +1194,14 @@ final class BearyDraftBoxViewController: UIViewController {
     }
 
     /// U18：把手下滑关闭——下滑跟手，超过 80pt 或快速下滑时走 closeBox 同动画；
-    /// 否则弹回原位。遮罩点按关闭不受影响。
+    /// 否则 0.25s 弹回原位。遮罩点按关闭不受影响。
+    /// 2026-10-30 抓手批：上滑按统一口径阻尼微移后回弹，不扩高、不关闭。
     @objc private func handlePanGesture(_ gesture: UIPanGestureRecognizer) {
         guard !isDismissing else { return }
         let translation = gesture.translation(in: view)
         switch gesture.state {
         case .changed:
-            let offset = max(0, translation.y)
+            let offset = BearySheetDrag.offset(for: translation.y)
             // 把手在内容顶端：下滑时把滚动锁回顶部，避免与滚动回弹打架。
             if translation.y > 0 {
                 sheetScrollView.contentOffset = .zero
