@@ -964,7 +964,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, U
         publishButton.addTarget(self, action: #selector(didTapPublish), for: .touchUpInside)
         // 发布中 spinner：平时停在发送图标位，发布/保存中时替下发送图标转圈（E3-4）。
         publishRingView.translatesAutoresizingMaskIntoConstraints = false
-        publishRingView.image = BearyIconImages.image(named: "icon_refresh", pointSize: 18)
+        publishRingView.image = BearyIconImages.image(named: "icon_restore", pointSize: 18)
         publishRingView.tintColor = BearyColors.gray
         publishRingView.contentMode = .scaleAspectFit
         publishRingView.isHidden = true
@@ -3797,6 +3797,8 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, U
         let tap = UITapGestureRecognizer(target: self, action: #selector(didTapImageItem(_:)))
         container.addGestureRecognizer(tap)
         let spinner = BearyRefreshIconView()
+        // 刷新图标分流：图片上传转圈不用下拉/加载的 icon_refresh，改用另一款 icon_restore。
+        spinner.image = BearyIconImages.image(named: "icon_restore", pointSize: 32)
         // 失败态：行内红底块（网页 thumb-fail 同款：红 10% 底 + 图标 + “失败，点我重试”），
         // 点块重试，不弹全局框；发布时有失败图直接 toast 拦截（决议第 5 项 A），不弹框。
         let failView = UIView()
@@ -4505,7 +4507,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, U
         // spin 图标 + “保存中…”），原 App 只出文字无图标；此处换 icon_refresh 图并转圈，
         // 落盘后 updateDraftStatusLabel 会停转并换回对勾。
         draftStatusGroup.isHidden = false
-        draftStatusIcon.image = BearyIconImages.image(named: "icon_refresh", pointSize: 15)
+        draftStatusIcon.image = BearyIconImages.image(named: "icon_restore", pointSize: 15)
         draftStatusIcon.tintColor = BearyColors.gray
         draftStatusIcon.isHidden = false
         BearyIconMotion.startSpin(on: draftStatusIcon, duration: 0.9, key: "bearyDraftSavingSpin")
