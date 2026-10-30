@@ -73,6 +73,8 @@ final class BearyDraftBoxViewController: UIViewController {
     private var bottomSpacerHeight: NSLayoutConstraint?
     /// G5：草稿库读取失败标记（loadAllResult 失败时置位，渲染时出失败态，不出空态）。
     private var draftsLoadFailed = false
+    /// 草稿库损坏态（lastLoadError 为 corruptStore 时）：失败态下出清除按钮；v2/v1 旧源损坏不属此态。
+    private var draftsLoadCorrupt = false
     /// U18：把手外包容器（原 buildViews 内局部变量），下滑关闭手势挂在这里。
     private let handleWrapView = UIView()
 
@@ -521,13 +523,39 @@ final class BearyDraftBoxViewController: UIViewController {
                 case .success(let loaded):
                     strongSelf.drafts = loaded
                     strongSelf.draftsLoadFailed = false
-                case .failure:
+                    strongSelf.draftsLoadCorrupt = false
+                case .failure(let err):
                     strongSelf.drafts = []
                     strongSelf.draftsLoadFailed = true
+                    if case .corruptStore(_) = err {
+                        strongSelf.draftsLoadCorrupt = true
+                    } else {
+                        strongSelf.draftsLoadCorrupt = false
+                    }
                 }
                 completion?()
             }
         }
+    }
+
+    /// 草稿库损坏态清除：先弹系统确认框（App 现有确认口径），确认后删当前
+    /// 账号的坏 v3 文件（.bak 备份不动），成功后重读 → 空态；失败则留失败态＋toast。
+    @objc private func clearCorruptStoreTapped() {
+        let alert = UIAlertController(title: "清除损坏的草稿库？", message: "损坏的草稿无法恢复，备份会保留在手机里。清除后草稿箱回到空态，新草稿可以正常保存。", preferredStyle: .alert)
+        alert.addAction(UIAlertAction(title: "取消", style: .cancel))
+        alert.addAction(UIAlertAction(title: "清除", style: .destructive) { [weak self] _ in
+            BearyDraftStore.clearCorruptStoreAsync { [weak self] ok in
+                guard let self = self else { return }
+                if ok {
+                    self.loadDrafts { [weak self] in
+                        self?.renderDrafts()
+                    }
+                } else {
+                    self.showDraftToast(message: "清除失败，请再试一次")
+                }
+            }
+        })
+        present(alert, animated: BearyMotion.animated(true))
     }
 
     private func renderDrafts() {
@@ -558,10 +586,25 @@ final class BearyDraftBoxViewController: UIViewController {
             failedLabel.translatesAutoresizingMaskIntoConstraints = false
             NSLayoutConstraint.activate([
                 failedLabel.topAnchor.constraint(equalTo: failedWrap.topAnchor, constant: 30),
-                failedLabel.bottomAnchor.constraint(equalTo: failedWrap.bottomAnchor, constant: -22),
                 failedLabel.leadingAnchor.constraint(equalTo: failedWrap.leadingAnchor, constant: 20),
                 failedLabel.trailingAnchor.constraint(equalTo: failedWrap.trailingAnchor, constant: -20),
             ])
+            if draftsLoadCorrupt {
+                let clearButton = BearyButton.make(style: .destructiveOutline(.compact), title: "清除损坏的草稿库")
+                clearButton.translatesAutoresizingMaskIntoConstraints = false
+                clearButton.accessibilityLabel = "清除损坏的草稿库"
+                clearButton.addTarget(self, action: #selector(clearCorruptStoreTapped), for: .touchUpInside)
+                clearButton.bearyAddPressFeedback()
+                failedWrap.addSubview(clearButton)
+                NSLayoutConstraint.activate([
+                    clearButton.topAnchor.constraint(equalTo: failedLabel.bottomAnchor, constant: 16),
+                    clearButton.centerXAnchor.constraint(equalTo: failedWrap.centerXAnchor),
+                    clearButton.heightAnchor.constraint(equalToConstant: 36),
+                    clearButton.bottomAnchor.constraint(equalTo: failedWrap.bottomAnchor, constant: -22),
+                ])
+            } else {
+                failedLabel.bottomAnchor.constraint(equalTo: failedWrap.bottomAnchor, constant: -22).isActive = true
+            }
             listStack.addArrangedSubview(failedWrap)
             return
         }
