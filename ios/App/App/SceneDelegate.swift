@@ -2874,6 +2874,9 @@ final class BearyChromeViewController: UIViewController {
         let detail = BearyDetailViewController(entry: entry, isGuest: SessionManager.shared.isGuestMode)
         detail.modalPresentationStyle = .fullScreen
         detail.transitioningDelegate = SceneDelegate.chrome?.fadeRiseTransitionDelegate
+        // 详情闪退诊断：present 前留一条（与详情 viewDidLoad/rendered 两条对照，
+        // 可定位崩在 present 前、进页中、还是渲染后）。
+        DiagFile.mark("detail.present id=\(entry.id ?? "?")")
         detail.onDismissed = { [weak self] entryId in
             self?.feedVC?.scrollToEntryId(entryId)
             self?.timelineVC?.scrollToEntryIdIfPresent(entryId)
