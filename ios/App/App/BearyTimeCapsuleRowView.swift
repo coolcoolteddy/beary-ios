@@ -49,7 +49,7 @@ fatalError("init(coder:) has not been implemented")
 
 private func build() {
 iconView.translatesAutoresizingMaskIntoConstraints = false
-iconView.contentMode =.scaleAspectFit
+iconView.contentMode = .scaleAspectFit
 iconView.tintColor = BearyColors.orange
 if let image = BearyTimeCapsuleIcon.timeCapsuleImage(pointSize: 16) {
 iconView.image = image
@@ -67,7 +67,7 @@ subtitleLabel.textColor = BearyColors.gray
 subtitleLabel.numberOfLines = 0
 subtitleLabel.text = "写成时间胶囊，埋在当前区级"
 refreshPlaceholderNote()
-textStack.axis =.vertical
+textStack.axis = .vertical
 textStack.spacing = 2
 textStack.translatesAutoresizingMaskIntoConstraints = false
 textStack.addArrangedSubview(titleLabel)
@@ -75,9 +75,9 @@ textStack.addArrangedSubview(subtitleLabel)
 capsuleSwitch.translatesAutoresizingMaskIntoConstraints = false
 capsuleSwitch.addTarget(self, action: #selector(didToggleSwitch), for:.valueChanged)
 capsuleSwitch.accessibilityLabel = "埋进地图"
-switchRow.axis =.horizontal
+switchRow.axis = .horizontal
 switchRow.spacing = 6
-switchRow.alignment =.center
+switchRow.alignment = .center
 switchRow.translatesAutoresizingMaskIntoConstraints = false
 switchRow.addArrangedSubview(iconView)
 switchRow.addArrangedSubview(textStack)
@@ -86,23 +86,23 @@ switchRow.addArrangedSubview(capsuleSwitch)
 calendarIconView.translatesAutoresizingMaskIntoConstraints = false
 calendarIconView.image = BearyIconImages.image(named: "icon_calendar", pointSize: 16)
 calendarIconView.tintColor = BearyColors.gray
-calendarIconView.contentMode =.scaleAspectFit
+calendarIconView.contentMode = .scaleAspectFit
 dateLabel.translatesAutoresizingMaskIntoConstraints = false
 dateLabel.font = UIFont.systemFont(ofSize: 13)
 dateLabel.textColor = BearyColors.gray
 dateLabel.text = "解锁日期"
 datePicker.translatesAutoresizingMaskIntoConstraints = false
-datePicker.datePickerMode =.date
-datePicker.preferredDatePickerStyle =.compact
+datePicker.datePickerMode = .date
+datePicker.preferredDatePickerStyle = .compact
 // 解锁日期只允许今天及以后：过去日期在视图层就选不到，Composer 发布时仍会再校验一次（防旁路）。
 datePicker.minimumDate = Calendar.current.startOfDay(for: Date())
 if let defaultDate = Calendar.current.date(byAdding:.day, value: 30, to: Date()) {
 datePicker.date = defaultDate
 }
 datePicker.addTarget(self, action: #selector(didChangeDate), for:.valueChanged)
-dateRow.axis =.horizontal
+dateRow.axis = .horizontal
 dateRow.spacing = 6
-dateRow.alignment =.center
+dateRow.alignment = .center
 dateRow.translatesAutoresizingMaskIntoConstraints = false
 dateRow.addArrangedSubview(calendarIconView)
 dateRow.addArrangedSubview(dateLabel)
@@ -114,7 +114,7 @@ noteLabel.textColor = BearyColors.orange
 noteLabel.numberOfLines = 0
 noteLabel.text = "解锁还要满足：到解锁日期且人在同一区级"
 
-mainStack.axis =.vertical
+mainStack.axis = .vertical
 mainStack.spacing = 6
 mainStack.translatesAutoresizingMaskIntoConstraints = false
 mainStack.addArrangedSubview(switchRow)
@@ -145,8 +145,8 @@ subtitleLabel.text = "写成时间胶囊，埋在当前区级"
 private func refreshDateRowVisibility() {
 // 关则收起：日期行与说明行一起隐藏，不留空行；开则两者都出现。
 let show = capsuleSwitch.isOn
-dateRow.isHidden =!show
-noteLabel.isHidden =!show
+dateRow.isHidden = !show
+noteLabel.isHidden = !show
 }
 
 func setDate(_ date: Date, animated: Bool = false) {
