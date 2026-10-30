@@ -1269,6 +1269,7 @@ class BearyProfileViewController: UIViewController {
         avatarImageView.transform = CGAffineTransform(scaleX: avatarScale, y: avatarScale)
         avatarLetterLabel.transform = CGAffineTransform(scaleX: avatarScale, y: avatarScale)
         applyProfileBelowShift(belowShift)
+        currentBelowShift = belowShift
         // 默认背景 wordmark：后半段内 1→0 淡出（照片时两视图均隐藏，赋值无可视影响）。
         defaultWordmarkView.alpha = 1 - rampProgress
         stickyWordmarkView.alpha = 1 - rampProgress
@@ -1292,13 +1293,19 @@ class BearyProfileViewController: UIViewController {
         stickyHeaderNameLabel.transform = CGAffineTransform(translationX: 0, y: 6 * (1 - transferProgress))
     }
 
+    /// 当前名字以下整段位移（updateProfileCoverScroll 写入，供墙入场动画收尾用）。
+    private var currentBelowShift: CGFloat = 0
+
     /// v22 名字以下整段位移（2026-10-30）：头像行按钮＋名字块＋统计＋墙＋徽章架
     /// 同值平移（纯位移，各视图相对位置不变，等价于包一层容器平移；不改约束、
     /// 不重排版，故 header 高不变）。标签容器不移（底贴 header 底、移了会压首张卡，
-    /// 且标签与卡片同定、间距本就恒定）。墙容器自身有入场动画（transform），
-    /// 故只移它的三个子视图、不碰容器 transform，避免与入场动画打架。
+    /// 且标签与卡片同定、间距本就恒定）。墙容器整体跟移（容器与内容同值，
+    /// 相对位置不变）：只移三个子视图、不碰容器时，统计行与墙内容下移后会
+    /// 压进不动的容器框（顶压统计数字、底裁表情行），故容器必须同值移；
+    /// 入场动画只在墙初现时跑一次（此时位移≈0），且以当前位移为基准收尾，
+    /// 滚动会重新贴合位移，故不打架。
     /// 末位可见视图的位移以到标签顶的布局间隙为上限（现行 16），防压标签：
-    /// 徽章架可见时封顶徽章架，否则封顶墙（子视图同值），再否则封顶统计行。
+    /// 徽章架可见时封顶徽章架，否则封顶墙，再否则封顶统计行。
     /// 间隙用 center／bounds 量布局位置（不受 transform 影响），故滚动中仍准。
     private func applyProfileBelowShift(_ shift: CGFloat) {
         let fullShift = CGAffineTransform(translationX: 0, y: shift)
@@ -1319,9 +1326,10 @@ class BearyProfileViewController: UIViewController {
             let badgesBottom = badgesContainer.center.y + badgesContainer.bounds.height / 2
             let cappedShift = min(shift, max(tabsTop - badgesBottom, 0))
             badgesContainer.transform = CGAffineTransform(translationX: 0, y: cappedShift)
-            wallTitleLabel.transform = fullShift
-            wallScrollView.transform = fullShift
-            wallTotalLabel.transform = fullShift
+            wallContainer.transform = fullShift
+            wallTitleLabel.transform = .identity
+            wallScrollView.transform = .identity
+            wallTotalLabel.transform = .identity
             publicCountLabel.transform = fullShift
             likesCountLabel.transform = fullShift
             publicTextLabel?.transform = fullShift
@@ -1330,9 +1338,10 @@ class BearyProfileViewController: UIViewController {
             let wallBottom = wallContainer.center.y + wallContainer.bounds.height / 2
             let cappedShift = min(shift, max(tabsTop - wallBottom, 0))
             let cappedTransform = CGAffineTransform(translationX: 0, y: cappedShift)
-            wallTitleLabel.transform = cappedTransform
-            wallScrollView.transform = cappedTransform
-            wallTotalLabel.transform = cappedTransform
+            wallContainer.transform = cappedTransform
+            wallTitleLabel.transform = .identity
+            wallScrollView.transform = .identity
+            wallTotalLabel.transform = .identity
             badgesContainer.transform = fullShift
             publicCountLabel.transform = fullShift
             likesCountLabel.transform = fullShift
@@ -1351,9 +1360,10 @@ class BearyProfileViewController: UIViewController {
             likesCountLabel.transform = cappedTransform
             publicTextLabel?.transform = cappedTransform
             likesTextLabel?.transform = cappedTransform
-            wallTitleLabel.transform = fullShift
-            wallScrollView.transform = fullShift
-            wallTotalLabel.transform = fullShift
+            wallContainer.transform = fullShift
+            wallTitleLabel.transform = .identity
+            wallScrollView.transform = .identity
+            wallTotalLabel.transform = .identity
             badgesContainer.transform = fullShift
         }
     }
@@ -1365,6 +1375,7 @@ class BearyProfileViewController: UIViewController {
         avatarImageView.transform = .identity
         avatarLetterLabel.transform = .identity
         applyProfileBelowShift(0)
+        currentBelowShift = 0
         defaultWordmarkView.alpha = 1
         stickyWordmarkView.alpha = 1
         stickyHeaderNameLabel.alpha = 0
@@ -2027,10 +2038,13 @@ class BearyProfileViewController: UIViewController {
 
     private func applyWall() {
         guard let profileValue = profile else { return }
-        let total = profileValue.emotesTotal ?? 0
-        let received = profileValue.emotesReceived ?? []
-        // 网页 pfFillWall 口径：total > 0 即显示，received 为空也显示空墙。
-        guard total > 0 else {
+        // 小熊回应墙只显示熊脸：非熊脸（物件／道具）一律过滤，服务端数据不动；
+        // 过滤后为空则不显示墙（不留“共收到 0 只”的空墙）。
+        let received = (profileValue.emotesReceived ?? []).filter { item in
+            guard let key = item.emote, !key.isEmpty else { return false }
+            return BearyEmoteKeys.bearFaceKeys.contains(key)
+        }
+        guard !received.isEmpty else {
             wallContainer.isHidden = true
             wallContainer.alpha = 1
             wallContainer.transform = .identity
@@ -2064,6 +2078,8 @@ class BearyProfileViewController: UIViewController {
             ])
             wallStack.addArrangedSubview(chip)
         }
+        // 总数按过滤后的熊脸合计，行与总数一致（不用服务端 emotesTotal，那是过滤前总数）。
+        let total = received.reduce(0) { $0 + ($1.count ?? 0) }
         wallTotalLabel.text = "共收到 \(total) 只"
         let wasHidden = wallContainer.isHidden
         wallContainer.isHidden = false
@@ -2072,11 +2088,14 @@ class BearyProfileViewController: UIViewController {
         if wasHidden && !wallHasAnimated {
             wallHasAnimated = true
             if !UIAccessibility.isReduceMotionEnabled {
+                // 入场动画以当前滚动位移为基准（8→位移处），而非归零：
+                // 否则入场结束时墙会回到 0、与已位移的统计行错位。
+                let baseShift = self.currentBelowShift
                 wallContainer.alpha = 0
-                wallContainer.transform = CGAffineTransform(translationX: 0, y: 8)
+                wallContainer.transform = CGAffineTransform(translationX: 0, y: baseShift + 8)
                 UIView.animate(withDuration: 0.3, delay: 0, options: .curveEaseOut, animations: {
                     self.wallContainer.alpha = 1
-                    self.wallContainer.transform = .identity
+                    self.wallContainer.transform = CGAffineTransform(translationX: 0, y: baseShift)
                 })
             }
         }
