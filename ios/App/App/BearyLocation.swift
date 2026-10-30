@@ -72,7 +72,10 @@ enum BearyLocationDisplay {
             }
             return (name, note)
         }
-        return (location.district, nil)
+        // 走到这里 name 已为 nil；isEmpty 已排除，故 district 必非空。
+        // 仍用 guard 收口：万一 district 为空则不显示，绝不把 nil 当行文案。
+        guard let district = location.district else { return nil }
+        return (district, nil)
     }
 
     /// 区级文本派生（逆地理编码/搜索 placemark 共用）：

@@ -349,7 +349,9 @@ final class BearyLocationPopoverView: UIView, CLLocationManagerDelegate, MKLocal
             guard let self = self, !self.isHidden else { return }
             let placemark = response?.mapItems.first?.placemark
             let name = placemark?.name ?? completion.title
-            let district = placemark.map { BearyLocationDisplay.district(from: $0) }
+            // flatMap 把 String?? 压到一层 String?，与 DiaryLocation(district:) 入参对齐；
+            // 无 placemark 或无区级时均为 nil，不改逆地理编码流程。
+            let district = placemark.flatMap { BearyLocationDisplay.district(from: $0) }
             // 点建议即直接定位：不等头部确认钮，调用方直接落定该地点（v3 口径）。
             self.delegate?.locationPopover(self, didConfirm: DiaryLocation(name: name, district: district))
         }

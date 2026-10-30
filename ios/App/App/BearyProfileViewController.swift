@@ -406,7 +406,7 @@ class BearyProfileViewController: UIViewController {
     /// 日记 tab 展示的日记（最新 3 篇）；赞过/收藏 tab 仍为原有全量模型。
     private var displayedEntries: [Entry] {
         if currentTab == .diary {
-            return Array(sortedDisplayableDiaryEntries(from: diaryEntries, isOwnProfile: isOwnProfile).prefix(3))
+            return Array(BearyProfileViewController.sortedDisplayableDiaryEntries(from: diaryEntries, isOwnProfile: isOwnProfile).prefix(3))
         }
         return currentEntries
     }
@@ -416,7 +416,7 @@ class BearyProfileViewController: UIViewController {
     /// 故他人页不显示该按钮——3 篇公开 + 照片区结构仍与本人页相同。
     private var diaryMoreButtonVisible: Bool {
         return currentTab == .diary && isOwnProfile
-            && !sortedDisplayableDiaryEntries(from: diaryEntries, isOwnProfile: isOwnProfile).isEmpty
+            && !BearyProfileViewController.sortedDisplayableDiaryEntries(from: diaryEntries, isOwnProfile: isOwnProfile).isEmpty
     }
 
     private var profilePhotosValue: [BearyProfilePhotoItem] {
@@ -5422,7 +5422,7 @@ class BearyProfileViewController: UIViewController {
         let photosVC = BearyProfilePhotosViewController(
             authorIdValue: profile?.profileIdValue ?? targetUserIdValue,
             isOwnProfileValue: isOwnProfile,
-            initialEntries: sortedDisplayableDiaryEntries(from: diaryEntries, isOwnProfile: isOwnProfile),
+            initialEntries: BearyProfileViewController.sortedDisplayableDiaryEntries(from: diaryEntries, isOwnProfile: isOwnProfile),
             diaryHasMoreValue: diaryHasMore,
             onOpenEntryValue: { [weak self] entryValue in self?.onOpenEntry?(entryValue) }
         )
