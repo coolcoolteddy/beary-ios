@@ -183,6 +183,13 @@ final class BearyChromeViewController: UIViewController {
     private var launchVeilSloganAnimation: LottieAnimationView?
     private var launchVeilPlayed = false
     private var launchVeilHomeEntryPlayed = false
+    /// 107 修复：veil 揭开进行中标记——起播完成回调与起播相对兜底可能同时
+    /// 到达，reveal 只跑一次（否则淡出重播、首屏卡片二次错峰）。
+    private var launchVeilRevealing = false
+    /// 107 修复：起播相对兜底（run 里按动画时长建，见 runLaunchVeilIfNeeded）。
+    private var launchVeilPlayTimeout: DispatchWorkItem?
+    /// 107 修复：最后一道兜底（install 里建，仅 viewDidAppear 始终没来时清 veil）。
+    private var launchVeilLastResort: DispatchWorkItem?
     private var bellBadge: UILabel!
     /// 顶栏图标行（宽度相关间距：≤360 时 4、≤480 时 10，其余 18，见 layoutChromeOverlays）。
     private var topStackView: UIStackView?
@@ -1015,7 +1022,7 @@ final class BearyChromeViewController: UIViewController {
         // 引导时序（v3 接线）：旧顺序先弹引导、后跑 veil——引导虽为 modal 不会被
         // veil 子视图盖住，但 veil 揭开动画会在引导层下空跑；现改为 veil 优先：
         // veil 仍在时由 removeLaunchVeil 完成时触发自动引导，veil 已不在时
-        // （已播过／4 秒兜底已清）直接触发。
+        // （已播过／兜底已清）直接触发。
         runLaunchVeilIfNeeded()
         if launchVeilView == nil {
             maybePresentOnboardingOnFirstLaunch()
@@ -1041,16 +1048,31 @@ final class BearyChromeViewController: UIViewController {
             veil.trailingAnchor.constraint(equalTo: view.trailingAnchor),
             veil.bottomAnchor.constraint(equalTo: view.bottomAnchor),
         ])
-        // 标语宽度：屏宽 - 64、上限 360（Lottie 画布 2135×360 等比缩放居中）。
+        // 标语宽度（107 修复，按屏宽分档，不再 360 一刀切）：
+        // 旧口径 min(max(W-64,200),360) 在手机上根本碰不到上限（390-64=326），
+        // 在 iPad/大屏上反而把标语压成屏宽三成；且停留帧图是 1920×1080 全幅渲染
+        // （墨迹占图宽 89.9%、图高仅 18.1%），以 aspectFit 塞进 2135×360 画布框时
+        // 按高适配只剩约 1/3 宽——390 屏上墨迹只剩约 88×10pt，这就是 107 真机
+        // “一行很小的细线字”的确定性来源之一（静帧路径）。
+        // 新口径：手机档屏宽 - 40；大屏档屏宽 × 0.72、上限 880；高恒按画布比走。
+        // 例：390→350×59.0（墨迹约 331×36、线宽约 1.8pt）；430→390×65.8；
+        // 820→590×99.6（墨迹约 558×61、线宽约 3.0pt）；1180→850×143.3
+        // （墨迹约 803×88、线宽约 4.4pt）。线宽由资产笔宽（10.5–11/2135）定，
+        // 手机档线宽仍约 1.8pt——若仍嫌细，须改资产笔宽，尺寸档解决不了。
         let baseWidth = view.bounds.width > 0 ? view.bounds.width : UIScreen.main.bounds.width
-        let sloganWidth = min(max(baseWidth - 64, 200), 360)
+        let sloganWidth: CGFloat = baseWidth <= 500 ? max(baseWidth - 40, 260) : min(baseWidth * 0.72, 880)
         let sloganHeight = sloganWidth * 360 / 2135
         let dark = traitCollection.userInterfaceStyle == .dark
         let slogan: UIView
         if UIAccessibility.isReduceMotionEnabled {
             // 减动效：不播 Lottie，直接挂停留帧 53 静帧（不是末帧 89，末帧是空白）。
+            // 107 修复：静帧图改 aspectFill + 裁边——图高方向上下空白带被裁掉，
+            // 墨迹竖向中心（图高 49.3%）落在框中心附近、墨迹竖向区间（图高
+            // 40.3%–58.4%）完全落在可视带内，墨迹宽度回到约 90% 框宽，与 Lottie
+            // 路径（墨迹占画布宽 94.5%）基本对齐；旧 aspectFit 是静帧变小的根因。
             let imageView = UIImageView(image: Self.sloganHoldImage(dark: dark))
-            imageView.contentMode = .scaleAspectFit
+            imageView.contentMode = .scaleAspectFill
+            imageView.clipsToBounds = true
             slogan = imageView
         } else if let animation = Self.sloganAnimation(dark: dark) {
             let animationView = LottieAnimationView(animation: animation)
@@ -1060,8 +1082,13 @@ final class BearyChromeViewController: UIViewController {
             slogan = animationView
         } else {
             // Lottie 解析失败兜底：仍只出文字静帧（帧 53），绝不回落熊图、不留空白 veil。
+            // 107 修复：同减动效路径改 aspectFill + 裁边（旧 aspectFit 下静帧墨迹
+            // 仅约 88×10pt）；另记一行反馈日志，解析失败不再静默（见 run 侧 1.2s
+            // 停留——静帧不再 0.4s 一闪而过）。
+            BearyAppLog.event("launch veil lottie parse failed")
             let imageView = UIImageView(image: Self.sloganHoldImage(dark: dark))
-            imageView.contentMode = .scaleAspectFit
+            imageView.contentMode = .scaleAspectFill
+            imageView.clipsToBounds = true
             slogan = imageView
         }
         slogan.isUserInteractionEnabled = false
@@ -1082,11 +1109,17 @@ final class BearyChromeViewController: UIViewController {
         launchVeilView = veil
         launchVeilSloganView = slogan
         view.bringSubviewToFront(veil)
-        // 6 秒兜底：v3 全长约 2.97s + veil 淡出 0.4s ≈ 3.37s，旧 4 秒兜底
-        // 若 viewDidAppear 稍迟就会把动画拦腰截断；6 秒既盖住正常链又防卡死。
-        DispatchQueue.main.asyncAfter(deadline: .now() + 6) { [weak self] in
-            self?.removeLaunchVeil()
+        // 107 修复：删掉 install 时起算的 6 秒绝对兜底——它按 viewDidLoad 计时，
+        // 若 viewDidAppear 来得稍迟就会在动画中途清 veil（旧 4 秒截断的前科即
+        // 如此）。正常兜底改由 run 里按起播时刻 + 动画时长建（见
+        // runLaunchVeilIfNeeded）；此处只留一道 10 秒最后一道兜底，且仅当起播
+        // 从未发生（viewDidAppear 始终没来）时才清 veil，绝不截断进行中的动画。
+        let lastResort = DispatchWorkItem { [weak self] in
+            guard let self = self, !self.launchVeilPlayed else { return }
+            self.removeLaunchVeil()
         }
+        launchVeilLastResort = lastResort
+        DispatchQueue.main.asyncAfter(deadline: .now() + 10, execute: lastResort)
     }
 
     /// 标语 Lottie：深浅两版分别取 keep_v3_dark / keep_v3_light。
@@ -1115,24 +1148,51 @@ final class BearyChromeViewController: UIViewController {
     private func runLaunchVeilIfNeeded() {
         guard launchVeilPlayed == false, launchVeilView != nil, launchVeilSloganView != nil else { return }
         launchVeilPlayed = true
+        // 起播已发生，install 侧 10 秒最后一道兜底不再需要（其自身亦有
+        // !launchVeilPlayed 守卫，此处取消只是不再留悬空任务）。
+        launchVeilLastResort?.cancel()
+        launchVeilLastResort = nil
         view.layoutIfNeeded()
+        // 107 修复：起播时刻把 veil 重新提至最前——install 与 appear 之间若有
+        // 懒建页 view 后加入（深链切页等），整页 view 会盖住 veil 使动画在
+        // 不可见处空播；起播点重提一次封住这个口子（栏是小件，不受影响）。
+        if let veil = launchVeilView { view.bringSubviewToFront(veil) }
         if UIAccessibility.isReduceMotionEnabled {
             removeLaunchVeil()
             return
         }
         guard let animationView = launchVeilSloganAnimation, let animation = animationView.animation else {
-            // Lottie 兜底静帧路径：短暂停留后走同一淡出揭开，避免静帧 veil 久留。
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { [weak self] in
+            // Lottie 兜底静帧路径：107 修复——旧 0.4s 停留使静帧一闪而过，
+            // 解析失败时用户只看到一闪的细线（且旧尺寸下本就极小），极易被
+            // 读成“没有动画”；改 1.2s 停留后走同一淡出揭开，静帧本身是可见
+            // 的标语而非一闪而过的残影。
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) { [weak self] in
                 guard let self = self, let veil = self.launchVeilView else { return }
                 self.revealHomeWithLaunchVeil(veil: veil)
             }
             return
         }
+        // 107 修复：起播显式归零 + 1 倍速 + 从动画首帧播起（旧代码只传了
+        // fromFrame: 0，未显式复位 currentFrame/速度；任一残留态都会让
+        // 逐笔描出从中断帧开始或以非 1 倍速跑完，用户侧即“没看到描出”）。
+        // 另建起播相对兜底：动画时长 + 0.4s 淡出 + 1.0s 余量，到时 veil
+        // 仍在且未在揭开中才补揭开——完成回调丢失/渲染卡住时 veil 不会
+        // 久留；正常播完则完成回调先揭开，兜底因 veil 已空/揭开中而 no-op。
+        animationView.currentFrame = animation.startFrame
+        animationView.animationSpeed = 1
+        let startFrame = animation.startFrame
         let endFrame = animation.endFrame
-        animationView.play(fromFrame: 0, toFrame: endFrame, loopMode: .playOnce) { [weak self] _ in
+        let playDuration = max((endFrame - startFrame) / CGFloat(animation.framerate), 0)
+        animationView.play(fromFrame: startFrame, toFrame: endFrame, loopMode: .playOnce) { [weak self] _ in
             guard let self = self, let veil = self.launchVeilView else { return }
             self.revealHomeWithLaunchVeil(veil: veil)
         }
+        let timeout = DispatchWorkItem { [weak self] in
+            guard let self = self, let veil = self.launchVeilView, !self.launchVeilRevealing else { return }
+            self.revealHomeWithLaunchVeil(veil: veil)
+        }
+        launchVeilPlayTimeout = timeout
+        DispatchQueue.main.asyncAfter(deadline: .now() + playDuration + 1.4, execute: timeout)
     }
 
     /// 审计第二阶段推荐 A：veil 原地淡出 0.4s＋主页首次揭开错峰。
@@ -1144,6 +1204,9 @@ final class BearyChromeViewController: UIViewController {
     /// 接线收敛在本文件内：Feed 的 tableView 为私有，不改 Feed 渲染链路，
     /// 只在 feedVC 视图子树里找 UITableView、取其 visibleCells 快照。
     private func revealHomeWithLaunchVeil(veil: UIView) {
+        // 107 修复：起播完成回调与起播相对兜底只揭开一次（见 launchVeilRevealing）。
+        guard !launchVeilRevealing else { return }
+        launchVeilRevealing = true
         var cards: [UIView] = []
         if let feedView = feedVC?.view, let table = findTableView(in: feedView) {
             cards = table.visibleCells.compactMap { $0 as? BearyDiaryCardCell }
@@ -1177,6 +1240,13 @@ final class BearyChromeViewController: UIViewController {
     }
 
     private func removeLaunchVeil() {
+        // 107 修复：清 veil 时一并取消两路兜底任务，防悬空任务在 veil 已空后
+        // 又触发一次揭开/清场（remove 本身幂等，但悬空任务无谓且难查）。
+        launchVeilPlayTimeout?.cancel()
+        launchVeilPlayTimeout = nil
+        launchVeilLastResort?.cancel()
+        launchVeilLastResort = nil
+        launchVeilRevealing = false
         let wasPresent = launchVeilView != nil
         launchVeilView?.removeFromSuperview()
         launchVeilView = nil
@@ -1191,7 +1261,7 @@ final class BearyChromeViewController: UIViewController {
             launchVeilHomeEntryPlayed = true
             BearySoundPlayer.play(.homeEntry)
         }
-        // veil 完成点（正常揭开／减动效／6 秒兜底三路汇合）：viewDidAppear 里因
+        // veil 完成点（正常揭开／减动效／兜底三路汇合）：viewDidAppear 里因
         // veil 仍在而未触发的自动引导，在此补触发；重复调用由
         // tutorialAutoPresented 守卫挡下。
         maybePresentOnboardingOnFirstLaunch()
