@@ -1167,6 +1167,150 @@ class BearyProfileViewController: UIViewController {
 
     /// 随机漫步卡：点卡片进详情；「换一篇」只换卡片不跳转（官方 shuffle
     /// 图标左侧 16pt + 文字，不用 icon_refresh 顶替）。
+    /// 过去的自己对话（不新开页）：送达卡在模块栈顶，那年今日卡内留话区在卡内。
+    /// 仅本人可见（isOwnProfile 门控）；游客 / 他人页整组隐藏，绝不渲染内容。
+    private let pastSelfDeliveryCard = BearyProfilePersonalModulesCard(title: "去年的对话")
+    private let pastSelfDeliveryStack: UIStackView = {
+        let stackValue = UIStackView()
+        stackValue.translatesAutoresizingMaskIntoConstraints = false
+        stackValue.axis = .vertical
+        stackValue.spacing = 16
+        return stackValue
+    }()
+    private let pastSelfThisDaySection: UIStackView = {
+        let stackValue = UIStackView()
+        stackValue.translatesAutoresizingMaskIntoConstraints = false
+        stackValue.axis = .vertical
+        stackValue.spacing = 10
+        stackValue.isHidden = true
+        return stackValue
+    }()
+    private let pastSelfEntryIconView = PastSelfIconView(imagesetName: "icon_past_present", pointSize: 20)
+    private lazy var pastSelfEntryButton: UIButton = {
+        let buttonValue = UIButton(type: .system)
+        buttonValue.translatesAutoresizingMaskIntoConstraints = false
+        buttonValue.setTitle("给一年前的自己留一句话", for: .normal)
+        buttonValue.setTitleColor(BearyColors.orange, for: .normal)
+        buttonValue.titleLabel?.font = UIFont.systemFont(ofSize: 14, weight: .bold)
+        buttonValue.contentHorizontalAlignment = .leading
+        buttonValue.addTarget(self, action: #selector(pastSelfEntryTapped), for: .touchUpInside)
+        buttonValue.bearyAddPressFeedback()
+        return buttonValue
+    }()
+    private let pastSelfEntryRow: UIStackView = {
+        let stackValue = UIStackView()
+        stackValue.translatesAutoresizingMaskIntoConstraints = false
+        stackValue.axis = .horizontal
+        stackValue.spacing = 8
+        stackValue.alignment = .center
+        stackValue.isHidden = true
+        return stackValue
+    }()
+    private let pastSelfComposeView = PastSelfComposeView(placeholder: "写给一年前的自己，不经过 AI，全是你自己的话…")
+    private let pastSelfComposeHintLabel: UILabel = {
+        let labelValue = UILabel()
+        labelValue.translatesAutoresizingMaskIntoConstraints = false
+        labelValue.font = UIFont.systemFont(ofSize: 12)
+        labelValue.textColor = BearyColors.gray
+        labelValue.numberOfLines = 0
+        return labelValue
+    }()
+    private lazy var pastSelfComposeSubmitButton: UIButton = {
+        let buttonValue = UIButton(type: .system)
+        buttonValue.translatesAutoresizingMaskIntoConstraints = false
+        buttonValue.setTitle("留给明年的自己", for: .normal)
+        buttonValue.setTitleColor(.black, for: .normal)
+        buttonValue.titleLabel?.font = UIFont.systemFont(ofSize: 14, weight: .bold)
+        buttonValue.backgroundColor = BearyColors.orange
+        buttonValue.layer.cornerRadius = 10
+        buttonValue.clipsToBounds = true
+        buttonValue.addTarget(self, action: #selector(pastSelfComposeSubmitTapped), for: .touchUpInside)
+        buttonValue.bearyAddPressFeedback()
+        return buttonValue
+    }()
+    private lazy var pastSelfComposeCancelButton: UIButton = {
+        let buttonValue = UIButton(type: .system)
+        buttonValue.translatesAutoresizingMaskIntoConstraints = false
+        buttonValue.setTitle("取消", for: .normal)
+        buttonValue.setTitleColor(BearyColors.ink, for: .normal)
+        buttonValue.titleLabel?.font = UIFont.systemFont(ofSize: 14, weight: .bold)
+        buttonValue.backgroundColor = BearyColors.faint
+        buttonValue.layer.cornerRadius = 10
+        buttonValue.clipsToBounds = true
+        buttonValue.addTarget(self, action: #selector(pastSelfComposeCancelTapped), for: .touchUpInside)
+        buttonValue.bearyAddPressFeedback()
+        return buttonValue
+    }()
+    private let pastSelfComposeButtonsRow: UIStackView = {
+        let stackValue = UIStackView()
+        stackValue.translatesAutoresizingMaskIntoConstraints = false
+        stackValue.axis = .horizontal
+        stackValue.spacing = 10
+        return stackValue
+    }()
+    private let pastSelfComposeSection: UIStackView = {
+        let stackValue = UIStackView()
+        stackValue.translatesAutoresizingMaskIntoConstraints = false
+        stackValue.axis = .vertical
+        stackValue.spacing = 8
+        stackValue.isHidden = true
+        return stackValue
+    }()
+    private let pastSelfWaitingStatusLabel: UILabel = {
+        let labelValue = UILabel()
+        labelValue.translatesAutoresizingMaskIntoConstraints = false
+        labelValue.font = UIFont.systemFont(ofSize: 14, weight: .bold)
+        labelValue.textColor = BearyColors.orange
+        return labelValue
+    }()
+    private let pastSelfWaitingBodyLabel: UILabel = {
+        let labelValue = UILabel()
+        labelValue.translatesAutoresizingMaskIntoConstraints = false
+        labelValue.font = UIFont.systemFont(ofSize: 14)
+        labelValue.textColor = BearyColors.ink
+        labelValue.numberOfLines = 0
+        return labelValue
+    }()
+    private lazy var pastSelfRevokeButton: UIButton = {
+        let buttonValue = UIButton(type: .system)
+        buttonValue.translatesAutoresizingMaskIntoConstraints = false
+        buttonValue.setTitle("撤回这句话", for: .normal)
+        buttonValue.setTitleColor(BearyColors.ink, for: .normal)
+        buttonValue.titleLabel?.font = UIFont.systemFont(ofSize: 14, weight: .bold)
+        buttonValue.backgroundColor = BearyColors.faint
+        buttonValue.layer.cornerRadius = 10
+        buttonValue.clipsToBounds = true
+        buttonValue.addTarget(self, action: #selector(pastSelfRevokeTapped), for: .touchUpInside)
+        buttonValue.bearyAddPressFeedback()
+        return buttonValue
+    }()
+    private let pastSelfWaitingSection: UIStackView = {
+        let stackValue = UIStackView()
+        stackValue.translatesAutoresizingMaskIntoConstraints = false
+        stackValue.axis = .vertical
+        stackValue.spacing = 8
+        stackValue.isHidden = true
+        return stackValue
+    }()
+    private let pastSelfDueNoteLabel: UILabel = {
+        let labelValue = UILabel()
+        labelValue.translatesAutoresizingMaskIntoConstraints = false
+        labelValue.font = UIFont.systemFont(ofSize: 13)
+        labelValue.textColor = BearyColors.gray
+        labelValue.numberOfLines = 0
+        labelValue.isHidden = true
+        return labelValue
+    }()
+    /// 那年今日卡内是否正展开留话输入（切账号 / 换目标时复位，防草稿串到新目标）。
+    private var pastSelfComposingThisDay = false
+    private var pastSelfThisDayDraft = ""
+    private var pastSelfThisDayDeliverOn = ""
+    /// 送达卡内正在「再回一句」的链 id（nil = 无展开）；草稿按链 id 存，防多串互串。
+    private var pastSelfReplyingChainId: String?
+    private var pastSelfReplyDrafts: [String: String] = [:]
+
+    /// 随机漫步卡：点卡片进详情；「换一篇」只换卡片不跳转（文字按钮——
+    /// 洗牌图标官方包缺失，见本批缺图标清单，不用 icon_refresh 顶替）。
     private let randomCard = BearyProfilePersonalModulesCard(title: "随机漫步")
     private let randomMetaLabel = BearyProfilePersonalModulesCard.metaLabel()
     private let randomTitleLabel = BearyProfilePersonalModulesCard.entryTitleLabel()
@@ -3406,6 +3550,34 @@ class BearyProfileViewController: UIViewController {
         thisDayCard.contentStack.addArrangedSubview(thisDayContentStack)
         thisDayCard.contentStack.addArrangedSubview(thisDayExpandButton)
         thisDayCard.contentStack.addArrangedSubview(thisDayExpandStack)
+        // —— 过去的自己对话（卡内留话区；仅本人渲染，见 renderPastSelf）：
+        // 入口行 + 输入区 + 已留话态 + 送达提示，四态互斥，由 renderPastSelf 开关。
+        pastSelfEntryRow.addArrangedSubview(pastSelfEntryIconView)
+        pastSelfEntryRow.addArrangedSubview(pastSelfEntryButton)
+        pastSelfComposeButtonsRow.addArrangedSubview(pastSelfComposeSubmitButton)
+        pastSelfComposeButtonsRow.addArrangedSubview(pastSelfComposeCancelButton)
+        pastSelfComposeSection.addArrangedSubview(pastSelfComposeView)
+        pastSelfComposeSection.addArrangedSubview(pastSelfComposeHintLabel)
+        pastSelfComposeSection.addArrangedSubview(pastSelfComposeButtonsRow)
+        pastSelfWaitingSection.addArrangedSubview(pastSelfWaitingStatusLabel)
+        pastSelfWaitingSection.addArrangedSubview(pastSelfWaitingBodyLabel)
+        pastSelfWaitingSection.addArrangedSubview(pastSelfRevokeButton)
+        pastSelfThisDaySection.addArrangedSubview(pastSelfEntryRow)
+        pastSelfThisDaySection.addArrangedSubview(pastSelfComposeSection)
+        pastSelfThisDaySection.addArrangedSubview(pastSelfWaitingSection)
+        pastSelfThisDaySection.addArrangedSubview(pastSelfDueNoteLabel)
+        thisDayCard.contentStack.addArrangedSubview(pastSelfThisDaySection)
+        NSLayoutConstraint.activate([
+            pastSelfComposeSubmitButton.heightAnchor.constraint(equalToConstant: 44),
+            pastSelfComposeCancelButton.heightAnchor.constraint(equalToConstant: 44),
+            pastSelfRevokeButton.heightAnchor.constraint(equalToConstant: 44),
+        ])
+        pastSelfComposeView.onTextChange = { [weak self] text in
+            self?.pastSelfThisDayDraft = text
+        }
+
+        // —— 过去的自己对话（送达卡；模块栈顶，见 renderPastSelfDelivery）。
+        pastSelfDeliveryCard.contentStack.addArrangedSubview(pastSelfDeliveryStack)
         NSLayoutConstraint.activate([
             thisDayExpandButton.heightAnchor.constraint(greaterThanOrEqualToConstant: 32),
         ])
@@ -3429,6 +3601,7 @@ class BearyProfileViewController: UIViewController {
             yearOpenButton.heightAnchor.constraint(greaterThanOrEqualToConstant: 44),
         ])
 
+        modulesStack.addArrangedSubview(pastSelfDeliveryCard)
         modulesStack.addArrangedSubview(calendarCard)
         modulesStack.addArrangedSubview(statsCard)
         modulesStack.addArrangedSubview(thisDayCard)
@@ -3547,6 +3720,10 @@ class BearyProfileViewController: UIViewController {
             currentWalkEntry = nil
             lastWalkId = nil
             thisDayExpanded = false
+            pastSelfComposingThisDay = false
+            pastSelfThisDayDraft = ""
+            pastSelfReplyingChainId = nil
+            pastSelfReplyDrafts = [:]
             let now = Date()
             calendarDisplayYear = Calendar.current.component(.year, from: now)
             calendarDisplayMonth = Calendar.current.component(.month, from: now)
@@ -3580,6 +3757,7 @@ class BearyProfileViewController: UIViewController {
                         strongSelf.modulesCorpus = merged
                         strongSelf.modulesCorpusComplete = true
                         strongSelf.renderModules()
+                        strongSelf.pastSelfSyncFromServer(generation: generation)
                     } else if let last = fresh.last, let lastCreatedAt = last.createdAt, let lastId = last.id {
                         strongSelf.loadModulesPage(before: lastCreatedAt, beforeId: lastId, accumulated: merged, generation: generation)
                     } else {
@@ -3588,6 +3766,7 @@ class BearyProfileViewController: UIViewController {
                         strongSelf.modulesCorpus = merged
                         strongSelf.modulesCorpusComplete = true
                         strongSelf.renderModules()
+                        strongSelf.pastSelfSyncFromServer(generation: generation)
                     }
                 case .failure:
                     // 失败保留旧语料：旧语料到齐过则继续显示旧聚合（不闪空），
@@ -3610,9 +3789,10 @@ class BearyProfileViewController: UIViewController {
         renderCalendar(visible: visible)
         renderStats(visible: visible)
         renderThisDay(visible: visible)
+        renderPastSelf(visible: visible)
         renderRandom(visible: visible)
         renderYear(visible: visible)
-        let anyVisible = [calendarCard, statsCard, thisDayCard, randomCard, yearCard].contains { !$0.isHidden }
+        let anyVisible = [pastSelfDeliveryCard, calendarCard, statsCard, thisDayCard, randomCard, yearCard].contains { !$0.isHidden }
         modulesContainer.isHidden = !anyVisible
         modulesHeightConstraint.isActive = !anyVisible
         if headerWidthValue > 0 {
@@ -3946,6 +4126,522 @@ class BearyProfileViewController: UIViewController {
             }
             thisDayExpandStack.isHidden = !thisDayExpanded
         }
+    }
+
+    // MARK: 批 D —— 与过去的自己对话（不新开页，不走 AI）
+    //
+    // 两处 UI，同一存储（PastSelfStore，按 viewer 用户 id 隔离）：
+    // - 那年今日卡内：入口 / 输入 / 已留话 / 撤回 / 送达提示（仅本人、仅主显篇在时）。
+    // - 模块栈顶送达卡：明年同一天并排推送（左原篇、右留话）+ 「再回一句」成年份链。
+    // 送达只由留话驱动：无留话不推；送达日未打开不丢（deliverOn <= 今天即送达态，
+    // 直到「再回一句」才进入下一年的等待态）。原篇删除 / 私密翻转不删存储行，
+    // 可见性每渲染重算（见 PastSelfVisibility），回收站恢复后串自动重现。
+
+    private func pastSelfStore() -> PastSelfStore? {
+        guard let userId = viewerUserIdValue ?? SessionManager.shared.currentUser?.id else { return nil }
+        return PastSelfStore(userId: userId)
+    }
+
+    private func pastSelfToday() -> String {
+        PastSelfLogic.localDateString(from: Date(), calendar: .current)
+    }
+
+    private func pastSelfNowMs() -> Int {
+        Int(Date().timeIntervalSince1970 * 1000)
+    }
+
+    private func pastSelfDisplayDate(_ yyyyMMdd: String) -> String {
+        let parts = yyyyMMdd.split(separator: "-")
+        guard parts.count == 3,
+              let month = Int(parts[1]), let day = Int(parts[2]) else { return yyyyMMdd }
+        return "\(parts[0]) 年 \(month) 月 \(day) 日"
+    }
+
+    private func pastSelfDisplayMonthDay(_ yyyyMMdd: String) -> String {
+        let parts = yyyyMMdd.split(separator: "-")
+        guard parts.count == 3,
+              let month = Int(parts[1]), let day = Int(parts[2]) else { return yyyyMMdd }
+        return "\(month) 月 \(day) 日"
+    }
+
+    private func pastSelfRefreshLayout() {
+        if headerWidthValue > 0 { layoutHeaderForced(widthValue: headerWidthValue) }
+    }
+
+    private func pastSelfDenyShake(_ view: UIView) {
+        guard !UIAccessibility.isReduceMotionEnabled else { return }
+        let shake = CAKeyframeAnimation(keyPath: "transform.translation.x")
+        shake.values = [0, -8, 8, -5, 5, 0]
+        shake.keyTimes = [0, 0.2, 0.4, 0.6, 0.8, 1]
+        shake.duration = 0.4
+        view.layer.add(shake, forKey: "pastSelfDenyShake")
+    }
+
+    private func pastSelfVisibleEntries() -> [Entry] {
+        BearyProfilePersonalLogic.visibleEntries(modulesCorpus, isOwn: isOwnProfile)
+    }
+
+    private func renderPastSelf(visible: [Entry]) {
+        guard modulesCorpusComplete, isOwnProfile, pastSelfStore() != nil else {
+            pastSelfDeliveryCard.isHidden = true
+            pastSelfThisDaySection.isHidden = true
+            return
+        }
+        renderPastSelfThisDay(visible: visible)
+        renderPastSelfDelivery(visible: visible)
+    }
+
+    private func renderPastSelfThisDay(visible: [Entry]) {
+        pastSelfEntryRow.isHidden = true
+        pastSelfComposeSection.isHidden = true
+        pastSelfWaitingSection.isHidden = true
+        pastSelfDueNoteLabel.isHidden = true
+        // 无主显篇 = 往年今天没写：不留入口、不硬推（一年没写不推的客户端一侧）。
+        guard let main = thisDayMainEntry, let mainId = main.id, !mainId.isEmpty,
+              let store = pastSelfStore() else {
+            pastSelfThisDaySection.isHidden = true
+            return
+        }
+        pastSelfThisDaySection.isHidden = false
+        let all = store.loadAll()
+        let today = pastSelfToday()
+        switch PastSelfLogic.threadState(all, chainId: mainId, today: today) {
+        case .none:
+            if pastSelfComposingThisDay {
+                pastSelfComposeSection.isHidden = false
+                pastSelfComposeView.text = pastSelfThisDayDraft
+                pastSelfComposeHintLabel.text = "将于明年同一天（\(pastSelfDisplayDate(pastSelfThisDayDeliverOn))）与这篇原篇并排推送给你。未到那天前仅你可见。"
+            } else {
+                pastSelfEntryRow.isHidden = false
+            }
+        case .waiting(let message):
+            pastSelfWaitingSection.isHidden = false
+            pastSelfWaitingStatusLabel.text = "✓ 已留话 · 明年 \(pastSelfDisplayMonthDay(message.deliverOn))见"
+            pastSelfWaitingBodyLabel.text = message.body
+        case .due:
+            pastSelfDueNoteLabel.isHidden = false
+            pastSelfDueNoteLabel.text = "对话已送达，见上方「去年的对话」"
+        case .answered(let waiting, _):
+            pastSelfDueNoteLabel.isHidden = false
+            pastSelfDueNoteLabel.text = "已回一句 · 明年 \(pastSelfDisplayMonthDay(waiting.deliverOn))再见，见上方「去年的对话」"
+        }
+        pastSelfRefreshLayout()
+    }
+
+    @objc private func pastSelfEntryTapped() {
+        guard thisDayMainEntry?.id != nil, pastSelfStore() != nil else { return }
+        guard let deliverOn = PastSelfLogic.nextYearDateString(fromMs: pastSelfNowMs(), calendar: .current) else {
+            BearyToast.show(in: view, message: "日期算不出来，换一天再试")
+            return
+        }
+        pastSelfThisDayDeliverOn = deliverOn
+        pastSelfThisDayDraft = ""
+        pastSelfComposingThisDay = true
+        renderPastSelf(visible: pastSelfVisibleEntries())
+    }
+
+    @objc private func pastSelfComposeCancelTapped() {
+        pastSelfComposingThisDay = false
+        pastSelfThisDayDraft = ""
+        renderPastSelf(visible: pastSelfVisibleEntries())
+    }
+
+    @objc private func pastSelfComposeSubmitTapped() {
+        guard let main = thisDayMainEntry, let mainId = main.id, let store = pastSelfStore() else { return }
+        let text = pastSelfComposeView.text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty else {
+            BearyHaptics.rejectionWarning()
+            pastSelfDenyShake(pastSelfComposeSubmitButton)
+            BearyToast.show(in: view, message: "先写一句话")
+            return
+        }
+        guard text.count <= PastSelfLogic.maxBodyLength else {
+            BearyHaptics.rejectionWarning()
+            pastSelfDenyShake(pastSelfComposeSubmitButton)
+            BearyToast.show(in: view, message: "一句话最多 \(PastSelfLogic.maxBodyLength) 字")
+            return
+        }
+        guard let message = store.add(originEntryId: mainId, body: text, createdAtMs: pastSelfNowMs(), calendar: .current) else {
+            BearyToast.show(in: view, message: "这篇已留过话，明年见")
+            pastSelfComposingThisDay = false
+            renderPastSelf(visible: pastSelfVisibleEntries())
+            return
+        }
+        pastSelfComposingThisDay = false
+        pastSelfThisDayDraft = ""
+        pastSelfPushCreate(message)
+        BearyHaptics.publishSuccess()
+        BearyToast.show(in: view, message: "已留给明年的自己")
+        renderPastSelf(visible: pastSelfVisibleEntries())
+    }
+
+    @objc private func pastSelfRevokeTapped() {
+        guard let main = thisDayMainEntry, let mainId = main.id, let store = pastSelfStore() else { return }
+        let today = pastSelfToday()
+        guard let waiting = PastSelfLogic.waitingMessage(store.loadAll(), chainId: mainId, today: today) else {
+            renderPastSelf(visible: pastSelfVisibleEntries())
+            return
+        }
+        if store.revoke(messageId: waiting.id, nowMs: pastSelfNowMs(), today: today) {
+            pastSelfPushRevoke(waiting.id)
+            BearyToast.show(in: view, message: "已撤回")
+        } else {
+            BearyToast.show(in: view, message: "这句话已送达，撤回不了了")
+        }
+        renderPastSelf(visible: pastSelfVisibleEntries())
+    }
+
+    private func renderPastSelfDelivery(visible: [Entry]) {
+        for arrangedView in pastSelfDeliveryStack.arrangedSubviews {
+            pastSelfDeliveryStack.removeArrangedSubview(arrangedView)
+            arrangedView.removeFromSuperview()
+        }
+        guard let store = pastSelfStore() else {
+            pastSelfDeliveryCard.isHidden = true
+            return
+        }
+        let all = store.loadAll()
+        let today = pastSelfToday()
+        var chainIds: [String] = []
+        for message in all where !chainIds.contains(message.chainId) {
+            chainIds.append(message.chainId)
+        }
+        var sections: [UIView] = []
+        for chainId in chainIds {
+            let state = PastSelfLogic.threadState(all, chainId: chainId, today: today)
+            let messages: [PastSelfMessage]
+            let isAnswered: Bool
+            let waiting: PastSelfMessage?
+            switch state {
+            case .due(let chainMessages, _):
+                messages = chainMessages
+                isAnswered = false
+                waiting = nil
+            case .answered(let waitingMessage, let chainMessages):
+                messages = chainMessages
+                isAnswered = true
+                waiting = waitingMessage
+            case .none, .waiting:
+                continue
+            }
+            // 送达卡只放已送达过的串；纯等待串只在那年今日卡内出现。
+            let delivered = messages.filter { PastSelfLogic.isDue(deliverOn: $0.deliverOn, today: today) }
+            guard let latestDelivered = delivered.last else { continue }
+            // 原篇在到齐语料里找不到 = 已删（占位态，不渲染任何正文与留话）。
+            let origin = visible.first { $0.id == chainId }
+            let visibility = PastSelfVisibility.viewerVisibility(origin: origin, viewerIsAuthor: true, corpusComplete: true) ?? .deleted
+            sections.append(pastSelfDeliverySection(
+                chainId: chainId, messages: messages, latestDelivered: latestDelivered,
+                origin: origin, visibility: visibility, isAnswered: isAnswered, waiting: waiting))
+        }
+        for section in sections {
+            pastSelfDeliveryStack.addArrangedSubview(section)
+        }
+        pastSelfDeliveryCard.isHidden = sections.isEmpty
+        pastSelfRefreshLayout()
+    }
+
+    private func pastSelfSideColumn(title: String, body: String, barColor: UIColor) -> UIView {
+        let container = UIView()
+        container.translatesAutoresizingMaskIntoConstraints = false
+        container.backgroundColor = BearyColors.faint
+        container.layer.cornerRadius = 12
+        container.clipsToBounds = true
+        let bar = UIView()
+        bar.translatesAutoresizingMaskIntoConstraints = false
+        bar.backgroundColor = barColor
+        container.addSubview(bar)
+        let stack = UIStackView()
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        stack.axis = .vertical
+        stack.spacing = 6
+        let titleLabel = UILabel()
+        titleLabel.translatesAutoresizingMaskIntoConstraints = false
+        titleLabel.font = UIFont.systemFont(ofSize: 11)
+        titleLabel.textColor = BearyColors.gray
+        titleLabel.text = title
+        let bodyLabel = UILabel()
+        bodyLabel.translatesAutoresizingMaskIntoConstraints = false
+        bodyLabel.font = UIFont.systemFont(ofSize: 13)
+        bodyLabel.textColor = BearyColors.ink
+        bodyLabel.numberOfLines = 0
+        bodyLabel.text = body
+        stack.addArrangedSubview(titleLabel)
+        stack.addArrangedSubview(bodyLabel)
+        container.addSubview(stack)
+        NSLayoutConstraint.activate([
+            bar.topAnchor.constraint(equalTo: container.topAnchor),
+            bar.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+            bar.bottomAnchor.constraint(equalTo: container.bottomAnchor),
+            bar.widthAnchor.constraint(equalToConstant: 3),
+            stack.topAnchor.constraint(equalTo: container.topAnchor, constant: 10),
+            stack.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 12),
+            stack.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -10),
+            stack.bottomAnchor.constraint(equalTo: container.bottomAnchor, constant: -10),
+        ])
+        return container
+    }
+
+    private func pastSelfMetaLabel() -> UILabel {
+        let labelValue = UILabel()
+        labelValue.translatesAutoresizingMaskIntoConstraints = false
+        labelValue.font = UIFont.systemFont(ofSize: 12)
+        labelValue.textColor = BearyColors.gray
+        labelValue.numberOfLines = 0
+        return labelValue
+    }
+
+    private func pastSelfDeliverySection(chainId: String, messages: [PastSelfMessage], latestDelivered: PastSelfMessage, origin: Entry?, visibility: PastSelfContentVisibility, isAnswered: Bool, waiting: PastSelfMessage?) -> UIView {
+        let section = UIStackView()
+        section.translatesAutoresizingMaskIntoConstraints = false
+        section.axis = .vertical
+        section.spacing = 10
+        // 推送头：compare 图标（待注册时为占位标注）+ 送达日期。
+        let headerRow = UIStackView()
+        headerRow.translatesAutoresizingMaskIntoConstraints = false
+        headerRow.axis = .horizontal
+        headerRow.spacing = 8
+        headerRow.alignment = .center
+        headerRow.addArrangedSubview(PastSelfIconView(imagesetName: "icon_compare", pointSize: 20))
+        let headerLabel = pastSelfMetaLabel()
+        headerLabel.text = "\(pastSelfDisplayDate(latestDelivered.deliverOn)) · 一年前的对话回来了"
+        headerRow.addArrangedSubview(headerLabel)
+        section.addArrangedSubview(headerRow)
+        // 原篇已删：整节只留占位，不渲染原篇正文与留话内容（存储行保留，
+        // 回收站恢复后原篇重回语料，串自动重现）。
+        if visibility == .deleted {
+            let deletedRow = UIStackView()
+            deletedRow.translatesAutoresizingMaskIntoConstraints = false
+            deletedRow.axis = .horizontal
+            deletedRow.spacing = 8
+            deletedRow.alignment = .center
+            let trashView = UIImageView(image: BearyIconImages.image(named: "icon_trash", pointSize: 20))
+            trashView.translatesAutoresizingMaskIntoConstraints = false
+            trashView.tintColor = BearyColors.gray
+            deletedRow.addArrangedSubview(trashView)
+            let deletedLabel = UILabel()
+            deletedLabel.translatesAutoresizingMaskIntoConstraints = false
+            deletedLabel.font = UIFont.systemFont(ofSize: 14, weight: .bold)
+            deletedLabel.textColor = BearyColors.ink
+            deletedLabel.text = "原篇已删除"
+            deletedRow.addArrangedSubview(deletedLabel)
+            section.addArrangedSubview(deletedRow)
+            let deletedNote = pastSelfMetaLabel()
+            deletedNote.text = "对话记录已一并隐藏，不残留正文；原篇从回收站恢复后，对话会再次出现。"
+            section.addArrangedSubview(deletedNote)
+            return section
+        }
+        // 原篇翻回私密：作者仍看全文，但带「仅你可见」提示（他人永远看不到本卡）。
+        if visibility == .privateNote {
+            let privateRow = UIStackView()
+            privateRow.translatesAutoresizingMaskIntoConstraints = false
+            privateRow.axis = .horizontal
+            privateRow.spacing = 8
+            privateRow.alignment = .center
+            let eyeView = UIImageView(image: BearyIconImages.image(named: "icon_eye_off", pointSize: 16))
+            eyeView.translatesAutoresizingMaskIntoConstraints = false
+            eyeView.tintColor = BearyColors.gray
+            privateRow.addArrangedSubview(eyeView)
+            let privateLabel = pastSelfMetaLabel()
+            privateLabel.text = "原篇已设为私密，仅你可见"
+            privateRow.addArrangedSubview(privateLabel)
+            section.addArrangedSubview(privateRow)
+        }
+        // 并排对照：左边去年原篇、右边今年留话。
+        let sideRow = UIStackView()
+        sideRow.translatesAutoresizingMaskIntoConstraints = false
+        sideRow.axis = .horizontal
+        sideRow.spacing = 10
+        sideRow.distribution = .fillEqually
+        sideRow.alignment = .top
+        let originDate = origin.map { personalDateString(timestampMs: $0.createdAt) }
+        let originBody = origin.map { personalExcerpt(entry: $0, limit: 200) }
+        let originText = (originBody ?? "").isEmpty ? (origin.map { personalTitle(entry: $0) } ?? "") : (originBody ?? "")
+        sideRow.addArrangedSubview(pastSelfSideColumn(
+            title: "去年原篇 · \(originDate ?? "")", body: originText, barColor: BearyColors.orange))
+        let writtenDate = pastSelfDisplayDate(PastSelfLogic.localDateString(fromMs: latestDelivered.createdAtMs, calendar: .current))
+        sideRow.addArrangedSubview(pastSelfSideColumn(
+            title: "今年留话 · 写于 \(writtenDate)", body: latestDelivered.body, barColor: BearyColors.blue))
+        section.addArrangedSubview(sideRow)
+        // 年份链：原篇年 + 每条留话的送达年（已撤回行已在 liveChainMessages 里排除）。
+        var chainParts: [String] = []
+        if let createdAt = origin?.createdAt {
+            let year = Calendar.current.component(.year, from: Date(timeIntervalSince1970: TimeInterval(createdAt) / 1000))
+            chainParts.append("\(year) 原篇")
+        }
+        for message in messages {
+            chainParts.append("\(message.deliverOn.prefix(4)) 留话")
+        }
+        if !chainParts.isEmpty {
+            let chainLabel = pastSelfMetaLabel()
+            chainLabel.text = chainParts.joined(separator: " → ")
+            section.addArrangedSubview(chainLabel)
+        }
+        // 下方动作：未回过 → 「再回一句」；已回过 → 明年见提示，不再出按钮。
+        if isAnswered, let waiting = waiting {
+            let answeredNote = pastSelfMetaLabel()
+            answeredNote.text = "已回一句 · 明年 \(pastSelfDisplayMonthDay(waiting.deliverOn))再见"
+            section.addArrangedSubview(answeredNote)
+        } else if pastSelfReplyingChainId == chainId {
+            let compose = PastSelfComposeView(placeholder: "再回一句，给明年的自己…")
+            compose.accessibilityIdentifier = chainId
+            compose.text = pastSelfReplyDrafts[chainId] ?? ""
+            compose.onTextChange = { [weak self] text in
+                self?.pastSelfReplyDrafts[chainId] = text
+            }
+            section.addArrangedSubview(compose)
+            let buttonsRow = UIStackView()
+            buttonsRow.translatesAutoresizingMaskIntoConstraints = false
+            buttonsRow.axis = .horizontal
+            buttonsRow.spacing = 10
+            let submitButton = UIButton(type: .system)
+            submitButton.translatesAutoresizingMaskIntoConstraints = false
+            submitButton.setTitle("再回一句", for: .normal)
+            submitButton.setTitleColor(.white, for: .normal)
+            submitButton.titleLabel?.font = UIFont.systemFont(ofSize: 14, weight: .bold)
+            submitButton.backgroundColor = BearyColors.blue
+            submitButton.layer.cornerRadius = 10
+            submitButton.clipsToBounds = true
+            submitButton.accessibilityIdentifier = chainId
+            submitButton.addTarget(self, action: #selector(pastSelfReplySubmitTapped(_:)), for: .touchUpInside)
+            submitButton.bearyAddPressFeedback()
+            let cancelButton = UIButton(type: .system)
+            cancelButton.translatesAutoresizingMaskIntoConstraints = false
+            cancelButton.setTitle("取消", for: .normal)
+            cancelButton.setTitleColor(BearyColors.ink, for: .normal)
+            cancelButton.titleLabel?.font = UIFont.systemFont(ofSize: 14, weight: .bold)
+            cancelButton.backgroundColor = BearyColors.faint
+            cancelButton.layer.cornerRadius = 10
+            cancelButton.clipsToBounds = true
+            cancelButton.accessibilityIdentifier = chainId
+            cancelButton.addTarget(self, action: #selector(pastSelfReplyCancelTapped(_:)), for: .touchUpInside)
+            cancelButton.bearyAddPressFeedback()
+            buttonsRow.addArrangedSubview(submitButton)
+            buttonsRow.addArrangedSubview(cancelButton)
+            NSLayoutConstraint.activate([
+                submitButton.heightAnchor.constraint(equalToConstant: 44),
+                cancelButton.heightAnchor.constraint(equalToConstant: 44),
+            ])
+            section.addArrangedSubview(buttonsRow)
+        } else {
+            let replyButton = UIButton(type: .system)
+            replyButton.translatesAutoresizingMaskIntoConstraints = false
+            replyButton.setTitle("再回一句", for: .normal)
+            replyButton.setTitleColor(.white, for: .normal)
+            replyButton.titleLabel?.font = UIFont.systemFont(ofSize: 14, weight: .bold)
+            replyButton.backgroundColor = BearyColors.blue
+            replyButton.layer.cornerRadius = 10
+            replyButton.clipsToBounds = true
+            replyButton.accessibilityIdentifier = chainId
+            replyButton.addTarget(self, action: #selector(pastSelfReplyTapped(_:)), for: .touchUpInside)
+            replyButton.bearyAddPressFeedback()
+            section.addArrangedSubview(replyButton)
+            NSLayoutConstraint.activate([
+                replyButton.heightAnchor.constraint(equalToConstant: 44),
+            ])
+        }
+        return section
+    }
+
+    @objc private func pastSelfReplyTapped(_ sender: UIButton) {
+        guard let chainId = sender.accessibilityIdentifier, !chainId.isEmpty else { return }
+        pastSelfReplyingChainId = chainId
+        renderPastSelf(visible: pastSelfVisibleEntries())
+    }
+
+    @objc private func pastSelfReplyCancelTapped(_ sender: UIButton) {
+        if let chainId = sender.accessibilityIdentifier {
+            pastSelfReplyDrafts[chainId] = nil
+        }
+        pastSelfReplyingChainId = nil
+        renderPastSelf(visible: pastSelfVisibleEntries())
+    }
+
+    @objc private func pastSelfReplySubmitTapped(_ sender: UIButton) {
+        guard let chainId = sender.accessibilityIdentifier, !chainId.isEmpty,
+              let store = pastSelfStore() else { return }
+        let text = (pastSelfReplyDrafts[chainId] ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty else {
+            BearyHaptics.rejectionWarning()
+            pastSelfDenyShake(sender)
+            BearyToast.show(in: view, message: "先写一句话")
+            return
+        }
+        guard text.count <= PastSelfLogic.maxBodyLength else {
+            BearyHaptics.rejectionWarning()
+            pastSelfDenyShake(sender)
+            BearyToast.show(in: view, message: "一句话最多 \(PastSelfLogic.maxBodyLength) 字")
+            return
+        }
+        guard let message = store.add(originEntryId: chainId, body: text, createdAtMs: pastSelfNowMs(), calendar: .current) else {
+            BearyToast.show(in: view, message: "这串已留过话，明年见")
+            pastSelfReplyingChainId = nil
+            pastSelfReplyDrafts[chainId] = nil
+            renderPastSelf(visible: pastSelfVisibleEntries())
+            return
+        }
+        pastSelfReplyingChainId = nil
+        pastSelfReplyDrafts[chainId] = nil
+        pastSelfPushCreate(message)
+        BearyHaptics.publishSuccess()
+        BearyToast.show(in: view, message: "已留给明年的自己")
+        renderPastSelf(visible: pastSelfVisibleEntries())
+    }
+
+    // MARK: 过去的自己对话 —— 服务端同步（最佳努力；后端未上线时静默走本地）
+
+    private func pastSelfSyncFromServer(generation: Int) {
+        guard isOwnProfile, pastSelfStore() != nil else { return }
+        BearyAPI.shared.fetchPastSelfMessages { [weak self] result in
+            DispatchQueue.main.async {
+                guard let strongSelf = self,
+                      generation == strongSelf.modulesGeneration,
+                      strongSelf.isOwnProfile,
+                      let store = strongSelf.pastSelfStore() else { return }
+                switch result {
+                case .success(let response):
+                    store.mergeServerRows(response.messages ?? [])
+                    // 补推：未同步行创建、已撤回行撤回；失败静默，本地仍是事实来源。
+                    // 已撤回的本地未同步行不创建（不复活）。
+                    let all = store.loadAll()
+                    for row in all where row.localOnly && row.revokedAtMs == nil {
+                        strongSelf.pastSelfPushCreate(row)
+                    }
+                    for row in all where row.revokedAtMs != nil && !row.localOnly {
+                        strongSelf.pastSelfPushRevoke(row.id)
+                    }
+                    strongSelf.renderPastSelf(visible: strongSelf.pastSelfVisibleEntries())
+                    strongSelf.pastSelfRefreshLayout()
+                case .failure:
+                    // 后端未上线（404）或断网：本地存储即事实来源，不弹 toast。
+                    break
+                }
+            }
+        }
+    }
+
+    private func pastSelfPushCreate(_ message: PastSelfMessage) {
+        let localId = message.id
+        BearyAPI.shared.createPastSelfMessage(originEntryId: message.originEntryId, body: message.body, deliverOn: message.deliverOn) { [weak self] result in
+            DispatchQueue.main.async {
+                guard let strongSelf = self, let store = strongSelf.pastSelfStore() else { return }
+                switch result {
+                case .success(let response):
+                    if let serverRow = response.message {
+                        store.replaceLocalRow(localId: localId, with: serverRow)
+                        if strongSelf.isOwnProfile {
+                            strongSelf.renderPastSelf(visible: strongSelf.pastSelfVisibleEntries())
+                        }
+                    }
+                case .failure:
+                    break
+                }
+            }
+        }
+    }
+
+    private func pastSelfPushRevoke(_ id: String) {
+        BearyAPI.shared.revokePastSelfMessage(id: id) { _ in }
     }
 
     // MARK: 批 D —— 随机漫步
