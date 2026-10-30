@@ -44,6 +44,15 @@ final class BearyCalloutDismissView: UIView {
 /// 故做自定义 callout：框体圆角 16、底边小尖角对齐触发图标中心，
 /// 框内横向可滑一排选项（右边缘半露下一个 + 渐隐，示意可滑）。
 /// 出现/消失只走 transform/opacity；减动效由调用方静态直出（本视图不自播动画）。
+/// 横滑条专用滚动视图：框内 delaysContentTouches=false（点按立即响应）时，
+/// 从选项按钮上起滑会滑不动——系统默认 touchesShouldCancel 对 UIControl 返回 false，
+/// 按钮会一直占住触摸、滚动视图抢不到 pan；空白处起滑（非 UIControl）则正常。
+/// 这里一律返回 true：拖动时按钮收 touchesCancelled（bearyAddPressFeedback 的
+/// touchCancel 回弹复位），点按（无拖动）不触发取消、照常走 touchUpInside。
+final class BearyCalloutScrollView: UIScrollView {
+    override func touchesShouldCancel(in view: UIView) -> Bool { true }
+}
+
 final class BearyCalloutPickerView: UIView, UIScrollViewDelegate {
     struct Option {
         let key: String
@@ -85,7 +94,7 @@ final class BearyCalloutPickerView: UIView, UIScrollViewDelegate {
     }
 
     private let backgroundLayer = CAShapeLayer()
-    private let scrollView = UIScrollView()
+    private let scrollView = BearyCalloutScrollView()
     private let stackView = UIStackView()
     private let fadeView = UIView()
     private let fadeLayer = CAGradientLayer()
