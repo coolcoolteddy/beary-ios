@@ -5554,6 +5554,42 @@ class BearyProfileViewController: UIViewController {
     /// stored 仍公开，旧口径会把“公开”点成“私密”）。
     /// 即时反馈（2026-10-29 定版）：点按瞬间先按目标态同步可见行（图标与 pill
     /// 立即变），回包成功对齐服务端值；失败回滚原态 + 拒绝动效。
+    /// 2026-10-31 卡片 ⋯ 菜单（时间线风格 actionSheet）：本人篇 编辑内容（15 分钟内）／
+    /// 修改权限／删除；他人公开篇 举报（已举报置灰）；点赞／收藏／分享是互动，
+    /// 仍在底部操作行，不进菜单；长按菜单已随 ⋯ 归并删除。
+    private func presentCardMoreMenu(entry: Entry, sourceView: UIView) {
+        let sheet = UIAlertController(title: nil, message: nil, preferredStyle: .actionSheet)
+        let nowMs = Int(Date().timeIntervalSince1970 * 1000)
+        if entry.isMine == true {
+            if let deadline = entry.editDeadline, nowMs < deadline {
+                sheet.addAction(UIAlertAction(title: "编辑内容", style: .default) { [weak self] _ in
+                    self?.onEditEntry?(entry)
+                })
+            }
+            sheet.addAction(UIAlertAction(title: "修改权限", style: .default) { [weak self] _ in
+                self?.handleCellVisibilityToggle(entry: entry)
+            })
+            sheet.addAction(UIAlertAction(title: "删除", style: .destructive) { [weak self] _ in
+                self?.onDeleteEntry?(entry)
+            })
+        } else if BearyEphemeral.isEffectivelyPublic(entry), let entryId = entry.id {
+            let reported = BearyReportedStore.isReported(entryId: entryId)
+            sheet.addAction(UIAlertAction(title: reported ? "已举报" : "举报", style: .default, handler: reported ? nil : { [weak self] _ in
+                guard let strongSelf = self else { return }
+                BearyReportFlow.present(from: strongSelf, entryId: entryId, entryLabel: nil)
+            }))
+            if reported {
+                sheet.actions.last?.isEnabled = false
+            }
+        }
+        sheet.addAction(UIAlertAction(title: "取消", style: .cancel))
+        if let popover = sheet.popoverPresentationController {
+            popover.sourceView = sourceView
+            popover.sourceRect = sourceView.bounds
+        }
+        present(sheet, animated: true)
+    }
+
     private func handleCellVisibilityToggle(entry: Entry) {
         guard let entryId = entry.id, !entryId.isEmpty else { return }
         guard entry.isMine == true else { return }
@@ -6060,6 +6096,9 @@ extension BearyProfileViewController: UITableViewDataSource, UITableViewDelegate
         }
         cellValue.onContextMenuEdit = { [weak self] in self?.onEditEntry?(entryValue) }
         cellValue.onContextMenuDelete = { [weak self] in self?.onDeleteEntry?(entryValue) }
+        cellValue.onMoreRequested = { [weak self] entryValue, sourceView in
+            self?.presentCardMoreMenu(entry: entryValue, sourceView: sourceView)
+        }
         cellValue.onEmoteTap = { [weak self] key in self?.handleCellEmote(entry: entryValue, key: key) }
         cellValue.onEmoteAdd = { [weak self] in self?.handleCellEmoteAdd(entry: entryValue) }
         // A1：个人主页非公开卡片点“+”不打开选择器，弹 toast 并返回。
