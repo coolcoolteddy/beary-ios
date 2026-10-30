@@ -394,7 +394,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, U
     private let draftStatusLabel = UILabel()
     private let charRingView = UIView()
     private let charCountLabel = UILabel()
-    /// C1：字数圆环 + 数字的横向组（工具栏右端，环与数字 gap 6；见 buildToolbarRow）。
+    /// C1：字数圆环组（数字已隐藏，只留圆环；见 buildToolbarRow）。
     private let charGroupStack = UIStackView()
     private var charTrackLayer: CAShapeLayer?
     private var charProgressLayer: CAShapeLayer?
@@ -2716,7 +2716,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, U
         toolRow.addArrangedSubview(recipientToolButton)
         toolRow.addArrangedSubview(quoteToolButton)
         // v6-5：字数圆环并进左侧图标组——不再被 spacer 顶到右端，与图片／心情／天气／@／引用
-        // 同组、同 20pt 间距（toolRow.spacing）；环与数字 gap 6 不变。
+        // 同组、同 20pt 间距（toolRow.spacing）；数字已隐藏，只留圆环。
         // v6-6：正文区草稿保存文案组（draftStatusGroup，图标＋文案＋级别逻辑全在 buildStatusRow/
         // updateDraftStatusLabel）挪到工具栏右端（spacer 之后）；窄屏下文案先截断（见下压缩优先级），
         // 不挤图标与字数。组本身在 buildStatusRow 里才配好轴向与子项，此处只定它在工具栏里的位置。
@@ -2726,6 +2726,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, U
         charGroupStack.translatesAutoresizingMaskIntoConstraints = false
         charRingView.translatesAutoresizingMaskIntoConstraints = false
         charCountLabel.translatesAutoresizingMaskIntoConstraints = false
+        charCountLabel.isHidden = true  // 数字已隐藏，只留圆环（updateCountLabel 内亦恒置 true，防首帧闪数字）。
         charGroupStack.addArrangedSubview(charRingView)
         charGroupStack.addArrangedSubview(charCountLabel)
         toolRow.addArrangedSubview(charGroupStack)
@@ -3416,7 +3417,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, U
         statusRow.addArrangedSubview(spacer)
         // v6-6：草稿保存文案组已挪到工具栏右端（buildToolbarRow），不再进状态行；
         // 状态行只留编辑倒计时。组内图标／文案／级别逻辑（updateDraftStatusLabel）一字不动。
-        // C1：字数圆环与数字已移入工具栏左图标组 charGroupStack（gap 6 在彼处），
+        // C1：字数圆环已移入工具栏左图标组 charGroupStack（数字已隐藏，只留圆环），
         // 圆环尺寸与形层仍在此处创建（视图归属不影响形层）。
         NSLayoutConstraint.activate([
             draftStatusIcon.widthAnchor.constraint(equalToConstant: 15),
@@ -3566,7 +3567,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, U
         return max(0, fullCount - markedText.count)
     }
 
-    /// 字数：状态行圆环 + N/2000（网页 char-count 同款）；空时整组隐藏，超字红字红环。
+    /// 字数：圆环进度（数字已隐藏，只留圆环）；空时圆环隐藏，超字红环。
     private func updateCountLabel() {
         let count = committedTextCount()
         placeholderLabel.isHidden = !textView.text.isEmpty
@@ -3576,17 +3577,12 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, U
             return
         }
         charRingView.isHidden = false
-        charCountLabel.isHidden = false
-        charCountLabel.text = "\(count)/\(BearyComposerViewController.maxLength)"
+        charCountLabel.isHidden = true
         let ratio = min(1.0, CGFloat(count) / CGFloat(BearyComposerViewController.maxLength))
         charProgressLayer?.strokeEnd = ratio
         if count > BearyComposerViewController.maxLength {
-            charCountLabel.textColor = BearyColors.red
-            charCountLabel.font = UIFont.boldSystemFont(ofSize: 12)
             charProgressLayer?.strokeColor = BearyColors.red.cgColor
         } else {
-            charCountLabel.textColor = BearyColors.gray
-            charCountLabel.font = UIFont.systemFont(ofSize: 12)
             charProgressLayer?.strokeColor = BearyColors.blue.cgColor
         }
     }
@@ -5688,6 +5684,7 @@ private final class BearyLimitedSwitch: UIControl {
         didSet {
             guard isOn != oldValue else { return }
             accessibilityValue = isOn ? "开" : "关"
+            refreshTrackColor()
             setNeedsLayout()
         }
     }
@@ -5696,13 +5693,18 @@ private final class BearyLimitedSwitch: UIControl {
         didSet { alpha = isEnabled ? 1 : 0.5 }
     }
 
+    /// track 底色：ON = ink（现行不变），OFF = gray（动态色，深浅模式均与 ink 有区分度）。
+    private func refreshTrackColor() {
+        trackView.backgroundColor = isOn ? BearyColors.ink : BearyColors.gray
+    }
+
     private let trackView = UIView()
     private let thumbView = UIView()
     private let iconView = UIImageView()
 
     override init(frame: CGRect) {
         super.init(frame: frame)
-        trackView.backgroundColor = BearyColors.ink
+        refreshTrackColor()
         trackView.layer.cornerRadius = Self.trackHeight / 2
         trackView.isUserInteractionEnabled = false
         thumbView.backgroundColor = BearyColors.bg
