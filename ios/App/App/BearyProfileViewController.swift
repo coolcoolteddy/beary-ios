@@ -71,6 +71,11 @@ struct BearyUserProfile: Decodable {
     var wornBadge: String?
     var movedFrom: String?
     var movedTo: String?
+    /// 批 D 个人签名：users 表 signature 列透传（后端迁移另批，未上线前服务端
+    /// 不下发本字段、解码恒为 nil；App 端编辑走 PUT /api/account/profile 透传，
+    /// 见 presentSignatureEditor——后端未接字段前成功回包也可能不持久化，
+    /// 下次拉资料即以服务端为准，见回报里的待验证项）。
+    var signature: String?
 
     // R3 根因修复：BearyAPI 的 decoder 用 convertFromSnakeCase（BearyAPI.swift
     // 约 267 行），会先把服务端 display_name/avatar_url 等转成 camelCase 再匹配；
@@ -94,7 +99,14 @@ struct BearyUserProfile: Decodable {
         case wornBadge
         case movedFrom
         case movedTo
+        case signature
     }
+}
+
+/// 批 D 签名保存响应（PUT /api/account/profile 的 ok 体；与 EditProfile 页的
+/// 私有响应结构同形、此处另定义——private 结构跨文件不可复用）。
+private struct BearySignatureUpdateResponse: Decodable {
+    var ok: Bool?
 }
 
 // MARK: - BearyAPI 扩展（只用既有 request 风格，不自创网络层）
@@ -280,6 +292,28 @@ class BearyProfileViewController: UIViewController {
     private var emoteBusyIds: Set<String> = []
     private var pubBusyIds: Set<String> = []
     private var badgeWearBusy = false
+    private var signatureSaving = false
+    // MARK: - 批 D 个性化模块状态（语料 = 作者 scope 全量分页结果，只走已有字段聚合）
+    /// 模块语料所属 profile id；与当前 profile 不一致即视为切账号/换目标，语料与
+    /// 随机上一次 id 全复位（scheduleModulesRefresh 内处理，不靠调用方记得清）。
+    private var modulesProfileId: Int?
+    /// 语料代次：每次刷新 +1；在途旧代次回包直接丢弃，防切账号后旧页覆盖新语料。
+    private var modulesGeneration = 0
+    /// 已拉到的作者条目（分页累积、按 id 去重）；未完成前 renderModules 全隐藏，
+    /// 不拿半截语料画「空白 = 没写」——半截语料的空白是假空白，会撒谎。
+    private var modulesCorpus: [Entry] = []
+    private var modulesCorpusComplete = false
+    /// 月历当前展示年月（默认当月；切账号/换目标时复位当月；月份切换只过滤语料，不重拉）。
+    private var calendarDisplayYear: Int = Calendar.current.component(.year, from: Date())
+    private var calendarDisplayMonth: Int = Calendar.current.component(.month, from: Date())
+    /// 月历日 → 当天条目（renderCalendar 重建，供点按取当天最晚一篇）。
+    private var calendarDayEntries: [Int: [Entry]] = [:]
+    /// 随机漫步当前卡片与上一次 id（换篇排除上一篇；语料刷新后当前卡仍在池内则保留，
+    /// 不在用户眼皮底下换卡；单篇池换不出新篇时换篇按钮只提示、不跳空卡）。
+    private var currentWalkEntry: Entry?
+    private var lastWalkId: String?
+    /// 那年今日同年多篇展开态（默认收起）。
+    private var thisDayExpanded = false
     private var unlockedBadges: [String] = []
     private var wornBadgeKey: String?
     private var tabBackgroundTab: ProfileTab?
@@ -847,6 +881,230 @@ class BearyProfileViewController: UIViewController {
         return stackValue
     }()
 
+    // MARK: - 批 D：个人签名（名字下方一句话）与个性化模块容器
+    //
+    // 位置排法（预览定版）：封面 → 头像 → 名字 → 签名 → 统计 → 回应墙 → 徽章 →
+    // 情绪月历 → 写作统计 → 那年今日 → 随机漫步 → 年度回顾入口 → 日记区（标签 + 列表）。
+    // 本基线（063b162）尚无批 C 的三 tab / 最新 3 篇 / 照片区，故「日记区」即现有
+    // 标签 + 列表；模块容器插在徽章架与标签之间，标签与列表本身一字不动。
+    // 图标铁律：以下只用官方包已有资产（icon_edit / icon_chevron_right /
+    // icon_chevron_down / icon_arrow_left / icon_arrow_right / icon_chart /
+    // icon_clock / icon_fire / icon_wx_* / emote_*）；「换一篇」洗牌图标官方包
+    // 里没有，故换篇按钮只用文字、不找替代顶替，缺图标清单见回报。
+
+    private let signatureContainer: UIView = {
+        let viewValue = UIView()
+        viewValue.translatesAutoresizingMaskIntoConstraints = false
+        viewValue.backgroundColor = .clear
+        viewValue.isHidden = true
+        return viewValue
+    }()
+
+    private let signatureLabel: UILabel = {
+        let labelValue = UILabel()
+        labelValue.translatesAutoresizingMaskIntoConstraints = false
+        labelValue.font = UIFont.systemFont(ofSize: 15)
+        labelValue.textColor = BearyColors.ink
+        labelValue.numberOfLines = 0
+        return labelValue
+    }()
+
+    /// 本人签名整行点按（未设时的「写一句属于你的话 ›」与已设签名均可点进编辑；
+    /// 编辑钮在它之上，点编辑钮走编辑、点行内其余处同样走编辑，不设双入口歧义）。
+    private lazy var signatureTapButton: UIButton = {
+        let buttonValue = UIButton(type: .custom)
+        buttonValue.translatesAutoresizingMaskIntoConstraints = false
+        buttonValue.backgroundColor = .clear
+        buttonValue.accessibilityLabel = "编辑个人签名"
+        buttonValue.addTarget(self, action: #selector(signatureEditTapped), for: .touchUpInside)
+        buttonValue.bearyAddPressFeedback()
+        buttonValue.isHidden = true
+        return buttonValue
+    }()
+
+    /// 签名右上角编辑入口（仅本人可见；他人页签名只读、无编辑钮）。
+    private lazy var signatureEditButton: UIButton = {
+        let buttonValue = UIButton(type: .system)
+        buttonValue.translatesAutoresizingMaskIntoConstraints = false
+        buttonValue.setImage(BearyIconImages.image(named: "icon_edit", pointSize: 15), for: .normal)
+        buttonValue.tintColor = BearyColors.ink
+        buttonValue.accessibilityLabel = "编辑个人签名"
+        buttonValue.addTarget(self, action: #selector(signatureEditTapped), for: .touchUpInside)
+        buttonValue.bearyAddPressFeedback()
+        buttonValue.isHidden = true
+        return buttonValue
+    }()
+
+    /// 模块容器（徽章架之后、标签之前）：内为纵向 stack，5 卡按预览顺序排列；
+    /// 单卡隐藏即从 stack 塌掉（UIStackView 对 hidden 的 arrangedSubview 不占位），
+    /// 5 卡全隐藏时容器本身以 0 高约束塌掉，不留空标题区。
+    private let modulesContainer: UIView = {
+        let viewValue = UIView()
+        viewValue.translatesAutoresizingMaskIntoConstraints = false
+        viewValue.backgroundColor = .clear
+        viewValue.isHidden = true
+        return viewValue
+    }()
+
+    private let modulesStack: UIStackView = {
+        let stackValue = UIStackView()
+        stackValue.translatesAutoresizingMaskIntoConstraints = false
+        stackValue.axis = .vertical
+        stackValue.spacing = 16
+        stackValue.alignment = .fill
+        return stackValue
+    }()
+
+    /// 月历卡：标题行（标题 + 上月 / 年月 / 下月）+ 星期头 + 日期格栈（逐月重建）。
+    private let calendarCard = BearyProfilePersonalModulesCard(title: "情绪月历")
+    private let calendarMonthLabel: UILabel = {
+        let labelValue = UILabel()
+        labelValue.translatesAutoresizingMaskIntoConstraints = false
+        labelValue.font = UIFont.systemFont(ofSize: 13, weight: .bold)
+        labelValue.textColor = BearyColors.ink
+        return labelValue
+    }()
+    private lazy var calendarPrevButton: UIButton = {
+        let buttonValue = UIButton(type: .system)
+        buttonValue.translatesAutoresizingMaskIntoConstraints = false
+        buttonValue.setImage(BearyIconImages.image(named: "icon_arrow_left", pointSize: 16), for: .normal)
+        buttonValue.tintColor = BearyColors.ink
+        buttonValue.accessibilityLabel = "上个月"
+        buttonValue.addTarget(self, action: #selector(calendarPrevMonthTapped), for: .touchUpInside)
+        buttonValue.bearyAddPressFeedback()
+        return buttonValue
+    }()
+    private lazy var calendarNextButton: UIButton = {
+        let buttonValue = UIButton(type: .system)
+        buttonValue.translatesAutoresizingMaskIntoConstraints = false
+        buttonValue.setImage(BearyIconImages.image(named: "icon_arrow_right", pointSize: 16), for: .normal)
+        buttonValue.tintColor = BearyColors.ink
+        buttonValue.accessibilityLabel = "下个月"
+        buttonValue.addTarget(self, action: #selector(calendarNextMonthTapped), for: .touchUpInside)
+        buttonValue.bearyAddPressFeedback()
+        return buttonValue
+    }()
+    private let calendarSubtitleLabel: UILabel = {
+        let labelValue = UILabel()
+        labelValue.translatesAutoresizingMaskIntoConstraints = false
+        labelValue.font = UIFont.systemFont(ofSize: 12)
+        labelValue.textColor = BearyColors.gray
+        return labelValue
+    }()
+    private let calendarGridStack: UIStackView = {
+        let stackValue = UIStackView()
+        stackValue.translatesAutoresizingMaskIntoConstraints = false
+        stackValue.axis = .vertical
+        stackValue.spacing = 6
+        stackValue.alignment = .fill
+        return stackValue
+    }()
+
+    /// 写作统计卡：2×2 小数字格 + 最常用心情 / 天气行（小数字，不做报表）。
+    private let statsCard = BearyProfilePersonalModulesCard(title: "写作统计")
+    private let statsTotalValueLabel = BearyProfilePersonalModulesCard.statValueLabel()
+    private let statsCharsValueLabel = BearyProfilePersonalModulesCard.statValueLabel()
+    private let statsSlotValueLabel = BearyProfilePersonalModulesCard.statValueLabel()
+    private let statsStreakValueLabel = BearyProfilePersonalModulesCard.statValueLabel()
+    private let statsMoodWeatherLabel: UILabel = {
+        let labelValue = UILabel()
+        labelValue.translatesAutoresizingMaskIntoConstraints = false
+        labelValue.font = UIFont.systemFont(ofSize: 13)
+        labelValue.textColor = BearyColors.gray
+        labelValue.numberOfLines = 0
+        return labelValue
+    }()
+
+    /// 那年今日卡：主显最近一年当天最晚一篇；同年多篇时展开列表；往年今天
+    /// 没写时显示解释性空态（不编造、不拿别的日子顶替），不整卡消失——
+    /// 前提是语料非空（全新 0 篇用户整卡隐藏，见 renderThisDay）。
+    private let thisDayCard = BearyProfilePersonalModulesCard(title: "那年今日")
+    private let thisDayMetaLabel = BearyProfilePersonalModulesCard.metaLabel()
+    private let thisDayTitleLabel = BearyProfilePersonalModulesCard.entryTitleLabel()
+    private let thisDayBodyLabel = BearyProfilePersonalModulesCard.bodyLabel()
+    private let thisDayContentStack: UIStackView = {
+        let stackValue = UIStackView()
+        stackValue.translatesAutoresizingMaskIntoConstraints = false
+        stackValue.axis = .vertical
+        stackValue.spacing = 6
+        return stackValue
+    }()
+    private lazy var thisDayExpandButton: UIButton = {
+        let buttonValue = UIButton(type: .system)
+        buttonValue.translatesAutoresizingMaskIntoConstraints = false
+        buttonValue.setImage(BearyIconImages.image(named: "icon_chevron_down", pointSize: 14), for: .normal)
+        buttonValue.setTitleColor(BearyColors.gray, for: .normal)
+        buttonValue.tintColor = BearyColors.gray
+        buttonValue.titleLabel?.font = UIFont.systemFont(ofSize: 13)
+        buttonValue.titleEdgeInsets = UIEdgeInsets(top: 0, left: 6, bottom: 0, right: 0)
+        buttonValue.contentHorizontalAlignment = .leading
+        buttonValue.addTarget(self, action: #selector(thisDayExpandTapped), for: .touchUpInside)
+        buttonValue.bearyAddPressFeedback()
+        buttonValue.isHidden = true
+        return buttonValue
+    }()
+    private let thisDayExpandStack: UIStackView = {
+        let stackValue = UIStackView()
+        stackValue.translatesAutoresizingMaskIntoConstraints = false
+        stackValue.axis = .vertical
+        stackValue.spacing = 8
+        stackValue.isHidden = true
+        return stackValue
+    }()
+    private var thisDayMainEntry: Entry?
+
+    /// 随机漫步卡：点卡片进详情；「换一篇」只换卡片不跳转（文字按钮——
+    /// 洗牌图标官方包缺失，见本批缺图标清单，不用 icon_refresh 顶替）。
+    private let randomCard = BearyProfilePersonalModulesCard(title: "随机漫步")
+    private let randomMetaLabel = BearyProfilePersonalModulesCard.metaLabel()
+    private let randomTitleLabel = BearyProfilePersonalModulesCard.entryTitleLabel()
+    private let randomBodyLabel = BearyProfilePersonalModulesCard.bodyLabel()
+    private let randomContentStack: UIStackView = {
+        let stackValue = UIStackView()
+        stackValue.translatesAutoresizingMaskIntoConstraints = false
+        stackValue.axis = .vertical
+        stackValue.spacing = 6
+        return stackValue
+    }()
+    private lazy var randomShuffleButton: UIButton = {
+        let buttonValue = UIButton(type: .system)
+        buttonValue.translatesAutoresizingMaskIntoConstraints = false
+        buttonValue.setTitle("换一篇", for: .normal)
+        buttonValue.setTitleColor(.black, for: .normal)
+        buttonValue.titleLabel?.font = UIFont.systemFont(ofSize: 14, weight: .bold)
+        buttonValue.backgroundColor = BearyColors.orange
+        buttonValue.layer.cornerRadius = 10
+        buttonValue.clipsToBounds = true
+        buttonValue.addTarget(self, action: #selector(randomShuffleTapped), for: .touchUpInside)
+        buttonValue.bearyAddPressFeedback()
+        return buttonValue
+    }()
+
+    /// 年度回顾入口卡：只本人可见；平时只显示今年已写篇数与连续天数，
+    /// 点进年报首屏示意（BearyYearReviewViewController），年报本身年底另做。
+    private let yearCard = BearyProfilePersonalModulesCard(title: "年度回顾")
+    private let yearSummaryLabel: UILabel = {
+        let labelValue = UILabel()
+        labelValue.translatesAutoresizingMaskIntoConstraints = false
+        labelValue.font = UIFont.systemFont(ofSize: 15)
+        labelValue.textColor = BearyColors.ink
+        return labelValue
+    }()
+    private lazy var yearOpenButton: UIButton = {
+        let buttonValue = UIButton(type: .system)
+        buttonValue.translatesAutoresizingMaskIntoConstraints = false
+        buttonValue.setTitle("查看年度回顾", for: .normal)
+        buttonValue.setTitleColor(BearyColors.ink, for: .normal)
+        buttonValue.titleLabel?.font = UIFont.systemFont(ofSize: 14, weight: .bold)
+        buttonValue.setImage(BearyIconImages.image(named: "icon_chevron_right", pointSize: 14), for: .normal)
+        buttonValue.tintColor = BearyColors.ink
+        buttonValue.titleEdgeInsets = UIEdgeInsets(top: 0, left: 0, bottom: 0, right: 6)
+        buttonValue.contentHorizontalAlignment = .leading
+        buttonValue.addTarget(self, action: #selector(yearReviewTapped), for: .touchUpInside)
+        buttonValue.bearyAddPressFeedback()
+        return buttonValue
+    }()
+
     private let tabsContainer: UIView = {
         let viewValue = UIView()
         viewValue.translatesAutoresizingMaskIntoConstraints = false
@@ -1011,7 +1269,17 @@ class BearyProfileViewController: UIViewController {
     /// 注意：此组数值与网页（-52/按钮压封面 8pt）拉开差距，系 Li 亲眼定版，勿以“对齐网页”改回。
     private lazy var avatarTopWithCoverConstraint: NSLayoutConstraint = avatarContainerView.topAnchor.constraint(equalTo: coverClipView.bottomAnchor, constant: -28)
     private lazy var avatarTopWithoutCoverConstraint: NSLayoutConstraint = avatarContainerView.topAnchor.constraint(equalTo: headerView.topAnchor, constant: 20)
-    private lazy var tabsTopConstraint: NSLayoutConstraint = tabsContainer.topAnchor.constraint(equalTo: badgesContainer.bottomAnchor, constant: 16)
+    /// 批 D：标签顶改贴模块容器底（模块全塌时容器高为 0，标签距徽章仍为 16，
+    /// 与改动前一致；模块可见时标签距末卡 16）。
+    private lazy var tabsTopConstraint: NSLayoutConstraint = tabsContainer.topAnchor.constraint(equalTo: modulesContainer.bottomAnchor, constant: 16)
+    /// 批 D：模块容器顶贴徽章架底（隐藏时 updateHeaderSpacing 归零，见墙 / 徽章架同款 F17 规矩）。
+    private lazy var modulesTopConstraint: NSLayoutConstraint = modulesContainer.topAnchor.constraint(equalTo: badgesContainer.bottomAnchor, constant: 16)
+    private lazy var modulesHeightConstraint: NSLayoutConstraint = modulesContainer.heightAnchor.constraint(equalToConstant: 0)
+    /// 批 D：签名容器隐藏时高归零（与墙 / 徽章架同款），handle 顶仍贴签名底 +8，
+    /// 无签名时 handle 距名字同改动前（8pt），不整体下跳。
+    private lazy var signatureHeightConstraint: NSLayoutConstraint = signatureContainer.heightAnchor.constraint(equalToConstant: 0)
+    /// 批 D：签名行右缘——本人时留 48 给右上角编辑钮，他人只读时不留（长签名不提前换行）。
+    private lazy var signatureLabelTrailingConstraint: NSLayoutConstraint = signatureLabel.trailingAnchor.constraint(lessThanOrEqualTo: signatureContainer.trailingAnchor, constant: -48)
     /// F17：头模块间距链（网页口径：墙 margin-top 10、徽章架 margin-top 16、标签 margin-top 16）。
     /// 隐藏容器仍占顶部间隙是旧 bug：updateHeaderSpacing 在每次强制布局前按显隐把
     /// 隐藏项的顶部间隙归零，使标签距上一可见元素恒为 16。
@@ -1025,6 +1293,8 @@ class BearyProfileViewController: UIViewController {
     private func updateHeaderSpacing() {
         wallTopConstraint.constant = wallContainer.isHidden ? 0 : 10
         badgesTopConstraint.constant = badgesContainer.isHidden ? 0 : 16
+        // 批 D：模块容器隐藏时顶间隙归零（F17 同款），避免徽章与标签间多出 16pt 空洞。
+        modulesTopConstraint.constant = modulesContainer.isHidden ? 0 : 16
         tabsTopConstraint.constant = 16
     }
     private lazy var wallHeightConstraint: NSLayoutConstraint = wallContainer.heightAnchor.constraint(equalToConstant: 0)
@@ -1557,6 +1827,12 @@ class BearyProfileViewController: UIViewController {
         updateDynamicLayerColors()
         // 全修 6-3 同步点：大字号/深浅切换后页签钮宽可能变化，下划线直设终值重算一次。
         updateUnderlinePosition(animated: false)
+        // 批 D：深浅切换时心情图需换深浅版（emote_<key> / emote_<key>_dark），
+        // 月历格重绘一次即可换版；语料不动、不重拉。
+        if previousTraitCollection?.userInterfaceStyle != traitCollection.userInterfaceStyle,
+           modulesCorpusComplete {
+            renderModules()
+        }
     }
 
     // MARK: - 头部搭建
@@ -1601,8 +1877,14 @@ class BearyProfileViewController: UIViewController {
         headerView.addSubview(emailLabel)
         headerView.addSubview(publicCountLabel)
         headerView.addSubview(likesCountLabel)
+        headerView.addSubview(signatureContainer)
+        signatureContainer.addSubview(signatureLabel)
+        signatureContainer.addSubview(signatureTapButton)
+        signatureContainer.addSubview(signatureEditButton)
         headerView.addSubview(wallContainer)
         headerView.addSubview(badgesContainer)
+        headerView.addSubview(modulesContainer)
+        modulesContainer.addSubview(modulesStack)
         headerView.addSubview(tabsContainer)
         wallContainer.addSubview(wallTitleLabel)
         wallContainer.addSubview(wallScrollView)
@@ -1629,7 +1911,12 @@ class BearyProfileViewController: UIViewController {
             tabsTopConstraint,
             wallHeightConstraint,
             badgesHeightConstraint,
+            modulesHeightConstraint,
+            signatureHeightConstraint,
         ])
+        // 批 D：模块卡片进纵向 stack（顺序即预览排法）；各卡内部结构在
+        // buildPersonalModuleCards 内一次搭好，render 时只改文案与显隐。
+        buildPersonalModuleCards()
 
         crownLeadingToBadgeConstraint = crownView.leadingAnchor.constraint(equalTo: badgeImageView.trailingAnchor, constant: 8)
         crownLeadingToNameConstraint = crownView.leadingAnchor.constraint(equalTo: nameLabel.trailingAnchor, constant: 8)
@@ -1697,7 +1984,28 @@ class BearyProfileViewController: UIViewController {
             crownView.heightAnchor.constraint(equalToConstant: 23),
             crownView.trailingAnchor.constraint(lessThanOrEqualTo: headerView.trailingAnchor, constant: -28),
 
-            handleLabel.topAnchor.constraint(equalTo: nameLabel.bottomAnchor, constant: 8),
+            // 批 D：handle 改贴签名底。间距算式：容器顶贴名字底（0 间隙），
+            // 签名行内顶留 10 作名字与签名间的空隙；签名隐藏时容器高被 0 约束压住，
+            // handle 距名字 = 0 + 8，与改动前（名字底 +8）一字不差，不整体下跳。
+            signatureContainer.topAnchor.constraint(equalTo: nameLabel.bottomAnchor, constant: 0),
+            signatureContainer.leadingAnchor.constraint(equalTo: headerView.leadingAnchor, constant: 28),
+            signatureContainer.trailingAnchor.constraint(equalTo: headerView.trailingAnchor, constant: -28),
+            signatureLabel.topAnchor.constraint(equalTo: signatureContainer.topAnchor, constant: 10),
+            signatureLabel.leadingAnchor.constraint(equalTo: signatureContainer.leadingAnchor),
+            signatureLabelTrailingConstraint,
+            signatureLabel.bottomAnchor.constraint(equalTo: signatureContainer.bottomAnchor),
+            signatureTapButton.topAnchor.constraint(equalTo: signatureContainer.topAnchor),
+            signatureTapButton.leadingAnchor.constraint(equalTo: signatureContainer.leadingAnchor),
+            signatureTapButton.trailingAnchor.constraint(equalTo: signatureContainer.trailingAnchor),
+            signatureTapButton.bottomAnchor.constraint(equalTo: signatureContainer.bottomAnchor),
+            // 编辑钮右上角：首行文字中心在容器顶 +10 + 约 10 = +20 处，
+            // 44 钮顶 = 20 − 22 = −2，钮中心与首行文字中心对齐。
+            signatureEditButton.topAnchor.constraint(equalTo: signatureContainer.topAnchor, constant: -2),
+            signatureEditButton.trailingAnchor.constraint(equalTo: signatureContainer.trailingAnchor),
+            signatureEditButton.widthAnchor.constraint(equalToConstant: 44),
+            signatureEditButton.heightAnchor.constraint(equalToConstant: 44),
+
+            handleLabel.topAnchor.constraint(equalTo: signatureContainer.bottomAnchor, constant: 8),
             handleLabel.leadingAnchor.constraint(equalTo: headerView.leadingAnchor, constant: 28),
             // I7：加入时间前补 14px 日历图标，图标与加入时间同显隐（见 applyProfile）。
             joinedIconView.centerYAnchor.constraint(equalTo: handleLabel.centerYAnchor),
@@ -1749,6 +2057,15 @@ class BearyProfileViewController: UIViewController {
             badgesStack.trailingAnchor.constraint(equalTo: badgesContainer.trailingAnchor, constant: -14),
             badgesStack.topAnchor.constraint(equalTo: badgesTitleLabel.bottomAnchor, constant: 10),
             badgesStack.bottomAnchor.constraint(equalTo: badgesContainer.bottomAnchor, constant: -12),
+
+            // 批 D：模块容器与墙 / 徽章架同列（左右各 20），顶贴徽章底（modulesTopConstraint）。
+            modulesContainer.leadingAnchor.constraint(equalTo: headerView.leadingAnchor, constant: 20),
+            modulesContainer.trailingAnchor.constraint(equalTo: headerView.trailingAnchor, constant: -20),
+            modulesTopConstraint,
+            modulesStack.topAnchor.constraint(equalTo: modulesContainer.topAnchor),
+            modulesStack.leadingAnchor.constraint(equalTo: modulesContainer.leadingAnchor),
+            modulesStack.trailingAnchor.constraint(equalTo: modulesContainer.trailingAnchor),
+            modulesStack.bottomAnchor.constraint(equalTo: modulesContainer.bottomAnchor),
 
             tabsContainer.leadingAnchor.constraint(equalTo: headerView.leadingAnchor, constant: 20),
             tabsContainer.trailingAnchor.constraint(equalTo: headerView.trailingAnchor, constant: -20),
@@ -1834,6 +2151,12 @@ class BearyProfileViewController: UIViewController {
         gearButton.layer.borderColor = BearyColors.line.cgColor
         wallContainer.layer.borderColor = BearyColors.line.cgColor
         badgesContainer.layer.borderColor = BearyColors.line.cgColor
+        // 批 D：模块卡边线同款重赋（深浅切换时 CGColor 不自动跟随）。
+        calendarCard.layer.borderColor = BearyColors.line.cgColor
+        statsCard.layer.borderColor = BearyColors.line.cgColor
+        thisDayCard.layer.borderColor = BearyColors.line.cgColor
+        randomCard.layer.borderColor = BearyColors.line.cgColor
+        yearCard.layer.borderColor = BearyColors.line.cgColor
     }
 
     // MARK: - 本人 / 他人模式
@@ -1999,6 +2322,11 @@ class BearyProfileViewController: UIViewController {
             if isOwnProfile {
                 loadBadges()
             }
+            // 批 D：签名（名字下方）与模块语料跟资料走同一回包；资料失败时
+            // 不动旧模块（与 G12「保留整套旧头」同哲学，失败不清空已显内容）。
+            renderSignature()
+            applyProfileThemeTint()
+            scheduleModulesRefresh()
             if targetHandleValue != nil {
                 // handle 目标的标签列表必须等 profile 解析出 id 才能拉。
                 loadTab(forceReload: true)
@@ -2471,6 +2799,693 @@ class BearyProfileViewController: UIViewController {
         let alert = UIAlertController(title: nil, message: message, preferredStyle: .alert)
         alert.addAction(UIAlertAction(title: "知道了", style: .default, handler: nil))
         present(alert, animated: BearyMotion.animated(true), completion: nil)
+    }
+
+    // MARK: - 批 D：个性化模块（签名 / 月历 / 统计 / 那年今日 / 随机漫步 / 年度回顾）
+    //
+    // 语料策略（防「半截语料撒谎」）：模块不用日记 tab 已加载的分页（那只是前 50 篇），
+    // 而是独立走作者 scope 全量分页（limit 50 游标递进，与日记 tab 同游标口径），
+    // 全部页到齐才置 modulesCorpusComplete 并渲染；未到齐前模块容器整体隐藏
+    // （不画「空白 = 没写那天」这种假空白），失败则保留旧语料。
+    // 刷新触发点：资料成功（loadProfile / reloadProfile / 下拉刷新均经此）、
+    // 页内可见性翻转成功、举报 / 拉黑广播；点赞 / 收藏 / 回应不改日记语料，不触发。
+    // 切账号 / 换目标：modulesProfileId 变化时语料、随机上一次 id、月历月份、展开态全复位。
+
+    private func buildPersonalModuleCards() {
+        // —— 情绪月历：标题行（年月 + 上 / 下月）+ 星期头 + 日期格（renderCalendar 重建）。
+        let monthRow = UIStackView()
+        monthRow.translatesAutoresizingMaskIntoConstraints = false
+        monthRow.axis = .horizontal
+        monthRow.alignment = .center
+        let monthSpacer = UIView()
+        monthSpacer.translatesAutoresizingMaskIntoConstraints = false
+        monthRow.addArrangedSubview(calendarMonthLabel)
+        monthRow.addArrangedSubview(monthSpacer)
+        monthRow.addArrangedSubview(calendarPrevButton)
+        monthRow.addArrangedSubview(calendarNextButton)
+        NSLayoutConstraint.activate([
+            calendarPrevButton.widthAnchor.constraint(equalToConstant: 44),
+            calendarPrevButton.heightAnchor.constraint(equalToConstant: 44),
+            calendarNextButton.widthAnchor.constraint(equalToConstant: 44),
+            calendarNextButton.heightAnchor.constraint(equalToConstant: 44),
+        ])
+        let weekdayRow = UIStackView()
+        weekdayRow.translatesAutoresizingMaskIntoConstraints = false
+        weekdayRow.axis = .horizontal
+        weekdayRow.distribution = .fillEqually
+        for weekdayName in ["一", "二", "三", "四", "五", "六", "日"] {
+            let label = UILabel()
+            label.font = UIFont.systemFont(ofSize: 12)
+            label.textColor = BearyColors.gray
+            label.textAlignment = .center
+            label.text = weekdayName
+            weekdayRow.addArrangedSubview(label)
+        }
+        calendarCard.contentStack.addArrangedSubview(monthRow)
+        calendarCard.contentStack.addArrangedSubview(calendarSubtitleLabel)
+        calendarCard.contentStack.addArrangedSubview(weekdayRow)
+        calendarCard.contentStack.addArrangedSubview(calendarGridStack)
+
+        // —— 写作统计：2×2 小数字格 + 最常用心情 / 天气行。
+        func makeStatTile(valueLabel: UILabel, keyText: String) -> UIView {
+            let tile = UIView()
+            tile.translatesAutoresizingMaskIntoConstraints = false
+            tile.backgroundColor = BearyColors.faint
+            tile.layer.cornerRadius = 12
+            tile.clipsToBounds = true
+            let stack = UIStackView(arrangedSubviews: [valueLabel, BearyProfilePersonalModulesCard.statKeyLabel(text: keyText)])
+            stack.translatesAutoresizingMaskIntoConstraints = false
+            stack.axis = .vertical
+            stack.spacing = 2
+            tile.addSubview(stack)
+            NSLayoutConstraint.activate([
+                stack.topAnchor.constraint(equalTo: tile.topAnchor, constant: 12),
+                stack.leadingAnchor.constraint(equalTo: tile.leadingAnchor, constant: 12),
+                stack.trailingAnchor.constraint(equalTo: tile.trailingAnchor, constant: -12),
+                stack.bottomAnchor.constraint(equalTo: tile.bottomAnchor, constant: -12),
+            ])
+            return tile
+        }
+        let statsRowTop = UIStackView(arrangedSubviews: [
+            makeStatTile(valueLabel: statsTotalValueLabel, keyText: "总篇数"),
+            makeStatTile(valueLabel: statsCharsValueLabel, keyText: "总字数"),
+        ])
+        statsRowTop.axis = .horizontal
+        statsRowTop.distribution = .fillEqually
+        statsRowTop.spacing = 10
+        let statsRowBottom = UIStackView(arrangedSubviews: [
+            makeStatTile(valueLabel: statsSlotValueLabel, keyText: "最常写时段"),
+            makeStatTile(valueLabel: statsStreakValueLabel, keyText: "当前连续写作"),
+        ])
+        statsRowBottom.axis = .horizontal
+        statsRowBottom.distribution = .fillEqually
+        statsRowBottom.spacing = 10
+        statsCard.contentStack.addArrangedSubview(statsRowTop)
+        statsCard.contentStack.addArrangedSubview(statsRowBottom)
+        statsCard.contentStack.addArrangedSubview(statsMoodWeatherLabel)
+
+        // —— 那年今日：内容栈（点按进主显篇）+ 展开钮 + 同年多篇列表（展开钮在内容栈外，
+        // 避免手势与按钮双触发）。
+        thisDayContentStack.addArrangedSubview(thisDayMetaLabel)
+        thisDayContentStack.addArrangedSubview(thisDayTitleLabel)
+        thisDayContentStack.addArrangedSubview(thisDayBodyLabel)
+        let thisDayTap = UITapGestureRecognizer(target: self, action: #selector(thisDayContentTapped))
+        thisDayContentStack.addGestureRecognizer(thisDayTap)
+        thisDayCard.contentStack.addArrangedSubview(thisDayContentStack)
+        thisDayCard.contentStack.addArrangedSubview(thisDayExpandButton)
+        thisDayCard.contentStack.addArrangedSubview(thisDayExpandStack)
+        NSLayoutConstraint.activate([
+            thisDayExpandButton.heightAnchor.constraint(greaterThanOrEqualToConstant: 32),
+        ])
+
+        // —— 随机漫步：内容栈（点按进抽到的篇）+ 换一篇按钮（只换卡片不跳转）。
+        randomContentStack.addArrangedSubview(randomMetaLabel)
+        randomContentStack.addArrangedSubview(randomTitleLabel)
+        randomContentStack.addArrangedSubview(randomBodyLabel)
+        let randomTap = UITapGestureRecognizer(target: self, action: #selector(randomContentTapped))
+        randomContentStack.addGestureRecognizer(randomTap)
+        randomCard.contentStack.addArrangedSubview(randomContentStack)
+        randomCard.contentStack.addArrangedSubview(randomShuffleButton)
+        NSLayoutConstraint.activate([
+            randomShuffleButton.heightAnchor.constraint(equalToConstant: 44),
+        ])
+
+        // —— 年度回顾入口：当年累计行 + 进入年报首屏示意的钮。
+        yearCard.contentStack.addArrangedSubview(yearSummaryLabel)
+        yearCard.contentStack.addArrangedSubview(yearOpenButton)
+        NSLayoutConstraint.activate([
+            yearOpenButton.heightAnchor.constraint(greaterThanOrEqualToConstant: 44),
+        ])
+
+        modulesStack.addArrangedSubview(calendarCard)
+        modulesStack.addArrangedSubview(statsCard)
+        modulesStack.addArrangedSubview(thisDayCard)
+        modulesStack.addArrangedSubview(randomCard)
+        modulesStack.addArrangedSubview(yearCard)
+    }
+
+    /// 主题氛围开关点：默认墨色现行（= 现行底色，视觉零变化）；三档色值见
+    /// BearyProfileThemeTint。可自选功能与 theme_tint 列均未开通——开通时只需把
+    /// 这里的 .ink 换成该用户的档位（届时 profile 需先接 theme_tint 字段），
+    /// 卡片布局与本函数签名不动。他人页同理：档位来自该用户资料，而非观看者。
+    private func applyProfileThemeTint() {
+        headerView.backgroundColor = BearyProfileThemeTint.ink.headerBackground
+    }
+
+    // MARK: 批 D —— 个人签名
+
+    private func renderSignature() {
+        let own = isOwnProfile
+        let signature = (profile?.signature ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        if own {
+            signatureContainer.isHidden = false
+            signatureHeightConstraint.isActive = false
+            signatureLabelTrailingConstraint.constant = -48
+            signatureLabel.text = signature.isEmpty ? "写一句属于你的话 ›" : signature
+            signatureLabel.textColor = signature.isEmpty ? BearyColors.gray : BearyColors.ink
+            signatureTapButton.isHidden = false
+            signatureEditButton.isHidden = false
+        } else if !signature.isEmpty {
+            // 他人页：签名是公开个人资料，可见、只读；未设则整行塌掉，不留空行。
+            signatureContainer.isHidden = false
+            signatureHeightConstraint.isActive = false
+            signatureLabelTrailingConstraint.constant = 0
+            signatureLabel.text = signature
+            signatureLabel.textColor = BearyColors.ink
+            signatureTapButton.isHidden = true
+            signatureEditButton.isHidden = true
+        } else {
+            signatureContainer.isHidden = true
+            signatureHeightConstraint.isActive = true
+            signatureTapButton.isHidden = true
+            signatureEditButton.isHidden = true
+        }
+        if headerWidthValue > 0 {
+            layoutHeaderForced(widthValue: headerWidthValue)
+        }
+    }
+
+    @objc private func signatureEditTapped() {
+        guard isOwnProfile, !signatureSaving else { return }
+        let current = (profile?.signature ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        let alert = UIAlertController(title: "个人签名", message: nil, preferredStyle: .alert)
+        alert.addTextField { textField in
+            textField.text = current
+            textField.placeholder = "写一句属于你的话"
+            textField.clearButtonMode = .whileEditing
+        }
+        alert.addAction(UIAlertAction(title: "取消", style: .cancel, handler: nil))
+        alert.addAction(UIAlertAction(title: "保存", style: .default, handler: { [weak self] _ in
+            guard let strongSelf = self else { return }
+            let raw = alert.textFields?.first?.text ?? ""
+            var final = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+            // 60 字上限：超长不静默丢字失败，而是截断 + toast 明示（alert 内无法
+            //  inline 报错，来回弹框更差；60 字后由后端迁移时再对齐服务端上限）。
+            var truncated = false
+            if final.count > 60 {
+                final = String(final.prefix(60))
+                truncated = true
+            }
+            strongSelf.signatureSaving = true
+            var body: [String: Any] = [:]
+            if final.isEmpty {
+                body["signature"] = NSNull()
+            } else {
+                body["signature"] = final
+            }
+            // 透传口径：后端 signature 列迁移另批；迁移前服务端可能忽略本字段，
+            // 成功回包时本地先行显示，下一轮拉资料以服务端为准（见字段注释）。
+            BearyAPI.shared.request("/api/account/profile", method: "PUT", jsonBody: body) { [weak self] (result: Result<BearySignatureUpdateResponse, APIError>) in
+                DispatchQueue.main.async {
+                    guard let strongSelf = self else { return }
+                    strongSelf.signatureSaving = false
+                    switch result {
+                    case .success:
+                        if var profileValue = strongSelf.profile {
+                            profileValue.signature = final.isEmpty ? nil : final
+                            strongSelf.profile = profileValue
+                        }
+                        strongSelf.renderSignature()
+                        if truncated {
+                            BearyToast.show(in: strongSelf.view, message: "签名已截断为 60 字")
+                        }
+                    case .failure(let err):
+                        if case .unauthorized = err {
+                            strongSelf.onRequireLogin?()
+                        } else {
+                            strongSelf.presentSimpleAlert(message: "签名保存失败，请重试")
+                        }
+                    }
+                }
+            }
+        }))
+        present(alert, animated: BearyMotion.animated(true), completion: nil)
+    }
+
+    // MARK: 批 D —— 模块语料（作者 scope 全量分页）
+
+    private func scheduleModulesRefresh() {
+        guard let profileId = profile?.profileIdValue ?? targetUserIdValue else { return }
+        if modulesProfileId != profileId {
+            // 切账号 / 换目标：语料、随机上一次 id、月历月份、展开态全复位，
+            // 旧目标的月历与随机卡绝不带到新目标首帧。
+            modulesProfileId = profileId
+            modulesCorpus = []
+            modulesCorpusComplete = false
+            currentWalkEntry = nil
+            lastWalkId = nil
+            thisDayExpanded = false
+            let now = Date()
+            calendarDisplayYear = Calendar.current.component(.year, from: now)
+            calendarDisplayMonth = Calendar.current.component(.month, from: now)
+            renderModules()
+        }
+        modulesGeneration += 1
+        loadModulesPage(before: nil, beforeId: nil, accumulated: [], generation: modulesGeneration)
+    }
+
+    private func loadModulesPage(before: Int?, beforeId: String?, accumulated: [Entry], generation: Int) {
+        guard let profileId = modulesProfileId, generation == modulesGeneration else { return }
+        BearyAPI.shared.fetchEntries(scope: .author(profileId), limit: 50, before: before, beforeId: beforeId) { [weak self] result in
+            DispatchQueue.main.async {
+                guard let strongSelf = self,
+                      generation == strongSelf.modulesGeneration,
+                      profileId == strongSelf.modulesProfileId else { return }
+                switch result {
+                case .success(let listValue):
+                    let fresh = listValue.entries ?? []
+                    var seenIds = Set<String>()
+                    for entry in accumulated { if let id = entry.id { seenIds.insert(id) } }
+                    var merged = accumulated
+                    for entry in fresh {
+                        if let id = entry.id, !seenIds.contains(id) {
+                            seenIds.insert(id)
+                            merged.append(entry)
+                        }
+                    }
+                    if fresh.count < 50 {
+                        // 末页（不足 50 即无更多）：语料到齐才渲染，半截不画。
+                        strongSelf.modulesCorpus = merged
+                        strongSelf.modulesCorpusComplete = true
+                        strongSelf.renderModules()
+                    } else if let last = fresh.last, let lastCreatedAt = last.createdAt, let lastId = last.id {
+                        strongSelf.loadModulesPage(before: lastCreatedAt, beforeId: lastId, accumulated: merged, generation: generation)
+                    } else {
+                        // 末页游标缺失（理论上不应发生）：按到齐处理，宁可少一页尾巴
+                        // 也不在分页里死循环；游标缺失本身已是服务端异常形态。
+                        strongSelf.modulesCorpus = merged
+                        strongSelf.modulesCorpusComplete = true
+                        strongSelf.renderModules()
+                    }
+                case .failure:
+                    // 失败保留旧语料：旧语料到齐过则继续显示旧聚合（不闪空），
+                    // 从未到齐过则模块继续隐藏（renderModules 的未完成分支）。
+                    break
+                }
+            }
+        }
+    }
+
+    // MARK: 批 D —— 模块渲染
+
+    private func renderModules() {
+        guard modulesCorpusComplete else {
+            modulesContainer.isHidden = true
+            modulesHeightConstraint.isActive = true
+            return
+        }
+        let visible = BearyProfilePersonalLogic.visibleEntries(modulesCorpus, isOwn: isOwnProfile)
+        renderCalendar(visible: visible)
+        renderStats(visible: visible)
+        renderThisDay(visible: visible)
+        renderRandom(visible: visible)
+        renderYear(visible: visible)
+        let anyVisible = [calendarCard, statsCard, thisDayCard, randomCard, yearCard].contains { !$0.isHidden }
+        modulesContainer.isHidden = !anyVisible
+        modulesHeightConstraint.isActive = !anyVisible
+        if headerWidthValue > 0 {
+            layoutHeaderForced(widthValue: headerWidthValue)
+        }
+    }
+
+    private func personalDateString(timestampMs: Int?) -> String {
+        guard let timestampMs = timestampMs else { return "" }
+        let date = Date(timeIntervalSince1970: TimeInterval(timestampMs) / 1000)
+        let parts = Calendar.current.dateComponents([.year, .month, .day], from: date)
+        guard let year = parts.year, let month = parts.month, let day = parts.day else { return "" }
+        return "\(year) 年 \(month) 月 \(day) 日"
+    }
+
+    private func personalExcerpt(entry: Entry, limit: Int) -> String {
+        let content = (entry.content ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !content.isEmpty else { return "" }
+        return content.count > limit ? String(content.prefix(limit)) + "…" : content
+    }
+
+    private func personalTitle(entry: Entry) -> String {
+        if let title = entry.title?.trimmingCharacters(in: .whitespacesAndNewlines), !title.isEmpty {
+            return title
+        }
+        let excerpt = personalExcerpt(entry: entry, limit: 40)
+        return excerpt.isEmpty ? "日记" : excerpt
+    }
+
+    // MARK: 批 D —— 情绪月历
+
+    @objc private func calendarPrevMonthTapped() {
+        calendarDisplayMonth -= 1
+        if calendarDisplayMonth < 1 {
+            calendarDisplayMonth = 12
+            calendarDisplayYear -= 1
+        }
+        renderCalendar(visible: BearyProfilePersonalLogic.visibleEntries(modulesCorpus, isOwn: isOwnProfile))
+        if headerWidthValue > 0 { layoutHeaderForced(widthValue: headerWidthValue) }
+    }
+
+    @objc private func calendarNextMonthTapped() {
+        calendarDisplayMonth += 1
+        if calendarDisplayMonth > 12 {
+            calendarDisplayMonth = 1
+            calendarDisplayYear += 1
+        }
+        renderCalendar(visible: BearyProfilePersonalLogic.visibleEntries(modulesCorpus, isOwn: isOwnProfile))
+        if headerWidthValue > 0 { layoutHeaderForced(widthValue: headerWidthValue) }
+    }
+
+    @objc private func calendarDayTapped(_ sender: UIButton) {
+        guard let entries = calendarDayEntries[sender.tag], let latest = entries.first else { return }
+        onOpenEntry?(latest)
+    }
+
+    private func renderCalendar(visible: [Entry]) {
+        // 语料为 0 时整卡隐藏（全新用户不摆空月历）；语料非空时即使当月空白也显示，
+        // 月份导航是去有日记月份的唯一入口，藏卡等于藏路。
+        guard !visible.isEmpty else {
+            calendarCard.isHidden = true
+            return
+        }
+        calendarCard.isHidden = false
+        let grid = BearyProfilePersonalLogic.monthGrid(year: calendarDisplayYear, month: calendarDisplayMonth, entries: visible, calendar: .current)
+        calendarMonthLabel.text = "\(calendarDisplayYear) 年 \(calendarDisplayMonth) 月"
+        let writtenDays = grid.days.filter { !$0.entries.isEmpty }.count
+        var moodCounts: [String: Int] = [:]
+        for day in grid.days {
+            if let mood = day.moodKey { moodCounts[mood, default: 0] += 1 }
+        }
+        let topMood = moodCounts.max(by: { a, b in
+            if a.value != b.value { return a.value < b.value }
+            return a.key > b.key
+        })?.key
+        if writtenDays == 0 {
+            calendarSubtitleLabel.text = "本月还没有日记"
+        } else if let topMood = topMood, let moodName = BearyText.moodNames[topMood] {
+            calendarSubtitleLabel.text = "本月写了 \(writtenDays) 天 · 最多心情：\(moodName)"
+        } else {
+            calendarSubtitleLabel.text = "本月写了 \(writtenDays) 天"
+        }
+        calendarDayEntries = [:]
+        for arrangedView in calendarGridStack.arrangedSubviews {
+            calendarGridStack.removeArrangedSubview(arrangedView)
+            arrangedView.removeFromSuperview()
+        }
+        let isDark = traitCollection.userInterfaceStyle == .dark
+        let todayParts = Calendar.current.dateComponents([.year, .month, .day], from: Date())
+        var cells: [UIView] = []
+        for _ in 0..<grid.leadingBlanks {
+            cells.append(UIView())
+        }
+        for day in grid.days {
+            calendarDayEntries[day.day] = day.entries
+            let button = UIButton(type: .custom)
+            button.translatesAutoresizingMaskIntoConstraints = false
+            button.tag = day.day
+            if !day.entries.isEmpty {
+                button.addTarget(self, action: #selector(calendarDayTapped(_:)), for: .touchUpInside)
+                button.bearyAddPressFeedback()
+            } else {
+                button.isUserInteractionEnabled = false
+            }
+            let cellStack = UIStackView()
+            cellStack.translatesAutoresizingMaskIntoConstraints = false
+            cellStack.axis = .vertical
+            cellStack.alignment = .center
+            cellStack.spacing = 2
+            cellStack.isUserInteractionEnabled = false
+            let numberLabel = UILabel()
+            numberLabel.font = UIFont.systemFont(ofSize: 14, weight: .bold)
+            // 当天（展示月 = 本月时）日期数字走品牌橙，其余墨色；空白天不点。
+            if todayParts.year == calendarDisplayYear, todayParts.month == calendarDisplayMonth, todayParts.day == day.day {
+                numberLabel.textColor = BearyColors.orange
+            } else {
+                numberLabel.textColor = BearyColors.ink
+            }
+            numberLabel.text = "\(day.day)"
+            cellStack.addArrangedSubview(numberLabel)
+            if let moodKey = day.moodKey, let moodImage = BearyEmoteImages.image(for: moodKey, dark: isDark) {
+                let moodImageView = UIImageView(image: moodImage)
+                moodImageView.translatesAutoresizingMaskIntoConstraints = false
+                moodImageView.contentMode = .scaleAspectFit
+                NSLayoutConstraint.activate([
+                    moodImageView.widthAnchor.constraint(equalToConstant: 22),
+                    moodImageView.heightAnchor.constraint(equalToConstant: 22),
+                ])
+                cellStack.addArrangedSubview(moodImageView)
+            } else {
+                // 无心情仍占 22 高：有心情 / 无心情行高一致，格子不参差。
+                let spacer = UIView()
+                spacer.translatesAutoresizingMaskIntoConstraints = false
+                spacer.heightAnchor.constraint(equalToConstant: 22).isActive = true
+                cellStack.addArrangedSubview(spacer)
+            }
+            let countLabel = UILabel()
+            countLabel.font = UIFont.systemFont(ofSize: 10)
+            countLabel.textColor = BearyColors.gray
+            countLabel.text = day.entries.count > 1 ? "\(day.entries.count)篇" : ""
+            countLabel.heightAnchor.constraint(equalToConstant: 13).isActive = true
+            cellStack.addArrangedSubview(countLabel)
+            button.addSubview(cellStack)
+            NSLayoutConstraint.activate([
+                cellStack.topAnchor.constraint(equalTo: button.topAnchor),
+                cellStack.leadingAnchor.constraint(equalTo: button.leadingAnchor),
+                cellStack.trailingAnchor.constraint(equalTo: button.trailingAnchor),
+                cellStack.bottomAnchor.constraint(equalTo: button.bottomAnchor),
+            ])
+            cells.append(button)
+        }
+        var index = 0
+        while index < cells.count {
+            let row = UIStackView()
+            row.translatesAutoresizingMaskIntoConstraints = false
+            row.axis = .horizontal
+            row.distribution = .fillEqually
+            row.spacing = 6
+            for cell in cells[index..<min(index + 7, cells.count)] {
+                row.addArrangedSubview(cell)
+            }
+            // 末行不足 7 格时补空白格，保持列宽与上行对齐。
+            while row.arrangedSubviews.count < 7 {
+                row.addArrangedSubview(UIView())
+            }
+            calendarGridStack.addArrangedSubview(row)
+            index += 7
+        }
+    }
+
+    // MARK: 批 D —— 写作统计
+
+    private func renderStats(visible: [Entry]) {
+        let stats = BearyProfilePersonalLogic.writingStats(entries: visible, now: Date(), calendar: .current)
+        guard stats.total > 0 else {
+            statsCard.isHidden = true
+            return
+        }
+        statsCard.isHidden = false
+        statsTotalValueLabel.text = "\(stats.total) 篇"
+        let formatter = NumberFormatter()
+        formatter.numberStyle = .decimal
+        let charsText = formatter.string(from: NSNumber(value: stats.totalChars)) ?? "\(stats.totalChars)"
+        statsCharsValueLabel.text = "\(charsText) 字"
+        if let slot = stats.bestSlotStartHour {
+            statsSlotValueLabel.text = String(format: "%02d:00–%02d:00", slot, slot + 2)
+        } else {
+            statsSlotValueLabel.text = "—"
+        }
+        statsStreakValueLabel.text = "连续 \(stats.currentStreakDays) 天"
+        var parts: [String] = []
+        if let moodKey = stats.topMoodKey, let moodName = BearyText.moodNames[moodKey] {
+            parts.append("最常用心情：\(moodName)")
+        }
+        if let weatherKey = stats.topWeatherKey, let weatherName = BearyText.weatherNames[weatherKey] {
+            parts.append("最常用天气：\(weatherName)")
+        }
+        if parts.isEmpty {
+            statsMoodWeatherLabel.isHidden = true
+        } else {
+            statsMoodWeatherLabel.isHidden = false
+            statsMoodWeatherLabel.text = parts.joined(separator: " · ")
+        }
+    }
+
+    // MARK: 批 D —— 那年今日
+
+    @objc private func thisDayContentTapped() {
+        guard let entry = thisDayMainEntry else { return }
+        onOpenEntry?(entry)
+    }
+
+    @objc private func thisDayExpandTapped() {
+        thisDayExpanded.toggle()
+        thisDayExpandStack.isHidden = !thisDayExpanded
+        let count = thisDayExpandStack.arrangedSubviews.count
+        thisDayExpandButton.setTitle(thisDayExpanded ? "收起" : "展开同年 \(count) 篇", for: .normal)
+        thisDayExpandButton.setImage(BearyIconImages.image(named: thisDayExpanded ? "icon_chevron_up" : "icon_chevron_down", pointSize: 14), for: .normal)
+        if headerWidthValue > 0 { layoutHeaderForced(widthValue: headerWidthValue) }
+    }
+
+    @objc private func thisDayEntryTapped(_ sender: UIButton) {
+        guard let entryId = sender.accessibilityIdentifier, !entryId.isEmpty else { return }
+        guard let entry = modulesCorpus.first(where: { $0.id == entryId }) else { return }
+        onOpenEntry?(entry)
+    }
+
+    private func renderThisDay(visible: [Entry]) {
+        // 语料为 0 时整卡隐藏；语料非空但往年今天没写时显示解释性空态（预览定版），
+        // 不编造、不拿别的日子顶替。
+        guard !visible.isEmpty else {
+            thisDayCard.isHidden = true
+            thisDayMainEntry = nil
+            return
+        }
+        thisDayCard.isHidden = false
+        let todayParts = Calendar.current.dateComponents([.month, .day], from: Date())
+        guard let month = todayParts.month, let day = todayParts.day else {
+            thisDayCard.isHidden = true
+            return
+        }
+        let history = BearyProfilePersonalLogic.thisDayInHistory(entries: visible, today: Date(), calendar: Calendar.current)
+        for arrangedView in thisDayExpandStack.arrangedSubviews {
+            thisDayExpandStack.removeArrangedSubview(arrangedView)
+            arrangedView.removeFromSuperview()
+        }
+        thisDayExpandStack.isHidden = true
+        thisDayExpandButton.isHidden = true
+        guard let history = history, let main = history.entries.first else {
+            thisDayMainEntry = nil
+            thisDayMetaLabel.isHidden = true
+            thisDayTitleLabel.isHidden = true
+            thisDayBodyLabel.isHidden = false
+            thisDayBodyLabel.textAlignment = .center
+            thisDayBodyLabel.textColor = BearyColors.gray
+            thisDayBodyLabel.text = "往年今天还没有日记\n不编造、不拿别的日子顶替"
+            return
+        }
+        thisDayMainEntry = main
+        thisDayMetaLabel.isHidden = false
+        thisDayTitleLabel.isHidden = false
+        thisDayBodyLabel.isHidden = false
+        thisDayBodyLabel.textAlignment = .left
+        thisDayBodyLabel.textColor = BearyColors.ink
+        var meta = "\(history.year) 年 \(month) 月 \(day) 日"
+        if isOwnProfile {
+            meta += main.isPublic == true ? " · 公开" : " · 私密"
+        }
+        thisDayMetaLabel.text = meta
+        thisDayTitleLabel.text = personalTitle(entry: main)
+        let body = personalExcerpt(entry: main, limit: 120)
+        thisDayBodyLabel.text = body
+        thisDayBodyLabel.isHidden = body.isEmpty
+        if history.entries.count > 1 {
+            thisDayExpandButton.isHidden = false
+            thisDayExpandButton.setTitle(thisDayExpanded ? "收起" : "展开同年 \(history.entries.count) 篇", for: .normal)
+            thisDayExpandButton.setImage(BearyIconImages.image(named: thisDayExpanded ? "icon_chevron_up" : "icon_chevron_down", pointSize: 14), for: .normal)
+            for entry in history.entries {
+                guard let entryId = entry.id else { continue }
+                let rowButton = UIButton(type: .system)
+                rowButton.translatesAutoresizingMaskIntoConstraints = false
+                rowButton.setTitle(personalTitle(entry: entry), for: .normal)
+                rowButton.setTitleColor(BearyColors.ink, for: .normal)
+                rowButton.titleLabel?.font = UIFont.systemFont(ofSize: 14)
+                rowButton.titleLabel?.numberOfLines = 1
+                rowButton.contentHorizontalAlignment = .leading
+                rowButton.accessibilityIdentifier = entryId
+                rowButton.addTarget(self, action: #selector(thisDayEntryTapped(_:)), for: .touchUpInside)
+                rowButton.bearyAddPressFeedback()
+                thisDayExpandStack.addArrangedSubview(rowButton)
+                NSLayoutConstraint.activate([
+                    rowButton.heightAnchor.constraint(greaterThanOrEqualToConstant: 32),
+                ])
+            }
+            thisDayExpandStack.isHidden = !thisDayExpanded
+        }
+    }
+
+    // MARK: 批 D —— 随机漫步
+
+    @objc private func randomContentTapped() {
+        guard let entry = currentWalkEntry else { return }
+        onOpenEntry?(entry)
+    }
+
+    @objc private func randomShuffleTapped() {
+        let pool = BearyProfilePersonalLogic.visibleEntries(modulesCorpus, isOwn: isOwnProfile)
+        guard !pool.isEmpty else { return }
+        if pool.count <= 1 {
+            // 单篇池换不出新篇：保留当前卡、明示原因，不跳空卡、不假装换了一篇。
+            BearyToast.show(in: view, message: "只有一篇日记，换不了下一篇")
+            return
+        }
+        guard let next = BearyProfilePersonalLogic.randomEntry(pool: pool, excludingId: currentWalkEntry?.id) else { return }
+        currentWalkEntry = next
+        lastWalkId = next.id
+        renderRandom(visible: pool)
+        if headerWidthValue > 0 { layoutHeaderForced(widthValue: headerWidthValue) }
+    }
+
+    private func renderRandom(visible: [Entry]) {
+        guard !visible.isEmpty else {
+            randomCard.isHidden = true
+            return
+        }
+        randomCard.isHidden = false
+        if let current = currentWalkEntry, visible.contains(where: { $0.id == current.id }) {
+            // 语料刷新后当前卡仍在池内：保留，不在用户眼皮底下换卡。
+        } else if let next = BearyProfilePersonalLogic.randomEntry(pool: visible, excludingId: lastWalkId) ?? visible.first {
+            currentWalkEntry = next
+            lastWalkId = next.id
+        } else {
+            randomCard.isHidden = true
+            return
+        }
+        guard let entry = currentWalkEntry else {
+            randomCard.isHidden = true
+            return
+        }
+        var meta = personalDateString(timestampMs: entry.createdAt)
+        if isOwnProfile {
+            meta += entry.isPublic == true ? " · 公开" : " · 私密"
+        }
+        randomMetaLabel.text = meta
+        randomTitleLabel.text = personalTitle(entry: entry)
+        let body = personalExcerpt(entry: entry, limit: 120)
+        randomBodyLabel.text = body
+        randomBodyLabel.isHidden = body.isEmpty
+    }
+
+    // MARK: 批 D —— 年度回顾入口
+
+    @objc private func yearReviewTapped() {
+        let visible = BearyProfilePersonalLogic.visibleEntries(modulesCorpus, isOwn: isOwnProfile)
+        let year = Calendar.current.component(.year, from: Date())
+        let yearEntries = BearyProfilePersonalLogic.yearEntries(entries: visible, year: year, calendar: .current)
+        guard !yearEntries.isEmpty else { return }
+        let sheet = BearyYearReviewViewController(year: year, entries: yearEntries)
+        sheet.modalPresentationStyle = .pageSheet
+        present(sheet, animated: BearyMotion.animated(true), completion: nil)
+    }
+
+    private func renderYear(visible: [Entry]) {
+        // 只本人可见；今年 0 篇时整卡隐藏（年报入口对着空年没有意义）。
+        guard isOwnProfile else {
+            yearCard.isHidden = true
+            return
+        }
+        let year = Calendar.current.component(.year, from: Date())
+        let yearEntries = BearyProfilePersonalLogic.yearEntries(entries: visible, year: year, calendar: .current)
+        guard !yearEntries.isEmpty else {
+            yearCard.isHidden = true
+            return
+        }
+        yearCard.isHidden = false
+        var writtenDays = Set<Date>()
+        for entry in visible {
+            if let createdAt = entry.createdAt {
+                let date = Date(timeIntervalSince1970: TimeInterval(createdAt) / 1000)
+                writtenDays.insert(Calendar.current.startOfDay(for: date))
+            }
+        }
+        let streak = BearyProfilePersonalLogic.currentStreak(from: Date(), writtenDays: writtenDays, calendar: .current)
+        yearSummaryLabel.text = "今年已写 \(yearEntries.count) 篇 · 连续 \(streak) 天"
+        yearCard.accessibilityLabel = "\(year) 年度回顾"
     }
 
     // MARK: - 数据：标签列表
@@ -3662,6 +4677,9 @@ class BearyProfileViewController: UIViewController {
                         BearyDiaryCardCell.quoteCache.removeValue(forKey: entryId)
                     }
                     strongSelf.syncVisibleCell(entry: updated)?.refreshPublishRow()
+                    // 批 D：可见性翻转成功——他人页公开口径与本人统计同步重拉语料；
+                    // 失败回滚分支不重拉（语料本就没变，重拉只是浪费一轮分页）。
+                    strongSelf.scheduleModulesRefresh()
                 case .failure(let err):
                     // 回滚：原 entry 写回各页并同步可见行（页签模型先行时已改，需复原）。
                     strongSelf.updateEntryInAllTabs(entry: entry)
@@ -3723,7 +4741,9 @@ class BearyProfileViewController: UIViewController {
         likedEntries.removeAll { $0.id == entryId }
         savedEntries.removeAll { $0.id == entryId }
         changed = (diaryEntries.count + likedEntries.count + savedEntries.count) != before
-        if changed { tableView.reloadData(); refreshFooter() }
+        if changed { tableView.reloadData(); refreshFooter(); scheduleModulesRefresh() }
+        // 批 D：举报后该篇对举报人消失——月历 / 统计 / 那年今日 / 随机漫步
+        // 的语料同步重拉（只影响举报人本页的聚合，不动服务端数据）。
     }
 
     @objc private func handleBlockedUserNotification(_ note: Notification) {
@@ -3736,6 +4756,8 @@ class BearyProfileViewController: UIViewController {
             savedEntries.removeAll()
             tableView.reloadData()
             refreshFooter()
+            // 批 D：作者被拉黑时语料同步重拉（服务端不再下发该作者条目，模块随之塌掉）。
+            scheduleModulesRefresh()
             return
         }
         let before = diaryEntries.count + likedEntries.count + savedEntries.count
@@ -3745,6 +4767,8 @@ class BearyProfileViewController: UIViewController {
         if (diaryEntries.count + likedEntries.count + savedEntries.count) != before {
             tableView.reloadData()
             refreshFooter()
+            // 批 D：被拉黑作者的条目从他人页聚合里同步消失。
+            scheduleModulesRefresh()
         }
     }
 
