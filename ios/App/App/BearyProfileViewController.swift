@@ -4069,8 +4069,35 @@ class BearyProfileViewController: UIViewController {
     // MARK: 批 D —— 随机漫步
 
     @objc private func randomContentTapped() {
-        guard let entry = currentWalkEntry else { return }
-        onOpenEntry?(entry)
+        // 随机漫步闪退修复：点按时不再直接传 currentWalkEntry。卡片在语料刷新、
+        // 删除、可见性翻转后可能已不在当前可见池里（renderRandom 的隐藏分支
+        // 旧代码不清空 currentWalkEntry，旧篇仍可被点按传进详情）；此处按 id
+        // 在当前可见池里复核一次，池里没有、id 为空、占位篇一律不进详情，
+        // 而是就地重抽一张（池空则藏卡 + toast），绝不把过期模型传给详情。
+        guard let entry = currentWalkEntry,
+              let entryId = entry.id, !entryId.isEmpty,
+              entry.placeholder != true else {
+            currentWalkEntry = nil
+            return
+        }
+        let pool = BearyProfilePersonalLogic.visibleEntries(modulesCorpus, isOwn: isOwnProfile)
+        guard let fresh = pool.first(where: { $0.id == entryId }) else {
+            // 旧篇已不在池里（已删 / 翻回私密 / 语料已换目标）：不进详情，
+            // 就地按现行口径重抽，池空则藏卡并明示，不静默无反应。
+            if let next = BearyProfilePersonalLogic.randomEntry(pool: pool, excludingId: lastWalkId) ?? pool.first {
+                currentWalkEntry = next
+                lastWalkId = next.id
+                renderRandom(visible: pool)
+                if headerWidthValue > 0 { layoutHeaderForced(widthValue: headerWidthValue) }
+            } else {
+                currentWalkEntry = nil
+                randomCard.isHidden = true
+                BearyToast.show(in: view, message: "这篇日记已不存在")
+            }
+            return
+        }
+        currentWalkEntry = fresh
+        onOpenEntry?(fresh)
     }
 
     @objc private func randomShuffleTapped() {
@@ -4090,6 +4117,9 @@ class BearyProfileViewController: UIViewController {
 
     private func renderRandom(visible: [Entry]) {
         guard !visible.isEmpty else {
+            // 卡片隐藏时必须同步清空当前条目：旧代码只藏卡不清空，
+            // 隐藏后的旧篇仍留在 currentWalkEntry 里，可被点按传进详情。
+            currentWalkEntry = nil
             randomCard.isHidden = true
             return
         }
@@ -4100,6 +4130,8 @@ class BearyProfileViewController: UIViewController {
             currentWalkEntry = next
             lastWalkId = next.id
         } else {
+            // 同上：隐藏分支必须清空当前条目，防旧篇残留后被点按。
+            currentWalkEntry = nil
             randomCard.isHidden = true
             return
         }
