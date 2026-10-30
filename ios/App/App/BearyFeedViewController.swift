@@ -235,6 +235,7 @@ class BearyFeedViewController: UIViewController {
     private let blindBoxEntryView = BearyBlindBoxEntryView()
     private let blindBoxHeaderWrap = UIView()
     private var feedBlindBoxHeaderHeight: CGFloat = 0
+    private var feedBlindBoxHeaderWidth: CGFloat = 0
     private var feedEmptyVisible = false
 
     /// 游客底部 logo（F19）：只在未登录且首拉完成后出现，登录后撤掉。
@@ -308,6 +309,9 @@ class BearyFeedViewController: UIViewController {
         // 盲盒计数：进页即按本地镜像刷新（跨日重置 + 流程页回来的已换态），服务端刷新由流程页做。
         BlindBoxState.shared.resetIfNewDay()
         blindBoxEntryView.refresh()
+        // 副文案随登录/已换态变长变短，入口高度可能变行——立即重算表头高度，
+        // 否则表头沿用旧高、框被压或留空，且中央转圈落点不跟进。
+        layoutFeedBlindBoxHeader()
         // 滚动藏栏复位：回到本页时栏恢复可见（animated: false）；FAB 同隐同现由容器 helper 负责。
         // 注意：容器 lane 在 SceneDelegate.swift 里提供 setChromeHidden，未落地前本文件单独编译不过（见交回 CI 风险）。
         feedChromeHidden = false
@@ -379,10 +383,8 @@ class BearyFeedViewController: UIViewController {
             tableView.scrollIndicatorInsets.top = top
             tableView.scrollIndicatorInsets.bottom = bottom
         }
-        let spinnerTop = safeTop + (visible ? 60 : 0) + 40
-        if centralSpinnerTopConstraint?.constant != spinnerTop {
-            centralSpinnerTopConstraint?.constant = spinnerTop
-        }
+        // 旧口径（顶栏 +40）已废：该位置在盲盒框加入后落在框内，改走表头底 +16。
+        updateCentralSpinnerTop()
     }
 
     /// 自定义下拉指示器跟随（消息页同款）：手指行程 ×0.48 阻尼、上限 116；
@@ -1078,8 +1080,10 @@ class BearyFeedViewController: UIViewController {
         }
     }
 
-    /// 盲盒表头布局（手动帧 + 高度守卫赋值）：入口行左右 16、上下各 8；空态行在下、
-    /// 高度沿用旧 fitting 口径；高度不变且表头已是容器时不重复赋值，防布局循环。
+    /// 盲盒表头布局（手动帧 + 高宽守卫赋值）：入口行左右 16、上下各 8；空态行在下、
+    /// 高度沿用旧 fitting 口径；高或宽任一变化都重赋值表头——UITableView 不会因
+    /// 已赋值表头的 frame 变化而自动跟宽，旧版只守高度时，首算的临时窄宽会
+    /// 一直沿用（“有时候框右侧被挤压”的根因之一），宽变必须重赋值才跟上。
     private func layoutFeedBlindBoxHeader() {
         let width = tableView.bounds.width > 0 ? tableView.bounds.width : view.bounds.width
         guard width > 0 else { return }
@@ -1113,9 +1117,22 @@ class BearyFeedViewController: UIViewController {
             totalHeight += emptyHeight
         }
         blindBoxHeaderWrap.frame = CGRect(x: 0, y: 0, width: width, height: totalHeight)
-        if tableView.tableHeaderView !== blindBoxHeaderWrap || abs(totalHeight - feedBlindBoxHeaderHeight) > 0.5 {
+        if tableView.tableHeaderView !== blindBoxHeaderWrap || abs(totalHeight - feedBlindBoxHeaderHeight) > 0.5 || abs(width - feedBlindBoxHeaderWidth) > 0.5 {
             feedBlindBoxHeaderHeight = totalHeight
+            feedBlindBoxHeaderWidth = width
             tableView.tableHeaderView = blindBoxHeaderWrap
+        }
+        updateCentralSpinnerTop()
+    }
+
+    /// 中央转圈落点：不再固定在顶栏 +40（盲盒框加入后该位置正落在框内，
+    /// 非手势刷新时转圈会盖在框副标题上）。改为表头底 +16：回顶时框顶即基线
+    /// （feedPullBaselineTop），故转圈顶 = 基线 + 表头高 + 16；空态时转圈已停，
+    /// 表头含空态行时的落点不影响显示。只写约束常量，不触发布局循环。
+    private func updateCentralSpinnerTop() {
+        let top = feedPullBaselineTop() + feedBlindBoxHeaderHeight + 16
+        if centralSpinnerTopConstraint?.constant != top {
+            centralSpinnerTopConstraint?.constant = top
         }
     }
 
@@ -1129,6 +1146,8 @@ class BearyFeedViewController: UIViewController {
 
     @objc private func handleBlindBoxStateChanged() {
         blindBoxEntryView.refresh()
+        // 计数/副文案变了，入口可能换行——立即重算表头高度与转圈落点。
+        layoutFeedBlindBoxHeader()
     }
 
     /// Q5 空态 CTA：只转发 onComposeRequested，导航归容器。
