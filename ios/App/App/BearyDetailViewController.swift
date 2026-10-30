@@ -1764,6 +1764,7 @@ final class BearyDetailViewController: UIViewController {
                 })
             }
             sheet.addAction(UIAlertAction(title: "修改权限", style: .default) { [weak self] _ in
+                guard let self = self else { return }
                 self.visibilityTapped()
             })
             sheet.addAction(UIAlertAction(title: "删除", style: .destructive) { [weak self] _ in
