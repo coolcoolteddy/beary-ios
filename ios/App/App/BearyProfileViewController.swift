@@ -1063,6 +1063,9 @@ class BearyProfileViewController: UIViewController {
         // lastY 取当前真实 offset（不硬置 0），否则返回时列表停在下方、
         // 第一次上滑会被误判为下滑而藏栏。FAB 同隐同现由容器 helper 负责。
         profileChromeHidden = false
+        // 顶端残留修法：切走时若正处下拉拉伸/模糊态，回来时不再有滚动
+        // 事件复位；进页即归自然态（非下拉区时本就是自然态，无视觉变化）。
+        resetCoverStretch()
         profileLastScrollOffsetY = tableView.contentOffset.y
         SceneDelegate.chrome?.setChromeHidden(false, animated: false)
         updateTopBarVisibility()
@@ -3060,9 +3063,14 @@ class BearyProfileViewController: UIViewController {
             if UIAccessibility.isReduceMotionEnabled {
                 pullOut()
                 self.refreshIconView.stopSpinning()
+                // 顶端残留修法：pullOut 动画期 inset/offset 不同步时瞬时
+                // 拉量可能又把封面拉伸+模糊，动画结束时不再有滚动事件来
+                // 复位，故此处强制归自然态（无模糊、无放大）。
+                self.resetCoverStretch()
             } else {
                 UIView.animate(withDuration: 0.32, animations: pullOut, completion: { _ in
                     self.refreshIconView.stopSpinning()
+                    self.resetCoverStretch()
                 })
             }
         }
@@ -3830,9 +3838,15 @@ extension BearyProfileViewController: UITableViewDataSource, UITableViewDelegate
         // 刷新接管期间：滚动事件只来自刷新控件的 offset 动画，不再由手指驱动；
         // 此时若继续按拉量拉伸，会与松手／触发时启动的复位动画打架（约束常量
         // 两处写，封面几何与模糊 alpha 来回跳 = 下拉刷新时背景闪）。刷新期间
-        // 滚动事件一律不动封面，复位只由触发点走一次动画；刷新结束后 offset
-        // 回落、isRefreshing 为 false，滚动事件恢复 1:1 跟随。
+        // 刷新期间滚动事件不再按拉量拉伸（见下文顶端残留修法：封面一律
+        // 复位自然态）；刷新结束后 offset 回落、isRefreshing 为 false，
+        // 滚动事件恢复 1:1 跟随。
         if isCustomPullRefreshing {
+            // 顶端残留修法（2026-10-30）：刷新期间滚动事件只来自 inset/offset
+            // 动画，旧口径“原样返回”会把刷新触发前的拉伸态（高 180+拉量、
+            // 左右各扩一半、模糊 alpha>0）原封不动留在顶端；刷新期间封面
+            // 本就应为自然态，故一律复位，不再按瞬时拉量拉伸。
+            resetCoverStretch()
             return
         }
         let pull = topBaseline - y
@@ -3956,6 +3970,23 @@ extension BearyProfileViewController: UITableViewDataSource, UITableViewDelegate
             setProfileChromeHidden(true)
         } else if y < profileLastScrollOffsetY && profileChromeHidden {
             setProfileChromeHidden(false)
+        }
+    }
+
+    /// 顶端残留修法（2026-10-30）：甩回顶端或程序化回顶（点 tab 回顶、
+    /// setContentOffset 动画）时，滚动事件可能停在动画期瞬时拉量那一帧，
+    /// 之后不再有滚动事件来复位；减速/动画结束时若已在顶端，强制归自然态。
+    func scrollViewDidEndDecelerating(_ scrollView: UIScrollView) {
+        guard scrollView === tableView else { return }
+        if scrollView.contentOffset.y <= -scrollView.contentInset.top && !isCustomPullRefreshing {
+            resetCoverStretch()
+        }
+    }
+
+    func scrollViewDidEndScrollingAnimation(_ scrollView: UIScrollView) {
+        guard scrollView === tableView else { return }
+        if scrollView.contentOffset.y <= -scrollView.contentInset.top && !isCustomPullRefreshing {
+            resetCoverStretch()
         }
     }
 
