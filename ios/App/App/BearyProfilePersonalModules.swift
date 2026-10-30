@@ -130,6 +130,8 @@ enum BearyProfilePersonalLogic {
     }
 
     static func writingStats(entries: [Entry], now: Date, calendar: Calendar) -> WritingStats {
+        // 时间胶囊：胶囊篇不计普通统计（埋了即排除，不论解锁与否；取消埋藏后重新计入）。
+        let entries = entries.filter { !BearyTimeCapsule.isExcludedFromStats($0) }
         let total = entries.count
         let totalChars = entries.reduce(0) { $0 + ($1.content ?? "").count }
         // 2 小时桶。
@@ -239,6 +241,8 @@ enum BearyProfilePersonalLogic {
               let todayMonth = todayParts.month,
               let todayDay = todayParts.day else { return nil }
         var byYear: [Int: [Entry]] = [:]
+        // 时间胶囊：胶囊篇不进那年今日（与写作统计同口径）。
+        let entries = entries.filter { !BearyTimeCapsule.isExcludedFromStats($0) }
         for entry in entries {
             guard let createdAt = entry.createdAt else { continue }
             let date = Date(timeIntervalSince1970: TimeInterval(createdAt) / 1000)
