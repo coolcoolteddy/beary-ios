@@ -1711,8 +1711,12 @@ final class BearyChromeViewController: UIViewController {
             timelineVC?.resumeVisibleEmotes()
         } else if page == .me {
             profileVC?.resumeVisibleEmotes()
+            // 批 C（#220 补口）：容器切页只改 isHidden，viewWillAppear 不触发，
+            // 封面下拉拉伸态须在这里显式复位（页内 pageDidReturn）。
+            profileVC?.pageDidReturn()
         } else if page == .user {
             userVC?.resumeVisibleEmotes()
+            userVC?.pageDidReturn()
         }
         // 淡入复加：主 tab 0.14s 交叉淡入、搜索页淡入、二级页（.user 等容器页）推入淡入，
         // 均走同一条 showPage 路径；只做透明度动画。减动效或首亮（无离场页）时直接显隐。
@@ -2420,6 +2424,18 @@ final class BearyChromeViewController: UIViewController {
             }
         }
         vc.onEditProfile = { [weak self] in self?.presentEditProfile() }
+        // 批 C：本人页“更多日记”→ 时间线页；他人页按钮不显示，不会触发。
+        // modal 态（他人 @ 链 modal 里恰好是本人时）先关 modal 再切页，
+        // 与 modal onOpenEntry 的先关后跳同口径。
+        vc.onOpenTimeline = { [weak self] in
+            if modal {
+                self?.dismiss(animated: BearyMotion.animated(true)) {
+                    self?.showPage(.timeline)
+                }
+            } else {
+                self?.showPage(.timeline)
+            }
+        }
         // C2：齿轮不再弹菜单，直接开设置页；教程与外观改由设置页内入口承载
         // （设置页通用组：使用指南行走 onShowTutorial、主题三档行；外观 Popover
         // 已随 G3 删除，齿轮路径不再触发）。
