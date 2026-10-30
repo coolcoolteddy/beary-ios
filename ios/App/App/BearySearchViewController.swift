@@ -402,7 +402,7 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         searchBoxView.addSubview(searchIconView)
 
         boxRingView.translatesAutoresizingMaskIntoConstraints = false
-        boxRingView.image = BearyIconImages.image(named: "icon_loading", pointSize: 21)
+        boxRingView.image = BearyIconImages.image(named: "icon_refresh", pointSize: 21)
         boxRingView.tintColor = BearyColors.gray
         boxRingView.contentMode = .scaleAspectFit
         boxRingView.isHidden = true
@@ -464,8 +464,8 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         stateCircle.addSubview(stateIconView)
 
         stateRingView.translatesAutoresizingMaskIntoConstraints = false
-        stateRingView.image = BearyIconImages.image(named: "icon_loading", pointSize: 25)
-        stateRingView.tintColor = BearyColors.orange
+        stateRingView.image = BearyIconImages.image(named: "icon_refresh", pointSize: 25)
+        stateRingView.tintColor = BearyColors.gray
         stateRingView.contentMode = .scaleAspectFit
         stateRingView.isHidden = true
         stateCircle.addSubview(stateRingView)

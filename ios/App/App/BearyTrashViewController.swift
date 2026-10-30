@@ -60,7 +60,7 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate {
     private let closeButton = BearyHit44Button(type: .custom)
     private let noteLabel = UILabel()
     private let listStack = UIStackView()
-    private let loadingView = UIActivityIndicatorView(style: .medium)
+    private let loadingView = BearyRefreshIconView()
     private let emptyWrap = UIStackView()
     // B-G14: trash empty-state 40pt top pad (web trashEmptyHtml padding-top:40).
     private let emptyTopSpacer = UIView()
@@ -70,7 +70,7 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate {
     // B 批示范接入：失败态改走统一 BearyStateView（错误重试态），失败文案与重试动作不变；
     // 空态 emptyWrap 与登录态 loginWrap 本批不动；Feed/Profile 各页的接入留给卡片线。
     private let failureStateView = BearyStateView()
-    private let moreSpinner = UIActivityIndicatorView(style: .medium)
+    private let moreSpinner = BearyRefreshIconView()
     private let loginWrap = UIStackView()
     private let loginButton = UIButton(type: .custom)
 
@@ -217,7 +217,8 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate {
         listStack.spacing = 10
         listStack.translatesAutoresizingMaskIntoConstraints = false
 
-        loadingView.color = BearyColors.gray
+        // 栈内固有尺寸与旧 medium 圈一致（20pt 图）。
+        loadingView.image = BearyIconImages.image(named: "icon_refresh", pointSize: 20)
         emptyWrap.axis = .vertical
         emptyWrap.alignment = .center
         emptyWrap.spacing = 8
@@ -242,7 +243,8 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate {
         failureStateView.translatesAutoresizingMaskIntoConstraints = false
         failureStateView.configure(kind: .error, title: "加载失败", subtitle: nil, iconName: nil, actionTitle: "重试", onAction: { [weak self] in self?.retryTapped() })
 
-        moreSpinner.color = BearyColors.gray
+        // 栈内固有尺寸与旧 medium 圈一致（20pt 图）。
+        moreSpinner.image = BearyIconImages.image(named: "icon_refresh", pointSize: 20)
         moreSpinner.isHidden = true
 
         // W7：401 登录空态（与时间线“先登录 + 去登录”同口径）。
@@ -475,12 +477,12 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate {
         }
         trashLoadingMore = true
         moreSpinner.isHidden = false
-        moreSpinner.startAnimating()
+        moreSpinner.startSpinning()
         BearyAPI.shared.fetchTrash(before: "\(lastDeletedAt)", beforeId: lastItem.entryIdentifier) { [weak self] result in
             DispatchQueue.main.async {
                 guard let self = self else { return }
                 self.trashLoadingMore = false
-                self.moreSpinner.stopAnimating()
+                self.moreSpinner.stopSpinning()
                 self.moreSpinner.isHidden = true
                 switch result {
                 case .success(let list):
@@ -527,9 +529,9 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate {
         let hasItems = trashItems.isEmpty == false
         loadingView.isHidden = trashLoading == false || hasItems
         if loadingView.isHidden == false {
-            loadingView.startAnimating()
+            loadingView.startSpinning()
         } else {
-            loadingView.stopAnimating()
+            loadingView.stopSpinning()
         }
         emptyWrap.isHidden = hasItems || trashLoading || trashFirstLoadFailed || trashLoginEmpty
         emptyTopSpacer.isHidden = emptyWrap.isHidden

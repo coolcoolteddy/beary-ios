@@ -2745,14 +2745,14 @@ class BearyProfileViewController: UIViewController {
 
     private func makeLoadingFooter() -> UIView {
         let container = UIView(frame: CGRect(x: 0, y: 0, width: headerWidthValue, height: 80))
-        let spinner = UIActivityIndicatorView(style: .medium)
-        spinner.translatesAutoresizingMaskIntoConstraints = false
-        spinner.color = BearyColors.gray
-        spinner.startAnimating()
+        let spinner = BearyRefreshIconView()
+        spinner.startSpinning()
         container.addSubview(spinner)
         NSLayoutConstraint.activate([
             spinner.centerXAnchor.constraint(equalTo: container.centerXAnchor),
             spinner.topAnchor.constraint(equalTo: container.topAnchor, constant: 40),
+            spinner.widthAnchor.constraint(equalToConstant: 20),
+            spinner.heightAnchor.constraint(equalToConstant: 20),
         ])
         return container
     }

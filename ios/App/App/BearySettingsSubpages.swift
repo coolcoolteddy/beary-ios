@@ -286,9 +286,10 @@ final class BearyPlusGrantsViewController: BearySettingsSubpageViewController {
         var grantRows: [UIView] = []
         if grants == nil && !loadFailed {
             // 自拉进行中：先显加载行，不闪空态（回包后 render 重绘）。
-            let spinner = UIActivityIndicatorView(style: .medium)
-            spinner.translatesAutoresizingMaskIntoConstraints = false
-            spinner.startAnimating()
+            let spinner = BearyRefreshIconView()
+            // 栈内固有尺寸与旧 medium 圈一致（20pt 图）。
+            spinner.image = BearyIconImages.image(named: "icon_refresh", pointSize: 20)
+            spinner.startSpinning()
             let loadingLabel = makeLabel(font: UIFont.systemFont(ofSize: 14), color: BearyColors.gray)
             loadingLabel.text = "加载中…"
             let loadingRow = UIStackView(arrangedSubviews: [spinner, loadingLabel])
@@ -407,9 +408,10 @@ final class BearyDevicesViewController: BearySettingsSubpageViewController {
         var rows: [UIView] = []
         if sessions == nil && !loadFailed {
             // 自拉进行中：先显加载行，不闪空态（回包后 render 重绘）。
-            let spinner = UIActivityIndicatorView(style: .medium)
-            spinner.translatesAutoresizingMaskIntoConstraints = false
-            spinner.startAnimating()
+            let spinner = BearyRefreshIconView()
+            // 栈内固有尺寸与旧 medium 圈一致（20pt 图）。
+            spinner.image = BearyIconImages.image(named: "icon_refresh", pointSize: 20)
+            spinner.startSpinning()
             let loadingLabel = makeLabel(font: UIFont.systemFont(ofSize: 13), color: BearyColors.gray)
             loadingLabel.text = "加载中…"
             let loadingRow = UIStackView(arrangedSubviews: [spinner, loadingLabel])

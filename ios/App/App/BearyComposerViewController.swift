@@ -432,7 +432,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, U
     private let quoteTabBarContainer = UIView()
     private let quoteTabStack = UIStackView()
     private var quoteTabButtons: [UIButton] = []
-    private let quotePanelSpinner = UIActivityIndicatorView(style: .medium)
+    private let quotePanelSpinner = BearyRefreshIconView()
     /// 录屏批 (f)：加载态光转圈太空，加一句说明（与转圈同显同隐，见 loadQuotePanelTab）。
     private let quotePanelLoadingLabel = UILabel()
     private let quotePanelEmptyLabel = UILabel()
@@ -983,7 +983,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, U
         publishButton.addTarget(self, action: #selector(didTapPublish), for: .touchUpInside)
         // 发布中 spinner：平时停在发送图标位，发布/保存中时替下发送图标转圈（E3-4）。
         publishRingView.translatesAutoresizingMaskIntoConstraints = false
-        publishRingView.image = BearyIconImages.image(named: "icon_loading", pointSize: 18)
+        publishRingView.image = BearyIconImages.image(named: "icon_refresh", pointSize: 18)
         publishRingView.tintColor = BearyColors.gray
         publishRingView.contentMode = .scaleAspectFit
         publishRingView.isHidden = true
@@ -2003,8 +2003,6 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, U
         }
         refreshQuoteTabs()
         quotePanelSpinner.translatesAutoresizingMaskIntoConstraints = false
-        quotePanelSpinner.color = BearyColors.gray
-        quotePanelSpinner.hidesWhenStopped = true
         quotePanelLoadingLabel.translatesAutoresizingMaskIntoConstraints = false
         quotePanelLoadingLabel.font = UIFont.systemFont(ofSize: 13)
         quotePanelLoadingLabel.textColor = BearyColors.gray
@@ -2051,6 +2049,8 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, U
             quoteTabStack.trailingAnchor.constraint(equalTo: quoteTabBarContainer.trailingAnchor, constant: -3),
             quotePanelSpinner.topAnchor.constraint(equalTo: quoteTabBarContainer.bottomAnchor, constant: 16),
             quotePanelSpinner.centerXAnchor.constraint(equalTo: quotePanel.centerXAnchor),
+            quotePanelSpinner.widthAnchor.constraint(equalToConstant: 20),
+            quotePanelSpinner.heightAnchor.constraint(equalToConstant: 20),
             quotePanelLoadingLabel.topAnchor.constraint(equalTo: quotePanelSpinner.bottomAnchor, constant: 8),
             quotePanelLoadingLabel.leadingAnchor.constraint(equalTo: quotePanel.leadingAnchor),
             quotePanelLoadingLabel.trailingAnchor.constraint(equalTo: quotePanel.trailingAnchor),
@@ -2173,7 +2173,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, U
                 self.quotePanel.isHidden = true
                 // 录屏批 (b/e)：关闭即停转圈、藏加载文案（在途请求的回包另有面板守卫，
                 // 不会把转圈顶回已关闭的面板），标题还原打开前存的那句。
-                self.quotePanelSpinner.stopAnimating()
+                self.quotePanelSpinner.stopSpinning()
                 self.quotePanelLoadingLabel.isHidden = true
                 if let savedTitle = self.quotePanelSavedTitle {
                     self.titleLabel.text = savedTitle
@@ -2290,21 +2290,21 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, U
         // 转圈只活在打开的面板里）；缓存分支也要停转圈——旧代码缓存返回时不 stop，
         // 上一次未缓存加载的转圈会残留到缓存行上。
         guard quotePanelOpen else {
-            quotePanelSpinner.stopAnimating()
+            quotePanelSpinner.stopSpinning()
             quotePanelLoadingLabel.isHidden = true
             return
         }
         if let cached = quotePanelCache[quotePanelTab] {
             quotePanelLoading = false
             quotePanelFailed = false
-            quotePanelSpinner.stopAnimating()
+            quotePanelSpinner.stopSpinning()
             quotePanelLoadingLabel.isHidden = true
             renderQuotePanelRows(entries: cached)
             return
         }
         quotePanelLoading = true
         quotePanelFailed = false
-        quotePanelSpinner.startAnimating()
+        quotePanelSpinner.startSpinning()
         quotePanelLoadingLabel.isHidden = false
         quotePanelEmptyLabel.isHidden = true
         quotePanelRetryButton.isHidden = true
@@ -2318,7 +2318,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, U
         BearyAPI.shared.fetchEntries(scope: quotePanelScope(), limit: 50) { [weak self] result in
             DispatchQueue.main.async {
                 guard let self = self, seq == self.quotePanelSeq, tab == self.quotePanelTab else { return }
-                self.quotePanelSpinner.stopAnimating()
+                self.quotePanelSpinner.stopSpinning()
                 self.quotePanelLoadingLabel.isHidden = true
                 self.quotePanelLoading = false
                 switch result {
@@ -2361,7 +2361,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, U
         quotePanelRowEntries = []
         quotePanelRowButtons = []
         // 录屏批 (e/f)：行渲染即加载结束，转圈与加载文案到此为止，不留残影。
-        quotePanelSpinner.stopAnimating()
+        quotePanelSpinner.stopSpinning()
         quotePanelLoadingLabel.isHidden = true
         quotePanelEmptyLabel.text = quotePanelEmptyText()
         quotePanelEmptyLabel.isHidden = !entries.isEmpty
@@ -3466,6 +3466,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, U
         // D-G14：落盘后停掉保存中转圈、换回对勾图；仅 lvl2 显示图标（lvl1/失败态网页均无图标）。
         BearyIconMotion.stopSpin(on: draftStatusIcon, key: "bearyDraftSavingSpin")
         draftStatusIcon.image = BearyIconImages.image(named: "icon_check", pointSize: 15)
+        draftStatusIcon.tintColor = BearyColors.blue
         draftStatusIcon.isHidden = level != 2
         if level == 2 {
             draftStatusLabel.text = "草稿已保存"
@@ -3782,10 +3783,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, U
         container.isUserInteractionEnabled = true
         let tap = UITapGestureRecognizer(target: self, action: #selector(didTapImageItem(_:)))
         container.addGestureRecognizer(tap)
-        let spinner = UIActivityIndicatorView(style: .medium)
-        spinner.translatesAutoresizingMaskIntoConstraints = false
-        spinner.color = BearyColors.gray
-        spinner.hidesWhenStopped = true
+        let spinner = BearyRefreshIconView()
         // 失败态：行内红底块（网页 thumb-fail 同款：红 10% 底 + 图标 + “失败，点我重试”），
         // 点块重试，不弹全局框；发布时有失败图直接 toast 拦截（决议第 5 项 A），不弹框。
         let failView = UIView()
@@ -3838,6 +3836,8 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, U
             imageView.trailingAnchor.constraint(equalTo: container.trailingAnchor),
             spinner.centerXAnchor.constraint(equalTo: container.centerXAnchor),
             spinner.centerYAnchor.constraint(equalTo: container.centerYAnchor),
+            spinner.widthAnchor.constraint(equalToConstant: 20),
+            spinner.heightAnchor.constraint(equalToConstant: 20),
             failView.topAnchor.constraint(equalTo: container.topAnchor),
             failView.bottomAnchor.constraint(equalTo: container.bottomAnchor),
             failView.leadingAnchor.constraint(equalTo: container.leadingAnchor),
@@ -3854,7 +3854,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, U
             removeButton.heightAnchor.constraint(equalToConstant: 22),
         ])
         if uploading {
-            spinner.startAnimating()
+            spinner.startSpinning()
         }
         if failed {
             imageView.isHidden = true
@@ -3871,7 +3871,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, U
         item.failView.isHidden = true
         item.imageView.isHidden = false
         item.imageView.alpha = 1.0
-        item.spinner.startAnimating()
+        item.spinner.startSpinning()
     }
 
     private func markUploaded(_ item: ComposerImageItem, key: String) {
@@ -3881,7 +3881,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, U
         item.failView.isHidden = true
         item.imageView.isHidden = false
         item.imageView.alpha = 1.0
-        item.spinner.stopAnimating()
+        item.spinner.stopSpinning()
     }
 
     private func markFailed(_ item: ComposerImageItem) {
@@ -3889,7 +3889,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, U
         item.failed = true
         item.failView.isHidden = false
         item.imageView.isHidden = true
-        item.spinner.stopAnimating()
+        item.spinner.stopSpinning()
     }
 
     @objc private func didTapImageItem(_ gesture: UITapGestureRecognizer) {
@@ -4489,10 +4489,11 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, U
         if isEditMode { return }
         // 防抖等待期先显“保存中…”（网页 queueSaveDraft 同款），落盘后由保存级别覆盖。
         // D-G14：网页保存中态带 15px beary-loading 转圈图标（queueSaveDraft 的
-        // spin 图标 + “保存中…”），原 App 只出文字无图标；此处换 loading 图并转圈，
+        // spin 图标 + “保存中…”），原 App 只出文字无图标；此处换 icon_refresh 图并转圈，
         // 落盘后 updateDraftStatusLabel 会停转并换回对勾。
         draftStatusGroup.isHidden = false
-        draftStatusIcon.image = BearyIconImages.image(named: "icon_loading", pointSize: 15)
+        draftStatusIcon.image = BearyIconImages.image(named: "icon_refresh", pointSize: 15)
+        draftStatusIcon.tintColor = BearyColors.gray
         draftStatusIcon.isHidden = false
         BearyIconMotion.startSpin(on: draftStatusIcon, duration: 0.9, key: "bearyDraftSavingSpin")
         draftStatusLabel.text = "保存中…"
@@ -5564,11 +5565,11 @@ private final class ComposerImageItem {
     var failed: Bool
     let container: UIView
     let imageView: UIImageView
-    let spinner: UIActivityIndicatorView
+    let spinner: BearyRefreshIconView
     let failView: UIView
     let removeButton: UIButton
 
-    init(key: String?, uploading: Bool, localFile: String?, failed: Bool, container: UIView, imageView: UIImageView, spinner: UIActivityIndicatorView, failView: UIView, removeButton: UIButton) {
+    init(key: String?, uploading: Bool, localFile: String?, failed: Bool, container: UIView, imageView: UIImageView, spinner: BearyRefreshIconView, failView: UIView, removeButton: UIButton) {
         self.key = key
         self.uploading = uploading
         self.localFile = localFile

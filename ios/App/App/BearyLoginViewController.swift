@@ -56,13 +56,7 @@ final class BearyLoginViewController: UIViewController {
     private let agreeLabel = UITextView()
     private let agreeRow = UIView()
     /// M14：登录进行态的圈转指示（与“处理中…”文案并用，不再只有 alpha 变化）。
-    private let loginSpinner: UIActivityIndicatorView = {
-        let spinner = UIActivityIndicatorView(style: .medium)
-        spinner.translatesAutoresizingMaskIntoConstraints = false
-        spinner.color = BearyColors.bg
-        spinner.hidesWhenStopped = true
-        return spinner
-    }()
+    private let loginSpinner = BearyRefreshIconView()
     /// U2：numberPad 没有 Return 键，配完成 accessory 收键盘。
     private lazy var codeAccessoryToolbar: UIToolbar = {
         let bar = UIToolbar()
@@ -206,6 +200,8 @@ final class BearyLoginViewController: UIViewController {
         NSLayoutConstraint.activate([
             loginSpinner.centerYAnchor.constraint(equalTo: loginButton.centerYAnchor),
             loginSpinner.leadingAnchor.constraint(equalTo: loginButton.leadingAnchor, constant: 16),
+            loginSpinner.widthAnchor.constraint(equalToConstant: 20),
+            loginSpinner.heightAnchor.constraint(equalToConstant: 20),
         ])
 
         // 游客次钮：sendButton 未启用态的次级口径（faint 底 + gray 字），
@@ -556,9 +552,9 @@ final class BearyLoginViewController: UIViewController {
         loginButton.alpha = loginEnabled ? 1 : 0.35
         // M14：进行态 = “处理中…”文案 + 圈转指示，不再只有 alpha 变化。
         if isVerifying {
-            loginSpinner.startAnimating()
+            loginSpinner.startSpinning()
         } else {
-            loginSpinner.stopAnimating()
+            loginSpinner.stopSpinning()
         }
         // 登录文案只在真正变文案时重建：之前每次按键、每秒倒计时都重建一次
         // attributed title，按钮标题每下都重绘闪一下。

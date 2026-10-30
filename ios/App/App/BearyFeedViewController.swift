@@ -151,17 +151,9 @@ class BearyFeedViewController: UIViewController {
     /// 下拉刷新指示：官方刷新图标（tintColor .clear 藏默认菊花）。
     private let refreshIconView = BearyRefreshIconView()
 
-    /// 首拉加载：网页 #feed .loading 口径——32px 转圈 + 上 padding 40。
-    /// 系统 medium 圈为 20pt，放大 1.6 倍后视觉为 32；布局顶距取 46（40 + 半边放大差 6），
-    /// 使放大后的视觉顶边恰好落在 40 处。
-    private lazy var centralSpinner: UIActivityIndicatorView = {
-        let sp = UIActivityIndicatorView(style: .medium)
-        sp.translatesAutoresizingMaskIntoConstraints = false
-        sp.color = BearyColors.gray
-        sp.hidesWhenStopped = true
-        sp.transform = CGAffineTransform(scaleX: 1.6, y: 1.6)
-        return sp
-    }()
+    /// 首拉加载：网页 #feed .loading 口径——32pt 官方刷新图标 + 视觉顶边 40。
+    /// （2026-10-30 全 App 统一 icon_refresh：32pt 真尺寸，不再用 medium 圈 ×1.6 放大。）
+    private let centralSpinner = BearyRefreshIconView()
 
     /// 空态（网页 .empty 口径）：图标 40×40 灰（NB.pencil 一次性描画）、标题 15 ink（图标→标题间距 8）、
     /// 副文案 13 灰、容器 padding 26/20/8。广场空态用 pencil（网页 beary.html:2187 的 nb-once 口径）。
@@ -247,7 +239,7 @@ class BearyFeedViewController: UIViewController {
         feedColWidth.priority = .defaultHigh
         let feedColCap = tableView.widthAnchor.constraint(lessThanOrEqualToConstant: 600)
         feedColCapConstraint = feedColCap
-        let spinnerTop = centralSpinner.topAnchor.constraint(equalTo: view.topAnchor, constant: 46)
+        let spinnerTop = centralSpinner.topAnchor.constraint(equalTo: view.topAnchor, constant: 40)
         self.centralSpinnerTopConstraint = spinnerTop
         NSLayoutConstraint.activate([
             tableView.topAnchor.constraint(equalTo: view.topAnchor),
@@ -258,6 +250,8 @@ class BearyFeedViewController: UIViewController {
             feedColWidth,
             tableView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
             centralSpinner.centerXAnchor.constraint(equalTo: view.centerXAnchor),
+            centralSpinner.widthAnchor.constraint(equalToConstant: 32),
+            centralSpinner.heightAnchor.constraint(equalToConstant: 32),
             spinnerTop,
             newContentPill.centerXAnchor.constraint(equalTo: view.centerXAnchor),
             newContentPill.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor, constant: -92),
@@ -346,7 +340,7 @@ class BearyFeedViewController: UIViewController {
             tableView.scrollIndicatorInsets.top = top
             tableView.scrollIndicatorInsets.bottom = bottom
         }
-        let spinnerTop = safeTop + (visible ? 60 : 0) + 46
+        let spinnerTop = safeTop + (visible ? 60 : 0) + 40
         if centralSpinnerTopConstraint?.constant != spinnerTop {
             centralSpinnerTopConstraint?.constant = spinnerTop
         }
@@ -383,7 +377,7 @@ class BearyFeedViewController: UIViewController {
         // B 视觉文案：中央菊花此前从未 startAnimating（死代码指示器），现改为
         // 非手势刷新时启动；后台重拉 revalidate 不走这里、继续不闪菊花。
         if showCentralSpinner {
-            centralSpinner.startAnimating()
+            centralSpinner.startSpinning()
         }
         loadPlazaFirstPage()
         tableView.reloadData()
@@ -992,7 +986,7 @@ class BearyFeedViewController: UIViewController {
         // B 视觉文案：菊花只在首拉落袋后停；在途时不截停，否则非手势刷新
         // 一启动就被 refreshAll 末尾的本次调用同步停掉、永远转不起来。
         if plazaLoading == false {
-            centralSpinner.stopAnimating()
+            centralSpinner.stopSpinning()
         }
         if plazaLoading {
             setEmptyVisible(false)
