@@ -1300,7 +1300,10 @@ final class BearyTimelineCell: UITableViewCell {
         editRowSawEditable = false
         editRowEndedShown = false
         editStatusGroup.alpha = 1
+        editStatusGroup.accessibilityElementsHidden = false
         editTextButton.isHidden = true
+        editTextButton.alpha = 1
+        editTextButton.isEnabled = true
         setTimelineLineEdges(isFirstInDay: true, isLastInDay: true)
         currentEntry = nil
         titleLabel.text = nil
@@ -1728,7 +1731,10 @@ final class BearyTimelineCell: UITableViewCell {
     /// - 可编辑期内：左侧“还剩 N 分钟”灰字（按分钟刷新，向上取整，至少 1 分钟）+
     ///   可点按的“编辑”二字（本行唯一的编辑入口）；数字变化只改 label 文本。
     /// - 到期那一刻（本行此前已渲染过可编辑态，即看着它过期）：同位置变
-    ///   “编辑已结束”灰字，约 3 秒后淡出消失（减动效下直接消失），什么都不留。
+    ///   “编辑已结束”灰字，约 3 秒后淡出到不可见（减动效下直接不可见）。
+    ///   2026-10-30 外框定格：退场只降 alpha，绝不 isHidden——本行在布局里
+    ///   始终占位，卡片高度与限时虚线框（cardView.bounds）不因编辑态翻转
+    ///   而跳变；“什么都不留”指的是视觉上无文字，不是布局上塌掉本行。
     /// - 首渲染已过期（含 deadline 缺失即已锁）：不闪“编辑已结束”，直接什么都不留。
     /// - 小地球显隐与无障碍文案同在此定（已挪 meta 行末，恒灰色 21pt）。
     private func updateEditRow(entry: Entry) {
@@ -1739,6 +1745,7 @@ final class BearyTimelineCell: UITableViewCell {
             editRowEndTimer = nil
             editStatusGroup.isHidden = false
             editStatusGroup.alpha = 1
+            editStatusGroup.accessibilityElementsHidden = false
             editStatusLabel.textColor = BearyColors.gray
             let remainingSeconds = (deadline - nowMs) / 1000
             let minutes = max(1, (remainingSeconds + 59) / 60)
@@ -1747,14 +1754,21 @@ final class BearyTimelineCell: UITableViewCell {
                 editStatusLabel.text = text
             }
             editTextButton.isHidden = false
+            editTextButton.alpha = 1
+            editTextButton.isEnabled = true
         } else if editRowSawEditable && !editRowEndedShown {
             // live 翻转：此前见过可编辑态，才走“编辑已结束 → 3 秒消失”这一段。
             editRowEndedShown = true
             editStatusGroup.isHidden = false
             editStatusGroup.alpha = 1
+            editStatusGroup.accessibilityElementsHidden = false
             editStatusLabel.text = "编辑已结束"
             editStatusLabel.textColor = BearyColors.gray
-            editTextButton.isHidden = true
+            // 外框定格：只换文字、不增删视图——“编辑”钮只降 alpha 并禁用，
+            // 仍留在布局里占位，本行宽高与可编辑期完全一致，卡片不跳变。
+            editTextButton.isHidden = false
+            editTextButton.alpha = 0
+            editTextButton.isEnabled = false
             editRowEndTimer?.invalidate()
             editRowEndTimer = Timer.scheduledTimer(withTimeInterval: 3, repeats: false) { [weak self] _ in
                 self?.hideEditEndedRow()
@@ -1770,19 +1784,23 @@ final class BearyTimelineCell: UITableViewCell {
         // 可见性切换走菜单“修改权限”，与原地球钮同一 handlePublishEntry 路径。
     }
 
-    /// “编辑已结束”3 秒后的退场：淡出（transform/opacity 口径；减动效直接消失）。
+    /// “编辑已结束”3 秒后的退场：只淡出到不可见，绝不 isHidden。
+    /// 旧口径在动画完成时 isHidden=true，UIStackView 会把本行高度塌到 0，
+    /// 卡片随之缩短、限时虚线框（cardView.bounds 重画）与分割线位置上移，
+    /// 就是 Li 报的“编辑已结束文字出现时外框变化”。本行保留“编辑已结束”
+    /// 文本与布局占位、仅 alpha=0，卡片高度与外框全程不动。
     private func hideEditEndedRow() {
         editRowEndTimer = nil
         if UIAccessibility.isReduceMotionEnabled {
-            editStatusGroup.isHidden = true
-            editStatusGroup.alpha = 1
+            editStatusGroup.alpha = 0
+            editStatusGroup.accessibilityElementsHidden = true
             return
         }
         UIView.animate(withDuration: 0.25, animations: { [weak self] in
             self?.editStatusGroup.alpha = 0
         }, completion: { [weak self] _ in
-            self?.editStatusGroup.isHidden = true
-            self?.editStatusGroup.alpha = 1
+            self?.editStatusGroup.alpha = 0
+            self?.editStatusGroup.accessibilityElementsHidden = true
         })
     }
 
