@@ -288,8 +288,8 @@ final class PastSelfStore {
 // MARK: - 图标占位视图（只引用 imageset 名，不自绘、不用 SF Symbol）
 //
 // 待注册资产（Li 补官方包后零改动自动生效）：
-// - 对话入口：imageset 名 "past-present"
-// - 并排推送屏：imageset 名 "compare"
+// - 对话入口：imageset 名 "icon_past_present"
+// - 并排推送屏：imageset 名 "icon_compare"
 // 资产未到时：显示带 imageset 名的占位标注（虚线框 + 名称），不画替代图标，
 // 不用 SF Symbol 顶位；文字按钮本身始终可用，图标缺失不阻塞功能。
 

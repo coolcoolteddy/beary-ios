@@ -1185,7 +1185,7 @@ class BearyProfileViewController: UIViewController {
         stackValue.isHidden = true
         return stackValue
     }()
-    private let pastSelfEntryIconView = PastSelfIconView(imagesetName: "past-present", pointSize: 20)
+    private let pastSelfEntryIconView = PastSelfIconView(imagesetName: "icon_past_present", pointSize: 20)
     private lazy var pastSelfEntryButton: UIButton = {
         let buttonValue = UIButton(type: .system)
         buttonValue.translatesAutoresizingMaskIntoConstraints = false
@@ -4402,7 +4402,7 @@ class BearyProfileViewController: UIViewController {
         headerRow.axis = .horizontal
         headerRow.spacing = 8
         headerRow.alignment = .center
-        headerRow.addArrangedSubview(PastSelfIconView(imagesetName: "compare", pointSize: 20))
+        headerRow.addArrangedSubview(PastSelfIconView(imagesetName: "icon_compare", pointSize: 20))
         let headerLabel = pastSelfMetaLabel()
         headerLabel.text = "\(pastSelfDisplayDate(latestDelivered.deliverOn)) · 一年前的对话回来了"
         headerRow.addArrangedSubview(headerLabel)
