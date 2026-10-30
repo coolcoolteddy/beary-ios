@@ -22,6 +22,27 @@ class BearyEntryImageViewerViewController: UIViewController, UIGestureRecognizer
     private let counterLabel = UILabel()
     private let closeButton = BearyButton.closeButton()
     private let dotsStack = UIStackView()
+    /// 批 C：照片页灯箱专用——非 nil 时底部出现“查看日记”钮，点按回传当前图序号
+    /// （调用方凭序号找所属日记进详情）；nil 时钮不出现，旧调用方行为一字不动。
+    var onViewEntryAtIndex: ((Int) -> Void)?
+
+    private lazy var viewEntryButton: UIButton = {
+        let buttonValue = UIButton(type: .custom)
+        buttonValue.translatesAutoresizingMaskIntoConstraints = false
+        buttonValue.setTitle("查看日记", for: .normal)
+        buttonValue.setTitleColor(.white, for: .normal)
+        buttonValue.titleLabel?.font = UIFont.systemFont(ofSize: 14, weight: .semibold)
+        buttonValue.backgroundColor = UIColor(white: 1, alpha: 0.16)
+        buttonValue.layer.cornerRadius = 18
+        buttonValue.clipsToBounds = true
+        buttonValue.contentEdgeInsets = UIEdgeInsets(top: 0, left: 18, bottom: 0, right: 18)
+        buttonValue.addTarget(self, action: #selector(viewEntryButtonTapped), for: .touchUpInside)
+        buttonValue.bearyAddPressFeedback()
+        return buttonValue
+    }()
+
+    private var viewEntryBottomToDotsConstraint: NSLayoutConstraint?
+    private var viewEntryBottomToSafeConstraint: NSLayoutConstraint?
     private var dotViews: [UIView] = []
     private var scale: CGFloat = 1
     private var tx: CGFloat = 0
@@ -100,12 +121,17 @@ class BearyEntryImageViewerViewController: UIViewController, UIGestureRecognizer
         counterLabel.translatesAutoresizingMaskIntoConstraints = false
         counterLabel.isHidden = imageKeys.count <= 1
         view.addSubview(counterLabel)
+        // 批 C：照片页灯箱可能一次带几十张图，圆点全画会溢出屏宽——
+        // 超 20 张时只留顶部计数“n / N”，圆点隐藏（旧单篇灯箱 ≤9 张不受影响）。
+        if onViewEntryAtIndex != nil {
+            view.addSubview(viewEntryButton)
+        }
         // 底部圆点指示器（网页 .lb-dots 口径）：bottom safe+24、gap 8、圆点 6、非当前白 35%、当前白；仅多图显示。
         dotsStack.axis = .horizontal
         dotsStack.spacing = 8
         dotsStack.alignment = .center
         dotsStack.translatesAutoresizingMaskIntoConstraints = false
-        dotsStack.isHidden = imageKeys.count <= 1
+        dotsStack.isHidden = imageKeys.count <= 1 || imageKeys.count > 20
         for _ in imageKeys {
             let dot = UIView()
             dot.translatesAutoresizingMaskIntoConstraints = false
@@ -159,8 +185,24 @@ class BearyEntryImageViewerViewController: UIViewController, UIGestureRecognizer
             closeButton.widthAnchor.constraint(equalToConstant: 32),
             closeButton.heightAnchor.constraint(equalToConstant: 32),
         ])
+        if onViewEntryAtIndex != nil {
+            let toDots = viewEntryButton.bottomAnchor.constraint(equalTo: dotsStack.topAnchor, constant: -16)
+            let toSafe = viewEntryButton.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor, constant: -24)
+            viewEntryBottomToDotsConstraint = toDots
+            viewEntryBottomToSafeConstraint = toSafe
+            toDots.isActive = !dotsStack.isHidden
+            toSafe.isActive = dotsStack.isHidden
+            NSLayoutConstraint.activate([
+                viewEntryButton.centerXAnchor.constraint(equalTo: view.centerXAnchor),
+                viewEntryButton.heightAnchor.constraint(equalToConstant: 36),
+            ])
+        }
         updateCounter()
         loadCurrent()
+    }
+
+    @objc private func viewEntryButtonTapped() {
+        onViewEntryAtIndex?(currentIndex)
     }
 
     func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldRecognizeSimultaneouslyWith otherGestureRecognizer: UIGestureRecognizer) -> Bool {

@@ -11,6 +11,10 @@ import CoreImage
 // - 个人主页头部：封面带 / 头像 / 统计 / 小熊回应墙 / 徽章架 / 三标签；
 //   回应墙与徽章架的服务端口径见下方实现（均以 worker.js 为准）。
 // - 后端 ~/workspace/teddy_beary/worker.js（以它为准，见下方接口对照）。
+// 批 C（2026-10-30）：三 tab 原位不动；日记 tab 只显最新 3 篇 + “更多日记”按钮
+// （本人页跳时间线页；他人页无本人时间线可跳，故不显示该按钮，见 diaryMoreButtonVisible）；
+// tab 内容下方固定照片区（脚部，与 tab 切换无关；无图时整区不出现）；
+// 图标一律只用 beary-ui 官方包（icon_back / icon_chevron_right），不用 SF Symbol、不自绘。
 // 约束：部署目标 iOS 15.0、Swift 5.0——只用闭包回调，不用 async/await，
 // 不用 if-let 简写；颜色只走 BearyColors；不新增玻璃效果；不用 SF Symbol，
 // 图标只走已有的 icon_* 资产与 BearyIconImages helper；无 force unwrap；
@@ -139,10 +143,19 @@ struct BearyWearResponse: Decodable {
 
 // MARK: - 个人主页
 
+/// 批 C 照片项：所属日记 + 图 key（灯箱“查看日记”凭 entry 回详情）。
+struct BearyProfilePhotoItem {
+    var entry: Entry
+    var imageKey: String
+}
+
 class BearyProfileViewController: UIViewController {
 
     /// 列表行点按：传整条 Entry，容器接线到详情页。
     var onOpenEntry: ((Entry) -> Void)?
+
+    /// 批 C：日记 tab“更多日记”点按，容器接线到时间线页（仅本人页触发，见下）。
+    var onOpenTimeline: (() -> Void)?
 
     /// 自己主页未登录时调用：容器接线到登录页。
     var onRequireLogin: (() -> Void)?
@@ -311,6 +324,75 @@ class BearyProfileViewController: UIViewController {
         case .saved: return savedHasMore
         }
     }
+
+    // MARK: - 批 C：展示层（日记截断 3 篇 + 照片区；模型 diary/liked/saved 一字不动）
+
+    /// 单篇是否计入“最新 3 篇 / 照片区”：排除私密占位、纯心情未写字项
+    /// （无正文、无标题、无图、无引用）；他人页只计公开篇（服务端已过滤，
+    /// 这里再守一道，isPublic 缺失按非公开算）。
+    static func isProfileDiaryDisplayable(entry: Entry, isOwnProfile: Bool) -> Bool {
+        if entry.placeholder == true { return false }
+        if isOwnProfile == false && entry.isPublic != true { return false }
+        let textValue = (entry.content ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        let titleValue = (entry.title ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        let hasImages = (entry.images ?? []).contains(where: { !$0.isEmpty })
+        let hasQuote = (entry.quoteId ?? "").isEmpty == false
+        return !textValue.isEmpty || !titleValue.isEmpty || hasImages || hasQuote
+    }
+
+    /// 展示用日记：过滤后按创建时间倒序（createdAt 缺失按 0 计、排最后；
+    /// 同毫秒保持服务端原顺序）。赞过/收藏 tab 不走这里，顺序一字不动。
+    static func sortedDisplayableDiaryEntries(from entries: [Entry], isOwnProfile: Bool) -> [Entry] {
+        let filtered = entries.filter { isProfileDiaryDisplayable(entry: $0, isOwnProfile: isOwnProfile) }
+        return filtered.enumerated().sorted(by: { left, right in
+            let leftMs = left.element.createdAt ?? 0
+            let rightMs = right.element.createdAt ?? 0
+            if leftMs != rightMs { return leftMs > rightMs }
+            return left.offset < right.offset
+        }).map { $0.element }
+    }
+
+    /// 照片项：按所属日记时间倒序，同日记多图按原顺序；无图日记跳过。
+    static func profilePhotoItems(from entries: [Entry], isOwnProfile: Bool) -> [BearyProfilePhotoItem] {
+        var items: [BearyProfilePhotoItem] = []
+        for entryValue in sortedDisplayableDiaryEntries(from: entries, isOwnProfile: isOwnProfile) {
+            for imageKey in entryValue.images ?? [] {
+                if imageKey.isEmpty == false {
+                    items.append(BearyProfilePhotoItem(entry: entryValue, imageKey: imageKey))
+                }
+            }
+        }
+        return items
+    }
+
+    /// 日记 tab 展示的日记（最新 3 篇）；赞过/收藏 tab 仍为原有全量模型。
+    private var displayedEntries: [Entry] {
+        if currentTab == .diary {
+            return Array(sortedDisplayableDiaryEntries(from: diaryEntries, isOwnProfile: isOwnProfile).prefix(3))
+        }
+        return currentEntries
+    }
+
+    /// “更多日记”按钮行是否显示：仅日记 tab、有展示日记、且为本人页。
+    /// 他人页没有“本人时间线”可跳（时间线页只显观看者自己的时间线），
+    /// 故他人页不显示该按钮——3 篇公开 + 照片区结构仍与本人页相同。
+    private var diaryMoreButtonVisible: Bool {
+        return currentTab == .diary && isOwnProfile
+            && !sortedDisplayableDiaryEntries(from: diaryEntries, isOwnProfile: isOwnProfile).isEmpty
+    }
+
+    private var profilePhotosValue: [BearyProfilePhotoItem] {
+        return BearyProfileViewController.profilePhotoItems(from: diaryEntries, isOwnProfile: isOwnProfile)
+    }
+
+    private var photosWallItems: [BearyProfilePhotoItem] {
+        return Array(profilePhotosValue.prefix(6))
+    }
+
+    /// 照片脚部缓存：签名 = 墙内 6 张 key + 全量张数 + 脚部宽度；
+    /// 数据未变时复用旧视图，不重建、不重下图（防切 tab / 回填时墙闪一下）。
+    private var cachedPhotosFooterView: UIView?
+    private var cachedPhotosFooterSignature: String?
 
     // MARK: - 列表
 
@@ -1048,6 +1130,15 @@ class BearyProfileViewController: UIViewController {
         }
         updateColumnLayout()
         layoutHeader()
+        // 批 C：列宽变化（旋转 / iPad 分栏）时照片墙格宽跟着变；脚部宽度变了
+        // 才重建（签名含宽度，refreshFooter 内复用守卫兜底，不逐帧重建）。
+        if cachedPhotosFooterView != nil {
+            let footerWidth = headerWidthValue > 0 ? headerWidthValue : tableView.bounds.width
+            let widthPart = String(Int(footerWidth))
+            if let signature = cachedPhotosFooterSignature, !signature.hasSuffix("|w" + widthPart) {
+                refreshFooter()
+            }
+        }
         updateDynamicLayerColors()
         updateStickyHeaderLayout()
         if pullView.frame.width != tableView.bounds.width {
@@ -1057,6 +1148,10 @@ class BearyProfileViewController: UIViewController {
 
     override func viewWillAppear(_ animated: Bool) {
         super.viewWillAppear(animated)
+        // 批 C（#220 补口）：容器切页只改 isHidden 时 viewWillAppear 不触发，
+        // 封面复位不能只依赖这里——见 pageDidReturn（容器切回时显式调）。
+        // modal 栈回页仍走这里，同样复位（已在自然态时 resetCoverStretch 是 no-op）。
+        resetCoverStretch()
         // 回到本页 = 上一层已关，行点按守卫清零（防连点叠页的另一半）。
         rowTapGuardUntil = nil
         // 清单 2 滚动藏栏复位：回到本页时栏恢复可见（animated: false，避免进页先闪一下栏）；
@@ -1066,6 +1161,14 @@ class BearyProfileViewController: UIViewController {
         profileLastScrollOffsetY = tableView.contentOffset.y
         SceneDelegate.chrome?.setChromeHidden(false, animated: false)
         updateTopBarVisibility()
+    }
+
+    /// 批 C 回页钩子：容器切页只改 isHidden、不触发 appearance 回调时，
+    /// 容器在 showPage 切回 .me/.user 处显式调用——补 #220 的 tab 往返缺口：
+    /// 切走时若封面正处下拉拉伸态，回页时强制回自然态，不留拉伸残影。
+    func pageDidReturn() {
+        resetCoverStretch()
+        view.layoutIfNeeded()
     }
 
     /// 顶栏透度批（容器调用，见 SceneDelegate.applyHeaderTopInsets）：主滚动视图即 tableView。
@@ -1826,8 +1929,8 @@ class BearyProfileViewController: UIViewController {
         guard let visiblePaths = tableView.indexPathsForVisibleRows else { return }
         var delay: TimeInterval = 0
         for path in visiblePaths {
-            guard path.row < currentEntries.count else { continue }
-            guard let entryId = currentEntries[path.row].id, !animatedRowIds.contains(entryId) else { continue }
+            guard path.row < displayedEntries.count else { continue }
+            guard let entryId = displayedEntries[path.row].id, !animatedRowIds.contains(entryId) else { continue }
             guard let cell = tableView.cellForRow(at: path) else { continue }
             animatedRowIds.insert(entryId)
             cell.alpha = 0
@@ -2391,6 +2494,8 @@ class BearyProfileViewController: UIViewController {
     }
 
     private func loadMoreIfNeeded() {
+        // 批 C：日记 tab 只显最新 3 篇，不再翻页（全量走时间线页）；赞过/收藏照常翻页。
+        guard currentTab != .diary else { return }
         guard currentHasMore, !tabLoading, !tabLoadMore, !tabError else { return }
         guard let scopeValue = scopeForTab(tab: currentTab) else { return }
         guard let lastEntry = currentEntries.last, let lastEntryId = lastEntry.id else { return }
@@ -2510,6 +2615,7 @@ class BearyProfileViewController: UIViewController {
         diaryEntries.insert(entry, at: idx)
         directLandedEntries[targetId] = entry
         tableView.reloadData()
+        refreshFooter()
         scrollToProfileRow(row: idx, entryId: targetId)
     }
 
@@ -2541,7 +2647,8 @@ class BearyProfileViewController: UIViewController {
     /// 详情返回定位（guarded）：只在已加载的日记列表里找，找到即按现行定位体验滚动；
     /// 不在列表里时什么都不做（不插入、不切 tab、不追拉）。
     func scrollToEntryIdIfPresent(_ entryId: String) {
-        guard let row = diaryEntries.firstIndex(where: { $0.id == entryId }) else { return }
+        // 批 C：只在展示行里找——3 篇外的日记不在列表里，按本方法原注释“什么都不做”。
+        guard let row = displayedEntries.firstIndex(where: { $0.id == entryId }) else { return }
         scrollToProfileRow(row: row, entryId: entryId)
     }
 
@@ -2551,17 +2658,20 @@ class BearyProfileViewController: UIViewController {
             pendingLocateEntryId = nil
             return
         }
-        if let row = diaryEntries.firstIndex(where: { $0.id == target }) {
+        if let row = displayedEntries.firstIndex(where: { $0.id == target }) {
             pendingLocateEntryId = nil
             scrollToProfileRow(row: row, entryId: target)
             return
         }
-        if diaryEntries.isEmpty && !tabLoading && !tabLoadMore {
-            loadTab(forceReload: true)
+        // 批 C：日记 tab 不再翻页——目标在模型里但不在展示 3 篇内时，
+        // 不再续拉（loadMore 已禁），直接进详情（与点按该行同去向），不挂起。
+        if let entryValue = diaryEntries.first(where: { $0.id == target }) {
+            pendingLocateEntryId = nil
+            onOpenEntry?(entryValue)
             return
         }
-        if diaryHasMore && !tabLoading && !tabLoadMore && !tabError {
-            loadMoreIfNeeded()
+        if diaryEntries.isEmpty && !tabLoading && !tabLoadMore {
+            loadTab(forceReload: true)
             return
         }
         pendingLocateEntryId = nil
@@ -2570,15 +2680,21 @@ class BearyProfileViewController: UIViewController {
     /// 6A：滚动到主页指定行并闪一下（两段 async：先等重载落定，再等滚动落定取 cell；
     /// contentView 默认透明，闪完回透明，复用无残留；减动效下只滚动不闪）。
     private func scrollToProfileRow(row: Int, entryId: String) {
-        guard row < diaryEntries.count else { return }
-        let path = IndexPath(row: row, section: 0)
+        // 批 C：行号一律按展示层重算——旧“模型下标 = 行号”在截断后不再成立，
+        // 直接拿模型下标 scrollToRow 会越界崩溃。展示层里没有时进详情兜底。
+        guard let displayRow = displayedEntries.firstIndex(where: { $0.id == entryId }) else {
+            if let entryValue = diaryEntries.first(where: { $0.id == entryId }) {
+                onOpenEntry?(entryValue)
+            }
+            return
+        }
         let animated = UIAccessibility.isReduceMotionEnabled == false
         DispatchQueue.main.async { [weak self] in
-            guard let self = self, row < self.diaryEntries.count, self.diaryEntries[row].id == entryId else { return }
-            self.tableView.scrollToRow(at: path, at: .middle, animated: animated)
+            guard let self = self, let displayRow = self.displayedEntries.firstIndex(where: { $0.id == entryId }) else { return }
+            self.tableView.scrollToRow(at: IndexPath(row: displayRow, section: 0), at: .middle, animated: animated)
             DispatchQueue.main.async { [weak self] in
-                guard let self = self, row < self.diaryEntries.count, self.diaryEntries[row].id == entryId else { return }
-                guard let cell = self.tableView.cellForRow(at: path) else { return }
+                guard let self = self, let finalRow = self.displayedEntries.firstIndex(where: { $0.id == entryId }) else { return }
+                guard let cell = self.tableView.cellForRow(at: IndexPath(row: finalRow, section: 0)) else { return }
                 // E3：定位落定后，目标统一卡片天气标播 Lottie；先停其他可见卡，
                 // 避免上一次落点仍在视野内时两行同播。减动效下播放器只置静态帧，
                 // 故此调用放在减动效提前返回之前，不随高亮闪烁一并跳过。
@@ -2756,24 +2872,53 @@ class BearyProfileViewController: UIViewController {
 
     private func refreshFooter() {
         let kind: String
+        let stateView: UIView?
         if tabLoading {
-            tableView.tableFooterView = makeLoadingFooter()
+            stateView = makeLoadingFooter()
             kind = "loading"
         } else if tabError || (currentTab == .diary && profileLoadFailed && targetHandleValue != nil) {
-            tableView.tableFooterView = makeErrorFooter()
+            stateView = makeErrorFooter()
             kind = "error"
-        } else if currentEntries.isEmpty {
-            tableView.tableFooterView = makeEmptyFooter()
+        } else if displayedEntries.isEmpty {
+            // 批 C：空态按展示层判——日记 tab 全被过滤时（只剩纯心情项等）
+            // 也应出空态脚部，而不是留一片空白。
+            stateView = makeEmptyFooter()
             kind = "empty"
         } else if tabLoadMore {
-            tableView.tableFooterView = makeLoadingFooter()
+            stateView = makeLoadingFooter()
             kind = "loading"
         } else {
-            tableView.tableFooterView = UIView()
+            stateView = nil
             kind = "none"
         }
+        // 批 C：照片区固定在 tab 内容下方、与 tab 切换无关——做法是把它叠进
+        // tableFooterView 的上半段（状态脚部在下半段；无状态时只有照片区）。
+        // 无图时 makePhotosFooterView 回 nil，脚部行为与改前一字不差。
+        // 注意：照片区取数只依赖 diaryEntries 模型，不为取图加轮询或全量重算；
+        // 可见性翻转（本人页私密/公开都算）不改变照片集合，删除/举报/拉黑
+        // 走 reloadProfile 或通知处理里的 refreshFooter，自然同步。
+        if let photosView = makePhotosFooterView() {
+            let footerWidth = headerWidthValue > 0 ? headerWidthValue : tableView.bounds.width
+            let container = UIView(frame: CGRect(x: 0, y: 0, width: footerWidth, height: photosView.frame.height))
+            container.addSubview(photosView)
+            var totalHeight = photosView.frame.height
+            if let stateValue = stateView {
+                let stateHeight = footerFittingHeight(view: stateValue, width: footerWidth)
+                stateValue.frame = CGRect(x: 0, y: totalHeight, width: footerWidth, height: stateHeight)
+                container.addSubview(stateValue)
+                totalHeight += stateHeight
+            }
+            container.frame = CGRect(x: 0, y: 0, width: footerWidth, height: totalHeight)
+            tableView.tableFooterView = container
+        } else if let stateValue = stateView {
+            tableView.tableFooterView = stateValue
+        } else {
+            tableView.tableFooterView = UIView()
+        }
         // 80 包 A3-1：空态脚部出现时 0.25s 淡入（与首页空态进入淡入同口径）。
-        if kind == "empty", kind != lastProfileFooterKind,
+        // 批 C：有照片区时不整脚淡入——否则切到空 tab（赞过空）时下方照片区
+        // 也跟着闪一次；空态淡入只在无照片区时保留。
+        if kind == "empty", kind != lastProfileFooterKind, cachedPhotosFooterView == nil,
            UIAccessibility.isReduceMotionEnabled == false,
            let footer = tableView.tableFooterView {
             footer.alpha = 0
@@ -2782,6 +2927,171 @@ class BearyProfileViewController: UIViewController {
             })
         }
         lastProfileFooterKind = kind
+    }
+
+    /// 批 C：脚部视图的落地高度——已有 frame 高度的直接用（loading 脚部 80、
+    /// 空态脚部已算好 fitting 高）；error 脚部改前未设 frame，叠加时才按宽
+    /// 算一次 fitting 高（不改无照片时的原行为，原路径仍直接赋值）。
+    private func footerFittingHeight(view: UIView, width: CGFloat) -> CGFloat {
+        if view.frame.height > 0 { return view.frame.height }
+        if width <= 0 { return 0 }
+        view.frame = CGRect(x: 0, y: 0, width: width, height: 0)
+        let fitted = view.systemLayoutSizeFitting(
+            CGSize(width: width, height: UIView.layoutFittingCompressedSize.height),
+            withHorizontalFittingPriority: .required,
+            verticalFittingPriority: .fittingSizeLevel
+        )
+        return fitted.height
+    }
+
+    /// 批 C 照片区：标题“照片”+ 右上角“更多照片 ›”（官方 icon_chevron_right），
+    /// 下方 3 列 × 2 行 6 张墙（圆角 12、间距 8、边距 20，与预览同几何）。
+    /// 无图时回 nil——整区不出现，不留空标题。墙点按直进大图灯箱（见
+    /// presentPhotosLightbox），“更多照片”进全量照片页。
+    private func makePhotosFooterView() -> UIView? {
+        let wall = photosWallItems
+        guard !wall.isEmpty else {
+            cachedPhotosFooterView = nil
+            cachedPhotosFooterSignature = nil
+            return nil
+        }
+        let footerWidth = headerWidthValue > 0 ? headerWidthValue : tableView.bounds.width
+        guard footerWidth > 0 else { return cachedPhotosFooterView }
+        let totalCount = profilePhotosValue.count
+        let signature = wall.map { $0.imageKey }.joined(separator: ",") + "|n\(totalCount)|w\(Int(footerWidth))"
+        if let cachedView = cachedPhotosFooterView, cachedPhotosFooterSignature == signature {
+            return cachedView
+        }
+        let container = UIView()
+        container.backgroundColor = BearyColors.bg
+        let titleLabel = UILabel()
+        titleLabel.translatesAutoresizingMaskIntoConstraints = false
+        titleLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 16, weight: .bold))
+        titleLabel.adjustsFontForContentSizeCategory = true
+        titleLabel.textColor = BearyColors.ink
+        titleLabel.text = "照片"
+        let moreButton = UIButton(type: .custom)
+        moreButton.translatesAutoresizingMaskIntoConstraints = false
+        moreButton.setTitle("更多照片", for: .normal)
+        moreButton.setTitleColor(BearyColors.gray, for: .normal)
+        moreButton.titleLabel?.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 14))
+        moreButton.titleLabel?.adjustsFontForContentSizeCategory = true
+        moreButton.setImage(BearyIconImages.image(named: "icon_chevron_right", pointSize: 14), for: .normal)
+        moreButton.tintColor = BearyColors.gray
+        moreButton.semanticContentAttribute = .forceRightToLeft
+        moreButton.titleEdgeInsets = UIEdgeInsets(top: 0, left: 0, bottom: 0, right: 2)
+        moreButton.addTarget(self, action: #selector(morePhotosButtonTapped), for: .touchUpInside)
+        moreButton.bearyAddPressFeedback()
+        container.addSubview(titleLabel)
+        container.addSubview(moreButton)
+        let cellSide = floor((footerWidth - 40 - 16) / 3)
+        var gridRows: [UIStackView] = []
+        for rowIndex in 0..<2 {
+            let rowStack = UIStackView()
+            rowStack.translatesAutoresizingMaskIntoConstraints = false
+            rowStack.axis = .horizontal
+            rowStack.spacing = 8
+            // 不用 fillEqually：墙不足 6 张时末行隐藏格会被拉伸成整行宽；
+            // .fill + 每格固定宽，末行缺格处自然留空、左对齐。
+            rowStack.distribution = .fill
+            for colIndex in 0..<3 {
+                let photoIndex = rowIndex * 3 + colIndex
+                let photoButton = UIButton(type: .custom)
+                photoButton.translatesAutoresizingMaskIntoConstraints = false
+                photoButton.backgroundColor = BearyColors.faint
+                photoButton.layer.cornerRadius = 12
+                photoButton.clipsToBounds = true
+                photoButton.imageView?.contentMode = .scaleAspectFill
+                photoButton.imageView?.clipsToBounds = true
+                photoButton.tag = photoIndex
+                photoButton.addTarget(self, action: #selector(photosWallButtonTapped(_:)), for: .touchUpInside)
+                photoButton.bearyAddPressFeedback()
+                if photoIndex < wall.count {
+                    let imageKey = wall[photoIndex].imageKey
+                    if let url = BearyImageURLs.imageURL(key: imageKey, thumb: true) {
+                        BearyImageLoader.shared.load(url: url, downsampleToWidth: cellSide * UIScreen.main.scale) { [weak photoButton] imageValue in
+                            photoButton?.setImage(imageValue, for: .normal)
+                        }
+                    }
+                } else {
+                    photoButton.isHidden = true
+                }
+                NSLayoutConstraint.activate([
+                    photoButton.widthAnchor.constraint(equalToConstant: cellSide),
+                    photoButton.heightAnchor.constraint(equalToConstant: cellSide),
+                ])
+                rowStack.addArrangedSubview(photoButton)
+            }
+            gridRows.append(rowStack)
+            container.addSubview(rowStack)
+        }
+        var constraints: [NSLayoutConstraint] = [
+            titleLabel.topAnchor.constraint(equalTo: container.topAnchor, constant: 24),
+            titleLabel.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 20),
+            moreButton.centerYAnchor.constraint(equalTo: titleLabel.centerYAnchor),
+            moreButton.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -20),
+            gridRows[0].topAnchor.constraint(equalTo: titleLabel.bottomAnchor, constant: 12),
+            gridRows[0].leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 20),
+            gridRows[1].topAnchor.constraint(equalTo: gridRows[0].bottomAnchor, constant: 8),
+            gridRows[1].leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 20),
+            gridRows[1].bottomAnchor.constraint(equalTo: container.bottomAnchor, constant: -8),
+        ]
+        NSLayoutConstraint.activate(constraints)
+        container.frame = CGRect(x: 0, y: 0, width: footerWidth, height: 0)
+        let fitted = container.systemLayoutSizeFitting(
+            CGSize(width: footerWidth, height: UIView.layoutFittingCompressedSize.height),
+            withHorizontalFittingPriority: .required,
+            verticalFittingPriority: .fittingSizeLevel
+        )
+        container.frame = CGRect(x: 0, y: 0, width: footerWidth, height: fitted.height)
+        cachedPhotosFooterView = container
+        cachedPhotosFooterSignature = signature
+        return container
+    }
+
+    @objc private func moreDiaryButtonTapped() {
+        // 批 C：本人页“更多日记”→ 时间线页；他人页按钮不显示，不会走到这里。
+        guard isOwnProfile else { return }
+        // 与行点按同款连点守卫（按钮直点不走 didSelectRowAt，须自带）。
+        if let guardUntil = rowTapGuardUntil, Date() < guardUntil { return }
+        rowTapGuardUntil = Date().addingTimeInterval(1.5)
+        BearyHaptics.press()
+        onOpenTimeline?()
+    }
+
+    @objc private func morePhotosButtonTapped() {
+        guard presentedViewController == nil else { return }
+        let photosVC = BearyProfilePhotosViewController(
+            authorIdValue: profile?.profileIdValue ?? targetUserIdValue,
+            isOwnProfileValue: isOwnProfile,
+            initialEntries: sortedDisplayableDiaryEntries(from: diaryEntries, isOwnProfile: isOwnProfile),
+            diaryHasMoreValue: diaryHasMore,
+            onOpenEntryValue: { [weak self] entryValue in self?.onOpenEntry?(entryValue) }
+        )
+        photosVC.modalPresentationStyle = .fullScreen
+        present(photosVC, animated: true, completion: nil)
+    }
+
+    @objc private func photosWallButtonTapped(_ sender: UIButton) {
+        presentPhotosLightbox(startIndex: sender.tag)
+    }
+
+    /// 批 C：照片墙点按直进大图灯箱（全量照片、左右滑动；灯箱内“查看日记”进详情）。
+    private func presentPhotosLightbox(startIndex: Int) {
+        let allPhotos = profilePhotosValue
+        guard !allPhotos.isEmpty, startIndex >= 0, startIndex < allPhotos.count else { return }
+        guard presentedViewController == nil else { return }
+        let viewer = BearyEntryImageViewerViewController(imageKeys: allPhotos.map { $0.imageKey }, startIndex: startIndex)
+        viewer.modalPresentationStyle = .fullScreen
+        viewer.onViewEntryAtIndex = { [weak self, weak viewer] tappedIndex in
+            guard let strongSelf = self, let viewerValue = viewer else { return }
+            guard tappedIndex >= 0, tappedIndex < strongSelf.profilePhotosValue.count else { return }
+            let targetEntry = strongSelf.profilePhotosValue[tappedIndex].entry
+            viewerValue.dismiss(animated: true) {
+                strongSelf.onOpenEntry?(targetEntry)
+            }
+        }
+        present(viewer, animated: true, completion: nil)
     }
 
     private func makeLoadingFooter() -> UIView {
@@ -3174,7 +3484,7 @@ class BearyProfileViewController: UIViewController {
     @discardableResult
     private func syncVisibleCell(entry: Entry, interactionDisabled: Bool? = nil, animatedEmoteLayout: Bool = false) -> BearyDiaryCardCell? {
         guard let entryId = entry.id,
-              let index = currentEntries.firstIndex(where: { $0.id == entryId }),
+              let index = displayedEntries.firstIndex(where: { $0.id == entryId }),
               let cell = tableView.cellForRow(at: IndexPath(row: index, section: 0)) as? BearyDiaryCardCell,
               cell.cellEntryId == entryId else { return nil }
         let disabled = interactionDisabled ?? emoteBusyIds.contains(entryId)
@@ -3186,7 +3496,7 @@ class BearyProfileViewController: UIViewController {
     /// 只摘赞过/收藏页签）。容器接线（Feed onInteractionRemoved → 本方法）。
     func removeEntryFromTabs(entryId: String, likeRemoved: Bool, bookmarkRemoved: Bool) {
         // 80 包 A6-2：只在当前页签正显示该行时删行；其他页签模型已改、界面不在本页，无需重载。
-        let visibleRow = currentEntries.firstIndex(where: { $0.id == entryId })
+        let visibleRow = displayedEntries.firstIndex(where: { $0.id == entryId })
         if likeRemoved {
             likedEntries.removeAll(where: { $0.id == entryId })
         }
@@ -3379,6 +3689,7 @@ class BearyProfileViewController: UIViewController {
                     strongSelf.likedEntries.removeAll()
                     strongSelf.savedEntries.removeAll()
                     strongSelf.tableView.reloadData()
+                    strongSelf.refreshFooter()
                 }
             }
         })
@@ -3394,7 +3705,7 @@ class BearyProfileViewController: UIViewController {
         likedEntries.removeAll { $0.id == entryId }
         savedEntries.removeAll { $0.id == entryId }
         changed = (diaryEntries.count + likedEntries.count + savedEntries.count) != before
-        if changed { tableView.reloadData() }
+        if changed { tableView.reloadData(); refreshFooter() }
     }
 
     @objc private func handleBlockedUserNotification(_ note: Notification) {
@@ -3406,6 +3717,7 @@ class BearyProfileViewController: UIViewController {
             likedEntries.removeAll()
             savedEntries.removeAll()
             tableView.reloadData()
+            refreshFooter()
             return
         }
         let before = diaryEntries.count + likedEntries.count + savedEntries.count
@@ -3414,6 +3726,7 @@ class BearyProfileViewController: UIViewController {
         savedEntries.removeAll { $0.authorId == userId }
         if (diaryEntries.count + likedEntries.count + savedEntries.count) != before {
             tableView.reloadData()
+            refreshFooter()
         }
     }
 
@@ -3599,7 +3912,9 @@ class BearyProfileViewController: UIViewController {
 
     /// 可见行查找（不改模型、不重绘）：供摘下先行动画用。
     private func visibleCell(for entryId: String) -> BearyDiaryCardCell? {
-        guard let index = currentEntries.firstIndex(where: { $0.id == entryId }),
+        // 批 C：行号按展示层算（日记 tab 过滤后行号与模型下标可能错位，旧写法
+        // 会取到错行、再被 cellEntryId 校验挡回 nil，导致可见行同步静默失效）。
+        guard let index = displayedEntries.firstIndex(where: { $0.id == entryId }),
               let cell = tableView.cellForRow(at: IndexPath(row: index, section: 0)) as? BearyDiaryCardCell,
               cell.cellEntryId == entryId else { return nil }
         return cell
@@ -3655,8 +3970,12 @@ class BearyProfileViewController: UIViewController {
         // L21（91 包）：展开/收起专用——cell 就地改显示 + 正文淡入，行高由 batch 平滑伸缩；
         // 互动路径走 syncVisibleCell 就地同步，不动。
         let expanded = expandedEntryIds.contains(entryId)
-        guard let index = currentEntries.firstIndex(where: { $0.id == entryId }),
-              let cell = tableView.cellForRow(at: IndexPath(row: index, section: 0)) as? BearyDiaryCardCell else { return }
+        // 批 C：行号按展示层算并校验 cellEntryId——旧模型下标在截断后可能
+        // 指到另一篇卡片，setFoldDisplay 会改错行（syncVisibleCell 有校验，
+        // 这里原来没有，属同类缺口一并补上）。
+        guard let index = displayedEntries.firstIndex(where: { $0.id == entryId }),
+              let cell = tableView.cellForRow(at: IndexPath(row: index, section: 0)) as? BearyDiaryCardCell,
+              cell.cellEntryId == entryId else { return }
         cell.setFoldDisplay(expanded: expanded, animated: true)
         tableView.performBatchUpdates(nil)
     }
@@ -3699,9 +4018,65 @@ class BearyProfileViewController: UIViewController {
 
 // MARK: - 列表数据源与点按（点按只走 onOpenEntry，不在本文件内置跳转）
 
+/// 批 C“更多日记”按钮行：全宽圆角钮（faint 底、墨字 + 官方 icon_chevron_right），
+/// 点按走 onTap（容器跳时间线页）；复用时 onTap 置空，不残留旧闭包。
+final class BearyProfileMoreDiaryCell: UITableViewCell {
+
+    var onTap: (() -> Void)?
+
+    private lazy var moreButton: UIButton = {
+        let buttonValue = UIButton(type: .custom)
+        buttonValue.translatesAutoresizingMaskIntoConstraints = false
+        buttonValue.backgroundColor = BearyColors.faint
+        buttonValue.layer.cornerRadius = 12
+        buttonValue.clipsToBounds = true
+        buttonValue.setTitle("更多日记", for: .normal)
+        buttonValue.setTitleColor(BearyColors.ink, for: .normal)
+        buttonValue.titleLabel?.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 15, weight: .semibold))
+        buttonValue.titleLabel?.adjustsFontForContentSizeCategory = true
+        buttonValue.setImage(BearyIconImages.image(named: "icon_chevron_right", pointSize: 16), for: .normal)
+        buttonValue.tintColor = BearyColors.ink
+        buttonValue.semanticContentAttribute = .forceRightToLeft
+        buttonValue.titleEdgeInsets = UIEdgeInsets(top: 0, left: 0, bottom: 0, right: 4)
+        buttonValue.addTarget(self, action: #selector(moreButtonTapped), for: .touchUpInside)
+        buttonValue.bearyAddPressFeedback()
+        return buttonValue
+    }()
+
+    override init(style: UITableViewCell.CellStyle, reuseIdentifier: String?) {
+        super.init(style: style, reuseIdentifier: reuseIdentifier)
+        backgroundColor = .clear
+        contentView.backgroundColor = .clear
+        selectionStyle = .none
+        contentView.addSubview(moreButton)
+        NSLayoutConstraint.activate([
+            moreButton.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 4),
+            moreButton.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 20),
+            moreButton.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -20),
+            moreButton.bottomAnchor.constraint(equalTo: contentView.bottomAnchor, constant: -4),
+            moreButton.heightAnchor.constraint(equalToConstant: 48),
+        ])
+    }
+
+    required init?(coder: NSCoder) {
+        return nil
+    }
+
+    override func prepareForReuse() {
+        super.prepareForReuse()
+        onTap = nil
+    }
+
+    @objc private func moreButtonTapped() {
+        onTap?()
+    }
+}
+
 extension BearyProfileViewController: UITableViewDataSource, UITableViewDelegate {
     func tableView(_ tableView: UITableView, numberOfRowsInSection section: Int) -> Int {
-        return currentEntries.count
+        // 批 C：日记 tab = 最新 3 篇 + 1 行“更多日记”按钮（本人页才有）；
+        // 赞过/收藏 tab 行数一字不动。
+        return displayedEntries.count + (diaryMoreButtonVisible ? 1 : 0)
     }
 
     func tableView(_ tableView: UITableView, cellForRowAt indexPath: IndexPath) -> UITableViewCell {
@@ -3711,7 +4086,16 @@ extension BearyProfileViewController: UITableViewDataSource, UITableViewDelegate
         } else {
             cellValue = BearyDiaryCardCell(style: .default, reuseIdentifier: "BearyDiaryCardCell", mode: .profile)
         }
-        let entryValue = currentEntries[indexPath.row]
+        if diaryMoreButtonVisible && indexPath.row == displayedEntries.count {
+            if let reused = tableView.dequeueReusableCell(withIdentifier: "BearyProfileMoreDiaryCell") as? BearyProfileMoreDiaryCell {
+                reused.onTap = { [weak self] in self?.moreDiaryButtonTapped() }
+                return reused
+            }
+            let moreCell = BearyProfileMoreDiaryCell(style: .default, reuseIdentifier: "BearyProfileMoreDiaryCell")
+            moreCell.onTap = { [weak self] in self?.moreDiaryButtonTapped() }
+            return moreCell
+        }
+        let entryValue = displayedEntries[indexPath.row]
         let entryId = entryValue.id ?? ""
         cellValue.configure(
             entry: entryValue,
@@ -3766,16 +4150,21 @@ extension BearyProfileViewController: UITableViewDataSource, UITableViewDelegate
         if let guardUntil = rowTapGuardUntil, Date() < guardUntil {
             return
         }
-        guard indexPath.row < currentEntries.count else { return }
+        if diaryMoreButtonVisible && indexPath.row == displayedEntries.count {
+            moreDiaryButtonTapped()
+            return
+        }
+        guard indexPath.row < displayedEntries.count else { return }
         // W6：行点按补 .light 轻震（放在连点守卫与越界守卫之后，只对真实生效的点按震动）。
         BearyHaptics.press()
         rowTapGuardUntil = Date().addingTimeInterval(1.5)
-        let entryValue = currentEntries[indexPath.row]
+        let entryValue = displayedEntries[indexPath.row]
         onOpenEntry?(entryValue)
     }
 
     func tableView(_ tableView: UITableView, willDisplay cell: UITableViewCell, forRowAt indexPath: IndexPath) {
-        if indexPath.row == currentEntries.count - 1 {
+        // 批 C：日记 tab 不翻页（loadMoreIfNeeded 内已守）；按钮行本身不触发翻页。
+        if currentTab != .diary && indexPath.row == displayedEntries.count - 1 {
             loadMoreIfNeeded()
         }
     }
