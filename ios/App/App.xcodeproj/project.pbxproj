@@ -62,6 +62,7 @@
 		852849F339E8F8D7F0BCF285 /* BearyProfileViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3C69557322ACDD89D6E6A408 /* BearyProfileViewController.swift */; };
 		F3BC02439AD67E59333DAE6D /* BearyProfilePhotosViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = F902BC2C341B403A94B5BA58 /* BearyProfilePhotosViewController.swift */; };
 		0AE5D01B1CC24189AE94E211 /* BearyProfilePersonalModules.swift in Sources */ = {isa = PBXBuildFile; fileRef = E18E3AA4468E4150B9EBCC3D /* BearyProfilePersonalModules.swift */; };
+		2E8196B98A259984EC93E07F /* BearyWordprint.swift in Sources */ = {isa = PBXBuildFile; fileRef = 995FC7BC3C031094E46BD8D6 /* BearyWordprint.swift */; };
 		2B5FFB899357ED2A2FA2E05E /* BearySearchViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = EF90ED3AC360C339FA2BAEFC /* BearySearchViewController.swift */; };
 		A23C53DAC03E8C03962E6498 /* BearyNotificationsViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5E158D917D57FA5831A2069F /* BearyNotificationsViewController.swift */; };
 		EA84A3E04072B1309A399108 /* BearyEmoteImages.swift in Sources */ = {isa = PBXBuildFile; fileRef = B67362B50D4D2A91E59412D2 /* BearyEmoteImages.swift */; };
@@ -245,6 +246,7 @@
 		3C69557322ACDD89D6E6A408 /* BearyProfileViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BearyProfileViewController.swift; sourceTree = "<group>"; };
 		F902BC2C341B403A94B5BA58 /* BearyProfilePhotosViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BearyProfilePhotosViewController.swift; sourceTree = "<group>"; };
 		E18E3AA4468E4150B9EBCC3D /* BearyProfilePersonalModules.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BearyProfilePersonalModules.swift; sourceTree = "<group>"; };
+		995FC7BC3C031094E46BD8D6 /* BearyWordprint.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BearyWordprint.swift; sourceTree = "<group>"; };
 		EF90ED3AC360C339FA2BAEFC /* BearySearchViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BearySearchViewController.swift; sourceTree = "<group>"; };
 		5E158D917D57FA5831A2069F /* BearyNotificationsViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BearyNotificationsViewController.swift; sourceTree = "<group>"; };
 		B67362B50D4D2A91E59412D2 /* BearyEmoteImages.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BearyEmoteImages.swift; sourceTree = "<group>"; };
@@ -458,6 +460,7 @@
 				3C69557322ACDD89D6E6A408 /* BearyProfileViewController.swift */,
 				F902BC2C341B403A94B5BA58 /* BearyProfilePhotosViewController.swift */,
 				E18E3AA4468E4150B9EBCC3D /* BearyProfilePersonalModules.swift */,
+				995FC7BC3C031094E46BD8D6 /* BearyWordprint.swift */,
 				EF90ED3AC360C339FA2BAEFC /* BearySearchViewController.swift */,
 				5E158D917D57FA5831A2069F /* BearyNotificationsViewController.swift */,
 				B67362B50D4D2A91E59412D2 /* BearyEmoteImages.swift */,
@@ -860,6 +863,7 @@
 				852849F339E8F8D7F0BCF285 /* BearyProfileViewController.swift in Sources */,
 				F3BC02439AD67E59333DAE6D /* BearyProfilePhotosViewController.swift in Sources */,
 				0AE5D01B1CC24189AE94E211 /* BearyProfilePersonalModules.swift in Sources */,
+				2E8196B98A259984EC93E07F /* BearyWordprint.swift in Sources */,
 				2B5FFB899357ED2A2FA2E05E /* BearySearchViewController.swift in Sources */,
 				A23C53DAC03E8C03962E6498 /* BearyNotificationsViewController.swift in Sources */,
 				EA84A3E04072B1309A399108 /* BearyEmoteImages.swift in Sources */,
