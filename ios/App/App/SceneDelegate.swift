@@ -175,6 +175,8 @@ final class BearyChromeViewController: UIViewController {
     private var launchVeilView: UIView?
     private var launchVeilLogo: UIImageView?
     private var launchVeilPlayed = false
+    /// TEST ONLY（测试分支专属，正式接 veil 时删）：标语 v3 测试页是否已呈现过（只播一次，modal 回落不重播）。
+    private var sloganV3TestPresented = false
     private var bellBadge: UILabel!
     /// 顶栏图标行（宽度相关间距：≤360 时 4、≤480 时 10，其余 18，见 layoutChromeOverlays）。
     private var topStackView: UIStackView?
@@ -1008,6 +1010,14 @@ final class BearyChromeViewController: UIViewController {
         // veil 仍在时由 removeLaunchVeil 完成时触发自动引导，veil 已不在时
         // （已播过／4 秒兜底已清）直接触发。
         runLaunchVeilIfNeeded()
+        // TEST ONLY（测试分支专属，正式接 veil 时删）：冷启动首次呈现标语 v3 测试页（全屏 modal，
+        // 只播文字、无熊图；点“进入主页” dismiss 回正常主页；正式 veil 与 LaunchScreen 一字未动）。
+        if !sloganV3TestPresented {
+            sloganV3TestPresented = true
+            let testVC = BearySloganV3TestViewController()
+            testVC.modalPresentationStyle = .fullScreen
+            present(testVC, animated: false, completion: nil)
+        }
         if launchVeilView == nil {
             maybePresentOnboardingOnFirstLaunch()
         }

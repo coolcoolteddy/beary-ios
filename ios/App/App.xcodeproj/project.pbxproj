@@ -52,6 +52,7 @@
 		F1A2B3C4D5E6F78901234567 /* BearyWishWallViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D4E5F67890ABCDEF12 /* BearyWishWallViewController.swift */; };
 		8ABB5DF4B35DF3B59999D3A2 /* BearySettingsSubpages.swift in Sources */ = {isa = PBXBuildFile; fileRef = 12F817BD777C96A660F91A83 /* BearySettingsSubpages.swift */; };
 		4286499B01B2367CADFE02E3 /* BearyCrownView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8489888CCB412D0007221576 /* BearyCrownView.swift */; };
+		0ACBEA87963043A482A012F3 /* BearySloganV3TestViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2F5F5BAD3B934FF987C3C18E /* BearySloganV3TestViewController.swift */; };
 		0DF17DFC39734CBE9118F087 /* BearyDetailViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0B7C99F453D645B0BBF9896F /* BearyDetailViewController.swift */; };
 		58697AC315BA4F4EA10C3DEB /* BearySettingsViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 262626061B9648ED8774C313 /* BearySettingsViewController.swift */; };
 		455A4C8BA2D150C518BD7A1F /* BearyIconMotion.swift in Sources */ = {isa = PBXBuildFile; fileRef = AE1004189D604B60D3CDB019 /* BearyIconMotion.swift */; };
@@ -63,6 +64,8 @@
 		93F45F628E22C5045A1EF58F /* agree.json in Resources */ = {isa = PBXBuildFile; fileRef = DAE48A2C16A1E3B2821093EB /* agree.json */; };
 		4497343DBC967B83178641E1 /* agree_dark.json in Resources */ = {isa = PBXBuildFile; fileRef = 37B9943EDEF2C3A792782E9E /* agree_dark.json */; };
 		7089387273580DA6004FDF8A /* crown.json in Resources */ = {isa = PBXBuildFile; fileRef = 4ED6BF206A0F34DF117D855A /* crown.json */; };
+		F671EB1FFD7040EE9DE52FA2 /* keep_v3_light.json in Resources */ = {isa = PBXBuildFile; fileRef = DB51E37E2B264923ABE8834B /* keep_v3_light.json */; };
+		78D116D9FA36474089622C7C /* keep_v3_dark.json in Resources */ = {isa = PBXBuildFile; fileRef = AA0AE016E2C74B948499583E /* keep_v3_dark.json */; };
 		2D246D12E611A91D2B5942DA /* crown_dark.json in Resources */ = {isa = PBXBuildFile; fileRef = F6FD1914898A32397E582D45 /* crown_dark.json */; };
 		253B820FAB0078EED0B89D4E /* angry.json in Resources */ = {isa = PBXBuildFile; fileRef = 0F94F0E398907EA72C0111A3 /* angry.json */; };
 		E2BA82FA3D6D7993407A70D0 /* angry_dark.json in Resources */ = {isa = PBXBuildFile; fileRef = A51DFDB490D877CB099D60EA /* angry_dark.json */; };
@@ -229,6 +232,7 @@
 		A1B2C3D4E5F67890ABCDEF12 /* BearyWishWallViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BearyWishWallViewController.swift; sourceTree = "<group>"; };
 		12F817BD777C96A660F91A83 /* BearySettingsSubpages.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BearySettingsSubpages.swift; sourceTree = "<group>"; };
 		8489888CCB412D0007221576 /* BearyCrownView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BearyCrownView.swift; sourceTree = "<group>"; };
+		2F5F5BAD3B934FF987C3C18E /* BearySloganV3TestViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BearySloganV3TestViewController.swift; sourceTree = "<group>"; };
 		0B7C99F453D645B0BBF9896F /* BearyDetailViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BearyDetailViewController.swift; sourceTree = "<group>"; };
 		262626061B9648ED8774C313 /* BearySettingsViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BearySettingsViewController.swift; sourceTree = "<group>"; };
 		AE1004189D604B60D3CDB019 /* BearyIconMotion.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BearyIconMotion.swift; sourceTree = "<group>"; };
@@ -240,6 +244,8 @@
 		DAE48A2C16A1E3B2821093EB /* agree.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = LottieEmotes/agree.json; sourceTree = "<group>"; };
 		37B9943EDEF2C3A792782E9E /* agree_dark.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = LottieEmotes/agree_dark.json; sourceTree = "<group>"; };
 		4ED6BF206A0F34DF117D855A /* crown.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = LottieCrown/crown.json; sourceTree = "<group>"; };
+		DB51E37E2B264923ABE8834B /* keep_v3_light.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = LottieSlogan/keep_v3_light.json; sourceTree = "<group>"; };
+		AA0AE016E2C74B948499583E /* keep_v3_dark.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = LottieSlogan/keep_v3_dark.json; sourceTree = "<group>"; };
 		F6FD1914898A32397E582D45 /* crown_dark.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = LottieCrown/crown_dark.json; sourceTree = "<group>"; };
 		0F94F0E398907EA72C0111A3 /* angry.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = LottieEmotes/angry.json; sourceTree = "<group>"; };
 		A51DFDB490D877CB099D60EA /* angry_dark.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = LottieEmotes/angry_dark.json; sourceTree = "<group>"; };
@@ -436,6 +442,7 @@
 				A1B2C3D4E5F67890ABCDEF12 /* BearyWishWallViewController.swift */,
 				12F817BD777C96A660F91A83 /* BearySettingsSubpages.swift */,
 				8489888CCB412D0007221576 /* BearyCrownView.swift */,
+				2F5F5BAD3B934FF987C3C18E /* BearySloganV3TestViewController.swift */,
 				0B7C99F453D645B0BBF9896F /* BearyDetailViewController.swift */,
 				262626061B9648ED8774C313 /* BearySettingsViewController.swift */,
 				AE1004189D604B60D3CDB019 /* BearyIconMotion.swift */,
@@ -454,6 +461,8 @@
 				DAE48A2C16A1E3B2821093EB /* agree.json */,
 				37B9943EDEF2C3A792782E9E /* agree_dark.json */,
 				4ED6BF206A0F34DF117D855A /* crown.json */,
+				DB51E37E2B264923ABE8834B /* keep_v3_light.json */,
+				AA0AE016E2C74B948499583E /* keep_v3_dark.json */,
 				F6FD1914898A32397E582D45 /* crown_dark.json */,
 				0F94F0E398907EA72C0111A3 /* angry.json */,
 				A51DFDB490D877CB099D60EA /* angry_dark.json */,
@@ -670,6 +679,8 @@
 				93F45F628E22C5045A1EF58F /* agree.json in Resources */,
 				4497343DBC967B83178641E1 /* agree_dark.json in Resources */,
 				7089387273580DA6004FDF8A /* crown.json in Resources */,
+				F671EB1FFD7040EE9DE52FA2 /* keep_v3_light.json in Resources */,
+				78D116D9FA36474089622C7C /* keep_v3_dark.json in Resources */,
 				2D246D12E611A91D2B5942DA /* crown_dark.json in Resources */,
 				253B820FAB0078EED0B89D4E /* angry.json in Resources */,
 				E2BA82FA3D6D7993407A70D0 /* angry_dark.json in Resources */,
@@ -831,6 +842,7 @@
 				F1A2B3C4D5E6F78901234567 /* BearyWishWallViewController.swift in Sources */,
 				8ABB5DF4B35DF3B59999D3A2 /* BearySettingsSubpages.swift in Sources */,
 				4286499B01B2367CADFE02E3 /* BearyCrownView.swift in Sources */,
+				0ACBEA87963043A482A012F3 /* BearySloganV3TestViewController.swift in Sources */,
 				0DF17DFC39734CBE9118F087 /* BearyDetailViewController.swift in Sources */,
 				58697AC315BA4F4EA10C3DEB /* BearySettingsViewController.swift in Sources */,
 				455A4C8BA2D150C518BD7A1F /* BearyIconMotion.swift in Sources */,
