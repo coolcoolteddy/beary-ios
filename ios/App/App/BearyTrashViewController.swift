@@ -689,9 +689,11 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate {
         let restoreButton = UIButton(type: .custom)
         restoreButton.setTitle("恢复", for: .normal)
         // C2：恢复钮文字与图标走 ink（此前错用蓝色）；彻底删除保持红。
+        // 恢复钮图标用 icon_restore：放大看是垃圾桶 + 右侧回旋箭头，字面即“从回收站恢复”，
+        // 是全仓唯一合法的 icon_restore 用处（重试/保存/加载/处理处一律不得用它，见 #224 回退）。
         restoreButton.setTitleColor(BearyColors.ink, for: .normal)
-        if let undoImage = BearyIconImages.image(named: "icon_undo", pointSize: 21) {
-            restoreButton.setImage(undoImage, for: .normal)
+        if let restoreImage = BearyIconImages.image(named: "icon_restore", pointSize: 21) {
+            restoreButton.setImage(restoreImage, for: .normal)
         }
         restoreButton.imageView?.contentMode = .scaleAspectFit
         restoreButton.tintColor = BearyColors.ink

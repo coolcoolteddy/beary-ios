@@ -519,8 +519,8 @@ class BearyEditProfileViewController: UIViewController {
         // [主页链接复制]）。
         contentStack.addArrangedSubview(topRow)
         // 1-8：圈转贴在保存钮左侧钮外空隙（不挤占 44 宽标题）。
-        // 刷新图标分流：保存处理转圈不用 icon_refresh，改用另一款 icon_restore。
-        savingSpinner.image = BearyIconImages.image(named: "icon_restore", pointSize: 32)
+        // 保存处理转圈与下拉/加载同款 icon_refresh（#224 误用 icon_restore 已回退）。
+        savingSpinner.image = BearyIconImages.image(named: "icon_refresh", pointSize: 32)
         saveButton.addSubview(savingSpinner)
         NSLayoutConstraint.activate([
             savingSpinner.widthAnchor.constraint(equalToConstant: 20),

@@ -53,7 +53,7 @@ enum BearyFeedIconCache {
 
 // MARK: - 图片失败重试（清单第 13 项首页部分：主卡图片 + 头像；合并后两页同款）
 
-/// 纯图标重试钮（用户定形态就是图标，不要文字按钮）：28pt bg 色圆盘 + icon_restore（刷新图标分流：重试不用 icon_refresh）。
+/// 纯图标重试钮（用户定形态就是图标，不要文字按钮）：28pt bg 色圆盘 + icon_refresh（#224 误用 icon_restore 已回退；icon_restore 是回收站恢复图标，不得用于重试）。
 /// 只由失败回调显示；点按先藏、重载成功后保持隐藏、再失败则重新出现。
 /// 加载中与成功态不碰——成功路径不回调，图标自然不会出现。
 final class BearyFeedRetryButton: UIButton {
@@ -71,7 +71,7 @@ final class BearyFeedRetryButton: UIButton {
 func bearyFeedRetryButton(target: Any?, action: Selector) -> BearyFeedRetryButton {
     let btn = BearyFeedRetryButton(type: .system)
     btn.translatesAutoresizingMaskIntoConstraints = false
-    btn.setImage(BearyFeedIconCache.image(named: "icon_restore", pointSize: 20), for: .normal)
+    btn.setImage(BearyFeedIconCache.image(named: "icon_refresh", pointSize: 20), for: .normal)
     btn.tintColor = BearyColors.gray
     btn.backgroundColor = BearyColors.bg
     btn.layer.cornerRadius = 14

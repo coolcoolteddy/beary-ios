@@ -1537,7 +1537,7 @@ final class BearyNotificationsViewController: UIViewController {
         isMarkingAllRead = true
         readAllButton.isEnabled = false
         // 网页口径：处理中换成转圈图标 +“处理中…”（check 图标不再保留）。
-        readAllButton.setImage(BearyIconImages.image(named: "icon_restore", pointSize: 14), for: .normal)
+        readAllButton.setImage(BearyIconImages.image(named: "icon_refresh", pointSize: 14), for: .normal)
         readAllButton.setTitle("处理中…", for: .normal)
         updateReadAllButtonWidth()
         readAllButton.layoutIfNeeded()
@@ -2508,7 +2508,7 @@ private class BearyNotificationCell: UITableViewCell {
     private lazy var avatarRetryButton: UIButton = {
         let button = UIButton(type: .system)
         button.translatesAutoresizingMaskIntoConstraints = false
-        button.setImage(BearyIconImages.image(named: "icon_restore", pointSize: 20), for: .normal)
+        button.setImage(BearyIconImages.image(named: "icon_refresh", pointSize: 20), for: .normal)
         button.tintColor = BearyColors.ink
         button.isHidden = true
         button.accessibilityLabel = "重试"
