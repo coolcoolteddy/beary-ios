@@ -20,7 +20,7 @@ import UIKit
 //   他人空态文案与作者有无私密篇无关（不做私密存在性预言机）。
 // - 分片：过滤后总数 ≤ 80 直接画全部；超过则强制按年/月分片（无“全部”
 //   选项），默认最新年最新月；年内“全年”仍受拉取上限约束。
-// - 图标铁律：连线示意用新图标 icon_constellation（imageset 名 "constellation"，
+// - 图标铁律：连线示意用新图标 icon_constellation（imageset 名 "icon_constellation"，
 //   注册由另一工人做；本页不自绘、不拿 SF Symbol 顶替）。页内其余图标
 //   一律官方包已有：关闭 icon_close、星星 icon_star、日历 icon_calendar、
 //   锁 icon_lock、地球 icon_globe、右箭头 icon_chevron_right。
