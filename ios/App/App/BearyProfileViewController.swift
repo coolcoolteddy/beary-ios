@@ -323,6 +323,16 @@ class BearyProfileViewController: UIViewController {
         tableViewValue.estimatedRowHeight = 220
         tableViewValue.contentInset = UIEdgeInsets(top: 0, left: 0, bottom: 90, right: 0)
         tableViewValue.scrollIndicatorInsets = tableViewValue.contentInset
+        tableViewValue.contentInsetAdjustmentBehavior = .never
+        // 状态栏黑条根因（2026-10-30）：此前 10-29“封面伸进状态栏”只把表框顶改到
+        // view.top，却没关自动内边距——系统仍按安全区顶给 adjustedContentInset 加
+        // 一个安全区顶高度，把 tableHeaderView（封面）整体下推，顶部露出表底色
+        // （深色下即黑条，高度与截图黑条一致）。
+        // Feed / 时间线早已是 .never，个人页是唯一漏掉的主滚动视图；本页全部滚动
+        // 数学（applyHeaderTopInset、updateCoverStretch、updateProfileCoverScroll）
+        // 本就以 contentInset.top（0/60）为准，不依赖自动内边距，故 .never 后与
+        // 代码假设一致：容器态封面顶到屏幕顶、伸到状态栏与灵动岛下方；modal 态表顶
+        // 本就是安全区顶 + 44，不会因此多缩进；无封面头像顶距仍走安全区 + 20，不动。
         // 跟手批：与 Feed 同款——关掉 delaysContentTouches，按钮按下立即响应而非等滚动判定。
         tableViewValue.delaysContentTouches = false
         tableViewValue.delegate = self
