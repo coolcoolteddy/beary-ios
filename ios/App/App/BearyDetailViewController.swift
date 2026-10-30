@@ -124,7 +124,7 @@ final class BearyDetailViewController: UIViewController {
     private let quoteView = BearyQuoteCardView(frame: .zero)
     private let actionStack = UIStackView()
     private let likeButton = BearyHit44Button(type: .custom)
-    private let commentButton = BearyHit44Button(type: .custom)
+    private let responseButton = BearyHit44Button(type: .custom)
     private let bookmarkButton = BearyHit44Button(type: .custom)
     private let shareButton = BearyHit44Button(type: .custom)
     private let guestPromptButton = BearyHit44Button(type: .custom)
@@ -269,6 +269,7 @@ final class BearyDetailViewController: UIViewController {
         super.traitCollectionDidChange(previousTraitCollection)
         if traitCollection.hasDifferentColorAppearance(comparedTo: previousTraitCollection) {
             refreshVisibilityViews()
+            refreshActionRow()
         }
     }
 
@@ -556,16 +557,18 @@ final class BearyDetailViewController: UIViewController {
         likeButton.addTarget(self, action: #selector(likeTapped), for: .touchUpInside)
         likeButton.bearyAddPressFeedback()
 
-        commentButton.translatesAutoresizingMaskIntoConstraints = false
-        commentButton.titleLabel?.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 14))
-        commentButton.titleEdgeInsets = UIEdgeInsets(top: 0, left: 6, bottom: 0, right: 0)
-        commentButton.setTitleColor(BearyColors.gray, for: .normal)
-        commentButton.setTitleColor(BearyColors.gray, for: .highlighted)
-        commentButton.adjustsImageWhenHighlighted = false
-        commentButton.setImage(BearyFeedIconCache.image(named: "icon_comment", pointSize: 21), for: .normal)
-        commentButton.tintColor = BearyColors.gray
-        commentButton.addTarget(self, action: #selector(commentTapped), for: .touchUpInside)
-        commentButton.bearyAddPressFeedback()
+        responseButton.translatesAutoresizingMaskIntoConstraints = false
+        responseButton.titleLabel?.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 14))
+        responseButton.titleEdgeInsets = UIEdgeInsets(top: 0, left: 6, bottom: 0, right: 0)
+        responseButton.setTitleColor(BearyColors.gray, for: .normal)
+        responseButton.setTitleColor(BearyColors.gray, for: .highlighted)
+        responseButton.adjustsImageWhenHighlighted = false
+        // 回应钮 = 小熊回应：用官方 hug 拥抱表情（时间线足行同款资产），
+        // 不要用 icon_comment 气泡——产品无评论功能，气泡会误导为评论入口。
+        // 尺寸 21pt 与收藏/分享同款；alwaysOriginal，灰色 tint 不得重染熊脸。
+        responseButton.setImage(hugResponseImage(), for: .normal)
+        responseButton.addTarget(self, action: #selector(responseTapped), for: .touchUpInside)
+        responseButton.bearyAddPressFeedback()
 
         bookmarkButton.translatesAutoresizingMaskIntoConstraints = false
         bookmarkButton.titleLabel?.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 14))
@@ -591,7 +594,7 @@ final class BearyDetailViewController: UIViewController {
         actionSpacer.setContentHuggingPriority(UILayoutPriority(1), for: .horizontal)
         actionSpacer.setContentCompressionResistancePriority(UILayoutPriority(1), for: .horizontal)
         actionStack.addArrangedSubview(likeButton)
-        actionStack.addArrangedSubview(commentButton)
+        actionStack.addArrangedSubview(responseButton)
         actionStack.addArrangedSubview(bookmarkButton)
         actionStack.addArrangedSubview(shareButton)
         actionStack.addArrangedSubview(actionSpacer)
@@ -1088,6 +1091,20 @@ final class BearyDetailViewController: UIViewController {
     // MARK: - 操作行
 
     /// 点赞点亮走红色、收藏点亮走橙色，与现有先行反馈口径；数字只 setTitle，不重建行。
+    /// 小熊回应钮图标：官方 hug 拥抱表情，缩放到 21pt（与收藏/分享同款尺寸），
+    /// alwaysOriginal 渲染（不得被灰色 tint 重染）；深色用 emote_hug_dark 版。
+    /// 资产缺失时返回 nil（调用方显示无图按钮，不拿气泡图标顶替）。
+    private func hugResponseImage() -> UIImage? {
+        let dark = traitCollection.userInterfaceStyle == .dark
+        guard let raw = BearyEmoteImages.image(for: "hug", dark: dark) else { return nil }
+        let size = CGSize(width: 21, height: 21)
+        let format = UIGraphicsImageRendererFormat()
+        format.scale = UIScreen.main.scale
+        let renderer = UIGraphicsImageRenderer(size: size, format: format)
+        let scaled = renderer.image { _ in raw.draw(in: CGRect(origin: .zero, size: size)) }
+        return scaled.withRenderingMode(.alwaysOriginal)
+    }
+
     private func refreshActionRow() {
         if isGuest {
             actionStack.isHidden = true
@@ -1119,7 +1136,8 @@ final class BearyDetailViewController: UIViewController {
         for emote in entry.emotes ?? [] {
             emoteTotal += emote.count ?? 0
         }
-        commentButton.setTitle("\(emoteTotal)", for: .normal)
+        responseButton.setTitle("\(emoteTotal)", for: .normal)
+        responseButton.setImage(hugResponseImage(), for: .normal)
 
         let bookmarked = entry.bookmarkedByMe ?? false
         let bookmarkImage = BearyFeedIconCache.image(named: bookmarked ? "icon_bookmark_fill" : "icon_bookmark", pointSize: 21)
@@ -1366,7 +1384,7 @@ final class BearyDetailViewController: UIViewController {
                     if case .unauthorized = err {
                         self.onRequireLogin?()
                     } else {
-                        self.playDenyShake(on: self.commentButton)
+                        self.playDenyShake(on: self.responseButton)
                         BearyToast.show(in: self.view, message: "操作失败，请重试")
                     }
                 }
@@ -1587,7 +1605,7 @@ final class BearyDetailViewController: UIViewController {
         }
     }
 
-    @objc private func commentTapped() {
+    @objc private func responseTapped() {
         // 回应钮 = 打开回应选择器（与“写回应…”同一入口）。
         writeResponseTapped()
     }
