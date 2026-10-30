@@ -74,17 +74,22 @@ final class BearyDetailViewController: UIViewController {
     /// 相等即无变化、直接返回，不重建 chip；nil 表示尚未渲染过一次。
     private var renderedEmoteSignature: String?
     private var lastFlowWidth: CGFloat = 0
-    /// 第 2 项（100 包第 16 项返修，P2-1 同口径）：600 列上限约束——
-    /// 只在宽 ≥821 时激活；宽 ≤820 时停用，改由 750 优先级的屏宽 −32 撑满。
-    /// 旧实现把 ≤600 常驻激活，633–820 档（iPhone 横屏、iPad 竖屏）被压成
-    /// 600 居中、两侧各空 70–120pt，看起来就是“左右被挤压”；开关在
-    /// viewDidLayoutSubviews（与 Feed／编辑资料同款，状态不变不开关）。
-    private var detailColCapConstraint: NSLayoutConstraint?
+    /// 详情页重做（2026-10-30 预览定版，Li 点头）：单层内容列，两分支互斥。
+    /// 宽 ≤820：leading = frame.leading＋16、trailing = frame.trailing−16
+    /// （required 等式，宽 = 屏宽−32，393 宽即 361pt），不靠 centerX＋
+    /// 不等式护栏、不靠 750 优先级补丁等式，内容内在宽不再反推列宽。
+    /// 宽 ≥821：宽 600 居中。两组约束只激活一组，切换时在
+    /// viewDidLayoutSubviews 里整组开关，状态不变不开关，避免布局循环。
+    private var columnNarrowLeading: NSLayoutConstraint?
+    private var columnNarrowTrailing: NSLayoutConstraint?
+    private var columnWideWidth: NSLayoutConstraint?
+    private var columnWideCenterX: NSLayoutConstraint?
+    private var columnIsWide = false
 
     // MARK: - 视图
 
     private let scrollView = UIScrollView()
-    private let containerView = UIView()
+    private let contentColumnView = UIView()
     private let stackView = UIStackView()
     private let closeButton = UIButton(type: .custom)
     private let avatarButton = BearyHit44Button(type: .custom)
@@ -152,8 +157,8 @@ final class BearyDetailViewController: UIViewController {
     }()
 
     /// 限时详情虚线边框（CAShapeLayer，1.5pt dashed、line 色、圆角 16；
-    /// 布局时按 containerView bounds 重画路径，主题切换重刷描边色；
-    /// 插在 containerView 图层最底层，不盖内容）。
+    /// 布局时按 contentColumnView bounds 重画路径，主题切换重刷描边色；
+    /// 插在 contentColumnView 图层最底层，不盖内容）。
     private let ephemeralBorderLayer: CAShapeLayer = {
         let layer = CAShapeLayer()
         layer.fillColor = UIColor.clear.cgColor
@@ -269,14 +274,18 @@ final class BearyDetailViewController: UIViewController {
 
     override func viewDidLayoutSubviews() {
         super.viewDidLayoutSubviews()
-        // 第 2 项：600 上限只在宽 ≥821 时激活（P2-1 开关，状态不变不开关，
-        // 避免布局循环）；宽 ≤820 时上限停用、列宽 = 屏宽 −32 撑满。
-        let wantColCap = view.bounds.width >= 821
-        if detailColCapConstraint?.isActive != wantColCap {
-            detailColCapConstraint?.isActive = wantColCap
+        // 详情重做：两分支互斥整组开关（状态不变不开关，避免布局循环）。
+        // 宽 ≥821 用 600 居中，宽 ≤820 用屏宽−32；切换时重算一次。
+        let wantWide = view.bounds.width >= 821
+        if wantWide != columnIsWide {
+            columnIsWide = wantWide
+            columnNarrowLeading?.isActive = !wantWide
+            columnNarrowTrailing?.isActive = !wantWide
+            columnWideWidth?.isActive = wantWide
+            columnWideCenterX?.isActive = wantWide
         }
         updateEphemeralBorderPath()
-        let width = containerView.bounds.width
+        let width = contentColumnView.bounds.width
         guard width > 0, width != lastFlowWidth else { return }
         lastFlowWidth = width
         emoteFlowHeight?.constant = emoteFlowView.height(forWidth: width)
@@ -300,19 +309,25 @@ final class BearyDetailViewController: UIViewController {
         scrollView.showsVerticalScrollIndicator = false
         view.addSubview(scrollView)
 
-        containerView.translatesAutoresizingMaskIntoConstraints = false
-        scrollView.addSubview(containerView)
+        contentColumnView.translatesAutoresizingMaskIntoConstraints = false
+        scrollView.addSubview(contentColumnView)
 
         stackView.translatesAutoresizingMaskIntoConstraints = false
         stackView.axis = .vertical
         stackView.spacing = 16
         stackView.alignment = .fill
-        containerView.addSubview(stackView)
+        contentColumnView.addSubview(stackView)
 
-        // 第 2 项（P2-1）：600 上限改为可开关约束（初始激活，
-        // viewDidLayoutSubviews 按实际宽度纠正：≥821 才激活，≤820 停用）。
-        let colCap = containerView.widthAnchor.constraint(lessThanOrEqualToConstant: 600)
-        detailColCapConstraint = colCap
+        // 详情重做：单层内容列，一条 required 等式钉死列宽，不用
+        // centerX＋≥/≤ 不等式护栏，不用 750 优先级补丁等式。
+        // scrollView 本身全宽，不加左右 contentInset；列宽分支：
+        // ≤820 屏宽−32（393 宽即 361pt），≥821 宽 600 居中。
+        columnNarrowLeading = contentColumnView.leadingAnchor.constraint(equalTo: scrollView.frameLayoutGuide.leadingAnchor, constant: 16)
+        columnNarrowTrailing = contentColumnView.trailingAnchor.constraint(equalTo: scrollView.frameLayoutGuide.trailingAnchor, constant: -16)
+        columnWideWidth = contentColumnView.widthAnchor.constraint(equalToConstant: 600)
+        columnWideCenterX = contentColumnView.centerXAnchor.constraint(equalTo: scrollView.frameLayoutGuide.centerXAnchor)
+        columnWideWidth?.isActive = false
+        columnWideCenterX?.isActive = false
         NSLayoutConstraint.activate([
             closeButton.leadingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.leadingAnchor, constant: 16),
             closeButton.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
@@ -321,28 +336,14 @@ final class BearyDetailViewController: UIViewController {
             scrollView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             scrollView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
             scrollView.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor),
-            containerView.topAnchor.constraint(equalTo: scrollView.contentLayoutGuide.topAnchor),
-            containerView.bottomAnchor.constraint(equalTo: scrollView.contentLayoutGuide.bottomAnchor),
-            // iPad 铁律：宽 ≥821 时内容列 600 居中；宽 ≤820 时 iPhone 式全宽（两侧各 16）。
-            containerView.centerXAnchor.constraint(equalTo: scrollView.frameLayoutGuide.centerXAnchor),
-            colCap,
-            containerView.leadingAnchor.constraint(greaterThanOrEqualTo: scrollView.frameLayoutGuide.leadingAnchor, constant: 16),
-            containerView.trailingAnchor.constraint(lessThanOrEqualTo: scrollView.frameLayoutGuide.trailingAnchor, constant: -16),
-            // 2026-10-29 第 16 项：窄列根因——原约束只有 centerX + ≤600 + 两侧
-            // ≥/≤ 不等式、没有宽度等式，UIScrollView 内容宽由内容内在宽决定，
-            // 正文极短时容器被压塌成窄列并居中。补宽度等式（750，非 required：
-            // iPhone 宽 390 时得 358 = 全宽减两侧 16；宽 ≥821 时 required
-            // 的 ≤600（已激活）压住等式、得 600 居中；宽 ≤820 时上限停用、
-            // 等式撑满得屏宽 −32；两侧不等式保留作护栏）。
-            {
-                let c = containerView.widthAnchor.constraint(equalTo: scrollView.frameLayoutGuide.widthAnchor, constant: -32)
-                c.priority = UILayoutPriority(750)
-                return c
-            }(),
-            stackView.topAnchor.constraint(equalTo: containerView.topAnchor, constant: 8),
-            stackView.leadingAnchor.constraint(equalTo: containerView.leadingAnchor),
-            stackView.trailingAnchor.constraint(equalTo: containerView.trailingAnchor),
-            stackView.bottomAnchor.constraint(equalTo: containerView.bottomAnchor, constant: -24),
+            contentColumnView.topAnchor.constraint(equalTo: scrollView.contentLayoutGuide.topAnchor),
+            contentColumnView.bottomAnchor.constraint(equalTo: scrollView.contentLayoutGuide.bottomAnchor),
+            columnNarrowLeading!,
+            columnNarrowTrailing!,
+            stackView.topAnchor.constraint(equalTo: contentColumnView.topAnchor, constant: 8),
+            stackView.leadingAnchor.constraint(equalTo: contentColumnView.leadingAnchor),
+            stackView.trailingAnchor.constraint(equalTo: contentColumnView.trailingAnchor),
+            stackView.bottomAnchor.constraint(equalTo: contentColumnView.bottomAnchor, constant: -24),
         ])
 
         buildAuthorRow()
@@ -505,9 +506,9 @@ final class BearyDetailViewController: UIViewController {
 
     private func buildEphemeralRow() {
         // 限时倒计时行：只留倒计时灰字，位置在作者行下方、正文上方（与卡片同口径）；
-        // 虚线边框插 containerView 图层最底层，框住整个内容列。
+        // 虚线边框插 contentColumnView 图层最底层，框住整个内容列。
         stackView.addArrangedSubview(ephemeralRow)
-        containerView.layer.insertSublayer(ephemeralBorderLayer, at: 0)
+        contentColumnView.layer.insertSublayer(ephemeralBorderLayer, at: 0)
     }
 
     private func buildBody() {
@@ -929,8 +930,8 @@ final class BearyDetailViewController: UIViewController {
     private func updateEphemeralBorderPath() {
         guard !ephemeralBorderLayer.isHidden else { return }
         ephemeralBorderLayer.strokeColor = BearyColors.line.cgColor
-        ephemeralBorderLayer.frame = containerView.bounds
-        ephemeralBorderLayer.path = UIBezierPath(roundedRect: containerView.bounds, cornerRadius: 16).cgPath
+        ephemeralBorderLayer.frame = contentColumnView.bounds
+        ephemeralBorderLayer.path = UIBezierPath(roundedRect: contentColumnView.bounds, cornerRadius: 16).cgPath
     }
 
     /// 作者行右侧显隐：游客无可见性图标（游客永非作者）；⋯ 始终在（游客点按走登录提示）。
