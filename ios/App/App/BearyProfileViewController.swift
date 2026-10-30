@@ -1540,11 +1540,11 @@ class BearyProfileViewController: UIViewController {
     private lazy var avatarTopWithoutCoverConstraint: NSLayoutConstraint = avatarContainerView.topAnchor.constraint(equalTo: headerView.topAnchor, constant: 20)
     /// tab 区挪位（2026-10-30）：标签顶改贴回应墙底——墙隐藏时高为 0，
     /// 标签距上一可见元素（夜巡 / 统计）仍为 16，与 F17 间隙规矩一致；
-    /// 徽章架已由 #250 删除，模块容器顺延到标签下方。
+    /// 徽章架已由 #250 删除；模块容器已由本批搬到脚部，不再顺延到标签下方。
     private lazy var tabsTopConstraint: NSLayoutConstraint = tabsContainer.topAnchor.constraint(equalTo: wallContainer.bottomAnchor, constant: 16)
-    /// tab 区挪位（2026-10-30）：模块容器顶改贴标签底（标签恒可见，
-    /// 故模块顶间隙恒为 16；模块隐藏时 updateHeaderSpacing 归零，见墙同款 F17 规矩）。
-    private lazy var modulesTopConstraint: NSLayoutConstraint = modulesContainer.topAnchor.constraint(equalTo: tabsContainer.bottomAnchor, constant: 16)
+    /// tab 与卡片贴在一起（2026-10-31）：模块容器已不在 header，改由
+    /// refreshFooter 放进 tableFooterView（表格行下方、照片区之前），故
+    /// 不再有模块顶约束；模块隐藏时只靠下面的 0 高约束塌掉。
     private lazy var modulesHeightConstraint: NSLayoutConstraint = modulesContainer.heightAnchor.constraint(equalToConstant: 0)
     /// 批 D：签名容器隐藏时高归零（与墙同款），handle 顶仍贴签名底 +8，
     /// 无签名时 handle 距名字同改动前（8pt），不整体下跳。
@@ -1565,8 +1565,8 @@ class BearyProfileViewController: UIViewController {
     private func updateHeaderSpacing() {
         nightTopConstraint.constant = nightContainer.isHidden ? 0 : 10
         wallTopConstraint.constant = wallContainer.isHidden ? 0 : 10
-        // 批 D：模块容器隐藏时顶间隙归零（F17 同款），避免回应墙与标签间多出 16pt 空洞。
-        modulesTopConstraint.constant = modulesContainer.isHidden ? 0 : 16
+        // 模块容器已不在 header（见 refreshFooter），间距链里不再有它；
+        // 标签距上一可见元素（墙 / 夜巡 / 统计）恒为 16，见 tabsTopConstraint。
         tabsTopConstraint.constant = 16
     }
     private lazy var nightHeightConstraint: NSLayoutConstraint = nightContainer.heightAnchor.constraint(equalToConstant: 0)
@@ -1993,8 +1993,9 @@ class BearyProfileViewController: UIViewController {
     /// 不重排版，故 header 高不变）。名字块内任一视图漏移都会在滚动中与邻行错位
     /// （签名漏移即 2026-10-31 真机报的贴名字，见下文行内注释），新增名字块视图时
     /// 必须同步补进本函数，不得只改静止约束。
-    /// 标签容器与模块容器不移（模块底贴 header 底、
-    /// 移了会压首张卡，且标签与下方内容同定、间距本就恒定）。墙容器整体跟移
+    /// 标签容器不移（标签底贴 header 底、
+    /// 移了会压首张卡，且标签与下方内容同定、间距本就恒定）；模块容器已搬到
+    /// 脚部（表格行下方），同样不跟移。墙容器整体跟移
     /// （容器与内容同值，相对位置不变）：只移三个子视图、不碰容器时，统计行与
     /// 墙内容下移后会压进不动的容器框（顶压统计数字、底裁表情行），故容器必须同值移；
     /// 入场动画只在墙初现时跑一次（此时位移≈0），且以当前位移为基准收尾，
@@ -2004,7 +2005,7 @@ class BearyProfileViewController: UIViewController {
     /// 再压进情绪月历卡顶 4pt；且 transform 只改视觉、不改布局，header 高不变，
     /// 故重叠只在滚动中出现、静止量高量不出来。#250 删徽章架与情绪月历、
     /// #246 把 tab 区挪到墙下方后，封顶改按首个未位移元素算：合并后顺序为
-    /// 墙→标签→模块，首个未位移元素恒为标签顶（模块在标签下方，不再作封顶）；
+    /// 墙→标签，首个未位移元素恒为标签顶（模块已搬到脚部，不再作封顶）；
     /// 墙／夜巡／统计三分支的位移均以到标签顶的布局间隙为上限（现行 16），
     /// max(..., 0) 保底不为负，末位可见头元素下移不再压进标签。
     /// 间隙用 center／bounds 量布局位置（不受 transform 影响），故滚动中仍准。
@@ -2030,11 +2031,11 @@ class BearyProfileViewController: UIViewController {
         joinedIconView.transform = fullShift
         joinedLabel.transform = fullShift
         emailLabel.transform = fullShift
-        // 标签下方的模块容器不跟移（见上）。
+        // 模块容器已搬到脚部（表格行下方），滚动位移不跟移（见上）。
         modulesContainer.transform = .identity
         let tabsTop = tabsContainer.center.y - tabsContainer.bounds.height / 2
-        // 首个未位移元素的顶：合并后顺序为墙→标签→模块，标签恒可见且在模块上方，
-        // 故恒为标签顶（模块顶不再作封顶，见上）。
+        // 首个未位移元素的顶：合并后顺序为墙→标签，标签恒可见，
+        // 故恒为标签顶（模块已搬到脚部，不再作封顶，见上）。
         let floorTop = tabsTop
         let wallVisible = !wallContainer.isHidden && wallContainer.bounds.height > 0
         if wallVisible {
@@ -2195,7 +2196,9 @@ class BearyProfileViewController: UIViewController {
         nightEntryButton.bearyAddPressFeedback()
         headerView.addSubview(wallContainer)
         headerView.addSubview(tabsContainer)
-        headerView.addSubview(modulesContainer)
+        // 模块容器不在 header：tab 下方直接就是表格行，模块组改由
+        // refreshFooter 接进 tableFooterView（见该函数），切 tab 时
+        // 脚部重建只换容器、不重建模块卡。
         modulesContainer.addSubview(modulesStack)
         wallContainer.addSubview(wallTitleLabel)
         wallContainer.addSubview(wallScrollView)
@@ -2382,10 +2385,8 @@ class BearyProfileViewController: UIViewController {
             wallTotalLabel.trailingAnchor.constraint(equalTo: wallContainer.trailingAnchor, constant: -14),
             wallTotalLabel.centerYAnchor.constraint(equalTo: wallTitleLabel.centerYAnchor),
 
-            // 批 D：模块容器与墙同列（左右各 20），顶贴标签底（modulesTopConstraint）。
-            modulesContainer.leadingAnchor.constraint(equalTo: headerView.leadingAnchor, constant: 20),
-            modulesContainer.trailingAnchor.constraint(equalTo: headerView.trailingAnchor, constant: -20),
-            modulesTopConstraint,
+            // 模块组内 stack 仍贴容器四边（容器本身改由 refreshFooter 落位，
+            // 此处不再给容器接 header 约束，免得跨层级约束失效）。
             modulesStack.topAnchor.constraint(equalTo: modulesContainer.topAnchor),
             modulesStack.leadingAnchor.constraint(equalTo: modulesContainer.leadingAnchor),
             modulesStack.trailingAnchor.constraint(equalTo: modulesContainer.trailingAnchor),
@@ -2393,11 +2394,12 @@ class BearyProfileViewController: UIViewController {
 
             tabsContainer.leadingAnchor.constraint(equalTo: headerView.leadingAnchor, constant: 20),
             tabsContainer.trailingAnchor.constraint(equalTo: headerView.trailingAnchor, constant: -20),
-            // tab 区挪位（2026-10-30）：header 底锚改到模块容器底——标签在回应墙下方、
-            // 模块容器顺延到标签下方，header 高由末位模块决定；
+            // tab 与卡片贴在一起（2026-10-31）：header 到标签为止，底锚改到
+            // 标签底；header 在标签底下只留 2pt，加上卡片 cell 内 14pt 顶内边距，
+            // 标签到底首张卡内容正好 16pt。模块组改由 refreshFooter 放进脚部，
             // 地图入口行已移到 tableFooterView 照片区下方，见 refreshFooter
             // （行内图标/文案/箭头/热区约束也在那里一次激活，不再进 header 约束组）。
-            modulesContainer.bottomAnchor.constraint(equalTo: headerView.bottomAnchor),
+            tabsContainer.bottomAnchor.constraint(equalTo: headerView.bottomAnchor, constant: -2),
             diaryTabButton.leadingAnchor.constraint(equalTo: tabsContainer.leadingAnchor),
             diaryTabButton.topAnchor.constraint(equalTo: tabsContainer.topAnchor),
             diaryTabButton.bottomAnchor.constraint(equalTo: tabsContainer.bottomAnchor),
@@ -3370,6 +3372,10 @@ class BearyProfileViewController: UIViewController {
         if headerWidthValue > 0 {
             layoutHeaderForced(widthValue: headerWidthValue)
         }
+        // 模块组住在脚部（不在 header）：显隐变化时脚部也要重算，
+        // 否则语料到齐后模块仍不出现在表格行下方。refreshFooter
+        // 不回调 renderModules，无递归。
+        refreshFooter()
     }
 
     private func personalDateString(timestampMs: Int?) -> String {
@@ -4721,10 +4727,27 @@ class BearyProfileViewController: UIViewController {
             starEntryRow.translatesAutoresizingMaskIntoConstraints = true
             let container = UIView(frame: CGRect(x: 0, y: 0, width: footerWidth, height: 0))
             var totalHeight: CGFloat = 0
+            // tab 与卡片贴在一起（2026-10-31）：模块组从 header 搬到这里，
+            // 排在表格行下方、照片区之前。脚部每次重建都是新容器，addSubview
+            // 会自动把模块容器从旧脚部摘到新脚部，模块卡本身不重建；
+            // 切 tab 时脚部重建、模块组原位不动。隐藏时不占位（脚部与改前一致）。
+            if !modulesContainer.isHidden {
+                let modulesWidth = max(footerWidth - 40, 0)
+                container.addSubview(modulesContainer)
+                // 先不量 0 高布局：stack 高由 fitting 算出，0 高先布局会把卡片压扁。
+                let modulesHeight = modulesContainer.systemLayoutSizeFitting(
+                    CGSize(width: modulesWidth, height: 0),
+                    withHorizontalFittingPriority: .required,
+                    verticalFittingPriority: .fittingSizeLevel
+                ).height
+                modulesContainer.frame = CGRect(x: 20, y: 0, width: modulesWidth, height: modulesHeight)
+                totalHeight += modulesHeight
+            }
             if let photosView = photosView {
-                photosView.frame = CGRect(x: 0, y: 0, width: footerWidth, height: photosView.frame.height)
+                let photosY = totalHeight > 0 ? totalHeight + 16 : 0
+                photosView.frame = CGRect(x: 0, y: photosY, width: footerWidth, height: photosView.frame.height)
                 container.addSubview(photosView)
-                totalHeight += photosView.frame.height
+                totalHeight = photosY + photosView.frame.height
             }
             mapEntryRow.frame = CGRect(x: 20, y: totalHeight + 12, width: max(footerWidth - 40, 0), height: 48)
             container.addSubview(mapEntryRow)
