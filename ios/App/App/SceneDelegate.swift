@@ -1686,8 +1686,9 @@ final class BearyChromeViewController: UIViewController {
                 guard let feed = feedVC else { return }
                 if feed.isAtTop { feed.refreshFeed() } else { feed.scrollToTop() }
             } else if page == .notif {
-                notifVC?.scrollToTop()
-                notifVC?.refresh()
+                if let notifications = notifVC {
+                    if notifications.isAtTop { notifications.refresh() } else { notifications.scrollToTop() }
+                }
             } else if page == .timeline {
                 if let timeline = timelineVC {
                     // 账号隔离 9 号：刷新分支保留选中日与旧内容（与下拉刷新同口径），
