@@ -75,10 +75,10 @@ struct BearyUserProfile: Decodable {
     var wornBadge: String?
     var movedFrom: String?
     var movedTo: String?
-    /// 批 D 个人签名：users 表 signature 列透传（后端迁移另批，未上线前服务端
-    /// 不下发本字段、解码恒为 nil；App 端编辑走 PUT /api/account/profile 透传，
-    /// 见 presentSignatureEditor——后端未接字段前成功回包也可能不持久化，
-    /// 下次拉资料即以服务端为准，见回报里的待验证项）。
+    /// 批 D 个人签名：users 表 signature 列，beary Worker 公开资料读口下发
+    /// （惰性建列，未设为 null）；本页只做展示（2026-10-30 起编辑统一走
+    /// 编辑资料页签名行，见 BearyEditProfileViewController；写口为 accounts
+    /// Worker PUT /api/account/profile 的 signature 字段，分支待补，见 PR 说明）。
     var signature: String?
 
     // R3 根因修复：BearyAPI 的 decoder 用 convertFromSnakeCase（BearyAPI.swift
@@ -105,12 +105,6 @@ struct BearyUserProfile: Decodable {
         case movedTo
         case signature
     }
-}
-
-/// 批 D 签名保存响应（PUT /api/account/profile 的 ok 体；与 EditProfile 页的
-/// 私有响应结构同形、此处另定义——private 结构跨文件不可复用）。
-private struct BearySignatureUpdateResponse: Decodable {
-    var ok: Bool?
 }
 
 // MARK: - BearyAPI 扩展（只用既有 request 风格，不自创网络层）
@@ -295,7 +289,6 @@ class BearyProfileViewController: UIViewController {
     private var confirmedBookmarkedById: [String: Bool] = [:]
     private var emoteBusyIds: Set<String> = []
     private var pubBusyIds: Set<String> = []
-    private var signatureSaving = false
     // MARK: - 批 D 个性化模块状态（语料 = 作者 scope 全量分页结果，只走已有字段聚合）
     /// 模块语料所属 profile id；与当前 profile 不一致即视为切账号/换目标，语料与
     /// 随机上一次 id 全复位（scheduleModulesRefresh 内处理，不靠调用方记得清）。
@@ -949,32 +942,6 @@ class BearyProfileViewController: UIViewController {
         labelValue.textColor = BearyColors.ink
         labelValue.numberOfLines = 0
         return labelValue
-    }()
-
-    /// 本人签名整行点按（未设时的「写一句属于你的话 ›」与已设签名均可点进编辑；
-    /// 编辑钮在它之上，点编辑钮走编辑、点行内其余处同样走编辑，不设双入口歧义）。
-    private lazy var signatureTapButton: UIButton = {
-        let buttonValue = UIButton(type: .custom)
-        buttonValue.translatesAutoresizingMaskIntoConstraints = false
-        buttonValue.backgroundColor = .clear
-        buttonValue.accessibilityLabel = "编辑个人签名"
-        buttonValue.addTarget(self, action: #selector(signatureEditTapped), for: .touchUpInside)
-        buttonValue.bearyAddPressFeedback()
-        buttonValue.isHidden = true
-        return buttonValue
-    }()
-
-    /// 签名右上角编辑入口（仅本人可见；他人页签名只读、无编辑钮）。
-    private lazy var signatureEditButton: UIButton = {
-        let buttonValue = UIButton(type: .system)
-        buttonValue.translatesAutoresizingMaskIntoConstraints = false
-        buttonValue.setImage(BearyIconImages.image(named: "icon_edit", pointSize: 15), for: .normal)
-        buttonValue.tintColor = BearyColors.ink
-        buttonValue.accessibilityLabel = "编辑个人签名"
-        buttonValue.addTarget(self, action: #selector(signatureEditTapped), for: .touchUpInside)
-        buttonValue.bearyAddPressFeedback()
-        buttonValue.isHidden = true
-        return buttonValue
     }()
 
     /// 模块容器（tab 区挪位后：标签之后）：内为纵向 stack，各卡按预览顺序排列；
@@ -2190,8 +2157,6 @@ class BearyProfileViewController: UIViewController {
         headerView.addSubview(likesCountLabel)
         headerView.addSubview(signatureContainer)
         signatureContainer.addSubview(signatureLabel)
-        signatureContainer.addSubview(signatureTapButton)
-        signatureContainer.addSubview(signatureEditButton)
         headerView.addSubview(nightContainer)
         nightContainer.addSubview(nightIconView)
         nightContainer.addSubview(nightTitleLabel)
@@ -2314,17 +2279,6 @@ class BearyProfileViewController: UIViewController {
             signatureLabel.leadingAnchor.constraint(equalTo: signatureContainer.leadingAnchor),
             signatureLabelTrailingConstraint,
             signatureLabel.bottomAnchor.constraint(equalTo: signatureContainer.bottomAnchor),
-            signatureTapButton.topAnchor.constraint(equalTo: signatureContainer.topAnchor),
-            signatureTapButton.leadingAnchor.constraint(equalTo: signatureContainer.leadingAnchor),
-            signatureTapButton.trailingAnchor.constraint(equalTo: signatureContainer.trailingAnchor),
-            signatureTapButton.bottomAnchor.constraint(equalTo: signatureContainer.bottomAnchor),
-            // 编辑钮右上角：首行文字中心在容器顶 +10 + 约 10 = +20 处，
-            // 44 钮顶 = 20 − 22 = −2，钮中心与首行文字中心对齐。
-            signatureEditButton.topAnchor.constraint(equalTo: signatureContainer.topAnchor, constant: -2),
-            signatureEditButton.trailingAnchor.constraint(equalTo: signatureContainer.trailingAnchor),
-            signatureEditButton.widthAnchor.constraint(equalToConstant: 44),
-            signatureEditButton.heightAnchor.constraint(equalToConstant: 44),
-
             handleLabel.topAnchor.constraint(equalTo: signatureContainer.bottomAnchor, constant: 8),
             handleLabel.leadingAnchor.constraint(equalTo: headerView.leadingAnchor, constant: 28),
             // I7：加入时间前补 14px 日历图标，图标与加入时间同显隐（见 applyProfile）。
@@ -3269,92 +3223,24 @@ class BearyProfileViewController: UIViewController {
 
     // MARK: 批 D —— 个人签名
 
+    // 2026-10-30 起纯展示：本人页与他人页同一口径——有签名显示全文（ink 色），
+    // 未设整行塌掉（容器 hidden + 0 高约束，不留空行、不留占位入口）；
+    // 编辑统一走编辑资料页，本页不再带点按入口与编辑钮。
     private func renderSignature() {
-        let own = isOwnProfile
         let signature = (profile?.signature ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-        if own {
-            signatureContainer.isHidden = false
-            signatureHeightConstraint.isActive = false
-            signatureLabelTrailingConstraint.constant = -48
-            signatureLabel.text = signature.isEmpty ? "写一句属于你的话 ›" : signature
-            signatureLabel.textColor = signature.isEmpty ? BearyColors.gray : BearyColors.ink
-            signatureTapButton.isHidden = false
-            signatureEditButton.isHidden = false
-        } else if !signature.isEmpty {
-            // 他人页：签名是公开个人资料，可见、只读；未设则整行塌掉，不留空行。
+        if signature.isEmpty {
+            signatureContainer.isHidden = true
+            signatureHeightConstraint.isActive = true
+        } else {
             signatureContainer.isHidden = false
             signatureHeightConstraint.isActive = false
             signatureLabelTrailingConstraint.constant = 0
             signatureLabel.text = signature
             signatureLabel.textColor = BearyColors.ink
-            signatureTapButton.isHidden = true
-            signatureEditButton.isHidden = true
-        } else {
-            signatureContainer.isHidden = true
-            signatureHeightConstraint.isActive = true
-            signatureTapButton.isHidden = true
-            signatureEditButton.isHidden = true
         }
         if headerWidthValue > 0 {
             layoutHeaderForced(widthValue: headerWidthValue)
         }
-    }
-
-    @objc private func signatureEditTapped() {
-        guard isOwnProfile, !signatureSaving else { return }
-        let current = (profile?.signature ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-        let alert = UIAlertController(title: "个人签名", message: nil, preferredStyle: .alert)
-        alert.addTextField { textField in
-            textField.text = current
-            textField.placeholder = "写一句属于你的话"
-            textField.clearButtonMode = .whileEditing
-        }
-        alert.addAction(UIAlertAction(title: "取消", style: .cancel, handler: nil))
-        alert.addAction(UIAlertAction(title: "保存", style: .default, handler: { [weak self] _ in
-            guard let strongSelf = self else { return }
-            let raw = alert.textFields?.first?.text ?? ""
-            var final = raw.trimmingCharacters(in: .whitespacesAndNewlines)
-            // 60 字上限：超长不静默丢字失败，而是截断 + toast 明示（alert 内无法
-            //  inline 报错，来回弹框更差；60 字后由后端迁移时再对齐服务端上限）。
-            var truncated = false
-            if final.count > 60 {
-                final = String(final.prefix(60))
-                truncated = true
-            }
-            strongSelf.signatureSaving = true
-            var body: [String: Any] = [:]
-            if final.isEmpty {
-                body["signature"] = NSNull()
-            } else {
-                body["signature"] = final
-            }
-            // 透传口径：后端 signature 列迁移另批；迁移前服务端可能忽略本字段，
-            // 成功回包时本地先行显示，下一轮拉资料以服务端为准（见字段注释）。
-            BearyAPI.shared.request("/api/account/profile", method: "PUT", jsonBody: body) { [weak self] (result: Result<BearySignatureUpdateResponse, APIError>) in
-                DispatchQueue.main.async {
-                    guard let strongSelf = self else { return }
-                    strongSelf.signatureSaving = false
-                    switch result {
-                    case .success:
-                        if var profileValue = strongSelf.profile {
-                            profileValue.signature = final.isEmpty ? nil : final
-                            strongSelf.profile = profileValue
-                        }
-                        strongSelf.renderSignature()
-                        if truncated {
-                            BearyToast.show(in: strongSelf.view, message: "签名已截断为 60 字")
-                        }
-                    case .failure(let err):
-                        if case .unauthorized = err {
-                            strongSelf.onRequireLogin?()
-                        } else {
-                            strongSelf.presentSimpleAlert(message: "签名保存失败，请重试")
-                        }
-                    }
-                }
-            }
-        }))
-        present(alert, animated: BearyMotion.animated(true), completion: nil)
     }
 
     // MARK: 批 D —— 模块语料（作者 scope 全量分页）

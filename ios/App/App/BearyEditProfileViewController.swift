@@ -18,6 +18,12 @@ import PhotosUI
 // 约束：部署目标 iOS 15.0、Swift 5.0——只用闭包回调，不用 async/await，
 // 不用 if-let 简写；颜色只走 BearyColors；不新增玻璃效果；无 force unwrap；
 // 本页不自己 dismiss，保存 / 取消 / 登录失效一律走回调，容器决定去向与刷新。
+// 批 D 签名行（2026-10-30）：表单在名字行下方加签名行（58 标签 + 单行输入，
+// 占位“写一句属于你的话”，60 字）；保存与名字同走 PUT /api/account/profile
+// （字段 signature，清空发 null）。调用方不改：初值由本页经 /me 取 id 后调
+// 既有 fetchUserProfile 自取；个人页签名编辑同步移除、只留展示。
+// 后端缺口（本 PR 不改后端、不部署）：现行 accounts Worker 的 PUT 分支不处理
+// signature 字段，成功回包也不持久化；补分支后 App 无需再改，见 PR 说明。
 
 private struct BearyHandleUpdateResponse: Decodable {
     var ok: Bool?
@@ -63,6 +69,14 @@ class BearyEditProfileViewController: UIViewController {
     private var coverRemoved = false
     private var pickingAvatar = false
     private var isSaving = false
+    /// 批 D 签名行（2026-10-30：编辑统一到本页，个人页只做展示）：
+    /// 初值不走调用方（/me 不下发 signature），本页经 /me 取 id 后调既有
+    /// fetchUserProfile 自取（见 fetchInitialSignature）；拉不到初值时空输入
+    /// 不发（防把未知旧值误删成空），非空输入仍按改动发。
+    private var initialSignature: String?
+    private var signatureLoaded = false
+    private var signatureEdited = false
+    private var signatureFetchStarted = false
     /// G3：handle POST 成功后立即记下的已提交 handle（initialHandle 是 let，不可改；
     /// 重试时以它为准，不再重发已成功的 handle 步）。
     private var submittedHandle: String?
@@ -238,6 +252,25 @@ class BearyEditProfileViewController: UIViewController {
         return fieldValue
     }()
 
+    /// 批 D 签名行：与名字行同款单行输入（58 标签 + 16 字输入框）；占位与
+    /// 个人页未设占位同文案（去 ›，输入框占位不带箭头）；60 字上限与原个人页
+    /// 弹框截断口径一致（打字即截断见 delegate，保存时再校验一次）。
+    /// 签名行不配图标（表单行统一只有文字标签，不自绘、不补新图标）。
+    private let signatureField: UITextField = {
+        let fieldValue = UITextField()
+        fieldValue.translatesAutoresizingMaskIntoConstraints = false
+        fieldValue.font = UIFont.systemFont(ofSize: 16)
+        fieldValue.textColor = BearyColors.ink
+        fieldValue.attributedPlaceholder = NSAttributedString(string: "写一句属于你的话", attributes: [
+            .foregroundColor: BearyColors.gray,
+            .font: UIFont.systemFont(ofSize: 16),
+        ])
+        fieldValue.borderStyle = .none
+        fieldValue.autocorrectionType = .no
+        fieldValue.clearButtonMode = .whileEditing
+        return fieldValue
+    }()
+
     /// F15：网页 ed-subnote 口径——12 灰、仅「修改后 7 天内不能更改」一行；
     /// 旧三规则合并长提示取消（格式规则改由占位文案 + 保存校验承担）。
     private let hintLabel: UILabel = {
@@ -296,9 +329,12 @@ class BearyEditProfileViewController: UIViewController {
         buildLayout()
         // U3：输入框 Return 收起/切换 + 滑动收键盘 + 键盘顶起时调 inset（与登录页同口径）。
         nameField.delegate = self
+        signatureField.delegate = self
         handleField.delegate = self
         nameField.returnKeyType = .next
+        signatureField.returnKeyType = .next
         handleField.returnKeyType = .done
+        signatureField.addTarget(self, action: #selector(signatureFieldChanged), for: .editingChanged)
         scrollView.keyboardDismissMode = .onDrag
         NotificationCenter.default.addObserver(self, selector: #selector(editKeyboardWillShow(_:)), name: UIResponder.keyboardWillShowNotification, object: nil)
         NotificationCenter.default.addObserver(self, selector: #selector(editKeyboardWillHide(_:)), name: UIResponder.keyboardWillHideNotification, object: nil)
@@ -339,6 +375,7 @@ class BearyEditProfileViewController: UIViewController {
                     strongSelf.meFetchFailed = false
                     strongSelf.fetchedUserId = user?.id
                     strongSelf.updateLinkRow()
+                    strongSelf.fetchInitialSignature()
                     if thenCopy {
                         if !strongSelf.effectiveHandle.isEmpty || strongSelf.fetchedUserId != nil {
                             strongSelf.copyLinkButtonTapped()
@@ -366,6 +403,45 @@ class BearyEditProfileViewController: UIViewController {
         } else {
             linkLabel.text = "主页链接 teddyhn.com/beary/@用户名"
         }
+    }
+
+    /// 批 D 签名初值：/me 不下发 signature，故用 /me 拿到的 id 调既有公开资料
+    /// 读口（beary Worker profilePayload 已下发 signature，未设为 null）自取；
+    /// 只取一次；回包前用户已动手输入时不覆盖已打内容（以 signatureEdited 为准）。
+    /// 拉取失败不锁死：占位保留，用户现打的非空内容仍可按改动发。
+    private func fetchInitialSignature() {
+        guard !signatureFetchStarted, let id = fetchedUserId else { return }
+        signatureFetchStarted = true
+        BearyAPI.shared.fetchUserProfile(userIdValue: id) { [weak self] result in
+            DispatchQueue.main.async {
+                guard let strongSelf = self else { return }
+                switch result {
+                case .success(let profile):
+                    strongSelf.initialSignature = profile.signature
+                    strongSelf.signatureLoaded = true
+                    if !strongSelf.signatureEdited {
+                        strongSelf.signatureField.text = profile.signature
+                    }
+                case .failure:
+                    break
+                }
+            }
+        }
+    }
+
+    @objc private func signatureFieldChanged() {
+        signatureEdited = true
+    }
+
+    /// 批 D 签名改动判定（trim 后比较）：已拉到初值时与初值比；未拉到初值时
+    /// 只有非空输入才算改动——空输入不发，避免把未知的旧签名误删成空。
+    private var signatureHasChange: Bool {
+        let current = (signatureField.text ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        if signatureLoaded {
+            let initial = (initialSignature ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+            return current != initial
+        }
+        return !current.isEmpty
     }
 
     override func viewDidLayoutSubviews() {
@@ -461,6 +537,13 @@ class BearyEditProfileViewController: UIViewController {
         handleRow.axis = .horizontal
         handleRow.spacing = 14
         handleRow.alignment = .center
+        // 批 D 签名行：位置在名字行下方（与个人页名字下方签名行对应）、
+        // 用户名行上方；与名字/用户名行同款 58 标签 + 输入框结构。
+        let signatureRow = UIStackView(arrangedSubviews: [makeFormLabel("签名"), signatureField])
+        signatureRow.translatesAutoresizingMaskIntoConstraints = false
+        signatureRow.axis = .horizontal
+        signatureRow.spacing = 14
+        signatureRow.alignment = .center
         // F15：提示行与标签同宽占位（网页 ed-subnote 左 90 = 页边 18 + 标签 58 + 间隙 14；
         // 本页内容列左 20，故占位取 58 + 间隙 14，与标签结构对齐）。
         let hintSpacer = UIView()
@@ -493,6 +576,8 @@ class BearyEditProfileViewController: UIViewController {
         formStack.alignment = .fill
         formStack.addArrangedSubview(makeFormSeparator())
         formStack.addArrangedSubview(makeFormRowWrap(nameRow))
+        formStack.addArrangedSubview(makeFormSeparator())
+        formStack.addArrangedSubview(makeFormRowWrap(signatureRow))
         formStack.addArrangedSubview(makeFormSeparator())
         formStack.addArrangedSubview(makeFormRowWrap(handleRow))
         formStack.addArrangedSubview(hintWrap)
@@ -557,6 +642,7 @@ class BearyEditProfileViewController: UIViewController {
             saveButton.widthAnchor.constraint(equalToConstant: 44),
             coverImageView.heightAnchor.constraint(equalToConstant: 180),
             nameField.heightAnchor.constraint(equalToConstant: 28),
+            signatureField.heightAnchor.constraint(equalToConstant: 28),
             handleField.heightAnchor.constraint(equalToConstant: 28),
         ])
         // 封面通栏 + 点按：封面挂 scrollView、左右贴 frameLayoutGuide（与个人主页
@@ -609,6 +695,9 @@ class BearyEditProfileViewController: UIViewController {
         }
         let handleValue = (handleField.text ?? "").trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         if handleValue != effectiveHandle {
+            return true
+        }
+        if signatureHasChange {
             return true
         }
         return false
@@ -712,6 +801,11 @@ class BearyEditProfileViewController: UIViewController {
             presentSimpleAlert(message: "名字里至少要有一个文字")
             return
         }
+        let signatureValue = (signatureField.text ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        if signatureValue.count > 60 {
+            presentSimpleAlert(message: "签名最多 60 个字")
+            return
+        }
         let handleChanged = handleValue != effectiveHandle
         if handleChanged {
             if !isValidHandle(handleValue) {
@@ -763,6 +857,20 @@ class BearyEditProfileViewController: UIViewController {
         if avatarChanged, let avatarDataURL = pendingAvatarDataURL {
             body["avatar"] = avatarDataURL
         }
+        // 批 D 签名：与名字/头像/封面同走 PUT /api/account/profile，字段名
+        // signature，清空发 null（与原个人页弹框口径一致）；只在有改动时发，
+        // 未改动不发，避免无意义写。注意后端缺口（见本文件顶注与 PR 说明）：
+        // 现行 accounts Worker 的 PUT 分支不处理 signature，成功回包也不持久化；
+        // 本页仍按字段名透传，后端补分支后 App 无需再改；保存成功后容器重拉
+        // 个人页以服务端为准，未持久化时签名行即回落旧值，不本地谎报已改。
+        if signatureHasChange {
+            let signatureValue = (signatureField.text ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+            if signatureValue.isEmpty {
+                body["signature"] = NSNull()
+            } else {
+                body["signature"] = signatureValue
+            }
+        }
         if coverChanged {
             // 5-15 死分支标注：coverRemoved 当前不可达——移除入口已删
             // （见 viewDidLoad F14 注释），全文件没有任何地方置 true，
@@ -800,7 +908,24 @@ class BearyEditProfileViewController: UIViewController {
     private func finishSavingWithError(message: String) {
         isSaving = false
         updateSaveButtonState()
+        // 保存失败：拒绝动效（卡片同款摇头 + warning 震动，减动效只跳过视觉抖动）；
+        // 本地草稿保留在输入框内（不清空、不回滚输入），服务端未写入，可直接重试，
+        // 改动不静默丢失；登录失效仍走 onRequireLogin（见 profileErrorMessage）。
+        playDenyShake(on: saveButton)
         presentSimpleAlert(message: message)
+    }
+
+    /// 拒绝动效（卡片 playDenyShake 同口径：values [0,-8,8,-5,5,0] / 0.4s）。
+    private func playDenyShake(on button: UIButton) {
+        BearyHaptics.rejectionWarning()
+        BearySoundPlayer.play(.refuseBonk)
+        if UIAccessibility.isReduceMotionEnabled { return }
+        button.layer.removeAnimation(forKey: "bearyDenyShake")
+        let shake = CAKeyframeAnimation(keyPath: "transform.translation.x")
+        shake.values = [0, -8, 8, -5, 5, 0]
+        shake.keyTimes = [0, 0.2, 0.4, 0.6, 0.8, 1]
+        shake.duration = 0.4
+        button.layer.add(shake, forKey: "bearyDenyShake")
     }
 
     private func handleErrorMessage(err: APIError) -> String {
@@ -830,6 +955,7 @@ class BearyEditProfileViewController: UIViewController {
             case "name_taken": return "该用户名已被使用"
             case "name_too_long": return "显示名称最多 30 个字"
             case "name_no_text": return "名字里至少要有一个文字"
+            case "signature_too_long": return "签名最多 60 个字"
             case "avatar_too_large": return "头像太大了，换一张小一点的吧"
             case "cover_too_large": return "这张图太大了，换一张小一点的吧"
             default: return "保存失败，请重试"
@@ -993,13 +1119,15 @@ extension BearyEditProfileViewController: PHPickerViewControllerDelegate {
 // MARK: - UITextFieldDelegate（U3：名字 Return 切到 handle，handle Return 收键盘）
 
 extension BearyEditProfileViewController: UITextFieldDelegate {
-    /// F13：网页 maxlength 口径——打字即截断（名字 30、用户名 20；输入法
+    /// F13：网页 maxlength 口径——打字即截断（名字 30、签名 60、用户名 20；输入法
     /// 组字中不截断，组字结束后的超长部分在下一次输入时截断）。
     func textField(_ textField: UITextField, shouldChangeCharactersIn range: NSRange, replacementString string: String) -> Bool {
         if textField.markedTextRange != nil { return true }
         let maxLength: Int
         if textField === nameField {
             maxLength = 30
+        } else if textField === signatureField {
+            maxLength = 60
         } else if textField === handleField {
             maxLength = 20
         } else {
@@ -1017,6 +1145,8 @@ extension BearyEditProfileViewController: UITextFieldDelegate {
 
     func textFieldShouldReturn(_ textField: UITextField) -> Bool {
         if textField === nameField {
+            signatureField.becomeFirstResponder()
+        } else if textField === signatureField {
             handleField.becomeFirstResponder()
         } else if textField === handleField {
             textField.resignFirstResponder()
