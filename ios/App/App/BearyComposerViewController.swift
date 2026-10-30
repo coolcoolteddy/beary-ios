@@ -1006,7 +1006,9 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         publishButton.setTitle(isEditMode ? "保存" : "发布", for: .normal)
         publishButton.titleLabel?.font = UIFont.systemFont(ofSize: 14)
         publishButton.setImage(BearyIconImages.image(named: "icon_send", pointSize: 22), for: .normal)
-        publishButton.contentEdgeInsets = UIEdgeInsets(top: 0, left: 12, bottom: 0, right: 12)
+        // 顶栏右上角三钮收紧（2026-10-31 真机报间距偏大）：发布 pill 左右内边距 12 → 10，
+        // 宽度重算读 live 边距（refreshPublishButtonWidth），spinner 前沿同步 12 → 10，见下。
+        publishButton.contentEdgeInsets = UIEdgeInsets(top: 0, left: 10, bottom: 0, right: 10)
         publishButton.titleEdgeInsets = UIEdgeInsets(top: 0, left: 6, bottom: 0, right: 0)
         // v6-4：发布钮高 44 → 36、pill 圆角随高取半 18；顶栏高 60 居中后底部到分界线净留白 12。其余样式与行为不动。
         publishButton.layer.cornerRadius = 18
@@ -1021,7 +1023,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         publishRingView.isUserInteractionEnabled = false
         publishButton.addSubview(publishRingView)
         NSLayoutConstraint.activate([
-            publishRingView.leadingAnchor.constraint(equalTo: publishButton.leadingAnchor, constant: 12),
+            publishRingView.leadingAnchor.constraint(equalTo: publishButton.leadingAnchor, constant: 10),
             publishRingView.centerYAnchor.constraint(equalTo: publishButton.centerYAnchor),
             publishRingView.widthAnchor.constraint(equalToConstant: 18),
             publishRingView.heightAnchor.constraint(equalToConstant: 18),
@@ -1067,11 +1069,13 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             titleLabel.leadingAnchor.constraint(equalTo: cancelButton.trailingAnchor, constant: 8),
             titleLabel.centerYAnchor.constraint(equalTo: topBar.centerYAnchor),
             titleLabel.trailingAnchor.constraint(lessThanOrEqualTo: draftPillButton.leadingAnchor, constant: -8),
-            visibilityButton.trailingAnchor.constraint(equalTo: publishButton.leadingAnchor, constant: -8),
+            // 顶栏右上角三钮收紧（2026-10-31）：钮间 gap 8 → 4（草稿—可见性、可见性—发布、
+            // 编辑态草稿—发布同口径）；右沿留白仍 16，与左沿关闭钮对称口径不变。
+            visibilityButton.trailingAnchor.constraint(equalTo: publishButton.leadingAnchor, constant: -4),
             visibilityButton.centerYAnchor.constraint(equalTo: topBar.centerYAnchor),
             visibilityButton.widthAnchor.constraint(equalToConstant: 44),
             visibilityButton.heightAnchor.constraint(equalToConstant: 44),
-            draftPillButton.trailingAnchor.constraint(equalTo: isEditMode ? publishButton.leadingAnchor : visibilityButton.leadingAnchor, constant: -8),
+            draftPillButton.trailingAnchor.constraint(equalTo: isEditMode ? publishButton.leadingAnchor : visibilityButton.leadingAnchor, constant: -4),
             draftPillButton.centerYAnchor.constraint(equalTo: topBar.centerYAnchor),
             draftPillButton.heightAnchor.constraint(equalToConstant: 44),
             publishButton.trailingAnchor.constraint(equalTo: topBar.trailingAnchor, constant: -16),
