@@ -159,3 +159,127 @@ final class BearyLocationDecodingTests: XCTestCase {
         XCTAssertNil(e.locationDistrict)
     }
 }
+
+// ===== 日记星图：纯逻辑单测（BearyStarMap.swift 同编进测试 target；
+// 不依赖 UIKit / BearyNativeCommon / BearyLocation / SessionManager）=====
+final class BearyStarMapTests: XCTestCase {
+    private func entry(_ json: String) throws -> Entry {
+        try bearyDecoder().decode(Entry.self, from: Data(json.utf8))
+    }
+
+    private func ms(year: Int, month: Int, day: Int) -> Int {
+        var comps = DateComponents()
+        comps.year = year
+        comps.month = month
+        comps.day = day
+        comps.hour = 12
+        let date = Calendar.current.date(from: comps)!
+        return Int(date.timeIntervalSince1970 * 1000)
+    }
+
+    func testPositionIsDeterministicAndBounded() {
+        let a = BearyStarMap.position(forEntryId: "b_star1")
+        let b = BearyStarMap.position(forEntryId: "b_star1")
+        XCTAssertEqual(a.x, b.x)
+        XCTAssertEqual(a.y, b.y)
+        XCTAssertTrue(a.x >= 0 && a.x < 1 && a.y >= 0 && a.y < 1)
+        // 两 id 不同位（FNV-1a 碰撞概率可忽略；若此断言抖动，先查哈希实现而非放宽）。
+        let c = BearyStarMap.position(forEntryId: "b_star2")
+        XCTAssertTrue(a.x != c.x || a.y != c.y)
+    }
+
+    func testFilterFailClosedForOther() throws {
+        let pub = try entry("{\"id\":\"b_pub\",\"content\":\"公开篇。\",\"is_public\":true}")
+        let priv = try entry("{\"id\":\"b_priv\",\"content\":\"私密篇。\",\"is_public\":false}")
+        let missing = try entry("{\"id\":\"b_missing\",\"content\":\"未标公开态。\"}")
+        let placeholder = try entry("{\"id\":\"b_ph\",\"content\":\"占位壳。\",\"is_public\":true,\"placeholder\":true}")
+        let expired = try entry("{\"id\":\"b_exp\",\"content\":\"限时过期。\",\"is_public\":true,\"ephemeral_until\":1000}")
+        let noId = try entry("{\"content\":\"无 id。\",\"is_public\":true}")
+        let all = [pub, priv, missing, placeholder, expired, noId]
+        let otherIds = Set(BearyStarMap.visibleEntries(all, viewerIsAuthor: false).compactMap { $0.id })
+        XCTAssertEqual(otherIds, ["b_pub"])
+        let ownIds = Set(BearyStarMap.visibleEntries(all, viewerIsAuthor: true).compactMap { $0.id })
+        XCTAssertEqual(ownIds, ["b_pub", "b_priv", "b_missing", "b_exp"])
+    }
+
+    func testPlaceEdgeDistrictOnlyForOther() throws {
+        // 同精确名、不同区级：他人视角不成同地点边（精确名不作键）。
+        let a = try entry("{\"id\":\"b_pa\",\"content\":\"甲篇内容甲。\",\"is_public\":true,\"location_name\":\"示例咖啡馆\",\"location_district\":\"甲区\"}")
+        let b = try entry("{\"id\":\"b_pb\",\"content\":\"乙篇内容乙。\",\"is_public\":true,\"location_name\":\"示例咖啡馆\",\"location_district\":\"乙区\"}")
+        let otherModel = BearyStarMap.buildModel(entries: [a, b], viewerIsAuthor: false)
+        XCTAssertTrue(otherModel.edges.allSatisfy { !$0.reasons.contains(where: { $0.kind == .place }) })
+        // 同区级、不同精确名：他人视角成边且原因只带区级；本人视角成边带精确名。
+        let c = try entry("{\"id\":\"b_pc\",\"content\":\"丙篇内容丙。\",\"is_public\":true,\"location_name\":\"甲店\",\"location_district\":\"同区\"}")
+        let d = try entry("{\"id\":\"b_pd\",\"content\":\"丁篇内容丁。\",\"is_public\":true,\"location_name\":\"乙店\",\"location_district\":\"同区\"}")
+        let otherModel2 = BearyStarMap.buildModel(entries: [c, d], viewerIsAuthor: false)
+        XCTAssertEqual(otherModel2.edges.count, 1)
+        XCTAssertEqual(otherModel2.edges[0].reasons.filter { $0.kind == .place }.map { $0.detail }, ["同区"])
+        let ownModel = BearyStarMap.buildModel(entries: [a, b], viewerIsAuthor: true)
+        XCTAssertEqual(ownModel.edges.count, 1)
+        XCTAssertEqual(ownModel.edges[0].reasons.filter { $0.kind == .place }.map { $0.detail }, ["示例咖啡馆"])
+    }
+
+    func testMoodAndWordEdges() throws {
+        let a = try entry("{\"id\":\"b_ma\",\"content\":\"湖边桂花开了。\",\"mood\":\"happy\",\"is_public\":true}")
+        let b = try entry("{\"id\":\"b_mb\",\"content\":\"桂花香满路。\",\"mood\":\"happy\",\"is_public\":true}")
+        let model = BearyStarMap.buildModel(entries: [a, b], viewerIsAuthor: true)
+        XCTAssertEqual(model.edges.count, 1)
+        XCTAssertTrue(model.edges[0].reasons.contains(where: { $0.kind == .mood && $0.detail == "happy" }))
+        let wordReasons = model.edges[0].reasons.filter { $0.kind == .word }
+        XCTAssertEqual(wordReasons.count, 1)
+        XCTAssertTrue(wordReasons[0].tokens.contains("桂花"))
+    }
+
+    func testHighFrequencyWordDoesNotConnect() throws {
+        // 4 篇都含“今天”：文档频率 4 > 上限 max(2, 4/2)=2，高频词不连线；
+        // 且各篇心情不同、无地点，避免其他原因成边。
+        let jsons = [
+            "{\"id\":\"b_hf1\",\"content\":\"今天。\",\"mood\":\"happy\",\"is_public\":true}",
+            "{\"id\":\"b_hf2\",\"content\":\"今天好。\",\"mood\":\"cry\",\"is_public\":true}",
+            "{\"id\":\"b_hf3\",\"content\":\"今天呀。\",\"mood\":\"angry\",\"is_public\":true}",
+            "{\"id\":\"b_hf4\",\"content\":\"今天呢。\",\"mood\":\"lonely\",\"is_public\":true}",
+        ]
+        let entries = try jsons.map { try entry($0) }
+        let model = BearyStarMap.buildModel(entries: entries, viewerIsAuthor: true)
+        XCTAssertTrue(model.edges.isEmpty)
+    }
+
+    func testPrivateEntryTakesItsEdgesWithIt() throws {
+        let pub = try entry("{\"id\":\"b_ea\",\"content\":\"湖边桂花开了。\",\"mood\":\"happy\",\"is_public\":true}")
+        let priv = try entry("{\"id\":\"b_eb\",\"content\":\"桂花香满路。\",\"mood\":\"happy\",\"is_public\":false}")
+        let model = BearyStarMap.buildModel(entries: [pub, priv], viewerIsAuthor: false)
+        XCTAssertEqual(model.stars.map { $0.entry.id }, ["b_ea"])
+        XCTAssertTrue(model.edges.isEmpty)
+    }
+
+    func testWordCountRadiusBrightness() throws {
+        let e = try entry("{\"id\":\"b_wc\",\"title\":\"标题\",\"content\":\"正文 四字。\",\"mood\":\"happy\",\"is_public\":true}")
+        // 标题 2 + 正文去空白 5 = 7。
+        XCTAssertEqual(BearyStarMap.wordCount(e), 7)
+        XCTAssertTrue(BearyStarMap.radius(forWordCount: 700) > BearyStarMap.radius(forWordCount: 7))
+        XCTAssertEqual(BearyStarMap.radius(forWordCount: 0), 6)
+        XCTAssertEqual(BearyStarMap.brightness(forMoodKey: "happy"), 1.0)
+        XCTAssertEqual(BearyStarMap.brightness(forMoodKey: "cry"), 0.40)
+        XCTAssertEqual(BearyStarMap.brightness(forMoodKey: "some_future_key"), 0.75)
+        XCTAssertEqual(BearyStarMap.brightness(forMoodKey: nil), 0.70)
+    }
+
+    func testSlicingAndDefaultSlice() throws {
+        let oct = try entry("{\"id\":\"b_oct\",\"content\":\"十月篇。\",\"is_public\":true,\"created_at\":\(ms(year: 2026, month: 10, day: 3))}")
+        let nov = try entry("{\"id\":\"b_nov\",\"content\":\"十一月篇。\",\"is_public\":true,\"created_at\":\(ms(year: 2026, month: 11, day: 5))}")
+        let undated = try entry("{\"id\":\"b_und\",\"content\":\"无日期篇。\",\"is_public\":true}")
+        let entries = [oct, nov, undated]
+        XCTAssertEqual(BearyStarMap.years(in: entries), [2026])
+        XCTAssertEqual(BearyStarMap.months(in: entries, year: 2026), [11, 10])
+        XCTAssertTrue(BearyStarMap.hasUndated(in: entries))
+        XCTAssertEqual(BearyStarMap.entries(in: entries, slice: .month(year: 2026, month: 10)).map { $0.id }, ["b_oct"])
+        XCTAssertEqual(BearyStarMap.entries(in: entries, slice: .undated).map { $0.id }, ["b_und"])
+        XCTAssertEqual(BearyStarMap.defaultSlice(for: entries), .all)
+        // 81 篇（> 阈值 80）默认最新年最新月，不铺全量。
+        var many: [Entry] = []
+        for i in 0..<81 {
+            many.append(try entry("{\"id\":\"b_many\(i)\",\"content\":\"第\(i)篇。\",\"is_public\":true,\"created_at\":\(ms(year: 2026, month: 11, day: 5))}"))
+        }
+        XCTAssertEqual(BearyStarMap.defaultSlice(for: many), .month(year: 2026, month: 11))
+    }
+}
