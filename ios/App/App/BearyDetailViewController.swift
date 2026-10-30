@@ -121,6 +121,50 @@ final class BearyDetailViewController: UIViewController {
     }()
     private let imagesStack = UIStackView()
     private let chipsStack = UIStackView()
+    /// 批 E 详情位置行：官方 icon_location 13 灰 + 位置文案，作者本人看自己公开篇时
+    /// 下方挂橙色提示；无位置/他人视角无区级时整组隐藏，不留空行（与卡片同口径）。
+    private let detailLocationIconView: UIImageView = {
+        let v = UIImageView()
+        v.translatesAutoresizingMaskIntoConstraints = false
+        v.image = BearyLocationIcon.image(pointSize: 13)
+        v.tintColor = BearyColors.gray
+        v.contentMode = .scaleAspectFit
+        return v
+    }()
+    private let detailLocationLabel: UILabel = {
+        let lb = UILabel()
+        lb.translatesAutoresizingMaskIntoConstraints = false
+        lb.font = UIFont.systemFont(ofSize: 13)
+        lb.textColor = BearyColors.gray
+        lb.numberOfLines = 1
+        lb.lineBreakMode = .byTruncatingTail
+        return lb
+    }()
+    private let detailLocationNoteLabel: UILabel = {
+        let lb = UILabel()
+        lb.translatesAutoresizingMaskIntoConstraints = false
+        lb.font = UIFont.systemFont(ofSize: 12)
+        lb.textColor = BearyColors.orange
+        lb.numberOfLines = 0
+        lb.isHidden = true
+        return lb
+    }()
+    private lazy var detailLocationLineRow: UIStackView = {
+        let st = UIStackView(arrangedSubviews: [detailLocationIconView, detailLocationLabel])
+        st.translatesAutoresizingMaskIntoConstraints = false
+        st.axis = .horizontal
+        st.spacing = 4
+        st.alignment = .center
+        return st
+    }()
+    private lazy var detailLocationStack: UIStackView = {
+        let st = UIStackView(arrangedSubviews: [detailLocationLineRow, detailLocationNoteLabel])
+        st.translatesAutoresizingMaskIntoConstraints = false
+        st.axis = .vertical
+        st.spacing = 2
+        st.isHidden = true
+        return st
+    }()
     private let quoteView = BearyQuoteCardView(frame: .zero)
     private let actionStack = UIStackView()
     private let likeButton = BearyHit44Button(type: .custom)
@@ -536,6 +580,12 @@ final class BearyDetailViewController: UIViewController {
         chipsStack.spacing = 8
         chipsStack.alignment = .center
         stackView.addArrangedSubview(chipsStack)
+        // 批 E：位置行紧跟 chips 行（心情/天气/@ 之后、引用卡之前），与卡片位置行同口径。
+        stackView.addArrangedSubview(detailLocationStack)
+        NSLayoutConstraint.activate([
+            detailLocationIconView.widthAnchor.constraint(equalToConstant: 13),
+            detailLocationIconView.heightAnchor.constraint(equalToConstant: 13),
+        ])
     }
 
     private func buildQuote() {
@@ -718,6 +768,7 @@ final class BearyDetailViewController: UIViewController {
 
         renderImages()
         renderChips()
+        renderLocation()
         renderQuote()
         refreshActionRow()
         renderEmotes()
@@ -808,6 +859,10 @@ final class BearyDetailViewController: UIViewController {
         }
         if old.mood != merged.mood || old.weather != merged.weather || old.mentionedName != merged.mentionedName || old.mentionedUserId != merged.mentionedUserId {
             renderChips()
+        }
+        // 批 E：位置字段或可见性/限时态变化时位置行重算（公开翻私密恢复精确，反之脱敏）。
+        if old.locationName != merged.locationName || old.locationDistrict != merged.locationDistrict || old.isPublic != merged.isPublic || old.ephemeralUntil != merged.ephemeralUntil {
+            renderLocation()
         }
         let oldQuote = old.quote
         let newQuote = merged.quote
@@ -1017,6 +1072,27 @@ final class BearyDetailViewController: UIViewController {
             ])
         }
         return container
+    }
+
+    /// 批 E 详情位置行渲染：与 renderChips 同刷新点（renderEntry 与字段合并路径均调），
+    /// 可见性翻转时位置行随 isPublic 变化同步变（公开→私密恢复精确，他人视角反之）。
+    private func renderLocation() {
+        guard let display = BearyLocationDisplay.display(entry: entry) else {
+            detailLocationStack.isHidden = true
+            detailLocationLabel.text = nil
+            detailLocationNoteLabel.text = nil
+            detailLocationNoteLabel.isHidden = true
+            return
+        }
+        detailLocationStack.isHidden = false
+        detailLocationLabel.text = display.line
+        if let note = display.note {
+            detailLocationNoteLabel.text = note
+            detailLocationNoteLabel.isHidden = false
+        } else {
+            detailLocationNoteLabel.text = nil
+            detailLocationNoteLabel.isHidden = true
+        }
     }
 
     private func renderChips() {

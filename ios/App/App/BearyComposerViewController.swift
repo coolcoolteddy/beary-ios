@@ -155,6 +155,12 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, U
 
     private var selectedMood: String?
     private var selectedWeather: String?
+    /// 批 E 编辑器位置：已确认的位置（只有文本，无坐标）。nil = 未定位；
+    /// 定位失败不改本值（失败只 toast、不静默清掉已确认的位置；从未确认过时行即隐藏 = 未定位态）。
+    private var selectedLocation: DiaryLocation?
+    /// 批 E 编辑态原位置快照（setupEditContent 首次回填时记下）：PUT 时与终态比对，
+    /// 未动省略、改选发新值、清除发显式 null；新建模式恒为 nil。
+    private var originalLocation: DiaryLocation?
     /// 新建模式的 @ 对象（编辑模式经 selectedRecipient 改选，见 refreshRecipientRow 编辑分支）。
     private var selectedRecipient: SearchUser?
     /// 通知对方：iCity @ 提醒无按篇开关——选人面板的开关值不再用于发布，
@@ -344,6 +350,8 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, U
     private var draftPillWidthConstraint: NSLayoutConstraint?
     private let toolbarSeparator = UIView()
     private let imageToolButton = BearyHit44Button(type: .system)
+    /// 批 E 定位钮：工具栏左组第 2 位（图片右边、心情之前，预览 v2 定版；v1 的心情/天气并列位置已作废）。
+    private let locationToolButton = BearyHit44Button(type: .system)
     private let moodToolButton = BearyHit44Button(type: .system)
     private let weatherToolButton = BearyHit44Button(type: .system)
     private let recipientToolButton = BearyHit44Button(type: .system)
@@ -356,6 +364,18 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, U
     private let moodCallout = BearyCalloutPickerView()
     private let weatherCallout = BearyCalloutPickerView()
     private let calloutDismissView = BearyCalloutDismissView()
+    /// 批 E 定位气泡与专属框外收起层（不复用 calloutDismissView：心情/天气框与定位气泡
+    /// 的显隐状态机各自独立，复用会使一方收起时误关另一方）。
+    private let locationPopover = BearyLocationPopoverView()
+    private let locationDismissView = BearyCalloutDismissView()
+    private var locationPopoverOpen = false
+    /// 批 E 编辑器下方定位行（精确地点名 + 公开提示副行；无位置时整行隐藏，不留空行）。
+    private let locationRowStack = UIStackView()
+    private let locationLineRow = UIStackView()
+    private let locationIconView = UIImageView()
+    private let locationLabel = UILabel()
+    private let locationClearButton = UIButton(type: .system)
+    private let locationNoteLabel = UILabel()
     private enum CalloutKind { case mood, weather }
     private var activeCallout: CalloutKind?
     private var calloutTransitionGeneration = 0
@@ -464,10 +484,12 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, U
         buildTitleField()
         buildTextArea()
         buildSelectedChipsRow()
+        buildLocationRow()
         buildImageRow()
         buildImageUndoBar()
         buildToolbarRow()
         buildCallouts()
+        buildLocationPopover()
         buildWeatherRow()
         buildStatusRow()
         buildRecipientRow()
@@ -2278,6 +2300,8 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, U
     @objc private func didTapVisibilityButton() {
         selectedVisibilityPublished.toggle()
         refreshVisibilityButton()
+        // 批 E：段位切换时位置行副行（公开后他人仅见区级）同步变，防滞后。
+        refreshLocationRow()
     }
 
     /// 顶栏可见性钮图标：锁＝私密、地球＝公开，随 selectedVisibilityPublished 走；
@@ -2299,6 +2323,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, U
             visibilityButton.isEnabled = true
         }
         refreshVisibilityButton()
+        refreshLocationRow()
     }
 
     @objc private func didTapQuoteTab(_ sender: UIButton) {
@@ -2723,6 +2748,12 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, U
         imageToolButton.tintColor = BearyColors.ink
         imageToolButton.addTarget(self, action: #selector(didTapAddImage), for: .touchUpInside)
         imageToolButton.bearyAddPressFeedback()
+        // 批 E：定位钮插在图片钮右边、心情钮之前（左组顺序：图片 → 定位 → 心情 → 天气 → @ → 引用）。
+        locationToolButton.setImage(BearyLocationIcon.image(pointSize: 24), for: .normal)
+        locationToolButton.accessibilityLabel = "添加位置"
+        locationToolButton.tintColor = BearyColors.ink
+        locationToolButton.addTarget(self, action: #selector(didTapLocationTool), for: .touchUpInside)
+        locationToolButton.bearyAddPressFeedback()
         moodToolButton.setImage(BearyIconImages.image(named: "icon_mood", pointSize: 24), for: .normal)
         moodToolButton.accessibilityLabel = "选择心情"
         moodToolButton.tintColor = BearyColors.ink
@@ -2747,7 +2778,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, U
         toolbarContainer.translatesAutoresizingMaskIntoConstraints = false
         toolbarSeparator.translatesAutoresizingMaskIntoConstraints = false
         toolRow.translatesAutoresizingMaskIntoConstraints = false
-        for button in [imageToolButton, moodToolButton, weatherToolButton, recipientToolButton, quoteToolButton] {
+        for button in [imageToolButton, locationToolButton, moodToolButton, weatherToolButton, recipientToolButton, quoteToolButton] {
             button.translatesAutoresizingMaskIntoConstraints = false
             button.widthAnchor.constraint(equalToConstant: 24).isActive = true
             button.heightAnchor.constraint(equalToConstant: 24).isActive = true
@@ -2756,6 +2787,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, U
         toolbarContainer.addSubview(toolbarSeparator)
         toolbarContainer.addSubview(toolRow)
         toolRow.addArrangedSubview(imageToolButton)
+        toolRow.addArrangedSubview(locationToolButton)
         toolRow.addArrangedSubview(moodToolButton)
         toolRow.addArrangedSubview(weatherToolButton)
         toolRow.addArrangedSubview(recipientToolButton)
@@ -2829,6 +2861,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, U
     @objc private func didTapQuoteTool() {
         // 编辑器改版：弹出框打开时点其他工具钮，先收起框再走各自处理。
         hideCallout(animated: false)
+        hideLocationPopover(animated: false)
         // P1-14：冻结之外的第二道守卫（按钮禁用本已拦点按，防其他调用路径）。
         if isPublishing {
             showToast(message: isEditMode ? "保存中…" : "发布中…")
@@ -3120,6 +3153,173 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, U
         )
     }
 
+    // MARK: - 批 E 定位行与定位气泡
+
+    /// 编辑器下方定位行：进 contentStack、紧跟已选 chip 行（viewDidLoad 里
+    /// buildSelectedChipsRow 之后立即建，顺序即栈顺序）；无位置时整行隐藏，不留空行。
+    private func buildLocationRow() {
+        locationIconView.translatesAutoresizingMaskIntoConstraints = false
+        locationIconView.image = BearyLocationIcon.image(pointSize: 16)
+        locationIconView.tintColor = BearyColors.gray
+        locationIconView.contentMode = .scaleAspectFit
+        locationLabel.translatesAutoresizingMaskIntoConstraints = false
+        locationLabel.font = UIFont.systemFont(ofSize: 13)
+        locationLabel.textColor = BearyColors.gray
+        locationLabel.numberOfLines = 1
+        locationLabel.lineBreakMode = .byTruncatingTail
+        // 清除钮用官方 icon_close（铁律：不用自绘 ×、不用 SF Symbol）。
+        locationClearButton.translatesAutoresizingMaskIntoConstraints = false
+        locationClearButton.setImage(BearyIconImages.image(named: "icon_close", pointSize: 16), for: .normal)
+        locationClearButton.tintColor = BearyColors.gray
+        locationClearButton.accessibilityLabel = "清除位置"
+        locationClearButton.addTarget(self, action: #selector(didTapClearLocation), for: .touchUpInside)
+        locationNoteLabel.translatesAutoresizingMaskIntoConstraints = false
+        locationNoteLabel.font = UIFont.systemFont(ofSize: 12)
+        locationNoteLabel.textColor = BearyColors.orange
+        locationNoteLabel.numberOfLines = 0
+        locationLineRow.axis = .horizontal
+        locationLineRow.spacing = 6
+        locationLineRow.alignment = .center
+        locationLineRow.translatesAutoresizingMaskIntoConstraints = false
+        locationLineRow.addArrangedSubview(locationIconView)
+        locationLineRow.addArrangedSubview(locationLabel)
+        locationLineRow.addArrangedSubview(locationClearButton)
+        locationRowStack.axis = .vertical
+        locationRowStack.spacing = 2
+        locationRowStack.translatesAutoresizingMaskIntoConstraints = false
+        locationRowStack.addArrangedSubview(locationLineRow)
+        locationRowStack.addArrangedSubview(locationNoteLabel)
+        contentStack.addArrangedSubview(locationRowStack)
+        NSLayoutConstraint.activate([
+            locationIconView.widthAnchor.constraint(equalToConstant: 16),
+            locationIconView.heightAnchor.constraint(equalToConstant: 16),
+            locationClearButton.widthAnchor.constraint(equalToConstant: 24),
+            locationClearButton.heightAnchor.constraint(equalToConstant: 24),
+        ])
+        refreshLocationRow()
+    }
+
+    /// 定位行刷新：行文案 = 精确地点名；公开段位且有区级时加橙色副行
+    /// “公开后他人仅见区级（X）”。可见性段位切换时也要调本函数（见
+    /// restoreVisibility/可见性切换调用点），否则副行会滞后于段位。
+    private func refreshLocationRow() {
+        guard let location = selectedLocation, !location.isEmpty, let name = location.name ?? location.district else {
+            locationRowStack.isHidden = true
+            locationLabel.text = nil
+            locationNoteLabel.text = nil
+            locationNoteLabel.isHidden = true
+            return
+        }
+        locationRowStack.isHidden = false
+        locationLabel.text = name
+        if selectedVisibilityPublished, let district = location.district, district != name {
+            locationNoteLabel.text = "公开后他人仅见区级（\(district)）"
+            locationNoteLabel.isHidden = false
+        } else {
+            locationNoteLabel.text = nil
+            locationNoteLabel.isHidden = true
+        }
+        updatePreferredContentSize()
+    }
+
+    @objc private func didTapClearLocation() {
+        selectedLocation = nil
+        refreshLocationRow()
+        scheduleDraftSave()
+    }
+
+    /// 定位气泡搭建：框体与专属框外收起层常驻 view（隐藏时 isHidden），约束一次激活；
+    /// 框左右与工具栏同宽（iPad 居中列下自动跟随），框底贴工具栏顶 8pt 上方；
+    /// 框是覆盖层（不推限时行、不改 sheet 高），与心情/天气框同口径。
+    private func buildLocationPopover() {
+        locationPopover.translatesAutoresizingMaskIntoConstraints = false
+        locationDismissView.translatesAutoresizingMaskIntoConstraints = false
+        locationPopover.isHidden = true
+        locationDismissView.isHidden = true
+        locationPopover.delegate = self
+        locationDismissView.onTapOutside = { [weak self] in self?.hideLocationPopover(animated: true) }
+        view.addSubview(locationDismissView)
+        view.addSubview(locationPopover)
+        NSLayoutConstraint.activate([
+            locationDismissView.topAnchor.constraint(equalTo: view.topAnchor),
+            locationDismissView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
+            locationDismissView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            locationDismissView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            locationPopover.leadingAnchor.constraint(equalTo: toolbarContainer.leadingAnchor),
+            locationPopover.trailingAnchor.constraint(equalTo: toolbarContainer.trailingAnchor),
+            locationPopover.bottomAnchor.constraint(equalTo: toolbarContainer.topAnchor, constant: -8),
+        ])
+    }
+
+    @objc private func didTapLocationTool() {
+        // 同一时刻只开一个选择器：引用面板开着时不抢（与心情/天气框同款守卫）。
+        if quotePanelOpen {
+            showToast(message: "请先关闭引用面板")
+            return
+        }
+        if isPublishing {
+            showToast(message: isEditMode ? "保存中…" : "发布中…")
+            return
+        }
+        if locationPopoverOpen {
+            hideLocationPopover(animated: true)
+            return
+        }
+        hideCallout(animated: false)
+        if activeToolStrip != nil {
+            activeToolStrip = nil
+            refreshToolStrip()
+        }
+        locationPopoverOpen = true
+        locationDismissView.isHidden = false
+        locationDismissView.passthroughRects = [toolbarContainer.convert(toolbarContainer.bounds, to: locationDismissView)]
+        locationPopover.isHidden = false
+        view.layoutIfNeeded()
+        updateLocationPopoverArrow()
+        if UIAccessibility.isReduceMotionEnabled || view.window == nil {
+            locationPopover.alpha = 1
+            locationPopover.transform = .identity
+        } else {
+            locationPopover.alpha = 0
+            locationPopover.transform = CGAffineTransform(translationX: 0, y: 6)
+            UIView.animate(withDuration: 0.20, delay: 0, options: [.beginFromCurrentState, .allowUserInteraction, .curveEaseOut], animations: {
+                self.locationPopover.alpha = 1
+                self.locationPopover.transform = .identity
+            })
+        }
+        // 打开即自动定位（不用再点一次获取），定位中确认钮由气泡内部禁用。
+        locationPopover.startAutoLocate()
+    }
+
+    private func hideLocationPopover(animated: Bool) {
+        guard locationPopoverOpen else { return }
+        locationPopoverOpen = false
+        locationPopover.cancelRequests()
+        if !animated || UIAccessibility.isReduceMotionEnabled || view.window == nil {
+            locationPopover.isHidden = true
+            locationPopover.alpha = 1
+            locationPopover.transform = .identity
+            locationDismissView.isHidden = true
+            return
+        }
+        UIView.animate(withDuration: 0.20, delay: 0, options: [.beginFromCurrentState, .allowUserInteraction, .curveEaseOut], animations: {
+            self.locationPopover.alpha = 0
+            self.locationPopover.transform = CGAffineTransform(translationX: 0, y: 6)
+        }, completion: { [weak self] _ in
+            guard let self = self, !self.locationPopoverOpen else { return }
+            self.locationPopover.isHidden = true
+            self.locationPopover.alpha = 1
+            self.locationPopover.transform = .identity
+            self.locationDismissView.isHidden = true
+        })
+    }
+
+    /// 尖角跟随定位钮中心（与 updateCalloutArrowPositions 同款换算）。
+    private func updateLocationPopoverArrow() {
+        let center = locationToolButton.convert(CGPoint(x: locationToolButton.bounds.midX, y: locationToolButton.bounds.midY), to: locationPopover)
+        locationPopover.arrowCenterX = center.x
+    }
+
     /// 尖角跟随触发图标中心：图标中心转到框坐标系；收起层穿透区同步为工具栏帧
     /// （工具栏按钮仍可点按，其余区域点按收起）。iPad 居中列下框与工具栏同宽同列，
     /// 换算自动对齐，不另算居中偏移。
@@ -3396,11 +3596,13 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, U
     }
 
     @objc private func didTapMoodTool() {
+        hideLocationPopover(animated: false)
         toggleCallout(.mood)
     }
 
     @objc private func didTapWeatherTool() {
         DiagFile.mark("weather-diag didTapWeatherTool")
+        hideLocationPopover(animated: false)
         toggleCallout(.weather)
     }
 
@@ -3410,6 +3612,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, U
         // 引用面板打开时工具栏本身已藏，此处不再走 setToolStrip 的面板守卫。
         // 编辑器改版：弹出框打开时点其他工具钮，先收起框再走各自处理。
         hideCallout(animated: false)
+        hideLocationPopover(animated: false)
         didTapPickRecipient()
     }
 
@@ -4449,6 +4652,14 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, U
         refreshMoodButtons()
         selectedWeather = entry.weather
         refreshWeatherButtons()
+        // 批 E：编辑回填位置（首次回填才以服务端原值为准；补拉二次调用时用户可能已改选，
+        // 不覆盖——与 @ 的 editQuoteFetchAttempted 守卫同款口径）。
+        if !editQuoteFetchAttempted {
+            let editLocation = DiaryLocation(entry: entry)
+            originalLocation = editLocation.isEmpty ? nil : editLocation
+            selectedLocation = originalLocation
+        }
+        refreshLocationRow()
         // 补拉重填（setupEditContent 二次调用）不碰 @ 态：用户可能已在加载期间改选/清除，
         // 首次回填时才以服务端原 @ 为准（editQuoteFetchAttempted 此时仍为 false）。
         if !editQuoteFetchAttempted {
@@ -4586,6 +4797,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, U
         }
         let hasRealContent = !trimmedContent().isEmpty || !uploadedItems.isEmpty
             || selectedWeather != nil || selectedRecipient != nil || selectedQuote != nil
+            || selectedLocation != nil
         if !hasRealContent {
             let deletingId = draftIdValue
             currentDraftId = nil
@@ -4634,6 +4846,8 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, U
             clientReq: req,
             updatedAt: Date().timeIntervalSince1970,
             weather: selectedWeather,
+            locationName: selectedLocation?.name,
+            locationDistrict: selectedLocation?.district,
             visibilitySegmentIndex: selectedVisibilityPublished ? 1 : 0,
             recipientId: recipientUserId,
             recipientName: recipientNameValue,
@@ -4740,8 +4954,12 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, U
                 self.selectedRecipient = self.restoredRecipient(from: draft)
                 self.notifyRecipient = draft.notifyRecipient
                 self.selectedQuote = self.restoredQuote(from: draft)
+                // 批 E：草稿位置恢复（两段文本，无坐标）；双空即无位置，不留空行。
+                let restoredLocation = DiaryLocation(name: draft.locationName, district: draft.locationDistrict)
+                self.selectedLocation = restoredLocation.isEmpty ? nil : restoredLocation
                 self.refreshRecipientRow()
                 self.refreshQuoteSection()
+                self.refreshLocationRow()
                 for img in draft.images {
                     let failed = (img.state == .failed)
                     let item = self.createImageItem(localImage: nil, key: img.serverKey, uploading: false, localFile: img.localFile, failed: failed)
@@ -4822,6 +5040,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, U
             visibilityButton.isEnabled = true
         }
         refreshVisibilityButton()
+        refreshLocationRow()
     }
 
     /// v3 引用快照还原为选引用对象：quoteId 为空即无引用；已删标记照原样带回，
@@ -4996,6 +5215,8 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, U
         if selectedWeather != nil { return true }
         if selectedRecipient != nil { return true }
         if selectedQuote != nil { return true }
+        // 批 E：只选了位置也算有内容（与天气/@/引用同口径），防丢弃流程把位置篇当空白扔掉。
+        if selectedLocation != nil { return true }
         if !imageItems.isEmpty { return true }
         return false
     }
@@ -5013,6 +5234,10 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, U
         selectedRecipient = nil
         notifyRecipient = true
         selectedQuote = nil
+        // 批 E：重置为空白时位置与编辑原快照同清，行随之隐藏。
+        selectedLocation = nil
+        originalLocation = nil
+        refreshLocationRow()
         setQuotePanelOpen(false)
         removeAllImageViews()
         // 只清视图与槽位，不碰存储：删篇由调用方决定（丢弃路径先调 clearDraftAndFiles
@@ -5054,6 +5279,10 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, U
         selectedRecipient = restoredRecipient(from: draft)
         notifyRecipient = draft.notifyRecipient
         selectedQuote = restoredQuote(from: draft)
+        // 批 E：草稿箱打开某篇时位置同款恢复。
+        let boxLocation = DiaryLocation(name: draft.locationName, district: draft.locationDistrict)
+        selectedLocation = boxLocation.isEmpty ? nil : boxLocation
+        refreshLocationRow()
         setQuotePanelOpen(false)
         for img in draft.images {
             let failed = (img.state == .failed)
@@ -5170,6 +5399,8 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, U
         if isPublishing {
             return
         }
+        // 批 E：发布/保存时先收定位气泡，防气泡确认与发布请求竞态。
+        hideLocationPopover(animated: false)
         if !SessionManager.shared.isLoggedIn {
             // G26：登录态未知（网络失败）时不弹登录页，改给网络不稳定提示。
             if SessionManager.shared.authUnknown {
@@ -5234,7 +5465,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, U
         // iCity：可见性值即 visibility（published 0/1）；@ 以 mentioned_user_id 发出，无按篇通知开关。
         // 限时：开关开时可见性必为公开，ephemeral=1 随新建发出（服务端写 24 小时到期）。
         let publishVisibility = selectedVisibilityPublished ? 1 : 0
-        BearyAPI.shared.publishEntry(content: trimmed, images: uploadedImageKeys(), mood: selectedMood, weather: selectedWeather, quoteId: publishQuoteId, published: publishVisibility, mentionedUserId: selectedRecipient?.id, title: trimmedTitle(), ephemeral: ephemeralSwitch.isOn ? 1 : nil, clientReq: req) { [weak self] result in
+        BearyAPI.shared.publishEntry(content: trimmed, images: uploadedImageKeys(), mood: selectedMood, weather: selectedWeather, quoteId: publishQuoteId, published: publishVisibility, mentionedUserId: selectedRecipient?.id, title: trimmedTitle(), ephemeral: ephemeralSwitch.isOn ? 1 : nil, clientReq: req, locationName: selectedLocation?.name, locationDistrict: selectedLocation?.district) { [weak self] result in
             DispatchQueue.main.async {
                 guard let self = self else { return }
                 self.isPublishing = false
@@ -5318,7 +5549,9 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, U
         // iCity：编辑 @ 三态——已改选发新 id；已清除发 clearMentioned；未动则两者皆空、服务端保留原值。
         let updateMentionedId: Int? = selectedRecipient?.id
         let updateClearMentioned: Bool = (selectedRecipient == nil && editMentionCleared)
-        BearyAPI.shared.updateEntry(id: entryId, content: trimmed, images: uploadedImageKeys(), mood: selectedMood, weather: selectedWeather, quoteId: lockedQuote?.entryId, title: trimmedTitle() ?? "", mentionedUserId: updateMentionedId, clearMentioned: updateClearMentioned) { [weak self] result in
+        // 批 E：编辑位置——与原快照比对，未动省略、改选两键算清（有值发值、无值发 null）、清除两键皆 null。
+        let locationChanged = selectedLocation != originalLocation
+        BearyAPI.shared.updateEntry(id: entryId, content: trimmed, images: uploadedImageKeys(), mood: selectedMood, weather: selectedWeather, quoteId: lockedQuote?.entryId, title: trimmedTitle() ?? "", mentionedUserId: updateMentionedId, clearMentioned: updateClearMentioned, locationName: locationChanged ? selectedLocation?.name : nil, locationDistrict: locationChanged ? selectedLocation?.district : nil, clearLocationName: locationChanged && selectedLocation?.name == nil, clearLocationDistrict: locationChanged && selectedLocation?.district == nil) { [weak self] result in
             DispatchQueue.main.async {
                 guard let self = self else { return }
                 self.isPublishing = false
@@ -5338,6 +5571,9 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, U
                         updated.images = self.uploadedImageKeys()
                         updated.mood = self.selectedMood
                         updated.weather = self.selectedWeather
+                        // 批 E：编辑成功后本地副本跟随位置终态，列表行不靠重拉才变。
+                        updated.locationName = self.selectedLocation?.name
+                        updated.locationDistrict = self.selectedLocation?.district
                         updated.quoteId = self.lockedQuote?.entryId
                         // iCity：编辑回传的 @ 终态同步进本地副本（改选→新 id/名，清除→nil，未动→保留原值）。
                         if let picked = self.selectedRecipient {
@@ -5843,5 +6079,24 @@ private final class BearyLimitedSwitch: UIControl {
         } else {
             UIView.animate(withDuration: 0.25, animations: { self.layoutIfNeeded() })
         }
+    }
+}
+
+// MARK: - 批 E 定位气泡回调
+
+extension BearyComposerViewController: BearyLocationPopoverDelegate {
+    func locationPopover(_ popover: BearyLocationPopoverView, didConfirm location: DiaryLocation) {
+        // 确认即落定（点建议也是直接落定，不再等头部确认钮）；气泡关闭、行显示、草稿跟随保存。
+        selectedLocation = location
+        hideLocationPopover(animated: true)
+        refreshLocationRow()
+        scheduleDraftSave()
+    }
+
+    func locationPopoverDidFail(_ popover: BearyLocationPopoverView, message: String) {
+        // 权限被拒/定位失败：toast 后回未定位态——失败本身不产生位置值，
+        // 已确认过的位置不被失败清掉（见 selectedLocation 注释），从未确认过时行即隐藏。
+        hideLocationPopover(animated: false)
+        showToast(message: message)
     }
 }

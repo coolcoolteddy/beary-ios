@@ -50,6 +50,9 @@
 		C7BB560646D1F3B2BF41E8CE /* BearyInviteViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = BC25E34F7F1469439164AB6F /* BearyInviteViewController.swift */; };
 		2A79C023905A6DE2078D5D28 /* BearyFeedbackViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 665D4F35E8824A24A86F9DB5 /* BearyFeedbackViewController.swift */; };
 		F1A2B3C4D5E6F78901234567 /* BearyWishWallViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D4E5F67890ABCDEF12 /* BearyWishWallViewController.swift */; };
+		F69CC632FC3065F79C9B7E2A /* BearyLocation.swift in Sources */ = {isa = PBXBuildFile; fileRef = F16DC0C4C6653B57C7C1D435 /* BearyLocation.swift */; };
+		75BAE1FB54991D19F8C4121A /* BearyLocationPopoverView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B89D24F83635F6366ADEBC67 /* BearyLocationPopoverView.swift */; };
+		8F7E729083AD880ED7E12DD4 /* BearyDiaryMapViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7A47FC5684A4899214A70CB3 /* BearyDiaryMapViewController.swift */; };
 		8ABB5DF4B35DF3B59999D3A2 /* BearySettingsSubpages.swift in Sources */ = {isa = PBXBuildFile; fileRef = 12F817BD777C96A660F91A83 /* BearySettingsSubpages.swift */; };
 		4286499B01B2367CADFE02E3 /* BearyCrownView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8489888CCB412D0007221576 /* BearyCrownView.swift */; };
 		0DF17DFC39734CBE9118F087 /* BearyDetailViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0B7C99F453D645B0BBF9896F /* BearyDetailViewController.swift */; };
@@ -230,6 +233,9 @@
 		BC25E34F7F1469439164AB6F /* BearyInviteViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BearyInviteViewController.swift; sourceTree = "<group>"; };
 		665D4F35E8824A24A86F9DB5 /* BearyFeedbackViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BearyFeedbackViewController.swift; sourceTree = "<group>"; };
 		A1B2C3D4E5F67890ABCDEF12 /* BearyWishWallViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BearyWishWallViewController.swift; sourceTree = "<group>"; };
+		F16DC0C4C6653B57C7C1D435 /* BearyLocation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BearyLocation.swift; sourceTree = "<group>"; };
+		B89D24F83635F6366ADEBC67 /* BearyLocationPopoverView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BearyLocationPopoverView.swift; sourceTree = "<group>"; };
+		7A47FC5684A4899214A70CB3 /* BearyDiaryMapViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BearyDiaryMapViewController.swift; sourceTree = "<group>"; };
 		12F817BD777C96A660F91A83 /* BearySettingsSubpages.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BearySettingsSubpages.swift; sourceTree = "<group>"; };
 		8489888CCB412D0007221576 /* BearyCrownView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BearyCrownView.swift; sourceTree = "<group>"; };
 		0B7C99F453D645B0BBF9896F /* BearyDetailViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BearyDetailViewController.swift; sourceTree = "<group>"; };
@@ -440,6 +446,9 @@
 				BC25E34F7F1469439164AB6F /* BearyInviteViewController.swift */,
 				665D4F35E8824A24A86F9DB5 /* BearyFeedbackViewController.swift */,
 				A1B2C3D4E5F67890ABCDEF12 /* BearyWishWallViewController.swift */,
+				F16DC0C4C6653B57C7C1D435 /* BearyLocation.swift */,
+				B89D24F83635F6366ADEBC67 /* BearyLocationPopoverView.swift */,
+				7A47FC5684A4899214A70CB3 /* BearyDiaryMapViewController.swift */,
 				12F817BD777C96A660F91A83 /* BearySettingsSubpages.swift */,
 				8489888CCB412D0007221576 /* BearyCrownView.swift */,
 				0B7C99F453D645B0BBF9896F /* BearyDetailViewController.swift */,
@@ -839,6 +848,9 @@
 				C7BB560646D1F3B2BF41E8CE /* BearyInviteViewController.swift in Sources */,
 				2A79C023905A6DE2078D5D28 /* BearyFeedbackViewController.swift in Sources */,
 				F1A2B3C4D5E6F78901234567 /* BearyWishWallViewController.swift in Sources */,
+				F69CC632FC3065F79C9B7E2A /* BearyLocation.swift in Sources */,
+				75BAE1FB54991D19F8C4121A /* BearyLocationPopoverView.swift in Sources */,
+				8F7E729083AD880ED7E12DD4 /* BearyDiaryMapViewController.swift in Sources */,
 				8ABB5DF4B35DF3B59999D3A2 /* BearySettingsSubpages.swift in Sources */,
 				4286499B01B2367CADFE02E3 /* BearyCrownView.swift in Sources */,
 				0DF17DFC39734CBE9118F087 /* BearyDetailViewController.swift in Sources */,

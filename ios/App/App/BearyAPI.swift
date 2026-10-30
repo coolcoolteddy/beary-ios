@@ -77,6 +77,10 @@ struct Entry: Codable {
     var imgDims: [String: [Int]]?
     var mood: String?
     var weather: String?
+    /// 批 E 日记位置（方案 A：只存文本，不存经纬度；服务端字段 location_name /
+    /// location_district 经 convertFromSnakeCase 直解；服务端未透传时为 nil，展示层按无位置处理）。
+    var locationName: String?
+    var locationDistrict: String?
     var quoteId: String?
     var quote: Quote?
     var createdAt: Int?

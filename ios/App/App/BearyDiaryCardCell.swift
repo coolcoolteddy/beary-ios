@@ -538,6 +538,57 @@ class BearyDiaryCardCell: UITableViewCell {
         return st
     }()
 
+    /// 批 E 卡片位置行：官方 icon_location 13 灰 + 位置文案；作者本人看自己公开篇时
+    /// 下方再挂一行橙色提示。无位置、或他人视角下无区级时整组隐藏，不留空行。
+    private let locationIconView: UIImageView = {
+        let v = UIImageView()
+        v.translatesAutoresizingMaskIntoConstraints = false
+        v.image = BearyLocationIcon.image(pointSize: 13)
+        v.tintColor = BearyColors.gray
+        v.contentMode = .scaleAspectFit
+        return v
+    }()
+
+    private let locationLabel: UILabel = {
+        let lb = UILabel()
+        lb.translatesAutoresizingMaskIntoConstraints = false
+        lb.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13))
+        lb.adjustsFontForContentSizeCategory = true
+        lb.textColor = BearyColors.gray
+        lb.numberOfLines = 1
+        lb.lineBreakMode = .byTruncatingTail
+        return lb
+    }()
+
+    private let locationNoteLabel: UILabel = {
+        let lb = UILabel()
+        lb.translatesAutoresizingMaskIntoConstraints = false
+        lb.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 12))
+        lb.adjustsFontForContentSizeCategory = true
+        lb.textColor = BearyColors.orange
+        lb.numberOfLines = 0
+        lb.isHidden = true
+        return lb
+    }()
+
+    private lazy var locationLineRow: UIStackView = {
+        let st = UIStackView(arrangedSubviews: [locationIconView, locationLabel])
+        st.translatesAutoresizingMaskIntoConstraints = false
+        st.axis = .horizontal
+        st.spacing = 4
+        st.alignment = .center
+        return st
+    }()
+
+    private lazy var locationStack: UIStackView = {
+        let st = UIStackView(arrangedSubviews: [locationLineRow, locationNoteLabel])
+        st.translatesAutoresizingMaskIntoConstraints = false
+        st.axis = .vertical
+        st.spacing = 2
+        st.isHidden = true
+        return st
+    }()
+
     private let nameLabel: UILabel = {
         let lb = UILabel()
         lb.translatesAutoresizingMaskIntoConstraints = false
@@ -822,7 +873,7 @@ class BearyDiaryCardCell: UITableViewCell {
 
     private lazy var rightStack: UIStackView = {
         quoteView.translatesAutoresizingMaskIntoConstraints = false
-        let st = UIStackView(arrangedSubviews: [recipientRow, titleStack, ephemeralRow, entryTitleLabel, contentLabel, foldButton, quoteView, imagesScrollView, actionStack, guestLoginPromptButton, emoteFlowView])
+        let st = UIStackView(arrangedSubviews: [recipientRow, titleStack, ephemeralRow, entryTitleLabel, contentLabel, foldButton, quoteView, imagesScrollView, locationStack, actionStack, guestLoginPromptButton, emoteFlowView])
         st.translatesAutoresizingMaskIntoConstraints = false
         st.axis = .vertical
         st.alignment = .fill
@@ -1132,6 +1183,11 @@ class BearyDiaryCardCell: UITableViewCell {
         // 限时态复位：倒计时行与虚线边框藏起、底线恢复，防残留到下一行。
         ephemeralRow.isHidden = true
         ephemeralLabel.text = nil
+        // 批 E：位置行复位，防上一行位置串位到下一行。
+        locationStack.isHidden = true
+        locationLabel.text = nil
+        locationNoteLabel.text = nil
+        locationNoteLabel.isHidden = true
         ephemeralBorderLayer.isHidden = true
         separatorView.isHidden = false
         // 皇冠动效复用时停播，防串位到下一行。
@@ -1382,6 +1438,8 @@ class BearyDiaryCardCell: UITableViewCell {
         rightStack.setCustomSpacing(10, after: foldButton)
         rightStack.setCustomSpacing(10, after: quoteView)
         rightStack.setCustomSpacing(10, after: imagesScrollView)
+        // 批 E：位置行→操作行 8；位置行隐藏时 stack 自动忽略该间距，不留空隙。
+        rightStack.setCustomSpacing(8, after: locationStack)
         rightStack.setCustomSpacing(10, after: actionStack)
     }
 
@@ -1389,6 +1447,29 @@ class BearyDiaryCardCell: UITableViewCell {
     private func rightColumnWidthEstimate() -> CGFloat {
         let cellWidth = bounds.width > 0 ? bounds.width : UIScreen.main.bounds.width
         return max(0, cellWidth - 92)
+    }
+
+    /// 批 E 卡片位置行刷新：文案与脱敏全走 BearyLocationDisplay.display（展示层实时判定，
+    /// 不读服务端截断值）；公开翻私密/删除/恢复时调用方重 configure 即同步，无需本行另存状态。
+    /// 四种口径：私密精确、公开他人仅区级、作者本人看自己公开精确 + 橙色提示、他人仅区级；
+    /// display 返回 nil 时整组隐藏（无位置、他人视角无区级），不留空行。
+    private func refreshLocationRow(entry: Entry) {
+        guard let display = BearyLocationDisplay.display(entry: entry) else {
+            locationStack.isHidden = true
+            locationLabel.text = nil
+            locationNoteLabel.text = nil
+            locationNoteLabel.isHidden = true
+            return
+        }
+        locationStack.isHidden = false
+        locationLabel.text = display.line
+        if let note = display.note {
+            locationNoteLabel.text = note
+            locationNoteLabel.isHidden = false
+        } else {
+            locationNoteLabel.text = nil
+            locationNoteLabel.isHidden = true
+        }
     }
 
     /// F9：心情 = 灰字 + 熊图 20px；无心情时整行隐藏。深浅变体由播放器内部切换。
@@ -1578,6 +1659,8 @@ class BearyDiaryCardCell: UITableViewCell {
 
         // F5：图片条 216 高、按宽高比定宽、圆角 12、间距 8、横向滚动（94 包槽位复用）。
         renderImages(keys: entry.images ?? [], dims: entry.imgDims)
+        // 批 E：位置行（图片条之后、操作行之前）。
+        refreshLocationRow(entry: entry)
 
         // F7/F8：点赞、收藏、分享（按钮状态见 updateLikeButton / updateBookmarkButton；
         // 互动门控见 updateActionInteractivity，与详情 isPublic == true 一致）。
@@ -1673,6 +1756,8 @@ class BearyDiaryCardCell: UITableViewCell {
         configureQuoteProfile(entry: entry)
         // 图片条 216 高、按宽高比定宽（原 stripW 口径；94 包槽位复用 + 合并后补重试）。
         renderImages(keys: entry.images ?? [], dims: entry.imgDims)
+        // 批 E：位置行（个人页模式同款，图片条之后、操作行之前）。
+        refreshLocationRow(entry: entry)
         // 点赞 / 收藏 / 分享（已赞为红色、已收藏为橙色；忙时整行互动禁用）。
         // 计数位宽度由显式约束定，不靠按钮固有宽：按钮固有宽不含标题边距，
         // 栈按固有宽给帧时标题框只剩边距差，数字会被裁成左半弧。
