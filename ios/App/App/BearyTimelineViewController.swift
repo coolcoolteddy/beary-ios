@@ -744,7 +744,10 @@ final class BearyTimelineCell: UITableViewCell {
     private let cardView = UIView()
     /// 分割线样式（2026-10-30 Li 定，取代卡片式）：行与行之间只留一条横线，
     /// 线色走 BearyColors.line（浅 #dbdbdb／深 #3a3a40）；cardView 只作内容容器，
-    /// 不再有边线与阴影。线钉在 cell 底缘、与首页同款 2pt 全宽线（contentView 左右边）。
+    /// 不再有边线与阴影。线钉在 cell 底缘、2pt（首页同款线宽，首页线本身不动）；
+    /// 2026-10-30 方案 1：左起改到内容列左缘（cardView.leading，实测 36pt），
+    /// 竖线轨道（11–13pt，圆点中心 12pt）留出来、两条线不再交叉；右沿仍到
+    /// contentView 右缘不变。约束在 init 内一次定死，不按行改，复用不漂移。
     private let dividerView: UIView = {
         let v = UIView()
         v.translatesAutoresizingMaskIntoConstraints = false
@@ -1134,9 +1137,12 @@ final class BearyTimelineCell: UITableViewCell {
             cardView.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 36),
             cardView.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -16),
             cardView.bottomAnchor.constraint(equalTo: contentView.bottomAnchor, constant: -8),
-            // 分割线：与首页同款——2pt 全宽线（contentView 左右边）、贴 cell 底缘；
-            // 只定高与底缘，不参与行高计算（行高仍由 cardView 底缘 -8 定）。
-            dividerView.leadingAnchor.constraint(equalTo: contentView.leadingAnchor),
+            // 分割线：2026-10-30 方案 1——2pt、贴 cell 底缘，左起锚到内容列
+            // cardView 左缘（= contentView + 36pt，与日期组头左缘 36pt 对齐），
+            // 不再从 contentView 左缘全宽起，竖线轨道（11–13pt）留出来；
+            // 右沿仍到 contentView 右缘不变。只定高与底缘，不参与行高计算
+            // （行高仍由 cardView 底缘 -8 定；内容到底线顶的留白口径不动）。
+            dividerView.leadingAnchor.constraint(equalTo: cardView.leadingAnchor),
             dividerView.trailingAnchor.constraint(equalTo: contentView.trailingAnchor),
             dividerView.bottomAnchor.constraint(equalTo: contentView.bottomAnchor),
             dividerView.heightAnchor.constraint(equalToConstant: 2),
