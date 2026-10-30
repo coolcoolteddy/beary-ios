@@ -5684,6 +5684,7 @@ private final class BearyLimitedSwitch: UIControl {
         didSet {
             guard isOn != oldValue else { return }
             accessibilityValue = isOn ? "开" : "关"
+            refreshTrackColor()
             setNeedsLayout()
         }
     }
@@ -5692,13 +5693,18 @@ private final class BearyLimitedSwitch: UIControl {
         didSet { alpha = isEnabled ? 1 : 0.5 }
     }
 
+    /// track 底色：ON = ink（现行不变），OFF = gray（动态色，深浅模式均与 ink 有区分度）。
+    private func refreshTrackColor() {
+        trackView.backgroundColor = isOn ? BearyColors.ink : BearyColors.gray
+    }
+
     private let trackView = UIView()
     private let thumbView = UIView()
     private let iconView = UIImageView()
 
     override init(frame: CGRect) {
         super.init(frame: frame)
-        trackView.backgroundColor = BearyColors.ink
+        refreshTrackColor()
         trackView.layer.cornerRadius = Self.trackHeight / 2
         trackView.isUserInteractionEnabled = false
         thumbView.backgroundColor = BearyColors.bg
