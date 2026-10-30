@@ -394,7 +394,11 @@ final class BearyPastSelfTests: XCTestCase {
         {"id":"ps_1","origin_entry_id":"b_1","chain_id":"b_1","author_id":1,"body":"少熬一点夜",
         "created_at":1761780000000,"deliver_on":"2026-10-30","revoked_at":null,"reply_to_message_id":null}
         """
-        let decoded = try bearyDecoder().decode(PastSelfMessage.self, from: Data(json.utf8))
+        // PastSelfMessage 用显式 snake_case CodingKeys，与 convertFromSnakeCase
+        // 叠加会 keyNotFound；产品侧 PastSelf 三个端点同样走 plain 解码器
+        // （BearyAPI.pastSelfDecoder），此处与产品口径一致。共享的
+        // bearyDecoder() 本身不动（其余类型依赖 convert 策略）。
+        let decoded = try JSONDecoder().decode(PastSelfMessage.self, from: Data(json.utf8))
         XCTAssertEqual(decoded.originEntryId, "b_1")
         XCTAssertEqual(decoded.body, "少熬一点夜")
         XCTAssertEqual(decoded.createdAtMs, 1761780000000)

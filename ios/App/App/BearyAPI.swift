@@ -439,6 +439,12 @@ final class BearyAPI {
         self.decoder = d
     }
 
+    /// PastSelf 专用的 plain 解码器（不带 convertFromSnakeCase）。
+    /// PastSelfMessage 用显式 snake_case CodingKeys，与全局 convert 解码器
+    /// 叠加会 keyNotFound；PastSelf 三个端点的成功体只走本解码器，
+    /// 错误体仍走全局 decoder，全局 decoder 本身不动（其余类型依赖它）。
+    private static let pastSelfDecoder = JSONDecoder()
+
     enum Scope {
         case plaza
         case delivered
@@ -583,6 +589,7 @@ final class BearyAPI {
         jsonBody: [String: Any]? = nil,
         suppressUnauthorized: Bool = false,
         timeout: TimeInterval? = nil,
+        payloadDecoder: JSONDecoder? = nil,
         completion: @escaping (Result<T, APIError>) -> Void
     ) -> URLSessionDataTask? {
         let epoch = authEpoch
@@ -591,10 +598,13 @@ final class BearyAPI {
         // （重发会重复落图）。返回值是首发任务，重试任务不经返回值返回
         // （发布流程不中途取消在途请求）；epoch 沿用首发值，账户已切换时
         // 重试回包的 401 同样被 epoch 守卫压住，不踢新号。
+        // payloadDecoder 仅改成功体解码器（默认全局 decoder）；错误体与
+        // mapStatus 仍走全局 decoder，不受本参数影响。
         let retryTransientOnce = (method == "POST" && path == "/beary/api/entries")
         return requestAttempt(path, query: query, method: method, jsonBody: jsonBody,
                               suppressUnauthorized: suppressUnauthorized, timeout: timeout,
                               epoch: epoch, retriesLeft: retryTransientOnce ? 1 : 0,
+                              payloadDecoder: payloadDecoder,
                               completion: completion)
     }
 
@@ -607,6 +617,7 @@ final class BearyAPI {
         timeout: TimeInterval?,
         epoch: Int,
         retriesLeft: Int,
+        payloadDecoder: JSONDecoder?,
         completion: @escaping (Result<T, APIError>) -> Void
     ) -> URLSessionDataTask? {
         return perform(path, query: query, method: method, jsonBody: jsonBody, timeout: timeout) { [weak self] data, status, error in
@@ -615,7 +626,7 @@ final class BearyAPI {
                 if retriesLeft > 0 && Self.isTransientPublishError(apiErr) {
                     _ = self.requestAttempt(path, query: query, method: method, jsonBody: jsonBody,
                                             suppressUnauthorized: suppressUnauthorized, timeout: timeout,
-                                            epoch: epoch, retriesLeft: retriesLeft - 1, completion: completion)
+                                            epoch: epoch, retriesLeft: retriesLeft - 1, payloadDecoder: payloadDecoder, completion: completion)
                     return
                 }
                 completion(.failure(apiErr))
@@ -626,7 +637,7 @@ final class BearyAPI {
                 return
             }
             do {
-                completion(.success(try self.decoder.decode(T.self, from: data)))
+                completion(.success(try (payloadDecoder ?? self.decoder).decode(T.self, from: data)))
             } catch {
                 completion(.failure(.decoding(error)))
             }
@@ -941,21 +952,21 @@ final class BearyAPI {
     /// 服务端约束（后端施工时必做）：仅作者本人可读；绝不进广场、不发通知；
     /// 原篇删除/私密不改行本身，可见性由客户端 viewerVisibility 每渲染重算。
     func fetchPastSelfMessages(completion: @escaping (Result<PastSelfListResponse, APIError>) -> Void) {
-        request("/beary/api/past-self/messages", completion: completion)
+        request("/beary/api/past-self/messages", payloadDecoder: Self.pastSelfDecoder, completion: completion)
     }
 
     /// 留话：POST /beary/api/past-self/messages {origin_entry_id, body, deliver_on}
     /// → {ok, message}。服务端校验：原篇须为作者本人所有；同一链同一时间
     /// 只允许一条未送达留话（重复提交返回业务码，调用方不重试、不覆盖）。
     func createPastSelfMessage(originEntryId: String, body: String, deliverOn: String, completion: @escaping (Result<PastSelfCreateResponse, APIError>) -> Void) {
-        request("/beary/api/past-self/messages", method: "POST", jsonBody: ["origin_entry_id": originEntryId, "body": body, "deliver_on": deliverOn], completion: completion)
+        request("/beary/api/past-self/messages", method: "POST", jsonBody: ["origin_entry_id": originEntryId, "body": body, "deliver_on": deliverOn], payloadDecoder: Self.pastSelfDecoder, completion: completion)
     }
 
     /// 撤回：POST /beary/api/past-self/messages/:id/revoke → {ok}。
     /// 服务端校验：仅作者、仅未送达行可撤回；已送达行撤回返回业务码。
     func revokePastSelfMessage(id: String, completion: @escaping (Result<PastSelfOkResponse, APIError>) -> Void) {
         let safe = id.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? id
-        request("/beary/api/past-self/messages/\(safe)/revoke", method: "POST", completion: completion)
+        request("/beary/api/past-self/messages/\(safe)/revoke", method: "POST", payloadDecoder: Self.pastSelfDecoder, completion: completion)
     }
 
     /// 行为事件：POST /beary/api/events {event_type, target_id?, duration_ms?}。

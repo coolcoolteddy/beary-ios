@@ -73,24 +73,26 @@ enum PastSelfLogic {
         return String(format: "%04d-%02d-%02d", year, month, day)
     }
 
-    /// 明年同一天（本地日）。2 月 29 日 → 下一年 2 月 28 日（不跳 3 月 1 日，
-    /// 不丢推送）；其他非法组合返回 nil，调用方不建留话。
+    /// 明年同一天（本地日）。次年同月同日无效时退到当月最后一天：
+    /// 2 月 29 日 → 下一年 2 月 28 日（不跳 3 月 1 日，不丢推送）。
+    /// 注意：calendar.date(from:) 会把无效日归一化（如 2025-02-29 → 2025-03-01）
+    /// 而不是返回 nil，故不能先构造再判空；必须先算目标月最后一天再截断。
     static func nextYearDateString(fromMs ms: Int, calendar: Calendar) -> String? {
         let date = Date(timeIntervalSince1970: TimeInterval(ms) / 1000)
-        var parts = calendar.dateComponents([.year, .month, .day], from: date)
-        guard let year = parts.year, let month = parts.month, var day = parts.day else { return nil }
-        parts.year = year + 1
-        parts.month = month
-        parts.day = day
-        if let next = calendar.date(from: parts) {
-            return localDateString(from: next, calendar: calendar)
-        }
-        // 仅 2 月 29 日会走到这里（平年无此日）：退到 2 月 28 日。
-        guard month == 2, day == 29 else { return nil }
-        day = 28
-        parts.day = day
-        guard let fallback = calendar.date(from: parts) else { return nil }
-        return localDateString(from: fallback, calendar: calendar)
+        let parts = calendar.dateComponents([.year, .month, .day], from: date)
+        guard let year = parts.year, let month = parts.month, let day = parts.day else { return nil }
+        var firstParts = DateComponents()
+        firstParts.year = year + 1
+        firstParts.month = month
+        firstParts.day = 1
+        guard let firstOfMonth = calendar.date(from: firstParts),
+              let dayRange = calendar.range(of: .day, in: .month, for: firstOfMonth) else { return nil }
+        var target = DateComponents()
+        target.year = year + 1
+        target.month = month
+        target.day = min(day, dayRange.count)
+        guard let next = calendar.date(from: target) else { return nil }
+        return localDateString(from: next, calendar: calendar)
     }
 
     /// 是否已到送达日（含当天；YYYY-MM-DD 字典序即时间序）。
