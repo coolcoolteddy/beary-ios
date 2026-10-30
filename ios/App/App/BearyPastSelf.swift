@@ -54,6 +54,31 @@ struct PastSelfMessage: Codable, Equatable {
     }
 }
 
+// MARK: - PastSelfMessage 解码（放 extension，不顶掉逐字段构造器）
+//
+// 服务端不下发 local_only（见上 struct 注释），缺失时按 false 计；
+// 但合成 Decodable 对带默认值的非可选字段仍要求 key 在场，缺失即
+// keyNotFound，故此处手写 init(from:)，仅 localOnly 用 decodeIfPresent
+// 兜底 false，其余字段与合成版一致。encode 仍走合成版（写 snake 键）。
+// 本 init 不改变解码器选择：服务端/单测仍走 plain 解码器（见 BearyAPI
+// pastSelfDecoder），convert 解码器下 snake 显式键依旧不匹配——那是
+// 解码器侧的既定口径，不在此处绕。
+extension PastSelfMessage {
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(String.self, forKey: .id)
+        originEntryId = try container.decode(String.self, forKey: .originEntryId)
+        chainId = try container.decode(String.self, forKey: .chainId)
+        authorId = try container.decode(Int.self, forKey: .authorId)
+        body = try container.decode(String.self, forKey: .body)
+        createdAtMs = try container.decode(Int.self, forKey: .createdAtMs)
+        deliverOn = try container.decode(String.self, forKey: .deliverOn)
+        revokedAtMs = try container.decodeIfPresent(Int.self, forKey: .revokedAtMs)
+        replyToMessageId = try container.decodeIfPresent(String.self, forKey: .replyToMessageId)
+        localOnly = try container.decodeIfPresent(Bool.self, forKey: .localOnly) ?? false
+    }
+}
+
 // MARK: - 日期与串状态（纯逻辑，可单测）
 
 enum PastSelfLogic {
