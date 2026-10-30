@@ -6,7 +6,9 @@ import MapKit
 // 形态沿用心情/天气尖角弹出框的既有语言：框体贴工具栏上方、左右与工具栏同宽、
 // 底边小尖角指向触发钮（框在工具栏上方，故尖角在框底、向下指钮；预览 HTML 把尖角画在
 // 框顶是示意画法，真实编辑器里框顶尖角会指向空白，与心情/天气框的底尖角口径也不一致）。
-// 行为：打开即自动定位（定位中确认钮禁用，防存空位置）；右边 ✓ 确认 + 自己输入；
+// 行为：打开即自动定位（定位中确认钮禁用，防存空位置）；右边 ✅ 图标确认钮（官方 icon_check）+ 自己输入；
+// ✅ 在自动定位态确认已定位地点，在自己输入态确认手动输入的地名（同一钮，不另起确认钮）；
+// 长地名不得挤压右边两钮：状态文案横向抗压最低、两钮抗压/抱紧均为 required，✅ 固定 32×32。
 // 自己输入边输边出 MapKit 搜索建议（MKLocalSearchCompleter），点建议直接定位；
 // 权限被拒/定位失败不留空地点，走 delegate 失败口径（调用方 toast 后回未定位态）。
 // 隐私：坐标只在内存里走一次逆地理编码取地名，用完即弃；本视图不写盘、不缓存坐标，
@@ -51,8 +53,6 @@ final class BearyLocationPopoverView: UIView, CLLocationManagerDelegate, MKLocal
     private let manualButton = UIButton(type: .system)
     private let subLabel = UILabel()
     private let inputField = UITextField()
-    private let useManualRow = UIStackView()
-    private let useManualButton = UIButton(type: .system)
     private let suggestionsStack = UIStackView()
     private let suggestionsEmptyLabel = UILabel()
 
@@ -62,6 +62,7 @@ final class BearyLocationPopoverView: UIView, CLLocationManagerDelegate, MKLocal
     private var suggestions: [MKLocalSearchCompletion] = []
     private var located: DiaryLocation?
     private var locating = false
+    private var manualMode = false
 
     override init(frame: CGRect) {
         super.init(frame: frame)
@@ -78,26 +79,34 @@ final class BearyLocationPopoverView: UIView, CLLocationManagerDelegate, MKLocal
         completer.resultTypes = [.pointOfInterest, .address]
 
         spinner.translatesAutoresizingMaskIntoConstraints = false
+        spinner.setContentCompressionResistancePriority(.required, for: .horizontal)
         statusIconView.translatesAutoresizingMaskIntoConstraints = false
         statusIconView.image = BearyLocationIcon.image(pointSize: 20)
         statusIconView.tintColor = BearyColors.gray
         statusIconView.contentMode = .scaleAspectFit
+        statusIconView.setContentCompressionResistancePriority(.required, for: .horizontal)
         statusIconView.isHidden = true
         statusLabel.translatesAutoresizingMaskIntoConstraints = false
         statusLabel.font = UIFont.boldSystemFont(ofSize: 15)
         statusLabel.textColor = BearyColors.ink
         statusLabel.numberOfLines = 2
+        statusLabel.lineBreakMode = .byTruncatingTail
+        // 状态文案是唯一可压缩项：长地名先截断它，绝不挤压右边的 ✅ 与“自己输入”。
+        statusLabel.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        statusLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         statusLabel.text = "正在获取当前位置…"
 
         confirmButton.translatesAutoresizingMaskIntoConstraints = false
-        confirmButton.setTitle("确认", for: .normal)
-        confirmButton.titleLabel?.font = UIFont.boldSystemFont(ofSize: 13)
+        // ✅ 按钮：官方 icon_check 资产（基线 Assets 在位，三档齐全），非文字“确认”；
+        // 固定 32×32 橙色圆钮、白勾，横向抱紧/抗压均为 required，长地名也挤不动它。
+        confirmButton.setImage(BearyIconImages.image(named: "icon_check", pointSize: 18), for: .normal)
+        confirmButton.tintColor = .white
         confirmButton.backgroundColor = BearyColors.orange
-        confirmButton.setTitleColor(.white, for: .normal)
-        confirmButton.layer.cornerRadius = 999
+        confirmButton.layer.cornerRadius = 16
         confirmButton.clipsToBounds = true
-        confirmButton.contentEdgeInsets = UIEdgeInsets(top: 7, left: 12, bottom: 7, right: 12)
         confirmButton.accessibilityLabel = "确认使用这个位置"
+        confirmButton.setContentHuggingPriority(.required, for: .horizontal)
+        confirmButton.setContentCompressionResistancePriority(.required, for: .horizontal)
         confirmButton.addTarget(self, action: #selector(didTapConfirm), for: .touchUpInside)
         manualButton.translatesAutoresizingMaskIntoConstraints = false
         manualButton.setTitle("自己输入", for: .normal)
@@ -107,6 +116,8 @@ final class BearyLocationPopoverView: UIView, CLLocationManagerDelegate, MKLocal
         manualButton.layer.borderWidth = 1
         manualButton.layer.borderColor = BearyColors.line.cgColor
         manualButton.contentEdgeInsets = UIEdgeInsets(top: 7, left: 12, bottom: 7, right: 12)
+        manualButton.setContentHuggingPriority(.required, for: .horizontal)
+        manualButton.setContentCompressionResistancePriority(.required, for: .horizontal)
         manualButton.accessibilityLabel = "自己输入地点"
         manualButton.addTarget(self, action: #selector(didTapManual), for: .touchUpInside)
 
@@ -134,23 +145,6 @@ final class BearyLocationPopoverView: UIView, CLLocationManagerDelegate, MKLocal
         inputField.isHidden = true
         inputField.addTarget(self, action: #selector(didChangeInput), for: .editingChanged)
 
-        useManualButton.translatesAutoresizingMaskIntoConstraints = false
-        useManualButton.setTitle("使用这个地点", for: .normal)
-        useManualButton.titleLabel?.font = UIFont.boldSystemFont(ofSize: 13)
-        useManualButton.backgroundColor = BearyColors.orange
-        useManualButton.setTitleColor(.white, for: .normal)
-        useManualButton.layer.cornerRadius = 999
-        useManualButton.clipsToBounds = true
-        useManualButton.contentEdgeInsets = UIEdgeInsets(top: 7, left: 12, bottom: 7, right: 12)
-        useManualButton.accessibilityLabel = "使用输入的地点"
-        useManualButton.addTarget(self, action: #selector(didTapUseManual), for: .touchUpInside)
-        let useSpacer = UIView()
-        useManualRow.axis = .horizontal
-        useManualRow.translatesAutoresizingMaskIntoConstraints = false
-        useManualRow.addArrangedSubview(useSpacer)
-        useManualRow.addArrangedSubview(useManualButton)
-        useManualRow.isHidden = true
-
         suggestionsEmptyLabel.translatesAutoresizingMaskIntoConstraints = false
         suggestionsEmptyLabel.font = UIFont.systemFont(ofSize: 13)
         suggestionsEmptyLabel.textColor = BearyColors.gray
@@ -167,12 +161,13 @@ final class BearyLocationPopoverView: UIView, CLLocationManagerDelegate, MKLocal
         mainStack.addArrangedSubview(headerRow)
         mainStack.addArrangedSubview(subLabel)
         mainStack.addArrangedSubview(inputField)
-        mainStack.addArrangedSubview(useManualRow)
         mainStack.addArrangedSubview(suggestionsStack)
         addSubview(mainStack)
         NSLayoutConstraint.activate([
             spinner.widthAnchor.constraint(equalToConstant: 20),
             spinner.heightAnchor.constraint(equalToConstant: 20),
+            confirmButton.widthAnchor.constraint(equalToConstant: 32),
+            confirmButton.heightAnchor.constraint(equalToConstant: 32),
             statusIconView.widthAnchor.constraint(equalToConstant: 20),
             statusIconView.heightAnchor.constraint(equalToConstant: 20),
             mainStack.topAnchor.constraint(equalTo: topAnchor, constant: 14),
@@ -243,6 +238,7 @@ final class BearyLocationPopoverView: UIView, CLLocationManagerDelegate, MKLocal
     // MARK: - 状态
 
     private func setLocating() {
+        manualMode = false
         locating = true
         spinner.isHidden = false
         spinner.startSpinning()
@@ -251,11 +247,11 @@ final class BearyLocationPopoverView: UIView, CLLocationManagerDelegate, MKLocal
         subLabel.text = "打开即自动定位，不用再点一次获取"
         setConfirmEnabled(false)
         inputField.isHidden = true
-        useManualRow.isHidden = true
         suggestionsStack.isHidden = true
     }
 
     private func setLocated(_ location: DiaryLocation) {
+        manualMode = false
         locating = false
         located = location
         spinner.stopSpinning()
@@ -269,11 +265,11 @@ final class BearyLocationPopoverView: UIView, CLLocationManagerDelegate, MKLocal
         }
         setConfirmEnabled(true)
         inputField.isHidden = true
-        useManualRow.isHidden = true
         suggestionsStack.isHidden = true
     }
 
     private func setManualMode(message: String? = nil) {
+        manualMode = true
         locating = false
         spinner.stopSpinning()
         spinner.isHidden = true
@@ -284,10 +280,9 @@ final class BearyLocationPopoverView: UIView, CLLocationManagerDelegate, MKLocal
         } else {
             subLabel.text = "输入地点，下方出现建议时点建议直接定位"
         }
-        // 手动态的确认走“使用这个地点”；头部的确认钮只对应已定位态，手动态禁用防误存。
-        setConfirmEnabled(false)
+        // 手动态的确认就是头部 ✅：有输入才可点，空输入禁用防误存；
+        // 不再另起“使用这个地点”钮，避免两个确认入口。
         inputField.isHidden = false
-        useManualRow.isHidden = false
         suggestionsStack.isHidden = false
         refreshManualConfirmState()
         inputField.becomeFirstResponder()
@@ -299,14 +294,20 @@ final class BearyLocationPopoverView: UIView, CLLocationManagerDelegate, MKLocal
     }
 
     private func refreshManualConfirmState() {
+        // 仅手动态用：✅ 按输入有无置灰；自动定位态由 setLocating/setLocated 控 ✅，不走这里。
+        guard manualMode else { return }
         let text = (inputField.text ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-        useManualButton.isEnabled = !text.isEmpty
-        useManualButton.alpha = text.isEmpty ? 0.4 : 1
+        setConfirmEnabled(!text.isEmpty)
     }
 
     // MARK: - 点按
 
     @objc private func didTapConfirm() {
+        // 手动态：✅ 确认手动输入的地名（区级仍由地理编码得出，不由用户手填）。
+        if manualMode {
+            didConfirmManualText()
+            return
+        }
         guard let location = located, !location.isEmpty else { return }
         delegate?.locationPopover(self, didConfirm: location)
     }
@@ -326,7 +327,7 @@ final class BearyLocationPopoverView: UIView, CLLocationManagerDelegate, MKLocal
         completer.queryFragment = text
     }
 
-    @objc private func didTapUseManual() {
+    private func didConfirmManualText() {
         let text = (inputField.text ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty else { return }
         // 手动输入的区级仍由地理编码得出，不由用户手填（v2 口径）；编不到区级时
