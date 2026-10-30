@@ -215,6 +215,10 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, U
     private var clearedCurrentDraftId: String?
     private var isPublishing = false
     private var didAutoFocus = false
+    /// 标题行进页可见性保证只跑一次（见 viewDidAppear 与 ensureTitleRowVisibleOnEntry）：
+    /// 进页自动聚焦＋键盘＋系统光标滚动可能把标题行顶出可视区顶部，#202 的守卫只覆盖
+    /// 标题打字时，进页这一下无人拉回；本 flag 只管进页那一次，不干扰后续正文打字滚动。
+    private var didEnsureTitleRowVisibleOnEntry = false
     private var draftTimer: Timer?
     private var editTimer: Timer?
     private var imageItems: [ComposerImageItem] = []
@@ -675,6 +679,15 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, U
             }
             textView.becomeFirstResponder()
         }
+        // 标题行进页可见性保证（2026-10-30，Li 报“依旧无法看到标题行”）：
+        // 键盘动画落定后再算一次；只在“拉回标题后光标仍在可视区内”时才拉回，
+        // 长文草稿/编辑回填光标在末尾时不与光标抢位置（那时标题本就只能上滑找回）。
+        if !didEnsureTitleRowVisibleOnEntry {
+            didEnsureTitleRowVisibleOnEntry = true
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { [weak self] in
+                self?.ensureTitleRowVisibleOnEntry()
+            }
+        }
         // 87 包修法：转场里被跳过的 setNeedsLayout 在此补一次，让高度 settle；
         // 此时转场已完成，单次布局请求不重入，宽门仍兜底。
         view.superview?.setNeedsLayout()
@@ -695,6 +708,10 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, U
         scrollView.translatesAutoresizingMaskIntoConstraints = false
         // 52 批收键盘：滚动拖动即收（keyboardDismissMode）+ 点空白处收（下方 tap 手势，cancelsTouchesInView=false
         // 不吞控件点按；正文区点按由手势代理放行给 textView 聚焦，不走收键盘）。打开即自动聚焦（viewDidAppear）不动。
+        // 标题行可见性保证：滚动区可视区顶的计算口径钉死——默认 .automatic 会随
+        // 呈现/安全区再补一份顶 inset，scrollFocusedFieldIntoView 按 contentInset.top
+        // 算可视区顶就会错位；本页滚动区顶已锚顶栏底、不贴安全区，.never 让数学精确。
+        scrollView.contentInsetAdjustmentBehavior = .never
         scrollView.keyboardDismissMode = .onDrag
         let dismissTap = UITapGestureRecognizer(target: self, action: #selector(dismissKeyboardTap))
         dismissTap.cancelsTouchesInView = false
@@ -952,6 +969,9 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, U
         // L10：标题允许截断（单行尾部省略），不与左右钮重叠见下方不等式。
         titleLabel.numberOfLines = 1
         titleLabel.lineBreakMode = .byTruncatingTail
+        // 标题行可见性保证：顶栏右侧是固定宽按钮组（草稿 pill 已是 required 抗压），
+        // 标题若无抗压会被先压没；钉死后窄屏先截断标题文字、不断到看不见。
+        titleLabel.setContentCompressionResistancePriority(.required, for: .horizontal)
         // 发布：墨底白字 pill + 发送图标（网页 obtn p）；禁用时按网页口径：无底灰字。
         publishButton.setTitle(isEditMode ? "保存" : "发布", for: .normal)
         publishButton.titleLabel?.font = UIFont.systemFont(ofSize: 14)
@@ -1096,10 +1116,22 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, U
             .font: UIFont.boldSystemFont(ofSize: 16),
         ])
         titleField.returnKeyType = .next
+        titleField.contentVerticalAlignment = .center
         titleField.addTarget(self, action: #selector(titleFieldChanged), for: .editingChanged)
         titleField.translatesAutoresizingMaskIntoConstraints = false
         contentStack.addArrangedSubview(titleField)
         contentStack.setCustomSpacing(8, after: titleField)
+        // 标题行可见性保证（2026-10-30）：此前标题行在栈里没有任何显式高度与抗压，
+        // 全靠 UITextField 内在尺寸撑着，一旦内在尺寸被布局挤掉、行高塌到 0，整行就
+        // “看不见”且点不到；显式钉 44pt 行高＋纵向 required 抗压/抱紧，行高再也塌不掉。
+        // 44pt 同时是可点热区高度，字仍是 16pt 粗体、占位仍是“标题”，视觉口径不变。
+        // 高度约束取 750 而非 required：引用面板打开时标题行被隐藏，栈要把它归零，
+        // required 高度会与归零约束打架出警告；750 在正常时照样钉住、隐藏时让栈赢。
+        let titleHeightConstraint = titleField.heightAnchor.constraint(equalToConstant: 44)
+        titleHeightConstraint.priority = .defaultHigh
+        titleHeightConstraint.isActive = true
+        titleField.setContentCompressionResistancePriority(.required, for: .vertical)
+        titleField.setContentHuggingPriority(.required, for: .vertical)
     }
 
     /// 标题归一化：先去掉拼音组合串（marked range，与正文 committedContent() 同款
@@ -5390,6 +5422,38 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, U
     func textViewDidBeginEditing(_ textView: UITextView) {
         if currentKeyboardHeight > 0 {
             scrollFocusedFieldIntoView(animated: true)
+        }
+    }
+
+    /// 标题行进页可见性保证（2026-10-30）：进页自动聚焦＋键盘＋系统光标滚动后，
+    /// 若标题行已在可视区顶部之外、且拉回后光标仍在可视区内，就按 16pt 留白拉回；
+    /// 标题已完整可见时不动；长文光标在末尾、拉回会把光标顶出可视区时不动（不抢光标）。
+    private func ensureTitleRowVisibleOnEntry() {
+        guard isViewLoaded, view.window != nil, !quotePanelOpen else { return }
+        view.layoutIfNeeded()
+        let titleFrame = contentView.convert(titleField.bounds, from: titleField)
+        let topInset = scrollView.contentInset.top
+        let bottomInset = scrollView.contentInset.bottom
+        let visibleTop = scrollView.contentOffset.y + topInset
+        let visibleBottom = scrollView.contentOffset.y + scrollView.bounds.height - bottomInset
+        guard titleFrame.minY < visibleTop || titleFrame.maxY > visibleBottom else { return }
+        var targetY = scrollView.contentOffset.y
+        if titleFrame.minY < visibleTop {
+            targetY = titleFrame.minY - topInset - Self.focusVisibleTopMargin
+        } else {
+            targetY = titleFrame.maxY - (scrollView.bounds.height - bottomInset)
+        }
+        let minY = -topInset
+        let maxY = max(minY, scrollView.contentSize.height + bottomInset - scrollView.bounds.height)
+        targetY = min(max(targetY, minY), maxY)
+        // 拉回后光标仍须可见，否则不动（长文末尾光标场景）。
+        if let selectedRange = textView.selectedTextRange {
+            let caretFrame = contentView.convert(textView.caretRect(for: selectedRange.end), from: textView)
+            let newVisibleBottom = targetY + scrollView.bounds.height - bottomInset
+            guard caretFrame.maxY <= newVisibleBottom, caretFrame.minY >= targetY + topInset else { return }
+        }
+        if targetY != scrollView.contentOffset.y {
+            scrollView.setContentOffset(CGPoint(x: scrollView.contentOffset.x, y: targetY), animated: false)
         }
     }
 
