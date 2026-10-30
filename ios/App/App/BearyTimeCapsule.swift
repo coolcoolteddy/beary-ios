@@ -64,7 +64,7 @@ return dateFormatter().date(from: string)
 static func normalizeDistrict(_ district: String?) -> String? {
 guard let raw = district else { return nil}
 let stripped = raw.filter {!$0.isWhitespace}
-return stripped.isEmpty? nil: stripped
+return stripped.isEmpty ? nil : stripped
 }
 
 static func districtsMatch(_ buried: String?, _ current: String?) -> Bool {
@@ -82,7 +82,7 @@ return entry.capsuleBuried == 1
 /// 但服务端在公开→私密 transition 上清字段时则永久下线，见字段说明；两者区别在回报里明说）。
 /// 占位（他人视角私密占位）永不渲染。
 static func isActive(_ entry: Entry) -> Bool {
-guard isBuried(entry), entry.placeholder!= true else { return false}
+guard isBuried(entry), entry.placeholder != true else { return false}
 return BearyEphemeral.isEffectivelyPublic(entry)
 }
 
@@ -127,7 +127,7 @@ _ = district
 let dateOK = isDateReached(unlockDate: unlockDate, now: now)
 guard let current = currentDistrict else {
 // 日期已到但区级未知时仍不能解锁；日期未到时先报日期问题（区级未知不掩盖日期未到）。
-return dateOK?.districtUnknown:.dateNotReached
+return dateOK ? .districtUnknown : .dateNotReached
 }
 let districtOK = districtsMatch(entry.capsuleDistrict, current)
 switch (dateOK, districtOK) {
@@ -145,7 +145,7 @@ case authorOnly
 }
 
 static func audienceAfterUnlock(entry: Entry) -> UnlockedAudience {
-return BearyEphemeral.isEffectivelyPublic(entry)?.everyone:.authorOnly
+return BearyEphemeral.isEffectivelyPublic(entry) ? .everyone : .authorOnly
 }
 
 /// 非作者在未解锁时唯一能看到的文案（标题/内容/图片/心情一律不进弹卡，见 SheetVC：它根本不读这些字段）。

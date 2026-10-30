@@ -281,6 +281,9 @@ final class BearyStarMapTests: XCTestCase {
             many.append(try entry("{\"id\":\"b_many\(i)\",\"content\":\"第\(i)篇。\",\"is_public\":true,\"created_at\":\(ms(year: 2026, month: 11, day: 5))}"))
         }
         XCTAssertEqual(BearyStarMap.defaultSlice(for: many), .month(year: 2026, month: 11))
+    }
+}
+
 // ===== 与过去的自己对话：日期 / 串状态 / 可见性 / 存储（纯逻辑；UI 在 ProfileVC）=====
 final class BearyPastSelfTests: XCTestCase {
     private var calendar: Calendar {
