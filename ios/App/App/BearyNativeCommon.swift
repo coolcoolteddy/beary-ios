@@ -873,9 +873,9 @@ extension BearyAPI {
     /// create_ip_limit(429) / create_dup。
     func publishEntry(content: String, images: [String], mood: String?, weather: String? = nil, quoteId: String? = nil, published: Int? = nil, mentionedUserId: Int? = nil, title: String? = nil, ephemeral: Int? = nil, clientReq: String, locationName: String? = nil, locationDistrict: String? = nil, capsuleBuried: Int? = nil, capsuleUnlockDate: String? = nil, capsuleDistrict: String? = nil, completion: @escaping (Result<CreateResponse, APIError>) -> Void) {
         var body: [String: Any] = ["content": content, "images": images, "client_req": clientReq]
-        // R1：标题透传，nil=省略不传；非 nil（含空串）原样传。新建调用方传
-        // trimmedTitle()（空时为 nil），故新建不填标题仍省略不传，行为不变；
-        // 显式空串只由编辑 PUT 调用方在清空标题时传，见 updateEntry。
+        // 标题透传，nil=省略不传；非 nil 原样传。新建调用方传 preservedTitle
+        //（全新日记为 nil、按无标题创建；续写旧草稿时为旧标题原样带回）；
+        // 编辑 PUT 不再发显式空串清标题（标题行已去掉、标题不可改），见 updateEntry。
         if let t = title { body["title"] = t }
         if let m = mood { body["mood"] = m }
         if let w = weather { body["weather"] = w }
@@ -910,9 +910,9 @@ extension BearyAPI {
         // 清除整行时两 clear 皆真。经纬度永不进 body。
         if let loc = locationName { body["location_name"] = loc } else if clearLocationName { body["location_name"] = NSNull() }
         if let district = locationDistrict { body["location_district"] = district } else if clearLocationDistrict { body["location_district"] = NSNull() }
-        // R1：标题透传，nil=省略不传（不改服务端标题）；显式空串 "" 原样传，
-        // 后端按显式空串清为 NULL。编辑调用方在标题清空时传 ""（见 performUpdate），
-        // 故编辑已有标题的日记清空后保存，标题真正消失；新建不走本函数。
+        // 标题透传，nil=省略不传（不改服务端标题）；非 nil 原样传。标题行已去掉后
+        // 编辑调用方只传 preservedTitle（旧标题原样、无标题为 nil 即省略），不再发
+        // 显式空串清标题；旧 R1“清空发空串清为 NULL”口径随标题行作废。新建不走本函数。
         if let t = title { body["title"] = t }
         if let m = mood { body["mood"] = m }
         if let w = weather { body["weather"] = w }

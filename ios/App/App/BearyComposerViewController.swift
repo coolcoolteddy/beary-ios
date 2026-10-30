@@ -78,7 +78,7 @@ private final class BearyBodyTextView: UITextView {
     }
 }
 
-final class BearyComposerViewController: UIViewController, UITextViewDelegate, UITextFieldDelegate, PHPickerViewControllerDelegate, UIGestureRecognizerDelegate {
+final class BearyComposerViewController: UIViewController, UITextViewDelegate, PHPickerViewControllerDelegate, UIGestureRecognizerDelegate {
 
     // MARK: - 公开接口
 
@@ -227,10 +227,9 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, U
     private var clearedCurrentDraftId: String?
     private var isPublishing = false
     private var didAutoFocus = false
-    /// 标题行进页可见性保证只跑一次（见 viewDidAppear 与 ensureTitleRowVisibleOnEntry）：
-    /// 进页自动聚焦＋键盘＋系统光标滚动可能把标题行顶出可视区顶部，#202 的守卫只覆盖
-    /// 标题打字时，进页这一下无人拉回；本 flag 只管进页那一次，不干扰后续正文打字滚动。
-    private var didEnsureTitleRowVisibleOnEntry = false
+    // 标题行已去掉：进页拉回旗标与 ensureTitleRowVisibleOnEntry 已整段删除
+    //（#219 只覆盖打字时、长草稿光标在末尾进页拉回故意不执行那 case 本就未解决；
+    // 本批不修可见性、直接去掉标题行根除该问题，进页聚焦默认只走正文）。
     private var draftTimer: Timer?
     private var editTimer: Timer?
     private var imageItems: [ComposerImageItem] = []
@@ -272,14 +271,15 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, U
     private let scrollView = UIScrollView()
     private let contentView = UIView()
     private let contentStack = UIStackView()
-    /// A4-App：编辑器标题输入框（App 端，不依赖卡片渲染子项）。上限 30 字为建议值，
-    /// Li 未填数字时先用它，可改（见 maxTitleLength）；空标题不做占位决定。
-    /// R1：新建空标题仍省略不传（trimmedTitle() 为 nil）；编辑已有标题的日记
-    /// 清空标题时 PUT 显式传空串（performUpdate 传 trimmedTitle() ?? ""），
-    /// 后端按显式空串清为 NULL。标题以 titleField 文本为准（trimmedTitle()
-    /// 归一化），不另设镜像状态。
-    private static let maxTitleLength = 30
-    private let titleField = UITextField()
+    /// 标题行已去掉（2026-10-30）：编辑器不再有标题输入行，#219 的行高钉死、
+    /// 打字拉回、进页拉回随之全部作废（见下文删除处，不再为不存在的行做处理）。
+    /// 旧标题只以本字段原样带回、不再可改、不静默清掉：新建（无旧标题）为 nil，
+    /// 发布/草稿均按无标题处理；续写旧草稿时取 draft.title；编辑已发日记时取
+    /// entry.title，PUT 原样带回（nil 时 API 省略不传、服务端保留原值，见
+    /// BearyAPI.updateEntry 的 nil=省略口径，绝不发显式空串清标题）。
+    /// 原因：光标在标题时标题行被遮挡的问题 #219 只覆盖打字时、长草稿光标在
+    /// 末尾进页拉回故意不执行那 case 本就未解决；本批不修可见性、直接去掉标题行根除。
+    private var preservedTitle: String?
     private let textView = BearyBodyTextView()
     /// 正文区高度约束（正式修法：随内容动态走，下限 140、上限由 updateTextViewHeight 按 sheet 封顶算）。
     private var textViewHeightConstraint: NSLayoutConstraint?
@@ -489,7 +489,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, U
         ])
         buildLayout()
         buildTopBar()
-        buildTitleField()
+        // 标题行已去掉：内容栈首项即正文，不再建标题输入行。
         buildTextArea()
         buildSelectedChipsRow()
         buildLocationRow()
@@ -710,15 +710,6 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, U
             }
             textView.becomeFirstResponder()
         }
-        // 标题行进页可见性保证（2026-10-30，Li 报“依旧无法看到标题行”）：
-        // 键盘动画落定后再算一次；只在“拉回标题后光标仍在可视区内”时才拉回，
-        // 长文草稿/编辑回填光标在末尾时不与光标抢位置（那时标题本就只能上滑找回）。
-        if !didEnsureTitleRowVisibleOnEntry {
-            didEnsureTitleRowVisibleOnEntry = true
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { [weak self] in
-                self?.ensureTitleRowVisibleOnEntry()
-            }
-        }
         // 87 包修法：转场里被跳过的 setNeedsLayout 在此补一次，让高度 settle；
         // 此时转场已完成，单次布局请求不重入，宽门仍兜底。
         view.superview?.setNeedsLayout()
@@ -739,7 +730,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, U
         scrollView.translatesAutoresizingMaskIntoConstraints = false
         // 52 批收键盘：滚动拖动即收（keyboardDismissMode）+ 点空白处收（下方 tap 手势，cancelsTouchesInView=false
         // 不吞控件点按；正文区点按由手势代理放行给 textView 聚焦，不走收键盘）。打开即自动聚焦（viewDidAppear）不动。
-        // 标题行可见性保证：滚动区可视区顶的计算口径钉死——默认 .automatic 会随
+        // 焦点滚动口径钉死：滚动区可视区顶的计算口径钉死——默认 .automatic 会随
         // 呈现/安全区再补一份顶 inset，scrollFocusedFieldIntoView 按 contentInset.top
         // 算可视区顶就会错位；本页滚动区顶已锚顶栏底、不贴安全区，.never 让数学精确。
         scrollView.contentInsetAdjustmentBehavior = .never
@@ -1000,7 +991,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, U
         // L10：标题允许截断（单行尾部省略），不与左右钮重叠见下方不等式。
         titleLabel.numberOfLines = 1
         titleLabel.lineBreakMode = .byTruncatingTail
-        // 标题行可见性保证：顶栏右侧是固定宽按钮组（草稿 pill 已是 required 抗压），
+        // 顶栏标题抗压（顶栏“新日记/编辑日记”文案，非日记标题行）：顶栏右侧是固定宽按钮组（草稿 pill 已是 required 抗压），
         // 标题若无抗压会被先压没；钉死后窄屏先截断标题文字、不断到看不见。
         titleLabel.setContentCompressionResistancePriority(.required, for: .horizontal)
         // 发布：墨底白字 pill + 发送图标（网页 obtn p）；禁用时按网页口径：无底灰字。
@@ -1136,78 +1127,11 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, U
         }
     }
 
-    // MARK: - A4-App 标题输入（正文上方；只做编辑器输入与透传，不做卡片渲染）
-
-    private func buildTitleField() {
-        titleField.delegate = self
-        titleField.font = UIFont.boldSystemFont(ofSize: 16)
-        titleField.textColor = BearyColors.ink
-        titleField.attributedPlaceholder = NSAttributedString(string: "标题", attributes: [
-            .foregroundColor: BearyColors.gray,
-            .font: UIFont.boldSystemFont(ofSize: 16),
-        ])
-        titleField.returnKeyType = .next
-        titleField.contentVerticalAlignment = .center
-        titleField.addTarget(self, action: #selector(titleFieldChanged), for: .editingChanged)
-        titleField.translatesAutoresizingMaskIntoConstraints = false
-        contentStack.addArrangedSubview(titleField)
-        contentStack.setCustomSpacing(8, after: titleField)
-        // 标题行可见性保证（2026-10-30）：此前标题行在栈里没有任何显式高度与抗压，
-        // 全靠 UITextField 内在尺寸撑着，一旦内在尺寸被布局挤掉、行高塌到 0，整行就
-        // “看不见”且点不到；显式钉 44pt 行高＋纵向 required 抗压/抱紧，行高再也塌不掉。
-        // 44pt 同时是可点热区高度，字仍是 16pt 粗体、占位仍是“标题”，视觉口径不变。
-        // 高度约束取 750 而非 required：引用面板打开时标题行被隐藏，栈要把它归零，
-        // required 高度会与归零约束打架出警告；750 在正常时照样钉住、隐藏时让栈赢。
-        let titleHeightConstraint = titleField.heightAnchor.constraint(equalToConstant: 44)
-        titleHeightConstraint.priority = .defaultHigh
-        titleHeightConstraint.isActive = true
-        titleField.setContentCompressionResistancePriority(.required, for: .vertical)
-        titleField.setContentHuggingPriority(.required, for: .vertical)
-    }
-
-    /// 标题归一化：先去掉拼音组合串（marked range，与正文 committedContent() 同款
-    /// offset 切除，只作快照读取、不改 titleField、不调 unmarkText，组词中的输入法
-    /// 状态不受影响），再 trim；trim 后空串按 nil（新建发布/草稿均按“无标题”处理，
-    /// 不发空串；仅编辑 PUT 调用方在传参时把 nil 转为空串，见 performUpdate 的 R1 注释）。
-    private func trimmedTitle() -> String? {
-        let full = titleField.text ?? ""
-        var committed = full
-        if let marked = titleField.markedTextRange {
-            let startOffset = titleField.offset(from: titleField.beginningOfDocument, to: marked.start)
-            let endOffset = titleField.offset(from: titleField.beginningOfDocument, to: marked.end)
-            if startOffset >= 0, endOffset <= full.count, startOffset <= endOffset {
-                let start = committed.index(committed.startIndex, offsetBy: startOffset)
-                let end = committed.index(committed.startIndex, offsetBy: endOffset)
-                committed.removeSubrange(start..<end)
-            }
-        }
-        let trimmed = committed.trimmingCharacters(in: .whitespacesAndNewlines)
-        return trimmed.isEmpty ? nil : trimmed
-    }
-
-    @objc private func titleFieldChanged() {
-        scheduleDraftSave()
-        // 2026-10-30 标题打字守卫：打字中标题被系统滚动顶出可视区顶部时，
-        // 按留白口径拉回；在视野内时 scrollFocusedFieldIntoView 自身 no-op。
-        if titleField.isFirstResponder {
-            scrollFocusedFieldIntoView(animated: true)
-        }
-    }
-
-    func textField(_ textField: UITextField, shouldChangeCharactersIn range: NSRange, replacementString string: String) -> Bool {
-        guard textField == titleField else { return true }
-        let current = textField.text ?? ""
-        guard let swiftRange = Range(range, in: current) else { return true }
-        let next = current.replacingCharacters(in: swiftRange, with: string)
-        // 30 字上限（建议值，可改）：按字符数计，超限的本次输入整体不采纳。
-        return next.count <= Self.maxTitleLength
-    }
-
-    func textFieldShouldReturn(_ textField: UITextField) -> Bool {
-        guard textField == titleField else { return true }
-        textView.becomeFirstResponder()
-        return true
-    }
+    // MARK: - 标题行已去掉（2026-10-30，不再建标题输入行）
+    // 旧 buildTitleField / trimmedTitle / titleFieldChanged / UITextFieldDelegate
+    // 方法已整段删除：标题行（44pt 行高钉死、打字拉回、30 字上限、占位“标题”）
+    // 随行消失；进页聚焦默认只走正文 textView（见 viewDidAppear），不再为标题行
+    // 做聚焦、滚动、拉回处理。旧标题口径见 preservedTitle 属性注释。
 
     private func buildTextArea() {
         textView.delegate = self
@@ -2179,8 +2103,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, U
             quotePanelSavedScrollOffset = scrollView.contentOffset
             quotePanelSavedScrollValid = true
             view.endEditing(true)
-            // A4-App：引用面板整编态下标题框与正文同藏，关闭时同恢复。
-            titleField.isHidden = true
+            // 引用面板整编态下正文同藏（标题行已去掉，无标题框可藏可恢复）。
             textView.isHidden = true
             imageScrollView.isHidden = true
             toolbarContainer.isHidden = true
@@ -2198,9 +2121,6 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, U
             // 否则隐藏区塌掉后残留 customSpacing 会在面板上方留空隙；tab 条显式可见后先落一次布局，
             // 再显示面板，首帧即按无间隙高度算。
             scrollView.contentOffset = CGPoint.zero
-            // 2026-10-29 第 26 项：补漏——titleField 的 8 间距此前打开时未置 0
-            //（其余四处已在间隙修复中置 0），隐藏区塌掉后残留间距会在面板上方留空隙。
-            contentStack.setCustomSpacing(0, after: titleField)
             contentStack.setCustomSpacing(0, after: textView)
             contentStack.setCustomSpacing(0, after: imageScrollView)
             contentStack.setCustomSpacing(0, after: statusRow)
@@ -2247,7 +2167,6 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, U
                 } else {
                     self.titleLabel.text = self.isEditMode ? "编辑日记" : "新日记"
                 }
-                self.titleField.isHidden = false
                 self.textView.isHidden = false
                 self.toolbarContainer.isHidden = false
                 self.selectedChipsRow.isHidden = false
@@ -2258,7 +2177,6 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, U
                 self.draftPillButton.isHidden = false
                 self.visibilityButton.isHidden = self.isEditMode
                 // 间隙修复的关闭恢复：把打开时置 0 的栈间距按 build 时原值还原（其余区同 build 原值）。
-                self.contentStack.setCustomSpacing(8, after: self.titleField)
                 self.contentStack.setCustomSpacing(12, after: self.textView)
                 self.contentStack.setCustomSpacing(4, after: self.imageScrollView)
                 self.contentStack.setCustomSpacing(8, after: self.statusRow)
@@ -3935,7 +3853,6 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, U
     private func refreshPublishingInputFreeze() {
         let frozen = isPublishing
         textView.isEditable = !frozen
-        titleField.isEnabled = !frozen
         // 100 包编辑器面修法：发布在途时可见性钮亦冻结——此前冻结清单
         // 漏了它，在途点钮只改旗标不改已发送值（performPublish 已在请求
         // 前捕获 publishVisibility），视觉上“切成功了”实则无效；解冻时
@@ -4712,8 +4629,9 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, U
         }
         textView.text = entry.content ?? ""
         applyBodyLineHeight()
-        // A4-App：编辑回填标题（无标题时字段留空，不做占位决定）。
-        titleField.text = entry.title ?? ""
+        // 标题行已去掉：编辑回填只记旧标题（不可见、不可改），PUT 时原样带回、
+        // 不静默清掉；无标题时为 nil，API 省略不传。
+        preservedTitle = entry.title
         selectedMood = entry.mood
         refreshMoodButtons()
         selectedWeather = entry.weather
@@ -4906,7 +4824,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, U
             // P1-15：草稿快照只存已落字（拼音组词期的未落字拼音不进草稿），
             // textView 本体不动，组词继续。
             content: committedContent(),
-            title: trimmedTitle(),
+            title: preservedTitle,
             mood: selectedMood,
             images: images,
             clientReq: req,
@@ -5014,6 +4932,9 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, U
                 if self.view.window == nil || (wasEmptyBeforeRestore && self.textView.isFirstResponder) {
                     self.textView.selectedRange = NSRange(location: self.textView.text.count, length: 0)
                 }
+                // 标题行已去掉：自动恢复同样只记旧标题（旧代码此处根本没回填标题，
+                // 下次保存即丢标题；现记 preservedTitle，保存/发布时原样带回）。
+                self.preservedTitle = draft.title
                 self.selectedMood = draft.mood
                 self.refreshMoodButtons()
                 self.selectedWeather = draft.weather
@@ -5304,8 +5225,8 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, U
     private func resetEditorToBlank() {
         draftTimer?.invalidate()
         textView.text = ""
-        // A4-App：空白新日记清标题。
-        titleField.text = ""
+        // 空白新日记：旧标题记忆同清，新篇标题为 nil（按无标题处理）。
+        preservedTitle = nil
         selectedMood = nil
         selectedWeather = nil
         selectedRecipient = nil
@@ -5348,8 +5269,8 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, U
         draftClientReq = draft.clientReq
         textView.text = draft.content
         applyBodyLineHeight()
-        // A4-App：草稿恢复标题。
-        titleField.text = draft.title ?? ""
+        // 草稿续写：旧标题只记不显示，保存/发布时原样带回，不静默清掉。
+        preservedTitle = draft.title
         selectedMood = draft.mood
         selectedWeather = draft.weather
         restoreVisibility(index: draft.visibilitySegmentIndex)
@@ -5548,12 +5469,12 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, U
         // 已删引用不传 quoteId：只剩 id 的引用服务端会拒，发布应按无引用走，
         // 展示态仍保留到发布成功清本篇草稿为止。
         let publishQuoteId = (selectedQuote?.isDeleted == true) ? nil : selectedQuote?.entryId
-        // R1 复核：新建仍传 trimmedTitle()（空时为 nil，API 省略不传），新建
-        // 不填标题的行为不变；显式空串清标题只发生在编辑 PUT（performUpdate）。
+        // 标题行已去掉：新建标题即 preservedTitle——全新日记为 nil（API 省略不传，
+        // 按无标题创建）；续写旧草稿时为旧标题、随发布带回，不静默清掉旧标题。
         // iCity：可见性值即 visibility（published 0/1）；@ 以 mentioned_user_id 发出，无按篇通知开关。
         // 限时：开关开时可见性必为公开，ephemeral=1 随新建发出（服务端写 24 小时到期）。
         let publishVisibility = selectedVisibilityPublished ? 1 : 0
-        BearyAPI.shared.publishEntry(content: trimmed, images: uploadedImageKeys(), mood: selectedMood, weather: selectedWeather, quoteId: publishQuoteId, published: publishVisibility, mentionedUserId: selectedRecipient?.id, title: trimmedTitle(), ephemeral: ephemeralSwitch.isOn ? 1 : nil, clientReq: req, locationName: selectedLocation?.name, locationDistrict: selectedLocation?.district, capsuleBuried: capsulePayload?.buried, capsuleUnlockDate: capsulePayload?.unlockDate, capsuleDistrict: capsulePayload?.district) { [weak self] result in
+        BearyAPI.shared.publishEntry(content: trimmed, images: uploadedImageKeys(), mood: selectedMood, weather: selectedWeather, quoteId: publishQuoteId, published: publishVisibility, mentionedUserId: selectedRecipient?.id, title: preservedTitle, ephemeral: ephemeralSwitch.isOn ? 1 : nil, clientReq: req, locationName: selectedLocation?.name, locationDistrict: selectedLocation?.district, capsuleBuried: capsulePayload?.buried, capsuleUnlockDate: capsulePayload?.unlockDate, capsuleDistrict: capsulePayload?.district) { [weak self] result in
             DispatchQueue.main.async {
                 guard let self = self else { return }
                 self.isPublishing = false
@@ -5632,16 +5553,16 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, U
         }
         isPublishing = true
         updatePublishState()
-        // R1：编辑时标题清空必须显式传空串，不能省略不传（省略=服务端
-        // 保留旧标题）。trimmedTitle() 空时为 nil，此处转 ""；有标题时原样传。
-        // 新建走 performPublish，仍传 trimmedTitle()（空时 nil 省略），行为不变。
+        // 标题行已去掉、标题不可改：编辑 PUT 只带回 preservedTitle（旧标题原样，
+        // 无标题时为 nil、API 省略不传即服务端保留原值）。旧“清空标题发显式空串
+        // 清为 NULL”的 R1 口径随标题行一并作废——编辑不再能清标题，也不再静默清掉。
         // iCity：编辑 @ 三态——已改选发新 id；已清除发 clearMentioned；未动则两者皆空、服务端保留原值。
         let updateMentionedId: Int? = selectedRecipient?.id
         let updateClearMentioned: Bool = (selectedRecipient == nil && editMentionCleared)
         // 时间胶囊：编辑 PUT 不发胶囊字段，服务端保留原埋点与解锁日期；改位置不挪胶囊（埋点是发布时快照）。
         // 批 E：编辑位置——与原快照比对，未动省略、改选两键算清（有值发值、无值发 null）、清除两键皆 null。
         let locationChanged = selectedLocation != originalLocation
-        BearyAPI.shared.updateEntry(id: entryId, content: trimmed, images: uploadedImageKeys(), mood: selectedMood, weather: selectedWeather, quoteId: lockedQuote?.entryId, title: trimmedTitle() ?? "", mentionedUserId: updateMentionedId, clearMentioned: updateClearMentioned, locationName: locationChanged ? selectedLocation?.name : nil, locationDistrict: locationChanged ? selectedLocation?.district : nil, clearLocationName: locationChanged && selectedLocation?.name == nil, clearLocationDistrict: locationChanged && selectedLocation?.district == nil) { [weak self] result in
+        BearyAPI.shared.updateEntry(id: entryId, content: trimmed, images: uploadedImageKeys(), mood: selectedMood, weather: selectedWeather, quoteId: lockedQuote?.entryId, title: preservedTitle, mentionedUserId: updateMentionedId, clearMentioned: updateClearMentioned, locationName: locationChanged ? selectedLocation?.name : nil, locationDistrict: locationChanged ? selectedLocation?.district : nil, clearLocationName: locationChanged && selectedLocation?.name == nil, clearLocationDistrict: locationChanged && selectedLocation?.district == nil) { [weak self] result in
             DispatchQueue.main.async {
                 guard let self = self else { return }
                 self.isPublishing = false
@@ -5654,10 +5575,9 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, U
                     /// 均为 nil，容器据此清行内引用卡；已删引用不按正常 quote 回传）。
                     if var updated = self.editingEntry {
                         updated.content = trimmed
-                        // R1：编辑 PUT 已显式传空串清标题，故本地副本直接跟随终态：
-                        // 有标题写标题，清空写 nil（与服务端清为 NULL 一致），否则
-                        // 保存后列表仍显示旧标题，与服务端不一致。
-                        updated.title = self.trimmedTitle()
+                        // 标题行已去掉：编辑不改标题，本地副本跟随 preservedTitle
+                        //（旧标题原样、无标题为 nil），与 PUT 带回值一致。
+                        updated.title = self.preservedTitle
                         updated.images = self.uploadedImageKeys()
                         updated.mood = self.selectedMood
                         updated.weather = self.selectedWeather
@@ -5741,49 +5661,14 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, U
     /// 2026-10-29 第 28 项：焦点切换时（键盘已在上、无键盘通知）立即做最小滚动修正；
     /// 键盘刚弹出时的修正走 applyKeyboard 动画完成回调（inset 落定后再算，不与
     /// 系统自动 caret 滚动打架；已在位时修正为 no-op）。
-    func textFieldDidBeginEditing(_ textField: UITextField) {
-        if currentKeyboardHeight > 0 {
-            scrollFocusedFieldIntoView(animated: true)
-        }
-    }
-
     func textViewDidBeginEditing(_ textView: UITextView) {
         if currentKeyboardHeight > 0 {
             scrollFocusedFieldIntoView(animated: true)
         }
     }
 
-    /// 标题行进页可见性保证（2026-10-30）：进页自动聚焦＋键盘＋系统光标滚动后，
-    /// 若标题行已在可视区顶部之外、且拉回后光标仍在可视区内，就按 16pt 留白拉回；
-    /// 标题已完整可见时不动；长文光标在末尾、拉回会把光标顶出可视区时不动（不抢光标）。
-    private func ensureTitleRowVisibleOnEntry() {
-        guard isViewLoaded, view.window != nil, !quotePanelOpen else { return }
-        view.layoutIfNeeded()
-        let titleFrame = contentView.convert(titleField.bounds, from: titleField)
-        let topInset = scrollView.contentInset.top
-        let bottomInset = scrollView.contentInset.bottom
-        let visibleTop = scrollView.contentOffset.y + topInset
-        let visibleBottom = scrollView.contentOffset.y + scrollView.bounds.height - bottomInset
-        guard titleFrame.minY < visibleTop || titleFrame.maxY > visibleBottom else { return }
-        var targetY = scrollView.contentOffset.y
-        if titleFrame.minY < visibleTop {
-            targetY = titleFrame.minY - topInset - Self.focusVisibleTopMargin
-        } else {
-            targetY = titleFrame.maxY - (scrollView.bounds.height - bottomInset)
-        }
-        let minY = -topInset
-        let maxY = max(minY, scrollView.contentSize.height + bottomInset - scrollView.bounds.height)
-        targetY = min(max(targetY, minY), maxY)
-        // 拉回后光标仍须可见，否则不动（长文末尾光标场景）。
-        if let selectedRange = textView.selectedTextRange {
-            let caretFrame = contentView.convert(textView.caretRect(for: selectedRange.end), from: textView)
-            let newVisibleBottom = targetY + scrollView.bounds.height - bottomInset
-            guard caretFrame.maxY <= newVisibleBottom, caretFrame.minY >= targetY + topInset else { return }
-        }
-        if targetY != scrollView.contentOffset.y {
-            scrollView.setContentOffset(CGPoint(x: scrollView.contentOffset.x, y: targetY), animated: false)
-        }
-    }
+    // 标题行已去掉：ensureTitleRowVisibleOnEntry（进页拉回）已整段删除，
+    // 不再为不存在的标题行做进页滚动；焦点滚动只剩正文 caret 口径（见下）。
 
     /// 可见性滚动留白：目标离可视区顶的距离（2026-10-30 滚动留白口径，
     /// 贴边改留白；已完整可见时仍不动）。
@@ -5791,14 +5676,12 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, U
 
     /// 2026-10-29 第 28 项：只滚到刚好让焦点框完整可见的最小滚动——焦点框在可视区
     /// 上方时上滚到其顶离可视区顶留 16pt（绝不顶出顶部），在可视区下方时下滚到其底恰贴
-    /// 键盘顶；已完整可见时不动。标题栏用整框（单行短框），正文用 caret 矩形
-    /// （整框可能高于可视区，整框口径会乱滚）。可视区按当前 contentInset 算
+    /// 键盘顶；已完整可见时不动。标题行已去掉，本函数只剩正文 caret 口径
+    /// （整框可能高于可视区，整框口径会乱滚，故用 caret 矩形）。可视区按当前 contentInset 算
     /// （键盘高已计入 bottom inset），目标偏移 clamp 到内容合法范围。
     private func scrollFocusedFieldIntoView(animated: Bool) {
         let targetRect: CGRect?
-        if titleField.isFirstResponder {
-            targetRect = contentView.convert(titleField.bounds, from: titleField)
-        } else if textView.isFirstResponder {
+        if textView.isFirstResponder {
             if let selectedRange = textView.selectedTextRange {
                 let caret = textView.caretRect(for: selectedRange.end)
                 targetRect = contentView.convert(caret, from: textView)
@@ -5852,17 +5735,12 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, U
         view.endEditing(true)
     }
 
-    /// 手势代理：落在正文 textView（含占位 label 子视图）与标题 titleField 内的点按
+    /// 手势代理：落在正文 textView（含占位 label 子视图）内的点按
     /// 不触发收键盘，交给输入框正常聚焦/选区；其余空白与控件点按照常收键盘
     /// （cancelsTouchesInView=false，控件自身点按不受影响）。
-    /// 标题必须排除（编辑器批第 4 项）：titleField 在 contentStack 内、属 scrollView 子树，
-    /// 不排除时点标题先聚焦（touch down）又被本手势立即 endEditing（touch up），
-    /// 键盘/工具栏/inset 上下弹跳一次，用户感知为“点标题页面自动往上跑”。
+    /// 标题行已去掉，旧标题排除分支随之删除（本页已无 UITextField）。
     func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldReceive touch: UITouch) -> Bool {
         if let touchedView = touch.view, touchedView.isDescendant(of: textView) || touchedView === textView {
-            return false
-        }
-        if let touchedView = touch.view, touchedView.isDescendant(of: titleField) || touchedView === titleField {
             return false
         }
         return true

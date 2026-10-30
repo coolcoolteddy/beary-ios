@@ -3346,6 +3346,9 @@ class BearyProfileViewController: UIViewController {
         return content.count > limit ? String(content.prefix(limit)) + "…" : content
     }
 
+    /// 行文案回退（非标题行）：那年今日展开列表行、去年的对话原篇栏在正文为空时
+    /// 仍需一句行文案才可点/可读，故空标题时退正文摘要、无正文时退“日记”；
+    /// 那年今日与随机漫步的主卡标题行已改为空标题整行隐藏，不再走本函数。
     private func personalTitle(entry: Entry) -> String {
         if let title = entry.title?.trimmingCharacters(in: .whitespacesAndNewlines), !title.isEmpty {
             return title
@@ -3490,7 +3493,12 @@ class BearyProfileViewController: UIViewController {
             meta += main.isPublic == true ? " · 公开" : " · 私密"
         }
         thisDayMetaLabel.text = meta
-        thisDayTitleLabel.text = personalTitle(entry: main)
+        // 标题行已去掉口径：空标题时整行标题不渲染（不再用 personalTitle 的正文
+        // 摘要回退充当标题、与下方正文摘要重复）；有标题的旧日记照常显示。
+        // 展开列表行与去年的对话原篇栏仍用 personalTitle 作行文案（见该函数注释）。
+        let thisDayTitle = (main.title ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        thisDayTitleLabel.text = thisDayTitle.isEmpty ? nil : thisDayTitle
+        thisDayTitleLabel.isHidden = thisDayTitle.isEmpty
         let body = personalExcerpt(entry: main, limit: 120)
         thisDayBodyLabel.text = body
         thisDayBodyLabel.isHidden = body.isEmpty
@@ -4081,7 +4089,10 @@ class BearyProfileViewController: UIViewController {
             meta += entry.isPublic == true ? " · 公开" : " · 私密"
         }
         randomMetaLabel.text = meta
-        randomTitleLabel.text = personalTitle(entry: entry)
+        // 空标题时整行标题不渲染（同那年今日主卡；不再用摘要回退充当标题）。
+        let randomTitle = (entry.title ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        randomTitleLabel.text = randomTitle.isEmpty ? nil : randomTitle
+        randomTitleLabel.isHidden = randomTitle.isEmpty
         let body = personalExcerpt(entry: entry, limit: 120)
         randomBodyLabel.text = body
         randomBodyLabel.isHidden = body.isEmpty
