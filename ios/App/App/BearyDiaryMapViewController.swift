@@ -421,7 +421,7 @@ final class BearyDiaryMapViewController: UIViewController, MKMapViewDelegate, UI
             if let image = BearyTimeCapsuleIcon.timeCapsuleImage(pointSize: 24) {
                 marker.glyphImage = image
             } else {
-                // 【占位标注】time-capsule 资产未注册时用文字占位，不自绘、不拿定位图标顶替。
+                // 【占位标注】icon_time_capsule 资产未注册时用文字占位，不自绘、不拿定位图标顶替。
                 marker.glyphText = "胶囊"
             }
             return marker

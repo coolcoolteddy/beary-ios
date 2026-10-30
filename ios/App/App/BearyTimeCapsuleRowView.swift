@@ -3,8 +3,8 @@ import UIKit
 // ===== 写日记页“埋进地图”行（2026-10-30；预览第 4 屏）=====
 // 位置：编辑器 contentStack 里，定位行正下方（调用方在 buildLocationRow 之后立即建，栈顺序即视觉顺序）。
 // 形态：开关行 + 解锁日期行（开关开才出现，关则收起，不留空行）；无位置时调用方整组隐藏（见 Composer）。
-// 图标：开关旁用新图标 time-capsule（BearyTimeCapsuleIcon）；日期行用官方已有 icon_calendar；
-// time-capsule 资产未注册时 iconView 隐藏、副行追加“（胶囊图标待官方补）”，不自绘、不拿 SF Symbol 顶替。
+// 图标：开关旁用新图标 icon_time_capsule（BearyTimeCapsuleIcon）；日期行用官方已有 icon_calendar；
+// icon_time_capsule 资产未注册时 iconView 隐藏、副行追加“（胶囊图标待官方补）”，不自绘、不拿 SF Symbol 顶替。
 // 本视图不碰位置与发布逻辑：开关/日期变化只经 delegate 回调给 Composer，校验与发请求全在 Composer。
 
 protocol BearyTimeCapsuleRowViewDelegate: AnyObject {

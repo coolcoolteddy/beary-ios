@@ -148,7 +148,7 @@ final class BearyTimeCapsuleSheetViewController: UIViewController, CLLocationMan
         dateLabel.numberOfLines = 0
         stack.addArrangedSubview(makeRow(iconView: dateIconView, label: dateLabel))
 
-        // 埋点区级行：仅作者可见。区级解锁态图标用新图标 district-range；未注册时图标位隐藏、
+        // 埋点区级行：仅作者可见。区级解锁态图标用新图标 icon_district_range；未注册时图标位隐藏、
         // 文案后追加占位标注，不自绘、不拿定位图标顶替（定位图标是另一含义）。
         districtIconView.tintColor = BearyColors.gray
         if let image = BearyTimeCapsuleIcon.districtRangeImage(pointSize: 20) {
