@@ -98,7 +98,7 @@ enum BearyButtonStyle: Equatable {
     }
 }
 
-final class BearyButton: BearyHit44Button {
+class BearyButton: BearyHit44Button {
 
     let style: BearyButtonStyle
 

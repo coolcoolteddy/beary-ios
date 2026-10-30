@@ -612,7 +612,7 @@ final class BearyYearReviewViewController: UIViewController {
 
         // 主视觉：词汇指纹（当年 top 15，点词进详情；无词时整节省略，只留口径行）。
         let wordprintValue = BearyProfilePersonalLogic.wordprint(entries: filteredEntries, year: selectedYear, isOwn: isOwnFlag, calendar: calendar)
-        if !print.items.isEmpty {
+        if !wordprintValue.items.isEmpty {
             wordprintView.configure(with: wordprintValue, scope: scopeValue)
             dynamicStack.addArrangedSubview(wordprintView)
         } else {
