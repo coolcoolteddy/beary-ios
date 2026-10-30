@@ -1284,7 +1284,7 @@ class BearyProfileViewController: UIViewController {
 
     /// 日记星图入口行（2026-10-30）：排在日记地图行下一行，与地图行同几何
     /// （左右各 20、高 48、12pt 间隔），本人/他人页同行（星空页内按视角过滤）。
-    /// 图标：连线示意用新图标 constellation（imageset 名 "constellation"，注册由
+    /// 图标：连线示意用新图标 constellation（imageset 名 "icon_constellation"，注册由
     /// 另一工人做；此处只引用名，不自绘、不用 SF Symbol 顶替）。注册未到时
     /// BearyIconImages 返回 nil，本行改放占位文字“待接图标”（行仍可点、星空页
     /// 照常进）；图标到货后下次启动自动走官方图分支，布局与地图行对齐。
@@ -1301,7 +1301,7 @@ class BearyProfileViewController: UIViewController {
     private let starEntryIconView: UIImageView = {
         let v = UIImageView()
         v.translatesAutoresizingMaskIntoConstraints = false
-        v.image = BearyIconImages.image(named: "constellation", pointSize: 20)
+        v.image = BearyIconImages.image(named: "icon_constellation", pointSize: 20)
         v.tintColor = BearyColors.ink
         v.contentMode = .scaleAspectFit
         return v
