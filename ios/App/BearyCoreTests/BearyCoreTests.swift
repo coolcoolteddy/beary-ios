@@ -365,7 +365,7 @@ final class BearyPastSelfTests: XCTestCase {
         XCTAssertNil(store.add(originEntryId: "b_9", body: "第二句", createdAtMs: created, calendar: calendar))
         // 撤回等待中的最新行成功；已送达行不可撤回。
         XCTAssertTrue(store.revoke(messageId: first!.id, nowMs: created, today: "2026-01-01"))
-        XCTAssertFalse(store.revoke(messageId: first.id, nowMs: created, today: "2026-01-01"))
+        XCTAssertFalse(store.revoke(messageId: first!.id, nowMs: created, today: "2026-01-01"))
         let delivered = store.add(originEntryId: "b_8", body: "旧句", createdAtMs: created, calendar: calendar)!
         XCTAssertFalse(store.revoke(messageId: delivered.id, nowMs: created, today: "2026-10-30"))
         // 按用户隔离：另一用户看不到本用户的留话。
