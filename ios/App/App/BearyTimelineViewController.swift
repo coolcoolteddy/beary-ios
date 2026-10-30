@@ -2127,7 +2127,7 @@ class BearyTimelineViewController: UIViewController {
             refreshIconView.heightAnchor.constraint(equalToConstant: 32),
         ])
         return pull
-    }
+    }()
 
     /// 表头容器：标题行 + 统计小字 + 连续写作行 + 日历卡。
     /// 用 tableHeaderView 承载（随列表一起滚走，不常驻占位）；高度每次渲染后重算。
