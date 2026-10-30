@@ -136,9 +136,16 @@ final class BearySloganV3TestViewController: UIViewController {
         animationView = nil
         let name = currentResourceName()
         themeLabel.text = "当前版本：" + name + ".json（跟随系统浅深）"
-        guard let path = Bundle.main.path(forResource: name, ofType: "json"),
-              let animation = LottieAnimation.filepath(path) else {
-            statusLabel.text = "动画加载失败： bundle 里找不到 " + name + ".json"
+        // TEST FIX：旧代码把“path 为空”和“Lottie 解析失败”混成同一条
+        // “bundle 里找不到”报错，截图根本分不清是哪一支。本次分开报，
+        // 且解析失败时带上文件字节数，证明文件到底在不在 bundle 里。
+        guard let path = Bundle.main.path(forResource: name, ofType: "json") else {
+            statusLabel.text = "动画加载失败：bundle 里找不到 " + name + ".json（path 为空）"
+            return
+        }
+        guard let animation = LottieAnimation.filepath(path) else {
+            let size = (try? FileManager.default.attributesOfItem(atPath: path)[.size] as? Int) ?? -1
+            statusLabel.text = "动画加载失败：已找到 " + name + ".json（" + String(size) + " 字节）但 Lottie 解析失败"
             return
         }
         let animationView = LottieAnimationView(animation: animation)
