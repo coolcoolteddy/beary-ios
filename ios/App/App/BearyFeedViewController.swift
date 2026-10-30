@@ -1537,6 +1537,9 @@ class BearyFeedViewController: UIViewController {
             guard let strongSelf = self, let entryId = entryValue.id else { return }
             BearyReportFlow.present(from: strongSelf, entryId: entryId, entryLabel: nil)
         }
+        cell.onMoreRequested = { [weak self] entryValue, sourceView in
+            self?.presentCardMoreMenu(entry: entryValue, sourceView: sourceView)
+        }
         cell.onAuthorTapped = { [weak self] in
             if let authorId = entry.authorId {
                 self?.onOpenUser?(authorId)
@@ -1597,6 +1600,42 @@ class BearyFeedViewController: UIViewController {
     /// 到的仍是私密 = “实际没公开”）；详情页一直用有效态，三处与之对齐。
     /// 即时反馈（2026-10-29 定版）：点按瞬间先按目标态同步本地（图标与操作行
     /// 门控立即变），回包成功对齐服务端值；失败回滚原态 + 拒绝动效。
+    /// 2026-10-31 卡片 ⋯ 菜单（时间线风格 actionSheet）：本人篇 编辑内容（15 分钟内）／
+    /// 修改权限／删除；他人公开篇 举报（已举报置灰）；点赞／收藏／分享是互动，
+    /// 仍在底部操作行，不进菜单；长按菜单已随 ⋯ 归并删除。
+    private func presentCardMoreMenu(entry: Entry, sourceView: UIView) {
+        let sheet = UIAlertController(title: nil, message: nil, preferredStyle: .actionSheet)
+        let nowMs = Int(Date().timeIntervalSince1970 * 1000)
+        if entry.isMine == true {
+            if let deadline = entry.editDeadline, nowMs < deadline {
+                sheet.addAction(UIAlertAction(title: "编辑内容", style: .default) { [weak self] _ in
+                    self?.onEditEntry?(entry)
+                })
+            }
+            sheet.addAction(UIAlertAction(title: "修改权限", style: .default) { [weak self] _ in
+                self?.handleVisibilityToggle(entryId: entry.id ?? "")
+            })
+            sheet.addAction(UIAlertAction(title: "删除", style: .destructive) { [weak self] _ in
+                self?.onDeleteEntry?(entry)
+            })
+        } else if BearyEphemeral.isEffectivelyPublic(entry), let entryId = entry.id {
+            let reported = BearyReportedStore.isReported(entryId: entryId)
+            sheet.addAction(UIAlertAction(title: reported ? "已举报" : "举报", style: .default, handler: reported ? nil : { [weak self] _ in
+                guard let strongSelf = self else { return }
+                BearyReportFlow.present(from: strongSelf, entryId: entryId, entryLabel: nil)
+            }))
+            if reported {
+                sheet.actions.last?.isEnabled = false
+            }
+        }
+        sheet.addAction(UIAlertAction(title: "取消", style: .cancel))
+        if let popover = sheet.popoverPresentationController {
+            popover.sourceView = sourceView
+            popover.sourceRect = sourceView.bounds
+        }
+        present(sheet, animated: true)
+    }
+
     private func handleVisibilityToggle(entryId: String) {
         guard !entryId.isEmpty, let entry = entryModel(for: entryId), entry.isMine == true else { return }
         if pubBusyIds.contains(entryId) { return }

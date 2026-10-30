@@ -348,10 +348,15 @@ class BearyDiaryCardCell: UITableViewCell {
     /// 回应失败后回传（控制器弹 toast；点赞/收藏失败仍走 onActionFailed 的 alert，不混用）。
     var onEmoteFailed: (() -> Void)?
     var onShareRequested: ((Entry) -> Void)?
-    /// iCity 可见性切换钮：本人卡片操作行的双向切换（公开↔私密），目标态由控制器按当前模型算。
+    /// 可见性切换（⋯ 菜单“修改权限”触发）：本人卡片公开↔私密，目标态由控制器按当前模型算。
     var onPublishTapped: (() -> Void)?
     /// 卡片菜单举报：仅他人公开卡出现，控制器走 BearyReportFlow。
     var onReportRequested: ((Entry) -> Void)?
+    /// 2026-10-31 卡片 ⋯ 菜单（时间线风格）：控制器弹 actionSheet，管理类操作
+    /// （编辑／修改权限／删除／举报）走原 onPublishTapped／onContextMenuEdit／
+    /// onContextMenuDelete／onReportRequested 同一路；点赞／收藏／分享是互动，
+    /// 仍留在底部操作行，不进菜单。
+    var onMoreRequested: ((Entry, UIView) -> Void)?
     /// 点头像或作者名：打开作者主页。
     var onAuthorTapped: (() -> Void)?
     /// C6 卡片上下文菜单：编辑/删除转发给控制器（容器接线到编辑器与删除确认流程）；
@@ -454,8 +459,7 @@ class BearyDiaryCardCell: UITableViewCell {
     private var quoteTapLoadFailed = false
     private var emoteRowHeightConstraint: NSLayoutConstraint?
     private var rightStackTopConstraint: NSLayoutConstraint?
-    /// 2026-10-28 23:56：右上角小地球 reserve——本人卡时 rightStack 右缩进 −52
-    ///（16 边距 + 28 图标 + 8 间隙），他人卡恢复 −16；由 refreshPubRow 与复用复位。
+    /// 右列右缩进恒 −16；⋯ 留位走标题行末 titleMoreSpacer，不再按本人／他人改右缩进。
     private var rightStackTrailingConstraint: NSLayoutConstraint?
     /// L21（91 包，个人主页模式）：本卡正文是否超过 300 字（折叠按钮是否适用），
     /// configure 时记下，供 setFoldDisplay 就地切换显示用，不再每次重算。
@@ -812,20 +816,33 @@ class BearyDiaryCardCell: UITableViewCell {
     /// 个人主页模式 + 钮：与首页同款虚线 34 圆圈（原实心 32 圆钮已随本修统一删除）。
     private var profileAddButton: BearyDiaryCardDashedAddButton?
 
-    /// iCity：公开切换钮（2026-10-28 23:56 改为卡片右上角小地球，见 refreshPubRow）：
-    /// 21pt 灰色 globe 图标、28×28 帧（BearyHit44Button 扩后热区仍 44），无文字、无边框；
-    /// 目标态只以无障碍文案表达（“公开”/“改回私密”），挂 contentView 右上角对齐标题行。
-    private lazy var publishButton: UIButton = {
-        let btn = BearyHit44Button(type: .system)
+    /// 2026-10-31 卡片 ⋯ 菜单钮（时间线风格）：官方 icon_more 横向三点 21pt 灰色、
+    /// 28×28 帧（BearyHit44Button 扩后热区仍 44），挂 contentView 右上角、对齐标题行；
+    /// 本人卡与他人公开卡均显（本人：编辑／修改权限／删除；他人：举报），其余藏。
+    /// 标题行末的 titleMoreSpacer（28 宽 + 8 间距）给 ⋯ 留位，右列右缩进恒 −16，
+    /// 操作行不再随本人／他人左移（旧小地球 −52 口径随本批废止）。
+    private lazy var moreButton: UIButton = {
+        let btn = BearyHit44Button(type: .custom)
         btn.translatesAutoresizingMaskIntoConstraints = false
-        btn.setImage(BearyFeedIconCache.image(named: "icon_globe", pointSize: 21), for: .normal)
+        btn.setImage(BearyFeedIconCache.image(named: "icon_more", pointSize: 21), for: .normal)
         btn.tintColor = BearyColors.gray
         btn.widthAnchor.constraint(equalToConstant: 28).isActive = true
         btn.heightAnchor.constraint(equalToConstant: 28).isActive = true
-        btn.addTarget(self, action: #selector(publishTapped), for: .touchUpInside)
+        btn.addTarget(self, action: #selector(moreTapped), for: .touchUpInside)
         btn.bearyAddPressFeedback()
+        btn.accessibilityLabel = "更多操作"
         btn.isHidden = true
         return btn
+    }()
+
+    /// 标题行末 ⋯ 留位垫片：宽 28，与 ⋯（28 框、右沿 −16）之间隔标题行间距 8，
+    /// 标题内容末缘恒为 −52；⋯ 藏时垫片同步藏，标题行恢复满宽。
+    private let titleMoreSpacer: UILabel = {
+        // 空 UILabel 自带基线，不破坏标题行 firstBaseline 对齐（titleSpacerLabel 同款口径）。
+        let lb = UILabel()
+        lb.translatesAutoresizingMaskIntoConstraints = false
+        lb.widthAnchor.constraint(equalToConstant: 28).isActive = true
+        return lb
     }()
 
     private lazy var actionStack: BearyActionStackView = {
@@ -1019,17 +1036,14 @@ class BearyDiaryCardCell: UITableViewCell {
         contentView.addSubview(separatorView)
         // 限时虚线边框层（挂 contentView 层，布局时重画；平时隐藏，不影响普通卡）。
         contentView.layer.addSublayer(ephemeralBorderLayer)
-        // C6 卡片上下文菜单：UIContextMenuInteraction 挂 contentView（原位浮起
-        // 整卡预览 + 系统毛玻璃 UIMenu），取代 Q9 长按手势 + actionSheet；
-        // 按钮/图片/引用/头像上的长按排除见文件末尾 contextMenuInteraction 代理
-        // （头像/名字排除仅首页模式，个人主页模式各保各的，与旧口径一致）。
-        contentView.addInteraction(UIContextMenuInteraction(delegate: self))
-        // 2026-10-28 23:56：公开钮不再插操作行，改挂 contentView 右上角（对齐标题行），
-        // 本人卡时 rightStack 右缩进让出 28 + 8 的位置（见 refreshPubRow），他人卡恢复 −16。
-        contentView.addSubview(publishButton)
+        // 2026-10-31：长按上下文菜单已归并进右上角 ⋯ 菜单（时间线风格），本行不再挂
+        // UIContextMenuInteraction；长按不再弹菜单，管理类操作一律走 ⋯。
+        // ⋯ 挂 contentView 右上角（对齐标题行），标题行末 titleMoreSpacer 给它留位。
+        contentView.addSubview(moreButton)
+        titleStack.addArrangedSubview(titleMoreSpacer)
         NSLayoutConstraint.activate([
-            publishButton.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -16),
-            publishButton.centerYAnchor.constraint(equalTo: titleStack.centerYAnchor),
+            moreButton.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -16),
+            moreButton.centerYAnchor.constraint(equalTo: titleStack.centerYAnchor),
         ])
         // F1（首页模式）：正文点击不导航——正文 label 自带空点按手势，把点按截住，
         // 使其不到达 tableView 的 didSelectRowAt（行其余区域点按仍进详情）。
@@ -1171,7 +1185,7 @@ class BearyDiaryCardCell: UITableViewCell {
         if currentEntry == nil { return }
         if previousTraitCollection?.userInterfaceStyle != traitCollection.userInterfaceStyle {
             refreshMoodView()
-            refreshPubRow()
+            refreshMoreRow()
         }
     }
 
@@ -1201,6 +1215,7 @@ class BearyDiaryCardCell: UITableViewCell {
         onActionFailed = nil
         onShareRequested = nil
         onPublishTapped = nil
+        onMoreRequested = nil
         onReportRequested = nil
         onAuthorTapped = nil
         onNeedsRowReload = nil
@@ -1272,7 +1287,8 @@ class BearyDiaryCardCell: UITableViewCell {
         }
         emoteRowHeightConstraint?.constant = 0
         likeButton.setTitle(nil, for: .normal)
-        publishButton.isHidden = true
+        moreButton.isHidden = true
+        titleMoreSpacer.isHidden = true
         rightStackTrailingConstraint?.constant = -16
         // 游客详情复位：提示条默认藏、操作行与回应行默认显，防游客展开态
         // 串位到复用的下一张卡；下一次 configure 的游客分支会重新定显隐。
@@ -1547,18 +1563,6 @@ class BearyDiaryCardCell: UITableViewCell {
         onAuthorTapped?()
     }
 
-    /// C6 上下文菜单：分享/收藏动作复用本 cell 已有的按钮路径
-    /// shareButtonTapped/bookmarkButtonTapped（其内已按 cardMode 分流：
-    /// 首页模式走 cell 内 API，个人主页模式走控制器回调），不新增服务端接口；
-    /// 编辑/删除走 onContextMenuEdit/onContextMenuDelete。
-    func shareFromCardMenu() {
-        shareButtonTapped()
-    }
-
-    func bookmarkFromCardMenu() {
-        bookmarkButtonTapped()
-    }
-
     /// C6 菜单编辑资格：本人 + 未过编辑期；审计 P2-15 统一为缺失即锁
     /// （与时间线编辑态文字组、网页端 +edit_deadline||0 算锁同口径；服务端
     /// 列表 SELECT e.* 本就带 edit_deadline，缺失只剩 legacy 载荷，锁住为稳妥。
@@ -1667,7 +1671,7 @@ class BearyDiaryCardCell: UITableViewCell {
         updateLikeButton()
         updateBookmarkButton()
         updateActionInteractivity()
-        refreshPubRow()
+        refreshMoreRow()
         refreshEphemeralState(entry: entry)
         // 回应行：操作行下方、行上边距 10（见 updateRightStackSpacing）。
         renderEmotes()
@@ -1771,10 +1775,10 @@ class BearyDiaryCardCell: UITableViewCell {
         shareButton.isHidden = publicOK == false
         shareSlotSpacer.isHidden = !shareButton.isHidden
         // 2026-10-29 100 包反馈第 4 项根因 A：个人页 configure 此前从未调
-        // refreshPubRow，而 prepareForReuse 把 publishButton 藏起，导致本人
+        // refreshMoreRow，而 prepareForReuse 把 moreButton 藏起，导致本人
         // 卡在个人页上根本没有地球切换钮（广场 configure 有此调用，故只坏
         // 个人页一面）。此处补上，与广场 configure 同款。
-        refreshPubRow()
+        refreshMoreRow()
         renderEmotes()
         // 游客详情（只读）：游客展开态藏操作行与回应行，改显登录提示条
         //（提示条占操作行原位：操作行隐藏后 stack 将其压为 0，提示条紧接
@@ -2268,7 +2272,7 @@ class BearyDiaryCardCell: UITableViewCell {
     /// 可见性切换失败的拒绝动效：摇头 + warning 震动（playDenyShake 内含），
     /// 控制器回滚本地态后调用，toast 由控制器发。
     func playPublishDenyShake() {
-        playDenyShake(on: publishButton)
+        playDenyShake(on: moreButton)
     }
 
     /// 审计 P2-23：个人页控制器侧门控拒绝动效（与详情页同口径：摇头＋warning 震动）。
@@ -2293,11 +2297,10 @@ class BearyDiaryCardCell: UITableViewCell {
         button.layer.add(shake, forKey: "bearyDenyShake")
     }
 
-    /// iCity：公开切换渲染（2026-10-28 23:56 改为右上角小地球）：仅本人卡显；
-    /// 本人卡时 rightStack 右缩进 −52 给小地球让位（16 边距 + 28 图标 + 8 间隙），
-    /// 他人卡藏钮并恢复 −16。目标态只以无障碍文案表达，图标恒灰色 21pt。
+    /// 2026-10-31 卡片 ⋯ 显隐（时间线风格）：本人卡或他人公开卡显，其余藏；
+    /// 右列右缩进恒 −16，⋯ 留位走标题行末 titleMoreSpacer。
     func refreshPublishRow() {
-        refreshPubRow()
+        refreshMoreRow()
     }
     private func refreshEphemeralState(entry: Entry) {
         // 限时存活期：倒计时行显 + 虚线边框显 + 底线藏（边框代之）；到期或非限时一律按普通卡。
@@ -2314,19 +2317,23 @@ class BearyDiaryCardCell: UITableViewCell {
         setNeedsLayout()
     }
 
-    private func refreshPubRow() {
-        guard let entry = currentEntry, entry.isMine == true else {
-            publishButton.isHidden = true
-            rightStackTrailingConstraint?.constant = -16
+    private func refreshMoreRow() {
+        guard let entry = currentEntry else {
+            moreButton.isHidden = true
+            titleMoreSpacer.isHidden = true
             return
         }
-        publishButton.isHidden = false
-        publishButton.accessibilityLabel = BearyEphemeral.isEffectivelyPublic(entry) ? "改回私密" : "公开"
-        rightStackTrailingConstraint?.constant = -52
+        // ⋯ 常驻条件：本人卡（编辑／修改权限／删除）或他人公开卡（举报）；
+        // 他人私密卡无菜单项，钮与垫片同藏，标题行恢复满宽。
+        let show = entry.isMine == true || BearyEphemeral.isEffectivelyPublic(entry)
+        moreButton.isHidden = !show
+        titleMoreSpacer.isHidden = !show
+        rightStackTrailingConstraint?.constant = -16
     }
 
-    @objc private func publishTapped() {
-        onPublishTapped?()
+    @objc private func moreTapped() {
+        guard let entry = currentEntry else { return }
+        onMoreRequested?(entry, moreButton)
     }
 
     /// 互动就地同步（首页模式，卡顿批）：只改点赞/收藏/回应三处控件，不重建图片/
@@ -2389,12 +2396,12 @@ class BearyDiaryCardCell: UITableViewCell {
         shareButton.isEnabled = !interactionDisabled
         // 2026-10-29 100 包反馈第 4 项根因 B：就地同步此前不跟可见性走——
         // 个人页原地翻公开/私密后，分享钮显隐仍停在旧态（私密→公开仍藏、
-        // 公开→私密仍显），地球无障碍文案在失败回滚后也停在目标态。
+        // 公开→私密仍显），失败回滚后文案也停在目标态（⋯ 菜单内无文案态可停）。
         // 此处按新 entry 的有效态同步两处（与 profile configure 同款口径；
         // 控制器失败回滚同样走本方法，文案随之回到原态）。
         shareButton.isHidden = BearyEphemeral.isEffectivelyPublic(entry) == false
         shareSlotSpacer.isHidden = !shareButton.isHidden
-        refreshPubRow()
+        refreshMoreRow()
         // 批 E 补漏：就地同步此前不刷位置行——可见行经本方法同步新模型
         // （如详情编辑回传带定位的 entry）后，位置行仍停在旧 configure 态，
         // 直到整行重配才变；此处与 configure 同款刷新，nil 即隐藏不留空行。
@@ -3183,73 +3190,5 @@ class BearyDiaryCardCell: UITableViewCell {
         emoteFlightAPIDone = false
         emoteFlightRemovalStaged = false
         updateEmoteInteractivity()
-    }
-}
-
-// MARK: - C6 卡片上下文菜单（取代 Q9 长按 + UIAlertController actionSheet，首页与个人主页共用）
-
-extension BearyDiaryCardCell: UIContextMenuInteractionDelegate {
-    func contextMenuInteraction(_ interaction: UIContextMenuInteraction, configurationForMenuAtLocation location: CGPoint) -> UIContextMenuConfiguration? {
-        // 旧长按互斥口径平移：按钮、图片条、引用卡上的长按不弹菜单，
-        // 各自原有手势照常走；头像/名字排除仅首页模式（个人主页原口径
-        // 不排除，各保各的）；正文区长按仍弹菜单。
-        if let hit = contentView.hitTest(location, with: nil) {
-            var view: UIView? = hit
-            while let current = view {
-                if current is UIButton { return nil }
-                if current === imagesScrollView || current === quoteView { return nil }
-                if cardMode == .feed {
-                    if current === avatarImageView || current === nameLabel { return nil }
-                }
-                if current === contentView { break }
-                view = current.superview
-            }
-        }
-        guard let entry = currentEntry else { return nil }
-        // previewProvider=nil：系统以 interaction 所附 view（contentView 整卡）作
-        // 原位浮起预览，菜单为系统毛玻璃 UIMenu；旧 sheet 的“取消”项由系统菜单
-        // 的空白处点按/下滑手势承担，不再单列。
-        return UIContextMenuConfiguration(identifier: nil, previewProvider: nil) { [weak self] _ in
-            guard let self = self else { return UIMenu(title: "", children: []) }
-            var actions: [UIAction] = []
-            if BearyEphemeral.isEffectivelyPublic(entry) {
-                actions.append(UIAction(title: "分享", image: BearyIconImages.image(named: "icon_share", pointSize: 20)) { [weak self] _ in
-                    self?.shareFromCardMenu()
-                })
-            }
-            // P2 首页纯逻辑：首页模式私密卡不给“收藏”项——其收藏路径
-            // feedBookmarkTapped 遇 isPublic != true 直接静默 return，留着就是死按钮
-            // （分享项同款口径：仅公开卡出现）。个人主页模式走自有 onBookmark 路径，
-            // 不在此改动，行为保持原样。
-            // 收藏标题取实时态：首页模式 currentEntry 由 cell 内收藏路径就地维护，
-            // 个人主页模式 cellBookmarkedByMe 由 syncInteraction 维护。
-            if BearyEphemeral.isEffectivelyPublic(entry) || self.cardMode == .profile {
-                let bookmarked = self.cardMode == .profile ? self.cellBookmarkedByMe : (self.currentEntry?.bookmarkedByMe ?? false)
-                // 2026-10-28 定版：菜单图标走手绘 icon_bookmark（无 bookmark.slash 手绘资产，取消态以标题区分，图标同款）。
-                actions.append(UIAction(title: bookmarked ? "取消收藏" : "收藏", image: BearyIconImages.image(named: "icon_bookmark", pointSize: 20)) { [weak self] _ in
-                    self?.bookmarkFromCardMenu()
-                })
-            }
-            if self.isCardMenuEditAvailable(entry: entry) {
-                actions.append(UIAction(title: "编辑", image: BearyIconImages.image(named: "icon_edit", pointSize: 20)) { [weak self] _ in
-                    self?.onContextMenuEdit?()
-                })
-            }
-            if entry.isMine == true {
-                actions.append(UIAction(title: "删除", image: BearyIconImages.image(named: "icon_trash", pointSize: 20), attributes: .destructive) { [weak self] _ in
-                    self?.onContextMenuDelete?()
-                })
-            }
-            // iCity 举报：仅他人公开卡，菜单末尾；自己日记无举报项；已举报则置灰显“已举报”。
-            // 切换钮放操作行、举报放菜单末尾，避免双入口双发。
-            if entry.isMine != true, BearyEphemeral.isEffectivelyPublic(entry), let entryId = entry.id {
-                let reported = BearyReportedStore.isReported(entryId: entryId)
-                actions.append(UIAction(title: reported ? "已举报" : "举报", image: BearyIconImages.image(named: "icon_flag", pointSize: 20), attributes: reported ? [.disabled] : []) { [weak self] _ in
-                    guard let self = self, let current = self.currentEntry else { return }
-                    self.onReportRequested?(current)
-                })
-            }
-            return UIMenu(title: "", children: actions)
-        }
     }
 }

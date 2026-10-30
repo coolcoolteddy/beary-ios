@@ -203,10 +203,10 @@ final class BearyDetailViewController: UIViewController {
         st.distribution = .fill
         return st
     }()
-    /// 本人卡右上角小地球：首页 publishButton 同款（21pt 灰色、28 框、44 热区），
+    /// 右上角 ⋯ 钮：时间线 moreButton 同款（21pt 灰色、28 框、44 热区），
     /// 不挂作者行内，挂 contentColumnView 右上角、对齐作者行；右列右缩进见
-    /// refreshAuthorActions（本人 −36、他人 0，以内容列为基准）。
-    private let visibilityButton = BearyHit44Button(type: .custom)
+    /// refreshAuthorActions（⋯ 显时 −36、藏时 0，以内容列为基准）。
+    private let moreButton = BearyHit44Button(type: .custom)
     private let bodyLabel = UILabel()
     /// 审计 P2-12：详情补标题行（卡片同款 16.5 粗体，空标题不占位）。
     /// 审计 P1-1（推翻 P2-12 单行决定，仅详情标题这一处）：标题自然换行，
@@ -565,12 +565,11 @@ final class BearyDetailViewController: UIViewController {
         buildActionRow()
         buildEmoteRow()
         buildPlaceholderState()
-        // 批 B：编辑／删除走长按系统上下文菜单（C6 同款，挂内容列；按钮／图片条／
-        // 引用卡上的长按排除见文件末尾代理，卡片内不再设 ⋯ 钮）。
-        contentColumnView.addInteraction(UIContextMenuInteraction(delegate: self))
+        // 2026-10-31：长按上下文菜单已归并进右上角 ⋯ 菜单（时间线风格），不再挂
+        // UIContextMenuInteraction；管理类操作一律走 ⋯，点赞／收藏／分享仍在操作行。
     }
 
-    /// 首页卡片头部同款：左列头像 40 + 右列（@ 行、作者行）；小地球不进作者行，
+    /// 首页卡片头部同款：左列头像 40 + 右列（@ 行、作者行）；⋯ 钮不进作者行，
     /// 挂内容列右上角、对齐作者行（见 buildLayout 末尾外的约束，此处一次设好）。
     private func buildCardHeader() {
         avatarImageView.translatesAutoresizingMaskIntoConstraints = false
@@ -660,20 +659,20 @@ final class BearyDetailViewController: UIViewController {
         ])
         rightStack.addArrangedSubview(authorRow)
 
-        // 右上角小地球：首页 publishButton 同款（21pt 灰色、28 框、44 热区），
-        // 图标恒为地球（公开态只以无障碍文案表达，见 refreshVisibilityViews）。
-        visibilityButton.translatesAutoresizingMaskIntoConstraints = false
-        visibilityButton.setImage(BearyFeedIconCache.image(named: "icon_globe", pointSize: 21), for: .normal)
-        visibilityButton.tintColor = BearyColors.gray
-        visibilityButton.adjustsImageWhenHighlighted = false
-        visibilityButton.addTarget(self, action: #selector(visibilityTapped), for: .touchUpInside)
-        visibilityButton.bearyAddPressFeedback()
-        contentColumnView.addSubview(visibilityButton)
+        // 右上角 ⋯ 钮：时间线 moreButton 同款（21pt 灰色、28 框、44 热区），图标恒为三点。
+        moreButton.translatesAutoresizingMaskIntoConstraints = false
+        moreButton.setImage(BearyFeedIconCache.image(named: "icon_more", pointSize: 21), for: .normal)
+        moreButton.tintColor = BearyColors.gray
+        moreButton.adjustsImageWhenHighlighted = false
+        moreButton.addTarget(self, action: #selector(moreTapped), for: .touchUpInside)
+        moreButton.accessibilityLabel = "更多操作"
+        moreButton.bearyAddPressFeedback()
+        contentColumnView.addSubview(moreButton)
         NSLayoutConstraint.activate([
-            visibilityButton.trailingAnchor.constraint(equalTo: contentColumnView.trailingAnchor),
-            visibilityButton.centerYAnchor.constraint(equalTo: authorRow.centerYAnchor),
-            visibilityButton.widthAnchor.constraint(equalToConstant: 28),
-            visibilityButton.heightAnchor.constraint(equalToConstant: 28),
+            moreButton.trailingAnchor.constraint(equalTo: contentColumnView.trailingAnchor),
+            moreButton.centerYAnchor.constraint(equalTo: authorRow.centerYAnchor),
+            moreButton.widthAnchor.constraint(equalToConstant: 28),
+            moreButton.heightAnchor.constraint(equalToConstant: 28),
         ])
     }
 
@@ -859,7 +858,7 @@ final class BearyDetailViewController: UIViewController {
             refreshAuthorActions()
             refreshEphemeralViews()
         } else {
-            visibilityButton.isHidden = true
+            moreButton.isHidden = true
             separatorView.isHidden = true
         }
     }
@@ -1182,14 +1181,14 @@ final class BearyDetailViewController: UIViewController {
         return true
     }
 
-    /// 批 B：小地球图标恒为地球（首页 publishButton 同款，不按公开态换锁图；
-    /// 公开态只以无障碍文案表达：“改回私密”／“公开”），点按即时切换。
+    /// 2026-10-31：⋯ 钮图标恒为三点；可见性切换走菜单“修改权限”，点按即时切换。
     /// 限时已到期按私密算（与卡片同口径，走 BearyEphemeral 有效态）。
     /// 注意：旧详情的锁／地球双图标 + 盒装 pill 已随本批删除，私密态在视觉上
     /// 不再有锁图标可认——与首页卡片一致，属有意对齐（待真机验确认 Li 接受）。
     private func refreshVisibilityViews() {
-        let isPublic = BearyEphemeral.isEffectivelyPublic(entry)
-        visibilityButton.accessibilityLabel = isPublic ? "改回私密" : "公开"
+        // 2026-10-31：⋯ 钮图标恒为三点，不再按公开态换文案；可见性切换走菜单
+        // “修改权限”，原小地球无障碍文案（“改回私密”／“公开”）随地球钮废止。
+        moreButton.accessibilityLabel = "更多操作"
     }
 
     /// 限时详情：存活期虚线边框 + 倒计时灰字（只留倒计时行）+ 底线藏（边框代之，
@@ -1219,9 +1218,12 @@ final class BearyDetailViewController: UIViewController {
     /// 作者行右侧显隐：本人卡显小地球、右列右缩进 −36 让位；他人／游客无地球、
     /// 右列恢复 0。游客永非作者，到不了本人分支。
     private func refreshAuthorActions() {
-        let showGlobe = isAuthor && !isGuest
-        visibilityButton.isHidden = !showGlobe
-        rightStackTrailingConstraint?.constant = showGlobe ? -36 : 0
+        // 2026-10-31：⋯ 显隐——本人卡（编辑／修改权限／删除）或他人公开卡
+        // （举报／拉黑）显；游客与占位态（他人私密）无菜单项，藏；右列右缩进
+        // −36 给 ⋯（28 框）留位，藏时恢复 0。
+        let showMore = !isGuest && (isAuthor || BearyEphemeral.isEffectivelyPublic(entry))
+        moreButton.isHidden = !showMore
+        rightStackTrailingConstraint?.constant = showMore ? -36 : 0
     }
 
     /// 首页图片条同款（F5）：高 216、间距 8、圆角 12、槽底色 line、横向滚动、
@@ -1743,6 +1745,53 @@ final class BearyDetailViewController: UIViewController {
         onAuthorTapped?(mentionedId)
     }
 
+    @objc private func moreTapped() {
+        presentDetailMoreMenu()
+    }
+
+    /// 2026-10-31 详情 ⋯ 菜单（时间线风格 actionSheet）：本人篇 编辑（15 分钟内）／
+    /// 修改权限／删除；他人公开篇 举报（已举报置灰）／拉黑；游客无菜单（⋯ 已藏）。
+    /// 点赞／收藏／分享是互动，仍在底部操作行，不进菜单。
+    private func presentDetailMoreMenu() {
+        if isGuest { return }
+        let sheet = UIAlertController(title: nil, message: nil, preferredStyle: .actionSheet)
+        let nowMs = Int(Date().timeIntervalSince1970 * 1000)
+        if isAuthor {
+            if let deadline = entry.editDeadline, nowMs < deadline {
+                sheet.addAction(UIAlertAction(title: "编辑", style: .default) { [weak self] _ in
+                    guard let self = self else { return }
+                    self.onEdit?(self.entry)
+                })
+            }
+            sheet.addAction(UIAlertAction(title: "修改权限", style: .default) { [weak self] _ in
+                self.visibilityTapped()
+            })
+            sheet.addAction(UIAlertAction(title: "删除", style: .destructive) { [weak self] _ in
+                guard let self = self else { return }
+                self.onDelete?(self.entry)
+            })
+        } else if BearyEphemeral.isEffectivelyPublic(entry), let entryId = entry.id {
+            let reported = BearyReportedStore.isReported(entryId: entryId)
+            sheet.addAction(UIAlertAction(title: reported ? "已举报" : "举报", style: .default, handler: reported ? nil : { [weak self] _ in
+                guard let self = self else { return }
+                BearyReportFlow.present(from: self, entryId: entryId, entryLabel: nil)
+            }))
+            if reported {
+                sheet.actions.last?.isEnabled = false
+            }
+            sheet.addAction(UIAlertAction(title: "拉黑", style: .destructive) { [weak self] _ in
+                guard let self = self, let authorId = self.entry.authorId else { return }
+                BearyBlockFlow.block(from: self, userId: authorId, userName: self.entry.authorName, onDone: nil)
+            })
+        }
+        sheet.addAction(UIAlertAction(title: "取消", style: .cancel))
+        if let popover = sheet.popoverPresentationController {
+            popover.sourceView = moreButton
+            popover.sourceRect = moreButton.bounds
+        }
+        present(sheet, animated: true)
+    }
+
     @objc private func visibilityTapped() {
         guard isAuthor else { return }
         guard let entryId = entry.id, !entryId.isEmpty else { return }
@@ -1797,12 +1846,12 @@ final class BearyDetailViewController: UIViewController {
                     BearyHaptics.rejectionWarning()
                     BearySoundPlayer.play(.refuseBonk)
                     if UIAccessibility.isReduceMotionEnabled == false {
-                        self.visibilityButton.layer.removeAnimation(forKey: "bearyDenyShake")
+                        self.moreButton.layer.removeAnimation(forKey: "bearyDenyShake")
                         let shake = CAKeyframeAnimation(keyPath: "transform.translation.x")
                         shake.values = [0, -8, 8, -5, 5, 0]
                         shake.keyTimes = [0, 0.2, 0.4, 0.6, 0.8, 1]
                         shake.duration = 0.4
-                        self.visibilityButton.layer.add(shake, forKey: "bearyDenyShake")
+                        self.moreButton.layer.add(shake, forKey: "bearyDenyShake")
                     }
                 }
             }
@@ -1979,68 +2028,5 @@ final class BearyDetailViewController: UIViewController {
         // gone/locked 卡不导航；其余一律经容器先校验可见性再放行（私密显占位）。
         if quote.gone == true || quote.locked == true { return }
         onQuoteTapped?(quoteId)
-    }
-}
-
-// MARK: - 长按上下文菜单（批 B，首页 C6 同款）
-
-/// 卡片内无 ⋯ 钮；编辑／删除／分享／收藏／举报／拉黑一律走本菜单。
-/// 排除口径与首页 cell 一致：按钮（头像／名字／小地球／操作钮／回应 chip／
-/// + 钮均为 UIButton，一律不弹菜单）、图片条、引用卡上的长按不弹菜单，
-/// 各自原有手势照常走；正文区长按弹菜单；previewProvider=nil，系统以
-/// 内容列原位浮起预览 + 毛玻璃 UIMenu。
-extension BearyDetailViewController: UIContextMenuInteractionDelegate {
-    func contextMenuInteraction(_ interaction: UIContextMenuInteraction, configurationForMenuAtLocation location: CGPoint) -> UIContextMenuConfiguration? {
-        // 游客无菜单（游客互动入口只剩提示条点按走登录提示）。
-        if isGuest { return nil }
-        if let hit = contentColumnView.hitTest(location, with: nil) {
-            var view: UIView? = hit
-            while let current = view {
-                if current is UIButton { return nil }
-                if current === imagesScrollView || current === quoteView { return nil }
-                if current === contentColumnView { break }
-                view = current.superview
-            }
-        }
-        return UIContextMenuConfiguration(identifier: nil, previewProvider: nil) { [weak self] _ in
-            guard let self = self else { return UIMenu(title: "", children: []) }
-            var actions: [UIAction] = []
-            if BearyEphemeral.isEffectivelyPublic(self.entry) {
-                actions.append(UIAction(title: "分享", image: BearyFeedIconCache.image(named: "icon_share", pointSize: 20)) { [weak self] _ in
-                    self?.presentShareSheet()
-                })
-                let bookmarked = self.entry.bookmarkedByMe ?? false
-                actions.append(UIAction(title: bookmarked ? "取消收藏" : "收藏", image: BearyFeedIconCache.image(named: "icon_bookmark", pointSize: 20)) { [weak self] _ in
-                    self?.bookmarkTapped()
-                })
-            }
-            if self.isAuthor {
-                // 编辑仅 15 分钟窗口内（首页 isCardMenuEditAvailable 同款）；
-                // 旧详情 ⋯ 菜单无窗口门控，窗口外给编辑是死按钮，本批改掉。
-                if let deadline = self.entry.editDeadline, Int(Date().timeIntervalSince1970 * 1000) < deadline {
-                    actions.append(UIAction(title: "编辑", image: BearyFeedIconCache.image(named: "icon_edit", pointSize: 20)) { [weak self] _ in
-                        guard let self = self else { return }
-                        self.onEdit?(self.entry)
-                    })
-                }
-                let deleteIcon = BearyFeedIconCache.image(named: "icon_trash", pointSize: 20)?
-                    .withTintColor(BearyColors.red, renderingMode: .alwaysOriginal)
-                actions.append(UIAction(title: "删除", image: deleteIcon, attributes: .destructive) { [weak self] _ in
-                    guard let self = self else { return }
-                    self.onDelete?(self.entry)
-                })
-            } else if BearyEphemeral.isEffectivelyPublic(self.entry), let entryId = self.entry.id {
-                let reported = BearyReportedStore.isReported(entryId: entryId)
-                actions.append(UIAction(title: reported ? "已举报" : "举报", image: BearyFeedIconCache.image(named: "icon_flag", pointSize: 20), attributes: reported ? [.disabled] : []) { [weak self] _ in
-                    guard let self = self, let id = self.entry.id else { return }
-                    BearyReportFlow.present(from: self, entryId: id, entryLabel: nil)
-                })
-                actions.append(UIAction(title: "拉黑", image: BearyFeedIconCache.image(named: "icon_block", pointSize: 20), attributes: .destructive) { [weak self] _ in
-                    guard let self = self, let authorId = self.entry.authorId else { return }
-                    BearyBlockFlow.block(from: self, userId: authorId, userName: self.entry.authorName, onDone: nil)
-                })
-            }
-            return UIMenu(title: "", children: actions)
-        }
     }
 }
