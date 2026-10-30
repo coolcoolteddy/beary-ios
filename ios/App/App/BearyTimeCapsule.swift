@@ -25,18 +25,16 @@ import CoreLocation
 // 发布后胶囊不持久化、重拉即消失；取消埋藏同理可能不持久化。缺口在 PR 说明与回报里明说，不背。
 
 /// 胶囊新图标：只引用 imageset 名，不自绘、不用 SF Symbol 做主图标。
-/// time-capsule / district-range 两套 imageset 尚未注册进 Assets.xcassets（待 Li / 官方包补）：
+/// icon_time_capsule / icon_district_range 两套 imageset 已由 #229 注册进 Assets.xcassets：
 /// 本函数在资产缺失时返回 nil，调用方按占位处理（文字标注，不画替代图、不上线替代视觉），
-/// 与批 E BearyLocationIcon 的 fail-safe 口径一致。资产补齐后本函数零改动直接出图。
-/// 注意：任务书给的名字就是 time-capsule / district-range（非 icon_ 前缀）；补资产时 imageset 名须与此处一致，
-/// 若改名成 icon_time_capsule 之类，须同步改这里两处字符串。
+/// 与批 E BearyLocationIcon 的 fail-safe 口径一致。
 enum BearyTimeCapsuleIcon {
 static func timeCapsuleImage(pointSize: CGFloat) -> UIImage? {
-return BearyIconImages.image(named: "time-capsule", pointSize: pointSize)
+return BearyIconImages.image(named: "icon_time_capsule", pointSize: pointSize)
 }
 
 static func districtRangeImage(pointSize: CGFloat) -> UIImage? {
-return BearyIconImages.image(named: "district-range", pointSize: pointSize)
+return BearyIconImages.image(named: "icon_district_range", pointSize: pointSize)
 }
 }
 
