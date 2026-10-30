@@ -292,6 +292,29 @@ enum BearyDraftStore {
         }
     }
 
+    /// 清除损坏的 v3 草稿库（草稿箱读取失败态专用）：仅当 lastLoadError 为
+    /// corruptStore 时删当前账号的 v3 文件；.bak 备份文件一律不动；删后
+    /// lastLoadError 清零，后续读取回到空态（无文件 → 无旧源 → 空数组）。
+    /// false = 非损坏态（拒绝删，防误删健康库）或删文件失败。
+    static func clearCorruptStoreAsync(completion: @escaping (Bool) -> Void) {
+        let accountId = currentAccountId
+        ioQueue.async {
+            var ok = false
+            if let err = lastLoadError, case .corruptStore(_) = err,
+               let url = fileURL(for: accountId) {
+                if FileManager.default.fileExists(atPath: url.path) {
+                    ok = (try? FileManager.default.removeItem(at: url)) != nil
+                } else {
+                    ok = true
+                }
+                if ok { lastLoadError = nil }
+            }
+            DispatchQueue.main.async {
+                completion(ok)
+            }
+        }
+    }
+
     /// 后台增改一篇：整库 loadAll + saveAll 都在 ioQueue 上，完成后回主线程。
     /// 老签名保留作兼容（成败仍可通过回读验证）；需成败回传的新调用方
     /// 请用 saveAsyncReporting，失败时出红字/toast（见 G5 交接说明）。
