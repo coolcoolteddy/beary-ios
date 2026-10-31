@@ -3031,6 +3031,15 @@ class BearyTimelineViewController: UIViewController {
     /// 当前分区 = 组头已越过悬浮区顶沿、且分区底仍在顶沿下方的最末分区；
     /// 第 0 分区是当日面板时悬浮头全程不出现（面板组头可见时不重复，
     /// 面板行仍占顶时也不抢；面板整体滚出、后续分区接管时才出现）。
+    /// 112：组头可见时悬浮头不叠加——current 只看组头顶沿是否越过悬浮区
+    /// 顶沿，但组头本身仍占悬浮区时（组头正滑出悬浮区，或 rectForHeader
+    /// 估算位置与实测位置有差、悬浮头提前亮起），悬浮头与组头会同屏显示
+    /// 同一日期（如顶部悬浮“10 月 31 日”下方组头又显一次“10 月 31 日”）。
+    /// 故加实测门控：能拿到 headerView 时用其 frame，否则回落
+    /// rectForHeader；组头底沿仍在悬浮区顶沿下方（即组头仍与悬浮区重叠）
+    /// 时隐藏悬浮头，组头底沿滑出悬浮区顶沿后悬浮头再接替显示（组头残影
+    /// 若落在状态栏区，由随悬浮头同显的状态栏底色盖住）。日期文案与
+    /// 分组/排序/分页逻辑不动，悬浮头本身不删。
     /// 下一分区组头顶进悬浮区时，吸顶条 transform.ty 随之变负、被顶上去
     /// （标准顶替；滑出容器顶沿的部分被裁掉，不改高度、不改约束）。
     private func updateStickyHeader() {
@@ -3055,6 +3064,20 @@ class BearyTimelineViewController: UIViewController {
         guard let current = current, current < sections.count else { hideStickyHeader(); return }
         // 当日面板分区（第 0 分区 + 选中日存在）永不进悬浮头。
         if current == 0 && selectedDayKey != nil { hideStickyHeader(); return }
+        // 112 组头可见门控：当前分区自己的组头仍与悬浮区重叠时不亮悬浮头，
+        // 组头底沿滑出悬浮区顶沿后才接替。实测 frame 优先（headerView 仅在
+        // 组头真实显示时返回，不受估算行高影响）；取不到时回落 rectForHeader。
+        // 坐标均为表内容坐标：top 即悬浮区顶沿对应的内容坐标。
+        let currentHeaderRect: CGRect
+        if let headerView = tableView.headerView(forSection: current) {
+            currentHeaderRect = headerView.frame
+        } else {
+            currentHeaderRect = tableView.rectForHeader(inSection: current)
+        }
+        if currentHeaderRect.maxY > top {
+            hideStickyHeader()
+            return
+        }
         let title = sections[current].title
         if stickyHeaderCurrentSection != current || stickyHeaderCurrentTitle != title {
             animateStickyDateChange(to: title)
