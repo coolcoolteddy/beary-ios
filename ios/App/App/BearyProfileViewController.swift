@@ -5442,7 +5442,12 @@ class BearyProfileViewController: UIViewController {
                 photoButton.imageView?.clipsToBounds = true
                 photoButton.tag = photoIndex
                 photoButton.addTarget(self, action: #selector(photosWallButtonTapped(_:)), for: .touchUpInside)
-                photoButton.bearyAddPressFeedback()
+                // 个人页照片墙：长按不给按压效果、不变暗。长按即按住不放的
+                // touchDown，与点按走同一条按压路径（bearyAddPressFeedback 的
+                // touchDown 缩 .84 + 系统 highlighted 压暗），无法只在长按时
+                // 单独关掉，故墙上照片钮整颗不挂按压反馈，并关掉系统高亮压暗；
+                // 点按进灯箱的 touchUpInside 不动。仅此一处，不动全 App 反馈。
+                photoButton.adjustsImageWhenHighlighted = false
                 if photoIndex < wall.count {
                     let imageKey = wall[photoIndex].imageKey
                     if let url = BearyImageURLs.imageURL(key: imageKey, thumb: true) {
