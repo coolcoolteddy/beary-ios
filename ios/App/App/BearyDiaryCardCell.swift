@@ -641,6 +641,19 @@ class BearyDiaryCardCell: UITableViewCell {
         return v
     }()
 
+    /// 皇冠容器：卡片/详情作者行是 .firstBaseline 栈，纯 UIView 的基线就是底边，
+    /// 皇冠直接进栈时底边钉在名字基线上，中心比名字大写字母中心高约
+    /// (19 − capHeight)/2 ≈ 3.6pt，即肉眼可见的“偏上”。容器与名字等高、
+    /// 底边钉基线，皇冠在容器内居中后中心即落在 cap 中心附近（SF 度量下
+    /// label 高度中心与 cap 中心差 <0.3pt），且等高约束随动态字号自动跟随。
+    /// 隐藏时容器与皇冠同藏，不留 19pt 空位。
+    private let crownWrapView: UIView = {
+        let v = UIView()
+        v.translatesAutoresizingMaskIntoConstraints = false
+        v.isHidden = true
+        return v
+    }()
+
     private let timeLabel: UILabel = {
         let lb = UILabel()
         lb.translatesAutoresizingMaskIntoConstraints = false
@@ -686,7 +699,7 @@ class BearyDiaryCardCell: UITableViewCell {
     }()
 
     private lazy var titleStack: UIStackView = {
-        let st = UIStackView(arrangedSubviews: [nameLabel, badgeImageView, crownView, titleSpacerLabel, timeLabel, weatherImageView, moodStack])
+        let st = UIStackView(arrangedSubviews: [nameLabel, badgeImageView, crownWrapView, titleSpacerLabel, timeLabel, weatherImageView, moodStack])
         st.translatesAutoresizingMaskIntoConstraints = false
         st.axis = .horizontal
         st.spacing = 8
@@ -1083,6 +1096,13 @@ class BearyDiaryCardCell: UITableViewCell {
         titleSpacerLabel.setContentCompressionResistancePriority(UILayoutPriority(1), for: .horizontal)
         badgeImageView.setContentCompressionResistancePriority(.required, for: .horizontal)
         crownView.setContentCompressionResistancePriority(.required, for: .horizontal)
+        crownWrapView.setContentCompressionResistancePriority(.required, for: .horizontal)
+        // 皇冠在等高容器内居中（容器底边钉基线，中心即 cap 中心）。
+        crownWrapView.addSubview(crownView)
+        NSLayoutConstraint.activate([
+            crownView.centerXAnchor.constraint(equalTo: crownWrapView.centerXAnchor),
+            crownView.centerYAnchor.constraint(equalTo: crownWrapView.centerYAnchor),
+        ])
         weatherImageView.setContentCompressionResistancePriority(.required, for: .horizontal)
         moodStack.setContentCompressionResistancePriority(.required, for: .horizontal)
         let imageHeight = imagesScrollView.heightAnchor.constraint(equalToConstant: 0)
@@ -1111,6 +1131,8 @@ class BearyDiaryCardCell: UITableViewCell {
             extraConstraints.append(badgeImageView.heightAnchor.constraint(equalToConstant: 17))
             extraConstraints.append(crownView.widthAnchor.constraint(equalToConstant: 19))
             extraConstraints.append(crownView.heightAnchor.constraint(equalToConstant: 19))
+            extraConstraints.append(crownWrapView.widthAnchor.constraint(equalToConstant: 19))
+            extraConstraints.append(crownWrapView.heightAnchor.constraint(equalTo: nameLabel.heightAnchor))
             extraConstraints.append(weatherImageView.widthAnchor.constraint(equalToConstant: 15))
             extraConstraints.append(weatherImageView.heightAnchor.constraint(equalToConstant: 15))
         } else {
@@ -1128,6 +1150,12 @@ class BearyDiaryCardCell: UITableViewCell {
             badgeWidth.priority = UILayoutPriority(999)
             let crownWidth = crownView.widthAnchor.constraint(equalToConstant: 19)
             crownWidth.priority = UILayoutPriority(999)
+            let crownWrapWidth = crownWrapView.widthAnchor.constraint(equalToConstant: 19)
+            crownWrapWidth.priority = UILayoutPriority(999)
+            let crownWrapHeight = crownWrapView.heightAnchor.constraint(equalTo: nameLabel.heightAnchor)
+            crownWrapHeight.priority = UILayoutPriority(999)
+            extraConstraints.append(crownWrapWidth)
+            extraConstraints.append(crownWrapHeight)
             let weatherWidth = weatherImageView.widthAnchor.constraint(equalToConstant: 15)
             weatherWidth.priority = UILayoutPriority(999)
             extraConstraints.append(recipientIconView.widthAnchor.constraint(equalToConstant: 13))
@@ -1366,8 +1394,7 @@ class BearyDiaryCardCell: UITableViewCell {
         quoteView.isHidden = true
         badgeImageView.image = nil
         badgeImageView.isHidden = true
-        crownView.isHidden = true
-        crownView.stop()
+        setCrownHidden(true)
         stopWeatherLottie()
         weatherImageView.image = nil
         weatherImageView.isHidden = true
@@ -1667,8 +1694,7 @@ class BearyDiaryCardCell: UITableViewCell {
             badgeImageView.image = nil
             badgeImageView.isHidden = true
         }
-        crownView.isHidden = (entry.authorPlus ?? 0) != 1 || !crownView.hasCrown
-        if crownView.isHidden { crownView.stop() } else { crownView.start() }
+        setCrownHidden((entry.authorPlus ?? 0) != 1 || !crownView.hasCrown)
 
         // F3：时间。广场卡：有效公开（未过期）且有 publishedAt 时显相对时间（“X 分钟前”），否则绝对时间。
         if BearyEphemeral.isEffectivelyPublic(entry), let relative = BearyVisibilityText.publishedRelativeString(publishedAtMs: entry.publishedAt) {
@@ -1834,11 +1860,17 @@ class BearyDiaryCardCell: UITableViewCell {
         updateRightStackSpacing()
     }
 
+    /// 皇冠显隐唯一入口：容器与皇冠同藏同显，容器留在栈内时不留 19pt 空位。
+    private func setCrownHidden(_ hidden: Bool) {
+        crownWrapView.isHidden = hidden
+        crownView.isHidden = hidden
+        if hidden { crownView.stop() } else { crownView.start() }
+    }
+
     private func rowCrownHiddenUpdate(entry: Entry) {
         // 个人主页原口径：authorPlus==0 即隐藏；合并后补 Feed 的资产缺失守卫
         // （资产缺失时不再留 19pt 空盒，资产在时行为一字不动）。
-        crownView.isHidden = (entry.authorPlus ?? 0) == 0 || !crownView.hasCrown
-        if crownView.isHidden { crownView.stop() } else { crownView.start() }
+        setCrownHidden((entry.authorPlus ?? 0) == 0 || !crownView.hasCrown)
     }
 
     // MARK: - 图片条（94 包槽位复用，两页同款；失败重试 Feed 口径）

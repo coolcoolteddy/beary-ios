@@ -735,6 +735,10 @@ class BearyProfileViewController: UIViewController {
     /// 隐藏的徽章视图仍占布局位，固定贴徽章会在无徽章时多出 39pt 空隙。
     private var crownLeadingToBadgeConstraint: NSLayoutConstraint?
     private var crownLeadingToNameConstraint: NSLayoutConstraint?
+    /// 皇冠中心锚点：原口径 centerY = 名字整块中心，单行名时约齐、多行名时
+    /// 会被整块中心拖到首行之下。改按首行基线算：中心 = 基线 − capHeight/2，
+    /// 在 viewDidLayoutSubviews 里按已布局 label 高度重算常量（变化守卫防环）。
+    private var crownCenterYConstraint: NSLayoutConstraint?
 
     private let handleLabel: UILabel = {
         let labelValue = UILabel()
@@ -1837,6 +1841,14 @@ class BearyProfileViewController: UIViewController {
         }
         updateColumnLayout()
         layoutHeader()
+        // 皇冠对齐首行 cap 中心（非整块中心）：中心锚点常量 = 基线 − cap/2 −
+        // label 半高；多行名时皇冠跟首行走。变化守卫防布局环。
+        if let crownCenterY = crownCenterYConstraint, nameLabel.bounds.height > 0 {
+            let target = nameLabel.font.ascent - nameLabel.font.capHeight / 2 - nameLabel.bounds.height / 2
+            if abs(crownCenterY.constant - target) > 0.01 {
+                crownCenterY.constant = target
+            }
+        }
         // 批 E 挪位：入口行已落位、但宽度与当前列宽失配时（旋转 / iPad 分栏）
         // 重建脚部；尚未落位时不动（等数据/切 tab 的既有 refreshFooter 落位，
         // 避免布局早期抢跑出空态脚部）。
@@ -2484,6 +2496,7 @@ class BearyProfileViewController: UIViewController {
         // 动态取值（见 updateNameTrailingLimit）。
         nameTrailingConstraint = nameLabel.trailingAnchor.constraint(lessThanOrEqualTo: headerView.trailingAnchor, constant: -28)
         nameTrailingConstraint?.isActive = true
+        crownCenterYConstraint = crownView.centerYAnchor.constraint(equalTo: nameLabel.centerYAnchor)
         NSLayoutConstraint.activate([
             coverTopConstraint,
             coverLeadingConstraint,
@@ -2538,7 +2551,7 @@ class BearyProfileViewController: UIViewController {
             badgeImageView.centerYAnchor.constraint(equalTo: nameLabel.centerYAnchor),
             badgeImageView.widthAnchor.constraint(equalToConstant: 23),
             badgeImageView.heightAnchor.constraint(equalToConstant: 23),
-            crownView.centerYAnchor.constraint(equalTo: nameLabel.centerYAnchor),
+            crownCenterYConstraint!,
             crownView.widthAnchor.constraint(equalToConstant: 23),
             crownView.heightAnchor.constraint(equalToConstant: 23),
             crownView.trailingAnchor.constraint(lessThanOrEqualTo: headerView.trailingAnchor, constant: -28),
