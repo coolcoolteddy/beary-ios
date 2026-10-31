@@ -85,12 +85,6 @@ struct Entry: Codable {
     /// location_district 经 convertFromSnakeCase 直解；服务端未透传时为 nil，展示层按无位置处理）。
     var locationName: String?
     var locationDistrict: String?
-    /// 时间胶囊（后端字段迁移未上线，App 端先行透传，见 ios/Docs/time-capsule-fields.md）：
-    /// capsule_buried INT 0/1、capsule_unlock_date 文本 YYYY-MM-DD、capsule_district 埋点区级快照文本。
-    /// 服务端未透传时全为 nil，按未埋胶囊处理；埋点区级绝不复用 locationDistrict（改位置不挪胶囊）。
-    var capsuleBuried: Int?
-    var capsuleUnlockDate: String?
-    var capsuleDistrict: String?
     var quoteId: String?
     var quote: Quote?
     var createdAt: Int?
