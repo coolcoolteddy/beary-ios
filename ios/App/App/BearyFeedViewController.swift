@@ -1745,10 +1745,12 @@ class BearyFeedViewController: UIViewController {
             snapshot?.removeFromSuperview()
             tableView.reloadData()
             updateOverlayState()
+            refillPlazaIfEmptiedAfterModeration()
             return
         }
         tableView.deleteRows(at: [path], with: .none)
         updateOverlayState()
+        refillPlazaIfEmptiedAfterModeration()
         if let snapshot = snapshot {
             UIView.animate(withDuration: 0.25, delay: 0, options: [.curveEaseOut], animations: {
                 snapshot.alpha = 0
@@ -1768,7 +1770,18 @@ class BearyFeedViewController: UIViewController {
             persistFeedHead()
             tableView.reloadData()
             updateOverlayState()
+            refillPlazaIfEmptiedAfterModeration()
         }
+    }
+
+    /// 112 扫查：举报/拉黑清行后广场被清空、但分页未到末页时自动重拉首屏。
+    /// 续拉入口（willDisplay 距末尾 3 行预取）依赖现有一行，空表时永不触发，
+    /// 60 秒后台重拉与手动下拉之外用户会被空态卡住；首屏重拉失败走原有
+    /// 空表失败态（plazaError + 重试行），不循环。在途首拉/分页（plazaLoading）
+    /// 与已有失败行（plazaError，保留显式重试）时不抢，避免回包交错与盖掉失败态。
+    private func refillPlazaIfEmptiedAfterModeration() {
+        guard plazaRaw.isEmpty, plazaHasMore, !plazaLoading, !plazaError else { return }
+        loadPlazaFirstPage()
     }
 
     private func feedCell(for tableView: UITableView, entry: Entry, indexPath: IndexPath) -> UITableViewCell {
