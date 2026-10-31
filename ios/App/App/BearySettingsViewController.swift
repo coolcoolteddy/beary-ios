@@ -382,10 +382,10 @@ final class BearySettingsViewController: UIViewController {
         if tag == "appear" { settingsLayoutLogged = true }
         let topBar = closeButton.superview
         NSLog("[Diag] settings-layout tag=%@ view=%@ topBar=%@ scrollView=%@ safeArea=%@",
-              tag, NSStringFromCGRect(view.frame),
-              topBar.map { NSStringFromCGRect($0.frame) } ?? "nil",
-              NSStringFromCGRect(scrollView.frame),
-              NSStringFromUIEdgeInsets(view.safeAreaInsets))
+              tag, NSCoder.string(for: view.frame),
+              topBar.map { NSCoder.string(for: $0.frame) } ?? "nil",
+              NSCoder.string(for: scrollView.frame),
+              NSCoder.string(for: view.safeAreaInsets))
     }
 
     /// 列宽只由 view.bounds 定：宽 ≥821 锁 600（P2-1 同款），宽 ≤820 时
