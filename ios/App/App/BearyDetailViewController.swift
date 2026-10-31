@@ -32,6 +32,36 @@
 
 import UIKit
 
+/// 详情限时虚线边框视图（116 详情框修）：自身按 bounds 重画虚线路径，
+/// 不再由控制器在布局时手动算矩形——右列高度落定（引用加载、回应行出现）
+/// 后 bounds 一变就重画，框底不再切穿“＋”回应钮。
+/// 口径不变：1.5pt、虚线 [4,3]、圆角 16、line 色；不拦截点按；深浅切换自刷描边色。
+final class BearyDetailDashedBorderView: UIView {
+    private let borderLayer = CAShapeLayer()
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        isUserInteractionEnabled = false
+        backgroundColor = .clear
+        borderLayer.fillColor = UIColor.clear.cgColor
+        borderLayer.lineWidth = 1.5
+        borderLayer.lineDashPattern = [4, 3]
+        borderLayer.strokeColor = BearyColors.line.cgColor
+        layer.addSublayer(borderLayer)
+    }
+    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        borderLayer.frame = bounds
+        borderLayer.path = UIBezierPath(roundedRect: bounds, cornerRadius: 16).cgPath
+    }
+    override func traitCollectionDidChange(_ previousTraitCollection: UITraitCollection?) {
+        super.traitCollectionDidChange(previousTraitCollection)
+        if traitCollection.hasDifferentColorAppearance(comparedTo: previousTraitCollection) {
+            borderLayer.strokeColor = BearyColors.line.cgColor
+        }
+    }
+}
+
 final class BearyDetailViewController: UIViewController {
 
     // MARK: - 回调（容器 SceneDelegate 接线）
@@ -347,19 +377,15 @@ final class BearyDetailViewController: UIViewController {
         return st
     }()
 
-    /// 限时详情虚线边框（CAShapeLayer，1.5pt dashed、line 色、圆角 16；
-    /// 批 B：按首页卡片口径按内容列内缩 8/6 矩形重画路径（旧详情按整列 bounds，
-    /// 框贴边；现与卡片一致）；109：框底改按右列底 +16 收底（见
-    /// updateEphemeralBorderPath），主题切换重刷描边色；插在 contentColumnView
-    /// 图层最底层，不盖内容；存活期底线藏、边框代之）。
-    private let ephemeralBorderLayer: CAShapeLayer = {
-        let layer = CAShapeLayer()
-        layer.fillColor = UIColor.clear.cgColor
-        layer.lineWidth = 1.5
-        layer.lineDashPattern = [4, 3]
-        layer.strokeColor = BearyColors.line.cgColor
-        layer.isHidden = true
-        return layer
+    /// 限时详情虚线边框视图（116 详情框修，取代旧 CAShapeLayer 手动算矩形）：
+    /// 约束钉在内容列上（顶 +6、左右内缩 8、底按右列底 +16），
+    /// 自身 layoutSubviews 按 bounds 重画，右列高度落定后框底跟着走；
+    /// 插在 contentColumnView 最底层，不盖内容、不拦截点按；存活期底线藏、边框代之。
+    private let ephemeralBorderView: BearyDetailDashedBorderView = {
+        let v = BearyDetailDashedBorderView()
+        v.translatesAutoresizingMaskIntoConstraints = false
+        v.isHidden = true
+        return v
     }()
     private var imageKeys: [String] = []
 
@@ -458,15 +484,9 @@ final class BearyDetailViewController: UIViewController {
         }
     }
 
-    /// 深浅切换：虚线边框描边色是 CGColor 快照（updateEphemeralBorderPath 内
-    /// 重赋），色貌变化时重画；小地球图标走 template + 动态灰 tint，系统自动跟随，
-    /// 无需重设；心情播放器内部自带 trait 重刷。
-    override func traitCollectionDidChange(_ previousTraitCollection: UITraitCollection?) {
-        super.traitCollectionDidChange(previousTraitCollection)
-        if traitCollection.hasDifferentColorAppearance(comparedTo: previousTraitCollection) {
-            updateEphemeralBorderPath()
-        }
-    }
+    // 深浅切换：虚线边框视图内部自刷描边色（BearyDetailDashedBorderView
+    // traitCollectionDidChange），控制器不再手动重画；小地球图标走 template +
+    // 动态灰 tint，系统自动跟随，无需重设；心情播放器内部自带 trait 重刷。
 
     override func viewDidLayoutSubviews() {
         super.viewDidLayoutSubviews()
@@ -480,7 +500,6 @@ final class BearyDetailViewController: UIViewController {
             columnWideWidth?.isActive = wantWide
             columnWideCenterX?.isActive = wantWide
         }
-        updateEphemeralBorderPath()
         // 批 B：回应行宽 = 右列宽（旧详情按整列宽算，右列窄 52pt 时会少算换行、
         // 行高偏矮；现按 rightStack 实测宽算，与首页卡片同口径）。
         let width = rightStack.bounds.width
@@ -693,9 +712,18 @@ final class BearyDetailViewController: UIViewController {
 
     private func buildEphemeralRow() {
         // 限时倒计时行：只留倒计时灰字，位置在作者行下方、标题上方（与卡片同口径）；
-        // 虚线边框插 contentColumnView 图层最底层，框住内容列内缩矩形。
+        // 虚线边框视图挂 contentColumnView 最底层，约束钉住内容列矩形
+        // （顶 +6、左右内缩 8、底按右列底 +16），右列高度一变框就跟着变，
+        // 不再依赖布局时手动算矩形的旧时机（旧时机下回应行高度落定后框底
+        // 仍停在旧位置，正好切穿“＋”回应钮）。
         rightStack.addArrangedSubview(ephemeralRow)
-        contentColumnView.layer.insertSublayer(ephemeralBorderLayer, at: 0)
+        contentColumnView.insertSubview(ephemeralBorderView, at: 0)
+        NSLayoutConstraint.activate([
+            ephemeralBorderView.topAnchor.constraint(equalTo: contentColumnView.topAnchor, constant: 6),
+            ephemeralBorderView.leadingAnchor.constraint(equalTo: contentColumnView.leadingAnchor, constant: 8),
+            ephemeralBorderView.trailingAnchor.constraint(equalTo: contentColumnView.trailingAnchor, constant: -8),
+            ephemeralBorderView.bottomAnchor.constraint(equalTo: rightStack.bottomAnchor, constant: 16),
+        ])
     }
 
     private func buildBody() {
@@ -1219,35 +1247,8 @@ final class BearyDetailViewController: UIViewController {
             ephemeralLabel.text = nil
             ephemeralRow.isHidden = true
         }
-        ephemeralBorderLayer.isHidden = !live
+        ephemeralBorderView.isHidden = !live
         separatorView.isHidden = live
-        updateEphemeralBorderPath()
-    }
-
-    private func updateEphemeralBorderPath() {
-        guard !ephemeralBorderLayer.isHidden else { return }
-        ephemeralBorderLayer.strokeColor = BearyColors.line.cgColor
-        ephemeralBorderLayer.frame = contentColumnView.bounds
-        // 109：框顶仍按内容列 +6、左右内缩 8；框底改按右列底 +16 收底
-        // （rightStack 是 contentColumnView 的直接子视图，frame.maxY 即列内坐标）。
-        // 此前按内容列 insetBy(dx:8, dy:6)：框底 = 右列底 +32（底线约束：
-        // 右列底→底线 12 + 线高 2 + 线下 24 = 38，框底 = 列底 −6），
-        // 框顶在右列顶上方 16，上下留白不对称。底线约束、非限时态、
-        // 首页卡片均不动；首帧未布局时（右列 frame 仍为 0）沿用旧内缩矩形，
-        // viewDidLayoutSubviews 会按实测 frame 重画。
-        let boxTop = contentColumnView.bounds.minY + 6
-        let boxRect: CGRect
-        if rightStack.frame.maxY > 0 {
-            boxRect = CGRect(
-                x: contentColumnView.bounds.minX + 8,
-                y: boxTop,
-                width: contentColumnView.bounds.width - 16,
-                height: rightStack.frame.maxY + 16 - boxTop
-            )
-        } else {
-            boxRect = contentColumnView.bounds.insetBy(dx: 8, dy: 6)
-        }
-        ephemeralBorderLayer.path = UIBezierPath(roundedRect: boxRect, cornerRadius: 16).cgPath
     }
 
     /// 作者行右侧显隐：本人卡显小地球、右列右缩进 −36 让位；他人／游客无地球、
