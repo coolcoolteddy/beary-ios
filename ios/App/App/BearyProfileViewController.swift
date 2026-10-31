@@ -1337,7 +1337,8 @@ class BearyProfileViewController: UIViewController {
     }()
 
     /// 日记星图入口行（2026-10-30）：排在日记地图行下一行，与地图行同几何
-    /// （左右各 20、高 48、12pt 间隔），本人/他人页同行（星空页内按视角过滤）。
+    /// （左右各 20、高 48、12pt 间隔），112 起仅本人页有此行（他人页脚部
+    /// 只留照片区，见 refreshFooter）。
     /// 图标：连线示意用新图标 constellation（imageset 名 "icon_constellation"，注册由
     /// 另一工人做；此处只引用名，不自绘、不用 SF Symbol 顶替）。注册未到时
     /// BearyIconImages 返回 nil，本行改放占位文字“待接图标”（行仍可点、星空页
@@ -3502,6 +3503,11 @@ class BearyProfileViewController: UIViewController {
     // MARK: 批 D —— 模块语料（作者 scope 全量分页）
 
     private func scheduleModulesRefresh() {
+        // 112 他人页口径：日记下方模块全去（写作统计／那年今日／随机漫步／
+        // 地图／星图），故他人页不拉模块语料——作者 scope 分页请求一律不发；
+        // 本人页原样。handle 目标在 profile 解析后才定本人与否，解析完成
+        // 的 handleProfileResult 会再调一次本函数，届时本人页照常拉取。
+        guard isOwnProfile else { return }
         guard let profileId = profile?.profileIdValue ?? targetUserIdValue else { return }
         if modulesProfileId != profileId {
             // 切账号 / 换目标：语料、随机上一次 id、展开态全复位，
@@ -3569,6 +3575,13 @@ class BearyProfileViewController: UIViewController {
     // MARK: 批 D —— 模块渲染
 
     private func renderModules() {
+        // 112 他人页口径：模块组永不渲染（即使语料已到齐也塌掉），脚部
+        // 只留照片区；本人页走原有语料到齐分支。
+        if !isOwnProfile {
+            modulesContainer.isHidden = true
+            modulesHeightConstraint.isActive = true
+            return
+        }
         guard modulesCorpusComplete else {
             modulesContainer.isHidden = true
             modulesHeightConstraint.isActive = true
@@ -4925,18 +4938,24 @@ class BearyProfileViewController: UIViewController {
         // 注意：照片区取数只依赖 diaryEntries 模型，不为取图加轮询或全量重算；
         // 可见性翻转（本人页私密/公开都算）不改变照片集合，删除/举报/拉黑
         // 走 reloadProfile 或通知处理里的 refreshFooter，自然同步。
+        // 112 他人页口径：脚部只留照片区（本人页现行照片模块原样复用，
+        // 样式与交互一字不动）；模块组与地图／星图入口行在他人页不进脚部、
+        // 不占 12pt 间隙、不留脚部留白，状态脚部（如有）仍按原有规则接在
+        // 照片区下方。本人页顺序不变：模块组 → 照片区 → 地图行 → 星图行
+        // → 状态脚部。
         // 批 E（挪位后）：地图入口行进 tableFooterView，排在照片区下方、状态脚部上方，
         // 与 tab 切换无关——不是 tab 内容行（不占 diary/liked/saved 的行数），
-        // 赞过/收藏 tab 的按钮与下划线一律不动。本人/他人页同行（他人进地图页
-        // 仍按只区级聚合口径，见 openDiaryMap）。顺序：照片区（如有）→ 入口行
+        // 赞过/收藏 tab 的按钮与下划线一律不动。112 起仅本人页有此行。顺序：照片区（如有）→ 入口行
         // （12pt 间隔、左右各 20、高 48，与原 header 行同几何）→ 状态脚部（如有）。
         // 日记星图行（2026-10-30）：同机制再接一行，排在地图行下一行、状态脚部
-        // 上方，本人/他人页同行（星空页内按视角过滤，见 openStarMap）。
-        // 无照片时入口行仍在脚部顶部，不因无图丢失；无照片且无状态时脚部只剩入口行。
+        // 上方，112 起仅本人页有此行。
+        // 无照片时入口行仍在脚部顶部，不因无图丢失；无照片且无状态时脚部只剩入口行（以上均为本人页；他人页无照片且无状态时脚部高为 0，不留空白大块）。
         let footerWidth = headerWidthValue > 0 ? headerWidthValue : tableView.bounds.width
         let photosView = footerWidth > 0 ? makePhotosFooterView() : nil
         if footerWidth > 0 {
-            if !mapEntryInternalConstraintsActivated {
+            // 112：地图／星图入口行只在本人页装配；他人页行内子视图与约束
+            // 一律不接，行本身也不进脚部容器，零残留。
+            if isOwnProfile, !mapEntryInternalConstraintsActivated {
                 mapEntryRow.addSubview(mapEntryIconView)
                 mapEntryRow.addSubview(mapEntryLabel)
                 mapEntryRow.addSubview(mapEntryChevronView)
@@ -4959,7 +4978,7 @@ class BearyProfileViewController: UIViewController {
                 ])
                 mapEntryInternalConstraintsActivated = true
             }
-            if !starEntryInternalConstraintsActivated {
+            if isOwnProfile, !starEntryInternalConstraintsActivated {
                 // 星图行：图标已注册走地图行同款几何；未注册走占位文字分支
                 // （占位宽 56，文案随其后，不与文案重叠；图标到货后自动对齐）。
                 starEntryRow.addSubview(starEntryLabel)
@@ -5011,7 +5030,7 @@ class BearyProfileViewController: UIViewController {
             modulesFooterLeadingConstraint?.isActive = false
             modulesFooterWidthConstraint?.isActive = false
             modulesFooterHeightConstraint?.isActive = false
-            if !modulesContainer.isHidden {
+            if isOwnProfile, !modulesContainer.isHidden {
                 // 模块组宽度 = 表格行内容列宽：≤820 为屏宽−32（左右各 16）、
                 // ≥821 为 600 居中列（脚部容器本身已被表宽锁 600，故 x=0 贴满列宽）；
                 // 与旧 header 口径（列宽−40、左右各 20）不同，按 2026-10-31 任务口径取内容列宽。
@@ -5046,13 +5065,15 @@ class BearyProfileViewController: UIViewController {
                 container.addSubview(photosView)
                 totalHeight = photosY + photosView.frame.height
             }
-            mapEntryRow.frame = CGRect(x: 20, y: totalHeight + 12, width: max(footerWidth - 40, 0), height: 48)
-            container.addSubview(mapEntryRow)
-            totalHeight += 12 + 48
-            // 星图行：地图行下一行（12pt 间隔、同宽同高），再接状态脚部。
-            starEntryRow.frame = CGRect(x: 20, y: totalHeight + 12, width: max(footerWidth - 40, 0), height: 48)
-            container.addSubview(starEntryRow)
-            totalHeight += 12 + 48
+            if isOwnProfile {
+                mapEntryRow.frame = CGRect(x: 20, y: totalHeight + 12, width: max(footerWidth - 40, 0), height: 48)
+                container.addSubview(mapEntryRow)
+                totalHeight += 12 + 48
+                // 星图行：地图行下一行（12pt 间隔、同宽同高），再接状态脚部。
+                starEntryRow.frame = CGRect(x: 20, y: totalHeight + 12, width: max(footerWidth - 40, 0), height: 48)
+                container.addSubview(starEntryRow)
+                totalHeight += 12 + 48
+            }
             if let stateValue = stateView {
                 let stateHeight = footerFittingHeight(view: stateValue, width: footerWidth)
                 stateValue.frame = CGRect(x: 0, y: totalHeight, width: footerWidth, height: stateHeight)
@@ -6646,8 +6667,11 @@ extension BearyProfileViewController: UITableViewDataSource, UITableViewDelegate
     /// 批 E 日记地图入口：以作者日记 tab（diaryEntries）为即时数据源进地图页，
     /// 地图页内再游标拉全量；点列表项走本页既有的 onOpenEntry（容器接详情），
     /// 本页不内置跳转。主页信息未加载出 id 时 toast，不进空地图。
-    /// 他人主页同样有本行（地图页内按他人 = 只区级聚合、只公开篇口径渲染）。
+    /// 112 起仅本人页可进（他人页入口行已去除，函数内亦有门控）。
     @objc private func openDiaryMap() {
+        // 112 他人页口径：地图入口行已从他人页脚部去除，此处再守一道，
+        // 他人页不进地图页；本人页原样。
+        guard isOwnProfile else { return }
         guard let profileId = profile?.profileIdValue ?? targetUserIdValue else {
             BearyToast.show(in: view, message: "主页信息还在加载，请稍后再试")
             return
@@ -6669,9 +6693,12 @@ extension BearyProfileViewController: UITableViewDataSource, UITableViewDelegate
     /// 日记星图入口（2026-10-30）：与 openDiaryMap 同约定——以 diaryEntries
     /// 为即时数据源进星空页，星空页内再游标拉全量；点星/点线卡内篇名走本页
     /// 既有的 onOpenEntry（容器接详情），本页不内置跳转。主页信息未加载出 id
-    /// 时 toast，不进空星空。他人主页同样有本行（星空页内按他人 = 只公开篇、
-    /// 只区级地点键口径渲染，私密篇及其连线一并消失）。
+    /// 时 toast，不进空星空。112 起仅本人页可进（他人页入口行已去除，
+    /// 函数内亦有门控）。
     @objc private func openStarMap() {
+        // 112 他人页口径：星图入口行已从他人页脚部去除，此处再守一道，
+        // 他人页不进星图页；本人页原样。
+        guard isOwnProfile else { return }
         guard let profileId = profile?.profileIdValue ?? targetUserIdValue else {
             BearyToast.show(in: view, message: "主页信息还在加载，请稍后再试")
             return
