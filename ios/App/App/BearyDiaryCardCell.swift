@@ -924,9 +924,11 @@ class BearyDiaryCardCell: UITableViewCell {
         onRequireLogin?()
     }
 
-    private lazy var rightStack: UIStackView = {
+    private lazy var rightStack: BearyPassThroughStackView = {
         quoteView.translatesAutoresizingMaskIntoConstraints = false
-        let st = UIStackView(arrangedSubviews: [recipientRow, titleStack, ephemeralRow, entryTitleLabel, contentLabel, foldButton, quoteView, imagesScrollView, locationStack, actionStack, guestLoginPromptButton, emoteFlowView])
+        let st = BearyPassThroughStackView(arrangedSubviews: [recipientRow, titleStack, ephemeralRow, entryTitleLabel, contentLabel, foldButton, quoteView, imagesScrollView, locationStack, actionStack, guestLoginPromptButton, emoteFlowView])
+        // 清单 18：中间栈透传回应行扩后热区（只认 emoteFlowView 内钮，其他行不动）。
+        st.passThroughRoot = emoteFlowView
         st.translatesAutoresizingMaskIntoConstraints = false
         st.axis = .vertical
         st.alignment = .fill
