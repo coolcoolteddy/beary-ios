@@ -2972,6 +2972,12 @@ class BearyProfileViewController: UIViewController {
         }
     }
 
+    /// 同 tab 连点刷新在途锁：列表加载或自定义下拉头在途时，重拍刷新一律不重复触发
+    /// （loadTab 自身的 tabLoading 守卫是第二道；资料头重拉本身幂等、无状态破坏）。
+    var isRefreshingForRetap: Bool {
+        tabLoading || isCustomPullRefreshing
+    }
+
     /// 收尾跨页同步：详情/时间线/回收站改动后刷新本页（资料头 + 列表，与初次加载同路径）。
     func reloadProfile() {
         loadProfile()
