@@ -228,6 +228,35 @@ final class BearyFeedbackViewController: UIViewController, UITextViewDelegate, P
     private static let recipient = "hi@teddyhn.com"
     private static let descriptionPlaceholder = "请描述遇到的问题：在哪个页面、做了什么操作、看到了什么…"
 
+    /// 116 数据填入动效：状态文案变化时只淡入该 label 本身、徽标由
+    /// 隐藏变可见时只淡入徽标本身（alpha 0→1、0.25s，不动 transform／
+    /// 布局、不重建节点）；同值不赋值不重播；减动效或未进窗口时直设终值。
+    private func setStatusTextFaded(_ text: String) {
+        guard statusLabel.text != text else { return }
+        statusLabel.text = text
+        guard !UIAccessibility.isReduceMotionEnabled, statusLabel.window != nil else {
+            statusLabel.alpha = 1
+            return
+        }
+        statusLabel.alpha = 0
+        UIView.animate(withDuration: 0.25, delay: 0, options: [.curveEaseOut, .beginFromCurrentState], animations: {
+            self.statusLabel.alpha = 1
+        })
+    }
+
+    private func showStatusBadgeFaded() {
+        let wasHidden = statusBadge.isHidden
+        statusBadge.isHidden = false
+        guard wasHidden, !UIAccessibility.isReduceMotionEnabled, statusBadge.window != nil else {
+            statusBadge.alpha = 1
+            return
+        }
+        statusBadge.alpha = 0
+        UIView.animate(withDuration: 0.25, delay: 0, options: [.curveEaseOut, .beginFromCurrentState], animations: {
+            self.statusBadge.alpha = 1
+        })
+    }
+
     override func viewDidLoad() {
         super.viewDidLoad()
         view.backgroundColor = BearyColors.faint
@@ -241,11 +270,14 @@ final class BearyFeedbackViewController: UIViewController, UITextViewDelegate, P
             if let urlValue = url {
                 self.zipURL = urlValue
                 self.zipReady = true
-                self.statusLabel.text = "反馈数据已准备就绪"
-                self.statusBadge.isHidden = false
+                // 116：本地 zip 完成时状态文案只淡入本身、绿点徽标由隐藏
+                // 变可见时只淡入本身（alpha 0→1、0.25s，不动 transform／
+                // 布局；同值不重播；减动效或未进窗口直设终值）。
+                self.setStatusTextFaded("反馈数据已准备就绪")
+                self.showStatusBadgeFaded()
             } else {
                 self.zipReady = false
-                self.statusLabel.text = "反馈数据准备失败"
+                self.setStatusTextFaded("反馈数据准备失败")
                 self.statusBadge.isHidden = true
                 BearyAppLog.event("feedback zip failed")
             }
