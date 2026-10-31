@@ -312,6 +312,11 @@ class BearyProfileViewController: UIViewController {
     /// 不拿半截语料画「空白 = 没写」——半截语料的空白是假空白，会撒谎。
     private var modulesCorpus: [Entry] = []
     private var modulesCorpusComplete = false
+    /// 113 模块分页失败态：失败不再静默全灭——本轮已拉到的页（或旧全量语料）
+    /// 照常渲染，另加重试行明示失败；从未拉到页时只显重试行。
+    private var modulesLoadFailed = false
+    /// 113 重试在途：重试行显加载态、重试钮禁用，成功/失败回包后复位。
+    private var modulesRetrying = false
     /// 随机漫步当前卡片与上一次 id（换篇排除上一篇；语料刷新后当前卡仍在池内则保留，
     /// 不在用户眼皮底下换卡；单篇池换不出新篇时换篇按钮只提示、不跳空卡）。
     private var currentWalkEntry: Entry?
@@ -1320,6 +1325,46 @@ class BearyProfileViewController: UIViewController {
     /// 年度回顾入口卡：只本人可见；平时只显示今年已写篇数与连续天数，
     /// 点进年报首屏示意（BearyYearReviewViewController），年报本身年底另做。
     private let yearCard = BearyProfilePersonalModulesCard(title: "年度回顾")
+    /// 113 模块分页失败重试行：faint 底圆角行 + 灰字说明 + 现成重试 pill；
+    /// 只在 modulesLoadFailed 时显，成功态永不进栈视觉（isHidden）。
+    private lazy var modulesRetryLabel: UILabel = {
+        let labelValue = UILabel()
+        labelValue.translatesAutoresizingMaskIntoConstraints = false
+        labelValue.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13))
+        labelValue.adjustsFontForContentSizeCategory = true
+        labelValue.textColor = BearyColors.gray
+        labelValue.numberOfLines = 0
+        return labelValue
+    }()
+    private lazy var modulesRetryButton: BearyButton = {
+        let buttonValue = BearyButton.retryPill()
+        buttonValue.translatesAutoresizingMaskIntoConstraints = false
+        buttonValue.setTitle("重试", for: .normal)
+        buttonValue.addTarget(self, action: #selector(modulesRetryTapped), for: .touchUpInside)
+        buttonValue.bearyAddPressFeedback()
+        return buttonValue
+    }()
+    private lazy var modulesRetryRow: UIView = {
+        let rowValue = UIView()
+        rowValue.translatesAutoresizingMaskIntoConstraints = false
+        rowValue.backgroundColor = BearyColors.faint
+        rowValue.layer.cornerRadius = 12
+        rowValue.clipsToBounds = true
+        rowValue.isHidden = true
+        let stackValue = UIStackView(arrangedSubviews: [modulesRetryLabel, modulesRetryButton])
+        stackValue.translatesAutoresizingMaskIntoConstraints = false
+        stackValue.axis = .horizontal
+        stackValue.spacing = 8
+        stackValue.alignment = .center
+        rowValue.addSubview(stackValue)
+        NSLayoutConstraint.activate([
+            stackValue.topAnchor.constraint(equalTo: rowValue.topAnchor, constant: 8),
+            stackValue.leadingAnchor.constraint(equalTo: rowValue.leadingAnchor, constant: 14),
+            stackValue.trailingAnchor.constraint(equalTo: rowValue.trailingAnchor, constant: -14),
+            stackValue.bottomAnchor.constraint(equalTo: rowValue.bottomAnchor, constant: -8),
+        ])
+        return rowValue
+    }()
     private let yearSummaryLabel: UILabel = {
         let labelValue = UILabel()
         labelValue.translatesAutoresizingMaskIntoConstraints = false
@@ -3532,6 +3577,7 @@ class BearyProfileViewController: UIViewController {
         modulesStack.addArrangedSubview(thisDayCard)
         modulesStack.addArrangedSubview(randomCard)
         modulesStack.addArrangedSubview(yearCard)
+        modulesStack.addArrangedSubview(modulesRetryRow)
     }
 
     /// 主题氛围开关点：默认墨色现行（= 现行底色，视觉零变化）；三档色值见
@@ -3579,10 +3625,12 @@ class BearyProfileViewController: UIViewController {
         guard let profileId = profile?.profileIdValue ?? targetUserIdValue else { return }
         if modulesProfileId != profileId {
             // 切账号 / 换目标：语料、随机上一次 id、展开态全复位，
-            // 旧目标的随机卡绝不带到新目标首帧。
+            // 旧目标的随机卡绝不带到新目标首帧。113：失败态一并复位。
             modulesProfileId = profileId
             modulesCorpus = []
             modulesCorpusComplete = false
+            modulesLoadFailed = false
+            modulesRetrying = false
             currentWalkEntry = nil
             lastWalkId = nil
             thisDayExpanded = false
@@ -3619,6 +3667,8 @@ class BearyProfileViewController: UIViewController {
                         // 末页（不足 50 即无更多）：语料到齐才渲染，半截不画。
                         strongSelf.modulesCorpus = merged
                         strongSelf.modulesCorpusComplete = true
+                        strongSelf.modulesLoadFailed = false
+                        strongSelf.modulesRetrying = false
                         strongSelf.renderModules()
                         strongSelf.pastSelfSyncFromServer(generation: generation)
                     } else if let last = fresh.last, let lastCreatedAt = last.createdAt, let lastId = last.id {
@@ -3628,13 +3678,22 @@ class BearyProfileViewController: UIViewController {
                         // 也不在分页里死循环；游标缺失本身已是服务端异常形态。
                         strongSelf.modulesCorpus = merged
                         strongSelf.modulesCorpusComplete = true
+                        strongSelf.modulesLoadFailed = false
+                        strongSelf.modulesRetrying = false
                         strongSelf.renderModules()
                         strongSelf.pastSelfSyncFromServer(generation: generation)
                     }
                 case .failure:
-                    // 失败保留旧语料：旧语料到齐过则继续显示旧聚合（不闪空），
-                    // 从未到齐过则模块继续隐藏（renderModules 的未完成分支）。
-                    break
+                    // 113：失败不再静默全灭——本轮已拉到的页进语料（旧全量语料在
+                    // accumulated 为空时原样保留），置失败旗并渲染：已有语料照常显
+                    // + 重试行，从未拉到页时只显重试行；重试行由 renderModules 管显隐。
+                    strongSelf.modulesRetrying = false
+                    strongSelf.modulesLoadFailed = true
+                    if !accumulated.isEmpty {
+                        strongSelf.modulesCorpus = accumulated
+                    }
+                    strongSelf.modulesCorpusComplete = false
+                    strongSelf.renderModules()
                 }
             }
         }
@@ -3644,12 +3703,42 @@ class BearyProfileViewController: UIViewController {
 
     private func renderModules() {
         // 112 他人页口径：模块组永不渲染（即使语料已到齐也塌掉），脚部
-        // 只留照片区；本人页走原有语料到齐分支。
+        // 只留照片区；本人页走原有语料到齐分支。113：失败行在他人页同样不显。
         if !isOwnProfile {
             modulesContainer.isHidden = true
             modulesHeightConstraint.isActive = true
+            modulesRetryRow.isHidden = true
             return
         }
+        if modulesLoadFailed {
+            // 113 失败态：已有语料（本轮已拉页或旧全量）照常渲染各卡 + 重试行；
+            // 从未拉到页时各卡全藏、只留重试行——不再整组静默消失。
+            // 部分语料下的统计等数字是“已加载部分”的聚合，重试行文案明示未完整，
+            // 不冒充全量（旧“半截不画”是防撒谎，现以明示替代隐藏）。
+            if modulesCorpus.isEmpty {
+                for card in [pastSelfDeliveryCard, statsCard, thisDayCard, randomCard, yearCard] {
+                    card.isHidden = true
+                }
+            } else {
+                let visible = BearyProfilePersonalLogic.visibleEntries(modulesCorpus, isOwn: isOwnProfile)
+                renderStats(visible: visible)
+                renderThisDay(visible: visible)
+                renderPastSelf(visible: visible)
+                renderRandom(visible: visible)
+                renderYear(visible: visible)
+            }
+            updateModulesRetryRow()
+            modulesRetryRow.isHidden = false
+            // 失败态容器恒显：有语料时装各卡 + 重试行，无语料时只装重试行。
+            modulesContainer.isHidden = false
+            modulesHeightConstraint.isActive = false
+            if headerWidthValue > 0 {
+                layoutHeaderForced(widthValue: headerWidthValue)
+            }
+            refreshFooter()
+            return
+        }
+        modulesRetryRow.isHidden = true
         guard modulesCorpusComplete else {
             modulesContainer.isHidden = true
             modulesHeightConstraint.isActive = true
@@ -3671,6 +3760,28 @@ class BearyProfileViewController: UIViewController {
         // 否则语料到齐后模块仍不出现在表格行下方。refreshFooter
         // 不回调 renderModules，无递归。
         refreshFooter()
+    }
+
+    /// 113 失败重试行文案与钮态：加载中显加载态、钮禁用；失败显重试。
+    /// 部分语料文案明示“未完整”，不冒充全量聚合。
+    private func updateModulesRetryRow() {
+        if modulesRetrying {
+            modulesRetryLabel.text = "正在加载个人模块…"
+            modulesRetryButton.isEnabled = false
+        } else if modulesCorpus.isEmpty {
+            modulesRetryLabel.text = "个人模块加载失败"
+            modulesRetryButton.isEnabled = true
+        } else {
+            modulesRetryLabel.text = "模块未加载完整，已保留已加载的部分"
+            modulesRetryButton.isEnabled = true
+        }
+    }
+
+    @objc private func modulesRetryTapped() {
+        guard !modulesRetrying else { return }
+        modulesRetrying = true
+        updateModulesRetryRow()
+        scheduleModulesRefresh()
     }
 
     private func personalDateString(timestampMs: Int?) -> String {
