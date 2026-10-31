@@ -2403,16 +2403,28 @@ class BearyDiaryCardCell: UITableViewCell {
         refreshActionAccessibility()
     }
 
-    /// F7/F8（首页模式）：首页与详情互动门控统一为 isPublic == true 才可互动（详情同口径）。
+    /// 作者本人判定（现行口径复用，不新造：isMine 为 true，或 authorId == 当前登录用户 id；
+    /// 详情 BearyDetailViewController.init 与本文件引用卡 viewerIsAuthor 同款 OR 口径）。
+    private func isEntryAuthor(_ entry: Entry) -> Bool {
+        if entry.isMine == true { return true }
+        if let aid = entry.authorId, let uid = SessionManager.shared.currentUser?.id { return aid == uid }
+        return false
+    }
+
+    /// 2026-10-31 私密自互动口径：点赞／收藏门控为“有效公开 或 作者本人”（详情同口径）；
+    /// 分享不动，仍仅有效公开才有。注意：后端目前仍以 published=1 拦私密互动（见 PR 说明），
+    /// 作者私密点赞／收藏的服务端请求仍会 404 并走既有失败回滚，本处只改 App 侧放行。
+    /// F7/F8（首页模式）：首页与详情互动门控统一为上述口径。
     private func updateActionInteractivity() {
-        // 审计 P0-4：有效态门控（过期限时篇不放行点赞/收藏/分享）。
+        // 审计 P0-4：有效态门控（过期限时篇不放行点赞/收藏/分享；作者本人例外只放行点赞/收藏）。
         // 2026-10-29 及时性口径：在途请求不再禁用按钮——快连点每次都必须立即
         // 落地，防重入只靠代次守卫，不靠按钮禁用。
         let publicOK = currentEntry.map(BearyEphemeral.isEffectivelyPublic) ?? false
-        likeButton.isEnabled = publicOK
-        bookmarkButton.isEnabled = publicOK
-        likeButton.alpha = publicOK ? 1.0 : 0.4
-        bookmarkButton.alpha = publicOK ? 1.0 : 0.4
+        let interactOK = publicOK || (currentEntry.map(isEntryAuthor) ?? false)
+        likeButton.isEnabled = interactOK
+        bookmarkButton.isEnabled = interactOK
+        likeButton.alpha = interactOK ? 1.0 : 0.4
+        bookmarkButton.alpha = interactOK ? 1.0 : 0.4
         // 网页口径：shBtn 仅 is_public 时输出——非公开卡直接没有分享钮（不禁用占位）。
         shareButton.isHidden = publicOK == false
         shareSlotSpacer.isHidden = !shareButton.isHidden
@@ -2640,7 +2652,8 @@ class BearyDiaryCardCell: UITableViewCell {
         }
         // 及时性口径：按下预览不拿在途请求门控——在途时按下仍按当前
         // （最新点按态）模型给预览，抬起取消时复原到同一模型。
-        guard currentEntry.map(BearyEphemeral.isEffectivelyPublic) ?? false else { return }
+        // 2026-10-31 私密自互动口径：按下预览守卫与抬起确认同款（有效公开 或 作者本人）。
+        guard currentEntry.map({ BearyEphemeral.isEffectivelyPublic($0) || isEntryAuthor($0) }) ?? false else { return }
         guard SessionManager.shared.isLoggedIn else { return }
         guard let entryIdValue = cellEntryId, !entryIdValue.isEmpty else { return }
         if currentEntry?.likedByMe == true {
@@ -2701,7 +2714,7 @@ class BearyDiaryCardCell: UITableViewCell {
             if hadPressPreview { restorePressPreview() }
             return
         }
-        if !(currentEntry.map(BearyEphemeral.isEffectivelyPublic) ?? false) {
+        if !(currentEntry.map({ BearyEphemeral.isEffectivelyPublic($0) || isEntryAuthor($0) }) ?? false) {
             if hadPressPreview { restorePressPreview() }
             return
         }
@@ -2795,7 +2808,7 @@ class BearyDiaryCardCell: UITableViewCell {
     /// 成功后以服务端值为准并经控制器全副本同步。
     private func feedBookmarkTapped() {
         guard let entryIdValue = cellEntryId, !entryIdValue.isEmpty else { return }
-        if !(currentEntry.map(BearyEphemeral.isEffectivelyPublic) ?? false) { return }
+        if !(currentEntry.map({ BearyEphemeral.isEffectivelyPublic($0) || isEntryAuthor($0) }) ?? false) { return }
         if SessionManager.shared.isLoggedIn == false {
             onRequireLogin?()
             return

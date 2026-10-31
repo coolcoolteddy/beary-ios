@@ -1480,14 +1480,17 @@ final class BearyDetailViewController: UIViewController {
         bookmarkButton.accessibilityLabel = bookmarked ? "已收藏" : "收藏"
         shareButton.accessibilityLabel = "分享"
 
-        // 卡片互动门控同口径：非公开时点赞／收藏压暗、分享隐藏（私密不交出正文与链接），
+        // 卡片互动门控同口径：2026-10-31 私密自互动口径——点赞／收藏为“有效公开 或 作者本人”
+        // 时正常显示，非作者看非公开篇仍压暗；分享不动，仍仅有效公开才有（私密不交出正文与链接），
         // 分享隐藏时留 21pt 槽位占位（首页 shareSlotSpacer 同款），防收藏钮滑到最右边缘。
         // 限时已到期按私密算（与卡片同口径）。
         // 注意：按钮不禁用（首页卡片禁用），点按仍走详情原有拒绝动效 + toast
-        // （审计 P2-11 口径），非公开互动有明确反馈而非静默无反应。
+        // （审计 P2-11 口径），非作者的非公开互动有明确反馈而非静默无反应。
+        // 后端缺口见 PR 说明：后端目前仍以 published=1 拦私密互动，作者私密请求仍会 404 回滚。
         let publicOK = BearyEphemeral.isEffectivelyPublic(entry)
-        likeButton.alpha = publicOK ? 1.0 : 0.4
-        bookmarkButton.alpha = publicOK ? 1.0 : 0.4
+        let interactOK = publicOK || isAuthor
+        likeButton.alpha = interactOK ? 1.0 : 0.4
+        bookmarkButton.alpha = interactOK ? 1.0 : 0.4
         shareButton.isHidden = !publicOK
         shareSlotSpacer.isHidden = !shareButton.isHidden
     }
@@ -1992,8 +1995,9 @@ final class BearyDetailViewController: UIViewController {
 
     @objc private func likeTapped() {
         guard let entryId = entry.id, !entryId.isEmpty else { return }
-        // 审计 P2-11：非公开时不再静默 return——拒绝动效＋“公开后才能互动”。
-        if !BearyEphemeral.isEffectivelyPublic(entry) {
+        // 审计 P2-11：非作者的非公开时不再静默 return——拒绝动效＋“公开后才能互动”。
+        // 2026-10-31 私密自互动口径：作者本人看自己私密篇时放行。
+        if !BearyEphemeral.isEffectivelyPublic(entry) && !isAuthor {
             playDenyShake(on: likeButton)
             BearyToast.show(in: view, message: "公开后才能互动")
             return
@@ -2062,8 +2066,9 @@ final class BearyDetailViewController: UIViewController {
 
     @objc private func bookmarkTapped() {
         guard let entryId = entry.id, !entryId.isEmpty else { return }
-        // 审计 P2-11：非公开时不再静默 return——拒绝动效＋“公开后才能互动”。
-        if !BearyEphemeral.isEffectivelyPublic(entry) {
+        // 审计 P2-11：非作者的非公开时不再静默 return——拒绝动效＋“公开后才能互动”。
+        // 2026-10-31 私密自互动口径：作者本人看自己私密篇时放行。
+        if !BearyEphemeral.isEffectivelyPublic(entry) && !isAuthor {
             playDenyShake(on: bookmarkButton)
             BearyToast.show(in: view, message: "公开后才能互动")
             return
