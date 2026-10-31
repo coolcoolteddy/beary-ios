@@ -37,7 +37,8 @@ final class BearyQuoteCardView: UIView {
         let btn = UIButton(type: .system)
         btn.translatesAutoresizingMaskIntoConstraints = false
         btn.setTitle("仅你可见", for: .normal)
-        btn.titleLabel?.font = UIFont.systemFont(ofSize: 11, weight: .semibold)
+        btn.titleLabel?.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 11, weight: .semibold))
+        btn.titleLabel?.adjustsFontForContentSizeCategory = true
         btn.setTitleColor(BearyColors.blue, for: .normal)
         btn.backgroundColor = BearyColors.alpha(BearyColors.blue, 0.13)
         btn.layer.cornerRadius = 6
@@ -61,7 +62,8 @@ final class BearyQuoteCardView: UIView {
     private let contentLabel: UILabel = {
         let lb = UILabel()
         lb.translatesAutoresizingMaskIntoConstraints = false
-        lb.font = UIFont.systemFont(ofSize: 13.5)
+        lb.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13.5))
+        lb.adjustsFontForContentSizeCategory = true
         lb.textColor = BearyColors.ink
         lb.numberOfLines = 3
         // P3-3：引用正文同款长串断行（字号行高不动）。
@@ -72,7 +74,8 @@ final class BearyQuoteCardView: UIView {
     private let dateLabel: UILabel = {
         let lb = UILabel()
         lb.translatesAutoresizingMaskIntoConstraints = false
-        lb.font = UIFont.systemFont(ofSize: 12)
+        lb.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 12))
+        lb.adjustsFontForContentSizeCategory = true
         lb.textColor = BearyColors.gray
         lb.numberOfLines = 1
         lb.isHidden = true
@@ -83,7 +86,8 @@ final class BearyQuoteCardView: UIView {
     private let goneLabel: UILabel = {
         let lb = UILabel()
         lb.translatesAutoresizingMaskIntoConstraints = false
-        lb.font = UIFont.systemFont(ofSize: 13)
+        lb.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13))
+        lb.adjustsFontForContentSizeCategory = true
         lb.textColor = BearyColors.gray
         lb.numberOfLines = 0
         lb.isHidden = true
@@ -388,7 +392,7 @@ final class BearyQuoteCardView: UIView {
             // P3-3：引用正文富文本同步按字符断行（字号行高不动）。
             paragraph.lineBreakMode = .byCharWrapping
             let attrs: [NSAttributedString.Key: Any] = [
-                .font: UIFont.systemFont(ofSize: 13.5),
+                .font: BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13.5)),
                 .foregroundColor: BearyColors.ink,
                 .paragraphStyle: paragraph,
             ]
