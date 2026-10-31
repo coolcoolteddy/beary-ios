@@ -3552,6 +3552,8 @@ class BearyTimelineViewController: UIViewController {
            updateTrashSuffixOnly(current, oldCount: last, newCount: trashCountValue) {
             lastTrashCount = trashCountValue
             fitTrashButtonWidth()
+            // 116：数字段-only 更新后只淡入标题文案（图标不动）。
+            fadeButtonTitle(trashButton)
             return
         }
         let base = NSMutableAttributedString(string: "回收站", attributes: [
@@ -3567,6 +3569,8 @@ class BearyTimelineViewController: UIViewController {
         trashButton.setAttributedTitle(base, for: .normal)
         lastTrashCount = trashCountValue
         fitTrashButtonWidth()
+        // 116：整行重建路径同样只淡入标题文案（图标不动）。
+        fadeButtonTitle(trashButton)
     }
 
     /// 回收站标题数字段-only 更新：静态段“回收站”不动，只增/改/删
@@ -3602,20 +3606,43 @@ class BearyTimelineViewController: UIViewController {
         return true
     }
 
+    /// 116 数据填入动效：文案／数字变化时只淡入该元素本身（alpha 0→1、
+    /// 0.25s，不动 transform／布局、不重建节点、不缩放弹一下）；同值不赋值
+    /// 不重播；减动效或未进窗口时直设终值。按钮只淡入 titleLabel，图标
+    /// （火苗／回收站图标）不动，符合“数字只动数字本身”。
+    private func setLabelTextFaded(_ label: UILabel, _ text: String) {
+        guard label.text != text else { return }
+        label.text = text
+        guard !UIAccessibility.isReduceMotionEnabled, label.window != nil else {
+            label.alpha = 1
+            return
+        }
+        label.alpha = 0
+        UIView.animate(withDuration: 0.25, delay: 0, options: [.curveEaseOut, .beginFromCurrentState], animations: {
+            label.alpha = 1
+        })
+    }
+
+    private func fadeButtonTitle(_ button: UIButton) {
+        guard !UIAccessibility.isReduceMotionEnabled, button.window != nil,
+              let titleLabel = button.titleLabel else { return }
+        titleLabel.alpha = 0
+        UIView.animate(withDuration: 0.25, delay: 0, options: [.curveEaseOut, .beginFromCurrentState], animations: {
+            titleLabel.alpha = 1
+        })
+    }
+
     private func updateCountsLabel() {
         if let counts = countsValue {
             let total = counts.total ?? 0
             let priv = counts.priv ?? 0
             let pub = counts.pub ?? 0
-            // 本批新规矩（跳过未变）：纯文本 label 无容器重建、无入场动效，
-            // 文案不变时不重复赋值；数值变时仍整行文本赋值（UILabel 文本
-            // 本身不重播动效，拆成多 label 属布局结构改动，不做）。
-            let newText = "共 \(total) 篇 · 私密 \(priv) · 公开 \(pub)"
-            guard countsLabel.text != newText else { return }
-            countsLabel.text = newText
+            // 116：数值变时整行只淡入（不拆多 label——拆分属布局结构改动，
+            // 且数字段已在行内；淡入覆盖整行文案，数字随之淡入，不弹一下）；
+            // 文案不变时不重复赋值不重播。
+            setLabelTextFaded(countsLabel, "共 \(total) 篇 · 私密 \(priv) · 公开 \(pub)")
         } else {
-            guard countsLabel.text != "" else { return }
-            countsLabel.text = ""
+            setLabelTextFaded(countsLabel, "")
         }
     }
 
@@ -3707,6 +3734,8 @@ class BearyTimelineViewController: UIViewController {
             statsButton.setAttributedTitle(nil, for: .normal)
             statsButton.setTitle("日历加载失败，重试", for: .normal)
             statsButton.setTitleColor(BearyColors.gray, for: .normal)
+            // 116：失败态文案出现时只淡入标题（无图标可动）。
+            fadeButtonTitle(statsButton)
             return
         }
         guard let primaryKey = primaryKey, let data = calendarCache[primaryKey] else {
@@ -3744,6 +3773,8 @@ class BearyTimelineViewController: UIViewController {
             lastStatsLineSignature = "normal"
             lastStatsStreak = streak
             lastStatsMonthTotal = monthTotal
+            // 116：数字段-only 更新后只淡入标题文案（火苗图标不动）。
+            fadeButtonTitle(statsButton)
             return
         }
         // 首建或态切换（失败/空态 → 正常）或数字段解析失败时才整行重建；
@@ -3770,6 +3801,8 @@ class BearyTimelineViewController: UIViewController {
         text.append(NSAttributedString(string: "\(monthTotal) 篇", attributes: boldAttributes))
         statsButton.setTitle(nil, for: .normal)
         statsButton.setAttributedTitle(text, for: .normal)
+        // 116：首建／态切换整行重建时同样只淡入标题文案（火苗图标不动）。
+        fadeButtonTitle(statsButton)
     }
 
     /// 统计行数字段-only 更新：只替换两处纯数字区间（streak、monthTotal），
