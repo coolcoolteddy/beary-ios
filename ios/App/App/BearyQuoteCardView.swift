@@ -46,16 +46,25 @@ final class BearyQuoteCardView: UIView {
         return lb
     }()
 
-    private let dateLabel: UILabel = {
-        let lb = UILabel()
-        lb.translatesAutoresizingMaskIntoConstraints = false
-        lb.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 12))
-        lb.adjustsFontForContentSizeCategory = true
-        lb.textColor = BearyColors.gray
-        lb.numberOfLines = 1
-        lb.isHidden = true
-        return lb
+    /// 引用规则简化来源行（2026-10-31）：内容上方一行，12px 灰字（比正文 13.5 小一档），
+    /// 格式“引用自 @handle · 日期”（日期走现行卡片 feedTimeString 口径）。
+    /// 可点条件由调用方按 viewer 权限给（sourceTappable）：有权限看原文时点按走 onTapped
+    /// 进原日记详情；占位态（已私密/已删除）下只展示、不点按、不泄露正文。
+    /// 本行即原尾部日期的归宿：尾部 dateLabel 随之删除，同一卡不再出现两次日期。
+    private let sourceButton: UIButton = {
+        let btn = UIButton(type: .system)
+        btn.translatesAutoresizingMaskIntoConstraints = false
+        btn.titleLabel?.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 12))
+        btn.titleLabel?.adjustsFontForContentSizeCategory = true
+        btn.titleLabel?.lineBreakMode = .byTruncatingTail
+        btn.setTitleColor(BearyColors.gray, for: .normal)
+        btn.setTitleColor(BearyColors.gray, for: .disabled)
+        btn.contentHorizontalAlignment = .left
+        btn.isHidden = true
+        return btn
     }()
+
+    private var sourceTappable = false
 
     /// gone/locked 失效文案：13px 灰字（网页 .quote-card.gone 口径）。
     private let goneLabel: UILabel = {
@@ -134,13 +143,25 @@ final class BearyQuoteCardView: UIView {
     }()
 
     // 52 批：lite 卡不带头像名（原 avatarContainer 已删）；D8：行栈为横向 flex：
-    // [15px 引号图标][正文栈][42px 缩略图条][日期]，日期为行内最后一个元素、位于右上角。
+    // [15px 引号图标][正文栈][42px 缩略图条]（尾部日期已并入顶部来源行，见 sourceButton）。
     private lazy var rowStack: UIStackView = {
-        let st = UIStackView(arrangedSubviews: [quoteIconWrap, textStack, thumbsScrollView, dateLabel])
+        let st = UIStackView(arrangedSubviews: [quoteIconWrap, textStack, thumbsScrollView])
         st.translatesAutoresizingMaskIntoConstraints = false
         st.axis = .horizontal
         st.spacing = 8
         st.alignment = .top
+        return st
+    }()
+
+    /// 卡片纵向容器：[来源行][正常行][占位行]，隐藏项自动塌掉（来源行隐藏时
+    /// 正常行即贴卡顶，不留空位；占位行与正常行互斥显隐，见 showGone/configure）。
+    private lazy var contentStack: UIStackView = {
+        let st = UIStackView(arrangedSubviews: [sourceButton, rowStack, goneRowStack])
+        st.translatesAutoresizingMaskIntoConstraints = false
+        st.axis = .vertical
+        st.spacing = 4
+        st.alignment = .fill
+        st.distribution = .fill
         return st
     }()
 
@@ -153,49 +174,40 @@ final class BearyQuoteCardView: UIView {
     /// 在途任务；clear 时先取消全部在途加载，视图留池不销毁。
     private var quoteThumbPool: [UIImageView] = []
     /// fixall-cell 5-17“本轮已算”标记：上次算过缩略图条宽时的输入快照。
-    /// 布局输入（卡宽/图条总宽/日期显隐与宽度/正文自然宽）全未变时，
+    /// 布局输入（卡宽/图条总宽/正文自然宽）全未变时，
     /// layoutSubviews 不再重算、不再写约束，只读返回。
     private var lastThumbsLayoutBoundsWidth: CGFloat = -1
     private var lastThumbsLayoutTotalWidth: CGFloat = -1
-    private var lastThumbsLayoutDateHidden = true
-    private var lastThumbsLayoutDateWidth: CGFloat = -1
     private var lastThumbsLayoutTextNatural: CGFloat = -1
 
     private func invalidateThumbsLayoutCache() {
         lastThumbsLayoutBoundsWidth = -1
         lastThumbsLayoutTotalWidth = -1
-        lastThumbsLayoutDateHidden = true
-        lastThumbsLayoutDateWidth = -1
         lastThumbsLayoutTextNatural = -1
     }
 
     /// fixall-cell 5-17：缩略图条宽的唯一计算入口（原 layoutSubviews 内联块抽出）。
     /// 正文自然宽与卡宽无关，configure 时已可算出，此处只在输入
     /// 快照变化时重算；快照未变时直接返回，layoutSubviews 因此不再每轮写约束。
+    /// 行内元素现为 [图标][正文栈][图条]（日期已并入顶部来源行，不再占行内宽）。
     private func refreshThumbsWidth() {
         guard thumbsScrollView.isHidden == false, thumbsTotalWidth > 0 else { return }
         let rowWidth = bounds.width - 24
         if rowWidth <= 0 { return }
-        let dateWidth = dateLabel.isHidden ? 0 : dateLabel.intrinsicContentSize.width
         // 正文自然宽（单行实测）与缩略图条按 flex:1 分享剩余空间：
         // 正文短时条带拿剩余全部，正文长时两者对半、正文换行。
         let contentSingleLine = contentLabel.sizeThatFits(CGSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)).width
         let textNatural = contentSingleLine
         if bounds.width == lastThumbsLayoutBoundsWidth,
            thumbsTotalWidth == lastThumbsLayoutTotalWidth,
-           dateLabel.isHidden == lastThumbsLayoutDateHidden,
-           dateWidth == lastThumbsLayoutDateWidth,
            textNatural == lastThumbsLayoutTextNatural {
             return
         }
         lastThumbsLayoutBoundsWidth = bounds.width
         lastThumbsLayoutTotalWidth = thumbsTotalWidth
-        lastThumbsLayoutDateHidden = dateLabel.isHidden
-        lastThumbsLayoutDateWidth = dateWidth
         lastThumbsLayoutTextNatural = textNatural
-        let visibleCount = 3 + (dateLabel.isHidden ? 0 : 1)
-        let gaps = CGFloat(visibleCount - 1) * 8
-        let avail = rowWidth - 15 - dateWidth - gaps
+        let gaps: CGFloat = 2 * 8
+        let avail = rowWidth - 15 - gaps
         if avail <= 0 { return }
         let thumbsWidth: CGFloat
         if textNatural < avail / 2 {
@@ -219,43 +231,34 @@ final class BearyQuoteCardView: UIView {
         super.init(frame: frame)
         // F2：引用卡可点（此前 isUserInteractionEnabled=false 导致点按全被行导航吞掉）。
         isUserInteractionEnabled = true
-        addGestureRecognizer(UITapGestureRecognizer(target: self, action: #selector(quoteTapped)))
+        addGestureRecognizer(UITapGestureRecognizer(target: self, action: #selector(quoteTapped(_:))))
+        sourceButton.addTarget(self, action: #selector(sourceTapped), for: .touchUpInside)
         backgroundColor = BearyColors.faint
         layer.cornerRadius = 8
         clipsToBounds = true
         thumbsScrollView.addSubview(thumbsStack)
         quoteIconWrap.addSubview(quoteIconView)
         addSubview(leftBorderView)
-        addSubview(rowStack)
-        addSubview(goneRowStack)
+        addSubview(contentStack)
         let height = thumbsScrollView.heightAnchor.constraint(equalToConstant: 0)
         thumbsHeightConstraint = height
         let thumbsWidth = thumbsScrollView.widthAnchor.constraint(equalToConstant: 0)
         thumbsWidthConstraint = thumbsWidth
         // 引用卡被右列 stack 隐藏时 stack 会将其高度压为 0，内部高度/上下边距用 999，
         // 避免与零高度约束冲突；显示时 999 照常生效。
-        let rowTop = rowStack.topAnchor.constraint(equalTo: topAnchor, constant: 9)
-        rowTop.priority = UILayoutPriority(999)
-        let rowBottom = rowStack.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -9)
-        rowBottom.priority = UILayoutPriority(999)
-        let goneRowTop = goneRowStack.topAnchor.constraint(equalTo: topAnchor, constant: 9)
-        goneRowTop.priority = UILayoutPriority(999)
-        let goneRowBottom = goneRowStack.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -9)
-        goneRowBottom.priority = UILayoutPriority(999)
-        dateLabel.setContentCompressionResistancePriority(.required, for: .horizontal)
+        let contentTop = contentStack.topAnchor.constraint(equalTo: topAnchor, constant: 9)
+        contentTop.priority = UILayoutPriority(999)
+        let contentBottom = contentStack.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -9)
+        contentBottom.priority = UILayoutPriority(999)
         NSLayoutConstraint.activate([
             leftBorderView.leadingAnchor.constraint(equalTo: leadingAnchor),
             leftBorderView.topAnchor.constraint(equalTo: topAnchor),
             leftBorderView.bottomAnchor.constraint(equalTo: bottomAnchor),
             leftBorderView.widthAnchor.constraint(equalToConstant: 3),
-            rowTop,
-            rowStack.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 12),
-            rowStack.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -12),
-            rowBottom,
-            goneRowTop,
-            goneRowStack.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 12),
-            goneRowStack.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -12),
-            goneRowBottom,
+            contentTop,
+            contentStack.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 12),
+            contentStack.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -12),
+            contentBottom,
             height,
             thumbsWidth,
             quoteIconView.topAnchor.constraint(equalTo: quoteIconWrap.topAnchor, constant: 2),
@@ -280,7 +283,15 @@ final class BearyQuoteCardView: UIView {
 
     /// F2：gone 态（showGone）首页不触发 onTapped（cell 侧同样守卫，双保险），
     /// 个人主页 allowGoneTap 时透传给控制器弹提示；加载失败态点按走重试；正常卡点按走 onTapped。
-    @objc private func quoteTapped() {
+    /// 来源行点按由 sourceButton 自处理：卡片手势落在来源行内时直接返回，防一次点按
+    /// 触发按钮与卡片两次导航（按钮未命中时手势照常走卡片路径）。
+    @objc private func quoteTapped(_ gesture: UITapGestureRecognizer) {
+        if sourceButton.isHidden == false {
+            let location = gesture.location(in: sourceButton)
+            if sourceButton.bounds.contains(location) {
+                return
+            }
+        }
         if isLoadFailedState {
             onRetryTapped?()
             return
@@ -291,11 +302,54 @@ final class BearyQuoteCardView: UIView {
         onTapped?()
     }
 
+    /// 来源行点按：仅 sourceTappable 时走 onTapped（即卡片正常点按同一路）；
+    /// 占位态下按钮被禁用，点按无动作、不导航、不泄露正文。
+    @objc private func sourceTapped() {
+        if sourceTappable {
+            onTapped?()
+        }
+    }
+
+    /// 来源行文案组装（handle/日期皆无时返回 nil，调用方据此隐藏整行，不编造）。
+    /// deleted 时无可信 handle/日期，固定写“引用自已删除的日记”。
+    private static func sourceRowText(handle: String?, dateMs: Int?, deleted: Bool) -> String? {
+        if deleted {
+            return "引用自已删除的日记"
+        }
+        let handleText = (handle ?? "").isEmpty ? nil : "@\(handle!)"
+        let dateText = (dateMs ?? 0) > 0 ? BearyDiaryCardCell.feedTimeString(ms: dateMs!) : nil
+        if let handleText = handleText, let dateText = dateText {
+            return "引用自 \(handleText) · \(dateText)"
+        }
+        if let handleText = handleText {
+            return "引用自 \(handleText)"
+        }
+        return dateText
+    }
+
+    /// 来源行唯一写入口：configure 与 showGone 均走这里，保证两态口径一致。
+    /// tappable=false 时按钮禁用（灰字不变，见 .disabled 同色），点按无动作。
+    func setSourceRow(handle: String?, dateMs: Int?, tappable: Bool, deleted: Bool) {
+        guard let text = BearyQuoteCardView.sourceRowText(handle: handle, dateMs: dateMs, deleted: deleted) else {
+            sourceButton.setTitle(nil, for: .normal)
+            sourceButton.isHidden = true
+            sourceButton.isEnabled = false
+            sourceTappable = false
+            return
+        }
+        sourceButton.setTitle(text, for: .normal)
+        sourceButton.isHidden = false
+        sourceTappable = tappable
+        sourceButton.isEnabled = tappable
+    }
+
     func clear() {
         contentLabel.attributedText = nil
         contentLabel.text = nil
-        dateLabel.text = nil
-        dateLabel.isHidden = true
+        sourceButton.setTitle(nil, for: .normal)
+        sourceButton.isHidden = true
+        sourceButton.isEnabled = false
+        sourceTappable = false
         goneLabel.attributedText = nil
         goneLabel.text = nil
         goneLabel.isHidden = true
@@ -322,8 +376,11 @@ final class BearyQuoteCardView: UIView {
     /// gone 用 beary-quote、locked 用 beary-lock（网页 quoteHtml 两分支口径）；调用方按态传图标。
     /// detail 非空时第二行 12px 灰字挂提醒句（引用规则简化：已私密占位卡的
     /// “原日记已转私密，引用内容已隐藏”）；无 detail 时只显主句。
-    func showGone(message: String, iconName: String = "icon_quote", detail: String? = nil) {
+    /// 来源行（sourceHandle/sourceDateMs）同样挂在占位卡上方：占位态只展示、
+    /// 不点按；deleted 时写“引用自已删除的日记”；两者皆无时来源行隐藏。
+    func showGone(message: String, iconName: String = "icon_quote", detail: String? = nil, sourceHandle: String? = nil, sourceDateMs: Int? = nil, sourceDeleted: Bool = false) {
         clear()
+        setSourceRow(handle: sourceHandle, dateMs: sourceDateMs, tappable: false, deleted: sourceDeleted)
         if let detail = detail, !detail.isEmpty {
             let combined = NSMutableAttributedString(string: message, attributes: [
                 .font: BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13)),
@@ -362,13 +419,11 @@ final class BearyQuoteCardView: UIView {
     /// 引用规则简化（2026-10-31）：“仅你可见”角标随混合态取消而下线，本函数不再接受
     /// showOnlyYouBadge，调用点亦全部清掉。占位态（showGone）不带日期与缩略图：
     /// clear() 已把日期行与缩略图区藏起，showGone 只显图标 + 占位文案（+ 可选提醒句）。
-    func configure(authorName: String, authorAvatar: String?, content: String, images: [String], dims: [String: [Int]]?, createdAt: Int? = nil, allowThumbs: Bool = true) {
+    func configure(authorName: String, authorAvatar: String?, content: String, images: [String], dims: [String: [Int]]?, createdAt: Int? = nil, allowThumbs: Bool = true, authorHandle: String? = nil, sourceTappable: Bool = false) {
         clear()
         // 52 批：lite 卡不带头像名——authorName/authorAvatar 参数仅为调用点兼容保留，不再赋值给任何视图。
-        if let createdAt = createdAt, createdAt > 0 {
-            dateLabel.text = BearyDiaryCardCell.feedTimeString(ms: createdAt)
-            dateLabel.isHidden = false
-        }
+        // 来源行：handle + 原尾部日期（feedTimeString 口径）并入本行，尾部不再重复显日期。
+        setSourceRow(handle: authorHandle, dateMs: createdAt, tappable: sourceTappable, deleted: false)
         if content.isEmpty {
             contentLabel.isHidden = true
         } else {

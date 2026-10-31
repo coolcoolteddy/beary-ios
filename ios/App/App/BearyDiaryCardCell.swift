@@ -2003,7 +2003,7 @@ class BearyDiaryCardCell: UITableViewCell {
     /// - 正文空：未公开→未公开占位，其余→已删占位；
     /// - 正文非空但 viewer 非作者且未公开：占位（绝不凭“正文非空”推断作者身份，fail-closed）。
     /// 缩略图门控：仅被引公开或 viewer 为作者时出。
-    private func presentQuoteCard(authorName: String, authorAvatar: String?, content: String, images: [String], dims: [String: [Int]]?, createdAt: Int?, isPublic: Bool?, gone: Bool?, locked: Bool?, quoteId: String?, quoteAuthorId: Int?, quoteIsMine: Bool?, hostIsPublic: Bool, quotePublishedAt: Int? = nil) {
+    private func presentQuoteCard(authorName: String, authorAvatar: String?, content: String, images: [String], dims: [String: [Int]]?, createdAt: Int?, isPublic: Bool?, gone: Bool?, locked: Bool?, quoteId: String?, quoteAuthorId: Int?, quoteIsMine: Bool?, hostIsPublic: Bool, quotePublishedAt: Int? = nil, authorHandle: String? = nil) {
         // 112：落卡即不再等待，回包补刷不再重复命中本卡。
         quoteAwaitingId = nil
         quoteTapId = quoteId
@@ -2011,14 +2011,14 @@ class BearyDiaryCardCell: UITableViewCell {
         quoteTapLoadFailed = false
         if gone == true {
             quoteTapGoneOrLocked = true
-            quoteView.showGone(message: "引用的日记已删除", iconName: "icon_quote")
+            quoteView.showGone(message: "引用的日记已删除", iconName: "icon_quote", sourceDeleted: true)
             quoteView.isHidden = false
             return
         }
         if locked == true {
             quoteTapGoneOrLocked = true
             let placeholder = BearyQuoteGate.placeholderText(publishedAt: quotePublishedAt, locked: true)
-            quoteView.showGone(message: placeholder.main, iconName: "icon_lock", detail: placeholder.detail)
+            quoteView.showGone(message: placeholder.main, iconName: "icon_lock", detail: placeholder.detail, sourceHandle: authorHandle, sourceDateMs: createdAt)
             quoteView.isHidden = false
             return
         }
@@ -2026,9 +2026,9 @@ class BearyDiaryCardCell: UITableViewCell {
             quoteTapGoneOrLocked = true
             if isPublic == false {
                 let placeholder = BearyQuoteGate.placeholderText(publishedAt: quotePublishedAt, locked: false)
-                quoteView.showGone(message: placeholder.main, iconName: "icon_lock", detail: placeholder.detail)
+                quoteView.showGone(message: placeholder.main, iconName: "icon_lock", detail: placeholder.detail, sourceHandle: authorHandle, sourceDateMs: createdAt)
             } else {
-                quoteView.showGone(message: "引用的日记已删除", iconName: "icon_quote")
+                quoteView.showGone(message: "引用的日记已删除", iconName: "icon_quote", sourceDeleted: true)
             }
             quoteView.isHidden = false
             return
@@ -2038,7 +2038,7 @@ class BearyDiaryCardCell: UITableViewCell {
         guard viewerIsAuthor || isPublic == true else {
             quoteTapGoneOrLocked = true
             let placeholder = BearyQuoteGate.placeholderText(publishedAt: quotePublishedAt, locked: false)
-            quoteView.showGone(message: placeholder.main, iconName: "icon_lock", detail: placeholder.detail)
+            quoteView.showGone(message: placeholder.main, iconName: "icon_lock", detail: placeholder.detail, sourceHandle: authorHandle, sourceDateMs: createdAt)
             quoteView.isHidden = false
             return
         }
@@ -2049,7 +2049,9 @@ class BearyDiaryCardCell: UITableViewCell {
             images: images,
             dims: dims,
             createdAt: createdAt,
-            allowThumbs: isPublic == true || viewerIsAuthor
+            allowThumbs: isPublic == true || viewerIsAuthor,
+            authorHandle: authorHandle,
+            sourceTappable: true
         )
         quoteView.isHidden = false
     }
@@ -2135,7 +2137,8 @@ class BearyDiaryCardCell: UITableViewCell {
                 quoteAuthorId: quoteValue.authorId,
                 quoteIsMine: quoteValue.isMine,
                 hostIsPublic: BearyEphemeral.isEffectivelyPublic(entry),
-                quotePublishedAt: quoteValue.publishedAt
+                quotePublishedAt: quoteValue.publishedAt,
+                authorHandle: quoteValue.authorHandle
             )
             return
         }
@@ -2155,7 +2158,8 @@ class BearyDiaryCardCell: UITableViewCell {
                 quoteAuthorId: cachedEntry.authorId,
                 quoteIsMine: cachedEntry.isMine,
                 hostIsPublic: BearyEphemeral.isEffectivelyPublic(entry),
-                quotePublishedAt: cachedEntry.publishedAt
+                quotePublishedAt: cachedEntry.publishedAt,
+                authorHandle: cachedEntry.authorHandle
             )
             return
         }
@@ -2201,7 +2205,8 @@ class BearyDiaryCardCell: UITableViewCell {
                         quoteAuthorId: fetchedEntry.authorId,
                         quoteIsMine: fetchedEntry.isMine,
                         hostIsPublic: BearyEphemeral.isEffectivelyPublic(entry),
-                        quotePublishedAt: fetchedEntry.publishedAt
+                        quotePublishedAt: fetchedEntry.publishedAt,
+                        authorHandle: fetchedEntry.authorHandle
                     )
                     strongSelf.updateRightStackSpacing()
                     strongSelf.onNeedsRowReload?()
@@ -2234,7 +2239,7 @@ class BearyDiaryCardCell: UITableViewCell {
         quoteView.clear()
         guard let quoteValue = entry.quote else {
             if let quoteId = entry.quoteId, !quoteId.isEmpty {
-                quoteView.showGone(message: "引用的日记已删除", iconName: "icon_quote")
+                quoteView.showGone(message: "引用的日记已删除", iconName: "icon_quote", sourceDeleted: true)
                 quoteView.isHidden = false
             } else {
                 quoteView.isHidden = true
@@ -2245,9 +2250,9 @@ class BearyDiaryCardCell: UITableViewCell {
         if quoteContent.isEmpty {
             if quoteValue.isPublic == false {
                 let placeholder = BearyQuoteGate.placeholderText(publishedAt: quoteValue.publishedAt, locked: quoteValue.locked == true)
-                quoteView.showGone(message: placeholder.main, iconName: "icon_lock", detail: placeholder.detail)
+                quoteView.showGone(message: placeholder.main, iconName: "icon_lock", detail: placeholder.detail, sourceHandle: quoteValue.authorHandle, sourceDateMs: quoteValue.createdAt)
             } else {
-                quoteView.showGone(message: "引用的日记已删除", iconName: "icon_quote")
+                quoteView.showGone(message: "引用的日记已删除", iconName: "icon_quote", sourceDeleted: true)
             }
             quoteView.isHidden = false
             return
@@ -2257,7 +2262,7 @@ class BearyDiaryCardCell: UITableViewCell {
         let viewerIsAuthor = quoteValue.isMine == true || (quoteValue.authorId != nil && viewerId != nil && quoteValue.authorId == viewerId)
         guard viewerIsAuthor || quoteValue.isPublic == true else {
             let placeholder = BearyQuoteGate.placeholderText(publishedAt: quoteValue.publishedAt, locked: false)
-            quoteView.showGone(message: placeholder.main, iconName: "icon_lock", detail: placeholder.detail)
+            quoteView.showGone(message: placeholder.main, iconName: "icon_lock", detail: placeholder.detail, sourceHandle: quoteValue.authorHandle, sourceDateMs: quoteValue.createdAt)
             quoteView.isHidden = false
             return
         }
@@ -2268,7 +2273,9 @@ class BearyDiaryCardCell: UITableViewCell {
             images: quoteValue.images ?? [],
             dims: quoteValue.imgDims,
             createdAt: quoteValue.createdAt,
-            allowThumbs: quoteValue.isPublic == true || viewerIsAuthor
+            allowThumbs: quoteValue.isPublic == true || viewerIsAuthor,
+            authorHandle: quoteValue.authorHandle,
+            sourceTappable: true
         )
         quoteView.isHidden = false
     }

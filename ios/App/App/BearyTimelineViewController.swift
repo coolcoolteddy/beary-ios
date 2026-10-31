@@ -1447,6 +1447,46 @@ final class BearyTimelineCell: UITableViewCell {
         return 280
     }
 
+    /// 引用规则简化来源行（时间线自绘引用块版）：标题行即来源行。
+    /// 有 handle 时“引用自 @handle · 日期”（日期走本块现行 timelineQuoteDateFormatter 口径）；
+    /// 仅日期时沿用旧“引用 · 日期”格式；皆无时返回 nil（调用方回退到占位主句/“引用”）。
+    private func timelineSourceTitle(handle: String?, dateMs: Int?) -> String? {
+        let handleText = (handle ?? "").isEmpty ? nil : handle!
+        let dateText = (dateMs ?? 0) > 0 ? Self.timelineQuoteDateFormatter.string(from: Date(timeIntervalSince1970: TimeInterval(dateMs!) / 1000.0)) : nil
+        if let handleText = handleText, let dateText = dateText {
+            return "引用自 @\(handleText) · \(dateText)"
+        }
+        if let handleText = handleText {
+            return "引用自 @\(handleText)"
+        }
+        if let dateText = dateText {
+            return "引用 · \(dateText)的日记"
+        }
+        return nil
+    }
+
+    /// 时间线占位：标题行改写为来源行（deleted 时固定“引用自已删除的日记”；
+    /// handle/日期皆无时标题仍为主句），正文行改写为占位主句（＋提醒句第二行，灰字；
+    /// 正文行限 2 行，主句＋提醒句恰好 2 行）。占位按钮本就禁用，来源行只展示、不点按。
+    private func applyTimelinePlaceholder(main: String, detail: String?, deleted: Bool, handle: String?, dateMs: Int?) {
+        if deleted {
+            quoteTitleLabel.text = "引用自已删除的日记"
+        } else if let source = timelineSourceTitle(handle: handle, dateMs: dateMs) {
+            quoteTitleLabel.text = source
+        } else {
+            quoteTitleLabel.text = main
+        }
+        var body = main
+        if let detail = detail {
+            body += "\n" + detail
+        }
+        quoteBodyLabel.attributedText = NSAttributedString(string: body, attributes: [
+            .font: BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13.5)),
+            .foregroundColor: BearyColors.gray,
+        ])
+        quoteBodyLabel.isHidden = false
+    }
+
     func configure(entry: Entry) {
         stopWeatherLottie()
         weatherIconView = nil
@@ -1601,15 +1641,16 @@ final class BearyTimelineCell: UITableViewCell {
         // a non-public quote on someone else's entry never shows body, even if the
         // server passed body through (fail-closed, see below).
         // quoteId 有而 quote 体缺失 → 已删除；quote 体无正文且未公开 → 未公开占位。
+        // 引用规则简化来源行：标题行即来源行（正常态“引用自 @handle · 日期”；
+        // 占位态标题为来源行、正文为占位主句＋提醒句；占位按钮禁用，只展示不点按）。
         // 引用缩略图见下方 F2 分支（仅有正文的公开/自己的引用才配图）。
         quoteButton.isHidden = true
         quoteBodyLabel.isHidden = false
         clearQuoteThumbs()
         quoteButton.isEnabled = true
         if entry.quote == nil, entry.quoteId != nil {
-            quoteTitleLabel.text = "引用的日记已删除"
+            applyTimelinePlaceholder(main: "引用的日记已删除", detail: nil, deleted: true, handle: nil, dateMs: nil)
             quoteIconView.image = BearyIconImages.image(named: "icon_quote", pointSize: 12)
-            quoteBodyLabel.isHidden = true
             quoteButton.isEnabled = false
             quoteButton.isHidden = false
         } else if let quote = entry.quote {
@@ -1617,44 +1658,24 @@ final class BearyTimelineCell: UITableViewCell {
             // non-empty server fields win; missing fields fall back to old heuristic.
             let quoteBody = (quote.content ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
             if quote.gone == true {
-                quoteTitleLabel.text = "引用的日记已删除"
+                applyTimelinePlaceholder(main: "引用的日记已删除", detail: nil, deleted: true, handle: nil, dateMs: nil)
                 quoteIconView.image = BearyIconImages.image(named: "icon_quote", pointSize: 12)
-                quoteBodyLabel.isHidden = true
                 quoteButton.isEnabled = false
                 quoteButton.isHidden = false
             } else if quote.locked == true {
                 let placeholder = BearyQuoteGate.placeholderText(publishedAt: quote.publishedAt, locked: true)
-                quoteTitleLabel.text = placeholder.main
+                applyTimelinePlaceholder(main: placeholder.main, detail: placeholder.detail, deleted: false, handle: quote.authorHandle, dateMs: quote.createdAt)
                 quoteIconView.image = BearyIconImages.image(named: "icon_lock", pointSize: 12)
-                if let detail = placeholder.detail {
-                    quoteBodyLabel.attributedText = NSAttributedString(string: detail, attributes: [
-                        .font: BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13.5)),
-                        .foregroundColor: BearyColors.gray,
-                    ])
-                    quoteBodyLabel.isHidden = false
-                } else {
-                    quoteBodyLabel.isHidden = true
-                }
                 quoteButton.isEnabled = false
                 quoteButton.isHidden = false
             } else if quoteBody.isEmpty {
                 if quote.isPublic == true {
-                    quoteTitleLabel.text = "引用的日记已删除"
+                    applyTimelinePlaceholder(main: "引用的日记已删除", detail: nil, deleted: true, handle: nil, dateMs: nil)
                     quoteIconView.image = BearyIconImages.image(named: "icon_quote", pointSize: 12)
-                    quoteBodyLabel.isHidden = true
                 } else {
                     let placeholder = BearyQuoteGate.placeholderText(publishedAt: quote.publishedAt, locked: false)
-                    quoteTitleLabel.text = placeholder.main
+                    applyTimelinePlaceholder(main: placeholder.main, detail: placeholder.detail, deleted: false, handle: quote.authorHandle, dateMs: quote.createdAt)
                     quoteIconView.image = BearyIconImages.image(named: "icon_lock", pointSize: 12)
-                    if let detail = placeholder.detail {
-                        quoteBodyLabel.attributedText = NSAttributedString(string: detail, attributes: [
-                            .font: BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13.5)),
-                            .foregroundColor: BearyColors.gray,
-                        ])
-                        quoteBodyLabel.isHidden = false
-                    } else {
-                        quoteBodyLabel.isHidden = true
-                    }
                 }
                 quoteButton.isEnabled = false
                 quoteButton.isHidden = false
@@ -1663,27 +1684,14 @@ final class BearyTimelineCell: UITableViewCell {
                 // 即使服务端透传了正文也以占位替代，绝不泄漏正文与图片
                 //（旧口径以宿主是否本人为代理，已作废；Quote 现有 authorId/isMine 字段）。
                 let placeholder = BearyQuoteGate.placeholderText(publishedAt: quote.publishedAt, locked: false)
-                quoteTitleLabel.text = placeholder.main
+                applyTimelinePlaceholder(main: placeholder.main, detail: placeholder.detail, deleted: false, handle: quote.authorHandle, dateMs: quote.createdAt)
                 quoteIconView.image = BearyIconImages.image(named: "icon_lock", pointSize: 12)
-                if let detail = placeholder.detail {
-                    quoteBodyLabel.attributedText = NSAttributedString(string: detail, attributes: [
-                        .font: BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13.5)),
-                        .foregroundColor: BearyColors.gray,
-                    ])
-                    quoteBodyLabel.isHidden = false
-                } else {
-                    quoteBodyLabel.isHidden = true
-                }
                 quoteButton.isEnabled = false
                 quoteButton.isHidden = false
             } else {
-                if let createdMs = quote.createdAt {
-                    let date = Date(timeIntervalSince1970: TimeInterval(createdMs) / 1000.0)
-                    // G8：引用日期走北京时区（静态 formatter 同口径）。
-                    quoteTitleLabel.text = "引用 · " + Self.timelineQuoteDateFormatter.string(from: date) + "的日记"
-                } else {
-                    quoteTitleLabel.text = "引用"
-                }
+                // G8：引用日期走北京时区（静态 formatter 同口径）；来源行口径：
+                // 有 handle 时“引用自 @handle · 日期”，无 handle 时沿用旧格式，不编造。
+                quoteTitleLabel.text = timelineSourceTitle(handle: quote.authorHandle, dateMs: quote.createdAt) ?? "引用"
                 // B-G1: web .tl-qt 13.5/1.6, clamped to 2 lines (count set in init).
                 let quoteParagraph = NSMutableParagraphStyle()
                 quoteParagraph.lineHeightMultiple = 1.6
