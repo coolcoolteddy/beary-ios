@@ -18,6 +18,9 @@ class BearyEntryImageViewerViewController: UIViewController, UIGestureRecognizer
     private let neighborImageView = UIImageView()
     private var neighborIndex: Int?
     private var neighborDirection: Int = 0
+    /// 110：目标图未加载时的加载反馈（官方 icon_refresh 圈，白字色）——
+    /// 不是骨架屏；只在 imageView 无图可显且有在途加载时转，图到/失败即停。
+    private let loadingSpinner = BearyRefreshIconView()
     private let retryLabel = UILabel()
     private let counterLabel = UILabel()
     private let closeButton = BearyButton.closeButton()
@@ -108,6 +111,8 @@ class BearyEntryImageViewerViewController: UIViewController, UIGestureRecognizer
         neighborImageView.translatesAutoresizingMaskIntoConstraints = false
         neighborImageView.isHidden = true
         view.addSubview(neighborImageView)
+        loadingSpinner.tintColor = .white
+        view.addSubview(loadingSpinner)
         retryLabel.text = "图片加载失败，重试"
         retryLabel.textColor = .white
         retryLabel.font = UIFont.systemFont(ofSize: 14)
@@ -173,6 +178,8 @@ class BearyEntryImageViewerViewController: UIViewController, UIGestureRecognizer
             neighborImageView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
             neighborImageView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             neighborImageView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            loadingSpinner.centerXAnchor.constraint(equalTo: view.centerXAnchor),
+            loadingSpinner.centerYAnchor.constraint(equalTo: view.centerYAnchor),
             retryLabel.centerXAnchor.constraint(equalTo: view.centerXAnchor),
             // E2：图片加载失败重试态按可视区中心往上 30pt 统一放（原正中心）。
             retryLabel.centerYAnchor.constraint(equalTo: view.centerYAnchor, constant: -30),
@@ -253,6 +260,17 @@ class BearyEntryImageViewerViewController: UIViewController, UIGestureRecognizer
         }
     }
 
+    /// 110：加载圈显隐。只在“无图可显且有在途加载”时转：首张/切图
+    /// 未加载时屏上是加载圈而非纯黑中场；旧图仍在（P2-25 保留）时不转，
+    /// 旧图即过渡占位；失败时停并走重试文案；本地图模式恒有图，不转。
+    private func updateLoadingSpinner() {
+        if !localImages.isEmpty || isFailed || imageView.image != nil || loadingKey == nil {
+            loadingSpinner.stopSpinning()
+        } else {
+            loadingSpinner.startSpinning()
+        }
+    }
+
     private func loadCurrent() {
         // 2026-10-29 第 15 项：本地图模式——UIImage 直显，不走网络、不预取、
         // 不置失败态（本地图恒有图，失败重试入口不适用）。
@@ -262,6 +280,7 @@ class BearyEntryImageViewerViewController: UIViewController, UIGestureRecognizer
             isFailed = false
             retryLabel.isHidden = true
             imageView.image = localImages[currentIndex]
+            updateLoadingSpinner()
             return
         }
         if imageKeys.isEmpty || currentIndex < 0 || currentIndex >= imageKeys.count {
@@ -280,6 +299,7 @@ class BearyEntryImageViewerViewController: UIViewController, UIGestureRecognizer
         guard let url = BearyImageURLs.imageURL(key: key, thumb: false) else {
             isFailed = true
             retryLabel.isHidden = false
+            updateLoadingSpinner()
             return
         }
         // S10 灯箱下采样：imageView 约束为全屏宽（leading/trailing = view），
@@ -299,7 +319,11 @@ class BearyEntryImageViewerViewController: UIViewController, UIGestureRecognizer
                 self.isFailed = true
                 self.retryLabel.isHidden = false
             }
+            self.updateLoadingSpinner()
         }
+        // 110：发出加载后立即按“无图可显且在途”判定圈显隐（首张/切图
+        // 未加载时圈即转，不等回包；旧图仍在时不转，旧图即过渡）。
+        updateLoadingSpinner()
     }
 
     @objc private func closeTapped() {
@@ -469,8 +493,16 @@ class BearyEntryImageViewerViewController: UIViewController, UIGestureRecognizer
             let totalDx = translation.x
             let totalDy = translation.y
             // 网页口径：横向 >60px 且横向占优才翻页，否则回弹。
-            if imageKeys.count > 1 && abs(totalDx) > 60 && abs(totalDx) > abs(totalDy) * 1.5 {
-                navigate(direction: totalDx < 0 ? 1 : -1)
+            // 110：补速度口径——快甩（横向速度 >700pt/s 且横向占优）即使
+            // 位移不足 60 也翻页，免得轻甩看起来“滑不动”；慢拖仍按位移
+            // 阈值，不误触；每 pan 只 navigate 一次，不串页。
+            let velocity = sender.velocity(in: view)
+            let flickPages = abs(velocity.x) > 700 && abs(velocity.x) > abs(velocity.y) * 1.5
+            let distancePages = abs(totalDx) > 60 && abs(totalDx) > abs(totalDy) * 1.5
+            if imageKeys.count > 1 && (distancePages || flickPages) {
+                // 位移达标按位移方向，快甩达标按末速度方向。
+                let direction = distancePages ? (totalDx < 0 ? 1 : -1) : (velocity.x < 0 ? 1 : -1)
+                navigate(direction: direction)
             } else {
                 tx = 0
                 ty = 0
@@ -550,35 +582,66 @@ class BearyEntryImageViewerViewController: UIViewController, UIGestureRecognizer
             })
             return
         }
-        hideNeighbor()
+        // 110：回落路径统一走相邻图轨道，不再两段式。旧两段式是
+        // “当前图先滑出（邻槽空着即黑场）→交接时把旧图从另一侧滑回→
+        // 新图到达才替换”，即中间黑 + 滑回的是上一张、弱网下尤其明显。
+        // 现：目标槽位先贴到翻页方向外侧（拖动中已贴好的槽位不重置，
+        // 避免跳变；未贴时新建槽位并起目标加载，与 loadCurrent 在途合并），
+        // 两图一次动画同步到位；交接时目标已加载即用目标图，未加载则
+        // imageView 先空 + 加载圈（见 updateLoadingSpinner），loadCurrent
+        // 回包到达即填图，旧图绝不滑回来。减动效时瞬时交接，不播动画。
         isNavigating = true
-        let width = view.bounds.width > 0 ? view.bounds.width : UIScreen.main.bounds.width
+        let width = pageWidthValue()
         let offX: CGFloat = direction > 0 ? -width : width
+        let hadNeighborSlot = (neighborIndex == wrapped)
+        neighborIndex = wrapped
+        neighborDirection = direction
+        if !hadNeighborSlot {
+            neighborImageView.image = nil
+            neighborImageView.isHidden = false
+            neighborImageView.transform = CGAffineTransform(translationX: CGFloat(direction) * width, y: 0)
+            if let url = BearyImageURLs.imageURL(key: imageKeys[wrapped], thumb: false) {
+                BearyImageLoader.shared.load(url: url, downsampleToWidth: width * UIScreen.main.scale) { [weak self] img in
+                    guard let self = self, self.neighborIndex == wrapped else { return }
+                    self.neighborImageView.image = img
+                }
+            }
+        } else {
+            neighborImageView.isHidden = false
+        }
         let reduceMotion = UIAccessibility.isReduceMotionEnabled
-        let slideOut: () -> Void = { [weak self] in
+        let commitFallback: () -> Void = { [weak self] in
             guard let self = self else { return }
             self.currentIndex = wrapped
             self.scale = 1
-            self.tx = -offX
-            self.ty = 0
-            self.applyTransform(animated: false)
-            self.updateCounter()
-            self.loadCurrent()
             self.tx = 0
             self.ty = 0
-            self.applyTransform(animated: reduceMotion == false)
+            self.imageView.transform = .identity
+            if let targetImage = self.neighborImageView.image {
+                self.imageView.image = targetImage
+                self.isFailed = false
+                self.retryLabel.isHidden = true
+                self.loadingKey = self.imageKeys[wrapped]
+            } else {
+                // 目标未到：先空 + 加载圈，loadCurrent 回包填图（不留旧图）。
+                self.imageView.image = nil
+            }
+            self.hideNeighbor()
+            self.updateCounter()
+            self.loadCurrent()
             self.isNavigating = false
         }
         if reduceMotion == true {
-            slideOut()
+            commitFallback()
             return
         }
-        tx = offX
-        ty = 0
         UIView.animate(withDuration: 0.25, animations: {
+            self.tx = offX
+            self.ty = 0
             self.applyTransform(animated: false)
+            self.neighborImageView.transform = .identity
         }, completion: { _ in
-            slideOut()
+            commitFallback()
         })
     }
 }
