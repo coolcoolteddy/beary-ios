@@ -68,6 +68,7 @@ enum BearyButtonStyle: Equatable {
 
     /// 默认标题字号（紧凑 14 / 常规 16，与搜索 CTA / 通知弹窗主副钮同款）。
     /// R8：常规款走 scaledFont，默认字号下与原值一致，大字号档跟随系统缩放。
+    /// 32 清单第 24 项：常规款改走 cappedFont（上限 20），不再被 44 高裁剪；紧凑款此前已是 cappedFont。
     /// P1-4：紧凑款（36 高固定容器）走 cappedFont 而非 scaledFont——沿审计 #31
     /// 口径（许愿墙 44 高标题框同款：固定高度容器配 cappedFont，上限 20，
     /// 行高不撑破容器）：默认字号下与原 14 完全一致，超大字号档截断到 20pt，
@@ -78,20 +79,21 @@ enum BearyButtonStyle: Equatable {
     var titleFont: UIFont {
         switch self {
         case .primaryPill:
-            return BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 16, weight: .semibold))
+            // 32 清单第 24 项：常规款走 cappedFont（上限 20），不再被 44 高裁剪。
+            return BearyDynamicType.cappedFont(for: UIFont.systemFont(ofSize: 16, weight: .semibold))
         case .secondaryOutline(let size):
             if size == .compact {
                 // P1-4：紧凑款 36 高固定容器，cappedFont 上限 20（默认上限，见
                 // BearyDynamicType.fixedContainerMaxPointSize），默认字号下 = 14 不变。
                 return BearyDynamicType.cappedFont(for: UIFont.systemFont(ofSize: 14, weight: .semibold))
             }
-            return BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 16, weight: .semibold))
+            return BearyDynamicType.cappedFont(for: UIFont.systemFont(ofSize: 16, weight: .semibold))
         case .destructiveOutline(let size):
             if size == .compact {
                 // P1-4：同上，紧凑款 cappedFont 上限 20，默认字号下 = 14 不变。
                 return BearyDynamicType.cappedFont(for: UIFont.systemFont(ofSize: 14, weight: .semibold))
             }
-            return BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 16, weight: .semibold))
+            return BearyDynamicType.cappedFont(for: UIFont.systemFont(ofSize: 16, weight: .semibold))
         case .iconCircleClose:
             return BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 15))
         }
@@ -157,7 +159,7 @@ class BearyButton: BearyHit44Button {
         layer.cornerRadius = style.cornerRadius
         layer.masksToBounds = true
         titleLabel?.font = style.titleFont
-        // R8：工厂钮一律跟随系统字号（紧凑款除外：P1-4 cappedFont 上限 20，见 titleFont）；
+        // R8：工厂钮一律跟随系统字号（32 清单第 24 项起常规款亦封顶：cappedFont 上限 20，见 titleFont；紧凑款此前已封顶）；
         // 调用方事后覆写 titleLabel?.font 时须自行重配 scaledFont/cappedFont + 本开关。
         titleLabel?.adjustsFontForContentSizeCategory = true
         switch style {
