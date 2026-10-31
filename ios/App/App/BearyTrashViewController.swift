@@ -815,11 +815,19 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate {
         }
         trashBusyIdentifiers.insert(identifier)
         setRowButtonBusy(sender, busy: true, busyTitle: "恢复中…", idleTitle: "恢复")
+        // 扫荡 B：同行另一钮（彻底删除）在途期间一并禁用，否则恢复在途时
+        // 点彻底删除会弹出确认框，确认后与恢复双请求齐飞（见 purge 确认处
+        // 的复验守卫）；标题不动，只禁点按，结束时与恢复钮一起恢复。
+        let purgeSibling = purgeEntries.first(where: { $0.trashValue.entryIdentifier == identifier })?.button
+        purgeSibling?.isEnabled = false
+        purgeSibling?.alpha = 0.5
         BearyAPI.shared.restoreTrashDetail(id: identifier) { [weak self] result in
             DispatchQueue.main.async {
                 guard let self = self else { return }
                 self.trashBusyIdentifiers.remove(identifier)
                 self.setRowButtonBusy(sender, busy: false, busyTitle: "恢复中…", idleTitle: "恢复")
+                purgeSibling?.isEnabled = true
+                purgeSibling?.alpha = 1
                 switch result {
                 case .success(let resp):
                     // iCity：恢复回原可见性——服务端返回 published/isPublic 时按其分流，
@@ -862,13 +870,25 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate {
         alert.addAction(UIAlertAction(title: "取消", style: .cancel, handler: nil))
         alert.addAction(UIAlertAction(title: "彻底删除", style: .destructive) { [weak self] _ in
             guard let self = self else { return }
+            // 扫荡 B：确认时再验一次 busy。入口处守卫拦不住已弹出的确认框：
+            // 框在屏时点恢复可正常在途，确认后若不复验，恢复与彻底删除
+            // 双请求齐飞，恢复成功后删除回 409 还会误弹“删除失败”。
+            // 复验拦住时直接收框、不发请求、不弹 toast（行已由恢复带走）。
+            guard !self.trashBusyIdentifiers.contains(identifier) else { return }
             self.trashBusyIdentifiers.insert(identifier)
             self.setRowButtonBusy(sender, busy: true, busyTitle: "删除中…", idleTitle: "彻底删除")
+            // 扫荡 B：同行恢复钮在途期间一并禁用（与 restoreTapped 对称），
+            // 标题不动，只禁点按，结束时与删除钮一起恢复。
+            let restoreSibling = self.restoreEntries.first(where: { $0.trashValue.entryIdentifier == identifier })?.button
+            restoreSibling?.isEnabled = false
+            restoreSibling?.alpha = 0.5
             BearyAPI.shared.purgeTrash(id: identifier) { [weak self] result in
                 DispatchQueue.main.async {
                     guard let self = self else { return }
                     self.trashBusyIdentifiers.remove(identifier)
                     self.setRowButtonBusy(sender, busy: false, busyTitle: "删除中…", idleTitle: "彻底删除")
+                    restoreSibling?.isEnabled = true
+                    restoreSibling?.alpha = 1
                     switch result {
                     case .success:
                         self.removeRow(identifier: identifier)
