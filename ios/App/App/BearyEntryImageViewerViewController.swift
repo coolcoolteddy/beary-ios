@@ -444,7 +444,12 @@ class BearyEntryImageViewerViewController: UIViewController, UIGestureRecognizer
             width: image.size.width * fit,
             height: image.size.height * fit
         )
-        return (image, fitRect.applying(imageView.transform))
+        // 关场起点必须是图在屏上的真实显示矩形：UIView transform 是绕
+        // imageView 中心（= view 中心）作用的，而 CGRect.applying 是绕坐标
+        // 原点作用——纯平移时两者恰好相等，捏合缩放后起点会整体错位、
+        // 临时图在动画第一帧就跳一下。convert 按图层 transform 换算，
+        // 本查看器只有平移＋缩放（无旋转），换算结果即精确显示矩形。
+        return (image, imageView.convert(fitRect, to: view))
     }
 
     /// 关场动画器读当前下标（currentIndex 本身是 private）。
