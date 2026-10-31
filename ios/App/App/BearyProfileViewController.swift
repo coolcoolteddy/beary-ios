@@ -308,6 +308,13 @@ class BearyProfileViewController: UIViewController {
     private var modulesProfileId: Int?
     /// 语料代次：每次刷新 +1；在途旧代次回包直接丢弃，防切账号后旧页覆盖新语料。
     private var modulesGeneration = 0
+    /// 提速：资料加载代次——每次 loadProfile +1。夜巡 / 模块的“本轮已起”
+    /// 标记按代次去重：首屏 viewDidLoad 先起、资料回包到达时不再重起；
+    /// 下拉刷新调 loadProfile 即换代次，回包仍正常重起。
+    private var profileLoadCycle = 0
+    private var nightPatrolStartedCycle: Int?
+    private var nightPatrolLoading = false
+    private var modulesStartedCycle: Int?
     /// 已拉到的作者条目（分页累积、按 id 去重）；未完成前 renderModules 全隐藏，
     /// 不拿半截语料画「空白 = 没写」——半截语料的空白是假空白，会撒谎。
     private var modulesCorpus: [Entry] = []
@@ -1828,6 +1835,14 @@ class BearyProfileViewController: UIViewController {
             // id 目标的标签列表不需要等 profile：日记 / 赞过按 id 直接拉。
             loadTab(forceReload: true)
         }
+        if targetUserIdValue != nil, isOwnProfile {
+            // 提速：夜巡（只读会话身份）与模块语料（按 id 拉作者 scope）
+            // 均不依赖资料回包，与资料 / 标签三路并行，不再串在
+            // handleProfileResult 之后；资料回包到达时由代次守卫去重、
+            // 不再重起。handle 目标（id 未知、本人与否未定）仍走回包路径。
+            loadNightPatrol()
+            scheduleModulesRefresh()
+        }
     }
 
     override func viewDidLayoutSubviews() {
@@ -2938,6 +2953,8 @@ class BearyProfileViewController: UIViewController {
     // MARK: - 数据：资料
 
     private func loadProfile() {
+        // 提速代次：每轮资料加载 +1，供夜巡 / 模块的本轮去重守卫用。
+        profileLoadCycle += 1
         // 夜巡先清后拉：换目标 / 换号时不闪上一位用户的脚印（私密夜巡尤其不可残留）。
         hideNightPatrol()
         if let targetId = targetUserIdValue {
@@ -2979,13 +2996,14 @@ class BearyProfileViewController: UIViewController {
             applyMode()
             if isOwnProfile {
                 // 夜巡为本人专属：资料回包后另拉夜巡（失败即隐藏，不 toast）；徽章架已删，不再拉徽章。
-                loadNightPatrol()
+                // 提速：本轮已在 viewDidLoad 先起时此处由代次守卫跳过，不重发。
+                loadNightPatrol(fromProfileResult: true)
             }
             // 批 D：签名（名字下方）与模块语料跟资料走同一回包；资料失败时
             // 不动旧模块（与 G12「保留整套旧头」同哲学，失败不清空已显内容）。
             renderSignature()
             applyProfileThemeTint()
-            scheduleModulesRefresh()
+            scheduleModulesRefresh(fromProfileResult: true)
             if targetHandleValue != nil {
                 // handle 目标的标签列表必须等 profile 解析出 id 才能拉。
                 loadTab(forceReload: true)
@@ -3254,11 +3272,18 @@ class BearyProfileViewController: UIViewController {
         nightHeightConstraint.isActive = true
     }
 
-    private func loadNightPatrol() {
+    private func loadNightPatrol(fromProfileResult: Bool = false) {
         guard isOwnProfile else { return }
+        // 提速去重：在途不重发；资料回包到达时若本轮已在 viewDidLoad 起过，不再重起。
+        if nightPatrolLoading { return }
+        if fromProfileResult, nightPatrolStartedCycle == profileLoadCycle { return }
+        nightPatrolStartedCycle = profileLoadCycle
+        nightPatrolLoading = true
         BearyAPI.shared.fetchNightPatrol { [weak self] result in
             DispatchQueue.main.async {
-                guard let strongSelf = self, strongSelf.isOwnProfile else { return }
+                guard let strongSelf = self else { return }
+                strongSelf.nightPatrolLoading = false
+                guard strongSelf.isOwnProfile else { return }
                 switch result {
                 case .success(let response):
                     // 防御过滤：本人视角原样；isOwnProfile 翻转的竞态下私密记录仍被滤掉。
@@ -3629,13 +3654,18 @@ class BearyProfileViewController: UIViewController {
 
     // MARK: 批 D —— 模块语料（作者 scope 全量分页）
 
-    private func scheduleModulesRefresh() {
+    private func scheduleModulesRefresh(fromProfileResult: Bool = false) {
         // 112 他人页口径：日记下方模块全去（写作统计／那年今日／随机漫步／
         // 地图／星图），故他人页不拉模块语料——作者 scope 分页请求一律不发；
         // 本人页原样。handle 目标在 profile 解析后才定本人与否，解析完成
         // 的 handleProfileResult 会再调一次本函数，届时本人页照常拉取。
         guard isOwnProfile else { return }
         guard let profileId = profile?.profileIdValue ?? targetUserIdValue else { return }
+        // 提速去重：资料回包到达时若本轮已在 viewDidLoad 起过同一目标的语料，不再重起
+        // （重起会 bump 代次、作废已在途的页，白白浪费首屏并行）；换目标 / 下拉刷新
+        // （代次已变）仍正常重起；其他调用点（改动后刷新）一律照常重起。
+        if fromProfileResult, modulesStartedCycle == profileLoadCycle, modulesProfileId == profileId { return }
+        modulesStartedCycle = profileLoadCycle
         if modulesProfileId != profileId {
             // 切账号 / 换目标：语料、随机上一次 id、展开态全复位，
             // 旧目标的随机卡绝不带到新目标首帧。113：失败态一并复位。
