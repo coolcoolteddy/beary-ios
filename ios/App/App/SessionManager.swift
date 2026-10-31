@@ -63,7 +63,7 @@ final class SessionManager {
         api.onUnauthorized = { [weak self] in
             guard let self = self else { return }
             self.purgeImageCacheForCurrentAccount()
-            self.purgeFeedCacheForCurrentAccount()
+            self.purgeLocalSnapshotsForCurrentAccount()
             self.sessionGeneration += 1
             self.currentUser = nil
             self.authUnknown = false
@@ -169,8 +169,8 @@ final class SessionManager {
     /// 显式退出：服务端会话已清后调（登出接口成功后），清本地用户态并通知界面。
     /// 同步递增 meSeq：在途旧 /me 成功回包到达时 seq 已变、被守卫丢弃，
     /// 不得把旧用户写回（登录/切号路径本就靠 refreshMe 调用递增，不动）。
-    /// 审计 P2-22：退出/注销时清该账号服务端派生落盘（日记缓存、回收站缓存、
-    /// 图片缓存）；草稿桶刻意保留——草稿是用户未发布的本地作品，退出即删
+    /// 审计 P2-22：退出/注销时清该账号服务端派生落盘（广场快照、时间线快照、
+    /// 日记缓存、回收站缓存、图片缓存）；草稿桶刻意保留——草稿是用户未发布的本地作品，退出即删
     /// 属丢数据，且草稿按账号分桶、换号不可见，留存情况在设置页账号操作卡下明示。
     func signOutLocally() {
         // 显式退出才清保管库：本函数只走显式登出路径（登录页 performLogout、
@@ -181,11 +181,7 @@ final class SessionManager {
             BearyAccountVault.shared.remove(userId: id)
         }
         purgeImageCacheForCurrentAccount()
-        purgeFeedCacheForCurrentAccount()
-        if let id = currentUser?.id {
-            BearyEntrySyncStore.purgeAccount(accountId: id)
-            BearyTrashSyncStore.purgeAccount(accountId: id)
-        }
+        purgeLocalSnapshotsForCurrentAccount()
         sessionGeneration += 1
         meSeq += 1
         api.bumpAuthEpoch()
@@ -203,12 +199,21 @@ final class SessionManager {
         BearyImageLoader.shared.purgeAccount(id)
     }
 
-    /// feedfast：退出/401 清态时清掉该账号的主页首屏缓存桶 + 冷启动桶提示
-    ///（与图片缓存同口径；切换账号不走这里，旧账号磁盘保留、仅由
-    /// feed 换桶隔离，切回可复用——见 BearyFeedCache 说明）。
-    private func purgeFeedCacheForCurrentAccount() {
+    /// 秒开-本地持久化：退出 / 401 清态时清掉该账号的全部日记快照，
+    /// 与图片缓存同口径；切换账号不走这里，旧账号磁盘保留、仅由
+    /// 桶隔离，切回可复用（见 BearyFeedCache 说明）。
+    /// 清单（缺一即私密内容留盘）：广场快照、时间线快照（含私密日记，
+    /// 此前无 purge 入口是本批补的缺口）、日落盘、回收站落盘，另加
+    /// 冷启动桶提示（forgetUserId，避免下次冷启动先画旧号桶）。
+    /// 401 口径变化（特意统一，不再只清广场）：401 即会话已死，与显式
+    /// 退出同等对待；唯一保留的区别仍是保管库 token 不删（见
+    /// signOutLocally 注释），切回死会话仍能走“重新登录”。
+    private func purgeLocalSnapshotsForCurrentAccount() {
         guard let id = currentUser?.id else { return }
         BearyFeedCache.purge(bucket: "\(id)")
+        BearyTimelineCache.purge(bucket: "\(id)")
+        BearyEntrySyncStore.purgeAccount(accountId: id)
+        BearyTrashSyncStore.purgeAccount(accountId: id)
         BearyFeedCache.forgetUserId()
     }
 

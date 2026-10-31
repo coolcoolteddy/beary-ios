@@ -932,8 +932,10 @@ final class BearyChromeViewController: UIViewController {
                 if userChanged {
                     // 账号隔离：先清时间线日缓存再重载（登录与退出两个方向都覆盖；
                     // 时间线 VC 换账号不重建，只 reload 会先闪出旧账号的日缓存）。
+                    // 秒开-本地持久化：切号走缓存优先（新号快照先画 + 静默刷新，
+                    // 无快照时该方法内部回落 reloadTimeline），不再强制清表重拉。
                     if let tl = self.timelineVC { tl.clearDayCacheForAccountChange() }
-                    if let tl = self.timelineVC, tl.isViewLoaded { tl.reloadTimeline() }
+                    if let tl = self.timelineVC, tl.isViewLoaded { tl.loadTimelineCachedOrRefresh() }
                     if let nt = self.notifVC, nt.isViewLoaded { nt.refresh() }
                     if let feed = self.feedVC, feed.isViewLoaded { feed.refreshFeed() }
                 }
@@ -945,8 +947,12 @@ final class BearyChromeViewController: UIViewController {
                 if userChanged {
                     // 账号隔离：先清时间线日缓存再重载（登录与退出两个方向都覆盖；
                     // 时间线 VC 换账号不重建，只 reload 会先闪出旧账号的日缓存）。
+                    // 秒开-本地持久化：退出翻转同样走缓存优先——登出时本号快照
+                    // 已由 SessionManager 清掉，故此处无快照即回落 reloadTimeline
+                    //（游客态），不会把旧号快照画给游客；切号到另一已登录号时
+                    // 则先画该号自己的快照。
                     if let tl = self.timelineVC { tl.clearDayCacheForAccountChange() }
-                    if let tl = self.timelineVC, tl.isViewLoaded { tl.reloadTimeline() }
+                    if let tl = self.timelineVC, tl.isViewLoaded { tl.loadTimelineCachedOrRefresh() }
                     if let nt = self.notifVC, nt.isViewLoaded { nt.refresh() }
                     if let feed = self.feedVC, feed.isViewLoaded { feed.refreshFeed() }
                 }
