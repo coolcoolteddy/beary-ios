@@ -1490,6 +1490,10 @@ final class BearySettingsViewController: UIViewController {
                         self.setAccountActionDeleteHidden(userValue.isAdmin == true)
                         self.loadPlusDetail()
                         self.loadSessions()
+                        // 切换卡跟随用户信息刷新（首次进页时 viewWillAppear 已跑
+                        // 在异步 /me 之前，缓存路径靠 viewWillAppear、非缓存
+                        // 路径靠这里，否则卡片首屏缺失）。
+                        self.refreshAccountSwitchSection()
                     case .failure(let error):
                         if case .cancelled = error { return }
                         // 静默刷新失败：保持缓存内容不变，不显示 failureWrap。
@@ -1523,6 +1527,7 @@ final class BearySettingsViewController: UIViewController {
                     self.accountSecurityWrap.isHidden = false
                     self.accountActionWrap.isHidden = false
                     self.fillIdCard(user: userValue)
+                    self.refreshAccountSwitchSection()
                     // 注销入口：只用 /me 下发的 is_admin（服务端算出），客户端不写 id 判定；
                     // 服务端 403 admin_cannot_delete 仍是最终判定（见 delete 失败映射）。
                     // C3：注销行隐藏（行包容器 + 其前分隔线一并藏，见 setAccountActionDeleteHidden）。
