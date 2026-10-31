@@ -819,7 +819,7 @@ final class BearyDraftBoxViewController: UIViewController {
         metaRow.spacing = 8
         metaRow.alignment = .center
         let wordLabel = UILabel()
-        wordLabel.text = "\(draftValue.content.count) 字"
+        wordLabel.text = "\(BearyText.inlineVisibleCount(of: draftValue.content)) 字"
         wordLabel.font = UIFont.systemFont(ofSize: 12)
         wordLabel.textColor = BearyColors.gray
         wordLabel.setContentCompressionResistancePriority(.required, for: .horizontal)

@@ -757,6 +757,90 @@ enum BearyText {
         "sprout": "慢慢来", "tea": "喝杯热茶", "umbrella": "给你撑伞", "wish": "愿你如愿",
     ]
 
+    /// 内联心情记号（编辑器熊脸图 ↔ 落库纯文本的中间层）：
+    /// 编辑器里心情是图片附件，正文/标题落库与后端都只存纯文本，故附件在
+    /// 发出/存草稿时转成记号 `[mood:<key>]`，读回编辑器/卡片/详情时再转回图。
+    /// 只有熊脸 32 只在内（后 8 只非熊脸已删，不进记号集）；未知 key 的记号
+    /// 原样当文字，不凭空变图。用户手打的同形文字也会在读回时变图，
+    /// 这是记号方案固有的撞形口径，已在交回说明里写明。
+    static let bearMoodKeys: [String] = [
+        "agree", "happy", "applause", "cheer", "comfort", "confused", "love", "determined",
+        "facepalm", "shy", "goodnight", "hug", "wink", "idea", "kiss", "thinking",
+        "listening", "lonely", "speechless", "nope", "surprised", "pat", "peek", "sleepy",
+        "proud", "shrug", "sorry", "cry", "angry", "thanks", "zap", "wave",
+    ]
+    static let inlineMoodKeyAttribute = NSAttributedString.Key(rawValue: "BearyInlineMoodKey")
+    static func inlineMoodToken(for key: String) -> String? {
+        guard bearMoodKeys.contains(key) else { return nil }
+        return "[mood:\(key)]"
+    }
+    /// 附件 → 记号：附件字符本身是 U+FFFC，绝不能原样落库；无记号属性的
+    /// 未知附件直接跳过，不让占位符污染正文。
+    static func inlinePlainText(from attributed: NSAttributedString?) -> String {
+        guard let attributed = attributed, attributed.length > 0 else { return "" }
+        var out = ""
+        let str = attributed.string as NSString
+        attributed.enumerateAttributes(in: NSRange(location: 0, length: attributed.length), options: []) { attrs, range, _ in
+            if let key = attrs[inlineMoodKeyAttribute] as? String, let token = inlineMoodToken(for: key) {
+                out += token
+            } else if attrs[.attachment] == nil {
+                out += str.substring(with: range)
+            }
+        }
+        return out
+    }
+    /// 记号 → 附件：字号跟随传入字体（标题 17 粗体 / 正文 16），基线按 descender 对齐。
+    static func inlineAttachment(for key: String, font: UIFont, dark: Bool) -> NSAttributedString? {
+        guard bearMoodKeys.contains(key), let image = BearyEmoteImages.image(for: key, dark: dark) else { return nil }
+        let attachment = NSTextAttachment()
+        attachment.image = image
+        attachment.bounds = CGRect(x: 0, y: font.descender, width: font.pointSize, height: font.pointSize)
+        attachment.accessibilityLabel = moodNames[key]
+        let result = NSMutableAttributedString(attachment: attachment)
+        result.addAttribute(inlineMoodKeyAttribute, value: key, range: NSRange(location: 0, length: 1))
+        result.addAttribute(.font, value: font, range: NSRange(location: 0, length: 1))
+        return result
+    }
+    static func inlineAttributedText(from plain: String, font: UIFont, color: UIColor, paragraphStyle: NSParagraphStyle?, dark: Bool) -> NSAttributedString {
+        var attrs: [NSAttributedString.Key: Any] = [.font: font, .foregroundColor: color]
+        if let paragraphStyle = paragraphStyle { attrs[.paragraphStyle] = paragraphStyle }
+        guard let regex = try? NSRegularExpression(pattern: "\\[mood:([a-z]+)\\]", options: []) else {
+            return NSAttributedString(string: plain, attributes: attrs)
+        }
+        let ns = plain as NSString
+        let result = NSMutableAttributedString()
+        var cursor = 0
+        for match in regex.matches(in: plain, options: [], range: NSRange(location: 0, length: ns.length)) {
+            let range = match.range
+            if range.location > cursor {
+                result.append(NSAttributedString(string: ns.substring(with: NSRange(location: cursor, length: range.location - cursor)), attributes: attrs))
+            }
+            let key = ns.substring(with: match.range(at: 1))
+            if let attachment = inlineAttachment(for: key, font: font, dark: dark) {
+                result.append(attachment)
+            } else {
+                result.append(NSAttributedString(string: ns.substring(with: range), attributes: attrs))
+            }
+            cursor = range.location + range.length
+        }
+        if cursor < ns.length {
+            result.append(NSAttributedString(string: ns.substring(from: cursor), attributes: attrs))
+        }
+        return result
+    }
+    /// 可见字数：一个记号只算 1 字（图占 1 格），供草稿箱字数等纯文本面用；
+    /// 编辑器内直接用 attributed 长度（附件本就是 1 格），不用本函数。
+    static func inlineVisibleCount(of plain: String) -> Int {
+        guard let regex = try? NSRegularExpression(pattern: "\\[mood:([a-z]+)\\]", options: []) else { return plain.count }
+        let ns = plain as NSString
+        var count = plain.count
+        for match in regex.matches(in: plain, options: [], range: NSRange(location: 0, length: ns.length)) {
+            let key = ns.substring(with: match.range(at: 1))
+            if bearMoodKeys.contains(key) { count -= (match.range.length - 1) }
+        }
+        return count
+    }
+
     /// 天气 key → 中文名（与网页 WX_DEFS 同集 9 种）。
     static let weatherNames: [String: String] = [
         "sun": "晴", "cloud": "多云", "cloudy": "阴", "rain": "雨", "snow": "雪",
