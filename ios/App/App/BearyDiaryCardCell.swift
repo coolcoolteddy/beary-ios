@@ -1216,6 +1216,11 @@ class BearyDiaryCardCell: UITableViewCell {
         ephemeralBorderLayer.strokeColor = BearyColors.line.cgColor
         // 首页模式：心情与公开行边框需重刷（chip 边框已由 BearyEmoteChipView
         // 自带 trait 重刷，此处不再调 renderEmotes——两套并存已摘掉一套）。
+        // 旧心情改位：主题切换时正文末尾心情附件需换深浅变体，故两模式
+        // 都重建正文（仅换附件变体，折叠态与行数不动）。
+        if previousTraitCollection?.userInterfaceStyle != traitCollection.userInterfaceStyle, let e = currentEntry {
+            contentLabel.attributedText = bodyWithTrailingMood(e.content ?? "", fontSize: cardMode == .feed ? 16 : 15, moodKey: e.mood)
+        }
         guard cardMode == .feed else { return }
         if currentEntry == nil { return }
         if previousTraitCollection?.userInterfaceStyle != traitCollection.userInterfaceStyle {
@@ -1412,6 +1417,23 @@ class BearyDiaryCardCell: UITableViewCell {
         return NSAttributedString(string: text, attributes: attrs)
     }
 
+    /// 旧日记心情改位：心情不再单独贴在作者行，改跟在正文最后一个字
+    /// 后面——用静态熊图附件直接缀在正文 attributed 串末尾（紧贴末字、
+    /// 无空格）；无心情时原样返回。深浅变体按当前 trait 取，主题切换
+    /// 时由 trait handler 重建正文换变体。
+    private func bodyWithTrailingMood(_ text: String, fontSize: CGFloat, moodKey: String?) -> NSAttributedString {
+        let base = attributedBody(text, fontSize: fontSize)
+        guard let key = moodKey, !key.isEmpty,
+              let image = BearyEmoteImages.image(for: key, dark: traitCollection.userInterfaceStyle == .dark) else { return base }
+        let font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: fontSize))
+        let attachment = NSTextAttachment()
+        attachment.image = image
+        attachment.bounds = CGRect(x: 0, y: font.descender, width: font.pointSize, height: font.pointSize)
+        let result = NSMutableAttributedString(attributedString: base)
+        result.append(NSAttributedString(attachment: attachment))
+        return result
+    }
+
     /// R4 App：日记标题渲染（两路 configure 共用，模型 Entry.title 由 A4-App
     /// 已透传，本处只做渲染、不加模型字段）。空白/缺失标题时 text 清空且
     /// isHidden，stack 不留空行、不预留高度；卡片高度随内容。
@@ -1530,37 +1552,15 @@ class BearyDiaryCardCell: UITableViewCell {
         }
     }
 
-    /// F9：心情 = 灰字 + 熊图 20px；无心情时整行隐藏。深浅变体由播放器内部切换。
+    /// 旧心情改位：作者行心情位一律隐藏，心情改缀正文末尾
+    /// （见 bodyWithTrailingMood）；旧播放器视图一并摘掉。
     private func refreshMoodView() {
-        guard let moodKey = currentEntry?.mood, let moodName = BearyText.moodNames[moodKey] else {
-            moodStack.isHidden = true
-            moodLabel.text = nil
-            moodEmoteView?.removeFromSuperview()
-            moodEmoteView = nil
-            return
-        }
-        moodStack.isHidden = false
-        moodLabel.text = moodName
-        setMoodEmote(key: moodKey)
+        moodStack.isHidden = true
+        moodLabel.text = nil
+        moodEmoteView?.removeFromSuperview()
+        moodEmoteView = nil
     }
 
-    /// 卡片心情位：key 不变时复用播放器（深浅由其内部切换），key 变了才重建，尺寸仍为 20（宽约束 999 与原口径一致）。
-    private func setMoodEmote(key: String) {
-        if let current = moodEmoteView, current.emoteKey == key {
-            return
-        }
-        moodEmoteView?.removeFromSuperview()
-        let emoteView = BearyEmoteView(key: key, animated: false)
-        emoteView.translatesAutoresizingMaskIntoConstraints = false
-        moodStack.insertArrangedSubview(emoteView, at: 0)
-        let width = emoteView.widthAnchor.constraint(equalToConstant: 20)
-        width.priority = UILayoutPriority(999)
-        NSLayoutConstraint.activate([
-            width,
-            emoteView.heightAnchor.constraint(equalToConstant: 20),
-        ])
-        moodEmoteView = emoteView
-    }
 
     /// E3：天气 key → Lottie 资源 key（编辑器选择器同款映射，唯 night 对应 moon）。
     private static func weatherLottieKey(for weatherKey: String) -> String {
@@ -1776,22 +1776,13 @@ class BearyDiaryCardCell: UITableViewCell {
             weatherImageView.image = nil
             weatherImageView.isHidden = true
         }
-        // 心情标签（表情 20 + 心情名；深浅变体由播放器内部切换）。
-        if let moodKey = entry.mood, !moodKey.isEmpty, let moodName = BearyText.moodNames[moodKey] {
-            setMoodEmote(key: moodKey)
-            moodLabel.text = moodName
-            moodStack.isHidden = false
-        } else {
-            moodEmoteView?.removeFromSuperview()
-            moodEmoteView = nil
-            moodLabel.text = nil
-            moodStack.isHidden = true
-        }
+        // 旧心情改位：作者行心情位一律隐藏，心情缀正文末尾。
+        refreshMoodView()
         // R4 App：日记标题在作者行（titleStack）与正文之间，空标题不占位。
         updateEntryTitle(entry.title)
         // 正文 + 300 字折叠（网页 renderPublic foldLong 口径；折叠态收起 6 行）。
         let bodyText = entry.content ?? ""
-        contentLabel.attributedText = attributedBody(bodyText, fontSize: 15)
+        contentLabel.attributedText = bodyWithTrailingMood(bodyText, fontSize: 15, moodKey: entry.mood)
         foldApplies = bodyText.count > 300
         foldButton.isHidden = !foldApplies
         if foldApplies {
@@ -1946,7 +1937,7 @@ class BearyDiaryCardCell: UITableViewCell {
 
     private func updateContentAndFold() {
         let fullText = currentEntry?.content ?? ""
-        contentLabel.attributedText = attributedBody(fullText, fontSize: 16)
+        contentLabel.attributedText = bodyWithTrailingMood(fullText, fontSize: 16, moodKey: currentEntry?.mood)
         let width = contentLabel.bounds.width > 0 ? contentLabel.bounds.width : rightColumnWidthEstimate()
         let overflow = measuredFoldOverflow(contentWidth: width)
         foldOverflow = overflow
