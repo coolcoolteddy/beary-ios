@@ -1320,6 +1320,11 @@ final class BearyDraftBoxViewController: UIViewController {
         guard !UIAccessibility.isReduceMotionEnabled,
               let cardView = cardEntries.first(where: { $0.draftValue.draftId == draftValue.draftId })?.button,
               cardView.bounds.height > 0 else {
+            // 113：减动效路径此前不禁用任何按钮，连点可重复进删；与动画路径
+            // 口径对齐：删钮与卡片一并禁用（回调幂等不动，finishDelete 内的
+            // 校验与失败恢复口径不变；失败时 renderDrafts 重建卡片，禁用不残留）。
+            sender.isEnabled = false
+            cardEntries.first(where: { $0.draftValue.draftId == draftValue.draftId })?.button.isUserInteractionEnabled = false
             finishDelete(draftValue: draftValue)
             return
         }

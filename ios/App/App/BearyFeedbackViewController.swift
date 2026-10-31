@@ -681,6 +681,9 @@ final class BearyFeedbackViewController: UIViewController, UITextViewDelegate, P
         }
         pendingMailKind = .submit
         if zipReady {
+            // 113：双击提交守卫——zip 已就绪时直接弹撰写框，连点会叠 present；
+            // 已有弹出层时直接返回（2.1 秒延迟分支原有守卫不动）。
+            guard presentedViewController == nil else { return }
             presentMailComposer()
         } else {
             // 清理后二次提交先重生成（不直接判失败）；重生成失败才走无 zip 发送。
