@@ -1844,7 +1844,7 @@ class BearyProfileViewController: UIViewController {
         // 皇冠对齐首行 cap 中心（非整块中心）：中心锚点常量 = 基线 − cap/2 −
         // label 半高；多行名时皇冠跟首行走。变化守卫防布局环。
         if let crownCenterY = crownCenterYConstraint, nameLabel.bounds.height > 0 {
-            let target = nameLabel.font.ascent - nameLabel.font.capHeight / 2 - nameLabel.bounds.height / 2
+            let target = nameLabel.font.ascender - nameLabel.font.capHeight / 2 - nameLabel.bounds.height / 2
             if abs(crownCenterY.constant - target) > 0.01 {
                 crownCenterY.constant = target
             }
