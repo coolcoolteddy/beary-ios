@@ -15,7 +15,7 @@
 // 本人卡右上角 21pt 灰色小地球（28 框、44 热区，对齐作者行；右列右缩进让出 28+8，
 // 以内容列为基准即 −36，等价于首页以整屏为基准的 −52，屏上几何一致）；
 // 编辑／删除走长按系统上下文菜单（C6 同款，卡片内无 ⋯ 钮，关闭钮保留）。
-// 限时：1.5pt 虚线框圆角 16、内容列内缩 8/6 + 倒计时灰字行（作者行下方、标题上方）。
+// 限时：1.5pt 虚线框圆角 16、左右内缩 8／顶 +6／底按右列底 +16 + 倒计时灰字行（作者行下方、标题上方）。
 // 纵向间距（右列内）：@→作者 4、作者→限时 4、限时→标题 4、标题→正文 4、
 // 正文→引用 10、引用→图片 10、图片→操作行 10、操作行→回应行 10、右列底→底线 12、
 // 底线下 24 留白；右列顶：无 @ 行 22、有 @ 行 23。
@@ -335,7 +335,8 @@ final class BearyDetailViewController: UIViewController {
 
     /// 限时详情虚线边框（CAShapeLayer，1.5pt dashed、line 色、圆角 16；
     /// 批 B：按首页卡片口径按内容列内缩 8/6 矩形重画路径（旧详情按整列 bounds，
-    /// 框贴边；现与卡片一致），主题切换重刷描边色；插在 contentColumnView
+    /// 框贴边；现与卡片一致）；109：框底改按右列底 +16 收底（见
+    /// updateEphemeralBorderPath），主题切换重刷描边色；插在 contentColumnView
     /// 图层最底层，不盖内容；存活期底线藏、边框代之）。
     private let ephemeralBorderLayer: CAShapeLayer = {
         let layer = CAShapeLayer()
@@ -1211,8 +1212,26 @@ final class BearyDetailViewController: UIViewController {
         guard !ephemeralBorderLayer.isHidden else { return }
         ephemeralBorderLayer.strokeColor = BearyColors.line.cgColor
         ephemeralBorderLayer.frame = contentColumnView.bounds
-        // 首页卡片同款：内缩 8/6 矩形（旧详情按整列 bounds，框贴边）。
-        ephemeralBorderLayer.path = UIBezierPath(roundedRect: contentColumnView.bounds.insetBy(dx: 8, dy: 6), cornerRadius: 16).cgPath
+        // 109：框顶仍按内容列 +6、左右内缩 8；框底改按右列底 +16 收底
+        // （rightStack 是 contentColumnView 的直接子视图，frame.maxY 即列内坐标）。
+        // 此前按内容列 insetBy(dx:8, dy:6)：框底 = 右列底 +32（底线约束：
+        // 右列底→底线 12 + 线高 2 + 线下 24 = 38，框底 = 列底 −6），
+        // 框顶在右列顶上方 16，上下留白不对称。底线约束、非限时态、
+        // 首页卡片均不动；首帧未布局时（右列 frame 仍为 0）沿用旧内缩矩形，
+        // viewDidLayoutSubviews 会按实测 frame 重画。
+        let boxTop = contentColumnView.bounds.minY + 6
+        let boxRect: CGRect
+        if rightStack.frame.maxY > 0 {
+            boxRect = CGRect(
+                x: contentColumnView.bounds.minX + 8,
+                y: boxTop,
+                width: contentColumnView.bounds.width - 16,
+                height: rightStack.frame.maxY + 16 - boxTop
+            )
+        } else {
+            boxRect = contentColumnView.bounds.insetBy(dx: 8, dy: 6)
+        }
+        ephemeralBorderLayer.path = UIBezierPath(roundedRect: boxRect, cornerRadius: 16).cgPath
     }
 
     /// 作者行右侧显隐：本人卡显小地球、右列右缩进 −36 让位；他人／游客无地球、
