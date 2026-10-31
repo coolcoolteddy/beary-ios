@@ -1512,6 +1512,39 @@ final class BearySettingsViewController: UIViewController {
 
     // MARK: - 加载
 
+    /// 116 数据填入动效：文案变化时只淡入该元素本身（alpha 0→1、
+    /// 0.25s，不动 transform／布局、不重建节点、不缩放弹一下）；同值
+    /// 不赋值不重播；减动效或未进窗口时直设终值。容器首次出现时
+    /// 只淡入容器本身，已可见时不重播。
+    private func setLabelTextFaded(_ label: UILabel, _ text: String) {
+        guard label.text != text else { return }
+        label.text = text
+        guard !UIAccessibility.isReduceMotionEnabled, label.window != nil else {
+            label.alpha = 1
+            return
+        }
+        label.alpha = 0
+        UIView.animate(withDuration: 0.25, delay: 0, options: [.curveEaseOut, .beginFromCurrentState], animations: {
+            label.alpha = 1
+        })
+    }
+
+    private func fadeView(_ view: UIView) {
+        guard !UIAccessibility.isReduceMotionEnabled, view.window != nil else {
+            view.alpha = 1
+            return
+        }
+        view.alpha = 0
+        UIView.animate(withDuration: 0.25, delay: 0, options: [.curveEaseOut, .beginFromCurrentState], animations: {
+            view.alpha = 1
+        })
+    }
+
+    private func fadeViewIfAppearing(_ view: UIView, wasHidden: Bool) {
+        guard wasHidden, !view.isHidden else { return }
+        fadeView(view)
+    }
+
     private func loadAll() {
         guard !isLoadingMe else { return }
         isLoadingMe = true
@@ -1580,9 +1613,16 @@ final class BearySettingsViewController: UIViewController {
                         return
                     }
                     self.meUser = userValue
+                    // 116：三组容器随 /me 到达首次出现时只淡入容器本身。
+                    let contentWasHidden = self.contentWrap.isHidden
+                    let securityWasHidden = self.accountSecurityWrap.isHidden
+                    let actionWasHidden = self.accountActionWrap.isHidden
                     self.contentWrap.isHidden = false
                     self.accountSecurityWrap.isHidden = false
                     self.accountActionWrap.isHidden = false
+                    self.fadeViewIfAppearing(self.contentWrap, wasHidden: contentWasHidden)
+                    self.fadeViewIfAppearing(self.accountSecurityWrap, wasHidden: securityWasHidden)
+                    self.fadeViewIfAppearing(self.accountActionWrap, wasHidden: actionWasHidden)
                     self.fillIdCard(user: userValue)
                     self.refreshAccountSwitchSection()
                     // 注销入口：只用 /me 下发的 is_admin（服务端算出），客户端不写 id 判定；
@@ -1606,9 +1646,10 @@ final class BearySettingsViewController: UIViewController {
         let emailPrefix = (user.email ?? "").components(separatedBy: "@").first ?? ""
         let displayName = !name.isEmpty ? name : (!emailPrefix.isEmpty ? emailPrefix : "–")
         // F5：网页 heroName 就是名字本身，不带「你好，」前缀。
-        heroNameLabel.text = displayName
-        heroEmailLabel.text = user.email ?? "–"
-        avatarInitialLabel.text = String(displayName.prefix(1))
+        // 116：ID 卡各文案随 /me 到达变化时只淡入该 label 本身。
+        setLabelTextFaded(heroNameLabel, displayName)
+        setLabelTextFaded(heroEmailLabel, user.email ?? "–")
+        setLabelTextFaded(avatarInitialLabel, String(displayName.prefix(1)))
         avatarImageView.image = nil
         // 审计追加：与编辑页同法——/me 下发的 avatar 本就是 data:image;base64，
         // 直接解码显示，不再跳过 data: 只剩首字母占位；解码失败回落原路径。
@@ -1620,10 +1661,10 @@ final class BearySettingsViewController: UIViewController {
         } else if let avatar = user.avatar, !avatar.isEmpty {
             avatarImageView.bearySetImage(url: BearyImageURLs.avatarURL(avatar))
         }
-        idCreatedLabel.text = BearyAccountText.dateString(ms: user.createdAt)
+        setLabelTextFaded(idCreatedLabel, BearyAccountText.dateString(ms: user.createdAt))
         // ID 卡会员行：只留状态词（Plus 会员 / 普通用户），不走 plus-detail；
         // 全修 3-2：到期日、永久、内测限免一律只留在 Plus 组，不在此重复。
-        idPlusLabel.text = user.plus == true ? "Plus 会员" : "普通用户"
+        setLabelTextFaded(idPlusLabel, user.plus == true ? "Plus 会员" : "普通用户")
         // ID 行：现行 /me 无 serial_id 时不编造；有则优先显示，否则 @handle，再无则数字 id。
         // F5：字距 2（网页 id-val letter-spacing:2px）走 attributedText。
         let idText: String
@@ -1636,7 +1677,10 @@ final class BearySettingsViewController: UIViewController {
         } else {
             idText = "–"
         }
+        // 116：ID 号变化时只淡入该 label（字距属性不变，只换文案）。
+        let oldIdText = idValueLabel.attributedText?.string
         idValueLabel.attributedText = NSAttributedString(string: idText, attributes: [.kern: 2])
+        if oldIdText != idText { fadeView(idValueLabel) }
     }
 
     // C4：fillAccountRows 已随旧账户组删除（显示名称 / 用户名 / 邮箱 /
@@ -1665,7 +1709,7 @@ final class BearySettingsViewController: UIViewController {
                     }
                     if case .cancelled = error { return }
                     if self.plusDetail != nil { return }
-                    self.plusStatusLabel.text = "加载失败"
+                    self.setLabelTextFaded(self.plusStatusLabel, "加载失败")
                     self.grantsLoadFailed = true
                     self.rebuildGrants(grants: nil, failed: true)
                 }
@@ -1677,30 +1721,37 @@ final class BearySettingsViewController: UIViewController {
         let now = Int(Date().timeIntervalSince1970 * 1000)
         let permanent = detail.permanent == true
         let effective = detail.effectiveUntil ?? 0
+        // 116：Plus 组各文案随数据到达变化时只淡入该 label 本身（文案
+        // 先算后一次赋值，分支逻辑与原口径一字不动）。
+        let statusText: String
         if permanent {
-            plusStatusLabel.text = "Plus 会员 · 永久"
+            statusText = "Plus 会员 · 永久"
         } else if effective > now {
-            plusStatusLabel.text = "Plus 会员 · 至 " + BearyAccountText.dateString(ms: effective)
+            statusText = "Plus 会员 · 至 " + BearyAccountText.dateString(ms: effective)
         } else {
-            plusStatusLabel.text = "普通用户"
+            statusText = "普通用户"
         }
+        setLabelTextFaded(plusStatusLabel, statusText)
         let freeUntil = detail.freeUntil ?? 0
         if freeUntil > 0 {
+            let freeRowWasHidden = plusFreeRow.isHidden
             plusFreeWrapper?.isHidden = false
             plusFreeRow.isHidden = false
             if freeUntil > now {
-                plusFreeLabel.text = "全体内测用户免费 · 至 " + BearyAccountText.dateString(ms: freeUntil)
+                setLabelTextFaded(plusFreeLabel, "全体内测用户免费 · 至 " + BearyAccountText.dateString(ms: freeUntil))
             } else {
-                plusFreeLabel.text = "已结束 · " + BearyAccountText.dateString(ms: freeUntil) + " 到期"
+                setLabelTextFaded(plusFreeLabel, "已结束 · " + BearyAccountText.dateString(ms: freeUntil) + " 到期")
             }
+            fadeViewIfAppearing(plusFreeRow, wasHidden: freeRowWasHidden)
         } else {
             // 网页口径：free_until 为 0 时整行隐藏（藏包容器，见 makeGroupCard）。
             plusFreeWrapper?.isHidden = true
             plusFreeRow.isHidden = true
         }
         let personal = detail.personalUntil ?? 0
+        let personalText: String
         if permanent {
-            plusPersonalLabel.text = "永久会员"
+            personalText = "永久会员"
         } else if personal > now {
             var text = "至 " + BearyAccountText.dateString(ms: personal)
             if freeUntil > 0 && personal > freeUntil {
@@ -1709,10 +1760,11 @@ final class BearySettingsViewController: UIViewController {
             } else if freeUntil > now {
                 text += " · 与限免期重叠"
             }
-            plusPersonalLabel.text = text
+            personalText = text
         } else {
-            plusPersonalLabel.text = "暂无（好友注册并绑定邀请码，双方各得 +30 天）"
+            personalText = "暂无（好友注册并绑定邀请码，双方各得 +30 天）"
         }
+        setLabelTextFaded(plusPersonalLabel, personalText)
         rebuildGrants(grants: detail.grants, failed: false)
     }
 
@@ -1742,9 +1794,9 @@ final class BearySettingsViewController: UIViewController {
                     // 用户可见完整登录史，不过滤）；activeCount 缺失时才回落全量计数，此时不标
                     // “（活跃）”（回落值含过期行，标活跃会误导）。
                     if let active = resp.activeCount {
-                        self.deviceCountLabel.text = "共 \(active) 台设备（活跃）"
+                        self.setLabelTextFaded(self.deviceCountLabel, "共 \(active) 台设备（活跃）")
                     } else {
-                        self.deviceCountLabel.text = "共 \(list.count) 台设备"
+                        self.setLabelTextFaded(self.deviceCountLabel, "共 \(list.count) 台设备")
                     }
                     self.rebuildSessions(sessions: list, failed: false)
                 case .failure(let error):
