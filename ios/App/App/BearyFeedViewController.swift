@@ -10,6 +10,19 @@ import UIKit
 // 图片条 216 高按宽高比定宽、圆角 12、间距 8、横向滚动；正文超 300 字且实测超 6 行才折叠在 6 行处。
 // 颜色只用 BearyColors；不新增玻璃效果；不碰草稿逻辑与通知角标数据。
 
+/// 110 扫查：首页表专用滚动视图。首页表 delaysContentTouches=false
+/// （按钮按下立即响应）时，从卡片点赞/收藏等小按钮上起滑同样滑不动——
+/// 系统默认 touchesShouldCancel 对 UIControl 返回 false（个人页照片墙
+/// 同款，见 BearyProfileTableView；首页旧注释“canCancel 可取消按钮跟踪”
+/// 只对非 UIControl 成立，对按钮不成立）。本子类一律返回 true：拖动
+/// 即取消按钮跟踪并滚动，点按不动仍正常触发；cell 本身不是 UIControl，
+/// 卡片点按/行选中不受影响。只改本页表。
+final class BearyFeedTableView: UITableView {
+    override func touchesShouldCancel(in view: UIView) -> Bool {
+        return true
+    }
+}
+
 class BearyFeedViewController: UIViewController {
 
     /// 点卡片或点图片条都走它，传整条 Entry。
@@ -136,7 +149,7 @@ class BearyFeedViewController: UIViewController {
     // MARK: - 视图
 
     private lazy var tableView: UITableView = {
-        let tv = UITableView(frame: .zero, style: .plain)
+        let tv = BearyFeedTableView(frame: .zero, style: .plain)
         tv.translatesAutoresizingMaskIntoConstraints = false
         tv.backgroundColor = BearyColors.bg
         tv.separatorStyle = .none

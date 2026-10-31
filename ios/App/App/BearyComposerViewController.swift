@@ -100,6 +100,17 @@ private final class BearyBodyTextView: UITextView {
     }
 }
 
+/// 110 扫查：编辑器天气条专用滚动视图。天气条 delaysContentTouches=false
+/// （chip 点按立即响应）时，从天气 chip（UIButton）上起滑同样滑不动——
+/// 系统默认 touchesShouldCancel 对 UIControl 返回 false（个人页照片墙
+/// 同款，见 BearyProfileTableView）。本子类一律返回 true：拖动即取消
+/// chip 跟踪并横滑，点按不动仍正常选中；不改 chip 样式与选中逻辑。
+final class BearyWeatherScrollView: UIScrollView {
+    override func touchesShouldCancel(in view: UIView) -> Bool {
+        return true
+    }
+}
+
 final class BearyComposerViewController: UIViewController, UITextViewDelegate, PHPickerViewControllerDelegate, UIGestureRecognizerDelegate {
 
     // MARK: - 公开接口
@@ -460,7 +471,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     private let imageUndoLabel = UILabel()
     private let imageUndoButton = BearyHit44Button(type: .system)
     // 天气（图标 + 名 chip，首项“无”，选中墨色边框）
-    private let weatherScrollView = UIScrollView()
+    private let weatherScrollView = BearyWeatherScrollView()
     private let weatherStackView = UIStackView()
     // 状态行：编辑倒计时 + 草稿状态 + 字数圆环
     private let statusRow = UIStackView()
