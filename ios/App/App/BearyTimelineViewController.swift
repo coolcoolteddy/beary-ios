@@ -409,7 +409,7 @@ final class BearyCalendarDayButton: UIButton {
             numberLabel.font = UIFont.boldSystemFont(ofSize: 15)
             numberLabel.backgroundColor = .clear
             numberLabel.layer.borderWidth = 1.5
-            numberLabel.layer.borderColor = BearyColors.orange.cgColor
+            numberLabel.layer.bearyDynamicBorderColor = BearyColors.orange
         } else if !day.isEnabled {
             numberLabel.textColor = BearyCalendarDayButton.disabledTextColor
             numberLabel.font = UIFont.systemFont(ofSize: 15)
@@ -454,7 +454,7 @@ final class BearyCalendarCardView: UIView {
         super.init(frame: frame)
         backgroundColor = BearyColors.surface
         layer.borderWidth = 1
-        layer.borderColor = BearyColors.line.cgColor
+        layer.bearyDynamicBorderColor = BearyColors.line
         layer.cornerRadius = 14
         layer.masksToBounds = true
 
@@ -574,7 +574,7 @@ final class BearyCalendarCardView: UIView {
 
     override func traitCollectionDidChange(_ previousTraitCollection: UITraitCollection?) {
         super.traitCollectionDidChange(previousTraitCollection)
-        layer.borderColor = BearyColors.line.cgColor
+        layer.bearyDynamicBorderColor = BearyColors.line
     }
 
     func setTitle(_ text: String) {
@@ -1267,9 +1267,9 @@ final class BearyTimelineCell: UITableViewCell {
             // 限时已到期按私密算（与 configure 同口径）。
             let published = BearyEphemeral.isEffectivelyPublic(entry)
             dotView.backgroundColor = BearyColors.bg
-            dotView.layer.borderColor = (published ? BearyColors.orange : BearyColors.blue).cgColor
+            dotView.layer.bearyDynamicBorderColor = (published ? BearyColors.orange : BearyColors.blue)
         } else {
-            dotView.layer.borderColor = BearyColors.bg.cgColor
+            dotView.layer.bearyDynamicBorderColor = BearyColors.bg
         }
         quoteLeftLineView.backgroundColor = BearyColors.line
         // 2026-10-29 改版追加：深浅切换时小熊回应 hug 图重刷为对应深浅版。
@@ -1524,7 +1524,7 @@ final class BearyTimelineCell: UITableViewCell {
             dotTopConstraint?.constant = 14.5
             dotView.backgroundColor = BearyColors.bg
             dotView.layer.borderWidth = 2.5
-            dotView.layer.borderColor = BearyColors.orange.cgColor
+            dotView.layer.bearyDynamicBorderColor = BearyColors.orange
             dotView.layer.cornerRadius = 4.5
             dotRingView.isHidden = true
         } else {
@@ -1538,7 +1538,7 @@ final class BearyTimelineCell: UITableViewCell {
             dotTopConstraint?.constant = 14.5
             dotView.backgroundColor = BearyColors.bg
             dotView.layer.borderWidth = 2.5
-            dotView.layer.borderColor = BearyColors.blue.cgColor
+            dotView.layer.bearyDynamicBorderColor = BearyColors.blue
             dotView.layer.cornerRadius = 4.5
             dotRingView.isHidden = true
         }
@@ -3641,7 +3641,7 @@ class BearyTimelineViewController: UIViewController {
         calendarFailedBanner.translatesAutoresizingMaskIntoConstraints = false
         calendarFailedBanner.backgroundColor = BearyColors.surface
         calendarFailedBanner.layer.borderWidth = 1
-        calendarFailedBanner.layer.borderColor = BearyColors.line.cgColor
+        calendarFailedBanner.layer.bearyDynamicBorderColor = BearyColors.line
         calendarFailedBanner.layer.cornerRadius = 22
         calendarFailedBanner.clipsToBounds = true
         calendarFailedBanner.isHidden = true
@@ -3672,13 +3672,13 @@ class BearyTimelineViewController: UIViewController {
     private func updateCalendarFailedBanner() {
         let visibleKeys = monthKeysForCurrentView()
         let anyVisibleFailed = visibleKeys.contains { calendarFailed.contains($0) && calendarCache[$0] == nil }
-        calendarFailedBanner.layer.borderColor = BearyColors.line.cgColor
+        calendarFailedBanner.layer.bearyDynamicBorderColor = BearyColors.line
         calendarFailedBanner.isHidden = !anyVisibleFailed
     }
 
     override func traitCollectionDidChange(_ previousTraitCollection: UITraitCollection?) {
         super.traitCollectionDidChange(previousTraitCollection)
-        calendarFailedBanner.layer.borderColor = BearyColors.line.cgColor
+        calendarFailedBanner.layer.bearyDynamicBorderColor = BearyColors.line
     }
 
     /// 连续写作行：网页 .cal-stats（13.5 灰、数字墨色加粗、16pt 橙色火苗图标）。
@@ -5327,7 +5327,7 @@ class BearyTimelineViewController: UIViewController {
                 button.titleEdgeInsets = UIEdgeInsets(top: 0, left: 6, bottom: 0, right: 0)
                 button.contentEdgeInsets = UIEdgeInsets(top: 0, left: 12, bottom: 0, right: 12)
                 button.layer.borderWidth = 1
-                button.layer.borderColor = BearyColors.line.cgColor
+                button.layer.bearyDynamicBorderColor = BearyColors.line
                 button.layer.cornerRadius = 20
             } else {
                 button.setTitleColor(BearyColors.blue, for: .normal)

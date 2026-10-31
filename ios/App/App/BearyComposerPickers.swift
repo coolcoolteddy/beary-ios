@@ -121,10 +121,10 @@ final class BearyRecipientPickerViewController: UIViewController, UITextFieldDel
         // CGColor 只在赋值时解析一次：深浅切换时重刷 sheet 边框与搜索框/头图圈/空态圈描边。
         if previousTraitCollection?.userInterfaceStyle != traitCollection.userInterfaceStyle {
             applySheetChrome()
-            searchBox.layer.borderColor = BearyColors.line.cgColor
-            notifyCheckButton.layer.borderColor = BearyColors.line.cgColor
-            headerIconWrap.layer.borderColor = BearyColors.orange.withAlphaComponent(0.28).cgColor
-            stateCircle.layer.borderColor = BearyColors.orange.withAlphaComponent(0.25).cgColor
+            searchBox.layer.bearyDynamicBorderColor = BearyColors.line
+            notifyCheckButton.layer.bearyDynamicBorderColor = BearyColors.line
+            headerIconWrap.layer.bearyDynamicBorderColor = BearyColors.orange.withAlphaComponent(0.28)
+            stateCircle.layer.bearyDynamicBorderColor = BearyColors.orange.withAlphaComponent(0.25)
         }
     }
 
@@ -152,7 +152,7 @@ final class BearyRecipientPickerViewController: UIViewController, UITextFieldDel
         headerIconWrap.layer.cornerRadius = 20
         headerIconWrap.layer.masksToBounds = true
         headerIconWrap.layer.borderWidth = 1
-        headerIconWrap.layer.borderColor = BearyColors.orange.withAlphaComponent(0.28).cgColor
+        headerIconWrap.layer.bearyDynamicBorderColor = BearyColors.orange.withAlphaComponent(0.28)
         headerIcon.image = BearyIconImages.image(named: "icon_at", pointSize: 20)
         headerIcon.tintColor = BearyColors.orange
         headerIcon.contentMode = .scaleAspectFit
@@ -173,7 +173,7 @@ final class BearyRecipientPickerViewController: UIViewController, UITextFieldDel
         searchBox.layer.cornerRadius = 22
         searchBox.layer.masksToBounds = true
         searchBox.layer.borderWidth = 1
-        searchBox.layer.borderColor = BearyColors.line.cgColor
+        searchBox.layer.bearyDynamicBorderColor = BearyColors.line
         searchIcon.image = BearyIconImages.image(named: "icon_search", pointSize: 18)
         searchIcon.tintColor = BearyColors.gray
         searchIcon.contentMode = .scaleAspectFit
@@ -198,7 +198,7 @@ final class BearyRecipientPickerViewController: UIViewController, UITextFieldDel
         notifyCheckButton.layer.cornerRadius = 6
         notifyCheckButton.layer.masksToBounds = true
         notifyCheckButton.layer.borderWidth = 1.5
-        notifyCheckButton.layer.borderColor = BearyColors.line.cgColor
+        notifyCheckButton.layer.bearyDynamicBorderColor = BearyColors.line
         notifyCheckButton.titleLabel?.font = UIFont.boldSystemFont(ofSize: 14)
         notifyCheckButton.addTarget(self, action: #selector(didTapNotifyCheck), for: .touchUpInside)
         notifyCheckButton.bearyAddPressFeedback()
@@ -220,7 +220,7 @@ final class BearyRecipientPickerViewController: UIViewController, UITextFieldDel
         stateCircle.layer.cornerRadius = 27
         stateCircle.layer.masksToBounds = true
         stateCircle.layer.borderWidth = 1
-        stateCircle.layer.borderColor = BearyColors.orange.withAlphaComponent(0.25).cgColor
+        stateCircle.layer.bearyDynamicBorderColor = BearyColors.orange.withAlphaComponent(0.25)
         stateIcon.tintColor = BearyColors.orange
         stateIcon.contentMode = .scaleAspectFit
         stateTitle.font = UIFont.boldSystemFont(ofSize: 15)
@@ -410,7 +410,7 @@ final class BearyRecipientPickerViewController: UIViewController, UITextFieldDel
         if isPadLayout {
             sheetView.layer.maskedCorners = [.layerMinXMinYCorner, .layerMaxXMinYCorner, .layerMinXMaxYCorner, .layerMaxXMaxYCorner]
             sheetView.layer.borderWidth = 1
-            sheetView.layer.borderColor = BearyColors.line.cgColor
+            sheetView.layer.bearyDynamicBorderColor = BearyColors.line
             sheetView.layer.shadowOpacity = 0.30
             // CALayer radius 取 CSS blur 一半（居中卡片与 SceneDelegate 底 sheet 同口径）：
             // 网页 60 → 30、32 → 16，旧值 60/32 直写会把阴影晕得比网页大一倍。
@@ -799,7 +799,7 @@ final class BearyRecipientPickerViewController: UIViewController, UITextFieldDel
             // D-G10：网页 .addr-user .addr-avafall 回退头像带 inset 1px 橙 25% 内圈；
             // 描边画在圆内侧，等价于该 inset ring（仅回退头像，真头像不加）。
             fallbackLabel.layer.borderWidth = 1
-            fallbackLabel.layer.borderColor = BearyColors.orange.withAlphaComponent(0.25).cgColor
+            fallbackLabel.layer.bearyDynamicBorderColor = BearyColors.orange.withAlphaComponent(0.25)
             let nameLabel = UILabel()
             nameLabel.translatesAutoresizingMaskIntoConstraints = false
             nameLabel.font = UIFont.systemFont(ofSize: 15, weight: .bold)

@@ -616,8 +616,8 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             // 不可在深色底上冒充），走 refreshSelectedChips 重算图标与换行。
             refreshSelectedChips()
             refreshNotifyCheck()
-            notifyCheckButton.layer.borderColor = BearyColors.line.cgColor
-            draftPillButton.layer.borderColor = BearyColors.line.cgColor
+            notifyCheckButton.layer.bearyDynamicBorderColor = BearyColors.line
+            draftPillButton.layer.bearyDynamicBorderColor = BearyColors.line
             charTrackLayer?.strokeColor = BearyColors.line.cgColor
             updateCountLabel()
         }
@@ -1609,9 +1609,9 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             button.setTitleColor(BearyColors.ink, for: .normal)
             button.tintColor = BearyColors.ink
             if isSelected {
-                button.layer.borderColor = BearyColors.ink.cgColor
+                button.layer.bearyDynamicBorderColor = BearyColors.ink
             } else {
-                button.layer.borderColor = BearyColors.line.cgColor
+                button.layer.bearyDynamicBorderColor = BearyColors.line
             }
         }
         // 工具栏天气钮图标随选中天气变（网页 syncWxBtn 同款）：未选回通用天气图标，
@@ -1746,7 +1746,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         notifyCheckButton.layer.cornerRadius = 6
         notifyCheckButton.layer.masksToBounds = true
         notifyCheckButton.layer.borderWidth = 1.5
-        notifyCheckButton.layer.borderColor = BearyColors.line.cgColor
+        notifyCheckButton.layer.bearyDynamicBorderColor = BearyColors.line
         notifyCheckButton.titleLabel?.font = UIFont.boldSystemFont(ofSize: 14)
         notifyCheckButton.addTarget(self, action: #selector(didTapNotifyCheck), for: .touchUpInside)
         notifyCheckButton.bearyAddPressFeedback()
@@ -2205,7 +2205,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                 tabButton.layer.shadowRadius = 6
                 tabButton.layer.shadowOffset = CGSize(width: 0, height: 1)
                 tabButton.layer.borderWidth = 1
-                tabButton.layer.borderColor = UIColor.black.withAlphaComponent(0.04).cgColor
+                tabButton.layer.bearyDynamicBorderColor = UIColor.black.withAlphaComponent(0.04)
             } else {
                 tabButton.layer.masksToBounds = true
                 tabButton.layer.shadowOpacity = 0
@@ -4148,12 +4148,12 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             let isSelected = (item.key == selectedMood)
             if isSelected {
                 item.ringView.backgroundColor = BearyColors.orange.withAlphaComponent(0.12)
-                item.ringView.layer.borderColor = UIColor.clear.cgColor
+                item.ringView.layer.bearyDynamicBorderColor = UIColor.clear
                 item.ringView.layer.borderWidth = 0
                 item.nameLabel.textColor = BearyColors.orange
             } else {
                 item.ringView.backgroundColor = BearyColors.faint
-                item.ringView.layer.borderColor = UIColor.clear.cgColor
+                item.ringView.layer.bearyDynamicBorderColor = UIColor.clear
                 item.ringView.layer.borderWidth = 0
                 item.nameLabel.textColor = BearyColors.gray
             }
@@ -6386,7 +6386,7 @@ private final class BearyQuoteStatusPillView: UIView {
         } else {
             dashedLayer.isHidden = true
             layer.borderWidth = 1.5
-            layer.borderColor = color.cgColor
+            layer.bearyDynamicBorderColor = color
         }
     }
 

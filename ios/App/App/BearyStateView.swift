@@ -54,7 +54,7 @@ final class BearyStateView: UIView {
 
         iconCircle.backgroundColor = BearyColors.orange.withAlphaComponent(0.18)
         iconCircle.layer.borderWidth = 1
-        iconCircle.layer.borderColor = BearyColors.orange.withAlphaComponent(0.25).cgColor
+        iconCircle.layer.bearyDynamicBorderColor = BearyColors.orange.withAlphaComponent(0.25)
         iconCircle.layer.cornerRadius = 27
         iconCircle.layer.masksToBounds = true
         iconCircle.translatesAutoresizingMaskIntoConstraints = false
@@ -183,7 +183,7 @@ final class BearyStateView: UIView {
         if traitCollection.hasDifferentColorAppearance(comparedTo: previousTraitCollection) {
             // CGColor 只在赋值时解析一次：深浅切换时重赋图标圆圈与动作钮边框，
             // 空态按钮边框不再停留在旧主题色（钮自身 trait 处理之外再兜底一层）。
-            self.iconCircle.layer.borderColor = BearyColors.orange.withAlphaComponent(0.25).cgColor
+            self.iconCircle.layer.bearyDynamicBorderColor = BearyColors.orange.withAlphaComponent(0.25)
             self.actionButton.refreshChrome()
         }
     }

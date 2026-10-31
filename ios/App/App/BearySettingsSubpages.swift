@@ -97,7 +97,7 @@ class BearySettingsSubpageViewController: UIViewController {
         super.traitCollectionDidChange(previousTraitCollection)
         if traitCollection.hasDifferentColorAppearance(comparedTo: previousTraitCollection) {
             for card in groupCards {
-                card.layer.borderColor = BearyColors.line.cgColor
+                card.layer.bearyDynamicBorderColor = BearyColors.line
             }
         }
     }
@@ -109,7 +109,7 @@ class BearySettingsSubpageViewController: UIViewController {
         card.translatesAutoresizingMaskIntoConstraints = false
         card.backgroundColor = BearyColors.surface
         card.layer.borderWidth = 1
-        card.layer.borderColor = BearyColors.line.cgColor
+        card.layer.bearyDynamicBorderColor = BearyColors.line
         card.layer.cornerRadius = 20
         card.clipsToBounds = true
         groupCards.append(card)
@@ -479,7 +479,7 @@ final class BearyDevicesViewController: BearySettingsSubpageViewController {
             let curPill = UIView()
             curPill.translatesAutoresizingMaskIntoConstraints = false
             curPill.layer.borderWidth = 1
-            curPill.layer.borderColor = BearyColors.green.cgColor
+            curPill.layer.bearyDynamicBorderColor = BearyColors.green
             curPill.layer.cornerRadius = 8
             curPill.clipsToBounds = true
             curPill.setContentHuggingPriority(.defaultHigh, for: .horizontal)

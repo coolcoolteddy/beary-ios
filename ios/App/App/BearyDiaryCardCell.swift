@@ -277,7 +277,7 @@ final class BearyEmoteChipView: UIView {
 
     private func applyChrome() {
         backgroundColor = mineFlag ? BearyColors.hov : BearyColors.faint
-        layer.borderColor = (mineFlag ? BearyColors.ink : BearyColors.line).cgColor
+        layer.bearyDynamicBorderColor = (mineFlag ? BearyColors.ink : BearyColors.line)
     }
 
     override func traitCollectionDidChange(_ previousTraitCollection: UITraitCollection?) {

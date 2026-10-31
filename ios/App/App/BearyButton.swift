@@ -145,11 +145,11 @@ class BearyButton: BearyHit44Button {
         if selected {
             backgroundColor = BearyColors.ink
             setTitleColor(BearyColors.bg, for: .normal)
-            layer.borderColor = BearyColors.ink.cgColor
+            layer.bearyDynamicBorderColor = BearyColors.ink
         } else {
             backgroundColor = .clear
             setTitleColor(BearyColors.ink, for: .normal)
-            layer.borderColor = BearyColors.ink.withAlphaComponent(0.25).cgColor
+            layer.bearyDynamicBorderColor = BearyColors.ink.withAlphaComponent(0.25)
         }
     }
 
@@ -177,13 +177,13 @@ class BearyButton: BearyHit44Button {
             setTitleColor(BearyColors.ink, for: .normal)
             tintColor = BearyColors.ink
             layer.borderWidth = 1
-            layer.borderColor = BearyColors.line.cgColor
+            layer.bearyDynamicBorderColor = BearyColors.line
         case .destructiveOutline:
             backgroundColor = BearyColors.surface
             setTitleColor(BearyColors.red, for: .normal)
             tintColor = BearyColors.red
             layer.borderWidth = 1
-            layer.borderColor = BearyColors.red.withAlphaComponent(0.45).cgColor
+            layer.bearyDynamicBorderColor = BearyColors.red.withAlphaComponent(0.45)
         case .iconCircleClose:
             backgroundColor = BearyColors.faint
             tintColor = BearyColors.ink
@@ -209,9 +209,9 @@ class BearyButton: BearyHit44Button {
         }
         switch style {
         case .secondaryOutline:
-            layer.borderColor = BearyColors.line.cgColor
+            layer.bearyDynamicBorderColor = BearyColors.line
         case .destructiveOutline:
-            layer.borderColor = BearyColors.red.withAlphaComponent(0.45).cgColor
+            layer.bearyDynamicBorderColor = BearyColors.red.withAlphaComponent(0.45)
         case .primaryPill, .iconCircleClose:
             break
         }

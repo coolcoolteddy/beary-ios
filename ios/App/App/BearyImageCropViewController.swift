@@ -85,7 +85,7 @@ final class BearyImageCropViewController: UIViewController, UIScrollViewDelegate
         hintLabel.textColor = UIColor.white.withAlphaComponent(0.7)
         hintLabel.textAlignment = .center
         cropBorderView.layer.borderWidth = 1
-        cropBorderView.layer.borderColor = UIColor.white.cgColor
+        cropBorderView.layer.bearyDynamicBorderColor = UIColor.white
         cropBorderView.isUserInteractionEnabled = false
         for v in [topBar, scrollView, hintLabel, cancelButton, titleLabel, confirmButton] {
             v.translatesAutoresizingMaskIntoConstraints = false

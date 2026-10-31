@@ -160,7 +160,7 @@ final class BearyEmotePickerSheetViewController: UIViewController, UICollectionV
         if isWide {
             sheetView.layer.maskedCorners = [.layerMinXMinYCorner, .layerMaxXMinYCorner, .layerMinXMaxYCorner, .layerMaxXMaxYCorner]
             sheetView.layer.borderWidth = 1
-            sheetView.layer.borderColor = BearyColors.line.cgColor
+            sheetView.layer.bearyDynamicBorderColor = BearyColors.line
             sheetBottomConstraint?.constant = -24
         } else {
             sheetView.layer.maskedCorners = [.layerMinXMinYCorner, .layerMaxXMinYCorner]
