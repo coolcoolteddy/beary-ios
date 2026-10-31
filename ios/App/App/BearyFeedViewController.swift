@@ -77,6 +77,15 @@ class BearyFeedViewController: UIViewController {
     /// 首拉/重拉时复位。表尾不再出文字行（网页 moreBtnHtml 无更多时返回空串）。
     private var plazaReachedEnd = false
     private var plazaLoading = false
+    /// 112 分段去重：首拉在途标记（与 plazaLoading 区分——分页下一页也置
+    /// plazaLoading，刷新节流只认首拉在途）。首拉在途时 refreshAllInternal
+    /// 直接跳过（不 bump 代际、不动模型），在途回包自会经 maybeEndRefreshing
+    /// 结束下拉头并更新模型；代际丢弃分支不动标记（新请求完成时清）。
+    private var plazaFirstPageInFlight = false
+    /// 112：登录翻转刷新的一次性绕过去重——旧身份在途首拉绝不能吞掉
+    /// 新身份的刷新（否则切号后会停留在旧身份数据上，直到下次重拉）。
+    /// 由 handlePageEnter 登录翻转分支置位，refreshAllInternal 消费一次。
+    private var refreshAllBypassInFlight = false
     /// 自定义下拉刷新（消息页同款，统一手感批）：指示与触发见 updateCustomPullIndicator / beginCustomPullRefresh。
     private var isCustomPullRefreshing = false
     private var customPullStartTime: Date?
@@ -368,6 +377,7 @@ class BearyFeedViewController: UIViewController {
         let loginFlipped = currentLoginUserId != lastFeedLoginUserId
         lastFeedLoginUserId = currentLoginUserId
         if loginFlipped && isFirstLoad == false {
+            refreshAllBypassInFlight = true
             refreshAll()
         } else if allowBackgroundRevalidate {
             revalidateIfNeeded()
@@ -483,6 +493,13 @@ class BearyFeedViewController: UIViewController {
         } else {
             UIView.animate(withDuration: 0.32, animations: pullIn)
         }
+        // 112 刷新节流（仅手势下拉）：上次首拉成功 5 秒内且已有内容时，
+        // 不再发网络请求，指示头走 500ms 最小展示后收回；程序侧刷新
+        //（重拍 tab/登录翻转/外部调用）不受此限，照常走 refreshAll。
+        if let last = lastFeedLoadAt, Date().timeIntervalSince(last) < 5, !plazaRaw.isEmpty {
+            endCustomPullRefresh()
+            return
+        }
         refreshAllInternal(showCentralSpinner: false)
     }
 
@@ -528,6 +545,16 @@ class BearyFeedViewController: UIViewController {
     }
 
     private func refreshAllInternal(showCentralSpinner: Bool) {
+        // 112 分段去重：首拉已在途时直接跳过——不 bump 代际（否则在途回包
+        // 会被代际守卫丢弃、等于白白重拉一次），不重置 hasMore/模型；
+        // 在途回包完成时经 maybeEndRefreshing 结束下拉头并更新模型。
+        // 分页下一页在途（plazaLoading 真、首拉标记假）不受影响，照常刷新。
+        // 登录翻转置位的 bypass 消费一次后照常强制重拉（旧在途回包随后
+        // 被代际守卫丢弃，不覆盖新身份数据）。
+        if plazaFirstPageInFlight && refreshAllBypassInFlight == false {
+            return
+        }
+        refreshAllBypassInFlight = false
         BearyDiaryCardCell.resetQuoteFetchState()
         revalidateGeneration += 1
         isRevalidating = false
@@ -691,6 +718,7 @@ class BearyFeedViewController: UIViewController {
         // 80 包 B4：首拉带代际（revalidate 同口径），旧首拉回包直接丢弃。
         let firstPageGeneration = revalidateGeneration
         plazaLoading = true
+        plazaFirstPageInFlight = true
         plazaError = false
         BearyAPI.shared.fetchEntries(scope: .plaza, limit: firstPageLimit) { [weak self] result in
             DispatchQueue.main.async {
@@ -705,6 +733,7 @@ class BearyFeedViewController: UIViewController {
                 case .success(let list):
                     let entries = list.entries ?? []
                     strongSelf.plazaLoading = false
+                    strongSelf.plazaFirstPageInFlight = false
                     strongSelf.plazaFirstDone = true
                     // 110：首页首屏成功即预取时间线首屏（缓存命中走静默
                     // 刷新时同样到此；BearyTimelinePrefetch 一次/启动、
@@ -730,6 +759,7 @@ class BearyFeedViewController: UIViewController {
                     // F6 同口径：广场首拉失败也保留旧模型，空时才进错误行。
                     // 静默刷新失败不 toast（后台行为不打扰阅读）。
                     strongSelf.plazaLoading = false
+                    strongSelf.plazaFirstPageInFlight = false
                     if strongSelf.plazaRaw.isEmpty {
                         strongSelf.plazaHasMore = false
                         strongSelf.plazaError = true

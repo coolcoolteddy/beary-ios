@@ -2084,6 +2084,23 @@ class BearyTimelineViewController: UIViewController {
     // 无参调用），故陈旧回包不调 completion 是安全的；日后若有调用方传
     // completion，需自行处理陈旧语义。
     private var timelineFirstPageSeq = 0
+    /// 112 分段去重：首屏在途标记（seq 只丢弃旧回包，不阻止重复发请求；
+    /// 下拉/重拍/详情回写/静默对齐重叠时曾并发多份同样的 50 条首拉）。
+    /// 在途时新调用直接跳过（不 bump seq，否则在途回包会被 seq 守卫丢弃、
+    /// 等于白白重拉一次）；在途回包自会结束下拉头并更新模型。
+    /// force=true 的硬重载（reloadTimeline 非 keepDay：登录翻转/取消编辑等）
+    /// 绕过此标记——旧身份在途请求绝不能吞掉新身份的硬刷新。
+    private var timelineFirstPageInFlight = false
+    /// 112：在途跳过时暂存的 completion（refreshAfterDetailChange 的互动
+    /// 变化回调等），在途回包匹配完成时统一补调；陈旧丢弃分支不补调
+    ///（新请求自会完成并补调，避免按过期快照发互动变化）。
+    private var timelineFirstPagePendingCompletions: [() -> Void] = []
+    /// 112 手势下拉节流时钟：最近一次首屏网络成功的时间。
+    private var lastTimelineFirstPageSuccessAt: Date?
+    /// 112 增量当日面板：keepDay 刷新时暂存选中日，不立即另发当日请求；
+    /// 首屏回包若已覆盖该日（页内出现更早日的篇），直接从首屏派生面板，
+    /// 否则回落正向 fetchDayEntries；首屏失败时同样回落正向拉取。
+    private var deferredDayKeyForFirstPage: String?
     // G15：分页失败标记——脚部保持“加载失败，重试”可重试。
     private var timelinePageFailed = false
     // M2：分页新增行的错峰滑入队列（willDisplay 时按原始序号起播，播过即摘；
@@ -2638,10 +2655,17 @@ class BearyTimelineViewController: UIViewController {
         clearStaggerEntries()
         tableView.reloadData()
         updateChrome()
-        loadTimelineFirstPage()
+        // 112：非 keepDay 硬重载 force=true（登录翻转/取消编辑等绝不能
+        // 被旧身份在途首拉吞掉）；keepDay 刷新走在途跳过口径。
+        loadTimelineFirstPage(force: keepDay == false)
         fetchCalendarMonthsForCurrentView()
-        if let dayKey = selectedDayKey {
-            fetchDayEntries(key: dayKey, clear: !keepDay)
+        if keepDay {
+            // 112：当日面板暂存选中日、不立即另发当日请求——首屏回包
+            // 派生或回落（见 deferredDayKeyForFirstPage）；面板与首屏同批
+            // 到达，不再比首屏早到（换一次冗余请求为同批更新）。
+            deferredDayKeyForFirstPage = selectedDayKey
+        } else if let dayKey = selectedDayKey {
+            fetchDayEntries(key: dayKey, clear: true)
         }
     }
 
@@ -2912,6 +2936,15 @@ class BearyTimelineViewController: UIViewController {
             pullIn()
         } else {
             UIView.animate(withDuration: 0.32, animations: pullIn)
+        }
+        // 112 刷新节流（仅手势下拉）：上次首屏网络成功 5 秒内且已有行时，
+        // 不再发网络请求，指示头随 0.32s 收回动画收回（500ms 保底只在
+        // 首屏完成分支，不在本函数）；程序侧刷新（重拍 tab/详情回写/
+        // 登录翻转）不受此限。begin 顶部的
+        // timelineState == .loading 守卫仍在：静默对齐在途时下拉直接忽略。
+        if let last = lastTimelineFirstPageSuccessAt, Date().timeIntervalSince(last) < 5, !timelineEntries.isEmpty {
+            endCustomPullRefresh()
+            return
         }
         // 原 pullToRefresh 体（触觉改由 scrollViewDidEndDragging 给一次，见下）：
         // G16：刷新时先保存选中日（reloadTimeline keepDay 分支内保留），
@@ -3642,9 +3675,18 @@ class BearyTimelineViewController: UIViewController {
 
     // MARK: - 时间线拉取
 
-    private func loadTimelineFirstPage(completion: (() -> Void)? = nil) {
+    private func loadTimelineFirstPage(completion: (() -> Void)? = nil, force: Bool = false) {
+        // 112：在途跳过（force 除外）——跳过时不 bump seq、不改状态，
+        // 在途回包自会渲染；completion 暂存、在途匹配完成时补调。
+        if timelineFirstPageInFlight && force == false {
+            if let completion = completion {
+                timelineFirstPagePendingCompletions.append(completion)
+            }
+            return
+        }
         timelineFirstPageSeq += 1
         let seq = timelineFirstPageSeq
+        timelineFirstPageInFlight = true
         timelineState = .loading
         updateChrome()
         // M2：已有行只更新变化行——刷新前记下旧分区，成功后若分区结构（日期键序列）
@@ -3658,11 +3700,14 @@ class BearyTimelineViewController: UIViewController {
                 // 卡死路径修法：丢弃时仍结束刷新指示（只跳过模型更新），不让
                 // “旧请求被取代”等于“刷新头永不结束”；后续新加载的完成分支
                 // 因旗标已清而 no-op，不会二次复位。
+                // 112：在途标记归新请求所有，丢弃分支不动标记（新请求完成时清）；
+                // 暂存的 completion 同样归新请求完成时补调，此处不补调。
                 guard seq == strongSelf.timelineFirstPageSeq else {
                     strongSelf.refreshIconView.stopSpinning()
                     strongSelf.endCustomPullRefresh()
                     return
                 }
+                strongSelf.timelineFirstPageInFlight = false
                 switch result {
                 case .success(let list):
                     strongSelf.timelineEntries = list.entries ?? []
@@ -3677,6 +3722,13 @@ class BearyTimelineViewController: UIViewController {
                     if let uid = SessionManager.shared.currentUser?.id {
                         BearyTimelineCache.save(bucket: BearyFeedCache.bucket(userId: uid), entries: strongSelf.timelineEntries, hasMore: strongSelf.timelineHasMore, trashCount: strongSelf.trashCountValue, counts: strongSelf.countsValue)
                     }
+                    strongSelf.lastTimelineFirstPageSuccessAt = Date()
+                    // 112：keepDay 刷新的增量当日面板——首屏已覆盖选中日时
+                    // 直接派生，不再另发当日请求；未覆盖或失败时回落正向拉取。
+                    if let deferredKey = strongSelf.deferredDayKeyForFirstPage {
+                        strongSelf.deferredDayKeyForFirstPage = nil
+                        strongSelf.deriveDayPanelFromFirstPageIfCovered(key: deferredKey)
+                    }
                     strongSelf.timelineState = .loaded
                     strongSelf.timelinePageFailed = false
                     strongSelf.updateTrashTitle()
@@ -3687,6 +3739,15 @@ class BearyTimelineViewController: UIViewController {
                     strongSelf.timelineState = .failed
                     if case .unauthorized = error {
                         strongSelf.timelineUnauthorized = true
+                    }
+                    // 112：首屏失败时暂存的当日面板仍需刷新——回落正向拉取，
+                    // 面板失败态与旧口径一致（面板不被首屏失败拖空）。
+                    // 选区已切走时不回落（新日的正向拉取自有面板归属）。
+                    if let deferredKey = strongSelf.deferredDayKeyForFirstPage {
+                        strongSelf.deferredDayKeyForFirstPage = nil
+                        if strongSelf.selectedDayKey == deferredKey {
+                            strongSelf.fetchDayEntries(key: deferredKey, clear: false)
+                        }
                     }
                 }
                 if case .success = result, hadOldRows, strongSelf.tableView.window != nil,
@@ -3707,6 +3768,13 @@ class BearyTimelineViewController: UIViewController {
                     strongSelf.refreshIconView.stopSpinning()
                 }
                 completion?()
+                // 112：在途跳过时暂存的 completion 在此补调（匹配完成才调；
+                // 失败同样补调——调用方按失败快照处理，不静默吞掉）。
+                let pendingFirstPageCompletions = strongSelf.timelineFirstPagePendingCompletions
+                strongSelf.timelineFirstPagePendingCompletions.removeAll()
+                for pendingCompletion in pendingFirstPageCompletions {
+                    pendingCompletion()
+                }
             }
         }
     }
@@ -4555,6 +4623,46 @@ class BearyTimelineViewController: UIViewController {
         guard !sections.isEmpty, tableView.numberOfSections == sections.count else { return false }
         tableView.reloadSections(IndexSet(integer: 0), with: .fade)
         return true
+    }
+
+    /// 112 增量当日面板：首屏已覆盖选中日时直接从首屏派生面板，
+    /// 不再另发当日请求；未覆盖时回落正向 fetchDayEntries。
+    /// 覆盖判定：首屏是 created DESC 前缀——页内一旦出现早于选中日的篇，
+    /// 即证明选中日的全部篇都在页内（当日上限 10 篇/天、首屏 50 条；
+    /// 页空、页尾仍在选中日、或时间戳缺失时一律判未覆盖、走正向拉取）。
+    /// 渲染不单独重载：调用点在首屏完成分支内，随后 diff/reloadData
+    /// 统一覆盖面板分区（section 0），避免与首屏批更新交错。
+    /// 跳转守卫与 fetchDayEntries 回包同口径：非空即清挂起；空且守卫
+    /// 接管时不写面板（跳转路径自拉正确日），否则写派生面板。
+    private func deriveDayPanelFromFirstPageIfCovered(key: String) {
+        // 选区一致守卫：首屏在途期间用户已切到别的日时，旧选中日的
+        // 面板绝不能写回（新日的正向拉取自有 dayKeyForLoad 归属守卫；
+        // 无此守卫时派生会覆盖新日面板、失败回落还会抢走 dayKeyForLoad
+        // 导致新日回包被丢弃）。
+        guard selectedDayKey == key else { return }
+        let covered = timelineEntries.contains { entry in
+            guard let created = entry.createdAt, let dayKey = BearyBeijingDay.dayKey(ofMs: created) else { return false }
+            return dayKey < key
+        }
+        guard covered else {
+            fetchDayEntries(key: key, clear: false)
+            return
+        }
+        let derived = timelineEntries.filter { entry in
+            guard let created = entry.createdAt else { return false }
+            return BearyBeijingDay.dayKey(ofMs: created) == key
+        }
+        if pendingEntryJumpCheck {
+            pendingEntryJumpCheck = false
+            if derived.isEmpty, checkEntryJumpForSelectedDay() {
+                return
+            }
+        }
+        dayEntries = derived
+        dayEntriesKey = key
+        dayState = .loaded
+        cacheDayEntries(key: key, entries: derived)
+        prefetchAdjacentDays(for: key)
     }
 
     private func fetchDayEntries(key: String, clear: Bool) {
@@ -5500,7 +5608,11 @@ extension BearyTimelineViewController: UITableViewDataSource, UITableViewDelegat
                         _ = BearyImageLoader.shared.load(url: avatarURL, downsampleToWidth: 40 * UIScreen.main.scale) { _ in }
                     }
                     if let firstKey = entry.images?.first, let imageURL = BearyImageURLs.imageURL(key: firstKey, thumb: true) {
-                        _ = BearyImageLoader.shared.load(url: imageURL) { _ in }
+                        // 112：预取与卡片展示同宽下采样（卡片 stripWidth 同公式，
+                        // 见 BearyTimelinePrefetchStrip）——旧口径不带宽度时内存键
+                        // 与展示键不一致，预取只暖磁盘、展示仍需解码一遍
+                        //（灯箱 111 同款问题）。
+                        _ = BearyImageLoader.shared.load(url: imageURL, downsampleToWidth: BearyTimelinePrefetchStrip.width(for: entry) * UIScreen.main.scale) { _ in }
                     }
                 }
             }
@@ -5553,6 +5665,21 @@ extension BearyTimelineViewController: UITableViewDataSource, UITableViewDelegat
 
     // 下滑藏栏已拆除（第 11 项）：底栏胶囊与 FAB 常驻，scrollViewDidScroll
     // 只做追加项二的悬浮日期头跟随，不做藏栏。
+}
+
+/// 112：时间线 willDisplay 预取的卡片首图下采样宽度（pt）——与卡片
+/// BearyDiaryCardCell.stripWidth(forKey:dims:height:216) 同公式：
+/// 216 × 宽高比，夹在 216×0.55…216×2.22，无 dims 时 280；调用方再 × scale。
+enum BearyTimelinePrefetchStrip {
+    static func width(for entry: Entry) -> CGFloat {
+        let height: CGFloat = 216
+        if let dims = entry.imgDims, let firstKey = entry.images?.first,
+           let d = dims[firstKey], d.count >= 2, d[0] > 0, d[1] > 0 {
+            let raw = height * CGFloat(d[0]) / CGFloat(d[1])
+            return round(max(height * 0.55, min(height * 2.22, raw)))
+        }
+        return 280
+    }
 }
 
 /// 110：时间线首屏磁盘缓存（首页 BearyFeedCache 同款结构与桶口径，
