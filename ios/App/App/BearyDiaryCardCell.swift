@@ -465,10 +465,18 @@ class BearyDiaryCardCell: UITableViewCell {
     /// tab 视觉底边 = header 底 −2 +16 = 首卡顶 +14，恰好压住虚线框顶边、
     /// 贴住内容顶；第二张卡以下不受影响（tab 只压首卡区）。
     /// 首卡时右列顶 14→30、虚线框顶 6→22：tab 底边到框顶留 8pt、到内容顶
-    /// 留 16pt；头像顶仍为 +14（tab 底边恰贴住、不被盖，无需动）。
-    /// 不改 tab 跟移行为本身，只给首卡加留白。
+    /// 留 16pt。不改 tab 跟移行为本身，只给首卡加留白。
+    /// 110 修正（109 #277 的漏项）：首卡留白只动了右列与框顶，头像顶
+    /// 约束仍是 build 里写死的 +14——相对右列（30）头像高出 16pt、相对
+    /// 框顶（22）高出 8pt，限时首卡头像上半部穿出虚线框、框顶圆角弧线
+    /// 从头像左上切过，看起来像头像“上移了”。实测头像锚点并未被连带
+    /// 抬高（恒为 contentView.top +14，不锚右列/框顶），错的是留白没跟
+    /// 上头像；修法以头像归位为准：首卡头像顶同右列取 30（与作者行顶
+    /// 对齐），框顶仍 22（框完整包住头像，上下各留 8pt），不用框去迁就
+    /// 错位头像；非首卡与首页/时间线一字不动。
     var profileFirstRow = false
     private var rightStackTopConstraint: NSLayoutConstraint?
+    private var avatarTopConstraint: NSLayoutConstraint?
     /// 右列右缩进恒 −16；⋯ 留位走标题行末 titleMoreSpacer，不再按本人／他人改右缩进。
     private var rightStackTrailingConstraint: NSLayoutConstraint?
     /// L21（91 包，个人主页模式）：本卡正文是否超过 300 字（折叠按钮是否适用），
@@ -1079,6 +1087,9 @@ class BearyDiaryCardCell: UITableViewCell {
         emoteRowHeightConstraint = emoteHeight
         let rightTop = rightStack.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 14)
         rightStackTopConstraint = rightTop
+        // 110：头像顶约束显式持有，首卡与右列同值跟移（见 updateRightStackSpacing）。
+        let avatarTop = avatarContainer.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 14)
+        avatarTopConstraint = avatarTop
         var extraConstraints: [NSLayoutConstraint] = []
         if cardMode == .profile {
             // 个人主页口径：点赞高 22、收藏/分享 21×21（原 required 约束）。
@@ -1125,7 +1136,7 @@ class BearyDiaryCardCell: UITableViewCell {
             rightStackTrailingConstraint = rightStack.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -16)
         }
         NSLayoutConstraint.activate([
-            avatarContainer.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 14),
+            avatarTop,
             avatarContainer.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 16),
             avatarContainer.widthAnchor.constraint(equalToConstant: 40),
             avatarContainer.heightAnchor.constraint(equalToConstant: 40),
@@ -1212,6 +1223,7 @@ class BearyDiaryCardCell: UITableViewCell {
         contentView.alpha = 1
         contentView.transform = .identity
         profileFirstRow = false
+        avatarTopConstraint?.constant = 14
         // 限时态复位：倒计时行与虚线边框藏起、底线恢复，防残留到下一行。
         ephemeralRow.isHidden = true
         ephemeralLabel.text = nil
@@ -1461,6 +1473,10 @@ class BearyDiaryCardCell: UITableViewCell {
     ///   模式差异，列入真机清单（两页同屏对比顶距）待视觉确认后再定。
     private func updateRightStackSpacing() {
         rightStackTopConstraint?.constant = cardMode == .feed ? (recipientRow.isHidden ? 22 : 23) : (profileFirstRow ? 30 : 14)
+        // 110：头像顶与右列顶同值（个人页首卡 30、其余 14；首页恒 14）——
+        // 头像顶与作者行顶对齐，首卡限时框（顶 22）完整包住头像（30..70，
+        // 框顶留 8pt）；框路径一字不动，不用框迁就错位头像。
+        avatarTopConstraint?.constant = cardMode == .feed ? 14 : (profileFirstRow ? 30 : 14)
         rightStack.setCustomSpacing(4, after: recipientRow)
         rightStack.setCustomSpacing(4, after: titleStack)
         rightStack.setCustomSpacing(4, after: ephemeralRow)

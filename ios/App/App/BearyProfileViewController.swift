@@ -1499,6 +1499,12 @@ class BearyProfileViewController: UIViewController {
     /// 内容用户名顶边碰到 header 底边时起，往后 20px 内淡入 0→1＋上浮 6→0 到位，
     /// 往回滑反向淡出＋下落；转移前 header 只有封面、无用户名。
     /// x 与内容用户名同列（表框左 + 28，iPad 600 居中列下自动对齐）。
+    /// 110：补 #248 同款发光阴影（半径 4、偏移 (0,1)，深浅色由
+    /// updateDynamicLayerColors 与内容用户名同款重赋）。#248 只给了内容
+    /// 用户名 nameLabel（封面下方实底色上），漏了这处真正压在封面图上的
+    /// header 用户名——封面纯白/纯黑时它才最需要阴影。阴影外扩至多约 5pt：
+    /// label 高 22 居中于 60 条带、左右各留 28/16pt，stickyHeaderView 的
+    /// clipsToBounds 裁不掉它；阴影跟随图层，淡入/上浮 transform 不受影响。
     private let stickyHeaderNameLabel: UILabel = {
         let labelValue = UILabel()
         labelValue.translatesAutoresizingMaskIntoConstraints = false
@@ -1507,6 +1513,11 @@ class BearyProfileViewController: UIViewController {
         labelValue.alpha = 0
         labelValue.text = "—"
         labelValue.isUserInteractionEnabled = false
+        labelValue.layer.masksToBounds = false
+        labelValue.layer.shadowRadius = 4
+        labelValue.layer.shadowOffset = CGSize(width: 0, height: 1)
+        labelValue.layer.shadowColor = UIColor.black.cgColor
+        labelValue.layer.shadowOpacity = 0.6
         return labelValue
     }()
 
@@ -2518,12 +2529,17 @@ class BearyProfileViewController: UIViewController {
         // 个人页 header 用户名阴影色重赋（深浅切换时 CGColor 不自动跟随）：
         // 注：原支另带 badgesContainer 重赋一行，#250 已删徽章架、该容器不存在，rebase 时弃掉该行、不复活徽章架。
         // 深色 ink 近白 → 黑色阴影；浅色 ink 纯黑 → 白色光晕。半径/偏移/透明度见 nameLabel 定义处。
+        // 110：header 用户名同款重赋（#248 漏处，见 stickyHeaderNameLabel 定义处）。
         if traitCollection.userInterfaceStyle == .dark {
             nameLabel.layer.shadowColor = UIColor.black.cgColor
             nameLabel.layer.shadowOpacity = 0.6
+            stickyHeaderNameLabel.layer.shadowColor = UIColor.black.cgColor
+            stickyHeaderNameLabel.layer.shadowOpacity = 0.6
         } else {
             nameLabel.layer.shadowColor = UIColor.white.cgColor
             nameLabel.layer.shadowOpacity = 0.85
+            stickyHeaderNameLabel.layer.shadowColor = UIColor.white.cgColor
+            stickyHeaderNameLabel.layer.shadowOpacity = 0.85
         }
         // 批 D：模块卡边线同款重赋（深浅切换时 CGColor 不自动跟随）。
         statsCard.layer.borderColor = BearyColors.line.cgColor
@@ -6063,26 +6079,35 @@ class BearyProfileViewController: UIViewController {
 
 // MARK: - 列表数据源与点按（点按只走 onOpenEntry，不在本文件内置跳转）
 
-/// 批 C“更多日记”按钮行：全宽圆角钮（faint 底、墨字 + 官方 icon_chevron_right），
-/// 点按走 onTap（容器跳时间线页）；复用时 onTap 置空，不残留旧闭包。
+/// 批 C“更多日记”行（110 方案 A，Li 已点头；方案 B/C 不用）：
+/// 纯文字行——无填充、无边框、无圆角块，只一条顶部分割线（2pt、
+/// BearyColors.line：浅 #dbdbdb／深 #3a3a40，与时间线分割线同款，
+/// 动态色自动跟随深浅）加居中 16pt 墨字“更多日记 ›”（› 为文字符号，
+/// 不用 chevron 图标）；整行可点，默认字号下行高 52pt（分割线 2 +
+/// 按钮区 50，按钮高用 ≥50 以便大字号时随字长高）；点按走 onTap
+/// （容器跳时间线页，行为与旧圆角钮一致）；复用时 onTap 置空。
+/// 旧浅灰填充大圆角按钮整块删除、零残留（无 faint 底、无圆角、
+/// 无边框、无图标引用）。
 final class BearyProfileMoreDiaryCell: UITableViewCell {
 
     var onTap: (() -> Void)?
 
+    private let dividerView: UIView = {
+        let viewValue = UIView()
+        viewValue.translatesAutoresizingMaskIntoConstraints = false
+        viewValue.backgroundColor = BearyColors.line
+        return viewValue
+    }()
+
     private lazy var moreButton: UIButton = {
         let buttonValue = UIButton(type: .custom)
         buttonValue.translatesAutoresizingMaskIntoConstraints = false
-        buttonValue.backgroundColor = BearyColors.faint
-        buttonValue.layer.cornerRadius = 12
-        buttonValue.clipsToBounds = true
-        buttonValue.setTitle("更多日记", for: .normal)
+        buttonValue.backgroundColor = .clear
+        buttonValue.setTitle("更多日记 ›", for: .normal)
         buttonValue.setTitleColor(BearyColors.ink, for: .normal)
-        buttonValue.titleLabel?.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 15, weight: .semibold))
+        buttonValue.titleLabel?.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 16))
         buttonValue.titleLabel?.adjustsFontForContentSizeCategory = true
-        buttonValue.setImage(BearyIconImages.image(named: "icon_chevron_right", pointSize: 16), for: .normal)
-        buttonValue.tintColor = BearyColors.ink
-        buttonValue.semanticContentAttribute = .forceRightToLeft
-        buttonValue.titleEdgeInsets = UIEdgeInsets(top: 0, left: 0, bottom: 0, right: 4)
+        buttonValue.titleLabel?.textAlignment = .center
         buttonValue.addTarget(self, action: #selector(moreButtonTapped), for: .touchUpInside)
         buttonValue.bearyAddPressFeedback()
         return buttonValue
@@ -6093,13 +6118,18 @@ final class BearyProfileMoreDiaryCell: UITableViewCell {
         backgroundColor = .clear
         contentView.backgroundColor = .clear
         selectionStyle = .none
+        contentView.addSubview(dividerView)
         contentView.addSubview(moreButton)
         NSLayoutConstraint.activate([
-            moreButton.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 4),
-            moreButton.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 20),
-            moreButton.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -20),
-            moreButton.bottomAnchor.constraint(equalTo: contentView.bottomAnchor, constant: -4),
-            moreButton.heightAnchor.constraint(equalToConstant: 48),
+            dividerView.topAnchor.constraint(equalTo: contentView.topAnchor),
+            dividerView.leadingAnchor.constraint(equalTo: contentView.leadingAnchor),
+            dividerView.trailingAnchor.constraint(equalTo: contentView.trailingAnchor),
+            dividerView.heightAnchor.constraint(equalToConstant: 2),
+            moreButton.topAnchor.constraint(equalTo: dividerView.bottomAnchor),
+            moreButton.leadingAnchor.constraint(equalTo: contentView.leadingAnchor),
+            moreButton.trailingAnchor.constraint(equalTo: contentView.trailingAnchor),
+            moreButton.bottomAnchor.constraint(equalTo: contentView.bottomAnchor),
+            moreButton.heightAnchor.constraint(greaterThanOrEqualToConstant: 50),
         ])
     }
 
