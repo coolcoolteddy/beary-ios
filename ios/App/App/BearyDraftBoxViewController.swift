@@ -1132,7 +1132,14 @@ final class BearyDraftBoxViewController: UIViewController {
             let minutes = max(1, Int(floor(diff / 60)))
             return "\(minutes) 分钟前"
         }
-        let calendar = Calendar.current
+        // 扫荡 B：今天/昨天判定走北京日历，与下方 formatter 的北京时区一致。
+        // 旧口径用 Calendar.current（设备时区）：设备时区非北京时，跨北京午夜
+        // 前后会把“昨天”误判成“今天”（或反之），而显示的 HH:mm/M月d日又是
+        // 北京时间，两处口径打架；回收站 TrashText.deletedLabel 已用北京日历，
+        // 本处与之对齐（本地构造，不依赖时间线文件的共享 helper，避免跨分支耦合）。
+        var beijingCalendar = Calendar(identifier: .gregorian)
+        beijingCalendar.timeZone = TimeZone(secondsFromGMT: 8 * 3600) ?? TimeZone.current
+        let calendar = beijingCalendar
         if calendar.isDateInToday(date) {
             let hours = Int(floor(diff / 3600))
             return "\(hours) 小时前"
