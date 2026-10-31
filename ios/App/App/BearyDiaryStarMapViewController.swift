@@ -13,6 +13,8 @@ import UIKit
 //   私密篇不出星、其连线一并消失；他人地点键只用区级，原因文案不带精确名。
 // - 数据：先用调用方已加载的日记即时成图，再游标拉全量替换（上限 10 页 ×
 //   50 篇，与地图同 cap；触顶时状态行明示“仅展示最近拉取的 500 篇”）。
+//   清单第 7 项：本人拉取改走 timeline scope（见 fetchEntriesPage 的 entriesScope），
+//   他人仍走 author scope；后端 author scope 不动，与日记 tab 口径分裂拍板接受。
 // - 切账号 / 登录翻转：appear 时 viewer 变了即按新身份重算重拉，旧选择清掉；
 //   从详情回来（可见性可能已翻转）只重拉一次；不轮询、不另建星图缓存，
 //   下次打开自然同步。重算走后台队列 + generation 门控，旧回包一律丢弃。
@@ -718,11 +720,21 @@ final class BearyDiaryStarMapViewController: UIViewController {
         loadGeneration += 1
         fetchCollected = []
         fetchSeenIds = []
-        fetchAuthorPage(before: nil, beforeId: nil, page: 1, generation: loadGeneration)
+        fetchEntriesPage(before: nil, beforeId: nil, page: 1, generation: loadGeneration)
     }
 
-    private func fetchAuthorPage(before: Int?, beforeId: String?, page: Int, generation: Int) {
-        BearyAPI.shared.fetchEntries(scope: .author(authorId), limit: 50, before: before, beforeId: beforeId) { [weak self] result in
+    /// 拉取 scope（清单第 7 项，Li 拍板）：本人走 timeline scope（服务端按
+    /// session.id 过滤，私密 + 公开 + 投递中全含），他人仍走 author scope；
+    /// 后端 author scope 不动。本人星图/地图与个人页日记 tab（author scope）
+    /// 因此数据口径分裂，拍板接受。timeline 与 author 同为 created_at DESC
+    /// 游标，分页（before=createdAt + before_id=id）一字不动；切账号后
+    /// viewerIsAuthor 已先更新，fetchAllEntries 自动按新身份选 scope。
+    private var entriesScope: BearyAPI.Scope {
+        return viewerIsAuthor ? .timeline : .author(authorId)
+    }
+
+    private func fetchEntriesPage(before: Int?, beforeId: String?, page: Int, generation: Int) {
+        BearyAPI.shared.fetchEntries(scope: entriesScope, limit: 50, before: before, beforeId: beforeId) { [weak self] result in
             DispatchQueue.main.async {
                 guard let self = self, generation == self.loadGeneration else { return }
                 switch result {
@@ -745,7 +757,7 @@ final class BearyDiaryStarMapViewController: UIViewController {
                     }
                     let last = pageEntries.last
                     if pageEntries.count >= 50, page < 10, let cursor = last?.createdAt, let lastId = last?.id {
-                        self.fetchAuthorPage(before: cursor, beforeId: lastId, page: page + 1, generation: generation)
+                        self.fetchEntriesPage(before: cursor, beforeId: lastId, page: page + 1, generation: generation)
                         return
                     }
                     self.fetchCapped = pageEntries.count >= 50 && page >= 10
