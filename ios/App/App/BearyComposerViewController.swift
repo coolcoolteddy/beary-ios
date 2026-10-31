@@ -2197,12 +2197,13 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         }
     }
 
-    /// 顶栏可见性钮图标：锁＝私密、地球＝公开、时钟＝限时（官方 beary-ui 包内
-    /// icon_clock，与新手引导限时项、回收站限时标同款，不自绘）；
+    /// 顶栏可见性钮图标：锁＝私密、地球＝公开、限时＝官方 icon_limited
+    /// （熊头 + 外围虚线环，#162 落位的 imageset，#272 删限时行时误删、
+    /// 本支从 2bb7df9^ 原样恢复，不自绘、不改图形；纠正：不要 icon_clock）；
     /// 可用态只由发布冻结（refreshPublishingInputFreeze）管，本函数不动 isEnabled。
     private func refreshVisibilityButton() {
         if isEphemeral {
-            visibilityButton.setImage(BearyIconImages.image(named: "icon_clock", pointSize: 24), for: .normal)
+            visibilityButton.setImage(BearyIconImages.image(named: "icon_limited", pointSize: 24), for: .normal)
             visibilityButton.accessibilityValue = "限时"
         } else {
             let published = selectedVisibilityPublished
