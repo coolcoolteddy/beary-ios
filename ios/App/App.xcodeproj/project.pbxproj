@@ -16,6 +16,7 @@
 		147711CB4F24122B8270E75F /* BearyCoreTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5402B22C53F47BC0E5260A35 /* BearyCoreTests.swift */; };
 		A8BEBC6E5F94AF59F6C14DDC /* BearyAPI.swift in Sources */ = {isa = PBXBuildFile; fileRef = AECBDBF45A4EEB200061613F /* BearyAPI.swift */; };
 		46A75137107D74DC8B449314 /* BearyPastSelf.swift in Sources */ = {isa = PBXBuildFile; fileRef = A57E941A106787A04C8C1EAA /* BearyPastSelf.swift */; };
+		8A1420F6FBFE89D95C582248 /* BearyDynamicBorder.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8F0056EF4785D1AB4F29064A /* BearyDynamicBorder.swift */; };
 		850D32A1A4CA4E3D088DA61F /* BearyNavigator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 86D18B2BF4591827760F0894 /* BearyNavigator.swift */; };
 		59C6778EEFAEC6629770AD96 /* WebKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 59B3786A24FEFF632E1621F3 /* WebKit.framework */; };
 		9F64B84E58D114FEDA76ED6E /* XCTest.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 1184567EDCC8BB2976BDBED4 /* XCTest.framework */; };
@@ -941,6 +942,7 @@
 				161AB80B45864055BCEEFC20 /* BearyStarMap.swift in Sources */,
 				A8BEBC6E5F94AF59F6C14DDC /* BearyAPI.swift in Sources */,
 				46A75137107D74DC8B449314 /* BearyPastSelf.swift in Sources */,
+				8A1420F6FBFE89D95C582248 /* BearyDynamicBorder.swift in Sources */,
 				850D32A1A4CA4E3D088DA61F /* BearyNavigator.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
