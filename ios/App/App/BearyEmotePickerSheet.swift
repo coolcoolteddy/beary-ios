@@ -3,7 +3,9 @@ import UIKit
 // ===== BearyEmotePickerSheet 统一回应 Sheet（B 批卡片合并）=====
 // 来源二合一：首页 BearyFeedEmoteSheetViewController ＋个人主页
 // BearyProfileEmoteSheetViewController。两边共用同一选择器；可选列表
-// 用保序熊脸列表 BearyEmoteKeys.bearFaces（all 原顺序去掉 8 个物件）。统一参数一律取
+// 清单 15 起恢复为全部 40 只（BearyEmoteKeys.all，与网页／后端白名单
+// 一致，含 8 只物件表情）。小熊回应墙仍只留熊脸（见 BearyProfileViewController
+// applyWall 与详情 renderEmotes 的 bearFaceKeys 过滤），本次只改选择器、不改墙。
 // 首页口径（任务定版）：动态 4 列（宽 - 54）/ 4 × 72、行距 10、槽位 46、
 // 按压高亮（faint 底）、遮罩 0.45、抓手顶距 10、iPad ≥821 宽屏分支
 // （全圆角 22 + 1px line 边框 + 底部偏移 24 的浮起卡片；移动端顶部圆角
@@ -23,9 +25,10 @@ enum BearyEmoteKeys {
     static let nonBearFaceKeys: Set<String> = ["candle", "flower", "letter", "paperplane", "sprout", "tea", "umbrella", "wish"]
     /// 熊脸 key 集 = 全部回应 key 减去非熊脸 key；个人页小熊回应墙只显示这些。
     static let bearFaceKeys: Set<String> = Set(all).subtracting(nonBearFaceKeys)
-    /// 选择器用的保序熊脸列表 = all 原顺序去掉非熊脸（32 项）；不要直接用
-    /// bearFaceKeys（Set 迭代顺序不定，会打乱选择器原有顺序）。回应选择器
-    /// 与墙共用同一口径：只留熊脸。
+    /// 保序熊脸列表 = all 原顺序去掉非熊脸（32 项）；不要直接用
+    /// bearFaceKeys（Set 迭代顺序不定，会打乱原有顺序）。清单 15 起选择器
+    /// 不再用它（改用 all 40 只），本列表保留作他处保序熊脸口径的备用；
+    /// 墙与详情显示仍走 bearFaceKeys 过滤，与选择器口径脱钩。
     static let bearFaces: [String] = all.filter { !nonBearFaceKeys.contains($0) }
 }
 
@@ -230,14 +233,15 @@ final class BearyEmotePickerSheetViewController: UIViewController, UICollectionV
     }
 
     func collectionView(_ collectionView: UICollectionView, numberOfItemsInSection section: Int) -> Int {
-        return BearyEmoteKeys.bearFaces.count
+        // 清单 15：选择器恢复全部 40 只（all），不再用 bearFaces 32 只。
+        return BearyEmoteKeys.all.count
     }
 
     func collectionView(_ collectionView: UICollectionView, cellForItemAt indexPath: IndexPath) -> UICollectionViewCell {
         guard let cell = collectionView.dequeueReusableCell(withReuseIdentifier: "bearyEmotePickerSheetCell", for: indexPath) as? BearyEmotePickerSheetCell else {
             return UICollectionViewCell()
         }
-        let key = BearyEmoteKeys.bearFaces[indexPath.item]
+        let key = BearyEmoteKeys.all[indexPath.item]
         cell.configure(key: key)
         return cell
     }
@@ -249,7 +253,7 @@ final class BearyEmotePickerSheetViewController: UIViewController, UICollectionV
     }
 
     func collectionView(_ collectionView: UICollectionView, didSelectItemAt indexPath: IndexPath) {
-        let pickedKey = BearyEmoteKeys.bearFaces[indexPath.item]
+        let pickedKey = BearyEmoteKeys.all[indexPath.item]
         BearySoundPlayer.play(.emoteChirp)
         onPick?(pickedKey)
     }

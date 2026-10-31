@@ -867,7 +867,7 @@ final class BearyBlindBoxFlowViewController: UIViewController {
         }
     }
 
-    // MARK: - 匿名小熊回应（仅熊脸选择器；乐观更新、失败回滚）
+    // MARK: - 匿名小熊回应（清单 15 起选择器为全部 40 只；乐观更新、失败回滚）
 
     private func renderEmoteChips() {
         for sub in emoteStack.arrangedSubviews {
@@ -955,7 +955,7 @@ final class BearyBlindBoxFlowViewController: UIViewController {
     @objc private func emoteAddTapped() {
         guard let exchangeId = exchangeId, reactBusy == false else { return }
         if presentedViewController != nil { return }
-        // 选择器本身只出熊脸（BearyEmoteKeys.bearFaces），与小熊回应墙同口径。
+        // 清单 15：选择器出全部 40 只（含物件表情），不再只出熊脸；墙仍只留熊脸。
         let sheet = BearyEmotePickerSheetViewController()
         sheet.modalPresentationStyle = .overFullScreen
         sheet.onPick = { [weak self] pickedKey in
