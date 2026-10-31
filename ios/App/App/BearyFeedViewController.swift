@@ -420,7 +420,8 @@ class BearyFeedViewController: UIViewController {
     }
 
     /// 自定义下拉指示器跟随（消息页同款）：手指行程 ×0.48 阻尼、上限 116；
-    /// 指示高 ≥80 时转圈淡入放大（BearyRefreshIconView.setPullProgress 口径）。
+    /// 指示高 ≥98.4 时转满一圈（= 触发行程 205pt × 0.48，满格点即触发点；
+    /// BearyRefreshIconView.setPullProgress 口径）。
     private func updateCustomPullIndicator() {
         if isCustomPullRefreshing {
             return
@@ -444,7 +445,7 @@ class BearyFeedViewController: UIViewController {
         if indicatorHeight <= 0 {
             refreshIconView.setPullProgress(0)
         } else {
-            refreshIconView.setPullProgress(min(1, indicatorHeight / 80))
+            refreshIconView.setPullProgress(min(1, indicatorHeight / 98.4))
         }
     }
 
@@ -1193,9 +1194,9 @@ class BearyFeedViewController: UIViewController {
             strongSelf.lastFeedLoadAt = Date()
             let oldPlazaHead = strongSelf.plazaEntries().first?.id
             let headChanged = (newPlaza.first?.id != nil && newPlaza.first?.id != oldPlazaHead)
-            // 读到深处（>600）且头条变了：先挂 pill，点了才换（网页 showNewPill 同口径）；
+            // 读到深处（相对位移 >600，即 y + contentInset.top，与滚动藏栏同口径）且头条变了：先挂 pill，点了才换（网页 showNewPill 同口径）；
             // 否则静默 diff 换上（只动变了的行，不动滚动位）。
-            if headChanged && strongSelf.tableView.contentOffset.y > 600 {
+            if headChanged && strongSelf.tableView.contentOffset.y + strongSelf.tableView.contentInset.top > 600 {
                 strongSelf.pendingPlaza = newPlaza
                 strongSelf.showNewContentPill()
                 return
