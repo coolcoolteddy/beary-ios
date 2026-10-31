@@ -195,6 +195,10 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
 
     private var selectedMood: String?
     private var selectedWeather: String?
+    /// 天气气温（摄氏度整数）：自动填或手改后才有值；清天气类型时同清。
+    private var selectedTemperature: Int?
+    /// 当地天气取数代次：快速连点天气钮时旧回包过期作废，不覆盖新一次的结果。
+    private var weatherFetchGeneration = 0
     /// 批 E 编辑器位置：已确认的位置（只有文本，无坐标）。nil = 未定位；
     /// 定位失败不改本值（失败只 toast、不静默清掉已确认的位置；从未确认过时行即隐藏 = 未定位态）。
     private var selectedLocation: DiaryLocation?
@@ -492,6 +496,12 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     private var toolStripTransitionGeneration = 0
     private let moodChipButton = BearyHit44Button(type: .system)
     private let weatherChipButton = BearyHit44Button(type: .system)
+    /// 气温步进器（只在已选天气时显）：− / 数值 / +，点数值弹系统输入框直输；
+    /// 无气温时点 ± 先落到 18° 再调（不凭空猜一个当地值当起点以外的数）。
+    private let tempStepperStack = UIStackView()
+    private let tempMinusButton = BearyHit44Button(type: .system)
+    private let tempLabelButton = BearyHit44Button(type: .system)
+    private let tempPlusButton = BearyHit44Button(type: .system)
     private let recipientChipButton = BearyHit44Button(type: .system)
     // C11：删图撤销条（图片条下方）：文案 + 撤销钮，10 秒到期自动消失并提交删除。
     private let imageUndoBar = UIView()
@@ -1692,6 +1702,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         // 网页口径：点某项即选中该项（含“无”=清空），再点已选项不取消。
         if key.isEmpty {
             selectedWeather = nil
+            selectedTemperature = nil
         } else {
             selectedWeather = key
         }
@@ -3571,10 +3582,72 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     }
 
     /// 弹出框点选天气：沿用旧条口径（点即选中、再点不取消）；点选即收起。
+    @objc private func didTapTempMinus() {
+        adjustTemperature(by: -1)
+    }
+
+    @objc private func didTapTempPlus() {
+        adjustTemperature(by: 1)
+    }
+
+    /// 气温 ±1：无气温时先落到 18°（不以方向猜 17°/19°）；范围钉死 -60…60°。
+    private func adjustTemperature(by delta: Int) {
+        guard selectedWeather != nil else { return }
+        let next: Int
+        if let current = selectedTemperature {
+            next = current + delta
+        } else {
+            next = 18
+        }
+        selectedTemperature = min(60, max(-60, next))
+        refreshSelectedChips()
+        scheduleDraftSave()
+    }
+
+    /// 点气温数值：系统输入框直输整数（-60…60°）；留空点确定即清除气温（只清气温、不动类型）。
+    @objc private func didTapTempLabel() {
+        guard selectedWeather != nil else { return }
+        let alert = UIAlertController(title: "气温", message: "输入摄氏度整数，留空即清除", preferredStyle: .alert)
+        alert.addTextField { field in
+            field.keyboardType = .numbersAndPunctuation
+            field.placeholder = "例如 18"
+            if let temp = self.selectedTemperature {
+                field.text = "\(temp)"
+            }
+        }
+        alert.addAction(UIAlertAction(title: "取消", style: .cancel, handler: nil))
+        alert.addAction(UIAlertAction(title: "清除", style: .destructive, handler: { [weak self] _ in
+            self?.selectedTemperature = nil
+            self?.refreshSelectedChips()
+            self?.scheduleDraftSave()
+        }))
+        alert.addAction(UIAlertAction(title: "确定", style: .default, handler: { [weak self] _ in
+            guard let self = self else { return }
+            let raw = alert.textFields?.first?.text?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            if raw.isEmpty {
+                self.selectedTemperature = nil
+            } else if let value = Int(raw) {
+                self.selectedTemperature = min(60, max(-60, value))
+            } else {
+                self.showToast("气温请输入整数")
+                return
+            }
+            self.refreshSelectedChips()
+            self.scheduleDraftSave()
+        }))
+        present(alert, animated: BearyMotion.animated(true))
+    }
+
     /// v6-8：点首位“无”即清除已选天气（weather 置空），工具栏天气钮经
     /// refreshWeatherButtons 回到无天气态（通用天气图标），chip 行同步隐藏天气 chip。
     private func didSelectWeatherFromCallout(_ key: String) {
-        selectedWeather = (key == "none") ? nil : key
+        // 手改类型：换类型气温保留；点“无”清类型时气温同清，不留孤气温。
+        if key == "none" {
+            selectedWeather = nil
+            selectedTemperature = nil
+        } else {
+            selectedWeather = key
+        }
         refreshWeatherButtons()
         updateWeatherPlayback()
         refreshSelectedChips()
@@ -3647,7 +3720,8 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         }
         if let weather = selectedWeather, let name = BearyText.weatherNames[weather] {
             weatherChipButton.isHidden = false
-            weatherChipButton.setTitle(name, for: .normal)
+            let weatherTitle = selectedTemperature != nil ? "\(name) \(selectedTemperature!)°" : name
+            weatherChipButton.setTitle(weatherTitle, for: .normal)
             let icon = BearyIconImages.image(named: "icon_wx_\(weather)", pointSize: 16)
             if icon == nil {
                 NSLog("[BearyComposer] selected weather chip icon missing key=%@", weather)
@@ -3655,11 +3729,15 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             weatherChipButton.setImage(icon, for: .normal)
             weatherChipButton.tintColor = BearyColors.ink
             weatherChipButton.titleEdgeInsets = UIEdgeInsets(top: 0, left: icon == nil ? 0 : 5, bottom: 0, right: 0)
-            weatherChipButton.accessibilityLabel = "天气：" + name
+            weatherChipButton.accessibilityLabel = selectedTemperature != nil ? "天气：\(name) \(selectedTemperature!)°" : "天气：" + name
         } else {
             weatherChipButton.isHidden = true
             weatherChipButton.setImage(nil, for: .normal)
         }
+        // 气温步进器只跟天气类型走：有类型才显，无类型（“无”）时连气温同清、不留孤气温。
+        tempStepperStack.isHidden = selectedWeather == nil
+        tempLabelButton.setTitle(selectedTemperature != nil ? "\(selectedTemperature!)°" : "气温", for: .normal)
+        tempLabelButton.accessibilityLabel = selectedTemperature != nil ? "气温：\(selectedTemperature!)°，点按可输入" : "气温：未设置，点按可输入"
         let recipientName: String?
         if let user = selectedRecipient {
             if let display = user.displayName {
@@ -3733,6 +3811,9 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         if visibleCount > 1 {
             singleLineWidth += CGFloat(visibleCount - 1) * selectedChipsFirstRow.spacing
         }
+        if !tempStepperStack.isHidden {
+            singleLineWidth += tempStepperStack.intrinsicContentSize.width + selectedChipsFirstRow.spacing
+        }
         let wrapRecipient = singleLineWidth > available
         guard wrapRecipient != selectedChipsRecipientOnSecondRow else { return }
         selectedChipsRecipientOnSecondRow = wrapRecipient
@@ -3777,6 +3858,32 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             chip.button.translatesAutoresizingMaskIntoConstraints = false
             selectedChipsFirstRow.addArrangedSubview(chip.button)
         }
+        // 气温步进器：挂在 chip 首行天气 chip 之后，只在已选天气时显（见 refreshSelectedChips）。
+        tempStepperStack.axis = .horizontal
+        tempStepperStack.spacing = 4
+        tempStepperStack.alignment = .center
+        tempStepperStack.backgroundColor = BearyColors.faint
+        tempStepperStack.layer.cornerRadius = 999
+        tempStepperStack.layer.masksToBounds = true
+        tempStepperStack.translatesAutoresizingMaskIntoConstraints = false
+        tempStepperStack.isHidden = true
+        for (button, title, action) in [
+            (tempMinusButton, "−", #selector(didTapTempMinus)),
+            (tempLabelButton, "气温", #selector(didTapTempLabel)),
+            (tempPlusButton, "+", #selector(didTapTempPlus)),
+        ] as [(BearyHit44Button, String, Selector)] {
+            button.setTitle(title, for: .normal)
+            button.setTitleColor(BearyColors.ink, for: .normal)
+            button.titleLabel?.font = UIFont.systemFont(ofSize: 13, weight: .semibold)
+            button.contentEdgeInsets = UIEdgeInsets(top: 7, left: 10, bottom: 7, right: 10)
+            button.addTarget(self, action: action, for: .touchUpInside)
+            button.bearyAddPressFeedback()
+            button.translatesAutoresizingMaskIntoConstraints = false
+            tempStepperStack.addArrangedSubview(button)
+        }
+        tempStepperStack.setContentHuggingPriority(.required, for: .horizontal)
+        tempStepperStack.setContentCompressionResistancePriority(.required, for: .horizontal)
+        selectedChipsFirstRow.addArrangedSubview(tempStepperStack)
         // 审计 P1-3：心情/天气自然宽不让步；写给低优先级，占剩余、紧时先缩先截断。
         moodChipButton.setContentHuggingPriority(.required, for: .horizontal)
         moodChipButton.setContentCompressionResistancePriority(.required, for: .horizontal)
@@ -3825,10 +3932,35 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         toggleCallout(.mood)
     }
 
+    /// 天气钮：点一下先自动取当地天气和气温填上，再打开天气选择器——填上之后
+    /// 类型可在选择器里手改、气温可在 chip 行步进器里手改，改完以手改的为准；
+    /// 再点天气钮会重新自动填（覆盖手改）。取不到时如实提示、不编假数据填上，
+    /// 仍打开选择器供手动选。
     @objc private func didTapWeatherTool() {
         DiagFile.mark("weather-diag didTapWeatherTool")
         hideLocationPopover(animated: false)
-        toggleCallout(.weather)
+        weatherFetchGeneration += 1
+        let generation = weatherFetchGeneration
+        showToast("正在获取当地天气…")
+        BearyAPI.shared.fetchLocalWeather { [weak self] result in
+            DispatchQueue.main.async {
+                guard let self = self, self.weatherFetchGeneration == generation else { return }
+                switch result {
+                case .success(let fetched):
+                    if let key = fetched.weatherKey {
+                        self.selectedWeather = key
+                    }
+                    self.selectedTemperature = fetched.temperature
+                    self.refreshWeatherButtons()
+                    self.updateWeatherPlayback()
+                    self.refreshSelectedChips()
+                    self.scheduleDraftSave()
+                case .failure:
+                    self.showToast("没取到当地天气，请手动选")
+                }
+                self.showCallout(.weather)
+            }
+        }
     }
 
     @objc private func didTapRecipientTool() {
@@ -4915,7 +5047,9 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         selectedMood = entry.mood
         refreshMoodButtons()
         selectedWeather = entry.weather
+        selectedTemperature = entry.temperatureC
         refreshWeatherButtons()
+        refreshSelectedChips()
         // 批 E：编辑回填位置（首次回填才以服务端原值为准；补拉二次调用时用户可能已改选，
         // 不覆盖——与 @ 的 editQuoteFetchAttempted 守卫同款口径）。
         if !editQuoteFetchAttempted {
@@ -5111,6 +5245,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             clientReq: req,
             updatedAt: Date().timeIntervalSince1970,
             weather: selectedWeather,
+            temperature: selectedTemperature,
             locationName: selectedLocation?.name,
             locationDistrict: selectedLocation?.district,
             capsuleEnabled: isEditMode ? false : capsuleEnabled,
@@ -5219,6 +5354,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                 self.selectedMood = draft.mood
                 self.refreshMoodButtons()
                 self.selectedWeather = draft.weather
+                self.selectedTemperature = draft.temperature
                 self.refreshWeatherButtons()
                 self.restoreVisibility(index: draft.visibilitySegmentIndex, ephemeral: draft.ephemeralEnabled)
                 self.selectedRecipient = self.restoredRecipient(from: draft)
@@ -5512,6 +5648,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         headlineField.text = ""
         selectedMood = nil
         selectedWeather = nil
+        selectedTemperature = nil
         selectedRecipient = nil
         notifyRecipient = true
         selectedQuote = nil
@@ -5571,6 +5708,8 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         headlineField.text = draft.title ?? ""
         selectedMood = draft.mood
         selectedWeather = draft.weather
+        selectedTemperature = draft.temperature
+        refreshSelectedChips()
         restoreVisibility(index: draft.visibilitySegmentIndex, ephemeral: draft.ephemeralEnabled)
         selectedRecipient = restoredRecipient(from: draft)
         notifyRecipient = draft.notifyRecipient
@@ -5803,7 +5942,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         // iCity：可见性值即 visibility（published 0/1）；@ 以 mentioned_user_id 发出，无按篇通知开关。
         // 限时：限时态时可见性必为公开，ephemeral=1 随新建发出（服务端写 24 小时到期）。
         let publishVisibility = selectedVisibilityPublished ? 1 : 0
-        BearyAPI.shared.publishEntry(content: trimmed, images: uploadedImageKeys(), mood: selectedMood, weather: selectedWeather, quoteId: publishQuoteId, published: publishVisibility, mentionedUserId: selectedRecipient?.id, title: headlineForCreate, ephemeral: isEphemeral ? 1 : nil, clientReq: req, locationName: selectedLocation?.name, locationDistrict: selectedLocation?.district, capsuleBuried: capsulePayload?.buried, capsuleUnlockDate: capsulePayload?.unlockDate, capsuleDistrict: capsulePayload?.district) { [weak self] result in
+        BearyAPI.shared.publishEntry(content: trimmed, images: uploadedImageKeys(), mood: selectedMood, weather: selectedWeather, temperature: selectedTemperature, quoteId: publishQuoteId, published: publishVisibility, mentionedUserId: selectedRecipient?.id, title: headlineForCreate, ephemeral: isEphemeral ? 1 : nil, clientReq: req, locationName: selectedLocation?.name, locationDistrict: selectedLocation?.district, capsuleBuried: capsulePayload?.buried, capsuleUnlockDate: capsulePayload?.unlockDate, capsuleDistrict: capsulePayload?.district) { [weak self] result in
             DispatchQueue.main.async {
                 guard let self = self else { return }
                 self.isPublishing = false
@@ -5890,7 +6029,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         // 时间胶囊：编辑 PUT 不发胶囊字段，服务端保留原埋点与解锁日期；改位置不挪胶囊（埋点是发布时快照）。
         // 批 E：编辑位置——与原快照比对，未动省略、改选两键算清（有值发值、无值发 null）、清除两键皆 null。
         let locationChanged = selectedLocation != originalLocation
-        BearyAPI.shared.updateEntry(id: entryId, content: trimmed, images: uploadedImageKeys(), mood: selectedMood, weather: selectedWeather, quoteId: lockedQuote?.entryId, title: headlineText, mentionedUserId: updateMentionedId, clearMentioned: updateClearMentioned, locationName: locationChanged ? selectedLocation?.name : nil, locationDistrict: locationChanged ? selectedLocation?.district : nil, clearLocationName: locationChanged && selectedLocation?.name == nil, clearLocationDistrict: locationChanged && selectedLocation?.district == nil) { [weak self] result in
+        BearyAPI.shared.updateEntry(id: entryId, content: trimmed, images: uploadedImageKeys(), mood: selectedMood, weather: selectedWeather, temperature: selectedTemperature, quoteId: lockedQuote?.entryId, title: headlineText, mentionedUserId: updateMentionedId, clearMentioned: updateClearMentioned, locationName: locationChanged ? selectedLocation?.name : nil, locationDistrict: locationChanged ? selectedLocation?.district : nil, clearLocationName: locationChanged && selectedLocation?.name == nil, clearLocationDistrict: locationChanged && selectedLocation?.district == nil) { [weak self] result in
             DispatchQueue.main.async {
                 guard let self = self else { return }
                 self.isPublishing = false
@@ -5908,6 +6047,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                         updated.images = self.uploadedImageKeys()
                         updated.mood = self.selectedMood
                         updated.weather = self.selectedWeather
+                        updated.temperatureC = self.selectedTemperature
                         // 批 E：编辑成功后本地副本跟随位置终态，列表行不靠重拉才变。
                         updated.locationName = self.selectedLocation?.name
                         updated.locationDistrict = self.selectedLocation?.district
