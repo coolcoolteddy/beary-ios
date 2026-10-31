@@ -1191,7 +1191,8 @@ final class BearyTimelineCell: UITableViewCell {
         dotRingView.heightAnchor.constraint(equalTo: dotRingView.widthAnchor).isActive = true
         NSLayoutConstraint.activate([
             // 对称分割线式：内容列上下 6 / 8、左右 36 / 16 不动（现行时间线口径，
-            // 内容到底线顶留白 = 栈底 14 + 列底 8 − 线高 2 = 20pt）；分割线钉 cell 底缘、
+            // 115 批：内容到底线顶留白由 20pt 改 12pt（与首页 12pt 对齐），只改栈底
+            // 14 → 6：内容到底线顶留白 = 栈底 6 + 列底 8 − 线高 2 = 12pt；分割线钉 cell 底缘、
             // 只定左右与高，不参与行高计算（行高仍由内容列底缘 -8 定）。
             // 分割线左右留白各 36pt 对称：左 36 = 内容列左缘（竖线轨道留出，
             // 绝不碰竖线与圆点），右 -36（#251 右到屏边那支不再保留）；
@@ -1207,7 +1208,7 @@ final class BearyTimelineCell: UITableViewCell {
             cardStack.topAnchor.constraint(equalTo: cardView.topAnchor, constant: 14),
             cardStack.leadingAnchor.constraint(equalTo: cardView.leadingAnchor, constant: 16),
             cardStack.trailingAnchor.constraint(equalTo: cardView.trailingAnchor, constant: -16),
-            cardStack.bottomAnchor.constraint(equalTo: cardView.bottomAnchor, constant: -14),
+            cardStack.bottomAnchor.constraint(equalTo: cardView.bottomAnchor, constant: -6),
         ])
         // 批 E 补漏：位置图标固定 13（详情同款），不靠图片固有尺寸撑行高。
         NSLayoutConstraint.activate([
