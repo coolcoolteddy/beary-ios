@@ -156,8 +156,12 @@ final class BearyProfilePhotosViewController: UIViewController {
                     strongSelf.collectionView.reloadData()
                     strongSelf.updateTitleAndEmpty()
                 case .failure:
-                    // 续拉失败只停不再拉，已有照片照常看，不 toast 打断浏览。
-                    strongSelf.photosHasMore = false
+                    // 109：续拉失败不再封死 hasMore——末项再次进入视野时 willDisplay
+                    // 可再触发 fetchNextPageIfNeeded；同时给一次失败提示（toast，
+                    // 与全 App 失败提示口径一致），已有照片照常看。原“不 toast”
+                    // 口径改为提示，因为静默断流会让用户误以为后面没有照片；
+                    // 失败时不 reload，不会因重建触发 willDisplay 循环重拉。
+                    BearyToast.show(in: strongSelf.view, message: "照片加载失败，请稍后重试")
                 }
             }
         }

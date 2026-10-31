@@ -827,6 +827,10 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         // 无结果时结果区改加载态（含登录提示）。
         if showingResults {
             setBoxBusy(true)
+            // 109：新一轮搜索开始即清失败尾行（setSearchFooter 注释口径：搜索进行时
+            // 不显示尾行，只转框内圈）；失败回包仍可经 showFailedStateKeepingResults 再亮。
+            // 旧回包另有 searchSeq 序号守卫，不会把旧失败亮回新一轮。
+            setSearchFooter(failed: false)
         } else {
             showLoadingState()
         }
