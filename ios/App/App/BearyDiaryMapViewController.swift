@@ -151,9 +151,40 @@ final class BearyDiaryMapViewController: UIViewController, MKMapViewDelegate, UI
         dismiss(animated: true)
     }
 
+    /// 116 数据填入动效：状态文案变化时只淡入该 label 本身（alpha
+    /// 0→1、0.25s，不动 transform／布局、不重建节点、不缩放弹一下）；
+    /// 同值不赋值不重播；减动效或未进窗口时直设终值。失败视图由
+    /// 隐藏变可见时只淡入视图本身。地图大头针为 MapKit 渲染元素，
+    /// 不走本口径（见 PR 说明）。
+    private func setStatusTextFaded(_ text: String) {
+        guard statusLabel.text != text else { return }
+        statusLabel.text = text
+        guard !UIAccessibility.isReduceMotionEnabled, statusLabel.window != nil else {
+            statusLabel.alpha = 1
+            return
+        }
+        statusLabel.alpha = 0
+        UIView.animate(withDuration: 0.25, delay: 0, options: [.curveEaseOut, .beginFromCurrentState], animations: {
+            self.statusLabel.alpha = 1
+        })
+    }
+
+    private func showFailureViewFaded() {
+        let wasHidden = failureView.isHidden
+        failureView.isHidden = false
+        guard wasHidden, !UIAccessibility.isReduceMotionEnabled, failureView.window != nil else {
+            failureView.alpha = 1
+            return
+        }
+        failureView.alpha = 0
+        UIView.animate(withDuration: 0.25, delay: 0, options: [.curveEaseOut, .beginFromCurrentState], animations: {
+            self.failureView.alpha = 1
+        })
+    }
+
     @objc private func didTapRetry() {
         failureView.isHidden = true
-        statusLabel.text = "正在加载日记…"
+        setStatusTextFaded("正在加载日记…")
         fetchAllEntries()
     }
 
@@ -177,11 +208,11 @@ final class BearyDiaryMapViewController: UIViewController, MKMapViewDelegate, UI
                 switch result {
                 case .failure:
                     if self.fetchCollected.isEmpty && self.allEntries.isEmpty {
-                        self.failureView.isHidden = false
-                        self.statusLabel.text = "日记加载失败"
+                        self.showFailureViewFaded()
+                        self.setStatusTextFaded("日记加载失败")
                     } else {
                         // 已有数据时网络失败不清空地图：保留已加载聚合，状态行明示。
-                        self.statusLabel.text = "网络失败，显示已加载的日记"
+                        self.setStatusTextFaded("网络失败，显示已加载的日记")
                     }
                 case .success(let list):
                     let pageEntries = list.entries ?? []
@@ -217,9 +248,9 @@ final class BearyDiaryMapViewController: UIViewController, MKMapViewDelegate, UI
             selectedGroup = nil
         }
         if groups.isEmpty {
-            statusLabel.text = capsuleEntries.isEmpty
+            setStatusTextFaded(capsuleEntries.isEmpty
                 ? (allEntries.isEmpty ? "还没有日记" : "还没有带位置的日记")
-                : "\(capsuleEntries.count) 个时间胶囊"
+                : "\(capsuleEntries.count) 个时间胶囊")
             mapView.removeAnnotations(mapView.annotations)
             unlocatedGroups = []
             tableView.reloadData()
@@ -229,7 +260,7 @@ final class BearyDiaryMapViewController: UIViewController, MKMapViewDelegate, UI
         }
         var status = "共 \(nonCapsule.filter { !DiaryLocation(entry: $0).isEmpty }.count) 篇带位置日记 · \(groups.count) 个地点"
         if !capsuleEntries.isEmpty { status += " · \(capsuleEntries.count) 个时间胶囊" }
-        statusLabel.text = status
+        setStatusTextFaded(status)
         geocodeGroupsSequentially(index: 0, located: [], unlocated: [])
     }
 
