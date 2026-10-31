@@ -6777,6 +6777,17 @@ extension BearyProfileViewController: UITableViewDataSource, UITableViewDelegate
         }
         cellValue.onQuoteTap = { [weak self] in self?.handleCellQuoteTap(entry: entryValue) }
         cellValue.onFoldToggle = { [weak self] in self?.handleCellFoldToggle(entryId: entryId) }
+        // 116：行高重算回调（首页同款口径）：引用/内容高度落定后行高需重算时
+        // 走 reloadRows(.none)，只刷新可见行；此前个人主页未接此回调，行高
+        // 停留在初算值、内容溢出行高后被下一行盖住（虚线底边缺失同类），
+        // 滑动中行高纠正即表现为抽搐。
+        cellValue.onNeedsRowReload = { [weak self, weak cellValue] in
+            guard let strongSelf = self, let targetCell = cellValue else { return }
+            guard let path = strongSelf.tableView.indexPath(for: targetCell) else { return }
+            if strongSelf.tableView.indexPathsForVisibleRows?.contains(path) == true {
+                strongSelf.tableView.reloadRows(at: [path], with: .none)
+            }
+        }
         // 游客详情：卡片上的登录提示条与未登录互动点按走本页的 onRequireLogin
         //（容器接登录提示 Sheet）；此前 cellForRowAt 未接此回调，现补上。
         cellValue.onRequireLogin = { [weak self] in self?.onRequireLogin?() }

@@ -952,17 +952,11 @@ class BearyDiaryCardCell: UITableViewCell {
         return st
     }()
 
-    /// 限时卡虚线边框（CAShapeLayer，1.5pt dashed、line 色、圆角 16；
-    /// 布局时按 contentView 内缩矩形重画路径，主题切换重刷描边色）。
-    private let ephemeralBorderLayer: CAShapeLayer = {
-        let layer = CAShapeLayer()
-        layer.fillColor = UIColor.clear.cgColor
-        layer.lineWidth = 1.5
-        layer.lineDashPattern = [4, 3]
-        layer.strokeColor = BearyColors.line.cgColor
-        layer.isHidden = true
-        return layer
-    }()
+    /// 限时卡虚线边框（BearyDashedBorderView：1.5pt dashed、line 色、圆角 16；
+    /// 由约束钉在 contentView 上、自身布局时按 bounds 重画，不再由 cell 的
+    /// layoutSubviews 按当时 bounds 手工算 path，防行高落定后框高停留在旧矩形）。
+    private let ephemeralBorderView = BearyDashedBorderView()
+    private var ephemeralBorderTopConstraint: NSLayoutConstraint?
 
     private var imageHeightConstraint: NSLayoutConstraint?
     private var separatorTopGap: CGFloat {
@@ -1059,8 +1053,18 @@ class BearyDiaryCardCell: UITableViewCell {
         contentView.addSubview(rightStack)
         imagesScrollView.addSubview(imagesStack)
         contentView.addSubview(separatorView)
-        // 限时虚线边框层（挂 contentView 层，布局时重画；平时隐藏，不影响普通卡）。
-        contentView.layer.addSublayer(ephemeralBorderLayer)
+        // 限时虚线边框视图（插最底层、不挡内容；平时隐藏，不影响普通卡）。
+        ephemeralBorderView.translatesAutoresizingMaskIntoConstraints = false
+        ephemeralBorderView.isHidden = true
+        contentView.insertSubview(ephemeralBorderView, at: 0)
+        let ephemeralTop = ephemeralBorderView.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 6)
+        ephemeralBorderTopConstraint = ephemeralTop
+        NSLayoutConstraint.activate([
+            ephemeralTop,
+            ephemeralBorderView.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 8),
+            ephemeralBorderView.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -8),
+            ephemeralBorderView.bottomAnchor.constraint(equalTo: contentView.bottomAnchor, constant: -6),
+        ])
         // 2026-10-31：长按上下文菜单已归并进右上角 ⋯ 菜单（时间线风格），本行不再挂
         // UIContextMenuInteraction；长按不再弹菜单，管理类操作一律走 ⋯。
         // ⋯ 挂 contentView 右上角（对齐标题行），标题行末 titleMoreSpacer 给它留位。
@@ -1186,17 +1190,24 @@ class BearyDiaryCardCell: UITableViewCell {
         // 回应行高随 flow 实测走（两模式）；折叠判定以实测行宽为准，初次
         // configure 时 cell 宽可能尚未落位（用屏宽估算），布局落位后若溢出
         // 结论变了，在此纠正一次（结论稳定后不再变动，不会往复）。
-        updateEmoteRowHeight()
-        // 限时虚线边框：存活期按 contentView 内缩矩形重画（圆角 16），两模式同款。
-        if !ephemeralBorderLayer.isHidden {
-            ephemeralBorderLayer.frame = contentView.bounds
-            if cardMode == .profile && profileFirstRow {
-                // 首卡：框顶 6→22（底边仍距 cell 底 6，不整体下移），
-                // tab 视觉底边（首卡顶 +14）到框顶留 8pt。
-                let borderRect = CGRect(x: 8, y: 22, width: contentView.bounds.width - 16, height: contentView.bounds.height - 22 - 6)
-                ephemeralBorderLayer.path = UIBezierPath(roundedRect: borderRect, cornerRadius: 16).cgPath
-            } else {
-                ephemeralBorderLayer.path = UIBezierPath(roundedRect: contentView.bounds.insetBy(dx: 8, dy: 6), cornerRadius: 16).cgPath
+        let emoteHeightChanged = updateEmoteRowHeight()
+        // 限时虚线边框不再在此手工重画 path：BearyDashedBorderView 自身按
+        // 约束后的 bounds 重画，行高落定后框高自动跟上（首卡顶 22 见下）。
+        // 个人主页：回应行高在初次布局（宽未落位、走估算）与落位后不一致时，
+        // 行高会变一次；此前个人主页没有行高重算回调（首页有 onNeedsRowReload），
+        // 行高停留在初算值、内容溢出或回缩即表现为滑动抽搐。异步通知一次，
+        // 控制器走 reloadRows(.none) 重算该行（可见行才刷，见控制器接线）。
+        if cardMode == .profile, emoteHeightChanged,
+           let entryIdValue = cellEntryId,
+           let settledHeight = emoteRowHeightConstraint?.constant {
+            let key = (entryId: entryIdValue, height: settledHeight)
+            if lastEmoteHeightNotified?.entryId != key.entryId || lastEmoteHeightNotified?.height != key.height {
+                lastEmoteHeightNotified = key
+                DispatchQueue.main.async { [weak self] in
+                    guard let self = self, self.cellEntryId == entryIdValue,
+                          self.emoteRowHeightConstraint?.constant == settledHeight else { return }
+                    self.onNeedsRowReload?()
+                }
             }
         }
         guard cardMode == .feed else { return }
@@ -1212,8 +1223,7 @@ class BearyDiaryCardCell: UITableViewCell {
 
     override func traitCollectionDidChange(_ previousTraitCollection: UITraitCollection?) {
         super.traitCollectionDidChange(previousTraitCollection)
-        // 限时虚线描边色是 cgColor 快照，主题切换须重刷（两模式同款，不受下方 feed 门控影响）。
-        ephemeralBorderLayer.strokeColor = BearyColors.line.cgColor
+        // 限时虚线描边色由 BearyDashedBorderView 自身在 trait 变化时重刷。
         // 首页模式：心情与公开行边框需重刷（chip 边框已由 BearyEmoteChipView
         // 自带 trait 重刷，此处不再调 renderEmotes——两套并存已摘掉一套）。
         guard cardMode == .feed else { return }
@@ -1239,7 +1249,7 @@ class BearyDiaryCardCell: UITableViewCell {
         locationLabel.text = nil
         locationNoteLabel.text = nil
         locationNoteLabel.isHidden = true
-        ephemeralBorderLayer.isHidden = true
+        ephemeralBorderView.isHidden = true
         separatorView.isHidden = false
         // 皇冠动效复用时停播，防串位到下一行。
         crownView.stop()
@@ -1481,6 +1491,9 @@ class BearyDiaryCardCell: UITableViewCell {
     ///   模式差异，列入真机清单（两页同屏对比顶距）待视觉确认后再定。
     private func updateRightStackSpacing() {
         rightStackTopConstraint?.constant = cardMode == .feed ? (recipientRow.isHidden ? 22 : 23) : (profileFirstRow ? 30 : 14)
+        // 首卡虚线框顶 6→22（底边仍距 cell 底 6，不整体下移），tab 视觉底边
+        // （首卡顶 +14）到框顶留 8pt；其余一律 6。
+        ephemeralBorderTopConstraint?.constant = (cardMode == .profile && profileFirstRow) ? 22 : 6
         // 110：头像顶与右列顶同值（个人页首卡 30、其余 14；首页恒 14）——
         // 头像顶与作者行顶对齐，首卡限时框（顶 22）完整包住头像（30..70，
         // 框顶留 8pt）；框路径一字不动，不用框迁就错位头像。
@@ -1501,10 +1514,11 @@ class BearyDiaryCardCell: UITableViewCell {
         rightStack.setCustomSpacing(10, after: actionStack)
     }
 
-    /// 右列内容宽：头像列 20 + 40 + 间距 12，右 20，共 92。
+    /// 右列内容宽：头像左 16 + 40 + 间距 12 + 右 16，共 84（此前误写 92，
+    /// 回应行高初算偏窄、多 chip 时会多算一行，落位后行高回缩、滑动中抖动）。
     private func rightColumnWidthEstimate() -> CGFloat {
         let cellWidth = bounds.width > 0 ? bounds.width : UIScreen.main.bounds.width
-        return max(0, cellWidth - 92)
+        return max(0, cellWidth - 84)
     }
 
     /// 批 E 卡片位置行刷新：文案与脱敏全走 BearyLocationDisplay.display（展示层实时判定，
@@ -2437,7 +2451,7 @@ class BearyDiaryCardCell: UITableViewCell {
             ephemeralRow.isHidden = true
         }
         separatorView.isHidden = (cardMode == .feed) ? false : live
-        ephemeralBorderLayer.isHidden = !live
+        ephemeralBorderView.isHidden = !live
         setNeedsLayout()
     }
 
@@ -2827,13 +2841,22 @@ class BearyDiaryCardCell: UITableViewCell {
     /// 算法抽取需改 BearyEmoteFlowView.swift，不在本批三个文件内，未动；
     /// 请协调人另派该文件（两处循环除设 frame 外完全一致，抽成同一
     /// layoutItems(forWidth:) 即可，cell 侧调用口径不变）。
-    private func updateEmoteRowHeight() {
+    /// 返回本轮是否改写了行高约束（调用方据此决定是否通知控制器重算行高）。
+    @discardableResult
+    private func updateEmoteRowHeight() -> Bool {
         let width = emoteFlowView.bounds.width > 0 ? emoteFlowView.bounds.width : rightColumnWidthEstimate()
         let height = emoteFlowView.height(forWidth: width)
         if let current = emoteRowHeightConstraint?.constant, abs(current - height) > 0.5 {
             emoteRowHeightConstraint?.constant = height
+            return true
         }
+        return false
     }
+
+    /// 回应行高落定通知去重（entryId + 高度）：布局中行高初算与落位宽不一致
+    /// 时会变一次，通知控制器重算该行；同一 (entry, 高度) 只通知一次，防
+    /// reloadRows → 再布局 → 再通知的循环。
+    private var lastEmoteHeightNotified: (entryId: String, height: CGFloat)?
 
     /// F7：回应 chip 按 count 降序（网页 emoteChipsHtml 同口径）。按 key 取 chip（动画用）。
     /// 查 chipKeys（已建 chip 的紧凑 key 表，与 overlay tag 对齐），不用 currentEmoteList
