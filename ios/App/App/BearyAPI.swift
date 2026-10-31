@@ -78,6 +78,10 @@ struct Entry: Codable {
     /// 卡片渲染与空标题占位均未定，本处只做模型字段，不做任何展示回退。
     var title: String?
     var images: [String]?
+    /// 实况映射（服务端 live_videos，convertFromSnakeCase 直解）：静态图 key →
+    /// 视频 key（视频 key = 静态图 key + "_live"）；nil/空 = 旧纯静态图，按无
+    /// 实况处理。无实况的图不出现在映射里。
+    var liveVideos: [String: String]?
     var imgDims: [String: [Int]]?
     var mood: String?
     var weather: String?

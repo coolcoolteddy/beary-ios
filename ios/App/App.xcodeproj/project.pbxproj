@@ -57,6 +57,7 @@
 		DE8D64F180D2F1B435EBC1A8 /* BearyBlindBoxEntryView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 709353AF36E7A13EDE025E55 /* BearyBlindBoxEntryView.swift */; };
 		8390766731A0B87B6A936AFC /* BearyBlindBox.swift in Sources */ = {isa = PBXBuildFile; fileRef = CC0475BEA97002D2AB77651F /* BearyBlindBox.swift */; };
 		F69CC632FC3065F79C9B7E2A /* BearyLocation.swift in Sources */ = {isa = PBXBuildFile; fileRef = F16DC0C4C6653B57C7C1D435 /* BearyLocation.swift */; };
+		B7E32DF13B854DBB86598255 /* BearyLivePhoto.swift in Sources */ = {isa = PBXBuildFile; fileRef = 27461924454044F9833DF938 /* BearyLivePhoto.swift */; };
 		75BAE1FB54991D19F8C4121A /* BearyLocationPopoverView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B89D24F83635F6366ADEBC67 /* BearyLocationPopoverView.swift */; };
 		8F7E729083AD880ED7E12DD4 /* BearyDiaryMapViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7A47FC5684A4899214A70CB3 /* BearyDiaryMapViewController.swift */; };
 		C135069A08D34199AC8F8AF3 /* BearyTimeCapsule.swift in Sources */ = {isa = PBXBuildFile; fileRef = D74D6C1DAD7F40BD8EFCD310 /* BearyTimeCapsule.swift */; };
@@ -258,6 +259,7 @@
 		709353AF36E7A13EDE025E55 /* BearyBlindBoxEntryView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BearyBlindBoxEntryView.swift; sourceTree = "<group>"; };
 		CC0475BEA97002D2AB77651F /* BearyBlindBox.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BearyBlindBox.swift; sourceTree = "<group>"; };
 		F16DC0C4C6653B57C7C1D435 /* BearyLocation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BearyLocation.swift; sourceTree = "<group>"; };
+		27461924454044F9833DF938 /* BearyLivePhoto.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BearyLivePhoto.swift; sourceTree = "<group>"; };
 		B89D24F83635F6366ADEBC67 /* BearyLocationPopoverView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BearyLocationPopoverView.swift; sourceTree = "<group>"; };
 		7A47FC5684A4899214A70CB3 /* BearyDiaryMapViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BearyDiaryMapViewController.swift; sourceTree = "<group>"; };
 		D74D6C1DAD7F40BD8EFCD310 /* BearyTimeCapsule.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BearyTimeCapsule.swift; sourceTree = "<group>"; };
@@ -488,6 +490,7 @@
 				709353AF36E7A13EDE025E55 /* BearyBlindBoxEntryView.swift */,
 				CC0475BEA97002D2AB77651F /* BearyBlindBox.swift */,
 				F16DC0C4C6653B57C7C1D435 /* BearyLocation.swift */,
+				27461924454044F9833DF938 /* BearyLivePhoto.swift */,
 				B89D24F83635F6366ADEBC67 /* BearyLocationPopoverView.swift */,
 				7A47FC5684A4899214A70CB3 /* BearyDiaryMapViewController.swift */,
 				D74D6C1DAD7F40BD8EFCD310 /* BearyTimeCapsule.swift */,
@@ -911,6 +914,7 @@
 				DE8D64F180D2F1B435EBC1A8 /* BearyBlindBoxEntryView.swift in Sources */,
 				8390766731A0B87B6A936AFC /* BearyBlindBox.swift in Sources */,
 				F69CC632FC3065F79C9B7E2A /* BearyLocation.swift in Sources */,
+				B7E32DF13B854DBB86598255 /* BearyLivePhoto.swift in Sources */,
 				75BAE1FB54991D19F8C4121A /* BearyLocationPopoverView.swift in Sources */,
 				8F7E729083AD880ED7E12DD4 /* BearyDiaryMapViewController.swift in Sources */,
 				C135069A08D34199AC8F8AF3 /* BearyTimeCapsule.swift in Sources */,

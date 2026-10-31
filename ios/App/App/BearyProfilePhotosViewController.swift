@@ -171,7 +171,13 @@ final class BearyProfilePhotosViewController: UIViewController {
         guard !photosValue.isEmpty, startIndex >= 0, startIndex < photosValue.count else { return }
         guard presentedViewController == nil else { return }
         let keys = photosValue.map { $0.imageKey }
-        let viewer = BearyEntryImageViewerViewController(imageKeys: keys, startIndex: startIndex)
+        var wallLiveVideos: [String: String] = [:]
+        for photo in photosValue {
+            if let liveKey = photo.entry.liveVideos?[photo.imageKey] {
+                wallLiveVideos[photo.imageKey] = liveKey
+            }
+        }
+        let viewer = BearyEntryImageViewerViewController(imageKeys: keys, liveVideos: wallLiveVideos.isEmpty ? nil : wallLiveVideos, startIndex: startIndex)
         viewer.modalPresentationStyle = .fullScreen
         viewer.onViewEntryAtIndex = { [weak self, weak viewer] tappedIndex in
             guard let strongSelf = self, let viewerValue = viewer else { return }

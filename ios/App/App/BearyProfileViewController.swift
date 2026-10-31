@@ -5531,7 +5531,13 @@ class BearyProfileViewController: UIViewController {
         let allPhotos = photoWallPhotosValue
         guard !allPhotos.isEmpty, startIndex >= 0, startIndex < allPhotos.count else { return }
         guard presentedViewController == nil else { return }
-        let viewer = BearyEntryImageViewerViewController(imageKeys: allPhotos.map { $0.imageKey }, startIndex: startIndex)
+        var wallLiveVideos: [String: String] = [:]
+        for photo in allPhotos {
+            if let liveKey = photo.entry.liveVideos?[photo.imageKey] {
+                wallLiveVideos[photo.imageKey] = liveKey
+            }
+        }
+        let viewer = BearyEntryImageViewerViewController(imageKeys: allPhotos.map { $0.imageKey }, liveVideos: wallLiveVideos.isEmpty ? nil : wallLiveVideos, startIndex: startIndex)
         viewer.modalPresentationStyle = .fullScreen
         viewer.onViewEntryAtIndex = { [weak self, weak viewer] tappedIndex in
             guard let strongSelf = self, let viewerValue = viewer else { return }
@@ -6805,7 +6811,7 @@ extension BearyProfileViewController: UITableViewDataSource, UITableViewDelegate
         // N7 主页图片灯箱：复用独立文件内的查看器，全屏模态弹出，弹出方式与时间线同款（已弹出时不叠加、减动效直显）。
         cellValue.onTapImages = { [weak self] keys, index in
             guard let self = self, self.presentedViewController == nil else { return }
-            let viewer = BearyEntryImageViewerViewController(imageKeys: keys, startIndex: index)
+            let viewer = BearyEntryImageViewerViewController(imageKeys: keys, liveVideos: entryValue.liveVideos, startIndex: index)
             viewer.modalPresentationStyle = .fullScreen
             self.present(viewer, animated: BearyMotion.animated(true), completion: nil)
         }
