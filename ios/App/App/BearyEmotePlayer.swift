@@ -408,7 +408,13 @@ public final class BearyEmoteView: UIView {
         } else if heldStaticFrame {
             view.currentFrame = cached.staticFrame
         } else {
-            view.currentFrame = 0
+            // 扫荡 B：不播放的静态表情同样停完成帧，不回 0 帧。
+            // 0 帧是描线未完成态（见 stop() 注释）：animated:false 的心情位
+            // （详情/卡片/草稿心情 chip、引导页初始态）从不调 play()，旧口径
+            // 在 Lottie 挂接后把已完整的 PNG 占位换成未画完的 0 帧，全程残缺；
+            // 完成帧与 PNG 占位一致，挂接无闪变。减动效分支本就走完成帧，
+            // 本分支与之对齐；heldStaticFrame 分支保留，语义不变。
+            view.currentFrame = cached.staticFrame
         }
         // 临时诊断（天气条 10/28，定根因后删除）：挂接完成置位，布局后第二时点日志发出即清零。
         diagAttachPending = true
