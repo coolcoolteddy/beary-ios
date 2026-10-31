@@ -457,6 +457,10 @@ class BearyDiaryCardCell: UITableViewCell {
     private var quoteTapId: String?
     private var quoteTapGoneOrLocked = false
     private var quoteTapLoadFailed = false
+    /// 112：本卡当前正在等回包的 quoteId（发起卡与等待中的同 quoteId 卡同置）。
+    /// 回包到达时只补刷 quoteAwaitingId == 该 quoteId 的可见卡，已落卡/已失败的卡不重配；
+    /// 复用与下一次 configureQuoteFeed 入口处清零，防等待标记串位到新篇。
+    private var quoteAwaitingId: String?
     private var emoteRowHeightConstraint: NSLayoutConstraint?
     /// 109：个人页首卡顶留白标志（仅 .profile 模式、表格第 0 行由容器在
     /// configure 前置 true）。tab 跟移 transform 最大下移 16pt（见
@@ -1312,6 +1316,7 @@ class BearyDiaryCardCell: UITableViewCell {
         quoteTapId = nil
         quoteTapGoneOrLocked = false
         quoteTapLoadFailed = false
+        quoteAwaitingId = nil
         for sub in emoteFlowView.subviews {
             sub.removeFromSuperview()
         }
@@ -1836,6 +1841,10 @@ class BearyDiaryCardCell: UITableViewCell {
     // MARK: - 图片条（94 包槽位复用，两页同款；失败重试 Feed 口径）
 
     private func renderImages(keys: [String], dims: [String: [Int]]?) {
+        // 112：卡片图片条上限 9 张（详情侧同款 Array(allKeys.prefix(9))）。
+        // 脏数据超 9 张时先截断再渲染，灯箱 keys 同步取截断后列表，
+        // 第 10 张起既不渲染也不进灯箱；逐项再 guard 三池下标，防池化异常越界。
+        let keys = Array(keys.prefix(9))
         currentImageKeys = keys
         if imageSlots.isEmpty { makeImageSlots() }
         if keys.isEmpty {
@@ -1854,6 +1863,9 @@ class BearyDiaryCardCell: UITableViewCell {
         imagesScrollView.isHidden = false
         imageHeightConstraint?.constant = 216
         for (imageIndex, imageKey) in keys.enumerated() {
+            // 详情侧同款守卫：槽位池、重试钮池、宽约束池须同下标，任一池短了都跳过该图、不下标越界。
+            guard imageIndex < imageSlots.count, imageIndex < imageSlotRetryButtons.count,
+                  imageIndex < imageSlotWidthConstraints.count else { continue }
             let slot = imageSlots[imageIndex]
             slot.tag = imageIndex
             let strip = stripWidth(forKey: imageKey, dims: dims, height: 216)
@@ -1989,6 +2001,8 @@ class BearyDiaryCardCell: UITableViewCell {
     /// 缩略图门控：仅被引公开或 viewer 为作者时出；“仅你可见”角标：viewer 为作者、
     /// 被引私密、宿主已公开时显。
     private func presentQuoteCard(authorName: String, authorAvatar: String?, content: String, images: [String], dims: [String: [Int]]?, createdAt: Int?, isPublic: Bool?, gone: Bool?, locked: Bool?, quoteId: String?, quoteAuthorId: Int?, quoteIsMine: Bool?, hostIsPublic: Bool) {
+        // 112：落卡即不再等待，回包补刷不再重复命中本卡。
+        quoteAwaitingId = nil
         quoteTapId = quoteId
         quoteTapGoneOrLocked = false
         quoteTapLoadFailed = false
@@ -2058,12 +2072,49 @@ class BearyDiaryCardCell: UITableViewCell {
         configureQuoteFeed(for: entryValue)
     }
 
+    /// 112：加载中占位——纯文字，不是骨架屏。复用引用卡现成的 gone 行
+    /// （图标仍是原引用图标 icon_quote，不新加图标语义），点按无动作
+    /// （quoteTapId 为空，quoteViewTapped 本就 return；gone 标志位保持 false，
+    /// 不与真正的 gone/locked 态混淆）。
+    private func showQuoteLoadingPlaceholder(quoteId: String) {
+        quoteAwaitingId = quoteId
+        quoteTapId = nil
+        quoteTapGoneOrLocked = false
+        quoteTapLoadFailed = false
+        quoteView.showGone(message: "引用加载中…")
+        quoteView.isHidden = false
+    }
+
+    /// 112：回包到达时补刷同表内仍在等该 quoteId 的可见卡（第二张同引用卡）。
+    /// 只命中 quoteAwaitingId == quoteId 的卡：其 configureQuoteFeed 走
+    /// quoteCache / quoteFailedIds 分支落卡或失败态，不重复发请求；
+    /// 已落卡的卡不重配。宿主卡由回包分支自己落卡，此处跳过 self。
+    /// 找不到 UITableView（卡未挂表）时不做事——离屏卡下次 configure 命中缓存。
+    private func refreshWaitingQuoteCells(quoteId: String) {
+        var tableView: UITableView?
+        var view = superview
+        while let current = view {
+            if let table = current as? UITableView { tableView = table; break }
+            view = current.superview
+        }
+        guard let table = tableView else { return }
+        for case let waiter as BearyDiaryCardCell in table.visibleCells {
+            guard waiter !== self, waiter.cardMode == .feed,
+                  waiter.quoteAwaitingId == quoteId,
+                  let waiterEntry = waiter.currentEntry else { continue }
+            waiter.configureQuoteFeed(for: waiterEntry)
+            waiter.updateRightStackSpacing()
+            waiter.onNeedsRowReload?()
+        }
+    }
+
     private func configureQuoteFeed(for entry: Entry) {
         quoteView.clear()
         quoteView.isHidden = true
         quoteTapId = nil
         quoteTapGoneOrLocked = false
         quoteTapLoadFailed = false
+        quoteAwaitingId = nil
         if let quoteValue = entry.quote {
             presentQuoteCard(
                 authorName: displayAuthorName(quoteValue.authorName ?? entry.authorName),
@@ -2109,8 +2160,14 @@ class BearyDiaryCardCell: UITableViewCell {
             quoteView.isHidden = false
             return
         }
-        if BearyDiaryCardCell.quoteLoadingIds.contains(quoteIdValue) { return }
+        // 112：同 quoteId 已在途时不再重复发请求，但不再直接 return 藏卡——
+        // 给等待卡一个“加载中”文字占位，回包到达时由发起卡补刷（见下）。
+        if BearyDiaryCardCell.quoteLoadingIds.contains(quoteIdValue) {
+            showQuoteLoadingPlaceholder(quoteId: quoteIdValue)
+            return
+        }
         BearyDiaryCardCell.quoteLoadingIds.insert(quoteIdValue)
+        showQuoteLoadingPlaceholder(quoteId: quoteIdValue)
         let hostEntryIdValue = entry.id
         BearyAPI.shared.fetchEntry(id: quoteIdValue) { [weak self] result in
             DispatchQueue.main.async {
@@ -2118,7 +2175,11 @@ class BearyDiaryCardCell: UITableViewCell {
                 switch result {
                 case .success(let fetchedEntry):
                     BearyDiaryCardCell.quoteCache[quoteIdValue] = fetchedEntry
-                    guard let strongSelf = self, strongSelf.cellEntryId == hostEntryIdValue else { return }
+                    // 宿主复用走了也先补刷等待卡（缓存已落，等待卡命中缓存不重发）；
+                    // 再按宿主身份决定宿主自己是否落卡。
+                    guard let strongSelf = self else { return }
+                    strongSelf.refreshWaitingQuoteCells(quoteId: quoteIdValue)
+                    guard strongSelf.cellEntryId == hostEntryIdValue else { return }
                     strongSelf.presentQuoteCard(
                         authorName: strongSelf.displayAuthorName(fetchedEntry.authorName),
                         authorAvatar: fetchedEntry.authorAvatar,
@@ -2138,7 +2199,12 @@ class BearyDiaryCardCell: UITableViewCell {
                     strongSelf.onNeedsRowReload?()
                 case .failure:
                     BearyDiaryCardCell.quoteFailedIds.insert(quoteIdValue)
-                    guard let strongSelf = self, strongSelf.cellEntryId == hostEntryIdValue else { return }
+                    // 失败同样补刷等待卡：等待卡命中失败分支显“加载失败，重试”，
+                    // 不再全程停在“加载中”占位；宿主复用走了也先补刷等待卡。
+                    guard let strongSelf = self else { return }
+                    strongSelf.refreshWaitingQuoteCells(quoteId: quoteIdValue)
+                    guard strongSelf.cellEntryId == hostEntryIdValue else { return }
+                    strongSelf.quoteAwaitingId = nil
                     strongSelf.quoteTapId = quoteIdValue
                     strongSelf.quoteTapLoadFailed = true
                     strongSelf.quoteView.showLoadFailed(message: "引用加载失败，重试")
