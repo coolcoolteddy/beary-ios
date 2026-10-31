@@ -67,6 +67,9 @@ final class BearyLoginViewController: UIViewController {
         return bar
     }()
     private var isAgreed = false
+    /// 扫荡组 A：协议勾选框与文案首行居中的约束（首行中心随字号档位变，
+    /// 档位变化时在 traitCollectionDidChange 里按新行高重算常量）。
+    private var agreeCenterYConstraint: NSLayoutConstraint?
 
     private var isSendingCode = false
     private var isVerifying = false
@@ -108,6 +111,14 @@ final class BearyLoginViewController: UIViewController {
         // 协议复选框描边是 CGColor：深浅切换时走已有刷新重赋（勾选态橙边、未选 line 边）。
         if previousTraitCollection?.userInterfaceStyle != traitCollection.userInterfaceStyle {
             refreshAgreeBox()
+        }
+        // 扫荡组 A：大字号档位变化时，协议首行中心与登录钮 attributed
+        // 标题都要按新字号重建（标题只在文案变化时重建，档位变化不
+        // 触发它，故先清 currentLoginTitle 再调 updateButtonStates）。
+        if previousTraitCollection?.preferredContentSizeCategory != traitCollection.preferredContentSizeCategory {
+            agreeCenterYConstraint?.constant = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 14)).lineHeight / 2
+            currentLoginTitle = nil
+            updateButtonStates()
         }
     }
 
@@ -171,7 +182,8 @@ final class BearyLoginViewController: UIViewController {
 
         subtitleLabel.translatesAutoresizingMaskIntoConstraints = false
         subtitleLabel.text = "邮箱验证码登录，无需密码；新邮箱登录即注册"
-        subtitleLabel.font = UIFont.systemFont(ofSize: 14)
+        subtitleLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 14))
+        subtitleLabel.adjustsFontForContentSizeCategory = true
         subtitleLabel.textColor = BearyColors.gray
         subtitleLabel.numberOfLines = 0
 
@@ -187,7 +199,8 @@ final class BearyLoginViewController: UIViewController {
         sendButton.bearyAddPressFeedback()
 
         messageLabel.translatesAutoresizingMaskIntoConstraints = false
-        messageLabel.font = UIFont.systemFont(ofSize: 13)
+        messageLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13))
+        messageLabel.adjustsFontForContentSizeCategory = true
         messageLabel.textColor = BearyColors.red
         messageLabel.numberOfLines = 0
 
@@ -214,13 +227,15 @@ final class BearyLoginViewController: UIViewController {
         guestButton.setTitle("先逛逛（游客模式）", for: .normal)
         guestButton.setTitleColor(BearyColors.gray, for: .normal)
         guestButton.setTitleColor(BearyColors.gray, for: .disabled)
-        guestButton.titleLabel?.font = UIFont.systemFont(ofSize: 16, weight: .semibold)
+        guestButton.titleLabel?.font = BearyDynamicType.cappedFont(for: UIFont.systemFont(ofSize: 16, weight: .semibold))
+        guestButton.titleLabel?.adjustsFontForContentSizeCategory = true
         guestButton.addTarget(self, action: #selector(guestTapped), for: .touchUpInside)
         guestButton.bearyAddPressFeedback()
 
         guestNoteLabel.translatesAutoresizingMaskIntoConstraints = false
         guestNoteLabel.text = "游客模式只能看别人的日记，登录后解锁完整版。"
-        guestNoteLabel.font = UIFont.systemFont(ofSize: 13)
+        guestNoteLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13))
+        guestNoteLabel.adjustsFontForContentSizeCategory = true
         guestNoteLabel.textColor = BearyColors.gray
         guestNoteLabel.numberOfLines = 0
 
@@ -309,7 +324,6 @@ final class BearyLoginViewController: UIViewController {
             // 约半行高处（14pt 字约 8.5pt），故钮比首行低约 13pt（photo-14 实证）。
             // 改锚：钮 centerY = label 顶 + 14pt 字行高/2（多行文案时以首行为准，
             // 行高改由 label 决定）；44 热区由 BearyHit44Button 保证。
-            agreeButton.centerYAnchor.constraint(equalTo: agreeLabel.topAnchor, constant: UIFont.systemFont(ofSize: 14).lineHeight / 2),
             agreeButton.widthAnchor.constraint(equalToConstant: 22),
             agreeButton.heightAnchor.constraint(equalToConstant: 22),
             agreeLabel.leadingAnchor.constraint(equalTo: agreeButton.trailingAnchor, constant: 10),
@@ -317,6 +331,10 @@ final class BearyLoginViewController: UIViewController {
             agreeLabel.topAnchor.constraint(equalTo: agreeRow.topAnchor),
             agreeLabel.bottomAnchor.constraint(equalTo: agreeRow.bottomAnchor),
         ])
+        // 协议勾选框与文案首行居中（见属性注释；档位变化时重算常量）。
+        let agreeCenterY = agreeButton.centerYAnchor.constraint(equalTo: agreeLabel.topAnchor, constant: BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 14)).lineHeight / 2)
+        agreeCenterY.isActive = true
+        agreeCenterYConstraint = agreeCenterY
     }
 
     /// wordmark 宽高比：取 LogoHorizontal 资产实际尺寸；资产缺失时退 1，避免布局歧义。
@@ -330,11 +348,12 @@ final class BearyLoginViewController: UIViewController {
     private func makeFieldLabel(text: String) -> UILabel {
         let label = UILabel()
         label.attributedText = NSAttributedString(string: text, attributes: [
-            .font: UIFont.systemFont(ofSize: 11, weight: .semibold),
+            .font: BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 11, weight: .semibold)),
             .foregroundColor: BearyColors.gray,
             .kern: 1.32,
         ])
         label.translatesAutoresizingMaskIntoConstraints = false
+        label.adjustsFontForContentSizeCategory = true
         return label
     }
 
@@ -347,11 +366,12 @@ final class BearyLoginViewController: UIViewController {
     }
 
     private func configureEmailField() {
-        emailField.font = UIFont.systemFont(ofSize: 16)
+        emailField.font = BearyDynamicType.cappedFont(for: UIFont.systemFont(ofSize: 16))
+        emailField.adjustsFontForContentSizeCategory = true
         emailField.textColor = BearyColors.ink
         emailField.attributedPlaceholder = NSAttributedString(string: "name@example.com", attributes: [
             .foregroundColor: BearyColors.gray,
-            .font: UIFont.systemFont(ofSize: 16),
+            .font: BearyDynamicType.cappedFont(for: UIFont.systemFont(ofSize: 16)),
         ])
         emailField.keyboardType = .emailAddress
         emailField.autocapitalizationType = .none
@@ -363,11 +383,12 @@ final class BearyLoginViewController: UIViewController {
     }
 
     private func configureCodeField() {
-        codeField.font = UIFont.systemFont(ofSize: 16)
+        codeField.font = BearyDynamicType.cappedFont(for: UIFont.systemFont(ofSize: 16))
+        codeField.adjustsFontForContentSizeCategory = true
         codeField.textColor = BearyColors.ink
         codeField.attributedPlaceholder = NSAttributedString(string: "6 位数字", attributes: [
             .foregroundColor: BearyColors.gray,
-            .font: UIFont.systemFont(ofSize: 16),
+            .font: BearyDynamicType.cappedFont(for: UIFont.systemFont(ofSize: 16)),
         ])
         codeField.keyboardType = .numberPad
         codeField.autocorrectionType = .no
@@ -394,11 +415,12 @@ final class BearyLoginViewController: UIViewController {
     }
 
     private func configureInviteField() {
-        inviteField.font = UIFont.systemFont(ofSize: 16)
+        inviteField.font = BearyDynamicType.cappedFont(for: UIFont.systemFont(ofSize: 16))
+        inviteField.adjustsFontForContentSizeCategory = true
         inviteField.textColor = BearyColors.ink
         inviteField.attributedPlaceholder = NSAttributedString(string: "填好友的邀请码，成功后各得 1 个月 Plus", attributes: [
             .foregroundColor: BearyColors.gray,
-            .font: UIFont.systemFont(ofSize: 16),
+            .font: BearyDynamicType.cappedFont(for: UIFont.systemFont(ofSize: 16)),
         ])
         inviteField.autocapitalizationType = .allCharacters
         inviteField.autocorrectionType = .no
@@ -424,7 +446,8 @@ final class BearyLoginViewController: UIViewController {
         agreeLabel.backgroundColor = UIColor.clear
         agreeLabel.textContainerInset = UIEdgeInsets.zero
         agreeLabel.textContainer.lineFragmentPadding = 0
-        agreeLabel.font = UIFont.systemFont(ofSize: 14)
+        agreeLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 14))
+        agreeLabel.adjustsFontForContentSizeCategory = true
         agreeLabel.textColor = BearyColors.gray
         agreeLabel.linkTextAttributes = [
             .foregroundColor: BearyColors.blue,
@@ -432,7 +455,7 @@ final class BearyLoginViewController: UIViewController {
         ]
         let fullText = "我已阅读并同意《隐私政策》和《用户协议》"
         let attributed = NSMutableAttributedString(string: fullText, attributes: [
-            .font: UIFont.systemFont(ofSize: 14),
+            .font: BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 14)),
             .foregroundColor: BearyColors.gray,
         ])
         let privacyRange = (fullText as NSString).range(of: "隐私政策")
@@ -523,7 +546,7 @@ final class BearyLoginViewController: UIViewController {
 
     private func setLoginTitle(_ text: String) {
         let title = NSAttributedString(string: text, attributes: [
-            .font: UIFont.systemFont(ofSize: 16, weight: .bold),
+            .font: BearyDynamicType.cappedFont(for: UIFont.systemFont(ofSize: 16, weight: .bold)),
             .foregroundColor: BearyColors.bg,
             .kern: 5.43,
         ])
@@ -547,7 +570,7 @@ final class BearyLoginViewController: UIViewController {
         let sendTitleColor = sendEnabled ? BearyColors.bg : BearyColors.gray
         sendButton.setTitleColor(sendTitleColor, for: .normal)
         sendButton.setTitleColor(sendTitleColor, for: .disabled)
-        sendButton.titleLabel?.font = UIFont.systemFont(ofSize: 14, weight: sendEnabled ? .semibold : .medium)
+        sendButton.titleLabel?.font = BearyDynamicType.cappedFont(for: UIFont.systemFont(ofSize: 14, weight: sendEnabled ? .semibold : .medium))
 
         let loginEnabled = isAgreed && emailValid && code.count == 6 && !isVerifying && !isWaitingFeedback
         loginButton.isEnabled = loginEnabled
