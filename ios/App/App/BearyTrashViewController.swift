@@ -994,8 +994,22 @@ private enum TrashText {
         } else {
             deletedPart = "删除于 —"
         }
+        // 扫荡 B：倒计时按 deletedAt 现算，不直接沿用服务端快照。
+        // 本地桶的 daysLeft 是上次同步时的快照：离线多日后再进回收站，
+        // 快照会把已过去的天数继续算在内（越放越大）。现算公式与服务端
+        // GET /beary/api/trash 的 days_left 同款（ceil，不足一天算一天）；
+        // 两者都有时取较小值——倒计时只会减少，既纠正陈旧快照，又不因
+        // 设备时钟偏慢而多算；只有快照时沿用快照，两者皆无时显“—”。
+        let computedDaysLeft: Int? = {
+            guard let deletedAt = trashValue.deletedAt else { return nil }
+            let nowMs = Date().timeIntervalSince1970 * 1000.0
+            let remainingDays = ceil((Double(deletedAt) + 30 * 24 * 3600 * 1000 - nowMs) / 86400000)
+            return max(0, Int(remainingDays))
+        }()
         let daysPart: String
-        if let daysLeft = trashValue.daysLeft {
+        if let stored = trashValue.daysLeft, let computed = computedDaysLeft {
+            daysPart = "还剩 \(min(stored, computed)) 天"
+        } else if let daysLeft = computedDaysLeft ?? trashValue.daysLeft {
             daysPart = "还剩 \(daysLeft) 天"
         } else {
             daysPart = "还剩 — 天"
