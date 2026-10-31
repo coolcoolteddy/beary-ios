@@ -339,6 +339,7 @@ final class BearySettingsViewController: UIViewController {
         super.viewWillAppear(animated)
         settingsFrameResetDone = false
         settingsLayoutLogged = false
+        refreshAccountSwitchSection()
     }
 
     override func viewDidAppear(_ animated: Bool) {
@@ -393,13 +394,6 @@ final class BearySettingsViewController: UIViewController {
               NSCoder.string(for: view.safeAreaInsets))
     }
 
-    /// 容器（登录页）关掉回到本页时刷新切换列表：添加账号走登录页回来
-    /// 后，新号经 refreshMe 快照进保管库，此处重建卡片即见新行；登录页
-    /// 取消则列表不变。只读保管库 + 重建本卡，不发网络。
-    override func viewWillAppear(_ animated: Bool) {
-        super.viewWillAppear(animated)
-        refreshAccountSwitchSection()
-    }
 
     /// 列宽只由 view.bounds 定：宽 ≥821 锁 600（P2-1 同款），宽 ≤820 时
     /// 屏宽 -40 撑满；bounds 为 0 时跳过不钉死；值不变时不写，避免布局环。
