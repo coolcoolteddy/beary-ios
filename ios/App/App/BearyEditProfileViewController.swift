@@ -395,13 +395,31 @@ class BearyEditProfileViewController: UIViewController {
 
     /// F12：主页链接文案（@handle 优先口径：有 handle 用 @handle，无 handle
     /// 才回退 /u/id，再无回退 @用户名；与个人主页分享、设置页隐私文案一致）。
+    /// 116 数据填入动效：链接行文案随 /me 到达或改名成功变化时只淡入
+    /// 该 label 本身（alpha 0→1、0.25s，不动 transform／布局、不重建
+    /// 节点、不缩放弹一下）；同值不赋值不重播；减动效或未进窗口时
+    /// 直设终值。签名输入框内容为可编辑文档，不做淡入（与编辑器
+    /// 表单回填同口径）。
+    private func setLinkLabelTextFaded(_ text: String) {
+        guard linkLabel.text != text else { return }
+        linkLabel.text = text
+        guard !UIAccessibility.isReduceMotionEnabled, linkLabel.window != nil else {
+            linkLabel.alpha = 1
+            return
+        }
+        linkLabel.alpha = 0
+        UIView.animate(withDuration: 0.25, delay: 0, options: [.curveEaseOut, .beginFromCurrentState], animations: {
+            self.linkLabel.alpha = 1
+        })
+    }
+
     private func updateLinkRow() {
         if !effectiveHandle.isEmpty {
-            linkLabel.text = "主页链接 teddyhn.com/beary/@\(effectiveHandle)"
+            setLinkLabelTextFaded("主页链接 teddyhn.com/beary/@\(effectiveHandle)")
         } else if let id = fetchedUserId {
-            linkLabel.text = "主页链接 teddyhn.com/beary/u/\(id)"
+            setLinkLabelTextFaded("主页链接 teddyhn.com/beary/u/\(id)")
         } else {
-            linkLabel.text = "主页链接 teddyhn.com/beary/@用户名"
+            setLinkLabelTextFaded("主页链接 teddyhn.com/beary/@用户名")
         }
     }
 
