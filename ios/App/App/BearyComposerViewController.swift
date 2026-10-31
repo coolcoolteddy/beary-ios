@@ -2434,6 +2434,9 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
 
     /// 面板行：完整 lite 卡（网页 diaryCardLite 同款：头像 40 + 名 + 日期 + 全文 +
     /// 118 图片条 + 天气图标；名截断优先；Plus 皇冠已按清单取消显示；iCity：无 pill）。
+    /// 112：行内无动作行（无赞/收藏/分享入口），唯一点按目标是整行选引用；
+    /// 头行 stack 与分隔线设不可交互、图条点按走同一选篇路径，行内不留
+    /// 第二触摸目标（看不见又能点的半截热区）。
     private func renderQuotePanelRows(entries: [Entry]) {
         for arranged in quotePanelRows.arrangedSubviews {
             quotePanelRows.removeArrangedSubview(arranged)
@@ -2515,6 +2518,10 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             headerStack.axis = .horizontal
             headerStack.spacing = 8
             headerStack.alignment = .center
+            // 112：UIStackView 默认可交互，挂在行钮里会截留名/日期区的点按
+            // （点按落到 stack 本身、行钮收不到，行内出现点按无反应的半截区）；
+            // 行内唯一点按目标是选引用，故头行 stack 本身不可交互，点按透传行钮。
+            headerStack.isUserInteractionEnabled = false
             let nameLabel = UILabel()
             nameLabel.translatesAutoresizingMaskIntoConstraints = false
             nameLabel.font = UIFont.boldSystemFont(ofSize: 16.5)
@@ -2570,6 +2577,9 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             let separator = UIView()
             separator.translatesAutoresizingMaskIntoConstraints = false
             separator.backgroundColor = BearyColors.line
+            // 112：同头行 stack——普通 UIView 默认可交互，2pt 分隔线带会截留点按；
+            // 行内唯一点按目标是选引用，分隔线不可交互，点按透传行钮。
+            separator.isUserInteractionEnabled = false
             rowButton.addSubview(avatarView)
             rowButton.addSubview(avatarFallback)
             rowButton.addSubview(headerStack)
@@ -2585,6 +2595,12 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                 let imagesScrollView = UIScrollView()
                 imagesScrollView.translatesAutoresizingMaskIntoConstraints = false
                 imagesScrollView.showsHorizontalScrollIndicator = false
+                // 112：图条是行钮的子视图 UIScrollView，点按默认被滑条截留、
+                // 落不到行钮（图区点按无反应）；补点按手势走同一选篇路径，
+                // 横滑仍由 pan 手势接管，点按与滑动不冲突——行内从此只有
+                // 一个点按结果：选引用，不存在第二触摸目标。
+                let stripTap = UITapGestureRecognizer(target: self, action: #selector(didTapQuotePanelImageStrip(_:)))
+                imagesScrollView.addGestureRecognizer(stripTap)
                 let imagesStack = UIStackView()
                 imagesStack.translatesAutoresizingMaskIntoConstraints = false
                 imagesStack.axis = .horizontal
@@ -2684,10 +2700,24 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     /// 换 tab 重建时只播新 key 行，已播行不重播；面板每次打开时清空（见 setQuotePanelOpen）。
     private var quotePanelAnimatedRowKeys: Set<String> = []
 
+    /// 112：图条点按 → 按宿主行钮走同一选篇路径（图条是 UIScrollView 子视图，
+    /// 点按默认落不到行钮；横滑仍由 pan 接管，点按与滑动不冲突）。
+    @objc private func didTapQuotePanelImageStrip(_ gesture: UITapGestureRecognizer) {
+        guard let strip = gesture.view, let rowButton = strip.superview as? UIButton else { return }
+        selectQuotePanelRow(rowButton)
+    }
+
     @objc private func didTapQuotePanelRow(_ sender: UIButton) {
+        selectQuotePanelRow(sender)
+    }
+
+    /// 引用行唯一点按结果：选引用。行内不挂赞/收藏/分享等任何动作入口
+    /// （lite 行本来就没有动作行；头行 stack 与分隔线另设不可交互，见渲染处，
+    /// 点按不再被行内子视图截留或分流）。
+    private func selectQuotePanelRow(_ button: UIButton) {
         var picked: Entry?
         for index in 0..<quotePanelRowButtons.count {
-            if index < quotePanelRowEntries.count && quotePanelRowButtons[index] == sender {
+            if index < quotePanelRowEntries.count && quotePanelRowButtons[index] == button {
                 picked = quotePanelRowEntries[index]
             }
         }
