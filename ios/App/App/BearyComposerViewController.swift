@@ -172,6 +172,9 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         /// 草稿还原时两者皆无则按他人处理，绝不挂一并公开项）。
         let authorId: Int?
         let isMine: Bool?
+        /// 引用规则简化来源行：来源作者 handle（面板选篇取 Entry.authorHandle、
+        /// 编辑锁定取 Quote.authorHandle；草稿还原时无则 nil，来源行不编造）。
+        let authorHandle: String?
         let images: [String]
         /// 补缺 P3-41：此处存“上次已知有效可见性”（过期即私密），非服务端 is_public 原值；
         /// 新选与恢复校验以 BearyEphemeral.isEffectivelyPublic 写入；编辑态锁定来自服务端直传
@@ -2022,7 +2025,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         quoteCardWrap.isHidden = false
         // allowThumbs: true 沿用旧编辑器行为——已选引用在本地草稿预览中恒出图；
         // 列表侧的 isPublic/本人门控不适用于编辑器预览（预览不出公开发布）。
-        quoteCard.configure(authorName: shown.authorName ?? "", authorAvatar: shown.authorAvatar, content: shown.content, images: shown.images, dims: shown.imgDims, createdAt: shown.createdAt, allowThumbs: true)
+        quoteCard.configure(authorName: shown.authorName ?? "", authorAvatar: shown.authorAvatar, content: shown.content, images: shown.images, dims: shown.imgDims, createdAt: shown.createdAt, allowThumbs: true, authorHandle: shown.authorHandle, sourceTappable: false)
         updatePreferredContentSize()
     }
 
@@ -2060,7 +2063,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                     switch result {
                     case .success:
                         if let current = self.lockedQuote {
-                            self.lockedQuote = SelectedQuote(entryId: current.entryId, content: current.content, createdAt: current.createdAt, authorName: current.authorName, authorAvatar: current.authorAvatar, authorId: current.authorId, isMine: current.isMine, images: current.images, isPublic: true, publishAt: current.publishAt, imgDims: current.imgDims, isDeleted: false)
+                            self.lockedQuote = SelectedQuote(entryId: current.entryId, content: current.content, createdAt: current.createdAt, authorName: current.authorName, authorAvatar: current.authorAvatar, authorId: current.authorId, isMine: current.isMine, authorHandle: current.authorHandle, images: current.images, isPublic: true, publishAt: current.publishAt, imgDims: current.imgDims, isDeleted: false)
                         }
                         self.refreshQuoteSection()
                         self.showToast(message: "原日记已公开")
@@ -2793,7 +2796,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             }
         }
         guard let entry = picked, let entryId = entry.id, let content = entry.content else { return }
-        let quote = SelectedQuote(entryId: entryId, content: content, createdAt: entry.createdAt, authorName: entry.authorName, authorAvatar: entry.authorAvatar, authorId: entry.authorId, isMine: entry.isMine, images: entry.images ?? [], isPublic: BearyEphemeral.isEffectivelyPublic(entry), publishAt: entry.publishAt, imgDims: entry.imgDims, isDeleted: false)
+        let quote = SelectedQuote(entryId: entryId, content: content, createdAt: entry.createdAt, authorName: entry.authorName, authorAvatar: entry.authorAvatar, authorId: entry.authorId, isMine: entry.isMine, authorHandle: entry.authorHandle, images: entry.images ?? [], isPublic: BearyEphemeral.isEffectivelyPublic(entry), publishAt: entry.publishAt, imgDims: entry.imgDims, isDeleted: false)
         if isEditMode {
             lockedQuote = quote
         } else {
@@ -4907,7 +4910,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         }
         if let quote = entry.quote, let quoteId = quote.id, let content = quote.content {
             // 内容为空的引用 = 已删（服务端 gone 只剩 id，网页版同款：已删引用不回填，保存时即丢弃）。
-            lockedQuote = SelectedQuote(entryId: quoteId, content: content, createdAt: quote.createdAt, authorName: quote.authorName, authorAvatar: quote.authorAvatar, authorId: quote.authorId, isMine: quote.isMine, images: quote.images ?? [], isPublic: quote.isPublic, publishAt: nil, imgDims: nil, isDeleted: false) // P3-41 注：编辑态锁定来自服务端直传 Quote（attachQuotes 不返回 ephemeral_until，算不出有效态），暂留原值；新选/恢复校验两处已走有效态。
+            lockedQuote = SelectedQuote(entryId: quoteId, content: content, createdAt: quote.createdAt, authorName: quote.authorName, authorAvatar: quote.authorAvatar, authorId: quote.authorId, isMine: quote.isMine, authorHandle: quote.authorHandle, images: quote.images ?? [], isPublic: quote.isPublic, publishAt: nil, imgDims: nil, isDeleted: false) // P3-41 注：编辑态锁定来自服务端直传 Quote（attachQuotes 不返回 ephemeral_until，算不出有效态），暂留原值；新选/恢复校验两处已走有效态。
         }
         refreshRecipientRow()
         refreshQuoteSection()
@@ -5270,7 +5273,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     /// 快照正文在已删态下不展示（见 refreshQuoteSection 的已删行）。
     private func restoredQuote(from draft: BearyDraft) -> SelectedQuote? {
         guard let quoteEntryId = draft.quoteId else { return nil }
-        return SelectedQuote(entryId: quoteEntryId, content: draft.quoteContent ?? "", createdAt: draft.quoteCreatedAt, authorName: draft.quoteAuthorName, authorAvatar: draft.quoteAuthorAvatar, authorId: nil, isMine: nil, images: draft.quoteImages, isPublic: draft.quoteIsPublic, publishAt: nil, imgDims: nil, isDeleted: draft.quoteDeleted)
+        return SelectedQuote(entryId: quoteEntryId, content: draft.quoteContent ?? "", createdAt: draft.quoteCreatedAt, authorName: draft.quoteAuthorName, authorAvatar: draft.quoteAuthorAvatar, authorId: nil, isMine: nil, authorHandle: nil, images: draft.quoteImages, isPublic: draft.quoteIsPublic, publishAt: nil, imgDims: nil, isDeleted: draft.quoteDeleted)
     }
 
     /// 恢复后校验引用是否还在：快照只能证明“选过”，不能证明“还在”。
@@ -5288,13 +5291,13 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                 case .success(let fetched):
                     // 补缺 P3-41：恢复后以最新有效可见性刷新快照并重算角标（原直接 return，快照恒旧）；
                     // 落盘使刷新跨杀 App 生效（已删分支同款 saveDraftNow）。
-                    self.selectedQuote = SelectedQuote(entryId: currentQuote.entryId, content: currentQuote.content, createdAt: currentQuote.createdAt, authorName: currentQuote.authorName, authorAvatar: currentQuote.authorAvatar, authorId: fetched.authorId, isMine: fetched.isMine, images: currentQuote.images, isPublic: BearyEphemeral.isEffectivelyPublic(fetched), publishAt: currentQuote.publishAt, imgDims: currentQuote.imgDims, isDeleted: false)
+                    self.selectedQuote = SelectedQuote(entryId: currentQuote.entryId, content: currentQuote.content, createdAt: currentQuote.createdAt, authorName: currentQuote.authorName, authorAvatar: currentQuote.authorAvatar, authorId: fetched.authorId, isMine: fetched.isMine, authorHandle: fetched.authorHandle, images: currentQuote.images, isPublic: BearyEphemeral.isEffectivelyPublic(fetched), publishAt: currentQuote.publishAt, imgDims: currentQuote.imgDims, isDeleted: false)
                     self.refreshQuoteSection()
                     self.saveDraftNow()
                     return
                 case .failure(let fetchError):
                     if case .notFound = fetchError {
-                        self.selectedQuote = SelectedQuote(entryId: currentQuote.entryId, content: "", createdAt: nil, authorName: nil, authorAvatar: nil, authorId: nil, isMine: nil, images: [], isPublic: nil, publishAt: nil, imgDims: nil, isDeleted: true)
+                        self.selectedQuote = SelectedQuote(entryId: currentQuote.entryId, content: "", createdAt: nil, authorName: nil, authorAvatar: nil, authorId: nil, isMine: nil, authorHandle: nil, images: [], isPublic: nil, publishAt: nil, imgDims: nil, isDeleted: true)
                         self.refreshQuoteSection()
                         self.refreshToolStrip()
                         self.saveDraftNow()
@@ -5882,7 +5885,8 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                                 authorBadge: nil,
                                 authorPlus: nil,
                                 authorId: locked.authorId,
-                                isMine: locked.isMine
+                                isMine: locked.isMine,
+                                authorHandle: locked.authorHandle
                             )
                         } else {
                             updated.quote = nil

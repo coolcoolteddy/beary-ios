@@ -772,7 +772,9 @@ final class BearyDetailViewController: UIViewController {
 
     private func buildQuote() {
         quoteView.translatesAutoresizingMaskIntoConstraints = false
-        quoteView.addGestureRecognizer(UITapGestureRecognizer(target: self, action: #selector(quoteTapped)))
+        // 引用卡点按走共享卡 onTapped（卡片内手势 + 来源行按钮同一路，见 BearyQuoteCardView）；
+        // gone/locked 不导航的守卫仍在 quoteTapped 内，不凭渲染快照放行。
+        quoteView.onTapped = { [weak self] in self?.quoteTapped() }
         rightStack.addArrangedSubview(quoteView)
     }
 
@@ -1351,13 +1353,13 @@ final class BearyDetailViewController: UIViewController {
         let viewerId = SessionManager.shared.currentUser?.id
         let quoteIsMine = quote.authorId != nil && viewerId != nil && quote.authorId == viewerId
         if quote.gone == true {
-            quoteView.showGone(message: "引用的日记已删除", iconName: "icon_quote")
+            quoteView.showGone(message: "引用的日记已删除", iconName: "icon_quote", sourceDeleted: true)
             quoteView.isHidden = false
             return
         }
         if quote.locked == true {
             let placeholder = BearyQuoteGate.placeholderText(publishedAt: quote.publishedAt, locked: true)
-            quoteView.showGone(message: placeholder.main, iconName: "icon_lock", detail: placeholder.detail)
+            quoteView.showGone(message: placeholder.main, iconName: "icon_lock", detail: placeholder.detail, sourceHandle: quote.authorHandle, sourceDateMs: quote.createdAt)
             quoteView.isHidden = false
             return
         }
@@ -1365,16 +1367,16 @@ final class BearyDetailViewController: UIViewController {
         if content.isEmpty {
             if quote.isPublic == false {
                 let placeholder = BearyQuoteGate.placeholderText(publishedAt: quote.publishedAt, locked: false)
-                quoteView.showGone(message: placeholder.main, iconName: "icon_lock", detail: placeholder.detail)
+                quoteView.showGone(message: placeholder.main, iconName: "icon_lock", detail: placeholder.detail, sourceHandle: quote.authorHandle, sourceDateMs: quote.createdAt)
             } else {
-                quoteView.showGone(message: "引用的日记已删除", iconName: "icon_quote")
+                quoteView.showGone(message: "引用的日记已删除", iconName: "icon_quote", sourceDeleted: true)
             }
             quoteView.isHidden = false
             return
         }
         guard quoteIsMine || quote.isPublic == true else {
             let placeholder = BearyQuoteGate.placeholderText(publishedAt: quote.publishedAt, locked: false)
-            quoteView.showGone(message: placeholder.main, iconName: "icon_lock", detail: placeholder.detail)
+            quoteView.showGone(message: placeholder.main, iconName: "icon_lock", detail: placeholder.detail, sourceHandle: quote.authorHandle, sourceDateMs: quote.createdAt)
             quoteView.isHidden = false
             return
         }
@@ -1385,7 +1387,9 @@ final class BearyDetailViewController: UIViewController {
             images: quote.images ?? [],
             dims: quote.imgDims,
             createdAt: quote.createdAt,
-            allowThumbs: quote.isPublic == true || quoteIsMine
+            allowThumbs: quote.isPublic == true || quoteIsMine,
+            authorHandle: quote.authorHandle,
+            sourceTappable: true
         )
         quoteView.isHidden = false
     }

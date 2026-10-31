@@ -102,6 +102,8 @@ struct Entry: Codable {
     var isPublic: Bool?
     /// iCity：最近一次公开时间（毫秒；私密态为 nil；服务端按 24 小时冷却刷新）。
     var publishedAt: Int?
+    /// 引用规则简化来源行：被引篇作者 handle（后端直传时才有；缺失时来源行不编造）。
+    var authorHandle: String? = nil
     /// 限时日记：到期时间戳（毫秒）；nil = 非限时。存活期（now < 该值）才算限时态，
     /// 到期后按普通私密渲染（见 BearyEphemeral）。
     var ephemeralUntil: Int?
