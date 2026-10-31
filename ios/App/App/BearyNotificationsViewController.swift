@@ -1116,7 +1116,7 @@ final class BearyNotificationsViewController: UIViewController {
         if indicatorHeight <= 0 {
             pullIconView.setPullProgress(0)
         } else {
-            let progress = min(1, indicatorHeight / 80)
+            let progress = min(1, indicatorHeight / 98.4)
             pullIconView.setPullProgress(progress)
         }
     }

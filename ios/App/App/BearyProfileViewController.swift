@@ -5866,7 +5866,7 @@ class BearyProfileViewController: UIViewController {
         if indicatorHeight <= 0 {
             refreshIconView.setPullProgress(0)
         } else {
-            refreshIconView.setPullProgress(min(1, indicatorHeight / 80))
+            refreshIconView.setPullProgress(min(1, indicatorHeight / 98.4))
         }
     }
 
