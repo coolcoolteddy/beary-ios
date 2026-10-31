@@ -4755,7 +4755,13 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                         return
                     }
                     var videoData = Data()
-                    PHAssetResourceManager.default().requestData(for: videoResource, options: nil, dataReceivedHandler: { videoData.append($0) }, completionHandler: { [weak self, weak item] error in
+                    // iCloud 照片：默认 options 不允许联网，原图只在本地时才
+                    // 读得出；开了「优化储存空间」的实况会直接读失败、整张图被
+                    // 移除。显式允许联网（PHPicker 的 loadObject 本就自动下载，
+                    // 这里须手动开），失败口径与 toast 不变。
+                    let videoOptions = PHAssetResourceRequestOptions()
+                    videoOptions.isNetworkAccessAllowed = true
+                    PHAssetResourceManager.default().requestData(for: videoResource, options: videoOptions, dataReceivedHandler: { videoData.append($0) }, completionHandler: { [weak self, weak item] error in
                         DispatchQueue.main.async {
                             guard let self = self, let item = item else { return }
                             var stillThere = false
