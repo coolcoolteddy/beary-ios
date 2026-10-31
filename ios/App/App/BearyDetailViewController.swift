@@ -133,7 +133,9 @@ final class BearyDetailViewController: UIViewController {
     private let recipientLabel: UILabel = {
         let lb = UILabel()
         lb.translatesAutoresizingMaskIntoConstraints = false
-        lb.font = UIFont.boldSystemFont(ofSize: 12)
+        // 113：底数 12 粗体不动，只加 scaledFont + adjusts（#322/#324 同款做法）。
+        lb.font = BearyDynamicType.scaledFont(for: UIFont.boldSystemFont(ofSize: 12))
+        lb.adjustsFontForContentSizeCategory = true
         lb.textColor = BearyColors.orange
         lb.numberOfLines = 1
         return lb

@@ -1036,7 +1036,9 @@ class BearyDiaryCardCell: UITableViewCell {
         backgroundColor = BearyColors.bg
         contentView.backgroundColor = BearyColors.bg
         // @ 行字号各保各的：首页 12 粗体、个人主页 13 常规；文案由 configure 按 mentionedName 写“@名”。
-        recipientLabel.font = cardMode == .feed ? UIFont.boldSystemFont(ofSize: 12) : UIFont.systemFont(ofSize: 13)
+        // 113：底数不动，只加 scaledFont + adjusts（#322/#324 时间线 @ 行同款做法）。
+        recipientLabel.font = cardMode == .feed ? BearyDynamicType.scaledFont(for: UIFont.boldSystemFont(ofSize: 12)) : BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13))
+        recipientLabel.adjustsFontForContentSizeCategory = true
         recipientLabel.text = nil
         // 首页皇冠带网页 drop-shadow（0 1px 1px 黑 30%），个人主页无阴影。
         if cardMode == .feed {
