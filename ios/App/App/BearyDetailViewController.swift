@@ -2230,8 +2230,12 @@ final class BearyDetailViewController: UIViewController {
 
 extension BearyDetailViewController: UIGestureRecognizerDelegate {
     func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldRecognizeSimultaneouslyWith otherGestureRecognizer: UIGestureRecognizer) -> Bool {
-        // 只放行本图片条捏合与滚动平移的共存（条内横滑 / 列表竖滑），
+        // 只放行本图片条捏合与条自身滚动平移的共存：捏合 began 即禁了条的
+        // 滚动，故自家平移本就滑不动；外层列表/详情页的竖滑若也放行，
+        // 两指捏合时手指稍带竖向漂移就会一边捏合一边滚页。先识别意图者胜：
+        // 捏合先成立则外层平移失败，竖滑先成立则捏合失败，不再双轨并行。
         // 该 delegate 只挂在捏合手势上，不影响点赞、点图等其他手势。
         return otherGestureRecognizer is UIPanGestureRecognizer
+            && otherGestureRecognizer.view === imagesScrollView
     }
 }
