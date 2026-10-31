@@ -2936,9 +2936,12 @@ class BearyDiaryCardCell: UITableViewCell {
         chipKeys = []
         var chipIndex = 0
         for item in list {
-            guard let key = item.emote, !key.isEmpty else {
+            guard let key = item.emote, !key.isEmpty,
+                  BearyEmoteKeys.bearFaceKeys.contains(key) else {
                 // 个人主页原口径：空 key 不建 chip；首页原口径不设防，此处两页
                 // 统一跳过空 key（空 key 的 BearyEmoteView 本就无图可播）。
+                // 非熊脸兜底（与详情/回应墙同口径）：库里已清存量非熊脸行，
+                // 卡片仍过滤一次，旧缓存里残留的非熊脸也不会再画出来。
                 continue
             }
             let mine = item.mine ?? false
