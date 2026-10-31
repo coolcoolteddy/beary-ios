@@ -919,7 +919,12 @@ extension BearyAPI {
         if let t = title { body["title"] = t }
         if let m = mood { body["mood"] = m }
         if let w = weather { body["weather"] = w }
-        if weather != nil, let temp = temperature { body["temperature_c"] = temp }
+        // 气温清除须显式发 null：只「有值才发」时，用户在编辑器里清掉气温
+        // （步进器「清除」/输入框留空）后 PUT 省略本键，服务端保留旧值，
+        // 重进编辑器旧气温复活。天气类型在时气温恒发（值或 null），与位置
+        // 清除同款三态；唯一调用方（编辑器编辑）恒传 selectedTemperature，
+        // 不存在「没管气温却被误清」的调用点。
+        if weather != nil { body["temperature_c"] = temperature ?? NSNull() }
         if let q = quoteId { body["quote_id"] = q }
         if clearMentioned {
             body["mentioned_user_id"] = NSNull()
