@@ -558,11 +558,13 @@ final class BearySettingsViewController: UIViewController {
         closeButton.translatesAutoresizingMaskIntoConstraints = false
         closeButton.setTitle("关闭", for: .normal)
         closeButton.setTitleColor(BearyColors.ink, for: .normal)
-        closeButton.titleLabel?.font = UIFont.systemFont(ofSize: 15)
+        closeButton.titleLabel?.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 15))
+        closeButton.titleLabel?.adjustsFontForContentSizeCategory = true
         closeButton.addTarget(self, action: #selector(closeButtonTapped), for: .touchUpInside)
         closeButton.bearyAddPressFeedback()
         titleLabel.translatesAutoresizingMaskIntoConstraints = false
-        titleLabel.font = UIFont.systemFont(ofSize: 17, weight: .bold)
+        titleLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 17, weight: .bold))
+        titleLabel.adjustsFontForContentSizeCategory = true
         titleLabel.textColor = BearyColors.ink
         titleLabel.textAlignment = .center
         titleLabel.text = "设置"
@@ -572,11 +574,15 @@ final class BearySettingsViewController: UIViewController {
         topBar.addSubview(closeButton)
         topBar.addSubview(titleLabel)
         NSLayoutConstraint.activate([
-            topBar.heightAnchor.constraint(equalToConstant: 52),
+            topBar.heightAnchor.constraint(greaterThanOrEqualToConstant: 52),
             closeButton.leadingAnchor.constraint(equalTo: topBar.leadingAnchor, constant: 16),
             closeButton.centerYAnchor.constraint(equalTo: topBar.centerYAnchor),
             titleLabel.centerXAnchor.constraint(equalTo: topBar.centerXAnchor),
             titleLabel.centerYAnchor.constraint(equalTo: topBar.centerYAnchor),
+            closeButton.topAnchor.constraint(greaterThanOrEqualTo: topBar.topAnchor, constant: 6),
+            closeButton.bottomAnchor.constraint(lessThanOrEqualTo: topBar.bottomAnchor, constant: -6),
+            titleLabel.topAnchor.constraint(greaterThanOrEqualTo: topBar.topAnchor, constant: 6),
+            titleLabel.bottomAnchor.constraint(lessThanOrEqualTo: topBar.bottomAnchor, constant: -6),
         ])
 
         scrollView.translatesAutoresizingMaskIntoConstraints = false
@@ -2186,11 +2192,13 @@ final class BearyLegalTextViewController: UIViewController {
         closeButton.translatesAutoresizingMaskIntoConstraints = false
         closeButton.setTitle("关闭", for: .normal)
         closeButton.setTitleColor(BearyColors.ink, for: .normal)
-        closeButton.titleLabel?.font = UIFont.systemFont(ofSize: 15)
+        closeButton.titleLabel?.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 15))
+        closeButton.titleLabel?.adjustsFontForContentSizeCategory = true
         closeButton.addTarget(self, action: #selector(closeTapped), for: .touchUpInside)
         closeButton.bearyAddPressFeedback()
         titleLabel.translatesAutoresizingMaskIntoConstraints = false
-        titleLabel.font = UIFont.systemFont(ofSize: 17, weight: .bold)
+        titleLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 17, weight: .bold))
+        titleLabel.adjustsFontForContentSizeCategory = true
         titleLabel.textColor = BearyColors.ink
         titleLabel.textAlignment = .center
         titleLabel.text = pageTitle
@@ -2218,11 +2226,15 @@ final class BearyLegalTextViewController: UIViewController {
             topBar.centerXAnchor.constraint(equalTo: view.centerXAnchor),
             topBar.widthAnchor.constraint(lessThanOrEqualToConstant: 600),
             legalTopBarWidthEquality,
-            topBar.heightAnchor.constraint(equalToConstant: 52),
+            topBar.heightAnchor.constraint(greaterThanOrEqualToConstant: 52),
             closeButton.leadingAnchor.constraint(equalTo: topBar.leadingAnchor, constant: 16),
             closeButton.centerYAnchor.constraint(equalTo: topBar.centerYAnchor),
             titleLabel.centerXAnchor.constraint(equalTo: topBar.centerXAnchor),
             titleLabel.centerYAnchor.constraint(equalTo: topBar.centerYAnchor),
+            closeButton.topAnchor.constraint(greaterThanOrEqualTo: topBar.topAnchor, constant: 6),
+            closeButton.bottomAnchor.constraint(lessThanOrEqualTo: topBar.bottomAnchor, constant: -6),
+            titleLabel.topAnchor.constraint(greaterThanOrEqualTo: topBar.topAnchor, constant: 6),
+            titleLabel.bottomAnchor.constraint(lessThanOrEqualTo: topBar.bottomAnchor, constant: -6),
             textView.topAnchor.constraint(equalTo: topBar.bottomAnchor),
             textView.centerXAnchor.constraint(equalTo: view.centerXAnchor),
             textView.widthAnchor.constraint(lessThanOrEqualToConstant: 600),
@@ -2801,13 +2813,15 @@ private final class BearyDiagnosticsViewController: UIViewController {
         closeButton.translatesAutoresizingMaskIntoConstraints = false
         closeButton.setTitle("关闭", for: .normal)
         closeButton.setTitleColor(BearyColors.ink, for: .normal)
-        closeButton.titleLabel?.font = UIFont.systemFont(ofSize: 15)
+        closeButton.titleLabel?.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 15))
+        closeButton.titleLabel?.adjustsFontForContentSizeCategory = true
         closeButton.addTarget(self, action: #selector(closeTapped), for: .touchUpInside)
         closeButton.bearyAddPressFeedback()
 
         let titleLabel = UILabel()
         titleLabel.translatesAutoresizingMaskIntoConstraints = false
-        titleLabel.font = UIFont.systemFont(ofSize: 17, weight: .bold)
+        titleLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 17, weight: .bold))
+        titleLabel.adjustsFontForContentSizeCategory = true
         titleLabel.textColor = BearyColors.ink
         titleLabel.textAlignment = .center
         titleLabel.text = "诊断日志"
@@ -2817,11 +2831,15 @@ private final class BearyDiagnosticsViewController: UIViewController {
         topBar.addSubview(closeButton)
         topBar.addSubview(titleLabel)
         NSLayoutConstraint.activate([
-            topBar.heightAnchor.constraint(equalToConstant: 52),
+            topBar.heightAnchor.constraint(greaterThanOrEqualToConstant: 52),
             closeButton.leadingAnchor.constraint(equalTo: topBar.leadingAnchor, constant: 16),
             closeButton.centerYAnchor.constraint(equalTo: topBar.centerYAnchor),
             titleLabel.centerXAnchor.constraint(equalTo: topBar.centerXAnchor),
             titleLabel.centerYAnchor.constraint(equalTo: topBar.centerYAnchor),
+            closeButton.topAnchor.constraint(greaterThanOrEqualTo: topBar.topAnchor, constant: 6),
+            closeButton.bottomAnchor.constraint(lessThanOrEqualTo: topBar.bottomAnchor, constant: -6),
+            titleLabel.topAnchor.constraint(greaterThanOrEqualTo: topBar.topAnchor, constant: 6),
+            titleLabel.bottomAnchor.constraint(lessThanOrEqualTo: topBar.bottomAnchor, constant: -6),
         ])
 
         copyButton.translatesAutoresizingMaskIntoConstraints = false
@@ -2942,11 +2960,13 @@ final class BearyBlockedUsersViewController: UIViewController, UITableViewDataSo
         closeButton.translatesAutoresizingMaskIntoConstraints = false
         closeButton.setTitle("关闭", for: .normal)
         closeButton.setTitleColor(BearyColors.ink, for: .normal)
-        closeButton.titleLabel?.font = UIFont.systemFont(ofSize: 15)
+        closeButton.titleLabel?.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 15))
+        closeButton.titleLabel?.adjustsFontForContentSizeCategory = true
         closeButton.addTarget(self, action: #selector(closeTapped), for: .touchUpInside)
         closeButton.bearyAddPressFeedback()
         titleLabel.translatesAutoresizingMaskIntoConstraints = false
-        titleLabel.font = UIFont.systemFont(ofSize: 17, weight: .bold)
+        titleLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 17, weight: .bold))
+        titleLabel.adjustsFontForContentSizeCategory = true
         titleLabel.textColor = BearyColors.ink
         titleLabel.textAlignment = .center
         titleLabel.text = "已拉黑用户"
@@ -2977,11 +2997,15 @@ final class BearyBlockedUsersViewController: UIViewController, UITableViewDataSo
             topBar.centerXAnchor.constraint(equalTo: view.centerXAnchor),
             topBar.widthAnchor.constraint(lessThanOrEqualToConstant: 600),
             blockedTopBarWidthEquality,
-            topBar.heightAnchor.constraint(equalToConstant: 52),
+            topBar.heightAnchor.constraint(greaterThanOrEqualToConstant: 52),
             closeButton.leadingAnchor.constraint(equalTo: topBar.leadingAnchor, constant: 16),
             closeButton.centerYAnchor.constraint(equalTo: topBar.centerYAnchor),
             titleLabel.centerXAnchor.constraint(equalTo: topBar.centerXAnchor),
             titleLabel.centerYAnchor.constraint(equalTo: topBar.centerYAnchor),
+            closeButton.topAnchor.constraint(greaterThanOrEqualTo: topBar.topAnchor, constant: 6),
+            closeButton.bottomAnchor.constraint(lessThanOrEqualTo: topBar.bottomAnchor, constant: -6),
+            titleLabel.topAnchor.constraint(greaterThanOrEqualTo: topBar.topAnchor, constant: 6),
+            titleLabel.bottomAnchor.constraint(lessThanOrEqualTo: topBar.bottomAnchor, constant: -6),
             tableView.topAnchor.constraint(equalTo: topBar.bottomAnchor),
             tableView.centerXAnchor.constraint(equalTo: view.centerXAnchor),
             tableView.widthAnchor.constraint(lessThanOrEqualToConstant: 600),
