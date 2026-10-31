@@ -675,6 +675,10 @@ class BearyFeedViewController: UIViewController {
                     let entries = list.entries ?? []
                     strongSelf.plazaLoading = false
                     strongSelf.plazaFirstDone = true
+                    // 110：首页首屏成功即预取时间线首屏（缓存命中走静默
+                    // 刷新时同样到此；BearyTimelinePrefetch 一次/启动、
+                    // 仅写缓存、不碰时间线 VC 状态）。
+                    BearyTimelinePrefetch.maybePrefetch()
                     if diffMode && !strongSelf.plazaRaw.isEmpty {
                         strongSelf.applyFirstPageDiff(entries)
                         return

@@ -2329,7 +2329,7 @@ class BearyTimelineViewController: UIViewController {
         // 内，以免空态重试等其他 reloadTimeline 调用点也被接上守卫。
         pendingEntryJumpCheck = true
         initialLoadStarted = true
-        reloadTimeline()
+        loadTimelineCachedOrRefresh()
     }
 
     override func viewDidLayoutSubviews() {
@@ -2518,6 +2518,75 @@ class BearyTimelineViewController: UIViewController {
     /// 账号隔离 9 号：keepDay 时同时保留旧内容——不清时间线模型、不动
     /// timelineState、不清当日面板，首屏回包经行 diff 更新；失败时旧内容
     /// 原样保留（失败/加载态只在空表时渲染特殊态，见 3617 一带，故不闪白）。
+    /// 110：冷启动缓存优先（首页 BearyFeedCache SWR 同款口径）。
+    /// 时间线此前无首屏磁盘缓存：每次冷启动都清表 + 全量重拉 50 条 +
+    /// 中央 spinner 等网络，即“冷启动后时间线慢”的主因（首屏 payload
+    /// 仅约 60KB、解码可忽略，耗时在 TTFB 与无缓存上，见实测分解）。
+    /// 有缓存：即时渲染缓存首屏（不转菊花、不清表），再走既有静默
+    /// 路径对齐——首屏 loadTimelineFirstPage（有旧行时走 diff，不重建
+    /// 节点；有行时 updateChrome 不挂背景 spinner）、日历月份（内存
+    /// 缓存守门）、当日面板（clear:false 静默刷新）；三路并行，不串行。
+    /// 无缓存：走旧 reloadTimeline 全量路径。
+    /// 账号切换不走本函数：SceneDelegate 切号时调 reloadTimeline 强制
+    /// 重拉，不读旧桶缓存。时间线是本人全部日记（含私密），缓存不做
+    /// Feed 的公开过滤，只按用户桶隔离（与日缓存落盘同款账号桶）。
+    private func loadTimelineCachedOrRefresh() {
+        let bucket = BearyFeedCache.bucket(userId: SessionManager.shared.currentUser?.id ?? BearyFeedCache.lastKnownUserId())
+        guard let snap = BearyTimelineCache.load(bucket: bucket), !snap.entries.isEmpty else {
+            reloadTimeline()
+            return
+        }
+        if calendarAnchor == nil {
+            calendarAnchor = BearyBeijingDay.todayComponents()
+        }
+        if calendarDisplayedMonth == nil, let anchor = calendarAnchor {
+            calendarDisplayedMonth = (anchor.year, anchor.month)
+        }
+        if let today = BearyBeijingDay.todayComponents() {
+            selectedDayKey = BearyBeijingDay.dayKey(year: today.year, month: today.month, day: today.day)
+        } else {
+            selectedDayKey = nil
+        }
+        timelineEntries = snap.entries
+        timelineHasMore = snap.hasMore
+        trashCountValue = snap.trashCount
+        if let total = snap.total, let priv = snap.priv, let pub = snap.pub {
+            countsValue = TlCounts(total: total, priv: priv, pub: pub, nextPub: nil)
+        }
+        timelineState = .loaded
+        timelinePageFailed = false
+        timelineUnauthorized = false
+        loginNotified = false
+        showJumpNote = false
+        // 当日面板先用缓存首屏里今天的篇顶上（静默刷新随后对齐），
+        // 避免面板空等网络；缓存里今天无篇时面板空态由静默刷新补，
+        // 初次进入跳最近有篇日的挂起（viewDidLoad 已置位）照常消费。
+        if let dayKey = selectedDayKey {
+            dayEntries = snap.entries.filter { entry in
+                guard let created = entry.createdAt, let key = BearyBeijingDay.dayKey(ofMs: created) else { return false }
+                return key == dayKey
+            }
+            dayEntriesKey = dayKey
+            dayState = .loaded
+        } else {
+            dayEntries = []
+            dayEntriesKey = nil
+            dayState = .idle
+        }
+        clearStaggerEntries()
+        tableView.reloadData()
+        updateTrashTitle()
+        updateCountsLabel()
+        refreshHeaderHeight()
+        updateChrome()
+        // 静默对齐（与下拉刷新/首屏 diff 同款，不清表、不转菊花）。
+        loadTimelineFirstPage()
+        fetchCalendarMonthsForCurrentView()
+        if let dayKey = selectedDayKey {
+            fetchDayEntries(key: dayKey, clear: false)
+        }
+    }
+
     func reloadTimeline(keepSelectedDay: Bool = false) {
         let keepDay = keepSelectedDay && selectedDayKey != nil
         if keepDay {
@@ -3573,6 +3642,11 @@ class BearyTimelineViewController: UIViewController {
                     strongSelf.trashCountValue = list.trashCount ?? 0
                     strongSelf.countsValue = list.tlCounts
                     strongSelf.timelineHasMore = (list.entries ?? []).count >= strongSelf.pageLimit
+                    // 110：首屏成功即写时间线缓存（下次冷启动缓存优先；
+                    // 只在已登录时写，避免游客态写 guest 桶；失败不写）。
+                    if let uid = SessionManager.shared.currentUser?.id {
+                        BearyTimelineCache.save(bucket: BearyFeedCache.bucket(userId: uid), entries: strongSelf.timelineEntries, hasMore: strongSelf.timelineHasMore, trashCount: strongSelf.trashCountValue, counts: strongSelf.countsValue)
+                    }
                     strongSelf.timelineState = .loaded
                     strongSelf.timelinePageFailed = false
                     strongSelf.updateTrashTitle()
@@ -5371,6 +5445,31 @@ extension BearyTimelineViewController: UITableViewDataSource, UITableViewDelegat
     }
 
     func tableView(_ tableView: UITableView, willDisplay cell: UITableViewCell, forRowAt indexPath: IndexPath) {
+        // 110：相邻项图片预取——行将上屏时，把同组下一行与下一组首行
+        // 的头像/首张正文图经 BearyImageLoader 预热（内存 + 磁盘命中后
+        // 主图秒出；只发加载请求，不改布局、不加骨架、不碰错峰队列，
+        // 放在错峰逻辑之前、且不早退，保证每行都触发）。
+        do {
+            let sections = currentSections()
+            if indexPath.section < sections.count, indexPath.row < sections[indexPath.section].entries.count {
+                var upcoming: [Entry] = []
+                let sectionEntries = sections[indexPath.section].entries
+                if indexPath.row + 1 < sectionEntries.count {
+                    upcoming.append(sectionEntries[indexPath.row + 1])
+                }
+                if indexPath.section + 1 < sections.count, let first = sections[indexPath.section + 1].entries.first {
+                    upcoming.append(first)
+                }
+                for entry in upcoming {
+                    if let avatarURL = BearyImageURLs.avatarURL(entry.authorAvatar) {
+                        _ = BearyImageLoader.shared.load(url: avatarURL, downsampleToWidth: 40 * UIScreen.main.scale) { _ in }
+                    }
+                    if let firstKey = entry.images?.first, let imageURL = BearyImageURLs.imageURL(key: firstKey, thumb: true) {
+                        _ = BearyImageLoader.shared.load(url: imageURL) { _ in }
+                    }
+                }
+            }
+        }
         // N3：切日新行错峰滑入——cell 即将上屏时从透明 + 下偏 6 起播，
         // 按面板行序号错峰（步进 0.05s、封顶 0.5s；减动效时队列为空，不播）。
         // 与 M2 同机制：播过即摘、代际不符即弃；仅新日行播，已有行不重播。
@@ -5419,4 +5518,66 @@ extension BearyTimelineViewController: UITableViewDataSource, UITableViewDelegat
 
     // 下滑藏栏已拆除（第 11 项）：底栏胶囊与 FAB 常驻，scrollViewDidScroll
     // 只做追加项二的悬浮日期头跟随，不做藏栏。
+}
+
+/// 110：时间线首屏磁盘缓存（首页 BearyFeedCache 同款结构与桶口径，
+/// 见 BearyFeedViewController.swift 末尾）。时间线是本人全部日记，
+/// 快照不做公开过滤；桶按用户隔离，游客不写盘（首屏成功写盘处
+/// 只在已登录时调用）。快照字段：savedAt、entries、hasMore、
+/// trashCount、计数 total/priv/pub（TlCounts 仅 Decodable，故拆存）。
+enum BearyTimelineCache {
+    private struct Snapshot: Codable {
+        var savedAt: TimeInterval
+        var entries: [Entry]
+        var hasMore: Bool
+        var trashCount: Int
+        var total: Int?
+        var priv: Int?
+        var pub: Int?
+    }
+
+    private static func fileURL(bucket: String) -> URL? {
+        guard let dir = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first else { return nil }
+        return dir.appendingPathComponent("beary_timeline_cache_\(bucket).json")
+    }
+
+    static func load(bucket: String) -> (entries: [Entry], hasMore: Bool, trashCount: Int, total: Int?, priv: Int?, pub: Int?, savedAt: TimeInterval)? {
+        guard let url = fileURL(bucket: bucket), let data = try? Data(contentsOf: url) else { return nil }
+        guard let snap = try? JSONDecoder().decode(Snapshot.self, from: data) else { return nil }
+        return (snap.entries, snap.hasMore, snap.trashCount, snap.total, snap.priv, snap.pub, snap.savedAt)
+    }
+
+    static func save(bucket: String, entries: [Entry], hasMore: Bool, trashCount: Int, counts: TlCounts?) {
+        guard let url = fileURL(bucket: bucket) else { return }
+        let snap = Snapshot(savedAt: Date().timeIntervalSince1970, entries: entries, hasMore: hasMore, trashCount: trashCount, total: counts?.total, priv: counts?.priv, pub: counts?.pub)
+        guard let data = try? JSONEncoder().encode(snap) else { return }
+        try? FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try? data.write(to: url, options: .atomic)
+    }
+}
+
+/// 110：首页加载时的时间线首屏预取（一次/启动，见任务“首页加载时
+/// 预取时间线首屏”）。触发点在首页首屏成功回包后（缓存命中走静默
+/// 刷新时同样触发）；只在已登录时跑（游客时间线 401，不发无用请求）；
+/// 只写时间线缓存，绝不碰时间线 VC 状态（VC 未创建时尤其不能碰）；
+/// 预取失败静默丢弃（下次首页首屏成功再试，标志只在成功存盘后置位）；
+/// 缓存已有且 10 分钟内新鲜时不重复拉（时间线 VC 每次打开仍静默
+/// 刷新对齐，预取只负责冷启动前置，不替代刷新）。
+enum BearyTimelinePrefetch {
+    private static var didPrefetch = false
+
+    static func maybePrefetch() {
+        guard didPrefetch == false, let uid = SessionManager.shared.currentUser?.id else { return }
+        let bucket = BearyFeedCache.bucket(userId: uid)
+        if let snap = BearyTimelineCache.load(bucket: bucket), !snap.entries.isEmpty,
+           Date().timeIntervalSince1970 - snap.savedAt < 600 {
+            didPrefetch = true
+            return
+        }
+        BearyAPI.shared.fetchEntries(scope: .timeline, limit: 50) { result in
+            guard case .success(let list) = result, let entries = list.entries, !entries.isEmpty else { return }
+            BearyTimelineCache.save(bucket: bucket, entries: entries, hasMore: entries.count >= 50, trashCount: list.trashCount ?? 0, counts: list.tlCounts)
+            didPrefetch = true
+        }
+    }
 }
