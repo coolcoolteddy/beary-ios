@@ -2307,6 +2307,27 @@ class BearyTimelineViewController: UIViewController {
     private let countsLabel = UILabel()
     private let statsButton = UIButton(type: .system)
     private let calendarCard = BearyCalendarCardView()
+    /// 113 日历失败悬浮条：VC 视图层覆盖（不进 tableHeaderView，故不随表头滚走；
+    /// 不是骨架屏——失败时才出现的一行文案 + 重试钮）。重试复用统计行 didTapStats
+    ///（重拉全部可视失败月份）；在途月份不出加载态（既有口径不动），故本条只管失败态。
+    private let calendarFailedBanner = UIView()
+    private let calendarFailedLabel: UILabel = {
+        let labelValue = UILabel()
+        labelValue.translatesAutoresizingMaskIntoConstraints = false
+        labelValue.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13))
+        labelValue.adjustsFontForContentSizeCategory = true
+        labelValue.textColor = BearyColors.gray
+        labelValue.text = "日历加载失败"
+        return labelValue
+    }()
+    private lazy var calendarFailedRetryButton: BearyButton = {
+        let buttonValue = BearyButton.retryPill()
+        buttonValue.translatesAutoresizingMaskIntoConstraints = false
+        buttonValue.setTitle("重试", for: .normal)
+        buttonValue.addTarget(self, action: #selector(didTapStats), for: .touchUpInside)
+        buttonValue.bearyAddPressFeedback()
+        return buttonValue
+    }()
     private var headerStack: UIStackView?
     private var lastHeaderWidth: CGFloat = 0
 
@@ -2330,6 +2351,7 @@ class BearyTimelineViewController: UIViewController {
             tableView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
         ])
         setupStickyHeader()
+        setupCalendarFailedBanner()
         // R8：控制器自有按钮类走 scaledFont + adjusts（卡片内文字由卡片组负责，不碰）。
         loadMoreButton.titleLabel?.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 14))
         loadMoreButton.titleLabel?.adjustsFontForContentSizeCategory = true
@@ -3576,10 +3598,60 @@ class BearyTimelineViewController: UIViewController {
     private var lastStatsStreak: Int?
     private var lastStatsMonthTotal: Int?
 
+    // MARK: - 113 日历失败悬浮条
+    // 悬浮条搭建：VC 视图层、钉在安全区顶 +68（顶栏 60 之下 8pt，
+    // 顶栏收起时仍在原位不跟随滚动）；只在失败时显，平时 isHidden 不占位、不拦截。
+    private func setupCalendarFailedBanner() {
+        calendarFailedBanner.translatesAutoresizingMaskIntoConstraints = false
+        calendarFailedBanner.backgroundColor = BearyColors.surface
+        calendarFailedBanner.layer.borderWidth = 1
+        calendarFailedBanner.layer.borderColor = BearyColors.line.cgColor
+        calendarFailedBanner.layer.cornerRadius = 22
+        calendarFailedBanner.clipsToBounds = true
+        calendarFailedBanner.isHidden = true
+        calendarFailedBanner.accessibilityLabel = "日历加载失败，重试"
+        let stackValue = UIStackView(arrangedSubviews: [calendarFailedLabel, calendarFailedRetryButton])
+        stackValue.translatesAutoresizingMaskIntoConstraints = false
+        stackValue.axis = .horizontal
+        stackValue.spacing = 8
+        stackValue.alignment = .center
+        calendarFailedBanner.addSubview(stackValue)
+        NSLayoutConstraint.activate([
+            stackValue.topAnchor.constraint(equalTo: calendarFailedBanner.topAnchor, constant: 8),
+            stackValue.leadingAnchor.constraint(equalTo: calendarFailedBanner.leadingAnchor, constant: 16),
+            stackValue.trailingAnchor.constraint(equalTo: calendarFailedBanner.trailingAnchor, constant: -12),
+            stackValue.bottomAnchor.constraint(equalTo: calendarFailedBanner.bottomAnchor, constant: -8),
+        ])
+        view.addSubview(calendarFailedBanner)
+        NSLayoutConstraint.activate([
+            calendarFailedBanner.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 68),
+            calendarFailedBanner.centerXAnchor.constraint(equalTo: view.centerXAnchor),
+            calendarFailedBanner.leadingAnchor.constraint(greaterThanOrEqualTo: view.leadingAnchor, constant: 16),
+            calendarFailedBanner.trailingAnchor.constraint(lessThanOrEqualTo: view.trailingAnchor, constant: -16),
+        ])
+    }
+
+    /// 113 悬浮条显隐：可视月份任一失败且无缓存即显（与统计行失败判定同口径）；
+    /// 切到已缓存月份、或重试成功后即藏。深浅切换时边框色同步重刷。
+    private func updateCalendarFailedBanner() {
+        let visibleKeys = monthKeysForCurrentView()
+        let anyVisibleFailed = visibleKeys.contains { calendarFailed.contains($0) && calendarCache[$0] == nil }
+        calendarFailedBanner.layer.borderColor = BearyColors.line.cgColor
+        calendarFailedBanner.isHidden = !anyVisibleFailed
+    }
+
+    override func traitCollectionDidChange(_ previousTraitCollection: UITraitCollection?) {
+        super.traitCollectionDidChange(previousTraitCollection)
+        calendarFailedBanner.layer.borderColor = BearyColors.line.cgColor
+    }
+
     /// 连续写作行：网页 .cal-stats（13.5 灰、数字墨色加粗、16pt 橙色火苗图标）。
     /// 火苗图为本批新建的 icon_fire 资产（beary.html #beary-fire sprite 路径渲染）。
     /// 任一可视月份失败时整行变重试入口（G14）；在途/缺失月份不出加载态（无“日历加载中…”）。
     private func updateStatsLine() {
+        // 113：悬浮失败条先于统计行签名守卫更新——失败签名不变时统计行提前返回，
+        // 但切月/重试后失败态可能已变，条的显隐必须每次重算（不靠签名守卫）。
+        updateCalendarFailedBanner()
         let primaryKey = primaryStatsMonthKey()
         let visibleKeys = monthKeysForCurrentView()
         let anyVisibleFailed = visibleKeys.contains { calendarFailed.contains($0) && calendarCache[$0] == nil }
