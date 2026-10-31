@@ -166,7 +166,17 @@ final class BearyDetailViewController: UIViewController {
         lb.translatesAutoresizingMaskIntoConstraints = false
         return lb
     }()
-    private let timeLabel = UILabel()
+    // 109：详情作者行时间与卡片同口径（13pt 灰 + 动态字号跟随；此前仅
+    // UILabel() 默认，实为 17pt 默认色，与文件头“时间 13 灰”注释不符）。
+    private let timeLabel: UILabel = {
+        let lb = UILabel()
+        lb.translatesAutoresizingMaskIntoConstraints = false
+        lb.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13))
+        lb.adjustsFontForContentSizeCategory = true
+        lb.textColor = BearyColors.gray
+        lb.numberOfLines = 1
+        return lb
+    }()
     private let weatherImageView: UIImageView = {
         let v = UIImageView()
         v.translatesAutoresizingMaskIntoConstraints = false
