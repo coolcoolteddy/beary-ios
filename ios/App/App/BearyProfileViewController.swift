@@ -4289,9 +4289,12 @@ class BearyProfileViewController: UIViewController {
             tabLoading = true
             tabError = false
             refreshFooter()
+            // 109：记下请求发出时的 tab；回包按该归属分发，切走即丢弃
+            //（与后台回填 loadTabBackground 的 tabAtStart 同口径）。
+            let tabAtStart = currentTab
             BearyAPI.shared.fetchEntries(scope: scopeValue, limit: 50) { [weak self] result in
                 DispatchQueue.main.async {
-                    self?.handleTabResult(result: result, appending: false)
+                    self?.handleTabResult(result: result, appending: false, requestTab: tabAtStart)
                 }
             }
         }
@@ -4312,16 +4315,28 @@ class BearyProfileViewController: UIViewController {
         guard let beforeCursor = beforeValue else { return }
         tabLoadMore = true
         refreshFooter()
+        // 109：翻页同样记请求发出时的 tab，见 loadTab。
+        let tabAtStart = currentTab
         BearyAPI.shared.fetchEntries(scope: scopeValue, limit: 50, before: beforeCursor, beforeId: lastEntryId) { [weak self] result in
             DispatchQueue.main.async {
-                self?.handleTabResult(result: result, appending: true)
+                self?.handleTabResult(result: result, appending: true, requestTab: tabAtStart)
             }
         }
     }
 
-    private func handleTabResult(result: Result<EntryList, APIError>, appending: Bool) {
+    private func handleTabResult(result: Result<EntryList, APIError>, appending: Bool, requestTab: ProfileTab) {
         tabLoading = false
         tabLoadMore = false
+        // 109：前台回包按请求发出时的 tab 归属分发；响应时已切走则丢弃，
+        // 不写进新 tab 模型（setEntries/appendEntries/setHasMore 均按 currentTab
+        // 分发，故守卫必须在它们之前）、不改新 tab 的 tabError；只清加载旗、
+        // 刷当前 tab 脚部并收下拉刷新头。displayedEntries 仍按当前 tab 实时
+        // 计算（#275 占位行口径），本处不动。
+        guard requestTab == currentTab else {
+            refreshFooter()
+            endCustomPullRefresh()
+            return
+        }
         switch result {
         case .success(let listValue):
             tabError = false
