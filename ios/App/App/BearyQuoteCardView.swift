@@ -23,6 +23,9 @@ final class BearyQuoteCardView: UIView {
     /// 首页保持 false（gone 卡点按无动作）。
     var allowGoneTap = false
     private var isLoadFailedState = false
+    /// 占位态标志（115 批去重用）：showGone 置 true、clear() 清掉；点按守卫凭它
+    /// 而不再凭 goneRowStack 是否可见——已删除卡去重后占位行整行隐藏，守卫仍须拦住点按。
+    private var isGoneState = false
 
     private let leftBorderView: UIView = {
         let v = UIView()
@@ -296,7 +299,7 @@ final class BearyQuoteCardView: UIView {
             onRetryTapped?()
             return
         }
-        if goneRowStack.isHidden == false, allowGoneTap == false {
+        if isGoneState, allowGoneTap == false {
             return
         }
         onTapped?()
@@ -357,6 +360,7 @@ final class BearyQuoteCardView: UIView {
         goneIconView.isHidden = false
         goneRowStack.isHidden = true
         isLoadFailedState = false
+        isGoneState = false
         rowStack.isHidden = false
         // 池化：先取消全部在途缩略图加载，视图离栈留池，不销毁。
         for thumbView in quoteThumbPool {
@@ -378,9 +382,23 @@ final class BearyQuoteCardView: UIView {
     /// “原日记已转私密，引用内容已隐藏”）；无 detail 时只显主句。
     /// 来源行（sourceHandle/sourceDateMs）同样挂在占位卡上方：占位态只展示、
     /// 不点按；deleted 时写“引用自已删除的日记”；两者皆无时来源行隐藏。
+    /// 115 批去重：sourceDeleted 时来源行已说清“已删除”，正文重复行
+    /// “引用的日记已删除”不再显示（占位行整行隐藏，只留来源行）；点按仍由
+    /// isGoneState 拦住，不因行隐藏而误导航。已私密 + 提醒句、未公开口径不动。
     func showGone(message: String, iconName: String = "icon_quote", detail: String? = nil, sourceHandle: String? = nil, sourceDateMs: Int? = nil, sourceDeleted: Bool = false) {
         clear()
         setSourceRow(handle: sourceHandle, dateMs: sourceDateMs, tappable: false, deleted: sourceDeleted)
+        isGoneState = true
+        if sourceDeleted {
+            goneLabel.attributedText = nil
+            goneLabel.text = nil
+            goneLabel.isHidden = true
+            goneIconView.image = nil
+            goneIconView.isHidden = true
+            goneRowStack.isHidden = true
+            rowStack.isHidden = true
+            return
+        }
         if let detail = detail, !detail.isEmpty {
             let combined = NSMutableAttributedString(string: message, attributes: [
                 .font: BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13)),
