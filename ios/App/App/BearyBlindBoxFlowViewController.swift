@@ -140,6 +140,14 @@ private final class BlindBoxPoolRowView: UIView {
             subLabel.text = (dateText.isEmpty ? "" : dateText + " · ") + "今日公开，明日可入池"
             alpha = 0.55
             tapButton.isEnabled = false
+        case .capsuleLocked:
+            // 扫荡 C：未解锁胶囊置灰禁用（与私密 / 当日公开同款 disabledRow 视觉）。
+            pillLabel.text = "胶囊"
+            pillLabel.textColor = BearyColors.blue
+            pillLabel.backgroundColor = BearyColors.alpha(BearyColors.blue, 0.12)
+            subLabel.text = (dateText.isEmpty ? "" : dateText + " · ") + "时间胶囊未解锁，不可入池"
+            alpha = 0.55
+            tapButton.isEnabled = false
         }
         checkView.isHidden = !selected
         layer.bearyDynamicBorderColor = selected ? BearyColors.ink : BearyColors.line
@@ -1072,9 +1080,20 @@ final class BearyBlindBoxFlowViewController: UIViewController {
             return "登录已过期，请重新登录。"
         case .notFound:
             return "盲盒服务暂未上线，请稍后再试。"
-        case .http(let code, _):
+        case .server(let code):
+            // 扫荡 C：服务端 capsule_locked（入池时胶囊仍锁定，如端侧日期
+            // 缺失未能预先置灰）不再落通用“失败请重试”——重试在解锁前
+            // 永远不会成功，文案须明说原因。
+            if code.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == "capsule_locked" {
+                return "时间胶囊未解锁，暂不可入池"
+            }
+            return fallback
+        case .http(let code, let snippet):
             if code == 404 { return "盲盒服务暂未上线，请稍后再试。" }
             if code == 409 { return "今日已换过 1 次" }
+            if let snippet = snippet, snippet.lowercased().contains("capsule_locked") {
+                return "时间胶囊未解锁，暂不可入池"
+            }
             return fallback
         default:
             return fallback
