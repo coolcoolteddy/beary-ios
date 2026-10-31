@@ -819,7 +819,9 @@ final class BearyDraftBoxViewController: UIViewController {
         metaRow.spacing = 8
         metaRow.alignment = .center
         let wordLabel = UILabel()
-        wordLabel.text = "\(draftValue.content.count) 字"
+        // 清单 19：草稿卡字数走编辑器圆环口径（见 BearyDraft.editorWordCount），
+        // 不再直接对正文原串 count；去组词串、首尾空白照计，均以编辑器为准。
+        wordLabel.text = "\(draftValue.editorWordCount) 字"
         wordLabel.font = UIFont.systemFont(ofSize: 12)
         wordLabel.textColor = BearyColors.gray
         wordLabel.setContentCompressionResistancePriority(.required, for: .horizontal)
