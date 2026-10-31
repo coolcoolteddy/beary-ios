@@ -34,7 +34,18 @@ private final class BearyBodyTextView: UITextView {
     /// 正文编辑器恒定的行高倍数，由 Composer 在 buildTextArea 里与 typingAttributes
     /// 用同一个 bodyParagraph 一并设定；本类只用于正文编辑器，倍数恒定。
     var fixedLineHeightMultiple: CGFloat?
-    private func caretFont() -> UIFont? {
+    /// 光标行实际渲染字体：优先取光标处 attributedText 的字体属性（粘贴/
+    /// 回填后该处字体可能与 typingAttributes 不一致时，以渲染字体为准），
+    /// 取不到时回退 typingAttributes，再回退 textView.font。
+    private func caretFont(at position: UITextPosition) -> UIFont? {
+        let text = attributedText ?? NSAttributedString()
+        if text.length > 0 {
+            let offset = self.offset(from: beginningOfDocument, to: position)
+            let index = min(max(offset - 1, 0), text.length - 1)
+            if let lineFont = text.attribute(.font, at: index, effectiveRange: nil) as? UIFont {
+                return lineFont
+            }
+        }
         if let typed = typingAttributes[.font] as? UIFont {
             return typed
         }
@@ -63,13 +74,23 @@ private final class BearyBodyTextView: UITextView {
         // 打字光标下移修：不再用系统 caret 高度与行高之差守门是否锚定——空行/拼音
         // 组合中系统 caret 约 19pt 时旧守卫不通过、落字后约 32pt 时才通过，落字瞬间
         // 高位→低位切换即光标下掉一截；只要倍数 > 1 就无条件按基线锚定，三态基线一致。
-        guard rect.height > 0, let caretFont = caretFont(), caretFont.lineHeight > 0 else { return rect }
+        guard rect.height > 0, let caretFont = caretFont(at: position), caretFont.lineHeight > 0 else { return rect }
         let multiple = fixedLineHeightMultiple ?? lineHeightMultiple(at: position)
         if let multiple = multiple, multiple > 1.0 {
             let height = caretFont.ascender - caretFont.descender
             guard height > 0 else { return rect }
-            rect.origin.y = rect.origin.y + caretFont.ascender * (multiple - 1)
-            rect.size.height = height
+            // 110：super 几何分流。旧口径默认 super caret 是 TextKit 1 的
+            // 片段顶高矩形（高 ≈ 行高 × 倍数，约 32pt），基线锚定下移
+            // ascender × (倍数 − 1) 才对准字形；但 iOS 16+ 默认 TextKit 2，
+            // super 也可能已是字形高矩形（高 ≈ 行高，字形锚定）——此时再下移
+            // 即 double-count，光标整体低于所打文字（110 真机报）。
+            // 只在 super 确为片段顶高矩形时下移；已是字形高时原样返回，
+            // 片段顶高口径的行为与此前一字不动。
+            if rect.height > caretFont.lineHeight * 1.3 {
+                rect.origin.y = rect.origin.y + caretFont.ascender * (multiple - 1)
+                rect.size.height = height
+                return rect
+            }
             return rect
         }
         let centerY = rect.midY
@@ -328,6 +349,10 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     private var keyboardAnimationInFlight = false
     private var lastAppliedKeyboardHeight: CGFloat = -1
     private var pendingFocusScrollAfterKeyboard = false
+    /// 110：标题聚焦前外层偏移快照（键盘已在上、切正文→标题时用）——
+    /// UIKit 默认标题聚焦滚动若在统一口径判定为 no-op 后仍动过偏移，
+    /// 下一 runloop 按本快照送回，见 textFieldDidBeginEditing。
+    private var headlineFocusSnapshotOffset: CGPoint?
     /// S10：textViewDidChange 高度缓存（contentSize 高度作判据）；高度不变时跳过
     /// updateTextViewHeight + updatePreferredContentSize 的重算。注意不用换行符
     /// 计行：长段落视觉折行不产生换行符，用换行符判会漏掉折行导致编辑器不跟长。
@@ -5740,12 +5765,14 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                 pendingFocusScrollAfterKeyboard = true
                 return
             }
-            scrollFocusedFieldIntoView(animated: true)
+            _ = scrollFocusedFieldIntoView(animated: true)
         }
     }
 
     // 标题行已去掉：ensureTitleRowVisibleOnEntry（进页拉回）已整段删除，
     // 不再为不存在的标题行做进页滚动；焦点滚动只剩正文 caret 口径（见下）。
+    // 110：#281 新标题行聚焦纳入同一口径（见 scrollFocusedFieldIntoView
+    // 与 UITextFieldDelegate 的 textFieldDidBeginEditing），不再只守正文。
 
     /// 可见性滚动留白：目标离可视区顶的距离（2026-10-30 滚动留白口径，
     /// 贴边改留白；已完整可见时仍不动）。
@@ -5760,7 +5787,8 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     /// 回调专用）；否则走默认 UIView 动画。animated:false 的瞬时修正是
     /// 闪回的另一来源——键盘动画刚把内容顶上去，完成回调又无动效地
     /// 把偏移改回去，看起来就是“上滑后闪回来”，故此处不再有无动效修正。
-    private func scrollFocusedFieldIntoView(animated: Bool, duration: TimeInterval? = nil, curveRaw: UInt? = nil) {
+    /// 返回值：是否实际动了外层偏移（标题聚焦的默认滚动抵消逻辑凭它判定 no-op）。
+    private func scrollFocusedFieldIntoView(animated: Bool, duration: TimeInterval? = nil, curveRaw: UInt? = nil) -> Bool {
         // 109：输入时去掉外层自动上滑。根因两处重复计算（2026-10-31 真机报
         // “输入上滑就看不到光标和打的文字”）：
         // ① 旧口径以 caretRect（内层 textView 内容坐标，长文时内层已滚动）
@@ -5778,11 +5806,24 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         // 正常输入时正文帧恒在可视区内 → 本函数 no-op，外层不再上滑，
         //    光标与文字始终留在帧内可见；手动把外层滑走后，焦点/键盘
         //    事件仍按帧顶/帧底最小量把帧拉回可视区，不丢光标。
-        guard textView.isFirstResponder else { return }
-        // textView 是 contentStack 的 arranged 子视图：frame 在 contentStack
-        // 坐标系内，经 superview 换算到 contentView 才是外层滚动的坐标口径；
-        // 不直接用 caretRect，避免内层滚动被重复计入外层偏移。
-        let fieldFrameInContent = contentView.convert(textView.frame, from: textView.superview ?? contentView)
+        // 110：标题行纳入同一口径。109 只守正文（guard textView），
+        // #281 新标题行聚焦根本不走本函数——标题选中/聚焦时的上滑走的是
+        // UIKit 默认 field 聚焦滚动（标题自身路径），与正文修法脱节。
+        // 现取当前焦点方帧：正文取 textView 帧、标题取 headlineField 帧
+        // （单行 field 无内层滚动，光标可见即 field 本身可见），同款
+        // “帧完整可见即 no-op、否则最小量拉回”判定；标题帧换算经
+        // headlineWrap（field 的 superview），不直接用 field.frame。
+        let fieldFrameInContent: CGRect
+        if textView.isFirstResponder {
+            // textView 是 contentStack 的 arranged 子视图：frame 在 contentStack
+            // 坐标系内，经 superview 换算到 contentView 才是外层滚动的坐标口径；
+            // 不直接用 caretRect，避免内层滚动被重复计入外层偏移。
+            fieldFrameInContent = contentView.convert(textView.frame, from: textView.superview ?? contentView)
+        } else if headlineField.isFirstResponder {
+            fieldFrameInContent = contentView.convert(headlineField.frame, from: headlineWrap)
+        } else {
+            return false
+        }
         let topInset = scrollView.contentInset.top
         let bottomInset = scrollView.contentInset.bottom
         let visibleTop = scrollView.contentOffset.y + topInset
@@ -5795,14 +5836,14 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         } else if fieldFrameInContent.maxY > visibleBottom {
             targetY = fieldFrameInContent.maxY - scrollView.bounds.height
         } else {
-            return
+            return false
         }
         let minY = -topInset
         let maxY = max(minY, scrollView.contentSize.height + bottomInset - scrollView.bounds.height)
         targetY = min(max(targetY, minY), maxY)
         // 2pt 死区：目标与现偏移差不到 2pt 时不动，防键盘帧微变、
         // 内层 caret 微移引发的反复微跳（视觉上也是闪）。
-        if abs(targetY - scrollView.contentOffset.y) < 2 { return }
+        if abs(targetY - scrollView.contentOffset.y) < 2 { return false }
         if animated, let duration = duration, let curveRaw = curveRaw {
             let options = UIView.AnimationOptions(rawValue: curveRaw << 16)
             UIView.animate(withDuration: duration, delay: 0, options: [options, .beginFromCurrentState], animations: {
@@ -5815,6 +5856,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             // 本分支保留作兜底，不再是键盘路径的默认行为）。
             scrollView.setContentOffset(CGPoint(x: scrollView.contentOffset.x, y: targetY), animated: false)
         }
+        return true
     }
 
     @objc private func keyboardWillShow(_ notification: Notification) {
@@ -5894,6 +5936,10 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         } else if isHiding && wasVisible {
             keyboardVisible = false
         }
+        // 110：本次弹起刚存的原位（仅弹出跃迁时非空）——标题抵消逻辑只认它，
+        // 键盘高度变化的 WillChangeFrame（wasVisible 已 true）不拿旧原位拉回
+        // 用户已滚位置；收起恢复仍走属性原逻辑，不动。
+        let showSavedOffset: CGPoint? = (showing && height > 0 && !wasVisible) ? keyboardSavedContentOffset : nil
         let options = UIView.AnimationOptions(rawValue: curveRaw << 16)
         UIView.animate(withDuration: duration, delay: 0, options: [options, .beginFromCurrentState], animations: { [weak self] in
             guard let self = self else { return }
@@ -5940,7 +5986,28 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                 // 光标已在可视区时 scrollFocused 内部 no-op；键盘在途
                 // 中点按记下的 pending 在此统一消化，只做一次。
                 self.pendingFocusScrollAfterKeyboard = false
-                self.scrollFocusedFieldIntoView(animated: true, duration: duration, curveRaw: curveRaw)
+                let didScroll = self.scrollFocusedFieldIntoView(animated: true, duration: duration, curveRaw: curveRaw)
+                // 110：标题聚焦的默认滚动抵消。键盘弹起期间 UIKit 默认
+                // 标题聚焦滚动可能已动过外层偏移；统一口径判定为 no-op
+                // （标题帧已在可视区内）且弹出前原位仍能完整容纳标题帧时，
+                // 按键盘曲线把偏移送回弹出前原位，不留一段上滑。
+                // 正文路径一字不动（本分支只在标题为焦点方时跑）；真正被
+                // 键盘盖住的标题在原位不完整可见时不抵消，统一滚动已处理。
+                if !didScroll, self.headlineField.isFirstResponder, let saved = showSavedOffset {
+                    let frame = self.contentView.convert(self.headlineField.frame, from: self.headlineWrap)
+                    let minY = -self.scrollView.contentInset.top
+                    let maxY = max(minY, self.scrollView.contentSize.height + self.scrollView.contentInset.bottom - self.scrollView.bounds.height)
+                    let restoredY = min(max(saved.y, minY), maxY)
+                    let visibleTopAtSaved = restoredY + self.scrollView.contentInset.top
+                    let visibleBottomAtSaved = restoredY + self.scrollView.bounds.height
+                    if frame.minY >= visibleTopAtSaved, frame.maxY <= visibleBottomAtSaved,
+                       abs(restoredY - self.scrollView.contentOffset.y) >= 2 {
+                        let options = UIView.AnimationOptions(rawValue: curveRaw << 16)
+                        UIView.animate(withDuration: duration, delay: 0, options: [options, .beginFromCurrentState], animations: {
+                            self.scrollView.setContentOffset(CGPoint(x: self.scrollView.contentOffset.x, y: restoredY), animated: false)
+                        })
+                    }
+                }
             }
         })
     }
@@ -6142,6 +6209,39 @@ extension BearyComposerViewController: BearyTimeCapsuleRowViewDelegate {
 }
 
 extension BearyComposerViewController: UITextFieldDelegate {
+    /// 110 标题聚焦：与正文 textViewDidBeginEditing 同款——键盘已在上时
+    /// 立即做统一最小滚动修正（标题帧完整可见即 no-op，见
+    /// scrollFocusedFieldIntoView）；键盘动画在途时只记 pending，由
+    /// applyKeyboard 完成回调统一做一次。键盘未在上时不动作，弹起完成
+    /// 回调的标题抵消逻辑接管（见 applyKeyboard 完成分支）。
+    /// 键盘已在上时的默认滚动抵消：聚焦前快照偏移，下一 runloop 若
+    /// 统一口径在快照处仍判 no-op（标题帧在快照处完整可见）且偏移已被
+    /// 默认滚动动过，则瞬时送回快照——默认滚动动画刚起步一帧内，
+    /// 送回几乎不可见；真正需滚动的标题（快照处不完整可见）不抵消。
+    func textFieldDidBeginEditing(_ textField: UITextField) {
+        guard textField === headlineField else { return }
+        if currentKeyboardHeight > 0 {
+            if keyboardAnimationInFlight {
+                pendingFocusScrollAfterKeyboard = true
+                return
+            }
+            headlineFocusSnapshotOffset = scrollView.contentOffset
+            _ = scrollFocusedFieldIntoView(animated: true)
+            DispatchQueue.main.async { [weak self] in
+                guard let self = self, self.headlineField.isFirstResponder,
+                      let snap = self.headlineFocusSnapshotOffset else { return }
+                self.headlineFocusSnapshotOffset = nil
+                if abs(self.scrollView.contentOffset.y - snap.y) < 2 { return }
+                let frame = self.contentView.convert(self.headlineField.frame, from: self.headlineWrap)
+                let visibleTopAtSnap = snap.y + self.scrollView.contentInset.top
+                let visibleBottomAtSnap = snap.y + self.scrollView.bounds.height
+                if frame.minY >= visibleTopAtSnap, frame.maxY <= visibleBottomAtSnap {
+                    self.scrollView.setContentOffset(CGPoint(x: self.scrollView.contentOffset.x, y: snap.y), animated: false)
+                }
+            }
+        }
+    }
+
     /// 109 标题输入 delegate（新写）：回车跳正文；30 字封顶（组词中不拦）。
     func textFieldShouldReturn(_ textField: UITextField) -> Bool {
         if textField === headlineField {
