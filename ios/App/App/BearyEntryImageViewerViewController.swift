@@ -21,6 +21,10 @@ class BearyEntryImageViewerViewController: UIViewController, UIGestureRecognizer
     /// 110：目标图未加载时的加载反馈（官方 icon_refresh 圈，白字色）——
     /// 不是骨架屏；只在 imageView 无图可显且有在途加载时转，图到/失败即停。
     private let loadingSpinner = BearyRefreshIconView()
+    /// 111：灯箱底色占位层——目标图未到时盖住全屏、底色走页面底色
+    /// BearyColors.bg（浅白／深黑，随 trait 自动跟随），不是纯黑、不是
+    /// 骨架屏；图到／失败即藏，旧图绝不滑回的口径不动。
+    private let placeholderView = UIView()
     private let retryLabel = UILabel()
     private let counterLabel = UILabel()
     private let closeButton = BearyButton.closeButton()
@@ -102,6 +106,10 @@ class BearyEntryImageViewerViewController: UIViewController, UIGestureRecognizer
         super.viewDidLoad()
         // 灯箱底色 0.92 黑为例外（2026-10-28 定）：透 8% 保留底层上下文，不改纯黑；深色背景纯黑定版不覆盖灯箱。
         view.backgroundColor = UIColor(white: 0, alpha: 0.92)
+        placeholderView.backgroundColor = BearyColors.bg
+        placeholderView.translatesAutoresizingMaskIntoConstraints = false
+        placeholderView.isHidden = true
+        view.addSubview(placeholderView)
         imageView.contentMode = .scaleAspectFit
         imageView.backgroundColor = .clear
         imageView.translatesAutoresizingMaskIntoConstraints = false
@@ -170,6 +178,10 @@ class BearyEntryImageViewerViewController: UIViewController, UIGestureRecognizer
         view.addGestureRecognizer(pinch)
         view.addGestureRecognizer(pan)
         NSLayoutConstraint.activate([
+            placeholderView.topAnchor.constraint(equalTo: view.topAnchor),
+            placeholderView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
+            placeholderView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            placeholderView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
             imageView.topAnchor.constraint(equalTo: view.topAnchor),
             imageView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
             imageView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
@@ -266,8 +278,12 @@ class BearyEntryImageViewerViewController: UIViewController, UIGestureRecognizer
     private func updateLoadingSpinner() {
         if !localImages.isEmpty || isFailed || imageView.image != nil || loadingKey == nil {
             loadingSpinner.stopSpinning()
+            placeholderView.isHidden = true
         } else {
             loadingSpinner.startSpinning()
+            // 111：与加载圈同条件显隐——目标未到时底色占位层先盖住
+            // 全屏（页面底色），弱网切图不再是纯黑中场；图到即藏。
+            placeholderView.isHidden = false
         }
     }
 
@@ -333,10 +349,14 @@ class BearyEntryImageViewerViewController: UIViewController, UIGestureRecognizer
 
     /// E-G3 相邻图预取：前后各一张（回绕也算相邻，与本页循环翻页一致），
     /// 只暖缓存、不动当前图；单图时不预取。
+    /// 111：预取必须带与展示加载同款下采样宽度——旧口径不带下采样时
+    /// 内存键与展示键不一致（内存键含下采样宽度），预取只暖了磁盘、
+    /// 展示时仍需解码一遍；现与 loadCurrent 同宽，内存直接命中。
     private func prefetchAdjacent() {
         if imageKeys.count <= 1 {
             return
         }
+        let downsampleWidth = pageWidthValue() * UIScreen.main.scale
         for offset in [-1, 1] {
             let index = (currentIndex + offset + imageKeys.count) % imageKeys.count
             if index == currentIndex {
@@ -345,7 +365,7 @@ class BearyEntryImageViewerViewController: UIViewController, UIGestureRecognizer
             guard let url = BearyImageURLs.imageURL(key: imageKeys[index], thumb: false) else {
                 continue
             }
-            BearyImageLoader.shared.load(url: url) { _ in }
+            BearyImageLoader.shared.load(url: url, downsampleToWidth: downsampleWidth) { _ in }
         }
     }
 
