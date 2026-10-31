@@ -1467,7 +1467,11 @@ final class BearyTimelineCell: UITableViewCell {
         if published {
             // 2026-10-29 晚：pill 已整个去掉，只留图标本体——公开＝地球，固定灰 #8e8e93（v3 值）；
             // 圆点口径不动（公开橙边见下）。
-            pillIconView.image = BearyIconImages.image(named: "icon_globe", pointSize: 14)
+            // 109：限时存活期只换图标为官方现成 icon_clock（与 #272 编辑器
+            // 三态循环的限时图标一致，不自绘；尺寸/灰色与公开/私密同款）；
+            // 圆点仍走公开橙边、虚线框与倒计时行一字不动；到期后 isLive 为假、
+            // isEffectivelyPublic 回私密，走下方锁分支，图标自动回锁。
+            pillIconView.image = BearyIconImages.image(named: BearyEphemeral.isLive(entry) ? "icon_clock" : "icon_globe", pointSize: 14)
             pillIconView.tintColor = BearyColors.timelineIconGray
             // 竖线圆点统一用私密的尺寸和结构（9pt 空心 + 12pt 环），只变颜色：
             // 已公开橙边、私密蓝边（2026-10-28 Li 定，覆盖 #125 的已公开几何口径）。
