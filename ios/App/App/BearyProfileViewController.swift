@@ -4599,6 +4599,11 @@ class BearyProfileViewController: UIViewController {
                     strongSelf.tableView.reloadData()
                     // M10：回填用淡入/滑入新行（已有行不重播），不用整表瞬换观感。
                     strongSelf.animateNewRows()
+                    // 109：后台回填成功且未切走（上方 tabAtStart 守卫已保证）时清掉
+                    // 其他 tab 残留的全局 tabError，否则 switchTab 缓存路径先 refreshFooter
+                    // 仍会先判 tabError 而显旧 tab 的失败脚部；失败分支口径不动，
+                    // 也不改成按 tab 分字典。
+                    strongSelf.tabError = false
                     strongSelf.refreshFooter()
                 case .failure:
                     break
