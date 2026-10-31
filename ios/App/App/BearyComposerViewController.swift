@@ -378,8 +378,19 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     private var pendingFocusScrollAfterKeyboard = false
     /// 110：标题聚焦前外层偏移快照（键盘已在上、切正文→标题时用）——
     /// UIKit 默认标题聚焦滚动若在统一口径判定为 no-op 后仍动过偏移，
-    /// 下一 runloop 按本快照送回，见 textFieldDidBeginEditing。
+    /// 按本快照送回，见 textFieldDidBeginEditing。
+    /// 116 守卫修：110 的一次性下一 runloop 检查带 <2pt 早退，而默认
+    /// 聚焦滚动是带动画的——动画第一帧位移几乎肯定 <2pt，检查每次都会
+    /// 提前放行、之后再也不补查，等于守卫从未生效。故快照改为守卫：
+    /// 点按时无条件快照（含键盘未在上时，原先该分支根本不快照），
+    /// 守卫高度取快照时刻的滚动区高（键盘弹起前后高不同，不能用事后高
+    /// 去判事前可见性）；守卫只由延迟复查、键盘完成回调、用户拖动、
+    /// 标题失焦、键盘收起这几处清掉，不再只活一个 runloop。
     private var headlineFocusSnapshotOffset: CGPoint?
+    /// 116 守卫修：快照时刻的滚动区 bounds 高 + 守卫代次（延迟复查块凭
+    /// 代次过期作废，快速连点只认最后一次点按的快照）。
+    private var headlineFocusGuardHeight: CGFloat = 0
+    private var headlineFocusGuardGeneration = 0
     /// S10：textViewDidChange 高度缓存（contentSize 高度作判据）；高度不变时跳过
     /// updateTextViewHeight + updatePreferredContentSize 的重算。注意不用换行符
     /// 计行：长段落视觉折行不产生换行符，用换行符判会漏掉折行导致编辑器不跟长。
@@ -815,6 +826,12 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         // 呈现/安全区再补一份顶 inset，scrollFocusedFieldIntoView 按 contentInset.top
         // 算可视区顶就会错位；本页滚动区顶已锚顶栏底、不贴安全区，.never 让数学精确。
         scrollView.contentInsetAdjustmentBehavior = .never
+        // 116 守卫修：外层滚动区此前未设 delegate，无法区分用户拖动与
+        // 程序/系统滚动；守卫只认程序与系统滚动，用户一拖动即清守卫，
+        // 不把用户的手动滚动又拉回去。内层正文 textView 另有自己的
+        // delegate，不受此影响；天气/图片横向滚动区各有自己的滚动视图，
+        // scrollViewDidScroll 里只认外层 scrollView。
+        scrollView.delegate = self
         scrollView.keyboardDismissMode = .onDrag
         let dismissTap = UITapGestureRecognizer(target: self, action: #selector(dismissKeyboardTap))
         dismissTap.cancelsTouchesInView = false
@@ -6149,6 +6166,9 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             // 把内容顶上去、完成回调又无动效改回去，就是“上滑后闪回来”。
             // 收起恢复原位同样带曲线动效，不再瞬时跳回。
             if isHiding {
+                // 116 守卫修：键盘收起即清标题聚焦守卫，收起恢复原位
+                // 之后不再有标题守卫复查把它又拉回去。
+                self.headlineFocusSnapshotOffset = nil
                 if let saved = self.keyboardSavedContentOffset {
                     self.keyboardSavedContentOffset = nil
                     let minY = -self.scrollView.contentInset.top
@@ -6186,6 +6206,12 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                             self.scrollView.setContentOffset(CGPoint(x: self.scrollView.contentOffset.x, y: restoredY), animated: false)
                         })
                     }
+                }
+                // 116 守卫修：完成回调复查（不清守卫，给 0.35 秒延迟复查
+                // 留第二次机会——默认滚动若晚于完成回调落点，延迟复查
+                // 仍能把它送回；110 原抵消只活在这里，晚落点即逃掉）。
+                if self.headlineField.isFirstResponder, let snap = self.headlineFocusSnapshotOffset {
+                    self.restoreHeadlineFocusGuardIfNeeded(snapshot: snap, height: self.headlineFocusGuardHeight, clearGuard: false)
                 }
             }
         })
@@ -6468,34 +6494,72 @@ extension BearyComposerViewController: UITextFieldDelegate {
     /// 110 标题聚焦：与正文 textViewDidBeginEditing 同款——键盘已在上时
     /// 立即做统一最小滚动修正（标题帧完整可见即 no-op，见
     /// scrollFocusedFieldIntoView）；键盘动画在途时只记 pending，由
-    /// applyKeyboard 完成回调统一做一次。键盘未在上时不动作，弹起完成
-    /// 回调的标题抵消逻辑接管（见 applyKeyboard 完成分支）。
-    /// 键盘已在上时的默认滚动抵消：聚焦前快照偏移，下一 runloop 若
-    /// 统一口径在快照处仍判 no-op（标题帧在快照处完整可见）且偏移已被
-    /// 默认滚动动过，则瞬时送回快照——默认滚动动画刚起步一帧内，
-    /// 送回几乎不可见；真正需滚动的标题（快照处不完整可见）不抵消。
+    /// applyKeyboard 完成回调统一做一次。
+    /// 116 守卫修：110 的抵消只活在两条窄缝里——键盘已在上时靠一次
+    /// 性下一 runloop 检查（带 <2pt 早退，动画第一帧必放行、之后永不
+    /// 补查），键盘未在上时根本不快照、只靠 applyKeyboard 完成回调里
+    /// 的 showSavedOffset 抵消（WillShow/WillChangeFrame 去重 early-return
+    /// 或默认滚动晚于完成回调落点时同样逃掉）。现改为来源无关的守卫：
+    /// 点按标题时无条件快照偏移 + 当时滚动区高；标题在快照处已完整
+    /// 可见、而聚焦窗口内偏移被任何一路（我们自己的滚动、UIKit 默认
+    /// 聚焦滚动、inset 变化带起的调整）动过 ≥2pt，就送回快照；标题
+    /// 在快照处本身不完整可见时不抵消，仍走统一最小滚动把它拉回。
+    /// 复查点有两处：applyKeyboard 完成回调（键盘弹起路径）与点按后
+    /// 0.35 秒延迟复查（键盘已在上、无键盘通知的路径，默认滚动动画
+    /// 0.25 秒级、此时已落定）；用户拖动、标题失焦、键盘收起即清守卫，
+    /// 不把用户手动滚动拉回去。
     func textFieldDidBeginEditing(_ textField: UITextField) {
         guard textField === headlineField else { return }
-        if currentKeyboardHeight > 0 {
-            if keyboardAnimationInFlight {
-                pendingFocusScrollAfterKeyboard = true
-                return
-            }
-            headlineFocusSnapshotOffset = scrollView.contentOffset
-            _ = scrollFocusedFieldIntoView(animated: true)
-            DispatchQueue.main.async { [weak self] in
-                guard let self = self, self.headlineField.isFirstResponder,
-                      let snap = self.headlineFocusSnapshotOffset else { return }
-                self.headlineFocusSnapshotOffset = nil
-                if abs(self.scrollView.contentOffset.y - snap.y) < 2 { return }
-                let frame = self.contentView.convert(self.headlineField.frame, from: self.headlineWrap)
-                let visibleTopAtSnap = snap.y + self.scrollView.contentInset.top
-                let visibleBottomAtSnap = snap.y + self.scrollView.bounds.height
-                if frame.minY >= visibleTopAtSnap, frame.maxY <= visibleBottomAtSnap {
-                    self.scrollView.setContentOffset(CGPoint(x: self.scrollView.contentOffset.x, y: snap.y), animated: false)
-                }
-            }
+        headlineFocusSnapshotOffset = scrollView.contentOffset
+        headlineFocusGuardHeight = scrollView.bounds.height
+        headlineFocusGuardGeneration += 1
+        let guardGeneration = headlineFocusGuardGeneration
+        NSLog("[Diag] composer-headline-focus snap=\(scrollView.contentOffset) height=\(headlineFocusGuardHeight)")
+        if keyboardAnimationInFlight {
+            pendingFocusScrollAfterKeyboard = true
+            return
         }
+        _ = scrollFocusedFieldIntoView(animated: true)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) { [weak self] in
+            guard let self = self, guardGeneration == self.headlineFocusGuardGeneration,
+                  let snap = self.headlineFocusSnapshotOffset else { return }
+            self.restoreHeadlineFocusGuardIfNeeded(snapshot: snap, height: self.headlineFocusGuardHeight, clearGuard: true)
+        }
+    }
+
+    /// 116 守卫修：标题聚焦守卫的复查入口。标题已失焦时清守卫；
+    /// 偏移与快照差 <2pt、或标题在快照处本身不完整可见时不动偏移；
+    /// 标题在快照处完整可见且偏移被动过时瞬时送回快照（与 110 原快照
+    /// 送回同款瞬时口径，不另起动画与默认滚动再打一架）。
+    /// clearGuard=false 时只在真正送回后清守卫（键盘完成回调复查用，
+    /// 给 0.35 秒延迟复查留第二次机会）；延迟复查用 clearGuard=true，
+    /// 复查完无论是否送回都清守卫，同一快照不重复生效。
+    private func restoreHeadlineFocusGuardIfNeeded(snapshot: CGPoint, height: CGFloat, clearGuard: Bool) {
+        guard headlineField.isFirstResponder else {
+            headlineFocusSnapshotOffset = nil
+            return
+        }
+        if abs(scrollView.contentOffset.y - snapshot.y) < 2 {
+            if clearGuard { headlineFocusSnapshotOffset = nil }
+            return
+        }
+        let frame = contentView.convert(headlineField.frame, from: headlineWrap)
+        let visibleTopAtSnap = snapshot.y + scrollView.contentInset.top
+        let visibleBottomAtSnap = snapshot.y + height
+        guard frame.minY >= visibleTopAtSnap, frame.maxY <= visibleBottomAtSnap else {
+            if clearGuard { headlineFocusSnapshotOffset = nil }
+            return
+        }
+        NSLog("[Diag] composer-headline-focus restore from=\(scrollView.contentOffset) to=\(snapshot)")
+        scrollView.setContentOffset(CGPoint(x: scrollView.contentOffset.x, y: snapshot.y), animated: false)
+        headlineFocusSnapshotOffset = nil
+    }
+
+    /// 116 守卫修：标题失焦即清守卫，之后任何延迟复查块凭代次与
+    /// 快照双重过期作废，不把已切走焦点的偏移再拉回去。
+    func textFieldDidEndEditing(_ textField: UITextField) {
+        guard textField === headlineField else { return }
+        headlineFocusSnapshotOffset = nil
     }
 
     /// 109 标题输入 delegate（新写）：回车跳正文；30 字封顶（组词中不拦）。
@@ -6521,5 +6585,17 @@ extension BearyComposerViewController: UITextFieldDelegate {
         showHeadlineLimitToastIfNeeded()
         headlineDidChange()
         return false
+    }
+}
+
+extension BearyComposerViewController: UIScrollViewDelegate {
+    /// 116 守卫修：用户手指拖动外层滚动区即清标题聚焦守卫——守卫
+    /// 只抵消程序与系统滚动，不把用户手动滚动拉回去；程序滚动
+    /// （isDragging 为 false）不触发此清守卫。只认外层 scrollView，
+    /// 内层正文、天气、图片横向滚动区各有自己的滚动视图与 delegate，
+    /// 不进本分支。
+    func scrollViewDidScroll(_ scrollView: UIScrollView) {
+        guard scrollView === self.scrollView, scrollView.isDragging else { return }
+        headlineFocusSnapshotOffset = nil
     }
 }
