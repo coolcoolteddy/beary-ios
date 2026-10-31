@@ -982,7 +982,10 @@ final class BearyTimelineCell: UITableViewCell {
         moodLabel.numberOfLines = 1
         moodLabel.lineBreakMode = .byTruncatingTail
         moodLabel.setContentCompressionResistancePriority(.defaultHigh, for: .horizontal)
-        recipientLabel.font = UIFont.boldSystemFont(ofSize: 12.5)
+        // 112 视觉扫查：同行时间/天气/心情均已走 scaledFont（见上方 8-3），@ 行此前独漏；
+        // 默认档仍为 12.5 粗体，仅跟随系统字号，170 上限与单行截断口径不动。
+        recipientLabel.font = BearyDynamicType.scaledFont(for: UIFont.boldSystemFont(ofSize: 12.5))
+        recipientLabel.adjustsFontForContentSizeCategory = true
         recipientLabel.textColor = BearyColors.orange
         // B-G12 (web .tl-to): max-width 170 + single-line ellipsis, never wrap.
         recipientLabel.numberOfLines = 1
