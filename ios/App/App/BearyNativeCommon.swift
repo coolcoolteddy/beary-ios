@@ -336,6 +336,12 @@ final class BearyImageLoader {
         if session === URLSession.shared {
             let config = URLSessionConfiguration.default
             config.httpMaximumConnectionsPerHost = Self.maxConcurrentDownloads
+            // 秒开-网络层：urlCache = nil。URLCache 按 URL 裸键、不分账号，
+            // 且退出/401 清理不覆盖它——私密图字节一旦进共享缓存，换号/
+            // 退出后仍可能被直接命中而不走服务端可见性判定；本加载器
+            // 自有按账号分桶的磁盘缓存（见 S10），URLCache 层纯属多余
+            // 且跨账号漏读风险，故显式关掉（与 BearyAPI 专用会话同口径）。
+            config.urlCache = nil
             // D4-App：默认会话挂重定向守门（见 BearyImageRedirectGuard）；
             // delegateQueue=nil 走系统串行队列，不改 dataTask 完成回调语义。
             self.session = URLSession(configuration: config, delegate: BearyImageRedirectGuard.shared, delegateQueue: nil)
@@ -367,9 +373,48 @@ final class BearyImageLoader {
         return caches.appendingPathComponent("BearyImageCache").appendingPathComponent(bucket).appendingPathComponent(key)
     }
 
+    /// 秒开-网络层：磁盘缓存 TTL 24 小时，与服务端公开图
+    /// Cache-Control public, max-age=86400（2026-10-29 Li 定）同口径。
+    /// 关键在“转私密后旧缓存不漏”：磁盘命中本来完全绕过网络，若无
+    /// TTL，转私密的日记图会在本机磁盘里无限期可读；24 小时后强制
+    /// 视为未命中、重新走网络，服务端此时按最新可见性 404，旧图即停。
+    /// 私密图服务端给的是 private 1 年，但本加载器无法从 URL 区分
+    /// 公开/私密（key 不含可见性），故统一 24 小时、向 fail-closed
+    /// 取严；代价只是私密图 24 小时后多一次下载。
+    private static let diskCacheMaxAge: TimeInterval = 24 * 3600
+
     private func diskData(for url: URL, bucket: Int?) -> Data? {
         guard let file = diskFileURL(for: url, bucket: bucket) else { return nil }
+        // TTL：以文件修改时间（即写入时间）为准；过期先删文件再判未命中，
+        // 避免过期文件占着 200MB 桶；删文件失败也不影响未命中判定。
+        if let values = try? file.resourceValues(forKeys: [.contentModificationDateKey]),
+           let mtime = values.contentModificationDate,
+           Date().timeIntervalSince(mtime) > Self.diskCacheMaxAge {
+            try? FileManager.default.removeItem(at: file)
+            return nil
+        }
         return try? Data(contentsOf: file)
+    }
+
+    /// 秒开-网络层：作者把日记转私密成功后，立即逐出该篇图片的本机缓存。
+    /// 磁盘按 URL 精确删（原图 + _t 缩略图两个变体）；内存 NSCache 无法
+    /// 按前缀枚举（下采样宽度后缀使同一 URL 有多个内存键），故转私密时
+    /// 全清内存——转私密是低频用户动作，内存图可从磁盘快速重建，不走网络。
+    /// 逐出是同步 unlink（不读数据），调用方在转私密成功回调里调本方法后，
+    /// 后续加载即走网络、服务端按新可见性判定，不会再命中旧图。
+    /// 注意：本方法只清本机当前账号桶；他人设备上的旧缓存仍受服务端
+    /// 公开图 1 天 max-age + 本方法同款 24 小时 TTL 约束，不会无限期可读。
+    func evictEntryImages(keys: [String]) {
+        guard !keys.isEmpty else { return }
+        cache.removeAllObjects()
+        let bucket = currentAccountId
+        for key in keys {
+            for thumb in [false, true] {
+                guard let url = BearyImageURLs.imageURL(key: key, thumb: thumb),
+                      let file = diskFileURL(for: url, bucket: bucket) else { continue }
+                try? FileManager.default.removeItem(at: file)
+            }
+        }
     }
 
     /// 审计三轮 23 项：磁盘累计字节（按桶）。本进程内每桶只在首次写入时
