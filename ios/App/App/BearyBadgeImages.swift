@@ -15,7 +15,8 @@ enum BearyBadgeImages {
     /// 按服务端 `authorBadge` 的 key 取图；无对应资产时返回 nil，
     /// 调用方须隐藏徽章位、绝不留空位。
     static func image(for key: String) -> UIImage? {
-        guard !key.isEmpty else { return nil }
+        // BETA 徽章已下线（2026-10-31）：beta 一律按无徽章处理，调用方隐藏徽章位。
+        guard key != "beta", !key.isEmpty else { return nil }
         return UIImage(named: "badge_" + key)
     }
 
@@ -25,6 +26,8 @@ enum BearyBadgeImages {
     /// 随深浅自适应，不再是固定浅灰块；
     /// 新徽章资产与 key 同步上架仍是上架流程项，代码侧只保证不留空白。
     static func imageOrPlaceholder(for key: String) -> UIImage? {
+        // BETA 已下线：不得 fallback 成占位问号，直接按无徽章处理。
+        guard key != "beta" else { return nil }
         if let found = image(for: key) {
             return found
         }
@@ -51,9 +54,8 @@ enum BearyBadgeImages {
 
     /// I9：key→展示名映射；未知 key 一律显示通用文案，不直接露原始 key。
     static func displayName(for key: String) -> String {
-        let known: [String: String] = [
-            "beta": "内测者",
-        ]
+        // BETA 已下线，映射表已清空。
+        let known: [String: String] = [:]
         return known[key] ?? "新徽章"
     }
 }
