@@ -151,7 +151,6 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         "facepalm", "shy", "goodnight", "hug", "wink", "idea", "kiss", "thinking",
         "listening", "lonely", "speechless", "nope", "surprised", "pat", "peek", "sleepy",
         "proud", "shrug", "sorry", "cry", "angry", "thanks", "zap", "wave",
-        "candle", "flower", "letter", "paperplane", "sprout", "tea", "umbrella", "wish",
     ]
 
     /// 天气顺序：与 BearyText.weatherNames 字面顺序一致（勿用字典 keys 排序，会打乱顺序）。
