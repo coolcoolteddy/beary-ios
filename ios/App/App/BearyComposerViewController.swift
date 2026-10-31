@@ -5635,35 +5635,47 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
 
     /// 2026-10-29 第 28 项：只滚到刚好让焦点框完整可见的最小滚动——焦点框在可视区
     /// 上方时上滚到其顶离可视区顶留 16pt（绝不顶出顶部），在可视区下方时下滚到其底恰贴
-    /// 键盘顶；已完整可见时不动。标题行已去掉，本函数只剩正文 caret 口径
-    /// （整框可能高于可视区，整框口径会乱滚，故用 caret 矩形）。可视区按当前 contentInset 算
-    /// （键盘高已计入 bottom inset），目标偏移 clamp 到内容合法范围。
+    /// 键盘顶；已完整可见时不动。109 改口径（见函数内注释）：焦点框改取正文帧
+    /// 本身（不再取 caretRect），可视底不再减键盘 inset；目标偏移 clamp 到
+    /// 内容合法范围。
     /// duration/curveRaw 非空时按给定键盘曲线做动效（applyKeyboard 完成
     /// 回调专用）；否则走默认 UIView 动画。animated:false 的瞬时修正是
     /// 闪回的另一来源——键盘动画刚把内容顶上去，完成回调又无动效地
     /// 把偏移改回去，看起来就是“上滑后闪回来”，故此处不再有无动效修正。
     private func scrollFocusedFieldIntoView(animated: Bool, duration: TimeInterval? = nil, curveRaw: UInt? = nil) {
-        let targetRect: CGRect?
-        if textView.isFirstResponder {
-            if let selectedRange = textView.selectedTextRange {
-                let caret = textView.caretRect(for: selectedRange.end)
-                targetRect = contentView.convert(caret, from: textView)
-            } else {
-                targetRect = contentView.convert(textView.bounds, from: textView)
-            }
-        } else {
-            targetRect = nil
-        }
-        guard let fieldFrame = targetRect else { return }
+        // 109：输入时去掉外层自动上滑。根因两处重复计算（2026-10-31 真机报
+        // “输入上滑就看不到光标和打的文字”）：
+        // ① 旧口径以 caretRect（内层 textView 内容坐标，长文时内层已滚动）
+        //    直接换算到外层 contentView——内层滚动被重复计入外层偏移，
+        //    长文末行时外层被多滚一段，正文整体被顶出顶栏上方，光标与
+        //    正在打的字随之出可视区。
+        // ② 外层 scrollView 底已锚工具栏顶（工具栏底锚键盘顶，即滚动区帧底
+        //    本就在键盘上方），旧口径又在可视底再减一份 contentInset.bottom
+        //    （= 键盘高），可视底被低估约一个键盘高——正文帧底恒被判定
+        //    “在可视区下方”，键盘弹起完成回调几乎每次都触发一次外层上滑。
+        // 修法（只改本函数，不动键盘 inset 动画、可见性三态、字数圆环等）：
+        // 外层只负责“正文帧本身是否在可视区内”，光标在帧内的可见性交
+        // 给内层 textView 自身滚动（isScrollEnabled=true、高度封顶在键盘
+        // 上方，系统标准 caret 滚动只在打到帧内可视区外时动内层）。
+        // 正常输入时正文帧恒在可视区内 → 本函数 no-op，外层不再上滑，
+        //    光标与文字始终留在帧内可见；手动把外层滑走后，焦点/键盘
+        //    事件仍按帧顶/帧底最小量把帧拉回可视区，不丢光标。
+        guard textView.isFirstResponder else { return }
+        // textView 是 contentStack 的 arranged 子视图：frame 在 contentStack
+        // 坐标系内，经 superview 换算到 contentView 才是外层滚动的坐标口径；
+        // 不直接用 caretRect，避免内层滚动被重复计入外层偏移。
+        let fieldFrameInContent = contentView.convert(textView.frame, from: textView.superview ?? contentView)
         let topInset = scrollView.contentInset.top
         let bottomInset = scrollView.contentInset.bottom
         let visibleTop = scrollView.contentOffset.y + topInset
-        let visibleBottom = scrollView.contentOffset.y + scrollView.bounds.height - bottomInset
+        // 滚动区帧底已在键盘上方（底锚工具栏顶），可视底不再减键盘 inset；
+        // bottomInset 只保留在下方 maxY 合法范围计算里，不参与可见判定。
+        let visibleBottom = scrollView.contentOffset.y + scrollView.bounds.height
         var targetY = scrollView.contentOffset.y
-        if fieldFrame.minY < visibleTop {
-            targetY = fieldFrame.minY - topInset - Self.focusVisibleTopMargin
-        } else if fieldFrame.maxY > visibleBottom {
-            targetY = fieldFrame.maxY - (scrollView.bounds.height - bottomInset)
+        if fieldFrameInContent.minY < visibleTop {
+            targetY = fieldFrameInContent.minY - topInset - Self.focusVisibleTopMargin
+        } else if fieldFrameInContent.maxY > visibleBottom {
+            targetY = fieldFrameInContent.maxY - scrollView.bounds.height
         } else {
             return
         }
