@@ -227,8 +227,15 @@ enum BearyProfilePersonalLogic {
     // MARK: - 年度回顾
 
     /// 当年条目（本地年），createdAt 降序。
+    /// 清单第 10 项：胶囊篇排除（与写作统计、那年今日同谓词
+    /// BearyTimeCapsule.isExcludedFromStats，即 capsuleBuried == 1，埋了即排除、
+    /// 不论解锁与否，取消埋藏后重新计入）。本函数是年度回顾总篇数、最长连续、
+    /// 心情分布与词汇指纹的共同源头——年报首屏与词汇指纹内部均经它取当年条目，
+    /// 故一处过滤即覆盖四处；年度回顾入口卡的“今年已写 N 篇”也随之变小，
+    /// Li 拍板接受（会小于实际写作篇数）。
     static func yearEntries(entries: [Entry], year: Int, calendar: Calendar) -> [Entry] {
         entries.filter { entry in
+            guard !BearyTimeCapsule.isExcludedFromStats(entry) else { return false }
             guard let createdAt = entry.createdAt else { return false }
             let date = Date(timeIntervalSince1970: TimeInterval(createdAt) / 1000)
             return calendar.component(.year, from: date) == year
