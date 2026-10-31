@@ -5967,6 +5967,17 @@ class BearyProfileViewController: UIViewController {
 
     /// 收尾跨页同步：首页/详情取消赞过或收藏后，对应页签摘卡（日记页签不受影响，
     /// 只摘赞过/收藏页签）。容器接线（Feed onInteractionRemoved → 本方法）。
+    /// 删帖同步清模型：删帖成功后立即从个人页各页签模型摘掉本篇，
+    /// 不只依赖随后重拉——重拉可能被 tabLoading 守卫跳过，跳过即复活。
+    /// 个人页列表更新走 reloadData，不发行级批更新（无下标可错）。
+    func removeDeletedEntry(entryId: String) {
+        diaryEntries.removeAll { $0.id == entryId }
+        likedEntries.removeAll { $0.id == entryId }
+        savedEntries.removeAll { $0.id == entryId }
+        guard isViewLoaded else { return }
+        tableView.reloadData()
+    }
+
     func removeEntryFromTabs(entryId: String, likeRemoved: Bool, bookmarkRemoved: Bool) {
         // 80 包 A6-2：只在当前页签正显示该行时删行；其他页签模型已改、界面不在本页，无需重载。
         let visibleRow = displayedEntries.firstIndex(where: { $0.id == entryId })

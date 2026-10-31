@@ -1992,6 +1992,22 @@ final class BearyChromeViewController: UIViewController {
                         // 首页与个人主页仍用原有重拉同步（其列表非日期分区，
                         // 且个人主页无删除入口，只是跟随同步）。
                         self.timelineVC?.removeDeletedEntry(entry)
+                        // 删帖复活修：首页重拉可能被在途守卫跳过、个人页重拉
+                        // 可能被 tabLoading 守卫跳过，且广场快照此前删帖时从不
+                        // 清——重进 App 先渲染快照，已删篇就复活。此处删帖即同
+                        // 步清掉两处模型与广场快照，重拉只是后续对齐，不再是
+                        // 唯一纠错路径。
+                        self.feedVC?.removeDeletedEntry(entryId: entryId)
+                        self.profileVC?.removeDeletedEntry(entryId: entryId)
+                        if let uid = SessionManager.shared.currentUser?.id {
+                            let bucket = BearyFeedCache.bucket(userId: uid)
+                            if let snap = BearyFeedCache.load(bucket: bucket) {
+                                let kept = snap.entries.filter { $0.id != entryId }
+                                if kept.count != snap.entries.count {
+                                    BearyFeedCache.save(bucket: bucket, entries: kept, hasMore: snap.hasMore)
+                                }
+                            }
+                        }
                         self.feedVC?.refreshAll()
                         self.profileVC?.reloadProfile()
                     case .failure:
