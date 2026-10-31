@@ -61,8 +61,8 @@ class BearyEntryImageViewerViewController: UIViewController, UIGestureRecognizer
     /// 拖动手势引用：旋转中途重算相邻图位置时，凭它判断手指是否仍在拖动
     /// （回弹/翻页动画中的 transform 由动画自身驱动，不干扰）。
     private var panGesture: UIPanGestureRecognizer?
-    /// 下甩关闭拖动状态：0 未定、1 横向翻页、2 下甩关闭——一根手势内
-    /// 定向后不再切换，避免斜向拖动中途从翻页跳成下甩（或反向）。
+    /// 纵向甩关闭拖动状态：0 未定、1 横向翻页、2 纵向甩关闭（上甩/下甩对称）——一根手势内
+    /// 定向后不再切换，避免斜向拖动中途从翻页跳成纵向甩（或反向）。
     private var panMode: Int = 0
     private var isNavigating: Bool = false
     private var isFailed: Bool = false
@@ -502,10 +502,10 @@ class BearyEntryImageViewerViewController: UIViewController, UIGestureRecognizer
                 clampPan()
                 applyTransform(animated: false)
             } else if panMode == 2 {
-                // 下甩关闭跟手：图往下走、略缩小，底色与顶底 chrome 同步变淡。
+                // 纵向甩关闭跟手：图跟着手指往上/往下走、略缩小，底色与顶底 chrome 同步变淡。
                 hideNeighbor()
                 tx = 0
-                ty = max(0, translation.y)
+                ty = translation.y
                 applyDismissDrag()
             } else if panMode == 1 {
                 // 未放大：轨道跟手，只跟横向；相邻图同步贴在边上跟手（见 updateNeighbor）。
@@ -514,14 +514,14 @@ class BearyEntryImageViewerViewController: UIViewController, UIGestureRecognizer
                 updateNeighbor(forDragX: tx)
                 applyTransform(animated: false)
             } else {
-                // 未定：位移过 12pt 才定向——向下且纵向占优进下甩，
+                // 未定：位移过 12pt 才定向——纵向占优（往上或往下都一样）进纵向甩关闭，
                 // 其余进横向翻页；定向前图不动，避免斜拖中途跳变。
                 if max(abs(translation.x), abs(translation.y)) > 12 {
-                    if translation.y > 0 && abs(translation.y) > abs(translation.x) {
+                    if abs(translation.y) > abs(translation.x) {
                         panMode = 2
                         hideNeighbor()
                         tx = 0
-                        ty = max(0, translation.y)
+                        ty = translation.y
                         applyDismissDrag()
                     } else {
                         panMode = 1
@@ -534,12 +534,13 @@ class BearyEntryImageViewerViewController: UIViewController, UIGestureRecognizer
             }
         } else if sender.state == .ended || sender.state == .cancelled {
             if panMode == 2 && sender.state == .ended {
-                // 下甩关闭判定：位移 >120pt，或快甩（纵向速度 >800pt/s
-                // 且纵向占优）——与横向翻页的 60pt/700pt/s 口径同款分层。
+                // 纵向甩关闭判定（上下完全一致）：位移绝对值 >120pt，或快甩
+                // （纵向速度绝对值 >800pt/s 且纵向占优）——与横向翻页的
+                // 60pt/700pt/s 口径同款分层。
                 let velocity = sender.velocity(in: view)
-                let flickDown = velocity.y > 800 && velocity.y > abs(velocity.x) * 1.5
-                if ty > 120 || flickDown {
-                    dismissBySwipeDown()
+                let flickVertical = abs(velocity.y) > 800 && abs(velocity.y) > abs(velocity.x) * 1.5
+                if abs(ty) > 120 || flickVertical {
+                    dismissByVerticalSwipe(velocityY: velocity.y)
                     panMode = 0
                     return
                 }
@@ -592,11 +593,11 @@ class BearyEntryImageViewerViewController: UIViewController, UIGestureRecognizer
         }
     }
 
-    /// 下甩关闭跟手态：进度 = 下移量 / 屏高；图略缩小（最多 12%），
-    /// 底色从 0.92 黑按进度淡掉 75%，顶底 chrome 同步变淡。
+    /// 纵向甩关闭跟手态：进度 = 纵向位移绝对值 / 屏高；图略缩小（最多 12%），
+    /// 底色从 0.92 黑按进度淡掉 75%，顶底 chrome 同步变淡。上下方向进度算法相同。
     private func applyDismissDrag() {
         let height = view.bounds.height > 0 ? view.bounds.height : UIScreen.main.bounds.height
-        let progress = height > 0 ? min(1, max(0, ty / height)) : 0
+        let progress = height > 0 ? min(1, max(0, abs(ty) / height)) : 0
         let shrink = 1 - progress * 0.12
         imageView.transform = CGAffineTransform(translationX: 0, y: ty).scaledBy(x: shrink, y: shrink)
         view.backgroundColor = UIColor(white: 0, alpha: 0.92 * (1 - progress * 0.75))
@@ -609,7 +610,7 @@ class BearyEntryImageViewerViewController: UIViewController, UIGestureRecognizer
         }
     }
 
-    /// 下甩力度不够：图、底色、chrome 一起弹回原位（0.25s，与回弹同款时长）。
+    /// 纵向甩力度不够：图、底色、chrome 一起弹回原位（0.25s，与回弹同款时长）。
     private func springBackFromDismiss() {
         hideNeighbor()
         tx = 0
@@ -637,17 +638,20 @@ class BearyEntryImageViewerViewController: UIViewController, UIGestureRecognizer
         })
     }
 
-    /// 下甩关闭：图继续下滑出屏、底色与 chrome 淡到 0 后直接 dismiss
-    ///（animated: false，不再走 160ms 淡出转场，避免双重淡出）。
-    private func dismissBySwipeDown() {
+    /// 纵向甩关闭：图继续沿甩动方向滑出屏（上甩往上出屏、下甩往下出屏）、
+    /// 底色与 chrome 淡到 0 后直接 dismiss（animated: false，不再走 160ms
+    /// 淡出转场，避免双重淡出）。出屏方向取跟手位移方向；位移为 0 的快甩
+    /// （理论上极少见）取末速度方向。
+    private func dismissByVerticalSwipe(velocityY: CGFloat) {
         hideNeighbor()
         if UIAccessibility.isReduceMotionEnabled {
             dismiss(animated: false, completion: nil)
             return
         }
         let height = view.bounds.height > 0 ? view.bounds.height : UIScreen.main.bounds.height
+        let exitDirection: CGFloat = ty != 0 ? (ty > 0 ? 1 : -1) : (velocityY >= 0 ? 1 : -1)
         UIView.animate(withDuration: 0.25, animations: {
-            self.imageView.transform = CGAffineTransform(translationX: 0, y: height).scaledBy(x: 0.9, y: 0.9)
+            self.imageView.transform = CGAffineTransform(translationX: 0, y: exitDirection * height).scaledBy(x: 0.9, y: 0.9)
             self.view.backgroundColor = UIColor(white: 0, alpha: 0)
             self.counterLabel.alpha = 0
             self.dotsStack.alpha = 0
