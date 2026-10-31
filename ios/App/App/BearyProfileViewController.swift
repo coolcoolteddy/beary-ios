@@ -4666,6 +4666,26 @@ class BearyProfileViewController: UIViewController {
         }
     }
 
+    /// 109：本人页空 tab 占位行是否显示。仅本人页、当前 tab 已加载完成
+    /// （非加载中、非失败态）且无展示行时为真；此时表格行区用 1 行占位
+    /// 撑住 tab 下方，脚部模块组不再直接贴到 tab 区下方。
+    /// 他人页恒为假——他人页空 tab 不加占位，脚部模块按现行他人页口径显隐。
+    private var showsOwnEmptyPlaceholder: Bool {
+        guard isOwnProfile, !tabLoading, !tabError else { return false }
+        if currentTab == .diary && profileLoadFailed && targetHandleValue != nil { return false }
+        return displayedEntries.isEmpty
+    }
+
+    /// 109：占位行文案，复用现行空态脚部（makeEmptyFooter）的本人页文案，
+    /// 不造新文案。日记 tab 的“还没有公开的日记”沿用脚部原话（脚部亦如此写）。
+    private var ownEmptyPlaceholderText: (title: String, subtitle: String) {
+        switch currentTab {
+        case .diary: return ("还没有公开的日记", "写下第一篇，默认私密")
+        case .liked: return ("还没有赞过的日记", "去广场逛逛吧")
+        case .saved: return ("还没有收藏的日记", "看到喜欢的日记，点书签存到这里，只有你能看到")
+        }
+    }
+
     // MARK: - 底部状态（加载 / 空态 / 失败）
 
     /// 80 包 A3-1：脚部种类记忆——空态脚部只在种类变化时淡入，已有空态不重播。
@@ -4689,9 +4709,11 @@ class BearyProfileViewController: UIViewController {
         } else if tabError || (currentTab == .diary && profileLoadFailed && targetHandleValue != nil) {
             stateView = makeErrorFooter()
             kind = "error"
-        } else if displayedEntries.isEmpty {
+        } else if displayedEntries.isEmpty && !showsOwnEmptyPlaceholder {
             // 批 C：空态按展示层判——日记 tab 全被过滤时（只剩纯心情项等）
             // 也应出空态脚部，而不是留一片空白。
+            // 109：本人页空 tab 已由表格行区占位行承载空态提示，脚部不再
+            // 重复出空态（否则同一提示出现两次：占位行一次、模块下方一次）。
             stateView = makeEmptyFooter()
             kind = "empty"
         } else if tabLoadMore {
@@ -6056,14 +6078,90 @@ final class BearyProfileMoreDiaryCell: UITableViewCell {
     }
 }
 
+/// 109：本人页空 tab 占位行。只占表格行区（上下各留 56pt，默认字号下
+/// 行高约 160pt，随动态字号变化），不盖 tab、不改脚部模块位置；
+/// 文案由调用方按 tab 传入（复用现行空态脚部文案），无交互、点按无动作。
+final class BearyProfileEmptyPlaceholderCell: UITableViewCell {
+
+    private let titleLabel: UILabel = {
+        let label = UILabel()
+        label.translatesAutoresizingMaskIntoConstraints = false
+        label.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 15))
+        label.adjustsFontForContentSizeCategory = true
+        label.textColor = BearyColors.ink
+        label.textAlignment = .center
+        return label
+    }()
+
+    private let subtitleLabel: UILabel = {
+        let label = UILabel()
+        label.translatesAutoresizingMaskIntoConstraints = false
+        label.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13))
+        label.adjustsFontForContentSizeCategory = true
+        label.textColor = BearyColors.gray
+        label.textAlignment = .center
+        label.numberOfLines = 0
+        return label
+    }()
+
+    override init(style: UITableViewCell.CellStyle, reuseIdentifier: String?) {
+        super.init(style: style, reuseIdentifier: reuseIdentifier)
+        backgroundColor = .clear
+        contentView.backgroundColor = .clear
+        selectionStyle = .none
+        let stack = UIStackView(arrangedSubviews: [titleLabel, subtitleLabel])
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        stack.axis = .vertical
+        stack.alignment = .center
+        stack.spacing = 8
+        contentView.addSubview(stack)
+        NSLayoutConstraint.activate([
+            stack.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 56),
+            stack.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 20),
+            stack.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -20),
+            stack.bottomAnchor.constraint(equalTo: contentView.bottomAnchor, constant: -56),
+        ])
+    }
+
+    required init?(coder: NSCoder) {
+        return nil
+    }
+
+    func configure(title: String, subtitle: String) {
+        titleLabel.text = title
+        subtitleLabel.text = subtitle
+    }
+
+    override func prepareForReuse() {
+        super.prepareForReuse()
+        titleLabel.text = nil
+        subtitleLabel.text = nil
+    }
+}
+
 extension BearyProfileViewController: UITableViewDataSource, UITableViewDelegate {
     func tableView(_ tableView: UITableView, numberOfRowsInSection section: Int) -> Int {
         // 批 C：日记 tab = 最新 3 篇 + 1 行“更多日记”按钮（本人页才有）；
         // 赞过/收藏 tab 行数一字不动。
-        return displayedEntries.count + (diaryMoreButtonVisible ? 1 : 0)
+        // 109：本人页空 tab 另加 1 行占位（空时 displayedEntries.count 为 0、
+        // 更多按钮行亦不出现，故占位行即唯一行）；他人页不加。
+        return displayedEntries.count + (diaryMoreButtonVisible ? 1 : 0) + (showsOwnEmptyPlaceholder ? 1 : 0)
     }
 
     func tableView(_ tableView: UITableView, cellForRowAt indexPath: IndexPath) -> UITableViewCell {
+        // 109：占位行优先返回——不走日记卡创建与更多按钮分支；点按时
+        // didSelectRowAt 的 row < displayedEntries.count 守卫会直接返回，无动作。
+        if showsOwnEmptyPlaceholder {
+            let placeholder: BearyProfileEmptyPlaceholderCell
+            if let reused = tableView.dequeueReusableCell(withIdentifier: "BearyProfileEmptyPlaceholderCell") as? BearyProfileEmptyPlaceholderCell {
+                placeholder = reused
+            } else {
+                placeholder = BearyProfileEmptyPlaceholderCell(style: .default, reuseIdentifier: "BearyProfileEmptyPlaceholderCell")
+            }
+            let text = ownEmptyPlaceholderText
+            placeholder.configure(title: text.title, subtitle: text.subtitle)
+            return placeholder
+        }
         let cellValue: BearyDiaryCardCell
         if let reused = tableView.dequeueReusableCell(withIdentifier: "BearyDiaryCardCell") as? BearyDiaryCardCell {
             cellValue = reused
