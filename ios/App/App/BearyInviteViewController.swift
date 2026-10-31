@@ -421,7 +421,9 @@ final class BearyInviteViewController: UIViewController {
         if let ref = referral {
             let invited = ref.invitedCount ?? 0
             let months = ref.rewardMonths ?? 0
-            statsLabel.text = "已邀请 \(invited) 人 · 累计获得 \(months * 30) 天 Plus"
+            // 清单第 8 项：与网页一致，统计单位改“个月”（rewardMonths 本就是月数，
+            // 不再 ×30 换算成天；可能被误读为自然月，Li 拍板接受）。
+            statsLabel.text = "已邀请 \(invited) 人 · 累计获得 \(months) 个月 Plus"
         } else {
             statsLabel.text = "加载中…"
         }
