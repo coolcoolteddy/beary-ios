@@ -4195,12 +4195,30 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     /// （组词中不做，免得打断输入法；下次打开编辑器自然是新变体）。
     private func refreshInlineMoodImages() {
         guard textView.markedTextRange == nil, headlineField.markedTextRange == nil else { return }
+        // 无内联心情时不重建：重建会把非心情附件（如粘贴进来的图片）
+        // 经 inlinePlainText 丢掉，还会把选区压成光标；只有真有熊脸附件
+        // 时才需要换深浅变体（动态墨色本身随主题自动解析，无需重建）。
+        guard containsInlineMood(textView.attributedText)
+            || containsInlineMood(headlineField.attributedText) else { return }
         let bodySelection = textView.selectedRange
         let headlineSelection = headlineField.selectedRange
         setBodyAttributedText(committedContent())
         setHeadlineText(headlineText)
         textView.selectedRange = NSRange(location: min(bodySelection.location, textView.attributedText.length), length: 0)
         headlineField.selectedRange = NSRange(location: min(headlineSelection.location, headlineField.attributedText.length), length: 0)
+    }
+
+    /// 是否含内联熊脸附件（主题切换重建的守门：无附件时跳过重建）。
+    private func containsInlineMood(_ attributed: NSAttributedString?) -> Bool {
+        guard let attributed = attributed, attributed.length > 0 else { return false }
+        var found = false
+        attributed.enumerateAttribute(BearyText.inlineMoodKeyAttribute, in: NSRange(location: 0, length: attributed.length), options: []) { value, _, stop in
+            if value != nil {
+                found = true
+                stop.pointee = true
+            }
+        }
+        return found
     }
 
     /// P1-15：正文取数统一走已落字口径——trimmedContent 即 trim 后的已落字正文，
