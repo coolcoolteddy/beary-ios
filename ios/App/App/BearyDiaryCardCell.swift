@@ -992,8 +992,8 @@ class BearyDiaryCardCell: UITableViewCell {
     private var imageSlotWidthConstraints: [NSLayoutConstraint] = []
     private var imageSlotRetryButtons: [BearyFeedRetryButton] = []
 
-    /// 图片条捏合拼图：双指捏合把间距 8 → 0（图贴在一起），张开恢复 8。
-    /// 只动 imagesStack.spacing，不动槽宽/高/圆角，不缩放单张图；灯箱自带的
+    /// 图片条捏合拼图：双指捏合把间距 8 → 0、圆角 12 → 0（图贴在一起且无圆角），张开恢复 8 / 12。
+    /// 只动 imagesStack.spacing 与槽位圆角，不动槽宽/高，不缩放单张图；灯箱自带的
     /// 单图捏合缩放不在此改动范围。滚动视图本身未开 zoom（min/max 均为 1），
     /// 其内置捏合手势不会抢占本手势。
     private var stripPinchStartProgress: CGFloat = 0
@@ -1003,6 +1003,13 @@ class BearyDiaryCardCell: UITableViewCell {
         let pinch = UIPinchGestureRecognizer(target: self, action: #selector(imageStripPinched(_:)))
         pinch.delegate = self
         imagesScrollView.addGestureRecognizer(pinch)
+    }
+
+    /// 捏合跟手圆角：progress 0 → 圆角 12，progress 1（贴合）→ 圆角 0，与间距同一进度走，
+    /// 不在松手瞬间跳变；只改槽位图层圆角，不动其他圆角。
+    private func applyImageStripCornerRadius(progress: CGFloat) {
+        let radius = 12 * (1 - max(0, min(1, progress)))
+        for slot in imageSlots { slot.layer.cornerRadius = radius }
     }
 
     @objc private func imageStripPinched(_ gesture: UIPinchGestureRecognizer) {
@@ -1019,6 +1026,7 @@ class BearyDiaryCardCell: UITableViewCell {
             // 从贴合态起手张开同样走这条式子，不会出现“贴合后张开无效”。
             let progress = max(0, min(1, stripPinchStartProgress + (1 - gesture.scale)))
             imagesStack.spacing = 8 * (1 - progress)
+            applyImageStripCornerRadius(progress: progress)
             imagesScrollView.layoutIfNeeded()
         case .ended, .cancelled, .failed:
             imagesScrollView.isScrollEnabled = true
@@ -1026,6 +1034,7 @@ class BearyDiaryCardCell: UITableViewCell {
             stripPinchJoined = progress >= 0.5
             UIView.animate(withDuration: 0.25, animations: {
                 self.imagesStack.spacing = self.stripPinchJoined ? 0 : 8
+                self.applyImageStripCornerRadius(progress: self.stripPinchJoined ? 1 : 0)
                 self.imagesScrollView.layoutIfNeeded()
             })
         default:
@@ -1036,6 +1045,7 @@ class BearyDiaryCardCell: UITableViewCell {
     private func resetImageStripPinch() {
         stripPinchJoined = false
         imagesStack.spacing = 8
+        applyImageStripCornerRadius(progress: 0)
         imagesScrollView.isScrollEnabled = true
     }
 
