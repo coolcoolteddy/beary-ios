@@ -1816,10 +1816,49 @@ class BearyFeedViewController: UIViewController {
     private func handleVisibilityToggle(entryId: String) {
         guard !entryId.isEmpty, let entry = entryModel(for: entryId), entry.isMine == true else { return }
         if pubBusyIds.contains(entryId) { return }
+        // 引用规则简化（2026-10-31）：切公开先过引用门禁、改私密先查引用数提醒；
+        // 门禁/提醒期间占 busy 位，放弃时清位、原态未动（乐观落地只在 perform 里做）。
+        let target = BearyEphemeral.isEffectivelyPublic(entry) ? 0 : 1
+        pubBusyIds.insert(entryId)
+        if target == 1 {
+            BearyQuoteGate.gatePublicToggle(from: self, entry: entry) { [weak self] result in
+                guard let strongSelf = self else { return }
+                switch result {
+                case .proceed:
+                    strongSelf.performVisibilityToggle(entryId: entryId)
+                case .publishTogether(let sourceId):
+                    BearyAPI.shared.setVisibility(id: sourceId, published: 1) { setResult in
+                        DispatchQueue.main.async {
+                            switch setResult {
+                            case .success:
+                                strongSelf.performVisibilityToggle(entryId: entryId)
+                            case .failure:
+                                strongSelf.pubBusyIds.remove(entryId)
+                                BearyToast.show(in: strongSelf.view, message: "原日记公开失败，请重试")
+                            }
+                        }
+                    }
+                case .aborted:
+                    strongSelf.pubBusyIds.remove(entryId)
+                }
+            }
+        } else {
+            BearyQuoteGate.confirmPrivateToggleIfQuoted(from: self, entryId: entryId) { [weak self] confirmed in
+                guard let strongSelf = self else { return }
+                if confirmed {
+                    strongSelf.performVisibilityToggle(entryId: entryId)
+                } else {
+                    strongSelf.pubBusyIds.remove(entryId)
+                }
+            }
+        }
+    }
+
+    private func performVisibilityToggle(entryId: String) {
+        guard !entryId.isEmpty, let entry = entryModel(for: entryId), entry.isMine == true else { return }
         let target = BearyEphemeral.isEffectivelyPublic(entry) ? 0 : 1
         let originalPublic = entry.isPublic ?? false
         let originalPublishedAt = entry.publishedAt
-        pubBusyIds.insert(entryId)
         // 先行：目标态立即落地（与成功路径同一同步函数，不重建行、不重播动效）。
         applyVisibilityState(entryId: entryId, isPublic: target == 1, publishedAt: nil)
         BearySoundPlayer.play(.visibilityClick)

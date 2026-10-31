@@ -1921,3 +1921,130 @@ enum BearyBlockFlow {
         vc.present(alert, animated: BearyMotion.animated(true))
     }
 }
+
+// MARK: - 引用规则简化（2026-10-31 Li 定版，网页端+后端已部署，App 端本批落地）
+// 无混合态：公开宿主含私密来源时先问是否一并公开原日记；一并公开后引用对所有人全文。
+// 来源作者判定：quote.is_mine 优先，其次 author_id 与当前用户 id 比对；身份不明时按他人
+// 处理（fail-closed：绝不给身份不明的来源挂“一并公开”项，杜绝 403 误触）。
+// 改私密提醒只做提醒不做门控：quote-count 拉取失败时直接放行切换，不拦用户。
+enum BearyQuoteGate {
+
+    static func sourceIsMine(isMine: Bool?, authorId: Int?) -> Bool {
+        if let mine = isMine { return mine }
+        if let aid = authorId, let uid = SessionManager.shared.currentUser?.id { return aid == uid }
+        return false
+    }
+
+    static func sourceIsMine(quote: Quote?) -> Bool {
+        guard let q = quote else { return false }
+        return sourceIsMine(isMine: q.isMine, authorId: q.authorId)
+    }
+
+    /// 私密来源：已删（gone）不算（已删引用另走已删除口径，不进公开门禁）；
+    /// 其余 is_public 非 true 即私密（含 locked 占位体与正文直传的私密体）。
+    static func sourceIsPrivate(quote: Quote?) -> Bool {
+        guard let q = quote, q.gone != true else { return false }
+        return q.isPublic != true
+    }
+
+    enum PublicToggleResult {
+        case proceed
+        case publishTogether(sourceId: String)
+        case aborted
+    }
+
+    /// 卡片切公开门禁（详情/首页/时间线/个人页共用）。宿主无私密来源时直接 proceed；
+    /// quote 体缺失但有 quoteId 时先 fetchEntry 补一次（补不到则 fail-open 直接 proceed，
+    /// 不因门禁拉取失败拦住公开）；他人来源弹窗里只有“保持私密”一项，不给一并公开、
+    /// 不弹 403 toast（调用方收到 aborted 时只做回滚/不发请求，不另 toast）。
+    static func gatePublicToggle(from vc: UIViewController, entry: Entry, completion: @escaping (PublicToggleResult) -> Void) {
+        if let quote = entry.quote, sourceIsPrivate(quote: quote), let sourceId = quote.id, !sourceId.isEmpty {
+            presentPublicGate(from: vc, sourceIsMine: sourceIsMine(quote: quote)) { publishTogether in
+                completion(publishTogether ? .publishTogether(sourceId: sourceId) : .aborted)
+            }
+            return
+        }
+        if entry.quote == nil, let quoteId = entry.quoteId, !quoteId.isEmpty, let entryId = entry.id, !entryId.isEmpty {
+            BearyAPI.shared.fetchEntry(id: entryId) { result in
+                DispatchQueue.main.async {
+                    switch result {
+                    case .success(let fetched):
+                        if let fetchedQuote = fetched.quote, sourceIsPrivate(quote: fetchedQuote), let sourceId = fetchedQuote.id, !sourceId.isEmpty {
+                            presentPublicGate(from: vc, sourceIsMine: sourceIsMine(quote: fetchedQuote)) { publishTogether in
+                                completion(publishTogether ? .publishTogether(sourceId: sourceId) : .aborted)
+                            }
+                        } else {
+                            completion(.proceed)
+                        }
+                    case .failure:
+                        completion(.proceed)
+                    }
+                }
+            }
+            return
+        }
+        completion(.proceed)
+    }
+
+    private static func presentPublicGate(from vc: UIViewController, sourceIsMine: Bool, completion: @escaping (Bool) -> Void) {
+        if sourceIsMine {
+            let alert = UIAlertController(title: "引用的日记还是私密", message: "公开本篇时，是否一并公开原日记？一并公开后，引用对所有人可见。", preferredStyle: .alert)
+            alert.addAction(UIAlertAction(title: "一并公开原日记", style: .default) { _ in completion(true) })
+            alert.addAction(UIAlertAction(title: "保持私密", style: .cancel) { _ in completion(false) })
+            vc.present(alert, animated: BearyMotion.animated(true))
+        } else {
+            let alert = UIAlertController(title: "引用的日记还是私密", message: "这篇日记引用了他人的私密日记，无法一并公开原日记。保持私密可继续保留引用。", preferredStyle: .alert)
+            alert.addAction(UIAlertAction(title: "保持私密", style: .default) { _ in completion(false) })
+            vc.present(alert, animated: BearyMotion.animated(true))
+        }
+    }
+
+    /// 编辑器新发布门禁：宿主将公开且含私密引用时拦截。自己来源三选一
+    /// （一并公开／删除引用并公开／保持私密发布），他人来源只剩两项
+    /// （删除引用并公开／保持私密发布）；“取消”仅关弹窗、不发请求。
+    static func gateEditorPublish(from vc: UIViewController, sourceIsMine: Bool, onPublishTogether: @escaping () -> Void, onDeleteQuote: @escaping () -> Void, onKeepPrivate: @escaping () -> Void) {
+        let alert = UIAlertController(title: "引用的日记还是私密", message: "公开本篇时，引用的私密日记怎么办？", preferredStyle: .alert)
+        if sourceIsMine {
+            alert.addAction(UIAlertAction(title: "一并公开原日记", style: .default) { _ in onPublishTogether() })
+        }
+        alert.addAction(UIAlertAction(title: "删除引用并公开", style: .default) { _ in onDeleteQuote() })
+        alert.addAction(UIAlertAction(title: "保持私密发布", style: .default) { _ in onKeepPrivate() })
+        alert.addAction(UIAlertAction(title: "取消", style: .cancel, handler: nil))
+        vc.present(alert, animated: BearyMotion.animated(true))
+    }
+
+    /// 存量公开篇含私密引用：作者下次打开编辑器时的三选一。自己来源三项
+    /// （一并公开／删除引用／保持私密），他人来源只剩两项（删除引用／保持私密）；
+    /// 保持私密即关弹窗、不改任何状态（下次打开编辑器仍会再提示，直至作者处理）。
+    static func promptStoredPrivateQuote(from vc: UIViewController, sourceIsMine: Bool, onPublishTogether: @escaping () -> Void, onDeleteQuote: @escaping () -> Void, onKeepPrivate: @escaping () -> Void) {
+        let alert = UIAlertController(title: "这篇已公开的日记引用了私密日记", message: "原日记仍是私密，他人看这篇时引用只显示占位。", preferredStyle: .alert)
+        if sourceIsMine {
+            alert.addAction(UIAlertAction(title: "一并公开原日记", style: .default) { _ in onPublishTogether() })
+        }
+        alert.addAction(UIAlertAction(title: "删除引用", style: .default) { _ in onDeleteQuote() })
+        alert.addAction(UIAlertAction(title: "保持私密", style: .cancel) { _ in onKeepPrivate() })
+        vc.present(alert, animated: BearyMotion.animated(true))
+    }
+
+    /// 改私密前提醒：本篇被 N 篇日记引用（N>0）时先弹确认，文案含改后口径；
+    /// N=0 或拉取失败时直接放行（提醒不是门控，失败不拦切换）。
+    static func confirmPrivateToggleIfQuoted(from vc: UIViewController, entryId: String, completion: @escaping (Bool) -> Void) {
+        BearyAPI.shared.fetchQuoteCount(id: entryId) { result in
+            DispatchQueue.main.async {
+                switch result {
+                case .success(let resp):
+                    if let count = resp.quoteCount, count > 0 {
+                        let alert = UIAlertController(title: nil, message: "这篇日记被 \(count) 篇日记引用，改私密后这些引用将显示“该日记已私密”。", preferredStyle: .alert)
+                        alert.addAction(UIAlertAction(title: "改私密", style: .destructive) { _ in completion(true) })
+                        alert.addAction(UIAlertAction(title: "取消", style: .cancel) { _ in completion(false) })
+                        vc.present(alert, animated: BearyMotion.animated(true))
+                    } else {
+                        completion(true)
+                    }
+                case .failure:
+                    completion(true)
+                }
+            }
+        }
+    }
+}

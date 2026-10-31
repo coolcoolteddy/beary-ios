@@ -973,6 +973,21 @@ final class BearyAPI {
         request("/beary/api/entries/\(safe)/visibility", method: "POST", jsonBody: ["published": published], completion: completion)
     }
 
+    /// 引用计数（2026-10-31 引用规则简化）：GET /beary/api/entries/:id/quote-count
+    /// → {ok, id, quote_count}，只计现存行（不含回收站）；未登录 401、查无行 404、
+    /// 非原作者 403。调用方只用它做改私密前的提醒：失败一律 fail-open（不拦切换），
+    /// 不把计数当门控。convertFromSnakeCase 下 quote_count 直解为 quoteCount。
+    struct QuoteCountResponse: Decodable {
+        var ok: Bool?
+        var id: String?
+        var quoteCount: Int?
+    }
+
+    func fetchQuoteCount(id: String, completion: @escaping (Result<QuoteCountResponse, APIError>) -> Void) {
+        let safe = id.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? id
+        request("/beary/api/entries/\(safe)/quote-count", completion: completion)
+    }
+
     /// 举报：POST /beary/api/reports {entry_id, reason}（reason 为封禁五类之一）。
     /// 重复举报返回已举报态，不建新行、不重复计数。
     func reportEntry(entryId: String, reason: String, completion: @escaping (Result<ReportResponse, APIError>) -> Void) {

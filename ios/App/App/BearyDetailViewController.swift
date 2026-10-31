@@ -1830,6 +1830,48 @@ final class BearyDetailViewController: UIViewController {
         guard isAuthor else { return }
         guard let entryId = entry.id, !entryId.isEmpty else { return }
         if isVisibilityBusy { return }
+        // 引用规则简化（2026-10-31）：切公开先过引用门禁（私密来源时先问一并公开，
+        // 他人来源无一并公开项）；改私密先查引用数提醒。门禁/提醒期间置 busy 防重入，
+        // 放弃时清 busy、原态未动（乐观落地只在 perform 里做）。
+        let target = BearyEphemeral.isEffectivelyPublic(entry) ? 0 : 1
+        isVisibilityBusy = true
+        if target == 1 {
+            BearyQuoteGate.gatePublicToggle(from: self, entry: entry) { [weak self] result in
+                guard let self = self else { return }
+                switch result {
+                case .proceed:
+                    self.performVisibilityToggle()
+                case .publishTogether(let sourceId):
+                    BearyAPI.shared.setVisibility(id: sourceId, published: 1) { setResult in
+                        DispatchQueue.main.async {
+                            switch setResult {
+                            case .success:
+                                self.performVisibilityToggle()
+                            case .failure:
+                                self.isVisibilityBusy = false
+                                BearyToast.show(in: self.view, message: "原日记公开失败，请重试")
+                            }
+                        }
+                    }
+                case .aborted:
+                    self.isVisibilityBusy = false
+                }
+            }
+        } else {
+            BearyQuoteGate.confirmPrivateToggleIfQuoted(from: self, entryId: entryId) { [weak self] confirmed in
+                guard let self = self else { return }
+                if confirmed {
+                    self.performVisibilityToggle()
+                } else {
+                    self.isVisibilityBusy = false
+                }
+            }
+        }
+    }
+
+    private func performVisibilityToggle() {
+        guard isAuthor else { return }
+        guard let entryId = entry.id, !entryId.isEmpty else { return }
         // 游客永非作者，到不了这里；未登录同样到不了（作者必登录）。
         // 目标态按有效态算：已到期限时篇 stored 仍为公开，但按私密算，点按应是公开（目标 1）。
         // （2026-10-29 第 18 项核实：详情页目标态本已正确，三处列表入口与之对齐，详情页不动算法。）
