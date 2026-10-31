@@ -1036,6 +1036,43 @@ final class BearyDetailViewController: UIViewController {
     /// 仍是先行态，而非已被覆盖的服务端旧值。字段级比对以合并后模型为准，
     /// 在途字段天然与旧值相等、不会误刷对应区；私密占位切换（内容→占位）
     /// 不受在途保护限制，隐私优先。id 不符的回包直接忽略（防御）。
+    /// 116 数据填入动效：后台补齐导致文案变化时只淡入该元素本身
+    /// （alpha 0→1、0.25s，不动 transform／布局、不重建节点、不缩放
+    /// 弹一下）；减动效或未进窗口时直设终值。本函数只在 update(with:)
+    /// 的变化分支里调用——初始 renderAll（首帧）与点赞操作行（已有
+    /// 爆点／即时反馈）不走这里，避免首帧延迟与操作反馈冲突。
+    private func fadeLabel(_ label: UILabel?) {
+        guard let label = label else { return }
+        guard !UIAccessibility.isReduceMotionEnabled, label.window != nil else {
+            label.alpha = 1
+            return
+        }
+        label.alpha = 0
+        UIView.animate(withDuration: 0.25, delay: 0, options: [.curveEaseOut, .beginFromCurrentState], animations: {
+            label.alpha = 1
+        })
+    }
+
+    private func fadeButtonTitle(_ button: UIButton) {
+        guard !UIAccessibility.isReduceMotionEnabled, button.window != nil,
+              let titleLabel = button.titleLabel else { return }
+        titleLabel.alpha = 0
+        UIView.animate(withDuration: 0.25, delay: 0, options: [.curveEaseOut, .beginFromCurrentState], animations: {
+            titleLabel.alpha = 1
+        })
+    }
+
+    private func fadeView(_ view: UIView) {
+        guard !UIAccessibility.isReduceMotionEnabled, view.window != nil else {
+            view.alpha = 1
+            return
+        }
+        view.alpha = 0
+        UIView.animate(withDuration: 0.25, delay: 0, options: [.curveEaseOut, .beginFromCurrentState], animations: {
+            view.alpha = 1
+        })
+    }
+
     func update(with fetched: Entry) {
         // 审计 P2-20：页内已因拉黑/举报转占位时，后台补齐一律忽略，不得复活全文。
         if locallyHiddenByModeration { return }
@@ -1081,11 +1118,18 @@ final class BearyDetailViewController: UIViewController {
         placeholderStateView.isHidden = true
         if old.authorName != merged.authorName || old.createdAt != merged.createdAt || old.authorAvatar != merged.authorAvatar || old.authorBadge != merged.authorBadge || old.authorPlus != merged.authorPlus || old.mood != merged.mood || old.weather != merged.weather || old.mentionedName != merged.mentionedName || old.mentionedUserId != merged.mentionedUserId {
             renderHeaderMeta()
+            // 116：头信息文案变化时只淡入文案元素（头像图与徽章／天气／
+            // 心情图标为图片，到达即显，不在此淡入）。
+            fadeButtonTitle(nameButton)
+            fadeLabel(timeLabel)
+            fadeLabel(recipientLabel)
+            fadeLabel(moodLabel)
         }
         if old.title != merged.title {
             let trimmedTitle = (merged.title ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
             titleLabel.text = trimmedTitle.isEmpty ? nil : trimmedTitle
             titleLabel.isHidden = trimmedTitle.isEmpty
+            if !trimmedTitle.isEmpty { fadeLabel(titleLabel) }
         }
         if old.content != merged.content {
             let paragraph = NSMutableParagraphStyle()
@@ -1097,6 +1141,7 @@ final class BearyDetailViewController: UIViewController {
                 .paragraphStyle: paragraph,
             ])
             bodyLabel.isHidden = (merged.content ?? "").isEmpty
+            if !bodyLabel.isHidden { fadeLabel(bodyLabel) }
         }
         if (old.images ?? []) != (merged.images ?? []) {
             renderImages()
@@ -1109,6 +1154,8 @@ final class BearyDetailViewController: UIViewController {
         let newQuote = merged.quote
         if oldQuote?.id != newQuote?.id || oldQuote?.content != newQuote?.content || oldQuote?.gone != newQuote?.gone || oldQuote?.locked != newQuote?.locked || oldQuote?.isPublic != newQuote?.isPublic {
             renderQuote()
+            // 116：引用卡内容变化时只淡入卡片本身。
+            if !quoteView.isHidden { fadeView(quoteView) }
         }
         // 元组数组无 Equatable，逐项比对（nil 与空均视作无回应，渲染同态，不多刷）。
         // 在途字段已在合并时保留本地值，故此处比对天然跳过在途区，无需另设 busy 门控。
