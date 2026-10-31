@@ -120,10 +120,12 @@ final class BearyDetailViewController: UIViewController {
         bearyFeedRetryButton(target: self, action: #selector(detailImageRetryTapped(_:)))
     }()
     /// @ 行：首页 recipientRow 同款（13 图标 + 12 粗体橙，间距 5）；点按走 mentionTapped。
+    /// 112 视觉扫查：@ 行文案是“@名”，图标须用 icon_at（编辑器 @ 钮、草稿箱 @ chip、
+    /// 消息页 @ 角标同款）；此前误用 icon_mail 信封（系统信件图标），与 @ 语义不符。
     private let recipientIconView: UIImageView = {
         let v = UIImageView()
         v.translatesAutoresizingMaskIntoConstraints = false
-        v.image = BearyFeedIconCache.image(named: "icon_mail", pointSize: 13)
+        v.image = BearyFeedIconCache.image(named: "icon_at", pointSize: 13)
         v.tintColor = BearyColors.orange
         v.contentMode = .scaleAspectFit
         return v

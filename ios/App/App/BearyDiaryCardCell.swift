@@ -538,10 +538,11 @@ class BearyDiaryCardCell: UITableViewCell {
 
     // MARK: 右列
 
+    // 112 视觉扫查：@ 行图标用 icon_at（编辑器/草稿箱/消息页 @ 同款），不用 icon_mail 信封。
     private let recipientIconView: UIImageView = {
         let v = UIImageView()
         v.translatesAutoresizingMaskIntoConstraints = false
-        v.image = BearyFeedIconCache.image(named: "icon_mail", pointSize: 13)
+        v.image = BearyFeedIconCache.image(named: "icon_at", pointSize: 13)
         v.tintColor = BearyColors.orange
         v.contentMode = .scaleAspectFit
         return v
