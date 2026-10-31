@@ -2466,7 +2466,7 @@ class BearyProfileViewController: UIViewController {
 
         NSLayoutConstraint.activate([
             coverHeightConstraint,
-            avatarTopWithoutCoverConstraint,
+            avatarTopWithCoverConstraint,
             tabsTopConstraint,
             nightHeightConstraint,
             wallHeightConstraint,
@@ -2669,6 +2669,20 @@ class BearyProfileViewController: UIViewController {
         joinedLabel.setContentCompressionResistancePriority(.required, for: .horizontal)
         wallTitleLabel.setContentCompressionResistancePriority(.required, for: .horizontal)
         wallTotalLabel.setContentCompressionResistancePriority(.required, for: .horizontal)
+        // 116 原生先行框架：封面带是固定框架、不是数据——applyProfile 无论有无
+        // 封面照片都把带高定为 profileCoverHeight（180），故首帧就按最终态搭好：
+        // 带高 180、头像半压在带底（-28）、默认橙底 + 官方白 wordmark。
+        // 此前首帧带高 0、头像顶距 20，资料一到带高跳 180、头像与名字／统计／
+        // 标签整体下跳，整头闪一次。本改动不是骨架屏：橙底 + wordmark 即无封面
+        // 时的最终默认背景（applyProfile 无封面分支同款），有封面时数据回来只把
+        // 带内照片换进来、带高与头像位一字不动；资料失败时框架同样不塌。
+        // 注意：旧“加载态先高 0 防 faint 灰块”注释（coverImageView 定义处）针对
+        // 的是无图时露 faint 底——现首帧底色已是最终默认橙底，不再适用。
+        profileShowsDefaultCover = true
+        coverClipView.backgroundColor = BearyColors.orange
+        defaultWordmarkView.isHidden = false
+        coverHeightConstraint.constant = profileCoverHeight
+        avatarImageView.layer.borderWidth = 3.5
         updateDynamicLayerColors()
     }
 
@@ -3024,8 +3038,12 @@ class BearyProfileViewController: UIViewController {
             joinedLabel.isHidden = true
             joinedIconView.isHidden = true
         }
-        publicCountLabel.text = profileValue.diaryCount.map { "\($0)" } ?? "—"
-        likesCountLabel.text = profileValue.likesReceived.map { "\($0)" } ?? "—"
+        // 116 数字文案规矩：统计数字与“公开日记／获赞”文字分属两个 label，
+        // 数据回来只改数字 label 本身；且同值不重复赋值，避免无谓重布局。
+        let newPublicCount = profileValue.diaryCount.map { "\($0)" } ?? "—"
+        if publicCountLabel.text != newPublicCount { publicCountLabel.text = newPublicCount }
+        let newLikesCount = profileValue.likesReceived.map { "\($0)" } ?? "—"
+        if likesCountLabel.text != newLikesCount { likesCountLabel.text = newLikesCount }
 
         // 头像：有图盖住首字母位，无图透出首字母（与列表页同款回退）；
         // 有图时的加载与失败回退走 startHeaderAvatarLoad（失败显式恢复首字母 + 出重试图标）。
