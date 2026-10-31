@@ -532,7 +532,9 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     private let quoteDeletedLabel = UILabel()
     private let quoteDeletedRemoveButton = UIButton(type: .system)
     private let quotePanel = UIView()
-    private let quoteTabBarContainer = UIView()
+    // 选择引用置顶 tab 条（预览 preview-quote-select-redesign-20261031.html）：
+    // 直接挂在根视图、锚顶栏底，不随滚动区滚动；旧的面板内 tab 条已废除
+    // （截图实测：面板内 tab 条在真机上整段不可见，改置顶后不再依赖面板内布局）。
     private let quoteTabStack = UIStackView()
     private var quoteTabButtons: [UIButton] = []
     private let quotePanelSpinner = BearyRefreshIconView()
@@ -2091,28 +2093,35 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         // 塌陷成 0 高不可见；现给容器显式高度 36（padding 3×2 + 钮高 30，钮上下
         // 内边距 6×2 + 13.5 字高，栈 fill 拉满不裁字）。faint 为不透明实色
         // （alpha 1），不是透明/玻璃，选中态文字仍为深色 ink，排除渲染不可见。
-        quoteTabBarContainer.translatesAutoresizingMaskIntoConstraints = false
-        quoteTabBarContainer.backgroundColor = BearyColors.faint
-        quoteTabBarContainer.layer.cornerRadius = 999
-        quoteTabBarContainer.layer.masksToBounds = true
+        // 预览口径：三段等宽 pill（全部 / 赞过 / 收藏），选中墨底白字、未选 faint 底灰字；
+        // 栈直接挂根视图置顶（顶栏底 +10、左右 16、高 36），面板打开时才显示。
         quoteTabStack.translatesAutoresizingMaskIntoConstraints = false
         quoteTabStack.axis = .horizontal
-        quoteTabStack.spacing = 0
+        quoteTabStack.spacing = 8
         quoteTabStack.alignment = .fill
-        let tabTitles = ["我的日记", "赞过的", "收藏的"]
+        quoteTabStack.distribution = .fillEqually
+        let tabTitles = ["全部", "赞过", "收藏"]
         for title in tabTitles {
             let tabButton = UIButton(type: .system)
             tabButton.translatesAutoresizingMaskIntoConstraints = false
             tabButton.setTitle(title, for: .normal)
-            tabButton.titleLabel?.font = UIFont.systemFont(ofSize: 13.5, weight: .semibold)
-            tabButton.contentEdgeInsets = UIEdgeInsets(top: 6, left: 16, bottom: 6, right: 16)
-            tabButton.layer.cornerRadius = 999
+            tabButton.titleLabel?.font = UIFont.systemFont(ofSize: 15, weight: .semibold)
+            tabButton.layer.cornerRadius = 18
             tabButton.layer.masksToBounds = true
             tabButton.addTarget(self, action: #selector(didTapQuoteTab(_:)), for: .touchUpInside)
             tabButton.bearyAddPressFeedback()
             quoteTabButtons.append(tabButton)
             quoteTabStack.addArrangedSubview(tabButton)
         }
+        refreshQuoteTabs()
+        quoteTabStack.isHidden = true
+        view.addSubview(quoteTabStack)
+        NSLayoutConstraint.activate([
+            quoteTabStack.topAnchor.constraint(equalTo: topBar.bottomAnchor, constant: 10),
+            quoteTabStack.leadingAnchor.constraint(equalTo: scrollView.leadingAnchor, constant: 16),
+            quoteTabStack.trailingAnchor.constraint(equalTo: scrollView.trailingAnchor, constant: -16),
+            quoteTabStack.heightAnchor.constraint(equalToConstant: 36),
+        ])
         refreshQuoteTabs()
         quotePanelSpinner.translatesAutoresizingMaskIntoConstraints = false
         quotePanelLoadingLabel.translatesAutoresizingMaskIntoConstraints = false
@@ -2140,8 +2149,6 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         // 112 v2：列表栈底色同页面底色走（浅白、深黑），行底不再另铺灰块。
         quotePanelRows.backgroundColor = BearyColors.bg
         contentStack.addArrangedSubview(quotePanel)
-        quotePanel.addSubview(quoteTabBarContainer)
-        quoteTabBarContainer.addSubview(quoteTabStack)
         quotePanel.addSubview(quotePanelSpinner)
         quotePanel.addSubview(quotePanelLoadingLabel)
         quotePanel.addSubview(quotePanelEmptyLabel)
@@ -2151,29 +2158,19 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             // 2026-10-29 第 26 项：列表顶贴导航栏、无顶隙——tab 条顶距面板顶 0
             //（原 10）、行顶距 tab 条底 0（原 4）；左右 16 仍由 contentStack 边距提供，
             // 容器在面板内居中（网页 qp-seg justify-content:center）。
-            quoteTabBarContainer.topAnchor.constraint(equalTo: quotePanel.topAnchor, constant: 0),
-            // R7(a)：tab 条显式高度，不再只靠钮固有高撑开。
-            quoteTabBarContainer.heightAnchor.constraint(equalToConstant: 36),
-            quoteTabBarContainer.centerXAnchor.constraint(equalTo: quotePanel.centerXAnchor),
-            quoteTabBarContainer.leadingAnchor.constraint(greaterThanOrEqualTo: quotePanel.leadingAnchor),
-            quoteTabBarContainer.trailingAnchor.constraint(lessThanOrEqualTo: quotePanel.trailingAnchor),
-            quoteTabStack.topAnchor.constraint(equalTo: quoteTabBarContainer.topAnchor, constant: 3),
-            quoteTabStack.bottomAnchor.constraint(equalTo: quoteTabBarContainer.bottomAnchor, constant: -3),
-            quoteTabStack.leadingAnchor.constraint(equalTo: quoteTabBarContainer.leadingAnchor, constant: 3),
-            quoteTabStack.trailingAnchor.constraint(equalTo: quoteTabBarContainer.trailingAnchor, constant: -3),
-            quotePanelSpinner.topAnchor.constraint(equalTo: quoteTabBarContainer.bottomAnchor, constant: 16),
+            quotePanelSpinner.topAnchor.constraint(equalTo: quotePanel.topAnchor, constant: 16),
             quotePanelSpinner.centerXAnchor.constraint(equalTo: quotePanel.centerXAnchor),
             quotePanelSpinner.widthAnchor.constraint(equalToConstant: 20),
             quotePanelSpinner.heightAnchor.constraint(equalToConstant: 20),
             quotePanelLoadingLabel.topAnchor.constraint(equalTo: quotePanelSpinner.bottomAnchor, constant: 8),
             quotePanelLoadingLabel.leadingAnchor.constraint(equalTo: quotePanel.leadingAnchor),
             quotePanelLoadingLabel.trailingAnchor.constraint(equalTo: quotePanel.trailingAnchor),
-            quotePanelEmptyLabel.topAnchor.constraint(equalTo: quoteTabBarContainer.bottomAnchor, constant: 16),
+            quotePanelEmptyLabel.topAnchor.constraint(equalTo: quotePanel.topAnchor, constant: 16),
             quotePanelEmptyLabel.leadingAnchor.constraint(equalTo: quotePanel.leadingAnchor),
             quotePanelEmptyLabel.trailingAnchor.constraint(equalTo: quotePanel.trailingAnchor),
-            quotePanelRetryButton.topAnchor.constraint(equalTo: quoteTabBarContainer.bottomAnchor, constant: 16),
+            quotePanelRetryButton.topAnchor.constraint(equalTo: quotePanel.topAnchor, constant: 16),
             quotePanelRetryButton.centerXAnchor.constraint(equalTo: quotePanel.centerXAnchor),
-            quotePanelRows.topAnchor.constraint(equalTo: quoteTabBarContainer.bottomAnchor, constant: 0),
+            quotePanelRows.topAnchor.constraint(equalTo: quotePanel.topAnchor, constant: 0),
             quotePanelRows.leadingAnchor.constraint(equalTo: quotePanel.leadingAnchor),
             quotePanelRows.trailingAnchor.constraint(equalTo: quotePanel.trailingAnchor),
             quotePanelRows.bottomAnchor.constraint(equalTo: quotePanel.bottomAnchor),
@@ -2196,21 +2193,12 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         for tabIndex in 0..<quoteTabButtons.count {
             let tabButton = quoteTabButtons[tabIndex]
             let isSelected = (tabIndex == 0 && quotePanelTab == "timeline") || (tabIndex == 1 && quotePanelTab == "liked") || (tabIndex == 2 && quotePanelTab == "saved")
-            tabButton.backgroundColor = isSelected ? BearyColors.surface : UIColor.clear
-            tabButton.setTitleColor(isSelected ? BearyColors.ink : BearyColors.gray, for: .normal)
-            if isSelected {
-                tabButton.layer.masksToBounds = false
-                tabButton.layer.shadowColor = UIColor.black.cgColor
-                tabButton.layer.shadowOpacity = 0.12
-                tabButton.layer.shadowRadius = 6
-                tabButton.layer.shadowOffset = CGSize(width: 0, height: 1)
-                tabButton.layer.borderWidth = 1
-                tabButton.layer.bearyDynamicBorderColor = UIColor.black.withAlphaComponent(0.04)
-            } else {
-                tabButton.layer.masksToBounds = true
-                tabButton.layer.shadowOpacity = 0
-                tabButton.layer.borderWidth = 0
-            }
+            // 预览口径：选中墨底 + 背景色字（深浅模式下自动反色），未选 faint 底灰字，无阴影无描边。
+            tabButton.backgroundColor = isSelected ? BearyColors.ink : BearyColors.faint
+            tabButton.setTitleColor(isSelected ? BearyColors.bg : BearyColors.gray, for: .normal)
+            tabButton.layer.masksToBounds = true
+            tabButton.layer.shadowOpacity = 0
+            tabButton.layer.borderWidth = 0
         }
     }
 
@@ -2252,7 +2240,8 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             contentStack.setCustomSpacing(0, after: imageScrollView)
             contentStack.setCustomSpacing(0, after: statusRow)
             contentStack.setCustomSpacing(0, after: quoteSection)
-            quoteTabBarContainer.isHidden = false
+            quoteTabStack.isHidden = false
+            scrollView.contentInset.top = 46
             view.layoutIfNeeded()
             quotePanel.isHidden = false
             // 录屏批 (b)：面板标题不再沿用“新日记”/“编辑日记”，打开前先存原标题。
@@ -2283,6 +2272,8 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         } else {
             // M6：关闭先 0.2s 淡出再恢复各区（减动效直接恢复）；恢复后重算 sheet 高。
             let applyClose = {
+                self.quoteTabStack.isHidden = true
+                self.scrollView.contentInset.top = 0
                 self.quotePanel.isHidden = true
                 // 录屏批 (b/e)：关闭即停转圈、藏加载文案（在途请求的回包另有面板守卫，
                 // 不会把转圈顶回已关闭的面板），标题还原打开前存的那句。
@@ -2538,12 +2529,16 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                 quotePanelRowButtons.append(lockedButton)
                 continue
             }
+            // 预览选中态：已选中的引用行（重进面板时）淡橙底 + 右侧橙色对勾；
+            // 未选行仍走页面底色。编辑态比 lockedQuote，新建态比 selectedQuote。
+            let currentSelectedQuoteId = isEditMode ? lockedQuote?.entryId : selectedQuote?.entryId
+            let isSelectedRow = currentSelectedQuoteId != nil && entry.id == currentSelectedQuoteId
             let rowButton = UIButton(type: .custom)
             rowButton.translatesAutoresizingMaskIntoConstraints = false
             // 112 v2：去掉每行外面的灰色方块感——行底色显式走页面底色
             // BearyColors.bg（浅色白、深色跟页面底色黑），整列表只留行间细分割线；
             // 作者、时间、正文、行内边距、分割线、点按选引用行为均不动。
-            rowButton.backgroundColor = BearyColors.bg
+            rowButton.backgroundColor = isSelectedRow ? BearyColors.orange.withAlphaComponent(0.08) : BearyColors.bg
             let authorName = entry.authorName ?? "用户"
             let avatarView = UIImageView()
             avatarView.translatesAutoresizingMaskIntoConstraints = false
@@ -2662,6 +2657,30 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             // 无公共祖先致 activate 在首行当场抛错（与条目内容、Plus、天气、图片全无关）；
             // 必须先挂载再激活，否则每渲染必崩。
             rowButton.addSubview(separator)
+            if isSelectedRow {
+                let checkView = UIView()
+                checkView.translatesAutoresizingMaskIntoConstraints = false
+                checkView.backgroundColor = BearyColors.orange
+                checkView.layer.cornerRadius = 12
+                checkView.layer.masksToBounds = true
+                checkView.isUserInteractionEnabled = false
+                let checkLabel = UILabel()
+                checkLabel.translatesAutoresizingMaskIntoConstraints = false
+                checkLabel.font = UIFont.boldSystemFont(ofSize: 14)
+                checkLabel.textColor = .white
+                checkLabel.textAlignment = .center
+                checkLabel.text = "✓"
+                checkView.addSubview(checkLabel)
+                rowButton.addSubview(checkView)
+                NSLayoutConstraint.activate([
+                    checkView.topAnchor.constraint(equalTo: rowButton.topAnchor, constant: 16),
+                    checkView.trailingAnchor.constraint(equalTo: rowButton.trailingAnchor, constant: -2),
+                    checkView.widthAnchor.constraint(equalToConstant: 24),
+                    checkView.heightAnchor.constraint(equalToConstant: 24),
+                    checkLabel.centerXAnchor.constraint(equalTo: checkView.centerXAnchor),
+                    checkLabel.centerYAnchor.constraint(equalTo: checkView.centerYAnchor),
+                ])
+            }
             var lastBottomAnchor: NSLayoutYAxisAnchor = contentLabel.bottomAnchor
             var lastBottomConstant: CGFloat = 14
             let entryImages = entry.images ?? []
@@ -2727,10 +2746,10 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                 avatarFallback.heightAnchor.constraint(equalToConstant: 40),
                 headerStack.topAnchor.constraint(equalTo: rowButton.topAnchor, constant: 16),
                 headerStack.leadingAnchor.constraint(equalTo: rowButton.leadingAnchor, constant: 54),
-                headerStack.trailingAnchor.constraint(lessThanOrEqualTo: rowButton.trailingAnchor, constant: -2),
+                headerStack.trailingAnchor.constraint(lessThanOrEqualTo: rowButton.trailingAnchor, constant: isSelectedRow ? -34 : -2),
                 contentLabel.topAnchor.constraint(equalTo: headerStack.bottomAnchor, constant: 4),
                 contentLabel.leadingAnchor.constraint(equalTo: rowButton.leadingAnchor, constant: 54),
-                contentLabel.trailingAnchor.constraint(equalTo: rowButton.trailingAnchor, constant: -2),
+                contentLabel.trailingAnchor.constraint(equalTo: rowButton.trailingAnchor, constant: isSelectedRow ? -34 : -2),
                 separator.topAnchor.constraint(equalTo: lastBottomAnchor, constant: lastBottomConstant),
                 // R7(c)：分隔线 leading 与正文左边缘对齐：正文/头行 leading 均为 54
                 //（头像 40 + 左距 2 + 间距 12），此前分隔线从头像左边缘（2）起。
@@ -2796,6 +2815,24 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             }
         }
         guard let entry = picked, let entryId = entry.id, let content = entry.content else { return }
+        // 预览“再点取消”口径：点已选中的行即取消引用、留在面板里可另选；
+        // 点未选中的行仍走现行唯一路径（应用 + 关面板）。不改行内动作（行内本无赞/收藏钮）。
+        let currentSelectedQuoteId = isEditMode ? lockedQuote?.entryId : selectedQuote?.entryId
+        if currentSelectedQuoteId != nil && entryId == currentSelectedQuoteId {
+            if isEditMode {
+                lockedQuote = nil
+            } else {
+                selectedQuote = nil
+                saveDraftNow()
+            }
+            refreshQuoteSection()
+            if let cached = quotePanelCache[quotePanelTab] {
+                renderQuotePanelRows(entries: cached)
+            } else {
+                loadQuotePanelTab()
+            }
+            return
+        }
         let quote = SelectedQuote(entryId: entryId, content: content, createdAt: entry.createdAt, authorName: entry.authorName, authorAvatar: entry.authorAvatar, authorId: entry.authorId, isMine: entry.isMine, authorHandle: entry.authorHandle, images: entry.images ?? [], isPublic: BearyEphemeral.isEffectivelyPublic(entry), publishAt: entry.publishAt, imgDims: entry.imgDims, isDeleted: false)
         if isEditMode {
             lockedQuote = quote
