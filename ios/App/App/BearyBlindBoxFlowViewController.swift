@@ -10,6 +10,10 @@ import UIKit
 // 见回报里的拉黑口径说明。收到篇图片只走站内 BearyImageURLs（白名单内），不拼外链。
 // 失败诚实口径：服务端未上线（404）时显示“盲盒服务暂未上线”，不编造开盒结果；
 // 每日已换（409）时 toast 并重拉当日状态；撤回后计数不返还（暂定 U2）。
+// 交换池空：POST /open 无可抽对象时服务端回 400 {error: "pool_empty"}（经
+// BearyAPI.mapStatus 解为 .server("pool_empty")），开盒失败分支特判它，toast +
+// 开盒提示行同文持久显示，不落通用“开盒失败，请重试”；池空不消耗次数、
+// 不清已入池的自己那篇，重进 / 再入池后提示行由原有逻辑复写。
 // 部署目标 iOS 15.0、Swift 5.0：只用闭包回调，不用 async/await，不用 if-let 简写。
 
 /// 小熊回应 chip：BearyButton 工厂款 + emoteKey 属性（不用 accessibilityLabel 夹带 key，
@@ -848,6 +852,14 @@ final class BearyBlindBoxFlowViewController: UIViewController {
                         self.loadInitial()
                         return
                     }
+                    if self.isPoolEmptyError(error) {
+                        // 池空只走现行 toast + 现行开盒提示行（灰 12pt 多行），不新增弹窗；
+                        // 不重拉、不清 pooledEntryId：池空不消耗次数，自己那篇仍在池里。
+                        BearyToast.show(in: self.view, message: Self.poolEmptyText)
+                        self.openHintLabel.text = Self.poolEmptyText
+                        self.setStep(.pool)
+                        return
+                    }
                     BearyToast.show(in: self.view, message: self.actionErrorText(error, fallback: "开盒失败，请重试"))
                     self.setStep(.pool)
                 }
@@ -1031,6 +1043,26 @@ final class BearyBlindBoxFlowViewController: UIViewController {
             return "加载失败，请重试。"
         default:
             return "网络不稳定，请稍后再试。"
+        }
+    }
+
+    /// 池空提示：三点齐全——池子里暂时没有可交换的旧公开日记、不是自己
+    /// 的日记有问题、晚点 / 明天再来试；不编造具体补货时间与数量。
+    /// 只认服务端既有码 pool_empty（.server 直传，或 .http 原始片段含该码
+    /// 的兜底），不凭“开盒失败”等通用失败反推池空，不改交换规则与次数口径。
+    private static let poolEmptyText = "池子里暂时没有可交换的旧公开日记，不是你的日记有问题，晚点或明天再来试试。"
+
+    private func isPoolEmptyError(_ error: APIError) -> Bool {
+        switch error {
+        case .server(let code):
+            return code.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == "pool_empty"
+        case .http(_, let snippet):
+            if let snippet = snippet {
+                return snippet.lowercased().contains("pool_empty")
+            }
+            return false
+        default:
+            return false
         }
     }
 
