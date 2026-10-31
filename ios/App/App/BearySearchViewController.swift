@@ -36,6 +36,36 @@ import CoreText
 //   - 免登录可搜公开内容：该接口本身不要求会话（无 session 时只缺 mine）。
 //   - 回调线程：BearyAPI 回调不在主线程，碰 UI 前必须 DispatchQueue.main.async。
 
+// 113：最近搜索标题行——只扩“清除”热区、不撑高行高：
+// BearyHit44Button 的 point(inside:) 已扩到 44，但栈行本身的 hitTest 在点落到
+// 行外（与下一行 8pt 间距内）时不会转发；本行重写 point(inside:)/hitTest，
+// 把清除钮扩后矩形内的点也认作行内并转发给钮，视觉帧与行高一字不动。
+// 行上方的扩出部分仍在父栈 hit 路径之外（容器边界所限），不虚报 44。
+final class BearySearchRecentHeaderRow: UIStackView {
+    weak var clearButton: UIButton?
+
+    private func expandedClearRect() -> CGRect? {
+        guard let button = clearButton else { return nil }
+        let dx: CGFloat = button.bounds.width < 44 ? (44 - button.bounds.width) / 2 : 0
+        let dy: CGFloat = button.bounds.height < 44 ? (44 - button.bounds.height) / 2 : 0
+        return button.frame.insetBy(dx: -dx, dy: -dy)
+    }
+
+    override func point(inside point: CGPoint, with event: UIEvent?) -> Bool {
+        if super.point(inside: point, with: event) { return true }
+        guard let rect = expandedClearRect() else { return false }
+        return rect.contains(point)
+    }
+
+    override func hitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? {
+        if let button = clearButton, let rect = expandedClearRect(), rect.contains(point) {
+            let local = convert(point, to: button)
+            if button.point(inside: local, with: event) { return button }
+        }
+        return super.hitTest(point, with: event)
+    }
+}
+
 final class BearySearchViewController: UIViewController, UITextFieldDelegate, UIScrollViewDelegate {
 
     // MARK: - 对外 API（容器按此接线，勿改名）
@@ -977,7 +1007,9 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         titleLabel.textColor = BearyColors.gray
         // A7：一键清除入口（标题行右侧弱化文字钮；只清当前账号桶记录，
         // 记录机制与 8 条上限不动；清除后同步重建本区，无记录时整区隐藏）。
-        let clearButton = UIButton(type: .system)
+        // 113：钮改 BearyHit44Button（视觉帧不动，热区扩到 44）+ 标题行用
+        // BearySearchRecentHeaderRow 转发扩后热区，行高不撑高。
+        let clearButton = BearyHit44Button(type: .system)
         clearButton.translatesAutoresizingMaskIntoConstraints = false
         clearButton.setTitle("清除", for: .normal)
         clearButton.titleLabel?.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13))
@@ -990,7 +1022,8 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         let headerSpacer = UIView()
         headerSpacer.translatesAutoresizingMaskIntoConstraints = false
         headerSpacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
-        let headerRow = UIStackView(arrangedSubviews: [titleLabel, headerSpacer, clearButton])
+        let headerRow = BearySearchRecentHeaderRow(arrangedSubviews: [titleLabel, headerSpacer, clearButton])
+        headerRow.clearButton = clearButton
         headerRow.translatesAutoresizingMaskIntoConstraints = false
         headerRow.axis = .horizontal
         headerRow.alignment = .center
