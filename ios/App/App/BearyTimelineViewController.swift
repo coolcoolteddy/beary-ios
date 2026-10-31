@@ -2865,13 +2865,14 @@ class BearyTimelineViewController: UIViewController {
         if indicatorHeight <= 0 {
             refreshIconView.setPullProgress(0)
         } else {
-            let progress = min(1, indicatorHeight / 80)
+            let progress = min(1, indicatorHeight / 98.4)
             refreshIconView.setPullProgress(progress)
             // 时间线与消息页的关键差别：消息页表框顶 = 安全区顶，表框裁剪会把
             // 指示高 <30 时的图标（中心在安全区顶之上）裁掉；本页表框贴页顶，
             // 表框裁剪裁不掉它，早期图标会 faint 地出现在灵动岛带内。故用 alpha
             // 门模拟同一裁剪：图标中心在指示高 30 时才越过安全区顶，30 以下
-            // alpha 强制 0，30–80 间按 (指示-30)/50 淡入，80 时满 alpha、转满一圈。
+            // alpha 强制 0，30–80 间按 (指示-30)/50 淡入至满 alpha；转满一圈在
+            // 指示高 98.4（= 触发行程 205pt × 0.48），满格点即触发点（alpha 口径不动）。
             if indicatorHeight <= 30 {
                 refreshIconView.alpha = 0
             } else {
