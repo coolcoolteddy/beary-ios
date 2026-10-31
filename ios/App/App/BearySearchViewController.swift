@@ -1511,10 +1511,12 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         bodyRow.addArrangedSubview(contentLabel)
 
         var thumbWrapView: UIView?
-        // 私密组行不拼缩略图（网页私密行 meta + 正文、无图）；公开组才拼首图。
+        // sweep32-6：私密组行也拼首图，与公开组同口径（44×44 圆角 12 居右、
+        // 图失败重试图标同款）；无图时仍不拼图，行版式不变。
         // 首图包进 44×44 容器：图铺满容器，重试图标（与头像同款纯图标）
         // 44×44 居中压在图上；UIStackView 只排容器，图标不参与横排、不挤正文。
-        if !isMineGroup, let images = entry.images, let firstKey = images.first, let url = BearyImageURLs.imageURL(key: firstKey, thumb: true) {
+        // 行高随之调整：bodyRow 高度取正文与 44 缩略图之大（原私密行只有正文高）。
+        if let images = entry.images, let firstKey = images.first, let url = BearyImageURLs.imageURL(key: firstKey, thumb: true) {
             let thumb = UIImageView()
             thumb.translatesAutoresizingMaskIntoConstraints = false
             thumb.contentMode = .scaleAspectFill
@@ -1778,7 +1780,7 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
 // 结果区，旧行连同 holder 一起被 clearResultRows 丢弃）、换图、重试后，
 // 旧回调均不得亮新行的重试图标。bearySetImage 自身另有目标 URL 比对与取消旧
 // 任务，是第二重守卫；.cancelled 不算失败（bearySetImage 已过滤，不进 onFailure）。
-// 无图槽位（头像为 null、日记无图、私密组无缩略图）不建本槽位、不亮图标。
+// 无图槽位（头像为 null、日记无图）不建本槽位、不亮图标；私密组有图时亦建槽位（sweep32-6）。
 
 private final class BearySearchImageRetry: NSObject {
 
