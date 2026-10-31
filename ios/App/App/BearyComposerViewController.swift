@@ -3854,8 +3854,8 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             if remain <= 0 {
                 // C4：到 0 显示“编辑已结束”并关闭编辑器（走现有取消/关闭路径
                 // onCancelled，不弹放弃确认；本轮新选图的本地文件按取消路径清理）。
-                // 注意：编辑态 onCancelled 在容器侧目前仅 dismiss，列表刷新需容器侧
-                // 接线（本文件不碰 SceneDelegate，见交回说明）。
+                // 注意：编辑态 onCancelled 在容器侧仅 dismiss、不刷新列表
+                //（112 返回未改不刷新：取消没有保存，服务端未动，无需接线刷新）。
                 self.editTimerLabel.text = "编辑已结束"
                 self.editTimer?.invalidate()
                 self.editTimer = nil
