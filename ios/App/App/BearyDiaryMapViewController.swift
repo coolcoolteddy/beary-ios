@@ -541,7 +541,7 @@ final class BearyDiaryMapViewController: UIViewController, MKMapViewDelegate, UI
                     config.text = title
                 } else {
                     let body = (entry.content ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-                    config.text = body.isEmpty ? "日记" : String(body.prefix(24))
+                    config.text = body.isEmpty ? "" : String(body.prefix(24))  // 109：无标题又无正文不再显“日记”占位
                 }
                 var secondary = ""
                 if let created = entry.createdAt, created > 0 {

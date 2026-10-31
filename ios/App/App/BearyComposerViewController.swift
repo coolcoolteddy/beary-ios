@@ -275,15 +275,37 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     private let scrollView = UIScrollView()
     private let contentView = UIView()
     private let contentStack = UIStackView()
-    /// 标题行已去掉（2026-10-30）：编辑器不再有标题输入行，#219 的行高钉死、
-    /// 打字拉回、进页拉回随之全部作废（见下文删除处，不再为不存在的行做处理）。
-    /// 旧标题只以本字段原样带回、不再可改、不静默清掉：新建（无旧标题）为 nil，
-    /// 发布/草稿均按无标题处理；续写旧草稿时取 draft.title；编辑已发日记时取
-    /// entry.title，PUT 原样带回（nil 时 API 省略不传、服务端保留原值，见
-    /// BearyAPI.updateEntry 的 nil=省略口径，绝不发显式空串清标题）。
-    /// 原因：光标在标题时标题行被遮挡的问题 #219 只覆盖打字时、长草稿光标在
-    /// 末尾进页拉回故意不执行那 case 本就未解决；本批不修可见性、直接去掉标题行根除。
-    private var preservedTitle: String?
+    // MARK: - 109 标题重写（从零新写，不复用 #244 前的旧标题实现）
+    /// 设计（先写清再施工）：
+    /// - 输入位置：内容栈首项、正文 textView 上方，一行独立输入区
+    ///   （headlineWrap：单行输入框 + 底部 1pt 细线），不进顶栏、不叠正文。
+    /// - 长度上限：30 字——与服务端 normalizeEntryTitle 口径一致
+    ///   （>30 字服务端 400），前端输入时即截断到 30 字，不靠服务端报错。
+    /// - 显示位置与样式：卡片与详情已有标题行（16.5 粗体，空标题整行
+    ///   隐藏、不占位），本支不改其样式；编辑器输入框 17 粗体、占位灰字
+    ///   “给这篇日记起个标题（可选）”，空 = 无标题。
+    /// - 空态：字段留空即无标题；卡片/详情空标题不占位、不显“日记”占位；
+    ///   列表行（那年今日/对话原篇、地图列表、星图 sheet）的“无标题又无
+    ///   正文显日记”回退一并去掉，改为空串（只剩日期/副文案可读）。
+    /// - 数据口径：只复用现行数据字段（Entry.title、BearyDraft.title、
+    ///   publish/update API 的 title 参数），不复用旧前端代码；编辑入口
+    ///   本就只在 15 分钟内出现（详情/卡片 ⋯ 菜单按 editDeadline 门控，
+    ///   服务端 PUT 同样按 edit_deadline 403），标题改动与正文同窗口，
+    ///   超时只能删不能改标题，无需另设标题门控。
+    /// - 清空语义：编辑时字段清空 → PUT 发显式空串，服务端归一化为空
+    ///   标题 NULL（即清掉旧标题）；新建时空字段按省略不传（同为无标题）。
+    private let headlineWrap = UIView()
+    private let headlineField = UITextField()
+    private let headlineRule = UIView()
+    private static let headlineMaxLength = 30
+    /// 编辑器标题当前值（去首尾空白；空串 = 无标题，供各发送点按需取用）。
+    private var headlineText: String {
+        (headlineField.text ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+    /// 新建/草稿用：无标题按 nil（省略不传，服务端即 NULL）。
+    private var headlineForCreate: String? {
+        headlineText.isEmpty ? nil : headlineText
+    }
     private let textView = BearyBodyTextView()
     /// 正文区高度约束（正式修法：随内容动态走，下限 140、上限由 updateTextViewHeight 按 sheet 封顶算）。
     private var textViewHeightConstraint: NSLayoutConstraint?
@@ -489,7 +511,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         ])
         buildLayout()
         buildTopBar()
-        // 标题行已去掉：内容栈首项即正文，不再建标题输入行。
+        // 109：内容栈首项为新标题输入区（见 buildHeadlineField），其下为正文。
         buildTextArea()
         buildSelectedChipsRow()
         buildLocationRow()
@@ -1084,13 +1106,52 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         }
     }
 
-    // MARK: - 标题行已去掉（2026-10-30，不再建标题输入行）
-    // 旧 buildTitleField / trimmedTitle / titleFieldChanged / UITextFieldDelegate
-    // 方法已整段删除：标题行（44pt 行高钉死、打字拉回、30 字上限、占位“标题”）
-    // 随行消失；进页聚焦默认只走正文 textView（见 viewDidAppear），不再为标题行
-    // 做聚焦、滚动、拉回处理。旧标题口径见 preservedTitle 属性注释。
+    // 109：标题输入区见 buildHeadlineField（内容栈首项）；进页聚焦默认
+    // 仍只走正文 textView（见 viewDidAppear），标题框点按聚焦、回车跳正文。
+
+    /// 109 标题输入区（新写）：内容栈首项。单行 UITextField + 底部细线，
+    /// 回车跳正文；输入变化即走草稿防抖保存（与正文同流），不另起定时器。
+    private func buildHeadlineField() {
+        headlineWrap.translatesAutoresizingMaskIntoConstraints = false
+        headlineField.translatesAutoresizingMaskIntoConstraints = false
+        headlineRule.translatesAutoresizingMaskIntoConstraints = false
+        headlineField.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 17, weight: .bold))
+        headlineField.adjustsFontForContentSizeCategory = true
+        headlineField.textColor = BearyColors.ink
+        headlineField.placeholder = "给这篇日记起个标题（可选）"
+        headlineField.clearButtonMode = .whileEditing
+        headlineField.returnKeyType = .next
+        headlineField.delegate = self
+        headlineField.addTarget(self, action: #selector(headlineDidChange), for: .editingChanged)
+        headlineRule.backgroundColor = BearyColors.line
+        headlineWrap.addSubview(headlineField)
+        headlineWrap.addSubview(headlineRule)
+        contentStack.addArrangedSubview(headlineWrap)
+        NSLayoutConstraint.activate([
+            headlineField.topAnchor.constraint(equalTo: headlineWrap.topAnchor),
+            headlineField.leadingAnchor.constraint(equalTo: headlineWrap.leadingAnchor),
+            headlineField.trailingAnchor.constraint(equalTo: headlineWrap.trailingAnchor),
+            headlineField.heightAnchor.constraint(equalToConstant: 28),
+            headlineRule.topAnchor.constraint(equalTo: headlineField.bottomAnchor, constant: 6),
+            headlineRule.leadingAnchor.constraint(equalTo: headlineWrap.leadingAnchor),
+            headlineRule.trailingAnchor.constraint(equalTo: headlineWrap.trailingAnchor),
+            headlineRule.heightAnchor.constraint(equalToConstant: 1),
+            headlineRule.bottomAnchor.constraint(equalTo: headlineWrap.bottomAnchor),
+        ])
+        contentStack.setCustomSpacing(10, after: headlineWrap)
+    }
+
+    @objc private func headlineDidChange() {
+        // 组词中的拼音组合串不截断（marked 时不动，落字后再按 30 字封顶），
+        // 否则中文输入法组词会被打断。
+        if headlineField.markedTextRange == nil, headlineField.text?.count ?? 0 > Self.headlineMaxLength {
+            headlineField.text = String((headlineField.text ?? "").prefix(Self.headlineMaxLength))
+        }
+        scheduleDraftSave()
+    }
 
     private func buildTextArea() {
+        buildHeadlineField()
         textView.delegate = self
         textView.font = UIFont.systemFont(ofSize: 16)
         textView.textColor = BearyColors.ink
@@ -2057,7 +2118,8 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             quotePanelSavedScrollOffset = scrollView.contentOffset
             quotePanelSavedScrollValid = true
             view.endEditing(true)
-            // 引用面板整编态下正文同藏（标题行已去掉，无标题框可藏可恢复）。
+            // 引用面板整编态下正文同藏（109：标题输入区同藏，关闭时同恢复）。
+            headlineWrap.isHidden = true
             textView.isHidden = true
             imageScrollView.isHidden = true
             toolbarContainer.isHidden = true
@@ -2121,6 +2183,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                 } else {
                     self.titleLabel.text = self.isEditMode ? "编辑日记" : "新日记"
                 }
+                self.headlineWrap.isHidden = false
                 self.textView.isHidden = false
                 self.toolbarContainer.isHidden = false
                 self.selectedChipsRow.isHidden = false
@@ -3702,6 +3765,29 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
 
     // MARK: - 正文与字数
 
+extension BearyComposerViewController: UITextFieldDelegate {
+    /// 109 标题输入 delegate（新写）：回车跳正文；30 字封顶（组词中不拦）。
+    func textFieldShouldReturn(_ textField: UITextField) -> Bool {
+        if textField === headlineField {
+            textView.becomeFirstResponder()
+            return true
+        }
+        return true
+    }
+
+    func textField(_ textField: UITextField, shouldChangeCharactersIn range: NSRange, replacementString string: String) -> Bool {
+        guard textField === headlineField else { return true }
+        if textField.markedTextRange != nil { return true }
+        let current = textField.text ?? ""
+        guard let swiftRange = Range(range, in: current) else { return true }
+        let updated = current.replacingCharacters(in: swiftRange, with: string)
+        if updated.count <= Self.headlineMaxLength { return true }
+        textField.text = String(updated.prefix(Self.headlineMaxLength))
+        headlineDidChange()
+        return false
+    }
+}
+
     func textViewDidChange(_ textView: UITextView) {
         updateCountLabel()
         updatePublishState()
@@ -4579,9 +4665,9 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         }
         textView.text = entry.content ?? ""
         applyBodyLineHeight()
-        // 标题行已去掉：编辑回填只记旧标题（不可见、不可改），PUT 时原样带回、
-        // 不静默清掉；无标题时为 nil，API 省略不传。
-        preservedTitle = entry.title
+        // 109：编辑回填标题进新输入框（15 分钟内可改，见门控注释）；
+        // 无标题时字段留空。
+        headlineField.text = entry.title ?? ""
         selectedMood = entry.mood
         refreshMoodButtons()
         selectedWeather = entry.weather
@@ -4731,7 +4817,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         }
         let hasRealContent = !trimmedContent().isEmpty || !uploadedItems.isEmpty
             || selectedWeather != nil || selectedRecipient != nil || selectedQuote != nil
-            || selectedLocation != nil
+            || selectedLocation != nil || !headlineText.isEmpty
         if !hasRealContent {
             let deletingId = draftIdValue
             currentDraftId = nil
@@ -4774,7 +4860,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             // P1-15：草稿快照只存已落字（拼音组词期的未落字拼音不进草稿），
             // textView 本体不动，组词继续。
             content: committedContent(),
-            title: preservedTitle,
+            title: headlineForCreate,
             mood: selectedMood,
             images: images,
             clientReq: req,
@@ -4883,9 +4969,8 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                 if self.view.window == nil || (wasEmptyBeforeRestore && self.textView.isFirstResponder) {
                     self.textView.selectedRange = NSRange(location: self.textView.text.count, length: 0)
                 }
-                // 标题行已去掉：自动恢复同样只记旧标题（旧代码此处根本没回填标题，
-                // 下次保存即丢标题；现记 preservedTitle，保存/发布时原样带回）。
-                self.preservedTitle = draft.title
+                // 109：草稿标题回填进新输入框。
+                self.headlineField.text = draft.title ?? ""
                 self.selectedMood = draft.mood
                 self.refreshMoodButtons()
                 self.selectedWeather = draft.weather
@@ -5161,6 +5246,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     /// P2：正文按 trim 后算，纯空格不算有内容，与 saveDraftNow 的落盘口径一致；
     /// trimmedContent 本身已排除拼音组合串，纯组词也不算有内容）。
     private func hasEditorContent() -> Bool {
+        if !headlineText.isEmpty { return true }
         if !trimmedContent().isEmpty { return true }
         if selectedWeather != nil { return true }
         if selectedRecipient != nil { return true }
@@ -5177,8 +5263,8 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     private func resetEditorToBlank() {
         draftTimer?.invalidate()
         textView.text = ""
-        // 空白新日记：旧标题记忆同清，新篇标题为 nil（按无标题处理）。
-        preservedTitle = nil
+        // 空白新日记：标题输入框同清（按无标题处理）。
+        headlineField.text = ""
         selectedMood = nil
         selectedWeather = nil
         selectedRecipient = nil
@@ -5221,8 +5307,8 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         draftClientReq = draft.clientReq
         textView.text = draft.content
         applyBodyLineHeight()
-        // 草稿续写：旧标题只记不显示，保存/发布时原样带回，不静默清掉。
-        preservedTitle = draft.title
+        // 草稿续写：标题回填进新输入框。
+        headlineField.text = draft.title ?? ""
         selectedMood = draft.mood
         selectedWeather = draft.weather
         restoreVisibility(index: draft.visibilitySegmentIndex, ephemeral: draft.ephemeralEnabled)
@@ -5421,12 +5507,11 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         // 已删引用不传 quoteId：只剩 id 的引用服务端会拒，发布应按无引用走，
         // 展示态仍保留到发布成功清本篇草稿为止。
         let publishQuoteId = (selectedQuote?.isDeleted == true) ? nil : selectedQuote?.entryId
-        // 标题行已去掉：新建标题即 preservedTitle——全新日记为 nil（API 省略不传，
-        // 按无标题创建）；续写旧草稿时为旧标题、随发布带回，不静默清掉旧标题。
+        // 109：新建标题取输入框（空 = nil 省略不传，按无标题创建）。
         // iCity：可见性值即 visibility（published 0/1）；@ 以 mentioned_user_id 发出，无按篇通知开关。
         // 限时：限时态时可见性必为公开，ephemeral=1 随新建发出（服务端写 24 小时到期）。
         let publishVisibility = selectedVisibilityPublished ? 1 : 0
-        BearyAPI.shared.publishEntry(content: trimmed, images: uploadedImageKeys(), mood: selectedMood, weather: selectedWeather, quoteId: publishQuoteId, published: publishVisibility, mentionedUserId: selectedRecipient?.id, title: preservedTitle, ephemeral: isEphemeral ? 1 : nil, clientReq: req, locationName: selectedLocation?.name, locationDistrict: selectedLocation?.district, capsuleBuried: capsulePayload?.buried, capsuleUnlockDate: capsulePayload?.unlockDate, capsuleDistrict: capsulePayload?.district) { [weak self] result in
+        BearyAPI.shared.publishEntry(content: trimmed, images: uploadedImageKeys(), mood: selectedMood, weather: selectedWeather, quoteId: publishQuoteId, published: publishVisibility, mentionedUserId: selectedRecipient?.id, title: headlineForCreate, ephemeral: isEphemeral ? 1 : nil, clientReq: req, locationName: selectedLocation?.name, locationDistrict: selectedLocation?.district, capsuleBuried: capsulePayload?.buried, capsuleUnlockDate: capsulePayload?.unlockDate, capsuleDistrict: capsulePayload?.district) { [weak self] result in
             DispatchQueue.main.async {
                 guard let self = self else { return }
                 self.isPublishing = false
@@ -5505,16 +5590,15 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         }
         isPublishing = true
         updatePublishState()
-        // 标题行已去掉、标题不可改：编辑 PUT 只带回 preservedTitle（旧标题原样，
-        // 无标题时为 nil、API 省略不传即服务端保留原值）。旧“清空标题发显式空串
-        // 清为 NULL”的 R1 口径随标题行一并作废——编辑不再能清标题，也不再静默清掉。
+        // 109：编辑 PUT 带输入框标题（清空发显式空串，服务端归一化为 NULL 即清标题；
+        // 有值发值；本支不再用“nil 省略保留原值”绕过清空——清空就是清标题）。
         // iCity：编辑 @ 三态——已改选发新 id；已清除发 clearMentioned；未动则两者皆空、服务端保留原值。
         let updateMentionedId: Int? = selectedRecipient?.id
         let updateClearMentioned: Bool = (selectedRecipient == nil && editMentionCleared)
         // 时间胶囊：编辑 PUT 不发胶囊字段，服务端保留原埋点与解锁日期；改位置不挪胶囊（埋点是发布时快照）。
         // 批 E：编辑位置——与原快照比对，未动省略、改选两键算清（有值发值、无值发 null）、清除两键皆 null。
         let locationChanged = selectedLocation != originalLocation
-        BearyAPI.shared.updateEntry(id: entryId, content: trimmed, images: uploadedImageKeys(), mood: selectedMood, weather: selectedWeather, quoteId: lockedQuote?.entryId, title: preservedTitle, mentionedUserId: updateMentionedId, clearMentioned: updateClearMentioned, locationName: locationChanged ? selectedLocation?.name : nil, locationDistrict: locationChanged ? selectedLocation?.district : nil, clearLocationName: locationChanged && selectedLocation?.name == nil, clearLocationDistrict: locationChanged && selectedLocation?.district == nil) { [weak self] result in
+        BearyAPI.shared.updateEntry(id: entryId, content: trimmed, images: uploadedImageKeys(), mood: selectedMood, weather: selectedWeather, quoteId: lockedQuote?.entryId, title: headlineText, mentionedUserId: updateMentionedId, clearMentioned: updateClearMentioned, locationName: locationChanged ? selectedLocation?.name : nil, locationDistrict: locationChanged ? selectedLocation?.district : nil, clearLocationName: locationChanged && selectedLocation?.name == nil, clearLocationDistrict: locationChanged && selectedLocation?.district == nil) { [weak self] result in
             DispatchQueue.main.async {
                 guard let self = self else { return }
                 self.isPublishing = false
@@ -5527,9 +5611,8 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                     /// 均为 nil，容器据此清行内引用卡；已删引用不按正常 quote 回传）。
                     if var updated = self.editingEntry {
                         updated.content = trimmed
-                        // 标题行已去掉：编辑不改标题，本地副本跟随 preservedTitle
-                        //（旧标题原样、无标题为 nil），与 PUT 带回值一致。
-                        updated.title = self.preservedTitle
+                        // 109：本地副本跟随输入框标题（空 = nil，与服务端归一化一致）。
+                        updated.title = self.headlineText.isEmpty ? nil : self.headlineText
                         updated.images = self.uploadedImageKeys()
                         updated.mood = self.selectedMood
                         updated.weather = self.selectedWeather
@@ -5725,9 +5808,13 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     /// 手势代理：落在正文 textView（含占位 label 子视图）内的点按
     /// 不触发收键盘，交给输入框正常聚焦/选区；其余空白与控件点按照常收键盘
     /// （cancelsTouchesInView=false，控件自身点按不受影响）。
-    /// 标题行已去掉，旧标题排除分支随之删除（本页已无 UITextField）。
+    /// 109：标题输入框（headlineField）点按同样排除，见函数内分支。
     func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldReceive touch: UITouch) -> Bool {
         if let touchedView = touch.view, touchedView.isDescendant(of: textView) || touchedView === textView {
+            return false
+        }
+        // 109：标题输入框点按同样不触发收键盘，交给输入框正常聚焦。
+        if let touchedView = touch.view, touchedView.isDescendant(of: headlineWrap) || touchedView === headlineField {
             return false
         }
         return true

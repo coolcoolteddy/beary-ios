@@ -691,7 +691,7 @@ final class BearyDiaryStarMapViewController: UIViewController {
         if !title.isEmpty { return title }
         let body = (entry.content ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
         if !body.isEmpty { return String(body.prefix(24)) }
-        return "日记"
+        return ""  // 109：无标题又无正文不再显“日记”占位
     }
 
     private func sheetDateString(_ entry: Entry) -> String {
