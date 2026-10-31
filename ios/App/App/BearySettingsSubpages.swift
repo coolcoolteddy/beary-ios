@@ -206,6 +206,10 @@ final class BearyPlusGrantsViewController: BearySettingsSubpageViewController {
     /// 后到失败回包还会覆盖先到成功回包；在途重试直接忽略，代次再拦过期回包。
     private var isRetrying = false
     private var retryGeneration = 0
+    /// 116：发放行入场错峰只播一次（首个数据 render 且已进窗口时）；
+    /// 传入数据首帧（viewDidLoad 时窗口未进）不播、直接显；失败／
+    /// 加载态 render 不置位，重试成功后仍可播一次。
+    private var grantsRowsAnimated = false
 
     /// 设置页已拉到的 plusDetail 经 status/personal 文案与 grants 传入；
     /// grants 为 nil 且未失败时本页自己拉一次（设置页首拉未完成即点入的兜底）。
@@ -342,6 +346,25 @@ final class BearyPlusGrantsViewController: BearySettingsSubpageViewController {
             grantRows.append(emptyLabel)
         }
         contentStack.addArrangedSubview(makeGroupCard(title: "来源明细", rows: grantRows))
+        // 116：发放行数据到达时错峰滑入（新内容 only：本页行每次 render
+        // 重建，故以首个数据 render + 已进窗口为播一次的守卫；行本身
+        // alpha／y+6、0.25s、0.03 步进，减动效直显；加载／失败／空态
+        // 行不走本分支——grants 为 nil 或失败时不置位）。
+        if !grantsRowsAnimated, grants != nil, !loadFailed,
+           view.window != nil, !UIAccessibility.isReduceMotionEnabled {
+            grantsRowsAnimated = true
+            var delay: TimeInterval = 0
+            for row in grantRows {
+                let targetAlpha = row.alpha
+                row.alpha = 0
+                row.transform = CGAffineTransform(translationX: 0, y: 6)
+                UIView.animate(withDuration: 0.25, delay: delay, options: [.curveEaseOut], animations: {
+                    row.alpha = targetAlpha
+                    row.transform = .identity
+                })
+                delay += 0.03
+            }
+        }
     }
 
     @objc private func retryTapped() {
