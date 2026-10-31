@@ -93,6 +93,14 @@ class BearyFeedViewController: UIViewController {
     private var customPullEndScheduled = false
     private var plazaError = false
     private var plazaFirstDone = false
+    /// 秒开-启动瘦身：首屏完成信号只发一次（本 VC 生命周期内；后来的下拉/重拍不再发，
+    /// 容器侧 startupMeFired 同样守门）。缓存渲染不发，等静默刷新首拉终结再发。
+    private var feedFirstScreenNotified = false
+    private func notifyFirstScreenDoneOnce() {
+        guard !feedFirstScreenNotified else { return }
+        feedFirstScreenNotified = true
+        NotificationCenter.default.post(name: .bearyFeedFirstScreenDone, object: nil)
+    }
 
     /// iCity：最近公开模块已删（主列表改 published_at 排序后模块与主列表头部重合），
     /// 服务端 recent_published 字段不再消费。
@@ -752,6 +760,8 @@ class BearyFeedViewController: UIViewController {
                     BearyTimelinePrefetch.maybePrefetch()
                     if diffMode && !strongSelf.plazaRaw.isEmpty {
                         strongSelf.applyFirstPageDiff(entries)
+                        // 秒开-启动瘦身：首屏回包已终结，通知容器再发启动期 /me。
+                        strongSelf.notifyFirstScreenDoneOnce()
                         return
                     }
                     strongSelf.plazaRaw = entries
@@ -766,6 +776,8 @@ class BearyFeedViewController: UIViewController {
                     strongSelf.finishFirstLoadIfNeeded()
                     strongSelf.updateOverlayState()
                     strongSelf.maybeEndRefreshing()
+                    // 秒开-启动瘦身：首屏回包已终结，通知容器再发启动期 /me。
+                    strongSelf.notifyFirstScreenDoneOnce()
                 case .failure:
                     // F6 同口径：广场首拉失败也保留旧模型，空时才进错误行。
                     // 静默刷新失败不 toast（后台行为不打扰阅读）。
@@ -782,6 +794,9 @@ class BearyFeedViewController: UIViewController {
                         BearyToast.show(in: strongSelf.view, message: "刷新失败")
                     }
                     strongSelf.maybeEndRefreshing()
+                    // 秒开-启动瘦身：首屏回包已终结（失败也算终结，/me 不被弱网首拉拖死；
+                    // 容器侧另有 3 秒兜底，见 SceneDelegate scheduleDeferredStartupMe）。
+                    strongSelf.notifyFirstScreenDoneOnce()
                 }
             }
         }

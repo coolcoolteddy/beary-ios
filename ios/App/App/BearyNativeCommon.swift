@@ -1848,6 +1848,10 @@ extension Notification.Name {
     static let bearyDidBlockUser = Notification.Name("bearyDidBlockUser")
     /// 补缺 P3-38：账号真变广播（SceneDelegate onUserChanged 去重后发，无 object）：通知页据此复位 seen 水印。
     static let bearyUserDidChange = Notification.Name("bearyUserDidChange")
+    /// 秒开-启动瘦身：首页首屏网络回包已终结（广场首拉成功，或空表/有缓存时的失败终结），
+    /// 本 VC 生命周期内只发一次；容器据此再发启动期 /me，不与首屏请求挤同一窗口。
+    /// 注意：有缓存时缓存渲染本身不发——等静默刷新首拉终结再发，/me 恒在首屏回包之后。
+    static let bearyFeedFirstScreenDone = Notification.Name("bearyFeedFirstScreenDone")
 }
 
 /// 举报理由：复用封禁五类（服务端 reasons 枚举同款文案）。
