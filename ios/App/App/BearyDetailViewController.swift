@@ -2296,6 +2296,7 @@ final class BearyDetailViewController: UIViewController {
         guard !imageKeys.isEmpty, index >= 0, index < imageKeys.count else { return }
         if presentedViewController != nil { return }
         let viewer = BearyEntryImageViewerViewController(imageKeys: imageKeys, startIndex: index)
+        viewer.originFrameInWindow = sender.view.map { $0.convert($0.bounds, to: nil) }
         viewer.modalPresentationStyle = .fullScreen
         present(viewer, animated: BearyMotion.animated(true), completion: nil)
     }
