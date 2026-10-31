@@ -289,6 +289,10 @@ class BearyProfileViewController: UIViewController {
     private var diaryHasMore = true
     private var likedHasMore = true
     private var savedHasMore = true
+    /// 提速：标签首屏与翻页共用页大小 50 → 20（首屏、翻页、后台回填、
+    /// hasMore 判定全走本常量；照片墙溢出页与模块全量语料各有自己的
+    /// 50 口径，不在本常量内，见各处注释）。
+    private let tabPageLimit = 20
     private var tabLoading = false
 
     private var tabLoadMore = false
@@ -4708,7 +4712,7 @@ class BearyProfileViewController: UIViewController {
     /// 113：前台首屏全量取数（原 loadTab 的取数体，不动口径；since
     /// 失败/无新条目时续发本函数，不再过 tabLoading 守卫）。
     private func fetchTabFirstPageFull(scope: BearyAPI.Scope, tabAtStart: ProfileTab) {
-        BearyAPI.shared.fetchEntries(scope: scope, limit: 50) { [weak self] result in
+        BearyAPI.shared.fetchEntries(scope: scope, limit: tabPageLimit) { [weak self] result in
             DispatchQueue.main.async {
                 self?.handleTabResult(result: result, appending: false, requestTab: tabAtStart)
             }
@@ -4783,7 +4787,7 @@ class BearyProfileViewController: UIViewController {
         refreshFooter()
         // 109：翻页同样记请求发出时的 tab，见 loadTab。
         let tabAtStart = currentTab
-        BearyAPI.shared.fetchEntries(scope: scopeValue, limit: 50, before: beforeCursor, beforeId: lastEntryId) { [weak self] result in
+        BearyAPI.shared.fetchEntries(scope: scopeValue, limit: tabPageLimit, before: beforeCursor, beforeId: lastEntryId) { [weak self] result in
             DispatchQueue.main.async {
                 self?.handleTabResult(result: result, appending: true, requestTab: tabAtStart)
             }
@@ -4833,7 +4837,7 @@ class BearyProfileViewController: UIViewController {
                     photoOverflowFailed = false
                 }
             }
-            if freshEntries.count < 50 {
+            if freshEntries.count < tabPageLimit {
                 setHasMore(hasMore: false)
             }
             // 80 包 A6-2：分页追加走 insertRows（与首页/时间线同口径），表行数对不上
@@ -5086,7 +5090,7 @@ class BearyProfileViewController: UIViewController {
         guard let scopeValue = scopeForTab(tab: currentTab), tabBackgroundTab != currentTab else { return }
         tabBackgroundTab = currentTab
         let tabAtStart = currentTab
-        BearyAPI.shared.fetchEntries(scope: scopeValue, limit: 50) { [weak self] result in
+        BearyAPI.shared.fetchEntries(scope: scopeValue, limit: tabPageLimit) { [weak self] result in
             DispatchQueue.main.async {
                 guard let strongSelf = self else { return }
                 // G1：回包时无论当前标签是否切走都清零（守卫只决定是否采用回包，
@@ -5097,7 +5101,7 @@ class BearyProfileViewController: UIViewController {
                 case .success(let listValue):
                     let fresh = listValue.entries ?? []
                     strongSelf.reconcileEntries(fresh: fresh)
-                    if fresh.count < 50 {
+                    if fresh.count < tabPageLimit {
                         strongSelf.setHasMore(hasMore: false)
                     }
                     strongSelf.tableView.reloadData()
