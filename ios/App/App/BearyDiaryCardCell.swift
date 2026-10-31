@@ -333,8 +333,8 @@ class BearyDiaryCardCell: UITableViewCell {
 
     // MARK: 首页模式回调（cell 内直发 API，成功失败经此回传控制器）
 
-    /// 点图片条时触发（传图片下标，控制器开图片查看器；不再进详情）。
-    var onImageTapped: ((Int) -> Void)?
+    /// 点图片条时触发（传图片下标与被点缩略图在 window 下的矩形，控制器开图片查看器；不再进详情；矩形供关场回到原处用）。
+    var onImageTapped: ((Int, CGRect?) -> Void)?
     /// 引用卡点按：传引用 id（容器先 fetchEntry 校验可见性再放行，私密时显占位）。
     var onQuoteSelected: ((String) -> Void)?
     /// 点赞/收藏成功后回传（控制器用 applyInteraction 同步模型并刷新该行）。
@@ -389,7 +389,7 @@ class BearyDiaryCardCell: UITableViewCell {
     var onFoldToggle: (() -> Void)?
     /// N7 主页图片灯箱：图片条点按回调（keys=本条图 key，index=点按位置），
     /// VC 侧复用独立文件内的 BearyEntryImageViewerViewController 全屏弹出（时间线同款）。
-    var onTapImages: (([String], Int) -> Void)?
+    var onTapImages: (([String], Int, CGRect?) -> Void)?
 
     /// 折叠展开态按条目持久化（首页模式；滚动复用、整表刷新都不收起），与网页 __foldOpen 同口径。
     static var expandedEntryIds: Set<String> = []
@@ -2613,7 +2613,7 @@ class BearyDiaryCardCell: UITableViewCell {
             }
             let index = sender.view?.tag ?? 0
             if index < 0 || index >= currentImageKeys.count { return }
-            onImageTapped?(index)
+            onImageTapped?(index, sender.view.map { $0.convert($0.bounds, to: nil) })
             return
         }
         // N7 主页图片条点按：下标取自槽位 tag，keys 为 configure 存下的本条图 key；
@@ -2621,7 +2621,7 @@ class BearyDiaryCardCell: UITableViewCell {
         // 卡片其他区域无手势，仍走 didSelectRowAt 进详情。
         let index = sender.view?.tag ?? 0
         guard index >= 0, index < currentImageKeys.count else { return }
-        onTapImages?(currentImageKeys, index)
+        onTapImages?(currentImageKeys, index, sender.view.map { $0.convert($0.bounds, to: nil) })
     }
 
     /// 按压反馈（两页同款 .84/.13s）。

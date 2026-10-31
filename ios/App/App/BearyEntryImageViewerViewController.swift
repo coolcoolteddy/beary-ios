@@ -64,6 +64,15 @@ class BearyEntryImageViewerViewController: UIViewController, UIGestureRecognizer
     private var isNavigating: Bool = false
     private var isFailed: Bool = false
     private var loadingKey: String?
+    /// 关场回到原处：调用方在 present 前传入被点缩略图在 window 坐标下的
+    /// 矩形（未传时关场走淡出兜底，同样不闪）；全屏模态下底层表无法滚动，
+    /// present 时 captured 的矩形在关场时仍然有效。
+    var originFrameInWindow: CGRect?
+    /// 关场动画只在“当前图就是打开时那张”时走回到原处；翻页后关场走淡出
+    /// 兜底（原处已不是当前图对应的缩略图，硬缩回去反而错位）。
+    var initialIndex: Int = 0
+    /// 下甩关闭拖动态：竖向为主且向下时进入，横向翻页不再接管本次手势。
+    private var dismissDragActive: Bool = false
 
     init(imageKeys: [String], startIndex: Int) {
         self.imageKeys = imageKeys
@@ -73,8 +82,10 @@ class BearyEntryImageViewerViewController: UIViewController, UIGestureRecognizer
         } else {
             self.currentIndex = 0
         }
+        self.initialIndex = self.currentIndex
         super.init(nibName: nil, bundle: nil)
-        // E-G12：网页灯箱开场 200ms 淡入、关场 160ms 淡出，不用默认滑入滑出。
+        // E-G12：网页灯箱开场 200ms 淡入；关场见 BearyImageViewerReturnAnimator
+        //（回到原处动效，缺原处时淡出兜底），不用默认滑入滑出。
         modalPresentationStyle = .fullScreen
         transitioningDelegate = self
     }
@@ -93,6 +104,7 @@ class BearyEntryImageViewerViewController: UIViewController, UIGestureRecognizer
         } else {
             self.currentIndex = 0
         }
+        self.initialIndex = self.currentIndex
         super.init(nibName: nil, bundle: nil)
         modalPresentationStyle = .fullScreen
         transitioningDelegate = self
@@ -416,14 +428,74 @@ class BearyEntryImageViewerViewController: UIViewController, UIGestureRecognizer
         neighborImageView.transform = CGAffineTransform(translationX: tx + CGFloat(neighborDirection) * w, y: 0)
     }
 
-    // MARK: - E-G12 淡入淡出转场
+    // MARK: - 关场回到原处（供 BearyImageViewerReturnAnimator 用）
+
+    /// 关场起始图与矩形：aspectFit 显示矩形再套当前 transform（捏合缩放/
+    /// 平移、下甩跟手位移都在 transform 里），用 CGRect.applying 精确算，
+    /// 不估算中心点。无图时返回 nil，走淡出兜底。
+    func dismissStartInfo() -> (image: UIImage, rect: CGRect)? {
+        guard let image = imageView.image, image.size.width > 0, image.size.height > 0 else { return nil }
+        let bounds = view.bounds
+        guard bounds.width > 0, bounds.height > 0 else { return nil }
+        let fit = min(bounds.width / image.size.width, bounds.height / image.size.height)
+        let fitRect = CGRect(
+            x: (bounds.width - image.size.width * fit) / 2,
+            y: (bounds.height - image.size.height * fit) / 2,
+            width: image.size.width * fit,
+            height: image.size.height * fit
+        )
+        return (image, fitRect.applying(imageView.transform))
+    }
+
+    /// 关场动画器读当前下标（currentIndex 本身是 private）。
+    var currentIndexForDismiss: Int { currentIndex }
+
+    /// 回到原处路径专用：原图藏起，改由 container 里的临时图做主角；
+    /// 淡出兜底路径不调它，旧图随 fromView 一起淡出。
+    func setDismissImageHidden(_ hidden: Bool) {
+        imageView.isHidden = hidden
+    }
+
+    /// 关场时藏起全部 chrome（计数、圆点、关闭钮、重试、加载圈、相邻图），
+    /// 只留图片本身做回到原处的主角；淡出兜底路径不调它，旧图随 fromView 一起淡出。
+    func setDismissChromeHidden(_ hidden: Bool) {
+        counterLabel.isHidden = hidden ? true : imageKeys.count <= 1
+        dotsStack.isHidden = hidden ? true : (imageKeys.count <= 1 || imageKeys.count > 20)
+        closeButton.isHidden = hidden
+        viewEntryButton.isHidden = hidden
+        retryLabel.isHidden = hidden ? true : !isFailed
+        if hidden {
+            loadingSpinner.stopSpinning()
+            placeholderView.isHidden = true
+            hideNeighbor()
+        }
+    }
+
+    /// 下甩跟手时的 chrome/底色同步：图往下走多少，底色与 chrome 就淡多少；
+    /// 取消时传 0 恢复原样。
+    private func applyDismissDragProgress(_ progress: CGFloat) {
+        let p = max(0, min(1, progress))
+        view.backgroundColor = UIColor(white: 0, alpha: 0.92 * (1 - p * 0.7))
+        counterLabel.alpha = 1 - p
+        dotsStack.alpha = 1 - p
+        closeButton.alpha = 1 - p
+    }
+
+    private func resetDismissDragAppearance() {
+        view.backgroundColor = UIColor(white: 0, alpha: 0.92)
+        counterLabel.alpha = 1
+        dotsStack.alpha = 1
+        closeButton.alpha = 1
+    }
+
+    // MARK: - E-G12 淡入转场 + 回到原处关场
 
     func animationController(forPresented presented: UIViewController, presenting: UIViewController, source: UIViewController) -> UIViewControllerAnimatedTransitioning? {
         return BearyImageViewerFadeAnimator(presenting: true)
     }
 
     func animationController(forDismissed dismissed: UIViewController) -> UIViewControllerAnimatedTransitioning? {
-        return BearyImageViewerFadeAnimator(presenting: false)
+        return BearyImageViewerReturnAnimator(viewer: self)
     }
 
     @objc private func stageTapped(_ sender: UITapGestureRecognizer) {
@@ -490,12 +562,22 @@ class BearyEntryImageViewerViewController: UIViewController, UIGestureRecognizer
         if sender.state == .began {
             panTx0 = tx
             panTy0 = ty
+            dismissDragActive = false
         } else if sender.state == .changed {
             if scale > 1 {
                 // 放大后平移，限幅按缩放后图尺寸算（见 clampPan）。
                 tx = panTx0 + translation.x
                 ty = panTy0 + translation.y
                 clampPan()
+            } else if dismissDragActive || (translation.y > 12 && abs(translation.y) > abs(translation.x)) {
+                // 下甩关闭：竖向为主且向下才进入，进入后本次手势不再切横向翻页；
+                // 图跟手往下走、底色与 chrome 同步淡，松手阈值见 .ended。
+                dismissDragActive = true
+                hideNeighbor()
+                tx = 0
+                ty = max(0, translation.y)
+                applyTransform(animated: false)
+                applyDismissDragProgress(ty / 320)
             } else {
                 // 未放大：轨道跟手，只跟横向；相邻图同步贴在边上跟手（见 updateNeighbor）。
                 tx = translation.x
@@ -504,6 +586,23 @@ class BearyEntryImageViewerViewController: UIViewController, UIGestureRecognizer
             }
             applyTransform(animated: false)
         } else if sender.state == .ended || sender.state == .cancelled {
+            if dismissDragActive {
+                // 下甩收尾：位移或速度达标即关场（关场动画本身就是回到原处，
+                // 起点取当前跟手位移后的图位置，不先弹回中心再缩）；不够则弹回原位、
+                // 底色与 chrome 全恢复，不留半透明态。
+                let velocity = sender.velocity(in: view)
+                let shouldDismiss = ty > 120 || velocity.y > 900
+                dismissDragActive = false
+                if shouldDismiss {
+                    dismiss(animated: UIAccessibility.isReduceMotionEnabled == false, completion: nil)
+                } else {
+                    tx = 0
+                    ty = 0
+                    resetDismissDragAppearance()
+                    applyTransform(animated: true)
+                }
+                return
+            }
             if scale > 1 {
                 // 放大态平移停在当前位置（已限幅），不翻页、不回弹。
                 clampPan()
@@ -666,7 +765,7 @@ class BearyEntryImageViewerViewController: UIViewController, UIGestureRecognizer
     }
 }
 
-/// 网页灯箱同款纯透明度转场：开场 200ms 淡入、关场 160ms 淡出。
+/// 网页灯箱同款纯透明度转场：只做开场 200ms 淡入。
 private final class BearyImageViewerFadeAnimator: NSObject, UIViewControllerAnimatedTransitioning {
     private let presenting: Bool
 
@@ -680,28 +779,87 @@ private final class BearyImageViewerFadeAnimator: NSObject, UIViewControllerAnim
 
     func animateTransition(using transitionContext: UIViewControllerContextTransitioning) {
         let duration = transitionDuration(using: transitionContext)
-        if presenting {
-            guard let toView = transitionContext.view(forKey: .to) else {
-                transitionContext.completeTransition(false)
-                return
-            }
-            transitionContext.containerView.addSubview(toView)
-            toView.alpha = 0
-            UIView.animate(withDuration: duration, animations: {
-                toView.alpha = 1
-            }, completion: { _ in
-                transitionContext.completeTransition(!transitionContext.transitionWasCancelled)
-            })
-        } else {
-            guard let fromView = transitionContext.view(forKey: .from) else {
-                transitionContext.completeTransition(false)
-                return
-            }
-            UIView.animate(withDuration: duration, animations: {
+        guard let toView = transitionContext.view(forKey: .to) else {
+            transitionContext.completeTransition(false)
+            return
+        }
+        transitionContext.containerView.addSubview(toView)
+        toView.alpha = 0
+        UIView.animate(withDuration: duration, animations: {
+            toView.alpha = 1
+        }, completion: { _ in
+            transitionContext.completeTransition(!transitionContext.transitionWasCancelled)
+        })
+    }
+}
+
+/// 关场回到原处动画器（点按关闭、下甩关闭、灯箱内“查看日记”跳转关场
+/// 全部走它，动画路径只有这一条，不留一种闪一种不闪）。
+///
+/// 闪的根因（旧 BearyImageViewerFadeAnimator 关场分支）：.fullScreen 模态
+/// 在 present 完成后会把底层页从层级里移除；旧关场动画只把 fromView 的
+/// alpha 淡到 0，却没有先把底层页（toView）加回 container——160ms 里
+/// container 底层是窗口黑底，动画结束底层页才瞬间恢复，视觉上就是闪一下。
+/// 本动画器关场第一步就把 toView 加到 fromView 之下、铺满 container，
+/// 再淡 fromView／缩图，底层页全程在位，结束时不再有“突然出现”的一帧。
+private final class BearyImageViewerReturnAnimator: NSObject, UIViewControllerAnimatedTransitioning {
+    private weak var viewer: BearyEntryImageViewerViewController?
+
+    init(viewer: BearyEntryImageViewerViewController) {
+        self.viewer = viewer
+    }
+
+    func transitionDuration(using transitionContext: UIViewControllerContextTransitioning?) -> TimeInterval {
+        return 0.3
+    }
+
+    func animateTransition(using transitionContext: UIViewControllerContextTransitioning) {
+        let container = transitionContext.containerView
+        guard let fromView = transitionContext.view(forKey: .from),
+              let toView = transitionContext.view(forKey: .to) else {
+            transitionContext.completeTransition(false)
+            return
+        }
+        // 底层页先就位（见上闪的根因），再做一切动画。
+        toView.frame = container.bounds
+        container.addSubview(toView)
+        container.addSubview(fromView)
+
+        let reduceMotion = UIAccessibility.isReduceMotionEnabled
+        guard reduceMotion == false,
+              let viewer = viewer,
+              viewer.currentIndexForDismiss == viewer.initialIndex,
+              let origin = viewer.originFrameInWindow,
+              let start = viewer.dismissStartInfo() else {
+            // 兜底：减动效、无图、无原处、翻页后关场——走 160ms 淡出，
+            // 但 toView 已在位，同样不闪。
+            UIView.animate(withDuration: reduceMotion ? 0 : 0.16, animations: {
                 fromView.alpha = 0
             }, completion: { _ in
                 transitionContext.completeTransition(!transitionContext.transitionWasCancelled)
             })
+            return
         }
+
+        // 主路径：原图藏起，临时图从灯箱显示位缩回原处缩略图位；
+        // 临时图盖在 fromView 之上，fromView 底色与自身 alpha 同步淡出，
+        // 原处缩略图是被临时图盖着“长出来”的，结束前不会突然跳出来抢位。
+        viewer.setDismissChromeHidden(true)
+        viewer.setDismissImageHidden(true)
+        let startRect = fromView.convert(start.rect, to: container)
+        let tempView = UIImageView(image: start.image)
+        tempView.frame = startRect
+        tempView.contentMode = .scaleToFill
+        tempView.clipsToBounds = true
+        tempView.layer.cornerRadius = 12
+        container.addSubview(tempView)
+        let targetRect = container.convert(origin, from: nil)
+        UIView.animate(withDuration: 0.3, delay: 0, options: .curveEaseOut, animations: {
+            fromView.alpha = 0
+            tempView.frame = targetRect
+        }, completion: { _ in
+            tempView.removeFromSuperview()
+            transitionContext.completeTransition(!transitionContext.transitionWasCancelled)
+        })
     }
 }

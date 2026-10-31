@@ -5553,15 +5553,16 @@ class BearyProfileViewController: UIViewController {
     }
 
     @objc private func photosWallButtonTapped(_ sender: UIButton) {
-        presentPhotosLightbox(startIndex: sender.tag)
+        presentPhotosLightbox(startIndex: sender.tag, originFrame: sender.convert(sender.bounds, to: nil))
     }
 
     /// 批 C：照片墙点按直进大图灯箱（全量照片、左右滑动；灯箱内“查看日记”进详情）。
-    private func presentPhotosLightbox(startIndex: Int) {
+    private func presentPhotosLightbox(startIndex: Int, originFrame: CGRect? = nil) {
         let allPhotos = photoWallPhotosValue
         guard !allPhotos.isEmpty, startIndex >= 0, startIndex < allPhotos.count else { return }
         guard presentedViewController == nil else { return }
         let viewer = BearyEntryImageViewerViewController(imageKeys: allPhotos.map { $0.imageKey }, startIndex: startIndex)
+        viewer.originFrameInWindow = originFrame
         viewer.modalPresentationStyle = .fullScreen
         viewer.onViewEntryAtIndex = { [weak self, weak viewer] tappedIndex in
             guard let strongSelf = self, let viewerValue = viewer else { return }
@@ -6833,9 +6834,10 @@ extension BearyProfileViewController: UITableViewDataSource, UITableViewDelegate
             }
         }
         // N7 主页图片灯箱：复用独立文件内的查看器，全屏模态弹出，弹出方式与时间线同款（已弹出时不叠加、减动效直显）。
-        cellValue.onTapImages = { [weak self] keys, index in
+        cellValue.onTapImages = { [weak self] keys, index, originFrame in
             guard let self = self, self.presentedViewController == nil else { return }
             let viewer = BearyEntryImageViewerViewController(imageKeys: keys, startIndex: index)
+            viewer.originFrameInWindow = originFrame
             viewer.modalPresentationStyle = .fullScreen
             self.present(viewer, animated: BearyMotion.animated(true), completion: nil)
         }
@@ -7026,12 +7028,14 @@ extension BearyProfileViewController: UITableViewDataSource, UITableViewDelegate
     @objc private func avatarViewTapped() {
         guard let image = avatarImageView.image else { return }
         let viewer = BearyEntryImageViewerViewController(images: [image], startIndex: 0)
+        viewer.originFrameInWindow = avatarImageView.convert(avatarImageView.bounds, to: nil)
         present(viewer, animated: BearyMotion.animated(true), completion: nil)
     }
 
     @objc private func coverViewTapped() {
         guard !coverImageView.isHidden, let image = coverImageView.image else { return }
         let viewer = BearyEntryImageViewerViewController(images: [image], startIndex: 0)
+        viewer.originFrameInWindow = coverImageView.convert(coverImageView.bounds, to: nil)
         present(viewer, animated: BearyMotion.animated(true), completion: nil)
     }
 
