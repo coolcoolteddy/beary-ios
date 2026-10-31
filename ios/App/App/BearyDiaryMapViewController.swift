@@ -11,7 +11,9 @@ import CoreLocation
 // 永不写盘、不进日记行、不进任何持久化缓存——与“经纬度不持久化”一致。
 // 代价（方案 A 已定取舍）：本人地图也只能做到文本级聚合点，不是 POI 米级精确打点；
 // 文本歧义/离线时点位可能漂移，编不到的组进“未能在地图上定位”列表，仍可点进日记。
-// 同步：本页不轮询、不另建地图缓存——每次打开重拉作者日记并重算聚合；
+// 同步：本页不轮询、不另建地图缓存——每次打开重拉日记并重算聚合；
+// 清单第 7 项：本人拉取改走 timeline scope（见 fetchEntriesPage 的 entriesScope），
+// 他人仍走 author scope；首帧即时成图仍用调用方 diaryEntries，后台替换后才为 timeline 口径。
 // 从本页进详情改了可见性后返回，本页只重拉一次（needsRefreshAfterDetail 门控，
 // 不是每次 appear 都拉）；删除/回收站/注销走服务端列表变化，下次打开自然同步。
 // 切账号：appear 时发现 viewer 变了即按新身份重算（本人↔他人口径切换）并重拉。
@@ -167,11 +169,21 @@ final class BearyDiaryMapViewController: UIViewController, MKMapViewDelegate, UI
         loadGeneration += 1
         fetchCollected = []
         fetchSeenIds = []
-        fetchAuthorPage(before: nil, beforeId: nil, page: 1, generation: loadGeneration)
+        fetchEntriesPage(before: nil, beforeId: nil, page: 1, generation: loadGeneration)
     }
 
-    private func fetchAuthorPage(before: Int?, beforeId: String?, page: Int, generation: Int) {
-        BearyAPI.shared.fetchEntries(scope: .author(authorId), limit: 50, before: before, beforeId: beforeId) { [weak self] result in
+    /// 拉取 scope（清单第 7 项，Li 拍板）：本人走 timeline scope（服务端按
+    /// session.id 过滤，私密 + 公开 + 投递中全含），他人仍走 author scope；
+    /// 后端 author scope 不动。本人星图/地图与个人页日记 tab（author scope）
+    /// 因此数据口径分裂，拍板接受。timeline 与 author 同为 created_at DESC
+    /// 游标，分页（before=createdAt + before_id=id）一字不动；切账号后
+    /// viewerIsAuthor 已先更新，fetchAllEntries 自动按新身份选 scope。
+    private var entriesScope: BearyAPI.Scope {
+        return viewerIsAuthor ? .timeline : .author(authorId)
+    }
+
+    private func fetchEntriesPage(before: Int?, beforeId: String?, page: Int, generation: Int) {
+        BearyAPI.shared.fetchEntries(scope: entriesScope, limit: 50, before: before, beforeId: beforeId) { [weak self] result in
             DispatchQueue.main.async {
                 guard let self = self, generation == self.loadGeneration else { return }
                 switch result {
@@ -194,7 +206,7 @@ final class BearyDiaryMapViewController: UIViewController, MKMapViewDelegate, UI
                     }
                     let last = pageEntries.last
                     if pageEntries.count >= 50, page < 10, let cursor = last?.createdAt, let lastId = last?.id {
-                        self.fetchAuthorPage(before: cursor, beforeId: lastId, page: page + 1, generation: generation)
+                        self.fetchEntriesPage(before: cursor, beforeId: lastId, page: page + 1, generation: generation)
                         return
                     }
                     self.failureView.isHidden = true
