@@ -156,7 +156,9 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate {
         headerRow.alignment = .center
         headerRow.spacing = 8
         titleLabel.text = "回收站"
-        titleLabel.font = UIFont.boldSystemFont(ofSize: 16)
+        // 扫查组：此前裸 16 粗体，标题不跟随大字号（栈行高自适应）。
+        titleLabel.font = BearyDynamicType.scaledFont(for: UIFont.boldSystemFont(ofSize: 16))
+        titleLabel.adjustsFontForContentSizeCategory = true
         titleLabel.textColor = BearyColors.ink
         closeButton.isHidden = false
         if let closeImage = BearyIconImages.image(named: "icon_close", pointSize: 15) {
@@ -165,7 +167,9 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate {
             // I14：资产缺失时补文字回退，不留空白热区。
             closeButton.setTitle("✕", for: .normal)
             closeButton.setTitleColor(BearyColors.ink, for: .normal)
-            closeButton.titleLabel?.font = UIFont.systemFont(ofSize: 15)
+            // 扫查组：资产缺失回退文案此前裸 15pt；32×32 钮走 cappedFont，不撑破。
+            closeButton.titleLabel?.font = BearyDynamicType.cappedFont(for: UIFont.systemFont(ofSize: 15))
+            closeButton.titleLabel?.adjustsFontForContentSizeCategory = true
         }
         closeButton.tintColor = BearyColors.ink
         closeButton.backgroundColor = BearyColors.faint
@@ -230,7 +234,9 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate {
         emptyIconView.contentMode = .scaleAspectFit
         emptyIconView.tintColor = BearyColors.gray
         emptyLabel.text = "回收站是空的"
-        emptyLabel.font = UIFont.systemFont(ofSize: 15)
+        // 扫查组：此前裸 15pt，空态文案不跟随大字号。
+        emptyLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 15))
+        emptyLabel.adjustsFontForContentSizeCategory = true
         emptyLabel.textColor = BearyColors.ink
         emptyLabel.textAlignment = .center
 
@@ -254,12 +260,16 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate {
         loginWrap.isHidden = true
         let loginTitleLabel = UILabel()
         loginTitleLabel.text = "先登录"
-        loginTitleLabel.font = UIFont.systemFont(ofSize: 15)
+        // 扫查组：此前裸 15pt，未登录空态标题不跟随大字号。
+        loginTitleLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 15))
+        loginTitleLabel.adjustsFontForContentSizeCategory = true
         loginTitleLabel.textColor = BearyColors.ink
         loginTitleLabel.textAlignment = .center
         loginButton.setTitle("去登录", for: .normal)
         loginButton.setTitleColor(BearyColors.blue, for: .normal)
-        loginButton.titleLabel?.font = UIFont.systemFont(ofSize: 14)
+        // 扫查组：此前裸 14pt；本钮无固定高，走 scaledFont 全跟随。
+        loginButton.titleLabel?.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 14))
+        loginButton.titleLabel?.adjustsFontForContentSizeCategory = true
         loginButton.addTarget(self, action: #selector(loginTapped), for: .touchUpInside)
         loginButton.bearyAddPressFeedback()
         loginWrap.addArrangedSubview(loginTitleLabel)
@@ -698,7 +708,9 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate {
         restoreButton.imageView?.contentMode = .scaleAspectFit
         restoreButton.tintColor = BearyColors.ink
         restoreButton.titleEdgeInsets = UIEdgeInsets(top: 0, left: 5, bottom: 0, right: 0)
-        restoreButton.titleLabel?.font = UIFont.systemFont(ofSize: 13)
+        // 扫查组：此前裸 13pt；钮钉高 44，走 cappedFont（上限 20，不撑破）。
+        restoreButton.titleLabel?.font = BearyDynamicType.cappedFont(for: UIFont.systemFont(ofSize: 13))
+        restoreButton.titleLabel?.adjustsFontForContentSizeCategory = true
         restoreButton.layer.borderWidth = 1
         restoreButton.layer.bearyDynamicBorderColor = BearyColors.line
         restoreButton.layer.cornerRadius = 22
@@ -710,11 +722,14 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate {
         restoreButton.bearyAddPressFeedback()
         // P2-4：照抄点赞钮修法——显式给足实测字宽，否则标题被裁：图宽 + titleEdgeInsets 左 5
         // + 实测标题宽 + contentEdgeInsets 左右各 14；取闲/忙两文案之宽的最大值，两态均不裁。
+        // 扫查组：量宽字体须与钮字体同为 cappedFont，且等宽改下限（广场失败行 R8 同款）——
+        // 等宽 + adjusts 会在档位变化时把变大的标题裁掉，下限则允许钮随字号向外生长。
+        let restoreButtonFont = BearyDynamicType.cappedFont(for: UIFont.systemFont(ofSize: 13))
         let restoreTitleWidth = max(
-            ceil(("恢复" as NSString).size(withAttributes: [NSAttributedString.Key.font: UIFont.systemFont(ofSize: 13)]).width),
-            ceil(("恢复中…" as NSString).size(withAttributes: [NSAttributedString.Key.font: UIFont.systemFont(ofSize: 13)]).width)
+            ceil(("恢复" as NSString).size(withAttributes: [NSAttributedString.Key.font: restoreButtonFont]).width),
+            ceil(("恢复中…" as NSString).size(withAttributes: [NSAttributedString.Key.font: restoreButtonFont]).width)
         )
-        restoreButton.widthAnchor.constraint(equalToConstant: (restoreButton.currentImage?.size.width ?? 21) + 5 + restoreTitleWidth + 28).isActive = true
+        restoreButton.widthAnchor.constraint(greaterThanOrEqualToConstant: (restoreButton.currentImage?.size.width ?? 21) + 5 + restoreTitleWidth + 28).isActive = true
 
         let spacerView = UIView()
         spacerView.setContentHuggingPriority(.defaultLow, for: .horizontal)
@@ -722,7 +737,9 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate {
         let purgeButton = UIButton(type: .custom)
         purgeButton.setTitle("彻底删除", for: .normal)
         purgeButton.setTitleColor(BearyColors.red, for: .normal)
-        purgeButton.titleLabel?.font = UIFont.systemFont(ofSize: 13)
+        // 扫查组：同恢复钮——钉高 44，走 cappedFont。
+        purgeButton.titleLabel?.font = BearyDynamicType.cappedFont(for: UIFont.systemFont(ofSize: 13))
+        purgeButton.titleLabel?.adjustsFontForContentSizeCategory = true
         if let trashImage = BearyIconImages.image(named: "icon_trash", pointSize: 14) {
             purgeButton.setImage(trashImage, for: .normal)
         }
@@ -740,11 +757,13 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate {
         purgeButton.bearyAddPressFeedback()
         // P2-4：同恢复钮修法——图宽 + titleEdgeInsets 左 5 + 实测标题宽 + contentEdgeInsets 左右各 14，
         // 取闲/忙两文案之宽的最大值，两态均不裁。
+        // 扫查组：同恢复钮——量宽字体改 cappedFont、等宽改下限，防档位变化时裁字。
+        let purgeButtonFont = BearyDynamicType.cappedFont(for: UIFont.systemFont(ofSize: 13))
         let purgeTitleWidth = max(
-            ceil(("彻底删除" as NSString).size(withAttributes: [NSAttributedString.Key.font: UIFont.systemFont(ofSize: 13)]).width),
-            ceil(("删除中…" as NSString).size(withAttributes: [NSAttributedString.Key.font: UIFont.systemFont(ofSize: 13)]).width)
+            ceil(("彻底删除" as NSString).size(withAttributes: [NSAttributedString.Key.font: purgeButtonFont]).width),
+            ceil(("删除中…" as NSString).size(withAttributes: [NSAttributedString.Key.font: purgeButtonFont]).width)
         )
-        purgeButton.widthAnchor.constraint(equalToConstant: (purgeButton.currentImage?.size.width ?? 14) + 5 + purgeTitleWidth + 28).isActive = true
+        purgeButton.widthAnchor.constraint(greaterThanOrEqualToConstant: (purgeButton.currentImage?.size.width ?? 14) + 5 + purgeTitleWidth + 28).isActive = true
 
         buttonsRow.addArrangedSubview(restoreButton)
         buttonsRow.addArrangedSubview(spacerView)
