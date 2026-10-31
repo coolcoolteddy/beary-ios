@@ -2778,12 +2778,12 @@ class BearyProfileViewController: UIViewController {
 
     private func updateDynamicLayerColors() {
         // UIColor 动态色转 CGColor 只在赋值时解析一次，深浅切换时需重赋。
-        avatarImageView.layer.borderColor = BearyColors.bg.cgColor
-        editButton.layer.borderColor = BearyColors.line.cgColor
-        profileErrorRetryButton?.layer.borderColor = BearyColors.line.cgColor
-        gearButton.layer.borderColor = BearyColors.line.cgColor
-        nightContainer.layer.borderColor = BearyColors.line.cgColor
-        wallContainer.layer.borderColor = BearyColors.line.cgColor
+        avatarImageView.layer.bearyDynamicBorderColor = BearyColors.bg
+        editButton.layer.bearyDynamicBorderColor = BearyColors.line
+        profileErrorRetryButton?.layer.bearyDynamicBorderColor = BearyColors.line
+        gearButton.layer.bearyDynamicBorderColor = BearyColors.line
+        nightContainer.layer.bearyDynamicBorderColor = BearyColors.line
+        wallContainer.layer.bearyDynamicBorderColor = BearyColors.line
         // 个人页内容用户名阴影色重赋（深浅切换时 CGColor 不自动跟随）：
         // 深色 ink 近白 → 黑色阴影；浅色 ink 纯黑 → 白色光晕。半径/偏移/透明度见 nameLabel 定义处。
         // 111：header 用户名不再跟 trait 走，改走条带亮度（见 updateStickyHeaderShadow）；
@@ -2797,10 +2797,10 @@ class BearyProfileViewController: UIViewController {
         }
         updateStickyHeaderShadow()
         // 批 D：模块卡边线同款重赋（深浅切换时 CGColor 不自动跟随）。
-        statsCard.layer.borderColor = BearyColors.line.cgColor
-        thisDayCard.layer.borderColor = BearyColors.line.cgColor
-        randomCard.layer.borderColor = BearyColors.line.cgColor
-        yearCard.layer.borderColor = BearyColors.line.cgColor
+        statsCard.layer.bearyDynamicBorderColor = BearyColors.line
+        thisDayCard.layer.bearyDynamicBorderColor = BearyColors.line
+        randomCard.layer.bearyDynamicBorderColor = BearyColors.line
+        yearCard.layer.bearyDynamicBorderColor = BearyColors.line
     }
 
     // MARK: - 本人 / 他人模式
@@ -5654,7 +5654,7 @@ class BearyProfileViewController: UIViewController {
         retryButton.contentEdgeInsets = UIEdgeInsets(top: 0, left: 12, bottom: 0, right: 12)
         retryButton.titleEdgeInsets = UIEdgeInsets(top: 0, left: 6, bottom: 0, right: 0)
         retryButton.layer.borderWidth = 1
-        retryButton.layer.borderColor = BearyColors.line.cgColor
+        retryButton.layer.bearyDynamicBorderColor = BearyColors.line
         retryButton.layer.cornerRadius = 20
         retryButton.addTarget(self, action: #selector(retryButtonTapped), for: .touchUpInside)
         retryButton.bearyAddPressFeedback()

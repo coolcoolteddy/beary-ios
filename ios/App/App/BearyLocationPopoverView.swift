@@ -114,7 +114,7 @@ final class BearyLocationPopoverView: UIView, CLLocationManagerDelegate, MKLocal
         manualButton.setTitleColor(BearyColors.ink, for: .normal)
         manualButton.layer.cornerRadius = 999
         manualButton.layer.borderWidth = 1
-        manualButton.layer.borderColor = BearyColors.line.cgColor
+        manualButton.layer.bearyDynamicBorderColor = BearyColors.line
         manualButton.contentEdgeInsets = UIEdgeInsets(top: 7, left: 12, bottom: 7, right: 12)
         manualButton.setContentHuggingPriority(.required, for: .horizontal)
         manualButton.setContentCompressionResistancePriority(.required, for: .horizontal)

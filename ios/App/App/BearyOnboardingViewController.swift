@@ -645,7 +645,7 @@ final class BearyOnboardingViewController: UIViewController {
         let pill = OnboardingCapsuleView()
         pill.translatesAutoresizingMaskIntoConstraints = false
         pill.layer.borderWidth = 1
-        pill.layer.borderColor = BearyColors.alpha(BearyColors.orange, 0.45).cgColor
+        pill.layer.bearyDynamicBorderColor = BearyColors.alpha(BearyColors.orange, 0.45)
         let pillLabel = UILabel()
         pillLabel.translatesAutoresizingMaskIntoConstraints = false
         pillLabel.font = scaledFont(size: 13, weight: .semibold)
@@ -968,7 +968,7 @@ final class BearyOnboardingViewController: UIViewController {
             button.refreshBorder()
         }
         demoPill.layer.borderWidth = 1
-        demoPill.layer.borderColor = BearyColors.alpha(selectedVisibility.pillColor, 0.45).cgColor
+        demoPill.layer.bearyDynamicBorderColor = BearyColors.alpha(selectedVisibility.pillColor, 0.45)
     }
 
     // MARK: - 第 3 页演示（离屏立即停播）
@@ -991,7 +991,7 @@ final class BearyOnboardingViewController: UIViewController {
         for (buttonKey, button) in emoteButtons {
             let selected = buttonKey == key
             button.layer.borderWidth = selected ? 2 : 0
-            button.layer.borderColor = BearyColors.orange.cgColor
+            button.layer.bearyDynamicBorderColor = BearyColors.orange
             button.backgroundColor = selected ? BearyColors.alpha(BearyColors.orange, 0.07) : BearyColors.faint
         }
         selectedEmote = key
@@ -1090,7 +1090,7 @@ private final class OnboardingOptionButton: BearyHit44Button {
         backgroundColor = BearyColors.surface
         layer.cornerRadius = 16
         layer.borderWidth = 1.5
-        layer.borderColor = BearyColors.line.cgColor
+        layer.bearyDynamicBorderColor = BearyColors.line
 
         iconView.translatesAutoresizingMaskIntoConstraints = false
         iconView.image = BearyIconImages.image(named: demo.iconName, pointSize: 28)
@@ -1119,7 +1119,7 @@ private final class OnboardingOptionButton: BearyHit44Button {
         checkView.translatesAutoresizingMaskIntoConstraints = false
         checkView.layer.cornerRadius = 12
         checkView.layer.borderWidth = 2
-        checkView.layer.borderColor = BearyColors.line.cgColor
+        checkView.layer.bearyDynamicBorderColor = BearyColors.line
         checkImageView.translatesAutoresizingMaskIntoConstraints = false
         checkImageView.image = BearyIconImages.image(named: "icon_check", pointSize: 14)
         checkImageView.tintColor = BearyColors.bg
@@ -1161,8 +1161,8 @@ private final class OnboardingOptionButton: BearyHit44Button {
 
     func refreshBorder() {
         layer.borderWidth = isOptionSelected ? 2 : 1.5
-        layer.borderColor = isOptionSelected ? BearyColors.orange.cgColor : BearyColors.line.cgColor
-        checkView.layer.borderColor = isOptionSelected ? BearyColors.orange.cgColor : BearyColors.line.cgColor
+        layer.bearyDynamicBorderColor = isOptionSelected ? BearyColors.orange : BearyColors.line
+        checkView.layer.bearyDynamicBorderColor = isOptionSelected ? BearyColors.orange : BearyColors.line
     }
 }
 

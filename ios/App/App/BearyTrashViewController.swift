@@ -116,13 +116,13 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate {
         // 失败态重试钮边框改由 BearyStateView 内 trait 处理，本页不再重刷。
         if previousTraitCollection?.userInterfaceStyle != traitCollection.userInterfaceStyle {
             for rowView in rowViewsByIdentifier.values {
-                rowView.layer.borderColor = BearyColors.line.cgColor
+                rowView.layer.bearyDynamicBorderColor = BearyColors.line
             }
             for entry in restoreEntries {
-                entry.button.layer.borderColor = BearyColors.line.cgColor
+                entry.button.layer.bearyDynamicBorderColor = BearyColors.line
             }
             for entry in purgeEntries {
-                entry.button.layer.borderColor = BearyColors.line.cgColor
+                entry.button.layer.bearyDynamicBorderColor = BearyColors.line
             }
         }
     }
@@ -651,7 +651,7 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate {
         let rowView = UIView()
         rowView.backgroundColor = BearyColors.bg
         rowView.layer.borderWidth = 1
-        rowView.layer.borderColor = BearyColors.line.cgColor
+        rowView.layer.bearyDynamicBorderColor = BearyColors.line
         rowView.layer.cornerRadius = 14
         rowView.translatesAutoresizingMaskIntoConstraints = false
 
@@ -700,7 +700,7 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate {
         restoreButton.titleEdgeInsets = UIEdgeInsets(top: 0, left: 5, bottom: 0, right: 0)
         restoreButton.titleLabel?.font = UIFont.systemFont(ofSize: 13)
         restoreButton.layer.borderWidth = 1
-        restoreButton.layer.borderColor = BearyColors.line.cgColor
+        restoreButton.layer.bearyDynamicBorderColor = BearyColors.line
         restoreButton.layer.cornerRadius = 22
         restoreButton.backgroundColor = BearyColors.bg
         restoreButton.contentEdgeInsets = UIEdgeInsets(top: 7, left: 14, bottom: 7, right: 14)
@@ -730,7 +730,7 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate {
         purgeButton.tintColor = BearyColors.red
         purgeButton.titleEdgeInsets = UIEdgeInsets(top: 0, left: 5, bottom: 0, right: 0)
         purgeButton.layer.borderWidth = 1
-        purgeButton.layer.borderColor = BearyColors.line.cgColor
+        purgeButton.layer.bearyDynamicBorderColor = BearyColors.line
         purgeButton.layer.cornerRadius = 22
         purgeButton.backgroundColor = BearyColors.bg
         purgeButton.contentEdgeInsets = UIEdgeInsets(top: 7, left: 14, bottom: 7, right: 14)

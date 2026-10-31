@@ -78,11 +78,11 @@ final class BearyInputContainer: UIView {
 
     private func refreshBorder() {
         if isError {
-            layer.borderColor = BearyColors.red.cgColor
+            layer.bearyDynamicBorderColor = BearyColors.red
         } else if contentEditingFocused {
-            layer.borderColor = BearyColors.blue.cgColor
+            layer.bearyDynamicBorderColor = BearyColors.blue
         } else {
-            layer.borderColor = normalBorderColor.cgColor
+            layer.bearyDynamicBorderColor = normalBorderColor
         }
     }
 

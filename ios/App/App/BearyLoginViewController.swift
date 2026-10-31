@@ -412,7 +412,7 @@ final class BearyLoginViewController: UIViewController {
         agreeButton.translatesAutoresizingMaskIntoConstraints = false
         agreeButton.layer.cornerRadius = 6
         agreeButton.layer.borderWidth = 1.5
-        agreeButton.layer.borderColor = BearyColors.line.cgColor
+        agreeButton.layer.bearyDynamicBorderColor = BearyColors.line
         agreeButton.backgroundColor = BearyColors.faint
         agreeButton.accessibilityLabel = "我已阅读并同意《隐私政策》和《用户协议》"
         agreeButton.addTarget(self, action: #selector(agreeTapped), for: .touchUpInside)
@@ -469,12 +469,12 @@ final class BearyLoginViewController: UIViewController {
     private func refreshAgreeBox() {
         if isAgreed {
             agreeButton.backgroundColor = BearyColors.orange
-            agreeButton.layer.borderColor = BearyColors.orange.cgColor
+            agreeButton.layer.bearyDynamicBorderColor = BearyColors.orange
             agreeButton.tintColor = BearyColors.bg
             agreeButton.setImage(BearyIconImages.image(named: "icon_check", pointSize: 13), for: .normal)
         } else {
             agreeButton.backgroundColor = BearyColors.faint
-            agreeButton.layer.borderColor = BearyColors.line.cgColor
+            agreeButton.layer.bearyDynamicBorderColor = BearyColors.line
             agreeButton.setImage(nil, for: .normal)
         }
     }

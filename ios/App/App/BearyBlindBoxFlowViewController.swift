@@ -36,7 +36,7 @@ private final class BlindBoxPoolRowView: UIView {
         backgroundColor = BearyColors.surface
         layer.cornerRadius = 14
         layer.borderWidth = 1
-        layer.borderColor = BearyColors.line.cgColor
+        layer.bearyDynamicBorderColor = BearyColors.line
         clipsToBounds = true
         translatesAutoresizingMaskIntoConstraints = false
 
@@ -142,7 +142,7 @@ private final class BlindBoxPoolRowView: UIView {
             tapButton.isEnabled = false
         }
         checkView.isHidden = !selected
-        layer.borderColor = selected ? BearyColors.ink.cgColor : BearyColors.line.cgColor
+        layer.bearyDynamicBorderColor = selected ? BearyColors.ink : BearyColors.line
         layer.borderWidth = selected ? 2 : 1
     }
 }
@@ -429,7 +429,7 @@ final class BearyBlindBoxFlowViewController: UIViewController {
         receivedView.backgroundColor = BearyColors.surface
         receivedView.layer.cornerRadius = 16
         receivedView.layer.borderWidth = 1
-        receivedView.layer.borderColor = BearyColors.line.cgColor
+        receivedView.layer.bearyDynamicBorderColor = BearyColors.line
         receivedView.clipsToBounds = true
 
         receivedPill.translatesAutoresizingMaskIntoConstraints = false
@@ -529,7 +529,7 @@ final class BearyBlindBoxFlowViewController: UIViewController {
         // 本页占位语义由文案承担，不为演示样式另起一层 shape 图层）。
         placeholderView.layer.cornerRadius = 14
         placeholderView.layer.borderWidth = 1
-        placeholderView.layer.borderColor = BearyColors.line.cgColor
+        placeholderView.layer.bearyDynamicBorderColor = BearyColors.line
         placeholderLabel.translatesAutoresizingMaskIntoConstraints = false
         placeholderLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 14))
         placeholderLabel.adjustsFontForContentSizeCategory = true

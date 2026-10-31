@@ -641,7 +641,7 @@ final class BearyWishCreateViewController: UIViewController, UITextViewDelegate 
         detailView.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 15))
         detailView.adjustsFontForContentSizeCategory = true
         detailView.textColor = BearyColors.ink
-        detailView.layer.borderColor = BearyColors.ink.withAlphaComponent(0.2).cgColor
+        detailView.layer.bearyDynamicBorderColor = BearyColors.ink.withAlphaComponent(0.2)
         detailView.layer.borderWidth = 1
         detailView.layer.cornerRadius = 12
         detailView.delegate = self
@@ -747,7 +747,7 @@ final class BearyWishCreateViewController: UIViewController, UITextViewDelegate 
     override func traitCollectionDidChange(_ previousTraitCollection: UITraitCollection?) {
         super.traitCollectionDidChange(previousTraitCollection)
         if traitCollection.hasDifferentColorAppearance(comparedTo: previousTraitCollection) {
-            detailView.layer.borderColor = BearyColors.ink.withAlphaComponent(0.2).cgColor
+            detailView.layer.bearyDynamicBorderColor = BearyColors.ink.withAlphaComponent(0.2)
         }
     }
 

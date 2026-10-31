@@ -26,7 +26,7 @@ final class BearyBlindBoxEntryView: UIView {
         backgroundColor = BearyColors.surface
         layer.cornerRadius = 14
         layer.borderWidth = 1
-        layer.borderColor = BearyColors.line.cgColor
+        layer.bearyDynamicBorderColor = BearyColors.line
         clipsToBounds = true
         translatesAutoresizingMaskIntoConstraints = false
 
@@ -42,7 +42,7 @@ final class BearyBlindBoxEntryView: UIView {
         pendingChip.textAlignment = .center
         pendingChip.layer.cornerRadius = 8
         pendingChip.layer.borderWidth = 1
-        pendingChip.layer.borderColor = BearyColors.orange.cgColor
+        pendingChip.layer.bearyDynamicBorderColor = BearyColors.orange
         pendingChip.clipsToBounds = true
         pendingChip.isHidden = true
 

@@ -54,7 +54,7 @@ private final class BearyCenteredPresentationController: UIPresentationControlle
         presentedView.layer.cornerRadius = BearySheetChrome.topCornerRadius
         presentedView.layer.maskedCorners = [.layerMinXMinYCorner, .layerMaxXMinYCorner, .layerMinXMaxYCorner, .layerMaxXMaxYCorner]
         presentedView.layer.borderWidth = 1
-        presentedView.layer.borderColor = BearyColors.line.resolvedColor(with: traitCollection).cgColor
+        presentedView.layer.bearyDynamicBorderColor = BearyColors.line.resolvedColor(with: traitCollection)
         presentedView.clipsToBounds = true
     }
 

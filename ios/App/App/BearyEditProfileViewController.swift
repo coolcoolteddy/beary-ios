@@ -172,7 +172,7 @@ class BearyEditProfileViewController: UIViewController {
         badge.backgroundColor = BearyColors.ink
         badge.layer.cornerRadius = 13.5
         badge.layer.borderWidth = 2
-        badge.layer.borderColor = BearyColors.bg.cgColor
+        badge.layer.bearyDynamicBorderColor = BearyColors.bg
         badge.clipsToBounds = true
         badge.isUserInteractionEnabled = false
         let icon = UIImageView()
@@ -312,7 +312,7 @@ class BearyEditProfileViewController: UIViewController {
         buttonValue.titleLabel?.font = UIFont.systemFont(ofSize: 13)
         buttonValue.contentEdgeInsets = UIEdgeInsets(top: 0, left: 14, bottom: 0, right: 14)
         buttonValue.layer.borderWidth = 1
-        buttonValue.layer.borderColor = BearyColors.line.cgColor
+        buttonValue.layer.bearyDynamicBorderColor = BearyColors.line
         buttonValue.layer.cornerRadius = 16
         buttonValue.addTarget(self, action: #selector(copyLinkButtonTapped), for: .touchUpInside)
         buttonValue.bearyAddPressFeedback()
@@ -456,8 +456,8 @@ class BearyEditProfileViewController: UIViewController {
     }
 
     private func updateDynamicLayerColors() {
-        copyLinkButton.layer.borderColor = BearyColors.line.cgColor
-        avatarCamBadge.layer.borderColor = BearyColors.bg.cgColor
+        copyLinkButton.layer.bearyDynamicBorderColor = BearyColors.line
+        avatarCamBadge.layer.bearyDynamicBorderColor = BearyColors.bg
     }
 
     /// F15：表单标签（网页 ed-rlabel 口径：宽 58、15/600）。

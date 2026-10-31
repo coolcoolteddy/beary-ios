@@ -2319,7 +2319,7 @@ final class BearyChromeViewController: UIViewController {
         sheetLaterButton.backgroundColor = .clear
         sheetLaterButton.layer.cornerRadius = 22
         sheetLaterButton.layer.borderWidth = 1
-        sheetLaterButton.layer.borderColor = BearyColors.line.cgColor
+        sheetLaterButton.layer.bearyDynamicBorderColor = BearyColors.line
         sheetLaterButton.translatesAutoresizingMaskIntoConstraints = false
         sheetLaterButton.addTarget(self, action: #selector(guestSheetDismissTapped), for: .touchUpInside)
         sheetLaterButton.bearyAddPressFeedback()

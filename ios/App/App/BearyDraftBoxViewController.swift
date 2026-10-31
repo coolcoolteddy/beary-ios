@@ -192,10 +192,10 @@ final class BearyDraftBoxViewController: UIViewController {
         if previousTraitCollection?.userInterfaceStyle != traitCollection.userInterfaceStyle {
             applySheetChrome()
             for entry in cardEntries {
-                entry.button.layer.borderColor = BearyColors.line.cgColor
+                entry.button.layer.bearyDynamicBorderColor = BearyColors.line
             }
             for entry in openEntries {
-                entry.button.layer.borderColor = BearyColors.line.cgColor
+                entry.button.layer.bearyDynamicBorderColor = BearyColors.line
             }
         }
     }
@@ -477,7 +477,7 @@ final class BearyDraftBoxViewController: UIViewController {
         if isPadLayout {
             sheetView.layer.maskedCorners = [.layerMinXMinYCorner, .layerMaxXMinYCorner, .layerMinXMaxYCorner, .layerMaxXMaxYCorner]
             sheetView.layer.borderWidth = 1
-            sheetView.layer.borderColor = BearyColors.line.cgColor
+            sheetView.layer.bearyDynamicBorderColor = BearyColors.line
             sheetView.layer.shadowOpacity = 0.30
             // CALayer radius 取 CSS blur 一半（居中卡片与 SceneDelegate 底 sheet 同口径）：
             // 网页 60 → 30、32 → 16，旧值 60/32 直写会把阴影晕得比网页大一倍。
@@ -709,7 +709,7 @@ final class BearyDraftBoxViewController: UIViewController {
         let card = UIButton(type: .custom)
         card.backgroundColor = UIColor.clear
         card.layer.borderWidth = 1
-        card.layer.borderColor = BearyColors.line.cgColor
+        card.layer.bearyDynamicBorderColor = BearyColors.line
         card.layer.cornerRadius = 14
         card.accessibilityLabel = "打开这份草稿"
         card.addTarget(self, action: #selector(cardTouchDown(_:)), for: .touchDown)
@@ -770,7 +770,7 @@ final class BearyDraftBoxViewController: UIViewController {
         openButton.setTitleColor(BearyColors.ink, for: .normal)
         openButton.titleLabel?.font = UIFont.systemFont(ofSize: 12.5)
         openButton.layer.borderWidth = 1.5
-        openButton.layer.borderColor = BearyColors.line.cgColor
+        openButton.layer.bearyDynamicBorderColor = BearyColors.line
         openButton.layer.cornerRadius = 999
         openButton.contentEdgeInsets = UIEdgeInsets(top: 5, left: 12, bottom: 5, right: 12)
         // 8-15：打开钮补最小 44 高约束（原仅 contentEdgeInsets，实测高约 25，

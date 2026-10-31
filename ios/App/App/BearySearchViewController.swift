@@ -551,7 +551,7 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         clearSearchButton.titleLabel?.adjustsFontForContentSizeCategory = true
         clearSearchButton.backgroundColor = BearyColors.surface
         clearSearchButton.layer.borderWidth = 1
-        clearSearchButton.layer.borderColor = BearyColors.line.cgColor
+        clearSearchButton.layer.bearyDynamicBorderColor = BearyColors.line
         clearSearchButton.layer.cornerRadius = 22
         clearSearchButton.layer.masksToBounds = true
         clearSearchButton.contentEdgeInsets = UIEdgeInsets(top: 0, left: 20, bottom: 0, right: 20)
@@ -735,15 +735,15 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
             // 不是蓝 55% 透明——深色下两者不同；原 withAlphaComponent 写法
             // 在深色 line #3a3a40 上会偏蓝偏暗，随 E-G11 一并纠正）。
             // 边框色由 traitCollectionDidChange → updateBorderColors 重赋。
-            searchBoxView.layer.borderColor = BearySearchViewController.mixedColor(BearyColors.blue, 0.55, over: BearyColors.line).cgColor
+            searchBoxView.layer.bearyDynamicBorderColor = BearySearchViewController.mixedColor(BearyColors.blue, 0.55, over: BearyColors.line)
         } else {
-            searchBoxView.layer.borderColor = BearyColors.line.cgColor
+            searchBoxView.layer.bearyDynamicBorderColor = BearyColors.line
         }
         // 状态圆描边：网页 inset 1px 橙 25% 圈。
-        stateCircle.layer.borderColor = BearyColors.orange.withAlphaComponent(0.25).cgColor
-        retryButton.layer.borderColor = BearyColors.line.cgColor
-        clearSearchButton.layer.borderColor = BearyColors.line.cgColor
-        searchFooterRetryButton.layer.borderColor = BearyColors.line.cgColor
+        stateCircle.layer.bearyDynamicBorderColor = BearyColors.orange.withAlphaComponent(0.25)
+        retryButton.layer.bearyDynamicBorderColor = BearyColors.line
+        clearSearchButton.layer.bearyDynamicBorderColor = BearyColors.line
+        searchFooterRetryButton.layer.bearyDynamicBorderColor = BearyColors.line
         updateSearchBoxShadow()
     }
 

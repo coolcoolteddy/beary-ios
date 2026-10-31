@@ -2244,7 +2244,7 @@ private class BearyLetterModal {
         secondaryButton.setTitleColor(BearyColors.ink, for: .normal)
         secondaryButton.tintColor = BearyColors.ink
         secondaryButton.layer.borderWidth = 1
-        secondaryButton.layer.borderColor = BearyColors.line.cgColor
+        secondaryButton.layer.bearyDynamicBorderColor = BearyColors.line
         // Q1 对照表：pill 按钮圆角 22（网页 .obtn 原 20 已按表统一）。
         secondaryButton.layer.cornerRadius = 22
         secondaryButton.setTitle(goEntryId == nil ? "知道了" : "稍后", for: .normal)
@@ -2477,7 +2477,7 @@ private final class BearyLetterModalButton: UIButton {
     override func traitCollectionDidChange(_ previousTraitCollection: UITraitCollection?) {
         super.traitCollectionDidChange(previousTraitCollection)
         if previousTraitCollection?.userInterfaceStyle != traitCollection.userInterfaceStyle {
-            layer.borderColor = BearyColors.line.cgColor
+            layer.bearyDynamicBorderColor = BearyColors.line
         }
     }
 }
@@ -2548,7 +2548,7 @@ private class BearyNotificationCell: UITableViewCell {
         badge.translatesAutoresizingMaskIntoConstraints = false
         badge.backgroundColor = BearyColors.bg
         badge.layer.borderWidth = 1
-        badge.layer.borderColor = BearyColors.line.cgColor
+        badge.layer.bearyDynamicBorderColor = BearyColors.line
         badge.layer.cornerRadius = 9.5
         badge.clipsToBounds = true
         return badge
@@ -2759,7 +2759,7 @@ private class BearyNotificationCell: UITableViewCell {
         super.traitCollectionDidChange(previousTraitCollection)
         // 角标描边是 CGColor，深浅切换时重赋，否则深色下仍留浅色边。
         if previousTraitCollection?.userInterfaceStyle != traitCollection.userInterfaceStyle {
-            kindBadgeView.layer.borderColor = BearyColors.line.cgColor
+            kindBadgeView.layer.bearyDynamicBorderColor = BearyColors.line
         }
     }
 

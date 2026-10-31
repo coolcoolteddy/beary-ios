@@ -189,7 +189,7 @@ final class BearyDiaryStarMapViewController: UIViewController {
         sheetCard.translatesAutoresizingMaskIntoConstraints = false
         sheetCard.backgroundColor = UIColor(white: 1, alpha: 0.08)
         sheetCard.layer.cornerRadius = 14
-        sheetCard.layer.borderColor = UIColor(white: 1, alpha: 0.14).cgColor
+        sheetCard.layer.bearyDynamicBorderColor = UIColor(white: 1, alpha: 0.14)
         sheetCard.layer.borderWidth = 1
         sheetCard.clipsToBounds = true
         sheetStack.translatesAutoresizingMaskIntoConstraints = false
@@ -335,7 +335,7 @@ final class BearyDiaryStarMapViewController: UIViewController {
         button.backgroundColor = selected ? UIColor(red: 1, green: 0.70, blue: 0.20, alpha: 1) : .clear
         button.layer.cornerRadius = 16
         button.layer.borderWidth = selected ? 0 : 1
-        button.layer.borderColor = UIColor(white: 1, alpha: 0.25).cgColor
+        button.layer.bearyDynamicBorderColor = UIColor(white: 1, alpha: 0.25)
         button.contentEdgeInsets = UIEdgeInsets(top: 6, left: 12, bottom: 6, right: 12)
         button.addTarget(self, action: action, for: .touchUpInside)
         return button

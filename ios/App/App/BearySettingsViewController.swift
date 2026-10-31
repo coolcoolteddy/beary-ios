@@ -347,9 +347,9 @@ final class BearySettingsViewController: UIViewController {
         // CGColor 只在赋值时解析一次：深浅切换时重刷描边（背景色走动态色，自动跟随）。
         if previousTraitCollection?.userInterfaceStyle != traitCollection.userInterfaceStyle {
             for card in cardViews {
-                card.layer.borderColor = BearyColors.line.cgColor
+                card.layer.bearyDynamicBorderColor = BearyColors.line
             }
-            logoutOthersButton.layer.borderColor = BearyColors.alpha(BearyColors.red, 0.45).cgColor
+            logoutOthersButton.layer.bearyDynamicBorderColor = BearyColors.alpha(BearyColors.red, 0.45)
         }
     }
 
@@ -467,7 +467,7 @@ final class BearySettingsViewController: UIViewController {
         card.translatesAutoresizingMaskIntoConstraints = false
         card.backgroundColor = BearyColors.surface
         card.layer.borderWidth = 1
-        card.layer.borderColor = BearyColors.line.cgColor
+        card.layer.bearyDynamicBorderColor = BearyColors.line
         card.layer.cornerRadius = 20
         card.clipsToBounds = true
         cardViews.append(card)
@@ -910,7 +910,7 @@ final class BearySettingsViewController: UIViewController {
         // F10：网页 .btn.danger 口径——36 高、13/600、红字红边（红 45% 透明边）。
         logoutOthersButton.titleLabel?.font = UIFont.systemFont(ofSize: 13, weight: .semibold)
         logoutOthersButton.layer.borderWidth = 1
-        logoutOthersButton.layer.borderColor = BearyColors.alpha(BearyColors.red, 0.45).cgColor
+        logoutOthersButton.layer.bearyDynamicBorderColor = BearyColors.alpha(BearyColors.red, 0.45)
         logoutOthersButton.layer.cornerRadius = 12
         logoutOthersButton.addTarget(self, action: #selector(logoutOthersButtonTapped), for: .touchUpInside)
         logoutOthersButton.bearyAddPressFeedback()
