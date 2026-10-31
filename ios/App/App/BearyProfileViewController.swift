@@ -6592,24 +6592,16 @@ class BearyProfileViewController: UIViewController {
 // MARK: - 列表数据源与点按（点按只走 onOpenEntry，不在本文件内置跳转）
 
 /// 批 C“更多日记”行（110 方案 A，Li 已点头；方案 B/C 不用）：
-/// 纯文字行——无填充、无边框、无圆角块，只一条顶部分割线（2pt、
-/// BearyColors.line：浅 #dbdbdb／深 #3a3a40，与时间线分割线同款，
-/// 动态色自动跟随深浅）加居中 16pt 墨字“更多日记 ›”（› 为文字符号，
-/// 不用 chevron 图标）；整行可点，默认字号下行高 52pt（分割线 2 +
-/// 按钮区 50，按钮高用 ≥50 以便大字号时随字长高）；点按走 onTap
-/// （容器跳时间线页，行为与旧圆角钮一致）；复用时 onTap 置空。
+/// 纯文字行——无填充、无边框、无圆角块、无顶部分割线（2026-10-31
+/// Li 定：最后一篇日记卡片底部与本行之间的分割线去掉）；居中 16pt
+/// 墨字“更多日记 ›”（› 为文字符号，不用 chevron 图标）；整行可点，
+/// 默认字号下行高 50pt（按钮高用 ≥50 以便大字号时随字长高）；点按走
+/// onTap（容器跳时间线页，行为与旧圆角钮一致）；复用时 onTap 置空。
 /// 旧浅灰填充大圆角按钮整块删除、零残留（无 faint 底、无圆角、
 /// 无边框、无图标引用）。
 final class BearyProfileMoreDiaryCell: UITableViewCell {
 
     var onTap: (() -> Void)?
-
-    private let dividerView: UIView = {
-        let viewValue = UIView()
-        viewValue.translatesAutoresizingMaskIntoConstraints = false
-        viewValue.backgroundColor = BearyColors.line
-        return viewValue
-    }()
 
     private lazy var moreButton: UIButton = {
         let buttonValue = UIButton(type: .custom)
@@ -6630,14 +6622,9 @@ final class BearyProfileMoreDiaryCell: UITableViewCell {
         backgroundColor = .clear
         contentView.backgroundColor = .clear
         selectionStyle = .none
-        contentView.addSubview(dividerView)
         contentView.addSubview(moreButton)
         NSLayoutConstraint.activate([
-            dividerView.topAnchor.constraint(equalTo: contentView.topAnchor),
-            dividerView.leadingAnchor.constraint(equalTo: contentView.leadingAnchor),
-            dividerView.trailingAnchor.constraint(equalTo: contentView.trailingAnchor),
-            dividerView.heightAnchor.constraint(equalToConstant: 2),
-            moreButton.topAnchor.constraint(equalTo: dividerView.bottomAnchor),
+            moreButton.topAnchor.constraint(equalTo: contentView.topAnchor),
             moreButton.leadingAnchor.constraint(equalTo: contentView.leadingAnchor),
             moreButton.trailingAnchor.constraint(equalTo: contentView.trailingAnchor),
             moreButton.bottomAnchor.constraint(equalTo: contentView.bottomAnchor),
