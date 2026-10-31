@@ -2,7 +2,7 @@ import UIKit
 
 // ===== BearyQuoteCardView 共享引用卡（B 批卡片合并）=====
 // 来源二合一：首页的独立 BearyFeedQuoteView（F11 lite 卡：左侧 3pt 线、
-// faint 底、圆角 8、15px 引号图标、「仅你可见」角标、日期行内末位、42px 缩略图条
+// faint 底、圆角 8、15px 引号图标、日期行内末位、42px 缩略图条
 // flex 分配、gone/locked/加载失败三态）＋个人主页 cell 内 quoteContainer
 // 手写卡（同款 faint 底、9/12 内边距、15px 图标、13.5 正文、42px 缩略图、
 // 日期、gone 两文案）。统一后两页视觉以 Feed 卡为准（个人主页侧圆角
@@ -31,33 +31,8 @@ final class BearyQuoteCardView: UIView {
         return v
     }()
 
-    /// iCity“仅你可见”角标（lite 卡口径）：11/600/blue、blue 13% 底、圆角 6、padding 2/7。
-    /// 仅当作者本人看自己私密日记被引用进公开日记时显示；别人看同一张卡时是占位，见不到它。
-    private let onlyYouBadgeButton: UIButton = {
-        let btn = UIButton(type: .system)
-        btn.translatesAutoresizingMaskIntoConstraints = false
-        btn.setTitle("仅你可见", for: .normal)
-        btn.titleLabel?.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 11, weight: .semibold))
-        btn.titleLabel?.adjustsFontForContentSizeCategory = true
-        btn.setTitleColor(BearyColors.blue, for: .normal)
-        btn.backgroundColor = BearyColors.alpha(BearyColors.blue, 0.13)
-        btn.layer.cornerRadius = 6
-        btn.clipsToBounds = true
-        btn.contentEdgeInsets = UIEdgeInsets(top: 2, left: 7, bottom: 2, right: 7)
-        btn.isUserInteractionEnabled = false
-        btn.isHidden = true
-        return btn
-    }()
-
-    // 52 批：lite 卡不带头像名——nameRow 只剩“仅你可见”角标（隐藏时该行自动塌掉）。
-    private lazy var nameRow: UIStackView = {
-        let st = UIStackView(arrangedSubviews: [onlyYouBadgeButton])
-        st.translatesAutoresizingMaskIntoConstraints = false
-        st.axis = .horizontal
-        st.spacing = 8
-        st.alignment = .center
-        return st
-    }()
+    // 52 批：lite 卡不带头像名（原 avatarContainer 已删）；引用规则简化
+    // （2026-10-31）后“仅你可见”角标随混合态取消而下线，本视图不再有顶部名行。
 
     private let contentLabel: UILabel = {
         let lb = UILabel()
@@ -148,12 +123,12 @@ final class BearyQuoteCardView: UIView {
     }()
 
     private lazy var textStack: UIStackView = {
-        let st = UIStackView(arrangedSubviews: [nameRow, contentLabel])
+        let st = UIStackView(arrangedSubviews: [contentLabel])
         st.translatesAutoresizingMaskIntoConstraints = false
         st.axis = .vertical
         st.alignment = .fill
         st.distribution = .fill
-        // 正文栈只剩 [角标行][正文]（日期与缩略图已移到横向行栈，见 rowStack）。
+        // 正文栈只剩 [正文]（日期与缩略图已移到横向行栈，见 rowStack）。
         st.spacing = 6
         return st
     }()
@@ -195,18 +170,17 @@ final class BearyQuoteCardView: UIView {
     }
 
     /// fixall-cell 5-17：缩略图条宽的唯一计算入口（原 layoutSubviews 内联块抽出）。
-    /// 正文自然宽与 pill 宽与卡宽无关，configure 时已可算出，此处只在输入
+    /// 正文自然宽与卡宽无关，configure 时已可算出，此处只在输入
     /// 快照变化时重算；快照未变时直接返回，layoutSubviews 因此不再每轮写约束。
     private func refreshThumbsWidth() {
         guard thumbsScrollView.isHidden == false, thumbsTotalWidth > 0 else { return }
         let rowWidth = bounds.width - 24
         if rowWidth <= 0 { return }
         let dateWidth = dateLabel.isHidden ? 0 : dateLabel.intrinsicContentSize.width
-        // 正文自然宽（单行实测；角标行宽取大者）与缩略图条按 flex:1 分享剩余空间：
+        // 正文自然宽（单行实测）与缩略图条按 flex:1 分享剩余空间：
         // 正文短时条带拿剩余全部，正文长时两者对半、正文换行。
         let contentSingleLine = contentLabel.sizeThatFits(CGSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)).width
-        let pillWidth = onlyYouBadgeButton.isHidden ? 0 : onlyYouBadgeButton.intrinsicContentSize.width
-        let textNatural = max(contentSingleLine, pillWidth)
+        let textNatural = contentSingleLine
         if bounds.width == lastThumbsLayoutBoundsWidth,
            thumbsTotalWidth == lastThumbsLayoutTotalWidth,
            dateLabel.isHidden == lastThumbsLayoutDateHidden,
@@ -268,7 +242,6 @@ final class BearyQuoteCardView: UIView {
         goneRowTop.priority = UILayoutPriority(999)
         let goneRowBottom = goneRowStack.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -9)
         goneRowBottom.priority = UILayoutPriority(999)
-        onlyYouBadgeButton.setContentCompressionResistancePriority(.required, for: .horizontal)
         dateLabel.setContentCompressionResistancePriority(.required, for: .horizontal)
         NSLayoutConstraint.activate([
             leftBorderView.leadingAnchor.constraint(equalTo: leadingAnchor),
@@ -299,7 +272,6 @@ final class BearyQuoteCardView: UIView {
             thumbsStack.trailingAnchor.constraint(equalTo: thumbsScrollView.contentLayoutGuide.trailingAnchor),
             thumbsStack.heightAnchor.constraint(equalTo: thumbsScrollView.frameLayoutGuide.heightAnchor),
         ])
-        textStack.setCustomSpacing(2, after: nameRow)
     }
 
     required init?(coder: NSCoder) {
@@ -324,7 +296,7 @@ final class BearyQuoteCardView: UIView {
         contentLabel.text = nil
         dateLabel.text = nil
         dateLabel.isHidden = true
-        onlyYouBadgeButton.isHidden = true
+        goneLabel.attributedText = nil
         goneLabel.text = nil
         goneLabel.isHidden = true
         goneIconView.image = nil
@@ -348,9 +320,23 @@ final class BearyQuoteCardView: UIView {
 
     /// 失效态：隐藏正常行、显示 15px 图标 + 13px 灰字文案（卡片本身不隐藏）。
     /// gone 用 beary-quote、locked 用 beary-lock（网页 quoteHtml 两分支口径）；调用方按态传图标。
-    func showGone(message: String, iconName: String = "icon_quote") {
+    /// detail 非空时第二行 12px 灰字挂提醒句（引用规则简化：已私密占位卡的
+    /// “原日记已转私密，引用内容已隐藏”）；无 detail 时只显主句。
+    func showGone(message: String, iconName: String = "icon_quote", detail: String? = nil) {
         clear()
-        goneLabel.text = message
+        if let detail = detail, !detail.isEmpty {
+            let combined = NSMutableAttributedString(string: message, attributes: [
+                .font: BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13)),
+                .foregroundColor: BearyColors.gray,
+            ])
+            combined.append(NSAttributedString(string: "\n" + detail, attributes: [
+                .font: BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 12)),
+                .foregroundColor: BearyColors.gray,
+            ]))
+            goneLabel.attributedText = combined
+        } else {
+            goneLabel.text = message
+        }
         goneLabel.isHidden = false
         goneIconView.image = BearyFeedIconCache.image(named: iconName, pointSize: 15)
         goneIconView.isHidden = false
@@ -372,17 +358,17 @@ final class BearyQuoteCardView: UIView {
     // D8c：网页 .quote-thumbs 口径为固定 42x42（不按 stripW 算宽），故 strip 宽函数已删；
     // configure 的 dims 参数保留（调用点仍传被引用篇自己的 imgDims），宽不再由它驱动。
 
-    /// iCity：configure 不再接受 showDeliveringPill / publishAt（投递 pill 与倒计时已删）；
-    /// 私密被引角标改走 showOnlyYouBadge。占位态（showGone）不带日期与缩略图：
-    /// clear() 已把日期行与缩略图区藏起，showGone 只显图标 + 占位文案。
-    func configure(authorName: String, authorAvatar: String?, content: String, images: [String], dims: [String: [Int]]?, createdAt: Int? = nil, allowThumbs: Bool = true, showOnlyYouBadge: Bool = false) {
+    /// iCity：configure 不再接受 showDeliveringPill / publishAt（投递 pill 与倒计时已删）。
+    /// 引用规则简化（2026-10-31）：“仅你可见”角标随混合态取消而下线，本函数不再接受
+    /// showOnlyYouBadge，调用点亦全部清掉。占位态（showGone）不带日期与缩略图：
+    /// clear() 已把日期行与缩略图区藏起，showGone 只显图标 + 占位文案（+ 可选提醒句）。
+    func configure(authorName: String, authorAvatar: String?, content: String, images: [String], dims: [String: [Int]]?, createdAt: Int? = nil, allowThumbs: Bool = true) {
         clear()
         // 52 批：lite 卡不带头像名——authorName/authorAvatar 参数仅为调用点兼容保留，不再赋值给任何视图。
         if let createdAt = createdAt, createdAt > 0 {
             dateLabel.text = BearyDiaryCardCell.feedTimeString(ms: createdAt)
             dateLabel.isHidden = false
         }
-        onlyYouBadgeButton.isHidden = showOnlyYouBadge == false
         if content.isEmpty {
             contentLabel.isHidden = true
         } else {

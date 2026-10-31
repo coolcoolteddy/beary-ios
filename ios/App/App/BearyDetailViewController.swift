@@ -1121,7 +1121,7 @@ final class BearyDetailViewController: UIViewController {
             refreshVisibilityViews()
             refreshEphemeralViews()
             refreshAuthorActions()
-            // 有效公开态同时决定操作行压暗／分享显隐与引用卡“仅你可见”角标，
+            // 有效公开态同时决定操作行压暗／分享显隐与引用卡占位态，
             // 可见性变化时一并刷这两处，否则小地球文案已变、私密门控仍停在旧态。
             refreshActionRow()
             renderQuote()
@@ -1170,7 +1170,7 @@ final class BearyDetailViewController: UIViewController {
 
     /// 到点重算有效态（纯本地重算，不发网络请求）：
     /// 已到期（ephemeralUntil 非空且已过）时，有效公开态恒为私密——
-    /// 作者：切私密显示（小地球文案翻转、限时行与边框藏、操作行按私密压暗／分享藏、引用角标重算）；
+    /// 作者：切私密显示（小地球文案翻转、限时行与边框藏、操作行按私密压暗／分享藏、引用卡占位重算）；
     /// 非作者：切私密占位（内容栈整藏，只显一句私密文案）。
     /// 未到期／非限时／已占位／已拉黑钉死时返回 false（调用方据此重排定时）。
     @discardableResult
@@ -1341,8 +1341,8 @@ final class BearyDetailViewController: UIViewController {
     }
 
     /// 引用卡 viewer 实时判定（卡片 presentQuoteCard 同口径）：作者本人或已公开才显全文，
-    /// 否则占位；gone → 已删除，locked／未公开 → 该日记已设为私密；私密被引进公开宿主时
-    /// 作者看全文＋“仅你可见”角标。
+    /// 否则占位；gone → 已删除，locked／未公开 → 引用规则简化占位文案
+    /// （曾公开“该日记已私密”＋提醒句，从未公开“该日记未公开”，见 BearyQuoteGate.placeholderText）。
     private func renderQuote() {
         guard let quote = entry.quote, let quoteId = quote.id, !quoteId.isEmpty else {
             quoteView.isHidden = true
@@ -1356,14 +1356,16 @@ final class BearyDetailViewController: UIViewController {
             return
         }
         if quote.locked == true {
-            quoteView.showGone(message: "该日记已设为私密", iconName: "icon_lock")
+            let placeholder = BearyQuoteGate.placeholderText(publishedAt: quote.publishedAt, locked: true)
+            quoteView.showGone(message: placeholder.main, iconName: "icon_lock", detail: placeholder.detail)
             quoteView.isHidden = false
             return
         }
         let content = quote.content ?? ""
         if content.isEmpty {
             if quote.isPublic == false {
-                quoteView.showGone(message: "该日记已设为私密", iconName: "icon_lock")
+                let placeholder = BearyQuoteGate.placeholderText(publishedAt: quote.publishedAt, locked: false)
+                quoteView.showGone(message: placeholder.main, iconName: "icon_lock", detail: placeholder.detail)
             } else {
                 quoteView.showGone(message: "引用的日记已删除", iconName: "icon_quote")
             }
@@ -1371,7 +1373,8 @@ final class BearyDetailViewController: UIViewController {
             return
         }
         guard quoteIsMine || quote.isPublic == true else {
-            quoteView.showGone(message: "该日记已设为私密", iconName: "icon_lock")
+            let placeholder = BearyQuoteGate.placeholderText(publishedAt: quote.publishedAt, locked: false)
+            quoteView.showGone(message: placeholder.main, iconName: "icon_lock", detail: placeholder.detail)
             quoteView.isHidden = false
             return
         }
@@ -1382,8 +1385,7 @@ final class BearyDetailViewController: UIViewController {
             images: quote.images ?? [],
             dims: quote.imgDims,
             createdAt: quote.createdAt,
-            allowThumbs: quote.isPublic == true || quoteIsMine,
-            showOnlyYouBadge: quoteIsMine && quote.isPublic != true && BearyEphemeral.isEffectivelyPublic(entry)
+            allowThumbs: quote.isPublic == true || quoteIsMine
         )
         quoteView.isHidden = false
     }
@@ -1901,8 +1903,8 @@ final class BearyDetailViewController: UIViewController {
                     self.refreshVisibilityViews()
                     self.refreshEphemeralViews()
                     self.refreshActionRow()
-                    // 批 B 补缺（旧详情漏刷）：可见性翻转同时决定引用卡“仅你可见”
-                    // 角标（宿主公开时作者私密被引才显角标），此处不刷则角标停在旧态。
+                    // 批 B 补缺（旧详情漏刷）：可见性翻转同时决定引用卡占位态，
+                    // 此处不刷则占位停在旧态。
                     self.renderQuote()
                     // 手动翻转已清限时标记：旧到期定时作废（schedule 内先取消、nil 则不排）。
                     self.scheduleEphemeralExpiry()
