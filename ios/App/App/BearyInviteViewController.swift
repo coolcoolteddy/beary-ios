@@ -381,6 +381,10 @@ final class BearyInviteViewController: UIViewController {
                         strongSelf.showMessage("请先登录")
                     }
                 case .failure(.network):
+                    // 清单第 14 项：网络失败时统计区不许继续停在“加载中…”——
+                    // 改写明确文案“加载失败”，不清空（消息行的绑定成功文案优先规则不动，
+                    // 只改统计区这一行）。
+                    strongSelf.statsLabel.text = "加载失败"
                     // 审计 P2：绑定后二次刷新失败时，成功文案优先于加载失败文案。
                     if let pending = strongSelf.pendingBindMessage {
                         strongSelf.showMessage(pending, ok: strongSelf.pendingBindMessageOK)
@@ -390,6 +394,8 @@ final class BearyInviteViewController: UIViewController {
                     }
                     strongSelf.retryButton.isHidden = false
                 case .failure:
+                    // 清单第 14 项：同上，非网络类加载失败统计区亦显“加载失败”，不清空。
+                    strongSelf.statsLabel.text = "加载失败"
                     if let pending = strongSelf.pendingBindMessage {
                         strongSelf.showMessage(pending, ok: strongSelf.pendingBindMessageOK)
                         strongSelf.pendingBindMessage = nil
