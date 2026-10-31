@@ -1222,15 +1222,29 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         contentStack.setCustomSpacing(10, after: headlineWrap)
     }
 
+    /// 扫查组：标题长度按服务端口径计——服务端 normalizeEntryTitle 用
+    /// JS `[...t].length`（码点数），Swift `.count` 是字素簇数，两者对 ZWJ
+    /// 组合表情（如 👨‍👩‍👧‍👦 计 1 簇、7 码点）、结合符不一致：30 簇内含组合
+    /// 表情时客户端放行、服务端 400 title too long，发布只剩一句通用失败。
+    /// 故此处按 unicodeScalars（= 码点数）计量；截断按簇从尾删，永不拆散
+    /// 一个组合表情（prefix(30) 按簇截同样会漏码点，不可用）。
+    private static func truncatedHeadline(_ text: String) -> String {
+        var result = text
+        while result.unicodeScalars.count > headlineMaxLength {
+            result = String(result.dropLast())
+        }
+        return result
+    }
+
     @objc private func headlineDidChange() {
         // 组词中的拼音组合串不截断（marked 时不动，落字后再按 30 字封顶），
         // 否则中文输入法组词会被打断。
         if headlineField.markedTextRange == nil {
-            if headlineField.text?.count ?? 0 > Self.headlineMaxLength {
-                headlineField.text = String((headlineField.text ?? "").prefix(Self.headlineMaxLength))
+            if headlineField.text?.unicodeScalars.count ?? 0 > Self.headlineMaxLength {
+                headlineField.text = Self.truncatedHeadline(headlineField.text ?? "")
                 // 112：此前超长直接取 prefix(30) 是静默截断；本轮首次截断给一次 toast。
                 showHeadlineLimitToastIfNeeded()
-            } else if headlineField.text?.count ?? 0 < Self.headlineMaxLength {
+            } else if headlineField.text?.unicodeScalars.count ?? 0 < Self.headlineMaxLength {
                 // 注意是严格 < 30 才重置：截断落点正好 30 不算回落，见标记处注释。
                 headlineLimitToastShown = false
             }
@@ -5862,6 +5876,10 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                 return "这篇和你写过的一篇一模一样"
             case "content too long":
                 return "正文最多 2000 字"
+            case "title too long":
+                // 扫查组兜底：旧草稿/他端标题超码点上限时发布仍可能撞上
+                // 服务端 400，不再落通用“发布失败”，直说标题超长。
+                return "标题最多 30 字"
             case "image unavailable":
                 return "图片已失效，请重新添加"
             case "recipient_invalid", "mentioned_user_invalid":
@@ -5973,6 +5991,8 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             switch code {
             case "content too long":
                 return "正文最多 2000 字"
+            case "title too long":
+                return "标题最多 30 字"
             case "image unavailable":
                 return "图片已失效，请重新添加"
             case "invalid image ownership":
