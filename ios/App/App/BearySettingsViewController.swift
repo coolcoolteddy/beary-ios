@@ -227,6 +227,11 @@ final class BearySettingsViewController: UIViewController {
     private var plusDetail: BearyPlusDetailResponse?
     private var accountSessions: [BearyAccountSession] = []
     private var isLoadingMe = false
+    /// 切换账号卡容器（buildAccountSwitchSection 建，refreshAccountSwitchSection
+    /// 重建卡片；登录态无关的通用/隐私组不受影响）。
+    private let accountSwitchWrap = UIView()
+    private var isSwitchingAccount = false
+    private var isRemovingAccount = false
     private var isLoggingOutOthers = false
     private var isDeleting = false
     private var isExporting = false
@@ -386,6 +391,14 @@ final class BearySettingsViewController: UIViewController {
               topBar.map { NSCoder.string(for: $0.frame) } ?? "nil",
               NSCoder.string(for: scrollView.frame),
               NSCoder.string(for: view.safeAreaInsets))
+    }
+
+    /// 容器（登录页）关掉回到本页时刷新切换列表：添加账号走登录页回来
+    /// 后，新号经 refreshMe 快照进保管库，此处重建卡片即见新行；登录页
+    /// 取消则列表不变。只读保管库 + 重建本卡，不发网络。
+    override func viewWillAppear(_ animated: Bool) {
+        super.viewWillAppear(animated)
+        refreshAccountSwitchSection()
     }
 
     /// 列宽只由 view.bounds 定：宽 ≥821 锁 600（P2-1 同款），宽 ≤820 时
@@ -749,6 +762,8 @@ final class BearySettingsViewController: UIViewController {
         // 全修 8-17：标题收进卡内（见 buildSecuritySection 的 makeGroupCard），
         // 与 Plus/通用/消息与通知/隐私四组一致，不再卡外单立标题。
         buildSecuritySection()
+        // 切换账号卡（2026-10-31）：同属账户与安全组，列在安全卡之后。
+        buildAccountSwitchSection()
 
         privacyWrap.translatesAutoresizingMaskIntoConstraints = false
         privacyWrap.axis = .vertical
@@ -1032,6 +1047,291 @@ final class BearySettingsViewController: UIViewController {
         accountSecurityWrap.addArrangedSubview(securityGroup.card)
     }
 
+    // MARK: - 切换账号（2026-10-31，仅 App 设置页；网页端不做）
+
+    /// 切换列表行展示模型：保管库行带 token（可切），当前账号若尚未
+    /// 快照进库（冷启动后首次进设置页且 refreshMe 尚未跑完的极小窗口）
+    /// 以无 token 行展示——点按即已是当前账号，移除仍走正常退出流程。
+    private struct SwitchRowModel {
+        var userId: Int
+        var title: String
+        var handle: String?
+        var email: String?
+        var avatarURL: String?
+        var hasToken: Bool
+    }
+
+    private func buildAccountSwitchSection() {
+        accountSwitchWrap.translatesAutoresizingMaskIntoConstraints = false
+        accountSwitchWrap.isHidden = true
+        accountSecurityWrap.addArrangedSubview(accountSwitchWrap)
+    }
+
+    /// 重建切换账号卡：只读保管库，不发网络；未登录时整卡隐藏。
+    /// 当前账号优先排第一位（其余按首次保存顺序），当前行打勾；
+    /// “添加账号”行恒可见，满 3 个时点按只弹上限提示、不进登录页。
+    private func refreshAccountSwitchSection() {
+        for subview in accountSwitchWrap.subviews {
+            subview.removeFromSuperview()
+        }
+        let currentUser = SessionManager.shared.currentUser ?? meUser
+        guard let currentUserValue = currentUser, currentUserValue.id != nil else {
+            accountSwitchWrap.isHidden = true
+            return
+        }
+        SessionManager.shared.snapshotCurrentAccount()
+        let vault = BearyAccountVault.shared
+        let stored = vault.loadAll()
+        var models: [SwitchRowModel] = stored.map { account in
+            SwitchRowModel(userId: account.userId, title: account.displayTitle, handle: account.handle, email: account.email, avatarURL: account.avatarURL, hasToken: true)
+        }
+        if let currentId = currentUserValue.id, !models.contains(where: { $0.userId == currentId }) {
+            models.append(SwitchRowModel(userId: currentId, title: currentUserValue.displayName ?? currentUserValue.email ?? "ID \(currentId)", handle: currentUserValue.handle, email: currentUserValue.email, avatarURL: nil, hasToken: false))
+        }
+        // 当前账号排首位，其余保持首次保存顺序（sort 稳定性：先按是否当前分两段）。
+        let currentIdValue = currentUserValue.id
+        models.sort { (first, second) -> Bool in
+            let firstIsCurrent = first.userId == currentIdValue
+            let secondIsCurrent = second.userId == currentIdValue
+            if firstIsCurrent != secondIsCurrent { return firstIsCurrent }
+            return false
+        }
+        var rows: [UIView] = []
+        for model in models {
+            rows.append(makeAccountSwitchRow(model: model, isCurrent: model.userId == currentIdValue))
+        }
+        rows.append(makeAddAccountRow())
+        let group = makeGroupCard(title: "切换账号", rows: rows)
+        group.card.translatesAutoresizingMaskIntoConstraints = false
+        accountSwitchWrap.addSubview(group.card)
+        NSLayoutConstraint.activate([
+            group.card.topAnchor.constraint(equalTo: accountSwitchWrap.topAnchor),
+            group.card.leadingAnchor.constraint(equalTo: accountSwitchWrap.leadingAnchor),
+            group.card.trailingAnchor.constraint(equalTo: accountSwitchWrap.trailingAnchor),
+            group.card.bottomAnchor.constraint(equalTo: accountSwitchWrap.bottomAnchor),
+        ])
+        accountSwitchWrap.isHidden = false
+    }
+
+    private func makeAccountSwitchRow(model: SwitchRowModel, isCurrent: Bool) -> UIView {
+        let avatarContainer = UIView()
+        avatarContainer.translatesAutoresizingMaskIntoConstraints = false
+        avatarContainer.backgroundColor = BearyColors.faint
+        avatarContainer.layer.cornerRadius = 18
+        avatarContainer.clipsToBounds = true
+        let avatarImageView = UIImageView()
+        avatarImageView.translatesAutoresizingMaskIntoConstraints = false
+        avatarImageView.contentMode = .scaleAspectFill
+        avatarImageView.clipsToBounds = true
+        let avatarInitialLabel = UILabel()
+        avatarInitialLabel.translatesAutoresizingMaskIntoConstraints = false
+        avatarInitialLabel.font = UIFont.systemFont(ofSize: 15, weight: .bold)
+        avatarInitialLabel.textColor = BearyColors.ink
+        avatarInitialLabel.textAlignment = .center
+        avatarInitialLabel.text = String(model.title.prefix(1))
+        avatarContainer.addSubview(avatarImageView)
+        avatarContainer.addSubview(avatarInitialLabel)
+        NSLayoutConstraint.activate([
+            avatarContainer.widthAnchor.constraint(equalToConstant: 36),
+            avatarContainer.heightAnchor.constraint(equalToConstant: 36),
+            avatarImageView.topAnchor.constraint(equalTo: avatarContainer.topAnchor),
+            avatarImageView.leadingAnchor.constraint(equalTo: avatarContainer.leadingAnchor),
+            avatarImageView.trailingAnchor.constraint(equalTo: avatarContainer.trailingAnchor),
+            avatarImageView.bottomAnchor.constraint(equalTo: avatarContainer.bottomAnchor),
+            avatarInitialLabel.centerXAnchor.constraint(equalTo: avatarContainer.centerXAnchor),
+            avatarInitialLabel.centerYAnchor.constraint(equalTo: avatarContainer.centerYAnchor),
+        ])
+        if let avatarURL = model.avatarURL, let url = BearyImageURLs.avatarURL(avatarURL) {
+            avatarImageView.bearySetImage(url: url)
+        }
+        let nameLabel = makeLabel(font: UIFont.systemFont(ofSize: 15), color: BearyColors.ink)
+        nameLabel.text = model.title
+        let detailText: String
+        if let handle = model.handle, !handle.isEmpty {
+            detailText = "@" + handle + " · " + BearyAccountVault.maskedEmail(model.email)
+        } else {
+            detailText = BearyAccountVault.maskedEmail(model.email)
+        }
+        let detailLabel = makeLabel(font: UIFont.systemFont(ofSize: 12), color: BearyColors.gray, lines: 0)
+        detailLabel.text = detailText
+        let textStack = UIStackView(arrangedSubviews: [nameLabel, detailLabel])
+        textStack.axis = .vertical
+        textStack.spacing = 2
+        textStack.translatesAutoresizingMaskIntoConstraints = false
+        let rowContent = UIStackView(arrangedSubviews: [avatarContainer, textStack])
+        rowContent.axis = .horizontal
+        rowContent.spacing = 12
+        rowContent.alignment = .center
+        rowContent.translatesAutoresizingMaskIntoConstraints = false
+        if isCurrent {
+            let checkView = UIImageView(image: BearyIconImages.image(named: "icon_check", pointSize: 18))
+            checkView.translatesAutoresizingMaskIntoConstraints = false
+            checkView.tintColor = BearyColors.ink
+            checkView.contentMode = .scaleAspectFit
+            NSLayoutConstraint.activate([
+                checkView.widthAnchor.constraint(equalToConstant: 18),
+                checkView.heightAnchor.constraint(equalToConstant: 18),
+            ])
+            rowContent.addArrangedSubview(checkView)
+        }
+        let rowView = UIView()
+        rowView.translatesAutoresizingMaskIntoConstraints = false
+        rowView.addSubview(rowContent)
+        let switchButton = UIButton(type: .system)
+        switchButton.translatesAutoresizingMaskIntoConstraints = false
+        switchButton.tag = model.userId
+        switchButton.addTarget(self, action: #selector(switchAccountButtonTapped(_:)), for: .touchUpInside)
+        switchButton.bearyAddPressFeedback()
+        rowView.addSubview(switchButton)
+        let removeButton = UIButton(type: .system)
+        removeButton.translatesAutoresizingMaskIntoConstraints = false
+        removeButton.setTitle("移除", for: .normal)
+        removeButton.setTitleColor(BearyColors.gray, for: .normal)
+        removeButton.titleLabel?.font = UIFont.systemFont(ofSize: 13)
+        removeButton.tag = model.userId
+        removeButton.addTarget(self, action: #selector(removeAccountButtonTapped(_:)), for: .touchUpInside)
+        removeButton.bearyAddPressFeedback()
+        rowView.addSubview(removeButton)
+        NSLayoutConstraint.activate([
+            rowContent.topAnchor.constraint(equalTo: rowView.topAnchor),
+            rowContent.leadingAnchor.constraint(equalTo: rowView.leadingAnchor),
+            rowContent.trailingAnchor.constraint(equalTo: rowView.trailingAnchor, constant: -52),
+            rowContent.bottomAnchor.constraint(equalTo: rowView.bottomAnchor),
+            switchButton.topAnchor.constraint(equalTo: rowView.topAnchor),
+            switchButton.leadingAnchor.constraint(equalTo: rowView.leadingAnchor),
+            switchButton.trailingAnchor.constraint(equalTo: rowView.trailingAnchor, constant: -52),
+            switchButton.bottomAnchor.constraint(equalTo: rowView.bottomAnchor),
+            removeButton.centerYAnchor.constraint(equalTo: rowView.centerYAnchor),
+            removeButton.trailingAnchor.constraint(equalTo: rowView.trailingAnchor),
+            removeButton.widthAnchor.constraint(equalToConstant: 44),
+            removeButton.heightAnchor.constraint(equalToConstant: 44),
+        ])
+        return rowView
+    }
+
+    private func makeAddAccountRow() -> UIView {
+        let titleLabel = makeLabel(font: UIFont.systemFont(ofSize: 15), color: BearyColors.ink)
+        titleLabel.text = "添加账号"
+        let detailLabel = makeLabel(font: UIFont.systemFont(ofSize: 12), color: BearyColors.gray, lines: 0)
+        detailLabel.text = "登录另一个账号，当前账号保持登录"
+        let textStack = UIStackView(arrangedSubviews: [titleLabel, detailLabel])
+        textStack.axis = .vertical
+        textStack.spacing = 2
+        textStack.translatesAutoresizingMaskIntoConstraints = false
+        let content = UIStackView(arrangedSubviews: [textStack, makeRowSpacer(), makeRowChevron()])
+        content.axis = .horizontal
+        content.spacing = 8
+        content.alignment = .center
+        content.translatesAutoresizingMaskIntoConstraints = false
+        let addButton = UIButton(type: .system)
+        addButton.translatesAutoresizingMaskIntoConstraints = false
+        addButton.addTarget(self, action: #selector(addAccountButtonTapped), for: .touchUpInside)
+        addButton.bearyAddPressFeedback()
+        return makeSettingsTappableRow(content: content, button: addButton)
+    }
+
+    /// 有效账号数 = 保管库 + 尚未快照的当前账号（去重）；满 3 个即满额。
+    private func effectiveAccountCount() -> Int {
+        var ids = Set(BearyAccountVault.shared.loadAll().map { $0.userId })
+        if let currentId = SessionManager.shared.currentUser?.id ?? meUser?.id {
+            ids.insert(currentId)
+        }
+        return ids.count
+    }
+
+    @objc private func switchAccountButtonTapped(_ sender: UIButton) {
+        let accountIdValue = sender.tag
+        guard !isSwitchingAccount else { return }
+        if SessionManager.shared.currentUser?.id == accountIdValue {
+            return
+        }
+        isSwitchingAccount = true
+        SessionManager.shared.switchToAccount(userId: accountIdValue) { [weak self] result in
+            guard let self = self else { return }
+            self.isSwitchingAccount = false
+            switch result {
+            case .switched:
+                self.loadAll()
+                self.refreshAccountSwitchSection()
+            case .alreadyCurrent:
+                self.refreshAccountSwitchSection()
+            case .expired:
+                self.showToast("登录已过期，请重新登录")
+                self.openLoginForAccountSwitch()
+            case .network:
+                self.showToast("网络不稳定，请稍后再试")
+            case .failed, .unavailable:
+                self.showToast("切换失败，请稍后再试")
+            }
+        }
+    }
+
+    @objc private func addAccountButtonTapped() {
+        SessionManager.shared.snapshotCurrentAccount()
+        if effectiveAccountCount() >= BearyAccountVault.maxAccounts {
+            let alert = UIAlertController(title: "添加账号", message: "最多 3 个账号，先移除一个", preferredStyle: .alert)
+            alert.addAction(UIAlertAction(title: "知道了", style: .default))
+            present(alert, animated: BearyMotion.animated(true))
+            return
+        }
+        openLoginForAccountSwitch()
+    }
+
+    /// 添加 / 过期重登都走容器登录页（与 onRequireLogin 同路径）；容器
+    /// 未接线时页内模态兜底（编辑页同款），登录成功后刷新本页与列表。
+    private func openLoginForAccountSwitch() {
+        if let handler = onRequireLogin {
+            handler()
+            return
+        }
+        let loginVC = BearyLoginViewController()
+        loginVC.modalPresentationStyle = .fullScreen
+        loginVC.transitioningDelegate = SceneDelegate.chrome?.fadeRiseTransitionDelegate
+        loginVC.onCancelled = { [weak loginVC] in loginVC?.dismiss(animated: BearyMotion.animated(true)) }
+        loginVC.onLoggedIn = { [weak self, weak loginVC] in
+            loginVC?.dismiss(animated: BearyMotion.animated(true)) {
+                SessionManager.shared.refreshMe()
+                self?.loadAll()
+                self?.refreshAccountSwitchSection()
+            }
+        }
+        present(loginVC, animated: BearyMotion.animated(true))
+    }
+
+    @objc private func removeAccountButtonTapped(_ sender: UIButton) {
+        let accountIdValue = sender.tag
+        guard !isRemovingAccount else { return }
+        let isCurrent = SessionManager.shared.currentUser?.id == accountIdValue
+        let title = isCurrent ? "移除当前账号" : "移除账号"
+        let message = "该账号将在本设备退出登录，其他账号不受影响。"
+        let alert = UIAlertController(title: title, message: message, preferredStyle: .alert)
+        alert.addAction(UIAlertAction(title: "取消", style: .cancel))
+        alert.addAction(UIAlertAction(title: "移除", style: .destructive) { [weak self] _ in
+            guard let self = self else { return }
+            self.isRemovingAccount = true
+            SessionManager.shared.removeAccount(userId: accountIdValue) { [weak self] result in
+                guard let self = self else { return }
+                self.isRemovingAccount = false
+                switch result {
+                case .removed:
+                    self.refreshAccountSwitchSection()
+                case .removedAndSwitched:
+                    self.loadAll()
+                    self.refreshAccountSwitchSection()
+                case .removedAndLoggedOut:
+                    if let handler = self.onLoggedOut {
+                        handler()
+                    } else {
+                        self.onClose?()
+                    }
+                case .failed:
+                    self.showToast("退出失败，请重试")
+                }
+            }
+        })
+        present(alert, animated: BearyMotion.animated(true))
+    }
+
     /// 2026-10-29 第 12 项（合并 B）：退出登录 + 注销账户并入「账号操作」卡片，
     /// 仍列在设置页内（页底、版本脚注之上）。行为一字不动：退出仍走
     /// logoutButtonTapped（BearyAPI.logout + 清 cookie + 本地退出）；注销仍走
@@ -1253,6 +1553,10 @@ final class BearySettingsViewController: UIViewController {
                         self.setAccountActionDeleteHidden(userValue.isAdmin == true)
                         self.loadPlusDetail()
                         self.loadSessions()
+                        // 切换卡跟随用户信息刷新（首次进页时 viewWillAppear 已跑
+                        // 在异步 /me 之前，缓存路径靠 viewWillAppear、非缓存
+                        // 路径靠这里，否则卡片首屏缺失）。
+                        self.refreshAccountSwitchSection()
                     case .failure(let error):
                         if case .cancelled = error { return }
                         // 静默刷新失败：保持缓存内容不变，不显示 failureWrap。
@@ -1286,6 +1590,7 @@ final class BearySettingsViewController: UIViewController {
                     self.accountSecurityWrap.isHidden = false
                     self.accountActionWrap.isHidden = false
                     self.fillIdCard(user: userValue)
+                    self.refreshAccountSwitchSection()
                     // 注销入口：只用 /me 下发的 is_admin（服务端算出），客户端不写 id 判定；
                     // 服务端 403 admin_cannot_delete 仍是最终判定（见 delete 失败映射）。
                     // C3：注销行隐藏（行包容器 + 其前分隔线一并藏，见 setAccountActionDeleteHidden）。
