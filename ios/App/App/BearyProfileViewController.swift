@@ -5834,6 +5834,37 @@ class BearyProfileViewController: UIViewController {
         onInteractionChanged?(entryId, entry.likeCount, entry.likedByMe, entry.bookmarkedByMe, entry.emotes)
     }
 
+    /// 113 详情互动同步：详情 onInteractionChanged 此前只推 feed，本方法补个人页一路——
+    /// 日记/赞过/收藏三页签模型同改，当前展示行就地同步可见卡；
+    /// 赞过/收藏页签摘卡仍走 feed onInteractionRemoved 链路，本方法不摘卡
+    /// （防与该链路重复删行）；详情侧失败回滚口径不动。
+    func applyInteraction(entryId: String, likeCount: Int?, likedByMe: Bool?, bookmarkedByMe: Bool?, emotes: [EmoteCount]?) {
+        func patched(_ entry: Entry) -> Entry {
+            var copy = entry
+            if let value = likeCount { copy.likeCount = value }
+            if let value = likedByMe { copy.likedByMe = value }
+            if let value = bookmarkedByMe { copy.bookmarkedByMe = value }
+            if let value = emotes { copy.emotes = BearyEmoteOrder.merged(previous: copy.emotes, server: value) }
+            return copy
+        }
+        var updatedEntry: Entry?
+        for index in diaryEntries.indices where diaryEntries[index].id == entryId {
+            diaryEntries[index] = patched(diaryEntries[index])
+            updatedEntry = diaryEntries[index]
+        }
+        for index in likedEntries.indices where likedEntries[index].id == entryId {
+            likedEntries[index] = patched(likedEntries[index])
+            updatedEntry = likedEntries[index]
+        }
+        for index in savedEntries.indices where savedEntries[index].id == entryId {
+            savedEntries[index] = patched(savedEntries[index])
+            updatedEntry = savedEntries[index]
+        }
+        guard let entry = updatedEntry else { return }
+        // 当前展示行在屏内时就地同步（不在当前页签时模型已改，切过去即新值）。
+        _ = syncVisibleCell(entry: entry)
+    }
+
     private func updateEntryInAllTabs(entry: Entry) {
         guard let entryId = entry.id else { return }
         for index in diaryEntries.indices where diaryEntries[index].id == entryId {

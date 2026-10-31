@@ -2784,6 +2784,54 @@ class BearyTimelineViewController: UIViewController {
         }
     }
 
+    /// 113 详情互动同步：详情 onInteractionChanged 此前只推 feed，本方法补时间线一路——
+    /// timelineEntries / dayEntries / 日缓存三处模型同改，可见行足数重渲；
+    /// 详情侧失败回滚口径不动（本方法只写详情传来的确认值，不参与代次/回滚）。
+    /// 注意：详情回调不带 bookmarkCount（与 feed 同口径），时间线足行收藏数
+    /// 仍靠下次时间线重拉对齐；点赞数/已赞态/回应行可即时同步。
+    func applyInteraction(entryId: String, likeCount: Int?, likedByMe: Bool?, bookmarkedByMe: Bool?, emotes: [EmoteCount]?) {
+        func patched(_ entry: Entry) -> Entry {
+            var copy = entry
+            if let value = likeCount { copy.likeCount = value }
+            if let value = likedByMe { copy.likedByMe = value }
+            if let value = bookmarkedByMe { copy.bookmarkedByMe = value }
+            if let value = emotes { copy.emotes = BearyEmoteOrder.merged(previous: copy.emotes, server: value) }
+            return copy
+        }
+        var updated = false
+        for index in timelineEntries.indices where timelineEntries[index].id == entryId {
+            timelineEntries[index] = patched(timelineEntries[index])
+            updated = true
+        }
+        for index in dayEntries.indices where dayEntries[index].id == entryId {
+            dayEntries[index] = patched(dayEntries[index])
+            updated = true
+        }
+        for key in dayEntriesCache.keys {
+            var list = dayEntriesCache[key] ?? []
+            var listUpdated = false
+            for index in list.indices where list[index].id == entryId {
+                list[index] = patched(list[index])
+                listUpdated = true
+            }
+            if listUpdated {
+                dayEntriesCache[key] = list
+                updated = true
+            }
+        }
+        guard updated else { return }
+        // 可见行足数重渲（详情模态仍在前台，行不可见时此循环自然为空；
+        // 模型已改，滑回/关详情后 configure 取新值，不另整表重载）。
+        let sections = currentSections()
+        for sectionIndex in sections.indices {
+            for rowIndex in sections[sectionIndex].entries.indices where sections[sectionIndex].entries[rowIndex].id == entryId {
+                if let cell = tableView.cellForRow(at: IndexPath(row: rowIndex, section: sectionIndex)) as? BearyTimelineCell {
+                    cell.configure(entry: sections[sectionIndex].entries[rowIndex])
+                }
+            }
+        }
+    }
+
     /// B-G7 local sync patch: timeline and day panel are two independent decodes
     /// of the same entry (currentSections can show one id twice). After either
     /// source reloads, copy interaction/publication state into the other source so

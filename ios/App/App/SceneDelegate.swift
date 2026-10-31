@@ -3044,6 +3044,10 @@ final class BearyChromeViewController: UIViewController {
         }
         detail.onInteractionChanged = { [weak self] entryId, likeCount, liked, bookmarked, emotes in
             self?.feedVC?.applyInteraction(entryId: entryId, likeCount: likeCount, likedByMe: liked, bookmarkedByMe: bookmarked, emotes: emotes)
+            // 113：详情回调除推 feed 外，同步时间线与个人页自身卡片
+            // （失败回滚口径不动——详情侧仍按确认态回滚，本处只写确认值）。
+            self?.timelineVC?.applyInteraction(entryId: entryId, likeCount: likeCount, likedByMe: liked, bookmarkedByMe: bookmarked, emotes: emotes)
+            self?.profileVC?.applyInteraction(entryId: entryId, likeCount: likeCount, likedByMe: liked, bookmarkedByMe: bookmarked, emotes: emotes)
         }
         detail.onRequireLogin = { [weak self] in self?.presentLoginGate() }
         topmostViewController().present(detail, animated: BearyMotion.animated(true))
