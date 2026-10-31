@@ -476,6 +476,22 @@ class BearyEntryImageViewerViewController: UIViewController, UIGestureRecognizer
             if scale < 1.15 {
                 resetZoom(animated: true)
             } else {
+                // 清单 16：捏合结束重定平移基线。捏合期间 panChanged 因
+                // pinchActive 早退，pan 的 .began 仍是捏合前的旧基线；若此时
+                // pan 手势仍在进行（多指未松开，不会再有 .began），下一次
+                // .changed 会用旧基线 + 自 pan 开始累计的 translation 算 tx/ty，
+                // 而捏合期 clampPan 已动过 tx/ty，造成位移跳变。此处把基线
+                // 重定为“当前 tx/ty 减当前 translation”：重定瞬间 tx/ty 不变，
+                // 后续增量连续。只在 scale > 1 的平移模式且 pan 仍在进行时做
+                // （scale == 1 时 tx 直接等于 translation，无基线可言；pan 已
+                // 结束时不动，下次 .began 会重设）。时序注意：本重定以
+                // translation 自手势开始累计为前提（系统侧若在触点数变化时
+                // 自行重置 translation，则重定本身会引入跳变，真机须验此点）。
+                if let pan = panGesture, pan.state == .began || pan.state == .changed {
+                    let translation = pan.translation(in: view)
+                    panTx0 = tx - translation.x
+                    panTy0 = ty - translation.y
+                }
                 clampPan()
                 applyTransform(animated: true)
             }
