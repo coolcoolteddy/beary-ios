@@ -152,6 +152,8 @@ final class BearyLoginViewController: UIViewController {
         stackView.axis = .vertical
         stackView.spacing = 0
         // U2：滚动收键盘 + 点空白收键盘（点在输入框内时不收，见 dismissKeyboardOnBlankTap）。
+        // 116 后扫查：与广场/个人页同口径——关掉 delaysContentTouches，滚动容器里的点按立即响应，不等滚动判定。
+        scrollView.delaysContentTouches = false
         scrollView.keyboardDismissMode = .onDrag
         let blankTap = UITapGestureRecognizer(target: self, action: #selector(dismissKeyboardOnBlankTap(_:)))
         blankTap.cancelsTouchesInView = false
