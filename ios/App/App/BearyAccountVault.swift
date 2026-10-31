@@ -7,7 +7,7 @@ import Security
 // 的 token 必须在本设备另有一份可信副本。本文件就是这份副本的唯一出入口：
 // - 只走 Keychain（kSecClassGenericPassword），不放 UserDefaults、不放明文文件；
 // - 不可迁移（accessibleAfterFirstUnlockThisDeviceOnly），换设备不跟过去；
-// - 一个账号一项，account = "beary-account-<userId>"，按 userId 去重；
+// - 一个账号一项，account = "beary.acct.<userId>"，按 userId 去重；
 // - 只存 token 与列表展示用的名字/handle/邮箱/头像 URL，不存密码、验证码；
 // - 头像只存 http(s) 链接，data: 内联图一律不存（旧号 /me 的 avatar 可能是
 //   十几万字符的 data URL，塞钥匙串无收益；列表行无链接时显示首字母占位，
@@ -46,7 +46,7 @@ final class BearyAccountVault {
     static let maxAccounts = 3
 
     private let service = "com.teddyhn.beary.account-vault"
-    private let prefix = "beary-account-"
+    private let prefix = "beary.acct."
 
     private init() {}
 
