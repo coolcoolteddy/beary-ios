@@ -2705,11 +2705,12 @@ private class BearyNotificationCell: UITableViewCell {
         contentView.addSubview(chevronView)
         contentView.addSubview(separatorView)
         contentView.addSubview(nestedLineView)
-        // 行内边距 16/14 由 cell 自身承担（列宽已是满 600，见 contentView 注释）：
-        // 顶层行头像 x=20、未读点右 -20；嵌套行在此基础上再缩进（见 configure）。
-        avatarLeadingConstraint = avatarImageView.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 16)
+        // 行内边距 20/14 由 cell 自身承担（列宽已是满 600，见 contentView 注释；
+        // 32 清单第 5 项：头像 x 与未读点/箭头右距统一 20，与网页 .nt-item 对齐）：
+        // 顶层行头像 x=20、未读点右 -20、箭头右 -20；嵌套行在此基础上再缩进（见 configure）。
+        avatarLeadingConstraint = avatarImageView.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 20)
         separatorLeadingConstraint = separatorView.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 0)
-        dotTrailingToContentConstraint = unreadDotView.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -16)
+        dotTrailingToContentConstraint = unreadDotView.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -20)
         dotTrailingToChevronConstraint = unreadDotView.trailingAnchor.constraint(equalTo: chevronView.leadingAnchor, constant: -12)
         avatarLeadingConstraint?.isActive = true
         separatorLeadingConstraint?.isActive = true
@@ -2755,7 +2756,7 @@ private class BearyNotificationCell: UITableViewCell {
             unreadDotView.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 24),
             unreadDotView.widthAnchor.constraint(equalToConstant: 8),
             unreadDotView.heightAnchor.constraint(equalToConstant: 8),
-            chevronView.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -16),
+            chevronView.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -20),
             chevronView.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 18),
             chevronView.widthAnchor.constraint(equalToConstant: 16),
             chevronView.heightAnchor.constraint(equalToConstant: 16),
@@ -2813,7 +2814,7 @@ private class BearyNotificationCell: UITableViewCell {
         chevronView.isHidden = true
         chevronView.transform = CGAffineTransform.identity
         chevronView.image = nil
-        avatarLeadingConstraint?.constant = 16
+        avatarLeadingConstraint?.constant = 20
         separatorLeadingConstraint?.constant = 0
         nestedLineView.isHidden = true
         unreadBgView.backgroundColor = .clear
@@ -2923,7 +2924,7 @@ private class BearyNotificationCell: UITableViewCell {
         chevronView.transform = expanded ? CGAffineTransform(rotationAngle: CGFloat.pi) : CGAffineTransform.identity
         dotTrailingToContentConstraint?.isActive = false
         dotTrailingToChevronConstraint?.isActive = true
-        avatarLeadingConstraint?.constant = 16
+        avatarLeadingConstraint?.constant = 20
         separatorLeadingConstraint?.constant = 0
         nestedLineView.isHidden = true
     }
@@ -2985,7 +2986,7 @@ private class BearyNotificationCell: UITableViewCell {
         // 竖线本身 x=20（margin 起点）不变。
         // 补缺 P3-37：嵌套头像 x 按文件头注释口径（网页 .nt-sysin：头像 x=50、分隔线起于 30）统一为 50；
         // 真实像素未经真机截图量取，待 Li 真机核实（不得以本值冒充实测值）。
-        avatarLeadingConstraint?.constant = nested ? 50 : 16
+        avatarLeadingConstraint?.constant = nested ? 50 : 20
         separatorLeadingConstraint?.constant = nested ? 30 : 0
         nestedLineView.isHidden = !nested
         chevronView.isHidden = true
