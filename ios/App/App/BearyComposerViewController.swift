@@ -6780,6 +6780,15 @@ extension BearyComposerViewController {
             if sanitized == text { return true }
             let mutable = NSMutableAttributedString(attributedString: current)
             mutable.replaceCharacters(in: range, with: sanitized)
+            // 手动塞入的纯文本绝不能带心情记号属性：replaceCharacters 塞纯
+            // 字符串时会继承落点旁的字符属性，紧贴熊脸附件粘贴时粘入的文字
+            // 可能带上 inlineMoodKeyAttribute，发出时整段会被转成一个记号、
+            // 原文字静默丢失；此处把插入段清成标题正文属性。
+            let inserted = NSRange(location: range.location, length: sanitized.count)
+            if inserted.length > 0 {
+                mutable.removeAttribute(BearyText.inlineMoodKeyAttribute, range: inserted)
+                mutable.addAttributes([.font: headlineFont, .foregroundColor: BearyColors.ink], range: inserted)
+            }
             headlineField.attributedText = mutable
             headlineField.typingAttributes = [.font: headlineFont, .foregroundColor: BearyColors.ink]
             headlineField.selectedRange = NSRange(location: range.location + sanitized.count, length: 0)
@@ -6791,6 +6800,12 @@ extension BearyComposerViewController {
         let kept = String(sanitized.prefix(remaining))
         let mutable = NSMutableAttributedString(attributedString: current)
         mutable.replaceCharacters(in: range, with: kept)
+        // 同上：超限分支手动塞入段同样清掉可能继承的心情记号属性。
+        let inserted = NSRange(location: range.location, length: kept.count)
+        if inserted.length > 0 {
+            mutable.removeAttribute(BearyText.inlineMoodKeyAttribute, range: inserted)
+            mutable.addAttributes([.font: headlineFont, .foregroundColor: BearyColors.ink], range: inserted)
+        }
         headlineField.attributedText = mutable
         headlineField.typingAttributes = [.font: headlineFont, .foregroundColor: BearyColors.ink]
         headlineField.selectedRange = NSRange(location: range.location + kept.count, length: 0)
