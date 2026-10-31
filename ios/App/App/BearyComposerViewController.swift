@@ -5047,7 +5047,13 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         selectedMood = entry.mood
         refreshMoodButtons()
         selectedWeather = entry.weather
-        selectedTemperature = entry.temperatureC
+        // 气温只首次回填：补拉二次调用 setupEditContent 时用户可能已在加载
+        // 期间手改气温，无条件重填会把手改静默盖回服务端旧值；与位置/@ 的
+        // editQuoteFetchAttempted 守卫同款口径（天气类型沿用旧无条件口径，
+        // 本支不动，避免扩大范围）。
+        if !editQuoteFetchAttempted {
+            selectedTemperature = entry.temperatureC
+        }
         refreshWeatherButtons()
         refreshSelectedChips()
         // 批 E：编辑回填位置（首次回填才以服务端原值为准；补拉二次调用时用户可能已改选，
