@@ -383,6 +383,10 @@ final class BearyDevicesViewController: BearySettingsSubpageViewController {
     /// 109：同会员来源明细页——重试在途锁 + 代次，防连点多发与过期回包覆盖。
     private var isRetrying = false
     private var retryGeneration = 0
+    /// 116：设备行入场错峰只播一次（首个数据 render 且已进窗口时）；
+    /// 传入数据首帧（viewDidLoad 时窗口未进）不播、直接显；失败／
+    /// 加载态 render 不置位，重试成功后仍可播一次。
+    private var deviceRowsAnimated = false
 
     /// 设置页已拉到的 sessions 传入；为 nil 且未失败时本页自己拉一次。
     /// 退出其他设备钮不进本页，仍留在设置页（任务只说列表另做一页）。
@@ -427,9 +431,11 @@ final class BearyDevicesViewController: BearySettingsSubpageViewController {
             contentStack.removeArrangedSubview(view)
             view.removeFromSuperview()
         }
+        var countLabelView: UILabel?
         if let count = countText {
             let countLabel = makeLabel(font: UIFont.systemFont(ofSize: 13), color: BearyColors.gray, lines: 0)
             countLabel.text = count
+            countLabelView = countLabel
             contentStack.addArrangedSubview(countLabel)
         }
         var rows: [UIView] = []
@@ -470,6 +476,33 @@ final class BearyDevicesViewController: BearySettingsSubpageViewController {
             rows.append(emptyLabel)
         }
         contentStack.addArrangedSubview(makeGroupCard(title: nil, rows: rows))
+        // 116：设备行数据到达时错峰滑入（alpha＋y+6、0.25s、0.03 步进；
+        // 行每次 render 重建，故以首个数据 render＋已进窗口为播一次的
+        // 守卫；传入数据首帧因窗口未进不播、直接显；加载／失败态
+        // render 不置位，重试成功后仍可播一次；减动效直显；目标
+        // alpha 按行原值取——过期行 0.55 不会被动画抬到 1）。
+        if !deviceRowsAnimated, sessions != nil, !loadFailed,
+           view.window != nil, !UIAccessibility.isReduceMotionEnabled {
+            deviceRowsAnimated = true
+            // 116：计数文案随数据到达只淡入本身（无位移）。
+            if let countLabelView = countLabelView {
+                countLabelView.alpha = 0
+                UIView.animate(withDuration: 0.25, delay: 0, options: [.curveEaseOut], animations: {
+                    countLabelView.alpha = 1
+                })
+            }
+            var delay: TimeInterval = 0
+            for row in rows {
+                let targetAlpha = row.alpha
+                row.alpha = 0
+                row.transform = CGAffineTransform(translationX: 0, y: 6)
+                UIView.animate(withDuration: 0.25, delay: delay, options: [.curveEaseOut], animations: {
+                    row.alpha = targetAlpha
+                    row.transform = .identity
+                })
+                delay += 0.03
+            }
+        }
     }
 
     /// 设置页 rebuildSessions 同款行格式：设备名 15 墨 + 当前绿 pill
