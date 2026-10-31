@@ -1013,6 +1013,7 @@ final class BearyTimelineCell: UITableViewCell {
 
         thumbsScrollView.translatesAutoresizingMaskIntoConstraints = false
         thumbsScrollView.showsHorizontalScrollIndicator = false
+        thumbsScrollView.delaysContentTouches = false
         thumbsStack.translatesAutoresizingMaskIntoConstraints = false
         thumbsStack.axis = .horizontal
         // 主图条：网页 tl-item grabrow / 广场卡口径——216 高、间距 8、圆角 12、
@@ -1081,6 +1082,7 @@ final class BearyTimelineCell: UITableViewCell {
         quoteThumbsStack.spacing = 5
         quoteThumbsScrollView.translatesAutoresizingMaskIntoConstraints = false
         quoteThumbsScrollView.showsHorizontalScrollIndicator = false
+        quoteThumbsScrollView.delaysContentTouches = false
         quoteThumbsScrollView.isHidden = true
         quoteThumbsScrollView.addSubview(quoteThumbsStack)
         NSLayoutConstraint.activate([

@@ -282,6 +282,7 @@ final class BearyDetailViewController: UIViewController {
         let sv = UIScrollView()
         sv.translatesAutoresizingMaskIntoConstraints = false
         sv.showsHorizontalScrollIndicator = false
+        sv.delaysContentTouches = false
         sv.isHidden = true
         return sv
     }()

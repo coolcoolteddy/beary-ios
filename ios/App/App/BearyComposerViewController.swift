@@ -792,6 +792,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         // delegate，不受此影响；天气/图片横向滚动区各有自己的滚动视图，
         // scrollViewDidScroll 里只认外层 scrollView。
         scrollView.delegate = self
+        scrollView.delaysContentTouches = false
         scrollView.keyboardDismissMode = .onDrag
         let dismissTap = UITapGestureRecognizer(target: self, action: #selector(dismissKeyboardTap))
         dismissTap.cancelsTouchesInView = false
@@ -2833,6 +2834,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
 
     private func buildImageRow() {
         imageScrollView.showsHorizontalScrollIndicator = false
+        imageScrollView.delaysContentTouches = false
         imageStackView.axis = .horizontal
         imageStackView.spacing = 8
         imageStackView.alignment = .center
