@@ -1836,6 +1836,10 @@ class BearyDiaryCardCell: UITableViewCell {
     // MARK: - 图片条（94 包槽位复用，两页同款；失败重试 Feed 口径）
 
     private func renderImages(keys: [String], dims: [String: [Int]]?) {
+        // 112：卡片图片条上限 9 张（详情侧同款 Array(allKeys.prefix(9))）。
+        // 脏数据超 9 张时先截断再渲染，灯箱 keys 同步取截断后列表，
+        // 第 10 张起既不渲染也不进灯箱；逐项再 guard 三池下标，防池化异常越界。
+        let keys = Array(keys.prefix(9))
         currentImageKeys = keys
         if imageSlots.isEmpty { makeImageSlots() }
         if keys.isEmpty {
@@ -1854,6 +1858,9 @@ class BearyDiaryCardCell: UITableViewCell {
         imagesScrollView.isHidden = false
         imageHeightConstraint?.constant = 216
         for (imageIndex, imageKey) in keys.enumerated() {
+            // 详情侧同款守卫：槽位池、重试钮池、宽约束池须同下标，任一池短了都跳过该图、不下标越界。
+            guard imageIndex < imageSlots.count, imageIndex < imageSlotRetryButtons.count,
+                  imageIndex < imageSlotWidthConstraints.count else { continue }
             let slot = imageSlots[imageIndex]
             slot.tag = imageIndex
             let strip = stripWidth(forKey: imageKey, dims: dims, height: 216)
