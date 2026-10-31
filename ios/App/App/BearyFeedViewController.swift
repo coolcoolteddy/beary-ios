@@ -1816,6 +1816,18 @@ class BearyFeedViewController: UIViewController {
             let reported = BearyReportedStore.isReported(entryId: entryId)
             sheet.addAction(UIAlertAction(title: reported ? "已举报" : "举报", style: .default, handler: reported ? nil : { [weak self] _ in
                 guard let strongSelf = self else { return }
+                // 扫荡 D：服务端举报要求登录（未登录调 POST /beary/api/reports 必 401）。
+                // 此前游客点 ⋯ → 举报 → 选完理由才收到“举报失败，请重试”，等于让用户
+                // 白走一趟理由选择；现与卡片点赞/收藏未登录口径对齐：登录态未知先给
+                // 网络不稳定 toast，未登录直接走容器登录门，登录后才进举报流程。
+                if SessionManager.shared.authUnknown {
+                    BearyToast.show(in: strongSelf.view, message: "网络不稳定，请稍后再试")
+                    return
+                }
+                if !SessionManager.shared.isLoggedIn {
+                    strongSelf.onRequireLogin?()
+                    return
+                }
                 BearyReportFlow.present(from: strongSelf, entryId: entryId, entryLabel: nil)
             }))
             if reported {
