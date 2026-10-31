@@ -3814,29 +3814,6 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
 
     // MARK: - 正文与字数
 
-extension BearyComposerViewController: UITextFieldDelegate {
-    /// 109 标题输入 delegate（新写）：回车跳正文；30 字封顶（组词中不拦）。
-    func textFieldShouldReturn(_ textField: UITextField) -> Bool {
-        if textField === headlineField {
-            textView.becomeFirstResponder()
-            return true
-        }
-        return true
-    }
-
-    func textField(_ textField: UITextField, shouldChangeCharactersIn range: NSRange, replacementString string: String) -> Bool {
-        guard textField === headlineField else { return true }
-        if textField.markedTextRange != nil { return true }
-        let current = textField.text ?? ""
-        guard let swiftRange = Range(range, in: current) else { return true }
-        let updated = current.replacingCharacters(in: swiftRange, with: string)
-        if updated.count <= Self.headlineMaxLength { return true }
-        textField.text = String(updated.prefix(Self.headlineMaxLength))
-        headlineDidChange()
-        return false
-    }
-}
-
     func textViewDidChange(_ textView: UITextView) {
         updateCountLabel()
         updatePublishState()
@@ -6158,5 +6135,28 @@ extension BearyComposerViewController: BearyTimeCapsuleRowViewDelegate {
     func timeCapsuleRowDidChangeDate(_ date: Date) {
         capsuleUnlockDate = date
         scheduleDraftSave()
+    }
+}
+
+extension BearyComposerViewController: UITextFieldDelegate {
+    /// 109 标题输入 delegate（新写）：回车跳正文；30 字封顶（组词中不拦）。
+    func textFieldShouldReturn(_ textField: UITextField) -> Bool {
+        if textField === headlineField {
+            textView.becomeFirstResponder()
+            return true
+        }
+        return true
+    }
+
+    func textField(_ textField: UITextField, shouldChangeCharactersIn range: NSRange, replacementString string: String) -> Bool {
+        guard textField === headlineField else { return true }
+        if textField.markedTextRange != nil { return true }
+        let current = textField.text ?? ""
+        guard let swiftRange = Range(range, in: current) else { return true }
+        let updated = current.replacingCharacters(in: swiftRange, with: string)
+        if updated.count <= Self.headlineMaxLength { return true }
+        textField.text = String(updated.prefix(Self.headlineMaxLength))
+        headlineDidChange()
+        return false
     }
 }
