@@ -296,9 +296,15 @@ enum BearyProfilePersonalLogic {
             dayCounts[day, default: 0] += 1
             dayChars[day, default: 0] += (entry.content ?? "").count
             if let hour = parts.hour, let minute = parts.minute {
+                // 平手取最早日期：输入按 createdAt 降序（yearEntries 新→旧），
+                // 只比大小会留住先遇到的最晚一天，故钟点相等时再比日期、
+                // 更早的才替换；其余两项（篇数/字数）已按日期升序扫、用严格 >
+                // 取最早，口径与它们一致。
                 let isLater = latestHour == nil
                     || hour > (latestHour ?? 0)
                     || (hour == (latestHour ?? 0) && minute > (latestMinute ?? 0))
+                    || (hour == (latestHour ?? 0) && minute == (latestMinute ?? 0)
+                        && latestDate.map { day < $0 } ?? true)
                 if isLater {
                     latestHour = hour
                     latestMinute = minute
