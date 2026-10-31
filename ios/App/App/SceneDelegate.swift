@@ -142,6 +142,11 @@ final class BearyChromeViewController: UIViewController {
     private var bottomBlurView: UIVisualEffectView?
     /// 分段器 touchDown 瞬间记录的旧选段（供重拍手势与 valueChanged 时序竞态判定用）。
     private var segmentIndexAtTouchDown: Int = -1
+    /// 同 tab 连点刷新：上一拍重拍的页、时间、上一拍是否只回了顶（未刷新）。
+    /// 第二下在 0.35s 内点同 tab 时直接刷新，不等回顶动画走完（见 retapCurrentPage）。
+    private var lastRetapPage: ContainerPage?
+    private var lastRetapTime = Date.distantPast
+    private var lastRetapDidScrollToTop = false
     private var fabButton: UIButton!
     /// FAB 玻璃化容器（阴影载体 + 玻璃 + 按钮三层；拖动时容器只平移跟手指，
     /// 形变改玻璃与阴影的尺寸约束——55 批只改容器 transform 时真机上玻璃边缘
@@ -1702,6 +1707,54 @@ final class BearyChromeViewController: UIViewController {
         }
     }
 
+    /// 同 tab 重拍统一口径（广场／消息／时间线／我页共用，搜索页无刷新入口不走这里）：
+    /// 1. 已在顶部 → 直接刷新（旧口径不动）；
+    /// 2. 不在顶部、上一拍是同 tab 回顶且在 0.35s 内又点 → 第二下直接刷新，
+    ///    不等回顶动画走完：先无动画贴顶（取消在途滚动动画），再调该页已有刷新入口，
+    ///    回顶动画与刷新动画不打架；
+    /// 3. 其余情况 → 只回顶，不刷新（旧口径不动）。
+    /// 在途锁：刷新进行中（各页 isRefreshingForRetap）再点一律不重复触发、不回顶，
+    /// 各页刷新入口自身的在途守卫是第二道（见各页 isRefreshingForRetap 注释）。
+    private func retapCurrentPage(
+        _ page: ContainerPage,
+        pageVC: UIViewController?,
+        isAtTop: Bool,
+        isRefreshing: Bool,
+        scrollToTop: () -> Void,
+        refresh: () -> Void
+    ) {
+        let now = Date()
+        if isRefreshing {
+            // 刷新进行中：不更新连点记录——窗口自然过期，刷新结束后的点按按新一拍算。
+            return
+        }
+        if isAtTop {
+            refresh()
+            lastRetapPage = page
+            lastRetapTime = now
+            lastRetapDidScrollToTop = false
+            return
+        }
+        let isDoubleTap = lastRetapPage == page && lastRetapDidScrollToTop
+            && now.timeIntervalSince(lastRetapTime) <= 0.35
+        if isDoubleTap {
+            // 无动画贴顶：直接置 contentOffset 会取消在途的 animated 回顶，
+            // 再刷新时自定义下拉头（84pt 进场）不再与回顶动画抢 offset。
+            if let scrollView = pageScrollView(pageVC) {
+                scrollView.setContentOffset(CGPoint(x: 0, y: -scrollView.contentInset.top), animated: false)
+            }
+            refresh()
+            lastRetapPage = page
+            lastRetapTime = now
+            lastRetapDidScrollToTop = false
+            return
+        }
+        scrollToTop()
+        lastRetapPage = page
+        lastRetapTime = now
+        lastRetapDidScrollToTop = true
+    }
+
     /// 原生页切换：首页与新页均为常驻子 VC（hide/show 保留滚动位置）。
     /// 重拍当前 tab：首页先回顶再刷新（与网页 topThen 同口径），消息页回顶再刷新，时间线重拉。
     private func showPage(_ page: ContainerPage) {
@@ -1750,30 +1803,34 @@ final class BearyChromeViewController: UIViewController {
         }
         if page == currentPage {
             // 再点当前 tab（Li 新口径，覆盖旧“回顶再刷新”无条件一起做）：
-            // 不在顶部只回顶，已在顶部（offset 在顶部容差内）才触发该页已有刷新入口。
+            // 不在顶部只回顶，已在顶部（offset 在顶部容差内）才触发该页已有刷新入口；
+            // 同 tab 0.35s 内连点两下，第二下直接刷新（见 retapCurrentPage）。
             // 切别的 tab 仍走下方正常切换，不触发任何刷新、不重拉缓存。
             if page == .home {
                 guard let feed = feedVC else { return }
-                if feed.isAtTop { feed.refreshFeed() } else { feed.scrollToTop() }
+                retapCurrentPage(.home, pageVC: feed, isAtTop: feed.isAtTop, isRefreshing: feed.isRefreshingForRetap, scrollToTop: { feed.scrollToTop() }, refresh: { feed.refreshFeed() })
             } else if page == .notif {
                 if let notifications = notifVC {
-                    if notifications.isAtTop { notifications.refresh() } else { notifications.scrollToTop() }
+                    retapCurrentPage(.notif, pageVC: notifications, isAtTop: notifications.isAtTop, isRefreshing: notifications.isRefreshingForRetap, scrollToTop: { notifications.scrollToTop() }, refresh: { notifications.refresh() })
                 }
             } else if page == .timeline {
                 if let timeline = timelineVC {
                     // 账号隔离 9 号：刷新分支保留选中日与旧内容（与下拉刷新同口径），
                     // 不再先清空闪白；登录翻转等其他调用点仍走默认清表路径。
-                    if timeline.isAtTop { timeline.reloadTimeline(keepSelectedDay: true) } else { timeline.scrollToTop() }
+                    retapCurrentPage(.timeline, pageVC: timeline, isAtTop: timeline.isAtTop, isRefreshing: timeline.isRefreshingForRetap, scrollToTop: { timeline.scrollToTop() }, refresh: { timeline.reloadTimeline(keepSelectedDay: true) })
                 }
             } else if page == .me {
                 // F5：回顶走 scrollPageToTop，见该函数注释。
-                if isPageAtTop(profileVC) { profileVC?.reloadProfile() } else { scrollPageToTop(profileVC) }
+                retapCurrentPage(.me, pageVC: profileVC, isAtTop: isPageAtTop(profileVC), isRefreshing: profileVC?.isRefreshingForRetap ?? false, scrollToTop: { [weak self] in self?.scrollPageToTop(profileVC) }, refresh: { profileVC?.reloadProfile() })
             } else if page == .search {
-                // F5：重拍搜索页回顶。
+                // F5：重拍搜索页回顶——搜索页无下拉刷新入口，不硬加刷新。
                 scrollPageToTop(searchVC)
             }
             return
         }
+        // 切到别的 tab：连点记录作废——回原 tab 后是新一拍，不沿用上一拍的回顶窗口。
+        lastRetapPage = nil
+        lastRetapDidScrollToTop = false
         let previousPage = currentPage
         // 淡入复加（Li 拍板，0.14s 只做透明度）：先记下离场页视图，暂不立即隐藏，
         // 下方与入场页做交叉淡入；减动效时仍走旧的即时显隐。M4 删的是整页淡入+滑动，
