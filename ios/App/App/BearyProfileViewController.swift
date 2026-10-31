@@ -159,6 +159,19 @@ struct BearyProfilePhotoItem {
     var imageKey: String
 }
 
+/// 110：个人页表专用滚动视图。个人页表 delaysContentTouches=false
+/// （按钮按下立即响应）时，从照片墙按钮（大面积 UIControl）上起滑会
+/// 滑不动——系统默认 touchesShouldCancel 对 UIControl 返回 false，
+/// 手指先按住图片再拖动时滚动视图抢不到触摸（BearyCalloutPicker 横滑条
+/// 同款先例，见该文件注释）。本子类一律返回 true：拖动即取消按钮跟踪
+/// 并滚动，点按不动仍正常触发 touchUpInside；照片按钮本就无长按行为，
+/// 点按与长按原有行为不变。只改本页表，不动首页/时间线表。
+final class BearyProfileTableView: UITableView {
+    override func touchesShouldCancel(in view: UIView) -> Bool {
+        return true
+    }
+}
+
 class BearyProfileViewController: UIViewController {
 
     /// 列表行点按：传整条 Entry，容器接线到详情页。
@@ -420,7 +433,7 @@ class BearyProfileViewController: UIViewController {
     // MARK: - 列表
 
     private lazy var tableView: UITableView = {
-        let tableViewValue = UITableView(frame: .zero, style: .plain)
+        let tableViewValue = BearyProfileTableView(frame: .zero, style: .plain)
         tableViewValue.translatesAutoresizingMaskIntoConstraints = false
         tableViewValue.backgroundColor = BearyColors.bg
         tableViewValue.separatorStyle = .none
