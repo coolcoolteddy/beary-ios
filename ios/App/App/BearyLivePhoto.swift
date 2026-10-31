@@ -194,6 +194,11 @@ final class BearyLivePhotoView: UIView {
                 self.liveView.livePhoto = photo
                 self.isHidden = false
             } else {
+                // 失败不留 currentLiveKey：否则下次同 key 再 configure 会命中
+                // 「同 key 不重复加载」直接 return，弱网抖动后实况永远不再出现，
+                // 只能靠滑走复用清掉；清掉后下次 configure 重新加载（加载中
+                // 的同 key 调用仍由 token＋currentLiveKey 守门，不会重复拉）。
+                self.currentLiveKey = nil
                 self.isHidden = true
             }
         }
