@@ -33,7 +33,10 @@ class BearySettingsSubpageViewController: UIViewController {
         view.backgroundColor = BearyColors.bg
         let topBar = UIView()
         topBar.translatesAutoresizingMaskIntoConstraints = false
-        let closeButton = UIButton(type: .custom)
+        // 109：子页壳关闭钮改 BearyHit44Button——视觉（15pt 墨字、无尺寸约束）
+        // 不变，仅 point(inside:) 把热区扩到 44pt；对照组设置主页/法律页/
+        // 诊断页/拉黑页关闭钮均为 BearyHit44Button，本壳此前是普通钮（约 30×18pt）。
+        let closeButton = BearyHit44Button(type: .custom)
         closeButton.translatesAutoresizingMaskIntoConstraints = false
         closeButton.setTitle("关闭", for: .normal)
         closeButton.setTitleColor(BearyColors.ink, for: .normal)
@@ -305,7 +308,8 @@ final class BearyPlusGrantsViewController: BearySettingsSubpageViewController {
             let failedLabel = makeLabel(font: UIFont.systemFont(ofSize: 14), color: BearyColors.gray, lines: 0)
             failedLabel.text = "加载失败"
             grantRows.append(failedLabel)
-            let retryButton = UIButton(type: .system)
+            // 109：失败态重试钮同改 BearyHit44Button——文案与布局不变，仅热区扩到 44pt。
+            let retryButton = BearyHit44Button(type: .system)
             retryButton.translatesAutoresizingMaskIntoConstraints = false
             retryButton.setTitle("重试", for: .normal)
             retryButton.setTitleColor(BearyColors.ink, for: .normal)
@@ -440,7 +444,8 @@ final class BearyDevicesViewController: BearySettingsSubpageViewController {
             let failedLabel = makeLabel(font: UIFont.systemFont(ofSize: 14), color: BearyColors.gray, lines: 0)
             failedLabel.text = "加载失败"
             rows.append(failedLabel)
-            let retryButton = UIButton(type: .system)
+            // 109：失败态重试钮同改 BearyHit44Button——文案与布局不变，仅热区扩到 44pt。
+            let retryButton = BearyHit44Button(type: .system)
             retryButton.translatesAutoresizingMaskIntoConstraints = false
             retryButton.setTitle("重试", for: .normal)
             retryButton.setTitleColor(BearyColors.ink, for: .normal)
