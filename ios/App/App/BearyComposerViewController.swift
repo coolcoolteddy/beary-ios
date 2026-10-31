@@ -269,7 +269,10 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     private let topBar = UIView()
     private let cancelButton = UIButton(type: .system)
     private let titleLabel = UILabel()
-    private let publishButton = UIButton(type: .system)
+    // 109：发布 pill 改 BearyHit44Button——视觉高仍钉死 36、圆角 18 与文案不动，
+    // 仅 point(inside:) 把热区扩到 44（同栏其余三钮均为 44；此前普通钮高 36，
+    // 上下各缺 4pt 可点区）。不要把视觉高改成 44。
+    private let publishButton = BearyHit44Button(type: .system)
     private let publishRingView = UIImageView()
     private let topSeparator = UIView()
     private let scrollView = UIScrollView()
@@ -5301,6 +5304,12 @@ extension BearyComposerViewController: UITextFieldDelegate {
     /// 发布、丢弃都只针对这一篇（currentDraftId 已切到该篇）。
     private func loadDraftFromBox(_ draft: BearyDraft) {
         if isEditMode { return }
+        // 109：切篇先重置草稿状态——此前全程不碰 draftStatusLevel、不调
+        // updateDraftStatusLabel()，工具栏状态行残留上一篇文案；对照组
+        // resetEditorToBlank()/clearDraftAndFiles() 都会清状态并刷新。
+        // 只清状态行，不改草稿保存逻辑（currentDraftId 等恢复原样走下文）。
+        draftStatusLevel = nil
+        updateDraftStatusLabel()
         draftTimer?.invalidate()
         removeAllImageViews()
         currentDraftId = draft.draftId
