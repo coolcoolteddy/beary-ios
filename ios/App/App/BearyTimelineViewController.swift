@@ -2290,7 +2290,10 @@ class BearyTimelineViewController: UIViewController {
     private var headerStack: UIStackView?
     private var lastHeaderWidth: CGFloat = 0
 
-    private let loadMoreButton = UIButton(type: .system)
+    // 112：脚部“加载更多”改 BearyHit44Button——旧 plain UIButton 无高度约束，
+    // 实际可点高度仅标题约 20pt，holder 上下各约 12pt 点按无反应。
+    // 视觉字号/文案不动（viewDidLoad 里 14pt 与颜色原样保留）。
+    private let loadMoreButton = BearyHit44Button(type: .system)
     private let footerSpinner = BearyRefreshIconView()
 
     // MARK: - 生命周期
@@ -5117,9 +5120,14 @@ class BearyTimelineViewController: UIViewController {
         let holder = UIView(frame: CGRect(x: 0, y: 0, width: tableView.bounds.width, height: 44))
         button.translatesAutoresizingMaskIntoConstraints = false
         holder.addSubview(button)
+        // 112：按钮本身铺满脚部行——高钉死 44、左右贴 holder 边缘，标题仍居中。
+        // 只换类不够：BearyHit44Button 只扩 <44 的轴，标题宽已超 44 时横向不扩，
+        // 标题外左右区域仍点不到；holder 高度不动（不是只把 holder 加高糊弄）。
         NSLayoutConstraint.activate([
-            button.centerXAnchor.constraint(equalTo: holder.centerXAnchor),
+            button.leadingAnchor.constraint(equalTo: holder.leadingAnchor),
+            button.trailingAnchor.constraint(equalTo: holder.trailingAnchor),
             button.centerYAnchor.constraint(equalTo: holder.centerYAnchor),
+            button.heightAnchor.constraint(equalToConstant: 44),
         ])
         return holder
     }
