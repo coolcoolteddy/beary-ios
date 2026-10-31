@@ -689,13 +689,13 @@ class BearyFeedViewController: UIViewController {
     /// F1：图片查看器统一复用 BearyEntryImageViewerViewController（自定义
     /// pinch＋双击、失败重试），不再用本文件内旧版。
     /// presented 守卫 + 本动作导航节流（0.8 秒，独立时钟，不与进详情共用），防连点叠页（E4）。
-    private func presentImageViewer(imageKeys: [String], startIndex: Int) {
+    private func presentImageViewer(imageKeys: [String], startIndex: Int, liveVideos: [String: String]? = nil) {
         if imageKeys.isEmpty { return }
         if presentedViewController != nil { return }
         let now = Date()
         if let last = lastImageViewerAt, now.timeIntervalSince(last) < 0.8 { return }
         lastImageViewerAt = now
-        let viewer = BearyEntryImageViewerViewController(imageKeys: imageKeys, startIndex: startIndex)
+        let viewer = BearyEntryImageViewerViewController(imageKeys: imageKeys, liveVideos: liveVideos, startIndex: startIndex)
         viewer.modalPresentationStyle = .fullScreen
         present(viewer, animated: !UIAccessibility.isReduceMotionEnabled, completion: nil)
     }
@@ -1681,7 +1681,7 @@ class BearyFeedViewController: UIViewController {
         // F1：点图进本文件内图片查看器（带起始下标），不再进详情。
         cell.onImageTapped = { [weak self] index in
             let keys = entry.images ?? []
-            self?.presentImageViewer(imageKeys: keys, startIndex: index)
+            self?.presentImageViewer(imageKeys: keys, startIndex: index, liveVideos: entry.liveVideos)
         }
         // F2：引用卡点按经容器走 gotoEntry 等价（容器先 fetchEntry 校验可见性再放行，私密显占位）。
         cell.onQuoteSelected = { [weak self] quoteId in

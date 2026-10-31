@@ -31,6 +31,7 @@
 // 新交互面禁用 tap 高亮与焦点描边。
 
 import UIKit
+import Photos
 
 /// 详情限时虚线边框视图（116 详情框修）：自身按 bounds 重画虚线路径，
 /// 不再由控制器在布局时手动算矩形——右列高度落定（引用加载、回应行出现）
@@ -298,6 +299,9 @@ final class BearyDetailViewController: UIViewController {
     private var imageSlots: [UIImageView] = []
     private var imageSlotWidthConstraints: [NSLayoutConstraint] = []
     private var imageSlotRetryButtons: [BearyFeedRetryButton] = []
+    /// 实况覆盖层与长按手势（卡片同款：平时隐藏、长按播实况、点按进灯箱不动）。
+    private var imageSlotLiveViews: [BearyLivePhotoView] = []
+    private var imageSlotLivePresses: [UILongPressGestureRecognizer?] = []
     /// 批 E 详情位置行：官方 icon_location 13 灰 + 位置文案，作者本人看自己公开篇时
     /// 下方挂橙色提示；无位置/他人视角无区级时整组隐藏，不留空行（与卡片同口径）。
     private let detailLocationIconView: UIImageView = {
@@ -793,6 +797,16 @@ final class BearyDetailViewController: UIViewController {
             slot.tag = index
             slot.addGestureRecognizer(UITapGestureRecognizer(target: self, action: #selector(imageTapped(_:))))
             slot.isHidden = true
+            let liveView = BearyLivePhotoView(contentMode: .aspectFill)
+            slot.addSubview(liveView)
+            NSLayoutConstraint.activate([
+                liveView.topAnchor.constraint(equalTo: slot.topAnchor),
+                liveView.bottomAnchor.constraint(equalTo: slot.bottomAnchor),
+                liveView.leadingAnchor.constraint(equalTo: slot.leadingAnchor),
+                liveView.trailingAnchor.constraint(equalTo: slot.trailingAnchor),
+            ])
+            imageSlotLiveViews.append(liveView)
+            imageSlotLivePresses.append(nil)
             imagesStack.addArrangedSubview(slot)
             let widthConstraint = slot.widthAnchor.constraint(equalToConstant: 280)
             imageSlotWidthConstraints.append(widthConstraint)
@@ -1319,6 +1333,7 @@ final class BearyDetailViewController: UIViewController {
                     imageSlotRetryButtons[slotIndex].isHidden = true
                     imageSlotRetryButtons[slotIndex].retryURL = nil
                 }
+                setLiveOverlay(index: slotIndex, staticKey: nil, liveKey: nil)
             }
             return
         }
@@ -1335,6 +1350,7 @@ final class BearyDetailViewController: UIViewController {
             bearyFeedLoadImage(into: slot, url: BearyImageURLs.imageURL(key: imageKey, thumb: true), retryButton: imageSlotRetryButtons[imageIndex], downsampleToWidth: strip * UIScreen.main.scale)
             imageSlotWidthConstraints[imageIndex].constant = strip
             slot.isHidden = false
+            setLiveOverlay(index: imageIndex, staticKey: imageKey, liveKey: entry.liveVideos?[imageKey])
         }
         for (slotIndex, slot) in imageSlots.dropFirst(keys.count).enumerated() {
             slot.bearySetImage(url: nil)
@@ -1343,6 +1359,47 @@ final class BearyDetailViewController: UIViewController {
             if retryIndex < imageSlotRetryButtons.count {
                 imageSlotRetryButtons[retryIndex].isHidden = true
                 imageSlotRetryButtons[retryIndex].retryURL = nil
+            }
+            setLiveOverlay(index: retryIndex, staticKey: nil, liveKey: nil)
+        }
+    }
+
+    /// 实况覆盖层开关（卡片同款；静态槽不挂长按手势，点按无延迟）。
+    private func setLiveOverlay(index: Int, staticKey: String?, liveKey: String?) {
+        guard index >= 0, index < imageSlotLiveViews.count, index < imageSlots.count,
+              index < imageSlotLivePresses.count else { return }
+        let overlay = imageSlotLiveViews[index]
+        let slot = imageSlots[index]
+        if let liveKey = liveKey, !liveKey.isEmpty, let staticKey = staticKey, !staticKey.isEmpty {
+            overlay.configure(staticKey: staticKey, liveKey: liveKey)
+            if imageSlotLivePresses[index] == nil {
+                let press = UILongPressGestureRecognizer(target: self, action: #selector(liveLongPressed(_:)))
+                press.minimumPressDuration = 0.4
+                slot.addGestureRecognizer(press)
+                imageSlotLivePresses[index] = press
+            }
+        } else {
+            overlay.clear()
+            if let press = imageSlotLivePresses[index] {
+                slot.removeGestureRecognizer(press)
+                imageSlotLivePresses[index] = nil
+            }
+        }
+    }
+
+    @objc private func liveLongPressed(_ sender: UILongPressGestureRecognizer) {
+        let index = sender.view?.tag ?? -1
+        guard index >= 0, index < imageSlotLiveViews.count else { return }
+        let overlay = imageSlotLiveViews[index]
+        if sender.state == .began {
+            overlay.startPlayback()
+            overlay.suppressTapUntil = Date().addingTimeInterval(3)
+        } else if sender.state == .ended || sender.state == .cancelled {
+            let until = Date().addingTimeInterval(0.35)
+            if let existing = overlay.suppressTapUntil, existing > until {
+                // 按住超 0.35 秒后的抬手仍在 began 的 3 秒窗内，不缩短。
+            } else {
+                overlay.suppressTapUntil = until
             }
         }
     }
@@ -2154,9 +2211,14 @@ final class BearyDetailViewController: UIViewController {
 
     @objc private func imageTapped(_ sender: UITapGestureRecognizer) {
         let index = sender.view?.tag ?? 0
+        // 实况长按后的抬手点按：压住一次，不进灯箱（卡片同款 suppressTapUntil）。
+        if index >= 0, index < imageSlotLiveViews.count,
+           let until = imageSlotLiveViews[index].suppressTapUntil, until > Date() {
+            return
+        }
         guard !imageKeys.isEmpty, index >= 0, index < imageKeys.count else { return }
         if presentedViewController != nil { return }
-        let viewer = BearyEntryImageViewerViewController(imageKeys: imageKeys, startIndex: index)
+        let viewer = BearyEntryImageViewerViewController(imageKeys: imageKeys, liveVideos: entry.liveVideos, startIndex: index)
         viewer.modalPresentationStyle = .fullScreen
         present(viewer, animated: BearyMotion.animated(true), completion: nil)
     }

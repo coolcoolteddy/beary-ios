@@ -2,10 +2,18 @@
 // Profile/Timeline 继续复用；仅一处图标缓存调用由详情私有缓存改走共享 BearyIconImages，
 // 私有淡入淡出动画类同步改名，行为一字未动）。
 import UIKit
+import Photos
 
 class BearyEntryImageViewerViewController: UIViewController, UIGestureRecognizerDelegate, UIViewControllerTransitioningDelegate {
 
     private let imageKeys: [String]
+    /// 实况映射（静态图 key → 视频 key；nil = 无实况，灯箱纯静态，与旧版一致）。
+    /// 调用方在创建时传入本篇 entry.liveVideos（详情/卡片容器/照片墙均已接线）。
+    var liveVideos: [String: String]?
+    /// 实况覆盖层：盖在 imageView 之上，平时隐藏、实况就绪后显现，长按播实况；
+    /// 自身不接手势，点按关闭/双击缩放/捏合/拖动翻页一律走原手势。
+    private var liveOverlay: BearyLivePhotoView?
+    private var liveTapSuppressUntil: Date?
     /// 2026-10-29 第 15 项：本地图模式（个人页头像/封面查看，不新造查看器）——
     /// 非空时以 UIImage 直显，不走服务端 key 加载；单图查看，翻页全程以
     /// imageKeys.count > 1 守门，本地模式自然不翻页；计数/圆点按 count ≤ 1 隐藏。
@@ -79,6 +87,12 @@ class BearyEntryImageViewerViewController: UIViewController, UIGestureRecognizer
         transitioningDelegate = self
     }
 
+    /// 实况入口（旧 init 原样保留，无实况调用方不受影响）。
+    convenience init(imageKeys: [String], liveVideos: [String: String]?, startIndex: Int) {
+        self.init(imageKeys: imageKeys, startIndex: startIndex)
+        self.liveVideos = liveVideos
+    }
+
     /// 本地图模式入口（个人页头像/封面）：与服务端 key 模式同一查看器、
     /// 同一淡入淡出转场与捏合/拖动，纯查看、无编辑入口。
     convenience init(images: [UIImage], startIndex: Int) {
@@ -119,6 +133,11 @@ class BearyEntryImageViewerViewController: UIViewController, UIGestureRecognizer
         neighborImageView.translatesAutoresizingMaskIntoConstraints = false
         neighborImageView.isHidden = true
         view.addSubview(neighborImageView)
+        // 实况覆盖层：与 imageView 同框、随 applyTransform 同步缩放平移；
+        // 平时隐藏（原静态图可见），实况就绪后显现，长按播实况。
+        let liveOverlay = BearyLivePhotoView(contentMode: .aspectFit)
+        view.addSubview(liveOverlay)
+        self.liveOverlay = liveOverlay
         loadingSpinner.tintColor = .white
         view.addSubview(loadingSpinner)
         retryLabel.text = "图片加载失败，重试"
@@ -173,10 +192,14 @@ class BearyEntryImageViewerViewController: UIViewController, UIGestureRecognizer
         let pan = UIPanGestureRecognizer(target: self, action: #selector(panChanged(_:)))
         pan.delegate = self
         panGesture = pan
+        let livePress = UILongPressGestureRecognizer(target: self, action: #selector(liveLongPressed(_:)))
+        livePress.minimumPressDuration = 0.4
+        livePress.delegate = self
         view.addGestureRecognizer(singleTap)
         view.addGestureRecognizer(doubleTap)
         view.addGestureRecognizer(pinch)
         view.addGestureRecognizer(pan)
+        view.addGestureRecognizer(livePress)
         NSLayoutConstraint.activate([
             placeholderView.topAnchor.constraint(equalTo: view.topAnchor),
             placeholderView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
@@ -190,6 +213,10 @@ class BearyEntryImageViewerViewController: UIViewController, UIGestureRecognizer
             neighborImageView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
             neighborImageView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             neighborImageView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            liveOverlay.topAnchor.constraint(equalTo: view.topAnchor),
+            liveOverlay.bottomAnchor.constraint(equalTo: view.bottomAnchor),
+            liveOverlay.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            liveOverlay.trailingAnchor.constraint(equalTo: view.trailingAnchor),
             loadingSpinner.centerXAnchor.constraint(equalTo: view.centerXAnchor),
             loadingSpinner.centerYAnchor.constraint(equalTo: view.centerYAnchor),
             retryLabel.centerXAnchor.constraint(equalTo: view.centerXAnchor),
@@ -233,9 +260,39 @@ class BearyEntryImageViewerViewController: UIViewController, UIGestureRecognizer
         if animated == true && UIAccessibility.isReduceMotionEnabled == false {
             UIView.animate(withDuration: 0.25, animations: {
                 self.imageView.transform = transform
+                self.liveOverlay?.transform = transform
             })
         } else {
             imageView.transform = transform
+            liveOverlay?.transform = transform
+        }
+    }
+
+    /// 实况覆盖层跟随当前图：本地图模式与无实况图一律清掉；有实况时配
+    /// 置（同 key 重复调用不重复加载）；翻页/切图时由 loadCurrent 与
+    /// navigate 的 commit 调用，缩放平移由 applyTransform 同步。
+    private func updateLiveOverlay() {
+        guard let overlay = liveOverlay else { return }
+        if !localImages.isEmpty || imageKeys.isEmpty || currentIndex < 0 || currentIndex >= imageKeys.count {
+            overlay.clear()
+            return
+        }
+        let key = imageKeys[currentIndex]
+        overlay.configure(staticKey: key, liveKey: liveVideos?[key])
+    }
+
+    @objc private func liveLongPressed(_ sender: UILongPressGestureRecognizer) {
+        if sender.state == .began {
+            liveOverlay?.startPlayback()
+            // 抬手单点压制：播完抬手那次单点不关闭灯箱（卡片/详情同款口径）。
+            liveTapSuppressUntil = Date().addingTimeInterval(3)
+        } else if sender.state == .ended || sender.state == .cancelled {
+            let until = Date().addingTimeInterval(0.35)
+            if let existing = liveTapSuppressUntil, existing > until {
+                // 按住超 0.35 秒后的抬手仍在 began 的 3 秒窗内，不缩短。
+            } else {
+                liveTapSuppressUntil = until
+            }
         }
     }
 
@@ -297,6 +354,7 @@ class BearyEntryImageViewerViewController: UIViewController, UIGestureRecognizer
             retryLabel.isHidden = true
             imageView.image = localImages[currentIndex]
             updateLoadingSpinner()
+            updateLiveOverlay()
             return
         }
         if imageKeys.isEmpty || currentIndex < 0 || currentIndex >= imageKeys.count {
@@ -312,6 +370,7 @@ class BearyEntryImageViewerViewController: UIViewController, UIGestureRecognizer
         // E-G3：网页灯箱建全部 slide 并逐张 decode——本页单图轨道，至少预取相邻两张进
         // 图片缓存（切图时不再等网络，空白只剩解码一帧）；翻页同样走 loadCurrent，预取随之跟进。
         prefetchAdjacent()
+        updateLiveOverlay()
         guard let url = BearyImageURLs.imageURL(key: key, thumb: false) else {
             isFailed = true
             retryLabel.isHidden = false
@@ -427,6 +486,10 @@ class BearyEntryImageViewerViewController: UIViewController, UIGestureRecognizer
     }
 
     @objc private func stageTapped(_ sender: UITapGestureRecognizer) {
+        // 实况长按后的抬手单点：压住一次，不关闭灯箱（卡片/详情同款口径）。
+        if let until = liveTapSuppressUntil, until > Date() {
+            return
+        }
         // 失败图点按重试，不关闭（网页 img-err 口径）；关闭钮点按由按钮自身处理。
         if isFailed == true {
             loadCurrent()
@@ -576,6 +639,7 @@ class BearyEntryImageViewerViewController: UIViewController, UIGestureRecognizer
                 self.ty = 0
                 self.imageView.image = self.neighborImageView.image
                 self.imageView.transform = .identity
+                self.liveOverlay?.transform = .identity
                 self.hideNeighbor()
                 // 5-16（选 commit 内同步清态，不走 loadCurrent 重载闪图）：
                 // 相邻图既已成功显示，上一张的失败态必须同步清除，否则
@@ -586,6 +650,7 @@ class BearyEntryImageViewerViewController: UIViewController, UIGestureRecognizer
                 self.loadingKey = self.imageKeys[wrapped]
                 self.updateCounter()
                 self.prefetchAdjacent()
+                self.updateLiveOverlay()
                 self.isNavigating = false
             }
             if reduceMotion == true {
@@ -637,6 +702,7 @@ class BearyEntryImageViewerViewController: UIViewController, UIGestureRecognizer
             self.tx = 0
             self.ty = 0
             self.imageView.transform = .identity
+            self.liveOverlay?.transform = .identity
             if let targetImage = self.neighborImageView.image {
                 self.imageView.image = targetImage
                 self.isFailed = false
