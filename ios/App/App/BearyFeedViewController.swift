@@ -2058,6 +2058,8 @@ extension BearyFeedViewController: UITableViewDataSource, UITableViewDelegate {
         for cell in tableView.visibleCells {
             cell.stopAllBearyEmotes()
         }
+        // 秒开批·图片预热：离页即停，不在后台页继续下缩略图。
+        BearyImagePrefetcher.shared.cancel()
     }
 
     /// 80 包 A5：与 stopVisibleEmotes 对称的恢复入口（容器切回时调用）：
@@ -2068,6 +2070,16 @@ extension BearyFeedViewController: UITableViewDataSource, UITableViewDelegate {
     func resumeVisibleEmotes() {
         handlePageEnter(allowBackgroundRevalidate: true)
         resumeVisibleEmotesCore()
+        prefetchNextScreen()
+    }
+
+    /// 秒开批·图片预热：以最后可见行为锚点，预热下一屏缩略图
+    ///（切回本页时锚点即上次滑到的位置）。只传模型与锚点，窗口、
+    ///流量口径与失败静默均由 BearyImagePrefetcher 定。
+    private func prefetchNextScreen() {
+        let entries = plazaEntries()
+        let last = (tableView.indexPathsForVisibleRows ?? []).map { $0.row }.max() ?? -1
+        BearyImagePrefetcher.shared.prefetch(entries: entries, lastVisibleIndex: last, viewerId: SessionManager.shared.currentUser?.id)
     }
 
     private func resumeVisibleEmotesCore() {
@@ -2114,6 +2126,20 @@ extension BearyFeedViewController: UITableViewDataSource, UITableViewDelegate {
             BearyHaptics.press()
             beginCustomPullRefresh()
         }
+        // 秒开批·图片预热：不减速即已停稳，直接预热下一屏。
+        if !decelerate { prefetchNextScreen() }
+    }
+
+    /// 秒开批·图片预热：滚动停稳时预热下一屏；滚动开始时取消在途预热，
+    /// 不与当前屏抢连接。
+    func scrollViewDidEndDecelerating(_ scrollView: UIScrollView) {
+        guard scrollView === tableView else { return }
+        prefetchNextScreen()
+    }
+
+    func scrollViewWillBeginDragging(_ scrollView: UIScrollView) {
+        guard scrollView === tableView else { return }
+        BearyImagePrefetcher.shared.cancel()
     }
 
 }
