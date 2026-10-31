@@ -362,7 +362,7 @@ final class BearyPlusGrantsViewController: BearySettingsSubpageViewController {
                     row.alpha = targetAlpha
                     row.transform = .identity
                 })
-                delay += 0.03
+                delay = min(delay + 0.03, 0.24)
             }
         }
     }
@@ -524,7 +524,7 @@ final class BearyDevicesViewController: BearySettingsSubpageViewController {
                     row.alpha = targetAlpha
                     row.transform = .identity
                 })
-                delay += 0.03
+                delay = min(delay + 0.03, 0.24)
             }
         }
     }
