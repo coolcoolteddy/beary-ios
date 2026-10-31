@@ -18,9 +18,10 @@ class BearyEntryImageViewerViewController: UIViewController, UIGestureRecognizer
     private let neighborImageView = UIImageView()
     private var neighborIndex: Int?
     private var neighborDirection: Int = 0
-    /// 110：目标图未加载时的加载反馈（官方 icon_refresh 圈，白字色）——
-    /// 不是骨架屏；只在 imageView 无图可显且有在途加载时转，图到/失败即停。
-    private let loadingSpinner = BearyRefreshIconView()
+    /// 110：目标图未加载时的加载反馈（网页同款圆环，黑底用 bright 白版）——
+    /// 不是骨架屏，也不再用下拉刷新那套 icon_refresh；只在 imageView 无图可显
+    /// 且有在途加载时转，图到/失败即停。
+    private let loadingSpinner = BearyWebRingSpinnerView(bright: true)
     /// 111：灯箱底色占位层——目标图未到时盖住全屏、底色走页面底色
     /// BearyColors.bg（浅白／深黑，随 trait 自动跟随），不是纯黑、不是
     /// 骨架屏；图到／失败即藏，旧图绝不滑回的口径不动。
@@ -119,7 +120,6 @@ class BearyEntryImageViewerViewController: UIViewController, UIGestureRecognizer
         neighborImageView.translatesAutoresizingMaskIntoConstraints = false
         neighborImageView.isHidden = true
         view.addSubview(neighborImageView)
-        loadingSpinner.tintColor = .white
         view.addSubview(loadingSpinner)
         retryLabel.text = "图片加载失败，重试"
         retryLabel.textColor = .white
