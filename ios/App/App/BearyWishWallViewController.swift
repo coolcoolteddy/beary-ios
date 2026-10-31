@@ -28,6 +28,20 @@ private final class WishRowView: UIView {
     private var detailOverflow = false
     private let upButton = BearyButton.make(style: .secondaryOutline(.compact), title: "赞成")
     private let downButton = BearyButton.make(style: .secondaryOutline(.compact), title: "反对")
+    /// 109：本行投票在途标志——configure 的禁用口径（已完成置灰）与它取并集，
+    /// 在途结束由控制器 setVoting(false) 或下一次 configure 恢复，不另改文案与选中态。
+    private var isVoting = false
+    private var isDoneRow = false
+
+    /// 109：在途锁的视觉侧——在途时两票钮禁用+置灰（点按不再进 voteTapped），
+    /// 解锁后恢复（已完成行仍由 configure 的 done 口径保持禁用）。
+    func setVoting(_ voting: Bool) {
+        isVoting = voting
+        upButton.isEnabled = !isDoneRow && !voting
+        downButton.isEnabled = !isDoneRow && !voting
+        upButton.alpha = (isDoneRow || voting) ? 0.4 : 1
+        downButton.alpha = (isDoneRow || voting) ? 0.4 : 1
+    }
     private let doneButton = BearyButton.make(style: .secondaryOutline(.compact), title: "标记已完成")
     var onUp: (() -> Void)?
     var onDown: (() -> Void)?
@@ -226,12 +240,14 @@ private final class WishRowView: UIView {
         setVoteSelected(upButton, selected: item.myVote == 1)
         setVoteSelected(downButton, selected: item.myVote == -1)
         let done = item.status == "done"
+        isDoneRow = done
         donePill.isHidden = !done
         // 已完成即闭环：票钮置灰不可点（禁用态本身即不可用示意，不另弹 toast）。
-        upButton.isEnabled = !done
-        downButton.isEnabled = !done
-        upButton.alpha = done ? 0.4 : 1
-        downButton.alpha = done ? 0.4 : 1
+        // 109：与在途标志取并集——在途行 configure 不得把票钮提前解开。
+        upButton.isEnabled = !done && !isVoting
+        downButton.isEnabled = !done && !isVoting
+        upButton.alpha = (done || isVoting) ? 0.4 : 1
+        downButton.alpha = (done || isVoting) ? 0.4 : 1
         doneButton.isHidden = !(isAdmin && !done)
     }
 
@@ -265,6 +281,9 @@ final class BearyWishWallViewController: UIViewController {
     private var wishes: [BearyAPI.WishItem] = []
     private var rowViews: [Int: WishRowView] = [:]
     private var voteGeneration: [Int: Int] = [:] // 2026-10-29：每条许愿投票代次，旧回包丢弃用
+    /// 109：每条许愿投票在途锁——代次只拦过期回包、不拦多发；本集合拦多发：
+    /// 在途点按直接忽略（票钮同时禁用+置灰），回包/失败后解锁，不改代次与排序逻辑。
+    private var votingWishIds: Set<Int> = []
     private var isLoading = false
     /// 13：600 上限约束（宽 ≥821 才激活，开关在 viewDidLayoutSubviews；Feed 断点同款）。
     private var colCapConstraints: [NSLayoutConstraint] = []
@@ -470,6 +489,10 @@ final class BearyWishWallViewController: UIViewController {
             return
         }
         guard let index = indexOfWish(wishId) else { return }
+        // 109：在途锁——本条已有投票请求在途时点按直接忽略，不多发请求；
+        // 锁在回包闭包首行无条件解除（在代次守卫之前），过期回包也不留死锁。
+        guard !votingWishIds.contains(wishId) else { return }
+        votingWishIds.insert(wishId)
         let old = wishes[index]
         let newVote: Int? = (old.myVote == target) ? nil : target
         var next = old
@@ -484,6 +507,7 @@ final class BearyWishWallViewController: UIViewController {
         next.myVote = newVote
         wishes[index] = next
         rowViews[wishId]?.configure(item: next, isAdmin: isAdmin)
+        rowViews[wishId]?.setVoting(true)
         BearySoundPlayer.play(.wishDing)
         // 2026-10-29 修：每条许愿投票代次——先发回包后到时直接丢弃，不得覆盖后一次的操作与失败回滚。
         voteGeneration[wishId, default: 0] += 1
@@ -491,6 +515,10 @@ final class BearyWishWallViewController: UIViewController {
         let sendVote = newVote ?? 0
         BearyAPI.shared.voteWish(id: wishId, vote: sendVote) { [weak self] result in
             DispatchQueue.main.async {
+                // 109：先解锁再判代次——成功/失败/过期回包一律解锁，不留死锁；
+                // 代次逻辑原样不动，仍由下一行守卫丢弃过期回包。
+                self?.votingWishIds.remove(wishId)
+                self?.rowViews[wishId]?.setVoting(false)
                 guard let self = self, let idx = self.indexOfWish(wishId), self.voteGeneration[wishId] == gen else { return }
                 switch result {
                 case .success(let resp):
