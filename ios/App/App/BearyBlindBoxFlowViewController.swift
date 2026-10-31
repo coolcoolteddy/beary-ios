@@ -809,6 +809,21 @@ final class BearyBlindBoxFlowViewController: UIViewController {
                     BearyToast.show(in: self.view, message: "已放进池子，可以开盒了")
                     self.setStep(.pool)
                 case .failure(let error):
+                    var alreadyPooled = self.isAlreadyPooledError(error)
+                    if case .http(let code, _) = error, code == 409 {
+                        // 入池侧裸 409 只可能是已入池（入池无“已换过”态），同款重拉。
+                        alreadyPooled = true
+                    }
+                    if alreadyPooled {
+                        // 清单 11（跨设备已入池，B 方案）：本机 pooledEntryId 仍为空、
+                        // 开盒区仍隐藏，光改 toast 纠不正状态；重拉 today，以服务端
+                        // 为准同步 pooledEntryId 与开盒态（多一次往返，拍板接受）。
+                        // today 回包经 routeFromToday 路由：已入池→池步骤且开盒区
+                        // 可见；已换过→占位；已撤回→对应态。
+                        BearyToast.show(in: self.view, message: "已在其他设备放进池子，正在同步")
+                        self.loadInitial()
+                        return
+                    }
                     BearyToast.show(in: self.view, message: self.actionErrorText(error, fallback: "放进池子失败，请重试"))
                     self.setStep(.pool)
                 }
@@ -847,6 +862,14 @@ final class BearyBlindBoxFlowViewController: UIViewController {
                     }
                     self.setStep(.error("开盒成功但未收到日记，请重新进入。"))
                 case .failure(let error):
+                    if self.isAlreadyPooledError(error) {
+                        // 清单 11（开盒侧已入池）：与入池侧同款——已入池不是已换过，
+                        // 不报“今日已换过 1 次”误导；重拉 today 同步开盒态（多一次
+                        // 往返，拍板接受），路由结果见 routeFromToday。
+                        BearyToast.show(in: self.view, message: "正在同步今日盲盒状态")
+                        self.loadInitial()
+                        return
+                    }
                     if case .http(let code, _) = error, code == 409 {
                         BearyToast.show(in: self.view, message: "今日已换过 1 次")
                         self.loadInitial()
@@ -1051,6 +1074,24 @@ final class BearyBlindBoxFlowViewController: UIViewController {
     /// 只认服务端既有码 pool_empty（.server 直传，或 .http 原始片段含该码
     /// 的兜底），不凭“开盒失败”等通用失败反推池空，不改交换规则与次数口径。
     private static let poolEmptyText = "池子里暂时没有可交换的旧公开日记，不是你的日记有问题，晚点或明天再来试试。"
+
+    /// 清单 11：跨设备已入池码 already_pooled（.server 直传，或 .http 原始片段
+    /// 含该码的兜底；与 isPoolEmptyError 同款认码方式）。裸 409 不进本函数——
+    /// 开盒侧裸 409 仍走现行“今日已换过 1 次”分支；入池侧裸 409 由
+    /// poolTapped 单独并入已入池分支（入池无“已换过”态）。
+    private func isAlreadyPooledError(_ error: APIError) -> Bool {
+        switch error {
+        case .server(let code):
+            return code.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == "already_pooled"
+        case .http(_, let snippet):
+            if let snippet = snippet {
+                return snippet.lowercased().contains("already_pooled")
+            }
+            return false
+        default:
+            return false
+        }
+    }
 
     private func isPoolEmptyError(_ error: APIError) -> Bool {
         switch error {
