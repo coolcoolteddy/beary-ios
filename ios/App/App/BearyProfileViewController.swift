@@ -3450,14 +3450,14 @@ class BearyProfileViewController: UIViewController {
     }
 
     /// 行文案回退（非标题行）：那年今日展开列表行、去年的对话原篇栏在正文为空时
-    /// 仍需一句行文案才可点/可读，故空标题时退正文摘要、无正文时退“日记”；
-    /// 那年今日与随机漫步的主卡标题行已改为空标题整行隐藏，不再走本函数。
+    /// 仍需一句行文案才可点/可读，故空标题时退正文摘要；109：无标题又无正文时
+    /// 不再退“日记”占位，返回空串（行只剩日期/副文案可读，不编造文案）。
     private func personalTitle(entry: Entry) -> String {
         if let title = entry.title?.trimmingCharacters(in: .whitespacesAndNewlines), !title.isEmpty {
             return title
         }
         let excerpt = personalExcerpt(entry: entry, limit: 40)
-        return excerpt.isEmpty ? "日记" : excerpt
+        return excerpt.isEmpty ? "" : excerpt
     }
 
     // MARK: 批 D —— 写作统计
