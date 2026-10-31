@@ -3197,8 +3197,9 @@ final class BearyChromeViewController: UIViewController {
 
     /// 编辑模式入口：详情“编辑”钮 → 编辑器（从详情 nav 上 present）。
     /// 未登录先弹登录页；保存成功 → 关编辑器 → 详情重拉单篇 + 列表定向刷新该行
-    /// + 时间线/我页刷新；取消（含编辑期到点）→ 关编辑器 → 详情重拉 + 首页刷新 +
-    /// 时间线重拉（C4 网页 closeEditor + loadFeed 同口径）；发布时登录失效 →
+    /// + 时间线/我页刷新；取消（含编辑期到点）→ 只关编辑器，不刷新任何列表
+    ///（112 返回未改不刷新：取消没有保存，服务端未动；旧 C4 网页 closeEditor +
+    /// loadFeed 同口径的无条件重拉已删）；发布时登录失效 →
     /// 登录页盖在编辑器上层，编辑器不关（D7）。
     private func presentComposerForEdit(entry: Entry) {
         if isComposerPresented() { return }
@@ -3219,11 +3220,12 @@ final class BearyChromeViewController: UIViewController {
                 }
             }
         }
-        c.onCancelled = { [weak self, weak c] in
-            c?.dismiss(animated: BearyMotion.animated(true)) {
-                self?.feedVC?.refreshFeed()
-                self?.timelineVC?.reloadTimeline()
-            }
+        c.onCancelled = { [weak c] in
+            // 112 返回未改不刷新：取消（含编辑倒计时到点自动关闭）没有保存，
+            // 服务端内容一字未动，故只关编辑器，不刷新首页、不重拉时间线；
+            // 以前这里无条件 refreshFeed + reloadTimeline，正是“没改也刷新”的
+            // 一路。保存成功走上面的 onUpdated 定向同步，不受影响。
+            c?.dismiss(animated: BearyMotion.animated(true))
         }
         c.onRequireLogin = { [weak self] in
             self?.presentLoginGate()

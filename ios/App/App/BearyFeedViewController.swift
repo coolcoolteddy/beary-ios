@@ -101,7 +101,8 @@ class BearyFeedViewController: UIViewController {
 
     /// G11：上次见到的登录用户 id；viewWillAppear 时与当前比对，翻转即绕开 60 秒门控整刷。
     private var lastFeedLoginUserId: Int?
-    /// 最近一次首拉成功的时间；viewWillAppear 时超 60 秒才后台重拉。
+    /// 最近一次首拉成功的时间；切 tab 回首页时超 60 秒才后台重拉
+    ///（modal dismiss 返回不走这条，见 handlePageEnter）。
     private var lastFeedLoadAt: Date?
     private var isRevalidating = false
     /// revalidate 代际：下拉刷新时 +1，在途重拉回来发现代际已变则丢弃，不覆盖新数据。
@@ -334,11 +335,21 @@ class BearyFeedViewController: UIViewController {
 
     override func viewWillAppear(_ animated: Bool) {
         super.viewWillAppear(animated)
-        handlePageEnter()
+        // 112 返回未改不刷新：全屏 modal（编辑器/详情/个人页/设置页等）dismiss
+        // 时会触发这里——它只是“回来了”，不是“改过了”，故不走 60 秒后台重拉，
+        // 只回显缓存、不动滚动位；切 tab 回首页走 pageDidEnter/resumeVisibleEmotes，
+        // 仍保留 60 秒门控（见 handlePageEnter）。
+        handlePageEnter(allowBackgroundRevalidate: false)
     }
 
     /// P1-5：进页逻辑（原 viewWillAppear 体抽出，供 viewWillAppear 与 pageDidEnter 共用）。
-    private func handlePageEnter() {
+    /// allowBackgroundRevalidate=false（modal 返回）：只做本地态复位（盲盒镜像/
+    /// 表头高度/藏栏/游客 logo）与登录翻转判定，不发 60 秒后台重拉——没改过就
+    /// 不刷新；真正改过的内容改动当时已由容器回调定向同步（发布 refreshAll、
+    /// 编辑保存 applyEditedEntry、可见性翻转 applyEditedEntry、删除/恢复 refreshAll、
+    /// 拉黑/举报广播清行），不需要返回时再整拉一遍。
+    /// allowBackgroundRevalidate=true（切 tab 回首页）：保留原 60 秒门控重拉。
+    private func handlePageEnter(allowBackgroundRevalidate: Bool) {
         // 盲盒计数：进页即按本地镜像刷新（跨日重置 + 流程页回来的已换态），服务端刷新由流程页做。
         BlindBoxState.shared.resetIfNewDay()
         blindBoxEntryView.refresh()
@@ -358,19 +369,20 @@ class BearyFeedViewController: UIViewController {
         lastFeedLoginUserId = currentLoginUserId
         if loginFlipped && isFirstLoad == false {
             refreshAll()
-        } else {
+        } else if allowBackgroundRevalidate {
             revalidateIfNeeded()
         }
+        // else：modal 返回且登录态未变——直接回显缓存，不重拉、不重置滚动位。
     }
 
     /// P1-5：与时间线 pageDidEnter 同款钩子——容器切页只改 isHidden、不触发
-    /// viewWillAppear，故 viewWillAppear 里的 60 秒后台重拉在切 tab 回首页时走不到；
-    /// 容器在 showPage(.home) 接上 `feedVC?.pageDidEnter()`（与时间线分支同款一行）
-    /// 后即真正触发。文件约束不碰 SceneDelegate，故在容器接线前，进页逻辑先经
-    /// 下方 resumeVisibleEmotes 顺带跑一遍（容器目前切入 .home 时已调它）；
-    /// 两处双跑时由 revalidate 门控（isRevalidating/60 秒/loading）去重，无害。
+    /// viewWillAppear，故切 tab 回首页走这里（allowBackgroundRevalidate=true，
+    /// 保留 60 秒门控重拉）；modal dismiss 返回走 viewWillAppear
+    ///（allowBackgroundRevalidate=false，不重拉）。下方 resumeVisibleEmotes
+    /// 顺带跑一遍同款进页逻辑；两处双跑时由 revalidate 门控
+    ///（isRevalidating/60 秒/loading）去重，无害。
     func pageDidEnter() {
-        handlePageEnter()
+        handlePageEnter(allowBackgroundRevalidate: true)
         resumeVisibleEmotesCore()
     }
 
@@ -1851,7 +1863,7 @@ extension BearyFeedViewController: UITableViewDataSource, UITableViewDelegate {
     /// handlePageEnter，让 60 秒后台重拉在切 tab 回首页时真正触发；容器接上
     /// pageDidEnter 后，两处双跑由 revalidate 门控去重，无害。
     func resumeVisibleEmotes() {
-        handlePageEnter()
+        handlePageEnter(allowBackgroundRevalidate: true)
         resumeVisibleEmotesCore()
     }
 
