@@ -554,6 +554,9 @@ class BearyFeedViewController: UIViewController {
         if plazaFirstPageInFlight && refreshAllBypassInFlight == false {
             return
         }
+        // 113：先捕获登录翻转 bypass 再清——清后分支读到的恒为 false，
+        // 翻转时就走成了 since，鉴权敏感字段会被旧身份数据污染。
+        let loginFlippedBypass = refreshAllBypassInFlight
         refreshAllBypassInFlight = false
         BearyDiaryCardCell.resetQuoteFetchState()
         revalidateGeneration += 1
@@ -570,7 +573,15 @@ class BearyFeedViewController: UIViewController {
         if showCentralSpinner && plazaRaw.isEmpty {
             centralSpinner.startSpinning()
         }
-        loadPlazaFirstPage(diffMode: !plazaRaw.isEmpty)
+        if loginFlippedBypass {
+            loadPlazaFirstPage(diffMode: !plazaRaw.isEmpty)
+        } else if plazaRaw.isEmpty {
+            loadPlazaFirstPage(diffMode: false)
+        } else {
+            // 113：常规刷新走 since 增量（新篇前插、旧篇不动、不跳顶）；
+            // 登录翻转已在上支全量，空表走首拉。
+            loadPlazaSince()
+        }
     }
 
     /// F16：重拍 tab 接线的一半——作用等同下拉刷新（广场从网络重拉）。
@@ -770,6 +781,80 @@ class BearyFeedViewController: UIViewController {
                     } else if !silent {
                         BearyToast.show(in: strongSelf.view, message: "刷新失败")
                     }
+                    strongSelf.maybeEndRefreshing()
+                }
+            }
+        }
+    }
+
+    /// 113 since 增量刷新：只拉比首条（最新）新的广场条目，前插合并进
+    /// plazaRaw，不动 hasMore/已触底态、不重置滚动位置（插行顶部的
+    /// contentOffset 不变，旧行只是被新行下推）。无新条目或失败时回落
+    /// 全量 loadPlazaFirstPage(diffMode: true)（其失败口径保留旧模型）。
+    /// 登录翻转（refreshAllBypassInFlight）不走本路——身份已变，点赞态
+    /// 等鉴权敏感字段必须全量重拉。
+    private func loadPlazaSince() {
+        let generation = revalidateGeneration
+        guard let head = plazaRaw.first,
+              let cursor = head.publishedAt ?? head.createdAt,
+              let headId = head.id, !headId.isEmpty else {
+            loadPlazaFirstPage(diffMode: true)
+            return
+        }
+        let oldCount = plazaRaw.count
+        let knownIds = Set(plazaRaw.compactMap { $0.id })
+        plazaLoading = true
+        plazaFirstPageInFlight = true
+        plazaError = false
+        BearyAPI.shared.fetchEntriesSince(
+            scope: .plaza, since: cursor, sinceId: headId,
+            sortKey: { $0.publishedAt ?? $0.createdAt }, knownIds: knownIds
+        ) { [weak self] result in
+            DispatchQueue.main.async {
+                guard let strongSelf = self else { return }
+                guard generation == strongSelf.revalidateGeneration else {
+                    strongSelf.plazaLoading = false
+                    strongSelf.maybeEndRefreshing()
+                    return
+                }
+                switch result {
+                case .failure:
+                    strongSelf.plazaLoading = false
+                    strongSelf.plazaFirstPageInFlight = false
+                    strongSelf.loadPlazaFirstPage(diffMode: true)
+                case .success(let (fresh, _)):
+                    let newItems = fresh.filter { entry in
+                        guard let entryId = entry.id else { return false }
+                        return !knownIds.contains(entryId)
+                    }
+                    if newItems.isEmpty {
+                        strongSelf.plazaLoading = false
+                        strongSelf.plazaFirstPageInFlight = false
+                        // 无新条目：仍走全量 diff 口径对齐一次点赞态等字段，
+                        // 但模型与表结构不变（applyFirstPageDiff 无变化即不动表），
+                        // 故不闪、不丢；失败时同样保留旧模型。
+                        strongSelf.loadPlazaFirstPage(diffMode: true)
+                        return
+                    }
+                    strongSelf.plazaRaw = newItems + strongSelf.plazaRaw
+                    strongSelf.firstPageIds = strongSelf.plazaRaw.prefix(strongSelf.firstPageLimit).compactMap { $0.id }
+                    strongSelf.plazaLoading = false
+                    strongSelf.plazaFirstPageInFlight = false
+                    strongSelf.plazaFirstDone = true
+                    strongSelf.plazaError = false
+                    strongSelf.lastFeedLoadAt = Date()
+                    BearyTimelinePrefetch.maybePrefetch()
+                    BearyFeedCache.save(bucket: strongSelf.feedCacheOwnerKey, entries: strongSelf.plazaRaw, hasMore: strongSelf.plazaHasMore)
+                    if strongSelf.tableView.numberOfRows(inSection: 0) == oldCount {
+                        let indexPaths = (0..<newItems.count).map { IndexPath(row: $0, section: 0) }
+                        strongSelf.tableView.performBatchUpdates({
+                            strongSelf.tableView.insertRows(at: indexPaths, with: .none)
+                        })
+                    } else {
+                        strongSelf.tableView.reloadData()
+                    }
+                    strongSelf.finishFirstLoadIfNeeded()
+                    strongSelf.updateOverlayState()
                     strongSelf.maybeEndRefreshing()
                 }
             }

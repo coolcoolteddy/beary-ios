@@ -3813,6 +3813,26 @@ class BearyTimelineViewController: UIViewController {
         // 不变则按行 diff 插删改，否则回落整表 reloadData（首屏旧表为空时同样 reloadData）。
         let oldSections = currentSections()
         let hadOldRows = timelineEntries.isEmpty == false
+        // 113：常规刷新（force 除外、已有行）先走 since 增量——新篇前插、
+        // 旧篇不动、不跳顶；空表、force、游标取不到时走全量。
+        if force == false,
+           let head = timelineEntries.first,
+           let cursor = head.createdAt,
+           let headId = head.id, !headId.isEmpty {
+            loadTimelineSince(
+                seq: seq, oldSections: oldSections, hadOldRows: hadOldRows,
+                cursor: cursor, headId: headId, completion: completion
+            )
+        } else {
+            fetchTimelineFirstPageFull(
+                seq: seq, oldSections: oldSections, hadOldRows: hadOldRows, completion: completion
+            )
+        }
+    }
+
+    /// 113：首屏全量取数（原 loadTimelineFirstPage 的取数体，不动口径；
+    /// since 失败/无新条目时同一 seq/在途标记内续发本函数，不再过在途守卫）。
+    private func fetchTimelineFirstPageFull(seq: Int, oldSections: [DaySection], hadOldRows: Bool, completion: (() -> Void)? = nil) {
         BearyAPI.shared.fetchEntries(scope: .timeline, limit: pageLimit) { [weak self] result in
             DispatchQueue.main.async {
                 guard let strongSelf = self else { return }
@@ -3870,30 +3890,127 @@ class BearyTimelineViewController: UIViewController {
                         }
                     }
                 }
-                if case .success = result, hadOldRows, strongSelf.tableView.window != nil,
-                   strongSelf.applyFirstPageDiff(oldSections: oldSections) {
-                    // diff 已插删改，跳过整表重载。
-                } else {
-                    strongSelf.tableView.reloadData()
-                }
-                strongSelf.updateChrome()
-                if strongSelf.isCustomPullRefreshing {
-                    // 自定义下拉至少展示 500ms（消息页同款），快回包也要等满再收回。
-                    let elapsed = strongSelf.customPullStartTime.map({ Date().timeIntervalSince($0) }) ?? 0.5
-                    let remaining = max(0, 0.5 - elapsed)
-                    DispatchQueue.main.asyncAfter(deadline: .now() + remaining) {
-                        strongSelf.endCustomPullRefresh()
-                    }
-                } else {
+                let diffEligible: Bool
+                if case .success = result { diffEligible = true } else { diffEligible = false }
+                strongSelf.finishTimelineFirstPage(
+                    diffEligible: diffEligible, oldSections: oldSections,
+                    hadOldRows: hadOldRows, completion: completion
+                )
+            }
+        }
+    }
+
+    /// 113：首屏收尾（原 loadTimelineFirstPage 的尾巴，全量与 since 共用）——
+    /// diff 成功即插删改、否则整表重载；结束下拉头/菊花；补调 completion
+    /// 与在途暂存的 completion。
+    private func finishTimelineFirstPage(diffEligible: Bool, oldSections: [DaySection], hadOldRows: Bool, completion: (() -> Void)?) {
+        if diffEligible, hadOldRows, tableView.window != nil,
+           applyFirstPageDiff(oldSections: oldSections) {
+            // diff 已插删改，跳过整表重载。
+        } else {
+            tableView.reloadData()
+        }
+        updateChrome()
+        if isCustomPullRefreshing {
+            // 自定义下拉至少展示 500ms（消息页同款），快回包也要等满再收回。
+            let elapsed = customPullStartTime.map({ Date().timeIntervalSince($0) }) ?? 0.5
+            let remaining = max(0, 0.5 - elapsed)
+            DispatchQueue.main.asyncAfter(deadline: .now() + remaining) {
+                self.endCustomPullRefresh()
+            }
+        } else {
+            refreshIconView.stopSpinning()
+        }
+        completion?()
+        // 112：在途跳过时暂存的 completion 在此补调（匹配完成才调；
+        // 失败同样补调——调用方按失败快照处理，不静默吞掉）。
+        let pendingFirstPageCompletions = timelineFirstPagePendingCompletions
+        timelineFirstPagePendingCompletions.removeAll()
+        for pendingCompletion in pendingFirstPageCompletions {
+            pendingCompletion()
+        }
+    }
+
+    /// 113 since 增量刷新：只拉比首条新的时间线条目，前插合并，不动
+    /// hasMore、不重置滚动位置（diff 插行在顶部，旧行下推不跳顶）。
+    /// 失败或无新条目时同一 seq/在途标记内回落全量；计数只在回包带值时
+    /// 更新（since 回包不含 recent_published，计数仍在）。
+    private func loadTimelineSince(seq: Int, oldSections: [DaySection], hadOldRows: Bool, cursor: Int, headId: String, completion: (() -> Void)? = nil) {
+        let knownIds = Set(timelineEntries.compactMap { $0.id })
+        BearyAPI.shared.fetchEntriesSince(
+            scope: .timeline, since: cursor, sinceId: headId,
+            sortKey: { $0.createdAt }, knownIds: knownIds
+        ) { [weak self] result in
+            DispatchQueue.main.async {
+                guard let strongSelf = self else { return }
+                // 旧回包直接丢弃（全量同款）：只结束刷新指示，不动模型。
+                guard seq == strongSelf.timelineFirstPageSeq else {
                     strongSelf.refreshIconView.stopSpinning()
+                    strongSelf.endCustomPullRefresh()
+                    return
                 }
-                completion?()
-                // 112：在途跳过时暂存的 completion 在此补调（匹配完成才调；
-                // 失败同样补调——调用方按失败快照处理，不静默吞掉）。
-                let pendingFirstPageCompletions = strongSelf.timelineFirstPagePendingCompletions
-                strongSelf.timelineFirstPagePendingCompletions.removeAll()
-                for pendingCompletion in pendingFirstPageCompletions {
-                    pendingCompletion()
+                switch result {
+                case .failure:
+                    strongSelf.fetchTimelineFirstPageFull(
+                        seq: seq, oldSections: oldSections, hadOldRows: hadOldRows, completion: completion
+                    )
+                case .success(let (fresh, firstList)):
+                    let newItems = fresh.filter { entry in
+                        guard let entryId = entry.id else { return false }
+                        return !knownIds.contains(entryId)
+                    }
+                    if newItems.isEmpty {
+                        // 无新条目：仍走全量 diff 口径对齐一次互动态等字段，
+                        // 模型与表结构不变（diff 无变化即不动表），故不闪、不丢。
+                        strongSelf.fetchTimelineFirstPageFull(
+                            seq: seq, oldSections: oldSections, hadOldRows: hadOldRows, completion: completion
+                        )
+                        return
+                    }
+                    strongSelf.timelineFirstPageInFlight = false
+                    strongSelf.timelineEntries = newItems + strongSelf.timelineEntries
+                    // B-G7 同款：先 patch 当日面板的旧行互动态，再前插选中日新篇。
+                    strongSelf.dayEntries = strongSelf.patchedEntries(strongSelf.dayEntries, withFresh: strongSelf.timelineEntries)
+                    if let selectedKey = strongSelf.selectedDayKey, strongSelf.dayEntriesKey == selectedKey {
+                        let dayNew = newItems.filter { entry in
+                            guard let created = entry.createdAt else { return false }
+                            return BearyBeijingDay.dayKey(ofMs: created) == selectedKey
+                        }
+                        if !dayNew.isEmpty {
+                            let dayKnown = Set(strongSelf.dayEntries.compactMap { $0.id })
+                            let dayFresh = dayNew.filter { entry in
+                                guard let entryId = entry.id else { return false }
+                                return !dayKnown.contains(entryId)
+                            }
+                            if !dayFresh.isEmpty {
+                                strongSelf.dayEntries = dayFresh + strongSelf.dayEntries
+                                if let cachedDay = strongSelf.dayEntriesCache[selectedKey] {
+                                    strongSelf.cacheDayEntries(key: selectedKey, entries: dayFresh + cachedDay)
+                                }
+                            }
+                        }
+                    }
+                    if let trashCount = firstList.trashCount { strongSelf.trashCountValue = trashCount }
+                    if let counts = firstList.tlCounts { strongSelf.countsValue = counts }
+                    // hasMore 不动：since 只补头部，旧页分页游标不受影响。
+                    if let uid = SessionManager.shared.currentUser?.id {
+                        BearyTimelineCache.save(bucket: BearyFeedCache.bucket(userId: uid), entries: strongSelf.timelineEntries, hasMore: strongSelf.timelineHasMore, trashCount: strongSelf.trashCountValue, counts: strongSelf.countsValue)
+                    }
+                    strongSelf.lastTimelineFirstPageSuccessAt = Date()
+                    // 112 keepDay 同款：首屏已覆盖选中日时直接派生当日面板。
+                    if let deferredKey = strongSelf.deferredDayKeyForFirstPage {
+                        strongSelf.deferredDayKeyForFirstPage = nil
+                        strongSelf.deriveDayPanelFromFirstPageIfCovered(key: deferredKey)
+                    }
+                    strongSelf.timelineState = .loaded
+                    strongSelf.timelinePageFailed = false
+                    strongSelf.updateTrashTitle()
+                    strongSelf.updateCountsLabel()
+                    strongSelf.refreshHeaderHeight()
+                    strongSelf.finishTimelineFirstPage(
+                        diffEligible: true, oldSections: oldSections,
+                        hadOldRows: hadOldRows, completion: completion
+                    )
                 }
             }
         }

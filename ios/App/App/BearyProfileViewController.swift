@@ -4641,9 +4641,79 @@ class BearyProfileViewController: UIViewController {
             // 109：记下请求发出时的 tab；回包按该归属分发，切走即丢弃
             //（与后台回填 loadTabBackground 的 tabAtStart 同口径）。
             let tabAtStart = currentTab
-            BearyAPI.shared.fetchEntries(scope: scopeValue, limit: 50) { [weak self] result in
-                DispatchQueue.main.async {
-                    self?.handleTabResult(result: result, appending: false, requestTab: tabAtStart)
+            // 113：已有行时先走 since 增量（新篇前插、旧篇不动、不跳顶）；
+            // 空表或游标取不到时走全量；后台回填 loadTabBackground 不动。
+            let cursorKey: Int?
+            if tabAtStart == .saved {
+                cursorKey = currentEntries.first?.bmAt ?? currentEntries.first?.createdAt
+            } else {
+                cursorKey = currentEntries.first?.createdAt
+            }
+            if let cursor = cursorKey,
+               let headId = currentEntries.first?.id, !headId.isEmpty {
+                loadTabSince(scope: scopeValue, tabAtStart: tabAtStart, cursor: cursor, headId: headId)
+            } else {
+                fetchTabFirstPageFull(scope: scopeValue, tabAtStart: tabAtStart)
+            }
+        }
+    }
+
+    /// 113：前台首屏全量取数（原 loadTab 的取数体，不动口径；since
+    /// 失败/无新条目时续发本函数，不再过 tabLoading 守卫）。
+    private func fetchTabFirstPageFull(scope: BearyAPI.Scope, tabAtStart: ProfileTab) {
+        BearyAPI.shared.fetchEntries(scope: scope, limit: 50) { [weak self] result in
+            DispatchQueue.main.async {
+                self?.handleTabResult(result: result, appending: false, requestTab: tabAtStart)
+            }
+        }
+    }
+
+    /// 113 since 增量刷新：只拉比首条新的本 tab 条目，前插合并；
+    /// hasMore 不动（since 只补头部，旧页分页游标不受影响）；失败或
+    /// 无新条目时回落全量首拉（其失败口径：tabError=true、旧模型保留在表里）。
+    private func loadTabSince(scope: BearyAPI.Scope, tabAtStart: ProfileTab, cursor: Int, headId: String) {
+        let knownIds = Set(currentEntries.compactMap { $0.id })
+        let sortKey: (Entry) -> Int? = tabAtStart == .saved
+            ? { $0.bmAt ?? $0.createdAt }
+            : { $0.createdAt }
+        BearyAPI.shared.fetchEntriesSince(
+            scope: scope, since: cursor, sinceId: headId,
+            sortKey: sortKey, knownIds: knownIds
+        ) { [weak self] result in
+            DispatchQueue.main.async {
+                guard let strongSelf = self else { return }
+                // 切走即丢弃（handleTabResult 的 109 守卫同款），只清加载旗。
+                guard tabAtStart == strongSelf.currentTab else {
+                    strongSelf.tabLoading = false
+                    strongSelf.tabLoadMore = false
+                    strongSelf.refreshFooter()
+                    strongSelf.endCustomPullRefresh()
+                    return
+                }
+                switch result {
+                case .failure:
+                    strongSelf.fetchTabFirstPageFull(scope: scope, tabAtStart: tabAtStart)
+                case .success(let (fresh, _)):
+                    let newItems = fresh.filter { entry in
+                        guard let entryId = entry.id else { return false }
+                        return !knownIds.contains(entryId)
+                    }
+                    if newItems.isEmpty {
+                        strongSelf.fetchTabFirstPageFull(scope: scope, tabAtStart: tabAtStart)
+                        return
+                    }
+                    strongSelf.setEntries(entries: newItems + strongSelf.currentEntries)
+                    // 113 照片墙同款：日记刷新 = 溢出分页的新一次机会，清失败旗。
+                    if tabAtStart == .diary {
+                        strongSelf.photoOverflowFailed = false
+                    }
+                    strongSelf.tabLoading = false
+                    strongSelf.tabError = false
+                    strongSelf.tableView.reloadData()
+                    strongSelf.refreshFooter()
+                    strongSelf.endCustomPullRefresh()
+                    strongSelf.consumePendingDirectEntry()
+                    strongSelf.tryLocatePending()
                 }
             }
         }

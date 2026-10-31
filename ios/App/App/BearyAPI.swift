@@ -673,13 +673,108 @@ final class BearyAPI {
         limit: Int = 20,
         before: Int? = nil,
         beforeId: String? = nil,
+        since: Int? = nil,
+        sinceId: String? = nil,
         completion: @escaping (Result<EntryList, APIError>) -> Void
     ) {
         var q: [String: String] = ["scope": scope.rawValue, "limit": "\(min(max(limit, 1), 50))"]
-        if let b = before { q["before"] = "\(b)" }
-        if let bid = beforeId { q["before_id"] = bid }
+        // 113 since 契约：since=<毫秒时间戳> + 可选 since_id 决胜，排序仍 DESC；
+        // plaza=published_at、saved=bm.created_at、其余=created_at（游标取数是调用方责任）；
+        // 不带 since 的请求一字不动；since 与 before 同传 400——故 since 在途时
+        // 一律不发 before/before_id（调用方误传也由本处压住，不发 400 请求）。
+        if let s = since {
+            q["since"] = "\(s)"
+            if let sid = sinceId, !sid.isEmpty { q["since_id"] = sid }
+        } else {
+            if let b = before { q["before"] = "\(b)" }
+            if let bid = beforeId { q["before_id"] = bid }
+        }
         if let aid = scope.authorId { q["author_id"] = "\(aid)" }
         request("/beary/api/entries", query: q, completion: completion)
+    }
+
+    /// 113 since 增量取数（含截断 gap-fill）：首发 since 一页（limit 50 封顶）；
+    /// 未截断（< limit）即返回；截断时（== limit）以末条为 before 游标向后
+    /// 续拉，直到撞见 knownIds（旧表头）或页不满或最多再拉 4 页——>50 条新篇
+    /// 的缺口由此补齐，不靠下次刷新（下次游标已是最新，缺口永不到）。
+    /// gap-fill 页失败时返回已收集到的新篇（不整批作废）；首发 since 失败时
+    /// 原样返回失败，调用方回落全量口径。sortKey 由调用方按 scope 给
+    /// （plaza=publishedAt、saved=bmAt、其余=createdAt），取不到游标时停拉。
+    /// 返回首包 EntryList 供调用方取计数（since 回包仅不含 recent_published）。
+    func fetchEntriesSince(
+        scope: Scope,
+        since: Int,
+        sinceId: String?,
+        sortKey: @escaping (Entry) -> Int?,
+        knownIds: Set<String>,
+        completion: @escaping (Result<([Entry], EntryList), APIError>) -> Void
+    ) {
+        fetchEntries(scope: scope, limit: 50, since: since, sinceId: sinceId) { [weak self] result in
+            guard let strongSelf = self else { return }
+            switch result {
+            case .failure(let error):
+                completion(.failure(error))
+            case .success(let list):
+                let collected = list.entries ?? []
+                guard collected.count >= 50 else {
+                    completion(.success((collected, list)))
+                    return
+                }
+                strongSelf.fetchSinceGap(
+                    scope: scope, sortKey: sortKey, knownIds: knownIds,
+                    collected: collected, firstList: list, remainingPages: 4, completion: completion
+                )
+            }
+        }
+    }
+
+    private func fetchSinceGap(
+        scope: Scope,
+        sortKey: @escaping (Entry) -> Int?,
+        knownIds: Set<String>,
+        collected: [Entry],
+        firstList: EntryList,
+        remainingPages: Int,
+        completion: @escaping (Result<([Entry], EntryList), APIError>) -> Void
+    ) {
+        guard remainingPages > 0,
+              let last = collected.last,
+              let lastKey = sortKey(last), let lastId = last.id, !lastId.isEmpty else {
+            completion(.success((collected, firstList)))
+            return
+        }
+        fetchEntries(scope: scope, limit: 50, before: lastKey, beforeId: lastId) { [weak self] result in
+            guard let strongSelf = self else { return }
+            switch result {
+            case .failure:
+                // gap-fill 页失败：返回已收集的新篇，不整批作废。
+                completion(.success((collected, firstList)))
+            case .success(let list):
+                let batch = list.entries ?? []
+                if batch.isEmpty {
+                    completion(.success((collected, firstList)))
+                    return
+                }
+                var merged = collected
+                var hitKnown = false
+                for entry in batch {
+                    if let entryId = entry.id, knownIds.contains(entryId) {
+                        hitKnown = true
+                        break
+                    }
+                    merged.append(entry)
+                }
+                if hitKnown || batch.count < 50 {
+                    completion(.success((merged, firstList)))
+                } else {
+                    strongSelf.fetchSinceGap(
+                        scope: scope, sortKey: sortKey, knownIds: knownIds,
+                        collected: merged, firstList: firstList,
+                        remainingPages: remainingPages - 1, completion: completion
+                    )
+                }
+            }
+        }
     }
 
     func fetchEntry(id: String, completion: @escaping (Result<Entry, APIError>) -> Void) {
