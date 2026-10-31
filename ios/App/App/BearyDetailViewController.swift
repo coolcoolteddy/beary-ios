@@ -307,6 +307,10 @@ final class BearyDetailViewController: UIViewController {
     /// 无回应钮；分享非公开隐藏时 shareSlotSpacer 占位 21pt，防收藏钮滑位）。
     private let actionStack = UIStackView()
     private let likeButton = BearyHit44Button(type: .custom)
+    /// 赞钮显式宽约束（卡片同款）：按钮固有宽不含标题边距，栈按固有宽给帧时
+    /// 标题框只剩边距差，数字会被裁成左半弧（115 详情页 0 赞残影实证）；
+    /// 故宽度一律显式算：图标宽（0 赞时）或图标宽 + 6 + 标题宽（有赞时）。
+    private var likeButtonWidthConstraint: NSLayoutConstraint?
     private let bookmarkButton = BearyHit44Button(type: .custom)
     private let shareButton = BearyHit44Button(type: .custom)
     private lazy var shareSlotSpacer: UIView = {
@@ -790,6 +794,11 @@ final class BearyDetailViewController: UIViewController {
         likeButton.adjustsImageWhenHighlighted = false
         likeButton.addTarget(self, action: #selector(likeTapped), for: .touchUpInside)
         likeButton.bearyAddPressFeedback()
+        // 显式宽约束（卡片同款，见 likeButtonWidthConstraint 注释）：初始只图标宽，
+        // refreshActionRow 按赞数重算；不靠按钮固有宽，防数字被裁成左半弧。
+        let likeWidth = likeButton.widthAnchor.constraint(equalToConstant: 22)
+        likeWidth.isActive = true
+        likeButtonWidthConstraint = likeWidth
 
         // 批 B：收藏／分享均为纯图标（首页同款，收藏去中文标签）；尺寸 21。
         bookmarkButton.translatesAutoresizingMaskIntoConstraints = false
@@ -1398,9 +1407,9 @@ final class BearyDetailViewController: UIViewController {
 
     /// 点赞点亮走红色、收藏点亮走橙色，与现有先行反馈口径；数字只 setTitle，不重建行。
     /// 批 B 操作行（首页同款）：赞左 + spacer + 收藏分享右组，无回应钮；
-    /// 收藏纯图标（无中文标签）；赞数恒显（含 0，预览口径——注意：首页卡片实测
-    /// 代码在 0 赞时藏数字，本批按预览“0 赞显示 0”实施，与卡片代码有此一处出入，
-    /// 见 PR 说明，待 Li／真机确认是否反向统一卡片）。
+    /// 收藏纯图标（无中文标签）；赞数口径（2026-10-31 Li 纠正，取代旧“详情页
+    /// 0 赞恒显 0”例外）：0 赞时数字整段隐藏、只留爱心图标可点，与卡片
+    /// 空数字位隐藏一致；有赞时显完整数字，宽度显式算（卡片同款）。
     private func refreshActionRow() {
         if isGuest {
             actionStack.isHidden = true
@@ -1415,12 +1424,24 @@ final class BearyDetailViewController: UIViewController {
         let heartImage = BearyFeedIconCache.image(named: liked ? "icon_heart_fill" : "icon_heart", pointSize: 22)
             ?? BearyFeedIconCache.image(named: "icon_heart", pointSize: 22)
         likeButton.setImage(heartImage, for: .normal)
-        likeButton.setTitle("\(max(0, likeCount))", for: .normal)
+        // 赞数 0 隐藏整段数字（2026-10-31 Li 纠正口径）：setTitle(nil) 后宽度只剩
+        // 图标宽，不占数字位、不留残影；有赞时显完整数字，宽度显式算
+        //（图标宽 + 6 边距 + 标题宽，卡片同款），不靠按钮固有宽。
+        let imageWidth = heartImage?.size.width ?? 22
+        if likeCount <= 0 {
+            likeButton.setTitle(nil, for: .normal)
+            likeButtonWidthConstraint?.constant = imageWidth
+        } else {
+            let titleText = "\(likeCount)"
+            let titleWidth = ceil((titleText as NSString).size(withAttributes: [NSAttributedString.Key.font: likeButton.titleLabel?.font ?? BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 14))]).width)
+            likeButton.setTitle(titleText, for: .normal)
+            likeButtonWidthConstraint?.constant = imageWidth + 6 + titleWidth
+        }
         likeButton.titleEdgeInsets = UIEdgeInsets(top: 0, left: 6, bottom: 0, right: 0)
         likeButton.tintColor = liked ? BearyColors.likeRed : BearyColors.gray
         likeButton.setTitleColor(liked ? BearyColors.likeRed : BearyColors.gray, for: .normal)
         likeButton.setTitleColor(liked ? BearyColors.likeRed : BearyColors.gray, for: .highlighted)
-        likeButton.accessibilityLabel = "\(liked ? "已点赞" : "点赞")，\(max(0, likeCount))"
+        likeButton.accessibilityLabel = likeCount <= 0 ? "点赞" : "\(liked ? "已点赞" : "点赞")，\(likeCount)"
 
         let bookmarked = entry.bookmarkedByMe ?? false
         let bookmarkImage = BearyFeedIconCache.image(named: bookmarked ? "icon_bookmark_fill" : "icon_bookmark", pointSize: 21)
