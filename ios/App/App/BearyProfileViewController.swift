@@ -6874,6 +6874,11 @@ extension BearyProfileViewController: UITableViewDataSource, UITableViewDelegate
         // updateRightStackSpacing 即按 30 取右列顶；layoutSubviews 按 22 取
         // 虚线框顶），复用时 prepareForReuse 已复位，非首行不受影响。
         cellValue.profileFirstRow = (indexPath.row == 0)
+        // 最后一篇后接“更多日记”行时，本卡底线整段塌掉（#360 删的是
+        // “更多日记”行自带的顶线，本卡底线是另一条，须在此处关掉；
+        // 非最后一篇、赞过/收藏 tab 不设此标志，卡片间分割线不动）。
+        // 置于 configure 之前：configure 末尾 refreshEphemeralState 即按此标志算底线显隐与高度。
+        cellValue.suppressBottomSeparator = diaryMoreButtonVisible && indexPath.row == displayedEntries.count - 1
         cellValue.configure(
             entry: entryValue,
             isExpanded: expandedEntryIds.contains(entryId),
