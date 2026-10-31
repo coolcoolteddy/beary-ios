@@ -2334,8 +2334,10 @@ class BearyTimelineViewController: UIViewController {
     private let stickyHeaderContainer = UIView()
     private let stickyHeaderView = UIView()
     private let stickyHeaderLabel = UILabel()
-    // 吸顶头状态栏区底色：只盖 view 顶到安全区顶沿这一段（吸顶头自身已盖安全区下方），
-    // 与吸顶头同显同隐，滚动内容不再从状态栏区透出。
+    // 吸顶头状态栏区底色：只盖 view 顶到安全区顶沿这一段（吸顶头自身已盖安全区下方）。
+    // 常驻不随吸顶头显隐：换日期头那一下吸顶头会先藏后显，若底色同显同隐，
+    // 藏的那几帧里正在滑进状态栏区的日记内容就会从状态栏区透出来（本次根因）。
+    // 底色与页面底同色，常驻在视觉上无变化，只堵透底。
     private let statusBarBgView = UIView()
     private var stickyHeaderCurrentSection: Int?
     private var stickyHeaderCurrentTitle: String?
@@ -3160,8 +3162,11 @@ class BearyTimelineViewController: UIViewController {
         statusBarBgView.translatesAutoresizingMaskIntoConstraints = false
         statusBarBgView.backgroundColor = BearyColors.bg
         statusBarBgView.isUserInteractionEnabled = false
-        statusBarBgView.isHidden = true
+        statusBarBgView.isHidden = false
         view.insertSubview(statusBarBgView, belowSubview: stickyHeaderContainer)
+        // 层级钉死：底色恒在表之上、吸顶容器之下，后续再加覆盖层也不至于把它压到表后。
+        view.bringSubviewToFront(statusBarBgView)
+        view.bringSubviewToFront(stickyHeaderContainer)
         NSLayoutConstraint.activate([
             statusBarBgView.topAnchor.constraint(equalTo: view.topAnchor),
             statusBarBgView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
@@ -3247,7 +3252,6 @@ class BearyTimelineViewController: UIViewController {
         }
         if stickyHeaderContainer.isHidden {
             stickyHeaderContainer.isHidden = false
-            statusBarBgView.isHidden = false
         }
     }
 
@@ -3306,7 +3310,8 @@ class BearyTimelineViewController: UIViewController {
         if stickyHeaderContainer.isHidden == false {
             stickyHeaderContainer.isHidden = true
         }
-        statusBarBgView.isHidden = true
+        // 注意：此处不再藏 statusBarBgView——换日交接时吸顶头藏起的那几帧，
+        // 正是真实组头滑进状态栏区的时刻，底色必须留着盖住它。
         stickyHeaderCurrentSection = nil
         stickyHeaderCurrentTitle = nil
         // 隐藏时在途动效一律打断并复位（此时容器不可见，无 snap 可见），
