@@ -267,6 +267,7 @@ class BearyFeedViewController: UIViewController {
     private let blindBoxHeaderWrap = UIView()
     private var feedBlindBoxHeaderHeight: CGFloat = 0
     private var feedBlindBoxHeaderWidth: CGFloat = 0
+    private var feedBlindBoxEntryPinned = false
     private var feedEmptyVisible = false
 
     /// 游客底部 logo（F19）：只在未登录且首拉完成后出现，登录后撤掉。
@@ -1379,12 +1380,32 @@ class BearyFeedViewController: UIViewController {
     /// 高度沿用旧 fitting 口径；高或宽任一变化都重赋值表头——UITableView 不会因
     /// 已赋值表头的 frame 变化而自动跟宽，旧版只守高度时，首算的临时窄宽会
     /// 一直沿用（“有时候框右侧被挤压”的根因之一），宽变必须重赋值才跟上。
+    /// 112 追加（#245 未根治的另一半）：入口行 translatesAutoresizingMaskIntoConstraints
+    /// 为 false、此前在容器里却没有任何外部约束，全靠手动 frame 定宽。UITableView
+    /// 在 reloadData / 重赋值表头时重排表头（此时 view 宽不变、viewDidLayoutSubviews
+    /// 不再跑、layoutFeed 也就不会再来纠正 frame），Auto Layout 就会把入口行按
+    /// 内在内容宽重算——窄了则右沿左缩、宽了则 chevron 被裁到容器外，表现为“有时
+    /// 右侧被挤压”。根治：给入口行加左右 + 顶三条约束钉死在容器上（只钉宽与顶，
+    /// 不钉底，避免容器旧高与新入口高不一致时过度约束），此后任何一次表头重排
+    /// 入口宽都恒等于容器宽 - 32，计数与 chevron 的 required 抗压（#245）只负责
+    /// 行内分配，不再承担定宽。手动 frame 保留作即时值，与约束值一致，不冲突。
     private func layoutFeedBlindBoxHeader() {
         let width = tableView.bounds.width > 0 ? tableView.bounds.width : view.bounds.width
         guard width > 0 else { return }
         if blindBoxEntryView.superview !== blindBoxHeaderWrap {
             blindBoxHeaderWrap.addSubview(blindBoxEntryView)
         }
+        if !feedBlindBoxEntryPinned {
+            feedBlindBoxEntryPinned = true
+            NSLayoutConstraint.activate([
+                blindBoxEntryView.leadingAnchor.constraint(equalTo: blindBoxHeaderWrap.leadingAnchor, constant: 16),
+                blindBoxEntryView.trailingAnchor.constraint(equalTo: blindBoxHeaderWrap.trailingAnchor, constant: -16),
+                blindBoxEntryView.topAnchor.constraint(equalTo: blindBoxHeaderWrap.topAnchor, constant: 8),
+            ])
+        }
+        // 先把容器宽定到当前表宽，再算入口高：约束下的入口宽即 width - 32，
+        // fitting 按此宽换行，副文案换行承担收缩，不压计数与 chevron。
+        blindBoxHeaderWrap.frame.size.width = width
         if feedEmptyVisible {
             if emptyView.superview !== blindBoxHeaderWrap {
                 blindBoxHeaderWrap.addSubview(emptyView)
