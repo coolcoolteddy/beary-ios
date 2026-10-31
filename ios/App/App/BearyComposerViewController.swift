@@ -4253,9 +4253,8 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         container.isUserInteractionEnabled = true
         let tap = UITapGestureRecognizer(target: self, action: #selector(didTapImageItem(_:)))
         container.addGestureRecognizer(tap)
-        let spinner = BearyRefreshIconView()
-        // 图片上传转圈与下拉/加载同款 icon_refresh（#224 误把 icon_restore 当刷新图标，已回退；icon_restore 是垃圾桶+回旋箭头的回收站恢复图标，不得用于加载/重试）。
-        spinner.image = BearyIconImages.image(named: "icon_refresh", pointSize: 32)
+        // 图片上传转圈改网页同款圆环（不再用下拉刷新那套 icon_refresh）。
+        let spinner = BearyWebRingSpinnerView()
         // 失败态：行内红底块（网页 thumb-fail 同款：红 10% 底 + 图标 + “失败，点我重试”），
         // 点块重试，不弹全局框；发布时有失败图直接 toast 拦截（决议第 5 项 A），不弹框。
         let failView = UIView()
@@ -6251,11 +6250,11 @@ private final class ComposerImageItem {
     var failed: Bool
     let container: UIView
     let imageView: UIImageView
-    let spinner: BearyRefreshIconView
+    let spinner: BearyWebRingSpinnerView
     let failView: UIView
     let removeButton: UIButton
 
-    init(key: String?, uploading: Bool, localFile: String?, failed: Bool, container: UIView, imageView: UIImageView, spinner: BearyRefreshIconView, failView: UIView, removeButton: UIButton) {
+    init(key: String?, uploading: Bool, localFile: String?, failed: Bool, container: UIView, imageView: UIImageView, spinner: BearyWebRingSpinnerView, failView: UIView, removeButton: UIButton) {
         self.key = key
         self.uploading = uploading
         self.localFile = localFile
