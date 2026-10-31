@@ -4408,6 +4408,17 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             }
         }
         guard let key = tappedKey else { return }
+        // 旧心情清除口（#421 回归）：心情条上已选中的那只带橙环（见
+        // refreshMoodButtons），再点它即清除单独心情字段——#421 后点选
+        // 一律插入，旧日记/旧草稿回填的 selectedMood 再无清除口，编辑时
+        // 旧心情就永远摘不掉。只放心情条（有选中修饰）走这条，弹出框
+        // （无选中修饰）仍一律插入，不吃掉插图意图。
+        if key == selectedMood {
+            selectedMood = nil
+            refreshMoodButtons()
+            scheduleDraftSave()
+            return
+        }
         insertMoodImageAtCursor(key)
     }
 
