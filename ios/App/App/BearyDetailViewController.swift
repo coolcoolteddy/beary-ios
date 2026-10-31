@@ -99,7 +99,7 @@ final class BearyDetailViewController: UIViewController {
     private let contentColumnView = UIView()
     /// 批 B 右列：首页卡片 rightStack 同款（spacing 0 + setCustomSpacing 对照表，
     /// 见 updateRightStackSpacing；顶距由 rightStackTopConstraint 动态定 22/23）。
-    private let rightStack = UIStackView()
+    private let rightStack = BearyPassThroughStackView()
     private var rightStackTopConstraint: NSLayoutConstraint?
     private var rightStackTrailingConstraint: NSLayoutConstraint?
     private let separatorView = UIView()
@@ -515,6 +515,8 @@ final class BearyDetailViewController: UIViewController {
         rightStack.spacing = 0
         rightStack.alignment = .fill
         rightStack.distribution = .fill
+        // 清单 18：中间栈透传回应行扩后热区（只认 emoteFlowView 内钮，其他行不动）。
+        rightStack.passThroughRoot = emoteFlowView
         contentColumnView.addSubview(rightStack)
 
         separatorView.translatesAutoresizingMaskIntoConstraints = false
