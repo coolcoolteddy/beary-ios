@@ -165,6 +165,16 @@ final class BearyDetailViewController: UIViewController {
         v.isHidden = true
         return v
     }()
+
+    /// 皇冠容器（卡片同款原因：作者行是 .firstBaseline 栈，纯 UIView 基线即底边，
+    /// 皇冠直接进栈时底边钉在名字基线上、中心比 cap 中心高约 3.6pt）。
+    /// 容器与名字按钮等高、底边钉基线，皇冠在内居中后中心即 cap 中心。
+    private let crownWrapView: UIView = {
+        let v = UIView()
+        v.translatesAutoresizingMaskIntoConstraints = false
+        v.isHidden = true
+        return v
+    }()
     private let titleSpacerLabel: UILabel = {
         let lb = UILabel()
         lb.translatesAutoresizingMaskIntoConstraints = false
@@ -209,7 +219,7 @@ final class BearyDetailViewController: UIViewController {
     }()
     private var moodEmoteView: BearyEmoteView?
     private lazy var authorRow: UIStackView = {
-        let st = UIStackView(arrangedSubviews: [nameButton, badgeImageView, crownView, titleSpacerLabel, timeLabel, weatherImageView, moodStack])
+        let st = UIStackView(arrangedSubviews: [nameButton, badgeImageView, crownWrapView, titleSpacerLabel, timeLabel, weatherImageView, moodStack])
         st.translatesAutoresizingMaskIntoConstraints = false
         st.axis = .horizontal
         st.spacing = 8
@@ -651,6 +661,19 @@ final class BearyDetailViewController: UIViewController {
         titleSpacerLabel.setContentCompressionResistancePriority(UILayoutPriority(1), for: .horizontal)
         badgeImageView.setContentCompressionResistancePriority(.required, for: .horizontal)
         crownView.setContentCompressionResistancePriority(.required, for: .horizontal)
+        crownWrapView.setContentCompressionResistancePriority(.required, for: .horizontal)
+        // 皇冠在等高容器内居中（容器底边钉基线，中心即 cap 中心）。
+        crownWrapView.addSubview(crownView)
+        let crownWrapWidth = crownWrapView.widthAnchor.constraint(equalToConstant: 19)
+        crownWrapWidth.priority = UILayoutPriority(999)
+        let crownWrapHeight = crownWrapView.heightAnchor.constraint(equalTo: nameButton.heightAnchor)
+        crownWrapHeight.priority = UILayoutPriority(999)
+        NSLayoutConstraint.activate([
+            crownView.centerXAnchor.constraint(equalTo: crownWrapView.centerXAnchor),
+            crownView.centerYAnchor.constraint(equalTo: crownWrapView.centerYAnchor),
+            crownWrapWidth,
+            crownWrapHeight,
+        ])
         weatherImageView.setContentCompressionResistancePriority(.required, for: .horizontal)
         moodStack.setContentCompressionResistancePriority(.required, for: .horizontal)
         // 隐藏子视图的固定尺寸用 999 优先级，避免与 stack 压零冲突（首页同款）。
@@ -987,8 +1010,7 @@ final class BearyDetailViewController: UIViewController {
             badgeImageView.image = nil
             badgeImageView.isHidden = true
         }
-        crownView.isHidden = (entry.authorPlus ?? 0) != 1 || !crownView.hasCrown
-        if crownView.isHidden { crownView.stop() } else { crownView.start() }
+        setCrownHidden((entry.authorPlus ?? 0) != 1 || !crownView.hasCrown)
         if let weatherKey = entry.weather, !weatherKey.isEmpty,
            let weatherImage = BearyFeedIconCache.image(named: "icon_wx_" + weatherKey, pointSize: 15) {
             weatherImageView.image = weatherImage
@@ -1252,6 +1274,13 @@ final class BearyDetailViewController: UIViewController {
 
     /// 作者行右侧显隐：本人卡显小地球、右列右缩进 −36 让位；他人／游客无地球、
     /// 右列恢复 0。游客永非作者，到不了本人分支。
+    /// 皇冠显隐唯一入口：容器与皇冠同藏同显，不留 19pt 空位。
+    private func setCrownHidden(_ hidden: Bool) {
+        crownWrapView.isHidden = hidden
+        crownView.isHidden = hidden
+        if hidden { crownView.stop() } else { crownView.start() }
+    }
+
     private func refreshAuthorActions() {
         // 2026-10-31：⋯ 显隐——本人卡（编辑／修改权限／删除）或他人公开卡
         // （举报／拉黑）显；游客与占位态（他人私密）无菜单项，藏；右列右缩进
