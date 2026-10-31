@@ -716,8 +716,14 @@ final class BearyNotificationsViewController: UIViewController {
         guard !removed.isEmpty else { return }
         items.removeAll(where: matches)
         let removedUnread = removed.filter { $0.read != true }.count
+        // 112 扫查：系统未读须与总未读同扣——openNotification 乐观已读
+        // 与 markSingleRead 失败回滚均以 type == "system" 为口径同步
+        // sysUnreadTotal，本处此前只扣总未读，系统未读残留偏高，直到下次
+        // 整页/轻量刷新才被服务端值纠正，期间容器收到的 sysUnread 失真。
+        let removedSysUnread = removed.filter { $0.read != true && $0.type == "system" }.count
         if removedUnread > 0 {
             unreadTotal = max(0, unreadTotal - removedUnread)
+            sysUnreadTotal = max(0, sysUnreadTotal - removedSysUnread)
             publishUnread(unreadTotal)
         }
         rebuildDisplayRows()
