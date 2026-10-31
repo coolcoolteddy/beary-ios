@@ -589,6 +589,8 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         // 草稿 pill 宽度兜底（2026-10-29，同上）：每次布局后按当前标题重算一次宽度
         // 约束常量，约束若在某次布局中被打破也能在下次布局恢复；同值重设不触发重排。
         refreshDraftPillWidth()
+        // 109：工具栏宽变化（旋转/分屏/居中列切换）时重算草稿状态适配，320 宽下只留对勾、宽回升恢复文案。
+        applyDraftStatusToolbarFit()
         // 编辑器改版（2026-10-29）：弹出框打开时，尖角跟随工具栏图标中心；
         // 放宽门之前（键盘只动工具栏纵向时宽门会早退，但锚点仍需每轮重算；
         // 仅改尖角图层路径与收起层穿透区，不触发布局环）。
@@ -2691,7 +2693,9 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         toolbarSeparator.backgroundColor = BearyColors.line
         let toolRow = UIStackView()
         toolRow.axis = .horizontal
-        toolRow.spacing = 20
+        // 109：草稿状态文案保全——工具栏间距 20 -> 16 微收（图标 24pt 与字数圆环 18pt 本身不动），
+        // 390 宽下「✓ 已保存」可完整排下；更窄宽由 applyDraftStatusToolbarFit 再按实测宽微调。
+        toolRow.spacing = 16
         toolRow.alignment = .center
         imageToolButton.setImage(BearyIconImages.image(named: "icon_image", pointSize: 24), for: .normal)
         // P1-26：工具栏图标钮按功能命名（图标本身无文字，VoiceOver 否则无读法）。
@@ -2747,8 +2751,9 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         // v6-5：字数圆环并进左侧图标组——不再被 spacer 顶到右端，与图片／心情／天气／@／引用
         // 同组、同 20pt 间距（toolRow.spacing）；数字已隐藏，只留圆环。
         // v6-6：正文区草稿保存文案组（draftStatusGroup，图标＋文案＋级别逻辑全在 buildStatusRow/
-        // updateDraftStatusLabel）挪到工具栏右端（spacer 之后）；窄屏下文案先截断（见下压缩优先级），
-        // 不挤图标与字数。组本身在 buildStatusRow 里才配好轴向与子项，此处只定它在工具栏里的位置。
+        // updateDraftStatusLabel）挪到工具栏右端（spacer 之后）；109：已保存态文案优先保全、
+        // 320 宽兜底只留对勾（见 applyDraftStatusToolbarFit），不再先截断。组本身在 buildStatusRow
+        // 里才配好轴向与子项，此处只定它在工具栏里的位置。
         charGroupStack.axis = .horizontal
         charGroupStack.spacing = 6
         charGroupStack.alignment = .center
@@ -3641,7 +3646,8 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         editTimerLabel.isHidden = true
         draftStatusLabel.font = UIFont.systemFont(ofSize: 12.5)
         draftStatusLabel.textColor = BearyColors.blue
-        // v6-6：文案在工具栏右端窄屏受压时先截断，不挤左侧图标组与字数（字数默认 750，高于此处的 749）。
+        // 109：压缩阻力默认值仍 749（lvl1/失败长文案窄屏受压时先截断）；lvl2 已保存态在
+        // updateDraftStatusLabel 里拉到 required、走 applyDraftStatusToolbarFit 的保全/只留对勾口径。
         draftStatusLabel.numberOfLines = 1
         draftStatusLabel.lineBreakMode = .byTruncatingTail
         draftStatusLabel.setContentCompressionResistancePriority(UILayoutPriority(749), for: .horizontal)
@@ -3722,14 +3728,53 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         draftStatusIcon.tintColor = BearyColors.blue
         draftStatusIcon.isHidden = level != 2
         if level == 2 {
-            draftStatusLabel.text = "草稿已保存"
+            // 109：文案缩短为「已保存」（对勾图标已在左侧，合起来即「✓ 已保存」，意思不变），
+            // 压缩阻力拉到 required，优先保全文案、不再被左侧图标组与字数圆环挤成「草…」。
+            draftStatusLabel.text = "已保存"
             draftStatusLabel.textColor = BearyColors.blue
+            draftStatusLabel.setContentCompressionResistancePriority(.required, for: .horizontal)
         } else if level == 1 {
             draftStatusLabel.text = "文字已保存，图片未保存"
             draftStatusLabel.textColor = BearyColors.blue
+            draftStatusLabel.setContentCompressionResistancePriority(UILayoutPriority(749), for: .horizontal)
         } else {
             draftStatusLabel.text = "草稿保存失败"
             draftStatusLabel.textColor = BearyColors.red
+            draftStatusLabel.setContentCompressionResistancePriority(UILayoutPriority(749), for: .horizontal)
+        }
+        applyDraftStatusToolbarFit()
+    }
+
+    /// 109：草稿状态在工具栏里的宽度适配（只动间距与 lvl2 文案显隐，不动图标与圆环）。
+    /// 390 宽：容器 358，左组 6×24 图标 + 18 圆环 + 状态组（对勾 15 + gap 5 + 文案约 39）
+    /// + 8 段间距 16 = 约 349，可完整排下「✓ 已保存」。
+    /// 320 宽：容器 288，即使间距收到 12 也排不下文案，兜底只留对勾（文案隐藏），
+    /// 绝不留半截字加省略号；宽回升时文案自动恢复（viewDidLayoutSubviews 每轮重算，同值不重设、不成环）。
+    private func applyDraftStatusToolbarFit() {
+        guard let toolRow = toolbarContainer.subviews.first(where: { $0 is UIStackView }) as? UIStackView else { return }
+        let width = toolbarContainer.bounds.width
+        guard width > 0 else { return }
+        guard let level = draftStatusLevel, !isEditMode, !draftStatusGroup.isHidden else {
+            if toolRow.spacing != 16 { toolRow.spacing = 16 }
+            return
+        }
+        if level != 2 {
+            if draftStatusLabel.isHidden { draftStatusLabel.isHidden = false }
+            if toolRow.spacing != 16 { toolRow.spacing = 16 }
+            return
+        }
+        let labelWidth = draftStatusLabel.intrinsicContentSize.width
+        let withLabel = CGFloat(6 * 24 + 18 + 15 + 5) + labelWidth
+        let spacingWithLabel = floor((width - withLabel) / 8)
+        if spacingWithLabel >= 12 {
+            if draftStatusLabel.isHidden { draftStatusLabel.isHidden = false }
+            let spacing = min(16, spacingWithLabel)
+            if toolRow.spacing != spacing { toolRow.spacing = spacing }
+        } else {
+            if !draftStatusLabel.isHidden { draftStatusLabel.isHidden = true }
+            let iconOnly = CGFloat(6 * 24 + 18 + 15)
+            let spacing = min(16, max(8, floor((width - iconOnly) / 8)))
+            if toolRow.spacing != spacing { toolRow.spacing = spacing }
         }
     }
 
