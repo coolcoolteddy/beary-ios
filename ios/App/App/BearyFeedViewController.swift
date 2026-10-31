@@ -947,6 +947,23 @@ class BearyFeedViewController: UIViewController {
     /// 全部模型都改（不再只改第一份），全部可见行都刷；取消点赞/收藏时经回调
     /// 通知容器（赞过/收藏页签摘卡，容器接线由总协调收尾）。
     /// 列表不可见或该条已不在列表时静默跳过，不报错。
+    /// 删帖同步清模型：删帖成功后立即从广场模型摘掉本篇，不只依赖
+    /// 随后重拉——重拉可能被在途守卫跳过，跳过即复活。行删除先校验表
+    /// 已渲染行数与旧模型一致，对不上时整表重载（模型已正确），不
+    /// 带病发 deleteRows（连续删帖闪退同款成因）。
+    func removeDeletedEntry(entryId: String) {
+        guard let row = plazaRaw.firstIndex(where: { $0.id == entryId }) else { return }
+        let oldCount = plazaRaw.count
+        plazaRaw.removeAll { $0.id == entryId }
+        firstPageIds.removeAll { $0 == entryId }
+        guard isViewLoaded else { return }
+        if tableView.numberOfRows(inSection: 0) == oldCount {
+            tableView.deleteRows(at: [IndexPath(row: row, section: 0)], with: .fade)
+        } else {
+            tableView.reloadData()
+        }
+    }
+
     func applyInteraction(entryId: String, likeCount: Int?, likedByMe: Bool?, bookmarkedByMe: Bool?, emotes: [EmoteCount]?) {
         var updated = false
         var likeRemoved = false

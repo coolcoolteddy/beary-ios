@@ -2748,6 +2748,11 @@ class BearyTimelineViewController: UIViewController {
     /// 故此处即删帖成功点，回收站计数 +1 并立即刷新 pill。
     func removeDeletedEntry(_ entry: Entry) {
         guard let entryId = entry.id else { return }
+        // 连续删帖防撞：删帖即作废在途首屏回包——在途回包的 oldSections
+        // 仍含本篇，其 diff 若在删帖批更新后到达，会对已删行再发
+        // deleteRows（Invalid update 闪退）。seq 守卫会把这类旧回包
+        // 丢弃（仅停菊花/收刷新头，不动模型与表）。
+        timelineFirstPageSeq += 1
         // P1-8：先于模型/分区处理加计数——即使模型里已无该篇而走下方
         // refreshAfterDetailChange 回落，删帖成功进回收站的事实不变；
         // 回落的首拉成功后 trashCountValue 会被服务端值覆盖校准，不会累加。
@@ -2761,7 +2766,11 @@ class BearyTimelineViewController: UIViewController {
             }
         }
         guard !occurrences.isEmpty else {
-            // 模型里没有（已被别处清掉），退回原有整页重拉保底。
+            // 模型里没有（已被别处清掉），退回原有整页重拉保底；同时把
+            // 快照同步写回（模型里已无本篇），免得重拉失败时快照复活它。
+            if let uid = SessionManager.shared.currentUser?.id {
+                BearyTimelineCache.save(bucket: BearyFeedCache.bucket(userId: uid), entries: timelineEntries, hasMore: timelineHasMore, trashCount: trashCountValue, counts: countsValue)
+            }
             refreshAfterDetailChange()
             return
         }
@@ -2814,16 +2823,39 @@ class BearyTimelineViewController: UIViewController {
             // 统计行会被 stack 压缩、上下裁剪；2423/3112 两路写入后都补）。
             refreshHeaderHeight()
         }
-        tableView.performBatchUpdates({
-            if !rowDeletes.isEmpty { self.tableView.deleteRows(at: rowDeletes, with: .fade) }
-            if !sectionDeletes.isEmpty { self.tableView.deleteSections(sectionDeletes, with: .fade) }
-        }, completion: { [weak self] _ in
-            guard let self = self else { return }
-            // 面板头含计数（“N篇”），需重建头视图；日期组头无计数，不用动。
-            if panelAffected {
-                self.tableView.reloadSections(IndexSet(integer: 0), with: .none)
+        // 删帖复活修：此前删帖只清了日落盘与内存模型，没写时间线首屏
+        // 快照——冷启动先渲染快照，已删篇会先回来、要等一次静默刷新成功
+        // 才纠掉，弱网/刷新失败时就一直复活。此处删帖即把快照同步写回。
+        if let uid = SessionManager.shared.currentUser?.id {
+            BearyTimelineCache.save(bucket: BearyFeedCache.bucket(userId: uid), entries: timelineEntries, hasMore: timelineHasMore, trashCount: trashCountValue, counts: countsValue)
+        }
+        // 连续删帖防撞：表当前已渲染行数须与 oldSections 一致才发批更新；
+        // 若上一批动画/另一路更新还没落定（行数对不上），批更新必按旧
+        // 下标删错行导致 Invalid update 闪退——此时模型已正确，整表重载
+        // 即与模型对齐，不带病批更新。
+        let renderedMatchesOld: Bool = {
+            guard tableView.numberOfSections == oldSections.count else { return false }
+            for section in 0..<oldSections.count {
+                guard tableView.numberOfRows(inSection: section) == oldSections[section].entries.count else { return false }
             }
-        })
+            return true
+        }()
+        if renderedMatchesOld {
+            tableView.performBatchUpdates({
+                if !rowDeletes.isEmpty { self.tableView.deleteRows(at: rowDeletes, with: .fade) }
+                if !sectionDeletes.isEmpty { self.tableView.deleteSections(sectionDeletes, with: .fade) }
+            }, completion: { [weak self] _ in
+                guard let self = self else { return }
+                // 面板头含计数（“N篇”），需重建头视图；日期组头无计数，不用动。
+                // 批更新完成前用户若已切日/切页，section 0 未必仍是面板——
+                // 越界 reloadSections 同样会闪退，先守卫再重载。
+                if panelAffected, self.selectedDayKey != nil, self.tableView.numberOfSections > 0 {
+                    self.tableView.reloadSections(IndexSet(integer: 0), with: .none)
+                }
+            })
+        } else {
+            tableView.reloadData()
+        }
         pendingFixSelCheck = true
         for key in monthKeysForCurrentView() {
             fetchCalendarMonth(key: key, force: true)
