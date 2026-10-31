@@ -6093,6 +6093,10 @@ class BearyProfileViewController: UIViewController {
         diaryEntries.removeAll { $0.id == entryId }
         likedEntries.removeAll { $0.id == entryId }
         savedEntries.removeAll { $0.id == entryId }
+        // 照片墙数据源 = 首屏 + 溢出页：只清首屏会漏掉已进溢出集的已删篇，
+        // 照片墙里照片残留、直到下次重拉才消失；溢出集一并清掉。
+        photoOverflowEntries.removeAll { $0.id == entryId }
+        modulesCorpus.removeAll { $0.id == entryId }
         guard isViewLoaded else { return }
         tableView.reloadData()
     }
