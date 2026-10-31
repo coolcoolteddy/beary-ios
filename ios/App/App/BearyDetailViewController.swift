@@ -298,6 +298,53 @@ final class BearyDetailViewController: UIViewController {
     private var imageSlots: [UIImageView] = []
     private var imageSlotWidthConstraints: [NSLayoutConstraint] = []
     private var imageSlotRetryButtons: [BearyFeedRetryButton] = []
+
+    /// 图片条捏合拼图：双指捏合把间距 8 → 0（图贴在一起），张开恢复 8。
+    /// 只动 imagesStack.spacing，不动槽宽/高/圆角，不缩放单张图；灯箱自带的
+    /// 单图捏合缩放不在此改动范围。滚动视图本身未开 zoom（min/max 均为 1），
+    /// 其内置捏合手势不会抢占本手势。
+    private var stripPinchStartProgress: CGFloat = 0
+    private var stripPinchJoined = false
+
+    private func installImageStripPinch() {
+        let pinch = UIPinchGestureRecognizer(target: self, action: #selector(imageStripPinched(_:)))
+        pinch.delegate = self
+        imagesScrollView.addGestureRecognizer(pinch)
+    }
+
+    @objc private func imageStripPinched(_ gesture: UIPinchGestureRecognizer) {
+        // 单图时无间距可收，不接管手势（也不禁滚动）。
+        let visibleCount = imageSlots.filter { !$0.isHidden }.count
+        guard visibleCount >= 2 else { return }
+        switch gesture.state {
+        case .began:
+            // 以当前实际间距起算，防上一轮贴合动画中途被新一轮捏合打断时跳变。
+            stripPinchStartProgress = max(0, min(1, 1 - imagesStack.spacing / 8))
+            imagesScrollView.isScrollEnabled = false
+        case .changed:
+            // scale < 1 为捏合（progress 增大、间距收小），scale > 1 为张开（反向）；
+            // 从贴合态起手张开同样走这条式子，不会出现“贴合后张开无效”。
+            let progress = max(0, min(1, stripPinchStartProgress + (1 - gesture.scale)))
+            imagesStack.spacing = 8 * (1 - progress)
+            imagesScrollView.layoutIfNeeded()
+        case .ended, .cancelled, .failed:
+            imagesScrollView.isScrollEnabled = true
+            let progress = max(0, min(1, stripPinchStartProgress + (1 - gesture.scale)))
+            stripPinchJoined = progress >= 0.5
+            UIView.animate(withDuration: 0.25, animations: {
+                self.imagesStack.spacing = self.stripPinchJoined ? 0 : 8
+                self.imagesScrollView.layoutIfNeeded()
+            })
+        default:
+            break
+        }
+    }
+
+    private func resetImageStripPinch() {
+        stripPinchJoined = false
+        imagesStack.spacing = 8
+        imagesScrollView.isScrollEnabled = true
+    }
     /// 批 E 详情位置行：官方 icon_location 13 灰 + 位置文案，作者本人看自己公开篇时
     /// 下方挂橙色提示；无位置/他人视角无区级时整组隐藏，不留空行（与卡片同口径）。
     private let detailLocationIconView: UIImageView = {
@@ -811,6 +858,7 @@ final class BearyDetailViewController: UIViewController {
             imageSlotRetryButtons.append(retry)
             imageSlots.append(slot)
         }
+        installImageStripPinch()
     }
 
     /// 批 E 详情位置行（rebase 落点：新骨架右列 rightStack，引用卡之后、操作行之前；
@@ -1305,6 +1353,7 @@ final class BearyDetailViewController: UIViewController {
     /// 槽位复用（上限 9 张；超 9 张只显前 9 张，旧详情纵向无上限，见 PR 说明）。
     /// 条内走 thumb 图（首页同款），点图进灯箱仍按原图 key 打开。
     private func renderImages() {
+        resetImageStripPinch()
         let allKeys = (entry.images ?? []).filter { !$0.isEmpty }
         imageKeys = allKeys
         let keys = Array(allKeys.prefix(9))
@@ -2166,5 +2215,13 @@ final class BearyDetailViewController: UIViewController {
         // gone/locked 卡不导航；其余一律经容器先校验可见性再放行（私密显占位）。
         if quote.gone == true || quote.locked == true { return }
         onQuoteTapped?(quoteId)
+    }
+}
+
+extension BearyDetailViewController: UIGestureRecognizerDelegate {
+    func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldRecognizeSimultaneouslyWith otherGestureRecognizer: UIGestureRecognizer) -> Bool {
+        // 只放行本图片条捏合与滚动平移的共存（条内横滑 / 列表竖滑），
+        // 该 delegate 只挂在捏合手势上，不影响点赞、点图等其他手势。
+        return otherGestureRecognizer is UIPanGestureRecognizer
     }
 }

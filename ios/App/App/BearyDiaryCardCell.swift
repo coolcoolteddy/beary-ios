@@ -992,6 +992,53 @@ class BearyDiaryCardCell: UITableViewCell {
     private var imageSlotWidthConstraints: [NSLayoutConstraint] = []
     private var imageSlotRetryButtons: [BearyFeedRetryButton] = []
 
+    /// 图片条捏合拼图：双指捏合把间距 8 → 0（图贴在一起），张开恢复 8。
+    /// 只动 imagesStack.spacing，不动槽宽/高/圆角，不缩放单张图；灯箱自带的
+    /// 单图捏合缩放不在此改动范围。滚动视图本身未开 zoom（min/max 均为 1），
+    /// 其内置捏合手势不会抢占本手势。
+    private var stripPinchStartProgress: CGFloat = 0
+    private var stripPinchJoined = false
+
+    private func installImageStripPinch() {
+        let pinch = UIPinchGestureRecognizer(target: self, action: #selector(imageStripPinched(_:)))
+        pinch.delegate = self
+        imagesScrollView.addGestureRecognizer(pinch)
+    }
+
+    @objc private func imageStripPinched(_ gesture: UIPinchGestureRecognizer) {
+        // 单图时无间距可收，不接管手势（也不禁滚动）。
+        let visibleCount = imageSlots.filter { !$0.isHidden }.count
+        guard visibleCount >= 2 else { return }
+        switch gesture.state {
+        case .began:
+            // 以当前实际间距起算，防上一轮贴合动画中途被新一轮捏合打断时跳变。
+            stripPinchStartProgress = max(0, min(1, 1 - imagesStack.spacing / 8))
+            imagesScrollView.isScrollEnabled = false
+        case .changed:
+            // scale < 1 为捏合（progress 增大、间距收小），scale > 1 为张开（反向）；
+            // 从贴合态起手张开同样走这条式子，不会出现“贴合后张开无效”。
+            let progress = max(0, min(1, stripPinchStartProgress + (1 - gesture.scale)))
+            imagesStack.spacing = 8 * (1 - progress)
+            imagesScrollView.layoutIfNeeded()
+        case .ended, .cancelled, .failed:
+            imagesScrollView.isScrollEnabled = true
+            let progress = max(0, min(1, stripPinchStartProgress + (1 - gesture.scale)))
+            stripPinchJoined = progress >= 0.5
+            UIView.animate(withDuration: 0.25, animations: {
+                self.imagesStack.spacing = self.stripPinchJoined ? 0 : 8
+                self.imagesScrollView.layoutIfNeeded()
+            })
+        default:
+            break
+        }
+    }
+
+    private func resetImageStripPinch() {
+        stripPinchJoined = false
+        imagesStack.spacing = 8
+        imagesScrollView.isScrollEnabled = true
+    }
+
     private func makeImageSlots() {
         guard imageSlots.isEmpty else { return }
         for index in 0..<9 {
@@ -1024,6 +1071,7 @@ class BearyDiaryCardCell: UITableViewCell {
             imageSlotRetryButtons.append(retry)
             imageSlots.append(slot)
         }
+        installImageStripPinch()
     }
 
     init(style: UITableViewCell.CellStyle, reuseIdentifier: String?, mode: BearyDiaryCardMode) {
@@ -1254,6 +1302,7 @@ class BearyDiaryCardCell: UITableViewCell {
 
     override func prepareForReuse() {
         super.prepareForReuse()
+        resetImageStripPinch()
         // iCity 举报退场动画只动 contentView（alpha/transform），复用时复位，防残留到下一行。
         contentView.alpha = 1
         contentView.transform = .identity
@@ -1876,6 +1925,7 @@ class BearyDiaryCardCell: UITableViewCell {
     // MARK: - 图片条（94 包槽位复用，两页同款；失败重试 Feed 口径）
 
     private func renderImages(keys: [String], dims: [String: [Int]]?) {
+        resetImageStripPinch()
         // 112：卡片图片条上限 9 张（详情侧同款 Array(allKeys.prefix(9))）。
         // 脏数据超 9 张时先截断再渲染，灯箱 keys 同步取截断后列表，
         // 第 10 张起既不渲染也不进灯箱；逐项再 guard 三池下标，防池化异常越界。
@@ -3362,5 +3412,13 @@ class BearyDiaryCardCell: UITableViewCell {
         emoteFlightAPIDone = false
         emoteFlightRemovalStaged = false
         updateEmoteInteractivity()
+    }
+}
+
+extension BearyDiaryCardCell: UIGestureRecognizerDelegate {
+    func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldRecognizeSimultaneouslyWith otherGestureRecognizer: UIGestureRecognizer) -> Bool {
+        // 只放行本图片条捏合与滚动平移的共存（条内横滑 / 列表竖滑），
+        // 该 delegate 只挂在捏合手势上，不影响点赞、点图等其他手势。
+        return otherGestureRecognizer is UIPanGestureRecognizer
     }
 }
