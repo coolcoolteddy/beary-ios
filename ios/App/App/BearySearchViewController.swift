@@ -224,6 +224,28 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         // 审计 P2-20：搜索页监听拉黑/举报即时清行并清 quoteCache。
         NotificationCenter.default.addObserver(self, selector: #selector(handleBlockedUserNotification(_:)), name: .bearyDidBlockUser, object: nil)
         NotificationCenter.default.addObserver(self, selector: #selector(handleReportedEntryNotification(_:)), name: .bearyDidReportEntry, object: nil)
+        // 扫荡组 A：键盘弹起时给滚动区补底部留白（见 keyboardWillShow）。
+        NotificationCenter.default.addObserver(self, selector: #selector(keyboardWillShow(_:)), name: UIResponder.keyboardWillShowNotification, object: nil)
+        NotificationCenter.default.addObserver(self, selector: #selector(keyboardWillHide(_:)), name: UIResponder.keyboardWillHideNotification, object: nil)
+    }
+
+    /// 扫荡组 A：键盘弹起时滚动区底部留白——此前本页从不监听键盘，
+    /// scrollView 底部留白恒为 90，键盘（约 300 高）弹起后会盖住结果区
+    /// 末尾几行：不先拖动收键盘就点不到它们。登录页已有同款键盘留白
+    /// 处理，本页按同口径补齐（只动 bottom，top 仍由 applyHeaderTopInset 管）。
+    private var keyboardBottomInset: CGFloat = 0
+
+    @objc private func keyboardWillShow(_ notification: Notification) {
+        guard let frame = notification.userInfo?[UIResponder.keyboardFrameEndUserInfoKey] as? CGRect else { return }
+        keyboardBottomInset = max(0, frame.height - view.safeAreaInsets.bottom)
+        scrollView.contentInset.bottom = 90 + keyboardBottomInset
+        scrollView.scrollIndicatorInsets.bottom = 90 + keyboardBottomInset
+    }
+
+    @objc private func keyboardWillHide(_ notification: Notification) {
+        keyboardBottomInset = 0
+        scrollView.contentInset.bottom = 90
+        scrollView.scrollIndicatorInsets.bottom = 90
     }
 
     /// 补缺 P2-21：搜索拉黑判定（与 SceneDelegate isBlockedAuthor 同口径：游客不承接拉黑表，
@@ -362,6 +384,8 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         searchTimer?.invalidate()
         NotificationCenter.default.removeObserver(self, name: .bearyDidBlockUser, object: nil)
         NotificationCenter.default.removeObserver(self, name: .bearyDidReportEntry, object: nil)
+        NotificationCenter.default.removeObserver(self, name: UIResponder.keyboardWillShowNotification, object: nil)
+        NotificationCenter.default.removeObserver(self, name: UIResponder.keyboardWillHideNotification, object: nil)
     }
 
     override func traitCollectionDidChange(_ previousTraitCollection: UITraitCollection?) {
