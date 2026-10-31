@@ -62,6 +62,7 @@
 		C135069A08D34199AC8F8AF3 /* BearyTimeCapsule.swift in Sources */ = {isa = PBXBuildFile; fileRef = D74D6C1DAD7F40BD8EFCD310 /* BearyTimeCapsule.swift */; };
 		1E362E2D44A34966AE01BAC7 /* BearyTimeCapsuleRowView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 742B8625835E4C439496E239 /* BearyTimeCapsuleRowView.swift */; };
 		0784198F166F926746DBBD8F /* BearyDynamicBorder.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8F0056EF4785D1AB4F29064A /* BearyDynamicBorder.swift */; };
+		0953EBE59CDE4004A8245CA8 /* BearyDashedBorderView.swift in Sources */ = {isa = PBXBuildFile; fileRef = BD3D299014174E13AA88A8C0 /* BearyDashedBorderView.swift */; };
 		18B93E5A06A14597B9AC7E5D /* BearyTimeCapsuleSheetViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 42318F958E9F405E9FAA466E /* BearyTimeCapsuleSheetViewController.swift */; };
 		5392548191C34E7DA72EBEAB /* BearyStarMap.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2D0F219CC32F47C894C1AC12 /* BearyStarMap.swift */; };
 		056BAE1849464C80809141E9 /* BearyDiaryStarMapViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = C12B794417E44D6BB453D151 /* BearyDiaryStarMapViewController.swift */; };
@@ -262,6 +263,7 @@
 		D74D6C1DAD7F40BD8EFCD310 /* BearyTimeCapsule.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BearyTimeCapsule.swift; sourceTree = "<group>"; };
 		742B8625835E4C439496E239 /* BearyTimeCapsuleRowView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BearyTimeCapsuleRowView.swift; sourceTree = "<group>"; };
 		8F0056EF4785D1AB4F29064A /* BearyDynamicBorder.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BearyDynamicBorder.swift; sourceTree = "<group>"; };
+		BD3D299014174E13AA88A8C0 /* BearyDashedBorderView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BearyDashedBorderView.swift; sourceTree = "<group>"; };
 		42318F958E9F405E9FAA466E /* BearyTimeCapsuleSheetViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BearyTimeCapsuleSheetViewController.swift; sourceTree = "<group>"; };
 		2D0F219CC32F47C894C1AC12 /* BearyStarMap.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BearyStarMap.swift; sourceTree = "<group>"; };
 		C12B794417E44D6BB453D151 /* BearyDiaryStarMapViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BearyDiaryStarMapViewController.swift; sourceTree = "<group>"; };
@@ -491,6 +493,7 @@
 				D74D6C1DAD7F40BD8EFCD310 /* BearyTimeCapsule.swift */,
 				742B8625835E4C439496E239 /* BearyTimeCapsuleRowView.swift */,
 				8F0056EF4785D1AB4F29064A /* BearyDynamicBorder.swift */,
+				BD3D299014174E13AA88A8C0 /* BearyDashedBorderView.swift */,
 				42318F958E9F405E9FAA466E /* BearyTimeCapsuleSheetViewController.swift */,
 				2D0F219CC32F47C894C1AC12 /* BearyStarMap.swift */,
 				C12B794417E44D6BB453D151 /* BearyDiaryStarMapViewController.swift */,
@@ -913,6 +916,7 @@
 				C135069A08D34199AC8F8AF3 /* BearyTimeCapsule.swift in Sources */,
 				1E362E2D44A34966AE01BAC7 /* BearyTimeCapsuleRowView.swift in Sources */,
 				0784198F166F926746DBBD8F /* BearyDynamicBorder.swift in Sources */,
+				0953EBE59CDE4004A8245CA8 /* BearyDashedBorderView.swift in Sources */,
 				18B93E5A06A14597B9AC7E5D /* BearyTimeCapsuleSheetViewController.swift in Sources */,
 				5392548191C34E7DA72EBEAB /* BearyStarMap.swift in Sources */,
 				056BAE1849464C80809141E9 /* BearyDiaryStarMapViewController.swift in Sources */,
