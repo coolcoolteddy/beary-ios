@@ -1969,8 +1969,8 @@ final class BearyNotificationsViewController: UIViewController {
 
 extension BearyNotificationsViewController: UITableViewDataSource, UITableViewDelegate {
 
-    /// 哨兵行：有更多页或正在翻页时占位（不可见；忙时仅 16px 转圈），
-    /// 翻页失败也不产生重试行，哨兵留位待重 arm。
+    /// 哨兵行：有更多页或正在翻页时占位（闲时不可见；忙时仅 16px 转圈），
+    /// 翻页失败时哨兵行本身可点按重试（见 didSelectRowAt），不再只靠滚出视野重 arm。
     private var showsSentinelRow: Bool {
         return hasMore || isLoadingMore
     }
@@ -2001,6 +2001,8 @@ extension BearyNotificationsViewController: UITableViewDataSource, UITableViewDe
             }
             if isLoadingMore {
                 trailingCell.configureLoading()
+            } else if loadMoreFailed {
+                trailingCell.configureFailed()
             } else {
                 trailingCell.configureIdle()
             }
@@ -2069,7 +2071,16 @@ extension BearyNotificationsViewController: UITableViewDataSource, UITableViewDe
     func tableView(_ tableView: UITableView, didSelectRowAt indexPath: IndexPath) {
         tableView.deselectRow(at: indexPath, animated: !UIAccessibility.isReduceMotionEnabled)
         if indexPath.row == displayRows.count {
-            // 哨兵行不可见、无点击行为；翻页只由 willDisplay / 滚动触发。
+            // 112：失败态哨兵行可点按重试——内容总高小于视口时哨兵永远可见，
+            // 只靠“滚出视野清 loadMoreFailed”永远清不掉，重试被永久锁死。
+            // 点按先清失败旗再重拉下一页；loadMore() 自带 isLoadingMore 守卫，
+            // 连点不会重复发请求。闲时（非失败）哨兵仍无点击行为；无更多页时
+            // 根本没有哨兵行，“到底了”正常态不动；滚动中不自动循环重拉。
+            if loadMoreFailed && hasMore && !isLoadingMore {
+                BearyHaptics.press()
+                loadMoreFailed = false
+                loadMore()
+            }
             return
         }
         // W6：行点按补 .light 轻震（哨兵行已提前返回，不震动）。
@@ -3259,7 +3270,7 @@ private final class BearyPopperView: UIView {
     }
 }
 
-// MARK: - 哨兵 cell（翻页触发占位：忙时 16px 转圈，闲时不可见）
+// MARK: - 哨兵 cell（翻页触发占位：忙时 16px 转圈，闲时不可见，失败时显重试文案）
 
 private class BearyNotificationTrailingCell: UITableViewCell {
 
@@ -3267,17 +3278,36 @@ private class BearyNotificationTrailingCell: UITableViewCell {
     /// 全 App 统一 icon_refresh，不再用 medium 圈 ×0.8 缩放）。
     private let spinner = BearyRefreshIconView()
 
+    /// 112：失败态重试文案。哨兵闲时不可见，若失败态也全隐形，
+    /// 用户无从发现可点按重试；只在失败态显形，闲时/到底了态不动。
+    private let retryLabel: UILabel = {
+        let label = UILabel()
+        label.translatesAutoresizingMaskIntoConstraints = false
+        label.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13))
+        label.adjustsFontForContentSizeCategory = true
+        label.textColor = BearyColors.gray
+        label.textAlignment = .center
+        label.text = "加载失败，点按重试"
+        label.isHidden = true
+        return label
+    }()
+
     override init(style: UITableViewCell.CellStyle, reuseIdentifier: String?) {
         super.init(style: style, reuseIdentifier: reuseIdentifier)
         selectionStyle = .none
         backgroundColor = BearyColors.bg
         contentView.backgroundColor = BearyColors.bg
         contentView.addSubview(spinner)
+        contentView.addSubview(retryLabel)
         NSLayoutConstraint.activate([
             spinner.centerXAnchor.constraint(equalTo: contentView.centerXAnchor),
             spinner.centerYAnchor.constraint(equalTo: contentView.centerYAnchor),
             spinner.widthAnchor.constraint(equalToConstant: 16),
             spinner.heightAnchor.constraint(equalToConstant: 16),
+            retryLabel.centerXAnchor.constraint(equalTo: contentView.centerXAnchor),
+            retryLabel.centerYAnchor.constraint(equalTo: contentView.centerYAnchor),
+            retryLabel.leadingAnchor.constraint(greaterThanOrEqualTo: contentView.leadingAnchor, constant: 20),
+            retryLabel.trailingAnchor.constraint(lessThanOrEqualTo: contentView.trailingAnchor, constant: -20),
         ])
     }
 
@@ -3293,10 +3323,12 @@ private class BearyNotificationTrailingCell: UITableViewCell {
     override func prepareForReuse() {
         super.prepareForReuse()
         spinner.stopSpinning()
+        retryLabel.isHidden = true
     }
 
     /// 忙时仅 16px 转圈；闲时不可见、无按钮、无点击。
     func configureLoading() {
+        retryLabel.isHidden = true
         spinner.isHidden = false
         spinner.startSpinning()
     }
@@ -3304,5 +3336,14 @@ private class BearyNotificationTrailingCell: UITableViewCell {
     func configureIdle() {
         spinner.stopSpinning()
         spinner.isHidden = true
+        retryLabel.isHidden = true
+    }
+
+    /// 112：失败态——藏转圈、显“加载失败，点按重试”，整行点按走
+    /// didSelectRowAt 的失败重试分支；无更多页时本行不存在。
+    func configureFailed() {
+        spinner.stopSpinning()
+        spinner.isHidden = true
+        retryLabel.isHidden = false
     }
 }
