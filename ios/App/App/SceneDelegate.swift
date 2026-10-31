@@ -2653,7 +2653,19 @@ final class BearyChromeViewController: UIViewController {
                 self?.showPage(.home)
             }
         }
-        topmostViewController().present(vc, animated: BearyMotion.animated(true))
+        // 115 设置页空白守卫（根因未证实）：全屏 modal 呈现完成时把
+        // 设置页 view.frame 复位到窗口 bounds，排除转场中途打断留下
+        // 的位移残留（呈现前定帧布局已做一次，这里是完成时的第二道
+        // 保险；只复位 frame，不重建、不重播动效）。
+        topmostViewController().present(vc, animated: BearyMotion.animated(true)) { [weak vc] in
+            guard let vc = vc, let window = vc.view.window else { return }
+            let bounds = window.bounds
+            if vc.view.frame != bounds {
+                vc.view.frame = bounds
+                vc.view.setNeedsLayout()
+                vc.view.layoutIfNeeded()
+            }
+        }
     }
 
     /// 引导页弹出（v3 四页版）：引导 UI 在 BearyOnboardingViewController.swift

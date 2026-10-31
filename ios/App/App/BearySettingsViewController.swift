@@ -236,6 +236,10 @@ final class BearySettingsViewController: UIViewController {
     /// view.bounds 的纯函数，首个布局轮次即最终值，不再经多轮约束收敛
     /// 分段变宽；最终口径不变（iPhone 屏宽 -40，宽 ≥821 锁 600 居中）。
     private var contentColumnWidth: NSLayoutConstraint?
+    /// 115 设置页空白守卫（根因未证实，见下）：view 帧复位只做一次，避免布局环。
+    private var settingsFrameResetDone = false
+    /// 115 设置页空白守卫：进场诊断日志每出现一次只记一次。
+    private var settingsLayoutLogged = false
 
     // MARK: - 视图
 
@@ -326,9 +330,62 @@ final class BearySettingsViewController: UIViewController {
         loadAll()
     }
 
+    override func viewWillAppear(_ animated: Bool) {
+        super.viewWillAppear(animated)
+        settingsFrameResetDone = false
+        settingsLayoutLogged = false
+    }
+
+    override func viewDidAppear(_ animated: Bool) {
+        super.viewDidAppear(animated)
+        logSettingsLayout(tag: "appear")
+    }
+
     override func viewDidLayoutSubviews() {
         super.viewDidLayoutSubviews()
         updateColumnWidth()
+        applySettingsLayoutGuard()
+    }
+
+    /// 115 设置页空白守卫（根因未证实，针对两类未证实原因）：
+    /// ① 呈现时 view 帧 / 安全区异常导致顶栏被顶到屏中部；
+    /// ② 约束冲突时 solver 弃锚点导致 scrollView 可见高度归零。
+    /// 只做帧复位 + 一次重布局，不整页重建、不重播动效、不改字号
+    /// 跟随与 loadAll / 各分组 isHidden 口径。顶栏是 buildLayout 的
+    /// 局部变量，这里经 closeButton.superview 取到，不新增存储属性。
+    private func applySettingsLayoutGuard() {
+        guard !settingsFrameResetDone, let window = view.window else { return }
+        let bounds = window.bounds
+        guard bounds.width > 0, bounds.height > 0, view.bounds.width > 0 else { return }
+        let topBar = closeButton.superview
+        let topBarMinY = topBar?.frame.minY ?? 0
+        let safeTop = view.safeAreaInsets.top
+        let viewFrameOff = abs(view.frame.origin.x) > 0.5 || abs(view.frame.origin.y) > 0.5
+            || abs(view.frame.width - bounds.width) > 0.5 || abs(view.frame.height - bounds.height) > 0.5
+        let topBarOff = topBar != nil && abs(topBarMinY - safeTop) > 20
+        let scrollCollapsed = scrollView.frame.height <= 0
+        guard viewFrameOff || topBarOff || scrollCollapsed else { return }
+        settingsFrameResetDone = true
+        if viewFrameOff {
+            view.frame = bounds
+        }
+        view.setNeedsLayout()
+        view.layoutIfNeeded()
+        logSettingsLayout(tag: "guard-reset")
+    }
+
+    /// 115 设置页空白诊断：进场与守卫触发时各记一行，进现有 NSLog
+    /// "[Diag]" 诊断通道，不弹 toast、不改 UI。复现时凭此行一次定位
+    /// （顶栏 frame.y 是否偏离安全区顶、scrollView 是否有可见高度）。
+    private func logSettingsLayout(tag: String) {
+        guard !settingsLayoutLogged || tag == "guard-reset" else { return }
+        if tag == "appear" { settingsLayoutLogged = true }
+        let topBar = closeButton.superview
+        NSLog("[Diag] settings-layout tag=%@ view=%@ topBar=%@ scrollView=%@ safeArea=%@",
+              tag, NSStringFromCGRect(view.frame),
+              topBar.map { NSStringFromCGRect($0.frame) } ?? "nil",
+              NSStringFromCGRect(scrollView.frame),
+              NSStringFromUIEdgeInsets(view.safeAreaInsets))
     }
 
     /// 列宽只由 view.bounds 定：宽 ≥821 锁 600（P2-1 同款），宽 ≤820 时
@@ -575,6 +632,12 @@ final class BearySettingsViewController: UIViewController {
         topBar.addSubview(titleLabel)
         NSLayoutConstraint.activate([
             topBar.heightAnchor.constraint(greaterThanOrEqualToConstant: 52),
+            // 115 设置页空白守卫（根因未证实）：顶栏保留 #343 跟随字号，
+            // 但加覆盖最大无障碍字号的上界。17pt 粗体在最大档缩放后约
+            // 51pt + 上下各 6pt 内边距 ≈ 63pt，88pt 留足余量；上界只防
+            // solver 在异常组合下把顶栏撑到把 scrollView 顶出屏，不改常规
+            // 字号下的 52pt，也不动字号跟随逻辑本身。
+            topBar.heightAnchor.constraint(lessThanOrEqualToConstant: 88),
             closeButton.leadingAnchor.constraint(equalTo: topBar.leadingAnchor, constant: 16),
             closeButton.centerYAnchor.constraint(equalTo: topBar.centerYAnchor),
             titleLabel.centerXAnchor.constraint(equalTo: topBar.centerXAnchor),
