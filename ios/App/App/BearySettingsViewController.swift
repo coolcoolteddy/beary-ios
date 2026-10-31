@@ -9,7 +9,8 @@
 // 新增行一律真实能力：消息角标开关（本地 UserDefaults 门控底栏角标）、外观主题三选
 // （复用 beary_theme_mode 存档键）、版本行（Bundle 实值）；全修 3-4 已删“系统通知设置”行
 // （全仓无通知调用，系统通知开关对本 App 无效，不留无效入口）、
-// 隐私政策 / 用户协议（App 内原生文字页，文本取自 teddyhn.com 现行 privacy/terms，不开网页）。
+// 隐私政策 / 用户协议（方案一：服务器下发文字、App 内原生排版，不开网页；
+// 打开时先显示缓存或包内文本，后台拉 GET /beary/api/legal 最新版，刷新后只换文字不重建页面）。
 import UIKit
 
 // ===== beary 原生账户设置页（F 批新建；此前齿轮菜单与头像菜单的“账户设置”均为 presentComingSoon 占位）=====
@@ -2513,24 +2514,30 @@ final class BearySettingsViewController: UIViewController {
     }
 
     @objc private func openPrivacyText() {
-        presentLegalText(title: "隐私政策", text: BearyLegalTexts.privacy)
+        presentLegalText(title: "隐私政策", doc: .privacy)
     }
 
     @objc private func openTermsText() {
-        presentLegalText(title: "用户协议", text: BearyLegalTexts.terms)
+        presentLegalText(title: "用户协议", doc: .terms)
     }
 
-    private func presentLegalText(title: String, text: String) {
-        let vc = BearyLegalTextViewController(pageTitle: title, pageText: text)
+    private func presentLegalText(title: String, doc: BearyLegalServerText.Doc) {
+        // 先显示缓存（或包内兜底），页面立刻打开不阻塞；后台刷新到最新版后只换文字。
+        let vc = BearyLegalTextViewController(pageTitle: title, pageText: BearyLegalServerText.displayText(for: doc))
         vc.modalPresentationStyle = .fullScreen
         // 审计 P2-16：全屏 modal 补 fadeRise。
         vc.transitioningDelegate = SceneDelegate.chrome?.fadeRiseTransitionDelegate
         present(vc, animated: BearyMotion.animated(true))
+        BearyLegalServerText.refresh(doc: doc) { [weak vc] text in
+            guard let text = text, let vc = vc, vc.isViewLoaded else { return }
+            vc.updateText(text)
+        }
     }
 }
 
-/// 设置页隐私/协议原生文字页：纯原生 UITextView 渲染捆进 App 的文本，
+/// 设置页隐私/协议原生文字页：纯原生 UITextView 渲染服务器下发文字，
 /// 不开网页、不挂 WKWebView（App 独立化方向）。全屏 modal，关闭即 dismiss。
+/// updateText 只换 textView 文字，不重建页面、不重播动效。
 final class BearyLegalTextViewController: UIViewController {
     private let pageTitle: String
     private let pageText: String
@@ -2607,6 +2614,70 @@ final class BearyLegalTextViewController: UIViewController {
 
     @objc private func closeTapped() {
         dismiss(animated: BearyMotion.animated(true))
+    }
+
+    /// 服务器刷新回包后只换文字：不重建视图、不动滚动位置以外的状态。
+    func updateText(_ text: String) {
+        guard textView.text != text else { return }
+        textView.text = text
+    }
+}
+
+/// 方案一：隐私政策 / 用户协议服务器下发文字（2026-11-01）。
+/// 缓存按 doc 分开存（privacy / terms 各一键 + 各一个 updated_at 键）；
+/// 有网每次打开都拉，拉取失败或没网就用缓存，再没有缓存才用包内 BearyLegalTexts 兜底；
+/// 登录页的协议链接不在本批范围，仍读包内文本（见 BearyLoginViewController）。
+enum BearyLegalServerText {
+    enum Doc: String {
+        case privacy
+        case terms
+    }
+
+    private struct Response: Decodable {
+        let ok: Bool
+        let doc: String
+        let title: String?
+        let updated_at: String?
+        let text: String?
+    }
+
+    private static func textKey(for doc: Doc) -> String { "beary_legal_text_" + doc.rawValue }
+    private static func updatedKey(for doc: Doc) -> String { "beary_legal_updated_at_" + doc.rawValue }
+
+    static func cachedText(for doc: Doc) -> String? {
+        UserDefaults.standard.string(forKey: textKey(for: doc))
+    }
+
+    static func bundledText(for doc: Doc) -> String {
+        doc == .privacy ? BearyLegalTexts.privacy : BearyLegalTexts.terms
+    }
+
+    static func displayText(for doc: Doc) -> String {
+        cachedText(for: doc) ?? bundledText(for: doc)
+    }
+
+    static func refresh(doc: Doc, completion: @escaping (String?) -> Void) {
+        guard let url = URL(string: "https://teddyhn.com/beary/api/legal?doc=" + doc.rawValue) else {
+            completion(nil)
+            return
+        }
+        var request = URLRequest(url: url)
+        request.setValue("https://teddyhn.com", forHTTPHeaderField: "Origin")
+        URLSession.shared.dataTask(with: request) { data, response, _ in
+            guard let data = data,
+                  let http = response as? HTTPURLResponse, http.statusCode == 200,
+                  let decoded = try? JSONDecoder().decode(Response.self, from: data),
+                  decoded.ok, decoded.doc == doc.rawValue,
+                  let text = decoded.text, !text.isEmpty else {
+                DispatchQueue.main.async { completion(nil) }
+                return
+            }
+            UserDefaults.standard.set(text, forKey: textKey(for: doc))
+            if let updated = decoded.updated_at {
+                UserDefaults.standard.set(updated, forKey: updatedKey(for: doc))
+            }
+            DispatchQueue.main.async { completion(text) }
+        }.resume()
     }
 }
 
