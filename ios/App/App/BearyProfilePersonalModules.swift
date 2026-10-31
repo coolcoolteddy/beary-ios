@@ -57,7 +57,13 @@ enum BearyProfilePersonalLogic {
             guard let id = entry.id, !id.isEmpty else { return false }
             guard entry.placeholder != true else { return false }
             if isOwn { return true }
-            return entry.isPublic == true
+            // 扫荡 C：他人态按有效公开判定（BearyEphemeral 全 App 唯一口径），
+            // 而非裸 isPublic——限时日记过期后按普通私密算（读时判定、无 sweep），
+            // 旧口径会把“已公开但限时已过期”的篇计入他人统计 / 词汇指纹 / 年度回顾。
+            // 当前调用链（个人模块语料仅本人页拉取、他人页模块不拉语料；作者
+            // scope 服务端已滤过期篇）下此改不改变线上行为，属纵深防御：
+            // 语料在过期前拉取、过期后仍在内存时，他人聚合不再把过期篇算进去。
+            return BearyEphemeral.isEffectivelyPublic(entry)
         }
     }
 
