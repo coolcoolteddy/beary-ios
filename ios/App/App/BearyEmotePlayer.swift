@@ -410,31 +410,6 @@ public final class BearyEmoteView: UIView {
         } else {
             view.currentFrame = 0
         }
-        // 临时诊断（天气条 10/28，定根因后删除）：挂接完成置位，布局后第二时点日志发出即清零。
-        diagAttachPending = true
-    }
-
-    /// 临时诊断（天气条 10/28，定根因后删除）：attach 待发标志；布局后第二时点日志用。
-    private var diagAttachPending = false
-
-    /// 临时诊断（天气条 10/28，定根因后删除）：取走 attach 待发标志（取后清零）。
-    func diagTakeAttachPending() -> Bool {
-        let pending = diagAttachPending
-        diagAttachPending = false
-        return pending
-    }
-
-    /// 临时诊断（天气条 10/28，定根因后删除）：当前内容种类与几何，不依赖子视图数组顺序。
-    /// kind：lottie（已挂 Lottie 视图）/ png（PNG 回退图）/ none（两者皆无）。
-    /// imageIsNil 仅 png 时有意义（回退图本身是否为 nil）；currentFrame/staticFrame 仅 lottie 时有值。
-    func diagContentState() -> (kind: String, frame: CGRect, imageIsNil: Bool?, currentFrame: CGFloat?, staticFrame: CGFloat?) {
-        if let view = animationView {
-            return ("lottie", view.frame, nil, view.currentFrame, currentEmote?.staticFrame)
-        }
-        if let imageView = fallbackImageView {
-            return ("png", imageView.frame, imageView.image == nil, nil, nil)
-        }
-        return ("none", .zero, nil, nil, nil)
     }
 
     /// PNG 占位：未命中缓存时的即时静态内容，也是解析失败后的最终回退。
