@@ -6081,6 +6081,10 @@ extension BearyProfileViewController: UITableViewDataSource, UITableViewDelegate
         }
         let entryValue = displayedEntries[indexPath.row]
         let entryId = entryValue.id ?? ""
+        // 109：首卡顶留白——第 0 行在 configure 前置标志（configure 内
+        // updateRightStackSpacing 即按 30 取右列顶；layoutSubviews 按 22 取
+        // 虚线框顶），复用时 prepareForReuse 已复位，非首行不受影响。
+        cellValue.profileFirstRow = (indexPath.row == 0)
         cellValue.configure(
             entry: entryValue,
             isExpanded: expandedEntryIds.contains(entryId),

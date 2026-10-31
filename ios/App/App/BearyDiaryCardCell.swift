@@ -458,6 +458,16 @@ class BearyDiaryCardCell: UITableViewCell {
     private var quoteTapGoneOrLocked = false
     private var quoteTapLoadFailed = false
     private var emoteRowHeightConstraint: NSLayoutConstraint?
+    /// 109：个人页首卡顶留白标志（仅 .profile 模式、表格第 0 行由容器在
+    /// configure 前置 true）。tab 跟移 transform 最大下移 16pt（见
+    /// BearyProfileViewController.applyProfileBelowShift：墙→标签布局间隙 16
+    /// 即封顶值），而首卡内容顶原为 cell 顶 +14、限时虚线框顶为 +6——
+    /// tab 视觉底边 = header 底 −2 +16 = 首卡顶 +14，恰好压住虚线框顶边、
+    /// 贴住内容顶；第二张卡以下不受影响（tab 只压首卡区）。
+    /// 首卡时右列顶 14→30、虚线框顶 6→22：tab 底边到框顶留 8pt、到内容顶
+    /// 留 16pt；头像顶仍为 +14（tab 底边恰贴住、不被盖，无需动）。
+    /// 不改 tab 跟移行为本身，只给首卡加留白。
+    var profileFirstRow = false
     private var rightStackTopConstraint: NSLayoutConstraint?
     /// 右列右缩进恒 −16；⋯ 留位走标题行末 titleMoreSpacer，不再按本人／他人改右缩进。
     private var rightStackTrailingConstraint: NSLayoutConstraint?
@@ -1162,7 +1172,14 @@ class BearyDiaryCardCell: UITableViewCell {
         // 限时虚线边框：存活期按 contentView 内缩矩形重画（圆角 16），两模式同款。
         if !ephemeralBorderLayer.isHidden {
             ephemeralBorderLayer.frame = contentView.bounds
-            ephemeralBorderLayer.path = UIBezierPath(roundedRect: contentView.bounds.insetBy(dx: 8, dy: 6), cornerRadius: 16).cgPath
+            if cardMode == .profile && profileFirstRow {
+                // 首卡：框顶 6→22（底边仍距 cell 底 6，不整体下移），
+                // tab 视觉底边（首卡顶 +14）到框顶留 8pt。
+                let borderRect = CGRect(x: 8, y: 22, width: contentView.bounds.width - 16, height: contentView.bounds.height - 22 - 6)
+                ephemeralBorderLayer.path = UIBezierPath(roundedRect: borderRect, cornerRadius: 16).cgPath
+            } else {
+                ephemeralBorderLayer.path = UIBezierPath(roundedRect: contentView.bounds.insetBy(dx: 8, dy: 6), cornerRadius: 16).cgPath
+            }
         }
         guard cardMode == .feed else { return }
         if currentEntry != nil, contentLabel.bounds.width > 0 {
@@ -1194,6 +1211,7 @@ class BearyDiaryCardCell: UITableViewCell {
         // iCity 举报退场动画只动 contentView（alpha/transform），复用时复位，防残留到下一行。
         contentView.alpha = 1
         contentView.transform = .identity
+        profileFirstRow = false
         // 限时态复位：倒计时行与虚线边框藏起、底线恢复，防残留到下一行。
         ephemeralRow.isHidden = true
         ephemeralLabel.text = nil
@@ -1442,7 +1460,7 @@ class BearyDiaryCardCell: UITableViewCell {
     ///   且 feed 顶距牵动已上线标题基线视觉，不擅自统一为 14；保留为唯一
     ///   模式差异，列入真机清单（两页同屏对比顶距）待视觉确认后再定。
     private func updateRightStackSpacing() {
-        rightStackTopConstraint?.constant = cardMode == .feed ? (recipientRow.isHidden ? 22 : 23) : 14
+        rightStackTopConstraint?.constant = cardMode == .feed ? (recipientRow.isHidden ? 22 : 23) : (profileFirstRow ? 30 : 14)
         rightStack.setCustomSpacing(4, after: recipientRow)
         rightStack.setCustomSpacing(4, after: titleStack)
         rightStack.setCustomSpacing(4, after: ephemeralRow)
