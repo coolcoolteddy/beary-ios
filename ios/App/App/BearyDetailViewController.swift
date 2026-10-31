@@ -933,7 +933,7 @@ final class BearyDetailViewController: UIViewController {
         // 审计 P2-12：标题行（卡片同款，空标题不占位；详情全文页放开换行，
         // 首页单行截断是唯一偏离，见文件头）。
         let trimmedTitle = (entry.title ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-        titleLabel.text = trimmedTitle.isEmpty ? nil : trimmedTitle
+        titleLabel.attributedText = trimmedTitle.isEmpty ? nil : BearyText.inlineAttributedText(from: trimmedTitle, font: BearyDynamicType.cardTitleFont(), color: BearyColors.ink, paragraphStyle: nil, dark: traitCollection.userInterfaceStyle == .dark)
         titleLabel.isHidden = trimmedTitle.isEmpty
 
         // 正文 16pt（diaryBodyFont 即 scaled 16），行高 1.6（首页卡片口径）。
@@ -962,11 +962,8 @@ final class BearyDetailViewController: UIViewController {
         let paragraph = NSMutableParagraphStyle()
         paragraph.lineHeightMultiple = 1.6
         paragraph.lineBreakMode = .byCharWrapping
-        let base = NSAttributedString(string: content, attributes: [
-            .font: font,
-            .foregroundColor: BearyColors.ink,
-            .paragraphStyle: paragraph,
-        ])
+        // 内联心情：正文里的记号先转回熊脸附件（与编辑器同一中间层）。
+        let base = BearyText.inlineAttributedText(from: content, font: font, color: BearyColors.ink, paragraphStyle: paragraph, dark: traitCollection.userInterfaceStyle == .dark)
         guard let key = moodKey, !key.isEmpty,
               let image = BearyEmoteImages.image(for: key, dark: traitCollection.userInterfaceStyle == .dark) else { return base }
         let attachment = NSTextAttachment()
@@ -1084,7 +1081,7 @@ final class BearyDetailViewController: UIViewController {
         }
         if old.title != merged.title {
             let trimmedTitle = (merged.title ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-            titleLabel.text = trimmedTitle.isEmpty ? nil : trimmedTitle
+            titleLabel.attributedText = trimmedTitle.isEmpty ? nil : BearyText.inlineAttributedText(from: trimmedTitle, font: BearyDynamicType.cardTitleFont(), color: BearyColors.ink, paragraphStyle: nil, dark: traitCollection.userInterfaceStyle == .dark)
             titleLabel.isHidden = trimmedTitle.isEmpty
         }
         if old.content != merged.content || old.mood != merged.mood {

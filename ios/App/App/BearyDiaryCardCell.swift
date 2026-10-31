@@ -1409,12 +1409,9 @@ class BearyDiaryCardCell: UITableViewCell {
         // 已置 adjustsFontForContentSizeCategory，富文本字号在下次 configure
         // 时重解（C8 已知局限，本批不改）；装饰性小字不动。
         let bodyFont = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: fontSize))
-        let attrs: [NSAttributedString.Key: Any] = [
-            .font: bodyFont,
-            .foregroundColor: BearyColors.ink,
-            .paragraphStyle: paragraph,
-        ]
-        return NSAttributedString(string: text, attributes: attrs)
+        // 内联心情：正文里的记号转回熊脸附件（与编辑器同一中间层），
+        // 附件字号跟随正文字号；旧心情缀尾仍由 bodyWithTrailingMood 另 append。
+        return BearyText.inlineAttributedText(from: text, font: bodyFont, color: BearyColors.ink, paragraphStyle: paragraph, dark: traitCollection.userInterfaceStyle == .dark)
     }
 
     /// 旧日记心情改位：心情不再单独贴在作者行，改跟在正文最后一个字
@@ -1440,10 +1437,11 @@ class BearyDiaryCardCell: UITableViewCell {
     private func updateEntryTitle(_ rawTitle: String?) {
         let trimmed = rawTitle?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         if trimmed.isEmpty {
-            entryTitleLabel.text = nil
+            entryTitleLabel.attributedText = nil
             entryTitleLabel.isHidden = true
         } else {
-            entryTitleLabel.text = trimmed
+            // 标题里的记号同样转回熊脸附件（卡片标题 16.5 粗体）。
+            entryTitleLabel.attributedText = BearyText.inlineAttributedText(from: trimmed, font: BearyDynamicType.cardTitleFont(), color: BearyColors.ink, paragraphStyle: nil, dark: traitCollection.userInterfaceStyle == .dark)
             entryTitleLabel.isHidden = false
         }
     }
