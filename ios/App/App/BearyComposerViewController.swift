@@ -3764,16 +3764,19 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             return
         }
         let labelWidth = draftStatusLabel.intrinsicContentSize.width
-        let withLabel = CGFloat(6 * 24 + 18 + 15 + 5) + labelWidth
-        let spacingWithLabel = floor((width - withLabel) / 8)
+        // 109-fix：CGFloat(整数算式) + CGFloat 的混合表达式曾让 CI 编译器报
+        // “unable to type-check in reasonable time”——改拆成显式 CGFloat 分步算式。
+        let fixedLeftWidth: CGFloat = 6 * 24 + 18 + 15 + 5  // 6×24 图标 + 18 圆环 + 对勾 15 + 组内 gap 5 = 182
+        let withLabel = fixedLeftWidth + labelWidth
+        let spacingWithLabel: CGFloat = floor((width - withLabel) / 8)
         if spacingWithLabel >= 12 {
             if draftStatusLabel.isHidden { draftStatusLabel.isHidden = false }
-            let spacing = min(16, spacingWithLabel)
+            let spacing: CGFloat = min(16, spacingWithLabel)
             if toolRow.spacing != spacing { toolRow.spacing = spacing }
         } else {
             if !draftStatusLabel.isHidden { draftStatusLabel.isHidden = true }
-            let iconOnly = CGFloat(6 * 24 + 18 + 15)
-            let spacing = min(16, max(8, floor((width - iconOnly) / 8)))
+            let iconOnly: CGFloat = 6 * 24 + 18 + 15  // = 177
+            let spacing: CGFloat = min(16, max(8, floor((width - iconOnly) / 8)))
             if toolRow.spacing != spacing { toolRow.spacing = spacing }
         }
     }
