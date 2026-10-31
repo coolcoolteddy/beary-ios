@@ -2684,11 +2684,15 @@ class BearyTimelineViewController: UIViewController {
     /// 路径对齐——首屏 loadTimelineFirstPage（有旧行时走 diff，不重建
     /// 节点；有行时 updateChrome 不挂背景 spinner）、日历月份（内存
     /// 缓存守门）、当日面板（clear:false 静默刷新）；三路并行，不串行。
-    /// 无缓存：走旧 reloadTimeline 全量路径。
-    /// 账号切换不走本函数：SceneDelegate 切号时调 reloadTimeline 强制
-    /// 重拉，不读旧桶缓存。时间线是本人全部日记（含私密），缓存不做
-    /// Feed 的公开过滤，只按用户桶隔离（与日缓存落盘同款账号桶）。
-    private func loadTimelineCachedOrRefresh() {
+    /// 无缓存：走旧 reloadTimeline 全量路径（空框架先立住，数据等网络，
+    /// 不加骨架屏）。
+    /// 账号切换同样走本函数（秒开-本地持久化）：桶按切换后的 currentUser
+    /// 现算，新号有快照即先画新号自己的快照 + 静默刷新，无快照才走
+    /// reloadTimeline；旧号桶绝不被读到。时间线是本人全部日记（含私密），
+    /// 缓存不做 Feed 的公开过滤，只按用户桶隔离（与日缓存落盘同款账号桶）。
+    /// 注意：切号前容器已清当日内存缓存（clearDayCacheForAccountChange），
+    /// 故当日面板的 clear:false 静默刷新仍走网络，不会吃旧号的日缓存。
+    func loadTimelineCachedOrRefresh() {
         let bucket = BearyFeedCache.bucket(userId: SessionManager.shared.currentUser?.id ?? BearyFeedCache.lastKnownUserId())
         guard let snap = BearyTimelineCache.load(bucket: bucket), !snap.entries.isEmpty else {
             reloadTimeline()
@@ -6197,6 +6201,16 @@ enum BearyTimelineCache {
         guard let data = try? JSONEncoder().encode(snap) else { return }
         try? FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
         try? data.write(to: url, options: .atomic)
+    }
+
+    /// 秒开-本地持久化：登出 / 会话失效时清当前账号的时间线快照。
+    /// 时间线含私密日记，此前无 purge 入口、登出后文件仍留盘，是本批
+    /// 补的缺口（广场 / 图片 / 日落盘此前已有清理，见 SessionManager）。
+    /// 只删传入的桶，不碰其他账号的桶；账号切换（不退出）绝不调这里，
+    /// 旧号快照保留、切回可复用。
+    static func purge(bucket: String) {
+        guard let url = fileURL(bucket: bucket) else { return }
+        try? FileManager.default.removeItem(at: url)
     }
 }
 
