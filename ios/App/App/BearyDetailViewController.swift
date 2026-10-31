@@ -522,6 +522,15 @@ final class BearyDetailViewController: UIViewController {
         emoteFlowHeight?.constant = emoteFlowView.height(forWidth: width)
     }
 
+    /// 系统字号档位变化时重算赞数显式宽：标题字号随 adjustsFontForContentSizeCategory
+    /// 自动跟随，但显式宽约束仍是旧字号下算出的值，不重算就会与周围文字档位脱节。
+    override func traitCollectionDidChange(_ previousTraitCollection: UITraitCollection?) {
+        super.traitCollectionDidChange(previousTraitCollection)
+        if previousTraitCollection?.preferredContentSizeCategory != traitCollection.preferredContentSizeCategory {
+            refreshActionRow()
+        }
+    }
+
     // MARK: - 布局
 
     private func buildLayout() {
@@ -843,6 +852,7 @@ final class BearyDetailViewController: UIViewController {
 
         likeButton.translatesAutoresizingMaskIntoConstraints = false
         likeButton.titleLabel?.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 14))
+        likeButton.titleLabel?.adjustsFontForContentSizeCategory = true
         likeButton.titleEdgeInsets = UIEdgeInsets(top: 0, left: 6, bottom: 0, right: 0)
         likeButton.adjustsImageWhenHighlighted = false
         likeButton.addTarget(self, action: #selector(likeTapped), for: .touchUpInside)
