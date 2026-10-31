@@ -5526,10 +5526,51 @@ class BearyTimelineViewController: UIViewController {
         let viewerId = SessionManager.shared.currentUser?.id
         guard entry.isMine == true || (entry.authorId != nil && viewerId != nil && entry.authorId == viewerId) else { return }
         if publishBusyIds.contains(entryId) { return }
+        // 引用规则简化（2026-10-31）：切公开先过引用门禁、改私密先查引用数提醒；
+        // 门禁/提醒期间占 busy 位，放弃时清位、原态未动（乐观落地只在 perform 里做）。
+        let target = BearyEphemeral.isEffectivelyPublic(entry) ? 0 : 1
+        publishBusyIds.insert(entryId)
+        if target == 1 {
+            BearyQuoteGate.gatePublicToggle(from: self, entry: entry) { [weak self] result in
+                guard let strongSelf = self else { return }
+                switch result {
+                case .proceed:
+                    strongSelf.performPublishEntry(entry)
+                case .publishTogether(let sourceId):
+                    BearyAPI.shared.setVisibility(id: sourceId, published: 1) { setResult in
+                        DispatchQueue.main.async {
+                            switch setResult {
+                            case .success:
+                                strongSelf.performPublishEntry(entry)
+                            case .failure:
+                                strongSelf.publishBusyIds.remove(entryId)
+                                strongSelf.showTimelineToast(message: "原日记公开失败，请重试")
+                            }
+                        }
+                    }
+                case .aborted:
+                    strongSelf.publishBusyIds.remove(entryId)
+                }
+            }
+        } else {
+            BearyQuoteGate.confirmPrivateToggleIfQuoted(from: self, entryId: entryId) { [weak self] confirmed in
+                guard let strongSelf = self else { return }
+                if confirmed {
+                    strongSelf.performPublishEntry(entry)
+                } else {
+                    strongSelf.publishBusyIds.remove(entryId)
+                }
+            }
+        }
+    }
+
+    private func performPublishEntry(_ entry: Entry) {
+        guard let entryId = entry.id, !entryId.isEmpty else { return }
+        let viewerId = SessionManager.shared.currentUser?.id
+        guard entry.isMine == true || (entry.authorId != nil && viewerId != nil && entry.authorId == viewerId) else { return }
         let target = BearyEphemeral.isEffectivelyPublic(entry) ? 0 : 1
         let originalPublic = entry.isPublic ?? false
         let originalPublishedAt = entry.publishedAt
-        publishBusyIds.insert(entryId)
         // 先行：目标态立即落地（模型 + 可见行，不整页重拉）。
         applyVisibilityLocally(entryId: entryId, isPublic: target == 1, publishedAt: nil)
         BearySoundPlayer.play(.visibilityClick)

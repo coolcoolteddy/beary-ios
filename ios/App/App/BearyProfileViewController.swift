@@ -6128,8 +6128,48 @@ class BearyProfileViewController: UIViewController {
         guard let entryId = entry.id, !entryId.isEmpty else { return }
         guard entry.isMine == true else { return }
         guard !pubBusyIds.contains(entryId) else { return }
+        // 引用规则简化（2026-10-31）：切公开先过引用门禁、改私密先查引用数提醒；
+        // 门禁/提醒期间占 busy 位，放弃时清位、原态未动（乐观落地只在 perform 里做）。
         let target = BearyEphemeral.isEffectivelyPublic(entry) ? 0 : 1
         pubBusyIds.insert(entryId)
+        if target == 1 {
+            BearyQuoteGate.gatePublicToggle(from: self, entry: entry) { [weak self] result in
+                guard let strongSelf = self else { return }
+                switch result {
+                case .proceed:
+                    strongSelf.performCellVisibilityToggle(entry: entry)
+                case .publishTogether(let sourceId):
+                    BearyAPI.shared.setVisibility(id: sourceId, published: 1) { setResult in
+                        DispatchQueue.main.async {
+                            switch setResult {
+                            case .success:
+                                strongSelf.performCellVisibilityToggle(entry: entry)
+                            case .failure:
+                                strongSelf.pubBusyIds.remove(entryId)
+                                BearyToast.show(in: strongSelf.view, message: "原日记公开失败，请重试")
+                            }
+                        }
+                    }
+                case .aborted:
+                    strongSelf.pubBusyIds.remove(entryId)
+                }
+            }
+        } else {
+            BearyQuoteGate.confirmPrivateToggleIfQuoted(from: self, entryId: entryId) { [weak self] confirmed in
+                guard let strongSelf = self else { return }
+                if confirmed {
+                    strongSelf.performCellVisibilityToggle(entry: entry)
+                } else {
+                    strongSelf.pubBusyIds.remove(entryId)
+                }
+            }
+        }
+    }
+
+    private func performCellVisibilityToggle(entry: Entry) {
+        guard let entryId = entry.id, !entryId.isEmpty else { return }
+        guard entry.isMine == true else { return }
+        let target = BearyEphemeral.isEffectivelyPublic(entry) ? 0 : 1
         var optimistic = entry
         optimistic.isPublic = target == 1
         optimistic.ephemeralUntil = nil

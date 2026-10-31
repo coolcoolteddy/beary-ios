@@ -168,6 +168,10 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         let createdAt: Int?
         let authorName: String?
         let authorAvatar: String?
+        /// 引用规则简化门禁：来源作者判定用（is_mine 优先，其次 author_id 比对；
+        /// 草稿还原时两者皆无则按他人处理，绝不挂一并公开项）。
+        let authorId: Int?
+        let isMine: Bool?
         let images: [String]
         /// 补缺 P3-41：此处存“上次已知有效可见性”（过期即私密），非服务端 is_public 原值；
         /// 新选与恢复校验以 BearyEphemeral.isEffectivelyPublic 写入；编辑态锁定来自服务端直传
@@ -221,6 +225,11 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     /// 编辑模式的引用：初始为原值，可改可删（网页 PUT 同款：body 带新 quote_id；
     /// 删为空时 updateEntry 省略 quote_id，服务端按 null 写，旧引用即清掉）。
     private var lockedQuote: SelectedQuote?
+    /// 引用规则简化存量提示：本编辑器实例内只弹一次；setupEditContent 时若尚未
+    /// appear 则先挂起（viewDidAppear 里补弹），补拉回填后已 appear 则当场弹。
+    private var storedQuotePromptShown = false
+    private var storedQuotePromptPending = false
+    private var composerDidAppear = false
     /// 编辑回填补拉单篇只做一次（quote 体缺失时）：避免已删引用（gone 只有 id、无正文）
     /// 补拉后仍无正文时反复请求。
     private var editQuoteFetchAttempted = false
@@ -764,6 +773,8 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
 
     override func viewDidAppear(_ animated: Bool) {
         super.viewDidAppear(animated)
+        composerDidAppear = true
+        maybePresentStoredQuotePrompt()
         NSLog("[Diag] composer-viewDidAppear")
         // 临时诊断（81 包，定根因后删除）。
         DiagFile.mark("viewDidAppear")
@@ -2033,6 +2044,43 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         refreshQuoteSection()
     }
 
+    /// 引用规则简化存量提示：编辑已公开篇且其引用仍私密时，作者打开编辑器即提示
+    /// 三选一（自己来源三项、他人来源两项）。一并公开即时发原日记 visibility=1
+    /// 并刷新编辑器内引用态；删除引用只清编辑器态、保存后才落库（与 × 口径一致）；
+    /// 保持私密不改任何状态（本实例不再重弹，下次打开编辑器仍会再提示）。
+    private func maybePresentStoredQuotePrompt() {
+        guard isEditMode, storedQuotePromptShown == false, let host = editingEntry, BearyEphemeral.isEffectivelyPublic(host), let locked = lockedQuote, locked.isDeleted == false, locked.isPublic != true else { return }
+        if composerDidAppear == false {
+            storedQuotePromptPending = true
+            return
+        }
+        storedQuotePromptShown = true
+        storedQuotePromptPending = false
+        let mine = BearyQuoteGate.sourceIsMine(isMine: locked.isMine, authorId: locked.authorId)
+        BearyQuoteGate.promptStoredPrivateQuote(from: self, sourceIsMine: mine, onPublishTogether: { [weak self] in
+            guard let self = self, let current = self.lockedQuote else { return }
+            BearyAPI.shared.setVisibility(id: current.entryId, published: 1) { result in
+                DispatchQueue.main.async {
+                    switch result {
+                    case .success:
+                        if let current = self.lockedQuote {
+                            self.lockedQuote = SelectedQuote(entryId: current.entryId, content: current.content, createdAt: current.createdAt, authorName: current.authorName, authorAvatar: current.authorAvatar, authorId: current.authorId, isMine: current.isMine, images: current.images, isPublic: true, publishAt: current.publishAt, imgDims: current.imgDims, isDeleted: false)
+                        }
+                        self.refreshQuoteSection()
+                        self.showToast(message: "原日记已公开")
+                    case .failure:
+                        self.showToast(message: "原日记公开失败，请重试")
+                    }
+                }
+            }
+        }, onDeleteQuote: { [weak self] in
+            guard let self = self else { return }
+            self.lockedQuote = nil
+            self.refreshQuoteSection()
+            self.showToast(message: "引用已移除，保存后生效")
+        }, onKeepPrivate: {})
+    }
+
     // MARK: - 引用面板 qp-mode（网页 qpEnterMode/qpExitMode 同款整编形态：
     // 打开时只留面板、发布钮隐藏、取消变“返回”只退面板、进出保存/恢复滚动位置）
 
@@ -2748,7 +2796,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             }
         }
         guard let entry = picked, let entryId = entry.id, let content = entry.content else { return }
-        let quote = SelectedQuote(entryId: entryId, content: content, createdAt: entry.createdAt, authorName: entry.authorName, authorAvatar: entry.authorAvatar, images: entry.images ?? [], isPublic: BearyEphemeral.isEffectivelyPublic(entry), publishAt: entry.publishAt, imgDims: entry.imgDims, isDeleted: false)
+        let quote = SelectedQuote(entryId: entryId, content: content, createdAt: entry.createdAt, authorName: entry.authorName, authorAvatar: entry.authorAvatar, authorId: entry.authorId, isMine: entry.isMine, images: entry.images ?? [], isPublic: BearyEphemeral.isEffectivelyPublic(entry), publishAt: entry.publishAt, imgDims: entry.imgDims, isDeleted: false)
         if isEditMode {
             lockedQuote = quote
         } else {
@@ -4862,11 +4910,12 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         }
         if let quote = entry.quote, let quoteId = quote.id, let content = quote.content {
             // 内容为空的引用 = 已删（服务端 gone 只剩 id，网页版同款：已删引用不回填，保存时即丢弃）。
-            lockedQuote = SelectedQuote(entryId: quoteId, content: content, createdAt: quote.createdAt, authorName: quote.authorName, authorAvatar: quote.authorAvatar, images: quote.images ?? [], isPublic: quote.isPublic, publishAt: nil, imgDims: nil, isDeleted: false) // P3-41 注：编辑态锁定来自服务端直传 Quote（attachQuotes 不返回 ephemeral_until，算不出有效态），暂留原值；新选/恢复校验两处已走有效态。
+            lockedQuote = SelectedQuote(entryId: quoteId, content: content, createdAt: quote.createdAt, authorName: quote.authorName, authorAvatar: quote.authorAvatar, authorId: quote.authorId, isMine: quote.isMine, images: quote.images ?? [], isPublic: quote.isPublic, publishAt: nil, imgDims: nil, isDeleted: false) // P3-41 注：编辑态锁定来自服务端直传 Quote（attachQuotes 不返回 ephemeral_until，算不出有效态），暂留原值；新选/恢复校验两处已走有效态。
         }
         refreshRecipientRow()
         refreshQuoteSection()
         refreshToolStrip()
+        maybePresentStoredQuotePrompt()
         startEditTimer()
         for key in entry.images ?? [] {
             let item = createImageItem(localImage: nil, key: key, uploading: false, localFile: nil, failed: false)
@@ -5224,7 +5273,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     /// 快照正文在已删态下不展示（见 refreshQuoteSection 的已删行）。
     private func restoredQuote(from draft: BearyDraft) -> SelectedQuote? {
         guard let quoteEntryId = draft.quoteId else { return nil }
-        return SelectedQuote(entryId: quoteEntryId, content: draft.quoteContent ?? "", createdAt: draft.quoteCreatedAt, authorName: draft.quoteAuthorName, authorAvatar: draft.quoteAuthorAvatar, images: draft.quoteImages, isPublic: draft.quoteIsPublic, publishAt: nil, imgDims: nil, isDeleted: draft.quoteDeleted)
+        return SelectedQuote(entryId: quoteEntryId, content: draft.quoteContent ?? "", createdAt: draft.quoteCreatedAt, authorName: draft.quoteAuthorName, authorAvatar: draft.quoteAuthorAvatar, authorId: nil, isMine: nil, images: draft.quoteImages, isPublic: draft.quoteIsPublic, publishAt: nil, imgDims: nil, isDeleted: draft.quoteDeleted)
     }
 
     /// 恢复后校验引用是否还在：快照只能证明“选过”，不能证明“还在”。
@@ -5242,13 +5291,13 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                 case .success(let fetched):
                     // 补缺 P3-41：恢复后以最新有效可见性刷新快照并重算角标（原直接 return，快照恒旧）；
                     // 落盘使刷新跨杀 App 生效（已删分支同款 saveDraftNow）。
-                    self.selectedQuote = SelectedQuote(entryId: currentQuote.entryId, content: currentQuote.content, createdAt: currentQuote.createdAt, authorName: currentQuote.authorName, authorAvatar: currentQuote.authorAvatar, images: currentQuote.images, isPublic: BearyEphemeral.isEffectivelyPublic(fetched), publishAt: currentQuote.publishAt, imgDims: currentQuote.imgDims, isDeleted: false)
+                    self.selectedQuote = SelectedQuote(entryId: currentQuote.entryId, content: currentQuote.content, createdAt: currentQuote.createdAt, authorName: currentQuote.authorName, authorAvatar: currentQuote.authorAvatar, authorId: fetched.authorId, isMine: fetched.isMine, images: currentQuote.images, isPublic: BearyEphemeral.isEffectivelyPublic(fetched), publishAt: currentQuote.publishAt, imgDims: currentQuote.imgDims, isDeleted: false)
                     self.refreshQuoteSection()
                     self.saveDraftNow()
                     return
                 case .failure(let fetchError):
                     if case .notFound = fetchError {
-                        self.selectedQuote = SelectedQuote(entryId: currentQuote.entryId, content: "", createdAt: nil, authorName: nil, authorAvatar: nil, images: [], isPublic: nil, publishAt: nil, imgDims: nil, isDeleted: true)
+                        self.selectedQuote = SelectedQuote(entryId: currentQuote.entryId, content: "", createdAt: nil, authorName: nil, authorAvatar: nil, authorId: nil, isMine: nil, images: [], isPublic: nil, publishAt: nil, imgDims: nil, isDeleted: true)
                         self.refreshQuoteSection()
                         self.refreshToolStrip()
                         self.saveDraftNow()
@@ -5630,6 +5679,38 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             showToast(message: "有图片上传失败，点失败的图重试或移除后再发布")
             return
         }
+        // 引用规则简化（2026-10-31）：新建将公开且含私密引用时先拦截，不直接发。
+        // 自己来源三选一、他人来源两项（见 BearyQuoteGate.gateEditorPublish）；
+        // 一并公开先发原日记 visibility=1，成功才发本篇；失败停在编辑器、不发本篇。
+        // 保持私密发布即把本篇改回私密再发（引用保留）；删除引用即清引用再公开。
+        if !isEditMode, selectedVisibilityPublished, let pendingQuote = selectedQuote, pendingQuote.isDeleted == false, pendingQuote.isPublic != true {
+            let mine = BearyQuoteGate.sourceIsMine(isMine: pendingQuote.isMine, authorId: pendingQuote.authorId)
+            BearyQuoteGate.gateEditorPublish(from: self, sourceIsMine: mine, onPublishTogether: { [weak self] in
+                guard let self = self, let sourceId = self.selectedQuote?.entryId, !sourceId.isEmpty else { return }
+                BearyAPI.shared.setVisibility(id: sourceId, published: 1) { result in
+                    DispatchQueue.main.async {
+                        switch result {
+                        case .success:
+                            self.performPublish(trimmed: trimmed)
+                        case .failure:
+                            self.showToast(message: "原日记公开失败，请重试")
+                        }
+                    }
+                }
+            }, onDeleteQuote: { [weak self] in
+                guard let self = self else { return }
+                self.selectedQuote = nil
+                self.refreshQuoteSection()
+                self.performPublish(trimmed: trimmed)
+            }, onKeepPrivate: { [weak self] in
+                guard let self = self else { return }
+                self.selectedVisibilityPublished = false
+                self.isEphemeral = false
+                self.refreshVisibilityButton()
+                self.performPublish(trimmed: trimmed)
+            })
+            return
+        }
         // 决议第 3 项 B：去掉发布/保存确认弹框，点发布/保存直接发（网页口径：
         // 网页 editorPublish 直接走校验与请求，无确认弹框）。
         if isEditMode {
@@ -5803,8 +5884,8 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                                 authorAvatar: locked.authorAvatar,
                                 authorBadge: nil,
                                 authorPlus: nil,
-                                authorId: nil,
-                                isMine: nil
+                                authorId: locked.authorId,
+                                isMine: locked.isMine
                             )
                         } else {
                             updated.quote = nil
