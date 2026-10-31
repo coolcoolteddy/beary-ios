@@ -2032,6 +2032,11 @@ class BearyProfileViewController: UIViewController {
     /// 当前名字以下整段位移（updateProfileCoverScroll 写入，供墙入场动画收尾用）。
     private var currentBelowShift: CGFloat = 0
 
+    /// 112：行跟移——当前施加给全部可见行 contentView 与 tableFooterView 的
+    /// 下移量，恒等于 tabsContainer 的跟移封顶值（见 applyProfileBelowShift）。
+    /// 只走 transform，不改约束、不改行高、不碰 contentInset／sectionHeader。
+    private var profileRowFollowShift: CGFloat = 0
+
     /// v22 名字以下整段位移（2026-10-30）：头像行按钮＋名字块（含签名容器）＋统计＋墙
     /// 同值平移（纯位移，各视图相对位置不变，等价于包一层容器平移；不改约束、
     /// 不重排版，故 header 高不变）。名字块内任一视图漏移都会在滚动中与邻行错位
@@ -2066,6 +2071,26 @@ class BearyProfileViewController: UIViewController {
     /// header 布局高不动（只改 transform）；残留边界：模块视觉底边在深滑时
     /// 超出 header 底 ≤16pt，落进首张卡顶部 14pt 空白区（最深处仅擦到内容顶
     /// 约 2pt），模块搬脚部的另支落地后该边界即不在 header 内。
+    /// 112 tab→首卡间隙定死（#260 的对称问题）：#260 只定了墙→标签恒 16，
+    /// 却让标签→首卡跟着变——标签视觉底 = header 底 −2 + cappedShift，
+    /// 首卡行布局顶恒为 header 底、内容顶恒为行顶 +30（#277／#298，
+    /// 限时框顶为行顶 +22），故标签底到首卡内容顶 = 32 − cappedShift，
+    /// 静止 32、跟移满值（cappedShift = 16）时只剩 16；限时框顶同理
+    /// 24 → 8。首卡顶约束（30／22）在滑动中一字不动，contentInset.top
+    /// 在正常上滑中也不变（只在容器栏态／刷新时改 0／60／基线+84），
+    /// 本表为 .plain 且 separatorStyle = .none、无 sectionHeader，
+    /// 故三候选里只有“标签跟移封顶值”是变量，根因即它。
+    /// 修法（标签跟移本身与 #277 不遮挡口径不动）：不改 cappedShift、
+    /// 不改 30／22、不改 header 高，改让全部可见行与脚部跟标签同值
+    /// 下移 cappedShift（syncProfileRowFollowShift，纯 transform）——
+    /// 标签与首卡同移，间隙恒为静止值；行与行同移，行间与末行→脚部
+    /// 间隙也不变；限时与非限时首卡同移，框顶→内容顶 8pt 内缩不变。
+    /// 恒定值即静止值：非限时首卡内容顶 32pt、限时首卡框顶 24pt
+    /// （内容顶仍 32pt），跟移满值时同样是 32／24pt——高于 #277
+    /// 最深处下限（内容 16pt、框 8pt），不遮挡口径得以保留且有余量。
+    /// 切 tab／深浅不改此算式：
+    /// 新行在 willDisplay 时按当前跟移值落位，复用时 prepareForReuse
+    /// 已把 diary 卡 contentView.transform 归零、willDisplay 再补上。
     private func applyProfileBelowShift(_ shift: CGFloat) {
         let fullShift = CGAffineTransform(translationX: 0, y: shift)
         editButton.transform = fullShift
@@ -2095,6 +2120,8 @@ class BearyProfileViewController: UIViewController {
         // 故恒为标签顶（模块已搬到脚部，不再作封顶，见上）。
         let floorTop = tabsTop
         let wallVisible = !wallContainer.isHidden && wallContainer.bounds.height > 0
+        // 112：三分支的 cappedShift 即标签跟移值，行跟移与它同值（见函数头）。
+        var tabsFollowShift: CGFloat = 0
         if wallVisible {
             let wallBottom = wallContainer.center.y + wallContainer.bounds.height / 2
             let cappedShift = min(shift, max(floorTop - wallBottom, 0))
@@ -2103,6 +2130,7 @@ class BearyProfileViewController: UIViewController {
             wallContainer.transform = cappedTransform
             // 墙下方间隙定死：标签与模块跟墙的封顶值同移，墙→标签的视觉间距恒等于布局值 16，不再被位移吃掉。
             tabsContainer.transform = cappedTransform
+            tabsFollowShift = cappedShift
             modulesContainer.transform = .identity  // #257 脚部模块不跟 header 位移
             wallTitleLabel.transform = .identity
             wallScrollView.transform = .identity
@@ -2119,6 +2147,7 @@ class BearyProfileViewController: UIViewController {
             nightContainer.transform = cappedTransform
             // 墙隐藏态同口径：标签跟夜巡的封顶值同移，夜巡→标签恒 16。
             tabsContainer.transform = cappedTransform
+            tabsFollowShift = cappedShift
             modulesContainer.transform = .identity  // #257 脚部模块不跟 header 位移
             publicCountLabel.transform = cappedTransform
             likesCountLabel.transform = cappedTransform
@@ -2140,12 +2169,41 @@ class BearyProfileViewController: UIViewController {
             likesTextLabel?.transform = cappedTransform
             // 墙与夜巡双隐藏态同口径：标签与模块跟统计的封顶值同移，统计→标签恒 16。
             tabsContainer.transform = cappedTransform
+            tabsFollowShift = cappedShift
             modulesContainer.transform = .identity  // #257 脚部模块不跟 header 位移
             nightContainer.transform = fullShift
             wallContainer.transform = fullShift
             wallTitleLabel.transform = .identity
             wallScrollView.transform = .identity
             wallTotalLabel.transform = .identity
+        }
+        // 112：行跟移与标签跟移同值（见函数头）；复位路径（shift = 0）亦经此归零。
+        profileRowFollowShift = tabsFollowShift
+        syncProfileRowFollowShift()
+    }
+
+    /// 112：把当前行跟移值施加给全部可见行与脚部（纯 transform，不布局）。
+    /// 只动 contentView，不动 cell 本身——新行错峰动画（animateNewRows）走
+    /// cell.transform，两者叠加不打架；diary 卡 prepareForReuse 已把
+    /// contentView.transform 归零，新行由 willDisplay 再补上本值。
+    /// 布局抵消守卫：若某次布局把 contentView 的 center 拉回（transform 值
+    /// 还在、视觉却回落到行顶），其 transformed frame 顶会小于跟移值，
+    /// 此时按差值把 center 补回，不调 layout、不启动画；正常态差值为 0、
+    /// 不动。脚部为新容器时 transform 本就为 identity，赋值即落位。
+    private func syncProfileRowFollowShift() {
+        let shift = profileRowFollowShift
+        let target = CGAffineTransform(translationX: 0, y: shift)
+        for cell in tableView.visibleCells {
+            if cell.contentView.transform != target {
+                cell.contentView.transform = target
+            }
+            let visualTop = cell.contentView.frame.minY
+            if visualTop < shift - 0.5 {
+                cell.contentView.center.y += shift - visualTop
+            }
+        }
+        if let footer = tableView.tableFooterView, footer.transform != target {
+            footer.transform = target
         }
     }
 
@@ -5014,6 +5072,11 @@ class BearyProfileViewController: UIViewController {
             })
         }
         lastProfileFooterKind = kind
+        // 112：脚部每次重建都是新容器，transform 回到 identity——按当前
+        // 跟移值补上，否则末行→脚部间隙在重建后先错后对（行已跟移、脚部未跟移）。
+        if let footer = tableView.tableFooterView {
+            footer.transform = CGAffineTransform(translationX: 0, y: profileRowFollowShift)
+        }
     }
 
     /// 批 C：脚部视图的落地高度——已有 frame 高度的直接用（loading 脚部 80、
@@ -6400,6 +6463,13 @@ extension BearyProfileViewController: UITableViewDataSource, UITableViewDelegate
         // 批 C：日记 tab 不翻页（loadMoreIfNeeded 内已守）；按钮行本身不触发翻页。
         if currentTab != .diary && indexPath.row == displayedEntries.count - 1 {
             loadMoreIfNeeded()
+        }
+        // 112：新入场行按当前跟移值落位——切 tab／后台回填／下滑入场时
+        // 不等下一次滚动事件，首帧即与标签同移，间隙不先错后对。
+        // 复用归零（diary 卡 prepareForReuse）后此处是唯一补位点。
+        let target = CGAffineTransform(translationX: 0, y: profileRowFollowShift)
+        if cell.contentView.transform != target {
+            cell.contentView.transform = target
         }
     }
 
