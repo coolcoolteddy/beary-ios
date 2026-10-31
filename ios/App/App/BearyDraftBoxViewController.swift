@@ -736,7 +736,9 @@ final class BearyDraftBoxViewController: UIViewController {
         let timeLabel = UILabel()
         timeLabel.text = draftTimeText(updatedAtSeconds: draftValue.updatedAt)
         timeLabel.font = UIFont.systemFont(ofSize: 13, weight: .semibold)
-        timeLabel.textColor = BearyColors.blue
+        // 113：卡片时间改全 App 时间文案同款灰（此前误用蓝）；同卡“草稿已保存”
+        // 状态行蓝色不动（见下方 saveStatus 分支）。
+        timeLabel.textColor = BearyColors.gray
         topRow.addArrangedSubview(timeLabel)
         let spacer = UIView()
         topRow.addArrangedSubview(spacer)
