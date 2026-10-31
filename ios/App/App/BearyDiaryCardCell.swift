@@ -1031,7 +1031,13 @@ class BearyDiaryCardCell: UITableViewCell {
         case .ended, .cancelled, .failed:
             imagesScrollView.isScrollEnabled = true
             let progress = max(0, min(1, stripPinchStartProgress + (1 - gesture.scale)))
+            let wasJoined = stripPinchJoined
             stripPinchJoined = progress >= 0.5
+            // 拼合/张开落点到位时各轻震一次：只在 .ended 且落点状态真的变化时震，
+            // 跟手过程、取消/失败、原地未变都不震；减动效时不震（系统触感开关由 UIKit 自身遵循）。
+            if gesture.state == .ended && wasJoined != stripPinchJoined && !UIAccessibility.isReduceMotionEnabled {
+                UIImpactFeedbackGenerator(style: .light).impactOccurred()
+            }
             UIView.animate(withDuration: 0.25, animations: {
                 self.imagesStack.spacing = self.stripPinchJoined ? 0 : 8
                 self.applyImageStripCornerRadius(progress: self.stripPinchJoined ? 1 : 0)
