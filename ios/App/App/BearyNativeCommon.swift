@@ -795,8 +795,6 @@ enum BearyText {
         "surprised": "惊讶", "pat": "摸摸头", "peek": "偷偷看", "sleepy": "困倦",
         "proud": "骄傲", "shrug": "没办法", "sorry": "对不起", "cry": "想哭",
         "angry": "生气", "thanks": "谢谢你", "zap": "带电", "wave": "挥挥手",
-        "candle": "留一盏灯", "flower": "送你小花", "letter": "收到心意", "paperplane": "把烦恼寄走",
-        "sprout": "慢慢来", "tea": "喝杯热茶", "umbrella": "给你撑伞", "wish": "愿你如愿",
     ]
 
     /// 天气 key → 中文名（与网页 WX_DEFS 同集 9 种）。
