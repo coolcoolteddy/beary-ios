@@ -9,7 +9,7 @@ import UIKit
 /// （与顶栏／底栏同款 BearyGlass 中性 tint），文字走 ink。
 ///
 /// 统一样式：玻璃 pill、ink 字、14pt medium、内边距 top 10 / left 18 /
-/// bottom 10 / right 18、两侧留 20pt 上限、居中；胶囊圆角取半高
+/// bottom 10 / right 18、两侧留 20pt 上限、居中；pill 圆角取半高
 /// （layoutSubviews 跟 bounds 走，单行约 19pt，与“圆角 18”同口径）。
 /// 展示 2.0s：淡入 0.25s、到点淡出 0.25s 后移除；减动效时直接现身、
 /// 到点直接移除，不播淡入淡出（与各页原 A5-3 口径一致）。

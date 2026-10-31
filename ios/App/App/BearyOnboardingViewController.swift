@@ -34,9 +34,9 @@ private enum OnboardingAnim {
     static let cardFrontRotation: CGFloat = 0.5 * CGFloat.pi / 180
 }
 
-// MARK: - 圆角胶囊容器（pill / 回应 chip 共用：圆角恒为半高，深浅与字号变化时自动跟随）
+// MARK: - 圆角 pill 容器（pill / 回应 chip 共用：圆角恒为半高，深浅与字号变化时自动跟随）
 
-private final class OnboardingCapsuleView: UIView {
+private final class OnboardingPillView: UIView {
     override func layoutSubviews() {
         super.layoutSubviews()
         layer.cornerRadius = bounds.height / 2
@@ -160,13 +160,13 @@ final class BearyOnboardingViewController: UIViewController {
     // 第 2 页元素。
     private var optionButtons: [OnboardingOptionButton] = []
     private let demoIconView = UIImageView()
-    private let demoPill = OnboardingCapsuleView()
+    private let demoPill = OnboardingPillView()
     private let demoPillLabel = UILabel()
     private let demoBodyLabel = UILabel()
     private let demoExplainLabel = UILabel()
 
     // 第 3 页元素。
-    private let responseChip = OnboardingCapsuleView()
+    private let responseChip = OnboardingPillView()
     private let responseChipIcon = UIImageView()
     private let responseChipCount = UILabel()
     private var emoteButtons: [String: UIButton] = [:]
@@ -642,7 +642,7 @@ final class BearyOnboardingViewController: UIViewController {
         pillWrap.translatesAutoresizingMaskIntoConstraints = false
         pillWrap.axis = .horizontal
         pillWrap.alignment = .center
-        let pill = OnboardingCapsuleView()
+        let pill = OnboardingPillView()
         pill.translatesAutoresizingMaskIntoConstraints = false
         pill.layer.borderWidth = 1
         pill.layer.bearyDynamicBorderColor = BearyColors.alpha(BearyColors.orange, 0.45)

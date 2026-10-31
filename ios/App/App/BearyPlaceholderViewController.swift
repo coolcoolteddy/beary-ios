@@ -6,7 +6,7 @@ import UIKit
 // 批二 / 批三逐页替换为真实现时，容器按页删对应 case，不改接线。
 // W11：标题不再是死参——标题与说明同时画出（标题 17 semibold 墨色在上、说明 15 灰色在下）；
 // 容器侧他人主页回退已改走“用户不存在，请重试”空态（见 SceneDelegate.ensurePlaceholder）。
-// L19（已被 E2 取代）：文案组曾按内容区（顶栏底至胶囊顶）居中，随布局重算；
+// L19（已被 E2 取代）：文案组曾按内容区（顶栏底至横幅顶）居中，随布局重算；
 // E2：空态与加载态统一放可视区中心往上 30pt，本页文案组固定 centerY -30。
 
 final class BearyPlaceholderViewController: UIViewController {
@@ -59,7 +59,7 @@ final class BearyPlaceholderViewController: UIViewController {
     override func viewDidLayoutSubviews() {
         super.viewDidLayoutSubviews()
         // E2：空态与加载态统一放可视区中心往上 30pt——本占位页文案组固定 -30，
-        // 取代 L19 按内容区（顶栏底至胶囊顶）算的变量偏移（安全区变化时不再重算）。
+        // 取代 L19 按内容区（顶栏底至横幅顶）算的变量偏移（安全区变化时不再重算）。
         if centerYConstraint?.constant != -30 {
             centerYConstraint?.constant = -30
         }

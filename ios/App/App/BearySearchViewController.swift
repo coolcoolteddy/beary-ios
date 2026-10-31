@@ -5,7 +5,7 @@ import CoreText
 // 网页对照：~/workspace/teddy_site/beary.html 内 #searchPage（结构、文案、状态口径）
 //   与 .srch-* CSS（尺寸见行内注释）；后端对照：~/workspace/teddy_beary/worker.js
 //   GET /beary/api/search（见下方“接口对照”）。
-// 容器契约：本页只负责搜索与渲染，不含顶栏/底栏胶囊（容器 SceneDelegate 侧提供，
+// 容器契约：本页只负责搜索与渲染，不含顶栏/底栏分段器（容器 SceneDelegate 侧提供，
 //   与其他内容页同口径）；点用户只回调 onOpenUser、点日记只回调 onOpenEntry，
 //   点返回只回调 onBack，跳转与个人主页打开一律由容器接线，本页不 present、不 push、不碰导航。
 // 页结构（网页 #searchPage 同口径）：页顶返回行（返回钮 + “搜索”标题，随内容滚出）
@@ -403,7 +403,7 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         scrollView.translatesAutoresizingMaskIntoConstraints = false
         scrollView.keyboardDismissMode = .onDrag
         scrollView.delegate = self
-        // 底留白 90：与 Feed/时间线/消息同口径，末行不再被底栏胶囊盖住。
+        // 底留白 90：与 Feed/时间线/消息同口径，末行不再被底栏分段器盖住。
         scrollView.contentInset = UIEdgeInsets(top: 0, left: 0, bottom: 90, right: 0)
         scrollView.scrollIndicatorInsets = scrollView.contentInset
         view.addSubview(scrollView)

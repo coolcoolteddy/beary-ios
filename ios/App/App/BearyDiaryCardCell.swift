@@ -232,7 +232,7 @@ final class BearyEmoteChipView: UIView {
         fatalError("init(coder:) has not been implemented")
     }
 
-    /// 胶囊形兜底：圆角恒取高的一半，任何高度下都是胶囊（32 高时即 16，与旧值一致）；
+    /// pill 形兜底：圆角恒取高的一半，任何高度下都是 pill 形（32 高时即 16，与旧值一致）；
     /// 即使某路残留 transform 使 bounds 翻倍，显示圆角仍为显示高的一半。
     override func layoutSubviews() {
         super.layoutSubviews()
@@ -436,7 +436,7 @@ class BearyDiaryCardCell: UITableViewCell {
     private var currentEmoteList: [EmoteCount] = []
     /// 个人主页模式 chip key 快照（与 currentEmoteList 同序，点选按下标取 key）。
     private var chipKeys: [String] = []
-    /// 80 包 B4-1：回应胶囊池——chip 容器留池复用，只在 key 变化时换播放器。
+    /// 80 包 B4-1：回应 chip 池——chip 容器留池复用，只在 key 变化时换播放器。
     private var emoteChipPool: [BearyEmoteChipView] = []
     private var isEmoteBusy = false
     /// 回应先行反馈在途态（首页模式，点赞/收藏同款口径）：点选后 chip 行立即按
@@ -2968,7 +2968,7 @@ class BearyDiaryCardCell: UITableViewCell {
     }
 
     /// 回应行统一渲染：count 降序（网页 emoteChipsHtml 同口径），mine 高亮，末尾常驻 + 按钮。
-    /// 80 包 B4-1：胶囊池化——只把 chip 从 flow 摘下留池，不销毁；本轮未复用
+    /// 80 包 B4-1：chip 池化——只把 chip 从 flow 摘下留池，不销毁；本轮未复用
     /// 的池 chip 不再上树（仍留池供下轮）；key 不变时重播播放器、key 变了才换播放器。
     /// animatedLayout：用户动作（先行贴/摘、回滚）时 + 钮与已存 chip 随新布局平滑移位
     /// （flow 帧动画，只动位置，不重播已有 chip）；服务端对齐与初始渲染走瞬时。
