@@ -1537,6 +1537,11 @@ class BearyProfileViewController: UIViewController {
     /// 背景图自然顶（布局时存的 tableFrame.minY，滚动回调 1:1 跟踪的起点）。
     private var stickyHeaderBgNaturalTop: CGFloat = 0
 
+    /// 111：header 阴影亮度采样缓存——同一封面图只算一次，换图才重算；
+    /// 默认橙底走另一哨兵（无图可比 identity）。
+    private var headerShadowSampledImage: UIImage?
+    private var headerShadowSampledDefaultCover = false
+
     private lazy var stickyHeaderHeightConstraint: NSLayoutConstraint = stickyHeaderView.heightAnchor.constraint(equalToConstant: 60)
     private lazy var stickyHeaderBgLeadingConstraint: NSLayoutConstraint = stickyHeaderBgImageView.leadingAnchor.constraint(equalTo: stickyHeaderView.leadingAnchor)
     private lazy var stickyHeaderBgTopConstraint: NSLayoutConstraint = stickyHeaderBgImageView.topAnchor.constraint(equalTo: stickyHeaderView.topAnchor)
@@ -1925,6 +1930,9 @@ class BearyProfileViewController: UIViewController {
             }
             stickyWordmarkView.isHidden = true
         }
+        // 111：封面图同步后按条带亮度重算 header 用户名阴影（换图才真算，
+        // 其余布局调用走缓存早返，不重复采样）。
+        updateStickyHeaderShadow()
         // 用户名：x 与内容用户名同列（表框左 + 28，iPad 600 居中列下自动对齐），
         // 垂直居中于 60 条带；文案同步（赋值点同步 + 此处兜底）。
         let nameX = tableFrame.minX + 28
@@ -2531,6 +2539,64 @@ class BearyProfileViewController: UIViewController {
         updateUnderlinePosition(animated: false)
     }
 
+    /// 111：按封面条带平均亮度选 header 用户名阴影色，与 trait 解耦。
+    /// 采样区：封面图底部 30%（锁定态 header 条带即封面底部约 60/234，
+    /// 用户名淡入时条带亦已接近锁定位置），缩放到 48 宽后取底部行
+    /// 平均亮度（0.2126R+0.7152G+0.0722B），阈值 0.5：亮条带→黑阴影
+    /// 0.6，暗条带→白阴影 0.85（#248 半径 4、偏移 (0,1) 不变）。
+    /// 用户名颜色一字不动；不改描边、不加底色块。同一封面图只算一次，
+    /// 换图才重算；默认橙底（#ff9500 亮度约 0.63）走亮条带；无图且
+    /// 非默认底时不改动（header 本就隐藏）。
+    private func updateStickyHeaderShadow() {
+        if profileShowsDefaultCover {
+            if headerShadowSampledDefaultCover { return }
+            headerShadowSampledDefaultCover = true
+            headerShadowSampledImage = nil
+            stickyHeaderNameLabel.layer.shadowColor = UIColor.black.cgColor
+            stickyHeaderNameLabel.layer.shadowOpacity = 0.6
+            return
+        }
+        guard let image = stickyHeaderBgImageView.image, !stickyHeaderBgImageView.isHidden else { return }
+        if headerShadowSampledImage === image { return }
+        headerShadowSampledImage = image
+        headerShadowSampledDefaultCover = false
+        let sampleWidth = 48
+        let sampleHeight = 48
+        // 先经 UIImage.draw 落方向（cgImage 原始像素不带 EXIF 方向，
+        // 直接采会把侧边当底部），再读缩略图像素。
+        let rendererFormat = UIGraphicsImageRendererFormat()
+        rendererFormat.scale = 1
+        let thumb = UIGraphicsImageRenderer(size: CGSize(width: sampleWidth, height: sampleHeight), format: rendererFormat).image { _ in
+            image.draw(in: CGRect(x: 0, y: 0, width: sampleWidth, height: sampleHeight))
+        }
+        guard let cgImage = thumb.cgImage else { return }
+        guard let context = CGContext(data: nil, width: sampleWidth, height: sampleHeight, bitsPerComponent: 8, bytesPerRow: sampleWidth * 4, space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue),
+              let data = context.data else { return }
+        context.draw(cgImage, in: CGRect(x: 0, y: 0, width: sampleWidth, height: sampleHeight))
+        let pixels = data.bindMemory(to: UInt8.self, capacity: sampleWidth * sampleHeight * 4)
+        let bottomRows = max(1, sampleHeight * 30 / 100)
+        var total: CGFloat = 0
+        var count: CGFloat = 0
+        for row in (sampleHeight - bottomRows)..<sampleHeight {
+            for col in 0..<sampleWidth {
+                let offset = (row * sampleWidth + col) * 4
+                let r = CGFloat(pixels[offset]) / 255.0
+                let g = CGFloat(pixels[offset + 1]) / 255.0
+                let b = CGFloat(pixels[offset + 2]) / 255.0
+                total += 0.2126 * r + 0.7152 * g + 0.0722 * b
+                count += 1
+            }
+        }
+        guard count > 0 else { return }
+        if total / count > 0.5 {
+            stickyHeaderNameLabel.layer.shadowColor = UIColor.black.cgColor
+            stickyHeaderNameLabel.layer.shadowOpacity = 0.6
+        } else {
+            stickyHeaderNameLabel.layer.shadowColor = UIColor.white.cgColor
+            stickyHeaderNameLabel.layer.shadowOpacity = 0.85
+        }
+    }
+
     private func updateDynamicLayerColors() {
         // UIColor 动态色转 CGColor 只在赋值时解析一次，深浅切换时需重赋。
         avatarImageView.layer.borderColor = BearyColors.bg.cgColor
@@ -2539,21 +2605,18 @@ class BearyProfileViewController: UIViewController {
         gearButton.layer.borderColor = BearyColors.line.cgColor
         nightContainer.layer.borderColor = BearyColors.line.cgColor
         wallContainer.layer.borderColor = BearyColors.line.cgColor
-        // 个人页 header 用户名阴影色重赋（深浅切换时 CGColor 不自动跟随）：
-        // 注：原支另带 badgesContainer 重赋一行，#250 已删徽章架、该容器不存在，rebase 时弃掉该行、不复活徽章架。
+        // 个人页内容用户名阴影色重赋（深浅切换时 CGColor 不自动跟随）：
         // 深色 ink 近白 → 黑色阴影；浅色 ink 纯黑 → 白色光晕。半径/偏移/透明度见 nameLabel 定义处。
-        // 110：header 用户名同款重赋（#248 漏处，见 stickyHeaderNameLabel 定义处）。
+        // 111：header 用户名不再跟 trait 走，改走条带亮度（见 updateStickyHeaderShadow）；
+        // 内容用户名在实底色上，仍按 trait 重赋。
         if traitCollection.userInterfaceStyle == .dark {
             nameLabel.layer.shadowColor = UIColor.black.cgColor
             nameLabel.layer.shadowOpacity = 0.6
-            stickyHeaderNameLabel.layer.shadowColor = UIColor.black.cgColor
-            stickyHeaderNameLabel.layer.shadowOpacity = 0.6
         } else {
             nameLabel.layer.shadowColor = UIColor.white.cgColor
             nameLabel.layer.shadowOpacity = 0.85
-            stickyHeaderNameLabel.layer.shadowColor = UIColor.white.cgColor
-            stickyHeaderNameLabel.layer.shadowOpacity = 0.85
         }
+        updateStickyHeaderShadow()
         // 批 D：模块卡边线同款重赋（深浅切换时 CGColor 不自动跟随）。
         statsCard.layer.borderColor = BearyColors.line.cgColor
         thisDayCard.layer.borderColor = BearyColors.line.cgColor
