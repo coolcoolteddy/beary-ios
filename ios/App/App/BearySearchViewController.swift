@@ -424,9 +424,23 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         searchBoxView.addSubview(searchField)
 
         clearButton.translatesAutoresizingMaskIntoConstraints = false
-        clearButton.backgroundColor = BearyColors.faint
-        clearButton.layer.cornerRadius = 13
-        clearButton.layer.masksToBounds = true
+        // 112：帧本身扩到 44×44（见约束处），淡底圆不再由按钮底色画满帧，
+        // 改内嵌 26×26 居中圆视图：视觉圆心/半径与原来完全一致，图标仍 13pt 居中。
+        // 按钮底透明，BearyHit44Button 的 point(inside:) 扩区此时已是冗余兜底（帧已 44）。
+        clearButton.backgroundColor = UIColor.clear
+        let clearVisual = UIView()
+        clearVisual.translatesAutoresizingMaskIntoConstraints = false
+        clearVisual.backgroundColor = BearyColors.faint
+        clearVisual.layer.cornerRadius = 13
+        clearVisual.clipsToBounds = true
+        clearVisual.isUserInteractionEnabled = false
+        clearButton.addSubview(clearVisual)
+        NSLayoutConstraint.activate([
+            clearVisual.centerXAnchor.constraint(equalTo: clearButton.centerXAnchor),
+            clearVisual.centerYAnchor.constraint(equalTo: clearButton.centerYAnchor),
+            clearVisual.widthAnchor.constraint(equalToConstant: 26),
+            clearVisual.heightAnchor.constraint(equalToConstant: 26),
+        ])
         clearButton.setImage(BearyIconImages.image(named: "icon_close", pointSize: 13), for: .normal)
         clearButton.tintColor = BearyColors.gray
         clearButton.isHidden = true
@@ -631,10 +645,13 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
             searchField.topAnchor.constraint(equalTo: searchBoxView.topAnchor),
             searchField.bottomAnchor.constraint(equalTo: searchBoxView.bottomAnchor),
 
-            clearButton.trailingAnchor.constraint(equalTo: searchBoxView.trailingAnchor, constant: -12),
+            // 112：清空钮热区帧本身 44×44。视觉圆心须与原来一致：
+            // 原 trailing -12、宽 26，圆心在框右 -25；现 trailing -3、宽 44，
+            // 圆心仍在 -25（-3-22），内嵌 26 圆与 13pt 图标均居中，视觉不动。
+            clearButton.trailingAnchor.constraint(equalTo: searchBoxView.trailingAnchor, constant: -3),
             clearButton.centerYAnchor.constraint(equalTo: searchBoxView.centerYAnchor),
-            clearButton.widthAnchor.constraint(equalToConstant: 26),
-            clearButton.heightAnchor.constraint(equalToConstant: 26),
+            clearButton.widthAnchor.constraint(equalToConstant: 44),
+            clearButton.heightAnchor.constraint(equalToConstant: 44),
 
             stateStack.topAnchor.constraint(equalTo: stateWrap.topAnchor, constant: 28),
             stateStack.leadingAnchor.constraint(equalTo: stateWrap.leadingAnchor, constant: 20),
@@ -669,7 +686,10 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         boxTopConstraint?.isActive = true
         // 输入框右缘：清空钮显示时贴清空钮、无清空钮时贴框右 16（两条约束互斥切换）。
         searchFieldToBoxTrailing = searchField.trailingAnchor.constraint(equalTo: searchBoxView.trailingAnchor, constant: -16)
-        searchFieldToClearLeading = searchField.trailingAnchor.constraint(equalTo: clearButton.leadingAnchor, constant: -8)
+        // 112：输入框右缘到清空钮视觉圆左缘仍留 8pt。钮帧已扩到 44，
+        // 视觉圆左缘 = 帧左缘 + 9（(44-26)/2），故此处常量由 -8 改为 +1；
+        // 换算回框右：原 -38-8 = -46，现 -47+1 = -46，输入框宽度原样不变。
+        searchFieldToClearLeading = searchField.trailingAnchor.constraint(equalTo: clearButton.leadingAnchor, constant: 1)
         searchFieldToBoxTrailing?.isActive = true
         searchFieldToClearLeading?.isActive = false
         // 标题与副文案间距：网页 .addr-state b margin-bottom 4；圆到底部文案间距 11。

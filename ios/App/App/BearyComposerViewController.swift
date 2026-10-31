@@ -333,6 +333,10 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     private let headlineField = UITextField()
     private let headlineRule = UIView()
     private static let headlineMaxLength = 30
+    /// 112：标题超 30 字截断提示的“本轮已弹”标记。截断落到正好 30 字不算
+    /// 回落（仍属同一轮超限），只有删回 30 字以下才重置，下一轮超限可再弹；
+    /// 这样连按超限键只弹一次，又不会一次弹完后续轮次再也不弹。
+    private var headlineLimitToastShown = false
     /// 编辑器标题当前值（去首尾空白；空串 = 无标题，供各发送点按需取用）。
     private var headlineText: String {
         (headlineField.text ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
@@ -1172,7 +1176,10 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             headlineField.topAnchor.constraint(equalTo: headlineWrap.topAnchor),
             headlineField.leadingAnchor.constraint(equalTo: headlineWrap.leadingAnchor),
             headlineField.trailingAnchor.constraint(equalTo: headlineWrap.trailingAnchor),
-            headlineField.heightAnchor.constraint(equalToConstant: 28),
+            // 112：高度只给下限 28，不再钉死。默认字号下内在高度 < 28，仍是 28；
+            // 大字号下 scaledFont(17 bold) 行高超过 28 时框随字长高，字不再被裁。
+            // 字体口径不变（仍 scaledFont 17 bold），视觉字号不变。
+            headlineField.heightAnchor.constraint(greaterThanOrEqualToConstant: 28),
             headlineRule.topAnchor.constraint(equalTo: headlineField.bottomAnchor, constant: 6),
             headlineRule.leadingAnchor.constraint(equalTo: headlineWrap.leadingAnchor),
             headlineRule.trailingAnchor.constraint(equalTo: headlineWrap.trailingAnchor),
@@ -1185,10 +1192,24 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     @objc private func headlineDidChange() {
         // 组词中的拼音组合串不截断（marked 时不动，落字后再按 30 字封顶），
         // 否则中文输入法组词会被打断。
-        if headlineField.markedTextRange == nil, headlineField.text?.count ?? 0 > Self.headlineMaxLength {
-            headlineField.text = String((headlineField.text ?? "").prefix(Self.headlineMaxLength))
+        if headlineField.markedTextRange == nil {
+            if headlineField.text?.count ?? 0 > Self.headlineMaxLength {
+                headlineField.text = String((headlineField.text ?? "").prefix(Self.headlineMaxLength))
+                // 112：此前超长直接取 prefix(30) 是静默截断；本轮首次截断给一次 toast。
+                showHeadlineLimitToastIfNeeded()
+            } else if headlineField.text?.count ?? 0 < Self.headlineMaxLength {
+                // 注意是严格 < 30 才重置：截断落点正好 30 不算回落，见标记处注释。
+                headlineLimitToastShown = false
+            }
         }
         scheduleDraftSave()
+    }
+
+    /// 112：标题超限截断提示，本轮只弹一次（见 headlineLimitToastShown 注释）。
+    private func showHeadlineLimitToastIfNeeded() {
+        guard !headlineLimitToastShown else { return }
+        headlineLimitToastShown = true
+        showToast(message: "标题最多 30 字")
     }
 
     private func buildTextArea() {
@@ -6279,6 +6300,10 @@ extension BearyComposerViewController: UITextFieldDelegate {
         let updated = current.replacingCharacters(in: swiftRange, with: string)
         if updated.count <= Self.headlineMaxLength { return true }
         textField.text = String(updated.prefix(Self.headlineMaxLength))
+        // 112：截断时本轮首次给一次 toast（不要每键都弹；30 字上限本身不变）。
+        // 注意随后调用的 headlineDidChange 见到正好 30 字不会重置标记，
+        // 所以连按超限键时这里的守卫能挡住重复 toast。
+        showHeadlineLimitToastIfNeeded()
         headlineDidChange()
         return false
     }
