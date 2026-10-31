@@ -5994,7 +5994,8 @@ class BearyProfileViewController: UIViewController {
         guard let entryId = entry.id, !entryId.isEmpty else { return }
         guard requireLoginForCellAction() else { return }
         // 审计 P2-23：个人页点赞补有效态门控（卡片 profile 分支直通控制器，控制器是唯一门控位）。
-        guard BearyEphemeral.isEffectivelyPublic(entry) else {
+        // 2026-10-31 私密自互动口径：作者本人看自己私密篇时放行（现行 viewerIsAuthor 口径复用）。
+        guard BearyEphemeral.isEffectivelyPublic(entry) || entry.isMine == true || (entry.authorId != nil && entry.authorId == SessionManager.shared.currentUser?.id) else {
             syncVisibleCell(entry: entry)?.playLikeDenyShake()
             BearyToast.show(in: view, message: "公开后才能互动")
             return
@@ -6292,7 +6293,8 @@ class BearyProfileViewController: UIViewController {
         guard let entryId = entry.id, !entryId.isEmpty else { return }
         guard requireLoginForCellAction() else { return }
         // 审计 P2-23：个人页收藏补有效态门控（与点赞同理，控制器是唯一门控位）。
-        guard BearyEphemeral.isEffectivelyPublic(entry) else {
+        // 2026-10-31 私密自互动口径：作者本人看自己私密篇时放行（现行 viewerIsAuthor 口径复用）。
+        guard BearyEphemeral.isEffectivelyPublic(entry) || entry.isMine == true || (entry.authorId != nil && entry.authorId == SessionManager.shared.currentUser?.id) else {
             syncVisibleCell(entry: entry)?.playBookmarkDenyShake()
             BearyToast.show(in: view, message: "公开后才能互动")
             return
