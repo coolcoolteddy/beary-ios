@@ -192,6 +192,10 @@ final class BearyPlusGrantsViewController: BearySettingsSubpageViewController {
     private var personalText: String
     private var grants: [BearyPlusGrant]?
     private var loadFailed: Bool
+    /// 109：重试在途锁 + 代次——重试只置空数据发请求时，连点会多发请求、
+    /// 后到失败回包还会覆盖先到成功回包；在途重试直接忽略，代次再拦过期回包。
+    private var isRetrying = false
+    private var retryGeneration = 0
 
     /// 设置页已拉到的 plusDetail 经 status/personal 文案与 grants 传入；
     /// grants 为 nil 且未失败时本页自己拉一次（设置页首拉未完成即点入的兜底）。
@@ -330,11 +334,21 @@ final class BearyPlusGrantsViewController: BearySettingsSubpageViewController {
     }
 
     @objc private func retryTapped() {
+        // 109：在途重试直接忽略（不重复发请求）；先 render 加载态——
+        // grants=nil 且 !loadFailed 时 render 出转圈“加载中…”行，失败态重试钮
+        // 随之离场（等价于禁用，在途无可点之钮）；回包后恢复。
+        guard !isRetrying else { return }
+        isRetrying = true
+        retryGeneration += 1
+        let gen = retryGeneration
         grants = nil
         loadFailed = false
+        render()
         BearyAPI.shared.fetchPlusDetail { [weak self] result in
             DispatchQueue.main.async {
-                guard let self = self else { return }
+                // 先解锁再判代次：成功/失败/过期回包一律解锁，不留死锁。
+                self?.isRetrying = false
+                guard let self = self, self.retryGeneration == gen else { return }
                 switch result {
                 case .success(let detail):
                     self.statusText = Self.statusText(detail: detail)
@@ -356,6 +370,9 @@ final class BearyDevicesViewController: BearySettingsSubpageViewController {
     private var sessions: [BearyAccountSession]?
     private var loadFailed: Bool
     private var countText: String?
+    /// 109：同会员来源明细页——重试在途锁 + 代次，防连点多发与过期回包覆盖。
+    private var isRetrying = false
+    private var retryGeneration = 0
 
     /// 设置页已拉到的 sessions 传入；为 nil 且未失败时本页自己拉一次。
     /// 退出其他设备钮不进本页，仍留在设置页（任务只说列表另做一页）。
@@ -489,11 +506,21 @@ final class BearyDevicesViewController: BearySettingsSubpageViewController {
     }
 
     @objc private func retryTapped() {
+        // 109：同会员来源明细页——在途重试直接忽略，先 render 加载态
+        // （sessions=nil 且 !loadFailed 时 render 出转圈“加载中…”行，
+        // 失败态重试钮随之离场，等价于禁用），回包后恢复。
+        guard !isRetrying else { return }
+        isRetrying = true
+        retryGeneration += 1
+        let gen = retryGeneration
         sessions = nil
         loadFailed = false
+        render()
         BearyAPI.shared.fetchAccountSessions { [weak self] result in
             DispatchQueue.main.async {
-                guard let self = self else { return }
+                // 先解锁再判代次：成功/失败/过期回包一律解锁，不留死锁。
+                self?.isRetrying = false
+                guard let self = self, self.retryGeneration == gen else { return }
                 switch result {
                 case .success(let resp):
                     self.sessions = resp.sessions ?? []
