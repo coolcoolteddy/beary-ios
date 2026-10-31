@@ -2,6 +2,7 @@ import UIKit
 import ObjectiveC
 import CryptoKit
 import ImageIO
+import Network
 
 // ===== 原生页共享契约（第二阶段第一项）=====
 // 三个原生页（列表 / 详情 / 编辑器）共用：动态色、图片地址与加载、时间文案、
@@ -666,6 +667,161 @@ final class BearyImageLoader {
             task.resume()
         }
         return proxy
+    }
+}
+
+// MARK: - 图片预热（秒开批：只预热缩略图）
+
+/// 预热窗口口径（纯值类型，与 NWPathMonitor 解耦，便于按口径复核）：
+/// Wi-Fi 积极、蜂窝收敛、流量受限/无网为零；未知网络先按蜂窝收敛算，
+/// 绝不在 monitor 首报前按 Wi-Fi 放量。
+struct BearyImagePrefetchBudget {
+    let maxEntries: Int
+    let maxThumbsPerEntry: Int
+    let maxURLs: Int
+    static let none = BearyImagePrefetchBudget(maxEntries: 0, maxThumbsPerEntry: 0, maxURLs: 0)
+    static func forNetwork(isSatisfied: Bool, isExpensive: Bool, isWiFi: Bool, pathKnown: Bool) -> BearyImagePrefetchBudget {
+        if !isSatisfied || isExpensive { return .none }
+        if isWiFi { return BearyImagePrefetchBudget(maxEntries: 10, maxThumbsPerEntry: 2, maxURLs: 16) }
+        // 蜂窝（含路径未知，pathKnown 仅作口径标注、预算同蜂窝档）：
+        // 下一屏只取前 4 篇、每篇首图，合计不超过 4 张。
+        _ = pathKnown
+        return BearyImagePrefetchBudget(maxEntries: 4, maxThumbsPerEntry: 1, maxURLs: 4)
+    }
+}
+
+/// 下一屏缩略图预热：只下 thumb（key+'_t'），绝不预热原图；只走
+/// BearyImageLoader.loadDetailed，故内存/磁盘缓存、账号桶、在途合并、
+/// 重定向守门、HTTP/MIME 校验与 200MB 磁盘上限全部复用现行口径，
+/// 预热命中的图与 cell 按需加载走同一份磁盘数据。
+/// 不抢首屏：只在滚动停稳（didEndDecelerating / 不减速的 didEndDragging）
+/// 与切回本页时触发，逐张错峰 0.15s 起步（首张再等 0.25s），新滚动
+/// 开始即 cancel（在途预热订阅摘除；若与可见 cell 合并在途，可见侧
+/// 的下载不受影响）；预热失败静默丢弃，不 toast、不重试、不亮失败态。
+/// 私密口径：只预热当前 viewer 可见的篇——已公开，或作者是本人；
+/// 占位篇（placeholder）与他人私密篇一律跳过，不进任何缓存桶。
+/// 账号隔离：窗口计算时快照当前账号桶，换号后旧桶的 warmed 集合清零，
+/// 且 loadDetailed 发起时已固定 bucket，夹在请求与回包之间的切号
+/// 不会把图写进新号桶（与 loader 的 S2 同口径）。
+final class BearyImagePrefetcher {
+    static let shared = BearyImagePrefetcher()
+    private let lock = NSLock()
+    private var monitor: NWPathMonitor?
+    private var monitorStarted = false
+    private var pathKnown = false
+    private var pathSatisfied = false
+    private var pathExpensive = true
+    private var pathWiFi = false
+    private var generation = 0
+    private var inFlight: [URLSessionDataTask] = []
+    private var warmed: Set<String> = []
+    private var warmedBucketKey: String?
+    private let queue = DispatchQueue(label: "com.beary.image-prefetch", qos: .utility)
+
+    private func ensureMonitor() {
+        lock.lock()
+        let started = monitorStarted
+        lock.unlock()
+        if started { return }
+        let monitor = NWPathMonitor()
+        monitor.pathUpdateHandler = { [weak self] path in
+            guard let self = self else { return }
+            self.lock.lock()
+            self.pathKnown = true
+            self.pathSatisfied = path.status == .satisfied
+            self.pathExpensive = path.isExpensive
+            self.pathWiFi = path.usesInterfaceType(.wifi)
+            self.lock.unlock()
+        }
+        monitor.start(queue: queue)
+        lock.lock()
+        self.monitor = monitor
+        monitorStarted = true
+        lock.unlock()
+    }
+
+    private func currentBudget() -> BearyImagePrefetchBudget {
+        lock.lock()
+        let budget = BearyImagePrefetchBudget.forNetwork(isSatisfied: pathSatisfied, isExpensive: pathExpensive, isWiFi: pathWiFi, pathKnown: pathKnown)
+        lock.unlock()
+        return budget
+    }
+
+    /// entries 为当前列表全量顺序；lastVisibleIndex 为最后可见行下标
+    ///（无可见行时传 -1，即从头预热）；viewerId 为当前登录用户 id，
+    ///游客传 nil（此时只预热公开篇）。
+    func prefetch(entries: [Entry], lastVisibleIndex: Int, viewerId: Int?) {
+        ensureMonitor()
+        let budget = currentBudget()
+        guard budget.maxURLs > 0 else { return }
+        let bucketKey = BearyImageLoader.shared.currentAccountId.map(String.init) ?? "guest"
+        lock.lock()
+        if warmedBucketKey != bucketKey {
+            warmed.removeAll()
+            warmedBucketKey = bucketKey
+        }
+        lock.unlock()
+        var urls: [URL] = []
+        let start = lastVisibleIndex + 1
+        guard start < entries.count else { return }
+        for entry in entries[start..<min(entries.count, start + budget.maxEntries)] {
+            if urls.count >= budget.maxURLs { break }
+            if entry.placeholder == true { continue }
+            let mine = entry.isMine == true || (viewerId != nil && entry.authorId == viewerId)
+            if !BearyEphemeral.isEffectivelyPublic(entry) && !mine { continue }
+            guard let keys = entry.images else { continue }
+            for key in keys.prefix(budget.maxThumbsPerEntry) {
+                if urls.count >= budget.maxURLs { break }
+                if key.isEmpty { continue }
+                guard let url = BearyImageURLs.imageURL(key: key, thumb: true) else { continue }
+                let warmedKey = bucketKey + "|" + url.absoluteString
+                lock.lock()
+                let seen = warmed.contains(warmedKey)
+                if !seen { warmed.insert(warmedKey) }
+                lock.unlock()
+                if seen { continue }
+                urls.append(url)
+            }
+        }
+        guard !urls.isEmpty else { return }
+        // 新触发取代旧触发：旧在途预热订阅全部摘除，错峰队列里的旧代次直接跳过。
+        lock.lock()
+        generation += 1
+        let gen = generation
+        let oldTasks = inFlight
+        inFlight.removeAll()
+        lock.unlock()
+        for task in oldTasks { task.cancel() }
+        for (index, url) in urls.enumerated() {
+            let delay = 0.25 + 0.15 * Double(index)
+            queue.asyncAfter(deadline: .now() + delay) { [weak self] in
+                guard let self = self else { return }
+                // 流量口径中途变受限/断网时，剩余错峰项直接停，不再起新下载。
+                if self.currentBudget().maxURLs == 0 { return }
+                self.lock.lock()
+                guard self.generation == gen else {
+                    self.lock.unlock()
+                    return
+                }
+                // 建任务与登记同锁内完成：cancel 漏不掉刚起的任务。
+                let task = BearyImageLoader.shared.loadDetailed(url: url) { _ in
+                    // 预热失败静默丢弃：不 toast、不重试；滑到该屏时 cell
+                    // 仍按需加载，不会因预热失败而缺图。
+                }
+                if let task = task { self.inFlight.append(task) }
+                self.lock.unlock()
+            }
+        }
+    }
+
+    /// 滚动开始 / 离页时调用：代次 +1 使错峰队列余项作废，已起任务取消订阅。
+    func cancel() {
+        lock.lock()
+        generation += 1
+        let tasks = inFlight
+        inFlight.removeAll()
+        lock.unlock()
+        for task in tasks { task.cancel() }
     }
 }
 
