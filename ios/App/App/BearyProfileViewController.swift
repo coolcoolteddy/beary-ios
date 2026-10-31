@@ -1202,7 +1202,7 @@ class BearyProfileViewController: UIViewController {
         let buttonValue = UIButton(type: .system)
         buttonValue.translatesAutoresizingMaskIntoConstraints = false
         buttonValue.setTitle("留给明年的自己", for: .normal)
-        buttonValue.setTitleColor(.black, for: .normal)
+        buttonValue.setTitleColor(.white, for: .normal)
         buttonValue.titleLabel?.font = UIFont.systemFont(ofSize: 14, weight: .bold)
         buttonValue.backgroundColor = BearyColors.orange
         buttonValue.layer.cornerRadius = 10
@@ -1309,10 +1309,10 @@ class BearyProfileViewController: UIViewController {
         let buttonValue = UIButton(type: .system)
         buttonValue.translatesAutoresizingMaskIntoConstraints = false
         buttonValue.setTitle("换一篇", for: .normal)
-        buttonValue.setTitleColor(.black, for: .normal)
+        buttonValue.setTitleColor(.white, for: .normal)
         buttonValue.titleLabel?.font = UIFont.systemFont(ofSize: 14, weight: .bold)
         buttonValue.setImage(BearyIconImages.image(named: "icon_shuffle", pointSize: 16), for: .normal)
-        buttonValue.tintColor = .black
+        buttonValue.tintColor = .white
         buttonValue.titleEdgeInsets = UIEdgeInsets(top: 0, left: 6, bottom: 0, right: 0)
         buttonValue.backgroundColor = BearyColors.orange
         buttonValue.layer.cornerRadius = 10
