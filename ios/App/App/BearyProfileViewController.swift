@@ -417,12 +417,80 @@ class BearyProfileViewController: UIViewController {
             && !BearyProfileViewController.sortedDisplayableDiaryEntries(from: diaryEntries, isOwnProfile: isOwnProfile).isEmpty
     }
 
-    private var profilePhotosValue: [BearyProfilePhotoItem] {
-        return BearyProfileViewController.profilePhotoItems(from: diaryEntries, isOwnProfile: isOwnProfile)
+    // MARK: - 113 照片墙独立分页
+    //
+    // 根因：日记 tab 只拉首屏 50 篇且不翻页（loadMoreIfNeeded 内已守），墙若只读
+    // diaryEntries，首屏无图时整区消失、图不足 6 张时墙永远不满——第 51 篇之后的
+    // 照片进不了墙。本组状态只服务照片墙：以首屏为第 1 页、按作者 scope 游标续拉
+    // 整页，直到墙满 6 张或页数到头；diaryEntries 与展示 3 篇一字不动。
+    // 过滤口径复用 profilePhotoItems（占位/纯心情项排除、他人页 isPublic!=true
+    // 排除），私密图不进他人墙。失败置 failed 旗、不循环重拉；日记首屏重拉时清旗重试。
+    private var photoOverflowEntries: [Entry] = []
+    private var photoOverflowHasMore = true
+    private var photoOverflowFetching = false
+    private var photoOverflowFailed = false
+    private var photoOverflowBaseIds: [String] = []
+
+    /// 照片墙数据源：首屏 + 溢出页，按 id 去重（直接落点单篇可能与溢出页重叠）。
+    private var photoWallSourceEntries: [Entry] {
+        var seenIds = Set<String>()
+        var merged: [Entry] = []
+        for entry in diaryEntries + photoOverflowEntries {
+            if let entryId = entry.id {
+                if seenIds.contains(entryId) { continue }
+                seenIds.insert(entryId)
+            }
+            merged.append(entry)
+        }
+        return merged
+    }
+
+    private var photoWallPhotosValue: [BearyProfilePhotoItem] {
+        return BearyProfileViewController.profilePhotoItems(from: photoWallSourceEntries, isOwnProfile: isOwnProfile)
+    }
+
+    private func syncPhotoWallBase() {
+        let baseIds = diaryEntries.compactMap { $0.id }
+        if baseIds != photoOverflowBaseIds {
+            photoOverflowBaseIds = baseIds
+            photoOverflowEntries = []
+            photoOverflowHasMore = diaryHasMore
+            photoOverflowFetching = false
+            photoOverflowFailed = false
+        }
+    }
+
+    private func fetchPhotoWallOverflowIfNeeded() {
+        syncPhotoWallBase()
+        guard !photoOverflowFetching, !photoOverflowFailed, photoOverflowHasMore else { return }
+        guard photoWallPhotosValue.count < 6 else { return }
+        guard let authorId = profile?.profileIdValue ?? targetUserIdValue,
+              let lastEntry = photoWallSourceEntries.last,
+              let lastCreated = lastEntry.createdAt, let lastId = lastEntry.id else { return }
+        photoOverflowFetching = true
+        BearyAPI.shared.fetchEntries(scope: .author(authorId), limit: 50, before: lastCreated, beforeId: lastId) { [weak self] result in
+            DispatchQueue.main.async {
+                guard let strongSelf = self else { return }
+                strongSelf.photoOverflowFetching = false
+                switch result {
+                case .success(let listValue):
+                    let fresh = listValue.entries ?? []
+                    if fresh.count < 50 {
+                        strongSelf.photoOverflowHasMore = false
+                    }
+                    strongSelf.photoOverflowEntries.append(contentsOf: fresh)
+                    strongSelf.refreshFooter()
+                case .failure:
+                    // 失败不封死 hasMore，但置旗防 refreshFooter 事件驱动下循环重拉；
+                    // 日记首屏重拉（handleTabResult 非追加成功分支）清旗后可再试。
+                    strongSelf.photoOverflowFailed = true
+                }
+            }
+        }
     }
 
     private var photosWallItems: [BearyProfilePhotoItem] {
-        return Array(profilePhotosValue.prefix(6))
+        return Array(photoWallPhotosValue.prefix(6))
     }
 
     /// 照片脚部缓存：签名 = 墙内 6 张 key + 全量张数 + 脚部宽度；
@@ -4532,6 +4600,10 @@ class BearyProfileViewController: UIViewController {
                 appendedRowCount = appendedEntries.count
             } else {
                 setEntries(entries: freshEntries)
+                // 113 照片墙：日记首屏重拉 = 溢出分页的新一次机会，清失败旗。
+                if requestTab == .diary {
+                    photoOverflowFailed = false
+                }
             }
             if freshEntries.count < 50 {
                 setHasMore(hasMore: false)
@@ -4935,7 +5007,7 @@ class BearyProfileViewController: UIViewController {
         // 批 C：照片区固定在 tab 内容下方、与 tab 切换无关——做法是把它叠进
         // tableFooterView 的上半段（状态脚部在下半段；无状态时只有照片区）。
         // 无图时 makePhotosFooterView 回 nil，脚部行为与改前一字不差。
-        // 注意：照片区取数只依赖 diaryEntries 模型，不为取图加轮询或全量重算；
+        // 注意：照片区取数 = 首屏 + 113 溢出页（见 photoWallSourceEntries），不为取图加轮询；
         // 可见性翻转（本人页私密/公开都算）不改变照片集合，删除/举报/拉黑
         // 走 reloadProfile 或通知处理里的 refreshFooter，自然同步。
         // 112 他人页口径：脚部只留照片区（本人页现行照片模块原样复用，
@@ -4950,6 +5022,10 @@ class BearyProfileViewController: UIViewController {
         // 日记星图行（2026-10-30）：同机制再接一行，排在地图行下一行、状态脚部
         // 上方，112 起仅本人页有此行。
         // 无照片时入口行仍在脚部顶部，不因无图丢失；无照片且无状态时脚部只剩入口行（以上均为本人页；他人页无照片且无状态时脚部高为 0，不留空白大块）。
+        // 113 照片墙：脚部每次重建前先看墙是否需要溢出页（墙满 6 张或到头即停），
+        // 溢出页到达后经 refreshFooter 再建墙；首屏无图时墙先不出现、溢出页有图后出现。
+        // 有图才有入口的口径不变——全量到头仍无图时墙与入口一并缺席。
+        fetchPhotoWallOverflowIfNeeded()
         let footerWidth = headerWidthValue > 0 ? headerWidthValue : tableView.bounds.width
         let photosView = footerWidth > 0 ? makePhotosFooterView() : nil
         if footerWidth > 0 {
@@ -5135,7 +5211,7 @@ class BearyProfileViewController: UIViewController {
         }
         let footerWidth = headerWidthValue > 0 ? headerWidthValue : tableView.bounds.width
         guard footerWidth > 0 else { return cachedPhotosFooterView }
-        let totalCount = profilePhotosValue.count
+        let totalCount = photoWallPhotosValue.count
         // 112：签名须含字号档，否则字号变化后 refreshFooter() 仍命中旧缓存、
         // 旧拟合高度原样返回；宽度保持在末尾，列宽后缀守卫（viewDidLayoutSubviews）口径不动。
         let signature = wall.map { $0.imageKey }.joined(separator: ",") + "|n\(totalCount)|c\(traitCollection.preferredContentSizeCategory.rawValue)|w\(Int(footerWidth))"
@@ -5244,8 +5320,8 @@ class BearyProfileViewController: UIViewController {
         let photosVC = BearyProfilePhotosViewController(
             authorIdValue: profile?.profileIdValue ?? targetUserIdValue,
             isOwnProfileValue: isOwnProfile,
-            initialEntries: BearyProfileViewController.sortedDisplayableDiaryEntries(from: diaryEntries, isOwnProfile: isOwnProfile),
-            diaryHasMoreValue: diaryHasMore,
+            initialEntries: BearyProfileViewController.sortedDisplayableDiaryEntries(from: photoWallSourceEntries, isOwnProfile: isOwnProfile),
+            diaryHasMoreValue: photoOverflowEntries.isEmpty ? diaryHasMore : photoOverflowHasMore,
             onOpenEntryValue: { [weak self] entryValue in self?.onOpenEntry?(entryValue) }
         )
         photosVC.modalPresentationStyle = .fullScreen
@@ -5258,15 +5334,15 @@ class BearyProfileViewController: UIViewController {
 
     /// 批 C：照片墙点按直进大图灯箱（全量照片、左右滑动；灯箱内“查看日记”进详情）。
     private func presentPhotosLightbox(startIndex: Int) {
-        let allPhotos = profilePhotosValue
+        let allPhotos = photoWallPhotosValue
         guard !allPhotos.isEmpty, startIndex >= 0, startIndex < allPhotos.count else { return }
         guard presentedViewController == nil else { return }
         let viewer = BearyEntryImageViewerViewController(imageKeys: allPhotos.map { $0.imageKey }, startIndex: startIndex)
         viewer.modalPresentationStyle = .fullScreen
         viewer.onViewEntryAtIndex = { [weak self, weak viewer] tappedIndex in
             guard let strongSelf = self, let viewerValue = viewer else { return }
-            guard tappedIndex >= 0, tappedIndex < strongSelf.profilePhotosValue.count else { return }
-            let targetEntry = strongSelf.profilePhotosValue[tappedIndex].entry
+            guard tappedIndex >= 0, tappedIndex < strongSelf.photoWallPhotosValue.count else { return }
+            let targetEntry = strongSelf.photoWallPhotosValue[tappedIndex].entry
             viewerValue.dismiss(animated: true) {
                 strongSelf.onOpenEntry?(targetEntry)
             }
