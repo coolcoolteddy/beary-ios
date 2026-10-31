@@ -2,7 +2,7 @@ import UIKit
 
 // ===== beary 原生时间线页（含写作日历卡）=====
 // 对照源（以 worker.js 为准，网页版 beary.html 与设计稿 layout_rest.html 为形态对照）：
-// - 列表：GET /beary/api/entries?scope=timeline&limit=50，游标 before=created_at（毫秒）
+// - 列表：GET /beary/api/entries?scope=timeline&limit=20，游标 before=created_at（毫秒）
 //   + before_id=entry.id；服务端排序 created_at DESC, id DESC；响应含 entries、
 //   trash_count、tl_counts{total, priv, pub, next_pub}；单条 is_public = now >= publish_at。
 // - 日历：GET /beary/api/calendar?month=YYYY-MM（仅本人、需登录），按 created_at 北京日界
@@ -2104,7 +2104,10 @@ class BearyTimelineViewController: UIViewController {
         var entries: [Entry]
     }
 
-    private let pageLimit = 50
+    // 提速：首屏与翻页共用页大小 50 → 20（hasMore 判定 count >= pageLimit
+    // 全走本常量，首屏与翻页同口径；日历圆点走月份请求、当日面板走
+    // fetchDayEntries 或首屏派生回落，均不依赖页大小，见派生注释）。
+    private let pageLimit = 20
 
     private var timelineEntries: [Entry] = []
     private var timelineHasMore = false
@@ -2122,7 +2125,7 @@ class BearyTimelineViewController: UIViewController {
     // completion，需自行处理陈旧语义。
     private var timelineFirstPageSeq = 0
     /// 112 分段去重：首屏在途标记（seq 只丢弃旧回包，不阻止重复发请求；
-    /// 下拉/重拍/详情回写/静默对齐重叠时曾并发多份同样的 50 条首拉）。
+    /// 下拉/重拍/详情回写/静默对齐重叠时曾并发多份同样的首屏首拉）。
     /// 在途时新调用直接跳过（不 bump seq，否则在途回包会被 seq 守卫丢弃、
     /// 等于白白重拉一次）；在途回包自会结束下拉头并更新模型。
     /// force=true 的硬重载（reloadTimeline 非 keepDay：登录翻转/取消编辑等）
@@ -2601,7 +2604,7 @@ class BearyTimelineViewController: UIViewController {
     /// timelineState、不清当日面板，首屏回包经行 diff 更新；失败时旧内容
     /// 原样保留（失败/加载态只在空表时渲染特殊态，见 3617 一带，故不闪白）。
     /// 110：冷启动缓存优先（首页 BearyFeedCache SWR 同款口径）。
-    /// 时间线此前无首屏磁盘缓存：每次冷启动都清表 + 全量重拉 50 条 +
+    /// 时间线此前无首屏磁盘缓存：每次冷启动都清表 + 全量重拉首屏 +
     /// 中央 spinner 等网络，即“冷启动后时间线慢”的主因（首屏 payload
     /// 仅约 60KB、解码可忽略，耗时在 TTFB 与无缓存上，见实测分解）。
     /// 有缓存：即时渲染缓存首屏（不转菊花、不清表），再走既有静默
@@ -4902,7 +4905,8 @@ class BearyTimelineViewController: UIViewController {
     /// 112 增量当日面板：首屏已覆盖选中日时直接从首屏派生面板，
     /// 不再另发当日请求；未覆盖时回落正向 fetchDayEntries。
     /// 覆盖判定：首屏是 created DESC 前缀——页内一旦出现早于选中日的篇，
-    /// 即证明选中日的全部篇都在页内（当日上限 10 篇/天、首屏 50 条；
+    /// 即证明选中日的全部篇都在页内（当日上限 10 篇/天；判定只看页内
+    /// 是否出现早于选中日的篇，与页大小无关，未覆盖时回落正向拉取；
     /// 页空、页尾仍在选中日、或时间戳缺失时一律判未覆盖、走正向拉取）。
     /// 渲染不单独重载：调用点在首屏完成分支内，随后 diff/reloadData
     /// 统一覆盖面板分区（section 0），避免与首屏批更新交错。
@@ -6051,9 +6055,11 @@ enum BearyTimelinePrefetch {
             didPrefetch = true
             return
         }
-        BearyAPI.shared.fetchEntries(scope: .timeline, limit: 50) { result in
+        // 提速：预取与时间线首屏同口径（pageLimit = 20），hasMore 阈值同步改，
+        // 否则缓存的 hasMore 与 VC 翻页口径错位。
+        BearyAPI.shared.fetchEntries(scope: .timeline, limit: 20) { result in
             guard case .success(let list) = result, let entries = list.entries, !entries.isEmpty else { return }
-            BearyTimelineCache.save(bucket: bucket, entries: entries, hasMore: entries.count >= 50, trashCount: list.trashCount ?? 0, counts: list.tlCounts)
+            BearyTimelineCache.save(bucket: bucket, entries: entries, hasMore: entries.count >= 20, trashCount: list.trashCount ?? 0, counts: list.tlCounts)
             didPrefetch = true
         }
     }
