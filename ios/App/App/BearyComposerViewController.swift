@@ -194,6 +194,11 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     // MARK: - 状态
 
     private var selectedMood: String?
+    /// 插入式心情的上次焦点框：点选心情钮/弹出框选项时焦点可能已被
+    /// 拾取动作带走，单靠 isFirstResponder 会误判；本字段记最后一次
+    /// 获焦的框（标题/正文），兜底时仍插到上次光标所在的框。
+    private enum ComposerInput { case headline, body }
+    private var lastFocusedComposerInput: ComposerInput?
     private var selectedWeather: String?
     /// 批 E 编辑器位置：已确认的位置（只有文本，无坐标）。nil = 未定位；
     /// 定位失败不改本值（失败只 toast、不静默清掉已确认的位置；从未确认过时行即隐藏 = 未定位态）。
@@ -3557,17 +3562,11 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         calloutDismissView.passthroughRects = [toolbarContainer.convert(toolbarContainer.bounds, to: calloutDismissView)]
     }
 
-    /// 弹出框点选心情：沿用旧条口径（再点已选项取消）；点选即收起。
+    /// 弹出框点选心情：插入式（取代旧“再点已选项取消”口径）——把心情名
+    /// 文本插进光标处；插完不收起，方便连着插多个（数量不限，见
+    /// insertMoodTextAtCursor）；单独心情字段一字不动。
     private func didSelectMoodFromCallout(_ key: String) {
-        if selectedMood == key {
-            selectedMood = nil
-        } else {
-            selectedMood = key
-        }
-        refreshMoodButtons()
-        updateMoodPlayback()
-        scheduleDraftSave()
-        hideCallout(animated: true)
+        insertMoodTextAtCursor(key)
     }
 
     /// 弹出框点选天气：沿用旧条口径（点即选中、再点不取消）；点选即收起。
@@ -4267,14 +4266,55 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             }
         }
         guard let key = tappedKey else { return }
-        if selectedMood == key {
-            selectedMood = nil
-        } else {
-            selectedMood = key
+        insertMoodTextAtCursor(key)
+    }
+
+    /// 心情插入式：点选心情不再改单独心情字段，而是把心情名文本
+    /// （BearyText.moodNames，如“开心”）像打字一样插进光标处。
+    /// 之所以插名文本而不是熊脸图片：熊脸是图片资产，正文与标题
+    /// 发布/草稿都走纯文本——图片附件在 text 里会变成 U+FFFC
+    /// 占位符污染正文，且标题 UITextField 根本放不下附件；
+    /// 名文本在两框、正文发布、草稿、字数、搜索里都原样存活。
+    /// 光标处理：标题框获焦插标题、正文获焦插正文，插完光标在
+    /// 符号后、焦点留在该框、可继续打字；组词中的拼音组合串
+    /// 先提交落字再插，避免打断输入法；两框都没焦点时
+    /// 默认插到正文末尾并让正文获焦（兜底）。
+    /// 旧心情字段：点选一字不动——新日记点选不再产生单独心情
+    /// 标签；旧日记已有的心情字段在编辑时照常保留、卡片/详情/
+    /// 统计仍按原样显示，绝不因点选被静默清掉或改掉。
+    /// 数量不限：每次点选都在光标处新插一段，不替换上一次插好
+    /// 的内容、不设上限；同一个心情可重复插，不同心情可混着插；
+    /// 弹出框点选后不收起，可连着插多个，再点工具钮才收起。
+    /// 附带口径变化：点选不再有“再点已选项取消”切换；单独心情
+    /// 字段此后在编辑器里不再有清除入口。
+    private func insertMoodTextAtCursor(_ key: String) {
+        guard let name = BearyText.moodNames[key], !name.isEmpty else { return }
+        if headlineField.isFirstResponder || lastFocusedComposerInput == .headline {
+            if !headlineField.isFirstResponder {
+                headlineField.becomeFirstResponder()
+                let end = headlineField.endOfDocument
+                headlineField.selectedTextRange = headlineField.textRange(from: end, to: end)
+            }
+            if headlineField.markedTextRange != nil {
+                headlineField.unmarkText()
+            }
+            headlineField.insertText(name)
+            headlineDidChange()
+            return
         }
-        refreshMoodButtons()
-        updateMoodPlayback()
-        scheduleDraftSave()
+        if textView.isFirstResponder || lastFocusedComposerInput == .body {
+            if !textView.isFirstResponder {
+                textView.becomeFirstResponder()
+            }
+            if textView.markedTextRange != nil {
+                textView.unmarkText()
+            }
+            textView.insertText(name)
+            return
+        }
+        textView.becomeFirstResponder()
+        textView.selectedRange = NSRange(location: textView.text.count, length: 0)
+        textView.insertText(name)
     }
 
     // MARK: - 图片条
@@ -5990,6 +6030,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     /// 键盘刚弹出时的修正走 applyKeyboard 动画完成回调（inset 落定后再算，不与
     /// 系统自动 caret 滚动打架；已在位时修正为 no-op）。
     func textViewDidBeginEditing(_ textView: UITextView) {
+        lastFocusedComposerInput = .body
         if currentKeyboardHeight > 0 {
             // 键盘动画在途时不另起一路滚动：系统 caret 滚动＋键盘 inset
             // 动画＋本回调三路抢偏移正是闪回的来源之一；只记 pending，
@@ -6547,14 +6588,27 @@ extension BearyComposerViewController: UITextFieldDelegate {
     /// 不把用户手动滚动拉回去。
     func textFieldDidBeginEditing(_ textField: UITextField) {
         guard textField === headlineField else { return }
-        headlineFocusSnapshotOffset = scrollView.contentOffset
-        headlineFocusGuardHeight = scrollView.bounds.height
-        headlineFocusGuardGeneration += 1
-        let guardGeneration = headlineFocusGuardGeneration
-        NSLog("[Diag] composer-headline-focus snap=\(scrollView.contentOffset) height=\(headlineFocusGuardHeight)")
-        if keyboardAnimationInFlight {
-            pendingFocusScrollAfterKeyboard = true
-            return
+        lastFocusedComposerInput = .headline
+        if currentKeyboardHeight > 0 {
+            if keyboardAnimationInFlight {
+                pendingFocusScrollAfterKeyboard = true
+                return
+            }
+            headlineFocusSnapshotOffset = scrollView.contentOffset
+            _ = scrollFocusedFieldIntoView(animated: true)
+            DispatchQueue.main.async { [weak self] in
+                guard let self = self, self.headlineField.isFirstResponder,
+                      let snap = self.headlineFocusSnapshotOffset else { return }
+                self.headlineFocusSnapshotOffset = nil
+                if abs(self.scrollView.contentOffset.y - snap.y) < 2 { return }
+                let frame = self.contentView.convert(self.headlineField.frame, from: self.headlineWrap)
+                let visibleTopAtSnap = snap.y + self.scrollView.contentInset.top
+                let visibleBottomAtSnap = snap.y + self.scrollView.bounds.height
+                if frame.minY >= visibleTopAtSnap, frame.maxY <= visibleBottomAtSnap {
+                    self.scrollView.setContentOffset(CGPoint(x: self.scrollView.contentOffset.x, y: snap.y), animated: false)
+                }
+            }
+ (feat(composer): 心情改为光标处插入式（数量不限）)
         }
         _ = scrollFocusedFieldIntoView(animated: true)
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) { [weak self] in
