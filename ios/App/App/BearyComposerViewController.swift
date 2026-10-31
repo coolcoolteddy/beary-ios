@@ -4817,7 +4817,7 @@ extension BearyComposerViewController: UITextFieldDelegate {
         }
         let hasRealContent = !trimmedContent().isEmpty || !uploadedItems.isEmpty
             || selectedWeather != nil || selectedRecipient != nil || selectedQuote != nil
-            || selectedLocation != nil
+            || selectedLocation != nil || !headlineText.isEmpty
         if !hasRealContent {
             let deletingId = draftIdValue
             currentDraftId = nil
@@ -5246,6 +5246,7 @@ extension BearyComposerViewController: UITextFieldDelegate {
     /// P2：正文按 trim 后算，纯空格不算有内容，与 saveDraftNow 的落盘口径一致；
     /// trimmedContent 本身已排除拼音组合串，纯组词也不算有内容）。
     private func hasEditorContent() -> Bool {
+        if !headlineText.isEmpty { return true }
         if !trimmedContent().isEmpty { return true }
         if selectedWeather != nil { return true }
         if selectedRecipient != nil { return true }
