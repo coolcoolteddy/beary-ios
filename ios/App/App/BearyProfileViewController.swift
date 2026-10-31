@@ -177,6 +177,10 @@ class BearyProfileViewController: UIViewController {
     /// 列表行点按：传整条 Entry，容器接线到详情页。
     var onOpenEntry: ((Entry) -> Void)?
 
+    /// 提速：引用卡点按专用——传刚为可见性校验拉到的新鲜 Entry，容器
+    /// 接线到详情页且跳过后台补拉（未接线时调用方回落 onOpenEntry 原路径）。
+    var onOpenFreshEntry: ((Entry) -> Void)?
+
     /// 批 C：日记 tab“更多日记”点按，容器接线到时间线页（仅本人页触发，见下）。
     var onOpenTimeline: (() -> Void)?
 
@@ -6557,7 +6561,13 @@ class BearyProfileViewController: UIViewController {
                     case .success(let fetched):
                         let viewerIsAuthor = fetched.isMine == true || (fetched.authorId != nil && fetched.authorId == SessionManager.shared.currentUser?.id)
                         if viewerIsAuthor || fetched.isPublic == true {
-                            strongSelf.onOpenEntry?(fetched)
+                            // 提速：这份 Entry 就是刚拉到的可见性校验结果，直接进详情
+                            // 且跳过后台补拉（原路径会再拉一次同一单篇）；未接线时回落原路径。
+                            if let openFresh = strongSelf.onOpenFreshEntry {
+                                openFresh(fetched)
+                            } else {
+                                strongSelf.onOpenEntry?(fetched)
+                            }
                         } else {
                             strongSelf.presentSimpleAlert(message: "该日记已设为私密")
                         }
