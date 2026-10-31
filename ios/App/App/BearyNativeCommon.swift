@@ -2048,3 +2048,20 @@ enum BearyQuoteGate {
         }
     }
 }
+
+extension BearyQuoteGate {
+    /// 引用占位文案（2026-10-31 引用规则简化，旧“该日记已设为私密”作废）：
+    /// published_at 非 nil 即曾公开 → “该日记已私密”＋提醒句；
+    /// locked 体且 published_at 为 nil 即从未公开 → “该日记未公开”（不谎称已转私密）；
+    /// 非 locked 体且 published_at 缺失（旧形状/占位单篇回包）→ 曾公开与否未知，
+    /// 只给主句“该日记已私密”、不加“已转”提醒句，绝不编造已转事实。
+    static func placeholderText(publishedAt: Int?, locked: Bool) -> (main: String, detail: String?) {
+        if publishedAt != nil {
+            return ("该日记已私密", "原日记已转私密，引用内容已隐藏")
+        }
+        if locked {
+            return ("该日记未公开", nil)
+        }
+        return ("该日记已私密", nil)
+    }
+}

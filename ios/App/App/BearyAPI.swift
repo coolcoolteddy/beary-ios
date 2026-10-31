@@ -57,6 +57,10 @@ struct Quote: Codable {
     /// 默认 nil：本地构造引用体（如编辑器回传）可省略，解码缺失时同为 nil。
     var authorId: Int? = nil
     var isMine: Bool? = nil
+    /// 引用规则简化（2026-10-31）：后端直传的被引篇作者 handle（来源行用）与
+    /// 最近一次公开时间（locked 体区分曾公开/从未公开用；毫秒，nil 即从未公开）。
+    var authorHandle: String? = nil
+    var publishedAt: Int? = nil
 }
 
 /// 全量同步落盘用：Entry 加 Encodable（只补编码能力，不改字段语义；

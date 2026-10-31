@@ -2000,7 +2000,6 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     /// 编辑 → 锁定的共享卡（面板入口锁定，× 仍可删）或都不显示。
     /// 共享卡口径变化（相对原自绘卡）：正文 13.5 且最多 3 行（原不限行 16.5）、
     /// 图条 42（原 118）、日期走共享卡 feedTimeString（原 BearyText.timeString）。
-    /// iCity：私密引用在将公开的宿主里挂“仅你可见”角标（viewer 即作者本人时）。
     private func refreshQuoteSection() {
         let quote = isEditMode ? lockedQuote : selectedQuote
         // C6：编辑模式引用可改可删（有引用露共享卡 + ×，无引用则本区塌掉）；
@@ -2023,10 +2022,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         quoteCardWrap.isHidden = false
         // allowThumbs: true 沿用旧编辑器行为——已选引用在本地草稿预览中恒出图；
         // 列表侧的 isPublic/本人门控不适用于编辑器预览（预览不出公开发布）。
-        // 仅你可见角标：被引私密 + 宿主将公开（新建看可见性钮状态，编辑看原可见性）。
-        // 补缺 P3-42：编辑态宿主可见性走有效态（过期即私密），原 editingEntry?.isPublic 原始值。
-        let hostWillBePublic = isEditMode ? (editingEntry.map { BearyEphemeral.isEffectivelyPublic($0) } == true) : selectedVisibilityPublished
-        quoteCard.configure(authorName: shown.authorName ?? "", authorAvatar: shown.authorAvatar, content: shown.content, images: shown.images, dims: shown.imgDims, createdAt: shown.createdAt, allowThumbs: true, showOnlyYouBadge: shown.isPublic != true && hostWillBePublic)
+        quoteCard.configure(authorName: shown.authorName ?? "", authorAvatar: shown.authorAvatar, content: shown.content, images: shown.images, dims: shown.imgDims, createdAt: shown.createdAt, allowThumbs: true)
         updatePreferredContentSize()
     }
 
@@ -2503,7 +2499,8 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         for entry in entries {
             // 审计 P0-2：选择引用加卡片同款 viewer 门控——赞过/收藏 tab 里翻回私密的
             // 他人日记不得出全文：只显占位行、不可选（作者本人或有效公开才出全文行）。
-            // 占位文案与审计 P3-27 统一口径“该日记已设为私密”。
+            // 占位主句与引用卡新口径一致（“该日记已私密”；picker 行无 published_at
+            // 可靠区分，不挂“已转”提醒句）。
             let viewerId = SessionManager.shared.currentUser?.id
             let quoteIsAuthor = entry.isMine == true || (entry.authorId != nil && viewerId != nil && entry.authorId == viewerId)
             if !quoteIsAuthor && !BearyEphemeral.isEffectivelyPublic(entry) {
@@ -2516,7 +2513,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                 lockedLabel.translatesAutoresizingMaskIntoConstraints = false
                 lockedLabel.font = UIFont.systemFont(ofSize: 15)
                 lockedLabel.textColor = BearyColors.gray
-                lockedLabel.text = "该日记已设为私密"
+                lockedLabel.text = "该日记已私密"
                 let lockedSeparator = UIView()
                 lockedSeparator.translatesAutoresizingMaskIntoConstraints = false
                 lockedSeparator.backgroundColor = BearyColors.line

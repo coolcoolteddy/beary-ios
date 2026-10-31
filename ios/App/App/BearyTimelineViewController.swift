@@ -1623,29 +1623,57 @@ final class BearyTimelineCell: UITableViewCell {
                 quoteButton.isEnabled = false
                 quoteButton.isHidden = false
             } else if quote.locked == true {
-                quoteTitleLabel.text = "该日记已设为私密"
+                let placeholder = BearyQuoteGate.placeholderText(publishedAt: quote.publishedAt, locked: true)
+                quoteTitleLabel.text = placeholder.main
                 quoteIconView.image = BearyIconImages.image(named: "icon_lock", pointSize: 12)
-                quoteBodyLabel.isHidden = true
+                if let detail = placeholder.detail {
+                    quoteBodyLabel.attributedText = NSAttributedString(string: detail, attributes: [
+                        .font: BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13.5)),
+                        .foregroundColor: BearyColors.gray,
+                    ])
+                    quoteBodyLabel.isHidden = false
+                } else {
+                    quoteBodyLabel.isHidden = true
+                }
                 quoteButton.isEnabled = false
                 quoteButton.isHidden = false
             } else if quoteBody.isEmpty {
                 if quote.isPublic == true {
                     quoteTitleLabel.text = "引用的日记已删除"
                     quoteIconView.image = BearyIconImages.image(named: "icon_quote", pointSize: 12)
+                    quoteBodyLabel.isHidden = true
                 } else {
-                    quoteTitleLabel.text = "该日记已设为私密"
+                    let placeholder = BearyQuoteGate.placeholderText(publishedAt: quote.publishedAt, locked: false)
+                    quoteTitleLabel.text = placeholder.main
                     quoteIconView.image = BearyIconImages.image(named: "icon_lock", pointSize: 12)
+                    if let detail = placeholder.detail {
+                        quoteBodyLabel.attributedText = NSAttributedString(string: detail, attributes: [
+                            .font: BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13.5)),
+                            .foregroundColor: BearyColors.gray,
+                        ])
+                        quoteBodyLabel.isHidden = false
+                    } else {
+                        quoteBodyLabel.isHidden = true
+                    }
                 }
-                quoteBodyLabel.isHidden = true
                 quoteButton.isEnabled = false
                 quoteButton.isHidden = false
             } else if quote.isPublic != true && !(quote.isMine == true || (quote.authorId != nil && quote.authorId == SessionManager.shared.currentUser?.id)) {
                 // iCity viewer 实时判定：被引篇非公开且 viewer 不是被引作者时，
                 // 即使服务端透传了正文也以占位替代，绝不泄漏正文与图片
                 //（旧口径以宿主是否本人为代理，已作废；Quote 现有 authorId/isMine 字段）。
-                quoteTitleLabel.text = "该日记已设为私密"
+                let placeholder = BearyQuoteGate.placeholderText(publishedAt: quote.publishedAt, locked: false)
+                quoteTitleLabel.text = placeholder.main
                 quoteIconView.image = BearyIconImages.image(named: "icon_lock", pointSize: 12)
-                quoteBodyLabel.isHidden = true
+                if let detail = placeholder.detail {
+                    quoteBodyLabel.attributedText = NSAttributedString(string: detail, attributes: [
+                        .font: BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13.5)),
+                        .foregroundColor: BearyColors.gray,
+                    ])
+                    quoteBodyLabel.isHidden = false
+                } else {
+                    quoteBodyLabel.isHidden = true
+                }
                 quoteButton.isEnabled = false
                 quoteButton.isHidden = false
             } else {
