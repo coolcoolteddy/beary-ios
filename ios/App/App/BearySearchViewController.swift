@@ -112,31 +112,35 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
     private let searchFooterRow = UIView()
     private let searchFooterRetryButton = BearyButton.retryPill()
     /// Q9 最近搜索：只存本机 UserDefaults，不走服务端；最多 8 条，新在前、去重。
-    /// 按账号分桶：登录时键为 bearyRecentSearches_<uid>；未登录时读旧单键
-    /// （升级迁移前暂留，登录后迁移见 migrateLegacyRecentSearchesIfNeeded）。
+    /// 按账号分桶：登录时键为 bearyRecentSearches_<uid>；未登录（含游客模式）
+    /// 一律走独立 guest 桶 bearyRecentSearches_guest，登录后不并入任何账号桶。
+    /// sweep32-3：旧单键 bearyRecentSearches 是改动前游客的存放键，登录时
+    /// 不再把它并入账号桶（旧迁移函数已删）；它只在游客态一次性并入 guest 桶。
     private let legacyRecentSearchesKey = "bearyRecentSearches"
+    private let guestRecentSearchesKey = "bearyRecentSearches_guest"
     private var recentSearchesKey: String {
         if let uid = SessionManager.shared.currentUser?.id {
             return "bearyRecentSearches_\(uid)"
         }
-        return legacyRecentSearchesKey
+        return guestRecentSearchesKey
     }
 
-    /// 升级迁移（一次性、幂等）：已登录且旧单键仍有记录时，把旧记录并到
-    /// 当前账号桶后（去重、上限 8 条），清旧键；旧记录不擅自删除——合并
-    /// 后才清键，桶已有记录时旧记录排在桶记录之后。未登录时不迁移。
-    private func migrateLegacyRecentSearchesIfNeeded() {
-        guard SessionManager.shared.currentUser?.id != nil else { return }
+    /// 游客桶升级迁移（一次性、幂等，仅游客态）：旧单键仍有记录时，把旧记录
+    /// 并入 guest 桶后（去重、上限 8 条），清旧键；旧记录不擅自删除——合并
+    /// 后才清键，guest 桶已有记录时旧记录排在桶记录之后。登录态不调用，
+    /// 游客记录永不进入账号桶。
+    private func migrateLegacyToGuestBucketIfNeeded() {
+        guard SessionManager.shared.currentUser?.id == nil else { return }
         let legacy = UserDefaults.standard.stringArray(forKey: legacyRecentSearchesKey) ?? []
         guard !legacy.isEmpty else { return }
-        var merged = UserDefaults.standard.stringArray(forKey: recentSearchesKey) ?? []
+        var merged = UserDefaults.standard.stringArray(forKey: guestRecentSearchesKey) ?? []
         for item in legacy where !merged.contains(item) {
             merged.append(item)
         }
         if merged.count > 8 {
             merged = Array(merged.prefix(8))
         }
-        UserDefaults.standard.set(merged, forKey: recentSearchesKey)
+        UserDefaults.standard.set(merged, forKey: guestRecentSearchesKey)
         UserDefaults.standard.removeObject(forKey: legacyRecentSearchesKey)
     }
     private var recentButtons: [UIButton] = []
@@ -973,7 +977,7 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
 
     /// Q9 最近搜索：读本机记录，重建标题 + 行；点行直接搜（不走服务端）。
     private func loadRecentSearches() -> [String] {
-        migrateLegacyRecentSearchesIfNeeded()
+        migrateLegacyToGuestBucketIfNeeded()
         return UserDefaults.standard.stringArray(forKey: recentSearchesKey) ?? []
     }
 
@@ -1005,7 +1009,7 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         titleLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13, weight: .semibold))
         titleLabel.adjustsFontForContentSizeCategory = true
         titleLabel.textColor = BearyColors.gray
-        // A7：一键清除入口（标题行右侧弱化文字钮；只清当前账号桶记录，
+        // A7：一键清除入口（标题行右侧弱化文字钮；只清当前桶记录（登录为账号桶、游客为 guest 桶），
         // 记录机制与 8 条上限不动；清除后同步重建本区，无记录时整区隐藏）。
         // 113：钮改 BearyHit44Button（视觉帧不动，热区扩到 44）+ 标题行用
         // BearySearchRecentHeaderRow 转发扩后热区，行高不撑高。
@@ -1066,7 +1070,7 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         runSearch(query: term)
     }
 
-    /// A7：一键清除最近搜索（当前账号桶；未登录时即旧单键），随后同步重建本区。
+    /// A7：一键清除最近搜索（当前桶：登录为账号桶、游客为 guest 桶），随后同步重建本区。
     @objc private func clearRecentSearchesTapped() {
         UserDefaults.standard.removeObject(forKey: recentSearchesKey)
         renderRecentSearches()
