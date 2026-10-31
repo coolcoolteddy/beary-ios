@@ -15,6 +15,8 @@ import ObjectiveC
 //   以最后一次写的值为准，状态不被冲掉；已有各组件自带重刷与本机制同值重赋，无冲突）。
 // - 子类 override 若调 super.traitCollectionDidChange（全仓现状皆如此），集中重刷经 super 走到；
 //   不 override 的视图由 UIKit 直接调 UIView 的实现，同样走到。
+// 本文件同时进 BearyCoreTests target：BearyPastSelf.swift 在两 target 共享，
+// 其两处边框已改走本入口，缺了它 test 编译即报 CALayer 无此成员（115 批 1a 补登）。
 // 部署目标 iOS 15.0、Swift 5.0——只用闭包回调，不用 async/await，不用 if-let 简写。
 
 private var bearyDynamicBorderColorKey: UInt8 = 0
