@@ -24,6 +24,8 @@
 	<string>$(CURRENT_PROJECT_VERSION)</string>
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
+	<key>NSFaceIDUsageDescription</key>
+	<string>beary 需要使用生物识别（面容识别或触控 ID），以便在冷启动时确认是你本人在使用。</string>
 	<key>NSCameraUsageDescription</key>
 	<string>beary 需要使用相机，以便为日记拍摄图片。</string>
 	<key>NSPhotoLibraryAddUsageDescription</key>
