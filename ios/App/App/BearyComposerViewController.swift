@@ -5339,6 +5339,15 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         selectedLocation = nil
         originalLocation = nil
         refreshLocationRow()
+        // 112：空白新日记不得继承上一篇的可见性/限时/胶囊态——编辑器每次
+        // 默认私密、不记住上次选择。位置已清、胶囊行随之隐藏，更不能让
+        // 开关在用户看不见的地方仍开着：三态一并复位并刷新按钮与胶囊行。
+        selectedVisibilityPublished = false
+        isEphemeral = false
+        capsuleEnabled = false
+        capsuleUnlockDate = nil
+        refreshVisibilityButton()
+        refreshTimeCapsuleRow()
         setQuotePanelOpen(false)
         removeAllImageViews()
         // 只清视图与槽位，不碰存储：删篇由调用方决定（丢弃路径先调 clearDraftAndFiles

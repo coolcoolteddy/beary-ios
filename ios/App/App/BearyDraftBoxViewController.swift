@@ -580,6 +580,14 @@ final class BearyDraftBoxViewController: UIViewController {
         present(alert, animated: BearyMotion.animated(true))
     }
 
+    /// 112：非损坏型读取失败的重试：只重读草稿库、不删任何文件；
+    /// 成功回列表、仍失败则留失败态（可再次点按重试）。
+    @objc private func retryLoadDraftsTapped() {
+        loadDrafts { [weak self] in
+            self?.renderDrafts()
+        }
+    }
+
     private func renderDrafts() {
         for arranged in listStack.arrangedSubviews {
             listStack.removeArrangedSubview(arranged)
@@ -625,7 +633,20 @@ final class BearyDraftBoxViewController: UIViewController {
                     clearButton.bottomAnchor.constraint(equalTo: failedWrap.bottomAnchor, constant: -22),
                 ])
             } else {
-                failedLabel.bottomAnchor.constraint(equalTo: failedWrap.bottomAnchor, constant: -22).isActive = true
+                // 112：非损坏型读取失败给重试钮（点按重读草稿，不删库）——
+                // 文案与样式均与损坏态“清除损坏的草稿库”区分开；损坏态不动。
+                let retryButton = BearyButton.make(style: .secondaryOutline(.compact), title: "重新读取")
+                retryButton.translatesAutoresizingMaskIntoConstraints = false
+                retryButton.accessibilityLabel = "重新读取草稿"
+                retryButton.addTarget(self, action: #selector(retryLoadDraftsTapped), for: .touchUpInside)
+                retryButton.bearyAddPressFeedback()
+                failedWrap.addSubview(retryButton)
+                NSLayoutConstraint.activate([
+                    retryButton.topAnchor.constraint(equalTo: failedLabel.bottomAnchor, constant: 16),
+                    retryButton.centerXAnchor.constraint(equalTo: failedWrap.centerXAnchor),
+                    retryButton.heightAnchor.constraint(equalToConstant: 36),
+                    retryButton.bottomAnchor.constraint(equalTo: failedWrap.bottomAnchor, constant: -22),
+                ])
             }
             listStack.addArrangedSubview(failedWrap)
             return
