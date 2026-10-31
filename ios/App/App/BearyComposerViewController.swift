@@ -2684,8 +2684,9 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         // v6-5：字数圆环并进左侧图标组——不再被 spacer 顶到右端，与图片／心情／天气／@／引用
         // 同组、同 20pt 间距（toolRow.spacing）；数字已隐藏，只留圆环。
         // v6-6：正文区草稿保存文案组（draftStatusGroup，图标＋文案＋级别逻辑全在 buildStatusRow/
-        // updateDraftStatusLabel）挪到工具栏右端（spacer 之后）；窄屏下文案先截断（见下压缩优先级），
-        // 不挤图标与字数。组本身在 buildStatusRow 里才配好轴向与子项，此处只定它在工具栏里的位置。
+        // updateDraftStatusLabel）挪到工具栏右端（spacer 之后）；109：已保存态文案优先保全、
+        // 320 宽兜底只留对勾（见 applyDraftStatusToolbarFit），不再先截断。组本身在 buildStatusRow
+        // 里才配好轴向与子项，此处只定它在工具栏里的位置。
         charGroupStack.axis = .horizontal
         charGroupStack.spacing = 6
         charGroupStack.alignment = .center
@@ -3578,7 +3579,8 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         editTimerLabel.isHidden = true
         draftStatusLabel.font = UIFont.systemFont(ofSize: 12.5)
         draftStatusLabel.textColor = BearyColors.blue
-        // v6-6：文案在工具栏右端窄屏受压时先截断，不挤左侧图标组与字数（字数默认 750，高于此处的 749）。
+        // 109：压缩阻力默认值仍 749（lvl1/失败长文案窄屏受压时先截断）；lvl2 已保存态在
+        // updateDraftStatusLabel 里拉到 required、走 applyDraftStatusToolbarFit 的保全/只留对勾口径。
         draftStatusLabel.numberOfLines = 1
         draftStatusLabel.lineBreakMode = .byTruncatingTail
         draftStatusLabel.setContentCompressionResistancePriority(UILayoutPriority(749), for: .horizontal)
