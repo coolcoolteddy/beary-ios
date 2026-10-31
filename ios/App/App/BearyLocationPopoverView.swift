@@ -445,11 +445,25 @@ final class BearyLocationPopoverView: UIView, CLLocationManagerDelegate, MKLocal
 
     func completerDidUpdateResults(_ completer: MKLocalSearchCompleter) {
         guard !isHidden else { return }
+        // 扫荡 D：输入已清空后，旧查询的建议回包仍会到达——此时若照常渲染，
+        // 空输入框下方会冒出与当前输入无关的旧建议。输入为空时直接清掉，不渲染。
+        // （@ 选人搜索有序号守卫，旧回包会被丢弃；本气泡的 completer 回包此前无此守卫。）
+        guard !(inputField.text ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            clearSuggestions()
+            return
+        }
         suggestions = completer.results
         renderSuggestions()
     }
 
     func completer(_ completer: MKLocalSearchCompleter, didFailWithError error: Error) {
+        // 扫荡 D：与上同口径——气泡已关或输入已空时不把“没有找到相关位置”
+        // 写进建议栈，否则下次打开手动态会先看到一条过期空态。
+        guard !isHidden else { return }
+        guard !(inputField.text ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            clearSuggestions()
+            return
+        }
         suggestions = []
         renderSuggestions()
     }
