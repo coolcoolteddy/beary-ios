@@ -5101,7 +5101,7 @@ class BearyProfileViewController: UIViewController {
                 case .success(let listValue):
                     let fresh = listValue.entries ?? []
                     strongSelf.reconcileEntries(fresh: fresh)
-                    if fresh.count < tabPageLimit {
+                    if fresh.count < strongSelf.tabPageLimit {
                         strongSelf.setHasMore(hasMore: false)
                     }
                     strongSelf.tableView.reloadData()
