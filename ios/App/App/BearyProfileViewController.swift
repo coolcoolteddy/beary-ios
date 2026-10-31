@@ -2501,7 +2501,7 @@ class BearyProfileViewController: UIViewController {
 
         NSLayoutConstraint.activate([
             coverHeightConstraint,
-            avatarTopWithoutCoverConstraint,
+            avatarTopWithCoverConstraint,
             tabsTopConstraint,
             nightHeightConstraint,
             wallHeightConstraint,
@@ -2705,6 +2705,20 @@ class BearyProfileViewController: UIViewController {
         joinedLabel.setContentCompressionResistancePriority(.required, for: .horizontal)
         wallTitleLabel.setContentCompressionResistancePriority(.required, for: .horizontal)
         wallTotalLabel.setContentCompressionResistancePriority(.required, for: .horizontal)
+        // 116 原生先行框架：封面带是固定框架、不是数据——applyProfile 无论有无
+        // 封面照片都把带高定为 profileCoverHeight（180），故首帧就按最终态搭好：
+        // 带高 180、头像半压在带底（-28）、默认橙底 + 官方白 wordmark。
+        // 此前首帧带高 0、头像顶距 20，资料一到带高跳 180、头像与名字／统计／
+        // 标签整体下跳，整头闪一次。本改动不是骨架屏：橙底 + wordmark 即无封面
+        // 时的最终默认背景（applyProfile 无封面分支同款），有封面时数据回来只把
+        // 带内照片换进来、带高与头像位一字不动；资料失败时框架同样不塌。
+        // 注意：旧“加载态先高 0 防 faint 灰块”注释（coverImageView 定义处）针对
+        // 的是无图时露 faint 底——现首帧底色已是最终默认橙底，不再适用。
+        profileShowsDefaultCover = true
+        coverClipView.backgroundColor = BearyColors.orange
+        defaultWordmarkView.isHidden = false
+        coverHeightConstraint.constant = profileCoverHeight
+        avatarImageView.layer.borderWidth = 3.5
         updateDynamicLayerColors()
     }
 
@@ -3033,20 +3047,52 @@ class BearyProfileViewController: UIViewController {
         }
     }
 
+    /// 116 数据填入动效：文案／数字变化时只淡入该 label 本身（alpha 0→1、
+    /// 0.25s，不动 transform、不动布局、不重建节点、不弹一下）；同值不赋值
+    /// 不重播；减动效或未进窗口时直设终值。顶栏／sticky 名字为镜像同步，
+    /// 不走本函数（sticky 名有自己的滚动淡入逻辑，重复动画会冲突）。
+    private func setLabelTextFaded(_ label: UILabel, _ text: String?) {
+        guard label.text != text else { return }
+        label.text = text
+        guard !UIAccessibility.isReduceMotionEnabled, label.window != nil else {
+            label.alpha = 1
+            return
+        }
+        label.alpha = 0
+        UIView.animate(withDuration: 0.25, delay: 0, options: [.curveEaseOut, .beginFromCurrentState], animations: {
+            label.alpha = 1
+        })
+    }
+
+    /// 116 数据填入动效（容器版）：分区首次出现时只淡入容器本身（alpha，
+    /// 不动 transform／布局）；已可见时不重播。夜巡／回应墙已有自己的
+    /// 入场动画，不走本函数。
+    private func fadeInViewIfAppearing(_ view: UIView, wasHidden: Bool) {
+        guard wasHidden, !view.isHidden else { return }
+        guard !UIAccessibility.isReduceMotionEnabled, view.window != nil else {
+            view.alpha = 1
+            return
+        }
+        view.alpha = 0
+        UIView.animate(withDuration: 0.25, delay: 0, options: [.curveEaseOut, .beginFromCurrentState], animations: {
+            view.alpha = 1
+        })
+    }
+
     private func applyProfile() {
         guard let profileValue = profile else { return }
         let displayNameValue = profileValue.displayName
             ?? (profileValue.handle.map { "@" + $0 })
             ?? "TA"
-        nameLabel.text = displayNameValue
+        setLabelTextFaded(nameLabel, displayNameValue)
         stickyHeaderNameLabel.text = displayNameValue
         if let handle = profileValue.handle, !handle.isEmpty {
-            handleLabel.text = "@" + handle
             handleLabel.isHidden = false
+            setLabelTextFaded(handleLabel, "@" + handle)
             joinedIconLeadingWithHandleConstraint.isActive = true
             joinedIconLeadingWithoutHandleConstraint.isActive = false
         } else {
-            handleLabel.text = nil
+            setLabelTextFaded(handleLabel, nil)
             handleLabel.isHidden = true
             // F18：无 handle 时日历图标贴头左缘，不再沿用 handle 后 5pt 的约束右偏。
             joinedIconLeadingWithHandleConstraint.isActive = false
@@ -3055,16 +3101,22 @@ class BearyProfileViewController: UIViewController {
         if let createdMs = profileValue.createdAt, createdMs > 0 {
             let dateValue = Date(timeIntervalSince1970: TimeInterval(createdMs) / 1000.0)
             // F18：网页 "2026 年 10 月加入" 口径——年 / 月前后带空格（静态 formatter 同口径）。
-            joinedLabel.text = Self.profileJoinedFormatter.string(from: dateValue)
             joinedLabel.isHidden = false
+            setLabelTextFaded(joinedLabel, Self.profileJoinedFormatter.string(from: dateValue))
+            let joinedIconWasHidden = joinedIconView.isHidden
             joinedIconView.isHidden = false
+            fadeInViewIfAppearing(joinedIconView, wasHidden: joinedIconWasHidden)
         } else {
-            joinedLabel.text = nil
+            setLabelTextFaded(joinedLabel, nil)
             joinedLabel.isHidden = true
             joinedIconView.isHidden = true
         }
-        publicCountLabel.text = profileValue.diaryCount.map { "\($0)" } ?? "—"
-        likesCountLabel.text = profileValue.likesReceived.map { "\($0)" } ?? "—"
+        // 116 数字文案规矩：统计数字与“公开日记／获赞”文字分属两个 label，
+        // 数据回来只改数字 label 本身；数字出现／变化时只淡入数字本身
+        // （setLabelTextFaded：alpha 0→1，不弹、不缩放、不重建整行），
+        // 同值不赋值不重播。
+        setLabelTextFaded(publicCountLabel, profileValue.diaryCount.map { "\($0)" } ?? "—")
+        setLabelTextFaded(likesCountLabel, profileValue.likesReceived.map { "\($0)" } ?? "—")
 
         // 头像：有图盖住首字母位，无图透出首字母（与列表页同款回退）；
         // 有图时的加载与失败回退走 startHeaderAvatarLoad（失败显式恢复首字母 + 出重试图标）。
@@ -3119,8 +3171,11 @@ class BearyProfileViewController: UIViewController {
         // BETA 佩戴徽章（23，主页面口径）；皇冠按 plus 显示（网页 pfPlusPill 口径）。
         // I8：取不到图时用占位图（并打日志），不再静默隐藏徽章位。
         if let badgeKey = profileValue.wornBadge, !badgeKey.isEmpty, let badgeImage = BearyBadgeImages.imageOrPlaceholder(for: badgeKey) {
+            let badgeWasHidden = badgeImageView.isHidden
             badgeImageView.image = badgeImage
             badgeImageView.isHidden = false
+            // 116：徽章首次出现只淡入（与名字淡入同口径），不硬弹。
+            fadeInViewIfAppearing(badgeImageView, wasHidden: badgeWasHidden)
         } else {
             badgeImageView.image = nil
             badgeImageView.isHidden = true
@@ -3645,11 +3700,15 @@ class BearyProfileViewController: UIViewController {
             signatureContainer.isHidden = true
             signatureHeightConstraint.isActive = true
         } else {
+            let signatureWasHidden = signatureContainer.isHidden
             signatureContainer.isHidden = false
             signatureHeightConstraint.isActive = false
             signatureLabelTrailingConstraint.constant = 0
-            signatureLabel.text = signature
+            setLabelTextFaded(signatureLabel, signature)
             signatureLabel.textColor = BearyColors.ink
+            // 分区首次出现只淡入容器（已有文案变化时 label 本身已淡入，
+            // 两者同为 alpha、不叠加位移动画）。
+            fadeInViewIfAppearing(signatureContainer, wasHidden: signatureWasHidden)
         }
         if headerWidthValue > 0 {
             layoutHeaderForced(widthValue: headerWidthValue)
@@ -3781,12 +3840,16 @@ class BearyProfileViewController: UIViewController {
             updateModulesRetryRow()
             modulesRetryRow.isHidden = false
             // 失败态容器恒显：有语料时装各卡 + 重试行，无语料时只装重试行。
+            let modulesWasHidden = modulesContainer.isHidden
             modulesContainer.isHidden = false
             modulesHeightConstraint.isActive = false
             if headerWidthValue > 0 {
                 layoutHeaderForced(widthValue: headerWidthValue)
             }
             refreshFooter()
+            // 淡入须在 refreshFooter 把容器接进脚部之后（此前容器未进窗口，
+            // window 守卫会直接置终值、播不出动画）。
+            fadeInViewIfAppearing(modulesContainer, wasHidden: modulesWasHidden)
             return
         }
         modulesRetryRow.isHidden = true
@@ -3802,6 +3865,7 @@ class BearyProfileViewController: UIViewController {
         renderRandom(visible: visible)
         renderYear(visible: visible)
         let anyVisible = [pastSelfDeliveryCard, statsCard, thisDayCard, randomCard, yearCard].contains { !$0.isHidden }
+        let modulesWasHidden = modulesContainer.isHidden
         modulesContainer.isHidden = !anyVisible
         modulesHeightConstraint.isActive = !anyVisible
         if headerWidthValue > 0 {
@@ -3811,6 +3875,10 @@ class BearyProfileViewController: UIViewController {
         // 否则语料到齐后模块仍不出现在表格行下方。refreshFooter
         // 不回调 renderModules，无递归。
         refreshFooter()
+        // 116：模块组语料到齐首次出现时只淡入容器（须在 refreshFooter
+        // 接进脚部之后播，否则容器未进窗口、播不出）；已有卡片内容
+        // 变化时各卡只改文案，不重播本动画（wasHidden 守卫）。
+        fadeInViewIfAppearing(modulesContainer, wasHidden: modulesWasHidden)
     }
 
     /// 113 失败重试行文案与钮态：加载中显加载态、钮禁用；失败显重试。
