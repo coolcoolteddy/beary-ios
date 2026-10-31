@@ -923,6 +923,32 @@ final class BearySettingsViewController: UIViewController {
         NSLayoutConstraint.activate([
             logoutOthersButton.heightAnchor.constraint(equalToConstant: 36),
         ])
+        // 2026-10-31 冷启动生物识别锁：开关行（标题按设备生物识别走——
+        // iPhone“面容识别解锁”、iPad“触控 ID 解锁”，绝不写死面容）。
+        // 开关默认关；未录入生物识别时置灰并给原因，不硬开。
+        // 开启/关闭都要先验一次生物识别（见 lockSwitchValueChanged），
+        // 验证失败/取消时开关视觉回滚，不写存档。
+        let lockAvailability = BearyAppLockSettings.availability
+        let lockTitle = makeLabel(font: UIFont.systemFont(ofSize: 15), color: BearyColors.ink)
+        lockTitle.text = "\(BearyAppLockSettings.biometryName)解锁"
+        lockTitle.numberOfLines = 0
+        let lockDetail = makeLabel(font: UIFont.systemFont(ofSize: 12), color: BearyColors.gray, lines: 0)
+        lockDetail.text = lockAvailability.available ? "冷启动时验证一次，回前台不重复验证" : (BearyAppLockSettings.isEnabled ? "已开启，当前设备未录入生物识别，冷启动将改用设备密码验证" : (lockAvailability.reason ?? "此设备暂无法使用生物识别"))
+        let lockTextStack = UIStackView(arrangedSubviews: [lockTitle, lockDetail])
+        lockTextStack.axis = .vertical
+        lockTextStack.spacing = 2
+        lockTextStack.alignment = .fill
+        let lockSwitch = UISwitch()
+        lockSwitch.isOn = BearyAppLockSettings.isEnabled
+        lockSwitch.isEnabled = lockAvailability.available
+        lockSwitch.setContentHuggingPriority(.required, for: .horizontal)
+        lockSwitch.setContentCompressionResistancePriority(.required, for: .horizontal)
+        lockSwitch.addTarget(self, action: #selector(lockSwitchValueChanged(_:)), for: .valueChanged)
+        let lockRow = UIStackView(arrangedSubviews: [makeRowIcon("icon_lock"), lockTextStack, lockSwitch])
+        lockRow.translatesAutoresizingMaskIntoConstraints = false
+        lockRow.axis = .horizontal
+        lockRow.spacing = 12
+        lockRow.alignment = .center
         // C2：导出我的数据归入账户与安全模块（原动作卡行，视觉与行为不动，
         // 仅换组；exportRowButton 的 isEnabled 仍由导出流程控制）。
         let exportTitle = makeLabel(font: UIFont.systemFont(ofSize: 15), color: BearyColors.ink)
@@ -963,6 +989,7 @@ final class BearySettingsViewController: UIViewController {
         let securityGroup = makeGroupCard(title: "账号与安全", rows: [
             codeLoginRow,
             deviceRow,
+            lockRow,
             logoutOthersButton,
             exportRowWrap,
         ])
@@ -2057,6 +2084,24 @@ final class BearySettingsViewController: UIViewController {
 
     @objc private func soundSwitchValueChanged(_ sender: UISwitch) {
         UserDefaults.standard.set(sender.isOn, forKey: BearySoundPlayer.enabledDefaultsKey)
+    }
+
+    /// 2026-10-31 冷启动锁开关：先验身份再写档。开启/关闭都要验一次
+    /// （防已解锁手机被他人随手关掉）；验证失败或取消时开关视觉回滚、
+    /// 不写存档，开关本身在未录入生物识别时已置灰、点按不到这里。
+    @objc private func lockSwitchValueChanged(_ sender: UISwitch) {
+        let desired = sender.isOn
+        let name = BearyAppLockSettings.biometryName
+        let verb = desired ? "开启" : "关闭"
+        BearyAppLockSettings.evaluate(reason: "\(verb)\(name)解锁前请先验证") { [weak sender] success in
+            guard let sender = sender else { return }
+            if success {
+                BearyAppLockSettings.setEnabled(desired)
+            } else {
+                sender.isOn = !desired
+                self.showToast("验证未通过，设置未更改")
+            }
+        }
     }
 
     /// D2：诊断日志开关——只存档；DiagFile 每次写入时实时读档，关后新写入即停
