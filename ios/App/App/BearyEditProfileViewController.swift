@@ -91,6 +91,8 @@ class BearyEditProfileViewController: UIViewController {
     private let scrollView: UIScrollView = {
         let scrollViewValue = UIScrollView()
         scrollViewValue.translatesAutoresizingMaskIntoConstraints = false
+        // 116 后扫查：与广场/个人页同口径——关掉 delaysContentTouches，滚动容器里的点按立即响应，不等滚动判定。
+        scrollViewValue.delaysContentTouches = false
         return scrollViewValue
     }()
 

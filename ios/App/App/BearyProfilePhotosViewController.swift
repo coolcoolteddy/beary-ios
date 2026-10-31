@@ -63,6 +63,8 @@ final class BearyProfilePhotosViewController: UIViewController {
         let collectionValue = UICollectionView(frame: .zero, collectionViewLayout: layoutValue)
         collectionValue.translatesAutoresizingMaskIntoConstraints = false
         collectionValue.backgroundColor = BearyColors.bg
+        // 116 后扫查：与广场/个人页同口径——关掉 delaysContentTouches，滚动容器里的点按立即响应，不等滚动判定。
+        collectionValue.delaysContentTouches = false
         collectionValue.delegate = self
         collectionValue.dataSource = self
         collectionValue.register(BearyProfilePhotoCell.self, forCellWithReuseIdentifier: "BearyProfilePhotoCell")

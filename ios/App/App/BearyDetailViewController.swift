@@ -538,6 +538,8 @@ final class BearyDetailViewController: UIViewController {
 
         scrollView.translatesAutoresizingMaskIntoConstraints = false
         scrollView.showsVerticalScrollIndicator = false
+        // 116 后扫查：与广场/个人页同口径——关掉 delaysContentTouches，滚动容器里的点按立即响应，不等滚动判定。
+        scrollView.delaysContentTouches = false
         view.addSubview(scrollView)
 
         contentColumnView.translatesAutoresizingMaskIntoConstraints = false

@@ -1327,6 +1327,8 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     private func buildMoodRow() {
         // C1：心情条本身即工具栏上方选择条（单行横滑），标题行已删，选中名走 Chip 行。
         moodScrollView.showsHorizontalScrollIndicator = false
+        // 116 后扫查：与广场/个人页同口径——关掉 delaysContentTouches，滚动容器里的点按立即响应，不等滚动判定。
+        moodScrollView.delaysContentTouches = false
         moodStackView.axis = .horizontal
         moodStackView.spacing = 4
         moodStackView.alignment = .top

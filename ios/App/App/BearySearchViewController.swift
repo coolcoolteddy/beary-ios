@@ -430,6 +430,8 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         // 底留白 90：与 Feed/时间线/消息同口径，末行不再被底栏胶囊盖住。
         scrollView.contentInset = UIEdgeInsets(top: 0, left: 0, bottom: 90, right: 0)
         scrollView.scrollIndicatorInsets = scrollView.contentInset
+        // 116 后扫查：与广场/个人页同口径——关掉 delaysContentTouches，滚动容器里的点按立即响应，不等滚动判定。
+        scrollView.delaysContentTouches = false
         view.addSubview(scrollView)
 
         columnWrap.translatesAutoresizingMaskIntoConstraints = false
