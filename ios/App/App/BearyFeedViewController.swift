@@ -716,6 +716,13 @@ class BearyFeedViewController: UIViewController {
     private func retryPlazaAfterError() {
         guard !plazaLoading else { return }
         if plazaRaw.isEmpty {
+            // 109：空表重试与首屏同口径启动中央转圈（refreshAllInternal 的
+            // showCentralSpinner && plazaRaw.isEmpty 分支同款调用）；此前该路径
+            // 从不启动转圈，而 loadPlazaFirstPage 同步置 plazaError=false 后
+            // 下一行 reloadData 立即清掉失败行，回包前为空白期。回包后由
+            // updateOverlayState 在 plazaLoading 落袋时停圈，失败行或内容接替。
+            // 非空表分页重试分支不动（plazaError 保持 true、失败行留守）。
+            centralSpinner.startSpinning()
             loadPlazaFirstPage()
         } else {
             loadPlazaNextPage()
