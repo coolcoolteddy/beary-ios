@@ -2204,6 +2204,13 @@ class BearyProfileViewController: UIViewController {
            modulesCorpusComplete {
             renderModules()
         }
+        // 112：字号档变化时脚部高度重算。模块高度与照片区高度只在
+        // refreshFooter() 现算，只刷颜色/下划线会让旧脚部高度钉住，
+        // 字变大后照片区与模块卡溢出/重叠；深浅切换口径不动。
+        if previousTraitCollection != nil,
+           previousTraitCollection?.preferredContentSizeCategory != traitCollection.preferredContentSizeCategory {
+            refreshFooter()
+        }
     }
 
     // MARK: - 头部搭建
@@ -5045,7 +5052,9 @@ class BearyProfileViewController: UIViewController {
         let footerWidth = headerWidthValue > 0 ? headerWidthValue : tableView.bounds.width
         guard footerWidth > 0 else { return cachedPhotosFooterView }
         let totalCount = profilePhotosValue.count
-        let signature = wall.map { $0.imageKey }.joined(separator: ",") + "|n\(totalCount)|w\(Int(footerWidth))"
+        // 112：签名须含字号档，否则字号变化后 refreshFooter() 仍命中旧缓存、
+        // 旧拟合高度原样返回；宽度保持在末尾，列宽后缀守卫（viewDidLayoutSubviews）口径不动。
+        let signature = wall.map { $0.imageKey }.joined(separator: ",") + "|n\(totalCount)|c\(traitCollection.preferredContentSizeCategory.rawValue)|w\(Int(footerWidth))"
         if let cachedView = cachedPhotosFooterView, cachedPhotosFooterSignature == signature {
             return cachedView
         }
