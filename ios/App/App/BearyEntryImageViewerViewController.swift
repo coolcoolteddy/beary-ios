@@ -38,7 +38,8 @@ class BearyEntryImageViewerViewController: UIViewController, UIGestureRecognizer
         buttonValue.translatesAutoresizingMaskIntoConstraints = false
         buttonValue.setTitle("查看日记", for: .normal)
         buttonValue.setTitleColor(.white, for: .normal)
-        buttonValue.titleLabel?.font = UIFont.systemFont(ofSize: 14, weight: .semibold)
+        buttonValue.titleLabel?.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 14, weight: .semibold))
+        buttonValue.titleLabel?.adjustsFontForContentSizeCategory = true
         buttonValue.backgroundColor = UIColor(white: 1, alpha: 0.16)
         buttonValue.layer.cornerRadius = 18
         buttonValue.clipsToBounds = true
@@ -123,13 +124,15 @@ class BearyEntryImageViewerViewController: UIViewController, UIGestureRecognizer
         view.addSubview(loadingSpinner)
         retryLabel.text = "图片加载失败，重试"
         retryLabel.textColor = .white
-        retryLabel.font = UIFont.systemFont(ofSize: 14)
+        retryLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 14))
+        retryLabel.adjustsFontForContentSizeCategory = true
         retryLabel.textAlignment = .center
         retryLabel.translatesAutoresizingMaskIntoConstraints = false
         retryLabel.isHidden = true
         view.addSubview(retryLabel)
         counterLabel.textColor = .white
-        counterLabel.font = UIFont.systemFont(ofSize: 14)
+        counterLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 14))
+        counterLabel.adjustsFontForContentSizeCategory = true
         counterLabel.textAlignment = .center
         counterLabel.translatesAutoresizingMaskIntoConstraints = false
         counterLabel.isHidden = imageKeys.count <= 1
@@ -197,6 +200,9 @@ class BearyEntryImageViewerViewController: UIViewController, UIGestureRecognizer
             retryLabel.centerYAnchor.constraint(equalTo: view.centerYAnchor, constant: -30),
             counterLabel.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 20),
             counterLabel.centerXAnchor.constraint(equalTo: view.centerXAnchor),
+            // 32 清单第 17 项：计数跟随放大后不得压到右上关闭钮之下（文案短，平时不触发；极端字号下宁可截尾不断钮）。
+            counterLabel.leadingAnchor.constraint(greaterThanOrEqualTo: view.leadingAnchor, constant: 16),
+            counterLabel.trailingAnchor.constraint(lessThanOrEqualTo: closeButton.leadingAnchor, constant: -8),
             dotsStack.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor, constant: -24),
             dotsStack.centerXAnchor.constraint(equalTo: view.centerXAnchor),
             closeButton.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 12),
