@@ -4075,13 +4075,13 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     /// 直接 count 会把 5 个字母算成字（录屏里 "nihao" 显示 6/2000 即 1 落字 + 5 字母）。
     /// 落字后 marked 为空，计数自然回到落字数（"你好" = 2）。占位显隐仍按全文
     /// （含组合串）算：组词中占位就该藏，不因落字数为 0 而复现。
+    /// 扫查组：计量单位须与服务端一致——服务端与网页版均按 JS `.length`
+    ///（UTF-16 码元数）判 2000 上限，Swift `.count` 是字素簇数：单个
+    /// astral 表情占 1 簇、2 码元，表情多的正文会在客户端放行、服务端
+    /// 400 content too long。故落字数直接取已落字串的 utf16.count；
+    /// 纯中英文下与原值完全一致，圆环进度与超长红环口径随之对齐服务端。
     private func committedTextCount() -> Int {
-        let fullCount = textView.text.count
-        guard let marked = textView.markedTextRange,
-              let markedText = textView.text(in: marked) else {
-            return fullCount
-        }
-        return max(0, fullCount - markedText.count)
+        return committedContent().utf16.count
     }
 
     /// 字数：圆环进度（数字已隐藏，只留圆环）；空时圆环隐藏，超字红环。
@@ -5723,8 +5723,10 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         }
         // D-G5：网页发布先 trim 再量长（editorText.value.trim() 后 c.length>2000）；
         // 此处原用未 trim 长度，首尾空白会误判超长。改用已 trim 的 trimmed 计长。
-        if trimmed.count > BearyComposerViewController.maxLength {
-            showToast(message: "最多 2000 字，现在 \(trimmed.count) 字")
+        // 扫查组：c.length 是 UTF-16 码元数，Swift .count 是字素簇数，
+        // 此处改 utf16.count，与服务端 400 口径一致（见 committedTextCount 注释）。
+        if trimmed.utf16.count > BearyComposerViewController.maxLength {
+            showToast(message: "最多 2000 字，现在 \(trimmed.utf16.count) 字")
             return
         }
         // 决议第 5 项 A：有上传失败的图片时拦截不发（网页 beary.html 编辑器发布口径，
