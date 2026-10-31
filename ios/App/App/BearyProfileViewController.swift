@@ -4573,8 +4573,27 @@ class BearyProfileViewController: UIViewController {
         }
     }
 
+    /// 109：#266 消息页同口径（contentInset 口径，不用 adjustedContentInset，
+    /// 否则回顶落点处仍判“未到顶”，重拍永远只回顶不刷新）。
+    private var profileIsAtTop: Bool {
+        tableView.contentOffset.y <= -tableView.contentInset.top + 1
+    }
+
+    private func scrollProfileToTop() {
+        tableView.setContentOffset(CGPoint(x: 0, y: -tableView.contentInset.top), animated: !UIAccessibility.isReduceMotionEnabled)
+    }
+
     private func switchTab(tab: ProfileTab) {
-        if tab == currentTab { return }
+        // 109：重拍当前 tab 不再静默 return，照 #266 消息页口径：已在顶部则
+        // 刷新当前 tab（loadTab 前台重拉），否则先回顶；切 tab 逻辑（下行起）不动。
+        if tab == currentTab {
+            if profileIsAtTop {
+                loadTab(forceReload: true)
+            } else {
+                scrollProfileToTop()
+            }
+            return
+        }
         if tab == .saved && !isOwnProfile { return }
         currentTab = tab
         applyTabSelection()
