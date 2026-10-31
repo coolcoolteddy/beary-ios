@@ -2,9 +2,13 @@ import UIKit
 
 // ===== beary 原生时间线页（含写作日历卡）=====
 // 对照源（以 worker.js 为准，网页版 beary.html 与设计稿 layout_rest.html 为形态对照）：
-// - 列表：GET /beary/api/entries?scope=timeline&limit=50，游标 before=created_at（毫秒）
-//   + before_id=entry.id；服务端排序 created_at DESC, id DESC；响应含 entries、
-//   trash_count、tl_counts{total, priv, pub, next_pub}；单条 is_public = now >= publish_at。
+// - 列表：GET /beary/api/entries?scope=timeline&limit=12（首屏；秒开批：
+//   原 50 条首拉改为 12 条，对齐广场 firstPageLimit=12；后续分页仍 limit=50），
+//   游标 before=created_at（毫秒）+ before_id=entry.id；服务端排序 created_at DESC, id DESC；
+//   响应含 entries、trash_count、tl_counts{total, priv, pub, next_pub}；单条 is_public = now >= publish_at。
+//   首屏另带 slim=1（后端 patch 未上线前服务端忽略该参数、回包不变；上线后仅裁
+//   卡片不渲染的死字段 author_cover/recipient_*/publish_pending_until，计数 likeCount、
+//   回应 emotes、引用 quote、图片 images+imgDims 等卡片渲染字段一律保留，首帧不缺块、不补布局）。
 // - 日历：GET /beary/api/calendar?month=YYYY-MM（仅本人、需登录），按 created_at 北京日界
 //   聚合 days{日: {pub, priv}} + month_total + streak（今天没写则从昨天往前连续计数）。
 // - 当日：GET /beary/api/entries?scope=timeline&date=YYYY-MM-DD（同为北京日界过滤），
@@ -44,6 +48,15 @@ extension BearyAPI {
     /// （entries / trash_count / tl_counts 同列表口径；当日模式下调用方只用 entries）。
     func fetchTimelineDay(date: String, completion: @escaping (Result<EntryList, APIError>) -> Void) {
         request("/beary/api/entries", query: ["scope": "timeline", "date": date, "limit": "200"], completion: completion)
+    }
+
+    /// 秒开·首屏再瘦：时间线首屏专用取数（scope=timeline + limit=12 + slim=1）。
+    /// 不走 BearyAPI.fetchEntries（其 limit 封顶 50 且无 slim 参数；本文件既有
+    /// 日历/当日方法同款 extension 写法，走既有 BearyAPI.request 通用请求）。
+    /// slim=1 在后端 patch 上线前被服务端忽略（回包不变，首屏照常 12 条），
+    /// 上线后只裁卡片不渲染的字段，卡片渲染字段与计数一律保留（见文件头注释）。
+    func fetchTimelineFirstPage(completion: @escaping (Result<EntryList, APIError>) -> Void) {
+        request("/beary/api/entries", query: ["scope": "timeline", "limit": "12", "slim": "1"], completion: completion)
     }
 }
 
@@ -2109,6 +2122,9 @@ class BearyTimelineViewController: UIViewController {
     }
 
     private let pageLimit = 50
+    /// 秒开·首屏再瘦：首屏只拉 12 条，对齐广场 firstPageLimit=12（屏上只看 5-8 条，
+    /// 12 条已覆盖当日 10 篇/天上限 + 翻页余量）；后续分页仍用 pageLimit=50，不多发请求。
+    private let firstPageLimit = 12
 
     private var timelineEntries: [Entry] = []
     private var timelineHasMore = false
@@ -2126,7 +2142,7 @@ class BearyTimelineViewController: UIViewController {
     // completion，需自行处理陈旧语义。
     private var timelineFirstPageSeq = 0
     /// 112 分段去重：首屏在途标记（seq 只丢弃旧回包，不阻止重复发请求；
-    /// 下拉/重拍/详情回写/静默对齐重叠时曾并发多份同样的 50 条首拉）。
+    /// 下拉/重拍/详情回写/静默对齐重叠时曾并发多份同样的 12 条首拉）。
     /// 在途时新调用直接跳过（不 bump seq，否则在途回包会被 seq 守卫丢弃、
     /// 等于白白重拉一次）；在途回包自会结束下拉头并更新模型。
     /// force=true 的硬重载（reloadTimeline 非 keepDay：登录翻转/取消编辑等）
@@ -3906,7 +3922,7 @@ class BearyTimelineViewController: UIViewController {
     /// 113：首屏全量取数（原 loadTimelineFirstPage 的取数体，不动口径；
     /// since 失败/无新条目时同一 seq/在途标记内续发本函数，不再过在途守卫）。
     private func fetchTimelineFirstPageFull(seq: Int, oldSections: [DaySection], hadOldRows: Bool, completion: (() -> Void)? = nil) {
-        BearyAPI.shared.fetchEntries(scope: .timeline, limit: pageLimit) { [weak self] result in
+        BearyAPI.shared.fetchTimelineFirstPage { [weak self] result in
             DispatchQueue.main.async {
                 guard let strongSelf = self else { return }
                 // 旧回包直接丢弃（见 timelineFirstPageSeq 注释）：表与模型均已由新加载接管。
@@ -3929,7 +3945,7 @@ class BearyTimelineViewController: UIViewController {
                     strongSelf.dayEntries = strongSelf.patchedEntries(strongSelf.dayEntries, withFresh: strongSelf.timelineEntries)
                     strongSelf.trashCountValue = list.trashCount ?? 0
                     strongSelf.countsValue = list.tlCounts
-                    strongSelf.timelineHasMore = (list.entries ?? []).count >= strongSelf.pageLimit
+                    strongSelf.timelineHasMore = (list.entries ?? []).count >= strongSelf.firstPageLimit
                     // 110：首屏成功即写时间线缓存（下次冷启动缓存优先；
                     // 只在已登录时写，避免游客态写 guest 桶；失败不写）。
                     if let uid = SessionManager.shared.currentUser?.id {
@@ -6076,6 +6092,8 @@ enum BearyTimelineCache {
 /// 预取失败静默丢弃（下次首页首屏成功再试，标志只在成功存盘后置位）；
 /// 缓存已有且 10 分钟内新鲜时不重复拉（时间线 VC 每次打开仍静默
 /// 刷新对齐，预取只负责冷启动前置，不替代刷新）。
+/// 秒开·首屏再瘦：预取与时间线首屏同口径，只拉 12 条（原 50 条），
+/// 否则预取本身就是一份 50 条首屏成本，瘦身白做。
 enum BearyTimelinePrefetch {
     private static var didPrefetch = false
 
@@ -6087,9 +6105,9 @@ enum BearyTimelinePrefetch {
             didPrefetch = true
             return
         }
-        BearyAPI.shared.fetchEntries(scope: .timeline, limit: 50) { result in
+        BearyAPI.shared.fetchEntries(scope: .timeline, limit: 12) { result in
             guard case .success(let list) = result, let entries = list.entries, !entries.isEmpty else { return }
-            BearyTimelineCache.save(bucket: bucket, entries: entries, hasMore: entries.count >= 50, trashCount: list.trashCount ?? 0, counts: list.tlCounts)
+            BearyTimelineCache.save(bucket: bucket, entries: entries, hasMore: entries.count >= 12, trashCount: list.trashCount ?? 0, counts: list.tlCounts)
             didPrefetch = true
         }
     }
