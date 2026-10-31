@@ -918,7 +918,7 @@ final class BearyTimelineCell: UITableViewCell {
     /// N7 时间线图片灯箱：主图条点按回调（keys=本条过滤后图 key，index=点按位置），
     /// VC 侧复用独立文件内的 BearyEntryImageViewerViewController 全屏弹出；
     /// 引用卡小图不走此路（点按引用卡仍走 onQuoteEntry 打开被引用日记）。
-    var onTapImages: (([String], Int) -> Void)?
+    var onTapImages: (([String], Int, CGRect?) -> Void)?
     private let actsStack = UIStackView()
     private let editStatusLabel = UILabel()
     /// 2026-10-29 Li 定编辑态口径：无图标、只留文字；可编辑期内左侧为倒计时灰字 +
@@ -1876,7 +1876,7 @@ final class BearyTimelineCell: UITableViewCell {
         let keys = (entry.images ?? []).filter { !$0.isEmpty }
         let index = sender.view?.tag ?? 0
         guard index >= 0 && index < keys.count else { return }
-        onTapImages?(keys, index)
+        onTapImages?(keys, index, sender.view.map { $0.convert($0.bounds, to: nil) })
     }
 
     /// 2026-10-29 Li 定编辑态口径（无图标、只留文字、状态会变）：
@@ -5801,9 +5801,10 @@ extension BearyTimelineViewController: UITableViewDataSource, UITableViewDelegat
         cell.onQuoteEntry = onQuoteEntry
         cell.onMoreEntry = { [weak self] entry, sourceView in self?.presentTimelineMoreMenu(entry: entry, sourceView: sourceView) }
         // N7：复用独立文件内的查看器，全屏模态弹出（已弹出时不叠加、减动效直显）。
-        cell.onTapImages = { [weak self] keys, index in
+        cell.onTapImages = { [weak self] keys, index, originFrame in
             guard let self = self, self.presentedViewController == nil else { return }
             let viewer = BearyEntryImageViewerViewController(imageKeys: keys, startIndex: index)
+            viewer.originFrameInWindow = originFrame
             viewer.modalPresentationStyle = .fullScreen
             self.present(viewer, animated: UIAccessibility.isReduceMotionEnabled == false, completion: nil)
         }
