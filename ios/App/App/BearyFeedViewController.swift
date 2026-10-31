@@ -481,6 +481,11 @@ class BearyFeedViewController: UIViewController {
         isCustomPullRefreshing = true
         customPullStartTime = Date()
         refreshIconView.startSpinning()
+        // 回程一次到位：先掐断松手后的表减速/回弹（位置不动、仅停掉动量）。
+        // 否则表自带物理动画会与下面 easing 动画双路驱动 contentOffset：
+        // 先随惯性多下一截、再被拉回 84 位，即“先下降一点再回去”；
+        // 旧 0.32s 默认 easeInOut 零初速起手、与手指甩速脱节，手感发轻。
+        tableView.setContentOffset(tableView.contentOffset, animated: false)
         let baseline = feedPullBaselineTop()
         let pullIn = {
             self.tableView.contentInset.top = baseline + 84
@@ -491,7 +496,7 @@ class BearyFeedViewController: UIViewController {
         if UIAccessibility.isReduceMotionEnabled {
             pullIn()
         } else {
-            UIView.animate(withDuration: 0.32, animations: pullIn)
+            UIView.animate(withDuration: 0.35, delay: 0, options: [.curveEaseOut, .beginFromCurrentState], animations: pullIn)
         }
         // 112 刷新节流（仅手势下拉）：上次首拉成功 5 秒内且已有内容时，
         // 不再发网络请求，指示头走 500ms 最小展示后收回；程序侧刷新
@@ -514,8 +519,9 @@ class BearyFeedViewController: UIViewController {
         let remaining = max(0, 0.5 - elapsed)
         DispatchQueue.main.asyncAfter(deadline: .now() + remaining) { [weak self] in
             guard let self else { return }
-            self.isCustomPullRefreshing = false
-            self.customPullEndScheduled = false
+            // 收回动画全程仍持刷新旗：scrollViewDidScroll 跟随侧
+            // 因此不中途重写 pullView.frame，不与回程动画打架；
+            // 两旗在动画完成（或减动效直落）时才清。
             let baseline = self.feedPullBaselineTop()
             let pullOut = {
                 self.tableView.contentInset.top = baseline
@@ -525,9 +531,13 @@ class BearyFeedViewController: UIViewController {
             }
             if UIAccessibility.isReduceMotionEnabled {
                 pullOut()
+                self.isCustomPullRefreshing = false
+                self.customPullEndScheduled = false
                 self.refreshIconView.stopSpinning()
             } else {
-                UIView.animate(withDuration: 0.32, animations: pullOut, completion: { _ in
+                UIView.animate(withDuration: 0.35, delay: 0, options: [.curveEaseOut, .beginFromCurrentState], animations: pullOut, completion: { _ in
+                    self.isCustomPullRefreshing = false
+                    self.customPullEndScheduled = false
                     self.refreshIconView.stopSpinning()
                 })
             }

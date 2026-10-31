@@ -2292,6 +2292,8 @@ class BearyTimelineViewController: UIViewController {
     private let refreshIconView = BearyRefreshIconView()
     /// 自定义下拉刷新进行中标志（消息页 isCustomPullRefreshing 同款）。
     private var isCustomPullRefreshing = false
+    /// 下拉收回动画在途旗：收回动画全程仍持刷新旗，跟随侧不中途重写 pullView.frame。
+    private var customPullEndInFlight = false
     private var customPullStartTime: Date?
     private var pullEngageTranslation: CGFloat?
 
@@ -3065,6 +3067,11 @@ class BearyTimelineViewController: UIViewController {
         isCustomPullRefreshing = true
         customPullStartTime = Date()
         refreshIconView.startSpinning()
+        // 回程一次到位：先掐断松手后的表减速/回弹（位置不动、仅停掉动量）。
+        // 否则表自带物理动画会与下面 easing 动画双路驱动 contentOffset：
+        // 先随惯性多下一截、再被拉回 84 位，即“先下降一点再回去”；
+        // 旧 0.32s 默认 easeInOut 零初速起手、与手指甩速脱节，手感发轻。
+        tableView.setContentOffset(tableView.contentOffset, animated: false)
         let baseTop = view.safeAreaInsets.top + (headerTopInsetVisible ? 60 : 0)
         let baseBottom = 90 + view.safeAreaInsets.bottom
         let pullIn = {
@@ -3078,10 +3085,10 @@ class BearyTimelineViewController: UIViewController {
         if UIAccessibility.isReduceMotionEnabled {
             pullIn()
         } else {
-            UIView.animate(withDuration: 0.32, animations: pullIn)
+            UIView.animate(withDuration: 0.35, delay: 0, options: [.curveEaseOut, .beginFromCurrentState], animations: pullIn)
         }
         // 112 刷新节流（仅手势下拉）：上次首屏网络成功 5 秒内且已有行时，
-        // 不再发网络请求，指示头随 0.32s 收回动画收回（500ms 保底只在
+        // 不再发网络请求，指示头随 0.35s 收回动画收回（500ms 保底只在
         // 首屏完成分支，不在本函数）；程序侧刷新（重拍 tab/详情回写/
         // 登录翻转）不受此限。begin 顶部的
         // timelineState == .loading 守卫仍在：静默对齐在途时下拉直接忽略。
@@ -3102,10 +3109,11 @@ class BearyTimelineViewController: UIViewController {
     }
 
     private func endCustomPullRefresh() {
-        if !isCustomPullRefreshing {
+        if !isCustomPullRefreshing || customPullEndInFlight {
             return
         }
-        isCustomPullRefreshing = false
+        customPullEndInFlight = true
+        // 收回动画全程仍持刷新旗（同广场端）：跟随侧不中途重写 pullView.frame。
         let baseTop = view.safeAreaInsets.top + (headerTopInsetVisible ? 60 : 0)
         let baseBottom = 90 + view.safeAreaInsets.bottom
         let pullOut = {
@@ -3118,9 +3126,13 @@ class BearyTimelineViewController: UIViewController {
         }
         if UIAccessibility.isReduceMotionEnabled {
             pullOut()
+            self.isCustomPullRefreshing = false
+            self.customPullEndInFlight = false
             self.refreshIconView.stopSpinning()
         } else {
-            UIView.animate(withDuration: 0.32, animations: pullOut, completion: { _ in
+            UIView.animate(withDuration: 0.35, delay: 0, options: [.curveEaseOut, .beginFromCurrentState], animations: pullOut, completion: { _ in
+                self.isCustomPullRefreshing = false
+                self.customPullEndInFlight = false
                 self.refreshIconView.stopSpinning()
             })
         }

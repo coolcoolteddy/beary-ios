@@ -187,6 +187,8 @@ final class BearyNotificationsViewController: UIViewController {
     private var hasDisplayedPage = false
     private var hasSuccessfulLoad = false
     private var isCustomPullRefreshing = false
+    /// 下拉收回动画在途旗：收回动画全程仍持刷新旗，跟随侧不中途重写 pullView.frame。
+    private var customPullEndInFlight = false
     /// 顶栏透度批：容器最后一次发来的栏态（本页属性内边距不含安全区顶，见 applyHeaderTopInset）。
     private var headerTopInsetVisible = false
     private var customPullStartTime: Date?
@@ -1130,7 +1132,12 @@ final class BearyNotificationsViewController: UIViewController {
         isCustomPullRefreshing = true
         customPullStartTime = Date()
         pullIconView.startSpinning()
-        // A5-3：下拉刷新进场查减动效开关——减动效时直接落位，不播 0.32s 动画。
+        // 回程一次到位：先掐断松手后的表减速/回弹（位置不动、仅停掉动量）。
+        // 否则表自带物理动画会与下面 easing 动画双路驱动 contentOffset：
+        // 先随惯性多下一截、再被拉回 84 位，即“先下降一点再回去”；
+        // 旧 0.32s 默认 easeInOut 零初速起手、与手指甩速脱节，手感发轻。
+        tableView.setContentOffset(tableView.contentOffset, animated: false)
+        // A5-3：下拉刷新进场查减动效开关——减动效时直接落位，不播 0.35s 动画。
         let pullIn = {
             self.tableView.contentInset.top = 84
             self.tableView.scrollIndicatorInsets.top = 84
@@ -1140,7 +1147,7 @@ final class BearyNotificationsViewController: UIViewController {
         if UIAccessibility.isReduceMotionEnabled {
             pullIn()
         } else {
-            UIView.animate(withDuration: 0.32, animations: pullIn)
+            UIView.animate(withDuration: 0.35, delay: 0, options: [.curveEaseOut, .beginFromCurrentState], animations: pullIn)
         }
         loadFirstPage(completion: { [weak self] in
             guard let strongSelf = self else { return }
@@ -1153,10 +1160,11 @@ final class BearyNotificationsViewController: UIViewController {
     }
 
     private func endCustomPullRefresh() {
-        if !isCustomPullRefreshing {
+        if !isCustomPullRefreshing || customPullEndInFlight {
             return
         }
-        isCustomPullRefreshing = false
+        customPullEndInFlight = true
+        // 收回动画全程仍持刷新旗（同广场端）：跟随侧不中途重写 pullView.frame。
         // A5-3：下拉刷新收回同样查减动效开关——减动效时直接复位并停圈。
         let pullOut = {
             self.tableView.contentInset.top = 0
@@ -1166,9 +1174,13 @@ final class BearyNotificationsViewController: UIViewController {
         }
         if UIAccessibility.isReduceMotionEnabled {
             pullOut()
+            self.isCustomPullRefreshing = false
+            self.customPullEndInFlight = false
             self.pullIconView.stopSpinning()
         } else {
-            UIView.animate(withDuration: 0.32, animations: pullOut, completion: { _ in
+            UIView.animate(withDuration: 0.35, delay: 0, options: [.curveEaseOut, .beginFromCurrentState], animations: pullOut, completion: { _ in
+                self.isCustomPullRefreshing = false
+                self.customPullEndInFlight = false
                 self.pullIconView.stopSpinning()
             })
         }
