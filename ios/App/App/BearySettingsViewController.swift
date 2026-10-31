@@ -3397,6 +3397,8 @@ final class BearyBlockedUsersViewController: UIViewController, UITableViewDataSo
         emptyLabel.text = "暂无已拉黑用户"
         emptyLabel.isHidden = true
         tableView.translatesAutoresizingMaskIntoConstraints = false
+        // 116 后扫查：与广场/个人页同口径——关掉 delaysContentTouches，滚动容器里的点按立即响应，不等滚动判定。
+        tableView.delaysContentTouches = false
         tableView.dataSource = self
         tableView.delegate = self
         tableView.backgroundColor = BearyColors.bg
