@@ -71,6 +71,16 @@ final class BearyDiaryStarMapViewController: UIViewController {
     private var needsRefreshAfterDetail = false
     private var yearRowHeight: NSLayoutConstraint?
     private var monthRowHeight: NSLayoutConstraint?
+    /// 扫荡 C：空态 / 失败态的底部约束三选一（同一时刻只激活一个）。
+    /// 背景：skyView / statusLabel / sheetCard 是手动布局（非 stack），isHidden
+    /// 不塌约束——空态时 sky 420 高 + 状态行 + 底卡仍撑内容高，空视图下方留
+    /// 大段空白、状态行还透在空视图上方；失败态与空视图同 top（filter+12）
+    /// 会重叠。故空态把 sky 高压 0、状态行隐藏、内容底改锚空视图；
+    /// 失败态内容底改锚失败视图；非空态恢复原 sheet 底锚。
+    private var skyHeight: NSLayoutConstraint?
+    private var sheetBottom: NSLayoutConstraint?
+    private var emptyBottom: NSLayoutConstraint?
+    private var failureBottom: NSLayoutConstraint?
 
     init(authorId: Int, viewerIsAuthor: Bool, initialEntries: [Entry], onOpenEntry: ((Entry) -> Void)?) {
         self.authorId = authorId
@@ -132,7 +142,26 @@ final class BearyDiaryStarMapViewController: UIViewController {
 
     @objc private func didTapRetry() {
         failureView.isHidden = true
+        // 扫荡 C：重试加载期间先按当前模型恢复空 / 非空布局（失败态的
+        // failureBottom 与隐藏态不留到加载期），回包后再由成功分支或
+        // showFailureState 定终态。
+        applyModelToSky()
         fetchAllEntries()
+    }
+
+    /// 扫荡 C：空数据加载失败的终态——失败视图独占（空视图 / 星空 /
+    /// 状态行 / 底卡全藏，sky 高压 0，内容底改锚失败视图），不再与
+    /// 空视图同 top 重叠、不留 sky 420 高的空白尾巴。
+    private func showFailureState() {
+        skyHeight?.constant = 0
+        skyView.isHidden = true
+        emptyView.isHidden = true
+        statusLabel.isHidden = true
+        sheetCard.isHidden = true
+        sheetBottom?.isActive = false
+        emptyBottom?.isActive = false
+        failureBottom?.isActive = true
+        failureView.isHidden = false
     }
 
     // MARK: - 布局
@@ -273,7 +302,6 @@ final class BearyDiaryStarMapViewController: UIViewController {
             skyView.topAnchor.constraint(equalTo: filterScrollView.bottomAnchor, constant: 12),
             skyView.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 16),
             skyView.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -16),
-            skyView.heightAnchor.constraint(equalToConstant: 420),
 
             statusLabel.topAnchor.constraint(equalTo: skyView.bottomAnchor, constant: 10),
             statusLabel.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 16),
@@ -312,9 +340,16 @@ final class BearyDiaryStarMapViewController: UIViewController {
             failureLabel.trailingAnchor.constraint(equalTo: failureView.trailingAnchor, constant: -24),
             retryButton.topAnchor.constraint(equalTo: failureLabel.bottomAnchor, constant: 16),
             retryButton.centerXAnchor.constraint(equalTo: failureView.centerXAnchor),
-
-            sheetCard.bottomAnchor.constraint(equalTo: contentView.bottomAnchor, constant: -24),
         ])
+        // 扫荡 C：sky 高与三选一底部约束单独持有（见属性注释）。
+        skyHeight = skyView.heightAnchor.constraint(equalToConstant: 420)
+        skyHeight?.isActive = true
+        sheetBottom = sheetCard.bottomAnchor.constraint(equalTo: contentView.bottomAnchor, constant: -24)
+        sheetBottom?.isActive = true
+        emptyBottom = emptyView.bottomAnchor.constraint(equalTo: contentView.bottomAnchor, constant: -24)
+        emptyBottom?.isActive = false
+        failureBottom = failureView.bottomAnchor.constraint(equalTo: contentView.bottomAnchor, constant: -24)
+        failureBottom?.isActive = false
         // 年/月行高约束单独持有：不分片时高置 0（isHidden 本身不塌约束，
         // 否则不分片页会在图例与过滤行之间留两行空白）。
         yearRowHeight = yearScrollView.heightAnchor.constraint(equalToConstant: 32)
@@ -515,8 +550,16 @@ final class BearyDiaryStarMapViewController: UIViewController {
         }
         skyView.setStars(model.stars, edges: skyEdges, pointsById: pointsById, selectedStarId: selectedStarId, selectedEdgeId: selectedEdgeId)
         let isEmpty = filteredEntries.isEmpty || BearyStarMap.entries(in: filteredEntries, slice: slice).isEmpty
+        // 扫荡 C：空态塌掉 sky 高、藏状态行、内容底改锚空视图——否则隐藏的
+        // sky（420 高）与状态行仍撑内容高，空视图下方留空白、状态行透在
+        // 空视图上方空白处；非空态全部恢复。
+        skyHeight?.constant = isEmpty ? 0 : 420
         skyView.isHidden = isEmpty
         emptyView.isHidden = !isEmpty
+        statusLabel.isHidden = isEmpty
+        sheetBottom?.isActive = !isEmpty
+        emptyBottom?.isActive = isEmpty
+        failureBottom?.isActive = false
         if isEmpty {
             emptySubLabel.text = viewerIsAuthor
                 ? "写下第一篇日记，它就会成为你的第一颗星。"
@@ -728,7 +771,7 @@ final class BearyDiaryStarMapViewController: UIViewController {
                 switch result {
                 case .failure:
                     if self.fetchCollected.isEmpty && self.allEntries.isEmpty {
-                        self.failureView.isHidden = false
+                        self.showFailureState()
                     } else {
                         // 已有数据时网络失败不清空星空：保留已加载模型，状态行在
                         // 下次 applyModelToSky 时仍按已加载集合算（不编造失败篇）。
