@@ -1,4 +1,5 @@
 import UIKit
+import Photos
 
 // ===== BearyDiaryCardCell 共享日记卡片（B 批卡片合并）=====
 // 首页 BearyFeedCell 与个人主页 BearyProfileEntryCell 的合并体，两页共用一处
@@ -333,8 +334,8 @@ class BearyDiaryCardCell: UITableViewCell {
 
     // MARK: 首页模式回调（cell 内直发 API，成功失败经此回传控制器）
 
-    /// 点图片条时触发（传图片下标，控制器开图片查看器；不再进详情）。
-    var onImageTapped: ((Int) -> Void)?
+    /// 点图片条时触发（传图片下标与被点缩略图在 window 下的矩形，控制器开图片查看器；不再进详情；矩形供关场回到原处用）。
+    var onImageTapped: ((Int, CGRect?) -> Void)?
     /// 引用卡点按：传引用 id（容器先 fetchEntry 校验可见性再放行，私密时显占位）。
     var onQuoteSelected: ((String) -> Void)?
     /// 点赞/收藏成功后回传（控制器用 applyInteraction 同步模型并刷新该行）。
@@ -389,7 +390,7 @@ class BearyDiaryCardCell: UITableViewCell {
     var onFoldToggle: (() -> Void)?
     /// N7 主页图片灯箱：图片条点按回调（keys=本条图 key，index=点按位置），
     /// VC 侧复用独立文件内的 BearyEntryImageViewerViewController 全屏弹出（时间线同款）。
-    var onTapImages: (([String], Int) -> Void)?
+    var onTapImages: (([String], Int, CGRect?) -> Void)?
 
     /// 折叠展开态按条目持久化（首页模式；滚动复用、整表刷新都不收起），与网页 __foldOpen 同口径。
     static var expandedEntryIds: Set<String> = []
@@ -479,6 +480,13 @@ class BearyDiaryCardCell: UITableViewCell {
     /// 对齐），框顶仍 22（框完整包住头像，上下各留 8pt），不用框去迁就
     /// 错位头像；非首卡与首页/时间线一字不动。
     var profileFirstRow = false
+    /// 个人页“更多日记”行上方：本卡为日记 tab 最后一篇且后接“更多日记”行时，
+    /// 卡片底线整段塌掉（高 2 → 0 并隐藏，不留空占位）。#360 删的是“更多日记”
+    /// 行自带的顶线，本卡底线是另一条（同为 2pt、BearyColors.line、全宽、
+    /// 贴 cell 底），故 #360 后截图里仍可见一条粗线。仅个人页容器在
+    /// configure 前置 true；其余行、首页模式一律不动；复用时复位。
+    var suppressBottomSeparator = false
+    private var separatorHeightConstraint: NSLayoutConstraint?
     private var rightStackTopConstraint: NSLayoutConstraint?
     private var avatarTopConstraint: NSLayoutConstraint?
     /// 右列右缩进恒 −16；⋯ 留位走标题行末 titleMoreSpacer，不再按本人／他人改右缩进。
@@ -641,6 +649,19 @@ class BearyDiaryCardCell: UITableViewCell {
         return v
     }()
 
+    /// 皇冠容器：卡片/详情作者行是 .firstBaseline 栈，纯 UIView 的基线就是底边，
+    /// 皇冠直接进栈时底边钉在名字基线上，中心比名字大写字母中心高约
+    /// (19 − capHeight)/2 ≈ 3.6pt，即肉眼可见的“偏上”。容器与名字等高、
+    /// 底边钉基线，皇冠在容器内居中后中心即落在 cap 中心附近（SF 度量下
+    /// label 高度中心与 cap 中心差 <0.3pt），且等高约束随动态字号自动跟随。
+    /// 隐藏时容器与皇冠同藏，不留 19pt 空位。
+    private let crownWrapView: UIView = {
+        let v = UIView()
+        v.translatesAutoresizingMaskIntoConstraints = false
+        v.isHidden = true
+        return v
+    }()
+
     private let timeLabel: UILabel = {
         let lb = UILabel()
         lb.translatesAutoresizingMaskIntoConstraints = false
@@ -658,6 +679,20 @@ class BearyDiaryCardCell: UITableViewCell {
         v.contentMode = .scaleAspectFit
         v.isHidden = true
         return v
+    }()
+
+    /// 卡片作者行气温（跟天气图标走同一处：有后端 temperature_c 才显，无值不留空位）。
+    private let weatherTempLabel: UILabel = {
+        let lb = UILabel()
+        lb.translatesAutoresizingMaskIntoConstraints = false
+        lb.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13))
+        lb.adjustsFontForContentSizeCategory = true
+        lb.textColor = BearyColors.gray
+        lb.numberOfLines = 1
+        lb.isHidden = true
+        lb.setContentHuggingPriority(.required, for: .horizontal)
+        lb.setContentCompressionResistancePriority(.required, for: .horizontal)
+        return lb
     }()
 
     private var moodEmoteView: BearyEmoteView?
@@ -686,7 +721,7 @@ class BearyDiaryCardCell: UITableViewCell {
     }()
 
     private lazy var titleStack: UIStackView = {
-        let st = UIStackView(arrangedSubviews: [nameLabel, badgeImageView, crownView, titleSpacerLabel, timeLabel, weatherImageView, moodStack])
+        let st = UIStackView(arrangedSubviews: [nameLabel, badgeImageView, crownWrapView, titleSpacerLabel, timeLabel, weatherImageView, weatherTempLabel, moodStack])
         st.translatesAutoresizingMaskIntoConstraints = false
         st.axis = .horizontal
         st.spacing = 8
@@ -761,6 +796,8 @@ class BearyDiaryCardCell: UITableViewCell {
         let sv = UIScrollView()
         sv.translatesAutoresizingMaskIntoConstraints = false
         sv.showsHorizontalScrollIndicator = false
+        // 116 后扫查：与广场/个人页同口径——关掉 delaysContentTouches，滚动容器里的点按立即响应，不等滚动判定。
+        sv.delaysContentTouches = false
         sv.isHidden = true
         return sv
     }()
@@ -911,9 +948,11 @@ class BearyDiaryCardCell: UITableViewCell {
         onRequireLogin?()
     }
 
-    private lazy var rightStack: UIStackView = {
+    private lazy var rightStack: BearyPassThroughStackView = {
         quoteView.translatesAutoresizingMaskIntoConstraints = false
-        let st = UIStackView(arrangedSubviews: [recipientRow, titleStack, ephemeralRow, entryTitleLabel, contentLabel, foldButton, quoteView, imagesScrollView, locationStack, actionStack, guestLoginPromptButton, emoteFlowView])
+        let st = BearyPassThroughStackView(arrangedSubviews: [recipientRow, titleStack, ephemeralRow, entryTitleLabel, contentLabel, foldButton, quoteView, imagesScrollView, locationStack, actionStack, guestLoginPromptButton, emoteFlowView])
+        // 清单 18：中间栈透传回应行扩后热区（只认 emoteFlowView 内钮，其他行不动）。
+        st.passThroughRoot = emoteFlowView
         st.translatesAutoresizingMaskIntoConstraints = false
         st.axis = .vertical
         st.alignment = .fill
@@ -978,6 +1017,74 @@ class BearyDiaryCardCell: UITableViewCell {
     private var imageSlots: [UIImageView] = []
     private var imageSlotWidthConstraints: [NSLayoutConstraint] = []
     private var imageSlotRetryButtons: [BearyFeedRetryButton] = []
+    /// 实况覆盖层（与槽位一一对应）与每槽长按手势：平时隐藏、静态帧仍是
+    /// 原槽位 UIImageView；实况就绪后覆盖层显现，长按播实况，点按进灯箱
+    /// 不动（长按后的抬手点按凭覆盖层的 suppressTapUntil 压住一次）。
+    private var imageSlotLiveViews: [BearyLivePhotoView] = []
+    private var imageSlotLivePresses: [UILongPressGestureRecognizer?] = []
+
+    /// 图片条捏合拼图：双指捏合把间距 8 → 0、圆角 12 → 0（图贴在一起且无圆角），张开恢复 8 / 12。
+    /// 只动 imagesStack.spacing 与槽位圆角，不动槽宽/高，不缩放单张图；灯箱自带的
+    /// 单图捏合缩放不在此改动范围。滚动视图本身未开 zoom（min/max 均为 1），
+    /// 其内置捏合手势不会抢占本手势。
+    private var stripPinchStartProgress: CGFloat = 0
+    private var stripPinchJoined = false
+
+    private func installImageStripPinch() {
+        let pinch = UIPinchGestureRecognizer(target: self, action: #selector(imageStripPinched(_:)))
+        pinch.delegate = self
+        imagesScrollView.addGestureRecognizer(pinch)
+    }
+
+    /// 捏合跟手圆角：progress 0 → 圆角 12，progress 1（贴合）→ 圆角 0，与间距同一进度走，
+    /// 不在松手瞬间跳变；只改槽位图层圆角，不动其他圆角。
+    private func applyImageStripCornerRadius(progress: CGFloat) {
+        let radius = 12 * (1 - max(0, min(1, progress)))
+        for slot in imageSlots { slot.layer.cornerRadius = radius }
+    }
+
+    @objc private func imageStripPinched(_ gesture: UIPinchGestureRecognizer) {
+        // 单图时无间距可收，不接管手势（也不禁滚动）。
+        let visibleCount = imageSlots.filter { !$0.isHidden }.count
+        guard visibleCount >= 2 else { return }
+        switch gesture.state {
+        case .began:
+            // 以当前实际间距起算，防上一轮贴合动画中途被新一轮捏合打断时跳变。
+            stripPinchStartProgress = max(0, min(1, 1 - imagesStack.spacing / 8))
+            imagesScrollView.isScrollEnabled = false
+        case .changed:
+            // scale < 1 为捏合（progress 增大、间距收小），scale > 1 为张开（反向）；
+            // 从贴合态起手张开同样走这条式子，不会出现“贴合后张开无效”。
+            let progress = max(0, min(1, stripPinchStartProgress + (1 - gesture.scale)))
+            imagesStack.spacing = 8 * (1 - progress)
+            applyImageStripCornerRadius(progress: progress)
+            imagesScrollView.layoutIfNeeded()
+        case .ended, .cancelled, .failed:
+            imagesScrollView.isScrollEnabled = true
+            let progress = max(0, min(1, stripPinchStartProgress + (1 - gesture.scale)))
+            let wasJoined = stripPinchJoined
+            stripPinchJoined = progress >= 0.5
+            // 拼合/张开落点到位时各轻震一次：只在 .ended 且落点状态真的变化时震，
+            // 跟手过程、取消/失败、原地未变都不震；减动效时不震（系统触感开关由 UIKit 自身遵循）。
+            if gesture.state == .ended && wasJoined != stripPinchJoined && !UIAccessibility.isReduceMotionEnabled {
+                UIImpactFeedbackGenerator(style: .light).impactOccurred()
+            }
+            UIView.animate(withDuration: 0.25, animations: {
+                self.imagesStack.spacing = self.stripPinchJoined ? 0 : 8
+                self.applyImageStripCornerRadius(progress: self.stripPinchJoined ? 1 : 0)
+                self.imagesScrollView.layoutIfNeeded()
+            })
+        default:
+            break
+        }
+    }
+
+    private func resetImageStripPinch() {
+        stripPinchJoined = false
+        imagesStack.spacing = 8
+        applyImageStripCornerRadius(progress: 0)
+        imagesScrollView.isScrollEnabled = true
+    }
 
     private func makeImageSlots() {
         guard imageSlots.isEmpty else { return }
@@ -993,6 +1100,16 @@ class BearyDiaryCardCell: UITableViewCell {
             slot.tag = index
             slot.addGestureRecognizer(UITapGestureRecognizer(target: self, action: #selector(imageTapped(_:))))
             slot.isHidden = true
+            let liveView = BearyLivePhotoView(contentMode: .aspectFill)
+            slot.addSubview(liveView)
+            NSLayoutConstraint.activate([
+                liveView.topAnchor.constraint(equalTo: slot.topAnchor),
+                liveView.bottomAnchor.constraint(equalTo: slot.bottomAnchor),
+                liveView.leadingAnchor.constraint(equalTo: slot.leadingAnchor),
+                liveView.trailingAnchor.constraint(equalTo: slot.trailingAnchor),
+            ])
+            imageSlotLiveViews.append(liveView)
+            imageSlotLivePresses.append(nil)
             imagesStack.addArrangedSubview(slot)
             let widthConstraint = slot.widthAnchor.constraint(equalToConstant: 280)
             imageSlotWidthConstraints.append(widthConstraint)
@@ -1011,6 +1128,7 @@ class BearyDiaryCardCell: UITableViewCell {
             imageSlotRetryButtons.append(retry)
             imageSlots.append(slot)
         }
+        installImageStripPinch()
     }
 
     init(style: UITableViewCell.CellStyle, reuseIdentifier: String?, mode: BearyDiaryCardMode) {
@@ -1083,6 +1201,13 @@ class BearyDiaryCardCell: UITableViewCell {
         titleSpacerLabel.setContentCompressionResistancePriority(UILayoutPriority(1), for: .horizontal)
         badgeImageView.setContentCompressionResistancePriority(.required, for: .horizontal)
         crownView.setContentCompressionResistancePriority(.required, for: .horizontal)
+        crownWrapView.setContentCompressionResistancePriority(.required, for: .horizontal)
+        // 皇冠在等高容器内居中（容器底边钉基线，中心即 cap 中心）。
+        crownWrapView.addSubview(crownView)
+        NSLayoutConstraint.activate([
+            crownView.centerXAnchor.constraint(equalTo: crownWrapView.centerXAnchor),
+            crownView.centerYAnchor.constraint(equalTo: crownWrapView.centerYAnchor),
+        ])
         weatherImageView.setContentCompressionResistancePriority(.required, for: .horizontal)
         moodStack.setContentCompressionResistancePriority(.required, for: .horizontal)
         let imageHeight = imagesScrollView.heightAnchor.constraint(equalToConstant: 0)
@@ -1111,6 +1236,8 @@ class BearyDiaryCardCell: UITableViewCell {
             extraConstraints.append(badgeImageView.heightAnchor.constraint(equalToConstant: 17))
             extraConstraints.append(crownView.widthAnchor.constraint(equalToConstant: 19))
             extraConstraints.append(crownView.heightAnchor.constraint(equalToConstant: 19))
+            extraConstraints.append(crownWrapView.widthAnchor.constraint(equalToConstant: 19))
+            extraConstraints.append(crownWrapView.heightAnchor.constraint(equalTo: nameLabel.heightAnchor))
             extraConstraints.append(weatherImageView.widthAnchor.constraint(equalToConstant: 15))
             extraConstraints.append(weatherImageView.heightAnchor.constraint(equalToConstant: 15))
         } else {
@@ -1128,6 +1255,12 @@ class BearyDiaryCardCell: UITableViewCell {
             badgeWidth.priority = UILayoutPriority(999)
             let crownWidth = crownView.widthAnchor.constraint(equalToConstant: 19)
             crownWidth.priority = UILayoutPriority(999)
+            let crownWrapWidth = crownWrapView.widthAnchor.constraint(equalToConstant: 19)
+            crownWrapWidth.priority = UILayoutPriority(999)
+            let crownWrapHeight = crownWrapView.heightAnchor.constraint(equalTo: nameLabel.heightAnchor)
+            crownWrapHeight.priority = UILayoutPriority(999)
+            extraConstraints.append(crownWrapWidth)
+            extraConstraints.append(crownWrapHeight)
             let weatherWidth = weatherImageView.widthAnchor.constraint(equalToConstant: 15)
             weatherWidth.priority = UILayoutPriority(999)
             extraConstraints.append(recipientIconView.widthAnchor.constraint(equalToConstant: 13))
@@ -1141,6 +1274,9 @@ class BearyDiaryCardCell: UITableViewCell {
         }
         if rightStackTrailingConstraint == nil {
             rightStackTrailingConstraint = rightStack.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -16)
+        }
+        if separatorHeightConstraint == nil {
+            separatorHeightConstraint = separatorView.heightAnchor.constraint(equalToConstant: 2)
         }
         NSLayoutConstraint.activate([
             avatarTop,
@@ -1170,7 +1306,7 @@ class BearyDiaryCardCell: UITableViewCell {
             separatorView.topAnchor.constraint(equalTo: rightStack.bottomAnchor, constant: separatorTopGap),
             separatorView.leadingAnchor.constraint(equalTo: contentView.leadingAnchor),
             separatorView.trailingAnchor.constraint(equalTo: contentView.trailingAnchor),
-            separatorView.heightAnchor.constraint(equalToConstant: 2),
+            separatorHeightConstraint!,
             separatorView.bottomAnchor.constraint(equalTo: contentView.bottomAnchor),
         ] + extraConstraints)
         // imagesScrollView 的高度只由 imageHeightConstraint 驱动（216 有图 / 0 无图）。
@@ -1216,6 +1352,11 @@ class BearyDiaryCardCell: UITableViewCell {
         ephemeralBorderLayer.strokeColor = BearyColors.line.cgColor
         // 首页模式：心情与公开行边框需重刷（chip 边框已由 BearyEmoteChipView
         // 自带 trait 重刷，此处不再调 renderEmotes——两套并存已摘掉一套）。
+        // 旧心情改位：主题切换时正文末尾心情附件需换深浅变体，故两模式
+        // 都重建正文（仅换附件变体，折叠态与行数不动）。
+        if previousTraitCollection?.userInterfaceStyle != traitCollection.userInterfaceStyle, let e = currentEntry {
+            contentLabel.attributedText = bodyWithTrailingMood(e.content ?? "", fontSize: cardMode == .feed ? 16 : 15, moodKey: e.mood)
+        }
         guard cardMode == .feed else { return }
         if currentEntry == nil { return }
         if previousTraitCollection?.userInterfaceStyle != traitCollection.userInterfaceStyle {
@@ -1226,10 +1367,13 @@ class BearyDiaryCardCell: UITableViewCell {
 
     override func prepareForReuse() {
         super.prepareForReuse()
+        resetImageStripPinch()
         // iCity 举报退场动画只动 contentView（alpha/transform），复用时复位，防残留到下一行。
         contentView.alpha = 1
         contentView.transform = .identity
         profileFirstRow = false
+        suppressBottomSeparator = false
+        separatorHeightConstraint?.constant = 2
         avatarTopConstraint?.constant = 14
         // 限时态复位：倒计时行与虚线边框藏起、底线恢复，防残留到下一行。
         ephemeralRow.isHidden = true
@@ -1352,6 +1496,14 @@ class BearyDiaryCardCell: UITableViewCell {
                 imageSlotRetryButtons[slotIndex].isHidden = true
                 imageSlotRetryButtons[slotIndex].retryURL = nil
             }
+            // 实况覆盖层同步清掉（在途加载凭 token 丢弃，复用不串位到下一行）。
+            if slotIndex < imageSlotLiveViews.count {
+                imageSlotLiveViews[slotIndex].clear()
+            }
+            if slotIndex < imageSlotLivePresses.count, let press = imageSlotLivePresses[slotIndex] {
+                slot.removeGestureRecognizer(press)
+                imageSlotLivePresses[slotIndex] = nil
+            }
         }
         imagesScrollView.isHidden = true
         imageHeightConstraint?.constant = 0
@@ -1366,11 +1518,12 @@ class BearyDiaryCardCell: UITableViewCell {
         quoteView.isHidden = true
         badgeImageView.image = nil
         badgeImageView.isHidden = true
-        crownView.isHidden = true
-        crownView.stop()
+        setCrownHidden(true)
         stopWeatherLottie()
         weatherImageView.image = nil
         weatherImageView.isHidden = true
+        weatherTempLabel.text = nil
+        weatherTempLabel.isHidden = true
         moodStack.isHidden = true
         moodEmoteView?.removeFromSuperview()
         moodEmoteView = nil
@@ -1404,12 +1557,26 @@ class BearyDiaryCardCell: UITableViewCell {
         // 已置 adjustsFontForContentSizeCategory，富文本字号在下次 configure
         // 时重解（C8 已知局限，本批不改）；装饰性小字不动。
         let bodyFont = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: fontSize))
-        let attrs: [NSAttributedString.Key: Any] = [
-            .font: bodyFont,
-            .foregroundColor: BearyColors.ink,
-            .paragraphStyle: paragraph,
-        ]
-        return NSAttributedString(string: text, attributes: attrs)
+        // 内联心情：正文里的记号转回熊脸附件（与编辑器同一中间层），
+        // 附件字号跟随正文字号；旧心情缀尾仍由 bodyWithTrailingMood 另 append。
+        return BearyText.inlineAttributedText(from: text, font: bodyFont, color: BearyColors.ink, paragraphStyle: paragraph, dark: traitCollection.userInterfaceStyle == .dark)
+    }
+
+    /// 旧日记心情改位：心情不再单独贴在作者行，改跟在正文最后一个字
+    /// 后面——用静态熊图附件直接缀在正文 attributed 串末尾（紧贴末字、
+    /// 无空格）；无心情时原样返回。深浅变体按当前 trait 取，主题切换
+    /// 时由 trait handler 重建正文换变体。
+    private func bodyWithTrailingMood(_ text: String, fontSize: CGFloat, moodKey: String?) -> NSAttributedString {
+        let base = attributedBody(text, fontSize: fontSize)
+        guard let key = moodKey, !key.isEmpty,
+              let image = BearyEmoteImages.image(for: key, dark: traitCollection.userInterfaceStyle == .dark) else { return base }
+        let font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: fontSize))
+        let attachment = NSTextAttachment()
+        attachment.image = image
+        attachment.bounds = CGRect(x: 0, y: font.descender, width: font.pointSize, height: font.pointSize)
+        let result = NSMutableAttributedString(attributedString: base)
+        result.append(NSAttributedString(attachment: attachment))
+        return result
     }
 
     /// R4 App：日记标题渲染（两路 configure 共用，模型 Entry.title 由 A4-App
@@ -1418,10 +1585,11 @@ class BearyDiaryCardCell: UITableViewCell {
     private func updateEntryTitle(_ rawTitle: String?) {
         let trimmed = rawTitle?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         if trimmed.isEmpty {
-            entryTitleLabel.text = nil
+            entryTitleLabel.attributedText = nil
             entryTitleLabel.isHidden = true
         } else {
-            entryTitleLabel.text = trimmed
+            // 标题里的记号同样转回熊脸附件（卡片标题 16.5 粗体）。
+            entryTitleLabel.attributedText = BearyText.inlineAttributedText(from: trimmed, font: BearyDynamicType.cardTitleFont(), color: BearyColors.ink, paragraphStyle: nil, dark: traitCollection.userInterfaceStyle == .dark)
             entryTitleLabel.isHidden = false
         }
     }
@@ -1530,37 +1698,15 @@ class BearyDiaryCardCell: UITableViewCell {
         }
     }
 
-    /// F9：心情 = 灰字 + 熊图 20px；无心情时整行隐藏。深浅变体由播放器内部切换。
+    /// 旧心情改位：作者行心情位一律隐藏，心情改缀正文末尾
+    /// （见 bodyWithTrailingMood）；旧播放器视图一并摘掉。
     private func refreshMoodView() {
-        guard let moodKey = currentEntry?.mood, let moodName = BearyText.moodNames[moodKey] else {
-            moodStack.isHidden = true
-            moodLabel.text = nil
-            moodEmoteView?.removeFromSuperview()
-            moodEmoteView = nil
-            return
-        }
-        moodStack.isHidden = false
-        moodLabel.text = moodName
-        setMoodEmote(key: moodKey)
+        moodStack.isHidden = true
+        moodLabel.text = nil
+        moodEmoteView?.removeFromSuperview()
+        moodEmoteView = nil
     }
 
-    /// 卡片心情位：key 不变时复用播放器（深浅由其内部切换），key 变了才重建，尺寸仍为 20（宽约束 999 与原口径一致）。
-    private func setMoodEmote(key: String) {
-        if let current = moodEmoteView, current.emoteKey == key {
-            return
-        }
-        moodEmoteView?.removeFromSuperview()
-        let emoteView = BearyEmoteView(key: key, animated: false)
-        emoteView.translatesAutoresizingMaskIntoConstraints = false
-        moodStack.insertArrangedSubview(emoteView, at: 0)
-        let width = emoteView.widthAnchor.constraint(equalToConstant: 20)
-        width.priority = UILayoutPriority(999)
-        NSLayoutConstraint.activate([
-            width,
-            emoteView.heightAnchor.constraint(equalToConstant: 20),
-        ])
-        moodEmoteView = emoteView
-    }
 
     /// E3：天气 key → Lottie 资源 key（编辑器选择器同款映射，唯 night 对应 moon）。
     private static func weatherLottieKey(for weatherKey: String) -> String {
@@ -1655,20 +1801,15 @@ class BearyDiaryCardCell: UITableViewCell {
             recipientLabel.text = nil
         }
 
-        // F2/F13：名 16.5 粗体 + BETA 徽章图。Plus 皇冠按网页复刻：authorPlus==1 时显示
-        //（清单 14 的首页取消显示已被“按网页复刻”覆盖；BETA 徽章不动）。
+        // F2/F13：名 16.5 粗体。Plus 皇冠按网页复刻：authorPlus==1 时显示
+        //（BETA 徽章已下线，徽章位恒隐藏）。
         // 无残留空位：crownView 是 titleStack 的 arrangedSubview，隐藏后 stack 自动
         // 将其尺寸压为 0，间距只算在可见项之间；19pt 宽约束是 999 优先级，不与压零冲突。
         nameLabel.text = authorNameValue
-        if let badgeKey = entry.authorBadge, !badgeKey.isEmpty, let badgeImage = BearyBadgeImages.image(for: badgeKey) {
-            badgeImageView.image = badgeImage
-            badgeImageView.isHidden = false
-        } else {
-            badgeImageView.image = nil
-            badgeImageView.isHidden = true
-        }
-        crownView.isHidden = (entry.authorPlus ?? 0) != 1 || !crownView.hasCrown
-        if crownView.isHidden { crownView.stop() } else { crownView.start() }
+        // BETA 徽章已下线：用户名右边不再显示佩戴徽章（Plus 皇冠不受影响）。
+        badgeImageView.image = nil
+        badgeImageView.isHidden = true
+        setCrownHidden((entry.authorPlus ?? 0) != 1 || !crownView.hasCrown)
 
         // F3：时间。广场卡：有效公开（未过期）且有 publishedAt 时显相对时间（“X 分钟前”），否则绝对时间。
         if BearyEphemeral.isEffectivelyPublic(entry), let relative = BearyVisibilityText.publishedRelativeString(publishedAtMs: entry.publishedAt) {
@@ -1690,6 +1831,14 @@ class BearyDiaryCardCell: UITableViewCell {
             weatherImageView.image = nil
             weatherImageView.isHidden = true
         }
+        // 气温跟天气图标走同一处：有值显“18°”，无值隐藏、不留空位。
+        if let temp = entry.temperatureC, entry.weather != nil, !entry.weather!.isEmpty {
+            weatherTempLabel.text = "\(temp)°"
+            weatherTempLabel.isHidden = false
+        } else {
+            weatherTempLabel.text = nil
+            weatherTempLabel.isHidden = true
+        }
 
         // F9：心情。
         refreshMoodView()
@@ -1704,7 +1853,7 @@ class BearyDiaryCardCell: UITableViewCell {
         configureQuoteFeed(for: entry)
 
         // F5：图片条 216 高、按宽高比定宽、圆角 12、间距 8、横向滚动（94 包槽位复用）。
-        renderImages(keys: entry.images ?? [], dims: entry.imgDims)
+        renderImages(keys: entry.images ?? [], dims: entry.imgDims, liveVideos: entry.liveVideos)
         // 批 E：位置行（图片条之后、操作行之前）。
         refreshLocationRow(entry: entry)
 
@@ -1758,15 +1907,11 @@ class BearyDiaryCardCell: UITableViewCell {
             recipientRow.isHidden = true
             recipientLabel.text = nil
         }
-        // 作者徽章（BETA 等，照常显示）；Plus 皇冠按 authorPlus 显示
+        // 佩戴徽章已下线（恒隐藏）；Plus 皇冠按 authorPlus 显示
         // （1:1 复刻，推翻清单 14；authorPlus 为 Int，0/缺失 = 不显示）。
-        if let badgeKey = entry.authorBadge, !badgeKey.isEmpty, let badgeImage = BearyBadgeImages.image(for: badgeKey) {
-            badgeImageView.image = badgeImage
-            badgeImageView.isHidden = false
-        } else {
-            badgeImageView.image = nil
-            badgeImageView.isHidden = true
-        }
+        // BETA 徽章已下线：用户名右边不再显示佩戴徽章（Plus 皇冠不受影响）。
+        badgeImageView.image = nil
+        badgeImageView.isHidden = true
         rowCrownHiddenUpdate(entry: entry)
         // 天气图标（icon_wx_<key>，取不到图时隐藏、不留空）。
         if let weatherKey = entry.weather, !weatherKey.isEmpty, let weatherImage = BearyFeedIconCache.image(named: "icon_wx_" + weatherKey, pointSize: 15) {
@@ -1776,22 +1921,21 @@ class BearyDiaryCardCell: UITableViewCell {
             weatherImageView.image = nil
             weatherImageView.isHidden = true
         }
-        // 心情标签（表情 20 + 心情名；深浅变体由播放器内部切换）。
-        if let moodKey = entry.mood, !moodKey.isEmpty, let moodName = BearyText.moodNames[moodKey] {
-            setMoodEmote(key: moodKey)
-            moodLabel.text = moodName
-            moodStack.isHidden = false
+        // #427 的气温显示保留；作者行心情位按 #421 新模型一律隐藏
+        // （refreshMoodView），心情缀正文末尾，不恢复旧心情标签。
+        if let temp = entry.temperatureC, entry.weather != nil, !entry.weather!.isEmpty {
+            weatherTempLabel.text = "\(temp)°"
+            weatherTempLabel.isHidden = false
         } else {
-            moodEmoteView?.removeFromSuperview()
-            moodEmoteView = nil
-            moodLabel.text = nil
-            moodStack.isHidden = true
+            weatherTempLabel.text = nil
+            weatherTempLabel.isHidden = true
         }
+        refreshMoodView()
         // R4 App：日记标题在作者行（titleStack）与正文之间，空标题不占位。
         updateEntryTitle(entry.title)
         // 正文 + 300 字折叠（网页 renderPublic foldLong 口径；折叠态收起 6 行）。
         let bodyText = entry.content ?? ""
-        contentLabel.attributedText = attributedBody(bodyText, fontSize: 15)
+        contentLabel.attributedText = bodyWithTrailingMood(bodyText, fontSize: 15, moodKey: entry.mood)
         foldApplies = bodyText.count > 300
         foldButton.isHidden = !foldApplies
         if foldApplies {
@@ -1801,7 +1945,7 @@ class BearyDiaryCardCell: UITableViewCell {
         }
         configureQuoteProfile(entry: entry)
         // 图片条 216 高、按宽高比定宽（原 stripW 口径；94 包槽位复用 + 合并后补重试）。
-        renderImages(keys: entry.images ?? [], dims: entry.imgDims)
+        renderImages(keys: entry.images ?? [], dims: entry.imgDims, liveVideos: entry.liveVideos)
         // 批 E：位置行（个人页模式同款，图片条之后、操作行之前）。
         refreshLocationRow(entry: entry)
         // 点赞 / 收藏 / 分享（已赞为红色、已收藏为橙色；忙时整行互动禁用）。
@@ -1834,16 +1978,25 @@ class BearyDiaryCardCell: UITableViewCell {
         updateRightStackSpacing()
     }
 
+    /// 皇冠显隐唯一入口：容器与皇冠同藏同显，容器留在栈内时不留 19pt 空位。
+    private func setCrownHidden(_ hidden: Bool) {
+        crownWrapView.isHidden = hidden
+        crownView.isHidden = hidden
+        if hidden { crownView.stop() } else { crownView.start() }
+    }
+
     private func rowCrownHiddenUpdate(entry: Entry) {
         // 个人主页原口径：authorPlus==0 即隐藏；合并后补 Feed 的资产缺失守卫
         // （资产缺失时不再留 19pt 空盒，资产在时行为一字不动）。
-        crownView.isHidden = (entry.authorPlus ?? 0) == 0 || !crownView.hasCrown
-        if crownView.isHidden { crownView.stop() } else { crownView.start() }
+        setCrownHidden((entry.authorPlus ?? 0) == 0 || !crownView.hasCrown)
     }
 
     // MARK: - 图片条（94 包槽位复用，两页同款；失败重试 Feed 口径）
 
-    private func renderImages(keys: [String], dims: [String: [Int]]?) {
+    /// 实况：调用方传本条 entry.liveVideos；无实况的图映射里无项，覆盖层
+    /// 即清掉（旧静态图、纯静态新图一律走这里，不动原静态加载）。
+    private func renderImages(keys: [String], dims: [String: [Int]]?, liveVideos: [String: String]? = nil) {
+        resetImageStripPinch()
         // 112：卡片图片条上限 9 张（详情侧同款 Array(allKeys.prefix(9))）。
         // 脏数据超 9 张时先截断再渲染，灯箱 keys 同步取截断后列表，
         // 第 10 张起既不渲染也不进灯箱；逐项再 guard 三池下标，防池化异常越界。
@@ -1860,6 +2013,7 @@ class BearyDiaryCardCell: UITableViewCell {
                     imageSlotRetryButtons[slotIndex].isHidden = true
                     imageSlotRetryButtons[slotIndex].retryURL = nil
                 }
+                setLiveOverlay(index: slotIndex, staticKey: nil, liveKey: nil)
             }
             return
         }
@@ -1875,6 +2029,7 @@ class BearyDiaryCardCell: UITableViewCell {
             bearyFeedLoadImage(into: slot, url: BearyImageURLs.imageURL(key: imageKey, thumb: true), retryButton: imageSlotRetryButtons[imageIndex], downsampleToWidth: strip * UIScreen.main.scale)
             imageSlotWidthConstraints[imageIndex].constant = strip
             slot.isHidden = false
+            setLiveOverlay(index: imageIndex, staticKey: imageKey, liveKey: liveVideos?[imageKey])
         }
         for (slotIndex, slot) in imageSlots.dropFirst(keys.count).enumerated() {
             slot.bearySetImage(url: nil)
@@ -1883,6 +2038,49 @@ class BearyDiaryCardCell: UITableViewCell {
             if retryIndex < imageSlotRetryButtons.count {
                 imageSlotRetryButtons[retryIndex].isHidden = true
                 imageSlotRetryButtons[retryIndex].retryURL = nil
+            }
+            setLiveOverlay(index: retryIndex, staticKey: nil, liveKey: nil)
+        }
+    }
+
+    /// 实况覆盖层开关：有 liveKey 时配覆盖层并给槽位挂长按手势（只挂实况槽，
+    /// 静态槽不挂、点按无延迟）；无 liveKey 时清覆盖层并摘长按手势。
+    private func setLiveOverlay(index: Int, staticKey: String?, liveKey: String?) {
+        guard index >= 0, index < imageSlotLiveViews.count, index < imageSlots.count,
+              index < imageSlotLivePresses.count else { return }
+        let overlay = imageSlotLiveViews[index]
+        let slot = imageSlots[index]
+        if let liveKey = liveKey, !liveKey.isEmpty, let staticKey = staticKey, !staticKey.isEmpty {
+            overlay.configure(staticKey: staticKey, liveKey: liveKey)
+            if imageSlotLivePresses[index] == nil {
+                let press = UILongPressGestureRecognizer(target: self, action: #selector(liveLongPressed(_:)))
+                press.minimumPressDuration = 0.4
+                slot.addGestureRecognizer(press)
+                imageSlotLivePresses[index] = press
+            }
+        } else {
+            overlay.clear()
+            if let press = imageSlotLivePresses[index] {
+                slot.removeGestureRecognizer(press)
+                imageSlotLivePresses[index] = nil
+            }
+        }
+    }
+
+    @objc private func liveLongPressed(_ sender: UILongPressGestureRecognizer) {
+        let index = sender.view?.tag ?? -1
+        guard index >= 0, index < imageSlotLiveViews.count else { return }
+        let overlay = imageSlotLiveViews[index]
+        if sender.state == .began {
+            overlay.startPlayback()
+            // 抬手点按压制：播完抬手那次点按不进灯箱（3 秒覆盖按住时长）。
+            overlay.suppressTapUntil = Date().addingTimeInterval(3)
+        } else if sender.state == .ended || sender.state == .cancelled {
+            let until = Date().addingTimeInterval(0.35)
+            if let existing = overlay.suppressTapUntil, existing > until {
+                // 按住超 0.35 秒后的抬手仍在 began 的 3 秒窗内，不缩短。
+            } else {
+                overlay.suppressTapUntil = until
             }
         }
     }
@@ -1946,7 +2144,7 @@ class BearyDiaryCardCell: UITableViewCell {
 
     private func updateContentAndFold() {
         let fullText = currentEntry?.content ?? ""
-        contentLabel.attributedText = attributedBody(fullText, fontSize: 16)
+        contentLabel.attributedText = bodyWithTrailingMood(fullText, fontSize: 16, moodKey: currentEntry?.mood)
         let width = contentLabel.bounds.width > 0 ? contentLabel.bounds.width : rightColumnWidthEstimate()
         let overflow = measuredFoldOverflow(contentWidth: width)
         foldOverflow = overflow
@@ -2371,16 +2569,28 @@ class BearyDiaryCardCell: UITableViewCell {
         refreshActionAccessibility()
     }
 
-    /// F7/F8（首页模式）：首页与详情互动门控统一为 isPublic == true 才可互动（详情同口径）。
+    /// 作者本人判定（现行口径复用，不新造：isMine 为 true，或 authorId == 当前登录用户 id；
+    /// 详情 BearyDetailViewController.init 与本文件引用卡 viewerIsAuthor 同款 OR 口径）。
+    private func isEntryAuthor(_ entry: Entry) -> Bool {
+        if entry.isMine == true { return true }
+        if let aid = entry.authorId, let uid = SessionManager.shared.currentUser?.id { return aid == uid }
+        return false
+    }
+
+    /// 2026-10-31 私密自互动口径：点赞／收藏门控为“有效公开 或 作者本人”（详情同口径）；
+    /// 分享不动，仍仅有效公开才有。注意：后端目前仍以 published=1 拦私密互动（见 PR 说明），
+    /// 作者私密点赞／收藏的服务端请求仍会 404 并走既有失败回滚，本处只改 App 侧放行。
+    /// F7/F8（首页模式）：首页与详情互动门控统一为上述口径。
     private func updateActionInteractivity() {
-        // 审计 P0-4：有效态门控（过期限时篇不放行点赞/收藏/分享）。
+        // 审计 P0-4：有效态门控（过期限时篇不放行点赞/收藏/分享；作者本人例外只放行点赞/收藏）。
         // 2026-10-29 及时性口径：在途请求不再禁用按钮——快连点每次都必须立即
         // 落地，防重入只靠代次守卫，不靠按钮禁用。
         let publicOK = currentEntry.map(BearyEphemeral.isEffectivelyPublic) ?? false
-        likeButton.isEnabled = publicOK
-        bookmarkButton.isEnabled = publicOK
-        likeButton.alpha = publicOK ? 1.0 : 0.4
-        bookmarkButton.alpha = publicOK ? 1.0 : 0.4
+        let interactOK = publicOK || (currentEntry.map(isEntryAuthor) ?? false)
+        likeButton.isEnabled = interactOK
+        bookmarkButton.isEnabled = interactOK
+        likeButton.alpha = interactOK ? 1.0 : 0.4
+        bookmarkButton.alpha = interactOK ? 1.0 : 0.4
         // 网页口径：shBtn 仅 is_public 时输出——非公开卡直接没有分享钮（不禁用占位）。
         shareButton.isHidden = publicOK == false
         shareSlotSpacer.isHidden = !shareButton.isHidden
@@ -2436,7 +2646,10 @@ class BearyDiaryCardCell: UITableViewCell {
             ephemeralLabel.text = nil
             ephemeralRow.isHidden = true
         }
-        separatorView.isHidden = (cardMode == .feed) ? false : live
+        // 个人页最后一篇后接“更多日记”行时底线整段塌掉（高 0 并隐藏），
+        // 其余行沿用旧口径（首页存活期限时篇也显底线；个人页存活期限时篇藏底线但高仍 2）。
+        separatorView.isHidden = ((cardMode == .feed) ? false : live) || suppressBottomSeparator
+        separatorHeightConstraint?.constant = suppressBottomSeparator ? 0 : 2
         ephemeralBorderLayer.isHidden = !live
         setNeedsLayout()
     }
@@ -2562,6 +2775,13 @@ class BearyDiaryCardCell: UITableViewCell {
     /// F1：点图进查看器（带下标）；正文点按已由 contentTapped 截住，不会走到行导航。
     /// 重试图标可见时点按只走重试，不进查看器（钮是槽位子视图，父层手势可能同收该点按）。
     @objc private func imageTapped(_ sender: UITapGestureRecognizer) {
+        // 实况长按后的抬手点按：压住一次，不进灯箱（覆盖层在长按 began 时
+        // 已置 3 秒窗，ended 后又延 0.35 秒；窗外点按照常进灯箱）。
+        let tappedIndex = sender.view?.tag ?? -1
+        if tappedIndex >= 0, tappedIndex < imageSlotLiveViews.count,
+           let until = imageSlotLiveViews[tappedIndex].suppressTapUntil, until > Date() {
+            return
+        }
         if cardMode == .feed {
             if let iv = sender.view as? UIImageView,
                iv.subviews.contains(where: { ($0 as? BearyFeedRetryButton)?.isHidden == false }) {
@@ -2569,7 +2789,7 @@ class BearyDiaryCardCell: UITableViewCell {
             }
             let index = sender.view?.tag ?? 0
             if index < 0 || index >= currentImageKeys.count { return }
-            onImageTapped?(index)
+            onImageTapped?(index, sender.view.map { $0.convert($0.bounds, to: nil) })
             return
         }
         // N7 主页图片条点按：下标取自槽位 tag，keys 为 configure 存下的本条图 key；
@@ -2577,7 +2797,7 @@ class BearyDiaryCardCell: UITableViewCell {
         // 卡片其他区域无手势，仍走 didSelectRowAt 进详情。
         let index = sender.view?.tag ?? 0
         guard index >= 0, index < currentImageKeys.count else { return }
-        onTapImages?(currentImageKeys, index)
+        onTapImages?(currentImageKeys, index, sender.view.map { $0.convert($0.bounds, to: nil) })
     }
 
     /// 按压反馈（两页同款 .84/.13s）。
@@ -2608,7 +2828,8 @@ class BearyDiaryCardCell: UITableViewCell {
         }
         // 及时性口径：按下预览不拿在途请求门控——在途时按下仍按当前
         // （最新点按态）模型给预览，抬起取消时复原到同一模型。
-        guard currentEntry.map(BearyEphemeral.isEffectivelyPublic) ?? false else { return }
+        // 2026-10-31 私密自互动口径：按下预览守卫与抬起确认同款（有效公开 或 作者本人）。
+        guard currentEntry.map({ BearyEphemeral.isEffectivelyPublic($0) || isEntryAuthor($0) }) ?? false else { return }
         guard SessionManager.shared.isLoggedIn else { return }
         guard let entryIdValue = cellEntryId, !entryIdValue.isEmpty else { return }
         if currentEntry?.likedByMe == true {
@@ -2669,7 +2890,7 @@ class BearyDiaryCardCell: UITableViewCell {
             if hadPressPreview { restorePressPreview() }
             return
         }
-        if !(currentEntry.map(BearyEphemeral.isEffectivelyPublic) ?? false) {
+        if !(currentEntry.map({ BearyEphemeral.isEffectivelyPublic($0) || isEntryAuthor($0) }) ?? false) {
             if hadPressPreview { restorePressPreview() }
             return
         }
@@ -2763,7 +2984,7 @@ class BearyDiaryCardCell: UITableViewCell {
     /// 成功后以服务端值为准并经控制器全副本同步。
     private func feedBookmarkTapped() {
         guard let entryIdValue = cellEntryId, !entryIdValue.isEmpty else { return }
-        if !(currentEntry.map(BearyEphemeral.isEffectivelyPublic) ?? false) { return }
+        if !(currentEntry.map({ BearyEphemeral.isEffectivelyPublic($0) || isEntryAuthor($0) }) ?? false) { return }
         if SessionManager.shared.isLoggedIn == false {
             onRequireLogin?()
             return
@@ -2936,9 +3157,12 @@ class BearyDiaryCardCell: UITableViewCell {
         chipKeys = []
         var chipIndex = 0
         for item in list {
-            guard let key = item.emote, !key.isEmpty else {
+            guard let key = item.emote, !key.isEmpty,
+                  BearyEmoteKeys.bearFaceKeys.contains(key) else {
                 // 个人主页原口径：空 key 不建 chip；首页原口径不设防，此处两页
                 // 统一跳过空 key（空 key 的 BearyEmoteView 本就无图可播）。
+                // 非熊脸兜底（与详情/回应墙同口径）：库里已清存量非熊脸行，
+                // 卡片仍过滤一次，旧缓存里残留的非熊脸也不会再画出来。
                 continue
             }
             let mine = item.mine ?? false
@@ -3314,5 +3538,19 @@ class BearyDiaryCardCell: UITableViewCell {
         emoteFlightAPIDone = false
         emoteFlightRemovalStaged = false
         updateEmoteInteractivity()
+    }
+}
+
+// UITableViewCell 在新 SDK 下已自带 UIGestureRecognizerDelegate 遵循，
+    // 故此处不再重复声明协议、方法改 override；行为与 #429 原意一致。
+extension BearyDiaryCardCell {
+    override func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldRecognizeSimultaneouslyWith otherGestureRecognizer: UIGestureRecognizer) -> Bool {
+        // 只放行本图片条捏合与条自身滚动平移的共存：捏合 began 即禁了条的
+        // 滚动，故自家平移本就滑不动；外层列表的竖滑若也放行，两指捏合时
+        // 手指稍带竖向漂移就会一边捏合一边滚页。先识别意图者胜：捏合先成立
+        // 则外层平移失败，竖滑先成立则捏合失败，不再双轨并行。
+        // 该 delegate 只挂在捏合手势上，不影响点赞、点图等其他手势。
+        return otherGestureRecognizer is UIPanGestureRecognizer
+            && otherGestureRecognizer.view === imagesScrollView
     }
 }
