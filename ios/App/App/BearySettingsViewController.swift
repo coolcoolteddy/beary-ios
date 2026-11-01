@@ -230,6 +230,19 @@ final class BearySettingsViewController: UIViewController {
     /// 切换账号卡容器（buildAccountSwitchSection 建，refreshAccountSwitchSection
     /// 重建卡片；登录态无关的通用/隐私组不受影响）。
     private let accountSwitchWrap = UIView()
+    /// 扫 bug 第 9 项：切换卡缓存（只缓存展示用模型，不缓存 token）。
+    /// cachedSwitchModels = 上次 loadAll 映射的保管库模型（保管库顺序，
+    /// 未含“当前账号不在库内”补位行、未排序）；cachedSwitchGeneration
+    /// = 取数时的保管库代际，代际不变即库内容未变，复用模型、不再
+    /// 全量读钥匙串。cachedSwitchFingerprint = 上次建成卡片的模型
+    /// 指纹（id/标题/handle/邮箱/头像/当前勾选全在内）；指纹不变即
+    /// 卡片内容与现行完全一致，跳过拆卡重建、保留现卡（头像加载态
+    /// 也不丢）。切换/移除/添加/快照写入都会推高代际或改指纹，
+    /// 故账号变化时必重建；切换逻辑本身一字不动。
+    private var cachedSwitchModels: [SwitchRowModel]?
+    private var cachedSwitchGeneration: Int?
+    private var cachedSwitchFingerprint: String?
+    private var switchCardBuilt = false
     private var isSwitchingAccount = false
     private var isRemovingAccount = false
     private var isLoggingOutOthers = false
@@ -1065,20 +1078,38 @@ final class BearySettingsViewController: UIViewController {
     /// 当前账号优先排第一位（其余按首次保存顺序），当前行打勾；
     /// “添加账号”行恒可见，满 3 个时点按只弹上限提示、不进登录页。
     private func refreshAccountSwitchSection() {
-        for subview in accountSwitchWrap.subviews {
-            subview.removeFromSuperview()
-        }
         let currentUser = SessionManager.shared.currentUser ?? meUser
         guard let currentUserValue = currentUser, currentUserValue.id != nil else {
+            // 未登录：旧卡必须清掉（此前拆卡发生在 guard 之前，现挪到这里，
+            // 语义不变）；已建成标记同步清零，下次登录必重建。
+            for subview in accountSwitchWrap.subviews {
+                subview.removeFromSuperview()
+            }
+            switchCardBuilt = false
+            cachedSwitchFingerprint = nil
             accountSwitchWrap.isHidden = true
             return
         }
         SessionManager.shared.snapshotCurrentAccount()
         let vault = BearyAccountVault.shared
-        let stored = vault.loadAll()
-        var models: [SwitchRowModel] = stored.map { account in
-            SwitchRowModel(userId: account.userId, title: account.displayTitle, handle: account.handle, email: account.email, avatarURL: account.avatarURL, hasToken: true)
+        // 扫 bug 第 9 项：钥匙串读结果缓存——代际未变即库内容未变，
+        // 复用上次 loadAll 映射的模型，不再每次进页全量读钥匙串；
+        // 代际变了（切换/移除/添加/快照写入）才重读。注意模型里只有
+        // 展示字段（token 不进缓存）；快照本身仍每次调用（内容不变
+        // 时 vault.save 已跳过写盘、不推代际，故缓存能命中）。
+        let storedModels: [SwitchRowModel]
+        if let cached = cachedSwitchModels, cachedSwitchGeneration == vault.generation {
+            storedModels = cached
+        } else {
+            let stored = vault.loadAll()
+            let mapped: [SwitchRowModel] = stored.map { account in
+                SwitchRowModel(userId: account.userId, title: account.displayTitle, handle: account.handle, email: account.email, avatarURL: account.avatarURL, hasToken: true)
+            }
+            cachedSwitchModels = mapped
+            cachedSwitchGeneration = vault.generation
+            storedModels = mapped
         }
+        var models: [SwitchRowModel] = storedModels
         if let currentId = currentUserValue.id, !models.contains(where: { $0.userId == currentId }) {
             models.append(SwitchRowModel(userId: currentId, title: currentUserValue.displayName ?? currentUserValue.email ?? "ID \(currentId)", handle: currentUserValue.handle, email: currentUserValue.email, avatarURL: nil, hasToken: false))
         }
@@ -1089,6 +1120,21 @@ final class BearySettingsViewController: UIViewController {
             let secondIsCurrent = second.userId == currentIdValue
             if firstIsCurrent != secondIsCurrent { return firstIsCurrent }
             return false
+        }
+        // 扫 bug 第 9 项：切换卡只在账号变化时重建——指纹含每行
+        // id/标题/handle/邮箱/头像/当前勾选，指纹不变即卡片内容与现行
+        // 完全一致，直接保留现卡（不拆卡、不重建头像加载、不丢行态）；
+        // 指纹变了（切号、增删号、改名/改头像）才走下面原有重建。
+        // 切换/移除/添加的调用点仍调本函数，逻辑本身一字不动。
+        let fingerprint = models.map { model in
+            "\(model.userId)|\(model.title)|\(model.handle ?? "")|\(model.email ?? "")|\(model.avatarURL ?? "")|\(model.hasToken)|\(model.userId == currentIdValue)"
+        }.joined(separator: ";")
+        if switchCardBuilt, fingerprint == cachedSwitchFingerprint {
+            accountSwitchWrap.isHidden = false
+            return
+        }
+        for subview in accountSwitchWrap.subviews {
+            subview.removeFromSuperview()
         }
         var rows: [UIView] = []
         for model in models {
@@ -1104,6 +1150,8 @@ final class BearySettingsViewController: UIViewController {
             group.card.trailingAnchor.constraint(equalTo: accountSwitchWrap.trailingAnchor),
             group.card.bottomAnchor.constraint(equalTo: accountSwitchWrap.bottomAnchor),
         ])
+        cachedSwitchFingerprint = fingerprint
+        switchCardBuilt = true
         accountSwitchWrap.isHidden = false
     }
 
