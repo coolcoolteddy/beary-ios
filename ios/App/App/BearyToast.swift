@@ -18,6 +18,12 @@ import UIKit
 /// 故与旧 -158 同值），仅底栏可见落底栏顶之上 12pt（底栏底边安全区 -6、
 /// 高 58、顶为 -64，故为 -76）；两者皆无或容器不在 Chrome 子页内
 /// （全屏模态等盖住 Chrome 的页）落安全区 -32pt。
+/// 键盘避让（审计第 10 项）：上述落点只是无键盘时的基线；键盘升起时
+/// 若键盘顶边高于该基线对应的遮挡边界，toast 改落键盘顶之上 12pt，
+/// 取两者中更高的遮挡边界（min），键盘收起后落回基线。基线在 show 时
+/// 冻结（与旧行为一致，显示期内底栏/FAB 变化不重算）；键盘位置在
+/// 显示期内随键盘通知实时跟随，与键盘同速同曲线移动。编辑器自身的
+/// keyboardWillShow/Hide 处理不动，本文件只读键盘通知、不改编辑器。
 /// 新 toast 先清同容器旧 toast：草稿箱 G7“新 toast 先清旧 toast”
 /// 原语义由此处统一承接，其余页旧实现的多例叠加/计时互踩一并收敛；
 /// 旧 toast 挂起的到点闭包只持有旧视图，移除后为空操作，不会误清新 toast。
@@ -30,14 +36,17 @@ enum BearyToast {
         let toast = BearyToastView(message: message)
         container.addSubview(toast)
         container.bringSubviewToFront(toast)
+        let bottomConstraint = toast.bottomAnchor.constraint(
+            equalTo: container.safeAreaLayoutGuide.bottomAnchor,
+            constant: bottomConstant(for: container))
         NSLayoutConstraint.activate([
             toast.centerXAnchor.constraint(equalTo: container.centerXAnchor),
             toast.leadingAnchor.constraint(greaterThanOrEqualTo: container.leadingAnchor, constant: 20),
             toast.trailingAnchor.constraint(lessThanOrEqualTo: container.trailingAnchor, constant: -20),
-            toast.bottomAnchor.constraint(
-                equalTo: container.safeAreaLayoutGuide.bottomAnchor,
-                constant: bottomConstant(for: container)),
+            bottomConstraint,
         ])
+        // 键盘避让接线：基线即上面刚算出的 constant，键盘态由此处起跟随。
+        toast.bindKeyboardAvoidance(bottomConstraint: bottomConstraint, container: container)
         // 8-8：VoiceOver 播报——toast 仅为普通 UIView + UILabel 时 VoiceOver
         // 用户可能错过反馈，显示时同步发 announcement（减动效与否同播）。
         UIAccessibility.post(notification: .announcement, argument: message)
@@ -108,6 +117,96 @@ enum BearyToast {
 private final class BearyToastView: UIView {
 
     private let label = UILabel()
+
+    // MARK: - 键盘避让（审计第 10 项）
+
+    /// show 时冻结的无键盘基线（底栏/FAB/-32 回落，见 BearyToast 注释）；
+    /// 显示期内只动键盘这一项，不重算基线，其他触发点行为与旧版一致。
+    private var baseBottomConstant: CGFloat = -32
+    private weak var toastContainer: UIView?
+    private var bottomConstraint: NSLayoutConstraint?
+    /// 键盘在 container 坐标系中的顶边；nil = 无贴底键盘（未弹出、
+    /// 已收起、或悬浮/分体等不贴底边、不盖住底部 toast 的形态）。
+    private var keyboardTopInContainer: CGFloat?
+
+    /// 接线：存基线与底部约束，读一次键盘当前态（键盘可能在 toast
+    /// 出现前就已升起——通知不会重播，故不能只等通知；keyboardLayoutGuide
+    /// 的 layoutFrame 在键盘已升起时即为当前键盘帧，补上这一拍），
+    /// 随后用键盘通知跟随位置变化。deinit 时注销，不留野观察者。
+    func bindKeyboardAvoidance(bottomConstraint: NSLayoutConstraint, container: UIView) {
+        baseBottomConstant = bottomConstraint.constant
+        self.bottomConstraint = bottomConstraint
+        toastContainer = container
+        let guideFrame = container.keyboardLayoutGuide.layoutFrame
+        keyboardTopInContainer = guideFrame.height > 0 ? guideFrame.minY : nil
+        applyKeyboardAvoidance()
+        let center = NotificationCenter.default
+        center.addObserver(self, selector: #selector(keyboardDidChange(_:)),
+                           name: UIResponder.keyboardWillShowNotification, object: nil)
+        center.addObserver(self, selector: #selector(keyboardDidChange(_:)),
+                           name: UIResponder.keyboardWillHideNotification, object: nil)
+        center.addObserver(self, selector: #selector(keyboardDidChange(_:)),
+                           name: UIResponder.keyboardWillChangeFrameNotification, object: nil)
+    }
+
+    deinit {
+        NotificationCenter.default.removeObserver(self)
+    }
+
+    @objc private func keyboardDidChange(_ notification: Notification) {
+        guard let container = toastContainer, superview != nil else { return }
+        if notification.name == UIResponder.keyboardWillHideNotification {
+            keyboardTopInContainer = nil
+        } else if let frameValue = notification.userInfo?[UIResponder.keyboardFrameEndUserInfoKey] as? NSValue {
+            // 与编辑器 applyKeyboard 同口径：from: nil 即按 window 坐标换算。
+            let inContainer = container.convert(frameValue.cgRectValue, from: nil)
+            let bounds = container.bounds
+            // 只认贴底键盘：帧须与容器相交且触到容器底边；悬浮键盘
+            // （帧悬在半空、不触底边）不盖底部 toast，不应把 toast 顶上去。
+            // 收起途中的 WillChangeFrame 终帧在屏外（minY 已过底边），同判为无。
+            if inContainer.minY < bounds.maxY - 1, inContainer.maxY >= bounds.maxY - 1,
+               inContainer.intersects(bounds) {
+                keyboardTopInContainer = inContainer.minY
+            } else {
+                keyboardTopInContainer = nil
+            }
+        }
+        var duration: TimeInterval = 0.25
+        var curveRaw: UInt = 0
+        if let userInfo = notification.userInfo {
+            if let d = userInfo[UIResponder.keyboardAnimationDurationUserInfoKey] as? Double {
+                duration = d
+            }
+            if let c = userInfo[UIResponder.keyboardAnimationCurveUserInfoKey] as? NSNumber {
+                curveRaw = c.uintValue
+            }
+        }
+        if UIAccessibility.isReduceMotionEnabled {
+            applyKeyboardAvoidance()
+            container.layoutIfNeeded()
+        } else {
+            let options = UIView.AnimationOptions(rawValue: curveRaw << 16)
+            UIView.animate(withDuration: duration, delay: 0,
+                           options: [options, .beginFromCurrentState], animations: { [weak self] in
+                self?.applyKeyboardAvoidance()
+                container.layoutIfNeeded()
+            })
+        }
+    }
+
+    /// 落点 = min(基线, 键盘顶之上 12pt)：键盘顶更高（Y 更小）时取键盘，
+    /// 否则维持基线；无键盘时恒为基线，与旧版逐像素一致。
+    /// 仅改 constant，不触布局本身；初次调用时只设值、不强制布局，
+    /// 由系统下一布局拍统一生效。
+    private func applyKeyboardAvoidance() {
+        guard let container = toastContainer, let constraint = bottomConstraint else { return }
+        var constant = baseBottomConstant
+        if let top = keyboardTopInContainer {
+            let safeBottomY = container.bounds.height - container.safeAreaInsets.bottom
+            constant = min(constant, top - 12 - safeBottomY)
+        }
+        constraint.constant = constant
+    }
 
     init(message: String) {
         super.init(frame: .zero)
