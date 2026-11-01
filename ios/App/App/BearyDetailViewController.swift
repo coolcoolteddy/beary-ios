@@ -150,6 +150,9 @@ final class BearyDetailViewController: UIViewController {
     private lazy var avatarRetryButton: BearyFeedRetryButton = {
         bearyFeedRetryButton(target: self, action: #selector(detailImageRetryTapped(_:)))
     }()
+    /// 审计 11：上次已渲染的头像 URL——URL 不变时保留当前图片，不重走
+    /// bearySetImage（它会取消在途任务、清图重下，造成头像闪烁）。
+    private var lastRenderedAvatarURL: URL?
     /// @ 行：首页 recipientRow 同款（13 图标 + 12 粗体橙，间距 5）；点按走 mentionTapped。
     /// 112 视觉扫查：@ 行文案是“@名”，图标须用 icon_at（编辑器 @ 钮、草稿箱 @ chip、
     /// 消息页 @ 角标同款）；此前误用 icon_mail 信封（系统信件图标），与 @ 语义不符。
@@ -1169,11 +1172,21 @@ final class BearyDetailViewController: UIViewController {
             timeLabel.text = nil
         }
         if let avatarPath = entry.authorAvatar, let url = BearyImageURLs.avatarURL(avatarPath) {
-            bearyFeedLoadImage(into: avatarImageView, url: url, retryButton: avatarRetryButton, downsampleToWidth: 80)
+            // 审计 11：URL 不变且已有图时保留当前图片，不重走加载流程；
+            // 在途任务不被取消、已图不被清掉。URL 变了、或上次加载已失败
+            // （无图且重试钮已亮）时才重新加载；在途（无图、重试钮未亮）
+            // 时不打断，让原任务自然完成。
+            if lastRenderedAvatarURL != url || (avatarImageView.image == nil && !avatarRetryButton.isHidden) {
+                bearyFeedLoadImage(into: avatarImageView, url: url, retryButton: avatarRetryButton, downsampleToWidth: 80)
+                lastRenderedAvatarURL = url
+            }
         } else {
-            avatarImageView.bearySetImage(url: nil)
-            avatarRetryButton.isHidden = true
-            avatarRetryButton.retryURL = nil
+            if lastRenderedAvatarURL != nil || avatarImageView.image != nil {
+                avatarImageView.bearySetImage(url: nil)
+                avatarRetryButton.isHidden = true
+                avatarRetryButton.retryURL = nil
+                lastRenderedAvatarURL = nil
+            }
         }
         if let mentioned = entry.mentionedName, !mentioned.isEmpty {
             recipientRow.isHidden = false
@@ -1186,6 +1199,16 @@ final class BearyDetailViewController: UIViewController {
         badgeImageView.image = nil
         badgeImageView.isHidden = true
         setCrownHidden((entry.authorPlus ?? 0) != 1 || !crownView.hasCrown)
+        renderWeatherTemp()
+        moodStack.isHidden = true
+        moodLabel.text = nil
+        moodEmoteView?.removeFromSuperview()
+        moodEmoteView = nil
+    }
+
+    /// 天气图标 + 气温标签（renderHeaderMeta 的一部分，审计 4/11 抽出）：
+    /// 只变天气/气温时，后台补齐路径只调这里，不重走整段头部（含头像）。
+    private func renderWeatherTemp() {
         if let weatherKey = entry.weather, !weatherKey.isEmpty,
            let weatherImage = BearyFeedIconCache.image(named: "icon_wx_" + weatherKey, pointSize: 15) {
             weatherImageView.image = weatherImage
@@ -1204,10 +1227,6 @@ final class BearyDetailViewController: UIViewController {
             weatherTempLabel.text = nil
             weatherTempLabel.isHidden = true
         }
-        moodStack.isHidden = true
-        moodLabel.text = nil
-        moodEmoteView?.removeFromSuperview()
-        moodEmoteView = nil
     }
 
 
@@ -1301,14 +1320,27 @@ final class BearyDetailViewController: UIViewController {
         // 内容页本身被占位过时（本路径不会发生：卡片数据恒为内容态），先恢复内容区。
         setContentVisible(true)
         placeholderStateView.isHidden = true
-        if old.authorName != merged.authorName || old.createdAt != merged.createdAt || old.authorAvatar != merged.authorAvatar || old.authorBadge != merged.authorBadge || old.authorPlus != merged.authorPlus || old.mood != merged.mood || old.weather != merged.weather || old.mentionedName != merged.mentionedName || old.mentionedUserId != merged.mentionedUserId {
+        // 审计 4/11：头部按元素判定。天气/气温单独成支——只变气温时不
+        // 再因缺 temperatureC 的分支条件漏刷，也不再整段重走头部；
+        // 心情不参与头部渲染（#421 后心情只缀正文末尾），不再列入头部
+        // 触发条件；淡入只给真正变化的文字，头像 URL 不变时由
+        // renderHeaderMeta 内的 lastRenderedAvatarURL 守卫保留当前图片。
+        let nameChanged = old.authorName != merged.authorName
+        let timeChanged = old.createdAt != merged.createdAt
+        let recipientChanged = old.mentionedName != merged.mentionedName
+        let weatherChanged = old.weather != merged.weather || old.temperatureC != merged.temperatureC
+        let headerMetaChanged = nameChanged || timeChanged || old.authorAvatar != merged.authorAvatar || old.authorBadge != merged.authorBadge || old.authorPlus != merged.authorPlus || recipientChanged || old.mentionedUserId != merged.mentionedUserId
+        if headerMetaChanged {
             renderHeaderMeta()
-            // 116：头信息文案变化时只淡入文案元素（头像图与徽章／天气／
-            // 心情图标为图片，到达即显，不在此淡入）。
-            fadeButtonTitle(nameButton)
-            fadeLabel(timeLabel)
-            fadeLabel(recipientLabel)
-            fadeLabel(moodLabel)
+            // 116：头信息文案变化时只淡入真正变化的元素（头像图与徽章／
+            // 天气图标为图片，到达即显，不在此淡入；气温是文字，变了才淡入）。
+            if nameChanged { fadeButtonTitle(nameButton) }
+            if timeChanged { fadeLabel(timeLabel) }
+            if recipientChanged { fadeLabel(recipientLabel) }
+            if weatherChanged && !weatherTempLabel.isHidden { fadeLabel(weatherTempLabel) }
+        } else if weatherChanged {
+            renderWeatherTemp()
+            if !weatherTempLabel.isHidden { fadeLabel(weatherTempLabel) }
         }
         if old.title != merged.title {
             let trimmedTitle = (merged.title ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
@@ -1325,8 +1357,26 @@ final class BearyDetailViewController: UIViewController {
             // 116：后台补齐文案变化时只淡入文案元素。
             if !bodyLabel.isHidden { fadeLabel(bodyLabel) }
         }
-        if (old.images ?? []) != (merged.images ?? []) {
+        // 审计 8：图片条按 key、尺寸、实况映射分别比对。只变尺寸或实况
+        // 时不重走 renderImages（它会重下全部图片），只更新变化槽位的
+        // 宽约束与实况覆盖层；key 变了（增删换图）才整条重建。
+        let oldImageKeys = Array((old.images ?? []).filter { !$0.isEmpty }.prefix(9))
+        let newImageKeys = Array((merged.images ?? []).filter { !$0.isEmpty }.prefix(9))
+        let imageKeysChanged = oldImageKeys != newImageKeys
+        let imageDimsChanged = (old.imgDims ?? [:]) != (merged.imgDims ?? [:])
+        let liveMapChanged = (old.liveVideos ?? [:]) != (merged.liveVideos ?? [:])
+        if imageKeysChanged || imageSlots.isEmpty {
             renderImages()
+        } else if imageDimsChanged || liveMapChanged {
+            for (slotIndex, imageKey) in newImageKeys.enumerated() {
+                guard slotIndex < imageSlots.count, slotIndex < imageSlotWidthConstraints.count else { continue }
+                if imageDimsChanged {
+                    imageSlotWidthConstraints[slotIndex].constant = stripWidth(forKey: imageKey, dims: merged.imgDims, height: 216)
+                }
+                if liveMapChanged {
+                    setLiveOverlay(index: slotIndex, staticKey: imageKey, liveKey: merged.liveVideos?[imageKey])
+                }
+            }
         }
         // 批 E：位置字段或可见性/限时态变化时位置行重算（公开翻私密恢复精确，反之脱敏）。
         if old.locationName != merged.locationName || old.locationDistrict != merged.locationDistrict || old.isPublic != merged.isPublic || old.ephemeralUntil != merged.ephemeralUntil {

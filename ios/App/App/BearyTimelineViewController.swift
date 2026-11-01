@@ -2763,8 +2763,22 @@ class BearyTimelineViewController: UIViewController {
         // 首拉（时间线自己的首拉已覆盖，预取只写缓存、无需重复请求）。
         BearyTimelinePrefetch.cancelPendingPrefetch()
         let bucket = BearyFeedCache.bucket(userId: SessionManager.shared.currentUser?.id ?? BearyFeedCache.lastKnownUserId())
-        guard let snap = BearyTimelineCache.load(bucket: bucket), !snap.entries.isEmpty else {
-            reloadTimeline()
+        // 审计 13：读盘 + 解码在缓存 IO 队列，界面先不阻塞；回包到主线程
+        // 后再应用。桶已换（账号切换）时旧回包直接丢弃，不覆盖新桶内容。
+        BearyTimelineCache.load(bucket: bucket) { [weak self] snap in
+            guard let self = self else { return }
+            self.applyTimelineCacheSnapshot(snap, bucket: bucket)
+        }
+    }
+
+    /// 审计 13：缓存快照应用体（loadTimelineCachedOrRefresh 的异步回包
+    /// 在此落地；抽成方法只为避开逃逸闭包里的隐式 self，语义与原同步
+    /// 版一致：桶已换时旧回包丢弃，空快照走 reloadTimeline 全量路径。
+    private func applyTimelineCacheSnapshot(_ snap: (entries: [Entry], hasMore: Bool, trashCount: Int, total: Int?, priv: Int?, pub: Int?, savedAt: TimeInterval)?, bucket: String) {
+        let currentBucket = BearyFeedCache.bucket(userId: SessionManager.shared.currentUser?.id ?? BearyFeedCache.lastKnownUserId())
+        guard currentBucket == bucket else { return }
+        guard let snap = snap, !snap.entries.isEmpty else {
+            self.reloadTimeline()
             return
         }
         if calendarAnchor == nil {
@@ -3678,9 +3692,13 @@ class BearyTimelineViewController: UIViewController {
         return size.height
     }
 
-    /// TL-4 翻页/切换动效：先 180ms 淡出 + 横移 8px（网页 .cal-fading 口径），
-    /// 再执行变更并以 .24s 高度 FLIP 过渡到新表头高度（网页 calHeightAnim 口径），
-    /// 同时淡回。reduced-motion 时直接变更、无动效。
+    /// TL-4 翻页/切换动效（审计 14 重构）：目标切换与补拉请求先行——
+    /// mutate（含 renderCalendar 与 fetchCalendarMonthsForCurrentView）
+    /// 在动画开始前同步执行，请求不再等 0.18s 淡出才发起；视觉只剩
+    /// 一次 0.22s 交接（淡入 + 横移回位 + 表头高度 FLIP），合计约
+    /// 0.22s（原 0.18 淡出 + 0.24 淡回 ≈ 0.42s）。同一 runloop 内先
+    /// mutate 再把卡片置为淡出初态，下一帧才开始呈现，故用户看不到
+    /// 未过动画的新内容闪现；减动效时仍直接变更、无动效。
     /// 6-3 例外（日历高度部分，定版不改 transform）：表头高度本身就是
     /// tableHeaderView 的布局高度，表体各行必须随高度差整体平移——只对
     /// calendarCard 做 scaleY 会把格子/日期圆压扁（30pt 圆、50pt 行高失真），
@@ -3694,29 +3712,20 @@ class BearyTimelineViewController: UIViewController {
             refreshHeaderHeight()
             return
         }
-        UIView.animate(withDuration: 0.18, animations: {
-            self.calendarCard.alpha = 0
-            self.calendarCard.transform = CGAffineTransform(translationX: 8, y: 0)
-        }, completion: { [weak self] _ in
-            guard let strongSelf = self else { return }
-            mutate()
-            let oldHeight = strongSelf.headerContainer.frame.height
-            let newHeight = strongSelf.fittingHeaderHeight()
-            if abs(newHeight - oldHeight) < 1 {
-                UIView.animate(withDuration: 0.18, animations: {
-                    strongSelf.calendarCard.alpha = 1
-                    strongSelf.calendarCard.transform = .identity
-                }, completion: { _ in strongSelf.refreshHeaderHeight() })
-                return
+        let oldHeight = headerContainer.frame.height
+        mutate()
+        let newHeight = fittingHeaderHeight()
+        calendarCard.alpha = 0
+        calendarCard.transform = CGAffineTransform(translationX: 8, y: 0)
+        UIView.animate(withDuration: 0.22, delay: 0, options: [.beginFromCurrentState, .curveEaseOut], animations: {
+            self.calendarCard.alpha = 1
+            self.calendarCard.transform = .identity
+            if abs(newHeight - oldHeight) >= 1 {
+                self.headerContainer.frame = CGRect(x: 0, y: 0, width: self.tableView.bounds.width, height: newHeight)
+                self.tableView.tableHeaderView = self.headerContainer
+                self.tableView.layoutIfNeeded()
             }
-            UIView.animate(withDuration: 0.24, delay: 0, options: [.beginFromCurrentState], animations: {
-                strongSelf.headerContainer.frame = CGRect(x: 0, y: 0, width: strongSelf.tableView.bounds.width, height: newHeight)
-                strongSelf.tableView.tableHeaderView = strongSelf.headerContainer
-                strongSelf.calendarCard.alpha = 1
-                strongSelf.calendarCard.transform = .identity
-                strongSelf.tableView.layoutIfNeeded()
-            }, completion: { _ in strongSelf.refreshHeaderHeight() })
-        })
+        }, completion: { [weak self] _ in self?.refreshHeaderHeight() })
     }
 
     /// 月视图错峰时要跳过的本周日期 key（网页 calStaggerMonthCells 口径）。
@@ -4364,15 +4373,23 @@ class BearyTimelineViewController: UIViewController {
         return true
     }
 
-    /// 行内容签名：正文 + 公开态 + 互动数字，用于 diff 判定“变化行”。
+    /// 行内容签名：用于 diff 判定“变化行”。须覆盖行实际绘制的全部字段，
+    /// 审计 5：此前只含正文/公开态/互动/定位——只改图片/尺寸/天气/气温/
+    /// 心情/标题/引用/作者时会被判“无变化”而跳过重载，行恒显旧值。
+    /// 变化行的更新仍走既有批更新（delete/insert/reloadRows）：未变化
+    /// 的行不动表、不整表 reloadData，滚动位置不受影响；本函数只修
+    /// “判不判得出变化”这一环，不另起更新机制。
     private func entrySignature(_ entry: Entry) -> String {
         var emoteParts: [String] = []
         for emote in entry.emotes ?? [] {
             emoteParts.append("\(emote.emote ?? ""):\(emote.count ?? 0):\(emote.mine ?? false)")
         }
-        // 批 E 补漏：签名此前不含定位——只改定位（编辑加定位、清定位、翻
-        // 可见性改脱敏）的静默刷新会被判“无变化”而跳过重载，位置行恒旧。
-        return "\(entry.content ?? "")|\(entry.isPublic ?? false)|\(entry.likeCount ?? 0)|\(entry.likedByMe ?? false)|\(entry.bookmarkedByMe ?? false)|\(emoteParts.joined(separator: ","))|\(entry.locationName ?? "")|\(entry.locationDistrict ?? "")"
+        let images = (entry.images ?? []).joined(separator: ",")
+        let dims = (entry.imgDims ?? [:]).map { "\($0.key):\($0.value.map(String.init).joined(separator: "x"))" }.sorted().joined(separator: ",")
+        let live = (entry.liveVideos ?? [:]).map { "\($0.key)=\($0.value)" }.sorted().joined(separator: ",")
+        let quote = entry.quote
+        let quotePart = "\(entry.quoteId ?? "")|\(quote?.id ?? "")|\(quote?.content ?? "")|\(quote?.gone ?? false)|\(quote?.locked ?? false)|\(quote?.isPublic ?? false)"
+        return "\(entry.content ?? "")|\(entry.isPublic ?? false)|\(entry.likeCount ?? 0)|\(entry.likedByMe ?? false)|\(entry.bookmarkedByMe ?? false)|\(entry.bookmarkCount ?? 0)|\(emoteParts.joined(separator: ","))|\(entry.locationName ?? "")|\(entry.locationDistrict ?? "")|\(images)|\(dims)|\(live)|\(entry.weather ?? "")|\(entry.temperatureC.map(String.init) ?? "")|\(entry.mood ?? "")|\(entry.title ?? "")|\(quotePart)|\(entry.authorName ?? "")|\(entry.authorAvatar ?? "")|\(entry.authorBadge ?? "")|\(entry.authorPlus ?? 0)|\(entry.mentionedName ?? "")|\(entry.createdAt ?? 0)|\(entry.publishedAt ?? 0)|\(entry.ephemeralUntil ?? 0)"
     }
 
     private func loadTimelineNextPage() {
@@ -6258,6 +6275,14 @@ enum BearyTimelinePrefetchStrip {
 /// 只在已登录时调用）。快照字段：savedAt、entries、hasMore、
 /// trashCount、计数 total/priv/pub（TlCounts 仅 Decodable，故拆存）。
 enum BearyTimelineCache {
+    /// 审计 13：与 BearyFeedCache 同款——读写与编解码走独立串行队列，
+    /// 不占主线程；读写同队列保证同一会话内写后读顺序。快照只存窗口
+    /// （snapshotEntryLimit 条，随翻页增长的整表不再落盘）；窗口外还有
+    /// 篇时 hasMore 强制为真，截断后的分页游标是窗口末条，before 续拉
+    /// 恰好取回被截掉的旧篇，续接不断。
+    private static let ioQueue = DispatchQueue(label: "beary.timelineCache.io", qos: .utility)
+    static let snapshotEntryLimit = 60
+
     private struct Snapshot: Codable {
         var savedAt: TimeInterval
         var entries: [Entry]
@@ -6273,18 +6298,28 @@ enum BearyTimelineCache {
         return dir.appendingPathComponent("beary_timeline_cache_\(bucket).json")
     }
 
-    static func load(bucket: String) -> (entries: [Entry], hasMore: Bool, trashCount: Int, total: Int?, priv: Int?, pub: Int?, savedAt: TimeInterval)? {
-        guard let url = fileURL(bucket: bucket), let data = try? Data(contentsOf: url) else { return nil }
-        guard let snap = try? JSONDecoder().decode(Snapshot.self, from: data) else { return nil }
-        return (snap.entries, snap.hasMore, snap.trashCount, snap.total, snap.priv, snap.pub, snap.savedAt)
+    static func load(bucket: String, completion: @escaping ((entries: [Entry], hasMore: Bool, trashCount: Int, total: Int?, priv: Int?, pub: Int?, savedAt: TimeInterval)?) -> Void) {
+        ioQueue.async {
+            var result: (entries: [Entry], hasMore: Bool, trashCount: Int, total: Int?, priv: Int?, pub: Int?, savedAt: TimeInterval)?
+            if let url = fileURL(bucket: bucket), let data = try? Data(contentsOf: url),
+               let snap = try? JSONDecoder().decode(Snapshot.self, from: data) {
+                result = (snap.entries, snap.hasMore, snap.trashCount, snap.total, snap.priv, snap.pub, snap.savedAt)
+            }
+            let captured = result
+            DispatchQueue.main.async { completion(captured) }
+        }
     }
 
     static func save(bucket: String, entries: [Entry], hasMore: Bool, trashCount: Int, counts: TlCounts?) {
-        guard let url = fileURL(bucket: bucket) else { return }
-        let snap = Snapshot(savedAt: Date().timeIntervalSince1970, entries: entries, hasMore: hasMore, trashCount: trashCount, total: counts?.total, priv: counts?.priv, pub: counts?.pub)
-        guard let data = try? JSONEncoder().encode(snap) else { return }
-        try? FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
-        try? data.write(to: url, options: .atomic)
+        let capped = Array(entries.prefix(snapshotEntryLimit))
+        let storedHasMore = hasMore || entries.count > snapshotEntryLimit
+        let snap = Snapshot(savedAt: Date().timeIntervalSince1970, entries: capped, hasMore: storedHasMore, trashCount: trashCount, total: counts?.total, priv: counts?.priv, pub: counts?.pub)
+        ioQueue.async {
+            guard let url = fileURL(bucket: bucket) else { return }
+            guard let data = try? JSONEncoder().encode(snap) else { return }
+            try? FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try? data.write(to: url, options: .atomic)
+        }
     }
 
     /// 秒开-本地持久化：登出 / 会话失效时清当前账号的时间线快照。
@@ -6312,44 +6347,61 @@ enum BearyTimelinePrefetch {
     /// 秒开-启动瘦身：待发的空闲预取（首屏回包后 2 秒才真正发请求，见 maybePrefetch；
     /// 时间线自己开页时取消——自己的首拉已覆盖，不再重复发一份）。
     private static var pendingWorkItem: DispatchWorkItem?
+    /// 审计 13：异步新鲜度检查在途标志 + 代际——检查在途时被取消，
+    /// 回包不再排队新任务（见 cancelPendingPrefetch）。
+    private static var freshnessCheckInFlight = false
+    private static var prefetchGeneration = 0
 
     static func maybePrefetch() {
-        guard didPrefetch == false, pendingWorkItem == nil,
+        guard didPrefetch == false, pendingWorkItem == nil, freshnessCheckInFlight == false,
               let uid = SessionManager.shared.currentUser?.id else { return }
         let bucket = BearyFeedCache.bucket(userId: uid)
-        if let snap = BearyTimelineCache.load(bucket: bucket), !snap.entries.isEmpty,
-           Date().timeIntervalSince1970 - snap.savedAt < 600 {
-            didPrefetch = true
-            return
-        }
-        // 秒开-启动瘦身：此前在广场首拉成功当刻立即发时间线首拉，仍挤在
-        // 首屏窗口里；现改为空闲 2 秒后再发——首屏图片/动效已让出窗口，且
-        // 触发点仍在首屏回包之后。触发时重查登录态与缓存新鲜度：期间用户
-        // 已开时间线（取消）或缓存已新（命中）时不再发；失败不置 didPrefetch，
-        // 下次广场首拉成功时可再排队。取数口径跟随秒开·首屏再瘦（只拉 12 条，
-        // #456 原文 50 已过期，不跟），hasMore 阈值同步 12。
-        let item = DispatchWorkItem {
-            pendingWorkItem = nil
-            guard didPrefetch == false, let uid = SessionManager.shared.currentUser?.id else { return }
-            let bucket = BearyFeedCache.bucket(userId: uid)
-            if let snap = BearyTimelineCache.load(bucket: bucket), !snap.entries.isEmpty,
+        // 审计 13：新鲜度检查的读盘 + 解码走缓存 IO 队列，不占主线程；
+        // 检查在途时被取消（时间线自己开页）须让回包不再排队，用代际守卫。
+        let generation = prefetchGeneration
+        freshnessCheckInFlight = true
+        BearyTimelineCache.load(bucket: bucket) { snap in
+            freshnessCheckInFlight = false
+            guard generation == prefetchGeneration, didPrefetch == false, pendingWorkItem == nil else { return }
+            if let snap = snap, !snap.entries.isEmpty,
                Date().timeIntervalSince1970 - snap.savedAt < 600 {
                 didPrefetch = true
                 return
             }
-            BearyAPI.shared.fetchEntries(scope: .timeline, limit: 12) { result in
-                guard case .success(let list) = result, let entries = list.entries, !entries.isEmpty else { return }
-                BearyTimelineCache.save(bucket: bucket, entries: entries, hasMore: entries.count >= 12, trashCount: list.trashCount ?? 0, counts: list.tlCounts)
-                didPrefetch = true
+            // 秒开-启动瘦身：此前在广场首拉成功当刻立即发时间线首拉，仍挤在
+            // 首屏窗口里；现改为空闲 2 秒后再发——首屏图片/动效已让出窗口，且
+            // 触发点仍在首屏回包之后。触发时重查登录态与缓存新鲜度：期间用户
+            // 已开时间线（取消）或缓存已新（命中）时不再发；失败不置 didPrefetch，
+            // 下次广场首拉成功时可再排队。取数口径跟随秒开·首屏再瘦（只拉 12 条，
+            // #456 原文 50 已过期，不跟），hasMore 阈值同步 12。
+            let item = DispatchWorkItem {
+                pendingWorkItem = nil
+                guard didPrefetch == false, let uid = SessionManager.shared.currentUser?.id else { return }
+                let bucket = BearyFeedCache.bucket(userId: uid)
+                BearyTimelineCache.load(bucket: bucket) { snap in
+                    guard didPrefetch == false else { return }
+                    if let snap = snap, !snap.entries.isEmpty,
+                       Date().timeIntervalSince1970 - snap.savedAt < 600 {
+                        didPrefetch = true
+                        return
+                    }
+                    BearyAPI.shared.fetchEntries(scope: .timeline, limit: 12) { result in
+                        guard case .success(let list) = result, let entries = list.entries, !entries.isEmpty else { return }
+                        BearyTimelineCache.save(bucket: bucket, entries: entries, hasMore: entries.count >= 12, trashCount: list.trashCount ?? 0, counts: list.tlCounts)
+                        didPrefetch = true
+                    }
+                }
             }
+            pendingWorkItem = item
+            DispatchQueue.main.asyncAfter(deadline: .now() + 2.0, execute: item)
         }
-        pendingWorkItem = item
-        DispatchQueue.main.asyncAfter(deadline: .now() + 2.0, execute: item)
     }
 
     /// 秒开-启动瘦身：时间线自己的首载接管时取消待发预取（在途请求不取消，
-    /// 只写缓存、无界面副作用，与首拉并存无害）。
+    /// 只写缓存、无界面副作用，与首拉并存无害）。审计 13：同时代际 +1，
+    /// 让在途新鲜度检查的回包不再排队新任务。
     static func cancelPendingPrefetch() {
+        prefetchGeneration += 1
         pendingWorkItem?.cancel()
         pendingWorkItem = nil
     }

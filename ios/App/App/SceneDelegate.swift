@@ -2195,7 +2195,10 @@ final class BearyChromeViewController: UIViewController {
                         self.profileVC?.removeDeletedEntry(entryId: entryId)
                         if let uid = SessionManager.shared.currentUser?.id {
                             let bucket = BearyFeedCache.bucket(userId: uid)
-                            if let snap = BearyFeedCache.load(bucket: bucket) {
+                            // 审计 13：快照读盘异步化后的机械适配——读 + 过滤 +
+                            // 写回仍走同一缓存 IO 队列，写后读顺序有保证，语义不变。
+                            BearyFeedCache.load(bucket: bucket) { snap in
+                                guard let snap = snap else { return }
                                 let kept = snap.entries.filter { $0.id != entryId }
                                 if kept.count != snap.entries.count {
                                     BearyFeedCache.save(bucket: bucket, entries: kept, hasMore: snap.hasMore)
