@@ -118,6 +118,13 @@ extension BearyAPI {
         request("/api/account/sessions", completion: completion)
     }
 
+    /// 导出专用 GET /api/account/sessions：与上法同口径，但走隔离请求、
+    /// 凭据固定为导出账号的 token；401 只返回 .unauthorized，永不触发
+    /// onUnauthorized（见 BearyAPI.requestWithToken 说明）。
+    func fetchAccountSessionsWithToken(_ token: String, completion: @escaping (Result<BearyAccountSessionsResponse, APIError>) -> Void) {
+        requestWithToken("/api/account/sessions", token: token, completion: completion)
+    }
+
     /// GET /api/account/plus-detail（Plus 分层 + 发放账本；未登录 401）。
     func fetchPlusDetail(completion: @escaping (Result<BearyPlusDetailResponse, APIError>) -> Void) {
         request("/api/account/plus-detail", completion: completion)
@@ -1289,6 +1296,13 @@ final class BearySettingsViewController: UIViewController {
     @objc private func switchAccountButtonTapped(_ sender: UIButton) {
         let accountIdValue = sender.tag
         guard !isSwitchingAccount else { return }
+        // 账号隔离改造：导出进行中禁止切换——旧代码只查 isSwitchingAccount，
+        // 导出按钮置灰但账号行照常可点，导出链中途切号会让 profile 与
+        // entries 分属两个账号。导出中点切换行直接提示、不启动切换。
+        guard !isExporting else {
+            showToast("正在导出，请稍后再切换账号")
+            return
+        }
         if SessionManager.shared.currentUser?.id == accountIdValue {
             return
         }
@@ -1989,26 +2003,73 @@ final class BearySettingsViewController: UIViewController {
 
     // MARK: - 导出我的数据（客户端拼 JSON，不新编服务端接口）
 
+    /// 导出钉住的账号与凭据：token = 导出开始时共享桶里的当前会话
+    /// token（只读一次，之后全程用它发隔离请求）；epoch = 同一时刻的
+    /// 鉴权代际；userId = 隔离 /me 回包确认后的账号 id（导出开始时
+    /// currentUser 可能尚未刷新，故先以 /me 为准，之后各步再比对）。
+    private typealias BearyExportPin = (userId: Int?, token: String, epoch: Int)
+
+    /// 导出账号是否已变（主线程调用）：epoch 变化（切换/退出/新登录/
+    /// 401 清态都会推 epoch）即变；currentUser 已存在且与钉住 id 不
+    /// 同也算变。currentUser 为 nil 时不以 id 判（导出开始时可能尚未
+    /// 刷新，epoch 已覆盖切换/退出情形），避免误杀。
+    private func exportPinChanged(_ pin: BearyExportPin) -> Bool {
+        if BearyAPI.shared.authEpoch != pin.epoch { return true }
+        if let pinnedId = pin.userId, let currentId = SessionManager.shared.currentUser?.id, currentId != pinnedId {
+            return true
+        }
+        return false
+    }
+
+    /// 账号变化取消整次导出：只 toast、不拼文件、不出分享面板。
+    /// 调用时导出链尚未产生文件（文件只在 buildAndShareExport 写盘，
+    /// 该处取消另行删已写文件，见该方法）；分享面板尚未 present，
+    /// 故无“停止分享”动作可做——已 present 的分享不在导出进行中，
+    /// 不属本取消口径（见 PR 残留风险）。
+    private func cancelExportForAccountChange() {
+        isExporting = false
+        exportRowButton.isEnabled = true
+        setExportProgress(nil)
+        showToast("账号已切换，导出已取消")
+    }
+
     @objc private func exportButtonTapped() {
         guard !isExporting else { return }
+        // 账号隔离改造：导出全程固定导出账号与凭据。旧流程开头用共享
+        // cookie 的 /me 拿 user，之后分页全走共享 cookie——中途切号
+        // 会让 profile 是 A、entries 是 B。本流程：先读当前会话 token
+        // 并钉住 epoch，再用该 token 走隔离 /me 确认账号；之后会话、
+        // 我的、信箱、赞过四步全走该 token 的隔离请求，任一步（主线程
+        // 边界）发现 epoch/账号变化即取消整单、不出文件。
+        // 无当前会话 token 时不启动导出、直接走登录门（旧流程此时会
+        // 先 toast“正在导出…”再失败+弹登录，本处直接弹登录、不留
+        // “导出失败”的误导 toast）。
+        guard let token = SessionManager.shared.currentSessionToken(), !token.isEmpty else {
+            onRequireLogin?()
+            return
+        }
+        let startEpoch = BearyAPI.shared.authEpoch
         isExporting = true
         exportRowButton.isEnabled = false
         showToast("正在导出…")
         setExportProgress("正在导出…")
-        BearyAPI.shared.fetchMe { [weak self] result in
+        BearyAPI.shared.fetchMeWithToken(token) { [weak self] result in
             guard let self = self else { return }
-            switch result {
-            case .success(let user):
-                guard let userValue = user else {
-                    DispatchQueue.main.async {
-                        self.finishExportFailed()
-                        self.onRequireLogin?()
-                    }
+            DispatchQueue.main.async {
+                // 隔离 /me 在途时切号/退出都会推 epoch：先判变化再认回包。
+                if BearyAPI.shared.authEpoch != startEpoch {
+                    self.cancelExportForAccountChange()
                     return
                 }
-                self.exportWithUser(userValue)
-            case .failure(let error):
-                DispatchQueue.main.async {
+                switch result {
+                case .success(let user):
+                    guard let userValue = user, let userId = userValue.id else {
+                        self.finishExportFailed()
+                        self.onRequireLogin?()
+                        return
+                    }
+                    self.exportWithUser(userValue, pin: (userId: userId, token: token, epoch: startEpoch))
+                case .failure(let error):
                     self.finishExportFailed()
                     if case .unauthorized = error { self.onRequireLogin?() }
                 }
@@ -2033,7 +2094,7 @@ final class BearySettingsViewController: UIViewController {
         }
     }
 
-    private func exportWithUser(_ user: MeUser) {
+    private func exportWithUser(_ user: MeUser, pin: BearyExportPin) {
         var sessionsResp: BearyAccountSessionsResponse?
         var mineEntries: [Entry] = []
         var mailboxEntries: [Entry] = []
@@ -2043,6 +2104,10 @@ final class BearySettingsViewController: UIViewController {
         var exportFailedReason: String?
         var exportTruncated = false
         var sessionsFailed = false
+        // 账号隔离改造：分页中途发现账号变化时 fetchScopePage 以
+        // reason="账号已切换" 回包（见该方法）；各 scope 边界的主线程
+        // 检查（下）在下一步开始前就停链，不等整条链跑完，finish 处
+        // 的 exportPinChanged 复查兜底最后一 scope 回包后才变的情形。
         // 审计 B 批：4 路并行回调改串行汇集——会话 → 我的 → 信箱 → 赞过依次
         // 拉取，共享变量只在同一串行链上写，不再并发；判定口径不变（失败
         // 优先于触顶；分页失败与触顶同现时以失败为准，不出文件）。
@@ -2058,6 +2123,13 @@ final class BearySettingsViewController: UIViewController {
         }
         let finish: () -> Void = { [weak self] in
             guard let self = self else { return }
+            // 账号变化取消优先于失败/触顶：只 toast 取消、不拼 JSON、
+            // 不出文件、不出分享面板；无残留文件（文件只在
+            // buildAndShareExport 写盘，本处根本没进该方法）。
+            if self.exportPinChanged(pin) {
+                self.cancelExportForAccountChange()
+                return
+            }
             // 失败 fail-closed：只 toast、不拼 JSON、不出文件、不出分享面板。
             if sessionsFailed {
                 self.isExporting = false
@@ -2085,33 +2157,61 @@ final class BearySettingsViewController: UIViewController {
                 let alert = UIAlertController(title: "部分导出", message: "部分导出（已取 \(totalCount) 篇，已达 20 页上限），是否继续分享部分数据？", preferredStyle: .alert)
                 alert.addAction(UIAlertAction(title: "取消", style: .cancel, handler: nil))
                 alert.addAction(UIAlertAction(title: "继续分享", style: .default, handler: { [weak self] _ in
-                    self?.buildAndShareExport(user: user, sessionsResp: sessionsResp, mineEntries: mineEntries, mailboxEntries: mailboxEntries, likedEntries: likedEntries)
+                    self?.buildAndShareExport(user: user, pin: pin, sessionsResp: sessionsResp, mineEntries: mineEntries, mailboxEntries: mailboxEntries, likedEntries: likedEntries)
                 }))
                 self.present(alert, animated: BearyMotion.animated(true))
                 return
             }
-            self.buildAndShareExport(user: user, sessionsResp: sessionsResp, mineEntries: mineEntries, mailboxEntries: mailboxEntries, likedEntries: likedEntries)
+            self.buildAndShareExport(user: user, pin: pin, sessionsResp: sessionsResp, mineEntries: mineEntries, mailboxEntries: mailboxEntries, likedEntries: likedEntries)
         }
         setExportProgress("正在导出（1/4）登录设备…")
-        BearyAPI.shared.fetchAccountSessions { [weak self] result in
+        // 账号隔离改造：会话步走钉住 token 的隔离请求；回包先回主线程
+        // 查钉住账号，变了即取消停链、不进下一 scope。三个日记 scope
+        // 同理：fetchAllEntries 全程用钉住 token，scope 回包先回主线程
+        // 查一次再进下一步；分页内部另有 epoch 检查（见 fetchScopePage）。
+        BearyAPI.shared.fetchAccountSessionsWithToken(pin.token) { [weak self] result in
             guard let self = self else { return }
-            // 审计 P1-23：会话拉取失败不得静默丢弃 sessions 让 JSON 看似完整——
-            // 整单 fail-closed，只 toast、不拼 JSON、不出文件（与三个日记 scope 同口径）。
-            if case .success(let resp) = result {
-                sessionsResp = resp
-            } else {
-                sessionsFailed = true
-            }
-            self.setExportProgress("正在导出（2/4）我的日记…")
-            self.fetchAllEntries(scope: .mine) { result in
-                applyScopeResult(result, &mineEntries)
-                self.setExportProgress("正在导出（3/4）信箱…")
-                self.fetchAllEntries(scope: .mailbox) { result in
-                    applyScopeResult(result, &mailboxEntries)
-                    self.setExportProgress("正在导出（4/4）赞过…")
-                    self.fetchAllEntries(scope: .liked) { result in
-                        applyScopeResult(result, &likedEntries)
-                        DispatchQueue.main.async { finish() }
+            DispatchQueue.main.async {
+                if self.exportPinChanged(pin) {
+                    self.cancelExportForAccountChange()
+                    return
+                }
+                // 审计 P1-23：会话拉取失败不得静默丢弃 sessions 让 JSON 看似完整——
+                // 整单 fail-closed，只 toast、不拼 JSON、不出文件（与三个日记 scope 同口径）。
+                if case .success(let resp) = result {
+                    sessionsResp = resp
+                } else {
+                    sessionsFailed = true
+                }
+                self.setExportProgress("正在导出（2/4）我的日记…")
+                self.fetchAllEntries(scope: .mine, pin: pin) { result in
+                    DispatchQueue.main.async {
+                        if self.exportPinChanged(pin) || result.reason == "账号已切换" {
+                            self.cancelExportForAccountChange()
+                            return
+                        }
+                        applyScopeResult(result, &mineEntries)
+                        self.setExportProgress("正在导出（3/4）信箱…")
+                        self.fetchAllEntries(scope: .mailbox, pin: pin) { result in
+                            DispatchQueue.main.async {
+                                if self.exportPinChanged(pin) || result.reason == "账号已切换" {
+                                    self.cancelExportForAccountChange()
+                                    return
+                                }
+                                applyScopeResult(result, &mailboxEntries)
+                                self.setExportProgress("正在导出（4/4）赞过…")
+                                self.fetchAllEntries(scope: .liked, pin: pin) { result in
+                                    DispatchQueue.main.async {
+                                        if self.exportPinChanged(pin) || result.reason == "账号已切换" {
+                                            self.cancelExportForAccountChange()
+                                            return
+                                        }
+                                        applyScopeResult(result, &likedEntries)
+                                        finish()
+                                    }
+                                }
+                            }
+                        }
                     }
                 }
             }
@@ -2125,9 +2225,16 @@ final class BearySettingsViewController: UIViewController {
     /// 全移后台队列（userInitiated），主线程只做进度文案、复原与 present 分享面板；
     /// 后台失败回主线程走原失败分支（同文案 toast + 复原），成功回主线程复原后 present。
     /// 拼装函数只读传入的模型值（export*Dict 均为纯字典映射，不碰 UI），可安全离主线程。
-    private func buildAndShareExport(user: MeUser, sessionsResp: BearyAccountSessionsResponse?, mineEntries: [Entry], mailboxEntries: [Entry], likedEntries: [Entry]) {
+    private func buildAndShareExport(user: MeUser, pin: BearyExportPin, sessionsResp: BearyAccountSessionsResponse?, mineEntries: [Entry], mailboxEntries: [Entry], likedEntries: [Entry]) {
         // 主线程：进入生成阶段——直出路径沿用已置的 isExporting/禁用态，触顶确认
         // 路径在此重新置位；两种路径都在文件写完后统一复原。
+        // 账号隔离改造：生成前（触顶确认后才进本方法，确认到生成之间
+        // 可能已切号）先查钉住账号，变了即取消、不写文件；写盘后、
+        // present 分享面板前再查一次，变了即删已写文件、不 present。
+        if exportPinChanged(pin) {
+            cancelExportForAccountChange()
+            return
+        }
         isExporting = true
         exportRowButton.isEnabled = false
         setExportProgress("正在生成文件…")
@@ -2173,6 +2280,13 @@ final class BearySettingsViewController: UIViewController {
             }
             DispatchQueue.main.async { [weak self] in
                 guard let self = self else { return }
+                // 生成期间切号：删刚写的文件、不出分享面板（分享面板
+                // 一旦 present 即不在导出进行中，见 cancel 说明）。
+                if self.exportPinChanged(pin) {
+                    try? FileManager.default.removeItem(at: fileURL)
+                    self.cancelExportForAccountChange()
+                    return
+                }
                 self.isExporting = false
                 self.exportRowButton.isEnabled = true
                 self.setExportProgress(nil)
@@ -2201,18 +2315,33 @@ final class BearySettingsViewController: UIViewController {
 
     /// 分页拉全一个 scope：limit=50、guard 20 页（网页 fetchAll 同口径），
     /// 游标 before + before_id（App fetchEntries 既有口径，服务端 created_at DESC, id DESC）。
-    private func fetchAllEntries(scope: BearyAPI.Scope, completion: @escaping (BearyExportPageResult) -> Void) {
-        fetchScopePage(scope: scope, before: nil, beforeId: nil, accumulated: [], depth: 0, completion: completion)
+    /// 账号隔离改造：分页全程走钉住 token 的隔离请求；每页发出前与回包
+    /// 后各查一次 epoch——切换/退出/401 都会推 epoch，故 epoch 变化即
+    /// 账号变化，以 reason="账号已切换" 回包，调用方（主线程边界）据
+    /// 此取消整单。epoch 读取走 BearyAPI 的串行队列，分页后台线程读
+    /// 安全；id 比对留给主线程边界（exportPinChanged），不在此做。
+    /// complete=false 新增第三种情形——账号已切换（reason 如上），
+    /// 调用方不得把它当失败/触顶处理（见 exportWithUser 链）。
+    private func fetchAllEntries(scope: BearyAPI.Scope, pin: BearyExportPin, completion: @escaping (BearyExportPageResult) -> Void) {
+        fetchScopePage(scope: scope, pin: pin, before: nil, beforeId: nil, accumulated: [], depth: 0, completion: completion)
     }
 
-    private func fetchScopePage(scope: BearyAPI.Scope, before: Int?, beforeId: String?, accumulated: [Entry], depth: Int, completion: @escaping (BearyExportPageResult) -> Void) {
+    private func fetchScopePage(scope: BearyAPI.Scope, pin: BearyExportPin, before: Int?, beforeId: String?, accumulated: [Entry], depth: Int, completion: @escaping (BearyExportPageResult) -> Void) {
         if depth >= 20 {
             completion((entries: accumulated, complete: false, reason: "已达 20 页上限"))
             return
         }
-        BearyAPI.shared.fetchEntries(scope: scope, limit: 50, before: before, beforeId: beforeId) { [weak self] result in
+        if BearyAPI.shared.authEpoch != pin.epoch {
+            completion((entries: accumulated, complete: false, reason: "账号已切换"))
+            return
+        }
+        BearyAPI.shared.fetchEntriesWithToken(pin.token, scope: scope, limit: 50, before: before, beforeId: beforeId) { [weak self] result in
             guard let self = self else {
                 completion((entries: accumulated, complete: false, reason: "第 \(depth + 1) 页失败"))
+                return
+            }
+            if BearyAPI.shared.authEpoch != pin.epoch {
+                completion((entries: accumulated, complete: false, reason: "账号已切换"))
                 return
             }
             switch result {
@@ -2227,7 +2356,7 @@ final class BearySettingsViewController: UIViewController {
                     completion((entries: all, complete: true, reason: nil))
                     return
                 }
-                self.fetchScopePage(scope: scope, before: lastCreated, beforeId: last.id, accumulated: all, depth: depth + 1, completion: completion)
+                self.fetchScopePage(scope: scope, pin: pin, before: lastCreated, beforeId: last.id, accumulated: all, depth: depth + 1, completion: completion)
             case .failure:
                 completion((entries: accumulated, complete: false, reason: "第 \(depth + 1) 页失败"))
             }

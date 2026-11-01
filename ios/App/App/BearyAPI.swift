@@ -433,10 +433,31 @@ final class BearyAPI {
     /// bumpAuthEpoch()；request/requestVoid 在发起时捕获当前值，回包 401
     /// 时 epoch 已变说明请求属于旧登录态，只返回 .unauthorized，不触发
     /// onUnauthorized（旧 401 不得把新账号界面切成未登录）。
-    var authEpoch = 0
+    /// 账号隔离改造：epoch 与 authAccountId 同属鉴权态，统一走一条串行
+    /// 队列读写（发起线程、回包后台线程、主线程三方都不再直接碰存储值）；
+    /// authAccountId 由 SessionManager 在每次权威提交/清态时同步设置，
+    /// 发布重试前同时比对两者，任一变化即停重试（见 requestAttempt）。
+    private var _authEpoch = 0
+    private var _authAccountId: Int?
+    private let authStateQueue = DispatchQueue(label: "com.teddyhn.beary.authState")
+
+    var authEpoch: Int {
+        authStateQueue.sync { _authEpoch }
+    }
+
+    var authAccountId: Int? {
+        authStateQueue.sync { _authAccountId }
+    }
 
     func bumpAuthEpoch() {
-        authEpoch += 1
+        authStateQueue.sync { _authEpoch += 1 }
+    }
+
+    /// 权威登录态提交/清态时同步更新账号身份（SessionManager 调用，
+    /// 与 bumpAuthEpoch 同队列；nil = 无当前账号）。不走本方法只 bump
+    /// epoch 的旧路径一律补上本调用，否则重试前的账号比对永远对不上。
+    func setAuthAccountId(_ id: Int?) {
+        authStateQueue.sync { _authAccountId = id }
     }
 
     /// 固定站点域名字面量恒可解析，故此处一次 force unwrap 安全，调用处一律用本常量。
@@ -543,6 +564,171 @@ final class BearyAPI {
         return task
     }
 
+    // MARK: - 显式凭据请求（账号隔离改造）
+
+    /// 隔离会话：ephemeral + 不接共享 cookie 存储 + 不自动存取 cookie。
+    /// 显式凭据请求只走这里：既不读共享桶里的当前账号 cookie，也不在
+    /// 回包时把服务端 Set-Cookie 写进共享桶——切换预检与非当前账号移除
+    /// 在途时，后台的正常请求仍按原账号 cookie 发，不会串号。
+    /// 注意：init 注入的 session 只影响共享路径；隔离路径恒用本会话，
+    /// 即使测试注入了共享 session 也不会污染。
+    private static let isolatedSession: URLSession = {
+        let config = URLSessionConfiguration.ephemeral
+        config.httpCookieStorage = nil
+        config.httpShouldSetCookies = false
+        return URLSession(configuration: config)
+    }()
+
+    /// 显式凭据原始请求：与 perform 同构，唯一区别是凭据来源——
+    /// 不靠共享 CookieStorage，请求头显式带 Cookie: teddy_session=<token>。
+    /// token 来自钥匙串保管库（本机已保存账号），不经任何其他账号的
+    /// cookie；服务端 Set-Cookie（若有）因 httpShouldSetCookies=false
+    /// 不会落进共享桶。
+    private func performIsolated(
+        _ path: String,
+        query: [String: String] = [:],
+        method: String = "GET",
+        jsonBody: [String: Any]? = nil,
+        token: String,
+        timeout: TimeInterval? = nil,
+        completion: @escaping (Data?, Int, Error?) -> Void
+    ) -> URLSessionDataTask? {
+        guard var url = URL(string: path, relativeTo: Self.baseURL)?.absoluteURL else {
+            completion(nil, 0, nil)
+            return nil
+        }
+        if !query.isEmpty {
+            var comps = URLComponents(url: url, resolvingAgainstBaseURL: false)
+            comps?.queryItems = query.map { URLQueryItem(name: $0.key, value: $0.value) }
+            if let u = comps?.url { url = u }
+        }
+        var req = URLRequest(url: url)
+        req.httpMethod = method
+        if let t = timeout ?? defaultTimeout(for: path, method: method) {
+            req.timeoutInterval = t
+        }
+        req.setValue("https://teddyhn.com", forHTTPHeaderField: "Origin")
+        req.setValue("teddy_session=\(token)", forHTTPHeaderField: "Cookie")
+        if let body = jsonBody {
+            req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            req.httpBody = try? JSONSerialization.data(withJSONObject: body)
+        }
+        let task = Self.isolatedSession.dataTask(with: req) { data, response, error in
+            let status = (response as? HTTPURLResponse)?.statusCode ?? 0
+            BearyAppLog.api(method: method, path: path, status: status)
+            completion(data, status, error)
+        }
+        task.resume()
+        return task
+    }
+
+    /// 显式凭据通用请求：只给隔离路径（切换预检、移除、导出）用。
+    /// 401 一律只返回 .unauthorized，永不触发 onUnauthorized（隔离请求
+    /// 的 401 只说明目标账号会话已死，不得清当前账号的登录态）。
+    /// 不做发布重试（隔离路径没有发布调用方；重试只属于共享路径的
+    /// request/requestAttempt，见该处账号比对守卫）。
+    func requestWithToken<T: Decodable>(
+        _ path: String,
+        query: [String: String] = [:],
+        method: String = "GET",
+        jsonBody: [String: Any]? = nil,
+        token: String,
+        timeout: TimeInterval? = nil,
+        completion: @escaping (Result<T, APIError>) -> Void
+    ) -> URLSessionDataTask? {
+        return performIsolated(path, query: query, method: method, jsonBody: jsonBody, token: token, timeout: timeout) { [weak self] data, status, error in
+            guard let self = self else { return }
+            if let e = error as NSError?, e.code == NSURLErrorCancelled { completion(.failure(.cancelled)); return }
+            if let e = error { completion(.failure(.network(e))); return }
+            if status == 401 { completion(.failure(.unauthorized)); return }
+            if status == 404 { completion(.failure(.notFound)); return }
+            if !(200...299).contains(status) {
+                if let data = data, let eb = try? self.decoder.decode(ServerErrorBody.self, from: data), let code = eb.error {
+                    completion(.failure(.server(code))); return
+                }
+                completion(.failure(.http(status, self.errorSnippet(from: data)))); return
+            }
+            guard let data = data else { completion(.failure(.http(status, nil))); return }
+            do {
+                completion(.success(try self.decoder.decode(T.self, from: data)))
+            } catch {
+                completion(.failure(.decoding(error)))
+            }
+        }
+    }
+
+    /// 切换预检专用 /me：与 fetchMe 同解码口径（带 reason 的 401 透传
+    /// .authFailure、无 reason 的 401 回 nil），但走隔离请求、不读不写
+    /// 共享 cookie、不触发 onUnauthorized。调用方（SessionManager）只
+    /// 在回包 user.id 与目标一致时才统一提交切换，失败时原账号原样不动。
+    func fetchMeWithToken(_ token: String, completion: @escaping (Result<MeUser?, APIError>) -> Void) {
+        performIsolated("/api/account/me", method: "GET", token: token) { [weak self] data, status, error in
+            guard let self = self else { return }
+            if let e = error as NSError?, e.code == NSURLErrorCancelled { completion(.failure(.cancelled)); return }
+            if let e = error { completion(.failure(.network(e))); return }
+            if status == 401 {
+                if let data = data, let eb = try? self.decoder.decode(ServerErrorBody.self, from: data),
+                   let reason = eb.reason, !reason.isEmpty {
+                    completion(.failure(.authFailure(reason: reason, message: eb.message)))
+                } else {
+                    completion(.success(nil))
+                }
+                return
+            }
+            guard (200...299).contains(status), let data = data else {
+                if let data = data, let eb = try? self.decoder.decode(ServerErrorBody.self, from: data), let code = eb.error {
+                    completion(.failure(.server(code)))
+                } else {
+                    completion(.failure(.http(status, self.errorSnippet(from: data))))
+                }
+                return
+            }
+            do {
+                completion(.success(try self.decoder.decode(MeResponse.self, from: data).user))
+            } catch {
+                completion(.failure(.decoding(error)))
+            }
+        }
+    }
+
+    /// 非当前账号移除专用登出：POST /beary/api/logout 走隔离请求，
+    /// 只清目标账号的服务端会话；401 同样算成功（会话已死，无需再清）。
+    /// 成功/失败都不碰共享 cookie 与 currentUser，调用方只在成功时删保管库项。
+    func logoutWithToken(_ token: String, completion: @escaping (Result<Void, APIError>) -> Void) {
+        performIsolated("/beary/api/logout", method: "POST", token: token) { [weak self] data, status, error in
+            guard let self = self else { return }
+            if let e = error as NSError?, e.code == NSURLErrorCancelled { completion(.failure(.cancelled)); return }
+            if let e = error { completion(.failure(.network(e))); return }
+            if status == 401 { completion(.success(())); return }
+            if !(200...299).contains(status) {
+                if let data = data, let eb = try? self.decoder.decode(ServerErrorBody.self, from: data), let code = eb.error {
+                    completion(.failure(.server(code))); return
+                }
+                completion(.failure(.http(status, self.errorSnippet(from: data)))); return
+            }
+            completion(.success(()))
+        }
+    }
+
+    /// 导出专用分页取数：与 fetchEntries 同 query 口径（scope/limit/
+    /// before/before_id），但走隔离请求、凭据固定为导出账号的 token。
+    /// 导出链在每步边界另做账号变化检查（见设置页）；本方法本身不判
+    /// 断当前账号，只保证发出的数据恒属 token 账号。
+    func fetchEntriesWithToken(
+        _ token: String,
+        scope: Scope,
+        limit: Int = 20,
+        before: Int? = nil,
+        beforeId: String? = nil,
+        completion: @escaping (Result<EntryList, APIError>) -> Void
+    ) {
+        var q: [String: String] = ["scope": scope.rawValue, "limit": "\(min(max(limit, 1), 50))"]
+        if let b = before { q["before"] = "\(b)" }
+        if let bid = beforeId { q["before_id"] = bid }
+        if let aid = scope.authorId { q["author_id"] = "\(aid)" }
+        requestWithToken("/beary/api/entries", query: q, token: token, completion: completion)
+    }
+
     // 状态码分流（401/404/业务错误码/HTTP 错误共用；401 默认通知 onUnauthorized，
     // suppressUnauthorized 为真时只返回 .unauthorized，不触发 onUnauthorized；
     // 账号隔离 3 号：epoch 与发起时不一致时同样只返回、不触发）。
@@ -605,17 +791,24 @@ final class BearyAPI {
         completion: @escaping (Result<T, APIError>) -> Void
     ) -> URLSessionDataTask? {
         let epoch = authEpoch
+        let accountId = authAccountId
         // 5-28：发布（POST /beary/api/entries，publishEntry 唯一调用方）自动
         // 重试一次；上传（POST /beary/api/images/upload）只加超时、不重试
         // （重发会重复落图）。返回值是首发任务，重试任务不经返回值返回
         // （发布流程不中途取消在途请求）；epoch 沿用首发值，账户已切换时
         // 重试回包的 401 同样被 epoch 守卫压住，不踢新号。
+        // 账号隔离改造：首发同时捕获 authAccountId；重试前重比 epoch 与
+        // 账号，任一变化即停重试（原失败原样返回，不再用新账号的共享
+        // cookie 重发——首发与重试之间切号是本改造要堵的串号口）。
+        // 重试条件本身一字不动：只针对网络错误与 5xx、只一次；
+        // epoch 401 压制逻辑（mapStatus）同样原样保留。
         // payloadDecoder 仅改成功体解码器（默认全局 decoder）；错误体与
         // mapStatus 仍走全局 decoder，不受本参数影响。
         let retryTransientOnce = (method == "POST" && path == "/beary/api/entries")
         return requestAttempt(path, query: query, method: method, jsonBody: jsonBody,
                               suppressUnauthorized: suppressUnauthorized, timeout: timeout,
-                              epoch: epoch, retriesLeft: retryTransientOnce ? 1 : 0,
+                              epoch: epoch, accountId: accountId,
+                              retriesLeft: retryTransientOnce ? 1 : 0,
                               payloadDecoder: payloadDecoder,
                               completion: completion)
     }
@@ -628,6 +821,7 @@ final class BearyAPI {
         suppressUnauthorized: Bool,
         timeout: TimeInterval?,
         epoch: Int,
+        accountId: Int?,
         retriesLeft: Int,
         payloadDecoder: JSONDecoder?,
         completion: @escaping (Result<T, APIError>) -> Void
@@ -636,10 +830,16 @@ final class BearyAPI {
             guard let self = self else { return }
             if let apiErr = self.mapStatus(status, data: data, error: error, suppressUnauthorized: suppressUnauthorized, epoch: epoch) {
                 if retriesLeft > 0 && Self.isTransientPublishError(apiErr) {
-                    _ = self.requestAttempt(path, query: query, method: method, jsonBody: jsonBody,
-                                            suppressUnauthorized: suppressUnauthorized, timeout: timeout,
-                                            epoch: epoch, retriesLeft: retriesLeft - 1, payloadDecoder: payloadDecoder, completion: completion)
-                    return
+                    // 重试前比对：epoch 或账号任一已变（切换/退出/新登录
+                    // 都推 epoch 并重设账号），说明共享 cookie 已不属于
+                    // 首发账号——停重试，原失败原样返回，不重发、不补 401。
+                    if epoch == self.authEpoch && accountId == self.authAccountId {
+                        _ = self.requestAttempt(path, query: query, method: method, jsonBody: jsonBody,
+                                                suppressUnauthorized: suppressUnauthorized, timeout: timeout,
+                                                epoch: epoch, accountId: accountId,
+                                                retriesLeft: retriesLeft - 1, payloadDecoder: payloadDecoder, completion: completion)
+                        return
+                    }
                 }
                 completion(.failure(apiErr))
                 return
