@@ -8,7 +8,7 @@ import UIKit
 // 不含引用卡。本视图把 path 交给自身 layoutSubviews：视图本身由约束钉在
 // 宿主容器上（时间线：cardView 内缩 8/6；卡片：contentView 内缩 8/6，首卡
 // 顶 22），自身 bounds 一变就重画，不再依赖宿主 cell 的布局时机。
-// 口径：1.5pt、虚线 [4, 3]、圆角 12（视觉清单第 7 项面板档）、line 色；不拦截点按。
+// 口径一字不动：1.5pt、虚线 [4, 3]、圆角 16、line 色；不拦截点按。
 final class BearyDashedBorderView: UIView {
 
     private let borderLayer = CAShapeLayer()
@@ -31,7 +31,7 @@ final class BearyDashedBorderView: UIView {
     override func layoutSubviews() {
         super.layoutSubviews()
         borderLayer.frame = bounds
-        borderLayer.path = UIBezierPath(roundedRect: bounds, cornerRadius: 12).cgPath
+        borderLayer.path = UIBezierPath(roundedRect: bounds, cornerRadius: 16).cgPath
     }
 
     override func traitCollectionDidChange(_ previousTraitCollection: UITraitCollection?) {

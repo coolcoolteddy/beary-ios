@@ -38,7 +38,7 @@ private final class WishRowView: UIView {
     override init(frame: CGRect) {
         super.init(frame: frame)
         backgroundColor = BearyColors.surface
-        layer.cornerRadius = 12
+        layer.cornerRadius = 16
         titleLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 15, weight: .semibold))
         titleLabel.adjustsFontForContentSizeCategory = true
         titleLabel.textColor = BearyColors.ink
@@ -64,7 +64,7 @@ private final class WishRowView: UIView {
         donePill.adjustsFontForContentSizeCategory = true
         donePill.textColor = BearyColors.green
         donePill.backgroundColor = BearyColors.alpha(BearyColors.green, 0.12)
-        donePill.layer.cornerRadius = 4
+        donePill.layer.cornerRadius = 9
         donePill.clipsToBounds = true
         donePill.textAlignment = .center
         donePill.text = "已完成"

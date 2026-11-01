@@ -340,7 +340,7 @@ class BearyEditProfileViewController: UIViewController {
         buttonValue.contentEdgeInsets = UIEdgeInsets(top: 0, left: 14, bottom: 0, right: 14)
         buttonValue.layer.borderWidth = 1
         buttonValue.layer.bearyDynamicBorderColor = BearyColors.line
-        buttonValue.layer.cornerRadius = 8
+        buttonValue.layer.cornerRadius = 16
         buttonValue.addTarget(self, action: #selector(copyLinkButtonTapped), for: .touchUpInside)
         buttonValue.bearyAddPressFeedback()
         return buttonValue

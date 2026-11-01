@@ -171,7 +171,7 @@ final class BearyRecipientPickerViewController: UIViewController, UITextFieldDel
         // 显式 44 高、18 图标、16 占位均不动。若真机仍不可见，下一步须诊断包记录
         // searchBox.frame/alpha/isHidden，而非继续盲改。
         searchBox.backgroundColor = BearyColors.faint
-        searchBox.layer.cornerRadius = 8
+        searchBox.layer.cornerRadius = 22
         searchBox.layer.masksToBounds = true
         searchBox.layer.borderWidth = 1
         searchBox.layer.bearyDynamicBorderColor = BearyColors.line

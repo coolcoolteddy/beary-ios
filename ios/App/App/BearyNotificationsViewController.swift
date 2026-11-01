@@ -2215,7 +2215,7 @@ private class BearyLetterModal {
         overlayView.translatesAutoresizingMaskIntoConstraints = false
         cardView.backgroundColor = BearyColors.surface
         // Q1 对照表：卡片圆角 14（网页 .confirm-box 原 16 已按表统一）。
-        cardView.layer.cornerRadius = 12
+        cardView.layer.cornerRadius = 14
         cardView.clipsToBounds = true
         cardView.translatesAutoresizingMaskIntoConstraints = false
         iconView.translatesAutoresizingMaskIntoConstraints = false
@@ -2280,14 +2280,14 @@ private class BearyLetterModal {
         secondaryButton.layer.borderWidth = 1
         secondaryButton.layer.bearyDynamicBorderColor = BearyColors.line
         // Q1 对照表：pill 按钮圆角 22（网页 .obtn 原 20 已按表统一）。
-        secondaryButton.layer.cornerRadius = 8
+        secondaryButton.layer.cornerRadius = 22
         secondaryButton.setTitle(goEntryId == nil ? "知道了" : "稍后", for: .normal)
         primaryButton.translatesAutoresizingMaskIntoConstraints = false
         primaryButton.titleLabel?.font = BearyDynamicType.cappedFont(for: UIFont.systemFont(ofSize: 16, weight: .semibold))
         primaryButton.titleLabel?.adjustsFontForContentSizeCategory = true
         primaryButton.setTitleColor(BearyColors.bg, for: .normal)
         primaryButton.backgroundColor = BearyColors.ink
-        primaryButton.layer.cornerRadius = 8
+        primaryButton.layer.cornerRadius = 22
         primaryButton.setTitle("去看看", for: .normal)
         primaryButton.isHidden = goEntryId == nil
     }
@@ -2588,7 +2588,7 @@ private class BearyNotificationCell: UITableViewCell {
         badge.backgroundColor = BearyColors.bg
         badge.layer.borderWidth = 1
         badge.layer.bearyDynamicBorderColor = BearyColors.line
-        badge.layer.cornerRadius = 4
+        badge.layer.cornerRadius = 9.5
         badge.clipsToBounds = true
         return badge
     }()

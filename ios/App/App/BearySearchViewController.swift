@@ -497,7 +497,7 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         searchBoxView.translatesAutoresizingMaskIntoConstraints = false
         searchBoxView.backgroundColor = BearyColors.bg
         searchBoxView.layer.borderWidth = 1.5
-        searchBoxView.layer.cornerRadius = 8
+        searchBoxView.layer.cornerRadius = 25
         // 阴影须画出框外，masksToBounds 必须关；框内元素均有内边距，不会溢出圆角。
         searchBoxView.layer.masksToBounds = false
         view.addSubview(searchBoxView)
@@ -629,7 +629,7 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         clearSearchButton.backgroundColor = BearyColors.surface
         clearSearchButton.layer.borderWidth = 1
         clearSearchButton.layer.bearyDynamicBorderColor = BearyColors.line
-        clearSearchButton.layer.cornerRadius = 8
+        clearSearchButton.layer.cornerRadius = 22
         clearSearchButton.layer.masksToBounds = true
         clearSearchButton.contentEdgeInsets = UIEdgeInsets(top: 0, left: 20, bottom: 0, right: 20)
         clearSearchButton.heightAnchor.constraint(equalToConstant: 44).isActive = true
@@ -896,7 +896,7 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
             BearyShadow.applyHairline(to: searchBoxView.layer)
             searchBoxView.layer.shadowPath = UIBezierPath(
                 roundedRect: bounds,
-                cornerRadius: 8
+                cornerRadius: 25
             ).cgPath
         }
     }
@@ -1362,7 +1362,7 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
             button.titleLabel?.font = BearyDynamicType.cappedFont(for: UIFont.systemFont(ofSize: 15))
             button.titleLabel?.adjustsFontForContentSizeCategory = true
             button.backgroundColor = BearyColors.surface
-            button.layer.cornerRadius = 8
+            button.layer.cornerRadius = 14
             button.layer.masksToBounds = true
             button.contentHorizontalAlignment = .left
             button.contentEdgeInsets = UIEdgeInsets(top: 0, left: 16, bottom: 0, right: 16)
@@ -1875,7 +1875,7 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
     private func makeUserRow(user: SearchUser, query: String) -> UIButton {
         let row = UIButton(type: .custom)
         row.translatesAutoresizingMaskIntoConstraints = false
-        row.layer.cornerRadius = 12
+        row.layer.cornerRadius = 14
         row.layer.masksToBounds = true
 
         let avatarView = UIImageView()
@@ -2160,7 +2160,7 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         let pill = UIView()
         pill.translatesAutoresizingMaskIntoConstraints = false
         pill.backgroundColor = BearyColors.alpha(BearyColors.blue, 0.13)
-        pill.layer.cornerRadius = 4
+        pill.layer.cornerRadius = 11
         pill.layer.masksToBounds = true
         let lock = UIImageView(image: BearyIconImages.image(named: "icon_lock", pointSize: 12))
         lock.translatesAutoresizingMaskIntoConstraints = false

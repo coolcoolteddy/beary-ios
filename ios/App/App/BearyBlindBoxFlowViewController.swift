@@ -34,7 +34,7 @@ private final class BlindBoxPoolRowView: UIView {
     override init(frame: CGRect) {
         super.init(frame: frame)
         backgroundColor = BearyColors.surface
-        layer.cornerRadius = 12
+        layer.cornerRadius = 14
         layer.borderWidth = 1
         layer.bearyDynamicBorderColor = BearyColors.line
         clipsToBounds = true
@@ -56,7 +56,7 @@ private final class BlindBoxPoolRowView: UIView {
         pillLabel.font = BearyDynamicType.cappedFont(for: UIFont.systemFont(ofSize: 12, weight: .semibold), maximumPointSize: 14)
         pillLabel.adjustsFontForContentSizeCategory = true
         pillLabel.textAlignment = .center
-        pillLabel.layer.cornerRadius = 4
+        pillLabel.layer.cornerRadius = 9
         pillLabel.clipsToBounds = true
 
         checkView.translatesAutoresizingMaskIntoConstraints = false
@@ -433,7 +433,7 @@ final class BearyBlindBoxFlowViewController: UIViewController {
     private func buildReceivedSection() {
         receivedView.translatesAutoresizingMaskIntoConstraints = false
         receivedView.backgroundColor = BearyColors.surface
-        receivedView.layer.cornerRadius = 12
+        receivedView.layer.cornerRadius = 16
         receivedView.layer.borderWidth = 1
         receivedView.layer.bearyDynamicBorderColor = BearyColors.line
         receivedView.clipsToBounds = true
@@ -444,7 +444,7 @@ final class BearyBlindBoxFlowViewController: UIViewController {
         receivedPill.adjustsFontForContentSizeCategory = true
         receivedPill.textColor = BearyColors.orange
         receivedPill.backgroundColor = BearyColors.alpha(BearyColors.orange, 0.12)
-        receivedPill.layer.cornerRadius = 4
+        receivedPill.layer.cornerRadius = 9
         receivedPill.clipsToBounds = true
         receivedPill.textAlignment = .center
 
@@ -533,7 +533,7 @@ final class BearyBlindBoxFlowViewController: UIViewController {
         placeholderView.translatesAutoresizingMaskIntoConstraints = false
         // 占位框：实线边框（CALayer 无虚线属性，虚线需 CAShapeLayer 另绘；
         // 本页占位语义由文案承担，不为演示样式另起一层 shape 图层）。
-        placeholderView.layer.cornerRadius = 12
+        placeholderView.layer.cornerRadius = 14
         placeholderView.layer.borderWidth = 1
         placeholderView.layer.bearyDynamicBorderColor = BearyColors.line
         placeholderLabel.translatesAutoresizingMaskIntoConstraints = false

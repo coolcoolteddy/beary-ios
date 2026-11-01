@@ -243,7 +243,7 @@ final class BearyQuoteCardView: UIView {
         addGestureRecognizer(UITapGestureRecognizer(target: self, action: #selector(quoteTapped(_:))))
         sourceButton.addTarget(self, action: #selector(sourceTapped), for: .touchUpInside)
         backgroundColor = BearyColors.faint
-        layer.cornerRadius = 12
+        layer.cornerRadius = 8
         clipsToBounds = true
         thumbsScrollView.addSubview(thumbsStack)
         quoteIconWrap.addSubview(quoteIconView)
