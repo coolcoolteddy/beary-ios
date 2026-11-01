@@ -67,13 +67,14 @@ final class BearyLoginViewController: UIViewController {
         return bar
     }()
     private var isAgreed = false
+    /// 扫荡组 A：协议勾选框与文案首行居中的约束（首行中心随字号档位变，
+    /// 档位变化时在 traitCollectionDidChange 里按新行高重算常量）。
+    private var agreeCenterYConstraint: NSLayoutConstraint?
 
     private var isSendingCode = false
     private var isVerifying = false
-    /// 5-6：验码成功后的 1.2 秒绑定反馈窗口内，登录钮保持禁用；
-    /// 关闭时取消延迟回调，只发 onCancelled，不再随后补发 onLoggedIn。
-    private var isWaitingFeedback = false
-    private var loginFeedbackWorkItem: DispatchWorkItem?
+    /// 扫 bug 定版第 1 项：登录成功不再等反馈窗口，验码成功即进 App；
+    /// 旧 1.2 秒绑定反馈窗口已删（见 handleLoginReferralFeedback）。
     private var countdownRemaining: Int?
     private var currentLoginTitle: String?
     private var countdownTimer: Timer?
@@ -108,6 +109,14 @@ final class BearyLoginViewController: UIViewController {
         // 协议复选框描边是 CGColor：深浅切换时走已有刷新重赋（勾选态橙边、未选 line 边）。
         if previousTraitCollection?.userInterfaceStyle != traitCollection.userInterfaceStyle {
             refreshAgreeBox()
+        }
+        // 扫荡组 A：大字号档位变化时，协议首行中心与登录钮 attributed
+        // 标题都要按新字号重建（标题只在文案变化时重建，档位变化不
+        // 触发它，故先清 currentLoginTitle 再调 updateButtonStates）。
+        if previousTraitCollection?.preferredContentSizeCategory != traitCollection.preferredContentSizeCategory {
+            agreeCenterYConstraint?.constant = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 14)).lineHeight / 2
+            currentLoginTitle = nil
+            updateButtonStates()
         }
     }
 
@@ -171,7 +180,8 @@ final class BearyLoginViewController: UIViewController {
 
         subtitleLabel.translatesAutoresizingMaskIntoConstraints = false
         subtitleLabel.text = "邮箱验证码登录，无需密码；新邮箱登录即注册"
-        subtitleLabel.font = UIFont.systemFont(ofSize: 14)
+        subtitleLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 14))
+        subtitleLabel.adjustsFontForContentSizeCategory = true
         subtitleLabel.textColor = BearyColors.gray
         subtitleLabel.numberOfLines = 0
 
@@ -187,7 +197,8 @@ final class BearyLoginViewController: UIViewController {
         sendButton.bearyAddPressFeedback()
 
         messageLabel.translatesAutoresizingMaskIntoConstraints = false
-        messageLabel.font = UIFont.systemFont(ofSize: 13)
+        messageLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13))
+        messageLabel.adjustsFontForContentSizeCategory = true
         messageLabel.textColor = BearyColors.red
         messageLabel.numberOfLines = 0
 
@@ -214,13 +225,15 @@ final class BearyLoginViewController: UIViewController {
         guestButton.setTitle("先逛逛（游客模式）", for: .normal)
         guestButton.setTitleColor(BearyColors.gray, for: .normal)
         guestButton.setTitleColor(BearyColors.gray, for: .disabled)
-        guestButton.titleLabel?.font = UIFont.systemFont(ofSize: 16, weight: .semibold)
+        guestButton.titleLabel?.font = BearyDynamicType.cappedFont(for: UIFont.systemFont(ofSize: 16, weight: .semibold))
+        guestButton.titleLabel?.adjustsFontForContentSizeCategory = true
         guestButton.addTarget(self, action: #selector(guestTapped), for: .touchUpInside)
         guestButton.bearyAddPressFeedback()
 
         guestNoteLabel.translatesAutoresizingMaskIntoConstraints = false
         guestNoteLabel.text = "游客模式只能看别人的日记，登录后解锁完整版。"
-        guestNoteLabel.font = UIFont.systemFont(ofSize: 13)
+        guestNoteLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13))
+        guestNoteLabel.adjustsFontForContentSizeCategory = true
         guestNoteLabel.textColor = BearyColors.gray
         guestNoteLabel.numberOfLines = 0
 
@@ -309,7 +322,6 @@ final class BearyLoginViewController: UIViewController {
             // 约半行高处（14pt 字约 8.5pt），故钮比首行低约 13pt（photo-14 实证）。
             // 改锚：钮 centerY = label 顶 + 14pt 字行高/2（多行文案时以首行为准，
             // 行高改由 label 决定）；44 热区由 BearyHit44Button 保证。
-            agreeButton.centerYAnchor.constraint(equalTo: agreeLabel.topAnchor, constant: UIFont.systemFont(ofSize: 14).lineHeight / 2),
             agreeButton.widthAnchor.constraint(equalToConstant: 22),
             agreeButton.heightAnchor.constraint(equalToConstant: 22),
             agreeLabel.leadingAnchor.constraint(equalTo: agreeButton.trailingAnchor, constant: 10),
@@ -317,6 +329,10 @@ final class BearyLoginViewController: UIViewController {
             agreeLabel.topAnchor.constraint(equalTo: agreeRow.topAnchor),
             agreeLabel.bottomAnchor.constraint(equalTo: agreeRow.bottomAnchor),
         ])
+        // 协议勾选框与文案首行居中（见属性注释；档位变化时重算常量）。
+        let agreeCenterY = agreeButton.centerYAnchor.constraint(equalTo: agreeLabel.topAnchor, constant: BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 14)).lineHeight / 2)
+        agreeCenterY.isActive = true
+        agreeCenterYConstraint = agreeCenterY
     }
 
     /// wordmark 宽高比：取 LogoHorizontal 资产实际尺寸；资产缺失时退 1，避免布局歧义。
@@ -330,11 +346,12 @@ final class BearyLoginViewController: UIViewController {
     private func makeFieldLabel(text: String) -> UILabel {
         let label = UILabel()
         label.attributedText = NSAttributedString(string: text, attributes: [
-            .font: UIFont.systemFont(ofSize: 11, weight: .semibold),
+            .font: BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 11, weight: .semibold)),
             .foregroundColor: BearyColors.gray,
             .kern: 1.32,
         ])
         label.translatesAutoresizingMaskIntoConstraints = false
+        label.adjustsFontForContentSizeCategory = true
         return label
     }
 
@@ -347,11 +364,12 @@ final class BearyLoginViewController: UIViewController {
     }
 
     private func configureEmailField() {
-        emailField.font = UIFont.systemFont(ofSize: 16)
+        emailField.font = BearyDynamicType.cappedFont(for: UIFont.systemFont(ofSize: 16))
+        emailField.adjustsFontForContentSizeCategory = true
         emailField.textColor = BearyColors.ink
         emailField.attributedPlaceholder = NSAttributedString(string: "name@example.com", attributes: [
             .foregroundColor: BearyColors.gray,
-            .font: UIFont.systemFont(ofSize: 16),
+            .font: BearyDynamicType.cappedFont(for: UIFont.systemFont(ofSize: 16)),
         ])
         emailField.keyboardType = .emailAddress
         emailField.autocapitalizationType = .none
@@ -363,11 +381,12 @@ final class BearyLoginViewController: UIViewController {
     }
 
     private func configureCodeField() {
-        codeField.font = UIFont.systemFont(ofSize: 16)
+        codeField.font = BearyDynamicType.cappedFont(for: UIFont.systemFont(ofSize: 16))
+        codeField.adjustsFontForContentSizeCategory = true
         codeField.textColor = BearyColors.ink
         codeField.attributedPlaceholder = NSAttributedString(string: "6 位数字", attributes: [
             .foregroundColor: BearyColors.gray,
-            .font: UIFont.systemFont(ofSize: 16),
+            .font: BearyDynamicType.cappedFont(for: UIFont.systemFont(ofSize: 16)),
         ])
         codeField.keyboardType = .numberPad
         codeField.autocorrectionType = .no
@@ -394,11 +413,12 @@ final class BearyLoginViewController: UIViewController {
     }
 
     private func configureInviteField() {
-        inviteField.font = UIFont.systemFont(ofSize: 16)
+        inviteField.font = BearyDynamicType.cappedFont(for: UIFont.systemFont(ofSize: 16))
+        inviteField.adjustsFontForContentSizeCategory = true
         inviteField.textColor = BearyColors.ink
         inviteField.attributedPlaceholder = NSAttributedString(string: "填好友的邀请码，成功后各得 1 个月 Plus", attributes: [
             .foregroundColor: BearyColors.gray,
-            .font: UIFont.systemFont(ofSize: 16),
+            .font: BearyDynamicType.cappedFont(for: UIFont.systemFont(ofSize: 16)),
         ])
         inviteField.autocapitalizationType = .allCharacters
         inviteField.autocorrectionType = .no
@@ -424,7 +444,8 @@ final class BearyLoginViewController: UIViewController {
         agreeLabel.backgroundColor = UIColor.clear
         agreeLabel.textContainerInset = UIEdgeInsets.zero
         agreeLabel.textContainer.lineFragmentPadding = 0
-        agreeLabel.font = UIFont.systemFont(ofSize: 14)
+        agreeLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 14))
+        agreeLabel.adjustsFontForContentSizeCategory = true
         agreeLabel.textColor = BearyColors.gray
         agreeLabel.linkTextAttributes = [
             .foregroundColor: BearyColors.blue,
@@ -432,7 +453,7 @@ final class BearyLoginViewController: UIViewController {
         ]
         let fullText = "我已阅读并同意《隐私政策》和《用户协议》"
         let attributed = NSMutableAttributedString(string: fullText, attributes: [
-            .font: UIFont.systemFont(ofSize: 14),
+            .font: BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 14)),
             .foregroundColor: BearyColors.gray,
         ])
         let privacyRange = (fullText as NSString).range(of: "隐私政策")
@@ -523,7 +544,7 @@ final class BearyLoginViewController: UIViewController {
 
     private func setLoginTitle(_ text: String) {
         let title = NSAttributedString(string: text, attributes: [
-            .font: UIFont.systemFont(ofSize: 16, weight: .bold),
+            .font: BearyDynamicType.cappedFont(for: UIFont.systemFont(ofSize: 16, weight: .bold)),
             .foregroundColor: BearyColors.bg,
             .kern: 5.43,
         ])
@@ -547,9 +568,9 @@ final class BearyLoginViewController: UIViewController {
         let sendTitleColor = sendEnabled ? BearyColors.bg : BearyColors.gray
         sendButton.setTitleColor(sendTitleColor, for: .normal)
         sendButton.setTitleColor(sendTitleColor, for: .disabled)
-        sendButton.titleLabel?.font = UIFont.systemFont(ofSize: 14, weight: sendEnabled ? .semibold : .medium)
+        sendButton.titleLabel?.font = BearyDynamicType.cappedFont(for: UIFont.systemFont(ofSize: 14, weight: sendEnabled ? .semibold : .medium))
 
-        let loginEnabled = isAgreed && emailValid && code.count == 6 && !isVerifying && !isWaitingFeedback
+        let loginEnabled = isAgreed && emailValid && code.count == 6 && !isVerifying
         loginButton.isEnabled = loginEnabled
         loginButton.alpha = loginEnabled ? 1 : 0.35
         // M14：进行态 = “处理中…”文案 + 圈转指示，不再只有 alpha 变化。
@@ -602,10 +623,6 @@ final class BearyLoginViewController: UIViewController {
         countdownTimer = nil
         currentTask?.cancel()
         currentTask = nil
-        // 5-6：关闭即取消延迟的 onLoggedIn，只发 onCancelled。
-        loginFeedbackWorkItem?.cancel()
-        loginFeedbackWorkItem = nil
-        isWaitingFeedback = false
         onCancelled?()
     }
 
@@ -717,7 +734,10 @@ final class BearyLoginViewController: UIViewController {
     }
 
     /// 审计 P1-25：验码成功分支的邀请绑定反馈。未填码时立即 dismiss；
-    /// 填了码时先行内提示绑定结果，1.2 秒后再 dismiss，让用户读到反馈。
+    /// 填了码时仍先行内提示绑定结果（文案口径不变），但扫 bug 定版第 1 项
+    /// 删去 1.2 秒等待：不再等用户读完反馈，立即调 onLoggedIn 进 App。
+    /// 注意：登录页随即 dismiss，行内反馈文案实际不再可读；如需让用户在
+    /// 进 App 后仍看到绑定结果，须另做进 App 后的提示（本项不做）。
     /// granted → 到账文案；flagged → 待审核文案；其余（失败态 / 无 referral 回包）
     /// 均显式提示“邀请码未绑定成功”，且不影响登录本身。
     private func handleLoginReferralFeedback(resp: VerifyResponse) {
@@ -754,20 +774,10 @@ final class BearyLoginViewController: UIViewController {
             }
             showMessage(text)
         }
-        // 5-6：延迟期间登录钮禁用（见 updateButtonStates 的 isWaitingFeedback 门）；
-        // 用 WorkItem 承载延迟，关闭时可取消，不再出现“先取消后登录”双回调。
-        loginFeedbackWorkItem?.cancel()
-        isWaitingFeedback = true
-        updateButtonStates()
-        let workItem = DispatchWorkItem { [weak self] in
-            guard let strongSelf = self else { return }
-            strongSelf.loginFeedbackWorkItem = nil
-            strongSelf.isWaitingFeedback = false
-            strongSelf.updateButtonStates()
-            strongSelf.onLoggedIn?()
-        }
-        loginFeedbackWorkItem = workItem
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1.2, execute: workItem)
+        // 扫 bug 定版第 1 项：去掉 1.2 秒等待，登录成功立刻进 App
+        //（onLoggedIn 由容器接管 dismiss + refreshMe）；行内反馈文案
+        // 已按原口径写好，但随登录页 dismiss 而不再可读（见函数头注释）。
+        onLoggedIn?()
     }
 
     /// 注销冷静期确认：文案与网页端 lgDelCfm 同款（“暂不登录 / 继续登录”）。

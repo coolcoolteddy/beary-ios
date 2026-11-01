@@ -177,6 +177,10 @@ class BearyProfileViewController: UIViewController {
     /// 列表行点按：传整条 Entry，容器接线到详情页。
     var onOpenEntry: ((Entry) -> Void)?
 
+    /// 提速：引用卡点按专用——传刚为可见性校验拉到的新鲜 Entry，容器
+    /// 接线到详情页且跳过后台补拉（未接线时调用方回落 onOpenEntry 原路径）。
+    var onOpenFreshEntry: ((Entry) -> Void)?
+
     /// 批 C：日记 tab“更多日记”点按，容器接线到时间线页（仅本人页触发，见下）。
     var onOpenTimeline: (() -> Void)?
 
@@ -285,6 +289,10 @@ class BearyProfileViewController: UIViewController {
     private var diaryHasMore = true
     private var likedHasMore = true
     private var savedHasMore = true
+    /// 提速：标签首屏与翻页共用页大小 50 → 20（首屏、翻页、后台回填、
+    /// hasMore 判定全走本常量；照片墙溢出页与模块全量语料各有自己的
+    /// 50 口径，不在本常量内，见各处注释）。
+    private let tabPageLimit = 20
     private var tabLoading = false
 
     private var tabLoadMore = false
@@ -308,6 +316,13 @@ class BearyProfileViewController: UIViewController {
     private var modulesProfileId: Int?
     /// 语料代次：每次刷新 +1；在途旧代次回包直接丢弃，防切账号后旧页覆盖新语料。
     private var modulesGeneration = 0
+    /// 提速：资料加载代次——每次 loadProfile +1。夜巡 / 模块的“本轮已起”
+    /// 标记按代次去重：首屏 viewDidLoad 先起、资料回包到达时不再重起；
+    /// 下拉刷新调 loadProfile 即换代次，回包仍正常重起。
+    private var profileLoadCycle = 0
+    private var nightPatrolStartedCycle: Int?
+    private var nightPatrolLoading = false
+    private var modulesStartedCycle: Int?
     /// 已拉到的作者条目（分页累积、按 id 去重）；未完成前 renderModules 全隐藏，
     /// 不拿半截语料画「空白 = 没写」——半截语料的空白是假空白，会撒谎。
     private var modulesCorpus: [Entry] = []
@@ -578,8 +593,9 @@ class BearyProfileViewController: UIViewController {
 
     /// 封面裁剪区（v22，2026-10-30）：封面图底贴齐区底、顶在区外预留 54，
     /// 图只跟区的边走（上滑区不再区内平移，视差 0.3 已删）；图宽 = 区宽、
-    /// 无缩放，左右永不露白。下拉拉伸约束（顶／高／左右）全部落在此区上，
-    /// 拉伸与上滑锁定互不踩（拉伸只在下拉区生效，上滑区只走 transform／alpha）。
+    /// 无缩放，左右永不露白。下拉拉伸不再逐帧改约束：约束恒为自然态，
+    /// 拉伸只改本区 transform（见 updateCoverStretch）；拉伸与上滑锁定
+    /// 互不踩（拉伸只在下拉区生效，上滑区只走 transform／alpha）。
     private let coverClipView: UIView = {
         let viewValue = UIView()
         viewValue.translatesAutoresizingMaskIntoConstraints = false
@@ -1540,8 +1556,9 @@ class BearyProfileViewController: UIViewController {
         return viewValue
     }()
 
-    // 拉伸约束全部落在裁剪区上（变量名不变，调用方 reset/updateCoverStretch 不动）：
-    // 区高 = 封面高（180/0），图高由区边推导（区高 + 54），拉伸时图自动跟区走。
+    // 封面约束恒为自然态（变量名不变，调用方 reset/updateCoverStretch 不动）：
+    // 区高 = 封面高（180/0），图高由区边推导（区高 + 54）；下拉拉伸不再改
+    // 这些常量，改走 coverClipView.transform（见 updateCoverStretch）。
     private lazy var coverHeightConstraint: NSLayoutConstraint = coverClipView.heightAnchor.constraint(equalToConstant: 0)
     /// 弹性封面顶约束（下拉时顶边上伸用；平时恒 0，底边不动）。
     private lazy var coverTopConstraint: NSLayoutConstraint = coverClipView.topAnchor.constraint(equalTo: headerView.topAnchor)
@@ -1670,7 +1687,7 @@ class BearyProfileViewController: UIViewController {
     private var stickyHeaderBottom: CGFloat = 0
     private var stickyHeaderModalDisabled = false
     /// v22 封面自然高（2026-10-30）：代码现行封面高恒 180（applyProfile／resetCoverStretch／
-    /// updateCoverStretch 同值），滚动回调取此常量、不取拉伸中的 live 约束（下拉复位动画
+    /// updateCoverStretch 同值），滚动回调取此常量、不取拉伸中的 live transform（下拉复位动画
     /// 0.28s 内 live 值会抖）；改封面高时此处与三处同改，另 stickyWordmark 的 144 也要同步。
     private let profileCoverHeight: CGFloat = 180
     /// 资料已到且无封面 URL 时为真：封面区显示橙底默认背景（applyProfile 置位，布局同步用）。
@@ -1827,6 +1844,14 @@ class BearyProfileViewController: UIViewController {
         if targetUserIdValue != nil {
             // id 目标的标签列表不需要等 profile：日记 / 赞过按 id 直接拉。
             loadTab(forceReload: true)
+        }
+        if targetUserIdValue != nil, isOwnProfile {
+            // 提速：夜巡（只读会话身份）与模块语料（按 id 拉作者 scope）
+            // 均不依赖资料回包，与资料 / 标签三路并行，不再串在
+            // handleProfileResult 之后；资料回包到达时由代次守卫去重、
+            // 不再重起。handle 目标（id 未知、本人与否未定）仍走回包路径。
+            loadNightPatrol()
+            scheduleModulesRefresh()
         }
     }
 
@@ -2411,7 +2436,7 @@ class BearyProfileViewController: UIViewController {
             coverBlurImageView.leadingAnchor.constraint(equalTo: coverImageView.leadingAnchor),
             coverBlurImageView.trailingAnchor.constraint(equalTo: coverImageView.trailingAnchor),
             coverBlurImageView.bottomAnchor.constraint(equalTo: coverImageView.bottomAnchor),
-            // 默认背景 wordmark：封面居中（下拉拉伸时 clip 长高、中心跟随，即“居中跟随”）。
+            // 默认背景 wordmark：封面居中（下拉拉伸时 clip 视觉长高、中心跟随，即“居中跟随”；注意 wordmark 会随 clip transform 一起缩放，见 updateCoverStretch）。
             defaultWordmarkView.centerXAnchor.constraint(equalTo: coverClipView.centerXAnchor),
             defaultWordmarkView.centerYAnchor.constraint(equalTo: coverClipView.centerYAnchor),
             defaultWordmarkView.widthAnchor.constraint(equalToConstant: 150),
@@ -2478,7 +2503,7 @@ class BearyProfileViewController: UIViewController {
 
         NSLayoutConstraint.activate([
             coverHeightConstraint,
-            avatarTopWithoutCoverConstraint,
+            avatarTopWithCoverConstraint,
             tabsTopConstraint,
             nightHeightConstraint,
             wallHeightConstraint,
@@ -2682,6 +2707,20 @@ class BearyProfileViewController: UIViewController {
         joinedLabel.setContentCompressionResistancePriority(.required, for: .horizontal)
         wallTitleLabel.setContentCompressionResistancePriority(.required, for: .horizontal)
         wallTotalLabel.setContentCompressionResistancePriority(.required, for: .horizontal)
+        // 116 原生先行框架：封面带是固定框架、不是数据——applyProfile 无论有无
+        // 封面照片都把带高定为 profileCoverHeight（180），故首帧就按最终态搭好：
+        // 带高 180、头像半压在带底（-28）、默认橙底 + 官方白 wordmark。
+        // 此前首帧带高 0、头像顶距 20，资料一到带高跳 180、头像与名字／统计／
+        // 标签整体下跳，整头闪一次。本改动不是骨架屏：橙底 + wordmark 即无封面
+        // 时的最终默认背景（applyProfile 无封面分支同款），有封面时数据回来只把
+        // 带内照片换进来、带高与头像位一字不动；资料失败时框架同样不塌。
+        // 注意：旧“加载态先高 0 防 faint 灰块”注释（coverImageView 定义处）针对
+        // 的是无图时露 faint 底——现首帧底色已是最终默认橙底，不再适用。
+        profileShowsDefaultCover = true
+        coverClipView.backgroundColor = BearyColors.orange
+        defaultWordmarkView.isHidden = false
+        coverHeightConstraint.constant = profileCoverHeight
+        avatarImageView.layer.borderWidth = 3.5
         updateDynamicLayerColors()
     }
 
@@ -2938,6 +2977,8 @@ class BearyProfileViewController: UIViewController {
     // MARK: - 数据：资料
 
     private func loadProfile() {
+        // 提速代次：每轮资料加载 +1，供夜巡 / 模块的本轮去重守卫用。
+        profileLoadCycle += 1
         // 夜巡先清后拉：换目标 / 换号时不闪上一位用户的脚印（私密夜巡尤其不可残留）。
         hideNightPatrol()
         if let targetId = targetUserIdValue {
@@ -2979,13 +3020,14 @@ class BearyProfileViewController: UIViewController {
             applyMode()
             if isOwnProfile {
                 // 夜巡为本人专属：资料回包后另拉夜巡（失败即隐藏，不 toast）；徽章架已删，不再拉徽章。
-                loadNightPatrol()
+                // 提速：本轮已在 viewDidLoad 先起时此处由代次守卫跳过，不重发。
+                loadNightPatrol(fromProfileResult: true)
             }
             // 批 D：签名（名字下方）与模块语料跟资料走同一回包；资料失败时
             // 不动旧模块（与 G12「保留整套旧头」同哲学，失败不清空已显内容）。
             renderSignature()
             applyProfileThemeTint()
-            scheduleModulesRefresh()
+            scheduleModulesRefresh(fromProfileResult: true)
             if targetHandleValue != nil {
                 // handle 目标的标签列表必须等 profile 解析出 id 才能拉。
                 loadTab(forceReload: true)
@@ -3007,20 +3049,52 @@ class BearyProfileViewController: UIViewController {
         }
     }
 
+    /// 116 数据填入动效：文案／数字变化时只淡入该 label 本身（alpha 0→1、
+    /// 0.25s，不动 transform、不动布局、不重建节点、不弹一下）；同值不赋值
+    /// 不重播；减动效或未进窗口时直设终值。顶栏／sticky 名字为镜像同步，
+    /// 不走本函数（sticky 名有自己的滚动淡入逻辑，重复动画会冲突）。
+    private func setLabelTextFaded(_ label: UILabel, _ text: String?) {
+        guard label.text != text else { return }
+        label.text = text
+        guard !UIAccessibility.isReduceMotionEnabled, label.window != nil else {
+            label.alpha = 1
+            return
+        }
+        label.alpha = 0
+        UIView.animate(withDuration: 0.25, delay: 0, options: [.curveEaseOut, .beginFromCurrentState], animations: {
+            label.alpha = 1
+        })
+    }
+
+    /// 116 数据填入动效（容器版）：分区首次出现时只淡入容器本身（alpha，
+    /// 不动 transform／布局）；已可见时不重播。夜巡／回应墙已有自己的
+    /// 入场动画，不走本函数。
+    private func fadeInViewIfAppearing(_ view: UIView, wasHidden: Bool) {
+        guard wasHidden, !view.isHidden else { return }
+        guard !UIAccessibility.isReduceMotionEnabled, view.window != nil else {
+            view.alpha = 1
+            return
+        }
+        view.alpha = 0
+        UIView.animate(withDuration: 0.25, delay: 0, options: [.curveEaseOut, .beginFromCurrentState], animations: {
+            view.alpha = 1
+        })
+    }
+
     private func applyProfile() {
         guard let profileValue = profile else { return }
         let displayNameValue = profileValue.displayName
             ?? (profileValue.handle.map { "@" + $0 })
             ?? "TA"
-        nameLabel.text = displayNameValue
+        setLabelTextFaded(nameLabel, displayNameValue)
         stickyHeaderNameLabel.text = displayNameValue
         if let handle = profileValue.handle, !handle.isEmpty {
-            handleLabel.text = "@" + handle
             handleLabel.isHidden = false
+            setLabelTextFaded(handleLabel, "@" + handle)
             joinedIconLeadingWithHandleConstraint.isActive = true
             joinedIconLeadingWithoutHandleConstraint.isActive = false
         } else {
-            handleLabel.text = nil
+            setLabelTextFaded(handleLabel, nil)
             handleLabel.isHidden = true
             // F18：无 handle 时日历图标贴头左缘，不再沿用 handle 后 5pt 的约束右偏。
             joinedIconLeadingWithHandleConstraint.isActive = false
@@ -3029,16 +3103,22 @@ class BearyProfileViewController: UIViewController {
         if let createdMs = profileValue.createdAt, createdMs > 0 {
             let dateValue = Date(timeIntervalSince1970: TimeInterval(createdMs) / 1000.0)
             // F18：网页 "2026 年 10 月加入" 口径——年 / 月前后带空格（静态 formatter 同口径）。
-            joinedLabel.text = Self.profileJoinedFormatter.string(from: dateValue)
             joinedLabel.isHidden = false
+            setLabelTextFaded(joinedLabel, Self.profileJoinedFormatter.string(from: dateValue))
+            let joinedIconWasHidden = joinedIconView.isHidden
             joinedIconView.isHidden = false
+            fadeInViewIfAppearing(joinedIconView, wasHidden: joinedIconWasHidden)
         } else {
-            joinedLabel.text = nil
+            setLabelTextFaded(joinedLabel, nil)
             joinedLabel.isHidden = true
             joinedIconView.isHidden = true
         }
-        publicCountLabel.text = profileValue.diaryCount.map { "\($0)" } ?? "—"
-        likesCountLabel.text = profileValue.likesReceived.map { "\($0)" } ?? "—"
+        // 116 数字文案规矩：统计数字与“公开日记／获赞”文字分属两个 label，
+        // 数据回来只改数字 label 本身；数字出现／变化时只淡入数字本身
+        // （setLabelTextFaded：alpha 0→1，不弹、不缩放、不重建整行），
+        // 同值不赋值不重播。
+        setLabelTextFaded(publicCountLabel, profileValue.diaryCount.map { "\($0)" } ?? "—")
+        setLabelTextFaded(likesCountLabel, profileValue.likesReceived.map { "\($0)" } ?? "—")
 
         // 头像：有图盖住首字母位，无图透出首字母（与列表页同款回退）；
         // 有图时的加载与失败回退走 startHeaderAvatarLoad（失败显式恢复首字母 + 出重试图标）。
@@ -3093,8 +3173,11 @@ class BearyProfileViewController: UIViewController {
         // BETA 佩戴徽章（23，主页面口径）；皇冠按 plus 显示（网页 pfPlusPill 口径）。
         // I8：取不到图时用占位图（并打日志），不再静默隐藏徽章位。
         if let badgeKey = profileValue.wornBadge, !badgeKey.isEmpty, let badgeImage = BearyBadgeImages.imageOrPlaceholder(for: badgeKey) {
+            let badgeWasHidden = badgeImageView.isHidden
             badgeImageView.image = badgeImage
             badgeImageView.isHidden = false
+            // 116：徽章首次出现只淡入（与名字淡入同口径），不硬弹。
+            fadeInViewIfAppearing(badgeImageView, wasHidden: badgeWasHidden)
         } else {
             badgeImageView.image = nil
             badgeImageView.isHidden = true
@@ -3254,11 +3337,18 @@ class BearyProfileViewController: UIViewController {
         nightHeightConstraint.isActive = true
     }
 
-    private func loadNightPatrol() {
+    private func loadNightPatrol(fromProfileResult: Bool = false) {
         guard isOwnProfile else { return }
+        // 提速去重：在途不重发；资料回包到达时若本轮已在 viewDidLoad 起过，不再重起。
+        if nightPatrolLoading { return }
+        if fromProfileResult, nightPatrolStartedCycle == profileLoadCycle { return }
+        nightPatrolStartedCycle = profileLoadCycle
+        nightPatrolLoading = true
         BearyAPI.shared.fetchNightPatrol { [weak self] result in
             DispatchQueue.main.async {
-                guard let strongSelf = self, strongSelf.isOwnProfile else { return }
+                guard let strongSelf = self else { return }
+                strongSelf.nightPatrolLoading = false
+                guard strongSelf.isOwnProfile else { return }
                 switch result {
                 case .success(let response):
                     // 防御过滤：本人视角原样；isOwnProfile 翻转的竞态下私密记录仍被滤掉。
@@ -3612,11 +3702,15 @@ class BearyProfileViewController: UIViewController {
             signatureContainer.isHidden = true
             signatureHeightConstraint.isActive = true
         } else {
+            let signatureWasHidden = signatureContainer.isHidden
             signatureContainer.isHidden = false
             signatureHeightConstraint.isActive = false
             signatureLabelTrailingConstraint.constant = 0
-            signatureLabel.text = signature
+            setLabelTextFaded(signatureLabel, signature)
             signatureLabel.textColor = BearyColors.ink
+            // 分区首次出现只淡入容器（已有文案变化时 label 本身已淡入，
+            // 两者同为 alpha、不叠加位移动画）。
+            fadeInViewIfAppearing(signatureContainer, wasHidden: signatureWasHidden)
         }
         if headerWidthValue > 0 {
             layoutHeaderForced(widthValue: headerWidthValue)
@@ -3629,13 +3723,18 @@ class BearyProfileViewController: UIViewController {
 
     // MARK: 批 D —— 模块语料（作者 scope 全量分页）
 
-    private func scheduleModulesRefresh() {
+    private func scheduleModulesRefresh(fromProfileResult: Bool = false) {
         // 112 他人页口径：日记下方模块全去（写作统计／那年今日／随机漫步／
         // 地图／星图），故他人页不拉模块语料——作者 scope 分页请求一律不发；
         // 本人页原样。handle 目标在 profile 解析后才定本人与否，解析完成
         // 的 handleProfileResult 会再调一次本函数，届时本人页照常拉取。
         guard isOwnProfile else { return }
         guard let profileId = profile?.profileIdValue ?? targetUserIdValue else { return }
+        // 提速去重：资料回包到达时若本轮已在 viewDidLoad 起过同一目标的语料，不再重起
+        // （重起会 bump 代次、作废已在途的页，白白浪费首屏并行）；换目标 / 下拉刷新
+        // （代次已变）仍正常重起；其他调用点（改动后刷新）一律照常重起。
+        if fromProfileResult, modulesStartedCycle == profileLoadCycle, modulesProfileId == profileId { return }
+        modulesStartedCycle = profileLoadCycle
         if modulesProfileId != profileId {
             // 切账号 / 换目标：语料、随机上一次 id、展开态全复位，
             // 旧目标的随机卡绝不带到新目标首帧。113：失败态一并复位。
@@ -3743,12 +3842,16 @@ class BearyProfileViewController: UIViewController {
             updateModulesRetryRow()
             modulesRetryRow.isHidden = false
             // 失败态容器恒显：有语料时装各卡 + 重试行，无语料时只装重试行。
+            let modulesWasHidden = modulesContainer.isHidden
             modulesContainer.isHidden = false
             modulesHeightConstraint.isActive = false
             if headerWidthValue > 0 {
                 layoutHeaderForced(widthValue: headerWidthValue)
             }
             refreshFooter()
+            // 淡入须在 refreshFooter 把容器接进脚部之后（此前容器未进窗口，
+            // window 守卫会直接置终值、播不出动画）。
+            fadeInViewIfAppearing(modulesContainer, wasHidden: modulesWasHidden)
             return
         }
         modulesRetryRow.isHidden = true
@@ -3764,6 +3867,7 @@ class BearyProfileViewController: UIViewController {
         renderRandom(visible: visible)
         renderYear(visible: visible)
         let anyVisible = [pastSelfDeliveryCard, statsCard, thisDayCard, randomCard, yearCard].contains { !$0.isHidden }
+        let modulesWasHidden = modulesContainer.isHidden
         modulesContainer.isHidden = !anyVisible
         modulesHeightConstraint.isActive = !anyVisible
         if headerWidthValue > 0 {
@@ -3773,6 +3877,10 @@ class BearyProfileViewController: UIViewController {
         // 否则语料到齐后模块仍不出现在表格行下方。refreshFooter
         // 不回调 renderModules，无递归。
         refreshFooter()
+        // 116：模块组语料到齐首次出现时只淡入容器（须在 refreshFooter
+        // 接进脚部之后播，否则容器未进窗口、播不出）；已有卡片内容
+        // 变化时各卡只改文案，不重播本动画（wasHidden 守卫）。
+        fadeInViewIfAppearing(modulesContainer, wasHidden: modulesWasHidden)
     }
 
     /// 113 失败重试行文案与钮态：加载中显加载态、钮禁用；失败显重试。
@@ -4674,7 +4782,7 @@ class BearyProfileViewController: UIViewController {
     /// 113：前台首屏全量取数（原 loadTab 的取数体，不动口径；since
     /// 失败/无新条目时续发本函数，不再过 tabLoading 守卫）。
     private func fetchTabFirstPageFull(scope: BearyAPI.Scope, tabAtStart: ProfileTab) {
-        BearyAPI.shared.fetchEntries(scope: scope, limit: 50) { [weak self] result in
+        BearyAPI.shared.fetchEntries(scope: scope, limit: tabPageLimit) { [weak self] result in
             DispatchQueue.main.async {
                 self?.handleTabResult(result: result, appending: false, requestTab: tabAtStart)
             }
@@ -4749,7 +4857,7 @@ class BearyProfileViewController: UIViewController {
         refreshFooter()
         // 109：翻页同样记请求发出时的 tab，见 loadTab。
         let tabAtStart = currentTab
-        BearyAPI.shared.fetchEntries(scope: scopeValue, limit: 50, before: beforeCursor, beforeId: lastEntryId) { [weak self] result in
+        BearyAPI.shared.fetchEntries(scope: scopeValue, limit: tabPageLimit, before: beforeCursor, beforeId: lastEntryId) { [weak self] result in
             DispatchQueue.main.async {
                 self?.handleTabResult(result: result, appending: true, requestTab: tabAtStart)
             }
@@ -4799,7 +4907,7 @@ class BearyProfileViewController: UIViewController {
                     photoOverflowFailed = false
                 }
             }
-            if freshEntries.count < 50 {
+            if freshEntries.count < tabPageLimit {
                 setHasMore(hasMore: false)
             }
             // 80 包 A6-2：分页追加走 insertRows（与首页/时间线同口径），表行数对不上
@@ -5052,7 +5160,7 @@ class BearyProfileViewController: UIViewController {
         guard let scopeValue = scopeForTab(tab: currentTab), tabBackgroundTab != currentTab else { return }
         tabBackgroundTab = currentTab
         let tabAtStart = currentTab
-        BearyAPI.shared.fetchEntries(scope: scopeValue, limit: 50) { [weak self] result in
+        BearyAPI.shared.fetchEntries(scope: scopeValue, limit: tabPageLimit) { [weak self] result in
             DispatchQueue.main.async {
                 guard let strongSelf = self else { return }
                 // G1：回包时无论当前标签是否切走都清零（守卫只决定是否采用回包，
@@ -5063,7 +5171,7 @@ class BearyProfileViewController: UIViewController {
                 case .success(let listValue):
                     let fresh = listValue.entries ?? []
                     strongSelf.reconcileEntries(fresh: fresh)
-                    if fresh.count < 50 {
+                    if fresh.count < strongSelf.tabPageLimit {
                         strongSelf.setHasMore(hasMore: false)
                     }
                     strongSelf.tableView.reloadData()
@@ -5455,7 +5563,16 @@ class BearyProfileViewController: UIViewController {
                 photoButton.imageView?.clipsToBounds = true
                 photoButton.tag = photoIndex
                 photoButton.addTarget(self, action: #selector(photosWallButtonTapped(_:)), for: .touchUpInside)
-                photoButton.bearyAddPressFeedback()
+                // 个人页照片墙：长按不给按压效果、不变暗。长按即按住不放的
+                // touchDown，与点按走同一条按压路径（bearyAddPressFeedback 的
+                // touchDown 缩 .84 + 系统 highlighted 压暗），无法只在长按时
+                // 单独关掉；但只补轻震的 bearyAddPressHaptic 不改任何视觉，
+                // 故墙上照片钮改挂它：长按不缩不变暗，点按仍保留轻震（此前
+                // 整颗摘掉连点按轻震也没了，与全 App 按钮轻震口径不一致），
+                // 再关掉系统高亮压暗；点按进灯箱的 touchUpInside 不动。
+                // 仅此一处，不动全 App 反馈。
+                photoButton.bearyAddPressHaptic()
+                photoButton.adjustsImageWhenHighlighted = false
                 if photoIndex < wall.count {
                     let imageKey = wall[photoIndex].imageKey
                     if let url = BearyImageURLs.imageURL(key: imageKey, thumb: true) {
@@ -5764,7 +5881,8 @@ class BearyProfileViewController: UIViewController {
         }
     }
 
-    /// 自定义下拉刷新进入（消息页同款）：指示固定 84 高 + 转圈，至少展示 500ms；
+    /// 自定义下拉刷新进入（消息页同款）：指示固定 84 高 + 转圈，回包到即收回
+    ///（第 2 项后无 0.5 秒最低展示）；
     /// 完成由 handleProfileResult / handleTabResult 经 endCustomPullRefresh 收回。
     private func beginCustomPullRefresh() {
         if isCustomPullRefreshing {
@@ -5796,40 +5914,37 @@ class BearyProfileViewController: UIViewController {
         }
     }
 
-    /// 自定义下拉刷新结束：至少展示 500ms 后复位到基线内边距；两路回包
+    /// 自定义下拉刷新结束：回包到即复位到基线内边距（第 2 项后无最低展示）；两路回包
     /// （资料 / 标签）都走这里，先到先收（与旧标准头先到先停同口径），
     /// 旧回包丢弃时仍需走这里，不让刷新头永不结束。
     private func endCustomPullRefresh() {
         if !isCustomPullRefreshing || customPullEndScheduled {
             return
         }
+        // 扫 bug 定版第 2 项：去掉 0.5 秒最低展示，回包到即收回，
+        // 不再用 asyncAfter 补满剩余时间；0.32s 收回动画与触发口径不动。
         customPullEndScheduled = true
-        let elapsed = customPullStartTime.map({ Date().timeIntervalSince($0) }) ?? 0.5
-        let remaining = max(0, 0.5 - elapsed)
-        DispatchQueue.main.asyncAfter(deadline: .now() + remaining) { [weak self] in
-            guard let self else { return }
-            self.isCustomPullRefreshing = false
-            self.customPullEndScheduled = false
-            let baseline = self.profilePullBaselineTop()
-            let pullOut = {
-                self.tableView.contentInset.top = baseline
-                self.tableView.scrollIndicatorInsets.top = baseline
-                self.tableView.contentOffset = CGPoint(x: 0, y: -baseline)
-                self.pullView.frame = CGRect(x: 0, y: -116, width: self.tableView.bounds.width, height: 116)
-            }
-            if UIAccessibility.isReduceMotionEnabled {
-                pullOut()
+        isCustomPullRefreshing = false
+        customPullEndScheduled = false
+        let baseline = profilePullBaselineTop()
+        let pullOut = {
+            self.tableView.contentInset.top = baseline
+            self.tableView.scrollIndicatorInsets.top = baseline
+            self.tableView.contentOffset = CGPoint(x: 0, y: -baseline)
+            self.pullView.frame = CGRect(x: 0, y: -116, width: self.tableView.bounds.width, height: 116)
+        }
+        if UIAccessibility.isReduceMotionEnabled {
+            pullOut()
+            self.refreshIconView.stopSpinning()
+            // 顶端残留修法：pullOut 动画期 inset/offset 不同步时瞬时
+            // 拉量可能又把封面拉伸+模糊，动画结束时不再有滚动事件来
+            // 复位，故此处强制归自然态（无模糊、无放大）。
+            self.resetCoverStretch()
+        } else {
+            UIView.animate(withDuration: 0.32, animations: pullOut, completion: { _ in
                 self.refreshIconView.stopSpinning()
-                // 顶端残留修法：pullOut 动画期 inset/offset 不同步时瞬时
-                // 拉量可能又把封面拉伸+模糊，动画结束时不再有滚动事件来
-                // 复位，故此处强制归自然态（无模糊、无放大）。
                 self.resetCoverStretch()
-            } else {
-                UIView.animate(withDuration: 0.32, animations: pullOut, completion: { _ in
-                    self.refreshIconView.stopSpinning()
-                    self.resetCoverStretch()
-                })
-            }
+            })
         }
     }
 
@@ -5980,6 +6095,17 @@ class BearyProfileViewController: UIViewController {
 
     /// 收尾跨页同步：首页/详情取消赞过或收藏后，对应页签摘卡（日记页签不受影响，
     /// 只摘赞过/收藏页签）。容器接线（Feed onInteractionRemoved → 本方法）。
+    /// 删帖同步清模型：删帖成功后立即从个人页各页签模型摘掉本篇，
+    /// 不只依赖随后重拉——重拉可能被 tabLoading 守卫跳过，跳过即复活。
+    /// 个人页列表更新走 reloadData，不发行级批更新（无下标可错）。
+    func removeDeletedEntry(entryId: String) {
+        diaryEntries.removeAll { $0.id == entryId }
+        likedEntries.removeAll { $0.id == entryId }
+        savedEntries.removeAll { $0.id == entryId }
+        guard isViewLoaded else { return }
+        tableView.reloadData()
+    }
+
     func removeEntryFromTabs(entryId: String, likeRemoved: Bool, bookmarkRemoved: Bool) {
         // 80 包 A6-2：只在当前页签正显示该行时删行；其他页签模型已改、界面不在本页，无需重载。
         let visibleRow = displayedEntries.firstIndex(where: { $0.id == entryId })
@@ -6572,7 +6698,13 @@ class BearyProfileViewController: UIViewController {
                     case .success(let fetched):
                         let viewerIsAuthor = fetched.isMine == true || (fetched.authorId != nil && fetched.authorId == SessionManager.shared.currentUser?.id)
                         if viewerIsAuthor || fetched.isPublic == true {
-                            strongSelf.onOpenEntry?(fetched)
+                            // 提速：这份 Entry 就是刚拉到的可见性校验结果，直接进详情
+                            // 且跳过后台补拉（原路径会再拉一次同一单篇）；未接线时回落原路径。
+                            if let openFresh = strongSelf.onOpenFreshEntry {
+                                openFresh(fetched)
+                            } else {
+                                strongSelf.onOpenEntry?(fetched)
+                            }
                         } else {
                             strongSelf.presentSimpleAlert(message: "该日记已设为私密")
                         }
@@ -6592,24 +6724,16 @@ class BearyProfileViewController: UIViewController {
 // MARK: - 列表数据源与点按（点按只走 onOpenEntry，不在本文件内置跳转）
 
 /// 批 C“更多日记”行（110 方案 A，Li 已点头；方案 B/C 不用）：
-/// 纯文字行——无填充、无边框、无圆角块，只一条顶部分割线（2pt、
-/// BearyColors.line：浅 #dbdbdb／深 #3a3a40，与时间线分割线同款，
-/// 动态色自动跟随深浅）加居中 16pt 墨字“更多日记 ›”（› 为文字符号，
-/// 不用 chevron 图标）；整行可点，默认字号下行高 52pt（分割线 2 +
-/// 按钮区 50，按钮高用 ≥50 以便大字号时随字长高）；点按走 onTap
-/// （容器跳时间线页，行为与旧圆角钮一致）；复用时 onTap 置空。
+/// 纯文字行——无填充、无边框、无圆角块、无顶部分割线（2026-10-31
+/// Li 定：最后一篇日记卡片底部与本行之间的分割线去掉）；居中 16pt
+/// 墨字“更多日记 ›”（› 为文字符号，不用 chevron 图标）；整行可点，
+/// 默认字号下行高 50pt（按钮高用 ≥50 以便大字号时随字长高）；点按走
+/// onTap（容器跳时间线页，行为与旧圆角钮一致）；复用时 onTap 置空。
 /// 旧浅灰填充大圆角按钮整块删除、零残留（无 faint 底、无圆角、
 /// 无边框、无图标引用）。
 final class BearyProfileMoreDiaryCell: UITableViewCell {
 
     var onTap: (() -> Void)?
-
-    private let dividerView: UIView = {
-        let viewValue = UIView()
-        viewValue.translatesAutoresizingMaskIntoConstraints = false
-        viewValue.backgroundColor = BearyColors.line
-        return viewValue
-    }()
 
     private lazy var moreButton: UIButton = {
         let buttonValue = UIButton(type: .custom)
@@ -6630,14 +6754,9 @@ final class BearyProfileMoreDiaryCell: UITableViewCell {
         backgroundColor = .clear
         contentView.backgroundColor = .clear
         selectionStyle = .none
-        contentView.addSubview(dividerView)
         contentView.addSubview(moreButton)
         NSLayoutConstraint.activate([
-            dividerView.topAnchor.constraint(equalTo: contentView.topAnchor),
-            dividerView.leadingAnchor.constraint(equalTo: contentView.leadingAnchor),
-            dividerView.trailingAnchor.constraint(equalTo: contentView.trailingAnchor),
-            dividerView.heightAnchor.constraint(equalToConstant: 2),
-            moreButton.topAnchor.constraint(equalTo: dividerView.bottomAnchor),
+            moreButton.topAnchor.constraint(equalTo: contentView.topAnchor),
             moreButton.leadingAnchor.constraint(equalTo: contentView.leadingAnchor),
             moreButton.trailingAnchor.constraint(equalTo: contentView.trailingAnchor),
             moreButton.bottomAnchor.constraint(equalTo: contentView.bottomAnchor),
@@ -6876,8 +6995,8 @@ extension BearyProfileViewController: UITableViewDataSource, UITableViewDelegate
 
     /// 主滚动视图即本表：向下滚过 120pt 藏栏、向上滚显栏；
     /// v22 上滑区（2026-10-30）只走 transform／alpha（见 updateProfileCoverScroll），
-    /// 视差 0.3 已删；下拉区（S ≤ 0）与刷新期封面 transform 恒 identity：
-    /// 下拉由拉伸约束接管、刷新期封面不动（#187）。
+    /// 视差 0.3 已删；刷新期封面 transform 恒 identity：下拉由封面 transform
+    /// 接管、刷新期封面不动（#187）。
 
     /// 顶部回弹区（offset ≤ 0）一律显栏。栏态变化时才调容器 helper，
     /// FAB 随栏同隐同现由容器 helper 内部负责，本页不直接碰 FAB。
@@ -6885,18 +7004,32 @@ extension BearyProfileViewController: UITableViewDataSource, UITableViewDelegate
     /// 且本扩展遵循 UITableViewDelegate，故 UIScrollViewDelegate 的
     /// scrollViewDidScroll 由主表滚动触发；横滑墙（wall/badges）未设 delegate，
     /// 即便触发也被 `=== tableView` 守卫挡下。
-    /// 弹性封面：下拉超滚时封面顶边上伸、底边不动（高度 = 180 + 下拉量），
-    /// 2026-10-29 第 5 项：左右同步外扩（各扩拉量一半，aspectFill 等比铺满 =
-    /// 双向放大，不只纵向拉伸），任何下拉量下顶部都不露白；
-    /// 模糊层 = 封面预模糊图（加载完成时生成一次），alpha = 下拉量 / 120，
-    /// 上限 0.85，回弹时随拉量同步淡出；不用磨砂玻璃，不染色、不露白。
-    /// 只改约束常量与模糊层 alpha（尺寸/透明度），不碰其他属性。
-    /// 基线取 -contentInset.top（与顶栏判定同口径，收起态为 0 时即 y < 0）。
+    /// 弹性封面（transform 版，2026-11-01 第 4 项）：下拉超滚时封面顶边上伸、
+    /// 底边不动（视觉高 = 180 + 下拉量），2026-10-29 第 5 项：左右同步外扩
+    /// （各扩拉量一半，任何下拉量下顶部都不露白）；目标几何与旧逐帧改约束
+    /// 版一字不动，改动的是实现层：约束恒为自然态，逐帧只写 transform。
+    /// 几何推导（clip 自然框：宽 W、高 180、中心 (W/2, 90)；旧版拉伸后框：
+    /// 顶 -pull、高 180+pull、左右各扩 pull/2，即中心移到 (W/2, 90-pull/2)）：
+    /// transform = 缩放 (sx=(W+pull)/W, sy=(180+pull)/180) + 平移 ty=-pull/2
+    /// （直接构造矩阵，不用 translatedBy 拼顺序，免平移被缩放吃掉一截），
+    /// 逐帧覆写、非累积；bounds 不受 transform 影响，故每帧都用自然宽算，
+    /// 不会越拉越大。头像锚在 clip 布局底边（-28），布局底边恒 180，
+    /// 故头像／名字／统计在拉伸中一字不动，与旧版一致。
+    /// 查看热区钮（coverViewButton）是 headerView 层兄弟视图、框与 clip
+    /// 自然框全等，故同矩阵跟移，拉伸区的点按仍走到查看封面大图。
+    /// 注意：transform 是对已渲染内容整体缩放，不是 aspectFill 重裁剪——
+    /// 旧版拉伸改宽高比、aspectFill 重新裁图（不变形）；本版横纵缩放比
+    /// 不等（W≠180 时 sx≠sy），照片与默认 wordmark 会被非等比拉伸，
+    /// 拉量越大变形越明显；视觉口径“几乎一样”不等于逐像素一样，
+    /// 必须真机验（见本支 PR 说明）。模糊层 = 封面预模糊图（加载完成时
+    /// 生成一次），alpha = 下拉量 / 120，上限 0.85，回弹时随拉量同步淡出；
+    /// 不用磨砂玻璃，不染色、不露白。基线取 -contentInset.top（与顶栏判定
+    /// 同口径，收起态为 0 时即 y < 0）。
     private func updateCoverStretch(offsetY y: CGFloat, topBaseline: CGFloat) {
         // 刷新接管期间：滚动事件只来自刷新控件的 offset 动画，不再由手指驱动；
-        // 此时若继续按拉量拉伸，会与松手／触发时启动的复位动画打架（约束常量
+        // 此时若继续按拉量拉伸，会与松手／触发时启动的复位动画打架（transform
         // 两处写，封面几何与模糊 alpha 来回跳 = 下拉刷新时背景闪）。刷新期间
-        // 刷新期间滚动事件不再按拉量拉伸（见下文顶端残留修法：封面一律
+        // 滚动事件不再按拉量拉伸（见下文顶端残留修法：封面一律
         // 复位自然态）；刷新结束后 offset 回落、isRefreshing 为 false，
         // 滚动事件恢复 1:1 跟随。
         if isCustomPullRefreshing {
@@ -6919,15 +7052,28 @@ extension BearyProfileViewController: UITableViewDataSource, UITableViewDelegate
         }
         // 封面换图后首次下拉时生成预模糊图（源图不变不重算，不逐帧现算）。
         refreshCoverBlurImage()
-        coverTopConstraint.constant = -pull
-        coverHeightConstraint.constant = profileCoverHeight + pull
-        coverLeadingConstraint.constant = -pull / 2
-        coverTrailingConstraint.constant = pull / 2
+        // 宽未出（首布局前）时不拉伸：下一滚动事件布局已出后会重新施加。
+        let clipWidth = coverClipView.bounds.width
+        guard clipWidth > 0 else {
+            resetCoverStretch()
+            return
+        }
+        let stretch = CGAffineTransform(
+            a: (clipWidth + pull) / clipWidth, b: 0, c: 0,
+            d: (profileCoverHeight + pull) / profileCoverHeight,
+            tx: 0, ty: -pull / 2
+        )
+        coverClipView.transform = stretch
+        coverViewButton.transform = stretch
         setCoverBlurAlpha(min(pull / 120, 0.85))
     }
 
-    /// 弹性封面复位（自然态：顶 0、高 180/0、左右贴边、无模糊）。
+    /// 弹性封面复位（自然态：transform 归 identity、约束回自然值、无模糊）。
+    /// 约束恒为自然态，复位主角是 transform；约束赋值保留作不变量兜底
+    /// （量高类调用方 layoutHeaderForced 依赖复位后为自然态）。
     private func resetCoverStretch() {
+        coverClipView.transform = .identity
+        coverViewButton.transform = .identity
         coverTopConstraint.constant = 0
         coverHeightConstraint.constant = profileShowsCoverArea ? profileCoverHeight : 0
         coverLeadingConstraint.constant = 0
@@ -6935,30 +7081,29 @@ extension BearyProfileViewController: UITableViewDataSource, UITableViewDelegate
         setCoverBlurAlpha(0)
     }
 
-    /// 弹性封面复位（动画版）：松手与刷新接管时用——四个常量 + 模糊 alpha
-    /// 一次 ease-out（0.28s）回自然态，用现有约束 + layoutIfNeeded 做动画，
-    /// 不把拉伸改成 transform；减动效时直接归位；已在自然态时不建动画。
+    /// 弹性封面复位（动画版）：松手与刷新接管时用——transform + 模糊 alpha
+    /// 一次 ease-out（0.28s）回自然态，不再经约束 + layoutIfNeeded 做动画；
+    /// 减动效时直接归位；已在自然态时不建动画。
     private func resetCoverStretchAnimated() {
-        let naturalHeight: CGFloat = profileShowsCoverArea ? profileCoverHeight : 0
-        let alreadyNatural = coverTopConstraint.constant == 0
-            && coverHeightConstraint.constant == naturalHeight
-            && coverLeadingConstraint.constant == 0
-            && coverTrailingConstraint.constant == 0
+        let alreadyNatural = coverClipView.transform == .identity
+            && coverViewButton.transform == .identity
             && coverBlurImageView.alpha == 0
         if alreadyNatural || UIAccessibility.isReduceMotionEnabled {
             resetCoverStretch()
             return
         }
+        // 约束恒为自然态，这里只是不变量兜底（正常情况下已是自然值，
+        // 赋值无视觉变化）；动画块内只淡 alpha 与归 transform；isHidden
+        // 在动画结束且仍为 0 时才置 true，否则动画一开始就把淡出藏掉。
         coverTopConstraint.constant = 0
-        coverHeightConstraint.constant = naturalHeight
+        coverHeightConstraint.constant = profileShowsCoverArea ? profileCoverHeight : 0
         coverLeadingConstraint.constant = 0
         coverTrailingConstraint.constant = 0
-        // 动画块内只淡 alpha；isHidden 在动画结束且仍为 0 时才置 true，
-        // 否则动画一开始就把淡出藏掉。
         coverBlurImageView.isHidden = false
         UIView.animate(withDuration: 0.28, delay: 0, options: [.curveEaseOut, .beginFromCurrentState], animations: {
+            self.coverClipView.transform = .identity
+            self.coverViewButton.transform = .identity
             self.coverBlurImageView.alpha = 0
-            self.view.layoutIfNeeded()
         }, completion: { [weak self] _ in
             guard let self = self else { return }
             if self.coverBlurImageView.alpha == 0 {

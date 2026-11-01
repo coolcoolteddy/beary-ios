@@ -411,12 +411,28 @@ final class BearyWishWallViewController: UIViewController {
         present(vc, animated: BearyMotion.animated(true), completion: nil)
     }
 
+    /// 116 数据填入动效：状态视图由隐藏变可见时只淡入本身（alpha
+    /// 0→1、0.25s，不动 transform／布局）；已可见时不重播；减动效或
+    /// 未进窗口时直设终值。成功时状态视图直接隐藏、行走已有错峰。
+    private func showStateViewFaded() {
+        let wasHidden = wishStateView.isHidden
+        wishStateView.isHidden = false
+        guard wasHidden, !UIAccessibility.isReduceMotionEnabled, wishStateView.window != nil else {
+            wishStateView.alpha = 1
+            return
+        }
+        wishStateView.alpha = 0
+        UIView.animate(withDuration: 0.25, delay: 0, options: [.curveEaseOut, .beginFromCurrentState], animations: {
+            self.wishStateView.alpha = 1
+        })
+    }
+
     private func loadWishes() {
         guard !isLoading else { return }
         isLoading = true
         // P2-18：加载态走 BearyStateView（转圈 + “加载中…”）；成功/失败回包时统一收起。
         wishStateView.configure(kind: .loading, title: "加载中…", subtitle: nil, iconName: nil, actionTitle: nil)
-        wishStateView.isHidden = false
+        showStateViewFaded()
         BearyAPI.shared.fetchWishes { [weak self] result in
             DispatchQueue.main.async {
                 guard let self = self else { return }
@@ -429,7 +445,7 @@ final class BearyWishWallViewController: UIViewController {
                 case .failure:
                     // P2-18：失败态走 BearyStateView（“加载失败”+“重试”，动作复用 retryTapped）。
                     self.wishStateView.configure(kind: .error, title: "加载失败", subtitle: nil, iconName: nil, actionTitle: "重试", onAction: { [weak self] in self?.retryTapped() })
-                    self.wishStateView.isHidden = false
+                    self.showStateViewFaded()
                 }
             }
         }

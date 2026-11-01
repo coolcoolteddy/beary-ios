@@ -812,7 +812,26 @@ final class BearyAPI {
 
     @discardableResult
     func search(q: String, completion: @escaping (Result<SearchResult, APIError>) -> Void) -> URLSessionDataTask? {
-        return request("/beary/api/search", query: ["q": q], completion: completion)
+        return search(q: q, before: nil, beforeId: nil, completion: completion)
+    }
+
+    /// sweep32-2 搜索翻页：服务端游标与列表同口径——日记组（entries/mine）
+    /// 按 created_at DESC + id DESC，传 before（末条 created_at 毫秒）+
+    /// before_id（末条 id）取下一批（各 LIMIT 20）；用户组按 id 升序，只传
+    /// before_id（末条用户 id，id > before_id）取下一批（LIMIT 8）。
+    /// 注意同一请求的三组共用同一套游标参：调用方翻页时按组各发一请求、
+    /// 只取该组结果（见 BearySearchViewController.loadMore），不把一组的
+    /// 游标套到另一组，否则会重复或漏项。
+    @discardableResult
+    func search(q: String, before: Int?, beforeId: String?, completion: @escaping (Result<SearchResult, APIError>) -> Void) -> URLSessionDataTask? {
+        var query: [String: String] = ["q": q]
+        if let beforeValue = before {
+            query["before"] = "\(beforeValue)"
+        }
+        if let beforeIdValue = beforeId, !beforeIdValue.isEmpty {
+            query["before_id"] = beforeIdValue
+        }
+        return request("/beary/api/search", query: query, completion: completion)
     }
 
     // MARK: - 账户与会话

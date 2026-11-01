@@ -158,7 +158,8 @@ final class BearyRecipientPickerViewController: UIViewController, UITextFieldDel
         headerIcon.contentMode = .scaleAspectFit
         // iCity：选人 sheet 标题改“@ 谁”。
         headerTitle.text = "@ 谁"
-        headerTitle.font = UIFont.boldSystemFont(ofSize: 16)
+        headerTitle.font = BearyDynamicType.scaledFont(for: UIFont.boldSystemFont(ofSize: 16))
+        headerTitle.adjustsFontForContentSizeCategory = true
         headerTitle.textColor = BearyColors.ink
         // 关闭钮视觉由 BearyButton.iconCircleClose 工厂定（faint 底 32 圆钮 + icon_close 15）；
         // 这里只保留动作与按压反馈，不再重复写底色/圆角。
@@ -181,9 +182,10 @@ final class BearyRecipientPickerViewController: UIViewController, UITextFieldDel
         // 不用系统默认占位色，避免与全站灰字不一致。
         searchField.attributedPlaceholder = NSAttributedString(string: "搜索昵称或 @用户名", attributes: [
             .foregroundColor: BearyColors.gray,
-            .font: UIFont.systemFont(ofSize: 16),
+            .font: BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 16)),
         ])
-        searchField.font = UIFont.systemFont(ofSize: 16)
+        searchField.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 16))
+        searchField.adjustsFontForContentSizeCategory = true
         searchField.textColor = BearyColors.ink
         searchField.contentVerticalAlignment = .center
         searchField.delegate = self
@@ -199,11 +201,13 @@ final class BearyRecipientPickerViewController: UIViewController, UITextFieldDel
         notifyCheckButton.layer.masksToBounds = true
         notifyCheckButton.layer.borderWidth = 1.5
         notifyCheckButton.layer.bearyDynamicBorderColor = BearyColors.line
-        notifyCheckButton.titleLabel?.font = UIFont.boldSystemFont(ofSize: 14)
+        notifyCheckButton.titleLabel?.font = BearyDynamicType.scaledFont(for: UIFont.boldSystemFont(ofSize: 14))
+        notifyCheckButton.titleLabel?.adjustsFontForContentSizeCategory = true
         notifyCheckButton.addTarget(self, action: #selector(didTapNotifyCheck), for: .touchUpInside)
         notifyCheckButton.bearyAddPressFeedback()
         notifyLabel.text = "通知对方"
-        notifyLabel.font = UIFont.systemFont(ofSize: 13)
+        notifyLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13))
+        notifyLabel.adjustsFontForContentSizeCategory = true
         notifyLabel.textColor = BearyColors.ink
         notifyRow.addArrangedSubview(notifyCheckButton)
         notifyRow.addArrangedSubview(notifyLabel)
@@ -212,7 +216,8 @@ final class BearyRecipientPickerViewController: UIViewController, UITextFieldDel
         rowsStack.axis = .vertical
         rowsStack.spacing = 0
         resultsLabel.text = "搜索结果"
-        resultsLabel.font = UIFont.systemFont(ofSize: 12)
+        resultsLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 12))
+        resultsLabel.adjustsFontForContentSizeCategory = true
         resultsLabel.textColor = BearyColors.gray
         resultsLabelWrap.isHidden = true
         // 空态圆：底色 orange 18% 不变，补内圈 orange 25% 描边（网页 .addr-stic 同款）。
@@ -223,16 +228,19 @@ final class BearyRecipientPickerViewController: UIViewController, UITextFieldDel
         stateCircle.layer.bearyDynamicBorderColor = BearyColors.orange.withAlphaComponent(0.25)
         stateIcon.tintColor = BearyColors.orange
         stateIcon.contentMode = .scaleAspectFit
-        stateTitle.font = UIFont.boldSystemFont(ofSize: 15)
+        stateTitle.font = BearyDynamicType.scaledFont(for: UIFont.boldSystemFont(ofSize: 15))
+        stateTitle.adjustsFontForContentSizeCategory = true
         stateTitle.textColor = BearyColors.ink
         stateTitle.textAlignment = .center
-        stateSubtitle.font = UIFont.systemFont(ofSize: 12.5)
+        stateSubtitle.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 12.5))
+        stateSubtitle.adjustsFontForContentSizeCategory = true
         stateSubtitle.textColor = BearyColors.gray
         stateSubtitle.textAlignment = .center
         stateSubtitle.numberOfLines = 0
         stateRetryButton.setTitle("重试", for: .normal)
         stateRetryButton.setTitleColor(BearyColors.blue, for: .normal)
-        stateRetryButton.titleLabel?.font = UIFont.systemFont(ofSize: 15)
+        stateRetryButton.titleLabel?.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 15))
+        stateRetryButton.titleLabel?.adjustsFontForContentSizeCategory = true
         stateRetryButton.isHidden = true
         stateRetryButton.addTarget(self, action: #selector(didTapStateRetry), for: .touchUpInside)
         stateRetryButton.bearyAddPressFeedback()
@@ -308,7 +316,8 @@ final class BearyRecipientPickerViewController: UIViewController, UITextFieldDel
             searchBox.leadingAnchor.constraint(equalTo: sheetView.leadingAnchor, constant: 16),
             searchBox.trailingAnchor.constraint(equalTo: sheetView.trailingAnchor, constant: -16),
             // A2：搜索框显式高度 44pt（不再内容驱动，避免 sheet fitting 压高导致图标/占位看不见）。
-            searchBox.heightAnchor.constraint(equalToConstant: 44),
+            // 32 清单第 25 项：搜索框改 ≥44——16pt 输入字跟随放大时框随字长高、不裁字；默认字号下仍为 44。
+            searchBox.heightAnchor.constraint(greaterThanOrEqualToConstant: 44),
             searchIcon.leadingAnchor.constraint(equalTo: searchBox.leadingAnchor, constant: 14),
             searchIcon.centerYAnchor.constraint(equalTo: searchBox.centerYAnchor),
             searchIcon.widthAnchor.constraint(equalToConstant: 18),
@@ -790,7 +799,8 @@ final class BearyRecipientPickerViewController: UIViewController, UITextFieldDel
             avatarView.layer.masksToBounds = true
             let fallbackLabel = UILabel()
             fallbackLabel.translatesAutoresizingMaskIntoConstraints = false
-            fallbackLabel.font = UIFont.boldSystemFont(ofSize: 16)
+            fallbackLabel.font = BearyDynamicType.scaledFont(for: UIFont.boldSystemFont(ofSize: 16))
+            fallbackLabel.adjustsFontForContentSizeCategory = true
             fallbackLabel.textColor = BearyColors.orange
             fallbackLabel.backgroundColor = BearyColors.orange.withAlphaComponent(0.18)
             fallbackLabel.textAlignment = .center
@@ -802,11 +812,13 @@ final class BearyRecipientPickerViewController: UIViewController, UITextFieldDel
             fallbackLabel.layer.bearyDynamicBorderColor = BearyColors.orange.withAlphaComponent(0.25)
             let nameLabel = UILabel()
             nameLabel.translatesAutoresizingMaskIntoConstraints = false
-            nameLabel.font = UIFont.systemFont(ofSize: 15, weight: .bold)
+            nameLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 15, weight: .bold))
+            nameLabel.adjustsFontForContentSizeCategory = true
             nameLabel.textColor = BearyColors.ink
             let handleLabel = UILabel()
             handleLabel.translatesAutoresizingMaskIntoConstraints = false
-            handleLabel.font = UIFont.systemFont(ofSize: 12.5)
+            handleLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 12.5))
+            handleLabel.adjustsFontForContentSizeCategory = true
             handleLabel.textColor = BearyColors.gray
             let chevron = UIImageView(image: BearyIconImages.image(named: "icon_chevron_right", pointSize: 16))
             chevron.translatesAutoresizingMaskIntoConstraints = false
@@ -851,13 +863,12 @@ final class BearyRecipientPickerViewController: UIViewController, UITextFieldDel
             row.addSubview(chevron)
             row.addSubview(separator)
             NSLayoutConstraint.activate([
-                avatarView.topAnchor.constraint(equalTo: row.topAnchor, constant: 10),
-                avatarView.bottomAnchor.constraint(equalTo: row.bottomAnchor, constant: -10),
+                // 32 清单第 25 项：头像改居中锚定（原上下各 10 定死 64 高）；行高改由内容撑起，见下方 ≥64。
+                avatarView.centerYAnchor.constraint(equalTo: row.centerYAnchor),
                 avatarView.leadingAnchor.constraint(equalTo: row.leadingAnchor, constant: 12),
                 avatarView.widthAnchor.constraint(equalToConstant: 44),
                 avatarView.heightAnchor.constraint(equalToConstant: 44),
-                fallbackLabel.topAnchor.constraint(equalTo: row.topAnchor, constant: 10),
-                fallbackLabel.bottomAnchor.constraint(equalTo: row.bottomAnchor, constant: -10),
+                fallbackLabel.centerYAnchor.constraint(equalTo: row.centerYAnchor),
                 fallbackLabel.leadingAnchor.constraint(equalTo: row.leadingAnchor, constant: 12),
                 fallbackLabel.widthAnchor.constraint(equalToConstant: 44),
                 fallbackLabel.heightAnchor.constraint(equalToConstant: 44),
@@ -869,7 +880,8 @@ final class BearyRecipientPickerViewController: UIViewController, UITextFieldDel
                 handleLabel.trailingAnchor.constraint(lessThanOrEqualTo: chevron.leadingAnchor, constant: -8),
                 handleLabel.bottomAnchor.constraint(lessThanOrEqualTo: row.bottomAnchor, constant: -12),
                 // 8-15：可点行最小 44 高约束（现由头像 44 + 上下 10 撑到 64，已达标；本约束防内容变矮时跌破 44）。
-            row.heightAnchor.constraint(greaterThanOrEqualToConstant: 44),
+                // 32 清单第 25 项：最小行高 44→64（即现行实际行高）；名/handle 跟随放大时名顶 12 + handle 底 ≤-12 把行撑高、不裁字。
+            row.heightAnchor.constraint(greaterThanOrEqualToConstant: 64),
             chevron.centerYAnchor.constraint(equalTo: row.centerYAnchor),
                 chevron.trailingAnchor.constraint(equalTo: row.trailingAnchor, constant: -12),
                 chevron.widthAnchor.constraint(equalToConstant: 16),

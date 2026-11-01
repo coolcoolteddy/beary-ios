@@ -32,6 +32,36 @@
 
 import UIKit
 
+/// 详情限时虚线边框视图（116 详情框修）：自身按 bounds 重画虚线路径，
+/// 不再由控制器在布局时手动算矩形——右列高度落定（引用加载、回应行出现）
+/// 后 bounds 一变就重画，框底不再切穿“＋”回应钮。
+/// 口径不变：1.5pt、虚线 [4,3]、圆角 16、line 色；不拦截点按；深浅切换自刷描边色。
+final class BearyDetailDashedBorderView: UIView {
+    private let borderLayer = CAShapeLayer()
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        isUserInteractionEnabled = false
+        backgroundColor = .clear
+        borderLayer.fillColor = UIColor.clear.cgColor
+        borderLayer.lineWidth = 1.5
+        borderLayer.lineDashPattern = [4, 3]
+        borderLayer.strokeColor = BearyColors.line.cgColor
+        layer.addSublayer(borderLayer)
+    }
+    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        borderLayer.frame = bounds
+        borderLayer.path = UIBezierPath(roundedRect: bounds, cornerRadius: 16).cgPath
+    }
+    override func traitCollectionDidChange(_ previousTraitCollection: UITraitCollection?) {
+        super.traitCollectionDidChange(previousTraitCollection)
+        if traitCollection.hasDifferentColorAppearance(comparedTo: previousTraitCollection) {
+            borderLayer.strokeColor = BearyColors.line.cgColor
+        }
+    }
+}
+
 final class BearyDetailViewController: UIViewController {
 
     // MARK: - 回调（容器 SceneDelegate 接线）
@@ -99,7 +129,7 @@ final class BearyDetailViewController: UIViewController {
     private let contentColumnView = UIView()
     /// 批 B 右列：首页卡片 rightStack 同款（spacing 0 + setCustomSpacing 对照表，
     /// 见 updateRightStackSpacing；顶距由 rightStackTopConstraint 动态定 22/23）。
-    private let rightStack = UIStackView()
+    private let rightStack = BearyPassThroughStackView()
     private var rightStackTopConstraint: NSLayoutConstraint?
     private var rightStackTrailingConstraint: NSLayoutConstraint?
     private let separatorView = UIView()
@@ -375,19 +405,15 @@ final class BearyDetailViewController: UIViewController {
         return st
     }()
 
-    /// 限时详情虚线边框（CAShapeLayer，1.5pt dashed、line 色、圆角 16；
-    /// 批 B：按首页卡片口径按内容列内缩 8/6 矩形重画路径（旧详情按整列 bounds，
-    /// 框贴边；现与卡片一致）；109：框底改按右列底 +16 收底（见
-    /// updateEphemeralBorderPath），主题切换重刷描边色；插在 contentColumnView
-    /// 图层最底层，不盖内容；存活期底线藏、边框代之）。
-    private let ephemeralBorderLayer: CAShapeLayer = {
-        let layer = CAShapeLayer()
-        layer.fillColor = UIColor.clear.cgColor
-        layer.lineWidth = 1.5
-        layer.lineDashPattern = [4, 3]
-        layer.strokeColor = BearyColors.line.cgColor
-        layer.isHidden = true
-        return layer
+    /// 限时详情虚线边框视图（116 详情框修，取代旧 CAShapeLayer 手动算矩形）：
+    /// 约束钉在内容列上（顶 +6、左右内缩 8、底按右列底 +16），
+    /// 自身 layoutSubviews 按 bounds 重画，右列高度落定后框底跟着走；
+    /// 插在 contentColumnView 最底层，不盖内容、不拦截点按；存活期底线藏、边框代之。
+    private let ephemeralBorderView: BearyDetailDashedBorderView = {
+        let v = BearyDetailDashedBorderView()
+        v.translatesAutoresizingMaskIntoConstraints = false
+        v.isHidden = true
+        return v
     }()
     private var imageKeys: [String] = []
 
@@ -486,13 +512,15 @@ final class BearyDetailViewController: UIViewController {
         }
     }
 
-    /// 深浅切换：虚线边框描边色是 CGColor 快照（updateEphemeralBorderPath 内
-    /// 重赋），色貌变化时重画；小地球图标走 template + 动态灰 tint，系统自动跟随，
-    /// 无需重设；心情播放器内部自带 trait 重刷。
+    /// 深浅切换：虚线边框视图内部自刷描边色（BearyDetailDashedBorderView
+    /// traitCollectionDidChange），控制器不再手动重画；小地球图标走 template +
+    /// 动态灰 tint，系统自动跟随，无需重设；心情播放器内部自带 trait 重刷。
+    /// 但正文内联心情附件的深浅变体仍需控制器重建：主题切换时正文末尾
+    /// 心情附件需换深浅变体，否则旧心情图停留在旧色貌。
     override func traitCollectionDidChange(_ previousTraitCollection: UITraitCollection?) {
         super.traitCollectionDidChange(previousTraitCollection)
         if traitCollection.hasDifferentColorAppearance(comparedTo: previousTraitCollection) {
-            updateEphemeralBorderPath()
+            bodyLabel.attributedText = detailBodyAttributedText(entry.content ?? "", moodKey: entry.mood)
         }
     }
 
@@ -508,7 +536,6 @@ final class BearyDetailViewController: UIViewController {
             columnWideWidth?.isActive = wantWide
             columnWideCenterX?.isActive = wantWide
         }
-        updateEphemeralBorderPath()
         // 批 B：回应行宽 = 右列宽（旧详情按整列宽算，右列窄 52pt 时会少算换行、
         // 行高偏矮；现按 rightStack 实测宽算，与首页卡片同口径）。
         let width = rightStack.bounds.width
@@ -543,6 +570,8 @@ final class BearyDetailViewController: UIViewController {
         rightStack.spacing = 0
         rightStack.alignment = .fill
         rightStack.distribution = .fill
+        // 清单 18：中间栈透传回应行扩后热区（只认 emoteFlowView 内钮，其他行不动）。
+        rightStack.passThroughRoot = emoteFlowView
         contentColumnView.addSubview(rightStack)
 
         separatorView.translatesAutoresizingMaskIntoConstraints = false
@@ -734,9 +763,18 @@ final class BearyDetailViewController: UIViewController {
 
     private func buildEphemeralRow() {
         // 限时倒计时行：只留倒计时灰字，位置在作者行下方、标题上方（与卡片同口径）；
-        // 虚线边框插 contentColumnView 图层最底层，框住内容列内缩矩形。
+        // 虚线边框视图挂 contentColumnView 最底层，约束钉住内容列矩形
+        // （顶 +6、左右内缩 8、底按右列底 +16），右列高度一变框就跟着变，
+        // 不再依赖布局时手动算矩形的旧时机（旧时机下回应行高度落定后框底
+        // 仍停在旧位置，正好切穿“＋”回应钮）。
         rightStack.addArrangedSubview(ephemeralRow)
-        contentColumnView.layer.insertSublayer(ephemeralBorderLayer, at: 0)
+        contentColumnView.insertSubview(ephemeralBorderView, at: 0)
+        NSLayoutConstraint.activate([
+            ephemeralBorderView.topAnchor.constraint(equalTo: contentColumnView.topAnchor, constant: 6),
+            ephemeralBorderView.leadingAnchor.constraint(equalTo: contentColumnView.leadingAnchor, constant: 8),
+            ephemeralBorderView.trailingAnchor.constraint(equalTo: contentColumnView.trailingAnchor, constant: -8),
+            ephemeralBorderView.bottomAnchor.constraint(equalTo: rightStack.bottomAnchor, constant: 16),
+        ])
     }
 
     private func buildBody() {
@@ -977,19 +1015,13 @@ final class BearyDetailViewController: UIViewController {
         // 审计 P2-12：标题行（卡片同款，空标题不占位；详情全文页放开换行，
         // 首页单行截断是唯一偏离，见文件头）。
         let trimmedTitle = (entry.title ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-        titleLabel.text = trimmedTitle.isEmpty ? nil : trimmedTitle
+        titleLabel.attributedText = trimmedTitle.isEmpty ? nil : BearyText.inlineAttributedText(from: trimmedTitle, font: BearyDynamicType.cardTitleFont(), color: BearyColors.ink, paragraphStyle: nil, dark: traitCollection.userInterfaceStyle == .dark)
         titleLabel.isHidden = trimmedTitle.isEmpty
 
         // 正文 16pt（diaryBodyFont 即 scaled 16），行高 1.6（首页卡片口径）。
-        let paragraph = NSMutableParagraphStyle()
-        paragraph.lineHeightMultiple = 1.6
-        paragraph.lineBreakMode = .byCharWrapping
-        bodyLabel.attributedText = NSAttributedString(string: entry.content ?? "", attributes: [
-            .font: BearyDynamicType.diaryBodyFont(),
-            .foregroundColor: BearyColors.ink,
-            .paragraphStyle: paragraph,
-        ])
-        bodyLabel.isHidden = (entry.content ?? "").isEmpty
+        // 旧心情改位：心情缀正文末尾（见 detailBodyAttributedText）。
+        bodyLabel.attributedText = detailBodyAttributedText(entry.content ?? "", moodKey: entry.mood)
+        bodyLabel.isHidden = (entry.content ?? "").isEmpty && (entry.mood ?? "").isEmpty
 
         renderImages()
         renderLocation()
@@ -1003,6 +1035,27 @@ final class BearyDetailViewController: UIViewController {
     /// 时间（绝对时间 M月d日 H:mm，小时不补零；详情不跟首页的相对时间口径，
     /// 见预览映射表）+ 天气 15 图标 + 心情（20 熊图 + 13 灰字）。
     /// 空项一律隐藏、不留空位；心情 key 不变时复用播放器（深浅由其内部切换）。
+    /// 旧日记心情改位：心情不再单独贴在作者行，改跟在正文最后一个字
+    /// 后面——用静态熊图附件直接缀在正文 attributed 串末尾（紧贴末字、
+    /// 无空格）；无心情时原样返回；正文为空且有心情时只显附件。
+    /// 深浅变体按当前 trait 取，主题切换时由 trait handler 重建正文。
+    private func detailBodyAttributedText(_ content: String, moodKey: String?) -> NSAttributedString {
+        let font = BearyDynamicType.diaryBodyFont()
+        let paragraph = NSMutableParagraphStyle()
+        paragraph.lineHeightMultiple = 1.6
+        paragraph.lineBreakMode = .byCharWrapping
+        // 内联心情：正文里的记号先转回熊脸附件（与编辑器同一中间层）。
+        let base = BearyText.inlineAttributedText(from: content, font: font, color: BearyColors.ink, paragraphStyle: paragraph, dark: traitCollection.userInterfaceStyle == .dark)
+        guard let key = moodKey, !key.isEmpty,
+              let image = BearyEmoteImages.image(for: key, dark: traitCollection.userInterfaceStyle == .dark) else { return base }
+        let attachment = NSTextAttachment()
+        attachment.image = image
+        attachment.bounds = CGRect(x: 0, y: font.descender, width: font.pointSize, height: font.pointSize)
+        let result = NSMutableAttributedString(attributedString: base)
+        result.append(NSAttributedString(attachment: attachment))
+        return result
+    }
+
     private func renderHeaderMeta() {
         let authorNameValue = entry.authorName ?? "beary 用户"
         nameButton.setTitle(authorNameValue, for: .normal)
@@ -1043,6 +1096,8 @@ final class BearyDetailViewController: UIViewController {
             weatherImageView.isHidden = true
         }
         // 气温跟天气图标走同一处（卡片同款门：有气温且有天气类型才显）。
+        // #427 的气温显示保留；作者行心情位按 #421 新模型一律隐藏，
+        // 心情缀正文末尾（见 detailBodyAttributedText），不恢复旧心情位。
         if let temp = entry.temperatureC, entry.weather != nil, !entry.weather!.isEmpty {
             weatherTempLabel.text = "\(temp)°"
             weatherTempLabel.isHidden = false
@@ -1050,34 +1105,12 @@ final class BearyDetailViewController: UIViewController {
             weatherTempLabel.text = nil
             weatherTempLabel.isHidden = true
         }
-        if let moodKey = entry.mood, !moodKey.isEmpty, let moodName = BearyText.moodNames[moodKey] {
-            moodStack.isHidden = false
-            moodLabel.text = moodName
-            setMoodEmote(key: moodKey)
-        } else {
-            moodStack.isHidden = true
-            moodLabel.text = nil
-            moodEmoteView?.removeFromSuperview()
-            moodEmoteView = nil
-        }
+        moodStack.isHidden = true
+        moodLabel.text = nil
+        moodEmoteView?.removeFromSuperview()
+        moodEmoteView = nil
     }
 
-    private func setMoodEmote(key: String) {
-        if let current = moodEmoteView, current.emoteKey == key {
-            return
-        }
-        moodEmoteView?.removeFromSuperview()
-        let emoteView = BearyEmoteView(key: key, animated: false)
-        emoteView.translatesAutoresizingMaskIntoConstraints = false
-        moodStack.insertArrangedSubview(emoteView, at: 0)
-        let width = emoteView.widthAnchor.constraint(equalToConstant: 20)
-        width.priority = UILayoutPriority(999)
-        NSLayoutConstraint.activate([
-            width,
-            emoteView.heightAnchor.constraint(equalToConstant: 20),
-        ])
-        moodEmoteView = emoteView
-    }
 
     /// 2026-10-29 第 17 项：后台补齐入口——卡片点按即时呈现后，后台 fetch 回包调它。
     /// 只更新变化处（字段级比对，变了才刷对应区），不重建栈、不重播已有元素的
@@ -1089,6 +1122,43 @@ final class BearyDetailViewController: UIViewController {
     /// 仍是先行态，而非已被覆盖的服务端旧值。字段级比对以合并后模型为准，
     /// 在途字段天然与旧值相等、不会误刷对应区；私密占位切换（内容→占位）
     /// 不受在途保护限制，隐私优先。id 不符的回包直接忽略（防御）。
+    /// 116 数据填入动效：后台补齐导致文案变化时只淡入该元素本身
+    /// （alpha 0→1、0.25s，不动 transform／布局、不重建节点、不缩放
+    /// 弹一下）；减动效或未进窗口时直设终值。本函数只在 update(with:)
+    /// 的变化分支里调用——初始 renderAll（首帧）与点赞操作行（已有
+    /// 爆点／即时反馈）不走这里，避免首帧延迟与操作反馈冲突。
+    private func fadeLabel(_ label: UILabel?) {
+        guard let label = label else { return }
+        guard !UIAccessibility.isReduceMotionEnabled, label.window != nil else {
+            label.alpha = 1
+            return
+        }
+        label.alpha = 0
+        UIView.animate(withDuration: 0.25, delay: 0, options: [.curveEaseOut, .beginFromCurrentState], animations: {
+            label.alpha = 1
+        })
+    }
+
+    private func fadeButtonTitle(_ button: UIButton) {
+        guard !UIAccessibility.isReduceMotionEnabled, button.window != nil,
+              let titleLabel = button.titleLabel else { return }
+        titleLabel.alpha = 0
+        UIView.animate(withDuration: 0.25, delay: 0, options: [.curveEaseOut, .beginFromCurrentState], animations: {
+            titleLabel.alpha = 1
+        })
+    }
+
+    private func fadeView(_ view: UIView) {
+        guard !UIAccessibility.isReduceMotionEnabled, view.window != nil else {
+            view.alpha = 1
+            return
+        }
+        view.alpha = 0
+        UIView.animate(withDuration: 0.25, delay: 0, options: [.curveEaseOut, .beginFromCurrentState], animations: {
+            view.alpha = 1
+        })
+    }
+
     func update(with fetched: Entry) {
         // 审计 P2-20：页内已因拉黑/举报转占位时，后台补齐一律忽略，不得复活全文。
         if locallyHiddenByModeration { return }
@@ -1134,22 +1204,27 @@ final class BearyDetailViewController: UIViewController {
         placeholderStateView.isHidden = true
         if old.authorName != merged.authorName || old.createdAt != merged.createdAt || old.authorAvatar != merged.authorAvatar || old.authorBadge != merged.authorBadge || old.authorPlus != merged.authorPlus || old.mood != merged.mood || old.weather != merged.weather || old.mentionedName != merged.mentionedName || old.mentionedUserId != merged.mentionedUserId {
             renderHeaderMeta()
+            // 116：头信息文案变化时只淡入文案元素（头像图与徽章／天气／
+            // 心情图标为图片，到达即显，不在此淡入）。
+            fadeButtonTitle(nameButton)
+            fadeLabel(timeLabel)
+            fadeLabel(recipientLabel)
+            fadeLabel(moodLabel)
         }
         if old.title != merged.title {
             let trimmedTitle = (merged.title ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-            titleLabel.text = trimmedTitle.isEmpty ? nil : trimmedTitle
+            titleLabel.attributedText = trimmedTitle.isEmpty ? nil : BearyText.inlineAttributedText(from: trimmedTitle, font: BearyDynamicType.cardTitleFont(), color: BearyColors.ink, paragraphStyle: nil, dark: traitCollection.userInterfaceStyle == .dark)
             titleLabel.isHidden = trimmedTitle.isEmpty
+            if !trimmedTitle.isEmpty { fadeLabel(titleLabel) }
         }
-        if old.content != merged.content {
-            let paragraph = NSMutableParagraphStyle()
-            paragraph.lineHeightMultiple = 1.6
-            paragraph.lineBreakMode = .byCharWrapping
-            bodyLabel.attributedText = NSAttributedString(string: merged.content ?? "", attributes: [
-                .font: BearyDynamicType.diaryBodyFont(),
-                .foregroundColor: BearyColors.ink,
-                .paragraphStyle: paragraph,
-            ])
-            bodyLabel.isHidden = (merged.content ?? "").isEmpty
+        if old.content != merged.content || old.mood != merged.mood {
+            // 心情只变时也要重建正文，否则新心情附件缀不上旧正文；
+            // 必须走 detailBodyAttributedText（内联记号转图 + 旧心情缀末尾），
+            // 不能退回纯文本，否则记号原串会直接露出来。
+            bodyLabel.attributedText = detailBodyAttributedText(merged.content ?? "", moodKey: merged.mood)
+            bodyLabel.isHidden = (merged.content ?? "").isEmpty && (merged.mood ?? "").isEmpty
+            // 116：后台补齐文案变化时只淡入文案元素。
+            if !bodyLabel.isHidden { fadeLabel(bodyLabel) }
         }
         if (old.images ?? []) != (merged.images ?? []) {
             renderImages()
@@ -1162,6 +1237,8 @@ final class BearyDetailViewController: UIViewController {
         let newQuote = merged.quote
         if oldQuote?.id != newQuote?.id || oldQuote?.content != newQuote?.content || oldQuote?.gone != newQuote?.gone || oldQuote?.locked != newQuote?.locked || oldQuote?.isPublic != newQuote?.isPublic {
             renderQuote()
+            // 116：引用卡内容变化时只淡入卡片本身。
+            if !quoteView.isHidden { fadeView(quoteView) }
         }
         // 元组数组无 Equatable，逐项比对（nil 与空均视作无回应，渲染同态，不多刷）。
         // 在途字段已在合并时保留本地值，故此处比对天然跳过在途区，无需另设 busy 门控。
@@ -1272,35 +1349,8 @@ final class BearyDetailViewController: UIViewController {
             ephemeralLabel.text = nil
             ephemeralRow.isHidden = true
         }
-        ephemeralBorderLayer.isHidden = !live
+        ephemeralBorderView.isHidden = !live
         separatorView.isHidden = live
-        updateEphemeralBorderPath()
-    }
-
-    private func updateEphemeralBorderPath() {
-        guard !ephemeralBorderLayer.isHidden else { return }
-        ephemeralBorderLayer.strokeColor = BearyColors.line.cgColor
-        ephemeralBorderLayer.frame = contentColumnView.bounds
-        // 109：框顶仍按内容列 +6、左右内缩 8；框底改按右列底 +16 收底
-        // （rightStack 是 contentColumnView 的直接子视图，frame.maxY 即列内坐标）。
-        // 此前按内容列 insetBy(dx:8, dy:6)：框底 = 右列底 +32（底线约束：
-        // 右列底→底线 12 + 线高 2 + 线下 24 = 38，框底 = 列底 −6），
-        // 框顶在右列顶上方 16，上下留白不对称。底线约束、非限时态、
-        // 首页卡片均不动；首帧未布局时（右列 frame 仍为 0）沿用旧内缩矩形，
-        // viewDidLayoutSubviews 会按实测 frame 重画。
-        let boxTop = contentColumnView.bounds.minY + 6
-        let boxRect: CGRect
-        if rightStack.frame.maxY > 0 {
-            boxRect = CGRect(
-                x: contentColumnView.bounds.minX + 8,
-                y: boxTop,
-                width: contentColumnView.bounds.width - 16,
-                height: rightStack.frame.maxY + 16 - boxTop
-            )
-        } else {
-            boxRect = contentColumnView.bounds.insetBy(dx: 8, dy: 6)
-        }
-        ephemeralBorderLayer.path = UIBezierPath(roundedRect: boxRect, cornerRadius: 16).cgPath
     }
 
     /// 作者行右侧显隐：本人卡显小地球、右列右缩进 −36 让位；他人／游客无地球、

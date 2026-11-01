@@ -62,16 +62,19 @@ final class BearyImageCropViewController: UIViewController, UIScrollViewDelegate
         topBar.backgroundColor = UIColor.black
         cancelButton.setTitle("取消", for: .normal)
         cancelButton.setTitleColor(UIColor.white, for: .normal)
-        cancelButton.titleLabel?.font = UIFont.systemFont(ofSize: 16)
+        cancelButton.titleLabel?.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 16))
+        cancelButton.titleLabel?.adjustsFontForContentSizeCategory = true
         cancelButton.addTarget(self, action: #selector(self.didTapCancel), for: .touchUpInside)
         cancelButton.bearyAddPressFeedback()
         titleLabel.text = "裁剪"
-        titleLabel.font = UIFont.boldSystemFont(ofSize: 16)
+        titleLabel.font = BearyDynamicType.scaledFont(for: UIFont.boldSystemFont(ofSize: 16))
+        titleLabel.adjustsFontForContentSizeCategory = true
         titleLabel.textColor = UIColor.white
         titleLabel.textAlignment = .center
         confirmButton.setTitle("确认", for: .normal)
         confirmButton.setTitleColor(BearyColors.orange, for: .normal)
-        confirmButton.titleLabel?.font = UIFont.boldSystemFont(ofSize: 16)
+        confirmButton.titleLabel?.font = BearyDynamicType.scaledFont(for: UIFont.boldSystemFont(ofSize: 16))
+        confirmButton.titleLabel?.adjustsFontForContentSizeCategory = true
         confirmButton.addTarget(self, action: #selector(self.didTapConfirm), for: .touchUpInside)
         confirmButton.bearyAddPressFeedback()
         scrollView.delegate = self
@@ -81,7 +84,8 @@ final class BearyImageCropViewController: UIViewController, UIScrollViewDelegate
         imageView.image = sourceImage
         imageView.contentMode = .scaleAspectFit
         hintLabel.text = "双指缩放，拖动调整"
-        hintLabel.font = UIFont.systemFont(ofSize: 13)
+        hintLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13))
+        hintLabel.adjustsFontForContentSizeCategory = true
         hintLabel.textColor = UIColor.white.withAlphaComponent(0.7)
         hintLabel.textAlignment = .center
         cropBorderView.layer.borderWidth = 1
@@ -110,7 +114,14 @@ final class BearyImageCropViewController: UIViewController, UIScrollViewDelegate
             topBar.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
             topBar.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             topBar.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-            topBar.heightAnchor.constraint(equalToConstant: 44),
+            // 32 清单第 17 项：顶栏由 44 定高改 ≥44，标题/按钮跟随放大时栏随字长高、不裁字。
+            topBar.heightAnchor.constraint(greaterThanOrEqualToConstant: 44),
+            cancelButton.topAnchor.constraint(greaterThanOrEqualTo: topBar.topAnchor, constant: 6),
+            cancelButton.bottomAnchor.constraint(lessThanOrEqualTo: topBar.bottomAnchor, constant: -6),
+            titleLabel.topAnchor.constraint(greaterThanOrEqualTo: topBar.topAnchor, constant: 6),
+            titleLabel.bottomAnchor.constraint(lessThanOrEqualTo: topBar.bottomAnchor, constant: -6),
+            confirmButton.topAnchor.constraint(greaterThanOrEqualTo: topBar.topAnchor, constant: 6),
+            confirmButton.bottomAnchor.constraint(lessThanOrEqualTo: topBar.bottomAnchor, constant: -6),
             cancelButton.leadingAnchor.constraint(equalTo: topBar.leadingAnchor, constant: 16),
             cancelButton.centerYAnchor.constraint(equalTo: topBar.centerYAnchor),
             titleLabel.centerXAnchor.constraint(equalTo: topBar.centerXAnchor),
@@ -124,7 +135,7 @@ final class BearyImageCropViewController: UIViewController, UIScrollViewDelegate
             hintLabel.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             hintLabel.trailingAnchor.constraint(equalTo: view.trailingAnchor),
             hintLabel.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor, constant: -12),
-            hintLabel.heightAnchor.constraint(equalToConstant: 20),
+            hintLabel.heightAnchor.constraint(greaterThanOrEqualToConstant: 20),  // 32-17：提示跟随放大时行高随字长高，不裁字
         ])
     }
 
