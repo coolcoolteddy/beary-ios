@@ -177,7 +177,7 @@ class BearyFeedViewController: UIViewController {
         tv.separatorColor = BearyColors.line
         tv.rowHeight = UITableView.automaticDimension
         tv.estimatedRowHeight = 220
-        tv.contentInset = UIEdgeInsets(top: 8, left: 0, bottom: 90, right: 0)
+        tv.contentInset = UIEdgeInsets(top: 8, left: 0, bottom: BearyChrome.chromeBottomInset(includesFab: true, width: view.bounds.width, safeAreaBottom: view.safeAreaInsets.bottom), right: 0)
         tv.scrollIndicatorInsets = tv.contentInset
         // 顶栏透度批：表框贴页顶（view.top），系统自动安全区叠加会使 S+60 再叠加一次 S，
         // 故关掉自动调整——此后 contentInset.top 即视觉顶距（见 applyHeaderTopInset）。
@@ -443,7 +443,7 @@ class BearyFeedViewController: UIViewController {
         guard !isCustomPullRefreshing else { return }
         let safeTop = view.safeAreaInsets.top
         let top = safeTop + (visible ? 60 : 0) + 8
-        let bottom = 90 + view.safeAreaInsets.bottom
+        let bottom = BearyChrome.chromeBottomInset(includesFab: true, width: view.bounds.width, safeAreaBottom: view.safeAreaInsets.bottom)
         if tableView.contentInset.top != top || tableView.contentInset.bottom != bottom {
             tableView.contentInset.top = top
             tableView.contentInset.bottom = bottom

@@ -73,6 +73,16 @@ enum BearySpace {
     static let lg: CGFloat = 16
 }
 
+/// 底边距统一口径（视觉清单 Grok 项 1.2）：宽 ≥821 时 44（消息页口径）；
+/// 窄屏时底栏占位 64（分段器 58 + 距安全区 6）+ 16 余量 = 80，含 FAB 的页
+/// 保留既有 90，再叠加安全区底。只算底边距，不碰 contentInset.top。
+enum BearyChrome {
+    static func chromeBottomInset(includesFab: Bool, width: CGFloat, safeAreaBottom: CGFloat) -> CGFloat {
+        if width >= 821 { return 44 }
+        return (includesFab ? 90 : 80) + safeAreaBottom
+    }
+}
+
 /// 6-10 减动效门控 helper（全修批统一口径，签名固定）：调用点把
 /// `animated: true` 改成 `animated: BearyMotion.animated(true)`；开启系统
 /// 减动效时一律返回 false，present/dismiss 即瞬时落终值。
