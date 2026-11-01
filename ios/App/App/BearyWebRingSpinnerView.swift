@@ -12,8 +12,16 @@ final class BearyWebRingSpinnerView: UIView {
 
     private let trackLayer = CAShapeLayer()
     private let arcLayer = CAShapeLayer()
-    private let bright: Bool
+    private var bright: Bool
     private var spinning = false
+
+    /// 审计 15 项第 15 项：允许调用方在加载占位期间切换前景口径
+    /// （如灯箱浅色占位底上改用主题色圈），切换后立即重算颜色。
+    func setBright(_ bright: Bool) {
+        guard self.bright != bright else { return }
+        self.bright = bright
+        updateColors()
+    }
 
     init(bright: Bool = false) {
         self.bright = bright

@@ -68,6 +68,9 @@ class BearyEntryImageViewerViewController: UIViewController, UIGestureRecognizer
     private var viewEntryBottomToSafeConstraint: NSLayoutConstraint?
     private var dotViews: [UIView] = []
     private var scale: CGFloat = 1
+    /// 审计 15 项第 8 项：放大后已升级到的高清解码宽度（同图同宽不再重复加载）。
+    private var zoomHiResKey: String?
+    private var zoomHiResWidth: CGFloat = 0
     private var tx: CGFloat = 0
     private var ty: CGFloat = 0
     private var panTx0: CGFloat = 0
@@ -371,11 +374,28 @@ class BearyEntryImageViewerViewController: UIViewController, UIGestureRecognizer
         if !localImages.isEmpty || isFailed || imageView.image != nil || loadingKey == nil {
             loadingSpinner.stopSpinning()
             placeholderView.isHidden = true
+            // 审计 15 项第 15 项：图到/失败后恢复灯箱原有白色控件。
+            counterLabel.textColor = .white
+            loadingSpinner.setBright(true)
         } else {
+            // 审计 15 项第 15 项：加载占位期间前景色与占位底匹配——
+            // 占位底走 BearyColors.bg（浅白／深黑），浅色下不用纯白圈
+            // 与白计数，深色下仍用原有 bright 白版。
+            let dark = traitCollection.userInterfaceStyle == .dark
+            loadingSpinner.setBright(dark)
+            counterLabel.textColor = dark ? .white : BearyColors.ink
             loadingSpinner.startSpinning()
             // 111：与加载圈同条件显隐——目标未到时底色占位层先盖住
             // 全屏（页面底色），弱网切图不再是纯黑中场；图到即藏。
             placeholderView.isHidden = false
+        }
+    }
+
+    /// 审计 15 项第 15 项：深浅切换时若正处加载占位，前景色跟随重算。
+    override func traitCollectionDidChange(_ previousTraitCollection: UITraitCollection?) {
+        super.traitCollectionDidChange(previousTraitCollection)
+        if previousTraitCollection?.userInterfaceStyle != traitCollection.userInterfaceStyle {
+            updateLoadingSpinner()
         }
     }
 
@@ -397,6 +417,9 @@ class BearyEntryImageViewerViewController: UIViewController, UIGestureRecognizer
         }
         let key = imageKeys[currentIndex]
         loadingKey = key
+        // 审计 15 项第 8 项：切图后放大高清状态清零，下次放大重新按需升级。
+        zoomHiResKey = nil
+        zoomHiResWidth = 0
         isFailed = false
         retryLabel.isHidden = true
         // 审计 P2-25：切图/重试时不再先置 nil 回落黑屏——旧图保留到新图到达
@@ -465,6 +488,29 @@ class BearyEntryImageViewerViewController: UIViewController, UIGestureRecognizer
 
     private func pageWidthValue() -> CGFloat {
         view.bounds.width > 0 ? view.bounds.width : UIScreen.main.bounds.width
+    }
+
+    /// 审计 15 项第 8 项：放大后按需后台解码更高清版本。首屏继续用当前
+    /// 轻量版本；目标宽度 = 页宽 × 屏幕 scale × 当前缩放，封顶 3072
+    /// （像素预算）；同图已升级到同宽或更高时不重复加载；回包时图已
+    /// 切走、缩放已回 1 时不替换；替换只换 imageView.image，当前
+    /// transform（缩放位置）一字不动。
+    private func maybeUpgradeZoomResolution() {
+        guard scale > 1, localImages.isEmpty, currentIndex >= 0, currentIndex < imageKeys.count else { return }
+        let key = imageKeys[currentIndex]
+        let baseWidth = pageWidthValue() * UIScreen.main.scale
+        let targetWidth = min(baseWidth * scale, 3072)
+        if zoomHiResKey == key && targetWidth <= zoomHiResWidth { return }
+        guard targetWidth > baseWidth else { return }
+        guard let url = BearyImageURLs.imageURL(key: key, thumb: false) else { return }
+        BearyImageLoader.shared.load(url: url, downsampleToWidth: targetWidth) { [weak self] img in
+            guard let self = self, let img = img else { return }
+            guard self.currentIndex >= 0, self.currentIndex < self.imageKeys.count,
+                  self.imageKeys[self.currentIndex] == key, self.scale > 1 else { return }
+            self.imageView.image = img
+            self.zoomHiResKey = key
+            self.zoomHiResWidth = targetWidth
+        }
     }
 
     /// 拖动时相邻图跟手：相邻图静止时贴在当前图外侧（下一张在右、上一张在左），
@@ -566,6 +612,9 @@ class BearyEntryImageViewerViewController: UIViewController, UIGestureRecognizer
         counterLabel.alpha = 1 - p
         dotsStack.alpha = 1 - p
         closeButton.alpha = 1 - p
+        // 审计 15 项第 11 项：底部“查看日记”钮同套渐隐，取消时由下
+        // 方 resetDismissDragAppearance 一并恢复。
+        viewEntryButton.alpha = 1 - p
     }
 
     private func resetDismissDragAppearance() {
@@ -573,6 +622,7 @@ class BearyEntryImageViewerViewController: UIViewController, UIGestureRecognizer
         counterLabel.alpha = 1
         dotsStack.alpha = 1
         closeButton.alpha = 1
+        viewEntryButton.alpha = 1
     }
 
     // MARK: - E-G12 淡入转场 + 回到原处关场
@@ -622,6 +672,8 @@ class BearyEntryImageViewerViewController: UIViewController, UIGestureRecognizer
             ty = 0
             applyTransform(animated: true)
         }
+        // 审计 15 项第 8 项：双击放大后按需升级清晰度（缩回时内部守卫直接返回）。
+        maybeUpgradeZoomResolution()
     }
 
     @objc private func pinchChanged(_ sender: UIPinchGestureRecognizer) {
@@ -662,6 +714,8 @@ class BearyEntryImageViewerViewController: UIViewController, UIGestureRecognizer
                 }
                 clampPan()
                 applyTransform(animated: true)
+                // 审计 15 项第 8 项：捏合结束且仍放大时按需升级清晰度。
+                maybeUpgradeZoomResolution()
             }
         }
     }
