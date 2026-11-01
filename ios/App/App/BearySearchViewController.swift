@@ -116,7 +116,7 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
     // sweep32-2：尾行新增“加载更多”态（加载中转圈、失败重试复用重试钮）；
     // 仍是 44 高居中形态，三态互斥显隐，见 updateSearchFooter。
     private let searchFooterRow = UIView()
-    private let searchFooterRetryButton = BearyButton.retryPill()
+    private let searchFooterRetryButton = BearyButton.retryPage()
     private let searchFooterLoadMoreButton = BearyButton.retryPill()
     private let searchFooterSpinnerView = UIImageView()
     // sweep32-2 翻页状态：三组各有 hasMore 与游标（游标取服务端回包原始
@@ -236,7 +236,7 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
     private let stateRingView = UIImageView()
     private let stateTitleLabel = UILabel()
     private let stateSubLabel = UILabel()
-    private let retryButton = BearyButton.retryPill()
+    private let retryButton = BearyButton.retryPage()
     /// 8-6：搜索错误重试态改走统一 BearyStateView（标题“搜索失败”+ 副文案 +
     /// 紧凑描边重试钮，动作复用 retryTapped）；其余状态仍走 bespoke stateStack。
     /// errorStateView 放在 errorStateWrap 内（与 stateWrap 同槽位、互斥显隐）：
@@ -609,12 +609,12 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         stateSubLabel.lineBreakMode = .byCharWrapping
         stateStack.addArrangedSubview(stateSubLabel)
 
-        // 失败重试：审计 P2——重试类描边 pill 收敛为 BearyButton 工厂唯一档（紧凑款 36 高），
-        // 不再各写一套尺寸；左右内边距 20 保留原网页 .addr-retry 口径。
+        // 失败重试：重试两档·整页档（BearyButton.retryPage，紧凑描边 pill 36 高），
+        // 左右内边距 20 保留原网页 .addr-retry 口径。
         retryButton.translatesAutoresizingMaskIntoConstraints = false
         retryButton.setTitle("重试", for: .normal)
         retryButton.contentEdgeInsets = UIEdgeInsets(top: 0, left: 20, bottom: 0, right: 20)
-        retryButton.heightAnchor.constraint(equalToConstant: BearyButtonStyle.secondaryOutline(.compact).height).isActive = true
+        retryButton.heightAnchor.constraint(equalToConstant: BearyButton.retryPageStyle.height).isActive = true
         retryButton.addTarget(self, action: #selector(retryTapped), for: .touchUpInside)
         retryButton.bearyAddPressFeedback()
         stateStack.addArrangedSubview(retryButton)
@@ -681,11 +681,11 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         searchFooterRow.translatesAutoresizingMaskIntoConstraints = false
         searchFooterRow.isHidden = true
         contentStack.addArrangedSubview(searchFooterRow)
-        // 审计 P2：与失败态重试钮同为 BearyButton 工厂紧凑档，不再各写一套尺寸。
+        // 重试两档·整页档（BearyButton.retryPage，与失败态重试钮同档）。
         searchFooterRetryButton.translatesAutoresizingMaskIntoConstraints = false
         searchFooterRetryButton.setTitle("重试", for: .normal)
         searchFooterRetryButton.contentEdgeInsets = UIEdgeInsets(top: 0, left: 20, bottom: 0, right: 20)
-        searchFooterRetryButton.heightAnchor.constraint(equalToConstant: BearyButtonStyle.secondaryOutline(.compact).height).isActive = true
+        searchFooterRetryButton.heightAnchor.constraint(equalToConstant: BearyButton.retryPageStyle.height).isActive = true
         searchFooterRetryButton.addTarget(self, action: #selector(retryTapped), for: .touchUpInside)
         searchFooterRetryButton.bearyAddPressFeedback()
         searchFooterRow.addSubview(searchFooterRetryButton)

@@ -373,13 +373,9 @@ final class BearyPlusGrantsViewController: BearySettingsSubpageViewController {
             let failedLabel = makeLabel(font: UIFont.systemFont(ofSize: 14), color: BearyColors.gray, lines: 0)
             failedLabel.text = "加载失败"
             grantRows.append(failedLabel)
-            // 109：失败态重试钮同改 BearyHit44Button——文案与布局不变，仅热区扩到 44pt。
-            let retryButton = BearyHit44Button(type: .system)
-            retryButton.translatesAutoresizingMaskIntoConstraints = false
-            retryButton.setTitle("重试", for: .normal)
-            retryButton.setTitleColor(BearyColors.ink, for: .normal)
-            retryButton.titleLabel?.font = UIFont.systemFont(ofSize: 14, weight: .bold)
-            retryButton.contentHorizontalAlignment = .left
+            // 重试两档·行内档（BearyButton.retryInline）：文案/布局/target 不变，
+            // 仅把手写规格收进工厂；109 热区仍由 BearyHit44Button 扩到 44pt。
+            let retryButton = BearyButton.retryInline()
             retryButton.addTarget(self, action: #selector(retryTapped), for: .touchUpInside)
             retryButton.bearyAddPressFeedback()
             grantRows.append(retryButton)
@@ -534,13 +530,9 @@ final class BearyDevicesViewController: BearySettingsSubpageViewController {
             let failedLabel = makeLabel(font: UIFont.systemFont(ofSize: 14), color: BearyColors.gray, lines: 0)
             failedLabel.text = "加载失败"
             rows.append(failedLabel)
-            // 109：失败态重试钮同改 BearyHit44Button——文案与布局不变，仅热区扩到 44pt。
-            let retryButton = BearyHit44Button(type: .system)
-            retryButton.translatesAutoresizingMaskIntoConstraints = false
-            retryButton.setTitle("重试", for: .normal)
-            retryButton.setTitleColor(BearyColors.ink, for: .normal)
-            retryButton.titleLabel?.font = UIFont.systemFont(ofSize: 14, weight: .bold)
-            retryButton.contentHorizontalAlignment = .left
+            // 重试两档·行内档（BearyButton.retryInline）：文案/布局/target 不变，
+            // 仅把手写规格收进工厂；109 热区仍由 BearyHit44Button 扩到 44pt。
+            let retryButton = BearyButton.retryInline()
             retryButton.addTarget(self, action: #selector(retryTapped), for: .touchUpInside)
             retryButton.bearyAddPressFeedback()
             rows.append(retryButton)

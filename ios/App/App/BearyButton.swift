@@ -135,8 +135,35 @@ class BearyButton: BearyHit44Button {
 
     /// 重试类描边 pill 唯一档：紧凑描边款（36 高 / 圆角 18 / 14 semibold）。
     /// 搜索页两处重试钮共用本工厂，不再各写一套尺寸。
+    /// 重试两档（ChatGPT 界面清单第 5 件：跨页分裂收敛，两档并存、不强行统一成一种）：
+    ///  行内档 retryInline()：卡片行内失败态——无边框/无底色、ink 字、14 bold、左对齐
+    ///    （原设置子页两处手写规格原样收进工厂；沿原写法用固定 14 bold，不走
+    ///    cappedFont/scaledFont，与原视觉逐字一致；热区仍由 BearyHit44Button 扩到 44pt）。
+    ///  整页档 retryPage()：整页/尾行失败态——即 retryPageStyle（secondaryOutline(.compact)：
+    ///    36 高/圆角 18/1pt line 边框 + surface 底 + ink 字、14 semibold；左右内边距 20
+    ///    由调用方下，工厂只定底色/字色/边框/圆角/字号）。
+    ///  两档只定视觉；target/回调/启用条件一律由调用方下，工厂不动行为语义。
+    static let retryPageStyle: BearyButtonStyle = .secondaryOutline(.compact)
+
+    /// 行内重试：行内文字钮（设置子页失败行用）。标题固定“重试”，其余视觉见上方两档注释。
+    static func retryInline() -> BearyHit44Button {
+        let button = BearyHit44Button(type: .system)
+        button.translatesAutoresizingMaskIntoConstraints = false
+        button.setTitle("重试", for: .normal)
+        button.setTitleColor(BearyColors.ink, for: .normal)
+        button.titleLabel?.font = UIFont.systemFont(ofSize: 14, weight: .bold)
+        button.contentHorizontalAlignment = .left
+        return button
+    }
+
+    /// 整页重试：与既有 retryPill() 同一规格；retryPill() 保留供时间线/个人主页等
+    /// 既有调用方，新写与本次收敛的搜索页走本名，档名即语义。
+    static func retryPage() -> BearyButton {
+        return BearyButton(style: retryPageStyle)
+    }
+
     static func retryPill() -> BearyButton {
-        return BearyButton(style: .secondaryOutline(.compact))
+        return BearyButton(style: retryPageStyle)
     }
 
     /// 投票选中态公共样式（许愿墙赞成/反对钮共用）：选中 = ink 底 + bg 字——bg 与 ink
