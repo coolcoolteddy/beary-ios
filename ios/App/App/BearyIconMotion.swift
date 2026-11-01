@@ -4,13 +4,11 @@ import UIKit
 /// 减动效时所有动画直接跳到结束态（不动）。
 enum BearyIconMotion {
 
-    /// 点赞成功爆点（Li 2026-10-27 新规格，替代描边画出）：爱心轻微放大再回弹，
-    /// 同时向外炸出 7 滴红色液体微粒（20–30pt 后淡出）。只在点赞（填色）的那一刻播，
-    /// 与填色同起（调用方在点按确认时与填色一起播，不再等服务端回包）；
-    /// 取消点赞不炸。点亮色为点赞红 BearyColors.likeRed（#ff3b30）。减动效不播。
-    /// fixall-cell 6-12：清点赞爆点残留——按钮层上本轮/旧轮的微粒层
-    /// （按 name 认领）与爆点缩放动画。cell 复用时调（prepareForReuse），
-    /// 新一轮爆点开始前也先清，防止 0.55s 窗口内复用串位或多轮堆叠。
+    /// 点赞反馈（ChatGPT 视觉清单已定设计第 1 项，取代 2026-10-27 爆点规格）：
+    /// 只保留官方爱心原图的短暂缩放（见 playLikeBurst），7 滴放射粒子层已整删。
+    /// fixall-cell 6-12：清点赞缩放动画残留；按 name 认领的微粒层清理保留为
+    /// 无害兜底（新规格不再创建粒子层，旧轮残留如有仍会被清掉）。
+    /// cell 复用时调（prepareForReuse），新一轮反馈开始前也先清。
     static func clearLikeBurst(on button: UIButton) {
         button.imageView?.layer.removeAnimation(forKey: "bearyLikeBurstPop")
         guard let sublayers = button.layer.sublayers else { return }
@@ -28,10 +26,16 @@ enum BearyIconMotion {
         }
     }
 
+    /// 点赞反馈只保留官方爱心原图的短暂缩放：1 → 1.22 → 1，.32s。
+    /// 只在点赞（填色）的那一刻播，与填色同起（调用方在点按确认时与填色
+    /// 一起播，不再等服务端回包）；取消点赞不播。点亮色仍为点赞红
+    /// BearyColors.likeRed（#ff3b30）。减动效不播。7 滴放射粒子层已整删：
+    /// 不再创建粒子层，也不再有 0.55s 延迟清理窗口。
+    /// 点赞状态、颜色、请求与回滚时机一律不动（调用方原样）。
     static func playLikeBurst(on button: UIButton) {
         if UIAccessibility.isReduceMotionEnabled { return }
         guard let imageView = button.imageView else { return }
-        // 先清上一轮残留微粒（快速连点/复用窗口内旧滴不再堆叠串位）。
+        // 先清上一轮缩放动画残留（快速连点不再多轮堆叠）。
         clearLikeBurst(on: button)
         // 爱心先轻微放大再回弹（1 → 1.22 → 1，.32s）。
         let pop = CAKeyframeAnimation(keyPath: "transform.scale")
@@ -40,41 +44,6 @@ enum BearyIconMotion {
         pop.duration = 0.32
         pop.timingFunction = CAMediaTimingFunction(controlPoints: 0.25, 0.1, 0.25, 1)
         imageView.layer.add(pop, forKey: "bearyLikeBurstPop")
-        // 7 滴液体：定角放射（全向），橙色系交替，飞 22–30pt 后淡出缩没。
-        let center = imageView.center
-        let angles: [CGFloat] = [-90, -38, 14, 66, 118, 170, -142]
-        let distances: [CGFloat] = [28, 23, 30, 24, 29, 22, 26]
-        let sizes: [CGFloat] = [5, 4, 5.5, 4.5, 5, 4, 5.5]
-        for i in 0..<7 {
-            let rad = angles[i] * .pi / 180
-            let size = sizes[i]
-            let dot = CALayer()
-            dot.name = "bearyLikeBurstDrop"
-            dot.frame = CGRect(x: center.x - size / 2, y: center.y - size / 2, width: size, height: size)
-            dot.cornerRadius = size / 2
-            dot.backgroundColor = (i % 2 == 0 ? BearyColors.likeRed : BearyColors.alpha(BearyColors.likeRed, 0.6)).cgColor
-            button.layer.addSublayer(dot)
-            let target = CGPoint(x: center.x + cos(rad) * distances[i], y: center.y + sin(rad) * distances[i])
-            let group = CAAnimationGroup()
-            group.duration = 0.5
-            group.timingFunction = CAMediaTimingFunction(name: .easeOut)
-            group.isRemovedOnCompletion = false
-            group.fillMode = .forwards
-            let move = CABasicAnimation(keyPath: "position")
-            move.fromValue = NSValue(cgPoint: dot.position)
-            move.toValue = NSValue(cgPoint: target)
-            let fade = CABasicAnimation(keyPath: "opacity")
-            fade.fromValue = 1
-            fade.toValue = 0
-            let shrink = CABasicAnimation(keyPath: "transform.scale")
-            shrink.fromValue = 1
-            shrink.toValue = 0.5
-            group.animations = [move, fade, shrink]
-            dot.add(group, forKey: "bearyLikeBurstDrop")
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.55) { [weak dot] in
-                dot?.removeFromSuperlayer()
-            }
-        }
     }
 
     /// 点赞填充淡入（网页 .fill transition fill .3s）。
