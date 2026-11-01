@@ -702,6 +702,7 @@ extension UIImageView {
     /// 失败态一字不动（仍走 onFailure 的重试 UI）。有占位图时不挂转圈——
     /// 占位图本身就是可见内容，网页环在图片之下、有图时也看不见。
     /// 图到时若转圈已亮过（加载 ≥0.15s），图片 0.25s 淡入；瞬时命中缓存时直设不闪。
+    /// 减动效开启时直设不淡入（走 BearyMotion.animated 口径，不另起判断）。
     private func bearyAttachWebRingSpinner() {
         bearyRemoveWebRingSpinner()
         let ring = BearyWebRingSpinnerView()
@@ -749,7 +750,7 @@ extension UIImageView {
             switch result {
             case .success(let img):
                 let slowLoad = Date().timeIntervalSince(startedAt) >= 0.15
-                if slowLoad && self.alpha == 1 {
+                if slowLoad && self.alpha == 1 && BearyMotion.animated(true) {
                     self.alpha = 0
                     self.image = img
                     UIView.animate(withDuration: 0.25) { self.alpha = 1 }
