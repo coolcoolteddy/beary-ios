@@ -410,7 +410,7 @@ final class BearyDraftBoxViewController: UIViewController {
             backdropButton.trailingAnchor.constraint(equalTo: view.trailingAnchor),
         ])
 
-        sheetScrollView.layer.cornerRadius = 12
+        sheetScrollView.layer.cornerRadius = 20
         sheetScrollView.layer.masksToBounds = true
         NSLayoutConstraint.activate([
             sheetScrollView.topAnchor.constraint(equalTo: sheetView.topAnchor),
@@ -692,7 +692,7 @@ final class BearyDraftBoxViewController: UIViewController {
         card.backgroundColor = UIColor.clear
         card.layer.borderWidth = 1
         card.layer.bearyDynamicBorderColor = BearyColors.line
-        card.layer.cornerRadius = 12
+        card.layer.cornerRadius = 14
         card.accessibilityLabel = "打开这份草稿"
         card.addTarget(self, action: #selector(cardTouchDown(_:)), for: .touchDown)
         card.addTarget(self, action: #selector(cardTouchUp(_:)), for: [.touchUpInside, .touchUpOutside, .touchCancel])
@@ -753,7 +753,7 @@ final class BearyDraftBoxViewController: UIViewController {
         openButton.titleLabel?.font = UIFont.systemFont(ofSize: 12.5)
         openButton.layer.borderWidth = 1.5
         openButton.layer.bearyDynamicBorderColor = BearyColors.line
-        openButton.layer.cornerRadius = 8
+        openButton.layer.cornerRadius = 999
         openButton.contentEdgeInsets = UIEdgeInsets(top: 5, left: 12, bottom: 5, right: 12)
         // 8-15：打开钮补最小 44 高约束（原仅 contentEdgeInsets，实测高约 25，
         // 未达 44 热区口径；视觉上 pill 变高一档，属任务指定改动）。
@@ -830,7 +830,7 @@ final class BearyDraftBoxViewController: UIViewController {
             lostButton.setTitleColor(BearyColors.gray, for: .normal)
             lostButton.titleLabel?.font = UIFont.systemFont(ofSize: 11.5, weight: .medium)
             lostButton.backgroundColor = BearyColors.faint
-            lostButton.layer.cornerRadius = 8
+            lostButton.layer.cornerRadius = 999
             lostButton.layer.masksToBounds = true
             lostButton.contentEdgeInsets = UIEdgeInsets(top: 2.5, left: 9, bottom: 2.5, right: 9)
             lostButton.accessibilityLabel = "图片未保存，点一下清除这条提示"
@@ -897,7 +897,7 @@ final class BearyDraftBoxViewController: UIViewController {
     private func chipShell() -> UIView {
         let chip = UIView()
         chip.backgroundColor = BearyColors.alpha(BearyColors.orange, 0.13)
-        chip.layer.cornerRadius = 4
+        chip.layer.cornerRadius = 999
         chip.layer.masksToBounds = true
         return chip
     }

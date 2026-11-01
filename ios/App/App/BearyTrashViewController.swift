@@ -727,7 +727,7 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate, UI
         rowView.backgroundColor = BearyColors.bg
         rowView.layer.borderWidth = 1
         rowView.layer.bearyDynamicBorderColor = BearyColors.line
-        rowView.layer.cornerRadius = 12
+        rowView.layer.cornerRadius = 14
         rowView.translatesAutoresizingMaskIntoConstraints = false
 
         let innerStack = UIStackView()
@@ -778,7 +778,7 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate, UI
         restoreButton.titleLabel?.adjustsFontForContentSizeCategory = true
         restoreButton.layer.borderWidth = 1
         restoreButton.layer.bearyDynamicBorderColor = BearyColors.line
-        restoreButton.layer.cornerRadius = 8
+        restoreButton.layer.cornerRadius = 22
         restoreButton.backgroundColor = BearyColors.bg
         restoreButton.contentEdgeInsets = UIEdgeInsets(top: 7, left: 14, bottom: 7, right: 14)
         // B-G14: button fixed height 44 (was >= 44).
@@ -813,7 +813,7 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate, UI
         purgeButton.titleEdgeInsets = UIEdgeInsets(top: 0, left: 5, bottom: 0, right: 0)
         purgeButton.layer.borderWidth = 1
         purgeButton.layer.bearyDynamicBorderColor = BearyColors.line
-        purgeButton.layer.cornerRadius = 8
+        purgeButton.layer.cornerRadius = 22
         purgeButton.backgroundColor = BearyColors.bg
         purgeButton.contentEdgeInsets = UIEdgeInsets(top: 7, left: 14, bottom: 7, right: 14)
         // B-G14: button fixed height 44 (was >= 44).

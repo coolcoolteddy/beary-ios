@@ -34,12 +34,12 @@ private enum OnboardingAnim {
     static let cardFrontRotation: CGFloat = 0.5 * CGFloat.pi / 180
 }
 
-// MARK: - 小标签容器（pill / 回应 chip 共用：视觉清单第 7 项小标签档 4，不再取半高）
+// MARK: - 圆角 pill 容器（pill / 回应 chip 共用：圆角恒为半高，深浅与字号变化时自动跟随）
 
 private final class OnboardingPillView: UIView {
     override func layoutSubviews() {
         super.layoutSubviews()
-        layer.cornerRadius = 4
+        layer.cornerRadius = bounds.height / 2
     }
 }
 
@@ -290,10 +290,10 @@ final class BearyOnboardingViewController: UIViewController {
         columnView.translatesAutoresizingMaskIntoConstraints = false
         heroContent.addSubview(columnView)
 
-        // 底部圆角卡片：BearyColors faint 底、顶部圆角 12、通栏。
+        // 底部圆角卡片：BearyColors faint 底、顶部圆角 28、通栏。
         bottomCard.translatesAutoresizingMaskIntoConstraints = false
         bottomCard.backgroundColor = BearyColors.faint
-        bottomCard.layer.cornerRadius = 12
+        bottomCard.layer.cornerRadius = 28
         bottomCard.layer.maskedCorners = [.layerMinXMinYCorner, .layerMaxXMinYCorner]
         view.addSubview(bottomCard)
 
@@ -325,7 +325,7 @@ final class BearyOnboardingViewController: UIViewController {
         // 固定高度容器：字号上限 20 防撑破（BearyDynamicType.cappedFont 口径）。
         primaryButton.titleLabel?.font = BearyDynamicType.cappedFont(for: UIFont.systemFont(ofSize: 17, weight: .semibold))
         primaryButton.titleLabel?.adjustsFontForContentSizeCategory = true
-        primaryButton.layer.cornerRadius = 8
+        primaryButton.layer.cornerRadius = 28
         primaryButton.addTarget(self, action: #selector(primaryTapped), for: .touchUpInside)
         primaryButton.bearyAddPressFeedback()
         bottomStack.addArrangedSubview(primaryButton)
@@ -419,12 +419,12 @@ final class BearyOnboardingViewController: UIViewController {
         }
     }
 
-    /// 示例日记卡片（faint 底、圆角 12）：日期行＋官方天气图标＋正文。
+    /// 示例日记卡片（faint 底、圆角 16）：日期行＋官方天气图标＋正文。
     private func makeDiaryCard(dateText: String, bodyText: String) -> UIView {
         let card = UIView()
         card.translatesAutoresizingMaskIntoConstraints = false
         card.backgroundColor = BearyColors.faint
-        card.layer.cornerRadius = 12
+        card.layer.cornerRadius = 16
         let stack = UIStackView()
         stack.translatesAutoresizingMaskIntoConstraints = false
         stack.axis = .vertical
@@ -556,7 +556,7 @@ final class BearyOnboardingViewController: UIViewController {
         let demoCard = UIView()
         demoCard.translatesAutoresizingMaskIntoConstraints = false
         demoCard.backgroundColor = BearyColors.faint
-        demoCard.layer.cornerRadius = 12
+        demoCard.layer.cornerRadius = 16
         let demoStack = UIStackView()
         demoStack.translatesAutoresizingMaskIntoConstraints = false
         demoStack.axis = .vertical
@@ -633,7 +633,7 @@ final class BearyOnboardingViewController: UIViewController {
         let demoCard = UIView()
         demoCard.translatesAutoresizingMaskIntoConstraints = false
         demoCard.backgroundColor = BearyColors.faint
-        demoCard.layer.cornerRadius = 12
+        demoCard.layer.cornerRadius = 16
         let demoStack = UIStackView()
         demoStack.translatesAutoresizingMaskIntoConstraints = false
         demoStack.axis = .vertical
@@ -777,7 +777,7 @@ final class BearyOnboardingViewController: UIViewController {
         let promptCard = UIView()
         promptCard.translatesAutoresizingMaskIntoConstraints = false
         promptCard.backgroundColor = BearyColors.faint
-        promptCard.layer.cornerRadius = 12
+        promptCard.layer.cornerRadius = 16
         let prompt = makeLabel(size: 17, color: BearyColors.gray, alignment: .center)
         prompt.text = "今天，想记住什么？"
         promptCard.addSubview(prompt)
@@ -1089,7 +1089,7 @@ private final class OnboardingOptionButton: BearyHit44Button {
         super.init(frame: .zero)
         translatesAutoresizingMaskIntoConstraints = false
         backgroundColor = BearyColors.surface
-        layer.cornerRadius = 12
+        layer.cornerRadius = 16
         layer.borderWidth = 1.5
         layer.bearyDynamicBorderColor = BearyColors.line
 

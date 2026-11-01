@@ -26,7 +26,7 @@ final class BearyBlindBoxEntryView: UIView {
     override init(frame: CGRect) {
         super.init(frame: frame)
         backgroundColor = BearyColors.bg
-        layer.cornerRadius = 12
+        layer.cornerRadius = 14
         layer.borderWidth = 1
         layer.bearyDynamicBorderColor = BearyColors.line
         clipsToBounds = true

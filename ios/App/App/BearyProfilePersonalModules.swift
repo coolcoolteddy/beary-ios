@@ -1053,7 +1053,7 @@ final class BearyProfilePersonalModulesCard: UIView {
         backgroundColor = BearyColors.bg
         layer.borderWidth = 1
         layer.bearyDynamicBorderColor = BearyColors.line
-        layer.cornerRadius = 12
+        layer.cornerRadius = 14
         clipsToBounds = true
         let titleLabel = UILabel()
         titleLabel.translatesAutoresizingMaskIntoConstraints = false
