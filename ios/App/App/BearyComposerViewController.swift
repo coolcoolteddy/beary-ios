@@ -676,9 +676,8 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         if previousTraitCollection?.userInterfaceStyle != traitCollection.userInterfaceStyle {
             refreshSelectedChips()
             syncWeatherToolButton()
-            // 审计 16 项：深浅切换时心情 chip 的 emote 深浅变体须重取（浅色线条稿
-            // 不可在深色底上冒充），走 refreshSelectedChips 重算图标与换行。
-            refreshSelectedChips()
+            // 审计 15 项第 5 项：此前此处紧接着又调一次 refreshSelectedChips
+            // （补丁叠加留下的重复调用），已删——一次刷新即含图标与换行重算。
             refreshInlineMoodImages()
             headlineHeightConstraint?.constant = max(28, ceil(headlineFont.lineHeight) + 2)
             refreshNotifyCheck()
@@ -717,6 +716,13 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         // 仅改尖角图层路径与收起层穿透区，不触发布局环）。
         if activeCallout != nil {
             updateCalloutArrowPositions()
+        }
+        // 审计 15 项第 9 项：定位气泡打开后，布局变化（键盘弹出、旋转、
+        // 分屏致工具栏移动）同样要更新箭头与收起层穿透区坐标——只更新坐标，
+        // 不重建视图；此前 viewDidLayoutSubviews 只处理心情/天气气泡。
+        if locationPopoverOpen {
+            updateLocationPopoverArrow()
+            locationDismissView.passthroughRects = [toolbarContainer.convert(toolbarContainer.bounds, to: locationDismissView)]
         }
         // 审计 P1-3：宽变化（旋转/分屏/居中列切换）时重算 Chip 行换行；同宽不重算，
         // 移行本身触发布局也不会再进本分支，不成环。宽门限 0.5pt 与 sheet 高同款。
@@ -3025,7 +3031,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             onSelect: { [weak self] key in self?.didSelectMoodFromCallout(key) },
             imageProvider: { [weak self] key, dark in self?.calloutMoodImage(for: key, dark: dark) }
         )
-        // v6-8：天气框首位补“无”（清除）选项，键为 "none"，图为虚线圆圈＋icon_plus 旋转 45 度
+        // v6-8：天气框首位补“无”（清除）选项，键为 "none"，图为官方 icon_close 原图
         //（见 weatherNoneImage；大小与其它天气图标一致 40pt、同色墨色模板）；心情框（40 项）不动。
         // 选中态口径：弹出框既有实现对任何选项均无选中修饰（configure 只设图、不标选中），
         // 故“无”选中时亦无修饰，不新发明——与已选天气在框内同样无修饰保持一致。
@@ -3437,29 +3443,11 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         hideCallout(animated: true)
     }
 
-    /// v6-8“无”选项图（40pt，与其它天气图标同尺寸）：虚线圆圈＋圆里的卡片“贴一只小熊”
-    /// 加号资产 icon_plus 旋转 45 度（实线叉形）；整图黑底色绘后转 alwaysTemplate，
-    /// 由弹出框按钮 tint（墨色、深色模板反白）着色，与其它天气模板图同口径。
+    /// v6-8“无”选项图（40pt，与其它天气图标同尺寸）：审计 15 项第 7 项——
+    /// 此前虚线圆＋icon_plus 旋 45° 拼叉号属于改造官方图标造型，已改为
+    /// 直接用官方 icon_close 原图（模板渲染、由弹出框按钮 tint 着色）。
     private func weatherNoneImage() -> UIImage? {
-        let size: CGFloat = 40
-        let format = UIGraphicsImageRendererFormat()
-        format.scale = UIScreen.main.scale
-        let drawn = UIGraphicsImageRenderer(size: CGSize(width: size, height: size), format: format).image { ctx in
-            let cg = ctx.cgContext
-            cg.setStrokeColor(UIColor.black.cgColor)
-            cg.setLineWidth(2)
-            cg.setLineDash(phase: 0, lengths: [4, 3])
-            cg.strokeEllipse(in: CGRect(x: 4, y: 4, width: 32, height: 32))
-            cg.setLineDash(phase: 0, lengths: [])
-            if let plus = UIImage(named: "icon_plus") {
-                cg.saveGState()
-                cg.translateBy(x: size / 2, y: size / 2)
-                cg.rotate(by: .pi / 4)
-                plus.draw(in: CGRect(x: -11, y: -11, width: 22, height: 22))
-                cg.restoreGState()
-            }
-        }
-        return drawn.withRenderingMode(.alwaysTemplate)
+        BearyIconImages.image(named: "icon_close", pointSize: 40)
     }
 
     /// 审计 16 项：心情 chip 图标——官方 emote 静态 PNG 按 16pt 重绘。
