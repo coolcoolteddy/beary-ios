@@ -286,6 +286,7 @@ final class BearyFeedbackViewController: UIViewController, UITextViewDelegate, P
             }
         }
         NotificationCenter.default.addObserver(self, selector: #selector(keyboardWillShow(_:)), name: UIResponder.keyboardWillShowNotification, object: nil)
+        NotificationCenter.default.addObserver(self, selector: #selector(keyboardWillShow(_:)), name: UIResponder.keyboardWillChangeFrameNotification, object: nil)
         NotificationCenter.default.addObserver(self, selector: #selector(keyboardWillHide(_:)), name: UIResponder.keyboardWillHideNotification, object: nil)
     }
 
@@ -449,7 +450,8 @@ final class BearyFeedbackViewController: UIViewController, UITextViewDelegate, P
         textView.textContainerInset = UIEdgeInsets(top: 8, left: 0, bottom: 8, right: 0)
         textView.textContainer.lineFragmentPadding = 0
         placeholderLabel.translatesAutoresizingMaskIntoConstraints = false
-        placeholderLabel.font = UIFont.systemFont(ofSize: 16)
+        placeholderLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 16))
+        placeholderLabel.adjustsFontForContentSizeCategory = true
         placeholderLabel.textColor = BearyColors.gray
         placeholderLabel.numberOfLines = 0
         placeholderLabel.text = Self.descriptionPlaceholder
@@ -962,15 +964,28 @@ final class BearyFeedbackViewController: UIViewController, UITextViewDelegate, P
         updateSubmitEnabled()
     }
 
+    // 审计 15 项第 10 项：与编辑器同口径——键盘帧转窗口坐标后算与滚动区
+    // （底锚安全区）的实际遮挡，跟随系统时长与曲线；浮动键盘、分屏、
+    // 高度变化只发 WillChangeFrame 时同样跟上，不再按屏幕高度全量垫。
     @objc private func keyboardWillShow(_ note: Notification) {
         guard let value = note.userInfo?[UIResponder.keyboardFrameEndUserInfoKey] as? NSValue else { return }
-        let bottom = max(0, value.cgRectValue.height - view.safeAreaInsets.bottom)
-        scrollView.contentInset.bottom = bottom
-        scrollView.verticalScrollIndicatorInsets.bottom = bottom
+        let frameInView = view.convert(value.cgRectValue, from: nil)
+        let scrollBottom = view.bounds.maxY - view.safeAreaInsets.bottom
+        let bottom = max(0, scrollBottom - frameInView.minY)
+        let duration = (note.userInfo?[UIResponder.keyboardAnimationDurationUserInfoKey] as? Double) ?? 0.25
+        let curveRaw = (note.userInfo?[UIResponder.keyboardAnimationCurveUserInfoKey] as? NSNumber)?.uintValue ?? 0
+        UIView.animate(withDuration: duration, delay: 0, options: [.beginFromCurrentState, UIView.AnimationOptions(rawValue: curveRaw << 16)], animations: {
+            self.scrollView.contentInset.bottom = bottom
+            self.scrollView.verticalScrollIndicatorInsets.bottom = bottom
+        })
     }
 
     @objc private func keyboardWillHide(_ note: Notification) {
-        scrollView.contentInset.bottom = 0
-        scrollView.verticalScrollIndicatorInsets.bottom = 0
+        let duration = (note.userInfo?[UIResponder.keyboardAnimationDurationUserInfoKey] as? Double) ?? 0.25
+        let curveRaw = (note.userInfo?[UIResponder.keyboardAnimationCurveUserInfoKey] as? NSNumber)?.uintValue ?? 0
+        UIView.animate(withDuration: duration, delay: 0, options: [.beginFromCurrentState, UIView.AnimationOptions(rawValue: curveRaw << 16)], animations: {
+            self.scrollView.contentInset.bottom = 0
+            self.scrollView.verticalScrollIndicatorInsets.bottom = 0
+        })
     }
 }
