@@ -3456,8 +3456,10 @@ class BearyDiaryCardCell: UITableViewCell {
     }
 }
 
-extension BearyDiaryCardCell: UIGestureRecognizerDelegate {
-    func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldRecognizeSimultaneouslyWith otherGestureRecognizer: UIGestureRecognizer) -> Bool {
+// UITableViewCell 在新 SDK 下已自带 UIGestureRecognizerDelegate 遵循，
+    // 故此处不再重复声明协议、方法改 override；行为与 #429 原意一致。
+extension BearyDiaryCardCell {
+    override func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldRecognizeSimultaneouslyWith otherGestureRecognizer: UIGestureRecognizer) -> Bool {
         // 只放行本图片条捏合与条自身滚动平移的共存：捏合 began 即禁了条的
         // 滚动，故自家平移本就滑不动；外层列表的竖滑若也放行，两指捏合时
         // 手指稍带竖向漂移就会一边捏合一边滚页。先识别意图者胜：捏合先成立
