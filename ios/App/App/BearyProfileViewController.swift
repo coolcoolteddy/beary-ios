@@ -2024,6 +2024,38 @@ class BearyProfileViewController: UIViewController {
         ])
     }
 
+    /// 吸顶跟踪图封面同步（2026-11-01 上滑橙块修复）：照片时同引用赋值
+    /// （不加载）；默认背景时无图、背景色为品牌橙、wordmark 显示；加载态
+    /// （封面图未到）时跟踪图与 wordmark 同隐。
+    /// 根因：此前这段只在 viewDidLayoutSubviews 里跑，滚动回调从不进这里；
+    /// 而 116 #401 让首帧先按默认橙底搭好（profileShowsDefaultCover = true），
+    /// 首个布局就把跟踪图刷成橙底。资料/封面图后来到了（flag 翻成 false、
+    /// coverImageView 有图），只要之后没有一次无关布局经过 viewDidLayoutSubviews，
+    /// 跟踪图就一直停在首帧的橙底——静止时封面区本身是对的（真封面图），
+    /// 一上滑（updateProfileCoverScroll 把 stickyHeaderView 置为可见）橙块
+    /// 才露出来；反之若某次布局恰好在图到之后跑过，吸顶就是照片（视频里
+    /// 那次就是照片），故同一 bug 在不同次进页表现不一。修法：滚动回调
+    /// 开头也调一次本函数（只改引用/显隐/底色，不加载、不采样阴影），
+    /// 吸顶显现的那一刻必与当前封面态一致，不再依赖布局时机。
+    private func syncStickyHeaderCover() {
+        if profileShowsDefaultCover {
+            stickyHeaderBgImageView.isHidden = false
+            stickyHeaderBgImageView.image = nil
+            stickyHeaderBgImageView.backgroundColor = BearyColors.orange
+            stickyWordmarkView.isHidden = false
+        } else if coverImageView.isHidden || coverImageView.image == nil {
+            stickyHeaderBgImageView.isHidden = true
+            stickyWordmarkView.isHidden = true
+        } else {
+            stickyHeaderBgImageView.isHidden = false
+            stickyHeaderBgImageView.backgroundColor = BearyColors.bg
+            if stickyHeaderBgImageView.image !== coverImageView.image {
+                stickyHeaderBgImageView.image = coverImageView.image
+            }
+            stickyWordmarkView.isHidden = true
+        }
+    }
+
     /// 上滑 header 布局：只在布局变化时跑（viewDidLayoutSubviews），滚动回调不进这里。
     /// 约束常量带变化守卫（不变不赋值），避免布局轮次成环；背景图与文案只在
     /// 变化时同步（同引用 / 同文案不重复赋值），覆盖异步头像 / 封面加载完成态。
@@ -2061,24 +2093,9 @@ class BearyProfileViewController: UIViewController {
                 stickyHeaderBgTopConstraint.constant = tableFrame.minY - 54
             }
         }
-        // 封面图同步：照片时同引用赋值（不加载）；默认背景时无图、背景色为品牌橙、
-        // wordmark 显示；加载态（封面区高 0）时跟踪图与 wordmark 同隐。
-        if profileShowsDefaultCover {
-            stickyHeaderBgImageView.isHidden = false
-            stickyHeaderBgImageView.image = nil
-            stickyHeaderBgImageView.backgroundColor = BearyColors.orange
-            stickyWordmarkView.isHidden = false
-        } else if coverImageView.isHidden || coverImageView.image == nil {
-            stickyHeaderBgImageView.isHidden = true
-            stickyWordmarkView.isHidden = true
-        } else {
-            stickyHeaderBgImageView.isHidden = false
-            stickyHeaderBgImageView.backgroundColor = BearyColors.bg
-            if stickyHeaderBgImageView.image !== coverImageView.image {
-                stickyHeaderBgImageView.image = coverImageView.image
-            }
-            stickyWordmarkView.isHidden = true
-        }
+        // 封面图同步（见 syncStickyHeaderCover）：布局时同步一次，滚动时
+        // 再同步一次（updateProfileCoverScroll 开头），后者是修复点。
+        syncStickyHeaderCover()
         // 111：封面图同步后按条带亮度重算 header 用户名阴影（换图才真算，
         // 其余布局调用走缓存早返，不重复采样）。
         updateStickyHeaderShadow()
@@ -2116,6 +2133,9 @@ class BearyProfileViewController: UIViewController {
     /// 须在顶栏回弹区早退之前跑，否则下拉区 header 藏不住。
     /// modal 态（顶栏自带名字）与加载态（封面区高 0）时 v22 不生效、全部复位自然态。
     private func updateProfileCoverScroll(offsetY y: CGFloat, topBaseline: CGFloat) {
+        // 吸顶显现前必先与当前封面态同步（见 syncStickyHeaderCover），
+        // 否则首帧橙底会在上滑时以吸顶形式露出来。
+        syncStickyHeaderCover()
         guard !stickyHeaderModalDisabled, coverHeightConstraint.constant > 0 else {
             resetProfileCoverScroll()
             stickyHeaderView.isHidden = true
@@ -2342,13 +2362,14 @@ class BearyProfileViewController: UIViewController {
     private func syncProfileRowFollowShift() {
         let shift = profileRowFollowShift
         let target = CGAffineTransform(translationX: 0, y: shift)
+        // 2026-11-01 列表跳动修复：此前这里在 transform 之外又按
+        // contentView.frame.minY 改 center.y——同一视图一帧内被位移两次，
+        // 且 frame 受 transform 影响、center 又反写 frame，来回滚动时
+        // 行视觉位置会在两值之间抖。日记卡 contentView 本就铺满 cell，
+        // 该修正对其恒为 no-op；只留纯 transform 一条位移路径。
         for cell in tableView.visibleCells {
             if cell.contentView.transform != target {
                 cell.contentView.transform = target
-            }
-            let visualTop = cell.contentView.frame.minY
-            if visualTop < shift - 0.5 {
-                cell.contentView.center.y += shift - visualTop
             }
         }
         if let footer = tableView.tableFooterView, footer.transform != target {
