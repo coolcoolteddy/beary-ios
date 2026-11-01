@@ -125,6 +125,23 @@ final class BearyGrabHitView: UIView {
     }
 }
 
+/// 审计第 9 项：滚动取消共享类——抽取首页（BearyFeedTableView）、个人页
+/// （BearyProfileTableView）、CalloutPicker（BearyCalloutScrollView）已有的
+/// 滚动取消策略。背景：滚动容器 delaysContentTouches=false 时，UIKit 默认
+/// touchesShouldCancel 对 UIControl 返回 false，从按钮上起滑时按钮会一直占住
+/// 触摸、滚动视图抢不到 pan；返回 true 则拖动时按钮收到 touchCancel（各页已有的
+/// touchCancel 回弹/复位照常走），点按不动仍走 touchUpInside。
+/// 普通按钮一律取消；输入框（UITextField/UITextView）保留各自处理（不取消，
+/// 避免打断光标/选区/键盘交互——搜索页与选人页的输入框本就不在滚动区内，
+/// 此处是防御性口径，防以后移入滚动区时行为突变）；其余控件走系统默认。
+final class BearyCancellableScrollView: UIScrollView {
+    override func touchesShouldCancel(in view: UIView) -> Bool {
+        if view is UITextField || view is UITextView { return false }
+        if view is UIButton { return true }
+        return super.touchesShouldCancel(in: view)
+    }
+}
+
 /// 抓手跟手位移统一口径：下滑原样跟手；上滑不扩高、不关闭，只按
 /// 0.25 阻尼跟手微移、上限 24pt，松手 0.25s 弹回原位。
 enum BearySheetDrag {

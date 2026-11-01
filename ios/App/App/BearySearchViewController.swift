@@ -198,7 +198,9 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
 
     // MARK: - 视图
 
-    private let scrollView = UIScrollView()
+    // 审计第 9 项：滚动取消走共享类（见 BearyNativeCommon.BearyCancellableScrollView）——
+    // 从结果行按钮上起滑时滚动视图能抢到 pan，点按行为不变；搜索输入框不在本滚动区内。
+    private let scrollView = BearyCancellableScrollView()
     private let contentStack = UIStackView()
     private let columnWrap = UIView()
 
