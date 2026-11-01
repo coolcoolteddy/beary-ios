@@ -164,6 +164,8 @@ final class BearyBlindBoxFlowViewController: UIViewController {
     private var colCapConstraints: [NSLayoutConstraint] = []
 
     private let spinner = BearyRefreshIconView()
+    private let spinnerWrap = UIView()
+    private let receivedPillWrap = UIView()
     private let introLabel = UILabel()
     private let poolStack = UIStackView()
     private let poolButton = BearyButton.make(style: .primaryPill(.orange), title: "放进池子")
@@ -227,6 +229,20 @@ final class BearyBlindBoxFlowViewController: UIViewController {
         for cap in colCapConstraints where cap.isActive != wantCap {
             cap.isActive = wantCap
         }
+    }
+
+    override func traitCollectionDidChange(_ previousTraitCollection: UITraitCollection?) {
+        super.traitCollectionDidChange(previousTraitCollection)
+        guard traitCollection.hasDifferentColorAppearance(comparedTo: previousTraitCollection) else { return }
+        // 回应 chip 创建时按当时 trait 取了深浅两套独立 PNG（原色图、非
+        // template 图，tint 改不了它），此前全文件无 trait handler，主题
+        // 变化后仍是旧深浅素材。主题变时重建 chips，重选现有官方素材；
+        // 已选态仍走原墨色底，橙色点缀在原色图里不受影响，不整体染色。
+        // 正文内联熊脸附件同理随主题重建（详情页同款 handler 口径）。
+        // 辨识度需真机验证。
+        guard case .received = step else { return }
+        renderEmoteChips()
+        renderReceivedContent()
     }
 
     override func viewWillAppear(_ animated: Bool) {
@@ -296,7 +312,7 @@ final class BearyBlindBoxFlowViewController: UIViewController {
             scrollView.centerXAnchor.constraint(equalTo: view.centerXAnchor),
             scrollCap, scrollWidth,
             scrollView.leadingAnchor.constraint(greaterThanOrEqualTo: view.leadingAnchor, constant: 16),
-            scrollView.trailingAnchor.constraint(greaterThanOrEqualTo: view.trailingAnchor, constant: -16),
+            scrollView.trailingAnchor.constraint(lessThanOrEqualTo: view.trailingAnchor, constant: -16),
             contentStack.topAnchor.constraint(equalTo: scrollView.topAnchor, constant: 8),
             contentStack.leadingAnchor.constraint(equalTo: scrollView.leadingAnchor),
             contentStack.trailingAnchor.constraint(equalTo: scrollView.trailingAnchor),
@@ -322,6 +338,15 @@ final class BearyBlindBoxFlowViewController: UIViewController {
         spinner.tintColor = BearyColors.ink
         spinner.widthAnchor.constraint(equalToConstant: 20).isActive = true
         spinner.heightAnchor.constraint(equalToConstant: 20).isActive = true
+        // 填充式竖栈（.fill）会把子视图横向拉满整行，固定 20pt 的转圈不能
+        // 直接进栈：改由普通容器承接，容器填满整行、转圈在容器内居中。
+        spinnerWrap.translatesAutoresizingMaskIntoConstraints = false
+        spinnerWrap.addSubview(spinner)
+        NSLayoutConstraint.activate([
+            spinner.centerXAnchor.constraint(equalTo: spinnerWrap.centerXAnchor),
+            spinner.centerYAnchor.constraint(equalTo: spinnerWrap.centerYAnchor),
+            spinnerWrap.heightAnchor.constraint(equalToConstant: 20),
+        ])
 
         introLabel.translatesAutoresizingMaskIntoConstraints = false
         introLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 14))
@@ -415,7 +440,7 @@ final class BearyBlindBoxFlowViewController: UIViewController {
             errorStack.bottomAnchor.constraint(equalTo: errorView.bottomAnchor),
         ])
 
-        contentStack.addArrangedSubview(spinner)
+        contentStack.addArrangedSubview(spinnerWrap)
         contentStack.addArrangedSubview(introLabel)
         contentStack.addArrangedSubview(poolStack)
         contentStack.addArrangedSubview(poolButton)
@@ -447,7 +472,15 @@ final class BearyBlindBoxFlowViewController: UIViewController {
         receivedPill.layer.cornerRadius = 9
         receivedPill.clipsToBounds = true
         receivedPill.textAlignment = .center
-
+        // 与转圈同款问题：内层竖栈同样是 .fill，固定 180pt 的标签不能直接
+        // 进栈。改由普通容器承接，容器填满整行、标签保持原左对齐位置。
+        receivedPillWrap.translatesAutoresizingMaskIntoConstraints = false
+        receivedPillWrap.addSubview(receivedPill)
+        NSLayoutConstraint.activate([
+            receivedPill.leadingAnchor.constraint(equalTo: receivedPillWrap.leadingAnchor),
+            receivedPill.centerYAnchor.constraint(equalTo: receivedPillWrap.centerYAnchor),
+            receivedPillWrap.heightAnchor.constraint(equalToConstant: 18),
+        ])
         receivedTitleLabel.translatesAutoresizingMaskIntoConstraints = false
         receivedTitleLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 16, weight: .semibold))
         receivedTitleLabel.adjustsFontForContentSizeCategory = true
@@ -513,7 +546,7 @@ final class BearyBlindBoxFlowViewController: UIViewController {
         actionRow.axis = .horizontal
         actionRow.spacing = 8
         actionRow.translatesAutoresizingMaskIntoConstraints = false
-        let stack = UIStackView(arrangedSubviews: [receivedPill, receivedTitleLabel, receivedDateLabel, receivedContentLabel, imagesStack, emoteScroll, emoteAddButton, actionRow, refreshStateButton])
+        let stack = UIStackView(arrangedSubviews: [receivedPillWrap, receivedTitleLabel, receivedDateLabel, receivedContentLabel, imagesStack, emoteScroll, emoteAddButton, actionRow, refreshStateButton])
         stack.axis = .vertical
         stack.spacing = 10
         stack.translatesAutoresizingMaskIntoConstraints = false
@@ -572,7 +605,7 @@ final class BearyBlindBoxFlowViewController: UIViewController {
     private func setStep(_ next: Step) {
         step = next
         hasLoadedOnce = true
-        spinner.isHidden = true
+        spinnerWrap.isHidden = true
         spinner.stopSpinning()
         introLabel.isHidden = true
         poolStack.isHidden = true
@@ -585,7 +618,7 @@ final class BearyBlindBoxFlowViewController: UIViewController {
         errorView.isHidden = true
         switch next {
         case .loading:
-            spinner.isHidden = false
+            spinnerWrap.isHidden = false
             spinner.startSpinning()
         case .login:
             loginView.isHidden = false
@@ -775,10 +808,20 @@ final class BearyBlindBoxFlowViewController: UIViewController {
         receivedTitleLabel.isHidden = title.isEmpty
         receivedDateLabel.text = BlindBoxDate.displayString(ms: received.publishedAt)
         receivedDateLabel.isHidden = receivedDateLabel.text?.isEmpty != false
-        receivedContentLabel.text = received.content ?? ""
+        renderReceivedContent()
         renderReceivedImages(keys: received.images ?? [])
         renderEmoteChips()
         setStep(.received)
+    }
+
+    /// 正文走共享内联小熊解析器（详情 / 卡片同款）：`[mood:<key>]` 记号转回
+    /// 熊脸附件，未知 key 原样留文字。行距等排版一字不动（paragraphStyle
+    /// 传 nil），只补记号解析这一处。复现未证实：需用一篇含内联小熊的
+    /// 盲盒日记验证（后端是否预处理、含记号的盲盒日记是否真露出原串均未核查）。
+    private func renderReceivedContent() {
+        let content = received?.content ?? ""
+        let font = receivedContentLabel.font
+        receivedContentLabel.attributedText = BearyText.inlineAttributedText(from: content, font: font, color: BearyColors.ink, paragraphStyle: nil, dark: traitCollection.userInterfaceStyle == .dark)
     }
 
     private func renderReceivedImages(keys: [String]) {
@@ -787,19 +830,41 @@ final class BearyBlindBoxFlowViewController: UIViewController {
             sub.removeFromSuperview()
         }
         for key in keys {
+            // 失败不再只剩空框：复用广场 / 详情同款图片失败重试组件
+            //（bearyFeedRetryButton：28pt + 官方 icon_refresh，失败时才出现），
+            //点按就地重试该图（bearyFeedPerformRetry），不整页重拉。
+            let frame = UIView()
+            frame.translatesAutoresizingMaskIntoConstraints = false
+            frame.backgroundColor = BearyColors.faint
+            frame.layer.cornerRadius = 12
+            frame.clipsToBounds = true
             let imageView = UIImageView()
             imageView.translatesAutoresizingMaskIntoConstraints = false
             imageView.contentMode = .scaleAspectFill
             imageView.clipsToBounds = true
             imageView.layer.cornerRadius = 12
-            imageView.backgroundColor = BearyColors.faint
-            imagesStack.addArrangedSubview(imageView)
+            frame.addSubview(imageView)
+            let retry = bearyFeedRetryButton(target: self, action: #selector(receivedImageRetryTapped(_:)))
+            frame.addSubview(retry)
+            imagesStack.addArrangedSubview(frame)
             NSLayoutConstraint.activate([
-                imageView.heightAnchor.constraint(equalToConstant: 200),
+                frame.heightAnchor.constraint(equalToConstant: 200),
+                imageView.topAnchor.constraint(equalTo: frame.topAnchor),
+                imageView.leadingAnchor.constraint(equalTo: frame.leadingAnchor),
+                imageView.trailingAnchor.constraint(equalTo: frame.trailingAnchor),
+                imageView.bottomAnchor.constraint(equalTo: frame.bottomAnchor),
+                retry.centerXAnchor.constraint(equalTo: frame.centerXAnchor),
+                retry.centerYAnchor.constraint(equalTo: frame.centerYAnchor),
+                retry.widthAnchor.constraint(equalToConstant: 28),
+                retry.heightAnchor.constraint(equalToConstant: 28),
             ])
-            imageView.bearySetImage(url: BearyImageURLs.imageURL(key: key, thumb: true), placeholder: nil, downsampleToWidth: nil, onFailure: { _ in })
+            bearyFeedLoadImage(into: imageView, url: BearyImageURLs.imageURL(key: key, thumb: true), retryButton: retry, downsampleToWidth: nil)
         }
         imagesStack.isHidden = keys.isEmpty
+    }
+
+    @objc private func receivedImageRetryTapped(_ sender: BearyFeedRetryButton) {
+        bearyFeedPerformRetry(sender)
     }
 
     // MARK: - 入池 / 开盒
