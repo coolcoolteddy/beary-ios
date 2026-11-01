@@ -9,7 +9,8 @@
 // 新增行一律真实能力：消息角标开关（本地 UserDefaults 门控底栏角标）、外观主题三选
 // （复用 beary_theme_mode 存档键）、版本行（Bundle 实值）；全修 3-4 已删“系统通知设置”行
 // （全仓无通知调用，系统通知开关对本 App 无效，不留无效入口）、
-// 隐私政策 / 用户协议（App 内原生文字页，文本取自 teddyhn.com 现行 privacy/terms，不开网页）。
+// 隐私政策 / 用户协议（方案一：服务器下发文字、App 内原生排版，不开网页；
+// 打开时先显示缓存或包内文本，后台拉 GET /beary/api/legal 最新版，刷新后只换文字不重建页面）。
 import UIKit
 
 // ===== beary 原生账户设置页（F 批新建；此前齿轮菜单与头像菜单的“账户设置”均为 presentComingSoon 占位）=====
@@ -227,6 +228,27 @@ final class BearySettingsViewController: UIViewController {
     private var plusDetail: BearyPlusDetailResponse?
     private var accountSessions: [BearyAccountSession] = []
     private var isLoadingMe = false
+    /// /me 代次：切换账号成功时 +1 作废旧请求，旧回包凭代次丢弃，
+    /// 不再把旧账号写回 ID 卡（旧请求发在切换前，回包体仍是旧账号）。
+    private var meLoadGeneration = 0
+    /// 切换账号卡容器（buildAccountSwitchSection 建，refreshAccountSwitchSection
+    /// 重建卡片；登录态无关的通用/隐私组不受影响）。
+    private let accountSwitchWrap = UIView()
+    /// 扫 bug 第 9 项：切换卡缓存（只缓存展示用模型，不缓存 token）。
+    /// cachedSwitchModels = 上次 loadAll 映射的保管库模型（保管库顺序，
+    /// 未含“当前账号不在库内”补位行、未排序）；cachedSwitchGeneration
+    /// = 取数时的保管库代际，代际不变即库内容未变，复用模型、不再
+    /// 全量读钥匙串。cachedSwitchFingerprint = 上次建成卡片的模型
+    /// 指纹（id/标题/handle/邮箱/头像/当前勾选全在内）；指纹不变即
+    /// 卡片内容与现行完全一致，跳过拆卡重建、保留现卡（头像加载态
+    /// 也不丢）。切换/移除/添加/快照写入都会推高代际或改指纹，
+    /// 故账号变化时必重建；切换逻辑本身一字不动。
+    private var cachedSwitchModels: [SwitchRowModel]?
+    private var cachedSwitchGeneration: Int?
+    private var cachedSwitchFingerprint: String?
+    private var switchCardBuilt = false
+    private var isSwitchingAccount = false
+    private var isRemovingAccount = false
     private var isLoggingOutOthers = false
     private var isDeleting = false
     private var isExporting = false
@@ -236,6 +258,10 @@ final class BearySettingsViewController: UIViewController {
     /// view.bounds 的纯函数，首个布局轮次即最终值，不再经多轮约束收敛
     /// 分段变宽；最终口径不变（iPhone 屏宽 -40，宽 ≥821 锁 600 居中）。
     private var contentColumnWidth: NSLayoutConstraint?
+    /// 115 设置页空白守卫（根因未证实，见下）：view 帧复位只做一次，避免布局环。
+    private var settingsFrameResetDone = false
+    /// 115 设置页空白守卫：进场诊断日志每出现一次只记一次。
+    private var settingsLayoutLogged = false
 
     // MARK: - 视图
 
@@ -326,10 +352,65 @@ final class BearySettingsViewController: UIViewController {
         loadAll()
     }
 
+    override func viewWillAppear(_ animated: Bool) {
+        super.viewWillAppear(animated)
+        settingsFrameResetDone = false
+        settingsLayoutLogged = false
+        refreshAccountSwitchSection()
+    }
+
+    override func viewDidAppear(_ animated: Bool) {
+        super.viewDidAppear(animated)
+        logSettingsLayout(tag: "appear")
+    }
+
     override func viewDidLayoutSubviews() {
         super.viewDidLayoutSubviews()
         updateColumnWidth()
+        applySettingsLayoutGuard()
     }
+
+    /// 115 设置页空白守卫（根因未证实，针对两类未证实原因）：
+    /// ① 呈现时 view 帧 / 安全区异常导致顶栏被顶到屏中部；
+    /// ② 约束冲突时 solver 弃锚点导致 scrollView 可见高度归零。
+    /// 只做帧复位 + 一次重布局，不整页重建、不重播动效、不改字号
+    /// 跟随与 loadAll / 各分组 isHidden 口径。顶栏是 buildLayout 的
+    /// 局部变量，这里经 closeButton.superview 取到，不新增存储属性。
+    private func applySettingsLayoutGuard() {
+        guard !settingsFrameResetDone, let window = view.window else { return }
+        let bounds = window.bounds
+        guard bounds.width > 0, bounds.height > 0, view.bounds.width > 0 else { return }
+        let topBar = closeButton.superview
+        let topBarMinY = topBar?.frame.minY ?? 0
+        let safeTop = view.safeAreaInsets.top
+        let viewFrameOff = abs(view.frame.origin.x) > 0.5 || abs(view.frame.origin.y) > 0.5
+            || abs(view.frame.width - bounds.width) > 0.5 || abs(view.frame.height - bounds.height) > 0.5
+        let topBarOff = topBar != nil && abs(topBarMinY - safeTop) > 20
+        let scrollCollapsed = scrollView.frame.height <= 0
+        guard viewFrameOff || topBarOff || scrollCollapsed else { return }
+        settingsFrameResetDone = true
+        if viewFrameOff {
+            view.frame = bounds
+        }
+        view.setNeedsLayout()
+        view.layoutIfNeeded()
+        logSettingsLayout(tag: "guard-reset")
+    }
+
+    /// 115 设置页空白诊断：进场与守卫触发时各记一行，进现有 NSLog
+    /// "[Diag]" 诊断通道，不弹 toast、不改 UI。复现时凭此行一次定位
+    /// （顶栏 frame.y 是否偏离安全区顶、scrollView 是否有可见高度）。
+    private func logSettingsLayout(tag: String) {
+        guard !settingsLayoutLogged || tag == "guard-reset" else { return }
+        if tag == "appear" { settingsLayoutLogged = true }
+        let topBar = closeButton.superview
+        NSLog("[Diag] settings-layout tag=%@ view=%@ topBar=%@ scrollView=%@ safeArea=%@",
+              tag, NSCoder.string(for: view.frame),
+              topBar.map { NSCoder.string(for: $0.frame) } ?? "nil",
+              NSCoder.string(for: scrollView.frame),
+              NSCoder.string(for: view.safeAreaInsets))
+    }
+
 
     /// 列宽只由 view.bounds 定：宽 ≥821 锁 600（P2-1 同款），宽 ≤820 时
     /// 屏宽 -40 撑满；bounds 为 0 时跳过不钉死；值不变时不写，避免布局环。
@@ -575,6 +656,12 @@ final class BearySettingsViewController: UIViewController {
         topBar.addSubview(titleLabel)
         NSLayoutConstraint.activate([
             topBar.heightAnchor.constraint(greaterThanOrEqualToConstant: 52),
+            // 115 设置页空白守卫（根因未证实）：顶栏保留 #343 跟随字号，
+            // 但加覆盖最大无障碍字号的上界。17pt 粗体在最大档缩放后约
+            // 51pt + 上下各 6pt 内边距 ≈ 63pt，88pt 留足余量；上界只防
+            // solver 在异常组合下把顶栏撑到把 scrollView 顶出屏，不改常规
+            // 字号下的 52pt，也不动字号跟随逻辑本身。
+            topBar.heightAnchor.constraint(lessThanOrEqualToConstant: 88),
             closeButton.leadingAnchor.constraint(equalTo: topBar.leadingAnchor, constant: 16),
             closeButton.centerYAnchor.constraint(equalTo: topBar.centerYAnchor),
             titleLabel.centerXAnchor.constraint(equalTo: topBar.centerXAnchor),
@@ -586,6 +673,8 @@ final class BearySettingsViewController: UIViewController {
         ])
 
         scrollView.translatesAutoresizingMaskIntoConstraints = false
+        // 116 后扫查：与广场/个人页同口径——关掉 delaysContentTouches，滚动容器里的点按立即响应，不等滚动判定。
+        scrollView.delaysContentTouches = false
         contentStack.translatesAutoresizingMaskIntoConstraints = false
         contentStack.axis = .vertical
         contentStack.spacing = 20
@@ -686,6 +775,8 @@ final class BearySettingsViewController: UIViewController {
         // 全修 8-17：标题收进卡内（见 buildSecuritySection 的 makeGroupCard），
         // 与 Plus/通用/消息与通知/隐私四组一致，不再卡外单立标题。
         buildSecuritySection()
+        // 切换账号卡（2026-10-31）：同属账户与安全组，列在安全卡之后。
+        buildAccountSwitchSection()
 
         privacyWrap.translatesAutoresizingMaskIntoConstraints = false
         privacyWrap.axis = .vertical
@@ -969,6 +1060,336 @@ final class BearySettingsViewController: UIViewController {
         accountSecurityWrap.addArrangedSubview(securityGroup.card)
     }
 
+    // MARK: - 切换账号（2026-10-31，仅 App 设置页；网页端不做）
+
+    /// 切换列表行展示模型：保管库行带 token（可切），当前账号若尚未
+    /// 快照进库（冷启动后首次进设置页且 refreshMe 尚未跑完的极小窗口）
+    /// 以无 token 行展示——点按即已是当前账号，移除仍走正常退出流程。
+    private struct SwitchRowModel {
+        var userId: Int
+        var title: String
+        var handle: String?
+        var email: String?
+        var avatarURL: String?
+        var hasToken: Bool
+    }
+
+    private func buildAccountSwitchSection() {
+        accountSwitchWrap.translatesAutoresizingMaskIntoConstraints = false
+        accountSwitchWrap.isHidden = true
+        accountSecurityWrap.addArrangedSubview(accountSwitchWrap)
+    }
+
+    /// 重建切换账号卡：只读保管库，不发网络；未登录时整卡隐藏。
+    /// 当前账号优先排第一位（其余按首次保存顺序），当前行打勾；
+    /// “添加账号”行恒可见，满 3 个时点按只弹上限提示、不进登录页。
+    private func refreshAccountSwitchSection() {
+        let currentUser = SessionManager.shared.currentUser ?? meUser
+        guard let currentUserValue = currentUser, currentUserValue.id != nil else {
+            // 未登录：旧卡必须清掉（此前拆卡发生在 guard 之前，现挪到这里，
+            // 语义不变）；已建成标记同步清零，下次登录必重建。
+            for subview in accountSwitchWrap.subviews {
+                subview.removeFromSuperview()
+            }
+            switchCardBuilt = false
+            cachedSwitchFingerprint = nil
+            accountSwitchWrap.isHidden = true
+            return
+        }
+        SessionManager.shared.snapshotCurrentAccount()
+        let vault = BearyAccountVault.shared
+        // 扫 bug 第 9 项：钥匙串读结果缓存——代际未变即库内容未变，
+        // 复用上次 loadAll 映射的模型，不再每次进页全量读钥匙串；
+        // 代际变了（切换/移除/添加/快照写入）才重读。注意模型里只有
+        // 展示字段（token 不进缓存）；快照本身仍每次调用（内容不变
+        // 时 vault.save 已跳过写盘、不推代际，故缓存能命中）。
+        let storedModels: [SwitchRowModel]
+        if let cached = cachedSwitchModels, cachedSwitchGeneration == vault.generation {
+            storedModels = cached
+        } else {
+            let stored = vault.loadAll()
+            let mapped: [SwitchRowModel] = stored.map { account in
+                SwitchRowModel(userId: account.userId, title: account.displayTitle, handle: account.handle, email: account.email, avatarURL: account.avatarURL, hasToken: true)
+            }
+            cachedSwitchModels = mapped
+            cachedSwitchGeneration = vault.generation
+            storedModels = mapped
+        }
+        var models: [SwitchRowModel] = storedModels
+        if let currentId = currentUserValue.id, !models.contains(where: { $0.userId == currentId }) {
+            models.append(SwitchRowModel(userId: currentId, title: currentUserValue.displayName ?? currentUserValue.email ?? "ID \(currentId)", handle: currentUserValue.handle, email: currentUserValue.email, avatarURL: nil, hasToken: false))
+        }
+        // 当前账号排首位，其余保持首次保存顺序（sort 稳定性：先按是否当前分两段）。
+        let currentIdValue = currentUserValue.id
+        models.sort { (first, second) -> Bool in
+            let firstIsCurrent = first.userId == currentIdValue
+            let secondIsCurrent = second.userId == currentIdValue
+            if firstIsCurrent != secondIsCurrent { return firstIsCurrent }
+            return false
+        }
+        // 扫 bug 第 9 项：切换卡只在账号变化时重建——指纹含每行
+        // id/标题/handle/邮箱/头像/当前勾选，指纹不变即卡片内容与现行
+        // 完全一致，直接保留现卡（不拆卡、不重建头像加载、不丢行态）；
+        // 指纹变了（切号、增删号、改名/改头像）才走下面原有重建。
+        // 切换/移除/添加的调用点仍调本函数，逻辑本身一字不动。
+        let fingerprint = models.map { model in
+            "\(model.userId)|\(model.title)|\(model.handle ?? "")|\(model.email ?? "")|\(model.avatarURL ?? "")|\(model.hasToken)|\(model.userId == currentIdValue)"
+        }.joined(separator: ";")
+        if switchCardBuilt, fingerprint == cachedSwitchFingerprint {
+            accountSwitchWrap.isHidden = false
+            return
+        }
+        for subview in accountSwitchWrap.subviews {
+            subview.removeFromSuperview()
+        }
+        var rows: [UIView] = []
+        for model in models {
+            rows.append(makeAccountSwitchRow(model: model, isCurrent: model.userId == currentIdValue))
+        }
+        rows.append(makeAddAccountRow())
+        let group = makeGroupCard(title: "切换账号", rows: rows)
+        group.card.translatesAutoresizingMaskIntoConstraints = false
+        accountSwitchWrap.addSubview(group.card)
+        NSLayoutConstraint.activate([
+            group.card.topAnchor.constraint(equalTo: accountSwitchWrap.topAnchor),
+            group.card.leadingAnchor.constraint(equalTo: accountSwitchWrap.leadingAnchor),
+            group.card.trailingAnchor.constraint(equalTo: accountSwitchWrap.trailingAnchor),
+            group.card.bottomAnchor.constraint(equalTo: accountSwitchWrap.bottomAnchor),
+        ])
+        cachedSwitchFingerprint = fingerprint
+        switchCardBuilt = true
+        accountSwitchWrap.isHidden = false
+    }
+
+    private func makeAccountSwitchRow(model: SwitchRowModel, isCurrent: Bool) -> UIView {
+        let avatarContainer = UIView()
+        avatarContainer.translatesAutoresizingMaskIntoConstraints = false
+        avatarContainer.backgroundColor = BearyColors.faint
+        avatarContainer.layer.cornerRadius = 18
+        avatarContainer.clipsToBounds = true
+        let avatarImageView = UIImageView()
+        avatarImageView.translatesAutoresizingMaskIntoConstraints = false
+        avatarImageView.contentMode = .scaleAspectFill
+        avatarImageView.clipsToBounds = true
+        let avatarInitialLabel = UILabel()
+        avatarInitialLabel.translatesAutoresizingMaskIntoConstraints = false
+        avatarInitialLabel.font = UIFont.systemFont(ofSize: 15, weight: .bold)
+        avatarInitialLabel.textColor = BearyColors.ink
+        avatarInitialLabel.textAlignment = .center
+        avatarInitialLabel.text = String(model.title.prefix(1))
+        avatarContainer.addSubview(avatarImageView)
+        avatarContainer.addSubview(avatarInitialLabel)
+        NSLayoutConstraint.activate([
+            avatarContainer.widthAnchor.constraint(equalToConstant: 36),
+            avatarContainer.heightAnchor.constraint(equalToConstant: 36),
+            avatarImageView.topAnchor.constraint(equalTo: avatarContainer.topAnchor),
+            avatarImageView.leadingAnchor.constraint(equalTo: avatarContainer.leadingAnchor),
+            avatarImageView.trailingAnchor.constraint(equalTo: avatarContainer.trailingAnchor),
+            avatarImageView.bottomAnchor.constraint(equalTo: avatarContainer.bottomAnchor),
+            avatarInitialLabel.centerXAnchor.constraint(equalTo: avatarContainer.centerXAnchor),
+            avatarInitialLabel.centerYAnchor.constraint(equalTo: avatarContainer.centerYAnchor),
+        ])
+        if let avatarURL = model.avatarURL, let url = BearyImageURLs.avatarURL(avatarURL) {
+            avatarImageView.bearySetImage(url: url)
+        }
+        let nameLabel = makeLabel(font: UIFont.systemFont(ofSize: 15), color: BearyColors.ink)
+        nameLabel.text = model.title
+        let detailText: String
+        if let handle = model.handle, !handle.isEmpty {
+            detailText = "@" + handle + " · " + BearyAccountVault.maskedEmail(model.email)
+        } else {
+            detailText = BearyAccountVault.maskedEmail(model.email)
+        }
+        let detailLabel = makeLabel(font: UIFont.systemFont(ofSize: 12), color: BearyColors.gray, lines: 0)
+        detailLabel.text = detailText
+        let textStack = UIStackView(arrangedSubviews: [nameLabel, detailLabel])
+        textStack.axis = .vertical
+        textStack.spacing = 2
+        textStack.translatesAutoresizingMaskIntoConstraints = false
+        let rowContent = UIStackView(arrangedSubviews: [avatarContainer, textStack])
+        rowContent.axis = .horizontal
+        rowContent.spacing = 12
+        rowContent.alignment = .center
+        rowContent.translatesAutoresizingMaskIntoConstraints = false
+        if isCurrent {
+            let checkView = UIImageView(image: BearyIconImages.image(named: "icon_check", pointSize: 18))
+            checkView.translatesAutoresizingMaskIntoConstraints = false
+            checkView.tintColor = BearyColors.ink
+            checkView.contentMode = .scaleAspectFit
+            NSLayoutConstraint.activate([
+                checkView.widthAnchor.constraint(equalToConstant: 18),
+                checkView.heightAnchor.constraint(equalToConstant: 18),
+            ])
+            rowContent.addArrangedSubview(checkView)
+        }
+        let rowView = UIView()
+        rowView.translatesAutoresizingMaskIntoConstraints = false
+        rowView.addSubview(rowContent)
+        let switchButton = UIButton(type: .system)
+        switchButton.translatesAutoresizingMaskIntoConstraints = false
+        switchButton.tag = model.userId
+        switchButton.addTarget(self, action: #selector(switchAccountButtonTapped(_:)), for: .touchUpInside)
+        switchButton.bearyAddPressFeedback()
+        rowView.addSubview(switchButton)
+        let removeButton = UIButton(type: .system)
+        removeButton.translatesAutoresizingMaskIntoConstraints = false
+        removeButton.setTitle("移除", for: .normal)
+        removeButton.setTitleColor(BearyColors.gray, for: .normal)
+        removeButton.titleLabel?.font = UIFont.systemFont(ofSize: 13)
+        removeButton.tag = model.userId
+        removeButton.addTarget(self, action: #selector(removeAccountButtonTapped(_:)), for: .touchUpInside)
+        removeButton.bearyAddPressFeedback()
+        rowView.addSubview(removeButton)
+        NSLayoutConstraint.activate([
+            rowContent.topAnchor.constraint(equalTo: rowView.topAnchor),
+            rowContent.leadingAnchor.constraint(equalTo: rowView.leadingAnchor),
+            rowContent.trailingAnchor.constraint(equalTo: rowView.trailingAnchor, constant: -52),
+            rowContent.bottomAnchor.constraint(equalTo: rowView.bottomAnchor),
+            switchButton.topAnchor.constraint(equalTo: rowView.topAnchor),
+            switchButton.leadingAnchor.constraint(equalTo: rowView.leadingAnchor),
+            switchButton.trailingAnchor.constraint(equalTo: rowView.trailingAnchor, constant: -52),
+            switchButton.bottomAnchor.constraint(equalTo: rowView.bottomAnchor),
+            removeButton.centerYAnchor.constraint(equalTo: rowView.centerYAnchor),
+            removeButton.trailingAnchor.constraint(equalTo: rowView.trailingAnchor),
+            removeButton.widthAnchor.constraint(equalToConstant: 44),
+            removeButton.heightAnchor.constraint(equalToConstant: 44),
+        ])
+        return rowView
+    }
+
+    private func makeAddAccountRow() -> UIView {
+        let titleLabel = makeLabel(font: UIFont.systemFont(ofSize: 15), color: BearyColors.ink)
+        titleLabel.text = "添加账号"
+        let detailLabel = makeLabel(font: UIFont.systemFont(ofSize: 12), color: BearyColors.gray, lines: 0)
+        detailLabel.text = "登录另一个账号，当前账号保持登录"
+        let textStack = UIStackView(arrangedSubviews: [titleLabel, detailLabel])
+        textStack.axis = .vertical
+        textStack.spacing = 2
+        textStack.translatesAutoresizingMaskIntoConstraints = false
+        let content = UIStackView(arrangedSubviews: [textStack, makeRowSpacer(), makeRowChevron()])
+        content.axis = .horizontal
+        content.spacing = 8
+        content.alignment = .center
+        content.translatesAutoresizingMaskIntoConstraints = false
+        let addButton = UIButton(type: .system)
+        addButton.translatesAutoresizingMaskIntoConstraints = false
+        addButton.addTarget(self, action: #selector(addAccountButtonTapped), for: .touchUpInside)
+        addButton.bearyAddPressFeedback()
+        return makeSettingsTappableRow(content: content, button: addButton)
+    }
+
+    /// 有效账号数 = 保管库 + 尚未快照的当前账号（去重）；满 3 个即满额。
+    private func effectiveAccountCount() -> Int {
+        var ids = Set(BearyAccountVault.shared.loadAll().map { $0.userId })
+        if let currentId = SessionManager.shared.currentUser?.id ?? meUser?.id {
+            ids.insert(currentId)
+        }
+        return ids.count
+    }
+
+    @objc private func switchAccountButtonTapped(_ sender: UIButton) {
+        let accountIdValue = sender.tag
+        guard !isSwitchingAccount else { return }
+        if SessionManager.shared.currentUser?.id == accountIdValue {
+            return
+        }
+        isSwitchingAccount = true
+        // 116 后扫查：切换要等一次 /me 网络往返，旧代码这段时间按钮毫无变化，
+        // 点按像没点中。点下立刻置灰+禁用（成功时整组行重建，失败时下面复原）。
+        sender.isEnabled = false
+        sender.alpha = 0.5
+        SessionManager.shared.switchToAccount(userId: accountIdValue) { [weak self] result in
+            guard let self = self else { return }
+            self.isSwitchingAccount = false
+            sender.isEnabled = true
+            sender.alpha = 1
+            switch result {
+            case .switched:
+                // 先作废在途旧 /me（并放行 loadAll 的 isLoadingMe 守卫），
+                // 再重拉新账号；否则 loadAll 被守卫丢弃、旧回包随后写回旧账号。
+                self.meLoadGeneration += 1
+                self.isLoadingMe = false
+                self.loadAll()
+                self.refreshAccountSwitchSection()
+            case .alreadyCurrent:
+                self.refreshAccountSwitchSection()
+            case .expired:
+                self.showToast("登录已过期，请重新登录")
+                self.openLoginForAccountSwitch()
+            case .network:
+                self.showToast("网络不稳定，请稍后再试")
+            case .failed, .unavailable:
+                self.showToast("切换失败，请稍后再试")
+            }
+        }
+    }
+
+    @objc private func addAccountButtonTapped() {
+        SessionManager.shared.snapshotCurrentAccount()
+        if effectiveAccountCount() >= BearyAccountVault.maxAccounts {
+            let alert = UIAlertController(title: "添加账号", message: "最多 3 个账号，先移除一个", preferredStyle: .alert)
+            alert.addAction(UIAlertAction(title: "知道了", style: .default))
+            present(alert, animated: BearyMotion.animated(true))
+            return
+        }
+        openLoginForAccountSwitch()
+    }
+
+    /// 添加 / 过期重登都走容器登录页（与 onRequireLogin 同路径）；容器
+    /// 未接线时页内模态兜底（编辑页同款），登录成功后刷新本页与列表。
+    private func openLoginForAccountSwitch() {
+        if let handler = onRequireLogin {
+            handler()
+            return
+        }
+        let loginVC = BearyLoginViewController()
+        loginVC.modalPresentationStyle = .fullScreen
+        loginVC.transitioningDelegate = SceneDelegate.chrome?.fadeRiseTransitionDelegate
+        loginVC.onCancelled = { [weak loginVC] in loginVC?.dismiss(animated: BearyMotion.animated(true)) }
+        loginVC.onLoggedIn = { [weak self, weak loginVC] in
+            loginVC?.dismiss(animated: BearyMotion.animated(true)) {
+                SessionManager.shared.refreshMe()
+                self?.loadAll()
+                self?.refreshAccountSwitchSection()
+            }
+        }
+        present(loginVC, animated: BearyMotion.animated(true))
+    }
+
+    @objc private func removeAccountButtonTapped(_ sender: UIButton) {
+        let accountIdValue = sender.tag
+        guard !isRemovingAccount else { return }
+        let isCurrent = SessionManager.shared.currentUser?.id == accountIdValue
+        let title = isCurrent ? "移除当前账号" : "移除账号"
+        let message = "该账号将在本设备退出登录，其他账号不受影响。"
+        let alert = UIAlertController(title: title, message: message, preferredStyle: .alert)
+        alert.addAction(UIAlertAction(title: "取消", style: .cancel))
+        alert.addAction(UIAlertAction(title: "移除", style: .destructive) { [weak self] _ in
+            guard let self = self else { return }
+            self.isRemovingAccount = true
+            SessionManager.shared.removeAccount(userId: accountIdValue) { [weak self] result in
+                guard let self = self else { return }
+                self.isRemovingAccount = false
+                switch result {
+                case .removed:
+                    self.refreshAccountSwitchSection()
+                case .removedAndSwitched:
+                    self.loadAll()
+                    self.refreshAccountSwitchSection()
+                case .removedAndLoggedOut:
+                    if let handler = self.onLoggedOut {
+                        handler()
+                    } else {
+                        self.onClose?()
+                    }
+                case .failed:
+                    self.showToast("退出失败，请重试")
+                }
+            }
+        })
+        present(alert, animated: BearyMotion.animated(true))
+    }
+
     /// 2026-10-29 第 12 项（合并 B）：退出登录 + 注销账户并入「账号操作」卡片，
     /// 仍列在设置页内（页底、版本脚注之上）。行为一字不动：退出仍走
     /// logoutButtonTapped（BearyAPI.logout + 清 cookie + 本地退出）；注销仍走
@@ -1155,9 +1576,44 @@ final class BearySettingsViewController: UIViewController {
 
     // MARK: - 加载
 
+    /// 116 数据填入动效：文案变化时只淡入该元素本身（alpha 0→1、
+    /// 0.25s，不动 transform／布局、不重建节点、不缩放弹一下）；同值
+    /// 不赋值不重播；减动效或未进窗口时直设终值。容器首次出现时
+    /// 只淡入容器本身，已可见时不重播。
+    private func setLabelTextFaded(_ label: UILabel, _ text: String) {
+        guard label.text != text else { return }
+        label.text = text
+        guard !UIAccessibility.isReduceMotionEnabled, label.window != nil else {
+            label.alpha = 1
+            return
+        }
+        label.alpha = 0
+        UIView.animate(withDuration: 0.25, delay: 0, options: [.curveEaseOut, .beginFromCurrentState], animations: {
+            label.alpha = 1
+        })
+    }
+
+    private func fadeView(_ view: UIView) {
+        guard !UIAccessibility.isReduceMotionEnabled, view.window != nil else {
+            view.alpha = 1
+            return
+        }
+        view.alpha = 0
+        UIView.animate(withDuration: 0.25, delay: 0, options: [.curveEaseOut, .beginFromCurrentState], animations: {
+            view.alpha = 1
+        })
+    }
+
+    private func fadeViewIfAppearing(_ view: UIView, wasHidden: Bool) {
+        guard wasHidden, !view.isHidden else { return }
+        fadeView(view)
+    }
+
     private func loadAll() {
         guard !isLoadingMe else { return }
         isLoadingMe = true
+        meLoadGeneration += 1
+        let meGeneration = meLoadGeneration
         // 缓存优先：登录态下本机已有同一份用户信息（SessionManager.currentUser），
         // 先显缓存、不转菊花，随后静默 fetchMe 对齐；无缓存时走现行加载态路径。
         if let cached = SessionManager.shared.currentUser {
@@ -1177,6 +1633,9 @@ final class BearySettingsViewController: UIViewController {
             BearyAPI.shared.fetchMe { [weak self] result in
                 DispatchQueue.main.async {
                     guard let self = self else { return }
+                    // 旧代次回包（切换前发出）：整段丢弃，不碰 isLoadingMe
+                    //（新一轮正在飞，它的回包自会复位），不写回旧账号。
+                    guard meGeneration == self.meLoadGeneration else { return }
                     self.isLoadingMe = false
                     switch result {
                     case .success(let user):
@@ -1190,6 +1649,10 @@ final class BearySettingsViewController: UIViewController {
                         self.setAccountActionDeleteHidden(userValue.isAdmin == true)
                         self.loadPlusDetail()
                         self.loadSessions()
+                        // 切换卡跟随用户信息刷新（首次进页时 viewWillAppear 已跑
+                        // 在异步 /me 之前，缓存路径靠 viewWillAppear、非缓存
+                        // 路径靠这里，否则卡片首屏缺失）。
+                        self.refreshAccountSwitchSection()
                     case .failure(let error):
                         if case .cancelled = error { return }
                         // 静默刷新失败：保持缓存内容不变，不显示 failureWrap。
@@ -1209,6 +1672,7 @@ final class BearySettingsViewController: UIViewController {
         BearyAPI.shared.fetchMe { [weak self] result in
             DispatchQueue.main.async {
                 guard let self = self else { return }
+                guard meGeneration == self.meLoadGeneration else { return }
                 self.isLoadingMe = false
                 self.loadingView.stopSpinning()
                 self.loadingView.isHidden = true
@@ -1219,10 +1683,18 @@ final class BearySettingsViewController: UIViewController {
                         return
                     }
                     self.meUser = userValue
+                    // 116：三组容器随 /me 到达首次出现时只淡入容器本身。
+                    let contentWasHidden = self.contentWrap.isHidden
+                    let securityWasHidden = self.accountSecurityWrap.isHidden
+                    let actionWasHidden = self.accountActionWrap.isHidden
                     self.contentWrap.isHidden = false
                     self.accountSecurityWrap.isHidden = false
                     self.accountActionWrap.isHidden = false
+                    self.fadeViewIfAppearing(self.contentWrap, wasHidden: contentWasHidden)
+                    self.fadeViewIfAppearing(self.accountSecurityWrap, wasHidden: securityWasHidden)
+                    self.fadeViewIfAppearing(self.accountActionWrap, wasHidden: actionWasHidden)
                     self.fillIdCard(user: userValue)
+                    self.refreshAccountSwitchSection()
                     // 注销入口：只用 /me 下发的 is_admin（服务端算出），客户端不写 id 判定；
                     // 服务端 403 admin_cannot_delete 仍是最终判定（见 delete 失败映射）。
                     // C3：注销行隐藏（行包容器 + 其前分隔线一并藏，见 setAccountActionDeleteHidden）。
@@ -1244,9 +1716,10 @@ final class BearySettingsViewController: UIViewController {
         let emailPrefix = (user.email ?? "").components(separatedBy: "@").first ?? ""
         let displayName = !name.isEmpty ? name : (!emailPrefix.isEmpty ? emailPrefix : "–")
         // F5：网页 heroName 就是名字本身，不带「你好，」前缀。
-        heroNameLabel.text = displayName
-        heroEmailLabel.text = user.email ?? "–"
-        avatarInitialLabel.text = String(displayName.prefix(1))
+        // 116：ID 卡各文案随 /me 到达变化时只淡入该 label 本身。
+        setLabelTextFaded(heroNameLabel, displayName)
+        setLabelTextFaded(heroEmailLabel, user.email ?? "–")
+        setLabelTextFaded(avatarInitialLabel, String(displayName.prefix(1)))
         avatarImageView.image = nil
         // 审计追加：与编辑页同法——/me 下发的 avatar 本就是 data:image;base64，
         // 直接解码显示，不再跳过 data: 只剩首字母占位；解码失败回落原路径。
@@ -1258,10 +1731,10 @@ final class BearySettingsViewController: UIViewController {
         } else if let avatar = user.avatar, !avatar.isEmpty {
             avatarImageView.bearySetImage(url: BearyImageURLs.avatarURL(avatar))
         }
-        idCreatedLabel.text = BearyAccountText.dateString(ms: user.createdAt)
+        setLabelTextFaded(idCreatedLabel, BearyAccountText.dateString(ms: user.createdAt))
         // ID 卡会员行：只留状态词（Plus 会员 / 普通用户），不走 plus-detail；
         // 全修 3-2：到期日、永久、内测限免一律只留在 Plus 组，不在此重复。
-        idPlusLabel.text = user.plus == true ? "Plus 会员" : "普通用户"
+        setLabelTextFaded(idPlusLabel, user.plus == true ? "Plus 会员" : "普通用户")
         // ID 行：现行 /me 无 serial_id 时不编造；有则优先显示，否则 @handle，再无则数字 id。
         // F5：字距 2（网页 id-val letter-spacing:2px）走 attributedText。
         let idText: String
@@ -1274,7 +1747,10 @@ final class BearySettingsViewController: UIViewController {
         } else {
             idText = "–"
         }
+        // 116：ID 号变化时只淡入该 label（字距属性不变，只换文案）。
+        let oldIdText = idValueLabel.attributedText?.string
         idValueLabel.attributedText = NSAttributedString(string: idText, attributes: [.kern: 2])
+        if oldIdText != idText { fadeView(idValueLabel) }
     }
 
     // C4：fillAccountRows 已随旧账户组删除（显示名称 / 用户名 / 邮箱 /
@@ -1303,7 +1779,7 @@ final class BearySettingsViewController: UIViewController {
                     }
                     if case .cancelled = error { return }
                     if self.plusDetail != nil { return }
-                    self.plusStatusLabel.text = "加载失败"
+                    self.setLabelTextFaded(self.plusStatusLabel, "加载失败")
                     self.grantsLoadFailed = true
                     self.rebuildGrants(grants: nil, failed: true)
                 }
@@ -1315,30 +1791,37 @@ final class BearySettingsViewController: UIViewController {
         let now = Int(Date().timeIntervalSince1970 * 1000)
         let permanent = detail.permanent == true
         let effective = detail.effectiveUntil ?? 0
+        // 116：Plus 组各文案随数据到达变化时只淡入该 label 本身（文案
+        // 先算后一次赋值，分支逻辑与原口径一字不动）。
+        let statusText: String
         if permanent {
-            plusStatusLabel.text = "Plus 会员 · 永久"
+            statusText = "Plus 会员 · 永久"
         } else if effective > now {
-            plusStatusLabel.text = "Plus 会员 · 至 " + BearyAccountText.dateString(ms: effective)
+            statusText = "Plus 会员 · 至 " + BearyAccountText.dateString(ms: effective)
         } else {
-            plusStatusLabel.text = "普通用户"
+            statusText = "普通用户"
         }
+        setLabelTextFaded(plusStatusLabel, statusText)
         let freeUntil = detail.freeUntil ?? 0
         if freeUntil > 0 {
+            let freeRowWasHidden = plusFreeRow.isHidden
             plusFreeWrapper?.isHidden = false
             plusFreeRow.isHidden = false
             if freeUntil > now {
-                plusFreeLabel.text = "全体内测用户免费 · 至 " + BearyAccountText.dateString(ms: freeUntil)
+                setLabelTextFaded(plusFreeLabel, "全体内测用户免费 · 至 " + BearyAccountText.dateString(ms: freeUntil))
             } else {
-                plusFreeLabel.text = "已结束 · " + BearyAccountText.dateString(ms: freeUntil) + " 到期"
+                setLabelTextFaded(plusFreeLabel, "已结束 · " + BearyAccountText.dateString(ms: freeUntil) + " 到期")
             }
+            fadeViewIfAppearing(plusFreeRow, wasHidden: freeRowWasHidden)
         } else {
             // 网页口径：free_until 为 0 时整行隐藏（藏包容器，见 makeGroupCard）。
             plusFreeWrapper?.isHidden = true
             plusFreeRow.isHidden = true
         }
         let personal = detail.personalUntil ?? 0
+        let personalText: String
         if permanent {
-            plusPersonalLabel.text = "永久会员"
+            personalText = "永久会员"
         } else if personal > now {
             var text = "至 " + BearyAccountText.dateString(ms: personal)
             if freeUntil > 0 && personal > freeUntil {
@@ -1347,10 +1830,11 @@ final class BearySettingsViewController: UIViewController {
             } else if freeUntil > now {
                 text += " · 与限免期重叠"
             }
-            plusPersonalLabel.text = text
+            personalText = text
         } else {
-            plusPersonalLabel.text = "暂无（好友注册并绑定邀请码，双方各得 +30 天）"
+            personalText = "暂无（好友注册并绑定邀请码，双方各得 +30 天）"
         }
+        setLabelTextFaded(plusPersonalLabel, personalText)
         rebuildGrants(grants: detail.grants, failed: false)
     }
 
@@ -1380,9 +1864,9 @@ final class BearySettingsViewController: UIViewController {
                     // 用户可见完整登录史，不过滤）；activeCount 缺失时才回落全量计数，此时不标
                     // “（活跃）”（回落值含过期行，标活跃会误导）。
                     if let active = resp.activeCount {
-                        self.deviceCountLabel.text = "共 \(active) 台设备（活跃）"
+                        self.setLabelTextFaded(self.deviceCountLabel, "共 \(active) 台设备（活跃）")
                     } else {
-                        self.deviceCountLabel.text = "共 \(list.count) 台设备"
+                        self.setLabelTextFaded(self.deviceCountLabel, "共 \(list.count) 台设备")
                     }
                     self.rebuildSessions(sessions: list, failed: false)
                 case .failure(let error):
@@ -1448,7 +1932,7 @@ final class BearySettingsViewController: UIViewController {
         guard !isDeleting else { return }
         let first = UIAlertController(
             title: "注销账户",
-            message: "7 天冷静期内登录可取消注销。7 天后账户正式注销，日记保留但作者显示为“已注销用户”。\n\n注销后，你的 Plus、未到账的邀请奖励、BETA 徽章和收藏会一并作废。",
+            message: "7 天冷静期内登录可取消注销。7 天后账户正式注销，日记保留但作者显示为“已注销用户”。\n\n注销后，你的 Plus、未到账的邀请奖励和收藏会一并作废。",
             preferredStyle: .alert
         )
         first.addAction(UIAlertAction(title: "再想想", style: .cancel, handler: nil))
@@ -1876,6 +2360,17 @@ final class BearySettingsViewController: UIViewController {
         return spacer
     }
 
+    /// 设置行按压视觉反馈：只走 opacity（不动布局、不缩放），与原有
+    /// touchDown 轻震叠加；关了系统触感时仍能看到行面变暗，点按不再像没点中。
+    /// 全宽行不用 bearyAddPressFeedback 的缩放（整行抖动），故只降 wrap 透明度。
+    @objc private func settingsRowPressDown(_ sender: UIButton) {
+        sender.superview?.alpha = 0.55
+    }
+
+    @objc private func settingsRowPressUp(_ sender: UIButton) {
+        sender.superview?.alpha = 1
+    }
+
     private func makeSettingsTappableRow(content: UIView, button: UIButton) -> UIView {
         let wrap = UIView()
         wrap.translatesAutoresizingMaskIntoConstraints = false
@@ -1883,6 +2378,8 @@ final class BearySettingsViewController: UIViewController {
         wrap.addSubview(content)
         button.translatesAutoresizingMaskIntoConstraints = false
         wrap.addSubview(button)
+        button.addTarget(self, action: #selector(settingsRowPressDown(_:)), for: .touchDown)
+        button.addTarget(self, action: #selector(settingsRowPressUp(_:)), for: [.touchUpInside, .touchUpOutside, .touchCancel])
         NSLayoutConstraint.activate([
             content.topAnchor.constraint(equalTo: wrap.topAnchor),
             content.leadingAnchor.constraint(equalTo: wrap.leadingAnchor),
@@ -2151,30 +2648,39 @@ final class BearySettingsViewController: UIViewController {
     }
 
     @objc private func openPrivacyText() {
-        presentLegalText(title: "隐私政策", text: BearyLegalTexts.privacy)
+        presentLegalText(title: "隐私政策", doc: .privacy)
     }
 
     @objc private func openTermsText() {
-        presentLegalText(title: "用户协议", text: BearyLegalTexts.terms)
+        presentLegalText(title: "用户协议", doc: .terms)
     }
 
-    private func presentLegalText(title: String, text: String) {
-        let vc = BearyLegalTextViewController(pageTitle: title, pageText: text)
+    private func presentLegalText(title: String, doc: BearyLegalServerText.Doc) {
+        // 先显示缓存（或包内兜底），页面立刻打开不阻塞；后台刷新到最新版后只换文字。
+        let vc = BearyLegalTextViewController(pageTitle: title, pageText: BearyLegalServerText.displayText(for: doc))
         vc.modalPresentationStyle = .fullScreen
         // 审计 P2-16：全屏 modal 补 fadeRise。
         vc.transitioningDelegate = SceneDelegate.chrome?.fadeRiseTransitionDelegate
         present(vc, animated: BearyMotion.animated(true))
+        BearyLegalServerText.refresh(doc: doc) { [weak vc] text in
+            guard let text = text, let vc = vc, vc.isViewLoaded else { return }
+            vc.updateText(text)
+        }
     }
 }
 
-/// 设置页隐私/协议原生文字页：纯原生 UITextView 渲染捆进 App 的文本，
+/// 设置页隐私/协议原生文字页：纯原生 UITextView 渲染服务器下发文字，
 /// 不开网页、不挂 WKWebView（App 独立化方向）。全屏 modal，关闭即 dismiss。
+/// updateText 只换 textView 文字，不重建页面、不重播动效。
 final class BearyLegalTextViewController: UIViewController {
     private let pageTitle: String
     private let pageText: String
     private let closeButton = BearyHit44Button(type: .system)
     private let titleLabel = UILabel()
     private let textView = UITextView()
+    /// 116 子页空白守卫（同 BearySettingsSubpages.swift 守卫说明）。
+    private let subpageLayoutGuard = BearySubpageLayoutGuard()
+    private var topBarView: UIView?
 
     init(pageTitle: String, pageText: String) {
         self.pageTitle = pageTitle
@@ -2192,12 +2698,12 @@ final class BearyLegalTextViewController: UIViewController {
         closeButton.translatesAutoresizingMaskIntoConstraints = false
         closeButton.setTitle("关闭", for: .normal)
         closeButton.setTitleColor(BearyColors.ink, for: .normal)
-        closeButton.titleLabel?.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 15))
+        closeButton.titleLabel?.font = BearyDynamicType.cappedFont(for: UIFont.systemFont(ofSize: 15))
         closeButton.titleLabel?.adjustsFontForContentSizeCategory = true
         closeButton.addTarget(self, action: #selector(closeTapped), for: .touchUpInside)
         closeButton.bearyAddPressFeedback()
         titleLabel.translatesAutoresizingMaskIntoConstraints = false
-        titleLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 17, weight: .bold))
+        titleLabel.font = BearyDynamicType.cappedFont(for: UIFont.systemFont(ofSize: 17, weight: .bold))
         titleLabel.adjustsFontForContentSizeCategory = true
         titleLabel.textColor = BearyColors.ink
         titleLabel.textAlignment = .center
@@ -2209,13 +2715,18 @@ final class BearyLegalTextViewController: UIViewController {
         textView.translatesAutoresizingMaskIntoConstraints = false
         textView.isEditable = false
         textView.isSelectable = true
-        textView.font = UIFont.systemFont(ofSize: 15)
+        // 扫查组：此前裸 15pt，隐私/条款长文本不跟随系统字号（本页顶栏已
+        // 在 #343 跟随，只剩正文漏网）；UITextView 配 scaledFont + adjusts
+        // 后档位变化自动重算字号，滚动区高度自适应，无固定高可撑破。
+        textView.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 15))
+        textView.adjustsFontForContentSizeCategory = true
         textView.textColor = BearyColors.ink
         textView.backgroundColor = BearyColors.bg
         textView.text = pageText
         textView.textContainerInset = UIEdgeInsets(top: 16, left: 16, bottom: 16, right: 16)
         view.addSubview(topBar)
         view.addSubview(textView)
+        topBarView = topBar
         // 补缺 P2-17：子页内容列 600 居中、顶栏同宽居中（iPhone 全宽不变）。
         let legalTopBarWidthEquality = topBar.widthAnchor.constraint(equalTo: view.widthAnchor)
         legalTopBarWidthEquality.priority = UILayoutPriority(750)
@@ -2245,6 +2756,80 @@ final class BearyLegalTextViewController: UIViewController {
 
     @objc private func closeTapped() {
         dismiss(animated: BearyMotion.animated(true))
+    }
+
+    /// 服务器刷新回包后只换文字：不重建视图、不动滚动位置以外的状态。
+    func updateText(_ text: String) {
+        guard textView.text != text else { return }
+        textView.text = text
+    }
+
+    override func viewWillAppear(_ animated: Bool) {
+        super.viewWillAppear(animated)
+        subpageLayoutGuard.resetForAppearance()
+    }
+
+    override func viewDidLayoutSubviews() {
+        super.viewDidLayoutSubviews()
+        subpageLayoutGuard.applyIfNeeded(page: pageTitle, view: view, topView: topBarView)
+    }
+}
+
+/// 方案一：隐私政策 / 用户协议服务器下发文字（2026-11-01）。
+/// 缓存按 doc 分开存（privacy / terms 各一键 + 各一个 updated_at 键）；
+/// 有网每次打开都拉，拉取失败或没网就用缓存，再没有缓存才用包内 BearyLegalTexts 兜底；
+/// 登录页的协议链接不在本批范围，仍读包内文本（见 BearyLoginViewController）。
+enum BearyLegalServerText {
+    enum Doc: String {
+        case privacy
+        case terms
+    }
+
+    private struct Response: Decodable {
+        let ok: Bool
+        let doc: String
+        let title: String?
+        let updated_at: String?
+        let text: String?
+    }
+
+    private static func textKey(for doc: Doc) -> String { "beary_legal_text_" + doc.rawValue }
+    private static func updatedKey(for doc: Doc) -> String { "beary_legal_updated_at_" + doc.rawValue }
+
+    static func cachedText(for doc: Doc) -> String? {
+        UserDefaults.standard.string(forKey: textKey(for: doc))
+    }
+
+    static func bundledText(for doc: Doc) -> String {
+        doc == .privacy ? BearyLegalTexts.privacy : BearyLegalTexts.terms
+    }
+
+    static func displayText(for doc: Doc) -> String {
+        cachedText(for: doc) ?? bundledText(for: doc)
+    }
+
+    static func refresh(doc: Doc, completion: @escaping (String?) -> Void) {
+        guard let url = URL(string: "https://teddyhn.com/beary/api/legal?doc=" + doc.rawValue) else {
+            completion(nil)
+            return
+        }
+        var request = URLRequest(url: url)
+        request.setValue("https://teddyhn.com", forHTTPHeaderField: "Origin")
+        URLSession.shared.dataTask(with: request) { data, response, _ in
+            guard let data = data,
+                  let http = response as? HTTPURLResponse, http.statusCode == 200,
+                  let decoded = try? JSONDecoder().decode(Response.self, from: data),
+                  decoded.ok, decoded.doc == doc.rawValue,
+                  let text = decoded.text, !text.isEmpty else {
+                DispatchQueue.main.async { completion(nil) }
+                return
+            }
+            UserDefaults.standard.set(text, forKey: textKey(for: doc))
+            if let updated = decoded.updated_at {
+                UserDefaults.standard.set(updated, forKey: updatedKey(for: doc))
+            }
+            DispatchQueue.main.async { completion(text) }
+        }.resume()
     }
 }
 
@@ -2804,6 +3389,9 @@ private final class BearyDiagnosticsViewController: UIViewController {
     private let textView = UITextView()
     private let copyButton = UIButton(type: .system)
     private let clearButton = UIButton(type: .system)
+    /// 116 子页空白守卫（同 BearySettingsSubpages.swift 守卫说明）。
+    private let subpageLayoutGuard = BearySubpageLayoutGuard()
+    private var topBarView: UIView?
 
     override func viewDidLoad() {
         super.viewDidLoad()
@@ -2813,14 +3401,14 @@ private final class BearyDiagnosticsViewController: UIViewController {
         closeButton.translatesAutoresizingMaskIntoConstraints = false
         closeButton.setTitle("关闭", for: .normal)
         closeButton.setTitleColor(BearyColors.ink, for: .normal)
-        closeButton.titleLabel?.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 15))
+        closeButton.titleLabel?.font = BearyDynamicType.cappedFont(for: UIFont.systemFont(ofSize: 15))
         closeButton.titleLabel?.adjustsFontForContentSizeCategory = true
         closeButton.addTarget(self, action: #selector(closeTapped), for: .touchUpInside)
         closeButton.bearyAddPressFeedback()
 
         let titleLabel = UILabel()
         titleLabel.translatesAutoresizingMaskIntoConstraints = false
-        titleLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 17, weight: .bold))
+        titleLabel.font = BearyDynamicType.cappedFont(for: UIFont.systemFont(ofSize: 17, weight: .bold))
         titleLabel.adjustsFontForContentSizeCategory = true
         titleLabel.textColor = BearyColors.ink
         titleLabel.textAlignment = .center
@@ -2871,6 +3459,7 @@ private final class BearyDiagnosticsViewController: UIViewController {
         view.addSubview(topBar)
         view.addSubview(actionRow)
         view.addSubview(textView)
+        topBarView = topBar
         // 补缺 P2-17：子页内容列 600 居中、顶栏同宽居中（iPhone 全宽不变；操作行跟顶栏左缘 +20）。
         let logTopBarWidthEquality = topBar.widthAnchor.constraint(equalTo: view.widthAnchor)
         logTopBarWidthEquality.priority = UILayoutPriority(750)
@@ -2889,6 +3478,16 @@ private final class BearyDiagnosticsViewController: UIViewController {
             logTextWidthEquality,
             textView.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor),
         ])
+    }
+
+    override func viewWillAppear(_ animated: Bool) {
+        super.viewWillAppear(animated)
+        subpageLayoutGuard.resetForAppearance()
+    }
+
+    override func viewDidLayoutSubviews() {
+        super.viewDidLayoutSubviews()
+        subpageLayoutGuard.applyIfNeeded(page: "诊断日志", view: view, topView: topBarView)
     }
 
     override func viewDidAppear(_ animated: Bool) {
@@ -2951,6 +3550,9 @@ final class BearyBlockedUsersViewController: UIViewController, UITableViewDataSo
     private let closeButton = BearyHit44Button(type: .system)
     private let titleLabel = UILabel()
     private let emptyLabel = UILabel()
+    /// 116 子页空白守卫（同 BearySettingsSubpages.swift 守卫说明）。
+    private let subpageLayoutGuard = BearySubpageLayoutGuard()
+    private var topBarView: UIView?
     private var blockedIds: [Int] = []
     private var unblockingIds: Set<Int> = []
 
@@ -2960,12 +3562,12 @@ final class BearyBlockedUsersViewController: UIViewController, UITableViewDataSo
         closeButton.translatesAutoresizingMaskIntoConstraints = false
         closeButton.setTitle("关闭", for: .normal)
         closeButton.setTitleColor(BearyColors.ink, for: .normal)
-        closeButton.titleLabel?.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 15))
+        closeButton.titleLabel?.font = BearyDynamicType.cappedFont(for: UIFont.systemFont(ofSize: 15))
         closeButton.titleLabel?.adjustsFontForContentSizeCategory = true
         closeButton.addTarget(self, action: #selector(closeTapped), for: .touchUpInside)
         closeButton.bearyAddPressFeedback()
         titleLabel.translatesAutoresizingMaskIntoConstraints = false
-        titleLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 17, weight: .bold))
+        titleLabel.font = BearyDynamicType.cappedFont(for: UIFont.systemFont(ofSize: 17, weight: .bold))
         titleLabel.adjustsFontForContentSizeCategory = true
         titleLabel.textColor = BearyColors.ink
         titleLabel.textAlignment = .center
@@ -2981,6 +3583,8 @@ final class BearyBlockedUsersViewController: UIViewController, UITableViewDataSo
         emptyLabel.text = "暂无已拉黑用户"
         emptyLabel.isHidden = true
         tableView.translatesAutoresizingMaskIntoConstraints = false
+        // 116 后扫查：与广场/个人页同口径——关掉 delaysContentTouches，滚动容器里的点按立即响应，不等滚动判定。
+        tableView.delaysContentTouches = false
         tableView.dataSource = self
         tableView.delegate = self
         tableView.backgroundColor = BearyColors.bg
@@ -2989,6 +3593,7 @@ final class BearyBlockedUsersViewController: UIViewController, UITableViewDataSo
         view.addSubview(topBar)
         view.addSubview(tableView)
         view.addSubview(emptyLabel)
+        topBarView = topBar
         // 补缺 P2-17：拉黑列表顶栏与内容列同宽居中（iPhone 全宽不变）。
         let blockedTopBarWidthEquality = topBar.widthAnchor.constraint(equalTo: view.widthAnchor)
         blockedTopBarWidthEquality.priority = UILayoutPriority(750)
@@ -3088,5 +3693,15 @@ final class BearyBlockedUsersViewController: UIViewController, UITableViewDataSo
 
     @objc private func closeTapped() {
         dismiss(animated: BearyMotion.animated(true))
+    }
+
+    override func viewWillAppear(_ animated: Bool) {
+        super.viewWillAppear(animated)
+        subpageLayoutGuard.resetForAppearance()
+    }
+
+    override func viewDidLayoutSubviews() {
+        super.viewDidLayoutSubviews()
+        subpageLayoutGuard.applyIfNeeded(page: "已拉黑用户", view: view, topView: topBarView)
     }
 }

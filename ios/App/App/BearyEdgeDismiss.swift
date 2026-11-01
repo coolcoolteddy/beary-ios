@@ -112,7 +112,13 @@ private final class BearySlideTransitionAnimator: NSObject, UIViewControllerAnim
             UIView.animate(withDuration: duration, animations: {
                 fromView.transform = CGAffineTransform(translationX: width, y: 0)
             }, completion: { _ in
-                // 取消时 fromView 由交互式过渡自动复位回原位；完成时视图即将移除，无需清 transform
+                // 115 设置页空白守卫（根因未证实）：转场取消 / 中断时显式
+                // 复位，不依赖交互式过渡的自动复位——若自动复位未发生，
+                // 残留的位移 transform 会让整页（含顶栏）停在屏中部。
+                // 完成时视图即将移除，复位无副作用。
+                if transitionContext.transitionWasCancelled {
+                    fromView.transform = .identity
+                }
                 transitionContext.completeTransition(!transitionContext.transitionWasCancelled)
             })
         }

@@ -133,7 +133,7 @@ final class BearyChromeViewController: UIViewController {
     private var feedTopConstraint: NSLayoutConstraint?
     private var pageTopConstraints: [ContainerPage: NSLayoutConstraint] = [:]
     /// 底栏：官方分段选择器（BearyHit44SegmentedControl 仅扩热区至 44pt，
-    /// 与已拆除的时间线筛选条同款热区扩类；系统自绘玻璃与选中 pill，不再自绘胶囊）。
+    /// 与已拆除的时间线筛选条同款热区扩类；系统自绘玻璃与选中 pill，不再自绘 pill）。
     private var bottomSegmented: BearyHit44SegmentedControl!
     /// 分段器后方的模糊衬底（Li 2026-10-26：分段器太透，加一层模糊）：
     /// systemMaterial，随深浅自适应；与分段器同中心同尺寸（288×58，见下方约束），
@@ -142,12 +142,20 @@ final class BearyChromeViewController: UIViewController {
     private var bottomBlurView: UIVisualEffectView?
     /// 分段器 touchDown 瞬间记录的旧选段（供重拍手势与 valueChanged 时序竞态判定用）。
     private var segmentIndexAtTouchDown: Int = -1
+    /// 同 tab 连点刷新：上一拍重拍的页、时间、上一拍是否只回了顶（未刷新）。
+    /// 第二下在 0.35s 内点同 tab 时直接刷新，不等回顶动画走完（见 retapCurrentPage）。
+    private var lastRetapPage: ContainerPage?
+    private var lastRetapTime = Date.distantPast
+    private var lastRetapDidScrollToTop = false
     private var fabButton: UIButton!
     /// FAB 玻璃化容器（阴影载体 + 玻璃 + 按钮三层；拖动时容器只平移跟手指，
-    /// 形变改玻璃与阴影的尺寸约束——55 批只改容器 transform 时真机上玻璃边缘
-    /// 不跟形变（Li 2026-10-26 实证），故形变直接改尺寸）。
+    /// 形变改玻璃与阴影自身的 transform（扫 bug 第 5 项，替代原尺寸约束形变）。
+    /// 旧风险未消除：55 批只改容器 transform 时真机上玻璃边缘不跟形变
+    /// （Li 2026-10-26 实证），故当时改走尺寸约束；本改法把 transform 直接
+    /// 施加到玻璃/阴影自身而非容器，但同属 transform 形变，玻璃模糊层跟不上、
+    /// 边缘残影的旧问题仍可能复发，真机必验（见 fabLongPressed 注释）。
     private var fabContainerView: UIView?
-    /// FAB 玻璃本体与阴影载体（拖动变形对象：尺寸约束 + 转角 + 自转）。
+    /// FAB 玻璃本体与阴影载体（拖动变形对象：自身 transform 拉伸 + 自转；尺寸约束恒 54×54 不动）。
     private var fabGlassView: UIVisualEffectView?
     private var fabShadowView: UIView?
     private var fabGlassWidthConstraint: NSLayoutConstraint?
@@ -158,7 +166,7 @@ final class BearyChromeViewController: UIViewController {
     private var fabDragAnchor: CGPoint?
     private var fabDragging = false
     /// FAB 本次触摸是否真的拖动过（.changed 里位移 > 8pt 才置真）：点按优先的判据。
-    /// 长按识别会取消按钮触摸，慢按（>0.4s 不动）时 touchUpInside 永不触发，
+    /// 长按识别会取消按钮触摸，慢按（>0.25s 不动）时 touchUpInside 永不触发，
     /// 故慢按的开编辑器走手势 .ended 补开；拖过的松手不补开。
     private var fabDraggedThisTouch = false
     private var fabPressedState = false
@@ -467,14 +475,14 @@ final class BearyChromeViewController: UIViewController {
             topStack.bottomAnchor.constraint(equalTo: top.contentView.bottomAnchor),
             topStack.heightAnchor.constraint(equalToConstant: 60),
         ])
-        // ---- 底栏：官方分段选择器（Li 2026-10-26 纠正：55 包的自绘胶囊不是官方分段器）----
+        // ---- 底栏：官方分段选择器（Li 2026-10-26 纠正：55 包的自绘 pill 不是官方分段器）----
         // 时间线筛选条已在复刻批拆除，线上已无可抄的筛选条配置；本控件口径：
         // 系统默认外观（iOS 27 自绘玻璃与选中 pill，不设背景色/选中色；
         // Li 2026-10-26 定底栏也加 52 tint：分段器本身无整条玻璃 tint 槽，
         // tint 落在它后面的模糊衬底 contentView 上，与顶栏同值统一颜色）；
         // BearyHit44SegmentedControl 是筛选条用过的同款热区扩类（仅扩触摸帧）；
         // 四段等宽（apportionsSegmentWidthsByContent=false），图标与旧钮同源、
-        // 统一缩到 24pt；布局常量与旧胶囊 1:1：宽 288、高 58、底距安全区 12。
+        // 统一缩到 24pt；布局常量与旧 pill 1:1：宽 288、高 58、底距安全区 12。
         // 模糊衬底（Li 2026-10-26：分段器太透）：systemMaterial 随深浅自适应；
         // 与分段器同尺寸（288×58、圆角 29）：加 52 tint 后大一圈的光晕显形，
         // 故衬底不再比控件大，只盖住分段器本身；
@@ -585,7 +593,7 @@ final class BearyChromeViewController: UIViewController {
         // F21：FAB 按压缩放（网页 .fab:active scale(.93)，beary.html:371）。
         // 缩放改在容器层：玻璃+阴影+按钮一起缩；拖动变形时容器 transform 只留
         // 平移（位移优先），长按识别会取消按钮触摸并发出 touchCancel，缩放随即复位，
-        // 不与拖动冲突；0.4s 内快点走不到长按识别，点按照常触发 didTapWrite。
+        // 不与拖动冲突；0.25s 内快点走不到长按识别，点按照常触发 didTapWrite。
         fab.addTarget(self, action: #selector(fabPressedDown), for: .touchDown)
         fab.addTarget(self, action: #selector(fabPressedUp), for: [.touchUpInside, .touchUpOutside, .touchCancel])
         constrainButtonIcon(fab)
@@ -598,13 +606,14 @@ final class BearyChromeViewController: UIViewController {
         // 长按拖动变形：单用长按手势跟手指（.changed 直接给位移），不用“长按后启用 pan”
         // ——pan 在触摸中途启用接不到当次触摸，长按手势则全程跟随。长按识别后
         // cancelsTouchesInView 默认 true 会取消按钮触摸，故拖动不会误触写日记；
-        // 0.4s 内完成的快点走不到长按识别，正常点按不受影响。
-        // 形变见 fabLongPressed：容器只平移跟手指，玻璃与阴影改尺寸（55 批只改
-        // 容器 transform 时玻璃边缘真机不跟形变，故形变直接改尺寸）。
+        // 0.25s 内完成的快点走不到长按识别，正常点按不受影响。
+        // 形变见 fabLongPressed：容器只平移跟手指，玻璃与阴影改自身 transform
+        // （扫 bug 第 5 项；旧风险见 fabLongPressed 注释，真机必验）。
         let fabLongPress = UILongPressGestureRecognizer(target: self, action: #selector(fabLongPressed(_:)))
-        fabLongPress.minimumPressDuration = 0.4
+        fabLongPress.minimumPressDuration = 0.25
         fabContainer.addGestureRecognizer(fabLongPress)
-        // 玻璃与阴影改中心 + 尺寸约束（不再钉容器四边）：拖动形变时改尺寸，
+        // 玻璃与阴影改中心 + 尺寸约束（不再钉容器四边）：尺寸约束恒 54×54，
+        // 拖动形变只改玻璃/阴影自身的 transform，不再改约束（扫 bug 第 5 项）；
         // 按钮仍钉容器四边（54×54 不动，加号保持端正清晰）；容器不裁剪，
         // 玻璃拉伸后每边超出容器约 8pt 的部分照常可见。
         let fabShadowWidth = fabShadow.widthAnchor.constraint(equalToConstant: 54)
@@ -636,7 +645,7 @@ final class BearyChromeViewController: UIViewController {
 
     /// 栏覆盖层布局（viewDidLayoutSubviews 与 updateTabSelection 后调用）：
     /// 顶栏图标间距随屏宽走（≤360 时 4、≤480 时 10，其余 18）；铃铛角标跟铃铛钮走。
-    /// 旧自绘胶囊的 pill/阴影/高光已随分段器改造删除，选中 pill 由系统自绘。
+    /// 旧自绘 pill 的/阴影/高光已随分段器改造删除，选中 pill 由系统自绘。
     /// S9 窄屏档：320pt 宽时固定项 79（logo）+ 约 60（登录 pill）+ 3×40（礼物/搜索/铃铛）
     /// + 两侧边距 32 = 约 291，5 档间距在 10 时共 50、合计约 341 超宽；≤360 时间距 4，
     /// 合计约 311 不超宽（不隐藏任何按钮，顶栏高仍 60）。
@@ -1368,31 +1377,30 @@ final class BearyChromeViewController: UIViewController {
     }
 
     /// FAB 长按拖动变形：长按落点为锚点，跟手位移 + 沿拖动方向拉伸。
-    /// 55 批只改容器 transform 时真机上玻璃边缘不跟形变（Li 2026-10-26 实证），
-    /// 故形变改玻璃与阴影的尺寸约束（+ 自转对齐拖动方向、转角跟半宽走），
+    /// 扫 bug 第 5 项：形变改走玻璃与阴影自身的 transform（旋转 + 沿拖动方向
+    /// 拉伸、垂直微缩），尺寸约束恒 54×54 不再改动，全程不触发布局；
     /// 容器 transform 只负责跟手指平移；按钮不形变，加号保持端正清晰。
+    /// 旧风险（真机必验）：55 批只改容器 transform 时真机上玻璃边缘不跟形变
+    /// （Li 2026-10-26 实证），这就是后来改走尺寸约束的原因；本改法只是把
+    /// transform 从容器改施到玻璃/阴影自身，仍属同一类 transform 形变，
+    /// 玻璃模糊层跟不上、边缘掉帧/残影的旧问题可能复发，复现即回退约束版。
     /// 松手弹簧回锚点，不改变常驻位置、不持久化。拖动中途栏显隐
     /// 若改写容器 transform，下一次 setBarsVisible 会重新收敛，不留残态。
-    /// 点按优先（2026-10-27 FAB 死钮修法）：长按识别（0.4s）会取消按钮触摸，
+    /// 点按优先（2026-10-27 FAB 死钮修法）：长按识别（0.25s）会取消按钮触摸，
     /// 慢按不动时 touchUpInside 永不触发，故 .ended 里没拖过即补开编辑器；
     /// 判据只看本次是否真的拖动（位移 > 8pt），不看按住时长。
     @objc private func fabLongPressed(_ gesture: UILongPressGestureRecognizer) {
         guard let container = fabContainerView else { return }
-        // 形变辅助：玻璃与阴影同尺寸同转角同自转；缺任一层时只做平移，不半吊子形变。
-        func applyDeform(width: CGFloat, height: CGFloat, angle: CGFloat) {
-            let radius = min(width, height) / 2
-            if let glass = self.fabGlassView {
-                self.fabGlassWidthConstraint?.constant = width
-                self.fabGlassHeightConstraint?.constant = height
-                glass.layer.cornerRadius = radius
-                glass.transform = CGAffineTransform(rotationAngle: angle)
-            }
-            if let shadow = self.fabShadowView {
-                self.fabShadowWidthConstraint?.constant = width
-                self.fabShadowHeightConstraint?.constant = height
-                shadow.layer.cornerRadius = radius
-                shadow.transform = CGAffineTransform(rotationAngle: angle)
-            }
+        // 形变辅助（扫 bug 第 5 项）：玻璃与阴影同 transform（先沿本地轴拉伸/
+        // 微缩、再转到拖动方向，故拉伸轴即拖动方向）；缺任一层时另一层仍照常
+        // 形变、平移不受影响。尺寸约束与 cornerRadius 一律不动（恒 54×54/27，
+        // 圆角随 transform 等比缩放）；拖动中不新增 alpha 变化，形变只走
+        // transform，仍在 transform/opacity 动效预算内。
+        // 旧风险见本函数文档注释：transform 玻璃在真机上曾跟不上，复现即回退。
+        func applyDeform(scaleX: CGFloat, scaleY: CGFloat, angle: CGFloat) {
+            let deform = CGAffineTransform(rotationAngle: angle).scaledBy(x: scaleX, y: scaleY)
+            self.fabGlassView?.transform = deform
+            self.fabShadowView?.transform = deform
         }
         switch gesture.state {
         case .began:
@@ -1410,7 +1418,7 @@ final class BearyChromeViewController: UIViewController {
             if len > 8 { fabDraggedThisTouch = true }
             if len < 4 {
                 container.transform = fabPressedState ? CGAffineTransform(scaleX: 0.93, y: 0.93) : .identity
-                applyDeform(width: 54, height: 54, angle: 0)
+                applyDeform(scaleX: 1, scaleY: 1, angle: 0)
                 return
             }
             // 沿拖动方向拉伸、垂直方向微缩（参数与 55 批一致：拉伸上限 30%、微缩上限 12%）。
@@ -1418,7 +1426,7 @@ final class BearyChromeViewController: UIViewController {
             let sx = 1 + min(0.30, len / 400)
             let sy = 1 - min(0.12, len / 800)
             container.transform = CGAffineTransform(translationX: tx, y: ty)
-            applyDeform(width: 54 * sx, height: 54 * sy, angle: angle)
+            applyDeform(scaleX: sx, scaleY: sy, angle: angle)
         case .ended, .cancelled, .failed:
             // 点按优先：先记下本次是正常松手还是中途取消/失败、是否拖过，再统一复位。
             let wasEnded = (gesture.state == .ended)
@@ -1427,14 +1435,16 @@ final class BearyChromeViewController: UIViewController {
             fabDragging = false
             let resetDeform = {
                 container.transform = .identity
-                applyDeform(width: 54, height: 54, angle: 0)
+                applyDeform(scaleX: 1, scaleY: 1, angle: 0)
             }
             if UIAccessibility.isReduceMotionEnabled {
                 resetDeform()
             } else {
-                UIView.animate(withDuration: 0.5, delay: 0, usingSpringWithDamping: 0.7, initialSpringVelocity: 0, options: [.beginFromCurrentState, .allowUserInteraction], animations: {
+                // 扫 bug 第 3 项：松手回弹弹簧 0.5s → 0.30s（阻尼 0.7、初速度 0 不变），
+                // 只求回得更快、不拖沓；仍保留弹簧感，不改成生硬的线性复位。
+                // #479 合入解冲突：取主线 0.30s（#476 已定），本支其余（门限 0.25s + 形变 transform）全部保留。
+                UIView.animate(withDuration: 0.30, delay: 0, usingSpringWithDamping: 0.7, initialSpringVelocity: 0, options: [.beginFromCurrentState, .allowUserInteraction], animations: {
                     resetDeform()
-                    container.layoutIfNeeded()
                 })
             }
             // 慢按补开：长按识别已取消按钮触摸，touchUpInside 永不触发；
@@ -1702,6 +1712,54 @@ final class BearyChromeViewController: UIViewController {
         }
     }
 
+    /// 同 tab 重拍统一口径（广场／消息／时间线／我页共用，搜索页无刷新入口不走这里）：
+    /// 1. 已在顶部 → 直接刷新（旧口径不动）；
+    /// 2. 不在顶部、上一拍是同 tab 回顶且在 0.35s 内又点 → 第二下直接刷新，
+    ///    不等回顶动画走完：先无动画贴顶（取消在途滚动动画），再调该页已有刷新入口，
+    ///    回顶动画与刷新动画不打架；
+    /// 3. 其余情况 → 只回顶，不刷新（旧口径不动）。
+    /// 在途锁：刷新进行中（各页 isRefreshingForRetap）再点一律不重复触发、不回顶，
+    /// 各页刷新入口自身的在途守卫是第二道（见各页 isRefreshingForRetap 注释）。
+    private func retapCurrentPage(
+        _ page: ContainerPage,
+        pageVC: UIViewController?,
+        isAtTop: Bool,
+        isRefreshing: Bool,
+        scrollToTop: () -> Void,
+        refresh: () -> Void
+    ) {
+        let now = Date()
+        if isRefreshing {
+            // 刷新进行中：不更新连点记录——窗口自然过期，刷新结束后的点按按新一拍算。
+            return
+        }
+        if isAtTop {
+            refresh()
+            lastRetapPage = page
+            lastRetapTime = now
+            lastRetapDidScrollToTop = false
+            return
+        }
+        let isDoubleTap = lastRetapPage == page && lastRetapDidScrollToTop
+            && now.timeIntervalSince(lastRetapTime) <= 0.35
+        if isDoubleTap {
+            // 无动画贴顶：直接置 contentOffset 会取消在途的 animated 回顶，
+            // 再刷新时自定义下拉头（84pt 进场）不再与回顶动画抢 offset。
+            if let scrollView = pageScrollView(pageVC) {
+                scrollView.setContentOffset(CGPoint(x: 0, y: -scrollView.contentInset.top), animated: false)
+            }
+            refresh()
+            lastRetapPage = page
+            lastRetapTime = now
+            lastRetapDidScrollToTop = false
+            return
+        }
+        scrollToTop()
+        lastRetapPage = page
+        lastRetapTime = now
+        lastRetapDidScrollToTop = true
+    }
+
     /// 原生页切换：首页与新页均为常驻子 VC（hide/show 保留滚动位置）。
     /// 重拍当前 tab：首页先回顶再刷新（与网页 topThen 同口径），消息页回顶再刷新，时间线重拉。
     private func showPage(_ page: ContainerPage) {
@@ -1750,30 +1808,34 @@ final class BearyChromeViewController: UIViewController {
         }
         if page == currentPage {
             // 再点当前 tab（Li 新口径，覆盖旧“回顶再刷新”无条件一起做）：
-            // 不在顶部只回顶，已在顶部（offset 在顶部容差内）才触发该页已有刷新入口。
+            // 不在顶部只回顶，已在顶部（offset 在顶部容差内）才触发该页已有刷新入口；
+            // 同 tab 0.35s 内连点两下，第二下直接刷新（见 retapCurrentPage）。
             // 切别的 tab 仍走下方正常切换，不触发任何刷新、不重拉缓存。
             if page == .home {
                 guard let feed = feedVC else { return }
-                if feed.isAtTop { feed.refreshFeed() } else { feed.scrollToTop() }
+                retapCurrentPage(.home, pageVC: feed, isAtTop: feed.isAtTop, isRefreshing: feed.isRefreshingForRetap, scrollToTop: { feed.scrollToTop() }, refresh: { feed.refreshFeed() })
             } else if page == .notif {
                 if let notifications = notifVC {
-                    if notifications.isAtTop { notifications.refresh() } else { notifications.scrollToTop() }
+                    retapCurrentPage(.notif, pageVC: notifications, isAtTop: notifications.isAtTop, isRefreshing: notifications.isRefreshingForRetap, scrollToTop: { notifications.scrollToTop() }, refresh: { notifications.refresh() })
                 }
             } else if page == .timeline {
                 if let timeline = timelineVC {
                     // 账号隔离 9 号：刷新分支保留选中日与旧内容（与下拉刷新同口径），
                     // 不再先清空闪白；登录翻转等其他调用点仍走默认清表路径。
-                    if timeline.isAtTop { timeline.reloadTimeline(keepSelectedDay: true) } else { timeline.scrollToTop() }
+                    retapCurrentPage(.timeline, pageVC: timeline, isAtTop: timeline.isAtTop, isRefreshing: timeline.isRefreshingForRetap, scrollToTop: { timeline.scrollToTop() }, refresh: { timeline.reloadTimeline(keepSelectedDay: true) })
                 }
             } else if page == .me {
                 // F5：回顶走 scrollPageToTop，见该函数注释。
-                if isPageAtTop(profileVC) { profileVC?.reloadProfile() } else { scrollPageToTop(profileVC) }
+                retapCurrentPage(.me, pageVC: profileVC, isAtTop: isPageAtTop(profileVC), isRefreshing: profileVC?.isRefreshingForRetap ?? false, scrollToTop: { [weak self] in self?.scrollPageToTop(profileVC) }, refresh: { profileVC?.reloadProfile() })
             } else if page == .search {
-                // F5：重拍搜索页回顶。
+                // F5：重拍搜索页回顶——搜索页无下拉刷新入口，不硬加刷新。
                 scrollPageToTop(searchVC)
             }
             return
         }
+        // 切到别的 tab：连点记录作废——回原 tab 后是新一拍，不沿用上一拍的回顶窗口。
+        lastRetapPage = nil
+        lastRetapDidScrollToTop = false
         let previousPage = currentPage
         // 淡入复加（Li 拍板，0.14s 只做透明度）：先记下离场页视图，暂不立即隐藏，
         // 下方与入场页做交叉淡入；减动效时仍走旧的即时显隐。M4 删的是整页淡入+滑动，
@@ -1992,6 +2054,22 @@ final class BearyChromeViewController: UIViewController {
                         // 首页与个人主页仍用原有重拉同步（其列表非日期分区，
                         // 且个人主页无删除入口，只是跟随同步）。
                         self.timelineVC?.removeDeletedEntry(entry)
+                        // 删帖复活修：首页重拉可能被在途守卫跳过、个人页重拉
+                        // 可能被 tabLoading 守卫跳过，且广场快照此前删帖时从不
+                        // 清——重进 App 先渲染快照，已删篇就复活。此处删帖即同
+                        // 步清掉两处模型与广场快照，重拉只是后续对齐，不再是
+                        // 唯一纠错路径。
+                        self.feedVC?.removeDeletedEntry(entryId: entryId)
+                        self.profileVC?.removeDeletedEntry(entryId: entryId)
+                        if let uid = SessionManager.shared.currentUser?.id {
+                            let bucket = BearyFeedCache.bucket(userId: uid)
+                            if let snap = BearyFeedCache.load(bucket: bucket) {
+                                let kept = snap.entries.filter { $0.id != entryId }
+                                if kept.count != snap.entries.count {
+                                    BearyFeedCache.save(bucket: bucket, entries: kept, hasMore: snap.hasMore)
+                                }
+                            }
+                        }
                         self.feedVC?.refreshAll()
                         self.profileVC?.reloadProfile()
                     case .failure:
@@ -2046,6 +2124,9 @@ final class BearyChromeViewController: UIViewController {
         profileBuiltForUserId = SessionManager.shared.currentUser?.id
         vc.onOpenEntry = { [weak self] entry in
             self?.gotoEntryImmediately(entry: entry)
+        }
+        vc.onOpenFreshEntry = { [weak self] entry in
+            self?.gotoEntryImmediately(entry: entry, skipSupplement: true)
         }
         vc.onRequireLogin = { [weak self] in self?.presentLoginGate() }
         // 收尾接线：返回/退出/编辑资料/齿轮菜单/行内互动（P3/P11，见 wireProfileVC）。
@@ -2153,6 +2234,9 @@ final class BearyChromeViewController: UIViewController {
         }
         vc.onOpenEntry = { [weak self] entry in
             self?.gotoEntryImmediately(entry: entry)
+        }
+        vc.onOpenFreshEntry = { [weak self] entry in
+            self?.gotoEntryImmediately(entry: entry, skipSupplement: true)
         }
         vc.onRequireLogin = { [weak self] in self?.presentLoginGate() }
         // iCity：拉黑后离页（回首页；信息流侧由广播自行清行）。
@@ -2653,7 +2737,19 @@ final class BearyChromeViewController: UIViewController {
                 self?.showPage(.home)
             }
         }
-        topmostViewController().present(vc, animated: BearyMotion.animated(true))
+        // 115 设置页空白守卫（根因未证实）：全屏 modal 呈现完成时把
+        // 设置页 view.frame 复位到窗口 bounds，排除转场中途打断留下
+        // 的位移残留（呈现前定帧布局已做一次，这里是完成时的第二道
+        // 保险；只复位 frame，不重建、不重播动效）。
+        topmostViewController().present(vc, animated: BearyMotion.animated(true)) { [weak vc] in
+            guard let vc = vc, let window = vc.view.window else { return }
+            let bounds = window.bounds
+            if vc.view.frame != bounds {
+                vc.view.frame = bounds
+                vc.view.setNeedsLayout()
+                vc.view.layoutIfNeeded()
+            }
+        }
     }
 
     /// 引导页弹出（v3 四页版）：引导 UI 在 BearyOnboardingViewController.swift
@@ -2844,6 +2940,11 @@ final class BearyChromeViewController: UIViewController {
                 self?.gotoEntryImmediately(entry: entry)
             }
         }
+        vc.onOpenFreshEntry = { [weak self] entry in
+            self?.dismiss(animated: BearyMotion.animated(true)) {
+                self?.gotoEntryImmediately(entry: entry, skipSupplement: true)
+            }
+        }
         vc.onRequireLogin = { [weak self] in
             self?.presentLoginGate()
         }
@@ -2880,8 +2981,14 @@ final class BearyChromeViewController: UIViewController {
     /// （不比旧“不存在”toast 更差，且不丢用户刚点开的内容）。
     /// id-only 入口（搜索/消息/深链/引用卡）无卡片数据，仍走 fetch-first 的
     /// gotoEntry(entryId:) 不变；旧 fetch-first 的 gotoEntry(entry:) 已随本项退役。
-    private func gotoEntryImmediately(entry: Entry) {
+    private func gotoEntryImmediately(entry: Entry, skipSupplement: Bool = false) {
         guard let entryId = entry.id, !entryId.isEmpty else { return }
+        if skipSupplement {
+            // 提速：调用方刚为可见性校验拉过同一单篇，详情直接用这份新鲜数据渲染，
+            // 不再后台补拉一次（计数 / 回应无需再等一次往返对齐）。
+            guard presentDetail(entry: entry) != nil else { return }
+            return
+        }
         guard let detail = presentDetail(entry: entry) else { return }
         BearyAPI.shared.fetchEntry(id: entryId) { [weak self, weak detail] result in
             DispatchQueue.main.async {
@@ -3822,6 +3929,11 @@ private final class BearyFadeRiseAnimator: NSObject, UIViewControllerAnimatedTra
                 toView.alpha = 1
                 toView.transform = .identity
             }, completion: { _ in
+                // 116 子页空白守卫配套：转场被打断时动画终值未必落位，
+                // 残留位移/帧会让整页顶栏停在屏中部；完成时强制复位一次，
+                // 动画已结束故无视觉跳变，取消时视图亦即将移除。
+                toView.transform = .identity
+                toView.frame = transitionContext.finalFrame(for: toVC)
                 transitionContext.completeTransition(!transitionContext.transitionWasCancelled)
             })
         } else {
