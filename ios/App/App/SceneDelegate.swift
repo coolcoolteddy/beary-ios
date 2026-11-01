@@ -1890,6 +1890,9 @@ final class BearyChromeViewController: UIViewController {
             switch page {
             case .timeline, .me, .notif:
                 presentGuestLoginSheet()
+                // Tab 错位修：门控拦住切页时，pill 已被点按先翻到新段；
+                // 只恢复 pill 到实际页（currentPage），不跳页、不改门控业务。
+                updateTabSelection()
                 return
             default:
                 break
@@ -1900,7 +1903,11 @@ final class BearyChromeViewController: UIViewController {
         // 仍为 nil 不能断定是游客——等一次 refreshMe 回包再判（FAB 的 P1-1 同口径），
         // 等的过程中不 toast、不弹登录页、不亮 tab；无 cookie 时按原口径直走登录门。
         if page == .me && SessionManager.shared.isLoggedIn == false {
-            if profileMeWaitPending { return }
+            if profileMeWaitPending {
+                // 已在等 /me 回包：第二下点按同样只恢复 pill，不重复发请求。
+                updateTabSelection()
+                return
+            }
             if !startupMeResolved && SessionManager.shared.hasCachedSession {
                 profileMeWaitPending = true
                 profileMeWaitTriggerPage = currentPage
@@ -1922,9 +1929,14 @@ final class BearyChromeViewController: UIViewController {
                     }
                     DispatchQueue.main.async { [weak self] in self?.resumePendingProfileAfterMe() }
                 }
+                // 启动等待期间不切页：pill 恢复到实际页，等待结果由 resume 处理。
+                updateTabSelection()
                 return
             }
             showMeLoginGate()
+            // 未登录门：只恢复 pill 到实际页，登录流程与文案一字不动；
+            // 登录成功后也不跳回我页（Li 定夺：留在原地）。
+            updateTabSelection()
             return
         }
         if page == currentPage {
@@ -3448,13 +3460,25 @@ final class BearyChromeViewController: UIViewController {
         startupMeResolved = true
         let triggerPage = profileMeWaitTriggerPage
         profileMeWaitTriggerPage = nil
-        guard currentPage == triggerPage else { return }
+        guard currentPage == triggerPage else {
+            // 等待期间已切过别的页：放弃跳回我页，只把 pill 恢复到实际页。
+            updateTabSelection()
+            return
+        }
         if SessionManager.shared.isLoggedIn {
             showPage(.me)
         } else if SessionManager.shared.authUnknown {
             // G26：网络失败不按游客处理，onNetworkUnstable 已 toast，此处不再弹登录页。
+            // 放弃分支：只恢复 pill，不跳页。
+            updateTabSelection()
         } else if presentedViewController == nil {
             showMeLoginGate()
+            // 等待结果是“未登录、走登录门”：同样只恢复 pill 到实际页；
+            // 登录成功后不跳回我页（与 showPage 内登录门同口径）。
+            updateTabSelection()
+        } else {
+            // 已有 modal 在前、登录门被跳过：放弃分支，只恢复 pill，不跳页。
+            updateTabSelection()
         }
     }
 
