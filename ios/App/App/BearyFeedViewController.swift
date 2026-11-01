@@ -213,10 +213,10 @@ class BearyFeedViewController: UIViewController {
         return pull
     }()
 
-    /// 自定义下拉基线：即 applyHeaderTopInset 算出的属性顶距（安全区顶 + 60/0 + 8），
+    /// 自定义下拉基线：即 applyHeaderTopInset 算出的属性顶距（安全区顶 + 108/0 + 8），
     /// 刷新中内边距 = 基线 +84、图标中心 = 基线 +54（消息页同款相对口径）。
     private func feedPullBaselineTop() -> CGFloat {
-        view.safeAreaInsets.top + (headerTopInsetVisible ? 60 : 0) + 8
+        view.safeAreaInsets.top + (headerTopInsetVisible ? 108 : 0) + 8
     }
 
     /// 首拉加载：网页 #feed .loading 口径——32pt 官方刷新图标 + 视觉顶边 40。
@@ -230,11 +230,10 @@ class BearyFeedViewController: UIViewController {
     private weak var feedEmptyTitleLabel: UILabel?
     private weak var feedEmptySubtitleLabel: UILabel?
 
-    /// 首页顶栏切换（Li 2026-11-01 定）：广场 / 正在关注。广场页原无分段，
-    /// 故用系统 UISegmentedControl（问题反馈/设置页同款控件，不新发明 tab
-    /// 样式、不自绘），放进表头盲盒入口下方、随流滚动（实现侧排布，待 Li
-    /// 过目：若他要钉顶顶栏，另起一支）。正在关注走 scope=following：作者
-    /// 是你关注的人（单向 + 互关都算），互关作者的公开未过期 + 仅好友篇都出，
+    /// 首页顶栏切换钉顶栏（Li 2026-11-01 定）：切换控件归容器顶栏玻璃所有
+    /// （SceneDelegate.homeSegmentControl，logo 行下方 8pt、高 32），随顶栏显隐
+    /// 走、不随列表滚动；本页只保留段状态与切换逻辑。正在关注走 scope=following：
+    /// 作者是你关注的人（单向 + 互关都算），互关作者的公开未过期 + 仅好友篇都出，
     /// 单向作者只出公开未过期篇，不关注/拉黑的一篇不出；排序 created_at
     /// DESC（后端口径已改，游标 before/since 同走 created_at，不再按
     /// published_at 传游标——见 feedSortKey）。不走广场磁盘快照（快照只含
@@ -242,13 +241,10 @@ class BearyFeedViewController: UIViewController {
     /// 回首页默认广场（见 handlePageEnter 的重置分支）。
     private var feedFollowingSegment = false
 
-    private lazy var feedSegmentControl: UISegmentedControl = {
-        let control = UISegmentedControl(items: ["广场", "正在关注"])
-        control.translatesAutoresizingMaskIntoConstraints = true
-        control.selectedSegmentIndex = 0
-        control.addTarget(self, action: #selector(feedSegmentChanged(_:)), for: .valueChanged)
-        return control
-    }()
+    /// 段重置时同步顶栏切换控件的选中态（控件归容器所有，本页不持有）。
+    private func syncHomeSegmentControl() {
+        SceneDelegate.chrome?.homeSegmentControl?.selectedSegmentIndex = feedFollowingSegment ? 1 : 0
+    }
 
     /// 当前段的数据口径：广场 = published_at DESC；正在关注 = created_at DESC
     ///（互关仅好友篇没有 published_at，复用广场游标会错页）。
@@ -260,7 +256,7 @@ class BearyFeedViewController: UIViewController {
         feedFollowingSegment ? entry.createdAt : (entry.publishedAt ?? entry.createdAt)
     }
 
-    @objc private func feedSegmentChanged(_ sender: UISegmentedControl) {
+    @objc func feedSegmentChanged(_ sender: UISegmentedControl) {
         let wantFollowing = sender.selectedSegmentIndex == 1
         guard wantFollowing != feedFollowingSegment else { return }
         // 游客/未登录：不调接口，走与“我的”同口径的登录门，段强制回广场。
@@ -473,7 +469,7 @@ class BearyFeedViewController: UIViewController {
         var didResetSegment = false
         if feedFollowingSegment, allowBackgroundRevalidate {
             feedFollowingSegment = false
-            feedSegmentControl.selectedSegmentIndex = 0
+            syncHomeSegmentControl()
             updateEmptyCopyForSegment()
             didResetSegment = true
         }
@@ -481,7 +477,7 @@ class BearyFeedViewController: UIViewController {
         // 不把关注段数据留给游客视角（切号时 handleFeedUserChanged 已先重置）。
         if currentLoginUserId == nil, feedFollowingSegment {
             feedFollowingSegment = false
-            feedSegmentControl.selectedSegmentIndex = 0
+            syncHomeSegmentControl()
             updateEmptyCopyForSegment()
             didResetSegment = true
         }
@@ -532,7 +528,8 @@ class BearyFeedViewController: UIViewController {
     }
 
     /// 顶栏透度批（容器调用，见 SceneDelegate.applyHeaderTopInsets）：主滚动视图即 tableView，
-    /// 表框贴页顶 + .never，故属性内边距即视觉顶距。显示 = 安全区顶 + 60 + 原 8 间隙，
+    /// 表框贴页顶 + .never，故属性内边距即视觉顶距。显示 = 安全区顶 + 108 + 原 8 间隙
+    /// （108 = logo 行 60 + 切换行 32 + 间隙 8 + 底边距 8，切换钉顶栏后顶栏总高），
     /// 收起 = 安全区顶 + 原 8 间隙（与旧收起时内容起于安全区顶 + 8 一致）。底内边距同步补
     /// 安全区底（.never 后系统不再自动叠加，旧视觉底 = 90 + 安全区底，须显式补回）。
     /// scrollToTop 已用 -contentInset.top，.never 下即顶部，无需改；藏栏阈值见
@@ -543,7 +540,7 @@ class BearyFeedViewController: UIViewController {
         // 自定义下拉刷新进行中不改写（刷新中内边距 = 基线 +84，改写会打断指示器）。
         guard !isCustomPullRefreshing else { return }
         let safeTop = view.safeAreaInsets.top
-        let top = safeTop + (visible ? 60 : 0) + 8
+        let top = safeTop + (visible ? 108 : 0) + 8
         let bottom = BearyChrome.chromeBottomInset(includesFab: true, width: view.bounds.width, safeAreaBottom: view.safeAreaInsets.bottom)
         if tableView.contentInset.top != top || tableView.contentInset.bottom != bottom {
             tableView.contentInset.top = top
@@ -1256,7 +1253,7 @@ class BearyFeedViewController: UIViewController {
         // 好友第一期：切号时关注段数据属于旧身份，先回广场段再走换桶逻辑。
         if feedFollowingSegment {
             feedFollowingSegment = false
-            feedSegmentControl.selectedSegmentIndex = 0
+            syncHomeSegmentControl()
             updateEmptyCopyForSegment()
         }
         if let uid = SessionManager.shared.currentUser?.id {
@@ -1720,17 +1717,9 @@ class BearyFeedViewController: UIViewController {
             verticalFittingPriority: .fittingSizeLevel
         ).height
         blindBoxEntryView.frame = CGRect(x: 16, y: 8, width: width - 32, height: entryHeight)
-        // 首页顶栏切换放进表头（盲盒入口下方、空态上方，随流滚动；与盲盒
-        // 入口同机制，不另起钉顶容器、不碰容器顶栏）。游客也可见，点正在关注
-        // 走登录门（见 feedSegmentChanged）；登录态变化时段显隐不跟登录态走，
-        // 只跟段选择走。
+        // 首页切换已钉顶栏（容器顶栏玻璃内），不再进表头随流滚动；
+        // 表头只剩盲盒入口与空态。
         var headerBaseY = 8 + entryHeight + 8
-        if feedSegmentControl.superview !== blindBoxHeaderWrap {
-            blindBoxHeaderWrap.addSubview(feedSegmentControl)
-        }
-        feedSegmentControl.selectedSegmentIndex = feedFollowingSegment ? 1 : 0
-        feedSegmentControl.frame = CGRect(x: 16, y: headerBaseY, width: width - 32, height: 32)
-        headerBaseY += 32 + 8
         var totalHeight = headerBaseY
         if feedEmptyVisible {
             emptyView.frame = CGRect(x: 0, y: 0, width: width, height: 0)

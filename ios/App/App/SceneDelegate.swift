@@ -228,6 +228,11 @@ final class BearyChromeViewController: UIViewController {
     private var bellBadge: UILabel!
     /// 顶栏图标行（宽度相关间距：≤360 时 4、≤480 时 10，其余 18，见 layoutChromeOverlays）。
     private var topStackView: UIStackView?
+    /// 好友第一期·首页切换钉顶栏（Li 2026-11-01 定）：广场 / 正在关注分段，
+    /// 放在顶栏玻璃内、logo 行下方 8pt、高 32，随顶栏显隐走（不随列表滚动）。
+    /// 控件归容器所有，点按转发给首页 FeedVC 的 feedSegmentChanged；
+    /// FeedVC 的段重置经本控件同步选中态。
+    var homeSegmentControl: UISegmentedControl?
     // 批一：原生页切换状态。currentPage 为 nil 表示尚未显示任何页（启动时 showPage(.home) 亮原生列表）。
     private enum ContainerPage {
         case home, notif, timeline, me, search, user
@@ -449,7 +454,8 @@ final class BearyChromeViewController: UIViewController {
     }
 
     private func buildChrome() {
-        // ---- 顶栏：整宽玻璃，内容区 60pt 贴安全区下方 ----
+        // ---- 顶栏：整宽玻璃，logo 行 60pt 贴安全区下方，其下再加首页切换行
+        // （8pt 间隙 + 32pt 切换 + 8pt 底边距，玻璃总高 = 安全区顶 + 108）。
         // 顶栏玻璃 tint：网页 .nav 底色 bg 52%，与下方白色内容同色系（浅色为白玻璃）；
         // 只改本调用的参数；底栏已改系统分段器，无玻璃调用；不加边框与阴影（网页 .nav 亦无，见 parity_values §7）。
         let top = makeGlassView(tint: BearyColors.alpha(BearyColors.bg, 0.52))
@@ -458,12 +464,12 @@ final class BearyChromeViewController: UIViewController {
         topGlass = top
         top.alpha = 0
         top.isUserInteractionEnabled = false
-        // 22(b) Plan A：顶栏高恒为安全区顶 + 60（viewDidLayoutSubviews 按真实安全区纠正），
+        // 22(b) Plan A：顶栏高恒为安全区顶 + 108（viewDidLayoutSubviews 按真实安全区纠正），
         // 显隐不再塌高（收起只上移 + 淡出，见 setHeaderVisible）；内容栈在玻璃内，裁剪防溢出。
         // 顶边推出屏外 topGlassTopOvershoot：玻璃顶边自带高光落在屏幕顶边即白线，
-        // 推出的量由高度同步补回，底边仍为安全区顶 + 60、内容栈锚底边不动。
+        // 推出的量由高度同步补回，底边仍为安全区顶 + 108、内容栈锚底边不动。
         top.clipsToBounds = true
-        let topHeight = top.heightAnchor.constraint(equalToConstant: 60)
+        let topHeight = top.heightAnchor.constraint(equalToConstant: 108)
         topHeightConstraint = topHeight
         let topTop = top.topAnchor.constraint(equalTo: view.topAnchor, constant: -topGlassTopOvershoot)
         topTopConstraint = topTop
@@ -525,11 +531,29 @@ final class BearyChromeViewController: UIViewController {
         topStackView = topStack
         topStack.translatesAutoresizingMaskIntoConstraints = false
         top.contentView.addSubview(topStack)
+        // logo 行锚安全区顶（不再锚玻璃底边）：玻璃加高后 logo 行仍贴安全区顶，
+        // 切换行落在其下方；旧底边锚在 60 高玻璃下与此等价。
         NSLayoutConstraint.activate([
             topStack.leadingAnchor.constraint(equalTo: top.contentView.leadingAnchor, constant: BearySpace.lg),
             topStack.trailingAnchor.constraint(equalTo: top.contentView.trailingAnchor, constant: -BearySpace.lg),
-            topStack.bottomAnchor.constraint(equalTo: top.contentView.bottomAnchor),
+            topStack.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
             topStack.heightAnchor.constraint(equalToConstant: 60),
+        ])
+        // 首页切换钉顶栏：与表头里旧切换同款系统分段（不新发明样式），
+        // 归容器所有、随玻璃显隐走；点按转发给 FeedVC（见 homeSegmentChanged）。
+        // 非首页时玻璃整体藏起（transform + alpha + 不可点），切换行随之藏起，
+        // 无需另设显隐。
+        let homeSegment = UISegmentedControl(items: ["广场", "正在关注"])
+        homeSegment.translatesAutoresizingMaskIntoConstraints = false
+        homeSegment.selectedSegmentIndex = 0
+        homeSegment.addTarget(self, action: #selector(homeSegmentChanged), for: .valueChanged)
+        top.contentView.addSubview(homeSegment)
+        homeSegmentControl = homeSegment
+        NSLayoutConstraint.activate([
+            homeSegment.leadingAnchor.constraint(equalTo: top.contentView.leadingAnchor, constant: BearySpace.lg),
+            homeSegment.trailingAnchor.constraint(equalTo: top.contentView.trailingAnchor, constant: -BearySpace.lg),
+            homeSegment.topAnchor.constraint(equalTo: topStack.bottomAnchor, constant: 8),
+            homeSegment.heightAnchor.constraint(equalToConstant: 32),
         ])
         // ---- 底栏：官方分段选择器（Li 2026-10-26 纠正：55 包的自绘 pill 不是官方分段器）----
         // 时间线筛选条已在复刻批拆除，线上已无可抄的筛选条配置；本控件口径：
@@ -1437,7 +1461,7 @@ final class BearyChromeViewController: UIViewController {
     /// 22(b) Plan A：header 只在首页出现（调用点不变：showPage 只在首页传 true，
     /// setBarsVisible 的 headerTarget 同样只在首页为真），显隐只改顶栏自身的
     /// transform + alpha——显示 = 位移归零 + alpha 1，收起 = 整块上移自身高度 +
-    /// alpha 0 + 不可点。高度约束恒为安全区顶 + 60 不再动，显隐不再改各页
+    /// alpha 0 + 不可点。高度约束恒为安全区顶 + 108 不再动，显隐不再改各页
     /// contentInset，动画块里不再 layoutIfNeeded：动画期间零布局，内容不跳，
     /// 也不再有每帧改 inset 触发的重新布局开销。顶栏是覆盖层（页框本就贴
     /// view.top），恒占位不挤页。减动效分支保留：直设终值。
@@ -1663,12 +1687,12 @@ final class BearyChromeViewController: UIViewController {
         // 审计 2：两侧背景层随 bounds 重算（窄屏隐藏、宽屏定宽/重建）。
         updateSideDecoLayout()
         layoutChromeOverlays()
-        // 22(b) Plan A：顶栏高恒为安全区顶 + 60（显隐不再塌高）；安全区变化
+        // 22(b) Plan A：顶栏高恒为安全区顶 + 108（显隐不再塌高）；安全区变化
         // （旋转/分屏）时恒纠正高度，收起态同步把上移量纠正为新高度，
         // 否则 transform 仍是旧高度、顶栏会露出半截。
-        // 高 = 安全区顶 + 60 + 顶边推出量：底边仍为安全区顶 + 60 不变。
+        // 高 = 安全区顶 + 108 + 顶边推出量：底边仍为安全区顶 + 108 不变。
         if let heightConstraint = topHeightConstraint {
-            let corrected = view.safeAreaInsets.top + 60 + topGlassTopOvershoot
+            let corrected = view.safeAreaInsets.top + 108 + topGlassTopOvershoot
             if heightConstraint.constant != corrected { heightConstraint.constant = corrected }
             if !headerVisible {
                 topGlass.transform = CGAffineTransform(translationX: 0, y: -corrected)
@@ -1680,6 +1704,11 @@ final class BearyChromeViewController: UIViewController {
     }
 
     @objc private func didTapLogo() { showPage(.home) }
+    /// 首页切换钉顶栏：顶栏分段点按转发给首页 FeedVC，切换逻辑本身
+    /// （默认广场、正在关注流口径、游客登录门）全在 feedSegmentChanged 里不动。
+    @objc private func homeSegmentChanged(_ sender: UISegmentedControl) {
+        feedVC?.feedSegmentChanged(sender)
+    }
     // 顶栏入口：登录弹原生登录页，其余走 tab 页；不再有任何跳网页的调用。
     @objc private func didTapLogin() { presentLogin() }
     @objc private func didTapSearch() { showPage(.search) }
