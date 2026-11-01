@@ -774,128 +774,279 @@ final class BearyRecipientPickerViewController: UIViewController, UITextFieldDel
         }
     }
 
+    /// 选人行视图束（审计 16）：一行 = 按钮 + 子视图 + 当前头像 URL；池按用户 ID 索引。
+    /// nil ID 行与同 ID 重复行不入池、每次新建（与旧行为一致，只是复用池不收它们）。
+    private final class RecipientRowViews {
+        let row: UIButton
+        let avatarView: UIImageView
+        let fallbackLabel: UILabel
+        let nameLabel: UILabel
+        let handleLabel: UILabel
+        let separator: UIView
+        var avatarURL: URL?
+        init(row: UIButton, avatarView: UIImageView, fallbackLabel: UILabel, nameLabel: UILabel, handleLabel: UILabel, separator: UIView) {
+            self.row = row
+            self.avatarView = avatarView
+            self.fallbackLabel = fallbackLabel
+            self.nameLabel = nameLabel
+            self.handleLabel = handleLabel
+            self.separator = separator
+        }
+    }
+
+    /// 新建一行选人行：只建视图、加子视图与约束、挂点按（内容由 configureRecipientRow 填）。
+    /// 视图与约束与旧 renderRows 内联版一字不动，只改一处层级（审计 9）：首字占位 label
+    /// 在头像视图之下——bearySetImage 无成功回调、BearyNativeCommon 只读不改，故不用
+    /// “成功时隐藏占位”的回调写法；加载中头像透明、占位从下方透出，成功后不透明头像
+    /// 盖住占位，失败时头像仍透明、占位继续显示。转圈挂在头像视图上（placeholder 为 nil
+    /// 时才挂圈，见 Common），故加载圈仍压在占位上方可见。
+    private func makeRecipientRow() -> RecipientRowViews {
+        let row = UIButton(type: .custom)
+        row.translatesAutoresizingMaskIntoConstraints = false
+        let avatarView = UIImageView()
+        avatarView.translatesAutoresizingMaskIntoConstraints = false
+        avatarView.contentMode = .scaleAspectFill
+        avatarView.clipsToBounds = true
+        avatarView.layer.cornerRadius = 22
+        avatarView.layer.masksToBounds = true
+        let fallbackLabel = UILabel()
+        fallbackLabel.translatesAutoresizingMaskIntoConstraints = false
+        fallbackLabel.font = BearyDynamicType.scaledFont(for: UIFont.boldSystemFont(ofSize: 16))
+        fallbackLabel.adjustsFontForContentSizeCategory = true
+        fallbackLabel.textColor = BearyColors.orange
+        fallbackLabel.backgroundColor = BearyColors.orange.withAlphaComponent(0.18)
+        fallbackLabel.textAlignment = .center
+        fallbackLabel.layer.cornerRadius = 22
+        fallbackLabel.layer.masksToBounds = true
+        // D-G10：网页 .addr-user .addr-avafall 回退头像带 inset 1px 橙 25% 内圈；
+        // 描边画在圆内侧，等价于该 inset ring（仅回退头像，真头像不加）。
+        fallbackLabel.layer.borderWidth = 1
+        fallbackLabel.layer.bearyDynamicBorderColor = BearyColors.orange.withAlphaComponent(0.25)
+        let nameLabel = UILabel()
+        nameLabel.translatesAutoresizingMaskIntoConstraints = false
+        nameLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 15, weight: .bold))
+        nameLabel.adjustsFontForContentSizeCategory = true
+        nameLabel.textColor = BearyColors.ink
+        let handleLabel = UILabel()
+        handleLabel.translatesAutoresizingMaskIntoConstraints = false
+        handleLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 12.5))
+        handleLabel.adjustsFontForContentSizeCategory = true
+        handleLabel.textColor = BearyColors.gray
+        let chevron = UIImageView(image: BearyIconImages.image(named: "icon_chevron_right", pointSize: 16))
+        chevron.translatesAutoresizingMaskIntoConstraints = false
+        chevron.tintColor = BearyColors.gray
+        chevron.contentMode = .scaleAspectFit
+        let separator = UIView()
+        separator.translatesAutoresizingMaskIntoConstraints = false
+        // 8-4：分隔线收进统一样式——基线厚已是 1pt，0.55 是颜色透明度（非厚度），
+        // 现改全强度 line 色（动态色本身，不走 withAlphaComponent，8-1 同款）。
+        separator.backgroundColor = BearyColors.line
+        // 审计 9 层级：占位在下、头像在上（其余子视图顺序与旧版一致）。
+        row.addSubview(fallbackLabel)
+        row.addSubview(avatarView)
+        row.addSubview(nameLabel)
+        row.addSubview(handleLabel)
+        row.addSubview(chevron)
+        row.addSubview(separator)
+        NSLayoutConstraint.activate([
+            // 32 清单第 25 项：头像改居中锚定（原上下各 10 定死 64 高）；行高改由内容撑起，见下方 ≥64。
+            avatarView.centerYAnchor.constraint(equalTo: row.centerYAnchor),
+            avatarView.leadingAnchor.constraint(equalTo: row.leadingAnchor, constant: 12),
+            avatarView.widthAnchor.constraint(equalToConstant: 44),
+            avatarView.heightAnchor.constraint(equalToConstant: 44),
+            fallbackLabel.centerYAnchor.constraint(equalTo: row.centerYAnchor),
+            fallbackLabel.leadingAnchor.constraint(equalTo: row.leadingAnchor, constant: 12),
+            fallbackLabel.widthAnchor.constraint(equalToConstant: 44),
+            fallbackLabel.heightAnchor.constraint(equalToConstant: 44),
+            nameLabel.topAnchor.constraint(equalTo: row.topAnchor, constant: 12),
+            nameLabel.leadingAnchor.constraint(equalTo: row.leadingAnchor, constant: 68),
+            nameLabel.trailingAnchor.constraint(lessThanOrEqualTo: chevron.leadingAnchor, constant: -8),
+            handleLabel.topAnchor.constraint(equalTo: nameLabel.bottomAnchor, constant: 2),
+            handleLabel.leadingAnchor.constraint(equalTo: row.leadingAnchor, constant: 68),
+            handleLabel.trailingAnchor.constraint(lessThanOrEqualTo: chevron.leadingAnchor, constant: -8),
+            handleLabel.bottomAnchor.constraint(lessThanOrEqualTo: row.bottomAnchor, constant: -12),
+            // 8-15：可点行最小 44 高约束（现由头像 44 + 上下 10 撑到 64，已达标；本约束防内容变矮时跌破 44）。
+            // 32 清单第 25 项：最小行高 44→64（即现行实际行高）；名/handle 跟随放大时名顶 12 + handle 底 ≤-12 把行撑高、不裁字。
+            row.heightAnchor.constraint(greaterThanOrEqualToConstant: 64),
+            chevron.centerYAnchor.constraint(equalTo: row.centerYAnchor),
+            chevron.trailingAnchor.constraint(equalTo: row.trailingAnchor, constant: -12),
+            chevron.widthAnchor.constraint(equalToConstant: 16),
+            chevron.heightAnchor.constraint(equalToConstant: 16),
+            separator.topAnchor.constraint(equalTo: row.topAnchor),
+            // 8-4 例外：左 68 = 头像左 12 + 宽 44 + 间隙 12，即正文列起点（与名/ handle 左 68 同列），
+            // 属头像对齐，不收进通用分隔线左距，保持不动。
+            separator.leadingAnchor.constraint(equalTo: row.leadingAnchor, constant: 68),
+            separator.trailingAnchor.constraint(equalTo: row.trailingAnchor, constant: -12),
+            separator.heightAnchor.constraint(equalToConstant: 1),
+        ])
+        row.addTarget(self, action: #selector(didTapRow(_:)), for: .touchUpInside)
+        row.bearyAddPressHaptic()
+        // 起手态：无头像态（头像藏、占位显）；configure 会按实际用户改写。
+        avatarView.isHidden = true
+        fallbackLabel.isHidden = false
+        return RecipientRowViews(row: row, avatarView: avatarView, fallbackLabel: fallbackLabel, nameLabel: nameLabel, handleLabel: handleLabel, separator: separator)
+    }
+
+    /// 更新一行内容：只改变化字段（审计 16）。
+    /// 头像 URL 不变时不重调 bearySetImage，在途加载、已到图、已失败态一律保留，
+    /// 失败占位也不会被重建抹掉；URL 变化时才起新加载（旧任务由 bearySetImage 取消）。
+    private func configureRecipientRow(_ views: RecipientRowViews, user: SearchUser, index: Int) {
+        let name: String
+        if let display = user.displayName {
+            name = display
+        } else if let handle = user.handle {
+            name = "@" + handle
+        } else {
+            // W1：匿名/未知用户回退三处统一为“匿名”（与首页、详情同口径）。
+            name = "匿名"
+        }
+        if views.nameLabel.text != name {
+            views.nameLabel.text = name
+        }
+        let handleText: String?
+        if let handle = user.handle {
+            handleText = "@" + handle
+        } else {
+            handleText = nil
+        }
+        if views.handleLabel.text != handleText {
+            views.handleLabel.text = handleText
+        }
+        if views.handleLabel.isHidden != (handleText == nil) {
+            views.handleLabel.isHidden = (handleText == nil)
+        }
+        let fallbackText = String(name.prefix(1)).uppercased()
+        if views.fallbackLabel.text != fallbackText {
+            views.fallbackLabel.text = fallbackText
+        }
+        if views.separator.isHidden != (index == 0) {
+            views.separator.isHidden = (index == 0)
+        }
+        // 审计 15：昵称仍为 label；已显示的 @用户名作 value（与昵称相同时不重复读，
+        // 如昵称缺失回退为 @用户名、无 handle 时 value 置空——复用行换用户时旧 value 同步清掉）。
+        if views.row.accessibilityLabel != name {
+            views.row.accessibilityLabel = name
+        }
+        let a11yValue: String?
+        if let handleText = handleText, handleText != name {
+            a11yValue = handleText
+        } else {
+            a11yValue = nil
+        }
+        if views.row.accessibilityValue != a11yValue {
+            views.row.accessibilityValue = a11yValue
+        }
+        // 审计 9：有头像时占位保持显示（位于头像之下）、头像视图显示；加载成功后
+        // 不透明头像盖住占位，失败时 onFailure 显式保住占位，不加新图标。
+        // 回调已在主线程分发（BearyImageLoader.loadDetailed 主线程回调），直接改 UI；
+        // 换图后的旧失败回调由 avatarURL 比对挡掉（bearySetImage 自身另有目标 URL 比对）。
+        let newAvatarURL: URL?
+        if let avatarPath = user.avatarUrl {
+            newAvatarURL = BearyImageURLs.avatarURL(avatarPath)
+        } else {
+            newAvatarURL = nil
+        }
+        if newAvatarURL != views.avatarURL {
+            views.avatarURL = newAvatarURL
+            if let url = newAvatarURL {
+                views.avatarView.isHidden = false
+                views.fallbackLabel.isHidden = false
+                // B3-2：选人行头像 44×44，下采样到显示尺寸。
+                views.avatarView.bearySetImage(url: url, placeholder: nil, downsampleToWidth: 44 * UIScreen.main.scale, onFailure: { [weak views] _ in
+                    guard let rowViews = views, rowViews.avatarURL == url else { return }
+                    rowViews.fallbackLabel.isHidden = false
+                })
+            } else {
+                views.avatarView.bearySetImage(url: nil)
+                views.avatarView.isHidden = true
+                views.fallbackLabel.isHidden = false
+            }
+        }
+    }
+
     private func renderRows() {
-        for arranged in rowsStack.arrangedSubviews {
-            rowsStack.removeArrangedSubview(arranged)
-            arranged.removeFromSuperview()
+        // 审计 16：按用户 ID 复用行，不再每轮拆掉全部行重建；搜索规则、结果顺序、
+        // “仅新结果入场”动画规则均不变。
+        // 保底：三组并行数组若失配，全量丢弃旧行重建（正常路径不会走到）。
+        if rowButtons.count != recipientRowViews.count || rowButtons.count != rowUsers.count {
+            for (index, button) in rowButtons.enumerated() {
+                rowsStack.removeArrangedSubview(button)
+                button.removeFromSuperview()
+                if index < recipientRowViews.count {
+                    recipientRowViews[index].avatarView.bearySetImage(url: nil)
+                    recipientRowViews[index].avatarURL = nil
+                }
+            }
+            rowButtons = []
+            rowUsers = []
+            recipientRowViews = []
+            recipientRowPool = [:]
+        }
+        var targetKeys = Set<String>()
+        for user in users {
+            if let id = user.id {
+                targetKeys.insert(String(id))
+            }
+        }
+        // 旧行分类：复用行只摘出 arranged（仍为 rowsStack 子视图，稍后按新顺序插回）；
+        // 丢弃行彻底移除并取消在途头像、清出池子；nil ID 行不入池，每轮丢弃重建。
+        for (index, button) in rowButtons.enumerated() {
+            guard index < rowUsers.count, index < recipientRowViews.count else { continue }
+            let prevUser = rowUsers[index]
+            let prevViews = recipientRowViews[index]
+            var keep = false
+            if let id = prevUser.id {
+                let key = String(id)
+                if targetKeys.contains(key), let pooled = recipientRowPool[key], pooled === prevViews {
+                    keep = true
+                }
+            }
+            rowsStack.removeArrangedSubview(button)
+            if !keep {
+                button.removeFromSuperview()
+                prevViews.avatarView.bearySetImage(url: nil)
+                prevViews.avatarURL = nil
+                if let id = prevUser.id {
+                    let key = String(id)
+                    if let pooled = recipientRowPool[key], pooled === prevViews {
+                        recipientRowPool.removeValue(forKey: key)
+                    }
+                }
+            }
         }
         // “搜索结果”分组 label 恒为 rowsStack 首个 arranged 项（隐藏时 stack 自动塌掉，
         // 显示时在结果行上方；sheet 高 fitting 按 rowsStack 整体量取，label 高已计入）。
-        rowsStack.addArrangedSubview(resultsLabelWrap)
-        rowButtons = []
-        rowUsers = users
-        for index in 0..<users.count {
-            let user = users[index]
-            let row = UIButton(type: .custom)
-            row.translatesAutoresizingMaskIntoConstraints = false
-            let avatarView = UIImageView()
-            avatarView.translatesAutoresizingMaskIntoConstraints = false
-            avatarView.contentMode = .scaleAspectFill
-            avatarView.clipsToBounds = true
-            avatarView.layer.cornerRadius = 22
-            avatarView.layer.masksToBounds = true
-            let fallbackLabel = UILabel()
-            fallbackLabel.translatesAutoresizingMaskIntoConstraints = false
-            fallbackLabel.font = BearyDynamicType.scaledFont(for: UIFont.boldSystemFont(ofSize: 16))
-            fallbackLabel.adjustsFontForContentSizeCategory = true
-            fallbackLabel.textColor = BearyColors.orange
-            fallbackLabel.backgroundColor = BearyColors.orange.withAlphaComponent(0.18)
-            fallbackLabel.textAlignment = .center
-            fallbackLabel.layer.cornerRadius = 22
-            fallbackLabel.layer.masksToBounds = true
-            // D-G10：网页 .addr-user .addr-avafall 回退头像带 inset 1px 橙 25% 内圈；
-            // 描边画在圆内侧，等价于该 inset ring（仅回退头像，真头像不加）。
-            fallbackLabel.layer.borderWidth = 1
-            fallbackLabel.layer.bearyDynamicBorderColor = BearyColors.orange.withAlphaComponent(0.25)
-            let nameLabel = UILabel()
-            nameLabel.translatesAutoresizingMaskIntoConstraints = false
-            nameLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 15, weight: .bold))
-            nameLabel.adjustsFontForContentSizeCategory = true
-            nameLabel.textColor = BearyColors.ink
-            let handleLabel = UILabel()
-            handleLabel.translatesAutoresizingMaskIntoConstraints = false
-            handleLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 12.5))
-            handleLabel.adjustsFontForContentSizeCategory = true
-            handleLabel.textColor = BearyColors.gray
-            let chevron = UIImageView(image: BearyIconImages.image(named: "icon_chevron_right", pointSize: 16))
-            chevron.translatesAutoresizingMaskIntoConstraints = false
-            chevron.tintColor = BearyColors.gray
-            chevron.contentMode = .scaleAspectFit
-            let name: String
-            if let display = user.displayName {
-                name = display
-            } else if let handle = user.handle {
-                name = "@" + handle
-            } else {
-                // W1：匿名/未知用户回退三处统一为“匿名”（与首页、详情同口径）。
-                name = "匿名"
-            }
-            nameLabel.text = name
-            if let handle = user.handle {
-                handleLabel.text = "@" + handle
-                handleLabel.isHidden = false
-            } else {
-                handleLabel.isHidden = true
-            }
-            if let avatarPath = user.avatarUrl, let url = BearyImageURLs.avatarURL(avatarPath) {
-                // B3-2：选人行头像 44×44，下采样到显示尺寸。
-                avatarView.bearySetImage(url: url, placeholder: nil, downsampleToWidth: 44 * UIScreen.main.scale)
-                avatarView.isHidden = false
-                fallbackLabel.isHidden = true
-            } else {
-                avatarView.isHidden = true
-                fallbackLabel.isHidden = false
-                fallbackLabel.text = String(name.prefix(1)).uppercased()
-            }
-            let separator = UIView()
-            separator.translatesAutoresizingMaskIntoConstraints = false
-            // 8-4：分隔线收进统一样式——基线厚已是 1pt，0.55 是颜色透明度（非厚度），
-            // 现改全强度 line 色（动态色本身，不走 withAlphaComponent，8-1 同款）。
-            separator.backgroundColor = BearyColors.line
-            separator.isHidden = (index == 0)
-            row.addSubview(avatarView)
-            row.addSubview(fallbackLabel)
-            row.addSubview(nameLabel)
-            row.addSubview(handleLabel)
-            row.addSubview(chevron)
-            row.addSubview(separator)
-            NSLayoutConstraint.activate([
-                // 32 清单第 25 项：头像改居中锚定（原上下各 10 定死 64 高）；行高改由内容撑起，见下方 ≥64。
-                avatarView.centerYAnchor.constraint(equalTo: row.centerYAnchor),
-                avatarView.leadingAnchor.constraint(equalTo: row.leadingAnchor, constant: 12),
-                avatarView.widthAnchor.constraint(equalToConstant: 44),
-                avatarView.heightAnchor.constraint(equalToConstant: 44),
-                fallbackLabel.centerYAnchor.constraint(equalTo: row.centerYAnchor),
-                fallbackLabel.leadingAnchor.constraint(equalTo: row.leadingAnchor, constant: 12),
-                fallbackLabel.widthAnchor.constraint(equalToConstant: 44),
-                fallbackLabel.heightAnchor.constraint(equalToConstant: 44),
-                nameLabel.topAnchor.constraint(equalTo: row.topAnchor, constant: 12),
-                nameLabel.leadingAnchor.constraint(equalTo: row.leadingAnchor, constant: 68),
-                nameLabel.trailingAnchor.constraint(lessThanOrEqualTo: chevron.leadingAnchor, constant: -8),
-                handleLabel.topAnchor.constraint(equalTo: nameLabel.bottomAnchor, constant: 2),
-                handleLabel.leadingAnchor.constraint(equalTo: row.leadingAnchor, constant: 68),
-                handleLabel.trailingAnchor.constraint(lessThanOrEqualTo: chevron.leadingAnchor, constant: -8),
-                handleLabel.bottomAnchor.constraint(lessThanOrEqualTo: row.bottomAnchor, constant: -12),
-                // 8-15：可点行最小 44 高约束（现由头像 44 + 上下 10 撑到 64，已达标；本约束防内容变矮时跌破 44）。
-                // 32 清单第 25 项：最小行高 44→64（即现行实际行高）；名/handle 跟随放大时名顶 12 + handle 底 ≤-12 把行撑高、不裁字。
-            row.heightAnchor.constraint(greaterThanOrEqualToConstant: 64),
-            chevron.centerYAnchor.constraint(equalTo: row.centerYAnchor),
-                chevron.trailingAnchor.constraint(equalTo: row.trailingAnchor, constant: -12),
-                chevron.widthAnchor.constraint(equalToConstant: 16),
-                chevron.heightAnchor.constraint(equalToConstant: 16),
-                separator.topAnchor.constraint(equalTo: row.topAnchor),
-                // 8-4 例外：左 68 = 头像左 12 + 宽 44 + 间隙 12，即正文列起点（与名/ handle 左 68 同列），
-            // 属头像对齐，不收进通用分隔线左距，保持不动。
-            separator.leadingAnchor.constraint(equalTo: row.leadingAnchor, constant: 68),
-                separator.trailingAnchor.constraint(equalTo: row.trailingAnchor, constant: -12),
-                separator.heightAnchor.constraint(equalToConstant: 1),
-            ])
-            row.addTarget(self, action: #selector(didTapRow(_:)), for: .touchUpInside)
-            row.bearyAddPressHaptic()
-            row.accessibilityLabel = name
-            rowsStack.addArrangedSubview(row)
-            rowButtons.append(row)
+        // 首轮尚未入栈时补上，之后不再动它；行按新顺序插在 label 之后。
+        if !rowsStack.arrangedSubviews.contains(resultsLabelWrap) {
+            rowsStack.addArrangedSubview(resultsLabelWrap)
         }
+        var newButtons: [UIButton] = []
+        var newViews: [RecipientRowViews] = []
+        var usedKeys = Set<String>()
+        for (index, user) in users.enumerated() {
+            let key = user.id.map(String.init)
+            var views: RecipientRowViews?
+            if let key = key, !usedKeys.contains(key), let pooled = recipientRowPool[key] {
+                views = pooled
+                usedKeys.insert(key)
+            }
+            if views == nil {
+                let made = makeRecipientRow()
+                views = made
+                if let key = key, !usedKeys.contains(key) {
+                    recipientRowPool[key] = made
+                    usedKeys.insert(key)
+                }
+            }
+            guard let rowViews = views else { continue }
+            configureRecipientRow(rowViews, user: user, index: index)
+            rowsStack.insertArrangedSubview(rowViews.row, at: index + 1)
+            newButtons.append(rowViews.row)
+            newViews.append(rowViews)
+        }
+        rowButtons = newButtons
+        rowUsers = users
+        recipientRowViews = newViews
         // M8：搜索结果行淡入错峰（减动效跳过；审计 P2-24：只播新 key 行——
         // 同一选人会话内多次搜索，已播过的行不重播；错峰序号按本轮新行动）。
         // sheet 高度由 viewDidLayoutSubviews 的 updateSheetHeight 跟进，键盘事件下的
@@ -913,11 +1064,15 @@ final class BearyRecipientPickerViewController: UIViewController, UITextFieldDel
                 animIndex += 1
             }
         }
-        // 行按钮与 rowUsers 按顺序对应（渲染时同步重建）；点行时按按钮身份取用户。
+        // 行按钮、行视图与 rowUsers 按顺序对应（渲染时同步重建）；点行时按按钮身份取用户。
     }
 
     private var rowButtons: [UIButton] = []
     private var rowUsers: [SearchUser] = []
+    /// 审计 16：与 rowButtons/rowUsers 并行的行视图束（渲染时同步重建）。
+    private var recipientRowViews: [RecipientRowViews] = []
+    /// 审计 16：按用户 ID 索引的复用行池（仅入池有 ID 且当轮首次出现的行）。
+    private var recipientRowPool: [String: RecipientRowViews] = [:]
     /// 审计 P2-24：@ 选人已播入场行的键集（搜索页 lastResultRowKeys 同口径）——
     /// 同一选人会话内多次搜索只播新 key 行；选人页每次新建实例，键集随实例生灭。
     private var animatedRowKeys: Set<String> = []
