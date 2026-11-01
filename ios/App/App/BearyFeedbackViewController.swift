@@ -224,8 +224,15 @@ final class BearyFeedbackViewController: UIViewController, UITextViewDelegate, P
     private let logOnlyButton = BearyButton.make(style: .secondaryOutline(.regular), title: "仅上传日志")
 
     private var attachments: [Attachment] = []
+    /// 审计反馈清除回填：附件选择代次。每轮选择占一个代次，清除或重选时
+    /// 代次 +1 使旧轮在途读取失效，旧轮 group.notify 到达时直接丢弃。
+    private var attachmentGeneration = 0
     private var zipURL: URL?
     private var zipReady = false
+    /// 审计反馈分享防重：zip 生成进行中标记与排队回调。ensureZip 已在途时
+    /// 后续调用只排队、不另起生成任务，生成完成时按序回放同一结果。
+    private var zipInFlight = false
+    private var pendingZipCompletions: [(Bool) -> Void] = []
     private var pendingMailKind: PendingMailKind = .submit
 
     private static let recipient = "hi@teddyhn.com"
@@ -694,22 +701,45 @@ final class BearyFeedbackViewController: UIViewController, UITextViewDelegate, P
             return
         }
         zipReady = false
+        // 审计反馈分享防重：生成已在途时只排队，不另起重复任务。
+        if zipInFlight {
+            pendingZipCompletions.append(completion)
+            return
+        }
+        zipInFlight = true
+        pendingZipCompletions.append(completion)
         generateZip { [weak self] url in
             guard let self = self else { return }
+            let ready: Bool
             if let urlValue = url {
                 self.zipURL = urlValue
                 self.zipReady = true
                 self.statusLabel.text = "反馈数据已准备就绪"
                 self.statusBadge.isHidden = false
-                completion(true)
+                ready = true
             } else {
                 self.zipReady = false
                 self.statusLabel.text = "反馈数据准备失败"
                 self.statusBadge.isHidden = true
                 BearyAppLog.event("feedback zip failed")
-                completion(false)
+                ready = false
+            }
+            self.zipInFlight = false
+            let pending = self.pendingZipCompletions
+            self.pendingZipCompletions = []
+            for pendingCompletion in pending {
+                pendingCompletion(ready)
             }
         }
+    }
+
+    /// 审计反馈分享防重：zip 生成等待期间，分享与仅上传日志两钮同置忙碌
+    /// 外观（沿用提交钮已有的 isEnabled + alpha 0.4 口径），不改文案与选项。
+    private func setShareButtonsBusy(_ busy: Bool) {
+        shareButton.isEnabled = !busy
+        shareButton.alpha = busy ? 0.4 : 1.0
+        logOnlyButton.isEnabled = !busy
+        logOnlyButton.alpha = busy ? 0.4 : 1.0
     }
 
     // MARK: - 操作
@@ -729,6 +759,8 @@ final class BearyFeedbackViewController: UIViewController, UITextViewDelegate, P
     }
 
     @objc private func clearAttachmentsTapped() {
+        // 审计反馈清除回填：代次 +1 使在途读取失效，旧轮结果不再回填。
+        attachmentGeneration += 1
         attachments = []
         refreshAttachUI()
     }
@@ -766,8 +798,13 @@ final class BearyFeedbackViewController: UIViewController, UITextViewDelegate, P
     }
 
     @objc private func shareTapped() {
+        setShareButtonsBusy(true)
         ensureZip { [weak self] ready in
             guard let self = self else { return }
+            self.setShareButtonsBusy(false)
+            // 审计反馈分享防重：回调时页面已不在窗口或已有面板时不 present，
+            // 与 submitTapped 两处守卫同口径，防多窗口叠出。
+            guard self.view.window != nil, self.presentedViewController == nil else { return }
             guard ready, let url = self.zipURL else {
                 BearyToast.show(in: self.view, message: "日志包准备失败")
                 BearyHaptics.rejectionWarning()
@@ -786,8 +823,13 @@ final class BearyFeedbackViewController: UIViewController, UITextViewDelegate, P
     }
 
     @objc private func logOnlyTapped() {
+        setShareButtonsBusy(true)
         ensureZip { [weak self] ready in
             guard let self = self else { return }
+            self.setShareButtonsBusy(false)
+            // 审计反馈分享防重：回调时页面已不在窗口或已有面板时不 present，
+            // 与 submitTapped 两处守卫同口径，防多窗口叠出。
+            guard self.view.window != nil, self.presentedViewController == nil else { return }
             guard ready else {
                 BearyToast.show(in: self.view, message: "日志包准备失败")
                 BearyHaptics.rejectionWarning()
@@ -874,6 +916,9 @@ final class BearyFeedbackViewController: UIViewController, UITextViewDelegate, P
     func picker(_ picker: PHPickerViewController, didFinishPicking results: [PHPickerResult]) {
         picker.dismiss(animated: BearyMotion.animated(true))
         guard !results.isEmpty else { return }
+        // 审计反馈清除回填：本轮选择占一个新代次，旧轮在途读取即失效。
+        attachmentGeneration += 1
+        let generation = attachmentGeneration
         let group = DispatchGroup()
         let lock = NSLock()
         var loaded: [Attachment?] = Array(repeating: nil, count: results.count)
@@ -944,7 +989,8 @@ final class BearyFeedbackViewController: UIViewController, UITextViewDelegate, P
             }
         }
         group.notify(queue: .main) { [weak self] in
-            guard let self = self else { return }
+            // 审计反馈清除回填：旧代次结果直接丢弃，不回填、不弹失败提示。
+            guard let self = self, self.attachmentGeneration == generation else { return }
             self.attachments = loaded.compactMap { $0 }
             self.refreshAttachUI()
             if failedCount > 0 {
