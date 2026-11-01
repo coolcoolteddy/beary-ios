@@ -2304,7 +2304,7 @@ private class BearyLetterModal {
         // 打开前先记焦点：遮罩加进层级后当前焦点即被弹窗夺走，此时再记就晚了。
         // 取焦点 API 以 iOS 17 起可用作守门（旧系统无显式返回、走系统默认行为）。
         if #available(iOS 17.0, *) {
-            previousFocusedElement = UIAccessibility.focusedElement(using: UIAccessibility.AssistiveTechnologyIdentifier.voiceOver) as? AnyObject
+            previousFocusedElement = UIAccessibility.focusedElement(using: nil) as? AnyObject
         }
         overlayView.addSubview(cardView)
         cardView.addSubview(iconView)
