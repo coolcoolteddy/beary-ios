@@ -1944,6 +1944,10 @@ final class BearyChromeViewController: UIViewController {
         currentPage = page
         let incomingView: UIView = (page == .home) ? ensureFeedVC().view : pageView(for: page).view
         incomingView.isHidden = false
+        // 入场页接管时机不变：切换开始即恢复交互。快速反向切页时，入场页可能
+        // 正是上一段交叉淡入的离场页（当时被禁用）；不等上一段动画完成回调，
+        // 否则反向切回的当前页在 0.14s 内点按无反应。
+        incomingView.isUserInteractionEnabled = true
         // 首次切入飞入修：懒建页首亮时帧仍为 .zero（addPageVC 只加约束未布局），
         // 下方 setHeaderVisible 的 0.25s layoutIfNeeded 动画会把整页从左上零帧动画到满帧；
         // 此处先非动画布局一次定帧，动画只剩顶栏高度变化。只布局不动数据/分页/错峰滑入。
@@ -1982,6 +1986,10 @@ final class BearyChromeViewController: UIViewController {
             incomingView.alpha = 1
         } else if let outgoing = outgoingView, outgoing !== incomingView {
             incomingView.alpha = 0
+            // 离场页交互：切换开始即禁用。动画仍带 .allowUserInteraction（入场页
+            // 0.14s 内即可点按，时长与交叉淡入本身不动）；离场页在淡出过程中
+            // 仍可见、未 isHidden，此前点按会落到旧页，本行起不再落到旧页。
+            outgoing.isUserInteractionEnabled = false
             UIView.animate(withDuration: 0.14, delay: 0, options: [.beginFromCurrentState, .allowUserInteraction], animations: {
                 incomingView.alpha = 1
                 outgoing.alpha = 0
@@ -1991,6 +1999,14 @@ final class BearyChromeViewController: UIViewController {
                 if self.currentPage != previousPage {
                     outgoing.isHidden = true
                     outgoing.alpha = 1
+                    // 交互不复位：已隐藏的页收不到点按；它下次作为入场页时，
+                    // 上方切换开始处统一恢复交互。刻意不在此复位——否则三连切
+                    //（A→B→A→B）时旧动画完成回调会把新一段离场动画中的 A 提前
+                    // 重新启用，淡出窗口内点按又落到旧页。
+                } else {
+                    // 离场页被快速反向切回、现为当前页：恢复交互，否则当前页
+                    // 在动画结束后仍保持禁用（上方入场恢复已先行，属双保险）。
+                    outgoing.isUserInteractionEnabled = true
                 }
                 if self.currentPage == page {
                     incomingView.alpha = 1
