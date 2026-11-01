@@ -98,6 +98,11 @@ final class BearyDiaryStarMapViewController: UIViewController {
     private var needsRefreshAfterDetail = false
     private var yearRowHeight: NSLayoutConstraint?
     private var monthRowHeight: NSLayoutConstraint?
+    /// 审计 15 项第 2 项：图例→年行→月行→筛选行的三段间距单独持有，
+    /// 隐藏行时随行高一起收起，不留 28pt 空白；恢复时还原原值。
+    private var legendYearGap: NSLayoutConstraint?
+    private var yearMonthGap: NSLayoutConstraint?
+    private var monthFilterGap: NSLayoutConstraint?
     /// 扫荡 C：空态 / 失败态的底部约束三选一（同一时刻只激活一个）。
     /// 背景：skyView / statusLabel / sheetCard 是手动布局（非 stack），isHidden
     /// 不塌约束——空态时 sky 420 高 + 状态行 + 底卡仍撑内容高，空视图下方留
@@ -313,15 +318,12 @@ final class BearyDiaryStarMapViewController: UIViewController {
             sliceCalendarIcon.widthAnchor.constraint(equalToConstant: 20),
             sliceCalendarIcon.heightAnchor.constraint(equalToConstant: 20),
 
-            yearScrollView.topAnchor.constraint(equalTo: legendLabel.bottomAnchor, constant: 12),
             yearScrollView.leadingAnchor.constraint(equalTo: sliceCalendarIcon.trailingAnchor, constant: 8),
             yearScrollView.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -16),
 
-            monthScrollView.topAnchor.constraint(equalTo: yearScrollView.bottomAnchor, constant: 8),
             monthScrollView.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 16),
             monthScrollView.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -16),
 
-            filterScrollView.topAnchor.constraint(equalTo: monthScrollView.bottomAnchor, constant: 8),
             filterScrollView.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 16),
             filterScrollView.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -16),
             filterScrollView.heightAnchor.constraint(equalToConstant: 32),
@@ -383,6 +385,13 @@ final class BearyDiaryStarMapViewController: UIViewController {
         monthRowHeight = monthScrollView.heightAnchor.constraint(equalToConstant: 32)
         yearRowHeight?.isActive = true
         monthRowHeight?.isActive = true
+        // 审计 15 项第 2 项：三段间距与行高同款持有，隐藏时一起收起。
+        legendYearGap = yearScrollView.topAnchor.constraint(equalTo: legendLabel.bottomAnchor, constant: 12)
+        yearMonthGap = monthScrollView.topAnchor.constraint(equalTo: yearScrollView.bottomAnchor, constant: 8)
+        monthFilterGap = filterScrollView.topAnchor.constraint(equalTo: monthScrollView.bottomAnchor, constant: 8)
+        legendYearGap?.isActive = true
+        yearMonthGap?.isActive = true
+        monthFilterGap?.isActive = true
         showDefaultSheet()
     }
 
@@ -413,6 +422,17 @@ final class BearyDiaryStarMapViewController: UIViewController {
         sliceCalendarIcon.isHidden = !needsSlicing
         yearRowHeight?.constant = needsSlicing ? 32 : 0
         monthRowHeight?.constant = needsSlicing ? 32 : 0
+        // 审计 15 项第 2 项：隐藏行时三段间距收成图例→筛选行统一 12pt；
+        // 恢复分片时还原 12/8/8。
+        if needsSlicing {
+            legendYearGap?.constant = 12
+            yearMonthGap?.constant = 8
+            monthFilterGap?.constant = 8
+        } else {
+            legendYearGap?.constant = 12
+            yearMonthGap?.constant = 0
+            monthFilterGap?.constant = 0
+        }
         if needsSlicing {
             // 年：倒序；未标日期单独一颗药丸（只在有无日期篇时出现）。
             for year in BearyStarMap.years(in: filteredEntries) {
@@ -448,9 +468,12 @@ final class BearyDiaryStarMapViewController: UIViewController {
             }
         }
         // 未标日期分片无月可切：月行直接塌掉，不留一行空白药丸栏。
+        // 审计 15 项第 2 项同款：年行→筛选行间距同样收成统一 12pt。
         if slice == .undated {
             monthScrollView.isHidden = true
             monthRowHeight?.constant = 0
+            yearMonthGap?.constant = 0
+            monthFilterGap?.constant = 12
         }
         // 连线过滤：全部 / 同心情 / 同地点 / 同词（只滤线，不滤星）。
         let filters: [(String, StarMapEdgeKind?)] = [
