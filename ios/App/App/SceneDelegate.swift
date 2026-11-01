@@ -2538,7 +2538,7 @@ final class BearyChromeViewController: UIViewController {
     private func presentGuestLoginSheet() {
         guard guestSheetView == nil else { return }
         if #available(iOS 17.0, *) {
-            guestSheetPreviousAccessibilityElement = UIAccessibility.focusedElement(using: .voiceOver)
+            guestSheetPreviousAccessibilityElement = UIAccessibility.focusedElement(using: nil)
         }
         let scrim = UIView()
         scrim.backgroundColor = BearySheetChrome.scrimColor
