@@ -2197,6 +2197,16 @@ class BearyTimelineViewController: UIViewController {
     /// 首屏回包若已覆盖该日（页内出现更早日的篇），直接从首屏派生面板，
     /// 否则回落正向 fetchDayEntries；首屏失败时同样回落正向拉取。
     private var deferredDayKeyForFirstPage: String?
+    /// 秒开-启动瘦身：时间线次级请求（日历月份、当日面板）不再与列表首拉并行，
+    /// 改由首拉 completion 触发（见 flushDeferredTimelineSecondary）。与上行
+    /// deferredDayKeyForFirstPage 分工不同：那是 keepDay 的“派生或回落”语义，
+    /// 这里是“先列表、后次级”的纯时序延后；keepDay 时当日仍走上行机制，
+    /// 本组只延后日历。首拉失败时 completion 同样跑（见 finishTimelineFirstPage），
+    /// 故次级不会被首拉失败拖死；首拉迟迟不终结时 5 秒兜底同样放行。
+    private var deferredCalendarFetch = false
+    private var deferredDayKey: String?
+    private var deferredDayClear = false
+    private var deferredSecondaryFallback: DispatchWorkItem?
     // G15：分页失败标记——脚部保持“加载失败，重试”可重试。
     private var timelinePageFailed = false
     // M2：分页新增行的错峰滑入队列（willDisplay 时按原始序号起播，播过即摘；
@@ -2698,17 +2708,58 @@ class BearyTimelineViewController: UIViewController {
     /// 仅约 60KB、解码可忽略，耗时在 TTFB 与无缓存上，见实测分解）。
     /// 有缓存：即时渲染缓存首屏（不转菊花、不清表），再走既有静默
     /// 路径对齐——首屏 loadTimelineFirstPage（有旧行时走 diff，不重建
-    /// 节点；有行时 updateChrome 不挂背景 spinner）、日历月份（内存
-    /// 缓存守门）、当日面板（clear:false 静默刷新）；三路并行，不串行。
+    /// 节点；有行时 updateChrome 不挂背景 spinner）；秒开-启动瘦身后，
+    /// 日历月份（内存缓存守门）与当日面板（clear:false 静默刷新）不再与
+    /// 首拉并行，改由首拉 completion 放行（见 flushDeferredTimelineSecondary），
+    /// 到达时仍走各自原有更新路径（日历只画卡片、当日只重载第 0 分区），
+    /// 不重建时间线行、不重播已有元素。
     /// 无缓存：走旧 reloadTimeline 全量路径（空框架先立住，数据等网络，
-    /// 不加骨架屏）。
+    /// 不加骨架屏），次级同样延后到首拉 completion。
     /// 账号切换同样走本函数（秒开-本地持久化）：桶按切换后的 currentUser
     /// 现算，新号有快照即先画新号自己的快照 + 静默刷新，无快照才走
     /// reloadTimeline；旧号桶绝不被读到。时间线是本人全部日记（含私密），
     /// 缓存不做 Feed 的公开过滤，只按用户桶隔离（与日缓存落盘同款账号桶）。
     /// 注意：切号前容器已清当日内存缓存（clearDayCacheForAccountChange），
     /// 故当日面板的 clear:false 静默刷新仍走网络，不会吃旧号的日缓存。
+    /// 秒开-启动瘦身：延后的次级请求放行点（首拉 completion 或 5 秒兜底共用）。
+    /// 日历回包只画卡片、当日回包只重载第 0 分区（或数据未变时不动表），
+    /// 均复用原有更新路径，不新增整表重建；当日放行时选区已切走即丢弃，
+    /// 不把旧日的面板写到新选区上。
+    private func flushDeferredTimelineSecondary() {
+        deferredSecondaryFallback?.cancel()
+        deferredSecondaryFallback = nil
+        if deferredCalendarFetch {
+            deferredCalendarFetch = false
+            fetchCalendarMonthsForCurrentView()
+        }
+        if let key = deferredDayKey {
+            deferredDayKey = nil
+            if selectedDayKey == key {
+                let clear = deferredDayClear
+                deferredDayClear = false
+                fetchDayEntries(key: key, clear: clear)
+            } else {
+                deferredDayClear = false
+            }
+        }
+    }
+
+    /// 秒开-启动瘦身：首拉迟迟不终结（弱网挂起）时次级不被拖死——5 秒后
+    /// 直接放行；首拉 completion 先到则取消本兜底。每次设延后标志时重排，
+    /// 旧兜底作废，不叠加。
+    private func scheduleDeferredSecondaryFallback() {
+        deferredSecondaryFallback?.cancel()
+        let item = DispatchWorkItem { [weak self] in self?.flushDeferredTimelineSecondary() }
+        deferredSecondaryFallback = item
+        DispatchQueue.main.asyncAfter(deadline: .now() + 5.0, execute: item)
+    }
+
+    // 注意：本函数保持 internal（非 private）——SceneDelegate 切号时直接调
+    // 用它（秒开-本地持久化），#456 原支的 private 会断该调用，特此保留。
     func loadTimelineCachedOrRefresh() {
+        // 秒开-启动瘦身：自己的首载若与在途预取撞车，预取不再另发一份时间线
+        // 首拉（时间线自己的首拉已覆盖，预取只写缓存、无需重复请求）。
+        BearyTimelinePrefetch.cancelPendingPrefetch()
         let bucket = BearyFeedCache.bucket(userId: SessionManager.shared.currentUser?.id ?? BearyFeedCache.lastKnownUserId())
         guard let snap = BearyTimelineCache.load(bucket: bucket), !snap.entries.isEmpty else {
             reloadTimeline()
@@ -2758,11 +2809,13 @@ class BearyTimelineViewController: UIViewController {
         refreshHeaderHeight()
         updateChrome()
         // 静默对齐（与下拉刷新/首屏 diff 同款，不清表、不转菊花）。
-        loadTimelineFirstPage()
-        fetchCalendarMonthsForCurrentView()
-        if let dayKey = selectedDayKey {
-            fetchDayEntries(key: dayKey, clear: false)
-        }
+        // 秒开-启动瘦身：日历与当日静默刷新延后到首拉 completion（失败也放行，
+        // 见 finishTimelineFirstPage），不再与首拉并行挤首屏窗口。
+        deferredCalendarFetch = true
+        deferredDayKey = selectedDayKey
+        deferredDayClear = false
+        scheduleDeferredSecondaryFallback()
+        loadTimelineFirstPage(completion: { [weak self] in self?.flushDeferredTimelineSecondary() })
     }
 
     func reloadTimeline(keepSelectedDay: Bool = false) {
@@ -2812,15 +2865,23 @@ class BearyTimelineViewController: UIViewController {
         updateChrome()
         // 112：非 keepDay 硬重载 force=true（登录翻转/取消编辑等绝不能
         // 被旧身份在途首拉吞掉）；keepDay 刷新走在途跳过口径。
-        loadTimelineFirstPage(force: keepDay == false)
-        fetchCalendarMonthsForCurrentView()
+        // 秒开-启动瘦身：日历与当日不再与首拉并行，改由首拉 completion 放行
+        // （失败也放行，见 finishTimelineFirstPage；5 秒兜底见
+        // scheduleDeferredSecondaryFallback）。keepDay 时当日仍走
+        // deferredDayKeyForFirstPage 派生/回落机制，本组只延后日历。
+        BearyTimelinePrefetch.cancelPendingPrefetch()
+        deferredCalendarFetch = true
+        scheduleDeferredSecondaryFallback()
         if keepDay {
             // 112：当日面板暂存选中日、不立即另发当日请求——首屏回包
             // 派生或回落（见 deferredDayKeyForFirstPage）；面板与首屏同批
             // 到达，不再比首屏早到（换一次冗余请求为同批更新）。
             deferredDayKeyForFirstPage = selectedDayKey
-        } else if let dayKey = selectedDayKey {
-            fetchDayEntries(key: dayKey, clear: true)
+            loadTimelineFirstPage(completion: { [weak self] in self?.flushDeferredTimelineSecondary() }, force: false)
+        } else {
+            deferredDayKey = selectedDayKey
+            deferredDayClear = true
+            loadTimelineFirstPage(completion: { [weak self] in self?.flushDeferredTimelineSecondary() }, force: true)
         }
     }
 
@@ -6246,21 +6307,48 @@ enum BearyTimelineCache {
 /// 否则预取本身就是一份 50 条首屏成本，瘦身白做。
 enum BearyTimelinePrefetch {
     private static var didPrefetch = false
+    /// 秒开-启动瘦身：待发的空闲预取（首屏回包后 2 秒才真正发请求，见 maybePrefetch；
+    /// 时间线自己开页时取消——自己的首拉已覆盖，不再重复发一份）。
+    private static var pendingWorkItem: DispatchWorkItem?
 
     static func maybePrefetch() {
-        guard didPrefetch == false, let uid = SessionManager.shared.currentUser?.id else { return }
+        guard didPrefetch == false, pendingWorkItem == nil,
+              let uid = SessionManager.shared.currentUser?.id else { return }
         let bucket = BearyFeedCache.bucket(userId: uid)
         if let snap = BearyTimelineCache.load(bucket: bucket), !snap.entries.isEmpty,
            Date().timeIntervalSince1970 - snap.savedAt < 600 {
             didPrefetch = true
             return
         }
-        // 秒开·首屏再瘦：预取与时间线首屏同口径（只拉 12 条），hasMore 阈值同步改，
-        // 否则缓存的 hasMore 与首屏口径错位。
-        BearyAPI.shared.fetchEntries(scope: .timeline, limit: 12) { result in
-            guard case .success(let list) = result, let entries = list.entries, !entries.isEmpty else { return }
-            BearyTimelineCache.save(bucket: bucket, entries: entries, hasMore: entries.count >= 12, trashCount: list.trashCount ?? 0, counts: list.tlCounts)
-            didPrefetch = true
+        // 秒开-启动瘦身：此前在广场首拉成功当刻立即发时间线首拉，仍挤在
+        // 首屏窗口里；现改为空闲 2 秒后再发——首屏图片/动效已让出窗口，且
+        // 触发点仍在首屏回包之后。触发时重查登录态与缓存新鲜度：期间用户
+        // 已开时间线（取消）或缓存已新（命中）时不再发；失败不置 didPrefetch，
+        // 下次广场首拉成功时可再排队。取数口径跟随秒开·首屏再瘦（只拉 12 条，
+        // #456 原文 50 已过期，不跟），hasMore 阈值同步 12。
+        let item = DispatchWorkItem {
+            pendingWorkItem = nil
+            guard didPrefetch == false, let uid = SessionManager.shared.currentUser?.id else { return }
+            let bucket = BearyFeedCache.bucket(userId: uid)
+            if let snap = BearyTimelineCache.load(bucket: bucket), !snap.entries.isEmpty,
+               Date().timeIntervalSince1970 - snap.savedAt < 600 {
+                didPrefetch = true
+                return
+            }
+            BearyAPI.shared.fetchEntries(scope: .timeline, limit: 12) { result in
+                guard case .success(let list) = result, let entries = list.entries, !entries.isEmpty else { return }
+                BearyTimelineCache.save(bucket: bucket, entries: entries, hasMore: entries.count >= 12, trashCount: list.trashCount ?? 0, counts: list.tlCounts)
+                didPrefetch = true
+            }
         }
+        pendingWorkItem = item
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2.0, execute: item)
+    }
+
+    /// 秒开-启动瘦身：时间线自己的首载接管时取消待发预取（在途请求不取消，
+    /// 只写缓存、无界面副作用，与首拉并存无害）。
+    static func cancelPendingPrefetch() {
+        pendingWorkItem?.cancel()
+        pendingWorkItem = nil
     }
 }

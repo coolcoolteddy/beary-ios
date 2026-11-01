@@ -264,6 +264,16 @@ final class BearyChromeViewController: UIViewController {
     /// P1-1：启动期首个 /me 是否已回包——成功与 401 经 onUserChanged、网络失败
     /// 经 onNetworkUnstable 标记；任一终态都算回包，之后 FAB 直接按登录态判。
     private var startupMeResolved = false
+    /// 秒开-启动瘦身：启动期 /me 不再随 viewDidLoad 立即发，改由首屏信号或兜底触发。
+    /// 触发源（先到者胜）：① Feed 首屏回包信号 bearyFeedFirstScreenDone（有缓存时等
+    /// 静默刷新首拉终结、无缓存时等首拉终结，失败终结也算）；② 3 秒兜底（弱网下首屏
+    /// 迟迟不终结时 /me 不被拖死）。已发过、或已有显式 /me 回包（FAB/我页门直接调
+    /// refreshMe 的路径）时不再补发——meSeq 会丢弃旧回包，重复只浪费一次请求。
+    /// 首帧登录态仍走 hasCachedSession 缓存直出（viewDidLoad 下方原有口径），/me 只做
+    /// 后台校验；其下游（entry 同步 kick、未读角标拉取）随 onUserChanged 自然延后。
+    private var startupMeFired = false
+    private var startupMeWorkItem: DispatchWorkItem?
+    private var feedFirstScreenObserver: NSObjectProtocol?
     /// P1-1：FAB 已在等 /me 回包时不再重复排队等（等的过程中再点 FAB 直接返回）。
     private var composerMeWaitPending = false
     /// 冷启动竞态修（我页门）：点“我的”时首个 /me 未回包且本地有有效会话
@@ -909,6 +919,9 @@ final class BearyChromeViewController: UIViewController {
         } else {
             giftButton.isHidden = true
         }
+        // 秒开-启动瘦身：先注册首屏信号观察再亮首页——Feed 在 showPage 建页时即可能
+        // 走缓存渲染、其静默首拉终结后发信号，观察者必须先于建页存在，否则信号会漏接。
+        scheduleDeferredStartupMe()
         // 栏初始即显示（不再等网页首推）；启动落点：直接亮原生列表。
         setBarsVisible(true, animated: false)
         showPage(.home)
@@ -1042,6 +1055,43 @@ final class BearyChromeViewController: UIViewController {
             }
             self?.showToast(message: "网络不稳定，请稍后再试")
         }
+        // 秒开-启动瘦身：启动期 /me 不在此处立即发——已改由 showPage 之前注册的
+        // scheduleDeferredStartupMe 调度（首屏信号或 3 秒兜底，见下方两方法）。
+        // 原审计 P1-7 的原因 toast 逻辑原样移到 fireStartupMeIfNeeded 的 completion 里。
+        // 未读角标：消息页发 BearyUnreadChanged，铃铛角标跟数走（0 隐藏；显隐走 M23 动画）。
+        unreadObserver = NotificationCenter.default.addObserver(forName: BearyNotificationsViewController.unreadChangedNotificationName, object: nil, queue: .main) { [weak self] note in
+            let unread = note.userInfo?["unread"] as? Int ?? 0
+            self?.updateBellBadge(unread: unread)
+        }
+        // 文字启动图 veil（v3 接线）：viewDidLoad 挂画面（Lottie 未起播时停在第 0 帧，
+        // 减动效则直接挂停留帧 53 静帧），viewDidAppear 起播 Lottie → 播完 veil 淡出＋
+        // 主页首次揭开错峰；只播一次，modal 回落与热启动不重播。
+        installLaunchVeil()
+    }
+
+    /// 秒开-启动瘦身：启动期 /me 调度（viewDidLoad 里 showPage 之前调用）。
+    /// 观察者与兜底工作项只活到首次触发；触发后两者都清掉，不留常驻监听。
+    private func scheduleDeferredStartupMe() {
+        feedFirstScreenObserver = NotificationCenter.default.addObserver(
+            forName: .bearyFeedFirstScreenDone, object: nil, queue: .main
+        ) { [weak self] _ in self?.fireStartupMeIfNeeded() }
+        let item = DispatchWorkItem { [weak self] in self?.fireStartupMeIfNeeded() }
+        startupMeWorkItem = item
+        DispatchQueue.main.asyncAfter(deadline: .now() + 3.0, execute: item)
+    }
+
+    /// 秒开-启动瘦身：启动期 /me 唯一触发点（首屏信号、3 秒兜底共用）。
+    /// 原 viewDidLoad 直发版的审计 P1-7 原因 toast 逻辑原样保留在 completion 里；
+    /// 登录态变迁本身仍走 refreshMe → onUserChanged，与旧口径一致，只是更晚发生。
+    private func fireStartupMeIfNeeded() {
+        guard !startupMeFired, !startupMeResolved else { return }
+        startupMeFired = true
+        startupMeWorkItem?.cancel()
+        startupMeWorkItem = nil
+        if let observer = feedFirstScreenObserver {
+            NotificationCenter.default.removeObserver(observer)
+            feedFirstScreenObserver = nil
+        }
         // 审计 P1-7：冷启动 /me 带原因 401（封禁/踢下线/过期）时，登录态变迁
         // 已由 refreshMe 的 authFailure 分支处理（清用户态、翻登录 chrome），
         // 此处只把服务端 message 透传为 toast；无 message 时按 reason 给兜底文案。
@@ -1059,15 +1109,6 @@ final class BearyChromeViewController: UIViewController {
             }
             DispatchQueue.main.async { [weak self] in self?.showToast(message: text) }
         }
-        // 未读角标：消息页发 BearyUnreadChanged，铃铛角标跟数走（0 隐藏；显隐走 M23 动画）。
-        unreadObserver = NotificationCenter.default.addObserver(forName: BearyNotificationsViewController.unreadChangedNotificationName, object: nil, queue: .main) { [weak self] note in
-            let unread = note.userInfo?["unread"] as? Int ?? 0
-            self?.updateBellBadge(unread: unread)
-        }
-        // 文字启动图 veil（v3 接线）：viewDidLoad 挂画面（Lottie 未起播时停在第 0 帧，
-        // 减动效则直接挂停留帧 53 静帧），viewDidAppear 起播 Lottie → 播完 veil 淡出＋
-        // 主页首次揭开错峰；只播一次，modal 回落与热启动不重播。
-        installLaunchVeil()
     }
 
     override func viewDidAppear(_ animated: Bool) {
