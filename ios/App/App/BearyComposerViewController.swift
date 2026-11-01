@@ -1271,19 +1271,40 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         refreshHeadlineChrome()
     }
 
+    /// 扫查组（#433，适配 #421 后的 attributed 标题模型）：标题长度按
+    /// 服务端口径计——服务端 normalizeEntryTitle 用 JS `[...t].length`
+    /// （码点数），Swift `.count` 是字素簇数，两者对 ZWJ 组合表情
+    /// （如 👨‍👩‍👧‍👦 计 1 簇、7 码点）、结合符不一致：30 簇内含组合表情时
+    /// 客户端放行、服务端 400 title too long，发布只剩一句通用失败。
+    /// 故此处按送往服务端的序列化串（headlineText：附件已还原为记号）
+    /// 的 unicodeScalars（= 码点数）计量；截断按簇从尾删，永不拆散一个
+    /// 组合表情（prefix(30) 按簇截同样会漏码点，不可用）；若截断点落在
+    /// 末尾心情记号内，整条记号一起删，免得记号被截成半截 literal 文本。
+    private static func truncatedHeadline(_ text: String) -> String {
+        var result = text
+        while result.unicodeScalars.count > headlineMaxLength {
+            if let range = result.range(of: #"\[mood:[a-z_]+\]$"#, options: .regularExpression) {
+                result.removeSubrange(range)
+            } else {
+                result = String(result.dropLast())
+            }
+        }
+        return result
+    }
+
     private func headlineDidChange() {
         refreshHeadlineChrome()
         // 组词中的拼音组合串不截断（marked 时不动，落字后再按 30 字封顶），
-        // 否则中文输入法组词会被打断；可见长 = attributed 长（附件算 1 格）。
+        // 否则中文输入法组词会被打断。
         if headlineField.markedTextRange == nil {
-            let visible = headlineField.attributedText?.length ?? 0
-            if visible > Self.headlineMaxLength {
-                let truncated = headlineField.attributedText?.attributedSubstring(from: NSRange(location: 0, length: Self.headlineMaxLength))
-                headlineField.attributedText = truncated ?? NSAttributedString()
-                headlineField.typingAttributes = [.font: headlineFont, .foregroundColor: BearyColors.ink]
-                headlineField.selectedRange = NSRange(location: Self.headlineMaxLength, length: 0)
+            let plain = BearyText.inlinePlainText(from: headlineField.attributedText)
+            if plain.unicodeScalars.count > Self.headlineMaxLength {
+                setHeadlineText(Self.truncatedHeadline(plain))
+                headlineField.selectedRange = NSRange(location: headlineField.attributedText?.length ?? 0, length: 0)
+                // 112：此前超长直接取 prefix(30) 是静默截断；本轮首次截断给一次 toast。
                 showHeadlineLimitToastIfNeeded()
-            } else if visible < Self.headlineMaxLength {
+            } else if plain.unicodeScalars.count < Self.headlineMaxLength {
+                // 注意是严格 < 30 才重置：截断落点正好 30 不算回落，见标记处注释。
                 headlineLimitToastShown = false
             }
         }
@@ -6200,6 +6221,10 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                 return "这篇和你写过的一篇一模一样"
             case "content too long":
                 return "正文最多 2000 字"
+            case "title too long":
+                // 扫查组兜底：旧草稿/他端标题超码点上限时发布仍可能撞上
+                // 服务端 400，不再落通用“发布失败”，直说标题超长。
+                return "标题最多 30 字"
             case "image unavailable":
                 return "图片已失效，请重新添加"
             case "recipient_invalid", "mentioned_user_invalid":
@@ -6312,6 +6337,8 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             switch code {
             case "content too long":
                 return "正文最多 2000 字"
+            case "title too long":
+                return "标题最多 30 字"
             case "image unavailable":
                 return "图片已失效，请重新添加"
             case "invalid image ownership":
