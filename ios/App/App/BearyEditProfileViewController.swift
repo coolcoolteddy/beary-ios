@@ -501,6 +501,12 @@ class BearyEditProfileViewController: UIViewController {
         subpageLayoutGuard.applyIfNeeded(page: "编辑资料", view: view, topView: scrollView)
     }
 
+    override func viewDidAppear(_ animated: Bool) {
+        super.viewDidAppear(animated)
+        // 117 终态偏离兜底：动画结束后的最终帧再校一次。
+        subpageLayoutGuard.applyAfterAppearance(page: "编辑资料", view: view, topView: scrollView)
+    }
+
     override func traitCollectionDidChange(_ previousTraitCollection: UITraitCollection?) {
         super.traitCollectionDidChange(previousTraitCollection)
         updateDynamicLayerColors()

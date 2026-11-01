@@ -402,6 +402,12 @@ final class BearyWishWallViewController: UIViewController {
         subpageLayoutGuard.applyIfNeeded(page: "功能许愿墙", view: view, topView: topBarView)
     }
 
+    override func viewDidAppear(_ animated: Bool) {
+        super.viewDidAppear(animated)
+        // 117 终态偏离兜底：动画结束后的最终帧再校一次。
+        subpageLayoutGuard.applyAfterAppearance(page: "功能许愿墙", view: view, topView: topBarView)
+    }
+
     @objc private func closeTapped() { dismiss(animated: BearyMotion.animated(true), completion: nil) }
     @objc private func retryTapped() { loadWishes() }
 
@@ -432,7 +438,17 @@ final class BearyWishWallViewController: UIViewController {
             BearyToast.show(in: self.view, message: "许愿已发布")
             self.onCreated?(wish)
         }
-        present(vc, animated: BearyMotion.animated(true), completion: nil)
+        // 117 终态偏离兜底：新建页无守卫，呈现完成时帧偏离就复位（与设置页 helper 同口径）。
+        present(vc, animated: BearyMotion.animated(true)) { [weak vc] in
+            guard let vc = vc, let window = vc.view.window else { return }
+            let bounds = window.bounds
+            if vc.view.frame != bounds || !vc.view.transform.isIdentity {
+                vc.view.transform = .identity
+                vc.view.frame = bounds
+                vc.view.setNeedsLayout()
+                vc.view.layoutIfNeeded()
+            }
+        }
     }
 
     /// 116 数据填入动效：状态视图由隐藏变可见时只淡入本身（alpha
@@ -663,6 +679,9 @@ final class BearyWishCreateViewController: UIViewController, UITextViewDelegate 
     private var colCapConstraints: [NSLayoutConstraint] = []
     /// 17：当前焦点框（键盘弹出时把它滚到可见区）。
     private weak var activeField: UIView?
+    /// 117 子页空白守卫：新建页此前无守卫，与列表页同款补上。
+    private let subpageLayoutGuard = BearySubpageLayoutGuard()
+    private var topBarView: UIView?
     var onCreated: ((BearyAPI.WishItem) -> Void)?
 
     override func viewDidLoad() {
@@ -740,6 +759,7 @@ final class BearyWishCreateViewController: UIViewController, UITextViewDelegate 
         // 116 后扫查：与广场/个人页同口径——关掉 delaysContentTouches，滚动容器里的点按立即响应，不等滚动判定。
         scrollView.delaysContentTouches = false
         view.addSubview(topBar)
+        topBarView = topBar
         view.addSubview(scrollView)
         scrollView.addSubview(titleField)
         scrollView.addSubview(titleCountLabel)
@@ -813,6 +833,11 @@ final class BearyWishCreateViewController: UIViewController, UITextViewDelegate 
         }
     }
 
+    override func viewWillAppear(_ animated: Bool) {
+        super.viewWillAppear(animated)
+        subpageLayoutGuard.resetForAppearance()
+    }
+
     override func viewDidLayoutSubviews() {
         super.viewDidLayoutSubviews()
         // 13：Feed 同款断点开关——状态不变不开关，避免布局循环。
@@ -820,6 +845,13 @@ final class BearyWishCreateViewController: UIViewController, UITextViewDelegate 
         for cap in colCapConstraints where cap.isActive != wantCap {
             cap.isActive = wantCap
         }
+        subpageLayoutGuard.applyIfNeeded(page: "新建许愿", view: view, topView: topBarView)
+    }
+
+    override func viewDidAppear(_ animated: Bool) {
+        super.viewDidAppear(animated)
+        // 117 终态偏离兜底：动画结束后的最终帧再校一次。
+        subpageLayoutGuard.applyAfterAppearance(page: "新建许愿", view: view, topView: topBarView)
     }
 
     /// 13：表单字段居中列约束——宽 == 滚动容器 frame 宽-32（defaultHigh，≤820 全宽-32）

@@ -304,6 +304,12 @@ final class BearyFeedbackViewController: UIViewController, UITextViewDelegate, P
         subpageLayoutGuard.applyIfNeeded(page: "反馈与改进", view: view, topView: topBarView)
     }
 
+    override func viewDidAppear(_ animated: Bool) {
+        super.viewDidAppear(animated)
+        // 117 终态偏离兜底：动画结束后的最终帧再校一次。
+        subpageLayoutGuard.applyAfterAppearance(page: "反馈与改进", view: view, topView: topBarView)
+    }
+
     // MARK: - 顶栏（诊断页同款：52 高、左上文字关闭 15、标题 17 居中）
 
     private func buildChrome() {
