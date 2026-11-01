@@ -394,6 +394,10 @@ class BearyFeedViewController: UIViewController {
     func pageDidEnter() {
         handlePageEnter(allowBackgroundRevalidate: true)
         resumeVisibleEmotesCore()
+        // 秒开批·图片预热：进页预热点跟随主线唯一入口 pageDidEnter（#450 原挂在
+        // resumeVisibleEmotes，主线重构后该方法只是调 pageDidEnter 的兼容别名，
+        // 原挂点不再被容器调用，挂别名即丢行为；触发语义与原支一致）。
+        prefetchNextScreen()
     }
 
     override func viewDidLayoutSubviews() {
@@ -2075,6 +2079,8 @@ extension BearyFeedViewController: UITableViewDataSource, UITableViewDelegate {
         for cell in tableView.visibleCells {
             cell.stopAllBearyEmotes()
         }
+        // 秒开批·图片预热：离页即停，不在后台页继续下缩略图。
+        BearyImagePrefetcher.shared.cancel()
     }
 
     /// 80 包 A5：与 stopVisibleEmotes 对称的恢复入口。
@@ -2084,6 +2090,16 @@ extension BearyFeedViewController: UITableViewDataSource, UITableViewDelegate {
     /// 纵使播放器侧已幂等，也不应留双入口。
     func resumeVisibleEmotes() {
         pageDidEnter()
+    }
+
+    /// 秒开批·图片预热：以最后可见行为锚点，预热下一屏缩略图
+    ///（切回本页时锚点即上次滑到的位置）。只传模型与锚点，窗口、
+    ///流量口径与失败静默均由 BearyImagePrefetcher 定。
+    private func prefetchNextScreen() {
+        let entries = plazaEntries()
+        let last = (tableView.indexPathsForVisibleRows ?? []).map { $0.row }.max() ?? -1
+        BearyImagePrefetcher.shared.prefetch(entries: entries, lastVisibleIndex: last, viewerId: SessionManager.shared.currentUser?.id)
+    }
     }
 
     private func resumeVisibleEmotesCore() {
@@ -2130,6 +2146,20 @@ extension BearyFeedViewController: UITableViewDataSource, UITableViewDelegate {
             BearyHaptics.press()
             beginCustomPullRefresh()
         }
+        // 秒开批·图片预热：不减速即已停稳，直接预热下一屏。
+        if !decelerate { prefetchNextScreen() }
+    }
+
+    /// 秒开批·图片预热：滚动停稳时预热下一屏；滚动开始时取消在途预热，
+    /// 不与当前屏抢连接。
+    func scrollViewDidEndDecelerating(_ scrollView: UIScrollView) {
+        guard scrollView === tableView else { return }
+        prefetchNextScreen()
+    }
+
+    func scrollViewWillBeginDragging(_ scrollView: UIScrollView) {
+        guard scrollView === tableView else { return }
+        BearyImagePrefetcher.shared.cancel()
     }
 
 }

@@ -2549,6 +2549,8 @@ class BearyTimelineViewController: UIViewController {
         for cell in tableView.visibleCells {
             cell.stopAllBearyEmotes()
         }
+        // 秒开批·图片预热：离页即停，不在后台页继续下缩略图。
+        BearyImagePrefetcher.shared.cancel()
     }
 
     /// 80 包 A5：与 stopVisibleEmotes 对称的恢复入口：
@@ -2561,6 +2563,23 @@ class BearyTimelineViewController: UIViewController {
             for sub in view.subviews { resume(sub) }
         }
         for cell in tableView.visibleCells { resume(cell) }
+        prefetchNextScreen()
+    }
+
+    /// 秒开批·图片预热：分区表先展平成顺序模型，再以最后可见行
+    /// 的展平下标为锚点预热下一屏（切回本页时锚点即上次滑到的位置）。
+    private func prefetchNextScreen() {
+        let sections = currentSections()
+        var flat: [Entry] = []
+        var flatIndexByPath: [IndexPath: Int] = [:]
+        for (section, sec) in sections.enumerated() {
+            for (row, entry) in sec.entries.enumerated() {
+                flatIndexByPath[IndexPath(row: row, section: section)] = flat.count
+                flat.append(entry)
+            }
+        }
+        let last = (tableView.indexPathsForVisibleRows ?? []).compactMap { flatIndexByPath[$0] }.max() ?? -1
+        BearyImagePrefetcher.shared.prefetch(entries: flat, lastVisibleIndex: last, viewerId: SessionManager.shared.currentUser?.id)
     }
 
     /// 动画批 11 号离屏停播：行离屏即停其全部表情（含心情位）。
@@ -3432,6 +3451,20 @@ class BearyTimelineViewController: UIViewController {
             BearyHaptics.press()
             beginCustomPullRefresh()
         }
+        // 秒开批·图片预热：不减速即已停稳，直接预热下一屏。
+        if !decelerate { prefetchNextScreen() }
+    }
+
+    /// 秒开批·图片预热：滚动停稳时预热下一屏；滚动开始时取消在途预热，
+    /// 不与当前屏抢连接。
+    func scrollViewDidEndDecelerating(_ scrollView: UIScrollView) {
+        guard scrollView === tableView else { return }
+        prefetchNextScreen()
+    }
+
+    func scrollViewWillBeginDragging(_ scrollView: UIScrollView) {
+        guard scrollView === tableView else { return }
+        BearyImagePrefetcher.shared.cancel()
     }
 
     private func buildHeader() {
