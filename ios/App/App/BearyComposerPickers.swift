@@ -141,7 +141,7 @@ final class BearyRecipientPickerViewController: UIViewController, UITextFieldDel
 
         sheetView.backgroundColor = BearyColors.bg
         sheetView.layer.cornerRadius = BearySheetChrome.topCornerRadius
-        sheetView.layer.shadowColor = UIColor.black.cgColor
+        // 阴影色与数值一律走 BearySheetChrome.applyShadow（见 applySheetChrome），此处不再自写。
 
         grabberView.backgroundColor = BearyColors.line
         grabberView.layer.cornerRadius = BearySheetChrome.grabberCornerRadius
@@ -421,17 +421,11 @@ final class BearyRecipientPickerViewController: UIViewController, UITextFieldDel
             sheetView.layer.maskedCorners = [.layerMinXMinYCorner, .layerMaxXMinYCorner, .layerMinXMaxYCorner, .layerMaxXMaxYCorner]
             sheetView.layer.borderWidth = 1
             sheetView.layer.bearyDynamicBorderColor = BearyColors.line
-            sheetView.layer.shadowOpacity = 0.30
-            // CALayer radius 取 CSS blur 一半（居中卡片与 SceneDelegate 底 sheet 同口径）：
-            // 网页 60 → 30、32 → 16，旧值 60/32 直写会把阴影晕得比网页大一倍。
-            sheetView.layer.shadowRadius = 30
-            sheetView.layer.shadowOffset = CGSize(width: 0, height: 24)
+            BearySheetChrome.applyShadow(to: sheetView.layer, centered: true)
         } else {
             sheetView.layer.maskedCorners = [.layerMinXMinYCorner, .layerMaxXMinYCorner]
             sheetView.layer.borderWidth = 0
-            sheetView.layer.shadowOpacity = 0.22
-            sheetView.layer.shadowRadius = 16
-            sheetView.layer.shadowOffset = CGSize(width: 0, height: -12)
+            BearySheetChrome.applyShadow(to: sheetView.layer, centered: false)
         }
     }
 

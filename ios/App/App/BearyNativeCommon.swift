@@ -73,6 +73,12 @@ enum BearyMotion {
 /// 回应 Sheet 圆角 22 / 抓手 38×4 的例外一律撤销）；遮罩出现时 0.25s 淡入。
 /// 注意：CenteredModal 旧值 UIColor(white: 0, alpha: 0.45) 与 scrimColor 等值
 /// （scrim 本就是 white 0，withAlphaComponent 只换 alpha），改写后视觉不变。
+/// 面板阴影（2026-11-01 清理批：此前各面板自写两组数值，现统一于此，视觉不变）：
+/// 底 sheet（手机布局、Composer 底 sheet）0.22 / radius 16 / offset (0, -12)；
+/// 居中面板（iPad 宽 ≥821 的 440 居中形态）0.30 / radius 30 / offset (0, 24)。
+/// CALayer radius 取 CSS blur 一半（网页 60 → 30、32 → 16），不要照 CSS 值直写。
+/// 注意：BearyCenteredModal 的居中卡片阴影与 centered 组同值，但居中弹窗不在
+/// 本清理件范围，故仍保留自写值、未迁移至此；勿顺手合入。
 enum BearySheetChrome {
     static let topCornerRadius: CGFloat = 20
     static let grabberWidth: CGFloat = 40
@@ -81,6 +87,20 @@ enum BearySheetChrome {
     static let grabberCornerRadius: CGFloat = 2
     static let scrimAlpha: CGFloat = 0.45
     static var scrimColor: UIColor { BearyColors.scrim.withAlphaComponent(scrimAlpha) }
+    static var shadowColor: CGColor { UIColor.black.cgColor }
+    static let bottomShadowOpacity: Float = 0.22
+    static let bottomShadowRadius: CGFloat = 16
+    static let bottomShadowOffset = CGSize(width: 0, height: -12)
+    static let centeredShadowOpacity: Float = 0.30
+    static let centeredShadowRadius: CGFloat = 30
+    static let centeredShadowOffset = CGSize(width: 0, height: 24)
+    /// 面板阴影唯一入口：centered=true 走居中组，否则走底 sheet 组；圆角不动。
+    static func applyShadow(to layer: CALayer, centered: Bool) {
+        layer.shadowColor = shadowColor
+        layer.shadowOpacity = centered ? centeredShadowOpacity : bottomShadowOpacity
+        layer.shadowRadius = centered ? centeredShadowRadius : bottomShadowRadius
+        layer.shadowOffset = centered ? centeredShadowOffset : bottomShadowOffset
+    }
 }
 
 // MARK: - 抓手拖动统一口径（2026-10-30 抓手批）
