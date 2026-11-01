@@ -51,6 +51,8 @@ final class BearyEmotePickerSheetViewController: UIViewController, UICollectionV
     private let grabView = UIView()
     private let titleLabel = UILabel()
     private let closeButton = BearyHit44Button(type: .system)
+    /// 审计 D-7：手势门控按布局后实测帧划分，需持有 collection 引用（见 gestureRecognizerShouldBegin）。
+    private var emoteCollectionView: UICollectionView?
     private var sheetHeightConstraint: NSLayoutConstraint?
     private var sheetBottomConstraint: NSLayoutConstraint?
 
@@ -78,7 +80,9 @@ final class BearyEmotePickerSheetViewController: UIViewController, UICollectionV
         grabView.translatesAutoresizingMaskIntoConstraints = false
         sheetView.addSubview(grabView)
         titleLabel.text = "贴一只小熊"
-        titleLabel.font = UIFont.boldSystemFont(ofSize: 15)
+        // 审计 D-13：标题跟系统字号（原 15pt 固定）；标题长高时下方列表顶约束同步下移，门控见 gestureRecognizerShouldBegin。
+        titleLabel.font = BearyDynamicType.scaledFont(for: UIFont.boldSystemFont(ofSize: 15))
+        titleLabel.adjustsFontForContentSizeCategory = true
         titleLabel.textColor = BearyColors.ink
         titleLabel.translatesAutoresizingMaskIntoConstraints = false
         sheetView.addSubview(titleLabel)
@@ -104,6 +108,7 @@ final class BearyEmotePickerSheetViewController: UIViewController, UICollectionV
         collection.dataSource = self
         collection.delegate = self
         collection.register(BearyEmotePickerSheetCell.self, forCellWithReuseIdentifier: "bearyEmotePickerSheetCell")
+        emoteCollectionView = collection
         sheetView.addSubview(collection)
         let heightConstraint = sheetView.heightAnchor.constraint(equalToConstant: 480)
         sheetHeightConstraint = heightConstraint
@@ -153,6 +158,11 @@ final class BearyEmotePickerSheetViewController: UIViewController, UICollectionV
     override func traitCollectionDidChange(_ previousTraitCollection: UITraitCollection?) {
         super.traitCollectionDidChange(previousTraitCollection)
         updateSheetChrome()
+        // 审计 D-13：系统字号档变化时行高需重算（sizeForItemAt 按实际文字高度计），
+        // 只刷布局，不重建 cell、不改列数与顺序。
+        if previousTraitCollection?.preferredContentSizeCategory != traitCollection.preferredContentSizeCategory {
+            emoteCollectionView?.collectionViewLayout.invalidateLayout()
+        }
     }
 
     /// D-11：与详情 sheet 一致的宽屏形态（宽 ≥821）：全圆角 22 + 1px line 边框
@@ -176,12 +186,20 @@ final class BearyEmotePickerSheetViewController: UIViewController, UICollectionV
         dismiss(animated: reduceMotion == false, completion: nil)
     }
 
-    /// 5-23 下滑关闭的起手门：只在头部区（抓手/标题/关闭行，y < 70）
-    /// 起手，列表区滑动仍归 collectionView，不抢滚动。
+    /// 审计 D-7：下滑关闭的起手门——不再用固定 y < 70（原门控盖住首行上缘约 8pt：
+    /// 抓手顶 10 + 高 4 → 标题顶 +14 → 列表顶 = 标题底 +12，首行上缘约 y=62）。
+    /// 改按布局后实测帧划分：关闭钮（含 BearyHit44Button 向外扩的 6pt 热区）与
+    /// 列表区一律不接手，只在列表顶以上的头部区（抓手/标题行）起手；标题随
+    /// 系统字号长高时列表顶同步下移，门控同步跟随，不再错位。
+    /// 关闭距离 80pt 与速度 600 阈值不动（见 sheetPanGesture）。
     func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
         guard gestureRecognizer.view === sheetView else { return true }
         let point = gestureRecognizer.location(in: sheetView)
-        return point.y < 70
+        if closeButton.frame.insetBy(dx: -6, dy: -6).contains(point) { return false }
+        if let collection = emoteCollectionView {
+            return point.y < collection.frame.minY
+        }
+        return point.y < titleLabel.frame.maxY + 12
     }
 
     /// 5-23：下滑关闭，与草稿箱 handlePan 同口径——下滑跟手（只动
@@ -190,7 +208,7 @@ final class BearyEmotePickerSheetViewController: UIViewController, UICollectionV
     /// 2026-10-30 抓手批：核对过，列表区不盖住抓手行（列表顶约 y58–60，
     /// 抓手在 y10–14），且 pan 是手势而非覆盖视图，不会吞列表点按；
     /// 故此处只补上滑统一口径（阻尼微移后回弹，不扩高、不关闭），
-    /// 门控 y<70 与阈值 80/600 均不动。
+    /// 阈值 80/600 不动；门控已由审计 D-7 改为实测帧划分（见 gestureRecognizerShouldBegin）。
     @objc private func sheetPanGesture(_ gesture: UIPanGestureRecognizer) {
         let translation = gesture.translation(in: view)
         switch gesture.state {
@@ -253,7 +271,22 @@ final class BearyEmotePickerSheetViewController: UIViewController, UICollectionV
     func collectionView(_ collectionView: UICollectionView, layout collectionViewLayout: UICollectionViewLayout, sizeForItemAt indexPath: IndexPath) -> CGSize {
         let totalSpacing: CGFloat = 18 * 2 + 6 * 3
         let width = max(44, (collectionView.bounds.width - totalSpacing) / 4)
-        return CGSize(width: width, height: 72)
+        // 审计 D-13：行高按实际文字高度计——名称用与 cell 一致的缩放 11pt 字、
+        // 格宽减左右各 2 内边距量取，允许多行；默认字号下 46 + 4 + 单行高 + 8
+        // 仍为 72，与原固定高一致；放大后名称换行，行高随之长高，不裁字。
+        // 列数（4 列）与排列顺序不动；字号档变化时 traitCollectionDidChange 刷布局重算。
+        let key = BearyEmoteKeys.bearFaces[indexPath.item]
+        let name = BearyText.moodNames[key] ?? key
+        let nameFont = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 11))
+        let nameWidth = max(width - 4, 0)
+        let nameHeight = (name as NSString).boundingRect(
+            with: CGSize(width: nameWidth, height: CGFloat.greatestFiniteMagnitude),
+            options: [.usesLineFragmentOrigin, .usesFontLeading],
+            attributes: [NSAttributedString.Key.font: nameFont],
+            context: nil
+        ).height.rounded(.up)
+        let height = max(72, 46 + 4 + nameHeight + 8)
+        return CGSize(width: width, height: height)
     }
 
     func collectionView(_ collectionView: UICollectionView, didSelectItemAt indexPath: IndexPath) {
@@ -353,6 +386,8 @@ final class BearyEmotePickerSheetCell: UICollectionViewCell {
         contentView.addSubview(emoteSlot)
         nameLabel.translatesAutoresizingMaskIntoConstraints = false
         nameLabel.textAlignment = .center
+        // 审计 D-13：放大后名称允许换行（行高见 sizeForItemAt 的实测计算）。
+        nameLabel.numberOfLines = 0
         contentView.addSubview(nameLabel)
         NSLayoutConstraint.activate([
             highlightView.topAnchor.constraint(equalTo: contentView.topAnchor),
@@ -405,7 +440,9 @@ final class BearyEmotePickerSheetCell: UICollectionViewCell {
             ])
             emoteView = next
         }
-        nameLabel.font = UIFont.systemFont(ofSize: 11)
+        // 审计 D-13：名称跟系统字号（原 11pt 固定），与 sizeForItemAt 量取用同一缩放字。
+        nameLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 11))
+        nameLabel.adjustsFontForContentSizeCategory = true
         nameLabel.textColor = BearyColors.gray
         nameLabel.text = name
     }

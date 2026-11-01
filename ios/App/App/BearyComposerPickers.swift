@@ -75,13 +75,17 @@ final class BearyRecipientPickerViewController: UIViewController, UITextFieldDel
     private let stateIcon = UIImageView()
     private let stateTitle = UILabel()
     private let stateSubtitle = UILabel()
-    private let stateRetryButton = UIButton(type: .system)
+    private let stateRetryButton = BearyHit44Button(type: .system)
     private var users: [SearchUser] = []
     private var searchTimer: Timer?
     private var searchSeq = 0
     private var lastQuery = ""
     private var isPadLayout = false
     private var keyboardHeight: CGFloat = 0
+    /// 审计 D-4：换算到 view 坐标后的键盘终帧（.zero = 无键盘/键盘不在屏上）；
+    /// 键盘通知给的是屏幕坐标，直接对 view.bounds.height 算高度在浮动键盘、
+    /// 分屏/台前调度下会错位，故一律先经屏幕坐标空间 convert。
+    private var keyboardFrameInView: CGRect = .zero
     private var sheetHeightConstraint: NSLayoutConstraint?
     private var sheetWidthConstraint: NSLayoutConstraint?
     /// L11：iPad 居中卡片的 centerY 约束——键盘弹出时按遮挡量上抬，收起时归零。
@@ -100,6 +104,9 @@ final class BearyRecipientPickerViewController: UIViewController, UITextFieldDel
         applySheetChrome()
         showState(kind: "init", query: "")
         NotificationCenter.default.addObserver(self, selector: #selector(keyboardWillShow(_:)), name: UIResponder.keyboardWillShowNotification, object: nil)
+        // 审计 D-4：补 WillChangeFrame——候选栏显隐、旋转、浮动键盘拖动只发本通知，
+        // 不发 WillShow/WillHide；与 WillShow 同一处理（绝对量重算，重复调用无叠加）。
+        NotificationCenter.default.addObserver(self, selector: #selector(keyboardWillChangeFrame(_:)), name: UIResponder.keyboardWillChangeFrameNotification, object: nil)
         NotificationCenter.default.addObserver(self, selector: #selector(keyboardWillHide(_:)), name: UIResponder.keyboardWillHideNotification, object: nil)
     }
 
@@ -139,7 +146,9 @@ final class BearyRecipientPickerViewController: UIViewController, UITextFieldDel
         backdropButton.addTarget(self, action: #selector(didTapClose), for: .touchUpInside)
         backdropButton.bearyAddPressFeedback()
 
-        sheetView.backgroundColor = BearyColors.bg
+        // 审计 D-16：浮层背景与回应 Sheet 一致走 surface（深色 #26262c，不再是 bg 的纯黑；
+        // 浅色下 surface 与 bg 同为白，观感不动）；全屏页面仍用 bg，不动。
+        sheetView.backgroundColor = BearyColors.surface
         sheetView.layer.cornerRadius = BearySheetChrome.topCornerRadius
         // 阴影色与数值一律走 BearySheetChrome.applyShadow（见 applySheetChrome），此处不再自写。
 
@@ -366,6 +375,12 @@ final class BearyRecipientPickerViewController: UIViewController, UITextFieldDel
             stateSubtitle.bottomAnchor.constraint(lessThanOrEqualTo: stateView.bottomAnchor),
             stateRetryButton.topAnchor.constraint(equalTo: stateSubtitle.bottomAnchor, constant: 8),
             stateRetryButton.centerXAnchor.constraint(equalTo: stateView.centerXAnchor),
+            // 审计 D-10：失败态“重试”改 BearyHit44Button（见声明处）并补 ≥44 宽高约束，
+            // 视觉帧本身即达标，不依赖热区外扩；父容器 stateView/listContainer/sheetView
+            // 均未设 clipsToBounds/masksToBounds，且按钮上下均有约束锚点（顶贴副标题、
+            // 底贴 stateView 底），扩展热区无截断；文字与位置不动。
+            stateRetryButton.widthAnchor.constraint(greaterThanOrEqualToConstant: 44),
+            stateRetryButton.heightAnchor.constraint(greaterThanOrEqualToConstant: 44),
             retryBottom,
         ])
     }
@@ -466,8 +481,22 @@ final class BearyRecipientPickerViewController: UIViewController, UITextFieldDel
         // 抓手 14 + 头顶 4 + 头图 40 + 头到搜索 12 + 搜索框高 + 搜索到列表 10
         // + 列表高 + 底 padding（iCity：通知行隐藏后不再占 8 + 行高 + 10）。
         let fittingHeight = 14 + 4 + 40 + 12 + searchHeight + 10 + listHeight + bottomPad
-        let visibleHeight = containerHeight - (isPadLayout ? 0 : keyboardHeight)
-        let maxHeight = max(visibleHeight * 0.82, 0)
+        // 审计 D-4：可用高按键盘顶沿计——手机端键盘顶沿即为可见高（此前 iPad 直接
+        // 不扣键盘高度，浮动/分屏键盘会盖住居中卡片）；iPad 另受“上抬后卡片顶不得
+        // 顶出安全区”约束：卡片底 = 键盘顶 - 14，故高上限 = 键盘顶 - 14 - 安全区顶。
+        // 超出上限的部分由 listScrollView 滚动承担（列表区已是滚动容器，行不裁）。
+        let visibleHeight: CGFloat
+        if isPadLayout {
+            visibleHeight = containerHeight
+        } else {
+            visibleHeight = keyboardHeight > 0 ? max(containerHeight - keyboardHeight, 0) : containerHeight
+        }
+        var maxHeight = max(visibleHeight * 0.82, 0)
+        if isPadLayout, keyboardHeight > 0 {
+            let keyboardTop = containerHeight - keyboardHeight
+            let keyboardFitHeight = keyboardTop - 14 - view.safeAreaInsets.top
+            maxHeight = min(maxHeight, max(keyboardFitHeight, 0))
+        }
         let target = min(fittingHeight, maxHeight)
         if let heightConstraint = sheetHeightConstraint, abs(heightConstraint.constant - target) > 0.5 {
             heightConstraint.constant = target
@@ -501,24 +530,15 @@ final class BearyRecipientPickerViewController: UIViewController, UITextFieldDel
     }
 
     @objc private func keyboardWillShow(_ note: Notification) {
-        keyboardHeight = keyboardHeightFrom(note)
-        if let bottomConstraint = phoneBottomConstraint, !isPadLayout {
-            bottomConstraint.constant = -keyboardHeight
-        }
-        if isPadLayout {
-            // L11：iPad 居中卡片以前键盘弹出时不抬升、可能被盖——按键盘顶沿与卡片底沿的
-            // 重叠量上抬卡片（+14 间隙），不重叠时不动；动画走 animateKeyboardLayout 的键盘曲线。
-            view.layoutIfNeeded()
-            let sheetHeight = sheetHeightConstraint?.constant ?? 0
-            let sheetBottom = view.bounds.height / 2 + (padCenterYConstraint?.constant ?? 0) + sheetHeight / 2
-            let keyboardTop = view.bounds.height - keyboardHeight
-            let overlap = sheetBottom - keyboardTop
-            padCenterYConstraint?.constant = overlap > 0 ? -(overlap + 14) : 0
-        }
-        animateKeyboardLayout(note)
+        applyKeyboardFrame(keyboardFrameFrom(note), note: note)
+    }
+
+    @objc private func keyboardWillChangeFrame(_ note: Notification) {
+        applyKeyboardFrame(keyboardFrameFrom(note), note: note)
     }
 
     @objc private func keyboardWillHide(_ note: Notification) {
+        keyboardFrameInView = .zero
         keyboardHeight = 0
         if let bottomConstraint = phoneBottomConstraint, !isPadLayout {
             bottomConstraint.constant = 0
@@ -527,12 +547,38 @@ final class BearyRecipientPickerViewController: UIViewController, UITextFieldDel
         animateKeyboardLayout(note)
     }
 
-    private func keyboardHeightFrom(_ note: Notification) -> CGFloat {
-        guard let info = note.userInfo else { return 0 }
-        guard let value = info[UIResponder.keyboardFrameEndUserInfoKey] as? NSValue else { return 0 }
-        let frame = value.cgRectValue
-        let height = view.bounds.height - frame.minY
-        return max(height, 0)
+    /// 审计 D-4：键盘终帧由屏幕坐标换算到 view 坐标（旧 keyboardHeightFrom 直接
+    /// 用屏幕坐标对 view.bounds.height 相减，分屏/浮动键盘下错位）；换算走屏幕坐标空间。
+    private func keyboardFrameFrom(_ note: Notification) -> CGRect {
+        guard let info = note.userInfo else { return .zero }
+        guard let value = info[UIResponder.keyboardFrameEndUserInfoKey] as? NSValue else { return .zero }
+        return view.convert(value.cgRectValue, from: UIScreen.main.coordinateSpace)
+    }
+
+    /// 审计 D-4：键盘避让统一处理（WillShow/WillChangeFrame 共用，绝对量重算）：
+    /// 只在键盘帧与当前卡片帧相交时避让——浮动到卡片之外的键盘不再无故抬卡片；
+    /// 手机端底边抬到键盘顶沿，iPad 居中卡片按卡片底沿与键盘顶沿的重叠量上抬
+    /// （+14 间隙，L11 口径保留），不重叠时不动；动画走键盘曲线。
+    /// keyboardHeight 供 updateSheetHeight 计可用高（手机端 = 到键盘顶沿的距离，
+    /// iPad 端同样计入后由那里的键盘适配高上限再约束一次）。
+    private func applyKeyboardFrame(_ frame: CGRect, note: Notification) {
+        keyboardFrameInView = frame
+        view.layoutIfNeeded()
+        let sheetFrame = sheetView.frame
+        let overlapsSheet = frame.isEmpty == false && frame.intersects(sheetFrame)
+        keyboardHeight = overlapsSheet ? max(view.bounds.height - frame.minY, 0) : 0
+        if let bottomConstraint = phoneBottomConstraint, !isPadLayout {
+            bottomConstraint.constant = overlapsSheet ? -keyboardHeight : 0
+        }
+        if isPadLayout {
+            if overlapsSheet {
+                let overlap = sheetFrame.maxY - frame.minY
+                padCenterYConstraint?.constant = overlap > 0 ? -(overlap + 14) : 0
+            } else {
+                padCenterYConstraint?.constant = 0
+            }
+        }
+        animateKeyboardLayout(note)
     }
 
     /// M8：sheet 高度/位置变化走键盘动画同曲线（duration + curve 均取键盘通知，不再固定 0.25 线性）。
@@ -781,6 +827,7 @@ final class BearyRecipientPickerViewController: UIViewController, UITextFieldDel
         // 显示时在结果行上方；sheet 高 fitting 按 rowsStack 整体量取，label 高已计入）。
         rowsStack.addArrangedSubview(resultsLabelWrap)
         rowButtons = []
+        rowHighlightViews = []
         rowUsers = users
         for index in 0..<users.count {
             let user = users[index]
@@ -845,12 +892,20 @@ final class BearyRecipientPickerViewController: UIViewController, UITextFieldDel
                 fallbackLabel.isHidden = false
                 fallbackLabel.text = String(name.prefix(1)).uppercased()
             }
+            // 审计 D-12：行按压底片——铺满整行、垫在全部内容之下，只换底色不缩放，
+            // 故头像与文字不晃动；isUserInteractionEnabled 关掉，否则底片会吞行点按。
+            // 按下 0.10s 淡入 hov，松开/滑出/取消时恢复（见 rowPressDown/rowPressUp）。
+            let rowHighlight = UIView()
+            rowHighlight.translatesAutoresizingMaskIntoConstraints = false
+            rowHighlight.backgroundColor = .clear
+            rowHighlight.isUserInteractionEnabled = false
             let separator = UIView()
             separator.translatesAutoresizingMaskIntoConstraints = false
             // 8-4：分隔线收进统一样式——基线厚已是 1pt，0.55 是颜色透明度（非厚度），
             // 现改全强度 line 色（动态色本身，不走 withAlphaComponent，8-1 同款）。
             separator.backgroundColor = BearyColors.line
             separator.isHidden = (index == 0)
+            row.addSubview(rowHighlight)
             row.addSubview(avatarView)
             row.addSubview(fallbackLabel)
             row.addSubview(nameLabel)
@@ -858,6 +913,10 @@ final class BearyRecipientPickerViewController: UIViewController, UITextFieldDel
             row.addSubview(chevron)
             row.addSubview(separator)
             NSLayoutConstraint.activate([
+                rowHighlight.topAnchor.constraint(equalTo: row.topAnchor),
+                rowHighlight.bottomAnchor.constraint(equalTo: row.bottomAnchor),
+                rowHighlight.leadingAnchor.constraint(equalTo: row.leadingAnchor),
+                rowHighlight.trailingAnchor.constraint(equalTo: row.trailingAnchor),
                 // 32 清单第 25 项：头像改居中锚定（原上下各 10 定死 64 高）；行高改由内容撑起，见下方 ≥64。
                 avatarView.centerYAnchor.constraint(equalTo: row.centerYAnchor),
                 avatarView.leadingAnchor.constraint(equalTo: row.leadingAnchor, constant: 12),
@@ -889,7 +948,10 @@ final class BearyRecipientPickerViewController: UIViewController, UITextFieldDel
                 separator.heightAnchor.constraint(equalToConstant: 1),
             ])
             row.addTarget(self, action: #selector(didTapRow(_:)), for: .touchUpInside)
+            row.addTarget(self, action: #selector(rowPressDown(_:)), for: [.touchDown, .touchDragEnter])
+            row.addTarget(self, action: #selector(rowPressUp(_:)), for: [.touchUpInside, .touchUpOutside, .touchCancel, .touchDragExit])
             row.bearyAddPressHaptic()
+            rowHighlightViews.append(rowHighlight)
             row.accessibilityLabel = name
             rowsStack.addArrangedSubview(row)
             rowButtons.append(row)
@@ -915,6 +977,8 @@ final class BearyRecipientPickerViewController: UIViewController, UITextFieldDel
     }
 
     private var rowButtons: [UIButton] = []
+    /// 审计 D-12：与 rowButtons 一一对应的行按压底片（见 renderRows），按下时显 hov 底色。
+    private var rowHighlightViews: [UIView] = []
     private var rowUsers: [SearchUser] = []
     /// 审计 P2-24：@ 选人已播入场行的键集（搜索页 lastResultRowKeys 同口径）——
     /// 同一选人会话内多次搜索只播新 key 行；选人页每次新建实例，键集随实例生灭。
@@ -932,6 +996,33 @@ final class BearyRecipientPickerViewController: UIViewController, UITextFieldDel
     func transitionSheetHeight() -> CGFloat {
         view.layoutIfNeeded()
         return sheetView.bounds.height
+    }
+
+    /// 审计 D-12：行按压视觉态（此前只有震动）——按下 0.10s 淡入 hov 底色；
+    /// 只动底片背景，不动 transform，故整行不缩放。松开/取消见 rowPressUp。
+    @objc private func rowPressDown(_ sender: UIButton) {
+        guard let highlight = rowHighlight(for: sender) else { return }
+        UIView.animate(withDuration: 0.10, animations: {
+            highlight.backgroundColor = BearyColors.hov
+        })
+    }
+
+    /// 审计 D-12：松开、滑出、取消时底色恢复（与按下同 0.10s 淡出；点按成功时
+    /// didTapRow 随即 dismiss，淡出是否播完不影响结果）。
+    @objc private func rowPressUp(_ sender: UIButton) {
+        guard let highlight = rowHighlight(for: sender) else { return }
+        UIView.animate(withDuration: 0.10, animations: {
+            highlight.backgroundColor = .clear
+        })
+    }
+
+    private func rowHighlight(for sender: UIButton) -> UIView? {
+        for index in 0..<rowButtons.count {
+            if index < rowHighlightViews.count && rowButtons[index] == sender {
+                return rowHighlightViews[index]
+            }
+        }
+        return nil
     }
 
     @objc private func didTapRow(_ sender: UIButton) {
