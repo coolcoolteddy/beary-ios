@@ -130,9 +130,20 @@ final class BearyDiaryStarMapViewController: UIViewController {
 
     // MARK: - 生命周期
 
+    /// 星图页底色是固定夜色（功能底色，不跟随系统深浅），故状态栏恒为
+    /// 浅色内容；导航栏用本页 navigationItem 专属透明外观（标题色为夜空
+    /// 主文字色），不改全局导航栏、不改夜空本身。
+    override var preferredStatusBarStyle: UIStatusBarStyle { .lightContent }
+    private var previousNavBarTintColor: UIColor?
+
     override func viewDidLoad() {
         super.viewDidLoad()
         view.backgroundColor = BearyStarMapNight.background
+        let navAppearance = UINavigationBarAppearance()
+        navAppearance.configureWithTransparentBackground()
+        navAppearance.titleTextAttributes = [.foregroundColor: BearyStarMapNight.primaryText]
+        navigationItem.standardAppearance = navAppearance
+        navigationItem.scrollEdgeAppearance = navAppearance
         if navigationController?.viewControllers.count == 1, presentingViewController != nil {
             if let closeImage = BearyIconImages.image(named: "icon_close", pointSize: 18) {
                 navigationItem.leftBarButtonItem = UIBarButtonItem(image: closeImage, style: .plain, target: self, action: #selector(didTapClose))
@@ -151,6 +162,11 @@ final class BearyDiaryStarMapViewController: UIViewController {
 
     override func viewWillAppear(_ animated: Bool) {
         super.viewWillAppear(animated)
+        // 关闭钮仍用现有 icon_close；tint 跟随夜空主文字色，离页时还原
+        //（导航栏 tint 是共享状态，不还原会污染返回后的页）。
+        previousNavBarTintColor = navigationController?.navigationBar.tintColor
+        navigationController?.navigationBar.tintColor = BearyStarMapNight.primaryText
+        navigationItem.leftBarButtonItem?.tintColor = BearyStarMapNight.primaryText
         let currentViewerId = SessionManager.shared.currentUser?.id
         if currentViewerId != viewerIdAtOpen {
             // 切账号/登录翻转：身份变了，口径与数据按新身份重算重拉，旧选择清掉。
@@ -166,6 +182,11 @@ final class BearyDiaryStarMapViewController: UIViewController {
             needsRefreshAfterDetail = false
             fetchAllEntries()
         }
+    }
+
+    override func viewWillDisappear(_ animated: Bool) {
+        super.viewWillDisappear(animated)
+        navigationController?.navigationBar.tintColor = previousNavBarTintColor
     }
 
     @objc private func didTapClose() {
