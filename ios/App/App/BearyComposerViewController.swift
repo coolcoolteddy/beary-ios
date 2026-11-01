@@ -5702,18 +5702,15 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             guard let self = self else { return }
             if self.presentedViewController != nil || self.isDraftBoxPresenting { return }
             self.isDraftBoxPresenting = true
+            // 弹窗审计 E1-18：草稿箱内部已统一退场——新建/打开先播同一
+            // 0.25s 退场、dismiss 后再调回调，故编辑器侧不再另行 dismiss
+            // （旧 dismiss 经 BearyDraftBoxInstantAnimator 瞬时消失，绕过了退场动画）。
             let box = BearyDraftBoxViewController(
                 onNew: { [weak self] in
-                    guard let self = self else { return }
-                    self.dismiss(animated: !UIAccessibility.isReduceMotionEnabled) {
-                        self.openBlankDraftFromBox()
-                    }
+                    self?.openBlankDraftFromBox()
                 },
                 onOpen: { [weak self] draft in
-                    guard let self = self else { return }
-                    self.dismiss(animated: !UIAccessibility.isReduceMotionEnabled) {
-                        self.loadDraftFromBox(draft)
-                    }
+                    self?.loadDraftFromBox(draft)
                 }
             )
             // DF-2 接线（收尾）：箱内删正在写草稿时通知编辑器，编辑器清 currentDraftId，

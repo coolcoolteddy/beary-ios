@@ -12,9 +12,11 @@ import UIKit
 // 卡片操作：整卡点按打开（onOpen）；卡片顶行另有打开钮与删除钮（网页 .df-open/.df-trash
 // 同款）；删除为本地操作：只删该篇（图片文件不动，6 秒撤销期内可原样恢复），
 // 删后出 6 秒撤销条，超时丢弃暂存；不碰服务端。
-// 调用约定：点“新建日记”只回调 onNew，点卡片/打开钮只回调 onOpen 并传出该篇草稿，
-// 弹层本身不 dismiss——由编辑器代理在打开编辑器时负责 dismiss，避免呈现链冲突；
-// 只有关闭钮与遮罩点击会直接 dismiss，且不删任何草稿。
+// 调用约定：点“新建日记”只回调 onNew，点卡片/打开钮只回调 onOpen 并传出该篇草稿；
+// 弹窗审计 E1-18 统一退场：关闭、打开、新建三路共用同一退场——先播 0.25s
+// 退场动画、dismiss 后再调回调，编辑器侧不再另行 dismiss（旧路径经
+// BearyDraftBoxInstantAnimator 瞬时消失，绕过了退场动画）；关闭路回调为空，
+// 不重复播动画；关闭与打开/新建均不删任何草稿。
 // 约束：颜色只用 BearyColors（遮罩走 BearySheetChrome.scrimColor）；不新增液态玻璃效果；
 // 动画遵守 reduced-motion；部署目标 iOS 15.0、Swift 5.0——只用闭包回调，
 // 不用 async/await，不用 if-let 简写。
@@ -121,6 +123,9 @@ final class BearyDraftBoxViewController: UIViewController {
     // 避免 viewDidAppear 对尚未渲染的空栈空跑、卡片随后硬切出现。
     private var draftBoxAppeared = false
     private var draftsInitialLoaded = false
+    /// 弹窗审计 E1-19：面板框架入场是否已播（与卡片入场分开记）。慢读时
+    /// 面板先随加载态出现，数据到达后 tryPlayEntrance 只补卡片部分，不重播面板。
+    private var didPlaySheetEntrance = false
     private var isDismissing = false
     private var isPadLayout = false
     private var bottomSpacerHeight: NSLayoutConstraint?
@@ -155,9 +160,14 @@ final class BearyDraftBoxViewController: UIViewController {
     private let undoWrap = UIView()
     private let undoBar = UIView()
     private let undoLabel = UILabel()
-    private let undoButton = UIButton(type: .custom)
+    private let undoButton = BearyHit44Button(type: .custom)
     private let listWrap = UIView()
     private let listStack = UIStackView()
+    /// 弹窗审计 E1-19：数据未到时的加载占位（复用图片加载同款细圆环
+    /// BearyWebRingSpinnerView，不新增图标/文案）。renderDrafts 清空
+    /// listStack 时随之一并摘掉，数据到达后不残留。
+    private let loadingWrap = UIView()
+    private let loadingSpinner = BearyWebRingSpinnerView()
     private let hintWrap = UIView()
     private let hintLabel = UILabel()
     private let bottomSpacer = UIView()
@@ -174,16 +184,47 @@ final class BearyDraftBoxViewController: UIViewController {
         view.backgroundColor = UIColor.clear
         buildViews()
         buildConstraints()
+        // 弹窗审计 E1-19（未覆盖的一半）：数据未到先呈现面板框架 + 加载图标，
+        // 不等首轮 loadDrafts。副文案与“点任意一份”提示在数据到达前先藏起
+        // （无卡片可点时提示会误导），renderDrafts 按实际态（列表/空态/失败态）
+        // 再决定显隐；加载占位由 renderDrafts 清空 listStack 时一并摘掉。
+        showLoadingState()
         loadDrafts { [weak self] in
+            self?.hideLoadingState()
             self?.renderDrafts()
             self?.draftsInitialLoaded = true
             self?.tryPlayEntrance()
         }
     }
 
+    /// E1-19 加载态：列表区只放细圆环（上下各 30pt，与空态文案上边距同口径），
+    /// 圆环不拦截点按（BearyWebRingSpinnerView 自带 isUserInteractionEnabled=false）。
+    private func showLoadingState() {
+        subWrap.isHidden = true
+        hintWrap.isHidden = true
+        loadingWrap.translatesAutoresizingMaskIntoConstraints = false
+        loadingWrap.addSubview(loadingSpinner)
+        NSLayoutConstraint.activate([
+            loadingSpinner.centerXAnchor.constraint(equalTo: loadingWrap.centerXAnchor),
+            loadingSpinner.topAnchor.constraint(equalTo: loadingWrap.topAnchor, constant: 30),
+            loadingSpinner.bottomAnchor.constraint(equalTo: loadingWrap.bottomAnchor, constant: -30),
+        ])
+        listStack.addArrangedSubview(loadingWrap)
+        loadingSpinner.startSpinning()
+    }
+
+    private func hideLoadingState() {
+        loadingSpinner.stopSpinning()
+        listStack.removeArrangedSubview(loadingWrap)
+        loadingWrap.removeFromSuperview()
+    }
+
     override func viewWillAppear(_ animated: Bool) {
         super.viewWillAppear(animated)
-        if !didPlayEntrance && !UIAccessibility.isReduceMotionEnabled {
+        // E1-19：初态只在面板入场未播时置——面板已先出现后重进 Appear
+        // （如上层弹框关闭回来）不再把面板藏回屏外，否则 playSheetEntrance
+        // 的已播守卫会让面板卡在屏外。
+        if !didPlaySheetEntrance && !UIAccessibility.isReduceMotionEnabled {
             applyEntranceStartState()
         }
     }
@@ -191,17 +232,46 @@ final class BearyDraftBoxViewController: UIViewController {
     override func viewDidAppear(_ animated: Bool) {
         super.viewDidAppear(animated)
         draftBoxAppeared = true
+        // E1-19：面板框架入场不以数据为门——慢读时面板先带加载图标出现；
+        // 卡片入场仍由 tryPlayEntrance 的 draftsInitialLoaded 门控。
+        playSheetEntrance()
         tryPlayEntrance()
+    }
+
+    /// E1-19 面板框架入场（只播 sheet + 遮罩，不碰卡片）：首个 viewDidAppear
+    /// 即播，与数据到达无关；减动效直显终值。已播过时直接返回，数据到达后
+    /// 的 tryPlayEntrance 不再重播面板（已有元素不重播）。
+    private func playSheetEntrance() {
+        guard !didPlaySheetEntrance else { return }
+        didPlaySheetEntrance = true
+        if UIAccessibility.isReduceMotionEnabled {
+            sheetView.transform = .identity
+            sheetView.alpha = 1
+            backdropButton.alpha = 1
+            return
+        }
+        view.layoutIfNeeded()
+        applyEntranceStartState()
+        let duration: TimeInterval = 0.25
+        UIView.animate(withDuration: duration, delay: 0, options: .curveEaseOut, animations: {
+            self.sheetView.transform = .identity
+            self.sheetView.alpha = 1
+        })
+        // 遮罩 0.25s 淡入（与卡片滑入解耦）。
+        UIView.animate(withDuration: 0.25, delay: 0, options: .curveEaseOut, animations: {
+            self.backdropButton.alpha = 1
+        })
     }
 
     /// 88 包 M8：入场错峰只在“已 Appear 且首轮 loadDrafts 已渲染”时播一次；
     /// 减动效与已播过时与原来一致，直接返回。
-    /// 审计第 12 项：本函数是入场唯一入口——“数据就绪（draftsInitialLoaded）+
+    /// 审计第 12 项：本函数是卡片入场唯一入口——“数据就绪（draftsInitialLoaded）+
     /// 面板可见（draftBoxAppeared）+ 首屏卡片入场”在此一处协调，不再由
-    /// renderDrafts 自行播卡片（原 renderDrafts 首轮即以 +0.03 逐张播全部卡片且
-    /// 无封顶，面板出现前就可能播完；tryPlayEntrance 又因 draftCardsAnimatedOnce
-    /// 已置真而不再重播，造成首开看不到卡片入场）。renderDrafts 只建卡片终态，
-    /// 入场初态与动画一律由本函数在面板到位时设置。
+    /// renderDrafts 自行播卡片。renderDrafts 只建卡片终态，入场初态与动画一律
+    /// 由本函数在面板到位时设置。
+    /// E1-19 面板拆分（以 #571 卡片版为底重做）：面板框架由 viewDidAppear 的
+    /// playSheetEntrance 先播，本函数面板已播时只播卡片、不重播面板；面板未播
+    /// 时走兜底分支（面板动画播完再播卡片）。
     private func tryPlayEntrance() {
         // 2026-10-28 Li 令：遮罩出现时 0.25s 淡入；减动效直显终值。
         if UIAccessibility.isReduceMotionEnabled { backdropButton.alpha = 1 }
@@ -209,8 +279,6 @@ final class BearyDraftBoxViewController: UIViewController {
               !UIAccessibility.isReduceMotionEnabled else { return }
         didPlayEntrance = true
         draftCardsAnimatedOnce = true
-        view.layoutIfNeeded()
-        applyEntranceStartState()
         // 只动画当前可见卡片：卡片在滚动区坐标系内与当前可视区域相交才入场；
         // 屏外卡片保持终态（alpha 1、identity），滚到时直接可见，不补播、
         // 不留隐藏态。空态/失败态 wrap 不是卡片，不进此列。
@@ -227,13 +295,9 @@ final class BearyDraftBoxViewController: UIViewController {
             cardView.alpha = 0
             cardView.transform = CGAffineTransform(translationX: 0, y: 8)
         }
-        let duration: TimeInterval = 0.25
-        UIView.animate(withDuration: duration, delay: 0, options: .curveEaseOut, animations: {
-            self.sheetView.transform = .identity
-            self.sheetView.alpha = 1
-        }, completion: { _ in
-            // 错峰延迟设上限：逐张 +0.04，但累计不超过 0.36——大量草稿时
-            // 尾部可见卡片不再拖出超长尾巴；超上限的卡片同批播出。
+        // 卡片播放入 playCards：错峰延迟设上限，逐张 +0.04，但累计不超过 0.36——
+        // 大量草稿时尾部可见卡片不再拖出超长尾巴；超上限的卡片同批播出。
+        let playCards = {
             let maxDelay: TimeInterval = 0.36
             for (index, cardView) in cardViews.enumerated() {
                 let delay = min(TimeInterval(index) * 0.04, maxDelay)
@@ -242,6 +306,19 @@ final class BearyDraftBoxViewController: UIViewController {
                     cardView.transform = .identity
                 })
             }
+        }
+        if didPlaySheetEntrance {
+            playCards()
+            return
+        }
+        view.layoutIfNeeded()
+        applyEntranceStartState()
+        let duration: TimeInterval = 0.25
+        UIView.animate(withDuration: duration, delay: 0, options: .curveEaseOut, animations: {
+            self.sheetView.transform = .identity
+            self.sheetView.alpha = 1
+        }, completion: { _ in
+            playCards()
         })
         // 遮罩 0.25s 淡入（与卡片滑入解耦）。
         UIView.animate(withDuration: 0.25, delay: 0, options: .curveEaseOut, animations: {
@@ -385,6 +462,11 @@ final class BearyDraftBoxViewController: UIViewController {
         }
         newButton.titleEdgeInsets = UIEdgeInsets(top: 0, left: 6, bottom: 0, right: 0)
         newButton.contentEdgeInsets = UIEdgeInsets(top: 10, left: 0, bottom: 10, right: 0)
+        // 弹窗审计 E1-10：新建钮原视觉高约 37（13.5pt 字 + 上下各 10 内边距），
+        // 未达 44。最小 44 高约束补足热区（卡片打开钮 8-15 同款做法）；
+        // 外包 wrap 上缘 = 钮上缘、下缘留 12pt 底边距，44 帧完整落在 wrap 内，
+        // 不被父容器截断；文案与位置不变，只虚线框高一档。
+        newButton.heightAnchor.constraint(greaterThanOrEqualToConstant: 44).isActive = true
         newButton.addTarget(self, action: #selector(newDraftTapped), for: .touchUpInside)
         // M19：新建钮加与卡片一致的按压底色反馈。
         newButton.addTarget(self, action: #selector(newButtonTouchDown(_:)), for: .touchDown)
@@ -409,6 +491,12 @@ final class BearyDraftBoxViewController: UIViewController {
         undoButton.translatesAutoresizingMaskIntoConstraints = false
         undoButton.addTarget(self, action: #selector(undoDeleteTapped), for: .touchUpInside)
         undoButton.bearyAddPressFeedback()
+        // 弹窗审计 E1-10：撤销为纯文字约 19 高，未达 44。BearyHit44Button 扩热区
+        // + 最小 44 高约束；undoBar 同补最小 44 高——否则 44 帧会超出约 41 高的
+        // bar、上缘被 undoWrap 截断（wrap 上缘 = bar 上缘、无上边距）。
+        // bar 高 44 时 label 上下 12 约束仍成立，文案居中位置基本不动。
+        undoButton.heightAnchor.constraint(greaterThanOrEqualToConstant: 44).isActive = true
+        undoBar.heightAnchor.constraint(greaterThanOrEqualToConstant: 44).isActive = true
         undoWrap.addSubview(undoBar)
         undoBar.addSubview(undoLabel)
         undoBar.addSubview(undoButton)
@@ -1252,10 +1340,21 @@ final class BearyDraftBoxViewController: UIViewController {
     }
 
     @objc private func closeBox() {
+        // 弹窗审计 E1-18：关闭钮/遮罩/把手下滑三路只走统一退场，回调为空，
+        // 不另播动画——旧 closeBox 本身就是这支退场，抽成共用方法后行为不变。
+        dismissWithExitAnimation(completion: nil)
+    }
+
+    /// 弹窗审计 E1-18 统一退场完成回调：关闭、打开、新建三路共用同一
+    /// 0.25s 退场（原 closeBox 的遮罩淡出 + 面板滑出，减动效直 dismiss），
+    /// dismiss 完成后才调 completion（即原 onNew/onOpen 回调）。
+    /// 退场在途时再点按一律忽略：不重复播动画，也不让“关闭后又打开”
+    /// 的回调在关闭完成后再执行；先到的一路为准。
+    private func dismissWithExitAnimation(completion: (() -> Void)?) {
         guard !isDismissing else { return }
         isDismissing = true
         if UIAccessibility.isReduceMotionEnabled {
-            dismiss(animated: false, completion: nil)
+            dismiss(animated: false, completion: completion)
             return
         }
         let duration: TimeInterval = 0.25
@@ -1271,12 +1370,14 @@ final class BearyDraftBoxViewController: UIViewController {
                 self.sheetView.transform = CGAffineTransform(translationX: 0, y: self.sheetView.bounds.height)
             }
         }, completion: { _ in
-            self.dismiss(animated: false, completion: nil)
+            self.dismiss(animated: false, completion: completion)
         })
     }
 
     @objc private func newDraftTapped() {
-        onNewHandler()
+        dismissWithExitAnimation { [weak self] in
+            self?.onNewHandler()
+        }
     }
 
     // M19：新建钮按压底色（与卡片 cardTouchDown/cardTouchUp 同口径）。
@@ -1365,7 +1466,10 @@ final class BearyDraftBoxViewController: UIViewController {
     @objc private func cardTapped(_ sender: UIButton) {
         for entry in cardEntries {
             if entry.button === sender {
-                onOpenHandler(entry.draftValue)
+                // E1-18：整卡打开先走统一退场，dismiss 后再调原 onOpen 回调。
+                dismissWithExitAnimation { [weak self] in
+                    self?.onOpenHandler(entry.draftValue)
+                }
                 return
             }
         }
@@ -1374,7 +1478,10 @@ final class BearyDraftBoxViewController: UIViewController {
     @objc private func openTapped(_ sender: UIButton) {
         for entry in openEntries {
             if entry.button === sender {
-                onOpenHandler(entry.draftValue)
+                // E1-18：打开钮与整卡同路，先统一退场再调原 onOpen 回调。
+                dismissWithExitAnimation { [weak self] in
+                    self?.onOpenHandler(entry.draftValue)
+                }
                 return
             }
         }
@@ -1588,7 +1695,9 @@ private final class BearyDraftBoxInstantAnimator: NSObject, UIViewControllerAnim
 
 // MARK: - 虚线边框按钮（网页 .df-new 的 1.5px dashed 边框）
 
-private final class BearyDraftBoxDashedButton: UIButton {
+// 弹窗审计 E1-10：虚线钮走 BearyHit44Button（只扩触摸帧，视觉帧不动；
+// 本钮另有最小 44 高约束，帧本身已达 44，扩热区为兜底）。
+private final class BearyDraftBoxDashedButton: BearyHit44Button {
 
     private let dashedLayer = CAShapeLayer()
 
