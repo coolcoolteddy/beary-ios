@@ -922,7 +922,7 @@ private final class BearyImageViewerFadeAnimator: NSObject, UIViewControllerAnim
     }
 
     func transitionDuration(using transitionContext: UIViewControllerContextTransitioning?) -> TimeInterval {
-        return presenting ? 0.2 : 0.16
+        return 0.25
     }
 
     func animateTransition(using transitionContext: UIViewControllerContextTransitioning) {
@@ -933,7 +933,7 @@ private final class BearyImageViewerFadeAnimator: NSObject, UIViewControllerAnim
         }
         transitionContext.containerView.addSubview(toView)
         toView.alpha = 0
-        UIView.animate(withDuration: duration, animations: {
+        UIView.animate(withDuration: duration, delay: 0, options: presenting ? .curveEaseOut : .curveEaseIn, animations: {
             toView.alpha = 1
         }, completion: { _ in
             transitionContext.completeTransition(!transitionContext.transitionWasCancelled)
@@ -958,7 +958,7 @@ private final class BearyImageViewerReturnAnimator: NSObject, UIViewControllerAn
     }
 
     func transitionDuration(using transitionContext: UIViewControllerContextTransitioning?) -> TimeInterval {
-        return 0.3
+        return 0.25
     }
 
     func animateTransition(using transitionContext: UIViewControllerContextTransitioning) {
@@ -979,9 +979,9 @@ private final class BearyImageViewerReturnAnimator: NSObject, UIViewControllerAn
               viewer.currentIndexForDismiss == viewer.initialIndex,
               let origin = viewer.originFrameInWindow,
               let start = viewer.dismissStartInfo() else {
-            // 兜底：减动效、无图、无原处、翻页后关场——走 160ms 淡出，
+            // 兜底：减动效、无图、无原处、翻页后关场——走 0.25s 淡出，
             // 但 toView 已在位，同样不闪。
-            UIView.animate(withDuration: reduceMotion ? 0 : 0.16, animations: {
+            UIView.animate(withDuration: reduceMotion ? 0 : 0.25, animations: {
                 fromView.alpha = 0
             }, completion: { _ in
                 transitionContext.completeTransition(!transitionContext.transitionWasCancelled)
@@ -1002,7 +1002,7 @@ private final class BearyImageViewerReturnAnimator: NSObject, UIViewControllerAn
         tempView.layer.cornerRadius = 12
         container.addSubview(tempView)
         let targetRect = container.convert(origin, from: nil)
-        UIView.animate(withDuration: 0.3, delay: 0, options: .curveEaseOut, animations: {
+        UIView.animate(withDuration: 0.25, delay: 0, options: .curveEaseOut, animations: {
             fromView.alpha = 0
             tempView.frame = targetRect
         }, completion: { _ in

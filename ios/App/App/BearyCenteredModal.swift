@@ -164,7 +164,7 @@ private final class BearyCenteredFadeAnimator: NSObject, UIViewControllerAnimate
                 transitionContext.completeTransition(!transitionContext.transitionWasCancelled)
                 return
             }
-            UIView.animate(withDuration: duration, animations: {
+            UIView.animate(withDuration: duration, delay: 0, options: .curveEaseOut, animations: {
                 toView.alpha = 1
                 toView.transform = .identity
             }, completion: { _ in
@@ -182,7 +182,7 @@ private final class BearyCenteredFadeAnimator: NSObject, UIViewControllerAnimate
                 transitionContext.completeTransition(!transitionContext.transitionWasCancelled)
                 return
             }
-            UIView.animate(withDuration: duration, animations: {
+            UIView.animate(withDuration: duration, delay: 0, options: .curveEaseIn, animations: {
                 fromView.alpha = 0
                 fromView.transform = CGAffineTransform(translationX: 0, y: offset)
             }, completion: { _ in

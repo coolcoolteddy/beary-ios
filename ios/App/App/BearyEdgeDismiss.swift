@@ -94,7 +94,7 @@ private final class BearySlideTransitionAnimator: NSObject, UIViewControllerAnim
     }
 
     func transitionDuration(using transitionContext: UIViewControllerContextTransitioning?) -> TimeInterval {
-        return UIAccessibility.isReduceMotionEnabled ? 0 : 0.35
+        return UIAccessibility.isReduceMotionEnabled ? 0 : 0.25
     }
 
     func animateTransition(using transitionContext: UIViewControllerContextTransitioning) {
@@ -111,7 +111,7 @@ private final class BearySlideTransitionAnimator: NSObject, UIViewControllerAnim
             toView.frame = transitionContext.finalFrame(for: toVC)
             let width = container.bounds.width
             toView.transform = CGAffineTransform(translationX: width, y: 0)
-            UIView.animate(withDuration: duration, animations: {
+            UIView.animate(withDuration: duration, delay: 0, options: .curveEaseOut, animations: {
                 toView.transform = .identity
             }, completion: { _ in
                 transitionContext.completeTransition(!transitionContext.transitionWasCancelled)
@@ -120,7 +120,7 @@ private final class BearySlideTransitionAnimator: NSObject, UIViewControllerAnim
             container.insertSubview(toView, belowSubview: fromView)
             toView.frame = transitionContext.finalFrame(for: toVC)
             let width = container.bounds.width
-            UIView.animate(withDuration: duration, animations: {
+            UIView.animate(withDuration: duration, delay: 0, options: .curveEaseIn, animations: {
                 fromView.transform = CGAffineTransform(translationX: width, y: 0)
             }, completion: { _ in
                 // 115 设置页空白守卫（根因未证实）：转场取消 / 中断时显式

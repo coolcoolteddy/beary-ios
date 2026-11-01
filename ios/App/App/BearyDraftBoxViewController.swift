@@ -159,7 +159,7 @@ final class BearyDraftBoxViewController: UIViewController {
             cardView.alpha = 0
             cardView.transform = CGAffineTransform(translationX: 0, y: 8)
         }
-        let duration = isPadLayout ? 0.25 : 0.32
+        let duration: TimeInterval = 0.25
         UIView.animate(withDuration: duration, delay: 0, options: .curveEaseOut, animations: {
             self.sheetView.transform = .identity
             self.sheetView.alpha = 1
@@ -1198,8 +1198,8 @@ final class BearyDraftBoxViewController: UIViewController {
             dismiss(animated: false, completion: nil)
             return
         }
-        let duration = isPadLayout ? 0.25 : 0.32
-        // 第 30 项：遮罩 0.25s 单独淡出（与面板滑出解耦；面板仍走原时长 0.25/0.32）。
+        let duration: TimeInterval = 0.25
+        // 第 30 项：遮罩 0.25s 单独淡出（与面板滑出解耦；面板走视觉清单第 8 项统一 0.25s）。
         UIView.animate(withDuration: 0.25, delay: 0, options: .curveEaseOut, animations: {
             self.backdropButton.alpha = 0
         })
