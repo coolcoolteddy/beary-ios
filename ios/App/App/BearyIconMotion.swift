@@ -147,9 +147,13 @@ enum BearyIconMotion {
 extension UIButton {
     /// W6：挂通用按压反馈（touchDown 缩+震；松手/滑出/取消回弹）。不改原有
     /// touchUpInside 逻辑与布局；钮自身作 target，不依赖所在 VC 的方法。
+    /// 审计 15 项第 12 项：补 touchDragExit（滑出恢复）与 touchDragEnter
+    /// （滑入恢复按压态）；业务动作仍只由 touchUpInside 执行；滚动容器
+    /// 内滑动时 touchCancel 仍兜底（原有行为不动）。
     func bearyAddPressFeedback() {
         addTarget(self, action: #selector(bearyPressDown), for: .touchDown)
-        addTarget(self, action: #selector(bearyPressUp), for: [.touchUpInside, .touchUpOutside, .touchCancel])
+        addTarget(self, action: #selector(bearyPressUp), for: [.touchUpInside, .touchUpOutside, .touchCancel, .touchDragExit])
+        addTarget(self, action: #selector(bearyPressDown), for: .touchDragEnter)
     }
 
     /// W6：行级全宽钮专用——只给按下轻震，不缩放（全宽行缩 .84 会像整行抖动；
