@@ -6188,7 +6188,7 @@ extension BearyTimelineViewController: UITableViewDataSource, UITableViewDelegat
             }
         }
         // N3：切日新行错峰滑入——cell 即将上屏时从透明 + 下偏 6 起播，
-        // 按面板行序号错峰（步进 0.05s、封顶 0.5s；减动效时队列为空，不播）。
+        // 按面板行序号错峰（步进 0.05s、封顶 0.24s，与月历一致；减动效时队列为空，不播）。
         // 与 M2 同机制：播过即摘、代际不符即弃；仅新日行播，已有行不重播。
         // 只动 transform/opacity，严禁逐帧改 height。
         if let dayOrder = daySwitchStagger[indexPath] {
@@ -6196,7 +6196,7 @@ extension BearyTimelineViewController: UITableViewDataSource, UITableViewDelegat
             if daySwitchGeneration == staggerGeneration {
                 cell.alpha = 0
                 cell.transform = CGAffineTransform(translationX: 0, y: 6)
-                let delay = min(Double(dayOrder) * 0.05, 0.5)
+                let delay = min(Double(dayOrder) * 0.05, 0.24)
                 UIView.animate(withDuration: 0.25, delay: delay, options: [.curveEaseOut, .allowUserInteraction], animations: {
                     cell.alpha = 1
                     cell.transform = .identity
