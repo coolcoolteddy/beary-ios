@@ -1555,9 +1555,9 @@ final class BearyTimelineCell: UITableViewCell {
             dotView.layer.cornerRadius = 4.5
             dotRingView.isHidden = true
         } else if entry.isFriendsOnly {
-            // 好友第一期：仅好友态图标＝官方单人（icon_user），圆点沿用私密档的蓝，
+            // 好友第一期：仅好友态图标＝官方双人锁（icon_friends_lock），圆点沿用私密档的蓝，
             // 不新发明颜色；限时互斥，故仅好友档恒不带倒计时行。
-            pillIconView.image = BearyIconImages.image(named: "icon_user", pointSize: 14)
+            pillIconView.image = BearyIconImages.image(named: "icon_friends_lock", pointSize: 14)
             pillIconView.tintColor = BearyColors.timelineIconGray
             dotSizeConstraint?.constant = 9
             dotRingSizeConstraint?.constant = 12
