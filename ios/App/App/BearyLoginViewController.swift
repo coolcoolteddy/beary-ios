@@ -432,8 +432,8 @@ final class BearyLoginViewController: UIViewController {
     private func configureAgreeRow() {
         agreeRow.translatesAutoresizingMaskIntoConstraints = false
         agreeButton.translatesAutoresizingMaskIntoConstraints = false
-        agreeButton.layer.cornerRadius = 6
-        agreeButton.layer.borderWidth = 1.5
+        agreeButton.layer.cornerRadius = 4
+        agreeButton.layer.borderWidth = 1
         agreeButton.layer.bearyDynamicBorderColor = BearyColors.line
         agreeButton.backgroundColor = BearyColors.faint
         agreeButton.accessibilityLabel = "我已阅读并同意《隐私政策》和《用户协议》"

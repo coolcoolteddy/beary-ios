@@ -197,9 +197,9 @@ final class BearyRecipientPickerViewController: UIViewController, UITextFieldDel
         notifyRow.alignment = .center
         // iCity：@ 提醒无按篇开关——通知行隐藏（约束与高度计算见下文同步改，不留空隙）。
         notifyRow.isHidden = true
-        notifyCheckButton.layer.cornerRadius = 6
+        notifyCheckButton.layer.cornerRadius = 4
         notifyCheckButton.layer.masksToBounds = true
-        notifyCheckButton.layer.borderWidth = 1.5
+        notifyCheckButton.layer.borderWidth = 1
         notifyCheckButton.layer.bearyDynamicBorderColor = BearyColors.line
         notifyCheckButton.titleLabel?.font = BearyDynamicType.scaledFont(for: UIFont.boldSystemFont(ofSize: 14))
         notifyCheckButton.titleLabel?.adjustsFontForContentSizeCategory = true

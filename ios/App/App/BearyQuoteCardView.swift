@@ -488,7 +488,7 @@ final class BearyQuoteCardView: UIView {
                     thumbView.backgroundColor = BearyColors.faint
                     thumbView.contentMode = .scaleAspectFill
                     thumbView.clipsToBounds = true
-                    thumbView.layer.cornerRadius = 7
+                    thumbView.layer.cornerRadius = 8
                     NSLayoutConstraint.activate([
                         thumbView.widthAnchor.constraint(equalToConstant: 42),
                         thumbView.heightAnchor.constraint(equalToConstant: 42),
