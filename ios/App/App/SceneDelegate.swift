@@ -372,17 +372,27 @@ final class BearyChromeViewController: UIViewController {
         ])
     }
 
-    /// I17：顶栏图标资产缺失回退——资产图优先，缺失时用同义 SF 通用图标，
-    /// 绝不留空白热区（SF 图亦为 alwaysTemplate，与资产图同着色口径）。
-    private func topIconImage(named: String, systemFallback: String) -> UIImage? {
+    /// I17 改（视觉清单第 10 项）：顶栏图标资产缺失回退——资产图优先，缺失时
+    /// 用同语义官方资源（小写 icon_*），不再用 SF Symbol 顶替；两源皆空时返回 nil，
+    /// 不生成、不绘制任何替代图标（按钮热区与无障碍文案仍在，图标位留空，见 PR 残留风险）。
+    /// 映射：IconSearch→icon_search、IconGift→icon_gift、IconBell→icon_bell、
+    /// IconHome→icon_home、IconUser→icon_user、IconPlus→icon_plus；
+    /// IconTimeline 无小写同名资产，同语义取 icon_calendar（与旧 SF calendar 同义）。
+    /// 开发环境下两源皆空记一行缺图告警（正式包无日志、无用户可见变化）。
+    private func topIconImage(named: String, officialFallback: String) -> UIImage? {
         if let img = UIImage(named: named)?.withRenderingMode(.alwaysTemplate) { return img }
-        return UIImage(systemName: systemFallback)?.withRenderingMode(.alwaysTemplate)
+        if let img = UIImage(named: officialFallback)?.withRenderingMode(.alwaysTemplate) { return img }
+        #if DEBUG
+        NSLog("[BearyIconMissing] top icon asset missing: %@ (official fallback %@ also missing)", named, officialFallback)
+        #endif
+        return nil
     }
 
-    /// 底栏分段图标：与旧钮同源（资产优先、SF 回退），统一缩到 24pt（旧钮图标尺寸），
-    /// template 模式不变；两源皆空时返回空白图以保四段不断（与旧钮空白热区同口径）。
-    private func segmentIcon(named: String, systemFallback: String) -> UIImage {
-        let src = topIconImage(named: named, systemFallback: systemFallback) ?? UIImage()
+    /// 底栏分段图标：与旧钮同源（资产优先、官方资源回退），统一缩到 24pt（旧钮图标尺寸），
+    /// template 模式不变；两源皆空时返回空白图以保三段不断——空白只是空位，
+    /// 不是绘制的替代图标（缺图时该段图标位留空，见 PR 残留风险）。
+    private func segmentIcon(named: String, officialFallback: String) -> UIImage {
+        let src = topIconImage(named: named, officialFallback: officialFallback) ?? UIImage()
         let size = CGSize(width: 24, height: 24)
         let format = UIGraphicsImageRendererFormat()
         format.opaque = false
@@ -399,10 +409,10 @@ final class BearyChromeViewController: UIViewController {
     /// 画成 32×32 图（alwaysOriginal）走原有 setImage 路径：按钮 imageView 已钉
     /// 32×32 + scaleAspectFill，改 title 方案会被空 imageView 挤占，画图最稳。
 
-    private func makeTopIconButton(imageName: String, fallbackSystemName: String, tint: UIColor, action: Selector) -> UIButton {
+    private func makeTopIconButton(imageName: String, officialFallback: String, tint: UIColor, action: Selector) -> UIButton {
         // 顶栏三个钮去玻璃（Li 2026-10-27 令）：回 51a572d 原版 BearyHit44Button；登录 pill 不动。
         let b = BearyHit44Button(type: .custom)
-        b.setImage(topIconImage(named: imageName, systemFallback: fallbackSystemName), for: .normal)
+        b.setImage(topIconImage(named: imageName, officialFallback: officialFallback), for: .normal)
         b.tintColor = tint
         b.layer.cornerRadius = 12
         b.addTarget(self, action: action, for: .touchUpInside)
@@ -474,14 +484,14 @@ final class BearyChromeViewController: UIViewController {
             login.widthAnchor.constraint(greaterThanOrEqualToConstant: login.bounds.width + 30),
         ])
         loginButton = login
-        let search = makeTopIconButton(imageName: "IconSearch", fallbackSystemName: "magnifyingglass", tint: ink, action: #selector(didTapSearch))
+        let search = makeTopIconButton(imageName: "IconSearch", officialFallback: "icon_search", tint: ink, action: #selector(didTapSearch))
         search.accessibilityLabel = "搜索"
-        let gift = makeTopIconButton(imageName: "IconGift", fallbackSystemName: "gift", tint: bearyOrange, action: #selector(didTapGift))
+        let gift = makeTopIconButton(imageName: "IconGift", officialFallback: "icon_gift", tint: bearyOrange, action: #selector(didTapGift))
         gift.accessibilityLabel = "邀请"
         giftButton = gift
         // 2026-10-26：头像钮由铃铛钮取代（Li 定：消息入口挪到首页顶栏右上角）；
-        // 铃铛走顶栏图标钮同款（IconBell 官方资产优先、SF bell 回退），点按进消息页。
-        let bell = makeTopIconButton(imageName: "IconBell", fallbackSystemName: "bell", tint: ink, action: #selector(didTapBell))
+        // 铃铛走顶栏图标钮同款（IconBell 官方资产优先、icon_bell 回退），点按进消息页。
+        let bell = makeTopIconButton(imageName: "IconBell", officialFallback: "icon_bell", tint: ink, action: #selector(didTapBell))
         bell.accessibilityLabel = "消息"
         bellButton = bell
         let spacer = UIView()
@@ -531,11 +541,11 @@ final class BearyChromeViewController: UIViewController {
             blur.heightAnchor.constraint(equalToConstant: 58),
         ])
         let tabIcons: [(String, String)] = [
-            ("IconHome", "house"),
-            ("IconTimeline", "calendar"),
-            ("IconUser", "person"),
+            ("IconHome", "icon_home"),
+            ("IconTimeline", "icon_calendar"),
+            ("IconUser", "icon_user"),
         ]
-        let seg = BearyHit44SegmentedControl(items: tabIcons.map { segmentIcon(named: $0.0, systemFallback: $0.1) })
+        let seg = BearyHit44SegmentedControl(items: tabIcons.map { segmentIcon(named: $0.0, officialFallback: $0.1) })
         seg.apportionsSegmentWidthsByContent = false
         // 67 包反馈修：分段器自身底色显式 clear——之前没设，系统默认灰底透出来，
         // 选中格 bg 52% 盖在灰底上就是截图里那截灰；clear 后选中格直接落在玻璃衬底上，
@@ -609,7 +619,7 @@ final class BearyChromeViewController: UIViewController {
         fabContainer.addSubview(fabGlass)
         fabGlassView = fabGlass
         let fab = UIButton(type: .custom)
-        fab.setImage(topIconImage(named: "IconPlus", systemFallback: "plus"), for: .normal)
+        fab.setImage(topIconImage(named: "IconPlus", officialFallback: "icon_plus"), for: .normal)
         fab.tintColor = .white
         fab.backgroundColor = .clear
         // FAB 点按只留容器缩放：关掉系统默认高亮压暗（adjustsImageWhenHighlighted
