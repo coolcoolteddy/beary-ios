@@ -66,6 +66,12 @@ final class BearyLocationPopoverView: UIView, CLLocationManagerDelegate, MKLocal
     private let geocoder = CLGeocoder()
     private let completer = MKLocalSearchCompleter()
     private var suggestions: [MKLocalSearchCompletion] = []
+    private var activeSearch: MKLocalSearch?
+    /// 交互代次：每次打开（startAutoLocate → cancelRequests）与每次关闭
+    /// （cancelRequests）都 +1；MKLocalSearch 回调只作用于捕获时的那次气泡。
+    /// 仅靠 !isHidden 不够：调用方关闭动画 0.20s 后才置 isHidden=true，动画期间
+    /// 或重开后旧回调仍能通过 isHidden 检查并经 didConfirm 落定旧地点。
+    private var interactionGeneration = 0
     private var located: DiaryLocation?
     private var locating = false
     private var manualMode = false
@@ -285,8 +291,14 @@ final class BearyLocationPopoverView: UIView, CLLocationManagerDelegate, MKLocal
         }
     }
 
-    /// 收起时停掉在途请求：定位/地理编码/搜索建议都不再回调，避免关弹窗后还弹结果。
+    /// 收起时停掉在途请求：定位/地理编码/搜索建议/当前 MKLocalSearch 都不再回调，
+    /// 避免关弹窗后还弹结果。代次先 +1：即使已取消的搜索回调仍被投递，或关闭动画
+    /// 期间（isHidden 尚未置 true）回调到达，旧代次检查也会把它丢弃；下次打开
+    /// 经 startAutoLocate 再调本方法又 +1，旧回调同样干扰不了新气泡。
     func cancelRequests() {
+        interactionGeneration += 1
+        activeSearch?.cancel()
+        activeSearch = nil
         locating = false
         locationManager.stopUpdatingLocation()
         geocoder.cancelGeocode()
@@ -409,8 +421,13 @@ final class BearyLocationPopoverView: UIView, CLLocationManagerDelegate, MKLocal
         // district 留空——他人视角展示层 fail-closed（不显示），不拿精确名冒充区级。
         let request = MKLocalSearch.Request()
         request.naturalLanguageQuery = text
-        MKLocalSearch(request: request).start { [weak self] response, _ in
-            guard let self = self, !self.isHidden else { return }
+        let generation = interactionGeneration
+        activeSearch?.cancel()
+        let search = MKLocalSearch(request: request)
+        activeSearch = search
+        search.start { [weak self] response, _ in
+            guard let self = self, !self.isHidden, self.interactionGeneration == generation else { return }
+            if self.activeSearch === search { self.activeSearch = nil }
             let district = response?.mapItems.first.map { BearyLocationDisplay.district(from: $0.placemark) } ?? nil
             self.delegate?.locationPopover(self, didConfirm: DiaryLocation(name: text, district: district))
         }
@@ -421,8 +438,13 @@ final class BearyLocationPopoverView: UIView, CLLocationManagerDelegate, MKLocal
         guard index < suggestions.count else { return }
         let completion = suggestions[index]
         let request = MKLocalSearch.Request(completion: completion)
-        MKLocalSearch(request: request).start { [weak self] response, _ in
-            guard let self = self, !self.isHidden else { return }
+        let generation = interactionGeneration
+        activeSearch?.cancel()
+        let search = MKLocalSearch(request: request)
+        activeSearch = search
+        search.start { [weak self] response, _ in
+            guard let self = self, !self.isHidden, self.interactionGeneration == generation else { return }
+            if self.activeSearch === search { self.activeSearch = nil }
             let placemark = response?.mapItems.first?.placemark
             let name = placemark?.name ?? completion.title
             // flatMap 把 String?? 压到一层 String?，与 DiaryLocation(district:) 入参对齐；
