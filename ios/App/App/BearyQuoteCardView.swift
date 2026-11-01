@@ -177,16 +177,18 @@ final class BearyQuoteCardView: UIView {
     /// 在途任务；clear 时先取消全部在途加载，视图留池不销毁。
     private var quoteThumbPool: [UIImageView] = []
     /// fixall-cell 5-17“本轮已算”标记：上次算过缩略图条宽时的输入快照。
-    /// 布局输入（卡宽/图条总宽/正文自然宽）全未变时，
-    /// layoutSubviews 不再重算、不再写约束，只读返回。
+    /// 审计 15 项第 6 项：缓存键改为内容文本＋字体＋可用宽度——命中判断
+    /// 不再先做 sizeThatFits 文本测量；正文自然宽只在键变化后才实测。
     private var lastThumbsLayoutBoundsWidth: CGFloat = -1
     private var lastThumbsLayoutTotalWidth: CGFloat = -1
-    private var lastThumbsLayoutTextNatural: CGFloat = -1
+    private var lastThumbsLayoutContent: String?
+    private var lastThumbsLayoutFont: UIFont?
 
     private func invalidateThumbsLayoutCache() {
         lastThumbsLayoutBoundsWidth = -1
         lastThumbsLayoutTotalWidth = -1
-        lastThumbsLayoutTextNatural = -1
+        lastThumbsLayoutContent = nil
+        lastThumbsLayoutFont = nil
     }
 
     /// fixall-cell 5-17：缩略图条宽的唯一计算入口（原 layoutSubviews 内联块抽出）。
@@ -197,18 +199,22 @@ final class BearyQuoteCardView: UIView {
         guard thumbsScrollView.isHidden == false, thumbsTotalWidth > 0 else { return }
         let rowWidth = bounds.width - 24
         if rowWidth <= 0 { return }
-        // 正文自然宽（单行实测）与缩略图条按 flex:1 分享剩余空间：
-        // 正文短时条带拿剩余全部，正文长时两者对半、正文换行。
-        let contentSingleLine = contentLabel.sizeThatFits(CGSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)).width
-        let textNatural = contentSingleLine
+        // 审计 15 项第 6 项：先用内容文本＋字体＋可用宽度判缓存命中，
+        // 命中直接返回，不先做 sizeThatFits；未命中才实测正文自然宽。
         if bounds.width == lastThumbsLayoutBoundsWidth,
            thumbsTotalWidth == lastThumbsLayoutTotalWidth,
-           textNatural == lastThumbsLayoutTextNatural {
+           contentLabel.text == lastThumbsLayoutContent,
+           contentLabel.font == lastThumbsLayoutFont {
             return
         }
         lastThumbsLayoutBoundsWidth = bounds.width
         lastThumbsLayoutTotalWidth = thumbsTotalWidth
-        lastThumbsLayoutTextNatural = textNatural
+        lastThumbsLayoutContent = contentLabel.text
+        lastThumbsLayoutFont = contentLabel.font
+        // 正文自然宽（单行实测）与缩略图条按 flex:1 分享剩余空间：
+        // 正文短时条带拿剩余全部，正文长时两者对半、正文换行。
+        let contentSingleLine = contentLabel.sizeThatFits(CGSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)).width
+        let textNatural = contentSingleLine
         let gaps: CGFloat = 2 * 8
         let avail = rowWidth - 15 - gaps
         if avail <= 0 { return }
