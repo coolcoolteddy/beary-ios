@@ -896,9 +896,6 @@ final class BearyTimelineCell: UITableViewCell {
     private var dotSizeConstraint: NSLayoutConstraint?
     private var dotRingSizeConstraint: NSLayoutConstraint?
     private var dotTopConstraint: NSLayoutConstraint?
-    /// 底部足行小熊回应图标视图（configure 现建现存；复用/重配即清），
-    /// 供 traitCollectionDidChange 在深浅切换时重刷深浅版 hug 图。
-    private var emoteIconView: UIImageView?
     // TL-3 引用卡与私密操作行。
     private let quoteButton = UIButton(type: .custom)
     // B-G1: left 3px line (web .tl-qcard border-left; full border removed).
@@ -918,13 +915,20 @@ final class BearyTimelineCell: UITableViewCell {
     /// N7 时间线图片灯箱：主图条点按回调（keys=本条过滤后图 key，index=点按位置），
     /// VC 侧复用独立文件内的 BearyEntryImageViewerViewController 全屏弹出；
     /// 引用卡小图不走此路（点按引用卡仍走 onQuoteEntry 打开被引用日记）。
-    var onTapImages: (([String], Int) -> Void)?
+    var onTapImages: (([String], Int, CGRect?) -> Void)?
     private let actsStack = UIStackView()
     private let editStatusLabel = UILabel()
     /// 2026-10-29 Li 定编辑态口径：无图标、只留文字；可编辑期内左侧为倒计时灰字 +
     /// 可点按的“编辑”二字（本行唯一的编辑入口，旧图标编辑钮已摘）；到期 live 翻转时
-    /// 同位置变“编辑已结束”，3 秒后淡出消失；首渲染已过期则直接不留。
+    /// 同位置变“编辑已结束”，3 秒后先淡出、再带动画塌掉；首渲染已过期则直接不留。
+    /// 2026-11-01 Li 新口径取代 2026-10-30 外框定格的后半段：淡出后本行不再
+    /// 永久占位，须塌回正常高度；文字出现那一刻仍不跳变（见 updateEditRow）。
     private let editStatusGroup = UIStackView()
+    /// 塌行用的临时高度约束：只在淡出后的塌行动画期间存在，动画结束即
+    /// 停用并随 isHidden=true 一起清掉；复用与重回可编辑态时同样复位，
+    /// 防止 0 高约束串到下一行。
+    private var editStatusHeightConstraint: NSLayoutConstraint?
+    private var editStatusCollapsing = false
     private let editTextButton = BearyHit44Button(type: .custom)
     private var editRowSawEditable = false
     private var editRowEndedShown = false
@@ -1013,6 +1017,7 @@ final class BearyTimelineCell: UITableViewCell {
 
         thumbsScrollView.translatesAutoresizingMaskIntoConstraints = false
         thumbsScrollView.showsHorizontalScrollIndicator = false
+        thumbsScrollView.delaysContentTouches = false
         thumbsStack.translatesAutoresizingMaskIntoConstraints = false
         thumbsStack.axis = .horizontal
         // 主图条：网页 tl-item grabrow / 广场卡口径——216 高、间距 8、圆角 12、
@@ -1081,6 +1086,7 @@ final class BearyTimelineCell: UITableViewCell {
         quoteThumbsStack.spacing = 5
         quoteThumbsScrollView.translatesAutoresizingMaskIntoConstraints = false
         quoteThumbsScrollView.showsHorizontalScrollIndicator = false
+        quoteThumbsScrollView.delaysContentTouches = false
         quoteThumbsScrollView.isHidden = true
         quoteThumbsScrollView.addSubview(quoteThumbsStack)
         NSLayoutConstraint.activate([
@@ -1277,10 +1283,6 @@ final class BearyTimelineCell: UITableViewCell {
             dotView.layer.bearyDynamicBorderColor = BearyColors.bg
         }
         quoteLeftLineView.backgroundColor = BearyColors.line
-        // 2026-10-29 改版追加：深浅切换时小熊回应 hug 图重刷为对应深浅版。
-        if let emoteView = emoteIconView {
-            emoteView.image = BearyEmoteImages.image(for: "hug", dark: traitCollection.userInterfaceStyle == .dark)
-        }
     }
 
     /// U14：行点按给内容列短暂 faint 底色（selectionStyle 已是 .none，
@@ -1380,6 +1382,12 @@ final class BearyTimelineCell: UITableViewCell {
         editRowEndedShown = false
         editStatusGroup.alpha = 1
         editStatusGroup.accessibilityElementsHidden = false
+        // 塌行残留复位：动画在途的完成回调以 editStatusCollapsing 守卫，
+        // 此处先置 false，旧动画完成时不再把新行藏掉；约束同步停用。
+        editStatusCollapsing = false
+        editStatusHeightConstraint?.isActive = false
+        editStatusHeightConstraint = nil
+        editStatusGroup.isHidden = false
         editTextButton.isHidden = true
         editTextButton.alpha = 1
         editTextButton.isEnabled = true
@@ -1410,7 +1418,6 @@ final class BearyTimelineCell: UITableViewCell {
             footStack.removeArrangedSubview(arranged)
             arranged.removeFromSuperview()
         }
-        emoteIconView = nil
         for arranged in metaStack.arrangedSubviews {
             metaStack.removeArrangedSubview(arranged)
             arranged.removeFromSuperview()
@@ -1785,7 +1792,6 @@ final class BearyTimelineCell: UITableViewCell {
             footStack.removeArrangedSubview(arranged)
             arranged.removeFromSuperview()
         }
-        emoteIconView = nil
         if published {
             // 2026-10-29 改版：足行三项按数量显隐——任一项为 0 就不显示该图标与数字，
             // 三项全 0 时整行塌掉（footStack 保持隐藏，cardStack 间距自然承接，不留空行）。
@@ -1804,29 +1810,11 @@ final class BearyTimelineCell: UITableViewCell {
                 emoteTotal += emote.count ?? 0
             }
             if emoteTotal > 0 {
-                // 小熊回应由文字改图标：官方 hug 拥抱表情（深色用 _dark 版，不 tint）
-                // ＋数字，与足项同款 14pt 图＋13pt 灰字、间距 4。
-                let emoteRow = UIStackView()
-                emoteRow.axis = .horizontal
-                emoteRow.spacing = 4
-                emoteRow.alignment = .center
-                let emoteIcon = UIImageView(image: BearyEmoteImages.image(for: "hug", dark: traitCollection.userInterfaceStyle == .dark))
-                emoteIcon.translatesAutoresizingMaskIntoConstraints = false
-                emoteIcon.contentMode = .scaleAspectFit
-                let emoteCountLabel = UILabel()
-                emoteCountLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13))
-                emoteCountLabel.adjustsFontForContentSizeCategory = true
-                emoteCountLabel.textColor = BearyColors.gray
-                emoteCountLabel.text = "\(emoteTotal)"
-                emoteCountLabel.setContentHuggingPriority(.required, for: .horizontal)
-                emoteRow.addArrangedSubview(emoteIcon)
-                emoteRow.addArrangedSubview(emoteCountLabel)
-                NSLayoutConstraint.activate([
-                    emoteIcon.widthAnchor.constraint(equalToConstant: 14),
-                    emoteIcon.heightAnchor.constraint(equalToConstant: 14),
-                ])
-                emoteIconView = emoteIcon
-                footItems.append(emoteRow)
+                // 回应数图标：单张熊脸 icon_mood（官方资产，放大核对过：只有熊脸，
+                // 无手臂、无抱抱动作、无道具），不再用 hug 拥抱表情，避免被误读为
+                // “N 个抱抱”。走足项同款 footItem：14pt 图＋13pt 灰字、间距 4，
+                // 模板渲染＋灰 tint，深浅模式自动跟走，无需深色变体重刷。
+                footItems.append(footItem(iconName: "icon_mood", text: "\(emoteTotal)"))
             }
             let bookmarkCount = entry.bookmarkCount ?? 0
             if bookmarkCount > 0 {
@@ -1876,17 +1864,19 @@ final class BearyTimelineCell: UITableViewCell {
         let keys = (entry.images ?? []).filter { !$0.isEmpty }
         let index = sender.view?.tag ?? 0
         guard index >= 0 && index < keys.count else { return }
-        onTapImages?(keys, index)
+        onTapImages?(keys, index, sender.view.map { $0.convert($0.bounds, to: nil) })
     }
 
     /// 2026-10-29 Li 定编辑态口径（无图标、只留文字、状态会变）：
     /// - 可编辑期内：左侧“还剩 N 分钟”灰字（按分钟刷新，向上取整，至少 1 分钟）+
     ///   可点按的“编辑”二字（本行唯一的编辑入口）；数字变化只改 label 文本。
     /// - 到期那一刻（本行此前已渲染过可编辑态，即看着它过期）：同位置变
-    ///   “编辑已结束”灰字，约 3 秒后淡出到不可见（减动效下直接不可见）。
-    ///   2026-10-30 外框定格：退场只降 alpha，绝不 isHidden——本行在布局里
-    ///   始终占位，卡片高度与限时虚线框（cardView.bounds）不因编辑态翻转
-    ///   而跳变；“什么都不留”指的是视觉上无文字，不是布局上塌掉本行。
+    ///   “编辑已结束”灰字，约 3 秒后先淡出、再带动画塌掉（减动效下直接塌掉）。
+    ///   2026-10-30 外框定格的前半段仍保留：文字出现那一刻只换文字、不增删
+    ///   视图，卡片高度与限时虚线框（cardView.bounds）不因文字翻转而跳变；
+    ///   2026-11-01 Li 新口径只取代后半段——淡出后本行不再永久占位，
+    ///   而是塌回首渲染已过期时的正常高度（actsStack 仅剩 9pt 栈间距与
+    ///   卡片底边距，与从未出过编辑行完全一致）。
     /// - 首渲染已过期（含 deadline 缺失即已锁）：不闪“编辑已结束”，直接什么都不留。
     /// - 小地球显隐与无障碍文案同在此定（已挪 meta 行末，恒灰色 21pt）。
     private func updateEditRow(entry: Entry) {
@@ -1895,6 +1885,11 @@ final class BearyTimelineCell: UITableViewCell {
             editRowSawEditable = true
             editRowEndTimer?.invalidate()
             editRowEndTimer = nil
+            // 重回可编辑态：塌行在途的动画不再生效（完成回调以
+            // editStatusCollapsing 守卫），约束同步停用。
+            editStatusCollapsing = false
+            editStatusHeightConstraint?.isActive = false
+            editStatusHeightConstraint = nil
             editStatusGroup.isHidden = false
             editStatusGroup.alpha = 1
             editStatusGroup.accessibilityElementsHidden = false
@@ -1936,24 +1931,71 @@ final class BearyTimelineCell: UITableViewCell {
         // 可见性切换走菜单“修改权限”，与原地球钮同一 handlePublishEntry 路径。
     }
 
-    /// “编辑已结束”3 秒后的退场：只淡出到不可见，绝不 isHidden。
-    /// 旧口径在动画完成时 isHidden=true，UIStackView 会把本行高度塌到 0，
-    /// 卡片随之缩短、限时虚线框（cardView.bounds 重画）位置上移，
-    /// 就是 Li 报的“编辑已结束文字出现时外框变化”。本行保留“编辑已结束”
-    /// 文本与布局占位、仅 alpha=0，卡片高度与外框全程不动。
+    /// “编辑已结束”3 秒后的退场：先淡出、再带动画塌掉。
+    /// 根因（2026-11-01 Li 报“编辑结束后下方空隙过大”）：旧口径在淡出后
+    /// 绝不 isHidden，editStatusGroup 一直在 actsStack 里占一行高度，
+    /// 文字没了、空行还在，卡片下方就留了一大段空白。
+    /// 新口径分两段走：0.25s 淡出（文字消失那一刻仍不跳变），淡出完成
+    /// 后 0.3s ease 把行高塌到 0，卡片平滑缩回正常高度；限时虚线框
+    /// 由 layoutSubviews 按 cardView.bounds 逐帧重画，不闪跳。
     private func hideEditEndedRow() {
         editRowEndTimer = nil
         if UIAccessibility.isReduceMotionEnabled {
             editStatusGroup.alpha = 0
             editStatusGroup.accessibilityElementsHidden = true
+            editStatusGroup.isHidden = true
             return
         }
         UIView.animate(withDuration: 0.25, animations: { [weak self] in
             self?.editStatusGroup.alpha = 0
         }, completion: { [weak self] _ in
-            self?.editStatusGroup.alpha = 0
-            self?.editStatusGroup.accessibilityElementsHidden = true
+            guard let self = self, self.editRowEndedShown else { return }
+            self.editStatusGroup.alpha = 0
+            self.editStatusGroup.accessibilityElementsHidden = true
+            self.collapseEditEndedRow()
         })
+    }
+
+    /// 淡出后的塌行：用临时高度约束把本行从当前高度压到 0。
+    /// 表格行高由 tableView 决定，光改 cell 内约束不动行高、只会在下一
+    /// 布局帧跳变，故动画内同步 begin/endUpdates，让行高跟随同一动画走。
+    /// 完成时 isHidden=true 并停用临时约束，终态与首渲染已过期完全一致。
+    private func collapseEditEndedRow() {
+        guard !editStatusGroup.isHidden, !editStatusCollapsing else { return }
+        editStatusCollapsing = true
+        let currentHeight = editStatusGroup.bounds.height
+        guard currentHeight > 0 else {
+            editStatusGroup.isHidden = true
+            editStatusCollapsing = false
+            return
+        }
+        let heightConstraint = editStatusGroup.heightAnchor.constraint(equalToConstant: currentHeight)
+        heightConstraint.isActive = true
+        editStatusHeightConstraint = heightConstraint
+        contentView.layoutIfNeeded()
+        let tableView = enclosingTableView
+        UIView.animate(withDuration: 0.3, delay: 0, options: [.curveEaseInOut, .beginFromCurrentState], animations: {
+            heightConstraint.constant = 0
+            self.contentView.layoutIfNeeded()
+            tableView?.beginUpdates()
+            tableView?.endUpdates()
+        }, completion: { [weak self] _ in
+            guard let self = self, self.editStatusCollapsing else { return }
+            self.editStatusHeightConstraint?.isActive = false
+            self.editStatusHeightConstraint = nil
+            self.editStatusGroup.isHidden = true
+            self.editStatusCollapsing = false
+        })
+    }
+
+    /// 沿 superview 链找宿主 tableView（cell 本身不持有 tableView 引用）。
+    private var enclosingTableView: UITableView? {
+        var view: UIView? = superview
+        while let current = view {
+            if let tableView = current as? UITableView { return tableView }
+            view = current.superview
+        }
+        return nil
     }
 
     @objc private func moreTapped() {
@@ -2280,6 +2322,8 @@ class BearyTimelineViewController: UIViewController {
         tv.scrollIndicatorInsets = tv.contentInset
         // 顶栏透度批：与 Feed 同理，表框贴页顶（view.top），关自动调整使属性内边距即视觉顶距。
         tv.contentInsetAdjustmentBehavior = .never
+        // 116 后扫查：与广场/个人页同口径——关掉 delaysContentTouches，滚动容器里的点按立即响应，不等滚动判定。
+        tv.delaysContentTouches = false
         tv.register(BearyTimelineCell.self, forCellReuseIdentifier: BearyTimelineCell.reuseIdentifier)
         tv.delegate = self
         tv.dataSource = self
@@ -2295,6 +2339,8 @@ class BearyTimelineViewController: UIViewController {
     private let refreshIconView = BearyRefreshIconView()
     /// 自定义下拉刷新进行中标志（消息页 isCustomPullRefreshing 同款）。
     private var isCustomPullRefreshing = false
+    /// 下拉收回动画在途旗：收回动画全程仍持刷新旗，跟随侧不中途重写 pullView.frame。
+    private var customPullEndInFlight = false
     private var customPullStartTime: Date?
     private var pullEngageTranslation: CGFloat?
 
@@ -2337,8 +2383,10 @@ class BearyTimelineViewController: UIViewController {
     private let stickyHeaderContainer = UIView()
     private let stickyHeaderView = UIView()
     private let stickyHeaderLabel = UILabel()
-    // 吸顶头状态栏区底色：只盖 view 顶到安全区顶沿这一段（吸顶头自身已盖安全区下方），
-    // 与吸顶头同显同隐，滚动内容不再从状态栏区透出。
+    // 吸顶头状态栏区底色：只盖 view 顶到安全区顶沿这一段（吸顶头自身已盖安全区下方）。
+    // 常驻不随吸顶头显隐：换日期头那一下吸顶头会先藏后显，若底色同显同隐，
+    // 藏的那几帧里正在滑进状态栏区的日记内容就会从状态栏区透出来（本次根因）。
+    // 底色与页面底同色，常驻在视觉上无变化，只堵透底。
     private let statusBarBgView = UIView()
     private var stickyHeaderCurrentSection: Int?
     private var stickyHeaderCurrentTitle: String?
@@ -2602,6 +2650,12 @@ class BearyTimelineViewController: UIViewController {
     /// 再点当前 tab 口径：offset 是否已在顶部容差（1pt）内；在顶部才刷新，否则只回顶。
     var isAtTop: Bool {
         tableView.contentOffset.y <= -tableView.contentInset.top + 1
+    }
+
+    /// 同 tab 连点刷新在途锁：首屏加载或自定义下拉头在途时，重拍刷新一律不重复触发
+    /// （loadTimelineFirstPage 自身的在途跳过守卫是第二道）。
+    var isRefreshingForRetap: Bool {
+        timelineState == .loading || isCustomPullRefreshing
     }
 
     /// 账号隔离 9 号：keepDay 时同时保留旧内容——不清时间线模型、不动
@@ -3002,7 +3056,7 @@ class BearyTimelineViewController: UIViewController {
     }
 
     /// 自定义下拉指示器跟随（消息页 updateCustomPullIndicator 同款）：
-    /// 手指行程（pan 手势自顶部锚点起算）× 0.48 阻尼、上限 116；指示高 ≥80 时转圈淡入放大。
+    /// 手指行程（pan 手势自顶部锚点起算）× 0.48 阻尼、上限 116；转满一圈在指示高 67.2（= 触发行程 140pt × 0.48），满格点即触发点；图标 alpha 在 30–67.2 间淡入至满。
     /// 指示器是表内子视图：屏内底边 = 安全区顶 + 指示高（基线内边距已计入 contentRaw），
     /// 顶边随表回弹裁剪；刷新中不跟随。
     private func updateCustomPullIndicator() {
@@ -3041,24 +3095,24 @@ class BearyTimelineViewController: UIViewController {
         if indicatorHeight <= 0 {
             refreshIconView.setPullProgress(0)
         } else {
-            let progress = min(1, indicatorHeight / 98.4)
+            let progress = min(1, indicatorHeight / 67.2)
             refreshIconView.setPullProgress(progress)
             // 时间线与消息页的关键差别：消息页表框顶 = 安全区顶，表框裁剪会把
             // 指示高 <30 时的图标（中心在安全区顶之上）裁掉；本页表框贴页顶，
             // 表框裁剪裁不掉它，早期图标会 faint 地出现在灵动岛带内。故用 alpha
             // 门模拟同一裁剪：图标中心在指示高 30 时才越过安全区顶，30 以下
-            // alpha 强制 0，30–80 间按 (指示-30)/50 淡入至满 alpha；转满一圈在
-            // 指示高 98.4（= 触发行程 205pt × 0.48），满格点即触发点（alpha 口径不动）。
+            // alpha 强制 0，30–67.2 间按 (指示-30)/37.2 淡入至满 alpha；转满一圈在
+            // 指示高 67.2（= 触发行程 140pt × 0.48），满格点即触发点。
             if indicatorHeight <= 30 {
                 refreshIconView.alpha = 0
             } else {
-                refreshIconView.alpha = min(1, (indicatorHeight - 30) / 50)
+                refreshIconView.alpha = min(1, (indicatorHeight - 30) / 37.2)
             }
         }
     }
 
     /// 自定义下拉刷新进入（消息页 beginCustomPullRefresh 同款，基线适配时间线）：
-    /// 指示固定 84 高 + 转圈，至少展示 500ms（见 loadTimelineFirstPage 完成分支），
+    /// 指示固定 84 高 + 转圈，回包到即收回（第 2 项后无 0.5 秒最低展示，见 loadTimelineFirstPage 完成分支），
     /// 刷新中内边距 = 基线（安全区顶 + 可见时 60）+ 84，屏内指示底边 = 基线 +84，
     /// 图标中心 = 基线 +54，灵动岛下方；减动效时直接落位，不播 0.32s 动画。
     private func beginCustomPullRefresh() {
@@ -3068,6 +3122,11 @@ class BearyTimelineViewController: UIViewController {
         isCustomPullRefreshing = true
         customPullStartTime = Date()
         refreshIconView.startSpinning()
+        // 回程一次到位：先掐断松手后的表减速/回弹（位置不动、仅停掉动量）。
+        // 否则表自带物理动画会与下面 easing 动画双路驱动 contentOffset：
+        // 先随惯性多下一截、再被拉回 84 位，即“先下降一点再回去”；
+        // 旧 0.32s 默认 easeInOut 零初速起手、与手指甩速脱节，手感发轻。
+        tableView.setContentOffset(tableView.contentOffset, animated: false)
         let baseTop = view.safeAreaInsets.top + (headerTopInsetVisible ? 60 : 0)
         let baseBottom = 90 + view.safeAreaInsets.bottom
         let pullIn = {
@@ -3081,11 +3140,11 @@ class BearyTimelineViewController: UIViewController {
         if UIAccessibility.isReduceMotionEnabled {
             pullIn()
         } else {
-            UIView.animate(withDuration: 0.32, animations: pullIn)
+            UIView.animate(withDuration: 0.35, delay: 0, options: [.curveEaseOut, .beginFromCurrentState], animations: pullIn)
         }
         // 112 刷新节流（仅手势下拉）：上次首屏网络成功 5 秒内且已有行时，
-        // 不再发网络请求，指示头随 0.32s 收回动画收回（500ms 保底只在
-        // 首屏完成分支，不在本函数）；程序侧刷新（重拍 tab/详情回写/
+        // 不再发网络请求，指示头随 0.35s 收回动画收回（第 2 项后首屏完成
+        // 分支也不再等 500ms）；程序侧刷新（重拍 tab/详情回写/
         // 登录翻转）不受此限。begin 顶部的
         // timelineState == .loading 守卫仍在：静默对齐在途时下拉直接忽略。
         if let last = lastTimelineFirstPageSuccessAt, Date().timeIntervalSince(last) < 5, !timelineEntries.isEmpty {
@@ -3105,10 +3164,11 @@ class BearyTimelineViewController: UIViewController {
     }
 
     private func endCustomPullRefresh() {
-        if !isCustomPullRefreshing {
+        if !isCustomPullRefreshing || customPullEndInFlight {
             return
         }
-        isCustomPullRefreshing = false
+        customPullEndInFlight = true
+        // 收回动画全程仍持刷新旗（同广场端）：跟随侧不中途重写 pullView.frame。
         let baseTop = view.safeAreaInsets.top + (headerTopInsetVisible ? 60 : 0)
         let baseBottom = 90 + view.safeAreaInsets.bottom
         let pullOut = {
@@ -3121,9 +3181,13 @@ class BearyTimelineViewController: UIViewController {
         }
         if UIAccessibility.isReduceMotionEnabled {
             pullOut()
+            self.isCustomPullRefreshing = false
+            self.customPullEndInFlight = false
             self.refreshIconView.stopSpinning()
         } else {
-            UIView.animate(withDuration: 0.32, animations: pullOut, completion: { _ in
+            UIView.animate(withDuration: 0.35, delay: 0, options: [.curveEaseOut, .beginFromCurrentState], animations: pullOut, completion: { _ in
+                self.isCustomPullRefreshing = false
+                self.customPullEndInFlight = false
                 self.refreshIconView.stopSpinning()
             })
         }
@@ -3195,8 +3259,11 @@ class BearyTimelineViewController: UIViewController {
         statusBarBgView.translatesAutoresizingMaskIntoConstraints = false
         statusBarBgView.backgroundColor = BearyColors.bg
         statusBarBgView.isUserInteractionEnabled = false
-        statusBarBgView.isHidden = true
+        statusBarBgView.isHidden = false
         view.insertSubview(statusBarBgView, belowSubview: stickyHeaderContainer)
+        // 层级钉死：底色恒在表之上、吸顶容器之下，后续再加覆盖层也不至于把它压到表后。
+        view.bringSubviewToFront(statusBarBgView)
+        view.bringSubviewToFront(stickyHeaderContainer)
         NSLayoutConstraint.activate([
             statusBarBgView.topAnchor.constraint(equalTo: view.topAnchor),
             statusBarBgView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
@@ -3282,7 +3349,6 @@ class BearyTimelineViewController: UIViewController {
         }
         if stickyHeaderContainer.isHidden {
             stickyHeaderContainer.isHidden = false
-            statusBarBgView.isHidden = false
         }
     }
 
@@ -3341,7 +3407,8 @@ class BearyTimelineViewController: UIViewController {
         if stickyHeaderContainer.isHidden == false {
             stickyHeaderContainer.isHidden = true
         }
-        statusBarBgView.isHidden = true
+        // 注意：此处不再藏 statusBarBgView——换日交接时吸顶头藏起的那几帧，
+        // 正是真实组头滑进状态栏区的时刻，底色必须留着盖住它。
         stickyHeaderCurrentSection = nil
         stickyHeaderCurrentTitle = nil
         // 隐藏时在途动效一律打断并复位（此时容器不可见，无 snap 可见），
@@ -3360,12 +3427,12 @@ class BearyTimelineViewController: UIViewController {
 
     func scrollViewDidEndDragging(_ scrollView: UIScrollView, willDecelerate decelerate: Bool) {
         guard scrollView === tableView else { return }
-        // 自定义下拉触发（消息页同款）：手指原始行程满 205px 松手才刷新。
+        // 自定义下拉触发（消息页同款）：手指原始行程满 140pt 松手才刷新。
         // M12（91 包）：触发给一次轻触觉；程序触发的刷新不走这里。
         let panTranslation = scrollView.panGestureRecognizer.translation(in: scrollView).y
         let fingerRaw = max(0, panTranslation - (pullEngageTranslation ?? panTranslation))
         pullEngageTranslation = nil
-        if fingerRaw >= 205 && timelineState != .loading && !isCustomPullRefreshing {
+        if fingerRaw >= 140 && timelineState != .loading && !isCustomPullRefreshing {
             BearyHaptics.press()
             beginCustomPullRefresh()
         }
@@ -3591,6 +3658,8 @@ class BearyTimelineViewController: UIViewController {
            updateTrashSuffixOnly(current, oldCount: last, newCount: trashCountValue) {
             lastTrashCount = trashCountValue
             fitTrashButtonWidth()
+            // 116：数字段-only 更新后只淡入标题文案（图标不动）。
+            fadeButtonTitle(trashButton)
             return
         }
         let base = NSMutableAttributedString(string: "回收站", attributes: [
@@ -3606,6 +3675,8 @@ class BearyTimelineViewController: UIViewController {
         trashButton.setAttributedTitle(base, for: .normal)
         lastTrashCount = trashCountValue
         fitTrashButtonWidth()
+        // 116：整行重建路径同样只淡入标题文案（图标不动）。
+        fadeButtonTitle(trashButton)
     }
 
     /// 回收站标题数字段-only 更新：静态段“回收站”不动，只增/改/删
@@ -3641,20 +3712,43 @@ class BearyTimelineViewController: UIViewController {
         return true
     }
 
+    /// 116 数据填入动效：文案／数字变化时只淡入该元素本身（alpha 0→1、
+    /// 0.25s，不动 transform／布局、不重建节点、不缩放弹一下）；同值不赋值
+    /// 不重播；减动效或未进窗口时直设终值。按钮只淡入 titleLabel，图标
+    /// （火苗／回收站图标）不动，符合“数字只动数字本身”。
+    private func setLabelTextFaded(_ label: UILabel, _ text: String) {
+        guard label.text != text else { return }
+        label.text = text
+        guard !UIAccessibility.isReduceMotionEnabled, label.window != nil else {
+            label.alpha = 1
+            return
+        }
+        label.alpha = 0
+        UIView.animate(withDuration: 0.25, delay: 0, options: [.curveEaseOut, .beginFromCurrentState], animations: {
+            label.alpha = 1
+        })
+    }
+
+    private func fadeButtonTitle(_ button: UIButton) {
+        guard !UIAccessibility.isReduceMotionEnabled, button.window != nil,
+              let titleLabel = button.titleLabel else { return }
+        titleLabel.alpha = 0
+        UIView.animate(withDuration: 0.25, delay: 0, options: [.curveEaseOut, .beginFromCurrentState], animations: {
+            titleLabel.alpha = 1
+        })
+    }
+
     private func updateCountsLabel() {
         if let counts = countsValue {
             let total = counts.total ?? 0
             let priv = counts.priv ?? 0
             let pub = counts.pub ?? 0
-            // 本批新规矩（跳过未变）：纯文本 label 无容器重建、无入场动效，
-            // 文案不变时不重复赋值；数值变时仍整行文本赋值（UILabel 文本
-            // 本身不重播动效，拆成多 label 属布局结构改动，不做）。
-            let newText = "共 \(total) 篇 · 私密 \(priv) · 公开 \(pub)"
-            guard countsLabel.text != newText else { return }
-            countsLabel.text = newText
+            // 116：数值变时整行只淡入（不拆多 label——拆分属布局结构改动，
+            // 且数字段已在行内；淡入覆盖整行文案，数字随之淡入，不弹一下）；
+            // 文案不变时不重复赋值不重播。
+            setLabelTextFaded(countsLabel, "共 \(total) 篇 · 私密 \(priv) · 公开 \(pub)")
         } else {
-            guard countsLabel.text != "" else { return }
-            countsLabel.text = ""
+            setLabelTextFaded(countsLabel, "")
         }
     }
 
@@ -3746,6 +3840,8 @@ class BearyTimelineViewController: UIViewController {
             statsButton.setAttributedTitle(nil, for: .normal)
             statsButton.setTitle("日历加载失败，重试", for: .normal)
             statsButton.setTitleColor(BearyColors.gray, for: .normal)
+            // 116：失败态文案出现时只淡入标题（无图标可动）。
+            fadeButtonTitle(statsButton)
             return
         }
         guard let primaryKey = primaryKey, let data = calendarCache[primaryKey] else {
@@ -3783,6 +3879,8 @@ class BearyTimelineViewController: UIViewController {
             lastStatsLineSignature = "normal"
             lastStatsStreak = streak
             lastStatsMonthTotal = monthTotal
+            // 116：数字段-only 更新后只淡入标题文案（火苗图标不动）。
+            fadeButtonTitle(statsButton)
             return
         }
         // 首建或态切换（失败/空态 → 正常）或数字段解析失败时才整行重建；
@@ -3809,6 +3907,8 @@ class BearyTimelineViewController: UIViewController {
         text.append(NSAttributedString(string: "\(monthTotal) 篇", attributes: boldAttributes))
         statsButton.setTitle(nil, for: .normal)
         statsButton.setAttributedTitle(text, for: .normal)
+        // 116：首建／态切换整行重建时同样只淡入标题文案（火苗图标不动）。
+        fadeButtonTitle(statsButton)
     }
 
     /// 统计行数字段-only 更新：只替换两处纯数字区间（streak、monthTotal），
@@ -3988,12 +4088,8 @@ class BearyTimelineViewController: UIViewController {
         }
         updateChrome()
         if isCustomPullRefreshing {
-            // 自定义下拉至少展示 500ms（消息页同款），快回包也要等满再收回。
-            let elapsed = customPullStartTime.map({ Date().timeIntervalSince($0) }) ?? 0.5
-            let remaining = max(0, 0.5 - elapsed)
-            DispatchQueue.main.asyncAfter(deadline: .now() + remaining) {
-                self.endCustomPullRefresh()
-            }
+            // 自定义下拉回包到即收回（第 2 项后无 0.5 秒最低展示，消息页同款已同步去掉）。
+            self.endCustomPullRefresh()
         } else {
             refreshIconView.stopSpinning()
         }
@@ -5805,9 +5901,11 @@ extension BearyTimelineViewController: UITableViewDataSource, UITableViewDelegat
         cell.onQuoteEntry = onQuoteEntry
         cell.onMoreEntry = { [weak self] entry, sourceView in self?.presentTimelineMoreMenu(entry: entry, sourceView: sourceView) }
         // N7：复用独立文件内的查看器，全屏模态弹出（已弹出时不叠加、减动效直显）。
-        cell.onTapImages = { [weak self] keys, index in
+        let viewerEntry = sections[indexPath.section].entries[indexPath.row]
+        cell.onTapImages = { [weak self] keys, index, originFrame in
             guard let self = self, self.presentedViewController == nil else { return }
-            let viewer = BearyEntryImageViewerViewController(imageKeys: keys, startIndex: index)
+            let viewer = BearyEntryImageViewerViewController(imageKeys: keys, liveVideos: viewerEntry.liveVideos, startIndex: index)
+            viewer.originFrameInWindow = originFrame
             viewer.modalPresentationStyle = .fullScreen
             self.present(viewer, animated: UIAccessibility.isReduceMotionEnabled == false, completion: nil)
         }

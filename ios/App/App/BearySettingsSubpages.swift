@@ -1,5 +1,43 @@
 import UIKit
 
+/// 设置子页布局守卫（116 真机：设置页点进的子页顶栏落到屏中部、正文全空）。
+/// 115 设置页本身已有同款守卫（#352，其注释自认根因未证实：呈现时 view 帧／
+/// 安全区异常把顶栏顶到屏中部），但子页一律没有——子页与设置页同款
+/// fullScreen + fadeRise 呈现，同一呈现异常落到子页身上时无任何复位。
+/// 守卫只做三件事（每出现一次、在首次布局时跑一次）：
+/// ① view.frame 偏离窗口 bounds >0.5pt → 复位回窗口 bounds；
+/// ② view.transform 非单位阵（转场中断残留位移）→ 清掉；
+/// ③ 顶栏 minY 偏离 safeAreaInsets.top >20pt → 重布局一次。
+/// 不重建节点、不重播动效、不改数据与门控。评估与否、触发与否各记 [Diag]
+/// 一行，复现时凭日志一次定位是帧、位移还是约束问题。
+final class BearySubpageLayoutGuard {
+    private var didEvaluate = false
+    func resetForAppearance() { didEvaluate = false }
+    @discardableResult
+    func applyIfNeeded(page: String, view: UIView, topView: UIView?) -> Bool {
+        guard !didEvaluate, let window = view.window else { return false }
+        let bounds = window.bounds
+        guard bounds.width > 0, bounds.height > 0, view.bounds.width > 0 else { return false }
+        didEvaluate = true
+        let frameOff = abs(view.frame.origin.x) > 0.5 || abs(view.frame.origin.y) > 0.5
+            || abs(view.frame.width - bounds.width) > 0.5 || abs(view.frame.height - bounds.height) > 0.5
+        let transformOff = !view.transform.isIdentity
+        let topOff = topView.map { abs($0.frame.minY - view.safeAreaInsets.top) > 20 } ?? false
+        NSLog("[Diag] subpage-layout page=%@ view=%@ top=%@ safeArea=%@ frameOff=%@ transformOff=%@ topOff=%@",
+              page, NSCoder.string(for: view.frame),
+              topView.map { NSCoder.string(for: $0.frame) } ?? "nil",
+              NSCoder.string(for: view.safeAreaInsets),
+              frameOff ? "Y" : "N", transformOff ? "Y" : "N", topOff ? "Y" : "N")
+        guard frameOff || transformOff || topOff else { return false }
+        if frameOff { view.frame = bounds }
+        if transformOff { view.transform = .identity }
+        view.setNeedsLayout()
+        view.layoutIfNeeded()
+        NSLog("[Diag] subpage-layout-reset page=%@", page)
+        return true
+    }
+}
+
 // ===== 设置子页：会员来源明细 / 登录设备（2026-10-29 第 7、11 项）=====
 // 两页原先以内联卡/内联展开的形式挤在设置页内（Plus 组的来源明细卡、
 // 账号与安全组的设备展开列表），本批各抽成独立页：设置页只留一行
@@ -17,6 +55,9 @@ import UIKit
 class BearySettingsSubpageViewController: UIViewController {
     private let pageTitle: String
     let contentStack = UIStackView()
+    /// 116 子页空白守卫：顶栏视图由 viewDidLoad 局部变量改为属性，供守卫读取 minY。
+    private let subpageLayoutGuard = BearySubpageLayoutGuard()
+    private var topBarView: UIView?
 
     init(title: String) {
         self.pageTitle = title
@@ -55,8 +96,11 @@ class BearySettingsSubpageViewController: UIViewController {
         topBar.addSubview(closeButton)
         topBar.addSubview(titleLabel)
         view.addSubview(topBar)
+        topBarView = topBar
         let scrollView = UIScrollView()
         scrollView.translatesAutoresizingMaskIntoConstraints = false
+        // 116 后扫查：与广场/个人页同口径——关掉 delaysContentTouches，滚动容器里的点按立即响应，不等滚动判定。
+        scrollView.delaysContentTouches = false
         view.addSubview(scrollView)
         contentStack.translatesAutoresizingMaskIntoConstraints = false
         contentStack.axis = .vertical
@@ -90,6 +134,16 @@ class BearySettingsSubpageViewController: UIViewController {
 
     @objc private func closeTapped() {
         dismiss(animated: BearyMotion.animated(true), completion: nil)
+    }
+
+    override func viewWillAppear(_ animated: Bool) {
+        super.viewWillAppear(animated)
+        subpageLayoutGuard.resetForAppearance()
+    }
+
+    override func viewDidLayoutSubviews() {
+        super.viewDidLayoutSubviews()
+        subpageLayoutGuard.applyIfNeeded(page: pageTitle, view: view, topView: topBarView)
     }
 
     /// 审计第二波 4b 分诊结论：分组卡边框确认 stale——makeGroupCard 内
@@ -206,6 +260,10 @@ final class BearyPlusGrantsViewController: BearySettingsSubpageViewController {
     /// 后到失败回包还会覆盖先到成功回包；在途重试直接忽略，代次再拦过期回包。
     private var isRetrying = false
     private var retryGeneration = 0
+    /// 116：发放行入场错峰只播一次（首个数据 render 且已进窗口时）；
+    /// 传入数据首帧（viewDidLoad 时窗口未进）不播、直接显；失败／
+    /// 加载态 render 不置位，重试成功后仍可播一次。
+    private var grantsRowsAnimated = false
 
     /// 设置页已拉到的 plusDetail 经 status/personal 文案与 grants 传入；
     /// grants 为 nil 且未失败时本页自己拉一次（设置页首拉未完成即点入的兜底）。
@@ -342,6 +400,25 @@ final class BearyPlusGrantsViewController: BearySettingsSubpageViewController {
             grantRows.append(emptyLabel)
         }
         contentStack.addArrangedSubview(makeGroupCard(title: "来源明细", rows: grantRows))
+        // 116：发放行数据到达时错峰滑入（新内容 only：本页行每次 render
+        // 重建，故以首个数据 render + 已进窗口为播一次的守卫；行本身
+        // alpha／y+6、0.25s、0.03 步进，减动效直显；加载／失败／空态
+        // 行不走本分支——grants 为 nil 或失败时不置位）。
+        if !grantsRowsAnimated, grants != nil, !loadFailed,
+           view.window != nil, !UIAccessibility.isReduceMotionEnabled {
+            grantsRowsAnimated = true
+            var delay: TimeInterval = 0
+            for row in grantRows {
+                let targetAlpha = row.alpha
+                row.alpha = 0
+                row.transform = CGAffineTransform(translationX: 0, y: 6)
+                UIView.animate(withDuration: 0.25, delay: delay, options: [.curveEaseOut], animations: {
+                    row.alpha = targetAlpha
+                    row.transform = .identity
+                })
+                delay = min(delay + 0.03, 0.24)
+            }
+        }
     }
 
     @objc private func retryTapped() {
@@ -384,6 +461,10 @@ final class BearyDevicesViewController: BearySettingsSubpageViewController {
     /// 109：同会员来源明细页——重试在途锁 + 代次，防连点多发与过期回包覆盖。
     private var isRetrying = false
     private var retryGeneration = 0
+    /// 116：设备行入场错峰只播一次（首个数据 render 且已进窗口时）；
+    /// 传入数据首帧（viewDidLoad 时窗口未进）不播、直接显；失败／
+    /// 加载态 render 不置位，重试成功后仍可播一次。
+    private var deviceRowsAnimated = false
 
     /// 设置页已拉到的 sessions 传入；为 nil 且未失败时本页自己拉一次。
     /// 退出其他设备钮不进本页，仍留在设置页（任务只说列表另做一页）。
@@ -428,9 +509,11 @@ final class BearyDevicesViewController: BearySettingsSubpageViewController {
             contentStack.removeArrangedSubview(view)
             view.removeFromSuperview()
         }
+        var countLabelView: UILabel?
         if let count = countText {
             let countLabel = makeLabel(font: UIFont.systemFont(ofSize: 13), color: BearyColors.gray, lines: 0)
             countLabel.text = count
+            countLabelView = countLabel
             contentStack.addArrangedSubview(countLabel)
         }
         var rows: [UIView] = []
@@ -471,6 +554,33 @@ final class BearyDevicesViewController: BearySettingsSubpageViewController {
             rows.append(emptyLabel)
         }
         contentStack.addArrangedSubview(makeGroupCard(title: nil, rows: rows))
+        // 116：设备行数据到达时错峰滑入（alpha＋y+6、0.25s、0.03 步进；
+        // 行每次 render 重建，故以首个数据 render＋已进窗口为播一次的
+        // 守卫；传入数据首帧因窗口未进不播、直接显；加载／失败态
+        // render 不置位，重试成功后仍可播一次；减动效直显；目标
+        // alpha 按行原值取——过期行 0.55 不会被动画抬到 1）。
+        if !deviceRowsAnimated, sessions != nil, !loadFailed,
+           view.window != nil, !UIAccessibility.isReduceMotionEnabled {
+            deviceRowsAnimated = true
+            // 116：计数文案随数据到达只淡入本身（无位移）。
+            if let countLabelView = countLabelView {
+                countLabelView.alpha = 0
+                UIView.animate(withDuration: 0.25, delay: 0, options: [.curveEaseOut], animations: {
+                    countLabelView.alpha = 1
+                })
+            }
+            var delay: TimeInterval = 0
+            for row in rows {
+                let targetAlpha = row.alpha
+                row.alpha = 0
+                row.transform = CGAffineTransform(translationX: 0, y: 6)
+                UIView.animate(withDuration: 0.25, delay: delay, options: [.curveEaseOut], animations: {
+                    row.alpha = targetAlpha
+                    row.transform = .identity
+                })
+                delay = min(delay + 0.03, 0.24)
+            }
+        }
     }
 
     /// 设置页 rebuildSessions 同款行格式：设备名 15 墨 + 当前绿 pill

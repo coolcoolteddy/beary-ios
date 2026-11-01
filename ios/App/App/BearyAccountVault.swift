@@ -40,6 +40,14 @@ struct BearyStoredAccount: Codable {
 final class BearyAccountVault {
     static let shared = BearyAccountVault()
 
+    /// 扫 bug 第 9 项：库内容代际（进程内计数，非凭据、不落盘）。
+    /// 每次真正写入（save 新增/更新、updateTokenExpiry、remove 删除）
+    /// 才 +1；内容不变的重复 save 不写盘也不 +1。设置页靠它判断
+    /// 上次缓存的 loadAll 结果是否仍有效，避免每次进页全量读钥匙串。
+    /// 本文件是钥匙串唯一出入口（仓内无其他 SecItem 写路径），故代际
+    /// 不会漏 bump；进程重启后代际归零，调用方缓存随之失效重读。
+    private(set) var generation = 0
+
     /// 账号上限（2026-10-31 Li 定）：3 个。第 4 个添加时不顶掉旧账号，
     /// 调用方（设置页添加行）弹“最多 3 个账号，先移除一个”并停在添加前；
     /// 已有账号数不可能超 3，不做超量清理；快照补进时同样守门。
@@ -75,11 +83,26 @@ final class BearyAccountVault {
             tokenExpiresAtMs: tokenExpiresAtMs,
             savedAtMs: nowMs
         )
+        var existingStored: BearyStoredAccount?
         if let existing = load(userId: userId) {
             stored.savedAtMs = existing.savedAtMs
             if tokenExpiresAtMs == nil {
                 stored.tokenExpiresAtMs = existing.tokenExpiresAtMs
             }
+            existingStored = existing
+        }
+        // 内容不变的重复 save（设置页每次进页的 snapshotCurrentAccount
+        // 即属此类）直接跳过写盘：写盘后字节与现存完全一致（savedAtMs
+        // 与旧过期时间均已按合并规则对齐），跳过不改变库内任何内容，
+        // 只省一次 SecItemUpdate 与一次代际递增，让设置页缓存能命中。
+        if let existing = existingStored,
+           existing.displayName == stored.displayName,
+           existing.handle == stored.handle,
+           existing.email == stored.email,
+           existing.avatarURL == stored.avatarURL,
+           existing.token == stored.token,
+           existing.tokenExpiresAtMs == stored.tokenExpiresAtMs {
+            return true
         }
         guard let data = try? JSONEncoder().encode(stored) else { return false }
         let name = accountName(for: userId)
@@ -93,9 +116,16 @@ final class BearyAccountVault {
             kSecAttrAccessible as String: kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly,
         ]
         let addStatus = SecItemAdd(query.merging(attributes) { _, new in new } as CFDictionary, nil)
-        if addStatus == errSecSuccess { return true }
+        if addStatus == errSecSuccess {
+            generation += 1
+            return true
+        }
         if addStatus == errSecDuplicateItem {
-            return SecItemUpdate(query as CFDictionary, attributes as CFDictionary) == errSecSuccess
+            let updated = SecItemUpdate(query as CFDictionary, attributes as CFDictionary) == errSecSuccess
+            if updated {
+                generation += 1
+            }
+            return updated
         }
         return false
     }
@@ -110,7 +140,9 @@ final class BearyAccountVault {
             kSecAttrService as String: service,
             kSecAttrAccount as String: accountName(for: userId),
         ]
-        _ = SecItemUpdate(query as CFDictionary, [kSecValueData as String: data] as CFDictionary)
+        if SecItemUpdate(query as CFDictionary, [kSecValueData as String: data] as CFDictionary) == errSecSuccess {
+            generation += 1
+        }
     }
 
     func load(userId: Int) -> BearyStoredAccount? {
@@ -170,6 +202,9 @@ final class BearyAccountVault {
             kSecAttrAccount as String: accountName(for: userId),
         ]
         let status = SecItemDelete(query as CFDictionary)
+        if status == errSecSuccess {
+            generation += 1
+        }
         return status == errSecSuccess || status == errSecItemNotFound
     }
 
