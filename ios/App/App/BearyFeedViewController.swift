@@ -1882,7 +1882,7 @@ class BearyFeedViewController: UIViewController {
             popover.sourceView = sourceView
             popover.sourceRect = sourceView.bounds
         }
-        present(sheet, animated: true)
+        present(sheet, animated: BearyMotion.animated(true))
     }
 
     private func handleVisibilityToggle(entryId: String) {

@@ -5911,7 +5911,7 @@ class BearyTimelineViewController: UIViewController {
             popover.sourceView = sourceView
             popover.sourceRect = sourceView.bounds
         }
-        present(sheet, animated: true)
+        present(sheet, animated: BearyMotion.animated(true))
     }
 
     /// 可见行单行重刷（.none，不播行动画、不重播已有元素动效）：按 currentSections
