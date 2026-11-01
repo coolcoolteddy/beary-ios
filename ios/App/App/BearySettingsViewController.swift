@@ -1931,7 +1931,7 @@ final class BearySettingsViewController: UIViewController {
         guard !isDeleting else { return }
         let first = UIAlertController(
             title: "注销账户",
-            message: "7 天冷静期内登录可取消注销。7 天后账户正式注销，日记保留但作者显示为“已注销用户”。\n\n注销后，你的 Plus、未到账的邀请奖励、BETA 徽章和收藏会一并作废。",
+            message: "7 天冷静期内登录可取消注销。7 天后账户正式注销，日记保留但作者显示为“已注销用户”。\n\n注销后，你的 Plus、未到账的邀请奖励和收藏会一并作废。",
             preferredStyle: .alert
         )
         first.addAction(UIAlertAction(title: "再想想", style: .cancel, handler: nil))

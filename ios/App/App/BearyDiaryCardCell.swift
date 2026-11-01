@@ -1789,18 +1789,14 @@ class BearyDiaryCardCell: UITableViewCell {
             recipientLabel.text = nil
         }
 
-        // F2/F13：名 16.5 粗体 + BETA 徽章图。Plus 皇冠按网页复刻：authorPlus==1 时显示
-        //（清单 14 的首页取消显示已被“按网页复刻”覆盖；BETA 徽章不动）。
+        // F2/F13：名 16.5 粗体。Plus 皇冠按网页复刻：authorPlus==1 时显示
+        //（BETA 徽章已下线，徽章位恒隐藏）。
         // 无残留空位：crownView 是 titleStack 的 arrangedSubview，隐藏后 stack 自动
         // 将其尺寸压为 0，间距只算在可见项之间；19pt 宽约束是 999 优先级，不与压零冲突。
         nameLabel.text = authorNameValue
-        if let badgeKey = entry.authorBadge, !badgeKey.isEmpty, let badgeImage = BearyBadgeImages.image(for: badgeKey) {
-            badgeImageView.image = badgeImage
-            badgeImageView.isHidden = false
-        } else {
-            badgeImageView.image = nil
-            badgeImageView.isHidden = true
-        }
+        // BETA 徽章已下线：用户名右边不再显示佩戴徽章（Plus 皇冠不受影响）。
+        badgeImageView.image = nil
+        badgeImageView.isHidden = true
         setCrownHidden((entry.authorPlus ?? 0) != 1 || !crownView.hasCrown)
 
         // F3：时间。广场卡：有效公开（未过期）且有 publishedAt 时显相对时间（“X 分钟前”），否则绝对时间。
@@ -1899,15 +1895,11 @@ class BearyDiaryCardCell: UITableViewCell {
             recipientRow.isHidden = true
             recipientLabel.text = nil
         }
-        // 作者徽章（BETA 等，照常显示）；Plus 皇冠按 authorPlus 显示
+        // 佩戴徽章已下线（恒隐藏）；Plus 皇冠按 authorPlus 显示
         // （1:1 复刻，推翻清单 14；authorPlus 为 Int，0/缺失 = 不显示）。
-        if let badgeKey = entry.authorBadge, !badgeKey.isEmpty, let badgeImage = BearyBadgeImages.image(for: badgeKey) {
-            badgeImageView.image = badgeImage
-            badgeImageView.isHidden = false
-        } else {
-            badgeImageView.image = nil
-            badgeImageView.isHidden = true
-        }
+        // BETA 徽章已下线：用户名右边不再显示佩戴徽章（Plus 皇冠不受影响）。
+        badgeImageView.image = nil
+        badgeImageView.isHidden = true
         rowCrownHiddenUpdate(entry: entry)
         // 天气图标（icon_wx_<key>，取不到图时隐藏、不留空）。
         if let weatherKey = entry.weather, !weatherKey.isEmpty, let weatherImage = BearyFeedIconCache.image(named: "icon_wx_" + weatherKey, pointSize: 15) {

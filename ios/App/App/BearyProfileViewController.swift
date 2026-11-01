@@ -49,7 +49,7 @@ import CoreImage
 //   与他人主页一律无入口；脚印数不计入回应墙“共收到 N 只”。
 // - 徽章架（仅本人）：GET /beary/api/my-badges 取 unlocked / worn，
 //   点徽章 POST /beary/api/wear {badge} 切换佩戴（传 null = 取消佩戴；
-//   服务端目前仅接受 beta，worn 也只回 beta 或 null）。
+//   （2026-10-31 起 BETA 已下线：服务端不再下发 beta，worn 一律 null。）
 // - C2：齿轮直达设置页，退出登录改走设置页独立按钮（仍是 BearyAPI.logout，
 //   /api/account/logout，见文末注记；设置页内逻辑一字不动）。
 // - 分享：优先 https://teddyhn.com/beary/@<handle>（取不到 handle 才回退
@@ -3221,18 +3221,10 @@ class BearyProfileViewController: UIViewController {
         avatarTopWithoutCoverConstraint.isActive = false
         avatarImageView.layer.borderWidth = 3.5
 
-        // BETA 佩戴徽章（23，主页面口径）；皇冠按 plus 显示（网页 pfPlusPill 口径）。
-        // I8：取不到图时用占位图（并打日志），不再静默隐藏徽章位。
-        if let badgeKey = profileValue.wornBadge, !badgeKey.isEmpty, let badgeImage = BearyBadgeImages.imageOrPlaceholder(for: badgeKey) {
-            let badgeWasHidden = badgeImageView.isHidden
-            badgeImageView.image = badgeImage
-            badgeImageView.isHidden = false
-            // 116：徽章首次出现只淡入（与名字淡入同口径），不硬弹。
-            fadeInViewIfAppearing(badgeImageView, wasHidden: badgeWasHidden)
-        } else {
-            badgeImageView.image = nil
-            badgeImageView.isHidden = true
-        }
+        // 佩戴徽章已下线（恒隐藏）；皇冠按 plus 显示（网页 pfPlusPill 口径）。
+        // BETA 徽章已下线：用户名右边不再显示佩戴徽章，皇冠改贴名字（下方约束已按 badgeVisible=false 走）。
+        badgeImageView.image = nil
+        badgeImageView.isHidden = true
         // 1:1 复刻（推翻清单 14）：皇冠按 profile.plus 显示，plus 数据已到位。
         crownView.isHidden = !(profileValue.plus ?? false)
         if crownView.isHidden { crownView.stop() } else { crownView.start() }
@@ -3619,13 +3611,9 @@ class BearyProfileViewController: UIViewController {
     /// 只刷新名字旁的佩戴徽章位（不重拉整个头部，避免滚动跳动）。
     private func refreshWornBadge() {
         guard let profileValue = profile else { return }
-        if let badgeKey = profileValue.wornBadge, !badgeKey.isEmpty, let badgeImage = BearyBadgeImages.imageOrPlaceholder(for: badgeKey) {
-            badgeImageView.image = badgeImage
-            badgeImageView.isHidden = false
-        } else {
-            badgeImageView.image = nil
-            badgeImageView.isHidden = true
-        }
+        // BETA 徽章已下线：用户名右边不再显示佩戴徽章，皇冠改贴名字（下方约束已按 badgeVisible=false 走）。
+        badgeImageView.image = nil
+        badgeImageView.isHidden = true
         let badgeVisible = badgeImageView.isHidden == false
         crownLeadingToBadgeConstraint?.isActive = badgeVisible
         crownLeadingToNameConstraint?.isActive = !badgeVisible

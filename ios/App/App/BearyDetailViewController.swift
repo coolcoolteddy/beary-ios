@@ -1182,13 +1182,9 @@ final class BearyDetailViewController: UIViewController {
             recipientRow.isHidden = true
             recipientLabel.text = nil
         }
-        if let badgeKey = entry.authorBadge, !badgeKey.isEmpty, let badgeImage = BearyBadgeImages.image(for: badgeKey) {
-            badgeImageView.image = badgeImage
-            badgeImageView.isHidden = false
-        } else {
-            badgeImageView.image = nil
-            badgeImageView.isHidden = true
-        }
+        // BETA 徽章已下线：用户名右边不再显示佩戴徽章（Plus 皇冠不受影响）。
+        badgeImageView.image = nil
+        badgeImageView.isHidden = true
         setCrownHidden((entry.authorPlus ?? 0) != 1 || !crownView.hasCrown)
         if let weatherKey = entry.weather, !weatherKey.isEmpty,
            let weatherImage = BearyFeedIconCache.image(named: "icon_wx_" + weatherKey, pointSize: 15) {
