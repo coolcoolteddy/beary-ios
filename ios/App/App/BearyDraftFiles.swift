@@ -37,6 +37,19 @@ struct BearyDraftImageItem: Codable {
     var state: BearyDraftImageState
 }
 
+extension BearyDraft {
+    /// 清单 19：草稿卡字数 = 编辑器圆环口径（committedTextCount），两处口径
+    /// 以编辑器为准：拼音组词串（marked text）不计、首尾空白照计（不 trim；
+    /// trim 只用于发布 2000 上限判定 trimmedContent，不用于圆环）。
+    /// 落盘时 content 已是 committedContent（组词串在存时已去掉），故对现行
+    /// 草稿本值即 content.count；但口径以此函数为准，不再由卡片各自对原串
+    /// count——任一处改口径只改这里。注意：已存串本身不带 marked 区间信息，
+    /// P1-15 之前存的含组词串老草稿无法事后剥离，见本条 PR 说明。
+    var editorWordCount: Int {
+        return content.count
+    }
+}
+
 struct BearyDraft: Codable {
     var draftId: String
     var content: String
@@ -47,6 +60,8 @@ struct BearyDraft: Codable {
     var clientReq: String
     var updatedAt: TimeInterval
     var weather: String?
+    /// 天气气温（摄氏度整数；老草稿缺本键时按 nil 解码，气温步进器不显示数值）。
+    var temperature: Int? = nil
     /// 批 E 草稿位置（两段文本，无坐标；老草稿缺本键时按 nil 解码，位置行不显示）。
     var locationName: String? = nil
     var locationDistrict: String? = nil

@@ -43,6 +43,8 @@ enum BearySoundPlayer {
     /// 池满才丢弃，不长期无界增长。单音最长 0.4s，并发数极小。
     private static var activePlayers: [AVAudioPlayer] = []
     private static var sessionConfigured = false
+    /// 打断监听是否已注册（随 ensureAudioSession 首次配置注册一次；静态持有 token 防注销）。
+    private static var interruptionObserver: NSObjectProtocol?
 
     // MARK: - 播放器池（审计三轮第 25 项：原来 play 每次现建播放器）
     // 原问题：play 每次在调用线程（UI 操作即主线程）做 Bundle.main.url +
@@ -110,6 +112,33 @@ enum BearySoundPlayer {
             try AVAudioSession.sharedInstance().setCategory(.ambient, options: [.mixWithOthers])
             try AVAudioSession.sharedInstance().setActive(true)
             sessionConfigured = true
+            observeInterruptionIfNeeded()
+        }
+    }
+
+    /// 32 清单第 26 项：监听音频打断结束，打断结束即将会话复位（重设 .ambient +
+    /// mixWithOthers 并 setActive），使打断后下一次音效不再静默。注册一次、常驻；
+    /// 复位失败静默（不弹 toast、不记日志，与本文件失败口径一致）。
+    /// 注意：.ambient + mixWithOthers 下系统可能已自动恢复会话，本改动届时为空操作——
+    /// 属 Li 拍板接受的可能无用功，仅作防御。
+    private static func observeInterruptionIfNeeded() {
+        guard interruptionObserver == nil else { return }
+        interruptionObserver = NotificationCenter.default.addObserver(
+            forName: AVAudioSession.interruptionNotification,
+            object: AVAudioSession.sharedInstance(),
+            queue: .main
+        ) { notification in
+            guard let info = notification.userInfo,
+                  let rawType = info[AVAudioSessionInterruptionTypeKey] as? UInt,
+                  AVAudioSession.InterruptionType(rawValue: rawType) == .ended else { return }
+            do {
+                try AVAudioSession.sharedInstance().setCategory(.ambient, options: [.mixWithOthers])
+                try AVAudioSession.sharedInstance().setActive(true)
+            } catch {
+                // 下一次 play 经 ensureAudioSession 的 sessionConfigured 门控不再重设；
+                // 为避免一次复位失败即永久静默，失败时把门控打回未配置，下次播放重走配置。
+                sessionConfigured = false
+            }
         }
     }
 

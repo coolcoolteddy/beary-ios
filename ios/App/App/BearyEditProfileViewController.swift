@@ -88,9 +88,14 @@ class BearyEditProfileViewController: UIViewController {
     /// 屏宽 -40 约束撑满，与个人主页 isDesktopColumn 同口径；开关见 viewDidLayoutSubviews）。
     private var contentColumnWidthCap: NSLayoutConstraint?
 
+    /// 116 子页空白守卫（同 BearySettingsSubpages.swift 守卫说明；本页无独立顶栏，
+    /// 以 scrollView 为顶视图——其 top 钉在安全区顶部，minY 偏离即判异常）。
+    private let subpageLayoutGuard = BearySubpageLayoutGuard()
     private let scrollView: UIScrollView = {
         let scrollViewValue = UIScrollView()
         scrollViewValue.translatesAutoresizingMaskIntoConstraints = false
+        // 116 后扫查：与广场/个人页同口径——关掉 delaysContentTouches，滚动容器里的点按立即响应，不等滚动判定。
+        scrollViewValue.delaysContentTouches = false
         return scrollViewValue
     }()
 
@@ -395,13 +400,31 @@ class BearyEditProfileViewController: UIViewController {
 
     /// F12：主页链接文案（@handle 优先口径：有 handle 用 @handle，无 handle
     /// 才回退 /u/id，再无回退 @用户名；与个人主页分享、设置页隐私文案一致）。
+    /// 116 数据填入动效：链接行文案随 /me 到达或改名成功变化时只淡入
+    /// 该 label 本身（alpha 0→1、0.25s，不动 transform／布局、不重建
+    /// 节点、不缩放弹一下）；同值不赋值不重播；减动效或未进窗口时
+    /// 直设终值。签名输入框内容为可编辑文档，不做淡入（与编辑器
+    /// 表单回填同口径）。
+    private func setLinkLabelTextFaded(_ text: String) {
+        guard linkLabel.text != text else { return }
+        linkLabel.text = text
+        guard !UIAccessibility.isReduceMotionEnabled, linkLabel.window != nil else {
+            linkLabel.alpha = 1
+            return
+        }
+        linkLabel.alpha = 0
+        UIView.animate(withDuration: 0.25, delay: 0, options: [.curveEaseOut, .beginFromCurrentState], animations: {
+            self.linkLabel.alpha = 1
+        })
+    }
+
     private func updateLinkRow() {
         if !effectiveHandle.isEmpty {
-            linkLabel.text = "主页链接 teddyhn.com/beary/@\(effectiveHandle)"
+            setLinkLabelTextFaded("主页链接 teddyhn.com/beary/@\(effectiveHandle)")
         } else if let id = fetchedUserId {
-            linkLabel.text = "主页链接 teddyhn.com/beary/u/\(id)"
+            setLinkLabelTextFaded("主页链接 teddyhn.com/beary/u/\(id)")
         } else {
-            linkLabel.text = "主页链接 teddyhn.com/beary/@用户名"
+            setLinkLabelTextFaded("主页链接 teddyhn.com/beary/@用户名")
         }
     }
 
@@ -444,10 +467,16 @@ class BearyEditProfileViewController: UIViewController {
         return !current.isEmpty
     }
 
+    override func viewWillAppear(_ animated: Bool) {
+        super.viewWillAppear(animated)
+        subpageLayoutGuard.resetForAppearance()
+    }
+
     override func viewDidLayoutSubviews() {
         super.viewDidLayoutSubviews()
         // P2-1：宽 ≥821 才锁 600 上限；宽 ≤820 时停用上限，屏宽 -40 约束撑满。
         contentColumnWidthCap?.isActive = view.bounds.width >= 821
+        subpageLayoutGuard.applyIfNeeded(page: "编辑资料", view: view, topView: scrollView)
     }
 
     override func traitCollectionDidChange(_ previousTraitCollection: UITraitCollection?) {
