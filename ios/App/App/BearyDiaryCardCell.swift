@@ -480,6 +480,13 @@ class BearyDiaryCardCell: UITableViewCell {
     /// 对齐），框顶仍 22（框完整包住头像，上下各留 8pt），不用框去迁就
     /// 错位头像；非首卡与首页/时间线一字不动。
     var profileFirstRow = false
+    /// 个人页“更多日记”行上方：本卡为日记 tab 最后一篇且后接“更多日记”行时，
+    /// 卡片底线整段塌掉（高 2 → 0 并隐藏，不留空占位）。#360 删的是“更多日记”
+    /// 行自带的顶线，本卡底线是另一条（同为 2pt、BearyColors.line、全宽、
+    /// 贴 cell 底），故 #360 后截图里仍可见一条粗线。仅个人页容器在
+    /// configure 前置 true；其余行、首页模式一律不动；复用时复位。
+    var suppressBottomSeparator = false
+    private var separatorHeightConstraint: NSLayoutConstraint?
     private var rightStackTopConstraint: NSLayoutConstraint?
     private var avatarTopConstraint: NSLayoutConstraint?
     /// 右列右缩进恒 −16；⋯ 留位走标题行末 titleMoreSpacer，不再按本人／他人改右缩进。
@@ -1268,6 +1275,9 @@ class BearyDiaryCardCell: UITableViewCell {
         if rightStackTrailingConstraint == nil {
             rightStackTrailingConstraint = rightStack.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -16)
         }
+        if separatorHeightConstraint == nil {
+            separatorHeightConstraint = separatorView.heightAnchor.constraint(equalToConstant: 2)
+        }
         NSLayoutConstraint.activate([
             avatarTop,
             avatarContainer.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 16),
@@ -1296,7 +1306,7 @@ class BearyDiaryCardCell: UITableViewCell {
             separatorView.topAnchor.constraint(equalTo: rightStack.bottomAnchor, constant: separatorTopGap),
             separatorView.leadingAnchor.constraint(equalTo: contentView.leadingAnchor),
             separatorView.trailingAnchor.constraint(equalTo: contentView.trailingAnchor),
-            separatorView.heightAnchor.constraint(equalToConstant: 2),
+            separatorHeightConstraint!,
             separatorView.bottomAnchor.constraint(equalTo: contentView.bottomAnchor),
         ] + extraConstraints)
         // imagesScrollView 的高度只由 imageHeightConstraint 驱动（216 有图 / 0 无图）。
@@ -1362,6 +1372,8 @@ class BearyDiaryCardCell: UITableViewCell {
         contentView.alpha = 1
         contentView.transform = .identity
         profileFirstRow = false
+        suppressBottomSeparator = false
+        separatorHeightConstraint?.constant = 2
         avatarTopConstraint?.constant = 14
         // 限时态复位：倒计时行与虚线边框藏起、底线恢复，防残留到下一行。
         ephemeralRow.isHidden = true
@@ -2634,7 +2646,10 @@ class BearyDiaryCardCell: UITableViewCell {
             ephemeralLabel.text = nil
             ephemeralRow.isHidden = true
         }
-        separatorView.isHidden = (cardMode == .feed) ? false : live
+        // 个人页最后一篇后接“更多日记”行时底线整段塌掉（高 0 并隐藏），
+        // 其余行沿用旧口径（首页存活期限时篇也显底线；个人页存活期限时篇藏底线但高仍 2）。
+        separatorView.isHidden = ((cardMode == .feed) ? false : live) || suppressBottomSeparator
+        separatorHeightConstraint?.constant = suppressBottomSeparator ? 0 : 2
         ephemeralBorderLayer.isHidden = !live
         setNeedsLayout()
     }
