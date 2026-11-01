@@ -2708,7 +2708,11 @@ final class BearyLegalTextViewController: UIViewController {
         textView.translatesAutoresizingMaskIntoConstraints = false
         textView.isEditable = false
         textView.isSelectable = true
-        textView.font = UIFont.systemFont(ofSize: 15)
+        // 扫查组：此前裸 15pt，隐私/条款长文本不跟随系统字号（本页顶栏已
+        // 在 #343 跟随，只剩正文漏网）；UITextView 配 scaledFont + adjusts
+        // 后档位变化自动重算字号，滚动区高度自适应，无固定高可撑破。
+        textView.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 15))
+        textView.adjustsFontForContentSizeCategory = true
         textView.textColor = BearyColors.ink
         textView.backgroundColor = BearyColors.bg
         textView.text = pageText
