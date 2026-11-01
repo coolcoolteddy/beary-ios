@@ -16,7 +16,7 @@ import UIKit
 // 回调不在主线程，碰 UI 一律 DispatchQueue.main.async）；颜色只用 BearyColors，
 // 不新增玻璃效果，不用 SF Symbol（图标一律 BearyIconImages + 既有 icon_* 资产），
 // 无 force unwrap、无裸 id 变量名。本文件不接线：容器（SceneDelegate 侧）负责实例化、
-// 设三个回调、做 600 居中列（宽 >=821 时）与底栏胶囊/FAB 的避让（表底 inset 已留 90）。
+// 设三个回调、做 600 居中列（宽 >=821 时）与底栏分段器/FAB 的避让（表底 inset 已留 90）。
 
 // MARK: - 日历接口模型（BearyAPI.request + convertFromSnakeCase 解码）
 
@@ -471,7 +471,7 @@ final class BearyCalendarCardView: UIView {
         toggleButton.addTarget(self, action: #selector(didTapToggle), for: .touchUpInside)
         toggleButton.bearyAddPressFeedback()
 
-        // C10 回到今天：轻量胶囊“今”，与翻页钮同款（faint 底、32×32、
+        // C10 回到今天：轻量 pill“今”，与翻页钮同款（faint 底、32×32、
         // 圆角 16、12.5 粗体），默认隐藏，只由 VC 的 setTodayButtonVisible
         // 在显示月份/周不含今天或选中日不是今天时浮现；无障碍名“回到今天”。
         todayButton.translatesAutoresizingMaskIntoConstraints = false
@@ -2512,7 +2512,7 @@ class BearyTimelineViewController: UIViewController {
         startCountdownTimer()
         // 回到本页时栏恢复可见（不带动画，避免进页先闪一下栏）。
         // setChromeHidden 由容器 lane 在 SceneDelegate.swift 提供，本文件只调用。
-        // 下滑藏栏已拆除（第 11 项）：底栏胶囊与 FAB 常驻，不再按滚动方向藏栏。
+        // 下滑藏栏已拆除（第 11 项）：底栏分段器与 FAB 常驻，不再按滚动方向藏栏。
         SceneDelegate.chrome?.setChromeHidden(false, animated: false)
     }
 
@@ -6116,7 +6116,7 @@ extension BearyTimelineViewController: UITableViewDataSource, UITableViewDelegat
         })
     }
 
-    // 下滑藏栏已拆除（第 11 项）：底栏胶囊与 FAB 常驻，scrollViewDidScroll
+    // 下滑藏栏已拆除（第 11 项）：底栏分段器与 FAB 常驻，scrollViewDidScroll
     // 只做追加项二的悬浮日期头跟随，不做藏栏。
 }
 

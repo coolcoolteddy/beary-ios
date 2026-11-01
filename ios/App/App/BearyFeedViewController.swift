@@ -146,7 +146,7 @@ class BearyFeedViewController: UIViewController {
         btn.titleEdgeInsets.left = 6
         btn.backgroundColor = BearyColors.ink
         // 8-11：圆角取半高，见 viewDidLayoutSubviews（跟 bounds 走，不手写 17；
-        // Dynamic Type 变高后仍为胶囊）。
+        // Dynamic Type 变高后仍为 pill 形）。
         btn.clipsToBounds = false
         btn.layer.shadowColor = UIColor.black.cgColor
         btn.layer.shadowOpacity = 0.22

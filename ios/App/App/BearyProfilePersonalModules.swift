@@ -88,8 +88,6 @@ enum BearyProfilePersonalLogic {
     }
 
     static func writingStats(entries: [Entry], now: Date, calendar: Calendar) -> WritingStats {
-        // 时间胶囊：胶囊篇不计普通统计（埋了即排除，不论解锁与否；取消埋藏后重新计入）。
-        let entries = entries.filter { !BearyTimeCapsule.isExcludedFromStats($0) }
         let total = entries.count
         let totalChars = entries.reduce(0) { $0 + ($1.content ?? "").count }
         // 2 小时桶。
@@ -199,8 +197,6 @@ enum BearyProfilePersonalLogic {
               let todayMonth = todayParts.month,
               let todayDay = todayParts.day else { return nil }
         var byYear: [Int: [Entry]] = [:]
-        // 时间胶囊：胶囊篇不进那年今日（与写作统计同口径）。
-        let entries = entries.filter { !BearyTimeCapsule.isExcludedFromStats($0) }
         for entry in entries {
             guard let createdAt = entry.createdAt else { continue }
             let date = Date(timeIntervalSince1970: TimeInterval(createdAt) / 1000)
@@ -233,15 +229,9 @@ enum BearyProfilePersonalLogic {
     // MARK: - 年度回顾
 
     /// 当年条目（本地年），createdAt 降序。
-    /// 清单第 10 项：胶囊篇排除（与写作统计、那年今日同谓词
-    /// BearyTimeCapsule.isExcludedFromStats，即 capsuleBuried == 1，埋了即排除、
-    /// 不论解锁与否，取消埋藏后重新计入）。本函数是年度回顾总篇数、最长连续、
-    /// 心情分布与词汇指纹的共同源头——年报首屏与词汇指纹内部均经它取当年条目，
-    /// 故一处过滤即覆盖四处；年度回顾入口卡的“今年已写 N 篇”也随之变小，
-    /// Li 拍板接受（会小于实际写作篇数）。
+    /// 当年条目是年度回顾总篇数、最长连续、心情分布与词汇指纹的共同源头。
     static func yearEntries(entries: [Entry], year: Int, calendar: Calendar) -> [Entry] {
         entries.filter { entry in
-            guard !BearyTimeCapsule.isExcludedFromStats(entry) else { return false }
             guard let createdAt = entry.createdAt else { return false }
             let date = Date(timeIntervalSince1970: TimeInterval(createdAt) / 1000)
             return calendar.component(.year, from: date) == year
@@ -263,10 +253,7 @@ enum BearyProfilePersonalLogic {
     // MARK: - 年度回顾新增统计（2026-10-31 Li 定）
 
     /// 年度之最 + 每月字数。口径与现行年报一致：
-    /// - 输入已是当年条目（调用方传 yearEntries 结果）；本函数再按
-    ///   BearyTimeCapsule.isExcludedFromStats 过一次胶囊篇（埋了即排除、
-    ///   不论解锁与否，与 32 条批第 10 项定过的年度回顾排除胶囊口径一致；
-    ///   #383 支仍在 OPEN 未合入 main，本处过滤与它同谓词，合入后也不重复计）。
+    /// - 输入已是当年条目（调用方传 yearEntries 结果；时间胶囊已删除，不再排除胶囊篇）。
     /// - 时间一律按设备本地时区（Calendar.current）取，createdAt 为毫秒。
     /// - 字数 = 正文 content.count，标题不计，与写作统计 totalChars 同口径。
     struct YearReviewExtras {
@@ -290,7 +277,6 @@ enum BearyProfilePersonalLogic {
     }
 
     static func yearReviewExtras(entries: [Entry], calendar: Calendar) -> YearReviewExtras {
-        let entries = entries.filter { !BearyTimeCapsule.isExcludedFromStats($0) }
         var monthlyChars = [Int](repeating: 0, count: 12)
         var dayCounts: [Date: Int] = [:]
         var dayChars: [Date: Int] = [:]

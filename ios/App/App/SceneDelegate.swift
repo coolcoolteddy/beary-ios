@@ -133,7 +133,7 @@ final class BearyChromeViewController: UIViewController {
     private var feedTopConstraint: NSLayoutConstraint?
     private var pageTopConstraints: [ContainerPage: NSLayoutConstraint] = [:]
     /// 底栏：官方分段选择器（BearyHit44SegmentedControl 仅扩热区至 44pt，
-    /// 与已拆除的时间线筛选条同款热区扩类；系统自绘玻璃与选中 pill，不再自绘胶囊）。
+    /// 与已拆除的时间线筛选条同款热区扩类；系统自绘玻璃与选中 pill，不再自绘 pill）。
     private var bottomSegmented: BearyHit44SegmentedControl!
     /// 分段器后方的模糊衬底（Li 2026-10-26：分段器太透，加一层模糊）：
     /// systemMaterial，随深浅自适应；与分段器同中心同尺寸（288×58，见下方约束），
@@ -475,14 +475,14 @@ final class BearyChromeViewController: UIViewController {
             topStack.bottomAnchor.constraint(equalTo: top.contentView.bottomAnchor),
             topStack.heightAnchor.constraint(equalToConstant: 60),
         ])
-        // ---- 底栏：官方分段选择器（Li 2026-10-26 纠正：55 包的自绘胶囊不是官方分段器）----
+        // ---- 底栏：官方分段选择器（Li 2026-10-26 纠正：55 包的自绘 pill 不是官方分段器）----
         // 时间线筛选条已在复刻批拆除，线上已无可抄的筛选条配置；本控件口径：
         // 系统默认外观（iOS 27 自绘玻璃与选中 pill，不设背景色/选中色；
         // Li 2026-10-26 定底栏也加 52 tint：分段器本身无整条玻璃 tint 槽，
         // tint 落在它后面的模糊衬底 contentView 上，与顶栏同值统一颜色）；
         // BearyHit44SegmentedControl 是筛选条用过的同款热区扩类（仅扩触摸帧）；
         // 四段等宽（apportionsSegmentWidthsByContent=false），图标与旧钮同源、
-        // 统一缩到 24pt；布局常量与旧胶囊 1:1：宽 288、高 58、底距安全区 12。
+        // 统一缩到 24pt；布局常量与旧 pill 1:1：宽 288、高 58、底距安全区 12。
         // 模糊衬底（Li 2026-10-26：分段器太透）：systemMaterial 随深浅自适应；
         // 与分段器同尺寸（288×58、圆角 29）：加 52 tint 后大一圈的光晕显形，
         // 故衬底不再比控件大，只盖住分段器本身；
@@ -645,7 +645,7 @@ final class BearyChromeViewController: UIViewController {
 
     /// 栏覆盖层布局（viewDidLayoutSubviews 与 updateTabSelection 后调用）：
     /// 顶栏图标间距随屏宽走（≤360 时 4、≤480 时 10，其余 18）；铃铛角标跟铃铛钮走。
-    /// 旧自绘胶囊的 pill/阴影/高光已随分段器改造删除，选中 pill 由系统自绘。
+    /// 旧自绘 pill 的/阴影/高光已随分段器改造删除，选中 pill 由系统自绘。
     /// S9 窄屏档：320pt 宽时固定项 79（logo）+ 约 60（登录 pill）+ 3×40（礼物/搜索/铃铛）
     /// + 两侧边距 32 = 约 291，5 档间距在 10 时共 50、合计约 341 超宽；≤360 时间距 4，
     /// 合计约 311 不超宽（不隐藏任何按钮，顶栏高仍 60）。

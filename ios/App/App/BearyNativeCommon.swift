@@ -137,7 +137,7 @@ enum BearyGlass {
 }
 
 /// 玻璃按钮：BearyHit44Button + 背部玻璃底。只换按钮底质，不动图标/文字/尺寸/44pt 热区；
-/// 点亮色、描边、边框等上层样式一律不动。圆角取半高（44×44 图标钮为圆、宽钮为胶囊，与预览一致）。
+/// 点亮色、描边、边框等上层样式一律不动。圆角取半高（44×44 图标钮为圆、宽钮为 pill 形，与预览一致）。
 /// 玻璃视图插在 index 0，位于 imageView/titleLabel 之下；backgroundColor 必须保持 clear，
 /// 否则实色底会盖住玻璃——转换点须同步把原实色底改 clear（边框/描边不动）。
 /// UIButton(type:) 在子类上调用仍走本类实例，现有 BearyHit44Button(type:) 调用点只改类名即可。
@@ -1002,7 +1002,7 @@ extension BearyAPI {
     /// 成功 201 返回 {id, publish_at, edit_deadline}；失败码：content required / content too long /
     /// invalid image ownership / image unavailable(409) / create_gap / create_day_limit /
     /// create_ip_limit(429) / create_dup。
-    func publishEntry(content: String, images: [String], mood: String?, weather: String? = nil, quoteId: String? = nil, published: Int? = nil, mentionedUserId: Int? = nil, title: String? = nil, ephemeral: Int? = nil, clientReq: String, locationName: String? = nil, locationDistrict: String? = nil, capsuleBuried: Int? = nil, capsuleUnlockDate: String? = nil, capsuleDistrict: String? = nil, temperature: Int? = nil, liveVideos: [String: String]? = nil, completion: @escaping (Result<CreateResponse, APIError>) -> Void) {
+    func publishEntry(content: String, images: [String], mood: String?, weather: String? = nil, quoteId: String? = nil, published: Int? = nil, mentionedUserId: Int? = nil, title: String? = nil, ephemeral: Int? = nil, clientReq: String, locationName: String? = nil, locationDistrict: String? = nil, temperature: Int? = nil, liveVideos: [String: String]? = nil, completion: @escaping (Result<CreateResponse, APIError>) -> Void) {
         var body: [String: Any] = ["content": content, "images": images, "client_req": clientReq]
         // 实况：非空才发 live_videos（无实况的新建与旧版 body 一字相同）；
         // 空映射不发（新建无旧态可清，编辑清实况走 updateEntry 的显式空映射）。
@@ -1021,11 +1021,6 @@ extension BearyAPI {
         // 位置持久化以后端批上线为准（见 ios/Docs/diary-location-fields.md）。
         if let loc = locationName { body["location_name"] = loc }
         if let district = locationDistrict { body["location_district"] = district }
-        // 时间胶囊：只在埋胶囊时发三键（埋点区级 = 发布时位置的区级快照，不是精确地点名）；
-        // 不埋时三键全省略，服务端保留缺省。经纬度永不进 body。
-        if let buried = capsuleBuried { body["capsule_buried"] = buried }
-        if let unlockDate = capsuleUnlockDate { body["capsule_unlock_date"] = unlockDate }
-        if let capsuleDistrictValue = capsuleDistrict { body["capsule_district"] = capsuleDistrictValue }
         if let q = quoteId { body["quote_id"] = q }
         if let p = published { body["published"] = p }
         if let e = ephemeral { body["ephemeral"] = e }
@@ -1128,14 +1123,6 @@ extension BearyAPI {
         }
     }
 
-    /// 取消埋藏：PUT /beary/api/entries/:id，三键显式清掉（buried=0 + 两键 null），与位置清除同款三态。
-    /// 后端字段未上线前服务端可能忽略本请求，调用方只在成功后才本地去标记（失败不乐观清除，见地图页）。
-    /// 编辑 PUT 不走本函数：编辑不碰胶囊字段，服务端保留原埋点与解锁日期。
-    func cancelCapsule(id: String, completion: @escaping (Result<Void, APIError>) -> Void) {
-        let safe = id.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? id
-        let body: [String: Any] = ["capsule_buried": 0, "capsule_unlock_date": NSNull(), "capsule_district": NSNull()]
-        requestVoid("/beary/api/entries/\(safe)", method: "PUT", jsonBody: body, completion: completion)
-    }
 }
 
 // MARK: - 图片压缩（与网页编辑器同口径：原图最长边 1600、JPEG .85；缩略图最长边 480）

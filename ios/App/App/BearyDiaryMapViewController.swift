@@ -40,20 +40,7 @@ final class BearyDiaryMapViewController: UIViewController, MKMapViewDelegate, UI
     private var loadGeneration = 0
     private var needsRefreshAfterDetail = false
     private var didInitialGeocode = false
-    /// 时间胶囊：与普通地点组分流（胶囊篇绝不进普通组列表，否则他人在地图列表里直接看到标题泄题）。
-    /// capsuleEntries = 有效公开的埋胶囊篇；located/unlocated 只管打点，弹卡列表用 capsuleEntries 全量
-    /// （编不出坐标的胶囊仍可点列表进弹卡，不因地理编码失败而消失）。
-    private var capsuleEntries: [Entry] = []
-    private var capsuleLocated: [(entry: Entry, coordinate: CLLocationCoordinate2D)] = []
-    private var capsuleUnlocated: [Entry] = []
-    private var capsuleGeocodeGeneration = 0
-    /// 清单 12：胶囊编码链路代际锁。每次起新胶囊编码链路（regroup 空组直启、
-    /// 普通组编码完成后的接续）即 +1；链路全程携带起链时的代际，异步回包
-    /// 与最终 applyCapsules 均先验代际——旧链路结果一律丢弃，不覆盖新链路
-    /// 标记。旧的 index/id 守卫只拦得住“列表形态变了”的换代：同位同篇
-    /// （如仅另一篇胶囊变化触发 regroup）时旧链路仍会跑到终点并覆盖新
-    /// 标记，代际锁补这一洞。普通组链路不动（另有 index/key 守卫，且其
-    /// 终点会起新胶囊代际，旧胶囊链路无法借它复活）。
+
 
     init(authorId: Int, viewerIsAuthor: Bool, initialEntries: [Entry], onOpenEntry: ((Entry) -> Void)?) {
         self.authorId = authorId
@@ -261,28 +248,19 @@ final class BearyDiaryMapViewController: UIViewController, MKMapViewDelegate, UI
     // MARK: - 聚合 + 现场地理编码（串行编组键，不按篇编）
 
     private func regroupAndGeocode() {
-        // 时间胶囊先分流：普通组只用非胶囊篇算（他人视角下胶囊公开篇若进普通组，列表行会泄标题）。
-        capsuleEntries = BearyTimeCapsule.capsuleEntries(from: allEntries)
-        let nonCapsule = BearyTimeCapsule.nonCapsuleEntries(from: allEntries)
-        groups = BearyLocationMap.groups(entries: nonCapsule, viewerIsAuthor: viewerIsAuthor)
+        groups = BearyLocationMap.groups(entries: allEntries, viewerIsAuthor: viewerIsAuthor)
         // 已选组若因重算消失（删篇/翻私密），回落到未选态，不留指向旧组的列表。
         if let selected = selectedGroup, !groups.contains(where: { $0.key == selected.key }) {
             selectedGroup = nil
         }
         if groups.isEmpty {
-            setStatusTextFaded(capsuleEntries.isEmpty
-                ? (allEntries.isEmpty ? "还没有日记" : "还没有带位置的日记")
-                : "\(capsuleEntries.count) 个时间胶囊")
+            statusLabel.text = allEntries.isEmpty ? "还没有日记" : "还没有带位置的日记"
             mapView.removeAnnotations(mapView.annotations)
             unlocatedGroups = []
             tableView.reloadData()
-            // 普通组为空时仍要编胶囊区级（胶囊不依赖普通组存在）。
-            startCapsuleGeocode()
             return
         }
-        var status = "共 \(nonCapsule.filter { !DiaryLocation(entry: $0).isEmpty }.count) 篇带位置日记 · \(groups.count) 个地点"
-        if !capsuleEntries.isEmpty { status += " · \(capsuleEntries.count) 个时间胶囊" }
-        setStatusTextFaded(status)
+        statusLabel.text = "共 \(allEntries.filter { !DiaryLocation(entry: $0).isEmpty }.count) 篇带位置日记 · \(groups.count) 个地点"
         geocodeGroupsSequentially(index: 0, located: [], unlocated: [])
     }
 
@@ -372,133 +350,15 @@ final class BearyDiaryMapViewController: UIViewController, MKMapViewDelegate, UI
         mapView.addAnnotations(annotations)
         if !annotations.isEmpty {
             // 首批成图时缩放到全部标记；之后重算（翻转回来）不再抢用户正在看的区域。
-            if !didInitialGeocode, capsuleEntries.isEmpty {
+            if !didInitialGeocode {
                 didInitialGeocode = true
                 mapView.showAnnotations(annotations, animated: false)
             }
         }
         tableView.reloadData()
-        startCapsuleGeocode()
+
     }
-
-    // MARK: - 时间胶囊打点（只按区级文本编，坐标只活本页内存）
-
-    /// 清单 12：胶囊编码链路唯一入口。每次起链即换代，旧链路的在途回包
-    /// 与终点 apply 一律被代际守卫拦下，不再有机会覆盖新标记。
-    private func startCapsuleGeocode() {
-        capsuleGeocodeGeneration += 1
-        geocodeCapsulesSequentially(generation: capsuleGeocodeGeneration, index: 0, located: [], unlocated: [])
-    }
-
-    private func geocodeCapsulesSequentially(generation: Int, index: Int, located: [(entry: Entry, coordinate: CLLocationCoordinate2D)], unlocated: [Entry]) {
-        guard index < capsuleEntries.count else {
-            applyCapsules(generation: generation, located: located, unlocated: unlocated)
-            return
-        }
-        let entry = capsuleEntries[index]
-        guard let district = entry.capsuleDistrict, !district.isEmpty else {
-            // 埋点区级缺失的胶囊不打点、但仍进弹卡列表（见 capsule section），不因字段不全而整篇消失。
-            var nextUnlocated = unlocated
-            nextUnlocated.append(entry)
-            geocodeCapsulesSequentially(generation: generation, index: index + 1, located: located, unlocated: nextUnlocated)
-            return
-        }
-        if let cached = geocodeCache[district] {
-            var next = located
-            next.append((entry, cached))
-            geocodeCapsulesSequentially(generation: generation, index: index + 1, located: next, unlocated: unlocated)
-            return
-        }
-        CLGeocoder().geocodeAddressString(district) { [weak self] placemarks, _ in
-            DispatchQueue.main.async {
-                guard let self = self else { return }
-                // 代际守卫（清单 12）：起链后又 regroup 过（新链路已起）时，
-                // 旧编码结果直接丢弃，不贴到新篇上；原 index/id 守卫保留作
-                // 第二道（同代内列表形态变化时仍拦）。
-                guard generation == self.capsuleGeocodeGeneration,
-                      index < self.capsuleEntries.count, self.capsuleEntries[index].id == entry.id else { return }
-                var nextLocated = located
-                var nextUnlocated = unlocated
-                if let coordinate = placemarks?.first?.location?.coordinate {
-                    self.geocodeCache[district] = coordinate
-                    nextLocated.append((entry, coordinate))
-                } else {
-                    nextUnlocated.append(entry)
-                }
-                self.geocodeCapsulesSequentially(generation: generation, index: index + 1, located: nextLocated, unlocated: nextUnlocated)
-            }
-        }
-    }
-
-    private func applyCapsules(generation: Int, located: [(entry: Entry, coordinate: CLLocationCoordinate2D)], unlocated: [Entry]) {
-        // 代际守卫（清单 12）：旧链路跑到终点时新链路已起，旧标记不得覆盖。
-        guard generation == capsuleGeocodeGeneration else { return }
-        capsuleLocated = located
-        capsuleUnlocated = unlocated
-        // 已选胶囊若因重算消失（删篇/翻私密/取消埋藏），回落到未选态，不留指向旧篇的弹卡。
-        if let selected = selectedCapsuleEntry, !capsuleEntries.contains(where: { $0.id == selected.id }) {
-            selectedCapsuleEntry = nil
-        }
-        // 先清旧胶囊标记再加新标记：重算期间旧编码链路晚到时，旧标记不得与新标记并存（普通组标记由
-        // applyGeocodedGroups 全量重建，胶囊标记须自己清，否则翻私密/取消埋藏后旧标记会残留）。
-        mapView.removeAnnotations(mapView.annotations.compactMap { $0 as? BearyCapsuleAnnotation })
-        var annotations: [BearyCapsuleAnnotation] = []
-        for item in located {
-            annotations.append(BearyCapsuleAnnotation(entry: item.entry, coordinate: item.coordinate))
-        }
-        mapView.addAnnotations(annotations)
-        if !didInitialGeocode, !annotations.isEmpty {
-            didInitialGeocode = true
-            mapView.showAnnotations(annotations, animated: false)
-        }
-        tableView.reloadData()
-    }
-
-    private var selectedCapsuleEntry: Entry?
-
-    private func presentCapsuleSheet(entry: Entry) {
-        selectedCapsuleEntry = entry
-        let sheet = BearyTimeCapsuleSheetViewController(
-            entry: entry,
-            viewerIsAuthor: viewerIsAuthor,
-            onOpenEntry: { [weak self] opened in
-                guard let self = self else { return }
-                self.needsRefreshAfterDetail = true
-                self.onOpenEntry?(opened)
-            },
-            onCancelCapsule: { [weak self] cancelled in
-                self?.cancelCapsule(entry: cancelled)
-            })
-        present(sheet, animated: true)
-    }
-
-    /// 取消埋藏：只在接口成功后本地去标记并重算（失败不乐观清除，标记仍在；后端未上线时接口可能被忽略，
-    /// 成功回包仍会本地去标记、但下次重拉可能复活——缺口见字段说明与 PR 说明，App 端不谎称已持久化）。
-    private func cancelCapsule(entry: Entry) {
-        guard let entryId = entry.id, !entryId.isEmpty else { return }
-        BearyAPI.shared.cancelCapsule(id: entryId) { [weak self] result in
-            DispatchQueue.main.async {
-                guard let self = self else { return }
-                switch result {
-                case .success:
-                    self.allEntries = self.allEntries.map { item in
-                        var copy = item
-                        if copy.id == entryId {
-                            copy.capsuleBuried = 0
-                            copy.capsuleUnlockDate = nil
-                            copy.capsuleDistrict = nil
-                        }
-                        return copy
-                    }
-                    self.selectedCapsuleEntry = nil
-                    self.regroupAndGeocode()
-                case .failure:
-                    // 失败不改本地态：标记仍在，用户可重试；不在失败时 toast“已取消”谎报。
-                    break
-                }
-            }
-        }
-    }
+（只按区级文本编，坐标只活本页内存）
 
     private func selectGroup(_ group: BearyLocationMapGroup) {
         selectedGroup = group
@@ -512,26 +372,6 @@ final class BearyDiaryMapViewController: UIViewController, MKMapViewDelegate, UI
     // MARK: - MKMapViewDelegate
 
     func mapView(_ mapView: MKMapView, viewFor annotation: MKAnnotation) -> MKAnnotationView? {
-        if let capsuleAnnotation = annotation as? BearyCapsuleAnnotation {
-            let reuseId = "DiaryMapCapsule"
-            let marker: MKMarkerAnnotationView
-            if let reused = mapView.dequeueReusableAnnotationView(withIdentifier: reuseId) as? MKMarkerAnnotationView {
-                marker = reused
-            } else {
-                marker = MKMarkerAnnotationView(annotation: capsuleAnnotation, reuseIdentifier: reuseId)
-            }
-            marker.annotation = capsuleAnnotation
-            // 胶囊标记不走系统 callout（callout 会把标题写进气泡）：点按直接进弹卡，标题绝不进气泡。
-            marker.canShowCallout = false
-            marker.markerTintColor = BearyColors.orange
-            if let image = BearyTimeCapsuleIcon.timeCapsuleImage(pointSize: 24) {
-                marker.glyphImage = image
-            } else {
-                // 【占位标注】icon_time_capsule 资产未注册时用文字占位，不自绘、不拿定位图标顶替。
-                marker.glyphText = "胶囊"
-            }
-            return marker
-        }
         guard annotation is MKPointAnnotation else { return nil }
         let reuseId = "DiaryMapPin"
         let marker: MKMarkerAnnotationView
@@ -553,31 +393,23 @@ final class BearyDiaryMapViewController: UIViewController, MKMapViewDelegate, UI
     }
 
     func mapView(_ mapView: MKMapView, didSelect view: MKAnnotationView) {
-        if let capsuleAnnotation = view.annotation as? BearyCapsuleAnnotation {
-            mapView.deselectAnnotation(capsuleAnnotation, animated: false)
-            presentCapsuleSheet(entry: capsuleAnnotation.entry)
-            return
-        }
         guard let title = view.annotation?.title ?? nil,
               let group = groups.first(where: { $0.key == title }) else { return }
         selectGroup(group)
     }
 
     // MARK: - UITableViewDataSource / Delegate
-    // section 构成是动态的：main 恒在；unlocated 仅在有编不出坐标的普通组时在；
-    // capsules 仅在有胶囊时在（胶囊行不依赖是否编出坐标，编不出时仍可点进弹卡）。
-    // 旧代码用固定 section 0/1，下标会随胶囊 section 出现而错位，故一律经 sectionKind 换算。
+    // section 构成是动态的：main 恒在；unlocated 仅在有编不出坐标的普通组时在。
+    // 旧代码用固定 section 0/1，下标会随 section 出现而错位，故一律经 sectionKind 换算。
 
     private enum DiaryMapSection {
         case main
         case unlocated
-        case capsules
     }
 
     private var diaryMapSections: [DiaryMapSection] {
         var sections: [DiaryMapSection] = [.main]
         if !unlocatedGroups.isEmpty { sections.append(.unlocated) }
-        if !capsuleEntries.isEmpty { sections.append(.capsules) }
         return sections
     }
 
@@ -589,8 +421,6 @@ final class BearyDiaryMapViewController: UIViewController, MKMapViewDelegate, UI
         switch diaryMapSections[section] {
         case .unlocated:
             return unlocatedGroups.count
-        case .capsules:
-            return capsuleEntries.count
         case .main:
             if let selected = selectedGroup { return selected.entries.count }
             return 1
@@ -601,8 +431,6 @@ final class BearyDiaryMapViewController: UIViewController, MKMapViewDelegate, UI
         switch diaryMapSections[section] {
         case .unlocated:
             return "未能在地图上定位"
-        case .capsules:
-            return "时间胶囊"
         case .main:
             if let selected = selectedGroup { return "\(selected.key) · \(selected.count) 篇" }
             return nil
@@ -617,23 +445,6 @@ final class BearyDiaryMapViewController: UIViewController, MKMapViewDelegate, UI
             var config = cell.defaultContentConfiguration()
             config.text = group.key
             config.secondaryText = "\(group.count) 篇 · 点此查看日记"
-            cell.contentConfiguration = config
-            cell.accessoryType = .disclosureIndicator
-            return cell
-        case .capsules:
-            // 胶囊行文案（他人视角绝不写区级名、不写标题）：他人只见“时间胶囊 + 解锁日期”；
-            // 作者才见埋点区级（与弹卡口径一致）。点行进弹卡，不直接进详情（未解锁时详情也不该直达正文）。
-            let cell = tableView.dequeueReusableCell(withIdentifier: "DiaryMapCell", for: indexPath)
-            let entry = capsuleEntries[indexPath.row]
-            var config = cell.defaultContentConfiguration()
-            let dateText = BearyTimeCapsule.unlockDateText(entry: entry) ?? "未知"
-            if viewerIsAuthor,
-               let district = entry.capsuleDistrict?.trimmingCharacters(in: .whitespacesAndNewlines), !district.isEmpty {
-                config.text = "时间胶囊 · \(district)"
-            } else {
-                config.text = "时间胶囊"
-            }
-            config.secondaryText = "解锁日期：\(dateText) · 点此查看"
             cell.contentConfiguration = config
             cell.accessoryType = .disclosureIndicator
             return cell
@@ -663,7 +474,7 @@ final class BearyDiaryMapViewController: UIViewController, MKMapViewDelegate, UI
             }
             let cell = tableView.dequeueReusableCell(withIdentifier: "DiaryMapCell", for: indexPath)
             var config = cell.defaultContentConfiguration()
-            config.text = groups.isEmpty && capsuleEntries.isEmpty ? "还没有带位置的日记" : "点地图上的标记点，这里出现该地点日记列表"
+            config.text = groups.isEmpty ? "还没有带位置的日记" : "点地图上的标记点，这里出现该地点日记列表"
             config.secondaryText = nil
             cell.contentConfiguration = config
             cell.selectionStyle = .none
@@ -676,9 +487,6 @@ final class BearyDiaryMapViewController: UIViewController, MKMapViewDelegate, UI
         switch diaryMapSections[indexPath.section] {
         case .unlocated:
             selectGroup(unlocatedGroups[indexPath.row])
-            return
-        case .capsules:
-            presentCapsuleSheet(entry: capsuleEntries[indexPath.row])
             return
         case .main:
             guard let selected = selectedGroup, indexPath.row < selected.entries.count else { return }

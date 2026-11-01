@@ -215,12 +215,6 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     /// 批 E 编辑态原位置快照（setupEditContent 首次回填时记下）：PUT 时与终态比对，
     /// 未动省略、改选发新值、清除发显式 null；新建模式恒为 nil。
     private var originalLocation: DiaryLocation?
-    /// 时间胶囊（新建模式专用；编辑模式不建行、不改胶囊字段）：
-    /// capsuleEnabled = 开关态；capsuleUnlockDate = 选中的解锁日（日粒度，行内 UIDatePicker 值）。
-    /// 埋点区级不另存变量——发布时取 selectedLocation.district 快照（改位置不挪已埋胶囊是服务端字段独立的前提，
-    /// 尚未发布前位置改了，埋点自然跟随最新位置走，这是发布前草稿态的正确语义）。
-    private var capsuleEnabled = false
-    private var capsuleUnlockDate: Date?
     /// 新建模式的 @ 对象（编辑模式经 selectedRecipient 改选，见 refreshRecipientRow 编辑分支）。
     private var selectedRecipient: SearchUser?
     /// 通知对方：iCity @ 提醒无按篇开关——选人面板的开关值不再用于发布，
@@ -482,8 +476,6 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     private let locationLabel = UILabel()
     private let locationClearButton = UIButton(type: .system)
     private let locationNoteLabel = UILabel()
-    /// 时间胶囊行视图（新建模式才建；编辑模式为 nil，所有刷新函数须按 optional 处理）。
-    private var capsuleRowView: BearyTimeCapsuleRowView?
     private enum CalloutKind { case mood, weather }
     private var activeCallout: CalloutKind?
     private var calloutTransitionGeneration = 0
@@ -601,7 +593,6 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         buildTextArea()
         buildSelectedChipsRow()
         buildLocationRow()
-        buildTimeCapsuleRow()
         buildImageRow()
         buildImageUndoBar()
         buildToolbarRow()
@@ -3496,64 +3487,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     @objc private func didTapClearLocation() {
         selectedLocation = nil
         refreshLocationRow()
-        // 位置清了，埋点区级即无从谈起：胶囊开关同步关闭（不是静默保留一个无区级的胶囊）。
-        if capsuleEnabled {
-            capsuleEnabled = false
-            capsuleUnlockDate = nil
-            capsuleRowView?.isOn = false
-            showToast(message: "已清除位置，埋胶囊已关闭")
-        }
-        refreshTimeCapsuleRow()
         scheduleDraftSave()
-    }
-
-    // MARK: - 时间胶囊行（定位行下方；新建模式专用）
-
-    private func buildTimeCapsuleRow() {
-        guard !isEditMode else { return }
-        let rowView = BearyTimeCapsuleRowView()
-        rowView.translatesAutoresizingMaskIntoConstraints = false
-        rowView.delegate = self
-        contentStack.addArrangedSubview(rowView)
-        capsuleRowView = rowView
-        refreshTimeCapsuleRow()
-    }
-
-    /// 胶囊行刷新：无位置时整组隐藏（定位行同款“无位置不留空行”）；有位置时显示，开关态与日期跟随状态变量。
-    /// 注意：本函数不做开关校验（校验只在开关点按与发布时做），避免刷新路径把用户刚开的开关悄悄关掉。
-    private func refreshTimeCapsuleRow() {
-        guard let rowView = capsuleRowView else { return }
-        if let location = selectedLocation, !location.isEmpty {
-            rowView.isHidden = false
-        } else {
-            rowView.isHidden = true
-        }
-        rowView.isOn = capsuleEnabled
-        if let date = capsuleUnlockDate {
-            rowView.setDate(date)
-        }
-    }
-
-    /// 发布用胶囊载荷：全部校验失败都 toast 并返回 nil（调用方停住不发）。校验顺序按用户可修性：
-    /// 限时冲突 → 无区级 → 无日期 → 过去日期。埋点区级取 selectedLocation.district 快照，不取精确地点名。
-    private func validatedCapsulePayload() -> (buried: Int, unlockDate: String, district: String)? {
-        if isEphemeral {
-            showToast(message: "限时日记不能埋胶囊")
-            return nil
-        }
-        guard let district = selectedLocation?.district, !district.isEmpty else {
-            showToast(message: "埋胶囊需要区级，请先添加带区级的位置")
-            return nil
-        }
-        guard let date = capsuleUnlockDate else {
-            showToast(message: "请先选择解锁日期")
-            return nil
-        }
-        if date < Calendar.current.startOfDay(for: Date()) {
-            showToast(message: "解锁日期不能是过去")
-            return nil
-        }
-        return (buried: 1, unlockDate: BearyTimeCapsule.string(from: date), district: district)
     }
 
     /// 定位气泡搭建：框体与专属框外收起层常驻 view（隐藏时 isHidden），约束一次激活；
@@ -5627,8 +5561,6 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             temperature: selectedTemperature,
             locationName: selectedLocation?.name,
             locationDistrict: selectedLocation?.district,
-            capsuleEnabled: isEditMode ? false : capsuleEnabled,
-            capsuleUnlockDate: (isEditMode || !capsuleEnabled) ? nil : capsuleUnlockDate.map { BearyTimeCapsule.string(from: $0) },
             visibilitySegmentIndex: selectedVisibilityPublished ? 1 : 0,
             ephemeralEnabled: isEditMode ? false : isEphemeral,
             recipientId: recipientUserId,
@@ -5742,18 +5674,9 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                 // 批 E：草稿位置恢复（两段文本，无坐标）；双空即无位置，不留空行。
                 let restoredLocation = DiaryLocation(name: draft.locationName, district: draft.locationDistrict)
                 self.selectedLocation = restoredLocation.isEmpty ? nil : restoredLocation
-                // 时间胶囊草稿恢复：开关 + 解锁日一起回填；日期解析失败即按未埋处理（不把坏日期带进发布）。
-                if draft.capsuleEnabled, let dateString = draft.capsuleUnlockDate, let date = BearyTimeCapsule.date(from: dateString) {
-                    self.capsuleEnabled = true
-                    self.capsuleUnlockDate = date
-                } else {
-                    self.capsuleEnabled = false
-                    self.capsuleUnlockDate = nil
-                }
                 self.refreshRecipientRow()
                 self.refreshQuoteSection()
                 self.refreshLocationRow()
-                self.refreshTimeCapsuleRow()
                 for img in draft.images {
                     let failed = (img.state == .failed)
                     let item = self.createImageItem(localImage: nil, key: img.serverKey, uploading: false, localFile: img.localFile, failed: failed)
@@ -6036,15 +5959,11 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         selectedLocation = nil
         originalLocation = nil
         refreshLocationRow()
-        // 112：空白新日记不得继承上一篇的可见性/限时/胶囊态——编辑器每次
-        // 默认私密、不记住上次选择。位置已清、胶囊行随之隐藏，更不能让
-        // 开关在用户看不见的地方仍开着：三态一并复位并刷新按钮与胶囊行。
+        // 112：空白新日记不得继承上一篇的可见性/限时态——编辑器每次
+        // 默认私密、不记住上次选择。
         selectedVisibilityPublished = false
         isEphemeral = false
-        capsuleEnabled = false
-        capsuleUnlockDate = nil
         refreshVisibilityButton()
-        refreshTimeCapsuleRow()
         setQuotePanelOpen(false)
         removeAllImageViews()
         // 只清视图与槽位，不碰存储：删篇由调用方决定（丢弃路径先调 clearDraftAndFiles
@@ -6097,15 +6016,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         // 批 E：草稿箱打开某篇时位置同款恢复。
         let boxLocation = DiaryLocation(name: draft.locationName, district: draft.locationDistrict)
         selectedLocation = boxLocation.isEmpty ? nil : boxLocation
-        if draft.capsuleEnabled, let dateString = draft.capsuleUnlockDate, let date = BearyTimeCapsule.date(from: dateString) {
-            capsuleEnabled = true
-            capsuleUnlockDate = date
-        } else {
-            capsuleEnabled = false
-            capsuleUnlockDate = nil
-        }
         refreshLocationRow()
-        refreshTimeCapsuleRow()
         setQuotePanelOpen(false)
         for img in draft.images {
             let failed = (img.state == .failed)
@@ -6313,9 +6224,6 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         // 先把本次 clientReq 落盘：服务端已落库但回包丢了，重试用同一 clientReq，
         // 服务端直接返回已落库的那篇，不重复发。
         saveDraftNow()
-        // 时间胶囊校验（失败时 validatedCapsulePayload 已 toast，本处直接停住，不发请求、不清草稿）。
-        let capsulePayload = capsuleEnabled ? validatedCapsulePayload() : nil
-        if capsuleEnabled, capsulePayload == nil { return }
         isPublishing = true
         updatePublishState()
         // 已删引用不传 quoteId：只剩 id 的引用服务端会拒，发布应按无引用走，
@@ -6325,7 +6233,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         // iCity：可见性值即 visibility（published 0/1）；@ 以 mentioned_user_id 发出，无按篇通知开关。
         // 限时：限时态时可见性必为公开，ephemeral=1 随新建发出（服务端写 24 小时到期）。
         let publishVisibility = selectedVisibilityPublished ? 1 : 0
-        BearyAPI.shared.publishEntry(content: trimmed, images: uploadedImageKeys(), mood: selectedMood, weather: selectedWeather, quoteId: publishQuoteId, published: publishVisibility, mentionedUserId: selectedRecipient?.id, title: headlineForCreate, ephemeral: isEphemeral ? 1 : nil, clientReq: req, locationName: selectedLocation?.name, locationDistrict: selectedLocation?.district, capsuleBuried: capsulePayload?.buried, capsuleUnlockDate: capsulePayload?.unlockDate, capsuleDistrict: capsulePayload?.district, temperature: selectedTemperature, liveVideos: uploadedLiveVideos().isEmpty ? nil : uploadedLiveVideos()) { [weak self] result in
+        BearyAPI.shared.publishEntry(content: trimmed, images: uploadedImageKeys(), mood: selectedMood, weather: selectedWeather, quoteId: publishQuoteId, published: publishVisibility, mentionedUserId: selectedRecipient?.id, title: headlineForCreate, ephemeral: isEphemeral ? 1 : nil, clientReq: req, locationName: selectedLocation?.name, locationDistrict: selectedLocation?.district, temperature: selectedTemperature, liveVideos: uploadedLiveVideos().isEmpty ? nil : uploadedLiveVideos()) { [weak self] result in
             DispatchQueue.main.async {
                 guard let self = self else { return }
                 self.isPublishing = false
@@ -6347,8 +6255,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                         // 发布在途时此前未冻结（见 refreshPublishingInputFreeze），
                         // 在途改动会使 toast 与实际发出态相反；现可见性已随冻结
                         // 禁用，此处仍以发送值为准，双保险。
-                        let capsuleNote = self.capsuleEnabled ? (publishVisibility == 1 ? " · 时间胶囊已埋好" : " · 胶囊待公开后生效") : ""
-                        self.showToastAfterClose(message: (publishVisibility == 1 ? "已发布 · 已公开" : "已发布 · 已设为私密") + capsuleNote)
+                        self.showToastAfterClose(message: (publishVisibility == 1 ? "已发布 · 已公开" : "已发布 · 已设为私密"))
                         BearyHaptics.publishSuccess()
                         BearySoundPlayer.play(.publishSuccess)
                         // B 修法：发布成功退场前先收起弹出框（无动画）。
@@ -6413,7 +6320,6 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         // iCity：编辑 @ 三态——已改选发新 id；已清除发 clearMentioned；未动则两者皆空、服务端保留原值。
         let updateMentionedId: Int? = selectedRecipient?.id
         let updateClearMentioned: Bool = (selectedRecipient == nil && editMentionCleared)
-        // 时间胶囊：编辑 PUT 不发胶囊字段，服务端保留原埋点与解锁日期；改位置不挪胶囊（埋点是发布时快照）。
         // 批 E：编辑位置——与原快照比对，未动省略、改选两键算清（有值发值、无值发 null）、清除两键皆 null。
         let locationChanged = selectedLocation != originalLocation
         // 编辑实况映射：新映射非空即发；新映射为空但原篇有实况时发显式
@@ -6988,14 +6894,6 @@ extension BearyComposerViewController: BearyLocationPopoverDelegate {
         selectedLocation = location
         hideLocationPopover(animated: true)
         refreshLocationRow()
-        // 新位置若没有区级（手工输入未编出区级时），已开的胶囊同步关闭——无区级埋不了胶囊。
-        if capsuleEnabled, location.district == nil {
-            capsuleEnabled = false
-            capsuleUnlockDate = nil
-            capsuleRowView?.isOn = false
-            showToast(message: "新位置没有区级，埋胶囊已关闭")
-        }
-        refreshTimeCapsuleRow()
         scheduleDraftSave()
     }
 
@@ -7007,38 +6905,6 @@ extension BearyComposerViewController: BearyLocationPopoverDelegate {
     }
 }
 
-// MARK: - 时间胶囊行回调
-
-extension BearyComposerViewController: BearyTimeCapsuleRowViewDelegate {
-    func timeCapsuleRowDidToggle(on: Bool) {
-        if on {
-            // 开关点按时即校验前置条件，不满足时开关弹回关态（不靠发布时才拦，用户当场就知道埋不了）。
-            if isEphemeral {
-                capsuleRowView?.isOn = false
-                showToast(message: "限时日记不能埋胶囊")
-                return
-            }
-            guard let district = selectedLocation?.district, !district.isEmpty else {
-                capsuleRowView?.isOn = false
-                showToast(message: "埋胶囊需要区级，请先添加带区级的位置")
-                return
-            }
-            _ = district
-            capsuleEnabled = true
-            // 开关打开时若尚未选过日期，取行内默认值（今天 +30 天）；已选过则保留用户选的值。
-            capsuleUnlockDate = capsuleUnlockDate ?? capsuleRowView?.selectedDate
-        } else {
-            capsuleEnabled = false
-        }
-        refreshTimeCapsuleRow()
-        scheduleDraftSave()
-    }
-
-    func timeCapsuleRowDidChangeDate(_ date: Date) {
-        capsuleUnlockDate = date
-        scheduleDraftSave()
-    }
-}
 
 extension BearyComposerViewController {
     // 2026-11-01：标题聚焦守卫复查函数已随标题滚动链删除。
