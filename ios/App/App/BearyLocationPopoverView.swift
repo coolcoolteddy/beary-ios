@@ -239,7 +239,7 @@ final class BearyLocationPopoverView: UIView, CLLocationManagerDelegate, MKLocal
 
     /// 审计 15 项第 14 项：内部状态切换的透明度过渡（约 0.16s 交叉淡入），
     /// 只过渡变化区域、不增加等待、不逐帧改约束；减动效时直接切换。
-    private func fadeStateChange(_ changes: () -> Void) {
+    private func fadeStateChange(_ changes: @escaping () -> Void) {
         if UIAccessibility.isReduceMotionEnabled {
             changes()
         } else {
