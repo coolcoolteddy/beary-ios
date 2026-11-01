@@ -718,19 +718,19 @@ class BearyProfileViewController: UIViewController {
         labelValue.numberOfLines = 0
         labelValue.lineBreakMode = .byCharWrapping
         labelValue.text = "—"
-        // 个人页 header 用户名发光与阴影（2026-10-30 Li 定：封面纯白或纯黑时名字看不清）：
+        // 个人页内容用户名阴影（ChatGPT 视觉清单已定设计第 3 项，取代 2026-10-30
+        // “浅色下白色光晕”口径）：浅色下白色光晕整删，只靠文字（ink）与背景对比；
         // 只动名字行一处，字色与约束不动；layer 阴影不占布局尺寸，不改 header 高度与
         // 位移逻辑（applyProfileBelowShift 只改 transform，阴影跟随图层、不参与动画重播）。
-        // 阴影色取 ink 的反色，深浅切换时由 updateDynamicLayerColors 重赋
-        // （CGColor 赋值时解析一次，不自动跟随 trait）：深色下黑色阴影——纯白封面靠它显形；
-        // 浅色下白色光晕——黑色封面时黑色字靠它显形，纯白封面时光晕不可见、黑字本身可读。
-        // 半径 4 + 偏移 (0,1)，阴影外扩至多约 5pt：名字与头像上下间距 14pt、与徽章左右间距 8pt，
-        // 不会压到头像与徽章本体。
+        // 深浅切换时由 updateDynamicLayerColors 重赋（CGColor 赋值时解析一次，
+        // 不自动跟随 trait）：深色下黑色阴影保留（0.6），浅色下透明度为 0、无光晕。
+        // 此处初值透明度 0：首帧即无光晕，深色下由 updateDynamicLayerColors 恢复 0.6。
+        // 半径 4 + 偏移 (0,1) 保留作深色阴影参数，浅色下因透明度 0 不可见。
         labelValue.layer.masksToBounds = false
         labelValue.layer.shadowRadius = 4
         labelValue.layer.shadowOffset = CGSize(width: 0, height: 1)
         labelValue.layer.shadowColor = UIColor.black.cgColor
-        labelValue.layer.shadowOpacity = 0.6
+        labelValue.layer.shadowOpacity = 0
         return labelValue
     }()
 
@@ -2991,15 +2991,17 @@ class BearyProfileViewController: UIViewController {
         nightContainer.layer.bearyDynamicBorderColor = BearyColors.line
         wallContainer.layer.bearyDynamicBorderColor = BearyColors.line
         // 个人页内容用户名阴影色重赋（深浅切换时 CGColor 不自动跟随）：
-        // 深色 ink 近白 → 黑色阴影；浅色 ink 纯黑 → 白色光晕。半径/偏移/透明度见 nameLabel 定义处。
+        // ChatGPT 视觉清单已定设计第 3 项：浅色下白色光晕整删（原白色、0.85），
+        // 浅色下只靠文字（ink）与背景对比；深色下黑色阴影保留（0.6）不动。
+        // 半径/偏移见 nameLabel 定义处。
         // header 用户名发光已删（Li 2026-10-31）：此处不再重赋 header 阴影；
-        // 内容用户名在实底色上，仍按 trait 重赋（不动）。
+        // 本支亦不动 header 用户名（其 shadowOpacity 已为 0）。
         if traitCollection.userInterfaceStyle == .dark {
             nameLabel.layer.shadowColor = UIColor.black.cgColor
             nameLabel.layer.shadowOpacity = 0.6
         } else {
             nameLabel.layer.shadowColor = UIColor.white.cgColor
-            nameLabel.layer.shadowOpacity = 0.85
+            nameLabel.layer.shadowOpacity = 0
         }
         // 批 D：模块卡边线同款重赋（深浅切换时 CGColor 不自动跟随）。
         statsCard.layer.bearyDynamicBorderColor = BearyColors.line
