@@ -13,7 +13,13 @@ class BearyEntryImageViewerViewController: UIViewController, UIGestureRecognizer
     /// 实况覆盖层：盖在 imageView 之上，平时隐藏、实况就绪后显现，长按播实况；
     /// 自身不接手势，点按关闭/双击缩放/捏合/拖动翻页一律走原手势。
     private var liveOverlay: BearyLivePhotoView?
-    private var liveTapSuppressUntil: Date?
+    /// 实况长按抬手后的误触屏蔽：只挡紧随其后的那一次舞台点按（长按抬手
+    /// 时手指离屏常被识别成一次点按），挡完即清，不再用时间窗持续屏蔽。
+    /// 普通图（无可播实况）长按不立此旗，抬手后点按立即生效。
+    private var suppressNextStageTapAfterLive = false
+    /// 本次长按是否真的播了实况（began 时 hasLivePhoto 才置位）；只有它为真，
+    /// 抬手才立起上面的一次性屏蔽，普通图长按抬手不留任何屏蔽。
+    private var livePlaybackStarted = false
     /// 2026-10-29 第 15 项：本地图模式（个人页头像/封面查看，不新造查看器）——
     /// 非空时以 UIImage 直显，不走服务端 key 加载；单图查看，翻页全程以
     /// imageKeys.count > 1 守门，本地模式自然不翻页；计数/圆点按 count ≤ 1 隐藏。
@@ -270,6 +276,8 @@ class BearyEntryImageViewerViewController: UIViewController, UIGestureRecognizer
     }
 
     @objc private func viewEntryButtonTapped() {
+        // 主动操作即表示抬手误触期已过，待挡的一次点按不再生效。
+        suppressNextStageTapAfterLive = false
         onViewEntryAtIndex?(currentIndex)
     }
 
@@ -305,16 +313,21 @@ class BearyEntryImageViewerViewController: UIViewController, UIGestureRecognizer
 
     @objc private func liveLongPressed(_ sender: UILongPressGestureRecognizer) {
         if sender.state == .began {
+            // 只有当前图确有可播实况才响应：普通图上 startPlayback 本就是空操作
+            // （livePhoto 为 nil 时不播），旧代码却无条件立起 3 秒压制窗，导致
+            // 普通图长按后 3 秒内舞台点按全部失灵（点按关闭无反应）。
+            guard liveOverlay?.hasLivePhoto == true else { return }
             liveOverlay?.startPlayback()
-            // 抬手单点压制：播完抬手那次单点不关闭灯箱（卡片/详情同款口径）。
-            liveTapSuppressUntil = Date().addingTimeInterval(3)
+            livePlaybackStarted = true
         } else if sender.state == .ended || sender.state == .cancelled {
-            let until = Date().addingTimeInterval(0.35)
-            if let existing = liveTapSuppressUntil, existing > until {
-                // 按住超 0.35 秒后的抬手仍在 began 的 3 秒窗内，不缩短。
-            } else {
-                liveTapSuppressUntil = until
+            // 抬手后只屏蔽一次误触，不持续屏蔽后续主动点击。旧的 3 秒窗 +
+            // ended 0.35 秒缩短分支一并删除：该分支对常规长按（按住 < 2.65 秒）
+            // 恒不生效（began 的 3 秒窗总比 ended 的 0.35 秒窗晚到期），等于
+            // 全程跑满 3 秒；按住超 2.65 秒才走到的缩短逻辑亦随时间窗机制废止。
+            if livePlaybackStarted {
+                suppressNextStageTapAfterLive = true
             }
+            livePlaybackStarted = false
         }
     }
 
@@ -573,8 +586,9 @@ class BearyEntryImageViewerViewController: UIViewController, UIGestureRecognizer
     }
 
     @objc private func stageTapped(_ sender: UITapGestureRecognizer) {
-        // 实况长按后的抬手单点：压住一次，不关闭灯箱（卡片/详情同款口径）。
-        if let until = liveTapSuppressUntil, until > Date() {
+        // 实况长按抬手后的那一次误触点按：挡一次即清，后续主动点按不再受影响。
+        if suppressNextStageTapAfterLive {
+            suppressNextStageTapAfterLive = false
             return
         }
         // 失败图点按重试，不关闭（网页 img-err 口径）；关闭钮点按由按钮自身处理。
@@ -597,6 +611,8 @@ class BearyEntryImageViewerViewController: UIViewController, UIGestureRecognizer
         if isNavigating == true {
             return
         }
+        // 双击缩放是主动操作，待挡的一次抬手误触不再生效，不留给后面的点按。
+        suppressNextStageTapAfterLive = false
         hideNeighbor()
         if scale > 1 {
             resetZoom(animated: true)
@@ -614,6 +630,8 @@ class BearyEntryImageViewerViewController: UIViewController, UIGestureRecognizer
         }
         if sender.state == .began {
             pinchActive = true
+            // 捏合是主动操作，清掉待挡的一次抬手误触，不留给后面的点按。
+            suppressNextStageTapAfterLive = false
             hideNeighbor()
             pinchScale0 = scale
         } else if sender.state == .changed {
@@ -656,6 +674,8 @@ class BearyEntryImageViewerViewController: UIViewController, UIGestureRecognizer
         if sender.state == .began {
             panTx0 = tx
             panTy0 = ty
+            // 拖动（翻页/甩关闭）是主动操作，清掉待挡的一次抬手误触。
+            suppressNextStageTapAfterLive = false
             // 灯箱对子统一定位：panMode 与 dismissDragActive 同步清零
             // （0=未定，1=横向翻页，2=纵向甩关闭；dismissDragActive 即 panMode==2）。
             panMode = 0
