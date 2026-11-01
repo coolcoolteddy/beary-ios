@@ -66,20 +66,22 @@ enum BearyIconMotion {
         imageView.layer.add(fade, forKey: "bearyFillFade")
     }
 
-    /// 收藏弹一下（网页 bmPop：.28s ease，scale 1→1.3→1，作用于图标本身）。
+    /// 收藏弹一下（视觉清单第 9 项：峰值由 1.3 收到 1.07、时长由 .28s 收到 .16s，
+    /// 曲线与回弹终态不变，作用于图标本身）。
     static func playBookmarkPop(on button: UIButton) {
         guard let imageView = button.imageView else { return }
         if UIAccessibility.isReduceMotionEnabled { return }
         imageView.layer.removeAnimation(forKey: "bearyBmPop")
         let pop = CAKeyframeAnimation(keyPath: "transform.scale")
-        pop.values = [1, 1.3, 1]
+        pop.values = [1, 1.07, 1]
         pop.keyTimes = [0, 0.4, 1]
-        pop.duration = 0.28
+        pop.duration = 0.16
         pop.timingFunction = CAMediaTimingFunction(controlPoints: 0.25, 0.1, 0.25, 1)
         imageView.layer.add(pop, forKey: "bearyBmPop")
     }
 
-    /// 图标缩放（按压 .84 / 取消点赞 pre-unlike .8 / 恢复 1，网页 svg transition .13s 同款）。
+    /// 图标缩放（按压 .96 / 取消点赞 pre-unlike .8 / 恢复 1，网页 svg transition .13s 同款；
+    /// .13s 落在视觉清单第 9 项 0.12–0.18s 档内，不动）。
     static func animateIconScale(on button: UIButton, to scale: CGFloat, duration: TimeInterval = 0.13) {
         guard let imageView = button.imageView else { return }
         let transform = scale == 1 ? CGAffineTransform.identity : CGAffineTransform(scaleX: scale, y: scale)
@@ -90,7 +92,8 @@ enum BearyIconMotion {
         UIView.animate(withDuration: duration, animations: { imageView.transform = transform })
     }
 
-    /// 通用按压反馈（80 包 W6 全量推广）：按下缩 .84 + .light 轻震，松手回 1。
+    /// 通用按压反馈（80 包 W6 全量推广）：按下缩 .96 + .light 轻震，松手回 1。
+    /// 按压幅度为视觉清单第 9 项（.84 → .96）；时长 .13s 已在 0.12–0.18s 档内，不动。
     /// 口径（2026-10-28 定）：按压轻震通用，所有挂 bearyAddPressFeedback 的按钮都发；
     /// 点赞/发布/拒绝三处专属反馈（成功/警告）另算，不与按压轻震混淆。
     /// 有图缩 imageView（iconTouchDown 同款）；无图缩整颗（行级全宽钮与
@@ -99,9 +102,9 @@ enum BearyIconMotion {
     ///（BearyHaptics 头注释既定口径：两者不是一回事）。
     static func pressDown(on button: UIButton) {
         if button.imageView != nil {
-            animateIconScale(on: button, to: 0.84)
+            animateIconScale(on: button, to: 0.96)
         } else {
-            scaleButton(button, to: 0.84)
+            scaleButton(button, to: 0.96)
         }
         BearyHaptics.press()
     }

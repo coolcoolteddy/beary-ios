@@ -2814,9 +2814,9 @@ class BearyDiaryCardCell: UITableViewCell {
         onTapImages?(currentImageKeys, index, sender.view.map { $0.convert($0.bounds, to: nil) })
     }
 
-    /// 按压反馈（两页同款 .84/.13s）。
+    /// 按压反馈（两页同款 .96/.13s，视觉清单第 9 项：.84 → .96）。
     @objc private func iconTouchDown(_ sender: UIButton) {
-        BearyIconMotion.animateIconScale(on: sender, to: 0.84)
+        BearyIconMotion.animateIconScale(on: sender, to: 0.96)
     }
 
     @objc private func iconTouchUp(_ sender: UIButton) {
