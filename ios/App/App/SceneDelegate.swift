@@ -587,13 +587,14 @@ final class BearyChromeViewController: UIViewController {
             blur.widthAnchor.constraint(equalToConstant: 288),
             blur.heightAnchor.constraint(equalToConstant: 58),
         ])
-        // 好友第一期：底栏新增第四段“好友”（互关列表页；icon_users 官方包，
-        // IconUsers 资产不存在时回退 icon_users）。顺序：首页、时间线、我的、好友。
+        // 好友第一期：底栏“好友”段（互关列表页；icon_users 官方包，
+        // IconUsers 资产不存在时回退 icon_users）。顺序：首页、好友、时间线、我的
+        // （Li 2026-11-01 定：好友放时间线左边）。
         let tabIcons: [(String, String)] = [
             ("IconHome", "icon_home"),
+            ("IconUsers", "icon_users"),
             ("IconTimeline", "icon_calendar"),
             ("IconUser", "icon_user"),
-            ("IconUsers", "icon_users"),
         ]
         let seg = BearyHit44SegmentedControl(items: tabIcons.map { segmentIcon(named: $0.0, officialFallback: $0.1) })
         seg.apportionsSegmentWidthsByContent = false
@@ -1637,9 +1638,9 @@ final class BearyChromeViewController: UIViewController {
         let index: Int
         switch currentPage {
         case .home: index = 0
-        case .timeline: index = 1
-        case .me: index = 2
-        case .friends: index = 3
+        case .friends: index = 1
+        case .timeline: index = 2
+        case .me: index = 3
         default: index = UISegmentedControl.noSegment
         }
         if seg.selectedSegmentIndex != index {
@@ -1761,9 +1762,9 @@ final class BearyChromeViewController: UIViewController {
         BearyHaptics.press()
         switch bottomSegmented.selectedSegmentIndex {
         case 0: didTapHome()
-        case 1: didTapTimeline()
-        case 2: didTapMe()
-        case 3: didTapFriends()
+        case 1: didTapFriends()
+        case 2: didTapTimeline()
+        case 3: didTapMe()
         default: break
         }
     }
@@ -1781,9 +1782,9 @@ final class BearyChromeViewController: UIViewController {
         BearyHaptics.press()
         switch tapped {
         case 0: didTapHome()
-        case 1: didTapTimeline()
-        case 2: didTapMe()
-        case 3: didTapFriends()
+        case 1: didTapFriends()
+        case 2: didTapTimeline()
+        case 3: didTapMe()
         default: break
         }
     }
