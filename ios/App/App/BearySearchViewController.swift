@@ -188,6 +188,13 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
     // 图片失败重试槽位（用户头像 / 日记首图各一）：随行重建而丢弃，见文件末尾
     // BearySearchImageRetry；clearResultRows 时连同行一起清空。
     private var imageRetryHolders: [BearySearchImageRetry] = []
+    /// 扫 bug 第 9 项：三组分区头（增量追加的落点锚点）。renderResults
+    /// 全量建行时同步登记，clearResultRows 时同步清零；appendResultRows
+    /// 靠它们找“本组末尾”（头之后、下个分区头之前），本组此前无行时
+    /// 才补建分区头。行与头只在这两处增删，锚点与栈内实际一致。
+    private var mineSectionHeader: UIView?
+    private var publicSectionHeader: UIView?
+    private var usersSectionHeader: UIView?
 
     // MARK: - 视图
 
@@ -216,7 +223,9 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
     private let searchField = UITextField()
     private let clearButton = BearyHit44Button(type: .custom)
 
-    // 结果区：每次渲染整体重建（与网页 body.innerHTML 重写同口径）。
+    // 结果区：新搜索与拉黑/举报过滤仍整体重建（与网页 body.innerHTML
+    // 重写同口径）；翻页改增量追加（见 appendResultRows），不再每翻一页
+    // 拆掉全部行重建。
     private let resultsStack = UIStackView()
 
     // 状态区：网页 .addr-state——容器 padding 28/20/20；圆 54、图标 25、标题 15、副文案 12.5。
@@ -950,6 +959,11 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         var pending = 0
         var anyFailed = false
         var mergedChanged = false
+        // 本批各组新行（原始未过滤；过滤口径统一由 appendResultRows
+        // 按 renderResults 逐字执行，避免两处过滤口径漂移）。
+        var freshMineEntries: [Entry] = []
+        var freshPublicEntries: [Entry] = []
+        var freshUsersList: [SearchUser] = []
         // 本批翻页内的去重基准：已在屏上的 id（公开/我的按日记 id、用户按 id）。
         var seenEntryIds = Set<String>(rowEntryIds)
         var seenUserIds = Set<Int>()
@@ -967,9 +981,12 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
             self.loadMoreFailed = anyFailed
             self.searchFooterRetryIsLoadMore = anyFailed
             if mergedChanged {
-                // 合并后重渲：同关键词故只淡入新行；末尾 updateSearchFooter
-                // 按新 hasMore 决定尾行（取尽则隐藏、失败则亮翻页重试）。
-                self.renderResults(data: merged, query: query)
+                // 扫 bug 第 9 项：翻页不再全量重渲（renderResults 开头
+                // clearResultRows 会拆掉全部行重建，页越多每翻越重）；
+                // 改增量追加本批新行（游标/hasMore/去重口径不动，见
+                // appendResultRows）；末尾 updateSearchFooter 按新 hasMore
+                // 决定尾行（取尽则隐藏、失败则亮翻页重试）。
+                self.appendResultRows(data: merged, mine: freshMineEntries, publicEntries: freshPublicEntries, users: freshUsersList, query: query)
             }
             self.updateSearchFooter()
         }
@@ -997,6 +1014,7 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
                                     fresh.append(entry)
                                 }
                             }
+                            freshPublicEntries = fresh
                             if !fresh.isEmpty {
                                 mergedChanged = true
                                 if merged.entries == nil {
@@ -1049,6 +1067,7 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
                                     fresh.append(entry)
                                 }
                             }
+                            freshMineEntries = fresh
                             if !fresh.isEmpty {
                                 mergedChanged = true
                                 if merged.mine == nil {
@@ -1098,6 +1117,7 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
                                     fresh.append(user)
                                 }
                             }
+                            freshUsersList = fresh
                             if !fresh.isEmpty {
                                 mergedChanged = true
                                 if merged.users == nil {
@@ -1533,6 +1553,9 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
             resultsStack.removeArrangedSubview(view)
             view.removeFromSuperview()
         }
+        mineSectionHeader = nil
+        publicSectionHeader = nil
+        usersSectionHeader = nil
         userButtons = []
         rowUsers = []
         entryButtons = []
@@ -1615,19 +1638,25 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
             userRows.append(makeUserRow(user: user, query: query))
         }
         if !mineRows.isEmpty {
-            resultsStack.addArrangedSubview(makeSectionHeader(title: "我的日记 · 私密"))
+            let header = makeSectionHeader(title: "我的日记 · 私密")
+            mineSectionHeader = header
+            resultsStack.addArrangedSubview(header)
             for row in mineRows {
                 resultsStack.addArrangedSubview(row)
             }
         }
         if !publicRows.isEmpty {
-            resultsStack.addArrangedSubview(makeSectionHeader(title: "公开日记"))
+            let header = makeSectionHeader(title: "公开日记")
+            publicSectionHeader = header
+            resultsStack.addArrangedSubview(header)
             for row in publicRows {
                 resultsStack.addArrangedSubview(row)
             }
         }
         if !userRows.isEmpty {
-            resultsStack.addArrangedSubview(makeSectionHeader(title: "用户"))
+            let header = makeSectionHeader(title: "用户")
+            usersSectionHeader = header
+            resultsStack.addArrangedSubview(header)
             for row in userRows {
                 resultsStack.addArrangedSubview(row)
             }
@@ -1636,6 +1665,109 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         animateResultRows(query: query)
         // sweep32-2：尾行由 updateSearchFooter 按翻页态算（有下一批即亮“加载更多”）。
         updateSearchFooter()
+    }
+
+    /// 扫 bug 第 9 项：翻页增量追加（仅 loadMore 调用）。
+    /// 现行 loadMore 完成时调 renderResults，而 renderResults 开头
+    /// clearResultRows() 会拆掉全部结果行再按合并后全量重建——页数越多
+    /// 每翻一页重建的行越多，已有行的入场态与图片加载态全丢。
+    /// 本函数只追加本批新行：已有行原地不动、不重建、不重播入场；
+    /// 新行按现行分区顺序落到本组末尾，本组此前无行时才补建分区头。
+    /// 不动口径：游标/hasMore/去重仍在 loadMore 数据层（本函数再按
+    /// 行 id/key 挡一道重复行）；过滤口径与 renderResults 逐字一致
+    /// （私密组只取 is_public == false；公开组有效公开 + 未拉黑；
+    /// 用户组未拉黑），避免追加行与全量渲染口径不一致。
+    /// 行数减少的场景（拉黑/举报过滤、新搜索）不走这里，仍走
+    /// renderResults 全量重建——增量无法表达“删行”。
+    private func appendResultRows(data: SearchResult, mine: [Entry], publicEntries: [Entry], users freshUsers: [SearchUser], query: String) {
+        lastRenderedData = data
+        lastRenderedQuery = query
+        // 锚点丢失的防御：栈里有行却三个分区头全无（理论上只可能
+        // 是旧路径残留），退回全量重建，不在无头栈上硬插。
+        if resultsStack.arrangedSubviews.isEmpty == false
+            && mineSectionHeader == nil && publicSectionHeader == nil && usersSectionHeader == nil {
+            renderResults(data: data, query: query)
+            return
+        }
+        showingResults = true
+        stateWrap.isHidden = true
+        // 8-6 不变量：成功渲染时错误 wrap 必藏（与 renderResults 同口径）。
+        errorStateWrap.isHidden = true
+        recentWrap.isHidden = true
+        resultsStack.isHidden = false
+        stateRingView.isHidden = true
+        BearyIconMotion.stopSpin(on: stateRingView, key: "bearyStateSpin")
+        var mineRows: [UIView] = []
+        for entry in mine {
+            // 与 renderResults 逐字一致：只取确认为私密篇（is_public == false）；
+            // 缺失字段（nil）不进私密组。
+            guard entry.isPublic == false else { continue }
+            guard let entryId = entry.id, rowEntryIds.contains(entryId) == false else { continue }
+            if let row = makeEntryRow(entry: entry, query: query, isMineGroup: true) {
+                mineRows.append(row)
+            }
+        }
+        var publicRows: [UIView] = []
+        for entry in publicEntries {
+            if BearyEphemeral.isEffectivelyPublic(entry) == false { continue }
+            if isBlockedForSearch(userId: entry.authorId) { continue }
+            guard let entryId = entry.id, rowEntryIds.contains(entryId) == false else { continue }
+            if let row = makeEntryRow(entry: entry, query: query, isMineGroup: false) {
+                publicRows.append(row)
+            }
+        }
+        var userRows: [UIView] = []
+        for user in freshUsers {
+            if isBlockedForSearch(userId: user.id) { continue }
+            if let key = userKey(for: user), userRowByKey[key] != nil { continue }
+            userRows.append(makeUserRow(user: user, query: query))
+        }
+        insertSectionRows(mineRows, section: 0, title: "我的日记 · 私密")
+        insertSectionRows(publicRows, section: 1, title: "公开日记")
+        insertSectionRows(userRows, section: 2, title: "用户")
+        // 同关键词追加：animateResultRows 按 key 查表，只让本批新行
+        // 错峰滑入，已有行不动（与 renderResults 末尾同一入口）。
+        animateResultRows(query: query)
+    }
+
+    /// 把一组新行插到指定分区的末尾（分区头之后、下个分区头之前）；
+    /// 本组此前无行时，在正确分区位置补建分区头（我的 < 公开 < 用户）。
+    /// 每次落点都现算 firstIndex，不缓存下标，前面分区插行移位不影响。
+    private func insertSectionRows(_ rows: [UIView], section: Int, title: String) {
+        guard rows.isEmpty == false else { return }
+        let headers: [UIView?] = [mineSectionHeader, publicSectionHeader, usersSectionHeader]
+        if headers[section] == nil {
+            var insertAt = resultsStack.arrangedSubviews.count
+            for later in (section + 1)..<headers.count {
+                if let laterHeader = headers[later],
+                   let index = resultsStack.arrangedSubviews.firstIndex(where: { $0 === laterHeader }) {
+                    insertAt = index
+                    break
+                }
+            }
+            let newHeader = makeSectionHeader(title: title)
+            resultsStack.insertArrangedSubview(newHeader, at: insertAt)
+            switch section {
+            case 0: mineSectionHeader = newHeader
+            case 1: publicSectionHeader = newHeader
+            default: usersSectionHeader = newHeader
+            }
+        }
+        let currentHeaders: [UIView?] = [mineSectionHeader, publicSectionHeader, usersSectionHeader]
+        guard let sectionHeader = currentHeaders[section],
+              resultsStack.arrangedSubviews.contains(where: { $0 === sectionHeader }) else { return }
+        var insertAt = resultsStack.arrangedSubviews.count
+        for later in (section + 1)..<currentHeaders.count {
+            if let laterHeader = currentHeaders[later],
+               let index = resultsStack.arrangedSubviews.firstIndex(where: { $0 === laterHeader }) {
+                insertAt = index
+                break
+            }
+        }
+        for row in rows {
+            resultsStack.insertArrangedSubview(row, at: insertAt)
+            insertAt += 1
+        }
     }
 
     /// M11 入场口径：换关键词（新一批）→ 全部行错峰滑入；同关键词重渲
