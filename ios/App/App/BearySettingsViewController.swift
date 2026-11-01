@@ -679,12 +679,12 @@ final class BearySettingsViewController: UIViewController {
         topBar.addSubview(closeButton)
         topBar.addSubview(titleLabel)
         NSLayoutConstraint.activate([
-            topBar.heightAnchor.constraint(greaterThanOrEqualToConstant: 52),
+            topBar.heightAnchor.constraint(greaterThanOrEqualToConstant: 44),
             // 115 设置页空白守卫（根因未证实）：顶栏保留 #343 跟随字号，
             // 但加覆盖最大无障碍字号的上界。17pt 粗体在最大档缩放后约
             // 51pt + 上下各 6pt 内边距 ≈ 63pt，88pt 留足余量；上界只防
-            // solver 在异常组合下把顶栏撑到把 scrollView 顶出屏，不改常规
-            // 字号下的 52pt，也不动字号跟随逻辑本身。
+            // solver 在异常组合下把顶栏撑到把 scrollView 顶出屏，常规
+            // 字号下为 44pt，也不动字号跟随逻辑本身。
             topBar.heightAnchor.constraint(lessThanOrEqualToConstant: 88),
             closeButton.leadingAnchor.constraint(equalTo: topBar.leadingAnchor, constant: 16),
             closeButton.centerYAnchor.constraint(equalTo: topBar.centerYAnchor),
