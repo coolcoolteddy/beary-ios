@@ -403,7 +403,8 @@ final class PastSelfComposeView: UIView, UITextViewDelegate {
         textView.isScrollEnabled = false
         addSubview(textView)
         placeholderLabel.translatesAutoresizingMaskIntoConstraints = false
-        placeholderLabel.font = UIFont.systemFont(ofSize: 15)
+        placeholderLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 15))
+        placeholderLabel.adjustsFontForContentSizeCategory = true
         placeholderLabel.textColor = BearyColors.gray
         placeholderLabel.text = placeholder
         placeholderLabel.numberOfLines = 0
