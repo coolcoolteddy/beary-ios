@@ -166,6 +166,36 @@ final class SessionManager {
         }
     }
 
+    /// 编辑资料保存成功后统一更新当前用户快照（名字 / 用户名 / 头像）：
+    /// 只覆盖调用方传入的已提交值（displayName / handle 传快照里的完整当前值，
+    /// avatar 只在换图时传新 dataURL、未换图传 nil 保持原值），不碰 id /
+    /// 邮箱 / Plus 等其他字段；无实际变化时不发通知。随后走现行 onUserChanged
+    /// 通知（容器按 id 去重：id 未变不触发换号分支，只刷新顶栏与个人页；
+    /// 信息流刷新仍由编辑页容器的 onSaved 接线负责）。保管库快照同步刷新，
+    /// 使设置页账号列表里的名字 / 头像不滞后。封面不在 MeUser 字段里
+    /// （只有 coverVer，且 PUT 回包不下发新 ver），故这里不碰封面——封面
+    /// ver 仍靠下一次 refreshMe 同步，见 PR 残留风险。
+    func applyEditedProfile(displayName: String, handle: String, avatarDataURL: String?) {
+        guard var user = currentUser else { return }
+        var changed = false
+        if user.displayName != displayName {
+            user.displayName = displayName
+            changed = true
+        }
+        if user.handle != handle {
+            user.handle = handle
+            changed = true
+        }
+        if let avatarValue = avatarDataURL, user.avatar != avatarValue {
+            user.avatar = avatarValue
+            changed = true
+        }
+        guard changed else { return }
+        currentUser = user
+        snapshotCurrentAccount()
+        notifyUserChanged(user)
+    }
+
     /// 显式退出：服务端会话已清后调（登出接口成功后），清本地用户态并通知界面。
     /// 同步递增 meSeq：在途旧 /me 成功回包到达时 seq 已变、被守卫丢弃，
     /// 不得把旧用户写回（登录/切号路径本就靠 refreshMe 调用递增，不动）。

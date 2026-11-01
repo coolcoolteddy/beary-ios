@@ -2746,6 +2746,12 @@ final class BearyChromeViewController: UIViewController {
         // slide 右滑入；attach 须在 present 之前，调用方强持有防手势中途失效。
         let editProfileEdgeDismiss = BearyEdgeDismissController()
         editProfileEdgeDismiss.attach(to: vc)
+        // 编辑资料三件套第 1 项：边缘右滑与关闭钮共用 VC 的统一退出判断
+        // （requestExit）；有未保存改动或保存中时，手势 .began 即拦截并弹
+        // 确认 / 提示，不先滑走、事后补确认；无改动时返回 true，手势照常驱动 dismiss。
+        editProfileEdgeDismiss.shouldAllowInteractiveDismiss = { [weak vc] in
+            vc?.requestExit(interactive: true) ?? true
+        }
         vc.transitioningDelegate = editProfileEdgeDismiss
         self.editProfileEdgeDismiss = editProfileEdgeDismiss
         topmostViewController().present(vc, animated: BearyMotion.animated(true))
