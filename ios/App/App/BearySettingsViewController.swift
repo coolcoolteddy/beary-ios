@@ -227,6 +227,9 @@ final class BearySettingsViewController: UIViewController {
     private var plusDetail: BearyPlusDetailResponse?
     private var accountSessions: [BearyAccountSession] = []
     private var isLoadingMe = false
+    /// /me 代次：切换账号成功时 +1 作废旧请求，旧回包凭代次丢弃，
+    /// 不再把旧账号写回 ID 卡（旧请求发在切换前，回包体仍是旧账号）。
+    private var meLoadGeneration = 0
     /// 切换账号卡容器（buildAccountSwitchSection 建，refreshAccountSwitchSection
     /// 重建卡片；登录态无关的通用/隐私组不受影响）。
     private let accountSwitchWrap = UIView()
@@ -1301,6 +1304,10 @@ final class BearySettingsViewController: UIViewController {
             sender.alpha = 1
             switch result {
             case .switched:
+                // 先作废在途旧 /me（并放行 loadAll 的 isLoadingMe 守卫），
+                // 再重拉新账号；否则 loadAll 被守卫丢弃、旧回包随后写回旧账号。
+                self.meLoadGeneration += 1
+                self.isLoadingMe = false
                 self.loadAll()
                 self.refreshAccountSwitchSection()
             case .alreadyCurrent:
@@ -1604,6 +1611,8 @@ final class BearySettingsViewController: UIViewController {
     private func loadAll() {
         guard !isLoadingMe else { return }
         isLoadingMe = true
+        meLoadGeneration += 1
+        let meGeneration = meLoadGeneration
         // 缓存优先：登录态下本机已有同一份用户信息（SessionManager.currentUser），
         // 先显缓存、不转菊花，随后静默 fetchMe 对齐；无缓存时走现行加载态路径。
         if let cached = SessionManager.shared.currentUser {
@@ -1623,6 +1632,9 @@ final class BearySettingsViewController: UIViewController {
             BearyAPI.shared.fetchMe { [weak self] result in
                 DispatchQueue.main.async {
                     guard let self = self else { return }
+                    // 旧代次回包（切换前发出）：整段丢弃，不碰 isLoadingMe
+                    //（新一轮正在飞，它的回包自会复位），不写回旧账号。
+                    guard meGeneration == self.meLoadGeneration else { return }
                     self.isLoadingMe = false
                     switch result {
                     case .success(let user):
@@ -1659,6 +1671,7 @@ final class BearySettingsViewController: UIViewController {
         BearyAPI.shared.fetchMe { [weak self] result in
             DispatchQueue.main.async {
                 guard let self = self else { return }
+                guard meGeneration == self.meLoadGeneration else { return }
                 self.isLoadingMe = false
                 self.loadingView.stopSpinning()
                 self.loadingView.isHidden = true
