@@ -3058,7 +3058,7 @@ class BearyTimelineViewController: UIViewController {
     }
 
     /// 自定义下拉刷新进入（消息页 beginCustomPullRefresh 同款，基线适配时间线）：
-    /// 指示固定 84 高 + 转圈，至少展示 500ms（见 loadTimelineFirstPage 完成分支），
+    /// 指示固定 84 高 + 转圈，回包到即收回（第 2 项后无 0.5 秒最低展示，见 loadTimelineFirstPage 完成分支），
     /// 刷新中内边距 = 基线（安全区顶 + 可见时 60）+ 84，屏内指示底边 = 基线 +84，
     /// 图标中心 = 基线 +54，灵动岛下方；减动效时直接落位，不播 0.32s 动画。
     private func beginCustomPullRefresh() {
@@ -3084,8 +3084,8 @@ class BearyTimelineViewController: UIViewController {
             UIView.animate(withDuration: 0.32, animations: pullIn)
         }
         // 112 刷新节流（仅手势下拉）：上次首屏网络成功 5 秒内且已有行时，
-        // 不再发网络请求，指示头随 0.32s 收回动画收回（500ms 保底只在
-        // 首屏完成分支，不在本函数）；程序侧刷新（重拍 tab/详情回写/
+        // 不再发网络请求，指示头随 0.32s 收回动画收回（第 2 项后首屏完成
+        // 分支也不再等 500ms）；程序侧刷新（重拍 tab/详情回写/
         // 登录翻转）不受此限。begin 顶部的
         // timelineState == .loading 守卫仍在：静默对齐在途时下拉直接忽略。
         if let last = lastTimelineFirstPageSuccessAt, Date().timeIntervalSince(last) < 5, !timelineEntries.isEmpty {
@@ -4021,12 +4021,8 @@ class BearyTimelineViewController: UIViewController {
         }
         updateChrome()
         if isCustomPullRefreshing {
-            // 自定义下拉至少展示 500ms（消息页同款），快回包也要等满再收回。
-            let elapsed = customPullStartTime.map({ Date().timeIntervalSince($0) }) ?? 0.5
-            let remaining = max(0, 0.5 - elapsed)
-            DispatchQueue.main.asyncAfter(deadline: .now() + remaining) {
-                self.endCustomPullRefresh()
-            }
+            // 自定义下拉回包到即收回（第 2 项后无 0.5 秒最低展示，消息页同款已同步去掉）。
+            self.endCustomPullRefresh()
         } else {
             refreshIconView.stopSpinning()
         }

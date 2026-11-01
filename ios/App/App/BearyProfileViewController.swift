@@ -5879,7 +5879,8 @@ class BearyProfileViewController: UIViewController {
         }
     }
 
-    /// 自定义下拉刷新进入（消息页同款）：指示固定 84 高 + 转圈，至少展示 500ms；
+    /// 自定义下拉刷新进入（消息页同款）：指示固定 84 高 + 转圈，回包到即收回
+    ///（第 2 项后无 0.5 秒最低展示）；
     /// 完成由 handleProfileResult / handleTabResult 经 endCustomPullRefresh 收回。
     private func beginCustomPullRefresh() {
         if isCustomPullRefreshing {
@@ -5911,40 +5912,37 @@ class BearyProfileViewController: UIViewController {
         }
     }
 
-    /// 自定义下拉刷新结束：至少展示 500ms 后复位到基线内边距；两路回包
+    /// 自定义下拉刷新结束：回包到即复位到基线内边距（第 2 项后无最低展示）；两路回包
     /// （资料 / 标签）都走这里，先到先收（与旧标准头先到先停同口径），
     /// 旧回包丢弃时仍需走这里，不让刷新头永不结束。
     private func endCustomPullRefresh() {
         if !isCustomPullRefreshing || customPullEndScheduled {
             return
         }
+        // 扫 bug 定版第 2 项：去掉 0.5 秒最低展示，回包到即收回，
+        // 不再用 asyncAfter 补满剩余时间；0.32s 收回动画与触发口径不动。
         customPullEndScheduled = true
-        let elapsed = customPullStartTime.map({ Date().timeIntervalSince($0) }) ?? 0.5
-        let remaining = max(0, 0.5 - elapsed)
-        DispatchQueue.main.asyncAfter(deadline: .now() + remaining) { [weak self] in
-            guard let self else { return }
-            self.isCustomPullRefreshing = false
-            self.customPullEndScheduled = false
-            let baseline = self.profilePullBaselineTop()
-            let pullOut = {
-                self.tableView.contentInset.top = baseline
-                self.tableView.scrollIndicatorInsets.top = baseline
-                self.tableView.contentOffset = CGPoint(x: 0, y: -baseline)
-                self.pullView.frame = CGRect(x: 0, y: -116, width: self.tableView.bounds.width, height: 116)
-            }
-            if UIAccessibility.isReduceMotionEnabled {
-                pullOut()
+        isCustomPullRefreshing = false
+        customPullEndScheduled = false
+        let baseline = profilePullBaselineTop()
+        let pullOut = {
+            self.tableView.contentInset.top = baseline
+            self.tableView.scrollIndicatorInsets.top = baseline
+            self.tableView.contentOffset = CGPoint(x: 0, y: -baseline)
+            self.pullView.frame = CGRect(x: 0, y: -116, width: self.tableView.bounds.width, height: 116)
+        }
+        if UIAccessibility.isReduceMotionEnabled {
+            pullOut()
+            self.refreshIconView.stopSpinning()
+            // 顶端残留修法：pullOut 动画期 inset/offset 不同步时瞬时
+            // 拉量可能又把封面拉伸+模糊，动画结束时不再有滚动事件来
+            // 复位，故此处强制归自然态（无模糊、无放大）。
+            self.resetCoverStretch()
+        } else {
+            UIView.animate(withDuration: 0.32, animations: pullOut, completion: { _ in
                 self.refreshIconView.stopSpinning()
-                // 顶端残留修法：pullOut 动画期 inset/offset 不同步时瞬时
-                // 拉量可能又把封面拉伸+模糊，动画结束时不再有滚动事件来
-                // 复位，故此处强制归自然态（无模糊、无放大）。
                 self.resetCoverStretch()
-            } else {
-                UIView.animate(withDuration: 0.32, animations: pullOut, completion: { _ in
-                    self.refreshIconView.stopSpinning()
-                    self.resetCoverStretch()
-                })
-            }
+            })
         }
     }
 
