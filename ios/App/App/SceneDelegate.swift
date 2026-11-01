@@ -3867,6 +3867,11 @@ private final class BearyFadeRiseAnimator: NSObject, UIViewControllerAnimatedTra
                 toView.alpha = 1
                 toView.transform = .identity
             }, completion: { _ in
+                // 116 子页空白守卫配套：转场被打断时动画终值未必落位，
+                // 残留位移/帧会让整页顶栏停在屏中部；完成时强制复位一次，
+                // 动画已结束故无视觉跳变，取消时视图亦即将移除。
+                toView.transform = .identity
+                toView.frame = transitionContext.finalFrame(for: toVC)
                 transitionContext.completeTransition(!transitionContext.transitionWasCancelled)
             })
         } else {
