@@ -11,7 +11,9 @@ import CoreLocation
 // 永不写盘、不进日记行、不进任何持久化缓存——与“经纬度不持久化”一致。
 // 代价（方案 A 已定取舍）：本人地图也只能做到文本级聚合点，不是 POI 米级精确打点；
 // 文本歧义/离线时点位可能漂移，编不到的组进“未能在地图上定位”列表，仍可点进日记。
-// 同步：本页不轮询、不另建地图缓存——每次打开重拉作者日记并重算聚合；
+// 同步：本页不轮询、不另建地图缓存——每次打开重拉日记并重算聚合；
+// 清单第 7 项：本人拉取改走 timeline scope（见 fetchEntriesPage 的 entriesScope），
+// 他人仍走 author scope；首帧即时成图仍用调用方 diaryEntries，后台替换后才为 timeline 口径。
 // 从本页进详情改了可见性后返回，本页只重拉一次（needsRefreshAfterDetail 门控，
 // 不是每次 appear 都拉）；删除/回收站/注销走服务端列表变化，下次打开自然同步。
 // 切账号：appear 时发现 viewer 变了即按新身份重算（本人↔他人口径切换）并重拉。
@@ -44,6 +46,14 @@ final class BearyDiaryMapViewController: UIViewController, MKMapViewDelegate, UI
     private var capsuleEntries: [Entry] = []
     private var capsuleLocated: [(entry: Entry, coordinate: CLLocationCoordinate2D)] = []
     private var capsuleUnlocated: [Entry] = []
+    private var capsuleGeocodeGeneration = 0
+    /// 清单 12：胶囊编码链路代际锁。每次起新胶囊编码链路（regroup 空组直启、
+    /// 普通组编码完成后的接续）即 +1；链路全程携带起链时的代际，异步回包
+    /// 与最终 applyCapsules 均先验代际——旧链路结果一律丢弃，不覆盖新链路
+    /// 标记。旧的 index/id 守卫只拦得住“列表形态变了”的换代：同位同篇
+    /// （如仅另一篇胶囊变化触发 regroup）时旧链路仍会跑到终点并覆盖新
+    /// 标记，代际锁补这一洞。普通组链路不动（另有 index/key 守卫，且其
+    /// 终点会起新胶囊代际，旧胶囊链路无法借它复活）。
 
     init(authorId: Int, viewerIsAuthor: Bool, initialEntries: [Entry], onOpenEntry: ((Entry) -> Void)?) {
         self.authorId = authorId
@@ -78,6 +88,8 @@ final class BearyDiaryMapViewController: UIViewController, MKMapViewDelegate, UI
         view.addSubview(statusLabel)
 
         tableView.translatesAutoresizingMaskIntoConstraints = false
+        // 116 后扫查：与广场/个人页同口径——关掉 delaysContentTouches，滚动容器里的点按立即响应，不等滚动判定。
+        tableView.delaysContentTouches = false
         tableView.dataSource = self
         tableView.delegate = self
         tableView.register(UITableViewCell.self, forCellReuseIdentifier: "DiaryMapCell")
@@ -151,9 +163,40 @@ final class BearyDiaryMapViewController: UIViewController, MKMapViewDelegate, UI
         dismiss(animated: true)
     }
 
+    /// 116 数据填入动效：状态文案变化时只淡入该 label 本身（alpha
+    /// 0→1、0.25s，不动 transform／布局、不重建节点、不缩放弹一下）；
+    /// 同值不赋值不重播；减动效或未进窗口时直设终值。失败视图由
+    /// 隐藏变可见时只淡入视图本身。地图大头针为 MapKit 渲染元素，
+    /// 不走本口径（见 PR 说明）。
+    private func setStatusTextFaded(_ text: String) {
+        guard statusLabel.text != text else { return }
+        statusLabel.text = text
+        guard !UIAccessibility.isReduceMotionEnabled, statusLabel.window != nil else {
+            statusLabel.alpha = 1
+            return
+        }
+        statusLabel.alpha = 0
+        UIView.animate(withDuration: 0.25, delay: 0, options: [.curveEaseOut, .beginFromCurrentState], animations: {
+            self.statusLabel.alpha = 1
+        })
+    }
+
+    private func showFailureViewFaded() {
+        let wasHidden = failureView.isHidden
+        failureView.isHidden = false
+        guard wasHidden, !UIAccessibility.isReduceMotionEnabled, failureView.window != nil else {
+            failureView.alpha = 1
+            return
+        }
+        failureView.alpha = 0
+        UIView.animate(withDuration: 0.25, delay: 0, options: [.curveEaseOut, .beginFromCurrentState], animations: {
+            self.failureView.alpha = 1
+        })
+    }
+
     @objc private func didTapRetry() {
         failureView.isHidden = true
-        statusLabel.text = "正在加载日记…"
+        setStatusTextFaded("正在加载日记…")
         fetchAllEntries()
     }
 
@@ -167,21 +210,31 @@ final class BearyDiaryMapViewController: UIViewController, MKMapViewDelegate, UI
         loadGeneration += 1
         fetchCollected = []
         fetchSeenIds = []
-        fetchAuthorPage(before: nil, beforeId: nil, page: 1, generation: loadGeneration)
+        fetchEntriesPage(before: nil, beforeId: nil, page: 1, generation: loadGeneration)
     }
 
-    private func fetchAuthorPage(before: Int?, beforeId: String?, page: Int, generation: Int) {
-        BearyAPI.shared.fetchEntries(scope: .author(authorId), limit: 50, before: before, beforeId: beforeId) { [weak self] result in
+    /// 拉取 scope（清单第 7 项，Li 拍板）：本人走 timeline scope（服务端按
+    /// session.id 过滤，私密 + 公开 + 投递中全含），他人仍走 author scope；
+    /// 后端 author scope 不动。本人星图/地图与个人页日记 tab（author scope）
+    /// 因此数据口径分裂，拍板接受。timeline 与 author 同为 created_at DESC
+    /// 游标，分页（before=createdAt + before_id=id）一字不动；切账号后
+    /// viewerIsAuthor 已先更新，fetchAllEntries 自动按新身份选 scope。
+    private var entriesScope: BearyAPI.Scope {
+        return viewerIsAuthor ? .timeline : .author(authorId)
+    }
+
+    private func fetchEntriesPage(before: Int?, beforeId: String?, page: Int, generation: Int) {
+        BearyAPI.shared.fetchEntries(scope: entriesScope, limit: 50, before: before, beforeId: beforeId) { [weak self] result in
             DispatchQueue.main.async {
                 guard let self = self, generation == self.loadGeneration else { return }
                 switch result {
                 case .failure:
                     if self.fetchCollected.isEmpty && self.allEntries.isEmpty {
-                        self.failureView.isHidden = false
-                        self.statusLabel.text = "日记加载失败"
+                        self.showFailureViewFaded()
+                        self.setStatusTextFaded("日记加载失败")
                     } else {
                         // 已有数据时网络失败不清空地图：保留已加载聚合，状态行明示。
-                        self.statusLabel.text = "网络失败，显示已加载的日记"
+                        self.setStatusTextFaded("网络失败，显示已加载的日记")
                     }
                 case .success(let list):
                     let pageEntries = list.entries ?? []
@@ -194,7 +247,7 @@ final class BearyDiaryMapViewController: UIViewController, MKMapViewDelegate, UI
                     }
                     let last = pageEntries.last
                     if pageEntries.count >= 50, page < 10, let cursor = last?.createdAt, let lastId = last?.id {
-                        self.fetchAuthorPage(before: cursor, beforeId: lastId, page: page + 1, generation: generation)
+                        self.fetchEntriesPage(before: cursor, beforeId: lastId, page: page + 1, generation: generation)
                         return
                     }
                     self.failureView.isHidden = true
@@ -217,19 +270,19 @@ final class BearyDiaryMapViewController: UIViewController, MKMapViewDelegate, UI
             selectedGroup = nil
         }
         if groups.isEmpty {
-            statusLabel.text = capsuleEntries.isEmpty
+            setStatusTextFaded(capsuleEntries.isEmpty
                 ? (allEntries.isEmpty ? "还没有日记" : "还没有带位置的日记")
-                : "\(capsuleEntries.count) 个时间胶囊"
+                : "\(capsuleEntries.count) 个时间胶囊")
             mapView.removeAnnotations(mapView.annotations)
             unlocatedGroups = []
             tableView.reloadData()
             // 普通组为空时仍要编胶囊区级（胶囊不依赖普通组存在）。
-            geocodeCapsulesSequentially(index: 0, located: [], unlocated: [])
+            startCapsuleGeocode()
             return
         }
         var status = "共 \(nonCapsule.filter { !DiaryLocation(entry: $0).isEmpty }.count) 篇带位置日记 · \(groups.count) 个地点"
         if !capsuleEntries.isEmpty { status += " · \(capsuleEntries.count) 个时间胶囊" }
-        statusLabel.text = status
+        setStatusTextFaded(status)
         geocodeGroupsSequentially(index: 0, located: [], unlocated: [])
     }
 
@@ -245,21 +298,62 @@ final class BearyDiaryMapViewController: UIViewController, MKMapViewDelegate, UI
             geocodeGroupsSequentially(index: index + 1, located: next, unlocated: unlocated)
             return
         }
-        CLGeocoder().geocodeAddressString(group.key) { [weak self] placemarks, _ in
+        // 地图打点根因修复：作者组键只是精确地点名（如“朝晖路248弄21号”），
+        // 不带任何城市/区级上下文，CLGeocoder 仅凭裸名经常编不出坐标，组就掉进
+        // “未能在地图上定位”而不是地图上的标记。改成按组内日记的区级文本逐级
+        // 兜底：先编“区级+地点名”，再编裸名，最后编区级；编出即停。
+        // 显示键、聚合口径、脱敏口径一律不动：区级只是本页内存里的编码查询词，
+        // 不写盘、不进日记行、不透给他人（他人组键本身就是区级，只编一格）。
+        geocodeGroupCandidates(
+            group: group, groupIndex: index,
+            candidates: geocodeCandidates(for: group), candidateIndex: 0,
+            located: located, unlocated: unlocated)
+    }
+
+    /// 编码查询词（只活本页内存）：作者组 = 区级+名 → 裸名 → 区级；
+    /// 他人组键已是区级，只编一格。
+    private func geocodeCandidates(for group: BearyLocationMapGroup) -> [String] {
+        guard viewerIsAuthor else { return [group.key] }
+        var seen = Set<String>()
+        var districts: [String] = []
+        for entry in group.entries {
+            let d = (entry.locationDistrict ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+            if !d.isEmpty, seen.insert(d).inserted { districts.append(d) }
+        }
+        guard let district = districts.first, district != group.key else { return [group.key] }
+        if group.key.hasPrefix(district) { return [group.key, district] }
+        return ["\(district)\(group.key)", group.key, district]
+    }
+
+    /// 逐级兜底编码：某一级编出坐标即进 located，全部编不出才进 unlocated。
+    /// 换代门控与原单次编码一致：重算后组已换代时旧结果直接丢弃。
+    private func geocodeGroupCandidates(
+        group: BearyLocationMapGroup, groupIndex: Int,
+        candidates: [String], candidateIndex: Int,
+        located: [(group: BearyLocationMapGroup, coordinate: CLLocationCoordinate2D)],
+        unlocated: [BearyLocationMapGroup]
+    ) {
+        guard candidateIndex < candidates.count else {
+            var nextUnlocated = unlocated
+            nextUnlocated.append(group)
+            geocodeGroupsSequentially(index: groupIndex + 1, located: located, unlocated: nextUnlocated)
+            return
+        }
+        CLGeocoder().geocodeAddressString(candidates[candidateIndex]) { [weak self] placemarks, _ in
             DispatchQueue.main.async {
                 guard let self = self else { return }
-                // 重算期间又 regroup 过（groups 已换代）时，旧编码结果直接丢弃，
-                // 不把旧组坐标贴到新组上。
-                guard index < self.groups.count, self.groups[index].key == group.key else { return }
-                var nextLocated = located
-                var nextUnlocated = unlocated
+                guard groupIndex < self.groups.count, self.groups[groupIndex].key == group.key else { return }
                 if let coordinate = placemarks?.first?.location?.coordinate {
                     self.geocodeCache[group.key] = coordinate
+                    var nextLocated = located
                     nextLocated.append((group, coordinate))
+                    self.geocodeGroupsSequentially(index: groupIndex + 1, located: nextLocated, unlocated: unlocated)
                 } else {
-                    nextUnlocated.append(group)
+                    self.geocodeGroupCandidates(
+                        group: group, groupIndex: groupIndex,
+                        candidates: candidates, candidateIndex: candidateIndex + 1,
+                        located: located, unlocated: unlocated)
                 }
-                self.geocodeGroupsSequentially(index: index + 1, located: nextLocated, unlocated: nextUnlocated)
             }
         }
     }
@@ -284,14 +378,21 @@ final class BearyDiaryMapViewController: UIViewController, MKMapViewDelegate, UI
             }
         }
         tableView.reloadData()
-        geocodeCapsulesSequentially(index: 0, located: [], unlocated: [])
+        startCapsuleGeocode()
     }
 
     // MARK: - 时间胶囊打点（只按区级文本编，坐标只活本页内存）
 
-    private func geocodeCapsulesSequentially(index: Int, located: [(entry: Entry, coordinate: CLLocationCoordinate2D)], unlocated: [Entry]) {
+    /// 清单 12：胶囊编码链路唯一入口。每次起链即换代，旧链路的在途回包
+    /// 与终点 apply 一律被代际守卫拦下，不再有机会覆盖新标记。
+    private func startCapsuleGeocode() {
+        capsuleGeocodeGeneration += 1
+        geocodeCapsulesSequentially(generation: capsuleGeocodeGeneration, index: 0, located: [], unlocated: [])
+    }
+
+    private func geocodeCapsulesSequentially(generation: Int, index: Int, located: [(entry: Entry, coordinate: CLLocationCoordinate2D)], unlocated: [Entry]) {
         guard index < capsuleEntries.count else {
-            applyCapsules(located: located, unlocated: unlocated)
+            applyCapsules(generation: generation, located: located, unlocated: unlocated)
             return
         }
         let entry = capsuleEntries[index]
@@ -299,20 +400,23 @@ final class BearyDiaryMapViewController: UIViewController, MKMapViewDelegate, UI
             // 埋点区级缺失的胶囊不打点、但仍进弹卡列表（见 capsule section），不因字段不全而整篇消失。
             var nextUnlocated = unlocated
             nextUnlocated.append(entry)
-            geocodeCapsulesSequentially(index: index + 1, located: located, unlocated: nextUnlocated)
+            geocodeCapsulesSequentially(generation: generation, index: index + 1, located: located, unlocated: nextUnlocated)
             return
         }
         if let cached = geocodeCache[district] {
             var next = located
             next.append((entry, cached))
-            geocodeCapsulesSequentially(index: index + 1, located: next, unlocated: unlocated)
+            geocodeCapsulesSequentially(generation: generation, index: index + 1, located: next, unlocated: unlocated)
             return
         }
         CLGeocoder().geocodeAddressString(district) { [weak self] placemarks, _ in
             DispatchQueue.main.async {
                 guard let self = self else { return }
-                // 重算期间 capsuleEntries 已换代时，旧编码结果直接丢弃，不贴到新篇上。
-                guard index < self.capsuleEntries.count, self.capsuleEntries[index].id == entry.id else { return }
+                // 代际守卫（清单 12）：起链后又 regroup 过（新链路已起）时，
+                // 旧编码结果直接丢弃，不贴到新篇上；原 index/id 守卫保留作
+                // 第二道（同代内列表形态变化时仍拦）。
+                guard generation == self.capsuleGeocodeGeneration,
+                      index < self.capsuleEntries.count, self.capsuleEntries[index].id == entry.id else { return }
                 var nextLocated = located
                 var nextUnlocated = unlocated
                 if let coordinate = placemarks?.first?.location?.coordinate {
@@ -321,12 +425,14 @@ final class BearyDiaryMapViewController: UIViewController, MKMapViewDelegate, UI
                 } else {
                     nextUnlocated.append(entry)
                 }
-                self.geocodeCapsulesSequentially(index: index + 1, located: nextLocated, unlocated: nextUnlocated)
+                self.geocodeCapsulesSequentially(generation: generation, index: index + 1, located: nextLocated, unlocated: nextUnlocated)
             }
         }
     }
 
-    private func applyCapsules(located: [(entry: Entry, coordinate: CLLocationCoordinate2D)], unlocated: [Entry]) {
+    private func applyCapsules(generation: Int, located: [(entry: Entry, coordinate: CLLocationCoordinate2D)], unlocated: [Entry]) {
+        // 代际守卫（清单 12）：旧链路跑到终点时新链路已起，旧标记不得覆盖。
+        guard generation == capsuleGeocodeGeneration else { return }
         capsuleLocated = located
         capsuleUnlocated = unlocated
         // 已选胶囊若因重算消失（删篇/翻私密/取消埋藏），回落到未选态，不留指向旧篇的弹卡。

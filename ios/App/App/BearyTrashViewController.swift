@@ -13,7 +13,7 @@ import UIKit
 // 颜色一律走 BearyColors，不新增字面量颜色；不新增 UIGlassEffect；图标只走
 // BearyIconImages 与已有 icon_* 资产；无 force unwrap；无裸 id 变量名。
 
-final class BearyTrashViewController: UIViewController, UIScrollViewDelegate {
+final class BearyTrashViewController: UIViewController, UIScrollViewDelegate, UIGestureRecognizerDelegate {
 
     // MARK: - 对外 API（调用方按此接线，勿改名）
 
@@ -43,6 +43,13 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate {
     private var restoreEntries: [(button: UIButton, trashValue: TrashItem)] = []
     private var purgeEntries: [(button: UIButton, trashValue: TrashItem)] = []
     private var rowViewsByIdentifier: [String: UIView] = [:]
+    /// 真跟手左滑：当前正在被手指拖动的行（同一时刻只可能有一行在拖）；
+    /// 新一行开始拖时，上一行若还停在偏移处先瞬间复位，避免两行同偏。
+    private var trashDraggingRow: UIView?
+    /// 松手出菜单的左滑距离（卡片左移满此值才弹菜单，不满则弹回原位）。
+    private let trashDragMenuThreshold: CGFloat = 60
+    /// 手指跟手的最大左移量（再往左拖也不跟，防卡片被拖出屏）。
+    private let trashDragMaxOffset: CGFloat = 140
     /// 列宽必需约束（宽 ≥821 取 600、宽 ≤820 取全宽减 32，值由 updateColumnWidth 在
     /// viewDidLayoutSubviews 里按 bounds 直接派生；设置页 #92 同款，不再走 @750 协商）。
     private var trashColWidthConstraint: NSLayoutConstraint?
@@ -146,6 +153,8 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate {
             trashGlassView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
         ])
         scrollView.delegate = self
+        // 116 后扫查：与广场/个人页同口径——关掉 delaysContentTouches，滚动容器里的点按立即响应，不等滚动判定。
+        scrollView.delaysContentTouches = false
         scrollView.translatesAutoresizingMaskIntoConstraints = false
         contentWrap.translatesAutoresizingMaskIntoConstraints = false
         contentStack.axis = .vertical
@@ -309,7 +318,7 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate {
         closeButton.widthAnchor.constraint(equalToConstant: 32).isActive = true
         closeButton.heightAnchor.constraint(equalToConstant: 32).isActive = true
         // Hit44：头行高放开到 44（钮 32 在 stack 内居中，上下各留 6），热区不再被 32 高行截断；钮视觉尺寸不变。
-        headerRow.heightAnchor.constraint(equalToConstant: 44).isActive = true
+        headerRow.heightAnchor.constraint(greaterThanOrEqualToConstant: 44).isActive = true  // 32-17：标题跟随放大时行高随字长高，不裁字
         emptyIconView.widthAnchor.constraint(equalToConstant: 36).isActive = true
         emptyIconView.heightAnchor.constraint(equalToConstant: 36).isActive = true
         // 列宽 = 全宽减 32（两侧各 16），宽 ≥821 时取 600 居中；值由 updateColumnWidth
@@ -782,20 +791,82 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate {
         ])
         restoreEntries.append((button: restoreButton, trashValue: trashValue))
         purgeEntries.append((button: purgeButton, trashValue: trashValue))
-        // C7：左滑复用按钮路径（恢复/彻底删除经下选后调已登记的按钮处理，
-        // 按钮本身保留；回收站为 stack 卡片、无 tableView 滑动 API，故左滑只
-        // 换触发方式，不新增执行逻辑；资格与按钮一致：全部回收站条目均可
-        // 恢复/彻底删除，仅 busy 守卫由按钮处理内把关）。
-        let swipe = UISwipeGestureRecognizer(target: self, action: #selector(trashCardSwiped(_:)))
-        swipe.direction = .left
-        rowView.addGestureRecognizer(swipe)
+        // 真跟手左滑（扫 bug 第 7 项）：回收站为 stack 卡片、无 tableView
+        // 滑动 API，故不用系统侧滑，改用每行一个 UIPanGestureRecognizer
+        // 做 1:1 跟手拖动——手指左移卡片即左移，松手够 60pt 出菜单、
+        // 不够弹回原位。菜单与恢复/彻底删除仍复用按钮路径（见
+        // presentTrashActionMenu），不新增执行逻辑；资格与按钮一致：
+        // 全部回收站条目均可恢复/彻底删除，仅 busy 守卫由按钮处理内把关。
+        // 与上下滚动抢手势见 gestureRecognizerShouldBegin：横滑才接管，
+        // 竖滑与滚动进行中一律放行给 scrollView（另见 scrollView 的
+        // pan 须等本手势失败才启动，避免滚动半途被横滑抢走）。
+        let drag = UIPanGestureRecognizer(target: self, action: #selector(trashCardDragged(_:)))
+        drag.delegate = self
+        rowView.addGestureRecognizer(drag)
+        scrollView.panGestureRecognizer.require(toFail: drag)
         return rowView
     }
 
-    @objc private func trashCardSwiped(_ sender: UISwipeGestureRecognizer) {
+    /// 手势仲裁：只有左横滑才让行拖动手势接管；竖滑（|vy| ≥ |vx|）
+    /// 与右滑放行给 scrollView；滚动进行中（拖动/减速）不抢，
+    /// 避免手指刚松开滚势未消时误触一行把它拖偏。
+    func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
+        guard gestureRecognizer is UIPanGestureRecognizer else { return true }
+        if scrollView.isDragging || scrollView.isDecelerating { return false }
+        let velocity = (gestureRecognizer as? UIPanGestureRecognizer)?.velocity(in: view) ?? .zero
+        return velocity.x < 0 && abs(velocity.x) > abs(velocity.y)
+    }
+
+    @objc private func trashCardDragged(_ sender: UIPanGestureRecognizer) {
         guard let rowView = sender.view,
               let identifier = rowViewsByIdentifier.first(where: { $0.value === rowView })?.key,
               trashItems.contains(where: { $0.entryIdentifier == identifier }) else { return }
+        switch sender.state {
+        case .began:
+            if let previous = trashDraggingRow, previous !== rowView {
+                previous.transform = .identity
+            }
+            trashDraggingRow = rowView
+            // 入场错峰动画若还在跑（transform/alpha 在途），先停掉它：
+            // 动画模型值本就是终值（alpha 1、transform identity），停动画
+            // 不会闪回，手指接管后 transform 只由拖动写。
+            rowView.layer.removeAllAnimations()
+        case .changed:
+            let translation = sender.translation(in: view).x
+            let offset = max(-trashDragMaxOffset, min(0, translation))
+            rowView.transform = CGAffineTransform(translationX: offset, y: 0)
+        case .ended:
+            trashDraggingRow = nil
+            let offset = rowView.transform.tx
+            if offset <= -trashDragMenuThreshold {
+                resetTrashDragRow(rowView)
+                presentTrashActionMenu(identifier: identifier, rowView: rowView)
+            } else {
+                resetTrashDragRow(rowView)
+            }
+        case .cancelled, .failed:
+            trashDraggingRow = nil
+            resetTrashDragRow(rowView)
+        default:
+            break
+        }
+    }
+
+    /// 拖动结束/取消后卡片归位：减动效直设，其余以弹簧弹回（只走 transform）。
+    private func resetTrashDragRow(_ rowView: UIView) {
+        if UIAccessibility.isReduceMotionEnabled {
+            rowView.transform = .identity
+            return
+        }
+        UIView.animate(withDuration: 0.3, delay: 0, usingSpringWithDamping: 0.7, initialSpringVelocity: 0, options: .curveEaseOut, animations: {
+            rowView.transform = .identity
+        }, completion: nil)
+    }
+
+    /// 左滑菜单本体（原 trashCardSwiped 的弹菜单段原样抽出，触发方式
+    /// 由“滑完才弹”改为“跟手拖动 + 松手够距才弹”，菜单内容与后续
+    /// 按钮路径一字不动）。
+    private func presentTrashActionMenu(identifier: String, rowView: UIView) {
         if presentedViewController != nil { return }
         let sheet = UIAlertController(title: nil, message: nil, preferredStyle: .actionSheet)
         sheet.addAction(UIAlertAction(title: "恢复", style: .default) { [weak self] _ in
@@ -834,11 +905,19 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate {
         }
         trashBusyIdentifiers.insert(identifier)
         setRowButtonBusy(sender, busy: true, busyTitle: "恢复中…", idleTitle: "恢复")
+        // 扫荡 B：同行另一钮（彻底删除）在途期间一并禁用，否则恢复在途时
+        // 点彻底删除会弹出确认框，确认后与恢复双请求齐飞（见 purge 确认处
+        // 的复验守卫）；标题不动，只禁点按，结束时与恢复钮一起恢复。
+        let purgeSibling = purgeEntries.first(where: { $0.trashValue.entryIdentifier == identifier })?.button
+        purgeSibling?.isEnabled = false
+        purgeSibling?.alpha = 0.5
         BearyAPI.shared.restoreTrashDetail(id: identifier) { [weak self] result in
             DispatchQueue.main.async {
                 guard let self = self else { return }
                 self.trashBusyIdentifiers.remove(identifier)
                 self.setRowButtonBusy(sender, busy: false, busyTitle: "恢复中…", idleTitle: "恢复")
+                purgeSibling?.isEnabled = true
+                purgeSibling?.alpha = 1
                 switch result {
                 case .success(let resp):
                     // iCity：恢复回原可见性——服务端返回 published/isPublic 时按其分流，
@@ -881,13 +960,25 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate {
         alert.addAction(UIAlertAction(title: "取消", style: .cancel, handler: nil))
         alert.addAction(UIAlertAction(title: "彻底删除", style: .destructive) { [weak self] _ in
             guard let self = self else { return }
+            // 扫荡 B：确认时再验一次 busy。入口处守卫拦不住已弹出的确认框：
+            // 框在屏时点恢复可正常在途，确认后若不复验，恢复与彻底删除
+            // 双请求齐飞，恢复成功后删除回 409 还会误弹“删除失败”。
+            // 复验拦住时直接收框、不发请求、不弹 toast（行已由恢复带走）。
+            guard !self.trashBusyIdentifiers.contains(identifier) else { return }
             self.trashBusyIdentifiers.insert(identifier)
             self.setRowButtonBusy(sender, busy: true, busyTitle: "删除中…", idleTitle: "彻底删除")
+            // 扫荡 B：同行恢复钮在途期间一并禁用（与 restoreTapped 对称），
+            // 标题不动，只禁点按，结束时与删除钮一起恢复。
+            let restoreSibling = self.restoreEntries.first(where: { $0.trashValue.entryIdentifier == identifier })?.button
+            restoreSibling?.isEnabled = false
+            restoreSibling?.alpha = 0.5
             BearyAPI.shared.purgeTrash(id: identifier) { [weak self] result in
                 DispatchQueue.main.async {
                     guard let self = self else { return }
                     self.trashBusyIdentifiers.remove(identifier)
                     self.setRowButtonBusy(sender, busy: false, busyTitle: "删除中…", idleTitle: "彻底删除")
+                    restoreSibling?.isEnabled = true
+                    restoreSibling?.alpha = 1
                     switch result {
                     case .success:
                         self.removeRow(identifier: identifier)
@@ -916,6 +1007,9 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate {
         guard let rowView = rowViewsByIdentifier[identifier] else {
             renderStateViews()
             return
+        }
+        if trashDraggingRow === rowView {
+            trashDraggingRow = nil
         }
         rowViewsByIdentifier[identifier] = nil
         let rowHeight = rowView.bounds.height
@@ -1013,8 +1107,22 @@ private enum TrashText {
         } else {
             deletedPart = "删除于 —"
         }
+        // 扫荡 B：倒计时按 deletedAt 现算，不直接沿用服务端快照。
+        // 本地桶的 daysLeft 是上次同步时的快照：离线多日后再进回收站，
+        // 快照会把已过去的天数继续算在内（越放越大）。现算公式与服务端
+        // GET /beary/api/trash 的 days_left 同款（ceil，不足一天算一天）；
+        // 两者都有时取较小值——倒计时只会减少，既纠正陈旧快照，又不因
+        // 设备时钟偏慢而多算；只有快照时沿用快照，两者皆无时显“—”。
+        let computedDaysLeft: Int? = {
+            guard let deletedAt = trashValue.deletedAt else { return nil }
+            let nowMs = Date().timeIntervalSince1970 * 1000.0
+            let remainingDays = ceil((Double(deletedAt) + 30 * 24 * 3600 * 1000 - nowMs) / 86400000)
+            return max(0, Int(remainingDays))
+        }()
         let daysPart: String
-        if let daysLeft = trashValue.daysLeft {
+        if let stored = trashValue.daysLeft, let computed = computedDaysLeft {
+            daysPart = "还剩 \(min(stored, computed)) 天"
+        } else if let daysLeft = computedDaysLeft ?? trashValue.daysLeft {
             daysPart = "还剩 \(daysLeft) 天"
         } else {
             daysPart = "还剩 — 天"
