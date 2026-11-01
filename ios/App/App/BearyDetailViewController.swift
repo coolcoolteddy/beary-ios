@@ -229,6 +229,20 @@ final class BearyDetailViewController: UIViewController {
         v.isHidden = true
         return v
     }()
+    /// 详情作者行气温（卡片同款口径：有后端 temperature_c 且有天气类型才显，
+    /// 无值隐藏、不留空位；详情此前只显天气图标、气温丢了，卡片/详情不一致）。
+    private let weatherTempLabel: UILabel = {
+        let lb = UILabel()
+        lb.translatesAutoresizingMaskIntoConstraints = false
+        lb.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13))
+        lb.adjustsFontForContentSizeCategory = true
+        lb.textColor = BearyColors.gray
+        lb.numberOfLines = 1
+        lb.isHidden = true
+        lb.setContentHuggingPriority(.required, for: .horizontal)
+        lb.setContentCompressionResistancePriority(.required, for: .horizontal)
+        return lb
+    }()
     private let moodLabel: UILabel = {
         let lb = UILabel()
         lb.translatesAutoresizingMaskIntoConstraints = false
@@ -249,7 +263,7 @@ final class BearyDetailViewController: UIViewController {
     }()
     private var moodEmoteView: BearyEmoteView?
     private lazy var authorRow: UIStackView = {
-        let st = UIStackView(arrangedSubviews: [nameButton, badgeImageView, crownWrapView, titleSpacerLabel, timeLabel, weatherImageView, moodStack])
+        let st = UIStackView(arrangedSubviews: [nameButton, badgeImageView, crownWrapView, titleSpacerLabel, timeLabel, weatherImageView, weatherTempLabel, moodStack])
         st.translatesAutoresizingMaskIntoConstraints = false
         st.axis = .horizontal
         st.spacing = 8
@@ -1081,8 +1095,16 @@ final class BearyDetailViewController: UIViewController {
             weatherImageView.image = nil
             weatherImageView.isHidden = true
         }
-        // 旧心情改位：作者行心情位一律隐藏，心情缀正文末尾
-        // （见 detailBodyAttributedText）。
+        // 气温跟天气图标走同一处（卡片同款门：有气温且有天气类型才显）。
+        // #427 的气温显示保留；作者行心情位按 #421 新模型一律隐藏，
+        // 心情缀正文末尾（见 detailBodyAttributedText），不恢复旧心情位。
+        if let temp = entry.temperatureC, entry.weather != nil, !entry.weather!.isEmpty {
+            weatherTempLabel.text = "\(temp)°"
+            weatherTempLabel.isHidden = false
+        } else {
+            weatherTempLabel.text = nil
+            weatherTempLabel.isHidden = true
+        }
         moodStack.isHidden = true
         moodLabel.text = nil
         moodEmoteView?.removeFromSuperview()

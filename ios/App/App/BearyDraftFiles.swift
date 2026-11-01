@@ -60,6 +60,8 @@ struct BearyDraft: Codable {
     var clientReq: String
     var updatedAt: TimeInterval
     var weather: String?
+    /// 天气气温（摄氏度整数；老草稿缺本键时按 nil 解码，气温步进器不显示数值）。
+    var temperature: Int? = nil
     /// 批 E 草稿位置（两段文本，无坐标；老草稿缺本键时按 nil 解码，位置行不显示）。
     var locationName: String? = nil
     var locationDistrict: String? = nil

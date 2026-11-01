@@ -673,6 +673,20 @@ class BearyDiaryCardCell: UITableViewCell {
         return v
     }()
 
+    /// 卡片作者行气温（跟天气图标走同一处：有后端 temperature_c 才显，无值不留空位）。
+    private let weatherTempLabel: UILabel = {
+        let lb = UILabel()
+        lb.translatesAutoresizingMaskIntoConstraints = false
+        lb.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13))
+        lb.adjustsFontForContentSizeCategory = true
+        lb.textColor = BearyColors.gray
+        lb.numberOfLines = 1
+        lb.isHidden = true
+        lb.setContentHuggingPriority(.required, for: .horizontal)
+        lb.setContentCompressionResistancePriority(.required, for: .horizontal)
+        return lb
+    }()
+
     private var moodEmoteView: BearyEmoteView?
     /// E3：落点行天气 Lottie 覆盖层（仅 gotoEntry 落点行创建；其他行恒为 nil，
     /// 天气标只显示底层 wx 静态图）。停播时摘层即回到静态图，不改静态图本身。
@@ -699,7 +713,7 @@ class BearyDiaryCardCell: UITableViewCell {
     }()
 
     private lazy var titleStack: UIStackView = {
-        let st = UIStackView(arrangedSubviews: [nameLabel, badgeImageView, crownWrapView, titleSpacerLabel, timeLabel, weatherImageView, moodStack])
+        let st = UIStackView(arrangedSubviews: [nameLabel, badgeImageView, crownWrapView, titleSpacerLabel, timeLabel, weatherImageView, weatherTempLabel, moodStack])
         st.translatesAutoresizingMaskIntoConstraints = false
         st.axis = .horizontal
         st.spacing = 8
@@ -1405,6 +1419,8 @@ class BearyDiaryCardCell: UITableViewCell {
         stopWeatherLottie()
         weatherImageView.image = nil
         weatherImageView.isHidden = true
+        weatherTempLabel.text = nil
+        weatherTempLabel.isHidden = true
         moodStack.isHidden = true
         moodEmoteView?.removeFromSuperview()
         moodEmoteView = nil
@@ -1716,6 +1732,14 @@ class BearyDiaryCardCell: UITableViewCell {
             weatherImageView.image = nil
             weatherImageView.isHidden = true
         }
+        // 气温跟天气图标走同一处：有值显“18°”，无值隐藏、不留空位。
+        if let temp = entry.temperatureC, entry.weather != nil, !entry.weather!.isEmpty {
+            weatherTempLabel.text = "\(temp)°"
+            weatherTempLabel.isHidden = false
+        } else {
+            weatherTempLabel.text = nil
+            weatherTempLabel.isHidden = true
+        }
 
         // F9：心情。
         refreshMoodView()
@@ -1802,7 +1826,15 @@ class BearyDiaryCardCell: UITableViewCell {
             weatherImageView.image = nil
             weatherImageView.isHidden = true
         }
-        // 旧心情改位：作者行心情位一律隐藏，心情缀正文末尾。
+        // #427 的气温显示保留；作者行心情位按 #421 新模型一律隐藏
+        // （refreshMoodView），心情缀正文末尾，不恢复旧心情标签。
+        if let temp = entry.temperatureC, entry.weather != nil, !entry.weather!.isEmpty {
+            weatherTempLabel.text = "\(temp)°"
+            weatherTempLabel.isHidden = false
+        } else {
+            weatherTempLabel.text = nil
+            weatherTempLabel.isHidden = true
+        }
         refreshMoodView()
         // R4 App：日记标题在作者行（titleStack）与正文之间，空标题不占位。
         updateEntryTitle(entry.title)

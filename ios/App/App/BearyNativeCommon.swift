@@ -995,7 +995,7 @@ extension BearyAPI {
     /// 成功 201 返回 {id, publish_at, edit_deadline}；失败码：content required / content too long /
     /// invalid image ownership / image unavailable(409) / create_gap / create_day_limit /
     /// create_ip_limit(429) / create_dup。
-    func publishEntry(content: String, images: [String], mood: String?, weather: String? = nil, quoteId: String? = nil, published: Int? = nil, mentionedUserId: Int? = nil, title: String? = nil, ephemeral: Int? = nil, clientReq: String, locationName: String? = nil, locationDistrict: String? = nil, capsuleBuried: Int? = nil, capsuleUnlockDate: String? = nil, capsuleDistrict: String? = nil, completion: @escaping (Result<CreateResponse, APIError>) -> Void) {
+    func publishEntry(content: String, images: [String], mood: String?, weather: String? = nil, quoteId: String? = nil, published: Int? = nil, mentionedUserId: Int? = nil, title: String? = nil, ephemeral: Int? = nil, clientReq: String, locationName: String? = nil, locationDistrict: String? = nil, capsuleBuried: Int? = nil, capsuleUnlockDate: String? = nil, capsuleDistrict: String? = nil, temperature: Int? = nil, completion: @escaping (Result<CreateResponse, APIError>) -> Void) {
         var body: [String: Any] = ["content": content, "images": images, "client_req": clientReq]
         // 标题透传，nil=省略不传；非 nil 原样传。新建调用方传 preservedTitle
         //（全新日记为 nil、按无标题创建；续写旧草稿时为旧标题原样带回）；
@@ -1003,6 +1003,9 @@ extension BearyAPI {
         if let t = title { body["title"] = t }
         if let m = mood { body["mood"] = m }
         if let w = weather { body["weather"] = w }
+        // 天气气温：后端 temperature_c 字段未上线前服务端忽略本键，App 端先行透传（与位置字段同款先行口径）；
+        // 字段上线后即持久化，卡片/编辑回填凭 Entry.temperatureC 读回。气温只在有天气类型时发。
+        if weather != nil, let temp = temperature { body["temperature_c"] = temp }
         // 批 E：位置只传两段文本，不传经纬度；nil=省略不传（服务端保留缺省 NULL）。
         // 注意：后端字段批尚未落地前服务端可能忽略这两个键，App 端先行透传，
         // 位置持久化以后端批上线为准（见 ios/Docs/diary-location-fields.md）。
@@ -1026,7 +1029,7 @@ extension BearyAPI {
     /// （公开后 15 分钟内仍可编辑；可见性只走 visibility 接口，不可经此接口改）。
     /// 成功只返回 {ok: true}，调用方成功后自行重拉单篇。
     /// 图片须归属本人且存在，否则 400 'invalid image ownership' / 409 'image unavailable'。
-    func updateEntry(id: String, content: String, images: [String], mood: String?, weather: String?, quoteId: String?, title: String? = nil, mentionedUserId: Int? = nil, clearMentioned: Bool = false, locationName: String? = nil, locationDistrict: String? = nil, clearLocationName: Bool = false, clearLocationDistrict: Bool = false, completion: @escaping (Result<Void, APIError>) -> Void) {
+    func updateEntry(id: String, content: String, images: [String], mood: String?, weather: String?, quoteId: String?, title: String? = nil, mentionedUserId: Int? = nil, clearMentioned: Bool = false, locationName: String? = nil, locationDistrict: String? = nil, clearLocationName: Bool = false, clearLocationDistrict: Bool = false, temperature: Int? = nil, completion: @escaping (Result<Void, APIError>) -> Void) {
         let safe = id.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? id
         var body: [String: Any] = ["content": content, "images": images]
         // 批 E：编辑位置——未动时四值皆空、服务端保留原值；改选时调用方把两键都算清楚
@@ -1040,6 +1043,12 @@ extension BearyAPI {
         if let t = title { body["title"] = t }
         if let m = mood { body["mood"] = m }
         if let w = weather { body["weather"] = w }
+        // 气温清除须显式发 null：只「有值才发」时，用户在编辑器里清掉气温
+        // （步进器「清除」/输入框留空）后 PUT 省略本键，服务端保留旧值，
+        // 重进编辑器旧气温复活。天气类型在时气温恒发（值或 null），与位置
+        // 清除同款三态；唯一调用方（编辑器编辑）恒传 selectedTemperature，
+        // 不存在「没管气温却被误清」的调用点。
+        if weather != nil { body["temperature_c"] = temperature ?? NSNull() }
         if let q = quoteId { body["quote_id"] = q }
         if clearMentioned {
             body["mentioned_user_id"] = NSNull()
@@ -1047,6 +1056,63 @@ extension BearyAPI {
             body["mentioned_user_id"] = mentioned
         }
         requestVoid("/beary/api/entries/\(safe)", method: "PUT", jsonBody: body, completion: completion)
+    }
+
+    /// 当地天气：GET https://api.teddyhn.com/api/weather（cat-likes Worker 现成接口，服务端按请求方
+    /// Cloudflare 边缘信息定位 + open-meteo 取数，前端不直连第三方、不取设备 GPS、不存经纬度）。
+    /// 回包 {temp, code, city}：temp 为摄氏度整数，code 为 WMO 天气代码。code 映射见
+    /// weatherKey(forWMOCode:)；未覆盖的代码只回气温、不改天气类型，绝不编一个类型填上。
+    /// 取不到（网络错、非 200、字段缺失）即走 failure，调用方如实提示、不填假数据。
+    func fetchLocalWeather(completion: @escaping (Result<(weatherKey: String?, temperature: Int, city: String?), Error>) -> Void) {
+        guard let url = URL(string: "https://api.teddyhn.com/api/weather") else {
+            completion(.failure(NSError(domain: "BearyWeather", code: -1, userInfo: nil)))
+            return
+        }
+        var req = URLRequest(url: url)
+        req.httpMethod = "GET"
+        req.timeoutInterval = 10
+        URLSession.shared.dataTask(with: req) { data, response, error in
+            if let error = error {
+                completion(.failure(error))
+                return
+            }
+            guard let http = response as? HTTPURLResponse, http.statusCode == 200,
+                  let data = data,
+                  let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+                completion(.failure(NSError(domain: "BearyWeather", code: -2, userInfo: nil)))
+                return
+            }
+            let temp: Int?
+            if let t = json["temp"] as? Int {
+                temp = t
+            } else if let t = json["temp"] as? Double {
+                temp = Int(t.rounded())
+            } else {
+                temp = nil
+            }
+            guard let temp = temp else {
+                completion(.failure(NSError(domain: "BearyWeather", code: -3, userInfo: nil)))
+                return
+            }
+            let code = json["code"] as? Int
+            let key = code.flatMap { Self.weatherKey(forWMOCode: $0) }
+            completion(.success((weatherKey: key, temperature: temp, city: json["city"] as? String)))
+        }.resume()
+    }
+
+    /// WMO 天气代码 → beary 天气 key（网页 WX_DEFS 同集 9 种；wind 无对应代码、night
+    /// 需昼夜信息而现成接口不回 is_day，故两者只走手动选，不由自动填产生）。
+    static func weatherKey(forWMOCode code: Int) -> String? {
+        switch code {
+        case 0: return "sun"
+        case 1, 2: return "cloud"
+        case 3: return "cloudy"
+        case 45, 48: return "fog"
+        case 51, 53, 55, 56, 57, 61, 63, 65, 66, 67, 80, 81, 82: return "rain"
+        case 71, 73, 75, 77, 85, 86: return "snow"
+        case 95, 96, 99: return "thunder"
+        default: return nil
+        }
     }
 
     /// 取消埋藏：PUT /beary/api/entries/:id，三键显式清掉（buried=0 + 两键 null），与位置清除同款三态。
