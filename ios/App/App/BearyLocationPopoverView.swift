@@ -53,7 +53,13 @@ final class BearyLocationPopoverView: UIView, CLLocationManagerDelegate, MKLocal
     private let manualButton = BearyHit44Button(type: .system)
     private let subLabel = UILabel()
     private let inputField = UITextField()
+    // 审计 E2 第 6 项：建议区包进滚动视图——气泡总高不再随建议条数无上限长，
+    // 头部、输入框保持原位，只有建议区内部滚动；选项仍是既有 5 条，不增不减。
+    private let suggestionsScrollView = UIScrollView()
     private let suggestionsStack = UIStackView()
+    private var suggestionsHeightConstraint: NSLayoutConstraint?
+    private var popoverTopConstraint: NSLayoutConstraint?
+    private var lastShadowSize: CGSize = .zero
     private let suggestionsEmptyLabel = UILabel()
 
     private let locationManager = CLLocationManager()
@@ -68,10 +74,9 @@ final class BearyLocationPopoverView: UIView, CLLocationManagerDelegate, MKLocal
         super.init(frame: frame)
         backgroundColor = UIColor.clear
         layer.addSublayer(backgroundLayer)
-        backgroundLayer.shadowColor = UIColor.black.cgColor
-        backgroundLayer.shadowOpacity = 0.15
-        backgroundLayer.shadowRadius = 8
-        backgroundLayer.shadowOffset = CGSize(width: 0, height: 2)
+        // 审计 E2 第 14 项：浮层阴影统一走轻薄单层 raised token（0.12/8/2），
+        // 不再自写 0.15/8/2；阴影挂在本视图层（不裁剪），圆角裁剪由 shape path 负责。
+        BearyShadow.applyRaised(to: backgroundLayer)
 
         locationManager.delegate = self
         locationManager.desiredAccuracy = kCLLocationAccuracyHundredMeters
@@ -153,7 +158,11 @@ final class BearyLocationPopoverView: UIView, CLLocationManagerDelegate, MKLocal
         suggestionsStack.axis = .vertical
         suggestionsStack.spacing = 0
         suggestionsStack.translatesAutoresizingMaskIntoConstraints = false
-        suggestionsStack.isHidden = true
+        suggestionsScrollView.translatesAutoresizingMaskIntoConstraints = false
+        suggestionsScrollView.addSubview(suggestionsStack)
+        suggestionsScrollView.isHidden = true
+        let suggestionsHeight = suggestionsScrollView.heightAnchor.constraint(equalToConstant: 0)
+        suggestionsHeightConstraint = suggestionsHeight
 
         mainStack.axis = .vertical
         mainStack.spacing = 10
@@ -161,7 +170,7 @@ final class BearyLocationPopoverView: UIView, CLLocationManagerDelegate, MKLocal
         mainStack.addArrangedSubview(headerRow)
         mainStack.addArrangedSubview(subLabel)
         mainStack.addArrangedSubview(inputField)
-        mainStack.addArrangedSubview(suggestionsStack)
+        mainStack.addArrangedSubview(suggestionsScrollView)
         addSubview(mainStack)
         NSLayoutConstraint.activate([
             spinner.widthAnchor.constraint(equalToConstant: 20),
@@ -170,6 +179,12 @@ final class BearyLocationPopoverView: UIView, CLLocationManagerDelegate, MKLocal
             confirmButton.heightAnchor.constraint(equalToConstant: 32),
             statusIconView.widthAnchor.constraint(equalToConstant: 20),
             statusIconView.heightAnchor.constraint(equalToConstant: 20),
+            suggestionsStack.topAnchor.constraint(equalTo: suggestionsScrollView.contentLayoutGuide.topAnchor),
+            suggestionsStack.leadingAnchor.constraint(equalTo: suggestionsScrollView.contentLayoutGuide.leadingAnchor),
+            suggestionsStack.trailingAnchor.constraint(equalTo: suggestionsScrollView.contentLayoutGuide.trailingAnchor),
+            suggestionsStack.bottomAnchor.constraint(equalTo: suggestionsScrollView.contentLayoutGuide.bottomAnchor),
+            suggestionsStack.widthAnchor.constraint(equalTo: suggestionsScrollView.frameLayoutGuide.widthAnchor),
+            suggestionsHeight,
             mainStack.topAnchor.constraint(equalTo: topAnchor, constant: 14),
             mainStack.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 14),
             mainStack.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -14),
@@ -180,6 +195,21 @@ final class BearyLocationPopoverView: UIView, CLLocationManagerDelegate, MKLocal
 
     required init?(coder: NSCoder) {
         fatalError("init(coder:) has not been implemented")
+    }
+
+    // 审计 E2 第 6 项：气泡顶边不得顶出顶部安全区。调用方（Composer）只把
+    // 气泡底贴工具栏顶，本文件内补一条顶边守卫：顶 ≥ 父视图安全区顶 + 8。
+    // 主机制仍是建议区高度上限（见 updateSuggestionsHeight），本约束是兜底；
+    // 优先级低于 required，避免极端尺寸下与调用方底约束死锁。
+    override func didMoveToSuperview() {
+        super.didMoveToSuperview()
+        popoverTopConstraint?.isActive = false
+        popoverTopConstraint = nil
+        guard let superview = superview else { return }
+        let top = topAnchor.constraint(greaterThanOrEqualTo: superview.safeAreaLayoutGuide.topAnchor, constant: 8)
+        top.priority = .defaultHigh
+        top.isActive = true
+        popoverTopConstraint = top
     }
 
     override func layoutSubviews() {
@@ -196,6 +226,35 @@ final class BearyLocationPopoverView: UIView, CLLocationManagerDelegate, MKLocal
         path.close()
         backgroundLayer.path = path.cgPath
         backgroundLayer.fillColor = Self.popoverBackgroundColor.resolvedColor(with: traitCollection).cgColor
+        // 审计 E2 第 14 项：shadowPath 只在尺寸变化时更新，不逐帧重算。
+        if bounds.size != lastShadowSize {
+            lastShadowSize = bounds.size
+            backgroundLayer.shadowPath = path.cgPath
+        }
+        updateSuggestionsHeight()
+    }
+
+    /// 审计 E2 第 6 项：建议区最大可用高度 = 气泡底（父视图坐标）到父视图
+    /// 安全区顶之间，扣掉 16pt 余量与头部/副文案/输入框等固定部分；
+    /// 至少留 88pt（约一条半建议），不足时建议区内部滚动、气泡不再顶出。
+    /// 常量变化才写回，避免布局循环。未进父视图或未布局时不算（保持上次值）。
+    private func updateSuggestionsHeight() {
+        guard !suggestionsScrollView.isHidden,
+              let heightConstraint = suggestionsHeightConstraint,
+              let superview = superview, superview.bounds.height > 0, frame.maxY > 0, bounds.width > 0 else { return }
+        suggestionsScrollView.layoutIfNeeded()
+        let contentHeight = suggestionsStack.frame.height
+        // 建议为空时高度归零（不留上一轮的空白区）；有内容时再按上限算。
+        guard contentHeight > 0 else {
+            if heightConstraint.constant != 0 { heightConstraint.constant = 0 }
+            return
+        }
+        let fixedHeight = max(0, mainStack.frame.height - suggestionsScrollView.frame.height)
+        let available = frame.maxY - superview.safeAreaInsets.top - 16 - fixedHeight
+        let capped = min(contentHeight, max(88, available))
+        if abs(heightConstraint.constant - capped) > 0.5 {
+            heightConstraint.constant = capped
+        }
     }
 
     override func traitCollectionDidChange(_ previousTraitCollection: UITraitCollection?) {
@@ -258,7 +317,7 @@ final class BearyLocationPopoverView: UIView, CLLocationManagerDelegate, MKLocal
             self.subLabel.text = "打开即自动定位，不用再点一次获取"
             self.setConfirmEnabled(false)
             self.inputField.isHidden = true
-            self.suggestionsStack.isHidden = true
+            self.suggestionsScrollView.isHidden = true
         }
     }
 
@@ -278,7 +337,7 @@ final class BearyLocationPopoverView: UIView, CLLocationManagerDelegate, MKLocal
             }
             self.setConfirmEnabled(true)
             self.inputField.isHidden = true
-            self.suggestionsStack.isHidden = true
+            self.suggestionsScrollView.isHidden = true
         }
     }
 
@@ -298,7 +357,7 @@ final class BearyLocationPopoverView: UIView, CLLocationManagerDelegate, MKLocal
             // 手动态的确认就是头部 ✅：有输入才可点，空输入禁用防误存；
             // 不再另起“使用这个地点”钮，避免两个确认入口。
             self.inputField.isHidden = false
-            self.suggestionsStack.isHidden = false
+            self.suggestionsScrollView.isHidden = false
             self.refreshManualConfirmState()
             self.inputField.becomeFirstResponder()
         }
@@ -395,6 +454,10 @@ final class BearyLocationPopoverView: UIView, CLLocationManagerDelegate, MKLocal
 
     private func renderSuggestions() {
         clearSuggestionViews()
+        // 布局一轮后按内容高与可用高重算建议区上限（见 updateSuggestionsHeight；
+        // layoutSubviews 也会再算一次，首帧不靠它也能落定）。
+        layoutIfNeeded()
+        updateSuggestionsHeight()
         if suggestions.isEmpty {
             suggestionsStack.addArrangedSubview(suggestionsEmptyLabel)
             suggestionsEmptyLabel.isHidden = false

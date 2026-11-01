@@ -72,6 +72,15 @@ final class BearyCalloutPickerView: UIView, UIScrollViewDelegate {
     /// 取图闭包：(key, dark) -> 图。心情走 emote 静态 PNG（深色 _dark），
     /// 天气走 icon_wx_* 模板图（调用方 tint 墨色，深浅自适应）。
     var imageProvider: ((String, Bool) -> UIImage?)?
+    /// 审计 E2 第 11 项：当前选中项的 key（天气单选用；心情是插入操作，
+    /// 不套用本样式，调用方不传即无选中态）。“无”选项（key "none"）与
+    /// 其他天气项沿用同一表现：轻量墨色描边 + selected 无障碍状态。
+    /// Composer 侧已接：buildCallouts 的 weatherCallout.configure 传
+    /// selectedWeather；打开天气框时 showCallout 再调 setSelectedKey
+    /// (selectedWeather) 同步（configure 只在搭建时调一次，编辑/草稿的
+    /// 天气晚于搭建才落定，故打开时同步是生效的一步）。无天气时传 nil，
+    /// 框内无行高亮。
+    private(set) var selectedKey: String?
 
     private static let arrowHeight: CGFloat = 10
     private static let arrowHalfWidth: CGFloat = 8
@@ -136,9 +145,10 @@ final class BearyCalloutPickerView: UIView, UIScrollViewDelegate {
         fatalError("init(coder:) has not been implemented")
     }
 
-    func configure(options: [Option], onSelect: ((String) -> Void)?, imageProvider: ((String, Bool) -> UIImage?)?) {
+    func configure(options: [Option], onSelect: ((String) -> Void)?, imageProvider: ((String, Bool) -> UIImage?)?, selectedKey: String? = nil) {
         self.onSelect = onSelect
         self.imageProvider = imageProvider
+        self.selectedKey = selectedKey
         // 32 清单第 31 项：先 removeArrangedSubview 再 removeFromSuperview（纯防御性；
         // 现状两实例 configure 各只调一次，旧按钮本就不会残留，收益为零，仍按拍板做）。
         for (_, button) in optionButtons {
@@ -162,7 +172,33 @@ final class BearyCalloutPickerView: UIView, UIScrollViewDelegate {
             optionButtons.append((key: option.key, button: button))
         }
         refreshImages()
+        refreshSelectedStates()
         setNeedsLayout()
+    }
+
+    /// 打开框时刷新选中态（不重建选项）：调用方在选中值变化后调一次即可。
+    func setSelectedKey(_ key: String?) {
+        selectedKey = key
+        refreshSelectedStates()
+    }
+
+    /// 选中态渲染：仅选中项 1pt 墨色描边（圆角 12，与框体同口径；
+    /// 边框色走动态入口，深浅切换自动跟走），其余项无边框；
+    /// 选中项同时置 isSelected 与 .selected 无障碍 trait。
+    private func refreshSelectedStates() {
+        for (key, button) in optionButtons {
+            let selected = (selectedKey != nil && key == selectedKey)
+            button.isSelected = selected
+            button.accessibilityTraits = selected ? [.button, .selected] : [.button]
+            if selected {
+                button.layer.cornerRadius = 12
+                button.layer.borderWidth = 1
+                button.layer.bearyDynamicBorderColor = BearyColors.ink
+            } else {
+                button.layer.borderWidth = 0
+                button.layer.bearyDynamicBorderColor = nil
+            }
+        }
     }
 
     /// 深浅切换时重取图（心情 _dark 资产）+ 重算底色与渐隐色。
