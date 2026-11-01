@@ -265,6 +265,7 @@ final class BearyRecipientPickerViewController: UIViewController, UITextFieldDel
         sheetView.addSubview(notifyRow)
         sheetView.addSubview(listContainer)
         listContainer.addSubview(listScrollView)
+        listScrollView.delaysContentTouches = false
         listScrollView.addSubview(rowsStack)
         resultsLabelWrap.addSubview(resultsLabel)
         NSLayoutConstraint.activate([
