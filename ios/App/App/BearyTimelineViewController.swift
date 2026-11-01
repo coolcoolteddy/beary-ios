@@ -2340,7 +2340,7 @@ class BearyTimelineViewController: UIViewController {
         tv.rowHeight = UITableView.automaticDimension
         tv.estimatedRowHeight = 180
         tv.estimatedSectionHeaderHeight = 40
-        tv.contentInset = UIEdgeInsets(top: 0, left: 0, bottom: 90, right: 0)
+        tv.contentInset = UIEdgeInsets(top: 0, left: 0, bottom: BearyChrome.chromeBottomInset(includesFab: true, width: view.bounds.width, safeAreaBottom: view.safeAreaInsets.bottom), right: 0)
         tv.scrollIndicatorInsets = tv.contentInset
         // 顶栏透度批：与 Feed 同理，表框贴页顶（view.top），关自动调整使属性内边距即视觉顶距。
         tv.contentInsetAdjustmentBehavior = .never
@@ -2674,7 +2674,7 @@ class BearyTimelineViewController: UIViewController {
         // 容器重发顶距会打断指示器。
         guard !isCustomPullRefreshing else { return }
         let top = view.safeAreaInsets.top + (visible ? 60 : 0)
-        let bottom = 90 + view.safeAreaInsets.bottom
+        let bottom = BearyChrome.chromeBottomInset(includesFab: true, width: view.bounds.width, safeAreaBottom: view.safeAreaInsets.bottom)
         if tableView.contentInset.top != top || tableView.contentInset.bottom != bottom {
             tableView.contentInset.top = top
             tableView.contentInset.bottom = bottom

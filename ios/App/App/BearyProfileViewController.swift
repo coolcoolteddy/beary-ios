@@ -530,7 +530,7 @@ class BearyProfileViewController: UIViewController {
         tableViewValue.separatorStyle = .none
         tableViewValue.rowHeight = UITableView.automaticDimension
         tableViewValue.estimatedRowHeight = 220
-        tableViewValue.contentInset = UIEdgeInsets(top: 0, left: 0, bottom: 90, right: 0)
+        tableViewValue.contentInset = UIEdgeInsets(top: 0, left: 0, bottom: BearyChrome.chromeBottomInset(includesFab: true, width: view.bounds.width, safeAreaBottom: view.safeAreaInsets.bottom), right: 0)
         tableViewValue.scrollIndicatorInsets = tableViewValue.contentInset
         tableViewValue.contentInsetAdjustmentBehavior = .never
         // 状态栏黑条根因（2026-10-30）：此前 10-29“封面伸进状态栏”只把表框顶改到

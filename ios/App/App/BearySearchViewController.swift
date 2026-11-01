@@ -275,14 +275,14 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
     @objc private func keyboardWillShow(_ notification: Notification) {
         guard let frame = notification.userInfo?[UIResponder.keyboardFrameEndUserInfoKey] as? CGRect else { return }
         keyboardBottomInset = max(0, frame.height - view.safeAreaInsets.bottom)
-        scrollView.contentInset.bottom = 90 + keyboardBottomInset
-        scrollView.scrollIndicatorInsets.bottom = 90 + keyboardBottomInset
+        scrollView.contentInset.bottom = BearyChrome.chromeBottomInset(includesFab: false, width: view.bounds.width, safeAreaBottom: view.safeAreaInsets.bottom) + keyboardBottomInset
+        scrollView.scrollIndicatorInsets.bottom = BearyChrome.chromeBottomInset(includesFab: false, width: view.bounds.width, safeAreaBottom: view.safeAreaInsets.bottom) + keyboardBottomInset
     }
 
     @objc private func keyboardWillHide(_ notification: Notification) {
         keyboardBottomInset = 0
-        scrollView.contentInset.bottom = 90
-        scrollView.scrollIndicatorInsets.bottom = 90
+        scrollView.contentInset.bottom = BearyChrome.chromeBottomInset(includesFab: false, width: view.bounds.width, safeAreaBottom: view.safeAreaInsets.bottom)
+        scrollView.scrollIndicatorInsets.bottom = BearyChrome.chromeBottomInset(includesFab: false, width: view.bounds.width, safeAreaBottom: view.safeAreaInsets.bottom)
     }
 
     /// 补缺 P2-21：搜索拉黑判定（与 SceneDelegate isBlockedAuthor 同口径：游客不承接拉黑表，
@@ -451,7 +451,7 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         scrollView.keyboardDismissMode = .onDrag
         scrollView.delegate = self
         // 底留白 90：与 Feed/时间线/消息同口径，末行不再被底栏分段器盖住。
-        scrollView.contentInset = UIEdgeInsets(top: 0, left: 0, bottom: 90, right: 0)
+        scrollView.contentInset = UIEdgeInsets(top: 0, left: 0, bottom: BearyChrome.chromeBottomInset(includesFab: false, width: view.bounds.width, safeAreaBottom: view.safeAreaInsets.bottom), right: 0)
         scrollView.scrollIndicatorInsets = scrollView.contentInset
         // 116 后扫查：与广场/个人页同口径——关掉 delaysContentTouches，滚动容器里的点按立即响应，不等滚动判定。
         scrollView.delaysContentTouches = false
