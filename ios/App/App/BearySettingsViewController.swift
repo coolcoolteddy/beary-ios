@@ -265,6 +265,11 @@ final class BearySettingsViewController: UIViewController {
     /// view.bounds 的纯函数，首个布局轮次即最终值，不再经多轮约束收敛
     /// 分段变宽；最终口径不变（iPhone 屏宽 -40，宽 ≥821 锁 600 居中）。
     private var contentColumnWidth: NSLayoutConstraint?
+    /// 审计第 1 项：主设置页顶栏与正文列共用同一宽度入口（见 columnWidth(forViewWidth:)）。
+    /// 旧口径是顶栏 width = view − 40（priority 750）+ width ≤ 600（必需），
+    /// 在 641…820pt 区间必需的 600 上限先胜出，顶栏 600pt、正文列 view − 40，
+    /// 两者左缘错开；现顶栏改为与正文列同一等值约束，600 上限只在 ≥821pt 时由计算入口给出。
+    private var topBarColumnWidth: NSLayoutConstraint?
     /// 115 设置页空白守卫（根因未证实，见下）：view 帧复位只做一次，避免布局环。
     private var settingsFrameResetDone = false
     /// 115 设置页空白守卫：进场诊断日志每出现一次只记一次。
@@ -419,14 +424,25 @@ final class BearySettingsViewController: UIViewController {
     }
 
 
-    /// 列宽只由 view.bounds 定：宽 ≥821 锁 600（P2-1 同款），宽 ≤820 时
-    /// 屏宽 -40 撑满；bounds 为 0 时跳过不钉死；值不变时不写，避免布局环。
+    /// 列宽唯一计算入口：宽 ≥821 锁 600（P2-1 同款），宽 ≤820 时
+    /// 屏宽 -40 撑满。顶栏与正文列共用此值，600 上限不再以独立约束形式存在。
+    private func columnWidth(forViewWidth w: CGFloat) -> CGFloat {
+        w >= 821 ? 600 : max(w - 40, 0)
+    }
+
+    /// 列宽只由 view.bounds 定（见 columnWidth(forViewWidth:)）；顶栏与正文列
+    /// 在同一入口算出同一目标值、写入各自等值约束；bounds 为 0 时跳过不钉死；
+    /// 值不变时不写，避免布局环。viewDidLayoutSubviews 每轮调用，故分屏 /
+    /// 旋转改宽时顶栏与正文列同步跟进。
     private func updateColumnWidth() {
         let w = view.bounds.width
         guard w > 0 else { return }
-        let target: CGFloat = w >= 821 ? 600 : max(w - 40, 0)
+        let target = columnWidth(forViewWidth: w)
         if contentColumnWidth?.constant != target {
             contentColumnWidth?.constant = target
+        }
+        if topBarColumnWidth?.constant != target {
+            topBarColumnWidth?.constant = target
         }
     }
 
@@ -690,16 +706,15 @@ final class BearySettingsViewController: UIViewController {
         view.addSubview(topBar)
         view.addSubview(scrollView)
         scrollView.addSubview(contentStack)
-        // 补缺 P2-17：主页顶栏与内容列同宽居中（内容列为 600／屏宽-40，见 updateColumnWidth）。
-        let mainTopBarWidthEquality = topBar.widthAnchor.constraint(equalTo: view.widthAnchor, constant: -40)
-        mainTopBarWidthEquality.priority = UILayoutPriority(750)
+        // 审计第 1 项：主页顶栏与内容列同宽居中，宽度由 updateColumnWidth
+        // 经 columnWidth(forViewWidth:) 统一算出（≥821pt 时 600、其余屏宽 −40），
+        // 不再用 view − 40（priority 750）+ ≤600（必需）两约束协商——后者在
+        // 641…820pt 区间会把顶栏卡在 600pt、与正文列错开。左右 ≥20 不等式保留作兜底。
         NSLayoutConstraint.activate([
             topBar.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
             topBar.centerXAnchor.constraint(equalTo: view.centerXAnchor),
-            topBar.widthAnchor.constraint(lessThanOrEqualToConstant: 600),
             topBar.leadingAnchor.constraint(greaterThanOrEqualTo: view.leadingAnchor, constant: 20),
             topBar.trailingAnchor.constraint(lessThanOrEqualTo: view.trailingAnchor, constant: -20),
-            mainTopBarWidthEquality,
             scrollView.topAnchor.constraint(equalTo: topBar.bottomAnchor),
             scrollView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             scrollView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
@@ -712,6 +727,8 @@ final class BearySettingsViewController: UIViewController {
         ])
         contentColumnWidth = contentStack.widthAnchor.constraint(equalToConstant: 0)
         contentColumnWidth?.isActive = true
+        topBarColumnWidth = topBar.widthAnchor.constraint(equalToConstant: 0)
+        topBarColumnWidth?.isActive = true
         updateColumnWidth()
 
         loadingView.translatesAutoresizingMaskIntoConstraints = false
