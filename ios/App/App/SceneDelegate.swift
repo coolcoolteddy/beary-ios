@@ -1933,18 +1933,13 @@ final class BearyChromeViewController: UIViewController {
         if page == .timeline {
             timelineVC?.pageDidEnter()
         }
-        // A5 返页表情恢复（容器侧，只加调用不改进入逻辑）：userVC 与 profileVC
-        // 共用 BearyProfileViewController 实现，页侧已有 resumeVisibleEmotes，这里只补容器调用。
+        // A5 返页表情恢复（容器侧）：每页只留一个恢复入口，不双调。
+        // 首页：只调 pageDidEnter（其内含 handlePageEnter + 可见行恢复）；
+        // 时间线：只调上方已有的 pageDidEnter（其内含 resumeVisibleEmotes），
+        // 这里不再另调一次；个人页/他人页无 pageDidEnter，才调 resumeVisibleEmotes
+        //（pageDidReturn 是封面复位，不是表情恢复，与恢复不重复）。
         if page == .home {
-            feedVC?.resumeVisibleEmotes()
-            // P1-5（首页组收尾）：时间线分支同款一行，正式接 pageDidEnter；
-            // 首页组在 resumeVisibleEmotes 内顺带的 handlePageEnter 兜底保留
-            // （在 BearyFeedViewController 内，不属本文件集，不摘；双跑由
-            // revalidate 门控去重、无害）。注意：本行依赖首页组在 Feed 侧
-            // 落地 pageDidEnter，合入前须以 rebase 后 main 为准复核存在性。
             feedVC?.pageDidEnter()
-        } else if page == .timeline {
-            timelineVC?.resumeVisibleEmotes()
         } else if page == .me {
             profileVC?.resumeVisibleEmotes()
             // 批 C（#220 补口）：容器切页只改 isHidden，viewWillAppear 不触发，

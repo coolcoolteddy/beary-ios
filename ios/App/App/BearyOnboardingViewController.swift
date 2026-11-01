@@ -985,8 +985,9 @@ final class BearyOnboardingViewController: UIViewController {
             if otherKey != key { otherView.showStaticFrame() }
         }
         if let current = emoteViews[key] {
-            current.stop()
-            current.play()
+            // 点中即主动重播：走显式 replayFromStart()，不要 stop() + play()——
+            // play() 现在是恢复语义，已播过开场的只会从暂停帧续播，不会从头播。
+            current.replayFromStart()
         }
         for (buttonKey, button) in emoteButtons {
             let selected = buttonKey == key
