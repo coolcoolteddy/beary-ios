@@ -197,12 +197,17 @@ final class BearyEmotePickerSheetViewController: UIViewController, UICollectionV
         case .changed:
             let offset = BearySheetDrag.offset(for: translation.y)
             sheetView.transform = CGAffineTransform(translationX: 0, y: offset)
+            // 审计第 14 项：遮罩跟手变淡，与游客提示同口径（共用映射）。
+            scrimView.alpha = BearySheetDrag.scrimAlpha(forDragOffset: offset, sheetHeight: sheetView.bounds.height)
         case .ended:
             let velocity = gesture.velocity(in: view).y
             if translation.y > 80 || velocity > 600 {
                 closeTapped()
             } else {
-                let restore = { self.sheetView.transform = .identity }
+                let restore = {
+                    self.sheetView.transform = .identity
+                    self.scrimView.alpha = 1
+                }
                 if UIAccessibility.isReduceMotionEnabled {
                     restore()
                 } else {
@@ -210,7 +215,10 @@ final class BearyEmotePickerSheetViewController: UIViewController, UICollectionV
                 }
             }
         case .cancelled, .failed:
-            let restore = { self.sheetView.transform = .identity }
+            let restore = {
+                self.sheetView.transform = .identity
+                self.scrimView.alpha = 1
+            }
             if UIAccessibility.isReduceMotionEnabled {
                 restore()
             } else {
