@@ -482,7 +482,7 @@ final class BearyChromeViewController: UIViewController {
         // 网页登录 pill：14 semibold 固定字号，不跟随系统字号缩放。
         login.titleLabel?.font = .systemFont(ofSize: 14, weight: .semibold)
         login.titleLabel?.adjustsFontForContentSizeCategory = false
-        login.setTitleColor(BearyColors.ink, for: .normal)
+        login.setTitleColor(BearyColors.onBrand, for: .normal)
         login.backgroundColor = .clear
         login.layer.cornerRadius = 8
         login.addTarget(self, action: #selector(didTapLogin), for: .touchUpInside)
@@ -631,7 +631,7 @@ final class BearyChromeViewController: UIViewController {
         fabBodyView = fabBody
         let fab = UIButton(type: .custom)
         fab.setImage(topIconImage(named: "IconPlus", officialFallback: "icon_plus"), for: .normal)
-        fab.tintColor = .white
+        fab.tintColor = BearyColors.onBrand
         fab.backgroundColor = .clear
         // FAB 点按只留容器缩放：关掉系统默认高亮压暗（adjustsImageWhenHighlighted
         // 默认为 true，按下会把白加号画深）；缩放仍走下方的 setFabPressed。
