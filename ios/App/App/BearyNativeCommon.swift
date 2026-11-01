@@ -170,7 +170,7 @@ enum BearyGlass {
 }
 
 /// 玻璃按钮：BearyHit44Button + 背部玻璃底。只换按钮底质，不动图标/文字/尺寸/44pt 热区；
-/// 点亮色、描边、边框等上层样式一律不动。圆角取 8（视觉清单第 7 项按钮档；44×44 图标钮亦为 8pt 圆角，不再取半高成圆）。
+/// 点亮色、描边、边框等上层样式一律不动。圆角取半高（2026-11-01 Li 定：玻璃钮改回圆端，推翻 #533 在此处的 8pt 档；唯一调用点顶栏登录 pill 高 32，半高 16 即胶囊端）。
 /// 玻璃视图插在 index 0，位于 imageView/titleLabel 之下；backgroundColor 必须保持 clear，
 /// 否则实色底会盖住玻璃——转换点须同步把原实色底改 clear（边框/描边不动）。
 /// 范围（视觉清单第 12 项）：本类只允许用在栏内按钮，唯一调用点是顶栏登录 pill；
@@ -213,7 +213,7 @@ final class BearyGlassButton: BearyHit44Button {
 
     override func layoutSubviews() {
         super.layoutSubviews()
-        glassView?.layer.cornerRadius = 8
+        glassView?.layer.cornerRadius = bounds.height / 2
         glassView?.clipsToBounds = true
     }
 }
