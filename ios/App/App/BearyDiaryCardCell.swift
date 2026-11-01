@@ -438,7 +438,10 @@ class BearyDiaryCardCell: UITableViewCell {
     /// 个人主页模式 chip key 快照（与 currentEmoteList 同序，点选按下标取 key）。
     private var chipKeys: [String] = []
     /// 80 包 B4-1：回应 chip 池——chip 容器留池复用，只在 key 变化时换播放器。
-    private var emoteChipPool: [BearyEmoteChipView] = []
+    /// 审计第 7 项（收窄后修）：池不再按位置下标取 chip，改按表情 key 取 chip。
+    /// 旧按位复用在 count 降序变化时，会把原槽位 chip 的播放器换成另一只熊；
+    /// 按 key 复用后，排序变化只是同一节点换位，计数只改文字，不重建播放器。
+    private var emoteChipPoolByKey: [String: BearyEmoteChipView] = []
     private var isEmoteBusy = false
     /// 回应先行反馈在途态（首页模式，点赞/收藏同款口径）：点选后 chip 行立即按
     /// 先行值重绘、API 在后台跑，成功对齐服务端值、失败回滚。旧 E3-3 pending
@@ -1453,7 +1456,7 @@ class BearyDiaryCardCell: UITableViewCell {
         // 圆角长方形根治：chip-out 会把摘下 chip 缩到 0.5 后留池，复用时若不复位
         // transform，flow 按帧设 frame 会使 bounds 翻倍、固定 16 圆角显示成 8、
         // 内容缩半——截图第三只 chip 即此状；此处与 renderEmotes 复用处双重复位。
-        for chip in emoteChipPool {
+        for chip in emoteChipPoolByKey.values {
             chip.stopPlayer()
             chip.transform = .identity
             chip.alpha = 1
@@ -3168,7 +3171,13 @@ class BearyDiaryCardCell: UITableViewCell {
 
     /// 回应行统一渲染：count 降序（网页 emoteChipsHtml 同口径），mine 高亮，末尾常驻 + 按钮。
     /// 80 包 B4-1：chip 池化——只把 chip 从 flow 摘下留池，不销毁；本轮未复用
-    /// 的池 chip 不再上树（仍留池供下轮）；key 不变时重播播放器、key 变了才换播放器。
+    /// 的池 chip 不再上树（仍留池供下轮）。
+    /// 审计第 7 项（收窄后修）：池按表情 key 取，不再按位置下标取。排序变化时
+    /// 同一 key 的原节点按新顺序重新上树（只移动位置，不换播放器、不重播开场）；
+    /// 计数变化时复用 chip 的 render 只改文字与选中态（同 key 播放器守卫在
+    /// BearyEmoteChipView.render 内：已在播不重建，停播才恢复播放）；只有本轮
+    /// 新出现的 key 才新建 chip、建新播放器播放入场。tag 仍按本轮排序下标写，
+    /// 与 chipKeys / 点选下标对齐（tag 不再等于池下标）。
     /// animatedLayout：用户动作（先行贴/摘、回滚）时 + 钮与已存 chip 随新布局平滑移位
     /// （flow 帧动画，只动位置，不重播已有 chip）；服务端对齐与初始渲染走瞬时。
     private func renderEmotes(animatedLayout: Bool = false) {
@@ -3179,6 +3188,7 @@ class BearyDiaryCardCell: UITableViewCell {
         currentEmoteList = list
         chipKeys = []
         var chipIndex = 0
+        var seenKeys = Set<String>()
         for item in list {
             guard let key = item.emote, !key.isEmpty,
                   BearyEmoteKeys.bearFaceKeys.contains(key) else {
@@ -3188,15 +3198,23 @@ class BearyDiaryCardCell: UITableViewCell {
                 // 卡片仍过滤一次，旧缓存里残留的非熊脸也不会再画出来。
                 continue
             }
+            // 同 key 只留首个：按 key 复用下同一节点不能同时占两个槽位，
+            // 否则第二次上树会把第一次的位置挤掉；模型侧本就按 key 去重，
+            // 此处只作防重复建 chip 的兜底（详情页同口径）。
+            guard seenKeys.insert(key).inserted else { continue }
             let mine = item.mine ?? false
             let count = item.count ?? 0
             chipKeys.append(key)
             let chip: BearyEmoteChipView
-            if chipIndex < emoteChipPool.count {
-                chip = emoteChipPool[chipIndex]
+            if let reused = emoteChipPoolByKey[key] {
+                chip = reused
                 // 圆角长方形根治：复用 chip 须先复位 transform（chip-out 残留 0.5
-                // 会使 flow 设 frame 时 bounds 翻倍、圆角与内容同缩一半）。
+                // 会使 flow 设 frame 时 bounds 翻倍、圆角与内容同缩一半）；
+                // alpha 同复位，防 chip-out 残留 0 的 chip 被无入场动画的
+                // 渲染路径（计数/排序/服务端对齐）复用后一直不可见。
+                // 后续若调用方播 playChipIn，会自行重设起态，不受此次复位影响。
                 chip.transform = .identity
+                chip.alpha = 1.0
                 chip.render(key: key, count: count, mine: mine)
                 chip.overlayButton.tag = chipIndex
             } else {
@@ -3205,7 +3223,7 @@ class BearyDiaryCardCell: UITableViewCell {
                 made.overlayButton.tag = chipIndex
                 made.overlayButton.addTarget(self, action: #selector(emoteChipTapped(_:)), for: .touchUpInside)
                 made.overlayButton.bearyAddPressFeedback()
-                emoteChipPool.append(made)
+                emoteChipPoolByKey[key] = made
                 chip = made
             }
             emoteFlowView.addSubview(chip)
