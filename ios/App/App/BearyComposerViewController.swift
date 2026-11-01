@@ -101,17 +101,6 @@ private final class BearyBodyTextView: UITextView {
     }
 }
 
-/// 110 扫查：编辑器天气条专用滚动视图。天气条 delaysContentTouches=false
-/// （chip 点按立即响应）时，从天气 chip（UIButton）上起滑同样滑不动——
-/// 系统默认 touchesShouldCancel 对 UIControl 返回 false（个人页照片墙
-/// 同款，见 BearyProfileTableView）。本子类一律返回 true：拖动即取消
-/// chip 跟踪并横滑，点按不动仍正常选中；不改 chip 样式与选中逻辑。
-final class BearyWeatherScrollView: UIScrollView {
-    override func touchesShouldCancel(in view: UIView) -> Bool {
-        return true
-    }
-}
-
 final class BearyComposerViewController: UIViewController, UITextViewDelegate, PHPickerViewControllerDelegate, UIGestureRecognizerDelegate {
 
     // MARK: - 公开接口
@@ -207,7 +196,9 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     private var selectedWeather: String?
     /// 天气气温（摄氏度整数）：自动填或手改后才有值；清天气类型时同清。
     private var selectedTemperature: Int?
-    /// 当地天气取数代次：快速连点天气钮时旧回包过期作废，不覆盖新一次的结果。
+    /// 当地天气取数代次：快速连点天气钮时旧回包过期作废，不覆盖新一次的结果；
+    /// 手选天气/手改气温时亦 +1，使在途自动填回包过期作废、不覆盖手改值。
+    /// 再点天气钮会重新取数（代次再 +1），仍按 #427 口径覆盖手改。
     private var weatherFetchGeneration = 0
     /// 批 E 编辑器位置：已确认的位置（只有文本，无坐标）。nil = 未定位；
     /// 定位失败不改本值（失败只 toast、不静默清掉已确认的位置；从未确认过时行即隐藏 = 未定位态）。
@@ -248,9 +239,9 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     /// 正文 UITextView 关滚动、随内容生长，故无 textarea 内部滚动需要另存）。
     private var quotePanelSavedScrollOffset = CGPoint.zero
     private var quotePanelSavedScrollValid = false
-    /// C1：工具栏上方选择条：同一时刻最多展开一条（心情/天气/写给），nil=全部收起。
-    /// 旧附加栏三态（天气行独立开关／曾打开标记／工具压制标记／附加栏展开态）随双重入口删除而整组拆除，不再有“附加栏撑着显示天气行”的
-    /// 压制状态机；天气 Lottie 显隐只看本值 + quotePanelOpen（见 updateWeatherPlayback）。
+    /// C1：工具栏上方选择条：同一时刻最多展开一条（写给），nil=全部收起。
+    /// 心情/天气旧条带已删（见下），入口只走心情/天气尖角弹出框，不再走本值；
+    /// 旧附加栏三态随双重入口删除而整组拆除，不再有“附加栏撑着显示天气行”的压制状态机。
     private enum ToolStrip {
         case mood, weather, recipient
     }
@@ -296,23 +287,6 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     private var draftTimer: Timer?
     private var editTimer: Timer?
     private var imageItems: [ComposerImageItem] = []
-    /// 心情条单项：按钮 + 44 圆环 + 环内熊图 + 环内缺图回退名 + 下方名。
-    private var moodItems: [(key: String, button: UIButton, ringView: UIView, emoteView: BearyEmoteView, fallbackLabel: UILabel, nameLabel: UILabel)] = []
-    /// A2-4/B6-1 播放控制上次状态：面板可见性；一致时 updateMoodPlayback
-    /// 直接返回，避免选择条刷新重复调用把动画反复从 0 重播。
-    /// （2026-10-29 第 25 项：全播口径下选中态不再影响播放，选中心情缓存已删。）
-    private var moodPlaybackPanelVisible: Bool?
-    private var weatherButtons: [(key: String, button: UIButton)] = []
-    /// Gemini 第一批（天气 Lottie 后台空转修）：94 接线时 9 个天气 Lottie 以
-    /// animated:true 建在按钮 imageView 上，却无任何登记；refreshWeatherRowVisibility
-    /// 只改 isHidden（隐藏不停播），updateMoodPlayback 只遍历 moodItems，天气行
-    /// 收起/引用面板打开时 9 只仍在后台循环。登记只含 9 个天气项（“无”钮无 Lottie），
-    /// 播放权统一交给 updateWeatherPlayback（心情 updateMoodPlayback 同款口径）。
-    private var weatherEmoteViews: [(key: String, emoteView: BearyEmoteView)] = []
-    /// 天气播放控制上次状态（心情 moodPlaybackPanelVisible/Selected 同款缓存）：
-    /// 一致时直接返回，避免每次选择条刷新都把选中动画从 0 帧重播。
-    private var weatherPlaybackVisible: Bool?
-    private var weatherPlaybackSelected: String?
     /// 草稿保存级别：nil=未显示；2=草稿已保存；1=文字已保存，图片未保存；0=保存失败（红字）。
     private var draftStatusLevel: Int?
     /// 引用内嵌面板状态：当前 tab（timeline/liked/saved）与每 tab 缓存、加载序号。
@@ -536,9 +510,6 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     private let imageUndoBar = UIView()
     private let imageUndoLabel = UILabel()
     private let imageUndoButton = BearyHit44Button(type: .system)
-    // 天气（图标 + 名 chip，首项“无”，选中墨色边框）
-    private let weatherScrollView = BearyWeatherScrollView()
-    private let weatherStackView = UIStackView()
     // 状态行：编辑倒计时 + 草稿状态 + 字数圆环
     private let statusRow = UIStackView()
     /// 窄屏 5 项之 4：状态行内的弹性 spacer（无内容、无高度，只占剩余宽）——
@@ -570,9 +541,6 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     private let notifyGroup = UIStackView()
     private let notifyCheckButton = BearyHit44Button(type: .system)
     private let notifyLabel = UILabel()
-    // 心情：熊图条本身即选择条（标题行已删，选中名改由正文下方 Chip 行承载）。
-    private let moodScrollView = UIScrollView()
-    private let moodStackView = UIStackView()
     // 引用（lite 卡）+ 内嵌展开面板
     // C1：正文中部“引用一篇日记”全宽大按钮已删，引用唯一入口改工具栏引用钮；
     // 无引用时 quoteSection 只剩隐藏的 lite 卡与已删行，栈自动塌掉不留空位。
@@ -634,10 +602,8 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         buildToolbarRow()
         buildCallouts()
         buildLocationPopover()
-        buildWeatherRow()
         buildStatusRow()
         buildRecipientRow()
-        buildMoodRow()
         buildQuoteSection()
         buildQuotePanel()
         if isEditMode {
@@ -668,8 +634,8 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         // 天气 chip 描边、通知复选框描边、草稿 pill 描边、字数圆环轨道色
         // 全走已有刷新函数重算（心情熊图深浅变体由播放器内部切换，不重建条）。
         if previousTraitCollection?.userInterfaceStyle != traitCollection.userInterfaceStyle {
-            refreshMoodButtons()
-            refreshWeatherButtons()
+            refreshSelectedChips()
+            syncWeatherToolButton()
             // 审计 16 项：深浅切换时心情 chip 的 emote 深浅变体须重取（浅色线条稿
             // 不可在深色底上冒充），走 refreshSelectedChips 重算图标与换行。
             refreshSelectedChips()
@@ -698,9 +664,6 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     // 正文/引用等各入口都直接调 updatePreferredContentSize，不走这里，不会丢更新。
     // 首帧：viewDidLoad 已算一次，首个非 0 宽布局再纠正一次（lastLayoutWidth 初值 -1）。
     private var lastLayoutWidth: CGFloat = -1
-    // 临时诊断（天气条 10/28，定根因后删除）：上一次已记录的布局后条带签名，
-    // 用于 postLayout mark 只在条带状态/几何变化时记一次，避免每次布局都刷屏。
-    private var lastPostLayoutStripSig: String = ""
 
     override func viewDidLayoutSubviews() {
         super.viewDidLayoutSubviews()
@@ -723,15 +686,6 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         }
         // 临时诊断（82 包追加，定根因后删除）：入口每调一次记一次，不节流。
         DiagFile.mark("composer-layout")
-        // 临时诊断（天气条 10/28，定根因后删除）：布局后实测帧。refreshToolStrip 里的
-        // weather-diag 是布局前的值（开日志恒为上一关闭态、关日志恒为上一打开态），
-        // 本 mark 在 viewDidLayoutSubviews（布局已完成）后记，只在条带签名变化时记，
-        // 用于钉死打开态到底是 370×40 还是塌掉。
-        let stripSig = "\(String(describing: activeToolStrip))|\(quotePanelOpen)|\(weatherScrollView.isHidden)|\(weatherScrollView.frame)|\(toolStripStack.frame)|\(weatherScrollView.contentSize)|\(weatherEmoteViews.count)|\(weatherStackView.arrangedSubviews.first?.frame ?? .zero)"
-        if stripSig != lastPostLayoutStripSig {
-            lastPostLayoutStripSig = stripSig
-            DiagFile.mark("weather-diag postLayout weatherHidden=\(weatherScrollView.isHidden) weatherFrame=\(weatherScrollView.frame) stackFrame=\(toolStripStack.frame) contentSize=\(weatherScrollView.contentSize) btnCount=\(weatherEmoteViews.count) firstBtnFrame=\(weatherStackView.arrangedSubviews.first?.frame ?? .zero)")
-        }
         let w = view.bounds.width
         guard w > 0, w != lastLayoutWidth else {
             // 临时诊断（86 包，定根因后删除）：布局方法出口（宽门挡住的早退路径）。
@@ -1514,348 +1468,6 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         textView.selectedRange = NSRange(location: location, length: length)
     }
 
-    // MARK: - 心情（网页 mood-strip：54 宽单项，44 圆环 + 熊图 35 + 10.5 名；
-    // 选中：圆环橙 12% 底 + 橙色描边、名变橙；选中名改由正文下方 Chip 行显示）
-
-    private func buildMoodRow() {
-        // C1：心情条本身即工具栏上方选择条（单行横滑），标题行已删，选中名走 Chip 行。
-        moodScrollView.showsHorizontalScrollIndicator = false
-        // 116 后扫查：与广场/个人页同口径——关掉 delaysContentTouches，滚动容器里的点按立即响应，不等滚动判定。
-        moodScrollView.delaysContentTouches = false
-        moodStackView.axis = .horizontal
-        moodStackView.spacing = 4
-        moodStackView.alignment = .top
-        moodScrollView.translatesAutoresizingMaskIntoConstraints = false
-        moodStackView.translatesAutoresizingMaskIntoConstraints = false
-        moodScrollView.addSubview(moodStackView)
-        moodScrollView.isHidden = true
-        // 2026-10-29 第 27 项：心情条（回应面板）不再进 toolStripStack（栈底锚限时行
-        // 上方）；改为独立浮条，底贴工具栏顶——即小熊
-        // 按钮本体正上方，以触发按钮行为锚点；左右与工具栏同宽；其余行为不变
-        //（横滑、选中、播放门、Chip 行均走原逻辑）。buildToolbarRow 已先跑，
-        // toolbarContainer 已入 view，约束可直接激活。
-        view.addSubview(moodScrollView)
-        NSLayoutConstraint.activate([
-            moodScrollView.leadingAnchor.constraint(equalTo: toolbarContainer.leadingAnchor),
-            moodScrollView.trailingAnchor.constraint(equalTo: toolbarContainer.trailingAnchor),
-            moodScrollView.bottomAnchor.constraint(equalTo: toolbarContainer.topAnchor),
-        ])
-        NSLayoutConstraint.activate([
-            // 滚动区高内容驱动：单项高 = 顶余 8 + 圆环 44 + gap 4 + 名字行高，约 67–68。
-            // 顶余 8 的原因：选中双环外扩 4.5pt 到环外、表情涂鸦（如嗯嗯的对勾）
-            // 也会画到环外（BearyEmoteView 全链 clipsToBounds=false），而 moodScrollView
-            // 默认裁剪——环若顶到按钮顶边，环顶与涂鸦顶都会被滚动区顶边横切。
-            moodScrollView.heightAnchor.constraint(equalTo: moodStackView.heightAnchor),
-            moodStackView.topAnchor.constraint(equalTo: moodScrollView.contentLayoutGuide.topAnchor),
-            moodStackView.bottomAnchor.constraint(equalTo: moodScrollView.contentLayoutGuide.bottomAnchor),
-            moodStackView.leadingAnchor.constraint(equalTo: moodScrollView.contentLayoutGuide.leadingAnchor),
-            moodStackView.trailingAnchor.constraint(equalTo: moodScrollView.contentLayoutGuide.trailingAnchor),
-        ])
-        for key in moodOrder {
-            let name = BearyText.moodNames[key] ?? key
-            let button = UIButton(type: .custom)
-            button.translatesAutoresizingMaskIntoConstraints = false
-            let ringView = UIView()
-            ringView.translatesAutoresizingMaskIntoConstraints = false
-            // 编辑器批第 3 项：环必须禁交互——UIView 默认可交互，盖在按钮上会吞点按
-            // （publishRingView 与天气 Lottie 已有同款显式 false，心情条漏了）；
-            // 不禁时点熊只命中环/动画视图、按钮收不到 touchUpInside，即“心情无法选择”
-            // （名字 label 默认不交互，故只有点名字才偶然成功）。
-            ringView.isUserInteractionEnabled = false
-            ringView.backgroundColor = BearyColors.faint
-            ringView.layer.cornerRadius = 22
-            ringView.layer.masksToBounds = true
-            // D-G4：网页选中态无描边，环外是两层 box-shadow（2px bg + 2.5px 橙）；
-            // 此处不设描边，选中双环由 refreshMoodButtons 的形层画（见 moodRingAnnulus）。
-            ringView.layer.borderWidth = 0
-            // A2-4 启动源修法：建条时不自动播。原 animated:true 使 40 只在
-            // 选择条收起时条虽 isHidden、视图仍在 window 内，didMoveToWindow 拦不住起播；
-            // 播放权交给 updateMoodPlayback（见 activeToolStrip 门）。
-            // E4：建条时也不解析（deferred），点开心情条时 updateMoodPlayback
-            // 调 ensureLoaded 才加载；未点开时只显示静态回退图。
-            let emoteView = BearyEmoteView(key: key, animated: false, deferred: true)
-            emoteView.translatesAutoresizingMaskIntoConstraints = false
-            // 同上：BearyEmoteView 类内未禁交互，35×35 盖在环中央，同样吞点按。
-            emoteView.isUserInteractionEnabled = false
-            let fallbackLabel = UILabel()
-            fallbackLabel.translatesAutoresizingMaskIntoConstraints = false
-            fallbackLabel.text = name
-            fallbackLabel.font = UIFont.systemFont(ofSize: 11)
-            fallbackLabel.textColor = BearyColors.gray
-            fallbackLabel.textAlignment = .center
-            fallbackLabel.numberOfLines = 2
-            let nameLabel = UILabel()
-            nameLabel.translatesAutoresizingMaskIntoConstraints = false
-            nameLabel.text = name
-            nameLabel.font = UIFont.systemFont(ofSize: 10.5)
-            nameLabel.textColor = BearyColors.gray
-            nameLabel.textAlignment = .center
-            button.addSubview(ringView)
-            button.addSubview(nameLabel)
-            ringView.addSubview(emoteView)
-            ringView.addSubview(fallbackLabel)
-            NSLayoutConstraint.activate([
-                button.widthAnchor.constraint(equalToConstant: 54),
-                // 心情条顶部余量（见上）：环顶离按钮顶边 8pt，选中外环与涂鸦不再被切。
-                ringView.topAnchor.constraint(equalTo: button.topAnchor, constant: 8),
-                ringView.centerXAnchor.constraint(equalTo: button.centerXAnchor),
-                ringView.widthAnchor.constraint(equalToConstant: 44),
-                ringView.heightAnchor.constraint(equalToConstant: 44),
-                emoteView.centerXAnchor.constraint(equalTo: ringView.centerXAnchor),
-                emoteView.centerYAnchor.constraint(equalTo: ringView.centerYAnchor),
-                emoteView.widthAnchor.constraint(equalToConstant: 35),
-                emoteView.heightAnchor.constraint(equalToConstant: 35),
-                fallbackLabel.centerXAnchor.constraint(equalTo: ringView.centerXAnchor),
-                fallbackLabel.centerYAnchor.constraint(equalTo: ringView.centerYAnchor),
-                fallbackLabel.leadingAnchor.constraint(greaterThanOrEqualTo: ringView.leadingAnchor, constant: 4),
-                fallbackLabel.trailingAnchor.constraint(lessThanOrEqualTo: ringView.trailingAnchor, constant: -4),
-                nameLabel.topAnchor.constraint(equalTo: ringView.bottomAnchor, constant: 4),
-                nameLabel.leadingAnchor.constraint(equalTo: button.leadingAnchor),
-                nameLabel.trailingAnchor.constraint(equalTo: button.trailingAnchor),
-                nameLabel.bottomAnchor.constraint(equalTo: button.bottomAnchor),
-            ])
-            button.addTarget(self, action: #selector(didTapMood(_:)), for: .touchUpInside)
-            button.bearyAddPressFeedback()
-            moodItems.append((key: key, button: button, ringView: ringView, emoteView: emoteView, fallbackLabel: fallbackLabel, nameLabel: nameLabel))
-            moodStackView.addArrangedSubview(button)
-        }
-        refreshMoodButtons()
-    }
-
-    /// 深浅切换时播放器内部自动换变体，这里只保证环内图可见、不重建条、不丢选中态。
-    private func refreshMoodImages() {
-        for item in moodItems {
-            item.emoteView.isHidden = false
-            item.fallbackLabel.isHidden = true
-        }
-    }
-
-    /// A2-4 + B6-1 心情播放控制（2026-10-29 第 25 项改动态口径）：面板隐藏时全部
-    /// stop；面板可见时全部播 Lottie（与列表里表情同一套 BearyEmoteView 资源与
-    /// 播放口径，不再只播选中 1 只、其余冻结静态帧）。已在播的不重播
-    /// （isPlayingNow 门，避免选心情时全部重画描线）；“40 个 CADisplayLink”
-    /// 未在代码中证实（Lottie 走 CoreAnimation，非每只一个 CADisplayLink），
-    /// 故不按此数施工，只按实际并发播放修；48MB 缓存预算数值不动。
-    /// C1：心情播放门改看选择条（旧心情区 isHidden 已随标题行删除）：
-    /// 仅心情条展开且引用面板未打开时播，其余一律停播。
-    private func updateMoodPlayback() {
-        let panelVisible = activeToolStrip == .mood && !quotePanelOpen
-        // E4：点开心情条时才加载对应动画（ensureLoaded 幂等，未点开不解析）；
-        // 放在早退门之前，首开即加载，不依赖选中态变化。
-        if panelVisible {
-            for item in moodItems {
-                item.emoteView.ensureLoaded()
-            }
-        }
-        if moodPlaybackPanelVisible == panelVisible {
-            return
-        }
-        moodPlaybackPanelVisible = panelVisible
-        for item in moodItems {
-            if !panelVisible {
-                item.emoteView.stop()
-            } else if !item.emoteView.isPlayingNow {
-                item.emoteView.play()
-            }
-        }
-    }
-
-    // MARK: - 天气（图标 + 名 chip；选中墨色边框、无底；首项“无”；再点已选项不取消）
-
-    private func buildWeatherRow() {
-        weatherScrollView.showsHorizontalScrollIndicator = false
-        // 2026-10-29 第 20 项：横滑条内小 chip 点按易被 scroll 误判为滑动而取消，
-        // 致“选项点不了”；关掉触摸延迟，点按立即响应（诊断日志代码不动）。
-        weatherScrollView.delaysContentTouches = false
-        weatherStackView.axis = .horizontal
-        weatherStackView.spacing = 8
-        weatherStackView.alignment = .center
-        weatherScrollView.translatesAutoresizingMaskIntoConstraints = false
-        weatherStackView.translatesAutoresizingMaskIntoConstraints = false
-        // 补缺 P2-20：天气条改独立条（心情条第 27 项同款锚点）：底贴工具栏顶、即触发行正上方，
-        // 不再进 toolStripStack（2026-10-31：限时行已删，栈底已直贴工具栏顶，旧耦合随之消失）。
-        view.addSubview(weatherScrollView)
-        weatherScrollView.addSubview(weatherStackView)
-        weatherScrollView.isHidden = true
-        let weatherHeightEquality = weatherScrollView.heightAnchor.constraint(equalTo: weatherStackView.heightAnchor, constant: 12)
-        weatherHeightEquality.priority = .defaultHigh
-        NSLayoutConstraint.activate([
-            // 天气行内容驱动约 40 = chip 高 + 上 10 + 下 2（左右与工具栏同宽）。
-            // 塌高兜底：等式降档 + 40 下限，保证条带永不塌到 0（诊断曾怀疑打开态塌掉）。
-            weatherHeightEquality,
-            weatherScrollView.heightAnchor.constraint(greaterThanOrEqualToConstant: 40),
-            weatherScrollView.leadingAnchor.constraint(equalTo: toolbarContainer.leadingAnchor),
-            weatherScrollView.trailingAnchor.constraint(equalTo: toolbarContainer.trailingAnchor),
-            weatherScrollView.bottomAnchor.constraint(equalTo: toolbarContainer.topAnchor),
-            weatherStackView.topAnchor.constraint(equalTo: weatherScrollView.contentLayoutGuide.topAnchor, constant: 10),
-            weatherStackView.bottomAnchor.constraint(equalTo: weatherScrollView.contentLayoutGuide.bottomAnchor, constant: -2),
-            weatherStackView.leadingAnchor.constraint(equalTo: weatherScrollView.contentLayoutGuide.leadingAnchor),
-            weatherStackView.trailingAnchor.constraint(equalTo: weatherScrollView.contentLayoutGuide.trailingAnchor),
-        ])
-        // 首项“无”：key 为空串即未选。
-        let noneButton = makeWeatherButton(key: "", title: "无", iconName: nil)
-        weatherButtons.append((key: "", button: noneButton))
-        weatherStackView.addArrangedSubview(noneButton)
-        for key in weatherOrder {
-            let name = BearyText.weatherNames[key] ?? key
-            let button = makeWeatherButton(key: key, title: name, iconName: "icon_wx_\(key)")
-            weatherButtons.append((key: key, button: button))
-            weatherStackView.addArrangedSubview(button)
-        }
-        refreshWeatherButtons()
-    }
-
-    /// 天气 key → Lottie 资源 key：选择器 key 与 Lottie 包基本同名，唯 night 对应 moon。
-    private static func weatherLottieKey(for weatherKey: String) -> String {
-        weatherKey == "night" ? "moon" : weatherKey
-    }
-
-    /// 天气 Lottie 占位图：16×16 全透明，仅占住按钮 imageView 槽位（布局与原来 16pt 静态图一致），
-    /// 真正内容由按钮内独立 16×16 图标容器里的 BearyEmoteView 画；加载失败时它回退 wx 静态图，永不留白。
-    private static let weatherPlaceholderImage: UIImage = {
-        UIGraphicsImageRenderer(size: CGSize(width: 16, height: 16)).image { _ in }
-    }()
-
-    private func makeWeatherButton(key: String, title: String, iconName: String?) -> UIButton {
-        let button = UIButton(type: .system)
-        button.translatesAutoresizingMaskIntoConstraints = false
-        button.setTitle(title, for: .normal)
-        button.titleLabel?.font = UIFont.systemFont(ofSize: 13)
-        // 内边距先定：图标槽位左锚取它（见下），避免两处 12 硬编码脱节。
-        button.contentEdgeInsets = UIEdgeInsets(top: 6, left: 12, bottom: 6, right: 12)
-        if let name = iconName {
-            let staticImage = BearyIconImages.image(named: name, pointSize: 16)
-            button.setImage(Self.weatherPlaceholderImage, for: .normal)
-            button.titleEdgeInsets = UIEdgeInsets(top: 0, left: 5, bottom: 0, right: 0)
-            // 天气 Lottie：独立 16×16 图标容器（心情条同款显式约束宿主）。
-            // 100 包根因修法：此前容器锚定 UIButton 内部 imageView（#147 由
-            // imageView.addSubview 改为锚 imageView 的兄弟容器），但 imageView
-            // 的帧由 UIButton 手工布局、不走 Auto Layout——建钮时帧恒为 0，
-            // 约束驱动的容器跟随不到它后来的真实槽位，全仓仅此一处锚内部
-            // imageView，而心情条 35pt 环锚点 + 显式尺寸同款结构正常显示；
-            // Lottie JSON（LottieWeather/，Resources 已含）与 icon_wx_* 静态图
-            // （Assets.xcassets，CI 资产校验通过）均已排除，剩下的唯一几何
-            // 依赖就是这一锚点。故容器改锚按钮本体：横向取 contentEdgeInsets
-            // 左（横滑栈内按钮恒为内在宽，组左缘即该值，与占位图槽位像素
-            // 一致）、纵向取按钮中心（与占位图纵向居中一致），尺寸显式 16。
-            // 占位图仍占住槽位，按钮内在尺寸/点按范围与原来一致；容器本身
-            // 不拦截点按；减动效时播放器内置静态帧不播；加载失败时播放器
-            // 内回退 wx 静态图（与原来一致，仍在容器内显示）。
-            // E4：建钮时不解析（deferred，静态图先行），点开天气条时
-            // updateWeatherPlayback 调 ensureLoaded 才加载；69 批播放管控本身不动。
-            let lottie = BearyEmoteView(key: Self.weatherLottieKey(for: key), animated: true, fallbackImage: staticImage, deferred: true)
-            weatherEmoteViews.append((key: key, emoteView: lottie))
-            let iconHost = UIView()
-            iconHost.isUserInteractionEnabled = false
-            iconHost.translatesAutoresizingMaskIntoConstraints = false
-            button.addSubview(iconHost)
-            lottie.isUserInteractionEnabled = false
-            lottie.translatesAutoresizingMaskIntoConstraints = false
-            iconHost.addSubview(lottie)
-            NSLayoutConstraint.activate([
-                iconHost.leadingAnchor.constraint(equalTo: button.leadingAnchor, constant: button.contentEdgeInsets.left),
-                iconHost.centerYAnchor.constraint(equalTo: button.centerYAnchor),
-                iconHost.widthAnchor.constraint(equalToConstant: 16),
-                iconHost.heightAnchor.constraint(equalToConstant: 16),
-                lottie.leadingAnchor.constraint(equalTo: iconHost.leadingAnchor),
-                lottie.trailingAnchor.constraint(equalTo: iconHost.trailingAnchor),
-                lottie.topAnchor.constraint(equalTo: iconHost.topAnchor),
-                lottie.bottomAnchor.constraint(equalTo: iconHost.bottomAnchor),
-            ])
-        }
-        button.layer.cornerRadius = 999
-        button.layer.masksToBounds = true
-        button.layer.borderWidth = 1.5
-        button.accessibilityLabel = title
-        button.addTarget(self, action: #selector(didTapWeather(_:)), for: .touchUpInside)
-        button.bearyAddPressFeedback()
-        return button
-    }
-
-    private func refreshWeatherButtons() {
-        for pair in weatherButtons {
-            let button = pair.button
-            let isNoneButton = pair.key.isEmpty
-            let isSelected = isNoneButton ? (selectedWeather == nil) : (pair.key == selectedWeather)
-            button.backgroundColor = UIColor.clear
-            button.setTitleColor(BearyColors.ink, for: .normal)
-            button.tintColor = BearyColors.ink
-            if isSelected {
-                button.layer.bearyDynamicBorderColor = BearyColors.ink
-            } else {
-                button.layer.bearyDynamicBorderColor = BearyColors.line
-            }
-        }
-        // 工具栏天气钮图标随选中天气变（网页 syncWxBtn 同款）：未选回通用天气图标，
-        // 已选换该天气图标；两态均为墨色（网页未选时按钮色继承 .icon-btn 的墨色，
-        // 仅已选时显式置墨，故未选态原灰色亦为 D-G7 之差，一并改墨）。
-        if let weather = selectedWeather {
-            if let icon = BearyIconImages.image(named: "icon_wx_\(weather)", pointSize: 24) {
-                weatherToolButton.setImage(icon, for: .normal)
-            }
-            weatherToolButton.tintColor = BearyColors.ink
-        } else {
-            if let icon = BearyIconImages.image(named: "icon_weather_tool", pointSize: 24) {
-                weatherToolButton.setImage(icon, for: .normal)
-            }
-            weatherToolButton.tintColor = BearyColors.ink
-        }
-    }
-
-    /// Gemini 第一批：天气播放控制（心情 updateMoodPlayback 同款口径）。
-    /// C1：行隐藏改看选择条（选择条收起/引用面板打开）时 9 只全部冻结静态帧，
-    /// 不再后台循环；行可见时仅当前选中的 1 只播，其余 8 只冻结静态帧。
-    /// 94 接线的“9 项全循环”计划至此作废（Li 点“按这个分批修”即点头改）。
-    /// 减动效、深浅切换、失败回退 wx 静态图的既有兜底不动：play() 在减动效下
-    /// 本就只置静态帧不播；深浅变体由播放器 trait 切换内处理；加载失败回退
-    /// 的是 PNG 图，play/showStaticFrame 对它均为空操作。
-    private func updateWeatherPlayback() {
-        let rowVisible = activeToolStrip == .weather && !quotePanelOpen
-        // E4：点开天气条时才加载对应动画（ensureLoaded 幂等）；69 批“行可见时
-        // 仅选中 1 只播、其余冻结静态帧”的播放管控在下面原样不动。
-        if rowVisible {
-            for item in weatherEmoteViews {
-                item.emoteView.ensureLoaded()
-            }
-        }
-        if weatherPlaybackVisible == rowVisible && weatherPlaybackSelected == selectedWeather {
-            return
-        }
-        weatherPlaybackVisible = rowVisible
-        weatherPlaybackSelected = selectedWeather
-        for item in weatherEmoteViews {
-            if !rowVisible {
-                item.emoteView.showStaticFrame()
-            } else if item.key == selectedWeather {
-                item.emoteView.play()
-            } else {
-                item.emoteView.showStaticFrame()
-            }
-        }
-    }
-
-    @objc private func didTapWeather(_ sender: UIButton) {
-        var tappedKey: String?
-        for pair in weatherButtons {
-            if pair.button == sender {
-                tappedKey = pair.key
-            }
-        }
-        guard let key = tappedKey else { return }
-        // 网页口径：点某项即选中该项（含“无”=清空），再点已选项不取消。
-        if key.isEmpty {
-            selectedWeather = nil
-            selectedTemperature = nil
-        } else {
-            selectedWeather = key
-        }
-        refreshWeatherButtons()
-        updateWeatherPlayback()
-        refreshSelectedChips()
-        // 天气在草稿 v3 字段里，改动即走防抖保存，杀 App 后可恢复。
-        scheduleDraftSave()
-    }
-
     // MARK: - @（网页 addr-row：@ 图标 + “@ 谁”钮 / chip；只选一人、不可 @ 自己；
     // @ 提醒无按篇开关；编辑模式可改选可清除，见 refreshRecipientRow 编辑分支）
 
@@ -2394,13 +2006,10 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             imageScrollView.isHidden = true
             toolbarContainer.isHidden = true
             toolStripStack.isHidden = true
-            weatherScrollView.isHidden = true
             selectedChipsRow.isHidden = true
             imageUndoBar.isHidden = true
             statusRow.isHidden = true
             updateScrollBottomAnchoring()
-            updateMoodPlayback()
-            updateWeatherPlayback()
             refreshImageUndoBar()
             quoteSection.isHidden = true
             // 间隙修复（只动布局）：滚动归零不影响开头已保存的恢复偏移；面板前各区栈间距显式置 0，
@@ -2504,8 +2113,8 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     /// C1：scrollView 底锚三档切换——引用面板打开时锚整页底（工具栏与选择条都藏，
     /// 不留空隙）；选择条展开时锚选择条顶（条不盖住正文尾部）；其余时锚工具栏顶。
     /// 改锚只发生在这两处：选择条刷新（refreshToolStrip）与引用面板开关。
-    /// 2026-10-31：限时行已删，原“锚限时行顶”档并入工具栏档（心情/天气旧条
-    /// 已是隐藏的弹出框，不再为其预留行高；新建态滚动区因此下探 48pt）。
+    /// 2026-10-31：限时行已删，原“锚限时行顶”档并入工具栏档（心情/天气旧条带
+    /// 已删、入口只走弹出框，不再为其预留行高；新建态滚动区因此下探 48pt）。
     private func updateScrollBottomAnchoring() {
         let otherStripOpen = activeToolStrip != nil && activeToolStrip != .mood && activeToolStrip != .weather && !quotePanelOpen
         scrollBottomToToolbarConstraint?.isActive = !quotePanelOpen && !otherStripOpen
@@ -3088,7 +2697,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         moodToolButton.tintColor = BearyColors.ink
         moodToolButton.addTarget(self, action: #selector(didTapMoodTool), for: .touchUpInside)
         moodToolButton.bearyAddPressFeedback()
-        // 天气钮图标随选中天气变（见 refreshWeatherButtons 的 syncWxBtn 同款同步）。
+        // 天气钮图标随选中天气变（见 syncWeatherToolButton，网页 syncWxBtn 同款同步）。
         weatherToolButton.setImage(BearyIconImages.image(named: "icon_weather_tool", pointSize: 24), for: .normal)
         weatherToolButton.accessibilityLabel = "选择天气"
         weatherToolButton.tintColor = BearyColors.ink
@@ -3267,40 +2876,28 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     private static let toolStripTransitionDuration: TimeInterval = 0.20
     private static let toolStripTransitionOffset: CGFloat = 6
 
-    /// 选择条显隐总口：同一时刻只显一条；面板打开时整栈隐藏（播放门另见
-    /// updateMoodPlayback/updateWeatherPlayback 的 quotePanelOpen 条件）。
-    /// 审计 P1-8：显隐不再瞬切——入场先现身再淡入位移归位，出场先淡出位移、
-    /// 动画跑完才 isHidden（播放门按 activeToolStrip 已在出场前停播，不依赖
-    /// isHidden 时点）。快速连点：新转场 beginFromCurrentState 从当前呈现值
-    /// 接管、代次 +1 使旧 completion 作废，只收敛到最后状态；减动效与未挂窗
-    /// （首帧）直接置终值，不播动画。引用面板打开时的瞬藏走 setQuotePanelOpen
-    /// 专属路径（面板盖住条带、无可见转场），此处不动它。
+    /// 选择条显隐总口：栈内只剩写给区（心情/天气旧条带已删，入口只走尖角弹出框）；
+    /// 面板打开时整栈隐藏。审计 P1-8：显隐不再瞬切——入场先现身再淡入位移归位，
+    /// 出场先淡出位移、动画跑完才 isHidden。快速连点：新转场 beginFromCurrentState
+    /// 从当前呈现值接管、代次 +1 使旧 completion 作废，只收敛到最后状态；
+    /// 减动效与未挂窗（首帧）直接置终值，不播动画。引用面板打开时的瞬藏走
+    /// setQuotePanelOpen 专属路径（面板盖住条带、无可见转场），此处不动它。
     private func refreshToolStrip() {
-        // 编辑器改版（2026-10-29）：心情/天气旧条已由尖角弹出框取代，旧条永久隐藏；
-        // 栈内只剩写给区。2026-10-31：限时行底锚三档随行删除（选择条底已直贴工具栏顶）。
+        // 编辑器改版（2026-10-29）：心情/天气旧条已由尖角弹出框取代；
+        // 本支删除旧条带后栈内只剩写给区。2026-10-31：限时行底锚三档随行删除
+        //（选择条底已直贴工具栏顶）。
         let stackHidden = quotePanelOpen || activeToolStrip != .recipient
-        let moodHidden = true
-        let weatherHidden = true
         // iCity：编辑模式 @ 可新增——无 @ 时条内仍有“@ 谁”钮，不再整区隐藏；
         // 其余态按条开关显隐。
         recipientSection.isHidden = activeToolStrip != .recipient
-        updateMoodPlayback()
-        updateWeatherPlayback()
         updateScrollBottomAnchoring()
         refreshSelectedChips()
         if UIAccessibility.isReduceMotionEnabled || view.window == nil {
             toolStripTransitionGeneration += 1
             toolStripStack.isHidden = stackHidden
-            moodScrollView.isHidden = moodHidden
-            weatherScrollView.isHidden = weatherHidden
             toolStripStack.alpha = 1
-            moodScrollView.alpha = 1
-            weatherScrollView.alpha = 1
             toolStripStack.transform = .identity
-            moodScrollView.transform = .identity
-            weatherScrollView.transform = .identity
             updatePreferredContentSize()
-            DiagFile.mark("weather-diag refreshToolStrip weatherHidden=\(weatherScrollView.isHidden) weatherFrame=\(weatherScrollView.frame) stackFrame=\(toolStripStack.frame)")
             return
         }
         toolStripTransitionGeneration += 1
@@ -3310,8 +2907,6 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         var needsAnimation = false
         for (stripView, shouldHide) in [
             (toolStripStack, stackHidden),
-            (moodScrollView, moodHidden),
-            (weatherScrollView, weatherHidden),
         ] as [(UIView, Bool)] {
             if shouldHide {
                 if !stripView.isHidden {
@@ -3333,7 +2928,6 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         if !needsAnimation {
             view.layoutIfNeeded()
             updatePreferredContentSize()
-            DiagFile.mark("weather-diag refreshToolStrip weatherHidden=\(weatherScrollView.isHidden) weatherFrame=\(weatherScrollView.frame) stackFrame=\(toolStripStack.frame)")
             return
         }
         UIView.animate(
@@ -3345,7 +2939,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                     stripView.alpha = 0
                     stripView.transform = CGAffineTransform(translationX: 0, y: offset)
                 }
-                for stripView in [self.toolStripStack, self.moodScrollView, self.weatherScrollView]
+                for stripView in [self.toolStripStack]
                 where !exitingViews.contains(where: { $0 === stripView }) && !stripView.isHidden {
                     stripView.alpha = 1
                     stripView.transform = .identity
@@ -3369,7 +2963,6 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         // 入场条带在转场期间已可见占高，sheet 高先按含条带算；出场条带
         // 的塌高由 completion 里的重算接管。
         updatePreferredContentSize()
-        DiagFile.mark("weather-diag refreshToolStrip weatherHidden=\(weatherScrollView.isHidden) weatherFrame=\(weatherScrollView.frame) stackFrame=\(toolStripStack.frame)")
     }
 
     // MARK: - 编辑器改版（2026-10-29）：心情/天气尖角弹出框
@@ -3713,8 +3306,10 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     }
 
     /// 气温 ±1：无气温时先落到 18°（不以方向猜 17°/19°）；范围钉死 -60…60°。
+    /// 手改气温：在途自动填回包即过期作废，不覆盖手改值（见 weatherFetchGeneration）。
     private func adjustTemperature(by delta: Int) {
         guard selectedWeather != nil else { return }
+        weatherFetchGeneration += 1
         let next: Int
         if let current = selectedTemperature {
             next = current + delta
@@ -3739,6 +3334,8 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         }
         alert.addAction(UIAlertAction(title: "取消", style: .cancel, handler: nil))
         alert.addAction(UIAlertAction(title: "清除", style: .destructive, handler: { [weak self] _ in
+            // 手改气温（清除亦算手改）：在途自动填回包过期作废。
+            self?.weatherFetchGeneration += 1
             self?.selectedTemperature = nil
             self?.refreshSelectedChips()
             self?.scheduleDraftSave()
@@ -3747,8 +3344,12 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             guard let self = self else { return }
             let raw = alert.textFields?.first?.text?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
             if raw.isEmpty {
+                // 手改气温（直输清空亦算手改）：在途自动填回包过期作废。
+                self.weatherFetchGeneration += 1
                 self.selectedTemperature = nil
             } else if let value = Int(raw) {
+                // 手改气温（直输亦算手改）：在途自动填回包过期作废。
+                self.weatherFetchGeneration += 1
                 self.selectedTemperature = min(60, max(-60, value))
             } else {
                 self.showToast(message: "气温请输入整数")
@@ -3760,9 +3361,29 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         present(alert, animated: BearyMotion.animated(true))
     }
 
+    /// 工具栏天气钮图标随选中天气变（网页 syncWxBtn 同款）：未选回通用天气图标，
+    /// 已选换该天气图标；两态均为墨色。这是旧 refreshWeatherButtons 里唯一现行
+    /// 副作用（其余皆为已删旧天气条带的按钮样式），旧条带删除后抽为独立函数。
+    private func syncWeatherToolButton() {
+        if let weather = selectedWeather {
+            if let icon = BearyIconImages.image(named: "icon_wx_\(weather)", pointSize: 24) {
+                weatherToolButton.setImage(icon, for: .normal)
+            }
+            weatherToolButton.tintColor = BearyColors.ink
+        } else {
+            if let icon = BearyIconImages.image(named: "icon_weather_tool", pointSize: 24) {
+                weatherToolButton.setImage(icon, for: .normal)
+            }
+            weatherToolButton.tintColor = BearyColors.ink
+        }
+    }
+
     /// v6-8：点首位“无”即清除已选天气（weather 置空），工具栏天气钮经
-    /// refreshWeatherButtons 回到无天气态（通用天气图标），chip 行同步隐藏天气 chip。
+    /// syncWeatherToolButton 回到无天气态（通用天气图标），chip 行同步隐藏天气 chip。
     private func didSelectWeatherFromCallout(_ key: String) {
+        // 手选天气：在途自动填回包即过期作废（见 weatherFetchGeneration），
+        // 迟到回包不再覆盖本次手选；再点天气钮重新自动填时仍覆盖手改（#427 口径不变）。
+        weatherFetchGeneration += 1
         // 手改类型：换类型气温保留；点“无”清类型时气温同清，不留孤气温。
         if key == "none" {
             selectedWeather = nil
@@ -3770,8 +3391,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         } else {
             selectedWeather = key
         }
-        refreshWeatherButtons()
-        updateWeatherPlayback()
+        syncWeatherToolButton()
         refreshSelectedChips()
         scheduleDraftSave()
         hideCallout(animated: true)
@@ -4118,7 +3738,8 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     }
 
     /// 天气钮：点一下先自动取当地天气和气温填上，再打开天气选择器——填上之后
-    /// 类型可在选择器里手改、气温可在 chip 行步进器里手改，改完以手改的为准；
+    /// 类型可在选择器里手改、气温可在 chip 行步进器里手改，改完以手改的为准
+    /// （手选/手改气温会使在途自动填回包过期作废，见 weatherFetchGeneration）；
     /// 再点天气钮会重新自动填（覆盖手改）。取不到时如实提示、不编假数据填上，
     /// 仍打开选择器供手动选。
     @objc private func didTapWeatherTool() {
@@ -4136,8 +3757,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                         self.selectedWeather = key
                     }
                     self.selectedTemperature = fetched.temperature
-                    self.refreshWeatherButtons()
-                    self.updateWeatherPlayback()
+                    self.syncWeatherToolButton()
                     self.refreshSelectedChips()
                     self.scheduleDraftSave()
                 case .failure:
@@ -4632,12 +4252,6 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         notifyCheckButton.isEnabled = !frozen && !isEditMode
         quoteCardRemoveButton.isEnabled = !frozen
         quoteDeletedRemoveButton.isEnabled = !frozen
-        for item in moodItems {
-            item.button.isEnabled = !frozen
-        }
-        for pair in weatherButtons {
-            pair.button.isEnabled = !frozen
-        }
         weatherToolButton.isEnabled = !frozen
         moodToolButton.isEnabled = !frozen
         recipientToolButton.isEnabled = !frozen
@@ -4668,93 +4282,6 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         // 标题/图标/边距三处每次变化都重算显式宽度（标题只在这里与 buildTopBar 改，
         // 故此处是唯一需要跟进的运行时更新点；updatePublishState 每次都走这里）。
         refreshPublishButtonWidth()
-    }
-
-    // MARK: - 心情（选中态；选中名改由正文下方 Chip 行显示）
-
-    private func refreshMoodButtons() {
-        refreshMoodImages()
-        for item in moodItems {
-            let isSelected = (item.key == selectedMood)
-            if isSelected {
-                item.ringView.backgroundColor = BearyColors.orange.withAlphaComponent(0.12)
-                item.ringView.layer.bearyDynamicBorderColor = UIColor.clear
-                item.ringView.layer.borderWidth = 0
-                item.nameLabel.textColor = BearyColors.orange
-            } else {
-                item.ringView.backgroundColor = BearyColors.faint
-                item.ringView.layer.bearyDynamicBorderColor = UIColor.clear
-                item.ringView.layer.borderWidth = 0
-                item.nameLabel.textColor = BearyColors.gray
-            }
-            // D-G4：选中双环（网页 .mood-it.on .ring 的 box-shadow 等价）：
-            // 内环 bg 2px + 外环橙 2.5px（总外扩 4.5px），用 even-odd 圆环形层画，
-            // 尺寸钉死 44（环约束即 44，与布局时序无关，布局前刷新也不塌）。
-            setMoodRingShadow(item.ringView, selected: isSelected)
-        }
-        // C1：选中名不再由心情标题行承载（标题行已删），改由正文下方 Chip 行显示。
-        refreshSelectedChips()
-    }
-
-    /// D-G4：心情选中双环。网页 `.mood-it.on .ring` 的 box-shadow 是
-    /// `0 0 0 2px bg, 0 0 0 4.5px orange`（环外先 2px 底色、再 2.5px 橙）；
-    /// 单层 CALayer shadow 画不出双环，故用两层 even-odd 圆环形层：
-    /// bg 环（22→24）+ 橙环（24→26.5），插到环视图图层最底层（熊图之下）。
-    /// 深浅切换走 traitCollectionDidChange → refreshMoodButtons 重建，底色跟随主题。
-    private func setMoodRingShadow(_ ringView: UIView, selected: Bool) {
-        if let sublayers = ringView.layer.sublayers {
-            for layer in sublayers where layer.name == "moodRingBg" || layer.name == "moodRingOrange" {
-                layer.removeFromSuperlayer()
-            }
-        }
-        if !selected {
-            ringView.layer.masksToBounds = true
-            return
-        }
-        // 形层须露到环外，关掉裁剪（环内熊图 35 < 环 44，不会溢出）。
-        ringView.layer.masksToBounds = false
-        let bgLayer = CAShapeLayer()
-        bgLayer.name = "moodRingBg"
-        bgLayer.frame = CGRect(x: 0, y: 0, width: 44, height: 44)
-        let bgPath = CGMutablePath()
-        bgPath.addEllipse(in: CGRect(x: -2, y: -2, width: 48, height: 48))
-        bgPath.addEllipse(in: CGRect(x: 0, y: 0, width: 44, height: 44))
-        bgLayer.path = bgPath
-        bgLayer.fillRule = .evenOdd
-        bgLayer.fillColor = BearyColors.bg.resolvedColor(with: traitCollection).cgColor
-        let orangeLayer = CAShapeLayer()
-        orangeLayer.name = "moodRingOrange"
-        orangeLayer.frame = CGRect(x: 0, y: 0, width: 44, height: 44)
-        let orangePath = CGMutablePath()
-        orangePath.addEllipse(in: CGRect(x: -4.5, y: -4.5, width: 53, height: 53))
-        orangePath.addEllipse(in: CGRect(x: -2, y: -2, width: 48, height: 48))
-        orangeLayer.path = orangePath
-        orangeLayer.fillRule = .evenOdd
-        orangeLayer.fillColor = BearyColors.orange.cgColor
-        ringView.layer.insertSublayer(bgLayer, at: 0)
-        ringView.layer.insertSublayer(orangeLayer, at: 0)
-    }
-
-    @objc private func didTapMood(_ sender: UIButton) {
-        var tappedKey: String?
-        for item in moodItems {
-            if item.button == sender {
-                tappedKey = item.key
-            }
-        }
-        guard let key = tappedKey else { return }
-        // 旧心情清除口（#421 回归）：心情条上已选中的那只带橙环（见
-        // refreshMoodButtons），再点它即清除单独心情字段——#421 后点选
-        // 一律插入，旧日记/旧草稿回填的 selectedMood 再无清除口，编辑时
-        // 旧心情就永远摘不掉。只放心情条（有选中修饰）走这条，弹出框
-        // （无选中修饰）仍一律插入，不吃掉插图意图。
-        if key == selectedMood {
-            selectedMood = nil
-            refreshMoodButtons()
-            scheduleDraftSave()
-            return
-        }
-        insertMoodImageAtCursor(key)
     }
 
     /// 心情插入式（熊脸图版）：点选心情不再改单独心情字段，也不再插名文本，
@@ -5618,7 +5145,6 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         // 无标题时字段留空。
         setHeadlineText(entry.title)
         selectedMood = entry.mood
-        refreshMoodButtons()
         selectedWeather = entry.weather
         // 气温只首次回填：补拉二次调用 setupEditContent 时用户可能已在加载
         // 期间手改气温，无条件重填会把手改静默盖回服务端旧值；与位置/@ 的
@@ -5627,7 +5153,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         if !editQuoteFetchAttempted {
             selectedTemperature = entry.temperatureC
         }
-        refreshWeatherButtons()
+        syncWeatherToolButton()
         refreshSelectedChips()
         // 批 E：编辑回填位置（首次回填才以服务端原值为准；补拉二次调用时用户可能已改选，
         // 不覆盖——与 @ 的 editQuoteFetchAttempted 守卫同款口径）。
@@ -5937,10 +5463,10 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                 // 109：草稿标题回填进新输入框。
                 self.setHeadlineText(draft.title)
                 self.selectedMood = draft.mood
-                self.refreshMoodButtons()
+                self.refreshSelectedChips()
                 self.selectedWeather = draft.weather
                 self.selectedTemperature = draft.temperature
-                self.refreshWeatherButtons()
+                self.syncWeatherToolButton()
                 self.restoreVisibility(index: draft.visibilitySegmentIndex, ephemeral: draft.ephemeralEnabled)
                 self.selectedRecipient = self.restoredRecipient(from: draft)
                 self.notifyRecipient = draft.notifyRecipient
@@ -6247,8 +5773,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         draftStatusLevel = nil
         updateCountLabel()
         updatePublishState()
-        refreshMoodButtons()
-        refreshWeatherButtons()
+        syncWeatherToolButton()
         refreshRecipientRow()
         refreshQuoteSection()
         refreshToolStrip()
@@ -6334,8 +5859,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             }
         }
         updateCountLabel()
-        refreshMoodButtons()
-        refreshWeatherButtons()
+        syncWeatherToolButton()
         refreshRecipientRow()
         refreshQuoteSection()
         refreshToolStrip()
