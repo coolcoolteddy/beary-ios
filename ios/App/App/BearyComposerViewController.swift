@@ -5163,7 +5163,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                                             }
                                             self.saveDraftNow()
                                         }
-                                        self?.uploadPrepared(for: item, full: full, thumbData: thumb, image: image, liveVideoData: item.liveVideoData)
+                                        self?.uploadPrepared(for: item, full: full, thumbData: thumb, image: image, liveVideoData: item?.liveVideoData)
                                     }
                                 }
                             }
@@ -5258,7 +5258,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             }
             // 重试/续传：实况项带上内存里的 liveVideoData 一起重传；静态项
             // liveVideoData 为 nil，uploadPrepared 内不附带视频，路径不动。
-            self?.uploadPrepared(for: item, full: full, thumbData: thumb, image: image, liveVideoData: item.liveVideoData)
+            self?.uploadPrepared(for: item, full: full, thumbData: thumb, image: image, liveVideoData: item?.liveVideoData)
         }
     }
 
@@ -5272,7 +5272,9 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         // 图发出；点图重试走 startUpload，仍带 liveVideoData 重传。
         if let liveVideoData = liveVideoData, liveVideoData.count > BearyLivePhoto.maxVideoBytes {
             DispatchQueue.main.async {
-                guard let self = self, let item = item else { return }
+                // uploadPrepared 入口已解包 item、self 本就是强引用，
+                // 此处再 guard let 会因“非 Optional 不能条件绑定”编译失败，
+                // 故直接用已解包的 item/self（与本函数其他同步段同款）。
                 self.markFailed(item)
                 self.showToast(message: "实况视频超过 10MB，未上传")
                 self.saveDraftNow()
