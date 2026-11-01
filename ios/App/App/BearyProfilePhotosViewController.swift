@@ -209,11 +209,12 @@ final class BearyProfilePhotosViewController: UIViewController {
         }
     }
 
-    private func presentLightbox(startIndex: Int) {
+    private func presentLightbox(startIndex: Int, originFrame: CGRect? = nil) {
         guard !photosValue.isEmpty, startIndex >= 0, startIndex < photosValue.count else { return }
         guard presentedViewController == nil else { return }
         let keys = photosValue.map { $0.imageKey }
         let viewer = BearyEntryImageViewerViewController(imageKeys: keys, startIndex: startIndex)
+        viewer.originFrameInWindow = originFrame
         viewer.modalPresentationStyle = .fullScreen
         viewer.onViewEntryAtIndex = { [weak self, weak viewer] tappedIndex in
             guard let strongSelf = self, let viewerValue = viewer else { return }
@@ -261,7 +262,8 @@ extension BearyProfilePhotosViewController: UICollectionViewDataSource, UICollec
     func collectionView(_ collectionView: UICollectionView, didSelectItemAt indexPath: IndexPath) {
         collectionView.deselectItem(at: indexPath, animated: true)
         BearyHaptics.press()
-        presentLightbox(startIndex: indexPath.item)
+        let originFrame = collectionView.cellForItem(at: indexPath).map { $0.convert($0.bounds, to: nil) }
+        presentLightbox(startIndex: indexPath.item, originFrame: originFrame)
     }
 }
 
