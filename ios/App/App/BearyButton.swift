@@ -4,7 +4,8 @@ import UIKit
 // 四类样式（各页实测形态的归纳口径，见下方各 case 注释；数值即原各页数值，
 // 工厂只收敛写法，不改任何一处视觉）：
 //  .primaryPill：高 44、圆角 22；墨底 + 反色字（bg 色，浅白深黑，与 ink 互为反色），
-//    或橙底 + 白字（引导/主操作，Onboarding 主钮同款）。
+//    或橙底 + onBrand 深墨字（视觉清单第 5 项：橙底前景固定深墨色，不用
+//    深色下会变白的 ink；引导/主操作，Onboarding 主钮同款口径）。
 //  .secondaryOutline：高 44/36、圆角 22/18、1pt line 边框 + surface 底 + ink 字
 //    （搜索页“清空搜索”44/22 同款；36/18 为其紧凑版）。
 //  .destructiveOutline：高 36/44、圆角 18/22、1pt 45% 红边框 + 红字 + surface 底
@@ -197,9 +198,11 @@ class BearyButton: BearyHit44Button {
                 setTitleColor(BearyColors.bg, for: .normal)
                 tintColor = BearyColors.bg
             } else {
+                // 视觉清单第 5 项：橙底保留，前景固定深墨色 onBrand（不用 ink，
+                // ink 深色下变近白、橙底白字对比度不足；onBrand 深浅恒墨色）。
                 backgroundColor = BearyColors.orange
-                setTitleColor(.white, for: .normal)
-                tintColor = .white
+                setTitleColor(BearyColors.onBrand, for: .normal)
+                tintColor = BearyColors.onBrand
             }
         case .secondaryOutline:
             backgroundColor = BearyColors.surface

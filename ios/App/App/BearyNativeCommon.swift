@@ -15,6 +15,11 @@ enum BearyColors {
     static var ink: UIColor { UIColor { t in t.userInterfaceStyle == .dark ? UIColor(white: 0.96, alpha: 1) : .black } }
     static var gray: UIColor { UIColor { t in t.userInterfaceStyle == .dark ? UIColor(white: 0.66, alpha: 1) : UIColor(white: 0.45, alpha: 1) } }
     static var orange: UIColor { UIColor(red: 1.0, green: 0.584, blue: 0.0, alpha: 1) }
+    /// 品牌橙上的固定前景色（深墨色，视觉清单第 5 项）：固定纯黑，不随深浅切换。
+    /// 不用 ink——ink 深色下是近白，放在固定橙底上会变白字（白字/橙底对比度
+    /// 仅约 2.20:1，见 #508 注释）；onBrand 在深浅两模式下恒为墨色，
+    /// 橙底对比度约 9.55:1。只用于橙底前景，不替代通用 ink。
+    static var onBrand: UIColor { .black }
     /// 语义红：网页 --red #e5484d，浅深同值（超字数提示等语义红一律走这里，不用 systemRed）。
     static var red: UIColor { UIColor(red: 0.898, green: 0.282, blue: 0.302, alpha: 1) }
     /// 点赞填色：亮红 #ff3b30（2026-10-29 Li 定，明显亮于语义红 #e5484d；仅点赞入口用——
