@@ -13,8 +13,9 @@ import UIKit
 // - 原篇状态联动（见 viewerVisibility）：删 = 全串只留「原篇已删除」占位，
 //   正文与留话一律不残留；翻回私密 = 仅作者可见，他人只见占位；
 //   存储行本身不因删除/私密而抹掉——回收站恢复后原篇重回语料，串自动重现。
-// - 本文件刻意只用 Foundation + UIKit，不引用 BearyColors / BearyIconImages，
-//   以便同时编进 App target 与 BearyCoreTests target（纯逻辑单测用）。
+// - 本文件只用 Foundation + UIKit + 已有的 BearyColors / BearyDynamicType
+//  （#555 起已引用 BearyColors，本处不再声称不引用；BearyColors 的
+//   定义与 target 注册不在本文件动，另有专线处理）。
 // - 后端未上线前：本地存储即事实来源；后端上线后见 BearyAPI 的
 //   past-self 端点（创建先落本地、后台再同步，失败静默留本地待下次同步）。
 
@@ -390,18 +391,20 @@ final class PastSelfComposeView: UIView, UITextViewDelegate {
         super.init(frame: .zero)
         translatesAutoresizingMaskIntoConstraints = false
         textView.translatesAutoresizingMaskIntoConstraints = false
-        textView.font = UIFont.systemFont(ofSize: 15)
-        textView.textColor = UIColor.label
-        textView.backgroundColor = UIColor.secondarySystemBackground
+        textView.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 15))
+        textView.adjustsFontForContentSizeCategory = true
+        textView.textColor = BearyColors.ink
+        textView.backgroundColor = BearyColors.faint
         textView.layer.cornerRadius = 12
         textView.layer.borderWidth = 1
-        textView.layer.bearyDynamicBorderColor = UIColor.separator
+        textView.layer.bearyDynamicBorderColor = BearyColors.line
         textView.textContainerInset = UIEdgeInsets(top: 10, left: 10, bottom: 10, right: 10)
         textView.delegate = self
         textView.isScrollEnabled = false
         addSubview(textView)
         placeholderLabel.translatesAutoresizingMaskIntoConstraints = false
-        placeholderLabel.font = UIFont.systemFont(ofSize: 15)
+        placeholderLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 15))
+        placeholderLabel.adjustsFontForContentSizeCategory = true
         placeholderLabel.textColor = BearyColors.gray
         placeholderLabel.text = placeholder
         placeholderLabel.numberOfLines = 0
