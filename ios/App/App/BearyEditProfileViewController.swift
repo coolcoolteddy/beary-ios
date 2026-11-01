@@ -68,7 +68,13 @@ class BearyEditProfileViewController: UIViewController {
     private var pendingCoverDataURL: String?
     private var coverChanged = false
     private var coverRemoved = false
-    private var pickingAvatar = false
+    /// 本次选图目标：打开相册时固定（见 avatarButtonTapped / coverTapped），
+    /// 之后随 didFinishPicking 的读取闭包与裁剪确认闭包传递，不再重读可变状态。
+    private enum PickTarget {
+        case avatar
+        case cover
+    }
+    private var pendingPickTarget: PickTarget?
     private var isSaving = false
     /// 提交快照（保存三件套第 2 项）：点保存时一次性定格全部提交值，
     /// 后续 handle / profile 两步只读快照，不再读输入框与待存标记——
@@ -816,13 +822,13 @@ class BearyEditProfileViewController: UIViewController {
     @objc private func avatarButtonTapped() {
         // 冻结期纵深防御：按钮已禁用，万一经其他路径触发仍直接拦住。
         guard !isSaving else { return }
-        pickingAvatar = true
+        pendingPickTarget = .avatar
         presentImagePicker()
     }
 
     @objc private func coverTapped() {
         guard !isSaving else { return }
-        pickingAvatar = false
+        pendingPickTarget = .cover
         presentImagePicker()
     }
 
@@ -1180,28 +1186,62 @@ class BearyEditProfileViewController: UIViewController {
 
 extension BearyEditProfileViewController: PHPickerViewControllerDelegate {
     func picker(_ picker: PHPickerViewController, didFinishPicking results: [PHPickerResult]) {
-        picker.dismiss(animated: BearyMotion.animated(true))
-        // 取消（空结果）不弹任何提示、不碰状态；选图后加载放选后做。
-        guard let result = results.first else { return }
-        let provider = result.itemProvider
-        guard provider.canLoadObject(ofClass: UIImage.self) else {
-            presentSimpleAlert(message: "图片读取失败")
+        // 取消（空结果）不弹任何提示；同时清掉本次目标，避免旧目标残留到
+        // 之后到达的慢读图片上。已捕获目标的在途读取不受影响（目标已随
+        // 各自闭包传递，不再读 pendingPickTarget）。
+        guard let result = results.first else {
+            pendingPickTarget = nil
+            picker.dismiss(animated: BearyMotion.animated(true))
             return
         }
-        provider.loadObject(ofClass: UIImage.self) { [weak self] object, _ in
+        // 审计第 4 项：打开相册时固定的目标在此同步取走并立即清掉，
+        // 之后只随闭包传递；头像慢读期间再点开/取消封面选图，也改不动
+        // 这次读取与裁剪的目标。
+        guard let target = pendingPickTarget else {
+            picker.dismiss(animated: BearyMotion.animated(true))
+            return
+        }
+        pendingPickTarget = nil
+        let provider = result.itemProvider
+        guard provider.canLoadObject(ofClass: UIImage.self) else {
+            picker.dismiss(animated: BearyMotion.animated(true)) { [weak self] in
+                self?.presentSimpleAlert(message: "图片读取失败")
+            }
+            return
+        }
+        // 审计第 3 项：相册退场与图片读取并行进行，两者都完成才呈现裁剪页。
+        // 旧代码 dismiss 无 completion、随后立即异步读图：快图先于退场结束
+        // 到达时，退场中的相册仍算 presentedViewController，裁剪页被
+        // presentCropEditor 的检查静默丢弃且无重试、无提示。本处用完成
+        // 回调协调，不加固定延迟；裁剪页自身的 presented 检查仍保留，
+        // 只不再因“正在退场的相册”误杀。
+        var dismissFinished = false
+        var loadFinished = false
+        var loadedImage: UIImage?
+        let deliver: () -> Void = { [weak self] in
+            guard dismissFinished, loadFinished else { return }
+            guard let strongSelf = self else { return }
+            guard let image = loadedImage else {
+                strongSelf.presentSimpleAlert(message: "图片读取失败")
+                return
+            }
+            // 清单第 3 项（编辑资料部分）：选图后先过通用裁剪页，
+            // 不再像以前那样直接用原图走压缩。裁剪确认才走原有换图/保存流程
+            // （dataURL 压缩 + pending 标记 + 预览替换，保存仍走 PUT
+            // /api/account/profile）；裁剪取消不回调、不碰任何待保存状态。
+            // 裁剪走通用 BearyImageCropViewController（B 批合并）：
+            // 头像 1:1、封面按本页预览比例，见下方 presentCropEditor。
+            strongSelf.presentCropEditor(image: image, target: target)
+        }
+        picker.dismiss(animated: BearyMotion.animated(true)) {
+            dismissFinished = true
+            deliver()
+        }
+        provider.loadObject(ofClass: UIImage.self) { object, _ in
             DispatchQueue.main.async {
-                guard let strongSelf = self else { return }
-                guard let image = object as? UIImage else {
-                    strongSelf.presentSimpleAlert(message: "图片读取失败")
-                    return
-                }
-                // 清单第 3 项（编辑资料部分）：选图后先过通用裁剪页，
-                // 不再像以前那样直接用原图走压缩。裁剪确认才走原有换图/保存流程
-                // （dataURL 压缩 + pending 标记 + 预览替换，保存仍走 PUT
-                // /api/account/profile）；裁剪取消不回调、不碰任何待保存状态。
-                // 裁剪走通用 BearyImageCropViewController（B 批合并）：
-                // 头像 1:1、封面按本页预览比例，见下方 presentCropEditor。
-                strongSelf.presentCropEditor(image: image)
+                loadFinished = true
+                loadedImage = object as? UIImage
+                deliver()
             }
         }
     }
@@ -1209,13 +1249,15 @@ extension BearyEditProfileViewController: PHPickerViewControllerDelegate {
     /// 选图 → 裁剪：头像方形窗（1:1），封面按本页封面预览比例
     /// （coverImageView 宽 / 160 高；布局未出时按内容列宽推算）。
     /// 取消：裁剪页自己 dismiss，不回调，本页状态全程不动。
-    private func presentCropEditor(image: UIImage) {
+    /// target 由 didFinishPicking 捕获后传入：裁剪比例与确认接收均用
+    /// 这个传入值，不在到达/确认时刻重读可变状态。
+    private func presentCropEditor(image: UIImage, target: PickTarget) {
         // 冻结期不接选图：选图加载是异步的，保存点按与图片到达之间有窗口；
         // 保存中到达的图片直接丢弃（不改待存标记、不换预览），存完可重选。
         guard !isSaving else { return }
         if presentedViewController != nil { return }
         let aspectRatio: CGFloat
-        if pickingAvatar {
+        if target == .avatar {
             aspectRatio = 1
         } else {
             // F14：封面预览高已改 180，裁剪窗比例同步。
@@ -1234,7 +1276,7 @@ extension BearyEditProfileViewController: PHPickerViewControllerDelegate {
             // 冻结期不接受裁剪确认：裁剪页确认时自己 dismiss，本页只须
             // 忽略回调，待存标记与预览都不动（与 presentCropEditor 的丢弃同口径）。
             guard !strongSelf.isSaving else { return }
-            if strongSelf.pickingAvatar {
+            if target == .avatar {
                 guard let dataURL = strongSelf.dataURLForAvatar(image: cropped) else {
                     strongSelf.presentSimpleAlert(message: "头像太大了，换一张小一点的吧")
                     return
