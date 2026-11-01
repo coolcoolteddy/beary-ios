@@ -920,8 +920,15 @@ final class BearyTimelineCell: UITableViewCell {
     private let editStatusLabel = UILabel()
     /// 2026-10-29 Li 定编辑态口径：无图标、只留文字；可编辑期内左侧为倒计时灰字 +
     /// 可点按的“编辑”二字（本行唯一的编辑入口，旧图标编辑钮已摘）；到期 live 翻转时
-    /// 同位置变“编辑已结束”，3 秒后淡出消失；首渲染已过期则直接不留。
+    /// 同位置变“编辑已结束”，3 秒后先淡出、再带动画塌掉；首渲染已过期则直接不留。
+    /// 2026-11-01 Li 新口径取代 2026-10-30 外框定格的后半段：淡出后本行不再
+    /// 永久占位，须塌回正常高度；文字出现那一刻仍不跳变（见 updateEditRow）。
     private let editStatusGroup = UIStackView()
+    /// 塌行用的临时高度约束：只在淡出后的塌行动画期间存在，动画结束即
+    /// 停用并随 isHidden=true 一起清掉；复用与重回可编辑态时同样复位，
+    /// 防止 0 高约束串到下一行。
+    private var editStatusHeightConstraint: NSLayoutConstraint?
+    private var editStatusCollapsing = false
     private let editTextButton = BearyHit44Button(type: .custom)
     private var editRowSawEditable = false
     private var editRowEndedShown = false
@@ -1375,6 +1382,12 @@ final class BearyTimelineCell: UITableViewCell {
         editRowEndedShown = false
         editStatusGroup.alpha = 1
         editStatusGroup.accessibilityElementsHidden = false
+        // 塌行残留复位：动画在途的完成回调以 editStatusCollapsing 守卫，
+        // 此处先置 false，旧动画完成时不再把新行藏掉；约束同步停用。
+        editStatusCollapsing = false
+        editStatusHeightConstraint?.isActive = false
+        editStatusHeightConstraint = nil
+        editStatusGroup.isHidden = false
         editTextButton.isHidden = true
         editTextButton.alpha = 1
         editTextButton.isEnabled = true
@@ -1858,10 +1871,12 @@ final class BearyTimelineCell: UITableViewCell {
     /// - 可编辑期内：左侧“还剩 N 分钟”灰字（按分钟刷新，向上取整，至少 1 分钟）+
     ///   可点按的“编辑”二字（本行唯一的编辑入口）；数字变化只改 label 文本。
     /// - 到期那一刻（本行此前已渲染过可编辑态，即看着它过期）：同位置变
-    ///   “编辑已结束”灰字，约 3 秒后淡出到不可见（减动效下直接不可见）。
-    ///   2026-10-30 外框定格：退场只降 alpha，绝不 isHidden——本行在布局里
-    ///   始终占位，卡片高度与限时虚线框（cardView.bounds）不因编辑态翻转
-    ///   而跳变；“什么都不留”指的是视觉上无文字，不是布局上塌掉本行。
+    ///   “编辑已结束”灰字，约 3 秒后先淡出、再带动画塌掉（减动效下直接塌掉）。
+    ///   2026-10-30 外框定格的前半段仍保留：文字出现那一刻只换文字、不增删
+    ///   视图，卡片高度与限时虚线框（cardView.bounds）不因文字翻转而跳变；
+    ///   2026-11-01 Li 新口径只取代后半段——淡出后本行不再永久占位，
+    ///   而是塌回首渲染已过期时的正常高度（actsStack 仅剩 9pt 栈间距与
+    ///   卡片底边距，与从未出过编辑行完全一致）。
     /// - 首渲染已过期（含 deadline 缺失即已锁）：不闪“编辑已结束”，直接什么都不留。
     /// - 小地球显隐与无障碍文案同在此定（已挪 meta 行末，恒灰色 21pt）。
     private func updateEditRow(entry: Entry) {
@@ -1870,6 +1885,11 @@ final class BearyTimelineCell: UITableViewCell {
             editRowSawEditable = true
             editRowEndTimer?.invalidate()
             editRowEndTimer = nil
+            // 重回可编辑态：塌行在途的动画不再生效（完成回调以
+            // editStatusCollapsing 守卫），约束同步停用。
+            editStatusCollapsing = false
+            editStatusHeightConstraint?.isActive = false
+            editStatusHeightConstraint = nil
             editStatusGroup.isHidden = false
             editStatusGroup.alpha = 1
             editStatusGroup.accessibilityElementsHidden = false
@@ -1911,24 +1931,71 @@ final class BearyTimelineCell: UITableViewCell {
         // 可见性切换走菜单“修改权限”，与原地球钮同一 handlePublishEntry 路径。
     }
 
-    /// “编辑已结束”3 秒后的退场：只淡出到不可见，绝不 isHidden。
-    /// 旧口径在动画完成时 isHidden=true，UIStackView 会把本行高度塌到 0，
-    /// 卡片随之缩短、限时虚线框（cardView.bounds 重画）位置上移，
-    /// 就是 Li 报的“编辑已结束文字出现时外框变化”。本行保留“编辑已结束”
-    /// 文本与布局占位、仅 alpha=0，卡片高度与外框全程不动。
+    /// “编辑已结束”3 秒后的退场：先淡出、再带动画塌掉。
+    /// 根因（2026-11-01 Li 报“编辑结束后下方空隙过大”）：旧口径在淡出后
+    /// 绝不 isHidden，editStatusGroup 一直在 actsStack 里占一行高度，
+    /// 文字没了、空行还在，卡片下方就留了一大段空白。
+    /// 新口径分两段走：0.25s 淡出（文字消失那一刻仍不跳变），淡出完成
+    /// 后 0.3s ease 把行高塌到 0，卡片平滑缩回正常高度；限时虚线框
+    /// 由 layoutSubviews 按 cardView.bounds 逐帧重画，不闪跳。
     private func hideEditEndedRow() {
         editRowEndTimer = nil
         if UIAccessibility.isReduceMotionEnabled {
             editStatusGroup.alpha = 0
             editStatusGroup.accessibilityElementsHidden = true
+            editStatusGroup.isHidden = true
             return
         }
         UIView.animate(withDuration: 0.25, animations: { [weak self] in
             self?.editStatusGroup.alpha = 0
         }, completion: { [weak self] _ in
-            self?.editStatusGroup.alpha = 0
-            self?.editStatusGroup.accessibilityElementsHidden = true
+            guard let self = self, self.editRowEndedShown else { return }
+            self.editStatusGroup.alpha = 0
+            self.editStatusGroup.accessibilityElementsHidden = true
+            self.collapseEditEndedRow()
         })
+    }
+
+    /// 淡出后的塌行：用临时高度约束把本行从当前高度压到 0。
+    /// 表格行高由 tableView 决定，光改 cell 内约束不动行高、只会在下一
+    /// 布局帧跳变，故动画内同步 begin/endUpdates，让行高跟随同一动画走。
+    /// 完成时 isHidden=true 并停用临时约束，终态与首渲染已过期完全一致。
+    private func collapseEditEndedRow() {
+        guard !editStatusGroup.isHidden, !editStatusCollapsing else { return }
+        editStatusCollapsing = true
+        let currentHeight = editStatusGroup.bounds.height
+        guard currentHeight > 0 else {
+            editStatusGroup.isHidden = true
+            editStatusCollapsing = false
+            return
+        }
+        let heightConstraint = editStatusGroup.heightAnchor.constraint(equalToConstant: currentHeight)
+        heightConstraint.isActive = true
+        editStatusHeightConstraint = heightConstraint
+        contentView.layoutIfNeeded()
+        let tableView = enclosingTableView
+        UIView.animate(withDuration: 0.3, delay: 0, options: [.curveEaseInOut, .beginFromCurrentState], animations: {
+            heightConstraint.constant = 0
+            self.contentView.layoutIfNeeded()
+            tableView?.beginUpdates()
+            tableView?.endUpdates()
+        }, completion: { [weak self] _ in
+            guard let self = self, self.editStatusCollapsing else { return }
+            self.editStatusHeightConstraint?.isActive = false
+            self.editStatusHeightConstraint = nil
+            self.editStatusGroup.isHidden = true
+            self.editStatusCollapsing = false
+        })
+    }
+
+    /// 沿 superview 链找宿主 tableView（cell 本身不持有 tableView 引用）。
+    private var enclosingTableView: UITableView? {
+        var view: UIView? = superview
+        while let current = view {
+            if let tableView = current as? UITableView { return tableView }
+            view = current.superview
+        }
+        return nil
     }
 
     @objc private func moreTapped() {
