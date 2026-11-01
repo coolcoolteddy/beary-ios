@@ -1911,7 +1911,7 @@ final class BearyChromeViewController: UIViewController {
         lastRetapPage = nil
         lastRetapDidScrollToTop = false
         let previousPage = currentPage
-        // 淡入复加（Li 拍板，0.14s 只做透明度）：先记下离场页视图，暂不立即隐藏，
+        // 淡入复加（Li 拍板，0.25s 只做透明度）：先记下离场页视图，暂不立即隐藏，
         // 下方与入场页做交叉淡入；减动效时仍走旧的即时显隐。M4 删的是整页淡入+滑动，
         // 这里只动 alpha，不加位移、不改转场代理。
         let outgoingView: UIView?
@@ -1961,7 +1961,7 @@ final class BearyChromeViewController: UIViewController {
         incomingView.isHidden = false
         // 入场页接管时机不变：切换开始即恢复交互。快速反向切页时，入场页可能
         // 正是上一段交叉淡入的离场页（当时被禁用）；不等上一段动画完成回调，
-        // 否则反向切回的当前页在 0.14s 内点按无反应。
+        // 否则反向切回的当前页在 0.25s 内点按无反应。
         incomingView.isUserInteractionEnabled = true
         // 首次切入飞入修：懒建页首亮时帧仍为 .zero（addPageVC 只加约束未布局），
         // 下方 setHeaderVisible 的 0.25s layoutIfNeeded 动画会把整页从左上零帧动画到满帧；
@@ -1988,7 +1988,7 @@ final class BearyChromeViewController: UIViewController {
             userVC?.resumeVisibleEmotes()
             userVC?.pageDidReturn()
         }
-        // 淡入复加：主 tab 0.14s 交叉淡入、搜索页淡入、二级页（.user 等容器页）推入淡入，
+        // 淡入复加：主 tab 0.25s 交叉淡入、搜索页淡入、二级页（.user 等容器页）推入淡入，
         // 均走同一条 showPage 路径；只做透明度动画。减动效或首亮（无离场页）时直接显隐。
         if UIAccessibility.isReduceMotionEnabled || outgoingView == nil {
             outgoingView?.isHidden = true
@@ -1997,10 +1997,10 @@ final class BearyChromeViewController: UIViewController {
         } else if let outgoing = outgoingView, outgoing !== incomingView {
             incomingView.alpha = 0
             // 离场页交互：切换开始即禁用。动画仍带 .allowUserInteraction（入场页
-            // 0.14s 内即可点按，时长与交叉淡入本身不动）；离场页在淡出过程中
+            // 0.25s 内即可点按，时长与交叉淡入本身不动）；离场页在淡出过程中
             // 仍可见、未 isHidden，此前点按会落到旧页，本行起不再落到旧页。
             outgoing.isUserInteractionEnabled = false
-            UIView.animate(withDuration: 0.14, delay: 0, options: [.beginFromCurrentState, .allowUserInteraction], animations: {
+            UIView.animate(withDuration: 0.25, delay: 0, options: [.beginFromCurrentState, .allowUserInteraction, .curveEaseOut], animations: {
                 incomingView.alpha = 1
                 outgoing.alpha = 0
             }) { _ in
@@ -2023,7 +2023,7 @@ final class BearyChromeViewController: UIViewController {
                 }
             }
         }
-        // 2026-10-26 切 tab 滑动重播排查：M4 的整页淡入+滑动仍不恢复（见上方 0.14s
+        // 2026-10-26 切 tab 滑动重播排查：M4 的整页淡入+滑动仍不恢复（见上方 0.25s
         // 纯透明度交叉淡入，Li 拍板复加）；除该透明度淡入与顶栏高度结构动画外，
         // 页本身不做位移、不重播其他入场动效。
         updateTabSelection()
@@ -2682,7 +2682,8 @@ final class BearyChromeViewController: UIViewController {
                     guard let self = self else { return }
                     switch result {
                     case .success:
-                        // A6-2：退出登录的界面过渡（站内 showPage 0.14s 淡入同款时长；
+                        // A6-2：退出登录的界面过渡（淡出/淡入两段各 0.14s、合计 0.28s，
+                        // 已落在视觉清单第 8 项 0.24–0.28s 档内，故两段时长不动；
                         // 减动效直换）：当前页内容先淡出，态翻转后的原地刷新落在淡出中，
                         // 再淡回。登出逻辑本身不动：API 成功→清 cookie→本地退出→失败 toast 原样。
                         let clearLogoutState = {
@@ -2690,7 +2691,7 @@ final class BearyChromeViewController: UIViewController {
                             SessionManager.shared.signOutLocally()
                         }
                         if UIAccessibility.isReduceMotionEnabled || self.currentPage == .me {
-                            // 减动效直换；.me 页由 onUserChanged→showPage 的 0.14s 交叉淡入承接，不双驱动。
+                            // 减动效直换；.me 页由 onUserChanged→showPage 的 0.25s 交叉淡入承接，不双驱动。
                             clearLogoutState()
                         } else {
                             let logoutPageView: UIView? = {
@@ -3794,7 +3795,7 @@ private final class BearyComposerSheetAnimator: NSObject, UIViewControllerAnimat
     }
 
     func transitionDuration(using transitionContext: UIViewControllerContextTransitioning?) -> TimeInterval {
-        return UIAccessibility.isReduceMotionEnabled ? 0 : 0.3
+        return UIAccessibility.isReduceMotionEnabled ? 0 : 0.25
     }
 
     func animateTransition(using transitionContext: UIViewControllerContextTransitioning) {
@@ -3820,7 +3821,7 @@ private final class BearyComposerSheetAnimator: NSObject, UIViewControllerAnimat
             DiagFile.mark("animator-animate-call")
             // 临时诊断（84 包，定根因后删除）：动画系统参数快照。
             DiagFile.mark("animator-anim-params speed=\(toView.layer.speed) containerSpeed=\(container.layer.speed) duration=\(duration) reduce=\(UIAccessibility.isReduceMotionEnabled)")
-            UIView.animate(withDuration: duration, animations: {
+            UIView.animate(withDuration: duration, delay: 0, options: .curveEaseOut, animations: {
                 // 临时诊断（86 包，定根因后删除）。
                 DiagFile.mark("animator-closure-enter")
                 toView.transform = .identity
@@ -3850,7 +3851,7 @@ private final class BearyComposerSheetAnimator: NSObject, UIViewControllerAnimat
                 return
             }
             let height = container.bounds.height
-            UIView.animate(withDuration: duration, animations: {
+            UIView.animate(withDuration: duration, delay: 0, options: .curveEaseIn, animations: {
                 // 临时诊断（86 包，定根因后删除）：关闭闭包入口。
                 DiagFile.mark("animator-dismiss-closure-enter")
                 fromView.transform = CGAffineTransform(translationX: 0, y: height)
@@ -3930,7 +3931,7 @@ private final class BearyFadeRiseAnimator: NSObject, UIViewControllerAnimatedTra
                 transitionContext.completeTransition(!transitionContext.transitionWasCancelled)
                 return
             }
-            UIView.animate(withDuration: 0.25, delay: 0, options: .curveEaseOut, animations: {
+            UIView.animate(withDuration: 0.25, delay: 0, options: .curveEaseIn, animations: {
                 fromView.alpha = 0
                 fromView.transform = CGAffineTransform(translationX: 0, y: 16)
             }, completion: { _ in
