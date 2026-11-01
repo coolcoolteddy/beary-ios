@@ -819,6 +819,11 @@ final class BearyDraftBoxViewController: UIViewController {
         metaRow.spacing = 8
         metaRow.alignment = .center
         let wordLabel = UILabel()
+        // 草稿卡字数走可见口径：一个心情记号算 1 字（图占 1 格），与编辑器
+        // 圆环一致（圆环按 textView.text 计，附件字符本身就是 1 格）。
+        // #399 的 editorWordCount 是落盘串原串 count，含记号的草稿会把
+        // "[mood:happy]" 这类记号原串全算进去，与圆环对不上，故此处不用它；
+        // 去组词串一节已由落盘 committedContent 保证，不在此重复。
         wordLabel.text = "\(BearyText.inlineVisibleCount(of: draftValue.content)) 字"
         wordLabel.font = UIFont.systemFont(ofSize: 12)
         wordLabel.textColor = BearyColors.gray
@@ -1132,7 +1137,14 @@ final class BearyDraftBoxViewController: UIViewController {
             let minutes = max(1, Int(floor(diff / 60)))
             return "\(minutes) 分钟前"
         }
-        let calendar = Calendar.current
+        // 扫荡 B：今天/昨天判定走北京日历，与下方 formatter 的北京时区一致。
+        // 旧口径用 Calendar.current（设备时区）：设备时区非北京时，跨北京午夜
+        // 前后会把“昨天”误判成“今天”（或反之），而显示的 HH:mm/M月d日又是
+        // 北京时间，两处口径打架；回收站 TrashText.deletedLabel 已用北京日历，
+        // 本处与之对齐（本地构造，不依赖时间线文件的共享 helper，避免跨分支耦合）。
+        var beijingCalendar = Calendar(identifier: .gregorian)
+        beijingCalendar.timeZone = TimeZone(secondsFromGMT: 8 * 3600) ?? TimeZone.current
+        let calendar = beijingCalendar
         if calendar.isDateInToday(date) {
             let hours = Int(floor(diff / 3600))
             return "\(hours) 小时前"

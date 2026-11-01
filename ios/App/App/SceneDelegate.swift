@@ -1992,6 +1992,22 @@ final class BearyChromeViewController: UIViewController {
                         // 首页与个人主页仍用原有重拉同步（其列表非日期分区，
                         // 且个人主页无删除入口，只是跟随同步）。
                         self.timelineVC?.removeDeletedEntry(entry)
+                        // 删帖复活修：首页重拉可能被在途守卫跳过、个人页重拉
+                        // 可能被 tabLoading 守卫跳过，且广场快照此前删帖时从不
+                        // 清——重进 App 先渲染快照，已删篇就复活。此处删帖即同
+                        // 步清掉两处模型与广场快照，重拉只是后续对齐，不再是
+                        // 唯一纠错路径。
+                        self.feedVC?.removeDeletedEntry(entryId: entryId)
+                        self.profileVC?.removeDeletedEntry(entryId: entryId)
+                        if let uid = SessionManager.shared.currentUser?.id {
+                            let bucket = BearyFeedCache.bucket(userId: uid)
+                            if let snap = BearyFeedCache.load(bucket: bucket) {
+                                let kept = snap.entries.filter { $0.id != entryId }
+                                if kept.count != snap.entries.count {
+                                    BearyFeedCache.save(bucket: bucket, entries: kept, hasMore: snap.hasMore)
+                                }
+                            }
+                        }
                         self.feedVC?.refreshAll()
                         self.profileVC?.reloadProfile()
                     case .failure:
@@ -2046,6 +2062,9 @@ final class BearyChromeViewController: UIViewController {
         profileBuiltForUserId = SessionManager.shared.currentUser?.id
         vc.onOpenEntry = { [weak self] entry in
             self?.gotoEntryImmediately(entry: entry)
+        }
+        vc.onOpenFreshEntry = { [weak self] entry in
+            self?.gotoEntryImmediately(entry: entry, skipSupplement: true)
         }
         vc.onRequireLogin = { [weak self] in self?.presentLoginGate() }
         // 收尾接线：返回/退出/编辑资料/齿轮菜单/行内互动（P3/P11，见 wireProfileVC）。
@@ -2153,6 +2172,9 @@ final class BearyChromeViewController: UIViewController {
         }
         vc.onOpenEntry = { [weak self] entry in
             self?.gotoEntryImmediately(entry: entry)
+        }
+        vc.onOpenFreshEntry = { [weak self] entry in
+            self?.gotoEntryImmediately(entry: entry, skipSupplement: true)
         }
         vc.onRequireLogin = { [weak self] in self?.presentLoginGate() }
         // iCity：拉黑后离页（回首页；信息流侧由广播自行清行）。
@@ -2856,6 +2878,11 @@ final class BearyChromeViewController: UIViewController {
                 self?.gotoEntryImmediately(entry: entry)
             }
         }
+        vc.onOpenFreshEntry = { [weak self] entry in
+            self?.dismiss(animated: BearyMotion.animated(true)) {
+                self?.gotoEntryImmediately(entry: entry, skipSupplement: true)
+            }
+        }
         vc.onRequireLogin = { [weak self] in
             self?.presentLoginGate()
         }
@@ -2892,8 +2919,14 @@ final class BearyChromeViewController: UIViewController {
     /// （不比旧“不存在”toast 更差，且不丢用户刚点开的内容）。
     /// id-only 入口（搜索/消息/深链/引用卡）无卡片数据，仍走 fetch-first 的
     /// gotoEntry(entryId:) 不变；旧 fetch-first 的 gotoEntry(entry:) 已随本项退役。
-    private func gotoEntryImmediately(entry: Entry) {
+    private func gotoEntryImmediately(entry: Entry, skipSupplement: Bool = false) {
         guard let entryId = entry.id, !entryId.isEmpty else { return }
+        if skipSupplement {
+            // 提速：调用方刚为可见性校验拉过同一单篇，详情直接用这份新鲜数据渲染，
+            // 不再后台补拉一次（计数 / 回应无需再等一次往返对齐）。
+            guard presentDetail(entry: entry) != nil else { return }
+            return
+        }
         guard let detail = presentDetail(entry: entry) else { return }
         BearyAPI.shared.fetchEntry(id: entryId) { [weak self, weak detail] result in
             DispatchQueue.main.async {

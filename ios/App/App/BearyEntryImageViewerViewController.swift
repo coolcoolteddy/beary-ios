@@ -18,9 +18,10 @@ class BearyEntryImageViewerViewController: UIViewController, UIGestureRecognizer
     private let neighborImageView = UIImageView()
     private var neighborIndex: Int?
     private var neighborDirection: Int = 0
-    /// 110：目标图未加载时的加载反馈（官方 icon_refresh 圈，白字色）——
-    /// 不是骨架屏；只在 imageView 无图可显且有在途加载时转，图到/失败即停。
-    private let loadingSpinner = BearyRefreshIconView()
+    /// 110：目标图未加载时的加载反馈（网页同款圆环，黑底用 bright 白版）——
+    /// 不是骨架屏，也不再用下拉刷新那套 icon_refresh；只在 imageView 无图可显
+    /// 且有在途加载时转，图到/失败即停。
+    private let loadingSpinner = BearyWebRingSpinnerView(bright: true)
     /// 111：灯箱底色占位层——目标图未到时盖住全屏、底色走页面底色
     /// BearyColors.bg（浅白／深黑，随 trait 自动跟随），不是纯黑、不是
     /// 骨架屏；图到／失败即藏，旧图绝不滑回的口径不动。
@@ -38,7 +39,8 @@ class BearyEntryImageViewerViewController: UIViewController, UIGestureRecognizer
         buttonValue.translatesAutoresizingMaskIntoConstraints = false
         buttonValue.setTitle("查看日记", for: .normal)
         buttonValue.setTitleColor(.white, for: .normal)
-        buttonValue.titleLabel?.font = UIFont.systemFont(ofSize: 14, weight: .semibold)
+        buttonValue.titleLabel?.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 14, weight: .semibold))
+        buttonValue.titleLabel?.adjustsFontForContentSizeCategory = true
         buttonValue.backgroundColor = UIColor(white: 1, alpha: 0.16)
         buttonValue.layer.cornerRadius = 18
         buttonValue.clipsToBounds = true
@@ -119,17 +121,18 @@ class BearyEntryImageViewerViewController: UIViewController, UIGestureRecognizer
         neighborImageView.translatesAutoresizingMaskIntoConstraints = false
         neighborImageView.isHidden = true
         view.addSubview(neighborImageView)
-        loadingSpinner.tintColor = .white
         view.addSubview(loadingSpinner)
         retryLabel.text = "图片加载失败，重试"
         retryLabel.textColor = .white
-        retryLabel.font = UIFont.systemFont(ofSize: 14)
+        retryLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 14))
+        retryLabel.adjustsFontForContentSizeCategory = true
         retryLabel.textAlignment = .center
         retryLabel.translatesAutoresizingMaskIntoConstraints = false
         retryLabel.isHidden = true
         view.addSubview(retryLabel)
         counterLabel.textColor = .white
-        counterLabel.font = UIFont.systemFont(ofSize: 14)
+        counterLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 14))
+        counterLabel.adjustsFontForContentSizeCategory = true
         counterLabel.textAlignment = .center
         counterLabel.translatesAutoresizingMaskIntoConstraints = false
         counterLabel.isHidden = imageKeys.count <= 1
@@ -197,6 +200,9 @@ class BearyEntryImageViewerViewController: UIViewController, UIGestureRecognizer
             retryLabel.centerYAnchor.constraint(equalTo: view.centerYAnchor, constant: -30),
             counterLabel.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 20),
             counterLabel.centerXAnchor.constraint(equalTo: view.centerXAnchor),
+            // 32 清单第 17 项：计数跟随放大后不得压到右上关闭钮之下（文案短，平时不触发；极端字号下宁可截尾不断钮）。
+            counterLabel.leadingAnchor.constraint(greaterThanOrEqualTo: view.leadingAnchor, constant: 16),
+            counterLabel.trailingAnchor.constraint(lessThanOrEqualTo: closeButton.leadingAnchor, constant: -8),
             dotsStack.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor, constant: -24),
             dotsStack.centerXAnchor.constraint(equalTo: view.centerXAnchor),
             closeButton.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 12),
@@ -476,6 +482,22 @@ class BearyEntryImageViewerViewController: UIViewController, UIGestureRecognizer
             if scale < 1.15 {
                 resetZoom(animated: true)
             } else {
+                // 清单 16：捏合结束重定平移基线。捏合期间 panChanged 因
+                // pinchActive 早退，pan 的 .began 仍是捏合前的旧基线；若此时
+                // pan 手势仍在进行（多指未松开，不会再有 .began），下一次
+                // .changed 会用旧基线 + 自 pan 开始累计的 translation 算 tx/ty，
+                // 而捏合期 clampPan 已动过 tx/ty，造成位移跳变。此处把基线
+                // 重定为“当前 tx/ty 减当前 translation”：重定瞬间 tx/ty 不变，
+                // 后续增量连续。只在 scale > 1 的平移模式且 pan 仍在进行时做
+                // （scale == 1 时 tx 直接等于 translation，无基线可言；pan 已
+                // 结束时不动，下次 .began 会重设）。时序注意：本重定以
+                // translation 自手势开始累计为前提（系统侧若在触点数变化时
+                // 自行重置 translation，则重定本身会引入跳变，真机须验此点）。
+                if let pan = panGesture, pan.state == .began || pan.state == .changed {
+                    let translation = pan.translation(in: view)
+                    panTx0 = tx - translation.x
+                    panTy0 = ty - translation.y
+                }
                 clampPan()
                 applyTransform(animated: true)
             }

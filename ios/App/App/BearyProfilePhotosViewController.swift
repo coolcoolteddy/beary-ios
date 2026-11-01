@@ -114,8 +114,45 @@ final class BearyProfilePhotosViewController: UIViewController {
         updateTitleAndEmpty()
     }
 
+    /// 116 数据填入动效：标题计数变化时只淡入标题本身（alpha 0→1、
+    /// 0.25s，不动布局、不缩放弹一下）；同值不赋值不重播；减动效或
+    /// 未进窗口时直设终值。续拉新格见 staggerNewCells。
+    private func setTitleTextFaded(_ text: String) {
+        guard titleLabel.text != text else { return }
+        titleLabel.text = text
+        guard !UIAccessibility.isReduceMotionEnabled, titleLabel.window != nil else {
+            titleLabel.alpha = 1
+            return
+        }
+        titleLabel.alpha = 0
+        UIView.animate(withDuration: 0.25, delay: 0, options: [.curveEaseOut, .beginFromCurrentState], animations: {
+            self.titleLabel.alpha = 1
+        })
+    }
+
+    /// 116：续拉新格错峰滑入（仅本页新增格、alpha＋y+6、0.25s、
+    /// 0.03 步进封顶 0.24s；已有格不重播；减动效直显）。
+    private func staggerNewCells(from oldCount: Int) {
+        guard !UIAccessibility.isReduceMotionEnabled else { return }
+        collectionView.layoutIfNeeded()
+        let newPaths = collectionView.indexPathsForVisibleItems
+            .filter { $0.item >= oldCount }
+            .sorted { $0.item < $1.item }
+        var delay: TimeInterval = 0
+        for path in newPaths {
+            guard let cell = collectionView.cellForItem(at: path) else { continue }
+            cell.alpha = 0
+            cell.transform = CGAffineTransform(translationX: 0, y: 6)
+            UIView.animate(withDuration: 0.25, delay: min(delay, 0.24), options: [.curveEaseOut], animations: {
+                cell.alpha = 1
+                cell.transform = .identity
+            })
+            delay += 0.03
+        }
+    }
+
     private func updateTitleAndEmpty() {
-        titleLabel.text = "照片 · \(photosValue.count) 张"
+        setTitleTextFaded("照片 · \(photosValue.count) 张")
         emptyLabel.isHidden = !photosValue.isEmpty
         collectionView.isHidden = photosValue.isEmpty
     }
@@ -151,10 +188,13 @@ final class BearyProfilePhotosViewController: UIViewController {
                         }
                     }
                     // 续拉页同样按创建时间倒序并案：新页全部更旧，直接追加即可保持倒序。
+                    let oldPhotoCount = strongSelf.photosValue.count
                     strongSelf.diaryEntriesValue.append(contentsOf: appended)
                     strongSelf.photosValue = BearyProfileViewController.profilePhotoItems(from: strongSelf.diaryEntriesValue, isOwnProfile: strongSelf.ownProfileValue)
                     strongSelf.collectionView.reloadData()
                     strongSelf.updateTitleAndEmpty()
+                    // 116：续拉新格错峰滑入（已有格不重播）。
+                    strongSelf.staggerNewCells(from: oldPhotoCount)
                 case .failure:
                     // 109：续拉失败不再封死 hasMore——末项再次进入视野时 willDisplay
                     // 可再触发 fetchNextPageIfNeeded；同时给一次失败提示（toast，

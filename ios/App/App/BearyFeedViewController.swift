@@ -505,6 +505,9 @@ class BearyFeedViewController: UIViewController {
 
     /// 自定义下拉刷新结束：至少展示 500ms 后复位到基线内边距；旧回包守卫
     /// 丢弃时仍走 maybeEndRefreshing 到这里，不让刷新头永不结束。
+    /// 32 清单第 23 项：结束时只收指示器——若刷新在途用户已滑到深处（或仍按住拖动），
+    /// 不再把 contentOffset 拽回 -baseline 顶部，只复位内边距、藏指示头，留在原位置；
+    /// 仍停在下拉位的才按旧口径回到 -baseline（指示区须收掉）。
     private func endCustomPullRefresh() {
         if !isCustomPullRefreshing || customPullEndScheduled {
             return
@@ -517,10 +520,15 @@ class BearyFeedViewController: UIViewController {
             self.isCustomPullRefreshing = false
             self.customPullEndScheduled = false
             let baseline = self.feedPullBaselineTop()
+            // 下拉位 = -(baseline + 84)（见 beginCustomPullRefresh）；8pt 容差内算仍在下拉位。
+            let stillAtPullPosition = !self.tableView.isDragging
+                && self.tableView.contentOffset.y <= -(baseline + 84) + 8
             let pullOut = {
                 self.tableView.contentInset.top = baseline
                 self.tableView.scrollIndicatorInsets.top = baseline
-                self.tableView.contentOffset = CGPoint(x: 0, y: -baseline)
+                if stillAtPullPosition {
+                    self.tableView.contentOffset = CGPoint(x: 0, y: -baseline)
+                }
                 self.pullView.frame = CGRect(x: 0, y: -116, width: self.tableView.bounds.width, height: 116)
             }
             if UIAccessibility.isReduceMotionEnabled {
@@ -947,6 +955,23 @@ class BearyFeedViewController: UIViewController {
     /// 全部模型都改（不再只改第一份），全部可见行都刷；取消点赞/收藏时经回调
     /// 通知容器（赞过/收藏页签摘卡，容器接线由总协调收尾）。
     /// 列表不可见或该条已不在列表时静默跳过，不报错。
+    /// 删帖同步清模型：删帖成功后立即从广场模型摘掉本篇，不只依赖
+    /// 随后重拉——重拉可能被在途守卫跳过，跳过即复活。行删除先校验表
+    /// 已渲染行数与旧模型一致，对不上时整表重载（模型已正确），不
+    /// 带病发 deleteRows（连续删帖闪退同款成因）。
+    func removeDeletedEntry(entryId: String) {
+        guard let row = plazaRaw.firstIndex(where: { $0.id == entryId }) else { return }
+        let oldCount = plazaRaw.count
+        plazaRaw.removeAll { $0.id == entryId }
+        firstPageIds.removeAll { $0 == entryId }
+        guard isViewLoaded else { return }
+        if tableView.numberOfRows(inSection: 0) == oldCount {
+            tableView.deleteRows(at: [IndexPath(row: row, section: 0)], with: .fade)
+        } else {
+            tableView.reloadData()
+        }
+    }
+
     func applyInteraction(entryId: String, likeCount: Int?, likedByMe: Bool?, bookmarkedByMe: Bool?, emotes: [EmoteCount]?) {
         var updated = false
         var likeRemoved = false
@@ -1799,11 +1824,30 @@ class BearyFeedViewController: UIViewController {
             let reported = BearyReportedStore.isReported(entryId: entryId)
             sheet.addAction(UIAlertAction(title: reported ? "已举报" : "举报", style: .default, handler: reported ? nil : { [weak self] _ in
                 guard let strongSelf = self else { return }
+                // 扫荡 D：服务端举报要求登录（未登录调 POST /beary/api/reports 必 401）。
+                // 此前游客点 ⋯ → 举报 → 选完理由才收到“举报失败，请重试”，等于让用户
+                // 白走一趟理由选择；现与卡片点赞/收藏未登录口径对齐：登录态未知先给
+                // 网络不稳定 toast，未登录直接走容器登录门，登录后才进举报流程。
+                if SessionManager.shared.authUnknown {
+                    BearyToast.show(in: strongSelf.view, message: "网络不稳定，请稍后再试")
+                    return
+                }
+                if !SessionManager.shared.isLoggedIn {
+                    strongSelf.onRequireLogin?()
+                    return
+                }
                 BearyReportFlow.present(from: strongSelf, entryId: entryId, entryLabel: nil)
             }))
             if reported {
                 sheet.actions.last?.isEnabled = false
             }
+        }
+        // 扫荡 D：除“取消”外无任何可点项时不 present——正常情况下到不了这里
+        //（卡片 ⋯ 只在本人卡或他人公开卡上显示），但限时篇可在卡片渲染后、
+        // 点 ⋯ 前过期，有效态翻私密后原菜单项全部落空，只剩一张空表。
+        // 注意：他人公开卡本就只有“举报”1 项，故只拦“零项”，不拦“1 项”。
+        if sheet.actions.isEmpty {
+            return
         }
         sheet.addAction(UIAlertAction(title: "取消", style: .cancel))
         if let popover = sheet.popoverPresentationController {

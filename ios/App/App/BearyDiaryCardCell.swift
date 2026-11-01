@@ -641,6 +641,19 @@ class BearyDiaryCardCell: UITableViewCell {
         return v
     }()
 
+    /// 皇冠容器：卡片/详情作者行是 .firstBaseline 栈，纯 UIView 的基线就是底边，
+    /// 皇冠直接进栈时底边钉在名字基线上，中心比名字大写字母中心高约
+    /// (19 − capHeight)/2 ≈ 3.6pt，即肉眼可见的“偏上”。容器与名字等高、
+    /// 底边钉基线，皇冠在容器内居中后中心即落在 cap 中心附近（SF 度量下
+    /// label 高度中心与 cap 中心差 <0.3pt），且等高约束随动态字号自动跟随。
+    /// 隐藏时容器与皇冠同藏，不留 19pt 空位。
+    private let crownWrapView: UIView = {
+        let v = UIView()
+        v.translatesAutoresizingMaskIntoConstraints = false
+        v.isHidden = true
+        return v
+    }()
+
     private let timeLabel: UILabel = {
         let lb = UILabel()
         lb.translatesAutoresizingMaskIntoConstraints = false
@@ -686,7 +699,7 @@ class BearyDiaryCardCell: UITableViewCell {
     }()
 
     private lazy var titleStack: UIStackView = {
-        let st = UIStackView(arrangedSubviews: [nameLabel, badgeImageView, crownView, titleSpacerLabel, timeLabel, weatherImageView, moodStack])
+        let st = UIStackView(arrangedSubviews: [nameLabel, badgeImageView, crownWrapView, titleSpacerLabel, timeLabel, weatherImageView, moodStack])
         st.translatesAutoresizingMaskIntoConstraints = false
         st.axis = .horizontal
         st.spacing = 8
@@ -911,9 +924,11 @@ class BearyDiaryCardCell: UITableViewCell {
         onRequireLogin?()
     }
 
-    private lazy var rightStack: UIStackView = {
+    private lazy var rightStack: BearyPassThroughStackView = {
         quoteView.translatesAutoresizingMaskIntoConstraints = false
-        let st = UIStackView(arrangedSubviews: [recipientRow, titleStack, ephemeralRow, entryTitleLabel, contentLabel, foldButton, quoteView, imagesScrollView, locationStack, actionStack, guestLoginPromptButton, emoteFlowView])
+        let st = BearyPassThroughStackView(arrangedSubviews: [recipientRow, titleStack, ephemeralRow, entryTitleLabel, contentLabel, foldButton, quoteView, imagesScrollView, locationStack, actionStack, guestLoginPromptButton, emoteFlowView])
+        // 清单 18：中间栈透传回应行扩后热区（只认 emoteFlowView 内钮，其他行不动）。
+        st.passThroughRoot = emoteFlowView
         st.translatesAutoresizingMaskIntoConstraints = false
         st.axis = .vertical
         st.alignment = .fill
@@ -1083,6 +1098,13 @@ class BearyDiaryCardCell: UITableViewCell {
         titleSpacerLabel.setContentCompressionResistancePriority(UILayoutPriority(1), for: .horizontal)
         badgeImageView.setContentCompressionResistancePriority(.required, for: .horizontal)
         crownView.setContentCompressionResistancePriority(.required, for: .horizontal)
+        crownWrapView.setContentCompressionResistancePriority(.required, for: .horizontal)
+        // 皇冠在等高容器内居中（容器底边钉基线，中心即 cap 中心）。
+        crownWrapView.addSubview(crownView)
+        NSLayoutConstraint.activate([
+            crownView.centerXAnchor.constraint(equalTo: crownWrapView.centerXAnchor),
+            crownView.centerYAnchor.constraint(equalTo: crownWrapView.centerYAnchor),
+        ])
         weatherImageView.setContentCompressionResistancePriority(.required, for: .horizontal)
         moodStack.setContentCompressionResistancePriority(.required, for: .horizontal)
         let imageHeight = imagesScrollView.heightAnchor.constraint(equalToConstant: 0)
@@ -1111,6 +1133,8 @@ class BearyDiaryCardCell: UITableViewCell {
             extraConstraints.append(badgeImageView.heightAnchor.constraint(equalToConstant: 17))
             extraConstraints.append(crownView.widthAnchor.constraint(equalToConstant: 19))
             extraConstraints.append(crownView.heightAnchor.constraint(equalToConstant: 19))
+            extraConstraints.append(crownWrapView.widthAnchor.constraint(equalToConstant: 19))
+            extraConstraints.append(crownWrapView.heightAnchor.constraint(equalTo: nameLabel.heightAnchor))
             extraConstraints.append(weatherImageView.widthAnchor.constraint(equalToConstant: 15))
             extraConstraints.append(weatherImageView.heightAnchor.constraint(equalToConstant: 15))
         } else {
@@ -1128,6 +1152,12 @@ class BearyDiaryCardCell: UITableViewCell {
             badgeWidth.priority = UILayoutPriority(999)
             let crownWidth = crownView.widthAnchor.constraint(equalToConstant: 19)
             crownWidth.priority = UILayoutPriority(999)
+            let crownWrapWidth = crownWrapView.widthAnchor.constraint(equalToConstant: 19)
+            crownWrapWidth.priority = UILayoutPriority(999)
+            let crownWrapHeight = crownWrapView.heightAnchor.constraint(equalTo: nameLabel.heightAnchor)
+            crownWrapHeight.priority = UILayoutPriority(999)
+            extraConstraints.append(crownWrapWidth)
+            extraConstraints.append(crownWrapHeight)
             let weatherWidth = weatherImageView.widthAnchor.constraint(equalToConstant: 15)
             weatherWidth.priority = UILayoutPriority(999)
             extraConstraints.append(recipientIconView.widthAnchor.constraint(equalToConstant: 13))
@@ -1371,8 +1401,7 @@ class BearyDiaryCardCell: UITableViewCell {
         quoteView.isHidden = true
         badgeImageView.image = nil
         badgeImageView.isHidden = true
-        crownView.isHidden = true
-        crownView.stop()
+        setCrownHidden(true)
         stopWeatherLottie()
         weatherImageView.image = nil
         weatherImageView.isHidden = true
@@ -1665,8 +1694,7 @@ class BearyDiaryCardCell: UITableViewCell {
             badgeImageView.image = nil
             badgeImageView.isHidden = true
         }
-        crownView.isHidden = (entry.authorPlus ?? 0) != 1 || !crownView.hasCrown
-        if crownView.isHidden { crownView.stop() } else { crownView.start() }
+        setCrownHidden((entry.authorPlus ?? 0) != 1 || !crownView.hasCrown)
 
         // F3：时间。广场卡：有效公开（未过期）且有 publishedAt 时显相对时间（“X 分钟前”），否则绝对时间。
         if BearyEphemeral.isEffectivelyPublic(entry), let relative = BearyVisibilityText.publishedRelativeString(publishedAtMs: entry.publishedAt) {
@@ -1823,11 +1851,17 @@ class BearyDiaryCardCell: UITableViewCell {
         updateRightStackSpacing()
     }
 
+    /// 皇冠显隐唯一入口：容器与皇冠同藏同显，容器留在栈内时不留 19pt 空位。
+    private func setCrownHidden(_ hidden: Bool) {
+        crownWrapView.isHidden = hidden
+        crownView.isHidden = hidden
+        if hidden { crownView.stop() } else { crownView.start() }
+    }
+
     private func rowCrownHiddenUpdate(entry: Entry) {
         // 个人主页原口径：authorPlus==0 即隐藏；合并后补 Feed 的资产缺失守卫
         // （资产缺失时不再留 19pt 空盒，资产在时行为一字不动）。
-        crownView.isHidden = (entry.authorPlus ?? 0) == 0 || !crownView.hasCrown
-        if crownView.isHidden { crownView.stop() } else { crownView.start() }
+        setCrownHidden((entry.authorPlus ?? 0) == 0 || !crownView.hasCrown)
     }
 
     // MARK: - 图片条（94 包槽位复用，两页同款；失败重试 Feed 口径）
@@ -2360,16 +2394,28 @@ class BearyDiaryCardCell: UITableViewCell {
         refreshActionAccessibility()
     }
 
-    /// F7/F8（首页模式）：首页与详情互动门控统一为 isPublic == true 才可互动（详情同口径）。
+    /// 作者本人判定（现行口径复用，不新造：isMine 为 true，或 authorId == 当前登录用户 id；
+    /// 详情 BearyDetailViewController.init 与本文件引用卡 viewerIsAuthor 同款 OR 口径）。
+    private func isEntryAuthor(_ entry: Entry) -> Bool {
+        if entry.isMine == true { return true }
+        if let aid = entry.authorId, let uid = SessionManager.shared.currentUser?.id { return aid == uid }
+        return false
+    }
+
+    /// 2026-10-31 私密自互动口径：点赞／收藏门控为“有效公开 或 作者本人”（详情同口径）；
+    /// 分享不动，仍仅有效公开才有。注意：后端目前仍以 published=1 拦私密互动（见 PR 说明），
+    /// 作者私密点赞／收藏的服务端请求仍会 404 并走既有失败回滚，本处只改 App 侧放行。
+    /// F7/F8（首页模式）：首页与详情互动门控统一为上述口径。
     private func updateActionInteractivity() {
-        // 审计 P0-4：有效态门控（过期限时篇不放行点赞/收藏/分享）。
+        // 审计 P0-4：有效态门控（过期限时篇不放行点赞/收藏/分享；作者本人例外只放行点赞/收藏）。
         // 2026-10-29 及时性口径：在途请求不再禁用按钮——快连点每次都必须立即
         // 落地，防重入只靠代次守卫，不靠按钮禁用。
         let publicOK = currentEntry.map(BearyEphemeral.isEffectivelyPublic) ?? false
-        likeButton.isEnabled = publicOK
-        bookmarkButton.isEnabled = publicOK
-        likeButton.alpha = publicOK ? 1.0 : 0.4
-        bookmarkButton.alpha = publicOK ? 1.0 : 0.4
+        let interactOK = publicOK || (currentEntry.map(isEntryAuthor) ?? false)
+        likeButton.isEnabled = interactOK
+        bookmarkButton.isEnabled = interactOK
+        likeButton.alpha = interactOK ? 1.0 : 0.4
+        bookmarkButton.alpha = interactOK ? 1.0 : 0.4
         // 网页口径：shBtn 仅 is_public 时输出——非公开卡直接没有分享钮（不禁用占位）。
         shareButton.isHidden = publicOK == false
         shareSlotSpacer.isHidden = !shareButton.isHidden
@@ -2597,7 +2643,8 @@ class BearyDiaryCardCell: UITableViewCell {
         }
         // 及时性口径：按下预览不拿在途请求门控——在途时按下仍按当前
         // （最新点按态）模型给预览，抬起取消时复原到同一模型。
-        guard currentEntry.map(BearyEphemeral.isEffectivelyPublic) ?? false else { return }
+        // 2026-10-31 私密自互动口径：按下预览守卫与抬起确认同款（有效公开 或 作者本人）。
+        guard currentEntry.map({ BearyEphemeral.isEffectivelyPublic($0) || isEntryAuthor($0) }) ?? false else { return }
         guard SessionManager.shared.isLoggedIn else { return }
         guard let entryIdValue = cellEntryId, !entryIdValue.isEmpty else { return }
         if currentEntry?.likedByMe == true {
@@ -2658,7 +2705,7 @@ class BearyDiaryCardCell: UITableViewCell {
             if hadPressPreview { restorePressPreview() }
             return
         }
-        if !(currentEntry.map(BearyEphemeral.isEffectivelyPublic) ?? false) {
+        if !(currentEntry.map({ BearyEphemeral.isEffectivelyPublic($0) || isEntryAuthor($0) }) ?? false) {
             if hadPressPreview { restorePressPreview() }
             return
         }
@@ -2752,7 +2799,7 @@ class BearyDiaryCardCell: UITableViewCell {
     /// 成功后以服务端值为准并经控制器全副本同步。
     private func feedBookmarkTapped() {
         guard let entryIdValue = cellEntryId, !entryIdValue.isEmpty else { return }
-        if !(currentEntry.map(BearyEphemeral.isEffectivelyPublic) ?? false) { return }
+        if !(currentEntry.map({ BearyEphemeral.isEffectivelyPublic($0) || isEntryAuthor($0) }) ?? false) { return }
         if SessionManager.shared.isLoggedIn == false {
             onRequireLogin?()
             return

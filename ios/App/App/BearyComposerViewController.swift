@@ -148,6 +148,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
 
     /// 心情顺序 = 熊脸 32 只（BearyText.bearMoodKeys；后 8 只非熊脸已删，
     /// 不进选择器、不进记号集，见 BearyText 内联心情记号注释）。
+    /// 与 main 原硬编码 32 只集合逐项一致，改走单一来源，防两处漂移。
     private let moodOrder: [String] = BearyText.bearMoodKeys
 
     /// 天气顺序：与 BearyText.weatherNames 字面顺序一致（勿用字典 keys 排序，会打乱顺序）。
@@ -667,9 +668,6 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     // 临时诊断（天气条 10/28，定根因后删除）：上一次已记录的布局后条带签名，
     // 用于 postLayout mark 只在条带状态/几何变化时记一次，避免每次布局都刷屏。
     private var lastPostLayoutStripSig: String = ""
-    // 临时诊断（天气条 10/28 第二批，定根因后删除）：上一次已记录的“晴”钮展开详情签名，
-    // 与 postLayout mark 同频（仅签名变化时记第一时点），避免每布局刷屏。
-    private var lastWeatherDetailSig: String = ""
 
     override func viewDidLayoutSubviews() {
         super.viewDidLayoutSubviews()
@@ -700,44 +698,6 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         if stripSig != lastPostLayoutStripSig {
             lastPostLayoutStripSig = stripSig
             DiagFile.mark("weather-diag postLayout weatherHidden=\(weatherScrollView.isHidden) weatherFrame=\(weatherScrollView.frame) stackFrame=\(toolStripStack.frame) contentSize=\(weatherScrollView.contentSize) btnCount=\(weatherEmoteViews.count) firstBtnFrame=\(weatherStackView.arrangedSubviews.first?.frame ?? .zero)")
-        }
-        // 临时诊断（天气条 10/28 第二批，定根因后删除）：“晴”钮两时点全量状态。
-        // 展开口径与 updateWeatherPlayback 的 rowVisible 一致；对象取 weatherButtons[1]
-        //（[0] 为无图标的“无”，[1] 为首个带图标钮“晴”），对应播放器按 key 映射，不硬编码。
-        // 第一时点：条带展开后的布局完成时，与 postLayout mark 同频（仅签名变化时记）。
-        // 第二时点：attachCachedEmote 完成后的下一次布局完成时（一次性标志取后即清零，
-        // 每布局都取、避免条带关闭后残留旧标志）；含当前动画帧与静态帧，其余字段与第一时点相同。
-        if weatherButtons.count > 1 {
-            let sunKey = weatherButtons[1].key
-            let sunEmoteView = weatherEmoteViews.first(where: { $0.key == sunKey })?.emoteView
-            let postAttach = sunEmoteView?.diagTakeAttachPending() ?? false
-            let stripExpanded = activeToolStrip == .weather && !quotePanelOpen && !weatherScrollView.isHidden
-            if stripExpanded, (postAttach || stripSig != lastWeatherDetailSig) {
-                lastWeatherDetailSig = stripSig
-                let sunButton = weatherButtons[1].button
-                let imageViewDesc: String
-                if let iv = sunButton.imageView {
-                    imageViewDesc = "frame=\(iv.frame) bounds=\(iv.bounds) hidden=\(iv.isHidden) alpha=\(iv.alpha) clips=\(iv.clipsToBounds) imageIsNil=\(iv.image == nil)"
-                } else {
-                    imageViewDesc = "nil"
-                }
-                let emoteDesc: String
-                let contentDesc: String
-                var frameSuffix = ""
-                if let emoteView = sunEmoteView {
-                    emoteDesc = "frame=\(emoteView.frame) bounds=\(emoteView.bounds) hidden=\(emoteView.isHidden) alpha=\(emoteView.alpha) windowIsNil=\(emoteView.window == nil) superviewIsImageView=\(emoteView.superview === sunButton.imageView)"
-                    let state = emoteView.diagContentState()
-                    contentDesc = "kind=\(state.kind) frame=\(state.frame) imageIsNil=\(String(describing: state.imageIsNil)) currentFrame=\(String(describing: state.currentFrame))"
-                    if postAttach {
-                        frameSuffix = " currentFrame=\(String(describing: state.currentFrame)) staticFrame=\(String(describing: state.staticFrame))"
-                    }
-                } else {
-                    emoteDesc = "nil"
-                    contentDesc = "nil"
-                }
-                let tag = postAttach ? "postAttach-detail" : "expanded-detail"
-                DiagFile.mark("weather-diag \(tag) scrollFrame=\(weatherScrollView.frame) scrollBounds=\(weatherScrollView.bounds) scrollContentSize=\(weatherScrollView.contentSize) scrollContentOffset=\(weatherScrollView.contentOffset) scrollHidden=\(weatherScrollView.isHidden) scrollAlpha=\(weatherScrollView.alpha) stackFrame=\(weatherStackView.frame) stackBounds=\(weatherStackView.bounds) stackHidden=\(weatherStackView.isHidden) stackAlpha=\(weatherStackView.alpha) btnFrame=\(sunButton.frame) btnBounds=\(sunButton.bounds) btnHidden=\(sunButton.isHidden) btnAlpha=\(sunButton.alpha) btnClips=\(sunButton.clipsToBounds) btnImageIsNil=\(sunButton.currentImage == nil) imageView[\(imageViewDesc)] emote[\(emoteDesc)] content[\(contentDesc)]\(frameSuffix)")
-            }
         }
         let w = view.bounds.width
         guard w > 0, w != lastLayoutWidth else {
@@ -4517,9 +4477,8 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         container.isUserInteractionEnabled = true
         let tap = UITapGestureRecognizer(target: self, action: #selector(didTapImageItem(_:)))
         container.addGestureRecognizer(tap)
-        let spinner = BearyRefreshIconView()
-        // 图片上传转圈与下拉/加载同款 icon_refresh（#224 误把 icon_restore 当刷新图标，已回退；icon_restore 是垃圾桶+回旋箭头的回收站恢复图标，不得用于加载/重试）。
-        spinner.image = BearyIconImages.image(named: "icon_refresh", pointSize: 32)
+        // 图片上传转圈改网页同款圆环（不再用下拉刷新那套 icon_refresh）。
+        let spinner = BearyWebRingSpinnerView()
         // 失败态：行内红底块（网页 thumb-fail 同款：红 10% 底 + 图标 + “失败，点我重试”），
         // 点块重试，不弹全局框；发布时有失败图直接 toast 拦截（决议第 5 项 A），不弹框。
         let failView = UIView()
@@ -6520,11 +6479,11 @@ private final class ComposerImageItem {
     var failed: Bool
     let container: UIView
     let imageView: UIImageView
-    let spinner: BearyRefreshIconView
+    let spinner: BearyWebRingSpinnerView
     let failView: UIView
     let removeButton: UIButton
 
-    init(key: String?, uploading: Bool, localFile: String?, failed: Bool, container: UIView, imageView: UIImageView, spinner: BearyRefreshIconView, failView: UIView, removeButton: UIButton) {
+    init(key: String?, uploading: Bool, localFile: String?, failed: Bool, container: UIView, imageView: UIImageView, spinner: BearyWebRingSpinnerView, failView: UIView, removeButton: UIButton) {
         self.key = key
         self.uploading = uploading
         self.localFile = localFile

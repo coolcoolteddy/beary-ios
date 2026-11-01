@@ -90,20 +90,34 @@ enum BlindBoxPoolEligibility {
     case eligible
     case privateEntry
     case tooNew
+    case capsuleLocked
 
     var disabledReason: String? {
         switch self {
         case .eligible: return nil
         case .privateEntry: return "私密篇不可入池"
         case .tooNew: return "今日公开，明日可入池"
+        case .capsuleLocked: return "时间胶囊未解锁，不可入池"
         }
     }
 }
 
 enum BlindBoxPool {
     /// 旧公开 = 已公开且 published_at 早于今日 00:00；私密与当日新公开一律置灰禁用。
+    /// 扫荡 C：未解锁的时间胶囊同样置灰禁用——服务端 /blindbox/pool 对
+    /// capsule_locked 明确 400 拒绝（见 worker.js pool 段），此前 App 端只按
+    /// 公开 / 新旧判定，埋了胶囊且未到解锁日的旧公开篇会显示为可入池，
+    /// 点入池只拿到通用失败 toast。解锁日期判定复用 BearyTimeCapsule 的
+    /// 日粒度口径（now >= 解锁日 00:00 即已到日期条件；入池不验区级，
+    /// 与服务端只验时间锁一致）；解锁日期缺失 / 解析失败时无法在端侧
+    /// 证实锁定，按可入池处理、服务端为最终门（失败文案见 actionErrorText）。
     static func eligibility(for entry: Entry) -> BlindBoxPoolEligibility {
         guard entry.isPublic == true else { return .privateEntry }
+        if BearyTimeCapsule.isBuried(entry),
+           let unlockDate = BearyTimeCapsule.date(from: entry.capsuleUnlockDate),
+           !BearyTimeCapsule.isDateReached(unlockDate: unlockDate) {
+            return .capsuleLocked
+        }
         let published = entry.publishedAt ?? entry.createdAt ?? 0
         if published <= 0 || published >= BlindBoxDate.todayStartMs() { return .tooNew }
         return .eligible

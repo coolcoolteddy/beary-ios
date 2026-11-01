@@ -57,7 +57,13 @@ enum BearyProfilePersonalLogic {
             guard let id = entry.id, !id.isEmpty else { return false }
             guard entry.placeholder != true else { return false }
             if isOwn { return true }
-            return entry.isPublic == true
+            // 扫荡 C：他人态按有效公开判定（BearyEphemeral 全 App 唯一口径），
+            // 而非裸 isPublic——限时日记过期后按普通私密算（读时判定、无 sweep），
+            // 旧口径会把“已公开但限时已过期”的篇计入他人统计 / 词汇指纹 / 年度回顾。
+            // 当前调用链（个人模块语料仅本人页拉取、他人页模块不拉语料；作者
+            // scope 服务端已滤过期篇）下此改不改变线上行为，属纵深防御：
+            // 语料在过期前拉取、过期后仍在内存时，他人聚合不再把过期篇算进去。
+            return BearyEphemeral.isEffectivelyPublic(entry)
         }
     }
 
@@ -227,8 +233,15 @@ enum BearyProfilePersonalLogic {
     // MARK: - 年度回顾
 
     /// 当年条目（本地年），createdAt 降序。
+    /// 清单第 10 项：胶囊篇排除（与写作统计、那年今日同谓词
+    /// BearyTimeCapsule.isExcludedFromStats，即 capsuleBuried == 1，埋了即排除、
+    /// 不论解锁与否，取消埋藏后重新计入）。本函数是年度回顾总篇数、最长连续、
+    /// 心情分布与词汇指纹的共同源头——年报首屏与词汇指纹内部均经它取当年条目，
+    /// 故一处过滤即覆盖四处；年度回顾入口卡的“今年已写 N 篇”也随之变小，
+    /// Li 拍板接受（会小于实际写作篇数）。
     static func yearEntries(entries: [Entry], year: Int, calendar: Calendar) -> [Entry] {
         entries.filter { entry in
+            guard !BearyTimeCapsule.isExcludedFromStats(entry) else { return false }
             guard let createdAt = entry.createdAt else { return false }
             let date = Date(timeIntervalSince1970: TimeInterval(createdAt) / 1000)
             return calendar.component(.year, from: date) == year

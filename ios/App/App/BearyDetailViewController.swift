@@ -32,6 +32,36 @@
 
 import UIKit
 
+/// 详情限时虚线边框视图（116 详情框修）：自身按 bounds 重画虚线路径，
+/// 不再由控制器在布局时手动算矩形——右列高度落定（引用加载、回应行出现）
+/// 后 bounds 一变就重画，框底不再切穿“＋”回应钮。
+/// 口径不变：1.5pt、虚线 [4,3]、圆角 16、line 色；不拦截点按；深浅切换自刷描边色。
+final class BearyDetailDashedBorderView: UIView {
+    private let borderLayer = CAShapeLayer()
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        isUserInteractionEnabled = false
+        backgroundColor = .clear
+        borderLayer.fillColor = UIColor.clear.cgColor
+        borderLayer.lineWidth = 1.5
+        borderLayer.lineDashPattern = [4, 3]
+        borderLayer.strokeColor = BearyColors.line.cgColor
+        layer.addSublayer(borderLayer)
+    }
+    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        borderLayer.frame = bounds
+        borderLayer.path = UIBezierPath(roundedRect: bounds, cornerRadius: 16).cgPath
+    }
+    override func traitCollectionDidChange(_ previousTraitCollection: UITraitCollection?) {
+        super.traitCollectionDidChange(previousTraitCollection)
+        if traitCollection.hasDifferentColorAppearance(comparedTo: previousTraitCollection) {
+            borderLayer.strokeColor = BearyColors.line.cgColor
+        }
+    }
+}
+
 final class BearyDetailViewController: UIViewController {
 
     // MARK: - 回调（容器 SceneDelegate 接线）
@@ -99,7 +129,7 @@ final class BearyDetailViewController: UIViewController {
     private let contentColumnView = UIView()
     /// 批 B 右列：首页卡片 rightStack 同款（spacing 0 + setCustomSpacing 对照表，
     /// 见 updateRightStackSpacing；顶距由 rightStackTopConstraint 动态定 22/23）。
-    private let rightStack = UIStackView()
+    private let rightStack = BearyPassThroughStackView()
     private var rightStackTopConstraint: NSLayoutConstraint?
     private var rightStackTrailingConstraint: NSLayoutConstraint?
     private let separatorView = UIView()
@@ -165,6 +195,16 @@ final class BearyDetailViewController: UIViewController {
         v.isHidden = true
         return v
     }()
+
+    /// 皇冠容器（卡片同款原因：作者行是 .firstBaseline 栈，纯 UIView 基线即底边，
+    /// 皇冠直接进栈时底边钉在名字基线上、中心比 cap 中心高约 3.6pt）。
+    /// 容器与名字按钮等高、底边钉基线，皇冠在内居中后中心即 cap 中心。
+    private let crownWrapView: UIView = {
+        let v = UIView()
+        v.translatesAutoresizingMaskIntoConstraints = false
+        v.isHidden = true
+        return v
+    }()
     private let titleSpacerLabel: UILabel = {
         let lb = UILabel()
         lb.translatesAutoresizingMaskIntoConstraints = false
@@ -209,7 +249,7 @@ final class BearyDetailViewController: UIViewController {
     }()
     private var moodEmoteView: BearyEmoteView?
     private lazy var authorRow: UIStackView = {
-        let st = UIStackView(arrangedSubviews: [nameButton, badgeImageView, crownView, titleSpacerLabel, timeLabel, weatherImageView, moodStack])
+        let st = UIStackView(arrangedSubviews: [nameButton, badgeImageView, crownWrapView, titleSpacerLabel, timeLabel, weatherImageView, moodStack])
         st.translatesAutoresizingMaskIntoConstraints = false
         st.axis = .horizontal
         st.spacing = 8
@@ -307,6 +347,10 @@ final class BearyDetailViewController: UIViewController {
     /// 无回应钮；分享非公开隐藏时 shareSlotSpacer 占位 21pt，防收藏钮滑位）。
     private let actionStack = UIStackView()
     private let likeButton = BearyHit44Button(type: .custom)
+    /// 赞钮显式宽约束（卡片同款）：按钮固有宽不含标题边距，栈按固有宽给帧时
+    /// 标题框只剩边距差，数字会被裁成左半弧（115 详情页 0 赞残影实证）；
+    /// 故宽度一律显式算：图标宽（0 赞时）或图标宽 + 6 + 标题宽（有赞时）。
+    private var likeButtonWidthConstraint: NSLayoutConstraint?
     private let bookmarkButton = BearyHit44Button(type: .custom)
     private let shareButton = BearyHit44Button(type: .custom)
     private lazy var shareSlotSpacer: UIView = {
@@ -347,19 +391,15 @@ final class BearyDetailViewController: UIViewController {
         return st
     }()
 
-    /// 限时详情虚线边框（CAShapeLayer，1.5pt dashed、line 色、圆角 16；
-    /// 批 B：按首页卡片口径按内容列内缩 8/6 矩形重画路径（旧详情按整列 bounds，
-    /// 框贴边；现与卡片一致）；109：框底改按右列底 +16 收底（见
-    /// updateEphemeralBorderPath），主题切换重刷描边色；插在 contentColumnView
-    /// 图层最底层，不盖内容；存活期底线藏、边框代之）。
-    private let ephemeralBorderLayer: CAShapeLayer = {
-        let layer = CAShapeLayer()
-        layer.fillColor = UIColor.clear.cgColor
-        layer.lineWidth = 1.5
-        layer.lineDashPattern = [4, 3]
-        layer.strokeColor = BearyColors.line.cgColor
-        layer.isHidden = true
-        return layer
+    /// 限时详情虚线边框视图（116 详情框修，取代旧 CAShapeLayer 手动算矩形）：
+    /// 约束钉在内容列上（顶 +6、左右内缩 8、底按右列底 +16），
+    /// 自身 layoutSubviews 按 bounds 重画，右列高度落定后框底跟着走；
+    /// 插在 contentColumnView 最底层，不盖内容、不拦截点按；存活期底线藏、边框代之。
+    private let ephemeralBorderView: BearyDetailDashedBorderView = {
+        let v = BearyDetailDashedBorderView()
+        v.translatesAutoresizingMaskIntoConstraints = false
+        v.isHidden = true
+        return v
     }()
     private var imageKeys: [String] = []
 
@@ -458,14 +498,14 @@ final class BearyDetailViewController: UIViewController {
         }
     }
 
-    /// 深浅切换：虚线边框描边色是 CGColor 快照（updateEphemeralBorderPath 内
-    /// 重赋），色貌变化时重画；小地球图标走 template + 动态灰 tint，系统自动跟随，
-    /// 无需重设；心情播放器内部自带 trait 重刷。
+    /// 深浅切换：虚线边框视图内部自刷描边色（BearyDetailDashedBorderView
+    /// traitCollectionDidChange），控制器不再手动重画；小地球图标走 template +
+    /// 动态灰 tint，系统自动跟随，无需重设；心情播放器内部自带 trait 重刷。
+    /// 但正文内联心情附件的深浅变体仍需控制器重建：主题切换时正文末尾
+    /// 心情附件需换深浅变体，否则旧心情图停留在旧色貌。
     override func traitCollectionDidChange(_ previousTraitCollection: UITraitCollection?) {
         super.traitCollectionDidChange(previousTraitCollection)
         if traitCollection.hasDifferentColorAppearance(comparedTo: previousTraitCollection) {
-            updateEphemeralBorderPath()
-            // 旧心情改位：主题切换时正文末尾心情附件需换深浅变体。
             bodyLabel.attributedText = detailBodyAttributedText(entry.content ?? "", moodKey: entry.mood)
         }
     }
@@ -482,7 +522,6 @@ final class BearyDetailViewController: UIViewController {
             columnWideWidth?.isActive = wantWide
             columnWideCenterX?.isActive = wantWide
         }
-        updateEphemeralBorderPath()
         // 批 B：回应行宽 = 右列宽（旧详情按整列宽算，右列窄 52pt 时会少算换行、
         // 行高偏矮；现按 rightStack 实测宽算，与首页卡片同口径）。
         let width = rightStack.bounds.width
@@ -517,6 +556,8 @@ final class BearyDetailViewController: UIViewController {
         rightStack.spacing = 0
         rightStack.alignment = .fill
         rightStack.distribution = .fill
+        // 清单 18：中间栈透传回应行扩后热区（只认 emoteFlowView 内钮，其他行不动）。
+        rightStack.passThroughRoot = emoteFlowView
         contentColumnView.addSubview(rightStack)
 
         separatorView.translatesAutoresizingMaskIntoConstraints = false
@@ -653,6 +694,19 @@ final class BearyDetailViewController: UIViewController {
         titleSpacerLabel.setContentCompressionResistancePriority(UILayoutPriority(1), for: .horizontal)
         badgeImageView.setContentCompressionResistancePriority(.required, for: .horizontal)
         crownView.setContentCompressionResistancePriority(.required, for: .horizontal)
+        crownWrapView.setContentCompressionResistancePriority(.required, for: .horizontal)
+        // 皇冠在等高容器内居中（容器底边钉基线，中心即 cap 中心）。
+        crownWrapView.addSubview(crownView)
+        let crownWrapWidth = crownWrapView.widthAnchor.constraint(equalToConstant: 19)
+        crownWrapWidth.priority = UILayoutPriority(999)
+        let crownWrapHeight = crownWrapView.heightAnchor.constraint(equalTo: nameButton.heightAnchor)
+        crownWrapHeight.priority = UILayoutPriority(999)
+        NSLayoutConstraint.activate([
+            crownView.centerXAnchor.constraint(equalTo: crownWrapView.centerXAnchor),
+            crownView.centerYAnchor.constraint(equalTo: crownWrapView.centerYAnchor),
+            crownWrapWidth,
+            crownWrapHeight,
+        ])
         weatherImageView.setContentCompressionResistancePriority(.required, for: .horizontal)
         moodStack.setContentCompressionResistancePriority(.required, for: .horizontal)
         // 隐藏子视图的固定尺寸用 999 优先级，避免与 stack 压零冲突（首页同款）。
@@ -695,9 +749,18 @@ final class BearyDetailViewController: UIViewController {
 
     private func buildEphemeralRow() {
         // 限时倒计时行：只留倒计时灰字，位置在作者行下方、标题上方（与卡片同口径）；
-        // 虚线边框插 contentColumnView 图层最底层，框住内容列内缩矩形。
+        // 虚线边框视图挂 contentColumnView 最底层，约束钉住内容列矩形
+        // （顶 +6、左右内缩 8、底按右列底 +16），右列高度一变框就跟着变，
+        // 不再依赖布局时手动算矩形的旧时机（旧时机下回应行高度落定后框底
+        // 仍停在旧位置，正好切穿“＋”回应钮）。
         rightStack.addArrangedSubview(ephemeralRow)
-        contentColumnView.layer.insertSublayer(ephemeralBorderLayer, at: 0)
+        contentColumnView.insertSubview(ephemeralBorderView, at: 0)
+        NSLayoutConstraint.activate([
+            ephemeralBorderView.topAnchor.constraint(equalTo: contentColumnView.topAnchor, constant: 6),
+            ephemeralBorderView.leadingAnchor.constraint(equalTo: contentColumnView.leadingAnchor, constant: 8),
+            ephemeralBorderView.trailingAnchor.constraint(equalTo: contentColumnView.trailingAnchor, constant: -8),
+            ephemeralBorderView.bottomAnchor.constraint(equalTo: rightStack.bottomAnchor, constant: 16),
+        ])
     }
 
     private func buildBody() {
@@ -792,6 +855,11 @@ final class BearyDetailViewController: UIViewController {
         likeButton.adjustsImageWhenHighlighted = false
         likeButton.addTarget(self, action: #selector(likeTapped), for: .touchUpInside)
         likeButton.bearyAddPressFeedback()
+        // 显式宽约束（卡片同款，见 likeButtonWidthConstraint 注释）：初始只图标宽，
+        // refreshActionRow 按赞数重算；不靠按钮固有宽，防数字被裁成左半弧。
+        let likeWidth = likeButton.widthAnchor.constraint(equalToConstant: 22)
+        likeWidth.isActive = true
+        likeButtonWidthConstraint = likeWidth
 
         // 批 B：收藏／分享均为纯图标（首页同款，收藏去中文标签）；尺寸 21。
         bookmarkButton.translatesAutoresizingMaskIntoConstraints = false
@@ -1004,8 +1072,7 @@ final class BearyDetailViewController: UIViewController {
             badgeImageView.image = nil
             badgeImageView.isHidden = true
         }
-        crownView.isHidden = (entry.authorPlus ?? 0) != 1 || !crownView.hasCrown
-        if crownView.isHidden { crownView.stop() } else { crownView.start() }
+        setCrownHidden((entry.authorPlus ?? 0) != 1 || !crownView.hasCrown)
         if let weatherKey = entry.weather, !weatherKey.isEmpty,
            let weatherImage = BearyFeedIconCache.image(named: "icon_wx_" + weatherKey, pointSize: 15) {
             weatherImageView.image = weatherImage
@@ -1033,6 +1100,43 @@ final class BearyDetailViewController: UIViewController {
     /// 仍是先行态，而非已被覆盖的服务端旧值。字段级比对以合并后模型为准，
     /// 在途字段天然与旧值相等、不会误刷对应区；私密占位切换（内容→占位）
     /// 不受在途保护限制，隐私优先。id 不符的回包直接忽略（防御）。
+    /// 116 数据填入动效：后台补齐导致文案变化时只淡入该元素本身
+    /// （alpha 0→1、0.25s，不动 transform／布局、不重建节点、不缩放
+    /// 弹一下）；减动效或未进窗口时直设终值。本函数只在 update(with:)
+    /// 的变化分支里调用——初始 renderAll（首帧）与点赞操作行（已有
+    /// 爆点／即时反馈）不走这里，避免首帧延迟与操作反馈冲突。
+    private func fadeLabel(_ label: UILabel?) {
+        guard let label = label else { return }
+        guard !UIAccessibility.isReduceMotionEnabled, label.window != nil else {
+            label.alpha = 1
+            return
+        }
+        label.alpha = 0
+        UIView.animate(withDuration: 0.25, delay: 0, options: [.curveEaseOut, .beginFromCurrentState], animations: {
+            label.alpha = 1
+        })
+    }
+
+    private func fadeButtonTitle(_ button: UIButton) {
+        guard !UIAccessibility.isReduceMotionEnabled, button.window != nil,
+              let titleLabel = button.titleLabel else { return }
+        titleLabel.alpha = 0
+        UIView.animate(withDuration: 0.25, delay: 0, options: [.curveEaseOut, .beginFromCurrentState], animations: {
+            titleLabel.alpha = 1
+        })
+    }
+
+    private func fadeView(_ view: UIView) {
+        guard !UIAccessibility.isReduceMotionEnabled, view.window != nil else {
+            view.alpha = 1
+            return
+        }
+        view.alpha = 0
+        UIView.animate(withDuration: 0.25, delay: 0, options: [.curveEaseOut, .beginFromCurrentState], animations: {
+            view.alpha = 1
+        })
+    }
+
     func update(with fetched: Entry) {
         // 审计 P2-20：页内已因拉黑/举报转占位时，后台补齐一律忽略，不得复活全文。
         if locallyHiddenByModeration { return }
@@ -1078,16 +1182,27 @@ final class BearyDetailViewController: UIViewController {
         placeholderStateView.isHidden = true
         if old.authorName != merged.authorName || old.createdAt != merged.createdAt || old.authorAvatar != merged.authorAvatar || old.authorBadge != merged.authorBadge || old.authorPlus != merged.authorPlus || old.mood != merged.mood || old.weather != merged.weather || old.mentionedName != merged.mentionedName || old.mentionedUserId != merged.mentionedUserId {
             renderHeaderMeta()
+            // 116：头信息文案变化时只淡入文案元素（头像图与徽章／天气／
+            // 心情图标为图片，到达即显，不在此淡入）。
+            fadeButtonTitle(nameButton)
+            fadeLabel(timeLabel)
+            fadeLabel(recipientLabel)
+            fadeLabel(moodLabel)
         }
         if old.title != merged.title {
             let trimmedTitle = (merged.title ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
             titleLabel.attributedText = trimmedTitle.isEmpty ? nil : BearyText.inlineAttributedText(from: trimmedTitle, font: BearyDynamicType.cardTitleFont(), color: BearyColors.ink, paragraphStyle: nil, dark: traitCollection.userInterfaceStyle == .dark)
             titleLabel.isHidden = trimmedTitle.isEmpty
+            if !trimmedTitle.isEmpty { fadeLabel(titleLabel) }
         }
         if old.content != merged.content || old.mood != merged.mood {
-            // 心情只变时也要重建正文，否则新心情附件缀不上旧正文。
+            // 心情只变时也要重建正文，否则新心情附件缀不上旧正文；
+            // 必须走 detailBodyAttributedText（内联记号转图 + 旧心情缀末尾），
+            // 不能退回纯文本，否则记号原串会直接露出来。
             bodyLabel.attributedText = detailBodyAttributedText(merged.content ?? "", moodKey: merged.mood)
             bodyLabel.isHidden = (merged.content ?? "").isEmpty && (merged.mood ?? "").isEmpty
+            // 116：后台补齐文案变化时只淡入文案元素。
+            if !bodyLabel.isHidden { fadeLabel(bodyLabel) }
         }
         if (old.images ?? []) != (merged.images ?? []) {
             renderImages()
@@ -1100,6 +1215,8 @@ final class BearyDetailViewController: UIViewController {
         let newQuote = merged.quote
         if oldQuote?.id != newQuote?.id || oldQuote?.content != newQuote?.content || oldQuote?.gone != newQuote?.gone || oldQuote?.locked != newQuote?.locked || oldQuote?.isPublic != newQuote?.isPublic {
             renderQuote()
+            // 116：引用卡内容变化时只淡入卡片本身。
+            if !quoteView.isHidden { fadeView(quoteView) }
         }
         // 元组数组无 Equatable，逐项比对（nil 与空均视作无回应，渲染同态，不多刷）。
         // 在途字段已在合并时保留本地值，故此处比对天然跳过在途区，无需另设 busy 门控。
@@ -1210,39 +1327,19 @@ final class BearyDetailViewController: UIViewController {
             ephemeralLabel.text = nil
             ephemeralRow.isHidden = true
         }
-        ephemeralBorderLayer.isHidden = !live
+        ephemeralBorderView.isHidden = !live
         separatorView.isHidden = live
-        updateEphemeralBorderPath()
-    }
-
-    private func updateEphemeralBorderPath() {
-        guard !ephemeralBorderLayer.isHidden else { return }
-        ephemeralBorderLayer.strokeColor = BearyColors.line.cgColor
-        ephemeralBorderLayer.frame = contentColumnView.bounds
-        // 109：框顶仍按内容列 +6、左右内缩 8；框底改按右列底 +16 收底
-        // （rightStack 是 contentColumnView 的直接子视图，frame.maxY 即列内坐标）。
-        // 此前按内容列 insetBy(dx:8, dy:6)：框底 = 右列底 +32（底线约束：
-        // 右列底→底线 12 + 线高 2 + 线下 24 = 38，框底 = 列底 −6），
-        // 框顶在右列顶上方 16，上下留白不对称。底线约束、非限时态、
-        // 首页卡片均不动；首帧未布局时（右列 frame 仍为 0）沿用旧内缩矩形，
-        // viewDidLayoutSubviews 会按实测 frame 重画。
-        let boxTop = contentColumnView.bounds.minY + 6
-        let boxRect: CGRect
-        if rightStack.frame.maxY > 0 {
-            boxRect = CGRect(
-                x: contentColumnView.bounds.minX + 8,
-                y: boxTop,
-                width: contentColumnView.bounds.width - 16,
-                height: rightStack.frame.maxY + 16 - boxTop
-            )
-        } else {
-            boxRect = contentColumnView.bounds.insetBy(dx: 8, dy: 6)
-        }
-        ephemeralBorderLayer.path = UIBezierPath(roundedRect: boxRect, cornerRadius: 16).cgPath
     }
 
     /// 作者行右侧显隐：本人卡显小地球、右列右缩进 −36 让位；他人／游客无地球、
     /// 右列恢复 0。游客永非作者，到不了本人分支。
+    /// 皇冠显隐唯一入口：容器与皇冠同藏同显，不留 19pt 空位。
+    private func setCrownHidden(_ hidden: Bool) {
+        crownWrapView.isHidden = hidden
+        crownView.isHidden = hidden
+        if hidden { crownView.stop() } else { crownView.start() }
+    }
+
     private func refreshAuthorActions() {
         // 2026-10-31：⋯ 显隐——本人卡（编辑／修改权限／删除）或他人公开卡
         // （举报／拉黑）显；游客与占位态（他人私密）无菜单项，藏；右列右缩进
@@ -1389,9 +1486,9 @@ final class BearyDetailViewController: UIViewController {
 
     /// 点赞点亮走红色、收藏点亮走橙色，与现有先行反馈口径；数字只 setTitle，不重建行。
     /// 批 B 操作行（首页同款）：赞左 + spacer + 收藏分享右组，无回应钮；
-    /// 收藏纯图标（无中文标签）；赞数恒显（含 0，预览口径——注意：首页卡片实测
-    /// 代码在 0 赞时藏数字，本批按预览“0 赞显示 0”实施，与卡片代码有此一处出入，
-    /// 见 PR 说明，待 Li／真机确认是否反向统一卡片）。
+    /// 收藏纯图标（无中文标签）；赞数口径（2026-10-31 Li 纠正，取代旧“详情页
+    /// 0 赞恒显 0”例外）：0 赞时数字整段隐藏、只留爱心图标可点，与卡片
+    /// 空数字位隐藏一致；有赞时显完整数字，宽度显式算（卡片同款）。
     private func refreshActionRow() {
         if isGuest {
             actionStack.isHidden = true
@@ -1406,12 +1503,24 @@ final class BearyDetailViewController: UIViewController {
         let heartImage = BearyFeedIconCache.image(named: liked ? "icon_heart_fill" : "icon_heart", pointSize: 22)
             ?? BearyFeedIconCache.image(named: "icon_heart", pointSize: 22)
         likeButton.setImage(heartImage, for: .normal)
-        likeButton.setTitle("\(max(0, likeCount))", for: .normal)
+        // 赞数 0 隐藏整段数字（2026-10-31 Li 纠正口径）：setTitle(nil) 后宽度只剩
+        // 图标宽，不占数字位、不留残影；有赞时显完整数字，宽度显式算
+        //（图标宽 + 6 边距 + 标题宽，卡片同款），不靠按钮固有宽。
+        let imageWidth = heartImage?.size.width ?? 22
+        if likeCount <= 0 {
+            likeButton.setTitle(nil, for: .normal)
+            likeButtonWidthConstraint?.constant = imageWidth
+        } else {
+            let titleText = "\(likeCount)"
+            let titleWidth = ceil((titleText as NSString).size(withAttributes: [NSAttributedString.Key.font: likeButton.titleLabel?.font ?? BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 14))]).width)
+            likeButton.setTitle(titleText, for: .normal)
+            likeButtonWidthConstraint?.constant = imageWidth + 6 + titleWidth
+        }
         likeButton.titleEdgeInsets = UIEdgeInsets(top: 0, left: 6, bottom: 0, right: 0)
         likeButton.tintColor = liked ? BearyColors.likeRed : BearyColors.gray
         likeButton.setTitleColor(liked ? BearyColors.likeRed : BearyColors.gray, for: .normal)
         likeButton.setTitleColor(liked ? BearyColors.likeRed : BearyColors.gray, for: .highlighted)
-        likeButton.accessibilityLabel = "\(liked ? "已点赞" : "点赞")，\(max(0, likeCount))"
+        likeButton.accessibilityLabel = likeCount <= 0 ? "点赞" : "\(liked ? "已点赞" : "点赞")，\(likeCount)"
 
         let bookmarked = entry.bookmarkedByMe ?? false
         let bookmarkImage = BearyFeedIconCache.image(named: bookmarked ? "icon_bookmark_fill" : "icon_bookmark", pointSize: 21)
@@ -1421,14 +1530,17 @@ final class BearyDetailViewController: UIViewController {
         bookmarkButton.accessibilityLabel = bookmarked ? "已收藏" : "收藏"
         shareButton.accessibilityLabel = "分享"
 
-        // 卡片互动门控同口径：非公开时点赞／收藏压暗、分享隐藏（私密不交出正文与链接），
+        // 卡片互动门控同口径：2026-10-31 私密自互动口径——点赞／收藏为“有效公开 或 作者本人”
+        // 时正常显示，非作者看非公开篇仍压暗；分享不动，仍仅有效公开才有（私密不交出正文与链接），
         // 分享隐藏时留 21pt 槽位占位（首页 shareSlotSpacer 同款），防收藏钮滑到最右边缘。
         // 限时已到期按私密算（与卡片同口径）。
         // 注意：按钮不禁用（首页卡片禁用），点按仍走详情原有拒绝动效 + toast
-        // （审计 P2-11 口径），非公开互动有明确反馈而非静默无反应。
+        // （审计 P2-11 口径），非作者的非公开互动有明确反馈而非静默无反应。
+        // 后端缺口见 PR 说明：后端目前仍以 published=1 拦私密互动，作者私密请求仍会 404 回滚。
         let publicOK = BearyEphemeral.isEffectivelyPublic(entry)
-        likeButton.alpha = publicOK ? 1.0 : 0.4
-        bookmarkButton.alpha = publicOK ? 1.0 : 0.4
+        let interactOK = publicOK || isAuthor
+        likeButton.alpha = interactOK ? 1.0 : 0.4
+        bookmarkButton.alpha = interactOK ? 1.0 : 0.4
         shareButton.isHidden = !publicOK
         shareSlotSpacer.isHidden = !shareButton.isHidden
     }
@@ -1933,8 +2045,9 @@ final class BearyDetailViewController: UIViewController {
 
     @objc private func likeTapped() {
         guard let entryId = entry.id, !entryId.isEmpty else { return }
-        // 审计 P2-11：非公开时不再静默 return——拒绝动效＋“公开后才能互动”。
-        if !BearyEphemeral.isEffectivelyPublic(entry) {
+        // 审计 P2-11：非作者的非公开时不再静默 return——拒绝动效＋“公开后才能互动”。
+        // 2026-10-31 私密自互动口径：作者本人看自己私密篇时放行。
+        if !BearyEphemeral.isEffectivelyPublic(entry) && !isAuthor {
             playDenyShake(on: likeButton)
             BearyToast.show(in: view, message: "公开后才能互动")
             return
@@ -2003,8 +2116,9 @@ final class BearyDetailViewController: UIViewController {
 
     @objc private func bookmarkTapped() {
         guard let entryId = entry.id, !entryId.isEmpty else { return }
-        // 审计 P2-11：非公开时不再静默 return——拒绝动效＋“公开后才能互动”。
-        if !BearyEphemeral.isEffectivelyPublic(entry) {
+        // 审计 P2-11：非作者的非公开时不再静默 return——拒绝动效＋“公开后才能互动”。
+        // 2026-10-31 私密自互动口径：作者本人看自己私密篇时放行。
+        if !BearyEphemeral.isEffectivelyPublic(entry) && !isAuthor {
             playDenyShake(on: bookmarkButton)
             BearyToast.show(in: view, message: "公开后才能互动")
             return

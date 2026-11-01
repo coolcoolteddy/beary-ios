@@ -671,6 +671,7 @@ final class BearyImageLoader {
 
 private var bearyImageTaskKey: UInt8 = 0
 private var bearyImageURLKey: UInt8 = 0
+private var bearyImageRingKey: UInt8 = 0
 
 extension UIView {
     /// 动画批 11 号离屏停播：递归停掉子树内全部 BearyEmoteView。cell 的
@@ -696,25 +697,66 @@ extension UIImageView {
     /// S10：downsampleToWidth 透传给 BearyImageLoader.loadDetailed（bearySetImage
     /// 本来就走 loadDetailed 而非 load，onFailure 需 Result 区分取消与失败）；
     /// 它放在 onFailure 之前，使 onFailure 仍为末尾闭包参数，现有尾随闭包调用点不用改。
+    /// 图片加载转圈（网页同款，不用下拉刷新 icon_refresh）：加载中在图框中央挂
+    /// 18pt 网页圆环（BearyWebRingSpinnerView），图到/失败/取消/复用清图时摘掉；
+    /// 失败态一字不动（仍走 onFailure 的重试 UI）。有占位图时不挂转圈——
+    /// 占位图本身就是可见内容，网页环在图片之下、有图时也看不见。
+    /// 图到时若转圈已亮过（加载 ≥0.15s），图片 0.25s 淡入；瞬时命中缓存时直设不闪。
+    private func bearyAttachWebRingSpinner() {
+        bearyRemoveWebRingSpinner()
+        let ring = BearyWebRingSpinnerView()
+        addSubview(ring)
+        NSLayoutConstraint.activate([
+            ring.centerXAnchor.constraint(equalTo: centerXAnchor),
+            ring.centerYAnchor.constraint(equalTo: centerYAnchor),
+            ring.widthAnchor.constraint(equalToConstant: 18),
+            ring.heightAnchor.constraint(equalToConstant: 18),
+        ])
+        ring.startSpinning()
+        objc_setAssociatedObject(self, &bearyImageRingKey, ring, .OBJC_ASSOCIATION_RETAIN_NONATOMIC)
+    }
+
+    private func bearyRemoveWebRingSpinner() {
+        if let ring = objc_getAssociatedObject(self, &bearyImageRingKey) as? BearyWebRingSpinnerView {
+            ring.stopSpinning()
+            ring.removeFromSuperview()
+        }
+        objc_setAssociatedObject(self, &bearyImageRingKey, nil, .OBJC_ASSOCIATION_RETAIN_NONATOMIC)
+    }
+
     func bearySetImage(url: URL?, placeholder: UIImage? = nil, downsampleToWidth: CGFloat? = nil, onFailure: ((BearyImageLoadError) -> Void)? = nil) {
         if let old = objc_getAssociatedObject(self, &bearyImageTaskKey) as? URLSessionDataTask {
             old.cancel()
         }
+        bearyRemoveWebRingSpinner()
         objc_setAssociatedObject(self, &bearyImageURLKey, url, .OBJC_ASSOCIATION_RETAIN_NONATOMIC)
         self.image = placeholder
         guard let url = url else {
             objc_setAssociatedObject(self, &bearyImageTaskKey, nil, .OBJC_ASSOCIATION_RETAIN_NONATOMIC)
             return
         }
+        if placeholder == nil {
+            bearyAttachWebRingSpinner()
+        }
+        let startedAt = Date()
         let task = BearyImageLoader.shared.loadDetailed(url: url, downsampleToWidth: downsampleToWidth) { [weak self] result in
             guard let self = self else { return }
             let current = objc_getAssociatedObject(self, &bearyImageURLKey) as? URL
             guard current == url else { return }
+            // 取消先 return：同 URL 重发时旧回调不得摘掉新任务的转圈。
+            if case .failure(let err) = result, case .cancelled = err { return }
+            self.bearyRemoveWebRingSpinner()
             switch result {
             case .success(let img):
-                self.image = img
+                let slowLoad = Date().timeIntervalSince(startedAt) >= 0.15
+                if slowLoad && self.alpha == 1 {
+                    self.alpha = 0
+                    self.image = img
+                    UIView.animate(withDuration: 0.25) { self.alpha = 1 }
+                } else {
+                    self.image = img
+                }
             case .failure(let err):
-                if case .cancelled = err { return }
                 onFailure?(err)
             }
         }
@@ -753,8 +795,6 @@ enum BearyText {
         "surprised": "惊讶", "pat": "摸摸头", "peek": "偷偷看", "sleepy": "困倦",
         "proud": "骄傲", "shrug": "没办法", "sorry": "对不起", "cry": "想哭",
         "angry": "生气", "thanks": "谢谢你", "zap": "带电", "wave": "挥挥手",
-        "candle": "留一盏灯", "flower": "送你小花", "letter": "收到心意", "paperplane": "把烦恼寄走",
-        "sprout": "慢慢来", "tea": "喝杯热茶", "umbrella": "给你撑伞", "wish": "愿你如愿",
     ]
 
     /// 内联心情记号（编辑器熊脸图 ↔ 落库纯文本的中间层）：

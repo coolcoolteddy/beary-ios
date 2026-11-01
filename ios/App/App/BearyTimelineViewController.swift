@@ -2,7 +2,7 @@ import UIKit
 
 // ===== beary 原生时间线页（含写作日历卡）=====
 // 对照源（以 worker.js 为准，网页版 beary.html 与设计稿 layout_rest.html 为形态对照）：
-// - 列表：GET /beary/api/entries?scope=timeline&limit=50，游标 before=created_at（毫秒）
+// - 列表：GET /beary/api/entries?scope=timeline&limit=20，游标 before=created_at（毫秒）
 //   + before_id=entry.id；服务端排序 created_at DESC, id DESC；响应含 entries、
 //   trash_count、tl_counts{total, priv, pub, next_pub}；单条 is_public = now >= publish_at。
 // - 日历：GET /beary/api/calendar?month=YYYY-MM（仅本人、需登录），按 created_at 北京日界
@@ -2108,7 +2108,10 @@ class BearyTimelineViewController: UIViewController {
         var entries: [Entry]
     }
 
-    private let pageLimit = 50
+    // 提速：首屏与翻页共用页大小 50 → 20（hasMore 判定 count >= pageLimit
+    // 全走本常量，首屏与翻页同口径；日历圆点走月份请求、当日面板走
+    // fetchDayEntries 或首屏派生回落，均不依赖页大小，见派生注释）。
+    private let pageLimit = 20
 
     private var timelineEntries: [Entry] = []
     private var timelineHasMore = false
@@ -2126,7 +2129,7 @@ class BearyTimelineViewController: UIViewController {
     // completion，需自行处理陈旧语义。
     private var timelineFirstPageSeq = 0
     /// 112 分段去重：首屏在途标记（seq 只丢弃旧回包，不阻止重复发请求；
-    /// 下拉/重拍/详情回写/静默对齐重叠时曾并发多份同样的 50 条首拉）。
+    /// 下拉/重拍/详情回写/静默对齐重叠时曾并发多份同样的首屏首拉）。
     /// 在途时新调用直接跳过（不 bump seq，否则在途回包会被 seq 守卫丢弃、
     /// 等于白白重拉一次）；在途回包自会结束下拉头并更新模型。
     /// force=true 的硬重载（reloadTimeline 非 keepDay：登录翻转/取消编辑等）
@@ -2605,7 +2608,7 @@ class BearyTimelineViewController: UIViewController {
     /// timelineState、不清当日面板，首屏回包经行 diff 更新；失败时旧内容
     /// 原样保留（失败/加载态只在空表时渲染特殊态，见 3617 一带，故不闪白）。
     /// 110：冷启动缓存优先（首页 BearyFeedCache SWR 同款口径）。
-    /// 时间线此前无首屏磁盘缓存：每次冷启动都清表 + 全量重拉 50 条 +
+    /// 时间线此前无首屏磁盘缓存：每次冷启动都清表 + 全量重拉首屏 +
     /// 中央 spinner 等网络，即“冷启动后时间线慢”的主因（首屏 payload
     /// 仅约 60KB、解码可忽略，耗时在 TTFB 与无缓存上，见实测分解）。
     /// 有缓存：即时渲染缓存首屏（不转菊花、不清表），再走既有静默
@@ -2748,6 +2751,11 @@ class BearyTimelineViewController: UIViewController {
     /// 故此处即删帖成功点，回收站计数 +1 并立即刷新 pill。
     func removeDeletedEntry(_ entry: Entry) {
         guard let entryId = entry.id else { return }
+        // 连续删帖防撞：删帖即作废在途首屏回包——在途回包的 oldSections
+        // 仍含本篇，其 diff 若在删帖批更新后到达，会对已删行再发
+        // deleteRows（Invalid update 闪退）。seq 守卫会把这类旧回包
+        // 丢弃（仅停菊花/收刷新头，不动模型与表）。
+        timelineFirstPageSeq += 1
         // P1-8：先于模型/分区处理加计数——即使模型里已无该篇而走下方
         // refreshAfterDetailChange 回落，删帖成功进回收站的事实不变；
         // 回落的首拉成功后 trashCountValue 会被服务端值覆盖校准，不会累加。
@@ -2761,7 +2769,11 @@ class BearyTimelineViewController: UIViewController {
             }
         }
         guard !occurrences.isEmpty else {
-            // 模型里没有（已被别处清掉），退回原有整页重拉保底。
+            // 模型里没有（已被别处清掉），退回原有整页重拉保底；同时把
+            // 快照同步写回（模型里已无本篇），免得重拉失败时快照复活它。
+            if let uid = SessionManager.shared.currentUser?.id {
+                BearyTimelineCache.save(bucket: BearyFeedCache.bucket(userId: uid), entries: timelineEntries, hasMore: timelineHasMore, trashCount: trashCountValue, counts: countsValue)
+            }
             refreshAfterDetailChange()
             return
         }
@@ -2814,16 +2826,39 @@ class BearyTimelineViewController: UIViewController {
             // 统计行会被 stack 压缩、上下裁剪；2423/3112 两路写入后都补）。
             refreshHeaderHeight()
         }
-        tableView.performBatchUpdates({
-            if !rowDeletes.isEmpty { self.tableView.deleteRows(at: rowDeletes, with: .fade) }
-            if !sectionDeletes.isEmpty { self.tableView.deleteSections(sectionDeletes, with: .fade) }
-        }, completion: { [weak self] _ in
-            guard let self = self else { return }
-            // 面板头含计数（“N篇”），需重建头视图；日期组头无计数，不用动。
-            if panelAffected {
-                self.tableView.reloadSections(IndexSet(integer: 0), with: .none)
+        // 删帖复活修：此前删帖只清了日落盘与内存模型，没写时间线首屏
+        // 快照——冷启动先渲染快照，已删篇会先回来、要等一次静默刷新成功
+        // 才纠掉，弱网/刷新失败时就一直复活。此处删帖即把快照同步写回。
+        if let uid = SessionManager.shared.currentUser?.id {
+            BearyTimelineCache.save(bucket: BearyFeedCache.bucket(userId: uid), entries: timelineEntries, hasMore: timelineHasMore, trashCount: trashCountValue, counts: countsValue)
+        }
+        // 连续删帖防撞：表当前已渲染行数须与 oldSections 一致才发批更新；
+        // 若上一批动画/另一路更新还没落定（行数对不上），批更新必按旧
+        // 下标删错行导致 Invalid update 闪退——此时模型已正确，整表重载
+        // 即与模型对齐，不带病批更新。
+        let renderedMatchesOld: Bool = {
+            guard tableView.numberOfSections == oldSections.count else { return false }
+            for section in 0..<oldSections.count {
+                guard tableView.numberOfRows(inSection: section) == oldSections[section].entries.count else { return false }
             }
-        })
+            return true
+        }()
+        if renderedMatchesOld {
+            tableView.performBatchUpdates({
+                if !rowDeletes.isEmpty { self.tableView.deleteRows(at: rowDeletes, with: .fade) }
+                if !sectionDeletes.isEmpty { self.tableView.deleteSections(sectionDeletes, with: .fade) }
+            }, completion: { [weak self] _ in
+                guard let self = self else { return }
+                // 面板头含计数（“N篇”），需重建头视图；日期组头无计数，不用动。
+                // 批更新完成前用户若已切日/切页，section 0 未必仍是面板——
+                // 越界 reloadSections 同样会闪退，先守卫再重载。
+                if panelAffected, self.selectedDayKey != nil, self.tableView.numberOfSections > 0 {
+                    self.tableView.reloadSections(IndexSet(integer: 0), with: .none)
+                }
+            })
+        } else {
+            tableView.reloadData()
+        }
         pendingFixSelCheck = true
         for key in monthKeysForCurrentView() {
             fetchCalendarMonth(key: key, force: true)
@@ -3556,6 +3591,8 @@ class BearyTimelineViewController: UIViewController {
            updateTrashSuffixOnly(current, oldCount: last, newCount: trashCountValue) {
             lastTrashCount = trashCountValue
             fitTrashButtonWidth()
+            // 116：数字段-only 更新后只淡入标题文案（图标不动）。
+            fadeButtonTitle(trashButton)
             return
         }
         let base = NSMutableAttributedString(string: "回收站", attributes: [
@@ -3571,6 +3608,8 @@ class BearyTimelineViewController: UIViewController {
         trashButton.setAttributedTitle(base, for: .normal)
         lastTrashCount = trashCountValue
         fitTrashButtonWidth()
+        // 116：整行重建路径同样只淡入标题文案（图标不动）。
+        fadeButtonTitle(trashButton)
     }
 
     /// 回收站标题数字段-only 更新：静态段“回收站”不动，只增/改/删
@@ -3606,20 +3645,43 @@ class BearyTimelineViewController: UIViewController {
         return true
     }
 
+    /// 116 数据填入动效：文案／数字变化时只淡入该元素本身（alpha 0→1、
+    /// 0.25s，不动 transform／布局、不重建节点、不缩放弹一下）；同值不赋值
+    /// 不重播；减动效或未进窗口时直设终值。按钮只淡入 titleLabel，图标
+    /// （火苗／回收站图标）不动，符合“数字只动数字本身”。
+    private func setLabelTextFaded(_ label: UILabel, _ text: String) {
+        guard label.text != text else { return }
+        label.text = text
+        guard !UIAccessibility.isReduceMotionEnabled, label.window != nil else {
+            label.alpha = 1
+            return
+        }
+        label.alpha = 0
+        UIView.animate(withDuration: 0.25, delay: 0, options: [.curveEaseOut, .beginFromCurrentState], animations: {
+            label.alpha = 1
+        })
+    }
+
+    private func fadeButtonTitle(_ button: UIButton) {
+        guard !UIAccessibility.isReduceMotionEnabled, button.window != nil,
+              let titleLabel = button.titleLabel else { return }
+        titleLabel.alpha = 0
+        UIView.animate(withDuration: 0.25, delay: 0, options: [.curveEaseOut, .beginFromCurrentState], animations: {
+            titleLabel.alpha = 1
+        })
+    }
+
     private func updateCountsLabel() {
         if let counts = countsValue {
             let total = counts.total ?? 0
             let priv = counts.priv ?? 0
             let pub = counts.pub ?? 0
-            // 本批新规矩（跳过未变）：纯文本 label 无容器重建、无入场动效，
-            // 文案不变时不重复赋值；数值变时仍整行文本赋值（UILabel 文本
-            // 本身不重播动效，拆成多 label 属布局结构改动，不做）。
-            let newText = "共 \(total) 篇 · 私密 \(priv) · 公开 \(pub)"
-            guard countsLabel.text != newText else { return }
-            countsLabel.text = newText
+            // 116：数值变时整行只淡入（不拆多 label——拆分属布局结构改动，
+            // 且数字段已在行内；淡入覆盖整行文案，数字随之淡入，不弹一下）；
+            // 文案不变时不重复赋值不重播。
+            setLabelTextFaded(countsLabel, "共 \(total) 篇 · 私密 \(priv) · 公开 \(pub)")
         } else {
-            guard countsLabel.text != "" else { return }
-            countsLabel.text = ""
+            setLabelTextFaded(countsLabel, "")
         }
     }
 
@@ -3711,6 +3773,8 @@ class BearyTimelineViewController: UIViewController {
             statsButton.setAttributedTitle(nil, for: .normal)
             statsButton.setTitle("日历加载失败，重试", for: .normal)
             statsButton.setTitleColor(BearyColors.gray, for: .normal)
+            // 116：失败态文案出现时只淡入标题（无图标可动）。
+            fadeButtonTitle(statsButton)
             return
         }
         guard let primaryKey = primaryKey, let data = calendarCache[primaryKey] else {
@@ -3748,6 +3812,8 @@ class BearyTimelineViewController: UIViewController {
             lastStatsLineSignature = "normal"
             lastStatsStreak = streak
             lastStatsMonthTotal = monthTotal
+            // 116：数字段-only 更新后只淡入标题文案（火苗图标不动）。
+            fadeButtonTitle(statsButton)
             return
         }
         // 首建或态切换（失败/空态 → 正常）或数字段解析失败时才整行重建；
@@ -3774,6 +3840,8 @@ class BearyTimelineViewController: UIViewController {
         text.append(NSAttributedString(string: "\(monthTotal) 篇", attributes: boldAttributes))
         statsButton.setTitle(nil, for: .normal)
         statsButton.setAttributedTitle(text, for: .normal)
+        // 116：首建／态切换整行重建时同样只淡入标题文案（火苗图标不动）。
+        fadeButtonTitle(statsButton)
     }
 
     /// 统计行数字段-only 更新：只替换两处纯数字区间（streak、monthTotal），
@@ -4906,7 +4974,8 @@ class BearyTimelineViewController: UIViewController {
     /// 112 增量当日面板：首屏已覆盖选中日时直接从首屏派生面板，
     /// 不再另发当日请求；未覆盖时回落正向 fetchDayEntries。
     /// 覆盖判定：首屏是 created DESC 前缀——页内一旦出现早于选中日的篇，
-    /// 即证明选中日的全部篇都在页内（当日上限 10 篇/天、首屏 50 条；
+    /// 即证明选中日的全部篇都在页内（当日上限 10 篇/天；判定只看页内
+    /// 是否出现早于选中日的篇，与页大小无关，未覆盖时回落正向拉取；
     /// 页空、页尾仍在选中日、或时间戳缺失时一律判未覆盖、走正向拉取）。
     /// 渲染不单独重载：调用点在首屏完成分支内，随后 diff/reloadData
     /// 统一覆盖面板分区（section 0），避免与首屏批更新交错。
@@ -6055,9 +6124,11 @@ enum BearyTimelinePrefetch {
             didPrefetch = true
             return
         }
-        BearyAPI.shared.fetchEntries(scope: .timeline, limit: 50) { result in
+        // 提速：预取与时间线首屏同口径（pageLimit = 20），hasMore 阈值同步改，
+        // 否则缓存的 hasMore 与 VC 翻页口径错位。
+        BearyAPI.shared.fetchEntries(scope: .timeline, limit: 20) { result in
             guard case .success(let list) = result, let entries = list.entries, !entries.isEmpty else { return }
-            BearyTimelineCache.save(bucket: bucket, entries: entries, hasMore: entries.count >= 50, trashCount: list.trashCount ?? 0, counts: list.tlCounts)
+            BearyTimelineCache.save(bucket: bucket, entries: entries, hasMore: entries.count >= 20, trashCount: list.trashCount ?? 0, counts: list.tlCounts)
             didPrefetch = true
         }
     }
