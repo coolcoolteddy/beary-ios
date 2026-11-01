@@ -28,20 +28,7 @@ private final class WishRowView: UIView {
     private var detailOverflow = false
     private let upButton = BearyButton.make(style: .secondaryOutline(.compact), title: "赞成")
     private let downButton = BearyButton.make(style: .secondaryOutline(.compact), title: "反对")
-    /// 109：本行投票在途标志——configure 的禁用口径（已完成置灰）与它取并集，
-    /// 在途结束由控制器 setVoting(false) 或下一次 configure 恢复，不另改文案与选中态。
-    private var isVoting = false
     private var isDoneRow = false
-
-    /// 109：在途锁的视觉侧——在途时两票钮禁用+置灰（点按不再进 voteTapped），
-    /// 解锁后恢复（已完成行仍由 configure 的 done 口径保持禁用）。
-    func setVoting(_ voting: Bool) {
-        isVoting = voting
-        upButton.isEnabled = !isDoneRow && !voting
-        downButton.isEnabled = !isDoneRow && !voting
-        upButton.alpha = (isDoneRow || voting) ? 0.4 : 1
-        downButton.alpha = (isDoneRow || voting) ? 0.4 : 1
-    }
     private let doneButton = BearyButton.make(style: .secondaryOutline(.compact), title: "标记已完成")
     var onUp: (() -> Void)?
     var onDown: (() -> Void)?
@@ -243,11 +230,12 @@ private final class WishRowView: UIView {
         isDoneRow = done
         donePill.isHidden = !done
         // 已完成即闭环：票钮置灰不可点（禁用态本身即不可用示意，不另弹 toast）。
-        // 109：与在途标志取并集——在途行 configure 不得把票钮提前解开。
-        upButton.isEnabled = !done && !isVoting
-        downButton.isEnabled = !done && !isVoting
-        upButton.alpha = (done || isVoting) ? 0.4 : 1
-        downButton.alpha = (done || isVoting) ? 0.4 : 1
+        // 扫 bug 定版第 6 项：投票不再有在途禁用——在途时票钮保持可点，
+        // configure 只按已完成态禁用，不把在途行提前解开/锁住。
+        upButton.isEnabled = !done
+        downButton.isEnabled = !done
+        upButton.alpha = done ? 0.4 : 1
+        downButton.alpha = done ? 0.4 : 1
         doneButton.isHidden = !(isAdmin && !done)
     }
 
@@ -280,10 +268,27 @@ final class BearyWishWallViewController: UIViewController {
     private let wishStateView = BearyStateView()
     private var wishes: [BearyAPI.WishItem] = []
     private var rowViews: [Int: WishRowView] = [:]
-    private var voteGeneration: [Int: Int] = [:] // 2026-10-29：每条许愿投票代次，旧回包丢弃用
-    /// 109：每条许愿投票在途锁——代次只拦过期回包、不拦多发；本集合拦多发：
-    /// 在途点按直接忽略（票钮同时禁用+置灰），回包/失败后解锁，不改代次与排序逻辑。
-    private var votingWishIds: Set<Int> = []
+    private var voteGeneration: [Int: Int] = [:] // 2026-10-29：每条许愿投票代次，旧回包丢弃用；
+    // 扫 bug 定版第 6 项（点赞同款代次口径）：代次不再只拦过期回包，
+    // 而是取代在途锁——快连点每次都发请求、每次都立即按最后一次点按渲染，
+    // 过期回包（含过期失败）一律丢弃，不得覆盖更新的点按态。
+    /// 每条许愿最后服务端确认态（点赞 confirmedLiked/confirmedLikeCount 同款）：
+    /// 成功回包才刷新；最新一代请求失败时回滚到这里，不是回滚到本次点按前
+    /// 的中间态（快连点下中间态早已被更新的点按覆盖，回滚到它即错）。
+    // 注意不用 [Int: Int?] 存确认票：Swift 里 nil 票与“未播种”在字典取值上
+    // 无法区分，快连点下播种守卫会把中间态误当确认基线。故票只存 1/-1，
+    // 无票 = 字典缺 key；播种与否另用 confirmedSeeded 记（播种后缺 key 即真无票）。
+    private var confirmedVote: [Int: Int] = [:]
+    private var confirmedSeeded: Set<Int> = []
+    private var confirmedUp: [Int: Int] = [:]
+    private var confirmedDown: [Int: Int] = [:]
+    private func seedConfirmedIfNeeded(wishId: Int, item: BearyAPI.WishItem) {
+        guard !confirmedSeeded.contains(wishId) else { return }
+        confirmedSeeded.insert(wishId)
+        confirmedVote[wishId] = item.myVote
+        confirmedUp[wishId] = item.upCount ?? 0
+        confirmedDown[wishId] = item.downCount ?? 0
+    }
     private var isLoading = false
     /// 13：600 上限约束（宽 ≥821 才激活，开关在 viewDidLayoutSubviews；Feed 断点同款）。
     private var colCapConstraints: [NSLayoutConstraint] = []
@@ -417,6 +422,12 @@ final class BearyWishWallViewController: UIViewController {
         vc.onCreated = { [weak self] wish in
             guard let self = self else { return }
             self.wishes.insert(wish, at: 0)
+            if let id = wish.id {
+                self.confirmedSeeded.insert(id)
+                self.confirmedVote[id] = wish.myVote
+                self.confirmedUp[id] = wish.upCount ?? 0
+                self.confirmedDown[id] = wish.downCount ?? 0
+            }
             self.renderWishes()
             BearyToast.show(in: self.view, message: "许愿已发布")
             self.onCreated?(wish)
@@ -454,6 +465,12 @@ final class BearyWishWallViewController: UIViewController {
                 case .success(let resp):
                     self.wishStateView.isHidden = true
                     self.wishes = resp.wishes ?? []
+                    for item in self.wishes where item.id != nil {
+                        self.confirmedSeeded.insert(item.id!)
+                        self.confirmedVote[item.id!] = item.myVote
+                        self.confirmedUp[item.id!] = item.upCount ?? 0
+                        self.confirmedDown[item.id!] = item.downCount ?? 0
+                    }
                     self.renderWishes()
                 case .failure:
                     // P2-18：失败态走 BearyStateView（“加载失败”+“重试”，动作复用 retryTapped）。
@@ -511,43 +528,47 @@ final class BearyWishWallViewController: UIViewController {
 
     private func indexOfWish(_ id: Int) -> Int? { wishes.firstIndex { $0.id == id } }
 
-    /// 投票：游客走登录页；登录用户点按瞬间改数与选中态，回包对齐，失败回滚 + 摇头 + toast。
+    /// 投票（扫 bug 定版第 6 项，点赞同款代次口径，取代 109 在途锁）：
+    /// 游客走登录页；登录用户每次点按都立即按最后一次点按渲染（选中态 +
+    /// 赞成/反对数点按瞬间就变，不等服务端、不置灰、不禁用票钮），每次点按
+    /// 都发一次绝对值请求（vote: 1/-1/0，0 = 取消本票）；在途请求只带代次，
+    /// 过期回包（含过期失败）直接丢弃，不得覆盖更新的点按态、不得触发回滚；
+    /// 只有最新一代回包生效：成功以服务端计数对齐并刷新确认态，失败回滚到
+    /// 最后确认态（confirmedVote/confirmedUp/confirmedDown）+ 摇头 + toast。
     private func voteTapped(wishId: Int, target: Int) {
         if isGuest {
             presentLoginPage()
             return
         }
         guard let index = indexOfWish(wishId) else { return }
-        // 109：在途锁——本条已有投票请求在途时点按直接忽略，不多发请求；
-        // 锁在回包闭包首行无条件解除（在代次守卫之前），过期回包也不留死锁。
-        guard !votingWishIds.contains(wishId) else { return }
-        votingWishIds.insert(wishId)
-        let old = wishes[index]
-        let newVote: Int? = (old.myVote == target) ? nil : target
-        var next = old
-        var up = old.upCount ?? 0
-        var down = old.downCount ?? 0
-        if old.myVote == 1 { up -= 1 }
-        if old.myVote == -1 { down -= 1 }
+        let current = wishes[index]
+        // 确认态兜底：本条若从未经过列表/新建播种（如行复用路径），
+        // 以本次点按前的显示态为确认基线，失败回滚才有可回的态。
+        seedConfirmedIfNeeded(wishId: wishId, item: current)
+        // 三态票数算法（每次都从当前显示态算增量，故快连点不算错）：
+        // 先减掉当前票（赞成 -1 或反对 -1），再加新票；再点同票 = 取消（新票 nil，
+        // 只减不加）；赞成↔反对改投 = 一边 -1、另一边 +1；计数下限钳 0。
+        let newVote: Int? = (current.myVote == target) ? nil : target
+        var next = current
+        var up = current.upCount ?? 0
+        var down = current.downCount ?? 0
+        if current.myVote == 1 { up -= 1 }
+        if current.myVote == -1 { down -= 1 }
         if newVote == 1 { up += 1 }
         if newVote == -1 { down += 1 }
-        next.upCount = up
-        next.downCount = down
+        next.upCount = max(0, up)
+        next.downCount = max(0, down)
         next.myVote = newVote
         wishes[index] = next
         rowViews[wishId]?.configure(item: next, isAdmin: isAdmin)
-        rowViews[wishId]?.setVoting(true)
         BearySoundPlayer.play(.wishDing)
-        // 2026-10-29 修：每条许愿投票代次——先发回包后到时直接丢弃，不得覆盖后一次的操作与失败回滚。
         voteGeneration[wishId, default: 0] += 1
         let gen = voteGeneration[wishId] ?? 0
         let sendVote = newVote ?? 0
         BearyAPI.shared.voteWish(id: wishId, vote: sendVote) { [weak self] result in
             DispatchQueue.main.async {
-                // 109：先解锁再判代次——成功/失败/过期回包一律解锁，不留死锁；
-                // 代次逻辑原样不动，仍由下一行守卫丢弃过期回包。
-                self?.votingWishIds.remove(wishId)
-                self?.rowViews[wishId]?.setVoting(false)
+                // 代次守卫（点赞 likeSeq 同款）：已有更新点按时过期回包直接丢弃，
+                // 不回滚、不摇头、不弹 toast，屏幕只反映最后一次点按。
                 guard let self = self, let idx = self.indexOfWish(wishId), self.voteGeneration[wishId] == gen else { return }
                 switch result {
                 case .success(let resp):
@@ -556,10 +577,20 @@ final class BearyWishWallViewController: UIViewController {
                     confirmed.downCount = resp.down ?? confirmed.downCount
                     confirmed.myVote = resp.myVote
                     self.wishes[idx] = confirmed
+                    self.confirmedSeeded.insert(wishId)
+                    self.confirmedVote[wishId] = confirmed.myVote
+                    self.confirmedUp[wishId] = confirmed.upCount ?? 0
+                    self.confirmedDown[wishId] = confirmed.downCount ?? 0
                     self.rowViews[wishId]?.configure(item: confirmed, isAdmin: self.isAdmin)
                 case .failure:
-                    self.wishes[idx] = old
-                    self.rowViews[wishId]?.configure(item: old, isAdmin: self.isAdmin)
+                    // 失败回滚口径（点赞同款）：滚到最后服务端确认态，不是本次
+                    // 点按前的中间态——快连点下中间态已被更新点按覆盖，滚回去即错。
+                    var rolledBack = self.wishes[idx]
+                    rolledBack.myVote = self.confirmedVote[wishId]
+                    rolledBack.upCount = self.confirmedUp[wishId] ?? rolledBack.upCount
+                    rolledBack.downCount = self.confirmedDown[wishId] ?? rolledBack.downCount
+                    self.wishes[idx] = rolledBack
+                    self.rowViews[wishId]?.configure(item: rolledBack, isAdmin: self.isAdmin)
                     self.rowViews[wishId]?.shake()
                     UINotificationFeedbackGenerator().notificationOccurred(.warning)
                     BearyToast.show(in: self.view, message: "投票失败，请稍后再试")
