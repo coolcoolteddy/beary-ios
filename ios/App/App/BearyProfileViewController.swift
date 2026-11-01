@@ -322,6 +322,9 @@ class BearyProfileViewController: UIViewController {
     private var profileLoadCycle = 0
     private var nightPatrolStartedCycle: Int?
     private var nightPatrolLoading = false
+    /// 10 项补起：本轮已用掉的夜巡自动补拉代次——每轮资料加载（profileLoadCycle）
+    /// 最多补拉一次；代次一换自动恢复资格，不用在 loadProfile 里手动清。
+    private var nightPatrolRetriedCycle: Int?
     private var modulesStartedCycle: Int?
     /// 已拉到的作者条目（分页累积、按 id 去重）；未完成前 renderModules 全隐藏，
     /// 不拿半截语料画「空白 = 没写」——半截语料的空白是假空白，会撒谎。
@@ -3363,12 +3366,42 @@ class BearyProfileViewController: UIViewController {
                     // （plus 为 false 且有旧记录 = 已停跑、旧脚印可回看）。
                     let paused = response.patrolPaused ?? !(strongSelf.profile?.plus ?? false)
                     strongSelf.renderNightPatrol(night: latest, footprints: footprints, paused: paused)
-                case .failure:
+                case .failure(let error):
                     // 后端未上线（404）/ 401 / 网络失败：静默隐藏，不 toast、不造假数据。
                     strongSelf.hideNightPatrol()
                     strongSelf.layoutHeaderForced(widthValue: strongSelf.headerWidthValue)
+                    // 10 项补起（失败后自动补拉，本轮最多一次）：弱网瞬时失败
+                    // 时入口若就此消失，用户本轮再无入口、须手动下拉刷新才回得来，
+                    // 且失败态与“无夜巡记录”长得一模一样、无从察觉。补拉只补瞬时类
+                    // 失败（.network 与 5xx）；404（后端未上线）、401（登录态问题）、
+                    // 取消、解码与服务端业务错不补——补了也成功不了，徒增请求。
+                    // 补拉是失败回调内直接再调一次 loadNightPatrol（此时在途旗已
+                    // 落，不与在途请求重叠；本轮补拉资格已记代次，补拉再失败不
+                    // 再补，不成循环）；成功路径一字不动。注意资料回包触发的
+                    // loadNightPatrol(fromProfileResult:) 仍受 startedCycle 去重，
+                    // 故本补拉不依赖“资料后到”的时序——资料先到、夜巡后失败的
+                    // 顺序同样能补上；下一轮 loadProfile（下拉刷新等）换代次后
+                    // 本来就会重拉，不在本支的补拉计数内。
+                    if strongSelf.nightPatrolRetriedCycle != strongSelf.profileLoadCycle,
+                       strongSelf.isNightPatrolRetryable(error) {
+                        strongSelf.nightPatrolRetriedCycle = strongSelf.profileLoadCycle
+                        strongSelf.loadNightPatrol()
+                    }
                 }
             }
+        }
+    }
+
+    /// 10 项补起口径：只补瞬时类失败。429 不补（立即重发只会加重限流），
+    /// 解码错不补（回包形态问题、重发同错），其余一律不补。
+    private func isNightPatrolRetryable(_ error: APIError) -> Bool {
+        switch error {
+        case .network:
+            return true
+        case .http(let code, _):
+            return code >= 500
+        default:
+            return false
         }
     }
 
