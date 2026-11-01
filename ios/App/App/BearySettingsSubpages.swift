@@ -10,9 +10,20 @@ import UIKit
 /// ③ 顶栏 minY 偏离 safeAreaInsets.top >20pt → 重布局一次。
 /// 不重建节点、不重播动效、不改数据与门控。评估与否、触发与否各记 [Diag]
 /// 一行，复现时凭日志一次定位是帧、位移还是约束问题。
+/// 117 真机教训：首次布局常落在转场动画中途（此时帧还是对的），一次性评估
+/// 随即消费掉；偏移若落在呈现完成、后一次布局解析之后，就再也不会被校正——
+/// 截图 5 页（标题落屏中、正文全空）正是终态偏离、守卫已 spent 的样子。
+/// 因此呈现完成时（viewDidAppear）必须再跑一次：applyAfterAppearance 不受
+/// didEvaluate 限制，复位后才算评估完成；动画已结束，复位无视觉跳变。
 final class BearySubpageLayoutGuard {
     private var didEvaluate = false
     func resetForAppearance() { didEvaluate = false }
+    /// 呈现完成时的再评估：先复位再跑，与 viewDidLayoutSubviews 的那次无关。
+    @discardableResult
+    func applyAfterAppearance(page: String, view: UIView, topView: UIView?) -> Bool {
+        didEvaluate = false
+        return applyIfNeeded(page: page, view: view, topView: topView)
+    }
     @discardableResult
     func applyIfNeeded(page: String, view: UIView, topView: UIView?) -> Bool {
         guard !didEvaluate, let window = view.window else { return false }
@@ -144,6 +155,12 @@ class BearySettingsSubpageViewController: UIViewController {
     override func viewDidLayoutSubviews() {
         super.viewDidLayoutSubviews()
         subpageLayoutGuard.applyIfNeeded(page: pageTitle, view: view, topView: topBarView)
+    }
+
+    override func viewDidAppear(_ animated: Bool) {
+        super.viewDidAppear(animated)
+        // 117 终态偏离兜底：动画结束后的最终帧再校一次，不受首次布局那次限制。
+        subpageLayoutGuard.applyAfterAppearance(page: pageTitle, view: view, topView: topBarView)
     }
 
     /// 审计第二波 4b 分诊结论：分组卡边框确认 stale——makeGroupCard 内

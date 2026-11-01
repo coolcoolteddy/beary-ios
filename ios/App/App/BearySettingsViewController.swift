@@ -1395,7 +1395,7 @@ final class BearySettingsViewController: UIViewController {
                 self?.refreshAccountSwitchSection()
             }
         }
-        present(loginVC, animated: BearyMotion.animated(true))
+        presentSettingsPage(loginVC)
     }
 
     @objc private func removeAccountButtonTapped(_ sender: UIButton) {
@@ -1591,7 +1591,7 @@ final class BearySettingsViewController: UIViewController {
                 self?.onRequireLogin?()
             }
         }
-        present(editVC, animated: BearyMotion.animated(true))
+        presentSettingsPage(editVC)
     }
 
     /// F8：退出登录（网页 account.html logoutBtn 口径：直接 POST、无二次确认；
@@ -2696,12 +2696,37 @@ final class BearySettingsViewController: UIViewController {
         privacyWrap.addArrangedSubview(group.card)
     }
 
+    /// 设置页点出新页的统一呈现口（117 终态偏离兜底，公共路径修法）：
+    /// 设置主页 presentSettings 已有两道保险（呈现前定帧 + 完成回调复位），
+    /// 但下面各子页一直是裸 present、无完成回调——偏移若落在呈现完成时，
+    /// 页内守卫又早已在动画中途消费掉，就没有任何一处再校正。本 helper 把
+    /// 两道保险收到一处：呈现前先在最终帧布局一次，呈现完成时帧偏离窗口
+    /// bounds 或 transform 非单位阵就复位 + 重布局；动画已结束，复位无跳变。
+    /// 不改转场类型、方向、时长，不重建节点、不重播动效。
+    private func presentSettingsPage(_ vc: UIViewController) {
+        vc.loadViewIfNeeded()
+        let preBounds = view.window?.bounds ?? UIScreen.main.bounds
+        vc.view.frame = preBounds
+        vc.view.setNeedsLayout()
+        vc.view.layoutIfNeeded()
+        present(vc, animated: BearyMotion.animated(true)) { [weak vc] in
+            guard let vc = vc, let window = vc.view.window else { return }
+            let bounds = window.bounds
+            if vc.view.frame != bounds || !vc.view.transform.isIdentity {
+                vc.view.transform = .identity
+                vc.view.frame = bounds
+                vc.view.setNeedsLayout()
+                vc.view.layoutIfNeeded()
+            }
+        }
+    }
+
     @objc private func openBlockedUsers() {
         let vc = BearyBlockedUsersViewController()
         vc.modalPresentationStyle = .fullScreen
         // 审计 P2-16：全屏 modal 补 fadeRise（与诊断/反馈/明细页同款）。
         vc.transitioningDelegate = SceneDelegate.chrome?.fadeRiseTransitionDelegate
-        present(vc, animated: BearyMotion.animated(true))
+        presentSettingsPage(vc)
     }
 
     @objc private func badgeSwitchValueChanged(_ sender: UISwitch) {
@@ -2742,7 +2767,7 @@ final class BearySettingsViewController: UIViewController {
         let vc = BearyDiagnosticsViewController()
         vc.modalPresentationStyle = .fullScreen
         vc.transitioningDelegate = SceneDelegate.chrome?.fadeRiseTransitionDelegate
-        present(vc, animated: BearyMotion.animated(true))
+        presentSettingsPage(vc)
     }
 
     // MARK: - 数据与反馈（2026-10-28 反馈 v3，路线 A）
@@ -2775,7 +2800,7 @@ final class BearySettingsViewController: UIViewController {
         let vc = BearyFeedbackViewController()
         vc.modalPresentationStyle = .fullScreen
         vc.transitioningDelegate = SceneDelegate.chrome?.fadeRiseTransitionDelegate
-        present(vc, animated: BearyMotion.animated(true))
+        presentSettingsPage(vc)
     }
 
     /// 补缺第 21 项：功能许愿墙列表页（反馈页同款全屏 modal + fadeRise）。
@@ -2783,7 +2808,7 @@ final class BearySettingsViewController: UIViewController {
         let vc = BearyWishWallViewController()
         vc.modalPresentationStyle = .fullScreen
         vc.transitioningDelegate = SceneDelegate.chrome?.fadeRiseTransitionDelegate
-        present(vc, animated: BearyMotion.animated(true))
+        presentSettingsPage(vc)
     }
 
     /// 2026-10-29 第 7 项：会员来源明细独立页——优先用设置页已拉到的
@@ -2796,7 +2821,7 @@ final class BearySettingsViewController: UIViewController {
             failed: grantsLoadFailed)
         vc.modalPresentationStyle = .fullScreen
         vc.transitioningDelegate = SceneDelegate.chrome?.fadeRiseTransitionDelegate
-        present(vc, animated: BearyMotion.animated(true))
+        presentSettingsPage(vc)
     }
 
     /// 2026-10-29 第 11 项：登录设备独立页——优先用设置页已拉到的
@@ -2808,7 +2833,7 @@ final class BearySettingsViewController: UIViewController {
             countText: deviceCountLabel.text)
         vc.modalPresentationStyle = .fullScreen
         vc.transitioningDelegate = SceneDelegate.chrome?.fadeRiseTransitionDelegate
-        present(vc, animated: BearyMotion.animated(true))
+        presentSettingsPage(vc)
     }
 
     /// 主题滑块档位变化：与旧三行同款持久化与应用路径
@@ -2836,7 +2861,7 @@ final class BearySettingsViewController: UIViewController {
         vc.modalPresentationStyle = .fullScreen
         // 审计 P2-16：全屏 modal 补 fadeRise。
         vc.transitioningDelegate = SceneDelegate.chrome?.fadeRiseTransitionDelegate
-        present(vc, animated: BearyMotion.animated(true))
+        presentSettingsPage(vc)
         BearyLegalServerText.refresh(doc: doc) { [weak vc] text in
             guard let text = text, let vc = vc, vc.isViewLoaded else { return }
             vc.updateText(text)
@@ -2947,6 +2972,12 @@ final class BearyLegalTextViewController: UIViewController {
     override func viewDidLayoutSubviews() {
         super.viewDidLayoutSubviews()
         subpageLayoutGuard.applyIfNeeded(page: pageTitle, view: view, topView: topBarView)
+    }
+
+    override func viewDidAppear(_ animated: Bool) {
+        super.viewDidAppear(animated)
+        // 117 终态偏离兜底：动画结束后的最终帧再校一次。
+        subpageLayoutGuard.applyAfterAppearance(page: pageTitle, view: view, topView: topBarView)
     }
 }
 
@@ -3667,6 +3698,8 @@ private final class BearyDiagnosticsViewController: UIViewController {
 
     override func viewDidAppear(_ animated: Bool) {
         super.viewDidAppear(animated)
+        // 117 终态偏离兜底：动画结束后的最终帧再校一次。
+        subpageLayoutGuard.applyAfterAppearance(page: "诊断日志", view: view, topView: topBarView)
         reloadLog()
     }
 
@@ -3878,5 +3911,11 @@ final class BearyBlockedUsersViewController: UIViewController, UITableViewDataSo
     override func viewDidLayoutSubviews() {
         super.viewDidLayoutSubviews()
         subpageLayoutGuard.applyIfNeeded(page: "已拉黑用户", view: view, topView: topBarView)
+    }
+
+    override func viewDidAppear(_ animated: Bool) {
+        super.viewDidAppear(animated)
+        // 117 终态偏离兜底：动画结束后的最终帧再校一次。
+        subpageLayoutGuard.applyAfterAppearance(page: "已拉黑用户", view: view, topView: topBarView)
     }
 }

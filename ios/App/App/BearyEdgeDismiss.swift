@@ -114,6 +114,10 @@ private final class BearySlideTransitionAnimator: NSObject, UIViewControllerAnim
             UIView.animate(withDuration: duration, delay: 0, options: .curveEaseOut, animations: {
                 toView.transform = .identity
             }, completion: { _ in
+                // 117 终态偏离兜底：进场完成时强制归位（此前呈现路径无此复位，
+                // 中断时残留位移会留到后续呈现；与退出取消路径的复位同口径）。
+                toView.transform = .identity
+                toView.frame = transitionContext.finalFrame(for: toVC)
                 transitionContext.completeTransition(!transitionContext.transitionWasCancelled)
             })
         } else {

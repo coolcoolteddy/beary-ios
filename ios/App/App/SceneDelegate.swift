@@ -2456,7 +2456,17 @@ final class BearyChromeViewController: UIViewController {
                 self?.enterGuestMode()
             }
         }
-        topmostViewController().present(vc, animated: BearyMotion.animated(true))
+        // 117 终态偏离兜底：登录页同样走全屏 modal，呈现完成时帧偏离就复位。
+        topmostViewController().present(vc, animated: BearyMotion.animated(true)) { [weak vc] in
+            guard let vc = vc, let window = vc.view.window else { return }
+            let bounds = window.bounds
+            if vc.view.frame != bounds || !vc.view.transform.isIdentity {
+                vc.view.transform = .identity
+                vc.view.frame = bounds
+                vc.view.setNeedsLayout()
+                vc.view.layoutIfNeeded()
+            }
+        }
     }
 
     // MARK: - 游客模式（只读）门控
@@ -2934,7 +2944,17 @@ final class BearyChromeViewController: UIViewController {
                 self.showPage(.home)
             }
         }
-        topmostViewController().present(vc, animated: BearyMotion.animated(true))
+        // 117 终态偏离兜底：引导重播页同样走全屏 modal，呈现完成时帧偏离就复位。
+        topmostViewController().present(vc, animated: BearyMotion.animated(true)) { [weak vc] in
+            guard let vc = vc, let window = vc.view.window else { return }
+            let bounds = window.bounds
+            if vc.view.frame != bounds || !vc.view.transform.isIdentity {
+                vc.view.transform = .identity
+                vc.view.frame = bounds
+                vc.view.setNeedsLayout()
+                vc.view.layoutIfNeeded()
+            }
+        }
     }
 
     /// 引导页内的登录：与 presentLogin 同款登录页，但以引导页为 presenting 方、
@@ -3953,6 +3973,9 @@ private final class BearyFadeRiseAnimator: NSObject, UIViewControllerAnimatedTra
             toView.frame = transitionContext.finalFrame(for: toVC)
             container.addSubview(toView)
             if UIAccessibility.isReduceMotionEnabled {
+                // 117 终态偏离兜底：减动效路径此前直接完成、不复位；这里同样清掉残留位移。
+                toView.transform = .identity
+                toView.frame = transitionContext.finalFrame(for: toVC)
                 transitionContext.completeTransition(!transitionContext.transitionWasCancelled)
                 return
             }
