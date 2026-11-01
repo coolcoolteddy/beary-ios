@@ -49,8 +49,8 @@ final class BearyLocationPopoverView: UIView, CLLocationManagerDelegate, MKLocal
     private let spinner = BearyRefreshIconView()
     private let statusIconView = UIImageView()
     private let statusLabel = UILabel()
-    private let confirmButton = UIButton(type: .system)
-    private let manualButton = UIButton(type: .system)
+    private let confirmButton = BearyHit44Button(type: .system)
+    private let manualButton = BearyHit44Button(type: .system)
     private let subLabel = UILabel()
     private let inputField = UITextField()
     private let suggestionsStack = UIStackView()
@@ -237,55 +237,71 @@ final class BearyLocationPopoverView: UIView, CLLocationManagerDelegate, MKLocal
 
     // MARK: - 状态
 
+    /// 审计 15 项第 14 项：内部状态切换的透明度过渡（约 0.16s 交叉淡入），
+    /// 只过渡变化区域、不增加等待、不逐帧改约束；减动效时直接切换。
+    private func fadeStateChange(_ changes: () -> Void) {
+        if UIAccessibility.isReduceMotionEnabled {
+            changes()
+        } else {
+            UIView.transition(with: mainStack, duration: 0.16, options: [.transitionCrossDissolve, .allowUserInteraction], animations: changes)
+        }
+    }
+
     private func setLocating() {
-        manualMode = false
-        locating = true
-        spinner.isHidden = false
-        spinner.startSpinning()
-        statusIconView.isHidden = true
-        statusLabel.text = "正在获取当前位置…"
-        subLabel.text = "打开即自动定位，不用再点一次获取"
-        setConfirmEnabled(false)
-        inputField.isHidden = true
-        suggestionsStack.isHidden = true
+        fadeStateChange {
+            manualMode = false
+            locating = true
+            spinner.isHidden = false
+            spinner.startSpinning()
+            statusIconView.isHidden = true
+            statusLabel.text = "正在获取当前位置…"
+            subLabel.text = "打开即自动定位，不用再点一次获取"
+            setConfirmEnabled(false)
+            inputField.isHidden = true
+            suggestionsStack.isHidden = true
+        }
     }
 
     private func setLocated(_ location: DiaryLocation) {
-        manualMode = false
-        locating = false
-        located = location
-        spinner.stopSpinning()
-        spinner.isHidden = true
-        statusIconView.isHidden = false
-        statusLabel.text = location.name ?? location.district
-        if let district = location.district, location.name != nil, district != location.name {
-            subLabel.text = "已定位 · 公开后他人仅见区级（\(district)）"
-        } else {
-            subLabel.text = "已定位"
+        fadeStateChange {
+            manualMode = false
+            locating = false
+            located = location
+            spinner.stopSpinning()
+            spinner.isHidden = true
+            statusIconView.isHidden = false
+            statusLabel.text = location.name ?? location.district
+            if let district = location.district, location.name != nil, district != location.name {
+                subLabel.text = "已定位 · 公开后他人仅见区级（\(district)）"
+            } else {
+                subLabel.text = "已定位"
+            }
+            setConfirmEnabled(true)
+            inputField.isHidden = true
+            suggestionsStack.isHidden = true
         }
-        setConfirmEnabled(true)
-        inputField.isHidden = true
-        suggestionsStack.isHidden = true
     }
 
     private func setManualMode(message: String? = nil) {
-        manualMode = true
-        locating = false
-        spinner.stopSpinning()
-        spinner.isHidden = true
-        statusIconView.isHidden = false
-        statusLabel.text = "自己输入地点"
-        if let message = message {
-            subLabel.text = message
-        } else {
-            subLabel.text = "输入地点，下方出现建议时点建议直接定位"
+        fadeStateChange {
+            manualMode = true
+            locating = false
+            spinner.stopSpinning()
+            spinner.isHidden = true
+            statusIconView.isHidden = false
+            statusLabel.text = "自己输入地点"
+            if let message = message {
+                subLabel.text = message
+            } else {
+                subLabel.text = "输入地点，下方出现建议时点建议直接定位"
+            }
+            // 手动态的确认就是头部 ✅：有输入才可点，空输入禁用防误存；
+            // 不再另起“使用这个地点”钮，避免两个确认入口。
+            inputField.isHidden = false
+            suggestionsStack.isHidden = false
+            refreshManualConfirmState()
+            inputField.becomeFirstResponder()
         }
-        // 手动态的确认就是头部 ✅：有输入才可点，空输入禁用防误存；
-        // 不再另起“使用这个地点”钮，避免两个确认入口。
-        inputField.isHidden = false
-        suggestionsStack.isHidden = false
-        refreshManualConfirmState()
-        inputField.becomeFirstResponder()
     }
 
     private func setConfirmEnabled(_ enabled: Bool) {
