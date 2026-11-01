@@ -756,15 +756,17 @@ final class BearyImageLoader {
 // MARK: - 图片预热（秒开批：只预热缩略图）
 
 /// 预热窗口口径（纯值类型，与 NWPathMonitor 解耦，便于按口径复核）：
-/// Wi-Fi 积极、蜂窝收敛、流量受限/无网为零；未知网络先按蜂窝收敛算，
+/// Wi-Fi 积极、蜂窝收敛、昂贵/受限/无网为零；未知网络先按蜂窝收敛算，
 /// 绝不在 monitor 首报前按 Wi-Fi 放量。
+/// 受限档：isConstrained（低数据模式）与 isExpensive 同档、一律为零——
+/// 受限 Wi-Fi 不再拿 Wi-Fi 积极预算；三档数值本身不动。
 struct BearyImagePrefetchBudget {
     let maxEntries: Int
     let maxThumbsPerEntry: Int
     let maxURLs: Int
     static let none = BearyImagePrefetchBudget(maxEntries: 0, maxThumbsPerEntry: 0, maxURLs: 0)
-    static func forNetwork(isSatisfied: Bool, isExpensive: Bool, isWiFi: Bool, pathKnown: Bool) -> BearyImagePrefetchBudget {
-        if !isSatisfied || isExpensive { return .none }
+    static func forNetwork(isSatisfied: Bool, isExpensive: Bool, isConstrained: Bool, isWiFi: Bool, pathKnown: Bool) -> BearyImagePrefetchBudget {
+        if !isSatisfied || isExpensive || isConstrained { return .none }
         if isWiFi { return BearyImagePrefetchBudget(maxEntries: 10, maxThumbsPerEntry: 2, maxURLs: 16) }
         // 蜂窝（含路径未知，pathKnown 仅作口径标注、预算同蜂窝档）：
         // 下一屏只取前 4 篇、每篇首图，合计不超过 4 张。
@@ -783,9 +785,17 @@ struct BearyImagePrefetchBudget {
 /// 的下载不受影响）；预热失败静默丢弃，不 toast、不重试、不亮失败态。
 /// 私密口径：只预热当前 viewer 可见的篇——已公开，或作者是本人；
 /// 占位篇（placeholder）与他人私密篇一律跳过，不进任何缓存桶。
-/// 账号隔离：窗口计算时快照当前账号桶，换号后旧桶的 warmed 集合清零，
-/// 且 loadDetailed 发起时已固定 bucket，夹在请求与回包之间的切号
-/// 不会把图写进新号桶（与 loader 的 S2 同口径）。
+/// 账号隔离：窗口计算时快照当前账号桶，换号后旧桶的 warmed 与 pending
+/// 集合双双清零，且 loadDetailed 发起时已固定 bucket，夹在请求与回包
+/// 之间的切号不会把图写进新号桶（与 loader 的 S2 同口径）。
+/// 排队与完成分开记：pending = 已排队未出结果（错峰待起或在途），
+/// warmed = 已成功预热完成。建任务前只记 pending，成功回调才移入
+/// warmed；取消或失败只清 pending，warmed 里的已完成项不受影响。
+/// 因此取消/失败的 URL 下次触发可重新排队，而不再是永久“已预热”；
+/// 本进程内同一 URL 不重复排队靠 pending + warmed 两集合共同保证。
+/// 卡片键对齐：预热传卡片同款下采样宽度（strip × scale，见
+/// cardStripWidth，与 BearyDiaryCardCell.stripWidth 同口径），使预热
+/// 解码图与卡片显示走同一内存键，不再全尺寸解码后仍命中不了。
 final class BearyImagePrefetcher {
     static let shared = BearyImagePrefetcher()
     private let lock = NSLock()
@@ -794,9 +804,11 @@ final class BearyImagePrefetcher {
     private var pathKnown = false
     private var pathSatisfied = false
     private var pathExpensive = true
+    private var pathConstrained = false
     private var pathWiFi = false
     private var generation = 0
     private var inFlight: [URLSessionDataTask] = []
+    private var pending: Set<String> = []
     private var warmed: Set<String> = []
     private var warmedBucketKey: String?
     private let queue = DispatchQueue(label: "com.beary.image-prefetch", qos: .utility)
@@ -813,6 +825,7 @@ final class BearyImagePrefetcher {
             self.pathKnown = true
             self.pathSatisfied = path.status == .satisfied
             self.pathExpensive = path.isExpensive
+            self.pathConstrained = path.isConstrained
             self.pathWiFi = path.usesInterfaceType(.wifi)
             self.lock.unlock()
         }
@@ -825,9 +838,23 @@ final class BearyImagePrefetcher {
 
     private func currentBudget() -> BearyImagePrefetchBudget {
         lock.lock()
-        let budget = BearyImagePrefetchBudget.forNetwork(isSatisfied: pathSatisfied, isExpensive: pathExpensive, isWiFi: pathWiFi, pathKnown: pathKnown)
+        let budget = BearyImagePrefetchBudget.forNetwork(isSatisfied: pathSatisfied, isExpensive: pathExpensive, isConstrained: pathConstrained, isWiFi: pathWiFi, pathKnown: pathKnown)
         lock.unlock()
         return budget
+    }
+
+    /// 卡片图片条同款定宽（BearyDiaryCardCell.stripWidth 同口径，卡片
+    /// 显示逻辑本身不动）：216 高按宽高比定宽，0.55–2.22 倍高夹取，
+    /// 无尺寸老图默认 280。预热用 strip × scale 作下采样宽度，使
+    /// memoryKey 与卡片显示的键一字相同；卡片键若改口径，这里须同改。
+    private func cardStripWidth(forKey key: String, dims: [String: [Int]]?, height: CGFloat) -> CGFloat {
+        if let dims = dims, let d = dims[key], d.count >= 2, d[0] > 0, d[1] > 0 {
+            let raw = height * CGFloat(d[0]) / CGFloat(d[1])
+            let low = height * 0.55
+            let high = height * 2.22
+            return round(max(low, min(high, raw)))
+        }
+        return 280
     }
 
     /// entries 为当前列表全量顺序；lastVisibleIndex 为最后可见行下标
@@ -841,53 +868,79 @@ final class BearyImagePrefetcher {
         lock.lock()
         if warmedBucketKey != bucketKey {
             warmed.removeAll()
+            pending.removeAll()
             warmedBucketKey = bucketKey
         }
         lock.unlock()
-        var urls: [URL] = []
+        // 本触发只收集、暂不记 pending：已完成（warmed）或已在途
+        //（pending）的 URL 跳过；若收集为空则原触发原样保留、不取代。
+        var items: [(url: URL, downsampleToWidth: CGFloat, warmedKey: String)] = []
         let start = lastVisibleIndex + 1
         guard start < entries.count else { return }
         for entry in entries[start..<min(entries.count, start + budget.maxEntries)] {
-            if urls.count >= budget.maxURLs { break }
+            if items.count >= budget.maxURLs { break }
             if entry.placeholder == true { continue }
             let mine = entry.isMine == true || (viewerId != nil && entry.authorId == viewerId)
             if !BearyEphemeral.isEffectivelyPublic(entry) && !mine { continue }
             guard let keys = entry.images else { continue }
             for key in keys.prefix(budget.maxThumbsPerEntry) {
-                if urls.count >= budget.maxURLs { break }
+                if items.count >= budget.maxURLs { break }
                 if key.isEmpty { continue }
                 guard let url = BearyImageURLs.imageURL(key: key, thumb: true) else { continue }
                 let warmedKey = bucketKey + "|" + url.absoluteString
                 lock.lock()
-                let seen = warmed.contains(warmedKey)
-                if !seen { warmed.insert(warmedKey) }
+                let seen = warmed.contains(warmedKey) || pending.contains(warmedKey)
                 lock.unlock()
                 if seen { continue }
-                urls.append(url)
+                let strip = cardStripWidth(forKey: key, dims: entry.imgDims, height: 216)
+                items.append((url: url, downsampleToWidth: strip * UIScreen.main.scale, warmedKey: warmedKey))
             }
         }
-        guard !urls.isEmpty else { return }
-        // 新触发取代旧触发：旧在途预热订阅全部摘除，错峰队列里的旧代次直接跳过。
+        guard !items.isEmpty else { return }
+        // 新触发取代旧触发：旧在途预热订阅全部摘除，错峰队列里的旧代次
+        // 直接跳过；旧 pending 一并清除（旧回调因订阅摘除不会再到，
+        // 不清则旧 URL 永久卡在排队态、再也排不进新触发）。
         lock.lock()
         generation += 1
         let gen = generation
         let oldTasks = inFlight
         inFlight.removeAll()
+        pending.removeAll()
+        for item in items { pending.insert(item.warmedKey) }
         lock.unlock()
         for task in oldTasks { task.cancel() }
-        for (index, url) in urls.enumerated() {
+        for (index, item) in items.enumerated() {
             let delay = 0.25 + 0.15 * Double(index)
             queue.asyncAfter(deadline: .now() + delay) { [weak self] in
                 guard let self = self else { return }
-                // 流量口径中途变受限/断网时，剩余错峰项直接停，不再起新下载。
-                if self.currentBudget().maxURLs == 0 { return }
+                // 预算快照取在锁外（currentBudget 自带锁），代次判定在锁内：
+                // 先判代次再用预算结论——旧代次跳过时绝不碰 pending，
+                // 否则会误删新代次重排同一 URL 的排队记录。
+                let budgetNowEmpty = self.currentBudget().maxURLs == 0
                 self.lock.lock()
                 guard self.generation == gen else {
                     self.lock.unlock()
                     return
                 }
+                // 流量口径中途变受限/断网/昂贵时，剩余错峰项直接停，
+                // 不再起新下载；本项排队记录清除，下次触发可重新排队。
+                if budgetNowEmpty {
+                    self.pending.remove(item.warmedKey)
+                    self.lock.unlock()
+                    return
+                }
                 // 建任务与登记同锁内完成：cancel 漏不掉刚起的任务。
-                let task = BearyImageLoader.shared.loadDetailed(url: url) { _ in
+                // 下采样宽度传卡片同款，内存键与卡片显示一致。
+                let task = BearyImageLoader.shared.loadDetailed(url: item.url, downsampleToWidth: item.downsampleToWidth) { [weak self] result in
+                    guard let self = self else { return }
+                    self.lock.lock()
+                    self.pending.remove(item.warmedKey)
+                    // 成功才记完成；失败（含取消）只清排队记录。
+                    // 切号后到的旧桶回包不记入新桶（键含桶前缀，兼防串桶）。
+                    if case .success = result, self.warmedBucketKey == bucketKey {
+                        self.warmed.insert(item.warmedKey)
+                    }
+                    self.lock.unlock()
                     // 预热失败静默丢弃：不 toast、不重试；滑到该屏时 cell
                     // 仍按需加载，不会因预热失败而缺图。
                 }
@@ -898,11 +951,14 @@ final class BearyImagePrefetcher {
     }
 
     /// 滚动开始 / 离页时调用：代次 +1 使错峰队列余项作废，已起任务取消订阅。
+    /// 只清排队记录（pending）：已成功预热的 warmed 不动；取消的 URL
+    /// 下次触发可重新排队，不再永久标记为“已经预热”。
     func cancel() {
         lock.lock()
         generation += 1
         let tasks = inFlight
         inFlight.removeAll()
+        pending.removeAll()
         lock.unlock()
         for task in tasks { task.cancel() }
     }
