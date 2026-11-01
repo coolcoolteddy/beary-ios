@@ -2937,7 +2937,6 @@ final class BearyLegalTextViewController: UIViewController {
             topBar.centerXAnchor.constraint(equalTo: view.centerXAnchor),
             topBar.widthAnchor.constraint(lessThanOrEqualToConstant: 600),
             legalTopBarWidthEquality,
-            topBar.heightAnchor.constraint(greaterThanOrEqualToConstant: 52),
             closeButton.leadingAnchor.constraint(equalTo: topBar.leadingAnchor, constant: 16),
             closeButton.centerYAnchor.constraint(equalTo: topBar.centerYAnchor),
             titleLabel.centerXAnchor.constraint(equalTo: topBar.centerXAnchor),
@@ -2951,7 +2950,7 @@ final class BearyLegalTextViewController: UIViewController {
             textView.widthAnchor.constraint(lessThanOrEqualToConstant: 600),
             legalTextWidthEquality,
             textView.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor),
-        ])
+        ] + BearySubpageTopBarHeight.constraints(for: topBar))
     }
 
     @objc private func closeTapped() {
@@ -2971,13 +2970,13 @@ final class BearyLegalTextViewController: UIViewController {
 
     override func viewDidLayoutSubviews() {
         super.viewDidLayoutSubviews()
-        subpageLayoutGuard.applyIfNeeded(page: pageTitle, view: view, topView: topBarView)
+        subpageLayoutGuard.applyIfNeeded(page: pageTitle, view: view, topView: topBarView, contentViews: [textView], presentation: "fullScreen+fadeRise")
     }
 
     override func viewDidAppear(_ animated: Bool) {
         super.viewDidAppear(animated)
         // 117 终态偏离兜底：动画结束后的最终帧再校一次。
-        subpageLayoutGuard.applyAfterAppearance(page: pageTitle, view: view, topView: topBarView)
+        subpageLayoutGuard.applyAfterAppearance(page: pageTitle, view: view, topView: topBarView, contentViews: [textView], presentation: "fullScreen+fadeRise")
     }
 }
 
@@ -3625,7 +3624,6 @@ private final class BearyDiagnosticsViewController: UIViewController {
         topBar.addSubview(closeButton)
         topBar.addSubview(titleLabel)
         NSLayoutConstraint.activate([
-            topBar.heightAnchor.constraint(greaterThanOrEqualToConstant: 52),
             closeButton.leadingAnchor.constraint(equalTo: topBar.leadingAnchor, constant: 16),
             closeButton.centerYAnchor.constraint(equalTo: topBar.centerYAnchor),
             titleLabel.centerXAnchor.constraint(equalTo: topBar.centerXAnchor),
@@ -3634,7 +3632,7 @@ private final class BearyDiagnosticsViewController: UIViewController {
             closeButton.bottomAnchor.constraint(lessThanOrEqualTo: topBar.bottomAnchor, constant: -6),
             titleLabel.topAnchor.constraint(greaterThanOrEqualTo: topBar.topAnchor, constant: 6),
             titleLabel.bottomAnchor.constraint(lessThanOrEqualTo: topBar.bottomAnchor, constant: -6),
-        ])
+        ] + BearySubpageTopBarHeight.constraints(for: topBar))
 
         copyButton.translatesAutoresizingMaskIntoConstraints = false
         copyButton.setTitle("复制全部", for: .normal)
@@ -3693,13 +3691,13 @@ private final class BearyDiagnosticsViewController: UIViewController {
 
     override func viewDidLayoutSubviews() {
         super.viewDidLayoutSubviews()
-        subpageLayoutGuard.applyIfNeeded(page: "诊断日志", view: view, topView: topBarView)
+        subpageLayoutGuard.applyIfNeeded(page: "诊断日志", view: view, topView: topBarView, contentViews: [textView], presentation: "fullScreen+fadeRise")
     }
 
     override func viewDidAppear(_ animated: Bool) {
         super.viewDidAppear(animated)
         // 117 终态偏离兜底：动画结束后的最终帧再校一次。
-        subpageLayoutGuard.applyAfterAppearance(page: "诊断日志", view: view, topView: topBarView)
+        subpageLayoutGuard.applyAfterAppearance(page: "诊断日志", view: view, topView: topBarView, contentViews: [textView], presentation: "fullScreen+fadeRise")
         reloadLog()
     }
 
@@ -3810,7 +3808,6 @@ final class BearyBlockedUsersViewController: UIViewController, UITableViewDataSo
             topBar.centerXAnchor.constraint(equalTo: view.centerXAnchor),
             topBar.widthAnchor.constraint(lessThanOrEqualToConstant: 600),
             blockedTopBarWidthEquality,
-            topBar.heightAnchor.constraint(greaterThanOrEqualToConstant: 52),
             closeButton.leadingAnchor.constraint(equalTo: topBar.leadingAnchor, constant: 16),
             closeButton.centerYAnchor.constraint(equalTo: topBar.centerYAnchor),
             titleLabel.centerXAnchor.constraint(equalTo: topBar.centerXAnchor),
@@ -3830,7 +3827,7 @@ final class BearyBlockedUsersViewController: UIViewController, UITableViewDataSo
             tableView.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor),
             emptyLabel.centerXAnchor.constraint(equalTo: view.centerXAnchor),
             emptyLabel.centerYAnchor.constraint(equalTo: view.centerYAnchor),
-        ])
+        ] + BearySubpageTopBarHeight.constraints(for: topBar))
         reloadBlocked()
     }
 
@@ -3910,12 +3907,12 @@ final class BearyBlockedUsersViewController: UIViewController, UITableViewDataSo
 
     override func viewDidLayoutSubviews() {
         super.viewDidLayoutSubviews()
-        subpageLayoutGuard.applyIfNeeded(page: "已拉黑用户", view: view, topView: topBarView)
+        subpageLayoutGuard.applyIfNeeded(page: "已拉黑用户", view: view, topView: topBarView, contentViews: [tableView], presentation: "fullScreen+fadeRise")
     }
 
     override func viewDidAppear(_ animated: Bool) {
         super.viewDidAppear(animated)
         // 117 终态偏离兜底：动画结束后的最终帧再校一次。
-        subpageLayoutGuard.applyAfterAppearance(page: "已拉黑用户", view: view, topView: topBarView)
+        subpageLayoutGuard.applyAfterAppearance(page: "已拉黑用户", view: view, topView: topBarView, contentViews: [tableView], presentation: "fullScreen+fadeRise")
     }
 }
