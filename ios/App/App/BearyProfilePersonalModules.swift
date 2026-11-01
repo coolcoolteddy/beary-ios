@@ -233,8 +233,15 @@ enum BearyProfilePersonalLogic {
     // MARK: - 年度回顾
 
     /// 当年条目（本地年），createdAt 降序。
+    /// 清单第 10 项：胶囊篇排除（与写作统计、那年今日同谓词
+    /// BearyTimeCapsule.isExcludedFromStats，即 capsuleBuried == 1，埋了即排除、
+    /// 不论解锁与否，取消埋藏后重新计入）。本函数是年度回顾总篇数、最长连续、
+    /// 心情分布与词汇指纹的共同源头——年报首屏与词汇指纹内部均经它取当年条目，
+    /// 故一处过滤即覆盖四处；年度回顾入口卡的“今年已写 N 篇”也随之变小，
+    /// Li 拍板接受（会小于实际写作篇数）。
     static func yearEntries(entries: [Entry], year: Int, calendar: Calendar) -> [Entry] {
         entries.filter { entry in
+            guard !BearyTimeCapsule.isExcludedFromStats(entry) else { return false }
             guard let createdAt = entry.createdAt else { return false }
             let date = Date(timeIntervalSince1970: TimeInterval(createdAt) / 1000)
             return calendar.component(.year, from: date) == year
@@ -251,6 +258,101 @@ enum BearyProfilePersonalLogic {
             if $0.count != $1.count { return $0.count > $1.count }
             return $0.key < $1.key
         }
+    }
+
+    // MARK: - 年度回顾新增统计（2026-10-31 Li 定）
+
+    /// 年度之最 + 每月字数。口径与现行年报一致：
+    /// - 输入已是当年条目（调用方传 yearEntries 结果）；本函数再按
+    ///   BearyTimeCapsule.isExcludedFromStats 过一次胶囊篇（埋了即排除、
+    ///   不论解锁与否，与 32 条批第 10 项定过的年度回顾排除胶囊口径一致；
+    ///   #383 支仍在 OPEN 未合入 main，本处过滤与它同谓词，合入后也不重复计）。
+    /// - 时间一律按设备本地时区（Calendar.current）取，createdAt 为毫秒。
+    /// - 字数 = 正文 content.count，标题不计，与写作统计 totalChars 同口径。
+    struct YearReviewExtras {
+        /// 最晚写日记的钟点（一天中最晚的时刻，不是当年最后一篇）：
+        /// hour/minute 为该篇的本地钟点，date 为该篇的本地日期；平手取最早日期。
+        var latestTimeHour: Int?
+        var latestTimeMinute: Int?
+        var latestTimeDate: Date?
+        /// 记录最多的一天：本地日 + 当天篇数；平手取最早一天。
+        var mostEntriesDay: Date?
+        var mostEntriesCount: Int
+        /// 写得最多的一天：本地日 + 当天正文总字数；平手取最早一天。
+        var mostCharsDay: Date?
+        var mostCharsCount: Int
+        /// 最常去的地方：locationName（空则 locationDistrict，trim 后）出现次数最多者；
+        /// 无定位的日记不计；平手取名字典序最小（稳定）。
+        var topLocationName: String?
+        var topLocationCount: Int
+        /// 每月正文总字数，下标 0 = 1 月；无日记的月为 0。
+        var monthlyChars: [Int]
+    }
+
+    static func yearReviewExtras(entries: [Entry], calendar: Calendar) -> YearReviewExtras {
+        let entries = entries.filter { !BearyTimeCapsule.isExcludedFromStats($0) }
+        var monthlyChars = [Int](repeating: 0, count: 12)
+        var dayCounts: [Date: Int] = [:]
+        var dayChars: [Date: Int] = [:]
+        var locationCounts: [String: Int] = [:]
+        var latestHour: Int?
+        var latestMinute: Int?
+        var latestDate: Date?
+        for entry in entries {
+            guard let createdAt = entry.createdAt else { continue }
+            let date = Date(timeIntervalSince1970: TimeInterval(createdAt) / 1000)
+            let parts = calendar.dateComponents([.month, .hour, .minute], from: date)
+            if let month = parts.month, (1...12).contains(month) {
+                monthlyChars[month - 1] += (entry.content ?? "").count
+            }
+            let day = calendar.startOfDay(for: date)
+            dayCounts[day, default: 0] += 1
+            dayChars[day, default: 0] += (entry.content ?? "").count
+            if let hour = parts.hour, let minute = parts.minute {
+                // 平手取最早日期：输入按 createdAt 降序（yearEntries 新→旧），
+                // 只比大小会留住先遇到的最晚一天，故钟点相等时再比日期、
+                // 更早的才替换；其余两项（篇数/字数）已按日期升序扫、用严格 >
+                // 取最早，口径与它们一致。
+                let isLater = latestHour == nil
+                    || hour > (latestHour ?? 0)
+                    || (hour == (latestHour ?? 0) && minute > (latestMinute ?? 0))
+                    || (hour == (latestHour ?? 0) && minute == (latestMinute ?? 0)
+                        && latestDate.map { day < $0 } ?? true)
+                if isLater {
+                    latestHour = hour
+                    latestMinute = minute
+                    latestDate = day
+                }
+            }
+            let name = (entry.locationName?.trimmingCharacters(in: .whitespacesAndNewlines)).flatMap { $0.isEmpty ? nil : $0 }
+                ?? (entry.locationDistrict?.trimmingCharacters(in: .whitespacesAndNewlines)).flatMap { $0.isEmpty ? nil : $0 }
+            if let name = name { locationCounts[name, default: 0] += 1 }
+        }
+        var mostEntriesDay: Date?
+        var mostEntriesCount = 0
+        for day in dayCounts.keys.sorted() {
+            let count = dayCounts[day] ?? 0
+            if count > mostEntriesCount { mostEntriesCount = count; mostEntriesDay = day }
+        }
+        var mostCharsDay: Date?
+        var mostCharsCount = 0
+        for day in dayChars.keys.sorted() {
+            let count = dayChars[day] ?? 0
+            if count > mostCharsCount { mostCharsCount = count; mostCharsDay = day }
+        }
+        var topLocationName: String?
+        var topLocationCount = 0
+        for name in locationCounts.keys.sorted() {
+            let count = locationCounts[name] ?? 0
+            if count > topLocationCount { topLocationCount = count; topLocationName = name }
+        }
+        return YearReviewExtras(
+            latestTimeHour: latestHour, latestTimeMinute: latestMinute, latestTimeDate: latestDate,
+            mostEntriesDay: mostEntriesDay, mostEntriesCount: mostEntriesCount,
+            mostCharsDay: mostCharsDay, mostCharsCount: mostCharsCount,
+            topLocationName: topLocationName, topLocationCount: topLocationCount,
+            monthlyChars: monthlyChars
+        )
     }
 
     /// 停用词（中文高频虚词 + 人称代词 + 时间副词骨架；只拦虚词，不拦实词——
@@ -365,6 +467,81 @@ enum BearyProfilePersonalLogic {
             guard CharacterSet.letters.contains(scalar) else { return false }
         }
         return true
+    }
+}
+
+/// 每月字数趋势图（纯 UIView，不引图表库；复用心情条形的 orange/faint 配色）。
+/// 12 根柱按当月正文总字数归一（最高月 = 满高），柱顶标当月字数，柱下标月份；
+/// 颜色全走 BearyColors 动态色，深浅切换自动跟走。
+final class BearyMonthlyCharsChartView: UIView {
+    func configure(monthlyChars: [Int]) {
+        for view in subviews { view.removeFromSuperview() }
+        let maxValue = monthlyChars.max() ?? 0
+        let titleRow = UIStackView()
+        titleRow.axis = .horizontal
+        titleRow.spacing = 8
+        titleRow.alignment = .center
+        let maxLabel = UILabel()
+        maxLabel.font = UIFont.systemFont(ofSize: 12)
+        maxLabel.textColor = BearyColors.gray
+        maxLabel.text = maxValue > 0 ? "最高 \(maxValue) 字" : "这一年还没有字数"
+        titleRow.addArrangedSubview(maxLabel)
+        let columns = UIStackView()
+        columns.axis = .horizontal
+        columns.spacing = 2
+        columns.distribution = .fillEqually
+        columns.alignment = .bottom
+        for month in 1...12 {
+            let value = month <= monthlyChars.count ? monthlyChars[month - 1] : 0
+            let column = UIStackView()
+            column.axis = .vertical
+            column.spacing = 4
+            column.alignment = .center
+            let valueLabel = UILabel()
+            valueLabel.font = UIFont.systemFont(ofSize: 9)
+            valueLabel.textColor = BearyColors.gray
+            valueLabel.text = "\(value)"
+            valueLabel.adjustsFontSizeToFitWidth = true
+            valueLabel.minimumScaleFactor = 0.7
+            let track = UIView()
+            track.backgroundColor = BearyColors.faint
+            track.layer.cornerRadius = 3
+            track.clipsToBounds = true
+            track.heightAnchor.constraint(equalToConstant: 110).isActive = true
+            let fill = UIView()
+            fill.translatesAutoresizingMaskIntoConstraints = false
+            fill.backgroundColor = BearyColors.orange
+            track.addSubview(fill)
+            let fillHeight = maxValue > 0 ? CGFloat(value) / CGFloat(maxValue) * 110 : 0
+            NSLayoutConstraint.activate([
+                fill.leadingAnchor.constraint(equalTo: track.leadingAnchor),
+                fill.trailingAnchor.constraint(equalTo: track.trailingAnchor),
+                fill.bottomAnchor.constraint(equalTo: track.bottomAnchor),
+                fill.heightAnchor.constraint(equalToConstant: fillHeight),
+            ])
+            let monthLabel = UILabel()
+            monthLabel.font = UIFont.systemFont(ofSize: 10)
+            monthLabel.textColor = BearyColors.gray
+            monthLabel.text = "\(month)月"
+            column.addArrangedSubview(valueLabel)
+            column.addArrangedSubview(track)
+            column.addArrangedSubview(monthLabel)
+            track.widthAnchor.constraint(equalTo: column.widthAnchor, multiplier: 0.6).isActive = true
+            columns.addArrangedSubview(column)
+        }
+        let stack = UIStackView(arrangedSubviews: [titleRow, columns])
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        stack.axis = .vertical
+        stack.spacing = 12
+        addSubview(stack)
+        NSLayoutConstraint.activate([
+            stack.topAnchor.constraint(equalTo: topAnchor),
+            stack.leadingAnchor.constraint(equalTo: leadingAnchor),
+            stack.trailingAnchor.constraint(equalTo: trailingAnchor),
+            stack.bottomAnchor.constraint(equalTo: bottomAnchor),
+        ])
+        isAccessibilityElement = false
+        accessibilityLabel = "每月字数趋势，最高 \(maxValue) 字"
     }
 }
 
@@ -645,6 +822,65 @@ final class BearyYearReviewViewController: UIViewController {
                 dynamicStack.addArrangedSubview(row)
             }
         }
+
+        // 年度之最 + 每月字数趋势（底部；胶囊篇按 yearReviewExtras 内过滤排除）。
+        let extras = BearyProfilePersonalLogic.yearReviewExtras(entries: yearEntriesValue, calendar: calendar)
+        let extrasTitle = UILabel()
+        extrasTitle.font = UIFont.systemFont(ofSize: 14, weight: .bold)
+        extrasTitle.textColor = BearyColors.ink
+        extrasTitle.text = "年度之最"
+        dynamicStack.addArrangedSubview(extrasTitle)
+        let dateFormatter = DateFormatter()
+        dateFormatter.locale = Locale(identifier: "zh_Hans_CN")
+        dateFormatter.dateFormat = "M月d日"
+        func extrasRow(title: String, value: String) {
+            let row = UIStackView()
+            row.axis = .horizontal
+            row.spacing = 8
+            row.alignment = .center
+            let titleLabel = UILabel()
+            titleLabel.font = UIFont.systemFont(ofSize: 13)
+            titleLabel.textColor = BearyColors.gray
+            titleLabel.text = title
+            let valueLabel = UILabel()
+            valueLabel.font = UIFont.systemFont(ofSize: 13)
+            valueLabel.textColor = BearyColors.ink
+            valueLabel.text = value
+            valueLabel.numberOfLines = 0
+            row.addArrangedSubview(titleLabel)
+            row.addArrangedSubview(valueLabel)
+            dynamicStack.addArrangedSubview(row)
+        }
+        if let hour = extras.latestTimeHour, let minute = extras.latestTimeMinute {
+            let dayText = extras.latestTimeDate.map { dateFormatter.string(from: $0) } ?? ""
+            extrasRow(title: "最晚写日记", value: String(format: "%02d:%02d", hour, minute) + (dayText.isEmpty ? "" : "（\(dayText)）"))
+        } else {
+            extrasRow(title: "最晚写日记", value: "暂无")
+        }
+        if let day = extras.mostEntriesDay {
+            extrasRow(title: "记录最多的一天", value: "\(dateFormatter.string(from: day)) · \(extras.mostEntriesCount) 篇")
+        } else {
+            extrasRow(title: "记录最多的一天", value: "暂无")
+        }
+        if let day = extras.mostCharsDay {
+            extrasRow(title: "写得最多的一天", value: "\(dateFormatter.string(from: day)) · \(extras.mostCharsCount) 字")
+        } else {
+            extrasRow(title: "写得最多的一天", value: "暂无")
+        }
+        if let place = extras.topLocationName {
+            extrasRow(title: "最常去的地方", value: "\(place) · \(extras.topLocationCount) 篇")
+        } else {
+            extrasRow(title: "最常去的地方", value: "暂无定位日记")
+        }
+        let chartTitle = UILabel()
+        chartTitle.font = UIFont.systemFont(ofSize: 14, weight: .bold)
+        chartTitle.textColor = BearyColors.ink
+        chartTitle.text = "每月字数趋势"
+        dynamicStack.addArrangedSubview(chartTitle)
+        let chartView = BearyMonthlyCharsChartView()
+        chartView.translatesAutoresizingMaskIntoConstraints = false
+        chartView.configure(monthlyChars: extras.monthlyChars)
+        dynamicStack.addArrangedSubview(chartView)
 
         let footnote = UILabel()
         footnote.numberOfLines = 0
