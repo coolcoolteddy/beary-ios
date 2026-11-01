@@ -5182,7 +5182,9 @@ class BearyProfileViewController: UIViewController {
                     flash.trailingAnchor.constraint(equalTo: cell.contentView.trailingAnchor),
                     flash.bottomAnchor.constraint(equalTo: cell.contentView.bottomAnchor),
                 ])
-                UIView.animate(withDuration: 0.6, delay: 0.5, options: [], animations: {
+                // Grok 5.4：有动效时延迟 0、时长 0.2s（原 0.5s / 0.6s 偏慢）；
+                // 减动效分支上游已 return（见本闭包开头），此处不再重复判断。
+                UIView.animate(withDuration: 0.2, delay: 0, options: [], animations: {
                     flash.alpha = 0
                 }, completion: { _ in
                     flash.removeFromSuperview()
