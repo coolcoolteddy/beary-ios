@@ -28,6 +28,31 @@ import UIKit
 //   锁 icon_lock、地球 icon_globe、右箭头 icon_chevron_right。
 // - 星空固定深色夜空（不跟随系统深浅），亮度语义在任何主题下可读。
 
+// MARK: - 星图夜景样式 Token（视觉清单第 11 项）
+//
+// 星空页固定深色夜空，不随系统深浅 / 全局主题变色：以下全部为固定值
+// （非 UIColor { trait } 动态色），数值与改动前散落在各处的字面量一字不差，
+// 本支只做集中命名，不换任何色值。选中橙 #FFB333（代码值 1 / 0.70 / 0.20）
+// 本次只 Token 化、不换色（等 Li 真机定色后再另议）。
+// 刻意未收进来的：底卡可见性行与详情钮仍走 BearyColors.orange / blue
+//（全局品牌与语义色，非夜景固定色），不在本 Token 口径内。
+enum BearyStarMapNight {
+    static let background = UIColor(red: 0.02, green: 0.03, blue: 0.06, alpha: 1)
+    static let primaryText: UIColor = .white
+    static let bodyText = UIColor(white: 0.85, alpha: 1)
+    static let secondaryText = UIColor(white: 0.72, alpha: 1)
+    static let dateText = UIColor(white: 0.65, alpha: 1)
+    static let selectedText = UIColor(white: 0.1, alpha: 1)
+    /// 选中橙 #FFB333（代码原值 1 / 0.70 / 0.20，原样保留，未按 179/255 微调）。
+    static let selected = UIColor(red: 1, green: 0.70, blue: 0.20, alpha: 1)
+    static let star = UIColor(red: 1, green: 0.85, blue: 0.54, alpha: 1)
+    static let edge = UIColor(red: 0.36, green: 0.48, blue: 0.71, alpha: 0.65)
+    static let dust = UIColor(white: 0.25, alpha: 0.5)
+    static let sheetBackground = UIColor(white: 1, alpha: 0.08)
+    static let sheetBorder = UIColor(white: 1, alpha: 0.14)
+    static let pillBorder = UIColor(white: 1, alpha: 0.25)
+}
+
 final class BearyDiaryStarMapViewController: UIViewController {
 
     private let authorId: Int
@@ -102,7 +127,7 @@ final class BearyDiaryStarMapViewController: UIViewController {
 
     override func viewDidLoad() {
         super.viewDidLoad()
-        view.backgroundColor = StarMapSkyView.nightBackground
+        view.backgroundColor = BearyStarMapNight.background
         if navigationController?.viewControllers.count == 1, presentingViewController != nil {
             if let closeImage = BearyIconImages.image(named: "icon_close", pointSize: 18) {
                 navigationItem.leftBarButtonItem = UIBarButtonItem(image: closeImage, style: .plain, target: self, action: #selector(didTapClose))
@@ -176,7 +201,7 @@ final class BearyDiaryStarMapViewController: UIViewController {
 
         legendLabel.translatesAutoresizingMaskIntoConstraints = false
         legendLabel.font = UIFont.systemFont(ofSize: 12)
-        legendLabel.textColor = UIColor(white: 0.72, alpha: 1)
+        legendLabel.textColor = BearyStarMapNight.secondaryText
         legendLabel.numberOfLines = 0
         legendLabel.text = "★ 大小 = 字数（字越多星越大）　亮度 = 心情\n连线 = 同心情 / 同地点 / 同词　点星进详情，点线看原因"
         contentView.addSubview(legendLabel)
@@ -184,7 +209,7 @@ final class BearyDiaryStarMapViewController: UIViewController {
         // 分片行首日历图标（官方 icon_calendar）：只在分片时出现，与年行同显隐。
         sliceCalendarIcon.translatesAutoresizingMaskIntoConstraints = false
         sliceCalendarIcon.image = BearyIconImages.image(named: "icon_calendar", pointSize: 20)
-        sliceCalendarIcon.tintColor = UIColor(white: 0.72, alpha: 1)
+        sliceCalendarIcon.tintColor = BearyStarMapNight.secondaryText
         sliceCalendarIcon.contentMode = .scaleAspectFit
         sliceCalendarIcon.isHidden = true
         contentView.addSubview(sliceCalendarIcon)
@@ -213,14 +238,14 @@ final class BearyDiaryStarMapViewController: UIViewController {
 
         statusLabel.translatesAutoresizingMaskIntoConstraints = false
         statusLabel.font = UIFont.systemFont(ofSize: 13)
-        statusLabel.textColor = UIColor(white: 0.72, alpha: 1)
+        statusLabel.textColor = BearyStarMapNight.secondaryText
         statusLabel.numberOfLines = 0
         contentView.addSubview(statusLabel)
 
         sheetCard.translatesAutoresizingMaskIntoConstraints = false
-        sheetCard.backgroundColor = UIColor(white: 1, alpha: 0.08)
+        sheetCard.backgroundColor = BearyStarMapNight.sheetBackground
         sheetCard.layer.cornerRadius = 14
-        sheetCard.layer.bearyDynamicBorderColor = UIColor(white: 1, alpha: 0.14)
+        sheetCard.layer.bearyDynamicBorderColor = BearyStarMapNight.sheetBorder
         sheetCard.layer.borderWidth = 1
         sheetCard.clipsToBounds = true
         sheetStack.translatesAutoresizingMaskIntoConstraints = false
@@ -234,16 +259,16 @@ final class BearyDiaryStarMapViewController: UIViewController {
         let emptyIcon = UIImageView()
         emptyIcon.translatesAutoresizingMaskIntoConstraints = false
         emptyIcon.image = BearyIconImages.image(named: "icon_star", pointSize: 48)
-        emptyIcon.tintColor = UIColor(red: 1, green: 0.70, blue: 0.20, alpha: 1)
+        emptyIcon.tintColor = BearyStarMapNight.selected
         emptyIcon.contentMode = .scaleAspectFit
         emptyLabel.translatesAutoresizingMaskIntoConstraints = false
         emptyLabel.font = UIFont.boldSystemFont(ofSize: 16)
-        emptyLabel.textColor = .white
+        emptyLabel.textColor = BearyStarMapNight.primaryText
         emptyLabel.textAlignment = .center
         emptyLabel.text = "这里还没有星星"
         emptySubLabel.translatesAutoresizingMaskIntoConstraints = false
         emptySubLabel.font = UIFont.systemFont(ofSize: 14)
-        emptySubLabel.textColor = UIColor(white: 0.72, alpha: 1)
+        emptySubLabel.textColor = BearyStarMapNight.secondaryText
         emptySubLabel.textAlignment = .center
         emptySubLabel.numberOfLines = 0
         emptyView.addSubview(emptyIcon)
@@ -253,14 +278,14 @@ final class BearyDiaryStarMapViewController: UIViewController {
 
         failureLabel.translatesAutoresizingMaskIntoConstraints = false
         failureLabel.font = UIFont.systemFont(ofSize: 14)
-        failureLabel.textColor = UIColor(white: 0.72, alpha: 1)
+        failureLabel.textColor = BearyStarMapNight.secondaryText
         failureLabel.textAlignment = .center
         failureLabel.numberOfLines = 0
         failureLabel.text = "日记加载失败，请重试"
         retryButton.translatesAutoresizingMaskIntoConstraints = false
         retryButton.setTitle("重试", for: .normal)
         retryButton.titleLabel?.font = UIFont.boldSystemFont(ofSize: 15)
-        retryButton.setTitleColor(.white, for: .normal)
+        retryButton.setTitleColor(BearyStarMapNight.primaryText, for: .normal)
         retryButton.addTarget(self, action: #selector(didTapRetry), for: .touchUpInside)
         failureView.translatesAutoresizingMaskIntoConstraints = false
         failureView.isHidden = true
@@ -368,11 +393,11 @@ final class BearyDiaryStarMapViewController: UIViewController {
         button.translatesAutoresizingMaskIntoConstraints = false
         button.setTitle(title, for: .normal)
         button.titleLabel?.font = UIFont.systemFont(ofSize: 13, weight: selected ? .bold : .regular)
-        button.setTitleColor(selected ? UIColor(white: 0.1, alpha: 1) : UIColor(white: 0.85, alpha: 1), for: .normal)
-        button.backgroundColor = selected ? UIColor(red: 1, green: 0.70, blue: 0.20, alpha: 1) : .clear
+        button.setTitleColor(selected ? BearyStarMapNight.selectedText : BearyStarMapNight.bodyText, for: .normal)
+        button.backgroundColor = selected ? BearyStarMapNight.selected : .clear
         button.layer.cornerRadius = 16
         button.layer.borderWidth = selected ? 0 : 1
-        button.layer.bearyDynamicBorderColor = UIColor(white: 1, alpha: 0.25)
+        button.layer.bearyDynamicBorderColor = BearyStarMapNight.pillBorder
         button.contentEdgeInsets = UIEdgeInsets(top: 6, left: 12, bottom: 6, right: 12)
         button.addTarget(self, action: action, for: .touchUpInside)
         return button
@@ -618,7 +643,7 @@ final class BearyDiaryStarMapViewController: UIViewController {
     private func sheetTitleLabel(_ text: String) -> UILabel {
         let label = UILabel()
         label.font = UIFont.boldSystemFont(ofSize: 14)
-        label.textColor = .white
+        label.textColor = BearyStarMapNight.primaryText
         label.numberOfLines = 0
         label.text = text
         return label
@@ -627,7 +652,7 @@ final class BearyDiaryStarMapViewController: UIViewController {
     private func sheetBodyLabel(_ text: String) -> UILabel {
         let label = UILabel()
         label.font = UIFont.systemFont(ofSize: 13)
-        label.textColor = UIColor(white: 0.85, alpha: 1)
+        label.textColor = BearyStarMapNight.bodyText
         label.numberOfLines = 0
         label.text = text
         return label
@@ -638,7 +663,7 @@ final class BearyDiaryStarMapViewController: UIViewController {
         button.contentHorizontalAlignment = .left
         button.titleLabel?.numberOfLines = 2
         button.titleLabel?.font = UIFont.systemFont(ofSize: 14)
-        button.setTitleColor(.white, for: .normal)
+        button.setTitleColor(BearyStarMapNight.primaryText, for: .normal)
         let title = sheetEntryTitle(entry)
         let date = sheetDateString(entry)
         button.setTitle("\(title) · \(date)", for: .normal)
@@ -664,7 +689,7 @@ final class BearyDiaryStarMapViewController: UIViewController {
             row.addArrangedSubview(sheetEntryButton(entry))
             let chevron = UIImageView()
             chevron.image = BearyIconImages.image(named: "icon_chevron_right", pointSize: 16)
-            chevron.tintColor = UIColor(white: 0.72, alpha: 1)
+            chevron.tintColor = BearyStarMapNight.secondaryText
             chevron.contentMode = .scaleAspectFit
             chevron.setContentHuggingPriority(.required, for: .horizontal)
             row.addArrangedSubview(chevron)
@@ -702,7 +727,7 @@ final class BearyDiaryStarMapViewController: UIViewController {
         let detailButton = UIButton(type: .custom)
         detailButton.setTitle("查看详情", for: .normal)
         detailButton.titleLabel?.font = UIFont.boldSystemFont(ofSize: 15)
-        detailButton.setTitleColor(.white, for: .normal)
+        detailButton.setTitleColor(BearyStarMapNight.primaryText, for: .normal)
         detailButton.backgroundColor = BearyColors.orange
         detailButton.layer.cornerRadius = 12
         detailButton.contentEdgeInsets = UIEdgeInsets(top: 10, left: 16, bottom: 10, right: 16)
@@ -833,7 +858,6 @@ struct StarMapSkyEdge {
 
 private final class StarMapSkyView: UIView {
 
-    static let nightBackground = UIColor(red: 0.02, green: 0.03, blue: 0.06, alpha: 1)
 
     var onStarTap: ((Entry) -> Void)?
     var onOverlapTap: (([Entry]) -> Void)?
@@ -849,7 +873,7 @@ private final class StarMapSkyView: UIView {
 
     override init(frame: CGRect) {
         super.init(frame: frame)
-        backgroundColor = StarMapSkyView.nightBackground
+        backgroundColor = BearyStarMapNight.background
         let tap = UITapGestureRecognizer(target: self, action: #selector(didTap(_:)))
         addGestureRecognizer(tap)
     }
@@ -907,7 +931,7 @@ private final class StarMapSkyView: UIView {
             let h = UInt64(i) &* 2_862_933_555_777_037_127 &+ 11
             let x = CGFloat(h % 1000) / 1000.0 * bounds.width
             let y = CGFloat((h >> 16) % 1000) / 1000.0 * bounds.height
-            context.setFillColor(UIColor(white: 0.25, alpha: 0.5).cgColor)
+            context.setFillColor(BearyStarMapNight.dust.cgColor)
             context.fillEllipse(in: CGRect(x: x, y: y, width: 1.5, height: 1.5))
         }
         // 连线：未选中细蓝灰，选中橙粗。
@@ -917,8 +941,8 @@ private final class StarMapSkyView: UIView {
             let p2 = point(for: b, in: bounds)
             let selected = edge.id == selectedEdgeId
             context.setStrokeColor(selected
-                ? UIColor(red: 1, green: 0.70, blue: 0.20, alpha: 1).cgColor
-                : UIColor(red: 0.36, green: 0.48, blue: 0.71, alpha: 0.65).cgColor)
+                ? BearyStarMapNight.selected.cgColor
+                : BearyStarMapNight.edge.cgColor)
             context.setLineWidth(selected ? 2 : 1)
             context.move(to: p1)
             context.addLine(to: p2)
@@ -927,20 +951,20 @@ private final class StarMapSkyView: UIView {
         // 星：光晕 + 星核（alpha = 亮度）+ 日期小字；选中描橙圈。
         for star in stars {
             let center = point(for: (x: star.x, y: star.y), in: bounds)
-            let haloColor = UIColor(red: 1, green: 0.85, blue: 0.54, alpha: star.brightness * 0.12).cgColor
+            let haloColor = BearyStarMapNight.star.withAlphaComponent(star.brightness * 0.12).cgColor
             context.setFillColor(haloColor)
             context.fillEllipse(in: CGRect(x: center.x - star.radius - 7, y: center.y - star.radius - 7, width: (star.radius + 7) * 2, height: (star.radius + 7) * 2))
-            context.setFillColor(UIColor(red: 1, green: 0.85, blue: 0.54, alpha: star.brightness).cgColor)
+            context.setFillColor(BearyStarMapNight.star.withAlphaComponent(star.brightness).cgColor)
             context.fillEllipse(in: CGRect(x: center.x - star.radius, y: center.y - star.radius, width: star.radius * 2, height: star.radius * 2))
             if star.id == selectedStarId {
-                context.setStrokeColor(UIColor(red: 1, green: 0.70, blue: 0.20, alpha: 1).cgColor)
+                context.setStrokeColor(BearyStarMapNight.selected.cgColor)
                 context.setLineWidth(2)
                 context.strokeEllipse(in: CGRect(x: center.x - star.radius - 3, y: center.y - star.radius - 3, width: (star.radius + 3) * 2, height: (star.radius + 3) * 2))
             }
             if !star.dateText.isEmpty {
                 let attributes: [NSAttributedString.Key: Any] = [
                     .font: UIFont.systemFont(ofSize: 9),
-                    .foregroundColor: UIColor(white: 0.65, alpha: 1),
+                    .foregroundColor: BearyStarMapNight.dateText,
                 ]
                 let size = star.dateText.size(withAttributes: attributes)
                 star.dateText.draw(at: CGPoint(x: center.x - size.width / 2, y: center.y + star.radius + 3), withAttributes: attributes)
