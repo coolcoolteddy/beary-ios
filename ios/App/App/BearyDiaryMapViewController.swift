@@ -99,11 +99,24 @@ final class BearyDiaryMapViewController: UIViewController, MKMapViewDelegate, UI
         failureView.addSubview(retryButton)
         view.addSubview(failureView)
 
+        // 地图高度可压缩（原 320pt required 定高）：竖向链是地图→说明→列表→底边，
+        // 短窗口（如横屏）下 required 定高会把列表挤到只剩一两行。改成三级让位：
+        // 320 仍是偏好高度（750），空间够时不变；列表最低 120pt 为 required，
+        // 空间不足时先压地图、保住列表可见；地图下限 160pt 仅 749，低于列表最低，
+        // 极矮窗口下也让位于列表（地图可再压、不留空白页）。MKMapView 无固有高度，
+        // 故不靠压缩阻力，靠这组高度约束本身让位；顺序与地图功能一字不动。
+        let mapPreferredHeight = mapView.heightAnchor.constraint(equalToConstant: 320)
+        mapPreferredHeight.priority = .defaultHigh
+        let mapMinimumHeight = mapView.heightAnchor.constraint(greaterThanOrEqualToConstant: 160)
+        mapMinimumHeight.priority = UILayoutPriority(749)
+        let listMinimumHeight = tableView.heightAnchor.constraint(greaterThanOrEqualToConstant: 120)
         NSLayoutConstraint.activate([
             mapView.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
             mapView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             mapView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-            mapView.heightAnchor.constraint(equalToConstant: 320),
+            mapPreferredHeight,
+            mapMinimumHeight,
+            listMinimumHeight,
             statusLabel.topAnchor.constraint(equalTo: mapView.bottomAnchor, constant: 12),
             statusLabel.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 16),
             statusLabel.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -16),
