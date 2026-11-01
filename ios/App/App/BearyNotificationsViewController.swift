@@ -2212,6 +2212,9 @@ private class BearyLetterModal {
         self.isPopper = (iconName == "icon_popper")
         self.isMail = (iconName == "icon_mail")
         overlayView.backgroundColor = BearyColors.scrim
+        // VoiceOver：弹窗为普通叠加层、非 VC，须显式声明模态，焦点才不越过遮罩
+        // 浏览到底下的通知列表；视觉与关闭行为不变。
+        overlayView.accessibilityViewIsModal = true
         overlayView.translatesAutoresizingMaskIntoConstraints = false
         cardView.backgroundColor = BearyColors.surface
         // Q1 对照表：卡片圆角 14（网页 .confirm-box 原 16 已按表统一）。
@@ -2292,7 +2295,17 @@ private class BearyLetterModal {
         primaryButton.isHidden = goEntryId == nil
     }
 
+    /// VoiceOver 焦点返回：show 时记下弹窗外当前焦点元素（通常为触发行），
+    /// 普通关闭后把焦点还回去；“去看看”跳页时不还（新页自带焦点）。
+    /// weak 持有：触发行是列表 cell，复用/离屏后失效即放弃返回，不强留。
+    private weak var previousFocusedElement: AnyObject?
+
     func show(in parentView: UIView) {
+        // 打开前先记焦点：遮罩加进层级后当前焦点即被弹窗夺走，此时再记就晚了。
+        // 取焦点 API 以 iOS 17 起可用作守门（旧系统无显式返回、走系统默认行为）。
+        if #available(iOS 17.0, *) {
+            previousFocusedElement = UIAccessibility.focusedElement(using: .voiceOver) as? AnyObject
+        }
         overlayView.addSubview(cardView)
         cardView.addSubview(iconView)
         cardView.addSubview(popperView)
@@ -2408,20 +2421,26 @@ private class BearyLetterModal {
         if UIAccessibility.isReduceMotionEnabled {
             overlayView.alpha = 1
             cardView.transform = CGAffineTransform.identity
-            return
+        } else {
+            // C-G17：网页 .confirm.open .confirm-box 走 cfmPop .28s——从
+            // translateY(10px) scale(.95) + 透明到原位；App 原只有遮罩淡入、无卡片 pop。
+            overlayView.alpha = 0
+            cardView.transform = CGAffineTransform(translationX: 0, y: 10).scaledBy(x: 0.95, y: 0.95)
+            UIView.animate(withDuration: 0.25) {
+                self.overlayView.alpha = 1
+            }
+            let popAnimator = UIViewPropertyAnimator(duration: 0.28, timingParameters: UICubicTimingParameters(controlPoint1: CGPoint(x: 0.32, y: 0.72), controlPoint2: CGPoint(x: 0.35, y: 1)))
+            popAnimator.addAnimations({
+                self.cardView.transform = CGAffineTransform.identity
+            })
+            popAnimator.startAnimation()
         }
-        // C-G17：网页 .confirm.open .confirm-box 走 cfmPop .28s——从
-        // translateY(10px) scale(.95) + 透明到原位；App 原只有遮罩淡入、无卡片 pop。
-        overlayView.alpha = 0
-        cardView.transform = CGAffineTransform(translationX: 0, y: 10).scaledBy(x: 0.95, y: 0.95)
-        UIView.animate(withDuration: 0.25) {
-            self.overlayView.alpha = 1
+        // VoiceOver：弹窗出现即聚焦标题。下一 runloop 再发，等布局落位后再取
+        // 标题 frame；若期间已关闭（overlay 已离线）则不发。未开 VoiceOver 时 post 为空操作。
+        DispatchQueue.main.async { [weak self] in
+            guard let strongSelf = self, strongSelf.overlayView.superview != nil else { return }
+            UIAccessibility.post(notification: .screenChanged, argument: strongSelf.titleLabel)
         }
-        let popAnimator = UIViewPropertyAnimator(duration: 0.28, timingParameters: UICubicTimingParameters(controlPoint1: CGPoint(x: 0.32, y: 0.72), controlPoint2: CGPoint(x: 0.35, y: 1)))
-        popAnimator.addAnimations({
-            self.cardView.transform = CGAffineTransform.identity
-        })
-        popAnimator.startAnimation()
     }
 
     /// 行高富文本（模态正文 1.9、引用 1.75 用；字号/颜色由调用方传）。
@@ -2445,11 +2464,17 @@ private class BearyLetterModal {
     private var isDismissingModal = false
 
     /// M13：关闭走 0.25s 淡出动画完成后再移除（减动效直接移除）；去看看在移除后回调。
-    private func dismissModalAnimated(afterDismiss: (() -> Void)? = nil) {
+    /// restoreFocus：普通关闭（知道了/稍后/遮罩点按）把 VoiceOver 焦点还给 show 时
+    /// 记下的触发元素；“去看看”跳页时为 false，新页自带焦点、不抢回旧列表。
+    private func dismissModalAnimated(restoreFocus: Bool = true, afterDismiss: (() -> Void)? = nil) {
         guard !isDismissingModal else { return }
         isDismissingModal = true
         let cleanup = {
             self.overlayView.removeFromSuperview()
+            if restoreFocus, let element = self.previousFocusedElement {
+                UIAccessibility.post(notification: .layoutChanged, argument: element)
+                self.previousFocusedElement = nil
+            }
             afterDismiss?()
             self.onDismiss?()
         }
@@ -2469,7 +2494,8 @@ private class BearyLetterModal {
     }
 
     /// 立即移除（供新模态顶替旧模态时用，跳过淡出动画；已在 dismiss 中则不动，
-    /// 其进行中的清理仍会回调 onDismiss）。
+    /// 其进行中的清理仍会回调 onDismiss）。顶替时不还焦点：新模态 show 后会
+    /// 自行聚焦标题，旧模态若先还焦点会被新标题焦点覆盖、徒增一次播报。
     func dismissNow() {
         guard !isDismissingModal else { return }
         isDismissingModal = true
@@ -2478,7 +2504,7 @@ private class BearyLetterModal {
     }
 
     @objc private func goTapped() {
-        dismissModalAnimated(afterDismiss: { [weak self] in
+        dismissModalAnimated(restoreFocus: false, afterDismiss: { [weak self] in
             if let entryId = self?.goEntryId {
                 self?.onGo?(entryId)
             }
