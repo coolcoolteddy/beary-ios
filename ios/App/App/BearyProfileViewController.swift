@@ -6390,7 +6390,7 @@ let viewer = BearyEntryImageViewerViewController(imageKeys: allPhotos.map { $0.i
             popover.sourceView = sourceView
             popover.sourceRect = sourceView.bounds
         }
-        present(sheet, animated: true)
+        present(sheet, animated: BearyMotion.animated(true))
     }
 
     private func handleCellVisibilityToggle(entry: Entry) {
@@ -6520,7 +6520,11 @@ let viewer = BearyEntryImageViewerViewController(imageKeys: allPhotos.map { $0.i
             }
         })
         sheet.addAction(UIAlertAction(title: "取消", style: .cancel))
-        present(sheet, animated: true)
+        if let popover = sheet.popoverPresentationController {
+            popover.sourceView = topMoreButton
+            popover.sourceRect = topMoreButton.bounds
+        }
+        present(sheet, animated: BearyMotion.animated(true))
     }
 
     @objc private func handleReportedEntryNotification(_ note: Notification) {

@@ -940,7 +940,7 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate, UI
             popover.sourceView = rowView
             popover.sourceRect = rowView.bounds
         }
-        present(sheet, animated: true, completion: nil)
+        present(sheet, animated: BearyMotion.animated(true), completion: nil)
     }
 
     // MARK: - 恢复 / 彻底删除
