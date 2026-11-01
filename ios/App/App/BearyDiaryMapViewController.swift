@@ -298,21 +298,62 @@ final class BearyDiaryMapViewController: UIViewController, MKMapViewDelegate, UI
             geocodeGroupsSequentially(index: index + 1, located: next, unlocated: unlocated)
             return
         }
-        CLGeocoder().geocodeAddressString(group.key) { [weak self] placemarks, _ in
+        // 地图打点根因修复：作者组键只是精确地点名（如“朝晖路248弄21号”），
+        // 不带任何城市/区级上下文，CLGeocoder 仅凭裸名经常编不出坐标，组就掉进
+        // “未能在地图上定位”而不是地图上的标记。改成按组内日记的区级文本逐级
+        // 兜底：先编“区级+地点名”，再编裸名，最后编区级；编出即停。
+        // 显示键、聚合口径、脱敏口径一律不动：区级只是本页内存里的编码查询词，
+        // 不写盘、不进日记行、不透给他人（他人组键本身就是区级，只编一格）。
+        geocodeGroupCandidates(
+            group: group, groupIndex: index,
+            candidates: geocodeCandidates(for: group), candidateIndex: 0,
+            located: located, unlocated: unlocated)
+    }
+
+    /// 编码查询词（只活本页内存）：作者组 = 区级+名 → 裸名 → 区级；
+    /// 他人组键已是区级，只编一格。
+    private func geocodeCandidates(for group: BearyLocationMapGroup) -> [String] {
+        guard viewerIsAuthor else { return [group.key] }
+        var seen = Set<String>()
+        var districts: [String] = []
+        for entry in group.entries {
+            let d = (entry.locationDistrict ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+            if !d.isEmpty, seen.insert(d).inserted { districts.append(d) }
+        }
+        guard let district = districts.first, district != group.key else { return [group.key] }
+        if group.key.hasPrefix(district) { return [group.key, district] }
+        return ["\(district)\(group.key)", group.key, district]
+    }
+
+    /// 逐级兜底编码：某一级编出坐标即进 located，全部编不出才进 unlocated。
+    /// 换代门控与原单次编码一致：重算后组已换代时旧结果直接丢弃。
+    private func geocodeGroupCandidates(
+        group: BearyLocationMapGroup, groupIndex: Int,
+        candidates: [String], candidateIndex: Int,
+        located: [(group: BearyLocationMapGroup, coordinate: CLLocationCoordinate2D)],
+        unlocated: [BearyLocationMapGroup]
+    ) {
+        guard candidateIndex < candidates.count else {
+            var nextUnlocated = unlocated
+            nextUnlocated.append(group)
+            geocodeGroupsSequentially(index: groupIndex + 1, located: located, unlocated: nextUnlocated)
+            return
+        }
+        CLGeocoder().geocodeAddressString(candidates[candidateIndex]) { [weak self] placemarks, _ in
             DispatchQueue.main.async {
                 guard let self = self else { return }
-                // 重算期间又 regroup 过（groups 已换代）时，旧编码结果直接丢弃，
-                // 不把旧组坐标贴到新组上。
-                guard index < self.groups.count, self.groups[index].key == group.key else { return }
-                var nextLocated = located
-                var nextUnlocated = unlocated
+                guard groupIndex < self.groups.count, self.groups[groupIndex].key == group.key else { return }
                 if let coordinate = placemarks?.first?.location?.coordinate {
                     self.geocodeCache[group.key] = coordinate
+                    var nextLocated = located
                     nextLocated.append((group, coordinate))
+                    self.geocodeGroupsSequentially(index: groupIndex + 1, located: nextLocated, unlocated: unlocated)
                 } else {
-                    nextUnlocated.append(group)
+                    self.geocodeGroupCandidates(
+                        group: group, groupIndex: groupIndex,
+                        candidates: candidates, candidateIndex: candidateIndex + 1,
+                        located: located, unlocated: unlocated)
                 }
-                self.geocodeGroupsSequentially(index: index + 1, located: nextLocated, unlocated: nextUnlocated)
             }
         }
     }
