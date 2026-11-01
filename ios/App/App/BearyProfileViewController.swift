@@ -626,15 +626,16 @@ class BearyProfileViewController: UIViewController {
         return viewValue
     }()
 
-    /// 无封面默认背景的文字 logo（v22，2026-10-30）：官方白色 wordmark 原图
-    ///（beary-wordmark-white imageset，深浅两模式同为白色），150pt 宽、等比、
+    /// 无封面默认背景的文字 logo（v22，2026-10-30）：官方动态 wordmark 原图
+    ///（side_beary_word imageset：浅色黑字、深色白字，与 beary-wordmark-white
+    /// 同字形、alpha 通道逐字节一致，仅颜色随深浅变），150pt 宽、等比、
     /// 封面居中；仅默认背景时显示，用户照片绝不叠加此 logo。
     private let defaultWordmarkView: UIImageView = {
         let imageViewValue = UIImageView()
         imageViewValue.translatesAutoresizingMaskIntoConstraints = false
         imageViewValue.contentMode = .scaleAspectFit
         imageViewValue.isUserInteractionEnabled = false
-        imageViewValue.image = UIImage(named: "beary-wordmark-white")
+        imageViewValue.image = UIImage(named: "side_beary_word")
         imageViewValue.isHidden = true
         return imageViewValue
     }()
@@ -1625,7 +1626,8 @@ class BearyProfileViewController: UIViewController {
     /// 由 header 容器裁剪；y=0 时 header 区域像素与真封面完全相同、无跳变；
     /// 上滑时与真封面 1:1 同速同框上移（视差 0.3 已删），到锁定点后顶冻结在
     /// 带底边 - 234、带内恒为封面底部本身（即封面锁定成 header，不另起模糊层）。
-    /// 无封面默认背景时无图、背景色为品牌橙（见 updateStickyHeaderLayout）。
+    /// 无封面默认背景时无图、背景色为主题底色（见 updateStickyHeaderLayout；
+    /// #528 起跟踪图一律隐藏，吸顶 header 本身即主题底色）。
     private let stickyHeaderBgImageView: UIImageView = {
         let imageViewValue = UIImageView()
         imageViewValue.translatesAutoresizingMaskIntoConstraints = false
@@ -1639,13 +1641,14 @@ class BearyProfileViewController: UIViewController {
     /// header 内默认背景的文字 logo（v22，2026-10-30）：与封面区 wordmark 同图，
     /// 放进跟踪图内、中心在图顶 + 144（= 图顶预留 54 + 封面半高 90，即封面中心
     /// 在跟踪图内的位置；coverH 变了要同步改），故随跟踪图自动 1:1 跟随与锁定；
-    /// 透明度与封面区 wordmark 同值淡出（后半段 1→0），锁定后 header 为纯橙。
+    /// 透明度与封面区 wordmark 同值淡出（后半段 1→0）；#528 起跟踪图一律隐藏，
+    /// 锁定后 header 为主题底色，不再是纯橙。
     private let stickyWordmarkView: UIImageView = {
         let imageViewValue = UIImageView()
         imageViewValue.translatesAutoresizingMaskIntoConstraints = false
         imageViewValue.contentMode = .scaleAspectFit
         imageViewValue.isUserInteractionEnabled = false
-        imageViewValue.image = UIImage(named: "beary-wordmark-white")
+        imageViewValue.image = UIImage(named: "side_beary_word")
         imageViewValue.isHidden = true
         return imageViewValue
     }()
@@ -1688,7 +1691,7 @@ class BearyProfileViewController: UIViewController {
     /// 宽度/234 高约束常量，在 updateStickyHeaderLayout 里与背景图同值同步），
     /// 内容为预模糊封面图（半径 25，与封面下拉模糊同款，不逐帧现算高斯）；
     /// 滚动回调只改 alpha（0→1 交叉淡入 = 模糊度渐进加深），不改约束、不加载图片。
-    /// 无封面照片（默认橙底/加载态）时无图可糊，恒隐藏。
+    /// 无封面照片（默认主题底色/加载态）时无图可糊，恒隐藏。
     private let stickyHeaderBlurImageView: UIImageView = {
         let imageViewValue = UIImageView()
         imageViewValue.translatesAutoresizingMaskIntoConstraints = false
@@ -1717,7 +1720,7 @@ class BearyProfileViewController: UIViewController {
     /// updateCoverStretch 同值），滚动回调取此常量、不取拉伸中的 live transform（下拉复位动画
     /// 0.28s 内 live 值会抖）；改封面高时此处与三处同改，另 stickyWordmark 的 144 也要同步。
     private let profileCoverHeight: CGFloat = 180
-    /// 资料已到且无封面 URL 时为真：封面区显示橙底默认背景（applyProfile 置位，布局同步用）。
+    /// 资料已到且无封面 URL 时为真：封面区显示主题底色默认背景（applyProfile 置位，布局同步用）。
     private var profileShowsDefaultCover = false
     /// 封面区是否显示（照片或默认背景任一）：下拉拉伸与复位以此为准，
     /// 不以 coverImageView.isHidden 为准（默认背景时图视图本身是隐藏的、区仍在）。
@@ -2059,11 +2062,11 @@ class BearyProfileViewController: UIViewController {
     }
 
     /// 吸顶跟踪图封面同步（2026-11-01 上滑橙块修复）：照片时同引用赋值
-    /// （不加载）；默认背景时无图、背景色为品牌橙、wordmark 显示；加载态
+    /// （不加载）；默认背景时无图、背景色为主题底色（#528 起跟踪图与 wordmark 均隐藏）；加载态
     /// （封面图未到）时跟踪图与 wordmark 同隐。
     /// 视觉清单第 6 项（已定设计，推翻 #508）：吸顶背景固定为主题底色——
     /// 容器 stickyHeaderView 本身即 BearyColors.bg，跟踪图与 wordmark 在此
-    /// 一律隐藏、不再跟随封面图或默认橙底；模糊层源图随跟踪图隐藏而被
+    /// 一律隐藏、不再跟随封面图或默认主题底色；模糊层源图随跟踪图隐藏而被
     /// refreshStickyHeaderBlurImage 清掉。旧“首帧橙底上滑才露出来”的
     /// 时机 bug 随背景不再跟随封面而自然消失（本函数仍在布局与滚动双路
     /// 被调，显隐时机与名字淡入逻辑一字不动）。
@@ -2260,7 +2263,7 @@ class BearyProfileViewController: UIViewController {
     }
 
     /// 背景 header 模糊层 alpha 唯一写口：0 时隐藏（不占合成），其余值显示；
-    /// 默认橙底/无图时 refreshStickyHeaderBlurImage 已清源图，alpha 即便非 0 也无图可显。
+    /// 默认主题底色/无图时 refreshStickyHeaderBlurImage 已清源图，alpha 即便非 0 也无图可显。
     private func setStickyHeaderBlurProgress(_ progress: CGFloat) {
         let clamped = min(max(progress, 0), 1)
         stickyHeaderBlurImageView.alpha = clamped
@@ -2268,7 +2271,7 @@ class BearyProfileViewController: UIViewController {
     }
 
     /// 模糊层源图同步（与封面下拉预模糊同款半径 25、后台算、主线程落图、
-    /// 旧结果丢弃）：背景图换了才重算；默认橙底/无图/隐藏时清源图与图。
+    /// 旧结果丢弃）：背景图换了才重算；默认主题底色/无图/隐藏时清源图与图。
     private func refreshStickyHeaderBlurImage() {
         guard let coverImage = stickyHeaderBgImageView.image, !stickyHeaderBgImageView.isHidden else {
             stickyHeaderBlurSourceImage = nil
@@ -2818,15 +2821,15 @@ class BearyProfileViewController: UIViewController {
         wallTotalLabel.setContentCompressionResistancePriority(.required, for: .horizontal)
         // 116 原生先行框架：封面带是固定框架、不是数据——applyProfile 无论有无
         // 封面照片都把带高定为 profileCoverHeight（180），故首帧就按最终态搭好：
-        // 带高 180、头像半压在带底（-28）、默认橙底 + 官方白 wordmark。
+        // 带高 180、头像半压在带底（-28）、默认主题底色 + 官方动态 wordmark。
         // 此前首帧带高 0、头像顶距 20，资料一到带高跳 180、头像与名字／统计／
-        // 标签整体下跳，整头闪一次。本改动不是骨架屏：橙底 + wordmark 即无封面
+        // 标签整体下跳，整头闪一次。本改动不是骨架屏：主题底色 + wordmark 即无封面
         // 时的最终默认背景（applyProfile 无封面分支同款），有封面时数据回来只把
         // 带内照片换进来、带高与头像位一字不动；资料失败时框架同样不塌。
         // 注意：旧“加载态先高 0 防 faint 灰块”注释（coverImageView 定义处）针对
-        // 的是无图时露 faint 底——现首帧底色已是最终默认橙底，不再适用。
+        // 的是无图时露 faint 底——现首帧底色已是最终默认主题底色，不再适用。
         profileShowsDefaultCover = true
-        coverClipView.backgroundColor = BearyColors.orange
+        coverClipView.backgroundColor = BearyColors.bg
         defaultWordmarkView.isHidden = false
         coverHeightConstraint.constant = profileCoverHeight
         avatarImageView.layer.borderWidth = 3.5
@@ -3200,7 +3203,7 @@ class BearyProfileViewController: UIViewController {
         applyEmailRow()
 
         // 封面带（v22，2026-10-30）：资料到了封面区恒 180 高——有封面 URL 时为照片，
-        // 无封面时为橙底默认背景（官方白 wordmark）；加载态（本函数未跑）仍为高 0＋头顶距 20。
+        // 无封面时为主题底色默认背景（官方动态 wordmark）；加载态（本函数未跑）仍为高 0＋头顶距 20。
         // L17：空字符串不再算有封面——须非空且能拼出 URL 才算。
         let hasCover = !(profileValue.coverUrl ?? "").isEmpty && BearyImageURLs.avatarURL(profileValue.coverUrl) != nil
         profileShowsDefaultCover = !hasCover
@@ -3218,7 +3221,7 @@ class BearyProfileViewController: UIViewController {
             coverImageView.image = nil
         }
         coverImageView.isHidden = !hasCover
-        coverClipView.backgroundColor = profileShowsDefaultCover ? BearyColors.orange : BearyColors.faint
+        coverClipView.backgroundColor = profileShowsDefaultCover ? BearyColors.bg : BearyColors.faint
         defaultWordmarkView.isHidden = !profileShowsDefaultCover
         coverHeightConstraint.constant = profileCoverHeight
         // 下拉模糊用预模糊图：缓存命中时直接复用；异步加载的新图在首次下拉时生成；
