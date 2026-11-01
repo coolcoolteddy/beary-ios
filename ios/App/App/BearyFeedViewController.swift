@@ -157,9 +157,9 @@ class BearyFeedViewController: UIViewController {
         // Dynamic Type 变高后仍为 pill 形）。
         btn.clipsToBounds = false
         btn.layer.shadowColor = UIColor.black.cgColor
-        btn.layer.shadowOpacity = 0.22
-        btn.layer.shadowOffset = CGSize(width: 0, height: 6)
-        btn.layer.shadowRadius = 9
+        btn.layer.shadowOpacity = 0.12
+        btn.layer.shadowOffset = CGSize(width: 0, height: 2)
+        btn.layer.shadowRadius = 8
         btn.contentEdgeInsets = UIEdgeInsets(top: 9, left: 16, bottom: 9, right: 16)
         btn.isHidden = true
         btn.addTarget(self, action: #selector(newContentPillTapped), for: .touchUpInside)

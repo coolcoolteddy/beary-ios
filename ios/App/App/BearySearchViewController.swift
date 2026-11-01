@@ -887,20 +887,13 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         let bounds = searchBoxView.bounds
         guard bounds.width > 0 && bounds.height > 0 else { return }
         if searchBoxFocused {
-            let ring = BearySearchViewController.mixedColor(BearyColors.blue, 0.55, over: BearyColors.line)
-            searchBoxView.layer.shadowColor = ring.cgColor
-            searchBoxView.layer.shadowOpacity = 1
-            searchBoxView.layer.shadowOffset = CGSize.zero
-            searchBoxView.layer.shadowRadius = 0
-            searchBoxView.layer.shadowPath = UIBezierPath(
-                roundedRect: bounds.insetBy(dx: -2, dy: -2),
-                cornerRadius: 10
-            ).cgPath
+            searchBoxView.layer.shadowOpacity = 0
+            searchBoxView.layer.shadowPath = nil
+            searchBoxView.layer.borderWidth = 1
+            searchBoxView.layer.bearyDynamicBorderColor = BearyColors.blue
         } else {
-            searchBoxView.layer.shadowColor = UIColor.black.cgColor
-            searchBoxView.layer.shadowOpacity = 0.05
-            searchBoxView.layer.shadowOffset = CGSize(width: 0, height: 4)
-            searchBoxView.layer.shadowRadius = 14
+            searchBoxView.layer.borderWidth = 0
+            BearyShadow.applyHairline(to: searchBoxView.layer)
             searchBoxView.layer.shadowPath = UIBezierPath(
                 roundedRect: bounds,
                 cornerRadius: 8

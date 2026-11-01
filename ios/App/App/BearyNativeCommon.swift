@@ -83,6 +83,24 @@ enum BearyChrome {
     }
 }
 
+/// 阴影 token（视觉清单 Grok 项 2）：hairline 用于搜索框、callout；
+/// raised 用于 FAB、新内容条、居中弹层、底 sheet。只改数值一档，
+/// 不新增阴影层；弹层本身的两档数值（#519 视觉不变前提）本支不动。
+enum BearyShadow {
+    static func applyHairline(to layer: CALayer) {
+        layer.shadowColor = UIColor.black.cgColor
+        layer.shadowOpacity = 0.08
+        layer.shadowRadius = 4
+        layer.shadowOffset = CGSize(width: 0, height: 1)
+    }
+    static func applyRaised(to layer: CALayer) {
+        layer.shadowColor = UIColor.black.cgColor
+        layer.shadowOpacity = 0.12
+        layer.shadowRadius = 8
+        layer.shadowOffset = CGSize(width: 0, height: 2)
+    }
+}
+
 /// 6-10 减动效门控 helper（全修批统一口径，签名固定）：调用点把
 /// `animated: true` 改成 `animated: BearyMotion.animated(true)`；开启系统
 /// 减动效时一律返回 false，present/dismiss 即瞬时落终值。
