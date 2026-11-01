@@ -226,6 +226,84 @@ class BearyFeedViewController: UIViewController {
     /// 空态（网页 .empty 口径）：图标 40×40 灰（NB.pencil 一次性描画）、标题 15 ink（图标→标题间距 8）、
     /// 副文案 13 灰、容器 padding 26/20/8。广场空态用 pencil（网页 beary.html:2187 的 nb-once 口径）。
     private weak var feedEmptyPencilView: BearyPencilView?
+    /// 好友第一期：空态文案随段切换（广场/好友各一套，不共用广场文案撒谎）。
+    private weak var feedEmptyTitleLabel: UILabel?
+    private weak var feedEmptySubtitleLabel: UILabel?
+
+    /// 首页顶栏切换（Li 2026-11-01 定）：广场 / 正在关注。广场页原无分段，
+    /// 故用系统 UISegmentedControl（问题反馈/设置页同款控件，不新发明 tab
+    /// 样式、不自绘），放进表头盲盒入口下方、随流滚动（实现侧排布，待 Li
+    /// 过目：若他要钉顶顶栏，另起一支）。正在关注走 scope=following：作者
+    /// 是你关注的人（单向 + 互关都算），互关作者的公开未过期 + 仅好友篇都出，
+    /// 单向作者只出公开未过期篇，不关注/拉黑的一篇不出；排序 created_at
+    /// DESC（后端口径已改，游标 before/since 同走 created_at，不再按
+    /// published_at 传游标——见 feedSortKey）。不走广场磁盘快照（快照只含
+    /// 公开，写了会把关注流数据混进广场桶）。切换状态不持久化：每次切 tab
+    /// 回首页默认广场（见 handlePageEnter 的重置分支）。
+    private var feedFollowingSegment = false
+
+    private lazy var feedSegmentControl: UISegmentedControl = {
+        let control = UISegmentedControl(items: ["广场", "正在关注"])
+        control.translatesAutoresizingMaskIntoConstraints = true
+        control.selectedSegmentIndex = 0
+        control.addTarget(self, action: #selector(feedSegmentChanged(_:)), for: .valueChanged)
+        return control
+    }()
+
+    /// 当前段的数据口径：广场 = published_at DESC；正在关注 = created_at DESC
+    ///（互关仅好友篇没有 published_at，复用广场游标会错页）。
+    private var feedScope: BearyAPI.Scope {
+        feedFollowingSegment ? .following : .plaza
+    }
+
+    private func feedSortKey(_ entry: Entry) -> Int? {
+        feedFollowingSegment ? entry.createdAt : (entry.publishedAt ?? entry.createdAt)
+    }
+
+    @objc private func feedSegmentChanged(_ sender: UISegmentedControl) {
+        let wantFollowing = sender.selectedSegmentIndex == 1
+        guard wantFollowing != feedFollowingSegment else { return }
+        // 游客/未登录：不调接口，走与“我的”同口径的登录门，段强制回广场。
+        // 游客即弹游客提示 Sheet；非游客未登录先 toast、1.2s 后弹登录页
+        //（与 showTabLoginGate 同口径，toast 先可见；回包前已登录则不再弹）。
+        guard SessionManager.shared.currentUser?.id != nil else {
+            feedFollowingSegment = false
+            sender.selectedSegmentIndex = 0
+            if SessionManager.shared.isGuestMode {
+                onRequireLogin?()
+            } else {
+                BearyToast.show(in: view, message: "请先登录")
+                DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) { [weak self] in
+                    guard let self = self else { return }
+                    if SessionManager.shared.currentUser?.id == nil {
+                        self.onRequireLogin?()
+                    }
+                }
+            }
+            return
+        }
+        feedFollowingSegment = wantFollowing
+        updateEmptyCopyForSegment()
+        tableView.setContentOffset(CGPoint(x: 0, y: -tableView.contentInset.top), animated: false)
+        refreshAll()
+    }
+
+    private func updateEmptyCopyForSegment() {
+        if feedFollowingSegment {
+            feedEmptyTitleLabel?.text = "还没有关注的日记"
+            feedEmptySubtitleLabel?.text = "你关注的人的日记会出现在这里"
+        } else {
+            feedEmptyTitleLabel?.text = "还没有公开的日记"
+            feedEmptySubtitleLabel?.text = "公开的日记会出现在这里，写一篇并公开试试"
+        }
+    }
+
+    @objc private func handleFriendsChangedNotification(_ note: Notification) {
+        // 回关/取关后正在关注段立即重拉（取关后旧行不得残留）。
+        if feedFollowingSegment {
+            refreshAll()
+        }
+    }
     private lazy var emptyView: UIView = {
         let container = UIView()
         container.backgroundColor = BearyColors.bg
@@ -236,6 +314,7 @@ class BearyFeedViewController: UIViewController {
         let titleLabel = UILabel()
         titleLabel.translatesAutoresizingMaskIntoConstraints = false
         titleLabel.text = "还没有公开的日记"
+        feedEmptyTitleLabel = titleLabel
         titleLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 15))
         titleLabel.adjustsFontForContentSizeCategory = true
         titleLabel.textColor = BearyColors.ink
@@ -243,6 +322,7 @@ class BearyFeedViewController: UIViewController {
         let subtitleLabel = UILabel()
         subtitleLabel.translatesAutoresizingMaskIntoConstraints = false
         subtitleLabel.text = "公开的日记会出现在这里，写一篇并公开试试"
+        feedEmptySubtitleLabel = subtitleLabel
         subtitleLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13))
         subtitleLabel.adjustsFontForContentSizeCategory = true
         subtitleLabel.textColor = BearyColors.gray
@@ -338,6 +418,7 @@ class BearyFeedViewController: UIViewController {
         NotificationCenter.default.addObserver(self, selector: #selector(handleBlockedUserNotification(_:)), name: .bearyDidBlockUser, object: nil)
         NotificationCenter.default.addObserver(self, selector: #selector(handleBlindBoxStateChanged), name: .bearyBlindBoxDidChange, object: nil)
         NotificationCenter.default.addObserver(self, selector: #selector(handleFeedUserChanged), name: .bearyUserDidChange, object: nil)
+        NotificationCenter.default.addObserver(self, selector: #selector(handleFriendsChangedNotification(_:)), name: .bearyFriendsChanged, object: nil)
         blindBoxEntryView.onTap = { [weak self] in
             self?.presentBlindBoxFlow()
         }
@@ -384,7 +465,27 @@ class BearyFeedViewController: UIViewController {
         let currentLoginUserId = SessionManager.shared.currentUser?.id
         let loginFlipped = currentLoginUserId != lastFeedLoginUserId
         lastFeedLoginUserId = currentLoginUserId
-        if loginFlipped && isFirstLoad == false {
+        // 正在关注不持久化：切 tab 回首页默认广场（实现侧取数，待 Li 过目）。
+        // 仅 tab 进页（allowBackgroundRevalidate=true，即 pageDidEnter）时重置；
+        // modal dismiss 返回（false）不重置、不丢用户正在看的段。
+        // 单列表模型：段回广场后旧段数据仍在表里，必须重拉广场，否则关注流
+        // 的行会顶着广场段名展示。
+        var didResetSegment = false
+        if feedFollowingSegment, allowBackgroundRevalidate {
+            feedFollowingSegment = false
+            feedSegmentControl.selectedSegmentIndex = 0
+            updateEmptyCopyForSegment()
+            didResetSegment = true
+        }
+        // 游客无正在关注段——退出/切游客时若停在关注段，先回广场段再重拉，
+        // 不把关注段数据留给游客视角（切号时 handleFeedUserChanged 已先重置）。
+        if currentLoginUserId == nil, feedFollowingSegment {
+            feedFollowingSegment = false
+            feedSegmentControl.selectedSegmentIndex = 0
+            updateEmptyCopyForSegment()
+            didResetSegment = true
+        }
+        if didResetSegment || (loginFlipped && isFirstLoad == false) {
             refreshAllBypassInFlight = true
             refreshAll()
         } else if allowBackgroundRevalidate {
@@ -760,7 +861,7 @@ class BearyFeedViewController: UIViewController {
         plazaLoading = true
         plazaFirstPageInFlight = true
         plazaError = false
-        BearyAPI.shared.fetchEntries(scope: .plaza, limit: firstPageLimit) { [weak self] result in
+        BearyAPI.shared.fetchEntries(scope: feedScope, limit: firstPageLimit) { [weak self] result in
             DispatchQueue.main.async {
                 guard let strongSelf = self else { return }
                 // 80 包 B4：代际不符时只复位 loading，不动模型与表。
@@ -791,7 +892,11 @@ class BearyFeedViewController: UIViewController {
                     strongSelf.plazaReachedEnd = entries.count < strongSelf.firstPageLimit
                     strongSelf.plazaError = false
                     strongSelf.lastFeedLoadAt = Date()
-                    BearyFeedCache.save(bucket: strongSelf.feedCacheOwnerKey, entries: entries, hasMore: strongSelf.plazaHasMore)
+                    // 正在关注段不写广场磁盘快照（快照只含公开，写了会
+                    // 把关注流数据混进广场桶；关注流每次进段/重拉都走网络）。
+                    if !strongSelf.feedFollowingSegment {
+                        BearyFeedCache.save(bucket: strongSelf.feedCacheOwnerKey, entries: entries, hasMore: strongSelf.plazaHasMore)
+                    }
                     // 80 包 A2-2：先落表再结束首屏标记。
                     strongSelf.tableView.reloadData()
                     strongSelf.finishFirstLoadIfNeeded()
@@ -832,7 +937,7 @@ class BearyFeedViewController: UIViewController {
     private func loadPlazaSince() {
         let generation = revalidateGeneration
         guard let head = plazaRaw.first,
-              let cursor = head.publishedAt ?? head.createdAt,
+              let cursor = feedSortKey(head),
               let headId = head.id, !headId.isEmpty else {
             loadPlazaFirstPage(diffMode: true)
             return
@@ -843,8 +948,11 @@ class BearyFeedViewController: UIViewController {
         plazaFirstPageInFlight = true
         plazaError = false
         BearyAPI.shared.fetchEntriesSince(
-            scope: .plaza, since: cursor, sinceId: headId,
-            sortKey: { $0.publishedAt ?? $0.createdAt }, knownIds: knownIds
+            scope: feedScope, since: cursor, sinceId: headId,
+            sortKey: { [weak self] entry in
+                guard let self = self else { return nil }
+                return self.feedSortKey(entry)
+            }, knownIds: knownIds
         ) { [weak self] result in
             DispatchQueue.main.async {
                 guard let strongSelf = self else { return }
@@ -880,7 +988,10 @@ class BearyFeedViewController: UIViewController {
                     strongSelf.plazaError = false
                     strongSelf.lastFeedLoadAt = Date()
                     BearyTimelinePrefetch.maybePrefetch()
-                    BearyFeedCache.save(bucket: strongSelf.feedCacheOwnerKey, entries: strongSelf.plazaRaw, hasMore: strongSelf.plazaHasMore)
+                    // 正在关注段不写广场磁盘快照（同首拉守卫）。
+                    if !strongSelf.feedFollowingSegment {
+                        BearyFeedCache.save(bucket: strongSelf.feedCacheOwnerKey, entries: strongSelf.plazaRaw, hasMore: strongSelf.plazaHasMore)
+                    }
                     if strongSelf.tableView.numberOfRows(inSection: 0) == oldCount {
                         let indexPaths = (0..<newItems.count).map { IndexPath(row: $0, section: 0) }
                         strongSelf.tableView.performBatchUpdates({
@@ -934,7 +1045,8 @@ class BearyFeedViewController: UIViewController {
         let nextPageGeneration = revalidateGeneration
         plazaLoading = true
         // iCity：广场服务端按 published_at DESC 排序，分页游标同步用 publishedAt（缺失时回退 createdAt）。
-        BearyAPI.shared.fetchEntries(scope: .plaza, limit: pageLimit, before: last.publishedAt ?? last.createdAt, beforeId: lastEntryIdValue) { [weak self] result in
+        // 正在关注段按 created_at DESC，游标同步用 createdAt。
+        BearyAPI.shared.fetchEntries(scope: feedScope, limit: pageLimit, before: feedSortKey(last), beforeId: lastEntryIdValue) { [weak self] result in
             DispatchQueue.main.async {
                 guard let strongSelf = self else { return }
                 guard nextPageGeneration == strongSelf.revalidateGeneration else {
@@ -1141,6 +1253,12 @@ class BearyFeedViewController: UIViewController {
     /// 首帧按 lastKnownUserId 桶渲染，/me 回包后这里换桶纠正 viewer 字段。
     @objc private func handleFeedUserChanged() {
         guard isViewLoaded else { return }
+        // 好友第一期：切号时关注段数据属于旧身份，先回广场段再走换桶逻辑。
+        if feedFollowingSegment {
+            feedFollowingSegment = false
+            feedSegmentControl.selectedSegmentIndex = 0
+            updateEmptyCopyForSegment()
+        }
         if let uid = SessionManager.shared.currentUser?.id {
             BearyFeedCache.rememberUserId(uid)
         } else {
@@ -1360,6 +1478,9 @@ class BearyFeedViewController: UIViewController {
 
     /// 回到首页时：首拉已完成且缓存超 60 秒，才在后台重拉（不闪 spinner、不清模型）。
     private func revalidateIfNeeded() {
+        // 正在关注段不走广场后台 revalidate（那路只拉 plaza、会把广场
+        // 新篇 diff 进关注段；关注段重拉走切段/下拉/好友变化广播）。
+        guard !feedFollowingSegment else { return }
         if isFirstLoad || isRevalidating || plazaLoading { return }
         if let last = lastFeedLoadAt, Date().timeIntervalSince(last) < 60 { return }
         isRevalidating = true
@@ -1599,7 +1720,18 @@ class BearyFeedViewController: UIViewController {
             verticalFittingPriority: .fittingSizeLevel
         ).height
         blindBoxEntryView.frame = CGRect(x: 16, y: 8, width: width - 32, height: entryHeight)
-        var totalHeight = 8 + entryHeight + 8
+        // 首页顶栏切换放进表头（盲盒入口下方、空态上方，随流滚动；与盲盒
+        // 入口同机制，不另起钉顶容器、不碰容器顶栏）。游客也可见，点正在关注
+        // 走登录门（见 feedSegmentChanged）；登录态变化时段显隐不跟登录态走，
+        // 只跟段选择走。
+        var headerBaseY = 8 + entryHeight + 8
+        if feedSegmentControl.superview !== blindBoxHeaderWrap {
+            blindBoxHeaderWrap.addSubview(feedSegmentControl)
+        }
+        feedSegmentControl.selectedSegmentIndex = feedFollowingSegment ? 1 : 0
+        feedSegmentControl.frame = CGRect(x: 16, y: headerBaseY, width: width - 32, height: 32)
+        headerBaseY += 32 + 8
+        var totalHeight = headerBaseY
         if feedEmptyVisible {
             emptyView.frame = CGRect(x: 0, y: 0, width: width, height: 0)
             emptyView.setNeedsLayout()
@@ -1609,7 +1741,7 @@ class BearyFeedViewController: UIViewController {
                 withHorizontalFittingPriority: .required,
                 verticalFittingPriority: .fittingSizeLevel
             ).height
-            emptyView.frame = CGRect(x: 0, y: 8 + entryHeight + 8, width: width, height: emptyHeight)
+            emptyView.frame = CGRect(x: 0, y: headerBaseY, width: width, height: emptyHeight)
             totalHeight += emptyHeight
         }
         blindBoxHeaderWrap.frame = CGRect(x: 0, y: 0, width: width, height: totalHeight)

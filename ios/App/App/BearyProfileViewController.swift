@@ -389,9 +389,11 @@ class BearyProfileViewController: UIViewController {
     /// 单篇是否计入“最新 3 篇 / 照片区”：排除私密占位、纯心情未写字项
     /// （无正文、无标题、无图、无引用）；他人页只计公开篇（服务端已过滤，
     /// 这里再守一道，isPublic 缺失按非公开算）。
+    /// 好友第一期：仅好友篇对好友 viewer 可见——服务端 author scope 已按 viewer
+    /// 过滤，客户端只放行显式 friends 档（不凭 isPublic 推断，fail-closed）。
     static func isProfileDiaryDisplayable(entry: Entry, isOwnProfile: Bool) -> Bool {
         if entry.placeholder == true { return false }
-        if isOwnProfile == false && entry.isPublic != true { return false }
+        if isOwnProfile == false && entry.isPublic != true && !entry.isFriendsOnly { return false }
         let textValue = (entry.content ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
         let titleValue = (entry.title ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
         let hasImages = (entry.images ?? []).contains(where: { !$0.isEmpty })
@@ -709,6 +711,36 @@ class BearyProfileViewController: UIViewController {
         buttonValue.widthAnchor.constraint(greaterThanOrEqualToConstant: 12 + editImageWidth + 6 + editTitleWidth + 12).isActive = true
         return buttonValue
     }()
+
+    /// 好友第一期（关注/回关模型）：他人主页顶部关注钮（编辑资料钮同款描边 pill，
+    /// 40 高下限）。状态机（状态一律调 state 接口实时取）：无关系→“关注”；
+    /// 我关他未互关→“已关注”（点按进取关确认）；他关我我未关→“回关”（点按即互关）；
+    /// 互关→“互关”（点按进取关确认）；任一方向拉黑（我方拉黑可查，对方拉黑我以
+    /// 后端拒绝兜底）/ 游客 / 本人 → 隐藏。图标一律官方包：关注 icon_user_add、
+    /// 互关 icon_user_check、已关注/回关无图标。
+    private lazy var followButton: UIButton = {
+        let buttonValue = UIButton(type: .system)
+        buttonValue.translatesAutoresizingMaskIntoConstraints = false
+        buttonValue.setTitleColor(BearyColors.ink, for: .normal)
+        buttonValue.titleLabel?.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 14))
+        buttonValue.titleLabel?.adjustsFontForContentSizeCategory = true
+        buttonValue.tintColor = BearyColors.ink
+        buttonValue.contentEdgeInsets = UIEdgeInsets(top: 0, left: 12, bottom: 0, right: 12)
+        buttonValue.titleEdgeInsets = UIEdgeInsets(top: 0, left: 6, bottom: 0, right: 0)
+        buttonValue.layer.borderWidth = 1
+        buttonValue.layer.cornerRadius = 20
+        buttonValue.addTarget(self, action: #selector(followButtonTapped), for: .touchUpInside)
+        buttonValue.bearyAddPressFeedback()
+        buttonValue.isHidden = true
+        return buttonValue
+    }()
+
+    /// 好友第一期：当前目标用户的关注态（nil = 未拉取；拉取失败时按钮保持隐藏，
+    /// 不把“未拉到”画成“可关注”）。目标 id 以 profile 解析值为准（handle 目标
+    /// 解析前不拉取、不渲染）。
+    private var followState: BearyFollowState?
+    private var followStateLoading = false
+    private var followBlockedByMe = false
 
     private let nameLabel: UILabel = {
         let labelValue = UILabel()
@@ -1862,6 +1894,9 @@ class BearyProfileViewController: UIViewController {
         // iCity：举报/拉黑广播——本页同步清掉对应条目（拉黑本页作者时离页由 onBlockedUser 容器接线）。
         NotificationCenter.default.addObserver(self, selector: #selector(handleReportedEntryNotification(_:)), name: .bearyDidReportEntry, object: nil)
         NotificationCenter.default.addObserver(self, selector: #selector(handleBlockedUserNotification(_:)), name: .bearyDidBlockUser, object: nil)
+        // 好友第一期：别处接受/删友后，本页关系态与日记列表同步重拉（断友后
+        // 对方仅好友篇立即消失，不靠旧缓存）。
+        NotificationCenter.default.addObserver(self, selector: #selector(handleFollowChangedNotification(_:)), name: .bearyFriendsChanged, object: nil)
         if selfGate && viewerUserIdValue == nil {
             // U7：二选一取“只铺页脚”：不拉任何本人数据、不直接弹登录，
             // 弹登录交给页脚“去登录”按钮（loginButtonTapped → onRequireLogin）。
@@ -2578,6 +2613,7 @@ class BearyProfileViewController: UIViewController {
         avatarContainerView.addSubview(avatarLetterLabel)
         avatarContainerView.addSubview(avatarRetryButton)
         headerView.addSubview(editButton)
+        headerView.addSubview(followButton)
         headerView.addSubview(gearButton)
         headerView.addSubview(headerShareButton)
         headerView.addSubview(nameLabel)
@@ -2685,6 +2721,11 @@ class BearyProfileViewController: UIViewController {
             editButton.trailingAnchor.constraint(equalTo: headerView.trailingAnchor, constant: -28),
             editButton.bottomAnchor.constraint(equalTo: avatarImageView.bottomAnchor),
             editButton.heightAnchor.constraint(greaterThanOrEqualToConstant: 40),
+            // 好友钮与编辑资料钮同行高、同右缘：本人页隐藏、他人页独占该位；
+            // 编辑钮隐藏时仍参与布局（centerY 锚点有效），故好友钮位置不受显隐影响。
+            followButton.trailingAnchor.constraint(equalTo: headerView.trailingAnchor, constant: -28),
+            followButton.centerYAnchor.constraint(equalTo: editButton.centerYAnchor),
+            followButton.heightAnchor.constraint(greaterThanOrEqualToConstant: 40),
             gearButton.trailingAnchor.constraint(equalTo: editButton.leadingAnchor, constant: -8),
             gearButton.centerYAnchor.constraint(equalTo: editButton.centerYAnchor),
             gearButton.widthAnchor.constraint(equalToConstant: 40),
@@ -2931,6 +2972,9 @@ class BearyProfileViewController: UIViewController {
         let own = isOwnProfile
         editButton.isHidden = !own
         gearButton.isHidden = !own
+        // 关注钮只属他人主页：本人、游客（viewer 为空）一律隐藏；拉黑态由
+        // refreshFollowState 按 state 接口复核（未到前先隐藏，不抢先画“关注”）。
+        followButton.isHidden = own || viewerUserIdValue == nil || followBlockedByMe || followState == nil
         // iCity：更多菜单只属他人主页（举报/拉黑均以他人为对象）。
         topMoreButton.isHidden = own
         if !own {
@@ -2947,6 +2991,120 @@ class BearyProfileViewController: UIViewController {
         // F17：他人主页夜巡在此隐藏，须立即重算间距链；宽未出时跳过，首布局会补算。
         if headerWidthValue > 0 {
             layoutHeaderForced(widthValue: headerWidthValue)
+        }
+    }
+
+    // MARK: - 好友第一期：他人主页关注状态机（关注/回关模型）
+
+    @objc private func handleFollowChangedNotification(_ note: Notification) {
+        refreshFollowState()
+        // 关系变化可能改变本页可见日记（取关后仅好友篇消失、回关后出现）：
+        // 列表强制重拉一遍，资料头不动。
+        if !isOwnProfile {
+            loadTab(forceReload: true)
+        }
+    }
+
+    /// 关注态拉取：目标 id 以 profile 解析值为准；本人/游客不拉（按钮恒藏）。
+    /// 状态一律调 state 接口实时取；我方拉黑走 BearyBlockedStore 同步查（登录时
+    /// 已全量拉取）。失败时按钮保持隐藏（不把失败画成可关注）；成功后按状态机渲染。
+    private func refreshFollowState() {
+        guard !isOwnProfile, viewerUserIdValue != nil,
+              let targetId = profile?.profileIdValue ?? targetUserIdValue,
+              !followStateLoading else {
+            if isOwnProfile || viewerUserIdValue == nil { followButton.isHidden = true }
+            return
+        }
+        followStateLoading = true
+        followBlockedByMe = BearyBlockedStore.isBlocked(targetId)
+        BearyAPI.shared.fetchFollowState(userId: targetId) { [weak self] result in
+            DispatchQueue.main.async {
+                guard let self = self else { return }
+                self.followStateLoading = false
+                switch result {
+                case .success(let state):
+                    self.followState = BearyFollowState(response: state)
+                case .failure:
+                    self.followState = nil
+                }
+                self.applyFollowButton()
+            }
+        }
+    }
+
+    private func applyFollowButton() {
+        guard !isOwnProfile, viewerUserIdValue != nil, !followBlockedByMe,
+              let state = followState else {
+            followButton.isHidden = true
+            return
+        }
+        followButton.isHidden = false
+        switch state {
+        case .none:
+            followButton.setImage(BearyIconImages.image(named: "icon_user_add", pointSize: 15), for: .normal)
+            followButton.setTitle("关注", for: .normal)
+            followButton.accessibilityLabel = "关注"
+            followButton.isEnabled = true
+            followButton.alpha = 1
+        case .following:
+            followButton.setImage(nil, for: .normal)
+            followButton.setTitle("已关注", for: .normal)
+            followButton.accessibilityLabel = "已关注，点按取关"
+            followButton.isEnabled = true
+            followButton.alpha = 1
+        case .followedBy:
+            followButton.setImage(BearyIconImages.image(named: "icon_user_add", pointSize: 15), for: .normal)
+            followButton.setTitle("回关", for: .normal)
+            followButton.accessibilityLabel = "回关"
+            followButton.isEnabled = true
+            followButton.alpha = 1
+        case .mutual:
+            followButton.setImage(BearyIconImages.image(named: "icon_user_check", pointSize: 15), for: .normal)
+            followButton.setTitle("互关", for: .normal)
+            followButton.accessibilityLabel = "互关，点按取关"
+            followButton.isEnabled = true
+            followButton.alpha = 1
+        }
+    }
+
+    @objc private func followButtonTapped() {
+        guard let targetId = profile?.profileIdValue ?? targetUserIdValue,
+              let state = followState else { return }
+        switch state {
+        case .none, .followedBy:
+            // 关注与回关同一接口（回关成功即成互关；回关不另发系统消息，
+            // 对方凭 follow 通知行知道已变互关）。
+            BearyAPI.shared.followFriend(userId: targetId) { [weak self] result in
+                DispatchQueue.main.async {
+                    guard let self = self else { return }
+                    switch result {
+                    case .success:
+                        let wasFollowedBy = state == .followedBy
+                        self.followState = wasFollowedBy ? .mutual : .following
+                        self.applyFollowButton()
+                        if wasFollowedBy {
+                            BearyFriends.clearDiaryCachesAndNotify()
+                            self.reloadProfile()
+                        }
+                        BearyToast.show(in: self.view, message: wasFollowedBy ? "已互关" : "已关注")
+                    case .failure(let error):
+                        if case .unauthorized = error {
+                            self.onRequireLogin?()
+                        } else {
+                            BearyToast.show(in: self.view, message: "关注失败，请重试")
+                        }
+                    }
+                }
+            }
+        case .following, .mutual:
+            let displayName = profile?.displayName ?? ""
+            BearyFriends.confirmUnfollow(from: self, displayName: displayName, userId: targetId, mutual: state == .mutual) { [weak self] in
+                guard let self = self else { return }
+                // 互关取关退为对方单向关注我（按钮变“回关”）；单向取关变无关系。
+                self.followState = state == .mutual ? .followedBy : .none
+                self.applyFollowButton()
+                self.reloadProfile()
+            }
         }
     }
 
@@ -3092,6 +3250,8 @@ class BearyProfileViewController: UIViewController {
             }
             applyProfile()
             applyMode()
+            // 好友第一期：资料解析出目标 id 后才拉关注态（handle 目标此前无 id）。
+            refreshFollowState()
             if isOwnProfile {
                 // 夜巡为本人专属：资料回包后另拉夜巡（失败即隐藏，不 toast）；徽章架已删，不再拉徽章。
                 // 提速：本轮已在 viewDidLoad 先起时此处由代次守卫跳过，不重发。
@@ -5428,7 +5588,7 @@ class BearyProfileViewController: UIViewController {
         // 112 他人页口径：脚部只留照片区（本人页现行照片模块原样复用，
         // 样式与交互一字不动）；模块组与地图／星图入口行在他人页不进脚部、
         // 不占 12pt 间隙、不留脚部留白，状态脚部（如有）仍按原有规则接在
-        // 照片区下方。本人页顺序不变：模块组 → 照片区 → 地图行 → 星图行
+        // 照片区下方。本人页顺序不变：模块组 → 照片区 → 地图行 → 星图行 → 好友行
         // → 状态脚部。
         // 批 E（挪位后）：地图入口行进 tableFooterView，排在照片区下方、状态脚部上方，
         // 与 tab 切换无关——不是 tab 内容行（不占 diary/liked/saved 的行数），
@@ -5561,6 +5721,7 @@ class BearyProfileViewController: UIViewController {
                 container.addSubview(mapEntryRow)
                 totalHeight += 12 + 48
                 // 星图行：地图行下一行（12pt 间隔、同宽同高），再接状态脚部。
+                // （好友行已作废：好友列表改走底栏第四段，不再进个人页模块区。）
                 starEntryRow.frame = CGRect(x: 20, y: totalHeight + 12, width: max(footerWidth - 40, 0), height: 48)
                 container.addSubview(starEntryRow)
                 totalHeight += 12 + 48
