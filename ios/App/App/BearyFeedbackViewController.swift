@@ -402,7 +402,7 @@ final class BearyFeedbackViewController: UIViewController, UITextViewDelegate, P
         badgeCheck.contentMode = .scaleAspectFit
         statusBadge.translatesAutoresizingMaskIntoConstraints = false
         statusBadge.backgroundColor = BearyColors.green
-        statusBadge.layer.cornerRadius = 13
+        statusBadge.layer.cornerRadius = 4
         statusBadge.clipsToBounds = true
         statusBadge.isHidden = true
         statusBadge.addSubview(badgeCheck)

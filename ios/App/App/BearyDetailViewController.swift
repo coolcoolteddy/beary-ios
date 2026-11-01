@@ -53,7 +53,7 @@ final class BearyDetailDashedBorderView: UIView {
     override func layoutSubviews() {
         super.layoutSubviews()
         borderLayer.frame = bounds
-        borderLayer.path = UIBezierPath(roundedRect: bounds, cornerRadius: 16).cgPath
+        borderLayer.path = UIBezierPath(roundedRect: bounds, cornerRadius: 12).cgPath
     }
     override func traitCollectionDidChange(_ previousTraitCollection: UITraitCollection?) {
         super.traitCollectionDidChange(previousTraitCollection)

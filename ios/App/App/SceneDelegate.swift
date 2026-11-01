@@ -413,7 +413,7 @@ final class BearyChromeViewController: UIViewController {
         let b = BearyHit44Button(type: .custom)
         b.setImage(topIconImage(named: imageName, officialFallback: officialFallback), for: .normal)
         b.tintColor = tint
-        b.layer.cornerRadius = 12
+        b.layer.cornerRadius = 8
         b.addTarget(self, action: action, for: .touchUpInside)
         b.bearyAddPressFeedback()
         b.translatesAutoresizingMaskIntoConstraints = false
@@ -474,7 +474,7 @@ final class BearyChromeViewController: UIViewController {
         login.titleLabel?.adjustsFontForContentSizeCategory = false
         login.setTitleColor(BearyColors.ink, for: .normal)
         login.backgroundColor = .clear
-        login.layer.cornerRadius = 16
+        login.layer.cornerRadius = 8
         login.addTarget(self, action: #selector(didTapLogin), for: .touchUpInside)
         login.bearyAddPressFeedback()
         login.translatesAutoresizingMaskIntoConstraints = false
@@ -584,7 +584,7 @@ final class BearyChromeViewController: UIViewController {
         badge.textColor = .white
         badge.backgroundColor = bearyBlue
         badge.textAlignment = .center
-        badge.layer.cornerRadius = 8.5
+        badge.layer.cornerRadius = 4
         badge.clipsToBounds = true
         badge.isHidden = true
         bellButton.addSubview(badge)
@@ -2477,7 +2477,7 @@ final class BearyChromeViewController: UIViewController {
         sheetLoginButton.titleLabel?.font = UIFont.systemFont(ofSize: 17, weight: .semibold)
         sheetLoginButton.setTitleColor(BearyColors.bg, for: .normal)
         sheetLoginButton.backgroundColor = BearyColors.ink
-        sheetLoginButton.layer.cornerRadius = 22
+        sheetLoginButton.layer.cornerRadius = 8
         sheetLoginButton.translatesAutoresizingMaskIntoConstraints = false
         sheetLoginButton.addTarget(self, action: #selector(guestSheetLoginTapped), for: .touchUpInside)
         sheetLoginButton.bearyAddPressFeedback()
@@ -2486,7 +2486,7 @@ final class BearyChromeViewController: UIViewController {
         sheetLaterButton.titleLabel?.font = UIFont.systemFont(ofSize: 17, weight: .semibold)
         sheetLaterButton.setTitleColor(BearyColors.ink, for: .normal)
         sheetLaterButton.backgroundColor = .clear
-        sheetLaterButton.layer.cornerRadius = 22
+        sheetLaterButton.layer.cornerRadius = 8
         sheetLaterButton.layer.borderWidth = 1
         sheetLaterButton.layer.bearyDynamicBorderColor = BearyColors.line
         sheetLaterButton.translatesAutoresizingMaskIntoConstraints = false

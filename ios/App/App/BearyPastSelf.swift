@@ -346,7 +346,7 @@ final class PastSelfIconView: UIView {
         } else {
             // 占位标注：资产未注册前明确标出缺失项，不伪装成正式图标。
             layer.borderWidth = 1
-            layer.cornerRadius = 10
+            layer.cornerRadius = 4
             layer.bearyDynamicBorderColor = UIColor.systemGray.withAlphaComponent(0.6)
             let label = UILabel()
             label.translatesAutoresizingMaskIntoConstraints = false
@@ -393,7 +393,7 @@ final class PastSelfComposeView: UIView, UITextViewDelegate {
         textView.font = UIFont.systemFont(ofSize: 15)
         textView.textColor = UIColor.label
         textView.backgroundColor = UIColor.secondarySystemBackground
-        textView.layer.cornerRadius = 12
+        textView.layer.cornerRadius = 8
         textView.layer.borderWidth = 1
         textView.layer.bearyDynamicBorderColor = UIColor.separator
         textView.textContainerInset = UIEdgeInsets(top: 10, left: 10, bottom: 10, right: 10)

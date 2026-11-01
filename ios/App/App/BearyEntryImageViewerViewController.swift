@@ -56,7 +56,7 @@ class BearyEntryImageViewerViewController: UIViewController, UIGestureRecognizer
         buttonValue.titleLabel?.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 14, weight: .semibold))
         buttonValue.titleLabel?.adjustsFontForContentSizeCategory = true
         buttonValue.backgroundColor = UIColor(white: 1, alpha: 0.16)
-        buttonValue.layer.cornerRadius = 18
+        buttonValue.layer.cornerRadius = 8
         buttonValue.clipsToBounds = true
         buttonValue.contentEdgeInsets = UIEdgeInsets(top: 0, left: 18, bottom: 0, right: 18)
         buttonValue.addTarget(self, action: #selector(viewEntryButtonTapped), for: .touchUpInside)

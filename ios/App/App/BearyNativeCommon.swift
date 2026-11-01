@@ -72,7 +72,7 @@ enum BearyMotion {
 
 // MARK: - Sheet/居中模态统一口径（B 批）
 
-/// 底 sheet 与居中模态的共享 chrome：顶部圆角 20、抓手 40×4（顶距 10、圆角 2）、
+/// 底 sheet 与居中模态的共享 chrome：顶部圆角 12、抓手 40×4（顶距 10、圆角 2）、
 /// 遮罩 scrim 0.45。B 批前四处各写各的数值（恰好同值），改一处即全跟走，防再分裂。
 /// 2026-10-28 Li 令：回应 Sheet 与草稿箱 Sheet 统一走本 chrome（此前草稿箱遮罩全透明、
 /// 回应 Sheet 圆角 22 / 抓手 38×4 的例外一律撤销）；遮罩出现时 0.25s 淡入。
@@ -85,7 +85,7 @@ enum BearyMotion {
 /// 注意：BearyCenteredModal 的居中卡片阴影与 centered 组同值，但居中弹窗不在
 /// 本清理件范围，故仍保留自写值、未迁移至此；勿顺手合入。
 enum BearySheetChrome {
-    static let topCornerRadius: CGFloat = 20
+    static let topCornerRadius: CGFloat = 12
     static let grabberWidth: CGFloat = 40
     static let grabberHeight: CGFloat = 4
     static let grabberTop: CGFloat = 10
@@ -169,7 +169,7 @@ enum BearyGlass {
 }
 
 /// 玻璃按钮：BearyHit44Button + 背部玻璃底。只换按钮底质，不动图标/文字/尺寸/44pt 热区；
-/// 点亮色、描边、边框等上层样式一律不动。圆角取半高（44×44 图标钮为圆、宽钮为 pill 形，与预览一致）。
+/// 点亮色、描边、边框等上层样式一律不动。圆角取 8（视觉清单第 7 项按钮档；44×44 图标钮亦为 8pt 圆角，不再取半高成圆）。
 /// 玻璃视图插在 index 0，位于 imageView/titleLabel 之下；backgroundColor 必须保持 clear，
 /// 否则实色底会盖住玻璃——转换点须同步把原实色底改 clear（边框/描边不动）。
 /// 范围（视觉清单第 12 项）：本类只允许用在栏内按钮，唯一调用点是顶栏登录 pill；
@@ -212,7 +212,7 @@ final class BearyGlassButton: BearyHit44Button {
 
     override func layoutSubviews() {
         super.layoutSubviews()
-        glassView?.layer.cornerRadius = bounds.height / 2
+        glassView?.layer.cornerRadius = 8
         glassView?.clipsToBounds = true
     }
 }

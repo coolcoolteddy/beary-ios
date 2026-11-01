@@ -75,7 +75,7 @@ func bearyFeedRetryButton(target: Any?, action: Selector) -> BearyFeedRetryButto
     btn.setImage(BearyFeedIconCache.image(named: "icon_refresh", pointSize: 20), for: .normal)
     btn.tintColor = BearyColors.gray
     btn.backgroundColor = BearyColors.bg
-    btn.layer.cornerRadius = 14
+    btn.layer.cornerRadius = 8
     btn.clipsToBounds = true
     btn.isHidden = true
     btn.accessibilityLabel = "重新加载图片"
@@ -203,7 +203,7 @@ final class BearyEmoteChipView: UIView {
     override init(frame: CGRect) {
         super.init(frame: frame)
         translatesAutoresizingMaskIntoConstraints = false
-        layer.cornerRadius = 16
+        layer.cornerRadius = 4
         layer.borderWidth = 1
         clipsToBounds = true
         row.axis = .horizontal
@@ -233,12 +233,11 @@ final class BearyEmoteChipView: UIView {
         fatalError("init(coder:) has not been implemented")
     }
 
-    /// pill 形兜底：圆角恒取高的一半，任何高度下都是 pill 形（32 高时即 16，与旧值一致）；
-    /// 即使某路残留 transform 使 bounds 翻倍，显示圆角仍为显示高的一半。
+    /// 小标签档：圆角恒为 4（视觉清单第 7 项；旧 pill 形半高已撤销）。
     override func layoutSubviews() {
         super.layoutSubviews()
         if bounds.height > 0 {
-            layer.cornerRadius = bounds.height / 2
+            layer.cornerRadius = 4
         }
     }
     /// 池化渲染：样式/计数/tag 由调用方随后写 overlayButton；key 不变且已在播时
@@ -317,7 +316,7 @@ final class BearyDiaryCardDashedAddButton: BearyHit44Button {
     override func layoutSubviews() {
         super.layoutSubviews()
         dashedLayer.frame = bounds
-        dashedLayer.path = UIBezierPath(roundedRect: bounds, cornerRadius: bounds.height / 2).cgPath
+        dashedLayer.path = UIBezierPath(roundedRect: bounds, cornerRadius: 8).cgPath
     }
 
     override func traitCollectionDidChange(_ previousTraitCollection: UITraitCollection?) {

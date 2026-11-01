@@ -32,7 +32,7 @@ final class BearyLocationPopoverView: UIView, CLLocationManagerDelegate, MKLocal
 
     private static let arrowHeight: CGFloat = 10
     private static let arrowHalfWidth: CGFloat = 8
-    private static let cornerRadius: CGFloat = 14
+    private static let cornerRadius: CGFloat = 12
 
     private static var popoverBackgroundColor: UIColor {
         UIColor { trait in
@@ -102,7 +102,7 @@ final class BearyLocationPopoverView: UIView, CLLocationManagerDelegate, MKLocal
         confirmButton.setImage(BearyIconImages.image(named: "icon_check", pointSize: 18), for: .normal)
         confirmButton.tintColor = .white
         confirmButton.backgroundColor = BearyColors.orange
-        confirmButton.layer.cornerRadius = 16
+        confirmButton.layer.cornerRadius = 8
         confirmButton.clipsToBounds = true
         confirmButton.accessibilityLabel = "确认使用这个位置"
         confirmButton.setContentHuggingPriority(.required, for: .horizontal)
@@ -112,7 +112,7 @@ final class BearyLocationPopoverView: UIView, CLLocationManagerDelegate, MKLocal
         manualButton.setTitle("自己输入", for: .normal)
         manualButton.titleLabel?.font = UIFont.systemFont(ofSize: 13)
         manualButton.setTitleColor(BearyColors.ink, for: .normal)
-        manualButton.layer.cornerRadius = 999
+        manualButton.layer.cornerRadius = 8
         manualButton.layer.borderWidth = 1
         manualButton.layer.bearyDynamicBorderColor = BearyColors.line
         manualButton.contentEdgeInsets = UIEdgeInsets(top: 7, left: 12, bottom: 7, right: 12)

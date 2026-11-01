@@ -138,7 +138,7 @@ final class BearyInviteViewController: UIViewController {
     private func buildLayout() {
         // 视觉清单第 12 项：弹窗玻璃背板已撤，改实色 surface 底（卡片标准底色；
         // 玻璃范围 Token 只允许栏/菜单，弹窗不在内）；外形圆角仍由呈现层
-        // presentedView 的圆角 20 + 裁剪定（居中卡片/底 sheet 呈现层均已设，本文件不动）。
+        // presentedView 的圆角 12（走 BearySheetChrome）+ 裁剪定（居中卡片/底 sheet 呈现层均已设，本文件不动）。
         scrollView.translatesAutoresizingMaskIntoConstraints = false
         // 116 后扫查：与广场/个人页同口径——关掉 delaysContentTouches，滚动容器里的点按立即响应，不等滚动判定。
         scrollView.delaysContentTouches = false
@@ -175,13 +175,13 @@ final class BearyInviteViewController: UIViewController {
 
         codeBox.translatesAutoresizingMaskIntoConstraints = false
         codeBox.backgroundColor = BearyColors.faint
-        codeBox.layer.cornerRadius = 12
+        codeBox.layer.cornerRadius = 8
         codeLabel.translatesAutoresizingMaskIntoConstraints = false
         codeLabel.text = "—"
         codeLabel.font = UIFont.systemFont(ofSize: 20, weight: .bold)
         codeLabel.textColor = BearyColors.ink
         copyButton.translatesAutoresizingMaskIntoConstraints = false
-        copyButton.layer.cornerRadius = 12
+        copyButton.layer.cornerRadius = 8
         // C4：复制钮改用 surface 底，与码框 faint 底拉开对比（深色下不再融为一体）。
         copyButton.backgroundColor = BearyColors.surface
         copyButton.setTitle("复制", for: .normal)
@@ -224,7 +224,7 @@ final class BearyInviteViewController: UIViewController {
         bindRow.isHidden = true
         let bindContainer = makeFieldContainer(field: bindField)
         bindButton.translatesAutoresizingMaskIntoConstraints = false
-        bindButton.layer.cornerRadius = 12
+        bindButton.layer.cornerRadius = 8
         bindButton.backgroundColor = BearyColors.ink
         bindButton.setTitle("绑定", for: .normal)
         bindButton.setTitleColor(BearyColors.bg, for: .normal)

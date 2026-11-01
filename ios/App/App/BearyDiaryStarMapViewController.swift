@@ -232,7 +232,7 @@ final class BearyDiaryStarMapViewController: UIViewController {
         }
 
         skyView.translatesAutoresizingMaskIntoConstraints = false
-        skyView.layer.cornerRadius = 16
+        skyView.layer.cornerRadius = 12
         skyView.clipsToBounds = true
         contentView.addSubview(skyView)
 
@@ -244,7 +244,7 @@ final class BearyDiaryStarMapViewController: UIViewController {
 
         sheetCard.translatesAutoresizingMaskIntoConstraints = false
         sheetCard.backgroundColor = BearyStarMapNight.sheetBackground
-        sheetCard.layer.cornerRadius = 14
+        sheetCard.layer.cornerRadius = 12
         sheetCard.layer.bearyDynamicBorderColor = BearyStarMapNight.sheetBorder
         sheetCard.layer.borderWidth = 1
         sheetCard.clipsToBounds = true
@@ -395,7 +395,7 @@ final class BearyDiaryStarMapViewController: UIViewController {
         button.titleLabel?.font = UIFont.systemFont(ofSize: 13, weight: selected ? .bold : .regular)
         button.setTitleColor(selected ? BearyStarMapNight.selectedText : BearyStarMapNight.bodyText, for: .normal)
         button.backgroundColor = selected ? BearyStarMapNight.selected : .clear
-        button.layer.cornerRadius = 16
+        button.layer.cornerRadius = 8
         button.layer.borderWidth = selected ? 0 : 1
         button.layer.bearyDynamicBorderColor = BearyStarMapNight.pillBorder
         button.contentEdgeInsets = UIEdgeInsets(top: 6, left: 12, bottom: 6, right: 12)
@@ -729,7 +729,7 @@ final class BearyDiaryStarMapViewController: UIViewController {
         detailButton.titleLabel?.font = UIFont.boldSystemFont(ofSize: 15)
         detailButton.setTitleColor(BearyStarMapNight.primaryText, for: .normal)
         detailButton.backgroundColor = BearyColors.orange
-        detailButton.layer.cornerRadius = 12
+        detailButton.layer.cornerRadius = 8
         detailButton.contentEdgeInsets = UIEdgeInsets(top: 10, left: 16, bottom: 10, right: 16)
         detailButton.accessibilityIdentifier = entry.id
         detailButton.addTarget(self, action: #selector(didTapSheetEntry(_:)), for: .touchUpInside)

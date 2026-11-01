@@ -193,7 +193,7 @@ final class BearyLoginViewController: UIViewController {
         configureAgreeRow()
 
         sendButton.translatesAutoresizingMaskIntoConstraints = false
-        sendButton.layer.cornerRadius = 12
+        sendButton.layer.cornerRadius = 8
         sendButton.contentEdgeInsets = UIEdgeInsets(top: 0, left: 15, bottom: 0, right: 15)
         sendButton.addTarget(self, action: #selector(sendCodeTapped), for: .touchUpInside)
         sendButton.bearyAddPressFeedback()
@@ -206,7 +206,7 @@ final class BearyLoginViewController: UIViewController {
 
         loginButton.translatesAutoresizingMaskIntoConstraints = false
         loginButton.backgroundColor = BearyColors.ink
-        loginButton.layer.cornerRadius = 12
+        loginButton.layer.cornerRadius = 8
         loginButton.addTarget(self, action: #selector(loginTapped), for: .touchUpInside)
         loginButton.bearyAddPressFeedback()
         // 登录处理转圈与下拉/加载同款 icon_refresh（#224 误用 icon_restore 已回退）。
@@ -223,7 +223,7 @@ final class BearyLoginViewController: UIViewController {
         // .custom 类型避免 system 钮的点按标题变暗；不受登录钮启用条件约束，任何时候可点。
         guestButton.translatesAutoresizingMaskIntoConstraints = false
         guestButton.backgroundColor = BearyColors.faint
-        guestButton.layer.cornerRadius = 12
+        guestButton.layer.cornerRadius = 8
         guestButton.setTitle("先逛逛（游客模式）", for: .normal)
         guestButton.setTitleColor(BearyColors.gray, for: .normal)
         guestButton.setTitleColor(BearyColors.gray, for: .disabled)

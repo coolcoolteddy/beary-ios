@@ -455,7 +455,7 @@ final class BearyCalendarCardView: UIView {
         backgroundColor = BearyColors.surface
         layer.borderWidth = 1
         layer.bearyDynamicBorderColor = BearyColors.line
-        layer.cornerRadius = 14
+        layer.cornerRadius = 12
         layer.masksToBounds = true
 
         titleLabel.translatesAutoresizingMaskIntoConstraints = false
@@ -464,7 +464,7 @@ final class BearyCalendarCardView: UIView {
 
         toggleButton.translatesAutoresizingMaskIntoConstraints = false
         toggleButton.backgroundColor = BearyColors.faint
-        toggleButton.layer.cornerRadius = 16
+        toggleButton.layer.cornerRadius = 8
         toggleButton.titleLabel?.font = UIFont.boldSystemFont(ofSize: 12.5)
         toggleButton.setTitleColor(BearyColors.ink, for: .normal)
         toggleButton.contentEdgeInsets = UIEdgeInsets(top: 0, left: 12, bottom: 0, right: 12)
@@ -476,7 +476,7 @@ final class BearyCalendarCardView: UIView {
         // 在显示月份/周不含今天或选中日不是今天时浮现；无障碍名“回到今天”。
         todayButton.translatesAutoresizingMaskIntoConstraints = false
         todayButton.backgroundColor = BearyColors.faint
-        todayButton.layer.cornerRadius = 16
+        todayButton.layer.cornerRadius = 8
         todayButton.titleLabel?.font = UIFont.boldSystemFont(ofSize: 12.5)
         todayButton.setTitleColor(BearyColors.ink, for: .normal)
         todayButton.setTitle("今", for: .normal)
@@ -490,7 +490,7 @@ final class BearyCalendarCardView: UIView {
 
         prevButton.translatesAutoresizingMaskIntoConstraints = false
         prevButton.backgroundColor = BearyColors.faint
-        prevButton.layer.cornerRadius = 16
+        prevButton.layer.cornerRadius = 8
         prevButton.tintColor = BearyColors.gray
         if let chevron = BearyIconImages.image(named: "icon_chevron_right", pointSize: 15) {
             prevButton.setImage(chevron, for: .normal)
@@ -505,7 +505,7 @@ final class BearyCalendarCardView: UIView {
 
         nextButton.translatesAutoresizingMaskIntoConstraints = false
         nextButton.backgroundColor = BearyColors.faint
-        nextButton.layer.cornerRadius = 16
+        nextButton.layer.cornerRadius = 8
         nextButton.tintColor = BearyColors.gray
         if let chevron = BearyIconImages.image(named: "icon_chevron_right", pointSize: 15) {
             nextButton.setImage(chevron, for: .normal)
@@ -3446,7 +3446,7 @@ class BearyTimelineViewController: UIViewController {
 
         trashButton.translatesAutoresizingMaskIntoConstraints = false
         trashButton.backgroundColor = BearyColors.faint
-        trashButton.layer.cornerRadius = 17
+        trashButton.layer.cornerRadius = 8
         trashButton.contentEdgeInsets = UIEdgeInsets(top: 8, left: 10, bottom: 8, right: 10)
         if let trashImage = BearyIconImages.image(named: "icon_trash", pointSize: 16) {
             trashButton.setImage(trashImage, for: .normal)
@@ -3772,7 +3772,7 @@ class BearyTimelineViewController: UIViewController {
         calendarFailedBanner.backgroundColor = BearyColors.surface
         calendarFailedBanner.layer.borderWidth = 1
         calendarFailedBanner.layer.bearyDynamicBorderColor = BearyColors.line
-        calendarFailedBanner.layer.cornerRadius = 22
+        calendarFailedBanner.layer.cornerRadius = 12
         calendarFailedBanner.clipsToBounds = true
         calendarFailedBanner.isHidden = true
         calendarFailedBanner.accessibilityLabel = "日历加载失败，重试"
@@ -5461,7 +5461,7 @@ class BearyTimelineViewController: UIViewController {
                 button.contentEdgeInsets = UIEdgeInsets(top: 0, left: 12, bottom: 0, right: 12)
                 button.layer.borderWidth = 1
                 button.layer.bearyDynamicBorderColor = BearyColors.line
-                button.layer.cornerRadius = 20
+                button.layer.cornerRadius = 8
             } else {
                 button.setTitleColor(BearyColors.blue, for: .normal)
             }
