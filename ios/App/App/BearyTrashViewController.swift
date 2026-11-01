@@ -228,7 +228,7 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate, UI
                 clockView.widthAnchor.constraint(equalToConstant: 13),
                 clockView.heightAnchor.constraint(equalToConstant: 13),
             ])
-            noteRow.layoutMargins = UIEdgeInsets(top: 0, left: 17, bottom: 0, right: 0)
+            noteRow.layoutMargins = UIEdgeInsets(top: 0, left: BearySpace.lg, bottom: 0, right: 0)
         }
         noteRow.addArrangedSubview(noteLabel)
 

@@ -855,7 +855,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         contentStack.spacing = 0
         contentStack.alignment = .fill
         contentStack.isLayoutMarginsRelativeArrangement = true
-        contentStack.layoutMargins = UIEdgeInsets(top: 14, left: 16, bottom: 14, right: 16)
+        contentStack.layoutMargins = UIEdgeInsets(top: BearySpace.lg, left: BearySpace.lg, bottom: BearySpace.lg, right: BearySpace.lg)
         view.addSubview(topBar)
         view.addSubview(toolbarContainer)
         view.addSubview(toolStripStack)

@@ -59,7 +59,7 @@ final class BearyProfilePhotosViewController: UIViewController {
         let layoutValue = UICollectionViewFlowLayout()
         layoutValue.minimumInteritemSpacing = 8
         layoutValue.minimumLineSpacing = 8
-        layoutValue.sectionInset = UIEdgeInsets(top: 16, left: 20, bottom: 20, right: 20)
+        layoutValue.sectionInset = UIEdgeInsets(top: 16, left: BearySpace.lg, bottom: 20, right: BearySpace.lg)
         let collectionValue = UICollectionView(frame: .zero, collectionViewLayout: layoutValue)
         collectionValue.translatesAutoresizingMaskIntoConstraints = false
         collectionValue.backgroundColor = BearyColors.bg

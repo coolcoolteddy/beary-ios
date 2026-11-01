@@ -2495,7 +2495,7 @@ class BearyProfileViewController: UIViewController {
             topBarLeadingConstraint,
             topBarTrailingConstraint,
             topBarHeightConstraint,
-            topBackButton.leadingAnchor.constraint(equalTo: topBarView.leadingAnchor, constant: 20),
+            topBackButton.leadingAnchor.constraint(equalTo: topBarView.leadingAnchor, constant: BearySpace.lg),
             topBackButton.centerYAnchor.constraint(equalTo: topBarView.centerYAnchor),
             topBackButton.widthAnchor.constraint(equalToConstant: 44),
             topBackButton.heightAnchor.constraint(equalToConstant: 44),
@@ -2507,7 +2507,7 @@ class BearyProfileViewController: UIViewController {
             topMoreButton.centerYAnchor.constraint(equalTo: topBarView.centerYAnchor),
             topMoreButton.widthAnchor.constraint(equalToConstant: 44),
             topMoreButton.heightAnchor.constraint(equalToConstant: 44),
-            topShareButton.trailingAnchor.constraint(equalTo: topBarView.trailingAnchor, constant: -20),
+            topShareButton.trailingAnchor.constraint(equalTo: topBarView.trailingAnchor, constant: -BearySpace.lg),
             topShareButton.centerYAnchor.constraint(equalTo: topBarView.centerYAnchor),
             topShareButton.widthAnchor.constraint(equalToConstant: 44),
             topShareButton.heightAnchor.constraint(equalToConstant: 44),
@@ -2729,8 +2729,8 @@ class BearyProfileViewController: UIViewController {
 
             // 夜巡入口：与墙同列（左右各 20）；入口行盖满标题区保证热区，
             // 脚印条在标题行下方独占一行横滑（脚印钮 44pt，见 renderNightPatrol）。
-            nightContainer.leadingAnchor.constraint(equalTo: headerView.leadingAnchor, constant: 20),
-            nightContainer.trailingAnchor.constraint(equalTo: headerView.trailingAnchor, constant: -20),
+            nightContainer.leadingAnchor.constraint(equalTo: headerView.leadingAnchor, constant: BearySpace.lg),
+            nightContainer.trailingAnchor.constraint(equalTo: headerView.trailingAnchor, constant: -BearySpace.lg),
             nightTopConstraint,
             nightIconView.leadingAnchor.constraint(equalTo: nightContainer.leadingAnchor, constant: 14),
             nightIconView.topAnchor.constraint(equalTo: nightContainer.topAnchor, constant: 12),
@@ -2761,8 +2761,8 @@ class BearyProfileViewController: UIViewController {
             nightTrailStack.bottomAnchor.constraint(equalTo: nightTrailScrollView.bottomAnchor),
             nightTrailStack.heightAnchor.constraint(equalTo: nightTrailScrollView.heightAnchor),
 
-            wallContainer.leadingAnchor.constraint(equalTo: headerView.leadingAnchor, constant: 20),
-            wallContainer.trailingAnchor.constraint(equalTo: headerView.trailingAnchor, constant: -20),
+            wallContainer.leadingAnchor.constraint(equalTo: headerView.leadingAnchor, constant: BearySpace.lg),
+            wallContainer.trailingAnchor.constraint(equalTo: headerView.trailingAnchor, constant: -BearySpace.lg),
             wallTopConstraint,
             // 网页移动端两行卡片：第一行标题左、总数右；第二行表情条独占整行横滑、右端截断。
             wallTitleLabel.leadingAnchor.constraint(equalTo: wallContainer.leadingAnchor, constant: 14),
@@ -2787,8 +2787,8 @@ class BearyProfileViewController: UIViewController {
             modulesStack.trailingAnchor.constraint(equalTo: modulesContainer.trailingAnchor),
             modulesStack.bottomAnchor.constraint(equalTo: modulesContainer.bottomAnchor),
 
-            tabsContainer.leadingAnchor.constraint(equalTo: headerView.leadingAnchor, constant: 20),
-            tabsContainer.trailingAnchor.constraint(equalTo: headerView.trailingAnchor, constant: -20),
+            tabsContainer.leadingAnchor.constraint(equalTo: headerView.leadingAnchor, constant: BearySpace.lg),
+            tabsContainer.trailingAnchor.constraint(equalTo: headerView.trailingAnchor, constant: -BearySpace.lg),
             // tab 与卡片贴在一起（2026-10-31）：header 到标签为止，底锚改到
             // 标签底；header 在标签底下只留 2pt，加上卡片 cell 内 14pt 顶内边距，
             // 标签到底首张卡内容正好 16pt。模块组改由 refreshFooter 放进脚部，

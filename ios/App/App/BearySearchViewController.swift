@@ -466,7 +466,7 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         // 列内边距 16 由 stack layoutMargins 承担（网页 #searchPage .pf-col padding 16
         // 同口径）：列本身不再收窄，见 buildConstraints。
         contentStack.isLayoutMarginsRelativeArrangement = true
-        contentStack.layoutMargins = UIEdgeInsets(top: 0, left: 16, bottom: 0, right: 16)
+        contentStack.layoutMargins = UIEdgeInsets(top: 0, left: BearySpace.lg, bottom: 0, right: BearySpace.lg)
         columnWrap.addSubview(contentStack)
 
         // 页顶返回行（流内，随内容滚出；框体 sticky 后它已滚出视野）。

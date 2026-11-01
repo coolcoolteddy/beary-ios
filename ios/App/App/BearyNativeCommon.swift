@@ -64,6 +64,15 @@ enum BearyColors {
     }
 }
 
+/// 间距 token（视觉清单 Grok 项 1.1）：页面只引用 token，不再写散落数字。
+/// xs 组内间距 / sm 相关间距 / md 卡片内边距 / lg 页边距。
+enum BearySpace {
+    static let xs: CGFloat = 4
+    static let sm: CGFloat = 8
+    static let md: CGFloat = 12
+    static let lg: CGFloat = 16
+}
+
 /// 6-10 减动效门控 helper（全修批统一口径，签名固定）：调用点把
 /// `animated: true` 改成 `animated: BearyMotion.animated(true)`；开启系统
 /// 减动效时一律返回 false，present/dismiss 即瞬时落终值。
