@@ -2347,6 +2347,9 @@ private class BearyLetterModal {
             // 被 .letter-box max-width 420 覆盖——信件模态实际宽就是 420，
             // App 原 420 已对上，不改；圆角与内边距按 .confirm-box 改 16/24。
             cardView.widthAnchor.constraint(lessThanOrEqualToConstant: 420),
+            // 审计 15 项第 1 项：整卡高度上限 = 安全区高度 − 32（上下各 16），
+            // 短屏/大字号下卡片不再顶出安全区；正文滚动区 750 优先级先收缩。
+            cardView.heightAnchor.constraint(lessThanOrEqualTo: overlayView.safeAreaLayoutGuide.heightAnchor, constant: -32),
             iconView.topAnchor.constraint(equalTo: cardView.topAnchor, constant: 24),
             iconView.centerXAnchor.constraint(equalTo: cardView.centerXAnchor),
             iconView.widthAnchor.constraint(equalToConstant: 36),
