@@ -37,6 +37,19 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate, UI
     private var trashLoading = false
     private var trashLoadingMore = false
     private var trashSilentRefreshing = false
+    /// 静默刷新代次守卫（全量同步 trash 腿同款口径，见 BearyEntrySync）：
+    /// 刷新开始时记下回收站写盘代际，终态提交前比对——期间发生过任何
+    /// trash.json 写盘（恢复/彻底删除清桶、删帖进桶、全量同步提交），
+    /// 旧快照即已过期，丢弃本次提交保旧盘，下次进页重刷。
+    private var trashSilentRefreshStartSequence: Int?
+    /// 本轮静默刷新期间恢复/彻底删除成功的 id：恢复/删除的落盘写
+    /// 已改走后台串行队列，主线程终态检查时那笔写可能尚未执行、
+    /// 代际尚未 +1，故另记一份主线程同步可见的已移除集合防回插。
+    /// 刷新开始时清空、终态（成功/失败/游标缺失）时清空，只活一轮。
+    private var trashRemovedDuringSilentRefresh: Set<String> = []
+    /// 本地桶后台读在途：loadFirstPage 改异步后防重复进页（重试/
+    /// reload 在读桶完成前再调直接丢弃，下次进页重读）。
+    private var trashBucketLoading = false
     private var trashFirstLoadFailed = false
     private var trashLoginEmpty = false
     private var trashBusyIdentifiers: Set<String> = []
@@ -368,22 +381,46 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate, UI
     // MARK: - 加载
 
     private func loadFirstPage() {
-        if trashLoading {
+        if trashLoading || trashBucketLoading || trashSilentRefreshing {
             return
         }
         // 回收站同步落盘：桶已存在时先读本地秒显（不转菊花），再静默整桶重拉对齐；
         // 桶不存在时走现行网络首拉（菊花 + 失败态口径一字不动）。
-        if let uid = SessionManager.shared.currentUser?.id,
-           let localItems = BearyTrashSyncStore.loadAll(accountId: uid) {
-            trashFirstLoadFailed = false
-            trashLoginEmpty = false
-            trashHasMore = false
-            trashItems = localItems
-            updateListRowsIncrementally()
-            renderStateViews()
-            silentRefreshTrash()
+        // 开页读改走同步串行后台队列（与恢复/删除写、静默刷新写同一队列，
+        // 读到的是写队列已落地的整桶，不会读到恢复在途的半截状态）：
+        // 读桶期间不转菊花（旧口径：本地秒显本来就不转菊花），读完回主线程
+        // 再渲染；静默刷新在途时不再重读旧桶——重读会把本轮已恢复/删除
+        // 的行从旧桶里捞回内存，静默终态丢弃旧快照后它仍赖在内存里。
+        if let uid = SessionManager.shared.currentUser?.id {
+            trashBucketLoading = true
+            BearyEntrySync.shared.runDiskWrite { [weak self] in
+                let localItems = BearyTrashSyncStore.loadAll(accountId: uid)
+                DispatchQueue.main.async { [weak self] in
+                    guard let self = self else { return }
+                    self.trashBucketLoading = false
+                    // 读桶期间切号：丢弃本桶结果，不渲染、不静默刷新，
+                    // 防跨账号显错桶（静默刷新启动时捕获的 accountId 同理）。
+                    guard SessionManager.shared.currentUser?.id == uid else { return }
+                    guard let localItems = localItems else {
+                        self.loadFirstPageFromNetwork()
+                        return
+                    }
+                    self.trashFirstLoadFailed = false
+                    self.trashLoginEmpty = false
+                    self.trashHasMore = false
+                    self.trashItems = localItems
+                    self.updateListRowsIncrementally()
+                    self.renderStateViews()
+                    self.silentRefreshTrash()
+                }
+            }
             return
         }
+        loadFirstPageFromNetwork()
+    }
+
+    /// 网络首拉（桶不存在/未登录时走这里；菊花 + 失败态口径与旧 loadFirstPage 一字不动）。
+    private func loadFirstPageFromNetwork() {
         trashLoading = true
         trashFirstLoadFailed = false
         trashLoginEmpty = false
@@ -433,6 +470,10 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate, UI
         }
         guard let uid = SessionManager.shared.currentUser?.id else { return }
         trashSilentRefreshing = true
+        // 代次基线：记下刷新开始时的回收站写盘代际（全量同步 trash 腿
+        // kick 时同款记法）；终态比对，期间有写盘即旧快照过期。
+        trashSilentRefreshStartSequence = BearyTrashSyncStore.currentWriteSequence()
+        trashRemovedDuringSilentRefresh.removeAll()
         fetchTrashSilentPage(accountId: uid, before: nil, beforeId: nil, accumulated: [])
     }
 
@@ -443,6 +484,8 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate, UI
                 switch result {
                 case .failure(let error):
                     self.trashSilentRefreshing = false
+                    self.trashSilentRefreshStartSequence = nil
+                    self.trashRemovedDuringSilentRefresh.removeAll()
                     if case .unauthorized = error {
                         self.onRequireLogin?()
                     }
@@ -454,6 +497,24 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate, UI
                         // 去重保底（游标页理论上不交叠；重复 id 进桶会在页内渲染成两行，故先清掉）。
                         var seen: Set<String> = []
                         let deduped = all.filter { seen.insert($0.id).inserted }
+                        // 代次 + 已移除双重守卫（旧快照回插修复，全量同步同款口径）：
+                        // 刷新开始后发生过任何 trash.json 写盘，或本轮已恢复/删除
+                        // 的 id 仍在迟到快照里——旧快照已过期，整批丢弃：
+                        // 内存与落盘都保持现状（恢复/删除的内存移除已生效、
+                        // 后台落盘随后落地；删帖进桶的新篇也不被旧快照抹掉），
+                        // 不调用 updateListRowsIncrementally，下次进页重刷再对齐。
+                        // 双重才够：恢复/删除写已改走后台队列，终态检查时那笔
+                        // 写可能尚未执行、代际尚未 +1，只看代际会漏网；只看已移除
+                        // 集合又拦不住删帖进桶/全量同步提交这类写盘。
+                        let startSequence = self.trashSilentRefreshStartSequence
+                        self.trashSilentRefreshStartSequence = nil
+                        let removedDuringRefresh = self.trashRemovedDuringSilentRefresh
+                        self.trashRemovedDuringSilentRefresh.removeAll()
+                        let sequenceChanged = startSequence != nil && startSequence != BearyTrashSyncStore.currentWriteSequence()
+                        let snapshotContainsRemoved = deduped.contains(where: { removedDuringRefresh.contains($0.id) })
+                        if sequenceChanged || snapshotContainsRemoved {
+                            return
+                        }
                         // uid 启动时捕获一路透传：中途切号也不把旧账号数据写进新账号桶。
                         // 落盘写走同步队列（不卡主线程）；内存态已同步更新，UI 不等落盘。
                         BearyEntrySync.shared.runDiskWrite {
@@ -468,6 +529,8 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate, UI
                         guard let last = page.items.last, let lastDeletedAt = last.deletedAt else {
                             // 游标缺失无法续翻：丢弃半截结果，保留旧桶与旧显示。
                             self.trashSilentRefreshing = false
+                            self.trashSilentRefreshStartSequence = nil
+                            self.trashRemovedDuringSilentRefresh.removeAll()
                             return
                         }
                         self.fetchTrashSilentPage(accountId: accountId, before: "\(lastDeletedAt)", beforeId: last.id, accumulated: all)
@@ -930,8 +993,20 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate, UI
                         self.showToast(message: "已恢复")
                     }
                     self.removeRow(identifier: identifier)
+                    // 防回插：先在主线程记下本轮已移除 id（静默终态检查时
+                    // 后台落盘写可能尚未执行、代际尚未 +1，只靠代际会漏网），
+                    // 再把整桶读→过滤→编码→写盘投到同步串行后台队列——
+                    // 与静默刷新写同一队列，先后顺序即落盘顺序，迟到快照
+                    // 若已先入队，恢复写随后读桶再清，终态仍不含本篇。
+                    // 不走 runTrashDiskWrite：removeItem 内部 saveAll 已记
+                    // 一次代际，再记一次会重复计数。
+                    if self.trashSilentRefreshing {
+                        self.trashRemovedDuringSilentRefresh.insert(identifier)
+                    }
                     if let uid = SessionManager.shared.currentUser?.id {
-                        BearyTrashSyncStore.removeItem(accountId: uid, entryId: identifier)
+                        BearyEntrySync.shared.runDiskWrite {
+                            BearyTrashSyncStore.removeItem(accountId: uid, entryId: identifier)
+                        }
                     }
                     self.onRestored?(trashValue)
                 case .failure(let error):
@@ -982,8 +1057,15 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate, UI
                     switch result {
                     case .success:
                         self.removeRow(identifier: identifier)
+                        // 防回插 + 后台落盘：口径与恢复成功处完全一致
+                        // （主线程先记已移除 id，再走同步串行后台队列清桶）。
+                        if self.trashSilentRefreshing {
+                            self.trashRemovedDuringSilentRefresh.insert(identifier)
+                        }
                         if let uid = SessionManager.shared.currentUser?.id {
-                            BearyTrashSyncStore.removeItem(accountId: uid, entryId: identifier)
+                            BearyEntrySync.shared.runDiskWrite {
+                                BearyTrashSyncStore.removeItem(accountId: uid, entryId: identifier)
+                            }
                         }
                         self.onPurged?(trashValue)
                     case .failure(let error):

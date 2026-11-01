@@ -776,17 +776,10 @@ final class BearyTimelineCell: UITableViewCell {
         st.isHidden = true
         return st
     }()
-    /// 限时虚线边框（首页同款：1.5pt dashed、line 色、圆角 16、内缩 8/6；
-    /// 分割线式下限时篇只留此虚线框，不再有卡片实线边）。
-    private let ephemeralBorderLayer: CAShapeLayer = {
-        let layer = CAShapeLayer()
-        layer.fillColor = UIColor.clear.cgColor
-        layer.lineWidth = 1.5
-        layer.lineDashPattern = [4, 3]
-        layer.strokeColor = BearyColors.line.cgColor
-        layer.isHidden = true
-        return layer
-    }()
+    /// 限时虚线边框（BearyDashedBorderView：首页同款 1.5pt dashed、line 色、
+    /// 圆角 16；由约束钉在 cardView 上内缩 8/6，自身布局时按 bounds 重画，
+    /// 引用卡进栈后框高自动跟上，不再停留在不含引用的旧矩形上）。
+    private let ephemeralBorderView = BearyDashedBorderView()
     private let metaStack = UIStackView()
     private let timeLabel = UILabel()
     /// 可见性图标（2026-10-29 改版：公开＝地球、私密＝锁；
@@ -951,13 +944,21 @@ final class BearyTimelineCell: UITableViewCell {
         // 无圆角，底色即页面底（bg），行间分隔只靠底缘的 dividerView 横线
         // （线宽 2pt、线色 BearyColors.line 动态色，浅 #dbdbdb／深 #3a3a40，
         // 深浅切换自动跟随，无需手动重刷）。
-        // 限时虚线边框层（ephemeralBorderLayer）是独立语义指示，不动。
+        // 限时虚线边框视图（ephemeralBorderView）是独立语义指示，不动。
         cardView.backgroundColor = BearyColors.bg
         cardView.layer.borderWidth = 0
         cardView.layer.cornerRadius = 0
         cardView.layer.masksToBounds = true
-        // 限时虚线边框层（存活期显；布局时重画路径，见 layoutSubviews）。
-        cardView.layer.addSublayer(ephemeralBorderLayer)
+        // 限时虚线边框视图（插 cardView 最底层、不挡内容；存活期显）。
+        ephemeralBorderView.translatesAutoresizingMaskIntoConstraints = false
+        ephemeralBorderView.isHidden = true
+        cardView.insertSubview(ephemeralBorderView, at: 0)
+        NSLayoutConstraint.activate([
+            ephemeralBorderView.topAnchor.constraint(equalTo: cardView.topAnchor, constant: 6),
+            ephemeralBorderView.leadingAnchor.constraint(equalTo: cardView.leadingAnchor, constant: 8),
+            ephemeralBorderView.trailingAnchor.constraint(equalTo: cardView.trailingAnchor, constant: -8),
+            ephemeralBorderView.bottomAnchor.constraint(equalTo: cardView.bottomAnchor, constant: -6),
+        ])
 
         // 8-3：meta 时间（正文类）走 scaledFont + adjusts。
         timeLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13))
@@ -1253,22 +1254,15 @@ final class BearyTimelineCell: UITableViewCell {
         if let moodRow = metaMoodRow, moodRow.isHidden != narrow {
             moodRow.isHidden = narrow
         }
-        // 限时虚线边框：首页同款（BearyDiaryCardCell 布局口径：宿主矩形内缩
-        // dx 8 / dy 6、圆角 16；此处宿主是时间线内容列 cardView，框须裹住
-        // 内容列、不得越过左侧时间线竖线/圆点区，故内缩落在 cardView 内，
-        // 不改内容列本体布局；分割线式下限时篇只留此虚线框）。
-        if !ephemeralBorderLayer.isHidden {
-            ephemeralBorderLayer.frame = cardView.bounds
-            ephemeralBorderLayer.path = UIBezierPath(roundedRect: cardView.bounds.insetBy(dx: 8, dy: 6), cornerRadius: 16).cgPath
-        }
+        // 限时虚线边框不再在此手工重画 path：BearyDashedBorderView 自身按
+        // 约束后的 cardView bounds 重画，引用卡进栈后框高自动跟上。
     }
 
     override func traitCollectionDidChange(_ previousTraitCollection: UITraitCollection?) {
         super.traitCollectionDidChange(previousTraitCollection)
         // 对称分割线式：内容列底色与分割线均走动态色（bg / line），
         // 深浅切换自动跟随，无外框 chrome 可刷。
-        // 限时虚线描边色是 cgColor 快照，主题切换须重刷。
-        ephemeralBorderLayer.strokeColor = BearyColors.line.cgColor
+        // 限时虚线描边色由 BearyDashedBorderView 自身在 trait 变化时重刷。
         timelineLineView.backgroundColor = BearyColors.line
         dotRingView.backgroundColor = BearyColors.line
         // C1：私密圆点边框按当前 isPublic 重设（公开 bg、私密蓝），
@@ -1567,7 +1561,7 @@ final class BearyTimelineCell: UITableViewCell {
         let ephemeralLive = BearyEphemeral.isLive(entry)
         // 对称分割线式：内容列无实线边；虚线层仍按存活期显隐（限时篇只留虚线框）。
         cardView.layer.borderWidth = 0
-        ephemeralBorderLayer.isHidden = !ephemeralLive
+        ephemeralBorderView.isHidden = !ephemeralLive
         // I3：天气用 icon_wx_* 图标、心情用 14px BearyEmoteView（播 Lottie 循环，
         // 与 Feed/主页心情位静态首帧不同，时间线卡片心情是动的；减动效下只显完成帧）。
         if let weatherKey = entry.weather, let weatherName = BearyText.weatherNames[weatherKey] {
