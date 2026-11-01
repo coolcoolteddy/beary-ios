@@ -1454,6 +1454,12 @@ final class BearyRefreshIconView: UIImageView {
         contentMode = .scaleAspectFit
         isUserInteractionEnabled = false
         alpha = 0
+        // 审计 15 项第 13 项：响应减动效设置变化，在转的动画要能停掉。
+        NotificationCenter.default.addObserver(self, selector: #selector(reduceMotionChanged), name: UIAccessibility.reduceMotionStatusDidChangeNotification, object: nil)
+    }
+
+    deinit {
+        NotificationCenter.default.removeObserver(self)
     }
 
     required init?(coder: NSCoder) {
@@ -1463,11 +1469,12 @@ final class BearyRefreshIconView: UIImageView {
     private var spinning = false
 
     /// 下拉跟随：刷新中调用无效（连续旋转动画接管）。
+    /// 审计 15 项第 13 项：减动效时不改旋转角，只保留显隐反馈。
     func setPullProgress(_ progress: CGFloat) {
         guard !spinning else { return }
         let p = min(1, max(0, progress))
         alpha = p
-        transform = CGAffineTransform(rotationAngle: p * 2 * .pi)
+        transform = UIAccessibility.isReduceMotionEnabled ? .identity : CGAffineTransform(rotationAngle: p * 2 * .pi)
     }
 
     func startSpinning() {
@@ -1475,6 +1482,26 @@ final class BearyRefreshIconView: UIImageView {
         spinning = true
         alpha = 1
         transform = .identity
+        // 审计 15 项第 13 项：减动效时只显静态图标，不加无限旋转
+        //（与 BearyWebRingSpinnerView 的减动效处理同口径）。
+        guard !UIAccessibility.isReduceMotionEnabled else { return }
+        addSpinAnimation()
+    }
+
+    /// 减动效开关变化：开→停掉在转的动画（静态图标仍可见）；
+    /// 关→若仍在刷新中，恢复旋转动画。
+    @objc private func reduceMotionChanged() {
+        guard spinning else { return }
+        if UIAccessibility.isReduceMotionEnabled {
+            layer.removeAnimation(forKey: "refresh-spin")
+            transform = .identity
+            alpha = 1
+        } else {
+            addSpinAnimation()
+        }
+    }
+
+    private func addSpinAnimation() {
         let anim = CABasicAnimation(keyPath: "transform.rotation.z")
         anim.fromValue = 0
         anim.toValue = Double.pi * 2
