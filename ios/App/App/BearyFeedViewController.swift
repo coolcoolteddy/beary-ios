@@ -2100,7 +2100,6 @@ extension BearyFeedViewController: UITableViewDataSource, UITableViewDelegate {
         let last = (tableView.indexPathsForVisibleRows ?? []).map { $0.row }.max() ?? -1
         BearyImagePrefetcher.shared.prefetch(entries: entries, lastVisibleIndex: last, viewerId: SessionManager.shared.currentUser?.id)
     }
-    }
 
     private func resumeVisibleEmotesCore() {
         func resume(_ view: UIView) {
