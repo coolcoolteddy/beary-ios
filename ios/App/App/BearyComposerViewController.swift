@@ -280,6 +280,66 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     /// 再手动关闭。正常到点（无在途请求）不置位，直接走原关闭路径；
     /// 新建发布没有编辑计时器，不受影响。
     private var editSaveBlockedAfterDeadline = false
+    /// 一并公开引用发布流程代次（quote-freeze）：每次点发布（新建态）即 +1，
+    /// setVisibility 与 publishEntry 的回调只认创建时的代次；过期回调直接
+    /// 丢弃，不碰 isPublishing、不 toast、不覆盖新一轮流程的状态。
+    private var publishGeneration = 0
+    /// 第一次点按时拍下的不可变完整发布快照（quote-freeze）：正文、图片、
+    /// 实况映射、心情、天气、气温、引用、可见性、@、标题、限时、位置、
+    /// 胶囊、clientReq 全在点按瞬间定格；门禁与 setVisibility 在途期间
+    /// 用户改什么都不再进提交载荷，performPublish 只读本快照。
+    private struct PublishSnapshot {
+        let content: String
+        let imageKeys: [String]
+        let liveVideos: [String: String]
+        let mood: String?
+        let weather: String?
+        let temperature: Int?
+        var quoteId: String?
+        var published: Int
+        let mentionedUserId: Int?
+        let title: String?
+        var ephemeral: Int?
+        let locationName: String?
+        let locationDistrict: String?
+        let capsuleBuried: Int?
+        let capsuleUnlockDate: String?
+        let capsuleDistrict: String?
+        let capsuleEnabled: Bool
+        let clientReq: String
+    }
+    /// 新建发布快照（quote-freeze）：在 didTapPublish 校验通过后、门禁弹出
+    /// 前调用。胶囊校验失败即 toast 并返回 nil——不进门禁、不冻结、不发
+    /// setVisibility，避免原流程“原日记已公开、胶囊校验才失败”的半截态。
+    /// clientReq 在此创建（原 performPublish 首步），调用方随后 saveDraftNow
+    /// 落盘，保证服务端幂等键在任何请求发出前已持久化。
+    private func makePublishSnapshot(trimmed: String) -> PublishSnapshot? {
+        if draftClientReq == nil {
+            draftClientReq = BearyDraftStore.newClientReq()
+        }
+        guard let req = draftClientReq else { return nil }
+        let capsulePayload = capsuleEnabled ? validatedCapsulePayload() : nil
+        if capsuleEnabled, capsulePayload == nil { return nil }
+        return PublishSnapshot(
+            content: trimmed,
+            imageKeys: uploadedImageKeys(),
+            liveVideos: uploadedLiveVideos(),
+            mood: selectedMood,
+            weather: selectedWeather,
+            temperature: selectedTemperature,
+            quoteId: (selectedQuote?.isDeleted == true) ? nil : selectedQuote?.entryId,
+            published: selectedVisibilityPublished ? 1 : 0,
+            mentionedUserId: selectedRecipient?.id,
+            title: headlineForCreate,
+            ephemeral: isEphemeral ? 1 : nil,
+            locationName: selectedLocation?.name,
+            locationDistrict: selectedLocation?.district,
+            capsuleBuried: capsulePayload?.buried,
+            capsuleUnlockDate: capsulePayload?.unlockDate,
+            capsuleDistrict: capsulePayload?.district,
+            capsuleEnabled: capsuleEnabled,
+            clientReq: req)
+    }
     private var didAutoFocus = false
     // 标题行已去掉：进页拉回旗标与 ensureTitleRowVisibleOnEntry 已整段删除
     //（#219 只覆盖打字时、长草稿光标在末尾进页拉回故意不执行那 case 本就未解决；
@@ -4255,6 +4315,15 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         weatherToolButton.isEnabled = !frozen
         moodToolButton.isEnabled = !frozen
         recipientToolButton.isEnabled = !frozen
+        // quote-freeze：气温步进/直输与标题清除钮此前不在冻结清单——
+        // 快照已保证改动不进载荷，但冻结清单按任务口径补齐，免得用户
+        // 在途改了却以为本次提交会带上。位置工具钮同理补齐（其 handler
+        // 本就有 isPublishing 第二道守卫，此处是第一道禁用）。
+        tempMinusButton.isEnabled = !frozen
+        tempPlusButton.isEnabled = !frozen
+        tempLabelButton.isEnabled = !frozen
+        headlineClearButton.isEnabled = !frozen
+        locationToolButton.isEnabled = !frozen
         imageUndoButton.isEnabled = !frozen
         imageToolButton.isEnabled = !frozen
         for item in imageItems {
@@ -5914,6 +5983,11 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     @objc private func didTapCancel() {
         // P1-7：发布/保存进行中时取消键不走取消流程，给进行中提示（与 didTapPublish
         // 首行 isPublishing 守卫同口径；真取消在途请求属结构改动，本批不做）。
+        // quote-freeze：isPublishing 在“一并公开”点按瞬间即置（见
+        // beginPublishTogether），故 setVisibility 在途时取消键同样只 toast、
+        // 不关编辑器——半截退出（原日记已公开、本篇未发）已被这道守卫堵死。
+        // 编辑器为全屏 present、无下滑关闭手势，容器侧 onCancelled 在新建态
+        // 只从本函数触发，故不存在另一条在途关闭路径。
         if isPublishing {
             showToast(message: isEditMode ? "保存中…" : "发布中…")
             return
@@ -6018,45 +6092,75 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             showToast(message: "有图片上传失败，点失败的图重试或移除后再发布")
             return
         }
-        // 引用规则简化（2026-10-31）：新建将公开且含私密引用时先拦截，不直接发。
-        // 自己来源三选一、他人来源两项（见 BearyQuoteGate.gateEditorPublish）；
-        // 一并公开先发原日记 visibility=1，成功才发本篇；失败停在编辑器、不发本篇。
-        // 保持私密发布即把本篇改回私密再发（引用保留）；删除引用即清引用再公开。
-        if !isEditMode, selectedVisibilityPublished, let pendingQuote = selectedQuote, pendingQuote.isDeleted == false, pendingQuote.isPublic != true {
-            let mine = BearyQuoteGate.sourceIsMine(isMine: pendingQuote.isMine, authorId: pendingQuote.authorId)
-            BearyQuoteGate.gateEditorPublish(from: self, sourceIsMine: mine, onPublishTogether: { [weak self] in
-                guard let self = self, let sourceId = self.selectedQuote?.entryId, !sourceId.isEmpty else { return }
-                BearyAPI.shared.setVisibility(id: sourceId, published: 1) { result in
-                    DispatchQueue.main.async {
-                        switch result {
-                        case .success:
-                            self.performPublish(trimmed: trimmed)
-                        case .failure:
-                            self.showToast(message: "原日记公开失败，请重试")
-                        }
-                    }
-                }
-            }, onDeleteQuote: { [weak self] in
-                guard let self = self else { return }
-                self.selectedQuote = nil
-                self.refreshQuoteSection()
-                self.performPublish(trimmed: trimmed)
-            }, onKeepPrivate: { [weak self] in
-                guard let self = self else { return }
-                self.selectedVisibilityPublished = false
-                self.isEphemeral = false
-                self.refreshVisibilityButton()
-                self.performPublish(trimmed: trimmed)
-            })
-            return
-        }
         // 决议第 3 项 B：去掉发布/保存确认弹框，点发布/保存直接发（网页口径：
         // 网页 editorPublish 直接走校验与请求，无确认弹框）。
         if isEditMode {
             performUpdate(trimmed: trimmed)
             return
         }
-        performPublish(trimmed: trimmed)
+        // quote-freeze：新建发布先拍完整快照（胶囊校验失败即返回，不进门禁）。
+        // 快照后落盘一次草稿（原 performPublish 首步的 clientReq 落盘，现移到
+        // 请求链起点，使门禁路径的 setVisibility 之前幂等键已持久化）。
+        guard let snapshot = makePublishSnapshot(trimmed: trimmed) else { return }
+        publishGeneration += 1
+        let generation = publishGeneration
+        saveDraftNow()
+        // 引用规则简化（2026-10-31）：新建将公开且含私密引用时先拦截，不直接发。
+        // 自己来源三选一、他人来源两项（见 BearyQuoteGate.gateEditorPublish）；
+        // 一并公开先发原日记 visibility=1，成功才发本篇；失败停在编辑器、不发本篇。
+        // 保持私密发布即把本篇改回私密再发（引用保留）；删除引用即清引用再公开。
+        // 门禁弹框本身是模态 alert，框在时编辑器动不了；三条出路提交的都是
+        // 本快照（删除/保持私密只改快照副本对应字段，现场值改动不进载荷）。
+        if selectedVisibilityPublished, let pendingQuote = selectedQuote, pendingQuote.isDeleted == false, pendingQuote.isPublic != true {
+            let mine = BearyQuoteGate.sourceIsMine(isMine: pendingQuote.isMine, authorId: pendingQuote.authorId)
+            BearyQuoteGate.gateEditorPublish(from: self, sourceIsMine: mine, onPublishTogether: { [weak self] in
+                guard let self = self else { return }
+                self.beginPublishTogether(snapshot: snapshot, generation: generation)
+            }, onDeleteQuote: { [weak self] in
+                guard let self = self else { return }
+                self.selectedQuote = nil
+                self.refreshQuoteSection()
+                var gated = snapshot
+                gated.quoteId = nil
+                self.performPublish(snapshot: gated, generation: generation)
+            }, onKeepPrivate: { [weak self] in
+                guard let self = self else { return }
+                self.selectedVisibilityPublished = false
+                self.isEphemeral = false
+                self.refreshVisibilityButton()
+                var gated = snapshot
+                gated.published = 0
+                gated.ephemeral = nil
+                self.performPublish(snapshot: gated, generation: generation)
+            })
+            return
+        }
+        performPublish(snapshot: snapshot, generation: generation)
+    }
+
+    /// 一并公开出路（quote-freeze）：用户点“一并公开”的瞬间即进入发布态——
+    /// isPublishing = true + updatePublishState() 冻结全部输入与发布钮，
+    /// 取消键由 didTapCancel 的 isPublishing 守卫拦下（只 toast、不关），
+    /// 故 setVisibility 在途期间不存在“关编辑器后原日记已公开、本篇未发”
+    /// 的半截流程；setVisibility 失败则解冻、停在编辑器、原日记未动。
+    private func beginPublishTogether(snapshot: PublishSnapshot, generation: Int) {
+        guard generation == publishGeneration else { return }
+        guard let sourceId = snapshot.quoteId, !sourceId.isEmpty else { return }
+        isPublishing = true
+        updatePublishState()
+        BearyAPI.shared.setVisibility(id: sourceId, published: 1) { [weak self] result in
+            DispatchQueue.main.async {
+                guard let self = self, generation == self.publishGeneration else { return }
+                switch result {
+                case .success:
+                    self.performPublish(snapshot: snapshot, generation: generation)
+                case .failure:
+                    self.isPublishing = false
+                    self.updatePublishState()
+                    self.showToast(message: "原日记公开失败，请重试")
+                }
+            }
+        }
     }
 
     private func hasFailedImage() -> Bool {
@@ -6068,26 +6172,25 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         return false
     }
 
-    private func performPublish(trimmed: String) {
-        if draftClientReq == nil {
-            draftClientReq = BearyDraftStore.newClientReq()
-        }
-        guard let req = draftClientReq else { return }
-        // 先把本次 clientReq 落盘：服务端已落库但回包丢了，重试用同一 clientReq，
-        // 服务端直接返回已落库的那篇，不重复发。
-        saveDraftNow()
+    /// 新建发布（quote-freeze）：提交载荷只读 snapshot，不再重读正文、
+    /// 图片、标题、天气、气温、引用等现场值。clientReq 落盘与胶囊校验
+    /// 已在 makePublishSnapshot/didTapPublish 做完，本处不再重复；
+    /// 失败分支的 saveDraftNow 只是草稿兜底（保留失败篇），不进请求。
+    /// 代次过期（新一轮发布已开始）的回调直接丢弃，不碰 isPublishing、
+    /// 不覆盖新流程状态。
+    private func performPublish(snapshot: PublishSnapshot, generation: Int) {
+        guard generation == publishGeneration else { return }
         isPublishing = true
         updatePublishState()
-        // 已删引用不传 quoteId：只剩 id 的引用服务端会拒，发布应按无引用走，
-        // 展示态仍保留到发布成功清本篇草稿为止。
-        let publishQuoteId = (selectedQuote?.isDeleted == true) ? nil : selectedQuote?.entryId
-        // 109：新建标题取输入框（空 = nil 省略不传，按无标题创建）。
+        // 109：新建标题取快照（空 = nil 省略不传，按无标题创建）。
         // iCity：可见性值即 visibility（published 0/1）；@ 以 mentioned_user_id 发出，无按篇通知开关。
         // 限时：限时态时可见性必为公开，ephemeral=1 随新建发出（服务端写 24 小时到期）。
-        let publishVisibility = selectedVisibilityPublished ? 1 : 0
-        BearyAPI.shared.publishEntry(content: trimmed, images: uploadedImageKeys(), mood: selectedMood, weather: selectedWeather, quoteId: publishQuoteId, published: publishVisibility, mentionedUserId: selectedRecipient?.id, title: headlineForCreate, ephemeral: isEphemeral ? 1 : nil, clientReq: req, locationName: selectedLocation?.name, locationDistrict: selectedLocation?.district, temperature: selectedTemperature, liveVideos: uploadedLiveVideos().isEmpty ? nil : uploadedLiveVideos()) { [weak self] result in
+        // 已删引用不传 quoteId：快照生成时已按“已删 → nil”定格（只剩 id 的
+        // 引用服务端会拒，发布应按无引用走，展示态仍保留到发布成功清草稿为止）。
+        let publishVisibility = snapshot.published
+        BearyAPI.shared.publishEntry(content: snapshot.content, images: snapshot.imageKeys, mood: snapshot.mood, weather: snapshot.weather, quoteId: snapshot.quoteId, published: publishVisibility, mentionedUserId: snapshot.mentionedUserId, title: snapshot.title, ephemeral: snapshot.ephemeral, clientReq: snapshot.clientReq, locationName: snapshot.locationName, locationDistrict: snapshot.locationDistrict, capsuleBuried: snapshot.capsuleBuried, capsuleUnlockDate: snapshot.capsuleUnlockDate, capsuleDistrict: snapshot.capsuleDistrict, temperature: snapshot.temperature, liveVideos: snapshot.liveVideos.isEmpty ? nil : snapshot.liveVideos) { [weak self] result in
             DispatchQueue.main.async {
-                guard let self = self else { return }
+                guard let self = self, generation == self.publishGeneration else { return }
                 self.isPublishing = false
                 self.updatePublishState()
                 switch result {
@@ -6107,7 +6210,8 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                         // 发布在途时此前未冻结（见 refreshPublishingInputFreeze），
                         // 在途改动会使 toast 与实际发出态相反；现可见性已随冻结
                         // 禁用，此处仍以发送值为准，双保险。
-                        self.showToastAfterClose(message: (publishVisibility == 1 ? "已发布 · 已公开" : "已发布 · 已设为私密"))
+                        let capsuleNote = snapshot.capsuleEnabled ? (publishVisibility == 1 ? " · 时间胶囊已埋好" : " · 胶囊待公开后生效") : ""
+                        self.showToastAfterClose(message: (publishVisibility == 1 ? "已发布 · 已公开" : "已发布 · 已设为私密") + capsuleNote)
                         BearyHaptics.publishSuccess()
                         BearySoundPlayer.play(.publishSuccess)
                         // B 修法：发布成功退场前先收起弹出框（无动画）。
