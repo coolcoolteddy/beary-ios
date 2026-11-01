@@ -86,6 +86,11 @@ class BearyEntryImageViewerViewController: UIViewController, UIGestureRecognizer
     private var isNavigating: Bool = false
     private var isFailed: Bool = false
     private var loadingKey: String?
+    /// 高清升级竞态守门：第 4 项——每次“当前图身份”变化（loadCurrent 发起、
+    /// 翻页交接直接换图）即 +1；在途回包凭发起时代次校验，过期代次一律丢弃，
+    /// 避免旧图或旧升级覆盖新图。升级回包另有清晰度优先级（见
+    /// maybeUpgradeZoomResolution），代次只管“是不是这张图这一轮”。
+    private var imageLoadGeneration = 0
     /// 关场回到原处：调用方在 present 前传入被点缩略图在 window 坐标下的
     /// 矩形（未传时关场走淡出兜底，同样不闪）；全屏模态下底层表无法滚动，
     /// present 时 captured 的矩形在关场时仍然有效。
@@ -417,6 +422,8 @@ class BearyEntryImageViewerViewController: UIViewController, UIGestureRecognizer
         }
         let key = imageKeys[currentIndex]
         loadingKey = key
+        imageLoadGeneration += 1
+        let generation = imageLoadGeneration
         // 审计 15 项第 8 项：切图后放大高清状态清零，下次放大重新按需升级。
         zoomHiResKey = nil
         zoomHiResWidth = 0
@@ -441,7 +448,15 @@ class BearyEntryImageViewerViewController: UIViewController, UIGestureRecognizer
         let pageWidth = view.bounds.width > 0 ? view.bounds.width : UIScreen.main.bounds.width
         BearyImageLoader.shared.load(url: url, downsampleToWidth: pageWidth * UIScreen.main.scale) { [weak self] img in
             guard let self = self else { return }
-            if self.loadingKey != key {
+            if self.loadingKey != key || generation != self.imageLoadGeneration {
+                return
+            }
+            // 第 4 项·高清优先：同图已显示更高清升级版时，迟到的基础回包
+            // 不再覆盖回去（基础宽恒小于升级宽；旋转后基础宽若已反超，
+            // 则它不再是“更低”，照常接受）。失败分支同样跳过：好图已在屏，
+            // 不应再压上失败态。
+            let baseWidth = self.pageWidthValue() * UIScreen.main.scale
+            if self.zoomHiResKey == key && self.zoomHiResWidth > baseWidth {
                 return
             }
             if let img = img {
@@ -495,6 +510,9 @@ class BearyEntryImageViewerViewController: UIViewController, UIGestureRecognizer
     /// （像素预算）；同图已升级到同宽或更高时不重复加载；回包时图已
     /// 切走、缩放已回 1 时不替换；替换只换 imageView.image，当前
     /// transform（缩放位置）一字不动。
+    /// 第 4 项·竞态守门：回包另凭发起时代次校验（过期代次丢弃），并按
+    /// 清晰度优先级接受——只接受不低于已显示升级版的结果，迟到的低清
+    /// 回包丢弃且不拉低 zoomHiResWidth 水位，画面不再重新变糊。
     private func maybeUpgradeZoomResolution() {
         guard scale > 1, localImages.isEmpty, currentIndex >= 0, currentIndex < imageKeys.count else { return }
         let key = imageKeys[currentIndex]
@@ -503,10 +521,13 @@ class BearyEntryImageViewerViewController: UIViewController, UIGestureRecognizer
         if zoomHiResKey == key && targetWidth <= zoomHiResWidth { return }
         guard targetWidth > baseWidth else { return }
         guard let url = BearyImageURLs.imageURL(key: key, thumb: false) else { return }
+        let generation = imageLoadGeneration
         BearyImageLoader.shared.load(url: url, downsampleToWidth: targetWidth) { [weak self] img in
             guard let self = self, let img = img else { return }
             guard self.currentIndex >= 0, self.currentIndex < self.imageKeys.count,
-                  self.imageKeys[self.currentIndex] == key, self.scale > 1 else { return }
+                  self.imageKeys[self.currentIndex] == key, self.scale > 1,
+                  generation == self.imageLoadGeneration else { return }
+            if self.zoomHiResKey == key && targetWidth <= self.zoomHiResWidth { return }
             self.imageView.image = img
             self.zoomHiResKey = key
             self.zoomHiResWidth = targetWidth
@@ -880,9 +901,12 @@ class BearyEntryImageViewerViewController: UIViewController, UIGestureRecognizer
                 // 相邻图既已成功显示，上一张的失败态必须同步清除，否则
                 // 成功图上仍压着“图片加载失败，重试”；loadingKey 同步
                 // 跟进为当前图 key，后续 loadCurrent 回包代次校验才对得上。
+                // 第 4 项：此处直接换图、未走 loadCurrent，代次也须同步 +1，
+                // 否则换图前在途的旧升级回包仍可能凭旧代次蒙混过关。
                 self.isFailed = false
                 self.retryLabel.isHidden = true
                 self.loadingKey = self.imageKeys[wrapped]
+                self.imageLoadGeneration += 1
                 self.updateCounter()
                 self.prefetchAdjacent()
                 self.updateLiveOverlay()
