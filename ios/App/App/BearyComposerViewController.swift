@@ -286,7 +286,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     private var publishGeneration = 0
     /// 第一次点按时拍下的不可变完整发布快照（quote-freeze）：正文、图片、
     /// 实况映射、心情、天气、气温、引用、可见性、@、标题、限时、位置、
-    /// 胶囊、clientReq 全在点按瞬间定格；门禁与 setVisibility 在途期间
+    /// clientReq 全在点按瞬间定格；门禁与 setVisibility 在途期间
     /// 用户改什么都不再进提交载荷，performPublish 只读本快照。
     private struct PublishSnapshot {
         let content: String
@@ -302,24 +302,16 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         var ephemeral: Int?
         let locationName: String?
         let locationDistrict: String?
-        let capsuleBuried: Int?
-        let capsuleUnlockDate: String?
-        let capsuleDistrict: String?
-        let capsuleEnabled: Bool
         let clientReq: String
     }
     /// 新建发布快照（quote-freeze）：在 didTapPublish 校验通过后、门禁弹出
-    /// 前调用。胶囊校验失败即 toast 并返回 nil——不进门禁、不冻结、不发
-    /// setVisibility，避免原流程“原日记已公开、胶囊校验才失败”的半截态。
-    /// clientReq 在此创建（原 performPublish 首步），调用方随后 saveDraftNow
+    /// 前调用。clientReq 在此创建（原 performPublish 首步），调用方随后 saveDraftNow
     /// 落盘，保证服务端幂等键在任何请求发出前已持久化。
     private func makePublishSnapshot(trimmed: String) -> PublishSnapshot? {
         if draftClientReq == nil {
             draftClientReq = BearyDraftStore.newClientReq()
         }
         guard let req = draftClientReq else { return nil }
-        let capsulePayload = capsuleEnabled ? validatedCapsulePayload() : nil
-        if capsuleEnabled, capsulePayload == nil { return nil }
         return PublishSnapshot(
             content: trimmed,
             imageKeys: uploadedImageKeys(),
@@ -334,10 +326,6 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             ephemeral: isEphemeral ? 1 : nil,
             locationName: selectedLocation?.name,
             locationDistrict: selectedLocation?.district,
-            capsuleBuried: capsulePayload?.buried,
-            capsuleUnlockDate: capsulePayload?.unlockDate,
-            capsuleDistrict: capsulePayload?.district,
-            capsuleEnabled: capsuleEnabled,
             clientReq: req)
     }
     private var didAutoFocus = false
@@ -6188,7 +6176,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         // 已删引用不传 quoteId：快照生成时已按“已删 → nil”定格（只剩 id 的
         // 引用服务端会拒，发布应按无引用走，展示态仍保留到发布成功清草稿为止）。
         let publishVisibility = snapshot.published
-        BearyAPI.shared.publishEntry(content: snapshot.content, images: snapshot.imageKeys, mood: snapshot.mood, weather: snapshot.weather, quoteId: snapshot.quoteId, published: publishVisibility, mentionedUserId: snapshot.mentionedUserId, title: snapshot.title, ephemeral: snapshot.ephemeral, clientReq: snapshot.clientReq, locationName: snapshot.locationName, locationDistrict: snapshot.locationDistrict, capsuleBuried: snapshot.capsuleBuried, capsuleUnlockDate: snapshot.capsuleUnlockDate, capsuleDistrict: snapshot.capsuleDistrict, temperature: snapshot.temperature, liveVideos: snapshot.liveVideos.isEmpty ? nil : snapshot.liveVideos) { [weak self] result in
+        BearyAPI.shared.publishEntry(content: snapshot.content, images: snapshot.imageKeys, mood: snapshot.mood, weather: snapshot.weather, quoteId: snapshot.quoteId, published: publishVisibility, mentionedUserId: snapshot.mentionedUserId, title: snapshot.title, ephemeral: snapshot.ephemeral, clientReq: snapshot.clientReq, locationName: snapshot.locationName, locationDistrict: snapshot.locationDistrict, temperature: snapshot.temperature, liveVideos: snapshot.liveVideos.isEmpty ? nil : snapshot.liveVideos) { [weak self] result in
             DispatchQueue.main.async {
                 guard let self = self, generation == self.publishGeneration else { return }
                 self.isPublishing = false
@@ -6210,8 +6198,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                         // 发布在途时此前未冻结（见 refreshPublishingInputFreeze），
                         // 在途改动会使 toast 与实际发出态相反；现可见性已随冻结
                         // 禁用，此处仍以发送值为准，双保险。
-                        let capsuleNote = snapshot.capsuleEnabled ? (publishVisibility == 1 ? " · 时间胶囊已埋好" : " · 胶囊待公开后生效") : ""
-                        self.showToastAfterClose(message: (publishVisibility == 1 ? "已发布 · 已公开" : "已发布 · 已设为私密") + capsuleNote)
+                        self.showToastAfterClose(message: (publishVisibility == 1 ? "已发布 · 已公开" : "已发布 · 已设为私密"))
                         BearyHaptics.publishSuccess()
                         BearySoundPlayer.play(.publishSuccess)
                         // B 修法：发布成功退场前先收起弹出框（无动画）。
