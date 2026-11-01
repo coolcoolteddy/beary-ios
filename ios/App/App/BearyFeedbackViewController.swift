@@ -209,6 +209,9 @@ final class BearyFeedbackViewController: UIViewController, UITextViewDelegate, P
 
     private let scrollView = UIScrollView()
     private let contentStack = UIStackView()
+    /// 116 子页空白守卫（同 BearySettingsSubpages.swift 守卫说明）。
+    private let subpageLayoutGuard = BearySubpageLayoutGuard()
+    private var topBarView: UIView?
     private let statusLabel = UILabel()
     private let statusBadge = UIView()
     private let typeSegmented = UISegmentedControl(items: ["问题反馈", "优化建议"])
@@ -291,6 +294,16 @@ final class BearyFeedbackViewController: UIViewController, UITextViewDelegate, P
         cleanupZip()
     }
 
+    override func viewWillAppear(_ animated: Bool) {
+        super.viewWillAppear(animated)
+        subpageLayoutGuard.resetForAppearance()
+    }
+
+    override func viewDidLayoutSubviews() {
+        super.viewDidLayoutSubviews()
+        subpageLayoutGuard.applyIfNeeded(page: "反馈与改进", view: view, topView: topBarView)
+    }
+
     // MARK: - 顶栏（诊断页同款：52 高、左上文字关闭 15、标题 17 居中）
 
     private func buildChrome() {
@@ -318,6 +331,7 @@ final class BearyFeedbackViewController: UIViewController, UITextViewDelegate, P
         topBar.addSubview(closeButton)
         topBar.addSubview(titleLabel)
         view.addSubview(topBar)
+        topBarView = topBar
         // 补缺 P2-17：顶栏与内容列同宽居中（详情页同款：iPhone 全宽减 32，iPad 600 居中）。
         let topBarWidthEquality = topBar.widthAnchor.constraint(equalTo: view.widthAnchor, constant: -32)
         topBarWidthEquality.priority = UILayoutPriority(750)
@@ -340,6 +354,8 @@ final class BearyFeedbackViewController: UIViewController, UITextViewDelegate, P
         ])
 
         scrollView.translatesAutoresizingMaskIntoConstraints = false
+        // 116 后扫查：与广场/个人页同口径——关掉 delaysContentTouches，滚动容器里的点按立即响应，不等滚动判定。
+        scrollView.delaysContentTouches = false
         scrollView.keyboardDismissMode = .onDrag
         view.addSubview(scrollView)
         NSLayoutConstraint.activate([

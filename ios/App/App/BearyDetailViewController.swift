@@ -229,6 +229,20 @@ final class BearyDetailViewController: UIViewController {
         v.isHidden = true
         return v
     }()
+    /// 详情作者行气温（卡片同款口径：有后端 temperature_c 且有天气类型才显，
+    /// 无值隐藏、不留空位；详情此前只显天气图标、气温丢了，卡片/详情不一致）。
+    private let weatherTempLabel: UILabel = {
+        let lb = UILabel()
+        lb.translatesAutoresizingMaskIntoConstraints = false
+        lb.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13))
+        lb.adjustsFontForContentSizeCategory = true
+        lb.textColor = BearyColors.gray
+        lb.numberOfLines = 1
+        lb.isHidden = true
+        lb.setContentHuggingPriority(.required, for: .horizontal)
+        lb.setContentCompressionResistancePriority(.required, for: .horizontal)
+        return lb
+    }()
     private let moodLabel: UILabel = {
         let lb = UILabel()
         lb.translatesAutoresizingMaskIntoConstraints = false
@@ -249,7 +263,7 @@ final class BearyDetailViewController: UIViewController {
     }()
     private var moodEmoteView: BearyEmoteView?
     private lazy var authorRow: UIStackView = {
-        let st = UIStackView(arrangedSubviews: [nameButton, badgeImageView, crownWrapView, titleSpacerLabel, timeLabel, weatherImageView, moodStack])
+        let st = UIStackView(arrangedSubviews: [nameButton, badgeImageView, crownWrapView, titleSpacerLabel, timeLabel, weatherImageView, weatherTempLabel, moodStack])
         st.translatesAutoresizingMaskIntoConstraints = false
         st.axis = .horizontal
         st.spacing = 8
@@ -498,9 +512,17 @@ final class BearyDetailViewController: UIViewController {
         }
     }
 
-    // 深浅切换：虚线边框视图内部自刷描边色（BearyDetailDashedBorderView
-    // traitCollectionDidChange），控制器不再手动重画；小地球图标走 template +
-    // 动态灰 tint，系统自动跟随，无需重设；心情播放器内部自带 trait 重刷。
+    /// 深浅切换：虚线边框视图内部自刷描边色（BearyDetailDashedBorderView
+    /// traitCollectionDidChange），控制器不再手动重画；小地球图标走 template +
+    /// 动态灰 tint，系统自动跟随，无需重设；心情播放器内部自带 trait 重刷。
+    /// 但正文内联心情附件的深浅变体仍需控制器重建：主题切换时正文末尾
+    /// 心情附件需换深浅变体，否则旧心情图停留在旧色貌。
+    override func traitCollectionDidChange(_ previousTraitCollection: UITraitCollection?) {
+        super.traitCollectionDidChange(previousTraitCollection)
+        if traitCollection.hasDifferentColorAppearance(comparedTo: previousTraitCollection) {
+            bodyLabel.attributedText = detailBodyAttributedText(entry.content ?? "", moodKey: entry.mood)
+        }
+    }
 
     override func viewDidLayoutSubviews() {
         super.viewDidLayoutSubviews()
@@ -538,6 +560,8 @@ final class BearyDetailViewController: UIViewController {
 
         scrollView.translatesAutoresizingMaskIntoConstraints = false
         scrollView.showsVerticalScrollIndicator = false
+        // 116 后扫查：与广场/个人页同口径——关掉 delaysContentTouches，滚动容器里的点按立即响应，不等滚动判定。
+        scrollView.delaysContentTouches = false
         view.addSubview(scrollView)
 
         contentColumnView.translatesAutoresizingMaskIntoConstraints = false
@@ -993,19 +1017,13 @@ final class BearyDetailViewController: UIViewController {
         // 审计 P2-12：标题行（卡片同款，空标题不占位；详情全文页放开换行，
         // 首页单行截断是唯一偏离，见文件头）。
         let trimmedTitle = (entry.title ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-        titleLabel.text = trimmedTitle.isEmpty ? nil : trimmedTitle
+        titleLabel.attributedText = trimmedTitle.isEmpty ? nil : BearyText.inlineAttributedText(from: trimmedTitle, font: BearyDynamicType.cardTitleFont(), color: BearyColors.ink, paragraphStyle: nil, dark: traitCollection.userInterfaceStyle == .dark)
         titleLabel.isHidden = trimmedTitle.isEmpty
 
         // 正文 16pt（diaryBodyFont 即 scaled 16），行高 1.6（首页卡片口径）。
-        let paragraph = NSMutableParagraphStyle()
-        paragraph.lineHeightMultiple = 1.6
-        paragraph.lineBreakMode = .byCharWrapping
-        bodyLabel.attributedText = NSAttributedString(string: entry.content ?? "", attributes: [
-            .font: BearyDynamicType.diaryBodyFont(),
-            .foregroundColor: BearyColors.ink,
-            .paragraphStyle: paragraph,
-        ])
-        bodyLabel.isHidden = (entry.content ?? "").isEmpty
+        // 旧心情改位：心情缀正文末尾（见 detailBodyAttributedText）。
+        bodyLabel.attributedText = detailBodyAttributedText(entry.content ?? "", moodKey: entry.mood)
+        bodyLabel.isHidden = (entry.content ?? "").isEmpty && (entry.mood ?? "").isEmpty
 
         renderImages()
         renderLocation()
@@ -1019,6 +1037,27 @@ final class BearyDetailViewController: UIViewController {
     /// 时间（绝对时间 M月d日 H:mm，小时不补零；详情不跟首页的相对时间口径，
     /// 见预览映射表）+ 天气 15 图标 + 心情（20 熊图 + 13 灰字）。
     /// 空项一律隐藏、不留空位；心情 key 不变时复用播放器（深浅由其内部切换）。
+    /// 旧日记心情改位：心情不再单独贴在作者行，改跟在正文最后一个字
+    /// 后面——用静态熊图附件直接缀在正文 attributed 串末尾（紧贴末字、
+    /// 无空格）；无心情时原样返回；正文为空且有心情时只显附件。
+    /// 深浅变体按当前 trait 取，主题切换时由 trait handler 重建正文。
+    private func detailBodyAttributedText(_ content: String, moodKey: String?) -> NSAttributedString {
+        let font = BearyDynamicType.diaryBodyFont()
+        let paragraph = NSMutableParagraphStyle()
+        paragraph.lineHeightMultiple = 1.6
+        paragraph.lineBreakMode = .byCharWrapping
+        // 内联心情：正文里的记号先转回熊脸附件（与编辑器同一中间层）。
+        let base = BearyText.inlineAttributedText(from: content, font: font, color: BearyColors.ink, paragraphStyle: paragraph, dark: traitCollection.userInterfaceStyle == .dark)
+        guard let key = moodKey, !key.isEmpty,
+              let image = BearyEmoteImages.image(for: key, dark: traitCollection.userInterfaceStyle == .dark) else { return base }
+        let attachment = NSTextAttachment()
+        attachment.image = image
+        attachment.bounds = CGRect(x: 0, y: font.descender, width: font.pointSize, height: font.pointSize)
+        let result = NSMutableAttributedString(attributedString: base)
+        result.append(NSAttributedString(attachment: attachment))
+        return result
+    }
+
     private func renderHeaderMeta() {
         let authorNameValue = entry.authorName ?? "beary 用户"
         nameButton.setTitle(authorNameValue, for: .normal)
@@ -1058,34 +1097,22 @@ final class BearyDetailViewController: UIViewController {
             weatherImageView.image = nil
             weatherImageView.isHidden = true
         }
-        if let moodKey = entry.mood, !moodKey.isEmpty, let moodName = BearyText.moodNames[moodKey] {
-            moodStack.isHidden = false
-            moodLabel.text = moodName
-            setMoodEmote(key: moodKey)
+        // 气温跟天气图标走同一处（卡片同款门：有气温且有天气类型才显）。
+        // #427 的气温显示保留；作者行心情位按 #421 新模型一律隐藏，
+        // 心情缀正文末尾（见 detailBodyAttributedText），不恢复旧心情位。
+        if let temp = entry.temperatureC, entry.weather != nil, !entry.weather!.isEmpty {
+            weatherTempLabel.text = "\(temp)°"
+            weatherTempLabel.isHidden = false
         } else {
-            moodStack.isHidden = true
-            moodLabel.text = nil
-            moodEmoteView?.removeFromSuperview()
-            moodEmoteView = nil
+            weatherTempLabel.text = nil
+            weatherTempLabel.isHidden = true
         }
+        moodStack.isHidden = true
+        moodLabel.text = nil
+        moodEmoteView?.removeFromSuperview()
+        moodEmoteView = nil
     }
 
-    private func setMoodEmote(key: String) {
-        if let current = moodEmoteView, current.emoteKey == key {
-            return
-        }
-        moodEmoteView?.removeFromSuperview()
-        let emoteView = BearyEmoteView(key: key, animated: false)
-        emoteView.translatesAutoresizingMaskIntoConstraints = false
-        moodStack.insertArrangedSubview(emoteView, at: 0)
-        let width = emoteView.widthAnchor.constraint(equalToConstant: 20)
-        width.priority = UILayoutPriority(999)
-        NSLayoutConstraint.activate([
-            width,
-            emoteView.heightAnchor.constraint(equalToConstant: 20),
-        ])
-        moodEmoteView = emoteView
-    }
 
     /// 2026-10-29 第 17 项：后台补齐入口——卡片点按即时呈现后，后台 fetch 回包调它。
     /// 只更新变化处（字段级比对，变了才刷对应区），不重建栈、不重播已有元素的
@@ -1188,20 +1215,17 @@ final class BearyDetailViewController: UIViewController {
         }
         if old.title != merged.title {
             let trimmedTitle = (merged.title ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-            titleLabel.text = trimmedTitle.isEmpty ? nil : trimmedTitle
+            titleLabel.attributedText = trimmedTitle.isEmpty ? nil : BearyText.inlineAttributedText(from: trimmedTitle, font: BearyDynamicType.cardTitleFont(), color: BearyColors.ink, paragraphStyle: nil, dark: traitCollection.userInterfaceStyle == .dark)
             titleLabel.isHidden = trimmedTitle.isEmpty
             if !trimmedTitle.isEmpty { fadeLabel(titleLabel) }
         }
-        if old.content != merged.content {
-            let paragraph = NSMutableParagraphStyle()
-            paragraph.lineHeightMultiple = 1.6
-            paragraph.lineBreakMode = .byCharWrapping
-            bodyLabel.attributedText = NSAttributedString(string: merged.content ?? "", attributes: [
-                .font: BearyDynamicType.diaryBodyFont(),
-                .foregroundColor: BearyColors.ink,
-                .paragraphStyle: paragraph,
-            ])
-            bodyLabel.isHidden = (merged.content ?? "").isEmpty
+        if old.content != merged.content || old.mood != merged.mood {
+            // 心情只变时也要重建正文，否则新心情附件缀不上旧正文；
+            // 必须走 detailBodyAttributedText（内联记号转图 + 旧心情缀末尾），
+            // 不能退回纯文本，否则记号原串会直接露出来。
+            bodyLabel.attributedText = detailBodyAttributedText(merged.content ?? "", moodKey: merged.mood)
+            bodyLabel.isHidden = (merged.content ?? "").isEmpty && (merged.mood ?? "").isEmpty
+            // 116：后台补齐文案变化时只淡入文案元素。
             if !bodyLabel.isHidden { fadeLabel(bodyLabel) }
         }
         if (old.images ?? []) != (merged.images ?? []) {

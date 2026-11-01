@@ -88,6 +88,8 @@ final class BearyDiaryMapViewController: UIViewController, MKMapViewDelegate, UI
         view.addSubview(statusLabel)
 
         tableView.translatesAutoresizingMaskIntoConstraints = false
+        // 116 后扫查：与广场/个人页同口径——关掉 delaysContentTouches，滚动容器里的点按立即响应，不等滚动判定。
+        tableView.delaysContentTouches = false
         tableView.dataSource = self
         tableView.delegate = self
         tableView.register(UITableViewCell.self, forCellReuseIdentifier: "DiaryMapCell")

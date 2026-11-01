@@ -287,6 +287,9 @@ final class BearyWishWallViewController: UIViewController {
     private var isLoading = false
     /// 13：600 上限约束（宽 ≥821 才激活，开关在 viewDidLayoutSubviews；Feed 断点同款）。
     private var colCapConstraints: [NSLayoutConstraint] = []
+    /// 116 子页空白守卫（同 BearySettingsSubpages.swift 守卫说明）。
+    private let subpageLayoutGuard = BearySubpageLayoutGuard()
+    private var topBarView: UIView?
     var onCreated: ((BearyAPI.WishItem) -> Void)?
 
     override func viewDidLoad() {
@@ -313,12 +316,15 @@ final class BearyWishWallViewController: UIViewController {
         topBar.addSubview(closeButton)
         topBar.addSubview(titleLabel)
         scrollView.translatesAutoresizingMaskIntoConstraints = false
+        // 116 后扫查：与广场/个人页同口径——关掉 delaysContentTouches，滚动容器里的点按立即响应，不等滚动判定。
+        scrollView.delaysContentTouches = false
         contentStack.axis = .vertical
         contentStack.spacing = 12
         contentStack.translatesAutoresizingMaskIntoConstraints = false
         scrollView.addSubview(contentStack)
         view.addSubview(topBar)
         view.addSubview(scrollView)
+        topBarView = topBar
         // 13：Feed 断点模式——600 上限只在宽 ≥821 激活（开关在 viewDidLayoutSubviews），
         // ≤820 时走 == 屏宽-32 的 iPhone 式全宽（左右 16），不再被常驻 600 上限收窄。
         let topBarWidth = topBar.widthAnchor.constraint(equalTo: view.widthAnchor, constant: -32)
@@ -375,6 +381,11 @@ final class BearyWishWallViewController: UIViewController {
         loadWishes()
     }
 
+    override func viewWillAppear(_ animated: Bool) {
+        super.viewWillAppear(animated)
+        subpageLayoutGuard.resetForAppearance()
+    }
+
     override func viewDidLayoutSubviews() {
         super.viewDidLayoutSubviews()
         // 13：Feed 同款断点开关——状态不变不开关，避免布局循环。
@@ -382,6 +393,8 @@ final class BearyWishWallViewController: UIViewController {
         for cap in colCapConstraints where cap.isActive != wantCap {
             cap.isActive = wantCap
         }
+        // 116 子页空白守卫（同 BearySettingsSubpages.swift 守卫说明）。
+        subpageLayoutGuard.applyIfNeeded(page: "功能许愿墙", view: view, topView: topBarView)
     }
 
     @objc private func closeTapped() { dismiss(animated: BearyMotion.animated(true), completion: nil) }
@@ -693,6 +706,8 @@ final class BearyWishCreateViewController: UIViewController, UITextViewDelegate 
         titleField.addTarget(self, action: #selector(titleFieldDidBegin), for: .editingDidBegin)
         titleField.addTarget(self, action: #selector(fieldDidEnd), for: .editingDidEnd)
         scrollView.translatesAutoresizingMaskIntoConstraints = false
+        // 116 后扫查：与广场/个人页同口径——关掉 delaysContentTouches，滚动容器里的点按立即响应，不等滚动判定。
+        scrollView.delaysContentTouches = false
         view.addSubview(topBar)
         view.addSubview(scrollView)
         scrollView.addSubview(titleField)

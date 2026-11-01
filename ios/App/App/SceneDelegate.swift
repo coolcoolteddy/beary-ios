@@ -1435,9 +1435,10 @@ final class BearyChromeViewController: UIViewController {
             if UIAccessibility.isReduceMotionEnabled {
                 resetDeform()
             } else {
-                // 本支不改回弹时长（0.5s 留给第 3 项分支）；只去掉 layoutIfNeeded——
-                // 形变已不走约束，回弹动画纯 transform，无布局可刷。
-                UIView.animate(withDuration: 0.5, delay: 0, usingSpringWithDamping: 0.7, initialSpringVelocity: 0, options: [.beginFromCurrentState, .allowUserInteraction], animations: {
+                // 扫 bug 第 3 项：松手回弹弹簧 0.5s → 0.30s（阻尼 0.7、初速度 0 不变），
+                // 只求回得更快、不拖沓；仍保留弹簧感，不改成生硬的线性复位。
+                // #479 合入解冲突：取主线 0.30s（#476 已定），本支其余（门限 0.25s + 形变 transform）全部保留。
+                UIView.animate(withDuration: 0.30, delay: 0, usingSpringWithDamping: 0.7, initialSpringVelocity: 0, options: [.beginFromCurrentState, .allowUserInteraction], animations: {
                     resetDeform()
                 })
             }
@@ -3871,6 +3872,11 @@ private final class BearyFadeRiseAnimator: NSObject, UIViewControllerAnimatedTra
                 toView.alpha = 1
                 toView.transform = .identity
             }, completion: { _ in
+                // 116 子页空白守卫配套：转场被打断时动画终值未必落位，
+                // 残留位移/帧会让整页顶栏停在屏中部；完成时强制复位一次，
+                // 动画已结束故无视觉跳变，取消时视图亦即将移除。
+                toView.transform = .identity
+                toView.frame = transitionContext.finalFrame(for: toVC)
                 transitionContext.completeTransition(!transitionContext.transitionWasCancelled)
             })
         } else {

@@ -88,9 +88,14 @@ class BearyEditProfileViewController: UIViewController {
     /// 屏宽 -40 约束撑满，与个人主页 isDesktopColumn 同口径；开关见 viewDidLayoutSubviews）。
     private var contentColumnWidthCap: NSLayoutConstraint?
 
+    /// 116 子页空白守卫（同 BearySettingsSubpages.swift 守卫说明；本页无独立顶栏，
+    /// 以 scrollView 为顶视图——其 top 钉在安全区顶部，minY 偏离即判异常）。
+    private let subpageLayoutGuard = BearySubpageLayoutGuard()
     private let scrollView: UIScrollView = {
         let scrollViewValue = UIScrollView()
         scrollViewValue.translatesAutoresizingMaskIntoConstraints = false
+        // 116 后扫查：与广场/个人页同口径——关掉 delaysContentTouches，滚动容器里的点按立即响应，不等滚动判定。
+        scrollViewValue.delaysContentTouches = false
         return scrollViewValue
     }()
 
@@ -462,10 +467,16 @@ class BearyEditProfileViewController: UIViewController {
         return !current.isEmpty
     }
 
+    override func viewWillAppear(_ animated: Bool) {
+        super.viewWillAppear(animated)
+        subpageLayoutGuard.resetForAppearance()
+    }
+
     override func viewDidLayoutSubviews() {
         super.viewDidLayoutSubviews()
         // P2-1：宽 ≥821 才锁 600 上限；宽 ≤820 时停用上限，屏宽 -40 约束撑满。
         contentColumnWidthCap?.isActive = view.bounds.width >= 821
+        subpageLayoutGuard.applyIfNeeded(page: "编辑资料", view: view, topView: scrollView)
     }
 
     override func traitCollectionDidChange(_ previousTraitCollection: UITraitCollection?) {

@@ -81,6 +81,8 @@ struct Entry: Codable {
     var imgDims: [String: [Int]]?
     var mood: String?
     var weather: String?
+    /// 天气气温（摄氏度整数，后端 temperature_c；字段未上线时服务端不回传即 nil，卡片不显示气温）。
+    var temperatureC: Int?
     /// 批 E 日记位置（方案 A：只存文本，不存经纬度；服务端字段 location_name /
     /// location_district 经 convertFromSnakeCase 直解；服务端未透传时为 nil，展示层按无位置处理）。
     var locationName: String?

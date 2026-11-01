@@ -896,9 +896,6 @@ final class BearyTimelineCell: UITableViewCell {
     private var dotSizeConstraint: NSLayoutConstraint?
     private var dotRingSizeConstraint: NSLayoutConstraint?
     private var dotTopConstraint: NSLayoutConstraint?
-    /// 底部足行小熊回应图标视图（configure 现建现存；复用/重配即清），
-    /// 供 traitCollectionDidChange 在深浅切换时重刷深浅版 hug 图。
-    private var emoteIconView: UIImageView?
     // TL-3 引用卡与私密操作行。
     private let quoteButton = UIButton(type: .custom)
     // B-G1: left 3px line (web .tl-qcard border-left; full border removed).
@@ -1277,10 +1274,6 @@ final class BearyTimelineCell: UITableViewCell {
             dotView.layer.bearyDynamicBorderColor = BearyColors.bg
         }
         quoteLeftLineView.backgroundColor = BearyColors.line
-        // 2026-10-29 改版追加：深浅切换时小熊回应 hug 图重刷为对应深浅版。
-        if let emoteView = emoteIconView {
-            emoteView.image = BearyEmoteImages.image(for: "hug", dark: traitCollection.userInterfaceStyle == .dark)
-        }
     }
 
     /// U14：行点按给内容列短暂 faint 底色（selectionStyle 已是 .none，
@@ -1410,7 +1403,6 @@ final class BearyTimelineCell: UITableViewCell {
             footStack.removeArrangedSubview(arranged)
             arranged.removeFromSuperview()
         }
-        emoteIconView = nil
         for arranged in metaStack.arrangedSubviews {
             metaStack.removeArrangedSubview(arranged)
             arranged.removeFromSuperview()
@@ -1785,7 +1777,6 @@ final class BearyTimelineCell: UITableViewCell {
             footStack.removeArrangedSubview(arranged)
             arranged.removeFromSuperview()
         }
-        emoteIconView = nil
         if published {
             // 2026-10-29 改版：足行三项按数量显隐——任一项为 0 就不显示该图标与数字，
             // 三项全 0 时整行塌掉（footStack 保持隐藏，cardStack 间距自然承接，不留空行）。
@@ -1804,29 +1795,11 @@ final class BearyTimelineCell: UITableViewCell {
                 emoteTotal += emote.count ?? 0
             }
             if emoteTotal > 0 {
-                // 小熊回应由文字改图标：官方 hug 拥抱表情（深色用 _dark 版，不 tint）
-                // ＋数字，与足项同款 14pt 图＋13pt 灰字、间距 4。
-                let emoteRow = UIStackView()
-                emoteRow.axis = .horizontal
-                emoteRow.spacing = 4
-                emoteRow.alignment = .center
-                let emoteIcon = UIImageView(image: BearyEmoteImages.image(for: "hug", dark: traitCollection.userInterfaceStyle == .dark))
-                emoteIcon.translatesAutoresizingMaskIntoConstraints = false
-                emoteIcon.contentMode = .scaleAspectFit
-                let emoteCountLabel = UILabel()
-                emoteCountLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13))
-                emoteCountLabel.adjustsFontForContentSizeCategory = true
-                emoteCountLabel.textColor = BearyColors.gray
-                emoteCountLabel.text = "\(emoteTotal)"
-                emoteCountLabel.setContentHuggingPriority(.required, for: .horizontal)
-                emoteRow.addArrangedSubview(emoteIcon)
-                emoteRow.addArrangedSubview(emoteCountLabel)
-                NSLayoutConstraint.activate([
-                    emoteIcon.widthAnchor.constraint(equalToConstant: 14),
-                    emoteIcon.heightAnchor.constraint(equalToConstant: 14),
-                ])
-                emoteIconView = emoteIcon
-                footItems.append(emoteRow)
+                // 回应数图标：单张熊脸 icon_mood（官方资产，放大核对过：只有熊脸，
+                // 无手臂、无抱抱动作、无道具），不再用 hug 拥抱表情，避免被误读为
+                // “N 个抱抱”。走足项同款 footItem：14pt 图＋13pt 灰字、间距 4，
+                // 模板渲染＋灰 tint，深浅模式自动跟走，无需深色变体重刷。
+                footItems.append(footItem(iconName: "icon_mood", text: "\(emoteTotal)"))
             }
             let bookmarkCount = entry.bookmarkCount ?? 0
             if bookmarkCount > 0 {
@@ -2280,6 +2253,8 @@ class BearyTimelineViewController: UIViewController {
         tv.scrollIndicatorInsets = tv.contentInset
         // 顶栏透度批：与 Feed 同理，表框贴页顶（view.top），关自动调整使属性内边距即视觉顶距。
         tv.contentInsetAdjustmentBehavior = .never
+        // 116 后扫查：与广场/个人页同口径——关掉 delaysContentTouches，滚动容器里的点按立即响应，不等滚动判定。
+        tv.delaysContentTouches = false
         tv.register(BearyTimelineCell.self, forCellReuseIdentifier: BearyTimelineCell.reuseIdentifier)
         tv.delegate = self
         tv.dataSource = self
@@ -2337,8 +2312,10 @@ class BearyTimelineViewController: UIViewController {
     private let stickyHeaderContainer = UIView()
     private let stickyHeaderView = UIView()
     private let stickyHeaderLabel = UILabel()
-    // 吸顶头状态栏区底色：只盖 view 顶到安全区顶沿这一段（吸顶头自身已盖安全区下方），
-    // 与吸顶头同显同隐，滚动内容不再从状态栏区透出。
+    // 吸顶头状态栏区底色：只盖 view 顶到安全区顶沿这一段（吸顶头自身已盖安全区下方）。
+    // 常驻不随吸顶头显隐：换日期头那一下吸顶头会先藏后显，若底色同显同隐，
+    // 藏的那几帧里正在滑进状态栏区的日记内容就会从状态栏区透出来（本次根因）。
+    // 底色与页面底同色，常驻在视觉上无变化，只堵透底。
     private let statusBarBgView = UIView()
     private var stickyHeaderCurrentSection: Int?
     private var stickyHeaderCurrentTitle: String?
@@ -3058,7 +3035,7 @@ class BearyTimelineViewController: UIViewController {
     }
 
     /// 自定义下拉刷新进入（消息页 beginCustomPullRefresh 同款，基线适配时间线）：
-    /// 指示固定 84 高 + 转圈，至少展示 500ms（见 loadTimelineFirstPage 完成分支），
+    /// 指示固定 84 高 + 转圈，回包到即收回（第 2 项后无 0.5 秒最低展示，见 loadTimelineFirstPage 完成分支），
     /// 刷新中内边距 = 基线（安全区顶 + 可见时 60）+ 84，屏内指示底边 = 基线 +84，
     /// 图标中心 = 基线 +54，灵动岛下方；减动效时直接落位，不播 0.32s 动画。
     private func beginCustomPullRefresh() {
@@ -3084,8 +3061,8 @@ class BearyTimelineViewController: UIViewController {
             UIView.animate(withDuration: 0.32, animations: pullIn)
         }
         // 112 刷新节流（仅手势下拉）：上次首屏网络成功 5 秒内且已有行时，
-        // 不再发网络请求，指示头随 0.32s 收回动画收回（500ms 保底只在
-        // 首屏完成分支，不在本函数）；程序侧刷新（重拍 tab/详情回写/
+        // 不再发网络请求，指示头随 0.32s 收回动画收回（第 2 项后首屏完成
+        // 分支也不再等 500ms）；程序侧刷新（重拍 tab/详情回写/
         // 登录翻转）不受此限。begin 顶部的
         // timelineState == .loading 守卫仍在：静默对齐在途时下拉直接忽略。
         if let last = lastTimelineFirstPageSuccessAt, Date().timeIntervalSince(last) < 5, !timelineEntries.isEmpty {
@@ -3195,8 +3172,11 @@ class BearyTimelineViewController: UIViewController {
         statusBarBgView.translatesAutoresizingMaskIntoConstraints = false
         statusBarBgView.backgroundColor = BearyColors.bg
         statusBarBgView.isUserInteractionEnabled = false
-        statusBarBgView.isHidden = true
+        statusBarBgView.isHidden = false
         view.insertSubview(statusBarBgView, belowSubview: stickyHeaderContainer)
+        // 层级钉死：底色恒在表之上、吸顶容器之下，后续再加覆盖层也不至于把它压到表后。
+        view.bringSubviewToFront(statusBarBgView)
+        view.bringSubviewToFront(stickyHeaderContainer)
         NSLayoutConstraint.activate([
             statusBarBgView.topAnchor.constraint(equalTo: view.topAnchor),
             statusBarBgView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
@@ -3282,7 +3262,6 @@ class BearyTimelineViewController: UIViewController {
         }
         if stickyHeaderContainer.isHidden {
             stickyHeaderContainer.isHidden = false
-            statusBarBgView.isHidden = false
         }
     }
 
@@ -3341,7 +3320,8 @@ class BearyTimelineViewController: UIViewController {
         if stickyHeaderContainer.isHidden == false {
             stickyHeaderContainer.isHidden = true
         }
-        statusBarBgView.isHidden = true
+        // 注意：此处不再藏 statusBarBgView——换日交接时吸顶头藏起的那几帧，
+        // 正是真实组头滑进状态栏区的时刻，底色必须留着盖住它。
         stickyHeaderCurrentSection = nil
         stickyHeaderCurrentTitle = nil
         // 隐藏时在途动效一律打断并复位（此时容器不可见，无 snap 可见），
@@ -4021,12 +4001,8 @@ class BearyTimelineViewController: UIViewController {
         }
         updateChrome()
         if isCustomPullRefreshing {
-            // 自定义下拉至少展示 500ms（消息页同款），快回包也要等满再收回。
-            let elapsed = customPullStartTime.map({ Date().timeIntervalSince($0) }) ?? 0.5
-            let remaining = max(0, 0.5 - elapsed)
-            DispatchQueue.main.asyncAfter(deadline: .now() + remaining) {
-                self.endCustomPullRefresh()
-            }
+            // 自定义下拉回包到即收回（第 2 项后无 0.5 秒最低展示，消息页同款已同步去掉）。
+            self.endCustomPullRefresh()
         } else {
             refreshIconView.stopSpinning()
         }

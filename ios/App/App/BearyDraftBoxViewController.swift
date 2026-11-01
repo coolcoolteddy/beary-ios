@@ -231,6 +231,8 @@ final class BearyDraftBoxViewController: UIViewController {
         view.addSubview(sheetView)
 
         sheetScrollView.showsVerticalScrollIndicator = false
+        // 116 后扫查：与广场/个人页同口径——关掉 delaysContentTouches，滚动容器里的点按立即响应，不等滚动判定。
+        sheetScrollView.delaysContentTouches = false
         sheetScrollView.translatesAutoresizingMaskIntoConstraints = false
         sheetView.addSubview(sheetScrollView)
 
@@ -819,9 +821,12 @@ final class BearyDraftBoxViewController: UIViewController {
         metaRow.spacing = 8
         metaRow.alignment = .center
         let wordLabel = UILabel()
-        // 清单 19：草稿卡字数走编辑器圆环口径（见 BearyDraft.editorWordCount），
-        // 不再直接对正文原串 count；去组词串、首尾空白照计，均以编辑器为准。
-        wordLabel.text = "\(draftValue.editorWordCount) 字"
+        // 草稿卡字数走可见口径：一个心情记号算 1 字（图占 1 格），与编辑器
+        // 圆环一致（圆环按 textView.text 计，附件字符本身就是 1 格）。
+        // #399 的 editorWordCount 是落盘串原串 count，含记号的草稿会把
+        // "[mood:happy]" 这类记号原串全算进去，与圆环对不上，故此处不用它；
+        // 去组词串一节已由落盘 committedContent 保证，不在此重复。
+        wordLabel.text = "\(BearyText.inlineVisibleCount(of: draftValue.content)) 字"
         wordLabel.font = UIFont.systemFont(ofSize: 12)
         wordLabel.textColor = BearyColors.gray
         wordLabel.setContentCompressionResistancePriority(.required, for: .horizontal)
