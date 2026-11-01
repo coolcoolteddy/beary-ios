@@ -19,6 +19,58 @@ import UIKit
 // 动画遵守 reduced-motion；部署目标 iOS 15.0、Swift 5.0——只用闭包回调，
 // 不用 async/await，不用 if-let 简写。
 
+/// 审计第 2 项：草稿卡片 meta 区流式布局视图。
+/// 原 metaRow 是单行横排 stack（字数 required + 写给/心情 chip + 图片未保存钮 +
+/// 正在写 + 保存状态 required + 末尾 spacer）：窄屏多标签时横排总宽超卡片宽，
+/// 只能靠压 chip 或触发约束冲突。UIStackView 本身不换行，故此处用手动分行：
+/// 按现有顺序从左到右排，排不下即另起一行；行高取本行最高项，行距 6。
+/// 高度由内部 height 约束驱动（layoutSubviews 按当前宽度重算、变化时才更新，
+/// 不循环触发布局）；子项用手动 frame，不参与 Auto Layout 竞争，故不再出现
+/// 约束冲突。字号、chip 上限宽、文案、顺序一律不动，不靠缩小字号解决。
+final class BearyDraftMetaFlowView: UIView {
+    var itemSpacing: CGFloat = 8
+    var lineSpacing: CGFloat = 6
+    private var heightConstraint: NSLayoutConstraint?
+
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        let constraint = heightAnchor.constraint(equalToConstant: 0)
+        constraint.isActive = true
+        heightConstraint = constraint
+    }
+
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        let width = bounds.width
+        guard width > 0 else { return }
+        var x: CGFloat = 0
+        var y: CGFloat = 0
+        var lineHeight: CGFloat = 0
+        var totalHeight: CGFloat = 0
+        for item in subviews {
+            var size = item.systemLayoutSizeFitting(UIView.layoutFittingCompressedSize)
+            if size.width > width { size.width = width }
+            if x > 0 && x + itemSpacing + size.width > width {
+                y += lineHeight + lineSpacing
+                x = 0
+                lineHeight = 0
+            }
+            if x > 0 { x += itemSpacing }
+            item.frame = CGRect(x: x, y: y, width: size.width, height: size.height)
+            x += size.width
+            lineHeight = max(lineHeight, size.height)
+            totalHeight = y + lineHeight
+        }
+        if heightConstraint?.constant != totalHeight {
+            heightConstraint?.constant = totalHeight
+        }
+    }
+}
+
 final class BearyDraftBoxViewController: UIViewController {
 
     // MARK: - 对外 API（编辑器代理按此调用，勿改名）
@@ -43,6 +95,7 @@ final class BearyDraftBoxViewController: UIViewController {
     private var drafts: [BearyDraft] = []
     private var cardEntries: [(button: UIButton, draftValue: BearyDraft)] = []
     /// 新规矩 (b)：草稿列表入场动效只播一次（首渲），后续重渲不重播已有卡片。
+    /// 审计第 12 项起由 tryPlayEntrance 统一置位（原 renderDrafts 首轮置位已移走）。
     private var draftCardsAnimatedOnce = false
     private var openEntries: [(button: UIButton, draftValue: BearyDraft)] = []
     private var deleteEntries: [(button: UIButton, draftValue: BearyDraft)] = []
@@ -82,7 +135,9 @@ final class BearyDraftBoxViewController: UIViewController {
 
     private let backdropButton = UIButton(type: .custom)
     private let sheetView = UIView()
-    private let sheetScrollView = UIScrollView()
+    // 审计第 9 项：滚动取消走共享类（见 BearyNativeCommon.BearyCancellableScrollView）——
+    // 从卡片/打开/删除等按钮上起滑时滚动视图能抢到 pan，点按行为不变。
+    private let sheetScrollView = BearyCancellableScrollView()
     private let contentStack = UIStackView()
     private let handleView = UIView()
     /// 2026-10-30 抓手批：把手行本身只有 14pt 高（顶距 10 + 抓手 4），
@@ -141,18 +196,33 @@ final class BearyDraftBoxViewController: UIViewController {
 
     /// 88 包 M8：入场错峰只在“已 Appear 且首轮 loadDrafts 已渲染”时播一次；
     /// 减动效与已播过时与原来一致，直接返回。
+    /// 审计第 12 项：本函数是入场唯一入口——“数据就绪（draftsInitialLoaded）+
+    /// 面板可见（draftBoxAppeared）+ 首屏卡片入场”在此一处协调，不再由
+    /// renderDrafts 自行播卡片（原 renderDrafts 首轮即以 +0.03 逐张播全部卡片且
+    /// 无封顶，面板出现前就可能播完；tryPlayEntrance 又因 draftCardsAnimatedOnce
+    /// 已置真而不再重播，造成首开看不到卡片入场）。renderDrafts 只建卡片终态，
+    /// 入场初态与动画一律由本函数在面板到位时设置。
     private func tryPlayEntrance() {
         // 2026-10-28 Li 令：遮罩出现时 0.25s 淡入；减动效直显终值。
         if UIAccessibility.isReduceMotionEnabled { backdropButton.alpha = 1 }
         guard !didPlayEntrance, draftBoxAppeared, draftsInitialLoaded,
               !UIAccessibility.isReduceMotionEnabled else { return }
         didPlayEntrance = true
+        draftCardsAnimatedOnce = true
         view.layoutIfNeeded()
         applyEntranceStartState()
-        // M20：开箱卡片错峰滑入（仅首次开箱；卡片先置初态，sheet 到位后再逐张播）。
-        // 审计 P2-24：复用 renderDrafts 的 draftCardsAnimatedOnce——首轮渲染已播过
-        // 的卡片不再由 tryPlayEntrance 重置 alpha 重播（此前首开双播）；sheet 与遮罩照常播。
-        let cardViews = draftCardsAnimatedOnce ? [] : listStack.arrangedSubviews
+        // 只动画当前可见卡片：卡片在滚动区坐标系内与当前可视区域相交才入场；
+        // 屏外卡片保持终态（alpha 1、identity），滚到时直接可见，不补播、
+        // 不留隐藏态。空态/失败态 wrap 不是卡片，不进此列。
+        let visibleRect = CGRect(origin: sheetScrollView.contentOffset, size: sheetScrollView.bounds.size)
+        var cardViews: [UIView] = []
+        for entry in cardEntries {
+            let card = entry.button
+            let frameInScroll = card.convert(card.bounds, to: sheetScrollView)
+            if frameInScroll.intersects(visibleRect) {
+                cardViews.append(card)
+            }
+        }
         for cardView in cardViews {
             cardView.alpha = 0
             cardView.transform = CGAffineTransform(translationX: 0, y: 8)
@@ -162,13 +232,15 @@ final class BearyDraftBoxViewController: UIViewController {
             self.sheetView.transform = .identity
             self.sheetView.alpha = 1
         }, completion: { _ in
-            var delay: TimeInterval = 0
-            for cardView in cardViews {
+            // 错峰延迟设上限：逐张 +0.04，但累计不超过 0.36——大量草稿时
+            // 尾部可见卡片不再拖出超长尾巴；超上限的卡片同批播出。
+            let maxDelay: TimeInterval = 0.36
+            for (index, cardView) in cardViews.enumerated() {
+                let delay = min(TimeInterval(index) * 0.04, maxDelay)
                 UIView.animate(withDuration: 0.25, delay: delay, options: .curveEaseOut, animations: {
                     cardView.alpha = 1
                     cardView.transform = .identity
                 })
-                delay += 0.04
             }
         })
         // 遮罩 0.25s 淡入（与卡片滑入解耦）。
@@ -668,22 +740,10 @@ final class BearyDraftBoxViewController: UIViewController {
                 cardEntries.append((button: card, draftValue: draftValue))
                 listStack.addArrangedSubview(card)
             }
-            // 新规矩 (b)：草稿列表首次渲染错峰淡入一次（后续删除/回页重渲不重播，
-            // 已有卡片不动；减动效直显）。
-            if !draftCardsAnimatedOnce && !UIAccessibility.isReduceMotionEnabled {
-                draftCardsAnimatedOnce = true
-                var delay: TimeInterval = 0
-                for entry in cardEntries {
-                    let card = entry.button
-                    card.alpha = 0
-                    card.transform = CGAffineTransform(translationX: 0, y: 8)
-                    UIView.animate(withDuration: 0.25, delay: delay, options: .curveEaseOut, animations: {
-                        card.alpha = 1
-                        card.transform = .identity
-                    })
-                    delay += 0.03
-                }
-            }
+            // 审计第 12 项：渲染只建卡片终态，不在此播入场动画——入场动画
+            // 唯一入口是 tryPlayEntrance（数据就绪 + 面板可见时才播首屏卡片）。
+            // 新规矩 (b) 的“后续重渲不重播”由 tryPlayEntrance 的 didPlayEntrance /
+            // draftCardsAnimatedOnce 门控承接，减动效下卡片同样直显终态。
         }
     }
 
@@ -796,10 +856,10 @@ final class BearyDraftBoxViewController: UIViewController {
         }
         inner.addArrangedSubview(summaryLabel)
 
-        let metaRow = UIStackView()
-        metaRow.axis = .horizontal
-        metaRow.spacing = 8
-        metaRow.alignment = .center
+        // 审计第 2 项：meta 区改流式布局 + 状态独立成行。顺序与原来一致：
+        // 字数 → 写给 chip → 心情 chip → 图片未保存钮 → 正在写（流式区内自然换行），
+        // 保存状态放末尾下一行，不再与 chip 挤同一行；字号与 chip 上限宽均不动。
+        let metaFlow = BearyDraftMetaFlowView()
         let wordLabel = UILabel()
         // 草稿卡字数走可见口径：一个心情记号算 1 字（图占 1 格），与编辑器
         // 圆环一致（圆环按 textView.text 计，附件字符本身就是 1 格）。
@@ -810,14 +870,20 @@ final class BearyDraftBoxViewController: UIViewController {
         wordLabel.font = UIFont.systemFont(ofSize: 12)
         wordLabel.textColor = BearyColors.gray
         wordLabel.setContentCompressionResistancePriority(.required, for: .horizontal)
-        metaRow.addArrangedSubview(wordLabel)
+        // 流式子项用手动 frame（见 BearyDraftMetaFlowView），不参与 Auto Layout。
+        wordLabel.translatesAutoresizingMaskIntoConstraints = false
+        metaFlow.addSubview(wordLabel)
         // DF-1 写给 chip（@ 图标 + 名，网页 buildDraftCard 的 d.to chip 口径）。
         if let recipientName = draftValue.recipientName, !recipientName.isEmpty {
-            metaRow.addArrangedSubview(recipientChip(name: recipientName))
+            let chip = recipientChip(name: recipientName)
+            chip.translatesAutoresizingMaskIntoConstraints = false
+            metaFlow.addSubview(chip)
         }
         // DF-1 心情 chip 带 emote 图（网页 df-chip 内 emote 图 + 心情名）。
         if let moodKey = draftValue.mood, let moodName = BearyText.moodNames[moodKey] {
-            metaRow.addArrangedSubview(moodChip(key: moodKey, name: moodName))
+            let chip = moodChip(key: moodKey, name: moodName)
+            chip.translatesAutoresizingMaskIntoConstraints = false
+            metaFlow.addSubview(chip)
         }
         // DF-1 图片未保存可点清除 chip：只针对已无物可续传的失败图
         // （本地文件与服务端 key 皆无，网页 imgs_lost 的等价情形）；点一下清掉
@@ -836,7 +902,8 @@ final class BearyDraftBoxViewController: UIViewController {
             lostButton.accessibilityLabel = "图片未保存，点一下清除这条提示"
             lostButton.addTarget(self, action: #selector(clearLostTapped(_:)), for: .touchUpInside)
             lostButton.bearyAddPressFeedback()
-            metaRow.addArrangedSubview(lostButton)
+            lostButton.translatesAutoresizingMaskIntoConstraints = false
+            metaFlow.addSubview(lostButton)
             lostEntries.append((button: lostButton, draftValue: draftValue))
         }
         // DF-1 正在写标记：编辑器当前正在写的那篇（currentDraftId 由容器设置）。
@@ -845,7 +912,8 @@ final class BearyDraftBoxViewController: UIViewController {
             writingLabel.text = "正在写"
             writingLabel.font = UIFont.systemFont(ofSize: 12)
             writingLabel.textColor = BearyColors.gray
-            metaRow.addArrangedSubview(writingLabel)
+            writingLabel.translatesAutoresizingMaskIntoConstraints = false
+            metaFlow.addSubview(writingLabel)
         }
         let status = saveStatus(for: draftValue)
         let statusLabel = UILabel()
@@ -863,19 +931,31 @@ final class BearyDraftBoxViewController: UIViewController {
             statusLabel.text = "草稿保存失败"
             statusLabel.textColor = BearyColors.red
         }
-        metaRow.addArrangedSubview(statusLabel)
+        // 保存状态独立成行、左对齐（末尾 spacer 撑满行宽，视觉位置与原来行内左置一致）。
+        let statusRow = UIStackView()
+        statusRow.axis = .horizontal
+        statusRow.spacing = 8
+        statusRow.alignment = .center
+        statusRow.addArrangedSubview(statusLabel)
         let metaSpacer = UIView()
-        metaRow.addArrangedSubview(metaSpacer)
+        statusRow.addArrangedSubview(metaSpacer)
         // 状态行与字数/心情行之间留 8pt（与内层 spacing 的 6pt 叠加后接近网页 meta 的 8pt 上边距）。
+        // metaColumn 上边距仍取原 metaRow 的 2pt，行距 6pt 与内层 spacing 一致。
+        let metaColumn = UIStackView()
+        metaColumn.axis = .vertical
+        metaColumn.spacing = 6
+        metaColumn.alignment = .fill
+        metaColumn.addArrangedSubview(metaFlow)
+        metaColumn.addArrangedSubview(statusRow)
         let metaWrap = UIView()
         metaWrap.translatesAutoresizingMaskIntoConstraints = false
-        metaWrap.addSubview(metaRow)
-        metaRow.translatesAutoresizingMaskIntoConstraints = false
+        metaWrap.addSubview(metaColumn)
+        metaColumn.translatesAutoresizingMaskIntoConstraints = false
         NSLayoutConstraint.activate([
-            metaRow.topAnchor.constraint(equalTo: metaWrap.topAnchor, constant: 2),
-            metaRow.bottomAnchor.constraint(equalTo: metaWrap.bottomAnchor),
-            metaRow.leadingAnchor.constraint(equalTo: metaWrap.leadingAnchor),
-            metaRow.trailingAnchor.constraint(equalTo: metaWrap.trailingAnchor),
+            metaColumn.topAnchor.constraint(equalTo: metaWrap.topAnchor, constant: 2),
+            metaColumn.bottomAnchor.constraint(equalTo: metaWrap.bottomAnchor),
+            metaColumn.leadingAnchor.constraint(equalTo: metaWrap.leadingAnchor),
+            metaColumn.trailingAnchor.constraint(equalTo: metaWrap.trailingAnchor),
         ])
         inner.addArrangedSubview(metaWrap)
         // C7：左滑删除复用删除钮路径（直接删卡 + 6 秒撤销条，与按钮一致，

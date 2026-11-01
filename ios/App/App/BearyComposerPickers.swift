@@ -64,7 +64,9 @@ final class BearyRecipientPickerViewController: UIViewController, UITextFieldDel
     /// 整棵子树不画（帧 44pt 证实存在、预测区像素纯白），改走全站已证实可见的
     /// BearyColors.faint/line，圆角取精确半高 22（见 buildViews）。
     private let listContainer = UIView()
-    private let listScrollView = UIScrollView()
+    // 审计第 9 项：滚动取消走共享类（见 BearyNativeCommon.BearyCancellableScrollView）——
+    // 从选人行按钮上起滑时滚动视图能抢到 pan，点按行为不变；搜索输入框不在本滚动区内。
+    private let listScrollView = BearyCancellableScrollView()
     private let rowsStack = UIStackView()
     /// 结果区“搜索结果”分组 label（网页 addr-lab 同款：12px 灰字，只在有结果时显示；
     /// 包一层 wrap 做 2/12/4 内边距，与行内头像左 12 对齐）。
