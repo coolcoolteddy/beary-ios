@@ -2180,6 +2180,7 @@ class BearyProfileViewController: UIViewController {
         syncStickyHeaderCover()
         guard !stickyHeaderModalDisabled, coverHeightConstraint.constant > 0 else {
             resetProfileCoverScroll()
+            stickyHeaderView.alpha = 0
             stickyHeaderView.isHidden = true
             return
         }
@@ -2225,14 +2226,26 @@ class BearyProfileViewController: UIViewController {
         if stickyHeaderBgTopConstraint.constant != bgTop {
             stickyHeaderBgTopConstraint.constant = bgTop
         }
+        // 吸顶容器显隐（黑 header 蹦出修法）：此前这里是 isHidden 一刀切——
+        // up 刚过 0 的第一帧，主题底色容器（深色纯黑、浅色纯白）就以满不透明
+        // 度整块出现，容器本身从没有任何 alpha 过渡，用户名/模糊层各自淡入
+        // 也盖不住底色这一帧的跳变。改法：容器透明度改由滚动量 1:1 驱动，
+        // 上滑 0→24pt 内从 0 渐显到 1，不用定时动画块、不重播；alpha 为 0 时
+        // 才隐藏（不占合成），回滑反向渐隐。减动效下同样跟手渐变——这是跟手
+        // 势 1:1 的透明度，不是自主播放的动效。
         if up <= 0 {
+            stickyHeaderView.alpha = 0
             stickyHeaderView.isHidden = true
             stickyHeaderNameLabel.alpha = 0
             stickyHeaderNameLabel.transform = .identity
             setStickyHeaderBlurProgress(0)
             return
         }
-        stickyHeaderView.isHidden = false
+        // 容器透明度跟滚动量走：上滑 0→24pt 内 0→1 渐显，24pt 后恒 1；
+        // alpha 为 0 时隐藏（不占合成），其余值显示；回滑反向渐隐。
+        let stickyHeaderFade = min(max(up / 24, 0), 1)
+        stickyHeaderView.alpha = stickyHeaderFade
+        stickyHeaderView.isHidden = (stickyHeaderFade == 0)
         // header 用户名转移：内容用户名顶边（已含 belowShift 位移的实时屏坐标）
         // 碰到 header 底边时起，往后 20px 内淡入 0→1＋上浮 6→0，往回滑反向恢复。
         let nameTop = nameLabel.convert(nameLabel.bounds, to: view).origin.y
