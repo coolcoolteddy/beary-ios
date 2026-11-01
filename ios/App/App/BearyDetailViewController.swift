@@ -389,7 +389,9 @@ final class BearyDetailViewController: UIViewController {
     private let detailLocationLabel: UILabel = {
         let lb = UILabel()
         lb.translatesAutoresizingMaskIntoConstraints = false
-        lb.font = UIFont.systemFont(ofSize: 13)
+        // 扫查组：此前裸 13pt，大字号下位置行不跟随；单行截断，栈高自适应。
+        lb.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13))
+        lb.adjustsFontForContentSizeCategory = true
         lb.textColor = BearyColors.gray
         lb.numberOfLines = 1
         lb.lineBreakMode = .byTruncatingTail
@@ -398,7 +400,9 @@ final class BearyDetailViewController: UIViewController {
     private let detailLocationNoteLabel: UILabel = {
         let lb = UILabel()
         lb.translatesAutoresizingMaskIntoConstraints = false
-        lb.font = UIFont.systemFont(ofSize: 12)
+        // 扫查组：此前裸 12pt，多行提示不跟随大字号。
+        lb.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 12))
+        lb.adjustsFontForContentSizeCategory = true
         lb.textColor = BearyColors.orange
         lb.numberOfLines = 0
         lb.isHidden = true
@@ -454,7 +458,9 @@ final class BearyDetailViewController: UIViewController {
     private let ephemeralLabel: UILabel = {
         let l = UILabel()
         l.translatesAutoresizingMaskIntoConstraints = false
-        l.font = UIFont.systemFont(ofSize: 12)
+        // 扫查组：此前裸 12pt，限时倒计时行不跟随大字号。
+        l.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 12))
+        l.adjustsFontForContentSizeCategory = true
         l.textColor = BearyColors.gray
         l.isHidden = true
         return l
@@ -588,6 +594,17 @@ final class BearyDetailViewController: UIViewController {
         }
     }
 
+    // 扫查组：字号档位变化时赞数显式宽须按新字号重算（refreshActionRow
+    // 按 live 字体算标题宽），否则大字号下数字被旧宽裁掉；正文/标题富文本
+    // 字号仍按卡片同款口径只在下次 configure 更新，不在此重排（会丢滚动位）。
+    override func traitCollectionDidChange(_ previousTraitCollection: UITraitCollection?) {
+        super.traitCollectionDidChange(previousTraitCollection)
+        guard isViewLoaded else { return }
+        if previousTraitCollection?.preferredContentSizeCategory != traitCollection.preferredContentSizeCategory {
+            refreshActionRow()
+        }
+    }
+
     override func viewDidLayoutSubviews() {
         super.viewDidLayoutSubviews()
         // 详情重做：两分支互斥整组开关（状态不变不开关，避免布局循环）。
@@ -613,7 +630,9 @@ final class BearyDetailViewController: UIViewController {
     private func buildLayout() {
         // 顶栏：只剩左上文字“关闭”（15pt 墨字），右侧不放任何图标。
         closeButton.translatesAutoresizingMaskIntoConstraints = false
-        closeButton.titleLabel?.font = UIFont.systemFont(ofSize: 15)
+        // 扫查组：此前裸 15pt；顶栏钉高 52，走 cappedFont（与许愿墙顶栏同口径），不撑破顶栏。
+        closeButton.titleLabel?.font = BearyDynamicType.cappedFont(for: UIFont.systemFont(ofSize: 15))
+        closeButton.titleLabel?.adjustsFontForContentSizeCategory = true
         closeButton.setTitle("关闭", for: .normal)
         closeButton.setTitleColor(BearyColors.ink, for: .normal)
         closeButton.setTitleColor(BearyColors.ink, for: .highlighted)
@@ -932,6 +951,9 @@ final class BearyDetailViewController: UIViewController {
 
         likeButton.translatesAutoresizingMaskIntoConstraints = false
         likeButton.titleLabel?.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 14))
+        // 扫查组：此前 scaledFont 却缺 adjusts，档位变化时赞数字号不跟、
+        // 显式宽也不重算；补 adjusts，宽重算见 traitCollectionDidChange。
+        likeButton.titleLabel?.adjustsFontForContentSizeCategory = true
         likeButton.titleEdgeInsets = UIEdgeInsets(top: 0, left: 6, bottom: 0, right: 0)
         likeButton.adjustsImageWhenHighlighted = false
         likeButton.addTarget(self, action: #selector(likeTapped), for: .touchUpInside)
@@ -977,7 +999,9 @@ final class BearyDetailViewController: UIViewController {
 
         // 游客提示条：与卡片游客展开态同文案，点按走登录提示；整行 44pt 可点。
         guestPromptButton.translatesAutoresizingMaskIntoConstraints = false
-        guestPromptButton.titleLabel?.font = UIFont.systemFont(ofSize: 15)
+        // 扫查组：此前裸 15pt；本行钉高 44，走 cappedFont，不撑破行高。
+        guestPromptButton.titleLabel?.font = BearyDynamicType.cappedFont(for: UIFont.systemFont(ofSize: 15))
+        guestPromptButton.titleLabel?.adjustsFontForContentSizeCategory = true
         guestPromptButton.setTitle("登录后可点赞、回应、收藏 ›", for: .normal)
         guestPromptButton.setTitleColor(BearyColors.gray, for: .normal)
         guestPromptButton.setTitleColor(BearyColors.gray, for: .highlighted)
