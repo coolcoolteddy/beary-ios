@@ -791,9 +791,10 @@ class BearyFeedViewController: UIViewController {
                     strongSelf.plazaReachedEnd = entries.count < strongSelf.firstPageLimit
                     strongSelf.plazaError = false
                     strongSelf.lastFeedLoadAt = Date()
+                    // 审计 13：界面先应用（落表 + 状态），写盘异步在后、不卡首帧。
+                    strongSelf.tableView.reloadData()
                     BearyFeedCache.save(bucket: strongSelf.feedCacheOwnerKey, entries: entries, hasMore: strongSelf.plazaHasMore)
                     // 80 包 A2-2：先落表再结束首屏标记。
-                    strongSelf.tableView.reloadData()
                     strongSelf.finishFirstLoadIfNeeded()
                     strongSelf.updateOverlayState()
                     strongSelf.maybeEndRefreshing()
@@ -1114,24 +1115,29 @@ class BearyFeedViewController: UIViewController {
     private func loadCachedFeedOrRefresh() {
         let bucket = BearyFeedCache.bucket(userId: SessionManager.shared.currentUser?.id ?? BearyFeedCache.lastKnownUserId())
         feedCacheOwnerKey = bucket
-        if let snap = BearyFeedCache.load(bucket: bucket) {
-            let head = BearyFeedCache.visibleHead(snap.entries)
-            if !head.isEmpty {
-                plazaRaw = head
-                firstPageIds = head.compactMap { $0.id }
-                plazaHasMore = snap.hasMore
-                plazaReachedEnd = !snap.hasMore
-                plazaError = false
-                plazaFirstDone = true
-                isFirstLoad = false
-                lastFeedLoadAt = Date(timeIntervalSince1970: snap.savedAt)
-                tableView.reloadData()
-                updateOverlayState()
-                silentRefreshFirstPage()
-                return
+        // 审计 13：读盘 + 解码在缓存 IO 队列，界面先不阻塞；回包到主线程
+        // 后再应用。桶已换（账号切换）时旧回包直接丢弃，不覆盖新桶内容。
+        BearyFeedCache.load(bucket: bucket) { [weak self] snap in
+            guard let strongSelf = self, strongSelf.feedCacheOwnerKey == bucket else { return }
+            if let snap = snap {
+                let head = BearyFeedCache.visibleHead(snap.entries)
+                if !head.isEmpty {
+                    strongSelf.plazaRaw = head
+                    strongSelf.firstPageIds = head.compactMap { $0.id }
+                    strongSelf.plazaHasMore = snap.hasMore
+                    strongSelf.plazaReachedEnd = !snap.hasMore
+                    strongSelf.plazaError = false
+                    strongSelf.plazaFirstDone = true
+                    strongSelf.isFirstLoad = false
+                    strongSelf.lastFeedLoadAt = Date(timeIntervalSince1970: snap.savedAt)
+                    strongSelf.tableView.reloadData()
+                    strongSelf.updateOverlayState()
+                    strongSelf.silentRefreshFirstPage()
+                    return
+                }
             }
+            strongSelf.refreshAll()
         }
-        refreshAll()
     }
 
     /// 账号/游客切换（SceneDelegate onUserChanged 在 id 真变时广播）：
@@ -1154,30 +1160,34 @@ class BearyFeedViewController: UIViewController {
         isRevalidating = false
         hideNewContentPill()
         pendingPlaza = nil
-        if let snap = BearyFeedCache.load(bucket: newBucket) {
+        // 审计 13：同 loadCachedFeedOrRefresh，读盘异步；桶又换时旧回包丢弃。
+        BearyFeedCache.load(bucket: newBucket) { [weak self] snap in
+            guard let strongSelf = self, strongSelf.feedCacheOwnerKey == newBucket else { return }
+            if let snap = snap {
             let head = BearyFeedCache.visibleHead(snap.entries)
             if !head.isEmpty {
-                plazaRaw = head
-                firstPageIds = head.compactMap { $0.id }
-                plazaHasMore = snap.hasMore
-                plazaReachedEnd = !snap.hasMore
-                plazaError = false
-                plazaFirstDone = true
-                isFirstLoad = false
-                lastFeedLoadAt = Date(timeIntervalSince1970: snap.savedAt)
-                tableView.reloadData()
-                updateOverlayState()
-                silentRefreshFirstPage()
+                strongSelf.plazaRaw = head
+                strongSelf.firstPageIds = head.compactMap { $0.id }
+                strongSelf.plazaHasMore = snap.hasMore
+                strongSelf.plazaReachedEnd = !snap.hasMore
+                strongSelf.plazaError = false
+                strongSelf.plazaFirstDone = true
+                strongSelf.isFirstLoad = false
+                strongSelf.lastFeedLoadAt = Date(timeIntervalSince1970: snap.savedAt)
+                strongSelf.tableView.reloadData()
+                strongSelf.updateOverlayState()
+                strongSelf.silentRefreshFirstPage()
                 return
             }
         }
-        plazaRaw = []
-        firstPageIds = []
-        plazaHasMore = true
-        plazaReachedEnd = false
-        plazaError = false
-        tableView.reloadData()
-        refreshAll()
+        strongSelf.plazaRaw = []
+        strongSelf.firstPageIds = []
+        strongSelf.plazaHasMore = true
+        strongSelf.plazaReachedEnd = false
+        strongSelf.plazaError = false
+        strongSelf.tableView.reloadData()
+        strongSelf.refreshAll()
+        }
     }
 
     /// 后台静默刷新：不转菊花、不清表、不 toast，失败静默保留旧内容。
@@ -1197,12 +1207,13 @@ class BearyFeedViewController: UIViewController {
         BearyFeedCache.save(bucket: bucket, entries: head, hasMore: plazaHasMore)
     }
 
-    /// 展示字段指纹（内容/图片/心情/天气/标题/引用/作者/公开态/限时）：
+    /// 展示字段指纹（内容/图片/心情/天气/气温/标题/引用/作者/公开态/限时）：
     /// 变了才 reloadRows；只变互动字段时走就地同步，不重建行。
+    /// 审计 4：此前缺 temperatureC——只改气温时指纹不变，广场恒显旧气温。
     private func feedDisplayFingerprint(_ e: Entry) -> String {
         let images = (e.images ?? []).joined(separator: ",")
         let dims = (e.imgDims ?? [:]).map { "\($0.key):\($0.value.map(String.init).joined(separator: "x"))" }.sorted().joined(separator: ",")
-        return [e.content ?? "", images, dims, e.mood ?? "", e.weather ?? "", e.title ?? "", e.quoteId ?? "", e.authorName ?? "", e.authorAvatar ?? "", e.authorBadge ?? "", "\(e.authorPlus ?? 0)", "\(e.publishedAt ?? 0)", "\(e.isPublic ?? false)", "\(e.ephemeralUntil ?? 0)", e.mentionedName ?? "", e.locationName ?? "", e.locationDistrict ?? ""].joined(separator: "|")
+        return [e.content ?? "", images, dims, e.mood ?? "", e.weather ?? "", e.temperatureC.map(String.init) ?? "", e.title ?? "", e.quoteId ?? "", e.authorName ?? "", e.authorAvatar ?? "", e.authorBadge ?? "", "\(e.authorPlus ?? 0)", "\(e.publishedAt ?? 0)", "\(e.isPublic ?? false)", "\(e.ephemeralUntil ?? 0)", e.mentionedName ?? "", e.locationName ?? "", e.locationDistrict ?? ""].joined(separator: "|")
     }
 
     /// 互动字段指纹（赞数/已赞/已收藏/收藏数/回应）：只变这些时，
@@ -2329,24 +2340,44 @@ enum BearyFeedCache {
         return base.appendingPathComponent("\(filePrefix)\(bucket).json")
     }
 
-    static func load(bucket: String) -> Snapshot? {
-        guard let url = fileURL(bucket: bucket), let data = try? Data(contentsOf: url) else { return nil }
-        let decoder = JSONDecoder()
-        decoder.keyDecodingStrategy = .convertFromSnakeCase
-        return try? decoder.decode(Snapshot.self, from: data)
+    /// 审计 13：磁盘读写与编解码走独立串行队列，不再占主线程；读写同队
+    /// 列，同一会话内“写后读”顺序有保证（删帖写回不会被旧快照读回冲掉）。
+    /// 快照只存首屏窗口（snapshotEntryLimit 条）；窗口外还有篇时 hasMore
+    /// 强制为真——截断后的分页游标是窗口末条，before 续拉恰好取回被截掉
+    /// 的旧篇，续接不断。调用方仍传原始 hasMore，截断修正由本函数统一做。
+    private static let ioQueue = DispatchQueue(label: "beary.feedCache.io", qos: .utility)
+    static let snapshotEntryLimit = 12
+
+    static func load(bucket: String, completion: @escaping (Snapshot?) -> Void) {
+        ioQueue.async {
+            var snap: Snapshot?
+            if let url = fileURL(bucket: bucket), let data = try? Data(contentsOf: url) {
+                let decoder = JSONDecoder()
+                decoder.keyDecodingStrategy = .convertFromSnakeCase
+                snap = try? decoder.decode(Snapshot.self, from: data)
+            }
+            let result = snap
+            DispatchQueue.main.async { completion(result) }
+        }
     }
 
     /// 写缓存：只存有效公开篇（visibleHead 过滤）；hasMore 由调用方按
-    /// 本次首拉回包量给（不能从存后篇数反推——删篇后写回时篇数会缩水）。
+    /// 本次首拉回包量给（不能从存后篇数反推——删篇后写回时篇数会缩水），
+    /// 再叠加截断修正（见上）。写盘异步进行，调用方先应用界面、不等写盘。
     static func save(bucket: String?, entries: [Entry], hasMore: Bool) {
         guard let bucket = bucket, !bucket.isEmpty else { return }
         let head = visibleHead(entries)
-        guard let url = fileURL(bucket: bucket) else { return }
-        let encoder = JSONEncoder()
-        encoder.keyEncodingStrategy = .convertToSnakeCase
-        guard let data = try? encoder.encode(Snapshot(savedAt: Date().timeIntervalSince1970, entries: head, hasMore: hasMore)) else { return }
-        try? FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
-        try? data.write(to: url, options: .atomic)
+        let capped = Array(head.prefix(snapshotEntryLimit))
+        let storedHasMore = hasMore || head.count > snapshotEntryLimit
+        let snap = Snapshot(savedAt: Date().timeIntervalSince1970, entries: capped, hasMore: storedHasMore)
+        ioQueue.async {
+            guard let url = fileURL(bucket: bucket) else { return }
+            let encoder = JSONEncoder()
+            encoder.keyEncodingStrategy = .convertToSnakeCase
+            guard let data = try? encoder.encode(snap) else { return }
+            try? FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try? data.write(to: url, options: .atomic)
+        }
     }
 
     static func purge(bucket: String) {
