@@ -1926,6 +1926,11 @@ class BearyFeedViewController: UIViewController {
                 switch result {
                 case .success(let resp):
                     let isPublic = resp.published.map { $0 == 1 } ?? (target == 1)
+                    // 秒开-网络层：转私密成功即逐出本篇图片的本机缓存；失败
+                    // 回滚分支不逐出（原态未变）。
+                    if !isPublic, let entry = strongSelf.entryModel(for: entryId) {
+                        BearyImageLoader.shared.evictEntryImages(keys: entry.images ?? [])
+                    }
                     strongSelf.applyVisibilityState(entryId: entryId, isPublic: isPublic, publishedAt: resp.publishedAt)
                 case .failure(let err):
                     strongSelf.applyVisibilityState(entryId: entryId, isPublic: originalPublic, publishedAt: originalPublishedAt)

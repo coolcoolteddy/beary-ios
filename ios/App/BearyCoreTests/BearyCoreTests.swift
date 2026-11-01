@@ -406,3 +406,17 @@ final class BearyPastSelfTests: XCTestCase {
         XCTAssertFalse(decoded.localOnly)
     }
 }
+
+// ===== 秒开-网络层：API 专用会话配置 =====
+// 只断言配置本身（连接复用口径 + 账号无关缓存关闭 + 共享 cookie 桶），
+// 不发真实网络；BearyAPI.swift 本就编进测试包，BearyNetwork 配置
+// 不依赖 NativeCommon，故测试目标无需新增文件。
+final class BearyNetworkTests: XCTestCase {
+    func testDedicatedSessionConfig() {
+        let session = BearyAPI.makeDedicatedSession()
+        XCTAssertEqual(session.configuration.httpMaximumConnectionsPerHost, 6)
+        XCTAssertNil(session.configuration.urlCache)
+        XCTAssertTrue(session.configuration.httpCookieStorage === HTTPCookieStorage.shared)
+        XCTAssertTrue(session.configuration.httpShouldSetCookies)
+    }
+}

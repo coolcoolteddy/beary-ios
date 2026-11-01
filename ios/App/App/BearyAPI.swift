@@ -459,8 +459,29 @@ final class BearyAPI {
     private let session: URLSession
     private let decoder: JSONDecoder
 
-    init(session: URLSession = .shared) {
-        self.session = session
+    /// 秒开-网络层：API 专用会话（不再用 URLSession.shared）。
+    /// 同一会话对象全 App 复用，同一 host（teddyhn.com）上的请求共享
+    /// keep-alive 连接池与 HTTP/2 多路复用，不再每类请求各建连接；
+    /// 每 host 6 并发与图片加载器同口径（见 BearyImageLoader），避免
+    /// 连接抖动。cookie 仍走共享 HTTPCookieStorage，登录 cookie 流程不变。
+    /// urlCache = nil：JSON 回包服务端一律 private, no-store，URLCache
+    /// 本就存不下；显式关掉可防止账号无关的共享缓存层误持私密体。
+    /// 注意：这里绝不手动设 Accept-Encoding——系统不设时自动协商
+    /// gzip/deflate/br 并透明解压；手动设会关掉透明解压，回包 gzip
+    /// 字节将直接进 JSON 解码而失败。压缩收益来自服务端（见后端
+    /// 秒开-网络层 patch 的 json() gzip 分支），App 侧零改动即享。
+    static func makeDedicatedSession() -> URLSession {
+        let config = URLSessionConfiguration.default
+        config.httpMaximumConnectionsPerHost = 6
+        config.httpCookieStorage = HTTPCookieStorage.shared
+        config.httpCookieAcceptPolicy = .always
+        config.httpShouldSetCookies = true
+        config.urlCache = nil
+        return URLSession(configuration: config)
+    }
+
+    init(session: URLSession? = nil) {
+        self.session = session ?? Self.makeDedicatedSession()
         let d = JSONDecoder()
         d.keyDecodingStrategy = .convertFromSnakeCase
         self.decoder = d

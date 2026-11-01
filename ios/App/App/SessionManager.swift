@@ -280,6 +280,11 @@ final class SessionManager {
     /// 该账号磁盘目录删除）。切换账号（不退出）不走这里，旧账号磁盘保留、
     /// 仅由容器 setAccount 切键 + 清内存，见 SceneDelegate onUserChanged。
     private func purgeImageCacheForCurrentAccount() {
+        // 秒开-网络层：先清共享 URLCache（与当前用户无关，任何调用路径都清）。
+        // API 与图片会话现已 urlCache=nil，理论上不再向它写；但历史版本 /
+        // 其他 .shared 调用仍可能留有私密体，退出/401 时一并清掉，杜绝
+        // 账号无关的共享缓存层在换号后命中旧图。
+        URLCache.shared.removeAllCachedResponses()
         guard let id = currentUser?.id else { return }
         BearyImageLoader.shared.purgeAccount(id)
     }

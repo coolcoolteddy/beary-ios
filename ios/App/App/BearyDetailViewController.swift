@@ -2166,6 +2166,12 @@ final class BearyDetailViewController: UIViewController {
                 case .success(let resp):
                     let isPublic = resp.published.map { $0 == 1 } ?? (target == 1)
                     self.entry.isPublic = isPublic
+                    // 秒开-网络层：转私密成功即逐出本篇图片的本机缓存（内存+
+                    // 磁盘），后续加载走网络、服务端按新可见性判定；失败回滚
+                    // 分支不逐出（原态未变，缓存仍可信）。
+                    if !isPublic {
+                        BearyImageLoader.shared.evictEntryImages(keys: self.entry.images ?? [])
+                    }
                     if let publishedAt = resp.publishedAt {
                         self.entry.publishedAt = publishedAt
                     }
