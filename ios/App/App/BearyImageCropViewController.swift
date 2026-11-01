@@ -56,6 +56,11 @@ final class BearyImageCropViewController: UIViewController, UIScrollViewDelegate
         fatalError("init(coder:) has not been implemented")
     }
 
+    /// 审计 12：裁剪页底色恒黑（view/topBar/scrollView 均为 black），故状态栏
+    /// 恒为浅色内容；仅本页指定，不改其他页的主题规则（星图页同款口径）。
+    /// 两处调用方均以 .fullScreen 呈现本页，状态栏样式由本页决定。
+    override var preferredStatusBarStyle: UIStatusBarStyle { .lightContent }
+
     override func viewDidLoad() {
         super.viewDidLoad()
         view.backgroundColor = UIColor.black
@@ -71,12 +76,20 @@ final class BearyImageCropViewController: UIViewController, UIScrollViewDelegate
         titleLabel.adjustsFontForContentSizeCategory = true
         titleLabel.textColor = UIColor.white
         titleLabel.textAlignment = .center
+        // 审计 13：标题是顶栏唯一的压缩项（749，低于两侧按钮）：小屏/大字号下
+        // 只压标题（单行尾截断），不压按钮、不与按钮重叠；编辑器顶栏同款口径。
+        titleLabel.numberOfLines = 1
+        titleLabel.lineBreakMode = .byTruncatingTail
+        titleLabel.setContentCompressionResistancePriority(UILayoutPriority(749), for: .horizontal)
+        cancelButton.setContentCompressionResistancePriority(.required, for: .horizontal)
         confirmButton.setTitle("确认", for: .normal)
         confirmButton.setTitleColor(BearyColors.orange, for: .normal)
         confirmButton.titleLabel?.font = BearyDynamicType.scaledFont(for: UIFont.boldSystemFont(ofSize: 16))
         confirmButton.titleLabel?.adjustsFontForContentSizeCategory = true
         confirmButton.addTarget(self, action: #selector(self.didTapConfirm), for: .touchUpInside)
         confirmButton.bearyAddPressFeedback()
+        // 审计 13：确认钮抗压钉死，与取消钮同口径，窄屏/大字号下不被压没。
+        confirmButton.setContentCompressionResistancePriority(.required, for: .horizontal)
         scrollView.delegate = self
         scrollView.showsHorizontalScrollIndicator = false
         scrollView.showsVerticalScrollIndicator = false
@@ -124,7 +137,12 @@ final class BearyImageCropViewController: UIViewController, UIScrollViewDelegate
             confirmButton.bottomAnchor.constraint(lessThanOrEqualTo: topBar.bottomAnchor, constant: -6),
             cancelButton.leadingAnchor.constraint(equalTo: topBar.leadingAnchor, constant: 16),
             cancelButton.centerYAnchor.constraint(equalTo: topBar.centerYAnchor),
-            titleLabel.centerXAnchor.constraint(equalTo: topBar.centerXAnchor),
+            // 审计 13：标题与两侧按钮补齐边界约束（各留 8pt，编辑器顶栏同款间隙），
+            // 标题不再只靠 centerX 悬空、与按钮无避让。居中约束见下文单独建：
+            // 优先级降为 defaultHigh，低于两侧边界（required），空间不足时先让位、
+            // 由 749 压缩的标题截断，而非系统任意破一条约束造成重叠。
+            titleLabel.leadingAnchor.constraint(greaterThanOrEqualTo: cancelButton.trailingAnchor, constant: 8),
+            titleLabel.trailingAnchor.constraint(lessThanOrEqualTo: confirmButton.leadingAnchor, constant: -8),
             titleLabel.centerYAnchor.constraint(equalTo: topBar.centerYAnchor),
             confirmButton.trailingAnchor.constraint(equalTo: topBar.trailingAnchor, constant: -16),
             confirmButton.centerYAnchor.constraint(equalTo: topBar.centerYAnchor),
@@ -137,6 +155,13 @@ final class BearyImageCropViewController: UIViewController, UIScrollViewDelegate
             hintLabel.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor, constant: -12),
             hintLabel.heightAnchor.constraint(greaterThanOrEqualToConstant: 20),  // 32-17：提示跟随放大时行高随字长高，不裁字
         ])
+        // 审计 13：标题居中单独建、优先级 defaultHigh（低于两侧边界 required）；
+        // 常态居中不变，空间不足时边界约束获胜、标题让位截断而非重叠。
+        // 顶栏高度随内容增长沿用 32-17 已有口径：顶栏 ≥44 + 三者上下各 ≥6/≤-6，
+        // 字号放大时栏随字长高，本处不另改高度约束。
+        let titleCenterX = titleLabel.centerXAnchor.constraint(equalTo: topBar.centerXAnchor)
+        titleCenterX.priority = .defaultHigh
+        titleCenterX.isActive = true
     }
 
     override func viewDidLayoutSubviews() {
@@ -259,6 +284,12 @@ final class BearyImageCropViewController: UIViewController, UIScrollViewDelegate
         confirmButton.isEnabled = false
         cancelButton.isEnabled = false
         confirmButton.setTitle("处理中…", for: .normal)
+        // 审计 13：处理态文案由 2 字变 4 字、右锚固定故向左生长；此处改走项目
+        // 现有的固定容器字号策略 cappedFont（上限 20pt，见 BearyDynamicType）：
+        // 默认字号下与原 16pt 粗体完全一致，只在超大字号档截断，处理态宽度
+        // 不再随字号无上限生长去逼近标题；文案“处理中…”原文保留。本页确认后
+        // 恒 dismiss，无需恢复常态字号。
+        confirmButton.titleLabel?.font = BearyDynamicType.cappedFont(for: UIFont.boldSystemFont(ofSize: 16))
         let source = sourceImage
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             let cropped = self?.cropWithGeometry(geometry, source: source)
