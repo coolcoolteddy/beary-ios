@@ -39,6 +39,8 @@ final class BearyInviteViewController: UIViewController {
     private let contentView = UIView()
     private let stackView = UIStackView()
     private let closeButton = BearyHit44Button(type: .system)
+    /// 审计 8/10 项：关闭行固定在面板顶部（不再是滚动栈首项），滚动后关闭钮仍在顶。
+    private let closeRow = UIView()
     private let titleLabel = UILabel()
     private let subtitleLabel = UILabel()
     private let codeBox = UIView()
@@ -86,12 +88,17 @@ final class BearyInviteViewController: UIViewController {
 
     deinit {
         copyTimer?.invalidate()
+        NotificationCenter.default.removeObserver(self)
     }
 
     override func viewDidLoad() {
         super.viewDidLoad()
         view.backgroundColor = BearyColors.surface
         buildLayout()
+        // 审计 8 项：键盘避让（与反馈页同口径，见 inviteKeyboardWillShow）。
+        NotificationCenter.default.addObserver(self, selector: #selector(inviteKeyboardWillShow(_:)), name: UIResponder.keyboardWillShowNotification, object: nil)
+        NotificationCenter.default.addObserver(self, selector: #selector(inviteKeyboardWillShow(_:)), name: UIResponder.keyboardWillChangeFrameNotification, object: nil)
+        NotificationCenter.default.addObserver(self, selector: #selector(inviteKeyboardWillHide(_:)), name: UIResponder.keyboardWillHideNotification, object: nil)
         // 52 批：先定一次非 0 首帧高，避免呈现层首帧以 preferred=0 走 88%/80% 满高封顶；
         // 布局落定后 viewDidLayoutSubviews 再按真实宽与安全区纠正。
         updatePreferredSheetHeight()
@@ -108,9 +115,12 @@ final class BearyInviteViewController: UIViewController {
         updatePreferredSheetHeight()
     }
 
-    /// 弹窗高度跟内容走：内容栈 fitting 高 + 上下边距（16 / 24）+ 上下安全区；
+    /// 弹窗高度跟内容走：固定关闭行高（44）+ 内容栈 fitting 高 + 上下边距
+    /// （栈顶 34 = 原 16 上边距 + 原 closeRow 后间距 18，标题首帧位置不变；
+    /// 栈底 24）+ 上下安全区；
     /// 底 sheet 与居中卡片的 presentation 方各以 88% / 80% 容器高封顶取小，
-    /// 内容超高时内层 scrollView 可滚。绑定区显隐变化时布局重算即跟高；
+    /// 内容超高时内层 scrollView 可滚（关闭行固定在面板顶部不随滚走）。
+    /// 绑定区显隐变化时布局重算即跟高；
     /// 仅高度变化超 0.5pt 才写 preferredContentSize，避免布局循环。
     /// 玻璃批：弹窗本体已改玻璃背板（view 底 clear + BearyGlass 背板钉满），
     /// 外形圆角仍由呈现层定，本方法只算高度不动玻璃。
@@ -125,7 +135,7 @@ final class BearyInviteViewController: UIViewController {
             withHorizontalFittingPriority: .required,
             verticalFittingPriority: .fittingSizeLevel
         )
-        let height = view.safeAreaInsets.top + fitting.height + 16 + 24 + view.safeAreaInsets.bottom
+        let height = view.safeAreaInsets.top + 44 + fitting.height + 34 + 24 + view.safeAreaInsets.bottom
         if abs(height - lastPreferredSheetHeight) > 0.5 {
             lastPreferredSheetHeight = height
             preferredContentSize = CGSize(width: 0, height: height)
@@ -146,6 +156,8 @@ final class BearyInviteViewController: UIViewController {
         stackView.translatesAutoresizingMaskIntoConstraints = false
         stackView.axis = .vertical
         stackView.spacing = 0
+        // 审计 10 项：关闭行固定在面板顶部，不进滚动栈；其余内容顺序不变。
+        view.addSubview(closeRow)
         view.addSubview(scrollView)
         scrollView.addSubview(contentView)
         contentView.addSubview(stackView)
@@ -158,7 +170,6 @@ final class BearyInviteViewController: UIViewController {
         closeButton.accessibilityLabel = "关闭"
         closeButton.addTarget(self, action: #selector(closeTapped), for: .touchUpInside)
         closeButton.bearyAddPressFeedback()
-        let closeRow = UIView()
         closeRow.translatesAutoresizingMaskIntoConstraints = false
         closeRow.addSubview(closeButton)
 
@@ -265,7 +276,6 @@ final class BearyInviteViewController: UIViewController {
         retryButton.addTarget(self, action: #selector(retryTapped), for: .touchUpInside)
         retryButton.bearyAddPressFeedback()
 
-        stackView.addArrangedSubview(closeRow)
         stackView.addArrangedSubview(titleLabel)
         stackView.addArrangedSubview(subtitleLabel)
         stackView.addArrangedSubview(codeBox)
@@ -275,7 +285,6 @@ final class BearyInviteViewController: UIViewController {
         stackView.addArrangedSubview(bindHintLabel)
         stackView.addArrangedSubview(messageLabel)
         stackView.addArrangedSubview(retryButton)
-        stackView.setCustomSpacing(18, after: closeRow)
         stackView.setCustomSpacing(5, after: titleLabel)
         stackView.setCustomSpacing(20, after: subtitleLabel)
         stackView.setCustomSpacing(10, after: codeBox)
@@ -286,7 +295,14 @@ final class BearyInviteViewController: UIViewController {
         stackView.setCustomSpacing(8, after: messageLabel)
 
         NSLayoutConstraint.activate([
-            scrollView.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
+            // 审计 10 项：关闭行钉面板顶（与内容列同宽：左右 ≥22、居中、≤432，
+            // 关闭钮位置与原来在栈内时一致）；滚动区从关闭行下方起，不再盖住它。
+            closeRow.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
+            closeRow.leadingAnchor.constraint(greaterThanOrEqualTo: view.safeAreaLayoutGuide.leadingAnchor, constant: 22),
+            closeRow.trailingAnchor.constraint(lessThanOrEqualTo: view.safeAreaLayoutGuide.trailingAnchor, constant: -22),
+            closeRow.centerXAnchor.constraint(equalTo: view.centerXAnchor),
+            closeRow.widthAnchor.constraint(lessThanOrEqualToConstant: 432),
+            scrollView.topAnchor.constraint(equalTo: closeRow.bottomAnchor),
             scrollView.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor),
             scrollView.leadingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.leadingAnchor),
             scrollView.trailingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.trailingAnchor),
@@ -295,7 +311,8 @@ final class BearyInviteViewController: UIViewController {
             contentView.leadingAnchor.constraint(equalTo: scrollView.contentLayoutGuide.leadingAnchor),
             contentView.trailingAnchor.constraint(equalTo: scrollView.contentLayoutGuide.trailingAnchor),
             contentView.widthAnchor.constraint(equalTo: scrollView.frameLayoutGuide.widthAnchor),
-            stackView.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 16),
+            // 栈顶 34 = 原 16 上边距 + 原 closeRow 后间距 18，标题首帧位置不变。
+            stackView.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 34),
             stackView.bottomAnchor.constraint(lessThanOrEqualTo: contentView.bottomAnchor, constant: -24),
             stackView.leadingAnchor.constraint(greaterThanOrEqualTo: contentView.leadingAnchor, constant: 22),
             stackView.trailingAnchor.constraint(lessThanOrEqualTo: contentView.trailingAnchor, constant: -22),
@@ -332,6 +349,41 @@ final class BearyInviteViewController: UIViewController {
     /// 键盘 / delegate / target 与校验逻辑均不动）。
     private func makeFieldContainer(field: UITextField) -> UIView {
         return BearyInputContainer(content: field, fixedHeight: 48)
+    }
+
+    // MARK: - 键盘避让（审计 8 项）
+
+    /// 与反馈页同口径：键盘帧转视图坐标后算与滚动区（底锚安全区底）的
+    /// 实际遮挡，跟随系统时长与曲线补底部 inset；浮动键盘、分屏、高度
+    /// 变化只发 WillChangeFrame 时同样跟上，不再按屏幕高度全量垫。
+    /// 垫高后把当前输入框所在绑定行滚到可见位置（行内含输入框与绑定钮），
+    /// 下一 runloop 待布局完成后再算，避免按旧 bounds 算错。
+    @objc private func inviteKeyboardWillShow(_ note: Notification) {
+        guard let value = note.userInfo?[UIResponder.keyboardFrameEndUserInfoKey] as? NSValue else { return }
+        let frameInView = view.convert(value.cgRectValue, from: nil)
+        let scrollBottom = view.bounds.maxY - view.safeAreaInsets.bottom
+        let bottom = max(0, scrollBottom - frameInView.minY)
+        let duration = (note.userInfo?[UIResponder.keyboardAnimationDurationUserInfoKey] as? Double) ?? 0.25
+        let curveRaw = (note.userInfo?[UIResponder.keyboardAnimationCurveUserInfoKey] as? NSNumber)?.uintValue ?? 0
+        UIView.animate(withDuration: duration, delay: 0, options: [.beginFromCurrentState, UIView.AnimationOptions(rawValue: curveRaw << 16)], animations: {
+            self.scrollView.contentInset.bottom = bottom
+            self.scrollView.verticalScrollIndicatorInsets.bottom = bottom
+        })
+        DispatchQueue.main.async { [weak self] in
+            guard let self = self, self.bindField.isFirstResponder, !self.bindRow.isHidden else { return }
+            self.view.layoutIfNeeded()
+            let rect = self.bindRow.convert(self.bindRow.bounds, to: self.scrollView)
+            self.scrollView.scrollRectToVisible(rect.insetBy(dx: 0, dy: -8), animated: !UIAccessibility.isReduceMotionEnabled)
+        }
+    }
+
+    @objc private func inviteKeyboardWillHide(_ note: Notification) {
+        let duration = (note.userInfo?[UIResponder.keyboardAnimationDurationUserInfoKey] as? Double) ?? 0.25
+        let curveRaw = (note.userInfo?[UIResponder.keyboardAnimationCurveUserInfoKey] as? NSNumber)?.uintValue ?? 0
+        UIView.animate(withDuration: duration, delay: 0, options: [.beginFromCurrentState, UIView.AnimationOptions(rawValue: curveRaw << 16)], animations: {
+            self.scrollView.contentInset.bottom = 0
+            self.scrollView.verticalScrollIndicatorInsets.bottom = 0
+        })
     }
 
     // MARK: - 数据
