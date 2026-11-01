@@ -454,6 +454,101 @@ enum BearyProfilePersonalLogic {
         }
         return true
     }
+
+    // MARK: - 词汇指纹后台计算与缓存
+    //
+    // 问题：wordprint() 逐篇跑 NLTokenizer，调用方（个人页 renderStats、
+    // 年报 renderSelectedYear）都在主线程；日记多时进个人页 / 切年份会
+    // 卡住界面。本节只动线程与缓存，同步 wordprint() 一字不动——口径、
+    // 排序、文案的唯一事实来源仍是它；后台算的是同一个函数、同一输入
+    // 顺序，故结果与同步计算完全一致。
+    // 缓存键 = 账号 + 年份 + limit + isOwn + 语料指纹。服务端没有给这份
+    // 内存语料下发数据版本号，故指纹即数据版本：取影响结果的全部字段
+    // （按计算顺序排列的当年可见条目的 id / createdAt / 正文 / 可见性
+    // 字段），增删改篇、可见性翻转、限时过期都会换键；切号、切年本来
+    // 就换键。指纹只做 Hasher 哈希，不存正文、不写库、不落盘。
+    // 完成回调一律回主线程；缓存命中时同步回调（调用方在主线程时即
+    // 本次渲染内回填，无闪烁）。调用方另以代次号 + 年份丢弃过期回调——
+    // 本层不替调用方判定“当前年份 / 当前账号”，因为本层不知道界面状态。
+
+    private static let wordprintQueue = DispatchQueue(label: "com.beary.wordprint", qos: .userInitiated)
+    private static let wordprintCacheLock = NSLock()
+    private static var wordprintCache: [WordprintCacheKey: Wordprint] = [:]
+    private static var wordprintCacheOrder: [WordprintCacheKey] = []
+    private static let wordprintCacheLimit = 16
+
+    struct WordprintCacheKey: Hashable {
+        var accountKey: String
+        var year: Int
+        var limit: Int
+        var isOwn: Bool
+        var fingerprint: Int
+    }
+
+    /// 语料指纹：与 wordprint() 内部完全相同的过滤顺序
+    /// （visibleEntries → yearEntries），只喂影响结果的字段；时区也喂入，
+    /// 设备时区变化导致年份归属变化时同样换键。
+    static func wordprintFingerprint(entries: [Entry], year: Int, isOwn: Bool, calendar: Calendar) -> Int {
+        var hasher = Hasher()
+        hasher.combine(calendar.timeZone.identifier)
+        let yearEntriesValue = yearEntries(entries: visibleEntries(entries, isOwn: isOwn), year: year, calendar: calendar)
+        hasher.combine(yearEntriesValue.count)
+        for entry in yearEntriesValue {
+            hasher.combine(entry.id)
+            hasher.combine(entry.createdAt)
+            hasher.combine(entry.content)
+            hasher.combine(entry.isPublic)
+            hasher.combine(entry.ephemeralUntil)
+            hasher.combine(entry.placeholder)
+        }
+        return hasher.finalize()
+    }
+
+    /// 后台算 wordprint：缓存命中同步回调，未命中则在后台队列算完、
+    /// 写缓存、回主线程回调。调用方必须在回调里凭自己的代次号与年份
+    /// 复核“仍是当前请求”，过期结果一律丢弃。
+    static func wordprintAsync(
+        accountKey: String,
+        entries: [Entry],
+        year: Int,
+        isOwn: Bool,
+        limit: Int = 15,
+        calendar: Calendar,
+        completion: @escaping (Wordprint) -> Void
+    ) {
+        let key = WordprintCacheKey(
+            accountKey: accountKey,
+            year: year,
+            limit: limit,
+            isOwn: isOwn,
+            fingerprint: wordprintFingerprint(entries: entries, year: year, isOwn: isOwn, calendar: calendar)
+        )
+        wordprintCacheLock.lock()
+        let cached = wordprintCache[key]
+        wordprintCacheLock.unlock()
+        if let cached = cached {
+            completion(cached)
+            return
+        }
+        // Entry 是值类型、wordprint 内 tokenizer 现建现用不共享，
+        // 后台只读语料，故跨线程安全；结果同样是值类型。
+        wordprintQueue.async {
+            let value = wordprint(entries: entries, year: year, isOwn: isOwn, limit: limit, calendar: calendar)
+            wordprintCacheLock.lock()
+            if wordprintCache[key] == nil {
+                wordprintCacheOrder.append(key)
+                if wordprintCacheOrder.count > wordprintCacheLimit {
+                    let evicted = wordprintCacheOrder.removeFirst()
+                    wordprintCache.removeValue(forKey: evicted)
+                }
+            }
+            wordprintCache[key] = value
+            wordprintCacheLock.unlock()
+            DispatchQueue.main.async {
+                completion(value)
+            }
+        }
+    }
 }
 
 /// 每月字数趋势图（纯 UIView，不引图表库；复用心情条形的 orange/faint 配色）。
@@ -545,7 +640,9 @@ final class BearyMonthlyCharsChartView: UIView {
 // 他人页通篇只按公开篇统计，首屏指纹徽标行明确标注「仅公开篇」。
 // 每年一张：年份选择器只列有词条目的年份（availableYears），切年份时
 // renderSelectedYear 先清空动态栈再重建——旧年词行绝不残留到新年；
-// 每次只算当选年份，不重算、不缓存其他年份，不写库。
+// 每次只算当选年份。词汇指纹走后台算 + 内存缓存（键 = 账号 / 年份 /
+// 语料指纹，不写库）：其余各节同步建好立即呈现，词行算完后插回栈顶，
+// 顺序与同步版最终一致；快速连点年份时旧年结果凭代次丢弃。
 // 无词时指纹一节整节省略（不留空标题），但口径徽标行仍单独出现，
 // 避免他人页在无词年里丢了「仅公开篇」标注。
 
@@ -555,6 +652,18 @@ final class BearyYearReviewViewController: UIViewController {
     private let isOwnFlag: Bool
     private let availableYearValues: [Int]
     private var selectedYear: Int
+    /// 词汇指纹在途代次：renderSelectedYear 每调一次即 +1；过期回调
+    /// （旧年 / 旧语料）到达时凭此丢弃，最终只留最后选中的年份。
+    private var wordprintRequest = 0
+    /// 词汇指纹缓存的账号键：语料作者 id；取不到时退 isOwn 口径。
+    /// 账号键只是纵深防御——语料指纹（篇 id + 正文）本身已区分不同
+    /// 作者的语料，跨号串结果还须指纹也撞上才可能发生。
+    private var wordprintAccountKey: String {
+        if let authorId = filteredEntries.compactMap({ $0.authorId }).first {
+            return "author:\(authorId)"
+        }
+        return isOwnFlag ? "own:unknown" : "other:unknown"
+    }
 
     private let titleLabel: UILabel = {
         let label = UILabel()
@@ -696,6 +805,10 @@ final class BearyYearReviewViewController: UIViewController {
     }
 
     private func renderSelectedYear() {
+        // 代次先 +1：空年提前返回的分支同样作废在途旧请求，旧词行
+        // 绝不插进新年的栈。
+        wordprintRequest += 1
+        let request = wordprintRequest
         titleLabel.text = "\(selectedYear) 年度回顾"
         yearLabel.text = "\(selectedYear) 年"
         // 只有一年时整行选择器隐藏（年份已在标题里）；多年前后箭头按年份数组
@@ -731,15 +844,9 @@ final class BearyYearReviewViewController: UIViewController {
             return
         }
 
-        // 主视觉：词汇指纹（当年 top 15，点词进详情；无词时整节省略，只留口径行）。
-        let wordprintValue = BearyProfilePersonalLogic.wordprint(entries: filteredEntries, year: selectedYear, isOwn: isOwnFlag, calendar: calendar)
-        if !wordprintValue.items.isEmpty {
-            wordprintView.configure(with: wordprintValue, scope: scopeValue)
-            dynamicStack.addArrangedSubview(wordprintView)
-        } else {
-            dynamicStack.addArrangedSubview(bearyMakeWordprintScopeBadge(scope: scopeValue))
-        }
-
+        // 主视觉词汇指纹不在此处同步算（NLTokenizer 逐篇分词会卡住
+        // 年份按钮事件）：其余各节先同步建好，词行在函数末尾后台请求，
+        // 算完插回栈顶——最终顺序与同步版一致（词行在摘要之上）。
         // 总篇数 / 最长连续 / 第一篇（当年）。
         var writtenDays = Set<Date>()
         for entry in yearEntriesValue {
@@ -874,6 +981,29 @@ final class BearyYearReviewViewController: UIViewController {
         footnote.textColor = BearyColors.gray
         footnote.text = "词汇指纹只按当年正文统计，不展示正文。完整年度报告年底另做。"
         dynamicStack.addArrangedSubview(footnote)
+
+        // 词汇指纹后台算：缓存命中时同步回调、直接插在栈顶；未命中时
+        // 后台算完回主线程一次性插回，最终顺序与同步版一致。代次 + 年份
+        // 双重守卫，旧年结果不得覆盖新年。
+        let year = selectedYear
+        BearyProfilePersonalLogic.wordprintAsync(
+            accountKey: wordprintAccountKey,
+            entries: filteredEntries,
+            year: year,
+            isOwn: isOwnFlag,
+            calendar: calendar
+        ) { [weak self] wordprintValue in
+            guard let self = self,
+                  self.wordprintRequest == request,
+                  self.selectedYear == wordprintValue.year else { return }
+            if !wordprintValue.items.isEmpty {
+                self.wordprintView.configure(with: wordprintValue, scope: self.scopeValue)
+                self.dynamicStack.insertArrangedSubview(self.wordprintView, at: 0)
+            } else {
+                // 无词时整节省略，只留口径行（与同步版一致）。
+                self.dynamicStack.insertArrangedSubview(bearyMakeWordprintScopeBadge(scope: self.scopeValue), at: 0)
+            }
+        }
     }
 
     @objc private func prevYearTapped() {
