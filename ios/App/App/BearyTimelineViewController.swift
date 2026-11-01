@@ -465,7 +465,8 @@ final class BearyCalendarCardView: UIView {
 
     override init(frame: CGRect) {
         super.init(frame: frame)
-        backgroundColor = BearyColors.surface
+        // 周/月视图日历卡底色均与页面背景同色（见 render 处注释）。
+        backgroundColor = BearyColors.bg
         layer.borderWidth = 1
         layer.bearyDynamicBorderColor = BearyColors.line
         layer.cornerRadius = 12
@@ -650,10 +651,11 @@ final class BearyCalendarCardView: UIView {
     /// weekKeys：月视图入场错峰时要跳过的本周日期 key（网页 calStaggerMonthCells
     /// 口径：本周格子不加 .cal-in）。周视图下本参数无用。
     func render(days: [BearyCalendarDay], mode: ViewMode, weekKeys: Set<String> = []) {
-        // 月视图底色与页面背景同色：月视图卡填充改走 BearyColors.bg（动态色，
-        // 浅色白、深色纯黑，深浅自动跟随），与页面底无色差；周视图卡仍走
-        // surface 不动；卡片边线与圆角不动，日记卡等其他卡片一律不动。
-        backgroundColor = (mode == .month) ? BearyColors.bg : BearyColors.surface
+        // 日历卡底色与页面背景同色：周/月视图卡填充均走 BearyColors.bg（动态色，
+        // 浅色白、深色纯黑，深浅自动跟随），与页面底无色差；卡片边线与圆角不动，
+        // 日记卡等其他卡片一律不动。（#410 只改了月视图，周视图仍走 surface
+        // 深灰，本支补齐周视图。）
+        backgroundColor = BearyColors.bg
         // F3：翻页钮按周/月模式补无障碍文案。
         prevButton.accessibilityLabel = (mode == .week) ? "上一周" : "上个月"
         nextButton.accessibilityLabel = (mode == .week) ? "下一周" : "下个月"
