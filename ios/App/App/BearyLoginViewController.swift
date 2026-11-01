@@ -493,7 +493,7 @@ final class BearyLoginViewController: UIViewController {
         if isAgreed {
             agreeButton.backgroundColor = BearyColors.orange
             agreeButton.layer.bearyDynamicBorderColor = BearyColors.orange
-            agreeButton.tintColor = BearyColors.bg
+            agreeButton.tintColor = BearyColors.onBrand
             agreeButton.setImage(BearyIconImages.image(named: "icon_check", pointSize: 13), for: .normal)
         } else {
             agreeButton.backgroundColor = BearyColors.faint
