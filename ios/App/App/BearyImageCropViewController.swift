@@ -250,10 +250,26 @@ final class BearyImageCropViewController: UIViewController, UIScrollViewDelegate
     }
 
     @objc private func didTapConfirm() {
-        if let cropped = croppedImage() {
-            onConfirm?(cropped)
+        // 确认点按立即反馈：先改文案+禁用两钮（主线程只做这一件小事），
+        // 全尺寸重绘挪到后台做，界面不再卡一下才跳走；裁完回主线程再回调+关页。
+        guard let geometry = cropGeometry() else {
+            dismiss(animated: !UIAccessibility.isReduceMotionEnabled)
+            return
         }
-        dismiss(animated: !UIAccessibility.isReduceMotionEnabled)
+        confirmButton.isEnabled = false
+        cancelButton.isEnabled = false
+        confirmButton.setTitle("处理中…", for: .normal)
+        let source = sourceImage
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            let cropped = self?.cropWithGeometry(geometry, source: source)
+            DispatchQueue.main.async {
+                guard let strongSelf = self else { return }
+                if let cropped = cropped {
+                    strongSelf.onConfirm?(cropped)
+                }
+                strongSelf.dismiss(animated: !UIAccessibility.isReduceMotionEnabled)
+            }
+        }
     }
 
     @objc private func didTapCancel() {
@@ -263,20 +279,15 @@ final class BearyImageCropViewController: UIViewController, UIScrollViewDelegate
 
     /// 按窗裁：窗（view 坐标）→ 滚动区坐标 → 图视图坐标（convert 计入缩放变换）
     /// → 点坐标 → 像素坐标；先把原图方向归一化再裁，避免朝向图的像素坐标错位。
-    private func croppedImage() -> UIImage? {
+    /// 主线程快照裁剪几何：只做坐标换算，不碰像素重绘。
+    /// 归一化后图尺寸与原图一致（size/scale 不变），故像素框可先算好。
+    private func cropGeometry() -> (pixelRect: CGRect, scale: CGFloat)? {
         guard cropRect.width > 0 && cropRect.height > 0 else { return nil }
         guard imageView.bounds.width > 0 && imageView.bounds.height > 0 else { return nil }
         let rectInScroll = scrollView.convert(cropRect, from: view)
         let rectInImageView = imageView.convert(rectInScroll, from: scrollView)
-        // 方向归一化：按 size 重绘，原朝向 baked 进像素，cgImage 尺寸即 size×scale。
-        let format = UIGraphicsImageRendererFormat()
-        format.scale = sourceImage.scale
-        let normalized = UIGraphicsImageRenderer(size: sourceImage.size, format: format).image { _ in
-            self.sourceImage.draw(in: CGRect(origin: .zero, size: self.sourceImage.size))
-        }
-        guard let cgImage = normalized.cgImage else { return nil }
-        let scaleX = normalized.size.width / imageView.bounds.width
-        let scaleY = normalized.size.height / imageView.bounds.height
+        let scaleX = sourceImage.size.width / imageView.bounds.width
+        let scaleY = sourceImage.size.height / imageView.bounds.height
         var pixelRect = CGRect(
             x: rectInImageView.minX * scaleX,
             y: rectInImageView.minY * scaleY,
@@ -284,8 +295,21 @@ final class BearyImageCropViewController: UIViewController, UIScrollViewDelegate
             height: rectInImageView.height * scaleY
         )
         pixelRect = pixelRect.integral
-        pixelRect = pixelRect.intersection(CGRect(origin: .zero, size: normalized.size))
+        pixelRect = pixelRect.intersection(CGRect(origin: .zero, size: sourceImage.size))
         guard pixelRect.width > 0 && pixelRect.height > 0 else { return nil }
+        return (pixelRect, sourceImage.scale)
+    }
+
+    /// 后台裁剪：全尺寸方向归一化重绘 + 按像素裁（UIGraphicsImageRenderer
+    /// 可离主线程用；几何已在主线程快照，本函数不读任何 view 状态）。
+    private func cropWithGeometry(_ geometry: (pixelRect: CGRect, scale: CGFloat), source: UIImage) -> UIImage? {
+        let format = UIGraphicsImageRendererFormat()
+        format.scale = source.scale
+        let normalized = UIGraphicsImageRenderer(size: source.size, format: format).image { _ in
+            source.draw(in: CGRect(origin: .zero, size: source.size))
+        }
+        guard let cgImage = normalized.cgImage else { return nil }
+        let pixelRect = geometry.pixelRect
         // cgImage 按像素裁：点坐标须乘 scale（size 是 pt，cgImage 是像素）。
         let cgRect = CGRect(
             x: pixelRect.minX * normalized.scale,
