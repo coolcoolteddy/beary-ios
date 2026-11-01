@@ -2298,6 +2298,17 @@ final class BearySettingsViewController: UIViewController {
         return spacer
     }
 
+    /// 设置行按压视觉反馈：只走 opacity（不动布局、不缩放），与原有
+    /// touchDown 轻震叠加；关了系统触感时仍能看到行面变暗，点按不再像没点中。
+    /// 全宽行不用 bearyAddPressFeedback 的缩放（整行抖动），故只降 wrap 透明度。
+    @objc private func settingsRowPressDown(_ sender: UIButton) {
+        sender.superview?.alpha = 0.55
+    }
+
+    @objc private func settingsRowPressUp(_ sender: UIButton) {
+        sender.superview?.alpha = 1
+    }
+
     private func makeSettingsTappableRow(content: UIView, button: UIButton) -> UIView {
         let wrap = UIView()
         wrap.translatesAutoresizingMaskIntoConstraints = false
@@ -2305,6 +2316,8 @@ final class BearySettingsViewController: UIViewController {
         wrap.addSubview(content)
         button.translatesAutoresizingMaskIntoConstraints = false
         wrap.addSubview(button)
+        button.addTarget(self, action: #selector(settingsRowPressDown(_:)), for: .touchDown)
+        button.addTarget(self, action: #selector(settingsRowPressUp(_:)), for: [.touchUpInside, .touchUpOutside, .touchCancel])
         NSLayoutConstraint.activate([
             content.topAnchor.constraint(equalTo: wrap.topAnchor),
             content.leadingAnchor.constraint(equalTo: wrap.leadingAnchor),
