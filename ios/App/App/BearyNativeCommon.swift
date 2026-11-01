@@ -137,7 +137,7 @@ enum BearyGlass {
 }
 
 /// 玻璃按钮：BearyHit44Button + 背部玻璃底。只换按钮底质，不动图标/文字/尺寸/44pt 热区；
-/// 点亮色、描边、边框等上层样式一律不动。圆角取半高（44×44 图标钮为圆、宽钮为胶囊，与预览一致）。
+/// 点亮色、描边、边框等上层样式一律不动。圆角取半高（44×44 图标钮为圆、宽钮为 pill 形，与预览一致）。
 /// 玻璃视图插在 index 0，位于 imageView/titleLabel 之下；backgroundColor 必须保持 clear，
 /// 否则实色底会盖住玻璃——转换点须同步把原实色底改 clear（边框/描边不动）。
 /// UIButton(type:) 在子类上调用仍走本类实例，现有 BearyHit44Button(type:) 调用点只改类名即可。
@@ -671,6 +671,7 @@ final class BearyImageLoader {
 
 private var bearyImageTaskKey: UInt8 = 0
 private var bearyImageURLKey: UInt8 = 0
+private var bearyImageRingKey: UInt8 = 0
 
 extension UIView {
     /// 动画批 11 号离屏停播：递归停掉子树内全部 BearyEmoteView。cell 的
@@ -696,25 +697,67 @@ extension UIImageView {
     /// S10：downsampleToWidth 透传给 BearyImageLoader.loadDetailed（bearySetImage
     /// 本来就走 loadDetailed 而非 load，onFailure 需 Result 区分取消与失败）；
     /// 它放在 onFailure 之前，使 onFailure 仍为末尾闭包参数，现有尾随闭包调用点不用改。
+    /// 图片加载转圈（网页同款，不用下拉刷新 icon_refresh）：加载中在图框中央挂
+    /// 18pt 网页圆环（BearyWebRingSpinnerView），图到/失败/取消/复用清图时摘掉；
+    /// 失败态一字不动（仍走 onFailure 的重试 UI）。有占位图时不挂转圈——
+    /// 占位图本身就是可见内容，网页环在图片之下、有图时也看不见。
+    /// 图到时若转圈已亮过（加载 ≥0.15s），图片 0.25s 淡入；瞬时命中缓存时直设不闪。
+    /// 减动效开启时直设不淡入（走 BearyMotion.animated 口径，不另起判断）。
+    private func bearyAttachWebRingSpinner() {
+        bearyRemoveWebRingSpinner()
+        let ring = BearyWebRingSpinnerView()
+        addSubview(ring)
+        NSLayoutConstraint.activate([
+            ring.centerXAnchor.constraint(equalTo: centerXAnchor),
+            ring.centerYAnchor.constraint(equalTo: centerYAnchor),
+            ring.widthAnchor.constraint(equalToConstant: 18),
+            ring.heightAnchor.constraint(equalToConstant: 18),
+        ])
+        ring.startSpinning()
+        objc_setAssociatedObject(self, &bearyImageRingKey, ring, .OBJC_ASSOCIATION_RETAIN_NONATOMIC)
+    }
+
+    private func bearyRemoveWebRingSpinner() {
+        if let ring = objc_getAssociatedObject(self, &bearyImageRingKey) as? BearyWebRingSpinnerView {
+            ring.stopSpinning()
+            ring.removeFromSuperview()
+        }
+        objc_setAssociatedObject(self, &bearyImageRingKey, nil, .OBJC_ASSOCIATION_RETAIN_NONATOMIC)
+    }
+
     func bearySetImage(url: URL?, placeholder: UIImage? = nil, downsampleToWidth: CGFloat? = nil, onFailure: ((BearyImageLoadError) -> Void)? = nil) {
         if let old = objc_getAssociatedObject(self, &bearyImageTaskKey) as? URLSessionDataTask {
             old.cancel()
         }
+        bearyRemoveWebRingSpinner()
         objc_setAssociatedObject(self, &bearyImageURLKey, url, .OBJC_ASSOCIATION_RETAIN_NONATOMIC)
         self.image = placeholder
         guard let url = url else {
             objc_setAssociatedObject(self, &bearyImageTaskKey, nil, .OBJC_ASSOCIATION_RETAIN_NONATOMIC)
             return
         }
+        if placeholder == nil {
+            bearyAttachWebRingSpinner()
+        }
+        let startedAt = Date()
         let task = BearyImageLoader.shared.loadDetailed(url: url, downsampleToWidth: downsampleToWidth) { [weak self] result in
             guard let self = self else { return }
             let current = objc_getAssociatedObject(self, &bearyImageURLKey) as? URL
             guard current == url else { return }
+            // 取消先 return：同 URL 重发时旧回调不得摘掉新任务的转圈。
+            if case .failure(let err) = result, case .cancelled = err { return }
+            self.bearyRemoveWebRingSpinner()
             switch result {
             case .success(let img):
-                self.image = img
+                let slowLoad = Date().timeIntervalSince(startedAt) >= 0.15
+                if slowLoad && self.alpha == 1 && BearyMotion.animated(true) {
+                    self.alpha = 0
+                    self.image = img
+                    UIView.animate(withDuration: 0.25) { self.alpha = 1 }
+                } else {
+                    self.image = img
+                }
             case .failure(let err):
-                if case .cancelled = err { return }
                 onFailure?(err)
             }
         }
@@ -753,9 +796,91 @@ enum BearyText {
         "surprised": "惊讶", "pat": "摸摸头", "peek": "偷偷看", "sleepy": "困倦",
         "proud": "骄傲", "shrug": "没办法", "sorry": "对不起", "cry": "想哭",
         "angry": "生气", "thanks": "谢谢你", "zap": "带电", "wave": "挥挥手",
-        "candle": "留一盏灯", "flower": "送你小花", "letter": "收到心意", "paperplane": "把烦恼寄走",
-        "sprout": "慢慢来", "tea": "喝杯热茶", "umbrella": "给你撑伞", "wish": "愿你如愿",
     ]
+
+    /// 内联心情记号（编辑器熊脸图 ↔ 落库纯文本的中间层）：
+    /// 编辑器里心情是图片附件，正文/标题落库与后端都只存纯文本，故附件在
+    /// 发出/存草稿时转成记号 `[mood:<key>]`，读回编辑器/卡片/详情时再转回图。
+    /// 只有熊脸 32 只在内（后 8 只非熊脸已删，不进记号集）；未知 key 的记号
+    /// 原样当文字，不凭空变图。用户手打的同形文字也会在读回时变图，
+    /// 这是记号方案固有的撞形口径，已在交回说明里写明。
+    static let bearMoodKeys: [String] = [
+        "agree", "happy", "applause", "cheer", "comfort", "confused", "love", "determined",
+        "facepalm", "shy", "goodnight", "hug", "wink", "idea", "kiss", "thinking",
+        "listening", "lonely", "speechless", "nope", "surprised", "pat", "peek", "sleepy",
+        "proud", "shrug", "sorry", "cry", "angry", "thanks", "zap", "wave",
+    ]
+    static let inlineMoodKeyAttribute = NSAttributedString.Key(rawValue: "BearyInlineMoodKey")
+    static func inlineMoodToken(for key: String) -> String? {
+        guard bearMoodKeys.contains(key) else { return nil }
+        return "[mood:\(key)]"
+    }
+    /// 附件 → 记号：附件字符本身是 U+FFFC，绝不能原样落库；无记号属性的
+    /// 未知附件直接跳过，不让占位符污染正文。
+    static func inlinePlainText(from attributed: NSAttributedString?) -> String {
+        guard let attributed = attributed, attributed.length > 0 else { return "" }
+        var out = ""
+        let str = attributed.string as NSString
+        attributed.enumerateAttributes(in: NSRange(location: 0, length: attributed.length), options: []) { attrs, range, _ in
+            if let key = attrs[inlineMoodKeyAttribute] as? String, let token = inlineMoodToken(for: key) {
+                out += token
+            } else if attrs[.attachment] == nil {
+                out += str.substring(with: range)
+            }
+        }
+        return out
+    }
+    /// 记号 → 附件：字号跟随传入字体（标题 17 粗体 / 正文 16），基线按 descender 对齐。
+    static func inlineAttachment(for key: String, font: UIFont, dark: Bool) -> NSAttributedString? {
+        guard bearMoodKeys.contains(key), let image = BearyEmoteImages.image(for: key, dark: dark) else { return nil }
+        let attachment = NSTextAttachment()
+        attachment.image = image
+        attachment.bounds = CGRect(x: 0, y: font.descender, width: font.pointSize, height: font.pointSize)
+        attachment.accessibilityLabel = moodNames[key]
+        let result = NSMutableAttributedString(attachment: attachment)
+        result.addAttribute(inlineMoodKeyAttribute, value: key, range: NSRange(location: 0, length: 1))
+        result.addAttribute(.font, value: font, range: NSRange(location: 0, length: 1))
+        return result
+    }
+    static func inlineAttributedText(from plain: String, font: UIFont, color: UIColor, paragraphStyle: NSParagraphStyle?, dark: Bool) -> NSAttributedString {
+        var attrs: [NSAttributedString.Key: Any] = [.font: font, .foregroundColor: color]
+        if let paragraphStyle = paragraphStyle { attrs[.paragraphStyle] = paragraphStyle }
+        guard let regex = try? NSRegularExpression(pattern: "\\[mood:([a-z]+)\\]", options: []) else {
+            return NSAttributedString(string: plain, attributes: attrs)
+        }
+        let ns = plain as NSString
+        let result = NSMutableAttributedString()
+        var cursor = 0
+        for match in regex.matches(in: plain, options: [], range: NSRange(location: 0, length: ns.length)) {
+            let range = match.range
+            if range.location > cursor {
+                result.append(NSAttributedString(string: ns.substring(with: NSRange(location: cursor, length: range.location - cursor)), attributes: attrs))
+            }
+            let key = ns.substring(with: match.range(at: 1))
+            if let attachment = inlineAttachment(for: key, font: font, dark: dark) {
+                result.append(attachment)
+            } else {
+                result.append(NSAttributedString(string: ns.substring(with: range), attributes: attrs))
+            }
+            cursor = range.location + range.length
+        }
+        if cursor < ns.length {
+            result.append(NSAttributedString(string: ns.substring(from: cursor), attributes: attrs))
+        }
+        return result
+    }
+    /// 可见字数：一个记号只算 1 字（图占 1 格），供草稿箱字数等纯文本面用；
+    /// 编辑器内直接用 attributed 长度（附件本就是 1 格），不用本函数。
+    static func inlineVisibleCount(of plain: String) -> Int {
+        guard let regex = try? NSRegularExpression(pattern: "\\[mood:([a-z]+)\\]", options: []) else { return plain.count }
+        let ns = plain as NSString
+        var count = plain.count
+        for match in regex.matches(in: plain, options: [], range: NSRange(location: 0, length: ns.length)) {
+            let key = ns.substring(with: match.range(at: 1))
+            if bearMoodKeys.contains(key) { count -= (match.range.length - 1) }
+        }
+        return count
+    }
 
     /// 天气 key → 中文名（与网页 WX_DEFS 同集 9 种）。
     static let weatherNames: [String: String] = [
@@ -821,6 +946,8 @@ enum BearyEmoteOrder {
 
 struct UploadResponse: Decodable {
     var key: String?
+    /// 实况视频 key（服务端 live_key；仅附带 videoDataUrl 的实况上传才有）。
+    var liveKey: String?
 }
 
 struct CreateResponse: Decodable {
@@ -856,9 +983,13 @@ extension BearyAPI {
 
     /// 图片上传：dataUrl 与 thumb 均为 data:image/jpeg;base64,...；单图 ≤5MB、缩略图 ≤2MB。
     /// 成功返回 R2 key（原图与缩略图共用该 key，缩略图另存 key+'_t'）。
-    func uploadImage(dataUrl: String, width: Int, height: Int, thumbDataUrl: String?, completion: @escaping (Result<UploadResponse, APIError>) -> Void) {
+    /// 实况：videoDataUrl 非空时才附带（data:video/quicktime;base64,... 的 mov，
+    /// App 端已限 ≤10MB），后端把视频存 key+'_live' 并回 live_key；videoDataUrl
+    /// 为 nil 时 body 与旧版一字相同，非实况上传路径不动。
+    func uploadImage(dataUrl: String, width: Int, height: Int, thumbDataUrl: String?, videoDataUrl: String? = nil, completion: @escaping (Result<UploadResponse, APIError>) -> Void) {
         var body: [String: Any] = ["dataUrl": dataUrl, "w": width, "h": height]
         if let t = thumbDataUrl { body["thumb"] = t }
+        if let v = videoDataUrl { body["videoDataUrl"] = v }
         request("/beary/api/images/upload", method: "POST", jsonBody: body, completion: completion)
     }
 
@@ -871,24 +1002,25 @@ extension BearyAPI {
     /// 成功 201 返回 {id, publish_at, edit_deadline}；失败码：content required / content too long /
     /// invalid image ownership / image unavailable(409) / create_gap / create_day_limit /
     /// create_ip_limit(429) / create_dup。
-    func publishEntry(content: String, images: [String], mood: String?, weather: String? = nil, quoteId: String? = nil, published: Int? = nil, mentionedUserId: Int? = nil, title: String? = nil, ephemeral: Int? = nil, clientReq: String, locationName: String? = nil, locationDistrict: String? = nil, capsuleBuried: Int? = nil, capsuleUnlockDate: String? = nil, capsuleDistrict: String? = nil, completion: @escaping (Result<CreateResponse, APIError>) -> Void) {
+    func publishEntry(content: String, images: [String], mood: String?, weather: String? = nil, quoteId: String? = nil, published: Int? = nil, mentionedUserId: Int? = nil, title: String? = nil, ephemeral: Int? = nil, clientReq: String, locationName: String? = nil, locationDistrict: String? = nil, temperature: Int? = nil, liveVideos: [String: String]? = nil, completion: @escaping (Result<CreateResponse, APIError>) -> Void) {
         var body: [String: Any] = ["content": content, "images": images, "client_req": clientReq]
+        // 实况：非空才发 live_videos（无实况的新建与旧版 body 一字相同）；
+        // 空映射不发（新建无旧态可清，编辑清实况走 updateEntry 的显式空映射）。
+        if let live = liveVideos, !live.isEmpty { body["live_videos"] = live }
         // 标题透传，nil=省略不传；非 nil 原样传。新建调用方传 preservedTitle
         //（全新日记为 nil、按无标题创建；续写旧草稿时为旧标题原样带回）；
         // 编辑 PUT 不再发显式空串清标题（标题行已去掉、标题不可改），见 updateEntry。
         if let t = title { body["title"] = t }
         if let m = mood { body["mood"] = m }
         if let w = weather { body["weather"] = w }
+        // 天气气温：后端 temperature_c 字段未上线前服务端忽略本键，App 端先行透传（与位置字段同款先行口径）；
+        // 字段上线后即持久化，卡片/编辑回填凭 Entry.temperatureC 读回。气温只在有天气类型时发。
+        if weather != nil, let temp = temperature { body["temperature_c"] = temp }
         // 批 E：位置只传两段文本，不传经纬度；nil=省略不传（服务端保留缺省 NULL）。
         // 注意：后端字段批尚未落地前服务端可能忽略这两个键，App 端先行透传，
         // 位置持久化以后端批上线为准（见 ios/Docs/diary-location-fields.md）。
         if let loc = locationName { body["location_name"] = loc }
         if let district = locationDistrict { body["location_district"] = district }
-        // 时间胶囊：只在埋胶囊时发三键（埋点区级 = 发布时位置的区级快照，不是精确地点名）；
-        // 不埋时三键全省略，服务端保留缺省。经纬度永不进 body。
-        if let buried = capsuleBuried { body["capsule_buried"] = buried }
-        if let unlockDate = capsuleUnlockDate { body["capsule_unlock_date"] = unlockDate }
-        if let capsuleDistrictValue = capsuleDistrict { body["capsule_district"] = capsuleDistrictValue }
         if let q = quoteId { body["quote_id"] = q }
         if let p = published { body["published"] = p }
         if let e = ephemeral { body["ephemeral"] = e }
@@ -902,9 +1034,12 @@ extension BearyAPI {
     /// （公开后 15 分钟内仍可编辑；可见性只走 visibility 接口，不可经此接口改）。
     /// 成功只返回 {ok: true}，调用方成功后自行重拉单篇。
     /// 图片须归属本人且存在，否则 400 'invalid image ownership' / 409 'image unavailable'。
-    func updateEntry(id: String, content: String, images: [String], mood: String?, weather: String?, quoteId: String?, title: String? = nil, mentionedUserId: Int? = nil, clearMentioned: Bool = false, locationName: String? = nil, locationDistrict: String? = nil, clearLocationName: Bool = false, clearLocationDistrict: Bool = false, completion: @escaping (Result<Void, APIError>) -> Void) {
+    func updateEntry(id: String, content: String, images: [String], mood: String?, weather: String?, quoteId: String?, title: String? = nil, mentionedUserId: Int? = nil, clearMentioned: Bool = false, locationName: String? = nil, locationDistrict: String? = nil, clearLocationName: Bool = false, clearLocationDistrict: Bool = false, temperature: Int? = nil, liveVideos: [String: String]? = nil, completion: @escaping (Result<Void, APIError>) -> Void) {
         let safe = id.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? id
         var body: [String: Any] = ["content": content, "images": images]
+        // 实况：调用方算清后才传——非空发映射；显式空映射 = 清掉原实况（删图/
+        // 裁剪丢实况后用）；nil = 省略（纯静态编辑与旧版 body 一字相同）。
+        if let live = liveVideos { body["live_videos"] = live }
         // 批 E：编辑位置——未动时四值皆空、服务端保留原值；改选时调用方把两键都算清楚
         // （有值发值、无值发显式 null），不出现“只改名不改区、旧区残留”的半更新。
         // 清除整行时两 clear 皆真。经纬度永不进 body。
@@ -916,6 +1051,12 @@ extension BearyAPI {
         if let t = title { body["title"] = t }
         if let m = mood { body["mood"] = m }
         if let w = weather { body["weather"] = w }
+        // 气温清除须显式发 null：只「有值才发」时，用户在编辑器里清掉气温
+        // （步进器「清除」/输入框留空）后 PUT 省略本键，服务端保留旧值，
+        // 重进编辑器旧气温复活。天气类型在时气温恒发（值或 null），与位置
+        // 清除同款三态；唯一调用方（编辑器编辑）恒传 selectedTemperature，
+        // 不存在「没管气温却被误清」的调用点。
+        if weather != nil { body["temperature_c"] = temperature ?? NSNull() }
         if let q = quoteId { body["quote_id"] = q }
         if clearMentioned {
             body["mentioned_user_id"] = NSNull()
@@ -925,14 +1066,63 @@ extension BearyAPI {
         requestVoid("/beary/api/entries/\(safe)", method: "PUT", jsonBody: body, completion: completion)
     }
 
-    /// 取消埋藏：PUT /beary/api/entries/:id，三键显式清掉（buried=0 + 两键 null），与位置清除同款三态。
-    /// 后端字段未上线前服务端可能忽略本请求，调用方只在成功后才本地去标记（失败不乐观清除，见地图页）。
-    /// 编辑 PUT 不走本函数：编辑不碰胶囊字段，服务端保留原埋点与解锁日期。
-    func cancelCapsule(id: String, completion: @escaping (Result<Void, APIError>) -> Void) {
-        let safe = id.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? id
-        let body: [String: Any] = ["capsule_buried": 0, "capsule_unlock_date": NSNull(), "capsule_district": NSNull()]
-        requestVoid("/beary/api/entries/\(safe)", method: "PUT", jsonBody: body, completion: completion)
+    /// 当地天气：GET https://api.teddyhn.com/api/weather（cat-likes Worker 现成接口，服务端按请求方
+    /// Cloudflare 边缘信息定位 + open-meteo 取数，前端不直连第三方、不取设备 GPS、不存经纬度）。
+    /// 回包 {temp, code, city}：temp 为摄氏度整数，code 为 WMO 天气代码。code 映射见
+    /// weatherKey(forWMOCode:)；未覆盖的代码只回气温、不改天气类型，绝不编一个类型填上。
+    /// 取不到（网络错、非 200、字段缺失）即走 failure，调用方如实提示、不填假数据。
+    func fetchLocalWeather(completion: @escaping (Result<(weatherKey: String?, temperature: Int, city: String?), Error>) -> Void) {
+        guard let url = URL(string: "https://api.teddyhn.com/api/weather") else {
+            completion(.failure(NSError(domain: "BearyWeather", code: -1, userInfo: nil)))
+            return
+        }
+        var req = URLRequest(url: url)
+        req.httpMethod = "GET"
+        req.timeoutInterval = 10
+        URLSession.shared.dataTask(with: req) { data, response, error in
+            if let error = error {
+                completion(.failure(error))
+                return
+            }
+            guard let http = response as? HTTPURLResponse, http.statusCode == 200,
+                  let data = data,
+                  let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+                completion(.failure(NSError(domain: "BearyWeather", code: -2, userInfo: nil)))
+                return
+            }
+            let temp: Int?
+            if let t = json["temp"] as? Int {
+                temp = t
+            } else if let t = json["temp"] as? Double {
+                temp = Int(t.rounded())
+            } else {
+                temp = nil
+            }
+            guard let temp = temp else {
+                completion(.failure(NSError(domain: "BearyWeather", code: -3, userInfo: nil)))
+                return
+            }
+            let code = json["code"] as? Int
+            let key = code.flatMap { Self.weatherKey(forWMOCode: $0) }
+            completion(.success((weatherKey: key, temperature: temp, city: json["city"] as? String)))
+        }.resume()
     }
+
+    /// WMO 天气代码 → beary 天气 key（网页 WX_DEFS 同集 9 种；wind 无对应代码、night
+    /// 需昼夜信息而现成接口不回 is_day，故两者只走手动选，不由自动填产生）。
+    static func weatherKey(forWMOCode code: Int) -> String? {
+        switch code {
+        case 0: return "sun"
+        case 1, 2: return "cloud"
+        case 3: return "cloudy"
+        case 45, 48: return "fog"
+        case 51, 53, 55, 56, 57, 61, 63, 65, 66, 67, 80, 81, 82: return "rain"
+        case 71, 73, 75, 77, 85, 86: return "snow"
+        case 95, 96, 99: return "thunder"
+        default: return nil
+        }
+    }
+
 }
 
 // MARK: - 图片压缩（与网页编辑器同口径：原图最长边 1600、JPEG .85；缩略图最长边 480）

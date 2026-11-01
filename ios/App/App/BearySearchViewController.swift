@@ -5,7 +5,7 @@ import CoreText
 // 网页对照：~/workspace/teddy_site/beary.html 内 #searchPage（结构、文案、状态口径）
 //   与 .srch-* CSS（尺寸见行内注释）；后端对照：~/workspace/teddy_beary/worker.js
 //   GET /beary/api/search（见下方“接口对照”）。
-// 容器契约：本页只负责搜索与渲染，不含顶栏/底栏胶囊（容器 SceneDelegate 侧提供，
+// 容器契约：本页只负责搜索与渲染，不含顶栏/底栏分段器（容器 SceneDelegate 侧提供，
 //   与其他内容页同口径）；点用户只回调 onOpenUser、点日记只回调 onOpenEntry，
 //   点返回只回调 onBack，跳转与个人主页打开一律由容器接线，本页不 present、不 push、不碰导航。
 // 页结构（网页 #searchPage 同口径）：页顶返回行（返回钮 + “搜索”标题，随内容滚出）
@@ -26,9 +26,14 @@ import CoreText
 //     avatar_url（/beary/api/users/:id/avatar?v=N，无头像为 null）/
 //     cover_url（有封面才给，无封面为 null）——与现有 SearchUser 模型对齐。
 //   - entries：LIMIT 20，仅已公开（publish_at <= now），按 created_at DESC；
+ //     翻页（sweep32-2）：传 before（末条 created_at）+ before_id（末条 id），
+//     与列表同口径 created_at DESC + id DESC；mine 同口径各 LIMIT 20，
+//     users 按 id 升序只传 before_id（LIMIT 8）。三组共用同一套游标参，
+//     故翻页按组各发一请求、只取本组结果合并（见 loadMore），不混用游标。
 //     字段 id/content/images/created_at/author_id/author_name/author_avatar/
 //     author_badge（仅 'beta' 才给）/like_count。
-//   - mine：仅登录会话返回（未登录为 null），本人全部日记按正文匹配，LIMIT 20；
+//   - mine：仅登录会话返回（未登录为 null），本人全部日记按正文匹配，LIMIT 20，
+ //     翻页同 entries 口径（before + before_id）；
 //     字段 id/content/images/created_at/publish_at/is_public；
 //     本页只取其中未公开（is_public != true）的篇目进“我的日记 · 私密”组，
 //     与网页 renderSrchResults 的 mine 过滤口径一致；未登录时服务端不给 mine，
@@ -107,36 +112,59 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
     private var lastQuery: String = ""
     private var showingResults: Bool = false
     private var searchBoxFocused: Bool = false
-    // 88 包 M13：结果区底部常驻尾行（对齐时间线/个人主页尾行形态；搜索后端
-    // 只返回一批、无分页参数，故尾行只承载加载态与失败重试，不做加载更多）。
+    // 88 包 M13：结果区底部常驻尾行（对齐时间线/个人主页尾行形态）。
+    // sweep32-2：尾行新增“加载更多”态（加载中转圈、失败重试复用重试钮）；
+    // 仍是 44 高居中形态，三态互斥显隐，见 updateSearchFooter。
     private let searchFooterRow = UIView()
     private let searchFooterRetryButton = BearyButton.retryPill()
+    private let searchFooterLoadMoreButton = BearyButton.retryPill()
+    private let searchFooterSpinnerView = UIImageView()
+    // sweep32-2 翻页状态：三组各有 hasMore 与游标（游标取服务端回包原始
+    // 末条，不取客户端过滤后末条——过滤掉的拉黑/过期行仍占服务端页内位置，
+    // 用过滤后末条当游标会把已回包的行重拉一遍，LIMIT 截断下还可能卡住进度）。
+    private var isLoadingMore = false
+    private var loadMoreFailed = false
+    /// 尾行重试当前是翻页重试（true）还是整搜重试（false，见 showFailedStateKeepingResults）。
+    private var searchFooterRetryIsLoadMore = false
+    private var currentLoadMoreTasks: [URLSessionDataTask] = []
+    private var searchHasMorePublic = false
+    private var searchHasMoreMine = false
+    private var searchHasMoreUsers = false
+    private var searchPublicCursorBefore: Int?
+    private var searchPublicCursorId: String?
+    private var searchMineCursorBefore: Int?
+    private var searchMineCursorId: String?
+    private var searchUsersCursorId: Int?
     /// Q9 最近搜索：只存本机 UserDefaults，不走服务端；最多 8 条，新在前、去重。
-    /// 按账号分桶：登录时键为 bearyRecentSearches_<uid>；未登录时读旧单键
-    /// （升级迁移前暂留，登录后迁移见 migrateLegacyRecentSearchesIfNeeded）。
+    /// 按账号分桶：登录时键为 bearyRecentSearches_<uid>；未登录（含游客模式）
+    /// 一律走独立 guest 桶 bearyRecentSearches_guest，登录后不并入任何账号桶。
+    /// sweep32-3：旧单键 bearyRecentSearches 是改动前游客的存放键，登录时
+    /// 不再把它并入账号桶（旧迁移函数已删）；它只在游客态一次性并入 guest 桶。
     private let legacyRecentSearchesKey = "bearyRecentSearches"
+    private let guestRecentSearchesKey = "bearyRecentSearches_guest"
     private var recentSearchesKey: String {
         if let uid = SessionManager.shared.currentUser?.id {
             return "bearyRecentSearches_\(uid)"
         }
-        return legacyRecentSearchesKey
+        return guestRecentSearchesKey
     }
 
-    /// 升级迁移（一次性、幂等）：已登录且旧单键仍有记录时，把旧记录并到
-    /// 当前账号桶后（去重、上限 8 条），清旧键；旧记录不擅自删除——合并
-    /// 后才清键，桶已有记录时旧记录排在桶记录之后。未登录时不迁移。
-    private func migrateLegacyRecentSearchesIfNeeded() {
-        guard SessionManager.shared.currentUser?.id != nil else { return }
+    /// 游客桶升级迁移（一次性、幂等，仅游客态）：旧单键仍有记录时，把旧记录
+    /// 并入 guest 桶后（去重、上限 8 条），清旧键；旧记录不擅自删除——合并
+    /// 后才清键，guest 桶已有记录时旧记录排在桶记录之后。登录态不调用，
+    /// 游客记录永不进入账号桶。
+    private func migrateLegacyToGuestBucketIfNeeded() {
+        guard SessionManager.shared.currentUser?.id == nil else { return }
         let legacy = UserDefaults.standard.stringArray(forKey: legacyRecentSearchesKey) ?? []
         guard !legacy.isEmpty else { return }
-        var merged = UserDefaults.standard.stringArray(forKey: recentSearchesKey) ?? []
+        var merged = UserDefaults.standard.stringArray(forKey: guestRecentSearchesKey) ?? []
         for item in legacy where !merged.contains(item) {
             merged.append(item)
         }
         if merged.count > 8 {
             merged = Array(merged.prefix(8))
         }
-        UserDefaults.standard.set(merged, forKey: recentSearchesKey)
+        UserDefaults.standard.set(merged, forKey: guestRecentSearchesKey)
         UserDefaults.standard.removeObject(forKey: legacyRecentSearchesKey)
     }
     private var recentButtons: [UIButton] = []
@@ -160,6 +188,13 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
     // 图片失败重试槽位（用户头像 / 日记首图各一）：随行重建而丢弃，见文件末尾
     // BearySearchImageRetry；clearResultRows 时连同行一起清空。
     private var imageRetryHolders: [BearySearchImageRetry] = []
+    /// 扫 bug 第 9 项：三组分区头（增量追加的落点锚点）。renderResults
+    /// 全量建行时同步登记，clearResultRows 时同步清零；appendResultRows
+    /// 靠它们找“本组末尾”（头之后、下个分区头之前），本组此前无行时
+    /// 才补建分区头。行与头只在这两处增删，锚点与栈内实际一致。
+    private var mineSectionHeader: UIView?
+    private var publicSectionHeader: UIView?
+    private var usersSectionHeader: UIView?
 
     // MARK: - 视图
 
@@ -188,7 +223,9 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
     private let searchField = UITextField()
     private let clearButton = BearyHit44Button(type: .custom)
 
-    // 结果区：每次渲染整体重建（与网页 body.innerHTML 重写同口径）。
+    // 结果区：新搜索与拉黑/举报过滤仍整体重建（与网页 body.innerHTML
+    // 重写同口径）；翻页改增量追加（见 appendResultRows），不再每翻一页
+    // 拆掉全部行重建。
     private let resultsStack = UIStackView()
 
     // 状态区：网页 .addr-state——容器 padding 28/20/20；圆 54、图标 25、标题 15、副文案 12.5。
@@ -224,6 +261,28 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         // 审计 P2-20：搜索页监听拉黑/举报即时清行并清 quoteCache。
         NotificationCenter.default.addObserver(self, selector: #selector(handleBlockedUserNotification(_:)), name: .bearyDidBlockUser, object: nil)
         NotificationCenter.default.addObserver(self, selector: #selector(handleReportedEntryNotification(_:)), name: .bearyDidReportEntry, object: nil)
+        // 扫荡组 A：键盘弹起时给滚动区补底部留白（见 keyboardWillShow）。
+        NotificationCenter.default.addObserver(self, selector: #selector(keyboardWillShow(_:)), name: UIResponder.keyboardWillShowNotification, object: nil)
+        NotificationCenter.default.addObserver(self, selector: #selector(keyboardWillHide(_:)), name: UIResponder.keyboardWillHideNotification, object: nil)
+    }
+
+    /// 扫荡组 A：键盘弹起时滚动区底部留白——此前本页从不监听键盘，
+    /// scrollView 底部留白恒为 90，键盘（约 300 高）弹起后会盖住结果区
+    /// 末尾几行：不先拖动收键盘就点不到它们。登录页已有同款键盘留白
+    /// 处理，本页按同口径补齐（只动 bottom，top 仍由 applyHeaderTopInset 管）。
+    private var keyboardBottomInset: CGFloat = 0
+
+    @objc private func keyboardWillShow(_ notification: Notification) {
+        guard let frame = notification.userInfo?[UIResponder.keyboardFrameEndUserInfoKey] as? CGRect else { return }
+        keyboardBottomInset = max(0, frame.height - view.safeAreaInsets.bottom)
+        scrollView.contentInset.bottom = 90 + keyboardBottomInset
+        scrollView.scrollIndicatorInsets.bottom = 90 + keyboardBottomInset
+    }
+
+    @objc private func keyboardWillHide(_ notification: Notification) {
+        keyboardBottomInset = 0
+        scrollView.contentInset.bottom = 90
+        scrollView.scrollIndicatorInsets.bottom = 90
     }
 
     /// 补缺 P2-21：搜索拉黑判定（与 SceneDelegate isBlockedAuthor 同口径：游客不承接拉黑表，
@@ -347,6 +406,13 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         searchTimer?.invalidate()
         searchTimer = nil
         searchSeq += 1
+        // 翻页在途离页：取消任务并复位加载态——旧回包凭序号丢弃、不调
+        // finishOne，若不复位则 pending 永不到 0，回来后尾行转圈卡死、
+        // “加载更多”再也点不动；新搜索另有 resetSearchPagination 兜底。
+        for task in currentLoadMoreTasks { task.cancel() }
+        currentLoadMoreTasks = []
+        isLoadingMore = false
+        updateSearchFooter()
     }
 
     /// 切页生命周期 7 号（最小化）：容器切页只改 isHidden，本回调不触发，
@@ -356,12 +422,21 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         searchTimer?.invalidate()
         searchTimer = nil
         searchSeq += 1
+        // 翻页在途离页：取消任务并复位加载态——旧回包凭序号丢弃、不调
+        // finishOne，若不复位则 pending 永不到 0，回来后尾行转圈卡死、
+        // “加载更多”再也点不动；新搜索另有 resetSearchPagination 兜底。
+        for task in currentLoadMoreTasks { task.cancel() }
+        currentLoadMoreTasks = []
+        isLoadingMore = false
+        updateSearchFooter()
     }
 
     deinit {
         searchTimer?.invalidate()
         NotificationCenter.default.removeObserver(self, name: .bearyDidBlockUser, object: nil)
         NotificationCenter.default.removeObserver(self, name: .bearyDidReportEntry, object: nil)
+        NotificationCenter.default.removeObserver(self, name: UIResponder.keyboardWillShowNotification, object: nil)
+        NotificationCenter.default.removeObserver(self, name: UIResponder.keyboardWillHideNotification, object: nil)
     }
 
     override func traitCollectionDidChange(_ previousTraitCollection: UITraitCollection?) {
@@ -375,9 +450,11 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         scrollView.translatesAutoresizingMaskIntoConstraints = false
         scrollView.keyboardDismissMode = .onDrag
         scrollView.delegate = self
-        // 底留白 90：与 Feed/时间线/消息同口径，末行不再被底栏胶囊盖住。
+        // 底留白 90：与 Feed/时间线/消息同口径，末行不再被底栏分段器盖住。
         scrollView.contentInset = UIEdgeInsets(top: 0, left: 0, bottom: 90, right: 0)
         scrollView.scrollIndicatorInsets = scrollView.contentInset
+        // 116 后扫查：与广场/个人页同口径——关掉 delaysContentTouches，滚动容器里的点按立即响应，不等滚动判定。
+        scrollView.delaysContentTouches = false
         view.addSubview(scrollView)
 
         columnWrap.translatesAutoresizingMaskIntoConstraints = false
@@ -612,10 +689,31 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         searchFooterRetryButton.addTarget(self, action: #selector(retryTapped), for: .touchUpInside)
         searchFooterRetryButton.bearyAddPressFeedback()
         searchFooterRow.addSubview(searchFooterRetryButton)
+        // sweep32-2：加载更多钮（与重试钮同工厂紧凑档）与加载中转圈，
+        // 三态互斥显隐（见 updateSearchFooter），约束与重试钮同槽位居中。
+        searchFooterLoadMoreButton.translatesAutoresizingMaskIntoConstraints = false
+        searchFooterLoadMoreButton.setTitle("加载更多", for: .normal)
+        searchFooterLoadMoreButton.contentEdgeInsets = UIEdgeInsets(top: 0, left: 20, bottom: 0, right: 20)
+        searchFooterLoadMoreButton.heightAnchor.constraint(equalToConstant: BearyButtonStyle.secondaryOutline(.compact).height).isActive = true
+        searchFooterLoadMoreButton.addTarget(self, action: #selector(loadMoreTapped), for: .touchUpInside)
+        searchFooterLoadMoreButton.bearyAddPressFeedback()
+        searchFooterRow.addSubview(searchFooterLoadMoreButton)
+        searchFooterSpinnerView.translatesAutoresizingMaskIntoConstraints = false
+        searchFooterSpinnerView.image = BearyIconImages.image(named: "icon_refresh", pointSize: 21)
+        searchFooterSpinnerView.tintColor = BearyColors.gray
+        searchFooterSpinnerView.contentMode = .scaleAspectFit
+        searchFooterSpinnerView.isHidden = true
+        searchFooterRow.addSubview(searchFooterSpinnerView)
         NSLayoutConstraint.activate([
             searchFooterRow.heightAnchor.constraint(equalToConstant: 44),
             searchFooterRetryButton.centerXAnchor.constraint(equalTo: searchFooterRow.centerXAnchor),
             searchFooterRetryButton.centerYAnchor.constraint(equalTo: searchFooterRow.centerYAnchor),
+            searchFooterLoadMoreButton.centerXAnchor.constraint(equalTo: searchFooterRow.centerXAnchor),
+            searchFooterLoadMoreButton.centerYAnchor.constraint(equalTo: searchFooterRow.centerYAnchor),
+            searchFooterSpinnerView.centerXAnchor.constraint(equalTo: searchFooterRow.centerXAnchor),
+            searchFooterSpinnerView.centerYAnchor.constraint(equalTo: searchFooterRow.centerYAnchor),
+            searchFooterSpinnerView.widthAnchor.constraint(equalToConstant: 21),
+            searchFooterSpinnerView.heightAnchor.constraint(equalToConstant: 21),
         ])
 
         updateBorderColors()
@@ -744,6 +842,7 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         retryButton.layer.bearyDynamicBorderColor = BearyColors.line
         clearSearchButton.layer.bearyDynamicBorderColor = BearyColors.line
         searchFooterRetryButton.layer.bearyDynamicBorderColor = BearyColors.line
+        searchFooterLoadMoreButton.layer.bearyDynamicBorderColor = BearyColors.line
         updateSearchBoxShadow()
     }
 
@@ -838,8 +937,236 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
     }
 
     @objc private func retryTapped() {
-        // 网页失败态重试口径：立即重跑上一次关键词，不走防抖。
+        // sweep32-2：尾行翻页失败的重试只重跑翻页（loadMore 再试），不重跑整搜；
+        // 其余失败态仍按网页口径立即重跑上一次关键词，不走防抖。
+        if loadMoreFailed && searchFooterRetryIsLoadMore {
+            loadMore()
+            return
+        }
         runSearch(query: lastQuery)
+    }
+
+    @objc private func loadMoreTapped() {
+        loadMore()
+    }
+
+    /// sweep32-2 搜索翻页：尾行“加载更多”只在还有下一批时出现。
+    /// 为何按组各发一请求：服务端三组共用同一套 before/before_id 参，
+    /// 一组游标套到另一组会重复或漏项（公开组与“我的”组各按 created_at
+    /// DESC + id DESC、用户组按 id 升序，游标语义本就不同）。故有下一批
+    /// 的组各发一路带本组游标的请求，每路只取本组结果合并，余组丢弃；
+    /// 各路并行、全部回包后统一重渲一次（同关键词同批口径，只淡入新行）。
+    /// 游标与 hasMore 在每路回包后按该路原始末条刷新（不满页即取尽）；
+    /// 某路失败时已成功路的结果照常合并，尾行亮翻页重试（只重跑翻页）；
+    /// .cancelled（新搜索已取消本批翻页）不计失败、不亮尾行。
+    /// 新搜索会使 searchSeq 变化，旧翻页回包凭序号丢弃，不碰 UI。
+    private func loadMore() {
+        guard showingResults, !isLoadingMore else { return }
+        guard let query = lastRenderedQuery, !query.isEmpty else { return }
+        guard var merged = lastRenderedData else { return }
+        guard searchHasMorePublic || searchHasMoreMine || searchHasMoreUsers else { return }
+        isLoadingMore = true
+        loadMoreFailed = false
+        searchFooterRetryIsLoadMore = false
+        updateSearchFooter()
+        let seq = searchSeq
+        var pending = 0
+        var anyFailed = false
+        var mergedChanged = false
+        // 本批各组新行（原始未过滤；过滤口径统一由 appendResultRows
+        // 按 renderResults 逐字执行，避免两处过滤口径漂移）。
+        var freshMineEntries: [Entry] = []
+        var freshPublicEntries: [Entry] = []
+        var freshUsersList: [SearchUser] = []
+        // 本批翻页内的去重基准：已在屏上的 id（公开/我的按日记 id、用户按 id）。
+        // 公开组与“我的”组去重集合分开：两组并行回包、谁先到谁先占 id 时，
+        // 共用集合会把自己公开篇从公开组里挤掉（“我的”组先占 id，公开组跳过，
+        // 而渲染时“我的”组又只留私密篇，两边都不渲染）；分开后公开篇仍由公开组出。
+        var seenPublicEntryIds = Set<String>(rowEntryIds)
+        var seenMineEntryIds = Set<String>(rowEntryIds)
+        var seenUserIds = Set<Int>()
+        for user in rowUsers {
+            if let userId = user.id {
+                seenUserIds.insert(userId)
+            }
+        }
+        let finishOne = { [weak self] in
+            guard let self = self else { return }
+            pending -= 1
+            if pending > 0 { return }
+            self.currentLoadMoreTasks = []
+            self.isLoadingMore = false
+            self.loadMoreFailed = anyFailed
+            self.searchFooterRetryIsLoadMore = anyFailed
+            if mergedChanged {
+                // 扫 bug 第 9 项：翻页不再全量重渲（renderResults 开头
+                // clearResultRows 会拆掉全部行重建，页越多每翻越重）；
+                // 改增量追加本批新行（游标/hasMore/去重口径不动，见
+                // appendResultRows）；末尾 updateSearchFooter 按新 hasMore
+                // 决定尾行（取尽则隐藏、失败则亮翻页重试）。
+                self.appendResultRows(data: merged, mine: freshMineEntries, publicEntries: freshPublicEntries, users: freshUsersList, query: query)
+            }
+            self.updateSearchFooter()
+        }
+        // 公开组下一批：before + before_id（created_at DESC + id DESC）。
+        if searchHasMorePublic, let before = searchPublicCursorBefore, let beforeId = searchPublicCursorId {
+            pending += 1
+            let task = BearyAPI.shared.search(q: query, before: before, beforeId: beforeId) { [weak self] result in
+                DispatchQueue.main.async {
+                    guard let self = self else { return }
+                    if seq != self.searchSeq { return }
+                    switch result {
+                    case .success(let data):
+                        if let entries = data.entries {
+                            self.searchHasMorePublic = entries.count == 20
+                            if let last = entries.last, let created = last.createdAt, let entryId = last.id {
+                                self.searchPublicCursorBefore = created
+                                self.searchPublicCursorId = entryId
+                            } else {
+                                self.searchHasMorePublic = false
+                            }
+                            var fresh: [Entry] = []
+                            for entry in entries {
+                                if let entryId = entry.id, !seenPublicEntryIds.contains(entryId) {
+                                    seenPublicEntryIds.insert(entryId)
+                                    fresh.append(entry)
+                                }
+                            }
+                            freshPublicEntries = fresh
+                            if !fresh.isEmpty {
+                                mergedChanged = true
+                                if merged.entries == nil {
+                                    merged.entries = fresh
+                                } else {
+                                    merged.entries?.append(contentsOf: fresh)
+                                }
+                            }
+                        } else {
+                            self.searchHasMorePublic = false
+                        }
+                    case .failure(let error):
+                        if case .cancelled = error {
+                            // 新搜索已取消：序号守卫在上，走到这里只剩本批内取消，
+                            // 不计失败，尾行不亮重试。
+                        } else {
+                            anyFailed = true
+                        }
+                    }
+                    finishOne()
+                }
+            }
+            if let task = task {
+                currentLoadMoreTasks.append(task)
+            } else {
+                pending -= 1
+            }
+        }
+        // “我的”组下一批：与公开组同口径游标，只取 mine。
+        if searchHasMoreMine, let before = searchMineCursorBefore, let beforeId = searchMineCursorId {
+            pending += 1
+            let task = BearyAPI.shared.search(q: query, before: before, beforeId: beforeId) { [weak self] result in
+                DispatchQueue.main.async {
+                    guard let self = self else { return }
+                    if seq != self.searchSeq { return }
+                    switch result {
+                    case .success(let data):
+                        if let mine = data.mine {
+                            self.searchHasMoreMine = mine.count == 20
+                            if let last = mine.last, let created = last.createdAt, let entryId = last.id {
+                                self.searchMineCursorBefore = created
+                                self.searchMineCursorId = entryId
+                            } else {
+                                self.searchHasMoreMine = false
+                            }
+                            var fresh: [Entry] = []
+                            for entry in mine {
+                                if let entryId = entry.id, !seenMineEntryIds.contains(entryId) {
+                                    seenMineEntryIds.insert(entryId)
+                                    fresh.append(entry)
+                                }
+                            }
+                            freshMineEntries = fresh
+                            if !fresh.isEmpty {
+                                mergedChanged = true
+                                if merged.mine == nil {
+                                    merged.mine = fresh
+                                } else {
+                                    merged.mine?.append(contentsOf: fresh)
+                                }
+                            }
+                        } else {
+                            self.searchHasMoreMine = false
+                        }
+                    case .failure(let error):
+                        if case .cancelled = error {
+                        } else {
+                            anyFailed = true
+                        }
+                    }
+                    finishOne()
+                }
+            }
+            if let task = task {
+                currentLoadMoreTasks.append(task)
+            } else {
+                pending -= 1
+            }
+        }
+        // 用户组下一批：只传 before_id（id 升序、id > before_id），不传 before。
+        if searchHasMoreUsers, let userCursor = searchUsersCursorId {
+            pending += 1
+            let task = BearyAPI.shared.search(q: query, before: nil, beforeId: "\(userCursor)") { [weak self] result in
+                DispatchQueue.main.async {
+                    guard let self = self else { return }
+                    if seq != self.searchSeq { return }
+                    switch result {
+                    case .success(let data):
+                        if let users = data.users {
+                            self.searchHasMoreUsers = users.count == 8
+                            if let last = users.last, let userId = last.id {
+                                self.searchUsersCursorId = userId
+                            } else {
+                                self.searchHasMoreUsers = false
+                            }
+                            var fresh: [SearchUser] = []
+                            for user in users {
+                                if let userId = user.id, !seenUserIds.contains(userId) {
+                                    seenUserIds.insert(userId)
+                                    fresh.append(user)
+                                }
+                            }
+                            freshUsersList = fresh
+                            if !fresh.isEmpty {
+                                mergedChanged = true
+                                if merged.users == nil {
+                                    merged.users = fresh
+                                } else {
+                                    merged.users?.append(contentsOf: fresh)
+                                }
+                            }
+                        } else {
+                            self.searchHasMoreUsers = false
+                        }
+                    case .failure(let error):
+                        if case .cancelled = error {
+                        } else {
+                            anyFailed = true
+                        }
+                    }
+                    finishOne()
+                }
+            }
+            if let task = task {
+                currentLoadMoreTasks.append(task)
+            } else {
+                pending -= 1
+            }
+        }
+        // 游标缺失导致一路都没发出（防御）：直接复位尾行，不卡加载态。
+        if pending == 0 {
+            isLoadingMore = false
+            updateSearchFooter()
+        }
     }
 
     func textFieldShouldReturn(_ textField: UITextField) -> Bool {
@@ -868,6 +1195,8 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         // S10：先取消上一路在途请求，旧回包由序号守卫丢弃。
         currentSearchTask?.cancel()
         currentSearchTask = nil
+        // sweep32-2：新一轮搜索作废上一批的翻页态与在途翻页请求。
+        resetSearchPagination()
         if trimmed.isEmpty {
             setBoxBusy(false)
             showInitialState()
@@ -893,6 +1222,9 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
                 switch result {
                 case .success(let data):
                     self.recordRecentSearch(trimmed)
+                    // sweep32-2：先记当批翻页态，renderResults 末尾的
+                    // updateSearchFooter 才能据此亮起“加载更多”。
+                    self.updateSearchPagination(from: data)
                     self.renderResults(data: data, query: trimmed)
                 case .failure:
                     // S7：已有旧结果时不进失败态（showState 会清结果区），
@@ -909,7 +1241,8 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
     }
 
     /// 框内圈：加载时以转圈替换放大镜（网页 srchSetIconBusy 同款语义）。
-    /// （2026-10-29 第 21 项：框下“正在搜索…”行已删，只留框内圈；尾行仅用于失败重试。）
+    /// （2026-10-29 第 21 项：框下“正在搜索…”行已删，只留框内圈；
+    /// sweep32-2：尾行另有“加载更多”与翻页失败重试态，见 updateSearchFooter。）
     private func setBoxBusy(_ busy: Bool) {
         searchIconView.isHidden = busy
         boxRingView.isHidden = !busy
@@ -973,7 +1306,7 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
 
     /// Q9 最近搜索：读本机记录，重建标题 + 行；点行直接搜（不走服务端）。
     private func loadRecentSearches() -> [String] {
-        migrateLegacyRecentSearchesIfNeeded()
+        migrateLegacyToGuestBucketIfNeeded()
         return UserDefaults.standard.stringArray(forKey: recentSearchesKey) ?? []
     }
 
@@ -1005,7 +1338,7 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         titleLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13, weight: .semibold))
         titleLabel.adjustsFontForContentSizeCategory = true
         titleLabel.textColor = BearyColors.gray
-        // A7：一键清除入口（标题行右侧弱化文字钮；只清当前账号桶记录，
+        // A7：一键清除入口（标题行右侧弱化文字钮；只清当前桶记录（登录为账号桶、游客为 guest 桶），
         // 记录机制与 8 条上限不动；清除后同步重建本区，无记录时整区隐藏）。
         // 113：钮改 BearyHit44Button（视觉帧不动，热区扩到 44）+ 标题行用
         // BearySearchRecentHeaderRow 转发扩后热区，行高不撑高。
@@ -1066,7 +1399,7 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         runSearch(query: term)
     }
 
-    /// A7：一键清除最近搜索（当前账号桶；未登录时即旧单键），随后同步重建本区。
+    /// A7：一键清除最近搜索（当前桶：登录为账号桶、游客为 guest 桶），随后同步重建本区。
     @objc private func clearRecentSearchesTapped() {
         UserDefaults.standard.removeObject(forKey: recentSearchesKey)
         renderRecentSearches()
@@ -1129,13 +1462,100 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         setSearchFooter(failed: true)
     }
 
-    /// 尾行两态（失败重试／隐藏），与时间线/个人主页尾行同形态；搜索进行时不显示尾行（只转框内圈）。
-    private func setSearchFooter(failed: Bool) {
-        if failed {
+    /// 尾行四态（与时间线/个人主页尾行同形态；搜索进行时不显示尾行，只转框内圈）：
+    /// 未出结果时隐藏；出结果后：翻页进行中 → 转圈；翻页失败 → 重试钮
+    /// （走 loadMore 再试）；整搜失败保结果 → 重试钮（走整搜重跑，见
+    /// searchFooterRetryIsLoadMore）；还有下一批 → “加载更多”钮；三组都
+    /// 取尽 → 隐藏。加载更多钮与重试钮同槽位居中、互斥显隐。
+    private func updateSearchFooter() {
+        searchFooterRetryButton.isHidden = true
+        searchFooterLoadMoreButton.isHidden = true
+        searchFooterSpinnerView.isHidden = true
+        BearyIconMotion.stopSpin(on: searchFooterSpinnerView, key: "bearySearchFooterSpin")
+        guard showingResults else {
+            searchFooterRow.isHidden = true
+            return
+        }
+        if isLoadingMore {
+            searchFooterRow.isHidden = false
+            searchFooterSpinnerView.isHidden = false
+            BearyIconMotion.startSpin(on: searchFooterSpinnerView, duration: 0.9, key: "bearySearchFooterSpin")
+        } else if loadMoreFailed {
             searchFooterRow.isHidden = false
             searchFooterRetryButton.isHidden = false
+        } else if searchHasMorePublic || searchHasMoreMine || searchHasMoreUsers {
+            searchFooterRow.isHidden = false
+            searchFooterLoadMoreButton.isHidden = false
         } else {
             searchFooterRow.isHidden = true
+        }
+    }
+
+    /// 旧调用点兼容：failed 只改整搜失败尾行（重试走整搜重跑），不碰翻页态；
+    /// 翻页态一律由 updateSearchFooter 按 isLoadingMore/loadMoreFailed/hasMore 算。
+    private func setSearchFooter(failed: Bool) {
+        if failed {
+            loadMoreFailed = true
+            searchFooterRetryIsLoadMore = false
+        } else if !searchFooterRetryIsLoadMore {
+            loadMoreFailed = false
+        }
+        updateSearchFooter()
+    }
+
+    /// 新一轮搜索 / 清空时复位翻页态（游标与 hasMore 只属于当批关键词）。
+    private func resetSearchPagination() {
+        for task in currentLoadMoreTasks {
+            task.cancel()
+        }
+        currentLoadMoreTasks = []
+        isLoadingMore = false
+        loadMoreFailed = false
+        searchFooterRetryIsLoadMore = false
+        searchHasMorePublic = false
+        searchHasMoreMine = false
+        searchHasMoreUsers = false
+        searchPublicCursorBefore = nil
+        searchPublicCursorId = nil
+        searchMineCursorBefore = nil
+        searchMineCursorId = nil
+        searchUsersCursorId = nil
+    }
+
+    /// 从服务端回包原始数组更新三组 hasMore 与游标（LIMIT：日记组 20、用户组 8；
+    /// 满页即可能还有下一批，不满页即取尽）。游标取原始末条（见属性注释）。
+    private func updateSearchPagination(from data: SearchResult) {
+        if let entries = data.entries {
+            searchHasMorePublic = entries.count == 20
+            if let last = entries.last, let created = last.createdAt, let entryId = last.id {
+                searchPublicCursorBefore = created
+                searchPublicCursorId = entryId
+            } else {
+                searchHasMorePublic = false
+            }
+        } else {
+            searchHasMorePublic = false
+        }
+        if let mine = data.mine {
+            searchHasMoreMine = mine.count == 20
+            if let last = mine.last, let created = last.createdAt, let entryId = last.id {
+                searchMineCursorBefore = created
+                searchMineCursorId = entryId
+            } else {
+                searchHasMoreMine = false
+            }
+        } else {
+            searchHasMoreMine = false
+        }
+        if let users = data.users {
+            searchHasMoreUsers = users.count == 8
+            if let last = users.last, let userId = last.id {
+                searchUsersCursorId = userId
+            } else {
+                searchHasMoreUsers = false
+            }
+        } else {
+            searchHasMoreUsers = false
         }
     }
 
@@ -1151,6 +1571,9 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
             resultsStack.removeArrangedSubview(view)
             view.removeFromSuperview()
         }
+        mineSectionHeader = nil
+        publicSectionHeader = nil
+        usersSectionHeader = nil
         userButtons = []
         rowUsers = []
         entryButtons = []
@@ -1158,7 +1581,7 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         entryRowById = [:]
         userRowByKey = [:]
         imageRetryHolders = []
-        // 88 包 M13：尾行不属于结果区，随结果区重建而隐藏（成功重渲末尾亦会隐藏）。
+        // 88 包 M13：尾行不属于结果区；成功重渲末尾尾行由 updateSearchFooter 按翻页态重算。
         setSearchFooter(failed: false)
     }
 
@@ -1233,27 +1656,136 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
             userRows.append(makeUserRow(user: user, query: query))
         }
         if !mineRows.isEmpty {
-            resultsStack.addArrangedSubview(makeSectionHeader(title: "我的日记 · 私密"))
+            let header = makeSectionHeader(title: "我的日记 · 私密")
+            mineSectionHeader = header
+            resultsStack.addArrangedSubview(header)
             for row in mineRows {
                 resultsStack.addArrangedSubview(row)
             }
         }
         if !publicRows.isEmpty {
-            resultsStack.addArrangedSubview(makeSectionHeader(title: "公开日记"))
+            let header = makeSectionHeader(title: "公开日记")
+            publicSectionHeader = header
+            resultsStack.addArrangedSubview(header)
             for row in publicRows {
                 resultsStack.addArrangedSubview(row)
             }
         }
         if !userRows.isEmpty {
-            resultsStack.addArrangedSubview(makeSectionHeader(title: "用户"))
+            let header = makeSectionHeader(title: "用户")
+            usersSectionHeader = header
+            resultsStack.addArrangedSubview(header)
             for row in userRows {
                 resultsStack.addArrangedSubview(row)
             }
         }
         // M11：结果区首次出现/换批时行错峰滑入；同一批仅内容变化的行淡入。
         animateResultRows(query: query)
-        // 88 包 M13：成功重渲后尾行隐藏。
-        setSearchFooter(failed: false)
+        // sweep32-2：尾行由 updateSearchFooter 按翻页态算（有下一批即亮“加载更多”）。
+        updateSearchFooter()
+    }
+
+    /// 扫 bug 第 9 项：翻页增量追加（仅 loadMore 调用）。
+    /// 现行 loadMore 完成时调 renderResults，而 renderResults 开头
+    /// clearResultRows() 会拆掉全部结果行再按合并后全量重建——页数越多
+    /// 每翻一页重建的行越多，已有行的入场态与图片加载态全丢。
+    /// 本函数只追加本批新行：已有行原地不动、不重建、不重播入场；
+    /// 新行按现行分区顺序落到本组末尾，本组此前无行时才补建分区头。
+    /// 不动口径：游标/hasMore/去重仍在 loadMore 数据层（本函数再按
+    /// 行 id/key 挡一道重复行）；过滤口径与 renderResults 逐字一致
+    /// （私密组只取 is_public == false；公开组有效公开 + 未拉黑；
+    /// 用户组未拉黑），避免追加行与全量渲染口径不一致。
+    /// 行数减少的场景（拉黑/举报过滤、新搜索）不走这里，仍走
+    /// renderResults 全量重建——增量无法表达“删行”。
+    private func appendResultRows(data: SearchResult, mine: [Entry], publicEntries: [Entry], users freshUsers: [SearchUser], query: String) {
+        lastRenderedData = data
+        lastRenderedQuery = query
+        // 锚点丢失的防御：栈里有行却三个分区头全无（理论上只可能
+        // 是旧路径残留），退回全量重建，不在无头栈上硬插。
+        if resultsStack.arrangedSubviews.isEmpty == false
+            && mineSectionHeader == nil && publicSectionHeader == nil && usersSectionHeader == nil {
+            renderResults(data: data, query: query)
+            return
+        }
+        showingResults = true
+        stateWrap.isHidden = true
+        // 8-6 不变量：成功渲染时错误 wrap 必藏（与 renderResults 同口径）。
+        errorStateWrap.isHidden = true
+        recentWrap.isHidden = true
+        resultsStack.isHidden = false
+        stateRingView.isHidden = true
+        BearyIconMotion.stopSpin(on: stateRingView, key: "bearyStateSpin")
+        var mineRows: [UIView] = []
+        for entry in mine {
+            // 与 renderResults 逐字一致：只取确认为私密篇（is_public == false）；
+            // 缺失字段（nil）不进私密组。
+            guard entry.isPublic == false else { continue }
+            guard let entryId = entry.id, rowEntryIds.contains(entryId) == false else { continue }
+            if let row = makeEntryRow(entry: entry, query: query, isMineGroup: true) {
+                mineRows.append(row)
+            }
+        }
+        var publicRows: [UIView] = []
+        for entry in publicEntries {
+            if BearyEphemeral.isEffectivelyPublic(entry) == false { continue }
+            if isBlockedForSearch(userId: entry.authorId) { continue }
+            guard let entryId = entry.id, rowEntryIds.contains(entryId) == false else { continue }
+            if let row = makeEntryRow(entry: entry, query: query, isMineGroup: false) {
+                publicRows.append(row)
+            }
+        }
+        var userRows: [UIView] = []
+        for user in freshUsers {
+            if isBlockedForSearch(userId: user.id) { continue }
+            if let key = userKey(for: user), userRowByKey[key] != nil { continue }
+            userRows.append(makeUserRow(user: user, query: query))
+        }
+        insertSectionRows(mineRows, section: 0, title: "我的日记 · 私密")
+        insertSectionRows(publicRows, section: 1, title: "公开日记")
+        insertSectionRows(userRows, section: 2, title: "用户")
+        // 同关键词追加：animateResultRows 按 key 查表，只让本批新行
+        // 错峰滑入，已有行不动（与 renderResults 末尾同一入口）。
+        animateResultRows(query: query)
+    }
+
+    /// 把一组新行插到指定分区的末尾（分区头之后、下个分区头之前）；
+    /// 本组此前无行时，在正确分区位置补建分区头（我的 < 公开 < 用户）。
+    /// 每次落点都现算 firstIndex，不缓存下标，前面分区插行移位不影响。
+    private func insertSectionRows(_ rows: [UIView], section: Int, title: String) {
+        guard rows.isEmpty == false else { return }
+        let headers: [UIView?] = [mineSectionHeader, publicSectionHeader, usersSectionHeader]
+        if headers[section] == nil {
+            var insertAt = resultsStack.arrangedSubviews.count
+            for later in (section + 1)..<headers.count {
+                if let laterHeader = headers[later],
+                   let index = resultsStack.arrangedSubviews.firstIndex(where: { $0 === laterHeader }) {
+                    insertAt = index
+                    break
+                }
+            }
+            let newHeader = makeSectionHeader(title: title)
+            resultsStack.insertArrangedSubview(newHeader, at: insertAt)
+            switch section {
+            case 0: mineSectionHeader = newHeader
+            case 1: publicSectionHeader = newHeader
+            default: usersSectionHeader = newHeader
+            }
+        }
+        let currentHeaders: [UIView?] = [mineSectionHeader, publicSectionHeader, usersSectionHeader]
+        guard let sectionHeader = currentHeaders[section],
+              resultsStack.arrangedSubviews.contains(where: { $0 === sectionHeader }) else { return }
+        var insertAt = resultsStack.arrangedSubviews.count
+        for later in (section + 1)..<currentHeaders.count {
+            if let laterHeader = currentHeaders[later],
+               let index = resultsStack.arrangedSubviews.firstIndex(where: { $0 === laterHeader }) {
+                insertAt = index
+                break
+            }
+        }
+        for row in rows {
+            resultsStack.insertArrangedSubview(row, at: insertAt)
+            insertAt += 1
+        }
     }
 
     /// M11 入场口径：换关键词（新一批）→ 全部行错峰滑入；同关键词重渲
@@ -1511,10 +2043,12 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         bodyRow.addArrangedSubview(contentLabel)
 
         var thumbWrapView: UIView?
-        // 私密组行不拼缩略图（网页私密行 meta + 正文、无图）；公开组才拼首图。
+        // sweep32-6：私密组行也拼首图，与公开组同口径（44×44 圆角 12 居右、
+        // 图失败重试图标同款）；无图时仍不拼图，行版式不变。
         // 首图包进 44×44 容器：图铺满容器，重试图标（与头像同款纯图标）
         // 44×44 居中压在图上；UIStackView 只排容器，图标不参与横排、不挤正文。
-        if !isMineGroup, let images = entry.images, let firstKey = images.first, let url = BearyImageURLs.imageURL(key: firstKey, thumb: true) {
+        // 行高随之调整：bodyRow 高度取正文与 44 缩略图之大（原私密行只有正文高）。
+        if let images = entry.images, let firstKey = images.first, let url = BearyImageURLs.imageURL(key: firstKey, thumb: true) {
             let thumb = UIImageView()
             thumb.translatesAutoresizingMaskIntoConstraints = false
             thumb.contentMode = .scaleAspectFill
@@ -1778,7 +2312,7 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
 // 结果区，旧行连同 holder 一起被 clearResultRows 丢弃）、换图、重试后，
 // 旧回调均不得亮新行的重试图标。bearySetImage 自身另有目标 URL 比对与取消旧
 // 任务，是第二重守卫；.cancelled 不算失败（bearySetImage 已过滤，不进 onFailure）。
-// 无图槽位（头像为 null、日记无图、私密组无缩略图）不建本槽位、不亮图标。
+// 无图槽位（头像为 null、日记无图）不建本槽位、不亮图标；私密组有图时亦建槽位（sweep32-6）。
 
 private final class BearySearchImageRetry: NSObject {
 

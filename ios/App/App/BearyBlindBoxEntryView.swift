@@ -1,8 +1,10 @@
 import UIKit
 
 // ===== 盲盒交换入口行（广场顶部与时间线顶部共用同一视图类）=====
-// 视觉：surface 底 + 1px line 边框 + 圆角 14（与预览页“盲盒交换”入口行同款信息层级，
-// 不复用预览的虚线演示样式）；图标 28pt；标题 15 semibold；计数与副文案 12/13 灰字。
+// 视觉：页面背景底（BearyColors.bg，深浅动态跟随）+ 1px line 边框 + 圆角 14
+// （与预览页“盲盒交换”入口行同款信息层级，不复用预览的虚线演示样式）；
+// 原 surface 底在深色下与页面底（纯黑）有色差，Li 2026-10-31 指正后改 bg，
+// 边框与圆角不动，入口行内无内层卡片；图标 28pt；标题 15 semibold；计数与副文案 12/13 灰字。
 // 计数联动：本视图监听 .bearyBlindBoxDidChange，任一入口开盒/撤回后两处同时刷新；
 // 进页时宿主再调一次 refresh()（缓存镜像 + 跨日重置，不额外发请求，服务端刷新由流程页做）。
 // 已换态：整行变灰（alpha 0.6 + 计数灰字）但仍可点——点按进流程页看今日收到篇与撤回
@@ -23,7 +25,7 @@ final class BearyBlindBoxEntryView: UIView {
 
     override init(frame: CGRect) {
         super.init(frame: frame)
-        backgroundColor = BearyColors.surface
+        backgroundColor = BearyColors.bg
         layer.cornerRadius = 14
         layer.borderWidth = 1
         layer.bearyDynamicBorderColor = BearyColors.line

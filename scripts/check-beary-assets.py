@@ -190,23 +190,8 @@ def main():
     for key in weather_keys:
         required.setdefault(f"icon_wx_{key}", "weather family (weather key)")
 
-    # Map literal: only strings followed by ':' are keys; values (e.g. a
-    # display name) must not be mistaken for badge keys.
-    _badge_m = re.search(
-        r"known\s*:\s*\[String\s*:\s*String\]\s*=\s*\[(.*?)\]", badges, re.DOTALL
-    )
-    if not _badge_m:
-        raise SystemExit(
-            "ERROR: key source not found, cannot verify family: "
-            "BearyBadgeImages.displayName known map"
-        )
-    badge_keys = re.findall(r'"([A-Za-z0-9_]+)"\s*:', _badge_m.group(1))
-    if not badge_keys:
-        raise SystemExit(
-            "ERROR: key source found but empty: BearyBadgeImages.displayName known map"
-        )
-    for key in badge_keys:
-        required.setdefault(f"badge_{key}", "badge family (known key)")
+    # 徽章族已退役（455，BETA 下线）：displayName 映射已删除，不再校验；
+    # 新徽章上架时须恢复本检查并同步 badge_<key> 资产。
 
     catalog = {
         p.name[: -len(".imageset")]
@@ -235,7 +220,7 @@ def main():
     print(f"swift files scanned: {len(swift_files)}")
     print(f"literal asset references: {literal_count}")
     print(f"emote keys: {len(emote_keys)}, weather keys: {len(weather_keys)}, "
-          f"badge keys: {len(badge_keys)}")
+          f"badge keys: retired (455)")
     print(f"required asset sets: {len(required)}, catalog sets: {len(catalog)}")
     if missing:
         print("MISSING asset sets (referenced by code, absent from xcassets):")

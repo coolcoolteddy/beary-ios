@@ -13,6 +13,8 @@ import UIKit
 //   私密篇不出星、其连线一并消失；他人地点键只用区级，原因文案不带精确名。
 // - 数据：先用调用方已加载的日记即时成图，再游标拉全量替换（上限 10 页 ×
 //   50 篇，与地图同 cap；触顶时状态行明示“仅展示最近拉取的 500 篇”）。
+//   清单第 7 项：本人拉取改走 timeline scope（见 fetchEntriesPage 的 entriesScope），
+//   他人仍走 author scope；后端 author scope 不动，与日记 tab 口径分裂拍板接受。
 // - 切账号 / 登录翻转：appear 时 viewer 变了即按新身份重算重拉，旧选择清掉；
 //   从详情回来（可见性可能已翻转）只重拉一次；不轮询、不另建星图缓存，
 //   下次打开自然同步。重算走后台队列 + generation 门控，旧回包一律丢弃。
@@ -71,6 +73,16 @@ final class BearyDiaryStarMapViewController: UIViewController {
     private var needsRefreshAfterDetail = false
     private var yearRowHeight: NSLayoutConstraint?
     private var monthRowHeight: NSLayoutConstraint?
+    /// 扫荡 C：空态 / 失败态的底部约束三选一（同一时刻只激活一个）。
+    /// 背景：skyView / statusLabel / sheetCard 是手动布局（非 stack），isHidden
+    /// 不塌约束——空态时 sky 420 高 + 状态行 + 底卡仍撑内容高，空视图下方留
+    /// 大段空白、状态行还透在空视图上方；失败态与空视图同 top（filter+12）
+    /// 会重叠。故空态把 sky 高压 0、状态行隐藏、内容底改锚空视图；
+    /// 失败态内容底改锚失败视图；非空态恢复原 sheet 底锚。
+    private var skyHeight: NSLayoutConstraint?
+    private var sheetBottom: NSLayoutConstraint?
+    private var emptyBottom: NSLayoutConstraint?
+    private var failureBottom: NSLayoutConstraint?
 
     init(authorId: Int, viewerIsAuthor: Bool, initialEntries: [Entry], onOpenEntry: ((Entry) -> Void)?) {
         self.authorId = authorId
@@ -132,7 +144,26 @@ final class BearyDiaryStarMapViewController: UIViewController {
 
     @objc private func didTapRetry() {
         failureView.isHidden = true
+        // 扫荡 C：重试加载期间先按当前模型恢复空 / 非空布局（失败态的
+        // failureBottom 与隐藏态不留到加载期），回包后再由成功分支或
+        // showFailureState 定终态。
+        applyModelToSky()
         fetchAllEntries()
+    }
+
+    /// 扫荡 C：空数据加载失败的终态——失败视图独占（空视图 / 星空 /
+    /// 状态行 / 底卡全藏，sky 高压 0，内容底改锚失败视图），不再与
+    /// 空视图同 top 重叠、不留 sky 420 高的空白尾巴。
+    private func showFailureState() {
+        skyHeight?.constant = 0
+        skyView.isHidden = true
+        emptyView.isHidden = true
+        statusLabel.isHidden = true
+        sheetCard.isHidden = true
+        sheetBottom?.isActive = false
+        emptyBottom?.isActive = false
+        failureBottom?.isActive = true
+        failureView.isHidden = false
     }
 
     // MARK: - 布局
@@ -273,7 +304,6 @@ final class BearyDiaryStarMapViewController: UIViewController {
             skyView.topAnchor.constraint(equalTo: filterScrollView.bottomAnchor, constant: 12),
             skyView.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 16),
             skyView.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -16),
-            skyView.heightAnchor.constraint(equalToConstant: 420),
 
             statusLabel.topAnchor.constraint(equalTo: skyView.bottomAnchor, constant: 10),
             statusLabel.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 16),
@@ -312,9 +342,16 @@ final class BearyDiaryStarMapViewController: UIViewController {
             failureLabel.trailingAnchor.constraint(equalTo: failureView.trailingAnchor, constant: -24),
             retryButton.topAnchor.constraint(equalTo: failureLabel.bottomAnchor, constant: 16),
             retryButton.centerXAnchor.constraint(equalTo: failureView.centerXAnchor),
-
-            sheetCard.bottomAnchor.constraint(equalTo: contentView.bottomAnchor, constant: -24),
         ])
+        // 扫荡 C：sky 高与三选一底部约束单独持有（见属性注释）。
+        skyHeight = skyView.heightAnchor.constraint(equalToConstant: 420)
+        skyHeight?.isActive = true
+        sheetBottom = sheetCard.bottomAnchor.constraint(equalTo: contentView.bottomAnchor, constant: -24)
+        sheetBottom?.isActive = true
+        emptyBottom = emptyView.bottomAnchor.constraint(equalTo: contentView.bottomAnchor, constant: -24)
+        emptyBottom?.isActive = false
+        failureBottom = failureView.bottomAnchor.constraint(equalTo: contentView.bottomAnchor, constant: -24)
+        failureBottom?.isActive = false
         // 年/月行高约束单独持有：不分片时高置 0（isHidden 本身不塌约束，
         // 否则不分片页会在图例与过滤行之间留两行空白）。
         yearRowHeight = yearScrollView.heightAnchor.constraint(equalToConstant: 32)
@@ -515,8 +552,16 @@ final class BearyDiaryStarMapViewController: UIViewController {
         }
         skyView.setStars(model.stars, edges: skyEdges, pointsById: pointsById, selectedStarId: selectedStarId, selectedEdgeId: selectedEdgeId)
         let isEmpty = filteredEntries.isEmpty || BearyStarMap.entries(in: filteredEntries, slice: slice).isEmpty
+        // 扫荡 C：空态塌掉 sky 高、藏状态行、内容底改锚空视图——否则隐藏的
+        // sky（420 高）与状态行仍撑内容高，空视图下方留空白、状态行透在
+        // 空视图上方空白处；非空态全部恢复。
+        skyHeight?.constant = isEmpty ? 0 : 420
         skyView.isHidden = isEmpty
         emptyView.isHidden = !isEmpty
+        statusLabel.isHidden = isEmpty
+        sheetBottom?.isActive = !isEmpty
+        emptyBottom?.isActive = isEmpty
+        failureBottom?.isActive = false
         if isEmpty {
             emptySubLabel.text = viewerIsAuthor
                 ? "写下第一篇日记，它就会成为你的第一颗星。"
@@ -718,17 +763,27 @@ final class BearyDiaryStarMapViewController: UIViewController {
         loadGeneration += 1
         fetchCollected = []
         fetchSeenIds = []
-        fetchAuthorPage(before: nil, beforeId: nil, page: 1, generation: loadGeneration)
+        fetchEntriesPage(before: nil, beforeId: nil, page: 1, generation: loadGeneration)
     }
 
-    private func fetchAuthorPage(before: Int?, beforeId: String?, page: Int, generation: Int) {
-        BearyAPI.shared.fetchEntries(scope: .author(authorId), limit: 50, before: before, beforeId: beforeId) { [weak self] result in
+    /// 拉取 scope（清单第 7 项，Li 拍板）：本人走 timeline scope（服务端按
+    /// session.id 过滤，私密 + 公开 + 投递中全含），他人仍走 author scope；
+    /// 后端 author scope 不动。本人星图/地图与个人页日记 tab（author scope）
+    /// 因此数据口径分裂，拍板接受。timeline 与 author 同为 created_at DESC
+    /// 游标，分页（before=createdAt + before_id=id）一字不动；切账号后
+    /// viewerIsAuthor 已先更新，fetchAllEntries 自动按新身份选 scope。
+    private var entriesScope: BearyAPI.Scope {
+        return viewerIsAuthor ? .timeline : .author(authorId)
+    }
+
+    private func fetchEntriesPage(before: Int?, beforeId: String?, page: Int, generation: Int) {
+        BearyAPI.shared.fetchEntries(scope: entriesScope, limit: 50, before: before, beforeId: beforeId) { [weak self] result in
             DispatchQueue.main.async {
                 guard let self = self, generation == self.loadGeneration else { return }
                 switch result {
                 case .failure:
                     if self.fetchCollected.isEmpty && self.allEntries.isEmpty {
-                        self.failureView.isHidden = false
+                        self.showFailureState()
                     } else {
                         // 已有数据时网络失败不清空星空：保留已加载模型，状态行在
                         // 下次 applyModelToSky 时仍按已加载集合算（不编造失败篇）。
@@ -745,7 +800,7 @@ final class BearyDiaryStarMapViewController: UIViewController {
                     }
                     let last = pageEntries.last
                     if pageEntries.count >= 50, page < 10, let cursor = last?.createdAt, let lastId = last?.id {
-                        self.fetchAuthorPage(before: cursor, beforeId: lastId, page: page + 1, generation: generation)
+                        self.fetchEntriesPage(before: cursor, beforeId: lastId, page: page + 1, generation: generation)
                         return
                     }
                     self.fetchCapped = pageEntries.count >= 50 && page >= 10

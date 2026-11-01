@@ -187,6 +187,8 @@ final class BearyNotificationsViewController: UIViewController {
     private var hasDisplayedPage = false
     private var hasSuccessfulLoad = false
     private var isCustomPullRefreshing = false
+    /// 下拉收回动画在途旗：收回动画全程仍持刷新旗，跟随侧不中途重写 pullView.frame。
+    private var customPullEndInFlight = false
     /// 顶栏透度批：容器最后一次发来的栏态（本页属性内边距不含安全区顶，见 applyHeaderTopInset）。
     private var headerTopInsetVisible = false
     private var customPullStartTime: Date?
@@ -215,7 +217,8 @@ final class BearyNotificationsViewController: UIViewController {
         let label = UILabel()
         label.translatesAutoresizingMaskIntoConstraints = false
         label.text = "消息"
-        label.font = UIFont.boldSystemFont(ofSize: 19)
+        label.font = BearyDynamicType.scaledFont(for: UIFont.boldSystemFont(ofSize: 19))
+        label.adjustsFontForContentSizeCategory = true
         label.textColor = BearyColors.ink
         return label
     }()
@@ -234,14 +237,15 @@ final class BearyNotificationsViewController: UIViewController {
         button.translatesAutoresizingMaskIntoConstraints = false
         button.setImage(BearyIconImages.image(named: "icon_check", pointSize: 14), for: .normal)
         button.setTitle("全部已读", for: .normal)
-        button.titleLabel?.font = UIFont.systemFont(ofSize: 14, weight: .semibold)
+        button.titleLabel?.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 14, weight: .semibold))
+        button.titleLabel?.adjustsFontForContentSizeCategory = true
         button.setTitleColor(BearyColors.gray, for: .normal)
         button.tintColor = BearyColors.gray
         button.contentEdgeInsets = UIEdgeInsets(top: 4, left: 6, bottom: 4, right: 6)
         button.titleEdgeInsets = UIEdgeInsets(top: 0, left: 4, bottom: 0, right: 0)
         button.addTarget(self, action: #selector(readAllTapped), for: .touchUpInside)
         button.bearyAddPressFeedback()
-        let titleWidth = ceil(("全部已读" as NSString).size(withAttributes: [NSAttributedString.Key.font: UIFont.systemFont(ofSize: 14, weight: .semibold)]).width)
+        let titleWidth = ceil(("全部已读" as NSString).size(withAttributes: [NSAttributedString.Key.font: BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 14, weight: .semibold))]).width)
         let width = button.widthAnchor.constraint(equalToConstant: 6 + (button.currentImage?.size.width ?? 14) + 4 + titleWidth + 6)
         width.isActive = true
         readAllButtonWidthConstraint = width
@@ -277,6 +281,8 @@ final class BearyNotificationsViewController: UIViewController {
         table.estimatedRowHeight = 78
         table.contentInset = UIEdgeInsets(top: 0, left: 0, bottom: 80, right: 0)
         table.scrollIndicatorInsets = table.contentInset
+        // 116 后扫查：与广场/个人页同口径——关掉 delaysContentTouches，滚动容器里的点按立即响应，不等滚动判定。
+        table.delaysContentTouches = false
         table.register(BearyNotificationCell.self, forCellReuseIdentifier: "BearyNotificationCell")
         table.register(BearyNotificationTrailingCell.self, forCellReuseIdentifier: "BearyNotificationTrailingCell")
         table.delegate = self
@@ -353,19 +359,21 @@ final class BearyNotificationsViewController: UIViewController {
     private lazy var stateTitleLabel: UILabel = {
         let label = UILabel()
         label.translatesAutoresizingMaskIntoConstraints = false
-        label.font = UIFont.systemFont(ofSize: 15)
+        label.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 15))
         label.textColor = BearyColors.ink
         label.textAlignment = .center
+        label.adjustsFontForContentSizeCategory = true
         return label
     }()
 
     private lazy var stateSubtitleLabel: UILabel = {
         let label = UILabel()
         label.translatesAutoresizingMaskIntoConstraints = false
-        label.font = UIFont.systemFont(ofSize: 13)
+        label.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13))
         label.textColor = BearyColors.gray
         label.textAlignment = .center
         label.numberOfLines = 0
+        label.adjustsFontForContentSizeCategory = true
         return label
     }()
 
@@ -608,6 +616,14 @@ final class BearyNotificationsViewController: UIViewController {
         if previousTraitCollection?.userInterfaceStyle != traitCollection.userInterfaceStyle {
             updateDynamicLayerColors()
         }
+        // 扫荡组 A：大字号档位变化时重算按钮显式宽度（宽度按字宽实测，
+        // 档位变了旧宽度会裁标题）并重绘行（行内 attributed 字号在
+        // configure 时按当前档位取 scaledFont，需重跑 configure 才跟上）。
+        if previousTraitCollection?.preferredContentSizeCategory != traitCollection.preferredContentSizeCategory {
+            updateReadAllButtonWidth()
+            updateStateButtonWidth()
+            tableView.reloadData()
+        }
     }
 
     /// P3-4：个人主页 updateDynamicLayerColors 同款——本 VC 直接持有的 CGColor 描边集中在此重赋。
@@ -775,7 +791,7 @@ final class BearyNotificationsViewController: UIViewController {
     /// 下拉刷新与容器调用都走它：重拉第一页；已有列表时拉取量不少于已加载条数
     /// （网页 ntWant 同款，上限 200），避免翻页成果被打回第一页。
     /// 容器重拍 tab / 程序触发刷新都走自定义下拉外观（网页 __ptrRefresh 同口径：
-    /// 下滑 84 + 转圈，至少展示 500ms），而非标准 UIRefreshControl。
+    /// 下滑 84 + 转圈，回包到即收回（第 2 项后无 500ms 最低展示），而非标准 UIRefreshControl。
     func refresh() {
         if isCustomPullRefreshing || isLoadingFirstPage {
             return
@@ -789,6 +805,12 @@ final class BearyNotificationsViewController: UIViewController {
     /// 会在回顶落点处仍判“未到顶”，重拍永远只回顶不刷新。
     var isAtTop: Bool {
         tableView.contentOffset.y <= -tableView.contentInset.top + 1
+    }
+
+    /// 同 tab 连点刷新在途锁：首拉或自定义下拉头在途时，重拍刷新一律不重复触发
+    /// （refresh 自身的 isCustomPullRefreshing/isLoadingFirstPage 守卫是第二道）。
+    var isRefreshingForRetap: Bool {
+        isLoadingFirstPage || isCustomPullRefreshing
     }
 
     func scrollToTop() {
@@ -1078,7 +1100,7 @@ final class BearyNotificationsViewController: UIViewController {
     }
 
     /// 自定义下拉指示器跟随：手指行程（pan 手势自顶部锚点起算，网页 engageY
-    /// 口径）× 0.48 阻尼、上限 116；指示高 ≥80 时转圈淡入放大（网页 .pull）。
+    /// 口径）× 0.48 阻尼、上限 116；指示高 ≥67.2 时转满一圈（= 触发行程 140pt × 0.48，满格点即触发点）。
     /// 指示器是表内子视图：屏内底边固定为指示高，顶边随表回弹裁剪。
     private func updateCustomPullIndicator() {
         if isCustomPullRefreshing {
@@ -1104,13 +1126,13 @@ final class BearyNotificationsViewController: UIViewController {
         if indicatorHeight <= 0 {
             pullIconView.setPullProgress(0)
         } else {
-            let progress = min(1, indicatorHeight / 80)
+            let progress = min(1, indicatorHeight / 67.2)
             pullIconView.setPullProgress(progress)
         }
     }
 
     /// 自定义下拉刷新进入：指示固定 84 高 + 转圈（网页 runRefresh），
-    /// 至少展示 500ms，loadFirstPage 完成后再收回。
+    /// 回包到即收回（扫 bug 定版第 2 项，已无 0.5 秒最低展示），loadFirstPage 完成后再收回。
     private func beginCustomPullRefresh() {
         if isCustomPullRefreshing || isLoadingFirstPage {
             return
@@ -1118,7 +1140,12 @@ final class BearyNotificationsViewController: UIViewController {
         isCustomPullRefreshing = true
         customPullStartTime = Date()
         pullIconView.startSpinning()
-        // A5-3：下拉刷新进场查减动效开关——减动效时直接落位，不播 0.32s 动画。
+        // 回程一次到位：先掐断松手后的表减速/回弹（位置不动、仅停掉动量）。
+        // 否则表自带物理动画会与下面 easing 动画双路驱动 contentOffset：
+        // 先随惯性多下一截、再被拉回 84 位，即“先下降一点再回去”；
+        // 旧 0.32s 默认 easeInOut 零初速起手、与手指甩速脱节，手感发轻。
+        tableView.setContentOffset(tableView.contentOffset, animated: false)
+        // A5-3：下拉刷新进场查减动效开关——减动效时直接落位，不播 0.35s 动画。
         let pullIn = {
             self.tableView.contentInset.top = 84
             self.tableView.scrollIndicatorInsets.top = 84
@@ -1128,23 +1155,21 @@ final class BearyNotificationsViewController: UIViewController {
         if UIAccessibility.isReduceMotionEnabled {
             pullIn()
         } else {
-            UIView.animate(withDuration: 0.32, animations: pullIn)
+            UIView.animate(withDuration: 0.35, delay: 0, options: [.curveEaseOut, .beginFromCurrentState], animations: pullIn)
         }
         loadFirstPage(completion: { [weak self] in
             guard let strongSelf = self else { return }
-            let elapsed = strongSelf.customPullStartTime.map({ Date().timeIntervalSince($0) }) ?? 0.5
-            let remaining = max(0, 0.5 - elapsed)
-            DispatchQueue.main.asyncAfter(deadline: .now() + remaining) {
-                strongSelf.endCustomPullRefresh()
-            }
+            // 扫 bug 定版第 2 项：去掉 0.5 秒最低展示，loadFirstPage 回包到即收回。
+            strongSelf.endCustomPullRefresh()
         })
     }
 
     private func endCustomPullRefresh() {
-        if !isCustomPullRefreshing {
+        if !isCustomPullRefreshing || customPullEndInFlight {
             return
         }
-        isCustomPullRefreshing = false
+        customPullEndInFlight = true
+        // 收回动画全程仍持刷新旗（同广场端）：跟随侧不中途重写 pullView.frame。
         // A5-3：下拉刷新收回同样查减动效开关——减动效时直接复位并停圈。
         let pullOut = {
             self.tableView.contentInset.top = 0
@@ -1154,9 +1179,13 @@ final class BearyNotificationsViewController: UIViewController {
         }
         if UIAccessibility.isReduceMotionEnabled {
             pullOut()
+            self.isCustomPullRefreshing = false
+            self.customPullEndInFlight = false
             self.pullIconView.stopSpinning()
         } else {
-            UIView.animate(withDuration: 0.32, animations: pullOut, completion: { _ in
+            UIView.animate(withDuration: 0.35, delay: 0, options: [.curveEaseOut, .beginFromCurrentState], animations: pullOut, completion: { _ in
+                self.isCustomPullRefreshing = false
+                self.customPullEndInFlight = false
                 self.pullIconView.stopSpinning()
             })
         }
@@ -1755,7 +1784,7 @@ final class BearyNotificationsViewController: UIViewController {
     /// 每次改标题后调用（“全部已读”↔“处理中…”两态字宽不同）。
     private func updateReadAllButtonWidth() {
         let titleText = readAllButton.currentTitle ?? ""
-        let font = readAllButton.titleLabel?.font ?? UIFont.systemFont(ofSize: 14, weight: .semibold)
+        let font = readAllButton.titleLabel?.font ?? BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 14, weight: .semibold))
         let titleWidth = ceil((titleText as NSString).size(withAttributes: [NSAttributedString.Key.font: font]).width)
         let imageWidth = readAllButton.currentImage?.size.width ?? 14
         let width = readAllButton.contentEdgeInsets.left + imageWidth + readAllButton.titleEdgeInsets.left + titleWidth + readAllButton.titleEdgeInsets.right + readAllButton.contentEdgeInsets.right
@@ -1771,7 +1800,7 @@ final class BearyNotificationsViewController: UIViewController {
     /// stateButton 同款宽度修法（失败态赋值标题/图标后调用；首次调用时创建约束）。
     private func updateStateButtonWidth() {
         let titleText = stateButton.currentTitle ?? ""
-        let font = stateButton.titleLabel?.font ?? UIFont.systemFont(ofSize: 14)
+        let font = stateButton.titleLabel?.font ?? BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 14))
         let titleWidth = ceil((titleText as NSString).size(withAttributes: [NSAttributedString.Key.font: font]).width)
         let imageWidth = stateButton.currentImage?.size.width ?? 0
         let width = stateButton.contentEdgeInsets.left + imageWidth + stateButton.titleEdgeInsets.left + titleWidth + stateButton.titleEdgeInsets.right + stateButton.contentEdgeInsets.right
@@ -1854,7 +1883,7 @@ final class BearyNotificationsViewController: UIViewController {
             // 高统一 44），标题用“刷新”（空态非失败，语义区分）。
             stateButton.isHidden = false
             stateButton.setImage(nil, for: .normal)
-            stateButton.titleLabel?.font = UIFont.systemFont(ofSize: 13)
+            stateButton.titleLabel?.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13))
             stateButton.setTitleColor(BearyColors.gray, for: .normal)
             stateButton.tintColor = BearyColors.gray
             stateButton.contentEdgeInsets = UIEdgeInsets(top: 9, left: 24, bottom: 9, right: 24)
@@ -2132,12 +2161,12 @@ extension BearyNotificationsViewController: UITableViewDataSource, UITableViewDe
     }
 
     func scrollViewDidEndDragging(_ scrollView: UIScrollView, willDecelerate decelerate: Bool) {
-        // 自定义下拉触发：手指原始行程满 205px 松手才刷新（网页 TRIGRAW 口径）。
+        // 自定义下拉触发：手指原始行程满 140pt 松手才刷新（原网页 TRIGRAW 口径 205pt，App 侧本支改短，见 PR 描述）。
         let panTranslation = scrollView.panGestureRecognizer.translation(in: scrollView).y
         let fingerRaw = max(0, panTranslation - (pullEngageTranslation ?? panTranslation))
         pullEngageTranslation = nil
-        if fingerRaw >= 205 && !isLoadingFirstPage && !isCustomPullRefreshing {
-            // M12（91 包）：自定义下拉触发（满 205px 松手）给一次轻触觉；程序触发的 refresh() 不走这里。
+        if fingerRaw >= 140 && !isLoadingFirstPage && !isCustomPullRefreshing {
+            // M12（91 包）：自定义下拉触发（满 140pt 松手）给一次轻触觉；程序触发的 refresh() 不走这里。
             BearyHaptics.press()
             beginCustomPullRefresh()
         }
@@ -2203,19 +2232,21 @@ private class BearyLetterModal {
         mailView.isHidden = !isMail
         titleLabel.translatesAutoresizingMaskIntoConstraints = false
         // C-G8：网页 .confirm-box h3 字号 16，不是 17。
-        titleLabel.font = UIFont.boldSystemFont(ofSize: 16)
+        titleLabel.font = BearyDynamicType.scaledFont(for: UIFont.boldSystemFont(ofSize: 16))
+        titleLabel.adjustsFontForContentSizeCategory = true
         titleLabel.textColor = BearyColors.ink
         titleLabel.textAlignment = .center
         titleLabel.numberOfLines = 0
         titleLabel.text = title
         bodyScrollView.translatesAutoresizingMaskIntoConstraints = false
         bodyLabel.translatesAutoresizingMaskIntoConstraints = false
-        bodyLabel.font = UIFont.systemFont(ofSize: 16)
+        bodyLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 16))
+        bodyLabel.adjustsFontForContentSizeCategory = true
         bodyLabel.textColor = BearyColors.ink
         bodyLabel.numberOfLines = 0
         bodyLabel.lineBreakMode = .byCharWrapping
         // C-G8：网页 .letter-body line-height 1.9，App 原无行高倍数。
-        bodyLabel.attributedText = BearyLetterModal.lineHeightText(body, font: UIFont.systemFont(ofSize: 16), color: BearyColors.ink, multiple: 1.9)
+        bodyLabel.attributedText = BearyLetterModal.lineHeightText(body, font: BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 16)), color: BearyColors.ink, multiple: 1.9)
         quoteWrap.translatesAutoresizingMaskIntoConstraints = false
         quoteWrap.backgroundColor = BearyColors.faint
         quoteWrap.layer.cornerRadius = 12
@@ -2223,24 +2254,27 @@ private class BearyLetterModal {
         quoteBar.translatesAutoresizingMaskIntoConstraints = false
         quoteBar.backgroundColor = BearyColors.line
         quoteTextLabel.translatesAutoresizingMaskIntoConstraints = false
-        quoteTextLabel.font = UIFont.systemFont(ofSize: 16)
+        quoteTextLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 16))
+        quoteTextLabel.adjustsFontForContentSizeCategory = true
         quoteTextLabel.textColor = BearyColors.ink
         quoteTextLabel.numberOfLines = 0
         quoteTextLabel.lineBreakMode = .byCharWrapping
         quoteMetaLabel.translatesAutoresizingMaskIntoConstraints = false
-        quoteMetaLabel.font = UIFont.systemFont(ofSize: 13)
+        quoteMetaLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13))
+        quoteMetaLabel.adjustsFontForContentSizeCategory = true
         quoteMetaLabel.textColor = BearyColors.gray
         quoteMetaLabel.numberOfLines = 0
         if let quoteText = quoteText, let quoteMeta = quoteMeta {
             // C-G17：网页 .lq-txt line-height 1.75，App 原无行高。
-            quoteTextLabel.attributedText = BearyLetterModal.lineHeightText(quoteText, font: UIFont.systemFont(ofSize: 16), color: BearyColors.ink, multiple: 1.75)
+            quoteTextLabel.attributedText = BearyLetterModal.lineHeightText(quoteText, font: BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 16)), color: BearyColors.ink, multiple: 1.75)
             quoteMetaLabel.text = quoteMeta
             quoteWrap.isHidden = false
         } else {
             quoteWrap.isHidden = true
         }
         secondaryButton.translatesAutoresizingMaskIntoConstraints = false
-        secondaryButton.titleLabel?.font = UIFont.systemFont(ofSize: 16, weight: .semibold)
+        secondaryButton.titleLabel?.font = BearyDynamicType.cappedFont(for: UIFont.systemFont(ofSize: 16, weight: .semibold))
+        secondaryButton.titleLabel?.adjustsFontForContentSizeCategory = true
         secondaryButton.setTitleColor(BearyColors.ink, for: .normal)
         secondaryButton.tintColor = BearyColors.ink
         secondaryButton.layer.borderWidth = 1
@@ -2249,7 +2283,8 @@ private class BearyLetterModal {
         secondaryButton.layer.cornerRadius = 22
         secondaryButton.setTitle(goEntryId == nil ? "知道了" : "稍后", for: .normal)
         primaryButton.translatesAutoresizingMaskIntoConstraints = false
-        primaryButton.titleLabel?.font = UIFont.systemFont(ofSize: 16, weight: .semibold)
+        primaryButton.titleLabel?.font = BearyDynamicType.cappedFont(for: UIFont.systemFont(ofSize: 16, weight: .semibold))
+        primaryButton.titleLabel?.adjustsFontForContentSizeCategory = true
         primaryButton.setTitleColor(BearyColors.bg, for: .normal)
         primaryButton.backgroundColor = BearyColors.ink
         primaryButton.layer.cornerRadius = 22
@@ -2397,7 +2432,7 @@ private class BearyLetterModal {
     /// 信件模态引用预览随后补全：有正文才显示引用区，按钮行随之改贴引用区。
     func fillQuote(text: String, meta: String) {
         // C-G17：随后补全的引用同样带 1.75 行高（与 init 分支一致）。
-        quoteTextLabel.attributedText = BearyLetterModal.lineHeightText(text, font: UIFont.systemFont(ofSize: 16), color: BearyColors.ink, multiple: 1.75)
+        quoteTextLabel.attributedText = BearyLetterModal.lineHeightText(text, font: BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 16)), color: BearyColors.ink, multiple: 1.75)
         quoteMetaLabel.text = meta
         quoteWrap.isHidden = false
         buttonTopToBody?.isActive = false
@@ -2503,8 +2538,9 @@ private class BearyNotificationCell: UITableViewCell {
     private let avatarFallbackLabel: UILabel = {
         let label = UILabel()
         label.translatesAutoresizingMaskIntoConstraints = false
-        label.font = UIFont.boldSystemFont(ofSize: 15)
+        label.font = BearyDynamicType.scaledFont(for: UIFont.boldSystemFont(ofSize: 15))
         label.textColor = BearyColors.gray
+        label.adjustsFontForContentSizeCategory = true
         label.textAlignment = .center
         return label
     }()
@@ -2565,8 +2601,9 @@ private class BearyNotificationCell: UITableViewCell {
     private let titleLabel: UILabel = {
         let label = UILabel()
         label.translatesAutoresizingMaskIntoConstraints = false
-        label.font = UIFont.systemFont(ofSize: 15.5)
+        label.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 15.5))
         label.textColor = BearyColors.ink
+        label.adjustsFontForContentSizeCategory = true
         label.numberOfLines = 1
         // P3-6：标题显式截断 + 横向低压缩先缩标题，timeLabel 保持 required 不被挤。
         label.lineBreakMode = .byTruncatingTail
@@ -2589,8 +2626,9 @@ private class BearyNotificationCell: UITableViewCell {
     private let excerptLabel: UILabel = {
         let label = UILabel()
         label.translatesAutoresizingMaskIntoConstraints = false
-        label.font = UIFont.systemFont(ofSize: 14)
+        label.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 14))
         label.textColor = BearyColors.gray
+        label.adjustsFontForContentSizeCategory = true
         label.numberOfLines = 1
         return label
     }()
@@ -2598,8 +2636,9 @@ private class BearyNotificationCell: UITableViewCell {
     private let timeLabel: UILabel = {
         let label = UILabel()
         label.translatesAutoresizingMaskIntoConstraints = false
-        label.font = UIFont.systemFont(ofSize: 13)
+        label.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13))
         label.textColor = BearyColors.gray
+        label.adjustsFontForContentSizeCategory = true
         label.setContentHuggingPriority(.required, for: .horizontal)
         label.setContentCompressionResistancePriority(.required, for: .horizontal)
         return label
@@ -2683,11 +2722,12 @@ private class BearyNotificationCell: UITableViewCell {
         contentView.addSubview(chevronView)
         contentView.addSubview(separatorView)
         contentView.addSubview(nestedLineView)
-        // 行内边距 16/14 由 cell 自身承担（列宽已是满 600，见 contentView 注释）：
-        // 顶层行头像 x=20、未读点右 -20；嵌套行在此基础上再缩进（见 configure）。
-        avatarLeadingConstraint = avatarImageView.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 16)
+        // 行内边距 20/14 由 cell 自身承担（列宽已是满 600，见 contentView 注释；
+        // 32 清单第 5 项：头像 x 与未读点/箭头右距统一 20，与网页 .nt-item 对齐）：
+        // 顶层行头像 x=20、未读点右 -20、箭头右 -20；嵌套行在此基础上再缩进（见 configure）。
+        avatarLeadingConstraint = avatarImageView.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 20)
         separatorLeadingConstraint = separatorView.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 0)
-        dotTrailingToContentConstraint = unreadDotView.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -16)
+        dotTrailingToContentConstraint = unreadDotView.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -20)
         dotTrailingToChevronConstraint = unreadDotView.trailingAnchor.constraint(equalTo: chevronView.leadingAnchor, constant: -12)
         avatarLeadingConstraint?.isActive = true
         separatorLeadingConstraint?.isActive = true
@@ -2733,7 +2773,7 @@ private class BearyNotificationCell: UITableViewCell {
             unreadDotView.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 24),
             unreadDotView.widthAnchor.constraint(equalToConstant: 8),
             unreadDotView.heightAnchor.constraint(equalToConstant: 8),
-            chevronView.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -16),
+            chevronView.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -20),
             chevronView.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 18),
             chevronView.widthAnchor.constraint(equalToConstant: 16),
             chevronView.heightAnchor.constraint(equalToConstant: 16),
@@ -2791,7 +2831,7 @@ private class BearyNotificationCell: UITableViewCell {
         chevronView.isHidden = true
         chevronView.transform = CGAffineTransform.identity
         chevronView.image = nil
-        avatarLeadingConstraint?.constant = 16
+        avatarLeadingConstraint?.constant = 20
         separatorLeadingConstraint?.constant = 0
         nestedLineView.isHidden = true
         unreadBgView.backgroundColor = .clear
@@ -2893,15 +2933,15 @@ private class BearyNotificationCell: UITableViewCell {
         avatarFallbackLabel.isHidden = true
         kindBadgeView.isHidden = true
         nestedLineView.isHidden = true
-        titleLabel.attributedText = BearyNotificationCell.lineHeightText(title, font: UIFont.boldSystemFont(ofSize: 15.5), color: BearyColors.ink)
-        excerptLabel.attributedText = BearyNotificationCell.lineHeightText(excerpt, font: UIFont.systemFont(ofSize: 14), color: BearyColors.gray)
+        titleLabel.attributedText = BearyNotificationCell.lineHeightText(title, font: BearyDynamicType.scaledFont(for: UIFont.boldSystemFont(ofSize: 15.5)), color: BearyColors.ink)
+        excerptLabel.attributedText = BearyNotificationCell.lineHeightText(excerpt, font: BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 14)), color: BearyColors.gray)
         timeLabel.text = BearyNotificationCell.timeText(ms: timeMs)
         chevronView.isHidden = false
         chevronView.image = BearyIconImages.image(named: "icon_chevron_down", pointSize: 16)
         chevronView.transform = expanded ? CGAffineTransform(rotationAngle: CGFloat.pi) : CGAffineTransform.identity
         dotTrailingToContentConstraint?.isActive = false
         dotTrailingToChevronConstraint?.isActive = true
-        avatarLeadingConstraint?.constant = 16
+        avatarLeadingConstraint?.constant = 20
         separatorLeadingConstraint?.constant = 0
         nestedLineView.isHidden = true
     }
@@ -2963,7 +3003,7 @@ private class BearyNotificationCell: UITableViewCell {
         // 竖线本身 x=20（margin 起点）不变。
         // 补缺 P3-37：嵌套头像 x 按文件头注释口径（网页 .nt-sysin：头像 x=50、分隔线起于 30）统一为 50；
         // 真实像素未经真机截图量取，待 Li 真机核实（不得以本值冒充实测值）。
-        avatarLeadingConstraint?.constant = nested ? 50 : 16
+        avatarLeadingConstraint?.constant = nested ? 50 : 20
         separatorLeadingConstraint?.constant = nested ? 30 : 0
         nestedLineView.isHidden = !nested
         chevronView.isHidden = true
@@ -3004,7 +3044,7 @@ private class BearyNotificationCell: UITableViewCell {
             }
             avatarFallbackLabel.isHidden = true
             kindBadgeView.isHidden = true
-            titleLabel.attributedText = BearyNotificationCell.lineHeightText(titleText, font: UIFont.boldSystemFont(ofSize: 15.5), color: BearyColors.ink)
+            titleLabel.attributedText = BearyNotificationCell.lineHeightText(titleText, font: BearyDynamicType.scaledFont(for: UIFont.boldSystemFont(ofSize: 15.5)), color: BearyColors.ink)
         } else {
             // 互动行：42 圆头像（无图回退首字母 15/700 灰）+ 右下角 19 号类型角标。
             avatarImageView.backgroundColor = BearyColors.line
@@ -3041,7 +3081,7 @@ private class BearyNotificationCell: UITableViewCell {
             title.append(NSAttributedString(
                 string: actorName,
                 attributes: [
-                    .font: UIFont.boldSystemFont(ofSize: 15.5),
+                    .font: BearyDynamicType.scaledFont(for: UIFont.boldSystemFont(ofSize: 15.5)),
                     .foregroundColor: BearyColors.ink,
                 ]
             ))
@@ -3049,7 +3089,7 @@ private class BearyNotificationCell: UITableViewCell {
             title.append(NSAttributedString(
                 string: " " + verbText,
                 attributes: [
-                    .font: UIFont.systemFont(ofSize: 15.5),
+                    .font: BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 15.5)),
                     .foregroundColor: BearyColors.ink,
                 ]
             ))
@@ -3073,7 +3113,7 @@ private class BearyNotificationCell: UITableViewCell {
             titleLabel.attributedText = title
         }
 
-        excerptLabel.attributedText = BearyNotificationCell.lineHeightText(item.excerpt ?? "", font: UIFont.systemFont(ofSize: 14), color: BearyColors.gray)
+        excerptLabel.attributedText = BearyNotificationCell.lineHeightText(item.excerpt ?? "", font: BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 14)), color: BearyColors.gray)
         timeLabel.text = BearyNotificationCell.timeText(ms: item.createdAt)
     }
 }

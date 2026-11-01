@@ -149,6 +149,8 @@ final class BearyInviteViewController: UIViewController {
             inviteGlassView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
         ])
         scrollView.translatesAutoresizingMaskIntoConstraints = false
+        // 116 后扫查：与广场/个人页同口径——关掉 delaysContentTouches，滚动容器里的点按立即响应，不等滚动判定。
+        scrollView.delaysContentTouches = false
         contentView.translatesAutoresizingMaskIntoConstraints = false
         stackView.translatesAutoresizingMaskIntoConstraints = false
         stackView.axis = .vertical
@@ -348,12 +350,29 @@ final class BearyInviteViewController: UIViewController {
         messageLabel.textColor = ok ? BearyColors.green : BearyColors.red
     }
 
+    /// 116 数据填入动效：文案变化时只淡入该 label 本身（alpha 0→1、
+    /// 0.25s，不动 transform／布局、不重建节点、不缩放弹一下）；同值
+    /// 不赋值不重播；减动效或未进窗口时直设终值。绑定区容器本身的
+    /// 隐藏变可见淡入已实现，本函数只补文案层。
+    private func setLabelTextFaded(_ label: UILabel, _ text: String) {
+        guard label.text != text else { return }
+        label.text = text
+        guard !UIAccessibility.isReduceMotionEnabled, label.window != nil else {
+            label.alpha = 1
+            return
+        }
+        label.alpha = 0
+        UIView.animate(withDuration: 0.25, delay: 0, options: [.curveEaseOut, .beginFromCurrentState], animations: {
+            label.alpha = 1
+        })
+    }
+
     private func load(afterRender: (() -> Void)? = nil) {
         guard !isLoading else { return }
         isLoading = true
         retryButton.isHidden = true
         // U6：加载中统计区显示“加载中…”，复制钮在拿到码之前禁用。
-        statsLabel.text = "加载中…"
+        setLabelTextFaded(statsLabel, "加载中…")
         updateCopyButton()
         BearyAPI.shared.fetchMe { [weak self] result in
             DispatchQueue.main.async {
@@ -381,6 +400,10 @@ final class BearyInviteViewController: UIViewController {
                         strongSelf.showMessage("请先登录")
                     }
                 case .failure(.network):
+                    // 清单第 14 项：网络失败时统计区不许继续停在“加载中…”——
+                    // 改写明确文案“加载失败”，不清空（消息行的绑定成功文案优先规则不动，
+                    // 只改统计区这一行）。
+                    strongSelf.statsLabel.text = "加载失败"
                     // 审计 P2：绑定后二次刷新失败时，成功文案优先于加载失败文案。
                     if let pending = strongSelf.pendingBindMessage {
                         strongSelf.showMessage(pending, ok: strongSelf.pendingBindMessageOK)
@@ -390,6 +413,8 @@ final class BearyInviteViewController: UIViewController {
                     }
                     strongSelf.retryButton.isHidden = false
                 case .failure:
+                    // 清单第 14 项：同上，非网络类加载失败统计区亦显“加载失败”，不清空。
+                    strongSelf.statsLabel.text = "加载失败"
                     if let pending = strongSelf.pendingBindMessage {
                         strongSelf.showMessage(pending, ok: strongSelf.pendingBindMessageOK)
                         strongSelf.pendingBindMessage = nil
@@ -415,15 +440,17 @@ final class BearyInviteViewController: UIViewController {
         let boundWasHidden = boundRow.isHidden
         let bindWasHidden = bindRow.isHidden
         let hintWasHidden = bindHintLabel.isHidden
-        codeLabel.text = inviteCode ?? "—"
+        setLabelTextFaded(codeLabel, inviteCode ?? "—")
         updateCopyButton()
         // 审计 P2：referral 尚未回包时统计区保留“加载中…”，不回落假零值。
         if let ref = referral {
             let invited = ref.invitedCount ?? 0
             let months = ref.rewardMonths ?? 0
-            statsLabel.text = "已邀请 \(invited) 人 · 累计获得 \(months * 30) 天 Plus"
+            // 清单第 8 项：与网页一致，统计单位改“个月”（rewardMonths 本就是月数，
+            // 不再 ×30 换算成天；#405 的文案淡入保留）。
+            setLabelTextFaded(statsLabel, "已邀请 \(invited) 人 · 累计获得 \(months) 个月 Plus")
         } else {
-            statsLabel.text = "加载中…"
+            setLabelTextFaded(statsLabel, "加载中…")
         }
         boundRow.isHidden = true
         bindRow.isHidden = true
@@ -432,19 +459,19 @@ final class BearyInviteViewController: UIViewController {
             let status = referral?.status ?? ""
             let inviterName = referral?.inviterName ?? "好友"
             if status == "cancelled" || status == "expired" {
-                boundLabel.text = "邀请已作废"
+                setLabelTextFaded(boundLabel, "邀请已作废")
                 // 审计 P2：作废态不写死绿勾，图标隐藏。
                 boundCheckIcon.isHidden = true
             } else if status == "granted" {
-                boundLabel.text = "已通过 \(inviterName) 的邀请加入 beary"
+                setLabelTextFaded(boundLabel, "已通过 \(inviterName) 的邀请加入 beary")
                 boundCheckIcon.isHidden = false
             } else if status == "flagged" || status == "granting" {
                 // 补缺 P3-32：pending/flagged/granting 不再一律“已通过”；绿勾只属 granted。
-                boundLabel.text = "待发放 · \(inviterName) 的邀请"
+                setLabelTextFaded(boundLabel, "待发放 · \(inviterName) 的邀请")
                 boundCheckIcon.isHidden = true
             } else {
                 // pending 与未知态保守显“待审核”，不谎称已通过。
-                boundLabel.text = "待审核 · \(inviterName) 的邀请"
+                setLabelTextFaded(boundLabel, "待审核 · \(inviterName) 的邀请")
                 boundCheckIcon.isHidden = true
             }
             boundRow.isHidden = false
@@ -454,26 +481,26 @@ final class BearyInviteViewController: UIViewController {
                 // 审计 P2：补绑已过期——隐藏绑定框，明确显示过期文案，不按“不到 1 天”显示。
                 bindRow.isHidden = true
                 bindHintLabel.isHidden = false
-                bindHintLabel.text = "补绑期已过"
+                setLabelTextFaded(bindHintLabel, "补绑期已过")
             } else {
                 bindRow.isHidden = false
                 bindHintLabel.isHidden = false
                 if let deadline = ref.bindDeadline {
                     let days = (deadline - nowMs) / 86400000
                     if days > 0 {
-                        bindHintLabel.text = "注册后 30 天内可补绑（还剩 \(days) 天）"
+                        setLabelTextFaded(bindHintLabel, "注册后 30 天内可补绑（还剩 \(days) 天）")
                     } else {
-                        bindHintLabel.text = "注册后 30 天内可补绑（还剩不到 1 天）"
+                        setLabelTextFaded(bindHintLabel, "注册后 30 天内可补绑（还剩不到 1 天）")
                     }
                 } else {
-                    bindHintLabel.text = "注册后 30 天内可补绑"
+                    setLabelTextFaded(bindHintLabel, "注册后 30 天内可补绑")
                 }
                 updateBindButton()
             }
         } else if referral != nil {
             // 审计 P2：未绑定且补绑窗口已关（bindOpen == false）——给过期文案，不整区静默消失。
             bindHintLabel.isHidden = false
-            bindHintLabel.text = "补绑期已过"
+            setLabelTextFaded(bindHintLabel, "补绑期已过")
         }
         messageLabel.text = ""
         // 审计 P2：绑定成功文案先显示——render 清空消息行后，待展示的绑定文案重新落回。
