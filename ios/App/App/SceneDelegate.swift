@@ -590,10 +590,13 @@ final class BearyChromeViewController: UIViewController {
         fabContainerView = fabContainer
         let fabShadow = UIView()
         fabShadow.backgroundColor = .clear
-        fabShadow.layer.shadowColor = bearyOrange.cgColor
-        fabShadow.layer.shadowOpacity = 0.45
-        fabShadow.layer.shadowRadius = 12
-        fabShadow.layer.shadowOffset = CGSize(width: 0, height: 10)
+        // ChatGPT 视觉清单已定设计第 2 项：FAB 移除橙色外发光，改轻薄中性阴影。
+        // 原值：橙色 shadowColor、透明度 0.45、半径 12、偏移 (0,10)——外发光感强。
+        // 新值只改阴影四项：黑色、中性、薄、贴近本体；玻璃底与加号图标一律不动。
+        fabShadow.layer.shadowColor = UIColor.black.cgColor
+        fabShadow.layer.shadowOpacity = 0.18
+        fabShadow.layer.shadowRadius = 6
+        fabShadow.layer.shadowOffset = CGSize(width: 0, height: 3)
         fabShadow.layer.cornerRadius = 27
         fabShadow.translatesAutoresizingMaskIntoConstraints = false
         fabContainer.addSubview(fabShadow)
