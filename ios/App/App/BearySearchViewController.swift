@@ -566,9 +566,9 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         stateWrap.addSubview(stateStack)
 
         stateCircle.translatesAutoresizingMaskIntoConstraints = false
-        // 网页 .addr-stic：橙 18% 混 surface（不是 18% 透明盖在 bg 上；
-        // 深色下 bg 纯黑、surface #26262c，两者差一档）。
-        stateCircle.backgroundColor = BearySearchViewController.mixedColor(BearyColors.orange, 0.18, over: BearyColors.surface)
+        // 空态圈视觉统一：与 BearyStateView 同款——橙 18% 透明底（不再混
+        // surface；深色下混 surface 会比 StateView 的圈亮一档）。
+        stateCircle.backgroundColor = BearyColors.orange.withAlphaComponent(0.18)
         stateCircle.layer.borderWidth = 1
         // 8-11：初值 27 = 54/2（首次布局前 bounds 未定时的正确帧；布局后由
         // viewDidLayoutSubviews 按高/2 重算，见该处注释）。
