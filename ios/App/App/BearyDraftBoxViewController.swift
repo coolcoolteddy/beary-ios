@@ -141,11 +141,13 @@ final class BearyDraftBoxViewController: UIViewController {
     private let contentStack = UIStackView()
     private let handleView = UIView()
     /// 2026-10-30 抓手批：把手行本身只有 14pt 高（顶距 10 + 抓手 4），
-    /// 且挂在 sheetScrollView 内的把手行上，手指稍偏或列表可滚时
-    /// 滚动视图会抢走竖向 pan。另加一块不进 stack 的透明热区，
+    /// 手指稍偏或列表可滚时滚动视图会抢走竖向 pan。另加一块不进 stack 的透明热区，
     /// 直接钉在 sheetView 顶部（滚动视图之上，不会被抢），视觉与
     /// 其余布局完全不动，见 buildViews。
+    /// 审计第 10 项（草稿箱部分）：把手行与标题行不再进滚动栈，改钉在
+    /// fixedHeaderView 内（面板顶部固定），滚动区从其下方起。
     private let grabHitView = UIView()
+    private let fixedHeaderView = UIView()
     private let headerWrap = UIView()
     private let titleLabel = UILabel()
     private let closeButton = BearyButton.closeButton()
@@ -316,7 +318,7 @@ final class BearyDraftBoxViewController: UIViewController {
         ])
         // U18：把手加下滑关闭手势（与 closeBox 同动画）；遮罩点按关闭保留。
         handleWrapView.addGestureRecognizer(UIPanGestureRecognizer(target: self, action: #selector(handlePanGesture(_:))))
-        contentStack.addArrangedSubview(handleWrapView)
+        // 审计第 10 项：把手行不进滚动栈，改由下方固定头部容器收纳。
         // 2026-10-30 抓手批：把手行只有 14pt 高，手指很难稳定抓中。
         // 热区以抓手为中心、宽 120、高 32（抓手 10–14 上下各扩余量），
         // 该区内只有不拦截触摸的把手与居中标题，右上角关闭钮在区外，
@@ -359,7 +361,31 @@ final class BearyDraftBoxViewController: UIViewController {
             closeButton.topAnchor.constraint(equalTo: headerWrap.topAnchor, constant: 6),
             closeButton.bottomAnchor.constraint(equalTo: headerWrap.bottomAnchor, constant: -6),
         ])
-        contentStack.addArrangedSubview(headerWrap)
+        // 审计第 10 项（草稿箱部分）：头部固定在面板顶部——把手行与
+        // 标题/关闭行移出滚动栈，钉在 sheetView 顶部的固定容器内；
+        // 滚动区改为从容器下方起，余下内容（副标题起）按原顺序仍在
+        // 滚动栈内。关闭动作、标题文案、抓手样式与头高均不动。
+        fixedHeaderView.backgroundColor = BearyColors.surface
+        fixedHeaderView.translatesAutoresizingMaskIntoConstraints = false
+        fixedHeaderView.layer.cornerRadius = BearySheetChrome.topCornerRadius
+        fixedHeaderView.layer.masksToBounds = true
+        sheetView.addSubview(fixedHeaderView)
+        fixedHeaderView.addSubview(handleWrapView)
+        fixedHeaderView.addSubview(headerWrap)
+        NSLayoutConstraint.activate([
+            fixedHeaderView.topAnchor.constraint(equalTo: sheetView.topAnchor),
+            fixedHeaderView.leadingAnchor.constraint(equalTo: sheetView.leadingAnchor),
+            fixedHeaderView.trailingAnchor.constraint(equalTo: sheetView.trailingAnchor),
+            handleWrapView.topAnchor.constraint(equalTo: fixedHeaderView.topAnchor),
+            handleWrapView.leadingAnchor.constraint(equalTo: fixedHeaderView.leadingAnchor),
+            handleWrapView.trailingAnchor.constraint(equalTo: fixedHeaderView.trailingAnchor),
+            headerWrap.topAnchor.constraint(equalTo: handleWrapView.bottomAnchor),
+            headerWrap.leadingAnchor.constraint(equalTo: fixedHeaderView.leadingAnchor),
+            headerWrap.trailingAnchor.constraint(equalTo: fixedHeaderView.trailingAnchor),
+            headerWrap.bottomAnchor.constraint(equalTo: fixedHeaderView.bottomAnchor),
+        ])
+        // 抓手热区仍压在最上层（居中 120 宽，关闭钮在其范围外，不被挡）。
+        sheetView.bringSubviewToFront(grabHitView)
 
         subLabel.font = UIFont.systemFont(ofSize: 12.5)
         subLabel.textColor = BearyColors.gray
@@ -485,7 +511,8 @@ final class BearyDraftBoxViewController: UIViewController {
         sheetScrollView.layer.cornerRadius = 20
         sheetScrollView.layer.masksToBounds = true
         NSLayoutConstraint.activate([
-            sheetScrollView.topAnchor.constraint(equalTo: sheetView.topAnchor),
+            // 审计第 10 项：滚动区从固定头部下方起，不再盖住头部。
+            sheetScrollView.topAnchor.constraint(equalTo: fixedHeaderView.bottomAnchor),
             sheetScrollView.bottomAnchor.constraint(equalTo: sheetView.bottomAnchor),
             sheetScrollView.leadingAnchor.constraint(equalTo: sheetView.leadingAnchor),
             sheetScrollView.trailingAnchor.constraint(equalTo: sheetView.trailingAnchor),
@@ -541,12 +568,15 @@ final class BearyDraftBoxViewController: UIViewController {
             sheetView.layer.borderWidth = 1
             sheetView.layer.bearyDynamicBorderColor = BearyColors.line
             BearySheetChrome.applyShadow(to: sheetView.layer, centered: true)
-            sheetScrollView.layer.maskedCorners = [.layerMinXMinYCorner, .layerMaxXMinYCorner, .layerMinXMaxYCorner, .layerMaxXMaxYCorner]
+            // 审计第 10 项：顶圆角归固定头部，底圆角归滚动区（圆角数值不动）。
+            fixedHeaderView.layer.maskedCorners = [.layerMinXMinYCorner, .layerMaxXMinYCorner]
+            sheetScrollView.layer.maskedCorners = [.layerMinXMaxYCorner, .layerMaxXMaxYCorner]
         } else {
             sheetView.layer.maskedCorners = [.layerMinXMinYCorner, .layerMaxXMinYCorner]
             sheetView.layer.borderWidth = 0
             BearySheetChrome.applyShadow(to: sheetView.layer, centered: false)
-            sheetScrollView.layer.maskedCorners = [.layerMinXMinYCorner, .layerMaxXMinYCorner]
+            fixedHeaderView.layer.maskedCorners = [.layerMinXMinYCorner, .layerMaxXMinYCorner]
+            sheetScrollView.layer.maskedCorners = []
         }
     }
 
@@ -557,7 +587,14 @@ final class BearyDraftBoxViewController: UIViewController {
         if let widthConstraint = sheetWidthConstraint, isPadLayout {
             widthConstraint.constant = max(sheetWidth, 0)
         }
-        let fittingHeight = contentStack.systemLayoutSizeFitting(
+        // 审计第 10 项：面板总高 = 固定头部高（把手 + 标题行）+ 滚动内容高；
+        // 头部已移出滚动栈，故此处须把两部分相加，否则面板会矮一截。
+        let headerHeight = fixedHeaderView.systemLayoutSizeFitting(
+            CGSize(width: sheetWidth, height: 0),
+            withHorizontalFittingPriority: .required,
+            verticalFittingPriority: .fittingSizeLevel
+        ).height
+        let fittingHeight = headerHeight + contentStack.systemLayoutSizeFitting(
             CGSize(width: sheetWidth, height: 0),
             withHorizontalFittingPriority: .required,
             verticalFittingPriority: .fittingSizeLevel
@@ -1304,12 +1341,17 @@ final class BearyDraftBoxViewController: UIViewController {
                 sheetScrollView.contentOffset = .zero
             }
             sheetView.transform = CGAffineTransform(translationX: 0, y: offset)
+            // 审计第 14 项：遮罩跟手变淡，与游客提示同口径（共用映射）。
+            backdropButton.alpha = BearySheetDrag.scrimAlpha(forDragOffset: offset, sheetHeight: sheetView.bounds.height)
         case .ended:
             let velocity = gesture.velocity(in: view).y
             if translation.y > 80 || velocity > 600 {
                 closeBox()
             } else {
-                let restore = { self.sheetView.transform = .identity }
+                let restore = {
+                    self.sheetView.transform = .identity
+                    self.backdropButton.alpha = 1
+                }
                 if UIAccessibility.isReduceMotionEnabled {
                     restore()
                 } else {
@@ -1317,7 +1359,10 @@ final class BearyDraftBoxViewController: UIViewController {
                 }
             }
         case .cancelled, .failed:
-            let restore = { self.sheetView.transform = .identity }
+            let restore = {
+                self.sheetView.transform = .identity
+                self.backdropButton.alpha = 1
+            }
             if UIAccessibility.isReduceMotionEnabled {
                 restore()
             } else {

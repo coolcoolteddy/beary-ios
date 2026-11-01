@@ -573,13 +573,19 @@ final class BearyRecipientPickerViewController: UIViewController, UITextFieldDel
         let translation = gesture.translation(in: view)
         switch gesture.state {
         case .changed:
-            sheetView.transform = CGAffineTransform(translationX: 0, y: BearySheetDrag.offset(for: translation.y))
+            let offset = BearySheetDrag.offset(for: translation.y)
+            sheetView.transform = CGAffineTransform(translationX: 0, y: offset)
+            // 审计第 14 项：遮罩跟手变淡，与游客提示同口径（共用映射）。
+            backdropButton.alpha = BearySheetDrag.scrimAlpha(forDragOffset: offset, sheetHeight: sheetView.bounds.height)
         case .ended:
             let velocity = gesture.velocity(in: view).y
             if translation.y > 80 || velocity > 600 {
                 didTapClose()
             } else {
-                let restore = { self.sheetView.transform = .identity }
+                let restore = {
+                    self.sheetView.transform = .identity
+                    self.backdropButton.alpha = 1
+                }
                 if UIAccessibility.isReduceMotionEnabled {
                     restore()
                 } else {
@@ -587,7 +593,10 @@ final class BearyRecipientPickerViewController: UIViewController, UITextFieldDel
                 }
             }
         case .cancelled, .failed:
-            let restore = { self.sheetView.transform = .identity }
+            let restore = {
+                self.sheetView.transform = .identity
+                self.backdropButton.alpha = 1
+            }
             if UIAccessibility.isReduceMotionEnabled {
                 restore()
             } else {

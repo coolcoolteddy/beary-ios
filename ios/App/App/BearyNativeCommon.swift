@@ -136,6 +136,15 @@ enum BearySheetDrag {
         if translationY >= 0 { return translationY }
         return max(translationY * 0.25, -24)
     }
+
+    /// 审计第 14 项：拖动进度到遮罩透明度的统一映射——与游客提示
+    /// （SceneDelegate guestSheetPanGesture）原口径一致：下滑位移占
+    /// 面板高比例线性变淡，上滑/未拖动时保持 1；面板高 ≤0 时返回 1，
+    /// 避免除零。拖动面板的各处 .changed 与取消恢复均走此函数。
+    static func scrimAlpha(forDragOffset offset: CGFloat, sheetHeight: CGFloat) -> CGFloat {
+        guard sheetHeight > 0 else { return 1 }
+        return max(0, 1 - max(0, offset) / sheetHeight)
+    }
 }
 
 // MARK: - 液态玻璃（与 SceneDelegate.makeGlassView 同配方，勿另起 tint）
