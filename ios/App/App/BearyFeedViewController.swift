@@ -473,7 +473,7 @@ class BearyFeedViewController: UIViewController {
     }
 
     /// 自定义下拉刷新进入（消息页同款）：指示固定 84 高 + 转圈，
-    /// 至少展示 500ms；完成由 maybeEndRefreshing 收回（见 endCustomPullRefresh）。
+    /// 回包到即收回（扫 bug 定版第 2 项，已无 0.5 秒最低展示）；完成由 maybeEndRefreshing 收回（见 endCustomPullRefresh）。
     private func beginCustomPullRefresh() {
         if isCustomPullRefreshing {
             return
@@ -494,7 +494,7 @@ class BearyFeedViewController: UIViewController {
             UIView.animate(withDuration: 0.32, animations: pullIn)
         }
         // 112 刷新节流（仅手势下拉）：上次首拉成功 5 秒内且已有内容时，
-        // 不再发网络请求，指示头走 500ms 最小展示后收回；程序侧刷新
+        // 不再发网络请求，指示头随收回动画收回（第 2 项后不再等 500ms）；程序侧刷新
         //（重拍 tab/登录翻转/外部调用）不受此限，照常走 refreshAll。
         if let last = lastFeedLoadAt, Date().timeIntervalSince(last) < 5, !plazaRaw.isEmpty {
             endCustomPullRefresh()
@@ -503,7 +503,7 @@ class BearyFeedViewController: UIViewController {
         refreshAllInternal(showCentralSpinner: false)
     }
 
-    /// 自定义下拉刷新结束：至少展示 500ms 后复位到基线内边距；旧回包守卫
+    /// 自定义下拉刷新结束：回包到即复位到基线内边距（第 2 项后无最低展示）；旧回包守卫
     /// 丢弃时仍走 maybeEndRefreshing 到这里，不让刷新头永不结束。
     /// 32 清单第 23 项：结束时只收指示器——若刷新在途用户已滑到深处（或仍按住拖动），
     /// 不再把 contentOffset 拽回 -baseline 顶部，只复位内边距、藏指示头，留在原位置；
@@ -512,33 +512,30 @@ class BearyFeedViewController: UIViewController {
         if !isCustomPullRefreshing || customPullEndScheduled {
             return
         }
+        // 扫 bug 定版第 2 项：去掉 0.5 秒最低展示，回包到即收回，
+        // 不再用 asyncAfter 补满剩余时间；0.32s 收回动画与触发口径不动。
         customPullEndScheduled = true
-        let elapsed = customPullStartTime.map({ Date().timeIntervalSince($0) }) ?? 0.5
-        let remaining = max(0, 0.5 - elapsed)
-        DispatchQueue.main.asyncAfter(deadline: .now() + remaining) { [weak self] in
-            guard let self else { return }
-            self.isCustomPullRefreshing = false
-            self.customPullEndScheduled = false
-            let baseline = self.feedPullBaselineTop()
-            // 下拉位 = -(baseline + 84)（见 beginCustomPullRefresh）；8pt 容差内算仍在下拉位。
-            let stillAtPullPosition = !self.tableView.isDragging
-                && self.tableView.contentOffset.y <= -(baseline + 84) + 8
-            let pullOut = {
-                self.tableView.contentInset.top = baseline
-                self.tableView.scrollIndicatorInsets.top = baseline
-                if stillAtPullPosition {
-                    self.tableView.contentOffset = CGPoint(x: 0, y: -baseline)
-                }
-                self.pullView.frame = CGRect(x: 0, y: -116, width: self.tableView.bounds.width, height: 116)
+        isCustomPullRefreshing = false
+        customPullEndScheduled = false
+        let baseline = feedPullBaselineTop()
+        // 下拉位 = -(baseline + 84)（见 beginCustomPullRefresh）；8pt 容差内算仍在下拉位。
+        let stillAtPullPosition = !self.tableView.isDragging
+            && self.tableView.contentOffset.y <= -(baseline + 84) + 8
+        let pullOut = {
+            self.tableView.contentInset.top = baseline
+            self.tableView.scrollIndicatorInsets.top = baseline
+            if stillAtPullPosition {
+                self.tableView.contentOffset = CGPoint(x: 0, y: -baseline)
             }
-            if UIAccessibility.isReduceMotionEnabled {
-                pullOut()
+            self.pullView.frame = CGRect(x: 0, y: -116, width: self.tableView.bounds.width, height: 116)
+        }
+        if UIAccessibility.isReduceMotionEnabled {
+            pullOut()
+            self.refreshIconView.stopSpinning()
+        } else {
+            UIView.animate(withDuration: 0.32, animations: pullOut, completion: { _ in
                 self.refreshIconView.stopSpinning()
-            } else {
-                UIView.animate(withDuration: 0.32, animations: pullOut, completion: { _ in
-                    self.refreshIconView.stopSpinning()
-                })
-            }
+            })
         }
     }
 

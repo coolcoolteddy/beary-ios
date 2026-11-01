@@ -787,7 +787,7 @@ final class BearyNotificationsViewController: UIViewController {
     /// 下拉刷新与容器调用都走它：重拉第一页；已有列表时拉取量不少于已加载条数
     /// （网页 ntWant 同款，上限 200），避免翻页成果被打回第一页。
     /// 容器重拍 tab / 程序触发刷新都走自定义下拉外观（网页 __ptrRefresh 同口径：
-    /// 下滑 84 + 转圈，至少展示 500ms），而非标准 UIRefreshControl。
+    /// 下滑 84 + 转圈，回包到即收回（第 2 项后无 500ms 最低展示），而非标准 UIRefreshControl。
     func refresh() {
         if isCustomPullRefreshing || isLoadingFirstPage {
             return
@@ -1122,7 +1122,7 @@ final class BearyNotificationsViewController: UIViewController {
     }
 
     /// 自定义下拉刷新进入：指示固定 84 高 + 转圈（网页 runRefresh），
-    /// 至少展示 500ms，loadFirstPage 完成后再收回。
+    /// 回包到即收回（扫 bug 定版第 2 项，已无 0.5 秒最低展示），loadFirstPage 完成后再收回。
     private func beginCustomPullRefresh() {
         if isCustomPullRefreshing || isLoadingFirstPage {
             return
@@ -1144,11 +1144,8 @@ final class BearyNotificationsViewController: UIViewController {
         }
         loadFirstPage(completion: { [weak self] in
             guard let strongSelf = self else { return }
-            let elapsed = strongSelf.customPullStartTime.map({ Date().timeIntervalSince($0) }) ?? 0.5
-            let remaining = max(0, 0.5 - elapsed)
-            DispatchQueue.main.asyncAfter(deadline: .now() + remaining) {
-                strongSelf.endCustomPullRefresh()
-            }
+            // 扫 bug 定版第 2 项：去掉 0.5 秒最低展示，loadFirstPage 回包到即收回。
+            strongSelf.endCustomPullRefresh()
         })
     }
 
