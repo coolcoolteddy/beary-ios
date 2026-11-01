@@ -10,6 +10,8 @@ import Lottie
 /// 文件名为 key 加 json 后缀，深色版在 key 后加 dark 后缀。
 /// 解析失败或取不到 JSON 时回退到 PNG 静态图，不抛错，不中断调用方布局。
 /// 减动效开启时一律只显示循环段末帧（完成帧），不自动播放，play 调用同样只停在完成帧。
+/// 主题切换（同一表情）：只换深浅版本，保留帧位置、循环阶段和播放状态，不重播开场；
+/// 延迟加载尚未触发时只换静态回退图、不提前解析（见 traitCollectionDidChange）。
 /// 完成帧取 CachedEmote.staticFrame：恒落在 [0, op) 半开区间内，永不等于 op（见该属性注释）。
 /// 首次解析（LottieAnimation.filepath + markers 解码）不在视图创建调用链上同步做：
 /// 未命中缓存时先挂 PNG 占位，后台线程解析、回主线程挂接；缓存命中仍同步挂接（只建视图，不解析）。
@@ -27,8 +29,9 @@ public final class BearyEmoteView: UIView {
     /// 渲染都从 0 帧重画描线；停播态仍需 play() 恢复，见 BearyEmoteChipView.render）。
     var isPlayingNow: Bool { isPlaying }
     /// 开场是否已播完一次（0→op 完成）：同一份内容只播一次开场；切 tab、
-    /// 滚出再回来走恢复，不重播。teardownContent（换内容/深浅切换）时清零，
-    /// 新内容重新首播；主动重播 replayFromStart() 也清零。
+    /// 滚出再回来走恢复，不重播。teardownContent 时清零，换内容时新内容
+    /// 重新首播；主题切换由 traitCollectionDidChange 在 teardown 后恢复该值，
+    /// 只换深浅版本、不重播；主动重播 replayFromStart() 也清零。
     private var introPlayed: Bool = false
     /// stop() 捕获的暂停帧：Lottie stop() 后不保证停在当前帧（同文件
     /// showStaticFrame 在 stop 后特意补帧即是证据），故 stop 时先记帧，
@@ -289,10 +292,25 @@ public final class BearyEmoteView: UIView {
             showFallback(dark: self.isDark)
             return
         }
+        // 主题切换（同一表情）：只换深浅版本，保留帧位置、循环阶段和播放状态，
+        // 不重播开场描线。快照必须在 teardown 之前取：teardown 会清 introPlayed /
+        // pausedFrame，且 loadEmote 内部还会再 teardown 一次，故恢复后的快照不能
+        // 经 loadEmote 走——这里 teardown 一次后恢复快照，再走不 teardown 的
+        // startLoadEmote()；代次仍递增一次，旧后台解析与旧播放回调照常作废。
+        // 帧取 pausedFrame 优先（stop 捕获的暂停帧比 stop 后的 currentFrame 准），
+        // 否则取当前帧；冻结静态帧（heldStaticFrame）时不取帧，挂接仍走静态帧。
+        // 尚无动画视图且无暂停帧（仍在 PNG 占位 / 后台解析）时快照为空，挂接时
+        // 按新内容首播 / 静态口径走，行为与旧路径一致。
         let wasPlaying = isPlaying
+        let wasIntroPlayed = introPlayed
+        let wasHeldStaticFrame = heldStaticFrame
+        let preservedFrame = heldStaticFrame ? nil : (pausedFrame ?? animationView?.currentFrame)
         teardownContent()
         isPlaying = wasPlaying
-        loadEmote()
+        introPlayed = wasIntroPlayed
+        heldStaticFrame = wasHeldStaticFrame
+        pausedFrame = preservedFrame
+        startLoadEmote()
         Self.schedulePrewarm(dark: self.isDark)
     }
 
@@ -402,6 +420,12 @@ public final class BearyEmoteView: UIView {
 
     private func loadEmote() {
         teardownContent()
+        startLoadEmote()
+    }
+
+    /// 不 teardown 的加载本体：换内容走 loadEmote()；主题切换在 teardown 后
+    /// 恢复快照，再走这里，避免第二次 teardown 把快照清掉。
+    private func startLoadEmote() {
         let dark = isDark
         let cacheKey = Self.cacheKey(for: emoteKey, dark: dark)
         // 缓存命中：只建 LottieAnimationView，不做任何解析，仍可同步挂接。
@@ -451,14 +475,21 @@ public final class BearyEmoteView: UIView {
             view.currentFrame = cached.staticFrame
         } else if isPlaying {
             // 新内容挂接时 introPlayed 恒为 false（teardown 已清零），走首播；
-            // 写成两分支是防未来挂接路径不经过 teardown 时也按已播态恢复，不回 0。
-            if introPlayed {
+            // 主题切换挂接时 introPlayed / 暂停帧已恢复：有暂停帧即走恢复，
+            // 不论开场是否已播完——恢复路径会把开场中帧续到 op 再进循环，
+            // 循环段内帧先播剩余片段再接回完整循环（见 resumePlayback），不回 0。
+            if introPlayed || pausedFrame != nil {
                 resumePlayback()
             } else {
                 startPlayback()
             }
         } else if heldStaticFrame {
             view.currentFrame = cached.staticFrame
+        } else if let paused = pausedFrame, paused >= 0, paused < cached.endFrame {
+            // 主题切换保留的停播帧：停在原帧的新深浅版本，不跳完成帧；
+            // pausedFrame 保留，之后 play() 按既有口径走（已播开场者从该帧恢复）。
+            // == op 的边界不取，落到下面静态帧分支（与 staticFrame 的 [0, op) 口径一致）。
+            view.currentFrame = paused
         } else {
             // 扫荡 B：不播放的静态表情同样停完成帧，不回 0 帧。
             // 0 帧是描线未完成态（见 stop() 注释）：animated:false 的心情位
@@ -523,7 +554,9 @@ public final class BearyEmoteView: UIView {
     private func teardownContent() {
         playbackGeneration += 1
         loadGeneration += 1
-        // 换内容/深浅切换：新视图的开场要重新首播，旧暂停帧作废。
+        // 换内容：新内容的开场要重新首播，旧暂停帧作废。主题切换同样先经
+        // 这里清零，但 traitCollectionDidChange 随后立即恢复快照，只换深浅
+        // 版本、不重播（见该方法注释），故本方法的清零不等于主题切换重播。
         introPlayed = false
         pausedFrame = nil
         animationView?.removeFromSuperview()
@@ -554,7 +587,8 @@ public final class BearyEmoteView: UIView {
     }
 
     /// 恢复播放（play() / 前台恢复共用，幂等由调用方 isAnimationPlaying 守门）：
-    /// 暂停帧落在循环段内时从该帧续循环；暂停在开场中、或循环段之后尾段时，
+    /// 暂停帧落在循环段内时先单次播剩余片段（暂停帧→loopEnd），播完再接回
+    /// loopStart→loopEnd 的完整循环；暂停在开场中、或循环段之后尾段时，
     /// 从当前帧播到 op 再进循环；帧已到 op 时直接进循环，避免 0 长 playOnce
     /// 无回调。三种路径都不回 0 帧，开场描线只在首播出现一次。
     private func resumePlayback() {
@@ -569,7 +603,18 @@ public final class BearyEmoteView: UIView {
         playbackGeneration += 1
         let generation = playbackGeneration
         if introPlayed, clamped >= cached.loopStart, clamped < cached.loopEnd {
-            view.play(fromFrame: clamped, toFrame: cached.loopEnd, loopMode: .loop) { _ in }
+            // 剩余片段只播一次：直接以该子段 .loop 会令 Lottie 重复子段、
+            // 永不回 loopStart；播完后以代次检查守门（与下面 playOnce 分支
+            // 同口径：中途 stop / 新播放 / 减动效均不再接循环），再接回
+            // loopStart→loopEnd 的完整循环。
+            view.play(fromFrame: clamped, toFrame: cached.loopEnd, loopMode: .playOnce) { [weak self] finished in
+                guard let self = self else { return }
+                guard finished else { return }
+                guard self.playbackGeneration == generation else { return }
+                guard self.isPlaying else { return }
+                guard UIAccessibility.isReduceMotionEnabled == false else { return }
+                self.animationView?.play(fromFrame: cached.loopStart, toFrame: cached.loopEnd, loopMode: .loop) { _ in }
+            }
             return
         }
         if clamped >= cached.endFrame {
