@@ -443,7 +443,7 @@ class BearyFeedViewController: UIViewController {
     }
 
     /// 自定义下拉指示器跟随（消息页同款）：手指行程 ×0.48 阻尼、上限 116；
-    /// 指示高 ≥98.4 时转满一圈（= 触发行程 205pt × 0.48，满格点即触发点；
+    /// 指示高 ≥67.2 时转满一圈（= 触发行程 140pt × 0.48，满格点即触发点；
     /// BearyRefreshIconView.setPullProgress 口径）。
     private func updateCustomPullIndicator() {
         if isCustomPullRefreshing {
@@ -468,7 +468,7 @@ class BearyFeedViewController: UIViewController {
         if indicatorHeight <= 0 {
             refreshIconView.setPullProgress(0)
         } else {
-            refreshIconView.setPullProgress(min(1, indicatorHeight / 98.4))
+            refreshIconView.setPullProgress(min(1, indicatorHeight / 67.2))
         }
     }
 
@@ -2114,11 +2114,11 @@ extension BearyFeedViewController: UITableViewDataSource, UITableViewDelegate {
 
     func scrollViewDidEndDragging(_ scrollView: UIScrollView, willDecelerate decelerate: Bool) {
         guard scrollView === tableView else { return }
-        // 自定义下拉触发（消息页同款）：手指原始行程满 205pt 松手才刷新。
+        // 自定义下拉触发（消息页同款）：手指原始行程满 140pt 松手才刷新。
         let panTranslation = scrollView.panGestureRecognizer.translation(in: scrollView).y
         let fingerRaw = max(0, panTranslation - (pullEngageTranslation ?? panTranslation))
         pullEngageTranslation = nil
-        if fingerRaw >= 205 && !isCustomPullRefreshing {
+        if fingerRaw >= 140 && !isCustomPullRefreshing {
             BearyHaptics.press()
             beginCustomPullRefresh()
         }
