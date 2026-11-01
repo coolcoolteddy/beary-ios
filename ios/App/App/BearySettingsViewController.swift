@@ -553,7 +553,8 @@ final class BearySettingsViewController: UIViewController {
     private func makeCardView() -> UIView {
         let card = UIView()
         card.translatesAutoresizingMaskIntoConstraints = false
-        card.backgroundColor = BearyColors.surface
+        // 卡片底色与页面背景同色（深色纯黑），与周视图日历卡同口径。
+        card.backgroundColor = BearyColors.bg
         card.layer.borderWidth = 1
         card.layer.bearyDynamicBorderColor = BearyColors.line
         card.layer.cornerRadius = 12

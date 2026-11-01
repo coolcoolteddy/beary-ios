@@ -168,7 +168,8 @@ class BearySettingsSubpageViewController: UIViewController {
     func makeGroupCard(title: String?, rows: [UIView]) -> UIView {
         let card = UIView()
         card.translatesAutoresizingMaskIntoConstraints = false
-        card.backgroundColor = BearyColors.surface
+        // 卡片底色与页面背景同色（深色纯黑），与设置主页面卡片同口径。
+        card.backgroundColor = BearyColors.bg
         card.layer.borderWidth = 1
         card.layer.bearyDynamicBorderColor = BearyColors.line
         card.layer.cornerRadius = 12
