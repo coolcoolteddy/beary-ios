@@ -3705,7 +3705,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             } else if let value = Int(raw) {
                 self.selectedTemperature = min(60, max(-60, value))
             } else {
-                self.showToast("气温请输入整数")
+                self.showToast(message: "气温请输入整数")
                 return
             }
             self.refreshSelectedChips()
@@ -4017,7 +4017,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         hideLocationPopover(animated: false)
         weatherFetchGeneration += 1
         let generation = weatherFetchGeneration
-        showToast("正在获取当地天气…")
+        showToast(message: "正在获取当地天气…")
         BearyAPI.shared.fetchLocalWeather { [weak self] result in
             DispatchQueue.main.async {
                 guard let self = self, self.weatherFetchGeneration == generation else { return }
@@ -4032,7 +4032,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                     self.refreshSelectedChips()
                     self.scheduleDraftSave()
                 case .failure:
-                    self.showToast("没取到当地天气，请手动选")
+                    self.showToast(message: "没取到当地天气，请手动选")
                 }
                 self.showCallout(.weather)
             }
@@ -6139,7 +6139,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         // iCity：可见性值即 visibility（published 0/1）；@ 以 mentioned_user_id 发出，无按篇通知开关。
         // 限时：限时态时可见性必为公开，ephemeral=1 随新建发出（服务端写 24 小时到期）。
         let publishVisibility = selectedVisibilityPublished ? 1 : 0
-        BearyAPI.shared.publishEntry(content: trimmed, images: uploadedImageKeys(), mood: selectedMood, weather: selectedWeather, temperature: selectedTemperature, quoteId: publishQuoteId, published: publishVisibility, mentionedUserId: selectedRecipient?.id, title: headlineForCreate, ephemeral: isEphemeral ? 1 : nil, clientReq: req, locationName: selectedLocation?.name, locationDistrict: selectedLocation?.district, capsuleBuried: capsulePayload?.buried, capsuleUnlockDate: capsulePayload?.unlockDate, capsuleDistrict: capsulePayload?.district) { [weak self] result in
+        BearyAPI.shared.publishEntry(content: trimmed, images: uploadedImageKeys(), mood: selectedMood, weather: selectedWeather, quoteId: publishQuoteId, published: publishVisibility, mentionedUserId: selectedRecipient?.id, title: headlineForCreate, ephemeral: isEphemeral ? 1 : nil, clientReq: req, locationName: selectedLocation?.name, locationDistrict: selectedLocation?.district, capsuleBuried: capsulePayload?.buried, capsuleUnlockDate: capsulePayload?.unlockDate, capsuleDistrict: capsulePayload?.district, temperature: selectedTemperature) { [weak self] result in
             DispatchQueue.main.async {
                 guard let self = self else { return }
                 self.isPublishing = false
@@ -6226,7 +6226,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         // 时间胶囊：编辑 PUT 不发胶囊字段，服务端保留原埋点与解锁日期；改位置不挪胶囊（埋点是发布时快照）。
         // 批 E：编辑位置——与原快照比对，未动省略、改选两键算清（有值发值、无值发 null）、清除两键皆 null。
         let locationChanged = selectedLocation != originalLocation
-        BearyAPI.shared.updateEntry(id: entryId, content: trimmed, images: uploadedImageKeys(), mood: selectedMood, weather: selectedWeather, temperature: selectedTemperature, quoteId: lockedQuote?.entryId, title: headlineText, mentionedUserId: updateMentionedId, clearMentioned: updateClearMentioned, locationName: locationChanged ? selectedLocation?.name : nil, locationDistrict: locationChanged ? selectedLocation?.district : nil, clearLocationName: locationChanged && selectedLocation?.name == nil, clearLocationDistrict: locationChanged && selectedLocation?.district == nil) { [weak self] result in
+        BearyAPI.shared.updateEntry(id: entryId, content: trimmed, images: uploadedImageKeys(), mood: selectedMood, weather: selectedWeather, quoteId: lockedQuote?.entryId, title: headlineText, mentionedUserId: updateMentionedId, clearMentioned: updateClearMentioned, locationName: locationChanged ? selectedLocation?.name : nil, locationDistrict: locationChanged ? selectedLocation?.district : nil, clearLocationName: locationChanged && selectedLocation?.name == nil, clearLocationDistrict: locationChanged && selectedLocation?.district == nil, temperature: selectedTemperature) { [weak self] result in
             DispatchQueue.main.async {
                 guard let self = self else { return }
                 self.isPublishing = false
