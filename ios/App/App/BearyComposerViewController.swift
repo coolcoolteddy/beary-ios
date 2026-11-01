@@ -5271,12 +5271,25 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         }
     }
 
+    /// saveDraftNow 完成结果（主线程回调）。
+    /// - succeeded：本次落盘是否成功。编辑模式不写草稿、无内容删篇成功均记成功
+    ///   （无新输入待保存，关闭不拦）；删篇失败、写盘失败、回读不到本篇均记失败。
+    /// - hadPreviousSavedVersion：只在失败时用于文案区分——写盘前库里是否已有本篇旧版。
+    ///   save 是原子写，失败时旧文件原样保留，故失败后回读仍命中本篇即等价于旧版在；
+    ///   成功时该位恒真、无意义，调用方只在失败时读它。
+    struct DraftSaveResult {
+        let succeeded: Bool
+        let hadPreviousSavedVersion: Bool
+    }
+
     /// 立即落盘（主线程只拍快照，整库读/写走 BearyDraftStore.ioQueue；写盘本身已是原子替换）。
-    /// completion 在主线程回调（存完才开草稿箱 / 保留后才关编辑器等顺序敏感路径用）。
-    private func saveDraftNow(completion: (() -> Void)? = nil) {
+    /// completion 在主线程回调（存完才开草稿箱 / 保留后才关编辑器等顺序敏感路径用），
+    /// 回调带 DraftSaveResult：关闭路径须按 succeeded 决定是否走 onCancelled，
+    /// 失败时不关闭、留页提示重试（P0：此前无条件关闭，失败红字随页面消失）。
+    private func saveDraftNow(completion: ((DraftSaveResult) -> Void)? = nil) {
         // 编辑模式不写草稿（scheduleDraftSave 已拦，这里再拦一道，防以后新增调用点漏拦）。
         if isEditMode {
-            completion?()
+            completion?(DraftSaveResult(succeeded: true, hadPreviousSavedVersion: false))
             return
         }
         // clientReq 与 draftId 都是本篇草稿创建时生成一次，之后全程复用（含发布重试），
@@ -5289,7 +5302,8 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             clearedCurrentDraftId = nil
         }
         guard let req = draftClientReq, let draftIdValue = currentDraftId else {
-            completion?()
+            // 上文刚生成过两者，此分支实际不可达；沿旧口径照常回调，不拦后续流程。
+            completion?(DraftSaveResult(succeeded: true, hadPreviousSavedVersion: false))
             return
         }
         // C10 空判定（心情不算内容）：正文 trim 为空、且无已上传图、无天气、无 @、
@@ -5310,17 +5324,20 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             currentDraftId = nil
             clearedCurrentDraftId = nil
             draftClientReq = nil
-            // 删篇走 deleteAsync（ioQueue 内删，完成后回主线程刷新状态与 pill）。
+            // 删篇走 deleteAsyncReporting（ioQueue 内删，完成后回主线程刷新状态与 pill，
+            // 并回传成败——此前 deleteAsync 不回传，删篇失败会被关闭路径当成功关掉）。
             // 状态只在仍是空篇时清：删盘期间用户已开始写新篇（currentDraftId 已换）
-            // 时不碰新篇的状态行，pill 计数全局刷新无妨。
-            BearyDraftStore.deleteAsync(draftId: deletingId) { [weak self] in
+            // 时不碰新篇的状态行，pill 计数全局刷新无妨；删篇失败时置红，与写盘失败同口径。
+            BearyDraftStore.deleteAsyncReporting(draftId: deletingId) { [weak self] deleted in
                 guard let self = self else { return }
                 if self.currentDraftId == nil {
-                    self.draftStatusLevel = nil
+                    self.draftStatusLevel = deleted ? nil : 0
                     self.updateDraftStatusLabel()
                 }
                 self.updateDraftPillCount()
-                completion?()
+                // 删篇失败时旧文件原样保留（见 deleteAsyncReporting 注释），
+                // 故失败即按“旧版还在”计，关闭文案不夸大成整篇已丢。
+                completion?(DraftSaveResult(succeeded: deleted, hadPreviousSavedVersion: !deleted))
             }
             return
         }
@@ -5415,7 +5432,9 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                     self.updateDraftStatusLabel()
                 }
                 self.setDraftPillCount(totalCount)
-                completion?()
+                // 原子写：失败时旧文件原样保留，故失败后回读仍命中本篇
+                // 即等价于写盘前已有旧版；成功时该位恒真、无意义，关闭文案只在失败时读它。
+                completion?(DraftSaveResult(succeeded: savedCurrentDraft, hadPreviousSavedVersion: foundCurrentDraft))
             }
         }
     }
@@ -5688,7 +5707,9 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             }
         }
         if hasEditorContent() {
-            saveDraftNow(completion: openBox)
+            // 完成回调现带 DraftSaveResult；开箱不依赖保存成败（箱在编辑器之上，
+            // 输入仍在编辑器里不丢），故忽略结果、行为不变。
+            saveDraftNow { _ in openBox() }
         } else {
             openBox()
         }
@@ -5706,7 +5727,9 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                 guard let self = self else { return }
                 // 落盘走后台队列：存完回调里再重置（快照在 saveDraftNow 调用时已拍，
                 // 存完前切篇的状态守卫见 saveDraftNow 完成回调）。
-                self.saveDraftNow {
+                // 完成回调现带 DraftSaveResult；此处仅做签名适配、行为不变
+                // （失败仍重置，见 PR 描述残留风险——本组只修关闭路径）。
+                self.saveDraftNow { _ in
                     self.resetEditorToBlank()
                 }
             })
@@ -5918,12 +5941,37 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         // 关编辑器后仍可见。旧文案“这次没存进草稿”范围过大：紧接着仍调
         // saveDraftNow，正文与已上传图等按原逻辑照常落盘，只有 key 为空的
         // 上传中图被落盘过滤排除；故新文案只说上传中的图片没存进草稿。
-        if hasUploadingImage() {
-            showToastAfterClose(message: "还有图片没上传完，上传中的图片没存进草稿")
-        }
+        // 该 toast 只在真正关闭时发（见成功分支）：保存失败留页时不发到
+        // 看不见的 presenting 方，失败提示另由本页 toast 给。
         // 关闭即提交缓冲删除（草稿随即按删除后状态落盘，见 saveDraftNow）。
         commitPendingRemoval()
-        saveDraftNow {
+        saveDraftNow { [weak self] result in
+            guard let self = self else { return }
+            guard result.succeeded else {
+                // P0：保存失败不再无条件走 onCancelled——编辑器与输入原样保留，
+                // 状态行已由 saveDraftNow 置红（level 0），这里补拒绝动效 + toast
+                // 明示重试（再点一次关闭即重走保存）；文案按原子写语义区分，
+                // 旧版在时只说“本次修改没存上”，不夸大成整篇已丢。
+                // 拒绝动效口径与详情页/卡片一致：摇头 + warning 震动 + refuse 音，
+                // 减动效只跳过视觉抖动，震动与音照常。
+                BearyHaptics.rejectionWarning()
+                BearySoundPlayer.play(.refuseBonk)
+                if !UIAccessibility.isReduceMotionEnabled {
+                    self.cancelButton.layer.removeAnimation(forKey: "bearyDenyShake")
+                    let shake = CAKeyframeAnimation(keyPath: "transform.translation.x")
+                    shake.values = [0, -8, 8, -5, 5, 0]
+                    shake.keyTimes = [0, 0.2, 0.4, 0.6, 0.8, 1]
+                    shake.duration = 0.4
+                    self.cancelButton.layer.add(shake, forKey: "bearyDenyShake")
+                }
+                self.showToast(message: result.hadPreviousSavedVersion
+                    ? "草稿保存失败，本次修改没存上，旧版还在，再点一次关闭重试"
+                    : "草稿保存失败，这篇草稿还没存上，再点一次关闭重试")
+                return
+            }
+            if self.hasUploadingImage() {
+                self.showToastAfterClose(message: "还有图片没上传完，上传中的图片没存进草稿")
+            }
             self.onCancelled?()
         }
     }
