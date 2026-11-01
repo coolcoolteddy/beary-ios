@@ -896,9 +896,6 @@ final class BearyTimelineCell: UITableViewCell {
     private var dotSizeConstraint: NSLayoutConstraint?
     private var dotRingSizeConstraint: NSLayoutConstraint?
     private var dotTopConstraint: NSLayoutConstraint?
-    /// 底部足行小熊回应图标视图（configure 现建现存；复用/重配即清），
-    /// 供 traitCollectionDidChange 在深浅切换时重刷深浅版 hug 图。
-    private var emoteIconView: UIImageView?
     // TL-3 引用卡与私密操作行。
     private let quoteButton = UIButton(type: .custom)
     // B-G1: left 3px line (web .tl-qcard border-left; full border removed).
@@ -1277,10 +1274,6 @@ final class BearyTimelineCell: UITableViewCell {
             dotView.layer.bearyDynamicBorderColor = BearyColors.bg
         }
         quoteLeftLineView.backgroundColor = BearyColors.line
-        // 2026-10-29 改版追加：深浅切换时小熊回应 hug 图重刷为对应深浅版。
-        if let emoteView = emoteIconView {
-            emoteView.image = BearyEmoteImages.image(for: "hug", dark: traitCollection.userInterfaceStyle == .dark)
-        }
     }
 
     /// U14：行点按给内容列短暂 faint 底色（selectionStyle 已是 .none，
@@ -1410,7 +1403,6 @@ final class BearyTimelineCell: UITableViewCell {
             footStack.removeArrangedSubview(arranged)
             arranged.removeFromSuperview()
         }
-        emoteIconView = nil
         for arranged in metaStack.arrangedSubviews {
             metaStack.removeArrangedSubview(arranged)
             arranged.removeFromSuperview()
@@ -1785,7 +1777,6 @@ final class BearyTimelineCell: UITableViewCell {
             footStack.removeArrangedSubview(arranged)
             arranged.removeFromSuperview()
         }
-        emoteIconView = nil
         if published {
             // 2026-10-29 改版：足行三项按数量显隐——任一项为 0 就不显示该图标与数字，
             // 三项全 0 时整行塌掉（footStack 保持隐藏，cardStack 间距自然承接，不留空行）。
@@ -1804,29 +1795,11 @@ final class BearyTimelineCell: UITableViewCell {
                 emoteTotal += emote.count ?? 0
             }
             if emoteTotal > 0 {
-                // 小熊回应由文字改图标：官方 hug 拥抱表情（深色用 _dark 版，不 tint）
-                // ＋数字，与足项同款 14pt 图＋13pt 灰字、间距 4。
-                let emoteRow = UIStackView()
-                emoteRow.axis = .horizontal
-                emoteRow.spacing = 4
-                emoteRow.alignment = .center
-                let emoteIcon = UIImageView(image: BearyEmoteImages.image(for: "hug", dark: traitCollection.userInterfaceStyle == .dark))
-                emoteIcon.translatesAutoresizingMaskIntoConstraints = false
-                emoteIcon.contentMode = .scaleAspectFit
-                let emoteCountLabel = UILabel()
-                emoteCountLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13))
-                emoteCountLabel.adjustsFontForContentSizeCategory = true
-                emoteCountLabel.textColor = BearyColors.gray
-                emoteCountLabel.text = "\(emoteTotal)"
-                emoteCountLabel.setContentHuggingPriority(.required, for: .horizontal)
-                emoteRow.addArrangedSubview(emoteIcon)
-                emoteRow.addArrangedSubview(emoteCountLabel)
-                NSLayoutConstraint.activate([
-                    emoteIcon.widthAnchor.constraint(equalToConstant: 14),
-                    emoteIcon.heightAnchor.constraint(equalToConstant: 14),
-                ])
-                emoteIconView = emoteIcon
-                footItems.append(emoteRow)
+                // 回应数图标：单张熊脸 icon_mood（官方资产，放大核对过：只有熊脸，
+                // 无手臂、无抱抱动作、无道具），不再用 hug 拥抱表情，避免被误读为
+                // “N 个抱抱”。走足项同款 footItem：14pt 图＋13pt 灰字、间距 4，
+                // 模板渲染＋灰 tint，深浅模式自动跟走，无需深色变体重刷。
+                footItems.append(footItem(iconName: "icon_mood", text: "\(emoteTotal)"))
             }
             let bookmarkCount = entry.bookmarkCount ?? 0
             if bookmarkCount > 0 {
