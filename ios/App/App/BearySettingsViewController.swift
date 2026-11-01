@@ -1242,9 +1242,15 @@ final class BearySettingsViewController: UIViewController {
             return
         }
         isSwitchingAccount = true
+        // 116 后扫查：切换要等一次 /me 网络往返，旧代码这段时间按钮毫无变化，
+        // 点按像没点中。点下立刻置灰+禁用（成功时整组行重建，失败时下面复原）。
+        sender.isEnabled = false
+        sender.alpha = 0.5
         SessionManager.shared.switchToAccount(userId: accountIdValue) { [weak self] result in
             guard let self = self else { return }
             self.isSwitchingAccount = false
+            sender.isEnabled = true
+            sender.alpha = 1
             switch result {
             case .switched:
                 self.loadAll()
