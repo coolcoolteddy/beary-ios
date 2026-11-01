@@ -513,8 +513,8 @@ final class BearyChromeViewController: UIViewController {
         topStack.translatesAutoresizingMaskIntoConstraints = false
         top.contentView.addSubview(topStack)
         NSLayoutConstraint.activate([
-            topStack.leadingAnchor.constraint(equalTo: top.contentView.leadingAnchor, constant: 16),
-            topStack.trailingAnchor.constraint(equalTo: top.contentView.trailingAnchor, constant: -16),
+            topStack.leadingAnchor.constraint(equalTo: top.contentView.leadingAnchor, constant: BearySpace.lg),
+            topStack.trailingAnchor.constraint(equalTo: top.contentView.trailingAnchor, constant: -BearySpace.lg),
             topStack.bottomAnchor.constraint(equalTo: top.contentView.bottomAnchor),
             topStack.heightAnchor.constraint(equalToConstant: 60),
         ])

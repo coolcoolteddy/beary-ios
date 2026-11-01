@@ -560,13 +560,13 @@ final class BearyCalendarCardView: UIView {
         outer.axis = .vertical
         outer.spacing = 0
         outer.setCustomSpacing(8, after: topRow)
-        outer.setCustomSpacing(6, after: weekdayRow)
+        outer.setCustomSpacing(BearySpace.sm, after: weekdayRow)
         addSubview(outer)
         NSLayoutConstraint.activate([
-            outer.topAnchor.constraint(equalTo: topAnchor, constant: 14),
-            outer.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 14),
-            outer.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -14),
-            outer.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -10),
+            outer.topAnchor.constraint(equalTo: topAnchor, constant: BearySpace.lg),
+            outer.leadingAnchor.constraint(equalTo: leadingAnchor, constant: BearySpace.lg),
+            outer.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -BearySpace.lg),
+            outer.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -BearySpace.lg),
             todaySpacer.widthAnchor.constraint(equalToConstant: 8),
             todayButton.widthAnchor.constraint(equalToConstant: 32),
             todayButton.heightAnchor.constraint(equalToConstant: 32),
