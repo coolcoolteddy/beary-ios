@@ -2589,6 +2589,9 @@ final class BearyLegalTextViewController: UIViewController {
     private let closeButton = BearyHit44Button(type: .system)
     private let titleLabel = UILabel()
     private let textView = UITextView()
+    /// 116 子页空白守卫（同 BearySettingsSubpages.swift 守卫说明）。
+    private let subpageLayoutGuard = BearySubpageLayoutGuard()
+    private var topBarView: UIView?
 
     init(pageTitle: String, pageText: String) {
         self.pageTitle = pageTitle
@@ -2630,6 +2633,7 @@ final class BearyLegalTextViewController: UIViewController {
         textView.textContainerInset = UIEdgeInsets(top: 16, left: 16, bottom: 16, right: 16)
         view.addSubview(topBar)
         view.addSubview(textView)
+        topBarView = topBar
         // 补缺 P2-17：子页内容列 600 居中、顶栏同宽居中（iPhone 全宽不变）。
         let legalTopBarWidthEquality = topBar.widthAnchor.constraint(equalTo: view.widthAnchor)
         legalTopBarWidthEquality.priority = UILayoutPriority(750)
@@ -2659,6 +2663,16 @@ final class BearyLegalTextViewController: UIViewController {
 
     @objc private func closeTapped() {
         dismiss(animated: BearyMotion.animated(true))
+    }
+
+    override func viewWillAppear(_ animated: Bool) {
+        super.viewWillAppear(animated)
+        subpageLayoutGuard.resetForAppearance()
+    }
+
+    override func viewDidLayoutSubviews() {
+        super.viewDidLayoutSubviews()
+        subpageLayoutGuard.applyIfNeeded(page: pageTitle, view: view, topView: topBarView)
     }
 }
 
@@ -3218,6 +3232,9 @@ private final class BearyDiagnosticsViewController: UIViewController {
     private let textView = UITextView()
     private let copyButton = UIButton(type: .system)
     private let clearButton = UIButton(type: .system)
+    /// 116 子页空白守卫（同 BearySettingsSubpages.swift 守卫说明）。
+    private let subpageLayoutGuard = BearySubpageLayoutGuard()
+    private var topBarView: UIView?
 
     override func viewDidLoad() {
         super.viewDidLoad()
@@ -3285,6 +3302,7 @@ private final class BearyDiagnosticsViewController: UIViewController {
         view.addSubview(topBar)
         view.addSubview(actionRow)
         view.addSubview(textView)
+        topBarView = topBar
         // 补缺 P2-17：子页内容列 600 居中、顶栏同宽居中（iPhone 全宽不变；操作行跟顶栏左缘 +20）。
         let logTopBarWidthEquality = topBar.widthAnchor.constraint(equalTo: view.widthAnchor)
         logTopBarWidthEquality.priority = UILayoutPriority(750)
@@ -3303,6 +3321,16 @@ private final class BearyDiagnosticsViewController: UIViewController {
             logTextWidthEquality,
             textView.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor),
         ])
+    }
+
+    override func viewWillAppear(_ animated: Bool) {
+        super.viewWillAppear(animated)
+        subpageLayoutGuard.resetForAppearance()
+    }
+
+    override func viewDidLayoutSubviews() {
+        super.viewDidLayoutSubviews()
+        subpageLayoutGuard.applyIfNeeded(page: "诊断日志", view: view, topView: topBarView)
     }
 
     override func viewDidAppear(_ animated: Bool) {
@@ -3365,6 +3393,9 @@ final class BearyBlockedUsersViewController: UIViewController, UITableViewDataSo
     private let closeButton = BearyHit44Button(type: .system)
     private let titleLabel = UILabel()
     private let emptyLabel = UILabel()
+    /// 116 子页空白守卫（同 BearySettingsSubpages.swift 守卫说明）。
+    private let subpageLayoutGuard = BearySubpageLayoutGuard()
+    private var topBarView: UIView?
     private var blockedIds: [Int] = []
     private var unblockingIds: Set<Int> = []
 
@@ -3403,6 +3434,7 @@ final class BearyBlockedUsersViewController: UIViewController, UITableViewDataSo
         view.addSubview(topBar)
         view.addSubview(tableView)
         view.addSubview(emptyLabel)
+        topBarView = topBar
         // 补缺 P2-17：拉黑列表顶栏与内容列同宽居中（iPhone 全宽不变）。
         let blockedTopBarWidthEquality = topBar.widthAnchor.constraint(equalTo: view.widthAnchor)
         blockedTopBarWidthEquality.priority = UILayoutPriority(750)
@@ -3502,5 +3534,15 @@ final class BearyBlockedUsersViewController: UIViewController, UITableViewDataSo
 
     @objc private func closeTapped() {
         dismiss(animated: BearyMotion.animated(true))
+    }
+
+    override func viewWillAppear(_ animated: Bool) {
+        super.viewWillAppear(animated)
+        subpageLayoutGuard.resetForAppearance()
+    }
+
+    override func viewDidLayoutSubviews() {
+        super.viewDidLayoutSubviews()
+        subpageLayoutGuard.applyIfNeeded(page: "已拉黑用户", view: view, topView: topBarView)
     }
 }
