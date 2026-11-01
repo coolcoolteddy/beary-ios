@@ -2414,9 +2414,6 @@ class BearyTimelineViewController: UIViewController {
     private var stickyHeaderCurrentTitle: String?
     private let headerContainer = UIView()
     private let titleLabel = UILabel()
-    /// 盲盒入口（时间线顶部）：与广场顶部入口共用 BearyBlindBoxEntryView 与
-    /// BlindBoxState，同一当日计数；点按进同一流程页。
-    private let blindBoxEntryView = BearyBlindBoxEntryView()
     private let trashButton = UIButton(type: .system)
     private let countsLabel = UILabel()
     private let statsButton = UIButton(type: .system)
@@ -2475,10 +2472,6 @@ class BearyTimelineViewController: UIViewController {
         // 审计 P2-20：时间线监听拉黑/举报即时清行并清 quoteCache。
         NotificationCenter.default.addObserver(self, selector: #selector(handleBlockedUserNotification(_:)), name: .bearyDidBlockUser, object: nil)
         NotificationCenter.default.addObserver(self, selector: #selector(handleReportedEntryNotification(_:)), name: .bearyDidReportEntry, object: nil)
-        NotificationCenter.default.addObserver(self, selector: #selector(handleBlindBoxStateChanged), name: .bearyBlindBoxDidChange, object: nil)
-        blindBoxEntryView.onTap = { [weak self] in
-            self?.presentBlindBoxFlow()
-        }
         // 2026-10-30 全 App 统一 icon_refresh：脚部圈取 20pt 图，栈内固有尺寸与旧 medium 圈一致。
         footerSpinner.image = BearyIconImages.image(named: "icon_refresh", pointSize: 20)
         // G15 toast 已委托 B 批统一 BearyToast（见 showTimelineToast），
@@ -2525,9 +2518,6 @@ class BearyTimelineViewController: UIViewController {
 
     override func viewWillAppear(_ animated: Bool) {
         super.viewWillAppear(animated)
-        // 盲盒计数：进页即按本地镜像刷新（跨日重置 + 流程页回来的已换态）。
-        BlindBoxState.shared.resetIfNewDay()
-        blindBoxEntryView.refresh()
         // 回收站 pill 图标按压缩放残留复位（通用按压反馈 .84 的已知残留类问题，
         // 回页时复位，保证图标回到满尺寸）。
         trashButton.imageView?.transform = .identity
@@ -2548,24 +2538,10 @@ class BearyTimelineViewController: UIViewController {
     ///（栏恢复已有 showPage 的 setBarsVisible/setHeaderVisible 兜底，不重复）。
     func pageDidEnter() {
         startCountdownTimer()
-        // 盲盒计数：切 tab 回页时同样按本地镜像刷新（容器只改 isHidden，不触发 viewWillAppear）。
-        BlindBoxState.shared.resetIfNewDay()
-        blindBoxEntryView.refresh()
         // 80 包 A5：进页恢复可见行表情播放（与 stopVisibleEmotes 对称）。
         resumeVisibleEmotes()
     }
 
-    /// 盲盒流程页（全屏 modal + fadeRise，广场入口同款；游客态由流程页内登录提示承接）。
-    private func presentBlindBoxFlow() {
-        let vc = BearyBlindBoxFlowViewController()
-        vc.modalPresentationStyle = .fullScreen
-        vc.transitioningDelegate = SceneDelegate.chrome?.fadeRiseTransitionDelegate
-        present(vc, animated: BearyMotion.animated(true), completion: nil)
-    }
-
-    @objc private func handleBlindBoxStateChanged() {
-        blindBoxEntryView.refresh()
-    }
 
     func pageDidLeave() {
         stopCountdownTimer()
@@ -2620,7 +2596,6 @@ class BearyTimelineViewController: UIViewController {
         jumpNoteTimer?.invalidate()
         NotificationCenter.default.removeObserver(self, name: .bearyDidBlockUser, object: nil)
         NotificationCenter.default.removeObserver(self, name: .bearyDidReportEntry, object: nil)
-        NotificationCenter.default.removeObserver(self, name: .bearyBlindBoxDidChange, object: nil)
     }
 
     /// 审计 P2-20：拉黑/举报广播到后即时清行——内存三处（timelineEntries/dayEntries/
@@ -3622,13 +3597,11 @@ class BearyTimelineViewController: UIViewController {
             self?.goToToday()
         }
 
-        // 盲盒入口行插在标题行与统计行之间（随表头一起滚走，不常驻占位）。
-        let stack = UIStackView(arrangedSubviews: [titleRow, blindBoxEntryView, countsLabel, statsButton, calendarCard])
+        let stack = UIStackView(arrangedSubviews: [titleRow, countsLabel, statsButton, calendarCard])
         stack.translatesAutoresizingMaskIntoConstraints = false
         stack.axis = .vertical
         stack.spacing = 0
         stack.setCustomSpacing(4, after: titleRow)
-        stack.setCustomSpacing(12, after: blindBoxEntryView)
         stack.setCustomSpacing(2, after: countsLabel)
         stack.setCustomSpacing(12, after: statsButton)
         headerStack = stack

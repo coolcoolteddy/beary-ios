@@ -1,8 +1,8 @@
 import UIKit
 
 // ===== 日记盲盒交换（客户端；预览：new-features-preview/beary-preview-05-night-patrol-06-blindbox.html ⑥）=====
-// 入口：广场顶部（BearyFeedViewController 表头）与时间线顶部（BearyTimelineViewController
-// 表头）各一处，共用 BearyBlindBoxEntryView 与 BlindBoxState，同一当日计数，不重复计次。
+// 入口：广场顶部（BearyFeedViewController 表头）一处，共用 BearyBlindBoxEntryView 与
+// BlindBoxState，同一当日计数，不重复计次（时间线顶部入口已删）。
 // 流程（先入池再开盒）：选一篇自己旧公开日记放进池 → 开盒随机收到别人一篇旧公开日记
 // → 收到卡片只能点小熊回应，不能评论、不能追踪作者、不能看作者主页、不能私信。
 // 匿名铁律（fail-closed）：匿名收到模型 BlindBoxReceivedEntry 故意不含任何作者字段
@@ -263,7 +263,7 @@ final class BlindBoxState {
         }
     }
 
-    /// 兼容旧调用点（Feed / Timeline 进页时调）：日期与账号已进键，跨日
+    /// 兼容旧调用点（Feed 进页时调）：日期与账号已进键，跨日
     /// 与切号无需清零；本函数只负责桶变化时通知在线入口刷新。
     func resetIfNewDay() {
         noteBucketChangeIfNeeded()
