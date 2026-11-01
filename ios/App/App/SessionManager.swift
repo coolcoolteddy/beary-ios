@@ -59,16 +59,37 @@ final class SessionManager {
     /// 成功回包被 seq 守卫丢弃，不得把旧用户写回。
     private var meSeq = 0
 
+    /// 账号隔离改造：会话状态写回统一到主线程。本类所有公开入口
+    /// （refreshMe/switchToAccount/removeAccount/signOutLocally）只在主
+    /// 线程执行：非主线程调用时整段重派到主线程再跑（主队列 FIFO 保序）；
+    /// 所有网络回调（fetchMe、隔离预检、隔离登出、401 回调）先跳回主线
+    /// 程再写 currentUser/authUnknown/sessionGeneration/meSeq/isGuestMode。
+    /// 此前只有 notifyUserChanged 走了主线程，回调本体直接写状态——后台
+    /// 线程与主线程双写是本改造要收掉的口。读方（各页读 currentUser）
+    /// 不动；meSeq/userId/epoch 守卫全部保留，见各方法内注释。
+    private func runOnMain(_ work: @escaping () -> Void) {
+        if Thread.isMainThread {
+            work()
+        } else {
+            DispatchQueue.main.async(execute: work)
+        }
+    }
+
     private init() {
         api.onUnauthorized = { [weak self] in
             guard let self = self else { return }
-            self.purgeImageCacheForCurrentAccount()
-            self.purgeFeedCacheForCurrentAccount()
-            self.sessionGeneration += 1
-            self.currentUser = nil
-            self.authUnknown = false
-            self.notifyUserChanged(nil)
-            self.notifyUnauthorized()
+            // 401 回调来自 BearyAPI 回包后台线程：先回主线程再清态，
+            // 不得在后台直接写 currentUser/sessionGeneration。
+            self.runOnMain {
+                self.purgeImageCacheForCurrentAccount()
+                self.purgeFeedCacheForCurrentAccount()
+                self.sessionGeneration += 1
+                self.api.setAuthAccountId(nil)
+                self.currentUser = nil
+                self.authUnknown = false
+                self.notifyUserChanged(nil)
+                self.notifyUnauthorized()
+            }
         }
     }
 
@@ -85,26 +106,49 @@ final class SessionManager {
     }
 
     func refreshMe(completion: ((Result<MeUser?, APIError>) -> Void)? = nil) {
+        // 主线程收敛：非主线程调用整段重派主线程，meSeq 递增与后续
+        // 状态写回都在主线程发生；原有调用方全是 UI 线程，本分支只防
+        // 将来后台调用方，不改现行时序。
+        guard Thread.isMainThread else {
+            DispatchQueue.main.async { [weak self] in self?.refreshMe(completion: completion) }
+            return
+        }
         meSeq += 1
         let seq = meSeq
         let previousUserId = currentUser?.id
         api.fetchMe { [weak self] result in
             guard let self = self else { return }
-            // 账号隔离 3 号：旧 refreshMe 回包直接丢弃（新登录后的旧请求
-            // 成功回包不得把旧用户写回，旧 401 映射的 nil 也不得清掉新态）。
-            guard seq == self.meSeq else { return }
-            switch result {
-            case .success(let user):
-                self.authUnknown = false
-                // 用户 id 变化即权威登录态变迁：先应用新态，再推代际，
-                // 使此前在途请求的 401 回调（BearyAPI 侧 epoch 校验）失效。
-                if user?.id != previousUserId {
-                    self.currentUser = user
-                    self.sessionGeneration += 1
-                    self.api.bumpAuthEpoch()
-                } else {
-                    self.currentUser = user
-                }
+            // 回包先回主线程再写状态：此前回调本体在后台线程直接写
+            // currentUser/authUnknown/sessionGeneration，本处收掉。
+            // 完成回调同样落主线程（原调用方或已回主线程、或自己再派
+            // 主线程，主线程上再派一次无害）。
+            DispatchQueue.main.async {
+                // 账号隔离 3 号：旧 refreshMe 回包直接丢弃（新登录后的旧请求
+                // 成功回包不得把旧用户写回，旧 401 映射的 nil 也不得清掉新态）。
+                guard seq == self.meSeq else { return }
+                self.applyRefreshMeResult(result, previousUserId: previousUserId, completion: completion)
+            }
+        }
+    }
+
+    /// refreshMe 回包的主线程应用体（原回调本体原样挪入，只补
+    /// setAuthAccountId 两处：成功立账号、authFailure 清账号；其余
+    /// 分流、meSeq/userId/epoch 守卫一字不动）。
+    private func applyRefreshMeResult(_ result: Result<MeUser?, APIError>, previousUserId: Int?, completion: ((Result<MeUser?, APIError>) -> Void)?) {
+        switch result {
+        case .success(let user):
+            self.authUnknown = false
+            // 用户 id 变化即权威登录态变迁：先应用新态，再推代际，
+            // 使此前在途请求的 401 回调（BearyAPI 侧 epoch 校验）失效。
+            if user?.id != previousUserId {
+                self.currentUser = user
+                self.sessionGeneration += 1
+                self.api.bumpAuthEpoch()
+                self.api.setAuthAccountId(user?.id)
+            } else {
+                self.currentUser = user
+                self.api.setAuthAccountId(user?.id)
+            }
                 // 游客模式结束：登录成功即不再是游客（容器随后恢复完整 chrome）。
                 if user != nil {
                     self.isGuestMode = false
@@ -138,6 +182,7 @@ final class SessionManager {
                         self.sessionGeneration += 1
                         self.api.bumpAuthEpoch()
                     }
+                    self.api.setAuthAccountId(nil)
                     self.currentUser = nil
                     self.notifyUserChanged(nil)
                 case .cancelled:
@@ -164,7 +209,6 @@ final class SessionManager {
                 completion?(.failure(e))
             }
         }
-    }
 
     /// 编辑资料保存成功后统一更新当前用户快照（名字 / 用户名 / 头像）：
     /// 只覆盖调用方传入的已提交值（displayName / handle 传快照里的完整当前值，
@@ -203,6 +247,11 @@ final class SessionManager {
     /// 图片缓存）；草稿桶刻意保留——草稿是用户未发布的本地作品，退出即删
     /// 属丢数据，且草稿按账号分桶、换号不可见，留存情况在设置页账号操作卡下明示。
     func signOutLocally() {
+        // 主线程收敛：非主线程调用整段重派主线程再跑。
+        guard Thread.isMainThread else {
+            DispatchQueue.main.async { [weak self] in self?.signOutLocally() }
+            return
+        }
         // 显式退出才清保管库：本函数只走显式登出路径（登录页 performLogout、
         // 容器登出、注销后清理），401 清态走 init 里的 onUnauthorized 内联
         // 分支、不调本函数，故 401 不删任何账号的 token，切回死会话时
@@ -222,6 +271,7 @@ final class SessionManager {
         sessionGeneration += 1
         meSeq += 1
         api.bumpAuthEpoch()
+        api.setAuthAccountId(nil)
         currentUser = nil
         authUnknown = false
         isGuestMode = false
@@ -322,136 +372,159 @@ final class SessionManager {
         _ = vault.save(user: user, token: cookie.value, tokenExpiresAtMs: expiresMs)
     }
 
+    /// 当前会话 token（共享桶里的 teddy_session 值，供导出钉住凭据用；
+    /// 导出与切换预检一律用隔离请求，不经本值以外的共享 cookie）。
+    /// 主线程调用（设置页导出按钮在主线程）；后台调用方不得用它拼请求。
+    func currentSessionToken() -> String? {
+        let value = currentSessionCookie()?.value
+        return (value?.isEmpty == false) ? value : nil
+    }
+
     /// 切换账号：换 cookie，不注销旧账号。
-    /// 流程：先快照旧号并把 meSeq +1（在途旧 /me 回包被 seq 守卫丢弃，
-    /// 不得覆盖新态）；装目标 token 后先用 api.fetchMe 预检（fetchMe
-    /// 不碰 SessionManager 状态，失败时无状态闪烁）；预检成功才提交
-    /// 新态（代际 +1、epoch +1、currentUser、onUserChanged——容器据此
-    /// 切草稿桶/图片桶/时间线缓存，与现行账号变化路径同一条）；预检
-    /// 失败一律装回旧 cookie，当前账号原地不动。
+    /// 账号隔离改造：预检不再先临时换共享 cookie 再验证。流程改为——
+    /// 先快照旧号并把 meSeq +1（在途旧 /me 回包被 seq 守卫丢弃，不
+    /// 得覆盖新态）；用目标 token 走隔离请求 fetchMeWithToken 预检
+    /// （隔离会话不读不写共享桶，预检在途时后台正常请求仍按原账号
+    /// cookie 发，不串号）；预检成功且 user.id 与目标一致、且预检期间
+    /// 当前账号未变，才统一提交新态（共享 cookie 与 currentUser、
+    /// 代际、epoch、账号身份一次提交，onUserChanged——容器据此切草
+    /// 稿桶/图片桶/时间线缓存，与现行账号变化路径同一条）；预检失败
+    /// 或身份对不上时，共享 cookie 与 currentUser 一字不动——没有回
+    /// 滚可做，也就不存在回滚窗口里后台请求错用临时 cookie 的问题。
     /// 磁盘缓存口径：切换不走 signOutLocally 的磁盘清除，旧账号磁盘
     /// 保留、切回可复用（现行注释口径）；内存态由容器 onUserChanged
     /// 切桶时清掉，不跨账号。
     func switchToAccount(userId: Int, completion: @escaping (AccountSwitchResult) -> Void) {
+        // 主线程收敛：非主线程调用整段重派主线程。
+        guard Thread.isMainThread else {
+            DispatchQueue.main.async { [weak self] in self?.switchToAccount(userId: userId, completion: completion) }
+            return
+        }
         let vault = BearyAccountVault.shared
         if currentUser?.id == userId {
-            DispatchQueue.main.async { completion(.alreadyCurrent) }
+            completion(.alreadyCurrent)
             return
         }
         guard let target = vault.load(userId: userId), !target.token.isEmpty else {
-            DispatchQueue.main.async { completion(.unavailable) }
+            completion(.unavailable)
             return
         }
-        let previousCookie = currentSessionCookie()
-        let previousToken = previousCookie?.value
-        let previousExpires = previousCookie?.expiresDate
+        let startUserId = currentUser?.id
         snapshotCurrentAccount()
         meSeq += 1
-        installSessionCookie(token: target.token, expiresDate: target.tokenExpiresAtMs.map { Date(timeIntervalSince1970: $0 / 1000) })
-        api.fetchMe { [weak self] result in
+        api.fetchMeWithToken(target.token) { [weak self] result in
             guard let self = self else { return }
-            let finish: (AccountSwitchResult) -> Void = { outcome in
-                DispatchQueue.main.async { completion(outcome) }
-            }
-            switch result {
-            case .success(let user):
-                guard let user = user, user.id == userId else {
-                    // 401 无原因回空（会话已死）或 token 归属对不上：回滚旧号。
-                    self.rollbackSwitch(previousToken: previousToken, previousExpires: previousExpires)
-                    finish(.expired)
-                    return
+            // 预检回包先回主线程再判定与提交；失败分支不碰任何状态。
+            DispatchQueue.main.async {
+                let finish: (AccountSwitchResult) -> Void = { outcome in
+                    completion(outcome)
                 }
-                // 提交新态：与 refreshMe 成功分支同口径（代际、epoch、通知）。
-                self.sessionGeneration += 1
-                self.api.bumpAuthEpoch()
-                self.currentUser = user
-                self.authUnknown = false
-                self.isGuestMode = false
-                _ = vault.save(user: user, token: target.token, tokenExpiresAtMs: target.tokenExpiresAtMs)
-                self.notifyUserChanged(user)
-                finish(.switched(user))
-            case .failure(let error):
-                self.rollbackSwitch(previousToken: previousToken, previousExpires: previousExpires)
-                switch error {
-                case .authFailure:
-                    finish(.expired)
-                case .network, .cancelled, .http, .decoding:
-                    // 网络/5xx/解析失败 = 未证实过期（G26 口径）：只回滚，
-                    // 不按游客处理、不清旧号。
-                    finish(.network)
-                default:
-                    finish(.failed)
+                switch result {
+                case .success(let user):
+                    guard let user = user, user.id == userId else {
+                        // 401 无原因回空（会话已死）或 token 归属对不上：
+                        // 原账号原样不动（无回滚），只报过期。
+                        finish(.expired)
+                        return
+                    }
+                    guard self.currentUser?.id == startUserId else {
+                        // 预检期间当前账号已被另一路切换/退出改掉：不覆盖
+                        // 更新的态，本次切换作废（调用方 toast 失败口径）。
+                        finish(.failed)
+                        return
+                    }
+                    // 统一提交：共享 cookie 与 currentUser 同一主线程段落
+                    // 内一次提交，中间没有后台请求能看到半提交态。
+                    self.installSessionCookie(token: target.token, expiresDate: target.tokenExpiresAtMs.map { Date(timeIntervalSince1970: $0 / 1000) })
+                    self.sessionGeneration += 1
+                    self.api.bumpAuthEpoch()
+                    self.api.setAuthAccountId(user.id)
+                    self.currentUser = user
+                    self.authUnknown = false
+                    self.isGuestMode = false
+                    _ = vault.save(user: user, token: target.token, tokenExpiresAtMs: target.tokenExpiresAtMs)
+                    self.notifyUserChanged(user)
+                    finish(.switched(user))
+                case .failure(let error):
+                    switch error {
+                    case .authFailure:
+                        finish(.expired)
+                    case .network, .cancelled, .http, .decoding:
+                        // 网络/5xx/解析失败 = 未证实过期（G26 口径）：只
+                        // 报告网络问题，不按游客处理、不清旧号、不动 cookie。
+                        finish(.network)
+                    default:
+                        finish(.failed)
+                    }
                 }
             }
-        }
-    }
-
-    private func rollbackSwitch(previousToken: String?, previousExpires: Date?) {
-        if let token = previousToken, !token.isEmpty {
-            installSessionCookie(token: token, expiresDate: previousExpires)
-        } else {
-            clearLocalCookies()
         }
     }
 
     /// 移除账号：该账号真退出（清它服务端会话 + 本地 token），其他账号不动。
-    /// 非当前账号：先装它的 token 调登出（登出接口按当前 cookie 认会话），
-    /// 再装回原账号 cookie，全程不碰 currentUser；当前账号：登出成功后
-    /// 走 signOutLocally（清该号磁盘缓存 + 保管库项），有下一账号时切
+    /// 账号隔离改造：非当前账号不再先装它的 token 调登出再装回——
+    /// 用目标 token 走隔离请求 logoutWithToken，只清目标账号的服务端
+    /// 会话；共享 cookie 与 currentUser 全程不动，成功时只删保管库项，
+    /// 失败时保管库项与当前账号都原样保留。当前账号：登出成功后走
+    /// signOutLocally（清该号磁盘缓存 + 保管库项），有下一账号时切
     /// 过去，无账号时报告 loggedOut（调用方走现有退出后路径）。
     func removeAccount(userId: Int, completion: @escaping (AccountRemoveResult) -> Void) {
+        // 主线程收敛：非主线程调用整段重派主线程。
+        guard Thread.isMainThread else {
+            DispatchQueue.main.async { [weak self] in self?.removeAccount(userId: userId, completion: completion) }
+            return
+        }
         let vault = BearyAccountVault.shared
         let isCurrent = currentUser?.id == userId
         if !isCurrent {
             guard let target = vault.load(userId: userId) else {
-                DispatchQueue.main.async { completion(.removed) }
+                completion(.removed)
                 return
             }
-            let previousCookie = currentSessionCookie()
-            installSessionCookie(token: target.token, expiresDate: target.tokenExpiresAtMs.map { Date(timeIntervalSince1970: $0 / 1000) })
-            api.logout { [weak self] result in
+            api.logoutWithToken(target.token) { [weak self] result in
                 guard let self = self else { return }
-                switch result {
-                case .success:
-                    _ = vault.remove(userId: userId)
-                    if let token = previousCookie?.value, !token.isEmpty {
-                        self.installSessionCookie(token: token, expiresDate: previousCookie?.expiresDate)
-                    } else {
-                        self.clearLocalCookies()
+                DispatchQueue.main.async {
+                    switch result {
+                    case .success:
+                        _ = vault.remove(userId: userId)
+                        completion(.removed)
+                    case .failure:
+                        // 隔离登出失败：不删保管库项、不动当前 cookie 与
+                        // currentUser（旧代码失败时也要装回 cookie，本处
+                        // 根本没动过，无需恢复）。
+                        completion(.failed)
                     }
-                    DispatchQueue.main.async { completion(.removed) }
-                case .failure:
-                    if let token = previousCookie?.value, !token.isEmpty {
-                        self.installSessionCookie(token: token, expiresDate: previousCookie?.expiresDate)
-                    } else {
-                        self.clearLocalCookies()
-                    }
-                    DispatchQueue.main.async { completion(.failed) }
                 }
             }
             return
         }
         api.logout { [weak self] result in
             guard let self = self else { return }
-            switch result {
-            case .success:
-                self.clearLocalCookies()
-                self.signOutLocally()
-                let remaining = vault.loadAll()
-                if let next = remaining.first {
-                    self.switchToAccount(userId: next.userId) { switchResult in
-                        switch switchResult {
-                        case .switched(let user):
-                            completion(.removedAndSwitched(user))
-                        default:
-                            completion(.removedAndLoggedOut)
+            // 当前账号登出回包先回主线程：后续 clearLocalCookies +
+            // signOutLocally（删保管库项）+ loadAll（取下一账号）+
+            // switchToAccount 必须按序在主线程跑，否则 signOut 的主
+            // 线程重派会跑在 loadAll 之后、下一账号会错取到刚移除的号。
+            DispatchQueue.main.async {
+                switch result {
+                case .success:
+                    self.clearLocalCookies()
+                    self.signOutLocally()
+                    let remaining = vault.loadAll()
+                    if let next = remaining.first {
+                        self.switchToAccount(userId: next.userId) { switchResult in
+                            switch switchResult {
+                            case .switched(let user):
+                                completion(.removedAndSwitched(user))
+                            default:
+                                completion(.removedAndLoggedOut)
+                            }
                         }
+                    } else {
+                        completion(.removedAndLoggedOut)
                     }
-                } else {
-                    DispatchQueue.main.async { completion(.removedAndLoggedOut) }
+                case .failure:
+                    completion(.failed)
                 }
-            case .failure:
-                DispatchQueue.main.async { completion(.failed) }
             }
         }
     }
