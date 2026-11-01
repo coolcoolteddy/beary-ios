@@ -374,8 +374,11 @@ final class BearyLocationPopoverView: UIView, CLLocationManagerDelegate, MKLocal
         }
     }
 
-    private func clearSuggestions() {
-        suggestions = []
+    /// 只清旧视图，不动结果数据：正常渲染先清旧按钮/旧空态，再按当前 suggestions 重建。
+    /// 此前 renderSuggestions 首句调 clearSuggestions，而后者首句就把 suggestions 置空，
+    /// 导致 completerDidUpdateResults 刚赋值的 completer.results 立即被清空、
+    /// suggestions.isEmpty 恒真、有结果也永远走“没有找到”空态分支。
+    private func clearSuggestionViews() {
         for sub in suggestionsStack.arrangedSubviews {
             suggestionsStack.removeArrangedSubview(sub)
             sub.removeFromSuperview()
@@ -383,8 +386,15 @@ final class BearyLocationPopoverView: UIView, CLLocationManagerDelegate, MKLocal
         suggestionsEmptyLabel.isHidden = true
     }
 
+    /// 全清：数据 + 视图。仅输入清空或搜索失败（且输入已空）等“旧建议必须不残留”时用；
+    /// 正常渲染不得走这里，否则会把刚到的结果清掉。
+    private func clearSuggestions() {
+        suggestions = []
+        clearSuggestionViews()
+    }
+
     private func renderSuggestions() {
-        clearSuggestions()
+        clearSuggestionViews()
         if suggestions.isEmpty {
             suggestionsStack.addArrangedSubview(suggestionsEmptyLabel)
             suggestionsEmptyLabel.isHidden = false
