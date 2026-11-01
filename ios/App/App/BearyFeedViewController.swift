@@ -611,6 +611,12 @@ class BearyFeedViewController: UIViewController {
         tableView.contentOffset.y <= -tableView.contentInset.top + 1
     }
 
+    /// 同 tab 连点刷新在途锁：首拉在途或自定义下拉头在途时，重拍刷新一律不重复触发
+    /// （refreshAllInternal 自身的 plazaFirstPageInFlight 守卫是第二道）。
+    var isRefreshingForRetap: Bool {
+        plazaFirstPageInFlight || isCustomPullRefreshing
+    }
+
     // MARK: - 游客底部 logo（F19）
 
     private func updateFootLogo() {

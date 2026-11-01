@@ -2652,6 +2652,12 @@ class BearyTimelineViewController: UIViewController {
         tableView.contentOffset.y <= -tableView.contentInset.top + 1
     }
 
+    /// 同 tab 连点刷新在途锁：首屏加载或自定义下拉头在途时，重拍刷新一律不重复触发
+    /// （loadTimelineFirstPage 自身的在途跳过守卫是第二道）。
+    var isRefreshingForRetap: Bool {
+        timelineState == .loading || isCustomPullRefreshing
+    }
+
     /// 账号隔离 9 号：keepDay 时同时保留旧内容——不清时间线模型、不动
     /// timelineState、不清当日面板，首屏回包经行 diff 更新；失败时旧内容
     /// 原样保留（失败/加载态只在空表时渲染特殊态，见 3617 一带，故不闪白）。

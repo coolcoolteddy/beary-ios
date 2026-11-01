@@ -807,6 +807,12 @@ final class BearyNotificationsViewController: UIViewController {
         tableView.contentOffset.y <= -tableView.contentInset.top + 1
     }
 
+    /// 同 tab 连点刷新在途锁：首拉或自定义下拉头在途时，重拍刷新一律不重复触发
+    /// （refresh 自身的 isCustomPullRefreshing/isLoadingFirstPage 守卫是第二道）。
+    var isRefreshingForRetap: Bool {
+        isLoadingFirstPage || isCustomPullRefreshing
+    }
+
     func scrollToTop() {
         tableView.setContentOffset(CGPoint(x: 0, y: -tableView.contentInset.top), animated: !UIAccessibility.isReduceMotionEnabled)
     }
