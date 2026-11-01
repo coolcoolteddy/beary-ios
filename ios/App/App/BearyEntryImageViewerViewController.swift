@@ -817,7 +817,11 @@ class BearyEntryImageViewerViewController: UIViewController, UIGestureRecognizer
             let velocity = sender.velocity(in: view)
             let flickPages = abs(velocity.x) > 700 && abs(velocity.x) > abs(velocity.y) * 1.5
             let distancePages = abs(totalDx) > 60 && abs(totalDx) > abs(totalDy) * 1.5
-            if imageKeys.count > 1 && (distancePages || flickPages) {
+            // 取消态不翻页：只有正常松手（.ended）才进翻页判断，距离
+            // （>60）与速度（>700）阈值不变；取消态落入下方 else 回弹
+            // 分支，恢复当前位置、相邻图同步退回屏外再隐藏（与纵向
+            // 分支“取消态一律弹回”一致）。
+            if sender.state == .ended && imageKeys.count > 1 && (distancePages || flickPages) {
                 // 位移达标按位移方向，快甩达标按末速度方向。
                 let direction = distancePages ? (totalDx < 0 ? 1 : -1) : (velocity.x < 0 ? 1 : -1)
                 navigate(direction: direction)
