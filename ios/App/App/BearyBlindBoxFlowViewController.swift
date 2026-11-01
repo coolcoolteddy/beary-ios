@@ -163,7 +163,7 @@ final class BearyBlindBoxFlowViewController: UIViewController {
     private let contentStack = UIStackView()
     private var colCapConstraints: [NSLayoutConstraint] = []
 
-    private let spinner = UIActivityIndicatorView(style: .medium)
+    private let spinner = BearyRefreshIconView()
     private let introLabel = UILabel()
     private let poolStack = UIStackView()
     private let poolButton = BearyButton.make(style: .primaryPill(.orange), title: "放进池子")
@@ -318,6 +318,10 @@ final class BearyBlindBoxFlowViewController: UIViewController {
 
     private func buildSections() {
         spinner.translatesAutoresizingMaskIntoConstraints = false
+        // 与原系统 medium 转圈同尺寸（RefreshIconView 图为 32pt，框定 20pt 渲染）。
+        spinner.tintColor = BearyColors.ink
+        spinner.widthAnchor.constraint(equalToConstant: 20).isActive = true
+        spinner.heightAnchor.constraint(equalToConstant: 20).isActive = true
 
         introLabel.translatesAutoresizingMaskIntoConstraints = false
         introLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 14))
@@ -569,7 +573,7 @@ final class BearyBlindBoxFlowViewController: UIViewController {
         step = next
         hasLoadedOnce = true
         spinner.isHidden = true
-        spinner.stopAnimating()
+        spinner.stopSpinning()
         introLabel.isHidden = true
         poolStack.isHidden = true
         poolButton.isHidden = true
@@ -582,7 +586,7 @@ final class BearyBlindBoxFlowViewController: UIViewController {
         switch next {
         case .loading:
             spinner.isHidden = false
-            spinner.startAnimating()
+            spinner.startSpinning()
         case .login:
             loginView.isHidden = false
         case .pool:
