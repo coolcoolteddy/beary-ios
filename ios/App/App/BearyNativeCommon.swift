@@ -135,8 +135,15 @@ enum BearySheetDrag {
 
 // MARK: - 液态玻璃（与 SceneDelegate.makeGlassView 同配方，勿另起 tint）
 
+/// 玻璃适用范围 Token（视觉清单第 12 项）：系统材质（UIGlassEffect /
+/// systemMaterial 降级）只允许在栏与菜单区域使用——顶栏、底栏衬底、顶栏内
+/// 登录 pill、菜单卡（bearyMenuGlassView）。窗口 / 弹窗 / Toast / 浮动按钮
+/// 一律不用系统材质，改走实色底（见各调用点注释）。
+/// 注意：本令推翻 Li 2026-10-26“所有窗口弹窗与全 App 按钮都用官方玻璃”
+/// 的旧令，可逆——恢复旧令 = 把本支删掉的玻璃背板原样贴回（见 PR 描述清单）。
+/// 本 Token 为口径声明 + 调用点收敛，不拦编译；新增玻璃调用点须先对上本表。
 /// 玻璃配方唯一口径：iOS 26+ 为 UIGlassEffect，低版本降级系统毛玻璃；
-/// tint 只用两档：中性 bg 52%（与顶栏/底栏同款）、主操作橙（与 FAB 同款）。
+/// tint 只用两档：中性 bg 52%（与顶栏/底栏同款）、主操作橙（顶栏登录 pill 同款）。
 /// SceneDelegate.makeGlassView 与本 helper 同配方，调用点按需任选其一，不新增配方。
 /// 部署目标 iOS 15.0：分支内 #available 兜底，不抬部署目标，不引新依赖。
 enum BearyGlass {
@@ -151,7 +158,7 @@ enum BearyGlass {
             view.contentView.backgroundColor = tint
         }
         // 撤回批（2026-10-27，76 包死钮根因）：UIVisualEffectView 默认可交互，命中测试
-        // 落在玻璃层上即吞掉触摸；经此 helper 出来的玻璃一律只做视觉（背板与按钮内玻璃），
+        // 落在玻璃层上即吞掉触摸；经此 helper 出来的玻璃一律只做视觉（栏衬底与栏内按钮玻璃），
         // 触摸由上层内容/按钮本体接管，故永不参与触摸。
         view.isUserInteractionEnabled = false
         return view
@@ -165,11 +172,13 @@ enum BearyGlass {
 /// 点亮色、描边、边框等上层样式一律不动。圆角取半高（44×44 图标钮为圆、宽钮为 pill 形，与预览一致）。
 /// 玻璃视图插在 index 0，位于 imageView/titleLabel 之下；backgroundColor 必须保持 clear，
 /// 否则实色底会盖住玻璃——转换点须同步把原实色底改 clear（边框/描边不动）。
+/// 范围（视觉清单第 12 项）：本类只允许用在栏内按钮，唯一调用点是顶栏登录 pill；
+/// 页内按钮一律不用本类（不用系统材质），不要再把它推广到全 App 按钮。
 /// UIButton(type:) 在子类上调用仍走本类实例，现有 BearyHit44Button(type:) 调用点只改类名即可。
 final class BearyGlassButton: BearyHit44Button {
     private var glassView: UIVisualEffectView?
 
-    /// 玻璃 tint：默认中性 bg 52%；主操作（发布/分享/登录）置 BearyColors.orange（FAB 同款）。
+    /// 玻璃 tint：默认中性 bg 52%；顶栏登录 pill 置 BearyColors.orange（点亮色不动）。
     var glassTint: UIColor? = BearyGlass.neutralTint {
         didSet { rebuildGlass() }
     }

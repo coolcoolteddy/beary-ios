@@ -98,7 +98,8 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate, UI
 
     override func viewDidLoad() {
         super.viewDidLoad()
-        view.backgroundColor = .clear
+        // 视觉清单第 12 项：玻璃背板已撤（见 buildViews），页底改 BearyColors.bg。
+        view.backgroundColor = BearyColors.bg
         title = "回收站"
         buildViews()
         buildConstraints()
@@ -155,16 +156,8 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate, UI
     // MARK: - 视图搭建
 
     private func buildViews() {
-        // 玻璃批：模态玻璃背板钉满 view（index 0，在 scrollView/toast 之下）；行卡片底不动。
-        let trashGlassView = BearyGlass.effectView(tint: BearyGlass.neutralTint)
-        trashGlassView.translatesAutoresizingMaskIntoConstraints = false
-        view.insertSubview(trashGlassView, at: 0)
-        NSLayoutConstraint.activate([
-            trashGlassView.topAnchor.constraint(equalTo: view.topAnchor),
-            trashGlassView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
-            trashGlassView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
-            trashGlassView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-        ])
+        // 视觉清单第 12 项：模态玻璃背板已撤（玻璃范围 Token 只允许栏/菜单，
+        // 全屏页不在内）；页底改 BearyColors.bg（整页标准底色），行卡片底不动。
         scrollView.delegate = self
         // 116 后扫查：与广场/个人页同口径——关掉 delaysContentTouches，滚动容器里的点按立即响应，不等滚动判定。
         scrollView.delaysContentTouches = false
