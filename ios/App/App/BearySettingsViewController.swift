@@ -2832,8 +2832,6 @@ enum BearyLegalServerText {
         }.resume()
     }
 }
-    }
-}
 
 enum BearyLegalTexts {
     static let privacy = """
