@@ -15,6 +15,13 @@ final class BearyEdgeDismissController: NSObject, UIViewControllerTransitioningD
     private weak var presentedVC: UIViewController?
     private var interaction: UIPercentDrivenInteractiveTransition?
 
+    /// 交互式退出开始前的统一判断：返回 false 时不启动交互式过渡、不 dismiss，
+    /// 调用方自行处理（例如未保存时弹确认，确认后走正常 dismiss 路径）。
+    /// 未设置时沿旧口径直接允许；只接需要拦截的页（编辑资料），其余页不设、
+    /// 行为不变。关键：判断发生在手势 .began，而不是滑完 .ended 后补确认——
+    /// 先拦截，视图才不会在确认前就滑走。
+    var shouldAllowInteractiveDismiss: (() -> Bool)?
+
     /// 把边缘手势挂到已呈现容器的 view 上（详情是 nav 容器的 view，编辑器是自身 view）。
     /// 必须在 present 之前调用，且调用方要一直强持有本对象。
     func attach(to presented: UIViewController) {
@@ -47,6 +54,10 @@ final class BearyEdgeDismissController: NSObject, UIViewControllerTransitioningD
         let progress = min(max(pan.translation(in: view).x / width, 0), 1)
         switch pan.state {
         case .began:
+            if let shouldAllow = shouldAllowInteractiveDismiss, !shouldAllow() {
+                interaction = nil
+                return
+            }
             interaction = UIPercentDrivenInteractiveTransition()
             presented.dismiss(animated: true)
         case .changed:

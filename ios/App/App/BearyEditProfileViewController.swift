@@ -55,6 +55,7 @@ class BearyEditProfileViewController: UIViewController {
         self.initialHandle = handle
         self.initialAvatarUrl = avatarUrl
         self.initialCoverUrl = coverUrl
+        self.committedDisplayName = displayName
         super.init(nibName: nil, bundle: nil)
     }
 
@@ -69,6 +70,27 @@ class BearyEditProfileViewController: UIViewController {
     private var coverRemoved = false
     private var pickingAvatar = false
     private var isSaving = false
+    /// 提交快照（保存三件套第 2 项）：点保存时一次性定格全部提交值，
+    /// 后续 handle / profile 两步只读快照，不再读输入框与待存标记——
+    /// 弱网等待中界面即使能改（现已冻结，见 updateSaveButtonState），
+    /// 提交的也恒为点按时的内容，不出现“界面是新内容、提交的是旧内容”。
+    private struct SaveSnapshot {
+        let displayName: String
+        let handle: String
+        let handleChanged: Bool
+        let nameChanged: Bool
+        let avatarDataURL: String?
+        let avatarChanged: Bool
+        let coverDataURL: String?
+        let coverChanged: Bool
+        let coverRemoved: Bool
+        let signatureValue: String
+        let signatureChanged: Bool
+    }
+    private var savingSnapshot: SaveSnapshot?
+    /// 成功后提交的基线：initialDisplayName 是 let，成功后改名仍需新的
+    /// 比较基线（容器不 dismiss 的兜底下，再点关闭不再误判未保存）。
+    private var committedDisplayName: String?
     /// 批 D 签名行（2026-10-30：编辑统一到本页，个人页只做展示）：
     /// 初值不走调用方（/me 不下发 signature），本页经 /me 取 id 后调既有
     /// fetchUserProfile 自取（见 fetchInitialSignature）；拉不到初值时空输入
@@ -713,13 +735,14 @@ class BearyEditProfileViewController: UIViewController {
 
     // MARK: - 动作
 
-    /// U1：未保存改动 = 头像/封面动过，或名字/handle 文本与初始（或已提交 handle）不一致。
+    /// U1：未保存改动 = 头像/封面动过，或名字/handle 文本与基线（或已提交 handle）不一致。
+    /// 名字基线是 committedDisplayName（初始值，成功后更新为已提交值）。
     private var hasUnsavedChanges: Bool {
         if avatarChanged || coverChanged {
             return true
         }
         let nameValue = (nameField.text ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-        if nameValue != (initialDisplayName ?? "") {
+        if nameValue != (committedDisplayName ?? "") {
             return true
         }
         let handleValue = (handleField.text ?? "").trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
@@ -732,18 +755,43 @@ class BearyEditProfileViewController: UIViewController {
         return false
     }
 
-    @objc private func closeButtonTapped() {
-        // U1：有关改动时先弹“放弃未保存的改动？”确认，无改动直接关。
-        guard hasUnsavedChanges else {
-            onCancel?()
-            return
+    /// 统一退出判断（保存三件套第 1 项）：关闭钮与边缘右滑共用的唯一退出口。
+    /// - interactive=true（边缘手势）：返回 true 时手势继续驱动 dismiss，
+    ///   本函数不直接调 onCancel；返回 false 时已拦截（已弹提示 / 确认，
+    ///   确认放弃后走 onCancel）。判断发生在手势 .began（见 BearyEdgeDismiss
+    ///   的 shouldAllowInteractiveDismiss），不是滑完再补确认。
+    /// - interactive=false（关闭钮）：可退出时直接调 onCancel。
+    /// 保存进行中：拦截，不弹放弃确认——请求已发出，放弃改动已无意义；
+    /// 关闭钮保存中仍可点（不静默禁用），点按即弹“正在保存”提示。
+    /// 已有弹层时不再叠弹（返回 false 拦截本次退出）。
+    @discardableResult
+    func requestExit(interactive: Bool) -> Bool {
+        if isSaving {
+            if presentedViewController == nil {
+                presentSimpleAlert(message: "正在保存，请稍候")
+            }
+            return false
         }
-        let alert = UIAlertController(title: "放弃未保存的改动？", message: nil, preferredStyle: .alert)
-        alert.addAction(UIAlertAction(title: "继续编辑", style: .cancel, handler: nil))
-        alert.addAction(UIAlertAction(title: "放弃", style: .destructive, handler: { [weak self] _ in
-            self?.onCancel?()
-        }))
-        present(alert, animated: BearyMotion.animated(true), completion: nil)
+        guard hasUnsavedChanges else {
+            if !interactive {
+                onCancel?()
+            }
+            return true
+        }
+        if presentedViewController == nil {
+            let alert = UIAlertController(title: "放弃未保存的改动？", message: nil, preferredStyle: .alert)
+            alert.addAction(UIAlertAction(title: "继续编辑", style: .cancel, handler: nil))
+            alert.addAction(UIAlertAction(title: "放弃", style: .destructive, handler: { [weak self] _ in
+                self?.onCancel?()
+            }))
+            present(alert, animated: BearyMotion.animated(true), completion: nil)
+        }
+        return false
+    }
+
+    @objc private func closeButtonTapped() {
+        // U1 + 三件套第 1 项：关闭钮走统一退出判断，不再自带一份检查。
+        requestExit(interactive: false)
     }
 
     // U3：键盘顶起时调 inset（与登录页同口径：扣掉底部安全区后的键盘高）。
@@ -760,11 +808,14 @@ class BearyEditProfileViewController: UIViewController {
     }
 
     @objc private func avatarButtonTapped() {
+        // 冻结期纵深防御：按钮已禁用，万一经其他路径触发仍直接拦住。
+        guard !isSaving else { return }
         pickingAvatar = true
         presentImagePicker()
     }
 
     @objc private func coverTapped() {
+        guard !isSaving else { return }
         pickingAvatar = false
         presentImagePicker()
     }
@@ -835,16 +886,30 @@ class BearyEditProfileViewController: UIViewController {
             presentSimpleAlert(message: "签名最多 60 个字")
             return
         }
-        let handleChanged = handleValue != effectiveHandle
-        if handleChanged {
+        if handleValue != effectiveHandle {
             if !isValidHandle(handleValue) {
                 presentSimpleAlert(message: "用户名需 3–20 位小写字母、数字或下划线")
                 return
             }
         }
+        // 三件套第 2 项：点按时一次性定格完整提交快照（名字、签名、头像、
+        // 封面全在此时取值），后续两步只读快照；校验用的也是同一批点按时读到的值。
+        let snapshot = SaveSnapshot(
+            displayName: nameValue,
+            handle: handleValue,
+            handleChanged: handleValue != effectiveHandle,
+            nameChanged: nameValue != (committedDisplayName ?? ""),
+            avatarDataURL: avatarChanged ? pendingAvatarDataURL : nil,
+            avatarChanged: avatarChanged,
+            coverDataURL: coverChanged ? pendingCoverDataURL : nil,
+            coverChanged: coverChanged,
+            coverRemoved: coverRemoved,
+            signatureValue: signatureValue,
+            signatureChanged: signatureHasChange)
+        savingSnapshot = snapshot
         isSaving = true
         updateSaveButtonState()
-        if handleChanged {
+        if snapshot.handleChanged {
             BearyAPI.shared.request("/api/account/handle", method: "POST", jsonBody: ["handle": handleValue]) { [weak self] (result: Result<BearyHandleUpdateResponse, APIError>) in
                 DispatchQueue.main.async {
                     guard let strongSelf = self else { return }
@@ -855,22 +920,31 @@ class BearyEditProfileViewController: UIViewController {
                         strongSelf.submittedHandle = handleValue
                         // 5-3：改名成功后立即刷新链接行，否则复制新链、显示旧链分裂。
                         strongSelf.updateLinkRow()
-                        strongSelf.saveProfile(nameValue: nameValue)
+                        strongSelf.saveProfile(snapshot: snapshot)
                     case .failure(let err):
                         strongSelf.finishSavingWithError(message: strongSelf.handleErrorMessage(err: err))
                     }
                 }
             }
         } else {
-            saveProfile(nameValue: nameValue)
+            saveProfile(snapshot: snapshot)
         }
     }
 
     /// M14 改（1-8）：保存进行态标题恒为“保存”，只加左侧圈转指示；
     /// 旧“保存中…”4 字在 44 宽钮内会被裁字，故不再改标题，另加禁用。
+    /// 三件套第 2 项冻结：保存期间除保存钮外，名字 / 签名 / 用户名输入框
+    /// 与头像 / 封面换图入口一并禁用（旧口径只禁保存钮，弱网等待中继续
+    /// 编辑会与快照脱节）；关闭钮不禁用，点按走统一退出判断（保存中弹提示，
+    /// 见 requestExit），不静默无反应；复制链接是只读操作，不冻结。
     private func updateSaveButtonState() {
         saveButton.isEnabled = !isSaving
         saveButton.setTitle("保存", for: .normal)
+        nameField.isEnabled = !isSaving
+        signatureField.isEnabled = !isSaving
+        handleField.isEnabled = !isSaving
+        avatarTapButton.isEnabled = !isSaving
+        coverTapButton.isEnabled = !isSaving
         if isSaving {
             savingSpinner.startSpinning()
         } else {
@@ -878,12 +952,13 @@ class BearyEditProfileViewController: UIViewController {
         }
     }
 
-    private func saveProfile(nameValue: String) {
+    /// 第二步资料保存：只读点按时定格的快照，不读输入框、不读待存标记。
+    private func saveProfile(snapshot: SaveSnapshot) {
         var body: [String: Any] = [:]
-        if nameValue != (initialDisplayName ?? "") {
-            body["display_name"] = nameValue
+        if snapshot.nameChanged {
+            body["display_name"] = snapshot.displayName
         }
-        if avatarChanged, let avatarDataURL = pendingAvatarDataURL {
+        if snapshot.avatarChanged, let avatarDataURL = snapshot.avatarDataURL {
             body["avatar"] = avatarDataURL
         }
         // 批 D 签名：与名字/头像/封面同走 PUT /api/account/profile，字段名
@@ -892,22 +967,21 @@ class BearyEditProfileViewController: UIViewController {
         // 现行 accounts Worker 的 PUT 分支不处理 signature，成功回包也不持久化；
         // 本页仍按字段名透传，后端补分支后 App 无需再改；保存成功后容器重拉
         // 个人页以服务端为准，未持久化时签名行即回落旧值，不本地谎报已改。
-        if signatureHasChange {
-            let signatureValue = (signatureField.text ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-            if signatureValue.isEmpty {
+        if snapshot.signatureChanged {
+            if snapshot.signatureValue.isEmpty {
                 body["signature"] = NSNull()
             } else {
-                body["signature"] = signatureValue
+                body["signature"] = snapshot.signatureValue
             }
         }
-        if coverChanged {
+        if snapshot.coverChanged {
             // 5-15 死分支标注：coverRemoved 当前不可达——移除入口已删
             // （见 viewDidLoad F14 注释），全文件没有任何地方置 true，
             // 仅在裁剪确认时复位 false；保留作将来移除入口复用，
             // 清理时须连同本分支的 cover = NSNull() 一起处理。
-            if coverRemoved {
+            if snapshot.coverRemoved {
                 body["cover"] = NSNull()
-            } else if let coverDataURL = pendingCoverDataURL {
+            } else if let coverDataURL = snapshot.coverDataURL {
                 body["cover"] = coverDataURL
             }
         }
@@ -929,12 +1003,38 @@ class BearyEditProfileViewController: UIViewController {
     }
 
     private func finishSavingSuccess() {
+        // 三件套第 3 项：先把已提交快照写进 SessionManager.currentUser
+        // 统一快照（名字 / 用户名 / 头像），再走 onSaved 通知容器刷新个人页
+        // 与信息流——下次打开编辑资料的初值即新值，不再是旧值。
+        // 快照缺失时（理论上到不了：两步入口都先置快照）只做原有成功路径。
+        if let snapshot = savingSnapshot {
+            committedDisplayName = snapshot.displayName
+            if snapshot.signatureChanged {
+                initialSignature = snapshot.signatureValue
+                signatureLoaded = true
+                signatureEdited = false
+            }
+            avatarChanged = false
+            coverChanged = false
+            coverRemoved = false
+            pendingAvatarDataURL = nil
+            pendingCoverDataURL = nil
+            SessionManager.shared.applyEditedProfile(
+                displayName: snapshot.displayName,
+                handle: snapshot.handle,
+                avatarDataURL: snapshot.avatarChanged ? snapshot.avatarDataURL : nil)
+        }
+        savingSnapshot = nil
         isSaving = false
         updateSaveButtonState()
         onSaved?()
     }
 
     private func finishSavingWithError(message: String) {
+        // 失败恢复：快照丢弃（重试时按当前输入重新定格），但待存标记与
+        // 已提交 handle 保留（G3：重试跳过已成功的 handle 步）；输入框内容
+        // 全程未被清空或回滚，解冻后原样保留，可直接重试。
+        savingSnapshot = nil
         isSaving = false
         updateSaveButtonState()
         // 保存失败：拒绝动效（卡片同款摇头 + warning 震动，减动效只跳过视觉抖动）；
@@ -1104,6 +1204,9 @@ extension BearyEditProfileViewController: PHPickerViewControllerDelegate {
     /// （coverImageView 宽 / 160 高；布局未出时按内容列宽推算）。
     /// 取消：裁剪页自己 dismiss，不回调，本页状态全程不动。
     private func presentCropEditor(image: UIImage) {
+        // 冻结期不接选图：选图加载是异步的，保存点按与图片到达之间有窗口；
+        // 保存中到达的图片直接丢弃（不改待存标记、不换预览），存完可重选。
+        guard !isSaving else { return }
         if presentedViewController != nil { return }
         let aspectRatio: CGFloat
         if pickingAvatar {
@@ -1122,6 +1225,9 @@ extension BearyEditProfileViewController: PHPickerViewControllerDelegate {
         cropVC.modalPresentationStyle = .fullScreen
         cropVC.onConfirm = { [weak self] cropped in
             guard let strongSelf = self else { return }
+            // 冻结期不接受裁剪确认：裁剪页确认时自己 dismiss，本页只须
+            // 忽略回调，待存标记与预览都不动（与 presentCropEditor 的丢弃同口径）。
+            guard !strongSelf.isSaving else { return }
             if strongSelf.pickingAvatar {
                 guard let dataURL = strongSelf.dataURLForAvatar(image: cropped) else {
                     strongSelf.presentSimpleAlert(message: "头像太大了，换一张小一点的吧")
