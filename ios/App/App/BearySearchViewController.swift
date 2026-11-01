@@ -406,6 +406,13 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         searchTimer?.invalidate()
         searchTimer = nil
         searchSeq += 1
+        // 翻页在途离页：取消任务并复位加载态——旧回包凭序号丢弃、不调
+        // finishOne，若不复位则 pending 永不到 0，回来后尾行转圈卡死、
+        // “加载更多”再也点不动；新搜索另有 resetSearchPagination 兜底。
+        for task in currentLoadMoreTasks { task.cancel() }
+        currentLoadMoreTasks = []
+        isLoadingMore = false
+        updateSearchFooter()
     }
 
     /// 切页生命周期 7 号（最小化）：容器切页只改 isHidden，本回调不触发，
@@ -415,6 +422,13 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         searchTimer?.invalidate()
         searchTimer = nil
         searchSeq += 1
+        // 翻页在途离页：取消任务并复位加载态——旧回包凭序号丢弃、不调
+        // finishOne，若不复位则 pending 永不到 0，回来后尾行转圈卡死、
+        // “加载更多”再也点不动；新搜索另有 resetSearchPagination 兜底。
+        for task in currentLoadMoreTasks { task.cancel() }
+        currentLoadMoreTasks = []
+        isLoadingMore = false
+        updateSearchFooter()
     }
 
     deinit {
@@ -965,7 +979,11 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         var freshPublicEntries: [Entry] = []
         var freshUsersList: [SearchUser] = []
         // 本批翻页内的去重基准：已在屏上的 id（公开/我的按日记 id、用户按 id）。
-        var seenEntryIds = Set<String>(rowEntryIds)
+        // 公开组与“我的”组去重集合分开：两组并行回包、谁先到谁先占 id 时，
+        // 共用集合会把自己公开篇从公开组里挤掉（“我的”组先占 id，公开组跳过，
+        // 而渲染时“我的”组又只留私密篇，两边都不渲染）；分开后公开篇仍由公开组出。
+        var seenPublicEntryIds = Set<String>(rowEntryIds)
+        var seenMineEntryIds = Set<String>(rowEntryIds)
         var seenUserIds = Set<Int>()
         for user in rowUsers {
             if let userId = user.id {
@@ -1009,8 +1027,8 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
                             }
                             var fresh: [Entry] = []
                             for entry in entries {
-                                if let entryId = entry.id, !seenEntryIds.contains(entryId) {
-                                    seenEntryIds.insert(entryId)
+                                if let entryId = entry.id, !seenPublicEntryIds.contains(entryId) {
+                                    seenPublicEntryIds.insert(entryId)
                                     fresh.append(entry)
                                 }
                             }
@@ -1062,8 +1080,8 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
                             }
                             var fresh: [Entry] = []
                             for entry in mine {
-                                if let entryId = entry.id, !seenEntryIds.contains(entryId) {
-                                    seenEntryIds.insert(entryId)
+                                if let entryId = entry.id, !seenMineEntryIds.contains(entryId) {
+                                    seenMineEntryIds.insert(entryId)
                                     fresh.append(entry)
                                 }
                             }
