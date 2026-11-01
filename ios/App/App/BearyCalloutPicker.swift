@@ -142,7 +142,10 @@ final class BearyCalloutPickerView: UIView, UIScrollViewDelegate {
     func configure(options: [Option], onSelect: ((String) -> Void)?, imageProvider: ((String, Bool) -> UIImage?)?) {
         self.onSelect = onSelect
         self.imageProvider = imageProvider
+        // 32 清单第 31 项：先 removeArrangedSubview 再 removeFromSuperview（纯防御性；
+        // 现状两实例 configure 各只调一次，旧按钮本就不会残留，收益为零，仍按拍板做）。
         for (_, button) in optionButtons {
+            stackView.removeArrangedSubview(button)
             button.removeFromSuperview()
         }
         optionButtons.removeAll()
