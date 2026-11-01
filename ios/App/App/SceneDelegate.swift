@@ -2524,20 +2524,34 @@ final class BearyChromeViewController: UIViewController {
     /// 游客登录提示 Sheet 的覆盖层（容器内子视图，非 modal VC，避免与登录页 present 层级纠缠）。
     private var guestSheetScrim: UIView?
     private var guestSheetView: UIView?
+    /// 审计 B 组 24：出现前 VoiceOver 所在的触发元素（iOS 17+ 才能取到；低版本为 nil，
+    /// 关闭时不强制移焦）。关闭后若仍在，焦点回到它。
+    private var guestSheetPreviousAccessibilityElement: Any?
 
     /// 游客登录提示 Sheet：统一 BearySheetChrome（顶圆角 20、抓手 40×4、遮罩 0.45 淡入 0.25s）；
     /// 标题“登录后解锁完整版”，文案“写日记、公开、点赞、回应、收藏都需要登录”，钮 登录/暂不；
     /// 登录 → 关 Sheet 后弹登录页，暂不/点遮罩 → 只关 Sheet。重复调用不叠加。
     /// 动效只走 transform/opacity；减动效直显终值。
+    /// 审计 B 组 16：浮层背景走 BearyColors.surface（深色深灰），不用 bg 纯黑；全屏页仍走 bg。
+    /// 审计 B 组 24：覆盖层 accessibilityViewIsModal，出现后聚焦标题，关闭后恢复触发位置，
+    /// VoiceOver 逃离手势走现有关闭路径（见 accessibilityPerformEscape）。
     private func presentGuestLoginSheet() {
         guard guestSheetView == nil else { return }
+        if #available(iOS 17.0, *) {
+            guestSheetPreviousAccessibilityElement = UIAccessibility.focusedElement(using: .voiceOver)
+        }
         let scrim = UIView()
         scrim.backgroundColor = BearySheetChrome.scrimColor
         scrim.alpha = 0
         scrim.translatesAutoresizingMaskIntoConstraints = false
         scrim.addGestureRecognizer(UITapGestureRecognizer(target: self, action: #selector(guestSheetDismissTapped)))
         let sheet = UIView()
-        sheet.backgroundColor = BearyColors.bg
+        // 审计 B 组 16：浮层背景走 surface（深色 #26262c），不用 bg（深色纯黑）；
+        // 全屏页面继续用 bg；登录钮前景仍走 bg（墨色钮上的字，不动）。
+        sheet.backgroundColor = BearyColors.surface
+        // 审计 B 组 24：addSubview 覆盖层不是 modal VC，须显式声明模态，
+        // VoiceOver 才不读覆盖层之外的底层内容。
+        sheet.accessibilityViewIsModal = true
         sheet.layer.cornerRadius = BearySheetChrome.topCornerRadius
         sheet.layer.maskedCorners = [.layerMinXMinYCorner, .layerMaxXMinYCorner]
         sheet.clipsToBounds = true
@@ -2546,6 +2560,13 @@ final class BearyChromeViewController: UIViewController {
         grabber.backgroundColor = BearyColors.line
         grabber.layer.cornerRadius = BearySheetChrome.grabberCornerRadius
         grabber.translatesAutoresizingMaskIntoConstraints = false
+        // 审计 B 组 3：竖栈 alignment=.fill 时栈会给抓手生成“宽 = 栈宽”约束，
+        // 与 40 宽 + 栈居中冲突。抓手改放全宽包装容器内居中，栈只排容器
+        // （容器 .fill 全宽，无宽约束冲突）；抓手位置与间距与原来一致：
+        // 栈顶仍为 sheet 顶 + grabberTop，容器高 = 抓手高，抓手后间距仍 16。
+        let grabberWrap = UIView()
+        grabberWrap.translatesAutoresizingMaskIntoConstraints = false
+        grabberWrap.addSubview(grabber)
         let titleLabel = UILabel()
         titleLabel.text = "登录后解锁完整版"
         titleLabel.font = UIFont.systemFont(ofSize: 17, weight: .bold)
@@ -2579,11 +2600,11 @@ final class BearyChromeViewController: UIViewController {
         sheetLaterButton.translatesAutoresizingMaskIntoConstraints = false
         sheetLaterButton.addTarget(self, action: #selector(guestSheetDismissTapped), for: .touchUpInside)
         sheetLaterButton.bearyAddPressFeedback()
-        let stack = UIStackView(arrangedSubviews: [grabber, titleLabel, bodyLabel, sheetLoginButton, sheetLaterButton])
+        let stack = UIStackView(arrangedSubviews: [grabberWrap, titleLabel, bodyLabel, sheetLoginButton, sheetLaterButton])
         stack.axis = .vertical
         stack.alignment = .fill
         stack.translatesAutoresizingMaskIntoConstraints = false
-        stack.setCustomSpacing(16, after: grabber)
+        stack.setCustomSpacing(16, after: grabberWrap)
         stack.setCustomSpacing(10, after: titleLabel)
         stack.setCustomSpacing(18, after: bodyLabel)
         stack.setCustomSpacing(12, after: sheetLoginButton)
@@ -2600,7 +2621,9 @@ final class BearyChromeViewController: UIViewController {
             sheet.bottomAnchor.constraint(equalTo: view.bottomAnchor),
             grabber.widthAnchor.constraint(equalToConstant: BearySheetChrome.grabberWidth),
             grabber.heightAnchor.constraint(equalToConstant: BearySheetChrome.grabberHeight),
-            grabber.centerXAnchor.constraint(equalTo: stack.centerXAnchor),
+            grabber.centerXAnchor.constraint(equalTo: grabberWrap.centerXAnchor),
+            grabber.topAnchor.constraint(equalTo: grabberWrap.topAnchor),
+            grabber.bottomAnchor.constraint(equalTo: grabberWrap.bottomAnchor),
             sheetLoginButton.heightAnchor.constraint(equalToConstant: 44),
             sheetLaterButton.heightAnchor.constraint(equalToConstant: 44),
             stack.topAnchor.constraint(equalTo: sheet.topAnchor, constant: BearySheetChrome.grabberTop),
@@ -2624,8 +2647,15 @@ final class BearyChromeViewController: UIViewController {
         guestSheetScrim = scrim
         guestSheetView = sheet
         view.layoutIfNeeded()
+        // 审计 B 组 24：出现后聚焦标题。动画完成后再移焦（0.25s 内被关掉则
+        // guestSheetView 已空，不移焦，避免焦点落到已移除的标题上）。
+        let focusGuestSheetTitle = { [weak self] in
+            guard self?.guestSheetView != nil else { return }
+            UIAccessibility.post(notification: .screenChanged, argument: titleLabel)
+        }
         if UIAccessibility.isReduceMotionEnabled {
             scrim.alpha = 1
+            focusGuestSheetTitle()
             return
         }
         let sheetHeight = sheet.bounds.height
@@ -2636,7 +2666,7 @@ final class BearyChromeViewController: UIViewController {
         })
         UIView.animate(withDuration: 0.25, delay: 0, options: [.beginFromCurrentState], animations: {
             sheet.transform = .identity
-        })
+        }) { _ in focusGuestSheetTitle() }
     }
 
     @objc private func guestSheetDismissTapped() {
@@ -2689,6 +2719,16 @@ final class BearyChromeViewController: UIViewController {
         dismissGuestLoginSheet { [weak self] in self?.presentLogin() }
     }
 
+    /// 审计 B 组 24：覆盖层是 addSubview 而非 modal VC，系统不会自动把
+    /// VoiceOver 逃离手势（双指 scrub）映射到关闭；只在覆盖层在屏时接住，
+    /// 复用现有关闭路径（与“暂不”/点遮罩同一结果，不新增操作），无覆盖层
+    /// 时返回 false 走系统默认。VoiceOver 表现需真机验证。
+    override func accessibilityPerformEscape() -> Bool {
+        guard guestSheetView != nil else { return false }
+        dismissGuestLoginSheet(completion: nil)
+        return true
+    }
+
     private func dismissGuestLoginSheet(completion: (() -> Void)?) {
         guard let scrim = guestSheetScrim, let sheet = guestSheetView else {
             completion?()
@@ -2696,9 +2736,17 @@ final class BearyChromeViewController: UIViewController {
         }
         guestSheetScrim = nil
         guestSheetView = nil
+        // 审计 B 组 24：关闭后恢复触发位置。先移焦、再跑 completion：
+        // 登录路径随后会弹登录页，其自身焦点处理会接管；暂不/遮罩/拖动/
+        // 逃离路径则停在触发位置。无捕获（低版本系统）时不强制移焦。
+        let previousAccessibilityElement = guestSheetPreviousAccessibilityElement
+        guestSheetPreviousAccessibilityElement = nil
         let finish = {
             scrim.removeFromSuperview()
             sheet.removeFromSuperview()
+            if let previous = previousAccessibilityElement {
+                UIAccessibility.post(notification: .layoutChanged, argument: previous)
+            }
             completion?()
         }
         if UIAccessibility.isReduceMotionEnabled {
@@ -3867,7 +3915,9 @@ private final class BearyComposerSheetPresentationController: UIPresentationCont
             if sheetHeight > 0 {
                 dimmingView.alpha = max(0, 1 - max(0, drag) / sheetHeight)
             }
-        case .ended, .cancelled:
+        case .ended:
+            // 审计 B 组 8：只在正常松手时执行关闭判断，条件原样不动
+            // （位移 > 高 × 0.25 或速度 > 800 即关闭，否则弹回原位）。
             let velocity = pan.velocity(in: container).y
             let height = sheetHeight > 0 ? sheetHeight : presentedView.bounds.height
             if translation > height * 0.25 || velocity > 800 {
@@ -3884,8 +3934,10 @@ private final class BearyComposerSheetPresentationController: UIPresentationCont
                     UIView.animate(withDuration: 0.25, animations: restore)
                 }
             }
-        case .failed:
-            // 手势失败时跟手位移可能已产生，0.25s 弹回原位，不触发关闭。
+        case .cancelled, .failed:
+            // 审计 B 组 8：系统取消与手势失败时跟手位移可能已产生，
+            // 0.25s 弹回原位，不触发关闭（此前 .cancelled 与 .ended 共用
+            // 关闭分支，系统取消也可能关掉编辑器/邀请弹层）。
             let restore = {
                 presentedView.transform = .identity
                 self.sheetShadowView.transform = .identity
