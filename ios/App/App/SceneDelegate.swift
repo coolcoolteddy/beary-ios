@@ -2444,8 +2444,16 @@ final class BearyChromeViewController: UIViewController {
         }
         let vc = BearyLoginViewController()
         vc.modalPresentationStyle = .fullScreen
-        vc.onCancelled = { [weak vc] in vc?.dismiss(animated: BearyMotion.animated(true)) }
+        vc.onCancelled = { [weak vc] in
+            // 添加账号会话守卫：从添加/过期重登进来的取消，在此恢复原会话；
+            // 未登录直登时守卫未 arm、cancel 是空操作，原有取消行为不动。
+            SessionManager.shared.cancelAccountAddSession()
+            vc?.dismiss(animated: BearyMotion.animated(true))
+        }
         vc.onLoggedIn = { [weak self, weak vc] in
+            // 新号登录成功先解 arm（当前态即新号，不得再恢复原号），
+            // 再 dismiss + refreshMe 立新态、快照新号。
+            SessionManager.shared.completeAccountAddSession()
             vc?.dismiss(animated: BearyMotion.animated(true)) {
                 SessionManager.shared.refreshMe()
             }
@@ -2972,8 +2980,16 @@ final class BearyChromeViewController: UIViewController {
         guard !(onboarding.presentedViewController is BearyLoginViewController) else { return }
         let vc = BearyLoginViewController()
         vc.modalPresentationStyle = .fullScreen
-        vc.onCancelled = { [weak vc] in vc?.dismiss(animated: BearyMotion.animated(true)) }
+        vc.onCancelled = { [weak vc] in
+            // 添加账号会话守卫：守卫只在添加/过期重登流程 arm，此处正常
+            // 是空操作；补上是防游客态等迂回路径下守卫仍 armed 时，后续
+            // 一次取消把新号恢复成旧号。
+            SessionManager.shared.cancelAccountAddSession()
+            vc?.dismiss(animated: BearyMotion.animated(true))
+        }
         vc.onLoggedIn = { [weak self, weak vc, weak onboarding] in
+            // 新号登录成功先解 arm（当前态即新号，不得再恢复原号）。
+            SessionManager.shared.completeAccountAddSession()
             // 登录页瞬时撤掉（不播滑下，避免成功路径上引导页闪现两次动效），
             // 随后引导层淡出；seen 写在登录成功时（与 /me 成败无关）。
             // 引导层立即淡出（不等 /me），避免 /me 等待期间用户在引导页上

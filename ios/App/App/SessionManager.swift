@@ -384,6 +384,77 @@ final class SessionManager {
         _ = vault.save(user: user, token: cookie.value, tokenExpiresAtMs: expiresMs)
     }
 
+    /// 添加账号会话守卫（2026-11-01：取消添加丢原号修法）。
+    /// 根因：进添加账号登录页本身不碰会话，但登录页打开期间任何一路
+    /// 在途请求回 401（设置页自己的 loadPlusDetail/loadSessions/fetchMe、
+    /// 或其他页后台刷新）都会走全局 onUnauthorized 清掉 currentUser 并
+    /// 清该号磁盘快照；验码成功换号还会直接覆盖共享桶里的原 cookie。
+    /// 此前取消/返回/失败路径没有任何恢复原会话的代码，登录态一丢就
+    /// 只能重输验证码——用户视角就是“没新增账号、返回后原号掉线”。
+    /// 修法：进添加/过期重登登录页前抓拍原会话（用户 + token），取消时
+    /// 若当前态已偏离抓拍就原样装回并通知界面；新号登录成功则只解 arm，
+    /// 不恢复（当前态即新号）。守卫只活在内存里：App 重启即失效，
+    /// 原号仍可凭保管库 token 切回；移除才真退出的口径不动。
+    private struct PendingAccountAddSession {
+        let user: MeUser
+        let token: String
+        let tokenExpiresAtMs: Double?
+    }
+    private var pendingAccountAddSession: PendingAccountAddSession?
+
+    /// 进添加/过期重登登录页前调用：抓拍当前会话。已 arm 时不覆盖外层
+    /// 抓拍（登录页内再弹登录页不重置恢复点）；无当前用户或既无共享
+    /// cookie 又无保管库 token 时不 arm（本就无原会话可恢复）。
+    func beginAccountAddSession() {
+        guard Thread.isMainThread else {
+            DispatchQueue.main.async { [weak self] in self?.beginAccountAddSession() }
+            return
+        }
+        guard pendingAccountAddSession == nil else { return }
+        guard let user = currentUser, user.id != nil else { return }
+        let userId = user.id!
+        let live = currentSessionCookie()
+        let token = (live?.value.isEmpty == false ? live?.value : nil)
+            ?? BearyAccountVault.shared.load(userId: userId)?.token
+        guard let tokenValue = token, !tokenValue.isEmpty else { return }
+        let expiresMs = live?.expiresDate.map { $0.timeIntervalSince1970 * 1000 }
+            ?? BearyAccountVault.shared.load(userId: userId)?.tokenExpiresAtMs
+        pendingAccountAddSession = PendingAccountAddSession(user: user, token: tokenValue, tokenExpiresAtMs: expiresMs)
+    }
+
+    /// 新号登录成功后调用：只解 arm，不恢复（当前态即新号；容器随后
+    /// refreshMe 立新态并快照新号）。未 arm 时是空操作，故容器通用登录
+    /// 路径（未登录直登）可直接调，不影响原有流程。
+    func completeAccountAddSession() {
+        guard Thread.isMainThread else {
+            DispatchQueue.main.async { [weak self] in self?.completeAccountAddSession() }
+            return
+        }
+        pendingAccountAddSession = nil
+    }
+
+    /// 取消/返回时调用：当前态与抓拍一致时只解 arm，不发多余通知；
+    /// 偏离时（401 清态、cookie 被覆盖等）装回原 token 与原用户，推代际
+    /// 与 epoch 使在途旧 401 回调失效，并通知界面重建（与切换提交同
+    /// 口径：cookie 与 currentUser 同一主线程段落内一次提交）。
+    func cancelAccountAddSession() {
+        guard Thread.isMainThread else {
+            DispatchQueue.main.async { [weak self] in self?.cancelAccountAddSession() }
+            return
+        }
+        guard let pending = pendingAccountAddSession else { return }
+        pendingAccountAddSession = nil
+        let cookieValue = currentSessionCookie()?.value
+        guard currentUser?.id != pending.user.id || cookieValue != pending.token else { return }
+        installSessionCookie(token: pending.token, expiresDate: pending.tokenExpiresAtMs.map { Date(timeIntervalSince1970: $0 / 1000) })
+        sessionGeneration += 1
+        api.bumpAuthEpoch()
+        api.setAuthAccountId(pending.user.id)
+        currentUser = pending.user
+        authUnknown = false
+        notifyUserChanged(pending.user)
+    }
+
     /// 当前会话 token（共享桶里的 teddy_session 值，供导出钉住凭据用；
     /// 导出与切换预检一律用隔离请求，不经本值以外的共享 cookie）。
     /// 主线程调用（设置页导出按钮在主线程）；后台调用方不得用它拼请求。

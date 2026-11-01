@@ -1380,6 +1380,10 @@ final class BearySettingsViewController: UIViewController {
     /// 添加 / 过期重登都走容器登录页（与 onRequireLogin 同路径）；容器
     /// 未接线时页内模态兜底（编辑页同款），登录成功后刷新本页与列表。
     private func openLoginForAccountSwitch() {
+        // 添加账号会话守卫：添加与切换过期重登共用本入口，进登录页前先
+        // 抓拍原会话；取消时由登录页 onCancelled 恢复（容器通用登录页
+        // 的 onCancelled 同样接了恢复，未登录直登时守卫未 arm、是空操作）。
+        SessionManager.shared.beginAccountAddSession()
         if let handler = onRequireLogin {
             handler()
             return
@@ -1387,8 +1391,14 @@ final class BearySettingsViewController: UIViewController {
         let loginVC = BearyLoginViewController()
         loginVC.modalPresentationStyle = .fullScreen
         loginVC.transitioningDelegate = SceneDelegate.chrome?.fadeRiseTransitionDelegate
-        loginVC.onCancelled = { [weak loginVC] in loginVC?.dismiss(animated: BearyMotion.animated(true)) }
+        loginVC.onCancelled = { [weak loginVC] in
+            SessionManager.shared.cancelAccountAddSession()
+            loginVC?.dismiss(animated: BearyMotion.animated(true))
+        }
         loginVC.onLoggedIn = { [weak self, weak loginVC] in
+            // 新号登录成功先解 arm（当前态即新号，不得再恢复原号），
+            // 再 dismiss + refreshMe 立新态、快照新号。
+            SessionManager.shared.completeAccountAddSession()
             loginVC?.dismiss(animated: BearyMotion.animated(true)) {
                 SessionManager.shared.refreshMe()
                 self?.loadAll()

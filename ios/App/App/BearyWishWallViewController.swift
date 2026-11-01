@@ -642,6 +642,9 @@ final class BearyWishWallViewController: UIViewController {
         let login = BearyLoginViewController()
         login.modalPresentationStyle = .fullScreen
         login.onLoggedIn = { [weak self] in
+            // 添加账号会话守卫：正常是空操作；防迂回路径下守卫仍 armed 时
+            // 后续一次取消把新号恢复成旧号，成功先解 arm。
+            SessionManager.shared.completeAccountAddSession()
             self?.dismiss(animated: BearyMotion.animated(true), completion: nil)
             SessionManager.shared.refreshMe { _ in
                 DispatchQueue.main.async {
@@ -651,6 +654,7 @@ final class BearyWishWallViewController: UIViewController {
             }
         }
         login.onCancelled = { [weak self] in
+            SessionManager.shared.cancelAccountAddSession()
             self?.dismiss(animated: BearyMotion.animated(true), completion: nil)
         }
         present(login, animated: BearyMotion.animated(true), completion: nil)
