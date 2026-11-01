@@ -3,12 +3,12 @@ import UIKit
 // ===== BearyButton 按钮工厂（B 批）=====
 // 四类样式（各页实测形态的归纳口径，见下方各 case 注释；数值即原各页数值，
 // 工厂只收敛写法，不改任何一处视觉）：
-//  .primaryPill：高 44、圆角 22；墨底 + 反色字（bg 色，浅白深黑，与 ink 互为反色），
+//  .primaryPill：高 44、圆角 8；墨底 + 反色字（bg 色，浅白深黑，与 ink 互为反色），
 //    或橙底 + onBrand 深墨字（视觉清单第 5 项：橙底前景固定深墨色，不用
 //    深色下会变白的 ink；引导/主操作，Onboarding 主钮同款口径）。
-//  .secondaryOutline：高 44/36、圆角 22/18、1pt line 边框 + surface 底 + ink 字
+//  .secondaryOutline：高 44/36、圆角 8、1pt line 边框 + surface 底 + ink 字
 //    （搜索页“清空搜索”44/22 同款；36/18 为其紧凑版）。
-//  .destructiveOutline：高 36/44、圆角 18/22、1pt 45% 红边框 + 红字 + surface 底
+//  .destructiveOutline：高 36/44、圆角 8、1pt 45% 红边框 + 红字 + surface 底
 //    （回收站“彻底删除”红字口径，边框按任务要求取 45% 红而非 line）。
 //  .iconCircleClose：视觉 32×32、圆角 16、faint 底、icon_close 15 + ink tint；
 //    热区 44×44 由父类 BearyHit44Button 的 point(inside:) 自动扩（视觉帧不动）。
@@ -55,13 +55,15 @@ enum BearyButtonStyle: Equatable {
     }
 
     var cornerRadius: CGFloat {
+        // 视觉清单第 7 项：按钮档一律 8（原 pill/outline 22/18 已收敛；圆钮 iconCircleClose 32×32
+        // 仍为圆 16，不在按钮档内；枚举名 Pill 系历史命名，调用方众多故不改名）。
         switch self {
         case .primaryPill:
-            return 22
-        case .secondaryOutline(let size):
-            return size == .regular ? 22 : 18
-        case .destructiveOutline(let size):
-            return size == .regular ? 22 : 18
+            return 8
+        case .secondaryOutline:
+            return 8
+        case .destructiveOutline:
+            return 8
         case .iconCircleClose:
             return 16
         }
@@ -134,7 +136,7 @@ class BearyButton: BearyHit44Button {
         return BearyButton(style: .iconCircleClose)
     }
 
-    /// 重试类描边 pill 唯一档：紧凑描边款（36 高 / 圆角 18 / 14 semibold）。
+    /// 重试类描边 pill 唯一档：紧凑描边款（36 高 / 圆角 8 / 14 semibold）。
     /// 搜索页两处重试钮共用本工厂，不再各写一套尺寸。
     /// 重试两档（ChatGPT 界面清单第 5 件：跨页分裂收敛，两档并存、不强行统一成一种）：
     ///  行内档 retryInline()：卡片行内失败态——无边框/无底色、ink 字、14 bold、左对齐

@@ -1069,7 +1069,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         publishButton.contentEdgeInsets = UIEdgeInsets(top: 0, left: 10, bottom: 0, right: 10)
         publishButton.titleEdgeInsets = UIEdgeInsets(top: 0, left: 6, bottom: 0, right: 0)
         // v6-4：发布钮高 44 → 36、pill 圆角随高取半 18；顶栏高 60 居中后底部到分界线净留白 12。其余样式与行为不动。
-        publishButton.layer.cornerRadius = 18
+        publishButton.layer.cornerRadius = 8
         publishButton.layer.masksToBounds = true
         publishButton.addTarget(self, action: #selector(didTapPublish), for: .touchUpInside)
         // 发布中 spinner：平时停在发送图标位，发布/保存中时替下发送图标转圈（E3-4）。
@@ -1529,7 +1529,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         recipientPickButton.titleLabel?.font = UIFont.systemFont(ofSize: 13)
         recipientPickButton.setTitleColor(BearyColors.gray, for: .normal)
         recipientPickButton.contentEdgeInsets = UIEdgeInsets(top: 7, left: 14, bottom: 7, right: 14)
-        recipientPickButton.layer.cornerRadius = 999
+        recipientPickButton.layer.cornerRadius = 8
         recipientPickButton.addTarget(self, action: #selector(didTapPickRecipient), for: .touchUpInside)
         recipientPickButton.bearyAddPressFeedback()
         // 已选 chip：橙 13% 底 + 22 头像/首字母 + “@名” + ×。
@@ -1545,7 +1545,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             surface.getRed(&sR, green: &sG, blue: &sB, alpha: &sA)
             return UIColor(red: 0.13 * oR + 0.87 * sR, green: 0.13 * oG + 0.87 * sG, blue: 0.13 * oB + 0.87 * sB, alpha: 1)
         }
-        recipientChipView.layer.cornerRadius = 15
+        recipientChipView.layer.cornerRadius = 4
         recipientChipView.layer.masksToBounds = true
         recipientChipAvatar.contentMode = .scaleAspectFill
         recipientChipAvatar.clipsToBounds = true
@@ -1929,7 +1929,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             tabButton.translatesAutoresizingMaskIntoConstraints = false
             tabButton.setTitle(title, for: .normal)
             tabButton.titleLabel?.font = UIFont.systemFont(ofSize: 15, weight: .semibold)
-            tabButton.layer.cornerRadius = 18
+            tabButton.layer.cornerRadius = 8
             tabButton.layer.masksToBounds = true
             tabButton.addTarget(self, action: #selector(didTapQuoteTab(_:)), for: .touchUpInside)
             tabButton.bearyAddPressFeedback()
@@ -3687,7 +3687,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             chip.button.titleLabel?.adjustsFontSizeToFitWidth = false
             chip.button.setTitleColor(BearyColors.ink, for: .normal)
             chip.button.backgroundColor = BearyColors.faint
-            chip.button.layer.cornerRadius = 999
+            chip.button.layer.cornerRadius = 4
             chip.button.layer.masksToBounds = true
             chip.button.contentEdgeInsets = UIEdgeInsets(top: 7, left: 12, bottom: 7, right: 12)
             chip.button.addTarget(self, action: chip.action, for: .touchUpInside)
@@ -3701,7 +3701,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         tempStepperStack.spacing = 4
         tempStepperStack.alignment = .center
         tempStepperStack.backgroundColor = BearyColors.faint
-        tempStepperStack.layer.cornerRadius = 999
+        tempStepperStack.layer.cornerRadius = 8
         tempStepperStack.layer.masksToBounds = true
         tempStepperStack.translatesAutoresizingMaskIntoConstraints = false
         tempStepperStack.isHidden = true
@@ -6754,7 +6754,7 @@ private final class BearyComposerDashedPickButton: UIButton {
     override func layoutSubviews() {
         super.layoutSubviews()
         dashedLayer.frame = bounds
-        dashedLayer.path = UIBezierPath(roundedRect: bounds, cornerRadius: bounds.height / 2).cgPath
+        dashedLayer.path = UIBezierPath(roundedRect: bounds, cornerRadius: 8).cgPath
     }
 
     override func traitCollectionDidChange(_ previousTraitCollection: UITraitCollection?) {
@@ -6793,7 +6793,7 @@ private final class BearyQuoteStatusPillView: UIView {
             label.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 8),
             label.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8),
         ])
-        layer.cornerRadius = 999
+        layer.cornerRadius = 4
         layer.masksToBounds = true
         dashedLayer.fillColor = UIColor.clear.cgColor
         dashedLayer.lineWidth = 1.5
@@ -6830,7 +6830,7 @@ private final class BearyQuoteStatusPillView: UIView {
         super.layoutSubviews()
         if style == .limited {
             dashedLayer.frame = bounds
-            dashedLayer.path = UIBezierPath(roundedRect: bounds, cornerRadius: bounds.height / 2).cgPath
+            dashedLayer.path = UIBezierPath(roundedRect: bounds, cornerRadius: 4).cgPath
         }
     }
 

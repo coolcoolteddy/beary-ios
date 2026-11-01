@@ -412,9 +412,9 @@ class BearyFeedViewController: UIViewController {
         if pullView.frame.width != tableView.bounds.width {
             pullView.frame.size.width = tableView.bounds.width
         }
-        // 8-11：新内容 pill 圆角取半高（只写 layer 值，不改约束，不触发布局循环）。
+        // 8-11：新内容钮圆角取按钮档 8（视觉清单第 7 项；旧半高 pill 已撤销。只写 layer 值，不改约束，不触发布局循环）。
         if newContentPill.bounds.height > 0 {
-            newContentPill.layer.cornerRadius = newContentPill.bounds.height / 2
+            newContentPill.layer.cornerRadius = 8
         }
     }
 

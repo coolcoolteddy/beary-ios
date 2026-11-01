@@ -135,7 +135,7 @@ private final class BearyToastView: UIView {
 
     override func layoutSubviews() {
         super.layoutSubviews()
-        layer.cornerRadius = bounds.height / 2
+        layer.cornerRadius = 12  // 视觉清单第 7 项：toast 外框取面板档 12，不再取半高 pill
         clipsToBounds = true
     }
 }

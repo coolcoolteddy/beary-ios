@@ -697,7 +697,7 @@ class BearyProfileViewController: UIViewController {
         buttonValue.contentEdgeInsets = UIEdgeInsets(top: 0, left: 12, bottom: 0, right: 12)
         buttonValue.titleEdgeInsets = UIEdgeInsets(top: 0, left: 6, bottom: 0, right: 0)
         buttonValue.layer.borderWidth = 1
-        buttonValue.layer.cornerRadius = 20
+        buttonValue.layer.cornerRadius = 8
         buttonValue.addTarget(self, action: #selector(editButtonTapped), for: .touchUpInside)
         buttonValue.bearyAddPressFeedback()
         // P2-4：照抄点赞钮实测字宽修法——按钮固有宽不含标题边距，显式宽 =
@@ -922,7 +922,7 @@ class BearyProfileViewController: UIViewController {
         viewValue.translatesAutoresizingMaskIntoConstraints = false
         viewValue.backgroundColor = BearyColors.bg
         viewValue.layer.borderWidth = 1
-        viewValue.layer.cornerRadius = 14
+        viewValue.layer.cornerRadius = 12
         viewValue.isHidden = true
         return viewValue
     }()
@@ -968,7 +968,7 @@ class BearyProfileViewController: UIViewController {
         viewValue.translatesAutoresizingMaskIntoConstraints = false
         viewValue.backgroundColor = BearyColors.bg
         viewValue.layer.borderWidth = 1
-        viewValue.layer.cornerRadius = 14
+        viewValue.layer.cornerRadius = 12
         viewValue.isHidden = true
         return viewValue
     }()
@@ -1232,7 +1232,7 @@ class BearyProfileViewController: UIViewController {
         buttonValue.setTitleColor(.white, for: .normal)
         buttonValue.titleLabel?.font = UIFont.systemFont(ofSize: 14, weight: .bold)
         buttonValue.backgroundColor = BearyColors.orange
-        buttonValue.layer.cornerRadius = 10
+        buttonValue.layer.cornerRadius = 8
         buttonValue.clipsToBounds = true
         buttonValue.addTarget(self, action: #selector(pastSelfComposeSubmitTapped), for: .touchUpInside)
         buttonValue.bearyAddPressFeedback()
@@ -1245,7 +1245,7 @@ class BearyProfileViewController: UIViewController {
         buttonValue.setTitleColor(BearyColors.ink, for: .normal)
         buttonValue.titleLabel?.font = UIFont.systemFont(ofSize: 14, weight: .bold)
         buttonValue.backgroundColor = BearyColors.faint
-        buttonValue.layer.cornerRadius = 10
+        buttonValue.layer.cornerRadius = 8
         buttonValue.clipsToBounds = true
         buttonValue.addTarget(self, action: #selector(pastSelfComposeCancelTapped), for: .touchUpInside)
         buttonValue.bearyAddPressFeedback()
@@ -1288,7 +1288,7 @@ class BearyProfileViewController: UIViewController {
         buttonValue.setTitleColor(BearyColors.ink, for: .normal)
         buttonValue.titleLabel?.font = UIFont.systemFont(ofSize: 14, weight: .bold)
         buttonValue.backgroundColor = BearyColors.faint
-        buttonValue.layer.cornerRadius = 10
+        buttonValue.layer.cornerRadius = 8
         buttonValue.clipsToBounds = true
         buttonValue.addTarget(self, action: #selector(pastSelfRevokeTapped), for: .touchUpInside)
         buttonValue.bearyAddPressFeedback()
@@ -1342,7 +1342,7 @@ class BearyProfileViewController: UIViewController {
         buttonValue.tintColor = .white
         buttonValue.titleEdgeInsets = UIEdgeInsets(top: 0, left: 6, bottom: 0, right: 0)
         buttonValue.backgroundColor = BearyColors.orange
-        buttonValue.layer.cornerRadius = 10
+        buttonValue.layer.cornerRadius = 8
         buttonValue.clipsToBounds = true
         buttonValue.addTarget(self, action: #selector(randomShuffleTapped), for: .touchUpInside)
         buttonValue.bearyAddPressFeedback()
@@ -4567,7 +4567,7 @@ class BearyProfileViewController: UIViewController {
             submitButton.setTitleColor(.white, for: .normal)
             submitButton.titleLabel?.font = UIFont.systemFont(ofSize: 14, weight: .bold)
             submitButton.backgroundColor = BearyColors.blue
-            submitButton.layer.cornerRadius = 10
+            submitButton.layer.cornerRadius = 8
             submitButton.clipsToBounds = true
             submitButton.accessibilityIdentifier = chainId
             submitButton.addTarget(self, action: #selector(pastSelfReplySubmitTapped(_:)), for: .touchUpInside)
@@ -4578,7 +4578,7 @@ class BearyProfileViewController: UIViewController {
             cancelButton.setTitleColor(BearyColors.ink, for: .normal)
             cancelButton.titleLabel?.font = UIFont.systemFont(ofSize: 14, weight: .bold)
             cancelButton.backgroundColor = BearyColors.faint
-            cancelButton.layer.cornerRadius = 10
+            cancelButton.layer.cornerRadius = 8
             cancelButton.clipsToBounds = true
             cancelButton.accessibilityIdentifier = chainId
             cancelButton.addTarget(self, action: #selector(pastSelfReplyCancelTapped(_:)), for: .touchUpInside)
@@ -4597,7 +4597,7 @@ class BearyProfileViewController: UIViewController {
             replyButton.setTitleColor(.white, for: .normal)
             replyButton.titleLabel?.font = UIFont.systemFont(ofSize: 14, weight: .bold)
             replyButton.backgroundColor = BearyColors.blue
-            replyButton.layer.cornerRadius = 10
+            replyButton.layer.cornerRadius = 8
             replyButton.clipsToBounds = true
             replyButton.accessibilityIdentifier = chainId
             replyButton.addTarget(self, action: #selector(pastSelfReplyTapped(_:)), for: .touchUpInside)
@@ -5652,7 +5652,7 @@ class BearyProfileViewController: UIViewController {
                 let photoButton = UIButton(type: .custom)
                 photoButton.translatesAutoresizingMaskIntoConstraints = false
                 photoButton.backgroundColor = BearyColors.faint
-                photoButton.layer.cornerRadius = 12
+                photoButton.layer.cornerRadius = 8
                 photoButton.clipsToBounds = true
                 photoButton.imageView?.contentMode = .scaleAspectFill
                 photoButton.imageView?.clipsToBounds = true
@@ -5887,7 +5887,7 @@ let viewer = BearyEntryImageViewerViewController(imageKeys: allPhotos.map { $0.i
         retryButton.titleEdgeInsets = UIEdgeInsets(top: 0, left: 6, bottom: 0, right: 0)
         retryButton.layer.borderWidth = 1
         retryButton.layer.bearyDynamicBorderColor = BearyColors.line
-        retryButton.layer.cornerRadius = 20
+        retryButton.layer.cornerRadius = 8
         retryButton.addTarget(self, action: #selector(retryButtonTapped), for: .touchUpInside)
         retryButton.bearyAddPressFeedback()
         retryButton.heightAnchor.constraint(greaterThanOrEqualToConstant: 40).isActive = true

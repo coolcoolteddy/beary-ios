@@ -26,10 +26,10 @@ final class BearyInputContainer: UIView {
     /// - content: 原生 UITextField / UITextView（调用方继续持有引用，
     ///   字体 / 占位 / 键盘 / delegate / target 一律原样）。
     /// - insets: 内容相对容器的内边距；登录 / 邀请单行框为左右 14、上下 0。
-    /// - cornerRadius: 默认 12（登录 / 邀请原值）。
+    /// - cornerRadius: 默认 8（视觉清单第 7 项输入框档；登录 / 邀请原值 12 已收敛）。
     /// - fixedHeight: 单行框传 48；多行框不传、由调用方约束定高。
     /// - borderColor: 常态边框色，默认 line；需 ink 20% 等口径时调用方传入。
-    init(content: UIView, insets: UIEdgeInsets = UIEdgeInsets(top: 0, left: 14, bottom: 0, right: 14), cornerRadius: CGFloat = 12, fixedHeight: CGFloat? = nil, borderColor: UIColor = BearyColors.line) {
+    init(content: UIView, insets: UIEdgeInsets = UIEdgeInsets(top: 0, left: 14, bottom: 0, right: 14), cornerRadius: CGFloat = 8, fixedHeight: CGFloat? = nil, borderColor: UIColor = BearyColors.line) {
         self.content = content
         self.normalBorderColor = borderColor
         super.init(frame: .zero)

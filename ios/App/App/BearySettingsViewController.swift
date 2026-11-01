@@ -556,7 +556,7 @@ final class BearySettingsViewController: UIViewController {
         card.backgroundColor = BearyColors.surface
         card.layer.borderWidth = 1
         card.layer.bearyDynamicBorderColor = BearyColors.line
-        card.layer.cornerRadius = 20
+        card.layer.cornerRadius = 12
         card.clipsToBounds = true
         cardViews.append(card)
         return card
@@ -1015,7 +1015,7 @@ final class BearySettingsViewController: UIViewController {
         logoutOthersButton.titleLabel?.font = UIFont.systemFont(ofSize: 13, weight: .semibold)
         logoutOthersButton.layer.borderWidth = 1
         logoutOthersButton.layer.bearyDynamicBorderColor = BearyColors.alpha(BearyColors.red, 0.45)
-        logoutOthersButton.layer.cornerRadius = 12
+        logoutOthersButton.layer.cornerRadius = 8
         logoutOthersButton.addTarget(self, action: #selector(logoutOthersButtonTapped), for: .touchUpInside)
         logoutOthersButton.bearyAddPressFeedback()
         NSLayoutConstraint.activate([

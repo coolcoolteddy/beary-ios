@@ -47,7 +47,7 @@ private final class BearyCenteredPresentationController: UIPresentationControlle
         return CGRect(x: (bounds.width - width) / 2, y: (bounds.height - height) / 2, width: width, height: height)
     }
 
-    /// 卡片外框：圆角 20 + 1px line 边框。CALayer borderColor 不跟动态色自动走，
+    /// 卡片外框：圆角 12（走 BearySheetChrome）+ 1px line 边框。CALayer borderColor 不跟动态色自动走，
     /// 故每次布局与深浅切换时都按当前 trait 重解一次。
     private func applyCardChrome() {
         guard let presentedView = presentedView else { return }
@@ -126,7 +126,7 @@ private final class BearyCenteredPresentationController: UIPresentationControlle
         presentedView.frame = frame
         applyCardChrome()
         cardShadowView.frame = frame
-        cardShadowView.layer.shadowPath = UIBezierPath(roundedRect: cardShadowView.bounds, cornerRadius: 20).cgPath
+        cardShadowView.layer.shadowPath = UIBezierPath(roundedRect: cardShadowView.bounds, cornerRadius: BearySheetChrome.topCornerRadius).cgPath
     }
 }
 
