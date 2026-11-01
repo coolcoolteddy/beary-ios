@@ -587,18 +587,16 @@ final class BearyDetailViewController: UIViewController {
     /// 动态灰 tint，系统自动跟随，无需重设；心情播放器内部自带 trait 重刷。
     /// 但正文内联心情附件的深浅变体仍需控制器重建：主题切换时正文末尾
     /// 心情附件需换深浅变体，否则旧心情图停留在旧色貌。
+    // 深浅与字号档位变化合一（#435 与 #421 各加了一个同名 override，
+    // Swift 不允许多个，合为一个）：深浅变时重建正文内联心情附件的
+    // 深浅变体；字号档位变时赞数显式宽按新字号重算（refreshActionRow
+    // 按 live 字体算标题宽），否则大字号下数字被旧宽裁掉；正文/标题富文本
+    // 字号仍按卡片同款口径只在下次 configure 更新，不在此重排（会丢滚动位）。
     override func traitCollectionDidChange(_ previousTraitCollection: UITraitCollection?) {
         super.traitCollectionDidChange(previousTraitCollection)
         if traitCollection.hasDifferentColorAppearance(comparedTo: previousTraitCollection) {
             bodyLabel.attributedText = detailBodyAttributedText(entry.content ?? "", moodKey: entry.mood)
         }
-    }
-
-    // 扫查组：字号档位变化时赞数显式宽须按新字号重算（refreshActionRow
-    // 按 live 字体算标题宽），否则大字号下数字被旧宽裁掉；正文/标题富文本
-    // 字号仍按卡片同款口径只在下次 configure 更新，不在此重排（会丢滚动位）。
-    override func traitCollectionDidChange(_ previousTraitCollection: UITraitCollection?) {
-        super.traitCollectionDidChange(previousTraitCollection)
         guard isViewLoaded else { return }
         if previousTraitCollection?.preferredContentSizeCategory != traitCollection.preferredContentSizeCategory {
             refreshActionRow()
