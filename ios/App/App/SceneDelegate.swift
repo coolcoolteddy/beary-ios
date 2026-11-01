@@ -314,8 +314,9 @@ final class BearyChromeViewController: UIViewController {
     private var feedCenterXConstraint: NSLayoutConstraint?
     /// 桌面式当前状态（updateDesktopLayout 的幂等守卫：状态不变直接返回，绝不在布局回调里反复开关约束）
     private var desktopActive = false
-    /// 审计 2 两侧背景层：仅宽 ≥821 时显示的 side-matrix 容器（左/右各一），
-    /// 宽度随 bounds 走（(宽-600)/2），内容列 600 与底栏/FAB 一字不动。
+    /// 视觉清单第 4 项（已定设计）：两侧背景层已停用——不再建层、不再平铺、
+    /// 不再跑 30s 循环动画；字段保留仅供 pause/resume/update 空操作守卫，
+    /// 内容列 600 与底栏/FAB 原布局一字不动。官方图片资源不删除、不修改。
     private var sideDecoLeft: UIView?
     private var sideDecoRight: UIView?
     private var sideDecoLeftWidth: NSLayoutConstraint?
@@ -870,9 +871,10 @@ final class BearyChromeViewController: UIViewController {
             window.overrideUserInterfaceStyle = bearyUserInterfaceStyle(forThemeMode: UserDefaults.standard.string(forKey: "beary_theme_mode") ?? "system")
         }
         buildChrome()
-        // 审计 2：两侧背景层在栏之后建（插 view 最底层），布局由 viewDidLayoutSubviews 驱动。
+        // 视觉清单第 4 项：两侧背景层已停用——buildSideDeco 现为空操作，
+        // 调用保留仅为恢复口；布局由 viewDidLayoutSubviews 驱动的部分随之失效。
         buildSideDeco()
-        // A10：订阅减动效开关变化（与 EmotePlayer 同口径的通知名）；开启停播、关闭重建恢复。
+        // A10：订阅减动效开关变化（与 EmotePlayer 同口径的通知名）；视觉清单第 4 项后背景层已停用，此订阅仅走空操作。
         reduceMotionObserver = NotificationCenter.default.addObserver(forName: UIAccessibility.reduceMotionStatusDidChangeNotification, object: nil, queue: .main) { [weak self] _ in
             if UIAccessibility.isReduceMotionEnabled {
                 self?.pauseSideMatrixAnimation()
@@ -3421,7 +3423,7 @@ final class BearyChromeViewController: UIViewController {
         topmostViewController().present(c, animated: BearyMotion.animated(true))
     }
 
-    // MARK: - 审计 2 两侧 side-matrix 背景层（仅宽 ≥821）
+    // MARK: - 审计 2 两侧 side-matrix 背景层（仅宽 ≥821）【视觉清单第 4 项已停用，以下为历史口径】
     /// 网页锚点 teddy_site/beary.html:201-210（.side-matrix：sideFlow 30s linear
     /// infinite、图标透明度 .34、减动效停播）与 :1061-1062（左右 .side-deco 容器）
     /// 及 :2419-2421（SIDE_TILE / SIDE_FILES）。
@@ -3435,126 +3437,23 @@ final class BearyChromeViewController: UIViewController {
     /// 原图不 tint、不 template（网页亦不着色，深色靠 -white 变体），透明度 .34。
     /// 平铺周期与网页一致（横 4 格 344pt、纵 2 格 164pt 的整数倍 328pt），
     /// 30s 平移动画循环回跳时图案无缝。
+    /// 视觉清单第 4 项：两侧背景层已停用，本函数不再建层（原两侧容器、
+    /// 宽度约束与 insertSubview 全部移除）；调用点 viewDidLoad 保留调用，
+    /// 以便日后若恢复只需改回本函数一处。官方图片资源不删除、不修改。
     private func buildSideDeco() {
-        let left = UIView()
-        left.backgroundColor = .clear
-        left.clipsToBounds = true
-        left.isUserInteractionEnabled = false
-        left.isHidden = true
-        left.translatesAutoresizingMaskIntoConstraints = false
-        view.insertSubview(left, at: 0)
-        let right = UIView()
-        right.backgroundColor = .clear
-        right.clipsToBounds = true
-        right.isUserInteractionEnabled = false
-        right.isHidden = true
-        right.translatesAutoresizingMaskIntoConstraints = false
-        view.insertSubview(right, at: 0)
-        let leftWidth = left.widthAnchor.constraint(equalToConstant: 0)
-        let rightWidth = right.widthAnchor.constraint(equalToConstant: 0)
-        sideDecoLeftWidth = leftWidth
-        sideDecoRightWidth = rightWidth
-        NSLayoutConstraint.activate([
-            left.leadingAnchor.constraint(equalTo: view.leadingAnchor),
-            left.topAnchor.constraint(equalTo: view.topAnchor),
-            left.bottomAnchor.constraint(equalTo: view.bottomAnchor),
-            leftWidth,
-            right.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-            right.topAnchor.constraint(equalTo: view.topAnchor),
-            right.bottomAnchor.constraint(equalTo: view.bottomAnchor),
-            rightWidth,
-        ])
-        sideDecoLeft = left
-        sideDecoRight = right
+        // 已停用：不创建 sideDecoLeft/Right，不插 view 最底层。
     }
 
-    /// viewDidLayoutSubviews 调用：窄屏隐藏、宽屏按 (宽-600)/2 定两侧宽；
-    /// 尺寸不变直接返回，不重建、不重启动画。
+    /// 视觉清单第 4 项：两侧背景层已停用——本函数只把可能残留的容器藏起，
+    /// 不定宽、不重建、不启动画；内容列与底栏布局不受影响。
     private func updateSideDecoLayout() {
-        guard let left = sideDecoLeft, let right = sideDecoRight,
-              let leftWidth = sideDecoLeftWidth, let rightWidth = sideDecoRightWidth else { return }
-        guard isDesktopLayout() else {
-            left.isHidden = true
-            right.isHidden = true
-            return
-        }
-        let sideWidth = max(0, (view.bounds.width - 600) / 2)
-        if leftWidth.constant != sideWidth { leftWidth.constant = sideWidth }
-        if rightWidth.constant != sideWidth { rightWidth.constant = sideWidth }
-        left.isHidden = false
-        right.isHidden = false
-        let size = CGSize(width: sideWidth, height: view.bounds.height)
-        if sideDecoBuiltSize == size { return }
-        sideDecoBuiltSize = size
-        rebuildSideMatrix(in: left, width: sideWidth, height: size.height)
-        rebuildSideMatrix(in: right, width: sideWidth, height: size.height)
+        sideDecoLeft?.isHidden = true
+        sideDecoRight?.isHidden = true
     }
 
-    /// 在一侧容器内建 matrix：格距横 86（52 列 + 34 间隙）、纵 82（52 行 + 30 间隙），
-    /// 与网页 .side-matrix 的 grid 口径一致；matrix 本体向左上各扩 344/328（一个动画周期），
-    /// 平移 0→344/328 全程不露出空白边。
-    /// M11（91 包）：逐格 UIImageView（iPad 横屏两侧约 874 个）改成 CAReplicatorLayer——
-    /// 一个 2×4 图案块（344×164）做源层，内层复制列（步进 344）、外层复制行（步进 164）；
-    /// 块内 8 只 tile 的图、尺寸、居中偏移、.34 透明度与原逐格公式一字一致，
-    /// 全局格 (4b+c, 2d+r) 取图案 [r][c]，与原 pattern[row%2][col%4] 对齐无差；
-    /// 容器 clipsToBounds，超出的复制块与原超出的 tile 一样被裁掉，可见区无差。
-    /// 深浅变体：tile 图在重建时按当前 trait 解析（UIImage(named:)），换主题时
-    /// traitCollectionDidChange 置 sideDecoBuiltSize=nil 强制重建，与旧 UIImageView 自动换图同效。
-    private func rebuildSideMatrix(in container: UIView, width: CGFloat, height: CGFloat) {
-        for sub in container.subviews { sub.removeFromSuperview() }
-        guard width > 0, height > 0 else { return }
-        let matrix = UIView()
-        matrix.backgroundColor = .clear
-        matrix.isUserInteractionEnabled = false
-        matrix.frame = CGRect(x: -344, y: -328, width: width + 688, height: height + 656)
-        container.addSubview(matrix)
-        // 网页 SIDE_TILE（beary.html:2419）：行 0 [icon, wordmark, stack, part-envelope]，
-        // 行 1 [part-notebook, part-envelope, part-notebook, wordmark]；元组 =（图集名，宽，高），
-        // 尺寸与网页 .sd-icon/.sd-stack/.sd-word/.sd-part 一字一致（40/52/60×30/30）。
-        let pattern: [[(String, CGFloat, CGFloat)]] = [
-            [("side_beary_icon", 40, 40), ("side_beary_word", 60, 30), ("side_beary_stack", 52, 52), ("side_part_envelope", 30, 30)],
-            [("side_part_notebook", 30, 30), ("side_part_envelope", 30, 30), ("side_part_notebook", 30, 30), ("side_beary_word", 60, 30)],
-        ]
-        // 一个图案块：4 列 ×86 = 344 宽、2 行 ×82 = 164 高，块内 tile 位置用原逐格公式。
-        let block = CALayer()
-        block.frame = CGRect(x: 0, y: 0, width: 344, height: 164)
-        for row in 0..<2 {
-            for col in 0..<4 {
-                let tile = pattern[row][col]
-                let tileLayer = CALayer()
-                // 网页原图直出：不 template、不 tint（深色由图集 dark 变体承接）。
-                // resizeAspect = UIImageView scaleAspectFit 同款；contentsScale 保视网膜锐度。
-                tileLayer.contents = UIImage(named: tile.0)?.cgImage
-                tileLayer.contentsScale = UIScreen.main.scale
-                tileLayer.contentsGravity = .resizeAspect
-                tileLayer.opacity = 0.34
-                tileLayer.frame = CGRect(
-                    x: CGFloat(col) * 86 + (52 - tile.1) / 2,
-                    y: CGFloat(row) * 82 + (52 - tile.2) / 2,
-                    width: tile.1, height: tile.2)
-                block.addSublayer(tileLayer)
-            }
-        }
-        let colReplicator = CAReplicatorLayer()
-        colReplicator.frame = matrix.bounds
-        colReplicator.instanceCount = Int(ceil(matrix.bounds.width / 344)) + 1
-        colReplicator.instanceTransform = CATransform3DMakeTranslation(344, 0, 0)
-        colReplicator.addSublayer(block)
-        let rowReplicator = CAReplicatorLayer()
-        rowReplicator.frame = matrix.bounds
-        rowReplicator.instanceCount = Int(ceil(matrix.bounds.height / 164)) + 1
-        rowReplicator.instanceTransform = CATransform3DMakeTranslation(0, 164, 0)
-        rowReplicator.addSublayer(colReplicator)
-        matrix.layer.addSublayer(rowReplicator)
-        // 减动效停播（网页 :210 @media prefers-reduced-motion 同口径）。
-        guard !UIAccessibility.isReduceMotionEnabled else { return }
-        UIView.animate(withDuration: 30, delay: 0, options: [.repeat, .curveLinear], animations: {
-            matrix.transform = CGAffineTransform(translationX: 344, y: 328)
-        })
-    }
-
-    /// A10/B10：退后台 / 减动效开启时停 matrix 动画——正在循环的 30s 位移动画直接
-    /// 移除并复位，不留半程位移；恢复时按当前尺寸重建（rebuild 自带减动效守卫）。
+    /// 视觉清单第 4 项：两侧背景层已停用，matrix 动画已不存在；本函数保留
+    /// 仅作 SceneDelegate 生命周期调用点的空操作（容器恒为 nil，循环无操作）。
+    /// A10/B10 旧语义（退后台/减动效停播 30s 循环）随停用一并失效。
     fileprivate func pauseSideMatrixAnimation() {
         for container in [sideDecoLeft, sideDecoRight] {
             for matrix in container?.subviews ?? [] {
@@ -3565,8 +3464,7 @@ final class BearyChromeViewController: UIViewController {
     }
 
     fileprivate func resumeSideMatrixAnimation() {
-        guard !UIAccessibility.isReduceMotionEnabled, isDesktopLayout() else { return }
-        sideDecoBuiltSize = nil
+        // 视觉清单第 4 项：背景层已停用，不重建、不启动画；仅走 update 的藏起守卫。
         updateSideDecoLayout()
     }
 
