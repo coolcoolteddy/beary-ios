@@ -108,10 +108,7 @@ final class BearyCalloutPickerView: UIView, UIScrollViewDelegate {
         super.init(frame: frame)
         backgroundColor = UIColor.clear
         layer.addSublayer(backgroundLayer)
-        backgroundLayer.shadowColor = UIColor.black.cgColor
-        backgroundLayer.shadowOpacity = 0.15
-        backgroundLayer.shadowRadius = 8
-        backgroundLayer.shadowOffset = CGSize(width: 0, height: 2)
+        BearyShadow.applyHairline(to: backgroundLayer)
         scrollView.showsHorizontalScrollIndicator = false
         // 天气条同款教训：横滑条内选项点按易被 scroll 误判为滑动而取消；
         // 关掉触摸延迟，点按立即响应。
