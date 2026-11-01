@@ -63,6 +63,9 @@ class BearyEntryImageViewerViewController: UIViewController, UIGestureRecognizer
     /// 拖动手势引用：旋转中途重算相邻图位置时，凭它判断手指是否仍在拖动
     /// （回弹/翻页动画中的 transform 由动画自身驱动，不干扰）。
     private var panGesture: UIPanGestureRecognizer?
+    /// 纵向甩关闭拖动状态：0 未定、1 横向翻页、2 纵向甩关闭（上甩/下甩对称）——一根手势内
+    /// 定向后不再切换，避免斜向拖动中途从翻页跳成纵向甩（或反向）。
+    private var panMode: Int = 0
     private var isNavigating: Bool = false
     private var isFailed: Bool = false
     private var loadingKey: String?
@@ -512,20 +515,65 @@ class BearyEntryImageViewerViewController: UIViewController, UIGestureRecognizer
         if sender.state == .began {
             panTx0 = tx
             panTy0 = ty
+            panMode = 0
         } else if sender.state == .changed {
             if scale > 1 {
                 // 放大后平移，限幅按缩放后图尺寸算（见 clampPan）。
                 tx = panTx0 + translation.x
                 ty = panTy0 + translation.y
                 clampPan()
-            } else {
+                applyTransform(animated: false)
+            } else if panMode == 2 {
+                // 纵向甩关闭跟手：图跟着手指往上/往下走、略缩小，底色与顶底 chrome 同步变淡。
+                hideNeighbor()
+                tx = 0
+                ty = translation.y
+                applyDismissDrag()
+            } else if panMode == 1 {
                 // 未放大：轨道跟手，只跟横向；相邻图同步贴在边上跟手（见 updateNeighbor）。
                 tx = translation.x
                 ty = 0
                 updateNeighbor(forDragX: tx)
+                applyTransform(animated: false)
+            } else {
+                // 未定：位移过 12pt 才定向——纵向占优（往上或往下都一样）进纵向甩关闭，
+                // 其余进横向翻页；定向前图不动，避免斜拖中途跳变。
+                if max(abs(translation.x), abs(translation.y)) > 12 {
+                    if abs(translation.y) > abs(translation.x) {
+                        panMode = 2
+                        hideNeighbor()
+                        tx = 0
+                        ty = translation.y
+                        applyDismissDrag()
+                    } else {
+                        panMode = 1
+                        tx = translation.x
+                        ty = 0
+                        updateNeighbor(forDragX: tx)
+                        applyTransform(animated: false)
+                    }
+                }
             }
-            applyTransform(animated: false)
         } else if sender.state == .ended || sender.state == .cancelled {
+            if panMode == 2 && sender.state == .ended {
+                // 纵向甩关闭判定（上下完全一致）：位移绝对值 >120pt，或快甩
+                // （纵向速度绝对值 >800pt/s 且纵向占优）——与横向翻页的
+                // 60pt/700pt/s 口径同款分层。
+                let velocity = sender.velocity(in: view)
+                let flickVertical = abs(velocity.y) > 800 && abs(velocity.y) > abs(velocity.x) * 1.5
+                if abs(ty) > 120 || flickVertical {
+                    dismissByVerticalSwipe(velocityY: velocity.y)
+                    panMode = 0
+                    return
+                }
+            }
+            if panMode == 2 {
+                // 力度不够：弹回原位，底色与 chrome 同步恢复。
+                panMode = 0
+                springBackFromDismiss()
+                return
+            }
+            panMode = 0
             if scale > 1 {
                 // 放大态平移停在当前位置（已限幅），不翻页、不回弹。
                 clampPan()
@@ -565,6 +613,77 @@ class BearyEntryImageViewerViewController: UIViewController, UIGestureRecognizer
                 }
             }
         }
+    }
+
+    /// 纵向甩关闭跟手态：进度 = 纵向位移绝对值 / 屏高；图略缩小（最多 12%），
+    /// 底色从 0.92 黑按进度淡掉 75%，顶底 chrome 同步变淡。上下方向进度算法相同。
+    private func applyDismissDrag() {
+        let height = view.bounds.height > 0 ? view.bounds.height : UIScreen.main.bounds.height
+        let progress = height > 0 ? min(1, max(0, abs(ty) / height)) : 0
+        let shrink = 1 - progress * 0.12
+        imageView.transform = CGAffineTransform(translationX: 0, y: ty).scaledBy(x: shrink, y: shrink)
+        view.backgroundColor = UIColor(white: 0, alpha: 0.92 * (1 - progress * 0.75))
+        let chromeAlpha = 1 - progress
+        counterLabel.alpha = chromeAlpha
+        dotsStack.alpha = chromeAlpha
+        closeButton.alpha = chromeAlpha
+        if viewEntryButton.superview != nil {
+            viewEntryButton.alpha = chromeAlpha
+        }
+    }
+
+    /// 纵向甩力度不够：图、底色、chrome 一起弹回原位（0.25s，与回弹同款时长）。
+    private func springBackFromDismiss() {
+        hideNeighbor()
+        tx = 0
+        ty = 0
+        if UIAccessibility.isReduceMotionEnabled {
+            imageView.transform = .identity
+            view.backgroundColor = UIColor(white: 0, alpha: 0.92)
+            counterLabel.alpha = 1
+            dotsStack.alpha = 1
+            closeButton.alpha = 1
+            if viewEntryButton.superview != nil {
+                viewEntryButton.alpha = 1
+            }
+            return
+        }
+        UIView.animate(withDuration: 0.25, animations: {
+            self.imageView.transform = .identity
+            self.view.backgroundColor = UIColor(white: 0, alpha: 0.92)
+            self.counterLabel.alpha = 1
+            self.dotsStack.alpha = 1
+            self.closeButton.alpha = 1
+            if self.viewEntryButton.superview != nil {
+                self.viewEntryButton.alpha = 1
+            }
+        })
+    }
+
+    /// 纵向甩关闭：图继续沿甩动方向滑出屏（上甩往上出屏、下甩往下出屏）、
+    /// 底色与 chrome 淡到 0 后直接 dismiss（animated: false，不再走 160ms
+    /// 淡出转场，避免双重淡出）。出屏方向取跟手位移方向；位移为 0 的快甩
+    /// （理论上极少见）取末速度方向。
+    private func dismissByVerticalSwipe(velocityY: CGFloat) {
+        hideNeighbor()
+        if UIAccessibility.isReduceMotionEnabled {
+            dismiss(animated: false, completion: nil)
+            return
+        }
+        let height = view.bounds.height > 0 ? view.bounds.height : UIScreen.main.bounds.height
+        let exitDirection: CGFloat = ty != 0 ? (ty > 0 ? 1 : -1) : (velocityY >= 0 ? 1 : -1)
+        UIView.animate(withDuration: 0.25, animations: {
+            self.imageView.transform = CGAffineTransform(translationX: 0, y: exitDirection * height).scaledBy(x: 0.9, y: 0.9)
+            self.view.backgroundColor = UIColor(white: 0, alpha: 0)
+            self.counterLabel.alpha = 0
+            self.dotsStack.alpha = 0
+            self.closeButton.alpha = 0
+            if self.viewEntryButton.superview != nil {
+                self.viewEntryButton.alpha = 0
+            }
+        }, completion: { _ in
+            self.dismiss(animated: false, completion: nil)
+        })
     }
 
     private func navigate(direction: Int) {
