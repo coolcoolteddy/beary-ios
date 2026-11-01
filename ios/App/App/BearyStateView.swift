@@ -60,8 +60,7 @@ final class BearyStateView: UIView {
                     let generation = visibilityGeneration
                     UIView.animate(withDuration: 0.2, delay: 0, options: .curveEaseOut, animations: { self.alpha = 0 }, completion: { [weak self] _ in
                         guard let self = self, self.visibilityGeneration == generation else { return }
-                        super.isHidden = true
-                        self.alpha = 1
+                        self.hideAfterFade()
                     })
                 } else {
                     super.isHidden = true
@@ -69,6 +68,15 @@ final class BearyStateView: UIView {
                 }
             }
         }
+    }
+
+    /// 淡出完成后的真正隐藏：super 调用不能留在显式捕获 self 的闭包里
+    ///（Swift 6：using 'super' in a closure where 'self' is explicitly captured
+    /// is not yet supported），故抽到本方法里，闭包内只调 self。
+    /// 代次校验仍在闭包里做，本方法只做“隐藏 + alpha 复位”两件事。
+    private func hideAfterFade() {
+        super.isHidden = true
+        alpha = 1
     }
 
     override init(frame: CGRect) {
