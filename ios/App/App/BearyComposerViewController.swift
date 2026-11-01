@@ -448,6 +448,18 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     private static let publishSpinnerTitleInset: CGFloat = 24
     private var draftPillWidthConstraint: NSLayoutConstraint?
     private let toolbarSeparator = UIView()
+    /// 窄屏 5 项之 3：草稿状态独立行（工具栏上方、工具行之上），只承载
+    /// level 0 失败与 level 1 部分保存：完整文案＋重试钮，不再挤进工具行
+    /// 与 6 个图标抢宽。level 2 已保存仍走工具行右端原口径，本行不启用。
+    private let draftStatusBanner = UIStackView()
+    private let draftStatusBannerLabel = UILabel()
+    private let draftStatusRetryButton = BearyHit44Button(type: .system)
+    private var toolbarToolRow: UIStackView?
+    private var toolbarToolRowTopToSeparatorConstraint: NSLayoutConstraint?
+    private var toolbarToolRowTopToBannerConstraint: NSLayoutConstraint?
+    /// 窄屏 5 项之 3：独立行隐藏时的 0 高约束。隐藏态只靠 isHidden 不够——
+    /// 行高仍由子项固有高撑着、会把工具行顶下去；隐藏时钉 0、显示时停用。
+    private var draftStatusBannerHeightConstraint: NSLayoutConstraint?
     private let imageToolButton = BearyHit44Button(type: .system)
     /// 批 E 定位钮：工具栏左组第 2 位（图片右边、心情之前，预览 v2 定版；v1 的心情/天气并列位置已作废）。
     private let locationToolButton = BearyHit44Button(type: .system)
@@ -491,6 +503,16 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     /// 凭此 + 宽门限决定是否重算，避免移行触发布局 → 再移行的循环。
     private var selectedChipsRecipientOnSecondRow = false
     private var selectedChipsLastLayoutWidth: CGFloat = -1
+    /// 窄屏 5 项之 1：气温步进器当前是否在独立第二行（见 layoutSelectedChips）。
+    /// 首行三项（心情＋天气＋步进器）本身超宽时，写给换行已不够——步进器
+    /// 独占第二行兜底，首行不再被 required 抗压挤出约束冲突；宽回升即回首行。
+    private var selectedChipsTempStepperOnSecondRow = false
+    /// 窄屏 5 项之 1：步进器第二行时的包壳横栈（竖栈 alignment .fill 会把
+    /// 直接进竖栈的步进器拉满宽、−／数值／＋被撑散；包壳内步进器 required
+    /// hugging 保自然宽、弹性 spacer 吸掉剩余宽，步进器本身不设显式宽约束，
+    /// 免得与竖栈 fill 约束顶成 required 对 required 的冲突）。
+    private let tempStepperSecondRowWrap = UIStackView()
+    private let tempStepperSecondRowSpacer = UIView()
     /// 审计 P1-8：选择条转场代次——每次 refreshToolStrip 显隐变化即 +1；旧转场
     /// 的 completion 凭代次过期作废，不再碰视图，快速连点只收敛到最后状态。
     private var toolStripTransitionGeneration = 0
@@ -512,6 +534,13 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     private let weatherStackView = UIStackView()
     // 状态行：编辑倒计时 + 草稿状态 + 字数圆环
     private let statusRow = UIStackView()
+    /// 窄屏 5 项之 4：状态行内的弹性 spacer（无内容、无高度，只占剩余宽）——
+    /// refreshStatusRowVisibility 判“有无实际内容”时须排除它，否则 spacer 永真、
+    /// 空行永远判为有内容。buildStatusRow 里用本项，不再另建局部 spacer。
+    private let statusRowSpacer = UIView()
+    /// 窄屏 5 项之 4：状态行最低高约束（≥18）。无内容隐藏整行时须停用它，
+    /// 否则隐藏的 arranged 子项仍被自身 ≥18 约束撑住、塌不掉。
+    private var statusRowMinHeightConstraint: NSLayoutConstraint?
     private let editTimerLabel = UILabel()
     private let draftStatusGroup = UIStackView()
     private let draftStatusIcon = UIImageView()
@@ -1023,9 +1052,13 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         // L10：标题允许截断（单行尾部省略），不与左右钮重叠见下方不等式。
         titleLabel.numberOfLines = 1
         titleLabel.lineBreakMode = .byTruncatingTail
-        // 顶栏标题抗压（顶栏“新日记/编辑日记”文案，非日记标题行）：顶栏右侧是固定宽按钮组（草稿 pill 已是 required 抗压），
-        // 标题若无抗压会被先压没；钉死后窄屏先截断标题文字、不断到看不见。
-        titleLabel.setContentCompressionResistancePriority(.required, for: .horizontal)
+        // 窄屏 5 项之 2：顶栏标题是明确的压缩项（749，低于按钮组）。
+        // 旧口径把标题抗压钉死 required：320pt 下标题＋固定宽按钮组＋发布显式宽
+        // 已超宽，required 对 required 成约束冲突、系统任意破一条，按钮会被
+        // 截断或横向跳动。标题降到 749 后窄屏只压标题（单行尾截断、不断到
+        // 看不见），草稿 pill（required）与可见性钮（下文 required）与发布显式宽
+        // 全数保全；常态宽度够用时标题完整显示，布局语义不变。
+        titleLabel.setContentCompressionResistancePriority(UILayoutPriority(749), for: .horizontal)
         // 发布：墨底白字 pill + 发送图标（网页 obtn p）；禁用时按网页口径：无底灰字。
         publishButton.setTitle(isEditMode ? "保存" : "发布", for: .normal)
         publishButton.titleLabel?.font = UIFont.systemFont(ofSize: 14)
@@ -1130,17 +1163,32 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         // 静态排查已排除隐藏/移除/宽度为 0/溢出；剩余疑似布局引擎在某次布局中压没了它，
         // 故把水平抗压提到 required，让标题先截断而不是 pill 被压没。
         draftPillButton.setContentCompressionResistancePriority(.required, for: .horizontal)
+        // 窄屏 5 项之 2：可见性钮同为固定 44 图标钮，抗压亦钉死，与草稿 pill
+        // 同口径——窄屏先压的只能是已降到 749 的标题，不是图标钮。
+        visibilityButton.setContentCompressionResistancePriority(.required, for: .horizontal)
     }
 
     /// 发布钮显式宽度（点赞钮同款修法）：UIButton 固有宽不含 titleEdgeInsets，
     /// 前沿自由的按钮按固有宽给帧时，标题会被左边距吃掉尾部（常态 6pt、发布中态 24pt，
     /// 后者会把“发布中…”裁成残字）。宽度按实测字宽重算：左右 content 边距 +
     /// 图宽 + 左右 title 边距 + 字宽；发布中态图为 nil、title 左边距取 publishSpinnerTitleInset 已含 spinner 位。
+    /// 窄屏 5 项之 2：预留稳定宽度＝常态宽与忙态宽取大（与当前态无关重算，
+    /// 不读 live 标题／图标，忙态切换时宽约束常量不再变、顶栏不再横向跳动；
+    /// 代价是常态 pill 比文字宽约一格忙态增量，内容居中、仍是同一 pill，不改常态语义）。
     private func refreshPublishButtonWidth() {
-        let title = publishButton.title(for: .normal) ?? ""
-        let titleWidth = ceil((title as NSString).size(withAttributes: [NSAttributedString.Key.font: UIFont.systemFont(ofSize: 14)]).width)
-        let imageWidth = publishButton.image(for: .normal)?.size.width ?? 0
-        publishWidthConstraint?.constant = publishButton.contentEdgeInsets.left + imageWidth + publishButton.titleEdgeInsets.left + titleWidth + publishButton.titleEdgeInsets.right + publishButton.contentEdgeInsets.right
+        let font = UIFont.systemFont(ofSize: 14)
+        func textWidth(_ text: String) -> CGFloat {
+            return ceil((text as NSString).size(withAttributes: [NSAttributedString.Key.font: font]).width)
+        }
+        let contentLeft = publishButton.contentEdgeInsets.left
+        let contentRight = publishButton.contentEdgeInsets.right
+        let titleRight = publishButton.titleEdgeInsets.right
+        let normalTitle = isEditMode ? "保存" : "发布"
+        let busyTitle = isEditMode ? "保存中…" : "发布中…"
+        let sendImageWidth = BearyIconImages.image(named: "icon_send", pointSize: 22)?.size.width ?? 22
+        let normalWidth = contentLeft + sendImageWidth + 6 + textWidth(normalTitle) + titleRight + contentRight
+        let busyWidth = contentLeft + Self.publishSpinnerTitleInset + textWidth(busyTitle) + titleRight + contentRight
+        publishWidthConstraint?.constant = max(normalWidth, busyWidth)
     }
 
     /// 发布钮外观跟随启用态（updatePublishState 只改 isEnabled，这里同步颜色/底色）。
@@ -1194,7 +1242,10 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         headlinePlaceholderLabel.font = headlineFont
         headlinePlaceholderLabel.textColor = BearyColors.alpha(BearyColors.gray, 0.7)
         headlinePlaceholderLabel.isUserInteractionEnabled = false
-        headlineClearButton.setImage(UIImage(systemName: "xmark.circle.fill"), for: .normal)
+        // 窄屏 5 项之 5：标题清除钮改官方 beary-ui icon_close（16pt，与位置
+        // 清除钮同口径），不再混用 SF Symbol xmark.circle.fill——本文件内
+        // 关闭类图标至此一律 icon_close，不补新资产、不自绘。
+        headlineClearButton.setImage(BearyIconImages.image(named: "icon_close", pointSize: 16), for: .normal)
         headlineClearButton.tintColor = BearyColors.gray
         headlineClearButton.isHidden = true
         headlineClearButton.addTarget(self, action: #selector(clearHeadline), for: .touchUpInside)
@@ -2402,7 +2453,6 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                 self.textView.isHidden = false
                 self.toolbarContainer.isHidden = false
                 self.selectedChipsRow.isHidden = false
-                self.statusRow.isHidden = false
                 self.quoteSection.isHidden = false
                 self.cancelButton.accessibilityLabel = "取消"
                 self.publishButton.isHidden = false
@@ -2411,7 +2461,11 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                 // 间隙修复的关闭恢复：把打开时置 0 的栈间距按 build 时原值还原（其余区同 build 原值）。
                 self.contentStack.setCustomSpacing(12, after: self.textView)
                 self.contentStack.setCustomSpacing(4, after: self.imageScrollView)
-                self.contentStack.setCustomSpacing(8, after: self.statusRow)
+                // 窄屏 5 项之 4：状态行不再无条件复原 isHidden=false＋间距 8——
+                // 新建模式倒计时本就隐藏，复原会把 26pt 空白行带回来；经
+                // refreshStatusRowVisibility 按倒计时实际显隐恢复（编辑态显示＋8、
+                // 新建态隐藏＋0）。
+                self.refreshStatusRowVisibility()
                 self.contentStack.setCustomSpacing(0, after: self.quoteSection)
                 // 各区显隐按正常态重算（选择条、@ 行、引用区）。
                 self.refreshToolStrip()
@@ -3053,6 +3107,31 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         }
         // 容器已由 buildLayout 加到 view 顶栏下方（固定），这里不再进内容栈。
         toolbarContainer.addSubview(toolbarSeparator)
+        // 窄屏 5 项之 3：草稿状态独立行（工具栏上方、工具行之上）：文案＋重试钮，
+        // 平时隐藏＋0 高（见 setDraftStatusBannerVisible），只在 level 0／1 时启用；
+        // 文案与 draftStatusLabel 同源（见 updateDraftStatusLabel），重试只重跑
+        // saveDraftNow（见 didTapDraftStatusRetry），不另起保存语义。
+        draftStatusBanner.axis = .horizontal
+        draftStatusBanner.spacing = 8
+        draftStatusBanner.alignment = .center
+        draftStatusBanner.translatesAutoresizingMaskIntoConstraints = false
+        draftStatusBannerLabel.font = UIFont.systemFont(ofSize: 12.5)
+        draftStatusBannerLabel.numberOfLines = 1
+        draftStatusBannerLabel.lineBreakMode = .byTruncatingTail
+        draftStatusBannerLabel.setContentCompressionResistancePriority(.required, for: .horizontal)
+        draftStatusRetryButton.setTitle("重试", for: .normal)
+        draftStatusRetryButton.setTitleColor(BearyColors.blue, for: .normal)
+        draftStatusRetryButton.titleLabel?.font = UIFont.systemFont(ofSize: 13, weight: .semibold)
+        draftStatusRetryButton.contentEdgeInsets = UIEdgeInsets(top: 6, left: 10, bottom: 6, right: 10)
+        draftStatusRetryButton.accessibilityLabel = "重试保存草稿"
+        draftStatusRetryButton.addTarget(self, action: #selector(didTapDraftStatusRetry), for: .touchUpInside)
+        draftStatusRetryButton.bearyAddPressFeedback()
+        draftStatusRetryButton.setContentCompressionResistancePriority(.required, for: .horizontal)
+        draftStatusBanner.addArrangedSubview(draftStatusBannerLabel)
+        draftStatusBanner.addArrangedSubview(UIView())
+        draftStatusBanner.addArrangedSubview(draftStatusRetryButton)
+        draftStatusBanner.isHidden = true
+        toolbarContainer.addSubview(draftStatusBanner)
         toolbarContainer.addSubview(toolRow)
         toolRow.addArrangedSubview(imageToolButton)
         toolRow.addArrangedSubview(locationToolButton)
@@ -3079,12 +3158,25 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         let spacer = UIView()
         toolRow.addArrangedSubview(spacer)
         toolRow.addArrangedSubview(draftStatusGroup)
+        toolbarToolRow = toolRow
+        // 窄屏 5 项之 3：工具行顶锚两档——独立行隐藏时锚分隔线（原 12 间距），
+        // 独立行显示时锚独立行底（8 间距）；两档互斥切换，见
+        // setDraftStatusBannerVisible（只在显隐翻转时切换，不成布局环）。
+        let toolRowTopToSeparator = toolRow.topAnchor.constraint(equalTo: toolbarSeparator.bottomAnchor, constant: 12)
+        toolRowTopToSeparator.isActive = true
+        toolbarToolRowTopToSeparatorConstraint = toolRowTopToSeparator
+        toolbarToolRowTopToBannerConstraint = toolRow.topAnchor.constraint(equalTo: draftStatusBanner.bottomAnchor, constant: 8)
+        let bannerHeight = draftStatusBanner.heightAnchor.constraint(equalToConstant: 0)
+        bannerHeight.isActive = true
+        draftStatusBannerHeightConstraint = bannerHeight
         NSLayoutConstraint.activate([
             toolbarSeparator.topAnchor.constraint(equalTo: toolbarContainer.topAnchor),
             toolbarSeparator.leadingAnchor.constraint(equalTo: toolbarContainer.leadingAnchor),
             toolbarSeparator.trailingAnchor.constraint(equalTo: toolbarContainer.trailingAnchor),
             toolbarSeparator.heightAnchor.constraint(equalToConstant: 1),
-            toolRow.topAnchor.constraint(equalTo: toolbarSeparator.bottomAnchor, constant: 12),
+            draftStatusBanner.topAnchor.constraint(equalTo: toolbarSeparator.bottomAnchor, constant: 8),
+            draftStatusBanner.leadingAnchor.constraint(equalTo: toolbarContainer.leadingAnchor),
+            draftStatusBanner.trailingAnchor.constraint(equalTo: toolbarContainer.trailingAnchor),
             toolRow.leadingAnchor.constraint(equalTo: toolbarContainer.leadingAnchor),
             toolRow.trailingAnchor.constraint(equalTo: toolbarContainer.trailingAnchor),
             toolRow.bottomAnchor.constraint(equalTo: toolbarContainer.bottomAnchor, constant: -6),
@@ -3789,6 +3881,27 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         layoutSelectedChips()
     }
 
+    /// 窄屏 5 项之 1：气温步进器的实测宽。UIStackView 没有固有尺寸，
+    /// intrinsicContentSize 恒为 -1（UIView.noIntrinsicMetric），旧口径直接
+    /// 用它算换行总宽、每行少算约 113pt，写给该换行时没换、被挤压截断。
+    /// 改 systemLayoutSizeFitting（压缩拟合）实测：三枚钮固有宽＋栈间距即
+    /// 自然宽；拟合失败（≤0）时退回各子项固有宽求和，绝不回落到 -1。
+    private func tempStepperMeasuredWidth() -> CGFloat {
+        guard !tempStepperStack.isHidden else { return 0 }
+        let fitting = tempStepperStack.systemLayoutSizeFitting(UIView.layoutFittingCompressedSize)
+        if fitting.width > 0 { return fitting.width }
+        var width: CGFloat = 0
+        var count = 0
+        for view in tempStepperStack.arrangedSubviews where !view.isHidden {
+            width += view.intrinsicContentSize.width
+            count += 1
+        }
+        if count > 1 {
+            width += CGFloat(count - 1) * tempStepperStack.spacing
+        }
+        return width
+    }
+
     /// 审计 P1-3：三 chip 收缩优先级与换行。
     /// 单行态：心情/天气自然宽（hugging + 抗压缩双 required，文字不缩小、不截断），
     /// 写给占剩余（hugging/compression 双 low：有富余则伸满、空间紧则先缩），
@@ -3796,7 +3909,12 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     /// 空间不足（单行总宽 > 行宽）且写给与心情/天气同显时：写给脱离首行、
     /// 独立成第二行（满宽、尾截断），心情/天气保持自然宽不动——不缩小全部文字。
     /// 写给单独出现时不换行（满宽即剩余，超长只尾截断）。
+    /// 窄屏 5 项之 1 兜底：心情＋天气＋步进器三项本身已超行宽时，只挪写给
+    /// 仍救不了首行（三个 required 项互相顶出约束冲突），步进器先经包壳
+    /// 独占第二行（包壳内保自然宽、不被竖栈拉满），首行只剩心情／天气；
+    /// 宽回升即回首行。
     /// 只在换行态真正变化时移视图；同态重算不碰层级，不触发布局环。
+    /// （移行不改行宽，viewDidLayoutSubviews 的宽门限仍挡得住重入。）
     private func layoutSelectedChips() {
         guard isViewLoaded else { return }
         // 行宽：布局后取实测宽；首帧布局前行宽为 0 时按内容栈边距（左右各 16）
@@ -3815,6 +3933,35 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         let moodVisible = !moodChipButton.isHidden
         let weatherVisible = !weatherChipButton.isHidden
         let recipientVisible = !recipientChipButton.isHidden
+        let stepperVisible = !tempStepperStack.isHidden
+        let stepperWidth = tempStepperMeasuredWidth()
+        // 首行基底：心情／天气自然宽＋其间间距（UIButton intrinsic 已含边距与标题宽）。
+        var firstRowBaseWidth: CGFloat = 0
+        var firstRowBaseCount = 0
+        for button in [moodChipButton, weatherChipButton] where !button.isHidden {
+            firstRowBaseWidth += button.intrinsicContentSize.width
+            firstRowBaseCount += 1
+        }
+        if firstRowBaseCount > 1 {
+            firstRowBaseWidth += CGFloat(firstRowBaseCount - 1) * selectedChipsFirstRow.spacing
+        }
+        // 兜底先算：步进器在首行时首行总宽＝基底＋步进器＋一格间距。
+        let firstRowWithStepper = firstRowBaseWidth
+            + (stepperVisible ? stepperWidth + (firstRowBaseCount > 0 ? selectedChipsFirstRow.spacing : 0) : 0)
+        let stepperOnSecondRow = stepperVisible && firstRowWithStepper > available
+        if stepperOnSecondRow != selectedChipsTempStepperOnSecondRow {
+            selectedChipsTempStepperOnSecondRow = stepperOnSecondRow
+            if stepperOnSecondRow {
+                selectedChipsFirstRow.removeArrangedSubview(tempStepperStack)
+                // 包壳插到首行正下方：写给已在第二行时被顶到其下，顺序仍是首行／步进器／写给。
+                tempStepperSecondRowWrap.insertArrangedSubview(tempStepperStack, at: 0)
+                selectedChipsRow.insertArrangedSubview(tempStepperSecondRowWrap, at: 1)
+            } else {
+                selectedChipsRow.removeArrangedSubview(tempStepperSecondRowWrap)
+                tempStepperSecondRowWrap.removeArrangedSubview(tempStepperStack)
+                selectedChipsFirstRow.addArrangedSubview(tempStepperStack)
+            }
+        }
         guard recipientVisible, moodVisible || weatherVisible else {
             // 写给单独出现或未出现：单行态即是终态（未出现时首行只剩隐藏项，塌高为 0）。
             if selectedChipsRecipientOnSecondRow {
@@ -3824,7 +3971,8 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             }
             return
         }
-        // UIButton intrinsicContentSize 已含 contentEdgeInsets 与标题宽，即自然宽。
+        // 写给换行总宽：心情／天气／写给自然宽＋间距；步进器已在第二行时
+        // 不再计入首行宽（它已不在首行），否则会把写给误判为需换行。
         var singleLineWidth: CGFloat = 0
         var visibleCount = 0
         for button in [moodChipButton, weatherChipButton, recipientChipButton] where !button.isHidden {
@@ -3834,8 +3982,8 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         if visibleCount > 1 {
             singleLineWidth += CGFloat(visibleCount - 1) * selectedChipsFirstRow.spacing
         }
-        if !tempStepperStack.isHidden {
-            singleLineWidth += tempStepperStack.intrinsicContentSize.width + selectedChipsFirstRow.spacing
+        if stepperVisible, !stepperOnSecondRow {
+            singleLineWidth += stepperWidth + selectedChipsFirstRow.spacing
         }
         let wrapRecipient = singleLineWidth > available
         guard wrapRecipient != selectedChipsRecipientOnSecondRow else { return }
@@ -3907,6 +4055,13 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         tempStepperStack.setContentHuggingPriority(.required, for: .horizontal)
         tempStepperStack.setContentCompressionResistancePriority(.required, for: .horizontal)
         selectedChipsFirstRow.addArrangedSubview(tempStepperStack)
+        // 窄屏 5 项之 1：第二行包壳（平时不进竖栈、不占高）：横栈＋弹性 spacer，
+        // 步进器 required hugging 保自然宽、spacer 吸剩余宽，见 layoutSelectedChips。
+        tempStepperSecondRowWrap.axis = .horizontal
+        tempStepperSecondRowWrap.spacing = 0
+        tempStepperSecondRowWrap.alignment = .center
+        tempStepperSecondRowWrap.translatesAutoresizingMaskIntoConstraints = false
+        tempStepperSecondRowWrap.addArrangedSubview(tempStepperSecondRowSpacer)
         // 审计 P1-3：心情/天气自然宽不让步；写给低优先级，占剩余、紧时先缩先截断。
         moodChipButton.setContentHuggingPriority(.required, for: .horizontal)
         moodChipButton.setContentCompressionResistancePriority(.required, for: .horizontal)
@@ -4042,8 +4197,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         statusRow.translatesAutoresizingMaskIntoConstraints = false
         contentStack.addArrangedSubview(statusRow)
         statusRow.addArrangedSubview(editTimerLabel)
-        let spacer = UIView()
-        statusRow.addArrangedSubview(spacer)
+        statusRow.addArrangedSubview(statusRowSpacer)
         // v6-6：草稿保存文案组已挪到工具栏右端（buildToolbarRow），不再进状态行；
         // 状态行只留编辑倒计时。组内图标／文案／级别逻辑（updateDraftStatusLabel）一字不动。
         // C1：字数圆环已移入工具栏左图标组 charGroupStack（数字已隐藏，只留圆环），
@@ -4053,8 +4207,12 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             draftStatusIcon.heightAnchor.constraint(equalToConstant: 15),
             charRingView.widthAnchor.constraint(equalToConstant: 18),
             charRingView.heightAnchor.constraint(equalToConstant: 18),
-            statusRow.heightAnchor.constraint(greaterThanOrEqualToConstant: 18),
         ])
+        // 窄屏 5 项之 4：最低高约束单独存引用——无内容隐藏整行时停用它，
+        // 有内容（编辑倒计时）时恢复；不存引用就无法在隐藏态停用，空行塌不掉。
+        let statusRowMinHeight = statusRow.heightAnchor.constraint(greaterThanOrEqualToConstant: 18)
+        statusRowMinHeight.isActive = true
+        statusRowMinHeightConstraint = statusRowMinHeight
         // 圆环：18 框、r 7.5、线宽 2.5，从顶部顺时针画（网页 cc-ring 同款）。
         let center = CGPoint(x: 9, y: 9)
         let path = UIBezierPath(arcCenter: center, radius: 7.5, startAngle: -CGFloat.pi / 2, endAngle: CGFloat.pi * 3 / 2, clockwise: true)
@@ -4074,7 +4232,30 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         charRingView.layer.addSublayer(progress)
         charTrackLayer = track
         charProgressLayer = progress
-        contentStack.setCustomSpacing(8, after: statusRow)
+        // 窄屏 5 项之 4：建完即按实际内容定显隐与间距——新建模式倒计时隐藏，
+        // 整行直接隐藏＋间距清零，不留 18＋8＝26pt 空白；编辑模式由 startEditTimer
+        // 经本函数恢复（见下）。
+        refreshStatusRowVisibility()
+    }
+
+    /// 窄屏 5 项之 4：状态行显隐的唯一口径。状态行当前唯一常驻内容是
+    /// 编辑倒计时（草稿组已移工具栏、字数圆环已移工具栏左组），故“有内容”
+    /// ＝除弹性 spacer 外有可见 arranged 子项；以后若有新内容进本行，
+    /// 本判据自动覆盖，不必再为新项另写显隐。
+    /// 无内容：整行隐藏＋最低高约束停用＋后间距清零，三处缺一都会残留空白。
+    /// 有内容：整行显示＋最低高恢复＋后间距 8。显隐翻转时重算 sheet 高，
+    /// 否则正文区高度不变、空白只是换了位置。引用面板打开时由
+    /// setQuotePanelOpen 临时整行隐藏（面板态优先），关闭时经本函数恢复。
+    private func refreshStatusRowVisibility() {
+        let hasVisibleContent = statusRow.arrangedSubviews.contains { $0 !== statusRowSpacer && !$0.isHidden }
+        let shouldHide = !hasVisibleContent
+        // 间距与最低高约束恒按目标态复核（面板关闭恢复等直接改 isHidden 的
+        // 路径可能留下旧间距），显隐本身只在翻转时改、翻转时才重算 sheet 高。
+        contentStack.setCustomSpacing(hasVisibleContent ? 8 : 0, after: statusRow)
+        statusRowMinHeightConstraint?.isActive = hasVisibleContent
+        guard statusRow.isHidden != shouldHide else { return }
+        statusRow.isHidden = shouldHide
+        updatePreferredContentSize()
     }
 
     /// 草稿状态文案跟随保存级别：2 草稿已保存 / 1 文字已保存，图片未保存 / 0 失败红字。
@@ -4083,12 +4264,14 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         if isEditMode {
             draftStatusGroup.isHidden = true
             draftStatusIcon.isHidden = true
+            setDraftStatusBannerVisible(false)
             return
         }
         guard let level = draftStatusLevel else {
             draftStatusGroup.isHidden = true
             draftStatusIcon.isHidden = true
             BearyIconMotion.stopSpin(on: draftStatusIcon, key: "bearyDraftSavingSpin")
+            setDraftStatusBannerVisible(false)
             return
         }
         draftStatusGroup.isHidden = false
@@ -4112,7 +4295,35 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             draftStatusLabel.textColor = BearyColors.red
             draftStatusLabel.setContentCompressionResistancePriority(UILayoutPriority(749), for: .horizontal)
         }
+        // 窄屏 5 项之 3：独立行文案与工具行组同源（级别逻辑、文案、颜色一处定，
+        // 这里只同步显示值；显隐由 applyDraftStatusToolbarFit 按级别统一分流）。
+        draftStatusBannerLabel.text = draftStatusLabel.text
+        draftStatusBannerLabel.textColor = draftStatusLabel.textColor
         applyDraftStatusToolbarFit()
+    }
+
+    /// 窄屏 5 项之 3：独立行显隐＋工具行顶锚两档切换。只在翻转时改约束，
+    /// 每轮布局重入（viewDidLayoutSubviews → applyDraftStatusToolbarFit）
+    /// 同值不重设、不成环；翻转时工具栏高变了，重算 sheet 高。
+    private func setDraftStatusBannerVisible(_ visible: Bool) {
+        // 守门读法：isHidden == visible 恰是“尚未到达目标态”
+        // （要显示时当前正隐藏、要隐藏时当前正显示），已到达则直接返回。
+        guard draftStatusBanner.isHidden == visible else { return }
+        draftStatusBanner.isHidden = !visible
+        draftStatusBannerHeightConstraint?.isActive = !visible
+        toolbarToolRowTopToSeparatorConstraint?.isActive = !visible
+        toolbarToolRowTopToBannerConstraint?.isActive = visible
+        updatePreferredContentSize()
+    }
+
+    /// 窄屏 5 项之 3：独立行重试入口。口径与 #495 草稿失败留页＋再点关闭重试
+    /// 一致：只重跑同一条 saveDraftNow——draftId／clientReq 不换、不另写落盘
+    /// 路径、不绕级别判定；成功后完成回调经 updateDraftStatusLabel 刷新级别
+    /// （成功则独立行自动收起、回到工具行已保存态），失败仍留页、独立行与
+    /// 文案不变。唯一区别是本钮不关闭页面（用户点的是重试，不是关闭）；
+    /// #495 的关闭重试路径本身一字不动。
+    @objc private func didTapDraftStatusRetry() {
+        saveDraftNow()
     }
 
     /// 109：草稿状态在工具栏里的宽度适配（只动间距与 lvl2 文案显隐，不动图标与圆环）。
@@ -4120,19 +4331,40 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     /// + 8 段间距 16 = 约 349，可完整排下「✓ 已保存」。
     /// 320 宽：容器 288，即使间距收到 12 也排不下文案，兜底只留对勾（文案隐藏），
     /// 绝不留半截字加省略号；宽回升时文案自动恢复（viewDidLayoutSubviews 每轮重算，同值不重设、不成环）。
+    /// 窄屏 5 项之 3：全部状态共用本函数分流，不再只有 level 2 走适配、
+    /// level 1／0 直接恢复 16pt 任由截断——level 0／1 改走工具栏上方独立行
+    /// （完整文案＋重试钮，工具行组同步隐藏、工具行间距恢复 16），level 2
+    /// 仍走下方原口径；编辑态／无级别时独立行隐藏、间距恢复 16。
     private func applyDraftStatusToolbarFit() {
-        guard let toolRow = toolbarContainer.subviews.first(where: { $0 is UIStackView }) as? UIStackView else { return }
+        // 工具行改存引用（buildToolbarRow 赋值）；回退旧查找时须跳过独立行
+        // （它也是 toolbarContainer 的 UIStackView 子项，first 会误取它）。
+        let toolRow: UIStackView
+        if let stored = toolbarToolRow {
+            toolRow = stored
+        } else if let found = toolbarContainer.subviews.first(where: { $0 is UIStackView && $0 !== draftStatusBanner }) as? UIStackView {
+            toolRow = found
+        } else {
+            return
+        }
         let width = toolbarContainer.bounds.width
         guard width > 0 else { return }
-        guard let level = draftStatusLevel, !isEditMode, !draftStatusGroup.isHidden else {
+        guard let level = draftStatusLevel, !isEditMode else {
+            setDraftStatusBannerVisible(false)
             if toolRow.spacing != 16 { toolRow.spacing = 16 }
             return
         }
-        if level != 2 {
-            if draftStatusLabel.isHidden { draftStatusLabel.isHidden = false }
+        if level == 0 || level == 1 {
+            // 独立行承载完整文案＋重试：工具行组不再与图标抢宽，隐藏它；
+            // 工具行间距恢复 16（不再为挤文案而收间距）。文案本身在独立行
+            // 独占整行宽（320 宽下 288，减重试钮后仍远超 11 字文案宽），不截断。
+            setDraftStatusBannerVisible(true)
+            if !draftStatusGroup.isHidden { draftStatusGroup.isHidden = true }
             if toolRow.spacing != 16 { toolRow.spacing = 16 }
             return
         }
+        // level 2：独立行收起，工具行组恢复显示，走原保全／只留对勾口径。
+        setDraftStatusBannerVisible(false)
+        if draftStatusGroup.isHidden { draftStatusGroup.isHidden = false }
         let labelWidth = draftStatusLabel.intrinsicContentSize.width
         // 109-fix：CGFloat(整数算式) + CGFloat 的混合表达式曾让 CI 编译器报
         // “unable to type-check in reasonable time”——改拆成显式 CGFloat 分步算式。
@@ -4157,9 +4389,12 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         editTimer?.invalidate()
         guard isEditMode, let deadline = editingEntry?.editDeadline else {
             editTimerLabel.isHidden = true
+            // 窄屏 5 项之 4：倒计时显隐即状态行显隐，新建模式这里把整行藏掉。
+            refreshStatusRowVisibility()
             return
         }
         editTimerLabel.isHidden = false
+        refreshStatusRowVisibility()
         let tickBlock: () -> Void = { [weak self] in
             guard let self = self else { return }
             let nowMs = Int(Date().timeIntervalSince1970 * 1000)
@@ -4352,6 +4587,9 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         // P1-14：冻结清单补齐全部入口——草稿 pill、引用钮、三枚已选 Chip、
         // @ pick/清除、引用卡 ×（含已删行“移除”）；其余入口见下。
         draftPillButton.isEnabled = !frozen
+        // 窄屏 5 项之 3：独立行重试钮同属发布冻结清单——在途点重试会与
+        // 发布流程并发写同一篇草稿，冻结与工具栏其他入口同口径恢复。
+        draftStatusRetryButton.isEnabled = !frozen
         quoteToolButton.isEnabled = !frozen
         moodChipButton.isEnabled = !frozen
         weatherChipButton.isEnabled = !frozen
