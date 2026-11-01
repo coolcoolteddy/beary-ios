@@ -13,7 +13,7 @@ import UIKit
 // 颜色一律走 BearyColors，不新增字面量颜色；不新增 UIGlassEffect；图标只走
 // BearyIconImages 与已有 icon_* 资产；无 force unwrap；无裸 id 变量名。
 
-final class BearyTrashViewController: UIViewController, UIScrollViewDelegate {
+final class BearyTrashViewController: UIViewController, UIScrollViewDelegate, UIGestureRecognizerDelegate {
 
     // MARK: - 对外 API（调用方按此接线，勿改名）
 
@@ -43,6 +43,13 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate {
     private var restoreEntries: [(button: UIButton, trashValue: TrashItem)] = []
     private var purgeEntries: [(button: UIButton, trashValue: TrashItem)] = []
     private var rowViewsByIdentifier: [String: UIView] = [:]
+    /// 真跟手左滑：当前正在被手指拖动的行（同一时刻只可能有一行在拖）；
+    /// 新一行开始拖时，上一行若还停在偏移处先瞬间复位，避免两行同偏。
+    private var trashDraggingRow: UIView?
+    /// 松手出菜单的左滑距离（卡片左移满此值才弹菜单，不满则弹回原位）。
+    private let trashDragMenuThreshold: CGFloat = 60
+    /// 手指跟手的最大左移量（再往左拖也不跟，防卡片被拖出屏）。
+    private let trashDragMaxOffset: CGFloat = 140
     /// 列宽必需约束（宽 ≥821 取 600、宽 ≤820 取全宽减 32，值由 updateColumnWidth 在
     /// viewDidLayoutSubviews 里按 bounds 直接派生；设置页 #92 同款，不再走 @750 协商）。
     private var trashColWidthConstraint: NSLayoutConstraint?
@@ -146,6 +153,8 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate {
             trashGlassView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
         ])
         scrollView.delegate = self
+        // 116 后扫查：与广场/个人页同口径——关掉 delaysContentTouches，滚动容器里的点按立即响应，不等滚动判定。
+        scrollView.delaysContentTouches = false
         scrollView.translatesAutoresizingMaskIntoConstraints = false
         contentWrap.translatesAutoresizingMaskIntoConstraints = false
         contentStack.axis = .vertical
@@ -156,6 +165,7 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate {
         headerRow.alignment = .center
         headerRow.spacing = 8
         titleLabel.text = "回收站"
+        // 扫查组：此前裸 16 粗体，标题不跟随大字号（栈行高自适应）。
         titleLabel.font = BearyDynamicType.scaledFont(for: UIFont.boldSystemFont(ofSize: 16))
         titleLabel.adjustsFontForContentSizeCategory = true
         titleLabel.textColor = BearyColors.ink
@@ -166,7 +176,8 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate {
             // I14：资产缺失时补文字回退，不留空白热区。
             closeButton.setTitle("✕", for: .normal)
             closeButton.setTitleColor(BearyColors.ink, for: .normal)
-            closeButton.titleLabel?.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 15))
+            // 扫查组：资产缺失回退文案此前裸 15pt；32×32 钮走 cappedFont，不撑破。
+            closeButton.titleLabel?.font = BearyDynamicType.cappedFont(for: UIFont.systemFont(ofSize: 15))
             closeButton.titleLabel?.adjustsFontForContentSizeCategory = true
         }
         closeButton.tintColor = BearyColors.ink
@@ -232,6 +243,7 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate {
         emptyIconView.contentMode = .scaleAspectFit
         emptyIconView.tintColor = BearyColors.gray
         emptyLabel.text = "回收站是空的"
+        // 扫查组：此前裸 15pt，空态文案不跟随大字号。
         emptyLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 15))
         emptyLabel.adjustsFontForContentSizeCategory = true
         emptyLabel.textColor = BearyColors.ink
@@ -257,12 +269,14 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate {
         loginWrap.isHidden = true
         let loginTitleLabel = UILabel()
         loginTitleLabel.text = "先登录"
+        // 扫查组：此前裸 15pt，未登录空态标题不跟随大字号。
         loginTitleLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 15))
         loginTitleLabel.adjustsFontForContentSizeCategory = true
         loginTitleLabel.textColor = BearyColors.ink
         loginTitleLabel.textAlignment = .center
         loginButton.setTitle("去登录", for: .normal)
         loginButton.setTitleColor(BearyColors.blue, for: .normal)
+        // 扫查组：此前裸 14pt；本钮无固定高，走 scaledFont 全跟随。
         loginButton.titleLabel?.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 14))
         loginButton.titleLabel?.adjustsFontForContentSizeCategory = true
         loginButton.addTarget(self, action: #selector(loginTapped), for: .touchUpInside)
@@ -703,7 +717,8 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate {
         restoreButton.imageView?.contentMode = .scaleAspectFit
         restoreButton.tintColor = BearyColors.ink
         restoreButton.titleEdgeInsets = UIEdgeInsets(top: 0, left: 5, bottom: 0, right: 0)
-        restoreButton.titleLabel?.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13))
+        // 扫查组：此前裸 13pt；钮钉高 44，走 cappedFont（上限 20，不撑破）。
+        restoreButton.titleLabel?.font = BearyDynamicType.cappedFont(for: UIFont.systemFont(ofSize: 13))
         restoreButton.titleLabel?.adjustsFontForContentSizeCategory = true
         restoreButton.layer.borderWidth = 1
         restoreButton.layer.bearyDynamicBorderColor = BearyColors.line
@@ -716,11 +731,14 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate {
         restoreButton.bearyAddPressFeedback()
         // P2-4：照抄点赞钮修法——显式给足实测字宽，否则标题被裁：图宽 + titleEdgeInsets 左 5
         // + 实测标题宽 + contentEdgeInsets 左右各 14；取闲/忙两文案之宽的最大值，两态均不裁。
+        // 扫查组：量宽字体须与钮字体同为 cappedFont，且等宽改下限（广场失败行 R8 同款）——
+        // 等宽 + adjusts 会在档位变化时把变大的标题裁掉，下限则允许钮随字号向外生长。
+        let restoreButtonFont = BearyDynamicType.cappedFont(for: UIFont.systemFont(ofSize: 13))
         let restoreTitleWidth = max(
-            ceil(("恢复" as NSString).size(withAttributes: [NSAttributedString.Key.font: BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13))]).width),
-            ceil(("恢复中…" as NSString).size(withAttributes: [NSAttributedString.Key.font: BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13))]).width)
+            ceil(("恢复" as NSString).size(withAttributes: [NSAttributedString.Key.font: restoreButtonFont]).width),
+            ceil(("恢复中…" as NSString).size(withAttributes: [NSAttributedString.Key.font: restoreButtonFont]).width)
         )
-        restoreButton.widthAnchor.constraint(equalToConstant: (restoreButton.currentImage?.size.width ?? 21) + 5 + restoreTitleWidth + 28).isActive = true
+        restoreButton.widthAnchor.constraint(greaterThanOrEqualToConstant: (restoreButton.currentImage?.size.width ?? 21) + 5 + restoreTitleWidth + 28).isActive = true
 
         let spacerView = UIView()
         spacerView.setContentHuggingPriority(.defaultLow, for: .horizontal)
@@ -728,7 +746,8 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate {
         let purgeButton = UIButton(type: .custom)
         purgeButton.setTitle("彻底删除", for: .normal)
         purgeButton.setTitleColor(BearyColors.red, for: .normal)
-        purgeButton.titleLabel?.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13))
+        // 扫查组：同恢复钮——钉高 44，走 cappedFont。
+        purgeButton.titleLabel?.font = BearyDynamicType.cappedFont(for: UIFont.systemFont(ofSize: 13))
         purgeButton.titleLabel?.adjustsFontForContentSizeCategory = true
         if let trashImage = BearyIconImages.image(named: "icon_trash", pointSize: 14) {
             purgeButton.setImage(trashImage, for: .normal)
@@ -747,11 +766,13 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate {
         purgeButton.bearyAddPressFeedback()
         // P2-4：同恢复钮修法——图宽 + titleEdgeInsets 左 5 + 实测标题宽 + contentEdgeInsets 左右各 14，
         // 取闲/忙两文案之宽的最大值，两态均不裁。
+        // 扫查组：同恢复钮——量宽字体改 cappedFont、等宽改下限，防档位变化时裁字。
+        let purgeButtonFont = BearyDynamicType.cappedFont(for: UIFont.systemFont(ofSize: 13))
         let purgeTitleWidth = max(
-            ceil(("彻底删除" as NSString).size(withAttributes: [NSAttributedString.Key.font: BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13))]).width),
-            ceil(("删除中…" as NSString).size(withAttributes: [NSAttributedString.Key.font: BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13))]).width)
+            ceil(("彻底删除" as NSString).size(withAttributes: [NSAttributedString.Key.font: purgeButtonFont]).width),
+            ceil(("删除中…" as NSString).size(withAttributes: [NSAttributedString.Key.font: purgeButtonFont]).width)
         )
-        purgeButton.widthAnchor.constraint(equalToConstant: (purgeButton.currentImage?.size.width ?? 14) + 5 + purgeTitleWidth + 28).isActive = true
+        purgeButton.widthAnchor.constraint(greaterThanOrEqualToConstant: (purgeButton.currentImage?.size.width ?? 14) + 5 + purgeTitleWidth + 28).isActive = true
 
         buttonsRow.addArrangedSubview(restoreButton)
         buttonsRow.addArrangedSubview(spacerView)
@@ -770,20 +791,82 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate {
         ])
         restoreEntries.append((button: restoreButton, trashValue: trashValue))
         purgeEntries.append((button: purgeButton, trashValue: trashValue))
-        // C7：左滑复用按钮路径（恢复/彻底删除经下选后调已登记的按钮处理，
-        // 按钮本身保留；回收站为 stack 卡片、无 tableView 滑动 API，故左滑只
-        // 换触发方式，不新增执行逻辑；资格与按钮一致：全部回收站条目均可
-        // 恢复/彻底删除，仅 busy 守卫由按钮处理内把关）。
-        let swipe = UISwipeGestureRecognizer(target: self, action: #selector(trashCardSwiped(_:)))
-        swipe.direction = .left
-        rowView.addGestureRecognizer(swipe)
+        // 真跟手左滑（扫 bug 第 7 项）：回收站为 stack 卡片、无 tableView
+        // 滑动 API，故不用系统侧滑，改用每行一个 UIPanGestureRecognizer
+        // 做 1:1 跟手拖动——手指左移卡片即左移，松手够 60pt 出菜单、
+        // 不够弹回原位。菜单与恢复/彻底删除仍复用按钮路径（见
+        // presentTrashActionMenu），不新增执行逻辑；资格与按钮一致：
+        // 全部回收站条目均可恢复/彻底删除，仅 busy 守卫由按钮处理内把关。
+        // 与上下滚动抢手势见 gestureRecognizerShouldBegin：横滑才接管，
+        // 竖滑与滚动进行中一律放行给 scrollView（另见 scrollView 的
+        // pan 须等本手势失败才启动，避免滚动半途被横滑抢走）。
+        let drag = UIPanGestureRecognizer(target: self, action: #selector(trashCardDragged(_:)))
+        drag.delegate = self
+        rowView.addGestureRecognizer(drag)
+        scrollView.panGestureRecognizer.require(toFail: drag)
         return rowView
     }
 
-    @objc private func trashCardSwiped(_ sender: UISwipeGestureRecognizer) {
+    /// 手势仲裁：只有左横滑才让行拖动手势接管；竖滑（|vy| ≥ |vx|）
+    /// 与右滑放行给 scrollView；滚动进行中（拖动/减速）不抢，
+    /// 避免手指刚松开滚势未消时误触一行把它拖偏。
+    func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
+        guard gestureRecognizer is UIPanGestureRecognizer else { return true }
+        if scrollView.isDragging || scrollView.isDecelerating { return false }
+        let velocity = (gestureRecognizer as? UIPanGestureRecognizer)?.velocity(in: view) ?? .zero
+        return velocity.x < 0 && abs(velocity.x) > abs(velocity.y)
+    }
+
+    @objc private func trashCardDragged(_ sender: UIPanGestureRecognizer) {
         guard let rowView = sender.view,
               let identifier = rowViewsByIdentifier.first(where: { $0.value === rowView })?.key,
               trashItems.contains(where: { $0.entryIdentifier == identifier }) else { return }
+        switch sender.state {
+        case .began:
+            if let previous = trashDraggingRow, previous !== rowView {
+                previous.transform = .identity
+            }
+            trashDraggingRow = rowView
+            // 入场错峰动画若还在跑（transform/alpha 在途），先停掉它：
+            // 动画模型值本就是终值（alpha 1、transform identity），停动画
+            // 不会闪回，手指接管后 transform 只由拖动写。
+            rowView.layer.removeAllAnimations()
+        case .changed:
+            let translation = sender.translation(in: view).x
+            let offset = max(-trashDragMaxOffset, min(0, translation))
+            rowView.transform = CGAffineTransform(translationX: offset, y: 0)
+        case .ended:
+            trashDraggingRow = nil
+            let offset = rowView.transform.tx
+            if offset <= -trashDragMenuThreshold {
+                resetTrashDragRow(rowView)
+                presentTrashActionMenu(identifier: identifier, rowView: rowView)
+            } else {
+                resetTrashDragRow(rowView)
+            }
+        case .cancelled, .failed:
+            trashDraggingRow = nil
+            resetTrashDragRow(rowView)
+        default:
+            break
+        }
+    }
+
+    /// 拖动结束/取消后卡片归位：减动效直设，其余以弹簧弹回（只走 transform）。
+    private func resetTrashDragRow(_ rowView: UIView) {
+        if UIAccessibility.isReduceMotionEnabled {
+            rowView.transform = .identity
+            return
+        }
+        UIView.animate(withDuration: 0.3, delay: 0, usingSpringWithDamping: 0.7, initialSpringVelocity: 0, options: .curveEaseOut, animations: {
+            rowView.transform = .identity
+        }, completion: nil)
+    }
+
+    /// 左滑菜单本体（原 trashCardSwiped 的弹菜单段原样抽出，触发方式
+    /// 由“滑完才弹”改为“跟手拖动 + 松手够距才弹”，菜单内容与后续
+    /// 按钮路径一字不动）。
+    private func presentTrashActionMenu(identifier: String, rowView: UIView) {
         if presentedViewController != nil { return }
         let sheet = UIAlertController(title: nil, message: nil, preferredStyle: .actionSheet)
         sheet.addAction(UIAlertAction(title: "恢复", style: .default) { [weak self] _ in
@@ -924,6 +1007,9 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate {
         guard let rowView = rowViewsByIdentifier[identifier] else {
             renderStateViews()
             return
+        }
+        if trashDraggingRow === rowView {
+            trashDraggingRow = nil
         }
         rowViewsByIdentifier[identifier] = nil
         let rowHeight = rowView.bounds.height
