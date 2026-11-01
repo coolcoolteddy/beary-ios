@@ -1732,7 +1732,7 @@ final class BearyTimelineCell: UITableViewCell {
                         imageView.translatesAutoresizingMaskIntoConstraints = false
                         imageView.contentMode = .scaleAspectFill
                         imageView.clipsToBounds = true
-                        imageView.layer.cornerRadius = 7
+                        imageView.layer.cornerRadius = 8
                         imageView.backgroundColor = BearyColors.faint
                         quoteThumbsStack.addArrangedSubview(imageView)
                         NSLayoutConstraint.activate([
