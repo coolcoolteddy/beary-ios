@@ -2203,15 +2203,19 @@ private class BearyLetterModal {
     private let primaryButton = UIButton(type: .system)
     private let secondaryButton = BearyLetterModalButton(type: .system)
     private let goEntryId: String?
-    private var buttonTopToBody: NSLayoutConstraint?
-    private var buttonTopToQuote: NSLayoutConstraint?
+    private let scrollContentView = UIView()
+    /// 滚动内容底二选一：无引用时正文贴内容底（隐藏的引用区不占位），有引用时引用区贴内容底。
+    private var bodyBottomToContent: NSLayoutConstraint?
+    private var quoteBottomToContent: NSLayoutConstraint?
     private var buttonRatioConstraint: NSLayoutConstraint?
 
     init(title: String, body: String, iconName: String, quoteText: String?, quoteMeta: String?, goEntryId: String?) {
         self.goEntryId = goEntryId
         self.isPopper = (iconName == "icon_popper")
         self.isMail = (iconName == "icon_mail")
-        overlayView.backgroundColor = BearyColors.scrim
+        // 审计 C-15：信件遮罩统一走 BearySheetChrome.scrimColor（0.45），不再用 BearyColors.scrim（0.60）；
+        // 图片灯箱遮罩属独立用途，本处不动。
+        overlayView.backgroundColor = BearySheetChrome.scrimColor
         // VoiceOver：弹窗为普通叠加层、非 VC，须显式声明模态，焦点才不越过遮罩
         // 浏览到底下的通知列表；视觉与关闭行为不变。
         overlayView.accessibilityViewIsModal = true
@@ -2318,8 +2322,11 @@ private class BearyLetterModal {
         }
         cardView.addSubview(titleLabel)
         cardView.addSubview(bodyScrollView)
-        bodyScrollView.addSubview(bodyLabel)
-        cardView.addSubview(quoteWrap)
+        // 审计 C-5：正文与引用区共同放入同一个滚动内容容器（阅读顺序 正文→引用），按钮固定在滚动区下方。
+        scrollContentView.translatesAutoresizingMaskIntoConstraints = false
+        bodyScrollView.addSubview(scrollContentView)
+        scrollContentView.addSubview(bodyLabel)
+        scrollContentView.addSubview(quoteWrap)
         quoteWrap.addSubview(quoteBar)
         quoteWrap.addSubview(quoteTextLabel)
         quoteWrap.addSubview(quoteMetaLabel)
@@ -2384,14 +2391,17 @@ private class BearyLetterModal {
             bodyScrollView.leadingAnchor.constraint(equalTo: cardView.leadingAnchor, constant: 24),
             bodyScrollView.trailingAnchor.constraint(equalTo: cardView.trailingAnchor, constant: -24),
             bodyScrollView.heightAnchor.constraint(lessThanOrEqualTo: parentView.heightAnchor, multiplier: 0.52),
-            bodyLabel.topAnchor.constraint(equalTo: bodyScrollView.contentLayoutGuide.topAnchor),
-            bodyLabel.leadingAnchor.constraint(equalTo: bodyScrollView.contentLayoutGuide.leadingAnchor),
-            bodyLabel.trailingAnchor.constraint(equalTo: bodyScrollView.contentLayoutGuide.trailingAnchor),
-            bodyLabel.bottomAnchor.constraint(equalTo: bodyScrollView.contentLayoutGuide.bottomAnchor),
-            bodyLabel.widthAnchor.constraint(equalTo: bodyScrollView.frameLayoutGuide.widthAnchor),
-            quoteWrap.topAnchor.constraint(equalTo: bodyScrollView.bottomAnchor, constant: 18),
-            quoteWrap.leadingAnchor.constraint(equalTo: cardView.leadingAnchor, constant: 24),
-            quoteWrap.trailingAnchor.constraint(equalTo: cardView.trailingAnchor, constant: -24),
+            scrollContentView.topAnchor.constraint(equalTo: bodyScrollView.contentLayoutGuide.topAnchor),
+            scrollContentView.leadingAnchor.constraint(equalTo: bodyScrollView.contentLayoutGuide.leadingAnchor),
+            scrollContentView.trailingAnchor.constraint(equalTo: bodyScrollView.contentLayoutGuide.trailingAnchor),
+            scrollContentView.bottomAnchor.constraint(equalTo: bodyScrollView.contentLayoutGuide.bottomAnchor),
+            scrollContentView.widthAnchor.constraint(equalTo: bodyScrollView.frameLayoutGuide.widthAnchor),
+            bodyLabel.topAnchor.constraint(equalTo: scrollContentView.topAnchor),
+            bodyLabel.leadingAnchor.constraint(equalTo: scrollContentView.leadingAnchor),
+            bodyLabel.trailingAnchor.constraint(equalTo: scrollContentView.trailingAnchor),
+            quoteWrap.topAnchor.constraint(equalTo: bodyLabel.bottomAnchor, constant: 18),
+            quoteWrap.leadingAnchor.constraint(equalTo: scrollContentView.leadingAnchor),
+            quoteWrap.trailingAnchor.constraint(equalTo: scrollContentView.trailingAnchor),
             quoteBar.leadingAnchor.constraint(equalTo: quoteWrap.leadingAnchor),
             quoteBar.topAnchor.constraint(equalTo: quoteWrap.topAnchor),
             quoteBar.bottomAnchor.constraint(equalTo: quoteWrap.bottomAnchor),
@@ -2403,21 +2413,23 @@ private class BearyLetterModal {
             quoteMetaLabel.leadingAnchor.constraint(equalTo: quoteWrap.leadingAnchor, constant: 14),
             quoteMetaLabel.trailingAnchor.constraint(equalTo: quoteWrap.trailingAnchor, constant: -14),
             quoteMetaLabel.bottomAnchor.constraint(equalTo: quoteWrap.bottomAnchor, constant: -12),
+            buttonStack.topAnchor.constraint(equalTo: bodyScrollView.bottomAnchor, constant: 18),
             buttonStack.leadingAnchor.constraint(equalTo: cardView.leadingAnchor, constant: 24),
             buttonStack.trailingAnchor.constraint(equalTo: cardView.trailingAnchor, constant: -24),
             buttonStack.bottomAnchor.constraint(equalTo: cardView.bottomAnchor, constant: -24),
             secondaryButton.heightAnchor.constraint(equalToConstant: 44),
             primaryButton.heightAnchor.constraint(equalToConstant: 44),
         ])
-        // 正文区高度 = 正文高度（750 优先级，超 52% 屏高时被上限压住、可滚动）。
-        let bodyHeight = bodyScrollView.heightAnchor.constraint(equalTo: bodyLabel.heightAnchor)
-        bodyHeight.priority = UILayoutPriority(750)
-        bodyHeight.isActive = true
-        // 按钮行 top 二选一：无引用时贴正文区（引用区不占位），有引用时贴引用区。
-        buttonTopToBody = buttonStack.topAnchor.constraint(equalTo: bodyScrollView.bottomAnchor, constant: 18)
-        buttonTopToQuote = buttonStack.topAnchor.constraint(equalTo: quoteWrap.bottomAnchor, constant: 18)
-        buttonTopToBody?.isActive = quoteWrap.isHidden
-        buttonTopToQuote?.isActive = !quoteWrap.isHidden
+        // 滚动区高度 = 正文 + 引用共同内容高度（750 优先级，超 52% 屏高时被上限压住、可滚动；
+        // 卡片高仍限安全区 − 32，超限时 750 约束先让步，按钮固定在滚动区下方）。
+        let scrollHeight = bodyScrollView.heightAnchor.constraint(equalTo: scrollContentView.heightAnchor)
+        scrollHeight.priority = UILayoutPriority(750)
+        scrollHeight.isActive = true
+        // 内容底二选一：无引用时正文贴内容底（隐藏的引用区不占位），有引用时引用区贴内容底。
+        bodyBottomToContent = bodyLabel.bottomAnchor.constraint(equalTo: scrollContentView.bottomAnchor)
+        quoteBottomToContent = quoteWrap.bottomAnchor.constraint(equalTo: scrollContentView.bottomAnchor)
+        bodyBottomToContent?.isActive = quoteWrap.isHidden
+        quoteBottomToContent?.isActive = !quoteWrap.isHidden
         if UIAccessibility.isReduceMotionEnabled {
             overlayView.alpha = 1
             cardView.transform = CGAffineTransform.identity
@@ -2451,14 +2463,26 @@ private class BearyLetterModal {
         return NSAttributedString(string: string, attributes: [.font: font, .foregroundColor: color, .paragraphStyle: paragraph])
     }
 
-    /// 信件模态引用预览随后补全：有正文才显示引用区，按钮行随之改贴引用区。
+    /// 信件模态引用预览随后补全：引用区随正文一起进滚动区，按钮仍固定在滚动区下方。
     func fillQuote(text: String, meta: String) {
         // C-G17：随后补全的引用同样带 1.75 行高（与 init 分支一致）。
+        let isNewQuote = quoteWrap.isHidden
         quoteTextLabel.attributedText = BearyLetterModal.lineHeightText(text, font: BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 16)), color: BearyColors.ink, multiple: 1.75)
         quoteMetaLabel.text = meta
         quoteWrap.isHidden = false
-        buttonTopToBody?.isActive = false
-        buttonTopToQuote?.isActive = true
+        bodyBottomToContent?.isActive = false
+        quoteBottomToContent?.isActive = true
+        // 审计 C-20：先一次性落定布局（不进动画块），再仅对新增引用区播 0.18s 透明度过渡；
+        // 已有正文与按钮不重播入场动画。减动效 / 尚未 show / 非新增时直接显现，不播过渡。
+        guard isNewQuote, !UIAccessibility.isReduceMotionEnabled, overlayView.superview != nil else {
+            quoteWrap.alpha = 1
+            return
+        }
+        quoteWrap.alpha = 0
+        overlayView.layoutIfNeeded()
+        UIView.animate(withDuration: 0.18) {
+            self.quoteWrap.alpha = 1
+        }
     }
 
     private var isDismissingModal = false
