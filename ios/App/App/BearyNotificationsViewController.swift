@@ -84,6 +84,11 @@ final class BearyNotificationsViewController: UIViewController {
     /// 点开一条带日记的通知：传 entry_id（非空字符串），容器跳详情页。
     var onEntrySelected: ((String) -> Void)?
 
+    /// 好友第一期：点开关注提醒卡：传关注方 user_id，容器打开对方公开主页。
+    var onOpenUser: ((Int) -> Void)?
+    /// 好友第一期（私信）：点开私信行：传对方最小用户信息，容器打开对应会话页。
+    var onOpenDM: ((BearyAPI.FriendUser) -> Void)?
+
     /// 点开一条无日记的系统信/信件：传整条 NotificationItem（title/body 在里面），
     /// 容器可弹信件框；容器未接时本页就地弹提示框兜底。
     var onSystemNotificationSelected: ((NotificationItem) -> Void)?
@@ -163,6 +168,11 @@ final class BearyNotificationsViewController: UIViewController {
     private var firstLoadFailed = false
     private var isMarkingAllRead = false
     private var markingReadIds: Set<Int> = []
+    /// 好友第一期（关注/回关模型）：关注提醒卡状态（按关注方 id 持有；同一人
+    /// 的多条 follow 行共享同一态，cell 复用与整页重拉都不丢“已互关”态）。
+    /// 未拉取时无条目，configure 时按行拉 state 接口。
+    private var followCardStates: [Int: BearyNotificationCell.FollowCardState] = [:]
+    private var followCardLoadingIds: Set<Int> = []
     private var lastPublishedUnread = -1
     private var lastPublishedSysUnread = -1
     /// 上次整页加载时的未读数快照（门控用，与 unreadTotal 严格分开）：
@@ -1637,6 +1647,115 @@ final class BearyNotificationsViewController: UIViewController {
     ///   （容器先 fetchEntry 校验可见性，私密显占位；送达信模态已随送达模型废除）；
     /// - 无 entry_id 的 system/letter → 系统信模态（容器接了回调则先交容器）；
     /// - 互动行带 entry_id → 进详情，无 entry_id 只标已读不跳转。
+    /// 好友第一期：关注提醒卡接线（仅 type='follow' 的行）。卡上回关按钮点按
+    /// 不走 didSelectRowAt（UIButton 拦截触摸），只调 follow 接口；行本身点按
+    /// 走默认行为（标已读 + 进对方公开主页，见 openNotification 的 follow 分支）。
+    /// 私信行（type='dm'）无动作区，点按进对应会话（见 openNotification 的 dm 分支）。
+    private func configureFollowCardIfNeeded(cell: BearyNotificationCell, itemIndex: Int) {
+        guard itemIndex < items.count else { return }
+        let item = items[itemIndex]
+        guard item.type == "follow", let actorId = item.actorId else { return }
+        if let state = followCardStates[actorId] {
+            cell.configureFollowCard(state: state) { [weak self] in
+                self?.handleFollowBack(itemIndex: itemIndex)
+            }
+            return
+        }
+        // 未拉取：先画禁用态回关钮，同时按关注方 id 拉一次 state（同人多卡共享
+        // 一次请求；在途复用行重配时不重复发）。
+        cell.configureFollowCard(state: .loading) { [weak self] in
+            self?.handleFollowBack(itemIndex: itemIndex)
+        }
+        guard !followCardLoadingIds.contains(actorId) else { return }
+        followCardLoadingIds.insert(actorId)
+        BearyAPI.shared.fetchFollowState(userId: actorId) { [weak self] result in
+            DispatchQueue.main.async {
+                guard let self = self else { return }
+                self.followCardLoadingIds.remove(actorId)
+                if case .success(let state) = result {
+                    let followState = BearyFollowState(response: state)
+                    self.followCardStates[actorId] = followState == .mutual ? .mutual : .canFollowBack
+                }
+                // 失败时不写态：按钮仍是禁用态，下次重配（滚动回显/整页重拉）时
+                // 再拉一次；点按回关本身幂等安全，见 handleFollowBack 的失败回落。
+                self.refreshFollowCardRows(actorId: actorId)
+            }
+        }
+    }
+
+    private func handleFollowBack(itemIndex: Int) {
+        guard itemIndex < items.count else { return }
+        let item = items[itemIndex]
+        guard let actorId = item.actorId else {
+            showToast(message: "回关失败，请重试")
+            return
+        }
+        // 已互关/在途时不再发请求（卡上按钮已是已互关态或禁用态，双重守卫）。
+        if case .mutual = followCardStates[actorId] { return }
+        if case .busy = followCardStates[actorId] { return }
+        if case .loading = followCardStates[actorId] {
+            // state 未到但点按已放行（失败回落口径：follow 幂等，重复点无害）；
+            // 仍先占 busy 防连点，失败后回 canFollowBack。
+            followCardStates[actorId] = .busy
+            refreshFollowCardRows(actorId: actorId)
+        } else {
+            followCardStates[actorId] = .busy
+            refreshFollowCardRows(actorId: actorId)
+        }
+        BearyAPI.shared.followFriend(userId: actorId) { [weak self] result in
+            DispatchQueue.main.async {
+                guard let self = self else { return }
+                switch result {
+                case .success:
+                    self.followCardStates[actorId] = .mutual
+                    // 回关成功给 light 震动（点赞轻震动口径）；取关不给震动。
+                    BearyHaptics.press()
+                    BearyFriends.clearDiaryCachesAndNotify()
+                    self.markFollowCardRead(itemIndex: itemIndex)
+                    self.refreshFollowCardRows(actorId: actorId)
+                case .failure(let error):
+                    self.followCardStates[actorId] = .canFollowBack
+                    self.refreshFollowCardRows(actorId: actorId)
+                    if case .unauthorized = error {
+                        self.onRequireLogin?()
+                    } else {
+                        self.showToast(message: "回关失败，请重试")
+                    }
+                }
+            }
+        }
+    }
+
+    private func refreshFollowCardRows(actorId: Int) {
+        // 同一关注方的多条卡共享一态：可见行就地重配动作区（不 reloadRows，
+        // 避免整行淡入闪一下）。
+        for (rowIndex, row) in displayRows.enumerated() {
+            guard let itemIndex = row.itemIndex, itemIndex < items.count,
+                  items[itemIndex].type == "follow",
+                  items[itemIndex].actorId == actorId else { continue }
+            let path = IndexPath(row: rowIndex, section: 0)
+            guard let cell = tableView.cellForRow(at: path) as? BearyNotificationCell else { continue }
+            let state = followCardStates[actorId] ?? .loading
+            cell.configureFollowCard(state: state) { [weak self] in
+                self?.handleFollowBack(itemIndex: itemIndex)
+            }
+        }
+    }
+
+    /// 回关成功后顺带标已读（与 openNotification 的乐观已读同口径，唯独不跳转）。
+    private func markFollowCardRead(itemIndex: Int) {
+        guard itemIndex < items.count else { return }
+        let item = items[itemIndex]
+        guard (item.read ?? true) == false, item.id != nil else { return }
+        items[itemIndex].read = true
+        unreadTotal = max(0, unreadTotal - 1)
+        publishUnread(unreadTotal)
+        updateReadAllButton()
+        recordFullLoadUnread()
+        applyReadAppearanceToVisibleRows()
+        markSingleRead(item, at: itemIndex)
+    }
+
     private func openNotification(_ item: NotificationItem, at index: Int) {
         let isUnread = (item.read ?? true) == false
         // 5-11：无 id 的行不做乐观已读——标已读函数遇 nil 直接 return
@@ -1673,6 +1792,21 @@ final class BearyNotificationsViewController: UIViewController {
                 onEntrySelected?(entryIdValue)
             } else {
                 presentSystemLetter(for: item)
+            }
+            return
+        }
+        // 好友第一期：关注提醒卡点按进对方公开主页（未接线时只标已读）；
+        // 私信行点按进对应会话（未接线时只标已读）。两者都不走 entry 深链。
+        if itemType == "follow" {
+            if let actorId = item.actorId {
+                onOpenUser?(actorId)
+            }
+            return
+        }
+        if itemType == "dm" {
+            if let actorId = item.actorId {
+                let peer = BearyAPI.FriendUser(id: actorId, displayName: item.actorName, handle: nil, avatarUrl: item.actorAvatar, createdAt: nil)
+                onOpenDM?(peer)
             }
             return
         }
@@ -2094,10 +2228,12 @@ extension BearyNotificationsViewController: UITableViewDataSource, UITableViewDe
         case .letter:
             if let itemIndex = row.itemIndex {
                 cell.configure(with: items[itemIndex], nested: false, highlight: shouldHighlight(item: items[itemIndex]))
+                configureFollowCardIfNeeded(cell: cell, itemIndex: itemIndex)
             }
         case .sysItem, .actItem:
             if let itemIndex = row.itemIndex {
                 cell.configure(with: items[itemIndex], nested: true, highlight: shouldHighlight(item: items[itemIndex]))
+                configureFollowCardIfNeeded(cell: cell, itemIndex: itemIndex)
             }
         }
         return cell
@@ -2568,7 +2704,7 @@ private class BearyNotificationCell: UITableViewCell {
     /// 头像加载失败重试：纯图标按钮（非文字按钮），44×44 点击区居中压在头像上；
     /// 仅失败态可见，加载中与成功态一律隐藏（见 loadAvatar）。无描边、无背景色，
     /// 故深浅切换无需重刷；图标本身走 BearyIconImages 本地资产，不会再加载失败。
-    private lazy var avatarRetryButton: UIButton = {
+    private let avatarRetryButton: UIButton = {
         let button = UIButton(type: .system)
         button.translatesAutoresizingMaskIntoConstraints = false
         button.setImage(BearyIconImages.image(named: "icon_refresh", pointSize: 20), for: .normal)
@@ -2580,6 +2716,49 @@ private class BearyNotificationCell: UITableViewCell {
         button.bearyAddPressFeedback()
         return button
     }()
+
+    /// 好友第一期（关注/回关模型）：关注提醒卡行内动作区（单个回关墨色主按钮；
+    /// 没有同意/拒绝两个按钮）。按钮是 UIControl，点按不触发行的 didSelectRowAt
+    ///（默认点按行为是标已读 + 进对方主页，按钮区与之互斥）；已互关时按钮换成
+    /// “已互关”灰文案、不可再点。
+    private let followActionStack: UIStackView = {
+        let stack = UIStackView()
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        stack.axis = .horizontal
+        stack.spacing = 10
+        stack.alignment = .center
+        stack.isHidden = true
+        return stack
+    }()
+
+    private lazy var followBackButton: UIButton = {
+        let button = UIButton(type: .system)
+        button.translatesAutoresizingMaskIntoConstraints = false
+        button.setTitle("回关", for: .normal)
+        button.titleLabel?.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 14, weight: .semibold))
+        button.titleLabel?.adjustsFontForContentSizeCategory = true
+        button.setTitleColor(BearyColors.bg, for: .normal)
+        button.backgroundColor = BearyColors.ink
+        button.layer.cornerRadius = 16
+        button.contentEdgeInsets = UIEdgeInsets(top: 6, left: 16, bottom: 6, right: 16)
+        button.addTarget(self, action: #selector(followBackTapped), for: .touchUpInside)
+        button.bearyAddPressFeedback()
+        return button
+    }()
+
+    private let followProcessedLabel: UILabel = {
+        let label = UILabel()
+        label.translatesAutoresizingMaskIntoConstraints = false
+        label.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 14))
+        label.adjustsFontForContentSizeCategory = true
+        label.textColor = BearyColors.gray
+        label.isHidden = true
+        return label
+    }()
+
+    private var followActionsTopConstraint: NSLayoutConstraint?
+    private var followActionsHeightConstraint: NSLayoutConstraint?
+    private var followBackHandler: (() -> Void)?
 
     /// 右下角 19 号类型角标（网页 .nt-kind：圆底 bg、1px line 边、11 号橙图标）。
     private let kindBadgeView: UIView = {
@@ -2725,6 +2904,14 @@ private class BearyNotificationCell: UITableViewCell {
         contentView.addSubview(chevronView)
         contentView.addSubview(separatorView)
         contentView.addSubview(nestedLineView)
+        // 好友申请卡动作区：贴 bodyStack 下方（头像/标题列左缘对齐），平时 0 高不占位。
+        followActionStack.addArrangedSubview(followBackButton)
+        followActionStack.addArrangedSubview(followProcessedLabel)
+        contentView.addSubview(followActionStack)
+        followActionsTopConstraint = followActionStack.topAnchor.constraint(equalTo: bodyStack.bottomAnchor, constant: 0)
+        followActionsHeightConstraint = followActionStack.heightAnchor.constraint(equalToConstant: 0)
+        followActionsTopConstraint?.isActive = true
+        followActionsHeightConstraint?.isActive = true
         // 行内边距 20/14 由 cell 自身承担（列宽已是满 600，见 contentView 注释；
         // 32 清单第 5 项：头像 x 与未读点/箭头右距统一 20，与网页 .nt-item 对齐）：
         // 顶层行头像 x=20、未读点右 -20、箭头右 -20；嵌套行在此基础上再缩进（见 configure）。
@@ -2770,6 +2957,9 @@ private class BearyNotificationCell: UITableViewCell {
             bodyStack.leadingAnchor.constraint(equalTo: avatarImageView.trailingAnchor, constant: 12),
             bodyStack.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 14),
             bodyStack.bottomAnchor.constraint(lessThanOrEqualTo: contentView.bottomAnchor, constant: -14),
+            followActionStack.leadingAnchor.constraint(equalTo: bodyStack.leadingAnchor),
+            followActionStack.trailingAnchor.constraint(lessThanOrEqualTo: contentView.trailingAnchor, constant: -20),
+            followActionStack.bottomAnchor.constraint(lessThanOrEqualTo: contentView.bottomAnchor, constant: -14),
             timeLabel.leadingAnchor.constraint(equalTo: bodyStack.trailingAnchor, constant: 12),
             timeLabel.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 19),
             unreadDotView.leadingAnchor.constraint(equalTo: timeLabel.trailingAnchor, constant: 12),
@@ -2841,6 +3031,8 @@ private class BearyNotificationCell: UITableViewCell {
         unreadBgLeadingConstraint?.constant = 0
         dotTrailingToContentConstraint?.isActive = true
         dotTrailingToChevronConstraint?.isActive = false
+        // 关注提醒卡动作区不得带到复用行。
+        hideFollowAction()
     }
 
     /// 取消在途头像加载并作废其回调：复用/换行时旧失败回调不得亮重试图标。
@@ -2922,6 +3114,7 @@ private class BearyNotificationCell: UITableViewCell {
     /// 未读底一律蓝 9%（网页 .nt-item.sys.unread，互动卡同样带 sys 类）。
     func configureAsCard(title: String, excerpt: String, timeMs: Int?, anyUnread: Bool, isSystem: Bool, expanded: Bool, highlight: Bool) {
         cancelAvatarLoad()
+        hideFollowAction()
         avatarRetryURL = nil
         avatarRetryActorName = ""
         avatarRetryButton.isHidden = true
@@ -2992,10 +3185,21 @@ private class BearyNotificationCell: UITableViewCell {
         if type == "mention" {
             return "@了你"
         }
+        // 好友第一期：关注提醒行文案（卡面标题即“XXX 关注了你”，回关按钮另见
+        // configureFollowCard）；私信行文案“发来一条私信”，摘要走 excerpt；
+        // 未知 type 仍回退回应文案，不编造新动词。
+        if type == "follow" {
+            return "关注了你"
+        }
+        if type == "dm" {
+            return "发来一条私信"
+        }
         return "给你的日记贴了小熊回应"
     }
 
     func configure(with item: NotificationItem, nested: Bool, highlight: Bool) {
+        // 复用行先清关注动作区；关注行由 VC 随后调 configureFollowCard 补上。
+        hideFollowAction()
         let itemType = item.type ?? ""
         let isSystemStyle = itemType == "system" || itemType == "letter"
         let isUnread = (item.read ?? true) == false
@@ -3065,6 +3269,10 @@ private class BearyNotificationCell: UITableViewCell {
                 kindIconName = "icon_at"
             } else if itemType == "emote" {
                 kindIconName = "icon_mood"
+            } else if itemType == "follow" {
+                kindIconName = "icon_user_add"
+            } else if itemType == "dm" {
+                kindIconName = "icon_mail"
             } else {
                 kindIconName = "icon_mood"
             }
@@ -3118,6 +3326,56 @@ private class BearyNotificationCell: UITableViewCell {
 
         excerptLabel.attributedText = BearyNotificationCell.lineHeightText(item.excerpt ?? "", font: BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 14)), color: BearyColors.gray)
         timeLabel.text = BearyNotificationCell.timeText(ms: item.createdAt)
+    }
+
+    /// 好友第一期：关注提醒卡动作区状态（VC 按关注方 id 持有，不随 cell 复用丢失）。
+    enum FollowCardState {
+        /// state 接口在途：按钮禁用防重复发。
+        case loading
+        /// 未回关：回关钮可点。
+        case canFollowBack
+        /// 已互关：按钮换成“已互关”灰文案、不可再点。
+        case mutual
+        /// 回关请求在途：按钮禁用防重复发。
+        case busy
+    }
+
+    /// 关注提醒卡动作区：base configure(with:) 已画好头像/名字/时间（verb“关注了你”），
+    /// 本函数只管动作区。loading/busy 时按钮禁用；canFollowBack 时回关钮可点；
+    /// mutual 时按钮换成“已互关”文案、不可再点。非关注行调用 hideFollowAction。
+    func configureFollowCard(state: FollowCardState, onFollowBack: @escaping () -> Void) {
+        followBackHandler = onFollowBack
+        followActionStack.isHidden = false
+        followActionsTopConstraint?.constant = 10
+        followActionsHeightConstraint?.isActive = false
+        switch state {
+        case .loading, .busy:
+            followBackButton.isHidden = false
+            followProcessedLabel.isHidden = true
+            followBackButton.isEnabled = false
+            followBackButton.alpha = 0.6
+        case .canFollowBack:
+            followBackButton.isHidden = false
+            followProcessedLabel.isHidden = true
+            followBackButton.isEnabled = true
+            followBackButton.alpha = 1
+        case .mutual:
+            followBackButton.isHidden = true
+            followProcessedLabel.isHidden = false
+            followProcessedLabel.text = "已互关"
+        }
+    }
+
+    func hideFollowAction() {
+        followBackHandler = nil
+        followActionStack.isHidden = true
+        followActionsTopConstraint?.constant = 0
+        followActionsHeightConstraint?.isActive = true
+        followProcessedLabel.isHidden = true
+    }
+
+    @objc private func followBackTapped() {
+        followBackHandler?()
     }
 }
 

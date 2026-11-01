@@ -519,7 +519,7 @@ final class BearyDetailViewController: UIViewController {
         view.backgroundColor = BearyColors.bg
         buildLayout()
         if entry.placeholder == true {
-            showPlaceholder()
+            showPlaceholder(friendsOnly: entry.isFriendsOnly)
         } else {
             renderAll()
         }
@@ -1086,12 +1086,14 @@ final class BearyDetailViewController: UIViewController {
 
     // MARK: - 渲染
 
-    private func showPlaceholder() {
+    private func showPlaceholder(friendsOnly: Bool = false) {
         // 私密占位：仅一句文案，不带标题／封面／时间／作者名；内容栈整藏。
         // 文案每次显式配齐：失败态（showFetchFailed）改过同一视图文案，复位防串味。
         // 副文案灰色多行居中（原 16pt 灰字 → 组件 12.5pt 灰色副文案，统一组件口径）；
         // 无插图、无动作钮（关闭重进即重试的约定不变）。
-        placeholderStateView.configure(kind: .empty, title: nil, subtitle: "该日记已设为私密", iconName: nil, actionTitle: nil)
+        // 好友第一期：服务端下发的仅好友占位（非好友/游客直链）显“该日记仅好友可见”；
+        // 拉黑/举报本地转占位不走本分支（调用方不传 friendsOnly，仍显私密句）。
+        placeholderStateView.configure(kind: .empty, title: nil, subtitle: friendsOnly ? "该日记仅好友可见" : "该日记已设为私密", iconName: nil, actionTitle: nil)
         setContentVisible(false)
         placeholderStateView.isHidden = false
     }
@@ -1269,7 +1271,7 @@ final class BearyDetailViewController: UIViewController {
             ephemeralExpiryTimer?.invalidate()
             ephemeralExpiryTimer = nil
             entry.placeholder = true
-            showPlaceholder()
+            showPlaceholder(friendsOnly: fetched.isFriendsOnly)
             return
         }
         // 按字段合并：先取服务端全量，再把在途字段写回本地值。
@@ -1611,7 +1613,7 @@ final class BearyDetailViewController: UIViewController {
             return
         }
         if quote.locked == true {
-            let placeholder = BearyQuoteGate.placeholderText(publishedAt: quote.publishedAt, locked: true)
+            let placeholder = BearyQuoteGate.placeholderTextForQuote(publishedAt: quote.publishedAt, locked: true, visibility: quote.visibility)
             quoteView.showGone(message: placeholder.main, iconName: "icon_lock", detail: placeholder.detail, sourceHandle: quote.authorHandle, sourceDateMs: quote.createdAt)
             quoteView.isHidden = false
             return
@@ -1619,7 +1621,7 @@ final class BearyDetailViewController: UIViewController {
         let content = quote.content ?? ""
         if content.isEmpty {
             if quote.isPublic == false {
-                let placeholder = BearyQuoteGate.placeholderText(publishedAt: quote.publishedAt, locked: false)
+                let placeholder = BearyQuoteGate.placeholderTextForQuote(publishedAt: quote.publishedAt, locked: false, visibility: quote.visibility)
                 quoteView.showGone(message: placeholder.main, iconName: "icon_lock", detail: placeholder.detail, sourceHandle: quote.authorHandle, sourceDateMs: quote.createdAt)
             } else {
                 quoteView.showGone(message: "引用的日记已删除", iconName: "icon_quote", sourceDeleted: true)
@@ -1628,7 +1630,7 @@ final class BearyDetailViewController: UIViewController {
             return
         }
         guard quoteIsMine || quote.isPublic == true else {
-            let placeholder = BearyQuoteGate.placeholderText(publishedAt: quote.publishedAt, locked: false)
+            let placeholder = BearyQuoteGate.placeholderTextForQuote(publishedAt: quote.publishedAt, locked: false, visibility: quote.visibility)
             quoteView.showGone(message: placeholder.main, iconName: "icon_lock", detail: placeholder.detail, sourceHandle: quote.authorHandle, sourceDateMs: quote.createdAt)
             quoteView.isHidden = false
             return

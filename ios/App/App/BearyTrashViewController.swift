@@ -978,7 +978,10 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate, UI
                 case .success(let resp):
                     // iCity：恢复回原可见性——服务端返回 published/isPublic 时按其分流，
                     // 均缺失时用通用文案，时间线重拉为准，不猜原态。
-                    if resp.published == 1 || resp.isPublic == true {
+                    // 好友第一期：visibility=friends 时显“仅好友”文案（恢复回仅好友）。
+                    if resp.visibility == "friends" {
+                        self.showToast(message: "已恢复为仅好友")
+                    } else if resp.published == 1 || resp.isPublic == true {
                         self.showToast(message: "已恢复为公开")
                     } else if resp.published == 0 || resp.isPublic == false {
                         self.showToast(message: "已恢复为私密")

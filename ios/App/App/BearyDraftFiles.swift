@@ -67,7 +67,7 @@ struct BearyDraft: Codable {
     /// 批 E 草稿位置（两段文本，无坐标；老草稿缺本键时按 nil 解码，位置行不显示）。
     var locationName: String? = nil
     var locationDistrict: String? = nil
-    /// 草稿可见性分段 index（0 私密 / 1 公开；老草稿缺本键时按 0 私密解码，
+    /// 草稿可见性分段 index（0 私密 / 1 公开 / 2 仅好友；老草稿缺本键时按 0 私密解码，
     /// 与编辑器每次默认私密 D4 口径一致）。
     var visibilitySegmentIndex: Int = 0
     /// 草稿限时态（顶栏三态循环的限时档；老草稿缺本键时按 false 解码，

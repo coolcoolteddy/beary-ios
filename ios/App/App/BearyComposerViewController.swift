@@ -221,6 +221,9 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     private var editMentionCleared = false
     /// iCity：新建编辑器可见性初值硬编码私密（false），不读 UserDefaults、不记住上次选择。
     private var selectedVisibilityPublished = false
+    /// 好友第一期：仅好友档（与 published/ephemeral 互斥三态之一；限时恒公开，
+    /// 故仅好友与限时互斥：仅好友切限时须先经公开档再计时，循环本身保证此顺序）。
+    private var selectedVisibilityFriends = false
     /// 顶栏三态循环的限时档：true 恒与 published=true 同行（限时即公开语义）；
     /// 切到私密或普通公开时即清掉，不残留（见 didTapVisibilityButton）。
     private var isEphemeral = false
@@ -297,6 +300,9 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         let temperature: Int?
         var quoteId: String?
         var published: Int
+        /// 好友第一期：新建三档（private/friends/public；限时恒 public）。
+        /// 快照拍定后 publishEntry 按它发，published 同步作旧版兼容（friends→0）。
+        var visibility: String
         let mentionedUserId: Int?
         let title: String?
         var ephemeral: Int?
@@ -321,6 +327,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             temperature: selectedTemperature,
             quoteId: (selectedQuote?.isDeleted == true) ? nil : selectedQuote?.entryId,
             published: selectedVisibilityPublished ? 1 : 0,
+            visibility: isEphemeral || selectedVisibilityPublished ? "public" : (selectedVisibilityFriends ? "friends" : "private"),
             mentionedUserId: selectedRecipient?.id,
             title: headlineForCreate,
             ephemeral: isEphemeral ? 1 : nil,
@@ -1119,7 +1126,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         visibilityButton.setImage(BearyIconImages.image(named: "icon_lock", pointSize: 24), for: .normal)
         visibilityButton.tintColor = BearyColors.ink
         visibilityButton.accessibilityLabel = "可见性"
-        visibilityButton.accessibilityHint = "点按切换私密、公开、限时"
+        visibilityButton.accessibilityHint = "点按切换私密、仅好友、公开、限时"
         visibilityButton.addTarget(self, action: #selector(didTapVisibilityButton), for: .touchUpInside)
         visibilityButton.bearyAddPressFeedback()
         visibilityButton.translatesAutoresizingMaskIntoConstraints = false
@@ -2169,17 +2176,22 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     }
 
     @objc private func didTapVisibilityButton() {
-        // 三态循环：私密 → 公开 → 限时 → 私密。限时态 = 公开 + 限时标记；
+        // 四态循环：私密 → 仅好友 → 公开 → 限时 → 私密。限时态 = 公开 + 限时标记；
+        // 仅好友与限时互斥：仅好友档先回公开档、再点才进限时（沿用“限时开强制公开”）；
         // 切到私密或普通公开时限时标记即清，不残留到下一篇普通篇。
         // （旧限时开关的“限时锁死公开钮”随开关删除而作废：循环本身已保证限时恒公开。）
-        if !selectedVisibilityPublished {
-            selectedVisibilityPublished = true
+        // 仅好友不是公开：切到仅好友不触发“一并公开”询问（门禁只认 published 档，见 didTapPublish）。
+        if isEphemeral {
+            selectedVisibilityPublished = false
+            selectedVisibilityFriends = false
             isEphemeral = false
-        } else if !isEphemeral {
+        } else if selectedVisibilityFriends {
+            selectedVisibilityFriends = false
+            selectedVisibilityPublished = true
+        } else if selectedVisibilityPublished {
             isEphemeral = true
         } else {
-            selectedVisibilityPublished = false
-            isEphemeral = false
+            selectedVisibilityFriends = true
         }
         refreshVisibilityButton()
         // 批 E：段位切换时位置行副行（公开后他人仅见区级）同步变，防滞后。
@@ -2191,7 +2203,8 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         }
     }
 
-    /// 顶栏可见性钮图标：锁＝私密、地球＝公开、限时＝官方 icon_limited
+    /// 顶栏可见性钮图标：锁＝私密、单人＝仅好友（官方 icon_user）、地球＝公开、
+    /// 限时＝官方 icon_limited
     /// （熊头 + 外围虚线环，#162 落位的 imageset，#272 删限时行时误删、
     /// 本支从 2bb7df9^ 原样恢复，不自绘、不改图形；纠正：不要 icon_clock）；
     /// 可用态只由发布冻结（refreshPublishingInputFreeze）管，本函数不动 isEnabled。
@@ -2199,6 +2212,9 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         if isEphemeral {
             visibilityButton.setImage(BearyIconImages.image(named: "icon_limited", pointSize: 24), for: .normal)
             visibilityButton.accessibilityValue = "限时"
+        } else if selectedVisibilityFriends {
+            visibilityButton.setImage(BearyIconImages.image(named: "icon_user", pointSize: 24), for: .normal)
+            visibilityButton.accessibilityValue = "仅好友"
         } else {
             let published = selectedVisibilityPublished
             visibilityButton.setImage(BearyIconImages.image(named: published ? "icon_globe" : "icon_lock", pointSize: 24), for: .normal)
@@ -5413,7 +5429,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             temperature: selectedTemperature,
             locationName: selectedLocation?.name,
             locationDistrict: selectedLocation?.district,
-            visibilitySegmentIndex: selectedVisibilityPublished ? 1 : 0,
+            visibilitySegmentIndex: selectedVisibilityFriends ? 2 : (selectedVisibilityPublished ? 1 : 0),
             ephemeralEnabled: isEditMode ? false : isEphemeral,
             recipientId: recipientUserId,
             recipientName: recipientNameValue,
@@ -5603,15 +5619,21 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     /// 草稿可见性恢复：index 与 selectedVisibilityPublished 同步写（发布
     /// 即读后者，只写 index 不动它仍会发出私密）；ephemeral=true 时恢复为
     /// 限时态（公开 + 限时标记），老草稿无限时键时缺省 false，走旧私密/公开态；
-    /// 非法 index 一律按私密兜底。restoreDraft 与 loadDraftFromBox 两路共用。
+    /// 好友第一期：index=2 恢复为仅好友档；非法 index 一律按私密兜底。restoreDraft 与 loadDraftFromBox 两路共用。
     /// （旧“限时开时钮锁死”口径随开关删除而作废：恢复后循环仍可点按。）
     private func restoreVisibility(index: Int, ephemeral: Bool = false) {
         if ephemeral {
             selectedVisibilityPublished = true
+            selectedVisibilityFriends = false
             isEphemeral = true
+        } else if index == 2 {
+            selectedVisibilityPublished = false
+            selectedVisibilityFriends = true
+            isEphemeral = false
         } else {
             let restoredIndex = index == 1 ? 1 : 0
             selectedVisibilityPublished = restoredIndex == 1
+            selectedVisibilityFriends = false
             isEphemeral = false
         }
         refreshVisibilityButton()
@@ -5822,6 +5844,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         // 112：空白新日记不得继承上一篇的可见性/限时态——编辑器每次
         // 默认私密、不记住上次选择。
         selectedVisibilityPublished = false
+        selectedVisibilityFriends = false
         isEphemeral = false
         refreshVisibilityButton()
         setQuotePanelOpen(false)
@@ -6094,10 +6117,12 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             }, onKeepPrivate: { [weak self] in
                 guard let self = self else { return }
                 self.selectedVisibilityPublished = false
+                self.selectedVisibilityFriends = false
                 self.isEphemeral = false
                 self.refreshVisibilityButton()
                 var gated = snapshot
                 gated.published = 0
+                gated.visibility = "private"
                 gated.ephemeral = nil
                 self.performPublish(snapshot: gated, generation: generation)
             })
@@ -6156,7 +6181,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         // 已删引用不传 quoteId：快照生成时已按“已删 → nil”定格（只剩 id 的
         // 引用服务端会拒，发布应按无引用走，展示态仍保留到发布成功清草稿为止）。
         let publishVisibility = snapshot.published
-        BearyAPI.shared.publishEntry(content: snapshot.content, images: snapshot.imageKeys, mood: snapshot.mood, weather: snapshot.weather, quoteId: snapshot.quoteId, published: publishVisibility, mentionedUserId: snapshot.mentionedUserId, title: snapshot.title, ephemeral: snapshot.ephemeral, clientReq: snapshot.clientReq, locationName: snapshot.locationName, locationDistrict: snapshot.locationDistrict, temperature: snapshot.temperature, liveVideos: snapshot.liveVideos.isEmpty ? nil : snapshot.liveVideos) { [weak self] result in
+        BearyAPI.shared.publishEntry(content: snapshot.content, images: snapshot.imageKeys, mood: snapshot.mood, weather: snapshot.weather, quoteId: snapshot.quoteId, published: publishVisibility, mentionedUserId: snapshot.mentionedUserId, title: snapshot.title, ephemeral: snapshot.ephemeral, clientReq: snapshot.clientReq, locationName: snapshot.locationName, locationDistrict: snapshot.locationDistrict, temperature: snapshot.temperature, liveVideos: snapshot.liveVideos.isEmpty ? nil : snapshot.liveVideos, visibility: snapshot.visibility) { [weak self] result in
             DispatchQueue.main.async {
                 guard let self = self, generation == self.publishGeneration else { return }
                 self.isPublishing = false
@@ -6178,7 +6203,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                         // 发布在途时此前未冻结（见 refreshPublishingInputFreeze），
                         // 在途改动会使 toast 与实际发出态相反；现可见性已随冻结
                         // 禁用，此处仍以发送值为准，双保险。
-                        self.showToastAfterClose(message: (publishVisibility == 1 ? "已发布 · 已公开" : "已发布 · 已设为私密"))
+                        self.showToastAfterClose(message: (snapshot.visibility == "friends" ? "已发布 · 仅好友可见" : (publishVisibility == 1 ? "已发布 · 已公开" : "已发布 · 已设为私密")))
                         BearyHaptics.publishSuccess()
                         BearySoundPlayer.play(.publishSuccess)
                         // B 修法：发布成功退场前先收起弹出框（无动画）。

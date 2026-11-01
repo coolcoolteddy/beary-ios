@@ -171,6 +171,14 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
 
     private var userButtons: [UIButton] = []
     private var rowUsers: [SearchUser] = []
+    /// 好友第一期（关注/回关模型）：搜索用户行紧凑版状态机（关注/已关注/
+    /// 回关/互关）。状态按行实时调 state 接口取（不靠缓存）；失败时行内钮
+    /// 保持“关注”占位但点按只 toast、不发请求（不把失败画成可关注的确定态，
+    /// 点按时若状态仍为空即提示加载中并重拉）。
+    private var followStates: [Int: BearyFollowState] = [:]
+    private var followStateLoadingIds: Set<Int> = []
+    private var followButtonUserIds: [UIButton: Int] = [:]
+    private var followButtonsByUserId: [Int: UIButton] = [:]
     private var entryButtons: [UIButton] = []
     private var rowEntryIds: [String] = []
     /// 5-20：行身份 -> 视图映射（同批动画按 key 查表，不按下标配对）。
@@ -261,6 +269,8 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         // 审计 P2-20：搜索页监听拉黑/举报即时清行并清 quoteCache。
         NotificationCenter.default.addObserver(self, selector: #selector(handleBlockedUserNotification(_:)), name: .bearyDidBlockUser, object: nil)
         NotificationCenter.default.addObserver(self, selector: #selector(handleReportedEntryNotification(_:)), name: .bearyDidReportEntry, object: nil)
+        // 好友第一期：别处回关/取关后，搜索行状态机同步重拉（不靠旧状态）。
+        NotificationCenter.default.addObserver(self, selector: #selector(handleFollowChangedNotification(_:)), name: .bearyFriendsChanged, object: nil)
         // 扫荡组 A：键盘弹起时给滚动区补底部留白（见 keyboardWillShow）。
         NotificationCenter.default.addObserver(self, selector: #selector(keyboardWillShow(_:)), name: UIResponder.keyboardWillShowNotification, object: nil)
         NotificationCenter.default.addObserver(self, selector: #selector(keyboardWillHide(_:)), name: UIResponder.keyboardWillHideNotification, object: nil)
@@ -435,6 +445,7 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         searchTimer?.invalidate()
         NotificationCenter.default.removeObserver(self, name: .bearyDidBlockUser, object: nil)
         NotificationCenter.default.removeObserver(self, name: .bearyDidReportEntry, object: nil)
+        NotificationCenter.default.removeObserver(self, name: .bearyFriendsChanged, object: nil)
         NotificationCenter.default.removeObserver(self, name: UIResponder.keyboardWillShowNotification, object: nil)
         NotificationCenter.default.removeObserver(self, name: UIResponder.keyboardWillHideNotification, object: nil)
     }
@@ -1569,6 +1580,10 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         usersSectionHeader = nil
         userButtons = []
         rowUsers = []
+        followButtonUserIds = [:]
+        followButtonsByUserId = [:]
+        followStates = [:]
+        followStateLoadingIds = []
         entryButtons = []
         rowEntryIds = []
         entryRowById = [:]
@@ -1986,6 +2001,38 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         row.addTarget(self, action: #selector(rowTouchDown(_:)), for: .touchDown)
         row.addTarget(self, action: #selector(rowTouchUp(_:)), for: [.touchUpInside, .touchUpOutside, .touchCancel])
         row.accessibilityLabel = displayName
+        // 好友第一期：紧凑版状态机钮（仅登录、非本人、未拉黑时出现；游客/本人/
+        // 拉黑无钮；按钮是行内独立 UIControl，点按不触发整行点按）。状态未到
+        // 前先画“关注”占位，点按时若状态仍为空只提示、不发请求。
+        if let myId = SessionManager.shared.currentUser?.id, let userId = user.id, userId != myId, !isBlockedForSearch(userId: userId) {
+            let followButton = UIButton(type: .system)
+            followButton.translatesAutoresizingMaskIntoConstraints = false
+            followButton.titleLabel?.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13, weight: .semibold))
+            followButton.titleLabel?.adjustsFontForContentSizeCategory = true
+            followButton.setTitleColor(BearyColors.ink, for: .normal)
+            followButton.tintColor = BearyColors.ink
+            followButton.layer.cornerRadius = 14
+            followButton.layer.borderWidth = 1
+            followButton.layer.bearyDynamicBorderColor = BearyColors.line
+            followButton.contentEdgeInsets = UIEdgeInsets(top: 5, left: 12, bottom: 5, right: 12)
+            followButton.titleEdgeInsets = UIEdgeInsets(top: 0, left: 4, bottom: 0, right: 0)
+            followButton.addTarget(self, action: #selector(followButtonTapped(_:)), for: .touchUpInside)
+            followButton.bearyAddPressFeedback()
+            row.addSubview(followButton)
+            NSLayoutConstraint.activate([
+                followButton.centerYAnchor.constraint(equalTo: row.centerYAnchor),
+                followButton.trailingAnchor.constraint(equalTo: chevron.leadingAnchor, constant: -8),
+                followButton.heightAnchor.constraint(greaterThanOrEqualToConstant: 28),
+                nameLabel.trailingAnchor.constraint(lessThanOrEqualTo: followButton.leadingAnchor, constant: -8),
+                handleLabel.trailingAnchor.constraint(lessThanOrEqualTo: followButton.leadingAnchor, constant: -8),
+            ])
+            followButtonUserIds[followButton] = userId
+            followButtonsByUserId[userId] = followButton
+            applyFollowButtonState(followButton, userId: userId)
+            if followStates[userId] == nil {
+                loadFollowState(userId: userId)
+            }
+        }
         userButtons.append(row)
         rowUsers.append(user)
         if let key = userKey(for: user) {
@@ -2082,8 +2129,9 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
 
         if isMineGroup {
             // 2-3：私密行只留 pill，不再拼“· 未公开”文字（双重状态文案已删）。
+            // 好友第一期：仅好友篇在我的组里同样只留 pill，文案“仅好友”、蓝档不变。
             metaStack.addArrangedSubview(dateLabel)
-            metaStack.addArrangedSubview(makePrivatePill())
+            metaStack.addArrangedSubview(makePrivatePill(friendsOnly: entry.isFriendsOnly))
         } else {
             let authorLabel = BearyRoundedMarkLabel()
             authorLabel.translatesAutoresizingMaskIntoConstraints = false
@@ -2156,13 +2204,14 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
     /// padding 2.5/9、锁图标 12、gap 4。圆角注（2-3 注释与代码对齐）：
     /// 实测高约 19（11.5 字 + 上下 2.5），圆角 11 已超半高 9.5，视觉近似 pill，
     /// 故代码保持 11、只改注释，不写 999。11.5 属装饰性小字，不走 Dynamic Type（8-3 豁免）。
-    private func makePrivatePill() -> UIView {
+    private func makePrivatePill(friendsOnly: Bool = false) -> UIView {
         let pill = UIView()
         pill.translatesAutoresizingMaskIntoConstraints = false
         pill.backgroundColor = BearyColors.alpha(BearyColors.blue, 0.13)
         pill.layer.cornerRadius = 11
         pill.layer.masksToBounds = true
-        let lock = UIImageView(image: BearyIconImages.image(named: "icon_lock", pointSize: 12))
+        // 好友第一期：仅好友 pill 沿用私密档的蓝（不新发明颜色），只换图标与文案。
+        let lock = UIImageView(image: BearyIconImages.image(named: friendsOnly ? "icon_user" : "icon_lock", pointSize: 12))
         lock.translatesAutoresizingMaskIntoConstraints = false
         lock.tintColor = BearyColors.blue
         lock.contentMode = .scaleAspectFit
@@ -2170,7 +2219,7 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         label.translatesAutoresizingMaskIntoConstraints = false
         label.font = UIFont.systemFont(ofSize: 11.5, weight: .semibold)
         label.textColor = BearyColors.blue
-        label.text = "私密"
+        label.text = friendsOnly ? "仅好友" : "私密"
         pill.addSubview(lock)
         pill.addSubview(label)
         NSLayoutConstraint.activate([
@@ -2201,6 +2250,113 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
                 }
                 onOpenUserHandler(user)
                 return
+            }
+        }
+    }
+
+    // MARK: - 好友第一期：搜索用户行紧凑版状态机（关注/回关模型）
+
+    @objc private func handleFollowChangedNotification(_ note: Notification) {
+        // 别处回关/取关后，当前结果行的状态缓存作废、按行重拉（不靠旧状态）。
+        followStates = [:]
+        refreshFollowButtons()
+    }
+
+    private func loadFollowState(userId: Int) {
+        guard SessionManager.shared.currentUser?.id != nil,
+              !followStateLoadingIds.contains(userId) else { return }
+        followStateLoadingIds.insert(userId)
+        BearyAPI.shared.fetchFollowState(userId: userId) { [weak self] result in
+            DispatchQueue.main.async {
+                guard let self = self else { return }
+                self.followStateLoadingIds.remove(userId)
+                if case .success(let state) = result {
+                    self.followStates[userId] = BearyFollowState(response: state)
+                    if let button = self.followButtonsByUserId[userId] {
+                        self.applyFollowButtonState(button, userId: userId)
+                    }
+                }
+                // 失败时状态保持缺失：按钮仍是“关注”占位，点按只提示并重拉，
+                // 不把失败画成确定态。
+            }
+        }
+    }
+
+    private func refreshFollowButtons() {
+        for (button, userId) in followButtonUserIds {
+            applyFollowButtonState(button, userId: userId)
+            if followStates[userId] == nil {
+                loadFollowState(userId: userId)
+            }
+        }
+    }
+
+    private func applyFollowButtonState(_ button: UIButton, userId: Int) {
+        let state = followStates[userId] ?? .none
+        switch state {
+        case .none:
+            button.setImage(BearyIconImages.image(named: "icon_user_add", pointSize: 13), for: .normal)
+            button.setTitle("关注", for: .normal)
+            button.accessibilityLabel = "关注"
+            button.isEnabled = true
+            button.alpha = 1
+        case .following:
+            button.setImage(nil, for: .normal)
+            button.setTitle("已关注", for: .normal)
+            button.accessibilityLabel = "已关注，点按取关"
+            button.isEnabled = true
+            button.alpha = 1
+        case .followedBy:
+            button.setImage(BearyIconImages.image(named: "icon_user_add", pointSize: 13), for: .normal)
+            button.setTitle("回关", for: .normal)
+            button.accessibilityLabel = "回关"
+            button.isEnabled = true
+            button.alpha = 1
+        case .mutual:
+            button.setImage(BearyIconImages.image(named: "icon_user_check", pointSize: 13), for: .normal)
+            button.setTitle("互关", for: .normal)
+            button.accessibilityLabel = "互关，点按取关"
+            button.isEnabled = true
+            button.alpha = 1
+        }
+    }
+
+    @objc private func followButtonTapped(_ sender: UIButton) {
+        guard let userId = followButtonUserIds[sender] else { return }
+        guard let state = followStates[userId] else {
+            BearyToast.show(in: view, message: "关注状态加载中，稍后再试")
+            loadFollowState(userId: userId)
+            return
+        }
+        switch state {
+        case .none, .followedBy:
+            BearyAPI.shared.followFriend(userId: userId) { [weak self] result in
+                DispatchQueue.main.async {
+                    guard let self = self else { return }
+                    switch result {
+                    case .success:
+                        let wasFollowedBy = state == .followedBy
+                        self.followStates[userId] = wasFollowedBy ? .mutual : .following
+                        if wasFollowedBy {
+                            BearyFriends.clearDiaryCachesAndNotify()
+                        }
+                        if let button = self.followButtonsByUserId[userId] {
+                            self.applyFollowButtonState(button, userId: userId)
+                        }
+                        BearyToast.show(in: self.view, message: wasFollowedBy ? "已互关" : "已关注")
+                    case .failure:
+                        BearyToast.show(in: self.view, message: "关注失败，请重试")
+                    }
+                }
+            }
+        case .following, .mutual:
+            // 行内取关走二次确认（与好友列表页 ⋯ 菜单取关同口径，静默解除）。
+            BearyFriends.confirmUnfollow(from: self, displayName: "", userId: userId, mutual: state == .mutual) { [weak self] in
+                guard let self = self else { return }
+                self.followStates[userId] = state == .mutual ? .followedBy : .none
+                if let button = self.followButtonsByUserId[userId] {
+                    self.applyFollowButtonState(button, userId: userId)
+                }
             }
         }
     }

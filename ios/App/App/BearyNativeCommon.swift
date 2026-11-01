@@ -1224,7 +1224,7 @@ extension BearyAPI {
     /// 成功 201 返回 {id, publish_at, edit_deadline}；失败码：content required / content too long /
     /// invalid image ownership / image unavailable(409) / create_gap / create_day_limit /
     /// create_ip_limit(429) / create_dup。
-    func publishEntry(content: String, images: [String], mood: String?, weather: String? = nil, quoteId: String? = nil, published: Int? = nil, mentionedUserId: Int? = nil, title: String? = nil, ephemeral: Int? = nil, clientReq: String, locationName: String? = nil, locationDistrict: String? = nil, temperature: Int? = nil, liveVideos: [String: String]? = nil, completion: @escaping (Result<CreateResponse, APIError>) -> Void) {
+    func publishEntry(content: String, images: [String], mood: String?, weather: String? = nil, quoteId: String? = nil, published: Int? = nil, mentionedUserId: Int? = nil, title: String? = nil, ephemeral: Int? = nil, clientReq: String, locationName: String? = nil, locationDistrict: String? = nil, temperature: Int? = nil, liveVideos: [String: String]? = nil, visibility: String? = nil, completion: @escaping (Result<CreateResponse, APIError>) -> Void) {
         var body: [String: Any] = ["content": content, "images": images, "client_req": clientReq]
         // 实况：非空才发 live_videos（无实况的新建与旧版 body 一字相同）；
         // 空映射不发（新建无旧态可清，编辑清实况走 updateEntry 的显式空映射）。
@@ -1245,6 +1245,14 @@ extension BearyAPI {
         if let district = locationDistrict { body["location_district"] = district }
         if let q = quoteId { body["quote_id"] = q }
         if let p = published { body["published"] = p }
+        /// 好友第一期：visibility 显式发三档；发 friends 时 published 同步为 0
+        /// （后端 published 列同步口径：仅 public 为 1，旧版读到仅好友篇按私密处理）。
+        if let v = visibility {
+            body["visibility"] = v
+            if v == "friends" { body["published"] = 0 }
+            if v == "public" { body["published"] = 1 }
+            if v == "private" { body["published"] = 0 }
+        }
         if let e = ephemeral { body["ephemeral"] = e }
         if let mentioned = mentionedUserId { body["mentioned_user_id"] = mentioned }
         request("/beary/api/entries", method: "POST", jsonBody: body, completion: completion)
@@ -2522,6 +2530,16 @@ enum BearyQuoteGate {
 }
 
 extension BearyQuoteGate {
+    /// 好友第一期：仅好友来源占位（拟文案，待 Li 过目）——服务端在 locked 体里
+    /// 透传 visibility=friends 时，非好友 viewer 走本句；好友 viewer 服务端应直传
+    /// 全文而不走 locked，App 不凭本地好友关系反推（无 per-entry 好友判定接口）。
+    /// visibility 缺失/其他值时回落旧两档文案（fail-closed，不漏出）。
+    static func placeholderTextForQuote(publishedAt: Int?, locked: Bool, visibility: String?) -> (main: String, detail: String?) {
+        if visibility == "friends" {
+            return ("该日记仅好友可见", nil)
+        }
+        return placeholderText(publishedAt: publishedAt, locked: locked)
+    }
     /// 引用占位文案（2026-10-31 引用规则简化，旧“该日记已设为私密”作废）：
     /// published_at 非 nil 即曾公开 → “该日记已私密”＋提醒句；
     /// locked 体且 published_at 为 nil 即从未公开 → “该日记未公开”（不谎称已转私密）；
