@@ -1107,6 +1107,10 @@ class BearyProfileViewController: UIViewController {
     /// 词视图标题行自带年份，绝不把别年的词顶在当年名下。
     private let statsWordprintView = BearyWordprintView(mode: .compact)
     private var statsWordprintYear: Int?
+    /// 词汇指纹在途代次：renderStats 每调一次即 +1；过期回调（旧语料 /
+    /// 旧年份 / 旧账号）到达时凭此丢弃，绝不覆盖新结果。切号建新 VC 时
+    /// 实例本身即换，代次另由 statsWordprintYear 复核年份。
+    private var statsWordprintRequest = 0
     private let statsEnterRow: UIStackView = {
         let stackValue = UIStackView()
         stackValue.translatesAutoresizingMaskIntoConstraints = false
@@ -4042,20 +4046,39 @@ class BearyProfileViewController: UIViewController {
         // 紧凑版词汇指纹：当年 top 4；当年无词条目时取最近有词条目的年，
         // 年份由词视图标题行明示；当年有篇但无可计词时整节隐藏，不留空标题。
         // 口径与年报首屏同源：visible 已过滤，wordprint 内部再过滤一次。
+        // 不在此处同步算（NLTokenizer 逐篇分词会卡住个人页渲染）：先藏旧词
+        // ——旧年 / 旧号的词绝不在新年份名下多留一帧；缓存命中时下方同步
+        // 回填，无闪烁；未命中时后台算完回主线程一次性呈现。
         let currentYear = Calendar.current.component(.year, from: Date())
         let availableYears = BearyProfilePersonalLogic.availableYears(entries: visible, isOwn: isOwnProfile, calendar: .current)
         let resolvedYear = availableYears.contains(currentYear) ? currentYear : availableYears.first
         statsWordprintYear = resolvedYear
+        statsWordprintView.isHidden = true
         if let resolvedYear = resolvedYear {
-            let wordprintValue = BearyProfilePersonalLogic.wordprint(entries: visible, year: resolvedYear, isOwn: isOwnProfile, calendar: .current)
-            if wordprintValue.items.isEmpty {
-                statsWordprintView.isHidden = true
-            } else {
-                statsWordprintView.isHidden = false
-                statsWordprintView.configure(with: wordprintValue, scope: isOwnProfile ? .own : .other)
+            statsWordprintRequest += 1
+            let request = statsWordprintRequest
+            let accountKey = "profile:\(profile?.profileIdValue ?? targetUserIdValue ?? -1)"
+            BearyProfilePersonalLogic.wordprintAsync(
+                accountKey: accountKey,
+                entries: visible,
+                year: resolvedYear,
+                isOwn: isOwnProfile,
+                calendar: .current
+            ) { [weak self] wordprintValue in
+                guard let self = self,
+                      self.statsWordprintRequest == request,
+                      self.statsWordprintYear == wordprintValue.year else { return }
+                if wordprintValue.items.isEmpty {
+                    self.statsWordprintView.isHidden = true
+                } else {
+                    self.statsWordprintView.isHidden = false
+                    self.statsWordprintView.configure(with: wordprintValue, scope: self.isOwnProfile ? .own : .other)
+                    // 词行在脚部容器内：脚部高度在 renderModules 末尾已按
+                    // 无词行定死，词到后须重算脚部，否则新行被裁掉。
+                    // refreshFooter 不回调 renderModules，无递归。
+                    self.refreshFooter()
+                }
             }
-        } else {
-            statsWordprintView.isHidden = true
         }
     }
 
