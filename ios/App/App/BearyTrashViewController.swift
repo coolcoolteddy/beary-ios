@@ -13,7 +13,7 @@ import UIKit
 // 颜色一律走 BearyColors，不新增字面量颜色；不新增 UIGlassEffect；图标只走
 // BearyIconImages 与已有 icon_* 资产；无 force unwrap；无裸 id 变量名。
 
-final class BearyTrashViewController: UIViewController, UIScrollViewDelegate {
+final class BearyTrashViewController: UIViewController, UIScrollViewDelegate, UIGestureRecognizerDelegate {
 
     // MARK: - 对外 API（调用方按此接线，勿改名）
 
@@ -43,6 +43,13 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate {
     private var restoreEntries: [(button: UIButton, trashValue: TrashItem)] = []
     private var purgeEntries: [(button: UIButton, trashValue: TrashItem)] = []
     private var rowViewsByIdentifier: [String: UIView] = [:]
+    /// 真跟手左滑：当前正在被手指拖动的行（同一时刻只可能有一行在拖）；
+    /// 新一行开始拖时，上一行若还停在偏移处先瞬间复位，避免两行同偏。
+    private var trashDraggingRow: UIView?
+    /// 松手出菜单的左滑距离（卡片左移满此值才弹菜单，不满则弹回原位）。
+    private let trashDragMenuThreshold: CGFloat = 60
+    /// 手指跟手的最大左移量（再往左拖也不跟，防卡片被拖出屏）。
+    private let trashDragMaxOffset: CGFloat = 140
     /// 列宽必需约束（宽 ≥821 取 600、宽 ≤820 取全宽减 32，值由 updateColumnWidth 在
     /// viewDidLayoutSubviews 里按 bounds 直接派生；设置页 #92 同款，不再走 @750 协商）。
     private var trashColWidthConstraint: NSLayoutConstraint?
@@ -770,20 +777,82 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate {
         ])
         restoreEntries.append((button: restoreButton, trashValue: trashValue))
         purgeEntries.append((button: purgeButton, trashValue: trashValue))
-        // C7：左滑复用按钮路径（恢复/彻底删除经下选后调已登记的按钮处理，
-        // 按钮本身保留；回收站为 stack 卡片、无 tableView 滑动 API，故左滑只
-        // 换触发方式，不新增执行逻辑；资格与按钮一致：全部回收站条目均可
-        // 恢复/彻底删除，仅 busy 守卫由按钮处理内把关）。
-        let swipe = UISwipeGestureRecognizer(target: self, action: #selector(trashCardSwiped(_:)))
-        swipe.direction = .left
-        rowView.addGestureRecognizer(swipe)
+        // 真跟手左滑（扫 bug 第 7 项）：回收站为 stack 卡片、无 tableView
+        // 滑动 API，故不用系统侧滑，改用每行一个 UIPanGestureRecognizer
+        // 做 1:1 跟手拖动——手指左移卡片即左移，松手够 60pt 出菜单、
+        // 不够弹回原位。菜单与恢复/彻底删除仍复用按钮路径（见
+        // presentTrashActionMenu），不新增执行逻辑；资格与按钮一致：
+        // 全部回收站条目均可恢复/彻底删除，仅 busy 守卫由按钮处理内把关。
+        // 与上下滚动抢手势见 gestureRecognizerShouldBegin：横滑才接管，
+        // 竖滑与滚动进行中一律放行给 scrollView（另见 scrollView 的
+        // pan 须等本手势失败才启动，避免滚动半途被横滑抢走）。
+        let drag = UIPanGestureRecognizer(target: self, action: #selector(trashCardDragged(_:)))
+        drag.delegate = self
+        rowView.addGestureRecognizer(drag)
+        scrollView.panGestureRecognizer.require(toFail: drag)
         return rowView
     }
 
-    @objc private func trashCardSwiped(_ sender: UISwipeGestureRecognizer) {
+    /// 手势仲裁：只有左横滑才让行拖动手势接管；竖滑（|vy| ≥ |vx|）
+    /// 与右滑放行给 scrollView；滚动进行中（拖动/减速）不抢，
+    /// 避免手指刚松开滚势未消时误触一行把它拖偏。
+    func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
+        guard gestureRecognizer is UIPanGestureRecognizer else { return true }
+        if scrollView.isDragging || scrollView.isDecelerating { return false }
+        let velocity = (gestureRecognizer as? UIPanGestureRecognizer)?.velocity(in: view) ?? .zero
+        return velocity.x < 0 && abs(velocity.x) > abs(velocity.y)
+    }
+
+    @objc private func trashCardDragged(_ sender: UIPanGestureRecognizer) {
         guard let rowView = sender.view,
               let identifier = rowViewsByIdentifier.first(where: { $0.value === rowView })?.key,
               trashItems.contains(where: { $0.entryIdentifier == identifier }) else { return }
+        switch sender.state {
+        case .began:
+            if let previous = trashDraggingRow, previous !== rowView {
+                previous.transform = .identity
+            }
+            trashDraggingRow = rowView
+            // 入场错峰动画若还在跑（transform/alpha 在途），先停掉它：
+            // 动画模型值本就是终值（alpha 1、transform identity），停动画
+            // 不会闪回，手指接管后 transform 只由拖动写。
+            rowView.layer.removeAllAnimations()
+        case .changed:
+            let translation = sender.translation(in: view).x
+            let offset = max(-trashDragMaxOffset, min(0, translation))
+            rowView.transform = CGAffineTransform(translationX: offset, y: 0)
+        case .ended:
+            trashDraggingRow = nil
+            let offset = rowView.transform.tx
+            if offset <= -trashDragMenuThreshold {
+                resetTrashDragRow(rowView)
+                presentTrashActionMenu(identifier: identifier, rowView: rowView)
+            } else {
+                resetTrashDragRow(rowView)
+            }
+        case .cancelled, .failed:
+            trashDraggingRow = nil
+            resetTrashDragRow(rowView)
+        default:
+            break
+        }
+    }
+
+    /// 拖动结束/取消后卡片归位：减动效直设，其余以弹簧弹回（只走 transform）。
+    private func resetTrashDragRow(_ rowView: UIView) {
+        if UIAccessibility.isReduceMotionEnabled {
+            rowView.transform = .identity
+            return
+        }
+        UIView.animate(withDuration: 0.3, delay: 0, usingSpringWithDamping: 0.7, initialSpringVelocity: 0, options: .curveEaseOut, animations: {
+            rowView.transform = .identity
+        }, completion: nil)
+    }
+
+    /// 左滑菜单本体（原 trashCardSwiped 的弹菜单段原样抽出，触发方式
+    /// 由“滑完才弹”改为“跟手拖动 + 松手够距才弹”，菜单内容与后续
+    /// 按钮路径一字不动）。
+    private func presentTrashActionMenu(identifier: String, rowView: UIView) {
         if presentedViewController != nil { return }
         let sheet = UIAlertController(title: nil, message: nil, preferredStyle: .actionSheet)
         sheet.addAction(UIAlertAction(title: "恢复", style: .default) { [weak self] _ in
@@ -924,6 +993,9 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate {
         guard let rowView = rowViewsByIdentifier[identifier] else {
             renderStateViews()
             return
+        }
+        if trashDraggingRow === rowView {
+            trashDraggingRow = nil
         }
         rowViewsByIdentifier[identifier] = nil
         let rowHeight = rowView.bounds.height
