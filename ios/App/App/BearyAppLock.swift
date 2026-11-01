@@ -8,7 +8,7 @@ import LocalAuthentication
 // 一直停在锁屏，没有“跳过”按钮。锁屏与遮罩都是窗口级覆盖层，盖在一切内容
 // 之上（包括 veil、modal、游客页），锁屏本身只放官方 logo 与解锁提示，
 // 不含任何用户内容（无头像、无数字、无标题、无日记）。
-// 遮罩：独立于锁开关（锁关了遮罩照样生效）。切后台时立即显示、回前台时
+// 遮罩：独立于锁开关（锁关了遮罩照样生效）。切后台时立即显示、回到 active 时
 // 无验证直接撤掉——只防切换器快照偷看，不改变“回前台不锁”的口径。
 // 开关默认关：用户在设置页“账号与安全”手动开启后，下一次冷启动才锁；
 // 开启/关闭操作本身都要先验一次生物识别（防已解锁手机被他人随手关掉）。
@@ -198,9 +198,15 @@ final class BearyAppLockManager {
     /// 触发点在 sceneWillResignActive（快照拍下之前的最早信号），
     /// sceneDidEnterBackground 再补一次（幂等），确保切换器快照里是遮罩。
     func installShield(on window: UIWindow) {
-        guard shieldOverlay == nil else {
-            window.bringSubviewToFront(shieldOverlay!)
-            return
+        if let existing = shieldOverlay {
+            if existing.window === window {
+                window.bringSubviewToFront(existing)
+                return
+            }
+            // 残留引用：旧遮罩已不在本窗口层级里（层级重建等）——丢掉重建，
+            // 避免“引用非空、屏上无遮罩、新遮罩又建不出来”的 stale 态。
+            existing.removeFromSuperview()
+            shieldOverlay = nil
         }
         let shield = UIView()
         shield.backgroundColor = BearyColors.bg
@@ -224,6 +230,9 @@ final class BearyAppLockManager {
     }
 
     /// 回前台时无验证直接撤掉（回前台不锁的口径不变；遮罩只防切换器偷看）。
+    /// 撤掉挂在两个点：sceneWillEnterForeground（真进后台再回来）与
+    /// sceneDidBecomeActive（下拉通知中心/控制中心、切换器点回本卡等只走
+    /// resignActive → becomeActive、根本不进后台的路）；后者缺了就会卡遮罩。
     func removeShield() {
         shieldOverlay?.removeFromSuperview()
         shieldOverlay = nil
