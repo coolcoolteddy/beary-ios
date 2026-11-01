@@ -1201,7 +1201,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         headlineField.typingAttributes = [.font: headlineFont, .foregroundColor: BearyColors.ink]
         headlinePlaceholderLabel.text = "给这篇日记起个标题（可选）"
         headlinePlaceholderLabel.font = headlineFont
-        headlinePlaceholderLabel.textColor = BearyColors.alpha(BearyColors.gray, 0.7)
+        headlinePlaceholderLabel.textColor = BearyColors.gray
         headlinePlaceholderLabel.isUserInteractionEnabled = false
         // 窄屏 5 项之 5：标题清除钮改官方 beary-ui icon_close（16pt，与位置
         // 清除钮同口径），不再混用 SF Symbol xmark.circle.fill——本文件内
