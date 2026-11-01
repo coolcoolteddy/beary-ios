@@ -3,6 +3,8 @@ import UIKit
 // ===== 居中 640 编辑器模态（宽 ≥821 的桌面式；对应网页编辑器 ≥821px 居中 640px）=====
 // 自定义 presentation：卡片宽 min(640, 容器宽 - 80)、高为 min(内容高, 80% 容器高)、居中；背景黑色 0.45 遮罩。
 // 卡片圆角 20、边框 1px line；阴影挂在容器里的独立阴影层上（presentedView 自身裁剪会裁掉自身阴影）。
+// 阴影口径（审计 E2 第 14 项，Li 本轮定夺统一、推翻此前“居中卡片保留自写值”的决定）：
+// 居中卡片不再自写 0.30/30/24，统一走轻薄单层 raised token（BearyShadow.applyRaised）。
 // 不做背景点击关闭：编辑器取消走自身取消流程（含草稿保留/丢弃），背景点击不得绕过它。
 // transitioningDelegate 是弱引用，调用方（SceneDelegate）必须强持有本对象直到 dismiss 完成。
 // 部署目标 iOS 15.0——只用闭包回调，不用 async/await。
@@ -31,6 +33,7 @@ private final class BearyCenteredPresentationController: UIPresentationControlle
 
     private let dimmingView = UIView()
     private let cardShadowView = UIView()
+    private var lastShadowBounds: CGRect = .zero
     var dimTapCloses = false
 
     @objc private func dimTapped() {
@@ -82,13 +85,11 @@ private final class BearyCenteredPresentationController: UIPresentationControlle
             dimmingView.addGestureRecognizer(UITapGestureRecognizer(target: self, action: #selector(dimTapped)))
         }
         // 阴影层挂在容器里、presentedView 下方：presentedView 自身 clipsToBounds 会裁掉
-        // 挂它身上的阴影，故阴影不能挂 presentedView。CSS 阴影 0 24 60 黑 30%，
-        // CALayer radius 取 CSS blur 一半即 30（与底 sheet 32→16 同口径）。
+        // 挂它身上的阴影，故阴影不能挂 presentedView；阴影在不裁剪的外层、
+        // 圆角裁剪由 presentedView 自身负责（见 applyCardChrome）。
+        // 审计 E2 第 14 项：统一走轻薄单层 raised token，不再自写数值。
         cardShadowView.backgroundColor = .clear
-        cardShadowView.layer.shadowColor = UIColor.black.cgColor
-        cardShadowView.layer.shadowOpacity = 0.30
-        cardShadowView.layer.shadowOffset = CGSize(width: 0, height: 24)
-        cardShadowView.layer.shadowRadius = 30
+        BearyShadow.applyRaised(to: cardShadowView.layer)
         container.addSubview(cardShadowView)
         if let coordinator = presentedViewController.transitionCoordinator {
             coordinator.animate(alongsideTransition: { _ in self.dimmingView.alpha = 1 }, completion: nil)
@@ -126,7 +127,11 @@ private final class BearyCenteredPresentationController: UIPresentationControlle
         presentedView.frame = frame
         applyCardChrome()
         cardShadowView.frame = frame
-        cardShadowView.layer.shadowPath = UIBezierPath(roundedRect: cardShadowView.bounds, cornerRadius: 20).cgPath
+        // 审计 E2 第 14 项：shadowPath 仅在尺寸变化时更新，不逐帧重算。
+        if cardShadowView.bounds != lastShadowBounds {
+            lastShadowBounds = cardShadowView.bounds
+            cardShadowView.layer.shadowPath = UIBezierPath(roundedRect: cardShadowView.bounds, cornerRadius: 20).cgPath
+        }
     }
 }
 

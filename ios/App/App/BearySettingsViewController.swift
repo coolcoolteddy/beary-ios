@@ -340,6 +340,15 @@ final class BearySettingsViewController: UIViewController {
     /// sessionsStack 已随之删除。退出其他设备钮仍留在设置页。
     private var sessionsLoadFailed = false
     private let logoutOthersButton = UIButton(type: .system)
+    /// 审计 E2 第 23 项：退出其他设备请求期的原入口忙碌图标（既有刷新图标，
+    /// 红 tint 贴合本钮红字；请求终结时停转隐藏，标题文案不动）。
+    private let logoutOthersSpinner: BearyRefreshIconView = {
+        let view = BearyRefreshIconView()
+        view.tintColor = BearyColors.red
+        return view
+    }()
+    /// 审计 E2 第 23 项：注销请求期的忙碌图标（既有刷新图标，灰 tint 贴合注销灰字）。
+    private let deleteSpinner = BearyRefreshIconView()
 
     // C3：退出登录独立居中常规钮（#74 BearyButton 工厂 secondaryOutline 常规款，
     // 不另起样式）；导出行复用 exportRowButton（安全组内行，isEnabled 由导出流程控制）；
@@ -1036,8 +1045,14 @@ final class BearySettingsViewController: UIViewController {
         logoutOthersButton.layer.cornerRadius = 8
         logoutOthersButton.addTarget(self, action: #selector(logoutOthersButtonTapped), for: .touchUpInside)
         logoutOthersButton.bearyAddPressFeedback()
+        // 审计 E2 第 23 项：忙碌图标挂在原入口内右侧（不改标题、不改钮尺寸）。
+        logoutOthersButton.addSubview(logoutOthersSpinner)
         NSLayoutConstraint.activate([
             logoutOthersButton.heightAnchor.constraint(equalToConstant: 36),
+            logoutOthersSpinner.widthAnchor.constraint(equalToConstant: 20),
+            logoutOthersSpinner.heightAnchor.constraint(equalToConstant: 20),
+            logoutOthersSpinner.trailingAnchor.constraint(equalTo: logoutOthersButton.trailingAnchor, constant: -12),
+            logoutOthersSpinner.centerYAnchor.constraint(equalTo: logoutOthersButton.centerYAnchor),
         ])
         // 2026-10-31 冷启动生物识别锁：开关行（标题按设备生物识别走——
         // iPhone“面容识别解锁”、iPad“触控 ID 解锁”，绝不写死面容）。
@@ -1490,10 +1505,16 @@ final class BearySettingsViewController: UIViewController {
         let deleteRow = UIView()
         deleteRow.translatesAutoresizingMaskIntoConstraints = false
         deleteRow.addSubview(deleteRowButton)
+        // 审计 E2 第 23 项：忙碌图标挂在注销行内、原入口右侧（不改标题、不新增弹窗）。
+        deleteRow.addSubview(deleteSpinner)
         NSLayoutConstraint.activate([
             deleteRowButton.topAnchor.constraint(equalTo: deleteRow.topAnchor),
             deleteRowButton.centerXAnchor.constraint(equalTo: deleteRow.centerXAnchor),
             deleteRowButton.bottomAnchor.constraint(equalTo: deleteRow.bottomAnchor),
+            deleteSpinner.widthAnchor.constraint(equalToConstant: 20),
+            deleteSpinner.heightAnchor.constraint(equalToConstant: 20),
+            deleteSpinner.leadingAnchor.constraint(equalTo: deleteRowButton.trailingAnchor, constant: 8),
+            deleteSpinner.centerYAnchor.constraint(equalTo: deleteRowButton.centerYAnchor),
         ])
         let group = makeGroupCard(title: "账号操作", rows: [logoutRow, deleteRow])
         accountActionDeleteWrap = group.wrappers.count > 1 ? group.wrappers[1] : nil
@@ -1973,12 +1994,28 @@ final class BearySettingsViewController: UIViewController {
         present(alert, animated: BearyMotion.animated(true))
     }
 
+    /// 审计 E2 第 23 项：请求期原入口忙碌外观——钮禁用 + 半透明 + 既有
+    /// 加载图标旋转；终结时恢复。标题文案、成功失败提示与确认步骤不变。
+    private func setLogoutOthersBusy(_ busy: Bool) {
+        logoutOthersButton.isEnabled = !busy
+        logoutOthersButton.alpha = busy ? 0.6 : 1
+        if busy { logoutOthersSpinner.startSpinning() } else { logoutOthersSpinner.stopSpinning() }
+    }
+
+    private func setDeleteBusy(_ busy: Bool) {
+        deleteRowButton.isEnabled = !busy
+        deleteRowButton.alpha = busy ? 0.6 : 1
+        if busy { deleteSpinner.startSpinning() } else { deleteSpinner.stopSpinning() }
+    }
+
     private func confirmLogoutOthers() {
         isLoggingOutOthers = true
+        setLogoutOthersBusy(true)
         BearyAPI.shared.revokeOtherSessions { [weak self] result in
             DispatchQueue.main.async {
                 guard let self = self else { return }
                 self.isLoggingOutOthers = false
+                self.setLogoutOthersBusy(false)
                 switch result {
                 case .success:
                     self.showToast("已退出其他设备")
@@ -2022,6 +2059,7 @@ final class BearySettingsViewController: UIViewController {
 
     private func confirmDeleteAccount() {
         isDeleting = true
+        setDeleteBusy(true)
         BearyAPI.shared.requestAccountDelete { [weak self] result in
             DispatchQueue.main.async {
                 guard let self = self else { return }
@@ -2039,9 +2077,12 @@ final class BearySettingsViewController: UIViewController {
                     DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) { [weak self] in
                         self?.onAccountDeleted?()
                         self?.isDeleting = false
+                        // 忙碌态与 isDeleting 同窗口复位（1.2 秒内仍防重入）。
+                        self?.setDeleteBusy(false)
                     }
                 case .failure(let error):
                     self.isDeleting = false
+                    self.setDeleteBusy(false)
                     if case .unauthorized = error {
                         self.onRequireLogin?()
                         return

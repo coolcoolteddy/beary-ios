@@ -70,8 +70,12 @@ enum BearyMotion {
 /// 底 sheet（手机布局、Composer 底 sheet）0.22 / radius 16 / offset (0, -12)；
 /// 居中面板（iPad 宽 ≥821 的 440 居中形态）0.30 / radius 30 / offset (0, 24)。
 /// CALayer radius 取 CSS blur 一半（网页 60 → 30、32 → 16），不要照 CSS 值直写。
-/// 注意：BearyCenteredModal 的居中卡片阴影与 centered 组同值，但居中弹窗不在
-/// 本清理件范围，故仍保留自写值、未迁移至此；勿顺手合入。
+/// 注意（审计 E2 第 14 项，Li 本轮定夺、推翻此前保留决定）：BearyCenteredModal
+/// 的居中卡片不再走 centered 组、也不再自写 0.30/30/24，改走轻薄单层 raised
+/// token（BearyShadow.applyRaised，见 BearyCenteredModal）；居中卡片阴影
+/// 因此变轻变薄，属有意视觉变化。centered 组数值仍留给底 sheet 系调用点
+/// （Composer 底 sheet、草稿箱 sheet 等走 applyShadow(centered: true) 的面板），
+/// 不随本项改动。
 enum BearySheetChrome {
     static let topCornerRadius: CGFloat = 20
     static let grabberWidth: CGFloat = 40
@@ -2365,6 +2369,30 @@ enum BearyReportReason {
     static let all = ["违规内容", "刷量", "人身攻击", "spam", "其他"]
 }
 
+/// 审计 E2 第 23 项：确认后请求期的忙碌态。举报/拉黑的确认入口是 UIAlertAction，
+/// 点按后 sheet/alert 即消失、原按钮已不存在，无法在原按钮上挂 spinner；
+/// 故在发起页中央显示既有加载图标（BearyRefreshIconView，旋转、不拦截触摸），
+/// 请求终结（成功/失败）时移除；不新增弹窗、不改文案、成功失败提示与确认步骤不变。
+enum BearyFlowBusy {
+    static func show(in view: UIView) -> BearyRefreshIconView {
+        let spinner = BearyRefreshIconView()
+        view.addSubview(spinner)
+        NSLayoutConstraint.activate([
+            spinner.widthAnchor.constraint(equalToConstant: 20),
+            spinner.heightAnchor.constraint(equalToConstant: 20),
+            spinner.centerXAnchor.constraint(equalTo: view.centerXAnchor),
+            spinner.centerYAnchor.constraint(equalTo: view.centerYAnchor),
+        ])
+        spinner.startSpinning()
+        return spinner
+    }
+
+    static func hide(_ spinner: BearyRefreshIconView?) {
+        spinner?.stopSpinning()
+        spinner?.removeFromSuperview()
+    }
+}
+
 /// 举报流程（卡片菜单 / 他人主页“更多”共用）：理由单选 → 提交 → 服务端确认后
 /// 才消失（失败只 toast、不消失；重复举报同样按已举报处理并消失）。
 enum BearyReportFlow {
@@ -2381,8 +2409,10 @@ enum BearyReportFlow {
         let sheet = UIAlertController(title: title, message: "举报后这篇日记将从你的信息流消失，不可撤销。", preferredStyle: .actionSheet)
         for reason in BearyReportReason.all {
             sheet.addAction(UIAlertAction(title: reason, style: .default) { _ in
+                let busy = BearyFlowBusy.show(in: vc.view)
                 BearyAPI.shared.reportEntry(entryId: entryId, reason: reason) { result in
                     DispatchQueue.main.async {
+                        BearyFlowBusy.hide(busy)
                         switch result {
                         case .success(let resp):
                             BearyReportedStore.markReported(entryId: entryId)
@@ -2413,8 +2443,10 @@ enum BearyBlockFlow {
         let alert = UIAlertController(title: "拉黑\(name)？", message: "拉黑后将不再看到 TA 的日记，可在设置页「已拉黑用户」里解除。", preferredStyle: .alert)
         alert.addAction(UIAlertAction(title: "取消", style: .cancel, handler: nil))
         alert.addAction(UIAlertAction(title: "拉黑", style: .destructive) { _ in
+            let busy = BearyFlowBusy.show(in: vc.view)
             BearyAPI.shared.blockUser(userId: userId) { result in
                 DispatchQueue.main.async {
+                    BearyFlowBusy.hide(busy)
                     switch result {
                     case .success:
                         BearyBlockedStore.markBlocked(userId)

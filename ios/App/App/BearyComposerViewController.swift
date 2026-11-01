@@ -3033,8 +3033,9 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         )
         // v6-8：天气框首位补“无”（清除）选项，键为 "none"，图为官方 icon_close 原图
         //（见 weatherNoneImage；大小与其它天气图标一致 40pt、同色墨色模板）；心情框（40 项）不动。
-        // 选中态口径：弹出框既有实现对任何选项均无选中修饰（configure 只设图、不标选中），
-        // 故“无”选中时亦无修饰，不新发明——与已选天气在框内同样无修饰保持一致。
+        // 选中态口径（审计 E2 第 11 项）：已选天气在框内以 1pt 墨色描边标出
+        //（见 CalloutPicker refreshSelectedStates）；打开框时按当前 selectedWeather
+        // 同步；无天气时无行高亮。
         weatherCallout.configure(
             options: [BearyCalloutPickerView.Option(key: "none", accessibilityLabel: "无")] + weatherOrder.map { key in
                 BearyCalloutPickerView.Option(key: key, accessibilityLabel: "天气：" + (BearyText.weatherNames[key] ?? key))
@@ -3043,7 +3044,8 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             imageProvider: { [weak self] key, _ in
                 if key == "none" { return self?.weatherNoneImage() }
                 return BearyIconImages.image(named: "icon_wx_\(key)", pointSize: 40)
-            }
+            },
+            selectedKey: selectedWeather
         )
         // 收起层先加、框后加：框在收起层之上，框内点按不触发框外收起。
         view.addSubview(calloutDismissView)
@@ -3098,6 +3100,12 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         }
         calloutTransitionGeneration += 1
         activeCallout = kind
+        // 审计 E2 第 11 项补步：configure 只在搭建时调一次，编辑/草稿的天气
+        // 晚于搭建才落定，故每次打开天气框都按当前 selectedWeather 同步一次，
+        // 否则重开框或编辑带天气的草稿时选中态仍是旧的。
+        if kind == .weather {
+            weatherCallout.setSelectedKey(selectedWeather)
+        }
         let target = kind == .mood ? moodCallout : weatherCallout
         let other = kind == .mood ? weatherCallout : moodCallout
         other.isHidden = true
