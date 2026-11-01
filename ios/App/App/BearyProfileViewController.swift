@@ -5303,8 +5303,14 @@ class BearyProfileViewController: UIViewController {
         }
     }
 
-    /// 对账：同 id 且签名相同的卡保留旧对象（节点/折叠态不丢），其余用新数据；
+    /// 对账：同 id 且签名相同的卡保留旧对象，其余用新数据；
     /// 新卡按服务端顺序插入，已不在新数据里的旧卡摘除。
+    /// 审计第 6 项：旧签名缺位置、气温、标题、公开态、限时态、imgDims，
+    /// 后台回填后即使 reloadData，画的也是旧对象、看起来仍没变化。
+    /// 修法：签名与时间线第 5 项（#574）同口径、覆盖全部参与绘制的字段，
+    /// 任一展示字段变化即判为变化、用新数据；折叠态不由 Entry 携带，
+    /// 它存在独立的 expandedEntryIds（按日记 ID 记），setEntries 不动它，
+    /// 故取新数据不丢折叠态；个人页无其他按篇存的界面状态。
     private func reconcileEntries(fresh: [Entry]) {
         var oldById: [String: Entry] = [:]
         for entryValue in currentEntries {
@@ -5338,19 +5344,41 @@ class BearyProfileViewController: UIViewController {
         setEntries(entries: merged)
     }
 
+    /// 展示签名：与时间线第 5 项（#574）的 entrySignature 同口径，
+    /// 覆盖全部参与绘制的字段，不要另起一套；任一字段变化即判为变化。
     private func entrySignature(entryValue: Entry) -> String {
         let emotePart = (entryValue.emotes ?? []).map { "\($0.emote ?? ""):\($0.count ?? 0):\($0.mine ?? false)" }.joined(separator: ",")
         let imagePart = (entryValue.images ?? []).joined(separator: ",")
+        let dimsPart = (entryValue.imgDims ?? [:]).map { "\($0.key):\($0.value.map(String.init).joined(separator: "x"))" }.sorted().joined(separator: ",")
+        let livePart = (entryValue.liveVideos ?? [:]).map { "\($0.key)=\($0.value)" }.sorted().joined(separator: ",")
+        let quote = entryValue.quote
+        let quotePart = "\(entryValue.quoteId ?? "")|\(quote?.id ?? "")|\(quote?.content ?? "")|\(quote?.gone ?? false)|\(quote?.locked ?? false)|\(quote?.isPublic ?? false)"
         return [
             entryValue.content ?? "",
-            imagePart,
+            "\(entryValue.isPublic ?? false)",
             "\(entryValue.likeCount ?? 0)",
             "\(entryValue.likedByMe ?? false)",
             "\(entryValue.bookmarkedByMe ?? false)",
+            "\(entryValue.bookmarkCount ?? 0)",
             emotePart,
-            entryValue.mood ?? "",
+            entryValue.locationName ?? "",
+            entryValue.locationDistrict ?? "",
+            imagePart,
+            dimsPart,
+            livePart,
             entryValue.weather ?? "",
-            entryValue.quoteId ?? "",
+            entryValue.temperatureC.map(String.init) ?? "",
+            entryValue.mood ?? "",
+            entryValue.title ?? "",
+            quotePart,
+            entryValue.authorName ?? "",
+            entryValue.authorAvatar ?? "",
+            entryValue.authorBadge ?? "",
+            "\(entryValue.authorPlus ?? 0)",
+            entryValue.mentionedName ?? "",
+            "\(entryValue.createdAt ?? 0)",
+            "\(entryValue.publishedAt ?? 0)",
+            "\(entryValue.ephemeralUntil ?? 0)",
         ].joined(separator: "|")
     }
 
