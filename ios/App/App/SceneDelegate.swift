@@ -1069,8 +1069,14 @@ final class BearyChromeViewController: UIViewController {
         guard launchVeilView == nil else { return }
         let veil = UIView()
         veil.backgroundColor = BearyColors.bg
-        // 88 包 H4：veil 默认可交互会吞掉底栏/FAB/顶栏触摸直至兜底结束，关掉。
-        veil.isUserInteractionEnabled = false
+        // 启动 veil 穿透修复：veil 铺满全屏，旧口径 isUserInteractionEnabled = false
+        // （88 包 H4，为解决“挡住点击”而关掉）会让动画期间的点按穿透到底层
+        // FAB／底栏／列表——画面上还是启动动画，手指已能点中看不见的按钮，
+        // 可能误建日记或误触入口。故 veil 必须可交互以截住点按，但不能长期
+        // 拦截：点按即跳过（见 handleLaunchVeilTap），第一次点击只结束 veil，
+        // 不触发底层任何操作；veil 清掉后手势随视图移除，之后点按正常落到底层。
+        veil.isUserInteractionEnabled = true
+        veil.addGestureRecognizer(UITapGestureRecognizer(target: self, action: #selector(handleLaunchVeilTap)))
         veil.translatesAutoresizingMaskIntoConstraints = false
         view.addSubview(veil)
         NSLayoutConstraint.activate([
@@ -1241,6 +1247,20 @@ final class BearyChromeViewController: UIViewController {
         }
         launchVeilPlayTimeout = timeout
         DispatchQueue.main.asyncAfter(deadline: .now() + playDuration + 1.4, execute: timeout)
+    }
+
+    /// 启动 veil 点按跳过：第一次点击只结束 veil，绝不穿透到底层。
+    /// veil 可交互（见 installLaunchVeil），点按命中 veil 自身而非底层按钮；
+    /// 此处不直接 remove，而是走与自然播完／起播兜底同一条 reveal→remove
+    /// 解锁流程（0.4s 淡出、remove 时 homeEntry 只发一次、引导补触发），
+    /// 不另起一条跳过路径。揭开进行中再次点按由 reveal 的
+    /// launchVeilRevealing 守卫挡下（0.4s 淡出内点按仍被 veil 截住，不穿透）；
+    /// veil 清掉后手势随视图移除，之后点按正常落到底层。
+    /// 起播前点按（viewDidAppear 未到）同样走 reveal：remove 会取消两路兜底，
+    /// 且 launchVeilView 已空使后续 runLaunchVeilIfNeeded no-op，不会重播。
+    @objc private func handleLaunchVeilTap() {
+        guard let veil = launchVeilView else { return }
+        revealHomeWithLaunchVeil(veil: veil)
     }
 
     /// 审计第二阶段推荐 A：veil 原地淡出 0.4s＋主页首次揭开错峰。
