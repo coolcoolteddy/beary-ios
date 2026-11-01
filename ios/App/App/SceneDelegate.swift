@@ -56,6 +56,13 @@ class SceneDelegate: UIResponder, UIWindowSceneDelegate {
     // 反馈日志：前后台切换只记固定事件名（不含任何用户内容）。
     func sceneDidBecomeActive(_ scene: UIScene) {
         BearyAppLog.event("app foreground")
+        // 隐私遮罩卡住修法：只在 willEnterForeground 撤遮罩不够——下拉通知中心/
+        // 控制中心、系统权限弹框等只走 resignActive → becomeActive，根本不进后台，
+        // willEnterForeground 不触发，resignActive 时盖上的遮罩就永远撤不掉
+        // （遮罩拦截触摸，App 看似卡死在遮罩态）。回到 active 即撤遮罩：
+        // 真进后台再回来时 willEnterForeground 已先撤过，此处是幂等空操作；
+        // resignActive 时的盖遮罩不动，切换器快照保护不受影响。
+        BearyAppLockManager.shared.removeShield()
     }
 
     func sceneWillResignActive(_ scene: UIScene) {
