@@ -20,12 +20,12 @@ final class BearySubpageLayoutGuard {
     func resetForAppearance() { didEvaluate = false }
     /// 呈现完成时的再评估：先复位再跑，与 viewDidLayoutSubviews 的那次无关。
     @discardableResult
-    func applyAfterAppearance(page: String, view: UIView, topView: UIView?) -> Bool {
+    func applyAfterAppearance(page: String, view: UIView, topView: UIView?, contentViews: [UIView] = [], presentation: String? = nil) -> Bool {
         didEvaluate = false
-        return applyIfNeeded(page: page, view: view, topView: topView)
+        return applyIfNeeded(page: page, view: view, topView: topView, contentViews: contentViews, presentation: presentation)
     }
     @discardableResult
-    func applyIfNeeded(page: String, view: UIView, topView: UIView?) -> Bool {
+    func applyIfNeeded(page: String, view: UIView, topView: UIView?, contentViews: [UIView] = [], presentation: String? = nil) -> Bool {
         guard !didEvaluate, let window = view.window else { return false }
         let bounds = window.bounds
         guard bounds.width > 0, bounds.height > 0, view.bounds.width > 0 else { return false }
@@ -34,11 +34,20 @@ final class BearySubpageLayoutGuard {
             || abs(view.frame.width - bounds.width) > 0.5 || abs(view.frame.height - bounds.height) > 0.5
         let transformOff = !view.transform.isIdentity
         let topOff = topView.map { abs($0.frame.minY - view.safeAreaInsets.top) > 20 } ?? false
-        NSLog("[Diag] subpage-layout page=%@ view=%@ top=%@ safeArea=%@ frameOff=%@ transformOff=%@ topOff=%@",
+        // 118 真机教训：三项全通过仍可能坏——坏的是顶栏高度（顶栏顶正常、
+        // 高度吃掉全部可用高度、内容区高度归零），三项里没有一项量高度。
+        // 故日志必须记顶栏高度与内容区帧，一次定位到底是帧、位移、顶栏位置
+        // 还是顶栏高度/内容区高度问题；高度本身由约束上界治（见
+        // BearySubpageTopBarHeight），守卫只记不治，不再加一层通用守卫。
+        let topHeightOff = topView.map { $0.frame.height > BearySubpageTopBarHeight.max } ?? false
+        let contentFrames = contentViews.map { NSCoder.string(for: $0.frame) }.joined(separator: " | ")
+        NSLog("[Diag] subpage-layout page=%@ view=%@ top=%@ topH=%@ safeArea=%@ frameOff=%@ transformOff=%@ topOff=%@ topHeightOff=%@ content=[%@] presentation=%@",
               page, NSCoder.string(for: view.frame),
               topView.map { NSCoder.string(for: $0.frame) } ?? "nil",
+              topView.map { String(format: "%.1f", $0.frame.height) } ?? "nil",
               NSCoder.string(for: view.safeAreaInsets),
-              frameOff ? "Y" : "N", transformOff ? "Y" : "N", topOff ? "Y" : "N")
+              frameOff ? "Y" : "N", transformOff ? "Y" : "N", topOff ? "Y" : "N", topHeightOff ? "Y" : "N",
+              contentFrames, presentation ?? "nil")
         guard frameOff || transformOff || topOff else { return false }
         if frameOff { view.frame = bounds }
         if transformOff { view.transform = .identity }
@@ -46,6 +55,39 @@ final class BearySubpageLayoutGuard {
         view.layoutIfNeeded()
         NSLog("[Diag] subpage-layout-reset page=%@", page)
         return true
+    }
+}
+
+/// 子页顶栏高度上下界（公共路径修法，与设置主页同口径）。
+/// 根因（117/118 真机 + 截图像素实测）：子页顶栏此前只钉了高度下界（>= 52），
+/// 子视图约束又全是不等式（centerY + 上下 >= 6 / <= -6），高度没有任何上界；
+/// 顶栏底边经滚动区/正文区/列表链到页底，内容区（scrollView/textView/tableView）
+/// 又都没有固有高度——整条竖向链多出一个自由度。实测解算结果是顶栏吃掉全部
+/// 可用高度、内容区高度归零：诊断页顶栏顶 61pt（正常安全区顶）、高约 734pt，
+/// 操作行被顶到 817pt、正文区只剩约 1pt；隐私/协议/拉黑三页顶栏高约 780pt、
+/// 内容区约 0pt；设备页（滚动区底钉 view.bottom）顶栏高约 814pt、滚动区约 0pt。
+/// 此时守卫三项全通过：view.frame == 窗口 bounds、transform 是单位阵、顶栏 minY
+/// == 安全区顶——坏的是顶栏高度，三项里没有一项量它；重布局也只会把同一套
+/// 约束再解出同一个结果，所以 #535 的呈现完成再校兜不住。
+/// 修法：与设置主页（>= 52 且 <= 88）同口径给顶栏加上界；88 内仍有余量，
+/// 大字号下顶栏可长到 88，内容区永远有高度，坏状态直接不在可行解里。
+/// 全量审计（以 BearySettingsViewController 全部呈现点为准，补查结论）：
+/// 本支 5 处改动实际覆盖 8 页——壳子页（会员来源明细、登录设备，子类调
+/// super.viewDidLoad 故同走壳顶栏）、法律页（隐私政策、用户协议）、诊断日志、
+/// 已拉黑用户、反馈与改进；原先只报“5 处”是代码落点数，不是页数。
+/// 刻意排除、经逐页核实不存在无界顶栏、不动的页：功能许愿墙（列表页与发起页
+/// 顶栏均钉死 == 52，无拉伸自由度）；编辑资料页（无独立顶栏，关闭/标题/保存
+/// 是内容栈内的横排 topRow，高度由 44pt 按钮固有高度决定）；添加账号登录页
+/// （栈式布局，关闭行 44、logo 行 28、字段 48、按钮 44 全部钉死高度）；使用指南
+/// （容器引导页，无顶栏视图）；系统弹窗与分享单（UIAlertController /
+/// UIActivityViewController，无自定义顶栏）。上述排除页若仍见标题落屏中、
+/// 正文全空，即非本机制，需凭新截图另查，不要再往本处加界。
+enum BearySubpageTopBarHeight {
+    static let min: CGFloat = 52
+    static let max: CGFloat = 88
+    static func constraints(for topBar: UIView) -> [NSLayoutConstraint] {
+        [topBar.heightAnchor.constraint(greaterThanOrEqualToConstant: min),
+         topBar.heightAnchor.constraint(lessThanOrEqualToConstant: max)]
     }
 }
 
@@ -69,6 +111,8 @@ class BearySettingsSubpageViewController: UIViewController {
     /// 116 子页空白守卫：顶栏视图由 viewDidLoad 局部变量改为属性，供守卫读取 minY。
     private let subpageLayoutGuard = BearySubpageLayoutGuard()
     private var topBarView: UIView?
+    /// 滚动区同样提为属性，供守卫日志记滚动区帧与内容栈高度。
+    private let contentScrollView = UIScrollView()
 
     init(title: String) {
         self.pageTitle = title
@@ -108,21 +152,19 @@ class BearySettingsSubpageViewController: UIViewController {
         topBar.addSubview(titleLabel)
         view.addSubview(topBar)
         topBarView = topBar
-        let scrollView = UIScrollView()
-        scrollView.translatesAutoresizingMaskIntoConstraints = false
+        contentScrollView.translatesAutoresizingMaskIntoConstraints = false
         // 116 后扫查：与广场/个人页同口径——关掉 delaysContentTouches，滚动容器里的点按立即响应，不等滚动判定。
-        scrollView.delaysContentTouches = false
-        view.addSubview(scrollView)
+        contentScrollView.delaysContentTouches = false
+        view.addSubview(contentScrollView)
         contentStack.translatesAutoresizingMaskIntoConstraints = false
         contentStack.axis = .vertical
         contentStack.spacing = 20
         contentStack.alignment = .fill
-        scrollView.addSubview(contentStack)
+        contentScrollView.addSubview(contentStack)
         NSLayoutConstraint.activate([
             topBar.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
             topBar.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             topBar.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-            topBar.heightAnchor.constraint(greaterThanOrEqualToConstant: 52),
             closeButton.leadingAnchor.constraint(equalTo: topBar.leadingAnchor, constant: 16),
             closeButton.centerYAnchor.constraint(equalTo: topBar.centerYAnchor),
             titleLabel.centerXAnchor.constraint(equalTo: topBar.centerXAnchor),
@@ -131,16 +173,16 @@ class BearySettingsSubpageViewController: UIViewController {
             closeButton.bottomAnchor.constraint(lessThanOrEqualTo: topBar.bottomAnchor, constant: -6),
             titleLabel.topAnchor.constraint(greaterThanOrEqualTo: topBar.topAnchor, constant: 6),
             titleLabel.bottomAnchor.constraint(lessThanOrEqualTo: topBar.bottomAnchor, constant: -6),
-            scrollView.topAnchor.constraint(equalTo: topBar.bottomAnchor),
-            scrollView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
-            scrollView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-            scrollView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
-            contentStack.topAnchor.constraint(equalTo: scrollView.contentLayoutGuide.topAnchor, constant: 16),
-            contentStack.leadingAnchor.constraint(equalTo: scrollView.contentLayoutGuide.leadingAnchor, constant: 16),
-            contentStack.trailingAnchor.constraint(equalTo: scrollView.contentLayoutGuide.trailingAnchor, constant: -16),
-            contentStack.bottomAnchor.constraint(equalTo: scrollView.contentLayoutGuide.bottomAnchor, constant: -24),
-            contentStack.widthAnchor.constraint(equalTo: scrollView.frameLayoutGuide.widthAnchor, constant: -32),
-        ])
+            contentScrollView.topAnchor.constraint(equalTo: topBar.bottomAnchor),
+            contentScrollView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            contentScrollView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            contentScrollView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
+            contentStack.topAnchor.constraint(equalTo: contentScrollView.contentLayoutGuide.topAnchor, constant: 16),
+            contentStack.leadingAnchor.constraint(equalTo: contentScrollView.contentLayoutGuide.leadingAnchor, constant: 16),
+            contentStack.trailingAnchor.constraint(equalTo: contentScrollView.contentLayoutGuide.trailingAnchor, constant: -16),
+            contentStack.bottomAnchor.constraint(equalTo: contentScrollView.contentLayoutGuide.bottomAnchor, constant: -24),
+            contentStack.widthAnchor.constraint(equalTo: contentScrollView.frameLayoutGuide.widthAnchor, constant: -32),
+        ] + BearySubpageTopBarHeight.constraints(for: topBar))
     }
 
     @objc private func closeTapped() {
@@ -154,13 +196,13 @@ class BearySettingsSubpageViewController: UIViewController {
 
     override func viewDidLayoutSubviews() {
         super.viewDidLayoutSubviews()
-        subpageLayoutGuard.applyIfNeeded(page: pageTitle, view: view, topView: topBarView)
+        subpageLayoutGuard.applyIfNeeded(page: pageTitle, view: view, topView: topBarView, contentViews: [contentScrollView, contentStack], presentation: "fullScreen+fadeRise")
     }
 
     override func viewDidAppear(_ animated: Bool) {
         super.viewDidAppear(animated)
         // 117 终态偏离兜底：动画结束后的最终帧再校一次，不受首次布局那次限制。
-        subpageLayoutGuard.applyAfterAppearance(page: pageTitle, view: view, topView: topBarView)
+        subpageLayoutGuard.applyAfterAppearance(page: pageTitle, view: view, topView: topBarView, contentViews: [contentScrollView, contentStack], presentation: "fullScreen+fadeRise")
     }
 
     /// 审计第二波 4b 分诊结论：分组卡边框确认 stale——makeGroupCard 内

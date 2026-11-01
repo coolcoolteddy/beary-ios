@@ -302,13 +302,13 @@ final class BearyFeedbackViewController: UIViewController, UITextViewDelegate, P
 
     override func viewDidLayoutSubviews() {
         super.viewDidLayoutSubviews()
-        subpageLayoutGuard.applyIfNeeded(page: "反馈与改进", view: view, topView: topBarView)
+        subpageLayoutGuard.applyIfNeeded(page: "反馈与改进", view: view, topView: topBarView, contentViews: [scrollView, contentStack], presentation: "fullScreen+fadeRise")
     }
 
     override func viewDidAppear(_ animated: Bool) {
         super.viewDidAppear(animated)
         // 117 终态偏离兜底：动画结束后的最终帧再校一次。
-        subpageLayoutGuard.applyAfterAppearance(page: "反馈与改进", view: view, topView: topBarView)
+        subpageLayoutGuard.applyAfterAppearance(page: "反馈与改进", view: view, topView: topBarView, contentViews: [scrollView, contentStack], presentation: "fullScreen+fadeRise")
     }
 
     // MARK: - 顶栏（诊断页同款：52 高、左上文字关闭 15、标题 17 居中）
@@ -349,7 +349,6 @@ final class BearyFeedbackViewController: UIViewController, UITextViewDelegate, P
             topBar.leadingAnchor.constraint(greaterThanOrEqualTo: view.leadingAnchor, constant: 16),
             topBar.trailingAnchor.constraint(lessThanOrEqualTo: view.trailingAnchor, constant: -16),
             topBarWidthEquality,
-            topBar.heightAnchor.constraint(greaterThanOrEqualToConstant: 52),
             closeButton.leadingAnchor.constraint(equalTo: topBar.leadingAnchor, constant: 16),
             closeButton.centerYAnchor.constraint(equalTo: topBar.centerYAnchor),
             titleLabel.centerXAnchor.constraint(equalTo: topBar.centerXAnchor),
@@ -358,7 +357,7 @@ final class BearyFeedbackViewController: UIViewController, UITextViewDelegate, P
             closeButton.bottomAnchor.constraint(lessThanOrEqualTo: topBar.bottomAnchor, constant: -6),
             titleLabel.topAnchor.constraint(greaterThanOrEqualTo: topBar.topAnchor, constant: 6),
             titleLabel.bottomAnchor.constraint(lessThanOrEqualTo: topBar.bottomAnchor, constant: -6),
-        ])
+        ] + BearySubpageTopBarHeight.constraints(for: topBar))
 
         scrollView.translatesAutoresizingMaskIntoConstraints = false
         // 116 后扫查：与广场/个人页同口径——关掉 delaysContentTouches，滚动容器里的点按立即响应，不等滚动判定。
