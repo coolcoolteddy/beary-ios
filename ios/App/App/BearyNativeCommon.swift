@@ -1138,29 +1138,58 @@ extension BearyAPI {
     }
 }
 
-// MARK: - 图片压缩（与网页编辑器同口径：原图最长边 1600、JPEG .85；缩略图最长边 480）
+// MARK: - 图片压缩（与网页编辑器同口径：原图最长边 1600px、JPEG .85；缩略图最长边 480px）
 
 enum BearyImagePrep {
-    private static func resized(_ image: UIImage, maxSide: CGFloat) -> UIImage {
-        let w = image.size.width, h = image.size.height
-        let longest = max(w, h)
-        guard longest > maxSide, longest > 0 else { return image }
-        let scale = maxSide / longest
-        let size = CGSize(width: w * scale, height: h * scale)
-        let renderer = UIGraphicsImageRenderer(size: size)
-        return renderer.image { _ in image.draw(in: CGRect(origin: .zero, size: size)) }
+    /// 最终像素尺寸：优先读 cgImage（权威），无 cgImage 时按 size × scale 换算。
+    /// UIImage.size 是 pt，绝不能直接当像素用——那正是本处旧 bug 的根源。
+    private static func pixelSize(of image: UIImage) -> (width: Int, height: Int) {
+        if let cg = image.cgImage {
+            // cgImage 是原始像素方向：竖拍图的 cgImage 常为横置，
+            // 而 size / draw 是方向修正后的。左右向须换位，否则目标框
+            // 宽高算反、draw 进去会拉伸变形。
+            switch image.imageOrientation {
+            case .left, .leftMirrored, .right, .rightMirrored:
+                return (cg.height, cg.width)
+            default:
+                return (cg.width, cg.height)
+            }
+        }
+        let s = image.scale > 0 ? image.scale : 1
+        return (max(Int(round(image.size.width * s)), 1), max(Int(round(image.size.height * s)), 1))
     }
 
-    /// 返回 JPEG data 与压缩后宽高（像素数按原图比例换算，取整）。
+    /// 按像素缩放：maxSide 是像素长边。旧实现用 pt 算目标边、又不设
+    /// format.scale（默认 = 屏 scale），3× 机上 1600pt 会画成 4800px、
+    /// 480pt 缩略图画成 1440px；且输入图 scale ≠ 屏 scale 时还会反向失真
+    ///（如 1600pt×3 的图旧实现直接原样返回 4800px）。
+    /// 现一律按像素算目标边、取整到整像素、format.scale = 1 渲染，
+    /// 返回图的 cgImage 像素即目标像素。resized 只作编码中间态，
+    /// 调用方只取 data / w / h，不参与任何布局，故不改布局语义。
+    private static func resized(_ image: UIImage, maxSide: CGFloat) -> UIImage {
+        let src = pixelSize(of: image)
+        let longest = max(src.width, src.height)
+        guard longest > 0, CGFloat(longest) > maxSide else { return image }
+        let ratio = maxSide / CGFloat(longest)
+        let target = CGSize(width: max(1, round(CGFloat(src.width) * ratio)),
+                            height: max(1, round(CGFloat(src.height) * ratio)))
+        let format = UIGraphicsImageRendererFormat()
+        format.scale = 1
+        let renderer = UIGraphicsImageRenderer(size: target, format: format)
+        return renderer.image { _ in image.draw(in: CGRect(origin: .zero, size: target)) }
+    }
+
+    /// 返回 JPEG data 与最终像素宽高：宽高从最终图的 cgImage 像素读，
+    /// 与 JPEG 实际像素一致（旧实现按 pt 换算，上报 1600×1200 时实际是 4800×3600）。
     static func jpegData(_ image: UIImage, maxSide: CGFloat = 1600, quality: CGFloat = 0.85) -> (data: Data, w: Int, h: Int)? {
         let img = resized(image, maxSide: maxSide)
         guard let data = img.jpegData(compressionQuality: quality) else { return nil }
-        let scale = img.size.width > 0 ? (image.size.width / img.size.width) : 1
-        let w = Int(round(image.size.width / scale))
-        let h = Int(round(image.size.height / scale))
-        return (data, max(w, 1), max(h, 1))
+        let px = pixelSize(of: img)
+        return (data, px.width, px.height)
     }
 
+    /// 缩略图：与 jpegData 共用 resized 像素路径，480 即 480px，
+    /// 3× 机上不再生成 1440px。
     static func thumbData(_ image: UIImage, maxSide: CGFloat = 480) -> Data? {
         let img = resized(image, maxSide: maxSide)
         return img.jpegData(compressionQuality: 0.8)
