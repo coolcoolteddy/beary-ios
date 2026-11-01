@@ -214,7 +214,7 @@ final class BearyDraftBoxViewController: UIViewController {
 
         sheetView.backgroundColor = .clear
         sheetView.layer.cornerRadius = BearySheetChrome.topCornerRadius
-        sheetView.layer.shadowColor = UIColor.black.cgColor
+        // 阴影色与数值一律走 BearySheetChrome.applyShadow（见 applySheetChrome），此处不再自写。
         // 玻璃批：玻璃只钉在 sheetView 内部（index 0，在 scrollView 之下），
         // 玻璃自身圆角 20 + clipsToBounds；sheetView 本身不裁剪，阴影保留。
         sheetGlassView.layer.cornerRadius = BearySheetChrome.topCornerRadius
@@ -480,18 +480,12 @@ final class BearyDraftBoxViewController: UIViewController {
             sheetView.layer.maskedCorners = [.layerMinXMinYCorner, .layerMaxXMinYCorner, .layerMinXMaxYCorner, .layerMaxXMaxYCorner]
             sheetView.layer.borderWidth = 1
             sheetView.layer.bearyDynamicBorderColor = BearyColors.line
-            sheetView.layer.shadowOpacity = 0.30
-            // CALayer radius 取 CSS blur 一半（居中卡片与 SceneDelegate 底 sheet 同口径）：
-            // 网页 60 → 30、32 → 16，旧值 60/32 直写会把阴影晕得比网页大一倍。
-            sheetView.layer.shadowRadius = 30
-            sheetView.layer.shadowOffset = CGSize(width: 0, height: 24)
+            BearySheetChrome.applyShadow(to: sheetView.layer, centered: true)
             sheetScrollView.layer.maskedCorners = [.layerMinXMinYCorner, .layerMaxXMinYCorner, .layerMinXMaxYCorner, .layerMaxXMaxYCorner]
         } else {
             sheetView.layer.maskedCorners = [.layerMinXMinYCorner, .layerMaxXMinYCorner]
             sheetView.layer.borderWidth = 0
-            sheetView.layer.shadowOpacity = 0.22
-            sheetView.layer.shadowRadius = 16
-            sheetView.layer.shadowOffset = CGSize(width: 0, height: -12)
+            BearySheetChrome.applyShadow(to: sheetView.layer, centered: false)
             sheetScrollView.layer.maskedCorners = [.layerMinXMinYCorner, .layerMaxXMinYCorner]
         }
         // 玻璃批：玻璃圆角裁剪跟随 sheet（手机仅顶圆角 / iPad 四圆角），仍只裁玻璃。
