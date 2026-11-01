@@ -130,7 +130,7 @@ final class BearyDetailViewController: UIViewController {
     private let contentColumnView = UIView()
     /// 批 B 右列：首页卡片 rightStack 同款（spacing 0 + setCustomSpacing 对照表，
     /// 见 updateRightStackSpacing；顶距由 rightStackTopConstraint 动态定 22/23）。
-    private let rightStack = UIStackView()
+    private let rightStack = BearyPassThroughStackView()
     private var rightStackTopConstraint: NSLayoutConstraint?
     private var rightStackTrailingConstraint: NSLayoutConstraint?
     private let separatorView = UIView()
@@ -230,6 +230,20 @@ final class BearyDetailViewController: UIViewController {
         v.isHidden = true
         return v
     }()
+    /// 详情作者行气温（卡片同款口径：有后端 temperature_c 且有天气类型才显，
+    /// 无值隐藏、不留空位；详情此前只显天气图标、气温丢了，卡片/详情不一致）。
+    private let weatherTempLabel: UILabel = {
+        let lb = UILabel()
+        lb.translatesAutoresizingMaskIntoConstraints = false
+        lb.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13))
+        lb.adjustsFontForContentSizeCategory = true
+        lb.textColor = BearyColors.gray
+        lb.numberOfLines = 1
+        lb.isHidden = true
+        lb.setContentHuggingPriority(.required, for: .horizontal)
+        lb.setContentCompressionResistancePriority(.required, for: .horizontal)
+        return lb
+    }()
     private let moodLabel: UILabel = {
         let lb = UILabel()
         lb.translatesAutoresizingMaskIntoConstraints = false
@@ -250,7 +264,7 @@ final class BearyDetailViewController: UIViewController {
     }()
     private var moodEmoteView: BearyEmoteView?
     private lazy var authorRow: UIStackView = {
-        let st = UIStackView(arrangedSubviews: [nameButton, badgeImageView, crownWrapView, titleSpacerLabel, timeLabel, weatherImageView, moodStack])
+        let st = UIStackView(arrangedSubviews: [nameButton, badgeImageView, crownWrapView, titleSpacerLabel, timeLabel, weatherImageView, weatherTempLabel, moodStack])
         st.translatesAutoresizingMaskIntoConstraints = false
         st.axis = .horizontal
         st.spacing = 8
@@ -283,6 +297,7 @@ final class BearyDetailViewController: UIViewController {
         let sv = UIScrollView()
         sv.translatesAutoresizingMaskIntoConstraints = false
         sv.showsHorizontalScrollIndicator = false
+        sv.delaysContentTouches = false
         sv.isHidden = true
         return sv
     }()
@@ -302,6 +317,69 @@ final class BearyDetailViewController: UIViewController {
     /// 实况覆盖层与长按手势（卡片同款：平时隐藏、长按播实况、点按进灯箱不动）。
     private var imageSlotLiveViews: [BearyLivePhotoView] = []
     private var imageSlotLivePresses: [UILongPressGestureRecognizer?] = []
+
+    /// 图片条捏合拼图：双指捏合把间距 8 → 0、圆角 12 → 0（图贴在一起且无圆角），张开恢复 8 / 12。
+    /// 只动 imagesStack.spacing 与槽位圆角，不动槽宽/高，不缩放单张图；灯箱自带的
+    /// 单图捏合缩放不在此改动范围。滚动视图本身未开 zoom（min/max 均为 1），
+    /// 其内置捏合手势不会抢占本手势。
+    private var stripPinchStartProgress: CGFloat = 0
+    private var stripPinchJoined = false
+
+    private func installImageStripPinch() {
+        let pinch = UIPinchGestureRecognizer(target: self, action: #selector(imageStripPinched(_:)))
+        pinch.delegate = self
+        imagesScrollView.addGestureRecognizer(pinch)
+    }
+
+    /// 捏合跟手圆角：progress 0 → 圆角 12，progress 1（贴合）→ 圆角 0，与间距同一进度走，
+    /// 不在松手瞬间跳变；只改槽位图层圆角，不动其他圆角。
+    private func applyImageStripCornerRadius(progress: CGFloat) {
+        let radius = 12 * (1 - max(0, min(1, progress)))
+        for slot in imageSlots { slot.layer.cornerRadius = radius }
+    }
+
+    @objc private func imageStripPinched(_ gesture: UIPinchGestureRecognizer) {
+        // 单图时无间距可收，不接管手势（也不禁滚动）。
+        let visibleCount = imageSlots.filter { !$0.isHidden }.count
+        guard visibleCount >= 2 else { return }
+        switch gesture.state {
+        case .began:
+            // 以当前实际间距起算，防上一轮贴合动画中途被新一轮捏合打断时跳变。
+            stripPinchStartProgress = max(0, min(1, 1 - imagesStack.spacing / 8))
+            imagesScrollView.isScrollEnabled = false
+        case .changed:
+            // scale < 1 为捏合（progress 增大、间距收小），scale > 1 为张开（反向）；
+            // 从贴合态起手张开同样走这条式子，不会出现“贴合后张开无效”。
+            let progress = max(0, min(1, stripPinchStartProgress + (1 - gesture.scale)))
+            imagesStack.spacing = 8 * (1 - progress)
+            applyImageStripCornerRadius(progress: progress)
+            imagesScrollView.layoutIfNeeded()
+        case .ended, .cancelled, .failed:
+            imagesScrollView.isScrollEnabled = true
+            let progress = max(0, min(1, stripPinchStartProgress + (1 - gesture.scale)))
+            let wasJoined = stripPinchJoined
+            stripPinchJoined = progress >= 0.5
+            // 拼合/张开落点到位时各轻震一次：只在 .ended 且落点状态真的变化时震，
+            // 跟手过程、取消/失败、原地未变都不震；减动效时不震（系统触感开关由 UIKit 自身遵循）。
+            if gesture.state == .ended && wasJoined != stripPinchJoined && !UIAccessibility.isReduceMotionEnabled {
+                UIImpactFeedbackGenerator(style: .light).impactOccurred()
+            }
+            UIView.animate(withDuration: 0.25, animations: {
+                self.imagesStack.spacing = self.stripPinchJoined ? 0 : 8
+                self.applyImageStripCornerRadius(progress: self.stripPinchJoined ? 1 : 0)
+                self.imagesScrollView.layoutIfNeeded()
+            })
+        default:
+            break
+        }
+    }
+
+    private func resetImageStripPinch() {
+        stripPinchJoined = false
+        imagesStack.spacing = 8
+        applyImageStripCornerRadius(progress: 0)
+        imagesScrollView.isScrollEnabled = true
+    }
     /// 批 E 详情位置行：官方 icon_location 13 灰 + 位置文案，作者本人看自己公开篇时
     /// 下方挂橙色提示；无位置/他人视角无区级时整组隐藏，不留空行（与卡片同口径）。
     private let detailLocationIconView: UIImageView = {
@@ -315,7 +393,9 @@ final class BearyDetailViewController: UIViewController {
     private let detailLocationLabel: UILabel = {
         let lb = UILabel()
         lb.translatesAutoresizingMaskIntoConstraints = false
-        lb.font = UIFont.systemFont(ofSize: 13)
+        // 扫查组：此前裸 13pt，大字号下位置行不跟随；单行截断，栈高自适应。
+        lb.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13))
+        lb.adjustsFontForContentSizeCategory = true
         lb.textColor = BearyColors.gray
         lb.numberOfLines = 1
         lb.lineBreakMode = .byTruncatingTail
@@ -324,7 +404,9 @@ final class BearyDetailViewController: UIViewController {
     private let detailLocationNoteLabel: UILabel = {
         let lb = UILabel()
         lb.translatesAutoresizingMaskIntoConstraints = false
-        lb.font = UIFont.systemFont(ofSize: 12)
+        // 扫查组：此前裸 12pt，多行提示不跟随大字号。
+        lb.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 12))
+        lb.adjustsFontForContentSizeCategory = true
         lb.textColor = BearyColors.orange
         lb.numberOfLines = 0
         lb.isHidden = true
@@ -380,7 +462,9 @@ final class BearyDetailViewController: UIViewController {
     private let ephemeralLabel: UILabel = {
         let l = UILabel()
         l.translatesAutoresizingMaskIntoConstraints = false
-        l.font = UIFont.systemFont(ofSize: 12)
+        // 扫查组：此前裸 12pt，限时倒计时行不跟随大字号。
+        l.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 12))
+        l.adjustsFontForContentSizeCategory = true
         l.textColor = BearyColors.gray
         l.isHidden = true
         return l
@@ -502,9 +586,26 @@ final class BearyDetailViewController: UIViewController {
         }
     }
 
-    // 深浅切换：虚线边框视图内部自刷描边色（BearyDetailDashedBorderView
-    // traitCollectionDidChange），控制器不再手动重画；小地球图标走 template +
-    // 动态灰 tint，系统自动跟随，无需重设；心情播放器内部自带 trait 重刷。
+    /// 深浅切换：虚线边框视图内部自刷描边色（BearyDetailDashedBorderView
+    /// traitCollectionDidChange），控制器不再手动重画；小地球图标走 template +
+    /// 动态灰 tint，系统自动跟随，无需重设；心情播放器内部自带 trait 重刷。
+    /// 但正文内联心情附件的深浅变体仍需控制器重建：主题切换时正文末尾
+    /// 心情附件需换深浅变体，否则旧心情图停留在旧色貌。
+    // 深浅与字号档位变化合一（#435 与 #421 各加了一个同名 override，
+    // Swift 不允许多个，合为一个）：深浅变时重建正文内联心情附件的
+    // 深浅变体；字号档位变时赞数显式宽按新字号重算（refreshActionRow
+    // 按 live 字体算标题宽），否则大字号下数字被旧宽裁掉；正文/标题富文本
+    // 字号仍按卡片同款口径只在下次 configure 更新，不在此重排（会丢滚动位）。
+    override func traitCollectionDidChange(_ previousTraitCollection: UITraitCollection?) {
+        super.traitCollectionDidChange(previousTraitCollection)
+        if traitCollection.hasDifferentColorAppearance(comparedTo: previousTraitCollection) {
+            bodyLabel.attributedText = detailBodyAttributedText(entry.content ?? "", moodKey: entry.mood)
+        }
+        guard isViewLoaded else { return }
+        if previousTraitCollection?.preferredContentSizeCategory != traitCollection.preferredContentSizeCategory {
+            refreshActionRow()
+        }
+    }
 
     override func viewDidLayoutSubviews() {
         super.viewDidLayoutSubviews()
@@ -531,7 +632,9 @@ final class BearyDetailViewController: UIViewController {
     private func buildLayout() {
         // 顶栏：只剩左上文字“关闭”（15pt 墨字），右侧不放任何图标。
         closeButton.translatesAutoresizingMaskIntoConstraints = false
-        closeButton.titleLabel?.font = UIFont.systemFont(ofSize: 15)
+        // 扫查组：此前裸 15pt；顶栏钉高 52，走 cappedFont（与许愿墙顶栏同口径），不撑破顶栏。
+        closeButton.titleLabel?.font = BearyDynamicType.cappedFont(for: UIFont.systemFont(ofSize: 15))
+        closeButton.titleLabel?.adjustsFontForContentSizeCategory = true
         closeButton.setTitle("关闭", for: .normal)
         closeButton.setTitleColor(BearyColors.ink, for: .normal)
         closeButton.setTitleColor(BearyColors.ink, for: .highlighted)
@@ -542,6 +645,8 @@ final class BearyDetailViewController: UIViewController {
 
         scrollView.translatesAutoresizingMaskIntoConstraints = false
         scrollView.showsVerticalScrollIndicator = false
+        // 116 后扫查：与广场/个人页同口径——关掉 delaysContentTouches，滚动容器里的点按立即响应，不等滚动判定。
+        scrollView.delaysContentTouches = false
         view.addSubview(scrollView)
 
         contentColumnView.translatesAutoresizingMaskIntoConstraints = false
@@ -552,6 +657,8 @@ final class BearyDetailViewController: UIViewController {
         rightStack.spacing = 0
         rightStack.alignment = .fill
         rightStack.distribution = .fill
+        // 清单 18：中间栈透传回应行扩后热区（只认 emoteFlowView 内钮，其他行不动）。
+        rightStack.passThroughRoot = emoteFlowView
         contentColumnView.addSubview(rightStack)
 
         separatorView.translatesAutoresizingMaskIntoConstraints = false
@@ -825,6 +932,7 @@ final class BearyDetailViewController: UIViewController {
             imageSlotRetryButtons.append(retry)
             imageSlots.append(slot)
         }
+        installImageStripPinch()
     }
 
     /// 批 E 详情位置行（rebase 落点：新骨架右列 rightStack，引用卡之后、操作行之前；
@@ -855,6 +963,9 @@ final class BearyDetailViewController: UIViewController {
 
         likeButton.translatesAutoresizingMaskIntoConstraints = false
         likeButton.titleLabel?.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 14))
+        // 扫查组：此前 scaledFont 却缺 adjusts，档位变化时赞数字号不跟、
+        // 显式宽也不重算；补 adjusts，宽重算见 traitCollectionDidChange。
+        likeButton.titleLabel?.adjustsFontForContentSizeCategory = true
         likeButton.titleEdgeInsets = UIEdgeInsets(top: 0, left: 6, bottom: 0, right: 0)
         likeButton.adjustsImageWhenHighlighted = false
         likeButton.addTarget(self, action: #selector(likeTapped), for: .touchUpInside)
@@ -900,7 +1011,9 @@ final class BearyDetailViewController: UIViewController {
 
         // 游客提示条：与卡片游客展开态同文案，点按走登录提示；整行 44pt 可点。
         guestPromptButton.translatesAutoresizingMaskIntoConstraints = false
-        guestPromptButton.titleLabel?.font = UIFont.systemFont(ofSize: 15)
+        // 扫查组：此前裸 15pt；本行钉高 44，走 cappedFont，不撑破行高。
+        guestPromptButton.titleLabel?.font = BearyDynamicType.cappedFont(for: UIFont.systemFont(ofSize: 15))
+        guestPromptButton.titleLabel?.adjustsFontForContentSizeCategory = true
         guestPromptButton.setTitle("登录后可点赞、回应、收藏 ›", for: .normal)
         guestPromptButton.setTitleColor(BearyColors.gray, for: .normal)
         guestPromptButton.setTitleColor(BearyColors.gray, for: .highlighted)
@@ -1005,19 +1118,13 @@ final class BearyDetailViewController: UIViewController {
         // 审计 P2-12：标题行（卡片同款，空标题不占位；详情全文页放开换行，
         // 首页单行截断是唯一偏离，见文件头）。
         let trimmedTitle = (entry.title ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-        titleLabel.text = trimmedTitle.isEmpty ? nil : trimmedTitle
+        titleLabel.attributedText = trimmedTitle.isEmpty ? nil : BearyText.inlineAttributedText(from: trimmedTitle, font: BearyDynamicType.cardTitleFont(), color: BearyColors.ink, paragraphStyle: nil, dark: traitCollection.userInterfaceStyle == .dark)
         titleLabel.isHidden = trimmedTitle.isEmpty
 
         // 正文 16pt（diaryBodyFont 即 scaled 16），行高 1.6（首页卡片口径）。
-        let paragraph = NSMutableParagraphStyle()
-        paragraph.lineHeightMultiple = 1.6
-        paragraph.lineBreakMode = .byCharWrapping
-        bodyLabel.attributedText = NSAttributedString(string: entry.content ?? "", attributes: [
-            .font: BearyDynamicType.diaryBodyFont(),
-            .foregroundColor: BearyColors.ink,
-            .paragraphStyle: paragraph,
-        ])
-        bodyLabel.isHidden = (entry.content ?? "").isEmpty
+        // 旧心情改位：心情缀正文末尾（见 detailBodyAttributedText）。
+        bodyLabel.attributedText = detailBodyAttributedText(entry.content ?? "", moodKey: entry.mood)
+        bodyLabel.isHidden = (entry.content ?? "").isEmpty && (entry.mood ?? "").isEmpty
 
         renderImages()
         renderLocation()
@@ -1031,6 +1138,27 @@ final class BearyDetailViewController: UIViewController {
     /// 时间（绝对时间 M月d日 H:mm，小时不补零；详情不跟首页的相对时间口径，
     /// 见预览映射表）+ 天气 15 图标 + 心情（20 熊图 + 13 灰字）。
     /// 空项一律隐藏、不留空位；心情 key 不变时复用播放器（深浅由其内部切换）。
+    /// 旧日记心情改位：心情不再单独贴在作者行，改跟在正文最后一个字
+    /// 后面——用静态熊图附件直接缀在正文 attributed 串末尾（紧贴末字、
+    /// 无空格）；无心情时原样返回；正文为空且有心情时只显附件。
+    /// 深浅变体按当前 trait 取，主题切换时由 trait handler 重建正文。
+    private func detailBodyAttributedText(_ content: String, moodKey: String?) -> NSAttributedString {
+        let font = BearyDynamicType.diaryBodyFont()
+        let paragraph = NSMutableParagraphStyle()
+        paragraph.lineHeightMultiple = 1.6
+        paragraph.lineBreakMode = .byCharWrapping
+        // 内联心情：正文里的记号先转回熊脸附件（与编辑器同一中间层）。
+        let base = BearyText.inlineAttributedText(from: content, font: font, color: BearyColors.ink, paragraphStyle: paragraph, dark: traitCollection.userInterfaceStyle == .dark)
+        guard let key = moodKey, !key.isEmpty,
+              let image = BearyEmoteImages.image(for: key, dark: traitCollection.userInterfaceStyle == .dark) else { return base }
+        let attachment = NSTextAttachment()
+        attachment.image = image
+        attachment.bounds = CGRect(x: 0, y: font.descender, width: font.pointSize, height: font.pointSize)
+        let result = NSMutableAttributedString(attributedString: base)
+        result.append(NSAttributedString(attachment: attachment))
+        return result
+    }
+
     private func renderHeaderMeta() {
         let authorNameValue = entry.authorName ?? "beary 用户"
         nameButton.setTitle(authorNameValue, for: .normal)
@@ -1070,34 +1198,22 @@ final class BearyDetailViewController: UIViewController {
             weatherImageView.image = nil
             weatherImageView.isHidden = true
         }
-        if let moodKey = entry.mood, !moodKey.isEmpty, let moodName = BearyText.moodNames[moodKey] {
-            moodStack.isHidden = false
-            moodLabel.text = moodName
-            setMoodEmote(key: moodKey)
+        // 气温跟天气图标走同一处（卡片同款门：有气温且有天气类型才显）。
+        // #427 的气温显示保留；作者行心情位按 #421 新模型一律隐藏，
+        // 心情缀正文末尾（见 detailBodyAttributedText），不恢复旧心情位。
+        if let temp = entry.temperatureC, entry.weather != nil, !entry.weather!.isEmpty {
+            weatherTempLabel.text = "\(temp)°"
+            weatherTempLabel.isHidden = false
         } else {
-            moodStack.isHidden = true
-            moodLabel.text = nil
-            moodEmoteView?.removeFromSuperview()
-            moodEmoteView = nil
+            weatherTempLabel.text = nil
+            weatherTempLabel.isHidden = true
         }
+        moodStack.isHidden = true
+        moodLabel.text = nil
+        moodEmoteView?.removeFromSuperview()
+        moodEmoteView = nil
     }
 
-    private func setMoodEmote(key: String) {
-        if let current = moodEmoteView, current.emoteKey == key {
-            return
-        }
-        moodEmoteView?.removeFromSuperview()
-        let emoteView = BearyEmoteView(key: key, animated: false)
-        emoteView.translatesAutoresizingMaskIntoConstraints = false
-        moodStack.insertArrangedSubview(emoteView, at: 0)
-        let width = emoteView.widthAnchor.constraint(equalToConstant: 20)
-        width.priority = UILayoutPriority(999)
-        NSLayoutConstraint.activate([
-            width,
-            emoteView.heightAnchor.constraint(equalToConstant: 20),
-        ])
-        moodEmoteView = emoteView
-    }
 
     /// 2026-10-29 第 17 项：后台补齐入口——卡片点按即时呈现后，后台 fetch 回包调它。
     /// 只更新变化处（字段级比对，变了才刷对应区），不重建栈、不重播已有元素的
@@ -1109,6 +1225,43 @@ final class BearyDetailViewController: UIViewController {
     /// 仍是先行态，而非已被覆盖的服务端旧值。字段级比对以合并后模型为准，
     /// 在途字段天然与旧值相等、不会误刷对应区；私密占位切换（内容→占位）
     /// 不受在途保护限制，隐私优先。id 不符的回包直接忽略（防御）。
+    /// 116 数据填入动效：后台补齐导致文案变化时只淡入该元素本身
+    /// （alpha 0→1、0.25s，不动 transform／布局、不重建节点、不缩放
+    /// 弹一下）；减动效或未进窗口时直设终值。本函数只在 update(with:)
+    /// 的变化分支里调用——初始 renderAll（首帧）与点赞操作行（已有
+    /// 爆点／即时反馈）不走这里，避免首帧延迟与操作反馈冲突。
+    private func fadeLabel(_ label: UILabel?) {
+        guard let label = label else { return }
+        guard !UIAccessibility.isReduceMotionEnabled, label.window != nil else {
+            label.alpha = 1
+            return
+        }
+        label.alpha = 0
+        UIView.animate(withDuration: 0.25, delay: 0, options: [.curveEaseOut, .beginFromCurrentState], animations: {
+            label.alpha = 1
+        })
+    }
+
+    private func fadeButtonTitle(_ button: UIButton) {
+        guard !UIAccessibility.isReduceMotionEnabled, button.window != nil,
+              let titleLabel = button.titleLabel else { return }
+        titleLabel.alpha = 0
+        UIView.animate(withDuration: 0.25, delay: 0, options: [.curveEaseOut, .beginFromCurrentState], animations: {
+            titleLabel.alpha = 1
+        })
+    }
+
+    private func fadeView(_ view: UIView) {
+        guard !UIAccessibility.isReduceMotionEnabled, view.window != nil else {
+            view.alpha = 1
+            return
+        }
+        view.alpha = 0
+        UIView.animate(withDuration: 0.25, delay: 0, options: [.curveEaseOut, .beginFromCurrentState], animations: {
+            view.alpha = 1
+        })
+    }
+
     func update(with fetched: Entry) {
         // 审计 P2-20：页内已因拉黑/举报转占位时，后台补齐一律忽略，不得复活全文。
         if locallyHiddenByModeration { return }
@@ -1154,22 +1307,27 @@ final class BearyDetailViewController: UIViewController {
         placeholderStateView.isHidden = true
         if old.authorName != merged.authorName || old.createdAt != merged.createdAt || old.authorAvatar != merged.authorAvatar || old.authorBadge != merged.authorBadge || old.authorPlus != merged.authorPlus || old.mood != merged.mood || old.weather != merged.weather || old.mentionedName != merged.mentionedName || old.mentionedUserId != merged.mentionedUserId {
             renderHeaderMeta()
+            // 116：头信息文案变化时只淡入文案元素（头像图与徽章／天气／
+            // 心情图标为图片，到达即显，不在此淡入）。
+            fadeButtonTitle(nameButton)
+            fadeLabel(timeLabel)
+            fadeLabel(recipientLabel)
+            fadeLabel(moodLabel)
         }
         if old.title != merged.title {
             let trimmedTitle = (merged.title ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-            titleLabel.text = trimmedTitle.isEmpty ? nil : trimmedTitle
+            titleLabel.attributedText = trimmedTitle.isEmpty ? nil : BearyText.inlineAttributedText(from: trimmedTitle, font: BearyDynamicType.cardTitleFont(), color: BearyColors.ink, paragraphStyle: nil, dark: traitCollection.userInterfaceStyle == .dark)
             titleLabel.isHidden = trimmedTitle.isEmpty
+            if !trimmedTitle.isEmpty { fadeLabel(titleLabel) }
         }
-        if old.content != merged.content {
-            let paragraph = NSMutableParagraphStyle()
-            paragraph.lineHeightMultiple = 1.6
-            paragraph.lineBreakMode = .byCharWrapping
-            bodyLabel.attributedText = NSAttributedString(string: merged.content ?? "", attributes: [
-                .font: BearyDynamicType.diaryBodyFont(),
-                .foregroundColor: BearyColors.ink,
-                .paragraphStyle: paragraph,
-            ])
-            bodyLabel.isHidden = (merged.content ?? "").isEmpty
+        if old.content != merged.content || old.mood != merged.mood {
+            // 心情只变时也要重建正文，否则新心情附件缀不上旧正文；
+            // 必须走 detailBodyAttributedText（内联记号转图 + 旧心情缀末尾），
+            // 不能退回纯文本，否则记号原串会直接露出来。
+            bodyLabel.attributedText = detailBodyAttributedText(merged.content ?? "", moodKey: merged.mood)
+            bodyLabel.isHidden = (merged.content ?? "").isEmpty && (merged.mood ?? "").isEmpty
+            // 116：后台补齐文案变化时只淡入文案元素。
+            if !bodyLabel.isHidden { fadeLabel(bodyLabel) }
         }
         if (old.images ?? []) != (merged.images ?? []) {
             renderImages()
@@ -1182,6 +1340,8 @@ final class BearyDetailViewController: UIViewController {
         let newQuote = merged.quote
         if oldQuote?.id != newQuote?.id || oldQuote?.content != newQuote?.content || oldQuote?.gone != newQuote?.gone || oldQuote?.locked != newQuote?.locked || oldQuote?.isPublic != newQuote?.isPublic {
             renderQuote()
+            // 116：引用卡内容变化时只淡入卡片本身。
+            if !quoteView.isHidden { fadeView(quoteView) }
         }
         // 元组数组无 Equatable，逐项比对（nil 与空均视作无回应，渲染同态，不多刷）。
         // 在途字段已在合并时保留本地值，故此处比对天然跳过在途区，无需另设 busy 门控。
@@ -1319,6 +1479,7 @@ final class BearyDetailViewController: UIViewController {
     /// 槽位复用（上限 9 张；超 9 张只显前 9 张，旧详情纵向无上限，见 PR 说明）。
     /// 条内走 thumb 图（首页同款），点图进灯箱仍按原图 key 打开。
     private func renderImages() {
+        resetImageStripPinch()
         let allKeys = (entry.images ?? []).filter { !$0.isEmpty }
         imageKeys = allKeys
         let keys = Array(allKeys.prefix(9))
@@ -2218,7 +2379,8 @@ final class BearyDetailViewController: UIViewController {
         }
         guard !imageKeys.isEmpty, index >= 0, index < imageKeys.count else { return }
         if presentedViewController != nil { return }
-        let viewer = BearyEntryImageViewerViewController(imageKeys: imageKeys, liveVideos: entry.liveVideos, startIndex: index)
+let viewer = BearyEntryImageViewerViewController(imageKeys: imageKeys, liveVideos: entry.liveVideos, startIndex: index)
+        viewer.originFrameInWindow = sender.view.map { $0.convert($0.bounds, to: nil) }
         viewer.modalPresentationStyle = .fullScreen
         present(viewer, animated: BearyMotion.animated(true), completion: nil)
     }
@@ -2228,5 +2390,17 @@ final class BearyDetailViewController: UIViewController {
         // gone/locked 卡不导航；其余一律经容器先校验可见性再放行（私密显占位）。
         if quote.gone == true || quote.locked == true { return }
         onQuoteTapped?(quoteId)
+    }
+}
+
+extension BearyDetailViewController: UIGestureRecognizerDelegate {
+    func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldRecognizeSimultaneouslyWith otherGestureRecognizer: UIGestureRecognizer) -> Bool {
+        // 只放行本图片条捏合与条自身滚动平移的共存：捏合 began 即禁了条的
+        // 滚动，故自家平移本就滑不动；外层列表/详情页的竖滑若也放行，
+        // 两指捏合时手指稍带竖向漂移就会一边捏合一边滚页。先识别意图者胜：
+        // 捏合先成立则外层平移失败，竖滑先成立则捏合失败，不再双轨并行。
+        // 该 delegate 只挂在捏合手势上，不影响点赞、点图等其他手势。
+        return otherGestureRecognizer is UIPanGestureRecognizer
+            && otherGestureRecognizer.view === imagesScrollView
     }
 }

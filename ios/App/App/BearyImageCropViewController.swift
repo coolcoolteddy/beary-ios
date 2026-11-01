@@ -62,16 +62,19 @@ final class BearyImageCropViewController: UIViewController, UIScrollViewDelegate
         topBar.backgroundColor = UIColor.black
         cancelButton.setTitle("取消", for: .normal)
         cancelButton.setTitleColor(UIColor.white, for: .normal)
-        cancelButton.titleLabel?.font = UIFont.systemFont(ofSize: 16)
+        cancelButton.titleLabel?.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 16))
+        cancelButton.titleLabel?.adjustsFontForContentSizeCategory = true
         cancelButton.addTarget(self, action: #selector(self.didTapCancel), for: .touchUpInside)
         cancelButton.bearyAddPressFeedback()
         titleLabel.text = "裁剪"
-        titleLabel.font = UIFont.boldSystemFont(ofSize: 16)
+        titleLabel.font = BearyDynamicType.scaledFont(for: UIFont.boldSystemFont(ofSize: 16))
+        titleLabel.adjustsFontForContentSizeCategory = true
         titleLabel.textColor = UIColor.white
         titleLabel.textAlignment = .center
         confirmButton.setTitle("确认", for: .normal)
         confirmButton.setTitleColor(BearyColors.orange, for: .normal)
-        confirmButton.titleLabel?.font = UIFont.boldSystemFont(ofSize: 16)
+        confirmButton.titleLabel?.font = BearyDynamicType.scaledFont(for: UIFont.boldSystemFont(ofSize: 16))
+        confirmButton.titleLabel?.adjustsFontForContentSizeCategory = true
         confirmButton.addTarget(self, action: #selector(self.didTapConfirm), for: .touchUpInside)
         confirmButton.bearyAddPressFeedback()
         scrollView.delegate = self
@@ -81,7 +84,8 @@ final class BearyImageCropViewController: UIViewController, UIScrollViewDelegate
         imageView.image = sourceImage
         imageView.contentMode = .scaleAspectFit
         hintLabel.text = "双指缩放，拖动调整"
-        hintLabel.font = UIFont.systemFont(ofSize: 13)
+        hintLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13))
+        hintLabel.adjustsFontForContentSizeCategory = true
         hintLabel.textColor = UIColor.white.withAlphaComponent(0.7)
         hintLabel.textAlignment = .center
         cropBorderView.layer.borderWidth = 1
@@ -110,7 +114,14 @@ final class BearyImageCropViewController: UIViewController, UIScrollViewDelegate
             topBar.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
             topBar.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             topBar.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-            topBar.heightAnchor.constraint(equalToConstant: 44),
+            // 32 清单第 17 项：顶栏由 44 定高改 ≥44，标题/按钮跟随放大时栏随字长高、不裁字。
+            topBar.heightAnchor.constraint(greaterThanOrEqualToConstant: 44),
+            cancelButton.topAnchor.constraint(greaterThanOrEqualTo: topBar.topAnchor, constant: 6),
+            cancelButton.bottomAnchor.constraint(lessThanOrEqualTo: topBar.bottomAnchor, constant: -6),
+            titleLabel.topAnchor.constraint(greaterThanOrEqualTo: topBar.topAnchor, constant: 6),
+            titleLabel.bottomAnchor.constraint(lessThanOrEqualTo: topBar.bottomAnchor, constant: -6),
+            confirmButton.topAnchor.constraint(greaterThanOrEqualTo: topBar.topAnchor, constant: 6),
+            confirmButton.bottomAnchor.constraint(lessThanOrEqualTo: topBar.bottomAnchor, constant: -6),
             cancelButton.leadingAnchor.constraint(equalTo: topBar.leadingAnchor, constant: 16),
             cancelButton.centerYAnchor.constraint(equalTo: topBar.centerYAnchor),
             titleLabel.centerXAnchor.constraint(equalTo: topBar.centerXAnchor),
@@ -124,7 +135,7 @@ final class BearyImageCropViewController: UIViewController, UIScrollViewDelegate
             hintLabel.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             hintLabel.trailingAnchor.constraint(equalTo: view.trailingAnchor),
             hintLabel.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor, constant: -12),
-            hintLabel.heightAnchor.constraint(equalToConstant: 20),
+            hintLabel.heightAnchor.constraint(greaterThanOrEqualToConstant: 20),  // 32-17：提示跟随放大时行高随字长高，不裁字
         ])
     }
 
@@ -239,10 +250,26 @@ final class BearyImageCropViewController: UIViewController, UIScrollViewDelegate
     }
 
     @objc private func didTapConfirm() {
-        if let cropped = croppedImage() {
-            onConfirm?(cropped)
+        // 确认点按立即反馈：先改文案+禁用两钮（主线程只做这一件小事），
+        // 全尺寸重绘挪到后台做，界面不再卡一下才跳走；裁完回主线程再回调+关页。
+        guard let geometry = cropGeometry() else {
+            dismiss(animated: !UIAccessibility.isReduceMotionEnabled)
+            return
         }
-        dismiss(animated: !UIAccessibility.isReduceMotionEnabled)
+        confirmButton.isEnabled = false
+        cancelButton.isEnabled = false
+        confirmButton.setTitle("处理中…", for: .normal)
+        let source = sourceImage
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            let cropped = self?.cropWithGeometry(geometry, source: source)
+            DispatchQueue.main.async {
+                guard let strongSelf = self else { return }
+                if let cropped = cropped {
+                    strongSelf.onConfirm?(cropped)
+                }
+                strongSelf.dismiss(animated: !UIAccessibility.isReduceMotionEnabled)
+            }
+        }
     }
 
     @objc private func didTapCancel() {
@@ -252,20 +279,15 @@ final class BearyImageCropViewController: UIViewController, UIScrollViewDelegate
 
     /// 按窗裁：窗（view 坐标）→ 滚动区坐标 → 图视图坐标（convert 计入缩放变换）
     /// → 点坐标 → 像素坐标；先把原图方向归一化再裁，避免朝向图的像素坐标错位。
-    private func croppedImage() -> UIImage? {
+    /// 主线程快照裁剪几何：只做坐标换算，不碰像素重绘。
+    /// 归一化后图尺寸与原图一致（size/scale 不变），故像素框可先算好。
+    private func cropGeometry() -> (pixelRect: CGRect, scale: CGFloat)? {
         guard cropRect.width > 0 && cropRect.height > 0 else { return nil }
         guard imageView.bounds.width > 0 && imageView.bounds.height > 0 else { return nil }
         let rectInScroll = scrollView.convert(cropRect, from: view)
         let rectInImageView = imageView.convert(rectInScroll, from: scrollView)
-        // 方向归一化：按 size 重绘，原朝向 baked 进像素，cgImage 尺寸即 size×scale。
-        let format = UIGraphicsImageRendererFormat()
-        format.scale = sourceImage.scale
-        let normalized = UIGraphicsImageRenderer(size: sourceImage.size, format: format).image { _ in
-            self.sourceImage.draw(in: CGRect(origin: .zero, size: self.sourceImage.size))
-        }
-        guard let cgImage = normalized.cgImage else { return nil }
-        let scaleX = normalized.size.width / imageView.bounds.width
-        let scaleY = normalized.size.height / imageView.bounds.height
+        let scaleX = sourceImage.size.width / imageView.bounds.width
+        let scaleY = sourceImage.size.height / imageView.bounds.height
         var pixelRect = CGRect(
             x: rectInImageView.minX * scaleX,
             y: rectInImageView.minY * scaleY,
@@ -273,8 +295,21 @@ final class BearyImageCropViewController: UIViewController, UIScrollViewDelegate
             height: rectInImageView.height * scaleY
         )
         pixelRect = pixelRect.integral
-        pixelRect = pixelRect.intersection(CGRect(origin: .zero, size: normalized.size))
+        pixelRect = pixelRect.intersection(CGRect(origin: .zero, size: sourceImage.size))
         guard pixelRect.width > 0 && pixelRect.height > 0 else { return nil }
+        return (pixelRect, sourceImage.scale)
+    }
+
+    /// 后台裁剪：全尺寸方向归一化重绘 + 按像素裁（UIGraphicsImageRenderer
+    /// 可离主线程用；几何已在主线程快照，本函数不读任何 view 状态）。
+    private func cropWithGeometry(_ geometry: (pixelRect: CGRect, scale: CGFloat), source: UIImage) -> UIImage? {
+        let format = UIGraphicsImageRendererFormat()
+        format.scale = source.scale
+        let normalized = UIGraphicsImageRenderer(size: source.size, format: format).image { _ in
+            source.draw(in: CGRect(origin: .zero, size: source.size))
+        }
+        guard let cgImage = normalized.cgImage else { return nil }
+        let pixelRect = geometry.pixelRect
         // cgImage 按像素裁：点坐标须乘 scale（size 是 pt，cgImage 是像素）。
         let cgRect = CGRect(
             x: pixelRect.minX * normalized.scale,
