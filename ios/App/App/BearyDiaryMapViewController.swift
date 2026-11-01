@@ -358,7 +358,6 @@ final class BearyDiaryMapViewController: UIViewController, MKMapViewDelegate, UI
         tableView.reloadData()
 
     }
-（只按区级文本编，坐标只活本页内存）
 
     private func selectGroup(_ group: BearyLocationMapGroup) {
         selectedGroup = group
