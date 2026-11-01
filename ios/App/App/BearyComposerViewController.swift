@@ -520,6 +520,14 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     private enum CalloutKind { case mood, weather }
     private var activeCallout: CalloutKind?
     private var calloutTransitionGeneration = 0
+    /// 审计 1：浮层展示意图代次（与天气取数代次、转场代次分开）。
+    /// 天气钮点按时记下当次意图；点按定位/心情/写给/引用等其他工具、
+    /// 或另一次显式 showCallout 时 +1，旧意图即失效——天气回包仍按
+    /// weatherFetchGeneration 正常落数、正常 toast，只是末尾不再抢开天气框。
+    private var calloutPresentationGeneration = 0
+    private func invalidatePendingCalloutPresentation() {
+        calloutPresentationGeneration += 1
+    }
     private static let calloutTransitionDuration: TimeInterval = 0.20
     private static let calloutTransitionOffset: CGFloat = 6
     private static let calloutHeight: CGFloat = 78
@@ -1043,7 +1051,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         // v6-1：左侧“取消”文字 → plain X 叉叉：无文字、无圆圈外框、无底色，
         // icon_close 24pt 墨色（深色反白走 ink 动态色）、44pt 热区；VoiceOver 仍读“取消”。
         // 双态行为不变：引用面板打开时本钮是“返回”（只退面板），见 setQuotePanelOpen
-        // 改 accessibilityLabel、didTapCancel 仍按 quotePanelOpen 分支。
+        // 改图标为 icon_back 并改 accessibilityLabel、didTapCancel 仍按 quotePanelOpen 分支。
         cancelButton.setTitle(nil, for: .normal)
         cancelButton.setImage(BearyIconImages.image(named: "icon_close", pointSize: 24), for: .normal)
         cancelButton.tintColor = BearyColors.ink
@@ -2074,6 +2082,9 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             quotePanelSavedTitle = titleLabel.text
             titleLabel.text = "选择引用"
             // v6-1：取消钮已无文字，双态只改 VoiceOver 语义：面板打开时读“返回”，点它仍只退面板（didTapCancel 分支不变）。
+            // 审计 11：打开时图标同步换为项目现有 icon_back（24pt，与 buildTopBar 的
+            // 取消态同尺寸、同墨色 tint），位置、行为、文案均不变；退出时在关闭分支恢复 icon_close。
+            cancelButton.setImage(BearyIconImages.image(named: "icon_back", pointSize: 24), for: .normal)
             cancelButton.accessibilityLabel = "返回"
             publishButton.isHidden = true
             // 编辑器改版：引用面板打开时顶栏草稿 pill 随发布钮同藏（旧时工具栏整体藏，pill 在其中）；
@@ -2116,6 +2127,8 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                 self.toolbarContainer.isHidden = false
                 self.selectedChipsRow.isHidden = false
                 self.quoteSection.isHidden = false
+                // 审计 11：退出面板恢复取消态图标（与 buildTopBar 初值一致）。
+                self.cancelButton.setImage(BearyIconImages.image(named: "icon_close", pointSize: 24), for: .normal)
                 self.cancelButton.accessibilityLabel = "取消"
                 self.publishButton.isHidden = false
                 self.draftPillButton.isHidden = false
@@ -2883,6 +2896,8 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     /// C1：引用唯一入口（工具栏引用钮）开关 qp-mode 面板（C6：编辑模式也可改引用，不再早退）。
     @objc private func didTapQuoteTool() {
         // 编辑器改版：弹出框打开时点其他工具钮，先收起框再走各自处理。
+        // 审计 1：切到引用工具时，在途的天气展示意图作废。
+        invalidatePendingCalloutPresentation()
         hideCallout(animated: false)
         hideLocationPopover(animated: false)
         // P1-14：冻结之外的第二道守卫（按钮禁用本已拦点按，防其他调用路径）。
@@ -3093,6 +3108,8 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     private func showCallout(_ kind: CalloutKind) {
         if quotePanelOpen { return }
         if activeCallout == kind { return }
+        // 审计 1：本次显式展示即为最新意图，在途的天气展示意图作废。
+        invalidatePendingCalloutPresentation()
         // 同一时刻只开一个选择器：写给条若开着，先关条再开框（旧时切条即关上一条）。
         if activeToolStrip == .recipient {
             activeToolStrip = nil
@@ -3272,6 +3289,9 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             showToast(message: isEditMode ? "保存中…" : "发布中…")
             return
         }
+        // 审计 1：切到定位工具时，在途的天气展示意图作废（定位点按本身
+        // 不递增 weatherFetchGeneration、不取消天气请求，只拦末尾抢开）。
+        invalidatePendingCalloutPresentation()
         if locationPopoverOpen {
             hideLocationPopover(animated: true)
             return
@@ -3769,6 +3789,8 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     }
 
     @objc private func didTapMoodTool() {
+        // 审计 1：切到心情工具时，在途的天气展示意图作废。
+        invalidatePendingCalloutPresentation()
         hideLocationPopover(animated: false)
         toggleCallout(.mood)
     }
@@ -3783,6 +3805,10 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         hideLocationPopover(animated: false)
         weatherFetchGeneration += 1
         let generation = weatherFetchGeneration
+        // 审计 1：记下本次展示意图；取数代次与展示意图代次分开——
+        // 定位点按不碰 weatherFetchGeneration、不取消本请求。
+        calloutPresentationGeneration += 1
+        let presentationGeneration = calloutPresentationGeneration
         showToast(message: "正在获取当地天气…")
         BearyAPI.shared.fetchLocalWeather { [weak self] result in
             DispatchQueue.main.async {
@@ -3799,6 +3825,9 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                 case .failure:
                     self.showToast(message: "没取到当地天气，请手动选")
                 }
+                // 审计 1：取数与落数原样不变；只有展示意图过期时不抢开——
+                // 用户中途切到定位/心情/写给/引用等工具后，回包不再顶掉当前浮层。
+                guard presentationGeneration == self.calloutPresentationGeneration else { return }
                 self.showCallout(.weather)
             }
         }
@@ -3809,6 +3838,8 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         // 打开，供已选态清除/重选；@ 提醒无按篇开关）。
         // 引用面板打开时工具栏本身已藏，此处不再走 setToolStrip 的面板守卫。
         // 编辑器改版：弹出框打开时点其他工具钮，先收起框再走各自处理。
+        // 审计 1：切到写给工具时，在途的天气展示意图作废。
+        invalidatePendingCalloutPresentation()
         hideCallout(animated: false)
         hideLocationPopover(animated: false)
         didTapPickRecipient()
