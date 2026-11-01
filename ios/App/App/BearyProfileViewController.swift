@@ -1652,28 +1652,23 @@ class BearyProfileViewController: UIViewController {
 
     /// header 用户名：左对齐 17pt 粗体（与内容用户名同文案）；v22 转移时机——
     /// 内容用户名顶边碰到 header 底边时起，往后 20px 内淡入 0→1＋上浮 6→0 到位，
-    /// 往回滑反向淡出＋下落；转移前 header 只有封面、无用户名。
+    /// 往回滑反向淡出＋下落；转移前 header 只有主题底色、无用户名（视觉清单第 6 项后无封面跟踪图）。
     /// x 与内容用户名同列（表框左 + 28，iPad 600 居中列下自动对齐）。
-    /// 110：补 #248 同款发光阴影（半径 4、偏移 (0,1)，深浅色由
-    /// updateDynamicLayerColors 与内容用户名同款重赋）。#248 只给了内容
-    /// 用户名 nameLabel（封面下方实底色上），漏了这处真正压在封面图上的
-    /// header 用户名——封面纯白/纯黑时它才最需要阴影。阴影外扩至多约 5pt：
-    /// label 高 22 居中于 60 条带、左右各留 28/16pt，stickyHeaderView 的
-    /// clipsToBounds 裁不掉它；阴影跟随图层，淡入/上浮 transform 不受影响。
-    /// 字色按封面亮度切换（见 updateStickyHeaderNameColor）：亮底墨色、
-    /// 暗底白色；阴影仍删（2026-10-31 决定不动）、不另加底色块、
-    /// 不动 alpha 转移逻辑。这里的纯白只是占位初值（alpha 0 不可见），
-    /// 首个同步（syncStickyHeaderCover，布局与滚动回调双路都经过）
-    /// 即按当前封面重判，且判色发生在名字淡入之前，不会在淡入中途翻色。
+    /// 视觉清单第 6 项（已定设计，推翻 #508）：吸顶用户名固定主题底色
+    /// （stickyHeaderView 本身的 BearyColors.bg）+ ink 字，不再按封面亮度取色；
+    /// 背景跟踪图/模糊层/wordmark 一律隐藏（见 syncStickyHeaderCover）。
+    /// 不重新增加文字阴影或光晕（2026-10-31 删阴影的决定不动）、不另加底色块。
+    /// 位置与显隐时机不动：label 高 22 居中于 60 条带、左右各留 28/16pt，
+    /// 转移淡入/上浮 alpha 逻辑见 updateProfileCoverScroll。ink 为动态色，
+    /// 深浅切换自动跟随主题底色，无需重判。
     private let stickyHeaderNameLabel: UILabel = {
         let labelValue = UILabel()
         labelValue.translatesAutoresizingMaskIntoConstraints = false
         labelValue.font = UIFont.systemFont(ofSize: 17, weight: .bold)
-        // header 用户名去发光（Li 2026-10-31）：发光阴影整删（原半径 4、
-        // 偏移 (0,1)、按条带亮度取黑/白阴影的 updateStickyHeaderShadow 一并删除），
-        // 字色不再固定纯白——纯白封面上一滑就看不清，改由
-        // updateStickyHeaderNameColor 按封面亮度取色；不另加底色块。
-        labelValue.textColor = UIColor.white
+        // header 用户名去发光（Li 2026-10-31）：发光阴影整删，不恢复；
+        // 视觉清单第 6 项：字色固定 ink（动态色，跟随主题底色），不再按
+        // 封面亮度取色（推翻 #508）；不另加底色块。
+        labelValue.textColor = BearyColors.ink
         labelValue.alpha = 0
         labelValue.text = "—"
         labelValue.isUserInteractionEnabled = false
@@ -1710,12 +1705,6 @@ class BearyProfileViewController: UIViewController {
     private lazy var stickyHeaderBlurWidthConstraint: NSLayoutConstraint = stickyHeaderBlurImageView.widthAnchor.constraint(equalToConstant: 0)
     /// 预模糊图对应的源图（identity 比对：源图变了才重算，不逐帧现算）。
     private var stickyHeaderBlurSourceImage: UIImage?
-    /// 吸顶用户名按封面亮度取色的判定缓存（与模糊层源图同款 identity 口径）：
-    /// 上次判定过的封面图；默认橙底时为 nil，另用下字段记态。
-    private var stickyHeaderNameColorCoverImage: UIImage?
-    /// 上次判定是否为默认橙底：照片→橙底时跟踪图 image 同为 nil，
-    /// 只认本字段才不会漏切回墨色；照片支不认它（只认上字段）。
-    private var stickyHeaderNameColorIsDefaultCover = false
     /// 模糊起止的锚点（见 updateProfileCoverScroll 内注释）：头像被 header 盖住
     /// 75% 时起糊，盖满后再上滑 100pt 到满糊；只读当前帧几何算，不存跨帧起点，
     /// 程序化跳位、回顶、转屏都不会卡在旧进度。
@@ -2072,120 +2061,27 @@ class BearyProfileViewController: UIViewController {
     /// 吸顶跟踪图封面同步（2026-11-01 上滑橙块修复）：照片时同引用赋值
     /// （不加载）；默认背景时无图、背景色为品牌橙、wordmark 显示；加载态
     /// （封面图未到）时跟踪图与 wordmark 同隐。
-    /// 根因：此前这段只在 viewDidLayoutSubviews 里跑，滚动回调从不进这里；
-    /// 而 116 #401 让首帧先按默认橙底搭好（profileShowsDefaultCover = true），
-    /// 首个布局就把跟踪图刷成橙底。资料/封面图后来到了（flag 翻成 false、
-    /// coverImageView 有图），只要之后没有一次无关布局经过 viewDidLayoutSubviews，
-    /// 跟踪图就一直停在首帧的橙底——静止时封面区本身是对的（真封面图），
-    /// 一上滑（updateProfileCoverScroll 把 stickyHeaderView 置为可见）橙块
-    /// 才露出来；反之若某次布局恰好在图到之后跑过，吸顶就是照片（视频里
-    /// 那次就是照片），故同一 bug 在不同次进页表现不一。修法：滚动回调
-    /// 开头也调一次本函数（只改引用/显隐/底色，不加载、不采样阴影），
-    /// 吸顶显现的那一刻必与当前封面态一致，不再依赖布局时机。
-    /// 末尾另调 updateStickyHeaderNameColor：字色判定与封面同步同点跑，
-    /// 迟到的封面图在吸顶显现（名字淡入）前已判好色；判定本身 identity
-    /// 门控，滚动每帧只做指针比对、不重算。
+    /// 视觉清单第 6 项（已定设计，推翻 #508）：吸顶背景固定为主题底色——
+    /// 容器 stickyHeaderView 本身即 BearyColors.bg，跟踪图与 wordmark 在此
+    /// 一律隐藏、不再跟随封面图或默认橙底；模糊层源图随跟踪图隐藏而被
+    /// refreshStickyHeaderBlurImage 清掉。旧“首帧橙底上滑才露出来”的
+    /// 时机 bug 随背景不再跟随封面而自然消失（本函数仍在布局与滚动双路
+    /// 被调，显隐时机与名字淡入逻辑一字不动）。
     private func syncStickyHeaderCover() {
-        if profileShowsDefaultCover {
-            stickyHeaderBgImageView.isHidden = false
-            stickyHeaderBgImageView.image = nil
-            stickyHeaderBgImageView.backgroundColor = BearyColors.orange
-            stickyWordmarkView.isHidden = false
-        } else if coverImageView.isHidden || coverImageView.image == nil {
-            stickyHeaderBgImageView.isHidden = true
-            stickyWordmarkView.isHidden = true
-        } else {
-            stickyHeaderBgImageView.isHidden = false
-            stickyHeaderBgImageView.backgroundColor = BearyColors.bg
-            if stickyHeaderBgImageView.image !== coverImageView.image {
-                stickyHeaderBgImageView.image = coverImageView.image
-            }
-            stickyWordmarkView.isHidden = true
-        }
+        stickyHeaderBgImageView.isHidden = true
+        stickyHeaderBgImageView.image = nil
+        stickyWordmarkView.isHidden = true
         updateStickyHeaderNameColor()
     }
 
-    /// 吸顶用户名按封面亮度取色（白封面白字不可读的修法）：
-    /// 不另加底色块、不恢复阴影（2026-10-31 删阴影的决定不动）；
-    /// 只改字色：亮底墨色、暗底白色。字色用固定黑/白，不用 ink——
-    /// ink 是动态色（浅黑／深近白），跟 trait 走会在一侧模式下重蹈覆辙
-    /// （深色下橙底白字、浅色下暗底黑字），故此处破例不用 BearyColors。
-    /// 稳定性：判定只认封面图 identity——同一张图滚动每帧只做指针比对、
-    /// 绝不重算重赋值；换图才一次性重判；深浅切换不重判（字色与 trait 无关，
-    /// 故切换后判定仍正确，无需跟 traitCollectionDidChange 挂钩）。
-    /// 无封面默认橙底：品牌橙 #ff9500 的相对亮度约 0.43，白字对比度约 2.20:1、
-    /// 墨色对比度约 9.55:1，故固定墨色（不走亮度采样，与照片支同阈值结论一致）。
-    /// 加载态（无图且非默认橙底）不判定、不改色：吸顶此时隐藏，图到后
-    /// identity 变化即触发判定，不留旧色。
+    /// 视觉清单第 6 项：吸顶用户名固定 ink 字（动态色，跟随主题底色），
+    /// 不再按封面亮度取色——#508 的亮度取色定法（WCAG 采样、0.179 阈值、
+    /// 亮底墨色/暗底白字、默认橙底固定墨色）本支起作废；不恢复阴影、
+    /// 不另加底色块。深浅切换无需重判（ink 与 bg 同为动态色、恒成反色）。
     private func updateStickyHeaderNameColor() {
-        if profileShowsDefaultCover {
-            if !stickyHeaderNameColorIsDefaultCover {
-                stickyHeaderNameColorIsDefaultCover = true
-                stickyHeaderNameColorCoverImage = nil
-                if stickyHeaderNameLabel.textColor != UIColor.black {
-                    stickyHeaderNameLabel.textColor = UIColor.black
-                }
-            }
-            return
+        if stickyHeaderNameLabel.textColor != BearyColors.ink {
+            stickyHeaderNameLabel.textColor = BearyColors.ink
         }
-        stickyHeaderNameColorIsDefaultCover = false
-        guard let coverImageValue = stickyHeaderBgImageView.image, !stickyHeaderBgImageView.isHidden else { return }
-        if stickyHeaderNameColorCoverImage === coverImageValue { return }
-        guard let luminanceValue = stickyCoverAverageRelativeLuminance(coverImageValue) else { return }
-        // 采样失败不缓存：下次同步再试，不把“采不到”锁成终态。
-        stickyHeaderNameColorCoverImage = coverImageValue
-        // WCAG 对比度交叉点：白字 (1.05)/(L+0.05) 与墨色 (L+0.05)/0.05
-        // 相等时 L ≈ 0.179；低于它白字对比度更高，反之墨色更高——
-        // 取对比度更高的一方，不另设经验阈值、不做迟滞（迟滞只对逐帧
-        // 重判有意义，本判定每图一次、结果已缓存，迟滞无从触发）。
-        let nextColor = luminanceValue < 0.179 ? UIColor.white : UIColor.black
-        if stickyHeaderNameLabel.textColor != nextColor {
-            stickyHeaderNameLabel.textColor = nextColor
-        }
-    }
-
-    /// 封面图平均相对亮度（WCAG 口径）：一次性缩到 24×24 读像素，
-    /// 每通道先转线性再平均；全透明像素不计入；采不到返回 nil。
-    /// 主线程一次性成本：只在封面图换引用时跑一次，滚动每帧不进这里。
-    private func stickyCoverAverageRelativeLuminance(_ imageValue: UIImage) -> CGFloat? {
-        guard let cgImageValue = imageValue.cgImage else { return nil }
-        let edgeValue = 24
-        let bytesPerRowValue = edgeValue * 4
-        var pixelsValue = [UInt8](repeating: 0, count: edgeValue * bytesPerRowValue)
-        let sampledValue = pixelsValue.withUnsafeMutableBytes { rawPointer -> Bool in
-            guard let baseAddressValue = rawPointer.baseAddress else { return false }
-            guard let contextValue = CGContext(data: baseAddressValue, width: edgeValue, height: edgeValue, bitsPerComponent: 8, bytesPerRow: bytesPerRowValue, space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return false }
-            contextValue.interpolationQuality = .low
-            contextValue.draw(cgImageValue, in: CGRect(x: 0, y: 0, width: edgeValue, height: edgeValue))
-            return true
-        }
-        guard sampledValue else { return nil }
-        func linearValue(_ channelValue: CGFloat) -> CGFloat {
-            let clampedValue = min(max(channelValue, 0), 1)
-            if clampedValue <= 0.04045 { return clampedValue / 12.92 }
-            return pow((clampedValue + 0.055) / 1.055, 2.4)
-        }
-        var redSumValue: CGFloat = 0
-        var greenSumValue: CGFloat = 0
-        var blueSumValue: CGFloat = 0
-        var countValue: CGFloat = 0
-        for rowValue in 0..<edgeValue {
-            for columnValue in 0..<edgeValue {
-                let offsetValue = rowValue * bytesPerRowValue + columnValue * 4
-                let alphaValue = CGFloat(pixelsValue[offsetValue + 3]) / 255
-                guard alphaValue > 0 else { continue }
-                // premultipliedLast：先除回 alpha 再转线性。
-                redSumValue += linearValue(CGFloat(pixelsValue[offsetValue]) / 255 / alphaValue)
-                greenSumValue += linearValue(CGFloat(pixelsValue[offsetValue + 1]) / 255 / alphaValue)
-                blueSumValue += linearValue(CGFloat(pixelsValue[offsetValue + 2]) / 255 / alphaValue)
-                countValue += 1
-            }
-        }
-        guard countValue > 0 else { return nil }
-        let redValue = redSumValue / countValue
-        let greenValue = greenSumValue / countValue
-        let blueValue = blueSumValue / countValue
-        return 0.2126 * redValue + 0.7152 * greenValue + 0.0722 * blueValue
     }
 
     /// 上滑 header 布局：只在布局变化时跑（viewDidLayoutSubviews），滚动回调不进这里。
@@ -2239,7 +2135,7 @@ class BearyProfileViewController: UIViewController {
         // 再同步一次（updateProfileCoverScroll 开头），后者是修复点。
         syncStickyHeaderCover()
         // header 用户名发光已删（#459）：不再按条带亮度算阴影；
-        // 模糊层源图与背景图同值同步（照片时同源预模糊，默认橙底/无图时清掉）。
+        // 视觉清单第 6 项：跟踪图已隐藏，模糊层源图恒被清掉（本行旧同步语义失效）。
         refreshStickyHeaderBlurImage()
         // 用户名：x 与内容用户名同列（表框左 + 28，iPad 600 居中列下自动对齐），
         // 垂直居中于 60 条带；文案同步（赋值点同步 + 此处兜底）。
@@ -2261,6 +2157,7 @@ class BearyProfileViewController: UIViewController {
     }
 
     /// v22 封面滚动态（2026-10-30，取代视差 0.3＋上滑模糊 header＋旧名字淡入）：
+    /// 视觉清单第 6 项：跟踪图已隐藏，下述 1:1 跟随几何仍跑但无可见输出。
     /// 跟踪图与真封面 1:1 同速同框上移、底贴 header 底边时锁定成 header
     ///（顶冻结在带底边 - 234，带内恒为封面底部本身）；头像前半段全尺寸跟随、
     /// 后半段缩小 84→70＋下落、距分界线间隙 -28→6 后定型、之后随页面 1:1
