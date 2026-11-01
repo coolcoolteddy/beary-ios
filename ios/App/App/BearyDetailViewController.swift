@@ -774,6 +774,16 @@ final class BearyDetailViewController: UIViewController {
         recipientRow.addGestureRecognizer(UITapGestureRecognizer(target: self, action: #selector(mentionTapped)))
         rightStack.addArrangedSubview(recipientRow)
 
+        // 118 闪退修复（.ips 实证）：作者行必须是懒初始化的 authorRow，
+        // 它的 arrangedSubviews（nameButton、crownWrapView 等）只有在
+        // authorRow 首次被访问时才入层级。下面皇冠块里有一条跨视图约束
+        // crownWrapView.height == nameButton.height，若 authorRow 在此之前
+        // 从未被访问，两端在激活时无共同祖先，NSLayoutConstraint 直接抛
+        // 异常 → SIGABRT，全入口进详情必崩（与 106 同类）。故 authorRow
+        // 必须在此先入栈（顺序不变：仍在 recipientRow 之后、⋯ 钮之前），
+        // 让两端先同属 authorRow 层级，再激活皇冠约束才安全。
+        rightStack.addArrangedSubview(authorRow)
+
         nameButton.titleLabel?.font = BearyDynamicType.cardTitleFont()
         nameButton.titleLabel?.adjustsFontForContentSizeCategory = true
         nameButton.titleLabel?.numberOfLines = 1
@@ -829,8 +839,7 @@ final class BearyDetailViewController: UIViewController {
             weatherWidth,
             weatherImageView.heightAnchor.constraint(equalToConstant: 15),
         ])
-        rightStack.addArrangedSubview(authorRow)
-
+        // authorRow 入栈已移到皇冠块之前（见上，118 闪退修复），此处不再重复添加。
         // 右上角 ⋯ 钮：时间线 moreButton 同款（21pt 灰色、28 框、44 热区），图标恒为三点。
         moreButton.translatesAutoresizingMaskIntoConstraints = false
         moreButton.setImage(BearyFeedIconCache.image(named: "icon_more", pointSize: 21), for: .normal)
