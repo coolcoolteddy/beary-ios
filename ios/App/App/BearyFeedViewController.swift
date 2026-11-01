@@ -481,6 +481,11 @@ class BearyFeedViewController: UIViewController {
         isCustomPullRefreshing = true
         customPullStartTime = Date()
         refreshIconView.startSpinning()
+        // 回程一次到位：先掐断松手后的表减速/回弹（位置不动、仅停掉动量）。
+        // 否则表自带物理动画会与下面 easing 动画双路驱动 contentOffset：
+        // 先随惯性多下一截、再被拉回 84 位，即“先下降一点再回去”；
+        // 旧 0.32s 默认 easeInOut 零初速起手、与手指甩速脱节，手感发轻。
+        tableView.setContentOffset(tableView.contentOffset, animated: false)
         let baseline = feedPullBaselineTop()
         let pullIn = {
             self.tableView.contentInset.top = baseline + 84
@@ -491,7 +496,7 @@ class BearyFeedViewController: UIViewController {
         if UIAccessibility.isReduceMotionEnabled {
             pullIn()
         } else {
-            UIView.animate(withDuration: 0.32, animations: pullIn)
+            UIView.animate(withDuration: 0.35, delay: 0, options: [.curveEaseOut, .beginFromCurrentState], animations: pullIn)
         }
         // 112 刷新节流（仅手势下拉）：上次首拉成功 5 秒内且已有内容时，
         // 不再发网络请求，指示头随收回动画收回（第 2 项后不再等 500ms）；程序侧刷新
@@ -513,7 +518,7 @@ class BearyFeedViewController: UIViewController {
             return
         }
         // 扫 bug 定版第 2 项：去掉 0.5 秒最低展示，回包到即收回，
-        // 不再用 asyncAfter 补满剩余时间；0.32s 收回动画与触发口径不动。
+        // 不再用 asyncAfter 补满剩余时间；触发口径不动，收回动画随 454 改 0.35s easeOut。
         customPullEndScheduled = true
         isCustomPullRefreshing = false
         customPullEndScheduled = false
@@ -533,7 +538,7 @@ class BearyFeedViewController: UIViewController {
             pullOut()
             self.refreshIconView.stopSpinning()
         } else {
-            UIView.animate(withDuration: 0.32, animations: pullOut, completion: { _ in
+            UIView.animate(withDuration: 0.35, delay: 0, options: [.curveEaseOut, .beginFromCurrentState], animations: pullOut, completion: { _ in
                 self.refreshIconView.stopSpinning()
             })
         }
