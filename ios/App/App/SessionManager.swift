@@ -185,6 +185,9 @@ final class SessionManager {
         if let id = currentUser?.id {
             BearyEntrySyncStore.purgeAccount(accountId: id)
             BearyTrashSyncStore.purgeAccount(accountId: id)
+            // 盲盒次数串账号修法：显式退出删该号全部盲盒桶，退出后不残留；
+            // 切号不走这里（旧号桶保留、切回可复用），切号隔离靠分桶本身。
+            BlindBoxState.shared.clearAccount(accountId: id)
         }
         sessionGeneration += 1
         meSeq += 1

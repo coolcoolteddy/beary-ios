@@ -215,49 +215,92 @@ extension BearyAPI {
 }
 
 // MARK: - 当日状态（本地只做服务端状态的镜像，服务端永远是事实来源）
+//
+// 账号隔离（盲盒次数串账号修法）：旧实现用一组无账号维度的扁平键
+// （beary.blindbox.used / exchangeId 等），且 applyServerState 只有 true
+// 才写、false 不覆盖，signOutLocally 也不清——于是 A 当天开过盒后切到
+// B（或退出再登 B），B 的入口仍读到 A 的 1/1 旧镜像；服务端回 false
+// 也清不掉已落盘的 true / 旧 exchangeId。
+// 现行口径：键按“账号 + Asia/Shanghai 自然日”分桶
+// （beary.blindbox.<accountId>.<yyyy-MM-dd>.used 等），切号即读到另一
+// 桶、旧号状态不再带到新号；跨日无需显式清零（旧日桶自然不再被读）。
+// 切号不删旧号桶（与图片/日记缓存“切号保留、切回可复用”同口径）；
+// 显式退出走 clearAccount(accountId:) 删该号全部盲盒桶（见
+// SessionManager.signOutLocally，与 P2-22 退出清该号落盘同口径）。
+// 旧扁平键升级时直接丢弃、不迁移——旧镜像归属账号已不可考，服务端
+// /today 是事实来源，流程页进页即重拉覆盖；入口只读镜像、不发请求。
 
 final class BlindBoxState {
     static let shared = BlindBoxState()
 
     private let defaults = UserDefaults.standard
-    private let dateKey = "beary.blindbox.date"
-    private let usedKey = "beary.blindbox.used"
-    private let exchangeKey = "beary.blindbox.exchangeId"
-    private let receivedWithdrawnKey = "beary.blindbox.receivedWithdrawn"
-    private let myWithdrawnKey = "beary.blindbox.myWithdrawn"
+    /// 旧扁平键（无账号维度，已废弃）：初始化时删掉，之后永不读写。
+    private let legacyKeys = [
+        "beary.blindbox.date",
+        "beary.blindbox.used",
+        "beary.blindbox.exchangeId",
+        "beary.blindbox.receivedWithdrawn",
+        "beary.blindbox.myWithdrawn",
+    ]
+    /// 上次被读到/写到的桶；桶变化（切号或跨日）时给在线入口发一次
+    /// .bearyBlindBoxDidChange，使不重建的入口行也能即时刷新（发通知
+    /// 前先更新该值，入口 refresh() 回读时桶已不变，不会循环发通知）。
+    private var lastSeenBucket: String?
 
-    private init() {}
-
-    /// 跨日即重置（只清当日镜像，不碰服务端计数；服务端按自然日强校验 1 次）。
-    func resetIfNewDay() {
-        let today = BlindBoxDate.todayKey()
-        if defaults.string(forKey: dateKey) != today {
-            defaults.set(today, forKey: dateKey)
-            defaults.set(false, forKey: usedKey)
-            defaults.set(nil, forKey: exchangeKey)
-            defaults.set(false, forKey: receivedWithdrawnKey)
-            defaults.set(false, forKey: myWithdrawnKey)
+    private init() {
+        for key in legacyKeys {
+            defaults.removeObject(forKey: key)
         }
     }
 
+    /// 当前账号维度的键前缀。未登录时落 "guest" 桶——游客入口本就硬编码
+    /// 显示 0/1、不读镜像（见 BearyBlindBoxEntryView.refresh），该桶只
+    /// 是防止未登录写操作误撞真实账号桶的隔离位。
+    private func bucketPrefix() -> String {
+        var account = "guest"
+        if let id = SessionManager.shared.currentUser?.id {
+            account = "\(id)"
+        }
+        return "beary.blindbox.\(account).\(BlindBoxDate.todayKey())"
+    }
+
+    private func usedKey() -> String { return bucketPrefix() + ".used" }
+    private func exchangeKey() -> String { return bucketPrefix() + ".exchangeId" }
+    private func receivedWithdrawnKey() -> String { return bucketPrefix() + ".receivedWithdrawn" }
+    private func myWithdrawnKey() -> String { return bucketPrefix() + ".myWithdrawn" }
+
+    private func noteBucketChangeIfNeeded() {
+        let bucket = bucketPrefix()
+        if lastSeenBucket != bucket {
+            lastSeenBucket = bucket
+            NotificationCenter.default.post(name: .bearyBlindBoxDidChange, object: nil)
+        }
+    }
+
+    /// 兼容旧调用点（Feed / Timeline 进页时调）：日期与账号已进键，跨日
+    /// 与切号无需清零；本函数只负责桶变化时通知在线入口刷新。
+    func resetIfNewDay() {
+        noteBucketChangeIfNeeded()
+    }
+
     var usedToday: Bool {
-        resetIfNewDay()
-        return defaults.bool(forKey: usedKey)
+        noteBucketChangeIfNeeded()
+        return defaults.bool(forKey: usedKey())
     }
 
     var exchangeIdForToday: String? {
-        resetIfNewDay()
-        return defaults.string(forKey: exchangeKey)
+        noteBucketChangeIfNeeded()
+        return defaults.string(forKey: exchangeKey())
     }
 
     var receivedWithdrawn: Bool {
-        resetIfNewDay()
-        return defaults.bool(forKey: receivedWithdrawnKey)
+        noteBucketChangeIfNeeded()
+        return defaults.bool(forKey: receivedWithdrawnKey())
     }
 
     var myWithdrawn: Bool {
-        resetIfNewDay()
-        return defaults.bool(forKey: myWithdrawnKey)
+        noteBucketChangeIfNeeded()
+        return defaults.bool(forKey: myWithdrawnKey())
     }
 
     func countText() -> String {
@@ -265,43 +308,54 @@ final class BlindBoxState {
     }
 
     /// 服务端状态 → 本地镜像（只在成功回包时写，失败不覆写旧镜像、不谎报计数）。
+    /// 成功回包一律完整替换当前桶：false 与空 exchangeId 也同步落盘，
+    /// 不再是旧的“只有 true 才写”。nil 口径：used 缺失时以有无 exchangeId
+    /// 推断（有交换即已换）；撤回两旗缺失即 false；空字符串 exchangeId 视
+    /// 为无交换并清掉旧 id。未登录时不写（防游客态写操作污染 guest 桶外
+    /// 的任何状态；流程页调用前本就要求登录，见 refreshFromServer 守卫）。
     func applyServerState(_ body: BlindBoxStateBody) {
-        resetIfNewDay()
-        let today = BlindBoxDate.todayKey()
-        defaults.set(today, forKey: dateKey)
-        if body.used == true || body.exchangeId != nil {
-            defaults.set(true, forKey: usedKey)
-        }
-        if let exchangeId = body.exchangeId {
-            defaults.set(exchangeId, forKey: exchangeKey)
-        }
-        if body.receivedWithdrawn == true {
-            defaults.set(true, forKey: receivedWithdrawnKey)
-        }
-        if body.myWithdrawn == true {
-            defaults.set(true, forKey: myWithdrawnKey)
-        }
+        guard SessionManager.shared.isLoggedIn else { return }
+        noteBucketChangeIfNeeded()
+        let exchangeId = (body.exchangeId?.isEmpty == false) ? body.exchangeId : nil
+        let used = body.used ?? (exchangeId != nil)
+        defaults.set(used, forKey: usedKey())
+        defaults.set(exchangeId, forKey: exchangeKey())
+        defaults.set(body.receivedWithdrawn == true, forKey: receivedWithdrawnKey())
+        defaults.set(body.myWithdrawn == true, forKey: myWithdrawnKey())
         NotificationCenter.default.post(name: .bearyBlindBoxDidChange, object: nil)
     }
 
     func markOpened(exchangeId: String) {
-        resetIfNewDay()
-        defaults.set(BlindBoxDate.todayKey(), forKey: dateKey)
-        defaults.set(true, forKey: usedKey)
-        defaults.set(exchangeId, forKey: exchangeKey)
-        defaults.set(false, forKey: receivedWithdrawnKey)
-        defaults.set(false, forKey: myWithdrawnKey)
+        noteBucketChangeIfNeeded()
+        defaults.set(true, forKey: usedKey())
+        defaults.set(exchangeId, forKey: exchangeKey())
+        defaults.set(false, forKey: receivedWithdrawnKey())
+        defaults.set(false, forKey: myWithdrawnKey())
         NotificationCenter.default.post(name: .bearyBlindBoxDidChange, object: nil)
     }
 
     func markMyWithdrawn() {
-        defaults.set(true, forKey: myWithdrawnKey)
+        noteBucketChangeIfNeeded()
+        defaults.set(true, forKey: myWithdrawnKey())
         NotificationCenter.default.post(name: .bearyBlindBoxDidChange, object: nil)
     }
 
     func markReceivedWithdrawn() {
-        defaults.set(true, forKey: receivedWithdrawnKey)
+        noteBucketChangeIfNeeded()
+        defaults.set(true, forKey: receivedWithdrawnKey())
         NotificationCenter.default.post(name: .bearyBlindBoxDidChange, object: nil)
+    }
+
+    /// 删指定账号的全部盲盒桶（不限当日；键含日期，须按前缀扫）。
+    /// 只供显式退出路径调用；切号不调（旧号桶保留、切回可复用）。
+    func clearAccount(accountId: Int) {
+        let prefix = "beary.blindbox.\(accountId)."
+        for key in defaults.dictionaryRepresentation().keys where key.hasPrefix(prefix) {
+            defaults.removeObject(forKey: key)
+        }
+        if lastSeenBucket?.hasPrefix(prefix) == true {
+            lastSeenBucket = nil
+        }
     }
 
     /// 进页刷新：成功即以服务端为准；失败保持本地镜像并回调失败（不谎报、不清零）。
