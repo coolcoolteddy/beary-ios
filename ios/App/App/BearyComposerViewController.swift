@@ -146,10 +146,17 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
 
     // MARK: - 心情顺序（硬编码，勿用 moodNames.keys.sorted()，会打乱原顺序）
 
-    /// 心情顺序 = 熊脸 32 只（BearyText.bearMoodKeys；后 8 只非熊脸已删，
-    /// 不进选择器、不进记号集，见 BearyText 内联心情记号注释）。
-    /// 与 main 原硬编码 32 只集合逐项一致，改走单一来源，防两处漂移。
-    private let moodOrder: [String] = BearyText.bearMoodKeys
+    /// 心情顺序 = 熊脸 32 只（后 8 只非熊脸已删，不进选择器、不进记号集）。
+    /// 注意：此处必须保持字面数组写法，不能改成 BearyText.bearMoodKeys 引用——
+    /// CI 的 scripts/check-beary-assets.py 用正则直接抠本文件 moodOrder 的
+    /// 字面数组校验 emote 资产，改引用会使该检查报 key source not found 而全红
+    /// （#421 合入后 CI 红的根因）。集合与 bearMoodKeys 逐项一致，改一处要同步另一处。
+    private let moodOrder: [String] = [
+        "agree", "happy", "applause", "cheer", "comfort", "confused", "love", "determined",
+        "facepalm", "shy", "goodnight", "hug", "wink", "idea", "kiss", "thinking",
+        "listening", "lonely", "speechless", "nope", "surprised", "pat", "peek", "sleepy",
+        "proud", "shrug", "sorry", "cry", "angry", "thanks", "zap", "wave",
+    ]
 
     /// 天气顺序：与 BearyText.weatherNames 字面顺序一致（勿用字典 keys 排序，会打乱顺序）。
     private let weatherOrder: [String] = [
