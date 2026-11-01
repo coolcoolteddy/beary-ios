@@ -31,6 +31,12 @@ class SceneDelegate: UIResponder, UIWindowSceneDelegate {
         window?.backgroundColor = BearyColors.bg
         window?.rootViewController = BearyChromeViewController()
         window?.makeKeyAndVisible()
+        // 冷启动生物识别锁（2026-10-31）：开关开着时在建窗后立即挂窗口级锁屏，
+        // 同 runloop 内盖住首帧内容；解锁后补跑被推迟的 veil 起播（见容器）。
+        if let chrome = window?.rootViewController as? BearyChromeViewController, let window = window {
+            BearyAppLockManager.shared.onUnlocked = { [weak chrome] in chrome?.startDeferredLaunchVeil() }
+            BearyAppLockManager.shared.installColdLockIfNeeded(on: window)
+        }
         // 审计 4 冷启动：建窗后立即补读 connectionOptions，走与 openURLContexts /
         // continue userActivity 同一条 handleDeepLink 链路（SceneDelegate 下方两方法），
         // 不另起解析。urlContexts 命中后不再走 userActivities（两者互斥的同一启动意图）。
@@ -54,6 +60,11 @@ class SceneDelegate: UIResponder, UIWindowSceneDelegate {
 
     func sceneWillResignActive(_ scene: UIScene) {
         BearyAppLog.event("app background")
+        // 隐私遮罩（2026-10-31，独立于锁开关）：切后台的最早信号即盖遮罩，
+        // 确保切换器快照拍到的是遮罩而不是上一屏内容。
+        if let window = window {
+            BearyAppLockManager.shared.installShield(on: window)
+        }
     }
 
     func scene(_ scene: UIScene, openURLContexts URLContexts: Set<UIOpenURLContext>) {
@@ -78,9 +89,15 @@ class SceneDelegate: UIResponder, UIWindowSceneDelegate {
     /// B10：退后台停 matrix 动画、回前台恢复（此前无此处理）；经容器 chrome 转发。
     func sceneDidEnterBackground(_ scene: UIScene) {
         (window?.rootViewController as? BearyChromeViewController)?.pauseSideMatrixAnimation()
+        // 遮罩幂等补位：若 resignActive 路径被系统打断未盖上，此处再盖一次。
+        if let window = window {
+            BearyAppLockManager.shared.installShield(on: window)
+        }
     }
 
     func sceneWillEnterForeground(_ scene: UIScene) {
+        // 遮罩回前台无验证直接撤掉（回前台不锁的口径不变）。
+        BearyAppLockManager.shared.removeShield()
         (window?.rootViewController as? BearyChromeViewController)?.resumeSideMatrixAnimation()
         // 审计 B 批：消息页未创建时回前台补一次角标轻量拉取（已创建则页内刷新已覆盖）。
         (window?.rootViewController as? BearyChromeViewController)?.foregroundBadgeRefreshIfNotifAbsent()
@@ -190,6 +207,11 @@ final class BearyChromeViewController: UIViewController {
     private var launchVeilSloganView: UIView?
     private var launchVeilSloganAnimation: LottieAnimationView?
     private var launchVeilPlayed = false
+    private var launchVeilDeferredAfterUnlock = false
+    /// 冷启动锁推迟 veil 的标记：锁着时 viewDidAppear 已跑过但 veil 不起播，
+    /// 解锁后由 startDeferredLaunchVeil 补跑一次（锁屏本身已盖住内容，veil
+    /// 不会成为透出内容的口子；若锁着时 veil 被 10 秒兜底清掉，补跑守卫会
+    /// 因 veil 已空而 no-op，解锁后直接露主页，同样不透内容）。
     private var launchVeilHomeEntryPlayed = false
     /// 107 修复：veil 揭开进行中标记——起播完成回调与起播相对兜底可能同时
     /// 到达，reveal 只跑一次（否则淡出重播、首屏卡片二次错峰）。
@@ -1154,8 +1176,25 @@ final class BearyChromeViewController: UIViewController {
     /// 冷启动判定：install 只在 viewDidLoad 跑一次、launchVeilPlayed 守卫、
     /// veil 清掉后 viewDidAppear 重进不再触发；热启动（前后台切换、modal 回落）
     /// 不经过本函数重播，sceneDidBecomeActive 亦不触 veil。
+    /// 冷启动锁解锁后补跑被推迟的 veil 起播（SceneDelegate 锁回调接线）。
+    func startDeferredLaunchVeil() {
+        guard launchVeilDeferredAfterUnlock else { return }
+        launchVeilDeferredAfterUnlock = false
+        runLaunchVeilIfNeeded()
+    }
+
     private func runLaunchVeilIfNeeded() {
         guard launchVeilPlayed == false, launchVeilView != nil, launchVeilSloganView != nil else { return }
+        // 冷启动锁着时不起播：锁屏已盖住内容，veil 动画留到解锁后补跑；
+        // 10 秒最后一道兜底一并取消（它只在“起播从未发生”时清 veil，锁着时
+        // viewDidAppear 已来、兜底若跑会把 veil 清掉，补跑将 no-op，虽不透
+        // 内容但丢了品牌动画，故锁着时取消兜底、解锁后正常起播）。
+        if BearyAppLockManager.shared.isColdLocked {
+            launchVeilDeferredAfterUnlock = true
+            launchVeilLastResort?.cancel()
+            launchVeilLastResort = nil
+            return
+        }
         launchVeilPlayed = true
         // 起播已发生，install 侧 10 秒最后一道兜底不再需要（其自身亦有
         // !launchVeilPlayed 守卫，此处取消只是不再留悬空任务）。

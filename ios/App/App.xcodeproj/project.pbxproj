@@ -62,6 +62,7 @@
 		8F7E729083AD880ED7E12DD4 /* BearyDiaryMapViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7A47FC5684A4899214A70CB3 /* BearyDiaryMapViewController.swift */; };
 		0784198F166F926746DBBD8F /* BearyDynamicBorder.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8F0056EF4785D1AB4F29064A /* BearyDynamicBorder.swift */; };
 
+		A293773BB5954D87B34F6907 /* BearyAppLock.swift in Sources */ = {isa = PBXBuildFile; fileRef = 21955294922741C28B91ED0E /* BearyAppLock.swift */; };
 		0953EBE59CDE4004A8245CA8 /* BearyDashedBorderView.swift in Sources */ = {isa = PBXBuildFile; fileRef = BD3D299014174E13AA88A8C0 /* BearyDashedBorderView.swift */; };
 		B1A2C3D4E5F64711A2B3C4D5 /* BearyAccountVault.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1A2C3D4E5F64712A2B3C4D5 /* BearyAccountVault.swift */; };
 		5392548191C34E7DA72EBEAB /* BearyStarMap.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2D0F219CC32F47C894C1AC12 /* BearyStarMap.swift */; };
@@ -264,6 +265,7 @@
 		7A47FC5684A4899214A70CB3 /* BearyDiaryMapViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BearyDiaryMapViewController.swift; sourceTree = "<group>"; };
 		8F0056EF4785D1AB4F29064A /* BearyDynamicBorder.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BearyDynamicBorder.swift; sourceTree = "<group>"; };
 
+		21955294922741C28B91ED0E /* BearyAppLock.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BearyAppLock.swift; sourceTree = "<group>"; };
 		BD3D299014174E13AA88A8C0 /* BearyDashedBorderView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BearyDashedBorderView.swift; sourceTree = "<group>"; };
 		B1A2C3D4E5F64712A2B3C4D5 /* BearyAccountVault.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BearyAccountVault.swift; sourceTree = "<group>"; };
 		2D0F219CC32F47C894C1AC12 /* BearyStarMap.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BearyStarMap.swift; sourceTree = "<group>"; };
@@ -495,6 +497,7 @@
 				7A47FC5684A4899214A70CB3 /* BearyDiaryMapViewController.swift */,
 				8F0056EF4785D1AB4F29064A /* BearyDynamicBorder.swift */,
 
+				21955294922741C28B91ED0E /* BearyAppLock.swift */,
 				BD3D299014174E13AA88A8C0 /* BearyDashedBorderView.swift */,
 				B1A2C3D4E5F64712A2B3C4D5 /* BearyAccountVault.swift */,
 				2D0F219CC32F47C894C1AC12 /* BearyStarMap.swift */,
@@ -919,6 +922,7 @@
 				8F7E729083AD880ED7E12DD4 /* BearyDiaryMapViewController.swift in Sources */,
 				0784198F166F926746DBBD8F /* BearyDynamicBorder.swift in Sources */,
 
+				A293773BB5954D87B34F6907 /* BearyAppLock.swift in Sources */,
 				0953EBE59CDE4004A8245CA8 /* BearyDashedBorderView.swift in Sources */,
 				B1A2C3D4E5F64711A2B3C4D5 /* BearyAccountVault.swift in Sources */,
 				5392548191C34E7DA72EBEAB /* BearyStarMap.swift in Sources */,
