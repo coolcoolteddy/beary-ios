@@ -5816,9 +5816,10 @@ extension BearyTimelineViewController: UITableViewDataSource, UITableViewDelegat
         cell.onQuoteEntry = onQuoteEntry
         cell.onMoreEntry = { [weak self] entry, sourceView in self?.presentTimelineMoreMenu(entry: entry, sourceView: sourceView) }
         // N7：复用独立文件内的查看器，全屏模态弹出（已弹出时不叠加、减动效直显）。
+        let viewerEntry = sections[indexPath.section].entries[indexPath.row]
         cell.onTapImages = { [weak self] keys, index, originFrame in
             guard let self = self, self.presentedViewController == nil else { return }
-            let viewer = BearyEntryImageViewerViewController(imageKeys: keys, startIndex: index)
+            let viewer = BearyEntryImageViewerViewController(imageKeys: keys, liveVideos: viewerEntry.liveVideos, startIndex: index)
             viewer.originFrameInWindow = originFrame
             viewer.modalPresentationStyle = .fullScreen
             self.present(viewer, animated: UIAccessibility.isReduceMotionEnabled == false, completion: nil)

@@ -1,4 +1,5 @@
 import UIKit
+import Photos
 import PhotosUI
 
 // ===== beary 原生编辑器（第二阶段 + 主线闭环第一块 + 网页对齐批）=====
@@ -5006,8 +5007,12 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                 if let saved = saved {
                     // 落盘成功才替换预览、清旧 key、删旧本地对（旧 key 指向未裁剪
                     // 原图，不可复用；孤 key 残留与移除同款已知可接受）。
+                    // 裁剪同样丢实况：帧已变，旧视频不再对应新帧，继续带旧视频
+                    // 会播出与静态帧对不上的实况，故两字段同清、裁后按纯静态重传。
                     item.imageView.image = cropped
                     item.key = nil
+                    item.liveVideoData = nil
+                    item.liveVideoKey = nil
                     item.failed = false
                     item.localFile = saved
                     if let oldName = oldName, oldName != saved {
@@ -5039,7 +5044,9 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         }
         var config = PHPickerConfiguration()
         config.selectionLimit = BearyComposerViewController.maxImages - imageItems.count
-        config.filter = .images
+        // 实况：filter 含 livePhotos，实况资产才能以 PHLivePhoto 取到视频部分；
+        // 非实况资产仍走原 UIImage 路径（见 picker 分流），filter 本身不改上限与顺序。
+        config.filter = .any(of: [.images, .livePhotos])
         config.selection = .ordered
         let picker = PHPickerViewController(configuration: config)
         picker.delegate = self
@@ -5053,6 +5060,118 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                 break
             }
             let provider = result.itemProvider
+            // 实况分流：能取 PHLivePhoto 的资产先走实况路（视频部分经
+            // PHAssetResource 导出 mov，静态帧仍走下面同款 JPEG 路径）；
+            // 取不到 PHLivePhoto 的资产一律走原静态路，下面的静态分支一字不动。
+            // 实况视频读不出 / 超 10MB 时占位项直接移除 + toast，不静默降级
+            // 为静态图（降级需用户确认，本处不擅自加降级 UI，失败即不发实况）。
+            if provider.canLoadObject(ofClass: PHLivePhoto.self) {
+                let item = createImageItem(localImage: nil, key: nil, uploading: true, localFile: nil, failed: false)
+                insertImageItem(item)
+                provider.loadObject(ofClass: PHLivePhoto.self) { [weak self, weak item] object, _ in
+                    guard let livePhoto = object as? PHLivePhoto else {
+                        DispatchQueue.main.async {
+                            guard let self = self, let item = item else { return }
+                            self.removeImageItem(item)
+                            self.showToast(message: "未能读取实况视频，未添加")
+                        }
+                        return
+                    }
+                    let resources = PHAssetResource.assetResources(for: livePhoto)
+                    guard let videoResource = resources.first(where: { $0.type == .pairedVideo }) else {
+                        DispatchQueue.main.async {
+                            guard let self = self, let item = item else { return }
+                            self.removeImageItem(item)
+                            self.showToast(message: "未能读取实况视频，未添加")
+                        }
+                        return
+                    }
+                    var videoData = Data()
+                    // iCloud 照片：默认 options 不允许联网，原图只在本地时才
+                    // 读得出；开了「优化储存空间」的实况会直接读失败、整张图被
+                    // 移除。显式允许联网（PHPicker 的 loadObject 本就自动下载，
+                    // 这里须手动开），失败口径与 toast 不变。
+                    let videoOptions = PHAssetResourceRequestOptions()
+                    videoOptions.isNetworkAccessAllowed = true
+                    PHAssetResourceManager.default().requestData(for: videoResource, options: videoOptions, dataReceivedHandler: { videoData.append($0) }, completionHandler: { [weak self, weak item] error in
+                        DispatchQueue.main.async {
+                            guard let self = self, let item = item else { return }
+                            var stillThere = false
+                            for existing in self.imageItems {
+                                if existing === item {
+                                    stillThere = true
+                                }
+                            }
+                            if !stillThere {
+                                return
+                            }
+                            if error != nil || videoData.isEmpty {
+                                self.removeImageItem(item)
+                                self.showToast(message: "实况视频读取失败，未添加")
+                                return
+                            }
+                            if videoData.count > BearyLivePhoto.maxVideoBytes {
+                                self.removeImageItem(item)
+                                self.showToast(message: "实况视频超过 10MB，未添加")
+                                return
+                            }
+                            item.liveVideoData = videoData
+                            // 静态帧：与静态分支同款 UIImage 加载 + 编码落盘，
+                            // 唯一差别是上传时附带 liveVideoData（见 uploadPrepared）。
+                            provider.loadObject(ofClass: UIImage.self) { [weak self, weak item] stillObject, _ in
+                                DispatchQueue.main.async {
+                                    guard let self = self, let item = item else { return }
+                                    var stillThere = false
+                                    for existing in self.imageItems {
+                                        if existing === item {
+                                            stillThere = true
+                                        }
+                                    }
+                                    if !stillThere {
+                                        return
+                                    }
+                                    guard let image = stillObject as? UIImage else {
+                                        self.removeImageItem(item)
+                                        return
+                                    }
+                                    item.imageView.image = image
+                                    self.imagePrepQueue.async { [weak self, weak item] in
+                                        guard let full = BearyImagePrep.jpegData(image, maxSide: 1600, quality: 0.85),
+                                              let thumb = BearyImagePrep.thumbData(image, maxSide: 480) else {
+                                            DispatchQueue.main.async {
+                                                guard let self = self, let item = item else { return }
+                                                self.markFailed(item)
+                                                self.saveDraftNow()
+                                                self.updatePublishState()
+                                            }
+                                            return
+                                        }
+                                        let saved = BearyDraftImageStore.save(fullData: full.data, thumbData: thumb)
+                                        DispatchQueue.main.async {
+                                            guard let self = self, let item = item else { return }
+                                            var stillThere = false
+                                            for existing in self.imageItems {
+                                                if existing === item {
+                                                    stillThere = true
+                                                }
+                                            }
+                                            if !stillThere {
+                                                return
+                                            }
+                                            if let saved = saved {
+                                                item.localFile = saved
+                                            }
+                                            self.saveDraftNow()
+                                        }
+                                        self?.uploadPrepared(for: item, full: full, thumbData: thumb, image: image, liveVideoData: item.liveVideoData)
+                                    }
+                                }
+                            }
+                        }
+                    })
+                }
+                continue
+            }
             if !provider.canLoadObject(ofClass: UIImage.self) {
                 continue
             }
@@ -5137,15 +5256,32 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                 }
                 return
             }
-            self?.uploadPrepared(for: item, full: full, thumbData: thumb, image: image)
+            // 重试/续传：实况项带上内存里的 liveVideoData 一起重传；静态项
+            // liveVideoData 为 nil，uploadPrepared 内不附带视频，路径不动。
+            self?.uploadPrepared(for: item, full: full, thumbData: thumb, image: image, liveVideoData: item.liveVideoData)
         }
     }
 
     /// 用已编好的数据上传（调用方已在后台线程上；base64 与 BearyAPI 的 JSON 序列化
     /// 都发生在本线程，回调回主线程后只更新 UI 与落盘）。
-    private func uploadPrepared(for item: ComposerImageItem?, full: (data: Data, w: Int, h: Int), thumbData: Data, image: UIImage) {
+    private func uploadPrepared(for item: ComposerImageItem?, full: (data: Data, w: Int, h: Int), thumbData: Data, image: UIImage, liveVideoData: Data? = nil) {
         guard let item = item else { return }
-        BearyAPI.shared.uploadImage(dataUrl: BearyImagePrep.dataURL(full.data), width: full.w, height: full.h, thumbDataUrl: BearyImagePrep.dataURL(thumbData)) { [weak self, weak item] result in
+        // 实况上传失败口径（防静默降级）：视频超限在选图时已拒收，这里再守
+        // 一道；上传失败、或回包缺 live_key（后端未上线/不匹配）时一律按失败
+        // 处理——亮红底重试块 + toast，发布亦被失败图拦截，绝不把实况当静态
+        // 图发出；点图重试走 startUpload，仍带 liveVideoData 重传。
+        if let liveVideoData = liveVideoData, liveVideoData.count > BearyLivePhoto.maxVideoBytes {
+            DispatchQueue.main.async {
+                guard let self = self, let item = item else { return }
+                self.markFailed(item)
+                self.showToast(message: "实况视频超过 10MB，未上传")
+                self.saveDraftNow()
+                self.updatePublishState()
+            }
+            return
+        }
+        let videoDataUrl = liveVideoData.map { BearyLivePhoto.videoDataURL($0) }
+        BearyAPI.shared.uploadImage(dataUrl: BearyImagePrep.dataURL(full.data), width: full.w, height: full.h, thumbDataUrl: BearyImagePrep.dataURL(thumbData), videoDataUrl: videoDataUrl) { [weak self, weak item] result in
             DispatchQueue.main.async {
                 guard let self = self, let item = item else { return }
                 var stillThere = false
@@ -5160,10 +5296,21 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                 switch result {
                 case .success(let resp):
                     if let key = resp.key {
-                        self.markUploaded(item, key: key)
-                        item.imageView.image = image
-                        self.scheduleDraftSave()
-                        self.updatePublishState()
+                        // 实况回包缺 live_key = 视频没落下：按失败处理（见函数头），
+                        // 不 markUploaded、不进草稿、不让发布把这张当静态图发出。
+                        if liveVideoData != nil, resp.liveKey == nil || resp.liveKey?.isEmpty == true {
+                            self.markFailed(item)
+                            self.showToast(message: "实况视频上传失败，请点图重试")
+                            self.saveDraftNow()
+                            self.updatePublishState()
+                        } else {
+                            self.markUploaded(item, key: key)
+                            item.liveVideoKey = resp.liveKey
+                            item.liveVideoData = nil
+                            item.imageView.image = image
+                            self.scheduleDraftSave()
+                            self.updatePublishState()
+                        }
                     } else {
                         self.markFailed(item)
                         self.saveDraftNow()
@@ -5171,6 +5318,11 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                     }
                 case .failure:
                     // 失败只亮重试态：图留在条里，点图重试；不弹全局框、不删项。
+                    // 实况失败多一句 toast（实况是用户明确选中的内容，失败须明说，
+                    // 静态失败口径不动；发布时失败图拦截 toast 仍在）。
+                    if liveVideoData != nil {
+                        self.showToast(message: "实况视频上传失败，请点图重试")
+                    }
                     self.markFailed(item)
                     self.saveDraftNow()
                     self.updatePublishState()
@@ -5221,6 +5373,19 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             }
         }
         return keys
+    }
+
+    /// 已上传实况映射：静态图 key → 视频 key；无实况的图不进映射。
+    /// 只有 key 与 liveVideoKey 双全的项才算实况已就绪（上传中/失败项本
+    /// 就被发布拦截，不会走到这里；裁剪/删图后 liveVideoKey 已清）。
+    private func uploadedLiveVideos() -> [String: String] {
+        var map: [String: String] = [:]
+        for item in imageItems {
+            if let key = item.key, let liveKey = item.liveVideoKey, !liveKey.isEmpty {
+                map[key] = liveKey
+            }
+        }
+        return map
     }
 
     // MARK: - 编辑模式回填（只读原值，不碰草稿）
@@ -5313,6 +5478,9 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         startEditTimer()
         for key in entry.images ?? [] {
             let item = createImageItem(localImage: nil, key: key, uploading: false, localFile: nil, failed: false)
+            // 编辑回填带实况：原图实况 key 随项带回，不动的图 PUT 时原样
+            // 发回 live_videos；删图/裁剪会清掉对应项，PUT 映射随之变。
+            item.liveVideoKey = entry.liveVideos?[key]
             insertImageItem(item)
             if let url = BearyImageURLs.imageURL(key: key, thumb: true) {
                 // B3-2：图片条单项 84×84，下采样到显示尺寸。
@@ -5424,7 +5592,10 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         }
         var images: [BearyDraftImageItem] = []
         for item in uploadedItems {
-            images.append(BearyDraftImageItem(localFile: item.localFile, serverKey: item.key, state: .uploaded))
+            // 实况已上传项随 liveVideoKey 进草稿：杀 App 后恢复仍能重建
+            // live_videos 映射；未上传/上传中的项本来就不进草稿（旧口径），
+            // 实况待传视频只留内存，杀 App 后按旧口径丢弃、不静默变静态。
+            images.append(BearyDraftImageItem(localFile: item.localFile, serverKey: item.key, state: .uploaded, liveVideoKey: item.liveVideoKey))
         }
         // @ 展示名口径与 refreshRecipientRow 一致（展示名 / @handle / “用户”兜底），
         // 只为恢复 chip 显示；发布仍以 mentioned_user_id 为准。
@@ -5584,6 +5755,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                 for img in draft.images {
                     let failed = (img.state == .failed)
                     let item = self.createImageItem(localImage: nil, key: img.serverKey, uploading: false, localFile: img.localFile, failed: failed)
+                    item.liveVideoKey = img.liveVideoKey
                     self.insertImageItem(item)
                     // 只有 key 的老项（v1 迁移而来）走远程缩略图；有本地文件的项等后台解码后填图。
                     if img.localFile == nil, let key = img.serverKey,
@@ -5936,6 +6108,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         for img in draft.images {
             let failed = (img.state == .failed)
             let item = createImageItem(localImage: nil, key: img.serverKey, uploading: false, localFile: img.localFile, failed: failed)
+            item.liveVideoKey = img.liveVideoKey
             insertImageItem(item)
             // 只有 key 的老项走远程缩略图；有本地文件的项等后台解码后填图。
             if img.localFile == nil, let key = img.serverKey,
@@ -6150,7 +6323,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         // iCity：可见性值即 visibility（published 0/1）；@ 以 mentioned_user_id 发出，无按篇通知开关。
         // 限时：限时态时可见性必为公开，ephemeral=1 随新建发出（服务端写 24 小时到期）。
         let publishVisibility = selectedVisibilityPublished ? 1 : 0
-        BearyAPI.shared.publishEntry(content: trimmed, images: uploadedImageKeys(), mood: selectedMood, weather: selectedWeather, quoteId: publishQuoteId, published: publishVisibility, mentionedUserId: selectedRecipient?.id, title: headlineForCreate, ephemeral: isEphemeral ? 1 : nil, clientReq: req, locationName: selectedLocation?.name, locationDistrict: selectedLocation?.district, capsuleBuried: capsulePayload?.buried, capsuleUnlockDate: capsulePayload?.unlockDate, capsuleDistrict: capsulePayload?.district, temperature: selectedTemperature) { [weak self] result in
+        BearyAPI.shared.publishEntry(content: trimmed, images: uploadedImageKeys(), mood: selectedMood, weather: selectedWeather, quoteId: publishQuoteId, published: publishVisibility, mentionedUserId: selectedRecipient?.id, title: headlineForCreate, ephemeral: isEphemeral ? 1 : nil, clientReq: req, locationName: selectedLocation?.name, locationDistrict: selectedLocation?.district, capsuleBuried: capsulePayload?.buried, capsuleUnlockDate: capsulePayload?.unlockDate, capsuleDistrict: capsulePayload?.district, temperature: selectedTemperature, liveVideos: uploadedLiveVideos().isEmpty ? nil : uploadedLiveVideos()) { [weak self] result in
             DispatchQueue.main.async {
                 guard let self = self else { return }
                 self.isPublishing = false
@@ -6241,7 +6414,13 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         // 时间胶囊：编辑 PUT 不发胶囊字段，服务端保留原埋点与解锁日期；改位置不挪胶囊（埋点是发布时快照）。
         // 批 E：编辑位置——与原快照比对，未动省略、改选两键算清（有值发值、无值发 null）、清除两键皆 null。
         let locationChanged = selectedLocation != originalLocation
-        BearyAPI.shared.updateEntry(id: entryId, content: trimmed, images: uploadedImageKeys(), mood: selectedMood, weather: selectedWeather, quoteId: lockedQuote?.entryId, title: headlineText, mentionedUserId: updateMentionedId, clearMentioned: updateClearMentioned, locationName: locationChanged ? selectedLocation?.name : nil, locationDistrict: locationChanged ? selectedLocation?.district : nil, clearLocationName: locationChanged && selectedLocation?.name == nil, clearLocationDistrict: locationChanged && selectedLocation?.district == nil, temperature: selectedTemperature) { [weak self] result in
+        // 编辑实况映射：新映射非空即发；新映射为空但原篇有实况时发显式
+        // 空映射清掉原实况；原篇本就无实况且新映射为空时省略（纯静态编辑
+        // body 不变）。uploadedLiveVideos() 算两次是同一内存快照，无副作用。
+        let editLiveVideos: [String: String]? = uploadedLiveVideos().isEmpty
+            ? ((editingEntry?.liveVideos?.isEmpty == false) ? [:] : nil)
+            : uploadedLiveVideos()
+                BearyAPI.shared.updateEntry(id: entryId, content: trimmed, images: uploadedImageKeys(), mood: selectedMood, weather: selectedWeather, quoteId: lockedQuote?.entryId, title: headlineText, mentionedUserId: updateMentionedId, clearMentioned: updateClearMentioned, locationName: locationChanged ? selectedLocation?.name : nil, locationDistrict: locationChanged ? selectedLocation?.district : nil, clearLocationName: locationChanged && selectedLocation?.name == nil, clearLocationDistrict: locationChanged && selectedLocation?.district == nil, temperature: selectedTemperature, liveVideos: editLiveVideos) { [weak self] result in
             DispatchQueue.main.async {
                 guard let self = self else { return }
                 self.isPublishing = false
@@ -6257,6 +6436,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                         // 109：本地副本跟随输入框标题（空 = nil，与服务端归一化一致）。
                         updated.title = self.headlineText.isEmpty ? nil : self.headlineText
                         updated.images = self.uploadedImageKeys()
+                        updated.liveVideos = self.uploadedLiveVideos().isEmpty ? nil : self.uploadedLiveVideos()
                         updated.mood = self.selectedMood
                         updated.weather = self.selectedWeather
                         updated.temperatureC = self.selectedTemperature
@@ -6615,6 +6795,12 @@ private final class ComposerImageItem {
     var uploading: Bool
     var localFile: String?
     var failed: Bool
+    /// 实况（仅内存 + 已上传 key，不进图片文件本身）：
+    /// liveVideoData = 本轮新选实况待上传的 mov（上传成功后清掉，只留 key）；
+    /// liveVideoKey = 服务端视频 key（上传回包 live_key，或编辑回填的原实况）。
+    /// 裁剪会清掉两者（帧已变，旧视频不再对应，见 applyCroppedImage）。
+    var liveVideoData: Data?
+    var liveVideoKey: String?
     let container: UIView
     let imageView: UIImageView
     let spinner: BearyWebRingSpinnerView

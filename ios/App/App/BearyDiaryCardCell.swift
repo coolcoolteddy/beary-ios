@@ -1,4 +1,5 @@
 import UIKit
+import Photos
 
 // ===== BearyDiaryCardCell 共享日记卡片（B 批卡片合并）=====
 // 首页 BearyFeedCell 与个人主页 BearyProfileEntryCell 的合并体，两页共用一处
@@ -1009,6 +1010,11 @@ class BearyDiaryCardCell: UITableViewCell {
     private var imageSlots: [UIImageView] = []
     private var imageSlotWidthConstraints: [NSLayoutConstraint] = []
     private var imageSlotRetryButtons: [BearyFeedRetryButton] = []
+    /// 实况覆盖层（与槽位一一对应）与每槽长按手势：平时隐藏、静态帧仍是
+    /// 原槽位 UIImageView；实况就绪后覆盖层显现，长按播实况，点按进灯箱
+    /// 不动（长按后的抬手点按凭覆盖层的 suppressTapUntil 压住一次）。
+    private var imageSlotLiveViews: [BearyLivePhotoView] = []
+    private var imageSlotLivePresses: [UILongPressGestureRecognizer?] = []
 
     /// 图片条捏合拼图：双指捏合把间距 8 → 0、圆角 12 → 0（图贴在一起且无圆角），张开恢复 8 / 12。
     /// 只动 imagesStack.spacing 与槽位圆角，不动槽宽/高，不缩放单张图；灯箱自带的
@@ -1087,6 +1093,16 @@ class BearyDiaryCardCell: UITableViewCell {
             slot.tag = index
             slot.addGestureRecognizer(UITapGestureRecognizer(target: self, action: #selector(imageTapped(_:))))
             slot.isHidden = true
+            let liveView = BearyLivePhotoView(contentMode: .aspectFill)
+            slot.addSubview(liveView)
+            NSLayoutConstraint.activate([
+                liveView.topAnchor.constraint(equalTo: slot.topAnchor),
+                liveView.bottomAnchor.constraint(equalTo: slot.bottomAnchor),
+                liveView.leadingAnchor.constraint(equalTo: slot.leadingAnchor),
+                liveView.trailingAnchor.constraint(equalTo: slot.trailingAnchor),
+            ])
+            imageSlotLiveViews.append(liveView)
+            imageSlotLivePresses.append(nil)
             imagesStack.addArrangedSubview(slot)
             let widthConstraint = slot.widthAnchor.constraint(equalToConstant: 280)
             imageSlotWidthConstraints.append(widthConstraint)
@@ -1468,6 +1484,14 @@ class BearyDiaryCardCell: UITableViewCell {
                 imageSlotRetryButtons[slotIndex].isHidden = true
                 imageSlotRetryButtons[slotIndex].retryURL = nil
             }
+            // 实况覆盖层同步清掉（在途加载凭 token 丢弃，复用不串位到下一行）。
+            if slotIndex < imageSlotLiveViews.count {
+                imageSlotLiveViews[slotIndex].clear()
+            }
+            if slotIndex < imageSlotLivePresses.count, let press = imageSlotLivePresses[slotIndex] {
+                slot.removeGestureRecognizer(press)
+                imageSlotLivePresses[slotIndex] = nil
+            }
         }
         imagesScrollView.isHidden = true
         imageHeightConstraint?.constant = 0
@@ -1821,7 +1845,7 @@ class BearyDiaryCardCell: UITableViewCell {
         configureQuoteFeed(for: entry)
 
         // F5：图片条 216 高、按宽高比定宽、圆角 12、间距 8、横向滚动（94 包槽位复用）。
-        renderImages(keys: entry.images ?? [], dims: entry.imgDims)
+        renderImages(keys: entry.images ?? [], dims: entry.imgDims, liveVideos: entry.liveVideos)
         // 批 E：位置行（图片条之后、操作行之前）。
         refreshLocationRow(entry: entry)
 
@@ -1917,7 +1941,7 @@ class BearyDiaryCardCell: UITableViewCell {
         }
         configureQuoteProfile(entry: entry)
         // 图片条 216 高、按宽高比定宽（原 stripW 口径；94 包槽位复用 + 合并后补重试）。
-        renderImages(keys: entry.images ?? [], dims: entry.imgDims)
+        renderImages(keys: entry.images ?? [], dims: entry.imgDims, liveVideos: entry.liveVideos)
         // 批 E：位置行（个人页模式同款，图片条之后、操作行之前）。
         refreshLocationRow(entry: entry)
         // 点赞 / 收藏 / 分享（已赞为红色、已收藏为橙色；忙时整行互动禁用）。
@@ -1965,7 +1989,9 @@ class BearyDiaryCardCell: UITableViewCell {
 
     // MARK: - 图片条（94 包槽位复用，两页同款；失败重试 Feed 口径）
 
-    private func renderImages(keys: [String], dims: [String: [Int]]?) {
+    /// 实况：调用方传本条 entry.liveVideos；无实况的图映射里无项，覆盖层
+    /// 即清掉（旧静态图、纯静态新图一律走这里，不动原静态加载）。
+    private func renderImages(keys: [String], dims: [String: [Int]]?, liveVideos: [String: String]? = nil) {
         resetImageStripPinch()
         // 112：卡片图片条上限 9 张（详情侧同款 Array(allKeys.prefix(9))）。
         // 脏数据超 9 张时先截断再渲染，灯箱 keys 同步取截断后列表，
@@ -1983,6 +2009,7 @@ class BearyDiaryCardCell: UITableViewCell {
                     imageSlotRetryButtons[slotIndex].isHidden = true
                     imageSlotRetryButtons[slotIndex].retryURL = nil
                 }
+                setLiveOverlay(index: slotIndex, staticKey: nil, liveKey: nil)
             }
             return
         }
@@ -1998,6 +2025,7 @@ class BearyDiaryCardCell: UITableViewCell {
             bearyFeedLoadImage(into: slot, url: BearyImageURLs.imageURL(key: imageKey, thumb: true), retryButton: imageSlotRetryButtons[imageIndex], downsampleToWidth: strip * UIScreen.main.scale)
             imageSlotWidthConstraints[imageIndex].constant = strip
             slot.isHidden = false
+            setLiveOverlay(index: imageIndex, staticKey: imageKey, liveKey: liveVideos?[imageKey])
         }
         for (slotIndex, slot) in imageSlots.dropFirst(keys.count).enumerated() {
             slot.bearySetImage(url: nil)
@@ -2006,6 +2034,49 @@ class BearyDiaryCardCell: UITableViewCell {
             if retryIndex < imageSlotRetryButtons.count {
                 imageSlotRetryButtons[retryIndex].isHidden = true
                 imageSlotRetryButtons[retryIndex].retryURL = nil
+            }
+            setLiveOverlay(index: retryIndex, staticKey: nil, liveKey: nil)
+        }
+    }
+
+    /// 实况覆盖层开关：有 liveKey 时配覆盖层并给槽位挂长按手势（只挂实况槽，
+    /// 静态槽不挂、点按无延迟）；无 liveKey 时清覆盖层并摘长按手势。
+    private func setLiveOverlay(index: Int, staticKey: String?, liveKey: String?) {
+        guard index >= 0, index < imageSlotLiveViews.count, index < imageSlots.count,
+              index < imageSlotLivePresses.count else { return }
+        let overlay = imageSlotLiveViews[index]
+        let slot = imageSlots[index]
+        if let liveKey = liveKey, !liveKey.isEmpty, let staticKey = staticKey, !staticKey.isEmpty {
+            overlay.configure(staticKey: staticKey, liveKey: liveKey)
+            if imageSlotLivePresses[index] == nil {
+                let press = UILongPressGestureRecognizer(target: self, action: #selector(liveLongPressed(_:)))
+                press.minimumPressDuration = 0.4
+                slot.addGestureRecognizer(press)
+                imageSlotLivePresses[index] = press
+            }
+        } else {
+            overlay.clear()
+            if let press = imageSlotLivePresses[index] {
+                slot.removeGestureRecognizer(press)
+                imageSlotLivePresses[index] = nil
+            }
+        }
+    }
+
+    @objc private func liveLongPressed(_ sender: UILongPressGestureRecognizer) {
+        let index = sender.view?.tag ?? -1
+        guard index >= 0, index < imageSlotLiveViews.count else { return }
+        let overlay = imageSlotLiveViews[index]
+        if sender.state == .began {
+            overlay.startPlayback()
+            // 抬手点按压制：播完抬手那次点按不进灯箱（3 秒覆盖按住时长）。
+            overlay.suppressTapUntil = Date().addingTimeInterval(3)
+        } else if sender.state == .ended || sender.state == .cancelled {
+            let until = Date().addingTimeInterval(0.35)
+            if let existing = overlay.suppressTapUntil, existing > until {
+                // 按住超 0.35 秒后的抬手仍在 began 的 3 秒窗内，不缩短。
+            } else {
+                overlay.suppressTapUntil = until
             }
         }
     }
@@ -2697,6 +2768,13 @@ class BearyDiaryCardCell: UITableViewCell {
     /// F1：点图进查看器（带下标）；正文点按已由 contentTapped 截住，不会走到行导航。
     /// 重试图标可见时点按只走重试，不进查看器（钮是槽位子视图，父层手势可能同收该点按）。
     @objc private func imageTapped(_ sender: UITapGestureRecognizer) {
+        // 实况长按后的抬手点按：压住一次，不进灯箱（覆盖层在长按 began 时
+        // 已置 3 秒窗，ended 后又延 0.35 秒；窗外点按照常进灯箱）。
+        let tappedIndex = sender.view?.tag ?? -1
+        if tappedIndex >= 0, tappedIndex < imageSlotLiveViews.count,
+           let until = imageSlotLiveViews[tappedIndex].suppressTapUntil, until > Date() {
+            return
+        }
         if cardMode == .feed {
             if let iv = sender.view as? UIImageView,
                iv.subviews.contains(where: { ($0 as? BearyFeedRetryButton)?.isHidden == false }) {

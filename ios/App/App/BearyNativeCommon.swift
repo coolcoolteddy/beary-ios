@@ -945,6 +945,8 @@ enum BearyEmoteOrder {
 
 struct UploadResponse: Decodable {
     var key: String?
+    /// 实况视频 key（服务端 live_key；仅附带 videoDataUrl 的实况上传才有）。
+    var liveKey: String?
 }
 
 struct CreateResponse: Decodable {
@@ -980,9 +982,13 @@ extension BearyAPI {
 
     /// 图片上传：dataUrl 与 thumb 均为 data:image/jpeg;base64,...；单图 ≤5MB、缩略图 ≤2MB。
     /// 成功返回 R2 key（原图与缩略图共用该 key，缩略图另存 key+'_t'）。
-    func uploadImage(dataUrl: String, width: Int, height: Int, thumbDataUrl: String?, completion: @escaping (Result<UploadResponse, APIError>) -> Void) {
+    /// 实况：videoDataUrl 非空时才附带（data:video/quicktime;base64,... 的 mov，
+    /// App 端已限 ≤10MB），后端把视频存 key+'_live' 并回 live_key；videoDataUrl
+    /// 为 nil 时 body 与旧版一字相同，非实况上传路径不动。
+    func uploadImage(dataUrl: String, width: Int, height: Int, thumbDataUrl: String?, videoDataUrl: String? = nil, completion: @escaping (Result<UploadResponse, APIError>) -> Void) {
         var body: [String: Any] = ["dataUrl": dataUrl, "w": width, "h": height]
         if let t = thumbDataUrl { body["thumb"] = t }
+        if let v = videoDataUrl { body["videoDataUrl"] = v }
         request("/beary/api/images/upload", method: "POST", jsonBody: body, completion: completion)
     }
 
@@ -995,8 +1001,11 @@ extension BearyAPI {
     /// 成功 201 返回 {id, publish_at, edit_deadline}；失败码：content required / content too long /
     /// invalid image ownership / image unavailable(409) / create_gap / create_day_limit /
     /// create_ip_limit(429) / create_dup。
-    func publishEntry(content: String, images: [String], mood: String?, weather: String? = nil, quoteId: String? = nil, published: Int? = nil, mentionedUserId: Int? = nil, title: String? = nil, ephemeral: Int? = nil, clientReq: String, locationName: String? = nil, locationDistrict: String? = nil, capsuleBuried: Int? = nil, capsuleUnlockDate: String? = nil, capsuleDistrict: String? = nil, temperature: Int? = nil, completion: @escaping (Result<CreateResponse, APIError>) -> Void) {
+    func publishEntry(content: String, images: [String], mood: String?, weather: String? = nil, quoteId: String? = nil, published: Int? = nil, mentionedUserId: Int? = nil, title: String? = nil, ephemeral: Int? = nil, clientReq: String, locationName: String? = nil, locationDistrict: String? = nil, capsuleBuried: Int? = nil, capsuleUnlockDate: String? = nil, capsuleDistrict: String? = nil, temperature: Int? = nil, liveVideos: [String: String]? = nil, completion: @escaping (Result<CreateResponse, APIError>) -> Void) {
         var body: [String: Any] = ["content": content, "images": images, "client_req": clientReq]
+        // 实况：非空才发 live_videos（无实况的新建与旧版 body 一字相同）；
+        // 空映射不发（新建无旧态可清，编辑清实况走 updateEntry 的显式空映射）。
+        if let live = liveVideos, !live.isEmpty { body["live_videos"] = live }
         // 标题透传，nil=省略不传；非 nil 原样传。新建调用方传 preservedTitle
         //（全新日记为 nil、按无标题创建；续写旧草稿时为旧标题原样带回）；
         // 编辑 PUT 不再发显式空串清标题（标题行已去掉、标题不可改），见 updateEntry。
@@ -1029,9 +1038,12 @@ extension BearyAPI {
     /// （公开后 15 分钟内仍可编辑；可见性只走 visibility 接口，不可经此接口改）。
     /// 成功只返回 {ok: true}，调用方成功后自行重拉单篇。
     /// 图片须归属本人且存在，否则 400 'invalid image ownership' / 409 'image unavailable'。
-    func updateEntry(id: String, content: String, images: [String], mood: String?, weather: String?, quoteId: String?, title: String? = nil, mentionedUserId: Int? = nil, clearMentioned: Bool = false, locationName: String? = nil, locationDistrict: String? = nil, clearLocationName: Bool = false, clearLocationDistrict: Bool = false, temperature: Int? = nil, completion: @escaping (Result<Void, APIError>) -> Void) {
+    func updateEntry(id: String, content: String, images: [String], mood: String?, weather: String?, quoteId: String?, title: String? = nil, mentionedUserId: Int? = nil, clearMentioned: Bool = false, locationName: String? = nil, locationDistrict: String? = nil, clearLocationName: Bool = false, clearLocationDistrict: Bool = false, temperature: Int? = nil, liveVideos: [String: String]? = nil, completion: @escaping (Result<Void, APIError>) -> Void) {
         let safe = id.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? id
         var body: [String: Any] = ["content": content, "images": images]
+        // 实况：调用方算清后才传——非空发映射；显式空映射 = 清掉原实况（删图/
+        // 裁剪丢实况后用）；nil = 省略（纯静态编辑与旧版 body 一字相同）。
+        if let live = liveVideos { body["live_videos"] = live }
         // 批 E：编辑位置——未动时四值皆空、服务端保留原值；改选时调用方把两键都算清楚
         // （有值发值、无值发显式 null），不出现“只改名不改区、旧区残留”的半更新。
         // 清除整行时两 clear 皆真。经纬度永不进 body。

@@ -35,6 +35,8 @@ struct BearyDraftImageItem: Codable {
     var localFile: String?
     var serverKey: String?
     var state: BearyDraftImageState
+    /// 实况视频 key（已上传实况项才有；老草稿缺本键时按 nil 解码，即纯静态）。
+    var liveVideoKey: String? = nil
 }
 
 extension BearyDraft {
@@ -698,7 +700,7 @@ enum BearyDraftStore {
                    FileManager.default.fileExists(atPath: url.path) {
                     kept.append(item)
                 } else if let key = item.serverKey {
-                    kept.append(BearyDraftImageItem(localFile: nil, serverKey: key, state: .uploaded))
+                    kept.append(BearyDraftImageItem(localFile: nil, serverKey: key, state: .uploaded, liveVideoKey: item.liveVideoKey))
                 } else {
                     // G6：本地文件已删且无服务端 key——转为失败态图项并保留提示，
                     // 而非丢弃；草稿箱现有识别逻辑（state==.failed 且双空）可直接认出。
