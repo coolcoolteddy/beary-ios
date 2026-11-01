@@ -346,7 +346,7 @@ class BearyFeedViewController: UIViewController {
         super.viewWillAppear(animated)
         // 112 返回未改不刷新：全屏 modal（编辑器/详情/个人页/设置页等）dismiss
         // 时会触发这里——它只是“回来了”，不是“改过了”，故不走 60 秒后台重拉，
-        // 只回显缓存、不动滚动位；切 tab 回首页走 pageDidEnter/resumeVisibleEmotes，
+        // 只回显缓存、不动滚动位；切 tab 回首页走 pageDidEnter（唯一入口），
         // 仍保留 60 秒门控（见 handlePageEnter）。
         handlePageEnter(allowBackgroundRevalidate: false)
     }
@@ -388,9 +388,9 @@ class BearyFeedViewController: UIViewController {
     /// P1-5：与时间线 pageDidEnter 同款钩子——容器切页只改 isHidden、不触发
     /// viewWillAppear，故切 tab 回首页走这里（allowBackgroundRevalidate=true，
     /// 保留 60 秒门控重拉）；modal dismiss 返回走 viewWillAppear
-    ///（allowBackgroundRevalidate=false，不重拉）。下方 resumeVisibleEmotes
-    /// 顺带跑一遍同款进页逻辑；两处双跑时由 revalidate 门控
-    ///（isRevalidating/60 秒/loading）去重，无害。
+    ///（allowBackgroundRevalidate=false，不重拉）。本方法是切 tab 回首页的
+    /// 唯一进页入口（含可见行表情恢复）；容器勿再另调 resumeVisibleEmotes，
+    /// 那是本方法的兼容别名，同调即双跑。
     func pageDidEnter() {
         handlePageEnter(allowBackgroundRevalidate: true)
         resumeVisibleEmotesCore()
@@ -2077,14 +2077,13 @@ extension BearyFeedViewController: UITableViewDataSource, UITableViewDelegate {
         }
     }
 
-    /// 80 包 A5：与 stopVisibleEmotes 对称的恢复入口（容器切回时调用）：
-    /// 只恢复可见行内 BearyEmoteView 的播放，不重播整页入场。
-    /// P1-5：容器目前切入 .home 时只调这里（未接 pageDidEnter），故顺带跑一遍
-    /// handlePageEnter，让 60 秒后台重拉在切 tab 回首页时真正触发；容器接上
-    /// pageDidEnter 后，两处双跑由 revalidate 门控去重，无害。
+    /// 80 包 A5：与 stopVisibleEmotes 对称的恢复入口。
+    /// 唯一实现在 pageDidEnter（handlePageEnter + resumeVisibleEmotesCore）；
+    /// 本方法只是兼容别名，不再另写一份进页逻辑。容器切回首页只调
+    /// pageDidEnter，勿与本方法同调——旧双调会让可见行 play() 跑两遍，
+    /// 纵使播放器侧已幂等，也不应留双入口。
     func resumeVisibleEmotes() {
-        handlePageEnter(allowBackgroundRevalidate: true)
-        resumeVisibleEmotesCore()
+        pageDidEnter()
     }
 
     private func resumeVisibleEmotesCore() {

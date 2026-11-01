@@ -26,6 +26,14 @@ public final class BearyEmoteView: UIView {
     /// 是否正在播放（供 chip 复用时判断：同 key 已在播时不再重播，避免每次
     /// 渲染都从 0 帧重画描线；停播态仍需 play() 恢复，见 BearyEmoteChipView.render）。
     var isPlayingNow: Bool { isPlaying }
+    /// 开场是否已播完一次（0→op 完成）：同一份内容只播一次开场；切 tab、
+    /// 滚出再回来走恢复，不重播。teardownContent（换内容/深浅切换）时清零，
+    /// 新内容重新首播；主动重播 replayFromStart() 也清零。
+    private var introPlayed: Bool = false
+    /// stop() 捕获的暂停帧：Lottie stop() 后不保证停在当前帧（同文件
+    /// showStaticFrame 在 stop 后特意补帧即是证据），故 stop 时先记帧，
+    /// 恢复时以它为准，不以 stop 后的 currentFrame 为准。
+    private var pausedFrame: CGFloat?
     /// 静态帧持有态：showStaticFrame() 置真，play()/stop() 清掉；attach 时若为真，
     /// 未播放的视图停在循环段末帧而非 0 帧（0 帧是首播描线起点，未完成态）。
     private var heldStaticFrame: Bool = false
@@ -216,28 +224,19 @@ public final class BearyEmoteView: UIView {
     }
 
     /// 前台恢复：后台挂起可能打断 playOnce→循环的接力（见上），isPlaying 仍为真
-    /// 但动画已死。本方法从当前帧续播到 op 再进循环，不回 0 帧重画描线；
-    /// 减动效下不恢复播放（仍停完成帧，口径不变）；冻结静态帧
+    /// 但动画已死。本方法走与 play() 恢复同一条 resumePlayback()：已在循环段
+    /// 的从当前帧续循环，开场未完的从当前帧播到 op 再进循环，一律不回 0 帧
+    /// 重画描线；减动效下不恢复播放（仍停完成帧，口径不变）；冻结静态帧
     /// （heldStaticFrame，如心情条未选中项旧口径）的与已离窗的不动。
     func resumeAfterForeground() {
         guard isPlaying, window != nil else { return }
         guard UIAccessibility.isReduceMotionEnabled == false else { return }
-        guard let view = animationView, let cached = currentEmote else {
+        guard animationView != nil, currentEmote != nil else {
             // 仍在后台解析或 PNG 占位：只保住起播意图，挂接时兑现，不丢。
             if fallbackImageView != nil { isPlaying = true }
             return
         }
-        playbackGeneration += 1
-        let generation = playbackGeneration
-        let fromFrame = view.currentFrame
-        view.play(fromFrame: fromFrame, toFrame: cached.endFrame, loopMode: .playOnce) { [weak self] finished in
-            guard let self = self else { return }
-            guard finished else { return }
-            guard self.playbackGeneration == generation else { return }
-            guard self.isPlaying else { return }
-            guard UIAccessibility.isReduceMotionEnabled == false else { return }
-            self.animationView?.play(fromFrame: cached.loopStart, toFrame: cached.loopEnd, loopMode: .loop) { _ in }
-        }
+        resumePlayback()
     }
 
     /// 内存警告观察者（只装一次，常驻不移除）：收到警告即清空解析缓存与字节计数，
@@ -297,12 +296,47 @@ public final class BearyEmoteView: UIView {
         Self.schedulePrewarm(dark: self.isDark)
     }
 
-    /// 开始播放：先播 0 到 op 一次，完成后进入 loop_start 到 loop_end 的无限循环。
-    /// 减动效开启时只显示循环段末帧（完成帧）。
+    /// 开始播放（首次 / 恢复共用，幂等）：
+    /// - 首次：先播 0 到 op 一次，完成后进入 loop_start 到 loop_end 的无限循环；
+    /// - 恢复（stop/切 tab/滚出后再回来）：已播过开场的从暂停帧/当前帧继续，
+    ///   循环段内续循环、开场中续到 op 再进循环，绝不回 0 帧重画描线；
+    /// - 已在播：直接返回，不重播（旧 play() 每次都进 startPlayback 从 0 播，
+    ///   是“已有元素重新长一遍”的根因；isPlaying 只是意图，Lottie 死播时
+    ///   isAnimationPlaying 为 false，仍会落到恢复分支，不被本行误挡）。
+    /// 主动想从头播一次时调 replayFromStart()，不要 stop() + play()。
+    /// 减动效开启时只显示循环段末帧（完成帧），口径不变。
     /// 后台加载中调用 play 时视图上还是 PNG 占位：只记下起播意图就返回，
     /// 挂接时 attachCachedEmote 见 isPlaying 为真即起播，不丢这次 play；
     /// 永久回退（解析失败）时该意图无动画可播，无害。
     public func play() {
+        heldStaticFrame = false
+        guard fallbackImageView == nil else {
+            isPlaying = UIAccessibility.isReduceMotionEnabled == false
+            return
+        }
+        if UIAccessibility.isReduceMotionEnabled {
+            isPlaying = false
+            pausedFrame = nil
+            if let view = animationView, let cached = currentEmote {
+                view.currentFrame = cached.staticFrame
+            }
+            return
+        }
+        if isPlaying, let view = animationView, view.isAnimationPlaying {
+            return
+        }
+        isPlaying = true
+        if introPlayed {
+            resumePlayback()
+        } else {
+            startPlayback()
+        }
+    }
+
+    /// 主动重播：唯一从 0 帧重播的入口。引导页点中表情“从头播一次”用，
+    /// 其余恢复场景一律走 play()，不要用 stop() + play() 拼重播——stop()
+    /// 现在保帧，拼出来的会是恢复而非重播。减动效下仍只置静态帧，不播。
+    public func replayFromStart() {
         heldStaticFrame = false
         guard fallbackImageView == nil else {
             isPlaying = UIAccessibility.isReduceMotionEnabled == false
@@ -316,6 +350,8 @@ public final class BearyEmoteView: UIView {
             return
         }
         isPlaying = true
+        introPlayed = false
+        pausedFrame = nil
         startPlayback()
     }
 
@@ -323,15 +359,23 @@ public final class BearyEmoteView: UIView {
     /// 0 帧是描线未完成态（线未画完），停回 0 帧会把已画完的熊退回未完成态；
     /// 当前帧才是用户最后看到的完成/进行态。减动效开启时停在循环段末帧
     /// （完成帧），这也是减动效通知观察者调用本方法时应有的静态态。
-    /// 回退静态图时为空操作。
+    /// 实现与注释一致：先记帧再调 Lottie stop()，停后再把记下的帧写回去——
+    /// Lottie stop() 本身不保证保帧（showStaticFrame 在 stop 后特意补帧
+    /// 即是证据），不补写就会丢帧。回退静态图时为空操作。
     public func stop() {
         isPlaying = false
         heldStaticFrame = false
+        if let view = animationView {
+            pausedFrame = view.currentFrame
+        }
         playbackGeneration += 1
         if let view = animationView {
             view.stop()
             if UIAccessibility.isReduceMotionEnabled, let cached = currentEmote {
                 view.currentFrame = cached.staticFrame
+                pausedFrame = nil
+            } else if let paused = pausedFrame {
+                view.currentFrame = paused
             }
         }
     }
@@ -343,6 +387,8 @@ public final class BearyEmoteView: UIView {
     public func showStaticFrame() {
         isPlaying = false
         heldStaticFrame = true
+        // 冻结不是暂停：恢复时以静态帧（currentFrame）为准，不以旧暂停帧为准。
+        pausedFrame = nil
         playbackGeneration += 1
         if let view = animationView, let cached = currentEmote {
             view.stop()
@@ -404,7 +450,13 @@ public final class BearyEmoteView: UIView {
             // 零长段已兜底为整段末帧，再由 staticFrame 退一帧）。
             view.currentFrame = cached.staticFrame
         } else if isPlaying {
-            startPlayback()
+            // 新内容挂接时 introPlayed 恒为 false（teardown 已清零），走首播；
+            // 写成两分支是防未来挂接路径不经过 teardown 时也按已播态恢复，不回 0。
+            if introPlayed {
+                resumePlayback()
+            } else {
+                startPlayback()
+            }
         } else if heldStaticFrame {
             view.currentFrame = cached.staticFrame
         } else {
@@ -471,6 +523,9 @@ public final class BearyEmoteView: UIView {
     private func teardownContent() {
         playbackGeneration += 1
         loadGeneration += 1
+        // 换内容/深浅切换：新视图的开场要重新首播，旧暂停帧作废。
+        introPlayed = false
+        pausedFrame = nil
         animationView?.removeFromSuperview()
         animationView = nil
         fallbackImageView?.removeFromSuperview()
@@ -492,6 +547,42 @@ public final class BearyEmoteView: UIView {
             guard self.playbackGeneration == generation else { return }
             guard self.isPlaying else { return }
             guard UIAccessibility.isReduceMotionEnabled == false else { return }
+            // 开场播完才算 introPlayed：此后一切恢复都不再回 0 帧。
+            self.introPlayed = true
+            self.animationView?.play(fromFrame: cached.loopStart, toFrame: cached.loopEnd, loopMode: .loop) { _ in }
+        }
+    }
+
+    /// 恢复播放（play() / 前台恢复共用，幂等由调用方 isAnimationPlaying 守门）：
+    /// 暂停帧落在循环段内时从该帧续循环；暂停在开场中、或循环段之后尾段时，
+    /// 从当前帧播到 op 再进循环；帧已到 op 时直接进循环，避免 0 长 playOnce
+    /// 无回调。三种路径都不回 0 帧，开场描线只在首播出现一次。
+    private func resumePlayback() {
+        guard let view = animationView, let cached = currentEmote else { return }
+        if UIAccessibility.isReduceMotionEnabled {
+            view.currentFrame = cached.staticFrame
+            return
+        }
+        let frame = pausedFrame ?? view.currentFrame
+        pausedFrame = nil
+        let clamped = min(max(frame, 0), cached.endFrame)
+        playbackGeneration += 1
+        let generation = playbackGeneration
+        if introPlayed, clamped >= cached.loopStart, clamped < cached.loopEnd {
+            view.play(fromFrame: clamped, toFrame: cached.loopEnd, loopMode: .loop) { _ in }
+            return
+        }
+        if clamped >= cached.endFrame {
+            view.play(fromFrame: cached.loopStart, toFrame: cached.loopEnd, loopMode: .loop) { _ in }
+            return
+        }
+        view.play(fromFrame: clamped, toFrame: cached.endFrame, loopMode: .playOnce) { [weak self] finished in
+            guard let self = self else { return }
+            guard finished else { return }
+            guard self.playbackGeneration == generation else { return }
+            guard self.isPlaying else { return }
+            guard UIAccessibility.isReduceMotionEnabled == false else { return }
+            self.introPlayed = true
             self.animationView?.play(fromFrame: cached.loopStart, toFrame: cached.loopEnd, loopMode: .loop) { _ in }
         }
     }

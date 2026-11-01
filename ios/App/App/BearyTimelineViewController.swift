@@ -2551,8 +2551,10 @@ class BearyTimelineViewController: UIViewController {
         }
     }
 
-    /// 80 包 A5：与 stopVisibleEmotes 对称的恢复入口（容器切回时调用）：
+    /// 80 包 A5：与 stopVisibleEmotes 对称的恢复入口：
     /// 只恢复可见行内 BearyEmoteView 的播放，不重播整页入场。
+    /// 唯一进页入口是 pageDidEnter（其内调本方法）；容器切回时间线只调
+    /// pageDidEnter，勿再另调本方法，否则可见行恢复跑两遍。
     func resumeVisibleEmotes() {
         func resume(_ view: UIView) {
             if let emote = view as? BearyEmoteView { emote.play() }
