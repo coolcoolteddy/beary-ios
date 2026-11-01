@@ -5898,7 +5898,7 @@ class BearyProfileViewController: UIViewController {
         if indicatorHeight <= 0 {
             refreshIconView.setPullProgress(0)
         } else {
-            refreshIconView.setPullProgress(min(1, indicatorHeight / 80))
+            refreshIconView.setPullProgress(min(1, indicatorHeight / 67.2))
         }
     }
 
@@ -7274,13 +7274,13 @@ extension BearyProfileViewController: UITableViewDataSource, UITableViewDelegate
         if isCustomPullRefreshing {
             resetCoverStretchAnimated()
         }
-        // 自定义下拉触发（消息页同款）：手指原始行程满 205pt 松手才刷新。
+        // 自定义下拉触发（消息页同款）：手指原始行程满 140pt 松手才刷新。
         // P1-11：gated 页（targetUserIdValue 与 targetHandleValue 双空）无请求可发，
         // 直接不触发，否则转圈永远不消失。
         let panTranslation = scrollView.panGestureRecognizer.translation(in: scrollView).y
         let fingerRaw = max(0, panTranslation - (pullEngageTranslation ?? panTranslation))
         pullEngageTranslation = nil
-        if fingerRaw >= 205 && !isCustomPullRefreshing
+        if fingerRaw >= 140 && !isCustomPullRefreshing
             && !(targetUserIdValue == nil && targetHandleValue == nil) {
             BearyHaptics.press()
             // 刷新触发即启动封面复位动画：刷新期间滚动事件不再拉伸（见 updateCoverStretch），

@@ -1092,7 +1092,7 @@ final class BearyNotificationsViewController: UIViewController {
     }
 
     /// 自定义下拉指示器跟随：手指行程（pan 手势自顶部锚点起算，网页 engageY
-    /// 口径）× 0.48 阻尼、上限 116；指示高 ≥80 时转圈淡入放大（网页 .pull）。
+    /// 口径）× 0.48 阻尼、上限 116；指示高 ≥67.2 时转满一圈（= 触发行程 140pt × 0.48，满格点即触发点）。
     /// 指示器是表内子视图：屏内底边固定为指示高，顶边随表回弹裁剪。
     private func updateCustomPullIndicator() {
         if isCustomPullRefreshing {
@@ -1118,7 +1118,7 @@ final class BearyNotificationsViewController: UIViewController {
         if indicatorHeight <= 0 {
             pullIconView.setPullProgress(0)
         } else {
-            let progress = min(1, indicatorHeight / 80)
+            let progress = min(1, indicatorHeight / 67.2)
             pullIconView.setPullProgress(progress)
         }
     }
@@ -2143,12 +2143,12 @@ extension BearyNotificationsViewController: UITableViewDataSource, UITableViewDe
     }
 
     func scrollViewDidEndDragging(_ scrollView: UIScrollView, willDecelerate decelerate: Bool) {
-        // 自定义下拉触发：手指原始行程满 205px 松手才刷新（网页 TRIGRAW 口径）。
+        // 自定义下拉触发：手指原始行程满 140pt 松手才刷新（原网页 TRIGRAW 口径 205pt，App 侧本支改短，见 PR 描述）。
         let panTranslation = scrollView.panGestureRecognizer.translation(in: scrollView).y
         let fingerRaw = max(0, panTranslation - (pullEngageTranslation ?? panTranslation))
         pullEngageTranslation = nil
-        if fingerRaw >= 205 && !isLoadingFirstPage && !isCustomPullRefreshing {
-            // M12（91 包）：自定义下拉触发（满 205px 松手）给一次轻触觉；程序触发的 refresh() 不走这里。
+        if fingerRaw >= 140 && !isLoadingFirstPage && !isCustomPullRefreshing {
+            // M12（91 包）：自定义下拉触发（满 140pt 松手）给一次轻触觉；程序触发的 refresh() 不走这里。
             BearyHaptics.press()
             beginCustomPullRefresh()
         }

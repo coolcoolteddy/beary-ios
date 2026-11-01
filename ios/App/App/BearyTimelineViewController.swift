@@ -2981,7 +2981,7 @@ class BearyTimelineViewController: UIViewController {
     }
 
     /// 自定义下拉指示器跟随（消息页 updateCustomPullIndicator 同款）：
-    /// 手指行程（pan 手势自顶部锚点起算）× 0.48 阻尼、上限 116；指示高 ≥80 时转圈淡入放大。
+    /// 手指行程（pan 手势自顶部锚点起算）× 0.48 阻尼、上限 116；转满一圈在指示高 67.2（= 触发行程 140pt × 0.48），满格点即触发点；图标 alpha 在 30–67.2 间淡入至满。
     /// 指示器是表内子视图：屏内底边 = 安全区顶 + 指示高（基线内边距已计入 contentRaw），
     /// 顶边随表回弹裁剪；刷新中不跟随。
     private func updateCustomPullIndicator() {
@@ -3020,18 +3020,18 @@ class BearyTimelineViewController: UIViewController {
         if indicatorHeight <= 0 {
             refreshIconView.setPullProgress(0)
         } else {
-            let progress = min(1, indicatorHeight / 98.4)
+            let progress = min(1, indicatorHeight / 67.2)
             refreshIconView.setPullProgress(progress)
             // 时间线与消息页的关键差别：消息页表框顶 = 安全区顶，表框裁剪会把
             // 指示高 <30 时的图标（中心在安全区顶之上）裁掉；本页表框贴页顶，
             // 表框裁剪裁不掉它，早期图标会 faint 地出现在灵动岛带内。故用 alpha
             // 门模拟同一裁剪：图标中心在指示高 30 时才越过安全区顶，30 以下
-            // alpha 强制 0，30–80 间按 (指示-30)/50 淡入至满 alpha；转满一圈在
-            // 指示高 98.4（= 触发行程 205pt × 0.48），满格点即触发点（alpha 口径不动）。
+            // alpha 强制 0，30–67.2 间按 (指示-30)/37.2 淡入至满 alpha；转满一圈在
+            // 指示高 67.2（= 触发行程 140pt × 0.48），满格点即触发点。
             if indicatorHeight <= 30 {
                 refreshIconView.alpha = 0
             } else {
-                refreshIconView.alpha = min(1, (indicatorHeight - 30) / 50)
+                refreshIconView.alpha = min(1, (indicatorHeight - 30) / 37.2)
             }
         }
     }
@@ -3342,12 +3342,12 @@ class BearyTimelineViewController: UIViewController {
 
     func scrollViewDidEndDragging(_ scrollView: UIScrollView, willDecelerate decelerate: Bool) {
         guard scrollView === tableView else { return }
-        // 自定义下拉触发（消息页同款）：手指原始行程满 205px 松手才刷新。
+        // 自定义下拉触发（消息页同款）：手指原始行程满 140pt 松手才刷新。
         // M12（91 包）：触发给一次轻触觉；程序触发的刷新不走这里。
         let panTranslation = scrollView.panGestureRecognizer.translation(in: scrollView).y
         let fingerRaw = max(0, panTranslation - (pullEngageTranslation ?? panTranslation))
         pullEngageTranslation = nil
-        if fingerRaw >= 205 && timelineState != .loading && !isCustomPullRefreshing {
+        if fingerRaw >= 140 && timelineState != .loading && !isCustomPullRefreshing {
             BearyHaptics.press()
             beginCustomPullRefresh()
         }
