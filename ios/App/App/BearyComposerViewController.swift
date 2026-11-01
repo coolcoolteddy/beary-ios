@@ -288,6 +288,13 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     /// 供箱内撤销恢复时比对——只绑回正是这一篇的恢复，防串篇；新篇接管/重开/发布重置时清掉。
     private var clearedCurrentDraftId: String?
     private var isPublishing = false
+    /// 编辑期到点时正好有保存 PUT 在途：计时器不自动关编辑器，改由服务端
+    /// 结果定去留（见 startEditTimer / performUpdate 失败分支）。置位后即便
+    /// 请求失败也不再允许重发——期限已过，服务端同样会以 edit window
+    /// expired 拒绝；编辑器保持打开、正文与标题原样保留，供用户复制后
+    /// 再手动关闭。正常到点（无在途请求）不置位，直接走原关闭路径；
+    /// 新建发布没有编辑计时器，不受影响。
+    private var editSaveBlockedAfterDeadline = false
     private var didAutoFocus = false
     // 标题行已去掉：进页拉回旗标与 ensureTitleRowVisibleOnEntry 已整段删除
     //（#219 只覆盖打字时、长草稿光标在末尾进页拉回故意不执行那 case 本就未解决；
@@ -4223,11 +4230,34 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             return
         }
         editTimerLabel.isHidden = false
+        // 已因在途保存暂停过关闭：期限已过、编辑器为“保留输入待复制”态，
+        // viewWillAppear 重起计时器时也不得再走关闭路径（否则失败后一次
+        // 弹窗/切出返回就会把保留的输入连同编辑器一起关掉）。
+        if editSaveBlockedAfterDeadline {
+            editTimerLabel.text = "编辑已结束"
+            updatePublishState()
+            return
+        }
         let tickBlock: () -> Void = { [weak self] in
             guard let self = self else { return }
             let nowMs = Int(Date().timeIntervalSince1970 * 1000)
             let remain = max(0, Int(ceil(Double(deadline - nowMs) / 1000.0)))
             if remain <= 0 {
+                if self.isPublishing {
+                    // 在途保存：PUT 请求体在发出前已拼好，删本地临时文件
+                    // 不会破坏已发出的请求，丢的是结果回传——容器 dismiss
+                    // 后 VC 可能释放，成功回传与失败提示都会因 weak self
+                    // 丢失。故暂停自动关闭：不删本地文件、不走 onCancelled、
+                    // 不收弹出框；计时器先停，置位后保存钮由
+                    // updatePublishState 持续禁用；结果到时成功走原
+                    // onUpdated 关闭，失败走 performUpdate 的过期分支。
+                    self.editTimerLabel.text = "编辑已结束"
+                    self.editTimer?.invalidate()
+                    self.editTimer = nil
+                    self.editSaveBlockedAfterDeadline = true
+                    self.updatePublishState()
+                    return
+                }
                 // C4：到 0 显示“编辑已结束”并关闭编辑器（走现有取消/关闭路径
                 // onCancelled，不弹放弃确认；本轮新选图的本地文件按取消路径清理）。
                 // 注意：编辑态 onCancelled 在容器侧仅 dismiss、不刷新列表
@@ -4386,7 +4416,8 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         // C11：超长时发布钮保持可用（不禁用），点发布时 toast 报当前字数；上传中仍禁用。
         // U13：空正文不再真禁用（禁用钮收不到点按、零反馈）——改视觉置灰 + 点按给“先写点什么”
         // 轻提示（见 didTapPublish）；超长时保持可用的口径不动。
-        publishButton.isEnabled = !isPublishing && !hasUploadingImage()
+        // 期限已过且在途保存已失败：保存钮持续禁用（防重发），编辑器仅保留输入供复制。
+        publishButton.isEnabled = !isPublishing && !hasUploadingImage() && !editSaveBlockedAfterDeadline
         refreshPublishAppearance()
         refreshPublishBusyState()
         refreshPublishingInputFreeze()
@@ -6223,6 +6254,12 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         if isPublishing {
             return
         }
+        // 期限已过且在途保存已失败：保存钮已由 updatePublishState 禁用，
+        // 此处再拦一道（防按钮态竞态），不发 PUT、不清输入。
+        if isEditMode && editSaveBlockedAfterDeadline {
+            showAlert(message: "编辑时间已过，无法再保存，内容仍在编辑器里，可复制后关闭")
+            return
+        }
         // 批 E：发布/保存时先收定位气泡，防气泡确认与发布请求竞态。
         hideLocationPopover(animated: false)
         if !SessionManager.shared.isLoggedIn {
@@ -6484,7 +6521,26 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                         self.onUpdated?(updated)
                     }
                 case .failure(let error):
-                    if case .unauthorized = error {
+                    if self.editSaveBlockedAfterDeadline {
+                        // 在途保存赶上期限、服务端已判失败：不再允许重发
+                        // （期限已过，重发同样会被服务端拒绝；保存钮已由
+                        // updatePublishState 持续禁用，didTapPublish 亦拦）。
+                        // 不删本地文件、不关编辑器、不清正文/标题，输入原样
+                        // 保留供复制；关闭仍走用户手动取消（与正常取消同语义，
+                        // 关闭前请先复制）。注意：此处不走 onRequireLogin——
+                        // 登录页盖上来也救不回已过的期限，反而会挡住复制
+                        // 输入的机会；非过期态的登录失效仍走原分支。
+                        // 失败原因常驻 alert（不用一闪而过的 toast），确保看得到。
+                        if case .server(let code) = error, code == "edit window expired" {
+                            self.showAlert(message: "超过 15 分钟，已无法编辑；内容仍在编辑器里，可复制后关闭")
+                        } else if case .network = error {
+                            self.showAlert(message: "网络不可用，修改未保存；编辑时间已过，无法再保存，内容仍在编辑器里，可复制后关闭")
+                        } else if case .unauthorized = error {
+                            self.showAlert(message: "登录已失效，修改未保存；编辑时间已过，无法再保存，内容仍在编辑器里，可复制后关闭")
+                        } else {
+                            self.showAlert(message: "\(self.message(forUpdateError: error))；编辑时间已过，无法再保存，内容仍在编辑器里，可复制后关闭")
+                        }
+                    } else if case .unauthorized = error {
                         self.onRequireLogin?()
                     } else if case .server(let code) = error, code == "edit window expired" {
                         // C5：编辑期过期只 toast“超过 15 分钟，已无法编辑”，编辑器保持打开、
