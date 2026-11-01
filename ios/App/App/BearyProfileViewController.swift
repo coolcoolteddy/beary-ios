@@ -2307,7 +2307,8 @@ class BearyProfileViewController: UIViewController {
     private var currentBelowShift: CGFloat = 0
 
     /// 112：行跟移——当前施加给全部可见行 contentView 与 tableFooterView 的
-    /// 下移量，恒等于 tabsContainer 的跟移封顶值（见 applyProfileBelowShift）。
+    /// 下移量，恒等于名字以下整段位移（见 applyProfileBelowShift；旧口径的
+    /// 封顶值已废，墙／标签／行／脚部一律拿同一个 fullShift）。
     /// 只走 transform，不改约束、不改行高、不碰 contentInset／sectionHeader。
     private var profileRowFollowShift: CGFloat = 0
 
@@ -2365,6 +2366,10 @@ class BearyProfileViewController: UIViewController {
     /// 切 tab／深浅不改此算式：
     /// 新行在 willDisplay 时按当前跟移值落位，复用时 prepareForReuse
     /// 已把 diary 卡 contentView.transform 归零、willDisplay 再补上。
+    /// 2026-11-01 统一位移（本函数内注释为准）：上文 #260／#112 的封顶口径
+    /// 已废——名字以下整段（统计／夜巡／墙／标签／行／脚部）一律拿同一个
+    /// fullShift，不再分 capped／full 两档；统计→墙、墙→标签、标签→首卡
+    /// 在任何滚动位置都恒等于布局值，封顶计算与 center 现算已整段删除。
     private func applyProfileBelowShift(_ shift: CGFloat) {
         let fullShift = CGAffineTransform(translationX: 0, y: shift)
         editButton.transform = fullShift
@@ -2380,8 +2385,7 @@ class BearyProfileViewController: UIViewController {
         // 从 10 缩成 10 − shift，shift > 10 即贴上、满 20 时签名压进名字底 10pt；同时
         // handle 已跟移 fullShift，签名与 handle 间距反向撑成 8 + shift（满 20 时 28）。
         // 只移容器、不另移行内 signatureLabel（容器位移已带走子视图，另移会双倍）；
-        // 用 fullShift 而不用下方统计／墙的封顶值：签名上下邻（名字、handle）均为
-        // fullShift，封顶会重新拉开间距，且签名离标签顶尚远、满移也不会压进标签。
+        // 签名上下邻（名字、handle）均为 fullShift，同值跟移、间距恒定。
         signatureContainer.transform = fullShift
         handleLabel.transform = fullShift
         joinedIconView.transform = fullShift
@@ -2389,22 +2393,25 @@ class BearyProfileViewController: UIViewController {
         emailLabel.transform = fullShift
         // 标签跟移（见函数头注释）；模块容器已搬到脚部（表格行下方），滚动位移不跟移（见上）。
         modulesContainer.transform = .identity
-        let tabsTop = tabsContainer.center.y - tabsContainer.bounds.height / 2
-        // 首个未位移元素的顶：合并后顺序为墙→标签，标签恒可见，
-        // 故恒为标签顶（模块已搬到脚部，不再作封顶，见上）。
-        let floorTop = tabsTop
+        // 统一位移（2026-11-01 真机报 tab→首卡、墙→tab 间距随滑动呼吸的根治）：
+        // 旧口径是三分支各算一个 cappedShift（墙／夜巡／统计到标签顶的布局间隙，
+        // 用已被 transform 污染的 center 现算）：稳态下恒等于 16，但墙刚出现
+        // （transform 还是 .identity）、入场动画在途、分支切换这几拍里，墙与标签
+        // 的 transform 短暂脱节，封顶值先 overshoot、下一滚动事件再 snap 回，
+        // 墙、标签、首卡整段跟着跳一拍；且墙可见分支里统计拿 full、墙拿 capped，
+        // 统计→墙本身就有 0→4pt 的差值。
+        // #260 之后标签已跟移、#112 之后行已跟移，封顶的存在理由已消失：
+        // 墙移多少、标签和行就移多少，墙永远压不到标签；故名字以下整段
+        // （统计／夜巡／墙／标签／行／脚部）一律拿同一个 fullShift，
+        // 统计→墙、墙→标签、标签→首卡、行间、末行→脚部在任何滚动位置都
+        // 恒等于布局值（16／16／32／行距／脚距），不再有任何差值项。
+        // 头像 lag（27）与名字位移（20）的 7pt 差是 v22 封面折叠编排本身，
+        // 不在本修法内（顶栏与封面折叠不动）。
         let wallVisible = !wallContainer.isHidden && wallContainer.bounds.height > 0
-        // 112：三分支的 cappedShift 即标签跟移值，行跟移与它同值（见函数头）。
-        var tabsFollowShift: CGFloat = 0
         if wallVisible {
-            let wallBottom = wallContainer.center.y + wallContainer.bounds.height / 2
-            let cappedShift = min(shift, max(floorTop - wallBottom, 0))
-            let cappedTransform = CGAffineTransform(translationX: 0, y: cappedShift)
             nightContainer.transform = fullShift
-            wallContainer.transform = cappedTransform
-            // 墙下方间隙定死：标签与模块跟墙的封顶值同移，墙→标签的视觉间距恒等于布局值 16，不再被位移吃掉。
-            tabsContainer.transform = cappedTransform
-            tabsFollowShift = cappedShift
+            wallContainer.transform = fullShift
+            tabsContainer.transform = fullShift
             modulesContainer.transform = .identity  // #257 脚部模块不跟 header 位移
             wallTitleLabel.transform = .identity
             wallScrollView.transform = .identity
@@ -2414,36 +2421,20 @@ class BearyProfileViewController: UIViewController {
             publicTextLabel?.transform = fullShift
             likesTextLabel?.transform = fullShift
         } else if !nightContainer.isHidden && nightContainer.bounds.height > 0 {
-            // 夜巡入口是墙隐藏时的标签上方末位元素：位移以标签顶为上限。
-            let nightBottom = nightContainer.center.y + nightContainer.bounds.height / 2
-            let cappedShift = min(shift, max(floorTop - nightBottom, 0))
-            let cappedTransform = CGAffineTransform(translationX: 0, y: cappedShift)
-            nightContainer.transform = cappedTransform
-            // 墙隐藏态同口径：标签跟夜巡的封顶值同移，夜巡→标签恒 16。
-            tabsContainer.transform = cappedTransform
-            tabsFollowShift = cappedShift
+            nightContainer.transform = fullShift
+            tabsContainer.transform = fullShift
             modulesContainer.transform = .identity  // #257 脚部模块不跟 header 位移
-            publicCountLabel.transform = cappedTransform
-            likesCountLabel.transform = cappedTransform
-            publicTextLabel?.transform = cappedTransform
-            likesTextLabel?.transform = cappedTransform
+            publicCountLabel.transform = fullShift
+            likesCountLabel.transform = fullShift
+            publicTextLabel?.transform = fullShift
+            likesTextLabel?.transform = fullShift
             wallContainer.transform = fullShift
         } else {
-            let statsBottom = max(
-                publicCountLabel.center.y + publicCountLabel.bounds.height / 2,
-                likesCountLabel.center.y + likesCountLabel.bounds.height / 2,
-                (publicTextLabel?.center.y ?? 0) + (publicTextLabel?.bounds.height ?? 0) / 2,
-                (likesTextLabel?.center.y ?? 0) + (likesTextLabel?.bounds.height ?? 0) / 2
-            )
-            let cappedShift = min(shift, max(floorTop - statsBottom, 0))
-            let cappedTransform = CGAffineTransform(translationX: 0, y: cappedShift)
-            publicCountLabel.transform = cappedTransform
-            likesCountLabel.transform = cappedTransform
-            publicTextLabel?.transform = cappedTransform
-            likesTextLabel?.transform = cappedTransform
-            // 墙与夜巡双隐藏态同口径：标签与模块跟统计的封顶值同移，统计→标签恒 16。
-            tabsContainer.transform = cappedTransform
-            tabsFollowShift = cappedShift
+            publicCountLabel.transform = fullShift
+            likesCountLabel.transform = fullShift
+            publicTextLabel?.transform = fullShift
+            likesTextLabel?.transform = fullShift
+            tabsContainer.transform = fullShift
             modulesContainer.transform = .identity  // #257 脚部模块不跟 header 位移
             nightContainer.transform = fullShift
             wallContainer.transform = fullShift
@@ -2451,8 +2442,8 @@ class BearyProfileViewController: UIViewController {
             wallScrollView.transform = .identity
             wallTotalLabel.transform = .identity
         }
-        // 112：行跟移与标签跟移同值（见函数头）；复位路径（shift = 0）亦经此归零。
-        profileRowFollowShift = tabsFollowShift
+        // 行跟移与名字以下整段位移同值（见函数头）；复位路径（shift = 0）亦经此归零。
+        profileRowFollowShift = shift
         syncProfileRowFollowShift()
     }
 
@@ -3362,27 +3353,20 @@ class BearyProfileViewController: UIViewController {
         layoutHeaderForced(widthValue: headerWidthValue)
         if wasHidden && !wallHasAnimated {
             wallHasAnimated = true
+            // 入场收尾与滚动逻辑同口径：墙与标签／行一律拿同一个整段位移
+            // （applyProfileBelowShift 的 fullShift），收尾即当前位移，不再
+            // 用已被 transform 污染的 center 现算封顶值；减动效下不播动画、
+            // 直接落位，免得墙以 .identity 残留到下一滚动事件才 snap。
+            let endShift = self.currentBelowShift
             if !UIAccessibility.isReduceMotionEnabled {
-                // 入场动画以当前滚动位移为基准（8→位移处），而非归零：
-                // 否则入场结束时墙会回到 0、与已位移的统计行错位。
-                // 收尾须与滚动逻辑同口径：滚动中墙只拿封顶位移（≤16），
-                // 若收在 full 位移（≤20），收尾瞬间墙→标签间隙先被吃掉 4pt、
-                // 下一滚动事件又把它 snap 回封顶值；故收尾直接用封顶值。
-                let baseShift = self.currentBelowShift
-                let endShift: CGFloat
-                if headerWidthValue > 0 && wallContainer.bounds.height > 0 {
-                    let tabsTop = tabsContainer.center.y - tabsContainer.bounds.height / 2
-                    let wallBottom = wallContainer.center.y + wallContainer.bounds.height / 2
-                    endShift = min(baseShift, max(tabsTop - wallBottom, 0))
-                } else {
-                    endShift = baseShift
-                }
                 wallContainer.alpha = 0
                 wallContainer.transform = CGAffineTransform(translationX: 0, y: endShift + 8)
                 UIView.animate(withDuration: 0.3, delay: 0, options: .curveEaseOut, animations: {
                     self.wallContainer.alpha = 1
                     self.wallContainer.transform = CGAffineTransform(translationX: 0, y: endShift)
                 })
+            } else {
+                wallContainer.transform = CGAffineTransform(translationX: 0, y: endShift)
             }
         }
     }
@@ -3560,27 +3544,20 @@ class BearyProfileViewController: UIViewController {
         layoutHeaderForced(widthValue: headerWidthValue)
         if wasHidden && !nightHasAnimated {
             nightHasAnimated = true
+            // 与墙同款：入场收尾与滚动逻辑同口径，夜巡与统计／墙／标签／行
+            // 一律拿同一个整段位移（applyProfileBelowShift 的 fullShift）；
+            // 减动效下不播动画、直接落位，免得夜巡以 .identity 残留到下一
+            // 滚动事件才 snap。
+            let endShift = self.currentBelowShift
             if !UIAccessibility.isReduceMotionEnabled {
-                // 与墙同款：入场以当前滚动位移为基准，结束不停在 0（否则与已位移的统计行错位）。
-                // 收尾与滚动逻辑同口径：墙可见时夜巡在滚动中拿 full 位移，收尾沿用
-                // baseShift；墙隐藏时夜巡是末位元素、滚动中只拿封顶位移，收尾同口径
-                // 用封顶值，否则夜巡→标签间隙在收尾瞬间被吃掉、下一滚动事件再 snap 回。
-                let baseShift = self.currentBelowShift
-                let nightWallVisible = !wallContainer.isHidden && wallContainer.bounds.height > 0
-                let endShift: CGFloat
-                if !nightWallVisible && headerWidthValue > 0 && nightContainer.bounds.height > 0 {
-                    let tabsTop = tabsContainer.center.y - tabsContainer.bounds.height / 2
-                    let nightBottom = nightContainer.center.y + nightContainer.bounds.height / 2
-                    endShift = min(baseShift, max(tabsTop - nightBottom, 0))
-                } else {
-                    endShift = baseShift
-                }
                 nightContainer.alpha = 0
                 nightContainer.transform = CGAffineTransform(translationX: 0, y: endShift + 8)
                 UIView.animate(withDuration: 0.3, delay: 0, options: .curveEaseOut, animations: {
                     self.nightContainer.alpha = 1
                     self.nightContainer.transform = CGAffineTransform(translationX: 0, y: endShift)
                 })
+            } else {
+                nightContainer.transform = CGAffineTransform(translationX: 0, y: endShift)
             }
         }
     }
