@@ -788,7 +788,10 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         if !didAutoFocus {
             didAutoFocus = true
             if !textView.text.isEmpty {
-                textView.selectedRange = NSRange(location: textView.text.count, length: 0)
+                // selectedRange 是 UTF-16 单位，String.count 是字素簇数：
+                // 含 emoji 时两者不等（"😀a" 计 2 簇、3 个 UTF-16 单位），
+                // 用 .count 会把光标落在正文中间；attributedText.length 即 UTF-16 长。
+                textView.selectedRange = NSRange(location: textView.attributedText.length, length: 0)
             }
             textView.becomeFirstResponder()
         }
@@ -5726,7 +5729,9 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                 // 恢复后光标置末尾（接着写）：未出现时由 viewDidAppear 兜底，已聚焦且
                 // 恢复前为空时也置末尾；恢复前已有用户输入时不抢光标。
                 if self.view.window == nil || (wasEmptyBeforeRestore && self.textView.isFirstResponder) {
-                    self.textView.selectedRange = NSRange(location: self.textView.text.count, length: 0)
+                    // 同 viewDidAppear 兜底：selectedRange 用 UTF-16 单位，
+                    // 含 emoji 的草稿用 .count 会把光标落在正文中间。
+                    self.textView.selectedRange = NSRange(location: self.textView.attributedText.length, length: 0)
                 }
                 // 109：草稿标题回填进新输入框。
                 self.setHeadlineText(draft.title)
@@ -7051,7 +7056,8 @@ extension BearyComposerViewController {
 
     /// 标题单行守卫（原 textFieldShouldReturn + shouldChangeCharacters，改走
     /// UITextViewDelegate）：回车跳正文；粘贴里的换行压成空格；30 字封顶按
-    /// 可见格算（附件 1 格），组词中不拦；正文一律放行。
+    /// 最终序列化标题的码点算（与 headlineDidChange / truncatedHeadline 的
+    /// 服务端口径一致，附件按记号全长计、非 1 格），组词中不拦；正文一律放行。
     func textView(_ textView: UITextView, shouldChangeTextIn range: NSRange, replacementText text: String) -> Bool {
         guard textView === headlineField else { return true }
         if headlineField.markedTextRange != nil { return true }
@@ -7061,8 +7067,18 @@ extension BearyComposerViewController {
         }
         let sanitized = text.replacingOccurrences(of: "\n", with: " ")
         let current = headlineField.attributedText ?? NSAttributedString()
-        let updatedLength = current.length - range.length + sanitized.count
-        if updatedLength <= Self.headlineMaxLength {
+        // 长度口径统一（旧公式混用三者是本修法的根因）：
+        // 选区与 NSRange 一律 UTF-16（current.length、range.length、(String as NSString).length）；
+        // 业务限长一律对最终序列化标题（附件已还原为记号的 inlinePlainText）按码点计，
+        // 与 headlineDidChange / truncatedHeadline 的服务端口径一致，同一公式里不混用 .length 与 .count。
+        // 旧公式 current.length - range.length + sanitized.count 把 UTF-16 长与字素簇数相加：
+        // 20 个普通 emoji 时 UTF-16 已 40、码点才 20，继续敲普通字会误走超限分支被吞还弹提示。
+        // 基数 = 删掉待替换段后的序列化标题码点数；被替换段里的熊脸附件按记号全长计（非 1 格），
+        // 删它能腾出的格数旧公式（按 attributed 1 格算）会算少。
+        let base = NSMutableAttributedString(attributedString: current)
+        base.deleteCharacters(in: range)
+        let baseCodePoints = BearyText.inlinePlainText(from: base).unicodeScalars.count
+        if baseCodePoints + sanitized.unicodeScalars.count <= Self.headlineMaxLength {
             if sanitized == text { return true }
             let mutable = NSMutableAttributedString(attributedString: current)
             mutable.replaceCharacters(in: range, with: sanitized)
@@ -7070,31 +7086,45 @@ extension BearyComposerViewController {
             // 字符串时会继承落点旁的字符属性，紧贴熊脸附件粘贴时粘入的文字
             // 可能带上 inlineMoodKeyAttribute，发出时整段会被转成一个记号、
             // 原文字静默丢失；此处把插入段清成标题正文属性。
-            let inserted = NSRange(location: range.location, length: sanitized.count)
+            // 插入段与光标一律 UTF-16：emoji 一个字素簇占 2 个 UTF-16 单位，
+            // 用 .count 会让属性清理短一截、光标落在插入段中间。
+            let insertedLength = (sanitized as NSString).length
+            let inserted = NSRange(location: range.location, length: insertedLength)
             if inserted.length > 0 {
                 mutable.removeAttribute(BearyText.inlineMoodKeyAttribute, range: inserted)
                 mutable.addAttributes([.font: headlineFont, .foregroundColor: BearyColors.ink], range: inserted)
             }
             headlineField.attributedText = mutable
             headlineField.typingAttributes = [.font: headlineFont, .foregroundColor: BearyColors.ink]
-            headlineField.selectedRange = NSRange(location: range.location + sanitized.count, length: 0)
+            headlineField.selectedRange = NSRange(location: range.location + insertedLength, length: 0)
             headlineDidChange()
             return false
         }
-        // 超限：只塞进剩下的格数，余下丢掉并弹一次提示（原 shouldChange 同款口径）。
-        let remaining = max(0, Self.headlineMaxLength - (current.length - range.length))
-        let kept = String(sanitized.prefix(remaining))
+        // 超限：只塞进剩下的码点数，余下丢掉并弹一次提示（原 shouldChange 同款口径）。
+        // 按字素簇逐个取、按码点累计，永不拆散一个组合表情：
+        // ZWJ 全家福 1 簇计 7 码点（见 truncatedHeadline 注释），占满剩余格即停，
+        // 不像旧 prefix(remaining) 那样把“剩余格”当成簇数/UTF-16 长混算。
+        let remaining = max(0, Self.headlineMaxLength - baseCodePoints)
+        var kept = ""
+        var keptCodePoints = 0
+        for character in sanitized {
+            let characterCodePoints = character.unicodeScalars.count
+            guard keptCodePoints + characterCodePoints <= remaining else { break }
+            kept.append(character)
+            keptCodePoints += characterCodePoints
+        }
         let mutable = NSMutableAttributedString(attributedString: current)
         mutable.replaceCharacters(in: range, with: kept)
-        // 同上：超限分支手动塞入段同样清掉可能继承的心情记号属性。
-        let inserted = NSRange(location: range.location, length: kept.count)
+        // 同上：超限分支手动塞入段同样清掉可能继承的心情记号属性；长度用 UTF-16。
+        let insertedLength = (kept as NSString).length
+        let inserted = NSRange(location: range.location, length: insertedLength)
         if inserted.length > 0 {
             mutable.removeAttribute(BearyText.inlineMoodKeyAttribute, range: inserted)
             mutable.addAttributes([.font: headlineFont, .foregroundColor: BearyColors.ink], range: inserted)
         }
         headlineField.attributedText = mutable
         headlineField.typingAttributes = [.font: headlineFont, .foregroundColor: BearyColors.ink]
-        headlineField.selectedRange = NSRange(location: range.location + kept.count, length: 0)
+        headlineField.selectedRange = NSRange(location: range.location + insertedLength, length: 0)
         showHeadlineLimitToastIfNeeded()
         headlineDidChange()
         return false
