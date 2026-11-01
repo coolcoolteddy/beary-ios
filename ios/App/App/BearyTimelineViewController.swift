@@ -2253,6 +2253,8 @@ class BearyTimelineViewController: UIViewController {
         tv.scrollIndicatorInsets = tv.contentInset
         // 顶栏透度批：与 Feed 同理，表框贴页顶（view.top），关自动调整使属性内边距即视觉顶距。
         tv.contentInsetAdjustmentBehavior = .never
+        // 116 后扫查：与广场/个人页同口径——关掉 delaysContentTouches，滚动容器里的点按立即响应，不等滚动判定。
+        tv.delaysContentTouches = false
         tv.register(BearyTimelineCell.self, forCellReuseIdentifier: BearyTimelineCell.reuseIdentifier)
         tv.delegate = self
         tv.dataSource = self

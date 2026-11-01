@@ -316,6 +316,8 @@ final class BearyWishWallViewController: UIViewController {
         topBar.addSubview(closeButton)
         topBar.addSubview(titleLabel)
         scrollView.translatesAutoresizingMaskIntoConstraints = false
+        // 116 后扫查：与广场/个人页同口径——关掉 delaysContentTouches，滚动容器里的点按立即响应，不等滚动判定。
+        scrollView.delaysContentTouches = false
         contentStack.axis = .vertical
         contentStack.spacing = 12
         contentStack.translatesAutoresizingMaskIntoConstraints = false
@@ -704,6 +706,8 @@ final class BearyWishCreateViewController: UIViewController, UITextViewDelegate 
         titleField.addTarget(self, action: #selector(titleFieldDidBegin), for: .editingDidBegin)
         titleField.addTarget(self, action: #selector(fieldDidEnd), for: .editingDidEnd)
         scrollView.translatesAutoresizingMaskIntoConstraints = false
+        // 116 后扫查：与广场/个人页同口径——关掉 delaysContentTouches，滚动容器里的点按立即响应，不等滚动判定。
+        scrollView.delaysContentTouches = false
         view.addSubview(topBar)
         view.addSubview(scrollView)
         scrollView.addSubview(titleField)

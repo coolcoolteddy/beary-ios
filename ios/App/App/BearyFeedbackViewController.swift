@@ -354,6 +354,8 @@ final class BearyFeedbackViewController: UIViewController, UITextViewDelegate, P
         ])
 
         scrollView.translatesAutoresizingMaskIntoConstraints = false
+        // 116 后扫查：与广场/个人页同口径——关掉 delaysContentTouches，滚动容器里的点按立即响应，不等滚动判定。
+        scrollView.delaysContentTouches = false
         scrollView.keyboardDismissMode = .onDrag
         view.addSubview(scrollView)
         NSLayoutConstraint.activate([
