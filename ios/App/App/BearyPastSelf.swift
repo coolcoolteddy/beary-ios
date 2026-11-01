@@ -347,11 +347,11 @@ final class PastSelfIconView: UIView {
             // 占位标注：资产未注册前明确标出缺失项，不伪装成正式图标。
             layer.borderWidth = 1
             layer.cornerRadius = 4
-            layer.bearyDynamicBorderColor = UIColor.systemGray.withAlphaComponent(0.6)
+            layer.bearyDynamicBorderColor = BearyColors.line
             let label = UILabel()
             label.translatesAutoresizingMaskIntoConstraints = false
             label.font = UIFont.systemFont(ofSize: 9)
-            label.textColor = UIColor.systemGray
+            label.textColor = BearyColors.gray
             label.text = imagesetName + " 待注册"
             label.textAlignment = .center
             addSubview(label)
@@ -402,7 +402,7 @@ final class PastSelfComposeView: UIView, UITextViewDelegate {
         addSubview(textView)
         placeholderLabel.translatesAutoresizingMaskIntoConstraints = false
         placeholderLabel.font = UIFont.systemFont(ofSize: 15)
-        placeholderLabel.textColor = UIColor.systemGray
+        placeholderLabel.textColor = BearyColors.gray
         placeholderLabel.text = placeholder
         placeholderLabel.numberOfLines = 0
         placeholderLabel.isUserInteractionEnabled = false
