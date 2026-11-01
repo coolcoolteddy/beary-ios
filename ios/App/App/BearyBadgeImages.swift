@@ -52,10 +52,6 @@ enum BearyBadgeImages {
         }
     }
 
-    /// I9：key→展示名映射；未知 key 一律显示通用文案，不直接露原始 key。
-    static func displayName(for key: String) -> String {
-        // BETA 已下线，映射表已清空。
-        let known: [String: String] = [:]
-        return known[key] ?? "新徽章"
-    }
+    // displayName 映射已随 BETA 下线删除（455）：无调用方，空映射会使
+    // 资产检查误报，见 scripts/check-beary-assets.py 的徽章族退役注释。
 }
