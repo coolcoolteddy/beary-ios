@@ -100,39 +100,32 @@ enum BearyToast {
 
 /// 统一 toast 视图本体：类型即身份（show 先清同容器旧 toast 时以此识别，
 /// 不占 tag、不与 Feed 的 991/992 号 tag 冲突）。
-/// 2026-10-29 玻璃批：实色 ink 底换成 BearyGlass 中性玻璃（顶栏／底栏
-/// 同款 bg 52% tint），文字走 ink；玻璃与容器均不参与触摸（瞬时提示
-/// 不应吞掉下方内容的点按，玻璃 helper 本就禁触摸，容器同步禁掉）。
+/// 视觉清单第 12 项：玻璃已撤（玻璃范围 Token 只允许栏/菜单，Toast 不在内），
+/// 改实色 surface 底；文字仍走 ink（深浅两色下均可读）、字号与内边距不动；
+/// 容器不参与触摸（瞬时提示不应吞掉下方内容的点按）。注：2026-10-29 玻璃批
+/// 之前是实色 ink 底，本支未恢复 ink 底——动态 ink 在深色下近白，配 ink 文字
+/// 会看不清，surface 是两色下都可读的实色兜底。
 private final class BearyToastView: UIView {
 
-    private let glass = BearyGlass.effectView(tint: BearyGlass.neutralTint)
     private let label = UILabel()
 
     init(message: String) {
         super.init(frame: .zero)
-        backgroundColor = .clear
+        backgroundColor = BearyColors.surface
         isUserInteractionEnabled = false
         translatesAutoresizingMaskIntoConstraints = false
-        glass.translatesAutoresizingMaskIntoConstraints = false
-        addSubview(glass)
-        NSLayoutConstraint.activate([
-            glass.leadingAnchor.constraint(equalTo: leadingAnchor),
-            glass.trailingAnchor.constraint(equalTo: trailingAnchor),
-            glass.topAnchor.constraint(equalTo: topAnchor),
-            glass.bottomAnchor.constraint(equalTo: bottomAnchor),
-        ])
         label.text = message
         label.font = UIFont.systemFont(ofSize: 14, weight: .medium)
         label.textColor = BearyColors.ink
         label.textAlignment = .center
         label.numberOfLines = 0
         label.translatesAutoresizingMaskIntoConstraints = false
-        glass.contentView.addSubview(label)
+        addSubview(label)
         NSLayoutConstraint.activate([
-            label.topAnchor.constraint(equalTo: glass.contentView.topAnchor, constant: 10),
-            label.bottomAnchor.constraint(equalTo: glass.contentView.bottomAnchor, constant: -10),
-            label.leadingAnchor.constraint(equalTo: glass.contentView.leadingAnchor, constant: 18),
-            label.trailingAnchor.constraint(equalTo: glass.contentView.trailingAnchor, constant: -18),
+            label.topAnchor.constraint(equalTo: topAnchor, constant: 10),
+            label.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -10),
+            label.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 18),
+            label.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -18),
         ])
     }
 
@@ -142,7 +135,7 @@ private final class BearyToastView: UIView {
 
     override func layoutSubviews() {
         super.layoutSubviews()
-        glass.layer.cornerRadius = bounds.height / 2
-        glass.clipsToBounds = true
+        layer.cornerRadius = bounds.height / 2
+        clipsToBounds = true
     }
 }

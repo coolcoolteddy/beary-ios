@@ -82,8 +82,6 @@ final class BearyDraftBoxViewController: UIViewController {
 
     private let backdropButton = UIButton(type: .custom)
     private let sheetView = UIView()
-    /// 玻璃批：sheet 玻璃背板（钉在 sheetView 内部，只裁玻璃自身，不裁 sheetView 阴影）。
-    private let sheetGlassView = BearyGlass.effectView(tint: BearyGlass.neutralTint)
     private let sheetScrollView = UIScrollView()
     private let contentStack = UIStackView()
     private let handleView = UIView()
@@ -212,21 +210,11 @@ final class BearyDraftBoxViewController: UIViewController {
         backdropButton.translatesAutoresizingMaskIntoConstraints = false
         view.addSubview(backdropButton)
 
-        sheetView.backgroundColor = .clear
+        // 视觉清单第 12 项：sheet 玻璃背板已撤，改实色 surface 底（卡片标准底色；
+        // 玻璃范围 Token 只允许栏/菜单，底 sheet 不在内）；sheetView 本身不裁剪，阴影保留。
+        sheetView.backgroundColor = BearyColors.surface
         sheetView.layer.cornerRadius = BearySheetChrome.topCornerRadius
         // 阴影色与数值一律走 BearySheetChrome.applyShadow（见 applySheetChrome），此处不再自写。
-        // 玻璃批：玻璃只钉在 sheetView 内部（index 0，在 scrollView 之下），
-        // 玻璃自身圆角 20 + clipsToBounds；sheetView 本身不裁剪，阴影保留。
-        sheetGlassView.layer.cornerRadius = BearySheetChrome.topCornerRadius
-        sheetGlassView.clipsToBounds = true
-        sheetGlassView.translatesAutoresizingMaskIntoConstraints = false
-        sheetView.insertSubview(sheetGlassView, at: 0)
-        NSLayoutConstraint.activate([
-            sheetGlassView.topAnchor.constraint(equalTo: sheetView.topAnchor),
-            sheetGlassView.bottomAnchor.constraint(equalTo: sheetView.bottomAnchor),
-            sheetGlassView.leadingAnchor.constraint(equalTo: sheetView.leadingAnchor),
-            sheetGlassView.trailingAnchor.constraint(equalTo: sheetView.trailingAnchor),
-        ])
         sheetView.translatesAutoresizingMaskIntoConstraints = false
         view.addSubview(sheetView)
 
@@ -488,8 +476,6 @@ final class BearyDraftBoxViewController: UIViewController {
             BearySheetChrome.applyShadow(to: sheetView.layer, centered: false)
             sheetScrollView.layer.maskedCorners = [.layerMinXMinYCorner, .layerMaxXMinYCorner]
         }
-        // 玻璃批：玻璃圆角裁剪跟随 sheet（手机仅顶圆角 / iPad 四圆角），仍只裁玻璃。
-        sheetGlassView.layer.maskedCorners = sheetView.layer.maskedCorners
     }
 
     private func updateSheetHeight() {

@@ -165,18 +165,16 @@ final class BearyChromeViewController: UIViewController {
     private var lastRetapTime = Date.distantPast
     private var lastRetapDidScrollToTop = false
     private var fabButton: UIButton!
-    /// FAB 玻璃化容器（阴影载体 + 玻璃 + 按钮三层；拖动时容器只平移跟手指，
-    /// 形变改玻璃与阴影自身的 transform（扫 bug 第 5 项，替代原尺寸约束形变）。
-    /// 旧风险未消除：55 批只改容器 transform 时真机上玻璃边缘不跟形变
-    /// （Li 2026-10-26 实证），故当时改走尺寸约束；本改法把 transform 直接
-    /// 施加到玻璃/阴影自身而非容器，但同属 transform 形变，玻璃模糊层跟不上、
-    /// 边缘残影的旧问题仍可能复发，真机必验（见 fabLongPressed 注释）。
+    /// FAB 容器（阴影载体 + 实色圆钮本体 + 按钮三层；拖动时容器只平移跟手指，
+    /// 形变改本体与阴影自身的 transform（扫 bug 第 5 项，替代原尺寸约束形变）。
+    /// 视觉清单第 12 项：FAB 不再用系统材质，本体为实色橙（点亮色值不动）；
+    /// 实色体跟 transform 不存在玻璃模糊层跟不上的旧问题（见 fabLongPressed 注释）。
     private var fabContainerView: UIView?
-    /// FAB 玻璃本体与阴影载体（拖动变形对象：自身 transform 拉伸 + 自转；尺寸约束恒 54×54 不动）。
-    private var fabGlassView: UIVisualEffectView?
+    /// FAB 实色圆钮本体与阴影载体（拖动变形对象：自身 transform 拉伸 + 自转；尺寸约束恒 54×54 不动）。
+    private var fabBodyView: UIView?
     private var fabShadowView: UIView?
-    private var fabGlassWidthConstraint: NSLayoutConstraint?
-    private var fabGlassHeightConstraint: NSLayoutConstraint?
+    private var fabBodyWidthConstraint: NSLayoutConstraint?
+    private var fabBodyHeightConstraint: NSLayoutConstraint?
     private var fabShadowWidthConstraint: NSLayoutConstraint?
     private var fabShadowHeightConstraint: NSLayoutConstraint?
     /// FAB 长按拖动锚点（长按落点，view 坐标）；nil = 未在拖动。
@@ -337,6 +335,7 @@ final class BearyChromeViewController: UIViewController {
     private var bearyBlue: UIColor { BearyColors.blue }
 
     /// 玻璃本体：iOS 26+ 为 UIGlassEffect，低版本降级系统毛玻璃；调用点一律不新增玻璃视图。
+    /// 范围（视觉清单第 12 项）：本 helper 只允许用在栏（顶栏 / 底栏衬底），FAB 已改实色体，不再调用。
     /// tint 只给顶栏传：网页 .nav 底色为 bg 52%（color-mix），tint 为 nil 时与旧调用完全一致
     /// （底栏已改系统分段器，不再调用 makeGlassView）。低版本分支无 tint 参数，
     /// 故同值以 contentView 底色叠加在毛玻璃上，复现网页 52% 底色口径。
@@ -356,7 +355,7 @@ final class BearyChromeViewController: UIViewController {
             view.contentView.backgroundColor = tint
         }
         // 撤回批（2026-10-27，76 包死钮根因）：经此 helper 出来的玻璃只做视觉（顶栏/
-        // 底栏衬底/FAB 玻璃），永不拦截触摸；调用点原有的显式 false 保留，与此一致。
+        // 底栏衬底），永不拦截触摸；调用点原有的显式 false 保留，与此一致。
         view.isUserInteractionEnabled = false
         return view
     }
@@ -466,6 +465,7 @@ final class BearyChromeViewController: UIViewController {
             logo.widthAnchor.constraint(equalToConstant: 79),
             logo.heightAnchor.constraint(equalToConstant: 28),
         ])
+        // 栏内按钮：顶栏登录 pill，玻璃范围 Token 允许（栏内），点亮橙色与功能不动。
         let login = BearyGlassButton(type: .custom)
         login.glassTint = BearyColors.orange
         login.setTitle("登录", for: .normal)
@@ -589,11 +589,11 @@ final class BearyChromeViewController: UIViewController {
         badge.isHidden = true
         bellButton.addSubview(badge)
         bellBadge = badge
-        // ---- FAB：官方液态玻璃橙色圆钮，与网页 .fab 同尺寸同位置 ----
-        // 三层结构：阴影载体在后（玻璃 clipsToBounds
-        // 会裁自身阴影，故阴影另挂一层）、玻璃本体居中、按钮在最上只负责点击与图标。
-        // 玻璃走 makeGlassView(tint: 橙)：iOS 26+ 为 UIGlassEffect 橙色 tint，低版本降级
-        // 系统毛玻璃 + 橙色 contentView 底色（helper 内 #available 兜底，不抬部署目标）。
+        // ---- FAB：实色橙色圆钮，与网页 .fab 同尺寸同位置 ----
+        // 三层结构：阴影载体在后（本体 clipsToBounds
+        // 会裁自身阴影，故阴影另挂一层）、实色本体居中、按钮在最上只负责点击与图标。
+        // 视觉清单第 12 项：FAB 不在栏/菜单范围内，不再用系统材质；本体为实色
+        // bearyOrange（点亮色值与原来玻璃 tint 的橙同值，图标白加号、功能、尺寸、位置全不动）。
         let fabContainer = UIView()
         fabContainer.backgroundColor = .clear
         fabContainer.translatesAutoresizingMaskIntoConstraints = false
@@ -612,12 +612,13 @@ final class BearyChromeViewController: UIViewController {
         fabShadow.translatesAutoresizingMaskIntoConstraints = false
         fabContainer.addSubview(fabShadow)
         fabShadowView = fabShadow
-        let fabGlass = makeGlassView(tint: bearyOrange)
-        fabGlass.layer.cornerRadius = 27
-        fabGlass.clipsToBounds = true
-        fabGlass.translatesAutoresizingMaskIntoConstraints = false
-        fabContainer.addSubview(fabGlass)
-        fabGlassView = fabGlass
+        let fabBody = UIView()
+        fabBody.backgroundColor = bearyOrange
+        fabBody.layer.cornerRadius = 27
+        fabBody.clipsToBounds = true
+        fabBody.translatesAutoresizingMaskIntoConstraints = false
+        fabContainer.addSubview(fabBody)
+        fabBodyView = fabBody
         let fab = UIButton(type: .custom)
         fab.setImage(topIconImage(named: "IconPlus", officialFallback: "icon_plus"), for: .normal)
         fab.tintColor = .white
@@ -627,7 +628,7 @@ final class BearyChromeViewController: UIViewController {
         fab.adjustsImageWhenHighlighted = false
         fab.addTarget(self, action: #selector(didTapWrite), for: .touchUpInside)
         // F21：FAB 按压缩放（网页 .fab:active scale(.93)，beary.html:371）。
-        // 缩放改在容器层：玻璃+阴影+按钮一起缩；拖动变形时容器 transform 只留
+        // 缩放改在容器层：本体+阴影+按钮一起缩；拖动变形时容器 transform 只留
         // 平移（位移优先），长按识别会取消按钮触摸并发出 touchCancel，缩放随即复位，
         // 不与拖动冲突；0.25s 内快点走不到长按识别，点按照常触发 didTapWrite。
         fab.addTarget(self, action: #selector(fabPressedDown), for: .touchDown)
@@ -643,30 +644,30 @@ final class BearyChromeViewController: UIViewController {
         // ——pan 在触摸中途启用接不到当次触摸，长按手势则全程跟随。长按识别后
         // cancelsTouchesInView 默认 true 会取消按钮触摸，故拖动不会误触写日记；
         // 0.25s 内完成的快点走不到长按识别，正常点按不受影响。
-        // 形变见 fabLongPressed：容器只平移跟手指，玻璃与阴影改自身 transform
+        // 形变见 fabLongPressed：容器只平移跟手指，本体与阴影改自身 transform
         // （扫 bug 第 5 项；旧风险见 fabLongPressed 注释，真机必验）。
         let fabLongPress = UILongPressGestureRecognizer(target: self, action: #selector(fabLongPressed(_:)))
         fabLongPress.minimumPressDuration = 0.25
         fabContainer.addGestureRecognizer(fabLongPress)
-        // 玻璃与阴影改中心 + 尺寸约束（不再钉容器四边）：尺寸约束恒 54×54，
-        // 拖动形变只改玻璃/阴影自身的 transform，不再改约束（扫 bug 第 5 项）；
+        // 本体与阴影改中心 + 尺寸约束（不再钉容器四边）：尺寸约束恒 54×54，
+        // 拖动形变只改本体/阴影自身的 transform，不再改约束（扫 bug 第 5 项）；
         // 按钮仍钉容器四边（54×54 不动，加号保持端正清晰）；容器不裁剪，
-        // 玻璃拉伸后每边超出容器约 8pt 的部分照常可见。
+        // 本体拉伸后每边超出容器约 8pt 的部分照常可见。
         let fabShadowWidth = fabShadow.widthAnchor.constraint(equalToConstant: 54)
         let fabShadowHeight = fabShadow.heightAnchor.constraint(equalToConstant: 54)
-        let fabGlassWidth = fabGlass.widthAnchor.constraint(equalToConstant: 54)
-        let fabGlassHeight = fabGlass.heightAnchor.constraint(equalToConstant: 54)
+        let fabBodyWidth = fabBody.widthAnchor.constraint(equalToConstant: 54)
+        let fabBodyHeight = fabBody.heightAnchor.constraint(equalToConstant: 54)
         fabShadowWidthConstraint = fabShadowWidth
         fabShadowHeightConstraint = fabShadowHeight
-        fabGlassWidthConstraint = fabGlassWidth
-        fabGlassHeightConstraint = fabGlassHeight
+        fabBodyWidthConstraint = fabBodyWidth
+        fabBodyHeightConstraint = fabBodyHeight
         NSLayoutConstraint.activate([
             fabShadow.centerXAnchor.constraint(equalTo: fabContainer.centerXAnchor),
             fabShadow.centerYAnchor.constraint(equalTo: fabContainer.centerYAnchor),
             fabShadowWidth, fabShadowHeight,
-            fabGlass.centerXAnchor.constraint(equalTo: fabContainer.centerXAnchor),
-            fabGlass.centerYAnchor.constraint(equalTo: fabContainer.centerYAnchor),
-            fabGlassWidth, fabGlassHeight,
+            fabBody.centerXAnchor.constraint(equalTo: fabContainer.centerXAnchor),
+            fabBody.centerYAnchor.constraint(equalTo: fabContainer.centerYAnchor),
+            fabBodyWidth, fabBodyHeight,
             fab.leadingAnchor.constraint(equalTo: fabContainer.leadingAnchor),
             fab.trailingAnchor.constraint(equalTo: fabContainer.trailingAnchor),
             fab.topAnchor.constraint(equalTo: fabContainer.topAnchor),
@@ -1451,13 +1452,12 @@ final class BearyChromeViewController: UIViewController {
     }
 
     /// FAB 长按拖动变形：长按落点为锚点，跟手位移 + 沿拖动方向拉伸。
-    /// 扫 bug 第 5 项：形变改走玻璃与阴影自身的 transform（旋转 + 沿拖动方向
+    /// 扫 bug 第 5 项：形变改走本体与阴影自身的 transform（旋转 + 沿拖动方向
     /// 拉伸、垂直微缩），尺寸约束恒 54×54 不再改动，全程不触发布局；
     /// 容器 transform 只负责跟手指平移；按钮不形变，加号保持端正清晰。
-    /// 旧风险（真机必验）：55 批只改容器 transform 时真机上玻璃边缘不跟形变
-    /// （Li 2026-10-26 实证），这就是后来改走尺寸约束的原因；本改法只是把
-    /// transform 从容器改施到玻璃/阴影自身，仍属同一类 transform 形变，
-    /// 玻璃模糊层跟不上、边缘掉帧/残影的旧问题可能复发，复现即回退约束版。
+    /// 旧风险已随实色体消除：55 批只改容器 transform 时真机上玻璃边缘不跟形变
+    /// （Li 2026-10-26 实证），这就是后来改走尺寸约束的原因；视觉清单第 12 项
+    /// 后 FAB 本体已是实色体，不存在玻璃模糊层跟不上的问题，形变真机仍必验形状。
     /// 松手弹簧回锚点，不改变常驻位置、不持久化。拖动中途栏显隐
     /// 若改写容器 transform，下一次 setBarsVisible 会重新收敛，不留残态。
     /// 点按优先（2026-10-27 FAB 死钮修法）：长按识别（0.25s）会取消按钮触摸，
@@ -1465,15 +1465,15 @@ final class BearyChromeViewController: UIViewController {
     /// 判据只看本次是否真的拖动（位移 > 8pt），不看按住时长。
     @objc private func fabLongPressed(_ gesture: UILongPressGestureRecognizer) {
         guard let container = fabContainerView else { return }
-        // 形变辅助（扫 bug 第 5 项）：玻璃与阴影同 transform（先沿本地轴拉伸/
+        // 形变辅助（扫 bug 第 5 项）：本体与阴影同 transform（先沿本地轴拉伸/
         // 微缩、再转到拖动方向，故拉伸轴即拖动方向）；缺任一层时另一层仍照常
         // 形变、平移不受影响。尺寸约束与 cornerRadius 一律不动（恒 54×54/27，
         // 圆角随 transform 等比缩放）；拖动中不新增 alpha 变化，形变只走
         // transform，仍在 transform/opacity 动效预算内。
-        // 旧风险见本函数文档注释：transform 玻璃在真机上曾跟不上，复现即回退。
+        // 本体已是实色体，玻璃跟不上形变的旧风险不再适用（见本函数文档注释）。
         func applyDeform(scaleX: CGFloat, scaleY: CGFloat, angle: CGFloat) {
             let deform = CGAffineTransform(rotationAngle: angle).scaledBy(x: scaleX, y: scaleY)
-            self.fabGlassView?.transform = deform
+            self.fabBodyView?.transform = deform
             self.fabShadowView?.transform = deform
         }
         switch gesture.state {
@@ -1628,7 +1628,7 @@ final class BearyChromeViewController: UIViewController {
     }
     @objc private func fabPressedDown() { setFabPressed(true) }
     @objc private func fabPressedUp() { setFabPressed(false) }
-    /// F21 按压态：整颗按压缩放到 .93（容器层：玻璃+阴影+按钮一起缩，
+    /// F21 按压态：整颗按压缩放到 .93（容器层：本体+阴影+按钮一起缩，
     /// 网页 .fab:active scale(.93) 是整颗一起缩，不是只缩按钮）、松手回 1；
     /// 拖动中位移优先（容器 transform 只留平移，缩放让位），松手两者复位；
     /// 减动效直设终值。
@@ -3531,6 +3531,7 @@ final class BearyChromeViewController: UIViewController {
 // MARK: - 审计 5 三档外观开关（与 BearyChromeViewController 同文件）
 
 /// 玻璃底（网页 .profile-menu :376/:746 口径：bg 52% + blur32）。
+/// 范围（视觉清单第 12 项）：菜单区域，玻璃范围 Token 允许，保留不动。
 /// iOS 无公开 blur 半径参数：iOS 26+ 用 UIGlassEffect（系统玻璃，tint 52%），
 /// 低版本用 systemMaterial + 52% contentView 底色（与顶栏 makeGlassView 同口径，
 /// 该 helper 的 tint 入参语义与此一致）。

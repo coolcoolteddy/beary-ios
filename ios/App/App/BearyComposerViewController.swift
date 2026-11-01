@@ -627,18 +627,10 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         NSLog("[Diag] composer-viewDidLoad-enter")
         // 临时诊断（81 包，定根因后删除）。
         DiagFile.mark("viewDidLoad-enter")
-        // 玻璃批：view 自身即 modal 卡片，底改 clear，玻璃背板钉满 bounds 垫在最底层（index 0），
-        // 后续 build* 加的子视图自然在其上；呈现层文件不动。
-        view.backgroundColor = UIColor.clear
-        let glassBacking = BearyGlass.effectView(tint: BearyGlass.neutralTint)
-        glassBacking.translatesAutoresizingMaskIntoConstraints = false
-        view.insertSubview(glassBacking, at: 0)
-        NSLayoutConstraint.activate([
-            glassBacking.topAnchor.constraint(equalTo: view.topAnchor),
-            glassBacking.bottomAnchor.constraint(equalTo: view.bottomAnchor),
-            glassBacking.leadingAnchor.constraint(equalTo: view.leadingAnchor),
-            glassBacking.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-        ])
+        // 视觉清单第 12 项：view 自身即 modal 卡片，玻璃背板已撤，改实色 surface 底
+        //（卡片标准底色；玻璃范围 Token 只允许栏/菜单，弹窗不在内）；后续 build*
+        // 加的子视图自然在其上；呈现层文件不动，卡片内按钮点亮色与功能全不动。
+        view.backgroundColor = BearyColors.surface
         buildLayout()
         buildTopBar()
         // 109：内容栈首项为新标题输入区（见 buildHeadlineField），其下为正文。

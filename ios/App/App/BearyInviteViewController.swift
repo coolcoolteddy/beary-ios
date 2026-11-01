@@ -90,7 +90,7 @@ final class BearyInviteViewController: UIViewController {
 
     override func viewDidLoad() {
         super.viewDidLoad()
-        view.backgroundColor = .clear
+        view.backgroundColor = BearyColors.surface
         buildLayout()
         // 52 批：先定一次非 0 首帧高，避免呈现层首帧以 preferred=0 走 88%/80% 满高封顶；
         // 布局落定后 viewDidLayoutSubviews 再按真实宽与安全区纠正。
@@ -136,18 +136,9 @@ final class BearyInviteViewController: UIViewController {
     // MARK: - 布局（与登录页同尺寸体系：左右 22、输入框高 48、内容列 ≤432）
 
     private func buildLayout() {
-        // 玻璃批：弹窗玻璃背板钉满 view（index 0，在 scrollView 之下）；本文件内无卡片
-        // 容器圆角值，故背板不新编圆角，外形由呈现层 presentedView 的圆角 20 + 裁剪定
-        // （居中卡片/底 sheet 呈现层均已设 cornerRadius 20 与 clipsToBounds，本文件不动）。
-        let inviteGlassView = BearyGlass.effectView(tint: BearyGlass.neutralTint)
-        inviteGlassView.translatesAutoresizingMaskIntoConstraints = false
-        view.insertSubview(inviteGlassView, at: 0)
-        NSLayoutConstraint.activate([
-            inviteGlassView.topAnchor.constraint(equalTo: view.topAnchor),
-            inviteGlassView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
-            inviteGlassView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
-            inviteGlassView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-        ])
+        // 视觉清单第 12 项：弹窗玻璃背板已撤，改实色 surface 底（卡片标准底色；
+        // 玻璃范围 Token 只允许栏/菜单，弹窗不在内）；外形圆角仍由呈现层
+        // presentedView 的圆角 20 + 裁剪定（居中卡片/底 sheet 呈现层均已设，本文件不动）。
         scrollView.translatesAutoresizingMaskIntoConstraints = false
         // 116 后扫查：与广场/个人页同口径——关掉 delaysContentTouches，滚动容器里的点按立即响应，不等滚动判定。
         scrollView.delaysContentTouches = false
