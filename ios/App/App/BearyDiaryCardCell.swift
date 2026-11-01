@@ -441,7 +441,7 @@ class BearyDiaryCardCell: UITableViewCell {
     /// 审计第 7 项（收窄后修）：池不再按位置下标取 chip，改按表情 key 取 chip。
     /// 旧按位复用在 count 降序变化时，会把原槽位 chip 的播放器换成另一只熊；
     /// 按 key 复用后，排序变化只是同一节点换位，计数只改文字，不重建播放器。
-    private var emoteChipPoolByKey: [String: BearyEmoteChipView] = []
+    private var emoteChipPoolByKey: [String: BearyEmoteChipView] = [:]
     private var isEmoteBusy = false
     /// 回应先行反馈在途态（首页模式，点赞/收藏同款口径）：点选后 chip 行立即按
     /// 先行值重绘、API 在后台跑，成功对齐服务端值、失败回滚。旧 E3-3 pending
