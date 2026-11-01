@@ -2211,7 +2211,7 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         pill.layer.cornerRadius = 11
         pill.layer.masksToBounds = true
         // 好友第一期：仅好友 pill 沿用私密档的蓝（不新发明颜色），只换图标与文案。
-        let lock = UIImageView(image: BearyIconImages.image(named: friendsOnly ? "icon_user" : "icon_lock", pointSize: 12))
+        let lock = UIImageView(image: BearyIconImages.image(named: friendsOnly ? "icon_friends_lock" : "icon_lock", pointSize: 12))
         lock.translatesAutoresizingMaskIntoConstraints = false
         lock.tintColor = BearyColors.blue
         lock.contentMode = .scaleAspectFit
@@ -2295,7 +2295,7 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         let state = followStates[userId] ?? .none
         switch state {
         case .none:
-            button.setImage(BearyIconImages.image(named: "icon_user_add", pointSize: 13), for: .normal)
+            button.setImage(BearyIconImages.image(named: "icon_user_plus", pointSize: 13), for: .normal)
             button.setTitle("关注", for: .normal)
             button.accessibilityLabel = "关注"
             button.isEnabled = true
@@ -2307,7 +2307,7 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
             button.isEnabled = true
             button.alpha = 1
         case .followedBy:
-            button.setImage(BearyIconImages.image(named: "icon_user_add", pointSize: 13), for: .normal)
+            button.setImage(BearyIconImages.image(named: "icon_user_plus", pointSize: 13), for: .normal)
             button.setTitle("回关", for: .normal)
             button.accessibilityLabel = "回关"
             button.isEnabled = true

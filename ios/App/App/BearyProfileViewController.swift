@@ -716,7 +716,7 @@ class BearyProfileViewController: UIViewController {
     /// 40 高下限）。状态机（状态一律调 state 接口实时取）：无关系→“关注”；
     /// 我关他未互关→“已关注”（点按进取关确认）；他关我我未关→“回关”（点按即互关）；
     /// 互关→“互关”（点按进取关确认）；任一方向拉黑（我方拉黑可查，对方拉黑我以
-    /// 后端拒绝兜底）/ 游客 / 本人 → 隐藏。图标一律官方包：关注 icon_user_add、
+    /// 后端拒绝兜底）/ 游客 / 本人 → 隐藏。图标一律官方包：关注 icon_user_plus、
     /// 互关 icon_user_check、已关注/回关无图标。
     private lazy var followButton: UIButton = {
         let buttonValue = UIButton(type: .system)
@@ -3028,7 +3028,7 @@ class BearyProfileViewController: UIViewController {
         followButton.isHidden = false
         switch state {
         case .none:
-            followButton.setImage(BearyIconImages.image(named: "icon_user_add", pointSize: 15), for: .normal)
+            followButton.setImage(BearyIconImages.image(named: "icon_user_plus", pointSize: 15), for: .normal)
             followButton.setTitle("关注", for: .normal)
             followButton.accessibilityLabel = "关注"
             followButton.isEnabled = true
@@ -3040,7 +3040,7 @@ class BearyProfileViewController: UIViewController {
             followButton.isEnabled = true
             followButton.alpha = 1
         case .followedBy:
-            followButton.setImage(BearyIconImages.image(named: "icon_user_add", pointSize: 15), for: .normal)
+            followButton.setImage(BearyIconImages.image(named: "icon_user_plus", pointSize: 15), for: .normal)
             followButton.setTitle("回关", for: .normal)
             followButton.accessibilityLabel = "回关"
             followButton.isEnabled = true

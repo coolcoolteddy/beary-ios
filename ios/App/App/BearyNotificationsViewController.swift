@@ -3270,7 +3270,7 @@ private class BearyNotificationCell: UITableViewCell {
             } else if itemType == "emote" {
                 kindIconName = "icon_mood"
             } else if itemType == "follow" {
-                kindIconName = "icon_user_add"
+                kindIconName = "icon_user_plus"
             } else if itemType == "dm" {
                 kindIconName = "icon_mail"
             } else {

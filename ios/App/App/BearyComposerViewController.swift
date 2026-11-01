@@ -2203,7 +2203,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         }
     }
 
-    /// 顶栏可见性钮图标：锁＝私密、单人＝仅好友（官方 icon_user）、地球＝公开、
+    /// 顶栏可见性钮图标：锁＝私密、双人锁＝仅好友（官方 icon_friends_lock）、地球＝公开、
     /// 限时＝官方 icon_limited
     /// （熊头 + 外围虚线环，#162 落位的 imageset，#272 删限时行时误删、
     /// 本支从 2bb7df9^ 原样恢复，不自绘、不改图形；纠正：不要 icon_clock）；
@@ -2213,7 +2213,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             visibilityButton.setImage(BearyIconImages.image(named: "icon_limited", pointSize: 24), for: .normal)
             visibilityButton.accessibilityValue = "限时"
         } else if selectedVisibilityFriends {
-            visibilityButton.setImage(BearyIconImages.image(named: "icon_user", pointSize: 24), for: .normal)
+            visibilityButton.setImage(BearyIconImages.image(named: "icon_friends_lock", pointSize: 24), for: .normal)
             visibilityButton.accessibilityValue = "仅好友"
         } else {
             let published = selectedVisibilityPublished

@@ -2696,7 +2696,7 @@ final class BearySettingsViewController: UIViewController {
         // iCity：已拉黑用户行（解除入口，不放他人主页）。
         let blockedDetail = makeLabel(font: UIFont.systemFont(ofSize: 13), color: BearyColors.gray)
         blockedDetail.text = "查看"
-        let blockedContent = makeRow(title: "已拉黑用户", detailLabel: blockedDetail, iconName: "icon_block")
+        let blockedContent = makeRow(title: "已拉黑用户", detailLabel: blockedDetail, iconName: "icon_user_block")
         let blockedButton = UIButton(type: .custom)
         blockedButton.accessibilityLabel = "已拉黑用户"
         blockedButton.addTarget(self, action: #selector(openBlockedUsers), for: .touchUpInside)

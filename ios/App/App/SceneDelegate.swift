@@ -587,12 +587,12 @@ final class BearyChromeViewController: UIViewController {
             blur.widthAnchor.constraint(equalToConstant: 288),
             blur.heightAnchor.constraint(equalToConstant: 58),
         ])
-        // 好友第一期：底栏“好友”段（互关列表页；icon_users 官方包，
-        // IconUsers 资产不存在时回退 icon_users）。顺序：首页、好友、时间线、我的
+        // 好友第一期：底栏“好友”段（互关列表页；新图标 icon_friends，
+        // PR #610 落位，#610 先于本支合入）。顺序：首页、好友、时间线、我的
         // （Li 2026-11-01 定：好友放时间线左边）。
         let tabIcons: [(String, String)] = [
             ("IconHome", "icon_home"),
-            ("IconUsers", "icon_users"),
+            ("icon_friends", "icon_friends"),
             ("IconTimeline", "icon_calendar"),
             ("IconUser", "icon_user"),
         ]
