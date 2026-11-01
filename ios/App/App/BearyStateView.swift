@@ -34,6 +34,42 @@ final class BearyStateView: UIView {
     private var actionButtonStyle: BearyButtonStyle = .secondaryOutline(.compact)
     private var actionHeightConstraint: NSLayoutConstraint?
     private var actionHandler: (() -> Void)?
+    private var visibilityGeneration = 0
+
+    /// 状态切换淡入淡出（视觉清单 Grok 项 5.2）：只动本视图 alpha（0.2s
+    /// curveEaseOut），各页显隐条件一字不动。减动效时直接设终值。
+    /// 注意：隐藏不能先设 isHidden 再播动画（隐藏后动画不可见），故
+    /// 隐藏时先淡出、动画完成后再真正隐藏；快速反复切换时以代次为准，
+    /// 过期动画完成回调不再隐藏新一轮已显示的视图。
+    override var isHidden: Bool {
+        get { super.isHidden }
+        set {
+            if newValue == super.isHidden { return }
+            if !newValue {
+                visibilityGeneration += 1
+                super.isHidden = false
+                if BearyMotion.animated(true) {
+                    alpha = 0
+                    UIView.animate(withDuration: 0.2, delay: 0, options: .curveEaseOut, animations: { self.alpha = 1 }, completion: nil)
+                } else {
+                    alpha = 1
+                }
+            } else {
+                if BearyMotion.animated(true) && alpha > 0 {
+                    visibilityGeneration += 1
+                    let generation = visibilityGeneration
+                    UIView.animate(withDuration: 0.2, delay: 0, options: .curveEaseOut, animations: { self.alpha = 0 }, completion: { [weak self] _ in
+                        guard let self = self, self.visibilityGeneration == generation else { return }
+                        super.isHidden = true
+                        self.alpha = 1
+                    })
+                } else {
+                    super.isHidden = true
+                    alpha = 1
+                }
+            }
+        }
+    }
 
     override init(frame: CGRect) {
         super.init(frame: frame)
