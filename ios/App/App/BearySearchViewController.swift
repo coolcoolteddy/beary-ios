@@ -35,7 +35,8 @@ import CoreText
 //   - mine：仅登录会话返回（未登录为 null），本人全部日记按正文匹配，LIMIT 20，
  //     翻页同 entries 口径（before + before_id）；
 //     字段 id/content/images/created_at/publish_at/is_public；
-//     本页只取其中未公开（is_public != true）的篇目进“我的日记 · 私密”组，
+//     本页只取其中未公开（is_public != true）与存活限时篇进“我的日记 · 私密”组
+//     （审计 2026-11-02 第十节：存活限时篇不再无处可寻；三档 pill 见 makePrivatePill），
 //     与网页 renderSrchResults 的 mine 过滤口径一致；未登录时服务端不给 mine，
 //     私密分组自然不出现，不靠客户端登录态再拦一道。
 //   - 免登录可搜公开内容：该接口本身不要求会话（无 session 时只缺 mine）。
@@ -273,6 +274,8 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         NotificationCenter.default.addObserver(self, selector: #selector(handleReportedEntryNotification(_:)), name: .bearyDidReportEntry, object: nil)
         // 好友第一期：别处回关/取关后，搜索行状态机同步重拉（不靠旧状态）。
         NotificationCenter.default.addObserver(self, selector: #selector(handleFollowChangedNotification(_:)), name: .bearyFriendsChanged, object: nil)
+        // 审计：监听账号切换，切号时清空搜索结果、关注态与私密行（见 handleUserChanged）。
+        NotificationCenter.default.addObserver(self, selector: #selector(handleUserChanged), name: .bearyUserDidChange, object: nil)
         // 扫荡组 A：键盘弹起时给滚动区补底部留白（见 keyboardWillShow）。
         NotificationCenter.default.addObserver(self, selector: #selector(keyboardWillShow(_:)), name: UIResponder.keyboardWillShowNotification, object: nil)
         NotificationCenter.default.addObserver(self, selector: #selector(keyboardWillHide(_:)), name: UIResponder.keyboardWillHideNotification, object: nil)
@@ -1608,7 +1611,10 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         var mineEntries: [Entry] = []
         if let mine = data.mine {
             for entry in mine {
-                if entry.isPublic == false {
+                // 审计 2026-11-02 第十节：我的组按三档收——私密与仅好友照旧，
+                // 存活限时篇（stored 公开、未过期）同样归本组、不再无处可寻；
+                // 已过期篇两组皆不进（公开组有效态过滤已挡）。
+                if entry.isPublic == false || BearyEphemeral.isLive(entry) {
                     mineEntries.append(entry)
                 }
             }
@@ -1727,9 +1733,9 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         BearyIconMotion.stopSpin(on: stateRingView, key: "bearyStateSpin")
         var mineRows: [UIView] = []
         for entry in mine {
-            // 与 renderResults 逐字一致：只取确认为私密篇（is_public == false）；
-            // 缺失字段（nil）不进私密组。
-            guard entry.isPublic == false else { continue }
+            // 与 renderResults 逐字一致：只取确认为私密篇（is_public == false）
+            // 与存活限时篇；缺失字段（nil）不进私密组。
+            guard entry.isPublic == false || BearyEphemeral.isLive(entry) else { continue }
             guard let entryId = entry.id, rowEntryIds.contains(entryId) == false else { continue }
             if let row = makeEntryRow(entry: entry, query: query, isMineGroup: true) {
                 mineRows.append(row)
@@ -1821,15 +1827,15 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
             return
         }
         if isNewBatch {
-            var delay: TimeInterval = 0
-            for rowView in rowViews {
+            // 审计：新批错峰延迟封顶 0.24s（此前 48 行末行约 1.41s＋0.25s，与同批分支同口径）。
+            for (index, rowView) in rowViews.enumerated() {
                 rowView.alpha = 0
                 rowView.transform = CGAffineTransform(translationX: 0, y: 8)
+                let delay = min(Double(index) * 0.03, 0.24)
                 UIView.animate(withDuration: 0.25, delay: delay, options: .curveEaseOut, animations: {
                     rowView.alpha = 1
                     rowView.transform = .identity
                 })
-                delay += 0.03
             }
         } else {
             // 同批（5-20 / 6-6 / 6-9）：按行身份 key 查视图，不按下标配对；
@@ -2002,12 +2008,14 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         row.addTarget(self, action: #selector(userRowTapped(_:)), for: .touchUpInside)
         row.addTarget(self, action: #selector(rowTouchDown(_:)), for: .touchDown)
         row.addTarget(self, action: #selector(rowTouchUp(_:)), for: [.touchUpInside, .touchUpOutside, .touchCancel])
-        row.accessibilityLabel = displayName
+        // 审计：搜索行 VoiceOver 带“用户”上下文，不再只读名字。
+        row.accessibilityLabel = "用户：" + displayName
         // 好友第一期：紧凑版状态机钮（仅登录、非本人、未拉黑时出现；游客/本人/
         // 拉黑无钮；按钮是行内独立 UIControl，点按不触发整行点按）。状态未到
         // 前先画“关注”占位，点按时若状态仍为空只提示、不发请求。
         if let myId = SessionManager.shared.currentUser?.id, let userId = user.id, userId != myId, !isBlockedForSearch(userId: userId) {
-            let followButton = UIButton(type: .system)
+            // 审计：关注钮视觉高约 28 不变，热区用 Hit44 扩到 44。
+            let followButton = BearyHit44Button(type: .system)
             followButton.translatesAutoresizingMaskIntoConstraints = false
             followButton.titleLabel?.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13, weight: .semibold))
             followButton.titleLabel?.adjustsFontForContentSizeCategory = true
@@ -2132,8 +2140,10 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         if isMineGroup {
             // 2-3：私密行只留 pill，不再拼“· 未公开”文字（双重状态文案已删）。
             // 好友第一期：仅好友篇在我的组里同样只留 pill，文案“仅好友”、蓝档不变。
+            // 审计 2026-11-02 第十节：我的组按三档标 pill——存活限时篇标“限时”
+            // （沿用私密档蓝底，不新发明颜色），仅好友标“仅好友”，其余标“私密”。
             metaStack.addArrangedSubview(dateLabel)
-            metaStack.addArrangedSubview(makePrivatePill(friendsOnly: entry.isFriendsOnly))
+            metaStack.addArrangedSubview(makePrivatePill(friendsOnly: entry.isFriendsOnly, ephemeralLive: BearyEphemeral.isLive(entry)))
         } else {
             let authorLabel = BearyRoundedMarkLabel()
             authorLabel.translatesAutoresizingMaskIntoConstraints = false
@@ -2196,7 +2206,8 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         row.addTarget(self, action: #selector(entryRowTapped(_:)), for: .touchUpInside)
         row.addTarget(self, action: #selector(rowTouchDown(_:)), for: .touchDown)
         row.addTarget(self, action: #selector(rowTouchUp(_:)), for: [.touchUpInside, .touchUpOutside, .touchCancel])
-        row.accessibilityLabel = contentText
+        // 审计：搜索行 VoiceOver 带“日记”上下文，不再只读正文。
+        row.accessibilityLabel = "日记：" + contentText
         entryButtons.append(row)
         rowEntryIds.append(entryId)
         return row
@@ -2206,13 +2217,14 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
     /// padding 2.5/9、锁图标 12、gap 4。圆角注（2-3 注释与代码对齐）：
     /// 实测高约 19（11.5 字 + 上下 2.5），圆角 11 已超半高 9.5，视觉近似 pill，
     /// 故代码保持 11、只改注释，不写 999。11.5 属装饰性小字，不走 Dynamic Type（8-3 豁免）。
-    private func makePrivatePill(friendsOnly: Bool = false) -> UIView {
+    private func makePrivatePill(friendsOnly: Bool = false, ephemeralLive: Bool = false) -> UIView {
         let pill = UIView()
         pill.translatesAutoresizingMaskIntoConstraints = false
         pill.backgroundColor = BearyColors.alpha(BearyColors.blue, 0.13)
         pill.layer.cornerRadius = 11
         pill.layer.masksToBounds = true
         // 好友第一期：仅好友 pill 沿用私密档的蓝（不新发明颜色），只换图标与文案。
+        // 审计 2026-11-02 第十节：存活限时档同样沿用蓝档，文案“限时”。
         let lock = UIImageView(image: BearyIconImages.image(named: friendsOnly ? "icon_friends_lock" : "icon_lock", pointSize: 12))
         lock.translatesAutoresizingMaskIntoConstraints = false
         lock.tintColor = BearyColors.blue
@@ -2221,7 +2233,7 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         label.translatesAutoresizingMaskIntoConstraints = false
         label.font = UIFont.systemFont(ofSize: 11.5, weight: .semibold)
         label.textColor = BearyColors.blue
-        label.text = friendsOnly ? "仅好友" : "私密"
+        label.text = ephemeralLive ? "限时" : (friendsOnly ? "仅好友" : "私密")
         pill.addSubview(lock)
         pill.addSubview(label)
         NSLayoutConstraint.activate([
@@ -2262,6 +2274,23 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         // 别处回关/取关后，当前结果行的状态缓存作废、按行重拉（不靠旧状态）。
         followStates = [:]
         refreshFollowButtons()
+    }
+
+    /// 审计：账号切换——清空搜索结果、关注态与私密行（mine 组随结果区同清），
+    /// 不自动用旧关键词给新号重搜；在途搜索/翻页请求先取消、回包再凭 searchSeq
+    /// 序号门控丢弃（切换期间在途请求不写回新号界面）。
+    @objc private func handleUserChanged() {
+        searchSeq += 1
+        currentSearchTask?.cancel()
+        currentSearchTask = nil
+        resetSearchPagination()
+        clearResultRows()
+        lastRenderedData = nil
+        lastRenderedQuery = nil
+        lastResultQuery = nil
+        lastResultRowKeys = []
+        showingResults = false
+        showInitialState()
     }
 
     private func loadFollowState(userId: Int) {

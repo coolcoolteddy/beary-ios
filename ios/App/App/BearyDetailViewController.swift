@@ -93,6 +93,9 @@ final class BearyDetailViewController: UIViewController {
     /// 点按代次 +1 并立即按本次点按态渲染；在途回包代次落后于最新代次
     /// 时直接丢弃，不得覆盖更新的点按态；失败回滚到最后确认态。
     private var likeSeq = 0
+    /// 审计动效组：点赞按下预览标记——bearyAddPressFeedback 已在 touchDown 给过
+    /// press 轻震，likeTapped 里不再补 likeTap，只震一次；取消/滑出时清零。
+    private var likePressPreviewActive = false
     private var likeConfirmedSeq = 0
     private var bookmarkSeq = 0
     private var bookmarkConfirmedSeq = 0
@@ -134,7 +137,9 @@ final class BearyDetailViewController: UIViewController {
     private var rightStackTopConstraint: NSLayoutConstraint?
     private var rightStackTrailingConstraint: NSLayoutConstraint?
     private let separatorView = UIView()
-    private let closeButton = UIButton(type: .custom)
+    // 审计-编辑器详情：关闭钮视觉仍为 15pt 文字、高 52，宽按标题固有宽
+    // （约 30pt）不足 44——改 Hit44 扩热区，视觉一字不动。
+    private let closeButton = BearyHit44Button(type: .custom)
     private let avatarButton = BearyHit44Button(type: .custom)
     private let avatarImageView = UIImageView()
     /// 首页卡片同款：无图时背后首字母圆透出（avatarImageView 为空时可见）。
@@ -356,16 +361,19 @@ final class BearyDetailViewController: UIViewController {
             let progress = max(0, min(1, stripPinchStartProgress + (1 - gesture.scale)))
             imagesStack.spacing = 8 * (1 - progress)
             applyImageStripCornerRadius(progress: progress)
-            imagesScrollView.layoutIfNeeded()
+            // 审计动效组：跟手过程只改值 + setNeedsLayout，不逐帧强制 layout；
+            // 松手后的落点动画（.ended 的 UIView.animate 内）仍用 layoutIfNeeded 结算。
+            imagesScrollView.setNeedsLayout()
         case .ended, .cancelled, .failed:
             imagesScrollView.isScrollEnabled = true
             let progress = max(0, min(1, stripPinchStartProgress + (1 - gesture.scale)))
             let wasJoined = stripPinchJoined
             stripPinchJoined = progress >= 0.5
             // 拼合/张开落点到位时各轻震一次：只在 .ended 且落点状态真的变化时震，
-            // 跟手过程、取消/失败、原地未变都不震；减动效时不震（系统触感开关由 UIKit 自身遵循）。
-            if gesture.state == .ended && wasJoined != stripPinchJoined && !UIAccessibility.isReduceMotionEnabled {
-                UIImpactFeedbackGenerator(style: .light).impactOccurred()
+            // 跟手过程、取消/失败、原地未变都不震；震动走 BearyHaptics 口径，
+            // 不拿减动效门控（两者不是一回事，见 BearyHaptics 头注释）。
+            if gesture.state == .ended && wasJoined != stripPinchJoined {
+                BearyHaptics.press()
             }
             UIView.animate(withDuration: 0.25, animations: {
                 self.imagesStack.spacing = self.stripPinchJoined ? 0 : 8
@@ -522,7 +530,7 @@ final class BearyDetailViewController: UIViewController {
         view.backgroundColor = BearyColors.bg
         buildLayout()
         if entry.placeholder == true {
-            showPlaceholder(friendsOnly: entry.isFriendsOnly)
+            showPlaceholder(visibility: entry.visibility)
         } else {
             renderAll()
         }
@@ -981,6 +989,8 @@ final class BearyDetailViewController: UIViewController {
         likeButton.titleEdgeInsets = UIEdgeInsets(top: 0, left: 6, bottom: 0, right: 0)
         likeButton.adjustsImageWhenHighlighted = false
         likeButton.addTarget(self, action: #selector(likeTapped), for: .touchUpInside)
+        likeButton.addTarget(self, action: #selector(likePressDown), for: .touchDown)
+        likeButton.addTarget(self, action: #selector(likePressCancelled), for: [.touchUpOutside, .touchCancel])
         likeButton.bearyAddPressFeedback()
         // 显式宽约束（卡片同款，见 likeButtonWidthConstraint 注释）：初始只图标宽，
         // refreshActionRow 按赞数重算；不靠按钮固有宽，防数字被裁成左半弧。
@@ -1098,28 +1108,87 @@ final class BearyDetailViewController: UIViewController {
 
     // MARK: - 渲染
 
-    private func showPlaceholder(friendsOnly: Bool = false) {
+    /// 审计 2026-11-02 第十节：占位文案按回包 visibility 区分——friends 显仅好友句，
+    /// private 显私密句；无字段（nil）时显通用占位“该日记不可见”，不误标为私密。
+    /// 拉黑/举报本地转占位仍走默认私密句（调用方不传参， moderation 占位口径不变）。
+    private func showPlaceholder(visibility: String? = "private") {
         // 私密占位：仅一句文案，不带标题／封面／时间／作者名；内容栈整藏。
         // 文案每次显式配齐：失败态（showFetchFailed）改过同一视图文案，复位防串味。
         // 副文案灰色多行居中（原 16pt 灰字 → 组件 12.5pt 灰色副文案，统一组件口径）；
         // 无插图、无动作钮（关闭重进即重试的约定不变）。
-        // 好友第一期：服务端下发的仅好友占位（非好友/游客直链）显“该日记仅好友可见”；
-        // 拉黑/举报本地转占位不走本分支（调用方不传 friendsOnly，仍显私密句）。
-        placeholderStateView.configure(kind: .empty, title: nil, subtitle: friendsOnly ? "该日记仅好友可见" : "该日记已设为私密", iconName: nil, actionTitle: nil)
+        let subtitle: String
+        switch visibility {
+        case "friends": subtitle = "该日记仅好友可见"
+        case nil: subtitle = "该日记不可见"
+        default: subtitle = "该日记已设为私密"
+        }
+        placeholderStateView.configure(kind: .empty, title: nil, subtitle: subtitle, iconName: nil, actionTitle: nil)
         setContentVisible(false)
         placeholderStateView.isHidden = false
     }
 
     /// 2026-10-29 Li 定（P0-3 包括项，推翻第 17 项“弱网/失败先出页面仍可看”）：
     /// 后台补齐失败时清为无正文态——内容栈整藏，居中一句失败文案，不留卡片旧内容；
-    /// 不用私密占位文案（失败不是私密）；关闭钮仍可用，关了重进即重试。
+    /// 不用私密占位文案（失败不是私密）。
     /// 页内已因拉黑/举报转占位时不动（隐私占位优先于失败态）。
-    /// 与占位共用 BearyStateView 布局（P1-2 一并受益），无重试钮，不另起一套。
+    /// 与占位共用 BearyStateView 布局（P1-2 一并受益）。
+    /// 审计-编辑器详情：失败态补时间线空态同款重试钮（高 44，regular 档），
+    /// 点按重拉详情（retryFetchDetail），不再要求关闭重进。
     func showFetchFailed() {
         if locallyHiddenByModeration { return }
         setContentVisible(false)
-        placeholderStateView.configure(kind: .error, title: nil, subtitle: "加载失败，请稍后再试", iconName: nil, actionTitle: nil)
+        placeholderStateView.configure(kind: .error, title: nil, subtitle: "加载失败，请稍后再试", iconName: nil, actionTitle: "重试", actionStyle: .secondaryOutline(.regular), onAction: { [weak self] in self?.retryFetchDetail() })
         placeholderStateView.isHidden = false
+    }
+
+    /// 详情失败重试：与 SceneDelegate 后台补齐同一可见性门（作者直更、
+    /// 占位直更、拉黑转占位、公开且作者可定直更、公开但定不出作者不动、
+    /// 私密非作者转私密占位）；失败则回失败态（重试钮仍在）。
+    private func retryFetchDetail() {
+        guard !locallyHiddenByModeration, let entryId = entry.id, !entryId.isEmpty else {
+            showFetchFailed()
+            return
+        }
+        placeholderStateView.configure(kind: .loading, title: nil, subtitle: nil, iconName: nil, actionTitle: nil)
+        BearyAPI.shared.fetchEntry(id: entryId) { [weak self] result in
+            DispatchQueue.main.async {
+                guard let self = self else { return }
+                guard case .success(let fetched) = result else {
+                    self.showFetchFailed()
+                    return
+                }
+                if self.locallyHiddenByModeration { return }
+                let viewerId = SessionManager.shared.currentUser?.id
+                let viewerIsAuthor = fetched.isMine == true || (fetched.authorId != nil && viewerId != nil && fetched.authorId == viewerId)
+                if viewerIsAuthor {
+                    self.update(with: fetched)
+                    return
+                }
+                if fetched.placeholder == true {
+                    self.update(with: fetched)
+                    return
+                }
+                if !SessionManager.shared.isGuestMode, let authorId = fetched.authorId, viewerId != authorId, BearyBlockedStore.isBlocked(authorId) {
+                    var placeholderEntry = fetched
+                    placeholderEntry.placeholder = true
+                    self.update(with: placeholderEntry)
+                    return
+                }
+                if fetched.isPublic == true {
+                    if fetched.authorId != nil {
+                        self.update(with: fetched)
+                    } else {
+                        // 公开但定不出作者：与补齐口径一致，不更新；此处页已在
+                        // 失败态，故回到失败态（重试钮仍在），不得停在加载态。
+                        self.showFetchFailed()
+                    }
+                    return
+                }
+                var placeholderEntry = fetched
+                placeholderEntry.placeholder = true
+                self.update(with: placeholderEntry)
+            }
+        }
     }
 
     private func renderAll() {
@@ -1299,7 +1368,7 @@ final class BearyDetailViewController: UIViewController {
             ephemeralExpiryTimer?.invalidate()
             ephemeralExpiryTimer = nil
             entry.placeholder = true
-            showPlaceholder(friendsOnly: fetched.isFriendsOnly)
+            showPlaceholder(visibility: fetched.visibility)
             return
         }
         // 按字段合并：先取服务端全量，再把在途字段写回本地值。
@@ -1324,6 +1393,7 @@ final class BearyDetailViewController: UIViewController {
         }
         if isVisibilityBusy {
             merged.isPublic = old.isPublic
+            merged.visibility = old.visibility
             merged.publishedAt = old.publishedAt
             merged.ephemeralUntil = old.ephemeralUntil
         }
@@ -1484,7 +1554,11 @@ final class BearyDetailViewController: UIViewController {
             return true
         }
         entry.placeholder = true
-        showPlaceholder()
+        // 审计 2026-11-02 第十节：限时到期即定向清该篇图片缓存（与手动转私密同口径），
+        // 占位文案按回包 visibility 区分，无字段时通用占位不误标。
+        BearyImageLoader.shared.evictEntryImages(keys: entry.images ?? [])
+        BearyDiaryCardCell.invalidateQuote(id: entry.id ?? "")
+        showPlaceholder(visibility: entry.visibility)
         return true
     }
 
@@ -1679,7 +1753,7 @@ final class BearyDetailViewController: UIViewController {
         }
         let content = quote.content ?? ""
         if content.isEmpty {
-            if quote.isPublic == false {
+            if quote.isEffectivelyPublic == false {
                 let placeholder = BearyQuoteGate.placeholderTextForQuote(publishedAt: quote.publishedAt, locked: false, visibility: quote.visibility)
                 quoteView.showGone(message: placeholder.main, iconName: "icon_lock", detail: placeholder.detail, sourceHandle: quote.authorHandle, sourceDateMs: quote.createdAt)
             } else {
@@ -1688,24 +1762,49 @@ final class BearyDetailViewController: UIViewController {
             quoteView.isHidden = false
             return
         }
-        guard quoteIsMine || quote.isPublic == true else {
+        // 审计 2026-11-02 第十节：引用判定统一走有效态＋互关通道——作者本人或
+        // 当前有效公开即显全文；仅好友档先占位、state 回包确认互关后再补全文
+        // （回包到达时若引用已换篇则丢弃，fail-closed）；其余一律占位。
+        let showPlaceholderForQuote = {
             let placeholder = BearyQuoteGate.placeholderTextForQuote(publishedAt: quote.publishedAt, locked: false, visibility: quote.visibility)
-            quoteView.showGone(message: placeholder.main, iconName: "icon_lock", detail: placeholder.detail, sourceHandle: quote.authorHandle, sourceDateMs: quote.createdAt)
+            self.quoteView.showGone(message: placeholder.main, iconName: "icon_lock", detail: placeholder.detail, sourceHandle: quote.authorHandle, sourceDateMs: quote.createdAt)
+            self.quoteView.isHidden = false
+        }
+        if quoteIsMine || quote.isEffectivelyPublic {
+            quoteView.configure(
+                authorName: quote.authorName ?? "",
+                authorAvatar: quote.authorAvatar,
+                content: content,
+                images: quote.images ?? [],
+                dims: quote.imgDims,
+                createdAt: quote.createdAt,
+                allowThumbs: quote.isEffectivelyPublic || quoteIsMine,
+                authorHandle: quote.authorHandle,
+                sourceTappable: true
+            )
             quoteView.isHidden = false
             return
         }
-        quoteView.configure(
-            authorName: quote.authorName ?? "",
-            authorAvatar: quote.authorAvatar,
-            content: content,
-            images: quote.images ?? [],
-            dims: quote.imgDims,
-            createdAt: quote.createdAt,
-            allowThumbs: quote.isPublic == true || quoteIsMine,
-            authorHandle: quote.authorHandle,
-            sourceTappable: true
-        )
-        quoteView.isHidden = false
+        if quote.visibility == "friends" {
+            showPlaceholderForQuote()
+            BearyQuoteGate.resolveQuoteFullAccess(quote: quote) { [weak self] canView in
+                guard let self = self, canView, self.entry.quote?.id == quoteId else { return }
+                self.quoteView.configure(
+                    authorName: quote.authorName ?? "",
+                    authorAvatar: quote.authorAvatar,
+                    content: content,
+                    images: quote.images ?? [],
+                    dims: quote.imgDims,
+                    createdAt: quote.createdAt,
+                    allowThumbs: true,
+                    authorHandle: quote.authorHandle,
+                    sourceTappable: true
+                )
+                self.quoteView.isHidden = false
+            }
+            return
+        }
+        showPlaceholderForQuote()
     }
 
     // MARK: - 操作行
@@ -2130,6 +2229,12 @@ final class BearyDetailViewController: UIViewController {
                     guard let self = self else { return }
                     self.onEdit?(self.entry)
                 })
+            } else {
+                // 审计-编辑器详情：过期（或 editDeadline 缺失即已锁，见时间线
+                // 同口径注释）时编辑项不再直接消失，置灰并附说明。
+                let expiredEdit = UIAlertAction(title: "编辑（已超 15 分钟不可编辑）", style: .default, handler: nil)
+                expiredEdit.isEnabled = false
+                sheet.addAction(expiredEdit)
             }
             sheet.addAction(UIAlertAction(title: "修改权限", style: .default) { [weak self] _ in
                 guard let self = self else { return }
@@ -2158,6 +2263,7 @@ final class BearyDetailViewController: UIViewController {
             popover.sourceView = moreButton
             popover.sourceRect = moreButton.bounds
         }
+        // 审计 2026-11-02 弹窗组：present 不写死 animated，走减动效口径。
         present(sheet, animated: BearyMotion.animated(true))
     }
 
@@ -2165,79 +2271,96 @@ final class BearyDetailViewController: UIViewController {
         guard isAuthor else { return }
         guard let entryId = entry.id, !entryId.isEmpty else { return }
         if isVisibilityBusy { return }
+        // 审计 2026-11-02 第十节：已发布日记改三档——“修改权限”先弹三档选择器
+        // （私密/仅好友/公开，当前档带 ✓），选同档即无变化、不发请求；
+        // 仅好友→公开→仅好友全程可逆；限时与仅好友互斥规则不动（手动改档恒清限时标记）。
         // 引用规则简化（2026-10-31）：切公开先过引用门禁（私密来源时先问一并公开，
-        // 他人来源无一并公开项）；改私密先查引用数提醒。门禁/提醒期间置 busy 防重入，
-        // 放弃时清 busy、原态未动（乐观落地只在 perform 里做）。
-        let target = BearyEphemeral.isEffectivelyPublic(entry) ? 0 : 1
-        isVisibilityBusy = true
-        if target == 1 {
-            BearyQuoteGate.gatePublicToggle(from: self, entry: entry) { [weak self] result in
-                guard let self = self else { return }
-                switch result {
-                case .proceed:
-                    self.performVisibilityToggle()
-                case .publishTogether(let sourceId):
-                    BearyAPI.shared.setVisibility(id: sourceId, published: 1) { setResult in
-                        DispatchQueue.main.async {
-                            switch setResult {
-                            case .success:
-                                self.performVisibilityToggle()
-                            case .failure:
-                                self.isVisibilityBusy = false
-                                BearyToast.show(in: self.view, message: "原日记公开失败，请重试")
+        // 他人来源无一并公开项）；改私密先查引用数提醒；改仅好友为收紧方向，直接放行。
+        // 门禁/提醒期间置 busy 防重入，放弃时清 busy、原态未动（乐观落地只在 perform 里做）。
+        BearyVisibility.presentPicker(from: self, entry: entry) { [weak self] targetVisibility in
+            guard let self = self else { return }
+            if targetVisibility == BearyVisibility.current(for: self.entry) { return }
+            self.isVisibilityBusy = true
+            if targetVisibility == "public" {
+                BearyQuoteGate.gatePublicToggle(from: self, entry: self.entry) { [weak self] result in
+                    guard let self = self else { return }
+                    switch result {
+                    case .proceed:
+                        self.performVisibilityToggle(targetVisibility: targetVisibility)
+                    case .publishTogether(let sourceId):
+                        BearyAPI.shared.setVisibility(id: sourceId, visibility: "public") { setResult in
+                            DispatchQueue.main.async {
+                                switch setResult {
+                                case .success:
+                                    self.performVisibilityToggle(targetVisibility: targetVisibility)
+                                case .failure:
+                                    self.isVisibilityBusy = false
+                                    BearyToast.show(in: self.view, message: "原日记公开失败，请重试")
+                                }
                             }
                         }
+                    case .aborted:
+                        self.isVisibilityBusy = false
                     }
-                case .aborted:
-                    self.isVisibilityBusy = false
                 }
-            }
-        } else {
-            BearyQuoteGate.confirmPrivateToggleIfQuoted(from: self, entryId: entryId) { [weak self] confirmed in
-                guard let self = self else { return }
-                if confirmed {
-                    self.performVisibilityToggle()
-                } else {
-                    self.isVisibilityBusy = false
+            } else if targetVisibility == "private" {
+                BearyQuoteGate.confirmPrivateToggleIfQuoted(from: self, entryId: entryId) { [weak self] confirmed in
+                    guard let self = self else { return }
+                    if confirmed {
+                        self.performVisibilityToggle(targetVisibility: targetVisibility)
+                    } else {
+                        self.isVisibilityBusy = false
+                    }
                 }
+            } else {
+                self.performVisibilityToggle(targetVisibility: targetVisibility)
             }
         }
     }
 
-    private func performVisibilityToggle() {
+    private func performVisibilityToggle(targetVisibility: String) {
         guard isAuthor else { return }
         guard let entryId = entry.id, !entryId.isEmpty else { return }
         // 游客永非作者，到不了这里；未登录同样到不了（作者必登录）。
-        // 目标态按有效态算：已到期限时篇 stored 仍为公开，但按私密算，点按应是公开（目标 1）。
-        // （2026-10-29 第 18 项核实：详情页目标态本已正确，三处列表入口与之对齐，详情页不动算法。）
-        let target = BearyEphemeral.isEffectivelyPublic(entry) ? 0 : 1
         let original = entry
         isVisibilityBusy = true
         // 即时反馈（2026-10-29 定版）：点按瞬间先按目标态刷小地球无障碍文案
         // （refreshVisibilityViews 只动文案，不重建栈、不重播动效），失败回滚原态 + 拒绝动效。
-        entry.isPublic = target == 1
+        entry.isPublic = BearyVisibility.isPublicValue(targetVisibility)
+        entry.visibility = targetVisibility
         entry.ephemeralUntil = nil
         refreshVisibilityViews()
         BearySoundPlayer.play(.visibilityClick)
-        BearyAPI.shared.setVisibility(id: entryId, published: target) { [weak self] result in
+        // 审计动效组：可见性翻转统一为“图标＋pill 文案＋轻震”——图标与文案
+        // 已由上方 refreshVisibilityViews 先行刷出，此处补轻震。
+        BearyHaptics.press()
+        BearyAPI.shared.setVisibility(id: entryId, visibility: targetVisibility) { [weak self] result in
             DispatchQueue.main.async {
                 guard let self = self else { return }
                 self.isVisibilityBusy = false
                 switch result {
                 case .success(let resp):
-                    let isPublic = resp.published.map { $0 == 1 } ?? (target == 1)
+                    // 成功回写以回包为准：visibility 缺失时回落 published/目标档；
+                    // ephemeralUntil 缺失 = 手动翻转已清限时标记，写回 nil。
+                    let isPublic = resp.visibility.map { BearyVisibility.isPublicValue($0) }
+                        ?? resp.published.map { $0 == 1 }
+                        ?? BearyVisibility.isPublicValue(targetVisibility)
                     self.entry.isPublic = isPublic
-                    // 秒开-网络层：转私密成功即逐出本篇图片的本机缓存（内存+
+                    self.entry.visibility = resp.visibility ?? targetVisibility
+                    // 秒开-网络层：转非公开成功即逐出本篇图片的本机缓存（内存+
                     // 磁盘），后续加载走网络、服务端按新可见性判定；失败回滚
-                    // 分支不逐出（原态未变，缓存仍可信）。
+                    // 分支不逐出（原态未变，缓存仍可信）；引用全文缓存同清，
+                    // 旧引用卡不按旧可见性渲染。
                     if !isPublic {
                         BearyImageLoader.shared.evictEntryImages(keys: self.entry.images ?? [])
+                        BearyDiaryCardCell.invalidateQuote(id: entryId)
                     }
                     if let publishedAt = resp.publishedAt {
                         self.entry.publishedAt = publishedAt
                     }
-                    // 手动翻转清限时标记（与后端规则、时间线本地同步点同口径）。
-                    self.entry.ephemeralUntil = nil
+                    // 手动翻转清限时标记（与后端规则、时间线本地同步点同口径），
+                    // 除非回包显式带回新的 ephemeralUntil。
+                    self.entry.ephemeralUntil = resp.ephemeralUntil
                     BearyHaptics.publishSuccess()
                     self.refreshVisibilityViews()
                     self.refreshEphemeralViews()
@@ -2275,8 +2398,21 @@ final class BearyDetailViewController: UIViewController {
         }
     }
 
+    @objc private func likePressDown() {
+        likePressPreviewActive = true
+        BearyHaptics.prepareLike()
+    }
+
+    @objc private func likePressCancelled() {
+        likePressPreviewActive = false
+    }
+
     @objc private func likeTapped() {
         guard let entryId = entry.id, !entryId.isEmpty else { return }
+        // 审计动效组：守卫标记在函数顶部统一消费——deny/未登录等早退路径
+        // 同样清零，防残留标记影响下一次点按的守卫判定。
+        let hadPressPreview = likePressPreviewActive
+        likePressPreviewActive = false
         // 审计 P2-11：非作者的非公开时不再静默 return——拒绝动效＋“公开后才能互动”。
         // 2026-10-31 私密自互动口径：作者本人看自己私密篇时放行。
         if !BearyEphemeral.isEffectivelyPublic(entry) && !isAuthor {
@@ -2295,8 +2431,13 @@ final class BearyDetailViewController: UIViewController {
         let targetLiked = !currentlyLiked
         // 先行反馈（卡片口径）：点赞即填亮红＋计数 +1，取消即褪色＋计数 −1；
         // 液体炸开与填色同起——点按确认时即播，不再等服务端回包。
+        // 审计动效组：touchDown 已由 bearyAddPressFeedback 给过一次 press 轻震，
+        // 此处照搬卡片页 hadPressPreview 守卫——有预览时不再补 likeTap，只震一次；
+        // 直达抬起（无 touchDown）时仍补一次；音效只在确认时播，不受守卫影响。
         if !currentlyLiked {
-            BearyHaptics.likeTap()
+            if !hadPressPreview {
+                BearyHaptics.likeTap()
+            }
             BearySoundPlayer.play(.likePop)
         } else {
             BearySoundPlayer.play(.unlikeSoft)
