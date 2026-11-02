@@ -6,7 +6,7 @@ import PhotosUI
 // 只负责写日记：正文 + 心情 + 天气 + @ + 引用 + 图片（上限 9 张）。
 // 编辑模式复用同一界面：正文/心情/天气/图片/引用/@ 可改，
 // 不走新日记草稿流（不读不写 beary_draft_v3、不复用新篇 client_req）。
-// iCity：新建默认私密（顶栏可见性钮三态点按循环：私密→公开→限时，编辑模式隐藏）；
+// iCity：新建默认私密（顶栏可见性钮点开菜单直选：私密/仅好友/公开/限时，编辑模式隐藏）；
 // 限时行已删（2026-10-31）：限时态即公开语义，ephemeral=1 发出后服务端 24 小时后转私密，无日期行。
 // C1 段落顺序：正文 → 已选 Chip 行 → 图片预览 → 状态行 → 引用；
 // A3：规则框已移出内容栈，锚在工具栏上方（不随正文滚动，键盘顶起工具栏时跟走）；
@@ -222,10 +222,10 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     /// iCity：新建编辑器可见性初值硬编码私密（false），不读 UserDefaults、不记住上次选择。
     private var selectedVisibilityPublished = false
     /// 好友第一期：仅好友档（与 published/ephemeral 互斥三态之一；限时恒公开，
-    /// 故仅好友与限时互斥：仅好友切限时须先经公开档再计时，循环本身保证此顺序）。
+    /// 故仅好友与限时互斥：菜单直选任一档即定格该档，不经过中间档）。
     private var selectedVisibilityFriends = false
-    /// 顶栏三态循环的限时档：true 恒与 published=true 同行（限时即公开语义）；
-    /// 切到私密或普通公开时即清掉，不残留（见 didTapVisibilityButton）。
+    /// 顶栏菜单的限时档：true 恒与 published=true 同行（限时即公开语义）；
+    /// 切到私密或普通公开时即清掉，不残留（见 applyVisibilityChoice）。
     private var isEphemeral = false
     /// 编辑模式的引用：初始为原值，可改可删（网页 PUT 同款：body 带新 quote_id；
     /// 删为空时 updateEntry 省略 quote_id，服务端按 null 写，旧引用即清掉）。
@@ -447,7 +447,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     private let toolbarContainer = UIView()
     private let toolStripStack = UIStackView()
     /// 2026-10-31：工具栏上方限时行已整组删除（行、开关、文案、约束全清），
-    /// 限时并进顶栏可见性钮三态循环；滚动区底锚直接走工具栏档（见 updateScrollBottomAnchoring）。
+    /// 限时并进顶栏可见性钮菜单（12b 前为点按循环）；滚动区底锚直接走工具栏档（见 updateScrollBottomAnchoring）。
     private var scrollBottomToToolbarConstraint: NSLayoutConstraint?
     private var scrollBottomToStripConstraint: NSLayoutConstraint?
     private var scrollBottomToViewConstraint: NSLayoutConstraint?
@@ -504,8 +504,8 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     private let recipientToolButton = BearyHit44Button(type: .system)
     private let quoteToolButton = BearyHit44Button(type: .system)
     private let draftPillButton = UIButton(type: .system)
-    /// 顶栏可见性钮（2026-10-30 建、2026-10-31 改三态）：锁＝私密、地球＝公开、
-    /// 时钟＝限时，点按循环切换；取代正文区分段，为唯一可见性入口；
+    /// 顶栏可见性钮（2026-10-30 建、2026-10-31 改三态、12b 改点开菜单）：锁＝私密、地球＝公开、
+    /// 时钟＝限时，点开系统 UIMenu 直选四档；取代正文区分段，为唯一可见性入口；
     /// 编辑模式隐藏（编辑不改可见性）；限时态即公开语义，不再另设锁定开关。
     private let visibilityButton = UIButton(type: .system)
     // 编辑器改版（2026-10-29）：心情/天气尖角弹出框（取代旧选择条）+ 框外收起层。
@@ -1134,8 +1134,11 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         visibilityButton.setImage(BearyIconImages.image(named: "icon_lock", pointSize: 24), for: .normal)
         visibilityButton.tintColor = BearyColors.ink
         visibilityButton.accessibilityLabel = "可见性"
-        visibilityButton.accessibilityHint = "点按切换私密、仅好友、公开、限时"
-        visibilityButton.addTarget(self, action: #selector(didTapVisibilityButton), for: .touchUpInside)
+        visibilityButton.accessibilityHint = "点开菜单选择私密、仅好友、公开、限时"
+        // 12b：点开菜单直选，取代 #596 的点按四态循环（循环入口整段删除，不留两套入口）。
+        // 系统 UIMenu（不自绘）：菜单内容由 refreshVisibilityButton 按当前档重建，当前档打勾。
+        visibilityButton.menu = makeVisibilityMenu()
+        visibilityButton.showsMenuAsPrimaryAction = true
         visibilityButton.bearyAddPressFeedback()
         visibilityButton.translatesAutoresizingMaskIntoConstraints = false
         visibilityButton.isHidden = isEditMode
@@ -2188,23 +2191,70 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         scrollBottomToViewConstraint?.isActive = quotePanelOpen
     }
 
-    @objc private func didTapVisibilityButton() {
-        // 四态循环：私密 → 仅好友 → 公开 → 限时 → 私密。限时态 = 公开 + 限时标记；
-        // 仅好友与限时互斥：仅好友档先回公开档、再点才进限时（沿用“限时开强制公开”）；
-        // 切到私密或普通公开时限时标记即清，不残留到下一篇普通篇。
-        // （旧限时开关的“限时锁死公开钮”随开关删除而作废：循环本身已保证限时恒公开。）
-        // 仅好友不是公开：切到仅好友不触发“一并公开”询问（门禁只认 published 档，见 didTapPublish）。
+    /// 12b：编辑器可见性菜单（系统 UIMenu，不自绘新组件；时间线筛子走系统
+    /// actionSheet，本处用 UIMenu 因其原生支持当前档打勾，且锚在钮上、iPad 无需另配 popover）。
+    /// 四档直选，取代 #596 的点按四态循环；四档文案与图标沿用现行（私密/仅好友/公开/限时，
+    /// 锁/双人锁/地球/限时官方图标，不新造样式、不改文案）。
+    /// 当前档仍列出，点按即无操作返回（与时间线筛子“当前档点按无操作”口径一致）。
+    private func makeVisibilityMenu() -> UIMenu {
+        let current = currentVisibilityChoice()
+        let items: [(title: String, icon: String, choice: VisibilityChoice)] = [
+            ("私密", "icon_lock", .privateTier),
+            ("仅好友", "icon_friends_lock", .friendsTier),
+            ("公开", "icon_globe", .publicTier),
+            ("限时", "icon_limited", .ephemeralTier),
+        ]
+        let actions = items.map { item in
+            UIAction(title: item.title, image: BearyIconImages.image(named: item.icon, pointSize: 24), state: item.choice == current ? .on : .off) { [weak self] _ in
+                self?.applyVisibilityChoice(item.choice)
+            }
+        }
+        return UIMenu(title: "可见性", children: actions)
+    }
+
+    /// 三旗标折叠成的当前档：限时优先（限时恒公开），其次仅好友，其次公开，其余私密。
+    private func currentVisibilityChoice() -> VisibilityChoice {
         if isEphemeral {
+            return .ephemeralTier
+        } else if selectedVisibilityFriends {
+            return .friendsTier
+        } else if selectedVisibilityPublished {
+            return .publicTier
+        } else {
+            return .privateTier
+        }
+    }
+
+    // case 名避开 private/public 关键字（不用反引号转义，省一处解析风险）。
+    private enum VisibilityChoice {
+        case privateTier, friendsTier, publicTier, ephemeralTier
+    }
+
+    /// 菜单选档：只写三旗标，其余逻辑一律不动——发布门禁（didTapPublish 只认
+    /// published 档，故仅好友不触发“一并公开”询问）、草稿恢复、快照生成均读旗标；
+    /// 限时档 = 公开 + 限时标记（限时开强制公开：published=true、friends=false，
+    /// 与仅好友互斥），切他档即清限时标记，不残留到下一篇普通篇。
+    /// （“限时开锁定”沿现行语义：限时恒公开、而非钮禁用——现行冻结只看发布在途态，
+    /// 限时态本身按钮仍可点开菜单重选，见 refreshPublishingInputFreeze；本支不新增禁用。）
+    private func applyVisibilityChoice(_ choice: VisibilityChoice) {
+        guard choice != currentVisibilityChoice() else { return }
+        switch choice {
+        case .privateTier:
             selectedVisibilityPublished = false
             selectedVisibilityFriends = false
             isEphemeral = false
-        } else if selectedVisibilityFriends {
-            selectedVisibilityFriends = false
-            selectedVisibilityPublished = true
-        } else if selectedVisibilityPublished {
-            isEphemeral = true
-        } else {
+        case .friendsTier:
+            selectedVisibilityPublished = false
             selectedVisibilityFriends = true
+            isEphemeral = false
+        case .publicTier:
+            selectedVisibilityPublished = true
+            selectedVisibilityFriends = false
+            isEphemeral = false
+        case .ephemeralTier:
+            selectedVisibilityPublished = true
+            selectedVisibilityFriends = false
+            isEphemeral = true
         }
         refreshVisibilityButton()
         // 批 E：段位切换时位置行副行（公开后他人仅见区级）同步变，防滞后。
@@ -2221,6 +2271,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     /// （熊头 + 外围虚线环，#162 落位的 imageset，#272 删限时行时误删、
     /// 本支从 2bb7df9^ 原样恢复，不自绘、不改图形；纠正：不要 icon_clock）；
     /// 可用态只由发布冻结（refreshPublishingInputFreeze）管，本函数不动 isEnabled。
+    /// 菜单随钮状态重建：草稿恢复/清空/门禁回写等一切调本函数的路径都会同步菜单打勾。
     private func refreshVisibilityButton() {
         if isEphemeral {
             visibilityButton.setImage(BearyIconImages.image(named: "icon_limited", pointSize: 24), for: .normal)
@@ -2233,6 +2284,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             visibilityButton.setImage(BearyIconImages.image(named: published ? "icon_globe" : "icon_lock", pointSize: 24), for: .normal)
             visibilityButton.accessibilityValue = published ? "公开" : "私密"
         }
+        visibilityButton.menu = makeVisibilityMenu()
     }
 
     @objc private func didTapQuoteTab(_ sender: UIButton) {
@@ -4333,7 +4385,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         // 100 包编辑器面修法：发布在途时可见性钮亦冻结——此前冻结清单
         // 漏了它，在途点钮只改旗标不改已发送值（performPublish 已在请求
         // 前捕获 publishVisibility），视觉上“切成功了”实则无效。
-        // 2026-10-31：限时开关已删，钮冻结只看在途态（限时态本身不再锁钮，循环可继续点按）。
+        // 2026-10-31：限时开关已删，钮冻结只看在途态（限时态本身不再锁钮，菜单仍可点开重选）。
         visibilityButton.isEnabled = !frozen
         // P1-14：冻结清单补齐全部入口——草稿 pill、引用钮、三枚已选 Chip、
         // @ pick/清除、引用卡 ×（含已删行“移除”）；其余入口见下。
@@ -5676,7 +5728,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     /// 即读后者，只写 index 不动它仍会发出私密）；ephemeral=true 时恢复为
     /// 限时态（公开 + 限时标记），老草稿无限时键时缺省 false，走旧私密/公开态；
     /// 好友第一期：index=2 恢复为仅好友档；非法 index 一律按私密兜底。restoreDraft 与 loadDraftFromBox 两路共用。
-    /// （旧“限时开时钮锁死”口径随开关删除而作废：恢复后循环仍可点按。）
+    /// （旧“限时开时钮锁死”口径随开关删除而作废：恢复后菜单仍可点开重选。）
     private func restoreVisibility(index: Int, ephemeral: Bool = false) {
         if ephemeral {
             selectedVisibilityPublished = true
