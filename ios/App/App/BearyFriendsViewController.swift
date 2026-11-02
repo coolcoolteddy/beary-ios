@@ -42,7 +42,7 @@ final class BearyFriendsViewController: UIViewController, UITableViewDelegate, U
         view.addSubview(topBar)
         topBarTopConstraint = topBar.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 60)
         titleLabel.translatesAutoresizingMaskIntoConstraints = false
-        titleLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 17, weight: .semibold))
+        titleLabel.font = BearyDynamicType.scaledFont(for: UIFont.boldSystemFont(ofSize: 19))
         titleLabel.adjustsFontForContentSizeCategory = true
         titleLabel.textColor = BearyColors.ink
         titleLabel.text = "好友"
@@ -101,13 +101,12 @@ final class BearyFriendsViewController: UIViewController, UITableViewDelegate, U
             topBar.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             topBar.trailingAnchor.constraint(equalTo: view.trailingAnchor),
             topBar.heightAnchor.constraint(equalToConstant: 44),
-            titleLabel.centerXAnchor.constraint(equalTo: topBar.centerXAnchor),
-            titleLabel.centerYAnchor.constraint(equalTo: topBar.centerYAnchor),
-            // 审计：居中标题加左右限位，小屏＋大字体时不与右侧会话钮重叠（超长截断）。
-            titleLabel.leadingAnchor.constraint(greaterThanOrEqualTo: topBar.leadingAnchor, constant: 16),
+            // 时间线同款：标题左对齐、左缘 16、顶距 14（时间线标题行栈顶 +14 同口径）。
+            titleLabel.leadingAnchor.constraint(equalTo: topBar.leadingAnchor, constant: 16),
+            titleLabel.topAnchor.constraint(equalTo: topBar.topAnchor, constant: 14),
             titleLabel.trailingAnchor.constraint(lessThanOrEqualTo: dmButton.leadingAnchor, constant: -8),
             dmButton.trailingAnchor.constraint(equalTo: topBar.trailingAnchor, constant: -16),
-            dmButton.centerYAnchor.constraint(equalTo: topBar.centerYAnchor),
+            dmButton.centerYAnchor.constraint(equalTo: titleLabel.centerYAnchor),
             dmButton.widthAnchor.constraint(equalToConstant: 44),
             dmButton.heightAnchor.constraint(equalToConstant: 44),
             tableView.topAnchor.constraint(equalTo: topBar.bottomAnchor),
