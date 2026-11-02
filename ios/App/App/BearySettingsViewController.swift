@@ -661,6 +661,31 @@ final class BearySettingsViewController: UIViewController {
                 row.trailingAnchor.constraint(equalTo: wrap.trailingAnchor, constant: -16),
                 row.bottomAnchor.constraint(equalTo: wrap.bottomAnchor, constant: -14),
             ])
+            // 审计三轮第 4 项：可点行的覆盖按钮改钉外层 wrap 四边（含 14pt 留白），
+            // 视觉内边距仍由内容容器控制。判定标准：按钮已零边距钉满内层四边
+            // （即整行覆盖钮）；居中独立钮（退出/注销）、带 -52 避让的切号钮、
+            // 开关行（无 UIButton）一律不动——开关行仍只响应控件本身。
+            // 外层 wrap 每行只包一行，按钮原已盖满整行，扩到外框只多出留白区，
+            // 不会盖住任何同行控件；按钮目标与按压反馈跟随按钮本身。
+            let coverButtons = row.subviews.compactMap { $0 as? UIButton }.filter { button in
+                let edgeAttrs: [NSLayoutConstraint.Attribute] = [.top, .leading, .trailing, .bottom]
+                return edgeAttrs.allSatisfy { attr in
+                    row.constraints.contains { c in
+                        (c.firstItem as? UIButton) === button && c.firstAttribute == attr
+                            && (c.secondItem as? UIView) === row && c.constant == 0
+                    }
+                }
+            }
+            if coverButtons.count == 1, let button = coverButtons.first {
+                NSLayoutConstraint.deactivate(row.constraints.filter { ($0.firstItem as? UIButton) === button || ($0.secondItem as? UIButton) === button })
+                wrap.addSubview(button)
+                NSLayoutConstraint.activate([
+                    button.topAnchor.constraint(equalTo: wrap.topAnchor),
+                    button.leadingAnchor.constraint(equalTo: wrap.leadingAnchor),
+                    button.trailingAnchor.constraint(equalTo: wrap.trailingAnchor),
+                    button.bottomAnchor.constraint(equalTo: wrap.bottomAnchor),
+                ])
+            }
             stack.addArrangedSubview(wrap)
             wrappers.append(wrap)
         }

@@ -256,6 +256,9 @@ final class BearyDiaryStarMapViewController: UIViewController {
             stack.translatesAutoresizingMaskIntoConstraints = false
             stack.axis = .horizontal
             stack.spacing = 8
+            // 审计三轮第 3 项：行高 44 后栈仍与行同高，药丸须居中而非拉伸——
+            // alignment .center 让药丸保持固有高（约 32 视觉胶囊）垂直居中。
+            stack.alignment = .center
             scroll.addSubview(stack)
             contentView.addSubview(scroll)
             NSLayoutConstraint.activate([
@@ -380,7 +383,7 @@ final class BearyDiaryStarMapViewController: UIViewController {
 
             filterScrollView.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 16),
             filterScrollView.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -16),
-            filterScrollView.heightAnchor.constraint(equalToConstant: 32),
+            filterScrollView.heightAnchor.constraint(equalToConstant: 44),
 
             skyView.topAnchor.constraint(equalTo: filterScrollView.bottomAnchor, constant: 12),
             skyView.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 16),
@@ -447,8 +450,8 @@ final class BearyDiaryStarMapViewController: UIViewController {
         failureBottom?.isActive = false
         // 年/月行高约束单独持有：不分片时高置 0（isHidden 本身不塌约束，
         // 否则不分片页会在图例与过滤行之间留两行空白）。
-        yearRowHeight = yearScrollView.heightAnchor.constraint(equalToConstant: 32)
-        monthRowHeight = monthScrollView.heightAnchor.constraint(equalToConstant: 32)
+        yearRowHeight = yearScrollView.heightAnchor.constraint(equalToConstant: 44)
+        monthRowHeight = monthScrollView.heightAnchor.constraint(equalToConstant: 44)
         yearRowHeight?.isActive = true
         monthRowHeight?.isActive = true
         // 审计 15 项第 2 项：三段间距与行高同款持有，隐藏时一起收起。
@@ -464,8 +467,8 @@ final class BearyDiaryStarMapViewController: UIViewController {
     // MARK: - 药丸按钮（年/月/连线过滤共用）
 
     private func pillButton(title: String, selected: Bool, action: Selector) -> UIButton {
-        // 审计登录杂项：药丸行高保持 32（样式 token，不擅自改 44），热区改
-        // BearyHit44Button 扩至 44，并补按压反馈；字号走 scaledFont。
+        // 审计三轮第 3 项：筛选行高改为 44（行高本身是本次修法，视觉胶囊仍保持
+        // 固有高、靠栈居中）；热区 BearyHit44Button 扩至 44，并补按压反馈；字号走 scaledFont。
         let button = BearyHit44Button(type: .custom)
         button.translatesAutoresizingMaskIntoConstraints = false
         button.setTitle(title, for: .normal)
@@ -479,6 +482,9 @@ final class BearyDiaryStarMapViewController: UIViewController {
         button.layer.bearyDynamicBorderColor = BearyStarMapNight.pillBorder
         button.contentEdgeInsets = UIEdgeInsets(top: 6, left: 12, bottom: 6, right: 12)
         button.addTarget(self, action: action, for: .touchUpInside)
+        // 审计三轮第 3 项：选中语义同步——读屏可知当前选中哪颗药丸。
+        button.isSelected = selected
+        button.accessibilityTraits = selected ? [.button, .selected] : .button
         return button
     }
 
@@ -490,8 +496,8 @@ final class BearyDiaryStarMapViewController: UIViewController {
         yearScrollView.isHidden = !needsSlicing
         monthScrollView.isHidden = !needsSlicing
         sliceCalendarIcon.isHidden = !needsSlicing
-        yearRowHeight?.constant = needsSlicing ? 32 : 0
-        monthRowHeight?.constant = needsSlicing ? 32 : 0
+        yearRowHeight?.constant = needsSlicing ? 44 : 0
+        monthRowHeight?.constant = needsSlicing ? 44 : 0
         // 审计 15 项第 2 项：隐藏行时三段间距收成图例→筛选行统一 12pt；
         // 恢复分片时还原 12/8/8。
         if needsSlicing {
