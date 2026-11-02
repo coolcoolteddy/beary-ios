@@ -48,15 +48,17 @@ enum BearyFollowState {
 
 enum BearyFriends {
 
+    /// 取关二次确认 alert（仅弹框，不发请求）：确认回调由调用方接乐观更新＋请求。
+    /// 文案与 confirmUnfollow 同款（同一 builder，不另起一套 copy）。
+    static func confirmUnfollowAlert(from vc: UIViewController, displayName: String, mutual: Bool, onConfirmed: @escaping () -> Void) {
+        vc.present(unfollowConfirmAlert(displayName: displayName, mutual: mutual, onConfirmed: onConfirmed), animated: BearyMotion.animated(true))
+    }
+
     /// 取关二次确认（alert，系统官方样式；确认后才发请求，失败只 toast、不改态；
     /// 取关不给震动）。mutual 与单向关注的文案分开：互关取关会断双向可见性，
     /// 单向取关只断自己的关注流。
     static func confirmUnfollow(from vc: UIViewController, displayName: String, userId: Int, mutual: Bool, onRemoved: @escaping () -> Void) {
-        let message = mutual
-            ? "取关后，你们不再是互关好友，对方将看不到你的仅好友日记，你也看不到对方的仅好友日记。"
-            : "取关后，你将不再看到对方的日记动态。"
-        let alert = UIAlertController(title: "取关", message: message, preferredStyle: .alert)
-        alert.addAction(UIAlertAction(title: "取关", style: .destructive) { _ in
+        let alert = unfollowConfirmAlert(displayName: displayName, mutual: mutual) {
             BearyAPI.shared.unfollowFriend(userId: userId) { result in
                 DispatchQueue.main.async {
                     switch result {
@@ -68,9 +70,18 @@ enum BearyFriends {
                     }
                 }
             }
-        })
-        alert.addAction(UIAlertAction(title: "取消", style: .cancel, handler: nil))
+        }
         vc.present(alert, animated: BearyMotion.animated(true))
+    }
+
+    private static func unfollowConfirmAlert(displayName: String, mutual: Bool, onConfirmed: @escaping () -> Void) -> UIAlertController {
+        let message = mutual
+            ? "取关后，你们不再是互关好友，对方将看不到你的仅好友日记，你也看不到对方的仅好友日记。"
+            : "取关后，你将不再看到对方的日记动态。"
+        let alert = UIAlertController(title: "取关", message: message, preferredStyle: .alert)
+        alert.addAction(UIAlertAction(title: "取关", style: .destructive) { _ in onConfirmed() })
+        alert.addAction(UIAlertAction(title: "取消", style: .cancel, handler: nil))
+        return alert
     }
 
     /// 回关/取关成功后的本地清理：广场磁盘快照（只含公开，本就无仅好友篇，
