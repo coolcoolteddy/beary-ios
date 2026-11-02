@@ -226,15 +226,15 @@ let viewer = BearyEntryImageViewerViewController(imageKeys: keys, liveVideos: wa
             guard let strongSelf = self, let viewerValue = viewer else { return }
             guard tappedIndex >= 0, tappedIndex < strongSelf.photosValue.count else { return }
             let targetEntry = strongSelf.photosValue[tappedIndex].entry
-            viewerValue.dismiss(animated: true) {
+            viewerValue.dismiss(animated: BearyMotion.animated(true)) {
                 strongSelf.onOpenEntry?(targetEntry)
             }
         }
-        present(viewer, animated: true, completion: nil)
+        present(viewer, animated: BearyMotion.animated(true), completion: nil)
     }
 
     @objc private func backButtonTapped() {
-        dismiss(animated: true, completion: nil)
+        dismiss(animated: BearyMotion.animated(true), completion: nil)
     }
 }
 
@@ -306,6 +306,11 @@ final class BearyProfilePhotoCell: UICollectionViewCell {
         super.prepareForReuse()
         loadingKey = nil
         photoImageView.image = nil
+        // 审计动效组：错峰入场动的是 cell 本体（alpha/transform），复用时同步
+        // 复位本体并清掉在途（含延迟未起播）动画，防残留到下一格。
+        layer.removeAllAnimations()
+        alpha = 1
+        transform = .identity
     }
 
     func configure(imageKey: String) {

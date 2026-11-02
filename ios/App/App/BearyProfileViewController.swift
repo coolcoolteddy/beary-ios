@@ -3757,7 +3757,7 @@ class BearyProfileViewController: UIViewController {
             }))
         }
         sheet.addAction(UIAlertAction(title: "知道了", style: .cancel))
-        present(sheet, animated: true)
+        present(sheet, animated: BearyMotion.animated(true))
     }
 
     private func openNightFootprintEntry(entryIdValue: String) {
@@ -6463,7 +6463,7 @@ let viewer = BearyEntryImageViewerViewController(imageKeys: allPhotos.map { $0.i
         }
         let wantLiked = !currentLiked
         // 跟手批：不再立即 reload——立即 reload 会换掉刚播按下预览的 cell，预览当场消失；
-        // 轻震已由 cell 按下时给，控制器不再重复给。
+        // 审计动效组：按下预览现为纯视觉，确认反馈改由下方控制器补（旧“按下时给”已失效）。
         var optimistic = entry
         optimistic.likedByMe = wantLiked
         optimistic.likeCount = wantLiked ? currentCount + 1 : max(0, currentCount - 1)
@@ -6479,6 +6479,14 @@ let viewer = BearyEntryImageViewerViewController(imageKeys: allPhotos.map { $0.i
             // 按下预览（applyCellPreUnlike）与新模型渲染一致，不闪；
             // 上一轮炸开微粒还在飞时一并清掉。
             syncedCell?.clearLikeBurst()
+        }
+        // 审计动效组：抬起确认时补震动＋音效（与首页 feedLikeTapped 同款）；
+        // 不补则个人页点赞将完全无反馈；失败回滚分支的拒绝反馈另算，不动。
+        if wantLiked {
+            BearyHaptics.likeTap()
+            BearySoundPlayer.play(.likePop)
+        } else {
+            BearySoundPlayer.play(.unlikeSoft)
         }
         let seq = (likeSeqById[entryId] ?? 0) + 1
         likeSeqById[entryId] = seq
@@ -6614,6 +6622,8 @@ let viewer = BearyEntryImageViewerViewController(imageKeys: allPhotos.map { $0.i
         updateEntryInAllTabs(entry: optimistic)
         syncVisibleCell(entry: optimistic)?.refreshPublishRow()
         BearySoundPlayer.play(.visibilityClick)
+        // 审计动效组：可见性翻转统一为“图标＋pill 文案＋轻震”，此处补轻震。
+        BearyHaptics.press()
         BearyAPI.shared.setVisibility(id: entryId, published: target) { [weak self] result in
             DispatchQueue.main.async {
                 guard let strongSelf = self else { return }

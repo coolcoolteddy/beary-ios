@@ -1055,16 +1055,20 @@ class BearyDiaryCardCell: UITableViewCell {
             let progress = max(0, min(1, stripPinchStartProgress + (1 - gesture.scale)))
             imagesStack.spacing = 8 * (1 - progress)
             applyImageStripCornerRadius(progress: progress)
-            imagesScrollView.layoutIfNeeded()
+            // 审计动效组：跟手过程只改值 + setNeedsLayout，不逐帧强制 layout；
+            // 下一 runloop 布局即下一帧见效，跟手感不变；松手后的落点动画
+            // （.ended 的 UIView.animate 内）仍用 layoutIfNeeded 做结算。
+            imagesScrollView.setNeedsLayout()
         case .ended, .cancelled, .failed:
             imagesScrollView.isScrollEnabled = true
             let progress = max(0, min(1, stripPinchStartProgress + (1 - gesture.scale)))
             let wasJoined = stripPinchJoined
             stripPinchJoined = progress >= 0.5
             // 拼合/张开落点到位时各轻震一次：只在 .ended 且落点状态真的变化时震，
-            // 跟手过程、取消/失败、原地未变都不震；减动效时不震（系统触感开关由 UIKit 自身遵循）。
-            if gesture.state == .ended && wasJoined != stripPinchJoined && !UIAccessibility.isReduceMotionEnabled {
-                UIImpactFeedbackGenerator(style: .light).impactOccurred()
+            // 跟手过程、取消/失败、原地未变都不震；震动走 BearyHaptics 口径，
+            // 不拿减动效门控（两者不是一回事，见 BearyHaptics 头注释）。
+            if gesture.state == .ended && wasJoined != stripPinchJoined {
+                BearyHaptics.press()
             }
             UIView.animate(withDuration: 0.25, animations: {
                 self.imagesStack.spacing = self.stripPinchJoined ? 0 : 8
@@ -1384,6 +1388,11 @@ class BearyDiaryCardCell: UITableViewCell {
         // iCity 举报退场动画只动 contentView（alpha/transform），复用时复位，防残留到下一行。
         contentView.alpha = 1
         contentView.transform = .identity
+        // 审计动效组：错峰入场动的是 cell 本体（alpha/transform），复用时须同步
+        // 复位本体并清掉在途（含延迟未起播）动画，防残留到下一行。
+        layer.removeAllAnimations()
+        alpha = 1
+        transform = .identity
         profileFirstRow = false
         suppressBottomSeparator = false
         separatorHeightConstraint?.constant = 2
@@ -2837,12 +2846,11 @@ class BearyDiaryCardCell: UITableViewCell {
             guard SessionManager.shared.isLoggedIn else { return }
             if cellLikedByMe {
                 applyCellPreUnlike()
-                BearySoundPlayer.play(.unlikeSoft)
-            } else {
-                // 描边已撤：按下只给轻震，按压缩放由 iconTouchDown 的 .84 给。
-                BearyHaptics.likeTap()
-                BearySoundPlayer.play(.likePop)
             }
+            // 审计动效组：按下只做视觉预态（按压缩放由 iconTouchDown 给），
+            // 震动＋音效移到抬起确认后播（个人页由控制器补，首页由 feedLikeTapped 播），
+            // 取消时只复位视觉预态（见 likePressCancelled）；此处先 prepare。
+            BearyHaptics.prepareLike()
             likePressPreviewActive = true
             return
         }
@@ -2854,12 +2862,10 @@ class BearyDiaryCardCell: UITableViewCell {
         guard let entryIdValue = cellEntryId, !entryIdValue.isEmpty else { return }
         if currentEntry?.likedByMe == true {
             applyPreUnlike()
-            BearySoundPlayer.play(.unlikeSoft)
-        } else {
-            // 描边已撤：按下只给轻震，按压缩放由 iconTouchDown 的 .84 给。
-            BearyHaptics.likeTap()
-            BearySoundPlayer.play(.likePop)
         }
+        // 审计动效组：按下只做视觉预态（同上），震动＋音效移到抬起确认后播；
+        // 此处先 prepare，确认时 likeTap 低延迟。
+        BearyHaptics.prepareLike()
         likePressPreviewActive = true
     }
 
@@ -2924,14 +2930,14 @@ class BearyDiaryCardCell: UITableViewCell {
         // 带代次，过期回包直接丢弃，不得覆盖更新的点按态。
         let currentlyLiked = currentEntry?.likedByMe ?? false
         let originalCount = currentEntry?.likeCount ?? 0
-        if hadPressPreview == false {
-            if currentlyLiked == false {
-                BearyHaptics.likeTap()
-                BearySoundPlayer.play(.likePop)
-            } else {
-                applyPreUnlike()
-                BearySoundPlayer.play(.unlikeSoft)
-            }
+        // 审计动效组：按下已改为纯视觉预态，故确认时恒播震动＋音效（不再以
+        // hadPressPreview 跳过）；hadPressPreview 只用于上方守卫失败时复位视觉。
+        if currentlyLiked == false {
+            BearyHaptics.likeTap()
+            BearySoundPlayer.play(.likePop)
+        } else {
+            applyPreUnlike()
+            BearySoundPlayer.play(.unlikeSoft)
         }
         let targetLiked = currentlyLiked == false
         if targetLiked {

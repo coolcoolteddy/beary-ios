@@ -37,7 +37,7 @@ private final class BearyCenteredPresentationController: UIPresentationControlle
     var dimTapCloses = false
 
     @objc private func dimTapped() {
-        presentedViewController.dismiss(animated: true)
+        presentedViewController.dismiss(animated: BearyMotion.animated(true))
     }
 
     override var frameOfPresentedViewInContainerView: CGRect {

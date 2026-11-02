@@ -160,7 +160,7 @@ final class BearyDiaryMapViewController: UIViewController, MKMapViewDelegate, UI
     }
 
     @objc private func didTapClose() {
-        dismiss(animated: true)
+        dismiss(animated: BearyMotion.animated(true))
     }
 
     /// 116 数据填入动效：状态文案变化时只淡入该 label 本身（alpha

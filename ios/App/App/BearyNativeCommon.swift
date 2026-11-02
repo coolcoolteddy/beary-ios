@@ -2126,22 +2126,39 @@ final class BearyBookmarkView: UIView {
 // MARK: - 震动三件套（Li 2026-10-26 批准，只做点赞/发布成功/拒绝三处）
 // UIKit 原生即跟随系统触感设置，不另设 App 内开关；不拿减动效门控（两者不是一回事）。
 enum BearyHaptics {
+    /// 审计动效组：生成器缓存复用——prepare() 只对同一实例有效，现建现扔
+    /// 的旧写法使 prepare 永远落空（全仓 prepare() 为 0 处即源于此）。
+    /// 全部调用方均为主线程 UI 调用，不另加锁。
+    private static var lightGenerator: UIImpactFeedbackGenerator?
+    private static var notificationGenerator: UINotificationFeedbackGenerator?
+    private static func light() -> UIImpactFeedbackGenerator {
+        if lightGenerator == nil { lightGenerator = UIImpactFeedbackGenerator(style: .light) }
+        return lightGenerator!
+    }
+    private static func notification() -> UINotificationFeedbackGenerator {
+        if notificationGenerator == nil { notificationGenerator = UINotificationFeedbackGenerator() }
+        return notificationGenerator!
+    }
+    /// 高频触发点按下时调用：点赞确认、投票确认的轻震低延迟。
+    static func prepareLike() { light().prepare() }
+    /// 投票按下时调用：轻震与失败 warning 均先 prepare。
+    static func prepareVote() { light().prepare(); notification().prepare() }
     /// 点赞 tap 瞬间（配描边先行画出的那一刻）；失败回滚时不调用。
     static func likeTap() {
-        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+        light().impactOccurred()
     }
     /// 通用按压轻震（80 包 W6 全量推广）：与点赞 tap 同款 .light，不自创档位；
     /// 不拿减动效门控（见本 enum 头注释：震动与减动效不是一回事）。
     static func press() {
-        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+        light().impactOccurred()
     }
     /// 发布成功：服务端确认、成功反馈出现时。
     static func publishSuccess() {
-        UINotificationFeedbackGenerator().notificationOccurred(.success)
+        notification().notificationOccurred(.success)
     }
     /// 拒绝：摇头 + toast 的主要拒绝路径上。
     static func rejectionWarning() {
-        UINotificationFeedbackGenerator().notificationOccurred(.warning)
+        notification().notificationOccurred(.warning)
     }
 }
 

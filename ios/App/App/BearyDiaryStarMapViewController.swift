@@ -190,7 +190,7 @@ final class BearyDiaryStarMapViewController: UIViewController {
     }
 
     @objc private func didTapClose() {
-        dismiss(animated: true)
+        dismiss(animated: BearyMotion.animated(true))
     }
 
     @objc private func didTapRetry() {
