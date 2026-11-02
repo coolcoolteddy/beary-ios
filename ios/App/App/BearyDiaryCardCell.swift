@@ -402,14 +402,67 @@ class BearyDiaryCardCell: UITableViewCell {
     static var expandedEntryIds: Set<String> = []
     /// 引用单篇缓存（首页模式 F11）：quoteId -> 拉到的整条 Entry；失败集合避免滚动时反复重拉；
     /// 下拉刷新时由 resetQuoteFetchState 清空，失败引用在刷新后可重试。
+    /// 审计-广场：缓存定量（100 条 LRU，见 storeQuote）+ 按身份隔离——
+    /// quoteCacheOwnerKey 记录缓存所属的身份桶（Feed 侧 feedCacheOwnerKey 同值）；
+    /// 切号时 Feed 调 switchQuoteCacheOwner(to:) 换桶即清空，旧身份拉到的引用
+    /// 正文绝不渲染给新身份/游客。外部调用点（个人主页/搜索/时间线）沿用
+    /// quoteCache.removeValue/removeAll 直删，键仍为裸 quoteId，不改键格式。
+    /// TTL 不做：数值须 Li 确认（见 PR 未做项），到期前不凭猜测定值。
     static var quoteCache: [String: Entry] = [:]
     static var quoteFailedIds: Set<String> = []
     static var quoteLoadingIds: Set<String> = []
+    static var quoteCacheOwnerKey: String?
+    /// LRU 顺序（队尾最新）；只由本文件内的 cachedQuote/storeQuote 维护，
+    /// 外部直删 quoteCache 时残留的旧键在下次命中/写入时惰性清理。
+    private static var quoteCacheOrder: [String] = []
+    static let quoteCacheLimit = 100
 
     static func resetQuoteFetchState() {
         quoteCache = [:]
         quoteFailedIds = []
         quoteLoadingIds = []
+        quoteCacheOrder = []
+    }
+
+    /// 换桶：桶变了才清空（同桶重调不丢缓存）；Feed 切号与冷启动首桶均走这里。
+    static func switchQuoteCacheOwner(to bucket: String) {
+        guard bucket != quoteCacheOwnerKey else { return }
+        quoteCacheOwnerKey = bucket
+        resetQuoteFetchState()
+    }
+
+    /// 读缓存：命中时把键移到队尾（最新用过），保持 LRU 顺序。
+    static func cachedQuote(for quoteId: String) -> Entry? {
+        guard let entry = quoteCache[quoteId] else {
+            quoteCacheOrder.removeAll { $0 == quoteId }
+            return nil
+        }
+        quoteCacheOrder.removeAll { $0 == quoteId }
+        quoteCacheOrder.append(quoteId)
+        return entry
+    }
+
+    /// 写缓存：定量 100，超量从队头逐出最久未用；写入失败集合里若有该 id
+    /// 一并清除（成功拉到即不再是失败态）。
+    static func storeQuote(_ entry: Entry, for quoteId: String) {
+        quoteCache[quoteId] = entry
+        quoteFailedIds.remove(quoteId)
+        quoteCacheOrder.removeAll { $0 == quoteId }
+        quoteCacheOrder.append(quoteId)
+        while quoteCacheOrder.count > quoteCacheLimit {
+            let oldest = quoteCacheOrder.removeFirst()
+            quoteCache.removeValue(forKey: oldest)
+        }
+    }
+
+    /// 定向失效（删除/转私密/举报/拉黑清行时调）：清掉该篇作为被引源的
+    /// 缓存与失败态，下次 configure 重新拉取、按现行可见性渲染占位；
+    /// 在途 loading 不动——在途回包落的是服务端现态（私密占位/失败），
+    /// 不会把旧正文写回，动 loading 反而会让重配重复发请求。
+    static func invalidateQuote(forQuoteId quoteId: String) {
+        quoteCache.removeValue(forKey: quoteId)
+        quoteCacheOrder.removeAll { $0 == quoteId }
+        quoteFailedIds.remove(quoteId)
     }
 
     private var currentEntry: Entry?
@@ -2374,7 +2427,7 @@ class BearyDiaryCardCell: UITableViewCell {
             return
         }
         guard let quoteIdValue = entry.quoteId, !quoteIdValue.isEmpty else { return }
-        if let cachedEntry = BearyDiaryCardCell.quoteCache[quoteIdValue] {
+        if let cachedEntry = BearyDiaryCardCell.cachedQuote(for: quoteIdValue) {
             presentQuoteCard(
                 authorName: displayAuthorName(cachedEntry.authorName),
                 authorAvatar: cachedEntry.authorAvatar,
@@ -2382,7 +2435,9 @@ class BearyDiaryCardCell: UITableViewCell {
                 images: cachedEntry.images ?? [],
                 dims: cachedEntry.imgDims,
                 createdAt: cachedEntry.createdAt,
-                isPublic: (cachedEntry.content?.isEmpty == false) ? true : BearyEphemeral.isEffectivelyPublic(cachedEntry),
+                // 审计-广场：公开态只认服务端 isPublic + 限时过期（isEffectivelyPublic），
+                // 正文非空只证明服务端给了内容（仅好友篇也会给好友看正文），绝不反推公开。
+                isPublic: BearyEphemeral.isEffectivelyPublic(cachedEntry),
                 gone: nil,
                 locked: nil,
                 quoteId: quoteIdValue,
@@ -2417,7 +2472,7 @@ class BearyDiaryCardCell: UITableViewCell {
                 BearyDiaryCardCell.quoteLoadingIds.remove(quoteIdValue)
                 switch result {
                 case .success(let fetchedEntry):
-                    BearyDiaryCardCell.quoteCache[quoteIdValue] = fetchedEntry
+                    BearyDiaryCardCell.storeQuote(fetchedEntry, for: quoteIdValue)
                     // 宿主复用走了也先补刷等待卡（缓存已落，等待卡命中缓存不重发）；
                     // 再按宿主身份决定宿主自己是否落卡。
                     guard let strongSelf = self else { return }
@@ -2430,7 +2485,8 @@ class BearyDiaryCardCell: UITableViewCell {
                         images: fetchedEntry.images ?? [],
                         dims: fetchedEntry.imgDims,
                         createdAt: fetchedEntry.createdAt,
-                        isPublic: (fetchedEntry.content?.isEmpty == false) ? true : BearyEphemeral.isEffectivelyPublic(fetchedEntry),
+                        // 审计-广场：同缓存分支，公开态只认服务端字段，不以正文非空反推。
+                        isPublic: BearyEphemeral.isEffectivelyPublic(fetchedEntry),
                         gone: nil,
                         locked: nil,
                         quoteId: quoteIdValue,
