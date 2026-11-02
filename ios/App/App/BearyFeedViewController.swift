@@ -92,6 +92,59 @@ class BearyFeedViewController: UIViewController {
     private var pullEngageTranslation: CGFloat?
     private var customPullEndScheduled = false
     private var plazaError = false
+    /// 切段缓存（Li 2026-11-02 定：切段直接显缓存，不重拉；刷新走下拉）：
+    /// 每段各存一份内存列表与分页态；plazaRaw 与分页变量恒为“当前段”的
+    /// live 镜像，切段时先把 live 写回出段槽、再把入段槽读回 live。
+    /// #626 的混段顾虑由槽位隔离解决：firstPageIds／末条游标／hasMore／
+    /// error 都随槽走，绝不跨段复用。磁盘快照仍只走广场段（首拉写盘
+    /// 守卫不动，persistFeedHead 不动）。
+    private struct FeedSegmentCache {
+        var entries: [Entry] = []
+        var firstPageIds: [String] = []
+        var hasMore = true
+        var reachedEnd = false
+        var error = false
+        var lastLoadAt: Date? = nil
+    }
+    private var plazaSegmentCache = FeedSegmentCache()
+    private var followingSegmentCache = FeedSegmentCache()
+    /// 该段是否拉过首屏（空结果也算拉过——空段切来切去同样不重拉，
+    /// 失败重试走失败行点按，不靠切段重拉）。
+    private var plazaSegmentLoaded = false
+    private var followingSegmentLoaded = false
+
+    /// 切段前把 live 镜像写回出段槽（调用点须在翻转 feedFollowingSegment
+    /// 之前，此时 live 即当前段）。
+    private func stashLiveFeedState() {
+        let slot = FeedSegmentCache(
+            entries: plazaRaw,
+            firstPageIds: firstPageIds,
+            hasMore: plazaHasMore,
+            reachedEnd: plazaReachedEnd,
+            error: plazaError,
+            lastLoadAt: lastFeedLoadAt
+        )
+        if feedFollowingSegment {
+            followingSegmentCache = slot
+        } else {
+            plazaSegmentCache = slot
+        }
+    }
+
+    /// 切段后把入段槽读回 live 镜像（调用点须在翻转之后）。
+    private func restoreLiveFeedState() {
+        let slot = feedFollowingSegment ? followingSegmentCache : plazaSegmentCache
+        plazaRaw = slot.entries
+        firstPageIds = slot.firstPageIds
+        plazaHasMore = slot.hasMore
+        plazaReachedEnd = slot.reachedEnd
+        plazaError = slot.error
+        lastFeedLoadAt = slot.lastLoadAt
+    }
+
+    private var currentSegmentLoaded: Bool {
+        feedFollowingSegment ? followingSegmentLoaded : plazaSegmentLoaded
+    }
     private var plazaFirstDone = false
     /// 秒开-启动瘦身：首屏完成信号只发一次（本 VC 生命周期内；后来的下拉/重拍不再发，
     /// 容器侧 startupMeFired 同样守门）。缓存渲染不发，等静默刷新首拉终结再发。
@@ -278,22 +331,37 @@ class BearyFeedViewController: UIViewController {
             }
             return
         }
+        // 切段缓存（Li 2026-11-02 定：切段直接显缓存，不重拉；刷新走下拉）：
+        // 先把 live 写回出段槽，再翻转段。代际 +1 让出段在途回包（首拉／
+        // since／分页）一律被守卫丢弃，不覆盖入段画面；pill 是出段的
+        // 临时通知，切段即丢。入段拉过（哪怕空结果）只换槽落表，不发
+        // 网络；没拉过才走旧的全量首拉。反方向（广场→正在关注）同一
+        // 处无条件重拉，同修。
+        stashLiveFeedState()
+        revalidateGeneration += 1
+        // 出段在途首拉已作废（代际守卫会丢弃其回包），loading 标记同步
+        // 清掉，不让旧请求的菊花／节流残留到入段画面上。
+        plazaLoading = false
+        plazaFirstPageInFlight = false
+        hideNewContentPill()
+        pendingPlaza = nil
         feedFollowingSegment = wantFollowing
         updateEmptyCopyForSegment()
         tableView.setContentOffset(CGPoint(x: 0, y: -tableView.contentInset.top), animated: false)
-        // 审计-广场（切段混段，高）：切段先清旧段模型并落表，再全量首拉；
-        // 旧段在途回包由 refreshAllInternal 的代际 bump 丢弃（见 loadPlazaFirstPage
-        // 的 firstPageGeneration 守卫），since 游标绝不跨段复用。bypass 置位是
-        // 为让旧段在途首拉不吞掉本次切段刷新（原 bypass 只用于登录翻转，
-        // 语义同为“旧身份/旧段在途回包必须让路”）。
-        plazaRaw = []
-        firstPageIds = []
-        plazaHasMore = true
-        plazaReachedEnd = false
-        plazaError = false
-        tableView.reloadData()
-        refreshAllBypassInFlight = true
-        refreshAll()
+        if currentSegmentLoaded {
+            restoreLiveFeedState()
+            tableView.reloadData()
+            updateOverlayState()
+        } else {
+            plazaRaw = []
+            firstPageIds = []
+            plazaHasMore = true
+            plazaReachedEnd = false
+            plazaError = false
+            tableView.reloadData()
+            refreshAllBypassInFlight = true
+            refreshAll()
+        }
     }
 
     private func updateEmptyCopyForSegment() {
@@ -476,35 +544,68 @@ class BearyFeedViewController: UIViewController {
         // 正在关注不持久化：切 tab 回首页默认广场（实现侧取数，待 Li 过目）。
         // 仅 tab 进页（allowBackgroundRevalidate=true，即 pageDidEnter）时重置；
         // modal dismiss 返回（false）不重置、不丢用户正在看的段。
-        // 单列表模型：段回广场后旧段数据仍在表里，必须重拉广场，否则关注流
-        // 的行会顶着广场段名展示。
+        // 槽位模型：段回广场后把广场槽读回 live，关注流的行即被替换，
+        // 不靠重拉清（切段缓存同口径）。
         var didResetSegment = false
         if feedFollowingSegment, allowBackgroundRevalidate {
+            // 先把关注段 live 写回槽，再回广场段。
+            stashLiveFeedState()
             feedFollowingSegment = false
             syncHomeSegmentControl()
             updateEmptyCopyForSegment()
             didResetSegment = true
         }
-        // 游客无正在关注段——退出/切游客时若停在关注段，先回广场段再重拉，
+        // 游客无正在关注段——退出/切游客时若停在关注段，先回广场段，
         // 不把关注段数据留给游客视角（切号时 handleFeedUserChanged 已先重置）。
         if currentLoginUserId == nil, feedFollowingSegment {
+            stashLiveFeedState()
             feedFollowingSegment = false
             syncHomeSegmentControl()
             updateEmptyCopyForSegment()
             didResetSegment = true
         }
         if didResetSegment {
-            // 审计-广场：段重置同切段，先清旧段模型再全量首拉，不留旧段行混段。
-            plazaRaw = []
-            firstPageIds = []
-            plazaHasMore = true
-            plazaReachedEnd = false
-            plazaError = false
-            tableView.reloadData()
+            // 切段缓存同口径：广场拉过即换槽显缓存，不重拉；没拉过才清表首拉。
+            // 代际 +1 丢弃出段在途回包，pill 是出段临时通知、切段即丢。
+            // 登录翻转时不换槽显旧身份缓存（下面登录分支会清表重拉）。
+            revalidateGeneration += 1
+            hideNewContentPill()
+            pendingPlaza = nil
+            // 出段在途首拉已作废（代际守卫会丢弃其回包），loading 标记同步
+            // 清掉，不让旧请求的菊花／节流残留到入段画面上。
+            plazaLoading = false
+            plazaFirstPageInFlight = false
+            if plazaSegmentLoaded && loginFlipped == false {
+                restoreLiveFeedState()
+                tableView.reloadData()
+                updateOverlayState()
+            } else {
+                if loginFlipped {
+                    // 身份已变：上面刚写回的关注段槽属于旧身份，直接丢弃，
+                    // 不让它经切段恢复到新身份眼前（换桶时 handleFeedUserChanged
+                    // 也会再清一次，两处互为兜底）。
+                    followingSegmentCache = FeedSegmentCache()
+                    followingSegmentLoaded = false
+                }
+                plazaRaw = []
+                firstPageIds = []
+                plazaHasMore = true
+                plazaReachedEnd = false
+                plazaError = false
+                tableView.reloadData()
+            }
         }
-        if didResetSegment || (loginFlipped && isFirstLoad == false) {
+        if loginFlipped && isFirstLoad == false {
+            // 登录翻转仍强制全量重拉（鉴权敏感字段必须按新身份来），
+            // 不受上面缓存恢复影响。
             refreshAllBypassInFlight = true
             refreshAll()
+        } else if didResetSegment {
+            if plazaSegmentLoaded == false || loginFlipped {
+                refreshAllBypassInFlight = true
+                refreshAll()
+            }
+            // 拉过且身份未变：上面已换槽显缓存，不发网络；刷新走下拉。
         } else if allowBackgroundRevalidate {
             revalidateIfNeeded()
         }
@@ -892,6 +993,13 @@ class BearyFeedViewController: UIViewController {
                     strongSelf.plazaLoading = false
                     strongSelf.maybeEndRefreshing()
                     return
+                }
+                // 切段缓存：代际守卫通过即算该段拉过（成功／失败都算；
+                // 失败重试走失败行点按，不靠切段重拉）。
+                if strongSelf.feedFollowingSegment {
+                    strongSelf.followingSegmentLoaded = true
+                } else {
+                    strongSelf.plazaSegmentLoaded = true
                 }
                 switch result {
                 case .success(let list):
@@ -1295,6 +1403,9 @@ class BearyFeedViewController: UIViewController {
                     strongSelf.plazaFirstDone = true
                     strongSelf.isFirstLoad = false
                     strongSelf.lastFeedLoadAt = Date(timeIntervalSince1970: snap.savedAt)
+                    // 切段缓存：快照落盘即算广场段拉过（随后静默刷新会再确认），
+                    // 切去关注段再回来直接显快照行，不重拉。
+                    strongSelf.plazaSegmentLoaded = true
                     strongSelf.tableView.reloadData()
                     strongSelf.updateOverlayState()
                     strongSelf.silentRefreshFirstPage()
@@ -1327,6 +1438,12 @@ class BearyFeedViewController: UIViewController {
         guard newBucket != feedCacheOwnerKey else { return }
         lastFeedLoginUserId = SessionManager.shared.currentUser?.id
         feedCacheOwnerKey = newBucket
+        // 切段缓存跟身份走：换桶即清两段槽与拉过标记，旧身份的行绝不
+        // 经切段恢复到新身份眼前（本函数后面的快照／清表分支会重建广场段）。
+        plazaSegmentCache = FeedSegmentCache()
+        followingSegmentCache = FeedSegmentCache()
+        plazaSegmentLoaded = false
+        followingSegmentLoaded = false
         // 审计-广场（跨身份缓存残留，高）：换桶同步清空引用缓存——旧身份
         // 拉到的引用正文绝不留给新身份/游客渲染；读盘回包是新桶内容，
         // 其引用仍走 fetch 现拉，不依赖旧缓存。
@@ -1349,6 +1466,8 @@ class BearyFeedViewController: UIViewController {
                 strongSelf.plazaFirstDone = true
                 strongSelf.isFirstLoad = false
                 strongSelf.lastFeedLoadAt = Date(timeIntervalSince1970: snap.savedAt)
+                // 切段缓存：快照落盘即算广场段拉过（随后静默刷新会再确认）。
+                strongSelf.plazaSegmentLoaded = true
                 strongSelf.tableView.reloadData()
                 strongSelf.updateOverlayState()
                 strongSelf.silentRefreshFirstPage()
