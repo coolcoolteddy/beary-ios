@@ -169,7 +169,9 @@ class BearyEditProfileViewController: UIViewController {
         buttonValue.translatesAutoresizingMaskIntoConstraints = false
         buttonValue.setTitle("保存", for: .normal)
         buttonValue.setTitleColor(BearyColors.ink, for: .normal)
-        buttonValue.titleLabel?.font = UIFont.systemFont(ofSize: 15, weight: .bold)
+        // 按钮普查：裸 15pt 粗体改 scaledFont，跟随系统字号（顶行 44 高，最大档不裁剪）。
+        buttonValue.titleLabel?.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 15, weight: .bold))
+        buttonValue.titleLabel?.adjustsFontForContentSizeCategory = true
         buttonValue.addTarget(self, action: #selector(saveButtonTapped), for: .touchUpInside)
         buttonValue.bearyAddPressFeedback()
         return buttonValue
@@ -365,7 +367,9 @@ class BearyEditProfileViewController: UIViewController {
         buttonValue.translatesAutoresizingMaskIntoConstraints = false
         buttonValue.setTitle("复制", for: .normal)
         buttonValue.setTitleColor(BearyColors.ink, for: .normal)
-        buttonValue.titleLabel?.font = UIFont.systemFont(ofSize: 13)
+        // 按钮普查：裸 13pt 改 scaledFont，跟随系统字号（行高 44，最大档不裁剪）。
+        buttonValue.titleLabel?.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13))
+        buttonValue.titleLabel?.adjustsFontForContentSizeCategory = true
         buttonValue.contentEdgeInsets = UIEdgeInsets(top: 0, left: 14, bottom: 0, right: 14)
         buttonValue.layer.borderWidth = 1
         buttonValue.layer.bearyDynamicBorderColor = BearyColors.line

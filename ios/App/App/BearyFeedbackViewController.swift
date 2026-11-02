@@ -491,7 +491,9 @@ final class BearyFeedbackViewController: UIViewController, UITextViewDelegate, P
         attachLabelButton.translatesAutoresizingMaskIntoConstraints = false
         attachLabelButton.setTitle("添加图片或视频", for: .normal)
         attachLabelButton.setTitleColor(BearyColors.ink, for: .normal)
-        attachLabelButton.titleLabel?.font = UIFont.systemFont(ofSize: 16, weight: .medium)
+        // 按钮普查：裸 16pt medium 改 scaledFont，跟随系统字号（行高 44，最大档不裁剪）。
+        attachLabelButton.titleLabel?.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 16, weight: .medium))
+        attachLabelButton.titleLabel?.adjustsFontForContentSizeCategory = true
         if let attachIcon = BearyIconImages.image(named: "icon_image", pointSize: 18) {
             attachLabelButton.setImage(attachIcon, for: .normal)
         }
@@ -503,7 +505,9 @@ final class BearyFeedbackViewController: UIViewController, UITextViewDelegate, P
         attachClearButton.translatesAutoresizingMaskIntoConstraints = false
         attachClearButton.setTitle("清除", for: .normal)
         attachClearButton.setTitleColor(BearyColors.gray, for: .normal)
-        attachClearButton.titleLabel?.font = UIFont.systemFont(ofSize: 15)
+        // 按钮普查：裸 15pt 改 scaledFont，跟随系统字号（与左钮同行高 44）。
+        attachClearButton.titleLabel?.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 15))
+        attachClearButton.titleLabel?.adjustsFontForContentSizeCategory = true
         attachClearButton.accessibilityLabel = "清除已选附件"
         attachClearButton.addTarget(self, action: #selector(clearAttachmentsTapped), for: .touchUpInside)
         attachClearButton.bearyAddPressFeedback()

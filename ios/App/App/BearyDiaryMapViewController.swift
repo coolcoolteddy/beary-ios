@@ -95,7 +95,9 @@ final class BearyDiaryMapViewController: UIViewController, MKMapViewDelegate, UI
         failureLabel.text = "日记加载失败，请重试"
         retryButton.translatesAutoresizingMaskIntoConstraints = false
         retryButton.setTitle("重试", for: .normal)
-        retryButton.titleLabel?.font = UIFont.boldSystemFont(ofSize: 15)
+        // 按钮普查：裸粗体 15pt 改 scaledFont，跟随系统字号（失败页居中独立钮，无固定容器）。
+        retryButton.titleLabel?.font = BearyDynamicType.scaledFont(for: UIFont.boldSystemFont(ofSize: 15))
+        retryButton.titleLabel?.adjustsFontForContentSizeCategory = true
         retryButton.addTarget(self, action: #selector(didTapRetry), for: .touchUpInside)
         failureView.translatesAutoresizingMaskIntoConstraints = false
         failureView.isHidden = true

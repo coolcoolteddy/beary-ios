@@ -49,7 +49,8 @@ class BearyEntryImageViewerViewController: UIViewController, UIGestureRecognizer
     var onViewEntryAtIndex: ((Int) -> Void)?
 
     private lazy var viewEntryButton: UIButton = {
-        let buttonValue = UIButton(type: .custom)
+        // 按钮普查：视觉高 36，热区用 Hit44 扩到 44（上下邻居为圆点指示与安全区，无互叠按钮）。
+        let buttonValue = BearyHit44Button(type: .custom)
         buttonValue.translatesAutoresizingMaskIntoConstraints = false
         buttonValue.setTitle("查看日记", for: .normal)
         buttonValue.setTitleColor(.white, for: .normal)
