@@ -256,7 +256,6 @@ final class BearyChromeViewController: UIViewController {
     /// 解锁后由 startDeferredLaunchVeil 补跑一次（锁屏本身已盖住内容，veil
     /// 不会成为透出内容的口子；若锁着时 veil 被 10 秒兜底清掉，补跑守卫会
     /// 因 veil 已空而 no-op，解锁后直接露主页，同样不透内容）。
-    private var launchVeilHomeEntryPlayed = false
     /// 107 修复：veil 揭开进行中标记——起播完成回调与起播相对兜底可能同时
     /// 到达，reveal 只跑一次（否则淡出重播、首屏卡片二次错峰）。
     private var launchVeilRevealing = false
@@ -1432,7 +1431,7 @@ final class BearyChromeViewController: UIViewController {
     /// 启动 veil 点按跳过：第一次点击只结束 veil，绝不穿透到底层。
     /// veil 可交互（见 installLaunchVeil），点按命中 veil 自身而非底层按钮；
     /// 此处不直接 remove，而是走与自然播完／起播兜底同一条 reveal→remove
-    /// 解锁流程（0.4s 淡出、remove 时 homeEntry 只发一次、引导补触发），
+    /// 解锁流程（0.4s 淡出、引导补触发），
     /// 不另起一条跳过路径。揭开进行中再次点按由 reveal 的
     /// launchVeilRevealing 守卫挡下（0.4s 淡出内点按仍被 veil 截住，不穿透）；
     /// veil 清掉后手势随视图移除，之后点按正常落到底层。
@@ -1444,7 +1443,7 @@ final class BearyChromeViewController: UIViewController {
     }
 
     /// 审计第二阶段推荐 A：veil 原地淡出 0.4s＋主页首次揭开错峰。
-    /// 淡出完成 → removeLaunchVeil，该处发 home_entry 一次（见 removeLaunchVeil）。
+    /// 淡出完成 → removeLaunchVeil。
     /// 揭开时机按时间走，绝不为等内容加载而延长 veil：内容未到时快照为空，
     /// 只淡 veil，不延迟。错峰只做首次揭开：快照只取揭开瞬间已渲染的首屏
     /// 卡片行（按纵向排序，自上而下错峰），后续加载的行不在快照里、正常出现
@@ -1503,20 +1502,10 @@ final class BearyChromeViewController: UIViewController {
         launchVeilLastResort?.cancel()
         launchVeilLastResort = nil
         launchVeilRevealing = false
-        let wasPresent = launchVeilView != nil
         launchVeilView?.removeFromSuperview()
         launchVeilView = nil
         launchVeilSloganView = nil
         launchVeilSloganAnimation = nil
-        // 进入主页音效（2026-10-30 定稿：330→415Hz、0.43s、峰值 0.18 的
-        // Sounds/home_entry.wav，BearySoundPlayer case homeEntry）：只在 veil
-        // 退场结束、主页露出那一刻调用一次——即本函数真正清掉 veil 时；
-        // 不挂 Lottie complete 标记（标语动画全程静默）、不提前、不重复。
-        // 减动效不门控音效（减动效只管视觉，音效照常给，见 BearySoundPlayer）。
-        if wasPresent, !launchVeilHomeEntryPlayed {
-            launchVeilHomeEntryPlayed = true
-            BearySoundPlayer.play(.homeEntry)
-        }
         // veil 完成点（正常揭开／减动效／兜底三路汇合）：viewDidAppear 里因
         // veil 仍在而未触发的自动引导，在此补触发；重复调用由
         // tutorialAutoPresented 守卫挡下。
