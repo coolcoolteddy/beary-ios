@@ -116,14 +116,17 @@ final class BearyAppLockManager {
         let name = BearyAppLockSettings.biometryName
         let title = UILabel()
         title.translatesAutoresizingMaskIntoConstraints = false
-        title.font = UIFont.systemFont(ofSize: 15, weight: .semibold)
+        // 审计-个人页设置：锁屏字号改 scaledFont（旧 15/13 写死，不跟系统字号）。
+        title.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 15, weight: .semibold))
+        title.adjustsFontForContentSizeCategory = true
         title.textColor = BearyColors.ink
         title.textAlignment = .center
         title.text = "使用\(name)解锁"
 
         let status = UILabel()
         status.translatesAutoresizingMaskIntoConstraints = false
-        status.font = UIFont.systemFont(ofSize: 13)
+        status.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13))
+        status.adjustsFontForContentSizeCategory = true
         status.textColor = BearyColors.gray
         status.textAlignment = .center
         status.numberOfLines = 0
@@ -171,7 +174,9 @@ final class BearyAppLockManager {
                 // 取消/失败都停在锁屏：不撤覆盖层、不放内容；只把提示换成可重试的文案。
                 // （系统密码兜底已在 evaluatePolicy 内：生物识别失败后用户可选设备密码，
                 // 只有最终仍未通过才走到这里。）
-                self.lockStatusLabel?.text = "验证未通过，请再试一次"
+                // 审计-个人页设置：失败文案补设备密码入口（旧文案只说再试一次，
+                // 未提示点“解锁”可改走设备密码）。
+                self.lockStatusLabel?.text = "验证未通过，请再试一次，也可用设备密码解锁"
             }
         }
     }
@@ -184,12 +189,23 @@ final class BearyAppLockManager {
         isColdLocked = false
         lockOverlay = nil
         lockStatusLabel = nil
-        UIView.animate(withDuration: 0.25, animations: {
+        // 审计动效组：锁屏解锁补减动效分支——减动效时直出终值，不播 0.25s 淡出。
+        if UIAccessibility.isReduceMotionEnabled {
             overlay.alpha = 0
-        }) { _ in
             overlay.removeFromSuperview()
+        } else {
+            UIView.animate(withDuration: 0.25, animations: {
+                overlay.alpha = 0
+            }) { _ in
+                overlay.removeFromSuperview()
+            }
         }
-        onUnlocked?()
+        // 审计-个人页设置：onUnlocked 调完置 nil。复核结论：容器接线确为
+        // [weak chrome] 捕获（SceneDelegate），本处置 nil 属纵深防御——
+        // 防 unlock 被重复触发时回调重跑（veil 起播只应跑一次）。
+        let callback = onUnlocked
+        onUnlocked = nil
+        callback?()
     }
 
     // MARK: - 隐私遮罩（独立于锁开关）

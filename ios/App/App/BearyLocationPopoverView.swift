@@ -32,7 +32,7 @@ final class BearyLocationPopoverView: UIView, CLLocationManagerDelegate, MKLocal
 
     private static let arrowHeight: CGFloat = 10
     private static let arrowHalfWidth: CGFloat = 8
-    private static let cornerRadius: CGFloat = 14
+    private static let cornerRadius: CGFloat = 16
 
     private static var popoverBackgroundColor: UIColor {
         UIColor { trait in
@@ -98,7 +98,8 @@ final class BearyLocationPopoverView: UIView, CLLocationManagerDelegate, MKLocal
         statusIconView.setContentCompressionResistancePriority(.required, for: .horizontal)
         statusIconView.isHidden = true
         statusLabel.translatesAutoresizingMaskIntoConstraints = false
-        statusLabel.font = UIFont.boldSystemFont(ofSize: 15)
+        statusLabel.font = BearyDynamicType.scaledFont(for: UIFont.boldSystemFont(ofSize: 15))
+        statusLabel.adjustsFontForContentSizeCategory = true
         statusLabel.textColor = BearyColors.ink
         statusLabel.numberOfLines = 2
         statusLabel.lineBreakMode = .byTruncatingTail
@@ -121,7 +122,8 @@ final class BearyLocationPopoverView: UIView, CLLocationManagerDelegate, MKLocal
         confirmButton.addTarget(self, action: #selector(didTapConfirm), for: .touchUpInside)
         manualButton.translatesAutoresizingMaskIntoConstraints = false
         manualButton.setTitle("自己输入", for: .normal)
-        manualButton.titleLabel?.font = UIFont.systemFont(ofSize: 13)
+        manualButton.titleLabel?.font = BearyDynamicType.cappedFont(for: UIFont.systemFont(ofSize: 13))
+        manualButton.titleLabel?.adjustsFontForContentSizeCategory = true
         manualButton.setTitleColor(BearyColors.ink, for: .normal)
         manualButton.layer.cornerRadius = 999
         manualButton.layer.borderWidth = 1
@@ -143,21 +145,24 @@ final class BearyLocationPopoverView: UIView, CLLocationManagerDelegate, MKLocal
         headerRow.addArrangedSubview(manualButton)
 
         subLabel.translatesAutoresizingMaskIntoConstraints = false
-        subLabel.font = UIFont.systemFont(ofSize: 12)
+        subLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 12))
+        subLabel.adjustsFontForContentSizeCategory = true
         subLabel.textColor = BearyColors.gray
         subLabel.numberOfLines = 0
         subLabel.text = "打开即自动定位，不用再点一次获取"
 
         inputField.translatesAutoresizingMaskIntoConstraints = false
         inputField.borderStyle = .roundedRect
-        inputField.font = UIFont.systemFont(ofSize: 14)
+        inputField.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 14))
+        inputField.adjustsFontForContentSizeCategory = true
         inputField.placeholder = "输入地点，例如：天一、月湖"
         inputField.clearButtonMode = .whileEditing
         inputField.isHidden = true
         inputField.addTarget(self, action: #selector(didChangeInput), for: .editingChanged)
 
         suggestionsEmptyLabel.translatesAutoresizingMaskIntoConstraints = false
-        suggestionsEmptyLabel.font = UIFont.systemFont(ofSize: 13)
+        suggestionsEmptyLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13))
+        suggestionsEmptyLabel.adjustsFontForContentSizeCategory = true
         suggestionsEmptyLabel.textColor = BearyColors.gray
         suggestionsEmptyLabel.text = "没有找到相关位置"
         suggestionsEmptyLabel.isHidden = true
@@ -493,12 +498,12 @@ final class BearyLocationPopoverView: UIView, CLLocationManagerDelegate, MKLocal
             button.titleLabel?.numberOfLines = 0
             let title = NSMutableAttributedString(
                 string: item.title,
-                attributes: [.font: UIFont.systemFont(ofSize: 14), .foregroundColor: BearyColors.ink]
+                attributes: [.font: BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 14)), .foregroundColor: BearyColors.ink]
             )
             if !item.subtitle.isEmpty {
                 title.append(NSAttributedString(
                     string: "\n\(item.subtitle)",
-                    attributes: [.font: UIFont.systemFont(ofSize: 12), .foregroundColor: BearyColors.gray]
+                    attributes: [.font: BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 12)), .foregroundColor: BearyColors.gray]
                 ))
             }
             button.setAttributedTitle(title, for: .normal)
@@ -517,6 +522,12 @@ final class BearyLocationPopoverView: UIView, CLLocationManagerDelegate, MKLocal
         case .authorizedWhenInUse, .authorizedAlways:
             manager.requestLocation()
         case .denied, .restricted:
+            // 审计登录杂项：失败分支先自洽——停转圈并隐藏，再按逆地理编码失败
+            // 既有口径转手动模式（此前只发 delegate 回调，调用方若只 toast 不关
+            // 气泡，气泡会一直转圈且确认钮永久禁用）；delegate 回调照常发。
+            spinner.stopSpinning()
+            spinner.isHidden = true
+            setManualMode(message: "定位权限未开启，请在“设置 → beary → 位置”中开启后重试，或自己输入")
             delegate?.locationPopoverDidFail(self, message: "定位权限未开启，请在“设置 → beary → 位置”中开启后重试")
         default:
             break
@@ -549,6 +560,10 @@ final class BearyLocationPopoverView: UIView, CLLocationManagerDelegate, MKLocal
     func locationManager(_ manager: CLLocationManager, didFailWithError error: Error) {
         guard locating else { return }
         locating = false
+        // 审计登录杂项：同 denied 分支——先停转圈并隐藏，再转手动模式；delegate 回调照常发。
+        spinner.stopSpinning()
+        spinner.isHidden = true
+        setManualMode(message: "定位失败，请重试或自己输入")
         delegate?.locationPopoverDidFail(self, message: "定位失败，请重试或自己输入")
     }
 

@@ -50,21 +50,24 @@ enum BearyToast {
         // 8-8：VoiceOver 播报——toast 仅为普通 UIView + UILabel 时 VoiceOver
         // 用户可能错过反馈，显示时同步发 announcement（减动效与否同播）。
         UIAccessibility.post(notification: .announcement, argument: message)
+        // 审计 2026-11-02 弹窗组：到点闭包改 [weak toast]——旧强持有会把已被
+        // 新 toast 清掉的旧视图再留 2 秒（且到点闭包可能误触已复用的视图层级）；
+        // 弱持有下旧视图提前移除后到点闭包为空操作。（阴影/描边不补，属样式 token。）
         if UIAccessibility.isReduceMotionEnabled {
             toast.alpha = 1
-            DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
-                toast.removeFromSuperview()
+            DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) { [weak toast] in
+                toast?.removeFromSuperview()
             }
         } else {
             toast.alpha = 0
             UIView.animate(withDuration: 0.25) {
                 toast.alpha = 1
             }
-            DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) { [weak toast] in
                 UIView.animate(withDuration: 0.25, animations: {
-                    toast.alpha = 0
+                    toast?.alpha = 0
                 }, completion: { _ in
-                    toast.removeFromSuperview()
+                    toast?.removeFromSuperview()
                 })
             }
         }
@@ -211,6 +214,11 @@ private final class BearyToastView: UIView {
     init(message: String) {
         super.init(frame: .zero)
         backgroundColor = BearyColors.surface
+        // 2026-11-02 定版第 2 组：Toast 补 hairline 阴影（0.08 / 4 / (0, 1)）＋ 1px line 描边
+        // （沿用全站卡片 1px line 描边口径；动态色走 bearyDynamicBorderColor，深浅切换跟随）。
+        BearyShadow.applyHairline(to: layer)
+        layer.borderWidth = 1
+        layer.bearyDynamicBorderColor = BearyColors.line
         isUserInteractionEnabled = false
         translatesAutoresizingMaskIntoConstraints = false
         label.text = message
@@ -235,6 +243,7 @@ private final class BearyToastView: UIView {
     override func layoutSubviews() {
         super.layoutSubviews()
         layer.cornerRadius = bounds.height / 2
-        clipsToBounds = true
+        // 阴影在 bounds 外：clipsToBounds 会裁掉阴影，故不裁剪；label 内缩 18/10，无溢出。
+        clipsToBounds = false
     }
 }
