@@ -117,9 +117,12 @@ final class BearyCalloutPickerView: UIView, UIScrollViewDelegate {
     private static let accessoryRowHeight: CGFloat = 36
 
     /// 附属行显时框体比基准高出的部分（调用方据此定框高约束）。
+    /// 附属行在图标条上方、图标条贴框底（箭头上方）：显隐只往上长，
+    /// 图标条屏上位置不动（框底钉在工具栏上方，框高变化全由顶部吸收）。
+    /// 增量 = 顶部内边距 + 附属行高 + 行间距。
     var accessoryExtraHeight: CGFloat {
         guard let accessory = accessoryView, !accessory.isHidden else { return 0 }
-        return Self.accessoryGap + Self.accessoryRowHeight
+        return Self.verticalPadding + Self.accessoryGap + Self.accessoryRowHeight
     }
 
     /// 附属行只在框内出现，不进调用方的 chip 行等外部布局；调用方须在
@@ -262,16 +265,17 @@ final class BearyCalloutPickerView: UIView, UIScrollViewDelegate {
         let width = bounds.width
         let height = fullBoxHeight
         backgroundLayer.frame = bounds
-        // 选项滚动区只占基准框高；附属行在其下方，不被滚动区盖住触摸
-        //（附属行后加、层级在滚动区之上，点按先落到附属行按钮）。
-        scrollView.frame = CGRect(x: 0, y: 0, width: width, height: boxHeight)
-        fadeView.frame = CGRect(x: width - Self.fadeWidth, y: 0, width: Self.fadeWidth, height: boxHeight)
+        // 图标条贴框底（箭头上方），附属行在图标条上方：附属行显隐只往上长，
+        // 图标条屏上位置不动（框底钉死、框高变化全由顶部吸收；点中图标不跑开）。
+        // 附属行后加、层级在滚动区之上，两者在纵向不重叠，点按互不干扰。
+        scrollView.frame = CGRect(x: 0, y: accessoryExtraHeight, width: width, height: boxHeight)
+        fadeView.frame = CGRect(x: width - Self.fadeWidth, y: accessoryExtraHeight, width: Self.fadeWidth, height: boxHeight)
         if let accessory = accessoryView, !accessory.isHidden {
             let naturalWidth = accessory.systemLayoutSizeFitting(UIView.layoutFittingCompressedSize).width
             let accessoryWidth = naturalWidth > 0 ? min(naturalWidth, max(width - Self.horizontalPadding * 2, 0)) : max(width - Self.horizontalPadding * 2, 0)
             accessory.frame = CGRect(
                 x: Self.horizontalPadding,
-                y: Self.verticalPadding + Self.optionSize + Self.accessoryGap,
+                y: Self.verticalPadding,
                 width: accessoryWidth,
                 height: Self.accessoryRowHeight
             )
