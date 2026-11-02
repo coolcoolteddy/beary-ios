@@ -131,6 +131,12 @@ struct Entry: Codable {
     var mentionedName: String?
     var isLocked: Bool?
     var isMine: Bool?
+    /// 日记置顶（后端并行施工中）：个人页 scope=author 列表下发 pinned 0/1 与
+    /// pinned_at（毫秒，null = 未置顶）；广场／时间线／搜索等其他列表不带置顶排序。
+    var pinned: Int?
+    var pinnedAt: Int?
+    /// 置顶判定：只认显式 1；缺失／其他值一律不算（fail-closed，与 isFriendsOnly 同口径）。
+    var isPinned: Bool { pinned == 1 }
     /// iCity 私密占位：服务端对非作者的私密单篇只下发 {placeholder: true, id, published: 0}，
     /// 详情页凭此只显一句“该日记已设为私密”，不带标题／封面／时间／作者名。
     var placeholder: Bool?
@@ -1308,6 +1314,29 @@ final class BearyAPI {
     func setVisibility(id: String, visibility: String, completion: @escaping (Result<VisibilityResponse, APIError>) -> Void) {
         let safe = id.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? id
         request("/beary/api/entries/\(safe)/visibility", method: "POST", jsonBody: ["visibility": visibility], completion: completion)
+    }
+
+    // MARK: - 日记置顶（后端并行施工中；接口未上线前非 200 一律走调用方失败态）
+
+    /// 置顶／取消置顶响应：POST /pin → {ok, pinned: true, pinned_at}；
+    /// POST /unpin → {ok, pinned: false}。错误：未登录 401、不存在 404、非作者 403、列不可用 503。
+    struct PinResponse: Decodable {
+        var ok: Bool?
+        var pinned: Bool?
+        var pinnedAt: Int?
+    }
+
+    /// 置顶：POST /beary/api/entries/:id/pin（无 body）。单槽位：服务端替换旧置顶篇；
+    /// App 端替换先经 BearyDiaryPin.confirmReplacement 确认，取消时绝不调本接口。
+    func pinEntry(id: String, completion: @escaping (Result<PinResponse, APIError>) -> Void) {
+        let safe = id.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? id
+        request("/beary/api/entries/\(safe)/pin", method: "POST", completion: completion)
+    }
+
+    /// 取消置顶：POST /beary/api/entries/:id/unpin（无 body）。
+    func unpinEntry(id: String, completion: @escaping (Result<PinResponse, APIError>) -> Void) {
+        let safe = id.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? id
+        request("/beary/api/entries/\(safe)/unpin", method: "POST", completion: completion)
     }
 
     // MARK: - 好友第一期（后端并行施工中；接口未上线前非 200 一律走调用方失败态）

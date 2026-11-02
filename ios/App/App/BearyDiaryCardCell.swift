@@ -1030,7 +1030,7 @@ class BearyDiaryCardCell: UITableViewCell {
 
     private lazy var rightStack: BearyPassThroughStackView = {
         quoteView.translatesAutoresizingMaskIntoConstraints = false
-        let st = BearyPassThroughStackView(arrangedSubviews: [recipientRow, titleStack, ephemeralRow, entryTitleLabel, contentLabel, foldButton, quoteView, imagesScrollView, locationStack, actionStack, guestLoginPromptButton, emoteFlowView])
+        let st = BearyPassThroughStackView(arrangedSubviews: [pinRow, recipientRow, titleStack, ephemeralRow, entryTitleLabel, contentLabel, foldButton, quoteView, imagesScrollView, locationStack, actionStack, guestLoginPromptButton, emoteFlowView])
         // 清单 18：中间栈透传回应行扩后热区（只认 emoteFlowView 内钮，其他行不动）。
         st.passThroughRoot = emoteFlowView
         st.translatesAutoresizingMaskIntoConstraints = false
@@ -1063,6 +1063,37 @@ class BearyDiaryCardCell: UITableViewCell {
 
     private lazy var ephemeralRow: UIStackView = {
         let st = UIStackView(arrangedSubviews: [ephemeralLabel])
+        st.translatesAutoresizingMaskIntoConstraints = false
+        st.axis = .horizontal
+        st.spacing = 4
+        st.alignment = .center
+        st.isHidden = true
+        return st
+    }()
+
+    /// 置顶标识行（卡片最上方，预览口径：图钉＋“置顶”）：官方 icon_pin 15（模板图＋橙 tint，
+    /// BearyFeedIconCache 同款缓存口径）＋ 12 semibold 文案；文案色走 deepOrangeText
+    /// （文字前景 token，浅色为深橙 #C2410C、深色为预览橙 #ff9500）；非置顶整组隐藏，不留空行。
+    private let pinIconView: UIImageView = {
+        let v = UIImageView()
+        v.translatesAutoresizingMaskIntoConstraints = false
+        v.image = BearyFeedIconCache.image(named: "icon_pin", pointSize: 15)
+        v.tintColor = BearyColors.orange
+        v.contentMode = .scaleAspectFit
+        return v
+    }()
+
+    private let pinLabel: UILabel = {
+        let l = UILabel()
+        l.translatesAutoresizingMaskIntoConstraints = false
+        l.font = UIFont.systemFont(ofSize: 12, weight: .semibold)
+        l.textColor = BearyColors.deepOrangeText
+        l.text = "置顶"
+        return l
+    }()
+
+    private lazy var pinRow: UIStackView = {
+        let st = UIStackView(arrangedSubviews: [pinIconView, pinLabel])
         st.translatesAutoresizingMaskIntoConstraints = false
         st.axis = .horizontal
         st.spacing = 4
@@ -1292,6 +1323,11 @@ class BearyDiaryCardCell: UITableViewCell {
         crownWrapView.setContentCompressionResistancePriority(.required, for: .horizontal)
         // 皇冠在等高容器内居中（容器底边钉基线，中心即 cap 中心）。
         crownWrapView.addSubview(crownView)
+        // 置顶图钉固定 15×15（两模式同款，不靠 stack 固有尺寸浮动）。
+        NSLayoutConstraint.activate([
+            pinIconView.widthAnchor.constraint(equalToConstant: 15),
+            pinIconView.heightAnchor.constraint(equalToConstant: 15),
+        ])
         NSLayoutConstraint.activate([
             crownView.centerXAnchor.constraint(equalTo: crownWrapView.centerXAnchor),
             crownView.centerYAnchor.constraint(equalTo: crownWrapView.centerYAnchor),
@@ -1477,6 +1513,8 @@ class BearyDiaryCardCell: UITableViewCell {
         // 限时态复位：倒计时行与虚线边框藏起、底线恢复，防残留到下一行。
         ephemeralRow.isHidden = true
         ephemeralLabel.text = nil
+        // 置顶标识行复位，防上一行置顶串位到下一行。
+        pinRow.isHidden = true
         // 批 E：位置行复位，防上一行位置串位到下一行。
         locationStack.isHidden = true
         locationLabel.text = nil
@@ -1754,7 +1792,11 @@ class BearyDiaryCardCell: UITableViewCell {
         // 110：头像顶与右列顶同值（个人页首卡 30、其余 14；首页恒 14）——
         // 头像顶与作者行顶对齐，首卡限时框（顶 22）完整包住头像（30..70，
         // 框顶留 8pt）；框路径一字不动，不用框迁就错位头像。
-        avatarTopConstraint?.constant = cardMode == .feed ? 14 : (profileFirstRow ? 30 : 14)
+        // 置顶时头像同步下移置顶行高（15）＋行间距（10）＝ 25，使头像仍与作者行对齐、
+        // 置顶行落在卡片最上方（预览口径：标识在作者行之上）；未置顶时一字不动。
+        let pinOffset: CGFloat = pinRow.isHidden ? 0 : 25
+        avatarTopConstraint?.constant = (cardMode == .feed ? 14 : (profileFirstRow ? 30 : 14)) + pinOffset
+        rightStack.setCustomSpacing(10, after: pinRow)
         rightStack.setCustomSpacing(4, after: recipientRow)
         rightStack.setCustomSpacing(4, after: titleStack)
         rightStack.setCustomSpacing(4, after: ephemeralRow)
@@ -1799,6 +1841,12 @@ class BearyDiaryCardCell: UITableViewCell {
             locationNoteLabel.text = nil
             locationNoteLabel.isHidden = true
         }
+    }
+
+    /// 置顶标识行刷新：只认 entry.isPinned（显式 1）；隐藏后 stack 自动压为 0，不留空行。
+    /// 计数与内容同时渲染：本行只随 configure 走，不单独播动效。
+    private func refreshPinRow(entry: Entry) {
+        pinRow.isHidden = !entry.isPinned
     }
 
     /// 旧心情改位：作者行心情位一律隐藏，心情改缀正文末尾
@@ -1946,6 +1994,9 @@ class BearyDiaryCardCell: UITableViewCell {
         // F9：心情。
         refreshMoodView()
 
+        // 置顶标识行（卡片最上方；两模式同款）。
+        refreshPinRow(entry: entry)
+
         // R4 App：日记标题在作者行（titleStack）与正文之间，空标题不占位。
         updateEntryTitle(entry.title)
 
@@ -2034,6 +2085,8 @@ class BearyDiaryCardCell: UITableViewCell {
             weatherTempLabel.isHidden = true
         }
         refreshMoodView()
+        // 置顶标识行（卡片最上方；两模式同款）。
+        refreshPinRow(entry: entry)
         // R4 App：日记标题在作者行（titleStack）与正文之间，空标题不占位。
         updateEntryTitle(entry.title)
         // 正文 + 300 字折叠（网页 renderPublic foldLong 口径；折叠态收起 6 行）。
