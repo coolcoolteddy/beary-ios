@@ -771,7 +771,7 @@ final class BearyDiaryStarMapViewController: UIViewController {
         let detailButton = UIButton(type: .custom)
         detailButton.setTitle("查看详情", for: .normal)
         detailButton.titleLabel?.font = UIFont.boldSystemFont(ofSize: 15)
-        detailButton.setTitleColor(BearyStarMapNight.primaryText, for: .normal)
+        detailButton.setTitleColor(BearyColors.onBrand, for: .normal)
         detailButton.backgroundColor = BearyColors.orange
         detailButton.layer.cornerRadius = 12
         detailButton.contentEdgeInsets = UIEdgeInsets(top: 10, left: 16, bottom: 10, right: 16)

@@ -1262,7 +1262,7 @@ class BearyProfileViewController: UIViewController {
         let buttonValue = UIButton(type: .system)
         buttonValue.translatesAutoresizingMaskIntoConstraints = false
         buttonValue.setTitle("留给明年的自己", for: .normal)
-        buttonValue.setTitleColor(.white, for: .normal)
+        buttonValue.setTitleColor(BearyColors.onBrand, for: .normal)
         buttonValue.titleLabel?.font = UIFont.systemFont(ofSize: 14, weight: .bold)
         buttonValue.backgroundColor = BearyColors.orange
         buttonValue.layer.cornerRadius = 10

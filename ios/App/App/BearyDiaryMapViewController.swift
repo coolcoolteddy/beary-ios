@@ -395,6 +395,9 @@ final class BearyDiaryMapViewController: UIViewController, MKMapViewDelegate, UI
         marker.annotation = annotation
         marker.canShowCallout = true
         marker.markerTintColor = BearyColors.orange
+        // 22a：大头针字形（篇数）由 MapKit 绘制、默认白色，落在橙色针体上；
+        // 字形色是 App 可控属性，随橙底前景口径改 onBrand 恒墨色。
+        marker.glyphTintColor = BearyColors.onBrand
         if let title = annotation.title ?? nil,
            let group = groups.first(where: { $0.key == title }) {
             marker.glyphText = "\(group.count)"
