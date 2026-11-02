@@ -129,6 +129,45 @@ class SceneDelegate: UIResponder, UIWindowSceneDelegate {
 // 栏状态（选中 tab、登录态）由容器本地管理；未读角标在批二接通知接口前保持隐藏。
 // iOS 26+ 用官方 UIGlassEffect，低版本自动降级系统毛玻璃；部署目标不用抬。
 
+/// 底栏读屏代理：分段器本身是纯图，VoiceOver 下每段各 exposed 为一个按钮元素，
+/// 名为段名（首页/好友/时间线/我的），当前段带 .selected；框与选中态实时取自分段器，
+/// 布局变化（旋转/尺寸）不留旧帧。点按代理与点分段器同路（切段走 valueChanged，
+/// 点已选段走重拍），分段器本身的视觉、触摸、选中逻辑一字不动。
+private final class BottomSegmentAccessibilityElement: UIAccessibilityElement {
+    var segmentIndex: Int = 0
+    var segmentName: String = ""
+    weak var segmentControl: UISegmentedControl?
+    var onActivate: ((Int) -> Void)?
+
+    override var accessibilityLabel: String? {
+        get { segmentName }
+        set { /* 名字由创建方定 */ }
+    }
+
+    override var accessibilityTraits: UIAccessibilityTraits {
+        get {
+            var traits: UIAccessibilityTraits = .button
+            if segmentControl?.selectedSegmentIndex == segmentIndex { traits.insert(.selected) }
+            return traits
+        }
+        set {}
+    }
+
+    override var accessibilityFrameInContainerSpace: CGRect {
+        get {
+            guard let seg = segmentControl, seg.bounds.width > 0 else { return .zero }
+            let width = seg.bounds.width / 4
+            return CGRect(x: CGFloat(segmentIndex) * width, y: 0, width: width, height: seg.bounds.height)
+        }
+        set {}
+    }
+
+    override func accessibilityActivate() -> Bool {
+        onActivate?(segmentIndex)
+        return true
+    }
+}
+
 final class BearyChromeViewController: UIViewController {
     private var topGlass: UIVisualEffectView!
     /// 94 包：淡入 + 上移模态过渡共享实例（现仅诊断页用；他人主页/设置页/
@@ -610,7 +649,20 @@ final class BearyChromeViewController: UIViewController {
             return UIColor.black.withAlphaComponent(0.12)
         }
         seg.selectedSegmentIndex = 0
-        seg.accessibilityLabel = "底栏"
+        // 审计第三轮无障碍：整栏单名“底栏”改为每段各一名（首页/好友/时间线/我的），
+        // 当前段带 .selected；分段器本身不再作为读屏元素，避免与代理重复。
+        seg.isAccessibilityElement = false
+        let segmentNames = ["首页", "好友", "时间线", "我的"]
+        seg.accessibilityElements = segmentNames.enumerated().map { index, name in
+            let element = BottomSegmentAccessibilityElement(accessibilityContainer: seg)
+            element.segmentIndex = index
+            element.segmentName = name
+            element.segmentControl = seg
+            element.onActivate = { [weak self] tapped in self?.activateBottomSegment(tapped) }
+            return element
+        }
+        // 初始 alpha 0（栏藏起），元素同步隐藏，随 setBarsVisible 翻转。
+        seg.accessibilityElementsHidden = true
         seg.addTarget(self, action: #selector(bottomSegmentTouchDown), for: .touchDown)
         seg.addTarget(self, action: #selector(bottomSegmentChanged), for: .valueChanged)
         let retap = UITapGestureRecognizer(target: self, action: #selector(bottomSegmentTapped(_:)))
@@ -1557,6 +1609,7 @@ final class BearyChromeViewController: UIViewController {
         let applyBars = {
             if let seg = self.bottomSegmented {
                 seg.alpha = visible ? 1 : 0
+                seg.accessibilityElementsHidden = !visible
                 seg.transform = visible ? .identity : CGAffineTransform(translationX: 0, y: 80)
             }
             self.bottomBlurView?.alpha = visible ? 1 : 0
@@ -1799,6 +1852,23 @@ final class BearyChromeViewController: UIViewController {
         case 2: didTapTimeline()
         case 3: didTapMe()
         default: break
+        }
+    }
+
+    /// 底栏读屏代理点按：与点分段器同路——切段走 valueChanged，点已选段走重拍。
+    private func activateBottomSegment(_ index: Int) {
+        guard let seg = bottomSegmented else { return }
+        if seg.selectedSegmentIndex == index {
+            switch index {
+            case 0: didTapHome()
+            case 1: didTapFriends()
+            case 2: didTapTimeline()
+            case 3: didTapMe()
+            default: break
+            }
+        } else {
+            seg.selectedSegmentIndex = index
+            bottomSegmentChanged()
         }
     }
 

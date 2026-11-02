@@ -9,10 +9,10 @@ import UIKit
 // 数据只读草稿 v3（BearyDraftFiles.swift）：v3 存储是多槽数组文件 beary_draft_v3.json，
 // 本弹层按 updatedAt 倒序列出全部草稿；旧 v2 单槽由存储层首次读取时迁入 v3，
 // 本文件不做迁移、不改存储结构本身。
-// 卡片操作：整卡点按打开（onOpen）；卡片顶行另有打开钮与删除钮（网页 .df-open/.df-trash
+// 卡片操作：整卡点按打开（onOpen）；卡片顶行另有删除钮（网页 .df-trash
 // 同款）；删除为本地操作：只删该篇（图片文件不动，6 秒撤销期内可原样恢复），
 // 删后出 6 秒撤销条，超时丢弃暂存；不碰服务端。
-// 调用约定：点“新建日记”只回调 onNew，点卡片/打开钮只回调 onOpen 并传出该篇草稿；
+// 调用约定：点“新建日记”只回调 onNew，点卡片只回调 onOpen 并传出该篇草稿；
 // 弹窗审计 E1-18 统一退场：关闭、打开、新建三路共用同一退场——先播 0.25s
 // 退场动画、dismiss 后再调回调，编辑器侧不再另行 dismiss（旧路径经
 // BearyDraftBoxInstantAnimator 瞬时消失，绕过了退场动画）；关闭路回调为空，
@@ -99,7 +99,6 @@ final class BearyDraftBoxViewController: UIViewController {
     /// 新规矩 (b)：草稿列表入场动效只播一次（首渲），后续重渲不重播已有卡片。
     /// 审计第 12 项起由 tryPlayEntrance 统一置位（原 renderDrafts 首轮置位已移走）。
     private var draftCardsAnimatedOnce = false
-    private var openEntries: [(button: UIButton, draftValue: BearyDraft)] = []
     private var deleteEntries: [(button: UIButton, draftValue: BearyDraft)] = []
     private var lostEntries: [(button: UIButton, draftValue: BearyDraft)] = []
     /// DF-1/DF-2：编辑器当前正在写的那篇 draftId（由容器/编辑器在呈现草稿箱后设置；
@@ -141,7 +140,7 @@ final class BearyDraftBoxViewController: UIViewController {
     private let backdropButton = UIButton(type: .custom)
     private let sheetView = UIView()
     // 审计第 9 项：滚动取消走共享类（见 BearyNativeCommon.BearyCancellableScrollView）——
-    // 从卡片/打开/删除等按钮上起滑时滚动视图能抢到 pan，点按行为不变。
+    // 从卡片/删除等按钮上起滑时滚动视图能抢到 pan，点按行为不变。
     private let sheetScrollView = BearyCancellableScrollView()
     private let contentStack = UIStackView()
     private let handleView = UIView()
@@ -337,13 +336,10 @@ final class BearyDraftBoxViewController: UIViewController {
 
     override func traitCollectionDidChange(_ previousTraitCollection: UITraitCollection?) {
         super.traitCollectionDidChange(previousTraitCollection)
-        // CGColor 只在赋值时解析一次：深浅切换时重刷 sheet 边框与卡片/打开钮描边。
+        // CGColor 只在赋值时解析一次：深浅切换时重刷 sheet 边框与卡片描边。
         if previousTraitCollection?.userInterfaceStyle != traitCollection.userInterfaceStyle {
             applySheetChrome()
             for entry in cardEntries {
-                entry.button.layer.bearyDynamicBorderColor = BearyColors.line
-            }
-            for entry in openEntries {
                 entry.button.layer.bearyDynamicBorderColor = BearyColors.line
             }
         }
@@ -489,7 +485,7 @@ final class BearyDraftBoxViewController: UIViewController {
         newButton.titleEdgeInsets = UIEdgeInsets(top: 0, left: 6, bottom: 0, right: 0)
         newButton.contentEdgeInsets = UIEdgeInsets(top: 10, left: 0, bottom: 10, right: 0)
         // 弹窗审计 E1-10：新建钮原视觉高约 37（13.5pt 字 + 上下各 10 内边距），
-        // 未达 44。最小 44 高约束补足热区（卡片打开钮 8-15 同款做法）；
+        // 未达 44。最小 44 高约束补足热区；
         // 外包 wrap 上缘 = 钮上缘、下缘留 12pt 底边距，44 帧完整落在 wrap 内，
         // 不被父容器截断；文案与位置不变，只虚线框高一档。
         newButton.heightAnchor.constraint(greaterThanOrEqualToConstant: 44).isActive = true
@@ -773,7 +769,6 @@ final class BearyDraftBoxViewController: UIViewController {
             arranged.removeFromSuperview()
         }
         cardEntries = []
-        openEntries = []
         deleteEntries = []
         lostEntries = []
         if draftsLoadFailed {
@@ -878,7 +873,6 @@ final class BearyDraftBoxViewController: UIViewController {
         card.layer.borderWidth = 1
         card.layer.bearyDynamicBorderColor = BearyColors.line
         card.layer.cornerRadius = 14
-        card.accessibilityLabel = "打开这份草稿"
         card.addTarget(self, action: #selector(cardTouchDown(_:)), for: .touchDown)
         card.addTarget(self, action: #selector(cardTouchUp(_:)), for: [.touchUpInside, .touchUpOutside, .touchCancel])
         card.addTarget(self, action: #selector(cardTapped(_:)), for: .touchUpInside)
@@ -931,23 +925,7 @@ final class BearyDraftBoxViewController: UIViewController {
             imageRow.addArrangedSubview(countLabel)
             topRow.addArrangedSubview(imageRow)
         }
-        // 卡片操作钮（网页 .df-open/.df-trash 同款）：打开钮整卡点按等价，删除钮本地删卡。
-        let openButton = UIButton(type: .custom)
-        openButton.setTitle("打开", for: .normal)
-        openButton.setTitleColor(BearyColors.ink, for: .normal)
-        openButton.titleLabel?.font = UIFont.systemFont(ofSize: 12.5)
-        openButton.layer.borderWidth = 1.5
-        openButton.layer.bearyDynamicBorderColor = BearyColors.line
-        openButton.layer.cornerRadius = 999
-        openButton.contentEdgeInsets = UIEdgeInsets(top: 5, left: 12, bottom: 5, right: 12)
-        // 8-15：打开钮补最小 44 高约束（原仅 contentEdgeInsets，实测高约 25，
-        // 未达 44 热区口径；视觉上 pill 变高一档，属任务指定改动）。
-        openButton.heightAnchor.constraint(greaterThanOrEqualToConstant: 44).isActive = true
-        openButton.accessibilityLabel = "打开这份草稿"
-        openButton.addTarget(self, action: #selector(openTapped(_:)), for: .touchUpInside)
-        openButton.bearyAddPressFeedback()
-        topRow.addArrangedSubview(openButton)
-        openEntries.append((button: openButton, draftValue: draftValue))
+        // 卡片操作钮（网页 .df-trash 同款）：删除钮本地删卡；打开只走整卡点按。
         let deleteButton = UIButton(type: .custom)
         if let trashImage = BearyIconImages.image(named: "icon_trash", pointSize: 21) {
             deleteButton.setImage(trashImage, for: .normal)
@@ -1045,15 +1023,11 @@ final class BearyDraftBoxViewController: UIViewController {
         // L7：状态文案必保全，不被长 chip 挤走。
         statusLabel.setContentCompressionResistancePriority(.required, for: .horizontal)
         statusLabel.font = UIFont.systemFont(ofSize: 12.5, weight: .semibold)
+        statusLabel.text = saveStatusText(status)
         switch status {
-        case .saved:
-            statusLabel.text = "草稿已保存"
-            statusLabel.textColor = BearyColors.blue
-        case .partial:
-            statusLabel.text = "文字已保存，图片未保存"
+        case .saved, .partial:
             statusLabel.textColor = BearyColors.blue
         case .failed:
-            statusLabel.text = "草稿保存失败"
             statusLabel.textColor = BearyColors.red
         }
         // 保存状态独立成行、左对齐（末尾 spacer 撑满行宽，视觉位置与原来行内左置一致）。
@@ -1089,6 +1063,16 @@ final class BearyDraftBoxViewController: UIViewController {
         let swipe = UISwipeGestureRecognizer(target: self, action: #selector(draftCardSwiped(_:)))
         swipe.direction = .left
         card.addGestureRecognizer(swipe)
+        // 审计第三轮无障碍：整卡是唯一打开入口，卡名须区分各卡——含标题、
+        // 摘要、时间、保存状态；摘要过长时截断，读屏名不念全文。
+        var nameParts = ["草稿"]
+        let nameTitle = (draftValue.title ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        if !nameTitle.isEmpty { nameParts.append(nameTitle) }
+        let nameSummary = summary.count > 80 ? String(summary.prefix(80)) + "…" : summary
+        nameParts.append(nameSummary)
+        nameParts.append(draftTimeText(updatedAtSeconds: draftValue.updatedAt))
+        nameParts.append(saveStatusText(status))
+        card.accessibilityLabel = nameParts.joined(separator: "，")
         return card
     }
 
@@ -1315,6 +1299,15 @@ final class BearyDraftBoxViewController: UIViewController {
         return .saved
     }
 
+    /// 保存状态文案（状态行与卡片读屏名同款，不另起第二套说法）。
+    private func saveStatusText(_ status: DraftSaveStatus) -> String {
+        switch status {
+        case .saved: return "草稿已保存"
+        case .partial: return "文字已保存，图片未保存"
+        case .failed: return "草稿保存失败"
+        }
+    }
+
     /// 网页 dfTimeStr 移植：v3 updatedAt 为秒，网页 updated_at 为毫秒，此处按秒换算。
     private func draftTimeText(updatedAtSeconds: TimeInterval) -> String {
         let date = Date(timeIntervalSince1970: updatedAtSeconds)
@@ -1534,18 +1527,6 @@ final class BearyDraftBoxViewController: UIViewController {
         }
     }
 
-    @objc private func openTapped(_ sender: UIButton) {
-        for entry in openEntries {
-            if entry.button === sender {
-                // E1-18：打开钮与整卡同路，先统一退场再调原 onOpen 回调。
-                dismissWithExitAnimation { [weak self] in
-                    self?.onOpenHandler(entry.draftValue)
-                }
-                return
-            }
-        }
-    }
-
     /// 本地删卡：从列表移除并只删该篇 v3 草稿；图片文件不动（撤销期内可原样恢复，
     /// 超时后由编辑器侧的孤文件清理承接，不在此处改存储结构）。
     @objc private func deleteTapped(_ sender: UIButton) {
@@ -1633,7 +1614,6 @@ final class BearyDraftBoxViewController: UIViewController {
                     cardEntry.button.removeFromSuperview()
                 }
                 strongSelf.cardEntries.removeAll { $0.draftValue.draftId == draftValue.draftId }
-                strongSelf.openEntries.removeAll { $0.draftValue.draftId == draftValue.draftId }
                 strongSelf.deleteEntries.removeAll { $0.draftValue.draftId == draftValue.draftId }
                 strongSelf.lostEntries.removeAll { $0.draftValue.draftId == draftValue.draftId }
                 strongSelf.subLabel.text = "共 \(strongSelf.drafts.count) 份 · 写的时候自动保存 · 仅保存在本设备"
