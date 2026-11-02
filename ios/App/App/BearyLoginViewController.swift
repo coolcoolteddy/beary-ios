@@ -854,7 +854,7 @@ final class BearyLoginViewController: UIViewController {
                     strongSelf.codeField.becomeFirstResponder()
                 case .failure(.cancelled):
                     strongSelf.updateButtonStates()
-                case .failure(.server(let message)):
+                case .failure(.server(let message, _)):
                     strongSelf.showMessage(message)
                     strongSelf.updateButtonStates()
                 case .failure(.network):
@@ -924,7 +924,7 @@ final class BearyLoginViewController: UIViewController {
                     }
                 case .failure(.cancelled):
                     break
-                case .failure(.server(let message)):
+                case .failure(.server(let message, _)):
                     strongSelf.showMessage(message)
                 case .failure(.network):
                     strongSelf.showMessage("网络不稳定，请稍后再试")

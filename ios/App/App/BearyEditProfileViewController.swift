@@ -1126,7 +1126,7 @@ class BearyEditProfileViewController: UIViewController {
         case .unauthorized:
             onRequireLogin?()
             return "登录已过期，请重新登录"
-        case .server(let code):
+        case .server(let code, _):
             switch code {
             case "taken": return "这个用户名已被占用"
             case "cooldown": return "改名冷却中，还不能改"
@@ -1143,7 +1143,7 @@ class BearyEditProfileViewController: UIViewController {
         case .unauthorized:
             onRequireLogin?()
             return "登录已过期，请重新登录"
-        case .server(let code):
+        case .server(let code, _):
             switch code {
             case "name_taken": return "该用户名已被使用"
             case "name_too_long": return "显示名称最多 30 个字"

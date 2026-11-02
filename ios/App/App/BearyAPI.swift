@@ -12,10 +12,13 @@ import Foundation
 enum APIError: Error {
     case network(Error)
     /// 5-31：非标准错误体时也携带服务端原始信息片段（截断后，供 toast/日志
-    /// 用；分流不变，仍是 .http 不升 .server）。标准错误体仍走 .server(码)。
+    /// 用；分流不变，仍是 .http 不升 .server）。标准错误体仍走 .server(码, 状态)。
     /// 无片段时为 nil；现有裸 `case .http:` 匹配不受第二值影响。
     case http(Int, String?)
-    case server(String)
+    /// 审计第 9 项：同时保留业务码与 HTTP 状态。status 由 mapStatus /
+    /// 隔离请求等已知 HTTP 状态的路径下发；verify / bind / sendCode 等
+    /// 展示文案路径（第一值是 message 而非业务码）传 nil，不凭文案判权限。
+    case server(String, Int?)
     case decoding(Error)
     case unauthorized
     /// 审计 P1-7：带原因的 401（/me 专用）：服务端体含 reason（banned/kicked/expired）
@@ -24,6 +27,39 @@ enum APIError: Error {
     case authFailure(reason: String?, message: String?)
     case notFound
     case cancelled
+}
+
+extension APIError {
+    /// 审计第 9 项：权限失效统一判定（私信页用；其他页原有 .server 分流不动）。
+    /// - 裸 HTTP 403；
+    /// - 带业务码的 403（.server 第二值 = 403，旧 mapStatus 丢状态时漏网的正是这类）；
+    /// - 业务码本身表权限失效（dm_not_allowed / blocked），即使状态未保留。
+    /// 非 403 的 .server（如 rate_limited）不在此列，仍走通用 toast / loadFailed。
+    var isPermissionDenied: Bool {
+        switch self {
+        case .http(let status, _):
+            return status == 403
+        case .server(let code, let status):
+            if status == 403 { return true }
+            let normalized = code.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            return normalized == "dm_not_allowed" || normalized == "blocked"
+        default:
+            return false
+        }
+    }
+
+    /// 档位不允许（私信横幅分支，非会话关闭）：仅 dm_not_allowed。
+    /// .http 沿旧口径看原始片段含码；.server 看业务码精确相等（码已是精确字段，不再含码子串）。
+    var isDMNotAllowed: Bool {
+        switch self {
+        case .http(let status, let snippet):
+            return status == 403 && snippet?.contains("dm_not_allowed") == true
+        case .server(let code, _):
+            return code.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == "dm_not_allowed"
+        default:
+            return false
+        }
+    }
 }
 
 // MARK: - 数据模型
@@ -704,7 +740,7 @@ final class BearyAPI {
             if status == 404 { completion(.failure(.notFound)); return }
             if !(200...299).contains(status) {
                 if let data = data, let eb = try? self.decoder.decode(ServerErrorBody.self, from: data), let code = eb.error {
-                    completion(.failure(.server(code))); return
+                    completion(.failure(.server(code, status))); return
                 }
                 completion(.failure(.http(status, self.errorSnippet(from: data)))); return
             }
@@ -737,7 +773,7 @@ final class BearyAPI {
             }
             guard (200...299).contains(status), let data = data else {
                 if let data = data, let eb = try? self.decoder.decode(ServerErrorBody.self, from: data), let code = eb.error {
-                    completion(.failure(.server(code)))
+                    completion(.failure(.server(code, status)))
                 } else {
                     completion(.failure(.http(status, self.errorSnippet(from: data))))
                 }
@@ -762,7 +798,7 @@ final class BearyAPI {
             if status == 401 { completion(.success(())); return }
             if !(200...299).contains(status) {
                 if let data = data, let eb = try? self.decoder.decode(ServerErrorBody.self, from: data), let code = eb.error {
-                    completion(.failure(.server(code))); return
+                    completion(.failure(.server(code, status))); return
                 }
                 completion(.failure(.http(status, self.errorSnippet(from: data)))); return
             }
@@ -802,7 +838,7 @@ final class BearyAPI {
         if status == 404 { return .notFound }
         if !(200...299).contains(status) {
             if let data = data, let eb = try? decoder.decode(ServerErrorBody.self, from: data), let code = eb.error {
-                return .server(code)
+                return .server(code, status)
             }
             return .http(status, errorSnippet(from: data))
         }
@@ -1158,7 +1194,7 @@ final class BearyAPI {
             }
             guard (200...299).contains(status), let data = data else {
                 if let data = data, let eb = try? self.decoder.decode(ServerErrorBody.self, from: data), let code = eb.error {
-                    completion(.failure(.server(code)))
+                    completion(.failure(.server(code, status)))
                 } else {
                     completion(.failure(.http(status, self.errorSnippet(from: data))))
                 }
@@ -1212,7 +1248,7 @@ final class BearyAPI {
                 if resp.pendingDelete == true { completion(.success(resp)); return }
                 if resp.ok == true { completion(.success(resp)); return }
                 let message = resp.message ?? resp.error ?? "验证失败"
-                completion(.failure(.server(message)))
+                completion(.failure(.server(message, nil)))
                 return
             }
             if !(200...299).contains(status) {
@@ -1229,8 +1265,8 @@ final class BearyAPI {
         if let e = error { return .network(e) }
         if (200...299).contains(status) { return nil }
         if let data = data, let body = try? decoder.decode(ServerErrorBody.self, from: data) {
-            if let message = body.message, !message.isEmpty { return .server(message) }
-            if let code = body.error, !code.isEmpty { return .server(code) }
+            if let message = body.message, !message.isEmpty { return .server(message, nil) }
+            if let code = body.error, !code.isEmpty { return .server(code, status) }
         }
         return .http(status, errorSnippet(from: data))
     }
@@ -1267,7 +1303,7 @@ final class BearyAPI {
             if let data = data, let resp = try? self.decoder.decode(ReferralBindResponse.self, from: data) {
                 if resp.ok == true { completion(.success(resp)); return }
                 let message = resp.message ?? resp.error ?? "绑定失败，请稍后再试"
-                completion(.failure(.server(message)))
+                completion(.failure(.server(message, nil)))
                 return
             }
             if !(200...299).contains(status) {

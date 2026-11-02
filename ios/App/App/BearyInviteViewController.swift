@@ -692,7 +692,7 @@ final class BearyInviteViewController: UIViewController {
                     }
                 case .failure(.cancelled):
                     break
-                case .failure(.server(let message)):
+                case .failure(.server(let message, _)):
                     strongSelf.showMessage(message)
                 case .failure(.network):
                     strongSelf.showMessage("网络不稳定，请稍后再试")

@@ -201,7 +201,7 @@ final class SessionManager {
                     // 反推会话过期），与网络失败同口径给轻提示。
                     self.authUnknown = true
                     self.notifyNetworkUnstable()
-                case .server, .notFound:
+                case .server(_, _), .notFound:
                     // 业务码 / 404 同样未证实游客：保持旧用户态不动，
                     // 不置未知、不弹登录页（沿旧口径）。
                     break

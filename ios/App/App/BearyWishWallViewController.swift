@@ -997,14 +997,14 @@ final class BearyWishCreateViewController: UIViewController, UITextViewDelegate 
                     self.titleChanged()
                     // 30：超长 400 'bad wish' 走字段级提示（字段旁红字），不弹通用 toast；
                     // 其余失败映射不变（not_plus / rate_limited / 通用 toast）。
-                    if case .server(let code) = err, code == "bad wish" {
+                    if case .server(let code, _) = err, code == "bad wish" {
                         self.setFieldErrorVisible(true)
                         return
                     }
                     let message: String
-                    if case .server(let code) = err, code == "not_plus" {
+                    if case .server(let code, _) = err, code == "not_plus" {
                         message = "仅 Plus 会员可发起许愿"
-                    } else if case .server(let code) = err, code == "rate_limited" {
+                    } else if case .server(let code, _) = err, code == "rate_limited" {
                         message = "操作太频繁，请稍后再试"
                     } else {
                         message = "发布失败，请重试"
