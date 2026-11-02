@@ -26,11 +26,15 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
     private let emptyLabel = UILabel()
     private let inputBar = UIView()
     private let inputTextView = UITextView()
-    private let sendButton = UIButton(type: .system)
+    // 审计：发送钮视觉高 32 不变，热区用 Hit44 扩到 44（读“全部已读”钮同款口径）。
+    private let sendButton = BearyHit44Button(type: .system)
+    private let newMessagePill = UIButton(type: .system)
+    private let placeholderLabel = UILabel()
+    private let countLabel = UILabel()
     private var inputBarBottomConstraint: NSLayoutConstraint?
     private var messages: [BearyAPI.DMMessage] = []
-    private var loading = false
-    private var loadingOlder = false
+    // 审计：下拉刷新与翻旧消息共用同一 busy 锁，不再两套守卫并发。
+    private var messageBusy = false
     private var hasMoreOlder = false
     private var loadFailed = false
     private var sessionClosed = false
@@ -110,6 +114,18 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
         inputTextView.delegate = self
         inputTextView.isScrollEnabled = true
         inputBar.addSubview(inputTextView)
+        // 审计：输入框占位（空输入时显，见 updateInputChrome）。
+        placeholderLabel.translatesAutoresizingMaskIntoConstraints = false
+        placeholderLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 15))
+        placeholderLabel.adjustsFontForContentSizeCategory = true
+        placeholderLabel.textColor = BearyColors.gray
+        placeholderLabel.text = "输入消息"
+        inputTextView.addSubview(placeholderLabel)
+        NSLayoutConstraint.activate([
+            placeholderLabel.topAnchor.constraint(equalTo: inputTextView.topAnchor, constant: 8),
+            placeholderLabel.leadingAnchor.constraint(equalTo: inputTextView.leadingAnchor, constant: 15),
+            placeholderLabel.trailingAnchor.constraint(lessThanOrEqualTo: inputTextView.trailingAnchor, constant: -10),
+        ])
         sendButton.translatesAutoresizingMaskIntoConstraints = false
         sendButton.setTitle("发送", for: .normal)
         sendButton.titleLabel?.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 14, weight: .semibold))
@@ -123,6 +139,32 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
         sendButton.isEnabled = false
         sendButton.alpha = 0.6
         inputBar.addSubview(sendButton)
+        // 审计：接近 2000 字实时计数（仅 ≥1800 字出现）与“新消息”pill。
+        countLabel.translatesAutoresizingMaskIntoConstraints = false
+        countLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 11))
+        countLabel.adjustsFontForContentSizeCategory = true
+        countLabel.textColor = BearyColors.gray
+        countLabel.isHidden = true
+        view.addSubview(countLabel)
+        newMessagePill.translatesAutoresizingMaskIntoConstraints = false
+        newMessagePill.setTitle("新消息", for: .normal)
+        newMessagePill.titleLabel?.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13, weight: .semibold))
+        newMessagePill.titleLabel?.adjustsFontForContentSizeCategory = true
+        newMessagePill.setTitleColor(BearyColors.bg, for: .normal)
+        newMessagePill.backgroundColor = BearyColors.ink
+        newMessagePill.layer.cornerRadius = 16
+        newMessagePill.contentEdgeInsets = UIEdgeInsets(top: 8, left: 16, bottom: 8, right: 16)
+        newMessagePill.isHidden = true
+        newMessagePill.addTarget(self, action: #selector(newMessagePillTapped), for: .touchUpInside)
+        newMessagePill.bearyAddPressFeedback()
+        view.addSubview(newMessagePill)
+        NSLayoutConstraint.activate([
+            countLabel.bottomAnchor.constraint(equalTo: inputBar.topAnchor, constant: -4),
+            countLabel.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -16),
+            newMessagePill.bottomAnchor.constraint(equalTo: inputBar.topAnchor, constant: -8),
+            newMessagePill.centerXAnchor.constraint(equalTo: view.centerXAnchor),
+            newMessagePill.heightAnchor.constraint(equalToConstant: 32),
+        ])
 
         inputBarBottomConstraint = inputBar.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor)
         inputBarBottomConstraint?.isActive = true
@@ -137,6 +179,9 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
             closeButton.heightAnchor.constraint(equalToConstant: 44),
             titleLabel.centerXAnchor.constraint(equalTo: topBar.centerXAnchor),
             titleLabel.centerYAnchor.constraint(equalTo: topBar.centerYAnchor),
+            // 审计：居中标题加左右限位，小屏＋大字体时不与关闭钮重叠（超长截断）。
+            titleLabel.leadingAnchor.constraint(greaterThanOrEqualTo: closeButton.trailingAnchor, constant: 8),
+            titleLabel.trailingAnchor.constraint(lessThanOrEqualTo: topBar.trailingAnchor, constant: -16),
             tableView.topAnchor.constraint(equalTo: topBar.bottomAnchor),
             tableView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             tableView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
@@ -155,6 +200,8 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
             inputTextView.leadingAnchor.constraint(equalTo: inputBar.leadingAnchor, constant: 16),
             inputTextView.bottomAnchor.constraint(equalTo: inputBar.bottomAnchor, constant: -9),
             inputTextView.heightAnchor.constraint(greaterThanOrEqualToConstant: 36),
+            // 审计：输入框补最大高度（约 5 行）；isScrollEnabled 已开，触顶后框内滚动。
+            inputTextView.heightAnchor.constraint(lessThanOrEqualToConstant: 160),
             sendButton.leadingAnchor.constraint(equalTo: inputTextView.trailingAnchor, constant: 8),
             sendButton.trailingAnchor.constraint(equalTo: inputBar.trailingAnchor, constant: -16),
             sendButton.bottomAnchor.constraint(equalTo: inputBar.bottomAnchor, constant: -9),
@@ -162,6 +209,7 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
         ])
 
         NotificationCenter.default.addObserver(self, selector: #selector(keyboardWillShow(_:)), name: UIResponder.keyboardWillShowNotification, object: nil)
+        NotificationCenter.default.addObserver(self, selector: #selector(keyboardWillChangeFrame(_:)), name: UIResponder.keyboardWillChangeFrameNotification, object: nil)
         NotificationCenter.default.addObserver(self, selector: #selector(keyboardWillHide(_:)), name: UIResponder.keyboardWillHideNotification, object: nil)
         loadLatest()
     }
@@ -172,8 +220,13 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
 
     override func viewDidDisappear(_ animated: Bool) {
         super.viewDidDisappear(animated)
-        // modal dismiss 后容器刷新会话列表未读与通知未读（本页不直接碰别页模型）。
-        onClosed?()
+        // 审计复核结论：旧写法无条件触发。DM 全屏 modal 上再盖登录门时
+        //（发送 401 → onRequireLogin → presentLoginGate）也会走 viewDidDisappear，
+        // 旧写法会在仍在会话内时误刷新会话列表/通知。故只在真正 dismiss/出栈时触发。
+        if isBeingDismissed || isMovingFromParent || presentingViewController == nil {
+            // modal dismiss 后容器刷新会话列表未读与通知未读（本页不直接碰别页模型）。
+            onClosed?()
+        }
     }
 
     @objc private func closeTapped() {
@@ -185,21 +238,59 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
     }
 
     @objc private func keyboardWillShow(_ note: Notification) {
-        guard let frame = (note.userInfo?[UIResponder.keyboardFrameEndUserInfoKey] as? NSValue)?.cgRectValue else { return }
-        let height = max(0, frame.height - view.safeAreaInsets.bottom)
-        inputBarBottomConstraint?.constant = -height
-        view.layoutIfNeeded()
-        // 不抢滚动位：输入条顶起后表高缩小，旧 offset 自然保留，正在翻旧消息
-        // 的用户不被拽到底；新消息发送成功后由 loadLatest 的 wasAtBottom 分支处理。
+        applyKeyboard(note)
+    }
+
+    @objc private func keyboardWillChangeFrame(_ note: Notification) {
+        applyKeyboard(note)
     }
 
     @objc private func keyboardWillHide(_ note: Notification) {
-        inputBarBottomConstraint?.constant = 0
-        view.layoutIfNeeded()
+        applyKeyboard(note)
+    }
+
+    /// 键盘跟随（审计）：跟系统时长曲线做动画；帧先 convert 到本视图坐标，
+    /// 再按与视图底边的实际遮挡算 inset——iPad 浮动键盘、分屏不贴底时不按全高垫。
+    /// 不抢滚动位：输入条顶起后表高缩小，旧 offset 自然保留，正在翻旧消息
+    /// 的用户不被拽到底；新消息发送成功后由 loadLatest 的 wasAtBottom 分支处理。
+    /// （iPad/分屏复核：旧代码直接取键盘帧高度、无 convert、无动画跟随，
+    /// 缺陷在代码层面已证实；浮动/分屏键盘的实际遮挡仍待真机复验。）
+    private func applyKeyboard(_ note: Notification) {
+        guard let frameValue = note.userInfo?[UIResponder.keyboardFrameEndUserInfoKey] as? NSValue else { return }
+        let frameInView = view.convert(frameValue.cgRectValue, from: nil)
+        let overlap = max(0, view.bounds.height - frameInView.minY - view.safeAreaInsets.bottom)
+        let duration = (note.userInfo?[UIResponder.keyboardAnimationDurationUserInfoKey] as? NSNumber)?.doubleValue ?? 0.25
+        let curve = (note.userInfo?[UIResponder.keyboardAnimationCurveUserInfoKey] as? NSNumber)?.intValue ?? 0
+        let options = UIView.AnimationOptions(rawValue: UInt(curve << 16))
+        inputBarBottomConstraint?.constant = -overlap
+        UIView.animate(withDuration: duration, delay: 0, options: options, animations: {
+            self.view.layoutIfNeeded()
+        }, completion: nil)
     }
 
     func textViewDidChange(_ textView: UITextView) {
         updateSendButton()
+        updateInputChrome()
+    }
+
+    /// 输入框占位与接近 2000 字计数（审计）：占位随有无文字显隐；
+    /// 计数仅在 ≥1800 字时出现；发送时超限仍 toast（旧口径不动）。
+    private func updateInputChrome() {
+        placeholderLabel.isHidden = !inputTextView.text.isEmpty
+        let count = inputTextView.text.count
+        countLabel.isHidden = count < 1800
+        countLabel.text = "\(count)/2000"
+    }
+
+    private func isNearBottom() -> Bool {
+        guard !messages.isEmpty else { return true }
+        let offsetY = tableView.contentOffset.y + tableView.bounds.height
+        return offsetY >= tableView.contentSize.height - 80
+    }
+
+    @objc private func newMessagePillTapped() {
+        newMessagePill.isHidden = true
+        scrollToBottomIfNeeded()
     }
 
     private func updateSendButton() {
@@ -232,30 +323,41 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
 
     private func markReadIfNeeded() {
         guard let userId = peer.id, !didMarkRead else { return }
-        didMarkRead = true
-        // 失败静默：未读数下次进会话/会话列表时再对齐，不弹 toast 打断聊天。
-        BearyAPI.shared.markDMRead(userId: userId) { _ in }
+        // 审计：已读失败不再“本页永不重试”——失败时不置 didMarkRead，
+        // 下次 loadLatest 成功时再试，并 toast 说明（重试入口即下拉刷新）。
+        BearyAPI.shared.markDMRead(userId: userId) { [weak self] result in
+            DispatchQueue.main.async {
+                guard let self = self else { return }
+                switch result {
+                case .success:
+                    self.didMarkRead = true
+                case .failure:
+                    BearyToast.show(in: self.view, message: "未读标记失败，下拉刷新可重试")
+                }
+            }
+        }
     }
 
     /// 最新页：服务端按 id 倒序下发，展示时反转为正序；成功后清未读。
-    private func loadLatest() {
-        guard let userId = peer.id, !loading else { return }
+    /// onLoaded 报告拉取开始时用户是否在底部附近（发送成功后的 pill 判定用）。
+    private func loadLatest(onLoaded: ((Bool) -> Void)? = nil) {
+        guard let userId = peer.id else { return }
         guard SessionManager.shared.isLoggedIn else {
             tableView.refreshControl?.endRefreshing()
             onRequireLogin?()
             return
         }
-        loading = true
+        guard !messageBusy else {
+            tableView.refreshControl?.endRefreshing()
+            return
+        }
+        messageBusy = true
         loadFailed = false
-        let wasAtBottom: Bool = {
-            guard !messages.isEmpty else { return true }
-            let offsetY = tableView.contentOffset.y + tableView.bounds.height
-            return offsetY >= tableView.contentSize.height - 80
-        }()
+        let wasAtBottom = isNearBottom()
         BearyAPI.shared.fetchDMHistory(userId: userId, limit: 30) { [weak self] result in
             DispatchQueue.main.async {
                 guard let self = self else { return }
-                self.loading = false
+                self.messageBusy = false
                 self.tableView.refreshControl?.endRefreshing()
                 switch result {
                 case .success(let history):
@@ -265,8 +367,12 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
                     self.loadFailed = false
                     self.updateEmptyState()
                     self.tableView.reloadData()
-                    if wasAtBottom { self.scrollToBottomIfNeeded() }
+                    if wasAtBottom {
+                        self.scrollToBottomIfNeeded()
+                        self.newMessagePill.isHidden = true
+                    }
                     self.markReadIfNeeded()
+                    onLoaded?(wasAtBottom)
                 case .failure(let error):
                     if case .http(403, _) = error {
                         self.sessionClosed = true
@@ -280,18 +386,24 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
         }
     }
 
-    /// 向上翻 older：before_id 取最旧一条 id；前插后按增量高度修正 offset，
-    /// 不跳视口（与时间线分页同口径）。
+    /// 向上翻 older：before_id 取最旧一条 id；前插后以翻页前首条消息 id 为锚点
+    /// 修正 offset（锚点行在视口内的相对位置不变），行高重算也不跳视口；
+    /// 锚点丢失时才回落到整表高度差口径。
     private func loadOlder() {
-        guard let userId = peer.id, !loadingOlder, hasMoreOlder,
+        guard let userId = peer.id, !messageBusy, hasMoreOlder,
               let oldestId = messages.first?.id else { return }
-        loadingOlder = true
+        messageBusy = true
+        let anchorId = oldestId
+        let anchorViewportOffset: CGFloat = {
+            let rect = tableView.rectForRow(at: IndexPath(row: 0, section: 0))
+            return rect.origin.y - tableView.contentOffset.y
+        }()
         let oldHeight = tableView.contentSize.height
         let oldOffsetY = tableView.contentOffset.y
         BearyAPI.shared.fetchDMHistory(userId: userId, beforeId: oldestId, limit: 30) { [weak self] result in
             DispatchQueue.main.async {
                 guard let self = self else { return }
-                self.loadingOlder = false
+                self.messageBusy = false
                 switch result {
                 case .success(let history):
                     let older = Array(history.resolvedMessages.reversed())
@@ -299,10 +411,17 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
                     self.messages.insert(contentsOf: older, at: 0)
                     self.tableView.reloadData()
                     self.tableView.layoutIfNeeded()
-                    let delta = self.tableView.contentSize.height - oldHeight
-                    self.tableView.contentOffset = CGPoint(x: 0, y: oldOffsetY + delta)
+                    if let anchorIndex = self.messages.firstIndex(where: { $0.id == anchorId }) {
+                        let rect = self.tableView.rectForRow(at: IndexPath(row: anchorIndex, section: 0))
+                        self.tableView.contentOffset = CGPoint(x: 0, y: rect.origin.y - anchorViewportOffset)
+                    } else {
+                        let delta = self.tableView.contentSize.height - oldHeight
+                        self.tableView.contentOffset = CGPoint(x: 0, y: oldOffsetY + delta)
+                    }
                 case .failure:
-                    break
+                    // 审计：翻旧失败不再静默——toast 说明，hasMoreOlder 保持，
+                    // 用户再次滚动到顶部即重试（loadOlder 守卫已放行）。
+                    BearyToast.show(in: self.view, message: "加载更早消息失败，滚动可重试")
                 }
             }
         }
@@ -330,9 +449,13 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
                 case .success:
                     self.inputTextView.text = ""
                     self.updateSendButton()
+                    self.updateInputChrome()
                     // 服务端确认后重拉最新页再落行，不做乐观假态。
-                    self.loadLatest()
-                    self.scrollToBottomIfNeeded()
+                    // 审计：发送成功不再强行拽到底部——仅用户已在底部附近时跟随，
+                    // 否则显“新消息”pill，点按再到底部。
+                    self.loadLatest { [weak self] wasAtBottom in
+                        if !wasAtBottom { self?.newMessagePill.isHidden = false }
+                    }
                 case .failure(let error):
                     if case .unauthorized = error {
                         self.onRequireLogin?()
@@ -341,7 +464,8 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
                         self.inputTextView.isEditable = false
                         self.updateSendButton()
                         self.updateEmptyState()
-                        BearyToast.show(in: self.view, message: "发送失败，请重试")
+                        // 审计：403 即已关闭态，不再给自相矛盾的“请重试”。
+                        BearyToast.show(in: self.view, message: "该会话已关闭")
                     } else {
                         BearyToast.show(in: self.view, message: "发送失败，请重试")
                     }
@@ -366,10 +490,14 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
     }
 
     func scrollViewDidScroll(_ scrollView: UIScrollView) {
+        // 回到底部附近即收起“新消息”pill（程序化跟随到底同样收起）。
+        if isNearBottom() {
+            newMessagePill.isHidden = true
+        }
         // 仅用户手势滚动到顶部附近且还有 older 时翻页：程序化滚动（首拉后
         // 回到底部、reloadData 布局抖动）不得触发，否则首屏会连翻 older。
         // 下拉刷新控件也在顶部，阈值取 120，与下拉手势不打架（下拉刷新在途
-        // 时 loadOlder 的 loadingOlder 守卫互斥）。
+        // 时 loadOlder 的共用 busy 锁互斥）。
         guard scrollView.isDragging || scrollView.isDecelerating else { return }
         if scrollView.contentOffset.y < 120 {
             loadOlder()

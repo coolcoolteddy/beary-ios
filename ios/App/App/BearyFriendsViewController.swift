@@ -28,6 +28,9 @@ final class BearyFriendsViewController: UIViewController, UITableViewDelegate, U
     private var friends: [BearyAPI.FriendUser] = []
     private var loading = false
     private var loadFailed = false
+    private let dmUnreadBadge = UILabel()
+    private var dmUnreadGen = 0
+    private var dmUnreadLoading = false
 
     override func viewDidLoad() {
         super.viewDidLoad()
@@ -52,6 +55,23 @@ final class BearyFriendsViewController: UIViewController, UITableViewDelegate, U
         dmButton.addTarget(self, action: #selector(dmTapped), for: .touchUpInside)
         dmButton.bearyAddPressFeedback()
         topBar.addSubview(dmButton)
+        // 审计低风险项：私信入口未读角标（蓝底白字，与会话行角标同口径；0 时隐藏）。
+        dmUnreadBadge.translatesAutoresizingMaskIntoConstraints = false
+        dmUnreadBadge.font = .boldSystemFont(ofSize: 10)
+        dmUnreadBadge.adjustsFontForContentSizeCategory = false
+        dmUnreadBadge.textColor = .white
+        dmUnreadBadge.backgroundColor = BearyColors.blue
+        dmUnreadBadge.textAlignment = .center
+        dmUnreadBadge.layer.cornerRadius = 8.5
+        dmUnreadBadge.clipsToBounds = true
+        dmUnreadBadge.isHidden = true
+        topBar.addSubview(dmUnreadBadge)
+        NSLayoutConstraint.activate([
+            dmUnreadBadge.topAnchor.constraint(equalTo: dmButton.topAnchor, constant: 2),
+            dmUnreadBadge.trailingAnchor.constraint(equalTo: dmButton.trailingAnchor, constant: -2),
+            dmUnreadBadge.heightAnchor.constraint(equalToConstant: 17),
+            dmUnreadBadge.widthAnchor.constraint(greaterThanOrEqualToConstant: 17),
+        ])
 
         tableView.translatesAutoresizingMaskIntoConstraints = false
         tableView.backgroundColor = BearyColors.bg
@@ -82,6 +102,9 @@ final class BearyFriendsViewController: UIViewController, UITableViewDelegate, U
             topBar.heightAnchor.constraint(equalToConstant: 44),
             titleLabel.centerXAnchor.constraint(equalTo: topBar.centerXAnchor),
             titleLabel.centerYAnchor.constraint(equalTo: topBar.centerYAnchor),
+            // 审计：居中标题加左右限位，小屏＋大字体时不与右侧会话钮重叠（超长截断）。
+            titleLabel.leadingAnchor.constraint(greaterThanOrEqualTo: topBar.leadingAnchor, constant: 16),
+            titleLabel.trailingAnchor.constraint(lessThanOrEqualTo: dmButton.leadingAnchor, constant: -8),
             dmButton.trailingAnchor.constraint(equalTo: topBar.trailingAnchor, constant: -16),
             dmButton.centerYAnchor.constraint(equalTo: topBar.centerYAnchor),
             dmButton.widthAnchor.constraint(equalToConstant: 44),
@@ -139,6 +162,39 @@ final class BearyFriendsViewController: UIViewController, UITableViewDelegate, U
         load()
     }
 
+    override func viewWillAppear(_ animated: Bool) {
+        super.viewWillAppear(animated)
+        refreshDMUnreadBadge()
+    }
+
+    /// 私信入口未读角标：通知总未读含点赞等类型，不能直接当私信角标，
+    /// 故本页单独拉会话列表求和（与会话页 load 同口径的单次 GET）。
+    /// 切号时角标先清、在途回包凭代次丢弃，不写回新号。
+    func refreshDMUnreadBadge() {
+        guard SessionManager.shared.isLoggedIn else {
+            dmUnreadBadge.isHidden = true
+            return
+        }
+        guard !dmUnreadLoading else { return }
+        dmUnreadLoading = true
+        let gen = dmUnreadGen
+        BearyAPI.shared.fetchDMConversations { [weak self] result in
+            DispatchQueue.main.async {
+                guard let self = self else { return }
+                self.dmUnreadLoading = false
+                guard gen == self.dmUnreadGen else { return }
+                switch result {
+                case .success(let list):
+                    let total = list.resolvedConversations.reduce(0) { $0 + ($1.unreadCount ?? 0) }
+                    self.dmUnreadBadge.isHidden = total <= 0
+                    self.dmUnreadBadge.text = total > 99 ? "99+" : "\(total)"
+                case .failure:
+                    break // 角标失败静默：不拿旧数误导，也不弹 toast 打断好友页。
+                }
+            }
+        }
+    }
+
     @objc private func dmTapped() {
         onOpenConversations?()
     }
@@ -155,6 +211,9 @@ final class BearyFriendsViewController: UIViewController, UITableViewDelegate, U
     @objc private func userChanged() {
         // 账号切换：旧号列表不得残留。已登录重拉新号；已退出只清空、不弹登录门
         //（容器在退出翻转时自会处理页跳转，本页不抢弹）。
+        // 角标同步作废：清角标、在途会话未读回包凭代次丢弃。
+        dmUnreadGen += 1
+        dmUnreadBadge.isHidden = true
         if SessionManager.shared.isLoggedIn {
             load()
         } else {
@@ -216,8 +275,8 @@ final class BearyFriendsViewController: UIViewController, UITableViewDelegate, U
     func tableView(_ tableView: UITableView, cellForRowAt indexPath: IndexPath) -> UITableViewCell {
         let cell = tableView.dequeueReusableCell(withIdentifier: "friendCell", for: indexPath) as! BearyFriendCell
         let user = friends[indexPath.row]
-        cell.configure(user: user) { [weak self] in
-            self?.presentFriendMenu(user: user)
+        cell.configure(user: user) { [weak self] button in
+            self?.presentFriendMenu(user: user, sourceButton: button)
         }
         return cell
     }
@@ -229,7 +288,7 @@ final class BearyFriendsViewController: UIViewController, UITableViewDelegate, U
 
     /// 行内 ⋯ 菜单：取关为红字 destructive；点取关后再弹一次确认框才发请求
     ///（取关静默解除，不发通知；成功后清缓存并广播，各列表页据此重拉）。
-    private func presentFriendMenu(user: BearyAPI.FriendUser) {
+    private func presentFriendMenu(user: BearyAPI.FriendUser, sourceButton: UIButton) {
         guard let userId = user.id else { return }
         let sheet = UIAlertController(title: nil, message: nil, preferredStyle: .actionSheet)
         sheet.addAction(UIAlertAction(title: "取关", style: .destructive) { [weak self] _ in
@@ -241,6 +300,14 @@ final class BearyFriendsViewController: UIViewController, UITableViewDelegate, U
             }
         })
         sheet.addAction(UIAlertAction(title: "取消", style: .cancel, handler: nil))
+        // 审计高风险：iPad 上 actionSheet 无 popover 锚点必崩溃，锚定 ⋯ 钮。
+        // iPhone 下 popoverPresentationController 为 nil，本段不生效，底 sheet 不变。
+        // 注：Linux 无 Xcode，iPad 真机复验仍待做（见 PR 描述）。
+        if let popover = sheet.popoverPresentationController {
+            popover.sourceView = sourceButton
+            popover.sourceRect = sourceButton.bounds
+            popover.permittedArrowDirections = [.up, .down]
+        }
         present(sheet, animated: BearyMotion.animated(true))
     }
 }
@@ -253,8 +320,24 @@ private final class BearyFriendCell: UITableViewCell {
     private let fallbackLabel = UILabel()
     private let nameLabel = UILabel()
     private let handleLabel = UILabel()
+    private let separatorView = UIView()
     private var avatarTask: URLSessionDataTask?
-    private var moreHandler: (() -> Void)?
+    private var avatarURL: URL?
+    private var moreHandler: ((UIButton) -> Void)?
+
+    // 审计：头像失败重试钮（搜索页 icon_refresh 44×44 同款口径），仅失败态可见。
+    private lazy var avatarRetryButton: UIButton = {
+        let button = UIButton(type: .custom)
+        button.translatesAutoresizingMaskIntoConstraints = false
+        button.setImage(BearyIconImages.image(named: "icon_refresh", pointSize: 20), for: .normal)
+        button.tintColor = BearyColors.ink
+        button.accessibilityLabel = "重试"
+        button.accessibilityHint = "重新加载头像"
+        button.isHidden = true
+        button.addTarget(self, action: #selector(avatarRetryTapped), for: .touchUpInside)
+        button.bearyAddPressFeedback()
+        return button
+    }()
 
     private lazy var moreButton: UIButton = {
         let button = UIButton(type: .system)
@@ -295,11 +378,15 @@ private final class BearyFriendCell: UITableViewCell {
         handleLabel.textColor = BearyColors.gray
         handleLabel.numberOfLines = 1
 
+        separatorView.translatesAutoresizingMaskIntoConstraints = false
+        separatorView.backgroundColor = BearyColors.line
         contentView.addSubview(avatarView)
         contentView.addSubview(fallbackLabel)
+        contentView.addSubview(avatarRetryButton)
         contentView.addSubview(nameLabel)
         contentView.addSubview(handleLabel)
         contentView.addSubview(moreButton)
+        contentView.addSubview(separatorView)
         NSLayoutConstraint.activate([
             avatarView.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 14),
             avatarView.bottomAnchor.constraint(equalTo: contentView.bottomAnchor, constant: -14),
@@ -321,6 +408,15 @@ private final class BearyFriendCell: UITableViewCell {
             moreButton.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -16),
             moreButton.widthAnchor.constraint(equalToConstant: 44),
             moreButton.heightAnchor.constraint(equalToConstant: 44),
+            avatarRetryButton.centerXAnchor.constraint(equalTo: avatarView.centerXAnchor),
+            avatarRetryButton.centerYAnchor.constraint(equalTo: avatarView.centerYAnchor),
+            avatarRetryButton.widthAnchor.constraint(equalToConstant: 44),
+            avatarRetryButton.heightAnchor.constraint(equalToConstant: 44),
+            // 审计低风险项：行底 1pt 分隔线（与日记行底边同口径）。
+            separatorView.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 16),
+            separatorView.trailingAnchor.constraint(equalTo: contentView.trailingAnchor),
+            separatorView.bottomAnchor.constraint(equalTo: contentView.bottomAnchor),
+            separatorView.heightAnchor.constraint(equalToConstant: 1),
             contentView.heightAnchor.constraint(greaterThanOrEqualToConstant: 72),
         ])
     }
@@ -333,12 +429,15 @@ private final class BearyFriendCell: UITableViewCell {
         super.prepareForReuse()
         avatarTask?.cancel()
         avatarTask = nil
+        avatarURL = nil
         avatarView.image = nil
+        avatarRetryButton.isHidden = true
         moreHandler = nil
     }
 
-    func configure(user: BearyAPI.FriendUser, onMore: @escaping () -> Void) {
+    func configure(user: BearyAPI.FriendUser, onMore: @escaping (UIButton) -> Void) {
         moreHandler = onMore
+        avatarRetryButton.isHidden = true
         let displayName = (user.displayName?.isEmpty == false) ? user.displayName! : "Beary 用户"
         nameLabel.text = displayName
         if let handle = user.handle, !handle.isEmpty {
@@ -350,14 +449,7 @@ private final class BearyFriendCell: UITableViewCell {
         if let avatarPath = user.avatarUrl, let url = BearyImageURLs.avatarURL(avatarPath) {
             avatarView.isHidden = false
             fallbackLabel.isHidden = true
-            avatarTask = BearyImageLoader.shared.loadDetailed(url: url) { [weak self] result in
-                DispatchQueue.main.async {
-                    guard let self = self else { return }
-                    if case .success(let image) = result {
-                        self.avatarView.image = image
-                    }
-                }
-            }
+            loadAvatar(url: url, displayName: displayName)
         } else {
             avatarView.isHidden = true
             fallbackLabel.isHidden = false
@@ -365,7 +457,37 @@ private final class BearyFriendCell: UITableViewCell {
         }
     }
 
+    private func loadAvatar(url: URL, displayName: String) {
+        avatarURL = url
+        avatarTask?.cancel()
+        avatarTask = BearyImageLoader.shared.loadDetailed(url: url) { [weak self] result in
+            DispatchQueue.main.async {
+                guard let self = self else { return }
+                switch result {
+                case .success(let image):
+                    self.avatarView.image = image
+                    self.avatarRetryButton.isHidden = true
+                case .failure:
+                    // 审计：头像失败不再留空白圆圈——回默认首字母占位＋点按重试。
+                    self.avatarView.isHidden = true
+                    self.fallbackLabel.isHidden = false
+                    self.fallbackLabel.text = String(displayName.prefix(1)).uppercased()
+                    self.avatarRetryButton.isHidden = false
+                }
+            }
+        }
+    }
+
+    @objc private func avatarRetryTapped() {
+        guard let url = avatarURL else { return }
+        avatarRetryButton.isHidden = true
+        avatarView.isHidden = false
+        fallbackLabel.isHidden = true
+        let displayName = nameLabel.text ?? "Beary 用户"
+        loadAvatar(url: url, displayName: displayName)
+    }
+
     @objc private func moreTapped() {
-        moreHandler?()
+        moreHandler?(moreButton)
     }
 }

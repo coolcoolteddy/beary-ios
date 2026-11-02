@@ -173,6 +173,8 @@ final class BearyNotificationsViewController: UIViewController {
     /// 未拉取时无条目，configure 时按行拉 state 接口。
     private var followCardStates: [Int: BearyNotificationCell.FollowCardState] = [:]
     private var followCardLoadingIds: Set<Int> = []
+    /// 审计：回关卡请求代次——切号时 +1，在途回包凭代次丢弃，不写回新号。
+    private var followCardGeneration = 0
     private var lastPublishedUnread = -1
     private var lastPublishedSysUnread = -1
     /// 上次整页加载时的未读数快照（门控用，与 unreadTotal 严格分开）：
@@ -276,6 +278,8 @@ final class BearyNotificationsViewController: UIViewController {
             titleLabel.leadingAnchor.constraint(equalTo: header.leadingAnchor, constant: 20),
             titleLabel.topAnchor.constraint(equalTo: header.topAnchor, constant: 14),
             titleLabel.bottomAnchor.constraint(equalTo: header.bottomAnchor, constant: -4),
+            // 审计：标题加右侧限位，大字体时不与“全部已读”钮重叠（超长截断）。
+            titleLabel.trailingAnchor.constraint(lessThanOrEqualTo: readAllButton.leadingAnchor, constant: -8),
             readAllButton.trailingAnchor.constraint(equalTo: header.trailingAnchor, constant: -20),
             readAllButton.centerYAnchor.constraint(equalTo: titleLabel.centerYAnchor),
         ])
@@ -1024,9 +1028,16 @@ final class BearyNotificationsViewController: UIViewController {
     }
 
     /// 补缺 P3-38：账号变化时复位 seen 水印（与 clearItemsAfterUnauthorized 的登出重置同款两字段）。
+    /// 审计追加：切号同步清回关卡状态与在途态；在途回包凭代次丢弃；
+    /// 可见卡先重配回 loading 态（触发新号重拉），旧号已互关态不残留。
     @objc private func handleUserChanged() {
         displayHighlightWatermarkMs = nil
         notifPageEntered = false
+        followCardStates.removeAll()
+        followCardLoadingIds.removeAll()
+        followCardGeneration += 1
+        cancelCardAnimation()
+        tableView.reloadData()
     }
 
     /// 未登录提示一集只发一次：toast“请先登录”，1200ms 后走 onRequireLogin。
@@ -1311,6 +1322,10 @@ final class BearyNotificationsViewController: UIViewController {
                 strongSelf.zeroHeightRows.removeAll()
                 strongSelf.cardAnimatingKind = nil
                 strongSelf.isCardAnimating = false
+                // 零高期隐藏的无障碍恢复：行已满高，不再隐藏。
+                for visibleCell in strongSelf.tableView.visibleCells {
+                    visibleCell.accessibilityElementsHidden = false
+                }
             })
             cardAnimator = animator
             animator.startAnimation()
@@ -1420,6 +1435,10 @@ final class BearyNotificationsViewController: UIViewController {
             strongSelf.zeroHeightRows.removeAll()
             strongSelf.cardAnimatingKind = nil
             strongSelf.isCardAnimating = false
+            // 零高期隐藏的无障碍恢复（与展开 animator completion 同口径）。
+            for visibleCell in strongSelf.tableView.visibleCells {
+                visibleCell.accessibilityElementsHidden = false
+            }
         })
         cardAnimator = animator
         animator.startAnimation()
@@ -1666,18 +1685,29 @@ final class BearyNotificationsViewController: UIViewController {
         cell.configureFollowCard(state: .loading) { [weak self] in
             self?.handleFollowBack(itemIndex: itemIndex)
         }
+        fetchFollowCardState(actorId: actorId)
+    }
+
+    /// 回关卡 state 拉取（configure 与失败重试共用）：切号后在途回包凭代次丢弃；
+    /// 拉取失败不再永久禁用——写 .loadFailed，按钮恢复可点并 toast 说明，
+    /// 点按重试拉取（见 handleFollowBack 的 .loadFailed 分支）。
+    private func fetchFollowCardState(actorId: Int) {
         guard !followCardLoadingIds.contains(actorId) else { return }
         followCardLoadingIds.insert(actorId)
+        let gen = followCardGeneration
         BearyAPI.shared.fetchFollowState(userId: actorId) { [weak self] result in
             DispatchQueue.main.async {
                 guard let self = self else { return }
                 self.followCardLoadingIds.remove(actorId)
-                if case .success(let state) = result {
+                guard gen == self.followCardGeneration else { return }
+                switch result {
+                case .success(let state):
                     let followState = BearyFollowState(response: state)
                     self.followCardStates[actorId] = followState == .mutual ? .mutual : .canFollowBack
+                case .failure:
+                    self.followCardStates[actorId] = .loadFailed
+                    self.showToast(message: "回关状态加载失败，点按可重试")
                 }
-                // 失败时不写态：按钮仍是禁用态，下次重配（滚动回显/整页重拉）时
-                // 再拉一次；点按回关本身幂等安全，见 handleFollowBack 的失败回落。
                 self.refreshFollowCardRows(actorId: actorId)
             }
         }
@@ -1688,6 +1718,13 @@ final class BearyNotificationsViewController: UIViewController {
         let item = items[itemIndex]
         guard let actorId = item.actorId else {
             showToast(message: "回关失败，请重试")
+            return
+        }
+        // 失败态点按 = 重试拉取 state，不发 follow 请求。
+        if case .loadFailed = followCardStates[actorId] {
+            followCardStates.removeValue(forKey: actorId)
+            refreshFollowCardRows(actorId: actorId)
+            fetchFollowCardState(actorId: actorId)
             return
         }
         // 已互关/在途时不再发请求（卡上按钮已是已互关态或禁用态，双重守卫）。
@@ -1702,9 +1739,11 @@ final class BearyNotificationsViewController: UIViewController {
             followCardStates[actorId] = .busy
             refreshFollowCardRows(actorId: actorId)
         }
+        let gen = followCardGeneration
         BearyAPI.shared.followFriend(userId: actorId) { [weak self] result in
             DispatchQueue.main.async {
                 guard let self = self else { return }
+                guard gen == self.followCardGeneration else { return }
                 switch result {
                 case .success:
                     self.followCardStates[actorId] = .mutual
@@ -2236,6 +2275,9 @@ extension BearyNotificationsViewController: UITableViewDataSource, UITableViewDe
                 configureFollowCardIfNeeded(cell: cell, itemIndex: itemIndex)
             }
         }
+        // 审计复核：展开动画期间行高为 0，行仍在层级里、VoiceOver 可聚焦。
+        // 零高期间整行无障碍隐藏；生长动画完成时下式复位（见展开 animator completion）。
+        cell.accessibilityElementsHidden = zeroHeightRows.contains(indexPath.row)
         return cell
     }
 
@@ -2782,7 +2824,8 @@ private class BearyNotificationCell: UITableViewCell {
     }()
 
     private lazy var followBackButton: UIButton = {
-        let button = UIButton(type: .system)
+        // 审计：回关钮视觉高约 32 不变，热区用 Hit44 扩到 44。
+        let button = BearyHit44Button(type: .system)
         button.translatesAutoresizingMaskIntoConstraints = false
         button.setTitle("回关", for: .normal)
         button.titleLabel?.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 14, weight: .semibold))
@@ -3388,6 +3431,8 @@ private class BearyNotificationCell: UITableViewCell {
         case mutual
         /// 回关请求在途：按钮禁用防重复发。
         case busy
+        /// state 拉取失败：按钮恢复可点，点按重试拉取（审计，不永久禁用）。
+        case loadFailed
     }
 
     /// 关注提醒卡动作区：base configure(with:) 已画好头像/名字/时间（verb“关注了你”），
@@ -3404,7 +3449,7 @@ private class BearyNotificationCell: UITableViewCell {
             followProcessedLabel.isHidden = true
             followBackButton.isEnabled = false
             followBackButton.alpha = 0.6
-        case .canFollowBack:
+        case .canFollowBack, .loadFailed:
             followBackButton.isHidden = false
             followProcessedLabel.isHidden = true
             followBackButton.isEnabled = true
