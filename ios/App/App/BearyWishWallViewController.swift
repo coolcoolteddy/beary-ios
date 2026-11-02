@@ -975,7 +975,7 @@ final class BearyWishCreateViewController: UIViewController, UITextViewDelegate 
                     } else if case .server(let code) = err, code == "rate_limited" {
                         message = "操作太频繁，请稍后再试"
                     } else {
-                        message = "发布失败，请稍后再试"
+                        message = "发布失败，请重试"
                     }
                     BearyToast.show(in: self.view, message: message)
                 }

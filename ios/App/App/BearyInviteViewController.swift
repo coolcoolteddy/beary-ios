@@ -453,7 +453,7 @@ final class BearyInviteViewController: UIViewController {
                         strongSelf.showMessage(pending, ok: strongSelf.pendingBindMessageOK)
                         strongSelf.pendingBindMessage = nil
                     } else {
-                        strongSelf.showMessage("网络错误，请重试")
+                        strongSelf.showMessage("网络不稳定，请稍后再试")
                     }
                     strongSelf.retryButton.isHidden = false
                 case .failure:
@@ -673,7 +673,7 @@ final class BearyInviteViewController: UIViewController {
                 case .failure(.server(let message)):
                     strongSelf.showMessage(message)
                 case .failure(.network):
-                    strongSelf.showMessage("网络异常，请稍后再试")
+                    strongSelf.showMessage("网络不稳定，请稍后再试")
                 case .failure:
                     strongSelf.showMessage("绑定失败，请稍后再试")
                 }
