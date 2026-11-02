@@ -2683,8 +2683,8 @@ final class BearyChromeViewController: UIViewController {
         case .changed:
             let offset = BearySheetDrag.offset(for: translation)
             sheet.transform = CGAffineTransform(translationX: 0, y: offset)
-            let height = sheet.bounds.height > 0 ? sheet.bounds.height : 1
-            scrim.alpha = max(0, 1 - max(0, offset) / height)
+            // 审计第 14 项：原口径不动，改走共用映射（其余面板与此同口径）。
+            scrim.alpha = BearySheetDrag.scrimAlpha(forDragOffset: offset, sheetHeight: sheet.bounds.height)
         case .ended:
             let velocity = gesture.velocity(in: view).y
             if translation > 80 || velocity > 600 {
@@ -3912,9 +3912,8 @@ private final class BearyComposerSheetPresentationController: UIPresentationCont
             let drag = BearySheetDrag.offset(for: translation)
             presentedView.transform = CGAffineTransform(translationX: 0, y: drag)
             sheetShadowView.transform = presentedView.transform
-            if sheetHeight > 0 {
-                dimmingView.alpha = max(0, 1 - max(0, drag) / sheetHeight)
-            }
+            // 审计第 14 项：原口径不动，改走共用映射（其余面板与此同口径）。
+            dimmingView.alpha = BearySheetDrag.scrimAlpha(forDragOffset: drag, sheetHeight: sheetHeight)
         case .ended:
             // 审计 B 组 8：只在正常松手时执行关闭判断，条件原样不动
             // （位移 > 高 × 0.25 或速度 > 800 即关闭，否则弹回原位）。
