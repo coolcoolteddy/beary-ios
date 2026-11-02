@@ -804,6 +804,16 @@ final class BearyYearReviewViewController: UIViewController {
         return isOwnFlag ? .own : .other
     }
 
+    /// [24] 小项 5：年报脚注唯一出处（空年与非空年共用，防两处文案漂移）。
+    private func makeYearReviewFootnote() -> UILabel {
+        let footnote = UILabel()
+        footnote.numberOfLines = 0
+        footnote.font = UIFont.systemFont(ofSize: 12)
+        footnote.textColor = BearyColors.gray
+        footnote.text = "词汇指纹只按当年正文统计，不展示正文。完整年度报告年底另做。"
+        return footnote
+    }
+
     private func renderSelectedYear() {
         // 代次先 +1：空年提前返回的分支同样作废在途旧请求，旧词行
         // 绝不插进新年的栈。
@@ -841,6 +851,10 @@ final class BearyYearReviewViewController: UIViewController {
             emptyLabel.textColor = BearyColors.gray
             emptyLabel.text = "这一年还没有日记"
             dynamicStack.addArrangedSubview(emptyLabel)
+            // [24] 小项 5：空年分支原先没有脚注，只剩口径徽标行；补与非空年
+            // 同一条脚注（同文案、同字号同灰色，见 makeYearReviewFootnote），
+            // 避免空年页丢了“完整年度报告年底另做”的口径说明。
+            dynamicStack.addArrangedSubview(makeYearReviewFootnote())
             return
         }
 
@@ -975,12 +989,7 @@ final class BearyYearReviewViewController: UIViewController {
         chartView.configure(monthlyChars: extras.monthlyChars)
         dynamicStack.addArrangedSubview(chartView)
 
-        let footnote = UILabel()
-        footnote.numberOfLines = 0
-        footnote.font = UIFont.systemFont(ofSize: 12)
-        footnote.textColor = BearyColors.gray
-        footnote.text = "词汇指纹只按当年正文统计，不展示正文。完整年度报告年底另做。"
-        dynamicStack.addArrangedSubview(footnote)
+        dynamicStack.addArrangedSubview(makeYearReviewFootnote())
 
         // 词汇指纹后台算：缓存命中时同步回调、直接插在栈顶；未命中时
         // 后台算完回主线程一次性插回，最终顺序与同步版一致。代次 + 年份

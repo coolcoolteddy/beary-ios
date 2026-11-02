@@ -5976,8 +5976,14 @@ let viewer = BearyEntryImageViewerViewController(imageKeys: allPhotos.map { $0.i
         switch currentTab {
         case .diary:
             // 网页 beary.html:2690 的 nb-once 口径：一次性描画铅笔。
-            titleText = "还没有公开的日记"
-            subtitleText = isOwnProfile ? "写下第一篇，默认私密" : ""
+            // [24] 小项 4：他人页日记空态原先副文案为空（标题下只剩空白），
+            // 与赞过/收藏空态“标题＋副文案”不对齐。补齐只复用项目内已有
+            // 措辞：标题照赞过空态的 TA 式（“TA 还没有赞过的日记”），副文案
+            // 取广场空态前半句“公开的日记会出现在这里”（后半句“写一篇并
+            // 公开试试”是给本人的动作指引，他人页不适用，故不取）；本人页
+            // 原文案一字不动。
+            titleText = isOwnProfile ? "还没有公开的日记" : "TA 还没有公开的日记"
+            subtitleText = isOwnProfile ? "写下第一篇，默认私密" : "公开的日记会出现在这里"
             let pencilView = BearyPencilView()
             pencilView.strokeColor = BearyColors.gray
             graphicView = pencilView

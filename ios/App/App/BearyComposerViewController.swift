@@ -538,6 +538,16 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     private static let calloutTransitionDuration: TimeInterval = 0.20
     private static let calloutTransitionOffset: CGFloat = 6
     private static let calloutHeight: CGFloat = 78
+    /// [24] 小项 2：天气框高约束（基准 78；步进器附属行显时 += 附属行高，
+    /// 见 updateWeatherCalloutHeight；心情框仍走固定 78，不受影响）。
+    private var weatherCalloutHeightConstraint: NSLayoutConstraint?
+
+    /// [24] 小项 2：天气框高 = 基准 + 附属行显隐对应的增量；框未搭建时
+    /// 约束为 nil，直接跳过（refreshSelectedChips 在搭建前也可能调到）。
+    private func updateWeatherCalloutHeight() {
+        guard let constraint = weatherCalloutHeightConstraint else { return }
+        constraint.constant = Self.calloutHeight + weatherCallout.accessoryExtraHeight
+    }
     // C1：已选中项轻量 Chip 行（正文下方）：心情/天气/写给各一枚，点 chip 打开对应选择条。
     private let selectedChipsRow = UIStackView()
     /// 审计 P1-3：Chip 行首行（心情/天气/写给单行态）；写给换行时脱离本行、改作
@@ -547,16 +557,8 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     /// 凭此 + 宽门限决定是否重算，避免移行触发布局 → 再移行的循环。
     private var selectedChipsRecipientOnSecondRow = false
     private var selectedChipsLastLayoutWidth: CGFloat = -1
-    /// 窄屏 5 项之 1：气温步进器当前是否在独立第二行（见 layoutSelectedChips）。
-    /// 首行三项（心情＋天气＋步进器）本身超宽时，写给换行已不够——步进器
-    /// 独占第二行兜底，首行不再被 required 抗压挤出约束冲突；宽回升即回首行。
-    private var selectedChipsTempStepperOnSecondRow = false
-    /// 窄屏 5 项之 1：步进器第二行时的包壳横栈（竖栈 alignment .fill 会把
-    /// 直接进竖栈的步进器拉满宽、−／数值／＋被撑散；包壳内步进器 required
-    /// hugging 保自然宽、弹性 spacer 吸掉剩余宽，步进器本身不设显式宽约束，
-    /// 免得与竖栈 fill 约束顶成 required 对 required 的冲突）。
-    private let tempStepperSecondRowWrap = UIStackView()
-    private let tempStepperSecondRowSpacer = UIView()
+    /// [24] 审计后续小项 2：气温步进器已收进天气框附属行，不再进 chip 行；
+    /// 窄屏第二行包壳与换行兜底随之删除（步进器不再参与首行宽度计算）。
     /// 审计 P1-8：选择条转场代次——每次 refreshToolStrip 显隐变化即 +1；旧转场
     /// 的 completion 凭代次过期作废，不再碰视图，快速连点只收敛到最后状态。
     private var toolStripTransitionGeneration = 0
@@ -2703,12 +2705,14 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         refreshQuoteSection()
     }
 
-    /// 面板行日期：M月d日 HH:mm（与网页 fmtDate 同款）。
+    /// [24] 小项 6：面板行日期统一为项目主流口径 M月d日 H:mm（小时不补零；
+    /// 旧注“与网页 fmtDate 同款”有误：卡片/详情/通知/时间线引用一律 H:mm，
+    /// 本处原 HH:mm 是唯一偏离的日记日期行，已改齐）。
     private func quoteRowDate(ms: Int) -> String {
         let date = Date(timeIntervalSince1970: TimeInterval(ms) / 1000.0)
         let fmt = DateFormatter()
         fmt.locale = Locale(identifier: "zh_CN")
-        fmt.dateFormat = "M月d日 HH:mm"
+        fmt.dateFormat = "M月d日 H:mm"
         return fmt.string(from: date)
     }
 
@@ -3078,10 +3082,14 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             },
             selectedKey: selectedWeather
         )
+        // [24] 小项 2：气温步进器以附属行身份挂进天气框（不进 chip 行），
+        // 框内点按步进器不触发框外收起（附属行在收起层之上、与框同层级）。
+        weatherCallout.setAccessoryView(tempStepperStack)
         // 收起层先加、框后加：框在收起层之上，框内点按不触发框外收起。
         view.addSubview(calloutDismissView)
         view.addSubview(moodCallout)
         view.addSubview(weatherCallout)
+        weatherCalloutHeightConstraint = weatherCallout.heightAnchor.constraint(equalToConstant: Self.calloutHeight)
         NSLayoutConstraint.activate([
             calloutDismissView.topAnchor.constraint(equalTo: view.topAnchor),
             calloutDismissView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
@@ -3094,8 +3102,9 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             weatherCallout.leadingAnchor.constraint(equalTo: toolbarContainer.leadingAnchor),
             weatherCallout.trailingAnchor.constraint(equalTo: toolbarContainer.trailingAnchor),
             weatherCallout.bottomAnchor.constraint(equalTo: toolbarContainer.topAnchor, constant: -8),
-            weatherCallout.heightAnchor.constraint(equalToConstant: Self.calloutHeight),
+            weatherCalloutHeightConstraint!,
         ])
+        updateWeatherCalloutHeight()
     }
 
     /// 弹出框心情图：官方 emote 静态 PNG 按 44pt 重绘（与已选 chip 的 16pt 同款做法）；
@@ -3138,6 +3147,9 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         // 否则重开框或编辑带天气的草稿时选中态仍是旧的。
         if kind == .weather {
             weatherCallout.setSelectedKey(selectedWeather)
+            // [24] 小项 2：打开前按当前天气态定框高（有天气则含步进器行）。
+            weatherCallout.setAccessoryVisible(selectedWeather != nil)
+            updateWeatherCalloutHeight()
         }
         let target = kind == .mood ? moodCallout : weatherCallout
         let other = kind == .mood ? weatherCallout : moodCallout
@@ -3549,7 +3561,10 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             weatherChipButton.setImage(nil, for: .normal)
         }
         // 气温步进器只跟天气类型走：有类型才显，无类型（“无”）时连气温同清、不留孤气温。
-        tempStepperStack.isHidden = selectedWeather == nil
+        // [24] 小项 2：步进器在天气框附属行里（见 buildCallouts），此处只管
+        // 附属行显隐 + 框高，不再管 chip 行里的步进器。
+        weatherCallout.setAccessoryVisible(selectedWeather != nil)
+        updateWeatherCalloutHeight()
         tempLabelButton.setTitle(selectedTemperature != nil ? "\(selectedTemperature!)°" : "气温", for: .normal)
         tempLabelButton.accessibilityLabel = selectedTemperature != nil ? "气温：\(selectedTemperature!)°，点按可输入" : "气温：未设置，点按可输入"
         let recipientName: String?
@@ -3580,27 +3595,6 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         layoutSelectedChips()
     }
 
-    /// 窄屏 5 项之 1：气温步进器的实测宽。UIStackView 没有固有尺寸，
-    /// intrinsicContentSize 恒为 -1（UIView.noIntrinsicMetric），旧口径直接
-    /// 用它算换行总宽、每行少算约 113pt，写给该换行时没换、被挤压截断。
-    /// 改 systemLayoutSizeFitting（压缩拟合）实测：三枚钮固有宽＋栈间距即
-    /// 自然宽；拟合失败（≤0）时退回各子项固有宽求和，绝不回落到 -1。
-    private func tempStepperMeasuredWidth() -> CGFloat {
-        guard !tempStepperStack.isHidden else { return 0 }
-        let fitting = tempStepperStack.systemLayoutSizeFitting(UIView.layoutFittingCompressedSize)
-        if fitting.width > 0 { return fitting.width }
-        var width: CGFloat = 0
-        var count = 0
-        for view in tempStepperStack.arrangedSubviews where !view.isHidden {
-            width += view.intrinsicContentSize.width
-            count += 1
-        }
-        if count > 1 {
-            width += CGFloat(count - 1) * tempStepperStack.spacing
-        }
-        return width
-    }
-
     /// 审计 P1-3：三 chip 收缩优先级与换行。
     /// 单行态：心情/天气自然宽（hugging + 抗压缩双 required，文字不缩小、不截断），
     /// 写给占剩余（hugging/compression 双 low：有富余则伸满、空间紧则先缩），
@@ -3608,10 +3602,8 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     /// 空间不足（单行总宽 > 行宽）且写给与心情/天气同显时：写给脱离首行、
     /// 独立成第二行（满宽、尾截断），心情/天气保持自然宽不动——不缩小全部文字。
     /// 写给单独出现时不换行（满宽即剩余，超长只尾截断）。
-    /// 窄屏 5 项之 1 兜底：心情＋天气＋步进器三项本身已超行宽时，只挪写给
-    /// 仍救不了首行（三个 required 项互相顶出约束冲突），步进器先经包壳
-    /// 独占第二行（包壳内保自然宽、不被竖栈拉满），首行只剩心情／天气；
-    /// 宽回升即回首行。
+    /// [24] 小项 2：步进器已收进天气框，首行只剩心情／天气／写给三项，
+    /// 窄屏第二行兜底（步进器包壳）已随之删除，不再有步进器换行态。
     /// 只在换行态真正变化时移视图；同态重算不碰层级，不触发布局环。
     /// （移行不改行宽，viewDidLayoutSubviews 的宽门限仍挡得住重入。）
     private func layoutSelectedChips() {
@@ -3632,35 +3624,6 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         let moodVisible = !moodChipButton.isHidden
         let weatherVisible = !weatherChipButton.isHidden
         let recipientVisible = !recipientChipButton.isHidden
-        let stepperVisible = !tempStepperStack.isHidden
-        let stepperWidth = tempStepperMeasuredWidth()
-        // 首行基底：心情／天气自然宽＋其间间距（UIButton intrinsic 已含边距与标题宽）。
-        var firstRowBaseWidth: CGFloat = 0
-        var firstRowBaseCount = 0
-        for button in [moodChipButton, weatherChipButton] where !button.isHidden {
-            firstRowBaseWidth += button.intrinsicContentSize.width
-            firstRowBaseCount += 1
-        }
-        if firstRowBaseCount > 1 {
-            firstRowBaseWidth += CGFloat(firstRowBaseCount - 1) * selectedChipsFirstRow.spacing
-        }
-        // 兜底先算：步进器在首行时首行总宽＝基底＋步进器＋一格间距。
-        let firstRowWithStepper = firstRowBaseWidth
-            + (stepperVisible ? stepperWidth + (firstRowBaseCount > 0 ? selectedChipsFirstRow.spacing : 0) : 0)
-        let stepperOnSecondRow = stepperVisible && firstRowWithStepper > available
-        if stepperOnSecondRow != selectedChipsTempStepperOnSecondRow {
-            selectedChipsTempStepperOnSecondRow = stepperOnSecondRow
-            if stepperOnSecondRow {
-                selectedChipsFirstRow.removeArrangedSubview(tempStepperStack)
-                // 包壳插到首行正下方：写给已在第二行时被顶到其下，顺序仍是首行／步进器／写给。
-                tempStepperSecondRowWrap.insertArrangedSubview(tempStepperStack, at: 0)
-                selectedChipsRow.insertArrangedSubview(tempStepperSecondRowWrap, at: 1)
-            } else {
-                selectedChipsRow.removeArrangedSubview(tempStepperSecondRowWrap)
-                tempStepperSecondRowWrap.removeArrangedSubview(tempStepperStack)
-                selectedChipsFirstRow.addArrangedSubview(tempStepperStack)
-            }
-        }
         guard recipientVisible, moodVisible || weatherVisible else {
             // 写给单独出现或未出现：单行态即是终态（未出现时首行只剩隐藏项，塌高为 0）。
             if selectedChipsRecipientOnSecondRow {
@@ -3670,8 +3633,8 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             }
             return
         }
-        // 写给换行总宽：心情／天气／写给自然宽＋间距；步进器已在第二行时
-        // 不再计入首行宽（它已不在首行），否则会把写给误判为需换行。
+        // 写给换行总宽：心情／天气／写给自然宽＋间距。
+        // [24] 小项 2：步进器已收进天气框，不再计入首行宽。
         var singleLineWidth: CGFloat = 0
         var visibleCount = 0
         for button in [moodChipButton, weatherChipButton, recipientChipButton] where !button.isHidden {
@@ -3680,9 +3643,6 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         }
         if visibleCount > 1 {
             singleLineWidth += CGFloat(visibleCount - 1) * selectedChipsFirstRow.spacing
-        }
-        if stepperVisible, !stepperOnSecondRow {
-            singleLineWidth += stepperWidth + selectedChipsFirstRow.spacing
         }
         let wrapRecipient = singleLineWidth > available
         guard wrapRecipient != selectedChipsRecipientOnSecondRow else { return }
@@ -3728,7 +3688,8 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             chip.button.translatesAutoresizingMaskIntoConstraints = false
             selectedChipsFirstRow.addArrangedSubview(chip.button)
         }
-        // 气温步进器：挂在 chip 首行天气 chip 之后，只在已选天气时显（见 refreshSelectedChips）。
+        // [24] 小项 2：气温步进器不再挂 chip 首行，改挂天气框附属行
+        //（buildCallouts 里 setAccessoryView）；只在已选天气时显（见 refreshSelectedChips）。
         tempStepperStack.axis = .horizontal
         tempStepperStack.spacing = 4
         tempStepperStack.alignment = .center
@@ -3753,14 +3714,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         }
         tempStepperStack.setContentHuggingPriority(.required, for: .horizontal)
         tempStepperStack.setContentCompressionResistancePriority(.required, for: .horizontal)
-        selectedChipsFirstRow.addArrangedSubview(tempStepperStack)
-        // 窄屏 5 项之 1：第二行包壳（平时不进竖栈、不占高）：横栈＋弹性 spacer，
-        // 步进器 required hugging 保自然宽、spacer 吸剩余宽，见 layoutSelectedChips。
-        tempStepperSecondRowWrap.axis = .horizontal
-        tempStepperSecondRowWrap.spacing = 0
-        tempStepperSecondRowWrap.alignment = .center
-        tempStepperSecondRowWrap.translatesAutoresizingMaskIntoConstraints = false
-        tempStepperSecondRowWrap.addArrangedSubview(tempStepperSecondRowSpacer)
+        // 不进 chip 行：buildCallouts 里以附属行身份挂进天气框。
         // 审计 P1-3：心情/天气自然宽不让步；写给低优先级，占剩余、紧时先缩先截断。
         moodChipButton.setContentHuggingPriority(.required, for: .horizontal)
         moodChipButton.setContentCompressionResistancePriority(.required, for: .horizontal)
@@ -3811,21 +3765,20 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         toggleCallout(.mood)
     }
 
-    /// 天气钮：点一下先自动取当地天气和气温填上，再打开天气选择器——填上之后
-    /// 类型可在选择器里手改、气温可在 chip 行步进器里手改，改完以手改的为准
-    /// （手选/手改气温会使在途自动填回包过期作废，见 weatherFetchGeneration）；
-    /// 再点天气钮会重新自动填（覆盖手改）。取不到时如实提示、不编假数据填上，
-    /// 仍打开选择器供手动选。
+    /// [24] 小项 1：天气钮点按即打开天气选择器，不再等自动取数回包才开
+    ///（旧口径：先 fetchLocalWeather、回包尾部才 showCallout，网络慢/
+    /// 取不到时选择器迟迟不开，看起来像要点两次）。自动取数仍在后台走：
+    /// 取到后填类型与气温（手选/手改气温仍凭 weatherFetchGeneration 使
+    /// 在途回包过期作废，不覆盖手改）；取不到只 toast，不编假数据。
+    /// 回包不再抢开选择器——用户若已手动关框，回包只落数不重开。
+    /// 填上之后类型可在选择器里手改、气温在框内步进器里手改（小项 2）；
+    /// 再点天气钮会重新自动填（覆盖手改，#427 口径不变）。
     @objc private func didTapWeatherTool() {
         DiagFile.mark("weather-diag didTapWeatherTool")
         hideLocationPopover(animated: false)
+        showCallout(.weather)
         weatherFetchGeneration += 1
         let generation = weatherFetchGeneration
-        // 审计 1：记下本次展示意图；取数代次与展示意图代次分开——
-        // 定位点按不碰 weatherFetchGeneration、不取消本请求。
-        calloutPresentationGeneration += 1
-        let presentationGeneration = calloutPresentationGeneration
-        showToast(message: "正在获取当地天气…")
         BearyAPI.shared.fetchLocalWeather { [weak self] result in
             DispatchQueue.main.async {
                 guard let self = self, self.weatherFetchGeneration == generation else { return }
@@ -3838,13 +3791,13 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                     self.syncWeatherToolButton()
                     self.refreshSelectedChips()
                     self.scheduleDraftSave()
+                    // 框还开着时同步框内选中态与步进器显隐；框已关则不重开。
+                    if self.activeCallout == .weather {
+                        self.weatherCallout.setSelectedKey(self.selectedWeather)
+                    }
                 case .failure:
                     self.showToast(message: "没取到当地天气，请手动选")
                 }
-                // 审计 1：取数与落数原样不变；只有展示意图过期时不抢开——
-                // 用户中途切到定位/心情/写给/引用等工具后，回包不再顶掉当前浮层。
-                guard presentationGeneration == self.calloutPresentationGeneration else { return }
-                self.showCallout(.weather)
             }
         }
     }
