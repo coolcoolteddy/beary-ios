@@ -101,6 +101,28 @@ private final class BearyBodyTextView: UITextView {
     }
 }
 
+/// U3：编辑器工具栏六钮专用热区钮（图片／定位／心情／天气／@／引用）。
+/// 根因：六钮视觉帧 24pt，父类 BearyHit44Button 对称各扩 10pt 至 44pt；
+/// 工具行间距 16 时中心距 24+16=40 < 44，相邻热区重叠 4pt，窄屏间距压到 8 时
+/// 中心距 32、重叠 12pt，交界处点按落到后加的右钮。
+/// 修法：横向扩量改由工具行间距实时给定（maxSideExpansion = 间距 / 2），
+/// 相邻热区宽 = 24 + 间距 = 中心距，恰好相接、不互叠；纵向仍扩满 44
+/// （工具行高 ≥44，纵向无相邻钮可叠）。视觉帧、图标、顺序、目标动作一律不动；
+/// 仅六个工具钮用本类，顶栏／重试等其余 Hit44 钮不受影响。
+/// 按压反馈仍走原 bearyAddPressFeedback（只走 transform／opacity），
+/// 本类不新增交互面，不涉及 tap 高亮与焦点描边。
+private final class BearyComposerToolButton: BearyHit44Button {
+    /// 横向单侧最大扩量，由 setToolbarToolRowSpacing 随工具行间距同步；
+    /// 默认 8 = 默认间距 16 的一半。
+    var maxSideExpansion: CGFloat = 8
+    override func point(inside point: CGPoint, with event: UIEvent?) -> Bool {
+        let dx: CGFloat = bounds.width < 44 ? min((44 - bounds.width) / 2, maxSideExpansion) : 0
+        let dy: CGFloat = bounds.height < 44 ? (44 - bounds.height) / 2 : 0
+        if dx == 0 && dy == 0 { return super.point(inside: point, with: event) }
+        return bounds.insetBy(dx: -dx, dy: -dy).contains(point)
+    }
+}
+
 final class BearyComposerViewController: UIViewController, UITextViewDelegate, PHPickerViewControllerDelegate, UIGestureRecognizerDelegate {
 
     // MARK: - 公开接口
@@ -531,13 +553,13 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     /// 窄屏 5 项之 3：独立行隐藏时的 0 高约束。隐藏态只靠 isHidden 不够——
     /// 行高仍由子项固有高撑着、会把工具行顶下去；隐藏时钉 0、显示时停用。
     private var draftStatusBannerHeightConstraint: NSLayoutConstraint?
-    private let imageToolButton = BearyHit44Button(type: .system)
+    private let imageToolButton = BearyComposerToolButton(type: .system)
     /// 批 E 定位钮：工具栏左组第 2 位（图片右边、心情之前，预览 v2 定版；v1 的心情/天气并列位置已作废）。
-    private let locationToolButton = BearyHit44Button(type: .system)
-    private let moodToolButton = BearyHit44Button(type: .system)
-    private let weatherToolButton = BearyHit44Button(type: .system)
-    private let recipientToolButton = BearyHit44Button(type: .system)
-    private let quoteToolButton = BearyHit44Button(type: .system)
+    private let locationToolButton = BearyComposerToolButton(type: .system)
+    private let moodToolButton = BearyComposerToolButton(type: .system)
+    private let weatherToolButton = BearyComposerToolButton(type: .system)
+    private let recipientToolButton = BearyComposerToolButton(type: .system)
+    private let quoteToolButton = BearyComposerToolButton(type: .system)
     private let draftPillButton = UIButton(type: .system)
     /// 顶栏可见性钮（2026-10-30 建、2026-10-31 改三态、12b 改点开菜单）：锁＝私密、地球＝公开、
     /// 时钟＝限时，点开系统 UIMenu 直选四档；取代正文区分段，为唯一可见性入口；
@@ -2961,7 +2983,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         toolRow.addArrangedSubview(recipientToolButton)
         toolRow.addArrangedSubview(quoteToolButton)
         // v6-5：字数圆环并进左侧图标组——不再被 spacer 顶到右端，与图片／心情／天气／@／引用
-        // 同组、同 20pt 间距（toolRow.spacing）；数字已隐藏，只留圆环。
+        // 同组、同 16pt 间距（toolRow.spacing）；数字已隐藏，只留圆环。
         // v6-6：正文区草稿保存文案组（draftStatusGroup，图标＋文案＋级别逻辑全在 buildStatusRow/
         // updateDraftStatusLabel）挪到工具栏右端（spacer 之后）；109：已保存态文案优先保全、
         // 320 宽兜底只留对勾（见 applyDraftStatusToolbarFit），不再先截断。组本身在 buildStatusRow
@@ -2980,6 +3002,8 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         toolRow.addArrangedSubview(spacer)
         toolRow.addArrangedSubview(draftStatusGroup)
         toolbarToolRow = toolRow
+        // U3：初始间距 16 同步六钮横向热区 cap（= 间距 / 2 = 8，相邻热区相接不叠）。
+        setToolbarToolRowSpacing(toolRow.spacing, in: toolRow)
         // 窄屏 5 项之 3：工具行顶锚两档——独立行隐藏时锚分隔线（原 12 间距），
         // 独立行显示时锚独立行底（8 间距）；两档互斥切换，见
         // setDraftStatusBannerVisible（只在显隐翻转时切换，不成布局环）。
@@ -4136,6 +4160,18 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         saveDraftNow()
     }
 
+    /// U3：工具行间距与六钮横向热区联动。热区横向扩量 = 间距 / 2 时，
+    /// 相邻热区宽 = 24 + 间距 = 中心距，恰好相接、不互叠（间距 16 → 扩 8、
+    /// 热区 40；窄屏间距再压也不叠）。只改热区 cap，不改视觉帧与间距本身；
+    /// 布局环 guard 仍在：间距同值不重设（cap 赋值不触发布局，可每轮直设）。
+    private func setToolbarToolRowSpacing(_ spacing: CGFloat, in toolRow: UIStackView) {
+        if toolRow.spacing != spacing { toolRow.spacing = spacing }
+        let cap = max(0, spacing / 2)
+        for button in [imageToolButton, locationToolButton, moodToolButton, weatherToolButton, recipientToolButton, quoteToolButton] {
+            button.maxSideExpansion = cap
+        }
+    }
+
     /// 109：草稿状态在工具栏里的宽度适配（只动间距与 lvl2 文案显隐，不动图标与圆环）。
     /// 390 宽：容器 358，左组 6×24 图标 + 18 圆环 + 状态组（对勾 15 + gap 5 + 文案约 39）
     /// + 8 段间距 16 = 约 349，可完整排下「✓ 已保存」。
@@ -4145,6 +4181,8 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     /// level 1／0 直接恢复 16pt 任由截断——level 0／1 改走工具栏上方独立行
     /// （完整文案＋重试钮，工具行组同步隐藏、工具行间距恢复 16），level 2
     /// 仍走下方原口径；编辑态／无级别时独立行隐藏、间距恢复 16。
+    /// U3：仅图标分支下限 8 → 12，间距每次变更都经 setToolbarToolRowSpacing
+    /// 同步六钮横向热区 cap（= 间距 / 2），相邻热区相接不叠。
     private func applyDraftStatusToolbarFit() {
         // 工具行改存引用（buildToolbarRow 赋值）；回退旧查找时须跳过独立行
         // （它也是 toolbarContainer 的 UIStackView 子项，first 会误取它）。
@@ -4160,7 +4198,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         guard width > 0 else { return }
         guard let level = draftStatusLevel, !isEditMode else {
             setDraftStatusBannerVisible(false)
-            if toolRow.spacing != 16 { toolRow.spacing = 16 }
+            setToolbarToolRowSpacing(16, in: toolRow)
             return
         }
         if level == 0 || level == 1 {
@@ -4169,7 +4207,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             // 独占整行宽（320 宽下 288，减重试钮后仍远超 11 字文案宽），不截断。
             setDraftStatusBannerVisible(true)
             if !draftStatusGroup.isHidden { draftStatusGroup.isHidden = true }
-            if toolRow.spacing != 16 { toolRow.spacing = 16 }
+            setToolbarToolRowSpacing(16, in: toolRow)
             return
         }
         // level 2：独立行收起，工具行组恢复显示，走原保全／只留对勾口径。
@@ -4184,12 +4222,14 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         if spacingWithLabel >= 12 {
             if draftStatusLabel.isHidden { draftStatusLabel.isHidden = false }
             let spacing: CGFloat = min(16, spacingWithLabel)
-            if toolRow.spacing != spacing { toolRow.spacing = spacing }
+            setToolbarToolRowSpacing(spacing, in: toolRow)
         } else {
             if !draftStatusLabel.isHidden { draftStatusLabel.isHidden = true }
             let iconOnly: CGFloat = 6 * 24 + 18 + 15  // = 177
-            let spacing: CGFloat = min(16, max(8, floor((width - iconOnly) / 8)))
-            if toolRow.spacing != spacing { toolRow.spacing = spacing }
+            // U3：下限 8 → 12（与上方文案分支的 12 门槛同档，不再压到 8）；
+            // 不重叠本身由热区 cap（= 间距 / 2）保证，与下限值无关。
+            let spacing: CGFloat = min(16, max(12, floor((width - iconOnly) / 8)))
+            setToolbarToolRowSpacing(spacing, in: toolRow)
         }
     }
 
