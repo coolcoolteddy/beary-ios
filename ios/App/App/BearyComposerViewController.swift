@@ -417,6 +417,9 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     private let headlineField = UITextView()
     private let headlinePlaceholderLabel = UILabel()
     private let headlineClearButton = UIButton(type: .system)
+    /// 审计三轮第 2 项：清除钮 44pt 透明命中容器——视觉钮仍 22pt 不动，
+    /// 命中钮浮在内容栈上层、右缘与视觉钮对齐（不超出内容右缘），读屏只认命中钮。
+    private let headlineClearHitButton = UIButton(type: .custom)
     private var headlineHeightConstraint: NSLayoutConstraint?
     private let headlineRule = UIView()
     private static let headlineMaxLength = 30
@@ -1337,6 +1340,20 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             headlineRule.heightAnchor.constraint(equalToConstant: 1),
             headlineRule.bottomAnchor.constraint(equalTo: headlineWrap.bottomAnchor),
         ])
+        // 审计三轮第 2 项：命中钮不进 headlineWrap（44 高以标题行为中心会伸出 wrap
+        // 上沿、命中又被 wrap 边界裁掉），改浮在内容栈上层，右缘与视觉钮对齐，
+        // 全 44×44 都在内容栈内可点；视觉钮只留样子，读屏元素只留命中钮。
+        headlineClearHitButton.translatesAutoresizingMaskIntoConstraints = false
+        headlineClearHitButton.addTarget(self, action: #selector(clearHeadline), for: .touchUpInside)
+        headlineClearHitButton.accessibilityLabel = "清除标题"
+        headlineClearButton.isAccessibilityElement = false
+        contentStack.addSubview(headlineClearHitButton)
+        NSLayoutConstraint.activate([
+            headlineClearHitButton.trailingAnchor.constraint(equalTo: headlineClearButton.trailingAnchor),
+            headlineClearHitButton.centerYAnchor.constraint(equalTo: headlineClearButton.centerYAnchor),
+            headlineClearHitButton.widthAnchor.constraint(equalToConstant: 44),
+            headlineClearHitButton.heightAnchor.constraint(equalToConstant: 44),
+        ])
         contentStack.setCustomSpacing(10, after: headlineWrap)
     }
 
@@ -1347,13 +1364,14 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     }
 
     /// 标题占位与清除钮：占位只在空标题时显；清除钮只在编辑中且非空时显，
-    /// 显时正文右留 28pt 不让末字被钮盖住（原 UITextField clearButton 同款位置）。
+    /// 显时正文右留 44pt 不让末字被 44pt 命中钮盖住（原 28pt 只够 22pt 视觉钮）。
     private func refreshHeadlineChrome() {
         let empty = (headlineField.attributedText?.length ?? 0) == 0
         headlinePlaceholderLabel.isHidden = !empty
         let showClear = headlineField.isFirstResponder && !empty
         headlineClearButton.isHidden = !showClear
-        headlineField.textContainerInset = UIEdgeInsets(top: 0, left: 0, bottom: 0, right: showClear ? 28 : 0)
+        headlineClearHitButton.isHidden = !showClear
+        headlineField.textContainerInset = UIEdgeInsets(top: 0, left: 0, bottom: 0, right: showClear ? 44 : 0)
     }
 
     /// 标题回填/清空统一入口：纯文本记号转回熊脸附件（换行压成空格保单行），
@@ -2963,6 +2981,10 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             toolRow.leadingAnchor.constraint(equalTo: toolbarContainer.leadingAnchor),
             toolRow.trailingAnchor.constraint(equalTo: toolbarContainer.trailingAnchor),
             toolRow.bottomAnchor.constraint(equalTo: toolbarContainer.bottomAnchor, constant: -6),
+            // 审计三轮第 1 项：工具行高至少 44——此前行高由 24pt 钮撑着只有 24，
+            // Hit44 向外扩的 10pt 超出栈边界、命中测试到不了；行高 44 后扩区全在行内，
+            // 图标仍 24、间距 16 与窄屏保全逻辑（applyDraftStatusToolbarFit）都不动。
+            toolRow.heightAnchor.constraint(greaterThanOrEqualToConstant: 44),
         ])
         // 编辑模式：无草稿流，但 pill 可见（DF-3：网页 openDraftBox 在 editingId 时
         // 直接 return，pill 可见但点开无动作；didTapDraftBox 编辑态已直接 return，
@@ -4416,6 +4438,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         tempPlusButton.isEnabled = !frozen
         tempLabelButton.isEnabled = !frozen
         headlineClearButton.isEnabled = !frozen
+        headlineClearHitButton.isEnabled = !frozen
         locationToolButton.isEnabled = !frozen
         imageUndoButton.isEnabled = !frozen
         imageToolButton.isEnabled = !frozen
