@@ -6874,7 +6874,9 @@ let viewer = BearyEntryImageViewerViewController(imageKeys: allPhotos.map { $0.i
                         let savedRow = strongSelf.currentEntries.firstIndex(where: { $0.id == entryId })
                         strongSelf.savedEntries.removeAll { $0.id == entryId }
                         // 80 包 A6-2：收藏页签摘卡走 deleteRows，行不在当前页签时才回落重载。
-                        if let row = savedRow {
+                        // 摘掉最后一行后本人页占位行出现（行数 1→1），deleteRows
+                        // 会与行数校验对不上而崩溃，改整表重载。
+                        if let row = savedRow, !strongSelf.savedEntries.isEmpty {
                             strongSelf.tableView.deleteRows(at: [IndexPath(row: row, section: 0)], with: .fade)
                         } else {
                             strongSelf.tableView.reloadData()

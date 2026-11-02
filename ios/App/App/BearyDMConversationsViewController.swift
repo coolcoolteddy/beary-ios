@@ -23,6 +23,7 @@ final class BearyDMConversationsViewController: UIViewController, UITableViewDel
     private var topBarTopConstraint: NSLayoutConstraint?
     private var conversations: [BearyAPI.DMConversation] = []
     private var loading = false
+    private var needsReloadAfterUserChange = false
     private var loadFailed = false
 
     override func viewDidLoad() {
@@ -137,12 +138,22 @@ final class BearyDMConversationsViewController: UIViewController, UITableViewDel
     }
 
     @objc private func userChanged() {
-        // 账号切换：旧号会话不得残留。已登录重拉新号；已退出只清空、不弹登录门。
+        // 账号切换：旧号会话不得残留。先清表再重拉；在途旧号请求回包凭
+        // 请求时账号丢弃（见 load），在途时新号重拉挂起、旧回包到后补发。
         if SessionManager.shared.isLoggedIn {
-            load()
+            conversations = []
+            loadFailed = false
+            updateEmptyState()
+            tableView.reloadData()
+            if loading {
+                needsReloadAfterUserChange = true
+            } else {
+                load()
+            }
         } else {
             conversations = []
             loadFailed = false
+            needsReloadAfterUserChange = false
             updateEmptyState()
             tableView.reloadData()
         }
@@ -157,11 +168,20 @@ final class BearyDMConversationsViewController: UIViewController, UITableViewDel
         guard !loading else { return }
         loading = true
         loadFailed = false
+        let requestUid = SessionManager.shared.currentUser?.id
         BearyAPI.shared.fetchDMConversations { [weak self] result in
             DispatchQueue.main.async {
                 guard let self = self else { return }
                 self.loading = false
                 self.tableView.refreshControl?.endRefreshing()
+                // 切号后到达的旧号回包直接丢弃；若新号重拉挂起，补发一次。
+                if SessionManager.shared.currentUser?.id != requestUid {
+                    if self.needsReloadAfterUserChange {
+                        self.needsReloadAfterUserChange = false
+                        self.load()
+                    }
+                    return
+                }
                 switch result {
                 case .success(let list):
                     self.conversations = list.resolvedConversations

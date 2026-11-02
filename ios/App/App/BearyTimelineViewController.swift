@@ -5590,11 +5590,20 @@ class BearyTimelineViewController: UIViewController {
         // 账号代际：请求时捕获 uid，回包写缓存/落盘前比对——中途切号到达的
         // 旧账号回包直接丢弃（新账号的 reloadTimeline 会重拉，不靠旧回包对齐）。
         let requestUid = SessionManager.shared.currentUser?.id
+        let requestVis = timelineVisFilter
         BearyAPI.shared.fetchTimelineDay(date: key, vis: timelineVisFilter.queryValue) { [weak self] result in
             DispatchQueue.main.async {
                 guard let strongSelf = self else { return }
                 if strongSelf.dayKeyForLoad != key { return }
                 if SessionManager.shared.currentUser?.id != requestUid { return }
+                // 筛子档快照：请求发出后用户切了档，旧档回包不得写入当日面板
+                // 与日缓存；状态复位后按当前档重拉（在途守卫已让位，不重复发）。
+                if requestVis != strongSelf.timelineVisFilter {
+                    strongSelf.dayKeyForLoad = nil
+                    strongSelf.dayState = .idle
+                    strongSelf.fetchDayEntries(key: key, clear: false)
+                    return
+                }
                 // N2/N3 回包快照：静默刷新比对用旧签名；换日到达标志在此消费
                 // （早退分支如 fixSel 跳转也不留残标志，避免后一次回包误错峰）。
                 let oldDaySignatures = strongSelf.dayEntries.map { strongSelf.entrySignature($0) }
@@ -5609,8 +5618,9 @@ class BearyTimelineViewController: UIViewController {
                     strongSelf.dayEntries = list.entries ?? []
                     // N2：成功回包写入日缓存（失败不写）；静默刷新比对签名。
                     // 写透：内存与落盘同写（见 cacheDayEntries）。
-                    // 筛子档不写盘：过滤行写盘会污染全部档日缓存。
-                    if strongSelf.timelineVisFilter == .all {
+                    // 筛子档不写盘：过滤行写盘会污染全部档日缓存（按请求时档位判，
+                    // 不按回包时档位判，切档中途的旧档回包到此已被上游丢弃）。
+                    if requestVis == .all {
                         strongSelf.cacheDayEntries(key: key, entries: strongSelf.dayEntries)
                     }
                     dayUnchanged = (clear == false && oldDaySignatures == strongSelf.dayEntries.map { strongSelf.entrySignature($0) })
