@@ -508,6 +508,8 @@ final class BearyNotificationsViewController: UIViewController {
         // 补缺 P3-38：页内切号监听——账号真变时复位 seen 水印（登出重置同款两字段），
         // 否则旧号水印会压住新号的高亮；行刷新走既有出现/回前台路径。
         NotificationCenter.default.addObserver(self, selector: #selector(handleUserChanged), name: .bearyUserDidChange, object: nil)
+        // 关注变化即时重验：个人页关注／取关成功后，通知页的关注卡不等下次进页才变。
+        NotificationCenter.default.addObserver(self, selector: #selector(handleFriendsChanged), name: .bearyFriendsChanged, object: nil)
         // 缓存秒显（网页 openNotifs ntItemsCache 口径）：已打开过先原样显旧列表，
         // 后台 loadFirstPage 刷新、变了才重绘；首次打开才走转圈。
         if let uid = SessionManager.shared.currentUser?.id, let cached = Self.cachedPages[uid] {
@@ -547,6 +549,9 @@ final class BearyNotificationsViewController: UIViewController {
         super.viewWillAppear(animated)
         startPolling()
         refreshListIfUnreadChanged()
+        // 回页兜底重验：从个人页取关回来时，关注卡不靠下次整页重拉才变。
+        // 首次挂载尚无缓存态，重验为空操作；tab 切回走 pageDidEnter，不重复。
+        revalidateFollowCardStates()
     }
 
     override func viewWillDisappear(_ animated: Bool) {
@@ -569,6 +574,8 @@ final class BearyNotificationsViewController: UIViewController {
     /// 有可见性门控，本方法只是让停表后不依赖下一次回调才恢复。
     func pageDidEnter() {
         startPolling()
+        // 容器切 tab 回消息页：关注卡实时状态重验一次（只验动作区，不整页重拉）。
+        revalidateFollowCardStates()
     }
 
     /// 表头高度实测：标题 19 + 上 14 下 4；实测后写回 tableHeaderView frame
@@ -1737,10 +1744,12 @@ final class BearyNotificationsViewController: UIViewController {
         fetchFollowCardState(actorId: actorId)
     }
 
-    /// 回关卡 state 拉取（configure 与失败重试共用）：切号后在途回包凭代次丢弃；
-    /// 拉取失败不再永久禁用——写 .loadFailed，按钮恢复可点并 toast 说明，
-    /// 点按重试拉取（见 handleFollowBack 的 .loadFailed 分支）。
-    private func fetchFollowCardState(actorId: Int) {
+    /// 回关卡 state 拉取（configure 与失败重试共用；重验共用本函数但 silentFailure
+    /// 为真）：切号后在途回包凭代次丢弃；拉取失败不再永久禁用——写 .loadFailed，
+    /// 按钮恢复可点并 toast 说明，点按重试拉取（见 handleFollowBack 的 .loadFailed
+    /// 分支）。重验失败（silentFailure）静默保留旧缓存态：不写 .loadFailed、
+    /// 不 toast——离线时不把上次已知态洗成失败态。
+    private func fetchFollowCardState(actorId: Int, silentFailure: Bool = false) {
         guard !followCardLoadingIds.contains(actorId) else { return }
         followCardLoadingIds.insert(actorId)
         let gen = followCardGeneration
@@ -1751,15 +1760,50 @@ final class BearyNotificationsViewController: UIViewController {
                 guard gen == self.followCardGeneration else { return }
                 switch result {
                 case .success(let state):
+                    // 实时关系四态直定，不再把“非互关”一律折成回关：
+                    // 对方已取关（none）→ 关注；我已关注（following）→ 已关注。
                     let followState = BearyFollowState(response: state)
-                    self.followCardStates[actorId] = followState == .mutual ? .mutual : .canFollowBack
+                    switch followState {
+                    case .mutual:
+                        self.followCardStates[actorId] = .mutual
+                    case .followedBy:
+                        self.followCardStates[actorId] = .canFollowBack
+                    case .none:
+                        self.followCardStates[actorId] = .canFollow
+                    case .following:
+                        self.followCardStates[actorId] = .following
+                    }
                 case .failure:
-                    self.followCardStates[actorId] = .loadFailed
-                    self.showToast(message: "回关状态加载失败，点按可重试")
+                    if silentFailure {
+                        // 旧缓存态原样保留（重验调用点只对已有缓存态发请求）。
+                    } else {
+                        self.followCardStates[actorId] = .loadFailed
+                        self.showToast(message: "回关状态加载失败，点按可重试")
+                    }
                 }
                 self.refreshFollowCardRows(actorId: actorId)
             }
         }
+    }
+
+    /// 关注卡实时状态重验：进通知页（pageDidEnter／viewWillAppear）与关注变化
+    /// 广播（.bearyFriendsChanged）到达时，对已有缓存态的关注方逐一重拉 state。
+    /// 只重验动作区（refreshFollowCardRows 就地重配，不 reloadRows、不碰列表），
+    /// 不触发整页重拉（切 tab 不重复拉取规矩不受影响）。在途（.busy 跟单在途、
+    /// .loading 拉取在途）的不碰；重验失败静默保留旧态（见 fetchFollowCardState
+    /// 的 silentFailure），不 toast、不降级。
+    private func revalidateFollowCardStates() {
+        for (actorId, state) in followCardStates {
+            if case .busy = state { continue }
+            if case .loading = state { continue }
+            fetchFollowCardState(actorId: actorId, silentFailure: true)
+        }
+    }
+
+    /// 关注变化广播（个人页关注／取关成功时 BearyFriends.clearDiaryCachesAndNotify
+    /// 发出）：通知页的关注卡实时状态可能已变，重验一次。
+    @objc private func handleFriendsChanged() {
+        revalidateFollowCardStates()
     }
 
     private func handleFollowBack(itemIndex: Int) {
@@ -1776,18 +1820,16 @@ final class BearyNotificationsViewController: UIViewController {
             fetchFollowCardState(actorId: actorId)
             return
         }
-        // 已互关/在途时不再发请求（卡上按钮已是已互关态或禁用态，双重守卫）。
+        // 已互关/已关注/在途/未知时不再发请求（未知态按钮本就禁用，走到这里也忽略，
+        // 不盲发 follow——盲发成功后的态无法由点按前关系直定，会画错）。
         if case .mutual = followCardStates[actorId] { return }
+        if case .following = followCardStates[actorId] { return }
         if case .busy = followCardStates[actorId] { return }
-        if case .loading = followCardStates[actorId] {
-            // state 未到但点按已放行（失败回落口径：follow 幂等，重复点无害）；
-            // 仍先占 busy 防连点，失败后回 canFollowBack。
-            followCardStates[actorId] = .busy
-            refreshFollowCardRows(actorId: actorId)
-        } else {
-            followCardStates[actorId] = .busy
-            refreshFollowCardRows(actorId: actorId)
-        }
+        guard let previousState = followCardStates[actorId] else { return }
+        var wasFollowBack = false
+        if case .canFollowBack = previousState { wasFollowBack = true }
+        followCardStates[actorId] = .busy
+        refreshFollowCardRows(actorId: actorId)
         let gen = followCardGeneration
         BearyAPI.shared.followFriend(userId: actorId) { [weak self] result in
             DispatchQueue.main.async {
@@ -1795,19 +1837,23 @@ final class BearyNotificationsViewController: UIViewController {
                 guard gen == self.followCardGeneration else { return }
                 switch result {
                 case .success:
-                    self.followCardStates[actorId] = .mutual
-                    // 回关成功给 light 震动（点赞轻震动口径）；取关不给震动。
+                    // 成功后态由点按前关系直定：回关（对方关注我）→ 互关；
+                    // 关注（对方没关注我）→ 已关注。不再成功就一律写互关。
+                    self.followCardStates[actorId] = wasFollowBack ? .mutual : .following
+                    // 关注成功给 light 震动（点赞轻震动口径）；取关不给震动。
                     BearyHaptics.press()
                     BearyFriends.clearDiaryCachesAndNotify()
                     self.markFollowCardRead(itemIndex: itemIndex)
                     self.refreshFollowCardRows(actorId: actorId)
                 case .failure(let error):
-                    self.followCardStates[actorId] = .canFollowBack
+                    // 失败回滚回点按前确认态，不再一律回 canFollowBack（那会把一次
+                    // 失败的“关注”点按也画成回关，正是本支要修的 stale 回关同类问题）。
+                    self.followCardStates[actorId] = previousState
                     self.refreshFollowCardRows(actorId: actorId)
                     if case .unauthorized = error {
                         self.onRequireLogin?()
                     } else {
-                        self.showToast(message: "回关失败，请重试")
+                        self.showToast(message: wasFollowBack ? "回关失败，请重试" : "关注失败，请重试")
                     }
                 }
             }
@@ -2873,7 +2919,7 @@ private class BearyNotificationCell: UITableViewCell {
         return button
     }()
 
-    /// 好友第一期（关注/回关模型）：关注提醒卡行内动作区（单个回关墨色主按钮；
+    /// 好友第一期（关注/回关模型）：关注提醒卡行内动作区（单个墨色主按钮，回关／关注；
     /// 没有同意/拒绝两个按钮）。按钮是 UIControl，点按不触发行的 didSelectRowAt
     ///（默认点按行为是标已读 + 进对方主页，按钮区与之互斥）；已互关时按钮换成
     /// “已互关”灰文案、不可再点。
@@ -3496,22 +3542,31 @@ private class BearyNotificationCell: UITableViewCell {
     }
 
     /// 好友第一期：关注提醒卡动作区状态（VC 按关注方 id 持有，不随 cell 复用丢失）。
+    /// 一律按实时关系状态定（state 接口现取现定，不沿用通知创建时的快照）：
+    /// 对方仍关注我、我没关注对方 → 回关；对方已取关、我也没关注 → 关注；
+    /// 我已关注对方 → 已关注灰文案、不可再点；已互关 → 已互关灰文案、不可再点。
     enum FollowCardState {
         /// state 接口在途：按钮禁用防重复发。
         case loading
-        /// 未回关：回关钮可点。
+        /// 对方仍关注我、我没关注对方：回关钮可点。
         case canFollowBack
+        /// 对方已取关、我也没关注对方：关注钮可点（不是回关）。
+        case canFollow
+        /// 我已关注对方：已关注灰文案、不可再点。
+        case following
         /// 已互关：按钮换成“已互关”灰文案、不可再点。
         case mutual
         /// 回关请求在途：按钮禁用防重复发。
         case busy
-        /// state 拉取失败：按钮恢复可点，点按重试拉取（审计，不永久禁用）。
+        /// state 拉取失败：按钮恢复可点（画“关注”不画“回关”，见下），点按重试拉取。
         case loadFailed
     }
 
     /// 关注提醒卡动作区：base configure(with:) 已画好头像/名字/时间（verb“关注了你”），
     /// 本函数只管动作区。loading/busy 时按钮禁用；canFollowBack 时回关钮可点；
-    /// mutual 时按钮换成“已互关”文案、不可再点。非关注行调用 hideFollowAction。
+    /// canFollow 时关注钮可点；following 时“已关注”灰文案、不可再点；
+    /// mutual 时按钮换成“已互关”文案、不可再点；loadFailed 时关注钮可点
+    /// （点按重试拉取，不是直接关注）。非关注行调用 hideFollowAction。
     func configureFollowCard(state: FollowCardState, onFollowBack: @escaping () -> Void) {
         followBackHandler = onFollowBack
         followActionStack.isHidden = false
@@ -3523,11 +3578,24 @@ private class BearyNotificationCell: UITableViewCell {
             followProcessedLabel.isHidden = true
             followBackButton.isEnabled = false
             followBackButton.alpha = 0.6
-        case .canFollowBack, .loadFailed:
+        case .canFollowBack:
             followBackButton.isHidden = false
             followProcessedLabel.isHidden = true
+            followBackButton.setTitle("回关", for: .normal)
             followBackButton.isEnabled = true
             followBackButton.alpha = 1
+        case .canFollow, .loadFailed:
+            // 拉取失败也画“关注”不画“回关”：未知关系时不把回关摆出来；
+            // loadFailed 点按仍是重试拉取（见 handleFollowBack），不是直接关注。
+            followBackButton.isHidden = false
+            followProcessedLabel.isHidden = true
+            followBackButton.setTitle("关注", for: .normal)
+            followBackButton.isEnabled = true
+            followBackButton.alpha = 1
+        case .following:
+            followBackButton.isHidden = true
+            followProcessedLabel.isHidden = false
+            followProcessedLabel.text = "已关注"
         case .mutual:
             followBackButton.isHidden = true
             followProcessedLabel.isHidden = false
