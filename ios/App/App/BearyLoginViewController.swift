@@ -453,6 +453,12 @@ final class BearyLoginViewController: UIViewController {
         agreeButton.layer.bearyDynamicBorderColor = BearyColors.line
         agreeButton.backgroundColor = BearyColors.faint
         agreeButton.accessibilityLabel = "我已阅读并同意《隐私政策》和《用户协议》"
+        // 读屏入口：agreeLabel 不在无障碍树里（不读两遍），两条协议各给勾选框
+        // 一个自定义操作，VoiceOver 用户在勾选框上划动即可分别打开，不另占焦点位。
+        agreeButton.accessibilityCustomActions = [
+            UIAccessibilityCustomAction(name: "打开隐私政策", target: self, selector: #selector(openPrivacyFromAccessibility)),
+            UIAccessibilityCustomAction(name: "打开用户协议", target: self, selector: #selector(openTermsFromAccessibility)),
+        ]
         agreeButton.addTarget(self, action: #selector(agreeTapped), for: .touchUpInside)
         agreeButton.bearyAddPressFeedback()
         // 协议文案里的两个协议名是真链接（App 内原生法律页打开），其余文字点按仍切换勾选。
@@ -494,19 +500,52 @@ final class BearyLoginViewController: UIViewController {
         refreshAgreeBox()
     }
 
-    /// F1：点中文案非链接处切换勾选；点在链接上时放行给 UITextView 的链接交互。
+    /// F1：点中文案非链接处切换勾选；点在链接上时直接打开法律页。
+    /// 注意：agreeLabel 不可选（#631：不读两遍、不可选中复制），系统链接交互
+    /// 不触发，故不能像以前那样在链接处 return 放行，必须在此直接打开。
     @objc private func agreeTextTapped(_ gesture: UITapGestureRecognizer) {
         let point = gesture.location(in: agreeLabel)
         let index = agreeLabel.layoutManager.characterIndex(for: point, in: agreeLabel.textContainer, fractionOfDistanceBetweenInsertionPoints: nil)
         let plainText = agreeLabel.attributedText?.string ?? ""
         let textLength = (plainText as NSString).length
-        if index < textLength, let attributed = agreeLabel.attributedText {
-            var effectiveRange = NSRange(location: 0, length: 0)
-            if attributed.attribute(.link, at: index, effectiveRange: &effectiveRange) != nil {
-                return
-            }
+        if index < textLength, let attributed = agreeLabel.attributedText,
+           let url = attributed.attribute(.link, at: index, effectiveRange: nil) as? URL {
+            openLegalPage(url: url)
+            return
         }
         agreeTapped()
+    }
+
+    /// 打开 App 内原生法律页（设置页同款 BearyLegalTextViewController、全屏 modal、
+    /// 同一 BearyLegalTexts 文本；未知链接不外跳，直接吞掉）。手势与 delegate 共用。
+    private func openLegalPage(url: URL) {
+        let title: String
+        let text: String
+        switch url.path {
+        case "/privacy":
+            title = "隐私政策"
+            text = BearyLegalTexts.privacy
+        case "/terms":
+            title = "用户协议"
+            text = BearyLegalTexts.terms
+        default:
+            return
+        }
+        let vc = BearyLegalTextViewController(pageTitle: title, pageText: text)
+        vc.modalPresentationStyle = .fullScreen
+        // 审计 P2-16：全屏 modal 补 fadeRise（与设置页法律文本页同款）。
+        vc.transitioningDelegate = SceneDelegate.chrome?.fadeRiseTransitionDelegate
+        present(vc, animated: BearyMotion.animated(true))
+    }
+
+    @objc private func openPrivacyFromAccessibility() -> Bool {
+        if let url = URL(string: "https://teddyhn.com/privacy") { openLegalPage(url: url) }
+        return true
+    }
+
+    @objc private func openTermsFromAccessibility() -> Bool {
+        if let url = URL(string: "https://teddyhn.com/terms") { openLegalPage(url: url) }
+        return true
     }
 
     private func refreshAgreeBox() {
@@ -915,25 +954,9 @@ extension BearyLoginViewController: UITextFieldDelegate {
 
 extension BearyLoginViewController: UITextViewDelegate {
     func textView(_ textView: UITextView, shouldInteractWith URL: URL, in characterRange: NSRange, interaction: UITextItemInteraction) -> Bool {
-        // 与设置页 presentLegalText 同款：同一 BearyLegalTextViewController、同一全屏 modal、
-        // 同一 BearyLegalTexts 文本；本页不新增文本、不改设置页。未知链接不外跳，直接吞掉。
-        let title: String
-        let text: String
-        switch URL.path {
-        case "/privacy":
-            title = "隐私政策"
-            text = BearyLegalTexts.privacy
-        case "/terms":
-            title = "用户协议"
-            text = BearyLegalTexts.terms
-        default:
-            return false
-        }
-        let vc = BearyLegalTextViewController(pageTitle: title, pageText: text)
-        vc.modalPresentationStyle = .fullScreen
-        // 审计 P2-16：全屏 modal 补 fadeRise（与设置页法律文本页同款）。
-        vc.transitioningDelegate = SceneDelegate.chrome?.fadeRiseTransitionDelegate
-        present(vc, animated: BearyMotion.animated(true))
+        // 系统链接交互只在可选时触发（本页 agreeLabel 不可选，实际走 agreeTextTapped
+        // 的直接打开路径）；此处保留作兜底，与手势共用同一打开入口，不走系统浏览器。
+        openLegalPage(url: URL)
         return false
     }
 }

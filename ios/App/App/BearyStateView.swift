@@ -35,18 +35,27 @@ final class BearyStateView: UIView {
     private var actionHeightConstraint: NSLayoutConstraint?
     private var actionHandler: (() -> Void)?
     private var visibilityGeneration = 0
+    /// 目标显隐态（调用方最后一次要求的状态，与 super.isHidden 的实际值分开记，
+    /// 淡出在途时两者会暂时不一致，靠它判断重显是不是“已经在目标态”）。
+    private var targetHidden = false
+    /// 淡出动画是否在途（在途时 super.isHidden 仍为 false，不能只凭它判断显隐）。
+    private var fadeOutInFlight = false
 
     /// 状态切换淡入淡出（视觉清单 Grok 项 5.2）：只动本视图 alpha（0.2s
     /// curveEaseOut），各页显隐条件一字不动。减动效时直接设终值。
     /// 注意：隐藏不能先设 isHidden 再播动画（隐藏后动画不可见），故
-    /// 隐藏时先淡出、动画完成后再真正隐藏；快速反复切换时以代次为准，
-    /// 过期动画完成回调不再隐藏新一轮已显示的视图。
+    /// 隐藏时先淡出、动画完成后再真正隐藏；快速反复切换时以目标态＋代次为准：
+    /// 淡出在途时重显不再被“实际 isHidden 仍为 false”提前返回吞掉，而是先
+    /// 作废旧淡出（代次＋1、清在途旗、取消图层动画），再按最终态重新呈现。
     override var isHidden: Bool {
         get { super.isHidden }
         set {
-            if newValue == super.isHidden { return }
+            if newValue == targetHidden && super.isHidden == newValue && !fadeOutInFlight { return }
+            targetHidden = newValue
             if !newValue {
                 visibilityGeneration += 1
+                fadeOutInFlight = false
+                layer.removeAllAnimations()
                 super.isHidden = false
                 if BearyMotion.animated(true) {
                     alpha = 0
@@ -57,12 +66,17 @@ final class BearyStateView: UIView {
             } else {
                 if BearyMotion.animated(true) && alpha > 0 {
                     visibilityGeneration += 1
+                    fadeOutInFlight = true
                     let generation = visibilityGeneration
                     UIView.animate(withDuration: 0.2, delay: 0, options: .curveEaseOut, animations: { self.alpha = 0 }, completion: { [weak self] _ in
-                        guard let self = self, self.visibilityGeneration == generation else { return }
+                        guard let self = self else { return }
+                        self.fadeOutInFlight = false
+                        guard self.visibilityGeneration == generation else { return }
                         self.hideAfterFade()
                     })
                 } else {
+                    visibilityGeneration += 1
+                    fadeOutInFlight = false
                     super.isHidden = true
                     alpha = 1
                 }
