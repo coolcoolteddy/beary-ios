@@ -184,6 +184,27 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         /// 已删态：原日记已删时只剩 id，恢复时不按正常 lite 卡显示，见 refreshQuoteSection。
         /// 发布时已删引用不传 quoteId（服务端会拒），只作展示态保留到用户清除或发布。
         let isDeleted: Bool
+
+        /// 修红（#632 合入后 CI 红）：合成逐成员 init 只含 13 个无默认值字段，
+        /// 不含带默认值的 visibility/ephemeralUntil，故 #632 新增的 5 处 15 参构造
+        /// 编译不过；此处显式 init 把两字段放末尾并给默认值，新旧 6 处构造全兼容。
+        init(entryId: String, content: String, createdAt: Int?, authorName: String?, authorAvatar: String?, authorId: Int?, isMine: Bool?, authorHandle: String?, images: [String], isPublic: Bool?, publishAt: Int?, imgDims: [String: [Int]]?, isDeleted: Bool, visibility: String? = nil, ephemeralUntil: Int? = nil) {
+            self.entryId = entryId
+            self.content = content
+            self.createdAt = createdAt
+            self.authorName = authorName
+            self.authorAvatar = authorAvatar
+            self.authorId = authorId
+            self.isMine = isMine
+            self.authorHandle = authorHandle
+            self.images = images
+            self.isPublic = isPublic
+            self.visibility = visibility
+            self.ephemeralUntil = ephemeralUntil
+            self.publishAt = publishAt
+            self.imgDims = imgDims
+            self.isDeleted = isDeleted
+        }
     }
 
     private static let maxLength = 2000
