@@ -402,13 +402,20 @@ class BearyDiaryCardCell: UITableViewCell {
     static var expandedEntryIds: Set<String> = []
     /// 引用单篇缓存（首页模式 F11）：quoteId -> 拉到的整条 Entry；失败集合避免滚动时反复重拉；
     /// 下拉刷新时由 resetQuoteFetchState 清空，失败引用在刷新后可重试。
-    /// 审计-广场：缓存定量（100 条 LRU，见 storeQuote）+ 按身份隔离——
-    /// quoteCacheOwnerKey 记录缓存所属的身份桶（Feed 侧 feedCacheOwnerKey 同值）；
-    /// 切号时 Feed 调 switchQuoteCacheOwner(to:) 换桶即清空，旧身份拉到的引用
-    /// 正文绝不渲染给新身份/游客。外部调用点（个人主页/搜索/时间线）沿用
-    /// quoteCache.removeValue/removeAll 直删，键仍为裸 quoteId，不改键格式。
-    /// TTL 不做：数值须 Li 确认（见 PR 未做项），到期前不凭猜测定值。
-    static var quoteCache: [String: Entry] = [:]
+    /// 审计 2026-11-02 第十节：按账号分桶——桶 key 为当前登录用户 id（游客为 guest），
+    /// 切号即换桶，旧号缓存绝不渲染给新身份（广场组 Feed 内换桶重置另行负责，
+    /// 本分桶为纵深防御：即使换桶重置漏调，旧桶也不会被新身份命中）。
+    /// TTL 数值未定（须 Li 确认），本支不编造数值、不设过期时间，见 PR 未做项。
+    private static var quoteCacheBuckets: [String: [String: Entry]] = [:]
+    private static func currentQuoteBucket() -> String {
+        if let id = SessionManager.shared.currentUser?.id { return String(id) }
+        return "guest"
+    }
+    /// 当前账号桶的引用缓存（读写均走本桶；外部 removeValue/下标写入同样经此代理）。
+    static var quoteCache: [String: Entry] {
+        get { quoteCacheBuckets[currentQuoteBucket()] ?? [:] }
+        set { quoteCacheBuckets[currentQuoteBucket()] = newValue }
+    }
     static var quoteFailedIds: Set<String> = []
     static var quoteLoadingIds: Set<String> = []
     static var quoteCacheOwnerKey: String?
@@ -418,7 +425,7 @@ class BearyDiaryCardCell: UITableViewCell {
     static let quoteCacheLimit = 100
 
     static func resetQuoteFetchState() {
-        quoteCache = [:]
+        quoteCacheBuckets = [:]
         quoteFailedIds = []
         quoteLoadingIds = []
         quoteCacheOrder = []
@@ -463,6 +470,17 @@ class BearyDiaryCardCell: UITableViewCell {
         quoteCache.removeValue(forKey: quoteId)
         quoteCacheOrder.removeAll { $0 == quoteId }
         quoteFailedIds.remove(quoteId)
+    }
+
+    /// 定向失效：被引篇删除/转非公开时清掉该篇在全部桶里的引用缓存与失败态，
+    /// 下次渲染重新拉取、不再按旧可见性出全文（只收紧，不放宽）。
+    static func invalidateQuote(id: String) {
+        guard !id.isEmpty else { return }
+        for bucket in quoteCacheBuckets.keys {
+            quoteCacheBuckets[bucket]?.removeValue(forKey: id)
+        }
+        quoteFailedIds.remove(id)
+        quoteLoadingIds.remove(id)
     }
 
     private var currentEntry: Entry?
@@ -2323,6 +2341,37 @@ class BearyDiaryCardCell: UITableViewCell {
             let placeholder = BearyQuoteGate.placeholderTextForQuote(publishedAt: quotePublishedAt, locked: false, visibility: quoteVisibility)
             quoteView.showGone(message: placeholder.main, iconName: "icon_lock", detail: placeholder.detail, sourceHandle: authorHandle, sourceDateMs: createdAt)
             quoteView.isHidden = false
+            // 审计 2026-11-02 第十节：仅好友档互关通道——先占位（fail-closed），
+            // 服务端 state 确认互关后再补全文；cell 已复用（quoteTapId 已变）时丢弃。
+            if quoteVisibility == "friends", let quoteId = quoteId, !quoteId.isEmpty, let authorId = quoteAuthorId, SessionManager.shared.isLoggedIn {
+                BearyAPI.shared.fetchFollowState(userId: authorId) { [weak self] result in
+                    DispatchQueue.main.async {
+                        guard let strongSelf = self, strongSelf.quoteTapId == quoteId else { return }
+                        guard case .success(let state) = result,
+                              (state.mutual ?? false) || ((state.following ?? false) && (state.followedBy ?? false)) else { return }
+                        strongSelf.presentQuoteCard(
+                            authorName: authorName,
+                            authorAvatar: authorAvatar,
+                            content: content,
+                            images: images,
+                            dims: dims,
+                            createdAt: createdAt,
+                            isPublic: true,
+                            gone: gone,
+                            locked: locked,
+                            quoteId: quoteId,
+                            quoteAuthorId: quoteAuthorId,
+                            quoteIsMine: quoteIsMine,
+                            hostIsPublic: hostIsPublic,
+                            quotePublishedAt: quotePublishedAt,
+                            authorHandle: authorHandle,
+                            quoteVisibility: quoteVisibility
+                        )
+                        strongSelf.updateRightStackSpacing()
+                        strongSelf.onNeedsRowReload?()
+                    }
+                }
+            }
             return
         }
         quoteView.configure(
@@ -2413,7 +2462,9 @@ class BearyDiaryCardCell: UITableViewCell {
                 images: quoteValue.images ?? [],
                 dims: quoteValue.imgDims,
                 createdAt: quoteValue.createdAt,
-                isPublic: quoteValue.isPublic,
+                // 审计 2026-11-02 第十节：直传引用体同样走有效态（过期即非公开），
+                // 绝不凭正文非空反推公开；仅好友档由 presentQuoteCard 内互关通道复核。
+                isPublic: quoteValue.isEffectivelyPublic,
                 gone: quoteValue.gone,
                 locked: quoteValue.locked,
                 quoteId: quoteValue.id,
@@ -2435,6 +2486,9 @@ class BearyDiaryCardCell: UITableViewCell {
                 images: cachedEntry.images ?? [],
                 dims: cachedEntry.imgDims,
                 createdAt: cachedEntry.createdAt,
+                // 审计 2026-11-02 第十节：缓存命中同样走 viewer 实时判定——
+                // 作者本人或当前有效公开才显全文，绝不以“有正文即公开”反推；
+                // 仅好友档由 presentQuoteCard 内互关通道复核。
                 // 审计-广场：公开态只认服务端 isPublic + 限时过期（isEffectivelyPublic），
                 // 正文非空只证明服务端给了内容（仅好友篇也会给好友看正文），绝不反推公开。
                 isPublic: BearyEphemeral.isEffectivelyPublic(cachedEntry),
@@ -2485,6 +2539,8 @@ class BearyDiaryCardCell: UITableViewCell {
                         images: fetchedEntry.images ?? [],
                         dims: fetchedEntry.imgDims,
                         createdAt: fetchedEntry.createdAt,
+                        // 审计 2026-11-02 第十节：拉取回包同样走 viewer 实时判定，
+                        // 绝不以“有正文即公开”反推；仅好友档由 presentQuoteCard 内互关通道复核。
                         // 审计-广场：同缓存分支，公开态只认服务端字段，不以正文非空反推。
                         isPublic: BearyEphemeral.isEffectivelyPublic(fetchedEntry),
                         gone: nil,
@@ -2537,7 +2593,8 @@ class BearyDiaryCardCell: UITableViewCell {
         }
         let quoteContent = quoteValue.content ?? ""
         if quoteContent.isEmpty {
-            if quoteValue.isPublic == false {
+            // 审计 2026-11-02 第十节：个人主页模式同样走有效态（过期即非公开）。
+            if quoteValue.isEffectivelyPublic == false {
                 let placeholder = BearyQuoteGate.placeholderTextForQuote(publishedAt: quoteValue.publishedAt, locked: quoteValue.locked == true, visibility: quoteValue.visibility)
                 quoteView.showGone(message: placeholder.main, iconName: "icon_lock", detail: placeholder.detail, sourceHandle: quoteValue.authorHandle, sourceDateMs: quoteValue.createdAt)
             } else {
@@ -2546,10 +2603,12 @@ class BearyDiaryCardCell: UITableViewCell {
             quoteView.isHidden = false
             return
         }
-        // iCity viewer 判定（个人主页模式同款）：作者本人或已公开才全文，否则占位。
+        // iCity viewer 判定（个人主页模式同款）：作者本人或当前有效公开才全文，否则占位。
+        // （仅好友档互关通道本模式暂不接——维持现行占位 fail-closed，不放宽；
+        // 个人页组如需接通可复用 BearyQuoteGate.resolveQuoteFullAccess。）
         let viewerId = SessionManager.shared.currentUser?.id
         let viewerIsAuthor = quoteValue.isMine == true || (quoteValue.authorId != nil && viewerId != nil && quoteValue.authorId == viewerId)
-        guard viewerIsAuthor || quoteValue.isPublic == true else {
+        guard viewerIsAuthor || quoteValue.isEffectivelyPublic else {
             let placeholder = BearyQuoteGate.placeholderTextForQuote(publishedAt: quoteValue.publishedAt, locked: false, visibility: quoteValue.visibility)
             quoteView.showGone(message: placeholder.main, iconName: "icon_lock", detail: placeholder.detail, sourceHandle: quoteValue.authorHandle, sourceDateMs: quoteValue.createdAt)
             quoteView.isHidden = false
@@ -2562,7 +2621,7 @@ class BearyDiaryCardCell: UITableViewCell {
             images: quoteValue.images ?? [],
             dims: quoteValue.imgDims,
             createdAt: quoteValue.createdAt,
-            allowThumbs: quoteValue.isPublic == true || viewerIsAuthor,
+            allowThumbs: quoteValue.isEffectivelyPublic || viewerIsAuthor,
             authorHandle: quoteValue.authorHandle,
             sourceTappable: true
         )

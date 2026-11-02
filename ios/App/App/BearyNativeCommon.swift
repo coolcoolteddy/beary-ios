@@ -2219,6 +2219,44 @@ enum BearyEphemeral {
     }
 }
 
+/// 审计 2026-11-02 第十节：可见性三档共享口径（已发布日记“修改权限”四处共用）。
+/// 服务端 visibility 字段值：private / friends / public；旧行缺失时调用方按
+/// isPublic 兜底（true=公开、其余=私密），绝不把缺失误标为仅好友。
+enum BearyVisibility {
+    static let all: [String] = ["private", "friends", "public"]
+
+    static func title(for visibility: String) -> String {
+        switch visibility {
+        case "friends": return "仅好友"
+        case "public": return "公开"
+        default: return "私密"
+        }
+    }
+
+    /// 当前档：显式 friends 优先；否则按有效公开态（限时过期即私密）。
+    /// 存活限时篇当前档为公开（限时不是手动切换的目标档；手动翻转恒清限时标记）。
+    static func current(for entry: Entry) -> String {
+        if entry.isFriendsOnly { return "friends" }
+        return BearyEphemeral.isEffectivelyPublic(entry) ? "public" : "private"
+    }
+
+    static func isPublicValue(_ visibility: String) -> Bool { visibility == "public" }
+
+    /// 三档选择器（alert 形态，iPad 无需 popover 锚点）：当前档带 ✓ 前缀；
+    /// 选同档时调用方按无变化处理（不发请求、不清限时标记）。
+    /// 限时与仅好友互斥规则不动：本选择器不提供限时档，手动改档恒清限时标记。
+    static func presentPicker(from vc: UIViewController, entry: Entry, onPick: @escaping (String) -> Void) {
+        let currentValue = current(for: entry)
+        let alert = UIAlertController(title: "修改权限", message: nil, preferredStyle: .alert)
+        for value in all {
+            let title = (value == currentValue ? "✓ " : "") + title(for: value)
+            alert.addAction(UIAlertAction(title: title, style: .default) { _ in onPick(value) })
+        }
+        alert.addAction(UIAlertAction(title: "取消", style: .cancel))
+        vc.present(alert, animated: BearyMotion.animated(true))
+    }
+}
+
 enum BearyVisibilityText {
     static func publishedRelativeString(publishedAtMs: Int?) -> String? {
         guard let ms = publishedAtMs, ms > 0 else { return nil }
@@ -2582,10 +2620,43 @@ enum BearyQuoteGate {
     }
 
     /// 私密来源：已删（gone）不算（已删引用另走已删除口径，不进公开门禁）；
-    /// 其余 is_public 非 true 即私密（含 locked 占位体与正文直传的私密体）。
+    /// 其余非有效公开即私密（含 locked 占位体、正文直传的私密体、仅好友体、
+    /// 以及已过期的限时体——审计第十节：判定一律走有效态，不用原始 isPublic）。
     static func sourceIsPrivate(quote: Quote?) -> Bool {
         guard let q = quote, q.gone != true else { return false }
-        return q.isPublic != true
+        return q.isEffectivelyPublic == false
+    }
+
+    /// 审计 2026-11-02 第十节：引用全文 viewer 实时判定统一入口。
+    /// 作者本人或当前有效公开 → 全文；仅好友 → 以服务端 /friends/state 的
+    /// mutual 为准（App 侧不只认 isPublic）；其余 → 占位（fail-closed）。
+    /// 同步可判时直接回 true/false；仅好友档需一次 state 请求，走 completion。
+    static func resolveQuoteFullAccess(quote: Quote?, completion: @escaping (Bool) -> Void) {
+        guard let q = quote, q.gone != true, q.locked != true else {
+            completion(false)
+            return
+        }
+        if sourceIsMine(quote: q) || q.isEffectivelyPublic {
+            completion(true)
+            return
+        }
+        if q.visibility == "friends", let authorId = q.authorId,
+           SessionManager.shared.isLoggedIn {
+            BearyAPI.shared.fetchFollowState(userId: authorId) { result in
+                DispatchQueue.main.async {
+                    switch result {
+                    case .success(let state):
+                        let mutual = state.mutual ?? false
+                            || ((state.following ?? false) && (state.followedBy ?? false))
+                        completion(mutual)
+                    case .failure:
+                        completion(false)
+                    }
+                }
+            }
+            return
+        }
+        completion(false)
     }
 
     enum PublicToggleResult {

@@ -6219,75 +6219,83 @@ class BearyTimelineViewController: UIViewController {
         let viewerId = SessionManager.shared.currentUser?.id
         guard entry.isMine == true || (entry.authorId != nil && viewerId != nil && entry.authorId == viewerId) else { return }
         if publishBusyIds.contains(entryId) { return }
-        // 引用规则简化（2026-10-31）：切公开先过引用门禁、改私密先查引用数提醒；
-        // 门禁/提醒期间占 busy 位，放弃时清位、原态未动（乐观落地只在 perform 里做）。
-        let target = BearyEphemeral.isEffectivelyPublic(entry) ? 0 : 1
-        publishBusyIds.insert(entryId)
-        if target == 1 {
-            BearyQuoteGate.gatePublicToggle(from: self, entry: entry) { [weak self] result in
-                guard let strongSelf = self else { return }
-                switch result {
-                case .proceed:
-                    strongSelf.performPublishEntry(entry)
-                case .publishTogether(let sourceId):
-                    BearyAPI.shared.setVisibility(id: sourceId, published: 1) { setResult in
-                        DispatchQueue.main.async {
-                            switch setResult {
-                            case .success:
-                                strongSelf.performPublishEntry(entry)
-                            case .failure:
-                                strongSelf.publishBusyIds.remove(entryId)
-                                strongSelf.showTimelineToast(message: "原日记公开失败，请重试")
+        // 审计 2026-11-02 第十节：三档选择器（私密/仅好友/公开），选同档即无变化；
+        // 引用规则简化（2026-10-31）：切公开先过引用门禁、改私密先查引用数提醒、
+        // 改仅好友为收紧方向直接放行；门禁/提醒期间占 busy 位，放弃时清位、
+        // 原态未动（乐观落地只在 perform 里做）。
+        BearyVisibility.presentPicker(from: self, entry: entry) { [weak self] targetVisibility in
+            guard let strongSelf = self else { return }
+            if targetVisibility == BearyVisibility.current(for: entry) { return }
+            strongSelf.publishBusyIds.insert(entryId)
+            if targetVisibility == "public" {
+                BearyQuoteGate.gatePublicToggle(from: strongSelf, entry: entry) { [weak self] result in
+                    guard let strongSelf = self else { return }
+                    switch result {
+                    case .proceed:
+                        strongSelf.performPublishEntry(entry, targetVisibility: targetVisibility)
+                    case .publishTogether(let sourceId):
+                        BearyAPI.shared.setVisibility(id: sourceId, visibility: "public") { setResult in
+                            DispatchQueue.main.async {
+                                switch setResult {
+                                case .success:
+                                    strongSelf.performPublishEntry(entry, targetVisibility: targetVisibility)
+                                case .failure:
+                                    strongSelf.publishBusyIds.remove(entryId)
+                                    strongSelf.showTimelineToast(message: "原日记公开失败，请重试")
+                                }
                             }
                         }
+                    case .aborted:
+                        strongSelf.publishBusyIds.remove(entryId)
                     }
-                case .aborted:
-                    strongSelf.publishBusyIds.remove(entryId)
                 }
-            }
-        } else {
-            BearyQuoteGate.confirmPrivateToggleIfQuoted(from: self, entryId: entryId) { [weak self] confirmed in
-                guard let strongSelf = self else { return }
-                if confirmed {
-                    strongSelf.performPublishEntry(entry)
-                } else {
-                    strongSelf.publishBusyIds.remove(entryId)
+            } else if targetVisibility == "private" {
+                BearyQuoteGate.confirmPrivateToggleIfQuoted(from: strongSelf, entryId: entryId) { [weak self] confirmed in
+                    guard let strongSelf = self else { return }
+                    if confirmed {
+                        strongSelf.performPublishEntry(entry, targetVisibility: targetVisibility)
+                    } else {
+                        strongSelf.publishBusyIds.remove(entryId)
+                    }
                 }
+            } else {
+                strongSelf.performPublishEntry(entry, targetVisibility: targetVisibility)
             }
         }
     }
 
-    private func performPublishEntry(_ entry: Entry) {
+    private func performPublishEntry(_ entry: Entry, targetVisibility: String) {
         guard let entryId = entry.id, !entryId.isEmpty else { return }
         let viewerId = SessionManager.shared.currentUser?.id
         guard entry.isMine == true || (entry.authorId != nil && viewerId != nil && entry.authorId == viewerId) else { return }
-        let target = BearyEphemeral.isEffectivelyPublic(entry) ? 0 : 1
         let originalPublic = entry.isPublic ?? false
         let originalPublishedAt = entry.publishedAt
         let originalVisibility = entry.visibility
         let originalEphemeralUntil = entry.ephemeralUntil
         // 先行：目标态立即落地（模型 + 可见行，不整页重拉）。
-        applyVisibilityLocally(entryId: entryId, isPublic: target == 1, publishedAt: nil, visibility: target == 1 ? "public" : "private")
+        applyVisibilityLocally(entryId: entryId, isPublic: BearyVisibility.isPublicValue(targetVisibility), publishedAt: nil, visibility: targetVisibility, ephemeralUntil: nil)
         BearySoundPlayer.play(.visibilityClick)
         // 审计动效组：可见性翻转统一为“图标＋pill 文案＋轻震”，此处补轻震。
         BearyHaptics.press()
         reloadVisibleTimelineRow(entryId: entryId)
-        BearyAPI.shared.setVisibility(id: entryId, published: target) { [weak self] result in
+        BearyAPI.shared.setVisibility(id: entryId, visibility: targetVisibility) { [weak self] result in
             DispatchQueue.main.async {
                 guard let strongSelf = self else { return }
                 strongSelf.publishBusyIds.remove(entryId)
                 switch result {
                 case .success(let resp):
-                    let isPublic = resp.published.map { $0 == 1 } ?? (target == 1)
-                    // 秒开-网络层：转私密成功即逐出本篇图片的本机缓存；失败
+                    let isPublic = resp.visibility.map { BearyVisibility.isPublicValue($0) }
+                        ?? resp.published.map { $0 == 1 }
+                        ?? BearyVisibility.isPublicValue(targetVisibility)
+                    // 秒开-网络层：转非公开成功即逐出本篇图片的本机缓存；失败
                     // 回滚分支不逐出（原态未变）。
                     if !isPublic {
                         BearyImageLoader.shared.evictEntryImages(keys: entry.images ?? [])
                     }
-                    strongSelf.applyVisibilityLocally(entryId: entryId, isPublic: isPublic, publishedAt: resp.publishedAt, visibility: isPublic ? "public" : "private")
+                    strongSelf.applyVisibilityLocally(entryId: entryId, isPublic: isPublic, publishedAt: resp.publishedAt, visibility: resp.visibility ?? targetVisibility, ephemeralUntil: resp.ephemeralUntil)
                     strongSelf.refreshAfterDetailChange()
                 case .failure(let err):
-                    strongSelf.applyVisibilityLocally(entryId: entryId, isPublic: originalPublic, publishedAt: originalPublishedAt, visibility: originalVisibility ?? (originalPublic ? "public" : "private"), ephemeralUntil: originalEphemeralUntil, restoreEphemeralUntil: true)
+                    strongSelf.applyVisibilityLocally(entryId: entryId, isPublic: originalPublic, publishedAt: originalPublishedAt, visibility: originalVisibility, ephemeralUntil: originalEphemeralUntil)
                     strongSelf.reloadVisibleTimelineRow(entryId: entryId)
                     let message: String
                     if case .server(let code) = err, code == "rate_limited" { message = "操作太频繁，请稍后再试" }
@@ -6356,21 +6364,25 @@ class BearyTimelineViewController: UIViewController {
 
     /// 翻转本地同步（removeDeletedEntry 式清理口径，改的是可见性不是删除）：
     /// timeline/day 列表与日缓存里的副本就地改 isPublic/visibility/publishedAt；
-    /// ephemeralUntil：正向翻转清 nil（服务端同口径），失败回滚时 restoreEphemeralUntil=true 写回原值，绝不无条件清 nil；
-    /// visibility 未传时按 isPublic 派生 public/private（本函数调用点只做公开<->私密翻转，不产仅好友/限时态）。
+    /// ephemeralUntil：直接写回传入值；正向翻转传 nil（服务端同口径），失败回滚传原值；
+    /// visibility 未传时按 isPublic 派生 public/private。
     /// 改动的日缓存同步写落盘；引用缓存清掉该篇（旧引用卡不按旧可见性渲染）。
-    private func applyVisibilityLocally(entryId: String, isPublic: Bool, publishedAt: Int?, visibility: String? = nil, ephemeralUntil: Int? = nil, restoreEphemeralUntil: Bool = false) {
+    private func applyVisibilityLocally(entryId: String, isPublic: Bool, publishedAt: Int?, visibility: String? = nil, ephemeralUntil: Int? = nil) {
+        // 审计 2026-11-02 第十节：成功回写 visibility 与 ephemeralUntil；
+        // 手动翻转清限时标记（服务端同口径），否则本地仍画虚线边框——
+        // 回包显式带回新的 ephemeralUntil 时以回包为准；回滚路径传回原值。
+        // （行签名与 patchedEntries 的 visibility/ephemeralUntil 补齐归时间线组，
+        // 本函数只保证三副本的可见性字段同步写回。）
         for index in timelineEntries.indices where timelineEntries[index].id == entryId {
             timelineEntries[index].isPublic = isPublic
             timelineEntries[index].visibility = visibility ?? (isPublic ? "public" : "private")
-            // 手动翻转清限时标记（服务端同口径），否则本地仍画虚线边框；回滚时写回原值。
-            timelineEntries[index].ephemeralUntil = restoreEphemeralUntil ? ephemeralUntil : nil
+            timelineEntries[index].ephemeralUntil = ephemeralUntil
             if let publishedAt = publishedAt { timelineEntries[index].publishedAt = publishedAt }
         }
         for index in dayEntries.indices where dayEntries[index].id == entryId {
             dayEntries[index].isPublic = isPublic
             dayEntries[index].visibility = visibility ?? (isPublic ? "public" : "private")
-            dayEntries[index].ephemeralUntil = restoreEphemeralUntil ? ephemeralUntil : nil
+            dayEntries[index].ephemeralUntil = ephemeralUntil
             if let publishedAt = publishedAt { dayEntries[index].publishedAt = publishedAt }
         }
         for key in dayEntriesCache.keys {
@@ -6379,7 +6391,7 @@ class BearyTimelineViewController: UIViewController {
             for index in list.indices where list[index].id == entryId {
                 list[index].isPublic = isPublic
                 list[index].visibility = visibility ?? (isPublic ? "public" : "private")
-                list[index].ephemeralUntil = restoreEphemeralUntil ? ephemeralUntil : nil
+                list[index].ephemeralUntil = ephemeralUntil
                 if let publishedAt = publishedAt { list[index].publishedAt = publishedAt }
                 changed = true
             }
@@ -6389,7 +6401,7 @@ class BearyTimelineViewController: UIViewController {
             }
         }
         if isPublic == false {
-            BearyDiaryCardCell.quoteCache.removeValue(forKey: entryId)
+            BearyDiaryCardCell.invalidateQuote(id: entryId)
         }
     }
 
