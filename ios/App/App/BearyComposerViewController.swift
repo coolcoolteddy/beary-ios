@@ -6234,7 +6234,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                 return
             }
             if self.hasUploadingImage() {
-                self.showToastAfterClose(message: "还有图片没上传完，上传中的图片没存进草稿")
+                self.showToastAfterClose(message: "图片还没上传完，不会存进草稿")
             }
             self.onCancelled?()
         }
@@ -6247,7 +6247,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         // 期限已过且在途保存已失败：保存钮已由 updatePublishState 禁用，
         // 此处再拦一道（防按钮态竞态），不发 PUT、不清输入。
         if isEditMode && editSaveBlockedAfterDeadline {
-            showAlert(message: "编辑时间已过，无法再保存，内容仍在编辑器里，可复制后关闭")
+            showAlert(message: "编辑时间已过，无法再保存，可复制内容后关闭")
             return
         }
         // 批 E：发布/保存时先收定位气泡，防气泡确认与发布请求竞态。
@@ -6550,11 +6550,11 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                         if case .server(let code) = error, code == "edit window expired" {
                             self.showAlert(message: "超过 15 分钟，已无法编辑；内容仍在编辑器里，可复制后关闭")
                         } else if case .network = error {
-                            self.showAlert(message: "网络不可用，修改未保存；编辑时间已过，无法再保存，内容仍在编辑器里，可复制后关闭")
+                            self.showAlert(message: "网络不可用，修改未保存；编辑时间已过，无法再保存，可复制内容后关闭")
                         } else if case .unauthorized = error {
-                            self.showAlert(message: "登录已失效，修改未保存；编辑时间已过，无法再保存，内容仍在编辑器里，可复制后关闭")
+                            self.showAlert(message: "登录已失效，修改未保存；编辑时间已过，无法再保存，可复制内容后关闭")
                         } else {
-                            self.showAlert(message: "\(self.message(forUpdateError: error))；编辑时间已过，无法再保存，内容仍在编辑器里，可复制后关闭")
+                            self.showAlert(message: "\(self.message(forUpdateError: error))；编辑时间已过，无法再保存，可复制内容后关闭")
                         }
                     } else if case .unauthorized = error {
                         self.onRequireLogin?()

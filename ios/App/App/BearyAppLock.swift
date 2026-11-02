@@ -130,7 +130,7 @@ final class BearyAppLockManager {
         status.textColor = BearyColors.gray
         status.textAlignment = .center
         status.numberOfLines = 0
-        status.text = "冷启动验证，仅本次进程需要一次"
+        status.text = "冷启动时验证一次"
         lockStatusLabel = status
 
         let button = BearyButton(style: .secondaryOutline(.regular))

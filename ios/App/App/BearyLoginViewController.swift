@@ -804,7 +804,7 @@ final class BearyLoginViewController: UIViewController {
     /// 读容器 refreshMe 后的 currentUser.plusUntil）。登录页内不再写行内文案
     /// （随 dismiss 消失、不可读），页面 dismiss 后不再发 fetchMe 请求。
     /// granted → 到账文案；flagged → 待审核文案；其余（失败态 / 无 referral 回包）
-    /// 均显式提示“邀请码未绑定成功”，且不影响登录本身；绑定规则与文案不动。
+    /// 均显式提示“邀请码绑定失败”，且不影响登录本身；绑定规则与文案不动。
     private func handleLoginReferralFeedback(resp: VerifyResponse) {
         let inviteCode = normalizedInviteCode()
         guard !inviteCode.isEmpty else {
@@ -818,7 +818,7 @@ final class BearyLoginViewController: UIViewController {
         } else if status == "flagged" {
             text = "邀请码已提交，站长审核通过后各得 30 天 Plus"
         } else {
-            var failure = "邀请码未绑定成功"
+            var failure = "邀请码绑定失败"
             if let err = resp.referral?.error, !err.isEmpty, err != failure {
                 failure += "：\(err)"
             }
