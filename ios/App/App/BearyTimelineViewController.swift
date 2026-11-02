@@ -598,8 +598,8 @@ final class BearyCalendarCardView: UIView {
             // 64 包反馈修（第 6 项）：周/月切换钮等宽——旧代码宽度随标题内容走，
             // “月视图”/“周视图”两态渲染宽不一致；固定 64（内边距 12+12 + 3 字×12.5 + 余量），
             // 两态同宽，不再随标题伸缩。
-            // 审计-时间线：切换钮宽由定值 64 改下限 64——默认字号下两态仍等宽，大字号下允许向外生长、不裁字。
-            toggleButton.widthAnchor.constraint(greaterThanOrEqualToConstant: 64),
+            // 审计-时间线：切换钮宽保持定值 64 不动（样式冻结：宽度档位未定版前不改数值；大字号下标题可能裁字，待 Li 定版后处理）。
+            toggleButton.widthAnchor.constraint(equalToConstant: 64),
             prevButton.widthAnchor.constraint(equalToConstant: 32),
             prevButton.heightAnchor.constraint(equalToConstant: 32),
             nextButton.widthAnchor.constraint(equalToConstant: 32),
