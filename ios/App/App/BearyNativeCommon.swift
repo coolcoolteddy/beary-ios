@@ -1527,14 +1527,24 @@ enum BearyImagePrep {
 /// 等价于旧 SF SymbolConfiguration(pointSize:) 的显示尺寸。
 /// 一律 alwaysTemplate + 调用方 tintColor 着色（与旧 SF 行为一致）。
 enum BearyIconImages {
+    /// 审计-个人页设置：图标绘图结果缓存——旧口径每次调用都在主线程重绘
+    /// （UIGraphicsImageRenderer），列表复用/重建时反复烧主线程；现按
+    /// name#pointSize 缓存模板图（与卡片层既有 cache 同 key 口径）。
+    /// 模板图颜色由使用方 tintColor 定，与深浅 trait 无关，缓存不跨 trait 失真。
+    private static let cache = NSCache<NSString, UIImage>()
+
     static func image(named name: String, pointSize: CGFloat) -> UIImage? {
+        let key = "\(name)#\(pointSize)" as NSString
+        if let hit = cache.object(forKey: key) { return hit }
         guard let base = UIImage(named: name) else { return nil }
         let size = CGSize(width: pointSize, height: pointSize)
         let format = UIGraphicsImageRendererFormat()
         format.scale = UIScreen.main.scale
         let renderer = UIGraphicsImageRenderer(size: size, format: format)
         let drawn = renderer.image { _ in base.draw(in: CGRect(origin: .zero, size: size)) }
-        return drawn.withRenderingMode(.alwaysTemplate)
+        let templated = drawn.withRenderingMode(.alwaysTemplate)
+        cache.setObject(templated, forKey: key)
+        return templated
     }
 }
 

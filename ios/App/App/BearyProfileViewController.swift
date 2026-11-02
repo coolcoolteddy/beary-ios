@@ -368,6 +368,14 @@ class BearyProfileViewController: UIViewController {
         return false
     }
 
+    /// 审计-个人页设置：互关判定（主列表 / 照片区 / 脚部模块过滤共用）。
+    /// followState 未拉到时按非互关 fail-closed；状态翻转时 refreshFollowState
+    /// 负责重拉日记 tab，过滤不滞后于旧状态。
+    private var isMutualFriend: Bool {
+        if case .mutual = followState { return true }
+        return false
+    }
+
     private var currentEntries: [Entry] {
         switch currentTab {
         case .diary: return diaryEntries
@@ -389,11 +397,19 @@ class BearyProfileViewController: UIViewController {
     /// 单篇是否计入“最新 3 篇 / 照片区”：排除私密占位、纯心情未写字项
     /// （无正文、无标题、无图、无引用）；他人页只计公开篇（服务端已过滤，
     /// 这里再守一道，isPublic 缺失按非公开算）。
-    /// 好友第一期：仅好友篇对好友 viewer 可见——服务端 author scope 已按 viewer
-    /// 过滤，客户端只放行显式 friends 档（不凭 isPublic 推断，fail-closed）。
-    static func isProfileDiaryDisplayable(entry: Entry, isOwnProfile: Bool) -> Bool {
+    /// 审计-个人页设置（与脚部模块 visibleEntries 统一口径）：非作者视角下
+    /// 仅好友篇只在互关时放行（isMutualFriend 由调用方按实时 followState 传，
+    /// 未拉到状态时按非互关 fail-closed）；单向关注、陌生人一律排除。
+    /// 服务端 scope 口径仍需抓包核对，App 侧不依赖服务端单点过滤。
+    static func isProfileDiaryDisplayable(entry: Entry, isOwnProfile: Bool, isMutualFriend: Bool = false) -> Bool {
         if entry.placeholder == true { return false }
-        if isOwnProfile == false && entry.isPublic != true && !entry.isFriendsOnly { return false }
+        if isOwnProfile == false {
+            if entry.isFriendsOnly {
+                if !isMutualFriend { return false }
+            } else if entry.isPublic != true {
+                return false
+            }
+        }
         let textValue = (entry.content ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
         let titleValue = (entry.title ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
         let hasImages = (entry.images ?? []).contains(where: { !$0.isEmpty })
@@ -403,8 +419,8 @@ class BearyProfileViewController: UIViewController {
 
     /// 展示用日记：过滤后按创建时间倒序（createdAt 缺失按 0 计、排最后；
     /// 同毫秒保持服务端原顺序）。赞过/收藏 tab 不走这里，顺序一字不动。
-    static func sortedDisplayableDiaryEntries(from entries: [Entry], isOwnProfile: Bool) -> [Entry] {
-        let filtered = entries.filter { isProfileDiaryDisplayable(entry: $0, isOwnProfile: isOwnProfile) }
+    static func sortedDisplayableDiaryEntries(from entries: [Entry], isOwnProfile: Bool, isMutualFriend: Bool = false) -> [Entry] {
+        let filtered = entries.filter { isProfileDiaryDisplayable(entry: $0, isOwnProfile: isOwnProfile, isMutualFriend: isMutualFriend) }
         return filtered.enumerated().sorted(by: { left, right in
             let leftMs = left.element.createdAt ?? 0
             let rightMs = right.element.createdAt ?? 0
@@ -414,9 +430,9 @@ class BearyProfileViewController: UIViewController {
     }
 
     /// 照片项：按所属日记时间倒序，同日记多图按原顺序；无图日记跳过。
-    static func profilePhotoItems(from entries: [Entry], isOwnProfile: Bool) -> [BearyProfilePhotoItem] {
+    static func profilePhotoItems(from entries: [Entry], isOwnProfile: Bool, isMutualFriend: Bool = false) -> [BearyProfilePhotoItem] {
         var items: [BearyProfilePhotoItem] = []
-        for entryValue in sortedDisplayableDiaryEntries(from: entries, isOwnProfile: isOwnProfile) {
+        for entryValue in sortedDisplayableDiaryEntries(from: entries, isOwnProfile: isOwnProfile, isMutualFriend: isMutualFriend) {
             for imageKey in entryValue.images ?? [] {
                 if imageKey.isEmpty == false {
                     items.append(BearyProfilePhotoItem(entry: entryValue, imageKey: imageKey))
@@ -429,7 +445,7 @@ class BearyProfileViewController: UIViewController {
     /// 日记 tab 展示的日记（最新 3 篇）；赞过/收藏 tab 仍为原有全量模型。
     private var displayedEntries: [Entry] {
         if currentTab == .diary {
-            return Array(BearyProfileViewController.sortedDisplayableDiaryEntries(from: diaryEntries, isOwnProfile: isOwnProfile).prefix(3))
+            return Array(BearyProfileViewController.sortedDisplayableDiaryEntries(from: diaryEntries, isOwnProfile: isOwnProfile, isMutualFriend: isMutualFriend).prefix(3))
         }
         return currentEntries
     }
@@ -439,7 +455,7 @@ class BearyProfileViewController: UIViewController {
     /// 故他人页不显示该按钮——3 篇公开 + 照片区结构仍与本人页相同。
     private var diaryMoreButtonVisible: Bool {
         return currentTab == .diary && isOwnProfile
-            && !BearyProfileViewController.sortedDisplayableDiaryEntries(from: diaryEntries, isOwnProfile: isOwnProfile).isEmpty
+            && !BearyProfileViewController.sortedDisplayableDiaryEntries(from: diaryEntries, isOwnProfile: isOwnProfile, isMutualFriend: isMutualFriend).isEmpty
     }
 
     // MARK: - 113 照片墙独立分页
@@ -471,7 +487,7 @@ class BearyProfileViewController: UIViewController {
     }
 
     private var photoWallPhotosValue: [BearyProfilePhotoItem] {
-        return BearyProfileViewController.profilePhotoItems(from: photoWallSourceEntries, isOwnProfile: isOwnProfile)
+        return BearyProfileViewController.profilePhotoItems(from: photoWallSourceEntries, isOwnProfile: isOwnProfile, isMutualFriend: isMutualFriend)
     }
 
     private func syncPhotoWallBase() {
@@ -522,6 +538,8 @@ class BearyProfileViewController: UIViewController {
     /// 数据未变时复用旧视图，不重建、不重下图（防切 tab / 回填时墙闪一下）。
     private var cachedPhotosFooterView: UIView?
     private var cachedPhotosFooterSignature: String?
+    /// 审计-个人页设置：照片墙淡入去重——上次已淡入过的墙签名，签名不变不重播。
+    private var lastPhotosFooterFadeSignature: String?
 
     // MARK: - 列表
 
@@ -751,19 +769,9 @@ class BearyProfileViewController: UIViewController {
         labelValue.numberOfLines = 0
         labelValue.lineBreakMode = .byCharWrapping
         labelValue.text = "—"
-        // 个人页内容用户名阴影（ChatGPT 视觉清单已定设计第 3 项，取代 2026-10-30
-        // “浅色下白色光晕”口径）：浅色下白色光晕整删，只靠文字（ink）与背景对比；
-        // 只动名字行一处，字色与约束不动；layer 阴影不占布局尺寸，不改 header 高度与
-        // 位移逻辑（applyProfileBelowShift 只改 transform，阴影跟随图层、不参与动画重播）。
-        // 深浅切换时由 updateDynamicLayerColors 重赋（CGColor 赋值时解析一次，
-        // 不自动跟随 trait）：深色下黑色阴影保留（0.6），浅色下透明度为 0、无光晕。
-        // 此处初值透明度 0：首帧即无光晕，深色下由 updateDynamicLayerColors 恢复 0.6。
-        // 半径 4 + 偏移 (0,1) 保留作深色阴影参数，浅色下因透明度 0 不可见。
-        labelValue.layer.masksToBounds = false
-        labelValue.layer.shadowRadius = 4
-        labelValue.layer.shadowOffset = CGSize(width: 0, height: 1)
-        labelValue.layer.shadowColor = UIColor.black.cgColor
-        labelValue.layer.shadowOpacity = 0
+        // 审计-个人页设置：用户名阴影死代码整删——浅色下透明度 0、深色下
+        // 黑影落黑底均不可见，留着只剩 trait 重赋的无用分支；只靠文字
+        // （ink）与背景对比，字色与约束不动。
         return labelValue
     }()
 
@@ -1233,7 +1241,9 @@ class BearyProfileViewController: UIViewController {
         let buttonValue = UIButton(type: .system)
         buttonValue.translatesAutoresizingMaskIntoConstraints = false
         buttonValue.setTitle("给一年前的自己留一句话", for: .normal)
-        buttonValue.setTitleColor(BearyColors.orange, for: .normal)
+        // 审计-个人页设置：橙色正文对比度约 2.9:1 低于 AA，改墨色；
+        // 只改使用处颜色，不改橙色 token 值（橙底白字与图标 tint 不动）。
+        buttonValue.setTitleColor(BearyColors.ink, for: .normal)
         buttonValue.titleLabel?.font = UIFont.systemFont(ofSize: 14, weight: .bold)
         buttonValue.contentHorizontalAlignment = .leading
         buttonValue.addTarget(self, action: #selector(pastSelfEntryTapped), for: .touchUpInside)
@@ -1303,7 +1313,8 @@ class BearyProfileViewController: UIViewController {
         let labelValue = UILabel()
         labelValue.translatesAutoresizingMaskIntoConstraints = false
         labelValue.font = UIFont.systemFont(ofSize: 14, weight: .bold)
-        labelValue.textColor = BearyColors.orange
+        // 审计-个人页设置：橙色正文改墨色（同 pastSelfEntryButton，token 值不动）。
+        labelValue.textColor = BearyColors.ink
         return labelValue
     }()
     private let pastSelfWaitingBodyLabel: UILabel = {
@@ -1707,7 +1718,7 @@ class BearyProfileViewController: UIViewController {
         labelValue.alpha = 0
         labelValue.text = "—"
         labelValue.isUserInteractionEnabled = false
-        labelValue.layer.shadowOpacity = 0
+        // 审计-个人页设置：发光已删，shadowOpacity = 0 的残留行同步删（默认值即 0）。
         return labelValue
     }()
 
@@ -1845,7 +1856,9 @@ class BearyProfileViewController: UIViewController {
         // 由系统以 tint 填充底色（真机上选中钮整块变黑、图标与标题墨色沉底不可见），
         // 代码里并无任何背景色设置；改 .custom 彻底去掉系统选中填充，选中指示只剩
         // applyTabSelection 的下划线 + 墨色标题/图标（网页口径）；未选中态外观一字不动。
-        let buttonValue = UIButton(type: .custom)
+        // 审计-个人页设置：签钮改 BearyHit44Button——视觉（内边距/字号/
+        // 图标）一字不动，仅 point(inside:) 把热区扩到 44pt（旧高约 35pt）。
+        let buttonValue = BearyHit44Button(type: .custom)
         buttonValue.translatesAutoresizingMaskIntoConstraints = false
         buttonValue.backgroundColor = .clear
         buttonValue.setTitle(title, for: .normal)
@@ -1874,6 +1887,9 @@ class BearyProfileViewController: UIViewController {
     deinit {
         NotificationCenter.default.removeObserver(self, name: .bearyDidReportEntry, object: nil)
         NotificationCenter.default.removeObserver(self, name: .bearyDidBlockUser, object: nil)
+        // 审计-个人页设置：补注销 bearyFriendsChanged（viewDidLoad 注册、
+        // 此前 deinit 漏注销；广播到达已释放实例不再投递）。
+        NotificationCenter.default.removeObserver(self, name: .bearyFriendsChanged, object: nil)
     }
 
     override func viewDidLoad() {
@@ -2966,19 +2982,9 @@ class BearyProfileViewController: UIViewController {
         gearButton.layer.bearyDynamicBorderColor = BearyColors.line
         nightContainer.layer.bearyDynamicBorderColor = BearyColors.line
         wallContainer.layer.bearyDynamicBorderColor = BearyColors.line
-        // 个人页内容用户名阴影色重赋（深浅切换时 CGColor 不自动跟随）：
-        // ChatGPT 视觉清单已定设计第 3 项：浅色下白色光晕整删（原白色、0.85），
-        // 浅色下只靠文字（ink）与背景对比；深色下黑色阴影保留（0.6）不动。
-        // 半径/偏移见 nameLabel 定义处。
-        // header 用户名发光已删（Li 2026-10-31）：此处不再重赋 header 阴影；
-        // 本支亦不动 header 用户名（其 shadowOpacity 已为 0）。
-        if traitCollection.userInterfaceStyle == .dark {
-            nameLabel.layer.shadowColor = UIColor.black.cgColor
-            nameLabel.layer.shadowOpacity = 0.6
-        } else {
-            nameLabel.layer.shadowColor = UIColor.white.cgColor
-            nameLabel.layer.shadowOpacity = 0
-        }
+        // 审计-个人页设置：用户名阴影死代码已随 nameLabel 定义处整删，
+        // 此处 trait 重赋分支同步删除（header 用户名发光 Li 2026-10-31 已删，
+        // 同样不再重赋）。
         // 批 D：模块卡边线同款重赋（深浅切换时 CGColor 不自动跟随）。
         statsCard.layer.bearyDynamicBorderColor = BearyColors.line
         thisDayCard.layer.bearyDynamicBorderColor = BearyColors.line
@@ -3045,7 +3051,20 @@ class BearyProfileViewController: UIViewController {
                 self.followStateLoading = false
                 switch result {
                 case .success(let state):
-                    self.followState = BearyFollowState(response: state)
+                    // 审计-个人页设置：互关翻转改变日记过滤（仅好友篇显隐），
+                    // 状态到达时若日记 tab 已按旧状态渲染过，须重拉一次，
+                    // 否则互关后仅好友篇仍被旧过滤挡住（或取关后仍残留）。
+                    // 初次拉取时日记 tab 尚未渲染（diaryEntries 为空）不重拉，
+                    // 后续 loadTab 本就按新状态过滤，不多发一次请求。
+                    let previousMutual: Bool
+                    if case .mutual = self.followState { previousMutual = true } else { previousMutual = false }
+                    let newState = BearyFollowState(response: state)
+                    self.followState = newState
+                    let newMutual: Bool
+                    if case .mutual = newState { newMutual = true } else { newMutual = false }
+                    if !self.isOwnProfile, previousMutual != newMutual, !self.diaryEntries.isEmpty {
+                        self.loadTab(forceReload: true)
+                    }
                 case .failure:
                     self.followState = nil
                 }
@@ -4092,7 +4111,7 @@ class BearyProfileViewController: UIViewController {
                     card.isHidden = true
                 }
             } else {
-                let visible = BearyProfilePersonalLogic.visibleEntries(modulesCorpus, isOwn: isOwnProfile)
+                let visible = BearyProfilePersonalLogic.visibleEntries(modulesCorpus, isOwn: isOwnProfile, isMutualFriend: isMutualFriend)
                 renderStats(visible: visible)
                 renderThisDay(visible: visible)
                 renderPastSelf(visible: visible)
@@ -4120,7 +4139,7 @@ class BearyProfileViewController: UIViewController {
             modulesHeightConstraint.isActive = true
             return
         }
-        let visible = BearyProfilePersonalLogic.visibleEntries(modulesCorpus, isOwn: isOwnProfile)
+        let visible = BearyProfilePersonalLogic.visibleEntries(modulesCorpus, isOwn: isOwnProfile, isMutualFriend: isMutualFriend)
         renderStats(visible: visible)
         renderThisDay(visible: visible)
         renderPastSelf(visible: visible)
@@ -4270,7 +4289,7 @@ class BearyProfileViewController: UIViewController {
     }
 
     private func openYearReview() {
-        let visible = BearyProfilePersonalLogic.visibleEntries(modulesCorpus, isOwn: isOwnProfile)
+        let visible = BearyProfilePersonalLogic.visibleEntries(modulesCorpus, isOwn: isOwnProfile, isMutualFriend: isMutualFriend)
         guard !visible.isEmpty else { return }
         let currentYear = Calendar.current.component(.year, from: Date())
         let availableYears = BearyProfilePersonalLogic.availableYears(entries: visible, isOwn: isOwnProfile, calendar: .current)
@@ -4429,7 +4448,7 @@ class BearyProfileViewController: UIViewController {
     }
 
     private func pastSelfVisibleEntries() -> [Entry] {
-        BearyProfilePersonalLogic.visibleEntries(modulesCorpus, isOwn: isOwnProfile)
+        BearyProfilePersonalLogic.visibleEntries(modulesCorpus, isOwn: isOwnProfile, isMutualFriend: isMutualFriend)
     }
 
     private func renderPastSelf(visible: [Entry]) {
@@ -4909,7 +4928,7 @@ class BearyProfileViewController: UIViewController {
             currentWalkEntry = nil
             return
         }
-        let pool = BearyProfilePersonalLogic.visibleEntries(modulesCorpus, isOwn: isOwnProfile)
+        let pool = BearyProfilePersonalLogic.visibleEntries(modulesCorpus, isOwn: isOwnProfile, isMutualFriend: isMutualFriend)
         guard let fresh = pool.first(where: { $0.id == entryId }) else {
             // 旧篇已不在池里（已删 / 翻回私密 / 语料已换目标）：不进详情，
             // 就地按现行口径重抽，池空则藏卡并明示，不静默无反应。
@@ -4930,7 +4949,7 @@ class BearyProfileViewController: UIViewController {
     }
 
     @objc private func randomShuffleTapped() {
-        let pool = BearyProfilePersonalLogic.visibleEntries(modulesCorpus, isOwn: isOwnProfile)
+        let pool = BearyProfilePersonalLogic.visibleEntries(modulesCorpus, isOwn: isOwnProfile, isMutualFriend: isMutualFriend)
         guard !pool.isEmpty else { return }
         if pool.count <= 1 {
             // 单篇池换不出新篇：保留当前卡、明示原因，不跳空卡、不假装换了一篇。
@@ -5788,6 +5807,18 @@ class BearyProfileViewController: UIViewController {
             })
         }
         lastProfileFooterKind = kind
+        // 审计-个人页设置：照片墙首次出现补与空态同款 0.25s 淡入（只淡照片区
+        // 本身，不整脚淡入，免得切空 tab 时照片区跟着闪；缓存视图复用时
+        // 签名不变不重播；脚部模块组淡入已由 renderModules 的
+        // fadeInViewIfAppearing 覆盖，本处不重复加）。
+        if let photosView = photosView, cachedPhotosFooterSignature != lastPhotosFooterFadeSignature,
+           UIAccessibility.isReduceMotionEnabled == false {
+            lastPhotosFooterFadeSignature = cachedPhotosFooterSignature
+            photosView.alpha = 0
+            UIView.animate(withDuration: 0.25, animations: {
+                photosView.alpha = 1
+            })
+        }
         // 112：脚部每次重建都是新容器，transform 回到 identity——按当前
         // 跟移值补上，否则末行→脚部间隙在重建后先错后对（行已跟移、脚部未跟移）。
         if let footer = tableView.tableFooterView {
@@ -5941,9 +5972,10 @@ class BearyProfileViewController: UIViewController {
         let photosVC = BearyProfilePhotosViewController(
             authorIdValue: profile?.profileIdValue ?? targetUserIdValue,
             isOwnProfileValue: isOwnProfile,
-            initialEntries: BearyProfileViewController.sortedDisplayableDiaryEntries(from: photoWallSourceEntries, isOwnProfile: isOwnProfile),
+            initialEntries: BearyProfileViewController.sortedDisplayableDiaryEntries(from: photoWallSourceEntries, isOwnProfile: isOwnProfile, isMutualFriend: isMutualFriend),
             diaryHasMoreValue: photoOverflowEntries.isEmpty ? diaryHasMore : photoOverflowHasMore,
-            onOpenEntryValue: { [weak self] entryValue in self?.onOpenEntry?(entryValue) }
+            onOpenEntryValue: { [weak self] entryValue in self?.onOpenEntry?(entryValue) },
+            isMutualFriendValue: isMutualFriend
         )
         photosVC.modalPresentationStyle = .fullScreen
         present(photosVC, animated: true, completion: nil)

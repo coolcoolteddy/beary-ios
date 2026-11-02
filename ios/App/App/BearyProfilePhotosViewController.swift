@@ -12,17 +12,22 @@ final class BearyProfilePhotosViewController: UIViewController {
 
     private let authorIdValue: Int?
     private let ownProfileValue: Bool
+    private let mutualFriendValue: Bool
     private var diaryEntriesValue: [Entry]
     private var photosValue: [BearyProfilePhotoItem]
     private var photosHasMore: Bool
     private var photosFetching = false
     var onOpenEntry: ((Entry) -> Void)?
 
-    init(authorIdValue: Int?, isOwnProfileValue: Bool, initialEntries: [Entry], diaryHasMoreValue: Bool, onOpenEntryValue: ((Entry) -> Void)?) {
+    /// 审计-个人页设置：全量照片页同样走互关过滤（调用方按实时 followState 传；
+    /// 默认 false，与旧行为一致——旧行为下初始 entries 已由调用方过滤，
+    /// 续拉页此前漏传互关态，本处补上）。
+    init(authorIdValue: Int?, isOwnProfileValue: Bool, initialEntries: [Entry], diaryHasMoreValue: Bool, onOpenEntryValue: ((Entry) -> Void)?, isMutualFriendValue: Bool = false) {
         self.authorIdValue = authorIdValue
         self.ownProfileValue = isOwnProfileValue
+        self.mutualFriendValue = isMutualFriendValue
         self.diaryEntriesValue = initialEntries
-        self.photosValue = BearyProfileViewController.profilePhotoItems(from: initialEntries, isOwnProfile: isOwnProfileValue)
+        self.photosValue = BearyProfileViewController.profilePhotoItems(from: initialEntries, isOwnProfile: isOwnProfileValue, isMutualFriend: isMutualFriendValue)
         self.photosHasMore = diaryHasMoreValue && authorIdValue != nil
         self.onOpenEntry = onOpenEntryValue
         super.init(nibName: nil, bundle: nil)
@@ -192,7 +197,7 @@ final class BearyProfilePhotosViewController: UIViewController {
                     // 续拉页同样按创建时间倒序并案：新页全部更旧，直接追加即可保持倒序。
                     let oldPhotoCount = strongSelf.photosValue.count
                     strongSelf.diaryEntriesValue.append(contentsOf: appended)
-                    strongSelf.photosValue = BearyProfileViewController.profilePhotoItems(from: strongSelf.diaryEntriesValue, isOwnProfile: strongSelf.ownProfileValue)
+                    strongSelf.photosValue = BearyProfileViewController.profilePhotoItems(from: strongSelf.diaryEntriesValue, isOwnProfile: strongSelf.ownProfileValue, isMutualFriend: strongSelf.mutualFriendValue)
                     strongSelf.collectionView.reloadData()
                     strongSelf.updateTitleAndEmpty()
                     // 116：续拉新格错峰滑入（已有格不重播）。
