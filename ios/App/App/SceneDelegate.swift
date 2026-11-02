@@ -4051,7 +4051,6 @@ private final class BearyComposerSheetPresentationController: UIPresentationCont
     private var grabberInstalled = false
     private var sheetHeight: CGFloat = 0
     /// 审计 2026-11-02 弹窗组：见 BearyComposerSheetTransitioningDelegate。
-    var dimTapCloses = false
     var dimTapHandler: (() -> Void)?
     var dismissalHandler: (() -> Void)?
 
