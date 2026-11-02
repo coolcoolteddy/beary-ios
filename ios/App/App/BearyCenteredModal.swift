@@ -151,12 +151,11 @@ private final class BearyCenteredPresentationController: UIPresentationControlle
         applyCardChrome()
         cardShadowView.frame = frame
         // 审计 E2 第 14 项：shadowPath 仅在尺寸变化时更新，不逐帧重算。
-        // 审计 2026-11-02 弹窗组：阴影 path 按卡片实际圆角计算，不硬编码 20
-        // （阴影 token 值本身不动；实际圆角由 applyCardChrome 刚写进 presentedView 层）。
+        // 冻结令（2026-11-02 Li 新令）：阴影 path 属冻结范围，本支不改计算方式，
+        // 原“按实际圆角计算”修法已 revert，见 PR 描述“因冻结未做的样式统一项”。
         if cardShadowView.bounds != lastShadowBounds {
             lastShadowBounds = cardShadowView.bounds
-            let actualRadius = presentedView.layer.cornerRadius > 0 ? presentedView.layer.cornerRadius : BearySheetChrome.topCornerRadius
-            cardShadowView.layer.shadowPath = UIBezierPath(roundedRect: cardShadowView.bounds, cornerRadius: actualRadius).cgPath
+            cardShadowView.layer.shadowPath = UIBezierPath(roundedRect: cardShadowView.bounds, cornerRadius: 20).cgPath
         }
     }
 }
