@@ -2482,15 +2482,30 @@ final class BearyChromeViewController: UIViewController {
         let vc = BearyInviteViewController()
         vc.onClose = { [weak vc] in vc?.dismiss(animated: BearyMotion.animated(true)) }
         vc.onRequireLogin = { [weak self] in self?.presentLoginGate() }
+        // 审计 2026-11-02 弹窗组：两形态统一为点遮罩关闭，且关闭一律走取消路径
+        // （onClose）；dismiss 完成后清强持有与 transitioningDelegate（拖动关闭、
+        // dim 关闭、关闭钮均经 dismissalHandler 覆盖，旧路径从不清 nil）。
+        let inviteDismissalCleanup: () -> Void = { [weak self, weak vc] in
+            self?.inviteCentered = nil
+            self?.inviteSheet = nil
+            vc?.transitioningDelegate = nil
+        }
         if view.bounds.width >= 821 {
             let centered = BearyCenteredTransitioningDelegate()
             // F9：邀请弹窗宽屏版单独给 dim 加点击关闭（编辑器保持不动，见 BearyCenteredModal）。
             centered.dimTapCloses = true
+            centered.dimTapHandler = { [weak vc] in vc?.onClose?() }
+            centered.dismissalHandler = inviteDismissalCleanup
             vc.modalPresentationStyle = .custom
             vc.transitioningDelegate = centered
             inviteCentered = centered
         } else {
             let sheet = BearyComposerSheetTransitioningDelegate()
+            // 窄屏底 sheet 旧无 dim 手势（点遮罩不关闭），与宽屏分裂；本处补齐，
+            // 与宽屏统一为点遮罩关闭、同样走 onClose 取消路径。
+            sheet.dimTapCloses = true
+            sheet.dimTapHandler = { [weak vc] in vc?.onClose?() }
+            sheet.dismissalHandler = inviteDismissalCleanup
             vc.modalPresentationStyle = .custom
             vc.transitioningDelegate = sheet
             inviteSheet = sheet
@@ -3878,8 +3893,21 @@ extension BearyChromeViewController: UIPopoverPresentationControllerDelegate {
 // reduced-motion：进出动画时长 0，见 BearyComposerSheetAnimator；下滑松手回弹亦直接复位。
 
 final class BearyComposerSheetTransitioningDelegate: NSObject, UIViewControllerTransitioningDelegate {
+    /// 审计 2026-11-02 弹窗组：邀请页窄屏底 sheet 与宽屏居中卡片统一为
+    /// 点遮罩关闭。默认 false（编辑器底 sheet 不得点遮罩关闭，须走自身取消流程）；
+    /// 仅邀请页置 true。dim 点击走 dimTapHandler（一般接被呈现页 onClose），
+    /// 未置时回落直接 dismiss。
+    var dimTapCloses = false
+    var dimTapHandler: (() -> Void)?
+    /// dismiss 完成回调（调用方做 dismiss 后清理，如 transitioningDelegate=nil）。
+    var dismissalHandler: (() -> Void)?
+
     func presentationController(forPresented presented: UIViewController, presenting: UIViewController?, source: UIViewController) -> UIPresentationController? {
-        return BearyComposerSheetPresentationController(presentedViewController: presented, presenting: presenting)
+        let controller = BearyComposerSheetPresentationController(presentedViewController: presented, presenting: presenting)
+        controller.dimTapCloses = dimTapCloses
+        controller.dimTapHandler = dimTapHandler
+        controller.dismissalHandler = dismissalHandler
+        return controller
     }
 
     func animationController(forPresented presented: UIViewController, presenting: UIViewController, source: UIViewController) -> UIViewControllerAnimatedTransitioning? {
@@ -3916,6 +3944,18 @@ private final class BearyComposerSheetPresentationController: UIPresentationCont
     private let sheetTopBorderView = UIView()
     private var grabberInstalled = false
     private var sheetHeight: CGFloat = 0
+    /// 审计 2026-11-02 弹窗组：见 BearyComposerSheetTransitioningDelegate。
+    var dimTapCloses = false
+    var dimTapHandler: (() -> Void)?
+    var dismissalHandler: (() -> Void)?
+
+    @objc private func sheetDimTapped() {
+        if let handler = dimTapHandler {
+            handler()
+        } else {
+            presentedViewController.dismiss(animated: BearyMotion.animated(true))
+        }
+    }
     // 90 包修法：转场进行中跳过 presentedView.frame 重写（transform 未归位时 frame 未定义，
     // 坏写会算坏 center、动画第一帧再也出不来）；转场结束后恢复正常写帧。
     private var isTransitioning = false
@@ -3944,6 +3984,12 @@ private final class BearyComposerSheetPresentationController: UIPresentationCont
             dimmingView.leadingAnchor.constraint(equalTo: container.leadingAnchor),
             dimmingView.trailingAnchor.constraint(equalTo: container.trailingAnchor),
         ])
+        // 审计 2026-11-02 弹窗组：仅 dimTapCloses 时给 dim 加点击关闭
+        // （邀请窄屏版；编辑器不动）。旧窄屏 sheet 根本无 dim 手势，
+        // 与宽屏居中卡片“点遮罩关闭”分裂，本处补齐为统一口径。
+        if dimTapCloses {
+            dimmingView.addGestureRecognizer(UITapGestureRecognizer(target: self, action: #selector(sheetDimTapped)))
+        }
         // 网页抓手无附加安全区：不再补 28pt 顶 inset；抓手直接落在 sheet 顶部（顶距 10）。
         // 阴影层挂在容器里、presentedView 下方（presentedView 自身裁剪，阴影不能挂它身上）。
         sheetShadowView.backgroundColor = .clear
@@ -3973,13 +4019,18 @@ private final class BearyComposerSheetPresentationController: UIPresentationCont
         // 临时诊断（86 包，定根因后删除；UIKit 无 presentationTransitionDidComplete，此为最接近的结束点）。
         DiagFile.mark("sheet-didComplete")
         if !completed {
+            // 审计 2026-11-02 弹窗组：取消路径同时清遮罩与阴影（旧路径只清阴影）。
+            dimmingView.removeFromSuperview()
             sheetShadowView.removeFromSuperview()
         }
     }
 
     override func dismissalTransitionDidEnd(_ completed: Bool) {
         if completed {
+            // 审计 2026-11-02 弹窗组：取消路径同时清遮罩与阴影，再通知调用方清理。
+            dimmingView.removeFromSuperview()
             sheetShadowView.removeFromSuperview()
+            dismissalHandler?()
         }
     }
 

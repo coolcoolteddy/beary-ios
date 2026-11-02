@@ -2158,7 +2158,8 @@ final class BearyDetailViewController: UIViewController {
             popover.sourceView = moreButton
             popover.sourceRect = moreButton.bounds
         }
-        present(sheet, animated: true)
+        // 审计 2026-11-02 弹窗组：present 不写死 animated，走减动效口径。
+        present(sheet, animated: BearyMotion.animated(true))
     }
 
     @objc private func visibilityTapped() {
