@@ -2650,9 +2650,6 @@ class BearyTimelineViewController: UIViewController {
             view.addSubview(visFilterDismissView)
             view.addSubview(visFilterBubble)
         }
-<<<<<<< HEAD
-        present(sheet, animated: BearyMotion.animated(true))
-=======
         visFilterBubble.setSelectedKey("\(timelineVisFilter)")
         view.layoutIfNeeded()
         let buttonFrame = visFilterButton.convert(visFilterButton.bounds, to: view)
@@ -2718,7 +2715,6 @@ class BearyTimelineViewController: UIViewController {
                 self.visFilterDismissView.isHidden = true
             }
         )
->>>>>>> origin/main
     }
 
     /// 切档：按新 vis 重取列表，分页游标随新筛子重置（首屏 force 全量，
