@@ -50,11 +50,13 @@ enum BearySoundPlayer {
     // 原问题：play 每次在调用线程（UI 操作即主线程）做 Bundle.main.url +
     // AVAudioPlayer(contentsOf:) + prepareToPlay，即每次播放都把文件 IO 与
     // 解码压在主线程关键路径上。改法：每音效一个小池复用 + 后台预热。
-    // 不变项：音色、音量、触发点一律不变——同名文件、不改 volume/rate、
-    // 调用 play 当即出声（命中池或冷启动兜底），绝不排队延迟播放；
+    // 不变项：音色、音量、触发点一律不变——同名文件、不改 volume/rate；
+    // 命中池当即出声；未命中不再主线程同步建播放器，改后台建好后
+    // 回主线程播放，过期（见 play）则不播、只回池，绝不排队延迟播放；
     // 门控不变：设置页“音效”开关 + .ambient（跟随静音键）+ mixWithOthers。
-    /// 每音效空闲池上限：点赞连点等同音并发 burst 通常 ≤2，超出走同步兜底
-    /// 新建（罕见，与旧行为一致），播完回池时按上限丢弃多余。
+    /// 每音效空闲池上限：点赞连点等同音并发 burst 通常 ≤2，超出走后台建
+    /// 播放器、就绪后符合新鲜度才播放（见 play 未命中路径），播完回池
+    /// 时按上限丢弃多余。
     private static let maxPooledPerSound = 2
     /// 审计动效组：全部 12 音在启动或闲时预热解码（旧口径只预热 3 音，
     /// 其余 9 音首次播放走主线程文件 IO）；预热只做后台解码，不改音色、
@@ -99,20 +101,22 @@ enum BearySoundPlayer {
             return
         }
         // 命中池：零文件 IO、零解码，只有取池 + play()，调用保持轻。
-        let player: AVAudioPlayer
-        if let pooled = takePooledPlayer(for: sound) {
-            player = pooled
-            player.currentTime = 0
-            // 已解码数据仍在内存，prepareToPlay 只是内存侧就绪，不读文件。
-            player.prepareToPlay()
-            refillPoolIfEmpty(for: sound)
-        } else if let built = buildPlayer(for: sound) {
-            // 冷启动兜底：该音效首次播放（或同音 burst 超出池上限/预热在途）
-            // 时才同步新建，与旧行为一致；播完即回池，此后同音效走池。
-            player = built
-        } else {
+        guard let pooled = takePooledPlayer(for: sound) else {
+            // 审计第 21 项残留缺口：未命中（预热未完成 / 同音 burst 超池）
+            // 时不再主线程同步 buildPlayer——点按主线程只调度后台建播放器
+            // 就立即返回；建好后回主线程、符合新鲜度才播放，过期不播只回池。
+            scheduleMissedSoundBuild(sound, tappedAt: now)
             return
         }
+        pooled.currentTime = 0
+        // 已解码数据仍在内存，prepareToPlay 只是内存侧就绪，不读文件。
+        pooled.prepareToPlay()
+        refillPoolIfEmpty(for: sound)
+        startPlaying(pooled, for: sound)
+    }
+
+    /// 主线程播放已就绪播放器：强持有到播完，播完回池（池满丢弃）。
+    private static func startPlaying(_ player: AVAudioPlayer, for sound: BearySound) {
         poolLock.lock()
         activePlayers.append(player)
         poolLock.unlock()
@@ -123,6 +127,42 @@ enum BearySoundPlayer {
             activePlayers.removeAll { $0 === player }
             poolLock.unlock()
             returnPlayerToPool(player, for: sound)
+        }
+    }
+
+    /// 未命中路径：后台建播放器，建好后回主线程播放；过期交互音不排队延迟播放。
+    /// 新鲜度三条（任一不满足即不播、播放器回池供下次命中）：
+    /// 1) 仍在前台 active（与 play 入口守卫一致，锁屏/后台不补播）；
+    /// 2) 距点按 < 0.5s（正常后台建播放器远低于此值，阈值只截断磁盘卡顿等
+    ///    病态延迟，避免用户已翻页/做下一步后旧音效才突然响起）；
+    /// 3) 仍是该音效最近一次点按（其后若已有更新点按走池播出，本次旧请求
+    ///    不再叠播，只回池）。
+    /// 设置开关在建好后复核：关了就不播（回池无害，下次开时可命中）。
+    private static func scheduleMissedSoundBuild(_ sound: BearySound, tappedAt: Date) {
+        poolQueue.async {
+            guard let built = buildPlayer(for: sound) else { return }
+            DispatchQueue.main.async {
+                let isFresh: Bool = {
+                    guard isEnabled else { return false }
+                    guard UIApplication.shared.applicationState == .active else { return false }
+                    guard Date().timeIntervalSince(tappedAt) < 0.5 else { return false }
+                    poolLock.lock()
+                    let latest = lastPlayAt[sound]
+                    poolLock.unlock()
+                    return latest == tappedAt
+                }()
+                guard isFresh else {
+                    returnPlayerToPool(built, for: sound)
+                    return
+                }
+                do {
+                    try ensureAudioSession()
+                } catch {
+                    returnPlayerToPool(built, for: sound)
+                    return
+                }
+                startPlaying(built, for: sound)
+            }
         }
     }
 
@@ -164,8 +204,8 @@ enum BearySoundPlayer {
         }
     }
 
-    /// 建播放器：Bundle 寻址 + 解码准备。只允许在后台队列（预热/补池）
-    /// 或冷启动兜底时调用；池命中路径绝不经过这里。
+    /// 建播放器：Bundle 寻址 + 解码准备。只允许在后台队列（预热/补池/
+    /// 未命中后台建）调用；点按主线程与池命中路径绝不经过这里。
     private static func buildPlayer(for sound: BearySound) -> AVAudioPlayer? {
         guard let url = Bundle.main.url(forResource: sound.rawValue, withExtension: "wav") else { return nil }
         do {
