@@ -200,7 +200,7 @@ final class BearyInviteViewController: UIViewController {
         // C4：复制钮改用 surface 底，与码框 faint 底拉开对比（深色下不再融为一体）。
         copyButton.backgroundColor = BearyColors.surface
         copyButton.setTitle("复制", for: .normal)
-        copyButton.setTitleColor(BearyColors.ink, for: .normal)
+        copyButton.setTitleColor(BearyColors.deepOrangeText, for: .normal)
         copyButton.titleLabel?.font = BearyDynamicType.cappedFont(for: UIFont.systemFont(ofSize: 14, weight: .semibold))
         copyButton.titleLabel?.adjustsFontForContentSizeCategory = true
         copyButton.contentEdgeInsets = UIEdgeInsets(top: 0, left: 16, bottom: 0, right: 16)
@@ -282,7 +282,7 @@ final class BearyInviteViewController: UIViewController {
 
         retryButton.translatesAutoresizingMaskIntoConstraints = false
         retryButton.setTitle("重试", for: .normal)
-        retryButton.setTitleColor(BearyColors.ink, for: .normal)
+        retryButton.setTitleColor(BearyColors.deepOrangeText, for: .normal)
         retryButton.titleLabel?.font = BearyDynamicType.cappedFont(for: UIFont.systemFont(ofSize: 14, weight: .semibold))
         retryButton.titleLabel?.adjustsFontForContentSizeCategory = true
         retryButton.isHidden = true
@@ -406,7 +406,7 @@ final class BearyInviteViewController: UIViewController {
 
     private func showMessage(_ text: String, ok: Bool = false) {
         messageLabel.text = text
-        messageLabel.textColor = ok ? BearyColors.green : BearyColors.red
+        messageLabel.textColor = ok ? BearyColors.deepGreenText : BearyColors.red
         // 审计登录杂项：行内失败时绑定框同步 isError 红边，成功 / 清空时复位。
         bindInputContainer?.isError = !text.isEmpty && !ok
     }
@@ -568,7 +568,7 @@ final class BearyInviteViewController: UIViewController {
         // 审计 P2：绑定成功文案先显示——render 清空消息行后，待展示的绑定文案重新落回。
         if let pending = pendingBindMessage {
             messageLabel.text = pending
-            messageLabel.textColor = pendingBindMessageOK ? BearyColors.green : BearyColors.red
+            messageLabel.textColor = pendingBindMessageOK ? BearyColors.deepGreenText : BearyColors.red
             pendingBindMessage = nil
         }
         if UIAccessibility.isReduceMotionEnabled == false {

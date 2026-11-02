@@ -3367,7 +3367,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         locationClearButton.addTarget(self, action: #selector(didTapClearLocation), for: .touchUpInside)
         locationNoteLabel.translatesAutoresizingMaskIntoConstraints = false
         locationNoteLabel.font = UIFont.systemFont(ofSize: 12)
-        locationNoteLabel.textColor = BearyColors.ink
+        locationNoteLabel.textColor = BearyColors.deepOrangeText
         locationNoteLabel.numberOfLines = 0
         locationLineRow.axis = .horizontal
         locationLineRow.spacing = 6
@@ -7031,7 +7031,7 @@ private final class BearyQuoteStatusPillView: UIView {
 
     private func applyColors() {
         let color: UIColor = (style == .private) ? BearyColors.blue : BearyColors.orange
-        label.textColor = color
+        label.textColor = (style == .private) ? BearyColors.blue : BearyColors.deepOrangeText
         if style == .limited {
             layer.borderWidth = 0
             dashedLayer.strokeColor = color.cgColor
