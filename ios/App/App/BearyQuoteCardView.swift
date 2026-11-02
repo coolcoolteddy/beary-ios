@@ -55,7 +55,8 @@ final class BearyQuoteCardView: UIView {
     /// 进原日记详情；占位态（已私密/已删除）下只展示、不点按、不泄露正文。
     /// 本行即原尾部日期的归宿：尾部 dateLabel 随之删除，同一卡不再出现两次日期。
     private let sourceButton: UIButton = {
-        let btn = UIButton(type: .system)
+        // 样式规格第 4 表：来源行 12 字视觉不动，热区扩到 44。
+        let btn = BearyHit44Button(type: .system)
         btn.translatesAutoresizingMaskIntoConstraints = false
         btn.titleLabel?.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 12))
         btn.titleLabel?.adjustsFontForContentSizeCategory = true

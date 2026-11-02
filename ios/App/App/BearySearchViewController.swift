@@ -2007,7 +2007,8 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         // 拉黑无钮；按钮是行内独立 UIControl，点按不触发整行点按）。状态未到
         // 前先画“关注”占位，点按时若状态仍为空只提示、不发请求。
         if let myId = SessionManager.shared.currentUser?.id, let userId = user.id, userId != myId, !isBlockedForSearch(userId: userId) {
-            let followButton = UIButton(type: .system)
+            // 样式规格第 4 表：关注钮视觉（≥28、圆角 14）不动，热区扩到 44。
+            let followButton = BearyHit44Button(type: .system)
             followButton.translatesAutoresizingMaskIntoConstraints = false
             followButton.titleLabel?.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13, weight: .semibold))
             followButton.titleLabel?.adjustsFontForContentSizeCategory = true

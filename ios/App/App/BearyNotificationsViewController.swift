@@ -2782,7 +2782,8 @@ private class BearyNotificationCell: UITableViewCell {
     }()
 
     private lazy var followBackButton: UIButton = {
-        let button = UIButton(type: .system)
+        // 样式规格第 4 表：回关钮视觉（内边距 6/16、圆角 16）不动，热区扩到 44。
+        let button = BearyHit44Button(type: .system)
         button.translatesAutoresizingMaskIntoConstraints = false
         button.setTitle("回关", for: .normal)
         button.titleLabel?.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 14, weight: .semibold))

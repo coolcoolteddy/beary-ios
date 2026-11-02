@@ -1845,7 +1845,8 @@ class BearyProfileViewController: UIViewController {
         // 由系统以 tint 填充底色（真机上选中钮整块变黑、图标与标题墨色沉底不可见），
         // 代码里并无任何背景色设置；改 .custom 彻底去掉系统选中填充，选中指示只剩
         // applyTabSelection 的下划线 + 墨色标题/图标（网页口径）；未选中态外观一字不动。
-        let buttonValue = UIButton(type: .custom)
+        // 样式规格第 4 表：页签钮视觉（内边距 9/10）不动，仍走 .custom，热区扩到 44。
+        let buttonValue = BearyHit44Button(type: .custom)
         buttonValue.translatesAutoresizingMaskIntoConstraints = false
         buttonValue.backgroundColor = .clear
         buttonValue.setTitle(title, for: .normal)

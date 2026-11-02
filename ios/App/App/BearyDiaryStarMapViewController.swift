@@ -81,7 +81,8 @@ final class BearyDiaryStarMapViewController: UIViewController {
     private let emptySubLabel = UILabel()
     private let failureView = UIView()
     private let failureLabel = UILabel()
-    private let retryButton = UIButton(type: .system)
+    // 样式规格第 4 表：视觉不动（15 bold 文字钮），热区扩到 44。
+    private let retryButton = BearyHit44Button(type: .system)
 
     // MARK: - 状态
 
@@ -419,7 +420,8 @@ final class BearyDiaryStarMapViewController: UIViewController {
     // MARK: - 药丸按钮（年/月/连线过滤共用）
 
     private func pillButton(title: String, selected: Bool, action: Selector) -> UIButton {
-        let button = UIButton(type: .custom)
+        // 样式规格第 4 表：药丸行视觉高 32 不动，热区扩到 44。
+        let button = BearyHit44Button(type: .custom)
         button.translatesAutoresizingMaskIntoConstraints = false
         button.setTitle(title, for: .normal)
         button.titleLabel?.font = UIFont.systemFont(ofSize: 13, weight: selected ? .bold : .regular)
@@ -768,7 +770,8 @@ final class BearyDiaryStarMapViewController: UIViewController {
         visRow.addArrangedSubview(visIcon)
         visRow.addArrangedSubview(sheetBodyLabel(isPublic ? "公开" : "私密"))
         sheetStack.addArrangedSubview(visRow)
-        let detailButton = UIButton(type: .custom)
+        // 样式规格第 4 表：详情钮视觉（内边距 10/16、圆角 12）不动，热区扩到 44。
+        let detailButton = BearyHit44Button(type: .custom)
         detailButton.setTitle("查看详情", for: .normal)
         detailButton.titleLabel?.font = UIFont.boldSystemFont(ofSize: 15)
         detailButton.setTitleColor(BearyStarMapNight.primaryText, for: .normal)

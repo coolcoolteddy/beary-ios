@@ -92,7 +92,8 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate, UI
     private let failureStateView = BearyStateView()
     private let moreSpinner = BearyRefreshIconView()
     private let loginWrap = UIStackView()
-    private let loginButton = UIButton(type: .custom)
+    // 样式规格第 4 表：“去登录”钮视觉（14 字文字钮）不动，热区扩到 44。
+    private let loginButton = BearyHit44Button(type: .custom)
 
     // MARK: - 生命周期
 

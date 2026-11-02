@@ -26,7 +26,8 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
     private let emptyLabel = UILabel()
     private let inputBar = UIView()
     private let inputTextView = UITextView()
-    private let sendButton = UIButton(type: .system)
+    // 样式规格第 4 表：发送钮视觉高 32、圆角 16 不动，热区扩到 44。
+    private let sendButton = BearyHit44Button(type: .system)
     private var inputBarBottomConstraint: NSLayoutConstraint?
     private var messages: [BearyAPI.DMMessage] = []
     private var loading = false

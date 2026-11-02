@@ -3660,8 +3660,9 @@ MC 服务器为免费公益服，不保证 7×24 在线。
 // 打开时重读最新；复制全部进剪贴板，清空需二次确认）。
 private final class BearyDiagnosticsViewController: UIViewController {
     private let textView = UITextView()
-    private let copyButton = UIButton(type: .system)
-    private let clearButton = UIButton(type: .system)
+    // 样式规格第 4 表：诊断页复制/清空钮视觉（15 字文字钮）不动，热区扩到 44。
+    private let copyButton = BearyHit44Button(type: .system)
+    private let clearButton = BearyHit44Button(type: .system)
     /// 116 子页空白守卫（同 BearySettingsSubpages.swift 守卫说明）。
     private let subpageLayoutGuard = BearySubpageLayoutGuard()
     private var topBarView: UIView?

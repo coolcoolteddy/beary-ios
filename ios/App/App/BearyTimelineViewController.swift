@@ -2465,9 +2465,11 @@ class BearyTimelineViewController: UIViewController {
     private var stickyHeaderCurrentTitle: String?
     private let headerContainer = UIView()
     private let titleLabel = UILabel()
-    private let trashButton = UIButton(type: .system)
+    // 样式规格第 4 表：回收站 pill 视觉（圆角 17、内边距 8/10）不动，热区扩到 44。
+    private let trashButton = BearyHit44Button(type: .system)
     private let countsLabel = UILabel()
-    private let statsButton = UIButton(type: .system)
+    // 样式规格第 4 表：统计/失败行视觉不动，热区扩到 44。
+    private let statsButton = BearyHit44Button(type: .system)
     private let calendarCard = BearyCalendarCardView()
     /// 113 日历失败悬浮条：VC 视图层覆盖（不进 tableHeaderView，故不随表头滚走；
     /// 不是骨架屏——失败时才出现的一行文案 + 重试钮）。重试复用统计行 didTapStats
@@ -5749,8 +5751,9 @@ class BearyTimelineViewController: UIViewController {
             } else {
                 button.setTitleColor(BearyColors.blue, for: .normal)
             }
-            // Q1 按钮高统一 44（空态各按钮同口径；仅数值约束，不改布局结构）。
-            button.heightAnchor.constraint(equalToConstant: actionOutlined ? 40 : 44).isActive = true
+            // 样式规格第 4 表：空态描边重试钮 40→44，与“统一 44”口径一致；
+            // 仅改高约束，圆角 20、边框、内边距一律不动（圆角归第 1 组管）。
+            button.heightAnchor.constraint(equalToConstant: 44).isActive = true
             button.addTarget(self, action: #selector(didTapEmptyAction(_:)), for: .touchUpInside)
             button.bearyAddPressFeedback()
             button.accessibilityIdentifier = "timelineEmptyAction"
