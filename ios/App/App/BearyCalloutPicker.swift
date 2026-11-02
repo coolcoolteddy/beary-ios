@@ -69,6 +69,29 @@ final class BearyCalloutPickerView: UIView, UIScrollViewDelegate {
     }
 
     var onSelect: ((String) -> Void)?
+    /// 审计第 31 项：VoiceOver 逃离（两指划）回调。框体是普通叠加层、非 VC，
+    /// 逃离手势无 VC 可接，须由框体自身响应（信件模态遮罩层同款做法）：
+    /// 调用方接成与框外点按同一关闭路径并还焦点。未接时返回 false，不谎称已处理。
+    var onAccessibilityEscape: (() -> Void)?
+    /// 审计第 31 项：打开时 VoiceOver 首落点——已选中的可见选项优先（与框内
+    /// 选中态同一口径），无选中或选中项取图失败被隐藏时落首个可见选项；
+    /// 全部选项都被隐藏时返回 nil，调用方此时不发焦点通知、不抢焦点。
+    /// 只读现有选项按钮与 isHidden，不改选项内容、布局与选中逻辑。
+    var initialAccessibilityElement: UIView? {
+        if let selectedKey = selectedKey {
+            for (key, button) in optionButtons where !button.isHidden && key == selectedKey {
+                return button
+            }
+        }
+        return optionButtons.map(\.button).first(where: { !$0.isHidden })
+    }
+
+    override func accessibilityPerformEscape() -> Bool {
+        guard let onAccessibilityEscape = onAccessibilityEscape else { return false }
+        onAccessibilityEscape()
+        return true
+    }
+
     /// 取图闭包：(key, dark) -> 图。心情走 emote 静态 PNG（深色 _dark），
     /// 天气走 icon_wx_* 模板图（调用方 tint 墨色，深浅自适应）。
     var imageProvider: ((String, Bool) -> UIImage?)?
