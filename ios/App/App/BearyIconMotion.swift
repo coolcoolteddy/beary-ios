@@ -100,13 +100,25 @@ enum BearyIconMotion {
     /// imageView 自带旋转的钮不用它，改走 haptic-only，见各页接线）。
     /// 减动效：缩放直达终值（animateIconScale 同口径）；震动不拿减动效门控
     ///（BearyHaptics 头注释既定口径：两者不是一回事）。
+    /// 审计第 30 项：同一次触摸序列仅首次发触感——touchDown 走本方法
+    /// （视觉＋轻震），手指滑出后重新滑入走 pressDownVisual（只恢复视觉
+    /// 按压态，不再发震）；touchDragEnter 只在已开始的触摸序列内触发，
+    /// 故分流即等价于“每序列首次才震”，无需另存序列状态。
+    /// 轻震仍走 BearyHaptics.press()（复用缓存的反馈生成器，不现建现扔）；
+    /// 成功/警告反馈按实际结果触发（publishSuccess/rejectionWarning），不受此分流影响。
     static func pressDown(on button: UIButton) {
+        pressDownVisual(on: button)
+        BearyHaptics.press()
+    }
+
+    /// 审计第 30 项：重新滑入的视觉恢复——与 pressDown 同款 .96 缩放、
+    /// 同时长同曲线，唯独不发触感。pressDown 复用本方法，视觉行为单点。
+    static func pressDownVisual(on button: UIButton) {
         if button.imageView != nil {
             animateIconScale(on: button, to: 0.96)
         } else {
             scaleButton(button, to: 0.96)
         }
-        BearyHaptics.press()
     }
 
     static func pressUp(on button: UIButton) {
@@ -150,10 +162,13 @@ extension UIButton {
     /// 审计 15 项第 12 项：补 touchDragExit（滑出恢复）与 touchDragEnter
     /// （滑入恢复按压态）；业务动作仍只由 touchUpInside 执行；滚动容器
     /// 内滑动时 touchCancel 仍兜底（原有行为不动）。
+    /// 审计第 30 项：touchDragEnter 改挂 bearyPressDownVisual——同一次按压
+    /// 滑出再滑入只恢复视觉按压态，不重复发轻震；新一次按压的 touchDown
+    /// 仍正常发震。
     func bearyAddPressFeedback() {
         addTarget(self, action: #selector(bearyPressDown), for: .touchDown)
         addTarget(self, action: #selector(bearyPressUp), for: [.touchUpInside, .touchUpOutside, .touchCancel, .touchDragExit])
-        addTarget(self, action: #selector(bearyPressDown), for: .touchDragEnter)
+        addTarget(self, action: #selector(bearyPressDownVisual), for: .touchDragEnter)
     }
 
     /// W6：行级全宽钮专用——只给按下轻震，不缩放（全宽行缩 .84 会像整行抖动；
@@ -163,6 +178,8 @@ extension UIButton {
     }
 
     @objc func bearyPressDown() { BearyIconMotion.pressDown(on: self) }
+    /// 审计第 30 项：重新滑入只恢复视觉按压态，不发触感。
+    @objc func bearyPressDownVisual() { BearyIconMotion.pressDownVisual(on: self) }
     @objc func bearyPressUp() { BearyIconMotion.pressUp(on: self) }
     @objc func bearyPressDownHapticOnly() { BearyHaptics.press() }
 }
