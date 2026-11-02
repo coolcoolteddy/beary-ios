@@ -1249,12 +1249,22 @@ final class BearyDraftBoxViewController: UIViewController {
     /// DF-1 摘要兜底顺序改网页口径（buildDraftCard）：
     /// 正文 > 只有图片 > 只有引用 > 只有心情 > 有天气/写给则“（还没写字）” > “（空白草稿）”。
     private func summaryText(for draftValue: BearyDraft) -> String {
+        // 摘要兜底：标题优先 → 正文摘要 → 图片数量/位置 → 引用/心情/天气/写给 → 空白。
+        let title = (draftValue.title ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        if !title.isEmpty {
+            return title
+        }
         let trimmed = draftValue.content.trimmingCharacters(in: .whitespacesAndNewlines)
         if !trimmed.isEmpty {
             return trimmed
         }
         if !draftValue.images.isEmpty {
-            return "（只有图片）"
+            let district = (draftValue.locationDistrict ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+            let place = district.isEmpty ? (draftValue.locationName ?? "").trimmingCharacters(in: .whitespacesAndNewlines) : district
+            if place.isEmpty {
+                return "（\(draftValue.images.count) 张图片）"
+            }
+            return "（\(draftValue.images.count) 张图片 · \(place)）"
         }
         if draftValue.quoteId != nil {
             return "（只有引用）"
@@ -1669,7 +1679,12 @@ final class BearyDraftBoxViewController: UIViewController {
             undoWrap.transform = .identity
             return
         }
-        undoLabel.text = pendingUndos.count == 1 ? "草稿已删除" : "\(pendingUndos.count) 份草稿已删除"
+        if pendingUndos.count == 1, let only = pendingUndos.first {
+            let short = summaryText(for: only.draft)
+            undoLabel.text = short.count > 20 ? "已删除“\(String(short.prefix(20)))…”" : "已删除“\(short)”"
+        } else {
+            undoLabel.text = "\(pendingUndos.count) 份草稿已删除"
+        }
         if undoWrap.isHidden {
             showUndoAnimated()
         }

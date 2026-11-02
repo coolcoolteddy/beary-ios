@@ -288,8 +288,15 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
     private var keyboardBottomInset: CGFloat = 0
 
     @objc private func keyboardWillShow(_ notification: Notification) {
-        guard let frame = notification.userInfo?[UIResponder.keyboardFrameEndUserInfoKey] as? CGRect else { return }
-        keyboardBottomInset = max(0, frame.height - view.safeAreaInsets.bottom)
+        guard let frameValue = notification.userInfo?[UIResponder.keyboardFrameEndUserInfoKey] as? NSValue else { return }
+        // 聊天/登录同款：先转窗口坐标再算实际遮挡；贴底键盘按遮挡垫底，
+        // 浮动键盘（底边未贴视图底边）不垫空白——搜索框在顶部本就不会被盖住。
+        let frameInView = view.convert(frameValue.cgRectValue, from: nil)
+        if frameInView.maxY >= view.bounds.height - 1 {
+            keyboardBottomInset = max(0, view.bounds.height - frameInView.minY - view.safeAreaInsets.bottom)
+        } else {
+            keyboardBottomInset = 0
+        }
         scrollView.contentInset.bottom = BearyChrome.chromeBottomInset(includesFab: false, width: view.bounds.width, safeAreaBottom: view.safeAreaInsets.bottom) + keyboardBottomInset
         scrollView.scrollIndicatorInsets.bottom = BearyChrome.chromeBottomInset(includesFab: false, width: view.bounds.width, safeAreaBottom: view.safeAreaInsets.bottom) + keyboardBottomInset
     }
