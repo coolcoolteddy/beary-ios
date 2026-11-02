@@ -8,7 +8,7 @@ import UIKit
 // 文件头 U1）；举报走既有 BearyReportFlow（只传 entry_id），举报成功后本篇对举报人
 // 变占位；拉黑需要作者 id，匿名卡上无法提供——举报后消失即为匿名场景下的等价防护，
 // 见回报里的拉黑口径说明。收到篇图片只走站内 BearyImageURLs（白名单内），不拼外链。
-// 失败诚实口径：服务端未上线（404）时显示“盲盒服务暂未上线”，不编造开盒结果；
+// 失败诚实口径：404 时显示“盲盒暂时无法加载”，不编造开盒结果；
 // 每日已换（409）时 toast 并重拉当日状态；撤回后计数不返还（暂定 U2）。
 // 交换池空：POST /open 无可抽对象时服务端回 400 {error: "pool_empty"}（经
 // BearyAPI.mapStatus 解为 .server("pool_empty")），开盒失败分支特判它，toast +
@@ -1153,7 +1153,7 @@ final class BearyBlindBoxFlowViewController: UIViewController {
 
     @objc private func withdrawTapped() {
         guard withdrawBusy == false, let exchangeId = exchangeId else { return }
-        let alert = UIAlertController(title: "撤回交换？", message: "撤回后，对方收到的你这篇将变为占位；今日次数不返还。", preferredStyle: .alert)
+        let alert = UIAlertController(title: "撤回交换？", message: "撤回后，对方将无法再查看你交换的这篇日记，今日交换次数不会恢复。", preferredStyle: .alert)
         alert.addAction(UIAlertAction(title: "取消", style: .cancel, handler: nil))
         alert.addAction(UIAlertAction(title: "撤回", style: .destructive) { [weak self] _ in
             guard let self = self else { return }
@@ -1179,16 +1179,16 @@ final class BearyBlindBoxFlowViewController: UIViewController {
         refreshExchangeDetail(id: exchangeId, silent: false)
     }
 
-    // MARK: - 错误文案（404 = 服务端未上线，不谎称网络问题）
+    // MARK: - 错误文案（404 未必是服务端未上线，也可能是路由或单据不存在，不谎称网络问题）
 
     private func todayErrorText(_ error: APIError) -> String {
         switch error {
         case .unauthorized, .authFailure:
             return "登录已过期，请重新登录"
         case .notFound:
-            return "盲盒服务暂未上线，请稍后再试"
+            return "盲盒暂时无法加载，请稍后重试"
         case .http(let code, _):
-            if code == 404 { return "盲盒服务暂未上线，请稍后再试" }
+            if code == 404 { return "盲盒暂时无法加载，请稍后重试" }
             if code == 409 { return "今日已换过 1 次，明天再来" }
             return "加载失败，请重试"
         default:
@@ -1239,11 +1239,11 @@ final class BearyBlindBoxFlowViewController: UIViewController {
         case .unauthorized, .authFailure:
             return "登录已过期，请重新登录"
         case .notFound:
-            return "盲盒服务暂未上线，请稍后再试"
+            return "盲盒暂时无法加载，请稍后重试"
         case .server(let code, _):
             return fallback
         case .http(let code, let snippet):
-            if code == 404 { return "盲盒服务暂未上线，请稍后再试" }
+            if code == 404 { return "盲盒暂时无法加载，请稍后重试" }
             if code == 409 { return "今日已换过 1 次，明天再来" }
             return fallback
         default:

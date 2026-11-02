@@ -1112,7 +1112,7 @@ final class BearySettingsViewController: UIViewController {
         // 一次设备密码验证（.deviceOwnerAuthentication 本就含密码兜底），
         // 文案同步说明可关闭；未开启且不可用时仍置灰（开不了，不硬开）。
         // “只冷启动锁一次”规则不动。
-        lockDetail.text = lockAvailability.available ? "冷启动时验证一次，回前台不重复验证" : (BearyAppLockSettings.isEnabled ? "已开启，当前设备未录入生物识别，冷启动改用设备密码验证，点按开关可关闭" : (lockAvailability.reason ?? "此设备暂无法使用生物识别"))
+        lockDetail.text = lockAvailability.available ? "重新启动 beary 时验证一次，短暂切换到其他应用后返回不会重复验证" : (BearyAppLockSettings.isEnabled ? "已开启，当前设备未录入生物识别，重新启动 beary 时改用设备密码验证，点按开关可关闭" : (lockAvailability.reason ?? "此设备暂无法使用生物识别"))
         let lockTextStack = UIStackView(arrangedSubviews: [lockTitle, lockDetail])
         lockTextStack.axis = .vertical
         lockTextStack.spacing = 2
