@@ -406,7 +406,7 @@ final class BearyInviteViewController: UIViewController {
 
     private func showMessage(_ text: String, ok: Bool = false) {
         messageLabel.text = text
-        messageLabel.textColor = ok ? BearyColors.green : BearyColors.red
+        messageLabel.textColor = ok ? BearyColors.deepGreenText : BearyColors.red
         // 审计登录杂项：行内失败时绑定框同步 isError 红边，成功 / 清空时复位。
         bindInputContainer?.isError = !text.isEmpty && !ok
     }
@@ -568,7 +568,7 @@ final class BearyInviteViewController: UIViewController {
         // 审计 P2：绑定成功文案先显示——render 清空消息行后，待展示的绑定文案重新落回。
         if let pending = pendingBindMessage {
             messageLabel.text = pending
-            messageLabel.textColor = pendingBindMessageOK ? BearyColors.green : BearyColors.red
+            messageLabel.textColor = pendingBindMessageOK ? BearyColors.deepGreenText : BearyColors.red
             pendingBindMessage = nil
         }
         if UIAccessibility.isReduceMotionEnabled == false {
