@@ -16,7 +16,7 @@ import UIKit
 // 约束约定：工厂只定视觉（底色/字色/边框/圆角/默认字号），不替调用方下尺寸约束；
 // 调用方按 style.height 下高约束（pill/outline 44 或 36；关闭钮 32×32）。
 // 默认字号（调用方可事后改 titleLabel?.font 覆盖）：pill/outline 常规 16 semibold，
-// 紧凑 14 semibold（搜索 CTA 同款；P1-4 起紧凑款走 cappedFont 上限 20，见 titleFont）；
+// 紧凑 14 semibold（搜索 CTA 同款；U8 起三款均走 scaledFont 不封顶，见 titleFont）；
 // 关闭钮文字兜底 15。
 // 边框色是 CGColor、赋值时固化：traitCollectionDidChange 内经 refreshChrome() 重赋，
 // 深浅切换后边框不再停留在旧主题色。工厂钮一律 .custom 类型（UIButton(type:) 工厂
@@ -68,33 +68,23 @@ enum BearyButtonStyle: Equatable {
     }
 
     /// 默认标题字号（紧凑 14 / 常规 16，与搜索 CTA / 通知弹窗主副钮同款）。
-    /// R8：常规款走 scaledFont，默认字号下与原值一致，大字号档跟随系统缩放。
-    /// 32 清单第 24 项：常规款改走 cappedFont（上限 20），不再被 44 高裁剪；紧凑款此前已是 cappedFont。
-    /// P1-4：紧凑款（36 高固定容器）走 cappedFont 而非 scaledFont——沿审计 #31
-    /// 口径（许愿墙 44 高标题框同款：固定高度容器配 cappedFont，上限 20，
-    /// 行高不撑破容器）：默认字号下与原 14 完全一致，超大字号档截断到 20pt，
-    /// 36 高内行高约 24pt、上下各余 6pt，按钮文字不再被固定高度纵向截断。
-    /// 不走“最小高度随文字增长”：各调用方的高约束是 equalToConstant
-    /// （许愿墙/搜索/空态均在各自文件内下死 36），改最小高度须动其他工人
-    /// 的文件，文件独占纪律下不动；cappedFont 在本文件内即可闭环。
+    /// U8：primaryPill、secondaryOutline、destructiveOutline 三款一律走
+    /// scaledFont 跟随系统字号，不再封顶 20pt；基准字号不变（常规 16 / 紧凑 14），
+    /// 不自定新字号数值。iconCircleClose 例外不动（此前已是 scaledFont 15）。
     var titleFont: UIFont {
         switch self {
         case .primaryPill:
-            // 32 清单第 24 项：常规款走 cappedFont（上限 20），不再被 44 高裁剪。
-            return BearyDynamicType.cappedFont(for: UIFont.systemFont(ofSize: 16, weight: .semibold))
+            return BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 16, weight: .semibold))
         case .secondaryOutline(let size):
             if size == .compact {
-                // P1-4：紧凑款 36 高固定容器，cappedFont 上限 20（默认上限，见
-                // BearyDynamicType.fixedContainerMaxPointSize），默认字号下 = 14 不变。
-                return BearyDynamicType.cappedFont(for: UIFont.systemFont(ofSize: 14, weight: .semibold))
+                return BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 14, weight: .semibold))
             }
-            return BearyDynamicType.cappedFont(for: UIFont.systemFont(ofSize: 16, weight: .semibold))
+            return BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 16, weight: .semibold))
         case .destructiveOutline(let size):
             if size == .compact {
-                // P1-4：同上，紧凑款 cappedFont 上限 20，默认字号下 = 14 不变。
-                return BearyDynamicType.cappedFont(for: UIFont.systemFont(ofSize: 14, weight: .semibold))
+                return BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 14, weight: .semibold))
             }
-            return BearyDynamicType.cappedFont(for: UIFont.systemFont(ofSize: 16, weight: .semibold))
+            return BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 16, weight: .semibold))
         case .iconCircleClose:
             return BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 15))
         }
@@ -187,7 +177,8 @@ class BearyButton: BearyHit44Button {
         layer.cornerRadius = style.cornerRadius
         layer.masksToBounds = true
         titleLabel?.font = style.titleFont
-        // R8：工厂钮一律跟随系统字号（32 清单第 24 项起常规款亦封顶：cappedFont 上限 20，见 titleFont；紧凑款此前已封顶）；
+        // U8：工厂钮一律跟随系统字号（titleFont 三款走 scaledFont 不封顶；
+        // 关闭钮此前已是 scaledFont，不动）；
         // 调用方事后覆写 titleLabel?.font 时须自行重配 scaledFont/cappedFont + 本开关。
         titleLabel?.adjustsFontForContentSizeCategory = true
         switch style {
