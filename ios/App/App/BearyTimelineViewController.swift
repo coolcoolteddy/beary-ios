@@ -2226,6 +2226,16 @@ class BearyTimelineViewController: UIViewController {
     /// 筛子触发钮（列表顶表头内，个人页展开钮同款：官方 icon_chevron_down
     /// 在左 + 档位名在右；标题即当前档位 = 选中态可见处）。
     private let visFilterButton = BearyHit44Button(type: .system)
+    /// 11b 筛子尖角气泡（BearyBubbleMenuView，见 BearyCalloutPicker.swift）
+    /// + 复用的框外收起层（BearyCalloutDismissView，与编辑器尖角框同款）。
+    /// 气泡以 frame 定位在 VC view 上（不在表头内，避免随表滚动错位）；
+    /// 入口钮本身不动（#612 定圆角 17 的口径原样保留）。
+    private let visFilterBubble = BearyBubbleMenuView()
+    private let visFilterDismissView = BearyCalloutDismissView()
+    private var visFilterBubbleOpen = false
+    private var visFilterBubbleGeneration = 0
+    private static let visFilterBubbleTransitionDuration: TimeInterval = 0.20
+    private static let visFilterBubbleTransitionOffset: CGFloat = 6
     // 崩溃 1（21:33/21:50 两次 Invalid_Batch_Updates）：首屏加载此前无在途守卫，
     // 重拍 tab/下拉/登录翻转/发布都可重入 loadTimelineFirstPage；旧回包按陈旧
     // oldSections diff 时表早已不是旧快照即崩。seq 令牌：每次首屏加载 +1，
@@ -2583,6 +2593,7 @@ class BearyTimelineViewController: UIViewController {
     override func viewWillDisappear(_ animated: Bool) {
         super.viewWillDisappear(animated)
         stopCountdownTimer()
+        hideVisFilterBubble(animated: false)
     }
 
     /// 切页生命周期 7 号（最小化）：容器切页只改 isHidden，本回调不触发，
@@ -2599,6 +2610,7 @@ class BearyTimelineViewController: UIViewController {
 
     func pageDidLeave() {
         stopCountdownTimer()
+        hideVisFilterBubble(animated: false)
     }
 
     /// 筛子钮标题 = 当前档位（选中态可见处）+ 无障碍文案同步。
@@ -2608,21 +2620,101 @@ class BearyTimelineViewController: UIViewController {
         visFilterButton.accessibilityHint = "点按展开选择全部、公开、私密、限时、仅好友"
     }
 
-    /// 切筛子：点按展开选择（系统 actionSheet 浮层，不自绘新组件、不摊五段条；
-    /// iPad 用 popover 锚在触发钮上）。当前档仍列出，点按即无操作返回。
+    /// 切筛子：点按展开尖角气泡选择（11b，替代系统 actionSheet；不摊五段条）。
+    /// 五档、默认全部、进页回全部、切档错峰均不动，只换呈现形态。
+    /// 当前档仍列出（半粗体 + 对勾），点按即无操作、只收气泡。
     @objc private func didTapVisFilter() {
-        let sheet = UIAlertController(title: "按可见性筛选", message: nil, preferredStyle: .actionSheet)
-        for tier in TimelineVisFilter.allCases {
-            sheet.addAction(UIAlertAction(title: tier.title, style: .default, handler: { [weak self] _ in
-                self?.applyVisFilter(tier)
-            }))
+        if visFilterBubbleOpen {
+            hideVisFilterBubble(animated: true)
+            return
         }
-        sheet.addAction(UIAlertAction(title: "取消", style: .cancel))
-        if let pop = sheet.popoverPresentationController {
-            pop.sourceView = visFilterButton
-            pop.sourceRect = visFilterButton.bounds
+        showVisFilterBubble()
+    }
+
+    /// 11b：气泡搭建一次、之后只刷新选中态与位置。气泡贴在触发钮下方、
+    /// 左缘与钮左缘对齐（左右 16pt 边距内钳制），尖角顶点对准钮中心。
+    /// 钮在滚动表头内、只会随滚动上移，故下方展开在常规屏高下不溢出底边。
+    private func showVisFilterBubble() {
+        if visFilterBubble.superview == nil {
+            visFilterBubble.configure(
+                rows: TimelineVisFilter.allCases.map { BearyBubbleMenuView.Row(key: "\($0)", title: $0.title) },
+                selectedKey: "\(timelineVisFilter)",
+                onSelect: { [weak self] key in
+                    guard let self = self,
+                          let tier = TimelineVisFilter.allCases.first(where: { "\($0)" == key }) else { return }
+                    // 先收气泡再切档：切档会 scrollToTop + 重拉，与收起动画并行会抢布局。
+                    self.hideVisFilterBubble(animated: false)
+                    self.applyVisFilter(tier)
+                })
+            visFilterBubble.isHidden = true
+            view.addSubview(visFilterDismissView)
+            view.addSubview(visFilterBubble)
         }
-        present(sheet, animated: true)
+        visFilterBubble.setSelectedKey("\(timelineVisFilter)")
+        view.layoutIfNeeded()
+        let buttonFrame = visFilterButton.convert(visFilterButton.bounds, to: view)
+        let bubbleWidth: CGFloat = 200
+        let maxX = max(16, view.bounds.width - 16 - bubbleWidth)
+        let bubbleX = min(max(buttonFrame.minX, 16), maxX)
+        let bubbleHeight = BearyBubbleMenuView.menuHeight(rowCount: TimelineVisFilter.allCases.count)
+        visFilterBubble.frame = CGRect(x: bubbleX, y: buttonFrame.maxY + 6, width: bubbleWidth, height: bubbleHeight)
+        visFilterBubble.arrowCenterX = buttonFrame.midX - bubbleX
+        visFilterDismissView.frame = view.bounds
+        visFilterDismissView.passthroughRects = [buttonFrame]
+        visFilterDismissView.onTapOutside = { [weak self] in self?.hideVisFilterBubble(animated: true) }
+        visFilterDismissView.isHidden = false
+        visFilterBubble.isHidden = false
+        view.bringSubviewToFront(visFilterDismissView)
+        view.bringSubviewToFront(visFilterBubble)
+        visFilterBubbleGeneration += 1
+        visFilterBubbleOpen = true
+        // 入场只走 transform/opacity（编辑器 showCallout 同款；减动效静态直出）。
+        if UIAccessibility.isReduceMotionEnabled || view.window == nil {
+            visFilterBubble.alpha = 1
+            visFilterBubble.transform = .identity
+            return
+        }
+        visFilterBubble.alpha = 0
+        visFilterBubble.transform = CGAffineTransform(translationX: 0, y: -Self.visFilterBubbleTransitionOffset)
+        UIView.animate(
+            withDuration: Self.visFilterBubbleTransitionDuration,
+            delay: 0,
+            options: [.beginFromCurrentState, .allowUserInteraction, .curveEaseOut],
+            animations: { [weak self] in
+                self?.visFilterBubble.alpha = 1
+                self?.visFilterBubble.transform = .identity
+            }
+        )
+    }
+
+    private func hideVisFilterBubble(animated: Bool) {
+        guard visFilterBubbleOpen else { return }
+        visFilterBubbleOpen = false
+        visFilterBubbleGeneration += 1
+        let generation = visFilterBubbleGeneration
+        if !animated || UIAccessibility.isReduceMotionEnabled || view.window == nil {
+            visFilterBubble.isHidden = true
+            visFilterBubble.alpha = 1
+            visFilterBubble.transform = .identity
+            visFilterDismissView.isHidden = true
+            return
+        }
+        UIView.animate(
+            withDuration: Self.visFilterBubbleTransitionDuration,
+            delay: 0,
+            options: [.beginFromCurrentState, .allowUserInteraction, .curveEaseOut],
+            animations: { [weak self] in
+                self?.visFilterBubble.alpha = 0
+                self?.visFilterBubble.transform = CGAffineTransform(translationX: 0, y: -Self.visFilterBubbleTransitionOffset)
+            },
+            completion: { [weak self] finished in
+                guard let self = self, finished, generation == self.visFilterBubbleGeneration else { return }
+                self.visFilterBubble.isHidden = true
+                self.visFilterBubble.alpha = 1
+                self.visFilterBubble.transform = .identity
+                self.visFilterDismissView.isHidden = true
+            }
+        )
     }
 
     /// 切档：按新 vis 重取列表，分页游标随新筛子重置（首屏 force 全量，
