@@ -278,7 +278,8 @@ final class BearyImageCropViewController: UIViewController, UIScrollViewDelegate
         // 确认点按立即反馈：先改文案+禁用两钮（主线程只做这一件小事），
         // 全尺寸重绘挪到后台做，界面不再卡一下才跳走；裁完回主线程再回调+关页。
         guard let geometry = cropGeometry() else {
-            dismiss(animated: !UIAccessibility.isReduceMotionEnabled)
+            // 几何无效是失败不是取消：留在页内、给重试反馈，不直接退出。
+            BearyToast.show(in: view, message: "裁剪失败，请调整裁剪框后重试")
             return
         }
         confirmButton.isEnabled = false
@@ -297,8 +298,15 @@ final class BearyImageCropViewController: UIViewController, UIScrollViewDelegate
                 guard let strongSelf = self else { return }
                 if let cropped = cropped {
                     strongSelf.onConfirm?(cropped)
+                    strongSelf.dismiss(animated: !UIAccessibility.isReduceMotionEnabled)
+                } else {
+                    // 生成失败同样留在页内：恢复两钮与确认文案，给重试反馈。
+                    strongSelf.confirmButton.isEnabled = true
+                    strongSelf.cancelButton.isEnabled = true
+                    strongSelf.confirmButton.setTitle("确认", for: .normal)
+                    strongSelf.confirmButton.titleLabel?.font = BearyDynamicType.scaledFont(for: UIFont.boldSystemFont(ofSize: 16))
+                    BearyToast.show(in: strongSelf.view, message: "裁剪失败，请重试")
                 }
-                strongSelf.dismiss(animated: !UIAccessibility.isReduceMotionEnabled)
             }
         }
     }

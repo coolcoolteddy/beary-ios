@@ -355,6 +355,10 @@ struct TrashItem: Codable {
     var visibility: String?
     var deletedAt: Int?
     var daysLeft: Int?
+    /// 回收站原篇标题（服务端透传；旧缓存缺本键时按 nil 解码）。
+    var title: String? = nil
+    /// 回收站原篇图片 keys（服务端透传；App 只取数量，不下载旧图）。
+    var imageKeys: [String]? = nil
 
     // CodingKeys 取 camelCase 名：BearyAPI 的 decoder 用 convertFromSnakeCase，
     // 会把服务端 created_at/publish_at/deleted_at/days_left 转成这些名再匹配；
@@ -368,6 +372,8 @@ struct TrashItem: Codable {
         case visibility
         case deletedAt
         case daysLeft
+        case title
+        case imageKeys = "images"
     }
 
     init(from decoder: Decoder) throws {
@@ -386,6 +392,8 @@ struct TrashItem: Codable {
         visibility = try container.decodeIfPresent(String.self, forKey: .visibility)
         deletedAt = try container.decodeIfPresent(Int.self, forKey: .deletedAt)
         daysLeft = try container.decodeIfPresent(Int.self, forKey: .daysLeft)
+        title = try container.decodeIfPresent(String.self, forKey: .title)
+        imageKeys = try container.decodeIfPresent([String].self, forKey: .imageKeys)
     }
 
     /// 本地构造（删帖进回收站桶）：id 即 entryIdentifier；deletedAt 为删除时刻毫秒，

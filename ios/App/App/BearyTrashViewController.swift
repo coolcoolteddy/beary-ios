@@ -757,7 +757,7 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate, UI
         // P3-3：日记摘要长串按字符断行，不溢出；字号行高不动（富文本段落同步见 TrashText.lineSpaced）。
         summaryLabel.lineBreakMode = .byCharWrapping
         summaryLabel.attributedText = TrashText.lineSpaced(
-            text: trashValue.content ?? "",
+            text: trashSummary(trashValue),
             font: BearyDynamicType.diaryBodyFont(),
             lineHeightMultiple: 1.6,
             color: BearyColors.ink
@@ -977,6 +977,16 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate, UI
         }
     }
 
+    /// 回收站摘要兜底（与草稿箱同款链）：标题优先 → 正文摘要 → 图片数量 → 无文字。
+    private func trashSummary(_ trashValue: TrashItem) -> String {
+        let title = (trashValue.title ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        if !title.isEmpty { return title }
+        let body = (trashValue.content ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        if !body.isEmpty { return body }
+        if let count = trashValue.imageKeys?.count, count > 0 { return "（\(count) 张图片）" }
+        return "（无文字）"
+    }
+
     /// 审计-时间线：回收站按钮无障碍 label 带条目标识——TrashItem 无标题字段，以正文首行截断作标识（空正文时回落“这篇日记”）。
     private func trashRowTitle(_ trashValue: TrashItem) -> String {
         let raw = (trashValue.content ?? "").replacingOccurrences(of: "\n", with: " ").trimmingCharacters(in: .whitespaces)
@@ -1064,9 +1074,11 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate, UI
         if identifier.isEmpty || trashBusyIdentifiers.contains(identifier) {
             return
         }
+        let summary = trashSummary(trashValue)
+        let shortSummary = summary.count > 60 ? String(summary.prefix(60)) + "…" : summary
         let alert = UIAlertController(
             title: "彻底删除？",
-            message: "这篇日记和它的图片会被永久删除，无法恢复。",
+            message: "\(shortSummary)\n这篇日记和它的图片会被永久删除，无法恢复。",
             preferredStyle: .alert
         )
         alert.addAction(UIAlertAction(title: "取消", style: .cancel, handler: nil))

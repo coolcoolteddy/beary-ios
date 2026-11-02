@@ -140,6 +140,9 @@ final class BearyOnboardingViewController: UIViewController {
     private let heroScroll = UIScrollView()
     private let heroContent = UIView()
     private let columnView = UIView()
+    /// 引导页主视觉区引导（heroContent 顶部 → 底部卡片顶部）：短内容时示例区
+    /// 在该区内居中（与旧布局一致），长内容时整页滚动、卡片跟内容走。
+    private let heroAreaGuide = UILayoutGuide()
     private let bottomCard = UIView()
     private let bottomStack = UIStackView()
     private let titleLabel = UILabel()
@@ -302,7 +305,7 @@ final class BearyOnboardingViewController: UIViewController {
         bottomCard.backgroundColor = BearyColors.faint
         bottomCard.layer.cornerRadius = 28
         bottomCard.layer.maskedCorners = [.layerMinXMinYCorner, .layerMaxXMinYCorner]
-        view.addSubview(bottomCard)
+        heroContent.addSubview(bottomCard)
 
         bottomStack.translatesAutoresizingMaskIntoConstraints = false
         bottomStack.axis = .vertical
@@ -359,6 +362,7 @@ final class BearyOnboardingViewController: UIViewController {
         swipeRight.cancelsTouchesInView = false
         view.addGestureRecognizer(swipeRight)
 
+        heroContent.addLayoutGuide(heroAreaGuide)
         topCap = topWrap.widthAnchor.constraint(lessThanOrEqualToConstant: 600)
         columnCap = columnView.widthAnchor.constraint(lessThanOrEqualToConstant: 600)
         bottomCap = bottomStack.widthAnchor.constraint(lessThanOrEqualToConstant: 600)
@@ -379,7 +383,7 @@ final class BearyOnboardingViewController: UIViewController {
             heroScroll.topAnchor.constraint(equalTo: topWrap.bottomAnchor),
             heroScroll.leadingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.leadingAnchor),
             heroScroll.trailingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.trailingAnchor),
-            heroScroll.bottomAnchor.constraint(equalTo: bottomCard.topAnchor),
+            heroScroll.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor),
 
             heroContent.topAnchor.constraint(equalTo: heroScroll.contentLayoutGuide.topAnchor),
             heroContent.leadingAnchor.constraint(equalTo: heroScroll.contentLayoutGuide.leadingAnchor),
@@ -389,20 +393,24 @@ final class BearyOnboardingViewController: UIViewController {
             heroContent.heightAnchor.constraint(greaterThanOrEqualTo: heroScroll.frameLayoutGuide.heightAnchor),
 
             columnView.topAnchor.constraint(greaterThanOrEqualTo: heroContent.topAnchor, constant: 8),
-            columnView.bottomAnchor.constraint(lessThanOrEqualTo: heroContent.bottomAnchor, constant: -8),
-            columnView.centerYAnchor.constraint(equalTo: heroContent.centerYAnchor).withPriority(.defaultLow),
+            columnView.bottomAnchor.constraint(lessThanOrEqualTo: bottomCard.topAnchor, constant: -16),
+            columnView.centerYAnchor.constraint(equalTo: heroAreaGuide.centerYAnchor).withPriority(.defaultLow),
             columnView.centerXAnchor.constraint(equalTo: heroContent.centerXAnchor),
             columnView.leadingAnchor.constraint(greaterThanOrEqualTo: heroContent.leadingAnchor, constant: 16).withPriority(.defaultHigh),
             columnView.trailingAnchor.constraint(lessThanOrEqualTo: heroContent.trailingAnchor, constant: -16).withPriority(.defaultHigh),
 
-            bottomCard.leadingAnchor.constraint(equalTo: view.leadingAnchor),
-            bottomCard.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-            bottomCard.bottomAnchor.constraint(equalTo: view.bottomAnchor),
+            bottomCard.leadingAnchor.constraint(equalTo: heroContent.leadingAnchor),
+            bottomCard.trailingAnchor.constraint(equalTo: heroContent.trailingAnchor),
+            bottomCard.bottomAnchor.constraint(equalTo: heroContent.bottomAnchor),
             bottomStack.topAnchor.constraint(equalTo: bottomCard.topAnchor, constant: 24),
             bottomStack.centerXAnchor.constraint(equalTo: bottomCard.centerXAnchor),
             bottomStack.leadingAnchor.constraint(greaterThanOrEqualTo: bottomCard.safeAreaLayoutGuide.leadingAnchor, constant: 24).withPriority(.defaultHigh),
             bottomStack.trailingAnchor.constraint(lessThanOrEqualTo: bottomCard.safeAreaLayoutGuide.trailingAnchor, constant: -24).withPriority(.defaultHigh),
-            bottomStack.bottomAnchor.constraint(equalTo: bottomCard.safeAreaLayoutGuide.bottomAnchor, constant: -16),
+            heroAreaGuide.topAnchor.constraint(equalTo: heroContent.topAnchor),
+            heroAreaGuide.bottomAnchor.constraint(equalTo: bottomCard.topAnchor),
+            heroAreaGuide.leadingAnchor.constraint(equalTo: heroContent.leadingAnchor),
+            heroAreaGuide.trailingAnchor.constraint(equalTo: heroContent.trailingAnchor),
+            bottomStack.bottomAnchor.constraint(equalTo: bottomCard.bottomAnchor, constant: -16),
             primaryButton.heightAnchor.constraint(equalToConstant: 56),
             secondaryButton.heightAnchor.constraint(equalToConstant: 44),
         ])
