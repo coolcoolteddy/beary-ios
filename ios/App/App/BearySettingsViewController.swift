@@ -1064,14 +1064,19 @@ final class BearySettingsViewController: UIViewController {
         lockTitle.text = "\(BearyAppLockSettings.biometryName)解锁"
         lockTitle.numberOfLines = 0
         let lockDetail = makeLabel(font: UIFont.systemFont(ofSize: 12), color: BearyColors.gray, lines: 0)
-        lockDetail.text = lockAvailability.available ? "冷启动时验证一次，回前台不重复验证" : (BearyAppLockSettings.isEnabled ? "已开启，当前设备未录入生物识别，冷启动将改用设备密码验证" : (lockAvailability.reason ?? "此设备暂无法使用生物识别"))
+        // 审计-个人页设置：置灰陷阱——旧口径未录入时开关一律置灰，已开启的锁
+        // 永远关不掉（只能一直走设备密码）；现已开启时开关保持可点，关闭走
+        // 一次设备密码验证（.deviceOwnerAuthentication 本就含密码兜底），
+        // 文案同步说明可关闭；未开启且不可用时仍置灰（开不了，不硬开）。
+        // “只冷启动锁一次”规则不动。
+        lockDetail.text = lockAvailability.available ? "冷启动时验证一次，回前台不重复验证" : (BearyAppLockSettings.isEnabled ? "已开启，当前设备未录入生物识别，冷启动将改用设备密码验证，点按开关可关闭" : (lockAvailability.reason ?? "此设备暂无法使用生物识别"))
         let lockTextStack = UIStackView(arrangedSubviews: [lockTitle, lockDetail])
         lockTextStack.axis = .vertical
         lockTextStack.spacing = 2
         lockTextStack.alignment = .fill
         let lockSwitch = UISwitch()
         lockSwitch.isOn = BearyAppLockSettings.isEnabled
-        lockSwitch.isEnabled = lockAvailability.available
+        lockSwitch.isEnabled = lockAvailability.available || BearyAppLockSettings.isEnabled
         lockSwitch.setContentHuggingPriority(.required, for: .horizontal)
         lockSwitch.setContentCompressionResistancePriority(.required, for: .horizontal)
         lockSwitch.addTarget(self, action: #selector(lockSwitchValueChanged(_:)), for: .valueChanged)
@@ -2779,13 +2784,21 @@ final class BearySettingsViewController: UIViewController {
     /// 两道保险收到一处：呈现前先在最终帧布局一次，呈现完成时帧偏离窗口
     /// bounds 或 transform 非单位阵就复位 + 重布局；动画已结束，复位无跳变。
     /// 不改转场类型、方向、时长，不重建节点、不重播动效。
+    /// 审计-个人页设置：设置页 present 连点守卫（真机是丢弃还是叠页未证实，
+    /// 守卫本身安全：呈现动画在途时后续点按直接忽略，动画结束自动解禁，
+    /// 不改转场、不改目标页；已 present 出子页时同样忽略，避免叠页）。
+    private var isPresentingSettingsPage = false
+
     private func presentSettingsPage(_ vc: UIViewController) {
+        guard !isPresentingSettingsPage, presentedViewController == nil else { return }
+        isPresentingSettingsPage = true
         vc.loadViewIfNeeded()
         let preBounds = view.window?.bounds ?? UIScreen.main.bounds
         vc.view.frame = preBounds
         vc.view.setNeedsLayout()
         vc.view.layoutIfNeeded()
-        present(vc, animated: BearyMotion.animated(true)) { [weak vc] in
+        present(vc, animated: BearyMotion.animated(true)) { [weak self, weak vc] in
+            self?.isPresentingSettingsPage = false
             guard let vc = vc, let window = vc.view.window else { return }
             let bounds = window.bounds
             if vc.view.frame != bounds || !vc.view.transform.isIdentity {
@@ -2816,7 +2829,10 @@ final class BearySettingsViewController: UIViewController {
 
     /// 2026-10-31 冷启动锁开关：先验身份再写档。开启/关闭都要验一次
     /// （防已解锁手机被他人随手关掉）；验证失败或取消时开关视觉回滚、
-    /// 不写存档，开关本身在未录入生物识别时已置灰、点按不到这里。
+    /// 不写存档。审计-个人页设置：未录入生物识别但锁已开启时开关仍可点，
+    /// 关闭走设备密码验证（evaluate 用 .deviceOwnerAuthentication，生物识别
+    /// 不可用时系统直接走设备密码）；关闭成功后开关回到置灰（已关且不可用，
+    /// 再开须先录入生物识别）。
     @objc private func lockSwitchValueChanged(_ sender: UISwitch) {
         let desired = sender.isOn
         let name = BearyAppLockSettings.biometryName
@@ -2825,6 +2841,9 @@ final class BearySettingsViewController: UIViewController {
             guard let sender = sender else { return }
             if success {
                 BearyAppLockSettings.setEnabled(desired)
+                if !desired && !BearyAppLockSettings.availability.available {
+                    sender.isEnabled = false
+                }
             } else {
                 sender.isOn = !desired
                 self.showToast("验证未通过，设置未更改")
@@ -3668,8 +3687,10 @@ MC 服务器为免费公益服，不保证 7×24 在线。
 // 打开时重读最新；复制全部进剪贴板，清空需二次确认）。
 private final class BearyDiagnosticsViewController: UIViewController {
     private let textView = UITextView()
-    private let copyButton = UIButton(type: .system)
-    private let clearButton = UIButton(type: .system)
+    // 审计-个人页设置：诊断页复制/清空钮改 BearyHit44Button——视觉（字号/
+    // 颜色/间距）不动，仅热区扩到 44pt（旧约 20pt 高）。
+    private let copyButton = BearyHit44Button(type: .system)
+    private let clearButton = BearyHit44Button(type: .system)
     /// 116 子页空白守卫（同 BearySettingsSubpages.swift 守卫说明）。
     private let subpageLayoutGuard = BearySubpageLayoutGuard()
     private var topBarView: UIView?
@@ -3824,7 +3845,10 @@ private final class BearyDiagnosticsViewController: UIViewController {
 }
 
 /// iCity 已拉黑用户列表（设置页内页，不新开文件）：GET /beary/api/blocks 只返回 id，
-/// 无用户查询接口，故行内仅显示“用户 + id”；每行“解除拉黑”调 DELETE 后刷新列表。
+/// 故行内资料另调既有公开资料读口 GET /beary/api/users/:id/profile 补齐
+/// （头像＋名字＋handle，复用好友列表行同款 44 头像＋名字/handle 布局；
+/// BearyFriendCell 为好友文件私有且带 ⋯ 菜单接线，本页另起同款 cell，不跨文件改好友组）。
+/// 资料拉不到时行内回落“用户 + id”，不阻塞解除；解除前弹系统 Alert 二次确认。
 /// 解除成功同时发 bearyDidBlockUser 广播？不——解除是反向操作，不触发各页清理；
 /// 各页的拉黑清理只由拉黑广播驱动，解除后下次拉取即恢复显示。
 final class BearyBlockedUsersViewController: UIViewController, UITableViewDataSource, UITableViewDelegate {
@@ -3837,6 +3861,11 @@ final class BearyBlockedUsersViewController: UIViewController, UITableViewDataSo
     private var topBarView: UIView?
     private var blockedIds: [Int] = []
     private var unblockingIds: Set<Int> = []
+    /// 审计-个人页设置：拉黑行资料缓存（id → 公开资料，含名字/handle/头像；
+    /// 资料拉不到时行内回落“用户 id”，不阻塞解除）；在途去重，避免复用抖动多发。
+    private var blockedProfiles: [Int: BearyUserProfile] = [:]
+    private var blockedProfileFetching: Set<Int> = []
+    private let blockedRetryButton = BearyHit44Button(type: .system)
 
     override func viewDidLoad() {
         super.viewDidLoad()
@@ -3864,6 +3893,14 @@ final class BearyBlockedUsersViewController: UIViewController, UITableViewDataSo
         emptyLabel.textAlignment = .center
         emptyLabel.text = "暂无已拉黑用户"
         emptyLabel.isHidden = true
+        // 审计-个人页设置：拉黑页加载失败页内重试（旧口径只有 toast、无重试入口）。
+        blockedRetryButton.translatesAutoresizingMaskIntoConstraints = false
+        blockedRetryButton.setTitle("重新加载", for: .normal)
+        blockedRetryButton.setTitleColor(BearyColors.blue, for: .normal)
+        blockedRetryButton.titleLabel?.font = UIFont.systemFont(ofSize: 15, weight: .semibold)
+        blockedRetryButton.addTarget(self, action: #selector(blockedRetryTapped), for: .touchUpInside)
+        blockedRetryButton.bearyAddPressFeedback()
+        blockedRetryButton.isHidden = true
         tableView.translatesAutoresizingMaskIntoConstraints = false
         // 116 后扫查：与广场/个人页同口径——关掉 delaysContentTouches，滚动容器里的点按立即响应，不等滚动判定。
         tableView.delaysContentTouches = false
@@ -3871,10 +3908,11 @@ final class BearyBlockedUsersViewController: UIViewController, UITableViewDataSo
         tableView.delegate = self
         tableView.backgroundColor = BearyColors.bg
         tableView.separatorColor = BearyColors.line
-        tableView.register(UITableViewCell.self, forCellReuseIdentifier: "BearyBlockedCell")
+        tableView.register(BearyBlockedUserCell.self, forCellReuseIdentifier: "BearyBlockedCell")
         view.addSubview(topBar)
         view.addSubview(tableView)
         view.addSubview(emptyLabel)
+        view.addSubview(blockedRetryButton)
         topBarView = topBar
         // 补缺 P2-17：拉黑列表顶栏与内容列同宽居中（iPhone 全宽不变）。
         let blockedTopBarWidthEquality = topBar.widthAnchor.constraint(equalTo: view.widthAnchor)
@@ -3903,7 +3941,15 @@ final class BearyBlockedUsersViewController: UIViewController, UITableViewDataSo
             tableView.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor),
             emptyLabel.centerXAnchor.constraint(equalTo: view.centerXAnchor),
             emptyLabel.centerYAnchor.constraint(equalTo: view.centerYAnchor),
+            blockedRetryButton.centerXAnchor.constraint(equalTo: view.centerXAnchor),
+            blockedRetryButton.topAnchor.constraint(equalTo: emptyLabel.bottomAnchor, constant: 16),
         ] + BearySubpageTopBarHeight.constraints(for: topBar))
+        reloadBlocked()
+    }
+
+    @objc private func blockedRetryTapped() {
+        blockedRetryButton.isHidden = true
+        emptyLabel.isHidden = true
         reloadBlocked()
     }
 
@@ -3914,9 +3960,16 @@ final class BearyBlockedUsersViewController: UIViewController, UITableViewDataSo
                 switch result {
                 case .success(let resp):
                     self.blockedIds = resp.blocked ?? []
+                    self.blockedRetryButton.isHidden = true
+                    self.emptyLabel.text = "暂无已拉黑用户"
                     self.emptyLabel.isHidden = !self.blockedIds.isEmpty
                     self.tableView.reloadData()
                 case .failure:
+                    // 页内重试：空态文案改加载失败 + 出重试钮（旧 toast 口径同步保留
+                    // 一次提示，弱网下用户不用来回进出本页）。
+                    self.emptyLabel.text = "加载失败"
+                    self.emptyLabel.isHidden = false
+                    self.blockedRetryButton.isHidden = false
                     BearyToast.show(in: self.view, message: "加载失败，请重试")
                 }
             }
@@ -3928,31 +3981,49 @@ final class BearyBlockedUsersViewController: UIViewController, UITableViewDataSo
     }
 
     func tableView(_ tableView: UITableView, cellForRowAt indexPath: IndexPath) -> UITableViewCell {
-        let cell = tableView.dequeueReusableCell(withIdentifier: "BearyBlockedCell", for: indexPath)
-        cell.backgroundColor = BearyColors.bg
-        cell.selectionStyle = .none
+        let cell = tableView.dequeueReusableCell(withIdentifier: "BearyBlockedCell", for: indexPath) as! BearyBlockedUserCell
         let userId = blockedIds[indexPath.row]
-        cell.textLabel?.text = "用户 \(userId)"
-        cell.textLabel?.font = UIFont.systemFont(ofSize: 15)
-        cell.textLabel?.textColor = BearyColors.ink
-        let button = UIButton(type: .system)
-        button.setTitle("解除拉黑", for: .normal)
-        button.setTitleColor(BearyColors.blue, for: .normal)
-        button.titleLabel?.font = UIFont.systemFont(ofSize: 15)
-        button.tag = userId
-        button.isEnabled = !unblockingIds.contains(userId)
-        button.addTarget(self, action: #selector(unblockTapped(_:)), for: .touchUpInside)
-        button.bearyAddPressFeedback()
-        button.sizeToFit()
-        cell.accessoryView = button
+        cell.configure(
+            userId: userId,
+            profile: blockedProfiles[userId],
+            isUnblocking: unblockingIds.contains(userId),
+            onUnblock: { [weak self] in self?.confirmUnblock(userId: userId) })
+        if blockedProfiles[userId] == nil, !blockedProfileFetching.contains(userId) {
+            blockedProfileFetching.insert(userId)
+            BearyAPI.shared.fetchUserProfile(userIdValue: userId) { [weak self] result in
+                DispatchQueue.main.async {
+                    guard let self = self else { return }
+                    self.blockedProfileFetching.remove(userId)
+                    if case .success(let profile) = result {
+                        self.blockedProfiles[userId] = profile
+                        if let row = self.blockedIds.firstIndex(of: userId) {
+                            self.tableView.reloadRows(at: [IndexPath(row: row, section: 0)], with: .none)
+                        }
+                    }
+                }
+            }
+        }
         return cell
     }
 
-    @objc private func unblockTapped(_ sender: UIButton) {
-        let userId = sender.tag
+    /// 审计-个人页设置：解除前弹系统 Alert 二次确认（确认后才调解除接口；
+    /// 防重入仍由 unblockingIds 守，确认框本身不改防重入口径）。
+    private func confirmUnblock(userId: Int) {
+        guard !unblockingIds.contains(userId) else { return }
+        let name = blockedProfiles[userId]?.displayName
+        let title = (name?.isEmpty == false) ? "解除对“\(name!)”的拉黑？" : "解除拉黑？"
+        let alert = UIAlertController(title: title, message: "解除后对方的日记将不再被屏蔽。", preferredStyle: .alert)
+        alert.addAction(UIAlertAction(title: "解除拉黑", style: .destructive) { [weak self] _ in
+            self?.performUnblock(userId: userId)
+        })
+        alert.addAction(UIAlertAction(title: "取消", style: .cancel, handler: nil))
+        present(alert, animated: BearyMotion.animated(true))
+    }
+
+    private func performUnblock(userId: Int) {
         guard !unblockingIds.contains(userId) else { return }
         unblockingIds.insert(userId)
-        sender.isEnabled = false
+        tableView.reloadData()
         BearyAPI.shared.unblockUser(userId: userId) { [weak self] result in
             DispatchQueue.main.async {
                 guard let self = self else { return }
@@ -3990,5 +4061,133 @@ final class BearyBlockedUsersViewController: UIViewController, UITableViewDataSo
         super.viewDidAppear(animated)
         // 117 终态偏离兜底：动画结束后的最终帧再校一次。
         subpageLayoutGuard.applyAfterAppearance(page: "已拉黑用户", view: view, topView: topBarView, contentViews: [tableView], presentation: "fullScreen+fadeRise")
+    }
+}
+
+// MARK: - 拉黑行 Cell（审计-个人页设置：好友列表行同款布局）
+
+/// 头像 44＋名字＋handle＋解除钮；解除钮为 BearyHit44Button（旧 accessoryView
+/// 普通钮热区不足）。头像加载走好友行同款 BearyImageLoader.loadDetailed，
+/// 复用时取消在途任务；无头像时首字母兜底（与好友行同款橙底淡底色占位）。
+private final class BearyBlockedUserCell: UITableViewCell {
+
+    private let avatarView = UIImageView()
+    private let fallbackLabel = UILabel()
+    private let nameLabel = UILabel()
+    private let handleLabel = UILabel()
+    private var avatarTask: URLSessionDataTask?
+    private var unblockHandler: (() -> Void)?
+
+    private lazy var unblockButton: BearyHit44Button = {
+        let button = BearyHit44Button(type: .system)
+        button.translatesAutoresizingMaskIntoConstraints = false
+        button.setTitle("解除拉黑", for: .normal)
+        button.setTitleColor(BearyColors.blue, for: .normal)
+        button.titleLabel?.font = UIFont.systemFont(ofSize: 15)
+        button.addTarget(self, action: #selector(unblockTapped), for: .touchUpInside)
+        button.bearyAddPressFeedback()
+        return button
+    }()
+
+    override init(style: UITableViewCell.CellStyle, reuseIdentifier: String?) {
+        super.init(style: style, reuseIdentifier: reuseIdentifier)
+        backgroundColor = BearyColors.bg
+        selectionStyle = .none
+        avatarView.translatesAutoresizingMaskIntoConstraints = false
+        avatarView.contentMode = .scaleAspectFill
+        avatarView.clipsToBounds = true
+        avatarView.layer.cornerRadius = 22
+        avatarView.layer.masksToBounds = true
+        fallbackLabel.translatesAutoresizingMaskIntoConstraints = false
+        fallbackLabel.font = BearyDynamicType.cappedFont(for: UIFont.boldSystemFont(ofSize: 17))
+        fallbackLabel.adjustsFontForContentSizeCategory = true
+        fallbackLabel.textColor = BearyColors.orange
+        fallbackLabel.backgroundColor = BearyColors.orange.withAlphaComponent(0.14)
+        fallbackLabel.textAlignment = .center
+        fallbackLabel.layer.cornerRadius = 22
+        fallbackLabel.layer.masksToBounds = true
+        nameLabel.translatesAutoresizingMaskIntoConstraints = false
+        nameLabel.font = BearyDynamicType.cardTitleFont()
+        nameLabel.textColor = BearyColors.ink
+        nameLabel.numberOfLines = 1
+        handleLabel.translatesAutoresizingMaskIntoConstraints = false
+        handleLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13))
+        handleLabel.adjustsFontForContentSizeCategory = true
+        handleLabel.textColor = BearyColors.gray
+        handleLabel.numberOfLines = 1
+        contentView.addSubview(avatarView)
+        contentView.addSubview(fallbackLabel)
+        contentView.addSubview(nameLabel)
+        contentView.addSubview(handleLabel)
+        contentView.addSubview(unblockButton)
+        NSLayoutConstraint.activate([
+            avatarView.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 14),
+            avatarView.bottomAnchor.constraint(equalTo: contentView.bottomAnchor, constant: -14),
+            avatarView.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 16),
+            avatarView.widthAnchor.constraint(equalToConstant: 44),
+            avatarView.heightAnchor.constraint(equalToConstant: 44),
+            fallbackLabel.topAnchor.constraint(equalTo: avatarView.topAnchor),
+            fallbackLabel.leadingAnchor.constraint(equalTo: avatarView.leadingAnchor),
+            fallbackLabel.widthAnchor.constraint(equalToConstant: 44),
+            fallbackLabel.heightAnchor.constraint(equalToConstant: 44),
+            nameLabel.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 14),
+            nameLabel.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 71),
+            nameLabel.trailingAnchor.constraint(lessThanOrEqualTo: unblockButton.leadingAnchor, constant: -8),
+            handleLabel.topAnchor.constraint(equalTo: nameLabel.bottomAnchor, constant: 1),
+            handleLabel.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 71),
+            handleLabel.trailingAnchor.constraint(lessThanOrEqualTo: unblockButton.leadingAnchor, constant: -8),
+            handleLabel.bottomAnchor.constraint(lessThanOrEqualTo: contentView.bottomAnchor, constant: -14),
+            unblockButton.centerYAnchor.constraint(equalTo: contentView.centerYAnchor),
+            unblockButton.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -16),
+            contentView.heightAnchor.constraint(greaterThanOrEqualToConstant: 72),
+        ])
+    }
+
+    required init?(coder: NSCoder) {
+        return nil
+    }
+
+    override func prepareForReuse() {
+        super.prepareForReuse()
+        avatarTask?.cancel()
+        avatarTask = nil
+        avatarView.image = nil
+        unblockHandler = nil
+    }
+
+    func configure(userId: Int, profile: BearyUserProfile?, isUnblocking: Bool, onUnblock: @escaping () -> Void) {
+        unblockHandler = onUnblock
+        unblockButton.isEnabled = !isUnblocking
+        var displayName = "用户 \(userId)"
+        if let name = profile?.displayName, !name.isEmpty {
+            displayName = name
+        }
+        nameLabel.text = displayName
+        if let handle = profile?.handle, !handle.isEmpty {
+            handleLabel.text = "@\(handle)"
+            handleLabel.isHidden = false
+        } else {
+            handleLabel.isHidden = true
+        }
+        if let avatarPath = profile?.avatarUrl, let url = BearyImageURLs.avatarURL(avatarPath) {
+            avatarView.isHidden = false
+            fallbackLabel.isHidden = true
+            avatarTask = BearyImageLoader.shared.loadDetailed(url: url) { [weak self] result in
+                DispatchQueue.main.async {
+                    guard let self = self else { return }
+                    if case .success(let image) = result {
+                        self.avatarView.image = image
+                    }
+                }
+            }
+        } else {
+            avatarView.isHidden = true
+            fallbackLabel.isHidden = false
+            fallbackLabel.text = String(displayName.prefix(1)).uppercased()
+        }
+    }
+
+    @objc private func unblockTapped() {
+        unblockHandler?()
     }
 }

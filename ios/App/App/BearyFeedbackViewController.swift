@@ -587,7 +587,7 @@ final class BearyFeedbackViewController: UIViewController, UITextViewDelegate, P
         footnote.font = UIFont.systemFont(ofSize: 13)
         footnote.textColor = BearyColors.gray
         footnote.numberOfLines = 0
-        footnote.text = "发送走邮件到 hi@teddyhn.com；未配邮箱时复制文字内容，附件不随复制发出；分享诊断日志走系统分享表，只发日志包，不含描述与附件；仅上传日志只发日志包。"
+        footnote.text = "发送走邮件到 hi@teddyhn.com；未配邮箱时复制文字内容，附件不随复制发出；分享或仅上传诊断日志时只发日志包，不含描述与附件。"
 
         let views: [UIView] = [statusCard, descLabel, descCard, mediaLabel, attachCard, deviceLabel, deviceCard, submitButton, shareButton, diagLabel, logOnlyButton, footnote]
         for viewItem in views {

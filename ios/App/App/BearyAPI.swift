@@ -831,23 +831,27 @@ final class BearyAPI {
     ) -> URLSessionDataTask? {
         let epoch = authEpoch
         let accountId = authAccountId
-        // 5-28：发布（POST /beary/api/entries，publishEntry 唯一调用方）自动
-        // 重试一次；上传（POST /beary/api/images/upload）只加超时、不重试
-        // （重发会重复落图）。返回值是首发任务，重试任务不经返回值返回
-        // （发布流程不中途取消在途请求）；epoch 沿用首发值，账户已切换时
-        // 重试回包的 401 同样被 epoch 守卫压住，不踢新号。
+        // 审计-性能：重试口径统一收进这里。
+        // 发布（POST /beary/api/entries，publishEntry 唯一调用方）指数退避
+        // 重试最多 3 次（1s→2s→4s，原“立即重试 1 次”改为退避序列）；
+        // GET 统一重试 1 次、仅网络错误（读请求幂等，5xx 不重试，避免把
+        // 服务端压力放大一倍）；上传（POST /beary/api/images/upload）
+        // 只加超时、不重试（重发会重复落图）。
+        // 返回值是首发任务，重试任务不经返回值返回（发布流程不中途取消
+        // 在途请求）；epoch 沿用首发值，账户已切换时重试回包的 401 同样
+        // 被 epoch 守卫压住，不踢新号。
         // 账号隔离改造：首发同时捕获 authAccountId；重试前重比 epoch 与
         // 账号，任一变化即停重试（原失败原样返回，不再用新账号的共享
         // cookie 重发——首发与重试之间切号是本改造要堵的串号口）。
-        // 重试条件本身一字不动：只针对网络错误与 5xx、只一次；
         // epoch 401 压制逻辑（mapStatus）同样原样保留。
         // payloadDecoder 仅改成功体解码器（默认全局 decoder）；错误体与
         // mapStatus 仍走全局 decoder，不受本参数影响。
-        let retryTransientOnce = (method == "POST" && path == "/beary/api/entries")
+        let isPublish = (method == "POST" && path == "/beary/api/entries")
+        let retriesLeft = isPublish ? 3 : (method == "GET" ? 1 : 0)
         return requestAttempt(path, query: query, method: method, jsonBody: jsonBody,
                               suppressUnauthorized: suppressUnauthorized, timeout: timeout,
                               epoch: epoch, accountId: accountId,
-                              retriesLeft: retryTransientOnce ? 1 : 0,
+                              retriesLeft: retriesLeft, retryBackoff: isPublish, retryDelay: 0,
                               payloadDecoder: payloadDecoder,
                               completion: completion)
     }
@@ -862,21 +866,49 @@ final class BearyAPI {
         epoch: Int,
         accountId: Int?,
         retriesLeft: Int,
+        retryBackoff: Bool,
+        retryDelay: TimeInterval,
         payloadDecoder: JSONDecoder?,
         completion: @escaping (Result<T, APIError>) -> Void
     ) -> URLSessionDataTask? {
         return perform(path, query: query, method: method, jsonBody: jsonBody, timeout: timeout) { [weak self] data, status, error in
             guard let self = self else { return }
             if let apiErr = self.mapStatus(status, data: data, error: error, suppressUnauthorized: suppressUnauthorized, epoch: epoch) {
-                if retriesLeft > 0 && Self.isTransientPublishError(apiErr) {
+                // 审计-性能：重试条件按通道分流——发布走网络错误与 5xx，
+                // GET 只走网络错误；退避只属于发布（1s→2s→4s，上限 4s），
+                // GET 重试立即发（单次、读请求，延迟收益低）。
+                let retryable: Bool
+                if retryBackoff {
+                    retryable = Self.isTransientPublishError(apiErr)
+                } else if case .network = apiErr {
+                    retryable = true
+                } else {
+                    retryable = false
+                }
+                if retriesLeft > 0 && retryable {
                     // 重试前比对：epoch 或账号任一已变（切换/退出/新登录
                     // 都推 epoch 并重设账号），说明共享 cookie 已不属于
                     // 首发账号——停重试，原失败原样返回，不重发、不补 401。
                     if epoch == self.authEpoch && accountId == self.authAccountId {
-                        _ = self.requestAttempt(path, query: query, method: method, jsonBody: jsonBody,
-                                                suppressUnauthorized: suppressUnauthorized, timeout: timeout,
-                                                epoch: epoch, accountId: accountId,
-                                                retriesLeft: retriesLeft - 1, payloadDecoder: payloadDecoder, completion: completion)
+                        let nextDelay: TimeInterval = retryBackoff ? (retryDelay == 0 ? 1 : min(retryDelay * 2, 4)) : 0
+                        let retryBlock = { [weak self] in
+                            guard let self = self else { return }
+                            // 退避等待期间切号同样停重试：等待结束时再比一次。
+                            guard epoch == self.authEpoch && accountId == self.authAccountId else {
+                                completion(.failure(apiErr))
+                                return
+                            }
+                            _ = self.requestAttempt(path, query: query, method: method, jsonBody: jsonBody,
+                                                    suppressUnauthorized: suppressUnauthorized, timeout: timeout,
+                                                    epoch: epoch, accountId: accountId,
+                                                    retriesLeft: retriesLeft - 1, retryBackoff: retryBackoff, retryDelay: nextDelay,
+                                                    payloadDecoder: payloadDecoder, completion: completion)
+                        }
+                        if nextDelay > 0 {
+                            DispatchQueue.global().asyncAfter(deadline: .now() + nextDelay, execute: retryBlock)
+                        } else {
+                            retryBlock()
+                        }
                         return
                     }
                 }

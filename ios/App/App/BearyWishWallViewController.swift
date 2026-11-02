@@ -70,6 +70,8 @@ private final class WishRowView: UIView {
         donePill.text = "已完成"
         upButton.addTarget(self, action: #selector(upTapped), for: .touchUpInside)
         downButton.addTarget(self, action: #selector(downTapped), for: .touchUpInside)
+        upButton.addTarget(self, action: #selector(voteTouchDown), for: .touchDown)
+        downButton.addTarget(self, action: #selector(voteTouchDown), for: .touchDown)
         doneButton.addTarget(self, action: #selector(doneTapped), for: .touchUpInside)
         // P1-17：展开钮与完成钮补通用按压反馈；两票钮不补——投票已有即时选中
         // 反馈（configure 立改选中态）＋ wishDing 音效，再挂按压缩放/震动即重复反馈。
@@ -126,6 +128,11 @@ private final class WishRowView: UIView {
 
     @objc private func upTapped() { onUp?() }
     @objc private func downTapped() { onDown?() }
+
+    @objc private func voteTouchDown() {
+        // 审计动效组：高频触发点按下时先 prepare，确认/失败反馈低延迟。
+        BearyHaptics.prepareVote()
+    }
     @objc private func doneTapped() { onMarkDone?() }
 
     @objc private func expandTapped() {
@@ -617,7 +624,7 @@ final class BearyWishWallViewController: UIViewController {
                     self.wishes[idx] = rolledBack
                     self.rowViews[wishId]?.configure(item: rolledBack, isAdmin: self.isAdmin)
                     self.rowViews[wishId]?.shake()
-                    UINotificationFeedbackGenerator().notificationOccurred(.warning)
+                    BearyHaptics.rejectionWarning()
                     BearyToast.show(in: self.view, message: "投票失败，请稍后再试")
                 }
             }
@@ -1001,7 +1008,7 @@ final class BearyWishCreateViewController: UIViewController, UITextViewDelegate 
                     } else if case .server(let code) = err, code == "rate_limited" {
                         message = "操作太频繁，请稍后再试"
                     } else {
-                        message = "发布失败，请稍后再试"
+                        message = "发布失败，请重试"
                     }
                     BearyToast.show(in: self.view, message: message)
                 }

@@ -403,7 +403,9 @@ final class BearyImageLoader {
         // G23：缓存按像素计 cost 并设上限，避免无界增长。
         // 20_000_000 像素 ≈ 最坏 80MB（RGBA 4 字节/像素）；站内图以缩略图
         // 与头像为主，日常占用远低于此。
+        // 审计-性能：再补 countLimit 作条数后备上限（cost 已是主约束）。
         cache.totalCostLimit = 20_000_000
+        cache.countLimit = 1000
     }
 
     // S10 磁盘缓存：目录 = 系统 caches 目录下的 BearyImageCache/<账号> 子目录
@@ -1076,22 +1078,34 @@ extension UIImageView {
 // MARK: - 时间与名字
 
 enum BearyText {
-    /// created_at 是毫秒时间戳。今天 → HH:mm；昨天 → 昨天 HH:mm；否则 M月d日 HH:mm。
+    /// 审计-性能：逐行新建 DateFormatter 改静态复用（每种格式一个静态实例，
+    /// 不复用同一实例改 dateFormat；调用方只在主线程做行渲染，不跨线程用）。
+    private static let hourMinuteFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "zh_CN")
+        formatter.dateFormat = "H:mm"
+        return formatter
+    }()
+    private static let monthDayHourMinuteFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "zh_CN")
+        formatter.dateFormat = "M月d日 H:mm"
+        return formatter
+    }()
+
+    /// [24] 小项 6：统一为项目主流口径——今天 → H:mm；昨天 → 昨天 H:mm；
+    /// 否则 M月d日 H:mm（小时不补零，与卡片/详情/通知/时间线引用一致）。
+    /// created_at 是毫秒时间戳。
     static func timeString(ms: Int) -> String {
         let date = Date(timeIntervalSince1970: TimeInterval(ms) / 1000.0)
         let cal = Calendar.current
-        let fmt = DateFormatter()
-        fmt.locale = Locale(identifier: "zh_CN")
         if cal.isDateInToday(date) {
-            fmt.dateFormat = "HH:mm"
-            return fmt.string(from: date)
+            return hourMinuteFormatter.string(from: date)
         }
         if cal.isDateInYesterday(date) {
-            fmt.dateFormat = "HH:mm"
-            return "昨天 " + fmt.string(from: date)
+            return "昨天 " + hourMinuteFormatter.string(from: date)
         }
-        fmt.dateFormat = "M月d日 HH:mm"
-        return fmt.string(from: date)
+        return monthDayHourMinuteFormatter.string(from: date)
     }
 
     /// 心情 key → 中文名（与网页 MOOD_DEFS 同集 40 种；前 32 带小熊、后 8 不带）。
@@ -1294,11 +1308,14 @@ extension BearyAPI {
     /// 实况：videoDataUrl 非空时才附带（data:video/quicktime;base64,... 的 mov，
     /// App 端已限 ≤10MB），后端把视频存 key+'_live' 并回 live_key；videoDataUrl
     /// 为 nil 时 body 与旧版一字相同，非实况上传路径不动。
-    func uploadImage(dataUrl: String, width: Int, height: Int, thumbDataUrl: String?, videoDataUrl: String? = nil, completion: @escaping (Result<UploadResponse, APIError>) -> Void) {
+    /// 审计-编辑器详情：返回在途任务，供编辑器取消上传用（调用方不
+    /// 用时可忽略返回值；上传本身仍不重试，见 request 注释）。
+    @discardableResult
+    func uploadImage(dataUrl: String, width: Int, height: Int, thumbDataUrl: String?, videoDataUrl: String? = nil, completion: @escaping (Result<UploadResponse, APIError>) -> Void) -> URLSessionDataTask? {
         var body: [String: Any] = ["dataUrl": dataUrl, "w": width, "h": height]
         if let t = thumbDataUrl { body["thumb"] = t }
         if let v = videoDataUrl { body["videoDataUrl"] = v }
-        request("/beary/api/images/upload", method: "POST", jsonBody: body, completion: completion)
+        return request("/beary/api/images/upload", method: "POST", jsonBody: body, completion: completion)
     }
 
     /// 发帖：content 必填 ≤2000 字；images 是已上传的 R2 key 数组（须归属本人且存在）；
@@ -1510,14 +1527,24 @@ enum BearyImagePrep {
 /// 等价于旧 SF SymbolConfiguration(pointSize:) 的显示尺寸。
 /// 一律 alwaysTemplate + 调用方 tintColor 着色（与旧 SF 行为一致）。
 enum BearyIconImages {
+    /// 审计-个人页设置：图标绘图结果缓存——旧口径每次调用都在主线程重绘
+    /// （UIGraphicsImageRenderer），列表复用/重建时反复烧主线程；现按
+    /// name#pointSize 缓存模板图（与卡片层既有 cache 同 key 口径）。
+    /// 模板图颜色由使用方 tintColor 定，与深浅 trait 无关，缓存不跨 trait 失真。
+    private static let cache = NSCache<NSString, UIImage>()
+
     static func image(named name: String, pointSize: CGFloat) -> UIImage? {
+        let key = "\(name)#\(pointSize)" as NSString
+        if let hit = cache.object(forKey: key) { return hit }
         guard let base = UIImage(named: name) else { return nil }
         let size = CGSize(width: pointSize, height: pointSize)
         let format = UIGraphicsImageRendererFormat()
         format.scale = UIScreen.main.scale
         let renderer = UIGraphicsImageRenderer(size: size, format: format)
         let drawn = renderer.image { _ in base.draw(in: CGRect(origin: .zero, size: size)) }
-        return drawn.withRenderingMode(.alwaysTemplate)
+        let templated = drawn.withRenderingMode(.alwaysTemplate)
+        cache.setObject(templated, forKey: key)
+        return templated
     }
 }
 
@@ -2126,22 +2153,39 @@ final class BearyBookmarkView: UIView {
 // MARK: - 震动三件套（Li 2026-10-26 批准，只做点赞/发布成功/拒绝三处）
 // UIKit 原生即跟随系统触感设置，不另设 App 内开关；不拿减动效门控（两者不是一回事）。
 enum BearyHaptics {
+    /// 审计动效组：生成器缓存复用——prepare() 只对同一实例有效，现建现扔
+    /// 的旧写法使 prepare 永远落空（全仓 prepare() 为 0 处即源于此）。
+    /// 全部调用方均为主线程 UI 调用，不另加锁。
+    private static var lightGenerator: UIImpactFeedbackGenerator?
+    private static var notificationGenerator: UINotificationFeedbackGenerator?
+    private static func light() -> UIImpactFeedbackGenerator {
+        if lightGenerator == nil { lightGenerator = UIImpactFeedbackGenerator(style: .light) }
+        return lightGenerator!
+    }
+    private static func notification() -> UINotificationFeedbackGenerator {
+        if notificationGenerator == nil { notificationGenerator = UINotificationFeedbackGenerator() }
+        return notificationGenerator!
+    }
+    /// 高频触发点按下时调用：点赞确认、投票确认的轻震低延迟。
+    static func prepareLike() { light().prepare() }
+    /// 投票按下时调用：轻震与失败 warning 均先 prepare。
+    static func prepareVote() { light().prepare(); notification().prepare() }
     /// 点赞 tap 瞬间（配描边先行画出的那一刻）；失败回滚时不调用。
     static func likeTap() {
-        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+        light().impactOccurred()
     }
     /// 通用按压轻震（80 包 W6 全量推广）：与点赞 tap 同款 .light，不自创档位；
     /// 不拿减动效门控（见本 enum 头注释：震动与减动效不是一回事）。
     static func press() {
-        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+        light().impactOccurred()
     }
     /// 发布成功：服务端确认、成功反馈出现时。
     static func publishSuccess() {
-        UINotificationFeedbackGenerator().notificationOccurred(.success)
+        notification().notificationOccurred(.success)
     }
     /// 拒绝：摇头 + toast 的主要拒绝路径上。
     static func rejectionWarning() {
-        UINotificationFeedbackGenerator().notificationOccurred(.warning)
+        notification().notificationOccurred(.warning)
     }
 }
 
@@ -2386,27 +2430,59 @@ enum BearyReportReason {
     static let all = ["违规内容", "刷量", "人身攻击", "spam", "其他"]
 }
 
+/// 弹窗 present 统一守卫（审计 2026-11-02 弹窗组）：present 前须同时满足
+/// presentedViewController == nil（无在途弹窗）与 view.window != nil（发起页
+/// 仍在窗口内，异步回包时页已离线不得再弹）。调用方在 present 前调一次；
+/// 异步路径（网络回包后才 present）在回包里再查一次，防期间状态变化。
+enum BearyPresentGuard {
+    static func canPresent(from vc: UIViewController) -> Bool {
+        return vc.presentedViewController == nil && vc.view.window != nil
+    }
+}
+
 /// 审计 E2 第 23 项：确认后请求期的忙碌态。举报/拉黑的确认入口是 UIAlertAction，
 /// 点按后 sheet/alert 即消失、原按钮已不存在，无法在原按钮上挂 spinner；
-/// 故在发起页中央显示既有加载图标（BearyRefreshIconView，旋转、不拦截触摸），
-/// 请求终结（成功/失败）时移除；不新增弹窗、不改文案、成功失败提示与确认步骤不变。
+/// 故在发起页中央显示既有加载图标（BearyRefreshIconView，旋转）。
+/// 审计 2026-11-02 弹窗组补：在途防重入——spinner 外加一层全屏透明拦截层
+/// （只拦触摸、不画任何东西），请求期内发起页的按钮点按一律被拦住，
+/// 防用户在途重复打开举报/拉黑再发一次请求；请求终结（成功/失败）时
+/// 连拦截层一起移除；不新增弹窗、不改文案、成功失败提示与确认步骤不变。
+private final class BearyFlowBusyBlockerView: UIView {}
+
 enum BearyFlowBusy {
     static func show(in view: UIView) -> BearyRefreshIconView {
+        let blocker = BearyFlowBusyBlockerView()
+        blocker.backgroundColor = .clear
+        blocker.translatesAutoresizingMaskIntoConstraints = false
+        view.addSubview(blocker)
+        NSLayoutConstraint.activate([
+            blocker.topAnchor.constraint(equalTo: view.topAnchor),
+            blocker.bottomAnchor.constraint(equalTo: view.bottomAnchor),
+            blocker.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            blocker.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+        ])
         let spinner = BearyRefreshIconView()
-        view.addSubview(spinner)
+        blocker.addSubview(spinner)
         NSLayoutConstraint.activate([
             spinner.widthAnchor.constraint(equalToConstant: 20),
             spinner.heightAnchor.constraint(equalToConstant: 20),
-            spinner.centerXAnchor.constraint(equalTo: view.centerXAnchor),
-            spinner.centerYAnchor.constraint(equalTo: view.centerYAnchor),
+            spinner.centerXAnchor.constraint(equalTo: blocker.centerXAnchor),
+            spinner.centerYAnchor.constraint(equalTo: blocker.centerYAnchor),
         ])
         spinner.startSpinning()
         return spinner
     }
 
     static func hide(_ spinner: BearyRefreshIconView?) {
-        spinner?.stopSpinning()
-        spinner?.removeFromSuperview()
+        guard let spinner = spinner else { return }
+        spinner.stopSpinning()
+        // spinner 挂在拦截层里：连层一起移除，恢复发起页触摸；旧路径
+        // （spinner 直接挂发起页）则只移除 spinner 本身。
+        if spinner.superview is BearyFlowBusyBlockerView {
+            spinner.superview?.removeFromSuperview()
+        } else {
+            spinner.removeFromSuperview()
+        }
     }
 }
 
@@ -2415,6 +2491,9 @@ enum BearyFlowBusy {
 enum BearyReportFlow {
     static func present(from vc: UIViewController, entryId: String, entryLabel: String? = nil) {
         guard !entryId.isEmpty else { return }
+        // 审计 2026-11-02 弹窗组：present 前统一守卫（无在途弹窗＋发起页在窗口内），
+        // 连点/异步回包后页已离线时不叠弹、不弹野弹窗。
+        guard BearyPresentGuard.canPresent(from: vc) else { return }
         // 审计三轮第 6 项：本地集已按账号分桶（markReported 只在服务端成功/duplicate 后调用），
         // 故当前桶命中即等价于本账号服务端已确认，可直接返回“已举报”；跨号污染已由分桶消除，
         // 无需每次都走到理由选择与服务端往返。服务端仍是最终权威（换设备等本地未同步时走下行提交，duplicate 态同样按已举报处理）。
@@ -2456,6 +2535,9 @@ enum BearyReportFlow {
 /// 拉黑流程（他人主页“更多”共用）：确认 → 提交 → 成功后广播，调用方据此清理条目与离场。
 enum BearyBlockFlow {
     static func block(from vc: UIViewController, userId: Int, userName: String?, onDone: ((Bool) -> Void)? = nil) {
+        // 审计 2026-11-02 弹窗组：present 前统一守卫；守卫未过即未执行拉黑，
+        // 按失败回调调用方（调用方只在 success 时清理，false 为空操作）。
+        guard BearyPresentGuard.canPresent(from: vc) else { onDone?(false); return }
         let name = (userName ?? "").isEmpty ? "这位用户" : userName!
         let alert = UIAlertController(title: "拉黑\(name)？", message: "拉黑后将不再看到 TA 的日记，可在设置页「已拉黑用户」里解除。", preferredStyle: .alert)
         alert.addAction(UIAlertAction(title: "取消", style: .cancel, handler: nil))
@@ -2518,9 +2600,12 @@ enum BearyQuoteGate {
     /// 不弹 403 toast（调用方收到 aborted 时只做回滚/不发请求，不另 toast）。
     static func gatePublicToggle(from vc: UIViewController, entry: Entry, completion: @escaping (PublicToggleResult) -> Void) {
         if let quote = entry.quote, sourceIsPrivate(quote: quote), let sourceId = quote.id, !sourceId.isEmpty {
-            presentPublicGate(from: vc, sourceIsMine: sourceIsMine(quote: quote)) { publishTogether in
+            // 审计 2026-11-02 弹窗组：守卫未过（已有弹窗/页已离线）按放弃处理，
+            // 调用方清 busy 位、原态未动，用户可重试；绝不无提示直接公开。
+            let presented = presentPublicGate(from: vc, sourceIsMine: sourceIsMine(quote: quote)) { publishTogether in
                 completion(publishTogether ? .publishTogether(sourceId: sourceId) : .aborted)
             }
+            if !presented { completion(.aborted) }
             return
         }
         if entry.quote == nil, let quoteId = entry.quoteId, !quoteId.isEmpty, let entryId = entry.id, !entryId.isEmpty {
@@ -2529,9 +2614,11 @@ enum BearyQuoteGate {
                     switch result {
                     case .success(let fetched):
                         if let fetchedQuote = fetched.quote, sourceIsPrivate(quote: fetchedQuote), let sourceId = fetchedQuote.id, !sourceId.isEmpty {
-                            presentPublicGate(from: vc, sourceIsMine: sourceIsMine(quote: fetchedQuote)) { publishTogether in
+                            // 异步回包时再查一次守卫：期间已有弹窗/页已离线则放弃，调用方清 busy。
+                            let presented = presentPublicGate(from: vc, sourceIsMine: sourceIsMine(quote: fetchedQuote)) { publishTogether in
                                 completion(publishTogether ? .publishTogether(sourceId: sourceId) : .aborted)
                             }
+                            if !presented { completion(.aborted) }
                         } else {
                             completion(.proceed)
                         }
@@ -2545,7 +2632,10 @@ enum BearyQuoteGate {
         completion(.proceed)
     }
 
-    private static func presentPublicGate(from vc: UIViewController, sourceIsMine: Bool, completion: @escaping (Bool) -> Void) {
+    /// present 前统一守卫；返回是否真正弹出了（false = 未弹，调用方按放弃处理）。
+    @discardableResult
+    private static func presentPublicGate(from vc: UIViewController, sourceIsMine: Bool, completion: @escaping (Bool) -> Void) -> Bool {
+        guard BearyPresentGuard.canPresent(from: vc) else { return false }
         if sourceIsMine {
             let alert = UIAlertController(title: "引用的日记还是私密", message: "公开本篇时，是否一并公开原日记？一并公开后，引用对所有人可见。", preferredStyle: .alert)
             alert.addAction(UIAlertAction(title: "一并公开原日记", style: .default) { _ in completion(true) })
@@ -2556,12 +2646,15 @@ enum BearyQuoteGate {
             alert.addAction(UIAlertAction(title: "保持私密", style: .default) { _ in completion(false) })
             vc.present(alert, animated: BearyMotion.animated(true))
         }
+        return true
     }
 
     /// 编辑器新发布门禁：宿主将公开且含私密引用时拦截。自己来源三选一
     /// （一并公开／删除引用并公开／保持私密发布），他人来源只剩两项
     /// （删除引用并公开／保持私密发布）；“取消”仅关弹窗、不发请求。
     static func gateEditorPublish(from vc: UIViewController, sourceIsMine: Bool, onPublishTogether: @escaping () -> Void, onDeleteQuote: @escaping () -> Void, onKeepPrivate: @escaping () -> Void) {
+        // 审计 2026-11-02 弹窗组：present 前统一守卫；未过则不弹、不发请求，用户可重试。
+        guard BearyPresentGuard.canPresent(from: vc) else { return }
         let alert = UIAlertController(title: "引用的日记还是私密", message: "公开本篇时，引用的私密日记怎么办？", preferredStyle: .alert)
         if sourceIsMine {
             alert.addAction(UIAlertAction(title: "一并公开原日记", style: .default) { _ in onPublishTogether() })
@@ -2576,6 +2669,8 @@ enum BearyQuoteGate {
     /// （一并公开／删除引用／保持私密），他人来源只剩两项（删除引用／保持私密）；
     /// 保持私密即关弹窗、不改任何状态（下次打开编辑器仍会再提示，直至作者处理）。
     static func promptStoredPrivateQuote(from vc: UIViewController, sourceIsMine: Bool, onPublishTogether: @escaping () -> Void, onDeleteQuote: @escaping () -> Void, onKeepPrivate: @escaping () -> Void) {
+        // 审计 2026-11-02 弹窗组：present 前统一守卫；未过则不弹，下次打开编辑器仍会再提示。
+        guard BearyPresentGuard.canPresent(from: vc) else { return }
         let alert = UIAlertController(title: "这篇已公开的日记引用了私密日记", message: "原日记仍是私密，他人看这篇时引用只显示占位。", preferredStyle: .alert)
         if sourceIsMine {
             alert.addAction(UIAlertAction(title: "一并公开原日记", style: .default) { _ in onPublishTogether() })
@@ -2593,6 +2688,9 @@ enum BearyQuoteGate {
                 switch result {
                 case .success(let resp):
                     if let count = resp.quoteCount, count > 0 {
+                        // 审计 2026-11-02 弹窗组：异步回包时再查守卫；未过时按提醒
+                        // 非门控的既有口径放行（与拉取失败同款），不把用户卡在 busy。
+                        guard BearyPresentGuard.canPresent(from: vc) else { completion(true); return }
                         let alert = UIAlertController(title: nil, message: "这篇日记被 \(count) 篇日记引用，改私密后这些引用将显示“该日记已私密”。", preferredStyle: .alert)
                         alert.addAction(UIAlertAction(title: "改私密", style: .destructive) { _ in completion(true) })
                         alert.addAction(UIAlertAction(title: "取消", style: .cancel) { _ in completion(false) })
@@ -2609,7 +2707,7 @@ enum BearyQuoteGate {
 }
 
 extension BearyQuoteGate {
-    /// 好友第一期：仅好友来源占位（拟文案，待 Li 过目）——服务端在 locked 体里
+    /// 10a 定版（2026-11-02 Li 定）：仅好友来源占位——服务端在 locked 体里
     /// 透传 visibility=friends 时，非好友 viewer 走本句；好友 viewer 服务端应直传
     /// 全文而不走 locked，App 不凭本地好友关系反推（无 per-entry 好友判定接口）。
     /// visibility 缺失/其他值时回落旧两档文案（fail-closed，不漏出）。

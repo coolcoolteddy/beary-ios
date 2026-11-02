@@ -196,7 +196,7 @@ final class BearyInviteViewController: UIViewController {
         codeLabel.adjustsFontForContentSizeCategory = true
         codeLabel.textColor = BearyColors.ink
         copyButton.translatesAutoresizingMaskIntoConstraints = false
-        copyButton.layer.cornerRadius = 22
+        copyButton.layer.cornerRadius = 12
         // C4：复制钮改用 surface 底，与码框 faint 底拉开对比（深色下不再融为一体）。
         copyButton.backgroundColor = BearyColors.surface
         copyButton.setTitle("复制", for: .normal)
@@ -243,7 +243,7 @@ final class BearyInviteViewController: UIViewController {
         let bindContainer = makeFieldContainer(field: bindField)
         bindInputContainer = bindContainer
         bindButton.translatesAutoresizingMaskIntoConstraints = false
-        bindButton.layer.cornerRadius = 24
+        bindButton.layer.cornerRadius = 12
         bindButton.backgroundColor = BearyColors.ink
         bindButton.setTitle("绑定", for: .normal)
         bindButton.setTitleColor(BearyColors.bg, for: .normal)
@@ -470,7 +470,7 @@ final class BearyInviteViewController: UIViewController {
                         strongSelf.showMessage(pending, ok: strongSelf.pendingBindMessageOK)
                         strongSelf.pendingBindMessage = nil
                     } else {
-                        strongSelf.showMessage("网络错误，请重试")
+                        strongSelf.showMessage("网络不稳定，请稍后再试")
                     }
                     strongSelf.retryButton.isHidden = false
                 case .failure:
@@ -695,7 +695,7 @@ final class BearyInviteViewController: UIViewController {
                 case .failure(.server(let message)):
                     strongSelf.showMessage(message)
                 case .failure(.network):
-                    strongSelf.showMessage("网络异常，请稍后再试")
+                    strongSelf.showMessage("网络不稳定，请稍后再试")
                 case .failure:
                     strongSelf.showMessage("绑定失败，请稍后再试")
                 }

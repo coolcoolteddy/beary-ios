@@ -8,7 +8,7 @@ import UIKit
 // 震动与音效照常给）；唯一门控是设置页“音效”开关 + 系统静音键。
 
 /// 音效名 = Bundle 内 wav 文件名（不含扩展名）。
-enum BearySound: String {
+enum BearySound: String, CaseIterable {
     case fabPop = "fab_pop"
     case publishSuccess = "publish_success"
     case likePop = "like_pop"
@@ -56,19 +56,41 @@ enum BearySoundPlayer {
     /// 每音效空闲池上限：点赞连点等同音并发 burst 通常 ≤2，超出走同步兜底
     /// 新建（罕见，与旧行为一致），播完回池时按上限丢弃多余。
     private static let maxPooledPerSound = 2
-    /// 常用音效：点赞 / 发布 / FAB——首次播放时在后台预热，之后命中池。
-    private static let prewarmSounds: [BearySound] = [.likePop, .publishSuccess, .fabPop]
+    /// 审计动效组：全部 12 音在启动或闲时预热解码（旧口径只预热 3 音，
+    /// 其余 9 音首次播放走主线程文件 IO）；预热只做后台解码，不改音色、
+    /// 音量与触发点，门控仍是设置页开关 + .ambient + mixWithOthers。
+    private static let prewarmSounds: [BearySound] = BearySound.allCases
     /// 空闲池：只在后台队列与主线程清理闭包之间共享，一律经 poolLock 访问。
     private static var pooledPlayers: [BearySound: [AVAudioPlayer]] = [:]
+    /// 同音上次播放时刻（0.1s 节流用，只经 poolLock 访问）。
+    private static var lastPlayAt: [BearySound: Date] = [:]
     private static var prewarmScheduled = false
     private static let poolLock = NSLock()
     /// 后台串行队列：文件 IO + 解码（Bundle.url / AVAudioPlayer(contentsOf:) /
     /// prepareToPlay）只在这里做，绝不上主线程；播放调用本身只做取池 + play()。
     private static let poolQueue = DispatchQueue(label: "com.beary.soundPool", qos: .utility)
 
+    /// 审计动效组：启动时调用（见 AppDelegate），后台解码全部 12 音；
+    /// 与 play 内的 schedulePrewarmIfNeeded 共用一次门控，重复调用无额外开销。
+    static func prewarmAll() {
+        schedulePrewarmIfNeeded()
+    }
+
     static func play(_ sound: BearySound) {
         guard isEnabled else { return }
-        // 首次播放时顺带触发常用音效后台预热（只调度一次，本身极轻）。
+        // 审计动效组：后台/锁屏不播音效（此前无此守卫；前台用户操作触发时恒为 active）。
+        guard UIApplication.shared.applicationState == .active else { return }
+        // 审计动效组：高频短音 0.1s 节流——同音 0.1s 内重复触发直接丢弃
+        // （震动不节流；池复用仍负责同音 burst 的播放器复用）。
+        poolLock.lock()
+        let now = Date()
+        if let last = lastPlayAt[sound], now.timeIntervalSince(last) < 0.1 {
+            poolLock.unlock()
+            return
+        }
+        lastPlayAt[sound] = now
+        poolLock.unlock()
+        // 首次播放时顺带触发全部音效后台预热（只调度一次，本身极轻）。
         schedulePrewarmIfNeeded()
         do {
             try ensureAudioSession()
