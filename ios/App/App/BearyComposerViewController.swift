@@ -212,32 +212,46 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
 
     // MARK: - 状态
 
-    private var selectedMood: String?
+    private var selectedMood: String? {
+        didSet { editorEditVersion += 1 }
+    }
     /// 插入式心情的上次焦点框：点选心情钮/弹出框选项时焦点可能已被
     /// 拾取动作带走，单靠 isFirstResponder 会误判；本字段记最后一次
     /// 获焦的框（标题/正文），兜底时仍插到上次光标所在的框。
     private enum ComposerInput { case headline, body }
     private var lastFocusedComposerInput: ComposerInput?
-    private var selectedWeather: String?
+    private var selectedWeather: String? {
+        didSet { editorEditVersion += 1 }
+    }
     /// 天气气温（摄氏度整数）：自动填或手改后才有值；清天气类型时同清。
-    private var selectedTemperature: Int?
+    private var selectedTemperature: Int? {
+        didSet { editorEditVersion += 1 }
+    }
     /// 当地天气取数代次：快速连点天气钮时旧回包过期作废，不覆盖新一次的结果；
     /// 手选天气/手改气温时亦 +1，使在途自动填回包过期作废、不覆盖手改值。
     /// 再点天气钮会重新取数（代次再 +1），仍按 #427 口径覆盖手改。
     private var weatherFetchGeneration = 0
     /// 批 E 编辑器位置：已确认的位置（只有文本，无坐标）。nil = 未定位；
     /// 定位失败不改本值（失败只 toast、不静默清掉已确认的位置；从未确认过时行即隐藏 = 未定位态）。
-    private var selectedLocation: DiaryLocation?
+    private var selectedLocation: DiaryLocation? {
+        didSet { editorEditVersion += 1 }
+    }
     /// 批 E 编辑态原位置快照（setupEditContent 首次回填时记下）：PUT 时与终态比对，
     /// 未动省略、改选发新值、清除发显式 null；新建模式恒为 nil。
     private var originalLocation: DiaryLocation?
     /// 新建模式的 @ 对象（编辑模式经 selectedRecipient 改选，见 refreshRecipientRow 编辑分支）。
-    private var selectedRecipient: SearchUser?
+    private var selectedRecipient: SearchUser? {
+        didSet { editorEditVersion += 1 }
+    }
     /// 通知对方：iCity @ 提醒无按篇开关——选人面板的开关值不再用于发布，
     /// 仅作面板初值占位保留，不触发重渲染、不进请求。
-    private var notifyRecipient = true
+    private var notifyRecipient = true {
+        didSet { editorEditVersion += 1 }
+    }
     /// 新建模式的引用（编辑模式不用它，引用锁定，见 lockedQuote）。
-    private var selectedQuote: SelectedQuote?
+    private var selectedQuote: SelectedQuote? {
+        didSet { editorEditVersion += 1 }
+    }
     /// 编辑模式原 @ 展示名（未动时回填展示；改选/清除后以 selectedRecipient/editMentionCleared 为准）。
     private var lockedRecipientName: String?
     /// 编辑模式原 @ 用户 id（未动时 PUT 省略 mentioned_user_id，服务端保留原值）。
@@ -245,13 +259,19 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     /// 编辑模式已清除 @（且未重新选人）：PUT 显式清 mentioned_user_id。
     private var editMentionCleared = false
     /// iCity：新建编辑器可见性初值硬编码私密（false），不读 UserDefaults、不记住上次选择。
-    private var selectedVisibilityPublished = false
+    private var selectedVisibilityPublished = false {
+        didSet { editorEditVersion += 1 }
+    }
     /// 好友第一期：仅好友档（与 published/ephemeral 互斥三态之一；限时恒公开，
     /// 故仅好友与限时互斥：菜单直选任一档即定格该档，不经过中间档）。
-    private var selectedVisibilityFriends = false
+    private var selectedVisibilityFriends = false {
+        didSet { editorEditVersion += 1 }
+    }
     /// 顶栏菜单的限时档：true 恒与 published=true 同行（限时即公开语义）；
     /// 切到私密或普通公开时即清掉，不残留（见 applyVisibilityChoice）。
-    private var isEphemeral = false
+    private var isEphemeral = false {
+        didSet { editorEditVersion += 1 }
+    }
     /// 编辑模式的引用：初始为原值，可改可删（网页 PUT 同款：body 带新 quote_id；
     /// 删为空时 updateEntry 省略 quote_id，服务端按 null 写，旧引用即清掉）。
     private var lockedQuote: SelectedQuote?
@@ -300,6 +320,11 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     /// 审计 P1-9：箱内删“正在写”草稿时被清掉的 draftId（onDeleteCurrentDraft 处记下），
     /// 供箱内撤销恢复时比对——只绑回正是这一篇的恢复，防串篇；新篇接管/重开/发布重置时清掉。
     private var clearedCurrentDraftId: String?
+    /// 审计第 26 项：编辑版本——打开编辑器（restoreDraft 入口）时记下基线，
+    /// 此后任何草稿字段变化都 +1（各字段的 didSet、正文/标题变化入口），
+    /// 异步恢复回包仅在版本与草稿身份均未变化时才应用；跳过时旧草稿
+    /// 仍在草稿箱，不丢数据。恢复自身的回填发生在门通过之后，不影响门。
+    private var editorEditVersion = 0
     private var isPublishing = false
     /// 编辑期到点时正好有保存 PUT 在途：计时器不自动关编辑器，改由服务端
     /// 结果定去留（见 startEditTimer / performUpdate 失败分支）。置位后即便
@@ -366,7 +391,9 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     // 本批不修可见性、直接去掉标题行根除该问题，进页聚焦默认只走正文）。
     private var draftTimer: Timer?
     private var editTimer: Timer?
-    private var imageItems: [ComposerImageItem] = []
+    private var imageItems: [ComposerImageItem] = [] {
+        didSet { editorEditVersion += 1 }
+    }
     /// 草稿保存级别：nil=未显示；2=草稿已保存；1=文字已保存，图片未保存；0=保存失败（红字）。
     private var draftStatusLevel: Int?
     /// 引用内嵌面板状态：当前 tab（timeline/liked/saved）与每 tab 缓存、加载序号。
@@ -706,7 +733,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         updateCountLabel()
         updatePublishState()
         refreshToolStrip()
-        updateDraftPillCount()
+        refreshDraftPillWidth()
         // 首帧高度预先算好（D-12 编辑器部分）：viewDidLoad 末尾即按内容栈 fitting
         // 定一次 preferredContentSize，呈现层首帧不再以 0 占位走 80%/88% 满高封顶；
         // 此时 view.bounds 可能仍为 0，updatePreferredContentSize 内用屏宽估算兜底，
@@ -1229,7 +1256,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         refreshPublishButtonWidth()
         refreshPublishAppearance()
         // 清单第 15 项：草稿 pill 显式宽度约束（随 pill 从工具栏搬到顶栏，口径不变；
-        // 初值按当前“草稿”标题算出，此后计数每次变化都经 setDraftPillCount 重算）。
+        // 纯图标固定 44，宽度由 refreshDraftPillWidth 钉死，不再按标题/计数重算（审计第 25 项）。
         let draftPillWidth = draftPillButton.widthAnchor.constraint(equalToConstant: 0)
         draftPillWidth.isActive = true
         draftPillWidthConstraint = draftPillWidth
@@ -1423,6 +1450,9 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     }
 
     private func headlineDidChange() {
+        // 审计第 26 项：标题变化（打字、清标题、心情插入、粘贴改写均走这里）
+        // 递增编辑版本，使在途的异步草稿恢复不再覆盖已填的标题。
+        editorEditVersion += 1
         refreshHeadlineChrome()
         // 组词中的拼音组合串不截断（marked 时不动，落字后再按 30 字封顶），
         // 否则中文输入法组词会被打断。
@@ -3012,31 +3042,13 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         // 工具栏已不在内容栈里，不再设栈间距（旧 setCustomSpacing 已删）。
     }
 
-    /// 草稿 pill 计数：v3 多槽篇数。0 篇时计数段隐藏（只留“草稿”二字），
-    /// pill 本体不隐藏——它是草稿箱的唯一入口，空箱也要能点开新建。
-    /// 草稿 pill 计数：整库读走后台队列，主线程只写标题（saveDraftNow 的完成回调
-    /// 已带回计数时直接用 setDraftPillCount，不再多读一次整库）。
-    private func updateDraftPillCount() {
-        if isEditMode { return }
-        // 整库读走 BearyDraftStore.ioQueue（与写同一串行队列，读不到写一半的库）。
-        // 审计三轮第 2 项：入队前捕获账号，执行中不重读全局账号，排队期间切号不串桶。
-        let pillAccountId = BearyDraftStore.currentAccountId
-        BearyDraftStore.ioQueue.async { [weak self] in
-            let count = BearyDraftStore.loadAll(forAccount: pillAccountId).count
-            DispatchQueue.main.async {
-                self?.setDraftPillCount(count)
-            }
-        }
-    }
-
-    /// v6-3：草稿钮已是纯图标，计数不再画在钮上（只在草稿箱内可见）；
-    /// 本函数保留调用链（计数读取仍走 updateDraftPillCount），只把显式宽度钉死 44，
-    /// 不再设任何标题/富文本标题，避免文字重新出现在图标旁。
-    private func setDraftPillCount(_ count: Int) {
-        if isEditMode { return }
-        refreshDraftPillWidth()
-    }
-
+    /// 审计第 25 项：草稿钮已是纯图标（v6-3），计数不再画在钮上，真实计数
+    /// 只在草稿箱内可见、由草稿箱自己读取——编辑器侧不再为 pill 读整库：
+    /// updateDraftPillCount（ioQueue 整库读 + loadAll().count）与
+    /// setDraftPillCount（参数已不使用、只调宽度刷新）整段删除，
+    /// 各调用点直接刷固定按钮规格。草稿保存/读取语义本身一字不动；
+    /// saveDraftNow 回读循环仍保留——它用于确认本篇是否落盘成功，
+    /// 不是 pill 计数（见该处注释）。
     /// 草稿钮显式宽度（v6 纯图标版）：固定 44，与图标热区一致；旧“按标题算宽”
     /// 口径随文字 pill 一并作废（标题算宽曾把 pill 压成“...”的历史教训不再适用）。
     private func refreshDraftPillWidth() {
@@ -4264,6 +4276,8 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             headlineDidChange()
             return
         }
+        // 审计第 26 项：正文变化递增编辑版本（标题分支已由 headlineDidChange 递增）。
+        editorEditVersion += 1
         updateCountLabel()
         updatePublishState()
         scheduleDraftSave()
@@ -4755,6 +4769,9 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     }
 
     private func insertImageItem(_ item: ComposerImageItem) {
+        // 审计第 26 项：图片增减同样是字段变化——append 是否触发 didSet
+        // 不作依赖，这里显式递增；删除/重置走 imageItems 整体赋值，由 didSet 覆盖。
+        editorEditVersion += 1
         imageItems.append(item)
         imageStackView.addArrangedSubview(item.container)
         refreshImageStripVisibility()
@@ -5562,14 +5579,14 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             // 删篇走 deleteAsyncReporting（ioQueue 内删，完成后回主线程刷新状态与 pill，
             // 并回传成败——此前 deleteAsync 不回传，删篇失败会被关闭路径当成功关掉）。
             // 状态只在仍是空篇时清：删盘期间用户已开始写新篇（currentDraftId 已换）
-            // 时不碰新篇的状态行，pill 计数全局刷新无妨；删篇失败时置红，与写盘失败同口径。
+            // 时不碰新篇的状态行，pill 宽度刷新无妨（审计第 25 项：纯图标固定 44，无计数）；删篇失败时置红，与写盘失败同口径。
             BearyDraftStore.deleteAsyncReporting(draftId: deletingId) { [weak self] deleted in
                 guard let self = self else { return }
                 if self.currentDraftId == nil {
                     self.draftStatusLevel = deleted ? nil : 0
                     self.updateDraftStatusLabel()
                 }
-                self.updateDraftPillCount()
+                self.refreshDraftPillWidth()
                 // 删篇失败时旧文件原样保留（见 deleteAsyncReporting 注释），
                 // 故失败即按“旧版还在”计，关闭文案不夸大成整篇已丢。
                 completion?(DraftSaveResult(succeeded: deleted, hadPreviousSavedVersion: !deleted))
@@ -5646,10 +5663,10 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             // 故已有草稿更新失败时回读仍命中旧版本——必须以 save 的 Bool 为准，
             // 回读只作辅助确认（save 成功仍回读不到本篇同样判失败），不得以回读
             // 命中掩盖写失败；多槽下必须按 draftId 查本篇，不能用“库非空”当成功信号。
+            // 审计第 25 项：回读循环只确认本篇是否存在（foundCurrentDraft），
+            // 不再计总数——总数此前只供已删除的 setDraftPillCount 使用。
             var foundCurrentDraft = false
-            var totalCount = 0
             for savedDraft in BearyDraftStore.loadAll(forAccount: saveAccountId) {
-                totalCount += 1
                 if savedDraft.draftId == draftIdValue {
                     foundCurrentDraft = true
                 }
@@ -5659,7 +5676,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             DispatchQueue.main.async {
                 guard let self = self else { return }
                 // 状态只在仍是本篇时写：落盘期间编辑器已切篇（如保留后新建）时，
-                // 旧篇的完成回调不把“草稿已保存”写到空白新篇上；pill 计数全局刷新无妨。
+                // 旧篇的完成回调不把“草稿已保存”写到空白新篇上；pill 宽度刷新无妨（审计第 25 项：纯图标固定 44，无计数）。
                 if self.currentDraftId == draftIdValue {
                     if savedCurrentDraft == false {
                         self.draftStatusLevel = 0
@@ -5668,7 +5685,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                     }
                     self.updateDraftStatusLabel()
                 }
-                self.setDraftPillCount(totalCount)
+                self.refreshDraftPillWidth()
                 // 原子写：失败时旧文件原样保留，故失败后回读仍命中本篇
                 // 即等价于写盘前已有旧版；成功时该位恒真、无意义，关闭文案只在失败时读它。
                 completion?(DraftSaveResult(succeeded: savedCurrentDraft, hadPreviousSavedVersion: foundCurrentDraft))
@@ -5679,6 +5696,12 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     /// FAB 打开时的草稿恢复（E1-3）：整库读 + 无主文件回收走 BearyDraftStore.ioQueue，
     /// 本地图解码走图片后台队列，主线程只填字段与建项；恢复完成 350ms 后 toast（网页同款）。
     private func restoreDraft() {
+        // 审计第 26 项：打开编辑器时记下编辑版本与草稿身份基线（主线程、
+        // 入队前拍定）。读盘在后台队列，落地时任一基线变化都说明用户已
+        // 动过编辑器或已切篇，整单跳过恢复，不覆盖已填字段。
+        let restoreBaselineVersion = editorEditVersion
+        let restoreBaselineDraftId = currentDraftId
+        let restoreBaselineClearedDraftId = clearedCurrentDraftId
         BearyDraftStore.ioQueue.async { [weak self] in
             guard let draft = BearyDraftStore.load() else { return }
             // 回收无主文件（杀 App 后、首存前产生的孤文件）：多槽下必须保留全部草稿的
@@ -5702,6 +5725,13 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                 // 52 批补充：恢复竞态门——恢复是异步读盘，落地时用户可能已经打过字；
                 // 此时整段覆盖会抹掉刚打的字（拼音组词中还会被 attributedText 重设打散）。
                 // 用户已打字时整单跳过恢复（旧草稿仍在草稿箱，不丢），只字为空时才应用。
+                // 审计第 26 项：正文空门只拦正文——已填标题/天气/位置等此前仍会被
+                // 下文整单覆盖，故再加版本与身份双门：读盘期间任何字段变化
+                // （didSet/正文/标题/图片入口均已递增版本）或草稿身份变化
+                // （切篇、删正在写篇、保存建新篇）都整单跳过；旧草稿仍在箱里，不丢。
+                guard self.editorEditVersion == restoreBaselineVersion,
+                      self.currentDraftId == restoreBaselineDraftId,
+                      self.clearedCurrentDraftId == restoreBaselineClearedDraftId else { return }
                 let wasEmptyBeforeRestore = self.textView.text.isEmpty
                 guard wasEmptyBeforeRestore else { return }
                 self.currentDraftId = draft.draftId
@@ -5746,7 +5776,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                 }
                 self.updateCountLabel()
                 self.refreshToolStrip()
-                self.updateDraftPillCount()
+                self.refreshDraftPillWidth()
                 self.updateTextViewHeight()
                 self.updatePreferredContentSize()
                 // 录屏批 (c)：恢复草稿后同步一次发布启用态，且放在全部刷新之后当
@@ -5887,10 +5917,10 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         updateDraftStatusLabel()
         if let draftIdValue = draftIdValue {
             BearyDraftStore.deleteAsync(draftId: draftIdValue) { [weak self] in
-                self?.updateDraftPillCount()
+                self?.refreshDraftPillWidth()
             }
         } else {
-            updateDraftPillCount()
+            refreshDraftPillWidth()
         }
     }
 
@@ -6060,7 +6090,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         refreshQuoteSection()
         refreshToolStrip()
         updateDraftStatusLabel()
-        updateDraftPillCount()
+        refreshDraftPillWidth()
         // P1-17：重置为空白后同款同步——正文区回落下限高，缓存同步，
         // 避免残留旧篇高度导致空白编辑器正文区过高/过矮。
         updateTextViewHeight()
@@ -6145,7 +6175,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         refreshRecipientRow()
         refreshQuoteSection()
         refreshToolStrip()
-        updateDraftPillCount()
+        refreshDraftPillWidth()
         verifyRestoredQuote()
         // 录屏批 (c) 同款：草稿箱恢复后同步一次发布启用态，放全部刷新之后。
         updatePublishState()
