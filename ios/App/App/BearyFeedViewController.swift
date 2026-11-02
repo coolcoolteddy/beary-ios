@@ -1440,9 +1440,13 @@ class BearyFeedViewController: UIViewController {
         for (i, e) in oldEntries.enumerated() {
             if let id = e.id, oldIndexById[id] == nil { oldIndexById[id] = i }
         }
+        // 首屏 diff 保留的旧尾只含窗口外分页尾部：窗口内消失的篇只走删除，
+        // 绝不能同时留在新列表里，否则模型与批更新行数对不上必闪退
+        //（旧 [A,B]、新 [C,A] 时旧写法会得模型 [C,A,B] 却删 B 插 C）。
+        let oldFirstPageIdSet = Set(firstPageIds)
         var newList: [Entry] = deduped
         for e in oldEntries {
-            guard let id = e.id, !freshSet.contains(id) else { continue }
+            guard let id = e.id, !freshSet.contains(id), !oldFirstPageIdSet.contains(id) else { continue }
             newList.append(e)
         }
         let newIds = newList.compactMap { $0.id }

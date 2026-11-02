@@ -5932,9 +5932,19 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                 guard let self = self else { return }
                 // 落盘走后台队列：存完回调里再重置（快照在 saveDraftNow 调用时已拍，
                 // 存完前切篇的状态守卫见 saveDraftNow 完成回调）。
-                // 完成回调现带 DraftSaveResult；此处仅做签名适配、行为不变
-                // （失败仍重置，见 PR 描述残留风险——本组只修关闭路径）。
-                self.saveDraftNow { _ in
+                // 完成回调带 DraftSaveResult：失败时不重置、内容原样保留并 toast
+                // 明示重试（关闭路径同款口径：拒绝震动＋拒绝音＋状态行已置红）；
+                // 成功才开空白新篇。
+                self.saveDraftNow { [weak self] result in
+                    guard let self = self else { return }
+                    guard result.succeeded else {
+                        BearyHaptics.rejectionWarning()
+                        BearySoundPlayer.play(.refuseBonk)
+                        self.showToast(message: result.hadPreviousSavedVersion
+                            ? "草稿保存失败，本次修改没存上，旧版还在，再点一次保留并新建重试"
+                            : "草稿保存失败，这篇草稿还没存上，再点一次保留并新建重试")
+                        return
+                    }
                     self.resetEditorToBlank()
                 }
             })
