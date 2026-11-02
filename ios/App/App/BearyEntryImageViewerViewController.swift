@@ -175,6 +175,11 @@ class BearyEntryImageViewerViewController: UIViewController, UIGestureRecognizer
         retryLabel.textColor = .white
         retryLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 14))
         retryLabel.adjustsFontForContentSizeCategory = true
+        // 审计-编辑器详情：失败重试文案本是纯 UILabel（点按重试走整场手势），
+        // VoiceOver 下补可点读法；关闭钮为纯图标钮，补“关闭”读法。
+        retryLabel.isAccessibilityElement = true
+        retryLabel.accessibilityLabel = "图片加载失败，点按重试"
+        retryLabel.accessibilityTraits = .button
         retryLabel.textAlignment = .center
         retryLabel.translatesAutoresizingMaskIntoConstraints = false
         retryLabel.isHidden = true
@@ -212,6 +217,7 @@ class BearyEntryImageViewerViewController: UIViewController, UIGestureRecognizer
         }
         view.addSubview(dotsStack)
         closeButton.translatesAutoresizingMaskIntoConstraints = false
+        closeButton.accessibilityLabel = "关闭"
         closeButton.addTarget(self, action: #selector(closeTapped), for: .touchUpInside)
         closeButton.bearyAddPressFeedback()
         view.addSubview(closeButton)

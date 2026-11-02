@@ -113,6 +113,11 @@ class BearySettingsSubpageViewController: UIViewController {
     private var topBarView: UIView?
     /// 滚动区同样提为属性，供守卫日志记滚动区帧与内容栈高度。
     private let contentScrollView = UIScrollView()
+    /// 审计-个人页设置：子页壳 iPad 列宽——顶栏与内容列的宽度约束，
+    /// viewDidLayoutSubviews 按 ≥821 时 600 居中、≤820 全宽减 32 更新常量
+    /// （断点条件无法用纯约束表达；只在值变化时赋值，避免布局循环）。
+    private var subpageTopBarWidthConstraint: NSLayoutConstraint?
+    private var subpageContentWidthConstraint: NSLayoutConstraint?
 
     init(title: String) {
         self.pageTitle = title
@@ -161,18 +166,16 @@ class BearySettingsSubpageViewController: UIViewController {
         contentStack.spacing = 20
         contentStack.alignment = .fill
         contentScrollView.addSubview(contentStack)
-        // 样式规格定版：子页壳列宽与通用口径一致——顶栏与滚动区同宽居中、
-        // 宽上限 600（法律/诊断/拉黑三页 P2-17 同款写法）；窄屏全宽、
-        // 内容栈仍左右各 16（列宽 view−32），宽屏时栈为 600 列内 568。
-        let shellTopBarWidthEquality = topBar.widthAnchor.constraint(equalTo: view.widthAnchor)
-        shellTopBarWidthEquality.priority = UILayoutPriority(750)
-        let shellScrollWidthEquality = contentScrollView.widthAnchor.constraint(equalTo: view.widthAnchor)
-        shellScrollWidthEquality.priority = UILayoutPriority(750)
+        // 审计-个人页设置：子页壳 iPad 列宽与设置主页/法律/诊断/拉黑对齐——
+        // ≥821 时顶栏与内容列同为 600 居中，≤820 时顶栏全宽、内容列全宽减 32
+        // （壳原有 -32 内边距不变，不改主页 -40 口径）；宽度常量由
+        // viewDidLayoutSubviews 按当前屏宽更新（见 updateSubpageColumnWidths）。
+        subpageTopBarWidthConstraint = topBar.widthAnchor.constraint(equalToConstant: view.bounds.width)
+        subpageContentWidthConstraint = contentStack.widthAnchor.constraint(equalToConstant: max(view.bounds.width - 32, 0))
         NSLayoutConstraint.activate([
             topBar.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
             topBar.centerXAnchor.constraint(equalTo: view.centerXAnchor),
-            topBar.widthAnchor.constraint(lessThanOrEqualToConstant: 600),
-            shellTopBarWidthEquality,
+            subpageTopBarWidthConstraint!,
             closeButton.leadingAnchor.constraint(equalTo: topBar.leadingAnchor, constant: 16),
             closeButton.centerYAnchor.constraint(equalTo: topBar.centerYAnchor),
             titleLabel.centerXAnchor.constraint(equalTo: topBar.centerXAnchor),
@@ -182,15 +185,15 @@ class BearySettingsSubpageViewController: UIViewController {
             titleLabel.topAnchor.constraint(greaterThanOrEqualTo: topBar.topAnchor, constant: 6),
             titleLabel.bottomAnchor.constraint(lessThanOrEqualTo: topBar.bottomAnchor, constant: -6),
             contentScrollView.topAnchor.constraint(equalTo: topBar.bottomAnchor),
-            contentScrollView.centerXAnchor.constraint(equalTo: view.centerXAnchor),
-            contentScrollView.widthAnchor.constraint(lessThanOrEqualToConstant: 600),
-            shellScrollWidthEquality,
-            contentScrollView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
+            contentScrollView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            contentScrollView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            // 审计-个人页设置：子页壳底部钉安全区（原 view.bottomAnchor，
+            // 末行内容会沉到 Home 指示条下；法律/诊断/拉黑页已是安全区口径）。
+            contentScrollView.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor),
             contentStack.topAnchor.constraint(equalTo: contentScrollView.contentLayoutGuide.topAnchor, constant: 16),
-            contentStack.leadingAnchor.constraint(equalTo: contentScrollView.contentLayoutGuide.leadingAnchor, constant: 16),
-            contentStack.trailingAnchor.constraint(equalTo: contentScrollView.contentLayoutGuide.trailingAnchor, constant: -16),
+            contentStack.centerXAnchor.constraint(equalTo: contentScrollView.frameLayoutGuide.centerXAnchor),
+            subpageContentWidthConstraint!,
             contentStack.bottomAnchor.constraint(equalTo: contentScrollView.contentLayoutGuide.bottomAnchor, constant: -24),
-            contentStack.widthAnchor.constraint(equalTo: contentScrollView.frameLayoutGuide.widthAnchor, constant: -32),
         ] + BearySubpageTopBarHeight.constraints(for: topBar))
     }
 
@@ -203,8 +206,25 @@ class BearySettingsSubpageViewController: UIViewController {
         subpageLayoutGuard.resetForAppearance()
     }
 
+    /// 审计-个人页设置：按当前屏宽更新子页壳列宽（≥821 锁 600，
+    /// ≤820 全宽 / 内容列全宽减 32）；旋转/分屏时 viewDidLayoutSubviews
+    /// 再跑即纠正，不另监听尺寸变化。
+    private func updateSubpageColumnWidths() {
+        let viewWidth = view.bounds.width
+        guard viewWidth > 0 else { return }
+        let topBarWidth = viewWidth >= 821 ? 600 : viewWidth
+        let contentWidth = viewWidth >= 821 ? 600 : max(viewWidth - 32, 0)
+        if subpageTopBarWidthConstraint?.constant != topBarWidth {
+            subpageTopBarWidthConstraint?.constant = topBarWidth
+        }
+        if subpageContentWidthConstraint?.constant != contentWidth {
+            subpageContentWidthConstraint?.constant = contentWidth
+        }
+    }
+
     override func viewDidLayoutSubviews() {
         super.viewDidLayoutSubviews()
+        updateSubpageColumnWidths()
         subpageLayoutGuard.applyIfNeeded(page: pageTitle, view: view, topView: topBarView, contentViews: [contentScrollView, contentStack], presentation: "fullScreen+fadeRise")
     }
 
@@ -231,7 +251,7 @@ class BearySettingsSubpageViewController: UIViewController {
         }
     }
 
-    /// 分组卡（设置页 makeGroupCard 同款视觉：卡内标题、1px 边框、圆角 20、
+    /// 分组卡（设置页 makeGroupCard 同款视觉：卡内标题、1px 边框、圆角 16、
     /// 行间 1px 分隔线、行内容左右 16、上下 14）。
     func makeGroupCard(title: String?, rows: [UIView]) -> UIView {
         let card = UIView()
@@ -240,7 +260,7 @@ class BearySettingsSubpageViewController: UIViewController {
         card.backgroundColor = BearyColors.bg
         card.layer.borderWidth = 1
         card.layer.bearyDynamicBorderColor = BearyColors.line
-        card.layer.cornerRadius = 20
+        card.layer.cornerRadius = 16
         card.clipsToBounds = true
         groupCards.append(card)
         let stack = UIStackView()

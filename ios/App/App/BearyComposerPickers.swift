@@ -58,7 +58,8 @@ final class BearyRecipientPickerViewController: UIViewController, UITextFieldDel
     private let searchField = UITextField()
     /// A2：面板内通知开关（16 复选 + “通知对方”文案；iCity 起行隐藏，仅保留代码）。
     private let notifyRow = UIStackView()
-    private let notifyCheckButton = UIButton(type: .custom)
+    // 样式规格第 4 表：选人器通知复选框视觉 16×16、圆角 4 不动，热区扩到 44。
+    private let notifyCheckButton = BearyHit44Button(type: .custom)
     private let notifyLabel = UILabel()
     /// 搜索框配色（编辑器批）：原 A2 自定义动态底色/边框已删——96 包真机上搜索框
     /// 整棵子树不画（帧 44pt 证实存在、预测区像素纯白），改走全站已证实可见的
@@ -152,7 +153,8 @@ final class BearyRecipientPickerViewController: UIViewController, UITextFieldDel
         // 浅色下 surface 与 bg 同为白，观感不动）；全屏页面仍用 bg，不动。
         sheetView.backgroundColor = BearyColors.surface
         sheetView.layer.cornerRadius = BearySheetChrome.topCornerRadius
-        // 阴影色与数值一律走 BearySheetChrome.applyShadow（见 applySheetChrome），此处不再自写。
+        // 阴影：手机端走底 sheet 档；iPad 卡片走 raised 档（2026-11-02 定版第 2 组，
+        // 旧 0.30/30/(0, 24) 档已废弃），此处不再自写数值。
 
         grabberView.backgroundColor = BearyColors.line
         grabberView.layer.cornerRadius = BearySheetChrome.grabberCornerRadius
@@ -438,11 +440,11 @@ final class BearyRecipientPickerViewController: UIViewController, UITextFieldDel
             sheetView.layer.maskedCorners = [.layerMinXMinYCorner, .layerMaxXMinYCorner, .layerMinXMaxYCorner, .layerMaxXMaxYCorner]
             sheetView.layer.borderWidth = 1
             sheetView.layer.bearyDynamicBorderColor = BearyColors.line
-            BearySheetChrome.applyShadow(to: sheetView.layer, centered: true)
+            BearyShadow.applyRaised(to: sheetView.layer)
         } else {
             sheetView.layer.maskedCorners = [.layerMinXMinYCorner, .layerMaxXMinYCorner]
             sheetView.layer.borderWidth = 0
-            BearySheetChrome.applyShadow(to: sheetView.layer, centered: false)
+            BearySheetChrome.applyShadow(to: sheetView.layer)
         }
     }
 

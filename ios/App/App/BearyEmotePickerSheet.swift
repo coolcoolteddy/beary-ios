@@ -6,8 +6,8 @@ import UIKit
 // 用保序熊脸列表 BearyEmoteKeys.bearFaces（all 原顺序去掉 8 个物件）。统一参数一律取
 // 首页口径（任务定版）：动态 4 列（宽 - 54）/ 4 × 72、行距 10、槽位 46、
 // 按压高亮（faint 底）、遮罩 0.45、抓手顶距 10、iPad ≥821 宽屏分支
-// （全圆角 22 + 1px line 边框 + 底部偏移 24 的浮起卡片；移动端顶部圆角
-// 22、无边框、贴底）。个人主页侧收敛点：遮罩 0.6→0.45、抓手顶距 12→10、
+// （全圆角 20 + 1px line 边框 + 底部偏移 24 的浮起卡片；移动端顶部圆角
+// 20、无边框、贴底）。个人主页侧收敛点：遮罩 0.6→0.45、抓手顶距 12→10、
 // 行距 6→10、槽位 44→46、固定高 480→min(540, 70% 高) 动态高、补宽屏分支、
 // 补按压高亮、关闭走减动效口径。两页原调用点改为本 Sheet，各自旧实现已删。
 // 部署目标 iOS 15.0、Swift 5.0——只用闭包回调，不用 async/await，不用 if-let 简写。
@@ -67,7 +67,11 @@ final class BearyEmotePickerSheetViewController: UIViewController, UICollectionV
         sheetView.backgroundColor = BearyColors.surface
         sheetView.layer.cornerRadius = BearySheetChrome.topCornerRadius
         sheetView.layer.maskedCorners = [.layerMinXMinYCorner, .layerMaxXMinYCorner]
-        sheetView.clipsToBounds = true
+        // 2026-11-02 定版第 2 组：回应 Sheet 补 raised 阴影（0.12 / 8 / (0, 2)），此前无阴影。
+        // 阴影挂本层：clipsToBounds 会裁掉 bounds 外的阴影，故不裁剪；子视图均内缩，
+        // 圆角处无溢出。圆角 20 本身不动（第 1 组范围）。
+        BearyShadow.applyRaised(to: sheetView.layer)
+        sheetView.clipsToBounds = false
         sheetView.translatesAutoresizingMaskIntoConstraints = false
         view.addSubview(sheetView)
         // 5-23：下滑关闭（与草稿箱 handlePan 同口径，见 sheetPanGesture）。
@@ -165,8 +169,10 @@ final class BearyEmotePickerSheetViewController: UIViewController, UICollectionV
         }
     }
 
-    /// D-11：与详情 sheet 一致的宽屏形态（宽 ≥821）：全圆角 22 + 1px line 边框
-    /// + 底部偏移 24 的浮起卡片；移动端保持顶部圆角 22、无边框、贴底。
+    /// D-11：与详情 sheet 一致的宽屏形态（宽 ≥821）：全圆角 20 + 1px line 边框
+    /// + 底部偏移 24 的浮起卡片；移动端保持顶部圆角 20、无边框、贴底。
+    /// 审计 2026-11-02 弹窗组：注释原写 22 与代码（topCornerRadius=20）漂移，
+    /// 只改注释统一为 20，不改代码数值（圆角属样式 token）。
     private func updateSheetChrome() {
         let isWide = view.bounds.width >= 821
         if isWide {
@@ -297,10 +303,27 @@ final class BearyEmotePickerSheetViewController: UIViewController, UICollectionV
         return CGSize(width: width, height: height)
     }
 
+    /// 审计 2026-11-02 弹窗组：回应 Sheet 防重复点选——点选后立即禁用选项，
+    /// 挡住 0.25s 关闭窗口内的二次点选；关闭完成（视图离线）后恢复，
+    /// 本 Sheet 单次呈现单例，恢复仅为防御（调用方 dismiss 后实例即丢弃）。
+    /// 内容区超大字号：列表本身就是 collectionView，内容超高时内部滚动，
+    /// 行高已按实际文字高度计（D-13），无需另改。
+    private var didPickEmote = false
+
     func collectionView(_ collectionView: UICollectionView, didSelectItemAt indexPath: IndexPath) {
+        guard !didPickEmote else { return }
+        didPickEmote = true
+        collectionView.isUserInteractionEnabled = false
         let pickedKey = BearyEmoteKeys.bearFaces[indexPath.item]
         BearySoundPlayer.play(.emoteChirp)
         onPick?(pickedKey)
+    }
+
+    override func viewDidDisappear(_ animated: Bool) {
+        super.viewDidDisappear(animated)
+        // 关闭完成后再恢复选项（单例防御；正常关闭后实例即丢弃）。
+        didPickEmote = false
+        emoteCollectionView?.isUserInteractionEnabled = true
     }
 }
 

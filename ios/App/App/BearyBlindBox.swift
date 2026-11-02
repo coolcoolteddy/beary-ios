@@ -101,9 +101,12 @@ enum BlindBoxPoolEligibility {
 }
 
 enum BlindBoxPool {
-    /// 旧公开 = 已公开且 published_at 早于今日 00:00；私密与当日新公开一律置灰禁用。
+    /// 旧公开 = 有效公开且 published_at 早于今日 00:00；私密与当日新公开一律置灰禁用。
+    /// 审计 2026-11-02 第十节：入池资格改用有效态——限时到期转私密后不再算公开，
+    /// 行 pill 同步走本函数（过期篇 pill 由“公开”改“私密”，与资格一致）；
+    /// 服务端交换接口二次校验不在 App 支做（后端项，见 PR 未做项）。
     static func eligibility(for entry: Entry) -> BlindBoxPoolEligibility {
-        guard entry.isPublic == true else { return .privateEntry }
+        guard BearyEphemeral.isEffectivelyPublic(entry) else { return .privateEntry }
         let published = entry.publishedAt ?? entry.createdAt ?? 0
         if published <= 0 || published >= BlindBoxDate.todayStartMs() { return .tooNew }
         return .eligible
