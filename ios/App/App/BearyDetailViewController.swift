@@ -134,7 +134,9 @@ final class BearyDetailViewController: UIViewController {
     private var rightStackTopConstraint: NSLayoutConstraint?
     private var rightStackTrailingConstraint: NSLayoutConstraint?
     private let separatorView = UIView()
-    private let closeButton = UIButton(type: .custom)
+    // 审计-编辑器详情：关闭钮视觉仍为 15pt 文字、高 52，宽按标题固有宽
+    // （约 30pt）不足 44——改 Hit44 扩热区，视觉一字不动。
+    private let closeButton = BearyHit44Button(type: .custom)
     private let avatarButton = BearyHit44Button(type: .custom)
     private let avatarImageView = UIImageView()
     /// 首页卡片同款：无图时背后首字母圆透出（avatarImageView 为空时可见）。
@@ -1112,14 +1114,66 @@ final class BearyDetailViewController: UIViewController {
 
     /// 2026-10-29 Li 定（P0-3 包括项，推翻第 17 项“弱网/失败先出页面仍可看”）：
     /// 后台补齐失败时清为无正文态——内容栈整藏，居中一句失败文案，不留卡片旧内容；
-    /// 不用私密占位文案（失败不是私密）；关闭钮仍可用，关了重进即重试。
+    /// 不用私密占位文案（失败不是私密）。
     /// 页内已因拉黑/举报转占位时不动（隐私占位优先于失败态）。
-    /// 与占位共用 BearyStateView 布局（P1-2 一并受益），无重试钮，不另起一套。
+    /// 与占位共用 BearyStateView 布局（P1-2 一并受益）。
+    /// 审计-编辑器详情：失败态补时间线空态同款重试钮（高 44，regular 档），
+    /// 点按重拉详情（retryFetchDetail），不再要求关闭重进。
     func showFetchFailed() {
         if locallyHiddenByModeration { return }
         setContentVisible(false)
-        placeholderStateView.configure(kind: .error, title: nil, subtitle: "加载失败，请稍后再试", iconName: nil, actionTitle: nil)
+        placeholderStateView.configure(kind: .error, title: nil, subtitle: "加载失败，请稍后再试", iconName: nil, actionTitle: "重试", actionStyle: .secondaryOutline(.regular), onAction: { [weak self] in self?.retryFetchDetail() })
         placeholderStateView.isHidden = false
+    }
+
+    /// 详情失败重试：与 SceneDelegate 后台补齐同一可见性门（作者直更、
+    /// 占位直更、拉黑转占位、公开且作者可定直更、公开但定不出作者不动、
+    /// 私密非作者转私密占位）；失败则回失败态（重试钮仍在）。
+    private func retryFetchDetail() {
+        guard !locallyHiddenByModeration, let entryId = entry.id, !entryId.isEmpty else {
+            showFetchFailed()
+            return
+        }
+        placeholderStateView.configure(kind: .loading, title: nil, subtitle: nil, iconName: nil, actionTitle: nil)
+        BearyAPI.shared.fetchEntry(id: entryId) { [weak self] result in
+            DispatchQueue.main.async {
+                guard let self = self else { return }
+                guard case .success(let fetched) = result else {
+                    self.showFetchFailed()
+                    return
+                }
+                if self.locallyHiddenByModeration { return }
+                let viewerId = SessionManager.shared.currentUser?.id
+                let viewerIsAuthor = fetched.isMine == true || (fetched.authorId != nil && viewerId != nil && fetched.authorId == viewerId)
+                if viewerIsAuthor {
+                    self.update(with: fetched)
+                    return
+                }
+                if fetched.placeholder == true {
+                    self.update(with: fetched)
+                    return
+                }
+                if !SessionManager.shared.isGuestMode, let authorId = fetched.authorId, viewerId != authorId, BearyBlockedStore.isBlocked(authorId) {
+                    var placeholderEntry = fetched
+                    placeholderEntry.placeholder = true
+                    self.update(with: placeholderEntry)
+                    return
+                }
+                if fetched.isPublic == true {
+                    if fetched.authorId != nil {
+                        self.update(with: fetched)
+                    } else {
+                        // 公开但定不出作者：与补齐口径一致，不更新；此处页已在
+                        // 失败态，故回到失败态（重试钮仍在），不得停在加载态。
+                        self.showFetchFailed()
+                    }
+                    return
+                }
+                var placeholderEntry = fetched
+                placeholderEntry.placeholder = true
+                self.update(with: placeholderEntry)
+            }
+        }
     }
 
     private func renderAll() {
@@ -2130,6 +2184,12 @@ final class BearyDetailViewController: UIViewController {
                     guard let self = self else { return }
                     self.onEdit?(self.entry)
                 })
+            } else {
+                // 审计-编辑器详情：过期（或 editDeadline 缺失即已锁，见时间线
+                // 同口径注释）时编辑项不再直接消失，置灰并附说明。
+                let expiredEdit = UIAlertAction(title: "编辑（已超 15 分钟不可编辑）", style: .default, handler: nil)
+                expiredEdit.isEnabled = false
+                sheet.addAction(expiredEdit)
             }
             sheet.addAction(UIAlertAction(title: "修改权限", style: .default) { [weak self] _ in
                 guard let self = self else { return }

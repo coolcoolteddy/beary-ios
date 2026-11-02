@@ -1294,11 +1294,14 @@ extension BearyAPI {
     /// 实况：videoDataUrl 非空时才附带（data:video/quicktime;base64,... 的 mov，
     /// App 端已限 ≤10MB），后端把视频存 key+'_live' 并回 live_key；videoDataUrl
     /// 为 nil 时 body 与旧版一字相同，非实况上传路径不动。
-    func uploadImage(dataUrl: String, width: Int, height: Int, thumbDataUrl: String?, videoDataUrl: String? = nil, completion: @escaping (Result<UploadResponse, APIError>) -> Void) {
+    /// 审计-编辑器详情：返回在途任务，供编辑器取消上传用（调用方不
+    /// 用时可忽略返回值；上传本身仍不重试，见 request 注释）。
+    @discardableResult
+    func uploadImage(dataUrl: String, width: Int, height: Int, thumbDataUrl: String?, videoDataUrl: String? = nil, completion: @escaping (Result<UploadResponse, APIError>) -> Void) -> URLSessionDataTask? {
         var body: [String: Any] = ["dataUrl": dataUrl, "w": width, "h": height]
         if let t = thumbDataUrl { body["thumb"] = t }
         if let v = videoDataUrl { body["videoDataUrl"] = v }
-        request("/beary/api/images/upload", method: "POST", jsonBody: body, completion: completion)
+        return request("/beary/api/images/upload", method: "POST", jsonBody: body, completion: completion)
     }
 
     /// 发帖：content 必填 ≤2000 字；images 是已上传的 R2 key 数组（须归属本人且存在）；

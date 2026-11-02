@@ -1067,7 +1067,10 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         cancelButton.addTarget(self, action: #selector(didTapCancel), for: .touchUpInside)
         cancelButton.bearyAddPressFeedback()
         titleLabel.text = isEditMode ? "编辑日记" : "新日记"
-        titleLabel.font = UIFont.systemFont(ofSize: 17, weight: .semibold)
+        // 审计-编辑器详情：顶栏标题走 Dynamic Type（正文标题输入框此前已
+        // 走 scaledFont，此处补顶栏标题一处；窄屏压缩优先级 749 不动）。
+        titleLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 17, weight: .semibold))
+        titleLabel.adjustsFontForContentSizeCategory = true
         titleLabel.textColor = BearyColors.ink
         // v6-2：标题靠左对齐、紧贴叉叉右侧 8pt，不再居中（v3 左右钮之间居中口径已推翻，不实施）。
         titleLabel.textAlignment = .left
@@ -1215,6 +1218,14 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
 
     /// 发布钮外观跟随启用态（updatePublishState 只改 isEnabled，这里同步颜色/底色）。
     private func refreshPublishAppearance() {
+        // 审计-编辑器详情：视觉禁用态与 VoiceOver 同步——只按 isEnabled
+        // 挂/摘 .notEnabled，不按外观。空正文视觉置灰但仍可点（U13）时
+        // 不得带 .notEnabled，否则 VoiceOver 与可点事实矛盾。
+        if publishButton.isEnabled {
+            publishButton.accessibilityTraits.remove(.notEnabled)
+        } else {
+            publishButton.accessibilityTraits.insert(.notEnabled)
+        }
         // U13：空正文时视觉置灰（与真禁用同外观），但按钮仍可点按以便给提示。
         if publishButton.isEnabled && trimmedContent().isEmpty {
             publishButton.backgroundColor = UIColor.clear
@@ -2842,7 +2853,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         charGroupStack.translatesAutoresizingMaskIntoConstraints = false
         charRingView.translatesAutoresizingMaskIntoConstraints = false
         charCountLabel.translatesAutoresizingMaskIntoConstraints = false
-        charCountLabel.isHidden = true  // 数字已隐藏，只留圆环（updateCountLabel 内亦恒置 true，防首帧闪数字）。
+        charCountLabel.isHidden = true  // 数字平时隐藏，只留圆环（超限时 updateCountLabel 显红字计数，见该函数）。
         charGroupStack.addArrangedSubview(charRingView)
         charGroupStack.addArrangedSubview(charCountLabel)
         toolRow.addArrangedSubview(charGroupStack)
@@ -4133,17 +4144,21 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                     self.updatePublishState()
                     return
                 }
-                // C4：到 0 显示“编辑已结束”并关闭编辑器（走现有取消/关闭路径
-                // onCancelled，不弹放弃确认；本轮新选图的本地文件按取消路径清理）。
-                // 注意：编辑态 onCancelled 在容器侧仅 dismiss、不刷新列表
-                //（112 返回未改不刷新：取消没有保存，服务端未动，无需接线刷新）。
+                // 审计-编辑器详情：到 0 不再直接关编辑器丢内容。编辑模式不走
+                // 草稿流（scheduleDraftSave/saveDraftNow 均拦编辑态），故不虚构
+                // “已存为草稿”；改走在途保存失败同款保留态：编辑器留在页上、
+                // 输入冻结为只读（见 refreshPublishingInputFreeze 的
+                // editSaveBlockedAfterDeadline 分支）、保存钮持续禁用，15 分钟
+                // 规则本身不延长；用户可复制内容后手动关闭，关闭时本地临时图
+                // 仍按取消路径清理（见 didTapCancel 编辑分支）。
                 self.editTimerLabel.text = "编辑已结束"
                 self.editTimer?.invalidate()
                 self.editTimer = nil
-                self.deleteEditLocalFiles()
-                // B 修法：计时自动关闭退场前先收起弹出框（无动画）。
+                self.editSaveBlockedAfterDeadline = true
+                // B 修法：退场前先收起弹出框（无动画）。
                 self.hideCallout(animated: false)
-                self.onCancelled?()
+                self.updatePublishState()
+                self.showToast(message: "编辑已结束，内容已保留，可复制后关闭")
                 return
             }
             self.editTimerLabel.text = "剩 \(remain / 60):\(String(format: "%02d", remain % 60))"
@@ -4268,13 +4283,18 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             return
         }
         charRingView.isHidden = false
-        charCountLabel.isHidden = true
         let ratio = min(1.0, CGFloat(count) / CGFloat(BearyComposerViewController.maxLength))
         charProgressLayer?.strokeEnd = ratio
         if count > BearyComposerViewController.maxLength {
             charProgressLayer?.strokeColor = BearyColors.red.cgColor
+            // 审计-编辑器详情：超限时数字不再隐藏——只显红环用户算不出超了
+            // 多少；未超限时仍只留圆环（原口径不动）。
+            charCountLabel.text = "\(count)"
+            charCountLabel.textColor = BearyColors.red
+            charCountLabel.isHidden = false
         } else {
             charProgressLayer?.strokeColor = BearyColors.blue.cgColor
+            charCountLabel.isHidden = true
         }
     }
 
@@ -4310,7 +4330,10 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     /// 恢复时直接置回可用：上述控件在别处没有其他禁用逻辑（grep 无其他 isEnabled/
     /// isEditable 赋值），不会误解开本应禁用的项。
     private func refreshPublishingInputFreeze() {
-        let frozen = isPublishing
+        // 审计-编辑器详情：期限已过保留态与发布在途同冻——正文/标题只读
+        // （UITextView 不可编辑时仍可选区复制），各入口钮同禁，保存钮已由
+        // updatePublishState 持续禁用；本位只在期限已过后才为真，不影响常态。
+        let frozen = isPublishing || editSaveBlockedAfterDeadline
         textView.isEditable = !frozen
         headlineField.isEditable = !frozen
         // 100 包编辑器面修法：发布在途时可见性钮亦冻结——此前冻结清单
@@ -4531,6 +4554,8 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             imageView.isHidden = true
         }
         let item = ComposerImageItem(key: key, uploading: uploading, localFile: localFile, failed: failed, container: container, imageView: imageView, spinner: spinner, failView: failView, removeButton: removeButton)
+        // 审计-编辑器详情：新建即上传态的项，× 同为取消入口。
+        removeButton.accessibilityLabel = uploading ? "取消上传" : "删除图片"
         return item
     }
 
@@ -4543,6 +4568,8 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         item.imageView.isHidden = false
         item.imageView.alpha = 1.0
         item.spinner.startSpinning()
+        // 审计-编辑器详情：上传中 × 即取消入口，VoiceOver 明说。
+        item.removeButton.accessibilityLabel = "取消上传"
     }
 
     private func markUploaded(_ item: ComposerImageItem, key: String) {
@@ -4553,6 +4580,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         item.imageView.isHidden = false
         item.imageView.alpha = 1.0
         item.spinner.stopSpinning()
+        item.removeButton.accessibilityLabel = "删除图片"
     }
 
     private func markFailed(_ item: ComposerImageItem) {
@@ -4561,6 +4589,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         item.failView.isHidden = false
         item.imageView.isHidden = true
         item.spinner.stopSpinning()
+        item.removeButton.accessibilityLabel = "删除图片"
     }
 
     @objc private func didTapImageItem(_ gesture: UITapGestureRecognizer) {
@@ -4645,7 +4674,18 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
 
 
 
+    /// 审计-编辑器详情：取消在途上传——cancel 任务 + 代次 +1（迟到回包
+    /// 由代次守卫丢弃）+ 清任务句柄。上传中缩略图的 × 即取消入口
+    /// （进度区，见 markUploading 的无障碍文案）；撤销恢复时
+    /// didTapUndoRemovedImage 已会为仍上传态的项重起上传，故取消不丢图。
+    private func cancelUpload(for item: ComposerImageItem) {
+        item.uploadTask?.cancel()
+        item.uploadTask = nil
+        item.uploadGeneration += 1
+    }
+
     private func removeImageItem(_ item: ComposerImageItem) {
+        cancelUpload(for: item)
         var kept: [ComposerImageItem] = []
         for existing in imageItems {
             if existing !== item {
@@ -4668,6 +4708,8 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     /// 期间草稿已按删除后状态落盘（scheduleDraftSave），本地文件暂不删；
     /// 点撤销即按原位恢复（含 key/localFile/上传态），恢复后重新落盘。
     private func deleteImageItemWithUndo(_ item: ComposerImageItem) {
+        // 审计-编辑器详情：删图即取消在途上传（网络任务不继续跑、回包不回写）。
+        cancelUpload(for: item)
         var index = imageItems.count
         for (i, existing) in imageItems.enumerated() {
             if existing === item {
@@ -5107,8 +5149,13 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             }
             return
         }
+        // 审计-编辑器详情：起传即认领代次并持有任务（本函数恒跑在串行
+        // imagePrepQueue 上，递增与认领不与另一路起传交错；离条项的回包
+        // 由下方 stillThere 守卫丢弃，不在此处跨线程读 imageItems）。
+        item.uploadGeneration += 1
+        let uploadGeneration = item.uploadGeneration
         let videoDataUrl = liveVideoData.map { BearyLivePhoto.videoDataURL($0) }
-        BearyAPI.shared.uploadImage(dataUrl: BearyImagePrep.dataURL(full.data), width: full.w, height: full.h, thumbDataUrl: BearyImagePrep.dataURL(thumbData), videoDataUrl: videoDataUrl) { [weak self, weak item] result in
+        item.uploadTask = BearyAPI.shared.uploadImage(dataUrl: BearyImagePrep.dataURL(full.data), width: full.w, height: full.h, thumbDataUrl: BearyImagePrep.dataURL(thumbData), videoDataUrl: videoDataUrl) { [weak self, weak item] result in
             DispatchQueue.main.async {
                 guard let self = self, let item = item else { return }
                 var stillThere = false
@@ -5117,9 +5164,12 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                         stillThere = true
                     }
                 }
-                if !stillThere {
+                // 代次门控：取消/删图/重传已推高代次时，过期回包直接丢弃，
+                // 不得把旧 key 写回新一轮上传的项（9 图竞态即此类）。
+                if !stillThere || uploadGeneration != item.uploadGeneration {
                     return
                 }
+                item.uploadTask = nil
                 switch result {
                 case .success(let resp):
                     if let key = resp.key {
@@ -6704,6 +6754,11 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
 private final class ComposerImageItem {
     var key: String?
     var uploading: Bool
+    /// 审计-编辑器详情：上传代次 + 在途任务。每次起传（uploadPrepared 入口）
+    /// 代次 +1 并由回包认领；取消/删图时再 +1 并 cancel 任务，过期回包
+    /// （代次不符或已不在条里）一律丢弃，不得覆盖更新的上传态。
+    var uploadGeneration = 0
+    var uploadTask: URLSessionTask?
     var localFile: String?
     var failed: Bool
     /// 实况（仅内存 + 已上传 key，不进图片文件本身）：
