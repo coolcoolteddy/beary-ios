@@ -1691,7 +1691,7 @@ class BearyProfileViewController: UIViewController {
     /// x 与内容用户名同列（表框左 + 28，iPad 600 居中列下自动对齐）。
     /// 视觉清单第 6 项（已定设计，推翻 #508）：吸顶用户名固定主题底色
     /// （stickyHeaderView 本身的 BearyColors.bg）+ ink 字，不再按封面亮度取色；
-    /// 背景跟踪图/模糊层/wordmark 一律隐藏（见 syncStickyHeaderCover）。
+    /// 背景跟踪图已恢复（见 syncStickyHeaderCover）；wordmark 仍隐藏。
     /// 不重新增加文字阴影或光晕（2026-10-31 删阴影的决定不动）、不另加底色块。
     /// 位置与显隐时机不动：label 高 22 居中于 60 条带、左右各留 28/16pt，
     /// 转移淡入/上浮 alpha 逻辑见 updateProfileCoverScroll。ink 为动态色，
@@ -2096,20 +2096,25 @@ class BearyProfileViewController: UIViewController {
         ])
     }
 
-    /// 吸顶跟踪图封面同步（2026-11-01 上滑橙块修复）：照片时同引用赋值
-    /// （不加载）；默认背景时无图、背景色为主题底色（#528 起跟踪图与 wordmark 均隐藏）；加载态
-    /// （封面图未到）时跟踪图与 wordmark 同隐。
-    /// 视觉清单第 6 项（已定设计，推翻 #508）：吸顶背景固定为主题底色——
-    /// 容器 stickyHeaderView 本身即 BearyColors.bg，跟踪图与 wordmark 在此
-    /// 一律隐藏、不再跟随封面图或默认主题底色；模糊层源图随跟踪图隐藏而被
-    /// refreshStickyHeaderBlurImage 清掉。旧“首帧橙底上滑才露出来”的
-    /// 时机 bug 随背景不再跟随封面而自然消失（本函数仍在布局与滚动双路
-    /// 被调，显隐时机与名字淡入逻辑一字不动）。
+    /// 跟踪图同步（Li 2026-11-02 定：背景上滑时逐渐变 header，推翻 #528
+    /// 跟踪图隐藏口径）：吸顶容器里的图与真封面同一张 UIImage、同一几何
+    /// （表框左／表宽、234 高、顶随上滑 1:1、锁定后冻结），容器淡入时与下方
+    /// 真封面像素对齐，故不再有黑块盖在照片上、也无接缝；到锁定点后模糊层
+    /// 再按遮挡进度交叉淡入，背景即逐渐变成 header。无封面照片时仍无图、
+    /// 容器即主题底色（默认背景本来就是底色，无图可跟）。
     private func syncStickyHeaderCover() {
-        stickyHeaderBgImageView.isHidden = true
-        stickyHeaderBgImageView.image = nil
+        if let coverImage = coverImageView.image, !coverImageView.isHidden {
+            if stickyHeaderBgImageView.image !== coverImage {
+                stickyHeaderBgImageView.image = coverImage
+            }
+            stickyHeaderBgImageView.isHidden = false
+        } else {
+            stickyHeaderBgImageView.isHidden = true
+            stickyHeaderBgImageView.image = nil
+        }
         stickyWordmarkView.isHidden = true
         updateStickyHeaderNameColor()
+        refreshStickyHeaderBlurImage()
     }
 
     /// 视觉清单第 6 项：吸顶用户名固定 ink 字（动态色，跟随主题底色），
@@ -2173,7 +2178,7 @@ class BearyProfileViewController: UIViewController {
         // 再同步一次（updateProfileCoverScroll 开头），后者是修复点。
         syncStickyHeaderCover()
         // header 用户名发光已删（#459）：不再按条带亮度算阴影；
-        // 视觉清单第 6 项：跟踪图已隐藏，模糊层源图恒被清掉（本行旧同步语义失效）。
+        // 2026-11-02：跟踪图已恢复，模糊层源图随封面同步（见 syncStickyHeaderCover）。
         refreshStickyHeaderBlurImage()
         // 用户名：x 与内容用户名同列（表框左 + 28，iPad 600 居中列下自动对齐），
         // 垂直居中于 60 条带；文案同步（赋值点同步 + 此处兜底）。
@@ -2195,12 +2200,11 @@ class BearyProfileViewController: UIViewController {
     }
 
     /// v22 封面滚动态（2026-10-30，取代视差 0.3＋上滑模糊 header＋旧名字淡入）：
-    /// 视觉清单第 6 项：跟踪图已隐藏，下述 1:1 跟随几何仍跑但无可见输出。
+    /// 2026-11-02：跟踪图已恢复可见，下述 1:1 跟随几何即背景变 header 的本体。
     /// 跟踪图与真封面 1:1 同速同框上移、底贴 header 底边时锁定成 header
-    ///（顶冻结在带底边 - 234，带内恒为封面底部本身）；头像前半段全尺寸跟随、
-    /// 后半段缩小 84→70＋下落、距分界线间隙 -28→6 后定型、之后随页面 1:1
-    /// 进入 header 后消失；名字以下整段跟头像视觉底边走（后半段 0→20，
-    /// 之后恒定），头像-用户名距离全程锁定（代码现行 14，不改静止态）；
+    ///（顶冻结在带底边 - 234，带内恒为封面底部本身）；头像 84→70 底部对齐
+    /// 缩小、之后随页面 1:1 进入 header 后消失；名字以下整段不再跟移，
+    /// 头像-用户名距离恒 14（静止态与滚动态一致）；
     /// header 用户名在内容用户名顶边碰到 header 底边时起、往后 20px 内
     /// 淡入＋上浮到位；默认背景 wordmark 在后半段内 1→0 淡出（用户照片无此处理）。
     /// 只改 transform／alpha 与跟踪图顶约束常量，不调 layoutIfNeeded、不做图片加载、
@@ -2234,25 +2238,22 @@ class BearyProfileViewController: UIViewController {
         } else {
             rampProgress = (up - rampStart) / (rampEnd - rampStart)
         }
-        // 头像几何（84→70、压线 28、冻结间隙 6 均为代码／v22 现行值，由此推导
-        // 下落与底边位移，不写死 27／20）：间隙 = -28 + lag + 缩小抬升，
-        // 冻结时 = 6 → lagMax = 27；视觉底边位移 = lag - 缩小抬升 = 20。
+        // 头像几何：84→70 底部对齐缩小，底边位移恒 0（旧 lag／间隙推导已废）。
         let avatarFrom: CGFloat = 84
         let avatarTo: CGFloat = 70
-        let avatarOverlap: CGFloat = 28
-        let frozenGap: CGFloat = 6
-        let shrinkRaise = (avatarFrom - avatarTo) / 2
-        let avatarLagMax = frozenGap + avatarOverlap - shrinkRaise
-        let belowShiftMax = avatarLagMax - shrinkRaise
-        let avatarLag = avatarLagMax * rampProgress
         let avatarScale = 1 - rampProgress * (avatarFrom - avatarTo) / avatarFrom
-        let belowShift = belowShiftMax * rampProgress
-        // 头像：外层容器位移、内层图与首字母缩放；热区钮与重试钮在容器内、跟位移不跟缩放。
-        avatarContainerView.transform = CGAffineTransform(translationX: 0, y: avatarLag)
-        avatarImageView.transform = CGAffineTransform(scaleX: avatarScale, y: avatarScale)
-        avatarLetterLabel.transform = CGAffineTransform(scaleX: avatarScale, y: avatarScale)
-        applyProfileBelowShift(belowShift)
-        currentBelowShift = belowShift
+        // 头像（Li 2026-11-02 真机报：上下滑时中间内容位移的根治）：
+        // 旧 v22 是容器滞后下落 27 + 名字以下整段下移 20，标签／行／脚部
+        // 全跟着在 30pt 滑程里多走 20pt，中间内容相对手指不是 1:1；
+        // 现容器不动、头像只底部对齐缩小（中心缩放会抬底边 7pt，故先平移
+        // 7pt 再缩放，底边恒贴名字上 14pt），名字以下整段不再下移，
+        // 标签／行／脚部全程跟手 1:1。头像不再下落定型、而是随页滚走。
+        let avatarBottomHold = (avatarFrom - avatarTo) / 2 * rampProgress
+        avatarContainerView.transform = .identity
+        avatarImageView.transform = CGAffineTransform(translationX: 0, y: avatarBottomHold).scaledBy(x: avatarScale, y: avatarScale)
+        avatarLetterLabel.transform = CGAffineTransform(translationX: 0, y: avatarBottomHold).scaledBy(x: avatarScale, y: avatarScale)
+        applyProfileBelowShift(0)
+        currentBelowShift = 0
         // 默认背景 wordmark：后半段内 1→0 淡出（照片时两视图均隐藏，赋值无可视影响）。
         defaultWordmarkView.alpha = 1 - rampProgress
         stickyWordmarkView.alpha = 1 - rampProgress
@@ -2260,6 +2261,12 @@ class BearyProfileViewController: UIViewController {
         let bgTop = max(stickyHeaderBgNaturalTop - up - 54, headerHeight - 234)
         if stickyHeaderBgTopConstraint.constant != bgTop {
             stickyHeaderBgTopConstraint.constant = bgTop
+        }
+        // 模糊层与跟踪图同几何：此前模糊层顶只在布局时同步，滚动中顶停在
+        // 静止值 -54、锁定后跟踪图顶已冻到带底边 -234，两图错位 61pt，
+        // 模糊交叉淡入时会跳一格；现滚动中同步同值，模糊即原图同框加深。
+        if stickyHeaderBlurTopConstraint.constant != bgTop {
+            stickyHeaderBlurTopConstraint.constant = bgTop
         }
         // 吸顶容器显隐（黑 header 蹦出修法）：此前这里是 isHidden 一刀切——
         // up 刚过 0 的第一帧，主题底色容器（深色纯黑、浅色纯白）就以满不透明
