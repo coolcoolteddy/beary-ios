@@ -755,6 +755,24 @@ class BearyProfileViewController: UIViewController {
         return buttonValue
     }()
 
+    /// 私信开放四档：他人主页私信钮（关注钮左侧同中心线、40×40，官方 icon_comment 空气泡）。
+    /// 只属他人主页：本人/游客/拉黑/无权限一律隐藏；可见性由 can 接口决定（见 refreshDMCan）。
+    private lazy var dmButton: BearyHit44Button = {
+        let buttonValue = BearyHit44Button(type: .system)
+        buttonValue.translatesAutoresizingMaskIntoConstraints = false
+        buttonValue.setImage(BearyIconImages.image(named: "icon_comment", pointSize: 20), for: .normal)
+        buttonValue.tintColor = BearyColors.ink
+        buttonValue.accessibilityLabel = "私信"
+        buttonValue.addTarget(self, action: #selector(dmButtonTapped), for: .touchUpInside)
+        buttonValue.bearyAddPressFeedback()
+        buttonValue.isHidden = true
+        return buttonValue
+    }()
+
+    /// 私信钮 can 结果（nil = 未查到/查失败，按钮保持隐藏，不把失败画成可私信）。
+    private var dmCan: Bool?
+    private var dmCanLoading = false
+
     /// 好友第一期：当前目标用户的关注态（nil = 未拉取；拉取失败时按钮保持隐藏，
     /// 不把“未拉到”画成“可关注”）。目标 id 以 profile 解析值为准（handle 目标
     /// 解析前不拉取、不渲染）。
@@ -928,6 +946,9 @@ class BearyProfileViewController: UIViewController {
 
     /// iCity：拉黑成功后容器接线（离页 + 刷新信息流）；容器未接线时本页清列表兜底。
     var onBlockedUser: ((Int) -> Void)?
+
+    /// 私信开放四档：他人主页私信钮点按，容器接线到聊天页（与 onOpenConversations 同款）。
+    var onOpenDMChat: ((BearyAPI.FriendUser) -> Void)?
 
     // MARK: - 头像行动作：齿轮（仅本人）；头像行分享已按 1:1 去掉，modal 态走顶栏分享
 
@@ -2654,6 +2675,7 @@ class BearyProfileViewController: UIViewController {
         avatarContainerView.addSubview(avatarRetryButton)
         headerView.addSubview(editButton)
         headerView.addSubview(followButton)
+        headerView.addSubview(dmButton)
         headerView.addSubview(gearButton)
         headerView.addSubview(headerShareButton)
         headerView.addSubview(nameLabel)
@@ -2765,6 +2787,11 @@ class BearyProfileViewController: UIViewController {
             followButton.trailingAnchor.constraint(equalTo: headerView.trailingAnchor, constant: -28),
             followButton.centerYAnchor.constraint(equalTo: nameLabel.centerYAnchor),
             followButton.heightAnchor.constraint(greaterThanOrEqualToConstant: 40),
+            // 私信钮贴关注钮左侧同中心线（隐藏钮仍参与布局，锚点有效，见好友钮注释）。
+            dmButton.trailingAnchor.constraint(equalTo: followButton.leadingAnchor, constant: -8),
+            dmButton.centerYAnchor.constraint(equalTo: followButton.centerYAnchor),
+            dmButton.widthAnchor.constraint(equalToConstant: 40),
+            dmButton.heightAnchor.constraint(equalToConstant: 40),
             gearButton.trailingAnchor.constraint(equalTo: editButton.leadingAnchor, constant: -8),
             gearButton.centerYAnchor.constraint(equalTo: editButton.centerYAnchor),
             gearButton.widthAnchor.constraint(equalToConstant: 40),
@@ -3004,6 +3031,7 @@ class BearyProfileViewController: UIViewController {
         // 关注钮只属他人主页：本人、游客（viewer 为空）一律隐藏；拉黑态由
         // refreshFollowState 按 state 接口复核（未到前先隐藏，不抢先画“关注”）。
         followButton.isHidden = own || viewerUserIdValue == nil || followBlockedByMe || followState == nil
+        updateDMButton()
         // iCity：更多菜单只属他人主页（举报/拉黑均以他人为对象）。
         topMoreButton.isHidden = own
         if !own {
@@ -3027,6 +3055,8 @@ class BearyProfileViewController: UIViewController {
 
     @objc private func handleFollowChangedNotification(_ note: Notification) {
         refreshFollowState()
+        // 关注/取关改变档位 followers/friends 的 can 结果，重查私信钮。
+        refreshDMCan()
         // 关系变化可能改变本页可见日记（取关后仅好友篇消失、回关后出现）：
         // 列表强制重拉一遍，资料头不动。
         if !isOwnProfile {
@@ -3070,6 +3100,7 @@ class BearyProfileViewController: UIViewController {
                     self.followState = nil
                 }
                 self.applyFollowButton()
+                self.updateDMButton()
             }
         }
     }
@@ -3294,6 +3325,8 @@ class BearyProfileViewController: UIViewController {
             applyMode()
             // 好友第一期：资料解析出目标 id 后才拉关注态（handle 目标此前无 id）。
             refreshFollowState()
+            // 私信钮 can 同点查（目标 id 已知；失败一律隐藏）。
+            refreshDMCan()
             if isOwnProfile {
                 // 夜巡为本人专属：资料回包后另拉夜巡（失败即隐藏，不 toast）；徽章架已删，不再拉徽章。
                 // 提速：本轮已在 viewDidLoad 先起时此处由代次守卫跳过，不重发。
@@ -6760,6 +6793,57 @@ let viewer = BearyEntryImageViewerViewController(imageKeys: allPhotos.map { $0.i
         }
     }
 
+    // MARK: - 私信开放四档：他人主页私信钮
+
+    /// 私信钮显隐：只属他人主页；本人/游客/我方拉黑/can 非真一律隐藏。
+    private func updateDMButton() {
+        dmButton.isHidden = isOwnProfile || viewerUserIdValue == nil || followBlockedByMe || dmCan != true
+    }
+
+    /// can 重查：目标 id 已知才查；我方拉黑直接隐藏不发请求；查不到/失败一律隐藏。
+    private func refreshDMCan() {
+        guard !isOwnProfile, viewerUserIdValue != nil,
+              let targetId = profile?.profileIdValue ?? targetUserIdValue else {
+            dmCan = nil
+            updateDMButton()
+            return
+        }
+        if followBlockedByMe {
+            dmCan = false
+            updateDMButton()
+            return
+        }
+        guard !dmCanLoading else { return }
+        dmCanLoading = true
+        BearyAPI.shared.fetchDMCan(userId: targetId) { [weak self] result in
+            DispatchQueue.main.async {
+                guard let self = self else { return }
+                self.dmCanLoading = false
+                switch result {
+                case .success(let can):
+                    self.dmCan = can.allowed ?? false
+                case .failure:
+                    self.dmCan = nil
+                }
+                self.updateDMButton()
+            }
+        }
+    }
+
+    @objc private func dmButtonTapped() {
+        guard !isOwnProfile, viewerUserIdValue != nil, dmCan == true,
+              let targetId = profile?.profileIdValue ?? targetUserIdValue,
+              let openChat = onOpenDMChat else { return }
+        // 聊天页进页时还会再查一次 can（档位中途变了以聊天页横幅为准），此处不重查。
+        let peer = BearyAPI.FriendUser(
+            id: targetId,
+            displayName: profile?.displayName,
+            handle: profile?.handle,
+            avatarUrl: nil,
+            createdAt: nil)
+        openChat(peer)
+    }
+
     // MARK: - iCity 他人主页“更多”：举报与拉黑
 
     /// 个人页级举报目标：举报 API 需要 entry_id。取已落点的直接条目，次取首篇公开日记；
@@ -6785,6 +6869,9 @@ let viewer = BearyEntryImageViewerViewController(imageKeys: allPhotos.map { $0.i
             guard let strongSelf = self else { return }
             BearyBlockFlow.block(from: strongSelf, userId: targetUserId, userName: strongSelf.topNameLabel.text) { [weak self] success in
                 guard success, let strongSelf = self else { return }
+                // 拉黑后私信钮立即隐藏（容器离页时无所谓，未接线留页时也不能留入口）。
+                strongSelf.dmCan = false
+                strongSelf.updateDMButton()
                 if let onBlocked = strongSelf.onBlockedUser {
                     onBlocked(targetUserId)
                 } else {

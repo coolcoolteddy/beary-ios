@@ -1,13 +1,14 @@
 import UIKit
 
-// MARK: - 好友第一期（私信）：会话页（聊天页，modal 全屏）
+// MARK: - 私信：会话页（聊天页，modal 全屏）
 //
-// 只限互关好友、纯文字：无图片按钮、无引用、无群聊、无撤回/编辑。
+// 四档开放、纯文字：无图片按钮、无引用、无群聊、无撤回/编辑。
+// 档位由对方设置决定；无权限时页顶横幅提示并禁用输入（见 dmNotAllowed）。
 // 进入会话即调 dm/read 清未读；对方发来新消息时沿用现有列表刷新口径
 //（下拉刷新 + 重进），不另搭长连接、不搭推送。
 // 已读回执不显示给对方：read_at 只用于自己未读计数，本页不画任何已读态。
-// 取关/拉黑后 history/send 一律 403：历史 403 时页内显“该会话已关闭”并
-// 禁用输入；发送 403 只 toast，不泄露拉黑方向。
+// 档位不允许时 history/send 回 403 dm_not_allowed：页顶横幅提示并禁用输入；
+// 拉黑 403 仍走原“会话已关闭”路径，不泄露拉黑方向。
 // 发送成功不做乐观假态：服务端确认后重拉最新页再落行（与点赞“服务端确认”
 // 口径一致）；失败保留输入框草稿，只 toast。
 
@@ -40,10 +41,18 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
     private var sessionClosed = false
     private var sending = false
     private var didMarkRead = false
+    /// 本页私信本地文件的账号（进页时捕获，切号后仍写原账号文件，不串号）。
+    private let storeAccountId: Int?
+    /// 对方不接受私信（can=false 或 403 dm_not_allowed）：页顶横幅 + 禁用输入。
+    private var dmNotAllowed = false
+    private let permBannerView = UIView()
+    private let permBannerLabel = UILabel()
+    private var permBannerHeight: NSLayoutConstraint?
     private var lastMarkedReadMessageId: Int?
 
     init(peer: BearyAPI.FriendUser) {
         self.peer = peer
+        self.storeAccountId = SessionManager.shared.currentUser?.id
         super.init(nibName: nil, bundle: nil)
     }
 
@@ -167,6 +176,30 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
             newMessagePill.heightAnchor.constraint(equalToConstant: 32),
         ])
 
+        // 私信权限横幅：对方不接受私信时出现（高 36），平时高 0 不占位。
+        permBannerView.translatesAutoresizingMaskIntoConstraints = false
+        permBannerView.backgroundColor = BearyColors.faint
+        permBannerView.isHidden = true
+        view.addSubview(permBannerView)
+        permBannerLabel.translatesAutoresizingMaskIntoConstraints = false
+        permBannerLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13))
+        permBannerLabel.adjustsFontForContentSizeCategory = true
+        permBannerLabel.textColor = BearyColors.gray
+        permBannerLabel.textAlignment = .center
+        permBannerLabel.text = "对方目前不接受你的私信"
+        permBannerView.addSubview(permBannerLabel)
+        permBannerHeight = permBannerView.heightAnchor.constraint(equalToConstant: 0)
+        permBannerHeight?.isActive = true
+        NSLayoutConstraint.activate([
+            permBannerView.topAnchor.constraint(equalTo: topBar.bottomAnchor),
+            permBannerView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            permBannerView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            permBannerLabel.centerXAnchor.constraint(equalTo: permBannerView.centerXAnchor),
+            permBannerLabel.centerYAnchor.constraint(equalTo: permBannerView.centerYAnchor),
+            permBannerLabel.leadingAnchor.constraint(greaterThanOrEqualTo: permBannerView.leadingAnchor, constant: 16),
+            permBannerLabel.trailingAnchor.constraint(lessThanOrEqualTo: permBannerView.trailingAnchor, constant: -16),
+        ])
+
         inputBarBottomConstraint = inputBar.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor)
         inputBarBottomConstraint?.isActive = true
         NSLayoutConstraint.activate([
@@ -183,7 +216,7 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
             // 审计：居中标题加左右限位，小屏＋大字体时不与关闭钮重叠（超长截断）。
             titleLabel.leadingAnchor.constraint(greaterThanOrEqualTo: closeButton.trailingAnchor, constant: 8),
             titleLabel.trailingAnchor.constraint(lessThanOrEqualTo: topBar.trailingAnchor, constant: -16),
-            tableView.topAnchor.constraint(equalTo: topBar.bottomAnchor),
+            tableView.topAnchor.constraint(equalTo: permBannerView.bottomAnchor),
             tableView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             tableView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
             tableView.bottomAnchor.constraint(equalTo: inputBar.topAnchor),
@@ -212,7 +245,16 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
         NotificationCenter.default.addObserver(self, selector: #selector(keyboardWillShow(_:)), name: UIResponder.keyboardWillShowNotification, object: nil)
         NotificationCenter.default.addObserver(self, selector: #selector(keyboardWillChangeFrame(_:)), name: UIResponder.keyboardWillChangeFrameNotification, object: nil)
         NotificationCenter.default.addObserver(self, selector: #selector(keyboardWillHide(_:)), name: UIResponder.keyboardWillHideNotification, object: nil)
+        // 先显本地消息（服务端 7 天到期后本地仍可看），再拉服务端合并。
+        if let userId = peer.id {
+            messages = BearyDMStore.messages(accountId: storeAccountId, peerId: userId)
+            if !messages.isEmpty {
+                tableView.reloadData()
+                scrollToBottomIfNeeded()
+            }
+        }
         loadLatest()
+        checkDMPermission()
     }
 
     deinit {
@@ -296,7 +338,7 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
 
     private func updateSendButton() {
         let hasText = !inputTextView.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-        sendButton.isEnabled = hasText && !sending && !sessionClosed
+        sendButton.isEnabled = hasText && !sending && !sessionClosed && !dmNotAllowed
         sendButton.alpha = sendButton.isEnabled ? 1 : 0.6
     }
 
@@ -342,6 +384,31 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
         }
     }
 
+    /// 私信权限横幅：可见 = dmNotAllowed；输入与发送钮同步禁用/恢复。
+    private func updatePermBanner() {
+        permBannerView.isHidden = !dmNotAllowed
+        permBannerHeight?.constant = dmNotAllowed ? 36 : 0
+        inputTextView.isEditable = !dmNotAllowed && !sessionClosed
+        updateSendButton()
+    }
+
+    /// 进页查一次 can：false 即横幅 + 禁用；查不到不挡路（历史/发送的 403 再定）。
+    private func checkDMPermission() {
+        guard let userId = peer.id, SessionManager.shared.isLoggedIn else { return }
+        BearyAPI.shared.fetchDMCan(userId: userId) { [weak self] result in
+            DispatchQueue.main.async {
+                guard let self = self else { return }
+                switch result {
+                case .success(let can):
+                    self.dmNotAllowed = !(can.allowed ?? false)
+                    self.updatePermBanner()
+                case .failure:
+                    break
+                }
+            }
+        }
+    }
+
     /// 最新页：服务端按 id 倒序下发，展示时反转为正序；成功后清未读。
     /// onLoaded 报告拉取开始时用户是否在底部附近（发送成功后的 pill 判定用）。
     private func loadLatest(onLoaded: ((Bool) -> Void)? = nil) {
@@ -365,8 +432,14 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
                 self.tableView.refreshControl?.endRefreshing()
                 switch result {
                 case .success(let history):
+                    // 成功即会话打开：清掉权限横幅与关闭态，恢复输入。
+                    self.dmNotAllowed = false
+                    self.sessionClosed = false
+                    self.inputTextView.isEditable = true
+                    self.updatePermBanner()
                     let fetched = history.resolvedMessages.reversed()
-                    self.messages = Array(fetched)
+                    BearyDMStore.saveMessages(accountId: self.storeAccountId, peer: self.peer, messages: Array(fetched))
+                    self.messages = BearyDMStore.messages(accountId: self.storeAccountId, peerId: userId)
                     self.hasMoreOlder = history.resolvedMessages.count >= 30
                     self.loadFailed = false
                     self.updateEmptyState()
@@ -384,7 +457,11 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
                     self.markReadIfNeeded()
                     onLoaded?(wasAtBottom)
                 case .failure(let error):
-                    if case .http(403, _) = error {
+                    if case .http(403, let snippet) = error, snippet?.contains("dm_not_allowed") == true {
+                        // 档位不允许：横幅 + 禁用，不走“会话已关闭”（那是拉黑路径）。
+                        self.dmNotAllowed = true
+                        self.updatePermBanner()
+                    } else if case .http(403, _) = error {
                         self.sessionClosed = true
                         self.inputTextView.isEditable = false
                         self.updateSendButton()
@@ -418,7 +495,8 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
                 case .success(let history):
                     let older = Array(history.resolvedMessages.reversed())
                     self.hasMoreOlder = history.resolvedMessages.count >= 30
-                    self.messages.insert(contentsOf: older, at: 0)
+                    BearyDMStore.saveMessages(accountId: self.storeAccountId, peer: self.peer, messages: older)
+                    self.messages = BearyDMStore.messages(accountId: self.storeAccountId, peerId: userId)
                     self.tableView.reloadData()
                     self.tableView.layoutIfNeeded()
                     if let anchorIndex = self.messages.firstIndex(where: { $0.id == anchorId }) {
@@ -438,7 +516,7 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
     }
 
     @objc private func sendTapped() {
-        guard let userId = peer.id, !sending, !sessionClosed else { return }
+        guard let userId = peer.id, !sending, !sessionClosed, !dmNotAllowed else { return }
         let body = inputTextView.text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !body.isEmpty else { return }
         guard body.count <= 2000 else {
@@ -457,6 +535,9 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
                 self.sending = false
                 switch result {
                 case .success:
+                    // 发送成功即权限无问题：横幅清掉（进页 can 误判时靠此恢复）。
+                    self.dmNotAllowed = false
+                    self.updatePermBanner()
                     // 只清掉刚发出的那份：发送等待期用户又打的字不得误删。
                     if self.inputTextView.text.trimmingCharacters(in: .whitespacesAndNewlines) == body {
                         self.inputTextView.text = ""
@@ -472,6 +553,10 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
                 case .failure(let error):
                     if case .unauthorized = error {
                         self.onRequireLogin?()
+                    } else if case .http(403, let snippet) = error, snippet?.contains("dm_not_allowed") == true {
+                        // 档位不允许：横幅 + 禁用，输入框原文字保留（仅不可再发）。
+                        self.dmNotAllowed = true
+                        self.updatePermBanner()
                     } else if case .http(403, _) = error {
                         self.sessionClosed = true
                         self.inputTextView.isEditable = false

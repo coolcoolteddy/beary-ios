@@ -1427,6 +1427,14 @@ final class BearyAPI {
             unreadCount = (try? container.decode(Int.self, forKey: .unreadCount))
                 ?? (try? container.decode(Int.self, forKey: .unread))
         }
+
+        /// 本地会话并入用：服务端未下发时由 BearyDMStore 拼装（仅本地有消息的对方）。
+        init(peer: FriendUser?, lastBody: String?, lastAt: Int?, unreadCount: Int?) {
+            self.peer = peer
+            self.lastBody = lastBody
+            self.lastAt = lastAt
+            self.unreadCount = unreadCount
+        }
     }
 
     struct DMConversationsResponse: Decodable {
@@ -1450,18 +1458,19 @@ final class BearyAPI {
     }
 
     /// 发私信：POST /beary/api/friends/dm/send {user_id, body}。正文去空后
-    /// 非空且 ≤2000 字（App 先拦一道，后端再校验）；非好友/拉黑/游客 403/401。
+    /// 非空且 ≤2000 字（App 先拦一道，后端再校验）；档位不允许/拉黑 403、游客 401。
     func sendDM(userId: Int, body: String, completion: @escaping (Result<FriendOkResponse, APIError>) -> Void) {
         request("/beary/api/friends/dm/send", method: "POST", jsonBody: ["user_id": userId, "body": body], completion: completion)
     }
 
-    /// 会话列表：GET /beary/api/friends/dm/conversations（仅含当前互关好友）。
+    /// 会话列表：GET /beary/api/friends/dm/conversations（全部有往来的对方，
+    /// 拉黑任一方向除外；仅本地有消息的对方由 BearyDMStore 并入）。
     func fetchDMConversations(completion: @escaping (Result<DMConversationsResponse, APIError>) -> Void) {
         request("/beary/api/friends/dm/conversations", completion: completion)
     }
 
     /// 历史：GET /beary/api/friends/dm/history?user_id=&before_id=&limit=
-    /// （按 id 倒序、默认 30、上限 50；before_id 翻 older）。非好友/拉黑 403。
+    /// （按 id 倒序、默认 30、上限 50；before_id 翻 older）。档位不允许/拉黑 403。
     func fetchDMHistory(userId: Int, beforeId: Int? = nil, limit: Int = 30, completion: @escaping (Result<DMHistoryResponse, APIError>) -> Void) {
         var query: [String: String] = ["user_id": "\(userId)", "limit": "\(limit)"]
         if let beforeId = beforeId { query["before_id"] = "\(beforeId)" }
@@ -1472,6 +1481,38 @@ final class BearyAPI {
     /// 无 body 响应，走 requestVoid（只看状态码）。
     func markDMRead(userId: Int, completion: @escaping (Result<Void, APIError>) -> Void) {
         requestVoid("/beary/api/friends/dm/read", method: "POST", jsonBody: ["user_id": userId], completion: completion)
+    }
+
+    /// 私信权限档位：GET /beary/api/friends/dm/prefs → {dm_level}；
+    /// anyone=所有人可私信我、followers=仅关注我的人、friends=仅好友、none=任何人不可。
+    /// 无记录时服务端默认 anyone。
+    struct DMLevelResponse: Decodable {
+        var dmLevel: String?
+    }
+
+    /// 私信权限保存回包：POST /beary/api/friends/dm/prefs {dm_level} → {ok, dm_level}。
+    struct DMLevelSaveResponse: Decodable {
+        var ok: Bool?
+        var dmLevel: String?
+    }
+
+    /// 对某人发私信是否允许：GET /beary/api/friends/dm/can?user_id=X → {allowed}；
+    /// 自己返回 allowed:false。档位不允许与拉黑在 can 里均为 false 不区分，
+    /// 403 错误串才区分 dm_not_allowed 与 blocked（聊天页据此分流）。
+    struct DMCanResponse: Decodable {
+        var allowed: Bool?
+    }
+
+    func fetchDMLevel(completion: @escaping (Result<DMLevelResponse, APIError>) -> Void) {
+        request("/beary/api/friends/dm/prefs", completion: completion)
+    }
+
+    func saveDMLevel(_ level: String, completion: @escaping (Result<DMLevelSaveResponse, APIError>) -> Void) {
+        request("/beary/api/friends/dm/prefs", method: "POST", jsonBody: ["dm_level": level], completion: completion)
+    }
+
+    func fetchDMCan(userId: Int, completion: @escaping (Result<DMCanResponse, APIError>) -> Void) {
+        request("/beary/api/friends/dm/can", query: ["user_id": "\(userId)"], completion: completion)
     }
 
     /// 引用计数（2026-10-31 引用规则简化）：GET /beary/api/entries/:id/quote-count

@@ -4,7 +4,8 @@ import UIKit
 //
 // 入口：好友列表页顶栏会话钮、或容器直接切页；返回走 onBack（容器接线回好友段）。
 // 行：对方头像（首字母兜底）、名字、最后一条摘要、时间、未读数（蓝底白字角标，
-// 0 时隐藏）。仅含当前互关好友的会话（后端过滤：取关/拉黑后会话自动消失）。
+// 0 时隐藏）。全部有往来的对方（后端过滤拉黑任一方向；仅本地有消息的对方由
+// BearyDMStore 并入，服务端 7 天到期后本地会话仍在列表里）。
 // 未读提醒只做 App 内：本页未读数 + 通知列表 dm 行；不搭推送。
 // 点行进会话页（容器接线 onOpenChat）；会话页关闭后由容器回调刷新本页。
 
@@ -184,7 +185,10 @@ final class BearyDMConversationsViewController: UIViewController, UITableViewDel
                 }
                 switch result {
                 case .success(let list):
-                    self.conversations = list.resolvedConversations
+                    // 服务端为准，仅本地有的对方追加（未读数不由本地推断，置空）。
+                    self.conversations = BearyDMStore.mergedConversations(
+                        server: list.resolvedConversations,
+                        accountId: SessionManager.shared.currentUser?.id)
                     self.loadFailed = false
                 case .failure:
                     self.loadFailed = true
@@ -200,7 +204,7 @@ final class BearyDMConversationsViewController: UIViewController, UITableViewDel
             emptyLabel.text = "加载失败，下拉重试"
             emptyLabel.isHidden = false
         } else if conversations.isEmpty {
-            emptyLabel.text = "还没有私信\n和互关好友互发第一条消息吧"
+            emptyLabel.text = "还没有私信\n发第一条纯文字消息吧"
             emptyLabel.isHidden = false
         } else {
             emptyLabel.isHidden = true

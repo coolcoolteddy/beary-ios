@@ -371,6 +371,12 @@ final class BearySettingsViewController: UIViewController {
         view.backgroundColor = BearyColors.bg
         buildLayout()
         loadAll()
+        // 切号后私信权限行跟新账号走（设置页内切换账号时 viewWillAppear 不触发）。
+        NotificationCenter.default.addObserver(self, selector: #selector(refreshDMLevelRow), name: .bearyUserDidChange, object: nil)
+    }
+
+    deinit {
+        NotificationCenter.default.removeObserver(self)
     }
 
     override func viewWillAppear(_ animated: Bool) {
@@ -378,6 +384,7 @@ final class BearySettingsViewController: UIViewController {
         settingsFrameResetDone = false
         settingsLayoutLogged = false
         refreshAccountSwitchSection()
+        refreshDMLevelRow()
     }
 
     override func viewDidAppear(_ animated: Bool) {
@@ -2747,6 +2754,13 @@ final class BearySettingsViewController: UIViewController {
         generalNotifyWrap.addArrangedSubview(diagGroup.card)
     }
 
+    // 私信权限档位行（四档开放）：当前档位、行内文案与按钮引用，刷新走 refreshDMLevelRow。
+    private var dmLevelDetailLabel: UILabel?
+    private var dmLevelRowButton: UIButton?
+    private var dmLevel: String?
+    private var dmLevelLoading = false
+    private var dmLevelPosting = false
+
     private func buildPrivacySection() {
         let privacyDetail = makeLabel(font: UIFont.systemFont(ofSize: 13), color: BearyColors.gray)
         privacyDetail.text = "查看"
@@ -2773,8 +2787,97 @@ final class BearySettingsViewController: UIViewController {
         blockedButton.addTarget(self, action: #selector(openBlockedUsers), for: .touchUpInside)
         blockedButton.bearyAddPressHaptic()
         let blockedRow = makeSettingsTappableRow(content: blockedContent, button: blockedButton)
-        let group = makeGroupCard(title: "隐私", rows: [privacyRow, termsRow, blockedRow])
+        // 私信权限行：当前档位中文，点按弹四档 ActionSheet（当前档打勾），选中即 POST。
+        let dmDetail = makeLabel(font: UIFont.systemFont(ofSize: 13), color: BearyColors.gray)
+        dmDetail.text = "加载中…"
+        let dmContent = makeRow(title: "私信权限", detailLabel: dmDetail, iconName: "icon_comment")
+        let dmButton = UIButton(type: .custom)
+        dmButton.accessibilityLabel = "私信权限"
+        dmButton.addTarget(self, action: #selector(dmLevelRowTapped), for: .touchUpInside)
+        dmButton.bearyAddPressHaptic()
+        let dmRow = makeSettingsTappableRow(content: dmContent, button: dmButton)
+        dmLevelDetailLabel = dmDetail
+        dmLevelRowButton = dmButton
+        let group = makeGroupCard(title: "隐私", rows: [privacyRow, termsRow, blockedRow, dmRow])
         privacyWrap.addArrangedSubview(group.card)
+    }
+
+    /// 私信权限行刷新：打开/切号时 GET 当前档位并刷新行文案；失败时已有值保持，
+    /// 从未拿到值则文案置“获取失败，点按重试”（点按仍可进档位选择重发 POST）。
+    @objc private func refreshDMLevelRow() {
+        guard SessionManager.shared.isLoggedIn, !dmLevelLoading else { return }
+        dmLevelLoading = true
+        BearyAPI.shared.fetchDMLevel { [weak self] result in
+            DispatchQueue.main.async {
+                guard let self = self else { return }
+                self.dmLevelLoading = false
+                switch result {
+                case .success(let resp):
+                    if let level = resp.dmLevel {
+                        self.dmLevel = level
+                        self.dmLevelDetailLabel?.text = self.dmLevelText(level)
+                    }
+                case .failure:
+                    if self.dmLevel == nil {
+                        self.dmLevelDetailLabel?.text = "获取失败，点按重试"
+                    }
+                }
+            }
+        }
+    }
+
+    private func dmLevelText(_ level: String) -> String {
+        switch level {
+        case "anyone": return "所有人都可私信我"
+        case "followers": return "仅关注我的人"
+        case "friends": return "仅好友"
+        case "none": return "任何人都不可私信我"
+        default: return "获取失败，点按重试"
+        }
+    }
+
+    @objc private func dmLevelRowTapped() {
+        guard !dmLevelPosting else { return }
+        let sheet = UIAlertController(title: "谁可以私信我", message: nil, preferredStyle: .actionSheet)
+        let options: [(value: String, title: String)] = [
+            ("anyone", "所有人都可私信我"),
+            ("followers", "仅关注我的人"),
+            ("friends", "仅好友"),
+            ("none", "任何人都不可私信我"),
+        ]
+        for option in options {
+            let title = option.value == dmLevel ? "✓ " + option.title : option.title
+            sheet.addAction(UIAlertAction(title: title, style: .default) { [weak self] _ in
+                self?.saveDMLevel(option.value)
+            })
+        }
+        sheet.addAction(UIAlertAction(title: "取消", style: .cancel))
+        if let popover = sheet.popoverPresentationController, let button = dmLevelRowButton {
+            popover.sourceView = button
+            popover.sourceRect = button.bounds
+        }
+        present(sheet, animated: BearyMotion.animated(true))
+    }
+
+    private func saveDMLevel(_ level: String) {
+        guard level != dmLevel, !dmLevelPosting, SessionManager.shared.isLoggedIn else { return }
+        dmLevelPosting = true
+        dmLevelRowButton?.isEnabled = false
+        BearyAPI.shared.saveDMLevel(level) { [weak self] result in
+            DispatchQueue.main.async {
+                guard let self = self else { return }
+                self.dmLevelPosting = false
+                self.dmLevelRowButton?.isEnabled = true
+                switch result {
+                case .success(let resp):
+                    let saved = resp.dmLevel ?? level
+                    self.dmLevel = saved
+                    self.dmLevelDetailLabel?.text = self.dmLevelText(saved)
+                case .failure:
+                    self.showToast("保存失败，请重试")
+                }
+            }
+        }
     }
 
     /// 设置页点出新页的统一呈现口（117 终态偏离兜底，公共路径修法）：
