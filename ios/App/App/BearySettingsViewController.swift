@@ -582,7 +582,7 @@ final class BearySettingsViewController: UIViewController {
         card.backgroundColor = BearyColors.bg
         card.layer.borderWidth = 1
         card.layer.bearyDynamicBorderColor = BearyColors.line
-        card.layer.cornerRadius = 20
+        card.layer.cornerRadius = 16
         card.clipsToBounds = true
         cardViews.append(card)
         return card
@@ -602,7 +602,7 @@ final class BearySettingsViewController: UIViewController {
     }
 
     /// F4：分组卡（网页 .group 口径）：标题在卡内、卡为 card 底 + 1px 边框 +
-    /// 圆角 20、行间 1px 分隔线（分隔线通宽，行内容左右 16、上下 14）。
+    /// 圆角 16、行间 1px 分隔线（分隔线通宽，行内容左右 16、上下 14）。
     /// 返回卡片与每行的包容器（包容器用于显隐整行：隐藏行本身仍会留 28pt 内边距，
     /// 故 Plus「内测限免」行须改藏包容器，见 fillPlusDetail）。
     private func makeGroupCard(title: String?, rows: [UIView]) -> (card: UIView, wrappers: [UIView]) {
