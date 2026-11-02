@@ -685,7 +685,7 @@ final class BearyChromeViewController: UIViewController {
         badge.font = .boldSystemFont(ofSize: 10)
         badge.adjustsFontForContentSizeCategory = false
         badge.textColor = .white
-        badge.backgroundColor = bearyBlue
+        badge.backgroundColor = UIColor(red: 0.0, green: 102.0/255.0, blue: 204.0/255.0, alpha: 1) // 顶栏铃铛角标专用深蓝 #0066CC（白字 5.57:1）；不动共享 BearyColors.blue
         badge.textAlignment = .center
         badge.layer.cornerRadius = 8.5
         badge.clipsToBounds = true
