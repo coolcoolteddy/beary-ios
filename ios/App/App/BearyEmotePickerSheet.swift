@@ -67,7 +67,11 @@ final class BearyEmotePickerSheetViewController: UIViewController, UICollectionV
         sheetView.backgroundColor = BearyColors.surface
         sheetView.layer.cornerRadius = BearySheetChrome.topCornerRadius
         sheetView.layer.maskedCorners = [.layerMinXMinYCorner, .layerMaxXMinYCorner]
-        sheetView.clipsToBounds = true
+        // 2026-11-02 定版第 2 组：回应 Sheet 补 raised 阴影（0.12 / 8 / (0, 2)），此前无阴影。
+        // 阴影挂本层：clipsToBounds 会裁掉 bounds 外的阴影，故不裁剪；子视图均内缩，
+        // 圆角处无溢出。圆角 20 本身不动（第 1 组范围）。
+        BearyShadow.applyRaised(to: sheetView.layer)
+        sheetView.clipsToBounds = false
         sheetView.translatesAutoresizingMaskIntoConstraints = false
         view.addSubview(sheetView)
         // 5-23：下滑关闭（与草稿箱 handlePan 同口径，见 sheetPanGesture）。
