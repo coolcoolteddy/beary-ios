@@ -214,6 +214,11 @@ private final class BearyToastView: UIView {
     init(message: String) {
         super.init(frame: .zero)
         backgroundColor = BearyColors.surface
+        // 2026-11-02 定版第 2 组：Toast 补 hairline 阴影（0.08 / 4 / (0, 1)）＋ 1px line 描边
+        // （沿用全站卡片 1px line 描边口径；动态色走 bearyDynamicBorderColor，深浅切换跟随）。
+        BearyShadow.applyHairline(to: layer)
+        layer.borderWidth = 1
+        layer.bearyDynamicBorderColor = BearyColors.line
         isUserInteractionEnabled = false
         translatesAutoresizingMaskIntoConstraints = false
         label.text = message
@@ -238,6 +243,7 @@ private final class BearyToastView: UIView {
     override func layoutSubviews() {
         super.layoutSubviews()
         layer.cornerRadius = bounds.height / 2
-        clipsToBounds = true
+        // 阴影在 bounds 外：clipsToBounds 会裁掉阴影，故不裁剪；label 内缩 18/10，无溢出。
+        clipsToBounds = false
     }
 }

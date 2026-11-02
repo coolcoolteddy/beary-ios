@@ -453,7 +453,7 @@ final class BearyCalendarDayButton: UIButton {
     }
 }
 
-// MARK: - 日历卡（网页 .cal-card：边框 1 line、圆角 14、padding 14/14/10、底色 surface）
+// MARK: - 日历卡（网页 .cal-card：边框 1 line、圆角 16、padding 16、底色 bg（与页面背景同色））
 
 final class BearyCalendarCardView: UIView {
     enum ViewMode {
@@ -489,7 +489,7 @@ final class BearyCalendarCardView: UIView {
         backgroundColor = BearyColors.bg
         layer.borderWidth = 1
         layer.bearyDynamicBorderColor = BearyColors.line
-        layer.cornerRadius = 14
+        layer.cornerRadius = 16
         layer.masksToBounds = true
 
         titleLabel.translatesAutoresizingMaskIntoConstraints = false
@@ -919,7 +919,7 @@ final class BearyTimelineCell: UITableViewCell {
         lb.translatesAutoresizingMaskIntoConstraints = false
         lb.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 12))
         lb.adjustsFontForContentSizeCategory = true
-        lb.textColor = BearyColors.orange
+        lb.textColor = BearyColors.ink
         lb.numberOfLines = 0
         lb.isHidden = true
         return lb
@@ -1069,7 +1069,7 @@ final class BearyTimelineCell: UITableViewCell {
         // 默认档仍为 12.5 粗体，仅跟随系统字号，170 上限与单行截断口径不动。
         recipientLabel.font = BearyDynamicType.scaledFont(for: UIFont.boldSystemFont(ofSize: 12.5))
         recipientLabel.adjustsFontForContentSizeCategory = true
-        recipientLabel.textColor = BearyColors.orange
+        recipientLabel.textColor = BearyColors.ink
         // B-G12 (web .tl-to): max-width 170 + single-line ellipsis, never wrap.
         recipientLabel.numberOfLines = 1
         recipientLabel.lineBreakMode = .byTruncatingTail
@@ -5590,11 +5590,20 @@ class BearyTimelineViewController: UIViewController {
         // 账号代际：请求时捕获 uid，回包写缓存/落盘前比对——中途切号到达的
         // 旧账号回包直接丢弃（新账号的 reloadTimeline 会重拉，不靠旧回包对齐）。
         let requestUid = SessionManager.shared.currentUser?.id
+        let requestVis = timelineVisFilter
         BearyAPI.shared.fetchTimelineDay(date: key, vis: timelineVisFilter.queryValue) { [weak self] result in
             DispatchQueue.main.async {
                 guard let strongSelf = self else { return }
                 if strongSelf.dayKeyForLoad != key { return }
                 if SessionManager.shared.currentUser?.id != requestUid { return }
+                // 筛子档快照：请求发出后用户切了档，旧档回包不得写入当日面板
+                // 与日缓存；状态复位后按当前档重拉（在途守卫已让位，不重复发）。
+                if requestVis != strongSelf.timelineVisFilter {
+                    strongSelf.dayKeyForLoad = nil
+                    strongSelf.dayState = .idle
+                    strongSelf.fetchDayEntries(key: key, clear: false)
+                    return
+                }
                 // N2/N3 回包快照：静默刷新比对用旧签名；换日到达标志在此消费
                 // （早退分支如 fixSel 跳转也不留残标志，避免后一次回包误错峰）。
                 let oldDaySignatures = strongSelf.dayEntries.map { strongSelf.entrySignature($0) }
@@ -5609,8 +5618,9 @@ class BearyTimelineViewController: UIViewController {
                     strongSelf.dayEntries = list.entries ?? []
                     // N2：成功回包写入日缓存（失败不写）；静默刷新比对签名。
                     // 写透：内存与落盘同写（见 cacheDayEntries）。
-                    // 筛子档不写盘：过滤行写盘会污染全部档日缓存。
-                    if strongSelf.timelineVisFilter == .all {
+                    // 筛子档不写盘：过滤行写盘会污染全部档日缓存（按请求时档位判，
+                    // 不按回包时档位判，切档中途的旧档回包到此已被上游丢弃）。
+                    if requestVis == .all {
                         strongSelf.cacheDayEntries(key: key, entries: strongSelf.dayEntries)
                     }
                     dayUnchanged = (clear == false && oldDaySignatures == strongSelf.dayEntries.map { strongSelf.entrySignature($0) })
@@ -5979,8 +5989,9 @@ class BearyTimelineViewController: UIViewController {
             } else {
                 button.setTitleColor(BearyColors.blue, for: .normal)
             }
-            // 审计-时间线：空态按钮高度口径——描边重试钮 40、其余 44；数值差异是现行实现，按钮高度档位属样式 token，须对照表定版后才统一，本支只改注释、不改数值。
-            button.heightAnchor.constraint(equalToConstant: actionOutlined ? 40 : 44).isActive = true
+            // 样式规格第 4 表：空态描边重试钮 40→44，与“统一 44”口径一致；
+            // 仅改高约束，圆角 20、边框、内边距一律不动（圆角归第 1 组管）。
+            button.heightAnchor.constraint(equalToConstant: 44).isActive = true
             button.addTarget(self, action: #selector(didTapEmptyAction(_:)), for: .touchUpInside)
             button.bearyAddPressFeedback()
             button.accessibilityIdentifier = "timelineEmptyAction"

@@ -639,7 +639,7 @@ class BearyDiaryCardCell: UITableViewCell {
     private let recipientLabel: UILabel = {
         let lb = UILabel()
         lb.translatesAutoresizingMaskIntoConstraints = false
-        lb.textColor = BearyColors.orange
+        lb.textColor = BearyColors.ink
         lb.numberOfLines = 1
         return lb
     }()
@@ -680,7 +680,7 @@ class BearyDiaryCardCell: UITableViewCell {
         lb.translatesAutoresizingMaskIntoConstraints = false
         lb.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 12))
         lb.adjustsFontForContentSizeCategory = true
-        lb.textColor = BearyColors.orange
+        lb.textColor = BearyColors.ink
         lb.numberOfLines = 0
         lb.isHidden = true
         return lb

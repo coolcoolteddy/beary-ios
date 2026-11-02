@@ -696,7 +696,7 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate, UI
             }
             listStack.insertArrangedSubview(rowView, at: index)
             if staggerEnabled {
-                let delay = min(Double(index) * 0.03, 0.3)
+                let delay = min(Double(index) * 0.03, 0.24)
                 rowView.alpha = 0
                 rowView.transform = CGAffineTransform(translationX: 0, y: 6)
                 UIView.animate(withDuration: 0.32, delay: delay, options: .curveEaseOut, animations: {
@@ -717,7 +717,7 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate, UI
             }
             listStack.addArrangedSubview(rowView)
             if staggerEnabled {
-                let delay = min(Double(index) * 0.03, 0.3)
+                let delay = min(Double(index) * 0.03, 0.24)
                 rowView.alpha = 0
                 rowView.transform = CGAffineTransform(translationX: 0, y: 6)
                 UIView.animate(withDuration: 0.32, delay: delay, options: .curveEaseOut, animations: {

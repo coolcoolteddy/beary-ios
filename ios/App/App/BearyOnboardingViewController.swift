@@ -31,8 +31,8 @@ private enum OnboardingAnim {
     static let pageHalfDuration: TimeInterval = 0.14
     /// 切页横移幅度（轻微横移＋淡入淡出）。
     static let pageSlide: CGFloat = 20
-    /// 入场错峰间隔；总入场 0.5 秒内（0.15 末位延迟 + 0.25 播长 = 0.40）。
-    static let staggerStep: TimeInterval = 0.05
+    /// 入场错峰间隔；总入场 0.5 秒内（0.09 末位延迟 + 0.25 播长 = 0.34）。
+    static let staggerStep: TimeInterval = 0.03
     static let entranceDuration: TimeInterval = 0.25
     /// 第 1 页两张卡片的错位：后卡左右各缩 10，前卡下压 80、微转 0.5°，后卡微转 -3.5°。
     static let cardBackInset: CGFloat = 10
@@ -273,6 +273,7 @@ final class BearyOnboardingViewController: UIViewController {
         skipButton.setTitle("跳过", for: .normal)
         skipButton.setTitleColor(BearyColors.gray, for: .normal)
         skipButton.setTitleColor(BearyColors.gray, for: .highlighted)
+        skipButton.setContentHuggingPriority(.defaultHigh, for: .horizontal)
         skipButton.titleLabel?.font = scaledFont(size: 15)
         skipButton.titleLabel?.adjustsFontForContentSizeCategory = true
         skipButton.addTarget(self, action: #selector(skipTapped), for: .touchUpInside)
@@ -367,6 +368,7 @@ final class BearyOnboardingViewController: UIViewController {
             topWrap.centerXAnchor.constraint(equalTo: view.centerXAnchor),
             topWrap.leadingAnchor.constraint(greaterThanOrEqualTo: view.safeAreaLayoutGuide.leadingAnchor, constant: 16).withPriority(.defaultHigh),
             topWrap.trailingAnchor.constraint(lessThanOrEqualTo: view.safeAreaLayoutGuide.trailingAnchor, constant: -16).withPriority(.defaultHigh),
+            topWrap.widthAnchor.constraint(equalTo: view.safeAreaLayoutGuide.widthAnchor, constant: -32).withPriority(.defaultHigh),
             topStack.topAnchor.constraint(equalTo: topWrap.topAnchor),
             topStack.leadingAnchor.constraint(equalTo: topWrap.leadingAnchor),
             topStack.trailingAnchor.constraint(equalTo: topWrap.trailingAnchor),
@@ -394,6 +396,7 @@ final class BearyOnboardingViewController: UIViewController {
             columnView.centerXAnchor.constraint(equalTo: heroContent.centerXAnchor),
             columnView.leadingAnchor.constraint(greaterThanOrEqualTo: heroContent.leadingAnchor, constant: 16).withPriority(.defaultHigh),
             columnView.trailingAnchor.constraint(lessThanOrEqualTo: heroContent.trailingAnchor, constant: -16).withPriority(.defaultHigh),
+            columnView.widthAnchor.constraint(equalTo: heroContent.widthAnchor, constant: -32).withPriority(.defaultHigh),
 
             bottomCard.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             bottomCard.trailingAnchor.constraint(equalTo: view.trailingAnchor),
@@ -837,6 +840,7 @@ final class BearyOnboardingViewController: UIViewController {
             seg.backgroundColor = index == currentPage ? BearyColors.ink : BearyColors.line
         }
         let showBack = currentPage >= 1
+        backButton.isHidden = !showBack
         backButton.alpha = showBack ? 1 : 0
         backButton.isEnabled = showBack
         backButton.accessibilityElementsHidden = !showBack

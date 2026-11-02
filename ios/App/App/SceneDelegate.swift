@@ -654,11 +654,9 @@ final class BearyChromeViewController: UIViewController {
         fabShadow.backgroundColor = .clear
         // ChatGPT 视觉清单已定设计第 2 项：FAB 移除橙色外发光，改轻薄中性阴影。
         // 原值：橙色 shadowColor、透明度 0.45、半径 12、偏移 (0,10)——外发光感强。
-        // 新值只改阴影四项：黑色、中性、薄、贴近本体；玻璃底与加号图标一律不动。
-        fabShadow.layer.shadowColor = UIColor.black.cgColor
-        fabShadow.layer.shadowOpacity = 0.18
-        fabShadow.layer.shadowRadius = 6
-        fabShadow.layer.shadowOffset = CGSize(width: 0, height: 3)
+        // 2026-11-02 定版第 2 组：FAB 阴影收进 raised 档（0.12 / 8 / (0, 2)），
+        // 玻璃底与加号图标一律不动；本体圆角 27（形状）不动。
+        BearyShadow.applyRaised(to: fabShadow.layer)
         fabShadow.layer.cornerRadius = 27
         fabShadow.translatesAutoresizingMaskIntoConstraints = false
         fabContainer.addSubview(fabShadow)
@@ -4042,6 +4040,11 @@ private final class BearyGrabberHitView: UIView {
 
 private final class BearyComposerSheetPresentationController: UIPresentationController {
     private let dimmingView = UIView()
+    var dimTapCloses = false
+
+    @objc private func dimTapped() {
+        presentedViewController.dismiss(animated: true)
+    }
     private let grabberStrip = BearyGrabberHitView()
     private let grabberPill = UIView()
     private let sheetShadowView = UIView()
@@ -4049,7 +4052,6 @@ private final class BearyComposerSheetPresentationController: UIPresentationCont
     private var grabberInstalled = false
     private var sheetHeight: CGFloat = 0
     /// 审计 2026-11-02 弹窗组：见 BearyComposerSheetTransitioningDelegate。
-    var dimTapCloses = false
     var dimTapHandler: (() -> Void)?
     var dismissalHandler: (() -> Void)?
 
@@ -4097,7 +4099,7 @@ private final class BearyComposerSheetPresentationController: UIPresentationCont
         // 网页抓手无附加安全区：不再补 28pt 顶 inset；抓手直接落在 sheet 顶部（顶距 10）。
         // 阴影层挂在容器里、presentedView 下方（presentedView 自身裁剪，阴影不能挂它身上）。
         sheetShadowView.backgroundColor = .clear
-        BearySheetChrome.applyShadow(to: sheetShadowView.layer, centered: false)
+        BearySheetChrome.applyShadow(to: sheetShadowView.layer)
         container.addSubview(sheetShadowView)
         if UIAccessibility.isReduceMotionEnabled {
             dimmingView.alpha = 1
@@ -4212,11 +4214,10 @@ private final class BearyComposerSheetPresentationController: UIPresentationCont
             // 审计第 14 项：原口径不动，改走共用映射（其余面板与此同口径）。
             dimmingView.alpha = BearySheetDrag.scrimAlpha(forDragOffset: drag, sheetHeight: sheetHeight)
         case .ended:
-            // 审计 B 组 8：只在正常松手时执行关闭判断，条件原样不动
-            // （位移 > 高 × 0.25 或速度 > 800 即关闭，否则弹回原位）。
+            // 审计 B 组 8：只在正常松手时执行关闭判断，条件走多数派口径
+            // （位移 > 80pt 或速度 > 600pt/s 即关闭，否则弹回原位）。
             let velocity = pan.velocity(in: container).y
-            let height = sheetHeight > 0 ? sheetHeight : presentedView.bounds.height
-            if translation > height * 0.25 || velocity > 800 {
+            if translation > 80 || velocity > 600 {
                 presentedViewController.dismiss(animated: BearyMotion.animated(true))
             } else {
                 let restore = {

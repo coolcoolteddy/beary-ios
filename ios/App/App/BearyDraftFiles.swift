@@ -518,6 +518,29 @@ enum BearyDraftStore {
                 lastLoadError = nil
                 return .success(sortedNormalized(drafts, forAccount: accountId))
             }
+            // 单条坏数据不再拖垮整库：整库解码失败时逐条解码，好的留下、
+            // 坏的跳过；原文件先备份、好数据立即回写，坏数据只留在备份里。
+            // 回写失败则落回原损坏路径（原文件与备份都在，不丢数据）。
+            if let data = try? Data(contentsOf: url),
+               let rawArray = try? JSONSerialization.jsonObject(with: data) as? [Any],
+               !rawArray.isEmpty {
+                let decoder = JSONDecoder()
+                var good: [BearyDraft] = []
+                var skipped = 0
+                for item in rawArray {
+                    guard let itemData = try? JSONSerialization.data(withJSONObject: item),
+                          let draft = try? decoder.decode(BearyDraft.self, from: itemData) else { skipped += 1; continue }
+                    good.append(draft)
+                }
+                if !good.isEmpty {
+                    let backup = backupCorruptFile(at: url)
+                    if saveAll(good, forAccount: accountId) {
+                        NSLog("[BearyDraft] partial v3 store recovered: kept \(good.count), skipped \(skipped), backup=\(backup?.path ?? "nil")")
+                        lastLoadError = nil
+                        return .success(sortedNormalized(good, forAccount: accountId))
+                    }
+                }
+            }
             let backup = backupCorruptFile(at: url)
             NSLog("[BearyDraft] corrupt v3 store, original kept")
             let err = LoadError.corruptStore(backupURL: backup)

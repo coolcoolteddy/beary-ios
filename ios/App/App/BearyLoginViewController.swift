@@ -306,8 +306,8 @@ final class BearyLoginViewController: UIViewController {
             contentView.widthAnchor.constraint(equalTo: scrollView.frameLayoutGuide.widthAnchor),
             stackView.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 16),
             stackView.bottomAnchor.constraint(lessThanOrEqualTo: contentView.bottomAnchor, constant: -24),
-            stackView.leadingAnchor.constraint(greaterThanOrEqualTo: contentView.leadingAnchor, constant: BearySpace.lg),
-            stackView.trailingAnchor.constraint(lessThanOrEqualTo: contentView.trailingAnchor, constant: -BearySpace.lg),
+            stackView.leadingAnchor.constraint(greaterThanOrEqualTo: contentView.leadingAnchor, constant: 22),
+            stackView.trailingAnchor.constraint(lessThanOrEqualTo: contentView.trailingAnchor, constant: -22),
             stackView.centerXAnchor.constraint(equalTo: contentView.centerXAnchor),
             stackView.widthAnchor.constraint(lessThanOrEqualToConstant: 432),
             // Hit44：行高放开到 44（钮 32 居中，上下各留 6），热区不再被 32 高行截断；钮视觉尺寸不变。
@@ -385,10 +385,6 @@ final class BearyLoginViewController: UIViewController {
         emailField.font = BearyDynamicType.cappedFont(for: UIFont.systemFont(ofSize: 16))
         emailField.adjustsFontForContentSizeCategory = true
         emailField.textColor = BearyColors.ink
-        emailField.attributedPlaceholder = NSAttributedString(string: "name@example.com", attributes: [
-            .foregroundColor: BearyColors.gray,
-            .font: BearyDynamicType.cappedFont(for: UIFont.systemFont(ofSize: 16)),
-        ])
         emailField.keyboardType = .emailAddress
         emailField.autocapitalizationType = .none
         emailField.autocorrectionType = .no
@@ -402,10 +398,6 @@ final class BearyLoginViewController: UIViewController {
         codeField.font = BearyDynamicType.cappedFont(for: UIFont.systemFont(ofSize: 16))
         codeField.adjustsFontForContentSizeCategory = true
         codeField.textColor = BearyColors.ink
-        codeField.attributedPlaceholder = NSAttributedString(string: "6 位数字", attributes: [
-            .foregroundColor: BearyColors.gray,
-            .font: BearyDynamicType.cappedFont(for: UIFont.systemFont(ofSize: 16)),
-        ])
         codeField.keyboardType = .numberPad
         codeField.autocorrectionType = .no
         codeField.textContentType = .oneTimeCode
@@ -434,10 +426,6 @@ final class BearyLoginViewController: UIViewController {
         inviteField.font = BearyDynamicType.cappedFont(for: UIFont.systemFont(ofSize: 16))
         inviteField.adjustsFontForContentSizeCategory = true
         inviteField.textColor = BearyColors.ink
-        inviteField.attributedPlaceholder = NSAttributedString(string: "填好友的邀请码，成功后各得 1 个月 Plus", attributes: [
-            .foregroundColor: BearyColors.gray,
-            .font: BearyDynamicType.cappedFont(for: UIFont.systemFont(ofSize: 16)),
-        ])
         inviteField.autocapitalizationType = .allCharacters
         inviteField.autocorrectionType = .no
         inviteField.returnKeyType = .done

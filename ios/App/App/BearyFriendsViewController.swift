@@ -27,6 +27,7 @@ final class BearyFriendsViewController: UIViewController, UITableViewDelegate, U
     private var topBarTopConstraint: NSLayoutConstraint?
     private var friends: [BearyAPI.FriendUser] = []
     private var loading = false
+    private var needsReloadAfterUserChange = false
     private var loadFailed = false
     private let dmUnreadBadge = UILabel()
     private var dmUnreadGen = 0
@@ -215,10 +216,19 @@ final class BearyFriendsViewController: UIViewController, UITableViewDelegate, U
         dmUnreadGen += 1
         dmUnreadBadge.isHidden = true
         if SessionManager.shared.isLoggedIn {
-            load()
+            friends = []
+            loadFailed = false
+            updateTitleAndEmptyState()
+            tableView.reloadData()
+            if loading {
+                needsReloadAfterUserChange = true
+            } else {
+                load()
+            }
         } else {
             friends = []
             loadFailed = false
+            needsReloadAfterUserChange = false
             updateTitleAndEmptyState()
             tableView.reloadData()
         }
@@ -233,11 +243,20 @@ final class BearyFriendsViewController: UIViewController, UITableViewDelegate, U
         guard !loading else { return }
         loading = true
         loadFailed = false
+        let requestUid = SessionManager.shared.currentUser?.id
         BearyAPI.shared.fetchFriends { [weak self] result in
             DispatchQueue.main.async {
                 guard let self = self else { return }
                 self.loading = false
                 self.tableView.refreshControl?.endRefreshing()
+                // 切号后到达的旧号回包直接丢弃；若新号重拉挂起，补发一次。
+                if SessionManager.shared.currentUser?.id != requestUid {
+                    if self.needsReloadAfterUserChange {
+                        self.needsReloadAfterUserChange = false
+                        self.load()
+                    }
+                    return
+                }
                 switch result {
                 case .success(let list):
                     self.friends = list.resolvedFriends

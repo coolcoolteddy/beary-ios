@@ -917,6 +917,12 @@ class BearyEntryImageViewerViewController: UIViewController, UIGestureRecognizer
                 self.retryLabel.isHidden = true
                 self.loadingKey = self.imageKeys[wrapped]
                 self.imageLoadGeneration += 1
+                // 快速通道交接：当前显示的是相邻槽位的基础图，高清标记须随图清零
+                //（否则回 A 时标记仍在、再放大跳过升级）；加载圈同步重算，
+                // 否则 A 加载中的圈与占位层会一直盖在已就绪的 B 图上。
+                self.zoomHiResKey = nil
+                self.zoomHiResWidth = 0
+                self.updateLoadingSpinner()
                 self.updateCounter()
                 self.prefetchAdjacent()
                 self.updateLiveOverlay()

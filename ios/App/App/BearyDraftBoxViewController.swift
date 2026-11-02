@@ -297,12 +297,12 @@ final class BearyDraftBoxViewController: UIViewController {
             cardView.alpha = 0
             cardView.transform = CGAffineTransform(translationX: 0, y: 8)
         }
-        // 卡片播放入 playCards：错峰延迟设上限，逐张 +0.04，但累计不超过 0.36——
+        // 卡片播放入 playCards：错峰延迟设上限，逐张 +0.03，但累计不超过 0.24——
         // 大量草稿时尾部可见卡片不再拖出超长尾巴；超上限的卡片同批播出。
         let playCards = {
-            let maxDelay: TimeInterval = 0.36
+            let maxDelay: TimeInterval = 0.24
             for (index, cardView) in cardViews.enumerated() {
-                let delay = min(TimeInterval(index) * 0.04, maxDelay)
+                let delay = min(TimeInterval(index) * 0.03, maxDelay)
                 UIView.animate(withDuration: 0.25, delay: delay, options: .curveEaseOut, animations: {
                     cardView.alpha = 1
                     cardView.transform = .identity
@@ -365,7 +365,8 @@ final class BearyDraftBoxViewController: UIViewController {
         // 玻璃范围 Token 只允许栏/菜单，底 sheet 不在内）；sheetView 本身不裁剪，阴影保留。
         sheetView.backgroundColor = BearyColors.surface
         sheetView.layer.cornerRadius = BearySheetChrome.topCornerRadius
-        // 阴影色与数值一律走 BearySheetChrome.applyShadow（见 applySheetChrome），此处不再自写。
+        // 阴影一律走底 sheet 档（2026-11-02 定版第 2 组，旧 0.30/30/(0, 24) 档已废弃），
+        // 此处不再自写数值。
         sheetView.translatesAutoresizingMaskIntoConstraints = false
         view.addSubview(sheetView)
 
@@ -655,14 +656,14 @@ final class BearyDraftBoxViewController: UIViewController {
             sheetView.layer.maskedCorners = [.layerMinXMinYCorner, .layerMaxXMinYCorner, .layerMinXMaxYCorner, .layerMaxXMaxYCorner]
             sheetView.layer.borderWidth = 1
             sheetView.layer.bearyDynamicBorderColor = BearyColors.line
-            BearySheetChrome.applyShadow(to: sheetView.layer, centered: true)
+            BearySheetChrome.applyShadow(to: sheetView.layer)
             // 审计第 10 项：顶圆角归固定头部，底圆角归滚动区（圆角数值不动）。
             fixedHeaderView.layer.maskedCorners = [.layerMinXMinYCorner, .layerMaxXMinYCorner]
             sheetScrollView.layer.maskedCorners = [.layerMinXMaxYCorner, .layerMaxXMaxYCorner]
         } else {
             sheetView.layer.maskedCorners = [.layerMinXMinYCorner, .layerMaxXMinYCorner]
             sheetView.layer.borderWidth = 0
-            BearySheetChrome.applyShadow(to: sheetView.layer, centered: false)
+            BearySheetChrome.applyShadow(to: sheetView.layer)
             fixedHeaderView.layer.maskedCorners = [.layerMinXMinYCorner, .layerMaxXMinYCorner]
             sheetScrollView.layer.maskedCorners = []
         }
@@ -1443,7 +1444,7 @@ final class BearyDraftBoxViewController: UIViewController {
     }
 
     /// U18：把手下滑关闭——下滑跟手，超过 80pt 或快速下滑时走 closeBox 同动画；
-    /// 否则 0.20s 弹回原位，减动效直接落位（不播回弹动画）。遮罩点按关闭不受影响。
+    /// 否则 0.25s 弹回原位，减动效直接落位（不播回弹动画）。遮罩点按关闭不受影响。
     /// 2026-10-30 抓手批：上滑按统一口径阻尼微移后回弹，不扩高、不关闭。
     @objc private func handlePanGesture(_ gesture: UIPanGestureRecognizer) {
         guard !isDismissing else { return }
@@ -1470,7 +1471,7 @@ final class BearyDraftBoxViewController: UIViewController {
                 if UIAccessibility.isReduceMotionEnabled {
                     restore()
                 } else {
-                    UIView.animate(withDuration: 0.20, animations: restore)
+                    UIView.animate(withDuration: 0.25, animations: restore)
                 }
             }
         case .cancelled, .failed:
@@ -1481,7 +1482,7 @@ final class BearyDraftBoxViewController: UIViewController {
             if UIAccessibility.isReduceMotionEnabled {
                 restore()
             } else {
-                UIView.animate(withDuration: 0.20, animations: restore)
+                UIView.animate(withDuration: 0.25, animations: restore)
             }
         default:
             break

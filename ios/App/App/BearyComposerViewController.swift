@@ -176,14 +176,35 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         let isPublic: Bool?
         /// 审计 2026-11-02 第十节：来源可见性三档与限时到期戳（草稿往返保留，
         /// 还原时据此重算有效态，不再只凭原始 isPublic）。
-        let visibility: String? = nil
-        let ephemeralUntil: Int? = nil
+        let visibility: String?
+        let ephemeralUntil: Int?
         /// iCity：旧送达时间字段已废（面板选篇行不再挂 pill）；保留字段仅作解码兼容。
         let publishAt: Int?
         let imgDims: [String: [Int]]?
         /// 已删态：原日记已删时只剩 id，恢复时不按正常 lite 卡显示，见 refreshQuoteSection。
         /// 发布时已删引用不传 quoteId（服务端会拒），只作展示态保留到用户清除或发布。
         let isDeleted: Bool
+
+        /// 修红（#632 合入后 CI 红）：合成逐成员 init 只含 13 个无默认值字段，
+        /// 不含带默认值的 visibility/ephemeralUntil，故 #632 新增的 5 处 15 参构造
+        /// 编译不过；此处显式 init 把两字段放末尾并给默认值，新旧 6 处构造全兼容。
+        init(entryId: String, content: String, createdAt: Int?, authorName: String?, authorAvatar: String?, authorId: Int?, isMine: Bool?, authorHandle: String?, images: [String], isPublic: Bool?, publishAt: Int?, imgDims: [String: [Int]]?, isDeleted: Bool, visibility: String? = nil, ephemeralUntil: Int? = nil) {
+            self.entryId = entryId
+            self.content = content
+            self.createdAt = createdAt
+            self.authorName = authorName
+            self.authorAvatar = authorAvatar
+            self.authorId = authorId
+            self.isMine = isMine
+            self.authorHandle = authorHandle
+            self.images = images
+            self.isPublic = isPublic
+            self.visibility = visibility
+            self.ephemeralUntil = ephemeralUntil
+            self.publishAt = publishAt
+            self.imgDims = imgDims
+            self.isDeleted = isDeleted
+        }
     }
 
     private static let maxLength = 2000
@@ -1161,13 +1182,13 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             titleLabel.leadingAnchor.constraint(equalTo: cancelButton.trailingAnchor, constant: 8),
             titleLabel.centerYAnchor.constraint(equalTo: topBar.centerYAnchor),
             titleLabel.trailingAnchor.constraint(lessThanOrEqualTo: draftPillButton.leadingAnchor, constant: -8),
-            // 顶栏右上角三钮收紧（2026-10-31）：钮间 gap 8 → 4（草稿—可见性、可见性—发布、
+            // 顶栏右上角三钮间距（样式规格定版）：钮间 gap 统一 8（草稿—可见性、可见性—发布、
             // 编辑态草稿—发布同口径）；右沿留白仍 16，与左沿关闭钮对称口径不变。
-            visibilityButton.trailingAnchor.constraint(equalTo: publishButton.leadingAnchor, constant: -4),
+            visibilityButton.trailingAnchor.constraint(equalTo: publishButton.leadingAnchor, constant: -8),
             visibilityButton.centerYAnchor.constraint(equalTo: topBar.centerYAnchor),
             visibilityButton.widthAnchor.constraint(equalToConstant: 44),
             visibilityButton.heightAnchor.constraint(equalToConstant: 44),
-            draftPillButton.trailingAnchor.constraint(equalTo: isEditMode ? publishButton.leadingAnchor : visibilityButton.leadingAnchor, constant: -4),
+            draftPillButton.trailingAnchor.constraint(equalTo: isEditMode ? publishButton.leadingAnchor : visibilityButton.leadingAnchor, constant: -8),
             draftPillButton.centerYAnchor.constraint(equalTo: topBar.centerYAnchor),
             draftPillButton.heightAnchor.constraint(equalToConstant: 44),
             publishButton.trailingAnchor.constraint(equalTo: topBar.trailingAnchor, constant: -16),
@@ -3304,7 +3325,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         locationClearButton.addTarget(self, action: #selector(didTapClearLocation), for: .touchUpInside)
         locationNoteLabel.translatesAutoresizingMaskIntoConstraints = false
         locationNoteLabel.font = UIFont.systemFont(ofSize: 12)
-        locationNoteLabel.textColor = BearyColors.orange
+        locationNoteLabel.textColor = BearyColors.ink
         locationNoteLabel.numberOfLines = 0
         locationLineRow.axis = .horizontal
         locationLineRow.spacing = 6
@@ -5911,9 +5932,19 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                 guard let self = self else { return }
                 // 落盘走后台队列：存完回调里再重置（快照在 saveDraftNow 调用时已拍，
                 // 存完前切篇的状态守卫见 saveDraftNow 完成回调）。
-                // 完成回调现带 DraftSaveResult；此处仅做签名适配、行为不变
-                // （失败仍重置，见 PR 描述残留风险——本组只修关闭路径）。
-                self.saveDraftNow { _ in
+                // 完成回调带 DraftSaveResult：失败时不重置、内容原样保留并 toast
+                // 明示重试（关闭路径同款口径：拒绝震动＋拒绝音＋状态行已置红）；
+                // 成功才开空白新篇。
+                self.saveDraftNow { [weak self] result in
+                    guard let self = self else { return }
+                    guard result.succeeded else {
+                        BearyHaptics.rejectionWarning()
+                        BearySoundPlayer.play(.refuseBonk)
+                        self.showToast(message: result.hadPreviousSavedVersion
+                            ? "草稿保存失败，本次修改没存上，旧版还在，再点一次保留并新建重试"
+                            : "草稿保存失败，这篇草稿还没存上，再点一次保留并新建重试")
+                        return
+                    }
                     self.resetEditorToBlank()
                 }
             })

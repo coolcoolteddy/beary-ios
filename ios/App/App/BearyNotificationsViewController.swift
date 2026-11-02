@@ -1067,6 +1067,23 @@ final class BearyNotificationsViewController: UIViewController {
         followCardStates.removeAll()
         followCardLoadingIds.removeAll()
         followCardGeneration += 1
+        // 切号清列表：旧号通知不得残留；hasSuccessfulLoad 同步复位，
+        // 否则离页写回（saveNotificationCache 按当前账号写）会把旧号
+        // 列表存进新号缓存；重拉旗立起，新号首拉走 401 清场同款路径。
+        // 在途旧号回包已由切号时 bump 的 authEpoch 代次丢弃。
+        items = []
+        displayRows = []
+        totalCount = nil
+        hasMore = false
+        unreadTotal = 0
+        sysUnreadTotal = 0
+        isSysExpanded = false
+        isActExpanded = false
+        hasSuccessfulLoad = false
+        hasDisplayedPage = false
+        loadMoreFailed = false
+        needsReloadAfterUnauthorized = true
+        publishUnread(0)
         cancelCardAnimation()
         tableView.reloadData()
     }
@@ -1135,11 +1152,11 @@ final class BearyNotificationsViewController: UIViewController {
             guard let cell = tableView.cellForRow(at: path) else {
                 continue
             }
-            let delay = min(Double(animatedCount) * 0.04, 0.24)
+            let delay = min(Double(animatedCount) * 0.03, 0.24)
             cell.alpha = 0
             cell.transform = CGAffineTransform(translationX: 0, y: -24)
             let animator = UIViewPropertyAnimator(
-                duration: 0.42,
+                duration: 0.25,
                 timingParameters: UICubicTimingParameters(controlPoint1: CGPoint(x: 0.32, y: 0.72), controlPoint2: CGPoint(x: 0.35, y: 1))
             )
             animator.addAnimations({
