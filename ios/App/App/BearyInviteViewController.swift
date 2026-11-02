@@ -200,7 +200,7 @@ final class BearyInviteViewController: UIViewController {
         // C4：复制钮改用 surface 底，与码框 faint 底拉开对比（深色下不再融为一体）。
         copyButton.backgroundColor = BearyColors.surface
         copyButton.setTitle("复制", for: .normal)
-        copyButton.setTitleColor(BearyColors.ink, for: .normal)
+        copyButton.setTitleColor(BearyColors.deepOrangeText, for: .normal)
         copyButton.titleLabel?.font = BearyDynamicType.cappedFont(for: UIFont.systemFont(ofSize: 14, weight: .semibold))
         copyButton.titleLabel?.adjustsFontForContentSizeCategory = true
         copyButton.contentEdgeInsets = UIEdgeInsets(top: 0, left: 16, bottom: 0, right: 16)
@@ -282,7 +282,7 @@ final class BearyInviteViewController: UIViewController {
 
         retryButton.translatesAutoresizingMaskIntoConstraints = false
         retryButton.setTitle("重试", for: .normal)
-        retryButton.setTitleColor(BearyColors.ink, for: .normal)
+        retryButton.setTitleColor(BearyColors.deepOrangeText, for: .normal)
         retryButton.titleLabel?.font = BearyDynamicType.cappedFont(for: UIFont.systemFont(ofSize: 14, weight: .semibold))
         retryButton.titleLabel?.adjustsFontForContentSizeCategory = true
         retryButton.isHidden = true

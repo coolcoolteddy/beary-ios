@@ -436,7 +436,7 @@ final class BearyCalendarDayButton: UIButton {
             numberLabel.font = UIFont.boldSystemFont(ofSize: 15)
             numberLabel.backgroundColor = BearyColors.ink
         } else if day.isToday {
-            numberLabel.textColor = BearyColors.orange
+            numberLabel.textColor = BearyColors.deepOrangeText
             numberLabel.font = UIFont.boldSystemFont(ofSize: 15)
             numberLabel.backgroundColor = .clear
             numberLabel.layer.borderWidth = 1.5
@@ -919,7 +919,7 @@ final class BearyTimelineCell: UITableViewCell {
         lb.translatesAutoresizingMaskIntoConstraints = false
         lb.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 12))
         lb.adjustsFontForContentSizeCategory = true
-        lb.textColor = BearyColors.ink
+        lb.textColor = BearyColors.deepOrangeText
         lb.numberOfLines = 0
         lb.isHidden = true
         return lb
@@ -1069,7 +1069,7 @@ final class BearyTimelineCell: UITableViewCell {
         // 默认档仍为 12.5 粗体，仅跟随系统字号，170 上限与单行截断口径不动。
         recipientLabel.font = BearyDynamicType.scaledFont(for: UIFont.boldSystemFont(ofSize: 12.5))
         recipientLabel.adjustsFontForContentSizeCategory = true
-        recipientLabel.textColor = BearyColors.ink
+        recipientLabel.textColor = BearyColors.deepOrangeText
         // B-G12 (web .tl-to): max-width 170 + single-line ellipsis, never wrap.
         recipientLabel.numberOfLines = 1
         recipientLabel.lineBreakMode = .byTruncatingTail

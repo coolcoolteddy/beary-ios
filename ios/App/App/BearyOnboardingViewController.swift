@@ -656,7 +656,7 @@ final class BearyOnboardingViewController: UIViewController {
         let pillLabel = UILabel()
         pillLabel.translatesAutoresizingMaskIntoConstraints = false
         pillLabel.font = scaledFont(size: 13, weight: .semibold)
-        pillLabel.textColor = BearyColors.orange
+        pillLabel.textColor = BearyColors.deepOrangeText
         pillLabel.textAlignment = .center
         pillLabel.adjustsFontForContentSizeCategory = true
         pillLabel.text = "公开"
@@ -996,7 +996,7 @@ final class BearyOnboardingViewController: UIViewController {
         }
         demoIconView.image = BearyIconImages.image(named: selectedVisibility.iconName, pointSize: 20)
         demoPillLabel.text = selectedVisibility.pillText
-        demoPillLabel.textColor = selectedVisibility.pillColor
+        demoPillLabel.textColor = selectedVisibility == .private ? BearyColors.blue : BearyColors.deepOrangeText
         demoExplainLabel.text = selectedVisibility.explain
         refreshDynamicBorders()
     }
