@@ -3082,6 +3082,7 @@ final class BearyChromeViewController: UIViewController {
         // 已随 G3 删除，齿轮路径不再触发）。
         vc.onShowTutorial = { [weak self] in self?.presentOnboarding(mode: .replay) }
         vc.onOpenAccountSettings = { [weak self] in self?.presentSettings() }
+        vc.onOpenDMChat = { [weak self] peer in self?.presentDMChat(peer: peer) }
         vc.onInteractionChanged = { [weak self] changedId, likeCount, liked, bookmarked, emotes in
             self?.feedVC?.applyInteraction(entryId: changedId, likeCount: likeCount, likedByMe: liked, bookmarkedByMe: bookmarked, emotes: emotes)
         }
