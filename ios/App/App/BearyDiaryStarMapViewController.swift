@@ -681,7 +681,7 @@ final class BearyDiaryStarMapViewController: UIViewController {
     }
 
     private func showDefaultSheet() {
-        rebuildSheet(title: "点一颗星查看详情，点一条线查看连线原因", rows: [])
+        rebuildSheet(title: "点星进详情，点线看原因", rows: [])
     }
 
     private func sheetTitleLabel(_ text: String) -> UILabel {

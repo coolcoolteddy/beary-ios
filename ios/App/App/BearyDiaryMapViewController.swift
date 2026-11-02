@@ -71,7 +71,7 @@ final class BearyDiaryMapViewController: UIViewController, MKMapViewDelegate, UI
         statusLabel.font = UIFont.systemFont(ofSize: 13)
         statusLabel.textColor = BearyColors.gray
         statusLabel.numberOfLines = 0
-        statusLabel.text = "正在加载日记…"
+        statusLabel.text = "加载中…"
         view.addSubview(statusLabel)
 
         tableView.translatesAutoresizingMaskIntoConstraints = false
@@ -196,7 +196,7 @@ final class BearyDiaryMapViewController: UIViewController, MKMapViewDelegate, UI
 
     @objc private func didTapRetry() {
         failureView.isHidden = true
-        setStatusTextFaded("正在加载日记…")
+        setStatusTextFaded("加载中…")
         fetchAllEntries()
     }
 

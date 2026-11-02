@@ -5870,7 +5870,7 @@ class BearyTimelineViewController: UIViewController {
         updateFooter()
     }
 
-    /// M2 首屏加载视图：居中 spinner + “正在加载…”（仅首屏无行时作 backgroundView）。
+    /// M2 首屏加载视图：居中 spinner + “加载中…”（仅首屏无行时作 backgroundView）。
     private func timelineLoadingView() -> UIView {
         let container = UIView()
         container.backgroundColor = BearyColors.bg
@@ -5879,7 +5879,7 @@ class BearyTimelineViewController: UIViewController {
         spinner.image = BearyIconImages.image(named: "icon_refresh", pointSize: 20)
         spinner.startSpinning()
         let label = UILabel()
-        label.text = "正在加载…"
+        label.text = "加载中…"
         // R8：首屏加载文字（正文类）走 scaledFont + adjusts。
         label.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13))
         label.adjustsFontForContentSizeCategory = true
@@ -5927,11 +5927,11 @@ class BearyTimelineViewController: UIViewController {
         }
     }
 
-    /// M18 脚部加载态：spinner + “正在加载…”居中行（高 44，与按钮脚部同高）。
+    /// M18 脚部加载态：spinner + “加载中…”居中行（高 44，与按钮脚部同高）。
     private func footerLoadingHolder() -> UIView {
         let holder = UIView(frame: CGRect(x: 0, y: 0, width: tableView.bounds.width, height: 44))
         let label = UILabel()
-        label.text = "正在加载…"
+        label.text = "加载中…"
         // R8：脚部加载文字（正文类）走 scaledFont + adjusts。
         label.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 14))
         label.adjustsFontForContentSizeCategory = true
