@@ -192,7 +192,7 @@ final class BearyInviteViewController: UIViewController {
         codeLabel.font = UIFont.systemFont(ofSize: 20, weight: .bold)
         codeLabel.textColor = BearyColors.ink
         copyButton.translatesAutoresizingMaskIntoConstraints = false
-        copyButton.layer.cornerRadius = 12
+        copyButton.layer.cornerRadius = 22
         // C4：复制钮改用 surface 底，与码框 faint 底拉开对比（深色下不再融为一体）。
         copyButton.backgroundColor = BearyColors.surface
         copyButton.setTitle("复制", for: .normal)
@@ -235,7 +235,7 @@ final class BearyInviteViewController: UIViewController {
         bindRow.isHidden = true
         let bindContainer = makeFieldContainer(field: bindField)
         bindButton.translatesAutoresizingMaskIntoConstraints = false
-        bindButton.layer.cornerRadius = 12
+        bindButton.layer.cornerRadius = 24
         bindButton.backgroundColor = BearyColors.ink
         bindButton.setTitle("绑定", for: .normal)
         bindButton.setTitleColor(BearyColors.bg, for: .normal)
@@ -295,13 +295,14 @@ final class BearyInviteViewController: UIViewController {
         stackView.setCustomSpacing(8, after: messageLabel)
 
         NSLayoutConstraint.activate([
-            // 审计 10 项：关闭行钉面板顶（与内容列同宽：左右 ≥22、居中、≤432，
-            // 关闭钮位置与原来在栈内时一致）；滚动区从关闭行下方起，不再盖住它。
+            // 审计 10 项：关闭行钉面板顶、行宽与内容列同宽（关闭钮位置与原来
+            // 在栈内时一致）；滚动区从关闭行下方起，不再盖住它。
             closeRow.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
-            closeRow.leadingAnchor.constraint(greaterThanOrEqualTo: view.safeAreaLayoutGuide.leadingAnchor, constant: 22),
-            closeRow.trailingAnchor.constraint(lessThanOrEqualTo: view.safeAreaLayoutGuide.trailingAnchor, constant: -22),
+            // 叉叉居中修法：行宽此前只给 >=/<= + centerX + 宽上限、未定宽，
+            // 布局把行压成钮宽 32 再居中，叉叉落在屏中；现行宽与内容列同宽，
+            // 钮贴行右缘即贴内容列右缘（iPad 432 列内同样对齐）。
             closeRow.centerXAnchor.constraint(equalTo: view.centerXAnchor),
-            closeRow.widthAnchor.constraint(lessThanOrEqualToConstant: 432),
+            closeRow.widthAnchor.constraint(equalTo: stackView.widthAnchor),
             scrollView.topAnchor.constraint(equalTo: closeRow.bottomAnchor),
             scrollView.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor),
             scrollView.leadingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.leadingAnchor),

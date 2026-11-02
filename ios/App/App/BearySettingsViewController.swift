@@ -1042,7 +1042,7 @@ final class BearySettingsViewController: UIViewController {
         logoutOthersButton.titleLabel?.font = UIFont.systemFont(ofSize: 13, weight: .semibold)
         logoutOthersButton.layer.borderWidth = 1
         logoutOthersButton.layer.bearyDynamicBorderColor = BearyColors.alpha(BearyColors.red, 0.45)
-        logoutOthersButton.layer.cornerRadius = 8
+        logoutOthersButton.layer.cornerRadius = 12
         logoutOthersButton.addTarget(self, action: #selector(logoutOthersButtonTapped), for: .touchUpInside)
         logoutOthersButton.bearyAddPressFeedback()
         // 审计 E2 第 23 项：忙碌图标挂在原入口内右侧（不改标题、不改钮尺寸）。
