@@ -176,8 +176,8 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         let isPublic: Bool?
         /// 审计 2026-11-02 第十节：来源可见性三档与限时到期戳（草稿往返保留，
         /// 还原时据此重算有效态，不再只凭原始 isPublic）。
-        let visibility: String? = nil
-        let ephemeralUntil: Int? = nil
+        let visibility: String?
+        let ephemeralUntil: Int?
         /// iCity：旧送达时间字段已废（面板选篇行不再挂 pill）；保留字段仅作解码兼容。
         let publishAt: Int?
         let imgDims: [String: [Int]]?
