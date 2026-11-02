@@ -2276,6 +2276,9 @@ final class BearyChromeViewController: UIViewController {
                         // 唯一纠错路径。
                         self.feedVC?.removeDeletedEntry(entryId: entryId)
                         self.profileVC?.removeDeletedEntry(entryId: entryId)
+                        // 审计 2026-11-02 第十节：被引篇删除时定向失效引用缓存，
+                        // 旧引用卡不再按删除前拉到的全文渲染。
+                        BearyDiaryCardCell.invalidateQuote(id: entryId)
                         if let uid = SessionManager.shared.currentUser?.id {
                             let bucket = BearyFeedCache.bucket(userId: uid)
                             // 审计 13：快照读盘异步化后的机械适配——读 + 过滤 +
@@ -3396,7 +3399,10 @@ final class BearyChromeViewController: UIViewController {
                     detail.update(with: placeholderEntry)
                     return
                 }
-                if fetched.isPublic == true, fetched.authorId != nil {
+                // 审计 2026-11-02 第十节：详情门按三档判定——公开走有效态（过期即私密），
+                // 仅好友只在服务端 state 确认互关时全见（App 侧不只认 isPublic），
+                // 其余一律占位（fail-closed；state 拉取失败同样占位）。
+                if BearyEphemeral.isEffectivelyPublic(fetched), fetched.authorId != nil {
                     detail.update(with: fetched)
                     return
                 }
@@ -3404,11 +3410,34 @@ final class BearyChromeViewController: UIViewController {
                     detail.update(with: fetched)
                     return
                 }
+                if fetched.isFriendsOnly, let authorId = fetched.authorId, SessionManager.shared.isLoggedIn {
+                    BearyAPI.shared.fetchFollowState(userId: authorId) { [weak self, weak detail] stateResult in
+                        DispatchQueue.main.async {
+                            guard let detail = detail else { return }
+                            switch stateResult {
+                            case .success(let state)
+                                where (state.mutual ?? false) || ((state.following ?? false) && (state.followedBy ?? false)):
+                                detail.update(with: fetched)
+                            default:
+                                var placeholderEntry = fetched
+                                placeholderEntry.placeholder = true
+                                detail.update(with: placeholderEntry)
+                            }
+                        }
+                    }
+                    return
+                }
                 if fetched.isPublic == true {
+                    if fetched.authorId != nil {
+                        // stored 公开但已过期：有效态为私密，切占位（不留卡片旧全文）。
+                        var placeholderEntry = fetched
+                        placeholderEntry.placeholder = true
+                        detail.update(with: placeholderEntry)
+                    }
                     // 公开但定不出作者：保持卡片页（见本函数注释），不更新、不 toast。
                     return
                 }
-                // 私密非作者：切详情私密占位。
+                // 私密非作者：切详情占位（文案按回包 visibility 区分，无字段时通用占位）。
                 var placeholderEntry = fetched
                 placeholderEntry.placeholder = true
                 detail.update(with: placeholderEntry)
@@ -3459,17 +3488,40 @@ final class BearyChromeViewController: UIViewController {
             presentDetail(entry: placeholderEntry)
             return
         }
-        if fetched.isPublic == true, fetched.authorId != nil {
+        // 审计 2026-11-02 第十节：详情门按三档判定——作者本人全见、有效公开全见、
+        // 仅好友只在服务端 state 确认互关时全见、私密占位；state 拉取失败占位
+        // （fail-closed）；服务端视角改写口径须抓包核对（见 PR 未做项）。
+        if BearyEphemeral.isEffectivelyPublic(fetched), fetched.authorId != nil {
             presentDetail(entry: fetched)
+            return
+        }
+        // 服务端已占位化的 payload 直接进占位（不再为仅好友占位体多拉一次 state）。
+        if fetched.placeholder == true {
+            presentDetail(entry: fetched)
+            return
+        }
+        if fetched.isFriendsOnly, let authorId = fetched.authorId, SessionManager.shared.isLoggedIn {
+            showToast(message: "正在打开…")
+            BearyAPI.shared.fetchFollowState(userId: authorId) { [weak self] stateResult in
+                DispatchQueue.main.async {
+                    guard let self = self else { return }
+                    switch stateResult {
+                    case .success(let state)
+                        where (state.mutual ?? false) || ((state.following ?? false) && (state.followedBy ?? false)):
+                        self.presentDetail(entry: fetched)
+                    default:
+                        var placeholderEntry = fetched
+                        placeholderEntry.placeholder = true
+                        self.presentDetail(entry: placeholderEntry)
+                    }
+                }
+            }
             return
         }
         if fetched.isPublic == true {
             // 公开但定不出作者：无法署名作者行，按不存在处理（不递归）。
+            // （含 stored 公开但已过期且定不出作者的篇：有效态为私密，同样不存在处理。）
             showToast(message: "这篇日记不存在或已被删除")
-            return
-        }
-        if fetched.placeholder == true {
-            presentDetail(entry: fetched)
             return
         }
         // 非占位 payload 的私密非作者篇：同样进详情占位（详情只认 placeholder 显占位；

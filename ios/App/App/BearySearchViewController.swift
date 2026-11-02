@@ -35,7 +35,8 @@ import CoreText
 //   - mine：仅登录会话返回（未登录为 null），本人全部日记按正文匹配，LIMIT 20，
  //     翻页同 entries 口径（before + before_id）；
 //     字段 id/content/images/created_at/publish_at/is_public；
-//     本页只取其中未公开（is_public != true）的篇目进“我的日记 · 私密”组，
+//     本页只取其中未公开（is_public != true）与存活限时篇进“我的日记 · 私密”组
+//     （审计 2026-11-02 第十节：存活限时篇不再无处可寻；三档 pill 见 makePrivatePill），
 //     与网页 renderSrchResults 的 mine 过滤口径一致；未登录时服务端不给 mine，
 //     私密分组自然不出现，不靠客户端登录态再拦一道。
 //   - 免登录可搜公开内容：该接口本身不要求会话（无 session 时只缺 mine）。
@@ -1608,7 +1609,10 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         var mineEntries: [Entry] = []
         if let mine = data.mine {
             for entry in mine {
-                if entry.isPublic == false {
+                // 审计 2026-11-02 第十节：我的组按三档收——私密与仅好友照旧，
+                // 存活限时篇（stored 公开、未过期）同样归本组、不再无处可寻；
+                // 已过期篇两组皆不进（公开组有效态过滤已挡）。
+                if entry.isPublic == false || BearyEphemeral.isLive(entry) {
                     mineEntries.append(entry)
                 }
             }
@@ -1727,9 +1731,9 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         BearyIconMotion.stopSpin(on: stateRingView, key: "bearyStateSpin")
         var mineRows: [UIView] = []
         for entry in mine {
-            // 与 renderResults 逐字一致：只取确认为私密篇（is_public == false）；
-            // 缺失字段（nil）不进私密组。
-            guard entry.isPublic == false else { continue }
+            // 与 renderResults 逐字一致：只取确认为私密篇（is_public == false）
+            // 与存活限时篇；缺失字段（nil）不进私密组。
+            guard entry.isPublic == false || BearyEphemeral.isLive(entry) else { continue }
             guard let entryId = entry.id, rowEntryIds.contains(entryId) == false else { continue }
             if let row = makeEntryRow(entry: entry, query: query, isMineGroup: true) {
                 mineRows.append(row)
@@ -2132,8 +2136,10 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         if isMineGroup {
             // 2-3：私密行只留 pill，不再拼“· 未公开”文字（双重状态文案已删）。
             // 好友第一期：仅好友篇在我的组里同样只留 pill，文案“仅好友”、蓝档不变。
+            // 审计 2026-11-02 第十节：我的组按三档标 pill——存活限时篇标“限时”
+            // （沿用私密档蓝底，不新发明颜色），仅好友标“仅好友”，其余标“私密”。
             metaStack.addArrangedSubview(dateLabel)
-            metaStack.addArrangedSubview(makePrivatePill(friendsOnly: entry.isFriendsOnly))
+            metaStack.addArrangedSubview(makePrivatePill(friendsOnly: entry.isFriendsOnly, ephemeralLive: BearyEphemeral.isLive(entry)))
         } else {
             let authorLabel = BearyRoundedMarkLabel()
             authorLabel.translatesAutoresizingMaskIntoConstraints = false
@@ -2206,13 +2212,14 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
     /// padding 2.5/9、锁图标 12、gap 4。圆角注（2-3 注释与代码对齐）：
     /// 实测高约 19（11.5 字 + 上下 2.5），圆角 11 已超半高 9.5，视觉近似 pill，
     /// 故代码保持 11、只改注释，不写 999。11.5 属装饰性小字，不走 Dynamic Type（8-3 豁免）。
-    private func makePrivatePill(friendsOnly: Bool = false) -> UIView {
+    private func makePrivatePill(friendsOnly: Bool = false, ephemeralLive: Bool = false) -> UIView {
         let pill = UIView()
         pill.translatesAutoresizingMaskIntoConstraints = false
         pill.backgroundColor = BearyColors.alpha(BearyColors.blue, 0.13)
         pill.layer.cornerRadius = 11
         pill.layer.masksToBounds = true
         // 好友第一期：仅好友 pill 沿用私密档的蓝（不新发明颜色），只换图标与文案。
+        // 审计 2026-11-02 第十节：存活限时档同样沿用蓝档，文案“限时”。
         let lock = UIImageView(image: BearyIconImages.image(named: friendsOnly ? "icon_friends_lock" : "icon_lock", pointSize: 12))
         lock.translatesAutoresizingMaskIntoConstraints = false
         lock.tintColor = BearyColors.blue
@@ -2221,7 +2228,7 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         label.translatesAutoresizingMaskIntoConstraints = false
         label.font = UIFont.systemFont(ofSize: 11.5, weight: .semibold)
         label.textColor = BearyColors.blue
-        label.text = friendsOnly ? "仅好友" : "私密"
+        label.text = ephemeralLive ? "限时" : (friendsOnly ? "仅好友" : "私密")
         pill.addSubview(lock)
         pill.addSubview(label)
         NSLayoutConstraint.activate([

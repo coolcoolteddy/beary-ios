@@ -64,6 +64,16 @@ struct Quote: Codable {
     /// 好友第一期：被引篇可见性三档（private/friends/public；服务端未透传时 nil，
     /// 调用方按旧 locked/isPublic 口径兜底，绝不凭缺失推断为仅好友）。
     var visibility: String? = nil
+    /// 审计 2026-11-02 第十节：被引篇限时到期戳（毫秒；服务端 attachQuotes 透传后
+    /// 判定可算有效态；缺失时调用方按 isPublic 原值兜底，绝不凭缺失推断已过期）。
+    var ephemeralUntil: Int? = nil
+
+    /// 引用有效公开态：公开且未过期；仅好友/私密/过期一律 false（fail-closed）。
+    var isEffectivelyPublic: Bool {
+        guard isPublic == true else { return false }
+        if let until = ephemeralUntil, until <= Int(Date().timeIntervalSince1970 * 1000) { return false }
+        return true
+    }
 }
 
 /// 全量同步落盘用：Entry 加 Encodable（只补编码能力，不改字段语义；
@@ -173,6 +183,9 @@ struct VisibilityResponse: Decodable {
     var publishedAt: Int?
     /// 好友第一期：切换后的实际可见性三档（服务端透传时调用方按它同步本地模型）。
     var visibility: String?
+    /// 审计 2026-11-02 第十节：切换后的限时到期戳（毫秒；服务端透传时调用方按它
+    /// 同步本地模型；缺失 = 手动翻转已清限时标记，调用方写回 nil）。
+    var ephemeralUntil: Int?
 }
 
 /// iCity 举报响应：成功 {ok: true}；重复举报 {ok: true, duplicate: true, reported: true}。

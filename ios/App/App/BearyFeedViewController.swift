@@ -883,10 +883,12 @@ class BearyFeedViewController: UIViewController {
                         strongSelf.notifyFirstScreenDoneOnce()
                         return
                     }
-                    strongSelf.plazaRaw = entries
-                    strongSelf.firstPageIds = entries.compactMap { $0.id }
-                    strongSelf.plazaHasMore = entries.count >= strongSelf.firstPageLimit
-                    strongSelf.plazaReachedEnd = entries.count < strongSelf.firstPageLimit
+                    // 关注流二次过滤（仅 following 段；广场段口径归广场组）。
+                    let pageEntries = strongSelf.feedFollowingSegment ? strongSelf.filteredFollowingEntries(entries) : entries
+                    strongSelf.plazaRaw = pageEntries
+                    strongSelf.firstPageIds = pageEntries.compactMap { $0.id }
+                    strongSelf.plazaHasMore = pageEntries.count >= strongSelf.firstPageLimit
+                    strongSelf.plazaReachedEnd = pageEntries.count < strongSelf.firstPageLimit
                     strongSelf.plazaError = false
                     strongSelf.lastFeedLoadAt = Date()
                     // 审计 13：界面先应用（落表 + 状态），写盘异步在后、不卡首帧。
@@ -965,10 +967,12 @@ class BearyFeedViewController: UIViewController {
                     strongSelf.plazaFirstPageInFlight = false
                     strongSelf.loadPlazaFirstPage(diffMode: true)
                 case .success(let (fresh, _)):
-                    let newItems = fresh.filter { entry in
+                    let baseNewItems = fresh.filter { entry in
                         guard let entryId = entry.id else { return false }
                         return !knownIds.contains(entryId)
                     }
+                    // 关注流二次过滤（仅 following 段）。
+                    let newItems = strongSelf.feedFollowingSegment ? strongSelf.filteredFollowingEntries(baseNewItems) : baseNewItems
                     if newItems.isEmpty {
                         strongSelf.plazaLoading = false
                         strongSelf.plazaFirstPageInFlight = false
@@ -1054,7 +1058,9 @@ class BearyFeedViewController: UIViewController {
                 }
                 switch result {
                 case .success(let list):
-                    let fresh = list.entries ?? []
+                    let serverFresh = list.entries ?? []
+                    // 关注流二次过滤（仅 following 段；hasMore 仍按服务端页大小算）。
+                    let fresh = strongSelf.feedFollowingSegment ? strongSelf.filteredFollowingEntries(serverFresh) : serverFresh
                     var known = Set<String>()
                     for entry in strongSelf.plazaRaw {
                         if let entryIdValue = entry.id { known.insert(entryIdValue) }
@@ -1064,8 +1070,9 @@ class BearyFeedViewController: UIViewController {
                         strongSelf.plazaRaw.append(entry)
                         known.insert(entryIdValue)
                     }
-                    strongSelf.plazaHasMore = fresh.count >= strongSelf.pageLimit
-                    strongSelf.plazaReachedEnd = fresh.count < strongSelf.pageLimit
+                    // hasMore 按服务端页大小算（过滤掉漏网篇不提前断页）。
+                    strongSelf.plazaHasMore = serverFresh.count >= strongSelf.pageLimit
+                    strongSelf.plazaReachedEnd = serverFresh.count < strongSelf.pageLimit
                     strongSelf.plazaError = false
                 case .failure:
                     strongSelf.plazaError = true
@@ -1347,6 +1354,8 @@ class BearyFeedViewController: UIViewController {
     /// 已展开内容永不折叠（展开态本就由 expandedEntryIds 持久化，
     /// move/insert/delete 均不重建已有 cell）。
     private func applyFirstPageDiff(_ fresh: [Entry]) {
+        // 关注流二次过滤（仅 following 段；旧尾部已在各自入池时滤过）。
+        let fresh = feedFollowingSegment ? filteredFollowingEntries(fresh) : fresh
         // 兜底：旧表里有无 id 行时下标模拟不再可靠（服务端正常数据恒有 id），
         // 此时退回整表替换保正确性，不走 diff（只影响脏数据场景）。
         if plazaRaw.contains(where: { $0.id == nil || $0.id!.isEmpty }) {
@@ -1938,15 +1947,18 @@ class BearyFeedViewController: UIViewController {
 
     /// 可见性同步：按响应目标态改模型（isPublic + publishedAt），可见行都刷；
     /// 翻私密时同步清掉该篇的引用缓存（否则旧引用卡仍按旧可见性渲染）。
-    private func applyVisibilityState(entryId: String, isPublic: Bool, publishedAt: Int?) {
+    private func applyVisibilityState(entryId: String, isPublic: Bool, publishedAt: Int?, visibility: String? = nil, ephemeralUntil: Int? = nil) {
         for index in plazaRaw.indices where plazaRaw[index].id == entryId {
             plazaRaw[index].isPublic = isPublic
-            // 手动翻转清限时标记（服务端同口径），否则本地仍画虚线边框。
-            plazaRaw[index].ephemeralUntil = nil
+            // 审计 2026-11-02 第十节：成功回写 visibility 与 ephemeralUntil；
+            // 手动翻转清限时标记（服务端同口径），否则本地仍画虚线边框——
+            // 回包显式带回新的 ephemeralUntil 时以回包为准；回滚路径传回原值。
+            plazaRaw[index].visibility = visibility ?? (isPublic ? "public" : "private")
+            plazaRaw[index].ephemeralUntil = ephemeralUntil
             if let publishedAt = publishedAt { plazaRaw[index].publishedAt = publishedAt }
         }
         if isPublic == false {
-            BearyDiaryCardCell.quoteCache.removeValue(forKey: entryId)
+            BearyDiaryCardCell.invalidateQuote(id: entryId)
             // feedfast：翻私密的篇同步出缓存（写入过滤会把它丢掉），
             // 下次冷启动不再从旧缓存里露给他人视角。
             persistFeedHead()
@@ -1954,6 +1966,14 @@ class BearyFeedViewController: UIViewController {
         for path in indexPaths(for: entryId) {
             reloadRowIfVisible(path)
         }
+    }
+
+    /// 审计 2026-11-02 第十节：关注流 App 侧二次过滤（广场首拉过滤归广场组，
+    /// 本函数只服务 following 段）：过期/私密漏网篇直接排除；仅好友篇由服务端
+    /// scope 先行按 viewer 过滤、详情门再以 state 复核互关，此处不凭本地关系
+    /// 误杀（本地无可信互关缓存），只收紧、不放宽。
+    private func filteredFollowingEntries(_ entries: [Entry]) -> [Entry] {
+        entries.filter { BearyEphemeral.isEffectivelyPublic($0) || $0.isFriendsOnly }
     }
 
     /// 切换钮：显式目标态，无需确认；在途去重（pubBusyIds 复用）。
@@ -2020,67 +2040,78 @@ class BearyFeedViewController: UIViewController {
     private func handleVisibilityToggle(entryId: String) {
         guard !entryId.isEmpty, let entry = entryModel(for: entryId), entry.isMine == true else { return }
         if pubBusyIds.contains(entryId) { return }
-        // 引用规则简化（2026-10-31）：切公开先过引用门禁、改私密先查引用数提醒；
-        // 门禁/提醒期间占 busy 位，放弃时清位、原态未动（乐观落地只在 perform 里做）。
-        let target = BearyEphemeral.isEffectivelyPublic(entry) ? 0 : 1
-        pubBusyIds.insert(entryId)
-        if target == 1 {
-            BearyQuoteGate.gatePublicToggle(from: self, entry: entry) { [weak self] result in
-                guard let strongSelf = self else { return }
-                switch result {
-                case .proceed:
-                    strongSelf.performVisibilityToggle(entryId: entryId)
-                case .publishTogether(let sourceId):
-                    BearyAPI.shared.setVisibility(id: sourceId, published: 1) { setResult in
-                        DispatchQueue.main.async {
-                            switch setResult {
-                            case .success:
-                                strongSelf.performVisibilityToggle(entryId: entryId)
-                            case .failure:
-                                strongSelf.pubBusyIds.remove(entryId)
-                                BearyToast.show(in: strongSelf.view, message: "原日记公开失败，请重试")
+        // 审计 2026-11-02 第十节：三档选择器（私密/仅好友/公开），选同档即无变化；
+        // 引用规则简化（2026-10-31）：切公开先过引用门禁、改私密先查引用数提醒、
+        // 改仅好友为收紧方向直接放行；门禁/提醒期间占 busy 位，放弃时清位、
+        // 原态未动（乐观落地只在 perform 里做）。
+        BearyVisibility.presentPicker(from: self, entry: entry) { [weak self] targetVisibility in
+            guard let strongSelf = self else { return }
+            guard let current = strongSelf.entryModel(for: entryId),
+                  targetVisibility != BearyVisibility.current(for: current) else { return }
+            strongSelf.pubBusyIds.insert(entryId)
+            if targetVisibility == "public" {
+                BearyQuoteGate.gatePublicToggle(from: strongSelf, entry: entry) { [weak self] result in
+                    guard let strongSelf = self else { return }
+                    switch result {
+                    case .proceed:
+                        strongSelf.performVisibilityToggle(entryId: entryId, targetVisibility: targetVisibility)
+                    case .publishTogether(let sourceId):
+                        BearyAPI.shared.setVisibility(id: sourceId, visibility: "public") { setResult in
+                            DispatchQueue.main.async {
+                                switch setResult {
+                                case .success:
+                                    strongSelf.performVisibilityToggle(entryId: entryId, targetVisibility: targetVisibility)
+                                case .failure:
+                                    strongSelf.pubBusyIds.remove(entryId)
+                                    BearyToast.show(in: strongSelf.view, message: "原日记公开失败，请重试")
+                                }
                             }
                         }
+                    case .aborted:
+                        strongSelf.pubBusyIds.remove(entryId)
                     }
-                case .aborted:
-                    strongSelf.pubBusyIds.remove(entryId)
                 }
-            }
-        } else {
-            BearyQuoteGate.confirmPrivateToggleIfQuoted(from: self, entryId: entryId) { [weak self] confirmed in
-                guard let strongSelf = self else { return }
-                if confirmed {
-                    strongSelf.performVisibilityToggle(entryId: entryId)
-                } else {
-                    strongSelf.pubBusyIds.remove(entryId)
+            } else if targetVisibility == "private" {
+                BearyQuoteGate.confirmPrivateToggleIfQuoted(from: strongSelf, entryId: entryId) { [weak self] confirmed in
+                    guard let strongSelf = self else { return }
+                    if confirmed {
+                        strongSelf.performVisibilityToggle(entryId: entryId, targetVisibility: targetVisibility)
+                    } else {
+                        strongSelf.pubBusyIds.remove(entryId)
+                    }
                 }
+            } else {
+                strongSelf.performVisibilityToggle(entryId: entryId, targetVisibility: targetVisibility)
             }
         }
     }
 
-    private func performVisibilityToggle(entryId: String) {
+    private func performVisibilityToggle(entryId: String, targetVisibility: String) {
         guard !entryId.isEmpty, let entry = entryModel(for: entryId), entry.isMine == true else { return }
-        let target = BearyEphemeral.isEffectivelyPublic(entry) ? 0 : 1
         let originalPublic = entry.isPublic ?? false
         let originalPublishedAt = entry.publishedAt
+        let originalVisibility = entry.visibility
+        let originalEphemeralUntil = entry.ephemeralUntil
         // 先行：目标态立即落地（与成功路径同一同步函数，不重建行、不重播动效）。
-        applyVisibilityState(entryId: entryId, isPublic: target == 1, publishedAt: nil)
+        applyVisibilityState(entryId: entryId, isPublic: BearyVisibility.isPublicValue(targetVisibility), publishedAt: nil, visibility: targetVisibility, ephemeralUntil: nil)
         BearySoundPlayer.play(.visibilityClick)
-        BearyAPI.shared.setVisibility(id: entryId, published: target) { [weak self] result in
+        BearyAPI.shared.setVisibility(id: entryId, visibility: targetVisibility) { [weak self] result in
             DispatchQueue.main.async {
                 guard let strongSelf = self else { return }
                 strongSelf.pubBusyIds.remove(entryId)
                 switch result {
                 case .success(let resp):
-                    let isPublic = resp.published.map { $0 == 1 } ?? (target == 1)
-                    // 秒开-网络层：转私密成功即逐出本篇图片的本机缓存；失败
+                    let isPublic = resp.visibility.map { BearyVisibility.isPublicValue($0) }
+                        ?? resp.published.map { $0 == 1 }
+                        ?? BearyVisibility.isPublicValue(targetVisibility)
+                    // 秒开-网络层：转非公开成功即逐出本篇图片的本机缓存；失败
                     // 回滚分支不逐出（原态未变）。
                     if !isPublic, let entry = strongSelf.entryModel(for: entryId) {
                         BearyImageLoader.shared.evictEntryImages(keys: entry.images ?? [])
                     }
-                    strongSelf.applyVisibilityState(entryId: entryId, isPublic: isPublic, publishedAt: resp.publishedAt)
+                    strongSelf.applyVisibilityState(entryId: entryId, isPublic: isPublic, publishedAt: resp.publishedAt, visibility: resp.visibility ?? targetVisibility, ephemeralUntil: resp.ephemeralUntil)
                 case .failure(let err):
-                    strongSelf.applyVisibilityState(entryId: entryId, isPublic: originalPublic, publishedAt: originalPublishedAt)
+                    strongSelf.applyVisibilityState(entryId: entryId, isPublic: originalPublic, publishedAt: originalPublishedAt, visibility: originalVisibility, ephemeralUntil: originalEphemeralUntil)
                     // 失败原因透传：限流时服务端 message 比通用文案有用（entry_write
                     // 120/小时打满即 429）；其余失败仍走通用文案。
                     let message: String
