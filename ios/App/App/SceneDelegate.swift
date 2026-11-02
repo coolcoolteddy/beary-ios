@@ -2489,6 +2489,8 @@ final class BearyChromeViewController: UIViewController {
             inviteCentered = centered
         } else {
             let sheet = BearyComposerSheetTransitioningDelegate()
+            // 样式规格定版：窄屏底 sheet 点遮罩关闭，与宽屏居中卡片一致（此前不关闭）。
+            sheet.dimTapCloses = true
             vc.modalPresentationStyle = .custom
             vc.transitioningDelegate = sheet
             inviteSheet = sheet
@@ -3876,8 +3878,13 @@ extension BearyChromeViewController: UIPopoverPresentationControllerDelegate {
 // reduced-motion：进出动画时长 0，见 BearyComposerSheetAnimator；下滑松手回弹亦直接复位。
 
 final class BearyComposerSheetTransitioningDelegate: NSObject, UIViewControllerTransitioningDelegate {
+    /// 样式规格定版：仅邀请弹窗窄屏版置 true——dim 点击关闭，与宽屏居中卡片一致；
+    /// 默认 false，其他调用点（编辑器等）点遮罩不关闭的行为不变（居中版 F9 同款写法）。
+    var dimTapCloses = false
     func presentationController(forPresented presented: UIViewController, presenting: UIViewController?, source: UIViewController) -> UIPresentationController? {
-        return BearyComposerSheetPresentationController(presentedViewController: presented, presenting: presenting)
+        let controller = BearyComposerSheetPresentationController(presentedViewController: presented, presenting: presenting)
+        controller.dimTapCloses = dimTapCloses
+        return controller
     }
 
     func animationController(forPresented presented: UIViewController, presenting: UIViewController, source: UIViewController) -> UIViewControllerAnimatedTransitioning? {
@@ -3908,6 +3915,11 @@ private final class BearyGrabberHitView: UIView {
 
 private final class BearyComposerSheetPresentationController: UIPresentationController {
     private let dimmingView = UIView()
+    var dimTapCloses = false
+
+    @objc private func dimTapped() {
+        presentedViewController.dismiss(animated: true)
+    }
     private let grabberStrip = BearyGrabberHitView()
     private let grabberPill = UIView()
     private let sheetShadowView = UIView()
@@ -3942,6 +3954,11 @@ private final class BearyComposerSheetPresentationController: UIPresentationCont
             dimmingView.leadingAnchor.constraint(equalTo: container.leadingAnchor),
             dimmingView.trailingAnchor.constraint(equalTo: container.trailingAnchor),
         ])
+        // 样式规格定版：仅 dimTapCloses 时给 dim 加点击关闭手势（邀请窄屏版；
+        // 与宽屏居中卡片 F9 同款，默认 false 的调用点不受影响）。
+        if dimTapCloses {
+            dimmingView.addGestureRecognizer(UITapGestureRecognizer(target: self, action: #selector(dimTapped)))
+        }
         // 网页抓手无附加安全区：不再补 28pt 顶 inset；抓手直接落在 sheet 顶部（顶距 10）。
         // 阴影层挂在容器里、presentedView 下方（presentedView 自身裁剪，阴影不能挂它身上）。
         sheetShadowView.backgroundColor = .clear

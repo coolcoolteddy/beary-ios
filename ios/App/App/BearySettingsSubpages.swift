@@ -161,10 +161,18 @@ class BearySettingsSubpageViewController: UIViewController {
         contentStack.spacing = 20
         contentStack.alignment = .fill
         contentScrollView.addSubview(contentStack)
+        // 样式规格定版：子页壳列宽与通用口径一致——顶栏与滚动区同宽居中、
+        // 宽上限 600（法律/诊断/拉黑三页 P2-17 同款写法）；窄屏全宽、
+        // 内容栈仍左右各 16（列宽 view−32），宽屏时栈为 600 列内 568。
+        let shellTopBarWidthEquality = topBar.widthAnchor.constraint(equalTo: view.widthAnchor)
+        shellTopBarWidthEquality.priority = UILayoutPriority(750)
+        let shellScrollWidthEquality = contentScrollView.widthAnchor.constraint(equalTo: view.widthAnchor)
+        shellScrollWidthEquality.priority = UILayoutPriority(750)
         NSLayoutConstraint.activate([
             topBar.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
-            topBar.leadingAnchor.constraint(equalTo: view.leadingAnchor),
-            topBar.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            topBar.centerXAnchor.constraint(equalTo: view.centerXAnchor),
+            topBar.widthAnchor.constraint(lessThanOrEqualToConstant: 600),
+            shellTopBarWidthEquality,
             closeButton.leadingAnchor.constraint(equalTo: topBar.leadingAnchor, constant: 16),
             closeButton.centerYAnchor.constraint(equalTo: topBar.centerYAnchor),
             titleLabel.centerXAnchor.constraint(equalTo: topBar.centerXAnchor),
@@ -174,8 +182,9 @@ class BearySettingsSubpageViewController: UIViewController {
             titleLabel.topAnchor.constraint(greaterThanOrEqualTo: topBar.topAnchor, constant: 6),
             titleLabel.bottomAnchor.constraint(lessThanOrEqualTo: topBar.bottomAnchor, constant: -6),
             contentScrollView.topAnchor.constraint(equalTo: topBar.bottomAnchor),
-            contentScrollView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
-            contentScrollView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            contentScrollView.centerXAnchor.constraint(equalTo: view.centerXAnchor),
+            contentScrollView.widthAnchor.constraint(lessThanOrEqualToConstant: 600),
+            shellScrollWidthEquality,
             contentScrollView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
             contentStack.topAnchor.constraint(equalTo: contentScrollView.contentLayoutGuide.topAnchor, constant: 16),
             contentStack.leadingAnchor.constraint(equalTo: contentScrollView.contentLayoutGuide.leadingAnchor, constant: 16),
