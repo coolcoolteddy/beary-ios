@@ -1071,10 +1071,10 @@ class BearyDiaryCardCell: UITableViewCell {
         return st
     }()
 
-    /// 置顶标识行（卡片最上方）：官方 icon_pin 15（模板图＋橙 tint，
+    /// 置顶标识行（卡片最上方，仅个人页显示）：官方 icon_pin 15（模板图＋橙 tint，
     /// BearyFeedIconCache 同款缓存口径）＋ 12 semibold 文案；文案色走 deepOrangeText
     /// （文字前景 token，浅色为深橙 #C2410C、深色为预览橙 #ff9500）；非置顶整组隐藏，不留空行。
-    /// 2026-11-03 Li 纠正：个人页图钉＋“置顶”文字，广场只画图钉（文案按 cardMode 隐藏）。
+    /// 2026-11-03 Li 再纠正：置顶标识仅限个人页，广场不画（pinRow 按 cardMode 隐藏）。
     private let pinIconView: UIImageView = {
         let v = UIImageView()
         v.translatesAutoresizingMaskIntoConstraints = false
@@ -1845,11 +1845,10 @@ class BearyDiaryCardCell: UITableViewCell {
     }
 
     /// 置顶标识行刷新：只认 entry.isPinned（显式 1）；隐藏后 stack 自动压为 0，不留空行。
-    /// 2026-11-03 Li 纠正：个人页图钉＋“置顶”文字，广场只画图钉（其他地方只显示图标）。
+    /// 2026-11-03 Li 再纠正：置顶标识仅限个人页，广场整行隐藏（pinOffset 随 pinRow.isHidden 自动归零）。
     /// 计数与内容同时渲染：本行只随 configure 走，不单独播动效。
     private func refreshPinRow(entry: Entry) {
-        pinRow.isHidden = !entry.isPinned
-        pinLabel.isHidden = cardMode == .feed
+        pinRow.isHidden = cardMode == .feed || !entry.isPinned
     }
 
     /// 旧心情改位：作者行心情位一律隐藏，心情改缀正文末尾

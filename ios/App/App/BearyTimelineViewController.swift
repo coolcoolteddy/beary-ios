@@ -889,30 +889,6 @@ final class BearyTimelineCell: UITableViewCell {
         lb.isHidden = true
         return lb
     }()
-    /// 置顶图钉（仅图标，2026-11-03 Li 纠正：时间线只画图钉、无“置顶”文字、不改顺序）：
-    /// 官方 icon_pin 15（模板图＋橙 tint，卡片 pinRow 同款），固定 15×15；非置顶隐藏。
-    private let pinIconView: UIImageView = {
-        let v = UIImageView()
-        v.translatesAutoresizingMaskIntoConstraints = false
-        v.image = BearyFeedIconCache.image(named: "icon_pin", pointSize: 15)
-        v.tintColor = BearyColors.orange
-        v.contentMode = .scaleAspectFit
-        v.isHidden = true
-        return v
-    }()
-    /// 标题行（图钉＋标题）：图钉在标题文字之前；图钉隐藏时行内只剩标题，布局与原来一致。
-    private lazy var titleRow: UIStackView = {
-        let st = UIStackView(arrangedSubviews: [pinIconView, titleLabel])
-        st.translatesAutoresizingMaskIntoConstraints = false
-        st.axis = .horizontal
-        st.spacing = 4
-        st.alignment = .center
-        NSLayoutConstraint.activate([
-            pinIconView.widthAnchor.constraint(equalToConstant: 15),
-            pinIconView.heightAnchor.constraint(equalToConstant: 15),
-        ])
-        return st
-    }()
     private let thumbsScrollView = UIScrollView()
     private let thumbsStack = UIStackView()
     /// 批 E 补漏（2026-10-30 定位卡片 bug）：时间线卡片此前根本没有位置行，
@@ -1260,12 +1236,12 @@ final class BearyTimelineCell: UITableViewCell {
         // 批 E 补漏：位置行落点 = 引用卡 → 位置行 → 足行（操作行一带），与卡片
         // “图片条之后、操作行之前”同序；图片条后的动态间距（configure 内按有图
         // 9 / 无图 0）现为图片条→位置行间距，位置行隐藏时栈自动塌掉不留空行。
-        let cardStack = UIStackView(arrangedSubviews: [metaStack, titleRow, contentLabel, quoteButton, thumbsScrollView, timelineLocationStack, footStack, actsStack])
+        let cardStack = UIStackView(arrangedSubviews: [metaStack, titleLabel, contentLabel, quoteButton, thumbsScrollView, timelineLocationStack, footStack, actsStack])
         cardStack.translatesAutoresizingMaskIntoConstraints = false
         cardStack.axis = .vertical
         cardStack.spacing = 0
         cardStack.setCustomSpacing(6, after: metaStack)
-        cardStack.setCustomSpacing(4, after: titleRow)
+        cardStack.setCustomSpacing(4, after: titleLabel)
         cardStack.setCustomSpacing(9, after: contentLabel)
         cardStack.setCustomSpacing(10, after: quoteButton)
         cardStack.setCustomSpacing(9, after: thumbsScrollView)
@@ -1495,8 +1471,6 @@ final class BearyTimelineCell: UITableViewCell {
         currentEntry = nil
         titleLabel.text = nil
         titleLabel.isHidden = true
-        // 置顶图钉复位，防上一行置顶串位到下一行。
-        pinIconView.isHidden = true
         // 批 E 补漏：位置行复用复位，防上一行位置串到下一行无定位日记（#252 口径保留）。
         timelineLocationStack.isHidden = true
         timelineLocationLabel.text = nil
@@ -1754,8 +1728,6 @@ final class BearyTimelineCell: UITableViewCell {
         let trimmedTitle = (entry.title ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
         titleLabel.attributedText = trimmedTitle.isEmpty ? nil : BearyText.inlineAttributedText(from: trimmedTitle, font: BearyDynamicType.cardTitleFont(), color: BearyColors.ink, paragraphStyle: nil, dark: traitCollection.userInterfaceStyle == .dark)
         titleLabel.isHidden = trimmedTitle.isEmpty
-        // 置顶图钉（仅图标）：空标题时随标题行一并塌掉，非置顶不画。
-        pinIconView.isHidden = trimmedTitle.isEmpty || !entry.isPinned
         contentLabel.attributedText = BearyText.inlineAttributedText(from: body, font: BearyDynamicType.diaryBodyFont(), color: BearyColors.ink, paragraphStyle: paragraph, dark: traitCollection.userInterfaceStyle == .dark)
         // TL-3 引用卡（网页 tlQuoteHtml 口径）：引用日记在时间线里必须有痕迹，
         // 卡内附 42px 引用缩略图行（见下方 F2 分支），无图不占位。

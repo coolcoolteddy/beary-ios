@@ -299,30 +299,6 @@ final class BearyDetailViewController: UIViewController {
         lb.isHidden = true
         return lb
     }()
-    /// 置顶图钉（仅图标，2026-11-03 Li 纠正：详情页只画图钉、无“置顶”文字）：
-    /// 官方 icon_pin 15（模板图＋橙 tint，卡片 pinRow 同款），固定 15×15；非置顶隐藏。
-    private let pinIconView: UIImageView = {
-        let v = UIImageView()
-        v.translatesAutoresizingMaskIntoConstraints = false
-        v.image = BearyFeedIconCache.image(named: "icon_pin", pointSize: 15)
-        v.tintColor = BearyColors.orange
-        v.contentMode = .scaleAspectFit
-        v.isHidden = true
-        return v
-    }()
-    /// 标题行（图钉＋标题）：图钉在标题文字之前；图钉隐藏时行内只剩标题，布局与原来一致。
-    private lazy var titleRow: UIStackView = {
-        let st = UIStackView(arrangedSubviews: [pinIconView, titleLabel])
-        st.translatesAutoresizingMaskIntoConstraints = false
-        st.axis = .horizontal
-        st.spacing = 4
-        st.alignment = .center
-        NSLayoutConstraint.activate([
-            pinIconView.widthAnchor.constraint(equalToConstant: 15),
-            pinIconView.heightAnchor.constraint(equalToConstant: 15),
-        ])
-        return st
-    }()
     /// 横向 216 图片条：首页 imagesScrollView + imagesStack 同款（间距 8、
     /// 高只由 imageHeightConstraint 驱动：216 有图 / 0 无图；9 只槽位复用）。
     private let imagesScrollView: UIScrollView = {
@@ -909,7 +885,7 @@ final class BearyDetailViewController: UIViewController {
     }
 
     private func buildBody() {
-        rightStack.addArrangedSubview(titleRow)
+        rightStack.addArrangedSubview(titleLabel)
         bodyLabel.translatesAutoresizingMaskIntoConstraints = false
         bodyLabel.numberOfLines = 0
         bodyLabel.lineBreakMode = .byCharWrapping
@@ -1089,7 +1065,7 @@ final class BearyDetailViewController: UIViewController {
         rightStack.setCustomSpacing(4, after: recipientRow)
         rightStack.setCustomSpacing(4, after: authorRow)
         rightStack.setCustomSpacing(4, after: ephemeralRow)
-        rightStack.setCustomSpacing(titleLabel.isHidden ? 0 : 4, after: titleRow)
+        rightStack.setCustomSpacing(titleLabel.isHidden ? 0 : 4, after: titleLabel)
         rightStack.setCustomSpacing(10, after: bodyLabel)
         rightStack.setCustomSpacing(10, after: quoteView)
         rightStack.setCustomSpacing(10, after: imagesScrollView)
@@ -1227,8 +1203,6 @@ final class BearyDetailViewController: UIViewController {
         let trimmedTitle = (entry.title ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
         titleLabel.attributedText = trimmedTitle.isEmpty ? nil : BearyText.inlineAttributedText(from: trimmedTitle, font: BearyDynamicType.cardTitleFont(), color: BearyColors.ink, paragraphStyle: nil, dark: traitCollection.userInterfaceStyle == .dark)
         titleLabel.isHidden = trimmedTitle.isEmpty
-        // 置顶图钉（仅图标）：空标题时随标题行一并塌掉，非置顶不画。
-        pinIconView.isHidden = trimmedTitle.isEmpty || !entry.isPinned
 
         // 正文 16pt（diaryBodyFont 即 scaled 16），行高 1.6（首页卡片口径）。
         // 旧心情改位：心情缀正文末尾（见 detailBodyAttributedText）。
@@ -1453,7 +1427,6 @@ final class BearyDetailViewController: UIViewController {
             let trimmedTitle = (merged.title ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
             titleLabel.attributedText = trimmedTitle.isEmpty ? nil : BearyText.inlineAttributedText(from: trimmedTitle, font: BearyDynamicType.cardTitleFont(), color: BearyColors.ink, paragraphStyle: nil, dark: traitCollection.userInterfaceStyle == .dark)
             titleLabel.isHidden = trimmedTitle.isEmpty
-            pinIconView.isHidden = trimmedTitle.isEmpty || !merged.isPinned
             if !trimmedTitle.isEmpty { fadeLabel(titleLabel) }
         }
         if old.content != merged.content || old.mood != merged.mood {
