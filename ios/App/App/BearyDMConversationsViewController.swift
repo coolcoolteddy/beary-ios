@@ -81,6 +81,9 @@ final class BearyDMConversationsViewController: UIViewController, UITableViewDel
             backButton.heightAnchor.constraint(equalToConstant: 44),
             titleLabel.centerXAnchor.constraint(equalTo: topBar.centerXAnchor),
             titleLabel.centerYAnchor.constraint(equalTo: topBar.centerYAnchor),
+            // 审计：居中标题加左右限位，小屏＋大字体时不与两侧钮重叠（超长截断）。
+            titleLabel.leadingAnchor.constraint(greaterThanOrEqualTo: backButton.trailingAnchor, constant: 8),
+            titleLabel.trailingAnchor.constraint(lessThanOrEqualTo: topBar.trailingAnchor, constant: -16),
             tableView.topAnchor.constraint(equalTo: topBar.bottomAnchor),
             tableView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             tableView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
@@ -212,7 +215,36 @@ private final class BearyDMConversationCell: UITableViewCell {
     private let snippetLabel = UILabel()
     private let timeLabel = UILabel()
     private let unreadBadge = UILabel()
+    private let separatorView = UIView()
     private var avatarTask: URLSessionDataTask?
+    private var avatarURL: URL?
+    private var unreadBadgeMinWidthConstraint: NSLayoutConstraint?
+    private var unreadBadgeZeroWidthConstraint: NSLayoutConstraint?
+
+    // 审计：头像失败重试钮（搜索页 icon_refresh 44×44 同款口径），仅失败态可见。
+    private lazy var avatarRetryButton: UIButton = {
+        let button = UIButton(type: .custom)
+        button.translatesAutoresizingMaskIntoConstraints = false
+        button.setImage(BearyIconImages.image(named: "icon_refresh", pointSize: 20), for: .normal)
+        button.tintColor = BearyColors.ink
+        button.accessibilityLabel = "重试"
+        button.accessibilityHint = "重新加载头像"
+        button.isHidden = true
+        button.addTarget(self, action: #selector(avatarRetryTapped), for: .touchUpInside)
+        button.bearyAddPressFeedback()
+        return button
+    }()
+    /// 审计-性能：头像代次。prepareForReuse 已取消旧任务，但同 cell 不经复用
+    /// 再次 configure（如可见行刷新）时旧任务仍在途；内存命中分支返回 nil、
+    /// 回调仍异步上主线程，无代次校验即会把旧头像写进新行，故 configure
+    /// 起始先取消旧任务并 +1，回调凭代次 + URL 双重校验，旧回包直接丢弃。
+    private var avatarGeneration = 0
+    private static let conversationTimeFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "zh_CN")
+        formatter.dateFormat = "M月d日 H:mm"
+        return formatter
+    }()
 
     override init(style: UITableViewCell.CellStyle, reuseIdentifier: String?) {
         super.init(style: style, reuseIdentifier: reuseIdentifier)
@@ -255,12 +287,16 @@ private final class BearyDMConversationCell: UITableViewCell {
         unreadBadge.clipsToBounds = true
         unreadBadge.isHidden = true
 
+        separatorView.translatesAutoresizingMaskIntoConstraints = false
+        separatorView.backgroundColor = BearyColors.line
         contentView.addSubview(avatarView)
         contentView.addSubview(fallbackLabel)
+        contentView.addSubview(avatarRetryButton)
         contentView.addSubview(nameLabel)
         contentView.addSubview(snippetLabel)
         contentView.addSubview(timeLabel)
         contentView.addSubview(unreadBadge)
+        contentView.addSubview(separatorView)
         NSLayoutConstraint.activate([
             avatarView.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 14),
             avatarView.bottomAnchor.constraint(equalTo: contentView.bottomAnchor, constant: -14),
@@ -283,9 +319,25 @@ private final class BearyDMConversationCell: UITableViewCell {
             unreadBadge.topAnchor.constraint(equalTo: timeLabel.bottomAnchor, constant: 6),
             unreadBadge.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -16),
             unreadBadge.heightAnchor.constraint(equalToConstant: 17),
-            unreadBadge.widthAnchor.constraint(greaterThanOrEqualToConstant: 17),
+            avatarRetryButton.centerXAnchor.constraint(equalTo: avatarView.centerXAnchor),
+            avatarRetryButton.centerYAnchor.constraint(equalTo: avatarView.centerYAnchor),
+            avatarRetryButton.widthAnchor.constraint(equalToConstant: 44),
+            avatarRetryButton.heightAnchor.constraint(equalToConstant: 44),
+            // 审计低风险项：行底 1pt 分隔线。
+            separatorView.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 16),
+            separatorView.trailingAnchor.constraint(equalTo: contentView.trailingAnchor),
+            separatorView.bottomAnchor.constraint(equalTo: contentView.bottomAnchor),
+            separatorView.heightAnchor.constraint(equalToConstant: 1),
             contentView.heightAnchor.constraint(greaterThanOrEqualToConstant: 72),
         ])
+        // 审计：角标隐藏时不占位——隐藏态用 0 宽约束替换 ≥17 宽约束
+        //（isHidden 本身不退出布局，旧写法会让摘要行右侧空出一块）。
+        let minWidth = unreadBadge.widthAnchor.constraint(greaterThanOrEqualToConstant: 17)
+        let zeroWidth = unreadBadge.widthAnchor.constraint(equalToConstant: 0)
+        unreadBadgeMinWidthConstraint = minWidth
+        unreadBadgeZeroWidthConstraint = zeroWidth
+        minWidth.isActive = false
+        zeroWidth.isActive = true
     }
 
     required init?(coder: NSCoder) {
@@ -296,35 +348,58 @@ private final class BearyDMConversationCell: UITableViewCell {
         super.prepareForReuse()
         avatarTask?.cancel()
         avatarTask = nil
+        avatarGeneration += 1
+        avatarURL = nil
         avatarView.image = nil
+        avatarRetryButton.isHidden = true
     }
 
     func configure(conversation: BearyAPI.DMConversation) {
         let peer = conversation.peer
         let displayName = (peer?.displayName?.isEmpty == false) ? peer!.displayName! : "Beary 用户"
         nameLabel.text = displayName
-        snippetLabel.text = conversation.lastBody ?? ""
-        // 时间口径与通知行一致（M月d日 H:mm）。
+        // 审计：摘要空行折叠——空白摘要整行隐藏，不留空白行。
+        let snippet = (conversation.lastBody ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        snippetLabel.text = snippet
+        snippetLabel.isHidden = snippet.isEmpty
+        // 时间口径与通知行一致（M月d日 H:mm）；逐行新建 DateFormatter 改静态复用
+        //（本 cell 只在主线程 configure，静态 formatter 不跨线程用）。
         if let lastAt = conversation.lastAt {
             let date = Date(timeIntervalSince1970: TimeInterval(lastAt) / 1000.0)
-            let formatter = DateFormatter()
-            formatter.locale = Locale(identifier: "zh_CN")
-            formatter.dateFormat = "M月d日 H:mm"
-            timeLabel.text = formatter.string(from: date)
+            timeLabel.text = Self.conversationTimeFormatter.string(from: date)
         } else {
             timeLabel.text = ""
         }
         let unread = conversation.unreadCount ?? 0
         unreadBadge.isHidden = unread <= 0
         unreadBadge.text = unread > 99 ? "99+" : "\(unread)"
+        unreadBadgeMinWidthConstraint?.isActive = unread > 0
+        unreadBadgeZeroWidthConstraint?.isActive = unread <= 0
+        avatarRetryButton.isHidden = true
+        // configure 前先取消旧任务（复用路径之外再次 configure 也守门）。
+        avatarTask?.cancel()
+        avatarTask = nil
+        avatarGeneration += 1
+        avatarURL = nil
         if let avatarPath = peer?.avatarUrl, let url = BearyImageURLs.avatarURL(avatarPath) {
             avatarView.isHidden = false
             fallbackLabel.isHidden = true
-            avatarTask = BearyImageLoader.shared.loadDetailed(url: url) { [weak self] result in
+            avatarURL = url
+            let generation = avatarGeneration
+            // 头像框 44pt：下采样到 44×scale 解码，不整图全解码进内存。
+            avatarTask = BearyImageLoader.shared.loadDetailed(url: url, downsampleToWidth: 44 * UIScreen.main.scale) { [weak self] result in
                 DispatchQueue.main.async {
-                    guard let self = self else { return }
-                    if case .success(let image) = result {
+                    guard let self = self, generation == self.avatarGeneration, self.avatarURL == url else { return }
+                    switch result {
+                    case .success(let image):
                         self.avatarView.image = image
+                        self.avatarRetryButton.isHidden = true
+                    case .failure:
+                        // 审计：头像失败不再留空白圆圈——回默认首字母占位＋点按重试。
+                        self.avatarView.isHidden = true
+                        self.fallbackLabel.isHidden = false
+                        self.fallbackLabel.text = String(displayName.prefix(1)).uppercased()
+                        self.avatarRetryButton.isHidden = false
                     }
                 }
             }
@@ -333,5 +408,35 @@ private final class BearyDMConversationCell: UITableViewCell {
             fallbackLabel.isHidden = false
             fallbackLabel.text = String(displayName.prefix(1)).uppercased()
         }
+    }
+
+    private func loadAvatar(url: URL, displayName: String) {
+        avatarURL = url
+        avatarTask?.cancel()
+        avatarTask = BearyImageLoader.shared.loadDetailed(url: url) { [weak self] result in
+            DispatchQueue.main.async {
+                guard let self = self else { return }
+                switch result {
+                case .success(let image):
+                    self.avatarView.image = image
+                    self.avatarRetryButton.isHidden = true
+                case .failure:
+                    // 审计：头像失败不再留空白圆圈——回默认首字母占位＋点按重试。
+                    self.avatarView.isHidden = true
+                    self.fallbackLabel.isHidden = false
+                    self.fallbackLabel.text = String(displayName.prefix(1)).uppercased()
+                    self.avatarRetryButton.isHidden = false
+                }
+            }
+        }
+    }
+
+    @objc private func avatarRetryTapped() {
+        guard let url = avatarURL else { return }
+        avatarRetryButton.isHidden = true
+        avatarView.isHidden = false
+        fallbackLabel.isHidden = true
+        let displayName = nameLabel.text ?? "Beary 用户"
+        loadAvatar(url: url, displayName: displayName)
     }
 }

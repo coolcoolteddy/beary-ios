@@ -587,7 +587,7 @@ final class BearyFeedbackViewController: UIViewController, UITextViewDelegate, P
         footnote.font = UIFont.systemFont(ofSize: 13)
         footnote.textColor = BearyColors.gray
         footnote.numberOfLines = 0
-        footnote.text = "发送走邮件到 hi@teddyhn.com；未配邮箱时复制文字内容，附件不随复制发出；分享诊断日志走系统分享表，只发日志包，不含描述与附件；仅上传日志只发日志包。"
+        footnote.text = "发送走邮件到 hi@teddyhn.com；未配邮箱时复制文字内容，附件不随复制发出；分享或仅上传诊断日志时只发日志包，不含描述与附件。"
 
         let views: [UIView] = [statusCard, descLabel, descCard, mediaLabel, attachCard, deviceLabel, deviceCard, submitButton, shareButton, diagLabel, logOnlyButton, footnote]
         for viewItem in views {
@@ -775,21 +775,27 @@ final class BearyFeedbackViewController: UIViewController, UITextViewDelegate, P
         pendingMailKind = .submit
         if zipReady {
             // 113：双击提交守卫——zip 已就绪时直接弹撰写框，连点会叠 present；
-            // 已有弹出层时直接返回（2.1 秒延迟分支原有守卫不动）。
-            guard presentedViewController == nil else { return }
+            // 审计登录杂项：与 shareTapped / logOnlyTapped 同口径，统一守卫
+            // view.window != nil 且 presentedViewController == nil。
+            guard view.window != nil, presentedViewController == nil else { return }
             presentMailComposer()
         } else {
             // 清理后二次提交先重生成（不直接判失败）；重生成失败才走无 zip 发送。
             ensureZip { [weak self] ready in
                 guard let self = self else { return }
                 if ready {
+                    // 审计登录杂项：ensureZip 回调分支补 presented 守卫（此前无守卫，
+                    // 页面已不在窗口或已有面板时仍 present，可能撞车）。
+                    guard self.view.window != nil, self.presentedViewController == nil else { return }
                     self.presentMailComposer()
                 } else {
                     // zip 缺失时发送仍可继续（不带 zip）：先 toast 明说，待 toast 可见
                     // 后再弹出邮件撰写框，避免撰写框盖住 toast 导致说明不可见。
                     BearyToast.show(in: self.view, message: "日志包准备失败，本次反馈不含日志包")
                     DispatchQueue.main.asyncAfter(deadline: .now() + 2.1) { [weak self] in
-                        guard let self = self, self.presentedViewController == nil else { return }
+                        // 审计登录杂项：2.1 秒延迟分支补 view.window 守卫，与
+                        // shareTapped / logOnlyTapped 同口径（此前只守 presented）。
+                        guard let self = self, self.view.window != nil, self.presentedViewController == nil else { return }
                         self.presentMailComposer()
                     }
                 }
@@ -849,6 +855,9 @@ final class BearyFeedbackViewController: UIViewController, UITextViewDelegate, P
     // MARK: - 邮件（系统 MFMailCompose；未配邮箱时按种类分流）
 
     private func presentMailComposer() {
+        // 审计登录杂项：入口统一守卫（本方法所有调用点此前各守各的，现入口
+        // 再拦一层：不在窗口或已有面板时不 present，防双击撞车）。
+        guard view.window != nil, presentedViewController == nil else { return }
         guard MFMailComposeViewController.canSendMail() else {
             // 补缺 P3-34：复制 fallback 只复制描述文字，设备信息与附件不随复制发出，toast 明说。
             UIPasteboard.general.string = textView.text.trimmingCharacters(in: .whitespacesAndNewlines)

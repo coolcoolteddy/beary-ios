@@ -52,6 +52,7 @@ final class BearyInviteViewController: UIViewController {
     private let boundRow = UIStackView()
     private let boundCheckIcon = UIImageView()
     private let bindRow = UIView()
+    private var bindInputContainer: BearyInputContainer?
     private let bindField = UITextField()
     private let bindButton = UIButton(type: .system)
     private let bindHintLabel = UILabel()
@@ -175,12 +176,14 @@ final class BearyInviteViewController: UIViewController {
 
         titleLabel.translatesAutoresizingMaskIntoConstraints = false
         titleLabel.text = "邀请好友"
-        titleLabel.font = UIFont.systemFont(ofSize: 21, weight: .heavy)
+        titleLabel.font = BearyDynamicType.cappedFont(for: UIFont.systemFont(ofSize: 21, weight: .heavy), maximumPointSize: 28)
+        titleLabel.adjustsFontForContentSizeCategory = true
         titleLabel.textColor = BearyColors.ink
 
         subtitleLabel.translatesAutoresizingMaskIntoConstraints = false
         subtitleLabel.text = "好友注册时填你的邀请码，成功后你们各得 30 天 Plus"
-        subtitleLabel.font = UIFont.systemFont(ofSize: 14)
+        subtitleLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 14))
+        subtitleLabel.adjustsFontForContentSizeCategory = true
         subtitleLabel.textColor = BearyColors.gray
         subtitleLabel.numberOfLines = 0
 
@@ -189,15 +192,17 @@ final class BearyInviteViewController: UIViewController {
         codeBox.layer.cornerRadius = 12
         codeLabel.translatesAutoresizingMaskIntoConstraints = false
         codeLabel.text = "—"
-        codeLabel.font = UIFont.systemFont(ofSize: 20, weight: .bold)
+        codeLabel.font = BearyDynamicType.cappedFont(for: UIFont.systemFont(ofSize: 20, weight: .bold), maximumPointSize: 28)
+        codeLabel.adjustsFontForContentSizeCategory = true
         codeLabel.textColor = BearyColors.ink
         copyButton.translatesAutoresizingMaskIntoConstraints = false
-        copyButton.layer.cornerRadius = 22
+        copyButton.layer.cornerRadius = 12
         // C4：复制钮改用 surface 底，与码框 faint 底拉开对比（深色下不再融为一体）。
         copyButton.backgroundColor = BearyColors.surface
         copyButton.setTitle("复制", for: .normal)
         copyButton.setTitleColor(BearyColors.ink, for: .normal)
-        copyButton.titleLabel?.font = UIFont.systemFont(ofSize: 14, weight: .semibold)
+        copyButton.titleLabel?.font = BearyDynamicType.cappedFont(for: UIFont.systemFont(ofSize: 14, weight: .semibold))
+        copyButton.titleLabel?.adjustsFontForContentSizeCategory = true
         copyButton.contentEdgeInsets = UIEdgeInsets(top: 0, left: 16, bottom: 0, right: 16)
         copyButton.addTarget(self, action: #selector(copyTapped), for: .touchUpInside)
         copyButton.bearyAddPressFeedback()
@@ -207,12 +212,14 @@ final class BearyInviteViewController: UIViewController {
         statsLabel.translatesAutoresizingMaskIntoConstraints = false
         // U6：加载中不再先显示“已邀请 0 人”假零值，拿到数据后 render() 再写数字。
         statsLabel.text = "加载中…"
-        statsLabel.font = UIFont.systemFont(ofSize: 14)
+        statsLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 14))
+        statsLabel.adjustsFontForContentSizeCategory = true
         statsLabel.textColor = BearyColors.ink
         statsLabel.numberOfLines = 0
 
         boundLabel.translatesAutoresizingMaskIntoConstraints = false
-        boundLabel.font = UIFont.systemFont(ofSize: 14)
+        boundLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 14))
+        boundLabel.adjustsFontForContentSizeCategory = true
         boundLabel.textColor = BearyColors.ink
         boundLabel.numberOfLines = 0
         boundCheckIcon.translatesAutoresizingMaskIntoConstraints = false
@@ -234,22 +241,25 @@ final class BearyInviteViewController: UIViewController {
         bindRow.translatesAutoresizingMaskIntoConstraints = false
         bindRow.isHidden = true
         let bindContainer = makeFieldContainer(field: bindField)
+        bindInputContainer = bindContainer
         bindButton.translatesAutoresizingMaskIntoConstraints = false
-        bindButton.layer.cornerRadius = 24
+        bindButton.layer.cornerRadius = 12
         bindButton.backgroundColor = BearyColors.ink
         bindButton.setTitle("绑定", for: .normal)
         bindButton.setTitleColor(BearyColors.bg, for: .normal)
-        bindButton.titleLabel?.font = UIFont.systemFont(ofSize: 14, weight: .semibold)
+        bindButton.titleLabel?.font = BearyDynamicType.cappedFont(for: UIFont.systemFont(ofSize: 14, weight: .semibold))
+        bindButton.titleLabel?.adjustsFontForContentSizeCategory = true
         bindButton.contentEdgeInsets = UIEdgeInsets(top: 0, left: 16, bottom: 0, right: 16)
         bindButton.addTarget(self, action: #selector(bindTapped), for: .touchUpInside)
         bindButton.bearyAddPressFeedback()
         bindRow.addSubview(bindContainer)
         bindRow.addSubview(bindButton)
-        bindField.font = UIFont.systemFont(ofSize: 16)
+        bindField.font = BearyDynamicType.cappedFont(for: UIFont.systemFont(ofSize: 16))
+        bindField.adjustsFontForContentSizeCategory = true
         bindField.textColor = BearyColors.ink
         bindField.attributedPlaceholder = NSAttributedString(string: "填好友的邀请码", attributes: [
             .foregroundColor: BearyColors.gray,
-            .font: UIFont.systemFont(ofSize: 16),
+            .font: BearyDynamicType.cappedFont(for: UIFont.systemFont(ofSize: 16)),
         ])
         bindField.autocapitalizationType = .allCharacters
         bindField.autocorrectionType = .no
@@ -258,20 +268,23 @@ final class BearyInviteViewController: UIViewController {
         bindField.addTarget(self, action: #selector(bindTextChanged), for: .editingChanged)
 
         bindHintLabel.translatesAutoresizingMaskIntoConstraints = false
-        bindHintLabel.font = UIFont.systemFont(ofSize: 13)
+        bindHintLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13))
+        bindHintLabel.adjustsFontForContentSizeCategory = true
         bindHintLabel.textColor = BearyColors.gray
         bindHintLabel.numberOfLines = 0
         bindHintLabel.isHidden = true
 
         messageLabel.translatesAutoresizingMaskIntoConstraints = false
-        messageLabel.font = UIFont.systemFont(ofSize: 13)
+        messageLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13))
+        messageLabel.adjustsFontForContentSizeCategory = true
         messageLabel.textColor = BearyColors.red
         messageLabel.numberOfLines = 0
 
         retryButton.translatesAutoresizingMaskIntoConstraints = false
         retryButton.setTitle("重试", for: .normal)
         retryButton.setTitleColor(BearyColors.ink, for: .normal)
-        retryButton.titleLabel?.font = UIFont.systemFont(ofSize: 14, weight: .semibold)
+        retryButton.titleLabel?.font = BearyDynamicType.cappedFont(for: UIFont.systemFont(ofSize: 14, weight: .semibold))
+        retryButton.titleLabel?.adjustsFontForContentSizeCategory = true
         retryButton.isHidden = true
         retryButton.addTarget(self, action: #selector(retryTapped), for: .touchUpInside)
         retryButton.bearyAddPressFeedback()
@@ -325,14 +338,14 @@ final class BearyInviteViewController: UIViewController {
             closeButton.heightAnchor.constraint(equalToConstant: 32),
             closeButton.trailingAnchor.constraint(equalTo: closeRow.trailingAnchor),
             closeButton.centerYAnchor.constraint(equalTo: closeRow.centerYAnchor),
-            codeBox.heightAnchor.constraint(equalToConstant: 56),
+            codeBox.heightAnchor.constraint(greaterThanOrEqualToConstant: 56),
             codeLabel.leadingAnchor.constraint(equalTo: codeBox.leadingAnchor, constant: 16),
             codeLabel.centerYAnchor.constraint(equalTo: codeBox.centerYAnchor),
             copyButton.trailingAnchor.constraint(equalTo: codeBox.trailingAnchor, constant: -8),
             copyButton.centerYAnchor.constraint(equalTo: codeBox.centerYAnchor),
             copyButton.heightAnchor.constraint(equalToConstant: 44),
             codeLabel.trailingAnchor.constraint(lessThanOrEqualTo: copyButton.leadingAnchor, constant: -8),
-            bindRow.heightAnchor.constraint(equalToConstant: 48),
+            bindRow.heightAnchor.constraint(greaterThanOrEqualToConstant: 48),
             bindContainer.leadingAnchor.constraint(equalTo: bindRow.leadingAnchor),
             bindContainer.topAnchor.constraint(equalTo: bindRow.topAnchor),
             bindContainer.bottomAnchor.constraint(equalTo: bindRow.bottomAnchor),
@@ -348,8 +361,10 @@ final class BearyInviteViewController: UIViewController {
     /// makeFieldContainer 逐字重复；faint 底 / 圆角 12 / 左右 14 / 48 高
     /// 均与原值一致，新增常态 line 边框与聚焦蓝边——字段字体 / 占位 /
     /// 键盘 / delegate / target 与校验逻辑均不动）。
-    private func makeFieldContainer(field: UITextField) -> UIView {
-        return BearyInputContainer(content: field, fixedHeight: 48)
+    private func makeFieldContainer(field: UITextField) -> BearyInputContainer {
+        // 审计登录杂项：不钉 48 固定高，容器随绑定行（≥48）伸展，大字号下不截断；
+        // 登录页的 48 固定高容器不受影响（两页 makeFieldContainer 各自独立）。
+        return BearyInputContainer(content: field)
     }
 
     // MARK: - 键盘避让（审计 8 项）
@@ -392,6 +407,8 @@ final class BearyInviteViewController: UIViewController {
     private func showMessage(_ text: String, ok: Bool = false) {
         messageLabel.text = text
         messageLabel.textColor = ok ? BearyColors.green : BearyColors.red
+        // 审计登录杂项：行内失败时绑定框同步 isError 红边，成功 / 清空时复位。
+        bindInputContainer?.isError = !text.isEmpty && !ok
     }
 
     /// 116 数据填入动效：文案变化时只淡入该 label 本身（alpha 0→1、
@@ -453,7 +470,7 @@ final class BearyInviteViewController: UIViewController {
                         strongSelf.showMessage(pending, ok: strongSelf.pendingBindMessageOK)
                         strongSelf.pendingBindMessage = nil
                     } else {
-                        strongSelf.showMessage("网络错误，请重试")
+                        strongSelf.showMessage("网络不稳定，请稍后再试")
                     }
                     strongSelf.retryButton.isHidden = false
                 case .failure:
@@ -547,6 +564,7 @@ final class BearyInviteViewController: UIViewController {
             setLabelTextFaded(bindHintLabel, "补绑期已过")
         }
         messageLabel.text = ""
+        bindInputContainer?.isError = false
         // 审计 P2：绑定成功文案先显示——render 清空消息行后，待展示的绑定文案重新落回。
         if let pending = pendingBindMessage {
             messageLabel.text = pending
@@ -566,8 +584,10 @@ final class BearyInviteViewController: UIViewController {
     }
 
     private func updateBindButton() {
-        let code = (bindField.text ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-        let enabled = !code.isEmpty && !isBinding
+        // 审计登录杂项：启用条件改 isValidInviteCode（此前只看非空，输满 8 位
+        // 含 - / 空格时按钮呈可点态、点按才拦截）。
+        let code = (bindField.text ?? "").trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
+        let enabled = isValidInviteCode(code) && !isBinding
         bindButton.isEnabled = enabled
         bindButton.alpha = enabled ? 1 : 0.35
         // M14：绑定进行态用“绑定中…”文案，不再只有 alpha 变化。
@@ -612,6 +632,8 @@ final class BearyInviteViewController: UIViewController {
         }
         UIPasteboard.general.string = code
         copyButton.setTitle("已复制", for: .normal)
+        // 审计登录杂项：复制成功只改按钮文案 1.6 秒时 VoiceOver 用户无从得知，补播报。
+        UIAccessibility.post(notification: .announcement, argument: "邀请码已复制")
         copyTimer?.invalidate()
         copyTimer = Timer.scheduledTimer(withTimeInterval: 1.6, repeats: false) { [weak self] _ in
             self?.copyButton.setTitle("复制", for: .normal)
@@ -673,7 +695,7 @@ final class BearyInviteViewController: UIViewController {
                 case .failure(.server(let message)):
                     strongSelf.showMessage(message)
                 case .failure(.network):
-                    strongSelf.showMessage("网络异常，请稍后再试")
+                    strongSelf.showMessage("网络不稳定，请稍后再试")
                 case .failure:
                     strongSelf.showMessage("绑定失败，请稍后再试")
                 }
@@ -690,8 +712,16 @@ extension BearyInviteViewController: UITextFieldDelegate {
         if textField.markedTextRange != nil { return true }
         let current = textField.text ?? ""
         guard let swiftRange = Range(range, in: current) else { return false }
-        let next = current.replacingCharacters(in: swiftRange, with: string)
-        if next.count <= 8 { return true }
+        // 审计登录杂项：delegate 只留 A-Z0-9（并大写）且截断 8 位，非法字符
+        // 进不来输入框；组字中不截断。
+        let filtered = string.uppercased().filter { ($0 >= "A" && $0 <= "Z") || ($0 >= "0" && $0 <= "9") }
+        let next = current.replacingCharacters(in: swiftRange, with: filtered)
+        if next.count <= 8 {
+            if filtered == string { return true }
+            textField.text = next
+            bindTextChanged()
+            return false
+        }
         textField.text = String(next.prefix(8))
         bindTextChanged()
         return false
