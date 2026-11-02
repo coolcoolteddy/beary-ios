@@ -588,7 +588,7 @@ final class BearyLoginViewController: UIViewController {
 
     private func showMessage(_ text: String, ok: Bool = false) {
         messageLabel.text = text
-        messageLabel.textColor = ok ? BearyColors.green : BearyColors.red
+        messageLabel.textColor = ok ? BearyColors.deepGreenText : BearyColors.red
         // 审计登录杂项：输入容器已实现 isError 红边，行内失败时同步点亮、
         // 成功 / 清空时复位（此前只写行内红字，从未设置 isError）。
         let failed = !text.isEmpty && !ok

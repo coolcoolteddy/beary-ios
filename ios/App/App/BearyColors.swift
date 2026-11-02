@@ -26,6 +26,14 @@ enum BearyColors {
     static var blue: UIColor { UIColor { t in t.userInterfaceStyle == .dark ? UIColor(red: 10.0/255.0, green: 132.0/255.0, blue: 1.0, alpha: 1) : UIColor(red: 0.0, green: 0.478, blue: 1.0, alpha: 1) } }
     /// 语义绿：网页 --green #2fbf71，深浅同值。
     static var green: UIColor { UIColor(red: 47.0/255.0, green: 191.0/255.0, blue: 113.0/255.0, alpha: 1) }
+    /// 正文用深橙（ChatGPT 审计第四类新 token）：浅 #C2410C / 深 #ff9500。
+    /// 浅色白底对比约 5.18:1、橙底 0.12 浅底对比约 4.69:1；深色黑底对比约 9.55:1。
+    /// 只用于文字前景；图标/FAB/收藏/大号文字/描边仍走 orange，不动。
+    static var deepOrangeText: UIColor { UIColor { t in t.userInterfaceStyle == .dark ? UIColor(red: 1.0, green: 0.584, blue: 0.0, alpha: 1) : UIColor(red: 194.0/255.0, green: 65.0/255.0, blue: 12.0/255.0, alpha: 1) } }
+    /// 正文用深绿（同上）：浅 #166534 / 深 #34C759（系统绿亮值）。
+    /// 浅色白底对比约 7.13:1、绿底 0.12 浅底对比约 6.42:1；深色黑底对比约 9.46:1。
+    /// 只用于文字前景；语义绿填充 #2fbf71 底色不动。
+    static var deepGreenText: UIColor { UIColor { t in t.userInterfaceStyle == .dark ? UIColor(red: 52.0/255.0, green: 199.0/255.0, blue: 89.0/255.0, alpha: 1) : UIColor(red: 22.0/255.0, green: 101.0/255.0, blue: 52.0/255.0, alpha: 1) } }
     /// 网页 --line：浅 #dbdbdb / 深 #3a3a40（深色带蓝偏，单 white 值复现不了）。
     static var line: UIColor { UIColor { t in t.userInterfaceStyle == .dark ? UIColor(red: 58.0/255.0, green: 58.0/255.0, blue: 64.0/255.0, alpha: 1) : UIColor(white: 0.86, alpha: 1) } }
     /// 网页 --bg：浅 #fff / 深 #000000（Li 2026-10-27 点选纯黑，覆盖 10-26 去纯黑令）。

@@ -1264,9 +1264,9 @@ class BearyProfileViewController: UIViewController {
         let buttonValue = UIButton(type: .system)
         buttonValue.translatesAutoresizingMaskIntoConstraints = false
         buttonValue.setTitle("给一年前的自己留一句话", for: .normal)
-        // 审计-个人页设置：橙色正文对比度约 2.9:1 低于 AA，改墨色；
+        // 审计-个人页设置：橙色正文对比度约 2.20:1 低于 AA，改深橙文字 token；
         // 只改使用处颜色，不改橙色 token 值（橙底白字与图标 tint 不动）。
-        buttonValue.setTitleColor(BearyColors.ink, for: .normal)
+        buttonValue.setTitleColor(BearyColors.deepOrangeText, for: .normal)
         buttonValue.titleLabel?.font = UIFont.systemFont(ofSize: 14, weight: .bold)
         buttonValue.contentHorizontalAlignment = .leading
         buttonValue.addTarget(self, action: #selector(pastSelfEntryTapped), for: .touchUpInside)
@@ -1336,8 +1336,8 @@ class BearyProfileViewController: UIViewController {
         let labelValue = UILabel()
         labelValue.translatesAutoresizingMaskIntoConstraints = false
         labelValue.font = UIFont.systemFont(ofSize: 14, weight: .bold)
-        // 审计-个人页设置：橙色正文改墨色（同 pastSelfEntryButton，token 值不动）。
-        labelValue.textColor = BearyColors.ink
+        // 审计-个人页设置：橙色正文改深橙文字 token（同 pastSelfEntryButton，token 值不动）。
+        labelValue.textColor = BearyColors.deepOrangeText
         return labelValue
     }()
     private let pastSelfWaitingBodyLabel: UILabel = {
@@ -3760,7 +3760,7 @@ class BearyProfileViewController: UIViewController {
                     badgeLabel.translatesAutoresizingMaskIntoConstraints = false
                     badgeLabel.text = "AI"
                     badgeLabel.font = UIFont.systemFont(ofSize: 9, weight: .bold)
-                    badgeLabel.textColor = BearyColors.orange
+                    badgeLabel.textColor = BearyColors.deepOrangeText
                     badgeLabel.backgroundColor = BearyColors.bg
                     badgeLabel.layer.cornerRadius = 4
                     badgeLabel.clipsToBounds = true

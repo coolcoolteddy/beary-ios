@@ -121,7 +121,7 @@ private final class BlindBoxPoolRowView: UIView {
         switch eligibility {
         case .eligible:
             pillLabel.text = "公开"
-            pillLabel.textColor = BearyColors.orange
+            pillLabel.textColor = BearyColors.deepOrangeText
             pillLabel.backgroundColor = BearyColors.alpha(BearyColors.orange, 0.12)
             subLabel.text = dateText.isEmpty ? "旧公开日记" : dateText + " · 旧公开日记"
             alpha = 1
@@ -135,7 +135,7 @@ private final class BlindBoxPoolRowView: UIView {
             tapButton.isEnabled = false
         case .tooNew:
             pillLabel.text = "公开"
-            pillLabel.textColor = BearyColors.orange
+            pillLabel.textColor = BearyColors.deepOrangeText
             pillLabel.backgroundColor = BearyColors.alpha(BearyColors.orange, 0.12)
             subLabel.text = (dateText.isEmpty ? "" : dateText + " · ") + "今日公开，明日可入池"
             alpha = 0.55
@@ -471,7 +471,7 @@ final class BearyBlindBoxFlowViewController: UIViewController {
         receivedPill.text = "来自一位陌生人 · 旧日记"
         receivedPill.font = BearyDynamicType.cappedFont(for: UIFont.systemFont(ofSize: 12, weight: .semibold), maximumPointSize: 14)
         receivedPill.adjustsFontForContentSizeCategory = true
-        receivedPill.textColor = BearyColors.orange
+        receivedPill.textColor = BearyColors.deepOrangeText
         receivedPill.backgroundColor = BearyColors.alpha(BearyColors.orange, 0.12)
         receivedPill.layer.cornerRadius = 9
         receivedPill.clipsToBounds = true

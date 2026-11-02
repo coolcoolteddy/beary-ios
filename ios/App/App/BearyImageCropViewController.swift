@@ -83,7 +83,7 @@ final class BearyImageCropViewController: UIViewController, UIScrollViewDelegate
         titleLabel.setContentCompressionResistancePriority(UILayoutPriority(749), for: .horizontal)
         cancelButton.setContentCompressionResistancePriority(.required, for: .horizontal)
         confirmButton.setTitle("确认", for: .normal)
-        confirmButton.setTitleColor(BearyColors.orange, for: .normal)
+        confirmButton.setTitleColor(BearyColors.deepOrangeText, for: .normal)
         confirmButton.titleLabel?.font = BearyDynamicType.scaledFont(for: UIFont.boldSystemFont(ofSize: 16))
         confirmButton.titleLabel?.adjustsFontForContentSizeCategory = true
         confirmButton.addTarget(self, action: #selector(self.didTapConfirm), for: .touchUpInside)

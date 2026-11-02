@@ -40,7 +40,7 @@ final class BearyBlindBoxEntryView: UIView {
         pendingChip.translatesAutoresizingMaskIntoConstraints = false
         pendingChip.text = "待补"
         pendingChip.font = UIFont.systemFont(ofSize: 11, weight: .semibold)
-        pendingChip.textColor = BearyColors.orange
+        pendingChip.textColor = BearyColors.deepOrangeText
         pendingChip.textAlignment = .center
         pendingChip.layer.cornerRadius = 8
         pendingChip.layer.borderWidth = 1
