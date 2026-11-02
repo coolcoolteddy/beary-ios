@@ -2158,7 +2158,7 @@ final class BearyDetailViewController: UIViewController {
             popover.sourceView = moreButton
             popover.sourceRect = moreButton.bounds
         }
-        present(sheet, animated: true)
+        present(sheet, animated: BearyMotion.animated(true))
     }
 
     @objc private func visibilityTapped() {

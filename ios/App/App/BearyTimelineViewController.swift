@@ -2621,7 +2621,7 @@ class BearyTimelineViewController: UIViewController {
             pop.sourceView = visFilterButton
             pop.sourceRect = visFilterButton.bounds
         }
-        present(sheet, animated: true)
+        present(sheet, animated: BearyMotion.animated(true))
     }
 
     /// 切档：按新 vis 重取列表，分页游标随新筛子重置（首屏 force 全量，

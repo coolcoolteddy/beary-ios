@@ -226,15 +226,15 @@ let viewer = BearyEntryImageViewerViewController(imageKeys: keys, liveVideos: wa
             guard let strongSelf = self, let viewerValue = viewer else { return }
             guard tappedIndex >= 0, tappedIndex < strongSelf.photosValue.count else { return }
             let targetEntry = strongSelf.photosValue[tappedIndex].entry
-            viewerValue.dismiss(animated: true) {
+            viewerValue.dismiss(animated: BearyMotion.animated(true)) {
                 strongSelf.onOpenEntry?(targetEntry)
             }
         }
-        present(viewer, animated: true, completion: nil)
+        present(viewer, animated: BearyMotion.animated(true), completion: nil)
     }
 
     @objc private func backButtonTapped() {
-        dismiss(animated: true, completion: nil)
+        dismiss(animated: BearyMotion.animated(true), completion: nil)
     }
 }
 

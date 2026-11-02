@@ -3757,7 +3757,7 @@ class BearyProfileViewController: UIViewController {
             }))
         }
         sheet.addAction(UIAlertAction(title: "知道了", style: .cancel))
-        present(sheet, animated: true)
+        present(sheet, animated: BearyMotion.animated(true))
     }
 
     private func openNightFootprintEntry(entryIdValue: String) {
