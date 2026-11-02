@@ -56,13 +56,13 @@ private final class WishRowView: UIView {
         netLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 12))
         netLabel.adjustsFontForContentSizeCategory = true
         netLabel.textColor = BearyColors.gray
-        // 28：donePill 文字与底色均走动态色（文字 BearyColors.green，底色经
+        // 28：donePill 底色走动态色（文字改墨色，绿字绿底对比不足，语义绿由底色经
         // BearyColors.alpha 重解，不再硬编码绿值与 alpha 底）；公开 pill 橙色
         // 不在本文件，绝不动。固定 56×18 容器配 cappedFont 上限 14（31），
         // 14pt 行高约 17pt 不撑破 18pt 高，3 字在 56 宽内不截断。
         donePill.font = BearyDynamicType.cappedFont(for: UIFont.systemFont(ofSize: 12, weight: .semibold), maximumPointSize: 14)
         donePill.adjustsFontForContentSizeCategory = true
-        donePill.textColor = BearyColors.green
+        donePill.textColor = BearyColors.ink
         donePill.backgroundColor = BearyColors.alpha(BearyColors.green, 0.12)
         donePill.layer.cornerRadius = 9
         donePill.clipsToBounds = true

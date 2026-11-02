@@ -275,10 +275,11 @@ final class BearyNotificationsViewController: UIViewController {
         let header = UIView()
         header.translatesAutoresizingMaskIntoConstraints = false
         header.backgroundColor = BearyColors.bg
-        // 追加 3：header 定高 48（按钮满 44 热区所需；标题顶距 14 不变，
-        // 多余高度落到底部留白，标题本身不移位）。fitting 高度由本约束钉死，
-        // viewDidLayoutSubviews 重算后仍为 48，不会缩回 41。
-        header.heightAnchor.constraint(equalToConstant: 48).isActive = true
+        // 行高改最小高度：默认仍为 48（按钮满 44 热区所需；标题顶距 14 不变），
+        // 大字号下标题长高时头部随之长高（fitting 高度由 viewDidLayoutSubviews
+        // 重算），标题不再被 30pt 卡死；标题仅两字不换行，右侧“全部已读”
+        // 宽度已有档位变化重算，不挤标题。
+        header.heightAnchor.constraint(greaterThanOrEqualToConstant: 48).isActive = true
         header.addSubview(titleLabel)
         header.addSubview(readAllButton)
         NSLayoutConstraint.activate([
