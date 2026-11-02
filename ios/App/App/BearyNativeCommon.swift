@@ -135,8 +135,8 @@ enum BearySheetDrag {
         return max(translationY * 0.25, -24)
     }
 
-    /// 审计第 14 项：拖动进度到遮罩透明度的统一映射——与游客提示
-    /// （SceneDelegate guestSheetPanGesture）原口径一致：下滑位移占
+    /// 审计第 14 项：拖动进度到遮罩透明度的统一映射——与登录弹窗
+    /// （BearyLoginSheet 抓手拖动）原口径一致：下滑位移占
     /// 面板高比例线性变淡，上滑/未拖动时保持 1；面板高 ≤0 时返回 1，
     /// 避免除零。拖动面板的各处 .changed 与取消恢复均走此函数。
     static func scrimAlpha(forDragOffset offset: CGFloat, sheetHeight: CGFloat) -> CGFloat {
@@ -158,6 +158,9 @@ enum BearySheetDrag {
 /// tint 只用两档：中性 bg 52%（与顶栏/底栏同款）、主操作橙（顶栏登录 pill 同款）。
 /// SceneDelegate.makeGlassView 与本 helper 同配方，调用点按需任选其一，不新增配方。
 /// 部署目标 iOS 15.0：分支内 #available 兜底，不抬部署目标，不引新依赖。
+/// 例外（Li 2026-11-02 批准）：登录底 sheet 弹窗（BearyLoginSheet）用本配方
+/// 中性玻璃（顶栏同款），不属于上条“窗口/弹窗不用系统材质”的清理范围；
+/// 不要把登录弹窗的玻璃“统一”回实色底，其余窗口/弹窗仍走实色底。
 enum BearyGlass {
     static func effectView(tint: UIColor? = nil) -> UIVisualEffectView {
         let view: UIVisualEffectView
