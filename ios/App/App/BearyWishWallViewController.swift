@@ -251,7 +251,7 @@ private final class WishRowView: UIView {
         if UIAccessibility.isReduceMotionEnabled { return }
         let anim = CAKeyframeAnimation(keyPath: "transform.translation.x")
         anim.values = [0, -8, 8, -5, 5, 0]
-        anim.duration = 0.35
+        anim.duration = 0.4
         layer.add(anim, forKey: "wish-row-shake")
     }
 }
@@ -535,7 +535,7 @@ final class BearyWishWallViewController: UIViewController {
         for (index, row) in newRows.enumerated() {
             row.alpha = 0
             row.transform = CGAffineTransform(translationX: 0, y: 6)
-            UIView.animate(withDuration: 0.25, delay: min(Double(index) * 0.05, 0.5), options: [.curveEaseOut], animations: {
+            UIView.animate(withDuration: 0.25, delay: min(Double(index) * 0.03, 0.24), options: [.curveEaseOut], animations: {
                 row.alpha = 1
                 row.transform = .identity
             }, completion: nil)

@@ -24,8 +24,8 @@ private enum OnboardingAnim {
     static let pageHalfDuration: TimeInterval = 0.14
     /// 切页横移幅度（轻微横移＋淡入淡出）。
     static let pageSlide: CGFloat = 20
-    /// 入场错峰间隔；总入场 0.5 秒内（0.15 末位延迟 + 0.25 播长 = 0.40）。
-    static let staggerStep: TimeInterval = 0.05
+    /// 入场错峰间隔；总入场 0.5 秒内（0.09 末位延迟 + 0.25 播长 = 0.34）。
+    static let staggerStep: TimeInterval = 0.03
     static let entranceDuration: TimeInterval = 0.25
     /// 第 1 页两张卡片的错位：后卡左右各缩 10，前卡下压 80、微转 0.5°，后卡微转 -3.5°。
     static let cardBackInset: CGFloat = 10
@@ -936,12 +936,17 @@ final class BearyOnboardingViewController: UIViewController {
         guard page == 0, !entrancePlayedPages.contains(0), !UIAccessibility.isReduceMotionEnabled else { return }
         entrancePlayedPages.insert(0)
         // Logo（小熊）→ 卡片 → 标题（底部卡片）依次自然出现；小熊轻动一次后安静停留，不循环。
-        let items: [(view: UIView, delay: TimeInterval, finalTransform: CGAffineTransform)] = [
+        playStaggeredEntrance([
             (bearWrap, 0, .identity),
             (cardBack, OnboardingAnim.staggerStep, cardBackFinalTransform),
             (cardFront, OnboardingAnim.staggerStep * 2, cardFrontFinalTransform),
             (bottomCard, OnboardingAnim.staggerStep * 3, .identity),
-        ]
+        ])
+    }
+
+    /// 按页通用入场错峰方法：只播所给条目的 alpha/transform，不改各页动效目标；
+    /// 第 1–3 页仍只走横移淡入，不经此方法加错峰。
+    private func playStaggeredEntrance(_ items: [(view: UIView, delay: TimeInterval, finalTransform: CGAffineTransform)]) {
         for item in items {
             UIView.animate(withDuration: OnboardingAnim.entranceDuration, delay: item.delay, options: [.curveEaseOut], animations: {
                 item.view.alpha = 1

@@ -1829,7 +1829,7 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
                     rowView.alpha = 1
                     rowView.transform = .identity
                 })
-                delay += 0.03
+                delay = min(delay + 0.03, 0.24)
             }
         } else {
             // 同批（5-20 / 6-6 / 6-9）：按行身份 key 查视图，不按下标配对；

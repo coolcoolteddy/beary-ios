@@ -297,12 +297,12 @@ final class BearyDraftBoxViewController: UIViewController {
             cardView.alpha = 0
             cardView.transform = CGAffineTransform(translationX: 0, y: 8)
         }
-        // 卡片播放入 playCards：错峰延迟设上限，逐张 +0.04，但累计不超过 0.36——
+        // 卡片播放入 playCards：错峰延迟设上限，逐张 +0.03，但累计不超过 0.24——
         // 大量草稿时尾部可见卡片不再拖出超长尾巴；超上限的卡片同批播出。
         let playCards = {
-            let maxDelay: TimeInterval = 0.36
+            let maxDelay: TimeInterval = 0.24
             for (index, cardView) in cardViews.enumerated() {
-                let delay = min(TimeInterval(index) * 0.04, maxDelay)
+                let delay = min(TimeInterval(index) * 0.03, maxDelay)
                 UIView.animate(withDuration: 0.25, delay: delay, options: .curveEaseOut, animations: {
                     cardView.alpha = 1
                     cardView.transform = .identity
