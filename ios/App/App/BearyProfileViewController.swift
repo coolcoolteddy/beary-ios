@@ -1292,27 +1292,15 @@ class BearyProfileViewController: UIViewController {
         return labelValue
     }()
     private lazy var pastSelfComposeSubmitButton: UIButton = {
-        let buttonValue = UIButton(type: .system)
+        let buttonValue = BearyButton.make(style: .primaryPill(.ink), title: "留给明年的自己")
         buttonValue.translatesAutoresizingMaskIntoConstraints = false
-        buttonValue.setTitle("留给明年的自己", for: .normal)
-        buttonValue.setTitleColor(BearyColors.onBrand, for: .normal)
-        buttonValue.titleLabel?.font = UIFont.systemFont(ofSize: 14, weight: .bold)
-        buttonValue.backgroundColor = BearyColors.orange
-        buttonValue.layer.cornerRadius = 10
-        buttonValue.clipsToBounds = true
         buttonValue.addTarget(self, action: #selector(pastSelfComposeSubmitTapped), for: .touchUpInside)
         buttonValue.bearyAddPressFeedback()
         return buttonValue
     }()
     private lazy var pastSelfComposeCancelButton: UIButton = {
-        let buttonValue = UIButton(type: .system)
+        let buttonValue = BearyButton.make(style: .secondaryOutline(.regular), title: "取消")
         buttonValue.translatesAutoresizingMaskIntoConstraints = false
-        buttonValue.setTitle("取消", for: .normal)
-        buttonValue.setTitleColor(BearyColors.ink, for: .normal)
-        buttonValue.titleLabel?.font = UIFont.systemFont(ofSize: 14, weight: .bold)
-        buttonValue.backgroundColor = BearyColors.faint
-        buttonValue.layer.cornerRadius = 10
-        buttonValue.clipsToBounds = true
         buttonValue.addTarget(self, action: #selector(pastSelfComposeCancelTapped), for: .touchUpInside)
         buttonValue.bearyAddPressFeedback()
         return buttonValue
@@ -1349,14 +1337,8 @@ class BearyProfileViewController: UIViewController {
         return labelValue
     }()
     private lazy var pastSelfRevokeButton: UIButton = {
-        let buttonValue = UIButton(type: .system)
+        let buttonValue = BearyButton.make(style: .secondaryOutline(.regular), title: "撤回这句话")
         buttonValue.translatesAutoresizingMaskIntoConstraints = false
-        buttonValue.setTitle("撤回这句话", for: .normal)
-        buttonValue.setTitleColor(BearyColors.ink, for: .normal)
-        buttonValue.titleLabel?.font = UIFont.systemFont(ofSize: 14, weight: .bold)
-        buttonValue.backgroundColor = BearyColors.faint
-        buttonValue.layer.cornerRadius = 10
-        buttonValue.clipsToBounds = true
         buttonValue.addTarget(self, action: #selector(pastSelfRevokeTapped), for: .touchUpInside)
         buttonValue.bearyAddPressFeedback()
         return buttonValue
@@ -1959,8 +1941,29 @@ class BearyProfileViewController: UIViewController {
         }
     }
 
+    /// U6：个人页底部留白只在 tableView 初始化时算一次，旋转／分屏／安全区
+    /// 变化后过期。本方法在 viewDidLayoutSubviews 与安全区变化时重算 bottom；
+    /// 只写 bottom 两处，top 的更新逻辑（applyHeaderTopInset／下拉刷新基线）
+    /// 一律不动。变化守卫防布局轮次成环。
+    private func updateTableViewBottomInset() {
+        let bottom = BearyChrome.chromeBottomInset(includesFab: true, width: view.bounds.width, safeAreaBottom: view.safeAreaInsets.bottom)
+        if tableView.contentInset.bottom != bottom {
+            tableView.contentInset.bottom = bottom
+        }
+        if tableView.scrollIndicatorInsets.bottom != bottom {
+            tableView.scrollIndicatorInsets.bottom = bottom
+        }
+    }
+
+    override func viewSafeAreaInsetsDidChange() {
+        super.viewSafeAreaInsetsDidChange()
+        guard isViewLoaded else { return }
+        updateTableViewBottomInset()
+    }
+
     override func viewDidLayoutSubviews() {
         super.viewDidLayoutSubviews()
+        updateTableViewBottomInset()
         // 容器态表顶已改 view.top：无封面时头像顶距须含安全区顶，否则头像顶进
         // 状态栏区；modal 态表顶仍为安全区顶 + 44，顶距保持 20 不变。
         // 变化守卫：常量不变不赋值，避免布局轮次成环。
@@ -4804,25 +4807,13 @@ class BearyProfileViewController: UIViewController {
             buttonsRow.translatesAutoresizingMaskIntoConstraints = false
             buttonsRow.axis = .horizontal
             buttonsRow.spacing = 10
-            let submitButton = UIButton(type: .system)
+            let submitButton = BearyButton.make(style: .primaryPill(.ink), title: "再回一句")
             submitButton.translatesAutoresizingMaskIntoConstraints = false
-            submitButton.setTitle("再回一句", for: .normal)
-            submitButton.setTitleColor(.white, for: .normal)
-            submitButton.titleLabel?.font = UIFont.systemFont(ofSize: 14, weight: .bold)
-            submitButton.backgroundColor = BearyColors.blue
-            submitButton.layer.cornerRadius = 10
-            submitButton.clipsToBounds = true
             submitButton.accessibilityIdentifier = chainId
             submitButton.addTarget(self, action: #selector(pastSelfReplySubmitTapped(_:)), for: .touchUpInside)
             submitButton.bearyAddPressFeedback()
-            let cancelButton = UIButton(type: .system)
+            let cancelButton = BearyButton.make(style: .secondaryOutline(.regular), title: "取消")
             cancelButton.translatesAutoresizingMaskIntoConstraints = false
-            cancelButton.setTitle("取消", for: .normal)
-            cancelButton.setTitleColor(BearyColors.ink, for: .normal)
-            cancelButton.titleLabel?.font = UIFont.systemFont(ofSize: 14, weight: .bold)
-            cancelButton.backgroundColor = BearyColors.faint
-            cancelButton.layer.cornerRadius = 10
-            cancelButton.clipsToBounds = true
             cancelButton.accessibilityIdentifier = chainId
             cancelButton.addTarget(self, action: #selector(pastSelfReplyCancelTapped(_:)), for: .touchUpInside)
             cancelButton.bearyAddPressFeedback()
@@ -4834,14 +4825,8 @@ class BearyProfileViewController: UIViewController {
             ])
             section.addArrangedSubview(buttonsRow)
         } else {
-            let replyButton = UIButton(type: .system)
+            let replyButton = BearyButton.make(style: .primaryPill(.ink), title: "再回一句")
             replyButton.translatesAutoresizingMaskIntoConstraints = false
-            replyButton.setTitle("再回一句", for: .normal)
-            replyButton.setTitleColor(.white, for: .normal)
-            replyButton.titleLabel?.font = UIFont.systemFont(ofSize: 14, weight: .bold)
-            replyButton.backgroundColor = BearyColors.blue
-            replyButton.layer.cornerRadius = 10
-            replyButton.clipsToBounds = true
             replyButton.accessibilityIdentifier = chainId
             replyButton.addTarget(self, action: #selector(pastSelfReplyTapped(_:)), for: .touchUpInside)
             replyButton.bearyAddPressFeedback()
