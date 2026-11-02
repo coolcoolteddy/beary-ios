@@ -40,6 +40,7 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
     private var sessionClosed = false
     private var sending = false
     private var didMarkRead = false
+    private var lastMarkedReadMessageId: Int?
 
     init(peer: BearyAPI.FriendUser) {
         self.peer = peer
@@ -325,12 +326,15 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
         guard let userId = peer.id, !didMarkRead else { return }
         // 审计：已读失败不再“本页永不重试”——失败时不置 didMarkRead，
         // 下次 loadLatest 成功时再试，并 toast 说明（重试入口即下拉刷新）。
+        // 标哪条：调用时最新对方消息 id；成功才记，下次以此为准判断有无新消息。
+        let markId = messages.last(where: { $0.senderId != nil && $0.senderId != SessionManager.shared.currentUser?.id })?.id
         BearyAPI.shared.markDMRead(userId: userId) { [weak self] result in
             DispatchQueue.main.async {
                 guard let self = self else { return }
                 switch result {
                 case .success:
                     self.didMarkRead = true
+                    self.lastMarkedReadMessageId = markId
                 case .failure:
                     BearyToast.show(in: self.view, message: "未读标记失败，下拉刷新可重试")
                 }
@@ -370,6 +374,12 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
                     if wasAtBottom {
                         self.scrollToBottomIfNeeded()
                         self.newMessagePill.isHidden = true
+                    }
+                    // 对方发了新消息时重标已读：以最新一条对方消息 id 为准，
+                    // 变了才放行再标（旧 didMarkRead 本页只标一次，之后的新消息永不清未读）。
+                    let latestPeerId = self.messages.last(where: { $0.senderId != nil && $0.senderId != SessionManager.shared.currentUser?.id })?.id
+                    if let latestPeerId = latestPeerId, latestPeerId != self.lastMarkedReadMessageId {
+                        self.didMarkRead = false
                     }
                     self.markReadIfNeeded()
                     onLoaded?(wasAtBottom)
@@ -447,7 +457,10 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
                 self.sending = false
                 switch result {
                 case .success:
-                    self.inputTextView.text = ""
+                    // 只清掉刚发出的那份：发送等待期用户又打的字不得误删。
+                    if self.inputTextView.text.trimmingCharacters(in: .whitespacesAndNewlines) == body {
+                        self.inputTextView.text = ""
+                    }
                     self.updateSendButton()
                     self.updateInputChrome()
                     // 服务端确认后重拉最新页再落行，不做乐观假态。
