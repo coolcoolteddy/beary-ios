@@ -30,6 +30,7 @@ final class BearyDMConversationsViewController: UIViewController, UITableViewDel
     private var fadedRowKeys = Set<String>()
     private let titleLabel = UILabel()
     private var topBarTopConstraint: NSLayoutConstraint?
+    private var backButton: UIButton?
     private var conversations: [BearyAPI.DMConversation] = []
     private var loading = false
     private var needsReloadAfterUserChange = false
@@ -51,6 +52,7 @@ final class BearyDMConversationsViewController: UIViewController, UITableViewDel
         backButton.addTarget(self, action: #selector(backTapped), for: .touchUpInside)
         backButton.bearyAddPressFeedback()
         topBar.addSubview(backButton)
+        self.backButton = backButton
         titleLabel.translatesAutoresizingMaskIntoConstraints = false
         titleLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 17, weight: .semibold))
         titleLabel.adjustsFontForContentSizeCategory = true
@@ -124,6 +126,33 @@ final class BearyDMConversationsViewController: UIViewController, UITableViewDel
         if tableView.contentInset.bottom != bottom {
             tableView.contentInset.bottom = bottom
             tableView.scrollIndicatorInsets.bottom = bottom
+        }
+        reportEmbeddedContentHeight()
+    }
+
+    /// 嵌入消息页时用：表内容高度变化回调（消息页据此定嵌入容器高）。
+    /// 含安全区顶与顶栏高（表内容高只含表区）；空态另留 160 内容高，
+    /// 否则居中空文案会顶到顶栏上。
+    var onContentHeightChanged: ((CGFloat) -> Void)?
+    private var lastReportedContentHeight: CGFloat = -1
+
+    /// 嵌入消息页时调用：隐藏返回钮（组头只留“私信”标题），表内滚动交外层滚动视图。
+    func setEmbedded() {
+        backButton?.isHidden = true
+        tableView.isScrollEnabled = false
+    }
+
+    /// 嵌入态高度上报：在布局末尾算一次，高度不变不重复报（防布局循环）。
+    private func reportEmbeddedContentHeight() {
+        guard onContentHeightChanged != nil else { return }
+        let topPad = view.safeAreaInsets.top + (topBarTopConstraint?.constant ?? 0) + 44
+        var height = topPad + tableView.contentSize.height
+        if !emptyLabel.isHidden {
+            height = max(height, topPad + 160)
+        }
+        if abs(height - lastReportedContentHeight) > 0.5 {
+            lastReportedContentHeight = height
+            onContentHeightChanged?(height)
         }
     }
 

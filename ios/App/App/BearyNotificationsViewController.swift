@@ -628,6 +628,7 @@ final class BearyNotificationsViewController: UIViewController {
                 pullView.frame.size.width = width
             }
         }
+        reportEmbeddedContentHeight()
     }
 
     /// 缓存写回：仅成功加载过才存（失败/未加载不以空列表覆盖旧缓存）。
@@ -850,6 +851,32 @@ final class BearyNotificationsViewController: UIViewController {
             return
         }
         beginCustomPullRefresh()
+    }
+
+    /// 嵌入消息页时用：表内容高度变化回调（消息页据此定嵌入容器高）。
+    /// 含安全区顶（嵌入位置若带 safeArea 也不裁行）；状态容器可见时表只有表头高，
+    /// 另留 280 状态区高度，否则空态／加载态会被压没。
+    var onContentHeightChanged: ((CGFloat) -> Void)?
+    private var lastReportedContentHeight: CGFloat = -1
+
+    /// 嵌入消息页时调用：表内滚动交外层滚动视图，表头标题改作“通知”组头
+    /// （表头“全部已读”钮保留，行为不变）。
+    func setEmbedded() {
+        tableView.isScrollEnabled = false
+        titleLabel.text = "通知"
+    }
+
+    /// 嵌入态高度上报：在布局末尾算一次，高度不变不重复报（防布局循环）。
+    private func reportEmbeddedContentHeight() {
+        guard onContentHeightChanged != nil else { return }
+        var height = view.safeAreaInsets.top + tableView.contentSize.height
+        if !stateContainer.isHidden {
+            height = max(height, view.safeAreaInsets.top + headerHeight + 280)
+        }
+        if abs(height - lastReportedContentHeight) > 0.5 {
+            lastReportedContentHeight = height
+            onContentHeightChanged?(height)
+        }
     }
 
     /// 与其他 tab 的重拍行为一致：未到顶部先回顶，已到顶部才刷新。
