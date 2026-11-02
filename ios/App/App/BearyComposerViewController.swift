@@ -3055,15 +3055,21 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         weatherCallout.isHidden = true
         calloutDismissView.isHidden = true
         calloutDismissView.onTapOutside = { [weak self] in self?.hideCallout(animated: true) }
+        // 23a：心情框与天气框同款，首位补“无”（清除旧心情）选项，键为 "none"，
+        // 图为官方 icon_close 原图（weatherNoneImage，40pt 同尺寸）；其余心情项
+        // 仍走插入式，不动。
         moodCallout.configure(
-            options: moodOrder.map { key in
+            options: [BearyCalloutPickerView.Option(key: "none", accessibilityLabel: "无")] + moodOrder.map { key in
                 BearyCalloutPickerView.Option(key: key, accessibilityLabel: "心情：" + (BearyText.moodNames[key] ?? key))
             },
             onSelect: { [weak self] key in self?.didSelectMoodFromCallout(key) },
-            imageProvider: { [weak self] key, dark in self?.calloutMoodImage(for: key, dark: dark) }
+            imageProvider: { [weak self] key, dark in
+                if key == "none" { return self?.weatherNoneImage() }
+                return self?.calloutMoodImage(for: key, dark: dark)
+            }
         )
         // v6-8：天气框首位补“无”（清除）选项，键为 "none"，图为官方 icon_close 原图
-        //（见 weatherNoneImage；大小与其它天气图标一致 40pt、同色墨色模板）；心情框（40 项）不动。
+        //（见 weatherNoneImage；大小与其它天气图标一致 40pt、同色墨色模板）。
         // 选中态口径（审计 E2 第 11 项）：已选天气在框内以 1pt 墨色描边标出
         //（见 CalloutPicker refreshSelectedStates）；打开框时按当前 selectedWeather
         // 同步；无天气时无行高亮。
@@ -3382,7 +3388,18 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     /// 弹出框点选心情：插入式（取代旧“再点已选项取消”口径）——把熊脸图
     /// 插进光标处；插完不收起，方便连着插多个（数量不限，见
     /// insertMoodImageAtCursor）；单独心情字段一字不动。
+    /// 23a 例外：首位“无”（key "none"）不插图，只清单独心情字段（编辑回填 /
+    /// 草稿恢复的旧心情）：selectedMood 置空、chip 行同步隐藏、草稿落盘；
+    /// 点选即收起（与天气“无”同口径，区别于插入式的不收起）。编辑保存时
+    /// selectedMood 为 nil 即按 updateEntry 省略口径发出，与天气清除同款。
     private func didSelectMoodFromCallout(_ key: String) {
+        if key == "none" {
+            selectedMood = nil
+            refreshSelectedChips()
+            scheduleDraftSave()
+            hideCallout(animated: true)
+            return
+        }
         insertMoodImageAtCursor(key)
     }
 
