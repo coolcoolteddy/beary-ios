@@ -50,9 +50,14 @@ enum BearyProfilePersonalLogic {
 
     // MARK: - 可见口径
 
-    /// 本人：全部非占位日记（公开 + 私密）；他人：仅 isPublic == true。
+    /// 本人：全部非占位日记（公开 + 私密）；他人：有效公开篇，或互关时的仅好友篇。
     /// 草稿 / 回收站条目服务端 author scope 本就不下发；本地若混入无 id 条目一律排除。
-    static func visibleEntries(_ entries: [Entry], isOwn: Bool) -> [Entry] {
+    /// 审计-个人页设置（与主列表 isProfileDiaryDisplayable 统一口径）：旧口径
+    /// 他人态一律排除仅好友篇，与主列表“只要 friends 就放行”分裂；现统一为
+    /// 非作者视角仅好友篇只在互关时放行（isMutualFriend 由调用方按实时
+    /// followState 传，未拉到状态时按非互关 fail-closed）。服务端 scope 口径
+    /// 仍需抓包核对，App 侧不依赖服务端单点过滤。
+    static func visibleEntries(_ entries: [Entry], isOwn: Bool, isMutualFriend: Bool = false) -> [Entry] {
         entries.filter { entry in
             guard let id = entry.id, !id.isEmpty else { return false }
             guard entry.placeholder != true else { return false }
@@ -63,7 +68,8 @@ enum BearyProfilePersonalLogic {
             // 当前调用链（个人模块语料仅本人页拉取、他人页模块不拉语料；作者
             // scope 服务端已滤过期篇）下此改不改变线上行为，属纵深防御：
             // 语料在过期前拉取、过期后仍在内存时，他人聚合不再把过期篇算进去。
-            return BearyEphemeral.isEffectivelyPublic(entry)
+            if BearyEphemeral.isEffectivelyPublic(entry) { return true }
+            return entry.isFriendsOnly && isMutualFriend
         }
     }
 

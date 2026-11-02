@@ -32,6 +32,23 @@ private struct BearyHandleUpdateResponse: Decodable {
 
 private struct BearyProfileUpdateResponse: Decodable {
     var ok: Bool?
+    /// 服务端回包是否原样带回 signature（审计-个人页设置：签名诚实口径）。
+    /// 后端 PUT 分支未补之前回包不带该键，本页据此判定“未确认落库”，
+    /// 不写本地已提交态、不调 onSaved；键存在但值为 null = 已确认清空。
+    var signature: String?
+    var signatureKeyPresent: Bool = false
+
+    enum CodingKeys: String, CodingKey {
+        case ok
+        case signature
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        ok = try container.decodeIfPresent(Bool.self, forKey: .ok)
+        signatureKeyPresent = container.contains(.signature)
+        signature = try container.decodeIfPresent(String.self, forKey: .signature)
+    }
 }
 
 class BearyEditProfileViewController: UIViewController {
@@ -977,8 +994,9 @@ class BearyEditProfileViewController: UIViewController {
         // signature，清空发 null（与原个人页弹框口径一致）；只在有改动时发，
         // 未改动不发，避免无意义写。注意后端缺口（见本文件顶注与 PR 说明）：
         // 现行 accounts Worker 的 PUT 分支不处理 signature，成功回包也不持久化；
-        // 本页仍按字段名透传，后端补分支后 App 无需再改；保存成功后容器重拉
-        // 个人页以服务端为准，未持久化时签名行即回落旧值，不本地谎报已改。
+        // 本页仍按字段名透传，后端补分支后 App 无需再改；回包未原样带回
+        // signature 时走 finishSavingSuccess 的诚实分支（不写已提交态、不调
+        // onSaved、只给中性提示），不本地谎报已改。
         if snapshot.signatureChanged {
             if snapshot.signatureValue.isEmpty {
                 body["signature"] = NSNull()
@@ -1005,23 +1023,48 @@ class BearyEditProfileViewController: UIViewController {
             DispatchQueue.main.async {
                 guard let strongSelf = self else { return }
                 switch result {
-                case .success:
-                    strongSelf.finishSavingSuccess()
+                case .success(let response):
+                    strongSelf.finishSavingSuccess(profileResponse: response)
                 case .failure(let err):
-                    strongSelf.finishSavingWithError(message: strongSelf.profileErrorMessage(err: err))
+                    // 审计-个人页设置：两步保存分裂态提示区分——handle 步已成功、
+                    // 资料步失败时明示用户名已保存，重试不再重发 handle（G3 已跳过），
+                    // 避免用户误以为两步全失败而重复改名。
+                    var message = strongSelf.profileErrorMessage(err: err)
+                    if let snapshot = strongSelf.savingSnapshot, snapshot.handleChanged,
+                       strongSelf.submittedHandle == snapshot.handle {
+                        message += "，用户名已保存"
+                    }
+                    strongSelf.finishSavingWithError(message: message)
                 }
             }
         }
     }
 
     private func finishSavingSuccess() {
+        finishSavingSuccess(profileResponse: nil)
+    }
+
+    private func finishSavingSuccess(profileResponse: BearyProfileUpdateResponse?) {
         // 三件套第 3 项：先把已提交快照写进 SessionManager.currentUser
         // 统一快照（名字 / 用户名 / 头像），再走 onSaved 通知容器刷新个人页
         // 与信息流——下次打开编辑资料的初值即新值，不再是旧值。
         // 快照缺失时（理论上到不了：两步入口都先置快照）只做原有成功路径。
+        // 审计-个人页设置（签名“假成功”诚实口径，根治在后端 PUT 分支）：
+        // 签名有改动时，只有回包原样带回提交值才算确认落库；未确认时不写
+        // 签名已提交态（initialSignature 不动、输入框原样保留）、不调 onSaved，
+        // 只给中性提示——不写“签名暂未保存”定论（回包没给证据，不能断言
+        // 服务端没存；后端补分支回显后本分支自动转确认，无需再改 App）。
+        // 名字 / 头像 / 封面仍按原口径写已提交态（不在本条审计范围内）。
         if let snapshot = savingSnapshot {
+            let signatureConfirmed: Bool
+            if snapshot.signatureChanged, let response = profileResponse {
+                let expected: String? = snapshot.signatureValue.isEmpty ? nil : snapshot.signatureValue
+                signatureConfirmed = response.signatureKeyPresent && response.signature == expected
+            } else {
+                signatureConfirmed = !snapshot.signatureChanged
+            }
             committedDisplayName = snapshot.displayName
-            if snapshot.signatureChanged {
+            if snapshot.signatureChanged && signatureConfirmed {
                 initialSignature = snapshot.signatureValue
                 signatureLoaded = true
                 signatureEdited = false
@@ -1035,6 +1078,15 @@ class BearyEditProfileViewController: UIViewController {
                 displayName: snapshot.displayName,
                 handle: snapshot.handle,
                 avatarDataURL: snapshot.avatarChanged ? snapshot.avatarDataURL : nil)
+            savingSnapshot = nil
+            isSaving = false
+            updateSaveButtonState()
+            if snapshot.signatureChanged && !signatureConfirmed {
+                BearyToast.show(in: view, message: "资料已提交，签名是否同步请返回个人页确认")
+                return
+            }
+            onSaved?()
+            return
         }
         savingSnapshot = nil
         isSaving = false
@@ -1321,6 +1373,12 @@ extension BearyEditProfileViewController: UITextFieldDelegate {
         let proposed = current.replacingCharacters(in: swiftRange, with: string)
         if proposed.count > maxLength {
             textField.text = String(proposed.prefix(maxLength))
+            // 审计-个人页设置：超长粘贴截断时 toast 提示（单字键入到顶不提示，
+            // 免得每敲一字都弹；多字替换视为粘贴才提示；光标落末尾是
+            // 程序赋值固有行为，本条只补提示，不改光标逻辑）。
+            if string.count > 1 {
+                BearyToast.show(in: view, message: "超出上限的部分已截断")
+            }
             return false
         }
         return true
