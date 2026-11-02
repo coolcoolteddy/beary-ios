@@ -2311,13 +2311,25 @@ extension BearyNotificationsViewController: UITableViewDataSource, UITableViewDe
 
 // MARK: - 信件模态（网页 #letterModal 同口径：图标 + 标题 + 正文 + 可选引用 + 按钮行）
 
+/// 审计 2026-11-02 弹窗组：信件模态遮罩层。普通叠加层、非 VC 时 VoiceOver
+/// 两指划（逃离手势）无 VC 可接，须由遮罩层自身响应：沿响应链冒泡到本层时
+/// 走与“知道了/遮罩点按”同一关闭路径并还焦点。卡片圆角 14 不动
+/// （有意网页对照值，不在本支改）。
+private final class BearyLetterModalOverlayView: UIView {
+    var onEscape: (() -> Void)?
+    override func accessibilityPerformEscape() -> Bool {
+        onEscape?()
+        return true
+    }
+}
+
 private class BearyLetterModal {
 
     var onGo: ((String) -> Void)?
     /// dismiss 完成回调（VC 侧清持有用；身份由调用方校验）。
     var onDismiss: (() -> Void)?
 
-    private let overlayView = UIView()
+    private let overlayView = BearyLetterModalOverlayView()
     private let cardView = UIView()
     private let iconView = UIImageView()
     /// 信件模态礼花：徽章信（iconName == "icon_popper"）时用动态 BearyPopperView
@@ -2487,6 +2499,9 @@ private class BearyLetterModal {
         secondaryButton.bearyAddPressFeedback()
         primaryButton.addTarget(self, action: #selector(goTapped), for: .touchUpInside)
         primaryButton.bearyAddPressFeedback()
+        // 审计 2026-11-02 弹窗组：VoiceOver 逃离手势走普通关闭（还焦点）；
+        // 弱持有，遮罩层由 modal 持有，不成环。
+        overlayView.onEscape = { [weak self] in self?.dismissModalAnimated() }
         let tap = UITapGestureRecognizer(target: self, action: #selector(overlayTapped(_:)))
         tap.cancelsTouchesInView = false
         overlayView.addGestureRecognizer(tap)

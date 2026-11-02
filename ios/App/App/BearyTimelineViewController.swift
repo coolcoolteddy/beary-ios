@@ -2621,7 +2621,9 @@ class BearyTimelineViewController: UIViewController {
             pop.sourceView = visFilterButton
             pop.sourceRect = visFilterButton.bounds
         }
-        present(sheet, animated: true)
+        // 审计 2026-11-02 弹窗组：present 不写死 animated，走减动效口径。
+        // （筛子选中态属 11b 气泡支，本支不动筛子。）
+        present(sheet, animated: BearyMotion.animated(true))
     }
 
     /// 切档：按新 vis 重取列表，分页游标随新筛子重置（首屏 force 全量，

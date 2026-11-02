@@ -13,10 +13,19 @@ final class BearyCenteredTransitioningDelegate: NSObject, UIViewControllerTransi
 
     /// F9：仅邀请弹窗宽屏版置 true——dim 点击关闭；编辑器保持 false（背景点击不得绕过取消流程）。
     var dimTapCloses = false
+    /// 审计 2026-11-02 弹窗组：dim 点击的取消路径。置了 handler 时 dim 点击走
+    /// handler（调用方一般接被呈现页的 onClose，即走取消路径清理状态），
+    /// 而非绕开 onClose 直接 dismiss；未置时回落直接 dismiss（旧行为）。
+    var dimTapHandler: (() -> Void)?
+    /// 审计 2026-11-02 弹窗组：dismiss 完成回调（取消路径统一清理用，
+    /// 如邀请页 dismiss 后清 transitioningDelegate 与强持有）。
+    var dismissalHandler: (() -> Void)?
 
     func presentationController(forPresented presented: UIViewController, presenting: UIViewController?, source: UIViewController) -> UIPresentationController? {
         let controller = BearyCenteredPresentationController(presentedViewController: presented, presenting: presenting)
         controller.dimTapCloses = dimTapCloses
+        controller.dimTapHandler = dimTapHandler
+        controller.dismissalHandler = dismissalHandler
         return controller
     }
 
@@ -35,9 +44,17 @@ private final class BearyCenteredPresentationController: UIPresentationControlle
     private let cardShadowView = UIView()
     private var lastShadowBounds: CGRect = .zero
     var dimTapCloses = false
+    var dimTapHandler: (() -> Void)?
+    var dismissalHandler: (() -> Void)?
 
     @objc private func dimTapped() {
-        presentedViewController.dismiss(animated: true)
+        // 审计 2026-11-02 弹窗组复核结论：旧 dimTapped 直接 dismiss，确实绕过
+        // 被呈现页的 onClose（审计标“未证实”现已证实）；有 handler 时走 handler。
+        if let handler = dimTapHandler {
+            handler()
+        } else {
+            presentedViewController.dismiss(animated: true)
+        }
     }
 
     override var frameOfPresentedViewInContainerView: CGRect {
@@ -100,6 +117,8 @@ private final class BearyCenteredPresentationController: UIPresentationControlle
 
     override func presentationTransitionDidEnd(_ completed: Bool) {
         if !completed {
+            // 审计 2026-11-02 弹窗组：取消路径同时清遮罩与阴影（旧路径只清阴影）。
+            dimmingView.removeFromSuperview()
             cardShadowView.removeFromSuperview()
         }
     }
@@ -114,7 +133,11 @@ private final class BearyCenteredPresentationController: UIPresentationControlle
 
     override func dismissalTransitionDidEnd(_ completed: Bool) {
         if completed {
+            // 审计 2026-11-02 弹窗组：取消路径同时清遮罩与阴影（旧路径只清阴影），
+            // 再通知调用方做 dismiss 后清理（如 transitioningDelegate=nil）。
+            dimmingView.removeFromSuperview()
             cardShadowView.removeFromSuperview()
+            dismissalHandler?()
         }
     }
 
@@ -128,9 +151,12 @@ private final class BearyCenteredPresentationController: UIPresentationControlle
         applyCardChrome()
         cardShadowView.frame = frame
         // 审计 E2 第 14 项：shadowPath 仅在尺寸变化时更新，不逐帧重算。
+        // 审计 2026-11-02 弹窗组：阴影 path 按卡片实际圆角计算，不硬编码 20
+        // （阴影 token 值本身不动；实际圆角由 applyCardChrome 刚写进 presentedView 层）。
         if cardShadowView.bounds != lastShadowBounds {
             lastShadowBounds = cardShadowView.bounds
-            cardShadowView.layer.shadowPath = UIBezierPath(roundedRect: cardShadowView.bounds, cornerRadius: 20).cgPath
+            let actualRadius = presentedView.layer.cornerRadius > 0 ? presentedView.layer.cornerRadius : BearySheetChrome.topCornerRadius
+            cardShadowView.layer.shadowPath = UIBezierPath(roundedRect: cardShadowView.bounds, cornerRadius: actualRadius).cgPath
         }
     }
 }
