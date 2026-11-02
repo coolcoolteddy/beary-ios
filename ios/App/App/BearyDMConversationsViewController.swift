@@ -322,7 +322,7 @@ private final class BearyDMConversationCell: UITableViewCell {
         unreadBadge.font = BearyDynamicType.scaledFont(for: .boldSystemFont(ofSize: 10))
         unreadBadge.adjustsFontForContentSizeCategory = true
         unreadBadge.textColor = .white
-        unreadBadge.backgroundColor = BearyColors.blue
+        unreadBadge.backgroundColor = UIColor(red: 0.0, green: 102.0/255.0, blue: 204.0/255.0, alpha: 1) // 角标专用深蓝 #0066CC（白字 5.57:1）；不动共享 BearyColors.blue
         unreadBadge.textAlignment = .center
         unreadBadge.layer.cornerRadius = 8.5
         unreadBadge.clipsToBounds = true
