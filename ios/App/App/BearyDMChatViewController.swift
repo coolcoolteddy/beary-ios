@@ -25,6 +25,12 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
 
     private let tableView = UITableView(frame: .zero, style: .plain)
     private let emptyLabel = UILabel()
+    // 审计第 19 项：首次加载态复用 BearyStateView（转圈 +“加载中…”），不加骨架屏。
+    // 只在“首次请求且尚无本地/旧消息”时出现；有旧消息时保留内容后台刷新。
+    private let firstLoadStateView = BearyStateView()
+    private var firstLoadPending = true
+    // 新行首次出现透明度过渡的已播记账（按消息 id 键，已有行更新不重播）。
+    private var fadedRowKeys = Set<String>()
     private let inputBar = UIView()
     private let inputTextView = UITextView()
     // 审计：发送钮视觉高 32 不变，热区用 Hit44 扩到 44（读“全部已读”钮同款口径）。
@@ -104,6 +110,10 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
         emptyLabel.numberOfLines = 0
         emptyLabel.isHidden = true
         view.addSubview(emptyLabel)
+
+        firstLoadStateView.translatesAutoresizingMaskIntoConstraints = false
+        firstLoadStateView.isHidden = true
+        view.addSubview(firstLoadStateView)
 
         // 输入条：纯文字，无图片按钮；发送钮墨色 pill，空输入时禁用。
         inputBar.translatesAutoresizingMaskIntoConstraints = false
@@ -224,6 +234,11 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
             emptyLabel.centerYAnchor.constraint(equalTo: view.centerYAnchor),
             emptyLabel.leadingAnchor.constraint(greaterThanOrEqualTo: view.leadingAnchor, constant: 32),
             emptyLabel.trailingAnchor.constraint(lessThanOrEqualTo: view.trailingAnchor, constant: -32),
+            // 首次加载态与空态同槽位居中（互斥显隐，见 loadLatest/updateEmptyState）。
+            firstLoadStateView.centerXAnchor.constraint(equalTo: view.centerXAnchor),
+            firstLoadStateView.centerYAnchor.constraint(equalTo: view.centerYAnchor),
+            firstLoadStateView.leadingAnchor.constraint(greaterThanOrEqualTo: view.leadingAnchor, constant: 32),
+            firstLoadStateView.trailingAnchor.constraint(lessThanOrEqualTo: view.trailingAnchor, constant: -32),
             inputBar.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             inputBar.trailingAnchor.constraint(equalTo: view.trailingAnchor),
             topLine.topAnchor.constraint(equalTo: inputBar.topAnchor),
@@ -424,6 +439,14 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
         }
         messageBusy = true
         loadFailed = false
+        // 审计第 19 项：首次无本地消息才显加载态；有本地消息时先显旧消息、
+        // 后台刷新（不遮内容）。下拉刷新自带转圈时不叠加；发送成功后的重拉
+        // 此时 firstLoadPending 已为 false，同样不遮内容（#668 回显口径不动）。
+        if firstLoadPending && messages.isEmpty && tableView.refreshControl?.isRefreshing != true {
+            emptyLabel.isHidden = true
+            firstLoadStateView.configure(kind: .loading, title: "加载中…", subtitle: nil, iconName: nil, actionTitle: nil)
+            firstLoadStateView.isHidden = false
+        }
         let wasAtBottom = isNearBottom()
         BearyAPI.shared.fetchDMHistory(userId: userId, limit: 30) { [weak self] result in
             DispatchQueue.main.async {
@@ -442,6 +465,8 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
                     self.messages = BearyDMStore.messages(accountId: self.storeAccountId, peerId: userId)
                     self.hasMoreOlder = history.resolvedMessages.count >= 30
                     self.loadFailed = false
+                    self.firstLoadPending = false
+                    self.firstLoadStateView.isHidden = true
                     self.updateEmptyState()
                     self.tableView.reloadData()
                     if wasAtBottom {
@@ -467,6 +492,8 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
                         self.updateSendButton()
                     }
                     self.loadFailed = true
+                    self.firstLoadPending = false
+                    self.firstLoadStateView.isHidden = true
                     self.updateEmptyState()
                 }
             }
@@ -585,6 +612,29 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
         let isMine = message.senderId != nil && message.senderId == SessionManager.shared.currentUser?.id
         cell.configure(message: message, isMine: isMine)
         return cell
+    }
+
+    // 审计第 19 项：新行首次出现只做透明度过渡（0.22s，减动效直设终值）；
+    // 已播过的行再次出现（滚动回 / reloadData 更新）只复位 alpha，不重播。
+    // 翻旧消息前插的行同样按 id 键：旧行不重播，只有真正新露出的旧消息行淡入。
+    // 复用 cell 的 alpha 必须显式复位，否则上行动画中途的 cell 会带着半透明进新行。
+    func tableView(_ tableView: UITableView, willDisplay cell: UITableViewCell, forRowAt indexPath: IndexPath) {
+        guard indexPath.row < messages.count else { return }
+        let message = messages[indexPath.row]
+        let key = message.id.map { "msg-\($0)" } ?? "msg-noid-\(message.senderId ?? -1)-\(message.createdAt ?? 0)-\(message.body ?? "")"
+        if fadedRowKeys.contains(key) {
+            cell.alpha = 1
+            return
+        }
+        fadedRowKeys.insert(key)
+        guard BearyMotion.animated(true) else {
+            cell.alpha = 1
+            return
+        }
+        cell.alpha = 0
+        UIView.animate(withDuration: 0.22, delay: 0, options: [.curveEaseOut, .allowUserInteraction], animations: {
+            cell.alpha = 1
+        })
     }
 
     func scrollViewDidScroll(_ scrollView: UIScrollView) {

@@ -23,6 +23,12 @@ final class BearyFriendsViewController: UIViewController, UITableViewDelegate, U
 
     private let tableView = UITableView(frame: .zero, style: .plain)
     private let emptyLabel = UILabel()
+    // 审计第 19 项：首次加载态复用 BearyStateView（转圈 +“加载中…”），不加骨架屏。
+    // 只在“首次请求且尚无旧数据”时出现；有旧数据时保留内容后台刷新。
+    private let firstLoadStateView = BearyStateView()
+    private var firstLoadPending = true
+    // 新行首次出现透明度过渡的已播记账（按好友 id/handle 键，已有行更新不重播）。
+    private var fadedRowKeys = Set<String>()
     private let titleLabel = UILabel()
     private var topBarTopConstraint: NSLayoutConstraint?
     private var friends: [BearyAPI.FriendUser] = []
@@ -96,6 +102,10 @@ final class BearyFriendsViewController: UIViewController, UITableViewDelegate, U
         emptyLabel.isHidden = true
         view.addSubview(emptyLabel)
 
+        firstLoadStateView.translatesAutoresizingMaskIntoConstraints = false
+        firstLoadStateView.isHidden = true
+        view.addSubview(firstLoadStateView)
+
         topBarTopConstraint?.isActive = true
         NSLayoutConstraint.activate([
             topBar.leadingAnchor.constraint(equalTo: view.leadingAnchor),
@@ -117,6 +127,11 @@ final class BearyFriendsViewController: UIViewController, UITableViewDelegate, U
             emptyLabel.centerYAnchor.constraint(equalTo: view.centerYAnchor),
             emptyLabel.leadingAnchor.constraint(greaterThanOrEqualTo: view.leadingAnchor, constant: 32),
             emptyLabel.trailingAnchor.constraint(lessThanOrEqualTo: view.trailingAnchor, constant: -32),
+            // 首次加载态与空态同槽位居中（互斥显隐，见 load/updateTitleAndEmptyState）。
+            firstLoadStateView.centerXAnchor.constraint(equalTo: view.centerXAnchor),
+            firstLoadStateView.centerYAnchor.constraint(equalTo: view.centerYAnchor),
+            firstLoadStateView.leadingAnchor.constraint(greaterThanOrEqualTo: view.leadingAnchor, constant: 32),
+            firstLoadStateView.trailingAnchor.constraint(lessThanOrEqualTo: view.trailingAnchor, constant: -32),
         ])
 
         NotificationCenter.default.addObserver(self, selector: #selector(friendsChanged), name: .bearyFriendsChanged, object: nil)
@@ -217,6 +232,8 @@ final class BearyFriendsViewController: UIViewController, UITableViewDelegate, U
         if SessionManager.shared.isLoggedIn {
             friends = []
             loadFailed = false
+            // 新号的首次加载重新走加载态（旧号加载态不得残留到新号）。
+            firstLoadPending = true
             updateTitleAndEmptyState()
             tableView.reloadData()
             if loading {
@@ -227,6 +244,7 @@ final class BearyFriendsViewController: UIViewController, UITableViewDelegate, U
         } else {
             friends = []
             loadFailed = false
+            firstLoadPending = true
             needsReloadAfterUserChange = false
             updateTitleAndEmptyState()
             tableView.reloadData()
@@ -242,12 +260,20 @@ final class BearyFriendsViewController: UIViewController, UITableViewDelegate, U
         guard !loading else { return }
         loading = true
         loadFailed = false
+        // 审计第 19 项：首次无数据才显加载态（下拉刷新自带转圈时不叠加）；
+        // 有旧数据时不遮内容，后台刷新完直接换行。
+        if firstLoadPending && friends.isEmpty && tableView.refreshControl?.isRefreshing != true {
+            emptyLabel.isHidden = true
+            firstLoadStateView.configure(kind: .loading, title: "加载中…", subtitle: nil, iconName: nil, actionTitle: nil)
+            firstLoadStateView.isHidden = false
+        }
         let requestUid = SessionManager.shared.currentUser?.id
         BearyAPI.shared.fetchFriends { [weak self] result in
             DispatchQueue.main.async {
                 guard let self = self else { return }
                 self.loading = false
                 self.tableView.refreshControl?.endRefreshing()
+                self.firstLoadStateView.isHidden = true
                 // 切号后到达的旧号回包直接丢弃；若新号重拉挂起，补发一次。
                 if SessionManager.shared.currentUser?.id != requestUid {
                     if self.needsReloadAfterUserChange {
@@ -256,6 +282,7 @@ final class BearyFriendsViewController: UIViewController, UITableViewDelegate, U
                     }
                     return
                 }
+                self.firstLoadPending = false
                 switch result {
                 case .success(let list):
                     self.friends = list.resolvedFriends
@@ -297,6 +324,28 @@ final class BearyFriendsViewController: UIViewController, UITableViewDelegate, U
             self?.presentFriendMenu(user: user, sourceButton: button)
         }
         return cell
+    }
+
+    // 审计第 19 项：新行首次出现只做透明度过渡（0.22s，减动效直设终值）；
+    // 已播过的行再次出现（滚动回 / reloadData 更新）只复位 alpha，不重播。
+    // 复用 cell 的 alpha 必须显式复位，否则上行动画中途的 cell 会带着半透明进新行。
+    func tableView(_ tableView: UITableView, willDisplay cell: UITableViewCell, forRowAt indexPath: IndexPath) {
+        guard indexPath.row < friends.count else { return }
+        let user = friends[indexPath.row]
+        let key = user.id.map { "friend-\($0)" } ?? "friend-\(user.handle ?? user.displayName ?? "")"
+        if fadedRowKeys.contains(key) {
+            cell.alpha = 1
+            return
+        }
+        fadedRowKeys.insert(key)
+        guard BearyMotion.animated(true) else {
+            cell.alpha = 1
+            return
+        }
+        cell.alpha = 0
+        UIView.animate(withDuration: 0.22, delay: 0, options: [.curveEaseOut, .allowUserInteraction], animations: {
+            cell.alpha = 1
+        })
     }
 
     func tableView(_ tableView: UITableView, didSelectRowAt indexPath: IndexPath) {
