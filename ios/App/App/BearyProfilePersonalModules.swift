@@ -50,9 +50,14 @@ enum BearyProfilePersonalLogic {
 
     // MARK: - 可见口径
 
-    /// 本人：全部非占位日记（公开 + 私密）；他人：仅 isPublic == true。
+    /// 本人：全部非占位日记（公开 + 私密）；他人：有效公开篇，或互关时的仅好友篇。
     /// 草稿 / 回收站条目服务端 author scope 本就不下发；本地若混入无 id 条目一律排除。
-    static func visibleEntries(_ entries: [Entry], isOwn: Bool) -> [Entry] {
+    /// 审计-个人页设置（与主列表 isProfileDiaryDisplayable 统一口径）：旧口径
+    /// 他人态一律排除仅好友篇，与主列表“只要 friends 就放行”分裂；现统一为
+    /// 非作者视角仅好友篇只在互关时放行（isMutualFriend 由调用方按实时
+    /// followState 传，未拉到状态时按非互关 fail-closed）。服务端 scope 口径
+    /// 仍需抓包核对，App 侧不依赖服务端单点过滤。
+    static func visibleEntries(_ entries: [Entry], isOwn: Bool, isMutualFriend: Bool = false) -> [Entry] {
         entries.filter { entry in
             guard let id = entry.id, !id.isEmpty else { return false }
             guard entry.placeholder != true else { return false }
@@ -63,7 +68,8 @@ enum BearyProfilePersonalLogic {
             // 当前调用链（个人模块语料仅本人页拉取、他人页模块不拉语料；作者
             // scope 服务端已滤过期篇）下此改不改变线上行为，属纵深防御：
             // 语料在过期前拉取、过期后仍在内存时，他人聚合不再把过期篇算进去。
-            return BearyEphemeral.isEffectivelyPublic(entry)
+            if BearyEphemeral.isEffectivelyPublic(entry) { return true }
+            return entry.isFriendsOnly && isMutualFriend
         }
     }
 
@@ -804,6 +810,16 @@ final class BearyYearReviewViewController: UIViewController {
         return isOwnFlag ? .own : .other
     }
 
+    /// [24] 小项 5：年报脚注唯一出处（空年与非空年共用，防两处文案漂移）。
+    private func makeYearReviewFootnote() -> UILabel {
+        let footnote = UILabel()
+        footnote.numberOfLines = 0
+        footnote.font = UIFont.systemFont(ofSize: 12)
+        footnote.textColor = BearyColors.gray
+        footnote.text = "词汇指纹只按当年正文统计，不展示正文。完整年度报告年底另做。"
+        return footnote
+    }
+
     private func renderSelectedYear() {
         // 代次先 +1：空年提前返回的分支同样作废在途旧请求，旧词行
         // 绝不插进新年的栈。
@@ -841,6 +857,10 @@ final class BearyYearReviewViewController: UIViewController {
             emptyLabel.textColor = BearyColors.gray
             emptyLabel.text = "这一年还没有日记"
             dynamicStack.addArrangedSubview(emptyLabel)
+            // [24] 小项 5：空年分支原先没有脚注，只剩口径徽标行；补与非空年
+            // 同一条脚注（同文案、同字号同灰色，见 makeYearReviewFootnote），
+            // 避免空年页丢了“完整年度报告年底另做”的口径说明。
+            dynamicStack.addArrangedSubview(makeYearReviewFootnote())
             return
         }
 
@@ -975,12 +995,7 @@ final class BearyYearReviewViewController: UIViewController {
         chartView.configure(monthlyChars: extras.monthlyChars)
         dynamicStack.addArrangedSubview(chartView)
 
-        let footnote = UILabel()
-        footnote.numberOfLines = 0
-        footnote.font = UIFont.systemFont(ofSize: 12)
-        footnote.textColor = BearyColors.gray
-        footnote.text = "词汇指纹只按当年正文统计，不展示正文。完整年度报告年底另做。"
-        dynamicStack.addArrangedSubview(footnote)
+        dynamicStack.addArrangedSubview(makeYearReviewFootnote())
 
         // 词汇指纹后台算：缓存命中时同步回调、直接插在栈顶；未命中时
         // 后台算完回主线程一次性插回，最终顺序与同步版一致。代次 + 年份

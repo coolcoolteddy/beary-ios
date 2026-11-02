@@ -47,9 +47,37 @@ final class BearyLivePhotoLoader {
     private let cache = NSCache<NSString, PHLivePhoto>()
     private let session: URLSession
 
+    /// 磁盘读 + TTL/上限 sweep 只走这里，不占主线程（原实现在调用线程同步读盘，
+    /// 调用方是主线程的卡片 configure，实况 mov 可达 10MB，首帧可卡）。
+    private static let diskQueue = DispatchQueue(label: "com.beary.live-disk", qos: .userInitiated)
+    /// 磁盘缓存 TTL 24 小时：与图片桶（BearyImageLoader）同款口径。
+    /// 实况视频与静态图同一可见性口径：转私密后旧盘缓存至多再活 24 小时，
+    /// 之后强制走网络、服务端按最新可见性判定，不无限期可读。
+    private static let diskCacheMaxAge: TimeInterval = 24 * 3600
+    /// 每账号桶磁盘上限 200MB：与图片桶同款；超了按修改时间删最旧文件直至回落。
+    private static let diskCacheCapBytes: Int64 = 200 * 1024 * 1024
+
+    private let stateLock = NSLock()
+    /// 桶代次：load() 起始桶与上次不同即 +1，旧桶在途任务取消、旧桶回包丢弃。
+    /// 内存键本身也含桶（见 memoryKey），切号后旧号条目即不可达。
+    private var generation = 0
+    private var activeBucket: String?
+    private var inFlightTasks: [URLSessionDataTask] = []
+    private var diskCacheTotals: [String: Int64] = [:]
+
     private init() {
         let config = URLSessionConfiguration.default
+        // 审计-性能：只关 URLCache，不改 ephemeral。ephemeral 会丢共享
+        // cookie 存储，私密实况视频将 401；图片加载器同款口径（default +
+        // urlCache=nil）：URLCache 按 URL 裸键、不分账号，私密字节一旦
+        // 进共享缓存，换号后仍可能被命中而不走服务端可见性判定，故关掉；
+        // 本加载器自有按账号分桶的磁盘缓存，URLCache 层纯属多余。
+        config.urlCache = nil
+        config.httpMaximumConnectionsPerHost = 6
         self.session = URLSession(configuration: config, delegate: BearyImageRedirectGuard.shared, delegateQueue: nil)
+        // PHLivePhoto 内存条目偏大（视频），NSCache 仍会在内存压力下自动逐出；
+        // countLimit 只作后备上限，不作日常淘汰依据。
+        cache.countLimit = 20
     }
 
     private func bucket() -> String {
@@ -59,38 +87,148 @@ final class BearyLivePhotoLoader {
         return "guest"
     }
 
-    private func fileURL(key: String, ext: String) -> URL? {
+    private func memoryKey(bucket: String, liveKey: String) -> NSString {
+        return "\(bucket)|\(liveKey)" as NSString
+    }
+
+    private func fileURL(key: String, ext: String, bucket: String) -> URL? {
         guard let caches = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first else { return nil }
         let digest = SHA256.hash(data: Data(key.utf8))
         let name = digest.map { String(format: "%02x", $0) }.joined() + "." + ext
-        let dir = caches.appendingPathComponent("BearyLiveCache").appendingPathComponent(bucket(), isDirectory: true)
+        let dir = caches.appendingPathComponent("BearyLiveCache").appendingPathComponent(bucket, isDirectory: true)
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true, attributes: nil)
         return dir.appendingPathComponent(name)
     }
 
-    private func download(url: URL, key: String, ext: String, completion: @escaping (Data?) -> Void) {
-        guard let file = fileURL(key: key, ext: ext) else {
-            completion(nil)
+    private func currentGeneration() -> Int {
+        stateLock.lock()
+        defer { stateLock.unlock() }
+        return generation
+    }
+
+    private func isCurrentGeneration(_ gen: Int) -> Bool {
+        return gen == currentGeneration()
+    }
+
+    /// 退出/401 清态：清该账号实况内存 + 磁盘桶（SessionManager 退出路径调用，
+    /// 与图片桶 purgeAccount 同口径；切换账号不走这里，旧桶保留、切回可复用）。
+    func purgeAccount(_ id: Int) {
+        cache.removeAllObjects()
+        guard let caches = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first else { return }
+        let dir = caches.appendingPathComponent("BearyLiveCache").appendingPathComponent("\(id)")
+        try? FileManager.default.removeItem(at: dir)
+        stateLock.lock()
+        diskCacheTotals["\(id)"] = nil
+        stateLock.unlock()
+    }
+
+    private func diskData(key: String, ext: String, bucket: String) -> Data? {
+        guard let file = fileURL(key: key, ext: ext, bucket: bucket) else { return nil }
+        if let values = try? file.resourceValues(forKeys: [.contentModificationDateKey]),
+           let mtime = values.contentModificationDate,
+           Date().timeIntervalSince(mtime) > Self.diskCacheMaxAge {
+            try? FileManager.default.removeItem(at: file)
+            return nil
+        }
+        guard let data = try? Data(contentsOf: file), !data.isEmpty else { return nil }
+        return data
+    }
+
+    private func writeDisk(data: Data, key: String, ext: String, bucket: String) {
+        guard let file = fileURL(key: key, ext: ext, bucket: bucket) else { return }
+        try? FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
+        let oldSize = (try? FileManager.default.attributesOfItem(atPath: file.path)[.size] as? NSNumber)?.int64Value ?? 0
+        try? data.write(to: file, options: .atomic)
+        let newSize = (try? FileManager.default.attributesOfItem(atPath: file.path)[.size] as? NSNumber)?.int64Value ?? 0
+        enforceDiskCacheCap(bucket: bucket, writtenDelta: newSize - oldSize)
+    }
+
+    private func enforceDiskCacheCap(bucket: String, writtenDelta: Int64) {
+        guard let caches = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first else { return }
+        let dir = caches.appendingPathComponent("BearyLiveCache").appendingPathComponent(bucket)
+        stateLock.lock()
+        defer { stateLock.unlock() }
+        var tracked: Int64
+        if let known = diskCacheTotals[bucket] {
+            tracked = known + writtenDelta
+            diskCacheTotals[bucket] = tracked
+            guard tracked > Self.diskCacheCapBytes else { return }
+        } else {
+            // 本进程首写、累计值未知：置为越限值，迫使本次即枚举校准一次。
+            tracked = Self.diskCacheCapBytes + 1
+        }
+        guard let names = try? FileManager.default.contentsOfDirectory(atPath: dir.path) else {
+            diskCacheTotals[bucket] = tracked
             return
         }
-        if let data = try? Data(contentsOf: file), !data.isEmpty {
-            completion(data)
+        var entries: [(url: URL, size: Int64, mtime: Date)] = []
+        var total: Int64 = 0
+        for name in names {
+            let url = dir.appendingPathComponent(name)
+            guard let values = try? url.resourceValues(forKeys: [.fileSizeKey, .contentModificationDateKey]),
+                  let size = values.fileSize, let mtime = values.contentModificationDate else { continue }
+            entries.append((url: url, size: Int64(size), mtime: mtime))
+            total += Int64(size)
+        }
+        guard total > Self.diskCacheCapBytes else {
+            diskCacheTotals[bucket] = total
             return
         }
-        let task = session.dataTask(with: url) { data, response, _ in
-            guard let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode),
+        entries.sort { $0.mtime < $1.mtime }
+        for entry in entries {
+            if total <= Self.diskCacheCapBytes { break }
+            try? FileManager.default.removeItem(at: entry.url)
+            total -= entry.size
+        }
+        diskCacheTotals[bucket] = total
+    }
+
+    private func untrackTask(_ task: URLSessionDataTask) {
+        stateLock.lock()
+        inFlightTasks.removeAll { $0 === task }
+        stateLock.unlock()
+    }
+
+    private func download(url: URL, key: String, ext: String, bucket: String, generation gen: Int, completion: @escaping (Data?) -> Void) {
+        var task: URLSessionDataTask?
+        task = session.dataTask(with: url) { [weak self] data, response, _ in
+            if let task = task { self?.untrackTask(task) }
+            guard let self = self, self.isCurrentGeneration(gen),
+                  let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode),
                   let data = data, !data.isEmpty else {
                 completion(nil)
                 return
             }
-            try? data.write(to: file, options: .atomic)
+            self.writeDisk(data: data, key: key, ext: ext, bucket: bucket)
             completion(data)
         }
+        guard let task = task else {
+            completion(nil)
+            return
+        }
+        stateLock.lock()
+        inFlightTasks.append(task)
+        stateLock.unlock()
         task.resume()
     }
 
     func load(staticKey: String, liveKey: String, contentMode: PHImageContentMode, completion: @escaping (PHLivePhoto?) -> Void) {
-        if let cached = cache.object(forKey: liveKey as NSString) {
+        // 桶在 load 起始固定：整条链路（磁盘读 / 网络写盘 / 内存键）都用它，
+        // 切号夹在请求与回包之间时不再写进新号桶；桶变了即取消旧桶在途任务。
+        let bucket = self.bucket()
+        stateLock.lock()
+        if activeBucket != bucket {
+            activeBucket = bucket
+            generation += 1
+            let stale = inFlightTasks
+            inFlightTasks.removeAll()
+            stateLock.unlock()
+            stale.forEach { $0.cancel() }
+        } else {
+            stateLock.unlock()
+        }
+        let gen = currentGeneration()
+        if let cached = cache.object(forKey: memoryKey(bucket: bucket, liveKey: liveKey)) {
             completion(cached)
             return
         }
@@ -99,36 +237,56 @@ final class BearyLivePhotoLoader {
             completion(nil)
             return
         }
-        download(url: videoURL, key: liveKey, ext: "mov") { [weak self] videoData in
-            guard let self = self, videoData != nil else {
-                DispatchQueue.main.async { completion(nil) }
+        Self.diskQueue.async { [weak self] in
+            guard let self = self, self.isCurrentGeneration(gen) else { return }
+            if let videoData = self.diskData(key: liveKey, ext: "mov", bucket: bucket),
+               let stillData = self.diskData(key: staticKey, ext: "jpg", bucket: bucket) {
+                // 磁盘双命中：数据已落盘，build 只凭文件 URL 组装，不再读盘。
+                _ = videoData
+                self.buildLivePhoto(stillData: stillData, bucket: bucket, liveKey: liveKey, staticKey: staticKey, generation: gen, contentMode: contentMode, completion: completion)
                 return
             }
-            self.download(url: stillURL, key: staticKey, ext: "jpg") { stillData in
-                guard let stillData = stillData,
-                      let videoFile = self.fileURL(key: liveKey, ext: "mov"),
-                      let stillFile = self.fileURL(key: staticKey, ext: "jpg"),
-                      FileManager.default.fileExists(atPath: videoFile.path),
-                      FileManager.default.fileExists(atPath: stillFile.path),
-                      let placeholder = UIImage(data: stillData) else {
+            self.download(url: videoURL, key: liveKey, ext: "mov", bucket: bucket, generation: gen) { [weak self] videoData in
+                guard let self = self, videoData != nil, self.isCurrentGeneration(gen) else {
                     DispatchQueue.main.async { completion(nil) }
                     return
                 }
-                let scale = UIScreen.main.scale
-                let targetSize = CGSize(width: placeholder.size.width * scale, height: placeholder.size.height * scale)
-                _ = PHLivePhoto.request(
-                    withResourceFileURLs: [stillFile, videoFile],
-                    placeholderImage: placeholder,
-                    targetSize: targetSize,
-                    contentMode: contentMode
-                ) { [weak self] photo, _ in
-                    DispatchQueue.main.async {
-                        if let photo = photo {
-                            self?.cache.setObject(photo, forKey: liveKey as NSString)
-                        }
-                        completion(photo)
+                self.download(url: stillURL, key: staticKey, ext: "jpg", bucket: bucket, generation: gen) { stillData in
+                    guard let stillData = stillData, self.isCurrentGeneration(gen) else {
+                        DispatchQueue.main.async { completion(nil) }
+                        return
                     }
+                    self.buildLivePhoto(stillData: stillData, bucket: bucket, liveKey: liveKey, staticKey: staticKey, generation: gen, contentMode: contentMode, completion: completion)
                 }
+            }
+        }
+    }
+
+    private func buildLivePhoto(stillData: Data, bucket: String, liveKey: String, staticKey: String, generation gen: Int, contentMode: PHImageContentMode, completion: @escaping (PHLivePhoto?) -> Void) {
+        guard let videoFile = self.fileURL(key: liveKey, ext: "mov", bucket: bucket),
+              let stillFile = self.fileURL(key: staticKey, ext: "jpg", bucket: bucket),
+              FileManager.default.fileExists(atPath: videoFile.path),
+              FileManager.default.fileExists(atPath: stillFile.path),
+              let placeholder = UIImage(data: stillData) else {
+            DispatchQueue.main.async { completion(nil) }
+            return
+        }
+        let scale = UIScreen.main.scale
+        let targetSize = CGSize(width: placeholder.size.width * scale, height: placeholder.size.height * scale)
+        _ = PHLivePhoto.request(
+            withResourceFileURLs: [stillFile, videoFile],
+            placeholderImage: placeholder,
+            targetSize: targetSize,
+            contentMode: contentMode
+        ) { [weak self] photo, _ in
+            DispatchQueue.main.async {
+                // 桶已切换的回包直接丢弃、不进新桶内存缓存（视图层 token 同样守门）。
+                guard let photo = photo, let self = self, self.isCurrentGeneration(gen) else {
+                    completion(nil)
+                    return
+                }
+                self.cache.setObject(photo, forKey: self.memoryKey(bucket: bucket, liveKey: liveKey))
+                completion(photo)
             }
         }
     }

@@ -654,11 +654,9 @@ final class BearyChromeViewController: UIViewController {
         fabShadow.backgroundColor = .clear
         // ChatGPT 视觉清单已定设计第 2 项：FAB 移除橙色外发光，改轻薄中性阴影。
         // 原值：橙色 shadowColor、透明度 0.45、半径 12、偏移 (0,10)——外发光感强。
-        // 新值只改阴影四项：黑色、中性、薄、贴近本体；玻璃底与加号图标一律不动。
-        fabShadow.layer.shadowColor = UIColor.black.cgColor
-        fabShadow.layer.shadowOpacity = 0.18
-        fabShadow.layer.shadowRadius = 6
-        fabShadow.layer.shadowOffset = CGSize(width: 0, height: 3)
+        // 2026-11-02 定版第 2 组：FAB 阴影收进 raised 档（0.12 / 8 / (0, 2)），
+        // 玻璃底与加号图标一律不动；本体圆角 27（形状）不动。
+        BearyShadow.applyRaised(to: fabShadow.layer)
         fabShadow.layer.cornerRadius = 27
         fabShadow.translatesAutoresizingMaskIntoConstraints = false
         fabContainer.addSubview(fabShadow)
@@ -1216,18 +1214,10 @@ final class BearyChromeViewController: UIViewController {
             imageView.contentMode = .scaleAspectFill
             imageView.clipsToBounds = true
             slogan = imageView
-        } else if let animation = Self.sloganAnimation(dark: dark) {
-            let animationView = LottieAnimationView(animation: animation)
-            animationView.backgroundColor = .clear
-            animationView.contentMode = .scaleAspectFit
-            launchVeilSloganAnimation = animationView
-            slogan = animationView
         } else {
-            // Lottie 解析失败兜底：仍只出文字静帧（帧 53），绝不回落熊图、不留空白 veil。
-            // 107 修复：同减动效路径改 aspectFill + 裁边（旧 aspectFit 下静帧墨迹
-            // 仅约 88×10pt）；另记一行反馈日志，解析失败不再静默（见 run 侧 1.2s
-            // 停留——静帧不再 0.4s 一闪而过）。
-            BearyAppLog.event("launch veil lottie parse failed")
+            // 审计动效组：106KB 标语 JSON 不再主线程同步解析——先挂帧 53
+            // 静帧占位（与旧解析失败兜底同一张图），后台线程解析后再换；
+            // 解析失败则静帧即最终兜底，并记一行反馈日志（旧失败分支同款）。
             let imageView = UIImageView(image: Self.sloganHoldImage(dark: dark))
             imageView.contentMode = .scaleAspectFill
             imageView.clipsToBounds = true
@@ -1250,6 +1240,39 @@ final class BearyChromeViewController: UIViewController {
         ])
         launchVeilView = veil
         launchVeilSloganView = slogan
+        // 审计动效组：后台解析标语 Lottie（见上）——起播前完成即换上 Lottie
+        // 视图；起播后/已清掉则丢弃结果，静帧继续作兜底，不闪换。
+        if !UIAccessibility.isReduceMotionEnabled {
+            let placeholder = slogan
+            let darkValue = dark
+            DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+                guard let animation = Self.sloganAnimation(dark: darkValue) else {
+                    BearyAppLog.event("launch veil lottie parse failed")
+                    return
+                }
+                DispatchQueue.main.async {
+                    guard let self = self, !self.launchVeilPlayed, !self.launchVeilRevealing,
+                          self.launchVeilView != nil, self.launchVeilSloganView === placeholder,
+                          let veil = self.launchVeilView else { return }
+                    let animationView = LottieAnimationView(animation: animation)
+                    animationView.backgroundColor = .clear
+                    animationView.contentMode = .scaleAspectFit
+                    animationView.translatesAutoresizingMaskIntoConstraints = false
+                    animationView.isUserInteractionEnabled = false
+                    placeholder.removeFromSuperview()
+                    veil.addSubview(animationView)
+                    NSLayoutConstraint.activate([
+                        animationView.centerXAnchor.constraint(equalTo: veil.centerXAnchor),
+                        animationView.widthAnchor.constraint(equalToConstant: sloganWidth),
+                        animationView.heightAnchor.constraint(equalToConstant: sloganHeight),
+                        NSLayoutConstraint(item: animationView, attribute: .centerY, relatedBy: .equal,
+                                           toItem: veil, attribute: .bottom, multiplier: 0.43, constant: 0),
+                    ])
+                    self.launchVeilSloganAnimation = animationView
+                    self.launchVeilSloganView = animationView
+                }
+            }
+        }
         view.bringSubviewToFront(veil)
         // 107 修复：删掉 install 时起算的 6 秒绝对兜底——它按 viewDidLoad 计时，
         // 若 viewDidAppear 来得稍迟就会在动画中途清 veil（旧 4 秒截断的前科即
@@ -1380,6 +1403,14 @@ final class BearyChromeViewController: UIViewController {
         // 107 修复：起播完成回调与起播相对兜底只揭开一次（见 launchVeilRevealing）。
         guard !launchVeilRevealing else { return }
         launchVeilRevealing = true
+        // 审计动效组：点按跳过同样走减动效门控——减动效时直出终值，不播
+        // 0.4s 淡出与卡片错峰（自然起播路径已有减动效早退，此处补点按路径）。
+        // 卡片此前未被藏起（藏起在下方才做），故终值即现状；音效不门控减动效。
+        if UIAccessibility.isReduceMotionEnabled {
+            topLogoButton?.alpha = 1
+            removeLaunchVeil()
+            return
+        }
         var cards: [UIView] = []
         if let feedView = feedVC?.view, let table = findTableView(in: feedView) {
             cards = table.visibleCells.compactMap { $0 as? BearyDiaryCardCell }
@@ -1572,7 +1603,7 @@ final class BearyChromeViewController: UIViewController {
             fabDragAnchor = gesture.location(in: view)
             fabDragging = true
             fabDraggedThisTouch = false
-            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+            BearyHaptics.press()
         case .changed:
             guard fabDragging, let anchor = fabDragAnchor else { return }
             let point = gesture.location(in: view)
@@ -2180,6 +2211,8 @@ final class BearyChromeViewController: UIViewController {
         // 功能完善批接线：切回消息页瞬间必刷（门控口径：未读数变了才整页重拉，
         // 不变时零请求，不违背“切 tab 不重复拉取”；重拍分支已有无条件刷新，不走这里）。
         if page == .notif {
+            // 审计-性能：切回消息页恢复 60 秒轮询（离页时 pageDidLeave 已停表）。
+            notifVC?.pageDidEnter()
             notifVC?.refreshListIfUnreadChanged()
         }
     }
@@ -2276,6 +2309,9 @@ final class BearyChromeViewController: UIViewController {
                         // 唯一纠错路径。
                         self.feedVC?.removeDeletedEntry(entryId: entryId)
                         self.profileVC?.removeDeletedEntry(entryId: entryId)
+                        // 审计 2026-11-02 第十节：被引篇删除时定向失效引用缓存，
+                        // 旧引用卡不再按删除前拉到的全文渲染。
+                        BearyDiaryCardCell.invalidateQuote(id: entryId)
                         if let uid = SessionManager.shared.currentUser?.id {
                             let bucket = BearyFeedCache.bucket(userId: uid)
                             // 审计 13：快照读盘异步化后的机械适配——读 + 过滤 +
@@ -2480,15 +2516,30 @@ final class BearyChromeViewController: UIViewController {
         let vc = BearyInviteViewController()
         vc.onClose = { [weak vc] in vc?.dismiss(animated: BearyMotion.animated(true)) }
         vc.onRequireLogin = { [weak self] in self?.presentLoginGate() }
+        // 审计 2026-11-02 弹窗组：两形态统一为点遮罩关闭，且关闭一律走取消路径
+        // （onClose）；dismiss 完成后清强持有与 transitioningDelegate（拖动关闭、
+        // dim 关闭、关闭钮均经 dismissalHandler 覆盖，旧路径从不清 nil）。
+        let inviteDismissalCleanup: () -> Void = { [weak self, weak vc] in
+            self?.inviteCentered = nil
+            self?.inviteSheet = nil
+            vc?.transitioningDelegate = nil
+        }
         if view.bounds.width >= 821 {
             let centered = BearyCenteredTransitioningDelegate()
             // F9：邀请弹窗宽屏版单独给 dim 加点击关闭（编辑器保持不动，见 BearyCenteredModal）。
             centered.dimTapCloses = true
+            centered.dimTapHandler = { [weak vc] in vc?.onClose?() }
+            centered.dismissalHandler = inviteDismissalCleanup
             vc.modalPresentationStyle = .custom
             vc.transitioningDelegate = centered
             inviteCentered = centered
         } else {
             let sheet = BearyComposerSheetTransitioningDelegate()
+            // 窄屏底 sheet 旧无 dim 手势（点遮罩不关闭），与宽屏分裂；本处补齐，
+            // 与宽屏统一为点遮罩关闭、同样走 onClose 取消路径。
+            sheet.dimTapCloses = true
+            sheet.dimTapHandler = { [weak vc] in vc?.onClose?() }
+            sheet.dismissalHandler = inviteDismissalCleanup
             vc.modalPresentationStyle = .custom
             vc.transitioningDelegate = sheet
             inviteSheet = sheet
@@ -2610,12 +2661,20 @@ final class BearyChromeViewController: UIViewController {
             SessionManager.shared.cancelAccountAddSession()
             vc?.dismiss(animated: BearyMotion.animated(true))
         }
-        vc.onLoggedIn = { [weak self, weak vc] in
+        vc.onLoggedIn = { [weak self, weak vc] referralText in
             // 新号登录成功先解 arm（当前态即新号，不得再恢复原号），
             // 再 dismiss + refreshMe 立新态、快照新号。
             SessionManager.shared.completeAccountAddSession()
             vc?.dismiss(animated: BearyMotion.animated(true)) {
-                SessionManager.shared.refreshMe()
+                SessionManager.shared.refreshMe { [weak self] _ in
+                    DispatchQueue.main.async {
+                        // 审计登录杂项：邀请绑定反馈落点——进 App 后 BearyToast 一次
+                        //（登录页内行文案随 dismiss 消失，不再指望被读到；Plus 到期日
+                        // 由 refreshMe 后的 currentUser.plusUntil 补全）。
+                        guard let self = self, let text = referralText, !text.isEmpty else { return }
+                        self.showToast(message: BearyReferralFeedback.toastText(base: text, plusUntil: SessionManager.shared.currentUser?.plusUntil))
+                    }
+                }
             }
         }
         // 游客模式入口：登录页“先逛逛”回调；容器负责关登录页后进游客态。
@@ -3120,9 +3179,12 @@ final class BearyChromeViewController: UIViewController {
     }
 
     /// 引导页弹出（v3 四页版）：引导 UI 在 BearyOnboardingViewController.swift
-    /// 内定义；容器只负责全屏模态弹出与四个回调的接线。seen 标记归属：闭包已
-    /// 设置时 VC 不写 seen、不 dismiss，全部由容器负责；跳过由 VC 自己写 seen
-    /// ＋dismiss，不经过这里。旧版预加载与旧版回调均已随 v3 删除，不再引用。
+    /// 内定义；容器只负责全屏模态弹出与四个回调的接线。seen 标记归属（审计登录
+    /// 杂项复核结论，2026-11-02）：闭包已设置时 VC 不写 seen、不 dismiss，全部由
+    /// 容器负责——下方四个回调（compose / browse / guestBrowse）与
+    /// presentLoginOverOnboarding 的成功 / 游客分支均已逐项核实写 seenKey，
+    /// 不存在“回调只跳转不写 key”的分支；跳过由 VC 自己写 seen＋dismiss，
+    /// 不经过这里。旧版预加载与旧版回调均已随 v3 删除，不再引用。
     /// 退出一律短暂淡出：crossDissolve 使弹出与所有退出（含 VC 自行 dismiss 的
     /// 跳过与兜底走完）均为淡入淡出，无需改 VC 文件；减动效时 animated:false
     /// 仍为瞬时切换。不闪白、不重播启动页、不加额外倒计时；数据未加载完用
@@ -3197,7 +3259,7 @@ final class BearyChromeViewController: UIViewController {
             SessionManager.shared.cancelAccountAddSession()
             vc?.dismiss(animated: BearyMotion.animated(true))
         }
-        vc.onLoggedIn = { [weak self, weak vc, weak onboarding] in
+        vc.onLoggedIn = { [weak self, weak vc, weak onboarding] referralText in
             // 新号登录成功先解 arm（当前态即新号，不得再恢复原号）。
             SessionManager.shared.completeAccountAddSession()
             // 登录页瞬时撤掉（不播滑下，避免成功路径上引导页闪现两次动效），
@@ -3208,6 +3270,13 @@ final class BearyChromeViewController: UIViewController {
                 guard let self = self else { return }
                 UserDefaults.standard.set(true, forKey: BearyOnboardingViewController.seenKey)
                 onboarding?.dismiss(animated: BearyMotion.animated(true))
+                // 审计登录杂项：邀请绑定反馈落点——引导层淡出、露出主页时 toast
+                // 一次基础文案（此时 refreshMe 尚未回包，Plus 到期日补全只在主
+                // 登录路径做；firstLaunch 随后开编辑器时 toast 会被全屏编辑器盖住，
+                // 属已知局限，replay 路径可完整看到）。
+                if let text = referralText, !text.isEmpty {
+                    self.showToast(message: text)
+                }
                 SessionManager.shared.refreshMe { [weak self] _ in
                     DispatchQueue.main.async { [weak self] in
                         guard let self = self, mode == .firstLaunch,
@@ -3396,7 +3465,10 @@ final class BearyChromeViewController: UIViewController {
                     detail.update(with: placeholderEntry)
                     return
                 }
-                if fetched.isPublic == true, fetched.authorId != nil {
+                // 审计 2026-11-02 第十节：详情门按三档判定——公开走有效态（过期即私密），
+                // 仅好友只在服务端 state 确认互关时全见（App 侧不只认 isPublic），
+                // 其余一律占位（fail-closed；state 拉取失败同样占位）。
+                if BearyEphemeral.isEffectivelyPublic(fetched), fetched.authorId != nil {
                     detail.update(with: fetched)
                     return
                 }
@@ -3404,11 +3476,34 @@ final class BearyChromeViewController: UIViewController {
                     detail.update(with: fetched)
                     return
                 }
+                if fetched.isFriendsOnly, let authorId = fetched.authorId, SessionManager.shared.isLoggedIn {
+                    BearyAPI.shared.fetchFollowState(userId: authorId) { [weak self, weak detail] stateResult in
+                        DispatchQueue.main.async {
+                            guard let detail = detail else { return }
+                            switch stateResult {
+                            case .success(let state)
+                                where (state.mutual ?? false) || ((state.following ?? false) && (state.followedBy ?? false)):
+                                detail.update(with: fetched)
+                            default:
+                                var placeholderEntry = fetched
+                                placeholderEntry.placeholder = true
+                                detail.update(with: placeholderEntry)
+                            }
+                        }
+                    }
+                    return
+                }
                 if fetched.isPublic == true {
+                    if fetched.authorId != nil {
+                        // stored 公开但已过期：有效态为私密，切占位（不留卡片旧全文）。
+                        var placeholderEntry = fetched
+                        placeholderEntry.placeholder = true
+                        detail.update(with: placeholderEntry)
+                    }
                     // 公开但定不出作者：保持卡片页（见本函数注释），不更新、不 toast。
                     return
                 }
-                // 私密非作者：切详情私密占位。
+                // 私密非作者：切详情占位（文案按回包 visibility 区分，无字段时通用占位）。
                 var placeholderEntry = fetched
                 placeholderEntry.placeholder = true
                 detail.update(with: placeholderEntry)
@@ -3459,17 +3554,40 @@ final class BearyChromeViewController: UIViewController {
             presentDetail(entry: placeholderEntry)
             return
         }
-        if fetched.isPublic == true, fetched.authorId != nil {
+        // 审计 2026-11-02 第十节：详情门按三档判定——作者本人全见、有效公开全见、
+        // 仅好友只在服务端 state 确认互关时全见、私密占位；state 拉取失败占位
+        // （fail-closed）；服务端视角改写口径须抓包核对（见 PR 未做项）。
+        if BearyEphemeral.isEffectivelyPublic(fetched), fetched.authorId != nil {
             presentDetail(entry: fetched)
+            return
+        }
+        // 服务端已占位化的 payload 直接进占位（不再为仅好友占位体多拉一次 state）。
+        if fetched.placeholder == true {
+            presentDetail(entry: fetched)
+            return
+        }
+        if fetched.isFriendsOnly, let authorId = fetched.authorId, SessionManager.shared.isLoggedIn {
+            showToast(message: "正在打开…")
+            BearyAPI.shared.fetchFollowState(userId: authorId) { [weak self] stateResult in
+                DispatchQueue.main.async {
+                    guard let self = self else { return }
+                    switch stateResult {
+                    case .success(let state)
+                        where (state.mutual ?? false) || ((state.following ?? false) && (state.followedBy ?? false)):
+                        self.presentDetail(entry: fetched)
+                    default:
+                        var placeholderEntry = fetched
+                        placeholderEntry.placeholder = true
+                        self.presentDetail(entry: placeholderEntry)
+                    }
+                }
+            }
             return
         }
         if fetched.isPublic == true {
             // 公开但定不出作者：无法署名作者行，按不存在处理（不递归）。
+            // （含 stored 公开但已过期且定不出作者的篇：有效态为私密，同样不存在处理。）
             showToast(message: "这篇日记不存在或已被删除")
-            return
-        }
-        if fetched.placeholder == true {
-            presentDetail(entry: fetched)
             return
         }
         // 非占位 payload 的私密非作者篇：同样进详情占位（详情只认 placeholder 显占位；
@@ -3876,8 +3994,21 @@ extension BearyChromeViewController: UIPopoverPresentationControllerDelegate {
 // reduced-motion：进出动画时长 0，见 BearyComposerSheetAnimator；下滑松手回弹亦直接复位。
 
 final class BearyComposerSheetTransitioningDelegate: NSObject, UIViewControllerTransitioningDelegate {
+    /// 审计 2026-11-02 弹窗组：邀请页窄屏底 sheet 与宽屏居中卡片统一为
+    /// 点遮罩关闭。默认 false（编辑器底 sheet 不得点遮罩关闭，须走自身取消流程）；
+    /// 仅邀请页置 true。dim 点击走 dimTapHandler（一般接被呈现页 onClose），
+    /// 未置时回落直接 dismiss。
+    var dimTapCloses = false
+    var dimTapHandler: (() -> Void)?
+    /// dismiss 完成回调（调用方做 dismiss 后清理，如 transitioningDelegate=nil）。
+    var dismissalHandler: (() -> Void)?
+
     func presentationController(forPresented presented: UIViewController, presenting: UIViewController?, source: UIViewController) -> UIPresentationController? {
-        return BearyComposerSheetPresentationController(presentedViewController: presented, presenting: presenting)
+        let controller = BearyComposerSheetPresentationController(presentedViewController: presented, presenting: presenting)
+        controller.dimTapCloses = dimTapCloses
+        controller.dimTapHandler = dimTapHandler
+        controller.dismissalHandler = dismissalHandler
+        return controller
     }
 
     func animationController(forPresented presented: UIViewController, presenting: UIViewController, source: UIViewController) -> UIViewControllerAnimatedTransitioning? {
@@ -3914,6 +4045,18 @@ private final class BearyComposerSheetPresentationController: UIPresentationCont
     private let sheetTopBorderView = UIView()
     private var grabberInstalled = false
     private var sheetHeight: CGFloat = 0
+    /// 审计 2026-11-02 弹窗组：见 BearyComposerSheetTransitioningDelegate。
+    var dimTapCloses = false
+    var dimTapHandler: (() -> Void)?
+    var dismissalHandler: (() -> Void)?
+
+    @objc private func sheetDimTapped() {
+        if let handler = dimTapHandler {
+            handler()
+        } else {
+            presentedViewController.dismiss(animated: BearyMotion.animated(true))
+        }
+    }
     // 90 包修法：转场进行中跳过 presentedView.frame 重写（transform 未归位时 frame 未定义，
     // 坏写会算坏 center、动画第一帧再也出不来）；转场结束后恢复正常写帧。
     private var isTransitioning = false
@@ -3942,10 +4085,16 @@ private final class BearyComposerSheetPresentationController: UIPresentationCont
             dimmingView.leadingAnchor.constraint(equalTo: container.leadingAnchor),
             dimmingView.trailingAnchor.constraint(equalTo: container.trailingAnchor),
         ])
+        // 审计 2026-11-02 弹窗组：仅 dimTapCloses 时给 dim 加点击关闭
+        // （邀请窄屏版；编辑器不动）。旧窄屏 sheet 根本无 dim 手势，
+        // 与宽屏居中卡片“点遮罩关闭”分裂，本处补齐为统一口径。
+        if dimTapCloses {
+            dimmingView.addGestureRecognizer(UITapGestureRecognizer(target: self, action: #selector(sheetDimTapped)))
+        }
         // 网页抓手无附加安全区：不再补 28pt 顶 inset；抓手直接落在 sheet 顶部（顶距 10）。
         // 阴影层挂在容器里、presentedView 下方（presentedView 自身裁剪，阴影不能挂它身上）。
         sheetShadowView.backgroundColor = .clear
-        BearySheetChrome.applyShadow(to: sheetShadowView.layer, centered: false)
+        BearySheetChrome.applyShadow(to: sheetShadowView.layer)
         container.addSubview(sheetShadowView)
         if UIAccessibility.isReduceMotionEnabled {
             dimmingView.alpha = 1
@@ -3971,13 +4120,18 @@ private final class BearyComposerSheetPresentationController: UIPresentationCont
         // 临时诊断（86 包，定根因后删除；UIKit 无 presentationTransitionDidComplete，此为最接近的结束点）。
         DiagFile.mark("sheet-didComplete")
         if !completed {
+            // 审计 2026-11-02 弹窗组：取消路径同时清遮罩与阴影（旧路径只清阴影）。
+            dimmingView.removeFromSuperview()
             sheetShadowView.removeFromSuperview()
         }
     }
 
     override func dismissalTransitionDidEnd(_ completed: Bool) {
         if completed {
+            // 审计 2026-11-02 弹窗组：取消路径同时清遮罩与阴影，再通知调用方清理。
+            dimmingView.removeFromSuperview()
             sheetShadowView.removeFromSuperview()
+            dismissalHandler?()
         }
     }
 
@@ -4055,11 +4209,10 @@ private final class BearyComposerSheetPresentationController: UIPresentationCont
             // 审计第 14 项：原口径不动，改走共用映射（其余面板与此同口径）。
             dimmingView.alpha = BearySheetDrag.scrimAlpha(forDragOffset: drag, sheetHeight: sheetHeight)
         case .ended:
-            // 审计 B 组 8：只在正常松手时执行关闭判断，条件原样不动
-            // （位移 > 高 × 0.25 或速度 > 800 即关闭，否则弹回原位）。
+            // 审计 B 组 8：只在正常松手时执行关闭判断，条件走多数派口径
+            // （位移 > 80pt 或速度 > 600pt/s 即关闭，否则弹回原位）。
             let velocity = pan.velocity(in: container).y
-            let height = sheetHeight > 0 ? sheetHeight : presentedView.bounds.height
-            if translation > height * 0.25 || velocity > 800 {
+            if translation > 80 || velocity > 600 {
                 presentedViewController.dismiss(animated: BearyMotion.animated(true))
             } else {
                 let restore = {

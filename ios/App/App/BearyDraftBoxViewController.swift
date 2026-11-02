@@ -297,12 +297,12 @@ final class BearyDraftBoxViewController: UIViewController {
             cardView.alpha = 0
             cardView.transform = CGAffineTransform(translationX: 0, y: 8)
         }
-        // 卡片播放入 playCards：错峰延迟设上限，逐张 +0.04，但累计不超过 0.36——
+        // 卡片播放入 playCards：错峰延迟设上限，逐张 +0.03，但累计不超过 0.24——
         // 大量草稿时尾部可见卡片不再拖出超长尾巴；超上限的卡片同批播出。
         let playCards = {
-            let maxDelay: TimeInterval = 0.36
+            let maxDelay: TimeInterval = 0.24
             for (index, cardView) in cardViews.enumerated() {
-                let delay = min(TimeInterval(index) * 0.04, maxDelay)
+                let delay = min(TimeInterval(index) * 0.03, maxDelay)
                 UIView.animate(withDuration: 0.25, delay: delay, options: .curveEaseOut, animations: {
                     cardView.alpha = 1
                     cardView.transform = .identity
@@ -365,7 +365,8 @@ final class BearyDraftBoxViewController: UIViewController {
         // 玻璃范围 Token 只允许栏/菜单，底 sheet 不在内）；sheetView 本身不裁剪，阴影保留。
         sheetView.backgroundColor = BearyColors.surface
         sheetView.layer.cornerRadius = BearySheetChrome.topCornerRadius
-        // 阴影色与数值一律走 BearySheetChrome.applyShadow（见 applySheetChrome），此处不再自写。
+        // 阴影一律走底 sheet 档（2026-11-02 定版第 2 组，旧 0.30/30/(0, 24) 档已废弃），
+        // 此处不再自写数值。
         sheetView.translatesAutoresizingMaskIntoConstraints = false
         view.addSubview(sheetView)
 
@@ -655,14 +656,14 @@ final class BearyDraftBoxViewController: UIViewController {
             sheetView.layer.maskedCorners = [.layerMinXMinYCorner, .layerMaxXMinYCorner, .layerMinXMaxYCorner, .layerMaxXMaxYCorner]
             sheetView.layer.borderWidth = 1
             sheetView.layer.bearyDynamicBorderColor = BearyColors.line
-            BearySheetChrome.applyShadow(to: sheetView.layer, centered: true)
+            BearySheetChrome.applyShadow(to: sheetView.layer)
             // 审计第 10 项：顶圆角归固定头部，底圆角归滚动区（圆角数值不动）。
             fixedHeaderView.layer.maskedCorners = [.layerMinXMinYCorner, .layerMaxXMinYCorner]
             sheetScrollView.layer.maskedCorners = [.layerMinXMaxYCorner, .layerMaxXMaxYCorner]
         } else {
             sheetView.layer.maskedCorners = [.layerMinXMinYCorner, .layerMaxXMinYCorner]
             sheetView.layer.borderWidth = 0
-            BearySheetChrome.applyShadow(to: sheetView.layer, centered: false)
+            BearySheetChrome.applyShadow(to: sheetView.layer)
             fixedHeaderView.layer.maskedCorners = [.layerMinXMinYCorner, .layerMaxXMinYCorner]
             sheetScrollView.layer.maskedCorners = []
         }
@@ -752,7 +753,7 @@ final class BearyDraftBoxViewController: UIViewController {
                         self?.renderDrafts()
                     }
                 } else {
-                    self.showDraftToast(message: "清除失败，请再试一次")
+                    self.showDraftToast(message: "清除失败，请重试")
                 }
             }
         })
@@ -1377,6 +1378,20 @@ final class BearyDraftBoxViewController: UIViewController {
     }
 
     @objc private func closeBox() {
+        // 审计-编辑器详情：补查证实——删盘在 finishDelete 即落盘，撤销只活
+        // 在箱内 pendingUndos 内存（deinit 即清计时器与队列），故 6 秒窗内
+        // 关箱即丢撤销。修法取审计“弹确认”分支：仅当仍有可撤销笔时确认，
+        // 无待撤销笔时关闭路径一字不动；打开/新建篇幅走各自退场，不在此拦。
+        if presentedViewController is UIAlertController { return }
+        if !pendingUndos.isEmpty {
+            let alert = UIAlertController(title: nil, message: "关闭草稿箱后，刚删除的草稿将无法撤销", preferredStyle: .alert)
+            alert.addAction(UIAlertAction(title: "仍要关闭", style: .destructive) { [weak self] _ in
+                self?.dismissWithExitAnimation(completion: nil)
+            })
+            alert.addAction(UIAlertAction(title: "取消", style: .cancel, handler: nil))
+            present(alert, animated: true)
+            return
+        }
         // 弹窗审计 E1-18：关闭钮/遮罩/把手下滑三路只走统一退场，回调为空，
         // 不另播动画——旧 closeBox 本身就是这支退场，抽成共用方法后行为不变。
         dismissWithExitAnimation(completion: nil)
@@ -1596,7 +1611,7 @@ final class BearyDraftBoxViewController: UIViewController {
                     strongSelf.drafts.insert(draftValue, at: min(restoreIndex, strongSelf.drafts.count))
                 }
                 strongSelf.renderDrafts()
-                strongSelf.showDraftToast(message: "删除失败，请再试一次")
+                strongSelf.showDraftToast(message: "删除失败，请重试")
                 return
             }
             if let currentIndex = strongSelf.drafts.firstIndex(where: { $0.draftId == draftValue.draftId }) {
@@ -1659,7 +1674,7 @@ final class BearyDraftBoxViewController: UIViewController {
             } else {
                 strongSelf.loadDrafts {
                     strongSelf.renderDrafts()
-                    strongSelf.showDraftToast(message: "恢复失败，请再试一次")
+                    strongSelf.showDraftToast(message: "恢复失败，请重试")
                 }
             }
         }
