@@ -403,7 +403,9 @@ final class BearyImageLoader {
         // G23：缓存按像素计 cost 并设上限，避免无界增长。
         // 20_000_000 像素 ≈ 最坏 80MB（RGBA 4 字节/像素）；站内图以缩略图
         // 与头像为主，日常占用远低于此。
+        // 审计-性能：再补 countLimit 作条数后备上限（cost 已是主约束）。
         cache.totalCostLimit = 20_000_000
+        cache.countLimit = 1000
     }
 
     // S10 磁盘缓存：目录 = 系统 caches 目录下的 BearyImageCache/<账号> 子目录
@@ -1076,24 +1078,34 @@ extension UIImageView {
 // MARK: - 时间与名字
 
 enum BearyText {
+    /// 审计-性能：逐行新建 DateFormatter 改静态复用（每种格式一个静态实例，
+    /// 不复用同一实例改 dateFormat；调用方只在主线程做行渲染，不跨线程用）。
+    private static let hourMinuteFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "zh_CN")
+        formatter.dateFormat = "H:mm"
+        return formatter
+    }()
+    private static let monthDayHourMinuteFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "zh_CN")
+        formatter.dateFormat = "M月d日 H:mm"
+        return formatter
+    }()
+
     /// [24] 小项 6：统一为项目主流口径——今天 → H:mm；昨天 → 昨天 H:mm；
-    /// 否则 M月d日 H:mm（小时不补零，与卡片/详情/通知/时间线引用一致；
-    /// 旧 HH:mm 偏离主流，已改齐；本函数现行调用方为空，改动只防后用漂移）。
+    /// 否则 M月d日 H:mm（小时不补零，与卡片/详情/通知/时间线引用一致）。
+    /// created_at 是毫秒时间戳。
     static func timeString(ms: Int) -> String {
         let date = Date(timeIntervalSince1970: TimeInterval(ms) / 1000.0)
         let cal = Calendar.current
-        let fmt = DateFormatter()
-        fmt.locale = Locale(identifier: "zh_CN")
         if cal.isDateInToday(date) {
-            fmt.dateFormat = "H:mm"
-            return fmt.string(from: date)
+            return hourMinuteFormatter.string(from: date)
         }
         if cal.isDateInYesterday(date) {
-            fmt.dateFormat = "H:mm"
-            return "昨天 " + fmt.string(from: date)
+            return "昨天 " + hourMinuteFormatter.string(from: date)
         }
-        fmt.dateFormat = "M月d日 H:mm"
-        return fmt.string(from: date)
+        return monthDayHourMinuteFormatter.string(from: date)
     }
 
     /// 心情 key → 中文名（与网页 MOOD_DEFS 同集 40 种；前 32 带小熊、后 8 不带）。
