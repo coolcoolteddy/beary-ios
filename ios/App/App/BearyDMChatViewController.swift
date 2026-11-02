@@ -349,6 +349,29 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
         tableView.scrollToRow(at: path, at: .bottom, animated: false)
     }
 
+    /// 发送动画：末行是刚发出的本人消息且可见时，让该 cell 从输入框位置
+    /// 动进它在历史区的位置。只走 transform（位移）+ opacity，全站 0.25s
+    /// 口径，无弹簧无花哨；末行不是本人消息（对方恰好同时发来）或不可见时不播。
+    private func animateLastMineRow() {
+        guard let last = messages.last,
+              last.senderId != nil,
+              last.senderId == SessionManager.shared.currentUser?.id else { return }
+        tableView.layoutIfNeeded()
+        let path = IndexPath(row: messages.count - 1, section: 0)
+        guard let cell = tableView.cellForRow(at: path) else { return }
+        let cellCenterInView = tableView.convert(cell.center, to: view)
+        let inputCenterInView = inputTextView.convert(
+            CGPoint(x: inputTextView.bounds.midX, y: inputTextView.bounds.midY), to: view)
+        let deltaY = inputCenterInView.y - cellCenterInView.y
+        guard deltaY > 0 else { return }
+        cell.alpha = 0
+        cell.transform = CGAffineTransform(translationX: 0, y: deltaY)
+        UIView.animate(withDuration: 0.25, delay: 0, options: .curveEaseOut, animations: {
+            cell.alpha = 1
+            cell.transform = .identity
+        }, completion: nil)
+    }
+
     private func updateEmptyState() {
         if sessionClosed {
             emptyLabel.text = "该会话已关闭"
@@ -411,6 +434,20 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
 
     /// 最新页：服务端按 id 倒序下发，展示时反转为正序；成功后清未读。
     /// onLoaded 报告拉取开始时用户是否在底部附近（发送成功后的 pill 判定用）。
+    /// 根因补全：后端 history 只给 from_me、不给 sender_id，入库前须把
+    /// senderId 补全（自己发 = 本人 id，否则 = 对方 id），否则本地 store
+    /// 会把无 senderId 的行当脏行跳过，整页历史永远显空态。
+    private func resolvedSenders(_ messages: [BearyAPI.DMMessage]) -> [BearyAPI.DMMessage] {
+        let myId = SessionManager.shared.currentUser?.id
+        let peerId = peer.id
+        return messages.map { m in
+            guard m.senderId == nil else { return m }
+            var fixed = m
+            fixed.senderId = (m.fromMe == true) ? myId : peerId
+            return fixed
+        }
+    }
+
     private func loadLatest(onLoaded: ((Bool) -> Void)? = nil) {
         guard let userId = peer.id else { return }
         guard SessionManager.shared.isLoggedIn else {
@@ -437,8 +474,8 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
                     self.sessionClosed = false
                     self.inputTextView.isEditable = true
                     self.updatePermBanner()
-                    let fetched = history.resolvedMessages.reversed()
-                    BearyDMStore.saveMessages(accountId: self.storeAccountId, peer: self.peer, messages: Array(fetched))
+                    let fetched = resolvedSenders(Array(history.resolvedMessages.reversed()))
+                    BearyDMStore.saveMessages(accountId: self.storeAccountId, peer: self.peer, messages: fetched)
                     self.messages = BearyDMStore.messages(accountId: self.storeAccountId, peerId: userId)
                     self.hasMoreOlder = history.resolvedMessages.count >= 30
                     self.loadFailed = false
@@ -493,7 +530,7 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
                 self.messageBusy = false
                 switch result {
                 case .success(let history):
-                    let older = Array(history.resolvedMessages.reversed())
+                    let older = resolvedSenders(Array(history.resolvedMessages.reversed()))
                     self.hasMoreOlder = history.resolvedMessages.count >= 30
                     BearyDMStore.saveMessages(accountId: self.storeAccountId, peer: self.peer, messages: older)
                     self.messages = BearyDMStore.messages(accountId: self.storeAccountId, peerId: userId)
@@ -548,7 +585,12 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
                     // 审计：发送成功不再强行拽到底部——仅用户已在底部附近时跟随，
                     // 否则显“新消息”pill，点按再到底部。
                     self.loadLatest { [weak self] wasAtBottom in
-                        if !wasAtBottom { self?.newMessagePill.isHidden = false }
+                        if !wasAtBottom {
+                            self?.newMessagePill.isHidden = false
+                        } else {
+                            // 发送动画：刚发出的气泡从输入框位置动进历史区末行。
+                            self?.animateLastMineRow()
+                        }
                     }
                 case .failure(let error):
                     if case .unauthorized = error {
@@ -671,6 +713,9 @@ private final class BearyDMMessageCell: UITableViewCell {
 
     override func prepareForReuse() {
         super.prepareForReuse()
+        // 发送动画中途复用不得把位移/透明残留带给下一条。
+        transform = .identity
+        alpha = 1
         mineTextLabel.text = nil
         theirsTextLabel.text = nil
         mineTimeLabel.text = nil
