@@ -81,7 +81,13 @@ final class BearyDiaryStarMapViewController: UIViewController {
     private let emptySubLabel = UILabel()
     private let failureView = UIView()
     private let failureLabel = UILabel()
-    private let retryButton = UIButton(type: .system)
+    private let retryButton = BearyHit44Button(type: .system)
+    /// 审计登录杂项：加载态（转圈＋“加载中…”），只在无已有数据时出现。
+    private let loadingView = UIView()
+    private let loadingSpinner = BearyRefreshIconView()
+    private let loadingLabel = UILabel()
+    /// 审计登录杂项：已有数据时分页失败的弱提示标记（applyModelToSky 拼进状态行）。
+    private var fetchStaleNote = false
 
     // MARK: - 状态
 
@@ -190,7 +196,8 @@ final class BearyDiaryStarMapViewController: UIViewController {
     }
 
     @objc private func didTapClose() {
-        dismiss(animated: true)
+        // 审计登录杂项：关闭走减动效口径，不再写死 animated:true。
+        dismiss(animated: BearyMotion.animated(true))
     }
 
     @objc private func didTapRetry() {
@@ -206,6 +213,7 @@ final class BearyDiaryStarMapViewController: UIViewController {
     /// 状态行 / 底卡全藏，sky 高压 0，内容底改锚失败视图），不再与
     /// 空视图同 top 重叠、不留 sky 420 高的空白尾巴。
     private func showFailureState() {
+        hideLoadingState()
         skyHeight?.constant = 0
         skyView.isHidden = true
         emptyView.isHidden = true
@@ -226,7 +234,8 @@ final class BearyDiaryStarMapViewController: UIViewController {
         scrollView.addSubview(contentView)
 
         legendLabel.translatesAutoresizingMaskIntoConstraints = false
-        legendLabel.font = UIFont.systemFont(ofSize: 12)
+        legendLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 12))
+        legendLabel.adjustsFontForContentSizeCategory = true
         legendLabel.textColor = BearyStarMapNight.secondaryText
         legendLabel.numberOfLines = 0
         legendLabel.text = "★ 大小 = 字数（字越多星越大）　亮度 = 心情\n连线 = 同心情 / 同地点 / 同词　点星进详情，点线看原因"
@@ -263,7 +272,8 @@ final class BearyDiaryStarMapViewController: UIViewController {
         contentView.addSubview(skyView)
 
         statusLabel.translatesAutoresizingMaskIntoConstraints = false
-        statusLabel.font = UIFont.systemFont(ofSize: 13)
+        statusLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13))
+        statusLabel.adjustsFontForContentSizeCategory = true
         statusLabel.textColor = BearyStarMapNight.secondaryText
         statusLabel.numberOfLines = 0
         contentView.addSubview(statusLabel)
@@ -288,12 +298,14 @@ final class BearyDiaryStarMapViewController: UIViewController {
         emptyIcon.tintColor = BearyStarMapNight.selected
         emptyIcon.contentMode = .scaleAspectFit
         emptyLabel.translatesAutoresizingMaskIntoConstraints = false
-        emptyLabel.font = UIFont.boldSystemFont(ofSize: 16)
+        emptyLabel.font = BearyDynamicType.cappedFont(for: UIFont.boldSystemFont(ofSize: 16))
+        emptyLabel.adjustsFontForContentSizeCategory = true
         emptyLabel.textColor = BearyStarMapNight.primaryText
         emptyLabel.textAlignment = .center
         emptyLabel.text = "这里还没有星星"
         emptySubLabel.translatesAutoresizingMaskIntoConstraints = false
-        emptySubLabel.font = UIFont.systemFont(ofSize: 14)
+        emptySubLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 14))
+        emptySubLabel.adjustsFontForContentSizeCategory = true
         emptySubLabel.textColor = BearyStarMapNight.secondaryText
         emptySubLabel.textAlignment = .center
         emptySubLabel.numberOfLines = 0
@@ -303,14 +315,18 @@ final class BearyDiaryStarMapViewController: UIViewController {
         contentView.addSubview(emptyView)
 
         failureLabel.translatesAutoresizingMaskIntoConstraints = false
-        failureLabel.font = UIFont.systemFont(ofSize: 14)
+        failureLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 14))
+        failureLabel.adjustsFontForContentSizeCategory = true
         failureLabel.textColor = BearyStarMapNight.secondaryText
         failureLabel.textAlignment = .center
         failureLabel.numberOfLines = 0
         failureLabel.text = "日记加载失败，请重试"
         retryButton.translatesAutoresizingMaskIntoConstraints = false
         retryButton.setTitle("重试", for: .normal)
-        retryButton.titleLabel?.font = UIFont.boldSystemFont(ofSize: 15)
+        retryButton.titleLabel?.font = BearyDynamicType.cappedFont(for: UIFont.boldSystemFont(ofSize: 15))
+        retryButton.titleLabel?.adjustsFontForContentSizeCategory = true
+        // 审计登录杂项：重试钮补按压反馈（BearyHit44Button 已扩热区至 44）。
+        retryButton.bearyAddPressFeedback()
         retryButton.setTitleColor(BearyStarMapNight.primaryText, for: .normal)
         retryButton.addTarget(self, action: #selector(didTapRetry), for: .touchUpInside)
         failureView.translatesAutoresizingMaskIntoConstraints = false
@@ -318,6 +334,22 @@ final class BearyDiaryStarMapViewController: UIViewController {
         failureView.addSubview(failureLabel)
         failureView.addSubview(retryButton)
         contentView.addSubview(failureView)
+
+        // 审计登录杂项：加载态与盲盒页 spinnerWrap 同款（转圈＋“加载中…”）。
+        loadingView.translatesAutoresizingMaskIntoConstraints = false
+        loadingView.isHidden = true
+        loadingSpinner.translatesAutoresizingMaskIntoConstraints = false
+        loadingSpinner.image = BearyIconImages.image(named: "icon_refresh", pointSize: 20)
+        loadingSpinner.tintColor = BearyStarMapNight.secondaryText
+        loadingLabel.translatesAutoresizingMaskIntoConstraints = false
+        loadingLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 14))
+        loadingLabel.adjustsFontForContentSizeCategory = true
+        loadingLabel.textColor = BearyStarMapNight.secondaryText
+        loadingLabel.textAlignment = .center
+        loadingLabel.text = "加载中…"
+        loadingView.addSubview(loadingSpinner)
+        loadingView.addSubview(loadingLabel)
+        contentView.addSubview(loadingView)
 
         NSLayoutConstraint.activate([
             scrollView.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
@@ -390,6 +422,18 @@ final class BearyDiaryStarMapViewController: UIViewController {
             failureLabel.trailingAnchor.constraint(equalTo: failureView.trailingAnchor, constant: -24),
             retryButton.topAnchor.constraint(equalTo: failureLabel.bottomAnchor, constant: 16),
             retryButton.centerXAnchor.constraint(equalTo: failureView.centerXAnchor),
+
+            loadingView.topAnchor.constraint(equalTo: filterScrollView.bottomAnchor, constant: 12),
+            loadingView.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 16),
+            loadingView.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -16),
+            loadingView.heightAnchor.constraint(equalToConstant: 200),
+            loadingSpinner.topAnchor.constraint(equalTo: loadingView.topAnchor, constant: 60),
+            loadingSpinner.centerXAnchor.constraint(equalTo: loadingView.centerXAnchor),
+            loadingSpinner.widthAnchor.constraint(equalToConstant: 20),
+            loadingSpinner.heightAnchor.constraint(equalToConstant: 20),
+            loadingLabel.topAnchor.constraint(equalTo: loadingSpinner.bottomAnchor, constant: 12),
+            loadingLabel.leadingAnchor.constraint(equalTo: loadingView.leadingAnchor),
+            loadingLabel.trailingAnchor.constraint(equalTo: loadingView.trailingAnchor),
         ])
         // 扫荡 C：sky 高与三选一底部约束单独持有（见属性注释）。
         skyHeight = skyView.heightAnchor.constraint(equalToConstant: 420)
@@ -419,10 +463,14 @@ final class BearyDiaryStarMapViewController: UIViewController {
     // MARK: - 药丸按钮（年/月/连线过滤共用）
 
     private func pillButton(title: String, selected: Bool, action: Selector) -> UIButton {
-        let button = UIButton(type: .custom)
+        // 审计登录杂项：药丸行高保持 32（样式 token，不擅自改 44），热区改
+        // BearyHit44Button 扩至 44，并补按压反馈；字号走 scaledFont。
+        let button = BearyHit44Button(type: .custom)
         button.translatesAutoresizingMaskIntoConstraints = false
         button.setTitle(title, for: .normal)
-        button.titleLabel?.font = UIFont.systemFont(ofSize: 13, weight: selected ? .bold : .regular)
+        button.titleLabel?.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13, weight: selected ? .bold : .regular))
+        button.titleLabel?.adjustsFontForContentSizeCategory = true
+        button.bearyAddPressFeedback()
         button.setTitleColor(selected ? BearyStarMapNight.selectedText : BearyStarMapNight.bodyText, for: .normal)
         button.backgroundColor = selected ? BearyStarMapNight.selected : .clear
         button.layer.cornerRadius = 16
@@ -641,6 +689,9 @@ final class BearyDiaryStarMapViewController: UIViewController {
         }
         let sliceCount = BearyStarMap.entries(in: filteredEntries, slice: slice).count
         var status = "共 \(filteredEntries.count) 颗星 · 本片 \(sliceCount) 篇"
+        if fetchStaleNote {
+            status += " · 数据未更新"
+        }
         if !viewerIsAuthor {
             status += " · 他人视角：只显示公开篇"
         }
@@ -686,7 +737,8 @@ final class BearyDiaryStarMapViewController: UIViewController {
 
     private func sheetTitleLabel(_ text: String) -> UILabel {
         let label = UILabel()
-        label.font = UIFont.boldSystemFont(ofSize: 14)
+        label.font = BearyDynamicType.cappedFont(for: UIFont.boldSystemFont(ofSize: 14))
+        label.adjustsFontForContentSizeCategory = true
         label.textColor = BearyStarMapNight.primaryText
         label.numberOfLines = 0
         label.text = text
@@ -695,7 +747,8 @@ final class BearyDiaryStarMapViewController: UIViewController {
 
     private func sheetBodyLabel(_ text: String) -> UILabel {
         let label = UILabel()
-        label.font = UIFont.systemFont(ofSize: 13)
+        label.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13))
+        label.adjustsFontForContentSizeCategory = true
         label.textColor = BearyStarMapNight.bodyText
         label.numberOfLines = 0
         label.text = text
@@ -706,11 +759,13 @@ final class BearyDiaryStarMapViewController: UIViewController {
         let button = UIButton(type: .custom)
         button.contentHorizontalAlignment = .left
         button.titleLabel?.numberOfLines = 2
-        button.titleLabel?.font = UIFont.systemFont(ofSize: 14)
+        button.titleLabel?.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 14))
+        button.titleLabel?.adjustsFontForContentSizeCategory = true
         button.setTitleColor(BearyStarMapNight.primaryText, for: .normal)
+        // 审计登录杂项：无标题篇底卡只显日期，不再拼出“ · M月d日”前导空标题。
         let title = sheetEntryTitle(entry)
         let date = sheetDateString(entry)
-        button.setTitle("\(title) · \(date)", for: .normal)
+        button.setTitle(title.isEmpty ? date : "\(title) · \(date)", for: .normal)
         button.accessibilityLabel = "打开日记：\(title)"
         button.addTarget(self, action: #selector(didTapSheetEntry(_:)), for: .touchUpInside)
         // id 经 tag 无法传字符串：用 accessibilityIdentifier 搭载，点按时再查表。
@@ -743,7 +798,9 @@ final class BearyDiaryStarMapViewController: UIViewController {
 
     private func showStarSheet(_ entry: Entry) {
         sheetStack.arrangedSubviews.forEach { $0.removeFromSuperview() }
-        sheetStack.addArrangedSubview(sheetTitleLabel(sheetEntryTitle(entry)))
+        // 审计登录杂项：无标题篇底卡标题只显日期（与行按钮同口径）。
+        let starTitle = sheetEntryTitle(entry)
+        sheetStack.addArrangedSubview(sheetTitleLabel(starTitle.isEmpty ? sheetDateString(entry) : starTitle))
         var meta = sheetDateString(entry)
         if let moodKey = entry.mood, !moodKey.isEmpty {
             meta += " · 心情 \(BearyText.moodNames[moodKey] ?? moodKey)"
@@ -768,9 +825,13 @@ final class BearyDiaryStarMapViewController: UIViewController {
         visRow.addArrangedSubview(visIcon)
         visRow.addArrangedSubview(sheetBodyLabel(isPublic ? "公开" : "私密"))
         sheetStack.addArrangedSubview(visRow)
-        let detailButton = UIButton(type: .custom)
+        // 审计登录杂项：详情钮补按压反馈，热区 BearyHit44Button 扩至 44
+        //（视觉高仍由内边距定，不擅自改按钮高度档位）。
+        let detailButton = BearyHit44Button(type: .custom)
         detailButton.setTitle("查看详情", for: .normal)
-        detailButton.titleLabel?.font = UIFont.boldSystemFont(ofSize: 15)
+        detailButton.titleLabel?.font = BearyDynamicType.cappedFont(for: UIFont.boldSystemFont(ofSize: 15))
+        detailButton.titleLabel?.adjustsFontForContentSizeCategory = true
+        detailButton.bearyAddPressFeedback()
         detailButton.setTitleColor(BearyStarMapNight.primaryText, for: .normal)
         detailButton.backgroundColor = BearyColors.orange
         detailButton.layer.cornerRadius = 12
@@ -832,7 +893,21 @@ final class BearyDiaryStarMapViewController: UIViewController {
         loadGeneration += 1
         fetchCollected = []
         fetchSeenIds = []
+        // 审计登录杂项：无已有数据时先出加载态（此前首帧直接走空态“这里还没有星星”，
+        // 回包后星星突然出现）；有数据时不遮旧星图。
+        if allEntries.isEmpty {
+            emptyView.isHidden = true
+            failureView.isHidden = true
+            loadingView.isHidden = false
+            loadingSpinner.startSpinning()
+        }
         fetchEntriesPage(before: nil, beforeId: nil, page: 1, generation: loadGeneration)
+    }
+
+    /// 加载态统一收起（成功 / 失败回包终态各调一次）。
+    private func hideLoadingState() {
+        loadingView.isHidden = true
+        loadingSpinner.stopSpinning()
     }
 
     /// 拉取 scope（清单第 7 项，Li 拍板）：本人走 timeline scope（服务端按
@@ -851,11 +926,13 @@ final class BearyDiaryStarMapViewController: UIViewController {
                 guard let self = self, generation == self.loadGeneration else { return }
                 switch result {
                 case .failure:
+                    self.hideLoadingState()
                     if self.fetchCollected.isEmpty && self.allEntries.isEmpty {
                         self.showFailureState()
                     } else {
-                        // 已有数据时网络失败不清空星空：保留已加载模型，状态行在
-                        // 下次 applyModelToSky 时仍按已加载集合算（不编造失败篇）。
+                        // 已有数据时网络失败不清空星空：保留已加载模型，并以状态行
+                        // “数据未更新”弱提示（不 toast、不清空），重试复用 didTapRetry。
+                        self.fetchStaleNote = true
                         self.recompute()
                     }
                 case .success(let list):
@@ -874,6 +951,8 @@ final class BearyDiaryStarMapViewController: UIViewController {
                     }
                     self.fetchCapped = pageEntries.count >= 50 && page >= 10
                     self.failureView.isHidden = true
+                    self.fetchStaleNote = false
+                    self.hideLoadingState()
                     self.allEntries = self.fetchCollected
                     self.recompute()
                 }
@@ -891,6 +970,7 @@ private struct StarMapSkyStar {
     let radius: CGFloat
     let brightness: CGFloat
     let dateText: String
+    let wordCount: Int
 }
 
 struct StarMapSkyEdge {
@@ -918,8 +998,24 @@ private final class StarMapSkyView: UIView {
     override init(frame: CGRect) {
         super.init(frame: frame)
         backgroundColor = BearyStarMapNight.background
+        // 审计登录杂项：画布本身不是无障碍元素，星由 accessibilityElements 逐颗暴露。
+        isAccessibilityElement = false
         let tap = UITapGestureRecognizer(target: self, action: #selector(didTap(_:)))
         addGestureRecognizer(tap)
+    }
+
+    /// 字号档位变化时画布日期字重算（draw 内按当前档位取值），只重绘不重建模型。
+    override func traitCollectionDidChange(_ previousTraitCollection: UITraitCollection?) {
+        super.traitCollectionDidChange(previousTraitCollection)
+        if previousTraitCollection?.preferredContentSizeCategory != traitCollection.preferredContentSizeCategory {
+            setNeedsDisplay()
+        }
+    }
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        // 布局落定后按真实 bounds 重算星的无障碍命中框（setStars 时 bounds 可能仍为 0）。
+        refreshAccessibilityElements()
     }
 
     required init?(coder: NSCoder) {
@@ -937,7 +1033,7 @@ private final class StarMapSkyView: UIView {
             } else {
                 dateText = ""
             }
-            return StarMapSkyStar(id: star.entry.id ?? "", x: star.x, y: star.y, radius: star.radius, brightness: star.brightness, dateText: dateText)
+            return StarMapSkyStar(id: star.entry.id ?? "", x: star.x, y: star.y, radius: star.radius, brightness: star.brightness, dateText: dateText, wordCount: star.wordCount)
         }
         // 循环覆盖，不用 uniqueKeysWithValues（重复 id 时 trap，见 VC 处同注）。
         var byId: [String: Entry] = [:]
@@ -951,12 +1047,45 @@ private final class StarMapSkyView: UIView {
         self.selectedStarId = selectedStarId
         self.selectedEdgeId = selectedEdgeId
         setNeedsDisplay()
+        refreshAccessibilityElements()
     }
 
     func setSelected(starId: String?, edgeId: String?) {
         selectedStarId = starId
         selectedEdgeId = edgeId
         setNeedsDisplay()
+        refreshAccessibilityElements()
+    }
+
+    /// 审计登录杂项：按当前 stars 生成 VoiceOver 元素——每颗星一个 button，
+    /// label 为“日期＋篇名 / 字数”，frame 为星心命中框；点按走现有 didTapStar
+    /// 路径（经 onStarTap 回调），视觉绘制一字不动。
+    private func refreshAccessibilityElements() {
+        guard !stars.isEmpty, bounds.width > 0, bounds.height > 0 else {
+            accessibilityElements = nil
+            return
+        }
+        var elements: [UIAccessibilityElement] = []
+        for star in stars {
+            guard let entry = entriesById[star.id] else { continue }
+            let center = point(for: (x: star.x, y: star.y), in: bounds)
+            let hit = max(24, star.radius + 10)
+            let element = StarMapStarAccessibilityElement(accessibilityContainer: self)
+            let title = (entry.title ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+            let name = title.isEmpty ? "日记" : title
+            let datePart = star.dateText.isEmpty ? "" : star.dateText + " "
+            element.accessibilityLabel = "\(datePart)\(name) \(star.wordCount)字"
+            element.accessibilityTraits = [.button]
+            if star.id == selectedStarId {
+                element.accessibilityTraits.insert(.selected)
+            }
+            element.accessibilityFrameInContainerSpace = CGRect(x: center.x - hit, y: center.y - hit, width: hit * 2, height: hit * 2)
+            element.onActivate = { [weak self] in
+                self?.onStarTap?(entry)
+            }
+            elements.append(element)
+        }
+        accessibilityElements = elements
     }
 
     private func point(for normalized: (x: Double, y: Double), in bounds: CGRect) -> CGPoint {
@@ -1006,8 +1135,11 @@ private final class StarMapSkyView: UIView {
                 context.strokeEllipse(in: CGRect(x: center.x - star.radius - 3, y: center.y - star.radius - 3, width: (star.radius + 3) * 2, height: (star.radius + 3) * 2))
             }
             if !star.dateText.isEmpty {
+                // 审计登录杂项：画布日期字不再写死 9pt，按当前字号档位缩放；
+                // 固定夜色主题本身不动（颜色仍走 dateText）。
+                let datePointSize = UIFontMetrics.default.scaledFont(for: UIFont.systemFont(ofSize: 9)).pointSize
                 let attributes: [NSAttributedString.Key: Any] = [
-                    .font: UIFont.systemFont(ofSize: 9),
+                    .font: UIFont.systemFont(ofSize: datePointSize),
                     .foregroundColor: BearyStarMapNight.dateText,
                 ]
                 let size = star.dateText.size(withAttributes: attributes)
@@ -1064,5 +1196,18 @@ private final class StarMapSkyView: UIView {
         t = max(0, min(1, t))
         let projected = CGPoint(x: p1.x + t * dx, y: p1.y + t * dy)
         return hypot(point.x - projected.x, point.y - projected.y)
+    }
+}
+
+// MARK: - 审计登录杂项：星图画布 VoiceOver 星元素
+
+/// UIAccessibilityElement 本身无点按回调：子类以 accessibilityActivate 转发现有
+/// didTapStar 路径（经 StarMapSkyView.onStarTap），不改视觉绘制与手势逻辑。
+private final class StarMapStarAccessibilityElement: UIAccessibilityElement {
+    var onActivate: (() -> Void)?
+
+    override func accessibilityActivate() -> Bool {
+        onActivate?()
+        return true
     }
 }

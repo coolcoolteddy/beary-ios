@@ -2610,12 +2610,20 @@ final class BearyChromeViewController: UIViewController {
             SessionManager.shared.cancelAccountAddSession()
             vc?.dismiss(animated: BearyMotion.animated(true))
         }
-        vc.onLoggedIn = { [weak self, weak vc] in
+        vc.onLoggedIn = { [weak self, weak vc] referralText in
             // 新号登录成功先解 arm（当前态即新号，不得再恢复原号），
             // 再 dismiss + refreshMe 立新态、快照新号。
             SessionManager.shared.completeAccountAddSession()
             vc?.dismiss(animated: BearyMotion.animated(true)) {
-                SessionManager.shared.refreshMe()
+                SessionManager.shared.refreshMe { [weak self] _ in
+                    DispatchQueue.main.async {
+                        // 审计登录杂项：邀请绑定反馈落点——进 App 后 BearyToast 一次
+                        //（登录页内行文案随 dismiss 消失，不再指望被读到；Plus 到期日
+                        // 由 refreshMe 后的 currentUser.plusUntil 补全）。
+                        guard let self = self, let text = referralText, !text.isEmpty else { return }
+                        self.showToast(message: BearyReferralFeedback.toastText(base: text, plusUntil: SessionManager.shared.currentUser?.plusUntil))
+                    }
+                }
             }
         }
         // 游客模式入口：登录页“先逛逛”回调；容器负责关登录页后进游客态。
@@ -3120,9 +3128,12 @@ final class BearyChromeViewController: UIViewController {
     }
 
     /// 引导页弹出（v3 四页版）：引导 UI 在 BearyOnboardingViewController.swift
-    /// 内定义；容器只负责全屏模态弹出与四个回调的接线。seen 标记归属：闭包已
-    /// 设置时 VC 不写 seen、不 dismiss，全部由容器负责；跳过由 VC 自己写 seen
-    /// ＋dismiss，不经过这里。旧版预加载与旧版回调均已随 v3 删除，不再引用。
+    /// 内定义；容器只负责全屏模态弹出与四个回调的接线。seen 标记归属（审计登录
+    /// 杂项复核结论，2026-11-02）：闭包已设置时 VC 不写 seen、不 dismiss，全部由
+    /// 容器负责——下方四个回调（compose / browse / guestBrowse）与
+    /// presentLoginOverOnboarding 的成功 / 游客分支均已逐项核实写 seenKey，
+    /// 不存在“回调只跳转不写 key”的分支；跳过由 VC 自己写 seen＋dismiss，
+    /// 不经过这里。旧版预加载与旧版回调均已随 v3 删除，不再引用。
     /// 退出一律短暂淡出：crossDissolve 使弹出与所有退出（含 VC 自行 dismiss 的
     /// 跳过与兜底走完）均为淡入淡出，无需改 VC 文件；减动效时 animated:false
     /// 仍为瞬时切换。不闪白、不重播启动页、不加额外倒计时；数据未加载完用
@@ -3197,7 +3208,7 @@ final class BearyChromeViewController: UIViewController {
             SessionManager.shared.cancelAccountAddSession()
             vc?.dismiss(animated: BearyMotion.animated(true))
         }
-        vc.onLoggedIn = { [weak self, weak vc, weak onboarding] in
+        vc.onLoggedIn = { [weak self, weak vc, weak onboarding] referralText in
             // 新号登录成功先解 arm（当前态即新号，不得再恢复原号）。
             SessionManager.shared.completeAccountAddSession()
             // 登录页瞬时撤掉（不播滑下，避免成功路径上引导页闪现两次动效），
@@ -3208,6 +3219,13 @@ final class BearyChromeViewController: UIViewController {
                 guard let self = self else { return }
                 UserDefaults.standard.set(true, forKey: BearyOnboardingViewController.seenKey)
                 onboarding?.dismiss(animated: BearyMotion.animated(true))
+                // 审计登录杂项：邀请绑定反馈落点——引导层淡出、露出主页时 toast
+                // 一次基础文案（此时 refreshMe 尚未回包，Plus 到期日补全只在主
+                // 登录路径做；firstLaunch 随后开编辑器时 toast 会被全屏编辑器盖住，
+                // 属已知局限，replay 路径可完整看到）。
+                if let text = referralText, !text.isEmpty {
+                    self.showToast(message: text)
+                }
                 SessionManager.shared.refreshMe { [weak self] _ in
                     DispatchQueue.main.async { [weak self] in
                         guard let self = self, mode == .firstLaunch,

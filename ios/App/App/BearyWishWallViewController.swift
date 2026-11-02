@@ -269,6 +269,8 @@ final class BearyWishWallViewController: UIViewController {
     private var wishes: [BearyAPI.WishItem] = []
     private var rowViews: [Int: WishRowView] = [:]
     private var voteGeneration: [Int: Int] = [:] // 2026-10-29：每条许愿投票代次，旧回包丢弃用；
+    /// 审计登录杂项：游客投票时存下的待重放意图（wishId, target），登录成功后补投。
+    private var pendingVote: (wishId: Int, target: Int)?
     // 扫 bug 定版第 6 项（点赞同款代次口径）：代次不再只拦过期回包，
     // 而是取代在途锁——快连点每次都发请求、每次都立即按最后一次点按渲染，
     // 过期回包（含过期失败）一律丢弃，不得覆盖更新的点按态。
@@ -389,6 +391,9 @@ final class BearyWishWallViewController: UIViewController {
     override func viewWillAppear(_ animated: Bool) {
         super.viewWillAppear(animated)
         subpageLayoutGuard.resetForAppearance()
+        // 审计登录杂项：本页外获得 / 失去 Plus 后返回，发起钮显隐跟最新 Plus 态
+        //（此前只在 viewDidLoad 与游客投票登录回调里刷新，旧态会滞留）。
+        createButton.isHidden = !isCurrentUserPlus()
     }
 
     override func viewDidLayoutSubviews() {
@@ -427,14 +432,10 @@ final class BearyWishWallViewController: UIViewController {
         vc.transitioningDelegate = SceneDelegate.chrome?.fadeRiseTransitionDelegate
         vc.onCreated = { [weak self] wish in
             guard let self = self else { return }
-            self.wishes.insert(wish, at: 0)
-            if let id = wish.id {
-                self.confirmedSeeded.insert(id)
-                self.confirmedVote[id] = wish.myVote
-                self.confirmedUp[id] = wish.upCount ?? 0
-                self.confirmedDown[id] = wish.downCount ?? 0
-            }
-            self.renderWishes()
+            // 审计登录杂项：新愿望不再 insert(at:0) 永远置顶（与注释“服务端净赞成
+            // 降序、App 不重排”冲突，直到下次重进才纠正）；创建成功后重拉，
+            // 以服务端顺序为准（确认态由 loadWishes 成功分支播种）。
+            self.loadWishes()
             BearyToast.show(in: self.view, message: "许愿已发布")
             self.onCreated?(wish)
         }
@@ -480,6 +481,8 @@ final class BearyWishWallViewController: UIViewController {
                 switch result {
                 case .success(let resp):
                     self.wishStateView.isHidden = true
+                    // 审计登录杂项：与 viewWillAppear 同款，列表成功回包时也刷新 Plus 门。
+                    self.createButton.isHidden = !self.isCurrentUserPlus()
                     self.wishes = resp.wishes ?? []
                     for item in self.wishes where item.id != nil {
                         self.confirmedSeeded.insert(item.id!)
@@ -553,6 +556,9 @@ final class BearyWishWallViewController: UIViewController {
     /// 最后确认态（confirmedVote/confirmedUp/confirmedDown）+ 摇头 + toast。
     private func voteTapped(wishId: Int, target: Int) {
         if isGuest {
+            // 审计登录杂项：投票前先存待重放意图，登录成功后补投并 toast
+            //（此前登录后不重放刚才那一票且无提示）。
+            pendingVote = (wishId: wishId, target: target)
             presentLoginPage()
             return
         }
@@ -577,7 +583,8 @@ final class BearyWishWallViewController: UIViewController {
         next.myVote = newVote
         wishes[index] = next
         rowViews[wishId]?.configure(item: next, isAdmin: isAdmin)
-        BearySoundPlayer.play(.wishDing)
+        // 审计登录杂项：wishDing 不再点按瞬间播（失败才回滚时音效语义与结果
+        // 相反），改到服务端成功回包后播放，见下方 success 分支。
         voteGeneration[wishId, default: 0] += 1
         let gen = voteGeneration[wishId] ?? 0
         let sendVote = newVote ?? 0
@@ -588,6 +595,8 @@ final class BearyWishWallViewController: UIViewController {
                 guard let self = self, let idx = self.indexOfWish(wishId), self.voteGeneration[wishId] == gen else { return }
                 switch result {
                 case .success(let resp):
+                    // 审计登录杂项：成功音只在服务端成功回包后播。
+                    BearySoundPlayer.play(.wishDing)
                     var confirmed = self.wishes[idx]
                     confirmed.upCount = resp.up ?? confirmed.upCount
                     confirmed.downCount = resp.down ?? confirmed.downCount
@@ -641,7 +650,7 @@ final class BearyWishWallViewController: UIViewController {
     private func presentLoginPage() {
         let login = BearyLoginViewController()
         login.modalPresentationStyle = .fullScreen
-        login.onLoggedIn = { [weak self] in
+        login.onLoggedIn = { [weak self] referralText in
             // 添加账号会话守卫：正常是空操作；防迂回路径下守卫仍 armed 时
             // 后续一次取消把新号恢复成旧号，成功先解 arm。
             SessionManager.shared.completeAccountAddSession()
@@ -649,6 +658,23 @@ final class BearyWishWallViewController: UIViewController {
             SessionManager.shared.refreshMe { _ in
                 DispatchQueue.main.async {
                     self?.createButton.isHidden = !(self?.isCurrentUserPlus() ?? false)
+                    // 审计登录杂项：登录成功后补投待重放的那一票并 toast；登录页
+                    // 带来的邀请绑定文案（若有）与补投提示合为一次 toast（新 toast
+                    // 会盖掉旧 toast，分开发会丢一条）。补投后重拉列表以服务端为准。
+                    var messages: [String] = []
+                    if let referralText = referralText, !referralText.isEmpty {
+                        messages.append(BearyReferralFeedback.toastText(base: referralText, plusUntil: SessionManager.shared.currentUser?.plusUntil))
+                    }
+                    // refreshMe 失败仍是游客时不补投（voteTapped 会重弹登录页）：
+                    // 意图保留，待下次成功登录再重放。
+                    if let pending = self?.pendingVote, !(self?.isGuest ?? true) {
+                        self?.pendingVote = nil
+                        self?.voteTapped(wishId: pending.wishId, target: pending.target)
+                        messages.append("已补投刚才那一票")
+                    }
+                    if !messages.isEmpty, let view = self?.view {
+                        BearyToast.show(in: view, message: messages.joined(separator: "，"))
+                    }
                     self?.loadWishes()
                 }
             }
