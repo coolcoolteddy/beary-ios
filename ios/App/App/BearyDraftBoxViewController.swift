@@ -1429,7 +1429,7 @@ final class BearyDraftBoxViewController: UIViewController {
     }
 
     /// U18：把手下滑关闭——下滑跟手，超过 80pt 或快速下滑时走 closeBox 同动画；
-    /// 否则 0.20s 弹回原位，减动效直接落位（不播回弹动画）。遮罩点按关闭不受影响。
+    /// 否则 0.25s 弹回原位，减动效直接落位（不播回弹动画）。遮罩点按关闭不受影响。
     /// 2026-10-30 抓手批：上滑按统一口径阻尼微移后回弹，不扩高、不关闭。
     @objc private func handlePanGesture(_ gesture: UIPanGestureRecognizer) {
         guard !isDismissing else { return }
@@ -1456,7 +1456,7 @@ final class BearyDraftBoxViewController: UIViewController {
                 if UIAccessibility.isReduceMotionEnabled {
                     restore()
                 } else {
-                    UIView.animate(withDuration: 0.20, animations: restore)
+                    UIView.animate(withDuration: 0.25, animations: restore)
                 }
             }
         case .cancelled, .failed:
@@ -1467,7 +1467,7 @@ final class BearyDraftBoxViewController: UIViewController {
             if UIAccessibility.isReduceMotionEnabled {
                 restore()
             } else {
-                UIView.animate(withDuration: 0.20, animations: restore)
+                UIView.animate(withDuration: 0.25, animations: restore)
             }
         default:
             break
