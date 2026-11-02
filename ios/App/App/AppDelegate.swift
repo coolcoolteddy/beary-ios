@@ -6,7 +6,8 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
     var window: UIWindow?
 
     func application(_ application: UIApplication, didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?) -> Bool {
-        // Override point for customization after application launch.
+        // 审计动效组：启动时后台预热全部 12 音，首次播放不走主线程文件 IO。
+        BearySoundPlayer.prewarmAll()
         return true
     }
 

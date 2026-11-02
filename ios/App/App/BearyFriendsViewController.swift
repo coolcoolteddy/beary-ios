@@ -338,6 +338,10 @@ private final class BearyFriendCell: UITableViewCell {
         button.bearyAddPressFeedback()
         return button
     }()
+    /// 审计-性能：头像代次，口径与通知行 loadAvatar 同款。prepareForReuse
+    /// 已取消旧任务，但同 cell 不经复用再次 configure 时旧任务仍在途；
+    /// 回调凭代次 + URL 双重校验，旧回包直接丢弃。
+    private var avatarGeneration = 0
 
     private lazy var moreButton: UIButton = {
         let button = UIButton(type: .system)
@@ -429,6 +433,7 @@ private final class BearyFriendCell: UITableViewCell {
         super.prepareForReuse()
         avatarTask?.cancel()
         avatarTask = nil
+        avatarGeneration += 1
         avatarURL = nil
         avatarView.image = nil
         avatarRetryButton.isHidden = true
@@ -446,10 +451,33 @@ private final class BearyFriendCell: UITableViewCell {
         } else {
             handleLabel.isHidden = true
         }
+        // configure 前先取消旧任务（复用路径之外再次 configure 也守门）。
+        avatarTask?.cancel()
+        avatarTask = nil
+        avatarGeneration += 1
+        avatarURL = nil
         if let avatarPath = user.avatarUrl, let url = BearyImageURLs.avatarURL(avatarPath) {
             avatarView.isHidden = false
             fallbackLabel.isHidden = true
-            loadAvatar(url: url, displayName: displayName)
+            avatarURL = url
+            let generation = avatarGeneration
+            // 头像框 44pt：下采样到 44×scale 解码，不整图全解码进内存。
+            avatarTask = BearyImageLoader.shared.loadDetailed(url: url, downsampleToWidth: 44 * UIScreen.main.scale) { [weak self] result in
+                DispatchQueue.main.async {
+                    guard let self = self, generation == self.avatarGeneration, self.avatarURL == url else { return }
+                    switch result {
+                    case .success(let image):
+                        self.avatarView.image = image
+                        self.avatarRetryButton.isHidden = true
+                    case .failure:
+                        // 审计：头像失败不再留空白圆圈——回默认首字母占位＋点按重试。
+                        self.avatarView.isHidden = true
+                        self.fallbackLabel.isHidden = false
+                        self.fallbackLabel.text = String(displayName.prefix(1)).uppercased()
+                        self.avatarRetryButton.isHidden = false
+                    }
+                }
+            }
         } else {
             avatarView.isHidden = true
             fallbackLabel.isHidden = false

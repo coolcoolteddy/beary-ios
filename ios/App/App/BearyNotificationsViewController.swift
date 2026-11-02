@@ -144,6 +144,13 @@ final class BearyNotificationsViewController: UIViewController {
     /// 审计 P2-20：通知缓存按账号分键——旧 static 单槽切号后会把旧账号消息秒显给新号。
     private static var cachedPages: [Int: CachedNotificationPage] = [:]
 
+    /// 审计-性能：退出/401 清态时清该账号的通知页缓存（SessionManager
+    /// 退出路径调用，与广场/时间线快照 purge 同口径；分键缓存不随退出
+    /// 自动失效，退出后旧号消息不得残留）。
+    static func purgeAccount(_ id: Int) {
+        cachedPages[id] = nil
+    }
+
     private var items: [NotificationItem] = []
     private var displayRows: [NotificationDisplayRow] = []
     private var isSysExpanded = false
@@ -537,11 +544,13 @@ final class BearyNotificationsViewController: UIViewController {
     /// 回前台的轻量门控，容器想切回瞬间必刷时调 refreshListIfUnreadChanged()。
     override func viewWillAppear(_ animated: Bool) {
         super.viewWillAppear(animated)
+        startPolling()
         refreshListIfUnreadChanged()
     }
 
     override func viewWillDisappear(_ animated: Bool) {
         super.viewWillDisappear(animated)
+        stopPolling()
         saveNotificationCache()
     }
 
@@ -550,7 +559,15 @@ final class BearyNotificationsViewController: UIViewController {
     /// 已有 showPage 的 refreshListIfUnreadChanged，不重复）。
     func pageDidLeave() {
         notifPageEntered = false
+        stopPolling()
         saveNotificationCache()
+    }
+
+    /// 审计-性能：容器切回消息页时显式恢复轮询（与 pageDidLeave 配对；
+    /// showPage(.notif) 分支调用，见 SceneDelegate）。timer 回调自身也
+    /// 有可见性门控，本方法只是让停表后不依赖下一次回调才恢复。
+    func pageDidEnter() {
+        startPolling()
     }
 
     /// 表头高度实测：标题 19 + 上 14 下 4；实测后写回 tableHeaderView frame
@@ -646,16 +663,30 @@ final class BearyNotificationsViewController: UIViewController {
         stateButton.refreshChrome()
     }
 
+    /// 审计-性能：页面可见性。容器切 tab 只改 view.isHidden，不走
+    /// viewWillAppear/viewWillDisappear，故轮询不能只靠 appearance 回调；
+    /// timer 回调与回前台入口统一凭本属性门控，隐藏时跳过本次请求、
+    /// 不停表（切回后下一拍自动恢复，不依赖容器补调）。
+    private var isNotifPageVisible: Bool {
+        return view.window != nil && !view.isHidden
+    }
+
     /// 60 秒轮询：只做轻量刷新（见 refreshUnreadCountLightly），cadence 不变。
     private func startPolling() {
         pollTimer?.invalidate()
         pollTimer = Timer.scheduledTimer(withTimeInterval: 60.0, repeats: true) { [weak self] _ in
-            guard let strongSelf = self else { return }
+            guard let strongSelf = self, strongSelf.isNotifPageVisible else { return }
             strongSelf.refreshUnreadCountLightly()
         }
     }
 
+    private func stopPolling() {
+        pollTimer?.invalidate()
+        pollTimer = nil
+    }
+
     @objc private func handleForeground() {
+        guard isNotifPageVisible else { return }
         refreshUnreadCountLightly()
     }
 
@@ -2353,13 +2384,25 @@ extension BearyNotificationsViewController: UITableViewDataSource, UITableViewDe
 
 // MARK: - 信件模态（网页 #letterModal 同口径：图标 + 标题 + 正文 + 可选引用 + 按钮行）
 
+/// 审计 2026-11-02 弹窗组：信件模态遮罩层。普通叠加层、非 VC 时 VoiceOver
+/// 两指划（逃离手势）无 VC 可接，须由遮罩层自身响应：沿响应链冒泡到本层时
+/// 走与“知道了/遮罩点按”同一关闭路径并还焦点。卡片圆角 14 不动
+/// （有意网页对照值，不在本支改）。
+private final class BearyLetterModalOverlayView: UIView {
+    var onEscape: (() -> Void)?
+    override func accessibilityPerformEscape() -> Bool {
+        onEscape?()
+        return true
+    }
+}
+
 private class BearyLetterModal {
 
     var onGo: ((String) -> Void)?
     /// dismiss 完成回调（VC 侧清持有用；身份由调用方校验）。
     var onDismiss: (() -> Void)?
 
-    private let overlayView = UIView()
+    private let overlayView = BearyLetterModalOverlayView()
     private let cardView = UIView()
     private let iconView = UIImageView()
     /// 信件模态礼花：徽章信（iconName == "icon_popper"）时用动态 BearyPopperView
@@ -2529,6 +2572,9 @@ private class BearyLetterModal {
         secondaryButton.bearyAddPressFeedback()
         primaryButton.addTarget(self, action: #selector(goTapped), for: .touchUpInside)
         primaryButton.bearyAddPressFeedback()
+        // 审计 2026-11-02 弹窗组：VoiceOver 逃离手势走普通关闭（还焦点）；
+        // 弱持有，遮罩层由 modal 持有，不成环。
+        overlayView.onEscape = { [weak self] in self?.dismissModalAnimated() }
         let tap = UITapGestureRecognizer(target: self, action: #selector(overlayTapped(_:)))
         tap.cancelsTouchesInView = false
         overlayView.addGestureRecognizer(tap)
@@ -3149,7 +3195,8 @@ private class BearyNotificationCell: UITableViewCell {
         avatarFallbackLabel.isHidden = false
         avatarFallbackLabel.text = actorName.isEmpty ? "T" : String(actorName.prefix(1)).uppercased()
         let generation = avatarLoadGeneration
-        avatarTask = BearyImageLoader.shared.loadDetailed(url: url) { [weak self] result in
+        // 头像框 42pt：下采样到 42×scale 解码，不整图全解码进内存。
+        avatarTask = BearyImageLoader.shared.loadDetailed(url: url, downsampleToWidth: 42 * UIScreen.main.scale) { [weak self] result in
             guard let strongSelf = self else { return }
             guard generation == strongSelf.avatarLoadGeneration else { return }
             strongSelf.avatarTask = nil
@@ -3244,24 +3291,33 @@ private class BearyNotificationCell: UITableViewCell {
         return NSAttributedString(string: string, attributes: [.font: font, .foregroundColor: color, .paragraphStyle: paragraph])
     }
 
+    /// 审计-性能：逐行新建 DateFormatter 改静态复用（每种格式一个静态实例，
+    /// 不复用同一实例改 dateFormat；调用方只在主线程做行渲染，不跨线程用）。
+    private static let monthDayTimeFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "zh_CN")
+        formatter.dateFormat = "M月d日 H:mm"
+        return formatter
+    }()
+    private static let monthDayFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "zh_CN")
+        formatter.dateFormat = "M月d日"
+        return formatter
+    }()
+
     /// 网页时间口径：fmtDate 一律 M月d日 H:mm——小时不补零（9:40），分钟补零。
     private static func timeText(ms: Int?) -> String {
         guard let msValue = ms else { return "" }
         let date = Date(timeIntervalSince1970: TimeInterval(msValue) / 1000.0)
-        let formatter = DateFormatter()
-        formatter.locale = Locale(identifier: "zh_CN")
-        formatter.dateFormat = "M月d日 H:mm"
-        return formatter.string(from: date)
+        return monthDayTimeFormatter.string(from: date)
     }
 
     /// 网页 fmtDay 口径：M月d日（无空格，信件引用 meta 用它）。
     static func dayText(ms: Int?) -> String {
         guard let msValue = ms else { return "" }
         let date = Date(timeIntervalSince1970: TimeInterval(msValue) / 1000.0)
-        let formatter = DateFormatter()
-        formatter.locale = Locale(identifier: "zh_CN")
-        formatter.dateFormat = "M月d日"
-        return formatter.string(from: date)
+        return monthDayFormatter.string(from: date)
     }
 
     /// 互动动词（卡面最新一条与行标题共用，须对 VC 可见，故不 private）。

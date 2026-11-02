@@ -1123,7 +1123,7 @@ private final class OnboardingOptionButton: BearyHit44Button {
         checkView.layer.bearyDynamicBorderColor = BearyColors.line
         checkImageView.translatesAutoresizingMaskIntoConstraints = false
         checkImageView.image = BearyIconImages.image(named: "icon_check", pointSize: 14)
-        checkImageView.tintColor = BearyColors.bg
+        checkImageView.tintColor = BearyColors.onBrand
         checkView.addSubview(checkImageView)
         addSubview(checkView)
 

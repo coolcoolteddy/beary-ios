@@ -234,6 +234,17 @@ private final class BearyDMConversationCell: UITableViewCell {
         button.bearyAddPressFeedback()
         return button
     }()
+    /// 审计-性能：头像代次。prepareForReuse 已取消旧任务，但同 cell 不经复用
+    /// 再次 configure（如可见行刷新）时旧任务仍在途；内存命中分支返回 nil、
+    /// 回调仍异步上主线程，无代次校验即会把旧头像写进新行，故 configure
+    /// 起始先取消旧任务并 +1，回调凭代次 + URL 双重校验，旧回包直接丢弃。
+    private var avatarGeneration = 0
+    private static let conversationTimeFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "zh_CN")
+        formatter.dateFormat = "M月d日 H:mm"
+        return formatter
+    }()
 
     override init(style: UITableViewCell.CellStyle, reuseIdentifier: String?) {
         super.init(style: style, reuseIdentifier: reuseIdentifier)
@@ -337,6 +348,7 @@ private final class BearyDMConversationCell: UITableViewCell {
         super.prepareForReuse()
         avatarTask?.cancel()
         avatarTask = nil
+        avatarGeneration += 1
         avatarURL = nil
         avatarView.image = nil
         avatarRetryButton.isHidden = true
@@ -350,13 +362,11 @@ private final class BearyDMConversationCell: UITableViewCell {
         let snippet = (conversation.lastBody ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
         snippetLabel.text = snippet
         snippetLabel.isHidden = snippet.isEmpty
-        // 时间口径与通知行一致（M月d日 H:mm）。
+        // 时间口径与通知行一致（M月d日 H:mm）；逐行新建 DateFormatter 改静态复用
+        //（本 cell 只在主线程 configure，静态 formatter 不跨线程用）。
         if let lastAt = conversation.lastAt {
             let date = Date(timeIntervalSince1970: TimeInterval(lastAt) / 1000.0)
-            let formatter = DateFormatter()
-            formatter.locale = Locale(identifier: "zh_CN")
-            formatter.dateFormat = "M月d日 H:mm"
-            timeLabel.text = formatter.string(from: date)
+            timeLabel.text = Self.conversationTimeFormatter.string(from: date)
         } else {
             timeLabel.text = ""
         }
@@ -366,10 +376,33 @@ private final class BearyDMConversationCell: UITableViewCell {
         unreadBadgeMinWidthConstraint?.isActive = unread > 0
         unreadBadgeZeroWidthConstraint?.isActive = unread <= 0
         avatarRetryButton.isHidden = true
+        // configure 前先取消旧任务（复用路径之外再次 configure 也守门）。
+        avatarTask?.cancel()
+        avatarTask = nil
+        avatarGeneration += 1
+        avatarURL = nil
         if let avatarPath = peer?.avatarUrl, let url = BearyImageURLs.avatarURL(avatarPath) {
             avatarView.isHidden = false
             fallbackLabel.isHidden = true
-            loadAvatar(url: url, displayName: displayName)
+            avatarURL = url
+            let generation = avatarGeneration
+            // 头像框 44pt：下采样到 44×scale 解码，不整图全解码进内存。
+            avatarTask = BearyImageLoader.shared.loadDetailed(url: url, downsampleToWidth: 44 * UIScreen.main.scale) { [weak self] result in
+                DispatchQueue.main.async {
+                    guard let self = self, generation == self.avatarGeneration, self.avatarURL == url else { return }
+                    switch result {
+                    case .success(let image):
+                        self.avatarView.image = image
+                        self.avatarRetryButton.isHidden = true
+                    case .failure:
+                        // 审计：头像失败不再留空白圆圈——回默认首字母占位＋点按重试。
+                        self.avatarView.isHidden = true
+                        self.fallbackLabel.isHidden = false
+                        self.fallbackLabel.text = String(displayName.prefix(1)).uppercased()
+                        self.avatarRetryButton.isHidden = false
+                    }
+                }
+            }
         } else {
             avatarView.isHidden = true
             fallbackLabel.isHidden = false
