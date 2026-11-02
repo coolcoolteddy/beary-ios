@@ -353,8 +353,8 @@ private final class BearyDMConversationCell: UITableViewCell {
         timeLabel.adjustsFontForContentSizeCategory = true
         timeLabel.textColor = BearyColors.gray
         unreadBadge.translatesAutoresizingMaskIntoConstraints = false
-        unreadBadge.font = .boldSystemFont(ofSize: 10)
-        unreadBadge.adjustsFontForContentSizeCategory = false
+        unreadBadge.font = BearyDynamicType.scaledFont(for: .boldSystemFont(ofSize: 10))
+        unreadBadge.adjustsFontForContentSizeCategory = true
         unreadBadge.textColor = .white
         unreadBadge.backgroundColor = BearyColors.blue
         unreadBadge.textAlignment = .center
