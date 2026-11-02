@@ -286,9 +286,9 @@ final class BearySettingsViewController: UIViewController {
     private let closeButton = BearyHit44Button(type: .system)
     private let titleLabel = UILabel()
     private let loadingView = BearyRefreshIconView()
-    private let failureWrap = UIStackView()
-    private let failureLabel = UILabel()
-    private let retryButton = UIButton(type: .system)
+    // C5：主失败态走统一 BearyStateView（旧 failureWrap/failureLabel/文字重试钮退役；
+    // 标题“加载失败”＋紧凑描边“重试”钮，动作仍是 loadAll；“请”字随旧文案并入动作）。
+    private let failureStateView = BearyStateView()
     private let loginWrap = UIStackView()
     private let loginHintLabel = UILabel()
     private let loginButton = UIButton(type: .system)
@@ -786,25 +786,11 @@ final class BearySettingsViewController: UIViewController {
         loadingView.translatesAutoresizingMaskIntoConstraints = false
         // 栈内固有尺寸与旧 medium 圈一致（20pt 图）。
         loadingView.image = BearyIconImages.image(named: "icon_refresh", pointSize: 20)
-        // P1-7：失败辅助文案走动态字体（已是 0 行，下同：只改字，不改布局）。
-        failureLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 14))
-        failureLabel.adjustsFontForContentSizeCategory = true
-        failureLabel.textColor = BearyColors.gray
-        failureLabel.numberOfLines = 0
-        failureLabel.textAlignment = .center
-        failureLabel.text = "加载失败，请重试"
-        retryButton.setTitle("重试", for: .normal)
-        retryButton.setTitleColor(BearyColors.ink, for: .normal)
-        retryButton.titleLabel?.font = UIFont.systemFont(ofSize: 15, weight: .bold)
-        retryButton.addTarget(self, action: #selector(retryButtonTapped), for: .touchUpInside)
-        retryButton.bearyAddPressFeedback()
-        failureWrap.translatesAutoresizingMaskIntoConstraints = false
-        failureWrap.axis = .vertical
-        failureWrap.spacing = 12
-        failureWrap.alignment = .center
-        failureWrap.addArrangedSubview(failureLabel)
-        failureWrap.addArrangedSubview(retryButton)
-        failureWrap.isHidden = true
+        // P1-7：失败辅助文案走统一状态视图（回收站失败态同款组件；无图标行，
+        // 标题＋紧凑描边重试钮，动作复用 retryButtonTapped = loadAll）。
+        failureStateView.translatesAutoresizingMaskIntoConstraints = false
+        failureStateView.configure(kind: .error, title: "加载失败", subtitle: nil, iconName: nil, actionTitle: "重试", onAction: { [weak self] in self?.retryButtonTapped() })
+        failureStateView.isHidden = true
 
         // P1-7：登录提示辅助文案走动态字体。
         loginHintLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 14))
@@ -871,7 +857,7 @@ final class BearySettingsViewController: UIViewController {
         buildVersionFooter()
 
         contentStack.addArrangedSubview(loadingView)
-        contentStack.addArrangedSubview(failureWrap)
+        contentStack.addArrangedSubview(failureStateView)
         contentStack.addArrangedSubview(loginWrap)
         contentStack.addArrangedSubview(contentWrap)
         contentStack.addArrangedSubview(generalNotifyWrap)
@@ -1668,7 +1654,7 @@ final class BearySettingsViewController: UIViewController {
         onClose?()
     }
 
-    @objc private func retryButtonTapped() {
+    private func retryButtonTapped() {
         loadAll()
     }
 
@@ -1791,7 +1777,7 @@ final class BearySettingsViewController: UIViewController {
         // 先显缓存、不转菊花，随后静默 fetchMe 对齐；无缓存时走现行加载态路径。
         if let cached = SessionManager.shared.currentUser {
             meUser = cached
-            failureWrap.isHidden = true
+            failureStateView.isHidden = true
             loginWrap.isHidden = true
             loadingView.stopSpinning()
             loadingView.isHidden = true
@@ -1828,7 +1814,7 @@ final class BearySettingsViewController: UIViewController {
                         self.refreshAccountSwitchSection()
                     case .failure(let error):
                         if case .cancelled = error { return }
-                        // 静默刷新失败：保持缓存内容不变，不显示 failureWrap。
+                        // 静默刷新失败：保持缓存内容不变，不显示 failureStateView。
                         return
                     }
                 }
@@ -1837,7 +1823,7 @@ final class BearySettingsViewController: UIViewController {
         }
         loadingView.startSpinning()
         loadingView.isHidden = false
-        failureWrap.isHidden = true
+        failureStateView.isHidden = true
         loginWrap.isHidden = true
         contentWrap.isHidden = true
         accountSecurityWrap.isHidden = true
@@ -1878,7 +1864,7 @@ final class BearySettingsViewController: UIViewController {
                     if case .cancelled = error {
                         return
                     }
-                    self.failureWrap.isHidden = false
+                    self.failureStateView.isHidden = false
                 }
             }
         }
@@ -4069,7 +4055,9 @@ final class BearyBlockedUsersViewController: UIViewController, UITableViewDataSo
     private let tableView = UITableView(frame: .zero, style: .plain)
     private let closeButton = BearyHit44Button(type: .system)
     private let titleLabel = UILabel()
-    private let emptyLabel = UILabel()
+    // C5：空态/失败态走统一 BearyStateView（旧 emptyLabel＋blockedRetryButton
+    // 退役；空态无动作、失败态“重新加载”动作仍调 reloadBlocked，失败 toast 保留）。
+    private let blockedStateView = BearyStateView()
     /// 116 子页空白守卫（同 BearySettingsSubpages.swift 守卫说明）。
     private let subpageLayoutGuard = BearySubpageLayoutGuard()
     private var topBarView: UIView?
@@ -4079,7 +4067,6 @@ final class BearyBlockedUsersViewController: UIViewController, UITableViewDataSo
     /// 资料拉不到时行内回落“用户 id”，不阻塞解除）；在途去重，避免复用抖动多发。
     private var blockedProfiles: [Int: BearyUserProfile] = [:]
     private var blockedProfileFetching: Set<Int> = []
-    private let blockedRetryButton = BearyHit44Button(type: .system)
 
     override func viewDidLoad() {
         super.viewDidLoad()
@@ -4101,20 +4088,8 @@ final class BearyBlockedUsersViewController: UIViewController, UITableViewDataSo
         topBar.translatesAutoresizingMaskIntoConstraints = false
         topBar.addSubview(closeButton)
         topBar.addSubview(titleLabel)
-        emptyLabel.translatesAutoresizingMaskIntoConstraints = false
-        emptyLabel.font = UIFont.systemFont(ofSize: 15)
-        emptyLabel.textColor = BearyColors.gray
-        emptyLabel.textAlignment = .center
-        emptyLabel.text = "暂无已拉黑用户"
-        emptyLabel.isHidden = true
-        // 审计-个人页设置：拉黑页加载失败页内重试（旧口径只有 toast、无重试入口）。
-        blockedRetryButton.translatesAutoresizingMaskIntoConstraints = false
-        blockedRetryButton.setTitle("重新加载", for: .normal)
-        blockedRetryButton.setTitleColor(BearyColors.blue, for: .normal)
-        blockedRetryButton.titleLabel?.font = UIFont.systemFont(ofSize: 15, weight: .semibold)
-        blockedRetryButton.addTarget(self, action: #selector(blockedRetryTapped), for: .touchUpInside)
-        blockedRetryButton.bearyAddPressFeedback()
-        blockedRetryButton.isHidden = true
+        blockedStateView.translatesAutoresizingMaskIntoConstraints = false
+        blockedStateView.isHidden = true
         tableView.translatesAutoresizingMaskIntoConstraints = false
         // 116 后扫查：与广场/个人页同口径——关掉 delaysContentTouches，滚动容器里的点按立即响应，不等滚动判定。
         tableView.delaysContentTouches = false
@@ -4125,8 +4100,7 @@ final class BearyBlockedUsersViewController: UIViewController, UITableViewDataSo
         tableView.register(BearyBlockedUserCell.self, forCellReuseIdentifier: "BearyBlockedCell")
         view.addSubview(topBar)
         view.addSubview(tableView)
-        view.addSubview(emptyLabel)
-        view.addSubview(blockedRetryButton)
+        view.addSubview(blockedStateView)
         topBarView = topBar
         // 补缺 P2-17：拉黑列表顶栏与内容列同宽居中（iPhone 全宽不变）。
         let blockedTopBarWidthEquality = topBar.widthAnchor.constraint(equalTo: view.widthAnchor)
@@ -4153,18 +4127,28 @@ final class BearyBlockedUsersViewController: UIViewController, UITableViewDataSo
                 return c
             }(),
             tableView.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor),
-            emptyLabel.centerXAnchor.constraint(equalTo: view.centerXAnchor),
-            emptyLabel.centerYAnchor.constraint(equalTo: view.centerYAnchor),
-            blockedRetryButton.centerXAnchor.constraint(equalTo: view.centerXAnchor),
-            blockedRetryButton.topAnchor.constraint(equalTo: emptyLabel.bottomAnchor, constant: 16),
+            blockedStateView.centerXAnchor.constraint(equalTo: view.centerXAnchor),
+            blockedStateView.centerYAnchor.constraint(equalTo: view.centerYAnchor),
+            blockedStateView.leadingAnchor.constraint(greaterThanOrEqualTo: view.leadingAnchor, constant: 32),
+            blockedStateView.trailingAnchor.constraint(lessThanOrEqualTo: view.trailingAnchor, constant: -32),
         ] + BearySubpageTopBarHeight.constraints(for: topBar))
         reloadBlocked()
     }
 
-    @objc private func blockedRetryTapped() {
-        blockedRetryButton.isHidden = true
-        emptyLabel.isHidden = true
+    private func blockedRetryTapped() {
+        blockedStateView.isHidden = true
         reloadBlocked()
+    }
+
+    /// 拉黑空态显隐（成功路径专用）：空则显统一空态、无则藏；失败态由
+    /// reloadBlocked 另行配置，不走这里（防解除成功把失败态误写成空态）。
+    private func updateBlockedEmptyState() {
+        if blockedIds.isEmpty {
+            blockedStateView.configure(kind: .empty, title: "暂无已拉黑用户", subtitle: nil, iconName: nil, actionTitle: nil, onAction: nil)
+            blockedStateView.isHidden = false
+        } else {
+            blockedStateView.isHidden = true
+        }
     }
 
     private func reloadBlocked() {
@@ -4174,16 +4158,13 @@ final class BearyBlockedUsersViewController: UIViewController, UITableViewDataSo
                 switch result {
                 case .success(let resp):
                     self.blockedIds = resp.blocked ?? []
-                    self.blockedRetryButton.isHidden = true
-                    self.emptyLabel.text = "暂无已拉黑用户"
-                    self.emptyLabel.isHidden = !self.blockedIds.isEmpty
+                    self.updateBlockedEmptyState()
                     self.tableView.reloadData()
                 case .failure:
-                    // 页内重试：空态文案改加载失败 + 出重试钮（旧 toast 口径同步保留
-                    // 一次提示，弱网下用户不用来回进出本页）。
-                    self.emptyLabel.text = "加载失败"
-                    self.emptyLabel.isHidden = false
-                    self.blockedRetryButton.isHidden = false
+                    // 页内重试：失败态改走统一状态视图（标题“加载失败”＋
+                    // “重新加载”动作，旧 toast 口径同步保留一次提示）。
+                    self.blockedStateView.configure(kind: .error, title: "加载失败", subtitle: nil, iconName: nil, actionTitle: "重新加载", onAction: { [weak self] in self?.blockedRetryTapped() })
+                    self.blockedStateView.isHidden = false
                     BearyToast.show(in: self.view, message: "加载失败，请重试")
                 }
             }
@@ -4246,7 +4227,7 @@ final class BearyBlockedUsersViewController: UIViewController, UITableViewDataSo
                 case .success:
                     BearyBlockedStore.removeBlocked(userId)
                     self.blockedIds.removeAll { $0 == userId }
-                    self.emptyLabel.isHidden = !self.blockedIds.isEmpty
+                    self.updateBlockedEmptyState()
                     self.tableView.reloadData()
                     BearyToast.show(in: self.view, message: "已解除拉黑")
                 case .failure:
@@ -4283,13 +4264,13 @@ final class BearyBlockedUsersViewController: UIViewController, UITableViewDataSo
 /// 头像 44＋名字＋handle＋解除钮；解除钮为 BearyHit44Button（旧 accessoryView
 /// 普通钮热区不足）。头像加载走好友行同款 BearyImageLoader.loadDetailed，
 /// 复用时取消在途任务；无头像时首字母兜底（与好友行同款橙底淡底色占位）。
+/// C3：头像三件套改走统一 BearyAvatarView；旧失败态留空白头像且无重试，
+/// 改走组件后失败态同为首字母占位＋重试钮（见 BearyAvatarView 注释第 4 条）。
 private final class BearyBlockedUserCell: UITableViewCell {
 
-    private let avatarView = UIImageView()
-    private let fallbackLabel = UILabel()
+    private let avatarView = BearyAvatarView()
     private let nameLabel = UILabel()
     private let handleLabel = UILabel()
-    private var avatarTask: URLSessionDataTask?
     private var unblockHandler: (() -> Void)?
 
     private lazy var unblockButton: BearyHit44Button = {
@@ -4308,18 +4289,6 @@ private final class BearyBlockedUserCell: UITableViewCell {
         backgroundColor = BearyColors.bg
         selectionStyle = .none
         avatarView.translatesAutoresizingMaskIntoConstraints = false
-        avatarView.contentMode = .scaleAspectFill
-        avatarView.clipsToBounds = true
-        avatarView.layer.cornerRadius = 22
-        avatarView.layer.masksToBounds = true
-        fallbackLabel.translatesAutoresizingMaskIntoConstraints = false
-        fallbackLabel.font = BearyDynamicType.cappedFont(for: UIFont.boldSystemFont(ofSize: 17))
-        fallbackLabel.adjustsFontForContentSizeCategory = true
-        fallbackLabel.textColor = BearyColors.orange
-        fallbackLabel.backgroundColor = BearyColors.orange.withAlphaComponent(0.14)
-        fallbackLabel.textAlignment = .center
-        fallbackLabel.layer.cornerRadius = 22
-        fallbackLabel.layer.masksToBounds = true
         nameLabel.translatesAutoresizingMaskIntoConstraints = false
         nameLabel.font = BearyDynamicType.cardTitleFont()
         nameLabel.textColor = BearyColors.ink
@@ -4330,7 +4299,6 @@ private final class BearyBlockedUserCell: UITableViewCell {
         handleLabel.textColor = BearyColors.gray
         handleLabel.numberOfLines = 1
         contentView.addSubview(avatarView)
-        contentView.addSubview(fallbackLabel)
         contentView.addSubview(nameLabel)
         contentView.addSubview(handleLabel)
         contentView.addSubview(unblockButton)
@@ -4340,10 +4308,6 @@ private final class BearyBlockedUserCell: UITableViewCell {
             avatarView.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 16),
             avatarView.widthAnchor.constraint(equalToConstant: 44),
             avatarView.heightAnchor.constraint(equalToConstant: 44),
-            fallbackLabel.topAnchor.constraint(equalTo: avatarView.topAnchor),
-            fallbackLabel.leadingAnchor.constraint(equalTo: avatarView.leadingAnchor),
-            fallbackLabel.widthAnchor.constraint(equalToConstant: 44),
-            fallbackLabel.heightAnchor.constraint(equalToConstant: 44),
             nameLabel.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 14),
             nameLabel.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 71),
             nameLabel.trailingAnchor.constraint(lessThanOrEqualTo: unblockButton.leadingAnchor, constant: -8),
@@ -4363,9 +4327,7 @@ private final class BearyBlockedUserCell: UITableViewCell {
 
     override func prepareForReuse() {
         super.prepareForReuse()
-        avatarTask?.cancel()
-        avatarTask = nil
-        avatarView.image = nil
+        avatarView.reset()
         unblockHandler = nil
     }
 
@@ -4383,22 +4345,9 @@ private final class BearyBlockedUserCell: UITableViewCell {
         } else {
             handleLabel.isHidden = true
         }
-        if let avatarPath = profile?.avatarUrl, let url = BearyImageURLs.avatarURL(avatarPath) {
-            avatarView.isHidden = false
-            fallbackLabel.isHidden = true
-            avatarTask = BearyImageLoader.shared.loadDetailed(url: url) { [weak self] result in
-                DispatchQueue.main.async {
-                    guard let self = self else { return }
-                    if case .success(let image) = result {
-                        self.avatarView.image = image
-                    }
-                }
-            }
-        } else {
-            avatarView.isHidden = true
-            fallbackLabel.isHidden = false
-            fallbackLabel.text = String(displayName.prefix(1)).uppercased()
-        }
+        // C3：头像加载/占位/重试全走 BearyAvatarView（无图首字母占位；
+        // 有图失败时占位＋重试，旧“失败留空白”不再出现）。
+        avatarView.configure(displayName: displayName, avatarURL: profile?.avatarUrl.flatMap { BearyImageURLs.avatarURL($0) })
     }
 
     @objc private func unblockTapped() {
