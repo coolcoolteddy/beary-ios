@@ -77,8 +77,10 @@ enum BearyFriends {
     private static func unfollowConfirmAlert(displayName: String, mutual: Bool, onConfirmed: @escaping () -> Void) -> UIAlertController {
         let message = mutual
             ? "取关后，你们不再是互关好友，对方将看不到你的仅好友日记，你也看不到对方的仅好友日记。"
-            : "取关后，你将不再看到对方的日记动态。"
-        let alert = UIAlertController(title: "取关", message: message, preferredStyle: .alert)
+            : "对方的日记将不再出现在‘正在关注’中"
+        // displayName 一直透传却未用：标题改为带昵称；调用方传空串时退回旧标题，避免“取消关注 ？”。
+        let title = displayName.isEmpty ? "取关" : "取消关注 \(displayName)？"
+        let alert = UIAlertController(title: title, message: message, preferredStyle: .alert)
         alert.addAction(UIAlertAction(title: "取关", style: .destructive) { _ in onConfirmed() })
         alert.addAction(UIAlertAction(title: "取消", style: .cancel, handler: nil))
         return alert

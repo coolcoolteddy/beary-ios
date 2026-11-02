@@ -2334,7 +2334,7 @@ final class BearySettingsViewController: UIViewController {
                 self.exportRowButton.isEnabled = true
                 self.setExportProgress(nil)
                 let totalCount = mineEntries.count + mailboxEntries.count + likedEntries.count
-                let alert = UIAlertController(title: "部分导出", message: "已取 \(totalCount) 篇，已达 20 页上限，是否继续分享？", preferredStyle: .alert)
+                let alert = UIAlertController(title: "部分导出", message: "本次仅导出 \(totalCount) 篇，未包含全部数据。是否继续分享这部分数据？", preferredStyle: .alert)
                 alert.addAction(UIAlertAction(title: "取消", style: .cancel, handler: nil))
                 alert.addAction(UIAlertAction(title: "继续分享", style: .default, handler: { [weak self] _ in
                     self?.buildAndShareExport(user: user, pin: pin, sessionsResp: sessionsResp, mineEntries: mineEntries, mailboxEntries: mailboxEntries, likedEntries: likedEntries)
@@ -3117,8 +3117,8 @@ final class BearySettingsViewController: UIViewController {
     }
 
     private func presentLegalText(title: String, doc: BearyLegalServerText.Doc) {
-        // 先显示缓存（或包内兜底），页面立刻打开不阻塞；后台刷新到最新版后只换文字。
-        let vc = BearyLegalTextViewController(pageTitle: title, pageText: BearyLegalServerText.displayText(for: doc))
+        // 先显示缓存（或包内兜底），页面立刻打开不阻塞；后台刷新到最新版后只换文字与更新日期。
+        let vc = BearyLegalTextViewController(pageTitle: title, pageText: BearyLegalServerText.displayText(for: doc), pageVersion: BearyLegalServerText.cachedUpdatedAt(for: doc))
         vc.modalPresentationStyle = .fullScreen
         // 审计 P2-16：全屏 modal 补 fadeRise。
         vc.transitioningDelegate = SceneDelegate.chrome?.fadeRiseTransitionDelegate
@@ -3126,6 +3126,7 @@ final class BearySettingsViewController: UIViewController {
         BearyLegalServerText.refresh(doc: doc) { [weak vc] text in
             guard let text = text, let vc = vc, vc.isViewLoaded else { return }
             vc.updateText(text)
+            vc.updateVersionText(BearyLegalServerText.cachedUpdatedAt(for: doc))
         }
     }
 }
@@ -3136,16 +3137,24 @@ final class BearySettingsViewController: UIViewController {
 final class BearyLegalTextViewController: UIViewController {
     private let pageTitle: String
     private let pageText: String
+    /// 已存的服务器更新日期（BearyLegalServerText.cachedUpdatedAt）；无值时该行不占高度。
+    private var currentVersionText: String?
     private let closeButton = BearyHit44Button(type: .system)
     private let titleLabel = UILabel()
     private let textView = UITextView()
+    /// 法律页版本行：顶栏与正文之间的小字灰行（“更新日期：…”），供用户比对版本。
+    /// 无版本时高度约束生效（0 高）、有版本时放开由文字固有高度撑开；顶栏到该行的间距同理切换。
+    private let versionLabel = UILabel()
+    private var versionTopConstraint: NSLayoutConstraint?
+    private var versionHeightConstraint: NSLayoutConstraint?
     /// 116 子页空白守卫（同 BearySettingsSubpages.swift 守卫说明）。
     private let subpageLayoutGuard = BearySubpageLayoutGuard()
     private var topBarView: UIView?
 
-    init(pageTitle: String, pageText: String) {
+    init(pageTitle: String, pageText: String, pageVersion: String? = nil) {
         self.pageTitle = pageTitle
         self.pageText = pageText
+        self.currentVersionText = pageVersion
         super.init(nibName: nil, bundle: nil)
     }
 
@@ -3185,10 +3194,19 @@ final class BearyLegalTextViewController: UIViewController {
         textView.backgroundColor = BearyColors.bg
         textView.text = pageText
         textView.textContainerInset = UIEdgeInsets(top: 16, left: 16, bottom: 16, right: 16)
+        versionLabel.translatesAutoresizingMaskIntoConstraints = false
+        versionLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13))
+        versionLabel.adjustsFontForContentSizeCategory = true
+        versionLabel.textColor = BearyColors.gray
+        versionLabel.numberOfLines = 0
         view.addSubview(topBar)
+        view.addSubview(versionLabel)
         view.addSubview(textView)
         topBarView = topBar
         // 补缺 P2-17：子页内容列 600 居中、顶栏同宽居中（iPhone 全宽不变）。
+        versionTopConstraint = versionLabel.topAnchor.constraint(equalTo: topBar.bottomAnchor)
+        versionHeightConstraint = versionLabel.heightAnchor.constraint(equalToConstant: 0)
+        applyVersionText(currentVersionText)
         let legalTopBarWidthEquality = topBar.widthAnchor.constraint(equalTo: view.widthAnchor)
         legalTopBarWidthEquality.priority = UILayoutPriority(750)
         let legalTextWidthEquality = textView.widthAnchor.constraint(equalTo: view.widthAnchor)
@@ -3206,7 +3224,11 @@ final class BearyLegalTextViewController: UIViewController {
             closeButton.bottomAnchor.constraint(lessThanOrEqualTo: topBar.bottomAnchor, constant: -6),
             titleLabel.topAnchor.constraint(greaterThanOrEqualTo: topBar.topAnchor, constant: 6),
             titleLabel.bottomAnchor.constraint(lessThanOrEqualTo: topBar.bottomAnchor, constant: -6),
-            textView.topAnchor.constraint(equalTo: topBar.bottomAnchor),
+            versionTopConstraint!,
+            // 与正文列同宽同左：iPhone 全宽、iPad 600 居中时都与正文左缘对齐。
+            versionLabel.leadingAnchor.constraint(equalTo: textView.leadingAnchor, constant: 16),
+            versionLabel.trailingAnchor.constraint(equalTo: textView.trailingAnchor, constant: -16),
+            textView.topAnchor.constraint(equalTo: versionLabel.bottomAnchor),
             textView.centerXAnchor.constraint(equalTo: view.centerXAnchor),
             textView.widthAnchor.constraint(lessThanOrEqualToConstant: 600),
             legalTextWidthEquality,
@@ -3222,6 +3244,27 @@ final class BearyLegalTextViewController: UIViewController {
     func updateText(_ text: String) {
         guard textView.text != text else { return }
         textView.text = text
+    }
+
+    /// 刷新已存更新日期的展示：有值显一行小字灰字、无值整行不占高度。
+    /// 调用时若视图未加载，只记值、viewDidLoad 时再按记的值布局。
+    func updateVersionText(_ version: String?) {
+        applyVersionText(version)
+    }
+
+    private func applyVersionText(_ version: String?) {
+        currentVersionText = version
+        if let version = version, !version.isEmpty {
+            versionLabel.text = "更新日期：\(version)"
+            versionLabel.isHidden = false
+            versionTopConstraint?.constant = 8
+            versionHeightConstraint?.isActive = false
+        } else {
+            versionLabel.text = nil
+            versionLabel.isHidden = true
+            versionTopConstraint?.constant = 0
+            versionHeightConstraint?.isActive = true
+        }
     }
 
     override func viewWillAppear(_ animated: Bool) {
@@ -3244,7 +3287,7 @@ final class BearyLegalTextViewController: UIViewController {
 /// 方案一：隐私政策 / 用户协议服务器下发文字（2026-11-01）。
 /// 缓存按 doc 分开存（privacy / terms 各一键 + 各一个 updated_at 键）；
 /// 有网每次打开都拉，拉取失败或没网就用缓存，再没有缓存才用包内 BearyLegalTexts 兜底；
-/// 登录页的协议链接不在本批范围，仍读包内文本（见 BearyLoginViewController）。
+/// 登录页协议链接同走本路径（见 BearyLoginViewController.openLegalPage）。
 enum BearyLegalServerText {
     enum Doc: String {
         case privacy
@@ -3272,6 +3315,11 @@ enum BearyLegalServerText {
 
     static func displayText(for doc: Doc) -> String {
         cachedText(for: doc) ?? bundledText(for: doc)
+    }
+
+    /// 已存的服务器更新日期（refresh 成功时随正文一起存；未拉到过则为 nil，法律页不展示该行）。
+    static func cachedUpdatedAt(for doc: Doc) -> String? {
+        UserDefaults.standard.string(forKey: updatedKey(for: doc))
     }
 
     static func refresh(doc: Doc, completion: @escaping (String?) -> Void) {

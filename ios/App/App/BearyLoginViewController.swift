@@ -34,7 +34,7 @@ import UIKit
 // 发码、登录按钮启用与两处拦截共用 isEmailValid，不再用更严的服务端口径前置拦截。
 // 协议链接说明：网页复选框文案里的《隐私政策》/《用户协议》链向 /privacy、/terms；
 // 原生不走系统浏览器：点链接 present 设置页同款 App 内原生法律页 BearyLegalTextViewController
-//（BearyLegalTexts.privacy / .terms，设置页 presentLegalText 同款全屏 modal）；点文案其他位置仍切换勾选。
+//（BearyLegalServerText 服务器＋缓存＋包内兜底，设置页 presentLegalText 同款路径、全屏 modal）；点文案其他位置仍切换勾选。
 
 final class BearyLoginViewController: UIViewController {
     /// 登录成功（验码 {ok: true}）。容器随后刷新登录态并关闭本页。
@@ -334,7 +334,7 @@ final class BearyLoginViewController: UIViewController {
         guestButton.bearyAddPressFeedback()
 
         guestNoteLabel.translatesAutoresizingMaskIntoConstraints = false
-        guestNoteLabel.text = "游客模式只能看别人的日记，登录后解锁完整版。"
+        guestNoteLabel.text = "游客可浏览公开日记，登录后可写日记、点赞、回应和收藏。"
         guestNoteLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13))
         guestNoteLabel.adjustsFontForContentSizeCategory = true
         guestNoteLabel.textColor = BearyColors.gray
@@ -620,25 +620,32 @@ final class BearyLoginViewController: UIViewController {
     }
 
     /// 打开 App 内原生法律页（设置页同款 BearyLegalTextViewController、全屏 modal、
-    /// 同一 BearyLegalTexts 文本；未知链接不外跳，直接吞掉）。手势与 delegate 共用。
+    /// 服务器＋缓存＋包内兜底（与设置页 presentLegalText 同款路径）；未知链接不外跳，直接吞掉）。
+    /// 手势与 delegate 共用。法律文本内容本身不动，只改读取来源并展示已存更新日期。
     private func openLegalPage(url: URL) {
         let title: String
-        let text: String
+        let doc: BearyLegalServerText.Doc
         switch url.path {
         case "/privacy":
             title = "隐私政策"
-            text = BearyLegalTexts.privacy
+            doc = .privacy
         case "/terms":
             title = "用户协议"
-            text = BearyLegalTexts.terms
+            doc = .terms
         default:
             return
         }
-        let vc = BearyLegalTextViewController(pageTitle: title, pageText: text)
+        // 先显示缓存（或包内兜底），页面立刻打开不阻塞；后台刷新到最新版后只换文字与更新日期。
+        let vc = BearyLegalTextViewController(pageTitle: title, pageText: BearyLegalServerText.displayText(for: doc), pageVersion: BearyLegalServerText.cachedUpdatedAt(for: doc))
         vc.modalPresentationStyle = .fullScreen
         // 审计 P2-16：全屏 modal 补 fadeRise（与设置页法律文本页同款）。
         vc.transitioningDelegate = SceneDelegate.chrome?.fadeRiseTransitionDelegate
         present(vc, animated: BearyMotion.animated(true))
+        BearyLegalServerText.refresh(doc: doc) { [weak vc] text in
+            guard let vc = vc, vc.isViewLoaded else { return }
+            if let text = text { vc.updateText(text) }
+            vc.updateVersionText(BearyLegalServerText.cachedUpdatedAt(for: doc))
+        }
     }
 
     @objc private func openPrivacyFromAccessibility() -> Bool {
@@ -876,7 +883,7 @@ final class BearyLoginViewController: UIViewController {
         }
         let code = codeField.text ?? ""
         guard code.count == 6 else {
-            showMessage("请输入验证码")
+            showMessage("请输入 6 位数字验证码")
             return
         }
         // 审计 P2：邀请码先行格式校验，不合规行内提示且不发请求。
