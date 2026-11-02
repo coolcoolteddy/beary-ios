@@ -308,7 +308,26 @@ class BearyFeedViewController: UIViewController {
 
     @objc private func handleFriendsChangedNotification(_ note: Notification) {
         // 回关/取关后正在关注段立即重拉（取关后旧行不得残留）。
+        // 审计第 7 项残留：旧路只调 refreshAll，非空表常规刷新走
+        // loadPlazaSince——since 只前插新篇、旧行不复核，取关后失资格的
+        // 仅好友旧行残留；since 回落首拉失败时又保留旧模型，弱网下残留
+        // 更久。广播不带作者 id，无法只摘某作者的行，故受影响范围 =
+        // 整个正在关注段：先清段模型并落表（取关行立刻消失，不等网络；
+        // 引用随行同清，引用缓存已由 clearDiaryCachesAndNotify 在广播前
+        // 清掉），再用已有的 bypass 口径强制首拉（在途旧首拉被代际丢弃，
+        // 不复活旧行；首拉失败时空表走错误行，不保留已清掉的旧行）。
+        // 广场段只含公开篇，不受影响，不清不动；触发条件（仅正在关注段）
+        // 与广播本身不动；普通刷新（非本路）仍走 since，不改。
         if feedFollowingSegment {
+            plazaRaw = []
+            firstPageIds = []
+            plazaHasMore = true
+            plazaReachedEnd = false
+            plazaError = false
+            if isViewLoaded {
+                tableView.reloadData()
+            }
+            refreshAllBypassInFlight = true
             refreshAll()
         }
     }
