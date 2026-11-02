@@ -48,15 +48,24 @@ public final class BearyEmoteView: UIView {
     private var animationView: LottieAnimationView?
     private var fallbackImageView: UIImageView?
     private var currentEmote: CachedEmote?
+    /// 审计 29 项：本视图当前挂接的缓存 key 与渲染成本记账。attach 时记入
+    /// liveHolderCountByKey / liveRenderCostBytes，teardown / deinit 时释放；
+    /// 幂等（已释放时两项均为 nil / 0），重复 teardown 不会把总数扣成负数。
+    private var attachedCacheKey: String?
+    private var attachedRenderCost: Int = 0
+    /// 审计 29 项：离屏渲染被回收后、尚未回窗重载的标记（见 reclaimOffscreenRender）。
+    /// 回窗时由 didMoveToWindow 凭它重载，帧与开场状态在回收时已快照保留。
+    private var offscreenRenderReclaimed = false
 
     private struct CachedEmote {
         let animation: LottieAnimation
         let loopStart: CGFloat
         let loopEnd: CGFloat
         let endFrame: CGFloat
-        /// 对应 JSON 文件字节数：解析后模型实际占用更大，故只作缓存预算的代理值，
-        /// 预算因此取保守值（见 cacheByteBudget）。
-        let estimatedBytes: Int
+        /// 审计 29 项：解析后估算成本（字节），不再是 JSON 文件字节数。
+        /// 计价见 loadEmoteFromBundle：JSON 字节 × 解析后模型膨胀系数；
+        /// 系数为保守代理而非实测值，实际峰值仍需 Instruments 测量。
+        let estimatedCostBytes: Int
         /// 减动效静态帧：必须落在 [0, op) 半开区间内，不得等于 op。
         /// 审计 12 项核实：80 只 loop_end 均 == op，属边界落点；lottie-ios 对
         /// currentFrame == op 渲染末帧还是空白，JSON 无法证明，故静态帧取
@@ -82,10 +91,28 @@ public final class BearyEmoteView: UIView {
     private static var cacheOrder: [String] = []
     private static let cacheLock = NSLock()
     private static let cacheLimit = 16
-    /// 字节双预算：以 JSON 文件大小为代理估算占用（解析后模型实际更大，故取保守值；
-    /// 全量 80 只约 75.9MB，单只 speechless 约 19.6MB——预算须小于总量且容得下常用组合）。
-    private static let cacheByteBudget = 48 * 1024 * 1024
-    private static var cacheBytes: Int = 0
+    /// 审计 29 项：数量 + 估算成本双预算，预算单位不再是 JSON 文件字节。
+    /// 总成本 = 缓存模型成本 + 存活渲染实例成本（cacheCostBytes + liveRenderCostBytes，
+    /// 两项均只在持 cacheLock 时读写）。
+    /// 模型成本 = JSON 字节 × parsedModelCostMultiplier：JSON 文本解析成 Lottie
+    /// 对象图（层、关键帧、标记等对象）后占用远大于文本本身，旧口径直接以
+    /// 文件字节计预算，48MB 预算实际可对应数倍于此的解析后内存，并不保守。
+    /// 渲染成本 = 每个已挂接 LottieAnimationView × liveRenderCostPerPlayer：
+    /// 每个视图自带一套 CALayer 渲染树与动画状态，缓存逐出清不掉它，旧口径
+    /// 完全不计这一项，多表情同屏时峰值被系统性低估。
+    /// 48MB 数值不变，但单位变了：可容纳的 JSON 量约降为旧口径的 1/4，
+    /// 这是故意的收紧，不是数值笔误。系数与单视图渲染 allowance 均为保守
+    /// 代理而非实测值；实际峰值仍需 Instruments 测量、录屏不能证明释放。
+    private static let cacheCostBudget = 48 * 1024 * 1024
+    /// JSON 字节到解析后对象图的保守膨胀系数（见上；代理值，非实测）。
+    private static let parsedModelCostMultiplier = 4
+    /// 每个已挂接渲染视图的渲染树 allowance（CALayer 树 + 动画状态；代理值，非实测）。
+    private static let liveRenderCostPerPlayer = 512 * 1024
+    private static var cacheCostBytes: Int = 0
+    private static var liveRenderCostBytes: Int = 0
+    /// 存活视图按缓存 key 计的持有数：>0 的条目是共享实例，逐出缓存省不出
+    /// 内存（视图仍自持），故 store 逐出时跳过这类条目（见 store 注释）。
+    private static var liveHolderCountByKey: [String: Int] = [:]
 
     /// ①后台解析队列（userInitiated）：只做 Lottie 解析 + markers 解码，不建 UIView。
     /// 与预热队列分开，避免预热排队挡住当前视图急需的解析。
@@ -118,8 +145,8 @@ public final class BearyEmoteView: UIView {
     /// 与减动效观察者同模式）；后台切回前台时对全部存活播放器调 resumeAfterForeground。
     private static var foregroundResumeObserverInstalled = false
     private static var foregroundResumeObserver: NSObjectProtocol?
-    /// 内存警告时清解析缓存（只清缓存字典，不停正在播的视图：视图自持 CachedEmote，
-    /// 下次加载重新解析；清掉后大文件不再常驻内存）。
+    /// 内存警告时先回收离屏渲染、再清未被存活视图持有的缓存（审计 29 项）：
+    /// 不停正在播的视图，存活视图自持的模型也不从缓存清（清了也省不出内存）。
     private static var memoryWarningObserver: NSObjectProtocol?
     private static var memoryWarningObserverInstalled = false
 
@@ -166,7 +193,31 @@ public final class BearyEmoteView: UIView {
     }
 
     deinit {
+        // 审计 29 项：未经理 teardown 就释放的视图（如 chip 复用时直接
+        // removeFromSuperview 的旧播放器）也要把持有数与渲染成本还回去，
+        // 否则该 key 会被永久视为活持有、永不逐出。release 本身幂等。
+        releaseAttachedAccounting()
         Self.unregisterLivePlayer(self)
+    }
+
+    /// 审计 29 项：释放本视图的预算记账（持有数减一、渲染成本扣回），
+    /// 只动静态计数与本视图字段，不动视图层级；teardown 与 deinit 共用。
+    private func releaseAttachedAccounting() {
+        Self.cacheLock.lock()
+        if let key = attachedCacheKey {
+            if let count = Self.liveHolderCountByKey[key], count > 1 {
+                Self.liveHolderCountByKey[key] = count - 1
+            } else {
+                Self.liveHolderCountByKey.removeValue(forKey: key)
+            }
+            attachedCacheKey = nil
+        }
+        Self.liveRenderCostBytes -= attachedRenderCost
+        if Self.liveRenderCostBytes < 0 {
+            Self.liveRenderCostBytes = 0
+        }
+        attachedRenderCost = 0
+        Self.cacheLock.unlock()
     }
 
     private static func registerLivePlayer(_ player: BearyEmoteView) {
@@ -242,8 +293,12 @@ public final class BearyEmoteView: UIView {
         resumePlayback()
     }
 
-    /// 内存警告观察者（只装一次，常驻不移除）：收到警告即清空解析缓存与字节计数，
-    /// 正在播的视图不受影响（自持 CachedEmote），下次加载重新解析。
+    /// 内存警告观察者（只装一次，常驻不移除）：收到警告时按“离屏渲染优先”
+    /// 的顺序清理——先回收离屏渲染实例（可见播放器不动），再清未被存活
+    /// 视图持有的缓存。审计 29 项修正旧口径：旧口径连存活视图自持的模型
+    /// 也从缓存字典里清掉，但共享实例仍在视图手里，实际一字节没省，
+    /// 只是逼下次加载重解析；活持有条目因此保留，只清真正能省出内存的
+    /// 未持有条目。官方 PNG 静态回退图不受影响（解析失败 / 未加载时仍走它）。
     private static func installMemoryWarningObserver() {
         cacheLock.lock()
         let installed = memoryWarningObserverInstalled
@@ -253,12 +308,62 @@ public final class BearyEmoteView: UIView {
         cacheLock.unlock()
         guard !installed else { return }
         memoryWarningObserver = NotificationCenter.default.addObserver(forName: UIApplication.didReceiveMemoryWarningNotification, object: nil, queue: .main) { _ in
-            cacheLock.lock()
-            cache.removeAll()
-            cacheOrder.removeAll()
-            cacheBytes = 0
-            cacheLock.unlock()
+            Self.reclaimOffscreenRenderInstances()
+            Self.clearUnheldCacheEntries()
         }
+    }
+
+    /// 审计 29 项：只清未被存活视图持有的缓存条目（调用方须不持 cacheLock；
+    /// 本方法自己加锁）。活持有条目跳过，理由见内存警告观察者注释。
+    private static func clearUnheldCacheEntries() {
+        cacheLock.lock()
+        defer { cacheLock.unlock() }
+        let order = cacheOrder
+        for key in order where (liveHolderCountByKey[key] ?? 0) == 0 {
+            if let removed = cache.removeValue(forKey: key) {
+                cacheCostBytes -= removed.estimatedCostBytes
+            }
+        }
+        cacheOrder.removeAll(where: { cache[$0] == nil })
+        if cacheCostBytes < 0 {
+            cacheCostBytes = 0
+        }
+    }
+
+    /// 审计 29 项：回收全部离屏渲染实例（window == nil 的存活播放器），
+    /// 可见播放器一律不动。须在主线程执行视图摘除；非主线程调用时转主
+    /// 线程异步执行，不在后台线程碰视图层级。内存警告时由观察者调用，
+    /// 其它调用方（如 cell 离屏清理）也可显式调用，不改变播放口径本身。
+    public static func reclaimOffscreenRenderInstances() {
+        guard Thread.isMainThread else {
+            DispatchQueue.main.async { Self.reclaimOffscreenRenderInstances() }
+            return
+        }
+        cacheLock.lock()
+        let players = livePlayers.allObjects
+        cacheLock.unlock()
+        for player in players {
+            player.reclaimOffscreenRender()
+        }
+    }
+
+    /// 审计 29 项：单个离屏渲染回收。只对已离窗（window == nil）且已有
+    /// 渲染视图的播放器生效；可见播放器与仅挂 PNG 回退图的播放器不动。
+    /// 回收等价于离屏停播 + 摘渲染树：isPlaying 置 false（与 didMoveToWindow
+    /// 离窗时 stop() 的口径一致，回窗不自动起播，仍由调用方 play() 恢复），
+    /// 但 introPlayed / 暂停帧 / 静态帧快照保留，回窗重载后调用方 play()
+    /// 走恢复路径、不回 0 帧重播开场；减动效静态帧口径亦不变。
+    public func reclaimOffscreenRender() {
+        guard window == nil, animationView != nil else { return }
+        let wasIntroPlayed = introPlayed
+        let wasHeldStaticFrame = heldStaticFrame
+        let preservedFrame = heldStaticFrame ? nil : (pausedFrame ?? animationView?.currentFrame)
+        teardownContent()
+        isPlaying = false
+        introPlayed = wasIntroPlayed
+        heldStaticFrame = wasHeldStaticFrame
+        pausedFrame = preservedFrame
+        offscreenRenderReclaimed = true
     }
 
     /// 离屏停播：cell 滚出可视区会被 tableView 移出层级（window 变 nil），此时停播，
@@ -268,6 +373,17 @@ public final class BearyEmoteView: UIView {
         super.didMoveToWindow()
         if window == nil {
             stop()
+            return
+        }
+        // 审计 29 项：被离屏回收过的播放器回窗时重载。重载走不 teardown 的
+        // startLoadEmote（回收时快照已保留，二次 teardown 会清掉快照）；
+        // animationView 已存在时不重载（避免叠加第二个渲染视图），
+        // 标记照常清除；回窗本身不自动起播，仍由调用方 play() 恢复。
+        if offscreenRenderReclaimed {
+            offscreenRenderReclaimed = false
+            if animationView == nil {
+                startLoadEmote()
+            }
         }
     }
 
@@ -426,6 +542,10 @@ public final class BearyEmoteView: UIView {
     /// 不 teardown 的加载本体：换内容走 loadEmote()；主题切换在 teardown 后
     /// 恢复快照，再走这里，避免第二次 teardown 把快照清掉。
     private func startLoadEmote() {
+        // 审计 29 项：任何一次主动重载都消费掉离屏回收标记（回窗重载与
+        // 主题切换重载共用此入口，标记不跨次残留；didMoveToWindow 另有
+        // animationView 非空时的守门，见该方法注释）。
+        offscreenRenderReclaimed = false
         let dark = isDark
         let cacheKey = Self.cacheKey(for: emoteKey, dark: dark)
         // 缓存命中：只建 LottieAnimationView，不做任何解析，仍可同步挂接。
@@ -461,6 +581,16 @@ public final class BearyEmoteView: UIView {
         fallbackImageView = nil
         currentEmote = cached
         let view = LottieAnimationView(animation: cached.animation)
+        // 审计 29 项：挂接即记账——模型成本已在缓存成本里（共享实例只计
+        // 一次），这里只加持有数与本视图的渲染树 allowance；teardown /
+        // deinit 时由 releaseAttachedAccounting 原数还回。
+        let attachKey = Self.cacheKey(for: emoteKey, dark: self.isDark)
+        Self.cacheLock.lock()
+        Self.liveHolderCountByKey[attachKey, default: 0] += 1
+        attachedCacheKey = attachKey
+        attachedRenderCost = Self.liveRenderCostPerPlayer
+        Self.liveRenderCostBytes += attachedRenderCost
+        Self.cacheLock.unlock()
         view.contentMode = .scaleAspectFit
         view.backgroundColor = .clear
         view.clipsToBounds = false
@@ -552,6 +682,9 @@ public final class BearyEmoteView: UIView {
     }
 
     private func teardownContent() {
+        // 审计 29 项：先还预算记账，再摘视图（记账幂等；主题切换随后
+        // 重挂接时会重新记入，净效果为旧深浅版出账、新版入账）。
+        releaseAttachedAccounting()
         playbackGeneration += 1
         loadGeneration += 1
         // 换内容：新内容的开场要重新首播，旧暂停帧作废。主题切换同样先经
@@ -683,25 +816,31 @@ public final class BearyEmoteView: UIView {
         cacheLock.lock()
         defer { cacheLock.unlock() }
         if let old = cache[cacheKey] {
-            cacheBytes -= old.estimatedBytes
+            cacheCostBytes -= old.estimatedCostBytes
         }
         cache[cacheKey] = value
-        cacheBytes += value.estimatedBytes
+        cacheCostBytes += value.estimatedCostBytes
         cacheOrder.removeAll(where: { $0 == cacheKey })
         cacheOrder.append(cacheKey)
-        // 数量 + 字节双预算：超任一预算即淘汰，淘汰顺序按占用从大到小
-        // （大文件先淘汰）；新存入的条目最后才动，避免刚存入即被逐出导致
-        // 大文件反复解析；只剩新条目时即使仍超预算也保留，不做空缓存。
-        while (cacheOrder.count > cacheLimit || cacheBytes > cacheByteBudget) && cacheOrder.count > 1 {
-            let victim = cacheOrder.filter({ $0 != cacheKey }).max(by: { (cache[$0]?.estimatedBytes ?? 0) < (cache[$1]?.estimatedBytes ?? 0) })
-            guard let key = victim else { break }
+        // 数量 + 估算成本双预算（审计 29 项）：超任一预算即淘汰，淘汰
+        // 顺序按估算成本从大到小（大文件先淘汰）；新存入的条目最后才动，
+        // 避免刚存入即被逐出导致大文件反复解析；只剩新条目时即使仍超
+        // 预算也保留，不做空缓存。
+        // 关键修正：逐出只选未被存活视图持有的条目。存活视图持有的模型
+        // 是共享实例，逐出缓存后实例仍在视图手里，一字节没省，只会逼
+        // 下次加载重解析；故活持有条目跳过。若全部为活持有，超支部分
+        // 由存活渲染承担，循环即停，不逐空缓存（预算超支此时是真实的
+        // 存活峰值，不是缓存能解决的，见 PR 描述的 Instruments 待测项）。
+        while (cacheOrder.count > cacheLimit || cacheCostBytes + liveRenderCostBytes > cacheCostBudget) && cacheOrder.count > 1 {
+            let candidates = cacheOrder.filter({ $0 != cacheKey && (liveHolderCountByKey[$0] ?? 0) == 0 })
+            guard let key = candidates.max(by: { (cache[$0]?.estimatedCostBytes ?? 0) < (cache[$1]?.estimatedCostBytes ?? 0) }) else { break }
             if let removed = cache.removeValue(forKey: key) {
-                cacheBytes -= removed.estimatedBytes
+                cacheCostBytes -= removed.estimatedCostBytes
             }
             cacheOrder.removeAll(where: { $0 == key })
         }
-        if cacheBytes < 0 {
-            cacheBytes = 0
+        if cacheCostBytes < 0 {
+            cacheCostBytes = 0
         }
     }
 
@@ -720,8 +859,13 @@ public final class BearyEmoteView: UIView {
             NSLog("[BearyEmote] load failed key=%@ dark=%@ reason=animation-parse-failed", key, dark ? "dark" : "light")
             return nil
         }
-        // 缓存预算代理值：JSON 文件字节数（解析后模型实际更大，预算取保守值）。
+        // 审计 29 项：缓存预算计价——JSON 文件字节 × 解析后模型膨胀系数
+        // （parsedModelCostMultiplier），不再直接以文件字节计。文件字节仍
+        // 是计价的唯一实测输入（层数 / 关键帧量已体现在文件大小里，不另
+        // 加按层计价，以免同一批字节重复计价）；系数本身是保守代理，
+        // 实际峰值仍需 Instruments 测量、录屏不能证明释放。
         let fileSize = (try? FileManager.default.attributesOfItem(atPath: url.path)[.size] as? NSNumber)?.intValue ?? 0
+        let estimatedCost = fileSize * parsedModelCostMultiplier
         let endFrame = CGFloat(animation.endFrame)
         guard endFrame > 0 else {
             NSLog("[BearyEmote] load failed key=%@ dark=%@ reason=nonpositive-endFrame endFrame=%f", key, dark ? "dark" : "light", endFrame)
@@ -759,6 +903,6 @@ public final class BearyEmoteView: UIView {
             loopStart = 0
             loopEnd = endFrame
         }
-        return CachedEmote(animation: animation, loopStart: loopStart, loopEnd: loopEnd, endFrame: endFrame, estimatedBytes: fileSize)
+        return CachedEmote(animation: animation, loopStart: loopStart, loopEnd: loopEnd, endFrame: endFrame, estimatedCostBytes: estimatedCost)
     }
 }
