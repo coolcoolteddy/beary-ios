@@ -34,7 +34,7 @@ private final class BlindBoxPoolRowView: UIView {
     override init(frame: CGRect) {
         super.init(frame: frame)
         backgroundColor = BearyColors.surface
-        layer.cornerRadius = 16
+        layer.cornerRadius = 14
         layer.borderWidth = 1
         layer.bearyDynamicBorderColor = BearyColors.line
         clipsToBounds = true

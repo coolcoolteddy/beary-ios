@@ -1,7 +1,7 @@
 import UIKit
 
 // ===== 盲盒交换入口行（广场顶部与时间线顶部共用同一视图类）=====
-// 视觉：页面背景底（BearyColors.bg，深浅动态跟随）+ 1px line 边框 + 圆角 16
+// 视觉：页面背景底（BearyColors.bg，深浅动态跟随）+ 1px line 边框 + 圆角 14
 // （与预览页“盲盒交换”入口行同款信息层级，不复用预览的虚线演示样式）；
 // 原 surface 底在深色下与页面底（纯黑）有色差，Li 2026-10-31 指正后改 bg，
 // 边框与圆角不动，入口行内无内层卡片；图标 28pt；标题 15 semibold；计数与副文案 12/13 灰字。
@@ -26,7 +26,7 @@ final class BearyBlindBoxEntryView: UIView {
     override init(frame: CGRect) {
         super.init(frame: frame)
         backgroundColor = BearyColors.bg
-        layer.cornerRadius = 16
+        layer.cornerRadius = 14
         layer.borderWidth = 1
         layer.bearyDynamicBorderColor = BearyColors.line
         clipsToBounds = true
