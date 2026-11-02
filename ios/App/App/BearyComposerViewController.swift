@@ -1573,7 +1573,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         recipientChipAvatar.layer.cornerRadius = 11
         recipientChipAvatar.layer.masksToBounds = true
         recipientChipFallback.font = UIFont.boldSystemFont(ofSize: 12)
-        recipientChipFallback.textColor = UIColor.white
+        recipientChipFallback.textColor = BearyColors.onBrand
         recipientChipFallback.backgroundColor = BearyColors.orange
         recipientChipFallback.textAlignment = .center
         recipientChipFallback.layer.cornerRadius = 11
@@ -2525,7 +2525,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                 let checkLabel = UILabel()
                 checkLabel.translatesAutoresizingMaskIntoConstraints = false
                 checkLabel.font = UIFont.boldSystemFont(ofSize: 14)
-                checkLabel.textColor = .white
+                checkLabel.textColor = BearyColors.onBrand
                 checkLabel.textAlignment = .center
                 checkLabel.text = "✓"
                 checkView.addSubview(checkLabel)
