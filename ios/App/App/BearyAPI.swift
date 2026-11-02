@@ -1452,9 +1452,13 @@ final class BearyAPI {
     }
 
     /// 私信单条：id 倒序下发；sender_id 判左右（自己发 = 右侧）。
+    /// 注意：后端 history 实际不下发 sender_id，只给 from_me（自己发 = true），
+    /// 故 senderId 经常是 nil——聊天页在入库前须用 fromMe 补全 senderId，
+    /// 否则本地 store 按“无 id/无 senderId 的脏行跳过”会把整页历史丢光。
     struct DMMessage: Decodable {
         var id: Int?
         var senderId: Int?
+        var fromMe: Bool? = nil
         var body: String?
         var createdAt: Int?
     }
