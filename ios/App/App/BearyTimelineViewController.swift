@@ -889,6 +889,30 @@ final class BearyTimelineCell: UITableViewCell {
         lb.isHidden = true
         return lb
     }()
+    /// 置顶图钉（仅图标，2026-11-03 Li 纠正：时间线只画图钉、无“置顶”文字、不改顺序）：
+    /// 官方 icon_pin 15（模板图＋橙 tint，卡片 pinRow 同款），固定 15×15；非置顶隐藏。
+    private let pinIconView: UIImageView = {
+        let v = UIImageView()
+        v.translatesAutoresizingMaskIntoConstraints = false
+        v.image = BearyFeedIconCache.image(named: "icon_pin", pointSize: 15)
+        v.tintColor = BearyColors.orange
+        v.contentMode = .scaleAspectFit
+        v.isHidden = true
+        return v
+    }()
+    /// 标题行（图钉＋标题）：图钉在标题文字之前；图钉隐藏时行内只剩标题，布局与原来一致。
+    private lazy var titleRow: UIStackView = {
+        let st = UIStackView(arrangedSubviews: [pinIconView, titleLabel])
+        st.translatesAutoresizingMaskIntoConstraints = false
+        st.axis = .horizontal
+        st.spacing = 4
+        st.alignment = .center
+        NSLayoutConstraint.activate([
+            pinIconView.widthAnchor.constraint(equalToConstant: 15),
+            pinIconView.heightAnchor.constraint(equalToConstant: 15),
+        ])
+        return st
+    }()
     private let thumbsScrollView = UIScrollView()
     private let thumbsStack = UIStackView()
     /// 批 E 补漏（2026-10-30 定位卡片 bug）：时间线卡片此前根本没有位置行，
@@ -1236,12 +1260,12 @@ final class BearyTimelineCell: UITableViewCell {
         // 批 E 补漏：位置行落点 = 引用卡 → 位置行 → 足行（操作行一带），与卡片
         // “图片条之后、操作行之前”同序；图片条后的动态间距（configure 内按有图
         // 9 / 无图 0）现为图片条→位置行间距，位置行隐藏时栈自动塌掉不留空行。
-        let cardStack = UIStackView(arrangedSubviews: [metaStack, titleLabel, contentLabel, quoteButton, thumbsScrollView, timelineLocationStack, footStack, actsStack])
+        let cardStack = UIStackView(arrangedSubviews: [metaStack, titleRow, contentLabel, quoteButton, thumbsScrollView, timelineLocationStack, footStack, actsStack])
         cardStack.translatesAutoresizingMaskIntoConstraints = false
         cardStack.axis = .vertical
         cardStack.spacing = 0
         cardStack.setCustomSpacing(6, after: metaStack)
-        cardStack.setCustomSpacing(4, after: titleLabel)
+        cardStack.setCustomSpacing(4, after: titleRow)
         cardStack.setCustomSpacing(9, after: contentLabel)
         cardStack.setCustomSpacing(10, after: quoteButton)
         cardStack.setCustomSpacing(9, after: thumbsScrollView)
@@ -1471,6 +1495,8 @@ final class BearyTimelineCell: UITableViewCell {
         currentEntry = nil
         titleLabel.text = nil
         titleLabel.isHidden = true
+        // 置顶图钉复位，防上一行置顶串位到下一行。
+        pinIconView.isHidden = true
         // 批 E 补漏：位置行复用复位，防上一行位置串到下一行无定位日记（#252 口径保留）。
         timelineLocationStack.isHidden = true
         timelineLocationLabel.text = nil
@@ -1728,6 +1754,8 @@ final class BearyTimelineCell: UITableViewCell {
         let trimmedTitle = (entry.title ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
         titleLabel.attributedText = trimmedTitle.isEmpty ? nil : BearyText.inlineAttributedText(from: trimmedTitle, font: BearyDynamicType.cardTitleFont(), color: BearyColors.ink, paragraphStyle: nil, dark: traitCollection.userInterfaceStyle == .dark)
         titleLabel.isHidden = trimmedTitle.isEmpty
+        // 置顶图钉（仅图标）：空标题时随标题行一并塌掉，非置顶不画。
+        pinIconView.isHidden = trimmedTitle.isEmpty || !entry.isPinned
         contentLabel.attributedText = BearyText.inlineAttributedText(from: body, font: BearyDynamicType.diaryBodyFont(), color: BearyColors.ink, paragraphStyle: paragraph, dark: traitCollection.userInterfaceStyle == .dark)
         // TL-3 引用卡（网页 tlQuoteHtml 口径）：引用日记在时间线里必须有痕迹，
         // 卡内附 42px 引用缩略图行（见下方 F2 分支），无图不占位。
@@ -2252,8 +2280,6 @@ class BearyTimelineViewController: UIViewController {
 
     private var timelineEntries: [Entry] = []
     private var timelineHasMore = false
-    /// 置顶在途去重（确认弹窗期间不占位，确认后发请求时才占位）。
-    private var pinBusyIds: Set<String> = []
     private var timelineState = LoadState.idle
     /// 80 包 B2：viewDidLoad 首拉已发起的标记（引导预加载步骤据此去重，不复发第二拉）。
     var initialLoadStarted = false
@@ -6324,15 +6350,6 @@ class BearyTimelineViewController: UIViewController {
     private func presentTimelineMoreMenu(entry: Entry, sourceView: UIView) {
         let sheet = UIAlertController(title: nil, message: nil, preferredStyle: .actionSheet)
         let nowMs = Int(Date().timeIntervalSince1970 * 1000)
-        // 置顶行（时间线只显本人日记，仍以 isOwn 守门；菜单行一律纯文字，图钉只出现在卡片标识上）：
-        // 未置顶显“置顶”，已置顶显“取消置顶”。时间线顺序不动：置顶只改标识，不重排时间线。
-        // 时间线 cell 是独立 BearyTimelineCell（非日记卡片），本支不给它加置顶标识；
-        // 成功时以 toast 反馈，标识只在个人页日记卡片上见。
-        if BearyDiaryPin.isOwn(entry) {
-            sheet.addAction(UIAlertAction(title: entry.isPinned ? "取消置顶" : "置顶", style: .default) { [weak self] _ in
-                self?.handlePinToggle(entry: entry)
-            })
-        }
         if let deadline = entry.editDeadline, nowMs < deadline {
             sheet.addAction(UIAlertAction(title: "编辑内容", style: .default) { [weak self] _ in
                 self?.onEditEntry?(entry)
@@ -6352,105 +6369,6 @@ class BearyTimelineViewController: UIViewController {
         // 审计-时间线：present 前统一守卫，已有弹窗时不叠页（筛子呈现留给 11b 气泡，本支不动）。
         guard presentedViewController == nil else { return }
         present(sheet, animated: BearyMotion.animated(true))
-    }
-
-    // MARK: - 日记置顶（单槽位，乐观更新总口径；时间线顺序不动）
-
-    /// 菜单置顶入口：只对本人篇；已有另一置顶篇时先弹替换确认，取消则什么都不做、
-    /// 不调接口、不改本地态；无旧置顶时直接置顶；已置顶篇点按即取消置顶（不弹确认）。
-    /// 时间线列表不带置顶排序：本页只改标识，不重排；时间线 cell 无置顶标识，
-    /// 成功时以 toast 反馈（与详情页同口径）。
-    private func handlePinToggle(entry: Entry) {
-        guard let entryId = entry.id, !entryId.isEmpty else { return }
-        guard BearyDiaryPin.isOwn(entry) else { return }
-        guard !pinBusyIds.contains(entryId) else { return }
-        if entry.isPinned {
-            performPinToggle(entry: entry, pinning: false, previousPinnedId: nil)
-        } else if let oldId = BearyDiaryPin.existingPinnedId(excluding: entryId, in: timelineEntries + dayEntries) {
-            BearyDiaryPin.confirmReplacement(from: self) { [weak self] confirmed in
-                guard confirmed else { return }
-                self?.performPinToggle(entry: entry, pinning: true, previousPinnedId: oldId)
-            }
-        } else {
-            performPinToggle(entry: entry, pinning: true, previousPinnedId: nil)
-        }
-    }
-
-    /// 乐观置顶／取消置顶：点按瞬间即最终态（目标篇标置顶／清标识、旧置顶篇清标识，
-    /// 可见行 .none 重刷），服务端回包只确认；失败回滚到最后确认态＋摇头＋toast＋warning 震动。
-    private func performPinToggle(entry: Entry, pinning: Bool, previousPinnedId: String?) {
-        guard let entryId = entry.id, !entryId.isEmpty else { return }
-        pinBusyIds.insert(entryId)
-        let originalTarget = entry
-        let originalPrevious = previousPinnedId.flatMap { id in (timelineEntries + dayEntries).first(where: { $0.id == id }) }
-        let optimisticPinnedAt = pinning ? Int(Date().timeIntervalSince1970 * 1000) : nil
-        applyPinLocally(entryId: entryId, pinned: pinning, pinnedAt: optimisticPinnedAt)
-        if let prevId = previousPinnedId {
-            applyPinLocally(entryId: prevId, pinned: false, pinnedAt: nil)
-        }
-        reloadVisibleTimelineRow(entryId: entryId)
-        if let prevId = previousPinnedId {
-            reloadVisibleTimelineRow(entryId: prevId)
-        }
-        let completion: (Result<BearyAPI.PinResponse, APIError>) -> Void = { [weak self] result in
-            DispatchQueue.main.async {
-                guard let strongSelf = self else { return }
-                strongSelf.pinBusyIds.remove(entryId)
-                switch result {
-                case .success(let resp):
-                    var pinned = pinning
-                    if let value = resp.pinned { pinned = value }
-                    var pinnedAt = optimisticPinnedAt
-                    if let value = resp.pinnedAt { pinnedAt = value } else if !pinned { pinnedAt = nil }
-                    strongSelf.applyPinLocally(entryId: entryId, pinned: pinned, pinnedAt: pinnedAt)
-                    BearyDiaryPin.notePinResult(entryId: entryId, pinned: pinned)
-                    strongSelf.reloadVisibleTimelineRow(entryId: entryId)
-                    BearyToast.show(in: strongSelf.view, message: pinned ? "已置顶" : "已取消置顶")
-                case .failure(let err):
-                    strongSelf.applyPinLocally(entryId: entryId, pinned: originalTarget.isPinned, pinnedAt: originalTarget.pinnedAt)
-                    if let prev = originalPrevious, let prevId = prev.id {
-                        strongSelf.applyPinLocally(entryId: prevId, pinned: prev.isPinned, pinnedAt: prev.pinnedAt)
-                    }
-                    strongSelf.reloadVisibleTimelineRow(entryId: entryId)
-                    if let prevId = previousPinnedId {
-                        strongSelf.reloadVisibleTimelineRow(entryId: prevId)
-                    }
-                    BearyToast.show(in: strongSelf.view, message: BearyDiaryPin.errorMessage(for: err, pinning: pinning))
-                    strongSelf.shakeVisibleTimelinePublishButton(entryId: entryId)
-                }
-            }
-        }
-        if pinning {
-            BearyAPI.shared.pinEntry(id: entryId, completion: completion)
-        } else {
-            BearyAPI.shared.unpinEntry(id: entryId, completion: completion)
-        }
-    }
-
-    /// 置顶态写回时间线三副本（applyVisibilityLocally 同款：timelineEntries／dayEntries／
-    /// 日缓存，改动的日缓存同步落盘；只动 pinned／pinnedAt 两字段，不整条替换）。
-    private func applyPinLocally(entryId: String, pinned: Bool, pinnedAt: Int?) {
-        for index in timelineEntries.indices where timelineEntries[index].id == entryId {
-            timelineEntries[index].pinned = pinned ? 1 : 0
-            timelineEntries[index].pinnedAt = pinnedAt
-        }
-        for index in dayEntries.indices where dayEntries[index].id == entryId {
-            dayEntries[index].pinned = pinned ? 1 : 0
-            dayEntries[index].pinnedAt = pinnedAt
-        }
-        for key in dayEntriesCache.keys {
-            var list = dayEntriesCache[key] ?? []
-            var changed = false
-            for index in list.indices where list[index].id == entryId {
-                list[index].pinned = pinned ? 1 : 0
-                list[index].pinnedAt = pinnedAt
-                changed = true
-            }
-            if changed {
-                dayEntriesCache[key] = list
-                cacheDayEntries(key: key, entries: list)
-            }
-        }
     }
 
     /// 可见行单行重刷（.none，不播行动画、不重播已有元素动效）：按 currentSections

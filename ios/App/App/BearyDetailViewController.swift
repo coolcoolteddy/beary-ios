@@ -104,8 +104,6 @@ final class BearyDetailViewController: UIViewController {
     private var confirmedBookmarked = false
     private var isEmoteBusy = false
     private var isVisibilityBusy = false
-    /// 置顶在途去重（确认弹窗期间不占位，确认后发请求时才占位）。
-    private var isPinBusy = false
     /// 审计三轮第二批 9：限时到期单次定时器（只按最近 ephemeralUntil 排一次，
     /// 绝不按秒/按分钟全量刷新；到点只重算有效态，见 applyEphemeralExpiryIfNeeded）。
     private var ephemeralExpiryTimer: Timer?
@@ -300,6 +298,30 @@ final class BearyDetailViewController: UIViewController {
         lb.lineBreakMode = .byCharWrapping
         lb.isHidden = true
         return lb
+    }()
+    /// 置顶图钉（仅图标，2026-11-03 Li 纠正：详情页只画图钉、无“置顶”文字）：
+    /// 官方 icon_pin 15（模板图＋橙 tint，卡片 pinRow 同款），固定 15×15；非置顶隐藏。
+    private let pinIconView: UIImageView = {
+        let v = UIImageView()
+        v.translatesAutoresizingMaskIntoConstraints = false
+        v.image = BearyFeedIconCache.image(named: "icon_pin", pointSize: 15)
+        v.tintColor = BearyColors.orange
+        v.contentMode = .scaleAspectFit
+        v.isHidden = true
+        return v
+    }()
+    /// 标题行（图钉＋标题）：图钉在标题文字之前；图钉隐藏时行内只剩标题，布局与原来一致。
+    private lazy var titleRow: UIStackView = {
+        let st = UIStackView(arrangedSubviews: [pinIconView, titleLabel])
+        st.translatesAutoresizingMaskIntoConstraints = false
+        st.axis = .horizontal
+        st.spacing = 4
+        st.alignment = .center
+        NSLayoutConstraint.activate([
+            pinIconView.widthAnchor.constraint(equalToConstant: 15),
+            pinIconView.heightAnchor.constraint(equalToConstant: 15),
+        ])
+        return st
     }()
     /// 横向 216 图片条：首页 imagesScrollView + imagesStack 同款（间距 8、
     /// 高只由 imageHeightConstraint 驱动：216 有图 / 0 无图；9 只槽位复用）。
@@ -887,7 +909,7 @@ final class BearyDetailViewController: UIViewController {
     }
 
     private func buildBody() {
-        rightStack.addArrangedSubview(titleLabel)
+        rightStack.addArrangedSubview(titleRow)
         bodyLabel.translatesAutoresizingMaskIntoConstraints = false
         bodyLabel.numberOfLines = 0
         bodyLabel.lineBreakMode = .byCharWrapping
@@ -1067,7 +1089,7 @@ final class BearyDetailViewController: UIViewController {
         rightStack.setCustomSpacing(4, after: recipientRow)
         rightStack.setCustomSpacing(4, after: authorRow)
         rightStack.setCustomSpacing(4, after: ephemeralRow)
-        rightStack.setCustomSpacing(titleLabel.isHidden ? 0 : 4, after: titleLabel)
+        rightStack.setCustomSpacing(titleLabel.isHidden ? 0 : 4, after: titleRow)
         rightStack.setCustomSpacing(10, after: bodyLabel)
         rightStack.setCustomSpacing(10, after: quoteView)
         rightStack.setCustomSpacing(10, after: imagesScrollView)
@@ -1205,6 +1227,8 @@ final class BearyDetailViewController: UIViewController {
         let trimmedTitle = (entry.title ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
         titleLabel.attributedText = trimmedTitle.isEmpty ? nil : BearyText.inlineAttributedText(from: trimmedTitle, font: BearyDynamicType.cardTitleFont(), color: BearyColors.ink, paragraphStyle: nil, dark: traitCollection.userInterfaceStyle == .dark)
         titleLabel.isHidden = trimmedTitle.isEmpty
+        // 置顶图钉（仅图标）：空标题时随标题行一并塌掉，非置顶不画。
+        pinIconView.isHidden = trimmedTitle.isEmpty || !entry.isPinned
 
         // 正文 16pt（diaryBodyFont 即 scaled 16），行高 1.6（首页卡片口径）。
         // 旧心情改位：心情缀正文末尾（见 detailBodyAttributedText）。
@@ -1429,6 +1453,7 @@ final class BearyDetailViewController: UIViewController {
             let trimmedTitle = (merged.title ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
             titleLabel.attributedText = trimmedTitle.isEmpty ? nil : BearyText.inlineAttributedText(from: trimmedTitle, font: BearyDynamicType.cardTitleFont(), color: BearyColors.ink, paragraphStyle: nil, dark: traitCollection.userInterfaceStyle == .dark)
             titleLabel.isHidden = trimmedTitle.isEmpty
+            pinIconView.isHidden = trimmedTitle.isEmpty || !merged.isPinned
             if !trimmedTitle.isEmpty { fadeLabel(titleLabel) }
         }
         if old.content != merged.content || old.mood != merged.mood {
@@ -2226,12 +2251,6 @@ final class BearyDetailViewController: UIViewController {
         let sheet = UIAlertController(title: nil, message: nil, preferredStyle: .actionSheet)
         let nowMs = Int(Date().timeIntervalSince1970 * 1000)
         if isAuthor {
-            // 置顶行（作者本人才有；菜单行一律纯文字，图钉只出现在卡片置顶标识上）：
-            // 未置顶显“置顶”，已置顶显“取消置顶”。详情页本身不画置顶标识，
-            // 成功时以 toast 反馈；标识只在个人页日记卡片上见。
-            sheet.addAction(UIAlertAction(title: entry.isPinned ? "取消置顶" : "置顶", style: .default) { [weak self] _ in
-                self?.handlePinToggle()
-            })
             if let deadline = entry.editDeadline, nowMs < deadline {
                 sheet.addAction(UIAlertAction(title: "编辑", style: .default) { [weak self] _ in
                     guard let self = self else { return }
@@ -2273,66 +2292,6 @@ final class BearyDetailViewController: UIViewController {
         }
         // 审计 2026-11-02 弹窗组：present 不写死 animated，走减动效口径。
         present(sheet, animated: BearyMotion.animated(true))
-    }
-
-    // MARK: - 日记置顶（单槽位，乐观更新总口径）
-
-    /// 菜单置顶入口：只对作者本人；已有另一置顶篇时先弹替换确认，取消则什么都不做、
-    /// 不调接口、不改本地态；无旧置顶时直接置顶；已置顶篇点按即取消置顶（不弹确认）。
-    /// 详情页不画置顶标识：乐观态只改本页 entry 模型，成功时以 toast 反馈；
-    /// 回到个人页后列表按置顶优先排序、卡片带标识。
-    private func handlePinToggle() {
-        guard isAuthor, !isPinBusy else { return }
-        guard let entryId = entry.id, !entryId.isEmpty else { return }
-        if entry.isPinned {
-            performPinToggle(pinning: false)
-        } else if BearyDiaryPin.existingPinnedId(excluding: entryId, in: []) != nil {
-            BearyDiaryPin.confirmReplacement(from: self) { [weak self] confirmed in
-                guard confirmed else { return }
-                self?.performPinToggle(pinning: true)
-            }
-        } else {
-            performPinToggle(pinning: true)
-        }
-    }
-
-    /// 乐观置顶／取消置顶：点按瞬间即最终态（本页 entry 模型先行），服务端回包只确认；
-    /// 失败回滚到最后确认态＋摇头＋toast＋warning 震动（playDenyShake 内含 warning）。
-    private func performPinToggle(pinning: Bool) {
-        guard let entryId = entry.id, !entryId.isEmpty else { return }
-        isPinBusy = true
-        let originalTarget = entry
-        let optimisticPinnedAt = pinning ? Int(Date().timeIntervalSince1970 * 1000) : nil
-        entry.pinned = pinning ? 1 : 0
-        entry.pinnedAt = optimisticPinnedAt
-        // 旧置顶篇不在本页模型内，无需本地清标识；服务端单槽位替换为准，
-        // 本页记忆同步交给 notePinResult（新置顶成功即覆盖旧记忆）。
-        let completion: (Result<BearyAPI.PinResponse, APIError>) -> Void = { [weak self] result in
-            DispatchQueue.main.async {
-                guard let self = self else { return }
-                self.isPinBusy = false
-                switch result {
-                case .success(let resp):
-                    var pinned = pinning
-                    if let value = resp.pinned { pinned = value }
-                    var pinnedAt = optimisticPinnedAt
-                    if let value = resp.pinnedAt { pinnedAt = value } else if !pinned { pinnedAt = nil }
-                    self.entry.pinned = pinned ? 1 : 0
-                    self.entry.pinnedAt = pinnedAt
-                    BearyDiaryPin.notePinResult(entryId: entryId, pinned: pinned)
-                    BearyToast.show(in: self.view, message: pinned ? "已置顶" : "已取消置顶")
-                case .failure(let err):
-                    self.entry = originalTarget
-                    BearyToast.show(in: self.view, message: BearyDiaryPin.errorMessage(for: err, pinning: pinning))
-                    self.playDenyShake(on: self.moreButton)
-                }
-            }
-        }
-        if pinning {
-            BearyAPI.shared.pinEntry(id: entryId, completion: completion)
-        } else {
-            BearyAPI.shared.unpinEntry(id: entryId, completion: completion)
-        }
     }
 
     @objc private func visibilityTapped() {
