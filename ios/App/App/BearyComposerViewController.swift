@@ -1182,13 +1182,13 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             titleLabel.leadingAnchor.constraint(equalTo: cancelButton.trailingAnchor, constant: 8),
             titleLabel.centerYAnchor.constraint(equalTo: topBar.centerYAnchor),
             titleLabel.trailingAnchor.constraint(lessThanOrEqualTo: draftPillButton.leadingAnchor, constant: -8),
-            // 顶栏右上角三钮收紧（2026-10-31）：钮间 gap 8 → 4（草稿—可见性、可见性—发布、
+            // 顶栏右上角三钮间距（样式规格定版）：钮间 gap 统一 8（草稿—可见性、可见性—发布、
             // 编辑态草稿—发布同口径）；右沿留白仍 16，与左沿关闭钮对称口径不变。
-            visibilityButton.trailingAnchor.constraint(equalTo: publishButton.leadingAnchor, constant: -4),
+            visibilityButton.trailingAnchor.constraint(equalTo: publishButton.leadingAnchor, constant: -8),
             visibilityButton.centerYAnchor.constraint(equalTo: topBar.centerYAnchor),
             visibilityButton.widthAnchor.constraint(equalToConstant: 44),
             visibilityButton.heightAnchor.constraint(equalToConstant: 44),
-            draftPillButton.trailingAnchor.constraint(equalTo: isEditMode ? publishButton.leadingAnchor : visibilityButton.leadingAnchor, constant: -4),
+            draftPillButton.trailingAnchor.constraint(equalTo: isEditMode ? publishButton.leadingAnchor : visibilityButton.leadingAnchor, constant: -8),
             draftPillButton.centerYAnchor.constraint(equalTo: topBar.centerYAnchor),
             draftPillButton.heightAnchor.constraint(equalToConstant: 44),
             publishButton.trailingAnchor.constraint(equalTo: topBar.trailingAnchor, constant: -16),

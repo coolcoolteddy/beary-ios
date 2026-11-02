@@ -4039,6 +4039,11 @@ private final class BearyGrabberHitView: UIView {
 
 private final class BearyComposerSheetPresentationController: UIPresentationController {
     private let dimmingView = UIView()
+    var dimTapCloses = false
+
+    @objc private func dimTapped() {
+        presentedViewController.dismiss(animated: true)
+    }
     private let grabberStrip = BearyGrabberHitView()
     private let grabberPill = UIView()
     private let sheetShadowView = UIView()
