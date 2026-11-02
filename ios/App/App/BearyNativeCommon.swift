@@ -1076,21 +1076,23 @@ extension UIImageView {
 // MARK: - 时间与名字
 
 enum BearyText {
-    /// created_at 是毫秒时间戳。今天 → HH:mm；昨天 → 昨天 HH:mm；否则 M月d日 HH:mm。
+    /// [24] 小项 6：统一为项目主流口径——今天 → H:mm；昨天 → 昨天 H:mm；
+    /// 否则 M月d日 H:mm（小时不补零，与卡片/详情/通知/时间线引用一致；
+    /// 旧 HH:mm 偏离主流，已改齐；本函数现行调用方为空，改动只防后用漂移）。
     static func timeString(ms: Int) -> String {
         let date = Date(timeIntervalSince1970: TimeInterval(ms) / 1000.0)
         let cal = Calendar.current
         let fmt = DateFormatter()
         fmt.locale = Locale(identifier: "zh_CN")
         if cal.isDateInToday(date) {
-            fmt.dateFormat = "HH:mm"
+            fmt.dateFormat = "H:mm"
             return fmt.string(from: date)
         }
         if cal.isDateInYesterday(date) {
-            fmt.dateFormat = "HH:mm"
+            fmt.dateFormat = "H:mm"
             return "昨天 " + fmt.string(from: date)
         }
-        fmt.dateFormat = "M月d日 HH:mm"
+        fmt.dateFormat = "M月d日 H:mm"
         return fmt.string(from: date)
     }
 
@@ -2663,7 +2665,7 @@ enum BearyQuoteGate {
 }
 
 extension BearyQuoteGate {
-    /// 好友第一期：仅好友来源占位（拟文案，待 Li 过目）——服务端在 locked 体里
+    /// 10a 定版（2026-11-02 Li 定）：仅好友来源占位——服务端在 locked 体里
     /// 透传 visibility=friends 时，非好友 viewer 走本句；好友 viewer 服务端应直传
     /// 全文而不走 locked，App 不凭本地好友关系反推（无 per-entry 好友判定接口）。
     /// visibility 缺失/其他值时回落旧两档文案（fail-closed，不漏出）。
