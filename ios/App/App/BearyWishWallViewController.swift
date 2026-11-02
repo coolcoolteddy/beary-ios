@@ -653,10 +653,9 @@ final class BearyWishWallViewController: UIViewController {
         }
     }
 
-    /// 游客投票走登录页（登录页全屏 modal；成功后刷新 /me 与列表，失败态不留残页）。
+    /// 游客投票走登录弹窗（成功后刷新 /me 与列表，失败态不留残页）。
     private func presentLoginPage() {
-        let login = BearyLoginViewController()
-        login.modalPresentationStyle = .fullScreen
+        let login = BearyLoginSheet.make()
         login.onLoggedIn = { [weak self] referralText in
             // 添加账号会话守卫：正常是空操作；防迂回路径下守卫仍 armed 时
             // 后续一次取消把新号恢复成旧号，成功先解 arm。

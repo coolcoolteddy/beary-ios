@@ -13,10 +13,15 @@ import UIKit
 //   - onGuestMode：用户点“先逛逛（游客模式）”；容器负责 dismiss 并进入游客态。
 // 页面元素（对照网页版登录框 beary.html 的 lgm 系列）：邮箱输入 + 获取验证码 +
 // 6 位验证码输入 + 邀请码输入（选填）+ 隐私协议复选框 + 登录钮 + 游客钮 + 关闭钮。
-// 文案与尺寸：wordmark 为 LogoHorizontal 官方资产（高 28，左对齐）、副标题“邮箱验证码登录，无需密码；新邮箱登录即注册”
-// 14 灰、字段 label 11/600、输入框高 48 圆角 12 faint 底、发码钮高 44（行高 48 内居中）圆角 12、
-// 登录钮高 44 圆角 12 墨底白字。颜色一律走 BearyColors，不新增字面量颜色；
-// 图标走 icon_close/icon_check 资产；不使用液态玻璃效果。
+// 文案与尺寸：wordmark 为 LogoHorizontal 官方资产（高 28，全屏页左对齐、Sheet 弹窗居中）、
+// 全屏页副标题“邮箱验证码登录，无需密码；新邮箱登录即注册”14 灰（Sheet 弹窗无副标题，
+// 改标题“欢迎回来”17 半粗体居中）、字段 label 11/600、输入框高 48 圆角 12 faint 底、
+// 发码钮高 44（行高 48 内居中）圆角 12、登录钮高 44 圆角 12（全屏页墨底白字，
+// Sheet 弹窗品牌橙底墨字——全弹窗唯一重色）、Sheet 弹窗邀请码收起为“有邀请码？ ›”行。
+// 颜色一律走 BearyColors，不新增字面量颜色；
+// 图标走 icon_close/icon_check/icon_chevron_right/icon_chevron_down 资产；
+// 全屏页不使用液态玻璃效果，Sheet 弹窗的玻璃由 BearyLoginSheet 容器提供
+// （顶栏同款 UIGlassEffect，Li 2026-11-02 批准的 BearyGlass token 例外）。
 //
 // 发码/验码一律走 BearyAPI（BearyAPI.sendCode、
 // BearyAPI.verify 返回完整响应体含 pending_delete）：本页不再有本地账户请求实现。
@@ -39,6 +44,13 @@ final class BearyLoginViewController: UIViewController {
     var onCancelled: (() -> Void)?
     /// 用户点“先逛逛（游客模式）”。本页不自己 dismiss，容器负责关闭并进入游客态。
     var onGuestMode: (() -> Void)?
+    /// Sheet 弹窗模式（Li 2026-11-02 批准：登录改底 sheet 弹窗）：由 BearyLoginSheet.make()
+    /// 在 present 前置 true，只改呈现与文案排布，登录逻辑（发码/验码/邀请码/协议）一字不动。
+    /// false = 原全屏页（保留作回退，当前无调用点走全屏）。
+    var sheetMode = false
+    /// Sheet transitioningDelegate 强持有（UIViewController.transitioningDelegate 为弱引用，
+    /// 调用方不另持有；随本页释放）。
+    var loginSheetDelegate: BearyLoginSheetTransitioningDelegate?
 
     private let scrollView = UIScrollView()
     private let contentView = UIView()
@@ -59,6 +71,16 @@ final class BearyLoginViewController: UIViewController {
     /// 协议文案用 UITextView 承载可点链接（UILabel 接不住链接点按）；点按走 App 内原生法律页。
     private let agreeLabel = UITextView()
     private let agreeRow = UIView()
+    /// Sheet 弹窗专属：标题“欢迎回来”（全屏页无此标题）。
+    private let welcomeTitleLabel = UILabel()
+    /// Sheet 弹窗专属：邀请码收起行（全屏页邀请码常显，无此行）。
+    private let inviteDisclosureRow = UIView()
+    private let inviteDisclosureLabel = UILabel()
+    private let inviteDisclosureChevron = UIImageView()
+    /// Sheet 弹窗：邀请码展开态（收起时只留收起行，字段隐藏但文本保留，登录照常读取）。
+    private var inviteExpanded = false
+    /// Sheet 弹窗：上次上报的内容高，变化 <0.5 不重复设 preferredContentSize，防布局循环。
+    private var lastSheetPreferredHeight: CGFloat = 0
     private var emailInputContainer: BearyInputContainer?
     private var codeInputContainer: BearyInputContainer?
     private var inviteInputContainer: BearyInputContainer?
@@ -109,12 +131,23 @@ final class BearyLoginViewController: UIViewController {
 
     override func viewDidLoad() {
         super.viewDidLoad()
-        view.backgroundColor = BearyColors.bg
+        view.backgroundColor = sheetMode ? UIColor.clear : BearyColors.bg
         buildLayout()
         NotificationCenter.default.addObserver(self, selector: #selector(keyboardWillShow(_:)), name: UIResponder.keyboardWillShowNotification, object: nil)
         NotificationCenter.default.addObserver(self, selector: #selector(keyboardWillShow(_:)), name: UIResponder.keyboardWillChangeFrameNotification, object: nil)
         NotificationCenter.default.addObserver(self, selector: #selector(keyboardWillHide(_:)), name: UIResponder.keyboardWillHideNotification, object: nil)
         updateButtonStates()
+    }
+
+    override func viewDidLayoutSubviews() {
+        super.viewDidLayoutSubviews()
+        guard sheetMode else { return }
+        // Sheet 高跟内容走：栈高 + 上下内边距（16/24）+ 安全区底（Home 条）；
+        // 邀请展开/收起、字号档位变化时重算，presentation 控制器跟帧走。
+        let height = stackView.bounds.height + 16 + 24 + view.safeAreaInsets.bottom
+        guard height > 0, abs(height - lastSheetPreferredHeight) > 0.5 else { return }
+        lastSheetPreferredHeight = height
+        preferredContentSize = CGSize(width: 0, height: height)
     }
 
     override func traitCollectionDidChange(_ previousTraitCollection: UITraitCollection?) {
@@ -174,10 +207,25 @@ final class BearyLoginViewController: UIViewController {
         contentView.addSubview(stackView)
 
         closeButton.translatesAutoresizingMaskIntoConstraints = false
-        closeButton.backgroundColor = BearyColors.faint
+        closeButton.backgroundColor = sheetMode ? UIColor.clear : BearyColors.faint
         closeButton.layer.cornerRadius = 16
         closeButton.tintColor = BearyColors.ink
         closeButton.setImage(BearyIconImages.image(named: "icon_close", pointSize: 15), for: .normal)
+        if sheetMode {
+            // Sheet 弹窗：关闭钮为玻璃圆钮（玻璃插 index 0，BearyGlassButton 同款；
+            // 玻璃层不参与触摸，点按仍归按钮本体；圆角 16 自裁剪）。
+            let closeGlass = BearyGlass.effectView(tint: BearyGlass.neutralTint)
+            closeGlass.layer.cornerRadius = 16
+            closeGlass.clipsToBounds = true
+            closeGlass.translatesAutoresizingMaskIntoConstraints = false
+            closeButton.insertSubview(closeGlass, at: 0)
+            NSLayoutConstraint.activate([
+                closeGlass.topAnchor.constraint(equalTo: closeButton.topAnchor),
+                closeGlass.bottomAnchor.constraint(equalTo: closeButton.bottomAnchor),
+                closeGlass.leadingAnchor.constraint(equalTo: closeButton.leadingAnchor),
+                closeGlass.trailingAnchor.constraint(equalTo: closeButton.trailingAnchor),
+            ])
+        }
         closeButton.accessibilityLabel = "关闭"
         closeButton.addTarget(self, action: #selector(closeTapped), for: .touchUpInside)
         closeButton.bearyAddPressFeedback()
@@ -200,6 +248,43 @@ final class BearyLoginViewController: UIViewController {
         subtitleLabel.textColor = BearyColors.gray
         subtitleLabel.numberOfLines = 0
 
+        // Sheet 弹窗标题“欢迎回来”（全屏页无此标题，副标题只在全屏页出现）。
+        welcomeTitleLabel.translatesAutoresizingMaskIntoConstraints = false
+        welcomeTitleLabel.text = "欢迎回来"
+        welcomeTitleLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 17, weight: .semibold))
+        welcomeTitleLabel.adjustsFontForContentSizeCategory = true
+        welcomeTitleLabel.textColor = BearyColors.ink
+        welcomeTitleLabel.textAlignment = .center
+
+        // Sheet 弹窗邀请码收起行：点按展开/收起字段（字段文本保留，登录照常读取）；
+        // 全屏页邀请码常显，不用此行。
+        inviteDisclosureRow.translatesAutoresizingMaskIntoConstraints = false
+        inviteDisclosureLabel.translatesAutoresizingMaskIntoConstraints = false
+        inviteDisclosureLabel.text = "有邀请码？"
+        inviteDisclosureLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 15))
+        inviteDisclosureLabel.adjustsFontForContentSizeCategory = true
+        inviteDisclosureLabel.textColor = BearyColors.gray
+        inviteDisclosureChevron.translatesAutoresizingMaskIntoConstraints = false
+        inviteDisclosureChevron.image = BearyIconImages.image(named: "icon_chevron_right", pointSize: 14)
+        inviteDisclosureChevron.tintColor = BearyColors.gray
+        inviteDisclosureChevron.contentMode = .scaleAspectFit
+        inviteDisclosureRow.addSubview(inviteDisclosureLabel)
+        inviteDisclosureRow.addSubview(inviteDisclosureChevron)
+        inviteDisclosureRow.isAccessibilityElement = true
+        inviteDisclosureRow.accessibilityLabel = "有邀请码？"
+        inviteDisclosureRow.accessibilityTraits = .button
+        inviteDisclosureRow.accessibilityValue = "已收起"
+        inviteDisclosureRow.addGestureRecognizer(UITapGestureRecognizer(target: self, action: #selector(inviteDisclosureTapped)))
+        NSLayoutConstraint.activate([
+            inviteDisclosureRow.heightAnchor.constraint(equalToConstant: 44),
+            inviteDisclosureLabel.leadingAnchor.constraint(equalTo: inviteDisclosureRow.leadingAnchor),
+            inviteDisclosureLabel.centerYAnchor.constraint(equalTo: inviteDisclosureRow.centerYAnchor),
+            inviteDisclosureChevron.leadingAnchor.constraint(equalTo: inviteDisclosureLabel.trailingAnchor, constant: 4),
+            inviteDisclosureChevron.centerYAnchor.constraint(equalTo: inviteDisclosureRow.centerYAnchor),
+            inviteDisclosureChevron.widthAnchor.constraint(equalToConstant: 14),
+            inviteDisclosureChevron.heightAnchor.constraint(equalToConstant: 14),
+        ])
+
         configureEmailField()
         configureCodeField()
         configureInviteField()
@@ -218,7 +303,9 @@ final class BearyLoginViewController: UIViewController {
         messageLabel.numberOfLines = 0
 
         loginButton.translatesAutoresizingMaskIntoConstraints = false
-        loginButton.backgroundColor = BearyColors.ink
+        // Sheet 弹窗：品牌橙登录钮（全弹窗唯一重色），前景走 onBrand 恒墨（见 setLoginTitle）；
+        // 全屏页保持墨底白字。
+        loginButton.backgroundColor = sheetMode ? BearyColors.orange : BearyColors.ink
         loginButton.layer.cornerRadius = 12
         loginButton.addTarget(self, action: #selector(loginTapped), for: .touchUpInside)
         loginButton.bearyAddPressFeedback()
@@ -232,14 +319,15 @@ final class BearyLoginViewController: UIViewController {
             loginSpinner.heightAnchor.constraint(equalToConstant: 20),
         ])
 
-        // 游客次钮：sendButton 未启用态的次级口径（faint 底 + gray 字），
+        // 游客次钮：全屏页为 sendButton 未启用态的次级口径（faint 底 + gray 字），
+        // Sheet 弹窗改纯文字链（墨字、无底），全弹窗唯一重色仍是橙登录钮。
         // .custom 类型避免 system 钮的点按标题变暗；不受登录钮启用条件约束，任何时候可点。
         guestButton.translatesAutoresizingMaskIntoConstraints = false
-        guestButton.backgroundColor = BearyColors.faint
+        guestButton.backgroundColor = sheetMode ? UIColor.clear : BearyColors.faint
         guestButton.layer.cornerRadius = 12
         guestButton.setTitle("先逛逛（游客模式）", for: .normal)
-        guestButton.setTitleColor(BearyColors.gray, for: .normal)
-        guestButton.setTitleColor(BearyColors.gray, for: .disabled)
+        guestButton.setTitleColor(sheetMode ? BearyColors.ink : BearyColors.gray, for: .normal)
+        guestButton.setTitleColor(sheetMode ? BearyColors.ink : BearyColors.gray, for: .disabled)
         guestButton.titleLabel?.font = BearyDynamicType.cappedFont(for: UIFont.systemFont(ofSize: 16, weight: .semibold))
         guestButton.titleLabel?.adjustsFontForContentSizeCategory = true
         guestButton.addTarget(self, action: #selector(guestTapped), for: .touchUpInside)
@@ -268,25 +356,48 @@ final class BearyLoginViewController: UIViewController {
         let inviteLabel = makeFieldLabel(text: "邀请码（选填）")
         stackView.addArrangedSubview(closeRow)
         stackView.addArrangedSubview(logoRow)
-        stackView.addArrangedSubview(subtitleLabel)
+        if sheetMode {
+            stackView.addArrangedSubview(welcomeTitleLabel)
+        } else {
+            stackView.addArrangedSubview(subtitleLabel)
+        }
         stackView.addArrangedSubview(emailLabel)
         stackView.addArrangedSubview(emailContainer)
         stackView.addArrangedSubview(codeLabel)
         stackView.addArrangedSubview(codeRow)
+        if sheetMode {
+            stackView.addArrangedSubview(inviteDisclosureRow)
+        }
         stackView.addArrangedSubview(inviteLabel)
         stackView.addArrangedSubview(inviteContainer)
         stackView.addArrangedSubview(messageLabel)
         stackView.addArrangedSubview(agreeRow)
         stackView.addArrangedSubview(loginButton)
         stackView.addArrangedSubview(guestButton)
-        stackView.addArrangedSubview(guestNoteLabel)
+        if !sheetMode {
+            stackView.addArrangedSubview(guestNoteLabel)
+        }
+        // Sheet 弹窗：邀请码收起（只留收起行，字段隐藏但文本保留）；邀请 label 在
+        // Sheet 弹窗里不出现（收起行即字段说明），仅全屏页用。
+        if sheetMode {
+            inviteLabel.isHidden = true
+            inviteContainer.isHidden = true
+        }
         stackView.setCustomSpacing(18, after: closeRow)
-        stackView.setCustomSpacing(5, after: logoRow)
-        stackView.setCustomSpacing(20, after: subtitleLabel)
+        if sheetMode {
+            stackView.setCustomSpacing(12, after: logoRow)
+            stackView.setCustomSpacing(20, after: welcomeTitleLabel)
+        } else {
+            stackView.setCustomSpacing(5, after: logoRow)
+            stackView.setCustomSpacing(20, after: subtitleLabel)
+        }
         stackView.setCustomSpacing(7, after: emailLabel)
         stackView.setCustomSpacing(14, after: emailContainer)
         stackView.setCustomSpacing(7, after: codeLabel)
         stackView.setCustomSpacing(14, after: codeRow)
+        if sheetMode {
+            stackView.setCustomSpacing(7, after: inviteDisclosureRow)
+        }
         stackView.setCustomSpacing(7, after: inviteLabel)
         stackView.setCustomSpacing(8, after: inviteContainer)
         stackView.setCustomSpacing(8, after: messageLabel)
@@ -294,6 +405,10 @@ final class BearyLoginViewController: UIViewController {
         stackView.setCustomSpacing(12, after: loginButton)
         stackView.setCustomSpacing(8, after: guestButton)
 
+        // Sheet 弹窗：logo 居中（全屏页左对齐）；宽高比约束与原值一致。
+        let logoXConstraint = sheetMode
+            ? logoImageView.centerXAnchor.constraint(equalTo: logoRow.centerXAnchor)
+            : logoImageView.leadingAnchor.constraint(equalTo: logoRow.leadingAnchor)
         NSLayoutConstraint.activate([
             scrollView.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
             scrollView.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor),
@@ -317,7 +432,7 @@ final class BearyLoginViewController: UIViewController {
             closeButton.trailingAnchor.constraint(equalTo: closeRow.trailingAnchor),
             closeButton.centerYAnchor.constraint(equalTo: closeRow.centerYAnchor),
             logoRow.heightAnchor.constraint(equalToConstant: 28),
-            logoImageView.leadingAnchor.constraint(equalTo: logoRow.leadingAnchor),
+            logoXConstraint,
             logoImageView.topAnchor.constraint(equalTo: logoRow.topAnchor),
             logoImageView.bottomAnchor.constraint(equalTo: logoRow.bottomAnchor),
             logoImageView.widthAnchor.constraint(equalTo: logoImageView.heightAnchor, multiplier: logoAspectRatio()),
@@ -600,7 +715,7 @@ final class BearyLoginViewController: UIViewController {
     private func setLoginTitle(_ text: String) {
         let title = NSAttributedString(string: text, attributes: [
             .font: BearyDynamicType.cappedFont(for: UIFont.systemFont(ofSize: 16, weight: .bold)),
-            .foregroundColor: BearyColors.bg,
+            .foregroundColor: sheetMode ? BearyColors.onBrand : BearyColors.bg,
             .kern: 5.43,
         ])
         loginButton.setAttributedTitle(title, for: .normal)
@@ -619,8 +734,14 @@ final class BearyLoginViewController: UIViewController {
         }
         let sendEnabled = emailValid && !isSendingCode && countdownRemaining == nil
         sendButton.isEnabled = sendEnabled
-        sendButton.backgroundColor = sendEnabled ? BearyColors.ink : BearyColors.faint
-        let sendTitleColor = sendEnabled ? BearyColors.bg : BearyColors.gray
+        if sheetMode {
+            // Sheet 弹窗：发码钮为浅色次级钮（全弹窗唯一重色是橙登录钮），
+            // 启用态墨字、未启用态灰字；底色恒 faint，不走墨底。
+            sendButton.backgroundColor = BearyColors.faint
+        } else {
+            sendButton.backgroundColor = sendEnabled ? BearyColors.ink : BearyColors.faint
+        }
+        let sendTitleColor = sendEnabled ? (sheetMode ? BearyColors.ink : BearyColors.bg) : BearyColors.gray
         sendButton.setTitleColor(sendTitleColor, for: .normal)
         sendButton.setTitleColor(sendTitleColor, for: .disabled)
         sendButton.titleLabel?.font = BearyDynamicType.cappedFont(for: UIFont.systemFont(ofSize: 14, weight: sendEnabled ? .semibold : .medium))
@@ -685,6 +806,22 @@ final class BearyLoginViewController: UIViewController {
         verifyTask?.cancel()
         verifyTask = nil
         onCancelled?()
+    }
+
+    /// Sheet 容器关闭路径（遮罩点按 / 抓手拖动）：与关闭钮同一取消路径——
+    /// 先停倒计时与在途任务，再交 onCancelled；容器不得绕开本方法直接 dismiss，
+    /// 否则添加账号会话守卫 stays armed。
+    func cancelFromSheet() {
+        closeTapped()
+    }
+
+    /// Sheet 弹窗邀请码收起行点按：展开/收起字段（文本保留，登录照常读取）；
+    /// 展开后栈高变化，viewDidLayoutSubviews 重算 preferredContentSize，sheet 跟帧走。
+    @objc private func inviteDisclosureTapped() {
+        inviteExpanded.toggle()
+        inviteInputContainer?.isHidden = !inviteExpanded
+        inviteDisclosureChevron.image = BearyIconImages.image(named: inviteExpanded ? "icon_chevron_down" : "icon_chevron_right", pointSize: 14)
+        inviteDisclosureRow.accessibilityValue = inviteExpanded ? "已展开" : "已收起"
     }
 
     /// 游客次钮：只交回 onGuestMode，不 dismiss、不做任何登录逻辑（容器负责关闭与进游客态）。

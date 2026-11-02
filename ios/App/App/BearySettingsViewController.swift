@@ -1447,7 +1447,7 @@ final class BearySettingsViewController: UIViewController {
     }
 
     /// 添加 / 过期重登都走容器登录页（与 onRequireLogin 同路径）；容器
-    /// 未接线时页内模态兜底（编辑页同款），登录成功后刷新本页与列表。
+    /// 未接线时页内底 sheet 兜底（BearyLoginSheet.make），登录成功后刷新本页与列表。
     private func openLoginForAccountSwitch() {
         // 添加账号会话守卫：添加与切换过期重登共用本入口，进登录页前先
         // 抓拍原会话；取消时由登录页 onCancelled 恢复（容器通用登录页
@@ -1457,9 +1457,7 @@ final class BearySettingsViewController: UIViewController {
             handler()
             return
         }
-        let loginVC = BearyLoginViewController()
-        loginVC.modalPresentationStyle = .fullScreen
-        loginVC.transitioningDelegate = SceneDelegate.chrome?.fadeRiseTransitionDelegate
+        let loginVC = BearyLoginSheet.make()
         loginVC.onCancelled = { [weak loginVC] in
             SessionManager.shared.cancelAccountAddSession()
             loginVC?.dismiss(animated: BearyMotion.animated(true))

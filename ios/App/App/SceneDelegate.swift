@@ -2041,12 +2041,12 @@ final class BearyChromeViewController: UIViewController {
     /// 原生页切换：首页与新页均为常驻子 VC（hide/show 保留滚动位置）。
     /// 重拍当前 tab：首页先回顶再刷新（与网页 topThen 同口径），消息页回顶再刷新，时间线重拉。
     private func showPage(_ page: ContainerPage) {
-        // 游客模式（只读）：时间线/我页/消息页/好友段不对游客开放，点按一律走登录提示 Sheet，
+        // 游客模式（只读）：时间线/我页/消息页/好友段不对游客开放，点按一律走登录弹窗，
         // 不进页、不弹原登录页；首页/搜索/他人主页（.user）游客可看，直放行。
         if SessionManager.shared.isGuestMode {
             switch page {
             case .timeline, .me, .notif, .friends, .conversations:
-                presentGuestLoginSheet()
+                presentLoginGate()
                 // Tab 错位修：门控拦住切页时，pill 已被点按先翻到新段；
                 // 只恢复 pill 到实际页（currentPage），不跳页、不改门控业务。
                 updateTabSelection()
@@ -2545,7 +2545,7 @@ final class BearyChromeViewController: UIViewController {
             return
         }
         if SessionManager.shared.isGuestMode {
-            presentGuestLoginSheet()
+            presentLoginGate()
             return
         }
         guard SessionManager.shared.isLoggedIn else {
@@ -2580,7 +2580,7 @@ final class BearyChromeViewController: UIViewController {
         // onRequireLogin 是第二道门，非游客未登录时仍走原登录页）；
         // 登录后恢复（游客旗已清，本分支不再触发，礼物钮由 applyLoginState 恢复）。
         if SessionManager.shared.isGuestMode {
-            presentGuestLoginSheet()
+            presentLoginGate()
             return
         }
         let vc = BearyInviteViewController()
@@ -2709,7 +2709,7 @@ final class BearyChromeViewController: UIViewController {
         return vc
     }
 
-    /// 原生登录页：全屏 modal，登录页自带关闭钮（onCancelled）；登录成功后刷新登录态，
+    /// 原生登录页：底 sheet 弹窗（Li 2026-11-02 批准：整页改弹窗），登录页自带关闭钮（onCancelled）；登录成功后刷新登录态，
     /// 若当前在 gated 我页，onUserChanged 会把 gated 视图重建为本人主页。
     /// D7（收尾）：登录页一律从最上层 present，关闭只关登录页自身——详情/编辑器
     /// 等下层 modal 不会被连带关掉（旧 self.dismiss 会关掉整条 present 链）。
@@ -2723,8 +2723,7 @@ final class BearyChromeViewController: UIViewController {
             rawTop.dismiss(animated: false) { [weak self] in self?.presentLogin() }
             return
         }
-        let vc = BearyLoginViewController()
-        vc.modalPresentationStyle = .fullScreen
+        let vc = BearyLoginSheet.make()
         vc.onCancelled = { [weak vc] in
             // 添加账号会话守卫：从添加/过期重登进来的取消，在此恢复原会话；
             // 未登录直登时守卫未 arm、cancel 是空操作，原有取消行为不动。
@@ -2753,30 +2752,19 @@ final class BearyChromeViewController: UIViewController {
                 self?.enterGuestMode()
             }
         }
-        // 117 终态偏离兜底：登录页同样走全屏 modal，呈现完成时帧偏离就复位。
-        topmostViewController().present(vc, animated: BearyMotion.animated(true)) { [weak vc] in
-            guard let vc = vc, let window = vc.view.window else { return }
-            let bounds = window.bounds
-            if vc.view.frame != bounds || !vc.view.transform.isIdentity {
-                vc.view.transform = .identity
-                vc.view.frame = bounds
-                vc.view.setNeedsLayout()
-                vc.view.layoutIfNeeded()
-            }
-        }
+        // Sheet 弹窗帧由 BearyLoginSheetPresentationController 定（跟内容高走），
+        // 不再是全屏 bounds，117 全屏帧复位兜底不再适用、删除。
+        topmostViewController().present(vc, animated: BearyMotion.animated(true))
     }
 
     // MARK: - 游客模式（只读）门控
 
-    /// 受限动作统一入口：游客态走登录提示 Sheet，非游客走原登录页。
-    /// 原有 onRequireLogin 调用点一律改走本方法（非游客行为与原来一字不动）；
-    /// 顶栏登录钮（didTapLogin）与登录页本身仍直走 presentLogin。
+    /// 受限动作统一入口：游客与非游客一律直走登录底 sheet（2026-11-02 起
+    /// 游客提示 Sheet 已删：登录弹窗自带“先逛逛”，关闭即回原地，与“暂不”同效）。
+    /// 原有 onRequireLogin 调用点一律改走本方法；顶栏登录钮（didTapLogin）
+    /// 与登录页本身仍直走 presentLogin。
     private func presentLoginGate() {
-        if SessionManager.shared.isGuestMode {
-            presentGuestLoginSheet()
-        } else {
-            presentLogin()
-        }
+        presentLogin()
     }
 
     /// 进入游客模式：置游客旗（SessionManager 内存态），刷游客 chrome，进首页广场。
@@ -2786,248 +2774,6 @@ final class BearyChromeViewController: UIViewController {
         applyLoginState(nil)
         setBarsVisible(true, animated: BearyMotion.animated(true))
         showPage(.home)
-    }
-
-    /// 游客登录提示 Sheet 的覆盖层（容器内子视图，非 modal VC，避免与登录页 present 层级纠缠）。
-    private var guestSheetScrim: UIView?
-    private var guestSheetView: UIView?
-    /// 审计 B 组 24：出现前 VoiceOver 所在的触发元素（iOS 17+ 才能取到；低版本为 nil，
-    /// 关闭时不强制移焦）。关闭后若仍在，焦点回到它。
-    private var guestSheetPreviousAccessibilityElement: Any?
-
-    /// 游客登录提示 Sheet：统一 BearySheetChrome（顶圆角 20、抓手 40×4、遮罩 0.45 淡入 0.25s）；
-    /// 标题“登录后解锁完整版”，文案“写日记、公开、点赞、回应、收藏都需要登录”，钮 登录/暂不；
-    /// 登录 → 关 Sheet 后弹登录页，暂不/点遮罩 → 只关 Sheet。重复调用不叠加。
-    /// 动效只走 transform/opacity；减动效直显终值。
-    /// 审计 B 组 16：浮层背景走 BearyColors.surface（深色深灰），不用 bg 纯黑；全屏页仍走 bg。
-    /// 审计 B 组 24：覆盖层 accessibilityViewIsModal，出现后聚焦标题，关闭后恢复触发位置，
-    /// VoiceOver 逃离手势走现有关闭路径（见 accessibilityPerformEscape）。
-    private func presentGuestLoginSheet() {
-        guard guestSheetView == nil else { return }
-        if #available(iOS 17.0, *) {
-            guestSheetPreviousAccessibilityElement = UIAccessibility.focusedElement(using: nil)
-        }
-        let scrim = UIView()
-        scrim.backgroundColor = BearySheetChrome.scrimColor
-        scrim.alpha = 0
-        scrim.translatesAutoresizingMaskIntoConstraints = false
-        scrim.addGestureRecognizer(UITapGestureRecognizer(target: self, action: #selector(guestSheetDismissTapped)))
-        let sheet = UIView()
-        // 审计 B 组 16：浮层背景走 surface（深色 #26262c），不用 bg（深色纯黑）；
-        // 全屏页面继续用 bg；登录钮前景仍走 bg（墨色钮上的字，不动）。
-        sheet.backgroundColor = BearyColors.surface
-        // 审计 B 组 24：addSubview 覆盖层不是 modal VC，须显式声明模态，
-        // VoiceOver 才不读覆盖层之外的底层内容。
-        sheet.accessibilityViewIsModal = true
-        sheet.layer.cornerRadius = BearySheetChrome.topCornerRadius
-        sheet.layer.maskedCorners = [.layerMinXMinYCorner, .layerMaxXMinYCorner]
-        sheet.clipsToBounds = true
-        sheet.translatesAutoresizingMaskIntoConstraints = false
-        let grabber = UIView()
-        grabber.backgroundColor = BearyColors.line
-        grabber.layer.cornerRadius = BearySheetChrome.grabberCornerRadius
-        grabber.translatesAutoresizingMaskIntoConstraints = false
-        // 审计 B 组 3：竖栈 alignment=.fill 时栈会给抓手生成“宽 = 栈宽”约束，
-        // 与 40 宽 + 栈居中冲突。抓手改放全宽包装容器内居中，栈只排容器
-        // （容器 .fill 全宽，无宽约束冲突）；抓手位置与间距与原来一致：
-        // 栈顶仍为 sheet 顶 + grabberTop，容器高 = 抓手高，抓手后间距仍 16。
-        let grabberWrap = UIView()
-        grabberWrap.translatesAutoresizingMaskIntoConstraints = false
-        grabberWrap.addSubview(grabber)
-        let titleLabel = UILabel()
-        titleLabel.text = "登录后解锁完整版"
-        titleLabel.font = UIFont.systemFont(ofSize: 17, weight: .bold)
-        titleLabel.textColor = BearyColors.ink
-        titleLabel.textAlignment = .center
-        titleLabel.translatesAutoresizingMaskIntoConstraints = false
-        let bodyLabel = UILabel()
-        bodyLabel.text = "写日记、公开、点赞、回应、收藏都需要登录。"
-        bodyLabel.font = UIFont.systemFont(ofSize: 15)
-        bodyLabel.textColor = BearyColors.gray
-        bodyLabel.textAlignment = .center
-        bodyLabel.numberOfLines = 0
-        bodyLabel.translatesAutoresizingMaskIntoConstraints = false
-        let sheetLoginButton = UIButton(type: .system)
-        sheetLoginButton.setTitle("登录", for: .normal)
-        sheetLoginButton.titleLabel?.font = UIFont.systemFont(ofSize: 17, weight: .semibold)
-        sheetLoginButton.setTitleColor(BearyColors.bg, for: .normal)
-        sheetLoginButton.backgroundColor = BearyColors.ink
-        sheetLoginButton.layer.cornerRadius = 22
-        sheetLoginButton.translatesAutoresizingMaskIntoConstraints = false
-        sheetLoginButton.addTarget(self, action: #selector(guestSheetLoginTapped), for: .touchUpInside)
-        sheetLoginButton.bearyAddPressFeedback()
-        let sheetLaterButton = UIButton(type: .system)
-        sheetLaterButton.setTitle("暂不", for: .normal)
-        sheetLaterButton.titleLabel?.font = UIFont.systemFont(ofSize: 17, weight: .semibold)
-        sheetLaterButton.setTitleColor(BearyColors.ink, for: .normal)
-        sheetLaterButton.backgroundColor = .clear
-        sheetLaterButton.layer.cornerRadius = 22
-        sheetLaterButton.layer.borderWidth = 1
-        sheetLaterButton.layer.bearyDynamicBorderColor = BearyColors.line
-        sheetLaterButton.translatesAutoresizingMaskIntoConstraints = false
-        sheetLaterButton.addTarget(self, action: #selector(guestSheetDismissTapped), for: .touchUpInside)
-        sheetLaterButton.bearyAddPressFeedback()
-        let stack = UIStackView(arrangedSubviews: [grabberWrap, titleLabel, bodyLabel, sheetLoginButton, sheetLaterButton])
-        stack.axis = .vertical
-        stack.alignment = .fill
-        stack.translatesAutoresizingMaskIntoConstraints = false
-        stack.setCustomSpacing(16, after: grabberWrap)
-        stack.setCustomSpacing(10, after: titleLabel)
-        stack.setCustomSpacing(18, after: bodyLabel)
-        stack.setCustomSpacing(12, after: sheetLoginButton)
-        sheet.addSubview(stack)
-        view.addSubview(scrim)
-        view.addSubview(sheet)
-        NSLayoutConstraint.activate([
-            scrim.topAnchor.constraint(equalTo: view.topAnchor),
-            scrim.bottomAnchor.constraint(equalTo: view.bottomAnchor),
-            scrim.leadingAnchor.constraint(equalTo: view.leadingAnchor),
-            scrim.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-            sheet.leadingAnchor.constraint(equalTo: view.leadingAnchor),
-            sheet.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-            sheet.bottomAnchor.constraint(equalTo: view.bottomAnchor),
-            grabber.widthAnchor.constraint(equalToConstant: BearySheetChrome.grabberWidth),
-            grabber.heightAnchor.constraint(equalToConstant: BearySheetChrome.grabberHeight),
-            grabber.centerXAnchor.constraint(equalTo: grabberWrap.centerXAnchor),
-            grabber.topAnchor.constraint(equalTo: grabberWrap.topAnchor),
-            grabber.bottomAnchor.constraint(equalTo: grabberWrap.bottomAnchor),
-            sheetLoginButton.heightAnchor.constraint(equalToConstant: 44),
-            sheetLaterButton.heightAnchor.constraint(equalToConstant: 44),
-            stack.topAnchor.constraint(equalTo: sheet.topAnchor, constant: BearySheetChrome.grabberTop),
-            stack.leadingAnchor.constraint(equalTo: sheet.leadingAnchor, constant: 20),
-            stack.trailingAnchor.constraint(equalTo: sheet.trailingAnchor, constant: -20),
-            stack.bottomAnchor.constraint(equalTo: sheet.safeAreaLayoutGuide.bottomAnchor, constant: -16),
-        ])
-        // 2026-10-30 抓手批：此前只有抓手视觉、没有 pan 手势，抓手拖不动。
-        // 透明热区盖在 sheet 顶部 32pt（抓手 10–14 + 上下余量），该区内
-        // 只有不拦截触摸的标题文字，登录/暂不钮在底部，不会被误吞。
-        let grabHit = BearyGrabHitView()
-        grabHit.translatesAutoresizingMaskIntoConstraints = false
-        grabHit.addGestureRecognizer(UIPanGestureRecognizer(target: self, action: #selector(guestSheetPanGesture(_:))))
-        sheet.addSubview(grabHit)
-        NSLayoutConstraint.activate([
-            grabHit.topAnchor.constraint(equalTo: sheet.topAnchor),
-            grabHit.leadingAnchor.constraint(equalTo: sheet.leadingAnchor),
-            grabHit.trailingAnchor.constraint(equalTo: sheet.trailingAnchor),
-            grabHit.heightAnchor.constraint(equalToConstant: 32),
-        ])
-        guestSheetScrim = scrim
-        guestSheetView = sheet
-        view.layoutIfNeeded()
-        // 审计 B 组 24：出现后聚焦标题。动画完成后再移焦（0.25s 内被关掉则
-        // guestSheetView 已空，不移焦，避免焦点落到已移除的标题上）。
-        let focusGuestSheetTitle = { [weak self] in
-            guard self?.guestSheetView != nil else { return }
-            UIAccessibility.post(notification: .screenChanged, argument: titleLabel)
-        }
-        if UIAccessibility.isReduceMotionEnabled {
-            scrim.alpha = 1
-            focusGuestSheetTitle()
-            return
-        }
-        let sheetHeight = sheet.bounds.height
-        sheet.transform = CGAffineTransform(translationX: 0, y: sheetHeight)
-        // 第 30 项：遮罩 0.25s 单独淡入、面板 0.25s 单独上滑（此前合写在一块里）。
-        UIView.animate(withDuration: 0.25, delay: 0, options: [.beginFromCurrentState], animations: {
-            scrim.alpha = 1
-        })
-        UIView.animate(withDuration: 0.25, delay: 0, options: [.beginFromCurrentState], animations: {
-            sheet.transform = .identity
-        }) { _ in focusGuestSheetTitle() }
-    }
-
-    @objc private func guestSheetDismissTapped() {
-        dismissGuestLoginSheet(completion: nil)
-    }
-
-    /// 2026-10-30 抓手批：游客 Sheet 抓手下滑跟手——下滑超 80pt 或
-    /// 快速下滑（速度 > 600）关闭，否则 0.25s 弹回原位；上滑阻尼微移
-    /// 后回弹，不扩高、不关闭。遮罩点按关闭与登录/暂不钮均不动。
-    @objc private func guestSheetPanGesture(_ gesture: UIPanGestureRecognizer) {
-        guard let sheet = guestSheetView, let scrim = guestSheetScrim else { return }
-        let translation = gesture.translation(in: view).y
-        switch gesture.state {
-        case .changed:
-            let offset = BearySheetDrag.offset(for: translation)
-            sheet.transform = CGAffineTransform(translationX: 0, y: offset)
-            // 审计第 14 项：原口径不动，改走共用映射（其余面板与此同口径）。
-            scrim.alpha = BearySheetDrag.scrimAlpha(forDragOffset: offset, sheetHeight: sheet.bounds.height)
-        case .ended:
-            let velocity = gesture.velocity(in: view).y
-            if translation > 80 || velocity > 600 {
-                dismissGuestLoginSheet(completion: nil)
-            } else {
-                let restore = {
-                    sheet.transform = .identity
-                    scrim.alpha = 1
-                }
-                if UIAccessibility.isReduceMotionEnabled {
-                    restore()
-                } else {
-                    UIView.animate(withDuration: 0.25, animations: restore)
-                }
-            }
-        case .cancelled, .failed:
-            let restore = {
-                sheet.transform = .identity
-                scrim.alpha = 1
-            }
-            if UIAccessibility.isReduceMotionEnabled {
-                restore()
-            } else {
-                UIView.animate(withDuration: 0.25, animations: restore)
-            }
-        default:
-            break
-        }
-    }
-
-    @objc private func guestSheetLoginTapped() {
-        dismissGuestLoginSheet { [weak self] in self?.presentLogin() }
-    }
-
-    /// 审计 B 组 24：覆盖层是 addSubview 而非 modal VC，系统不会自动把
-    /// VoiceOver 逃离手势（双指 scrub）映射到关闭；只在覆盖层在屏时接住，
-    /// 复用现有关闭路径（与“暂不”/点遮罩同一结果，不新增操作），无覆盖层
-    /// 时返回 false 走系统默认。VoiceOver 表现需真机验证。
-    override func accessibilityPerformEscape() -> Bool {
-        guard guestSheetView != nil else { return false }
-        dismissGuestLoginSheet(completion: nil)
-        return true
-    }
-
-    private func dismissGuestLoginSheet(completion: (() -> Void)?) {
-        guard let scrim = guestSheetScrim, let sheet = guestSheetView else {
-            completion?()
-            return
-        }
-        guestSheetScrim = nil
-        guestSheetView = nil
-        // 审计 B 组 24：关闭后恢复触发位置。先移焦、再跑 completion：
-        // 登录路径随后会弹登录页，其自身焦点处理会接管；暂不/遮罩/拖动/
-        // 逃离路径则停在触发位置。无捕获（低版本系统）时不强制移焦。
-        let previousAccessibilityElement = guestSheetPreviousAccessibilityElement
-        guestSheetPreviousAccessibilityElement = nil
-        let finish = {
-            scrim.removeFromSuperview()
-            sheet.removeFromSuperview()
-            if let previous = previousAccessibilityElement {
-                UIAccessibility.post(notification: .layoutChanged, argument: previous)
-            }
-            completion?()
-        }
-        if UIAccessibility.isReduceMotionEnabled {
-            finish()
-            return
-        }
-        let sheetHeight = sheet.bounds.height
-        // 第 30 项：遮罩 0.25s 单独淡出、面板 0.25s 单独下滑（此前合写在一块里）。
-        UIView.animate(withDuration: 0.25, delay: 0, options: [.beginFromCurrentState], animations: {
-            scrim.alpha = 0
-        })
-        UIView.animate(withDuration: 0.25, delay: 0, options: [.beginFromCurrentState], animations: {
-            sheet.transform = CGAffineTransform(translationX: 0, y: sheetHeight)
-        }) { _ in finish() }
     }
 
     /// Toast 落点用：当前可见的底部 chrome（FAB 优先于底栏）在 container
@@ -3308,7 +3054,7 @@ final class BearyChromeViewController: UIViewController {
         }
     }
 
-    /// 引导页内的登录：与 presentLogin 同款登录页，但以引导页为 presenting 方、
+    /// 引导页内的登录：与 presentLogin 同款登录底 sheet，但以引导页为 presenting 方、
     /// 盖在引导页之上弹出（不用 topmostViewController，避免登录页落到别层；
     /// presentLogin 本体不动，其他调用点行为一字不变）。
     /// 取消：只关登录页（presentLogin 同款），露出引导页，不写 seen。
@@ -3321,8 +3067,7 @@ final class BearyChromeViewController: UIViewController {
     /// 只落主页（onNetworkUnstable 已 toast，不伪造进度）。
     private func presentLoginOverOnboarding(_ onboarding: BearyOnboardingViewController, mode: BearyOnboardingViewController.Mode) {
         guard !(onboarding.presentedViewController is BearyLoginViewController) else { return }
-        let vc = BearyLoginViewController()
-        vc.modalPresentationStyle = .fullScreen
+        let vc = BearyLoginSheet.make()
         vc.onCancelled = { [weak vc] in
             // 添加账号会话守卫：守卫只在添加/过期重登流程 arm，此处正常
             // 是空操作；补上是防游客态等迂回路径下守卫仍 armed 时，后续
@@ -3387,9 +3132,9 @@ final class BearyChromeViewController: UIViewController {
 
     /// 回收站：全屏 modal，关闭钮由 TrashVC 自带（onClose 设置后才显示）。
     private func presentTrash() {
-        // 游客模式（只读）：回收站不对游客开放，深链到此一律走登录提示。
+        // 游客模式（只读）：回收站不对游客开放，深链到此一律走登录弹窗。
         if SessionManager.shared.isGuestMode {
-            presentGuestLoginSheet()
+            presentLoginGate()
             return
         }
         let vc = BearyTrashViewController()

@@ -661,8 +661,7 @@ final class BearyBlindBoxFlowViewController: UIViewController {
     }
 
     @objc private func loginTapped() {
-        let login = BearyLoginViewController()
-        login.modalPresentationStyle = .fullScreen
+        let login = BearyLoginSheet.make()
         login.onLoggedIn = { [weak self] referralText in
             // 添加账号会话守卫：正常是空操作；防迂回路径下守卫仍 armed 时
             // 后续一次取消把新号恢复成旧号，成功先解 arm。
