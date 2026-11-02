@@ -654,11 +654,9 @@ final class BearyChromeViewController: UIViewController {
         fabShadow.backgroundColor = .clear
         // ChatGPT 视觉清单已定设计第 2 项：FAB 移除橙色外发光，改轻薄中性阴影。
         // 原值：橙色 shadowColor、透明度 0.45、半径 12、偏移 (0,10)——外发光感强。
-        // 新值只改阴影四项：黑色、中性、薄、贴近本体；玻璃底与加号图标一律不动。
-        fabShadow.layer.shadowColor = UIColor.black.cgColor
-        fabShadow.layer.shadowOpacity = 0.18
-        fabShadow.layer.shadowRadius = 6
-        fabShadow.layer.shadowOffset = CGSize(width: 0, height: 3)
+        // 2026-11-02 定版第 2 组：FAB 阴影收进 raised 档（0.12 / 8 / (0, 2)），
+        // 玻璃底与加号图标一律不动；本体圆角 27（形状）不动。
+        BearyShadow.applyRaised(to: fabShadow.layer)
         fabShadow.layer.cornerRadius = 27
         fabShadow.translatesAutoresizingMaskIntoConstraints = false
         fabContainer.addSubview(fabShadow)
@@ -3945,7 +3943,7 @@ private final class BearyComposerSheetPresentationController: UIPresentationCont
         // 网页抓手无附加安全区：不再补 28pt 顶 inset；抓手直接落在 sheet 顶部（顶距 10）。
         // 阴影层挂在容器里、presentedView 下方（presentedView 自身裁剪，阴影不能挂它身上）。
         sheetShadowView.backgroundColor = .clear
-        BearySheetChrome.applyShadow(to: sheetShadowView.layer, centered: false)
+        BearySheetChrome.applyShadow(to: sheetShadowView.layer)
         container.addSubview(sheetShadowView)
         if UIAccessibility.isReduceMotionEnabled {
             dimmingView.alpha = 1

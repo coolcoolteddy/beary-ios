@@ -67,15 +67,11 @@ enum BearyMotion {
 /// 注意：CenteredModal 旧值 UIColor(white: 0, alpha: 0.45) 与 scrimColor 等值
 /// （scrim 本就是 white 0，withAlphaComponent 只换 alpha），改写后视觉不变。
 /// 面板阴影（2026-11-01 清理批：此前各面板自写两组数值，现统一于此，视觉不变）：
-/// 底 sheet（手机布局、Composer 底 sheet）0.22 / radius 16 / offset (0, -12)；
-/// 居中面板（iPad 宽 ≥821 的 440 居中形态）0.30 / radius 30 / offset (0, 24)。
-/// CALayer radius 取 CSS blur 一半（网页 60 → 30、32 → 16），不要照 CSS 值直写。
-/// 注意（审计 E2 第 14 项，Li 本轮定夺、推翻此前保留决定）：BearyCenteredModal
-/// 的居中卡片不再走 centered 组、也不再自写 0.30/30/24，改走轻薄单层 raised
-/// token（BearyShadow.applyRaised，见 BearyCenteredModal）；居中卡片阴影
-/// 因此变轻变薄，属有意视觉变化。centered 组数值仍留给底 sheet 系调用点
-/// （Composer 底 sheet、草稿箱 sheet 等走 applyShadow(centered: true) 的面板），
-/// 不随本项改动。
+/// 底 sheet（手机布局、Composer 底 sheet、草稿箱 sheet）0.22 / radius 16 / offset (0, -12)。
+/// CALayer radius 取 CSS blur 一半（网页 32 → 16），不要照 CSS 值直写。
+/// 注意（2026-11-02 样式定版第 2 组，Li 定）：旧 0.30 / radius 30 / offset (0, 24) 档
+/// 已废弃并删除——@ 选人 iPad 卡片改走 raised（BearyShadow.applyRaised），
+/// 草稿箱 sheet 改走底 sheet 档；居中卡片此前已走 raised（见 BearyCenteredModal），不变。
 enum BearySheetChrome {
     static let topCornerRadius: CGFloat = 20
     static let grabberWidth: CGFloat = 40
@@ -88,15 +84,13 @@ enum BearySheetChrome {
     static let bottomShadowOpacity: Float = 0.22
     static let bottomShadowRadius: CGFloat = 16
     static let bottomShadowOffset = CGSize(width: 0, height: -12)
-    static let centeredShadowOpacity: Float = 0.30
-    static let centeredShadowRadius: CGFloat = 30
-    static let centeredShadowOffset = CGSize(width: 0, height: 24)
-    /// 面板阴影唯一入口：centered=true 走居中组，否则走底 sheet 组；圆角不动。
-    static func applyShadow(to layer: CALayer, centered: Bool) {
+    /// 面板阴影唯一入口：底 sheet 档（0.22 / 16 / (0, -12)）；圆角不动。
+    /// 旧 0.30/30/(0, 24) 档已于 2026-11-02 定版第 2 组废弃删除，不再提供参数分流。
+    static func applyShadow(to layer: CALayer) {
         layer.shadowColor = shadowColor
-        layer.shadowOpacity = centered ? centeredShadowOpacity : bottomShadowOpacity
-        layer.shadowRadius = centered ? centeredShadowRadius : bottomShadowRadius
-        layer.shadowOffset = centered ? centeredShadowOffset : bottomShadowOffset
+        layer.shadowOpacity = bottomShadowOpacity
+        layer.shadowRadius = bottomShadowRadius
+        layer.shadowOffset = bottomShadowOffset
     }
 }
 

@@ -128,9 +128,10 @@ private final class BearyCenteredPresentationController: UIPresentationControlle
         applyCardChrome()
         cardShadowView.frame = frame
         // 审计 E2 第 14 项：shadowPath 仅在尺寸变化时更新，不逐帧重算。
+        // 2026-11-02 定版第 2 组：按卡片实际圆角计算，不再硬编码 20。
         if cardShadowView.bounds != lastShadowBounds {
             lastShadowBounds = cardShadowView.bounds
-            cardShadowView.layer.shadowPath = UIBezierPath(roundedRect: cardShadowView.bounds, cornerRadius: 20).cgPath
+            cardShadowView.layer.shadowPath = UIBezierPath(roundedRect: cardShadowView.bounds, cornerRadius: presentedView.layer.cornerRadius).cgPath
         }
     }
 }
