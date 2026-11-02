@@ -123,14 +123,16 @@ final class BearyStateView: UIView {
 
         spinner.translatesAutoresizingMaskIntoConstraints = false
 
-        titleLabel.font = UIFont.boldSystemFont(ofSize: 15)
+        titleLabel.font = BearyDynamicType.scaledFont(for: UIFont.boldSystemFont(ofSize: 15))
+        titleLabel.adjustsFontForContentSizeCategory = true
         titleLabel.textColor = BearyColors.ink
         titleLabel.textAlignment = .center
         titleLabel.numberOfLines = 0
         titleLabel.lineBreakMode = .byCharWrapping
         titleLabel.translatesAutoresizingMaskIntoConstraints = false
 
-        subtitleLabel.font = UIFont.systemFont(ofSize: 12.5)
+        subtitleLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 12.5))
+        subtitleLabel.adjustsFontForContentSizeCategory = true
         subtitleLabel.textColor = BearyColors.gray
         subtitleLabel.textAlignment = .center
         subtitleLabel.numberOfLines = 0

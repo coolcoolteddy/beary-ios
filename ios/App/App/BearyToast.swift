@@ -222,7 +222,8 @@ private final class BearyToastView: UIView {
         isUserInteractionEnabled = false
         translatesAutoresizingMaskIntoConstraints = false
         label.text = message
-        label.font = UIFont.systemFont(ofSize: 14, weight: .medium)
+        label.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 14, weight: .medium))
+        label.adjustsFontForContentSizeCategory = true
         label.textColor = BearyColors.ink
         label.textAlignment = .center
         label.numberOfLines = 0

@@ -411,8 +411,10 @@ private final class BearyFriendCell: UITableViewCell {
         contentView.addSubview(moreButton)
         contentView.addSubview(separatorView)
         NSLayoutConstraint.activate([
-            avatarView.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 14),
-            avatarView.bottomAnchor.constraint(equalTo: contentView.bottomAnchor, constant: -14),
+            // 行高改文字栈决定：头像垂直居中，上下各留最小 14（行高下限 72 兜底）。
+            avatarView.centerYAnchor.constraint(equalTo: contentView.centerYAnchor),
+            avatarView.topAnchor.constraint(greaterThanOrEqualTo: contentView.topAnchor, constant: 14),
+            avatarView.bottomAnchor.constraint(lessThanOrEqualTo: contentView.bottomAnchor, constant: -14),
             avatarView.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 16),
             avatarView.widthAnchor.constraint(equalToConstant: 44),
             avatarView.heightAnchor.constraint(equalToConstant: 44),

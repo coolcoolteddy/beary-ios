@@ -561,8 +561,39 @@ enum BearyProfilePersonalLogic {
 /// 12 根柱按当月正文总字数归一（最高月 = 满高），柱顶标当月字数，柱下标月份；
 /// 颜色全走 BearyColors 动态色，深浅切换自动跟走。
 final class BearyMonthlyCharsChartView: UIView {
+    private var selectedMonth: Int?
+    private var monthValueLabels: [(month: Int, label: UILabel)] = []
+    private var monthValues: [Int] = []
+
+    /// 柱顶数值文案：峰值与选中月永远完整；其余过万简写（1.2万），万以下完整。
+    private func monthValueText(month: Int, value: Int, maxValue: Int) -> String {
+        if month == selectedMonth || (maxValue > 0 && value == maxValue) { return "\(value)" }
+        if value >= 10000 {
+            let text = String(format: "%.1f", Double(value) / 10000.0)
+            return (text.hasSuffix(".0") ? String(text.dropLast(2)) : text) + "万"
+        }
+        return "\(value)"
+    }
+
+    private func refreshMonthValueTexts() {
+        let maxValue = monthValues.max() ?? 0
+        for (month, label) in monthValueLabels {
+            let value = month <= monthValues.count ? monthValues[month - 1] : 0
+            label.text = monthValueText(month: month, value: value, maxValue: maxValue)
+        }
+    }
+
+    @objc private func monthColumnTapped(_ sender: UITapGestureRecognizer) {
+        guard let month = sender.view?.tag, month >= 1, month <= 12 else { return }
+        selectedMonth = month
+        refreshMonthValueTexts()
+    }
+
     func configure(monthlyChars: [Int]) {
         for view in subviews { view.removeFromSuperview() }
+        selectedMonth = nil
+        monthValueLabels = []
+        monthValues = monthlyChars
         let maxValue = monthlyChars.max() ?? 0
         let titleRow = UIStackView()
         titleRow.axis = .horizontal
@@ -584,12 +615,19 @@ final class BearyMonthlyCharsChartView: UIView {
             column.axis = .vertical
             column.spacing = 4
             column.alignment = .center
+            column.isUserInteractionEnabled = true
+            column.tag = month
+            column.addGestureRecognizer(UITapGestureRecognizer(target: self, action: #selector(monthColumnTapped(_:))))
+            column.isAccessibilityElement = true
+            column.accessibilityLabel = "\(month)月，\(value)字"
+            column.accessibilityTraits = .button
             let valueLabel = UILabel()
+            // 12 列固定宽，字号不跟系统放大（放大会撑破列宽）：固定 9pt、
+            // 不再继续缩小；峰值与选中月显完整数，其余过万简写（见 monthValueText）。
             valueLabel.font = UIFont.systemFont(ofSize: 9)
             valueLabel.textColor = BearyColors.gray
-            valueLabel.text = "\(value)"
-            valueLabel.adjustsFontSizeToFitWidth = true
-            valueLabel.minimumScaleFactor = 0.7
+            valueLabel.text = monthValueText(month: month, value: value, maxValue: maxValue)
+            monthValueLabels.append((month, valueLabel))
             let track = UIView()
             track.backgroundColor = BearyColors.faint
             track.layer.cornerRadius = 3
@@ -607,6 +645,7 @@ final class BearyMonthlyCharsChartView: UIView {
                 fill.heightAnchor.constraint(equalToConstant: fillHeight),
             ])
             let monthLabel = UILabel()
+            // 月份固定 10pt：2～3 字必须塞进固定列宽，跟系统放大反而会裁字。
             monthLabel.font = UIFont.systemFont(ofSize: 10)
             monthLabel.textColor = BearyColors.gray
             monthLabel.text = "\(month)月"

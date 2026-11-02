@@ -431,6 +431,11 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     private var headlineFont: UIFont {
         BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 17, weight: .bold))
     }
+    /// 正文动态字号（标题 headlineFont 同款口径）：正文、占位、输入属性、
+    /// 回填属性统一走这里，不再各写固定 16pt。
+    private var bodyFont: UIFont {
+        BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 16))
+    }
     private var headlineIsDark: Bool { traitCollection.userInterfaceStyle == .dark }
     /// 新建/草稿用：无标题按 nil（省略不传，服务端即 NULL）。
     private var headlineForCreate: String? {
@@ -440,6 +445,8 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     /// 正文区高度约束（2026-11-01 撑满口径：区高 = 滚动区可用高 − 其他区高，
     /// 下限 140；内容短时撑满、内容长时内层滚动，旧 sheet 封顶已废）。
     private var textViewHeightConstraint: NSLayoutConstraint?
+    /// 占位顶约束（字号档位变化时跟 bodyFont 重算基线偏移，见 trait 回调）。
+    private var placeholderTopConstraint: NSLayoutConstraint?
     /// 当前键盘高度（applyKeyboard 算出，编辑器批第 5 项）：updateTextViewHeight 的封顶
     /// 须再减它，否则正文帧底伸到键盘下方、末行被盖且内层滚到头也露不出来；
     /// 键盘收起/移出屏时为 0，WillChangeFrame 路径同值幂等。
@@ -736,6 +743,15 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             headlinePlaceholderLabel.font = headlineFont
             setHeadlineText(headlineText)
             headlineHeightConstraint?.constant = max(28, ceil(headlineFont.lineHeight) + 2)
+        }
+        // 正文动态字号跟随（UITextView 不自动跟档位，标题同款手动刷新）：
+        // 字号变了才重设，不打断正在输入的正文；已有文本走回填同款重刷。
+        if textView.font?.pointSize != bodyFont.pointSize {
+            textView.font = bodyFont
+            textView.typingAttributes = [.font: bodyFont, .foregroundColor: BearyColors.ink, .paragraphStyle: bodyParagraphStyle()]
+            placeholderLabel.font = bodyFont
+            placeholderTopConstraint?.constant = bodyFont.ascender * (textView.fixedLineHeightMultiple - 1)
+            applyBodyLineHeight()
         }
     }
 
@@ -1426,7 +1442,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     private func buildTextArea() {
         buildHeadlineField()
         textView.delegate = self
-        textView.font = UIFont.systemFont(ofSize: 16)
+        textView.font = bodyFont
         textView.textColor = BearyColors.ink
         // 无框正文：透明底。正式修法（2026-10-26，微信输入法×编辑器隔离结论）：
         // 根因是正文区自身滚动关闭——isScrollEnabled=false 时微信输入法打不上字，
@@ -1439,7 +1455,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         let bodyLineMultiple: CGFloat = 1.7
         let bodyParagraph = NSMutableParagraphStyle()
         bodyParagraph.lineHeightMultiple = bodyLineMultiple
-        textView.typingAttributes = [.font: UIFont.systemFont(ofSize: 16), .foregroundColor: BearyColors.ink, .paragraphStyle: bodyParagraph]
+        textView.typingAttributes = [.font: bodyFont, .foregroundColor: BearyColors.ink, .paragraphStyle: bodyParagraph]
         // caret 锚定同用该倍数（见 BearyBodyTextView.fixedLineHeightMultiple）：光标处
         // 属性 lookup 在输入法提交文本上不可靠，固定倍数优先，防回退居中致光标偏上。
         textView.fixedLineHeightMultiple = bodyLineMultiple
@@ -1449,7 +1465,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         textView.textContainer.lineFragmentPadding = 0
         textView.textContainerInset = UIEdgeInsets(top: 0, left: 0, bottom: 0, right: 0)
         placeholderLabel.text = "写一点，留一点"
-        placeholderLabel.font = UIFont.systemFont(ofSize: 16)
+        placeholderLabel.font = bodyFont
         placeholderLabel.textColor = BearyColors.alpha(BearyColors.gray, 0.7)
         textView.translatesAutoresizingMaskIntoConstraints = false
         placeholderLabel.translatesAutoresizingMaskIntoConstraints = false
@@ -1457,6 +1473,8 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         textView.addSubview(placeholderLabel)
         let textHeightConstraint = textView.heightAnchor.constraint(equalToConstant: 140)
         textViewHeightConstraint = textHeightConstraint
+        let placeholderTop = placeholderLabel.topAnchor.constraint(equalTo: textView.topAnchor, constant: bodyFont.ascender * (bodyLineMultiple - 1))
+        placeholderTopConstraint = placeholderTop
         NSLayoutConstraint.activate([
             // 自身滚动开启后 textView 无内在高度：先给下限 140（正式修法前原值），
             // 实际高度由 updateTextViewHeight() 随 contentSize 动态更新（下限 140、上限按 sheet 封顶算）。
@@ -1464,7 +1482,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             // 编辑器批同款（基线对齐）：1.7 倍行高把首行基线推到片段顶 + ascender × 倍数，
             // 占位 label 若贴顶 0，其基线会比打出来的字高 ascender × (倍数 − 1)，
             // 空态占位与落字位置对不上；占位顶下移该量，让两者基线重合。
-            placeholderLabel.topAnchor.constraint(equalTo: textView.topAnchor, constant: UIFont.systemFont(ofSize: 16).ascender * (bodyLineMultiple - 1)),
+            placeholderTop,
             placeholderLabel.leadingAnchor.constraint(equalTo: textView.leadingAnchor),
             placeholderLabel.trailingAnchor.constraint(lessThanOrEqualTo: textView.trailingAnchor),
         ])
@@ -1549,7 +1567,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         let paragraph = NSMutableParagraphStyle()
         paragraph.lineHeightMultiple = 1.7
         // 只换呈现属性：附件格原样保留（熊脸图不被纯文本重建吃掉），
-        // 文字格换 16pt + 墨色 + 1.7 行高。
+        // 文字格换正文字体 + 墨色 + 1.7 行高。
         let styled = NSMutableAttributedString()
         let fullString = current.string as NSString
         current.enumerateAttributes(in: NSRange(location: 0, length: current.length), options: []) { attrs, range, _ in
@@ -1557,7 +1575,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                 styled.append(current.attributedSubstring(from: range))
             } else {
                 var newAttrs = attrs
-                newAttrs[.font] = UIFont.systemFont(ofSize: 16)
+                newAttrs[.font] = bodyFont
                 newAttrs[.foregroundColor] = BearyColors.ink
                 newAttrs[.paragraphStyle] = paragraph
                 styled.append(NSAttributedString(string: fullString.substring(with: range), attributes: newAttrs))
@@ -4255,7 +4273,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     }
 
     /// 正文回填统一入口：记号转回熊脸附件（与标题 setHeadlineText 同款中间层），
-    /// typingAttributes 复位为正文 16pt + 1.7 行高，免得附件后打字跟错样式。
+    /// typingAttributes 复位为正文字体 + 1.7 行高，免得附件后打字跟错样式。
     private func bodyParagraphStyle() -> NSMutableParagraphStyle {
         let paragraph = NSMutableParagraphStyle()
         paragraph.lineHeightMultiple = 1.7
@@ -4264,8 +4282,8 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     }
 
     private func setBodyAttributedText(_ plain: String?) {
-        textView.attributedText = BearyText.inlineAttributedText(from: plain ?? "", font: UIFont.systemFont(ofSize: 16), color: BearyColors.ink, paragraphStyle: bodyParagraphStyle(), dark: traitCollection.userInterfaceStyle == .dark)
-        textView.typingAttributes = [.font: UIFont.systemFont(ofSize: 16), .foregroundColor: BearyColors.ink, .paragraphStyle: bodyParagraphStyle()]
+        textView.attributedText = BearyText.inlineAttributedText(from: plain ?? "", font: bodyFont, color: BearyColors.ink, paragraphStyle: bodyParagraphStyle(), dark: traitCollection.userInterfaceStyle == .dark)
+        textView.typingAttributes = [.font: bodyFont, .foregroundColor: BearyColors.ink, .paragraphStyle: bodyParagraphStyle()]
         updateCountLabel()
     }
 
@@ -4477,13 +4495,13 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             if textView.markedTextRange != nil {
                 textView.unmarkText()
             }
-            insertMoodAttachment(into: textView, key: key, font: UIFont.systemFont(ofSize: 16), dark: dark)
+            insertMoodAttachment(into: textView, key: key, font: bodyFont, dark: dark)
             textViewDidChange(textView)
             return
         }
         textView.becomeFirstResponder()
         textView.selectedRange = NSRange(location: textView.attributedText.length, length: 0)
-        insertMoodAttachment(into: textView, key: key, font: UIFont.systemFont(ofSize: 16), dark: dark)
+        insertMoodAttachment(into: textView, key: key, font: bodyFont, dark: dark)
         textViewDidChange(textView)
     }
 
@@ -4501,7 +4519,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         if textView === headlineField {
             textView.typingAttributes = [.font: headlineFont, .foregroundColor: BearyColors.ink]
         } else {
-            textView.typingAttributes = [.font: UIFont.systemFont(ofSize: 16), .foregroundColor: BearyColors.ink, .paragraphStyle: bodyParagraphStyle()]
+            textView.typingAttributes = [.font: bodyFont, .foregroundColor: BearyColors.ink, .paragraphStyle: bodyParagraphStyle()]
         }
         textView.selectedRange = NSRange(location: safeLocation + 1, length: 0)
     }
