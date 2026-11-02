@@ -33,6 +33,8 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
     private let placeholderLabel = UILabel()
     private let countLabel = UILabel()
     private var inputBarBottomConstraint: NSLayoutConstraint?
+    /// 输入框高度约束：跟内容走（空态一行、上限五行），替代旧的 36~160 区间约束。
+    private var inputTextViewHeightConstraint: NSLayoutConstraint?
     private var messages: [BearyAPI.DMMessage] = []
     // 审计：下拉刷新与翻旧消息共用同一 busy 锁，不再两套守卫并发。
     private var messageBusy = false
@@ -202,6 +204,9 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
 
         inputBarBottomConstraint = inputBar.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor)
         inputBarBottomConstraint?.isActive = true
+        // 输入框初始一行高；后续由 updateInputTextViewHeight 按内容修正。
+        inputTextViewHeightConstraint = inputTextView.heightAnchor.constraint(equalToConstant: 36)
+        inputTextViewHeightConstraint?.isActive = true
         NSLayoutConstraint.activate([
             topBar.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
             topBar.leadingAnchor.constraint(equalTo: view.leadingAnchor),
@@ -233,9 +238,8 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
             inputTextView.topAnchor.constraint(equalTo: inputBar.topAnchor, constant: 9),
             inputTextView.leadingAnchor.constraint(equalTo: inputBar.leadingAnchor, constant: 16),
             inputTextView.bottomAnchor.constraint(equalTo: inputBar.bottomAnchor, constant: -9),
-            inputTextView.heightAnchor.constraint(greaterThanOrEqualToConstant: 36),
-            // 审计：输入框补最大高度（约 5 行）；isScrollEnabled 已开，触顶后框内滚动。
-            inputTextView.heightAnchor.constraint(lessThanOrEqualToConstant: 160),
+            // 输入框高度走 inputTextViewHeightConstraint（空态一行、上限五行，见 updateInputTextViewHeight）；
+            // 旧的 36~160 区间约束不给确定高度，空态会被布局落到高处，故不再保留。
             sendButton.leadingAnchor.constraint(equalTo: inputTextView.trailingAnchor, constant: 8),
             sendButton.trailingAnchor.constraint(equalTo: inputBar.trailingAnchor, constant: -16),
             sendButton.bottomAnchor.constraint(equalTo: inputBar.bottomAnchor, constant: -9),
@@ -314,6 +318,28 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
     func textViewDidChange(_ textView: UITextView) {
         updateSendButton()
         updateInputChrome()
+        updateInputTextViewHeight()
+    }
+
+    override func viewDidLayoutSubviews() {
+        super.viewDidLayoutSubviews()
+        updateInputTextViewHeight()
+    }
+
+    /// 输入框高度跟内容走：空态一行，随输入长高，到五行封顶后框内滚动（isScrollEnabled 已开）。
+    /// 用 sizeThatFits 量内容高、按当前字号算一/五行上下限；只在变化时改约束，避免布局往复。
+    private func updateInputTextViewHeight() {
+        let width = inputTextView.bounds.width
+        guard width > 0 else { return }
+        let font = inputTextView.font ?? UIFont.systemFont(ofSize: 15)
+        let insets = inputTextView.textContainerInset.top + inputTextView.textContainerInset.bottom
+        let minHeight = max(36, font.lineHeight + insets)
+        let maxHeight = font.lineHeight * 5 + insets
+        let fitting = inputTextView.sizeThatFits(CGSize(width: width, height: .greatestFiniteMagnitude)).height
+        let height = min(max(fitting, minHeight), maxHeight)
+        if inputTextViewHeightConstraint?.constant != height {
+            inputTextViewHeightConstraint?.constant = height
+        }
     }
 
     /// 输入框占位与接近 2000 字计数（审计）：占位随有无文字显隐；
@@ -544,6 +570,7 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
                     }
                     self.updateSendButton()
                     self.updateInputChrome()
+                    self.updateInputTextViewHeight()
                     // 服务端确认后重拉最新页再落行，不做乐观假态。
                     // 审计：发送成功不再强行拽到底部——仅用户已在底部附近时跟随，
                     // 否则显“新消息”pill，点按再到底部。
