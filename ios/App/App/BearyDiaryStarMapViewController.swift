@@ -820,17 +820,25 @@ final class BearyDiaryStarMapViewController: UIViewController {
             meta += " · \(place)"
         }
         sheetStack.addArrangedSubview(sheetBodyLabel(meta))
-        // 可见性行：公开 = 地球橙，私密 = 锁蓝（与主页 pill 同色，不复用文字 pill）。
+        // 可见性行：公开 = 地球橙，其余 = 锁蓝（与主页 pill 同色，不复用文字 pill）；
+        // 文案按实际档位：仅好友不再误标私密，存活限时篇补限时剩余信息。
+        // （星图只对作者本人放行非公开篇，故仅好友档只在作者视角出现。）
         let visRow = UIStackView()
         visRow.axis = .horizontal
         visRow.spacing = 6
         let visIcon = UIImageView()
-        let isPublic = BearyStarMap.isEffectivelyPublic(entry)
-        visIcon.image = BearyIconImages.image(named: isPublic ? "icon_globe" : "icon_lock", pointSize: 16)
+        let visValue = BearyVisibility.current(for: entry)
+        let isPublic = visValue == "public"
+        let isFriendsOnly = visValue == "friends"
+        visIcon.image = BearyIconImages.image(named: isPublic ? "icon_globe" : (isFriendsOnly ? "icon_friends_lock" : "icon_lock"), pointSize: 16)
         visIcon.tintColor = isPublic ? BearyColors.orange : BearyColors.blue
         visIcon.contentMode = .scaleAspectFit
         visRow.addArrangedSubview(visIcon)
-        visRow.addArrangedSubview(sheetBodyLabel(isPublic ? "公开" : "私密"))
+        var visText = BearyVisibility.title(for: visValue)
+        if isPublic, BearyEphemeral.isLive(entry), let until = entry.ephemeralUntil {
+            visText += " · \(BearyEphemeral.remainingText(until: until))"
+        }
+        visRow.addArrangedSubview(sheetBodyLabel(visText))
         sheetStack.addArrangedSubview(visRow)
         // 审计登录杂项：详情钮补按压反馈，热区 BearyHit44Button 扩至 44
         //（视觉高仍由内边距定，不擅自改按钮高度档位）。

@@ -231,7 +231,7 @@ final class BearyDMConversationsViewController: UIViewController, UITableViewDel
             emptyLabel.text = "加载失败，下拉重试"
             emptyLabel.isHidden = false
         } else if conversations.isEmpty {
-            emptyLabel.text = "还没有私信\n发第一条纯文字消息吧"
+            emptyLabel.text = "还没有私信\n收到或发出的消息会显示在这里"
             emptyLabel.isHidden = false
         } else {
             emptyLabel.isHidden = true
@@ -434,7 +434,7 @@ private final class BearyDMConversationCell: UITableViewCell {
 
     func configure(conversation: BearyAPI.DMConversation) {
         let peer = conversation.peer
-        let displayName = (peer?.displayName?.isEmpty == false) ? peer!.displayName! : "Beary 用户"
+        let displayName = (peer?.displayName?.isEmpty == false) ? peer!.displayName! : "beary 用户"
         nameLabel.text = displayName
         // 审计：摘要空行折叠——空白摘要整行隐藏，不留空白行。
         let snippet = (conversation.lastBody ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
@@ -524,7 +524,7 @@ private final class BearyDMConversationCell: UITableViewCell {
         avatarRetryButton.isHidden = true
         avatarView.isHidden = false
         fallbackLabel.isHidden = true
-        let displayName = nameLabel.text ?? "Beary 用户"
+        let displayName = nameLabel.text ?? "beary 用户"
         loadAvatar(url: url, displayName: displayName, representedID: representedUserID)
     }
 }

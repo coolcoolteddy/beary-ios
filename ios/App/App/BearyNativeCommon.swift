@@ -2581,9 +2581,13 @@ extension Notification.Name {
     static let bearyFeedFirstScreenDone = Notification.Name("bearyFeedFirstScreenDone")
 }
 
-/// 举报理由：复用封禁五类（服务端 reasons 枚举同款文案）。
+/// 举报理由：上报值复用服务端 reasons 枚举原值（worker.js REASONS 逐字校验，
+/// 改发中文会 400）；界面展示另走 displayTitle：spam 只在界面上显示为“垃圾广告”。
 enum BearyReportReason {
     static let all = ["违规内容", "刷量", "人身攻击", "spam", "其他"]
+    static func displayTitle(for reason: String) -> String {
+        reason == "spam" ? "垃圾广告" : reason
+    }
 }
 
 /// 弹窗 present 统一守卫（审计 2026-11-02 弹窗组）：present 前须同时满足
@@ -2660,7 +2664,7 @@ enum BearyReportFlow {
         let title = entryLabel == nil ? "举报这篇日记？" : "举报\(entryLabel!)？"
         let sheet = UIAlertController(title: title, message: "举报后这篇日记将从你的信息流消失，不可撤销。", preferredStyle: .actionSheet)
         for reason in BearyReportReason.all {
-            sheet.addAction(UIAlertAction(title: reason, style: .default) { _ in
+            sheet.addAction(UIAlertAction(title: BearyReportReason.displayTitle(for: reason), style: .default) { _ in
                 let busy = BearyFlowBusy.show(in: vc.view)
                 BearyAPI.shared.reportEntry(entryId: entryId, reason: reason) { result in
                     DispatchQueue.main.async {
@@ -2791,7 +2795,7 @@ enum BearyQuoteGate {
         if let quote = entry.quote, sourceIsPrivate(quote: quote), let sourceId = quote.id, !sourceId.isEmpty {
             // 审计 2026-11-02 弹窗组：守卫未过（已有弹窗/页已离线）按放弃处理，
             // 调用方清 busy 位、原态未动，用户可重试；绝不无提示直接公开。
-            let presented = presentPublicGate(from: vc, sourceIsMine: sourceIsMine(quote: quote)) { publishTogether in
+            let presented = presentPublicGate(from: vc, sourceIsMine: sourceIsMine(quote: quote), sourceIsFriendsOnly: quote.visibility == "friends") { publishTogether in
                 completion(publishTogether ? .publishTogether(sourceId: sourceId) : .aborted)
             }
             if !presented { completion(.aborted) }
@@ -2804,7 +2808,7 @@ enum BearyQuoteGate {
                     case .success(let fetched):
                         if let fetchedQuote = fetched.quote, sourceIsPrivate(quote: fetchedQuote), let sourceId = fetchedQuote.id, !sourceId.isEmpty {
                             // 异步回包时再查一次守卫：期间已有弹窗/页已离线则放弃，调用方清 busy。
-                            let presented = presentPublicGate(from: vc, sourceIsMine: sourceIsMine(quote: fetchedQuote)) { publishTogether in
+                            let presented = presentPublicGate(from: vc, sourceIsMine: sourceIsMine(quote: fetchedQuote), sourceIsFriendsOnly: fetchedQuote.visibility == "friends") { publishTogether in
                                 completion(publishTogether ? .publishTogether(sourceId: sourceId) : .aborted)
                             }
                             if !presented { completion(.aborted) }
@@ -2822,17 +2826,22 @@ enum BearyQuoteGate {
     }
 
     /// present 前统一守卫；返回是否真正弹出了（false = 未弹，调用方按放弃处理）。
+    /// 文案按来源档位分私密／仅好友（门禁触发条件仍是“非有效公开”，含仅好友来源）。
+    /// 本弹窗的否定动作一律是“放弃公开”：点按即放弃本次公开、原态未动——
+    /// 不叫“保持私密”，以免与编辑器门禁的“保持私密发布”（本篇改回私密再发）、
+    /// 存量提示的“原日记保持私密”（原日记不改、本篇已公开态不变）混淆。
     @discardableResult
-    private static func presentPublicGate(from vc: UIViewController, sourceIsMine: Bool, completion: @escaping (Bool) -> Void) -> Bool {
+    private static func presentPublicGate(from vc: UIViewController, sourceIsMine: Bool, sourceIsFriendsOnly: Bool = false, completion: @escaping (Bool) -> Void) -> Bool {
         guard BearyPresentGuard.canPresent(from: vc) else { return false }
+        let sourceWord = sourceIsFriendsOnly ? "仅好友" : "私密"
         if sourceIsMine {
-            let alert = UIAlertController(title: "引用的日记还是私密", message: "公开本篇时，是否一并公开原日记？一并公开后，引用对所有人可见。", preferredStyle: .alert)
+            let alert = UIAlertController(title: "引用的日记还是\(sourceWord)", message: "公开本篇时，是否一并公开原日记？一并公开后，引用对所有人可见。", preferredStyle: .alert)
             alert.addAction(UIAlertAction(title: "一并公开原日记", style: .default) { _ in completion(true) })
-            alert.addAction(UIAlertAction(title: "保持私密", style: .cancel) { _ in completion(false) })
+            alert.addAction(UIAlertAction(title: "放弃公开", style: .cancel) { _ in completion(false) })
             vc.present(alert, animated: BearyMotion.animated(true))
         } else {
-            let alert = UIAlertController(title: "引用的日记还是私密", message: "这篇日记引用了他人的私密日记，无法一并公开原日记。保持私密可继续保留引用。", preferredStyle: .alert)
-            alert.addAction(UIAlertAction(title: "保持私密", style: .default) { _ in completion(false) })
+            let alert = UIAlertController(title: "引用的日记还是\(sourceWord)", message: "这篇日记引用了他人的\(sourceWord)日记，无法一并公开原日记。放弃公开可继续保留引用。", preferredStyle: .alert)
+            alert.addAction(UIAlertAction(title: "放弃公开", style: .default) { _ in completion(false) })
             vc.present(alert, animated: BearyMotion.animated(true))
         }
         return true
@@ -2841,10 +2850,13 @@ enum BearyQuoteGate {
     /// 编辑器新发布门禁：宿主将公开且含私密引用时拦截。自己来源三选一
     /// （一并公开／删除引用并公开／保持私密发布），他人来源只剩两项
     /// （删除引用并公开／保持私密发布）；“取消”仅关弹窗、不发请求。
-    static func gateEditorPublish(from vc: UIViewController, sourceIsMine: Bool, onPublishTogether: @escaping () -> Void, onDeleteQuote: @escaping () -> Void, onKeepPrivate: @escaping () -> Void) {
+    static func gateEditorPublish(from vc: UIViewController, sourceIsMine: Bool, sourceIsFriendsOnly: Bool = false, onPublishTogether: @escaping () -> Void, onDeleteQuote: @escaping () -> Void, onKeepPrivate: @escaping () -> Void) {
         // 审计 2026-11-02 弹窗组：present 前统一守卫；未过则不弹、不发请求，用户可重试。
+        // “保持私密发布”含义固定：本篇改回私密再发（引用保留），与切公开门禁的
+        // “放弃公开”（不发请求）不同；标题／正文按来源私密／仅好友分。
         guard BearyPresentGuard.canPresent(from: vc) else { return }
-        let alert = UIAlertController(title: "引用的日记还是私密", message: "公开本篇时，引用的私密日记怎么办？", preferredStyle: .alert)
+        let sourceWord = sourceIsFriendsOnly ? "仅好友" : "私密"
+        let alert = UIAlertController(title: "引用的日记还是\(sourceWord)", message: "公开本篇时，引用的\(sourceWord)日记怎么办？", preferredStyle: .alert)
         if sourceIsMine {
             alert.addAction(UIAlertAction(title: "一并公开原日记", style: .default) { _ in onPublishTogether() })
         }
@@ -2855,17 +2867,21 @@ enum BearyQuoteGate {
     }
 
     /// 存量公开篇含私密引用：作者下次打开编辑器时的三选一。自己来源三项
-    /// （一并公开／删除引用／保持私密），他人来源只剩两项（删除引用／保持私密）；
-    /// 保持私密即关弹窗、不改任何状态（下次打开编辑器仍会再提示，直至作者处理）。
-    static func promptStoredPrivateQuote(from vc: UIViewController, sourceIsMine: Bool, onPublishTogether: @escaping () -> Void, onDeleteQuote: @escaping () -> Void, onKeepPrivate: @escaping () -> Void) {
+    /// （一并公开／删除引用／原日记保持私密），他人来源只剩两项（删除引用／原日记保持私密）；
+    /// 原日记保持私密即关弹窗、不改任何状态（下次打开编辑器仍会再提示，直至作者处理）。
+    static func promptStoredPrivateQuote(from vc: UIViewController, sourceIsMine: Bool, sourceIsFriendsOnly: Bool = false, onPublishTogether: @escaping () -> Void, onDeleteQuote: @escaping () -> Void, onKeepPrivate: @escaping () -> Void) {
         // 审计 2026-11-02 弹窗组：present 前统一守卫；未过则不弹，下次打开编辑器仍会再提示。
+        // 否定动作叫“原日记保持私密”：原日记不改、本篇已公开态不变，下次打开编辑器
+        // 仍会再提示——与编辑器门禁的“保持私密发布”（本篇改回私密再发）后果不同。
         guard BearyPresentGuard.canPresent(from: vc) else { return }
-        let alert = UIAlertController(title: "这篇已公开的日记引用了私密日记", message: "原日记仍是私密，他人看这篇时引用只显示占位。", preferredStyle: .alert)
+        let sourceWord = sourceIsFriendsOnly ? "仅好友" : "私密"
+        let detail = sourceIsFriendsOnly ? "原日记仍仅好友可见，非好友看这篇时引用只显示占位。" : "原日记仍是私密，他人看这篇时引用只显示占位。"
+        let alert = UIAlertController(title: "这篇已公开的日记引用了\(sourceWord)日记", message: detail, preferredStyle: .alert)
         if sourceIsMine {
             alert.addAction(UIAlertAction(title: "一并公开原日记", style: .default) { _ in onPublishTogether() })
         }
         alert.addAction(UIAlertAction(title: "删除引用", style: .default) { _ in onDeleteQuote() })
-        alert.addAction(UIAlertAction(title: "保持私密", style: .cancel) { _ in onKeepPrivate() })
+        alert.addAction(UIAlertAction(title: "原日记保持私密", style: .cancel) { _ in onKeepPrivate() })
         vc.present(alert, animated: BearyMotion.animated(true))
     }
 
