@@ -423,8 +423,14 @@ class BearyDiaryCardCell: UITableViewCell {
     /// 外部直删 quoteCache 时残留的旧键在下次命中/写入时惰性清理。
     private static var quoteCacheOrder: [String] = []
     static let quoteCacheLimit = 100
+    /// 引用 fetch 代次：每次 resetQuoteFetchState（下拉刷新/内存警告/
+    /// 换桶清空）+1。fetch 发起时捕获当时桶 + 代次，回包写缓存前双重
+    /// 复核，任一不符即过期回包（审计第 5 项残留缺口：刷新清空后在途
+    /// 旧请求仍可写入当前新号桶）。
+    private static var quoteFetchGeneration = 0
 
     static func resetQuoteFetchState() {
+        quoteFetchGeneration += 1
         quoteCacheBuckets = [:]
         quoteFailedIds = []
         quoteLoadingIds = []
@@ -452,6 +458,16 @@ class BearyDiaryCardCell: UITableViewCell {
     /// 写缓存：定量 100，超量从队头逐出最久未用；写入失败集合里若有该 id
     /// 一并清除（成功拉到即不再是失败态）。
     static func storeQuote(_ entry: Entry, for quoteId: String) {
+        _ = storeQuote(entry, for: quoteId, requestBucket: currentQuoteBucket(), generation: quoteFetchGeneration)
+    }
+
+    /// 写缓存（带请求校验）：仅当请求桶仍为当前桶且代次仍为当前代次时写入；
+    /// 过期回包返回 false，且不写缓存、不动失败集与 LRU。服务端实际
+    /// visibility 原样存入，绝不根据正文是否非空推断公开状态（公开判定在
+    /// 落卡处走 isEffectivelyPublic，本处只存不判）。
+    @discardableResult
+    static func storeQuote(_ entry: Entry, for quoteId: String, requestBucket: String, generation: Int) -> Bool {
+        guard requestBucket == currentQuoteBucket(), generation == quoteFetchGeneration else { return false }
         quoteCache[quoteId] = entry
         quoteFailedIds.remove(quoteId)
         quoteCacheOrder.removeAll { $0 == quoteId }
@@ -460,6 +476,7 @@ class BearyDiaryCardCell: UITableViewCell {
             let oldest = quoteCacheOrder.removeFirst()
             quoteCache.removeValue(forKey: oldest)
         }
+        return true
     }
 
     /// 定向失效（删除/转私密/举报/拉黑清行时调）：清掉该篇作为被引源的
@@ -507,8 +524,9 @@ class BearyDiaryCardCell: UITableViewCell {
     private var likeButtonWidthConstraint: NSLayoutConstraint?
     /// 折叠溢出判定缓存（首页模式 nil = 未测）：300 字以上且实测超 6 行才溢出。
     private var foldOverflow: Bool?
-    /// 80 包 B12：折叠实测缓存（entryId + 宽度 + 字号 16 + 字数 + 文本哈希），跨复用
-    /// 命中，文本/宽度变化即换键；超 200 条清库防无界增长。
+    /// 80 包 B12：折叠实测缓存（entryId + 宽度 + 字号 16 + 字号类别 + 字数 + 文本哈希），
+    /// 跨复用命中，文本/宽度/字号类别变化即换键（审计第 27 项：字号档变了实测
+    /// 行数会变，旧档结论不得复用）；超 200 条清库防无界增长。
     private var foldOverflowCache: [String: Bool] = [:]
     /// 回应行当前快照（按 count 降序；chip 点选按下标取 key；成功后由服务端聚合覆盖）。
     private var currentEmoteList: [EmoteCount] = []
@@ -1451,6 +1469,35 @@ class BearyDiaryCardCell: UITableViewCell {
         if previousTraitCollection?.userInterfaceStyle != traitCollection.userInterfaceStyle, let e = currentEntry {
             contentLabel.attributedText = bodyWithTrailingMood(e.content ?? "", fontSize: cardMode == .feed ? 16 : 15, moodKey: e.mood)
         }
+        // 审计第 27 项：内容字号档变化时立即重建可见卡片富文本——
+        // attributed 字号不随 adjustsFont 自动跟随，旧口径要等下次 configure
+        // 才重解，字号切换当下卡片停留在旧字号。纯文本 label 靠 adjustsFont
+        // 自动跟随，不在此重设。previous 为 nil 时不是一次变化（首现），不触发。
+        if previousTraitCollection != nil,
+           previousTraitCollection?.preferredContentSizeCategory != traitCollection.preferredContentSizeCategory,
+           let e = currentEntry {
+            updateEntryTitle(e.title)
+            if cardMode == .feed {
+                updateContentAndFold()
+            } else {
+                contentLabel.attributedText = bodyWithTrailingMood(e.content ?? "", fontSize: 15, moodKey: e.mood)
+                if foldApplies {
+                    setFoldDisplay(expanded: isExpanded, animated: false)
+                } else {
+                    contentLabel.numberOfLines = 0
+                }
+            }
+            // 行高：只刷本可见行（控制器 reloadRows .none），不 reloadData、
+            // 不滚动——阅读位置不动。异步发，避免在 trait 传播中途改表；
+            // 复用或又变档时凭 entryId + 档位复核，过期通知丢弃。
+            let entryIdValue = cellEntryId
+            let categoryValue = traitCollection.preferredContentSizeCategory
+            DispatchQueue.main.async { [weak self] in
+                guard let self = self, self.cellEntryId == entryIdValue, self.currentEntry != nil,
+                      self.traitCollection.preferredContentSizeCategory == categoryValue else { return }
+                self.onNeedsRowReload?()
+            }
+        }
         guard cardMode == .feed else { return }
         if currentEntry == nil { return }
         if previousTraitCollection?.userInterfaceStyle != traitCollection.userInterfaceStyle {
@@ -1653,8 +1700,9 @@ class BearyDiaryCardCell: UITableViewCell {
         paragraph.lineBreakMode = .byCharWrapping
         // C8 + R8 卡片内部分：正文字号一律走 scaledFont（feed 16 / profile 15，
         // 默认档点数不变，profile 15 此前未缩放、本批补齐）；contentLabel 侧
-        // 已置 adjustsFontForContentSizeCategory，富文本字号在下次 configure
-        // 时重解（C8 已知局限，本批不改）；装饰性小字不动。
+        // 已置 adjustsFontForContentSizeCategory，但富文本字号不随它自动重解，
+        // 由 trait handler 在字号档变化时重建（审计第 27 项；离屏卡下次
+        // configure 同样按新档重解）；装饰性小字不动。
         let bodyFont = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: fontSize))
         // 内联心情：正文里的记号转回熊脸附件（与编辑器同一中间层），
         // 附件字号跟随正文字号；旧心情缀尾仍由 bodyWithTrailingMood 另 append。
@@ -2201,7 +2249,7 @@ class BearyDiaryCardCell: UITableViewCell {
     private func measuredFoldOverflow(contentWidth: CGFloat) -> Bool {
         let fullText = currentEntry?.content ?? ""
         if fullText.isEmpty || fullText.count <= 300 || contentWidth <= 0 { return false }
-        let foldCacheKey = "\(currentEntry?.id ?? "")|\(Int(contentWidth.rounded()))|16|\(fullText.count)|\(fullText.hashValue)"
+        let foldCacheKey = "\(currentEntry?.id ?? "")|\(Int(contentWidth.rounded()))|16|\(traitCollection.preferredContentSizeCategory.rawValue)|\(fullText.count)|\(fullText.hashValue)"
         if let cached = foldOverflowCache[foldCacheKey] { return cached }
         let full = attributedBody(fullText, fontSize: 16)
         let fullHeight = full.boundingRect(
@@ -2521,12 +2569,20 @@ class BearyDiaryCardCell: UITableViewCell {
         BearyDiaryCardCell.quoteLoadingIds.insert(quoteIdValue)
         showQuoteLoadingPlaceholder(quoteId: quoteIdValue)
         let hostEntryIdValue = entry.id
+        // 审计第 5 项残留：发起时捕获请求桶 + 代次；刷新清空/换桶后到达的
+        // 旧回包在写缓存前即丢弃，不得写入当前（新号）桶。
+        let requestBucket = BearyDiaryCardCell.currentQuoteBucket()
+        let requestGeneration = BearyDiaryCardCell.quoteFetchGeneration
         BearyAPI.shared.fetchEntry(id: quoteIdValue) { [weak self] result in
             DispatchQueue.main.async {
+                // 过期回包：不写缓存、不落卡、不记失败；也不清在途位——
+                // 该位可能已属新代次同 id 请求，清掉会让新请求被误判为未在途而重复发。
+                guard requestBucket == BearyDiaryCardCell.currentQuoteBucket(),
+                      requestGeneration == BearyDiaryCardCell.quoteFetchGeneration else { return }
                 BearyDiaryCardCell.quoteLoadingIds.remove(quoteIdValue)
                 switch result {
                 case .success(let fetchedEntry):
-                    BearyDiaryCardCell.storeQuote(fetchedEntry, for: quoteIdValue)
+                    guard BearyDiaryCardCell.storeQuote(fetchedEntry, for: quoteIdValue, requestBucket: requestBucket, generation: requestGeneration) else { return }
                     // 宿主复用走了也先补刷等待卡（缓存已落，等待卡命中缓存不重发）；
                     // 再按宿主身份决定宿主自己是否落卡。
                     guard let strongSelf = self else { return }
