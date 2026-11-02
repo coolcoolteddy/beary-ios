@@ -1135,11 +1135,11 @@ final class BearyNotificationsViewController: UIViewController {
             guard let cell = tableView.cellForRow(at: path) else {
                 continue
             }
-            let delay = min(Double(animatedCount) * 0.04, 0.24)
+            let delay = min(Double(animatedCount) * 0.03, 0.24)
             cell.alpha = 0
             cell.transform = CGAffineTransform(translationX: 0, y: -24)
             let animator = UIViewPropertyAnimator(
-                duration: 0.42,
+                duration: 0.25,
                 timingParameters: UICubicTimingParameters(controlPoint1: CGPoint(x: 0.32, y: 0.72), controlPoint2: CGPoint(x: 0.35, y: 1))
             )
             animator.addAnimations({

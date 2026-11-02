@@ -4211,11 +4211,10 @@ private final class BearyComposerSheetPresentationController: UIPresentationCont
             // 审计第 14 项：原口径不动，改走共用映射（其余面板与此同口径）。
             dimmingView.alpha = BearySheetDrag.scrimAlpha(forDragOffset: drag, sheetHeight: sheetHeight)
         case .ended:
-            // 审计 B 组 8：只在正常松手时执行关闭判断，条件原样不动
-            // （位移 > 高 × 0.25 或速度 > 800 即关闭，否则弹回原位）。
+            // 审计 B 组 8：只在正常松手时执行关闭判断，条件走多数派口径
+            // （位移 > 80pt 或速度 > 600pt/s 即关闭，否则弹回原位）。
             let velocity = pan.velocity(in: container).y
-            let height = sheetHeight > 0 ? sheetHeight : presentedView.bounds.height
-            if translation > height * 0.25 || velocity > 800 {
+            if translation > 80 || velocity > 600 {
                 presentedViewController.dismiss(animated: BearyMotion.animated(true))
             } else {
                 let restore = {

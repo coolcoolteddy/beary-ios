@@ -31,8 +31,8 @@ private enum OnboardingAnim {
     static let pageHalfDuration: TimeInterval = 0.14
     /// 切页横移幅度（轻微横移＋淡入淡出）。
     static let pageSlide: CGFloat = 20
-    /// 入场错峰间隔；总入场 0.5 秒内（0.15 末位延迟 + 0.25 播长 = 0.40）。
-    static let staggerStep: TimeInterval = 0.05
+    /// 入场错峰间隔；总入场 0.5 秒内（0.09 末位延迟 + 0.25 播长 = 0.34）。
+    static let staggerStep: TimeInterval = 0.03
     static let entranceDuration: TimeInterval = 0.25
     /// 第 1 页两张卡片的错位：后卡左右各缩 10，前卡下压 80、微转 0.5°，后卡微转 -3.5°。
     static let cardBackInset: CGFloat = 10
