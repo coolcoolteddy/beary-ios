@@ -2388,27 +2388,59 @@ enum BearyReportReason {
     static let all = ["违规内容", "刷量", "人身攻击", "spam", "其他"]
 }
 
+/// 弹窗 present 统一守卫（审计 2026-11-02 弹窗组）：present 前须同时满足
+/// presentedViewController == nil（无在途弹窗）与 view.window != nil（发起页
+/// 仍在窗口内，异步回包时页已离线不得再弹）。调用方在 present 前调一次；
+/// 异步路径（网络回包后才 present）在回包里再查一次，防期间状态变化。
+enum BearyPresentGuard {
+    static func canPresent(from vc: UIViewController) -> Bool {
+        return vc.presentedViewController == nil && vc.view.window != nil
+    }
+}
+
 /// 审计 E2 第 23 项：确认后请求期的忙碌态。举报/拉黑的确认入口是 UIAlertAction，
 /// 点按后 sheet/alert 即消失、原按钮已不存在，无法在原按钮上挂 spinner；
-/// 故在发起页中央显示既有加载图标（BearyRefreshIconView，旋转、不拦截触摸），
-/// 请求终结（成功/失败）时移除；不新增弹窗、不改文案、成功失败提示与确认步骤不变。
+/// 故在发起页中央显示既有加载图标（BearyRefreshIconView，旋转）。
+/// 审计 2026-11-02 弹窗组补：在途防重入——spinner 外加一层全屏透明拦截层
+/// （只拦触摸、不画任何东西），请求期内发起页的按钮点按一律被拦住，
+/// 防用户在途重复打开举报/拉黑再发一次请求；请求终结（成功/失败）时
+/// 连拦截层一起移除；不新增弹窗、不改文案、成功失败提示与确认步骤不变。
+private final class BearyFlowBusyBlockerView: UIView {}
+
 enum BearyFlowBusy {
     static func show(in view: UIView) -> BearyRefreshIconView {
+        let blocker = BearyFlowBusyBlockerView()
+        blocker.backgroundColor = .clear
+        blocker.translatesAutoresizingMaskIntoConstraints = false
+        view.addSubview(blocker)
+        NSLayoutConstraint.activate([
+            blocker.topAnchor.constraint(equalTo: view.topAnchor),
+            blocker.bottomAnchor.constraint(equalTo: view.bottomAnchor),
+            blocker.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            blocker.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+        ])
         let spinner = BearyRefreshIconView()
-        view.addSubview(spinner)
+        blocker.addSubview(spinner)
         NSLayoutConstraint.activate([
             spinner.widthAnchor.constraint(equalToConstant: 20),
             spinner.heightAnchor.constraint(equalToConstant: 20),
-            spinner.centerXAnchor.constraint(equalTo: view.centerXAnchor),
-            spinner.centerYAnchor.constraint(equalTo: view.centerYAnchor),
+            spinner.centerXAnchor.constraint(equalTo: blocker.centerXAnchor),
+            spinner.centerYAnchor.constraint(equalTo: blocker.centerYAnchor),
         ])
         spinner.startSpinning()
         return spinner
     }
 
     static func hide(_ spinner: BearyRefreshIconView?) {
-        spinner?.stopSpinning()
-        spinner?.removeFromSuperview()
+        guard let spinner = spinner else { return }
+        spinner.stopSpinning()
+        // spinner 挂在拦截层里：连层一起移除，恢复发起页触摸；旧路径
+        // （spinner 直接挂发起页）则只移除 spinner 本身。
+        if spinner.superview is BearyFlowBusyBlockerView {
+            spinner.superview?.removeFromSuperview()
+        } else {
+            spinner.removeFromSuperview()
+        }
     }
 }
 
@@ -2417,6 +2449,9 @@ enum BearyFlowBusy {
 enum BearyReportFlow {
     static func present(from vc: UIViewController, entryId: String, entryLabel: String? = nil) {
         guard !entryId.isEmpty else { return }
+        // 审计 2026-11-02 弹窗组：present 前统一守卫（无在途弹窗＋发起页在窗口内），
+        // 连点/异步回包后页已离线时不叠弹、不弹野弹窗。
+        guard BearyPresentGuard.canPresent(from: vc) else { return }
         // 审计三轮第 6 项：本地集已按账号分桶（markReported 只在服务端成功/duplicate 后调用），
         // 故当前桶命中即等价于本账号服务端已确认，可直接返回“已举报”；跨号污染已由分桶消除，
         // 无需每次都走到理由选择与服务端往返。服务端仍是最终权威（换设备等本地未同步时走下行提交，duplicate 态同样按已举报处理）。
@@ -2458,6 +2493,9 @@ enum BearyReportFlow {
 /// 拉黑流程（他人主页“更多”共用）：确认 → 提交 → 成功后广播，调用方据此清理条目与离场。
 enum BearyBlockFlow {
     static func block(from vc: UIViewController, userId: Int, userName: String?, onDone: ((Bool) -> Void)? = nil) {
+        // 审计 2026-11-02 弹窗组：present 前统一守卫；守卫未过即未执行拉黑，
+        // 按失败回调调用方（调用方只在 success 时清理，false 为空操作）。
+        guard BearyPresentGuard.canPresent(from: vc) else { onDone?(false); return }
         let name = (userName ?? "").isEmpty ? "这位用户" : userName!
         let alert = UIAlertController(title: "拉黑\(name)？", message: "拉黑后将不再看到 TA 的日记，可在设置页「已拉黑用户」里解除。", preferredStyle: .alert)
         alert.addAction(UIAlertAction(title: "取消", style: .cancel, handler: nil))
@@ -2520,9 +2558,12 @@ enum BearyQuoteGate {
     /// 不弹 403 toast（调用方收到 aborted 时只做回滚/不发请求，不另 toast）。
     static func gatePublicToggle(from vc: UIViewController, entry: Entry, completion: @escaping (PublicToggleResult) -> Void) {
         if let quote = entry.quote, sourceIsPrivate(quote: quote), let sourceId = quote.id, !sourceId.isEmpty {
-            presentPublicGate(from: vc, sourceIsMine: sourceIsMine(quote: quote)) { publishTogether in
+            // 审计 2026-11-02 弹窗组：守卫未过（已有弹窗/页已离线）按放弃处理，
+            // 调用方清 busy 位、原态未动，用户可重试；绝不无提示直接公开。
+            let presented = presentPublicGate(from: vc, sourceIsMine: sourceIsMine(quote: quote)) { publishTogether in
                 completion(publishTogether ? .publishTogether(sourceId: sourceId) : .aborted)
             }
+            if !presented { completion(.aborted) }
             return
         }
         if entry.quote == nil, let quoteId = entry.quoteId, !quoteId.isEmpty, let entryId = entry.id, !entryId.isEmpty {
@@ -2531,9 +2572,11 @@ enum BearyQuoteGate {
                     switch result {
                     case .success(let fetched):
                         if let fetchedQuote = fetched.quote, sourceIsPrivate(quote: fetchedQuote), let sourceId = fetchedQuote.id, !sourceId.isEmpty {
-                            presentPublicGate(from: vc, sourceIsMine: sourceIsMine(quote: fetchedQuote)) { publishTogether in
+                            // 异步回包时再查一次守卫：期间已有弹窗/页已离线则放弃，调用方清 busy。
+                            let presented = presentPublicGate(from: vc, sourceIsMine: sourceIsMine(quote: fetchedQuote)) { publishTogether in
                                 completion(publishTogether ? .publishTogether(sourceId: sourceId) : .aborted)
                             }
+                            if !presented { completion(.aborted) }
                         } else {
                             completion(.proceed)
                         }
@@ -2547,7 +2590,10 @@ enum BearyQuoteGate {
         completion(.proceed)
     }
 
-    private static func presentPublicGate(from vc: UIViewController, sourceIsMine: Bool, completion: @escaping (Bool) -> Void) {
+    /// present 前统一守卫；返回是否真正弹出了（false = 未弹，调用方按放弃处理）。
+    @discardableResult
+    private static func presentPublicGate(from vc: UIViewController, sourceIsMine: Bool, completion: @escaping (Bool) -> Void) -> Bool {
+        guard BearyPresentGuard.canPresent(from: vc) else { return false }
         if sourceIsMine {
             let alert = UIAlertController(title: "引用的日记还是私密", message: "公开本篇时，是否一并公开原日记？一并公开后，引用对所有人可见。", preferredStyle: .alert)
             alert.addAction(UIAlertAction(title: "一并公开原日记", style: .default) { _ in completion(true) })
@@ -2558,12 +2604,15 @@ enum BearyQuoteGate {
             alert.addAction(UIAlertAction(title: "保持私密", style: .default) { _ in completion(false) })
             vc.present(alert, animated: BearyMotion.animated(true))
         }
+        return true
     }
 
     /// 编辑器新发布门禁：宿主将公开且含私密引用时拦截。自己来源三选一
     /// （一并公开／删除引用并公开／保持私密发布），他人来源只剩两项
     /// （删除引用并公开／保持私密发布）；“取消”仅关弹窗、不发请求。
     static func gateEditorPublish(from vc: UIViewController, sourceIsMine: Bool, onPublishTogether: @escaping () -> Void, onDeleteQuote: @escaping () -> Void, onKeepPrivate: @escaping () -> Void) {
+        // 审计 2026-11-02 弹窗组：present 前统一守卫；未过则不弹、不发请求，用户可重试。
+        guard BearyPresentGuard.canPresent(from: vc) else { return }
         let alert = UIAlertController(title: "引用的日记还是私密", message: "公开本篇时，引用的私密日记怎么办？", preferredStyle: .alert)
         if sourceIsMine {
             alert.addAction(UIAlertAction(title: "一并公开原日记", style: .default) { _ in onPublishTogether() })
@@ -2578,6 +2627,8 @@ enum BearyQuoteGate {
     /// （一并公开／删除引用／保持私密），他人来源只剩两项（删除引用／保持私密）；
     /// 保持私密即关弹窗、不改任何状态（下次打开编辑器仍会再提示，直至作者处理）。
     static func promptStoredPrivateQuote(from vc: UIViewController, sourceIsMine: Bool, onPublishTogether: @escaping () -> Void, onDeleteQuote: @escaping () -> Void, onKeepPrivate: @escaping () -> Void) {
+        // 审计 2026-11-02 弹窗组：present 前统一守卫；未过则不弹，下次打开编辑器仍会再提示。
+        guard BearyPresentGuard.canPresent(from: vc) else { return }
         let alert = UIAlertController(title: "这篇已公开的日记引用了私密日记", message: "原日记仍是私密，他人看这篇时引用只显示占位。", preferredStyle: .alert)
         if sourceIsMine {
             alert.addAction(UIAlertAction(title: "一并公开原日记", style: .default) { _ in onPublishTogether() })
@@ -2595,6 +2646,9 @@ enum BearyQuoteGate {
                 switch result {
                 case .success(let resp):
                     if let count = resp.quoteCount, count > 0 {
+                        // 审计 2026-11-02 弹窗组：异步回包时再查守卫；未过时按提醒
+                        // 非门控的既有口径放行（与拉取失败同款），不把用户卡在 busy。
+                        guard BearyPresentGuard.canPresent(from: vc) else { completion(true); return }
                         let alert = UIAlertController(title: nil, message: "这篇日记被 \(count) 篇日记引用，改私密后这些引用将显示“该日记已私密”。", preferredStyle: .alert)
                         alert.addAction(UIAlertAction(title: "改私密", style: .destructive) { _ in completion(true) })
                         alert.addAction(UIAlertAction(title: "取消", style: .cancel) { _ in completion(false) })
