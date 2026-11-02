@@ -1703,7 +1703,7 @@ final class BearyTimelineCell: UITableViewCell {
                 quoteButton.isEnabled = false
                 quoteButton.isHidden = false
             } else if quote.locked == true {
-                let placeholder = BearyQuoteGate.placeholderText(publishedAt: quote.publishedAt, locked: true)
+                let placeholder = BearyQuoteGate.placeholderTextForQuote(publishedAt: quote.publishedAt, locked: true, visibility: quote.visibility)
                 applyTimelinePlaceholder(main: placeholder.main, detail: placeholder.detail, deleted: false, handle: quote.authorHandle, dateMs: quote.createdAt)
                 quoteIconView.image = BearyIconImages.image(named: "icon_lock", pointSize: 12)
                 quoteButton.isEnabled = false
@@ -1713,7 +1713,7 @@ final class BearyTimelineCell: UITableViewCell {
                     applyTimelinePlaceholder(main: "引用的日记已删除", detail: nil, deleted: true, handle: nil, dateMs: nil)
                     quoteIconView.image = BearyIconImages.image(named: "icon_quote", pointSize: 12)
                 } else {
-                    let placeholder = BearyQuoteGate.placeholderText(publishedAt: quote.publishedAt, locked: false)
+                    let placeholder = BearyQuoteGate.placeholderTextForQuote(publishedAt: quote.publishedAt, locked: false, visibility: quote.visibility)
                     applyTimelinePlaceholder(main: placeholder.main, detail: placeholder.detail, deleted: false, handle: quote.authorHandle, dateMs: quote.createdAt)
                     quoteIconView.image = BearyIconImages.image(named: "icon_lock", pointSize: 12)
                 }
@@ -1723,7 +1723,8 @@ final class BearyTimelineCell: UITableViewCell {
                 // iCity viewer 实时判定：被引篇非公开且 viewer 不是被引作者时，
                 // 即使服务端透传了正文也以占位替代，绝不泄漏正文与图片
                 //（旧口径以宿主是否本人为代理，已作废；Quote 现有 authorId/isMine 字段）。
-                let placeholder = BearyQuoteGate.placeholderText(publishedAt: quote.publishedAt, locked: false)
+                // 10a：仅好友来源走定版句（其余仍回落私密/未公开档，见 placeholderTextForQuote）。
+                let placeholder = BearyQuoteGate.placeholderTextForQuote(publishedAt: quote.publishedAt, locked: false, visibility: quote.visibility)
                 applyTimelinePlaceholder(main: placeholder.main, detail: placeholder.detail, deleted: false, handle: quote.authorHandle, dateMs: quote.createdAt)
                 quoteIconView.image = BearyIconImages.image(named: "icon_lock", pointSize: 12)
                 quoteButton.isEnabled = false
