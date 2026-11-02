@@ -274,6 +274,8 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         NotificationCenter.default.addObserver(self, selector: #selector(handleReportedEntryNotification(_:)), name: .bearyDidReportEntry, object: nil)
         // 好友第一期：别处回关/取关后，搜索行状态机同步重拉（不靠旧状态）。
         NotificationCenter.default.addObserver(self, selector: #selector(handleFollowChangedNotification(_:)), name: .bearyFriendsChanged, object: nil)
+        // 审计：监听账号切换，切号时清空搜索结果、关注态与私密行（见 handleUserChanged）。
+        NotificationCenter.default.addObserver(self, selector: #selector(handleUserChanged), name: .bearyUserDidChange, object: nil)
         // 扫荡组 A：键盘弹起时给滚动区补底部留白（见 keyboardWillShow）。
         NotificationCenter.default.addObserver(self, selector: #selector(keyboardWillShow(_:)), name: UIResponder.keyboardWillShowNotification, object: nil)
         NotificationCenter.default.addObserver(self, selector: #selector(keyboardWillHide(_:)), name: UIResponder.keyboardWillHideNotification, object: nil)
@@ -1825,15 +1827,15 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
             return
         }
         if isNewBatch {
-            var delay: TimeInterval = 0
-            for rowView in rowViews {
+            // 审计：新批错峰延迟封顶 0.24s（此前 48 行末行约 1.41s＋0.25s，与同批分支同口径）。
+            for (index, rowView) in rowViews.enumerated() {
                 rowView.alpha = 0
                 rowView.transform = CGAffineTransform(translationX: 0, y: 8)
+                let delay = min(Double(index) * 0.03, 0.24)
                 UIView.animate(withDuration: 0.25, delay: delay, options: .curveEaseOut, animations: {
                     rowView.alpha = 1
                     rowView.transform = .identity
                 })
-                delay += 0.03
             }
         } else {
             // 同批（5-20 / 6-6 / 6-9）：按行身份 key 查视图，不按下标配对；
@@ -2006,12 +2008,14 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         row.addTarget(self, action: #selector(userRowTapped(_:)), for: .touchUpInside)
         row.addTarget(self, action: #selector(rowTouchDown(_:)), for: .touchDown)
         row.addTarget(self, action: #selector(rowTouchUp(_:)), for: [.touchUpInside, .touchUpOutside, .touchCancel])
-        row.accessibilityLabel = displayName
+        // 审计：搜索行 VoiceOver 带“用户”上下文，不再只读名字。
+        row.accessibilityLabel = "用户：" + displayName
         // 好友第一期：紧凑版状态机钮（仅登录、非本人、未拉黑时出现；游客/本人/
         // 拉黑无钮；按钮是行内独立 UIControl，点按不触发整行点按）。状态未到
         // 前先画“关注”占位，点按时若状态仍为空只提示、不发请求。
         if let myId = SessionManager.shared.currentUser?.id, let userId = user.id, userId != myId, !isBlockedForSearch(userId: userId) {
-            let followButton = UIButton(type: .system)
+            // 审计：关注钮视觉高约 28 不变，热区用 Hit44 扩到 44。
+            let followButton = BearyHit44Button(type: .system)
             followButton.translatesAutoresizingMaskIntoConstraints = false
             followButton.titleLabel?.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13, weight: .semibold))
             followButton.titleLabel?.adjustsFontForContentSizeCategory = true
@@ -2202,7 +2206,8 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         row.addTarget(self, action: #selector(entryRowTapped(_:)), for: .touchUpInside)
         row.addTarget(self, action: #selector(rowTouchDown(_:)), for: .touchDown)
         row.addTarget(self, action: #selector(rowTouchUp(_:)), for: [.touchUpInside, .touchUpOutside, .touchCancel])
-        row.accessibilityLabel = contentText
+        // 审计：搜索行 VoiceOver 带“日记”上下文，不再只读正文。
+        row.accessibilityLabel = "日记：" + contentText
         entryButtons.append(row)
         rowEntryIds.append(entryId)
         return row
@@ -2269,6 +2274,23 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         // 别处回关/取关后，当前结果行的状态缓存作废、按行重拉（不靠旧状态）。
         followStates = [:]
         refreshFollowButtons()
+    }
+
+    /// 审计：账号切换——清空搜索结果、关注态与私密行（mine 组随结果区同清），
+    /// 不自动用旧关键词给新号重搜；在途搜索/翻页请求先取消、回包再凭 searchSeq
+    /// 序号门控丢弃（切换期间在途请求不写回新号界面）。
+    @objc private func handleUserChanged() {
+        searchSeq += 1
+        currentSearchTask?.cancel()
+        currentSearchTask = nil
+        resetSearchPagination()
+        clearResultRows()
+        lastRenderedData = nil
+        lastRenderedQuery = nil
+        lastResultQuery = nil
+        lastResultRowKeys = []
+        showingResults = false
+        showInitialState()
     }
 
     private func loadFollowState(userId: Int) {

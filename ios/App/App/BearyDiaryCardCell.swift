@@ -42,7 +42,13 @@ enum BearyDiaryCardMode {
 /// BearyIconImages 每次调用都重绘一次 PNG；卡片内的调用全部经此缓存，
 /// key = 名字 + 尺寸（template 图与 tint 无关，深浅模式共用同一缓存图）。
 enum BearyFeedIconCache {
-    private static let cache = NSCache<NSString, UIImage>()
+    // 审计-性能：图标重绘缓存补条数上限（名字 × 尺寸组合本就有限，
+    // countLimit 只作后备，不作日常淘汰依据；NSCache 内存压力下仍自动逐出）。
+    private static let cache: NSCache<NSString, UIImage> = {
+        let cache = NSCache<NSString, UIImage>()
+        cache.countLimit = 300
+        return cache
+    }()
     static func image(named name: String, pointSize: CGFloat) -> UIImage? {
         let key = "\(name)#\(pointSize)" as NSString
         if let hit = cache.object(forKey: key) { return hit }
@@ -412,11 +418,58 @@ class BearyDiaryCardCell: UITableViewCell {
     }
     static var quoteFailedIds: Set<String> = []
     static var quoteLoadingIds: Set<String> = []
+    static var quoteCacheOwnerKey: String?
+    /// LRU 顺序（队尾最新）；只由本文件内的 cachedQuote/storeQuote 维护，
+    /// 外部直删 quoteCache 时残留的旧键在下次命中/写入时惰性清理。
+    private static var quoteCacheOrder: [String] = []
+    static let quoteCacheLimit = 100
 
     static func resetQuoteFetchState() {
         quoteCacheBuckets = [:]
         quoteFailedIds = []
         quoteLoadingIds = []
+        quoteCacheOrder = []
+    }
+
+    /// 换桶：桶变了才清空（同桶重调不丢缓存）；Feed 切号与冷启动首桶均走这里。
+    static func switchQuoteCacheOwner(to bucket: String) {
+        guard bucket != quoteCacheOwnerKey else { return }
+        quoteCacheOwnerKey = bucket
+        resetQuoteFetchState()
+    }
+
+    /// 读缓存：命中时把键移到队尾（最新用过），保持 LRU 顺序。
+    static func cachedQuote(for quoteId: String) -> Entry? {
+        guard let entry = quoteCache[quoteId] else {
+            quoteCacheOrder.removeAll { $0 == quoteId }
+            return nil
+        }
+        quoteCacheOrder.removeAll { $0 == quoteId }
+        quoteCacheOrder.append(quoteId)
+        return entry
+    }
+
+    /// 写缓存：定量 100，超量从队头逐出最久未用；写入失败集合里若有该 id
+    /// 一并清除（成功拉到即不再是失败态）。
+    static func storeQuote(_ entry: Entry, for quoteId: String) {
+        quoteCache[quoteId] = entry
+        quoteFailedIds.remove(quoteId)
+        quoteCacheOrder.removeAll { $0 == quoteId }
+        quoteCacheOrder.append(quoteId)
+        while quoteCacheOrder.count > quoteCacheLimit {
+            let oldest = quoteCacheOrder.removeFirst()
+            quoteCache.removeValue(forKey: oldest)
+        }
+    }
+
+    /// 定向失效（删除/转私密/举报/拉黑清行时调）：清掉该篇作为被引源的
+    /// 缓存与失败态，下次 configure 重新拉取、按现行可见性渲染占位；
+    /// 在途 loading 不动——在途回包落的是服务端现态（私密占位/失败），
+    /// 不会把旧正文写回，动 loading 反而会让重配重复发请求。
+    static func invalidateQuote(forQuoteId quoteId: String) {
+        quoteCache.removeValue(forKey: quoteId)
+        quoteCacheOrder.removeAll { $0 == quoteId }
+        quoteFailedIds.remove(quoteId)
     }
 
     /// 定向失效：被引篇删除/转非公开时清掉该篇在全部桶里的引用缓存与失败态，
@@ -1079,16 +1132,20 @@ class BearyDiaryCardCell: UITableViewCell {
             let progress = max(0, min(1, stripPinchStartProgress + (1 - gesture.scale)))
             imagesStack.spacing = 8 * (1 - progress)
             applyImageStripCornerRadius(progress: progress)
-            imagesScrollView.layoutIfNeeded()
+            // 审计动效组：跟手过程只改值 + setNeedsLayout，不逐帧强制 layout；
+            // 下一 runloop 布局即下一帧见效，跟手感不变；松手后的落点动画
+            // （.ended 的 UIView.animate 内）仍用 layoutIfNeeded 做结算。
+            imagesScrollView.setNeedsLayout()
         case .ended, .cancelled, .failed:
             imagesScrollView.isScrollEnabled = true
             let progress = max(0, min(1, stripPinchStartProgress + (1 - gesture.scale)))
             let wasJoined = stripPinchJoined
             stripPinchJoined = progress >= 0.5
             // 拼合/张开落点到位时各轻震一次：只在 .ended 且落点状态真的变化时震，
-            // 跟手过程、取消/失败、原地未变都不震；减动效时不震（系统触感开关由 UIKit 自身遵循）。
-            if gesture.state == .ended && wasJoined != stripPinchJoined && !UIAccessibility.isReduceMotionEnabled {
-                UIImpactFeedbackGenerator(style: .light).impactOccurred()
+            // 跟手过程、取消/失败、原地未变都不震；震动走 BearyHaptics 口径，
+            // 不拿减动效门控（两者不是一回事，见 BearyHaptics 头注释）。
+            if gesture.state == .ended && wasJoined != stripPinchJoined {
+                BearyHaptics.press()
             }
             UIView.animate(withDuration: 0.25, animations: {
                 self.imagesStack.spacing = self.stripPinchJoined ? 0 : 8
@@ -1408,6 +1465,11 @@ class BearyDiaryCardCell: UITableViewCell {
         // iCity 举报退场动画只动 contentView（alpha/transform），复用时复位，防残留到下一行。
         contentView.alpha = 1
         contentView.transform = .identity
+        // 审计动效组：错峰入场动的是 cell 本体（alpha/transform），复用时须同步
+        // 复位本体并清掉在途（含延迟未起播）动画，防残留到下一行。
+        layer.removeAllAnimations()
+        alpha = 1
+        transform = .identity
         profileFirstRow = false
         suppressBottomSeparator = false
         separatorHeightConstraint?.constant = 2
@@ -2416,7 +2478,7 @@ class BearyDiaryCardCell: UITableViewCell {
             return
         }
         guard let quoteIdValue = entry.quoteId, !quoteIdValue.isEmpty else { return }
-        if let cachedEntry = BearyDiaryCardCell.quoteCache[quoteIdValue] {
+        if let cachedEntry = BearyDiaryCardCell.cachedQuote(for: quoteIdValue) {
             presentQuoteCard(
                 authorName: displayAuthorName(cachedEntry.authorName),
                 authorAvatar: cachedEntry.authorAvatar,
@@ -2427,6 +2489,8 @@ class BearyDiaryCardCell: UITableViewCell {
                 // 审计 2026-11-02 第十节：缓存命中同样走 viewer 实时判定——
                 // 作者本人或当前有效公开才显全文，绝不以“有正文即公开”反推；
                 // 仅好友档由 presentQuoteCard 内互关通道复核。
+                // 审计-广场：公开态只认服务端 isPublic + 限时过期（isEffectivelyPublic），
+                // 正文非空只证明服务端给了内容（仅好友篇也会给好友看正文），绝不反推公开。
                 isPublic: BearyEphemeral.isEffectivelyPublic(cachedEntry),
                 gone: nil,
                 locked: nil,
@@ -2462,7 +2526,7 @@ class BearyDiaryCardCell: UITableViewCell {
                 BearyDiaryCardCell.quoteLoadingIds.remove(quoteIdValue)
                 switch result {
                 case .success(let fetchedEntry):
-                    BearyDiaryCardCell.quoteCache[quoteIdValue] = fetchedEntry
+                    BearyDiaryCardCell.storeQuote(fetchedEntry, for: quoteIdValue)
                     // 宿主复用走了也先补刷等待卡（缓存已落，等待卡命中缓存不重发）；
                     // 再按宿主身份决定宿主自己是否落卡。
                     guard let strongSelf = self else { return }
@@ -2477,6 +2541,7 @@ class BearyDiaryCardCell: UITableViewCell {
                         createdAt: fetchedEntry.createdAt,
                         // 审计 2026-11-02 第十节：拉取回包同样走 viewer 实时判定，
                         // 绝不以“有正文即公开”反推；仅好友档由 presentQuoteCard 内互关通道复核。
+                        // 审计-广场：同缓存分支，公开态只认服务端字段，不以正文非空反推。
                         isPublic: BearyEphemeral.isEffectivelyPublic(fetchedEntry),
                         gone: nil,
                         locked: nil,
@@ -2902,12 +2967,11 @@ class BearyDiaryCardCell: UITableViewCell {
             guard SessionManager.shared.isLoggedIn else { return }
             if cellLikedByMe {
                 applyCellPreUnlike()
-                BearySoundPlayer.play(.unlikeSoft)
-            } else {
-                // 描边已撤：按下只给轻震，按压缩放由 iconTouchDown 的 .84 给。
-                BearyHaptics.likeTap()
-                BearySoundPlayer.play(.likePop)
             }
+            // 审计动效组：按下只做视觉预态（按压缩放由 iconTouchDown 给），
+            // 震动＋音效移到抬起确认后播（个人页由控制器补，首页由 feedLikeTapped 播），
+            // 取消时只复位视觉预态（见 likePressCancelled）；此处先 prepare。
+            BearyHaptics.prepareLike()
             likePressPreviewActive = true
             return
         }
@@ -2919,12 +2983,10 @@ class BearyDiaryCardCell: UITableViewCell {
         guard let entryIdValue = cellEntryId, !entryIdValue.isEmpty else { return }
         if currentEntry?.likedByMe == true {
             applyPreUnlike()
-            BearySoundPlayer.play(.unlikeSoft)
-        } else {
-            // 描边已撤：按下只给轻震，按压缩放由 iconTouchDown 的 .84 给。
-            BearyHaptics.likeTap()
-            BearySoundPlayer.play(.likePop)
         }
+        // 审计动效组：按下只做视觉预态（同上），震动＋音效移到抬起确认后播；
+        // 此处先 prepare，确认时 likeTap 低延迟。
+        BearyHaptics.prepareLike()
         likePressPreviewActive = true
     }
 
@@ -2989,14 +3051,14 @@ class BearyDiaryCardCell: UITableViewCell {
         // 带代次，过期回包直接丢弃，不得覆盖更新的点按态。
         let currentlyLiked = currentEntry?.likedByMe ?? false
         let originalCount = currentEntry?.likeCount ?? 0
-        if hadPressPreview == false {
-            if currentlyLiked == false {
-                BearyHaptics.likeTap()
-                BearySoundPlayer.play(.likePop)
-            } else {
-                applyPreUnlike()
-                BearySoundPlayer.play(.unlikeSoft)
-            }
+        // 审计动效组：按下已改为纯视觉预态，故确认时恒播震动＋音效（不再以
+        // hadPressPreview 跳过）；hadPressPreview 只用于上方守卫失败时复位视觉。
+        if currentlyLiked == false {
+            BearyHaptics.likeTap()
+            BearySoundPlayer.play(.likePop)
+        } else {
+            applyPreUnlike()
+            BearySoundPlayer.play(.unlikeSoft)
         }
         let targetLiked = currentlyLiked == false
         if targetLiked {

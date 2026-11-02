@@ -93,6 +93,9 @@ final class BearyDetailViewController: UIViewController {
     /// 点按代次 +1 并立即按本次点按态渲染；在途回包代次落后于最新代次
     /// 时直接丢弃，不得覆盖更新的点按态；失败回滚到最后确认态。
     private var likeSeq = 0
+    /// 审计动效组：点赞按下预览标记——bearyAddPressFeedback 已在 touchDown 给过
+    /// press 轻震，likeTapped 里不再补 likeTap，只震一次；取消/滑出时清零。
+    private var likePressPreviewActive = false
     private var likeConfirmedSeq = 0
     private var bookmarkSeq = 0
     private var bookmarkConfirmedSeq = 0
@@ -134,7 +137,9 @@ final class BearyDetailViewController: UIViewController {
     private var rightStackTopConstraint: NSLayoutConstraint?
     private var rightStackTrailingConstraint: NSLayoutConstraint?
     private let separatorView = UIView()
-    private let closeButton = UIButton(type: .custom)
+    // 审计-编辑器详情：关闭钮视觉仍为 15pt 文字、高 52，宽按标题固有宽
+    // （约 30pt）不足 44——改 Hit44 扩热区，视觉一字不动。
+    private let closeButton = BearyHit44Button(type: .custom)
     private let avatarButton = BearyHit44Button(type: .custom)
     private let avatarImageView = UIImageView()
     /// 首页卡片同款：无图时背后首字母圆透出（avatarImageView 为空时可见）。
@@ -356,16 +361,19 @@ final class BearyDetailViewController: UIViewController {
             let progress = max(0, min(1, stripPinchStartProgress + (1 - gesture.scale)))
             imagesStack.spacing = 8 * (1 - progress)
             applyImageStripCornerRadius(progress: progress)
-            imagesScrollView.layoutIfNeeded()
+            // 审计动效组：跟手过程只改值 + setNeedsLayout，不逐帧强制 layout；
+            // 松手后的落点动画（.ended 的 UIView.animate 内）仍用 layoutIfNeeded 结算。
+            imagesScrollView.setNeedsLayout()
         case .ended, .cancelled, .failed:
             imagesScrollView.isScrollEnabled = true
             let progress = max(0, min(1, stripPinchStartProgress + (1 - gesture.scale)))
             let wasJoined = stripPinchJoined
             stripPinchJoined = progress >= 0.5
             // 拼合/张开落点到位时各轻震一次：只在 .ended 且落点状态真的变化时震，
-            // 跟手过程、取消/失败、原地未变都不震；减动效时不震（系统触感开关由 UIKit 自身遵循）。
-            if gesture.state == .ended && wasJoined != stripPinchJoined && !UIAccessibility.isReduceMotionEnabled {
-                UIImpactFeedbackGenerator(style: .light).impactOccurred()
+            // 跟手过程、取消/失败、原地未变都不震；震动走 BearyHaptics 口径，
+            // 不拿减动效门控（两者不是一回事，见 BearyHaptics 头注释）。
+            if gesture.state == .ended && wasJoined != stripPinchJoined {
+                BearyHaptics.press()
             }
             UIView.animate(withDuration: 0.25, animations: {
                 self.imagesStack.spacing = self.stripPinchJoined ? 0 : 8
@@ -981,6 +989,8 @@ final class BearyDetailViewController: UIViewController {
         likeButton.titleEdgeInsets = UIEdgeInsets(top: 0, left: 6, bottom: 0, right: 0)
         likeButton.adjustsImageWhenHighlighted = false
         likeButton.addTarget(self, action: #selector(likeTapped), for: .touchUpInside)
+        likeButton.addTarget(self, action: #selector(likePressDown), for: .touchDown)
+        likeButton.addTarget(self, action: #selector(likePressCancelled), for: [.touchUpOutside, .touchCancel])
         likeButton.bearyAddPressFeedback()
         // 显式宽约束（卡片同款，见 likeButtonWidthConstraint 注释）：初始只图标宽，
         // refreshActionRow 按赞数重算；不靠按钮固有宽，防数字被裁成左半弧。
@@ -1119,14 +1129,66 @@ final class BearyDetailViewController: UIViewController {
 
     /// 2026-10-29 Li 定（P0-3 包括项，推翻第 17 项“弱网/失败先出页面仍可看”）：
     /// 后台补齐失败时清为无正文态——内容栈整藏，居中一句失败文案，不留卡片旧内容；
-    /// 不用私密占位文案（失败不是私密）；关闭钮仍可用，关了重进即重试。
+    /// 不用私密占位文案（失败不是私密）。
     /// 页内已因拉黑/举报转占位时不动（隐私占位优先于失败态）。
-    /// 与占位共用 BearyStateView 布局（P1-2 一并受益），无重试钮，不另起一套。
+    /// 与占位共用 BearyStateView 布局（P1-2 一并受益）。
+    /// 审计-编辑器详情：失败态补时间线空态同款重试钮（高 44，regular 档），
+    /// 点按重拉详情（retryFetchDetail），不再要求关闭重进。
     func showFetchFailed() {
         if locallyHiddenByModeration { return }
         setContentVisible(false)
-        placeholderStateView.configure(kind: .error, title: nil, subtitle: "加载失败，请稍后再试", iconName: nil, actionTitle: nil)
+        placeholderStateView.configure(kind: .error, title: nil, subtitle: "加载失败，请稍后再试", iconName: nil, actionTitle: "重试", actionStyle: .secondaryOutline(.regular), onAction: { [weak self] in self?.retryFetchDetail() })
         placeholderStateView.isHidden = false
+    }
+
+    /// 详情失败重试：与 SceneDelegate 后台补齐同一可见性门（作者直更、
+    /// 占位直更、拉黑转占位、公开且作者可定直更、公开但定不出作者不动、
+    /// 私密非作者转私密占位）；失败则回失败态（重试钮仍在）。
+    private func retryFetchDetail() {
+        guard !locallyHiddenByModeration, let entryId = entry.id, !entryId.isEmpty else {
+            showFetchFailed()
+            return
+        }
+        placeholderStateView.configure(kind: .loading, title: nil, subtitle: nil, iconName: nil, actionTitle: nil)
+        BearyAPI.shared.fetchEntry(id: entryId) { [weak self] result in
+            DispatchQueue.main.async {
+                guard let self = self else { return }
+                guard case .success(let fetched) = result else {
+                    self.showFetchFailed()
+                    return
+                }
+                if self.locallyHiddenByModeration { return }
+                let viewerId = SessionManager.shared.currentUser?.id
+                let viewerIsAuthor = fetched.isMine == true || (fetched.authorId != nil && viewerId != nil && fetched.authorId == viewerId)
+                if viewerIsAuthor {
+                    self.update(with: fetched)
+                    return
+                }
+                if fetched.placeholder == true {
+                    self.update(with: fetched)
+                    return
+                }
+                if !SessionManager.shared.isGuestMode, let authorId = fetched.authorId, viewerId != authorId, BearyBlockedStore.isBlocked(authorId) {
+                    var placeholderEntry = fetched
+                    placeholderEntry.placeholder = true
+                    self.update(with: placeholderEntry)
+                    return
+                }
+                if fetched.isPublic == true {
+                    if fetched.authorId != nil {
+                        self.update(with: fetched)
+                    } else {
+                        // 公开但定不出作者：与补齐口径一致，不更新；此处页已在
+                        // 失败态，故回到失败态（重试钮仍在），不得停在加载态。
+                        self.showFetchFailed()
+                    }
+                    return
+                }
+                var placeholderEntry = fetched
+                placeholderEntry.placeholder = true
+                self.update(with: placeholderEntry)
+            }
+        }
     }
 
     private func renderAll() {
@@ -2167,6 +2229,12 @@ final class BearyDetailViewController: UIViewController {
                     guard let self = self else { return }
                     self.onEdit?(self.entry)
                 })
+            } else {
+                // 审计-编辑器详情：过期（或 editDeadline 缺失即已锁，见时间线
+                // 同口径注释）时编辑项不再直接消失，置灰并附说明。
+                let expiredEdit = UIAlertAction(title: "编辑（已超 15 分钟不可编辑）", style: .default, handler: nil)
+                expiredEdit.isEnabled = false
+                sheet.addAction(expiredEdit)
             }
             sheet.addAction(UIAlertAction(title: "修改权限", style: .default) { [weak self] _ in
                 guard let self = self else { return }
@@ -2195,7 +2263,8 @@ final class BearyDetailViewController: UIViewController {
             popover.sourceView = moreButton
             popover.sourceRect = moreButton.bounds
         }
-        present(sheet, animated: true)
+        // 审计 2026-11-02 弹窗组：present 不写死 animated，走减动效口径。
+        present(sheet, animated: BearyMotion.animated(true))
     }
 
     @objc private func visibilityTapped() {
@@ -2262,6 +2331,9 @@ final class BearyDetailViewController: UIViewController {
         entry.ephemeralUntil = nil
         refreshVisibilityViews()
         BearySoundPlayer.play(.visibilityClick)
+        // 审计动效组：可见性翻转统一为“图标＋pill 文案＋轻震”——图标与文案
+        // 已由上方 refreshVisibilityViews 先行刷出，此处补轻震。
+        BearyHaptics.press()
         BearyAPI.shared.setVisibility(id: entryId, visibility: targetVisibility) { [weak self] result in
             DispatchQueue.main.async {
                 guard let self = self else { return }
@@ -2326,8 +2398,21 @@ final class BearyDetailViewController: UIViewController {
         }
     }
 
+    @objc private func likePressDown() {
+        likePressPreviewActive = true
+        BearyHaptics.prepareLike()
+    }
+
+    @objc private func likePressCancelled() {
+        likePressPreviewActive = false
+    }
+
     @objc private func likeTapped() {
         guard let entryId = entry.id, !entryId.isEmpty else { return }
+        // 审计动效组：守卫标记在函数顶部统一消费——deny/未登录等早退路径
+        // 同样清零，防残留标记影响下一次点按的守卫判定。
+        let hadPressPreview = likePressPreviewActive
+        likePressPreviewActive = false
         // 审计 P2-11：非作者的非公开时不再静默 return——拒绝动效＋“公开后才能互动”。
         // 2026-10-31 私密自互动口径：作者本人看自己私密篇时放行。
         if !BearyEphemeral.isEffectivelyPublic(entry) && !isAuthor {
@@ -2346,8 +2431,13 @@ final class BearyDetailViewController: UIViewController {
         let targetLiked = !currentlyLiked
         // 先行反馈（卡片口径）：点赞即填亮红＋计数 +1，取消即褪色＋计数 −1；
         // 液体炸开与填色同起——点按确认时即播，不再等服务端回包。
+        // 审计动效组：touchDown 已由 bearyAddPressFeedback 给过一次 press 轻震，
+        // 此处照搬卡片页 hadPressPreview 守卫——有预览时不再补 likeTap，只震一次；
+        // 直达抬起（无 touchDown）时仍补一次；音效只在确认时播，不受守卫影响。
         if !currentlyLiked {
-            BearyHaptics.likeTap()
+            if !hadPressPreview {
+                BearyHaptics.likeTap()
+            }
             BearySoundPlayer.play(.likePop)
         } else {
             BearySoundPlayer.play(.unlikeSoft)

@@ -427,6 +427,6 @@ final class BearyWordprintDetailViewController: UIViewController {
     }
 
     @objc private func closeTapped() {
-        dismiss(animated: true, completion: nil)
+        dismiss(animated: BearyMotion.animated(true), completion: nil)
     }
 }
