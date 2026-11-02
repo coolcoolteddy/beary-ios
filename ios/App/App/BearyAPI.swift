@@ -61,6 +61,9 @@ struct Quote: Codable {
     /// 最近一次公开时间（locked 体区分曾公开/从未公开用；毫秒，nil 即从未公开）。
     var authorHandle: String? = nil
     var publishedAt: Int? = nil
+    /// 好友第一期：被引篇可见性三档（private/friends/public；服务端未透传时 nil，
+    /// 调用方按旧 locked/isPublic 口径兜底，绝不凭缺失推断为仅好友）。
+    var visibility: String? = nil
 }
 
 /// 全量同步落盘用：Entry 加 Encodable（只补编码能力，不改字段语义；
@@ -102,6 +105,12 @@ struct Entry: Codable {
     var isPublic: Bool?
     /// iCity：最近一次公开时间（毫秒；私密态为 nil；服务端按 24 小时冷却刷新）。
     var publishedAt: Int?
+    /// 好友第一期：可见性三档（private/friends/public；旧行缺失时 nil，调用方
+    /// 按 isPublic 兜底：true=公开、其余=私密，不把缺失误标为仅好友）。
+    var visibility: String?
+
+    /// 仅好友判定：只认显式 friends 值；缺失/其他值一律不算（fail-closed）。
+    var isFriendsOnly: Bool { visibility == "friends" }
     /// 引用规则简化来源行：被引篇作者 handle（后端直传时才有；缺失时来源行不编造）。
     var authorHandle: String? = nil
     /// 限时日记：到期时间戳（毫秒）；nil = 非限时。存活期（now < 该值）才算限时态，
@@ -162,6 +171,8 @@ struct VisibilityResponse: Decodable {
     var ok: Bool?
     var published: Int?
     var publishedAt: Int?
+    /// 好友第一期：切换后的实际可见性三档（服务端透传时调用方按它同步本地模型）。
+    var visibility: String?
 }
 
 /// iCity 举报响应：成功 {ok: true}；重复举报 {ok: true, duplicate: true, reported: true}。
@@ -211,6 +222,8 @@ struct RestoreResponse: Decodable {
     var ok: Bool?
     var published: Int?
     var isPublic: Bool?
+    /// 好友第一期：恢复后的实际可见性三档（服务端透传时调用方按它分流文案）。
+    var visibility: String?
 }
 
 struct NotificationItem: Decodable {
@@ -325,6 +338,8 @@ struct TrashItem: Codable {
     var publishAt: Int?
     /// iCity：回收站原可见性（服务端 trash 列表返回；旧行缺失时为 nil，恢复按私密处理）。
     var published: Int?
+    /// 好友第一期：回收站原可见性三档（服务端透传时恢复文案/时间线 pill 按它走）。
+    var visibility: String?
     var deletedAt: Int?
     var daysLeft: Int?
 
@@ -337,6 +352,7 @@ struct TrashItem: Codable {
         case createdAt
         case publishAt
         case published
+        case visibility
         case deletedAt
         case daysLeft
     }
@@ -354,6 +370,7 @@ struct TrashItem: Codable {
         createdAt = try container.decodeIfPresent(Int.self, forKey: .createdAt)
         publishAt = try container.decodeIfPresent(Int.self, forKey: .publishAt)
         published = try container.decodeIfPresent(Int.self, forKey: .published)
+        visibility = try container.decodeIfPresent(String.self, forKey: .visibility)
         deletedAt = try container.decodeIfPresent(Int.self, forKey: .deletedAt)
         daysLeft = try container.decodeIfPresent(Int.self, forKey: .daysLeft)
     }
@@ -379,6 +396,7 @@ struct TrashItem: Codable {
         try container.encodeIfPresent(createdAt, forKey: .createdAt)
         try container.encodeIfPresent(publishAt, forKey: .publishAt)
         try container.encodeIfPresent(published, forKey: .published)
+        try container.encodeIfPresent(visibility, forKey: .visibility)
         try container.encodeIfPresent(deletedAt, forKey: .deletedAt)
         try container.encodeIfPresent(daysLeft, forKey: .daysLeft)
     }
@@ -505,6 +523,10 @@ final class BearyAPI {
         case authorLiked(Int)
         case saved
         case liked
+        /// 好友第一期：好友栏 scope（好友的公开 + 仅好友篇，created_at DESC；不走广场快照）。
+        case friends
+        /// 关注流 scope（我关注的人的公开篇，published_at DESC；不走广场快照）。
+        case following
         var rawValue: String {
             switch self {
             case .plaza: return "plaza"
@@ -516,6 +538,8 @@ final class BearyAPI {
             case .authorLiked: return "author_liked"
             case .saved: return "saved"
             case .liked: return "liked"
+            case .friends: return "friends"
+            case .following: return "following"
             }
         }
         var authorId: Int? {
@@ -902,9 +926,13 @@ final class BearyAPI {
         beforeId: String? = nil,
         since: Int? = nil,
         sinceId: String? = nil,
+        vis: String? = nil,
         completion: @escaping (Result<EntryList, APIError>) -> Void
     ) {
         var q: [String: String] = ["scope": scope.rawValue, "limit": "\(min(max(limit, 1), 50))"]
+        // 时间线可见性筛子（scope=timeline）：vis=all 时不发参数（= 缺省口径，
+        // 默认请求与旧请求一字不差）；其余四档才发 vis，避免旧服务端误解。
+        if let v = vis, !v.isEmpty { q["vis"] = v }
         // 113 since 契约：since=<毫秒时间戳> + 可选 since_id 决胜，排序仍 DESC；
         // plaza=published_at、saved=bm.created_at、其余=created_at（游标取数是调用方责任）；
         // 不带 since 的请求一字不动；since 与 before 同传 400——故 since 在途时
@@ -934,9 +962,10 @@ final class BearyAPI {
         sinceId: String?,
         sortKey: @escaping (Entry) -> Int?,
         knownIds: Set<String>,
+        vis: String? = nil,
         completion: @escaping (Result<([Entry], EntryList), APIError>) -> Void
     ) {
-        fetchEntries(scope: scope, limit: 50, since: since, sinceId: sinceId) { [weak self] result in
+        fetchEntries(scope: scope, limit: 50, since: since, sinceId: sinceId, vis: vis) { [weak self] result in
             guard let strongSelf = self else { return }
             switch result {
             case .failure(let error):
@@ -949,7 +978,7 @@ final class BearyAPI {
                 }
                 strongSelf.fetchSinceGap(
                     scope: scope, sortKey: sortKey, knownIds: knownIds,
-                    collected: collected, firstList: list, remainingPages: 4, completion: completion
+                    collected: collected, firstList: list, remainingPages: 4, vis: vis, completion: completion
                 )
             }
         }
@@ -962,6 +991,7 @@ final class BearyAPI {
         collected: [Entry],
         firstList: EntryList,
         remainingPages: Int,
+        vis: String? = nil,
         completion: @escaping (Result<([Entry], EntryList), APIError>) -> Void
     ) {
         guard remainingPages > 0,
@@ -970,7 +1000,7 @@ final class BearyAPI {
             completion(.success((collected, firstList)))
             return
         }
-        fetchEntries(scope: scope, limit: 50, before: lastKey, beforeId: lastId) { [weak self] result in
+        fetchEntries(scope: scope, limit: 50, before: lastKey, beforeId: lastId, vis: vis) { [weak self] result in
             guard let strongSelf = self else { return }
             switch result {
             case .failure:
@@ -1217,6 +1247,186 @@ final class BearyAPI {
     func setVisibility(id: String, published: Int, completion: @escaping (Result<VisibilityResponse, APIError>) -> Void) {
         let safe = id.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? id
         request("/beary/api/entries/\(safe)/visibility", method: "POST", jsonBody: ["published": published], completion: completion)
+    }
+
+    /// 好友第一期：可见性三档切换：POST /beary/api/entries/:id/visibility {visibility}。
+    /// 后端未上线/旧版返回非 200 时调用方按失败处理（不静默改本地态）；旧 {published}
+    /// 口径保留在上一个重载里，调用方按需选用，不混发。
+    func setVisibility(id: String, visibility: String, completion: @escaping (Result<VisibilityResponse, APIError>) -> Void) {
+        let safe = id.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? id
+        request("/beary/api/entries/\(safe)/visibility", method: "POST", jsonBody: ["visibility": visibility], completion: completion)
+    }
+
+    // MARK: - 好友第一期（后端并行施工中；接口未上线前非 200 一律走调用方失败态）
+
+    /// 好友用户行：服务端 GET /friends/list、/following、/followers 的用户形状
+    /// （handle/显示名/头像）。
+    struct FriendUser: Decodable {
+        var id: Int?
+        var displayName: String?
+        var handle: String?
+        var avatarUrl: String?
+        var createdAt: Int?
+    }
+
+    struct FriendListResponse: Decodable {
+        var friends: [FriendUser]?
+        var users: [FriendUser]?
+        /// 两种回包形状兼容：friends 优先，缺失时取 users；调用方统一用 resolvedFriends。
+        var resolvedFriends: [FriendUser] { friends ?? users ?? [] }
+    }
+
+    struct FriendOkResponse: Decodable {
+        var ok: Bool?
+        var error: String?
+        var message: String?
+    }
+
+    /// 与某人的关系态：GET /friends/state?user_id= → {following: 我是否关他,
+    /// followed_by: 他是否关我, mutual: 是否互关}。按钮与卡片状态一律实时取它，
+    /// 不靠本地缓存（方案四节）。
+    struct FollowStateResponse: Decodable {
+        var following: Bool?
+        var followedBy: Bool?
+        var mutual: Bool?
+    }
+
+    /// 关注：POST /beary/api/friends/follow {user_id}。单向关注、幂等；不可关自己、
+    /// 任一方向拉黑 403；成功给对方写一条 type='follow' 通知行（含回关那次）。
+    func followFriend(userId: Int, completion: @escaping (Result<FriendOkResponse, APIError>) -> Void) {
+        request("/beary/api/friends/follow", method: "POST", jsonBody: ["user_id": userId], completion: completion)
+    }
+
+    /// 取关：POST /beary/api/friends/unfollow {user_id}。删我关对方的一行，静默；
+    /// 互关时取关退为对方单向关注我。
+    func unfollowFriend(userId: Int, completion: @escaping (Result<FriendOkResponse, APIError>) -> Void) {
+        request("/beary/api/friends/unfollow", method: "POST", jsonBody: ["user_id": userId], completion: completion)
+    }
+
+    /// 互关好友：GET /beary/api/friends/list（两个方向都有行）。
+    func fetchFriends(completion: @escaping (Result<FriendListResponse, APIError>) -> Void) {
+        request("/beary/api/friends/list", completion: completion)
+    }
+
+    /// 我关注的人：GET /beary/api/friends/following。
+    func fetchFollowing(completion: @escaping (Result<FriendListResponse, APIError>) -> Void) {
+        request("/beary/api/friends/following", completion: completion)
+    }
+
+    /// 关注我的人：GET /beary/api/friends/followers。
+    func fetchFollowers(completion: @escaping (Result<FriendListResponse, APIError>) -> Void) {
+        request("/beary/api/friends/followers", completion: completion)
+    }
+
+    func fetchFollowState(userId: Int, completion: @escaping (Result<FollowStateResponse, APIError>) -> Void) {
+        request("/beary/api/friends/state", query: ["user_id": "\(userId)"], completion: completion)
+    }
+
+    // MARK: - 好友私信第一期（后端并行施工中；接口未上线前非 200 一律走调用方失败态）
+    //
+    // 路径口径：任务书与方案第七节写的是 /friends/dm/*，即 friends 命名空间下的
+    // dm 子路径；App 沿用本文件好友接口的 /beary/api/friends/ 前缀，故全路径为
+    // /beary/api/friends/dm/*。若后端实际挂在其他前缀，本组调用会 404——PR 描述
+    // 里已请后端确认前缀，合入前以后端实测为准。
+
+    /// 私信会话：对方信息 + 最后一条正文 + 最后时间 + 未读数（按最后时间倒序）。
+    /// 后端字段名未在方案里钉死，解码时多键兼容：对方对象取 user/peer/other/
+    /// friend，扁平时取 user_id/display_name/handle/avatar_url；最后一条取
+    /// last_body/last_message/body/snippet；最后时间取 last_at/last_time/
+    /// updated_at（秒级值统一换算为毫秒）；未读取 unread_count/unread。
+    struct DMConversation: Decodable {
+        var peer: FriendUser?
+        var lastBody: String?
+        var lastAt: Int?
+        var unreadCount: Int?
+
+        private enum Keys: String, CodingKey {
+            case user, peer, other, friend
+            case userId, displayName, handle, avatarUrl
+            case lastBody, lastMessage, lastText, body, snippet
+            case lastAt, lastTime, updatedAt, lastMessageAt
+            case unreadCount, unread
+        }
+
+        init(from decoder: Decoder) throws {
+            let container = try decoder.container(keyedBy: Keys.self)
+            if let nested = try? container.decode(FriendUser.self, forKey: .user) {
+                peer = nested
+            } else if let nested = try? container.decode(FriendUser.self, forKey: .peer) {
+                peer = nested
+            } else if let nested = try? container.decode(FriendUser.self, forKey: .other) {
+                peer = nested
+            } else if let nested = try? container.decode(FriendUser.self, forKey: .friend) {
+                peer = nested
+            } else {
+                var flat = FriendUser(id: nil, displayName: nil, handle: nil, avatarUrl: nil, createdAt: nil)
+                flat.id = try? container.decode(Int.self, forKey: .userId)
+                flat.displayName = try? container.decode(String.self, forKey: .displayName)
+                flat.handle = try? container.decode(String.self, forKey: .handle)
+                flat.avatarUrl = try? container.decode(String.self, forKey: .avatarUrl)
+                peer = flat.id == nil && flat.displayName == nil && flat.handle == nil ? nil : flat
+            }
+            lastBody = (try? container.decode(String.self, forKey: .lastBody))
+                ?? (try? container.decode(String.self, forKey: .lastMessage))
+                ?? (try? container.decode(String.self, forKey: .lastText))
+                ?? (try? container.decode(String.self, forKey: .body))
+                ?? (try? container.decode(String.self, forKey: .snippet))
+            let rawLastAt = (try? container.decode(Int.self, forKey: .lastAt))
+                ?? (try? container.decode(Int.self, forKey: .lastTime))
+                ?? (try? container.decode(Int.self, forKey: .updatedAt))
+                ?? (try? container.decode(Int.self, forKey: .lastMessageAt))
+            if let raw = rawLastAt {
+                // 秒级时间戳（< 1e11）换算为毫秒，与全站毫秒口径一致。
+                lastAt = raw < 100_000_000_000 ? raw * 1000 : raw
+            }
+            unreadCount = (try? container.decode(Int.self, forKey: .unreadCount))
+                ?? (try? container.decode(Int.self, forKey: .unread))
+        }
+    }
+
+    struct DMConversationsResponse: Decodable {
+        var conversations: [DMConversation]?
+        var list: [DMConversation]?
+        var resolvedConversations: [DMConversation] { conversations ?? list ?? [] }
+    }
+
+    /// 私信单条：id 倒序下发；sender_id 判左右（自己发 = 右侧）。
+    struct DMMessage: Decodable {
+        var id: Int?
+        var senderId: Int?
+        var body: String?
+        var createdAt: Int?
+    }
+
+    struct DMHistoryResponse: Decodable {
+        var messages: [DMMessage]?
+        var items: [DMMessage]?
+        var resolvedMessages: [DMMessage] { messages ?? items ?? [] }
+    }
+
+    /// 发私信：POST /beary/api/friends/dm/send {user_id, body}。正文去空后
+    /// 非空且 ≤2000 字（App 先拦一道，后端再校验）；非好友/拉黑/游客 403/401。
+    func sendDM(userId: Int, body: String, completion: @escaping (Result<FriendOkResponse, APIError>) -> Void) {
+        request("/beary/api/friends/dm/send", method: "POST", jsonBody: ["user_id": userId, "body": body], completion: completion)
+    }
+
+    /// 会话列表：GET /beary/api/friends/dm/conversations（仅含当前互关好友）。
+    func fetchDMConversations(completion: @escaping (Result<DMConversationsResponse, APIError>) -> Void) {
+        request("/beary/api/friends/dm/conversations", completion: completion)
+    }
+
+    /// 历史：GET /beary/api/friends/dm/history?user_id=&before_id=&limit=
+    /// （按 id 倒序、默认 30、上限 50；before_id 翻 older）。非好友/拉黑 403。
+    func fetchDMHistory(userId: Int, beforeId: Int? = nil, limit: Int = 30, completion: @escaping (Result<DMHistoryResponse, APIError>) -> Void) {
+        var query: [String: String] = ["user_id": "\(userId)", "limit": "\(limit)"]
+        if let beforeId = beforeId { query["before_id"] = "\(beforeId)" }
+        request("/beary/api/friends/dm/history", query: query, completion: completion)
+    }
+
+    /// 清未读：POST /beary/api/friends/dm/read {user_id}（同时清该对方的 dm 通知行）。
+    /// 无 body 响应，走 requestVoid（只看状态码）。
+    func markDMRead(userId: Int, completion: @escaping (Result<Void, APIError>) -> Void) {
+        requestVoid("/beary/api/friends/dm/read", method: "POST", jsonBody: ["user_id": userId], completion: completion)
     }
 
     /// 引用计数（2026-10-31 引用规则简化）：GET /beary/api/entries/:id/quote-count
