@@ -7012,7 +7012,8 @@ let viewer = BearyEntryImageViewerViewController(imageKeys: allPhotos.map { $0.i
                                 strongSelf.onOpenEntry?(fetched)
                             }
                         } else {
-                            strongSelf.presentSimpleAlert(message: "该日记已设为私密")
+                            // 10a：回退提示按档区分——仅好友来源显定版句，私密档文案不动。
+                            strongSelf.presentSimpleAlert(message: fetched.isFriendsOnly ? "该日记仅好友可见" : "该日记已设为私密")
                         }
                     case .failure:
                         strongSelf.presentSimpleAlert(message: "引用的日记已删除")

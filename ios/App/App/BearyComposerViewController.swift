@@ -2351,8 +2351,8 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         for entry in entries {
             // 审计 P0-2：选择引用加卡片同款 viewer 门控——赞过/收藏 tab 里翻回私密的
             // 他人日记不得出全文：只显占位行、不可选（作者本人或有效公开才出全文行）。
-            // 占位主句与引用卡新口径一致（“该日记已私密”；picker 行无 published_at
-            // 可靠区分，不挂“已转”提醒句）。
+            // 占位主句与引用卡新口径一致（私密档“该日记已私密”；仅好友档走 10a 定版
+            // “该日记仅好友可见”；picker 行无 published_at 可靠区分，不挂“已转”提醒句）。
             let viewerId = SessionManager.shared.currentUser?.id
             let quoteIsAuthor = entry.isMine == true || (entry.authorId != nil && viewerId != nil && entry.authorId == viewerId)
             if !quoteIsAuthor && !BearyEphemeral.isEffectivelyPublic(entry) {
@@ -2365,7 +2365,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                 lockedLabel.translatesAutoresizingMaskIntoConstraints = false
                 lockedLabel.font = UIFont.systemFont(ofSize: 15)
                 lockedLabel.textColor = BearyColors.gray
-                lockedLabel.text = "该日记已私密"
+                lockedLabel.text = entry.isFriendsOnly ? "该日记仅好友可见" : "该日记已私密"
                 let lockedSeparator = UIView()
                 lockedSeparator.translatesAutoresizingMaskIntoConstraints = false
                 lockedSeparator.backgroundColor = BearyColors.line

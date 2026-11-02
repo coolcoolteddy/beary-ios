@@ -2609,7 +2609,7 @@ enum BearyQuoteGate {
 }
 
 extension BearyQuoteGate {
-    /// 好友第一期：仅好友来源占位（拟文案，待 Li 过目）——服务端在 locked 体里
+    /// 10a 定版（2026-11-02 Li 定）：仅好友来源占位——服务端在 locked 体里
     /// 透传 visibility=friends 时，非好友 viewer 走本句；好友 viewer 服务端应直传
     /// 全文而不走 locked，App 不凭本地好友关系反推（无 per-entry 好友判定接口）。
     /// visibility 缺失/其他值时回落旧两档文案（fail-closed，不漏出）。
