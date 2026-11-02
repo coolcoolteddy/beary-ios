@@ -68,7 +68,7 @@ enum BearyMotion {
 /// （scrim 本就是 white 0，withAlphaComponent 只换 alpha），改写后视觉不变。
 /// 面板阴影（2026-11-01 清理批：此前各面板自写两组数值，现统一于此，视觉不变）：
 /// 底 sheet（手机布局、Composer 底 sheet）0.22 / radius 16 / offset (0, -12)；
-/// 居中面板（iPad 宽 ≥821 的 440 居中形态）0.30 / radius 30 / offset (0, 24)。
+/// 居中面板（iPad 宽 ≥821 的 640 居中形态）0.30 / radius 30 / offset (0, 24)。
 /// CALayer radius 取 CSS blur 一半（网页 60 → 30、32 → 16），不要照 CSS 值直写。
 /// 注意（审计 E2 第 14 项，Li 本轮定夺、推翻此前保留决定）：BearyCenteredModal
 /// 的居中卡片不再走 centered 组、也不再自写 0.30/30/24，改走轻薄单层 raised

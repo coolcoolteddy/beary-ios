@@ -6,8 +6,8 @@ import UIKit
 // 用保序熊脸列表 BearyEmoteKeys.bearFaces（all 原顺序去掉 8 个物件）。统一参数一律取
 // 首页口径（任务定版）：动态 4 列（宽 - 54）/ 4 × 72、行距 10、槽位 46、
 // 按压高亮（faint 底）、遮罩 0.45、抓手顶距 10、iPad ≥821 宽屏分支
-// （全圆角 22 + 1px line 边框 + 底部偏移 24 的浮起卡片；移动端顶部圆角
-// 22、无边框、贴底）。个人主页侧收敛点：遮罩 0.6→0.45、抓手顶距 12→10、
+// （全圆角 20 + 1px line 边框 + 底部偏移 24 的浮起卡片；移动端顶部圆角
+// 20、无边框、贴底）。个人主页侧收敛点：遮罩 0.6→0.45、抓手顶距 12→10、
 // 行距 6→10、槽位 44→46、固定高 480→min(540, 70% 高) 动态高、补宽屏分支、
 // 补按压高亮、关闭走减动效口径。两页原调用点改为本 Sheet，各自旧实现已删。
 // 部署目标 iOS 15.0、Swift 5.0——只用闭包回调，不用 async/await，不用 if-let 简写。
@@ -165,8 +165,8 @@ final class BearyEmotePickerSheetViewController: UIViewController, UICollectionV
         }
     }
 
-    /// D-11：与详情 sheet 一致的宽屏形态（宽 ≥821）：全圆角 22 + 1px line 边框
-    /// + 底部偏移 24 的浮起卡片；移动端保持顶部圆角 22、无边框、贴底。
+    /// D-11：与详情 sheet 一致的宽屏形态（宽 ≥821）：全圆角 20 + 1px line 边框
+    /// + 底部偏移 24 的浮起卡片；移动端保持顶部圆角 20、无边框、贴底。
     private func updateSheetChrome() {
         let isWide = view.bounds.width >= 821
         if isWide {

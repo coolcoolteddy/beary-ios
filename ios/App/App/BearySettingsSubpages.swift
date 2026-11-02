@@ -222,7 +222,7 @@ class BearySettingsSubpageViewController: UIViewController {
         }
     }
 
-    /// 分组卡（设置页 makeGroupCard 同款视觉：卡内标题、1px 边框、圆角 20、
+    /// 分组卡（设置页 makeGroupCard 同款视觉：卡内标题、1px 边框、圆角 16、
     /// 行间 1px 分隔线、行内容左右 16、上下 14）。
     func makeGroupCard(title: String?, rows: [UIView]) -> UIView {
         let card = UIView()
@@ -231,7 +231,7 @@ class BearySettingsSubpageViewController: UIViewController {
         card.backgroundColor = BearyColors.bg
         card.layer.borderWidth = 1
         card.layer.bearyDynamicBorderColor = BearyColors.line
-        card.layer.cornerRadius = 20
+        card.layer.cornerRadius = 16
         card.clipsToBounds = true
         groupCards.append(card)
         let stack = UIStackView()

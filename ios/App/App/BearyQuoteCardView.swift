@@ -464,7 +464,7 @@ final class BearyQuoteCardView: UIView {
             contentLabel.attributedText = NSAttributedString(string: content, attributes: attrs)
         }
         // D8c：缩略图只当 quote.is_public 或宿主本人时出（allowThumbs 门控）；
-        // 网页 .quote-thumbs 口径：与正文同行、单张 42x42、圆角 7、间距 5（thumbsStack.spacing）。
+        // 网页 .quote-thumbs 口径：与正文同行、单张 42x42、圆角 8、间距 5（thumbsStack.spacing）。
         // 条带宽按 flex:1 在布局时分配（见 layoutSubviews），不封顶；超出横向滚动。
         let keys = images.filter { !$0.isEmpty }
         if keys.isEmpty || allowThumbs == false {
