@@ -750,7 +750,9 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             textView.font = bodyFont
             textView.typingAttributes = [.font: bodyFont, .foregroundColor: BearyColors.ink, .paragraphStyle: bodyParagraphStyle()]
             placeholderLabel.font = bodyFont
-            placeholderTopConstraint?.constant = bodyFont.ascender * (textView.fixedLineHeightMultiple - 1)
+            // fixedLineHeightMultiple 为 nil = 未设倍数覆盖，按默认 1.0 计（偏移 0）；约束只在
+            // buildTextArea 后存在，而那里恒设 1.7，故该回退实际走不到，仅过编译。
+            placeholderTopConstraint?.constant = bodyFont.ascender * ((textView.fixedLineHeightMultiple ?? 1) - 1)
             applyBodyLineHeight()
         }
     }
