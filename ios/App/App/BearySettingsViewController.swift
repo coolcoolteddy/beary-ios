@@ -253,6 +253,9 @@ final class BearySettingsViewController: UIViewController {
     private var cachedSwitchModels: [SwitchRowModel]?
     private var cachedSwitchGeneration: Int?
     private var cachedSwitchFingerprint: String?
+    /// 切换时预检 401 证实已死的账号（内存态，不进保管库）：列表不再
+    /// 把这类账号装成可直接切换，行上标“登录已过期”、点按直走重登。
+    /// 账号回到当前（重登成功）或从列表消失时由刷新处剪掉。
     private var switchCardBuilt = false
     private var isSwitchingAccount = false
     private var isRemovingAccount = false
@@ -1176,6 +1179,7 @@ final class BearySettingsViewController: UIViewController {
         var email: String?
         var avatarURL: String?
         var hasToken: Bool
+        var isExpired: Bool = false
     }
 
     private func buildAccountSwitchSection() {
@@ -1231,13 +1235,21 @@ final class BearySettingsViewController: UIViewController {
             if firstIsCurrent != secondIsCurrent { return firstIsCurrent }
             return false
         }
+        // 切换过期标记：只保留仍在列表里的非当前账号（当前账号会话
+        // 刚被证实有效、移除的账号不再展示，标记随之失效）；标记打到
+        // 行模型上、进指纹，标记变化时卡片必重建、不被指纹守卫吞掉。
+        expiredSwitchUserIds = expiredSwitchUserIds.intersection(Set(models.map { $0.userId }))
+        if let currentId = currentIdValue { expiredSwitchUserIds.remove(currentId) }
+        for index in models.indices {
+            models[index].isExpired = expiredSwitchUserIds.contains(models[index].userId)
+        }
         // 扫 bug 第 9 项：切换卡只在账号变化时重建——指纹含每行
         // id/标题/handle/邮箱/头像/当前勾选，指纹不变即卡片内容与现行
         // 完全一致，直接保留现卡（不拆卡、不重建头像加载、不丢行态）；
         // 指纹变了（切号、增删号、改名/改头像）才走下面原有重建。
         // 切换/移除/添加的调用点仍调本函数，逻辑本身一字不动。
         let fingerprint = models.map { model in
-            "\(model.userId)|\(model.title)|\(model.handle ?? "")|\(model.email ?? "")|\(model.avatarURL ?? "")|\(model.hasToken)|\(model.userId == currentIdValue)"
+            "\(model.userId)|\(model.title)|\(model.handle ?? "")|\(model.email ?? "")|\(model.avatarURL ?? "")|\(model.hasToken)|\(model.userId == currentIdValue)|\(model.isExpired)"
         }.joined(separator: ";")
         if switchCardBuilt, fingerprint == cachedSwitchFingerprint {
             accountSwitchWrap.isHidden = false
@@ -1298,11 +1310,14 @@ final class BearySettingsViewController: UIViewController {
         }
         let nameLabel = makeLabel(font: UIFont.systemFont(ofSize: 15), color: BearyColors.ink)
         nameLabel.text = model.title
-        let detailText: String
+        var detailText: String
         if let handle = model.handle, !handle.isEmpty {
             detailText = "@" + handle + " · " + BearyAccountVault.maskedEmail(model.email)
         } else {
             detailText = BearyAccountVault.maskedEmail(model.email)
+        }
+        if model.isExpired {
+            detailText += " · 登录已过期"
         }
         let detailLabel = makeLabel(font: UIFont.systemFont(ofSize: 12), color: BearyColors.gray, lines: 0)
         detailLabel.text = detailText
@@ -1404,6 +1419,13 @@ final class BearySettingsViewController: UIViewController {
         if SessionManager.shared.currentUser?.id == accountIdValue {
             return
         }
+        if expiredSwitchUserIds.contains(accountIdValue) {
+            // 该号会话已被上次切换预检证实失效：不再发注定 401 的预检，
+            // 直走过期重登（与下面 .expired 分支同一入口）。
+            showToast("登录已过期，请重新登录")
+            openLoginForAccountSwitch()
+            return
+        }
         isSwitchingAccount = true
         // 116 后扫查：切换要等一次 /me 网络往返，旧代码这段时间按钮毫无变化，
         // 点按像没点中。点下立刻置灰+禁用（成功时整组行重建，失败时下面复原）。
@@ -1425,6 +1447,10 @@ final class BearySettingsViewController: UIViewController {
             case .alreadyCurrent:
                 self.refreshAccountSwitchSection()
             case .expired:
+                // 会话已死：先把该号标成过期并刷新卡片（行上见“登录已过期”，
+                // 不再装成可直接切换），再弹重登页；取消回来时标记仍在。
+                self.expiredSwitchUserIds.insert(accountIdValue)
+                self.refreshAccountSwitchSection()
                 self.showToast("登录已过期，请重新登录")
                 self.openLoginForAccountSwitch()
             case .network:
