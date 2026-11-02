@@ -1726,13 +1726,9 @@ final class BearyTimelineCell: UITableViewCell {
         let body = entry.content ?? ""
         // 审计 P2-12：标题行（卡片同款，空标题不占位；stack 里隐藏行不占高）。
         let trimmedTitle = (entry.title ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-        titleLabel.text = trimmedTitle.isEmpty ? nil : trimmedTitle
+        titleLabel.attributedText = trimmedTitle.isEmpty ? nil : BearyText.inlineAttributedText(from: trimmedTitle, font: BearyDynamicType.cardTitleFont(), color: BearyColors.ink, paragraphStyle: nil, dark: traitCollection.userInterfaceStyle == .dark)
         titleLabel.isHidden = trimmedTitle.isEmpty
-        contentLabel.attributedText = NSAttributedString(string: body, attributes: [
-            .font: BearyDynamicType.diaryBodyFont(),
-            .foregroundColor: BearyColors.ink,
-            .paragraphStyle: paragraph,
-        ])
+        contentLabel.attributedText = BearyText.inlineAttributedText(from: body, font: BearyDynamicType.diaryBodyFont(), color: BearyColors.ink, paragraphStyle: paragraph, dark: traitCollection.userInterfaceStyle == .dark)
         // TL-3 引用卡（网页 tlQuoteHtml 口径）：引用日记在时间线里必须有痕迹，
         // 卡内附 42px 引用缩略图行（见下方 F2 分支），无图不占位。
         // B-G2 (privacy, server fields first): Quote.gone/locked ARE decoded
