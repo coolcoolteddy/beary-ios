@@ -403,7 +403,9 @@ final class BearyImageLoader {
         // G23：缓存按像素计 cost 并设上限，避免无界增长。
         // 20_000_000 像素 ≈ 最坏 80MB（RGBA 4 字节/像素）；站内图以缩略图
         // 与头像为主，日常占用远低于此。
+        // 审计-性能：再补 countLimit 作条数后备上限（cost 已是主约束）。
         cache.totalCostLimit = 20_000_000
+        cache.countLimit = 1000
     }
 
     // S10 磁盘缓存：目录 = 系统 caches 目录下的 BearyImageCache/<账号> 子目录
@@ -1076,22 +1078,32 @@ extension UIImageView {
 // MARK: - 时间与名字
 
 enum BearyText {
+    /// 审计-性能：逐行新建 DateFormatter 改静态复用（每种格式一个静态实例，
+    /// 不复用同一实例改 dateFormat；调用方只在主线程做行渲染，不跨线程用）。
+    private static let hourMinuteFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "zh_CN")
+        formatter.dateFormat = "HH:mm"
+        return formatter
+    }()
+    private static let monthDayHourMinuteFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "zh_CN")
+        formatter.dateFormat = "M月d日 HH:mm"
+        return formatter
+    }()
+
     /// created_at 是毫秒时间戳。今天 → HH:mm；昨天 → 昨天 HH:mm；否则 M月d日 HH:mm。
     static func timeString(ms: Int) -> String {
         let date = Date(timeIntervalSince1970: TimeInterval(ms) / 1000.0)
         let cal = Calendar.current
-        let fmt = DateFormatter()
-        fmt.locale = Locale(identifier: "zh_CN")
         if cal.isDateInToday(date) {
-            fmt.dateFormat = "HH:mm"
-            return fmt.string(from: date)
+            return hourMinuteFormatter.string(from: date)
         }
         if cal.isDateInYesterday(date) {
-            fmt.dateFormat = "HH:mm"
-            return "昨天 " + fmt.string(from: date)
+            return "昨天 " + hourMinuteFormatter.string(from: date)
         }
-        fmt.dateFormat = "M月d日 HH:mm"
-        return fmt.string(from: date)
+        return monthDayHourMinuteFormatter.string(from: date)
     }
 
     /// 心情 key → 中文名（与网页 MOOD_DEFS 同集 40 种；前 32 带小熊、后 8 不带）。
@@ -2415,6 +2427,9 @@ enum BearyFlowBusy {
 enum BearyReportFlow {
     static func present(from vc: UIViewController, entryId: String, entryLabel: String? = nil) {
         guard !entryId.isEmpty else { return }
+        // 审计-性能：present 前守卫——已有弹窗或视图不在窗口时不 present
+        //（否则 UIKit 只记警告、不出弹窗，用户点按后无反馈、还以为已弹出）。
+        guard vc.presentedViewController == nil, vc.view.window != nil else { return }
         // 审计三轮第 6 项：本地集已按账号分桶（markReported 只在服务端成功/duplicate 后调用），
         // 故当前桶命中即等价于本账号服务端已确认，可直接返回“已举报”；跨号污染已由分桶消除，
         // 无需每次都走到理由选择与服务端往返。服务端仍是最终权威（换设备等本地未同步时走下行提交，duplicate 态同样按已举报处理）。
@@ -2456,6 +2471,8 @@ enum BearyReportFlow {
 /// 拉黑流程（他人主页“更多”共用）：确认 → 提交 → 成功后广播，调用方据此清理条目与离场。
 enum BearyBlockFlow {
     static func block(from vc: UIViewController, userId: Int, userName: String?, onDone: ((Bool) -> Void)? = nil) {
+        // 审计-性能：present 前守卫（同举报流程；取消路径同样不调 onDone，口径一致）。
+        guard vc.presentedViewController == nil, vc.view.window != nil else { return }
         let name = (userName ?? "").isEmpty ? "这位用户" : userName!
         let alert = UIAlertController(title: "拉黑\(name)？", message: "拉黑后将不再看到 TA 的日记，可在设置页「已拉黑用户」里解除。", preferredStyle: .alert)
         alert.addAction(UIAlertAction(title: "取消", style: .cancel, handler: nil))
@@ -2546,6 +2563,13 @@ enum BearyQuoteGate {
     }
 
     private static func presentPublicGate(from vc: UIViewController, sourceIsMine: Bool, completion: @escaping (Bool) -> Void) {
+        // 审计-性能：present 前守卫——已有弹窗或视图不在窗口时不出门禁，
+        // 回 .aborted（切换保持原态、可重试）；此前无守卫时 present 只记警告、
+        // completion 永不回调，切换流程会卡住。
+        guard vc.presentedViewController == nil, vc.view.window != nil else {
+            completion(false)
+            return
+        }
         if sourceIsMine {
             let alert = UIAlertController(title: "引用的日记还是私密", message: "公开本篇时，是否一并公开原日记？一并公开后，引用对所有人可见。", preferredStyle: .alert)
             alert.addAction(UIAlertAction(title: "一并公开原日记", style: .default) { _ in completion(true) })

@@ -42,7 +42,13 @@ enum BearyDiaryCardMode {
 /// BearyIconImages 每次调用都重绘一次 PNG；卡片内的调用全部经此缓存，
 /// key = 名字 + 尺寸（template 图与 tint 无关，深浅模式共用同一缓存图）。
 enum BearyFeedIconCache {
-    private static let cache = NSCache<NSString, UIImage>()
+    // 审计-性能：图标重绘缓存补条数上限（名字 × 尺寸组合本就有限，
+    // countLimit 只作后备，不作日常淘汰依据；NSCache 内存压力下仍自动逐出）。
+    private static let cache: NSCache<NSString, UIImage> = {
+        let cache = NSCache<NSString, UIImage>()
+        cache.countLimit = 300
+        return cache
+    }()
     static func image(named name: String, pointSize: CGFloat) -> UIImage? {
         let key = "\(name)#\(pointSize)" as NSString
         if let hit = cache.object(forKey: key) { return hit }

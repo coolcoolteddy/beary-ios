@@ -2180,6 +2180,8 @@ final class BearyChromeViewController: UIViewController {
         // 功能完善批接线：切回消息页瞬间必刷（门控口径：未读数变了才整页重拉，
         // 不变时零请求，不违背“切 tab 不重复拉取”；重拍分支已有无条件刷新，不走这里）。
         if page == .notif {
+            // 审计-性能：切回消息页恢复 60 秒轮询（离页时 pageDidLeave 已停表）。
+            notifVC?.pageDidEnter()
             notifVC?.refreshListIfUnreadChanged()
         }
     }
