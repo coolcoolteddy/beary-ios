@@ -2211,7 +2211,6 @@ class BearyFeedViewController: UIViewController {
                     if !isPublic {
                         BearyImageLoader.shared.evictEntryImages(keys: originalEntrySnapshot.images ?? [])
                     }
-                    }
                     strongSelf.applyVisibilityState(entryId: entryId, isPublic: isPublic, publishedAt: resp.publishedAt, visibility: resp.visibility ?? targetVisibility, ephemeralUntil: resp.ephemeralUntil)
                 case .failure(let err):
                     strongSelf.applyVisibilityState(entryId: entryId, isPublic: originalPublic, publishedAt: originalPublishedAt, visibility: originalVisibility, ephemeralUntil: originalEphemeralUntil)
