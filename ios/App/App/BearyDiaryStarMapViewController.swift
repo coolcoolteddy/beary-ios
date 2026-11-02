@@ -239,7 +239,7 @@ final class BearyDiaryStarMapViewController: UIViewController {
         legendLabel.adjustsFontForContentSizeCategory = true
         legendLabel.textColor = BearyStarMapNight.secondaryText
         legendLabel.numberOfLines = 0
-        legendLabel.text = "★ 大小 = 字数（字越多星越大）　亮度 = 心情\n连线 = 同心情 / 同地点 / 同词　点星进详情，点线看原因"
+        legendLabel.text = "星越大字越多，亮度代表心情；连线表示同心情、同地点或同词。点星进详情，点线看原因。"
         contentView.addSubview(legendLabel)
 
         // 分片行首日历图标（官方 icon_calendar）：只在分片时出现，与年行同显隐。

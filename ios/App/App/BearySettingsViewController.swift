@@ -1101,7 +1101,7 @@ final class BearySettingsViewController: UIViewController {
         // 一次设备密码验证（.deviceOwnerAuthentication 本就含密码兜底），
         // 文案同步说明可关闭；未开启且不可用时仍置灰（开不了，不硬开）。
         // “只冷启动锁一次”规则不动。
-        lockDetail.text = lockAvailability.available ? "冷启动时验证一次，回前台不重复验证" : (BearyAppLockSettings.isEnabled ? "已开启，当前设备未录入生物识别，冷启动将改用设备密码验证，点按开关可关闭" : (lockAvailability.reason ?? "此设备暂无法使用生物识别"))
+        lockDetail.text = lockAvailability.available ? "冷启动时验证一次，回前台不重复验证" : (BearyAppLockSettings.isEnabled ? "已开启，当前设备未录入生物识别，冷启动改用设备密码验证，点按开关可关闭" : (lockAvailability.reason ?? "此设备暂无法使用生物识别"))
         let lockTextStack = UIStackView(arrangedSubviews: [lockTitle, lockDetail])
         lockTextStack.axis = .vertical
         lockTextStack.spacing = 2
@@ -1579,7 +1579,7 @@ final class BearySettingsViewController: UIViewController {
         logoutFootnote.adjustsFontForContentSizeCategory = true
         logoutFootnote.textColor = BearyColors.gray
         logoutFootnote.numberOfLines = 0
-        logoutFootnote.text = "退出登录后，已同步的日记与回收站缓存会从本设备清除；未发布的草稿仍保存在本设备，登录同一账号后可继续编辑。"
+        logoutFootnote.text = "退出登录后，已同步的日记与回收站缓存会从本设备清除；未发布的草稿仍保留，登录同一账号后可继续编辑。"
         accountActionWrap.addSubview(logoutFootnote)
         NSLayoutConstraint.activate([
             group.card.topAnchor.constraint(equalTo: accountActionWrap.topAnchor),
@@ -2294,7 +2294,7 @@ final class BearySettingsViewController: UIViewController {
                 self.exportRowButton.isEnabled = true
                 self.setExportProgress(nil)
                 let totalCount = mineEntries.count + mailboxEntries.count + likedEntries.count
-                let alert = UIAlertController(title: "部分导出", message: "部分导出（已取 \(totalCount) 篇，已达 20 页上限），是否继续分享部分数据？", preferredStyle: .alert)
+                let alert = UIAlertController(title: "部分导出", message: "已取 \(totalCount) 篇，已达 20 页上限，是否继续分享？", preferredStyle: .alert)
                 alert.addAction(UIAlertAction(title: "取消", style: .cancel, handler: nil))
                 alert.addAction(UIAlertAction(title: "继续分享", style: .default, handler: { [weak self] _ in
                     self?.buildAndShareExport(user: user, pin: pin, sessionsResp: sessionsResp, mineEntries: mineEntries, mailboxEntries: mailboxEntries, likedEntries: likedEntries)

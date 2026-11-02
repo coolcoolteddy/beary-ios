@@ -3819,7 +3819,7 @@ class BearyProfileViewController: UIViewController {
 
     /// 点脚印弹该夜短评（系统 UIAlertController；iOS 26 下即官方玻璃观感）。
     private func presentNightFootprintSheet(footprint: NightPatrolFootprint, index: Int) {
-        let sourceText = footprint.isAI ? "AI 短评" : "模板脚印"
+        let sourceText = footprint.isAI ? "AI 短评" : "小熊短评"
         let titleText = "第 \(index + 1) 枚脚印 · \(sourceText)"
         var messageText = ""
         if footprint.isPrivate == true {

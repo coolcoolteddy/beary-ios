@@ -739,7 +739,7 @@ final class BearyDraftBoxViewController: UIViewController {
     /// 草稿库损坏态清除：先弹系统确认框（App 现有确认口径），确认后删当前
     /// 账号的坏 v3 文件（.bak 备份不动），成功后重读 → 空态；失败则留失败态＋toast。
     @objc private func clearCorruptStoreTapped() {
-        let alert = UIAlertController(title: "清除损坏的草稿库？", message: "损坏的草稿无法恢复，备份会保留在手机里。清除后草稿箱回到空态，新草稿可以正常保存。", preferredStyle: .alert)
+        let alert = UIAlertController(title: "清除损坏的草稿库？", message: "损坏的草稿无法恢复，备份会保留在手机里。清除后草稿箱会变空，新草稿可以正常保存。", preferredStyle: .alert)
         alert.addAction(UIAlertAction(title: "取消", style: .cancel))
         alert.addAction(UIAlertAction(title: "清除", style: .destructive) { [weak self] _ in
             BearyDraftStore.clearCorruptStoreAsync { [weak self] ok in

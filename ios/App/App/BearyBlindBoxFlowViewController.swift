@@ -357,7 +357,7 @@ final class BearyBlindBoxFlowViewController: UIViewController {
         introLabel.adjustsFontForContentSizeCategory = true
         introLabel.textColor = BearyColors.gray
         introLabel.numberOfLines = 0
-        introLabel.text = "选一篇自己的旧公开日记放进池子，再开盒换一篇别人的旧日记。每天最多换一次，今日计数与广场、时间线入口共用。"
+        introLabel.text = "选一篇旧公开日记放进池子，开盒换一篇别人的旧日记，每天最多换一次。"
 
         poolStack.axis = .vertical
         poolStack.spacing = 10
@@ -1184,7 +1184,7 @@ final class BearyBlindBoxFlowViewController: UIViewController {
     private func todayErrorText(_ error: APIError) -> String {
         switch error {
         case .unauthorized, .authFailure:
-            return "登录已过期，请重新登录。"
+            return "登录已过期，请重新登录"
         case .notFound:
             return "盲盒服务暂未上线，请稍后再试"
         case .http(let code, _):
@@ -1237,7 +1237,7 @@ final class BearyBlindBoxFlowViewController: UIViewController {
     private func actionErrorText(_ error: APIError, fallback: String) -> String {
         switch error {
         case .unauthorized, .authFailure:
-            return "登录已过期，请重新登录。"
+            return "登录已过期，请重新登录"
         case .notFound:
             return "盲盒服务暂未上线，请稍后再试"
         case .server(let code):

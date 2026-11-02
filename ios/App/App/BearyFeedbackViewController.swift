@@ -587,7 +587,7 @@ final class BearyFeedbackViewController: UIViewController, UITextViewDelegate, P
         footnote.font = UIFont.systemFont(ofSize: 13)
         footnote.textColor = BearyColors.gray
         footnote.numberOfLines = 0
-        footnote.text = "发送走邮件到 hi@teddyhn.com；未配邮箱时复制文字内容，附件不随复制发出；分享或仅上传诊断日志时只发日志包，不含描述与附件。"
+        footnote.text = "发送走邮件到 hi@teddyhn.com；未配邮箱时只复制文字，不含附件；仅发日志包时不含描述与附件。"
 
         let views: [UIView] = [statusCard, descLabel, descCard, mediaLabel, attachCard, deviceLabel, deviceCard, submitButton, shareButton, diagLabel, logOnlyButton, footnote]
         for viewItem in views {
@@ -861,7 +861,7 @@ final class BearyFeedbackViewController: UIViewController, UITextViewDelegate, P
         guard MFMailComposeViewController.canSendMail() else {
             // 补缺 P3-34：复制 fallback 只复制描述文字，设备信息与附件不随复制发出，toast 明说。
             UIPasteboard.general.string = textView.text.trimmingCharacters(in: .whitespacesAndNewlines)
-            BearyToast.show(in: view, message: "未配置邮箱，已复制反馈内容，附件不随复制发出")
+            BearyToast.show(in: view, message: "未配置邮箱，已复制反馈内容，不含附件")
             BearyAppLog.event("feedback mail no account copy fallback")
             return
         }
