@@ -281,6 +281,18 @@ class BearyFeedViewController: UIViewController {
         feedFollowingSegment = wantFollowing
         updateEmptyCopyForSegment()
         tableView.setContentOffset(CGPoint(x: 0, y: -tableView.contentInset.top), animated: false)
+        // 审计-广场（切段混段，高）：切段先清旧段模型并落表，再全量首拉；
+        // 旧段在途回包由 refreshAllInternal 的代际 bump 丢弃（见 loadPlazaFirstPage
+        // 的 firstPageGeneration 守卫），since 游标绝不跨段复用。bypass 置位是
+        // 为让旧段在途首拉不吞掉本次切段刷新（原 bypass 只用于登录翻转，
+        // 语义同为“旧身份/旧段在途回包必须让路”）。
+        plazaRaw = []
+        firstPageIds = []
+        plazaHasMore = true
+        plazaReachedEnd = false
+        plazaError = false
+        tableView.reloadData()
+        refreshAllBypassInFlight = true
         refreshAll()
     }
 
@@ -290,7 +302,7 @@ class BearyFeedViewController: UIViewController {
             feedEmptySubtitleLabel?.text = "你关注的人的日记会出现在这里"
         } else {
             feedEmptyTitleLabel?.text = "还没有公开的日记"
-            feedEmptySubtitleLabel?.text = "公开的日记会出现在这里，写一篇并公开试试"
+            feedEmptySubtitleLabel?.text = "写一篇并公开试试"
         }
     }
 
@@ -317,7 +329,7 @@ class BearyFeedViewController: UIViewController {
         titleLabel.textAlignment = .center
         let subtitleLabel = UILabel()
         subtitleLabel.translatesAutoresizingMaskIntoConstraints = false
-        subtitleLabel.text = "公开的日记会出现在这里，写一篇并公开试试"
+        subtitleLabel.text = "写一篇并公开试试"
         feedEmptySubtitleLabel = subtitleLabel
         subtitleLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13))
         subtitleLabel.adjustsFontForContentSizeCategory = true
@@ -480,6 +492,15 @@ class BearyFeedViewController: UIViewController {
             syncHomeSegmentControl()
             updateEmptyCopyForSegment()
             didResetSegment = true
+        }
+        if didResetSegment {
+            // 审计-广场：段重置同切段，先清旧段模型再全量首拉，不留旧段行混段。
+            plazaRaw = []
+            firstPageIds = []
+            plazaHasMore = true
+            plazaReachedEnd = false
+            plazaError = false
+            tableView.reloadData()
         }
         if didResetSegment || (loginFlipped && isFirstLoad == false) {
             refreshAllBypassInFlight = true
@@ -778,7 +799,10 @@ class BearyFeedViewController: UIViewController {
     /// ③ sheet 回调带错时同样复制 + toast。
     private func presentShareSheet(for entry: Entry) {
         // B3：私密直接 return，不进分享 sheet、不交出正文前 60 字、不走剪贴板回退。
-        if entry.isPublic != true { return }
+        // 审计-广场（分享守卫有效态，中）：存储态 isPublic 不够——已过期限时篇
+        // 存储公开、有效私密，旧口径仍可分享出正文与深链；改与菜单/可见性切换
+        // 同口径的有效态 isEffectivelyPublic。
+        if BearyEphemeral.isEffectivelyPublic(entry) == false { return }
         guard let entryIdValue = entry.id, !entryIdValue.isEmpty,
               let urlValue = URL(string: "https://teddyhn.com/beary/d/" + entryIdValue) else { return }
         let shareText = (entry.content ?? "").replacingOccurrences(of: "\\s+", with: " ", options: .regularExpression)
@@ -788,8 +812,10 @@ class BearyFeedViewController: UIViewController {
         }
         items.append(urlValue)
         if presentedViewController != nil {
+            // 审计-广场（低风险）：被占用时先 toast 说明再复制，不再静默改复制——
+            // 单条 toast 同时说明占用与复制结果（Toast 新盖旧，两条连发只剩后一条可见）。
+            BearyToast.show(in: view, message: "当前有弹窗打开，链接已复制")
             UIPasteboard.general.string = urlValue.absoluteString
-            BearyToast.show(in: view, message: "链接已复制")
             return
         }
         let activity = UIActivityViewController(activityItems: items, applicationActivities: nil)
@@ -869,7 +895,13 @@ class BearyFeedViewController: UIViewController {
                 }
                 switch result {
                 case .success(let list):
-                    let entries = list.entries ?? []
+                    let rawEntries = list.entries ?? []
+                    // 审计-广场（首拉过滤，已证实）：非 diff 首拉原先直接 plazaRaw = entries，
+                    // 与缓存读写（visibleHead 过滤）口径分裂。广场段首拉先按有效公开
+                    // 过滤，与缓存口径统一；正在关注段不滤——互关作者的仅好友篇
+                    // 合法出关注流，滤掉即错杀（服务端 scope=following 已按关注关系过滤）。
+                    // hasMore 仍按服务端回包量算（过滤是兜底，满页被滤掉 1 篇不应误判末页）。
+                    let entries = strongSelf.feedFollowingSegment ? rawEntries : rawEntries.filter { BearyEphemeral.isEffectivelyPublic($0) }
                     strongSelf.plazaLoading = false
                     strongSelf.plazaFirstPageInFlight = false
                     strongSelf.plazaFirstDone = true
@@ -878,15 +910,17 @@ class BearyFeedViewController: UIViewController {
                     // 仅写缓存、不碰时间线 VC 状态）。
                     BearyTimelinePrefetch.maybePrefetch()
                     if diffMode && !strongSelf.plazaRaw.isEmpty {
-                        strongSelf.applyFirstPageDiff(entries)
+                        strongSelf.applyFirstPageDiff(entries, hasMoreOverride: rawEntries.count >= strongSelf.firstPageLimit)
                         // 秒开-启动瘦身：首屏回包已终结，通知容器再发启动期 /me。
                         strongSelf.notifyFirstScreenDoneOnce()
                         return
                     }
-                    strongSelf.plazaRaw = entries
-                    strongSelf.firstPageIds = entries.compactMap { $0.id }
-                    strongSelf.plazaHasMore = entries.count >= strongSelf.firstPageLimit
-                    strongSelf.plazaReachedEnd = entries.count < strongSelf.firstPageLimit
+                    // 关注流二次过滤（仅 following 段；广场段口径归广场组）。
+                    let pageEntries = strongSelf.feedFollowingSegment ? strongSelf.filteredFollowingEntries(entries) : entries
+                    strongSelf.plazaRaw = pageEntries
+                    strongSelf.firstPageIds = pageEntries.compactMap { $0.id }
+                    strongSelf.plazaHasMore = rawEntries.count >= strongSelf.firstPageLimit
+                    strongSelf.plazaReachedEnd = rawEntries.count < strongSelf.firstPageLimit
                     strongSelf.plazaError = false
                     strongSelf.lastFeedLoadAt = Date()
                     // 审计 13：界面先应用（落表 + 状态），写盘异步在后、不卡首帧。
@@ -934,6 +968,11 @@ class BearyFeedViewController: UIViewController {
     /// 等鉴权敏感字段必须全量重拉。
     private func loadPlazaSince() {
         let generation = revalidateGeneration
+        // 审计-广场：since 游标与段绑定——切段时 refreshAllInternal 已 bump 代际，
+        // 这里再 captured 段，段变了的在途 since 回包同样丢弃，绝不跨段复用游标。
+        // Scope 带关联值且未声明 Equatable，故按 rawValue 比对（广场/关注段
+        // rawValue 本就不同，Feed 的 feedScope 只取这两档，够用）。
+        let sinceScopeRaw = feedScope.rawValue
         guard let head = plazaRaw.first,
               let cursor = feedSortKey(head),
               let headId = head.id, !headId.isEmpty else {
@@ -954,7 +993,7 @@ class BearyFeedViewController: UIViewController {
         ) { [weak self] result in
             DispatchQueue.main.async {
                 guard let strongSelf = self else { return }
-                guard generation == strongSelf.revalidateGeneration else {
+                guard generation == strongSelf.revalidateGeneration, sinceScopeRaw == strongSelf.feedScope.rawValue else {
                     strongSelf.plazaLoading = false
                     strongSelf.maybeEndRefreshing()
                     return
@@ -965,10 +1004,15 @@ class BearyFeedViewController: UIViewController {
                     strongSelf.plazaFirstPageInFlight = false
                     strongSelf.loadPlazaFirstPage(diffMode: true)
                 case .success(let (fresh, _)):
-                    let newItems = fresh.filter { entry in
+                    // 审计-广场：since 前插同首拉口径，广场段滤掉非有效公开篇；
+                    // 关注段不滤（仅好友篇合法，见 loadPlazaFirstPage 注释）。
+                    let scopeFiltered = strongSelf.feedFollowingSegment ? fresh : fresh.filter { BearyEphemeral.isEffectivelyPublic($0) }
+                    let baseNewItems = scopeFiltered.filter { entry in
                         guard let entryId = entry.id else { return false }
                         return !knownIds.contains(entryId)
                     }
+                    // 关注流二次过滤（仅 following 段）。
+                    let newItems = strongSelf.feedFollowingSegment ? strongSelf.filteredFollowingEntries(baseNewItems) : baseNewItems
                     if newItems.isEmpty {
                         strongSelf.plazaLoading = false
                         strongSelf.plazaFirstPageInFlight = false
@@ -1054,7 +1098,12 @@ class BearyFeedViewController: UIViewController {
                 }
                 switch result {
                 case .success(let list):
-                    let fresh = list.entries ?? []
+                    let rawFresh = list.entries ?? []
+                    // 审计-广场：分页追加同首拉口径，广场段滤掉非有效公开篇；
+                    // 关注段不滤。hasMore 仍按服务端回包量算，不因过滤误判末页。
+                    // 关注流二次过滤（仅 following 段）。
+                    let scopeFiltered = strongSelf.feedFollowingSegment ? rawFresh : rawFresh.filter { BearyEphemeral.isEffectivelyPublic($0) }
+                    let fresh = strongSelf.feedFollowingSegment ? strongSelf.filteredFollowingEntries(scopeFiltered) : scopeFiltered
                     var known = Set<String>()
                     for entry in strongSelf.plazaRaw {
                         if let entryIdValue = entry.id { known.insert(entryIdValue) }
@@ -1064,8 +1113,8 @@ class BearyFeedViewController: UIViewController {
                         strongSelf.plazaRaw.append(entry)
                         known.insert(entryIdValue)
                     }
-                    strongSelf.plazaHasMore = fresh.count >= strongSelf.pageLimit
-                    strongSelf.plazaReachedEnd = fresh.count < strongSelf.pageLimit
+                    strongSelf.plazaHasMore = rawFresh.count >= strongSelf.pageLimit
+                    strongSelf.plazaReachedEnd = rawFresh.count < strongSelf.pageLimit
                     strongSelf.plazaError = false
                 case .failure:
                     strongSelf.plazaError = true
@@ -1102,6 +1151,9 @@ class BearyFeedViewController: UIViewController {
         let oldCount = plazaRaw.count
         plazaRaw.removeAll { $0.id == entryId }
         firstPageIds.removeAll { $0 == entryId }
+        // 审计-广场（删除定向失效）：该篇作为被引源的缓存同步失效，
+        // 别处引用它的卡下次重配时重新拉取、按已删除渲染占位。
+        BearyDiaryCardCell.invalidateQuote(forQuoteId: entryId)
         guard isViewLoaded else { return }
         if tableView.numberOfRows(inSection: 0) == oldCount {
             tableView.deleteRows(at: [IndexPath(row: row, section: 0)], with: .fade)
@@ -1158,6 +1210,8 @@ class BearyFeedViewController: UIViewController {
             // 先取行号再摘模型（indexPaths 读 plazaRaw），删行动画只走 opacity（.fade）。
             let paths = indexPaths(for: entryId)
             plazaRaw.removeAll { $0.id == entryId }
+            firstPageIds.removeAll { $0 == entryId }
+            BearyDiaryCardCell.invalidateQuote(forQuoteId: entryId)
             persistFeedHead()
             if !paths.isEmpty {
                 tableView.beginUpdates()
@@ -1224,6 +1278,8 @@ class BearyFeedViewController: UIViewController {
     private func loadCachedFeedOrRefresh() {
         let bucket = BearyFeedCache.bucket(userId: SessionManager.shared.currentUser?.id ?? BearyFeedCache.lastKnownUserId())
         feedCacheOwnerKey = bucket
+        // 审计-广场：首桶即定引用缓存身份桶（同桶重调不清空，见 switchQuoteCacheOwner）。
+        BearyDiaryCardCell.switchQuoteCacheOwner(to: bucket)
         // 审计 13：读盘 + 解码在缓存 IO 队列，界面先不阻塞；回包到主线程
         // 后再应用。桶已换（账号切换）时旧回包直接丢弃，不覆盖新桶内容。
         BearyFeedCache.load(bucket: bucket) { [weak self] snap in
@@ -1271,6 +1327,10 @@ class BearyFeedViewController: UIViewController {
         guard newBucket != feedCacheOwnerKey else { return }
         lastFeedLoginUserId = SessionManager.shared.currentUser?.id
         feedCacheOwnerKey = newBucket
+        // 审计-广场（跨身份缓存残留，高）：换桶同步清空引用缓存——旧身份
+        // 拉到的引用正文绝不留给新身份/游客渲染；读盘回包是新桶内容，
+        // 其引用仍走 fetch 现拉，不依赖旧缓存。
+        BearyDiaryCardCell.switchQuoteCacheOwner(to: newBucket)
         revalidateGeneration += 1
         isRevalidating = false
         hideNewContentPill()
@@ -1346,14 +1406,16 @@ class BearyFeedViewController: UIViewController {
     /// 仅互动变了就地同步。整表 reloadData 在此路径绝不出现，
     /// 已展开内容永不折叠（展开态本就由 expandedEntryIds 持久化，
     /// move/insert/delete 均不重建已有 cell）。
-    private func applyFirstPageDiff(_ fresh: [Entry]) {
+    private func applyFirstPageDiff(_ fresh: [Entry], hasMoreOverride: Bool? = nil) {
+        // 关注流二次过滤（仅 following 段；旧尾部已在各自入池时滤过）。
+        let fresh = feedFollowingSegment ? filteredFollowingEntries(fresh) : fresh
         // 兜底：旧表里有无 id 行时下标模拟不再可靠（服务端正常数据恒有 id），
         // 此时退回整表替换保正确性，不走 diff（只影响脏数据场景）。
         if plazaRaw.contains(where: { $0.id == nil || $0.id!.isEmpty }) {
             plazaRaw = fresh
             firstPageIds = fresh.compactMap { $0.id }
-            plazaHasMore = fresh.count >= firstPageLimit
-            plazaReachedEnd = fresh.count < firstPageLimit
+            plazaHasMore = hasMoreOverride ?? (fresh.count >= firstPageLimit)
+            plazaReachedEnd = !(hasMoreOverride ?? (fresh.count >= firstPageLimit))
             plazaError = false
             lastFeedLoadAt = Date()
             BearyFeedCache.save(bucket: feedCacheOwnerKey, entries: fresh, hasMore: plazaHasMore)
@@ -1419,8 +1481,8 @@ class BearyFeedViewController: UIViewController {
         }
         plazaRaw = newList
         firstPageIds = freshIds
-        plazaHasMore = deduped.count >= firstPageLimit
-        plazaReachedEnd = deduped.count < firstPageLimit
+        plazaHasMore = hasMoreOverride ?? (deduped.count >= firstPageLimit)
+        plazaReachedEnd = !(hasMoreOverride ?? (deduped.count >= firstPageLimit))
         plazaError = false
         lastFeedLoadAt = Date()
         BearyFeedCache.save(bucket: feedCacheOwnerKey, entries: deduped, hasMore: plazaHasMore)
@@ -1516,7 +1578,9 @@ class BearyFeedViewController: UIViewController {
         BearyAPI.shared.fetchEntries(scope: .plaza, limit: firstPageLimit) { [weak self] result in
             DispatchQueue.main.async {
                 if case .success(let list) = result {
-                    freshPlaza = list.entries ?? []
+                    // 审计-广场：后台 revalidate 只拉 plaza（上 guard 已拦关注段），
+                    // 同首拉口径滤掉非有效公开篇，不让过期/翻私密篇经 diff 回到广场。
+                    freshPlaza = (list.entries ?? []).filter { BearyEphemeral.isEffectivelyPublic($0) }
                 }
                 plazaDone = true
                 finish()
@@ -1779,8 +1843,18 @@ class BearyFeedViewController: UIViewController {
     }
 
     /// Q5 空态 CTA：只转发 onComposeRequested，导航归容器。
+    /// 审计-广场复核（空态游客门，未证实→已证伪，不修）：容器接线
+    /// presentComposer 内有登录门（未登录弹原生登录页，见 SceneDelegate
+    /// presentComposer），与段切换处的游客门同口径，空态 CTA 无需本页再设门。
     @objc private func emptyWriteTapped() {
         onComposeRequested?()
+    }
+
+    /// 审计-广场（引用缓存无上限）：内存警告即清空引用缓存（正文重拉即可恢复，
+    /// 不丢用户数据）；失败/在途集合同清，下次 configure 按需重拉。
+    override func didReceiveMemoryWarning() {
+        super.didReceiveMemoryWarning()
+        BearyDiaryCardCell.resetQuoteFetchState()
     }
 
     /// 空态恢复网页口径：首拉完成、两流均无条目且均无失败时显示空态文案；
@@ -1832,7 +1906,12 @@ class BearyFeedViewController: UIViewController {
     /// 选定后先收起面板，再由该行 cell 按条目 id 校验后走贴/摘/换逻辑。
     private func presentEmoteSheet(cell: BearyDiaryCardCell?, entryIdValue: String) {
         if entryIdValue.isEmpty { return }
-        if presentedViewController != nil { return }
+        // 审计-广场（回应 Sheet 被占用静默，中）：被占用不再无声 return，
+        // 给 toast 反馈（不排队：排队会让回应意图在未知弹窗关闭后才突然弹出）。
+        if presentedViewController != nil {
+            BearyToast.show(in: view, message: "请先关闭当前弹窗")
+            return
+        }
         let sheet = BearyEmotePickerSheetViewController()
         sheet.modalPresentationStyle = .overFullScreen
         sheet.onPick = { [weak self, weak cell] pickedKey in
@@ -1938,22 +2017,57 @@ class BearyFeedViewController: UIViewController {
 
     /// 可见性同步：按响应目标态改模型（isPublic + publishedAt），可见行都刷；
     /// 翻私密时同步清掉该篇的引用缓存（否则旧引用卡仍按旧可见性渲染）。
-    private func applyVisibilityState(entryId: String, isPublic: Bool, publishedAt: Int?) {
-        for index in plazaRaw.indices where plazaRaw[index].id == entryId {
-            plazaRaw[index].isPublic = isPublic
-            // 手动翻转清限时标记（服务端同口径），否则本地仍画虚线边框。
-            plazaRaw[index].ephemeralUntil = nil
-            if let publishedAt = publishedAt { plazaRaw[index].publishedAt = publishedAt }
-        }
+    private func applyVisibilityState(entryId: String, isPublic: Bool, publishedAt: Int?, visibility: String? = nil, ephemeralUntil: Int? = nil) {
+        // 审计-广场（翻私密滞留，中）：变私密时不再只改模型留行——广场只应含
+        // 公开篇，须从 plazaRaw 删行并同步 persistFeedHead；行数校验一致才
+        // deleteRows，否则 reloadData（removeDeletedEntry 同款防闪退口径）。
+        // 注意：本函数被 performVisibilityToggle 的失败回滚复用——行已删时
+        // 回滚分支自然 no-op，行恢复由 performVisibilityToggle 的快照负责。
         if isPublic == false {
-            BearyDiaryCardCell.quoteCache.removeValue(forKey: entryId)
+            if plazaRaw.firstIndex(where: { $0.id == entryId }) == nil {
+                // 行不在表里时仍清引用缓存（全桶）并同步快照——HEAD 私密块口径。
+                BearyDiaryCardCell.invalidateQuote(id: entryId)
+                persistFeedHead()
+                return
+            }
+            guard let row = plazaRaw.firstIndex(where: { $0.id == entryId }) else { return }
+            let oldCount = plazaRaw.count
+            plazaRaw.removeAll { $0.id == entryId }
+            firstPageIds.removeAll { $0 == entryId }
+            BearyDiaryCardCell.invalidateQuote(forQuoteId: entryId)
             // feedfast：翻私密的篇同步出缓存（写入过滤会把它丢掉），
             // 下次冷启动不再从旧缓存里露给他人视角。
             persistFeedHead()
+            guard isViewLoaded else { return }
+            if tableView.numberOfRows(inSection: 0) == oldCount {
+                tableView.deleteRows(at: [IndexPath(row: row, section: 0)], with: .fade)
+            } else {
+                tableView.reloadData()
+            }
+            updateOverlayState()
+            return
         }
+        for index in plazaRaw.indices where plazaRaw[index].id == entryId {
+            plazaRaw[index].isPublic = isPublic
+            // 审计 2026-11-02 第十节：成功回写 visibility 与 ephemeralUntil；
+            // 手动翻转清限时标记（服务端同口径），否则本地仍画虚线边框——
+            // 回包显式带回新的 ephemeralUntil 时以回包为准；回滚路径传回原值。
+            plazaRaw[index].visibility = visibility ?? (isPublic ? "public" : "private")
+            plazaRaw[index].ephemeralUntil = ephemeralUntil
+            if let publishedAt = publishedAt { plazaRaw[index].publishedAt = publishedAt }
+        }
+
         for path in indexPaths(for: entryId) {
             reloadRowIfVisible(path)
         }
+    }
+
+    /// 审计 2026-11-02 第十节：关注流 App 侧二次过滤（广场首拉过滤归广场组，
+    /// 本函数只服务 following 段）：过期/私密漏网篇直接排除；仅好友篇由服务端
+    /// scope 先行按 viewer 过滤、详情门再以 state 复核互关，此处不凭本地关系
+    /// 误杀（本地无可信互关缓存），只收紧、不放宽。
+    private func filteredFollowingEntries(_ entries: [Entry]) -> [Entry] {
+        entries.filter { BearyEphemeral.isEffectivelyPublic($0) || $0.isFriendsOnly }
     }
 
     /// 切换钮：显式目标态，无需确认；在途去重（pubBusyIds 复用）。
@@ -2020,67 +2134,96 @@ class BearyFeedViewController: UIViewController {
     private func handleVisibilityToggle(entryId: String) {
         guard !entryId.isEmpty, let entry = entryModel(for: entryId), entry.isMine == true else { return }
         if pubBusyIds.contains(entryId) { return }
-        // 引用规则简化（2026-10-31）：切公开先过引用门禁、改私密先查引用数提醒；
-        // 门禁/提醒期间占 busy 位，放弃时清位、原态未动（乐观落地只在 perform 里做）。
-        let target = BearyEphemeral.isEffectivelyPublic(entry) ? 0 : 1
-        pubBusyIds.insert(entryId)
-        if target == 1 {
-            BearyQuoteGate.gatePublicToggle(from: self, entry: entry) { [weak self] result in
-                guard let strongSelf = self else { return }
-                switch result {
-                case .proceed:
-                    strongSelf.performVisibilityToggle(entryId: entryId)
-                case .publishTogether(let sourceId):
-                    BearyAPI.shared.setVisibility(id: sourceId, published: 1) { setResult in
-                        DispatchQueue.main.async {
-                            switch setResult {
-                            case .success:
-                                strongSelf.performVisibilityToggle(entryId: entryId)
-                            case .failure:
-                                strongSelf.pubBusyIds.remove(entryId)
-                                BearyToast.show(in: strongSelf.view, message: "原日记公开失败，请重试")
+        // 审计 2026-11-02 第十节：三档选择器（私密/仅好友/公开），选同档即无变化；
+        // 引用规则简化（2026-10-31）：切公开先过引用门禁、改私密先查引用数提醒、
+        // 改仅好友为收紧方向直接放行；门禁/提醒期间占 busy 位，放弃时清位、
+        // 原态未动（乐观落地只在 perform 里做）。
+        BearyVisibility.presentPicker(from: self, entry: entry) { [weak self] targetVisibility in
+            guard let strongSelf = self else { return }
+            guard let current = strongSelf.entryModel(for: entryId),
+                  targetVisibility != BearyVisibility.current(for: current) else { return }
+            strongSelf.pubBusyIds.insert(entryId)
+            if targetVisibility == "public" {
+                BearyQuoteGate.gatePublicToggle(from: strongSelf, entry: entry) { [weak self] result in
+                    guard let strongSelf = self else { return }
+                    switch result {
+                    case .proceed:
+                        strongSelf.performVisibilityToggle(entryId: entryId, targetVisibility: targetVisibility)
+                    case .publishTogether(let sourceId):
+                        BearyAPI.shared.setVisibility(id: sourceId, visibility: "public") { setResult in
+                            DispatchQueue.main.async {
+                                switch setResult {
+                                case .success:
+                                    strongSelf.performVisibilityToggle(entryId: entryId, targetVisibility: targetVisibility)
+                                case .failure:
+                                    strongSelf.pubBusyIds.remove(entryId)
+                                    BearyToast.show(in: strongSelf.view, message: "原日记公开失败，请重试")
+                                }
                             }
                         }
+                    case .aborted:
+                        strongSelf.pubBusyIds.remove(entryId)
                     }
-                case .aborted:
-                    strongSelf.pubBusyIds.remove(entryId)
                 }
-            }
-        } else {
-            BearyQuoteGate.confirmPrivateToggleIfQuoted(from: self, entryId: entryId) { [weak self] confirmed in
-                guard let strongSelf = self else { return }
-                if confirmed {
-                    strongSelf.performVisibilityToggle(entryId: entryId)
-                } else {
-                    strongSelf.pubBusyIds.remove(entryId)
+            } else if targetVisibility == "private" {
+                BearyQuoteGate.confirmPrivateToggleIfQuoted(from: strongSelf, entryId: entryId) { [weak self] confirmed in
+                    guard let strongSelf = self else { return }
+                    if confirmed {
+                        strongSelf.performVisibilityToggle(entryId: entryId, targetVisibility: targetVisibility)
+                    } else {
+                        strongSelf.pubBusyIds.remove(entryId)
+                    }
                 }
+            } else {
+                strongSelf.performVisibilityToggle(entryId: entryId, targetVisibility: targetVisibility)
             }
         }
     }
 
-    private func performVisibilityToggle(entryId: String) {
+    private func performVisibilityToggle(entryId: String, targetVisibility: String) {
         guard !entryId.isEmpty, let entry = entryModel(for: entryId), entry.isMine == true else { return }
-        let target = BearyEphemeral.isEffectivelyPublic(entry) ? 0 : 1
         let originalPublic = entry.isPublic ?? false
         let originalPublishedAt = entry.publishedAt
+        let originalVisibility = entry.visibility
+        let originalEphemeralUntil = entry.ephemeralUntil
+        // 审计-广场：翻私密乐观删行后，失败必须能把行找回来——先快照整篇
+        // 与原行号；回滚时行已不在表里，applyVisibilityState 自然 no-op，
+        // 故失败分支在下面按快照插回（只影响失败路径，成功路径不动）。
+        let originalEntrySnapshot = entry
+        let originalRow = plazaRaw.firstIndex(where: { $0.id == entryId })
         // 先行：目标态立即落地（与成功路径同一同步函数，不重建行、不重播动效）。
-        applyVisibilityState(entryId: entryId, isPublic: target == 1, publishedAt: nil)
+        applyVisibilityState(entryId: entryId, isPublic: BearyVisibility.isPublicValue(targetVisibility), publishedAt: nil, visibility: targetVisibility, ephemeralUntil: nil)
         BearySoundPlayer.play(.visibilityClick)
-        BearyAPI.shared.setVisibility(id: entryId, published: target) { [weak self] result in
+        // 审计动效组：可见性翻转统一为“图标＋pill 文案＋轻震”，此处补轻震。
+        BearyHaptics.press()
+        BearyAPI.shared.setVisibility(id: entryId, visibility: targetVisibility) { [weak self] result in
             DispatchQueue.main.async {
                 guard let strongSelf = self else { return }
                 strongSelf.pubBusyIds.remove(entryId)
                 switch result {
                 case .success(let resp):
-                    let isPublic = resp.published.map { $0 == 1 } ?? (target == 1)
-                    // 秒开-网络层：转私密成功即逐出本篇图片的本机缓存；失败
-                    // 回滚分支不逐出（原态未变）。
-                    if !isPublic, let entry = strongSelf.entryModel(for: entryId) {
-                        BearyImageLoader.shared.evictEntryImages(keys: entry.images ?? [])
+                    let isPublic = resp.visibility.map { BearyVisibility.isPublicValue($0) }
+                        ?? resp.published.map { $0 == 1 }
+                        ?? BearyVisibility.isPublicValue(targetVisibility)
+                    // 秒开-网络层：转非公开成功即逐出本篇图片的本机缓存；失败
+                    // 回滚分支不逐出（原态未变）。注意：转私密成功时行已在乐观
+                    // 阶段删掉，entryModel 为 nil，逐出以快照图片键为准。
+                    if !isPublic {
+                        BearyImageLoader.shared.evictEntryImages(keys: originalEntrySnapshot.images ?? [])
                     }
-                    strongSelf.applyVisibilityState(entryId: entryId, isPublic: isPublic, publishedAt: resp.publishedAt)
+                    strongSelf.applyVisibilityState(entryId: entryId, isPublic: isPublic, publishedAt: resp.publishedAt, visibility: resp.visibility ?? targetVisibility, ephemeralUntil: resp.ephemeralUntil)
                 case .failure(let err):
-                    strongSelf.applyVisibilityState(entryId: entryId, isPublic: originalPublic, publishedAt: originalPublishedAt)
+                    strongSelf.applyVisibilityState(entryId: entryId, isPublic: originalPublic, publishedAt: originalPublishedAt, visibility: originalVisibility, ephemeralUntil: originalEphemeralUntil)
+                    // 乐观删行后的失败恢复：行不在表里时按快照插回原位
+                    // （失败路径才走 reloadData，正确性优先于删行动画）。
+                    if strongSelf.plazaRaw.contains(where: { $0.id == entryId }) == false {
+                        let at = min(originalRow ?? strongSelf.plazaRaw.count, strongSelf.plazaRaw.count)
+                        strongSelf.plazaRaw.insert(originalEntrySnapshot, at: at)
+                        strongSelf.firstPageIds = strongSelf.plazaRaw.prefix(strongSelf.firstPageLimit).compactMap { $0.id }
+                        strongSelf.persistFeedHead()
+                        strongSelf.tableView.reloadData()
+                        strongSelf.updateOverlayState()
+                    }
                     // 失败原因透传：限流时服务端 message 比通用文案有用（entry_write
                     // 120/小时打满即 429）；其余失败仍走通用文案。
                     let message: String
@@ -2115,6 +2258,8 @@ class BearyFeedViewController: UIViewController {
             snapshot = nil
         }
         plazaRaw.remove(at: row)
+        firstPageIds.removeAll { $0 == entryId }
+        BearyDiaryCardCell.invalidateQuote(forQuoteId: entryId)
         persistFeedHead()
         guard tableView.numberOfRows(inSection: 0) > row else {
             snapshot?.removeFromSuperview()
@@ -2140,7 +2285,11 @@ class BearyFeedViewController: UIViewController {
     @objc private func handleBlockedUserNotification(_ note: Notification) {
         guard let userId = note.object as? Int else { return }
         let before = plazaRaw.count
+        // 审计-广场：拉黑清行时同步失效被清篇目作为被引源的缓存。
+        let removedIds = plazaRaw.compactMap { $0.authorId == userId ? $0.id : nil }
         plazaRaw.removeAll { $0.authorId == userId }
+        firstPageIds.removeAll { removedIds.contains($0) }
+        for id in removedIds { BearyDiaryCardCell.invalidateQuote(forQuoteId: id) }
         if plazaRaw.count != before {
             persistFeedHead()
             tableView.reloadData()

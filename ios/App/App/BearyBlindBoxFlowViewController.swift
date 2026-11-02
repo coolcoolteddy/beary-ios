@@ -199,6 +199,10 @@ final class BearyBlindBoxFlowViewController: UIViewController {
 
     private var step: Step = .loading
     private var poolEntries: [Entry] = []
+    /// 审计登录杂项：入池分页代次 / 收集集 / 去重集（照搬星图页游标分页口径）。
+    private var poolLoadGeneration = 0
+    private var poolCollected: [Entry] = []
+    private var poolSeenIds = Set<String>()
     private var selectedEntryId: String?
     private var pooledEntryId: String?
     private var exchangeId: String?
@@ -520,10 +524,14 @@ final class BearyBlindBoxFlowViewController: UIViewController {
         emoteAddButton.addTarget(self, action: #selector(emoteAddTapped), for: .touchUpInside)
         emoteAddButton.bearyAddPressFeedback()
 
-        // 评论钮置灰不可点（任务口径：盲盒日记无评论入口；按钮留位以明示不可用，不藏）。
+        // 评论钮：盲盒日记无评论入口，按钮留位以明示不可用，不藏。
+        // 审计登录杂项：补 accessibilityHint（VoiceOver 读到原因），并改为可点
+        // 弱提示——点按只 toast 说明，不进评论流程；视觉仍保持 0.45 置灰。
         commentButton.translatesAutoresizingMaskIntoConstraints = false
-        commentButton.isEnabled = false
+        commentButton.isEnabled = true
         commentButton.alpha = 0.45
+        commentButton.accessibilityHint = "盲盒日记暂不支持评论"
+        commentButton.addTarget(self, action: #selector(commentUnavailableTapped), for: .touchUpInside)
 
         reportButton.translatesAutoresizingMaskIntoConstraints = false
         reportButton.addTarget(self, action: #selector(reportTapped), for: .touchUpInside)
@@ -590,7 +598,7 @@ final class BearyBlindBoxFlowViewController: UIViewController {
         mineWithdrawnLabel.textColor = BearyColors.gray
         mineWithdrawnLabel.numberOfLines = 0
         mineWithdrawnLabel.textAlignment = .center
-        mineWithdrawnLabel.text = "你已撤回交换，对方收到的你这篇已变为占位。今日次数不返还，明天再来。"
+        mineWithdrawnLabel.text = "你已撤回交换。今日次数不返还，明天再来。"
         mineWithdrawnView.addSubview(mineWithdrawnLabel)
         NSLayoutConstraint.activate([
             mineWithdrawnLabel.topAnchor.constraint(equalTo: mineWithdrawnView.topAnchor, constant: 20),
@@ -655,7 +663,7 @@ final class BearyBlindBoxFlowViewController: UIViewController {
     @objc private func loginTapped() {
         let login = BearyLoginViewController()
         login.modalPresentationStyle = .fullScreen
-        login.onLoggedIn = { [weak self] in
+        login.onLoggedIn = { [weak self] referralText in
             // 添加账号会话守卫：正常是空操作；防迂回路径下守卫仍 armed 时
             // 后续一次取消把新号恢复成旧号，成功先解 arm。
             SessionManager.shared.completeAccountAddSession()
@@ -663,6 +671,10 @@ final class BearyBlindBoxFlowViewController: UIViewController {
             SessionManager.shared.refreshMe { _ in
                 DispatchQueue.main.async {
                     self?.loadInitial()
+                    // 审计登录杂项：邀请绑定反馈落点——进 App 后 BearyToast 一次。
+                    if let text = referralText, !text.isEmpty, let view = self?.view {
+                        BearyToast.show(in: view, message: BearyReferralFeedback.toastText(base: text, plusUntil: SessionManager.shared.currentUser?.plusUntil))
+                    }
                 }
             }
         }
@@ -708,7 +720,7 @@ final class BearyBlindBoxFlowViewController: UIViewController {
             return
         }
         if body.used == true {
-            setStep(.placeholder("今日已换过 1 次，明天再来。"))
+            setStep(.placeholder("今日已换过 1 次，明天再来"))
             return
         }
         if let pooled = body.pooledEntryId {
@@ -718,19 +730,53 @@ final class BearyBlindBoxFlowViewController: UIViewController {
     }
 
     private func loadPoolEntries() {
-        BearyAPI.shared.fetchEntries(scope: .timeline, limit: 50) { [weak self] result in
+        // 审计登录杂项：入池不再只拉 50 篇一页（50 篇之后的旧公开日记此前
+        // 永远进不了池）：照搬星图页游标分页（before / beforeId、去重、代次
+        // 门控，上限 10 页）拉全量；行内仍按入池资格显 pill（公开 / 私密 /
+        // 今日公开），选中时再按资格过滤（见 renderPoolRows onTap）。
+        poolLoadGeneration += 1
+        poolCollected = []
+        poolSeenIds = []
+        loadPoolEntriesPage(before: nil, beforeId: nil, page: 1, generation: poolLoadGeneration)
+    }
+
+    private func loadPoolEntriesPage(before: Int?, beforeId: String?, page: Int, generation: Int) {
+        BearyAPI.shared.fetchEntries(scope: .timeline, limit: 50, before: before, beforeId: beforeId) { [weak self] result in
             DispatchQueue.main.async {
-                guard let self = self else { return }
+                guard let self = self, generation == self.poolLoadGeneration else { return }
                 switch result {
                 case .success(let list):
-                    self.poolEntries = list.entries ?? []
+                    let pageEntries = list.entries ?? []
+                    for entry in pageEntries {
+                        if let id = entry.id, !id.isEmpty {
+                            if self.poolSeenIds.contains(id) { continue }
+                            self.poolSeenIds.insert(id)
+                        }
+                        self.poolCollected.append(entry)
+                    }
+                    let last = pageEntries.last
+                    if pageEntries.count >= 50, page < 10, let cursor = last?.createdAt, let lastId = last?.id {
+                        self.loadPoolEntriesPage(before: cursor, beforeId: lastId, page: page + 1, generation: generation)
+                        return
+                    }
+                    self.poolEntries = self.poolCollected
                     self.renderPoolRows()
                     self.openHintLabel.text = self.pooledEntryId == nil
                         ? "先放进池子，再开盒。私密篇与今日新公开篇不可入池。"
-                        : "已放进池子，可以开盒了。开盒后今日计数变为 1/1。"
+                        : "已放进池子，可以开盒了。"
                     self.setStep(.pool)
                 case .failure(let error):
-                    self.setStep(.error(self.todayErrorText(error)))
+                    // 分页中途断网：已收集到的页不作废，照常进池；一页未得才走失败态。
+                    if !self.poolCollected.isEmpty {
+                        self.poolEntries = self.poolCollected
+                        self.renderPoolRows()
+                        self.openHintLabel.text = self.pooledEntryId == nil
+                            ? "先放进池子，再开盒。私密篇与今日新公开篇不可入池。"
+                            : "已放进池子，可以开盒了。开盒后今日计数变为 1/1。"
+                        self.setStep(.pool)
+                    } else {
+                        self.setStep(.error(self.todayErrorText(error)))
+                    }
                 }
             }
         }
@@ -880,7 +926,7 @@ final class BearyBlindBoxFlowViewController: UIViewController {
                 switch result {
                 case .success(let resp):
                     self.pooledEntryId = resp.pooledEntryId ?? entryId
-                    self.openHintLabel.text = "已放进池子，可以开盒了。开盒后今日计数变为 1/1。"
+                    self.openHintLabel.text = "已放进池子，可以开盒了。"
                     BearyToast.show(in: self.view, message: "已放进池子，可以开盒了")
                     self.setStep(.pool)
                 case .failure(let error):
@@ -946,7 +992,7 @@ final class BearyBlindBoxFlowViewController: UIViewController {
                         return
                     }
                     if case .http(let code, _) = error, code == 409 {
-                        BearyToast.show(in: self.view, message: "今日已换过 1 次")
+                        BearyToast.show(in: self.view, message: "今日已换过 1 次，明天再来")
                         self.loadInitial()
                         return
                     }
@@ -1064,8 +1110,10 @@ final class BearyBlindBoxFlowViewController: UIViewController {
                 self.receivedEmotes = self.toggledEmotes(previous, key: pickedKey)
                 self.renderEmoteChips()
                 self.reactBusy = true
-                BearyAPI.shared.reactBlindBoxExchange(id: exchangeId, emote: pickedKey) { result in
+                // 审计登录杂项：API 回调改 [weak self]，离页后 VC 不再被留存到回包结束。
+                BearyAPI.shared.reactBlindBoxExchange(id: exchangeId, emote: pickedKey) { [weak self] result in
                     DispatchQueue.main.async {
+                        guard let self = self else { return }
                         self.reactBusy = false
                         switch result {
                         case .success(let resp):
@@ -1086,6 +1134,11 @@ final class BearyBlindBoxFlowViewController: UIViewController {
     }
 
     // MARK: - 举报 / 撤回 / 刷新
+
+    /// 审计登录杂项：评论不可用弱提示（按钮本身不进评论流程）。
+    @objc private func commentUnavailableTapped() {
+        BearyToast.show(in: view, message: "盲盒日记暂不支持评论")
+    }
 
     @objc private func reportTapped() {
         guard let entryId = received?.entryId, entryId.isEmpty == false else { return }
@@ -1134,13 +1187,13 @@ final class BearyBlindBoxFlowViewController: UIViewController {
         case .unauthorized, .authFailure:
             return "登录已过期，请重新登录。"
         case .notFound:
-            return "盲盒服务暂未上线，请稍后再试。"
+            return "盲盒服务暂未上线，请稍后再试"
         case .http(let code, _):
-            if code == 404 { return "盲盒服务暂未上线，请稍后再试。" }
-            if code == 409 { return "今日已换过 1 次，明天再来。" }
-            return "加载失败，请重试。"
+            if code == 404 { return "盲盒服务暂未上线，请稍后再试" }
+            if code == 409 { return "今日已换过 1 次，明天再来" }
+            return "加载失败，请重试"
         default:
-            return "网络不稳定，请稍后再试。"
+            return "网络不稳定，请稍后再试"
         }
     }
 
@@ -1187,12 +1240,12 @@ final class BearyBlindBoxFlowViewController: UIViewController {
         case .unauthorized, .authFailure:
             return "登录已过期，请重新登录。"
         case .notFound:
-            return "盲盒服务暂未上线，请稍后再试。"
+            return "盲盒服务暂未上线，请稍后再试"
         case .server(let code):
             return fallback
         case .http(let code, let snippet):
-            if code == 404 { return "盲盒服务暂未上线，请稍后再试。" }
-            if code == 409 { return "今日已换过 1 次" }
+            if code == 404 { return "盲盒服务暂未上线，请稍后再试" }
+            if code == 409 { return "今日已换过 1 次，明天再来" }
             return fallback
         default:
             return fallback

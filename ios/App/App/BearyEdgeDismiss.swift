@@ -70,7 +70,7 @@ final class BearyEdgeDismissController: NSObject, UIViewControllerTransitioningD
             let velocity = pan.velocity(in: view).x
             if progress > 0.35 || velocity > 800 {
                 // U24：完成关闭时给轻触感（取消时无）。
-                UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                BearyHaptics.press()
                 interaction?.finish()
             } else {
                 interaction?.cancel()

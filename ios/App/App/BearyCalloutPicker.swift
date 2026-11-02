@@ -109,8 +109,43 @@ final class BearyCalloutPickerView: UIView, UIScrollViewDelegate {
     private let fadeLayer = CAGradientLayer()
     private var optionButtons: [(key: String, button: UIButton)] = []
 
+    /// [24] 审计后续小项 2：面板内附属行（仅天气框用，装气温步进器）。
+    /// 框体不替附属行做业务：只给它一行固定高的位置（自然宽、左对齐），
+    /// 附属行自身的按钮/动作仍归调用方；心情框不设附属行，几何一字不动。
+    private var accessoryView: UIView?
+    private static let accessoryGap: CGFloat = 8
+    private static let accessoryRowHeight: CGFloat = 36
+
+    /// 附属行显时框体比基准高出的部分（调用方据此定框高约束）。
+    var accessoryExtraHeight: CGFloat {
+        guard let accessory = accessoryView, !accessory.isHidden else { return 0 }
+        return Self.accessoryGap + Self.accessoryRowHeight
+    }
+
+    /// 附属行只在框内出现，不进调用方的 chip 行等外部布局；调用方须在
+    /// 附属行显隐变化时同步刷新框高约束（见 Composer updateWeatherCalloutHeight）。
+    func setAccessoryView(_ view: UIView?) {
+        accessoryView?.removeFromSuperview()
+        accessoryView = view
+        guard let view = view else { return }
+        // 框内附属行走手动 frame（见 layoutSubviews），不参与 Auto Layout。
+        view.translatesAutoresizingMaskIntoConstraints = true
+        addSubview(view)
+        setNeedsLayout()
+    }
+
+    func setAccessoryVisible(_ visible: Bool) {
+        guard accessoryView?.isHidden == visible else { return }
+        accessoryView?.isHidden = !visible
+        setNeedsLayout()
+    }
+
     private var boxHeight: CGFloat {
         Self.verticalPadding * 2 + Self.optionSize
+    }
+
+    private var fullBoxHeight: CGFloat {
+        boxHeight + accessoryExtraHeight
     }
 
     override init(frame: CGRect) {
@@ -202,10 +237,15 @@ final class BearyCalloutPickerView: UIView, UIScrollViewDelegate {
     }
 
     /// 深浅切换时重取图（心情 _dark 资产）+ 重算底色与渐隐色。
+    /// 审计登录杂项：取图为 nil 的选项直接隐藏（此前仍是 48×48 空白可点格）；
+    /// 不自绘、不拿 SF Symbol 顶替；资产补齐后 refreshImages 会自动恢复显示。
+    /// 注：本选择器为纯图片选项、无文字 label，故“字号改 scaledFont”一项不适用。
     func refreshImages() {
         let dark = traitCollection.userInterfaceStyle == .dark
         for (key, button) in optionButtons {
-            button.setImage(imageProvider?(key, dark), for: .normal)
+            let image = imageProvider?(key, dark)
+            button.setImage(image, for: .normal)
+            button.isHidden = (image == nil)
         }
     }
 
@@ -220,10 +260,22 @@ final class BearyCalloutPickerView: UIView, UIScrollViewDelegate {
     override func layoutSubviews() {
         super.layoutSubviews()
         let width = bounds.width
-        let height = boxHeight
+        let height = fullBoxHeight
         backgroundLayer.frame = bounds
-        scrollView.frame = CGRect(x: 0, y: 0, width: width, height: height)
-        fadeView.frame = CGRect(x: width - Self.fadeWidth, y: 0, width: Self.fadeWidth, height: height)
+        // 选项滚动区只占基准框高；附属行在其下方，不被滚动区盖住触摸
+        //（附属行后加、层级在滚动区之上，点按先落到附属行按钮）。
+        scrollView.frame = CGRect(x: 0, y: 0, width: width, height: boxHeight)
+        fadeView.frame = CGRect(x: width - Self.fadeWidth, y: 0, width: Self.fadeWidth, height: boxHeight)
+        if let accessory = accessoryView, !accessory.isHidden {
+            let naturalWidth = accessory.systemLayoutSizeFitting(UIView.layoutFittingCompressedSize).width
+            let accessoryWidth = naturalWidth > 0 ? min(naturalWidth, max(width - Self.horizontalPadding * 2, 0)) : max(width - Self.horizontalPadding * 2, 0)
+            accessory.frame = CGRect(
+                x: Self.horizontalPadding,
+                y: Self.verticalPadding + Self.optionSize + Self.accessoryGap,
+                width: accessoryWidth,
+                height: Self.accessoryRowHeight
+            )
+        }
         fadeLayer.frame = fadeView.bounds
         // 尖角钳制：顶点离左右边各留半宽 + 4pt，三角不伸出框外。
         let clampedX = min(max(arrowCenterX, Self.arrowHalfWidth + 4), max(width - Self.arrowHalfWidth - 4, Self.arrowHalfWidth + 4))
@@ -265,6 +317,194 @@ final class BearyCalloutPickerView: UIView, UIScrollViewDelegate {
 
     @objc private func didTapOption(_ sender: UIButton) {
         for (key, button) in optionButtons where button == sender {
+            onSelect?(key)
+            return
+        }
+    }
+}
+
+/// 时间线筛子尖角气泡（11b：筛子从系统 actionSheet 改回尖角气泡）。
+/// 壳口径 1:1 复用 BearyCalloutPickerView（编辑器心情/天气尖角框）：
+/// 框体圆角 16、尖角高 10/半宽 8、浅色 white .96 / 深色 #26262c、hairline 阴影；
+/// 框外收起直接复用 BearyCalloutDismissView（不另写收起层）。
+/// CalloutPicker 本体是横向 48pt 图标排、渲不出文字，故只复用其壳常量与
+/// 路径画法，不硬套其本体。尖角改放框顶（筛子钮在表头、气泡朝下展开，
+/// 框在钮下方、尖角向上指钮中心——与编辑器“框在上、尖角朝下指钮”镜像）。
+/// 出现/消失只走 transform/opacity（0.20s、6pt，编辑器 showCallout 同款；
+/// 减动效静态直出，本视图不自播动画）。
+final class BearyBubbleMenuView: UIView {
+    struct Row {
+        let key: String
+        let title: String
+    }
+
+    var onSelect: ((String) -> Void)?
+
+    /// 尖角顶点在本视图坐标系的 x（调用方按触发钮中心设；布局时钳制在框内，
+    /// 与 BearyCalloutPickerView.arrowCenterX 同口径）。
+    var arrowCenterX: CGFloat = 0 {
+        didSet {
+            if arrowCenterX != oldValue {
+                setNeedsLayout()
+            }
+        }
+    }
+
+    private static let arrowHeight: CGFloat = 10
+    private static let arrowHalfWidth: CGFloat = 8
+    private static let cornerRadius: CGFloat = 16
+    private static let verticalPadding: CGFloat = 8
+    private static let horizontalPadding: CGFloat = 8
+    private static let rowHeight: CGFloat = 44
+    private static let separatorHeight: CGFloat = 0.5
+
+    private static var bubbleBackgroundColor: UIColor {
+        UIColor { trait in
+            if trait.userInterfaceStyle == .dark {
+                return UIColor(red: 38.0 / 255.0, green: 38.0 / 255.0, blue: 44.0 / 255.0, alpha: 1)
+            }
+            return UIColor(white: 0.96, alpha: 1)
+        }
+    }
+
+    /// 调用方按此算框高（尖角 + 上下内边距 + 各行 + 行间细线），不另算。
+    static func menuHeight(rowCount: Int) -> CGFloat {
+        Self.arrowHeight + Self.verticalPadding * 2 + CGFloat(rowCount) * Self.rowHeight
+            + CGFloat(max(0, rowCount - 1)) * Self.separatorHeight
+    }
+
+    private let backgroundLayer = CAShapeLayer()
+    private let stackView = UIStackView()
+    private var rowButtons: [(key: String, button: UIButton)] = []
+    private var selectedKey: String?
+    private var stackConstraintsInstalled = false
+
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        backgroundColor = UIColor.clear
+        layer.addSublayer(backgroundLayer)
+        BearyShadow.applyHairline(to: backgroundLayer)
+        stackView.translatesAutoresizingMaskIntoConstraints = false
+        stackView.axis = .vertical
+        stackView.spacing = 0
+        addSubview(stackView)
+    }
+
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    func configure(rows: [Row], selectedKey: String?, onSelect: ((String) -> Void)?) {
+        self.onSelect = onSelect
+        self.selectedKey = selectedKey
+        for (_, button) in rowButtons {
+            stackView.removeArrangedSubview(button)
+            button.removeFromSuperview()
+        }
+        rowButtons.removeAll()
+        // 旧分隔线一并清掉（分隔线不是 rowButtons 成员，单独扫一遍）。
+        for arranged in stackView.arrangedSubviews {
+            stackView.removeArrangedSubview(arranged)
+            arranged.removeFromSuperview()
+        }
+        for (index, row) in rows.enumerated() {
+            if index > 0 {
+                let separator = UIView()
+                separator.backgroundColor = BearyColors.line
+                separator.translatesAutoresizingMaskIntoConstraints = false
+                separator.heightAnchor.constraint(equalToConstant: Self.separatorHeight).isActive = true
+                stackView.addArrangedSubview(separator)
+            }
+            let button = BearyHit44Button(type: .system)
+            button.translatesAutoresizingMaskIntoConstraints = false
+            button.setTitle(row.title, for: .normal)
+            button.titleLabel?.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 15))
+            button.titleLabel?.adjustsFontForContentSizeCategory = true
+            button.setTitleColor(BearyColors.ink, for: .normal)
+            button.tintColor = BearyColors.ink
+            button.contentHorizontalAlignment = .left
+            button.contentEdgeInsets = UIEdgeInsets(top: 0, left: 16, bottom: 0, right: 16)
+            button.titleEdgeInsets = UIEdgeInsets(top: 0, left: 8, bottom: 0, right: 0)
+            button.imageView?.contentMode = .scaleAspectFit
+            button.heightAnchor.constraint(equalToConstant: Self.rowHeight).isActive = true
+            button.addTarget(self, action: #selector(didTapRow(_:)), for: .touchUpInside)
+            button.bearyAddPressFeedback()
+            button.accessibilityLabel = row.title
+            stackView.addArrangedSubview(button)
+            rowButtons.append((key: row.key, button: button))
+        }
+        if !stackConstraintsInstalled {
+            stackConstraintsInstalled = true
+            NSLayoutConstraint.activate([
+                stackView.topAnchor.constraint(equalTo: topAnchor, constant: Self.arrowHeight + Self.verticalPadding),
+                stackView.leadingAnchor.constraint(equalTo: leadingAnchor, constant: Self.horizontalPadding),
+                stackView.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -Self.horizontalPadding),
+                stackView.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -Self.verticalPadding),
+            ])
+        }
+        refreshSelectedStates()
+        setNeedsLayout()
+    }
+
+    /// 打开时刷新选中态（不重建行）：选中行半粗体 + 左侧官方 icon_check
+    /// + .selected 无障碍 trait；未选中行垫同尺寸透明图，标题左对齐不漂移。
+    func setSelectedKey(_ key: String?) {
+        selectedKey = key
+        refreshSelectedStates()
+    }
+
+    private func refreshSelectedStates() {
+        for (key, button) in rowButtons {
+            let selected = (selectedKey != nil && key == selectedKey)
+            button.isSelected = selected
+            button.accessibilityTraits = selected ? [.button, .selected] : [.button]
+            button.titleLabel?.font = BearyDynamicType.scaledFont(
+                for: selected ? UIFont.boldSystemFont(ofSize: 15) : UIFont.systemFont(ofSize: 15))
+            if selected {
+                button.setImage(BearyIconImages.image(named: "icon_check", pointSize: 16), for: .normal)
+            } else {
+                button.setImage(Self.clearPlaceholderImage(pointSize: 16), for: .normal)
+            }
+        }
+    }
+
+    private static func clearPlaceholderImage(pointSize: CGFloat) -> UIImage {
+        let size = CGSize(width: pointSize, height: pointSize)
+        let format = UIGraphicsImageRendererFormat()
+        format.scale = UIScreen.main.scale
+        return UIGraphicsImageRenderer(size: size, format: format).image { _ in }
+    }
+
+    override func traitCollectionDidChange(_ previousTraitCollection: UITraitCollection?) {
+        super.traitCollectionDidChange(previousTraitCollection)
+        if previousTraitCollection?.userInterfaceStyle != traitCollection.userInterfaceStyle {
+            updateBackgroundColors()
+        }
+    }
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        let width = bounds.width
+        let height = bounds.height
+        backgroundLayer.frame = bounds
+        // 尖角钳制：顶点离左右边各留半宽 + 4pt，三角不伸出框外（CalloutPicker 同款）。
+        let clampedX = min(max(arrowCenterX, Self.arrowHalfWidth + 4), max(width - Self.arrowHalfWidth - 4, Self.arrowHalfWidth + 4))
+        let box = CGRect(x: 0, y: Self.arrowHeight, width: width, height: max(0, height - Self.arrowHeight))
+        let path = UIBezierPath(roundedRect: box, cornerRadius: Self.cornerRadius)
+        path.move(to: CGPoint(x: clampedX - Self.arrowHalfWidth, y: Self.arrowHeight))
+        path.addLine(to: CGPoint(x: clampedX, y: 0))
+        path.addLine(to: CGPoint(x: clampedX + Self.arrowHalfWidth, y: Self.arrowHeight))
+        path.close()
+        backgroundLayer.path = path.cgPath
+        updateBackgroundColors()
+    }
+
+    private func updateBackgroundColors() {
+        backgroundLayer.fillColor = Self.bubbleBackgroundColor.resolvedColor(with: traitCollection).cgColor
+    }
+
+    @objc private func didTapRow(_ sender: UIButton) {
+        for (key, button) in rowButtons where button == sender {
             onSelect?(key)
             return
         }
