@@ -5921,7 +5921,7 @@ class BearyProfileViewController: UIViewController {
         titleLabel.text = "照片"
         let moreButton = UIButton(type: .custom)
         moreButton.translatesAutoresizingMaskIntoConstraints = false
-        moreButton.setTitle("更多照片", for: .normal)
+        moreButton.setTitle("更多", for: .normal)
         moreButton.setTitleColor(BearyColors.gray, for: .normal)
         moreButton.titleLabel?.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 14))
         moreButton.titleLabel?.adjustsFontForContentSizeCategory = true
