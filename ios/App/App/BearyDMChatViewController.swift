@@ -500,7 +500,7 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
                     self.sessionClosed = false
                     self.inputTextView.isEditable = true
                     self.updatePermBanner()
-                    let fetched = resolvedSenders(Array(history.resolvedMessages.reversed()))
+                    let fetched = self.resolvedSenders(Array(history.resolvedMessages.reversed()))
                     BearyDMStore.saveMessages(accountId: self.storeAccountId, peer: self.peer, messages: fetched)
                     self.messages = BearyDMStore.messages(accountId: self.storeAccountId, peerId: userId)
                     self.hasMoreOlder = history.resolvedMessages.count >= 30
@@ -556,7 +556,7 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
                 self.messageBusy = false
                 switch result {
                 case .success(let history):
-                    let older = resolvedSenders(Array(history.resolvedMessages.reversed()))
+                    let older = self.resolvedSenders(Array(history.resolvedMessages.reversed()))
                     self.hasMoreOlder = history.resolvedMessages.count >= 30
                     BearyDMStore.saveMessages(accountId: self.storeAccountId, peer: self.peer, messages: older)
                     self.messages = BearyDMStore.messages(accountId: self.storeAccountId, peerId: userId)
