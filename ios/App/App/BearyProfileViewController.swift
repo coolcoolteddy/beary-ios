@@ -1442,7 +1442,7 @@ class BearyProfileViewController: UIViewController {
         let rowValue = UIView()
         rowValue.translatesAutoresizingMaskIntoConstraints = false
         rowValue.backgroundColor = BearyColors.faint
-        rowValue.layer.cornerRadius = 16
+        rowValue.layer.cornerRadius = 12
         rowValue.clipsToBounds = true
         rowValue.isHidden = true
         let stackValue = UIStackView(arrangedSubviews: [modulesRetryLabel, modulesRetryButton])
@@ -1502,7 +1502,7 @@ class BearyProfileViewController: UIViewController {
         let viewValue = UIView()
         viewValue.translatesAutoresizingMaskIntoConstraints = false
         viewValue.backgroundColor = BearyColors.faint
-        viewValue.layer.cornerRadius = 16
+        viewValue.layer.cornerRadius = 12
         viewValue.clipsToBounds = true
         return viewValue
     }()
@@ -1555,7 +1555,7 @@ class BearyProfileViewController: UIViewController {
         let viewValue = UIView()
         viewValue.translatesAutoresizingMaskIntoConstraints = false
         viewValue.backgroundColor = BearyColors.faint
-        viewValue.layer.cornerRadius = 16
+        viewValue.layer.cornerRadius = 12
         viewValue.clipsToBounds = true
         return viewValue
     }()

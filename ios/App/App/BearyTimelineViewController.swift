@@ -453,7 +453,7 @@ final class BearyCalendarDayButton: UIButton {
     }
 }
 
-// MARK: - 日历卡（网页 .cal-card：边框 1 line、圆角 16、padding 16、底色 bg（与页面背景同色））
+// MARK: - 日历卡（网页 .cal-card：边框 1 line、圆角 14、padding 16、底色 bg（与页面背景同色））
 
 final class BearyCalendarCardView: UIView {
     enum ViewMode {
@@ -489,7 +489,7 @@ final class BearyCalendarCardView: UIView {
         backgroundColor = BearyColors.bg
         layer.borderWidth = 1
         layer.bearyDynamicBorderColor = BearyColors.line
-        layer.cornerRadius = 16
+        layer.cornerRadius = 14
         layer.masksToBounds = true
 
         titleLabel.translatesAutoresizingMaskIntoConstraints = false
