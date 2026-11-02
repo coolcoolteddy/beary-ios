@@ -192,7 +192,7 @@ final class BearyInviteViewController: UIViewController {
         codeLabel.font = UIFont.systemFont(ofSize: 20, weight: .bold)
         codeLabel.textColor = BearyColors.ink
         copyButton.translatesAutoresizingMaskIntoConstraints = false
-        copyButton.layer.cornerRadius = 22
+        copyButton.layer.cornerRadius = 12
         // C4：复制钮改用 surface 底，与码框 faint 底拉开对比（深色下不再融为一体）。
         copyButton.backgroundColor = BearyColors.surface
         copyButton.setTitle("复制", for: .normal)
@@ -235,7 +235,7 @@ final class BearyInviteViewController: UIViewController {
         bindRow.isHidden = true
         let bindContainer = makeFieldContainer(field: bindField)
         bindButton.translatesAutoresizingMaskIntoConstraints = false
-        bindButton.layer.cornerRadius = 24
+        bindButton.layer.cornerRadius = 12
         bindButton.backgroundColor = BearyColors.ink
         bindButton.setTitle("绑定", for: .normal)
         bindButton.setTitleColor(BearyColors.bg, for: .normal)
