@@ -287,6 +287,8 @@ final class SessionManager {
         URLCache.shared.removeAllCachedResponses()
         guard let id = currentUser?.id else { return }
         BearyImageLoader.shared.purgeAccount(id)
+        // 审计-性能：实况磁盘桶与图片桶同口径，退出/401 时一并清掉。
+        BearyLivePhotoLoader.shared.purgeAccount(id)
     }
 
     /// 秒开-本地持久化：退出 / 401 清态时清掉该账号的全部日记快照，
@@ -302,6 +304,8 @@ final class SessionManager {
         guard let id = currentUser?.id else { return }
         BearyFeedCache.purge(bucket: "\(id)")
         BearyTimelineCache.purge(bucket: "\(id)")
+        // 审计-性能：通知页分键缓存同样在退出/401 时清掉该账号槽位。
+        BearyNotificationsViewController.purgeAccount(id)
         BearyEntrySyncStore.purgeAccount(accountId: id)
         BearyTrashSyncStore.purgeAccount(accountId: id)
         BearyFeedCache.forgetUserId()

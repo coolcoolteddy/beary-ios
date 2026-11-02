@@ -752,7 +752,7 @@ final class BearyDraftBoxViewController: UIViewController {
                         self?.renderDrafts()
                     }
                 } else {
-                    self.showDraftToast(message: "清除失败，请再试一次")
+                    self.showDraftToast(message: "清除失败，请重试")
                 }
             }
         })
@@ -1610,7 +1610,7 @@ final class BearyDraftBoxViewController: UIViewController {
                     strongSelf.drafts.insert(draftValue, at: min(restoreIndex, strongSelf.drafts.count))
                 }
                 strongSelf.renderDrafts()
-                strongSelf.showDraftToast(message: "删除失败，请再试一次")
+                strongSelf.showDraftToast(message: "删除失败，请重试")
                 return
             }
             if let currentIndex = strongSelf.drafts.firstIndex(where: { $0.draftId == draftValue.draftId }) {
@@ -1673,7 +1673,7 @@ final class BearyDraftBoxViewController: UIViewController {
             } else {
                 strongSelf.loadDrafts {
                     strongSelf.renderDrafts()
-                    strongSelf.showDraftToast(message: "恢复失败，请再试一次")
+                    strongSelf.showDraftToast(message: "恢复失败，请重试")
                 }
             }
         }

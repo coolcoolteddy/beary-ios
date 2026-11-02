@@ -31,9 +31,10 @@ import UIKit
 // MARK: - 星图夜景样式 Token（视觉清单第 11 项）
 //
 // 星空页固定深色夜空，不随系统深浅 / 全局主题变色：以下全部为固定值
-// （非 UIColor { trait } 动态色），数值与改动前散落在各处的字面量一字不差，
-// 本支只做集中命名，不换任何色值。选中橙 #FFB333（代码值 1 / 0.70 / 0.20）
-// 本次只 Token 化、不换色（等 Li 真机定色后再另议）。
+// （非 UIColor { trait } 动态色）。
+// [24] 小项 7：星图颜色换成 #FFB333（255 / 179 / 51）：星体本色与选中色
+// 同为该值；旧星体色 1 / 0.85 / 0.54（偏浅黄）已改，选中色原 1 / 0.70 / 0.20
+// 只是 #FFB333 的近似值，现改写为精确值；星图结构与亮度/大小逻辑一字不动。
 // 刻意未收进来的：底卡可见性行与详情钮仍走 BearyColors.orange / blue
 //（全局品牌与语义色，非夜景固定色），不在本 Token 口径内。
 enum BearyStarMapNight {
@@ -43,9 +44,9 @@ enum BearyStarMapNight {
     static let secondaryText = UIColor(white: 0.72, alpha: 1)
     static let dateText = UIColor(white: 0.65, alpha: 1)
     static let selectedText = UIColor(white: 0.1, alpha: 1)
-    /// 选中橙 #FFB333（代码原值 1 / 0.70 / 0.20，原样保留，未按 179/255 微调）。
-    static let selected = UIColor(red: 1, green: 0.70, blue: 0.20, alpha: 1)
-    static let star = UIColor(red: 1, green: 0.85, blue: 0.54, alpha: 1)
+    /// [24] 小项 7：星图色精确值 #FFB333（255 / 179 / 51）。
+    static let selected = UIColor(red: 255 / 255.0, green: 179 / 255.0, blue: 51 / 255.0, alpha: 1)
+    static let star = UIColor(red: 255 / 255.0, green: 179 / 255.0, blue: 51 / 255.0, alpha: 1)
     static let edge = UIColor(red: 0.36, green: 0.48, blue: 0.71, alpha: 0.65)
     static let dust = UIColor(white: 0.25, alpha: 0.5)
     static let sheetBackground = UIColor(white: 1, alpha: 0.08)
@@ -190,7 +191,7 @@ final class BearyDiaryStarMapViewController: UIViewController {
     }
 
     @objc private func didTapClose() {
-        dismiss(animated: true)
+        dismiss(animated: BearyMotion.animated(true))
     }
 
     @objc private func didTapRetry() {
@@ -681,7 +682,7 @@ final class BearyDiaryStarMapViewController: UIViewController {
     }
 
     private func showDefaultSheet() {
-        rebuildSheet(title: "点一颗星查看详情，点一条线查看连线原因", rows: [])
+        rebuildSheet(title: "点星进详情，点线看原因", rows: [])
     }
 
     private func sheetTitleLabel(_ text: String) -> UILabel {
@@ -771,7 +772,7 @@ final class BearyDiaryStarMapViewController: UIViewController {
         let detailButton = UIButton(type: .custom)
         detailButton.setTitle("查看详情", for: .normal)
         detailButton.titleLabel?.font = UIFont.boldSystemFont(ofSize: 15)
-        detailButton.setTitleColor(BearyStarMapNight.primaryText, for: .normal)
+        detailButton.setTitleColor(BearyColors.onBrand, for: .normal)
         detailButton.backgroundColor = BearyColors.orange
         detailButton.layer.cornerRadius = 12
         detailButton.contentEdgeInsets = UIEdgeInsets(top: 10, left: 16, bottom: 10, right: 16)

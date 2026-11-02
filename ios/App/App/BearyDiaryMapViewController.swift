@@ -71,7 +71,7 @@ final class BearyDiaryMapViewController: UIViewController, MKMapViewDelegate, UI
         statusLabel.font = UIFont.systemFont(ofSize: 13)
         statusLabel.textColor = BearyColors.gray
         statusLabel.numberOfLines = 0
-        statusLabel.text = "正在加载日记…"
+        statusLabel.text = "加载中…"
         view.addSubview(statusLabel)
 
         tableView.translatesAutoresizingMaskIntoConstraints = false
@@ -160,7 +160,7 @@ final class BearyDiaryMapViewController: UIViewController, MKMapViewDelegate, UI
     }
 
     @objc private func didTapClose() {
-        dismiss(animated: true)
+        dismiss(animated: BearyMotion.animated(true))
     }
 
     /// 116 数据填入动效：状态文案变化时只淡入该 label 本身（alpha
@@ -196,7 +196,7 @@ final class BearyDiaryMapViewController: UIViewController, MKMapViewDelegate, UI
 
     @objc private func didTapRetry() {
         failureView.isHidden = true
-        setStatusTextFaded("正在加载日记…")
+        setStatusTextFaded("加载中…")
         fetchAllEntries()
     }
 
@@ -395,6 +395,9 @@ final class BearyDiaryMapViewController: UIViewController, MKMapViewDelegate, UI
         marker.annotation = annotation
         marker.canShowCallout = true
         marker.markerTintColor = BearyColors.orange
+        // 22a：大头针字形（篇数）由 MapKit 绘制、默认白色，落在橙色针体上；
+        // 字形色是 App 可控属性，随橙底前景口径改 onBrand 恒墨色。
+        marker.glyphTintColor = BearyColors.onBrand
         if let title = annotation.title ?? nil,
            let group = groups.first(where: { $0.key == title }) {
             marker.glyphText = "\(group.count)"
