@@ -18,6 +18,13 @@ import UIKit
 //   定义与 target 注册不在本文件动，另有专线处理）。
 // - 后端未上线前：本地存储即事实来源；后端上线后见 BearyAPI 的
 //   past-self 端点（创建先落本地、后台再同步，失败静默留本地待下次同步）。
+// - 存储取舍（审计登录杂项，2026-11-02）：留话全文现以 JSON 明文存 UserDefaults
+//   （beary.pastSelf.v1.<userId>），未迁 Keychain / 未加密，原因：Keychain 迁移
+//   须同时改写存量 200 条行的编解码、mergeServerRows 与 replaceLocalRow 的
+//   双向同步、以及钥匙串单条容量与同步失败回落，风险面大于单次审计小修；
+//   App 沙盒本身已隔离（他 App 读不到本沙盒文件），且留话仅作者本人可见、
+//   服务端同步后以服务端为准。若后续要做，应走“新行写 Keychain、存量行惰性
+//   迁移”的独立方案，不在本支顺手改。
 
 // MARK: - 对话记录模型（后端字段口径，见 PR 描述）
 
@@ -200,8 +207,22 @@ enum PastSelfVisibility {
 final class PastSelfStore {
     private let defaults: UserDefaults
     private let userId: Int
-    /// 单用户留话上限（防无界增长；超限时先丢最旧的已撤回行，再丢最旧的已送达行）。
+    /// 单用户留话上限（防无界增长）。
+    /// 审计登录杂项丢弃顺序：已撤回 → 已送达 → 绝不丢等待中（等待中的留话是
+    /// 未来的送达，丢了即静默丢未来留话）；若只剩等待中行仍超限，save 不再
+    /// 硬砍等待中行（宁可暂时超 cap），新增由 add 的超限拒绝挡下。
     static let maxStoredMessages = 200
+
+    /// 新增留话被拒的原因（调用方据此给行内提示，见 ProfileVC 两处提交）。
+    enum AddRejection {
+        /// 该链已有等待中的留话（一链同一时间只留一句）。
+        case alreadyWaiting
+        /// 存储已满且只剩等待中行（无已撤回 / 已送达行可丢）。
+        case waitingCapped
+    }
+
+    /// 最近一次 add 返回 nil 的原因（成功时为 nil）。
+    private(set) var lastRejection: AddRejection?
 
     init(userId: Int, defaults: UserDefaults = .standard) {
         self.userId = userId
@@ -216,17 +237,28 @@ final class PastSelfStore {
         return decoded
     }
 
+    /// 存储已满且无可丢行（只剩等待中）时为 true，新增应拒绝并行内提示。
+    var isWaitingCapped: Bool {
+        let all = loadAll()
+        guard all.count >= Self.maxStoredMessages else { return false }
+        let today = PastSelfLogic.localDateString(from: Date(), calendar: .current)
+        return !all.contains { $0.revokedAtMs != nil || PastSelfLogic.isDue(deliverOn: $0.deliverOn, today: today) }
+    }
+
     private func save(_ messages: [PastSelfMessage]) {
         var capped = messages
         if capped.count > Self.maxStoredMessages {
+            let today = PastSelfLogic.localDateString(from: Date(), calendar: .current)
             let overflow = capped.count - Self.maxStoredMessages
+            // 先丢最旧的已撤回行，再丢最旧的已送达行；等待中行绝不丢——
+            // 若两类可丢行不够填 overflow，剩余超限部分原样保留（不砍等待中）。
             let revoked = capped.indices.filter { capped[$0].revokedAtMs != nil }.sorted {
                 capped[$0].createdAtMs < capped[$1].createdAtMs
             }
             var drop = Set<Int>()
             for index in revoked.prefix(overflow) { drop.insert(index) }
             if drop.count < overflow {
-                let delivered = capped.indices.filter { !drop.contains($0) }.sorted {
+                let delivered = capped.indices.filter { !drop.contains($0) && capped[$0].revokedAtMs == nil && PastSelfLogic.isDue(deliverOn: capped[$0].deliverOn, today: today) }.sorted {
                     capped[$0].createdAtMs < capped[$1].createdAtMs
                 }
                 for index in delivered.prefix(overflow - drop.count) { drop.insert(index) }
@@ -240,12 +272,21 @@ final class PastSelfStore {
     /// 新增留话。nil = 拒绝：正文空 / 超 500 字 / 原篇 id 空 / 该链已有等待中的留话
     /// （一链同一时间只留一句，防同一天堆出两条同日送达）。
     func add(originEntryId: String, body: String, createdAtMs: Int, calendar: Calendar) -> PastSelfMessage? {
+        lastRejection = nil
         let text = body.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !originEntryId.isEmpty, !text.isEmpty, text.count <= PastSelfLogic.maxBodyLength else { return nil }
         guard let deliverOn = PastSelfLogic.nextYearDateString(fromMs: createdAtMs, calendar: calendar) else { return nil }
         var all = loadAll()
         let today = PastSelfLogic.localDateString(fromMs: createdAtMs, calendar: calendar)
-        if PastSelfLogic.waitingMessage(all, chainId: originEntryId, today: today) != nil { return nil }
+        if PastSelfLogic.waitingMessage(all, chainId: originEntryId, today: today) != nil {
+            lastRejection = .alreadyWaiting
+            return nil
+        }
+        // 审计登录杂项：等待中超限时拒绝新留话（行内提示由调用方按 lastRejection 给）。
+        if isWaitingCapped {
+            lastRejection = .waitingCapped
+            return nil
+        }
         let previous = PastSelfLogic.liveChainMessages(all, chainId: originEntryId).last
         let message = PastSelfMessage(
             id: "ps_" + UUID().uuidString.lowercased(),
@@ -268,7 +309,8 @@ final class PastSelfStore {
     /// 要改写只能「再回一句」往后接）。成功返回 true。
     func revoke(messageId: String, nowMs: Int, today: String) -> Bool {
         var all = loadAll()
-        guard let index = all.firstIndex(where: { $0.id == messageId && $0.revokedAtMs == nil }) else { return false }
+        // 审计登录杂项：补 authorId == userId 校验（防御性缺口：越界混入的行不得撤回他人留话）。
+        guard let index = all.firstIndex(where: { $0.id == messageId && $0.authorId == userId && $0.revokedAtMs == nil }) else { return false }
         let message = all[index]
         guard PastSelfLogic.liveChainMessages(all, chainId: message.chainId).last?.id == messageId else { return false }
         guard !PastSelfLogic.isDue(deliverOn: message.deliverOn, today: today) else { return false }
@@ -284,7 +326,8 @@ final class PastSelfStore {
         var all = loadAll()
         var byId: [String: PastSelfMessage] = [:]
         for row in all { byId[row.id] = row }
-        for var row in server {
+        // 审计登录杂项：过滤他人行（服务端混入的非本人 authorId 行不进本用户存储）。
+        for var row in server where row.authorId == userId {
             row.localOnly = false
             if let local = byId[row.id], local.revokedAtMs != nil, row.revokedAtMs == nil {
                 row.revokedAtMs = local.revokedAtMs
@@ -333,6 +376,9 @@ final class PastSelfIconView: UIView {
             let drawn = renderer.image { _ in base.draw(in: CGRect(origin: .zero, size: size)) }
             let imageView = UIImageView(image: drawn.withRenderingMode(.alwaysTemplate))
             imageView.translatesAutoresizingMaskIntoConstraints = false
+            // 审计登录杂项：模板图 tint 显式定死为 ink，不再依赖父视图 tint 链
+            //（此前未显式设 tint，实际颜色随父视图 tint 走，未证实即为隐患）。
+            imageView.tintColor = BearyColors.ink
             imageView.contentMode = .scaleAspectFit
             addSubview(imageView)
             NSLayoutConstraint.activate([
@@ -401,6 +447,8 @@ final class PastSelfComposeView: UIView, UITextViewDelegate {
         textView.textContainerInset = UIEdgeInsets(top: 10, left: 10, bottom: 10, right: 10)
         textView.delegate = self
         textView.isScrollEnabled = false
+        // 审计登录杂项：输入框补最大高度 240（触顶后滚动，见 updateScrollState），
+        // 不再随 500 字无限撑高、把调用方容器顶穿。
         addSubview(textView)
         placeholderLabel.translatesAutoresizingMaskIntoConstraints = false
         placeholderLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 15))
@@ -416,6 +464,7 @@ final class PastSelfComposeView: UIView, UITextViewDelegate {
             textView.trailingAnchor.constraint(equalTo: trailingAnchor),
             textView.bottomAnchor.constraint(equalTo: bottomAnchor),
             textView.heightAnchor.constraint(greaterThanOrEqualToConstant: 88),
+            textView.heightAnchor.constraint(lessThanOrEqualToConstant: 240),
             placeholderLabel.topAnchor.constraint(equalTo: textView.topAnchor, constant: 10),
             placeholderLabel.leadingAnchor.constraint(equalTo: textView.leadingAnchor, constant: 14),
             placeholderLabel.trailingAnchor.constraint(equalTo: textView.trailingAnchor, constant: -14),
@@ -428,6 +477,16 @@ final class PastSelfComposeView: UIView, UITextViewDelegate {
 
     func textViewDidChange(_ textView: UITextView) {
         placeholderLabel.isHidden = !(textView.text ?? "").isEmpty
+        updateScrollState()
         onTextChange?(textView.text ?? "")
+    }
+
+    /// 触顶滚动：内容超过 240 上限时开滚动（此前 isScrollEnabled 恒 false，
+    /// 超高时高度只取决于调用方容器是否兜底）；回落到上限内时关滚动。
+    private func updateScrollState() {
+        let shouldScroll = textView.contentSize.height > 240
+        if textView.isScrollEnabled != shouldScroll {
+            textView.isScrollEnabled = shouldScroll
+        }
     }
 }

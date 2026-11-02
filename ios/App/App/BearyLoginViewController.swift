@@ -5,7 +5,10 @@ import UIKit
 // 容器接线（总协调收尾）：由 SceneDelegate 的 presentLogin present 本页，
 // 本页只通过回调交回结果，不自己 dismiss（容器拥有 presentation，负责关闭）：
 //   - onLoggedIn：验码成功（服务端 {ok: true}，会话 cookie 已由 URLSession.shared 存入
-//     共享存储）；容器随后调 SessionManager.refreshMe 刷新登录态。
+//     共享存储）；容器随后调 SessionManager.refreshMe 刷新登录态。回调携带邀请绑定
+//     文案（String?，未填邀请码时为 nil）：容器在 dismiss + refreshMe 后用 BearyToast
+//     呈现一次（日期补全见 BearyReferralFeedback.toastText）；登录页内不再指望行内
+//     文案被读到（审计 2026-11-02 登录杂项）。
 //   - onCancelled：用户点关闭钮；容器负责 dismiss。
 //   - onGuestMode：用户点“先逛逛（游客模式）”；容器负责 dismiss 并进入游客态。
 // 页面元素（对照网页版登录框 beary.html 的 lgm 系列）：邮箱输入 + 获取验证码 +
@@ -30,7 +33,8 @@ import UIKit
 
 final class BearyLoginViewController: UIViewController {
     /// 登录成功（验码 {ok: true}）。容器随后刷新登录态并关闭本页。
-    var onLoggedIn: (() -> Void)?
+    /// 参数：邀请绑定文案（未填邀请码时为 nil），容器进 App 后 toast 一次。
+    var onLoggedIn: ((String?) -> Void)?
     /// 用户关闭。本页不自己 dismiss，容器负责关闭。
     var onCancelled: (() -> Void)?
     /// 用户点“先逛逛（游客模式）”。本页不自己 dismiss，容器负责关闭并进入游客态。
@@ -55,6 +59,9 @@ final class BearyLoginViewController: UIViewController {
     /// 协议文案用 UITextView 承载可点链接（UILabel 接不住链接点按）；点按走 App 内原生法律页。
     private let agreeLabel = UITextView()
     private let agreeRow = UIView()
+    private var emailInputContainer: BearyInputContainer?
+    private var codeInputContainer: BearyInputContainer?
+    private var inviteInputContainer: BearyInputContainer?
     /// M14：登录进行态的圈转指示（与“处理中…”文案并用，不再只有 alpha 变化）。
     private let loginSpinner = BearyRefreshIconView()
     /// U2：numberPad 没有 Return 键，配完成 accessory 收键盘。
@@ -78,7 +85,11 @@ final class BearyLoginViewController: UIViewController {
     private var countdownRemaining: Int?
     private var currentLoginTitle: String?
     private var countdownTimer: Timer?
-    private var currentTask: URLSessionDataTask?
+    /// 审计登录杂项：验证码墙钟截止点（startCountdown 时记死，计时器每次按墙钟重算）。
+    private var countdownDeadline: Date?
+    /// 审计登录杂项：发码 / 验码各走自己的任务，互不覆盖，关闭时各自取消。
+    private var sendCodeTask: URLSessionDataTask?
+    private var verifyTask: URLSessionDataTask?
 
     init() {
         super.init(nibName: nil, bundle: nil)
@@ -92,7 +103,8 @@ final class BearyLoginViewController: UIViewController {
     deinit {
         NotificationCenter.default.removeObserver(self)
         countdownTimer?.invalidate()
-        currentTask?.cancel()
+        sendCodeTask?.cancel()
+        verifyTask?.cancel()
     }
 
     override func viewDidLoad() {
@@ -100,6 +112,7 @@ final class BearyLoginViewController: UIViewController {
         view.backgroundColor = BearyColors.bg
         buildLayout()
         NotificationCenter.default.addObserver(self, selector: #selector(keyboardWillShow(_:)), name: UIResponder.keyboardWillShowNotification, object: nil)
+        NotificationCenter.default.addObserver(self, selector: #selector(keyboardWillShow(_:)), name: UIResponder.keyboardWillChangeFrameNotification, object: nil)
         NotificationCenter.default.addObserver(self, selector: #selector(keyboardWillHide(_:)), name: UIResponder.keyboardWillHideNotification, object: nil)
         updateButtonStates()
     }
@@ -240,12 +253,15 @@ final class BearyLoginViewController: UIViewController {
         guestNoteLabel.numberOfLines = 0
 
         let emailContainer = makeFieldContainer(field: emailField)
+        emailInputContainer = emailContainer
         let codeContainer = makeFieldContainer(field: codeField)
+        codeInputContainer = codeContainer
         let codeRow = UIView()
         codeRow.translatesAutoresizingMaskIntoConstraints = false
         codeRow.addSubview(codeContainer)
         codeRow.addSubview(sendButton)
         let inviteContainer = makeFieldContainer(field: inviteField)
+        inviteInputContainer = inviteContainer
 
         let emailLabel = makeFieldLabel(text: "邮箱")
         let codeLabel = makeFieldLabel(text: "验证码")
@@ -361,7 +377,7 @@ final class BearyLoginViewController: UIViewController {
     /// makeFieldContainer 逐字重复；faint 底 / 圆角 12 / 左右 14 / 48 高
     /// 均与原值一致，新增常态 line 边框与聚焦蓝边——字段字体 / 占位 /
     /// 键盘 / delegate / target 与校验逻辑均不动）。
-    private func makeFieldContainer(field: UITextField) -> UIView {
+    private func makeFieldContainer(field: UITextField) -> BearyInputContainer {
         return BearyInputContainer(content: field, fixedHeight: 48)
     }
 
@@ -443,6 +459,10 @@ final class BearyLoginViewController: UIViewController {
         agreeLabel.translatesAutoresizingMaskIntoConstraints = false
         agreeLabel.isEditable = false
         agreeLabel.isScrollEnabled = false
+        // 审计登录杂项：协议行已有 agreeButton 的无障碍 label 同文案，agreeLabel
+        // 本身不再作为无障碍元素（VoiceOver 不读两遍），且不可选中 / 复制。
+        agreeLabel.isAccessibilityElement = false
+        agreeLabel.isSelectable = false
         agreeLabel.backgroundColor = UIColor.clear
         agreeLabel.textContainerInset = UIEdgeInsets.zero
         agreeLabel.textContainer.lineFragmentPadding = 0
@@ -532,16 +552,22 @@ final class BearyLoginViewController: UIViewController {
         return ["w": Int(bounds.width), "h": Int(bounds.height), "d": Double(UIScreen.main.scale)]
     }
 
-    /// N13：与网页 lgEmailOk 同款 /.+@.+\..+/（任意非空＋@＋任意非空＋.＋任意非空），
-    /// 不锚定、不禁空格、不设长度上限、不要求恰好一个 @；发码与登录拦截共用本实现。
-    /// 注意：服务端仍可能以更严口径拒收（如含空格/多 @），此时走服务端返回文案，不由本页前置拦截。
+    /// 审计登录杂项：锚定口径 ^[^@\s]+@[^@\s]+\.[^@\s]+$（恰好一个 @、两边
+    /// 非空无空格、点后非空）；含空格 / 多 @ 在前置校验即拦截，不再等服务端打回。
+    /// 发码与登录拦截共用本实现。
     private func isEmailValid(_ email: String) -> Bool {
-        return email.range(of: ".+@.+\\..+", options: .regularExpression) != nil
+        return email.range(of: "^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$", options: .regularExpression) != nil
     }
 
     private func showMessage(_ text: String, ok: Bool = false) {
         messageLabel.text = text
         messageLabel.textColor = ok ? BearyColors.green : BearyColors.red
+        // 审计登录杂项：输入容器已实现 isError 红边，行内失败时同步点亮、
+        // 成功 / 清空时复位（此前只写行内红字，从未设置 isError）。
+        let failed = !text.isEmpty && !ok
+        emailInputContainer?.isError = failed
+        codeInputContainer?.isError = failed
+        inviteInputContainer?.isError = failed
     }
 
     private func setLoginTitle(_ text: String) {
@@ -591,27 +617,30 @@ final class BearyLoginViewController: UIViewController {
     }
 
     private func startCountdown() {
+        // 审计登录杂项：墙钟口径——记死截止点，每次按墙钟重算剩余秒（切后台
+        // 回来不再沿用切后台前的值）；计时器加 .common mode，手指拖动滚动容器时不暂停。
+        countdownDeadline = Date().addingTimeInterval(30)
         countdownRemaining = 30
         updateButtonStates()
         countdownTimer?.invalidate()
-        countdownTimer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] timer in
-            guard let strongSelf = self else {
+        let timer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] timer in
+            guard let strongSelf = self, let deadline = strongSelf.countdownDeadline else {
                 timer.invalidate()
                 return
             }
-            guard let remaining = strongSelf.countdownRemaining else {
-                timer.invalidate()
-                return
-            }
-            if remaining <= 1 {
+            let remaining = max(0, Int(ceil(deadline.timeIntervalSinceNow)))
+            if remaining <= 0 {
                 strongSelf.countdownRemaining = nil
+                strongSelf.countdownDeadline = nil
                 timer.invalidate()
                 strongSelf.countdownTimer = nil
             } else {
-                strongSelf.countdownRemaining = remaining - 1
+                strongSelf.countdownRemaining = remaining
             }
             strongSelf.updateButtonStates()
         }
+        RunLoop.main.add(timer, forMode: .common)
+        countdownTimer = timer
     }
 
     // MARK: - 动作
@@ -623,13 +652,20 @@ final class BearyLoginViewController: UIViewController {
     @objc private func closeTapped() {
         countdownTimer?.invalidate()
         countdownTimer = nil
-        currentTask?.cancel()
-        currentTask = nil
+        countdownDeadline = nil
+        sendCodeTask?.cancel()
+        sendCodeTask = nil
+        verifyTask?.cancel()
+        verifyTask = nil
         onCancelled?()
     }
 
     /// 游客次钮：只交回 onGuestMode，不 dismiss、不做任何登录逻辑（容器负责关闭与进游客态）。
     @objc private func guestTapped() {
+        // 审计登录杂项：与 closeTapped 同款先停倒计时（此前只依赖容器释放触发 deinit 停表）。
+        countdownTimer?.invalidate()
+        countdownTimer = nil
+        countdownDeadline = nil
         onGuestMode?()
     }
 
@@ -642,10 +678,10 @@ final class BearyLoginViewController: UIViewController {
         showMessage("")
         isSendingCode = true
         updateButtonStates()
-        currentTask = BearyAPI.shared.sendCode(email: email) { [weak self] result in
+        sendCodeTask = BearyAPI.shared.sendCode(email: email) { [weak self] result in
             DispatchQueue.main.async {
                 guard let strongSelf = self else { return }
-                strongSelf.currentTask = nil
+                strongSelf.sendCodeTask = nil
                 strongSelf.isSendingCode = false
                 switch result {
                 case .success:
@@ -691,7 +727,7 @@ final class BearyLoginViewController: UIViewController {
     }
 
     private func verify(email: String, code: String, confirmCancel: Bool) {
-        currentTask = BearyAPI.shared.verify(
+        verifyTask = BearyAPI.shared.verify(
             email: email,
             code: code,
             inviteCode: normalizedInviteCode(),
@@ -700,7 +736,7 @@ final class BearyLoginViewController: UIViewController {
         ) { [weak self] result in
             DispatchQueue.main.async {
                 guard let strongSelf = self else { return }
-                strongSelf.currentTask = nil
+                strongSelf.verifyTask = nil
                 strongSelf.isVerifying = false
                 strongSelf.updateButtonStates()
                 switch result {
@@ -716,7 +752,7 @@ final class BearyLoginViewController: UIViewController {
                         // 验证组④：登录成功即注销已取消（冷静期登录即取消），清掉注销时持久化的 delete_at。
                         UserDefaults.standard.removeObject(forKey: "bearyPendingDeleteAt")
                         // 会话 cookie 已由共享 URLSession 存好；容器随后刷新登录态。
-                        // 审计 P1-25：先按 referral 绑定结果给一句反馈再 dismiss。
+                        // 审计登录杂项：绑定文案经回调带给容器，进 App 后 toast 一次。
                         strongSelf.handleLoginReferralFeedback(resp: resp)
                         BearySoundPlayer.play(.loginChime)
                     } else {
@@ -735,51 +771,33 @@ final class BearyLoginViewController: UIViewController {
         }
     }
 
-    /// 审计 P1-25：验码成功分支的邀请绑定反馈。未填码时立即 dismiss；
-    /// 填了码时仍先行内提示绑定结果（文案口径不变），但扫 bug 定版第 1 项
-    /// 删去 1.2 秒等待：不再等用户读完反馈，立即调 onLoggedIn 进 App。
-    /// 注意：登录页随即 dismiss，行内反馈文案实际不再可读；如需让用户在
-    /// 进 App 后仍看到绑定结果，须另做进 App 后的提示（本项不做）。
+    /// 审计登录杂项（高）：验码成功分支的邀请绑定反馈，落点改为进 App 后
+    /// BearyToast 一次——文案经 onLoggedIn 回调带给容器，容器在 dismiss +
+    /// refreshMe 后呈现（Plus 到期日补全见 BearyReferralFeedback.toastText，
+    /// 读容器 refreshMe 后的 currentUser.plusUntil）。登录页内不再写行内文案
+    /// （随 dismiss 消失、不可读），页面 dismiss 后不再发 fetchMe 请求。
     /// granted → 到账文案；flagged → 待审核文案；其余（失败态 / 无 referral 回包）
-    /// 均显式提示“邀请码未绑定成功”，且不影响登录本身。
+    /// 均显式提示“邀请码未绑定成功”，且不影响登录本身；绑定规则与文案不动。
     private func handleLoginReferralFeedback(resp: VerifyResponse) {
         let inviteCode = normalizedInviteCode()
         guard !inviteCode.isEmpty else {
-            onLoggedIn?()
+            onLoggedIn?(nil)
             return
         }
         let status = resp.referral?.status ?? ""
+        let text: String
         if resp.referral?.ok == true || status == "granted" {
-            let grantedText = "邀请码绑定成功，30 天 Plus 已到账"
-            showMessage(grantedText, ok: true)
-            // 补缺 P3-33：登录成功文案补 Plus 到期日（邀请页 granted 同款口径；/me 失败时只留基础文案）。
-            BearyAPI.shared.fetchMe { [weak self] result in
-                DispatchQueue.main.async {
-                    guard let strongSelf = self, strongSelf.messageLabel.text == grantedText else { return }
-                    guard case .success(let user) = result, let until = user?.plusUntil, until > 0 else { return }
-                    if until >= 4102444800000 {
-                        strongSelf.messageLabel.text = grantedText + "，Plus 永久有效"
-                    } else {
-                        let formatter = DateFormatter()
-                        formatter.locale = Locale(identifier: "zh_CN")
-                        formatter.dateFormat = "yyyy/M/d"
-                        strongSelf.messageLabel.text = grantedText + "，Plus 至 " + formatter.string(from: Date(timeIntervalSince1970: TimeInterval(until) / 1000.0))
-                    }
-                }
-            }
+            text = "邀请码绑定成功，30 天 Plus 已到账"
         } else if status == "flagged" {
-            showMessage("邀请码已提交，站长审核通过后各得 30 天 Plus", ok: true)
+            text = "邀请码已提交，站长审核通过后各得 30 天 Plus"
         } else {
-            var text = "邀请码未绑定成功"
-            if let err = resp.referral?.error, !err.isEmpty, err != text {
-                text += "：\(err)"
+            var failure = "邀请码未绑定成功"
+            if let err = resp.referral?.error, !err.isEmpty, err != failure {
+                failure += "：\(err)"
             }
-            showMessage(text)
+            text = failure
         }
-        // 扫 bug 定版第 1 项：去掉 1.2 秒等待，登录成功立刻进 App
-        //（onLoggedIn 由容器接管 dismiss + refreshMe）；行内反馈文案
-        // 已按原口径写好，但随登录页 dismiss 而不再可读（见函数头注释）。
-        onLoggedIn?()
+        onLoggedIn?(text)
     }
 
     /// 注销冷静期确认：文案与网页端 lgDelCfm 同款（“暂不登录 / 继续登录”）。
@@ -825,11 +843,20 @@ final class BearyLoginViewController: UIViewController {
 
     // MARK: - 键盘
 
+    /// 审计登录杂项：照搬邀请页 inviteKeyboardWillShow 写法——键盘帧转视图
+    /// 坐标后算与滚动区（底锚安全区底）的实际遮挡，跟随系统时长与曲线；
+    /// 浮动 / 分屏键盘不再按全高垫 inset；keyboardWillChangeFrame 同走本处理。
     @objc private func keyboardWillShow(_ notification: Notification) {
-        guard let frame = notification.userInfo?[UIResponder.keyboardFrameEndUserInfoKey] as? CGRect else { return }
-        let inset = max(0, frame.height - view.safeAreaInsets.bottom)
-        scrollView.contentInset.bottom = inset
-        scrollView.verticalScrollIndicatorInsets.bottom = inset
+        guard let value = notification.userInfo?[UIResponder.keyboardFrameEndUserInfoKey] as? NSValue else { return }
+        let frameInView = view.convert(value.cgRectValue, from: nil)
+        let scrollBottom = view.bounds.maxY - view.safeAreaInsets.bottom
+        let bottom = max(0, scrollBottom - frameInView.minY)
+        let duration = (notification.userInfo?[UIResponder.keyboardAnimationDurationUserInfoKey] as? Double) ?? 0.25
+        let curveRaw = (notification.userInfo?[UIResponder.keyboardAnimationCurveUserInfoKey] as? NSNumber)?.uintValue ?? 0
+        UIView.animate(withDuration: duration, delay: 0, options: [.beginFromCurrentState, UIView.AnimationOptions(rawValue: curveRaw << 16)], animations: {
+            self.scrollView.contentInset.bottom = bottom
+            self.scrollView.verticalScrollIndicatorInsets.bottom = bottom
+        })
     }
 
     @objc private func keyboardWillHide(_ notification: Notification) {
@@ -850,8 +877,17 @@ extension BearyLoginViewController: UITextFieldDelegate {
         guard let swiftRange = Range(range, in: current) else { return false }
         let next = current.replacingCharacters(in: swiftRange, with: string)
         if textField === inviteField {
-            if next.count <= 8 { return true }
-            textField.text = String(next.prefix(8))
+            // 审计登录杂项：delegate 只留 A-Z0-9（并大写）且截断 8 位，输满 8 位
+            // 含 - / 空格时不再呈可点态、点按才拦截；组字中不截断。
+            let filtered = string.uppercased().filter { ($0 >= "A" && $0 <= "Z") || ($0 >= "0" && $0 <= "9") }
+            let filteredNext = current.replacingCharacters(in: swiftRange, with: filtered)
+            if filteredNext.count <= 8 {
+                if filtered == string { return true }
+                textField.text = filteredNext
+                textChanged()
+                return false
+            }
+            textField.text = String(filteredNext.prefix(8))
             textChanged()
             return false
         }
@@ -899,5 +935,25 @@ extension BearyLoginViewController: UITextViewDelegate {
         vc.transitioningDelegate = SceneDelegate.chrome?.fadeRiseTransitionDelegate
         present(vc, animated: BearyMotion.animated(true))
         return false
+    }
+}
+
+// MARK: - 审计登录杂项：邀请绑定 toast 文案（含 Plus 到期日补全）
+
+/// 容器在登录页 dismiss + refreshMe 后调本方法，把登录页回调带回的基础文案
+/// 补成最终 toast 文案：仅 granted 基础文案补到期日（邀请页 granted 同款口径，
+/// 永久阈值 4102444800000）；plusUntil 缺失 / 非 granted 时原样返回，不编造日期。
+enum BearyReferralFeedback {
+    static let grantedBaseText = "邀请码绑定成功，30 天 Plus 已到账"
+
+    static func toastText(base: String, plusUntil: Int?) -> String {
+        guard base == grantedBaseText, let until = plusUntil, until > 0 else { return base }
+        if until >= 4102444800000 {
+            return base + "，Plus 永久有效"
+        }
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "zh_CN")
+        formatter.dateFormat = "yyyy/M/d"
+        return base + "，Plus 至 " + formatter.string(from: Date(timeIntervalSince1970: TimeInterval(until) / 1000.0))
     }
 }

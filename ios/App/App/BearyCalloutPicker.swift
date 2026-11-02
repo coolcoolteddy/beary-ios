@@ -237,10 +237,15 @@ final class BearyCalloutPickerView: UIView, UIScrollViewDelegate {
     }
 
     /// 深浅切换时重取图（心情 _dark 资产）+ 重算底色与渐隐色。
+    /// 审计登录杂项：取图为 nil 的选项直接隐藏（此前仍是 48×48 空白可点格）；
+    /// 不自绘、不拿 SF Symbol 顶替；资产补齐后 refreshImages 会自动恢复显示。
+    /// 注：本选择器为纯图片选项、无文字 label，故“字号改 scaledFont”一项不适用。
     func refreshImages() {
         let dark = traitCollection.userInterfaceStyle == .dark
         for (key, button) in optionButtons {
-            button.setImage(imageProvider?(key, dark), for: .normal)
+            let image = imageProvider?(key, dark)
+            button.setImage(image, for: .normal)
+            button.isHidden = (image == nil)
         }
     }
 

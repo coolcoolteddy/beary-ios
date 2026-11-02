@@ -1432,14 +1432,22 @@ final class BearySettingsViewController: UIViewController {
             SessionManager.shared.cancelAccountAddSession()
             loginVC?.dismiss(animated: BearyMotion.animated(true))
         }
-        loginVC.onLoggedIn = { [weak self, weak loginVC] in
+        loginVC.onLoggedIn = { [weak self, weak loginVC] referralText in
             // 新号登录成功先解 arm（当前态即新号，不得再恢复原号），
             // 再 dismiss + refreshMe 立新态、快照新号。
             SessionManager.shared.completeAccountAddSession()
             loginVC?.dismiss(animated: BearyMotion.animated(true)) {
-                SessionManager.shared.refreshMe()
-                self?.loadAll()
-                self?.refreshAccountSwitchSection()
+                SessionManager.shared.refreshMe { [weak self] _ in
+                    DispatchQueue.main.async {
+                        guard let self = self else { return }
+                        self.loadAll()
+                        self.refreshAccountSwitchSection()
+                        // 审计登录杂项：邀请绑定反馈落点——进 App 后 BearyToast 一次。
+                        if let text = referralText, !text.isEmpty {
+                            BearyToast.show(in: self.view, message: BearyReferralFeedback.toastText(base: text, plusUntil: SessionManager.shared.currentUser?.plusUntil))
+                        }
+                    }
+                }
             }
         }
         presentSettingsPage(loginVC)
