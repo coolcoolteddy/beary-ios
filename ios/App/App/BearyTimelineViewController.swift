@@ -5979,8 +5979,9 @@ class BearyTimelineViewController: UIViewController {
             } else {
                 button.setTitleColor(BearyColors.blue, for: .normal)
             }
-            // 审计-时间线：空态按钮高度口径——描边重试钮 40、其余 44；数值差异是现行实现，按钮高度档位属样式 token，须对照表定版后才统一，本支只改注释、不改数值。
-            button.heightAnchor.constraint(equalToConstant: actionOutlined ? 40 : 44).isActive = true
+            // 样式规格第 4 表：空态描边重试钮 40→44，与“统一 44”口径一致；
+            // 仅改高约束，圆角 20、边框、内边距一律不动（圆角归第 1 组管）。
+            button.heightAnchor.constraint(equalToConstant: 44).isActive = true
             button.addTarget(self, action: #selector(didTapEmptyAction(_:)), for: .touchUpInside)
             button.bearyAddPressFeedback()
             button.accessibilityIdentifier = "timelineEmptyAction"

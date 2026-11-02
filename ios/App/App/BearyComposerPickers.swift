@@ -58,7 +58,8 @@ final class BearyRecipientPickerViewController: UIViewController, UITextFieldDel
     private let searchField = UITextField()
     /// A2：面板内通知开关（16 复选 + “通知对方”文案；iCity 起行隐藏，仅保留代码）。
     private let notifyRow = UIStackView()
-    private let notifyCheckButton = UIButton(type: .custom)
+    // 样式规格第 4 表：选人器通知复选框视觉 16×16、圆角 4 不动，热区扩到 44。
+    private let notifyCheckButton = BearyHit44Button(type: .custom)
     private let notifyLabel = UILabel()
     /// 搜索框配色（编辑器批）：原 A2 自定义动态底色/边框已删——96 包真机上搜索框
     /// 整棵子树不画（帧 44pt 证实存在、预测区像素纯白），改走全站已证实可见的
