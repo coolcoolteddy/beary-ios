@@ -368,6 +368,14 @@ class BearyProfileViewController: UIViewController {
         return false
     }
 
+    /// 审计-个人页设置：互关判定（主列表 / 照片区 / 脚部模块过滤共用）。
+    /// followState 未拉到时按非互关 fail-closed；状态翻转时 refreshFollowState
+    /// 负责重拉日记 tab，过滤不滞后于旧状态。
+    private var isMutualFriend: Bool {
+        if case .mutual = followState { return true }
+        return false
+    }
+
     private var currentEntries: [Entry] {
         switch currentTab {
         case .diary: return diaryEntries
@@ -389,11 +397,19 @@ class BearyProfileViewController: UIViewController {
     /// 单篇是否计入“最新 3 篇 / 照片区”：排除私密占位、纯心情未写字项
     /// （无正文、无标题、无图、无引用）；他人页只计公开篇（服务端已过滤，
     /// 这里再守一道，isPublic 缺失按非公开算）。
-    /// 好友第一期：仅好友篇对好友 viewer 可见——服务端 author scope 已按 viewer
-    /// 过滤，客户端只放行显式 friends 档（不凭 isPublic 推断，fail-closed）。
-    static func isProfileDiaryDisplayable(entry: Entry, isOwnProfile: Bool) -> Bool {
+    /// 审计-个人页设置（与脚部模块 visibleEntries 统一口径）：非作者视角下
+    /// 仅好友篇只在互关时放行（isMutualFriend 由调用方按实时 followState 传，
+    /// 未拉到状态时按非互关 fail-closed）；单向关注、陌生人一律排除。
+    /// 服务端 scope 口径仍需抓包核对，App 侧不依赖服务端单点过滤。
+    static func isProfileDiaryDisplayable(entry: Entry, isOwnProfile: Bool, isMutualFriend: Bool = false) -> Bool {
         if entry.placeholder == true { return false }
-        if isOwnProfile == false && entry.isPublic != true && !entry.isFriendsOnly { return false }
+        if isOwnProfile == false {
+            if entry.isFriendsOnly {
+                if !isMutualFriend { return false }
+            } else if entry.isPublic != true {
+                return false
+            }
+        }
         let textValue = (entry.content ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
         let titleValue = (entry.title ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
         let hasImages = (entry.images ?? []).contains(where: { !$0.isEmpty })
@@ -403,8 +419,8 @@ class BearyProfileViewController: UIViewController {
 
     /// 展示用日记：过滤后按创建时间倒序（createdAt 缺失按 0 计、排最后；
     /// 同毫秒保持服务端原顺序）。赞过/收藏 tab 不走这里，顺序一字不动。
-    static func sortedDisplayableDiaryEntries(from entries: [Entry], isOwnProfile: Bool) -> [Entry] {
-        let filtered = entries.filter { isProfileDiaryDisplayable(entry: $0, isOwnProfile: isOwnProfile) }
+    static func sortedDisplayableDiaryEntries(from entries: [Entry], isOwnProfile: Bool, isMutualFriend: Bool = false) -> [Entry] {
+        let filtered = entries.filter { isProfileDiaryDisplayable(entry: $0, isOwnProfile: isOwnProfile, isMutualFriend: isMutualFriend) }
         return filtered.enumerated().sorted(by: { left, right in
             let leftMs = left.element.createdAt ?? 0
             let rightMs = right.element.createdAt ?? 0
@@ -414,9 +430,9 @@ class BearyProfileViewController: UIViewController {
     }
 
     /// 照片项：按所属日记时间倒序，同日记多图按原顺序；无图日记跳过。
-    static func profilePhotoItems(from entries: [Entry], isOwnProfile: Bool) -> [BearyProfilePhotoItem] {
+    static func profilePhotoItems(from entries: [Entry], isOwnProfile: Bool, isMutualFriend: Bool = false) -> [BearyProfilePhotoItem] {
         var items: [BearyProfilePhotoItem] = []
-        for entryValue in sortedDisplayableDiaryEntries(from: entries, isOwnProfile: isOwnProfile) {
+        for entryValue in sortedDisplayableDiaryEntries(from: entries, isOwnProfile: isOwnProfile, isMutualFriend: isMutualFriend) {
             for imageKey in entryValue.images ?? [] {
                 if imageKey.isEmpty == false {
                     items.append(BearyProfilePhotoItem(entry: entryValue, imageKey: imageKey))
@@ -429,7 +445,7 @@ class BearyProfileViewController: UIViewController {
     /// 日记 tab 展示的日记（最新 3 篇）；赞过/收藏 tab 仍为原有全量模型。
     private var displayedEntries: [Entry] {
         if currentTab == .diary {
-            return Array(BearyProfileViewController.sortedDisplayableDiaryEntries(from: diaryEntries, isOwnProfile: isOwnProfile).prefix(3))
+            return Array(BearyProfileViewController.sortedDisplayableDiaryEntries(from: diaryEntries, isOwnProfile: isOwnProfile, isMutualFriend: isMutualFriend).prefix(3))
         }
         return currentEntries
     }
@@ -439,7 +455,7 @@ class BearyProfileViewController: UIViewController {
     /// 故他人页不显示该按钮——3 篇公开 + 照片区结构仍与本人页相同。
     private var diaryMoreButtonVisible: Bool {
         return currentTab == .diary && isOwnProfile
-            && !BearyProfileViewController.sortedDisplayableDiaryEntries(from: diaryEntries, isOwnProfile: isOwnProfile).isEmpty
+            && !BearyProfileViewController.sortedDisplayableDiaryEntries(from: diaryEntries, isOwnProfile: isOwnProfile, isMutualFriend: isMutualFriend).isEmpty
     }
 
     // MARK: - 113 照片墙独立分页
@@ -471,7 +487,7 @@ class BearyProfileViewController: UIViewController {
     }
 
     private var photoWallPhotosValue: [BearyProfilePhotoItem] {
-        return BearyProfileViewController.profilePhotoItems(from: photoWallSourceEntries, isOwnProfile: isOwnProfile)
+        return BearyProfileViewController.profilePhotoItems(from: photoWallSourceEntries, isOwnProfile: isOwnProfile, isMutualFriend: isMutualFriend)
     }
 
     private func syncPhotoWallBase() {
@@ -522,6 +538,8 @@ class BearyProfileViewController: UIViewController {
     /// 数据未变时复用旧视图，不重建、不重下图（防切 tab / 回填时墙闪一下）。
     private var cachedPhotosFooterView: UIView?
     private var cachedPhotosFooterSignature: String?
+    /// 审计-个人页设置：照片墙淡入去重——上次已淡入过的墙签名，签名不变不重播。
+    private var lastPhotosFooterFadeSignature: String?
 
     // MARK: - 列表
 
@@ -751,8 +769,9 @@ class BearyProfileViewController: UIViewController {
         labelValue.numberOfLines = 0
         labelValue.lineBreakMode = .byCharWrapping
         labelValue.text = "—"
-        // 2026-11-02 定版第 2 组：用户名阴影死代码删除——深色黑影落黑底不可见、
-        // 浅色透明度 0，视觉恒为零；字色与约束不动，深浅重赋一并删除（见 updateDynamicLayerColors）。
+        // 审计-个人页设置：用户名阴影死代码整删——浅色下透明度 0、深色下
+        // 黑影落黑底均不可见，留着只剩 trait 重赋的无用分支；只靠文字
+        // （ink）与背景对比，字色与约束不动。
         return labelValue
     }()
 
@@ -1222,7 +1241,9 @@ class BearyProfileViewController: UIViewController {
         let buttonValue = UIButton(type: .system)
         buttonValue.translatesAutoresizingMaskIntoConstraints = false
         buttonValue.setTitle("给一年前的自己留一句话", for: .normal)
-        buttonValue.setTitleColor(BearyColors.orange, for: .normal)
+        // 审计-个人页设置：橙色正文对比度约 2.9:1 低于 AA，改墨色；
+        // 只改使用处颜色，不改橙色 token 值（橙底白字与图标 tint 不动）。
+        buttonValue.setTitleColor(BearyColors.ink, for: .normal)
         buttonValue.titleLabel?.font = UIFont.systemFont(ofSize: 14, weight: .bold)
         buttonValue.contentHorizontalAlignment = .leading
         buttonValue.addTarget(self, action: #selector(pastSelfEntryTapped), for: .touchUpInside)
@@ -1251,7 +1272,7 @@ class BearyProfileViewController: UIViewController {
         let buttonValue = UIButton(type: .system)
         buttonValue.translatesAutoresizingMaskIntoConstraints = false
         buttonValue.setTitle("留给明年的自己", for: .normal)
-        buttonValue.setTitleColor(.white, for: .normal)
+        buttonValue.setTitleColor(BearyColors.onBrand, for: .normal)
         buttonValue.titleLabel?.font = UIFont.systemFont(ofSize: 14, weight: .bold)
         buttonValue.backgroundColor = BearyColors.orange
         buttonValue.layer.cornerRadius = 10
@@ -1292,7 +1313,8 @@ class BearyProfileViewController: UIViewController {
         let labelValue = UILabel()
         labelValue.translatesAutoresizingMaskIntoConstraints = false
         labelValue.font = UIFont.systemFont(ofSize: 14, weight: .bold)
-        labelValue.textColor = BearyColors.orange
+        // 审计-个人页设置：橙色正文改墨色（同 pastSelfEntryButton，token 值不动）。
+        labelValue.textColor = BearyColors.ink
         return labelValue
     }()
     private let pastSelfWaitingBodyLabel: UILabel = {
@@ -1696,6 +1718,7 @@ class BearyProfileViewController: UIViewController {
         labelValue.alpha = 0
         labelValue.text = "—"
         labelValue.isUserInteractionEnabled = false
+        // 审计-个人页设置：发光已删，shadowOpacity = 0 的残留行同步删（默认值即 0）。
         return labelValue
     }()
 
@@ -1833,7 +1856,9 @@ class BearyProfileViewController: UIViewController {
         // 由系统以 tint 填充底色（真机上选中钮整块变黑、图标与标题墨色沉底不可见），
         // 代码里并无任何背景色设置；改 .custom 彻底去掉系统选中填充，选中指示只剩
         // applyTabSelection 的下划线 + 墨色标题/图标（网页口径）；未选中态外观一字不动。
-        let buttonValue = UIButton(type: .custom)
+        // 审计-个人页设置：签钮改 BearyHit44Button——视觉（内边距/字号/
+        // 图标）一字不动，仅 point(inside:) 把热区扩到 44pt（旧高约 35pt）。
+        let buttonValue = BearyHit44Button(type: .custom)
         buttonValue.translatesAutoresizingMaskIntoConstraints = false
         buttonValue.backgroundColor = .clear
         buttonValue.setTitle(title, for: .normal)
@@ -1862,6 +1887,9 @@ class BearyProfileViewController: UIViewController {
     deinit {
         NotificationCenter.default.removeObserver(self, name: .bearyDidReportEntry, object: nil)
         NotificationCenter.default.removeObserver(self, name: .bearyDidBlockUser, object: nil)
+        // 审计-个人页设置：补注销 bearyFriendsChanged（viewDidLoad 注册、
+        // 此前 deinit 漏注销；广播到达已释放实例不再投递）。
+        NotificationCenter.default.removeObserver(self, name: .bearyFriendsChanged, object: nil)
     }
 
     override func viewDidLoad() {
@@ -2192,7 +2220,9 @@ class BearyProfileViewController: UIViewController {
     /// 跟踪图与真封面 1:1 同速同框上移、底贴 header 底边时锁定成 header
     ///（顶冻结在带底边 - 234，带内恒为封面底部本身）；头像 84→70 底部对齐
     /// 缩小、之后随页面 1:1 进入 header 后消失；名字以下整段不再跟移，
-    /// 头像-用户名距离恒 14（静止态与滚动态一致）；
+    /// 头像-用户名距离恒 14（静止态与滚动态一致）；18b：头像容器自身在
+    /// 锁定前 32pt 窗口内做 8pt 回落 bump（见头像段公式），窗口外恒 0、
+    /// 定型位与 #612 现行一字不差，名字以下内容不受任何位移；
     /// header 用户名在内容用户名顶边碰到 header 底边时起、往后 20px 内
     /// 淡入＋上浮到位；默认背景 wordmark 在后半段内 1→0 淡出（用户照片无此处理）。
     /// 只改 transform／alpha 与跟踪图顶约束常量，不调 layoutIfNeeded、不做图片加载、
@@ -2230,14 +2260,36 @@ class BearyProfileViewController: UIViewController {
         let avatarFrom: CGFloat = 84
         let avatarTo: CGFloat = 70
         let avatarScale = 1 - rampProgress * (avatarFrom - avatarTo) / avatarFrom
-        // 头像（Li 2026-11-02 真机报：上下滑时中间内容位移的根治）：
-        // 旧 v22 是容器滞后下落 27 + 名字以下整段下移 20，标签／行／脚部
-        // 全跟着在 30pt 滑程里多走 20pt，中间内容相对手指不是 1:1；
-        // 现容器不动、头像只底部对齐缩小（中心缩放会抬底边 7pt，故先平移
-        // 7pt 再缩放，底边恒贴名字上 14pt），名字以下整段不再下移，
-        // 标签／行／脚部全程跟手 1:1。头像不再下落定型、而是随页滚走。
+        // 头像（#612 根治口径不动：旧 v22 是容器滞后下落 27 + 名字以下整段
+        // 下移 20，标签／行／脚部全跟着在滑程里多走 20pt，中间内容相对手指
+        // 不是 1:1；#612 起容器不动、头像只底部对齐缩小，名字以下整段不再下移）。
+        // 18b 回落定型（Li 2026-11-02 定、只动头像容器自身，绝不带回整段下移）：
+        // 滞后量 settleLagMax = 8pt（< 头像-名字间距 14pt，峰值时底边距名字仍剩
+        // 6pt，头像永不压到名字）；滞后窗口 = [settleStart, lockUp]，其中
+        // settleStart = max(lockUp - 32, 0)，即锁定前最后 32pt 滑程（lockUp 过小
+        // 时窗口缩窄、仍起于 ≥0、终于 lockUp，静止态 up = 0 处滞后恒 0）；
+        // 窗口内 t = (up - settleStart) / (lockUp - settleStart)，滞后
+        // settleLag = 8 * 16 * t² * (1 - t)²（两端为 0 且导数为 0、无跳变，
+        // t = 0.5 处峰值 8pt；先滞后下落、后收回定型，纯滚动量函数、无定时
+        // 动画块，回滑原路返回）；窗口外（含 up ≥ lockUp 的锁定后全程）
+        // settleLag = 0，容器回 .identity。
+        // 最终定型位与 #612 现行一字不差：up ≥ lockUp 时 rampProgress = 1、
+        // 头像 70、容器位移 0、内层底部对齐平移 7pt 后缩放，底边恒贴名字上
+        // 14pt、与名字间距恒定。内层底部对齐缩放（avatarBottomHold）与
+        // #612 完全相同，不随 settleLag 改动；滞后只写在容器 transform 上，
+        // 头像热区钮／重试钮在容器内、跟容器走、不跟内层缩放，始终与头像对齐。
+        // 不漂移的隔离点：applyProfileBelowShift(0) 与 currentBelowShift = 0
+        // 原样保留，profileRowFollowShift 恒 0，故名字／签名／统计／墙／标签／
+        // 行／脚部 transform 全程不受 settleLag 影响；名字以下内容相对手指
+        // 仍是 1:1（头像容器位移不改布局、不改 header 高、不碰任何行／脚部）。
         let avatarBottomHold = (avatarFrom - avatarTo) / 2 * rampProgress
-        avatarContainerView.transform = .identity
+        let settleStart = max(lockUp - 32, 0)
+        var settleLag: CGFloat = 0
+        if up > settleStart && up < lockUp && lockUp > settleStart {
+            let settleT = (up - settleStart) / (lockUp - settleStart)
+            settleLag = 8 * 16 * settleT * settleT * (1 - settleT) * (1 - settleT)
+        }
+        avatarContainerView.transform = CGAffineTransform(translationX: 0, y: settleLag)
         avatarImageView.transform = CGAffineTransform(translationX: 0, y: avatarBottomHold).scaledBy(x: avatarScale, y: avatarScale)
         avatarLetterLabel.transform = CGAffineTransform(translationX: 0, y: avatarBottomHold).scaledBy(x: avatarScale, y: avatarScale)
         applyProfileBelowShift(0)
@@ -2930,8 +2982,9 @@ class BearyProfileViewController: UIViewController {
         gearButton.layer.bearyDynamicBorderColor = BearyColors.line
         nightContainer.layer.bearyDynamicBorderColor = BearyColors.line
         wallContainer.layer.bearyDynamicBorderColor = BearyColors.line
-        // 2026-11-02 定版第 2 组：用户名阴影死代码已删，此处不再重赋用户名阴影；
-        // header 用户名发光早已删除（Li 2026-10-31），此处亦不重赋。
+        // 审计-个人页设置：用户名阴影死代码已随 nameLabel 定义处整删，
+        // 此处 trait 重赋分支同步删除（header 用户名发光 Li 2026-10-31 已删，
+        // 同样不再重赋）。
         // 批 D：模块卡边线同款重赋（深浅切换时 CGColor 不自动跟随）。
         statsCard.layer.bearyDynamicBorderColor = BearyColors.line
         thisDayCard.layer.bearyDynamicBorderColor = BearyColors.line
@@ -2998,7 +3051,20 @@ class BearyProfileViewController: UIViewController {
                 self.followStateLoading = false
                 switch result {
                 case .success(let state):
-                    self.followState = BearyFollowState(response: state)
+                    // 审计-个人页设置：互关翻转改变日记过滤（仅好友篇显隐），
+                    // 状态到达时若日记 tab 已按旧状态渲染过，须重拉一次，
+                    // 否则互关后仅好友篇仍被旧过滤挡住（或取关后仍残留）。
+                    // 初次拉取时日记 tab 尚未渲染（diaryEntries 为空）不重拉，
+                    // 后续 loadTab 本就按新状态过滤，不多发一次请求。
+                    let previousMutual: Bool
+                    if case .mutual = self.followState { previousMutual = true } else { previousMutual = false }
+                    let newState = BearyFollowState(response: state)
+                    self.followState = newState
+                    let newMutual: Bool
+                    if case .mutual = newState { newMutual = true } else { newMutual = false }
+                    if !self.isOwnProfile, previousMutual != newMutual, !self.diaryEntries.isEmpty {
+                        self.loadTab(forceReload: true)
+                    }
                 case .failure:
                     self.followState = nil
                 }
@@ -3734,7 +3800,7 @@ class BearyProfileViewController: UIViewController {
             }))
         }
         sheet.addAction(UIAlertAction(title: "知道了", style: .cancel))
-        present(sheet, animated: true)
+        present(sheet, animated: BearyMotion.animated(true))
     }
 
     private func openNightFootprintEntry(entryIdValue: String) {
@@ -4045,7 +4111,7 @@ class BearyProfileViewController: UIViewController {
                     card.isHidden = true
                 }
             } else {
-                let visible = BearyProfilePersonalLogic.visibleEntries(modulesCorpus, isOwn: isOwnProfile)
+                let visible = BearyProfilePersonalLogic.visibleEntries(modulesCorpus, isOwn: isOwnProfile, isMutualFriend: isMutualFriend)
                 renderStats(visible: visible)
                 renderThisDay(visible: visible)
                 renderPastSelf(visible: visible)
@@ -4073,7 +4139,7 @@ class BearyProfileViewController: UIViewController {
             modulesHeightConstraint.isActive = true
             return
         }
-        let visible = BearyProfilePersonalLogic.visibleEntries(modulesCorpus, isOwn: isOwnProfile)
+        let visible = BearyProfilePersonalLogic.visibleEntries(modulesCorpus, isOwn: isOwnProfile, isMutualFriend: isMutualFriend)
         renderStats(visible: visible)
         renderThisDay(visible: visible)
         renderPastSelf(visible: visible)
@@ -4223,7 +4289,7 @@ class BearyProfileViewController: UIViewController {
     }
 
     private func openYearReview() {
-        let visible = BearyProfilePersonalLogic.visibleEntries(modulesCorpus, isOwn: isOwnProfile)
+        let visible = BearyProfilePersonalLogic.visibleEntries(modulesCorpus, isOwn: isOwnProfile, isMutualFriend: isMutualFriend)
         guard !visible.isEmpty else { return }
         let currentYear = Calendar.current.component(.year, from: Date())
         let availableYears = BearyProfilePersonalLogic.availableYears(entries: visible, isOwn: isOwnProfile, calendar: .current)
@@ -4382,7 +4448,7 @@ class BearyProfileViewController: UIViewController {
     }
 
     private func pastSelfVisibleEntries() -> [Entry] {
-        BearyProfilePersonalLogic.visibleEntries(modulesCorpus, isOwn: isOwnProfile)
+        BearyProfilePersonalLogic.visibleEntries(modulesCorpus, isOwn: isOwnProfile, isMutualFriend: isMutualFriend)
     }
 
     private func renderPastSelf(visible: [Entry]) {
@@ -4466,6 +4532,12 @@ class BearyProfileViewController: UIViewController {
             return
         }
         guard let message = store.add(originEntryId: mainId, body: text, createdAtMs: pastSelfNowMs(), calendar: .current) else {
+            // 审计登录杂项：等待中超限时拒绝新留话并行内提示（不关编辑器、不清草稿，
+            // 用户撤回一句或等送达后可再写）；其余拒绝（该链已有等待中）沿用旧文案。
+            if store.lastRejection == .waitingCapped {
+                BearyToast.show(in: view, message: "留话已满 200 条，等待中的留话不能丢，撤回一句或等送达后再写")
+                return
+            }
             BearyToast.show(in: view, message: "这篇已留过话，明年见")
             pastSelfComposingThisDay = false
             renderPastSelf(visible: pastSelfVisibleEntries())
@@ -4778,6 +4850,11 @@ class BearyProfileViewController: UIViewController {
             return
         }
         guard let message = store.add(originEntryId: chainId, body: text, createdAtMs: pastSelfNowMs(), calendar: .current) else {
+            // 审计登录杂项：同上，等待中超限时只提示、不清回复态与草稿。
+            if store.lastRejection == .waitingCapped {
+                BearyToast.show(in: view, message: "留话已满 200 条，等待中的留话不能丢，撤回一句或等送达后再写")
+                return
+            }
             BearyToast.show(in: view, message: "这串已留过话，明年见")
             pastSelfReplyingChainId = nil
             pastSelfReplyDrafts[chainId] = nil
@@ -4862,7 +4939,7 @@ class BearyProfileViewController: UIViewController {
             currentWalkEntry = nil
             return
         }
-        let pool = BearyProfilePersonalLogic.visibleEntries(modulesCorpus, isOwn: isOwnProfile)
+        let pool = BearyProfilePersonalLogic.visibleEntries(modulesCorpus, isOwn: isOwnProfile, isMutualFriend: isMutualFriend)
         guard let fresh = pool.first(where: { $0.id == entryId }) else {
             // 旧篇已不在池里（已删 / 翻回私密 / 语料已换目标）：不进详情，
             // 就地按现行口径重抽，池空则藏卡并明示，不静默无反应。
@@ -4883,7 +4960,7 @@ class BearyProfileViewController: UIViewController {
     }
 
     @objc private func randomShuffleTapped() {
-        let pool = BearyProfilePersonalLogic.visibleEntries(modulesCorpus, isOwn: isOwnProfile)
+        let pool = BearyProfilePersonalLogic.visibleEntries(modulesCorpus, isOwn: isOwnProfile, isMutualFriend: isMutualFriend)
         guard !pool.isEmpty else { return }
         if pool.count <= 1 {
             // 单篇池换不出新篇：保留当前卡、明示原因，不跳空卡、不假装换了一篇。
@@ -5188,8 +5265,11 @@ class BearyProfileViewController: UIViewController {
         }
         if diaryEntries.isEmpty {
             // iCity：挂起前同样先守可见性——私密落点不挂起、不重插。
+            // 审计 2026-11-02 第十节：直接落点二次过滤走有效态——已过期限时篇
+            // （stored 公开、有效私密）同样不挂起；仅好友篇维持现行丢弃口径
+            // （不放宽；主列表口径统一归个人页组）。
             let viewerIsAuthor = entry.isMine == true || (entry.authorId != nil && entry.authorId == SessionManager.shared.currentUser?.id)
-            if viewerIsAuthor == false && entry.isPublic != true { return }
+            if viewerIsAuthor == false && BearyEphemeral.isEffectivelyPublic(entry) == false { return }
             pendingDirectEntry = entry
             if !tabLoading && !tabLoadMore {
                 loadTab(forceReload: true)
@@ -5201,10 +5281,12 @@ class BearyProfileViewController: UIViewController {
 
     /// 按 createdAt 降序把单篇插进日记 tab 合适位置并滚动高亮。
     /// iCity：服务端列表本就排除他人私密篇——非本人非公开的直接落点一律丢弃，绝不重插。
+    /// 审计 2026-11-02 第十节：直接落点二次过滤走有效态（过期即丢弃；仅好友篇
+    /// 维持现行丢弃口径，不放宽；主列表口径统一归个人页组）。
     private func insertDirectEntry(_ entry: Entry) {
         guard let targetId = entry.id, !targetId.isEmpty else { return }
         let viewerIsAuthor = entry.isMine == true || (entry.authorId != nil && entry.authorId == SessionManager.shared.currentUser?.id)
-        if viewerIsAuthor == false && entry.isPublic != true { return }
+        if viewerIsAuthor == false && BearyEphemeral.isEffectivelyPublic(entry) == false { return }
         let targetMs = entry.createdAt ?? 0
         let idx = diaryEntries.firstIndex(where: { ($0.createdAt ?? 0) < targetMs }) ?? diaryEntries.count
         diaryEntries.insert(entry, at: idx)
@@ -5741,6 +5823,18 @@ class BearyProfileViewController: UIViewController {
             })
         }
         lastProfileFooterKind = kind
+        // 审计-个人页设置：照片墙首次出现补与空态同款 0.25s 淡入（只淡照片区
+        // 本身，不整脚淡入，免得切空 tab 时照片区跟着闪；缓存视图复用时
+        // 签名不变不重播；脚部模块组淡入已由 renderModules 的
+        // fadeInViewIfAppearing 覆盖，本处不重复加）。
+        if let photosView = photosView, cachedPhotosFooterSignature != lastPhotosFooterFadeSignature,
+           UIAccessibility.isReduceMotionEnabled == false {
+            lastPhotosFooterFadeSignature = cachedPhotosFooterSignature
+            photosView.alpha = 0
+            UIView.animate(withDuration: 0.25, animations: {
+                photosView.alpha = 1
+            })
+        }
         // 112：脚部每次重建都是新容器，transform 回到 identity——按当前
         // 跟移值补上，否则末行→脚部间隙在重建后先错后对（行已跟移、脚部未跟移）。
         if let footer = tableView.tableFooterView {
@@ -5894,9 +5988,10 @@ class BearyProfileViewController: UIViewController {
         let photosVC = BearyProfilePhotosViewController(
             authorIdValue: profile?.profileIdValue ?? targetUserIdValue,
             isOwnProfileValue: isOwnProfile,
-            initialEntries: BearyProfileViewController.sortedDisplayableDiaryEntries(from: photoWallSourceEntries, isOwnProfile: isOwnProfile),
+            initialEntries: BearyProfileViewController.sortedDisplayableDiaryEntries(from: photoWallSourceEntries, isOwnProfile: isOwnProfile, isMutualFriend: isMutualFriend),
             diaryHasMoreValue: photoOverflowEntries.isEmpty ? diaryHasMore : photoOverflowHasMore,
-            onOpenEntryValue: { [weak self] entryValue in self?.onOpenEntry?(entryValue) }
+            onOpenEntryValue: { [weak self] entryValue in self?.onOpenEntry?(entryValue) },
+            isMutualFriendValue: isMutualFriend
         )
         photosVC.modalPresentationStyle = .fullScreen
         present(photosVC, animated: true, completion: nil)
@@ -5953,8 +6048,14 @@ let viewer = BearyEntryImageViewerViewController(imageKeys: allPhotos.map { $0.i
         switch currentTab {
         case .diary:
             // 网页 beary.html:2690 的 nb-once 口径：一次性描画铅笔。
-            titleText = "还没有公开的日记"
-            subtitleText = isOwnProfile ? "写下第一篇，默认私密" : ""
+            // [24] 小项 4：他人页日记空态原先副文案为空（标题下只剩空白），
+            // 与赞过/收藏空态“标题＋副文案”不对齐。补齐只复用项目内已有
+            // 措辞：标题照赞过空态的 TA 式（“TA 还没有赞过的日记”），副文案
+            // 取广场空态前半句“公开的日记会出现在这里”（后半句“写一篇并
+            // 公开试试”是给本人的动作指引，他人页不适用，故不取）；本人页
+            // 原文案一字不动。
+            titleText = isOwnProfile ? "还没有公开的日记" : "TA 还没有公开的日记"
+            subtitleText = isOwnProfile ? "写下第一篇，默认私密" : "公开的日记会出现在这里"
             let pencilView = BearyPencilView()
             pencilView.strokeColor = BearyColors.gray
             graphicView = pencilView
@@ -6440,7 +6541,7 @@ let viewer = BearyEntryImageViewerViewController(imageKeys: allPhotos.map { $0.i
         }
         let wantLiked = !currentLiked
         // 跟手批：不再立即 reload——立即 reload 会换掉刚播按下预览的 cell，预览当场消失；
-        // 轻震已由 cell 按下时给，控制器不再重复给。
+        // 审计动效组：按下预览现为纯视觉，确认反馈改由下方控制器补（旧“按下时给”已失效）。
         var optimistic = entry
         optimistic.likedByMe = wantLiked
         optimistic.likeCount = wantLiked ? currentCount + 1 : max(0, currentCount - 1)
@@ -6456,6 +6557,14 @@ let viewer = BearyEntryImageViewerViewController(imageKeys: allPhotos.map { $0.i
             // 按下预览（applyCellPreUnlike）与新模型渲染一致，不闪；
             // 上一轮炸开微粒还在飞时一并清掉。
             syncedCell?.clearLikeBurst()
+        }
+        // 审计动效组：抬起确认时补震动＋音效（与首页 feedLikeTapped 同款）；
+        // 不补则个人页点赞将完全无反馈；失败回滚分支的拒绝反馈另算，不动。
+        if wantLiked {
+            BearyHaptics.likeTap()
+            BearySoundPlayer.play(.likePop)
+        } else {
+            BearySoundPlayer.play(.unlikeSoft)
         }
         let seq = (likeSeqById[entryId] ?? 0) + 1
         likeSeqById[entryId] = seq
@@ -6542,74 +6651,95 @@ let viewer = BearyEntryImageViewerViewController(imageKeys: allPhotos.map { $0.i
         guard let entryId = entry.id, !entryId.isEmpty else { return }
         guard entry.isMine == true else { return }
         guard !pubBusyIds.contains(entryId) else { return }
-        // 引用规则简化（2026-10-31）：切公开先过引用门禁、改私密先查引用数提醒；
-        // 门禁/提醒期间占 busy 位，放弃时清位、原态未动（乐观落地只在 perform 里做）。
-        let target = BearyEphemeral.isEffectivelyPublic(entry) ? 0 : 1
-        pubBusyIds.insert(entryId)
-        if target == 1 {
-            BearyQuoteGate.gatePublicToggle(from: self, entry: entry) { [weak self] result in
-                guard let strongSelf = self else { return }
-                switch result {
-                case .proceed:
-                    strongSelf.performCellVisibilityToggle(entry: entry)
-                case .publishTogether(let sourceId):
-                    BearyAPI.shared.setVisibility(id: sourceId, published: 1) { setResult in
-                        DispatchQueue.main.async {
-                            switch setResult {
-                            case .success:
-                                strongSelf.performCellVisibilityToggle(entry: entry)
-                            case .failure:
-                                strongSelf.pubBusyIds.remove(entryId)
-                                BearyToast.show(in: strongSelf.view, message: "原日记公开失败，请重试")
+        // 审计 2026-11-02 第十节：三档选择器（私密/仅好友/公开），选同档即无变化；
+        // 引用规则简化（2026-10-31）：切公开先过引用门禁、改私密先查引用数提醒、
+        // 改仅好友为收紧方向直接放行；门禁/提醒期间占 busy 位，放弃时清位、
+        // 原态未动（乐观落地只在 perform 里做）。
+        BearyVisibility.presentPicker(from: self, entry: entry) { [weak self] targetVisibility in
+            guard let strongSelf = self else { return }
+            if targetVisibility == BearyVisibility.current(for: entry) { return }
+            strongSelf.pubBusyIds.insert(entryId)
+            if targetVisibility == "public" {
+                BearyQuoteGate.gatePublicToggle(from: strongSelf, entry: entry) { [weak self] result in
+                    guard let strongSelf = self else { return }
+                    switch result {
+                    case .proceed:
+                        strongSelf.performCellVisibilityToggle(entry: entry, targetVisibility: targetVisibility)
+                    case .publishTogether(let sourceId):
+                        BearyAPI.shared.setVisibility(id: sourceId, visibility: "public") { setResult in
+                            DispatchQueue.main.async {
+                                switch setResult {
+                                case .success:
+                                    strongSelf.performCellVisibilityToggle(entry: entry, targetVisibility: targetVisibility)
+                                case .failure:
+                                    strongSelf.pubBusyIds.remove(entryId)
+                                    BearyToast.show(in: strongSelf.view, message: "原日记公开失败，请重试")
+                                }
                             }
                         }
+                    case .aborted:
+                        strongSelf.pubBusyIds.remove(entryId)
                     }
-                case .aborted:
-                    strongSelf.pubBusyIds.remove(entryId)
                 }
-            }
-        } else {
-            BearyQuoteGate.confirmPrivateToggleIfQuoted(from: self, entryId: entryId) { [weak self] confirmed in
-                guard let strongSelf = self else { return }
-                if confirmed {
-                    strongSelf.performCellVisibilityToggle(entry: entry)
-                } else {
-                    strongSelf.pubBusyIds.remove(entryId)
+            } else if targetVisibility == "private" {
+                BearyQuoteGate.confirmPrivateToggleIfQuoted(from: strongSelf, entryId: entryId) { [weak self] confirmed in
+                    guard let strongSelf = self else { return }
+                    if confirmed {
+                        strongSelf.performCellVisibilityToggle(entry: entry, targetVisibility: targetVisibility)
+                    } else {
+                        strongSelf.pubBusyIds.remove(entryId)
+                    }
                 }
+            } else {
+                strongSelf.performCellVisibilityToggle(entry: entry, targetVisibility: targetVisibility)
             }
         }
     }
 
-    private func performCellVisibilityToggle(entry: Entry) {
+    private func performCellVisibilityToggle(entry: Entry, targetVisibility: String) {
         guard let entryId = entry.id, !entryId.isEmpty else { return }
         guard entry.isMine == true else { return }
-        let target = BearyEphemeral.isEffectivelyPublic(entry) ? 0 : 1
         var optimistic = entry
-        optimistic.isPublic = target == 1
+        optimistic.isPublic = BearyVisibility.isPublicValue(targetVisibility)
+        optimistic.visibility = targetVisibility
         optimistic.ephemeralUntil = nil
         // 先行：目标态立即落地（可见行 + 页签模型同步改；成功路径再以服务端值对齐）。
         updateEntryInAllTabs(entry: optimistic)
         syncVisibleCell(entry: optimistic)?.refreshPublishRow()
         BearySoundPlayer.play(.visibilityClick)
-        BearyAPI.shared.setVisibility(id: entryId, published: target) { [weak self] result in
+        // 审计动效组：可见性翻转统一为“图标＋pill 文案＋轻震”，此处补轻震。
+        BearyHaptics.press()
+        BearyAPI.shared.setVisibility(id: entryId, visibility: targetVisibility) { [weak self] result in
             DispatchQueue.main.async {
                 guard let strongSelf = self else { return }
                 strongSelf.pubBusyIds.remove(entryId)
                 switch result {
                 case .success(let resp):
                     var updated = entry
-                    if let published = resp.published { updated.isPublic = published == 1 }
-                    // 秒开-网络层：转私密成功即逐出本篇图片的本机缓存；失败
+                    // 成功回写以回包为准：visibility 缺失时回落 published/目标档；
+                    // ephemeralUntil 缺失 = 手动翻转已清限时标记，写回 nil。
+                    if let visibility = resp.visibility {
+                        updated.isPublic = BearyVisibility.isPublicValue(visibility)
+                        updated.visibility = visibility
+                    } else if let published = resp.published {
+                        updated.isPublic = published == 1
+                        updated.visibility = targetVisibility
+                    } else {
+                        updated.isPublic = BearyVisibility.isPublicValue(targetVisibility)
+                        updated.visibility = targetVisibility
+                    }
+                    // 秒开-网络层：转非公开成功即逐出本篇图片的本机缓存；失败
                     // 回滚分支不逐出（原态未变）。
                     if updated.isPublic != true {
                         BearyImageLoader.shared.evictEntryImages(keys: updated.images ?? [])
                     }
-                    // 手动翻转清限时标记（服务端同口径），否则本地仍画虚线边框。
-                    updated.ephemeralUntil = nil
+                    // 手动翻转清限时标记（服务端同口径），否则本地仍画虚线边框，
+                    // 除非回包显式带回新的 ephemeralUntil。
+                    updated.ephemeralUntil = resp.ephemeralUntil
                     if let publishedAt = resp.publishedAt { updated.publishedAt = publishedAt }
                     strongSelf.updateEntryInAllTabs(entry: updated)
                     if updated.isPublic != true {
-                        BearyDiaryCardCell.quoteCache.removeValue(forKey: entryId)
+                        BearyDiaryCardCell.invalidateQuote(id: entryId)
                     }
                     strongSelf.syncVisibleCell(entry: updated)?.refreshPublishRow()
                     // 批 D：可见性翻转成功——他人页公开口径与本人统计同步重拉语料；
@@ -6634,8 +6764,9 @@ let viewer = BearyEntryImageViewerViewController(imageKeys: allPhotos.map { $0.i
     /// 个人页级举报目标：举报 API 需要 entry_id。取已落点的直接条目，次取首篇公开日记；
     /// 两者皆无时菜单不放举报项（不以私密篇为目标）。
     private var reportTargetEntry: Entry? {
-        if let landed = directLandedEntries.values.first, landed.isPublic == true { return landed }
-        return diaryEntries.first(where: { $0.isPublic == true })
+        // 审计 2026-11-02 第十节：举报目标同样走有效态，过期篇不作公开目标。
+        if let landed = directLandedEntries.values.first, BearyEphemeral.isEffectivelyPublic(landed) { return landed }
+        return diaryEntries.first(where: { BearyEphemeral.isEffectivelyPublic($0) })
     }
 
     @objc private func topMoreButtonTapped() {
@@ -6989,7 +7120,8 @@ let viewer = BearyEntryImageViewerViewController(imageKeys: allPhotos.map { $0.i
                                 strongSelf.onOpenEntry?(fetched)
                             }
                         } else {
-                            strongSelf.presentSimpleAlert(message: "该日记已设为私密")
+                            // 10a：回退提示按档区分——仅好友来源显定版句，私密档文案不动。
+                            strongSelf.presentSimpleAlert(message: fetched.isFriendsOnly ? "该日记仅好友可见" : "该日记已设为私密")
                         }
                     case .failure:
                         strongSelf.presentSimpleAlert(message: "引用的日记已删除")

@@ -84,6 +84,10 @@ struct BearyDraft: Codable {
     var quoteContent: String?
     var quoteImages: [String]
     var quoteIsPublic: Bool?
+    /// 审计 2026-11-02 第十节：引用来源三档与限时到期戳（草稿往返保留；
+    /// 老草稿缺本键时按 nil 解码，还原口径与旧版一致，不凭空变档）。
+    var quoteVisibility: String? = nil
+    var quoteEphemeralUntil: Int? = nil
     var quoteDeleted: Bool
 
     /// 有实质内容：空白篇（全空）不迁入、不展示为有效草稿。

@@ -10,6 +10,13 @@ import UIKit
 // - 四个可选闭包 onRequestLogin / onRequestGuestBrowse / onRequestCompose / onRequestBrowse：
 //   触发时只回调、不自行 dismiss，dismiss 由 SceneDelegate 控制；闭包未设置时才回退为
 //   写 seenKey + 自行 dismiss（兜底，避免按钮无反应）。
+// - seenKey 归属（审计登录杂项复核结论，2026-11-02）：闭包已设置时写 key 是容器
+//   的责任，SceneDelegate.presentOnboarding 的四个回调与 presentLoginOverOnboarding
+//   均已逐项核实写 seenKey（本页不重复写，避免时序竞态）；本页只在闭包未设置
+//   的兜底路径与“跳过”时自己写。断言说明：写 key 的语句就写在容器回调本体里，
+//   无需另补运行时断言——回调执行即写 key，不存在“回调只跳转不写 key”的分支。
+// - 下滑关闭不存在：isModalInPresentation = true 全程禁下滑关闭，故无“下滑关闭
+//   时写 seenKey”的路径；退出只走跳过（写 key）与第 4 页主 / 次钮回调（容器写 key）。
 // - 跳过：写 seenKey = true 后自行 dismiss（modal 下方就是主页或设置页，直接露出即可）。
 // 旧 VC 的预加载步骤 API 已随整文件替换而消失，SceneDelegate 的 presentOnboarding 会暂时
 // 无法编译——这是预期的，第 2 棒会重写它，本文件不碰 SceneDelegate。
@@ -24,8 +31,8 @@ private enum OnboardingAnim {
     static let pageHalfDuration: TimeInterval = 0.14
     /// 切页横移幅度（轻微横移＋淡入淡出）。
     static let pageSlide: CGFloat = 20
-    /// 入场错峰间隔；总入场 0.5 秒内（0.15 末位延迟 + 0.25 播长 = 0.40）。
-    static let staggerStep: TimeInterval = 0.05
+    /// 入场错峰间隔；总入场 0.5 秒内（0.09 末位延迟 + 0.25 播长 = 0.34）。
+    static let staggerStep: TimeInterval = 0.03
     static let entranceDuration: TimeInterval = 0.25
     /// 第 1 页两张卡片的错位：后卡左右各缩 10，前卡下压 80、微转 0.5°，后卡微转 -3.5°。
     static let cardBackInset: CGFloat = 10
@@ -932,16 +939,47 @@ final class BearyOnboardingViewController: UIViewController {
         bottomCard.transform = CGAffineTransform(translationX: 0, y: 8)
     }
 
+    /// 审计登录杂项：入场错峰抽为按页通用方法——第 0 页沿用原四件套
+    /// （小熊 → 卡片 → 标题）；第 1–3 页错峰其页内栈的各段（此前只有
+    /// 0.14＋0.14 整页横移淡入）。每页只播一次；减动效时直出终值。
     private func playEntranceIfNeeded(_ page: Int) {
-        guard page == 0, !entrancePlayedPages.contains(0), !UIAccessibility.isReduceMotionEnabled else { return }
-        entrancePlayedPages.insert(0)
-        // Logo（小熊）→ 卡片 → 标题（底部卡片）依次自然出现；小熊轻动一次后安静停留，不循环。
-        let items: [(view: UIView, delay: TimeInterval, finalTransform: CGAffineTransform)] = [
-            (bearWrap, 0, .identity),
-            (cardBack, OnboardingAnim.staggerStep, cardBackFinalTransform),
-            (cardFront, OnboardingAnim.staggerStep * 2, cardFrontFinalTransform),
-            (bottomCard, OnboardingAnim.staggerStep * 3, .identity),
-        ]
+        guard !entrancePlayedPages.contains(page) else { return }
+        entrancePlayedPages.insert(page)
+        if page == 0 {
+            // Logo（小熊）→ 卡片 → 标题（底部卡片）依次自然出现；小熊轻动一次后安静停留，不循环。
+            playStaggeredEntrance(items: [
+                (bearWrap, 0, .identity),
+                (cardBack, OnboardingAnim.staggerStep, cardBackFinalTransform),
+                (cardFront, OnboardingAnim.staggerStep * 2, cardFrontFinalTransform),
+                (bottomCard, OnboardingAnim.staggerStep * 3, .identity),
+            ])
+            return
+        }
+        guard pageViews.indices.contains(page),
+              let stack = pageViews[page].subviews.first(where: { $0 is UIStackView }) as? UIStackView else { return }
+        let items: [(view: UIView, delay: TimeInterval, finalTransform: CGAffineTransform)] = stack.arrangedSubviews.enumerated().map {
+            ($0.element, Double($0.offset) * OnboardingAnim.staggerStep, .identity)
+        }
+        // 入场起点先摆好（淡出＋下沉 6pt），再走通用错峰；减动效时
+        // playStaggeredEntrance 直出终值，不留半透明起点。
+        for item in items {
+            item.view.alpha = 0
+            item.view.transform = CGAffineTransform(translationX: 0, y: 6)
+        }
+        playStaggeredEntrance(items: items)
+    }
+
+    /// 通用错峰播放：只改 transform 与 opacity；减动效时直出终值。
+    /// （第 0 页的起点由 viewDidLoad 的 preparePageOneEntrance 预摆，
+    /// 第 1–3 页的起点由 playEntranceIfNeeded 现摆，本方法只负责播出。）
+    private func playStaggeredEntrance(items: [(view: UIView, delay: TimeInterval, finalTransform: CGAffineTransform)]) {
+        if UIAccessibility.isReduceMotionEnabled {
+            for item in items {
+                item.view.alpha = 1
+                item.view.transform = item.finalTransform
+            }
+            return
+        }
         for item in items {
             UIView.animate(withDuration: OnboardingAnim.entranceDuration, delay: item.delay, options: [.curveEaseOut], animations: {
                 item.view.alpha = 1
@@ -1044,6 +1082,7 @@ final class BearyOnboardingViewController: UIViewController {
             return
         }
         // 第 4 页：只回调、不自行 dismiss；闭包未设置时回退为走完（写 seenKey＋dismiss）。
+        // seenKey 归属见文件头契约：闭包已设置时容器回调内写 key，本页不重复写。
         if SessionManager.shared.isLoggedIn {
             if let action = onRequestCompose { action() } else { finish() }
         } else {
@@ -1123,7 +1162,7 @@ private final class OnboardingOptionButton: BearyHit44Button {
         checkView.layer.bearyDynamicBorderColor = BearyColors.line
         checkImageView.translatesAutoresizingMaskIntoConstraints = false
         checkImageView.image = BearyIconImages.image(named: "icon_check", pointSize: 14)
-        checkImageView.tintColor = BearyColors.bg
+        checkImageView.tintColor = BearyColors.onBrand
         checkView.addSubview(checkImageView)
         addSubview(checkView)
 
