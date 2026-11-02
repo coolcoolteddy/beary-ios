@@ -1262,7 +1262,7 @@ class BearyProfileViewController: UIViewController {
         let buttonValue = UIButton(type: .system)
         buttonValue.translatesAutoresizingMaskIntoConstraints = false
         buttonValue.setTitle("留给明年的自己", for: .normal)
-        buttonValue.setTitleColor(.white, for: .normal)
+        buttonValue.setTitleColor(BearyColors.onBrand, for: .normal)
         buttonValue.titleLabel?.font = UIFont.systemFont(ofSize: 14, weight: .bold)
         buttonValue.backgroundColor = BearyColors.orange
         buttonValue.layer.cornerRadius = 10
@@ -2204,7 +2204,9 @@ class BearyProfileViewController: UIViewController {
     /// 跟踪图与真封面 1:1 同速同框上移、底贴 header 底边时锁定成 header
     ///（顶冻结在带底边 - 234，带内恒为封面底部本身）；头像 84→70 底部对齐
     /// 缩小、之后随页面 1:1 进入 header 后消失；名字以下整段不再跟移，
-    /// 头像-用户名距离恒 14（静止态与滚动态一致）；
+    /// 头像-用户名距离恒 14（静止态与滚动态一致）；18b：头像容器自身在
+    /// 锁定前 32pt 窗口内做 8pt 回落 bump（见头像段公式），窗口外恒 0、
+    /// 定型位与 #612 现行一字不差，名字以下内容不受任何位移；
     /// header 用户名在内容用户名顶边碰到 header 底边时起、往后 20px 内
     /// 淡入＋上浮到位；默认背景 wordmark 在后半段内 1→0 淡出（用户照片无此处理）。
     /// 只改 transform／alpha 与跟踪图顶约束常量，不调 layoutIfNeeded、不做图片加载、
@@ -2242,14 +2244,36 @@ class BearyProfileViewController: UIViewController {
         let avatarFrom: CGFloat = 84
         let avatarTo: CGFloat = 70
         let avatarScale = 1 - rampProgress * (avatarFrom - avatarTo) / avatarFrom
-        // 头像（Li 2026-11-02 真机报：上下滑时中间内容位移的根治）：
-        // 旧 v22 是容器滞后下落 27 + 名字以下整段下移 20，标签／行／脚部
-        // 全跟着在 30pt 滑程里多走 20pt，中间内容相对手指不是 1:1；
-        // 现容器不动、头像只底部对齐缩小（中心缩放会抬底边 7pt，故先平移
-        // 7pt 再缩放，底边恒贴名字上 14pt），名字以下整段不再下移，
-        // 标签／行／脚部全程跟手 1:1。头像不再下落定型、而是随页滚走。
+        // 头像（#612 根治口径不动：旧 v22 是容器滞后下落 27 + 名字以下整段
+        // 下移 20，标签／行／脚部全跟着在滑程里多走 20pt，中间内容相对手指
+        // 不是 1:1；#612 起容器不动、头像只底部对齐缩小，名字以下整段不再下移）。
+        // 18b 回落定型（Li 2026-11-02 定、只动头像容器自身，绝不带回整段下移）：
+        // 滞后量 settleLagMax = 8pt（< 头像-名字间距 14pt，峰值时底边距名字仍剩
+        // 6pt，头像永不压到名字）；滞后窗口 = [settleStart, lockUp]，其中
+        // settleStart = max(lockUp - 32, 0)，即锁定前最后 32pt 滑程（lockUp 过小
+        // 时窗口缩窄、仍起于 ≥0、终于 lockUp，静止态 up = 0 处滞后恒 0）；
+        // 窗口内 t = (up - settleStart) / (lockUp - settleStart)，滞后
+        // settleLag = 8 * 16 * t² * (1 - t)²（两端为 0 且导数为 0、无跳变，
+        // t = 0.5 处峰值 8pt；先滞后下落、后收回定型，纯滚动量函数、无定时
+        // 动画块，回滑原路返回）；窗口外（含 up ≥ lockUp 的锁定后全程）
+        // settleLag = 0，容器回 .identity。
+        // 最终定型位与 #612 现行一字不差：up ≥ lockUp 时 rampProgress = 1、
+        // 头像 70、容器位移 0、内层底部对齐平移 7pt 后缩放，底边恒贴名字上
+        // 14pt、与名字间距恒定。内层底部对齐缩放（avatarBottomHold）与
+        // #612 完全相同，不随 settleLag 改动；滞后只写在容器 transform 上，
+        // 头像热区钮／重试钮在容器内、跟容器走、不跟内层缩放，始终与头像对齐。
+        // 不漂移的隔离点：applyProfileBelowShift(0) 与 currentBelowShift = 0
+        // 原样保留，profileRowFollowShift 恒 0，故名字／签名／统计／墙／标签／
+        // 行／脚部 transform 全程不受 settleLag 影响；名字以下内容相对手指
+        // 仍是 1:1（头像容器位移不改布局、不改 header 高、不碰任何行／脚部）。
         let avatarBottomHold = (avatarFrom - avatarTo) / 2 * rampProgress
-        avatarContainerView.transform = .identity
+        let settleStart = max(lockUp - 32, 0)
+        var settleLag: CGFloat = 0
+        if up > settleStart && up < lockUp && lockUp > settleStart {
+            let settleT = (up - settleStart) / (lockUp - settleStart)
+            settleLag = 8 * 16 * settleT * settleT * (1 - settleT) * (1 - settleT)
+        }
+        avatarContainerView.transform = CGAffineTransform(translationX: 0, y: settleLag)
         avatarImageView.transform = CGAffineTransform(translationX: 0, y: avatarBottomHold).scaledBy(x: avatarScale, y: avatarScale)
         avatarLetterLabel.transform = CGAffineTransform(translationX: 0, y: avatarBottomHold).scaledBy(x: avatarScale, y: avatarScale)
         applyProfileBelowShift(0)
@@ -3757,7 +3781,7 @@ class BearyProfileViewController: UIViewController {
             }))
         }
         sheet.addAction(UIAlertAction(title: "知道了", style: .cancel))
-        present(sheet, animated: true)
+        present(sheet, animated: BearyMotion.animated(true))
     }
 
     private func openNightFootprintEntry(entryIdValue: String) {
@@ -5976,8 +6000,14 @@ let viewer = BearyEntryImageViewerViewController(imageKeys: allPhotos.map { $0.i
         switch currentTab {
         case .diary:
             // 网页 beary.html:2690 的 nb-once 口径：一次性描画铅笔。
-            titleText = "还没有公开的日记"
-            subtitleText = isOwnProfile ? "写下第一篇，默认私密" : ""
+            // [24] 小项 4：他人页日记空态原先副文案为空（标题下只剩空白），
+            // 与赞过/收藏空态“标题＋副文案”不对齐。补齐只复用项目内已有
+            // 措辞：标题照赞过空态的 TA 式（“TA 还没有赞过的日记”），副文案
+            // 取广场空态前半句“公开的日记会出现在这里”（后半句“写一篇并
+            // 公开试试”是给本人的动作指引，他人页不适用，故不取）；本人页
+            // 原文案一字不动。
+            titleText = isOwnProfile ? "还没有公开的日记" : "TA 还没有公开的日记"
+            subtitleText = isOwnProfile ? "写下第一篇，默认私密" : "公开的日记会出现在这里"
             let pencilView = BearyPencilView()
             pencilView.strokeColor = BearyColors.gray
             graphicView = pencilView
@@ -6463,7 +6493,7 @@ let viewer = BearyEntryImageViewerViewController(imageKeys: allPhotos.map { $0.i
         }
         let wantLiked = !currentLiked
         // 跟手批：不再立即 reload——立即 reload 会换掉刚播按下预览的 cell，预览当场消失；
-        // 轻震已由 cell 按下时给，控制器不再重复给。
+        // 审计动效组：按下预览现为纯视觉，确认反馈改由下方控制器补（旧“按下时给”已失效）。
         var optimistic = entry
         optimistic.likedByMe = wantLiked
         optimistic.likeCount = wantLiked ? currentCount + 1 : max(0, currentCount - 1)
@@ -6479,6 +6509,14 @@ let viewer = BearyEntryImageViewerViewController(imageKeys: allPhotos.map { $0.i
             // 按下预览（applyCellPreUnlike）与新模型渲染一致，不闪；
             // 上一轮炸开微粒还在飞时一并清掉。
             syncedCell?.clearLikeBurst()
+        }
+        // 审计动效组：抬起确认时补震动＋音效（与首页 feedLikeTapped 同款）；
+        // 不补则个人页点赞将完全无反馈；失败回滚分支的拒绝反馈另算，不动。
+        if wantLiked {
+            BearyHaptics.likeTap()
+            BearySoundPlayer.play(.likePop)
+        } else {
+            BearySoundPlayer.play(.unlikeSoft)
         }
         let seq = (likeSeqById[entryId] ?? 0) + 1
         likeSeqById[entryId] = seq
@@ -6614,6 +6652,8 @@ let viewer = BearyEntryImageViewerViewController(imageKeys: allPhotos.map { $0.i
         updateEntryInAllTabs(entry: optimistic)
         syncVisibleCell(entry: optimistic)?.refreshPublishRow()
         BearySoundPlayer.play(.visibilityClick)
+        // 审计动效组：可见性翻转统一为“图标＋pill 文案＋轻震”，此处补轻震。
+        BearyHaptics.press()
         BearyAPI.shared.setVisibility(id: entryId, published: target) { [weak self] result in
             DispatchQueue.main.async {
                 guard let strongSelf = self else { return }
@@ -7012,7 +7052,8 @@ let viewer = BearyEntryImageViewerViewController(imageKeys: allPhotos.map { $0.i
                                 strongSelf.onOpenEntry?(fetched)
                             }
                         } else {
-                            strongSelf.presentSimpleAlert(message: "该日记已设为私密")
+                            // 10a：回退提示按档区分——仅好友来源显定版句，私密档文案不动。
+                            strongSelf.presentSimpleAlert(message: fetched.isFriendsOnly ? "该日记仅好友可见" : "该日记已设为私密")
                         }
                     case .failure:
                         strongSelf.presentSimpleAlert(message: "引用的日记已删除")

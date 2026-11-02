@@ -590,7 +590,7 @@ final class BearyBlindBoxFlowViewController: UIViewController {
         mineWithdrawnLabel.textColor = BearyColors.gray
         mineWithdrawnLabel.numberOfLines = 0
         mineWithdrawnLabel.textAlignment = .center
-        mineWithdrawnLabel.text = "你已撤回交换，对方收到的你这篇已变为占位。今日次数不返还，明天再来。"
+        mineWithdrawnLabel.text = "你已撤回交换。今日次数不返还，明天再来。"
         mineWithdrawnView.addSubview(mineWithdrawnLabel)
         NSLayoutConstraint.activate([
             mineWithdrawnLabel.topAnchor.constraint(equalTo: mineWithdrawnView.topAnchor, constant: 20),
@@ -708,7 +708,7 @@ final class BearyBlindBoxFlowViewController: UIViewController {
             return
         }
         if body.used == true {
-            setStep(.placeholder("今日已换过 1 次，明天再来。"))
+            setStep(.placeholder("今日已换过 1 次，明天再来"))
             return
         }
         if let pooled = body.pooledEntryId {
@@ -727,7 +727,7 @@ final class BearyBlindBoxFlowViewController: UIViewController {
                     self.renderPoolRows()
                     self.openHintLabel.text = self.pooledEntryId == nil
                         ? "先放进池子，再开盒。私密篇与今日新公开篇不可入池。"
-                        : "已放进池子，可以开盒了。开盒后今日计数变为 1/1。"
+                        : "已放进池子，可以开盒了。"
                     self.setStep(.pool)
                 case .failure(let error):
                     self.setStep(.error(self.todayErrorText(error)))
@@ -880,7 +880,7 @@ final class BearyBlindBoxFlowViewController: UIViewController {
                 switch result {
                 case .success(let resp):
                     self.pooledEntryId = resp.pooledEntryId ?? entryId
-                    self.openHintLabel.text = "已放进池子，可以开盒了。开盒后今日计数变为 1/1。"
+                    self.openHintLabel.text = "已放进池子，可以开盒了。"
                     BearyToast.show(in: self.view, message: "已放进池子，可以开盒了")
                     self.setStep(.pool)
                 case .failure(let error):
@@ -946,7 +946,7 @@ final class BearyBlindBoxFlowViewController: UIViewController {
                         return
                     }
                     if case .http(let code, _) = error, code == 409 {
-                        BearyToast.show(in: self.view, message: "今日已换过 1 次")
+                        BearyToast.show(in: self.view, message: "今日已换过 1 次，明天再来")
                         self.loadInitial()
                         return
                     }
@@ -1134,13 +1134,13 @@ final class BearyBlindBoxFlowViewController: UIViewController {
         case .unauthorized, .authFailure:
             return "登录已过期，请重新登录。"
         case .notFound:
-            return "盲盒服务暂未上线，请稍后再试。"
+            return "盲盒服务暂未上线，请稍后再试"
         case .http(let code, _):
-            if code == 404 { return "盲盒服务暂未上线，请稍后再试。" }
-            if code == 409 { return "今日已换过 1 次，明天再来。" }
-            return "加载失败，请重试。"
+            if code == 404 { return "盲盒服务暂未上线，请稍后再试" }
+            if code == 409 { return "今日已换过 1 次，明天再来" }
+            return "加载失败，请重试"
         default:
-            return "网络不稳定，请稍后再试。"
+            return "网络不稳定，请稍后再试"
         }
     }
 
@@ -1187,12 +1187,12 @@ final class BearyBlindBoxFlowViewController: UIViewController {
         case .unauthorized, .authFailure:
             return "登录已过期，请重新登录。"
         case .notFound:
-            return "盲盒服务暂未上线，请稍后再试。"
+            return "盲盒服务暂未上线，请稍后再试"
         case .server(let code):
             return fallback
         case .http(let code, let snippet):
-            if code == 404 { return "盲盒服务暂未上线，请稍后再试。" }
-            if code == 409 { return "今日已换过 1 次" }
+            if code == 404 { return "盲盒服务暂未上线，请稍后再试" }
+            if code == 409 { return "今日已换过 1 次，明天再来" }
             return fallback
         default:
             return fallback

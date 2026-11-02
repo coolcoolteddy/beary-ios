@@ -6,7 +6,7 @@ import PhotosUI
 // 只负责写日记：正文 + 心情 + 天气 + @ + 引用 + 图片（上限 9 张）。
 // 编辑模式复用同一界面：正文/心情/天气/图片/引用/@ 可改，
 // 不走新日记草稿流（不读不写 beary_draft_v3、不复用新篇 client_req）。
-// iCity：新建默认私密（顶栏可见性钮三态点按循环：私密→公开→限时，编辑模式隐藏）；
+// iCity：新建默认私密（顶栏可见性钮点开菜单直选：私密/仅好友/公开/限时，编辑模式隐藏）；
 // 限时行已删（2026-10-31）：限时态即公开语义，ephemeral=1 发出后服务端 24 小时后转私密，无日期行。
 // C1 段落顺序：正文 → 已选 Chip 行 → 图片预览 → 状态行 → 引用；
 // A3：规则框已移出内容栈，锚在工具栏上方（不随正文滚动，键盘顶起工具栏时跟走）；
@@ -222,10 +222,10 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     /// iCity：新建编辑器可见性初值硬编码私密（false），不读 UserDefaults、不记住上次选择。
     private var selectedVisibilityPublished = false
     /// 好友第一期：仅好友档（与 published/ephemeral 互斥三态之一；限时恒公开，
-    /// 故仅好友与限时互斥：仅好友切限时须先经公开档再计时，循环本身保证此顺序）。
+    /// 故仅好友与限时互斥：菜单直选任一档即定格该档，不经过中间档）。
     private var selectedVisibilityFriends = false
-    /// 顶栏三态循环的限时档：true 恒与 published=true 同行（限时即公开语义）；
-    /// 切到私密或普通公开时即清掉，不残留（见 didTapVisibilityButton）。
+    /// 顶栏菜单的限时档：true 恒与 published=true 同行（限时即公开语义）；
+    /// 切到私密或普通公开时即清掉，不残留（见 applyVisibilityChoice）。
     private var isEphemeral = false
     /// 编辑模式的引用：初始为原值，可改可删（网页 PUT 同款：body 带新 quote_id；
     /// 删为空时 updateEntry 省略 quote_id，服务端按 null 写，旧引用即清掉）。
@@ -447,7 +447,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     private let toolbarContainer = UIView()
     private let toolStripStack = UIStackView()
     /// 2026-10-31：工具栏上方限时行已整组删除（行、开关、文案、约束全清），
-    /// 限时并进顶栏可见性钮三态循环；滚动区底锚直接走工具栏档（见 updateScrollBottomAnchoring）。
+    /// 限时并进顶栏可见性钮菜单（12b 前为点按循环）；滚动区底锚直接走工具栏档（见 updateScrollBottomAnchoring）。
     private var scrollBottomToToolbarConstraint: NSLayoutConstraint?
     private var scrollBottomToStripConstraint: NSLayoutConstraint?
     private var scrollBottomToViewConstraint: NSLayoutConstraint?
@@ -504,8 +504,8 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     private let recipientToolButton = BearyHit44Button(type: .system)
     private let quoteToolButton = BearyHit44Button(type: .system)
     private let draftPillButton = UIButton(type: .system)
-    /// 顶栏可见性钮（2026-10-30 建、2026-10-31 改三态）：锁＝私密、地球＝公开、
-    /// 时钟＝限时，点按循环切换；取代正文区分段，为唯一可见性入口；
+    /// 顶栏可见性钮（2026-10-30 建、2026-10-31 改三态、12b 改点开菜单）：锁＝私密、地球＝公开、
+    /// 时钟＝限时，点开系统 UIMenu 直选四档；取代正文区分段，为唯一可见性入口；
     /// 编辑模式隐藏（编辑不改可见性）；限时态即公开语义，不再另设锁定开关。
     private let visibilityButton = UIButton(type: .system)
     // 编辑器改版（2026-10-29）：心情/天气尖角弹出框（取代旧选择条）+ 框外收起层。
@@ -538,6 +538,16 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     private static let calloutTransitionDuration: TimeInterval = 0.20
     private static let calloutTransitionOffset: CGFloat = 6
     private static let calloutHeight: CGFloat = 78
+    /// [24] 小项 2：天气框高约束（基准 78；步进器附属行显时 += 附属行高，
+    /// 见 updateWeatherCalloutHeight；心情框仍走固定 78，不受影响）。
+    private var weatherCalloutHeightConstraint: NSLayoutConstraint?
+
+    /// [24] 小项 2：天气框高 = 基准 + 附属行显隐对应的增量；框未搭建时
+    /// 约束为 nil，直接跳过（refreshSelectedChips 在搭建前也可能调到）。
+    private func updateWeatherCalloutHeight() {
+        guard let constraint = weatherCalloutHeightConstraint else { return }
+        constraint.constant = Self.calloutHeight + weatherCallout.accessoryExtraHeight
+    }
     // C1：已选中项轻量 Chip 行（正文下方）：心情/天气/写给各一枚，点 chip 打开对应选择条。
     private let selectedChipsRow = UIStackView()
     /// 审计 P1-3：Chip 行首行（心情/天气/写给单行态）；写给换行时脱离本行、改作
@@ -547,16 +557,8 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     /// 凭此 + 宽门限决定是否重算，避免移行触发布局 → 再移行的循环。
     private var selectedChipsRecipientOnSecondRow = false
     private var selectedChipsLastLayoutWidth: CGFloat = -1
-    /// 窄屏 5 项之 1：气温步进器当前是否在独立第二行（见 layoutSelectedChips）。
-    /// 首行三项（心情＋天气＋步进器）本身超宽时，写给换行已不够——步进器
-    /// 独占第二行兜底，首行不再被 required 抗压挤出约束冲突；宽回升即回首行。
-    private var selectedChipsTempStepperOnSecondRow = false
-    /// 窄屏 5 项之 1：步进器第二行时的包壳横栈（竖栈 alignment .fill 会把
-    /// 直接进竖栈的步进器拉满宽、−／数值／＋被撑散；包壳内步进器 required
-    /// hugging 保自然宽、弹性 spacer 吸掉剩余宽，步进器本身不设显式宽约束，
-    /// 免得与竖栈 fill 约束顶成 required 对 required 的冲突）。
-    private let tempStepperSecondRowWrap = UIStackView()
-    private let tempStepperSecondRowSpacer = UIView()
+    /// [24] 审计后续小项 2：气温步进器已收进天气框附属行，不再进 chip 行；
+    /// 窄屏第二行包壳与换行兜底随之删除（步进器不再参与首行宽度计算）。
     /// 审计 P1-8：选择条转场代次——每次 refreshToolStrip 显隐变化即 +1；旧转场
     /// 的 completion 凭代次过期作废，不再碰视图，快速连点只收敛到最后状态。
     private var toolStripTransitionGeneration = 0
@@ -1134,8 +1136,11 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         visibilityButton.setImage(BearyIconImages.image(named: "icon_lock", pointSize: 24), for: .normal)
         visibilityButton.tintColor = BearyColors.ink
         visibilityButton.accessibilityLabel = "可见性"
-        visibilityButton.accessibilityHint = "点按切换私密、仅好友、公开、限时"
-        visibilityButton.addTarget(self, action: #selector(didTapVisibilityButton), for: .touchUpInside)
+        visibilityButton.accessibilityHint = "点开菜单选择私密、仅好友、公开、限时"
+        // 12b：点开菜单直选，取代 #596 的点按四态循环（循环入口整段删除，不留两套入口）。
+        // 系统 UIMenu（不自绘）：菜单内容由 refreshVisibilityButton 按当前档重建，当前档打勾。
+        visibilityButton.menu = makeVisibilityMenu()
+        visibilityButton.showsMenuAsPrimaryAction = true
         visibilityButton.bearyAddPressFeedback()
         visibilityButton.translatesAutoresizingMaskIntoConstraints = false
         visibilityButton.isHidden = isEditMode
@@ -1573,7 +1578,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         recipientChipAvatar.layer.cornerRadius = 11
         recipientChipAvatar.layer.masksToBounds = true
         recipientChipFallback.font = UIFont.boldSystemFont(ofSize: 12)
-        recipientChipFallback.textColor = UIColor.white
+        recipientChipFallback.textColor = BearyColors.onBrand
         recipientChipFallback.backgroundColor = BearyColors.orange
         recipientChipFallback.textAlignment = .center
         recipientChipFallback.layer.cornerRadius = 11
@@ -2188,23 +2193,70 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         scrollBottomToViewConstraint?.isActive = quotePanelOpen
     }
 
-    @objc private func didTapVisibilityButton() {
-        // 四态循环：私密 → 仅好友 → 公开 → 限时 → 私密。限时态 = 公开 + 限时标记；
-        // 仅好友与限时互斥：仅好友档先回公开档、再点才进限时（沿用“限时开强制公开”）；
-        // 切到私密或普通公开时限时标记即清，不残留到下一篇普通篇。
-        // （旧限时开关的“限时锁死公开钮”随开关删除而作废：循环本身已保证限时恒公开。）
-        // 仅好友不是公开：切到仅好友不触发“一并公开”询问（门禁只认 published 档，见 didTapPublish）。
+    /// 12b：编辑器可见性菜单（系统 UIMenu，不自绘新组件；时间线筛子走系统
+    /// actionSheet，本处用 UIMenu 因其原生支持当前档打勾，且锚在钮上、iPad 无需另配 popover）。
+    /// 四档直选，取代 #596 的点按四态循环；四档文案与图标沿用现行（私密/仅好友/公开/限时，
+    /// 锁/双人锁/地球/限时官方图标，不新造样式、不改文案）。
+    /// 当前档仍列出，点按即无操作返回（与时间线筛子“当前档点按无操作”口径一致）。
+    private func makeVisibilityMenu() -> UIMenu {
+        let current = currentVisibilityChoice()
+        let items: [(title: String, icon: String, choice: VisibilityChoice)] = [
+            ("私密", "icon_lock", .privateTier),
+            ("仅好友", "icon_friends_lock", .friendsTier),
+            ("公开", "icon_globe", .publicTier),
+            ("限时", "icon_limited", .ephemeralTier),
+        ]
+        let actions = items.map { item in
+            UIAction(title: item.title, image: BearyIconImages.image(named: item.icon, pointSize: 24), state: item.choice == current ? .on : .off) { [weak self] _ in
+                self?.applyVisibilityChoice(item.choice)
+            }
+        }
+        return UIMenu(title: "可见性", children: actions)
+    }
+
+    /// 三旗标折叠成的当前档：限时优先（限时恒公开），其次仅好友，其次公开，其余私密。
+    private func currentVisibilityChoice() -> VisibilityChoice {
         if isEphemeral {
+            return .ephemeralTier
+        } else if selectedVisibilityFriends {
+            return .friendsTier
+        } else if selectedVisibilityPublished {
+            return .publicTier
+        } else {
+            return .privateTier
+        }
+    }
+
+    // case 名避开 private/public 关键字（不用反引号转义，省一处解析风险）。
+    private enum VisibilityChoice {
+        case privateTier, friendsTier, publicTier, ephemeralTier
+    }
+
+    /// 菜单选档：只写三旗标，其余逻辑一律不动——发布门禁（didTapPublish 只认
+    /// published 档，故仅好友不触发“一并公开”询问）、草稿恢复、快照生成均读旗标；
+    /// 限时档 = 公开 + 限时标记（限时开强制公开：published=true、friends=false，
+    /// 与仅好友互斥），切他档即清限时标记，不残留到下一篇普通篇。
+    /// （“限时开锁定”沿现行语义：限时恒公开、而非钮禁用——现行冻结只看发布在途态，
+    /// 限时态本身按钮仍可点开菜单重选，见 refreshPublishingInputFreeze；本支不新增禁用。）
+    private func applyVisibilityChoice(_ choice: VisibilityChoice) {
+        guard choice != currentVisibilityChoice() else { return }
+        switch choice {
+        case .privateTier:
             selectedVisibilityPublished = false
             selectedVisibilityFriends = false
             isEphemeral = false
-        } else if selectedVisibilityFriends {
-            selectedVisibilityFriends = false
-            selectedVisibilityPublished = true
-        } else if selectedVisibilityPublished {
-            isEphemeral = true
-        } else {
+        case .friendsTier:
+            selectedVisibilityPublished = false
             selectedVisibilityFriends = true
+            isEphemeral = false
+        case .publicTier:
+            selectedVisibilityPublished = true
+            selectedVisibilityFriends = false
+            isEphemeral = false
+        case .ephemeralTier:
+            selectedVisibilityPublished = true
+            selectedVisibilityFriends = false
+            isEphemeral = true
         }
         refreshVisibilityButton()
         // 批 E：段位切换时位置行副行（公开后他人仅见区级）同步变，防滞后。
@@ -2221,6 +2273,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     /// （熊头 + 外围虚线环，#162 落位的 imageset，#272 删限时行时误删、
     /// 本支从 2bb7df9^ 原样恢复，不自绘、不改图形；纠正：不要 icon_clock）；
     /// 可用态只由发布冻结（refreshPublishingInputFreeze）管，本函数不动 isEnabled。
+    /// 菜单随钮状态重建：草稿恢复/清空/门禁回写等一切调本函数的路径都会同步菜单打勾。
     private func refreshVisibilityButton() {
         if isEphemeral {
             visibilityButton.setImage(BearyIconImages.image(named: "icon_limited", pointSize: 24), for: .normal)
@@ -2233,6 +2286,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             visibilityButton.setImage(BearyIconImages.image(named: published ? "icon_globe" : "icon_lock", pointSize: 24), for: .normal)
             visibilityButton.accessibilityValue = published ? "公开" : "私密"
         }
+        visibilityButton.menu = makeVisibilityMenu()
     }
 
     @objc private func didTapQuoteTab(_ sender: UIButton) {
@@ -2351,8 +2405,8 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         for entry in entries {
             // 审计 P0-2：选择引用加卡片同款 viewer 门控——赞过/收藏 tab 里翻回私密的
             // 他人日记不得出全文：只显占位行、不可选（作者本人或有效公开才出全文行）。
-            // 占位主句与引用卡新口径一致（“该日记已私密”；picker 行无 published_at
-            // 可靠区分，不挂“已转”提醒句）。
+            // 占位主句与引用卡新口径一致（私密档“该日记已私密”；仅好友档走 10a 定版
+            // “该日记仅好友可见”；picker 行无 published_at 可靠区分，不挂“已转”提醒句）。
             let viewerId = SessionManager.shared.currentUser?.id
             let quoteIsAuthor = entry.isMine == true || (entry.authorId != nil && viewerId != nil && entry.authorId == viewerId)
             if !quoteIsAuthor && !BearyEphemeral.isEffectivelyPublic(entry) {
@@ -2365,7 +2419,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                 lockedLabel.translatesAutoresizingMaskIntoConstraints = false
                 lockedLabel.font = UIFont.systemFont(ofSize: 15)
                 lockedLabel.textColor = BearyColors.gray
-                lockedLabel.text = "该日记已私密"
+                lockedLabel.text = entry.isFriendsOnly ? "该日记仅好友可见" : "该日记已私密"
                 let lockedSeparator = UIView()
                 lockedSeparator.translatesAutoresizingMaskIntoConstraints = false
                 lockedSeparator.backgroundColor = BearyColors.line
@@ -2525,7 +2579,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                 let checkLabel = UILabel()
                 checkLabel.translatesAutoresizingMaskIntoConstraints = false
                 checkLabel.font = UIFont.boldSystemFont(ofSize: 14)
-                checkLabel.textColor = .white
+                checkLabel.textColor = BearyColors.onBrand
                 checkLabel.textAlignment = .center
                 checkLabel.text = "✓"
                 checkView.addSubview(checkLabel)
@@ -2703,12 +2757,14 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         refreshQuoteSection()
     }
 
-    /// 面板行日期：M月d日 HH:mm（与网页 fmtDate 同款）。
+    /// [24] 小项 6：面板行日期统一为项目主流口径 M月d日 H:mm（小时不补零；
+    /// 旧注“与网页 fmtDate 同款”有误：卡片/详情/通知/时间线引用一律 H:mm，
+    /// 本处原 HH:mm 是唯一偏离的日记日期行，已改齐）。
     private func quoteRowDate(ms: Int) -> String {
         let date = Date(timeIntervalSince1970: TimeInterval(ms) / 1000.0)
         let fmt = DateFormatter()
         fmt.locale = Locale(identifier: "zh_CN")
-        fmt.dateFormat = "M月d日 HH:mm"
+        fmt.dateFormat = "M月d日 H:mm"
         return fmt.string(from: date)
     }
 
@@ -3055,15 +3111,21 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         weatherCallout.isHidden = true
         calloutDismissView.isHidden = true
         calloutDismissView.onTapOutside = { [weak self] in self?.hideCallout(animated: true) }
+        // 23a：心情框与天气框同款，首位补“无”（清除旧心情）选项，键为 "none"，
+        // 图为官方 icon_close 原图（weatherNoneImage，40pt 同尺寸）；其余心情项
+        // 仍走插入式，不动。
         moodCallout.configure(
-            options: moodOrder.map { key in
+            options: [BearyCalloutPickerView.Option(key: "none", accessibilityLabel: "无")] + moodOrder.map { key in
                 BearyCalloutPickerView.Option(key: key, accessibilityLabel: "心情：" + (BearyText.moodNames[key] ?? key))
             },
             onSelect: { [weak self] key in self?.didSelectMoodFromCallout(key) },
-            imageProvider: { [weak self] key, dark in self?.calloutMoodImage(for: key, dark: dark) }
+            imageProvider: { [weak self] key, dark in
+                if key == "none" { return self?.weatherNoneImage() }
+                return self?.calloutMoodImage(for: key, dark: dark)
+            }
         )
         // v6-8：天气框首位补“无”（清除）选项，键为 "none"，图为官方 icon_close 原图
-        //（见 weatherNoneImage；大小与其它天气图标一致 40pt、同色墨色模板）；心情框（40 项）不动。
+        //（见 weatherNoneImage；大小与其它天气图标一致 40pt、同色墨色模板）。
         // 选中态口径（审计 E2 第 11 项）：已选天气在框内以 1pt 墨色描边标出
         //（见 CalloutPicker refreshSelectedStates）；打开框时按当前 selectedWeather
         // 同步；无天气时无行高亮。
@@ -3078,10 +3140,14 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             },
             selectedKey: selectedWeather
         )
+        // [24] 小项 2：气温步进器以附属行身份挂进天气框（不进 chip 行），
+        // 框内点按步进器不触发框外收起（附属行在收起层之上、与框同层级）。
+        weatherCallout.setAccessoryView(tempStepperStack)
         // 收起层先加、框后加：框在收起层之上，框内点按不触发框外收起。
         view.addSubview(calloutDismissView)
         view.addSubview(moodCallout)
         view.addSubview(weatherCallout)
+        weatherCalloutHeightConstraint = weatherCallout.heightAnchor.constraint(equalToConstant: Self.calloutHeight)
         NSLayoutConstraint.activate([
             calloutDismissView.topAnchor.constraint(equalTo: view.topAnchor),
             calloutDismissView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
@@ -3094,8 +3160,9 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             weatherCallout.leadingAnchor.constraint(equalTo: toolbarContainer.leadingAnchor),
             weatherCallout.trailingAnchor.constraint(equalTo: toolbarContainer.trailingAnchor),
             weatherCallout.bottomAnchor.constraint(equalTo: toolbarContainer.topAnchor, constant: -8),
-            weatherCallout.heightAnchor.constraint(equalToConstant: Self.calloutHeight),
+            weatherCalloutHeightConstraint!,
         ])
+        updateWeatherCalloutHeight()
     }
 
     /// 弹出框心情图：官方 emote 静态 PNG 按 44pt 重绘（与已选 chip 的 16pt 同款做法）；
@@ -3138,6 +3205,9 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         // 否则重开框或编辑带天气的草稿时选中态仍是旧的。
         if kind == .weather {
             weatherCallout.setSelectedKey(selectedWeather)
+            // [24] 小项 2：打开前按当前天气态定框高（有天气则含步进器行）。
+            weatherCallout.setAccessoryVisible(selectedWeather != nil)
+            updateWeatherCalloutHeight()
         }
         let target = kind == .mood ? moodCallout : weatherCallout
         let other = kind == .mood ? weatherCallout : moodCallout
@@ -3382,7 +3452,18 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     /// 弹出框点选心情：插入式（取代旧“再点已选项取消”口径）——把熊脸图
     /// 插进光标处；插完不收起，方便连着插多个（数量不限，见
     /// insertMoodImageAtCursor）；单独心情字段一字不动。
+    /// 23a 例外：首位“无”（key "none"）不插图，只清单独心情字段（编辑回填 /
+    /// 草稿恢复的旧心情）：selectedMood 置空、chip 行同步隐藏、草稿落盘；
+    /// 点选即收起（与天气“无”同口径，区别于插入式的不收起）。编辑保存时
+    /// selectedMood 为 nil 即按 updateEntry 省略口径发出，与天气清除同款。
     private func didSelectMoodFromCallout(_ key: String) {
+        if key == "none" {
+            selectedMood = nil
+            refreshSelectedChips()
+            scheduleDraftSave()
+            hideCallout(animated: true)
+            return
+        }
         insertMoodImageAtCursor(key)
     }
 
@@ -3549,7 +3630,10 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             weatherChipButton.setImage(nil, for: .normal)
         }
         // 气温步进器只跟天气类型走：有类型才显，无类型（“无”）时连气温同清、不留孤气温。
-        tempStepperStack.isHidden = selectedWeather == nil
+        // [24] 小项 2：步进器在天气框附属行里（见 buildCallouts），此处只管
+        // 附属行显隐 + 框高，不再管 chip 行里的步进器。
+        weatherCallout.setAccessoryVisible(selectedWeather != nil)
+        updateWeatherCalloutHeight()
         tempLabelButton.setTitle(selectedTemperature != nil ? "\(selectedTemperature!)°" : "气温", for: .normal)
         tempLabelButton.accessibilityLabel = selectedTemperature != nil ? "气温：\(selectedTemperature!)°，点按可输入" : "气温：未设置，点按可输入"
         let recipientName: String?
@@ -3580,27 +3664,6 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         layoutSelectedChips()
     }
 
-    /// 窄屏 5 项之 1：气温步进器的实测宽。UIStackView 没有固有尺寸，
-    /// intrinsicContentSize 恒为 -1（UIView.noIntrinsicMetric），旧口径直接
-    /// 用它算换行总宽、每行少算约 113pt，写给该换行时没换、被挤压截断。
-    /// 改 systemLayoutSizeFitting（压缩拟合）实测：三枚钮固有宽＋栈间距即
-    /// 自然宽；拟合失败（≤0）时退回各子项固有宽求和，绝不回落到 -1。
-    private func tempStepperMeasuredWidth() -> CGFloat {
-        guard !tempStepperStack.isHidden else { return 0 }
-        let fitting = tempStepperStack.systemLayoutSizeFitting(UIView.layoutFittingCompressedSize)
-        if fitting.width > 0 { return fitting.width }
-        var width: CGFloat = 0
-        var count = 0
-        for view in tempStepperStack.arrangedSubviews where !view.isHidden {
-            width += view.intrinsicContentSize.width
-            count += 1
-        }
-        if count > 1 {
-            width += CGFloat(count - 1) * tempStepperStack.spacing
-        }
-        return width
-    }
-
     /// 审计 P1-3：三 chip 收缩优先级与换行。
     /// 单行态：心情/天气自然宽（hugging + 抗压缩双 required，文字不缩小、不截断），
     /// 写给占剩余（hugging/compression 双 low：有富余则伸满、空间紧则先缩），
@@ -3608,10 +3671,8 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     /// 空间不足（单行总宽 > 行宽）且写给与心情/天气同显时：写给脱离首行、
     /// 独立成第二行（满宽、尾截断），心情/天气保持自然宽不动——不缩小全部文字。
     /// 写给单独出现时不换行（满宽即剩余，超长只尾截断）。
-    /// 窄屏 5 项之 1 兜底：心情＋天气＋步进器三项本身已超行宽时，只挪写给
-    /// 仍救不了首行（三个 required 项互相顶出约束冲突），步进器先经包壳
-    /// 独占第二行（包壳内保自然宽、不被竖栈拉满），首行只剩心情／天气；
-    /// 宽回升即回首行。
+    /// [24] 小项 2：步进器已收进天气框，首行只剩心情／天气／写给三项，
+    /// 窄屏第二行兜底（步进器包壳）已随之删除，不再有步进器换行态。
     /// 只在换行态真正变化时移视图；同态重算不碰层级，不触发布局环。
     /// （移行不改行宽，viewDidLayoutSubviews 的宽门限仍挡得住重入。）
     private func layoutSelectedChips() {
@@ -3632,35 +3693,6 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         let moodVisible = !moodChipButton.isHidden
         let weatherVisible = !weatherChipButton.isHidden
         let recipientVisible = !recipientChipButton.isHidden
-        let stepperVisible = !tempStepperStack.isHidden
-        let stepperWidth = tempStepperMeasuredWidth()
-        // 首行基底：心情／天气自然宽＋其间间距（UIButton intrinsic 已含边距与标题宽）。
-        var firstRowBaseWidth: CGFloat = 0
-        var firstRowBaseCount = 0
-        for button in [moodChipButton, weatherChipButton] where !button.isHidden {
-            firstRowBaseWidth += button.intrinsicContentSize.width
-            firstRowBaseCount += 1
-        }
-        if firstRowBaseCount > 1 {
-            firstRowBaseWidth += CGFloat(firstRowBaseCount - 1) * selectedChipsFirstRow.spacing
-        }
-        // 兜底先算：步进器在首行时首行总宽＝基底＋步进器＋一格间距。
-        let firstRowWithStepper = firstRowBaseWidth
-            + (stepperVisible ? stepperWidth + (firstRowBaseCount > 0 ? selectedChipsFirstRow.spacing : 0) : 0)
-        let stepperOnSecondRow = stepperVisible && firstRowWithStepper > available
-        if stepperOnSecondRow != selectedChipsTempStepperOnSecondRow {
-            selectedChipsTempStepperOnSecondRow = stepperOnSecondRow
-            if stepperOnSecondRow {
-                selectedChipsFirstRow.removeArrangedSubview(tempStepperStack)
-                // 包壳插到首行正下方：写给已在第二行时被顶到其下，顺序仍是首行／步进器／写给。
-                tempStepperSecondRowWrap.insertArrangedSubview(tempStepperStack, at: 0)
-                selectedChipsRow.insertArrangedSubview(tempStepperSecondRowWrap, at: 1)
-            } else {
-                selectedChipsRow.removeArrangedSubview(tempStepperSecondRowWrap)
-                tempStepperSecondRowWrap.removeArrangedSubview(tempStepperStack)
-                selectedChipsFirstRow.addArrangedSubview(tempStepperStack)
-            }
-        }
         guard recipientVisible, moodVisible || weatherVisible else {
             // 写给单独出现或未出现：单行态即是终态（未出现时首行只剩隐藏项，塌高为 0）。
             if selectedChipsRecipientOnSecondRow {
@@ -3670,8 +3702,8 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             }
             return
         }
-        // 写给换行总宽：心情／天气／写给自然宽＋间距；步进器已在第二行时
-        // 不再计入首行宽（它已不在首行），否则会把写给误判为需换行。
+        // 写给换行总宽：心情／天气／写给自然宽＋间距。
+        // [24] 小项 2：步进器已收进天气框，不再计入首行宽。
         var singleLineWidth: CGFloat = 0
         var visibleCount = 0
         for button in [moodChipButton, weatherChipButton, recipientChipButton] where !button.isHidden {
@@ -3680,9 +3712,6 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         }
         if visibleCount > 1 {
             singleLineWidth += CGFloat(visibleCount - 1) * selectedChipsFirstRow.spacing
-        }
-        if stepperVisible, !stepperOnSecondRow {
-            singleLineWidth += stepperWidth + selectedChipsFirstRow.spacing
         }
         let wrapRecipient = singleLineWidth > available
         guard wrapRecipient != selectedChipsRecipientOnSecondRow else { return }
@@ -3728,7 +3757,8 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             chip.button.translatesAutoresizingMaskIntoConstraints = false
             selectedChipsFirstRow.addArrangedSubview(chip.button)
         }
-        // 气温步进器：挂在 chip 首行天气 chip 之后，只在已选天气时显（见 refreshSelectedChips）。
+        // [24] 小项 2：气温步进器不再挂 chip 首行，改挂天气框附属行
+        //（buildCallouts 里 setAccessoryView）；只在已选天气时显（见 refreshSelectedChips）。
         tempStepperStack.axis = .horizontal
         tempStepperStack.spacing = 4
         tempStepperStack.alignment = .center
@@ -3753,14 +3783,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         }
         tempStepperStack.setContentHuggingPriority(.required, for: .horizontal)
         tempStepperStack.setContentCompressionResistancePriority(.required, for: .horizontal)
-        selectedChipsFirstRow.addArrangedSubview(tempStepperStack)
-        // 窄屏 5 项之 1：第二行包壳（平时不进竖栈、不占高）：横栈＋弹性 spacer，
-        // 步进器 required hugging 保自然宽、spacer 吸剩余宽，见 layoutSelectedChips。
-        tempStepperSecondRowWrap.axis = .horizontal
-        tempStepperSecondRowWrap.spacing = 0
-        tempStepperSecondRowWrap.alignment = .center
-        tempStepperSecondRowWrap.translatesAutoresizingMaskIntoConstraints = false
-        tempStepperSecondRowWrap.addArrangedSubview(tempStepperSecondRowSpacer)
+        // 不进 chip 行：buildCallouts 里以附属行身份挂进天气框。
         // 审计 P1-3：心情/天气自然宽不让步；写给低优先级，占剩余、紧时先缩先截断。
         moodChipButton.setContentHuggingPriority(.required, for: .horizontal)
         moodChipButton.setContentCompressionResistancePriority(.required, for: .horizontal)
@@ -3811,21 +3834,20 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         toggleCallout(.mood)
     }
 
-    /// 天气钮：点一下先自动取当地天气和气温填上，再打开天气选择器——填上之后
-    /// 类型可在选择器里手改、气温可在 chip 行步进器里手改，改完以手改的为准
-    /// （手选/手改气温会使在途自动填回包过期作废，见 weatherFetchGeneration）；
-    /// 再点天气钮会重新自动填（覆盖手改）。取不到时如实提示、不编假数据填上，
-    /// 仍打开选择器供手动选。
+    /// [24] 小项 1：天气钮点按即打开天气选择器，不再等自动取数回包才开
+    ///（旧口径：先 fetchLocalWeather、回包尾部才 showCallout，网络慢/
+    /// 取不到时选择器迟迟不开，看起来像要点两次）。自动取数仍在后台走：
+    /// 取到后填类型与气温（手选/手改气温仍凭 weatherFetchGeneration 使
+    /// 在途回包过期作废，不覆盖手改）；取不到只 toast，不编假数据。
+    /// 回包不再抢开选择器——用户若已手动关框，回包只落数不重开。
+    /// 填上之后类型可在选择器里手改、气温在框内步进器里手改（小项 2）；
+    /// 再点天气钮会重新自动填（覆盖手改，#427 口径不变）。
     @objc private func didTapWeatherTool() {
         DiagFile.mark("weather-diag didTapWeatherTool")
         hideLocationPopover(animated: false)
+        showCallout(.weather)
         weatherFetchGeneration += 1
         let generation = weatherFetchGeneration
-        // 审计 1：记下本次展示意图；取数代次与展示意图代次分开——
-        // 定位点按不碰 weatherFetchGeneration、不取消本请求。
-        calloutPresentationGeneration += 1
-        let presentationGeneration = calloutPresentationGeneration
-        showToast(message: "正在获取当地天气…")
         BearyAPI.shared.fetchLocalWeather { [weak self] result in
             DispatchQueue.main.async {
                 guard let self = self, self.weatherFetchGeneration == generation else { return }
@@ -3838,13 +3860,13 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                     self.syncWeatherToolButton()
                     self.refreshSelectedChips()
                     self.scheduleDraftSave()
+                    // 框还开着时同步框内选中态与步进器显隐；框已关则不重开。
+                    if self.activeCallout == .weather {
+                        self.weatherCallout.setSelectedKey(self.selectedWeather)
+                    }
                 case .failure:
                     self.showToast(message: "没取到当地天气，请手动选")
                 }
-                // 审计 1：取数与落数原样不变；只有展示意图过期时不抢开——
-                // 用户中途切到定位/心情/写给/引用等工具后，回包不再顶掉当前浮层。
-                guard presentationGeneration == self.calloutPresentationGeneration else { return }
-                self.showCallout(.weather)
             }
         }
     }
@@ -4316,7 +4338,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         // 100 包编辑器面修法：发布在途时可见性钮亦冻结——此前冻结清单
         // 漏了它，在途点钮只改旗标不改已发送值（performPublish 已在请求
         // 前捕获 publishVisibility），视觉上“切成功了”实则无效。
-        // 2026-10-31：限时开关已删，钮冻结只看在途态（限时态本身不再锁钮，循环可继续点按）。
+        // 2026-10-31：限时开关已删，钮冻结只看在途态（限时态本身不再锁钮，菜单仍可点开重选）。
         visibilityButton.isEnabled = !frozen
         // P1-14：冻结清单补齐全部入口——草稿 pill、引用钮、三枚已选 Chip、
         // @ pick/清除、引用卡 ×（含已删行“移除”）；其余入口见下。
@@ -5659,7 +5681,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     /// 即读后者，只写 index 不动它仍会发出私密）；ephemeral=true 时恢复为
     /// 限时态（公开 + 限时标记），老草稿无限时键时缺省 false，走旧私密/公开态；
     /// 好友第一期：index=2 恢复为仅好友档；非法 index 一律按私密兜底。restoreDraft 与 loadDraftFromBox 两路共用。
-    /// （旧“限时开时钮锁死”口径随开关删除而作废：恢复后循环仍可点按。）
+    /// （旧“限时开时钮锁死”口径随开关删除而作废：恢复后菜单仍可点开重选。）
     private func restoreVisibility(index: Int, ephemeral: Bool = false) {
         if ephemeral {
             selectedVisibilityPublished = true

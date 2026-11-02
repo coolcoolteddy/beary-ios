@@ -1764,7 +1764,7 @@ final class BearyTimelineCell: UITableViewCell {
                 quoteButton.isEnabled = false
                 quoteButton.isHidden = false
             } else if quote.locked == true {
-                let placeholder = BearyQuoteGate.placeholderText(publishedAt: quote.publishedAt, locked: true)
+                let placeholder = BearyQuoteGate.placeholderTextForQuote(publishedAt: quote.publishedAt, locked: true, visibility: quote.visibility)
                 applyTimelinePlaceholder(main: placeholder.main, detail: placeholder.detail, deleted: false, handle: quote.authorHandle, dateMs: quote.createdAt)
                 quoteIconView.image = BearyIconImages.image(named: "icon_lock", pointSize: 12)
                 quoteButton.isEnabled = false
@@ -1774,7 +1774,7 @@ final class BearyTimelineCell: UITableViewCell {
                     applyTimelinePlaceholder(main: "引用的日记已删除", detail: nil, deleted: true, handle: nil, dateMs: nil)
                     quoteIconView.image = BearyIconImages.image(named: "icon_quote", pointSize: 12)
                 } else {
-                    let placeholder = BearyQuoteGate.placeholderText(publishedAt: quote.publishedAt, locked: false)
+                    let placeholder = BearyQuoteGate.placeholderTextForQuote(publishedAt: quote.publishedAt, locked: false, visibility: quote.visibility)
                     applyTimelinePlaceholder(main: placeholder.main, detail: placeholder.detail, deleted: false, handle: quote.authorHandle, dateMs: quote.createdAt)
                     quoteIconView.image = BearyIconImages.image(named: "icon_lock", pointSize: 12)
                 }
@@ -1784,7 +1784,8 @@ final class BearyTimelineCell: UITableViewCell {
                 // iCity viewer 实时判定：被引篇非公开且 viewer 不是被引作者时，
                 // 即使服务端透传了正文也以占位替代，绝不泄漏正文与图片
                 //（旧口径以宿主是否本人为代理，已作废；Quote 现有 authorId/isMine 字段）。
-                let placeholder = BearyQuoteGate.placeholderText(publishedAt: quote.publishedAt, locked: false)
+                // 10a：仅好友来源走定版句（其余仍回落私密/未公开档，见 placeholderTextForQuote）。
+                let placeholder = BearyQuoteGate.placeholderTextForQuote(publishedAt: quote.publishedAt, locked: false, visibility: quote.visibility)
                 applyTimelinePlaceholder(main: placeholder.main, detail: placeholder.detail, deleted: false, handle: quote.authorHandle, dateMs: quote.createdAt)
                 quoteIconView.image = BearyIconImages.image(named: "icon_lock", pointSize: 12)
                 quoteButton.isEnabled = false
@@ -2292,6 +2293,16 @@ class BearyTimelineViewController: UIViewController {
     /// 筛子触发钮（列表顶表头内，个人页展开钮同款：官方 icon_chevron_down
     /// 在左 + 档位名在右；标题即当前档位 = 选中态可见处）。
     private let visFilterButton = BearyHit44Button(type: .system)
+    /// 11b 筛子尖角气泡（BearyBubbleMenuView，见 BearyCalloutPicker.swift）
+    /// + 复用的框外收起层（BearyCalloutDismissView，与编辑器尖角框同款）。
+    /// 气泡以 frame 定位在 VC view 上（不在表头内，避免随表滚动错位）；
+    /// 入口钮本身不动（#612 定圆角 17 的口径原样保留）。
+    private let visFilterBubble = BearyBubbleMenuView()
+    private let visFilterDismissView = BearyCalloutDismissView()
+    private var visFilterBubbleOpen = false
+    private var visFilterBubbleGeneration = 0
+    private static let visFilterBubbleTransitionDuration: TimeInterval = 0.20
+    private static let visFilterBubbleTransitionOffset: CGFloat = 6
     // 崩溃 1（21:33/21:50 两次 Invalid_Batch_Updates）：首屏加载此前无在途守卫，
     // 重拍 tab/下拉/登录翻转/发布都可重入 loadTimelineFirstPage；旧回包按陈旧
     // oldSections diff 时表早已不是旧快照即崩。seq 令牌：每次首屏加载 +1，
@@ -2655,6 +2666,7 @@ class BearyTimelineViewController: UIViewController {
     override func viewWillDisappear(_ animated: Bool) {
         super.viewWillDisappear(animated)
         stopCountdownTimer()
+        hideVisFilterBubble(animated: false)
     }
 
     /// 审计-时间线：Timer 自保失效——容器切页走 pageDidLeave、模态离页走 viewWillDisappear，
@@ -2678,6 +2690,7 @@ class BearyTimelineViewController: UIViewController {
 
     func pageDidLeave() {
         stopCountdownTimer()
+        hideVisFilterBubble(animated: false)
     }
 
     /// 筛子钮标题 = 当前档位（选中态可见处）+ 无障碍文案同步。
@@ -2687,21 +2700,101 @@ class BearyTimelineViewController: UIViewController {
         visFilterButton.accessibilityHint = "点按展开选择全部、公开、私密、限时、仅好友"
     }
 
-    /// 切筛子：点按展开选择（系统 actionSheet 浮层，不自绘新组件、不摊五段条；
-    /// iPad 用 popover 锚在触发钮上）。当前档仍列出，点按即无操作返回。
+    /// 切筛子：点按展开尖角气泡选择（11b，替代系统 actionSheet；不摊五段条）。
+    /// 五档、默认全部、进页回全部、切档错峰均不动，只换呈现形态。
+    /// 当前档仍列出（半粗体 + 对勾），点按即无操作、只收气泡。
     @objc private func didTapVisFilter() {
-        let sheet = UIAlertController(title: "按可见性筛选", message: nil, preferredStyle: .actionSheet)
-        for tier in TimelineVisFilter.allCases {
-            sheet.addAction(UIAlertAction(title: tier.title, style: .default, handler: { [weak self] _ in
-                self?.applyVisFilter(tier)
-            }))
+        if visFilterBubbleOpen {
+            hideVisFilterBubble(animated: true)
+            return
         }
-        sheet.addAction(UIAlertAction(title: "取消", style: .cancel))
-        if let pop = sheet.popoverPresentationController {
-            pop.sourceView = visFilterButton
-            pop.sourceRect = visFilterButton.bounds
+        showVisFilterBubble()
+    }
+
+    /// 11b：气泡搭建一次、之后只刷新选中态与位置。气泡贴在触发钮下方、
+    /// 左缘与钮左缘对齐（左右 16pt 边距内钳制），尖角顶点对准钮中心。
+    /// 钮在滚动表头内、只会随滚动上移，故下方展开在常规屏高下不溢出底边。
+    private func showVisFilterBubble() {
+        if visFilterBubble.superview == nil {
+            visFilterBubble.configure(
+                rows: TimelineVisFilter.allCases.map { BearyBubbleMenuView.Row(key: "\($0)", title: $0.title) },
+                selectedKey: "\(timelineVisFilter)",
+                onSelect: { [weak self] key in
+                    guard let self = self,
+                          let tier = TimelineVisFilter.allCases.first(where: { "\($0)" == key }) else { return }
+                    // 先收气泡再切档：切档会 scrollToTop + 重拉，与收起动画并行会抢布局。
+                    self.hideVisFilterBubble(animated: false)
+                    self.applyVisFilter(tier)
+                })
+            visFilterBubble.isHidden = true
+            view.addSubview(visFilterDismissView)
+            view.addSubview(visFilterBubble)
         }
-        present(sheet, animated: true)
+        visFilterBubble.setSelectedKey("\(timelineVisFilter)")
+        view.layoutIfNeeded()
+        let buttonFrame = visFilterButton.convert(visFilterButton.bounds, to: view)
+        let bubbleWidth: CGFloat = 200
+        let maxX = max(16, view.bounds.width - 16 - bubbleWidth)
+        let bubbleX = min(max(buttonFrame.minX, 16), maxX)
+        let bubbleHeight = BearyBubbleMenuView.menuHeight(rowCount: TimelineVisFilter.allCases.count)
+        visFilterBubble.frame = CGRect(x: bubbleX, y: buttonFrame.maxY + 6, width: bubbleWidth, height: bubbleHeight)
+        visFilterBubble.arrowCenterX = buttonFrame.midX - bubbleX
+        visFilterDismissView.frame = view.bounds
+        visFilterDismissView.passthroughRects = [buttonFrame]
+        visFilterDismissView.onTapOutside = { [weak self] in self?.hideVisFilterBubble(animated: true) }
+        visFilterDismissView.isHidden = false
+        visFilterBubble.isHidden = false
+        view.bringSubviewToFront(visFilterDismissView)
+        view.bringSubviewToFront(visFilterBubble)
+        visFilterBubbleGeneration += 1
+        visFilterBubbleOpen = true
+        // 入场只走 transform/opacity（编辑器 showCallout 同款；减动效静态直出）。
+        if UIAccessibility.isReduceMotionEnabled || view.window == nil {
+            visFilterBubble.alpha = 1
+            visFilterBubble.transform = .identity
+            return
+        }
+        visFilterBubble.alpha = 0
+        visFilterBubble.transform = CGAffineTransform(translationX: 0, y: -Self.visFilterBubbleTransitionOffset)
+        UIView.animate(
+            withDuration: Self.visFilterBubbleTransitionDuration,
+            delay: 0,
+            options: [.beginFromCurrentState, .allowUserInteraction, .curveEaseOut],
+            animations: { [weak self] in
+                self?.visFilterBubble.alpha = 1
+                self?.visFilterBubble.transform = .identity
+            }
+        )
+    }
+
+    private func hideVisFilterBubble(animated: Bool) {
+        guard visFilterBubbleOpen else { return }
+        visFilterBubbleOpen = false
+        visFilterBubbleGeneration += 1
+        let generation = visFilterBubbleGeneration
+        if !animated || UIAccessibility.isReduceMotionEnabled || view.window == nil {
+            visFilterBubble.isHidden = true
+            visFilterBubble.alpha = 1
+            visFilterBubble.transform = .identity
+            visFilterDismissView.isHidden = true
+            return
+        }
+        UIView.animate(
+            withDuration: Self.visFilterBubbleTransitionDuration,
+            delay: 0,
+            options: [.beginFromCurrentState, .allowUserInteraction, .curveEaseOut],
+            animations: { [weak self] in
+                self?.visFilterBubble.alpha = 0
+                self?.visFilterBubble.transform = CGAffineTransform(translationX: 0, y: -Self.visFilterBubbleTransitionOffset)
+            },
+            completion: { [weak self] finished in
+                guard let self = self, finished, generation == self.visFilterBubbleGeneration else { return }
+                self.visFilterBubble.isHidden = true
+                self.visFilterBubble.alpha = 1
+                self.visFilterBubble.transform = .identity
+                self.visFilterDismissView.isHidden = true
+            }
+        )
     }
 
     /// 切档：按新 vis 重取列表，分页游标随新筛子重置（首屏 force 全量，
@@ -6007,7 +6100,7 @@ class BearyTimelineViewController: UIViewController {
         updateFooter()
     }
 
-    /// M2 首屏加载视图：居中 spinner + “正在加载…”（仅首屏无行时作 backgroundView）。
+    /// M2 首屏加载视图：居中 spinner + “加载中…”（仅首屏无行时作 backgroundView）。
     private func timelineLoadingView() -> UIView {
         let container = UIView()
         container.backgroundColor = BearyColors.bg
@@ -6016,7 +6109,7 @@ class BearyTimelineViewController: UIViewController {
         spinner.image = BearyIconImages.image(named: "icon_refresh", pointSize: 20)
         spinner.startSpinning()
         let label = UILabel()
-        label.text = "正在加载…"
+        label.text = "加载中…"
         // R8：首屏加载文字（正文类）走 scaledFont + adjusts。
         label.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13))
         label.adjustsFontForContentSizeCategory = true
@@ -6064,11 +6157,11 @@ class BearyTimelineViewController: UIViewController {
         }
     }
 
-    /// M18 脚部加载态：spinner + “正在加载…”居中行（高 44，与按钮脚部同高）。
+    /// M18 脚部加载态：spinner + “加载中…”居中行（高 44，与按钮脚部同高）。
     private func footerLoadingHolder() -> UIView {
         let holder = UIView(frame: CGRect(x: 0, y: 0, width: tableView.bounds.width, height: 44))
         let label = UILabel()
-        label.text = "正在加载…"
+        label.text = "加载中…"
         // R8：脚部加载文字（正文类）走 scaledFont + adjusts。
         label.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 14))
         label.adjustsFontForContentSizeCategory = true
@@ -6176,6 +6269,8 @@ class BearyTimelineViewController: UIViewController {
         // 先行：目标态立即落地（模型 + 可见行，不整页重拉）。
         applyVisibilityLocally(entryId: entryId, isPublic: target == 1, publishedAt: nil, visibility: target == 1 ? "public" : "private")
         BearySoundPlayer.play(.visibilityClick)
+        // 审计动效组：可见性翻转统一为“图标＋pill 文案＋轻震”，此处补轻震。
+        BearyHaptics.press()
         reloadVisibleTimelineRow(entryId: entryId)
         BearyAPI.shared.setVisibility(id: entryId, published: target) { [weak self] result in
             DispatchQueue.main.async {

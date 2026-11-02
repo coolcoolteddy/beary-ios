@@ -352,7 +352,34 @@ final class BearyQuoteCardView: UIView {
         sourceButton.isEnabled = tappable
     }
 
+    /// 审计-广场（引用卡 VoiceOver）：正常卡整卡为一个 button 元素（子视图
+    /// 来源行不再单独聚焦，与“卡片可点”视觉语义一致）；占位/gone 态为
+    /// staticText 且不响应激活；加载失败态仍为 button（点按重试）。
+    /// 注意：仅设 traits/label 不够——VoiceOver 双击走 accessibilityActivate，
+    /// 默认不触发 UITapGestureRecognizer，故下面重写该方法镜像 quoteTapped
+    /// 的守卫（失败→重试、占位→不动作、其余→onTapped）。
+    private func setQuoteAccessibility(label: String?, isButton: Bool) {
+        isAccessibilityElement = true
+        accessibilityTraits = isButton ? .button : .staticText
+        accessibilityLabel = label
+    }
+
+    override func accessibilityActivate() -> Bool {
+        if isLoadFailedState {
+            onRetryTapped?()
+            return true
+        }
+        if isGoneState, allowGoneTap == false {
+            return false
+        }
+        onTapped?()
+        return true
+    }
+
     func clear() {
+        isAccessibilityElement = false
+        accessibilityTraits = []
+        accessibilityLabel = nil
         contentLabel.attributedText = nil
         contentLabel.text = nil
         sourceButton.setTitle(nil, for: .normal)
@@ -403,6 +430,8 @@ final class BearyQuoteCardView: UIView {
             goneIconView.isHidden = true
             goneRowStack.isHidden = true
             rowStack.isHidden = true
+            // 审计-广场：已删除占位只剩来源行，VoiceOver 读来源行文案，不可激活。
+            setQuoteAccessibility(label: "引用自已删除的日记", isButton: false)
             return
         }
         if let detail = detail, !detail.isEmpty {
@@ -423,6 +452,9 @@ final class BearyQuoteCardView: UIView {
         goneIconView.isHidden = false
         goneRowStack.isHidden = false
         rowStack.isHidden = true
+        // 审计-广场：占位态 VoiceOver 只读文案（+提醒句），staticText、不可激活。
+        let goneLabelText = (detail ?? "").isEmpty ? message : "\(message)，\(detail!)"
+        setQuoteAccessibility(label: goneLabelText, isButton: false)
     }
 
     /// F3：加载失败态（非 gone）：同样 13px 灰字、无图标，但点按可重试（isLoadFailedState）。
@@ -434,6 +466,8 @@ final class BearyQuoteCardView: UIView {
         goneRowStack.isHidden = false
         rowStack.isHidden = true
         isLoadFailedState = true
+        // 审计-广场：加载失败可重试，VoiceOver 仍为 button（与点按重试同路）。
+        setQuoteAccessibility(label: "引用加载失败，点按重试", isButton: true)
     }
 
     // D8c：网页 .quote-thumbs 口径为固定 42x42（不按 stripW 算宽），故 strip 宽函数已删；
@@ -464,7 +498,9 @@ final class BearyQuoteCardView: UIView {
             contentLabel.attributedText = NSAttributedString(string: content, attributes: attrs)
         }
         // D8c：缩略图只当 quote.is_public 或宿主本人时出（allowThumbs 门控）；
-        // 网页 .quote-thumbs 口径：与正文同行、单张 42x42、圆角 7、间距 5（thumbsStack.spacing）。
+        // 网页 .quote-thumbs 口径：与正文同行、单张 42x42、圆角 8、间距 5（thumbsStack.spacing）。
+        // 审计-广场：注释原写“圆角 7”与代码 8 不一致，只改注释统一为 8，
+        // 圆角数值不动（圆角属样式 token，须对照表定版后才能改）。
         // 条带宽按 flex:1 在布局时分配（见 layoutSubviews），不封顶；超出横向滚动。
         let keys = images.filter { !$0.isEmpty }
         if keys.isEmpty || allowThumbs == false {
@@ -510,5 +546,9 @@ final class BearyQuoteCardView: UIView {
         // 条宽算到 flex 值，不必等 layoutSubviews；卡宽未落位（0）时
         // refresh 提前返回，仍由 layoutSubviews 首轮算出。
         refreshThumbsWidth()
+        // 审计-广场：正常卡 VoiceOver 整卡为 button，label 带作者（handle 优先）。
+        let quoteAuthor = (authorHandle ?? "").isEmpty ? authorName : "@\(authorHandle!)"
+        let quoteLabel = quoteAuthor.isEmpty ? "引用日记，点按查看原文" : "引用日记，\(quoteAuthor)，点按查看原文"
+        setQuoteAccessibility(label: quoteLabel, isButton: true)
     }
 }

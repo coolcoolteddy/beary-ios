@@ -1117,7 +1117,7 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate, UI
         })
         // 审计-时间线：此处不加 presentedViewController 守卫——本确认框可由左滑菜单的 action 回调触发，
         // 回调执行时菜单尚未完成 dismiss，守卫会误拦；菜单本身已有守卫，叠页风险已由调用链控制。
-        present(alert, animated: true, completion: nil)
+        present(alert, animated: BearyMotion.animated(true), completion: nil)
     }
 
     /// 成功后原地移除该行：只动该行视图，不重建列表、不滚顶；空了则出空态。
@@ -1183,18 +1183,21 @@ private enum TrashText {
         return NSAttributedString(string: text, attributes: attributes)
     }
 
-    /// 网页 fmtDayTime：恒为 M月d日 HH:mm（不走今天/昨天特例）。
+    /// [24] 小项 6：恒为 M月d日 H:mm（不走今天/昨天特例；小时不补零，
+    /// 与项目主流日记日期口径一致；旧 HH:mm 注“网页 fmtDayTime 同款”
+    /// 与现行卡片/详情 H:mm 主流冲突，已按 App 内主流改齐）。
     /// G8：显示用 formatter 统一设北京时区，与服务端日界一致。
     static func createdLabel(ms: Int) -> String {
         let date = Date(timeIntervalSince1970: TimeInterval(ms) / 1000.0)
         let formatter = DateFormatter()
         formatter.locale = Locale(identifier: "zh_CN")
         formatter.timeZone = TimeZone(secondsFromGMT: 8 * 3600)
-        formatter.dateFormat = "M月d日 HH:mm"
+        formatter.dateFormat = "M月d日 H:mm"
         return formatter.string(from: date)
     }
 
-    /// 网页 fmtDelLabel：今天 → 今天 HH:mm；昨天 → 昨天；否则 M月d日。
+    /// 网页 fmtDelLabel：今天 → 今天 H:mm；昨天 → 昨天；否则 M月d日。
+    /// [24] 小项 6：今天态小时亦不补零，与上条同口径。
     /// G8：今天/昨天判定与显示均走北京日历/时区，不用设备时区。
     static func deletedLabel(ms: Int) -> String {
         let date = Date(timeIntervalSince1970: TimeInterval(ms) / 1000.0)
@@ -1203,7 +1206,7 @@ private enum TrashText {
         formatter.locale = Locale(identifier: "zh_CN")
         formatter.timeZone = TimeZone(secondsFromGMT: 8 * 3600)
         if calendar.isDateInToday(date) {
-            formatter.dateFormat = "HH:mm"
+            formatter.dateFormat = "H:mm"
             return "今天 " + formatter.string(from: date)
         }
         if calendar.isDateInYesterday(date) {
