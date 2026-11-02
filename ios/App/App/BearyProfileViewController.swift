@@ -1233,7 +1233,7 @@ class BearyProfileViewController: UIViewController {
         let buttonValue = UIButton(type: .system)
         buttonValue.translatesAutoresizingMaskIntoConstraints = false
         buttonValue.setTitle("给一年前的自己留一句话", for: .normal)
-        buttonValue.setTitleColor(BearyColors.orange, for: .normal)
+        buttonValue.setTitleColor(BearyColors.ink, for: .normal)
         buttonValue.titleLabel?.font = UIFont.systemFont(ofSize: 14, weight: .bold)
         buttonValue.contentHorizontalAlignment = .leading
         buttonValue.addTarget(self, action: #selector(pastSelfEntryTapped), for: .touchUpInside)
@@ -1303,7 +1303,7 @@ class BearyProfileViewController: UIViewController {
         let labelValue = UILabel()
         labelValue.translatesAutoresizingMaskIntoConstraints = false
         labelValue.font = UIFont.systemFont(ofSize: 14, weight: .bold)
-        labelValue.textColor = BearyColors.orange
+        labelValue.textColor = BearyColors.ink
         return labelValue
     }()
     private let pastSelfWaitingBodyLabel: UILabel = {

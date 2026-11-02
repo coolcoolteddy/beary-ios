@@ -3219,7 +3219,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         locationClearButton.addTarget(self, action: #selector(didTapClearLocation), for: .touchUpInside)
         locationNoteLabel.translatesAutoresizingMaskIntoConstraints = false
         locationNoteLabel.font = UIFont.systemFont(ofSize: 12)
-        locationNoteLabel.textColor = BearyColors.orange
+        locationNoteLabel.textColor = BearyColors.ink
         locationNoteLabel.numberOfLines = 0
         locationLineRow.axis = .horizontal
         locationLineRow.spacing = 6

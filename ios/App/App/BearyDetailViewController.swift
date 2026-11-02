@@ -170,7 +170,7 @@ final class BearyDetailViewController: UIViewController {
         // 113：底数 12 粗体不动，只加 scaledFont + adjusts（#322/#324 同款做法）。
         lb.font = BearyDynamicType.scaledFont(for: UIFont.boldSystemFont(ofSize: 12))
         lb.adjustsFontForContentSizeCategory = true
-        lb.textColor = BearyColors.orange
+        lb.textColor = BearyColors.ink
         lb.numberOfLines = 1
         return lb
     }()
@@ -410,7 +410,7 @@ final class BearyDetailViewController: UIViewController {
         // 扫查组：此前裸 12pt，多行提示不跟随大字号。
         lb.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 12))
         lb.adjustsFontForContentSizeCategory = true
-        lb.textColor = BearyColors.orange
+        lb.textColor = BearyColors.ink
         lb.numberOfLines = 0
         lb.isHidden = true
         return lb
