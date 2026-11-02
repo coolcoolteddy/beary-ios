@@ -59,6 +59,10 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate, UI
     /// 真跟手左滑：当前正在被手指拖动的行（同一时刻只可能有一行在拖）；
     /// 新一行开始拖时，上一行若还停在偏移处先瞬间复位，避免两行同偏。
     private var trashDraggingRow: UIView?
+    /// 审计-时间线：拖动期间被冻结的静默刷新（拖动结束后再应用，见 trashCardDragged）。
+    private var trashSilentRefreshDeferred = false
+    /// 审计-时间线：回收站 401 登录门本页去重（容器 presentLogin 另有顶层去重兜底）；显式“去登录”点按不走本守卫。
+    private var trashLoginNotified = false
     /// 松手出菜单的左滑距离（卡片左移满此值才弹菜单，不满则弹回原位）。
     private let trashDragMenuThreshold: CGFloat = 60
     /// 手指跟手的最大左移量（再往左拖也不跟，防卡片被拖出屏）。
@@ -92,7 +96,8 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate, UI
     private let failureStateView = BearyStateView()
     private let moreSpinner = BearyRefreshIconView()
     private let loginWrap = UIStackView()
-    private let loginButton = UIButton(type: .custom)
+    // 审计-时间线：回收站“去登录”钮改 BearyHit44Button，视觉帧不动、热区扩至 44×44（纵向扩区受 loginWrap 栈界约束，见 PR 说明）。
+    private let loginButton = BearyHit44Button(type: .custom)
 
     // MARK: - 生命周期
 
@@ -110,6 +115,8 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate, UI
         super.viewWillAppear(animated)
         // 7-5：关闭钮常驻，不再随 onClose 有无显隐。
         closeButton.isHidden = false
+        // 审计-时间线：回页复位 401 去重（取消登录后再次 401 仍可提醒）。
+        trashLoginNotified = false
     }
 
     override func viewDidLayoutSubviews() {
@@ -437,7 +444,7 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate, UI
                     }
                 case .failure(let error):
                     if case .unauthorized = error {
-                        self.onRequireLogin?()
+                        self.notifyTrashLoginOnce()
                         // W7：401 单独出登录空态，不再与普通失败共用“加载失败”。
                         if self.trashItems.isEmpty {
                             self.trashLoginEmpty = true
@@ -461,6 +468,13 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate, UI
         if trashSilentRefreshing || trashLoading || trashLoadingMore {
             return
         }
+        // 审计-时间线：拖动期间冻结增量刷新，拖动结束后再应用，拖动中途不重排；
+        // 拖动取消时 transform 已由 resetTrashDragRow 复位（既有逻辑，本支不改）。
+        if trashDraggingRow != nil {
+            trashSilentRefreshDeferred = true
+            return
+        }
+        trashSilentRefreshDeferred = false
         guard let uid = SessionManager.shared.currentUser?.id else { return }
         trashSilentRefreshing = true
         // 代次基线：记下刷新开始时的回收站写盘代际（全量同步 trash 腿
@@ -480,7 +494,7 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate, UI
                     self.trashSilentRefreshStartSequence = nil
                     self.trashRemovedDuringSilentRefresh.removeAll()
                     if case .unauthorized = error {
-                        self.onRequireLogin?()
+                        self.notifyTrashLoginOnce()
                     }
                     // 其他失败静默：保留本地显示，下次进页重刷。
                 case .success(let page):
@@ -578,7 +592,7 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate, UI
                     self.renderStateViews()
                 case .failure(let error):
                     if case .unauthorized = error {
-                        self.onRequireLogin?()
+                        self.notifyTrashLoginOnce()
                     } else {
                         self.showToast(message: "加载失败")
                     }
@@ -784,6 +798,7 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate, UI
         // B-G14: button fixed height 44 (was >= 44).
         restoreButton.heightAnchor.constraint(equalToConstant: 44).isActive = true
         restoreButton.addTarget(self, action: #selector(restoreTapped(_:)), for: .touchUpInside)
+        restoreButton.accessibilityLabel = "恢复，\(trashRowTitle(trashValue))"
         restoreButton.bearyAddPressFeedback()
         // P2-4：照抄点赞钮修法——显式给足实测字宽，否则标题被裁：图宽 + titleEdgeInsets 左 5
         // + 实测标题宽 + contentEdgeInsets 左右各 14；取闲/忙两文案之宽的最大值，两态均不裁。
@@ -819,6 +834,7 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate, UI
         // B-G14: button fixed height 44 (was >= 44).
         purgeButton.heightAnchor.constraint(equalToConstant: 44).isActive = true
         purgeButton.addTarget(self, action: #selector(purgeTapped(_:)), for: .touchUpInside)
+        purgeButton.accessibilityLabel = "彻底删除，\(trashRowTitle(trashValue))"
         purgeButton.bearyAddPressFeedback()
         // P2-4：同恢复钮修法——图宽 + titleEdgeInsets 左 5 + 实测标题宽 + contentEdgeInsets 左右各 14，
         // 取闲/忙两文案之宽的最大值，两态均不裁。
@@ -899,10 +915,20 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate, UI
                 presentTrashActionMenu(identifier: identifier, rowView: rowView)
             } else {
                 resetTrashDragRow(rowView)
+                // 审计-时间线：拖动结束（未出菜单）时应用被冻结的静默刷新。
+                if trashSilentRefreshDeferred {
+                    trashSilentRefreshDeferred = false
+                    silentRefreshTrash()
+                }
             }
         case .cancelled, .failed:
             trashDraggingRow = nil
             resetTrashDragRow(rowView)
+            // 审计-时间线：拖动取消时复位 transform（resetTrashDragRow）并应用被冻结的静默刷新。
+            if trashSilentRefreshDeferred {
+                trashSilentRefreshDeferred = false
+                silentRefreshTrash()
+            }
         default:
             break
         }
@@ -941,6 +967,21 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate, UI
             popover.sourceRect = rowView.bounds
         }
         present(sheet, animated: BearyMotion.animated(true), completion: nil)
+    }
+
+    /// 审计-时间线：回收站 401 登录门本页去重；回页时复位（见 viewWillAppear），取消登录后再次 401 仍可提醒。
+    private func notifyTrashLoginOnce() {
+        if !trashLoginNotified {
+            trashLoginNotified = true
+            onRequireLogin?()
+        }
+    }
+
+    /// 审计-时间线：回收站按钮无障碍 label 带条目标识——TrashItem 无标题字段，以正文首行截断作标识（空正文时回落“这篇日记”）。
+    private func trashRowTitle(_ trashValue: TrashItem) -> String {
+        let raw = (trashValue.content ?? "").replacingOccurrences(of: "\n", with: " ").trimmingCharacters(in: .whitespaces)
+        if raw.isEmpty { return "这篇日记" }
+        return String(raw.prefix(20))
     }
 
     // MARK: - 恢复 / 彻底删除
@@ -1007,7 +1048,7 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate, UI
                     self.onRestored?(trashValue)
                 case .failure(let error):
                     if case .unauthorized = error {
-                        self.onRequireLogin?()
+                        self.notifyTrashLoginOnce()
                     } else {
                         self.showToast(message: "恢复失败，请刷新后重试")
                     }
@@ -1066,7 +1107,7 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate, UI
                         self.onPurged?(trashValue)
                     case .failure(let error):
                         if case .unauthorized = error {
-                            self.onRequireLogin?()
+                            self.notifyTrashLoginOnce()
                         } else {
                             self.showToast(message: "删除失败")
                         }
@@ -1074,6 +1115,8 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate, UI
                 }
             }
         })
+        // 审计-时间线：此处不加 presentedViewController 守卫——本确认框可由左滑菜单的 action 回调触发，
+        // 回调执行时菜单尚未完成 dismiss，守卫会误拦；菜单本身已有守卫，叠页风险已由调用链控制。
         present(alert, animated: true, completion: nil)
     }
 
