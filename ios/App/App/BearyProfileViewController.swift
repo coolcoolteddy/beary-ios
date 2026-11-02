@@ -712,7 +712,7 @@ class BearyProfileViewController: UIViewController {
         return buttonValue
     }()
 
-    /// 好友第一期（关注/回关模型）：他人主页顶部关注钮（编辑资料钮同款描边 pill，
+    /// 好友第一期（关注/回关模型）：他人主页关注钮（v5 定版：用户名行右缘实心 pill，填充 ink、前景 bg，
     /// 40 高下限）。状态机（状态一律调 state 接口实时取）：无关系→“关注”；
     /// 我关他未互关→“已关注”（点按进取关确认）；他关我我未关→“回关”（点按即互关）；
     /// 互关→“互关”（点按进取关确认）；任一方向拉黑（我方拉黑可查，对方拉黑我以
@@ -721,13 +721,15 @@ class BearyProfileViewController: UIViewController {
     private lazy var followButton: UIButton = {
         let buttonValue = UIButton(type: .system)
         buttonValue.translatesAutoresizingMaskIntoConstraints = false
-        buttonValue.setTitleColor(BearyColors.ink, for: .normal)
-        buttonValue.titleLabel?.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 14))
+        buttonValue.setTitleColor(BearyColors.bg, for: .normal)
+        buttonValue.titleLabel?.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 17))
         buttonValue.titleLabel?.adjustsFontForContentSizeCategory = true
-        buttonValue.tintColor = BearyColors.ink
+        buttonValue.tintColor = BearyColors.bg
         buttonValue.contentEdgeInsets = UIEdgeInsets(top: 0, left: 12, bottom: 0, right: 12)
         buttonValue.titleEdgeInsets = UIEdgeInsets(top: 0, left: 6, bottom: 0, right: 0)
-        buttonValue.layer.borderWidth = 1
+        buttonValue.layer.borderWidth = 0
+        buttonValue.backgroundColor = BearyColors.ink
+        buttonValue.clipsToBounds = true
         buttonValue.layer.cornerRadius = 20
         buttonValue.addTarget(self, action: #selector(followButtonTapped), for: .touchUpInside)
         buttonValue.bearyAddPressFeedback()
@@ -2743,10 +2745,9 @@ class BearyProfileViewController: UIViewController {
             editButton.trailingAnchor.constraint(equalTo: headerView.trailingAnchor, constant: -28),
             editButton.bottomAnchor.constraint(equalTo: avatarImageView.bottomAnchor),
             editButton.heightAnchor.constraint(greaterThanOrEqualToConstant: 40),
-            // 好友钮与编辑资料钮同行高、同右缘：本人页隐藏、他人页独占该位；
-            // 编辑钮隐藏时仍参与布局（centerY 锚点有效），故好友钮位置不受显隐影响。
+            // 好友钮锚点改为名字行中心（v5 定版）、右缘 -28 不变：本人页隐藏、他人页独占该位。
             followButton.trailingAnchor.constraint(equalTo: headerView.trailingAnchor, constant: -28),
-            followButton.centerYAnchor.constraint(equalTo: editButton.centerYAnchor),
+            followButton.centerYAnchor.constraint(equalTo: nameLabel.centerYAnchor),
             followButton.heightAnchor.constraint(greaterThanOrEqualToConstant: 40),
             gearButton.trailingAnchor.constraint(equalTo: editButton.leadingAnchor, constant: -8),
             gearButton.centerYAnchor.constraint(equalTo: editButton.centerYAnchor),
@@ -3063,7 +3064,7 @@ class BearyProfileViewController: UIViewController {
         followButton.isHidden = false
         switch state {
         case .none:
-            followButton.setImage(BearyIconImages.image(named: "icon_user_plus", pointSize: 15), for: .normal)
+            followButton.setImage(BearyIconImages.image(named: "icon_user_plus", pointSize: 17), for: .normal)
             followButton.setTitle("关注", for: .normal)
             followButton.accessibilityLabel = "关注"
             followButton.isEnabled = true
@@ -3075,13 +3076,13 @@ class BearyProfileViewController: UIViewController {
             followButton.isEnabled = true
             followButton.alpha = 1
         case .followedBy:
-            followButton.setImage(BearyIconImages.image(named: "icon_user_plus", pointSize: 15), for: .normal)
+            followButton.setImage(BearyIconImages.image(named: "icon_user_plus", pointSize: 17), for: .normal)
             followButton.setTitle("回关", for: .normal)
             followButton.accessibilityLabel = "回关"
             followButton.isEnabled = true
             followButton.alpha = 1
         case .mutual:
-            followButton.setImage(BearyIconImages.image(named: "icon_user_check", pointSize: 15), for: .normal)
+            followButton.setImage(BearyIconImages.image(named: "icon_user_check", pointSize: 17), for: .normal)
             followButton.setTitle("互关", for: .normal)
             followButton.accessibilityLabel = "互关，点按取关"
             followButton.isEnabled = true
