@@ -385,10 +385,6 @@ final class BearyLoginViewController: UIViewController {
         emailField.font = BearyDynamicType.cappedFont(for: UIFont.systemFont(ofSize: 16))
         emailField.adjustsFontForContentSizeCategory = true
         emailField.textColor = BearyColors.ink
-        emailField.attributedPlaceholder = NSAttributedString(string: "name@example.com", attributes: [
-            .foregroundColor: BearyColors.gray,
-            .font: BearyDynamicType.cappedFont(for: UIFont.systemFont(ofSize: 16)),
-        ])
         emailField.keyboardType = .emailAddress
         emailField.autocapitalizationType = .none
         emailField.autocorrectionType = .no
@@ -402,10 +398,6 @@ final class BearyLoginViewController: UIViewController {
         codeField.font = BearyDynamicType.cappedFont(for: UIFont.systemFont(ofSize: 16))
         codeField.adjustsFontForContentSizeCategory = true
         codeField.textColor = BearyColors.ink
-        codeField.attributedPlaceholder = NSAttributedString(string: "6 位数字", attributes: [
-            .foregroundColor: BearyColors.gray,
-            .font: BearyDynamicType.cappedFont(for: UIFont.systemFont(ofSize: 16)),
-        ])
         codeField.keyboardType = .numberPad
         codeField.autocorrectionType = .no
         codeField.textContentType = .oneTimeCode
@@ -434,10 +426,6 @@ final class BearyLoginViewController: UIViewController {
         inviteField.font = BearyDynamicType.cappedFont(for: UIFont.systemFont(ofSize: 16))
         inviteField.adjustsFontForContentSizeCategory = true
         inviteField.textColor = BearyColors.ink
-        inviteField.attributedPlaceholder = NSAttributedString(string: "填好友的邀请码，成功后各得 1 个月 Plus", attributes: [
-            .foregroundColor: BearyColors.gray,
-            .font: BearyDynamicType.cappedFont(for: UIFont.systemFont(ofSize: 16)),
-        ])
         inviteField.autocapitalizationType = .allCharacters
         inviteField.autocorrectionType = .no
         inviteField.returnKeyType = .done
