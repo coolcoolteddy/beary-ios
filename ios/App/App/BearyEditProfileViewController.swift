@@ -265,12 +265,14 @@ class BearyEditProfileViewController: UIViewController {
         let fieldValue = UITextField()
         fieldValue.translatesAutoresizingMaskIntoConstraints = false
         // F15：网页 ed-rinput 口径——16 字、无边框矩形框；占位文案同网页。
-        fieldValue.font = UIFont.systemFont(ofSize: 16)
+        // U7：字号跟随系统（默认档 = 16 不变），高度见下方最小高度约束。
+        fieldValue.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 16))
+        fieldValue.adjustsFontForContentSizeCategory = true
         fieldValue.textColor = BearyColors.ink
         // 占位色走 BearyColors.gray（与登录/邀请页 attributedPlaceholder 同口径）。
         fieldValue.attributedPlaceholder = NSAttributedString(string: "给自己起个名字", attributes: [
             .foregroundColor: BearyColors.gray,
-            .font: UIFont.systemFont(ofSize: 16),
+            .font: BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 16)),
         ])
         fieldValue.borderStyle = .none
         fieldValue.autocorrectionType = .no
@@ -289,12 +291,14 @@ class BearyEditProfileViewController: UIViewController {
     private let handleField: UITextField = {
         let fieldValue = UITextField()
         fieldValue.translatesAutoresizingMaskIntoConstraints = false
-        fieldValue.font = UIFont.systemFont(ofSize: 16)
+        // U7：字号跟随系统（默认档 = 16 不变），高度见下方最小高度约束。
+        fieldValue.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 16))
+        fieldValue.adjustsFontForContentSizeCategory = true
         fieldValue.textColor = BearyColors.ink
         // 占位色走 BearyColors.gray（与登录/邀请页 attributedPlaceholder 同口径）。
         fieldValue.attributedPlaceholder = NSAttributedString(string: "小写字母、数字或下划线", attributes: [
             .foregroundColor: BearyColors.gray,
-            .font: UIFont.systemFont(ofSize: 16),
+            .font: BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 16)),
         ])
         fieldValue.borderStyle = .none
         fieldValue.autocapitalizationType = .none
@@ -309,11 +313,13 @@ class BearyEditProfileViewController: UIViewController {
     private let signatureField: UITextField = {
         let fieldValue = UITextField()
         fieldValue.translatesAutoresizingMaskIntoConstraints = false
-        fieldValue.font = UIFont.systemFont(ofSize: 16)
+        // U7：字号跟随系统（默认档 = 16 不变），高度见下方最小高度约束。
+        fieldValue.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 16))
+        fieldValue.adjustsFontForContentSizeCategory = true
         fieldValue.textColor = BearyColors.ink
         fieldValue.attributedPlaceholder = NSAttributedString(string: "写一句属于你的话", attributes: [
             .foregroundColor: BearyColors.gray,
-            .font: UIFont.systemFont(ofSize: 16),
+            .font: BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 16)),
         ])
         fieldValue.borderStyle = .none
         fieldValue.autocorrectionType = .no
@@ -721,9 +727,10 @@ class BearyEditProfileViewController: UIViewController {
             closeButton.widthAnchor.constraint(equalToConstant: 44),
             saveButton.widthAnchor.constraint(equalToConstant: 44),
             coverImageView.heightAnchor.constraint(equalToConstant: 180),
-            nameField.heightAnchor.constraint(equalToConstant: 28),
-            signatureField.heightAnchor.constraint(equalToConstant: 28),
-            handleField.heightAnchor.constraint(equalToConstant: 28),
+            // U7：三输入框高度改最小 28（默认档外观不变），大字号时随字长高、不裁字。
+            nameField.heightAnchor.constraint(greaterThanOrEqualToConstant: 28),
+            signatureField.heightAnchor.constraint(greaterThanOrEqualToConstant: 28),
+            handleField.heightAnchor.constraint(greaterThanOrEqualToConstant: 28),
         ])
         // 封面通栏 + 点按：封面挂 scrollView、左右贴 frameLayoutGuide（与个人主页
         // 封面同款通栏）；点封面走原更换流程（选图/裁剪/上传链路不变，见 coverTapped）。
