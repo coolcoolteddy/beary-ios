@@ -341,6 +341,8 @@ private final class BearyFriendCell: UITableViewCell {
     private let separatorView = UIView()
     private var avatarTask: URLSessionDataTask?
     private var avatarURL: URL?
+    /// 重试回包校验用：当前行代表的用户 id（configure 时记录，复用时清零）。
+    private var representedUserID: Int?
     private var moreHandler: ((UIButton) -> Void)?
 
     // 审计：头像失败重试钮（搜索页 icon_refresh 44×44 同款口径），仅失败态可见。
@@ -455,6 +457,7 @@ private final class BearyFriendCell: UITableViewCell {
         avatarTask = nil
         avatarGeneration += 1
         avatarURL = nil
+        representedUserID = nil
         avatarView.image = nil
         avatarRetryButton.isHidden = true
         moreHandler = nil
@@ -476,6 +479,7 @@ private final class BearyFriendCell: UITableViewCell {
         avatarTask = nil
         avatarGeneration += 1
         avatarURL = nil
+        representedUserID = user.id
         if let avatarPath = user.avatarUrl, let url = BearyImageURLs.avatarURL(avatarPath) {
             avatarView.isHidden = false
             fallbackLabel.isHidden = true
@@ -505,18 +509,27 @@ private final class BearyFriendCell: UITableViewCell {
         }
     }
 
-    private func loadAvatar(url: URL, displayName: String) {
+    /// 审计 18 残留：重试路径与主 configure 同口径——代次 + URL + 代表用户 id
+    /// 三重校验，过期回包（复用/换行后才到的旧重试结果）直接丢弃，不串位；
+    /// 下采样与主路径一致（头像框 44pt × scale），失败恢复当前用户首字母
+    /// 占位＋重试钮，不留空白头像。
+    private func loadAvatar(url: URL, displayName: String, representedID: Int?) {
         avatarURL = url
         avatarTask?.cancel()
-        avatarTask = BearyImageLoader.shared.loadDetailed(url: url) { [weak self] result in
+        avatarTask = nil
+        avatarGeneration += 1
+        let generation = avatarGeneration
+        avatarTask = BearyImageLoader.shared.loadDetailed(url: url, downsampleToWidth: 44 * UIScreen.main.scale) { [weak self] result in
             DispatchQueue.main.async {
-                guard let self = self else { return }
+                guard let self = self, generation == self.avatarGeneration, self.avatarURL == url, self.representedUserID == representedID else { return }
                 switch result {
                 case .success(let image):
                     self.avatarView.image = image
+                    self.avatarView.isHidden = false
+                    self.fallbackLabel.isHidden = true
                     self.avatarRetryButton.isHidden = true
                 case .failure:
-                    // 审计：头像失败不再留空白圆圈——回默认首字母占位＋点按重试。
+                    // 审计：头像失败不再留空白圆圈——回当前用户首字母占位＋点按重试。
                     self.avatarView.isHidden = true
                     self.fallbackLabel.isHidden = false
                     self.fallbackLabel.text = String(displayName.prefix(1)).uppercased()
@@ -532,7 +545,7 @@ private final class BearyFriendCell: UITableViewCell {
         avatarView.isHidden = false
         fallbackLabel.isHidden = true
         let displayName = nameLabel.text ?? "Beary 用户"
-        loadAvatar(url: url, displayName: displayName)
+        loadAvatar(url: url, displayName: displayName, representedID: representedUserID)
     }
 
     @objc private func moreTapped() {
