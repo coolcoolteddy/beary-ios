@@ -54,8 +54,11 @@ final class BearyQuoteCardView: UIView {
     /// 可点条件由调用方按 viewer 权限给（sourceTappable）：有权限看原文时点按走 onTapped
     /// 进原日记详情；占位态（已私密/已删除）下只展示、不点按、不泄露正文。
     /// 本行即原尾部日期的归宿：尾部 dateLabel 随之删除，同一卡不再出现两次日期。
-    private let sourceButton: UIButton = {
-        let btn = UIButton(type: .system)
+    // 审计-编辑器详情：来源行视觉仍为 12pt 单行（约 18pt 高），热区经
+    // Hit44 扩至 44（项目内 16pt 复选框、22pt 删图钮同款口径）；可点时
+    // 按钮与卡片点按同去向，不改导航，不可用时卡片手势仍可触发。
+    private let sourceButton: BearyHit44Button = {
+        let btn = BearyHit44Button(type: .system)
         btn.translatesAutoresizingMaskIntoConstraints = false
         btn.titleLabel?.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 12))
         btn.titleLabel?.adjustsFontForContentSizeCategory = true
@@ -134,8 +137,25 @@ final class BearyQuoteCardView: UIView {
         return st
     }()
 
+    /// 审计-编辑器详情：正文超 3 行时的展开钮（仅展开、不收起；展开后
+    /// numberOfLines 置 0，按钮自藏；复用时 clear() 复位）。
+    private let expandButton: UIButton = {
+        let btn = UIButton(type: .system)
+        btn.translatesAutoresizingMaskIntoConstraints = false
+        btn.setTitle("展开", for: .normal)
+        btn.titleLabel?.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13))
+        btn.titleLabel?.adjustsFontForContentSizeCategory = true
+        btn.setTitleColor(BearyColors.blue, for: .normal)
+        btn.contentHorizontalAlignment = .left
+        btn.isHidden = true
+        btn.accessibilityLabel = "展开全文"
+        return btn
+    }()
+
+    private var quoteExpanded = false
+
     private lazy var textStack: UIStackView = {
-        let st = UIStackView(arrangedSubviews: [contentLabel])
+        let st = UIStackView(arrangedSubviews: [contentLabel, expandButton])
         st.translatesAutoresizingMaskIntoConstraints = false
         st.axis = .vertical
         st.alignment = .fill
@@ -234,6 +254,36 @@ final class BearyQuoteCardView: UIView {
         // fixall-cell 5-17：布局回调只调带缓存守卫的 refreshThumbsWidth，
         // 输入未变时不写约束（原 0.5pt 门限保留在 refresh 内）。
         refreshThumbsWidth()
+        refreshExpandButtonVisibility()
+    }
+
+    /// 审计-编辑器详情：3 行截断判定——全文实测高超过当前 3 行框高
+    /// 2pt 以上才显展开钮；已展开、占位态、正文隐藏时一律藏钮。
+    /// 只改按钮显隐，不写约束、不触发布局循环（显隐翻转后的下一轮
+    /// layout 会再算一次，结果稳定）。
+    private func refreshExpandButtonVisibility() {
+        if quoteExpanded || rowStack.isHidden || contentLabel.isHidden {
+            expandButton.isHidden = true
+            return
+        }
+        guard let text = contentLabel.attributedText, text.length > 0 else {
+            expandButton.isHidden = true
+            return
+        }
+        let width = contentLabel.bounds.width
+        guard width > 0, contentLabel.bounds.height > 0 else { return }
+        let fullHeight = text.boundingRect(
+            with: CGSize(width: width, height: CGFloat.greatestFiniteMagnitude),
+            options: [.usesLineFragmentOrigin, .usesFontLeading],
+            context: nil
+        ).height
+        expandButton.isHidden = fullHeight <= contentLabel.bounds.height + 2
+    }
+
+    @objc private func expandTapped() {
+        quoteExpanded = true
+        contentLabel.numberOfLines = 0
+        expandButton.isHidden = true
     }
 
     override init(frame: CGRect) {
@@ -242,6 +292,7 @@ final class BearyQuoteCardView: UIView {
         isUserInteractionEnabled = true
         addGestureRecognizer(UITapGestureRecognizer(target: self, action: #selector(quoteTapped(_:))))
         sourceButton.addTarget(self, action: #selector(sourceTapped), for: .touchUpInside)
+        expandButton.addTarget(self, action: #selector(expandTapped), for: .touchUpInside)
         backgroundColor = BearyColors.faint
         layer.cornerRadius = 8
         clipsToBounds = true
@@ -298,6 +349,13 @@ final class BearyQuoteCardView: UIView {
         if sourceButton.isHidden == false {
             let location = gesture.location(in: sourceButton)
             if sourceButton.bounds.contains(location) {
+                return
+            }
+        }
+        // 审计-编辑器详情：展开钮点按只展开，不触发卡片导航（与来源行同款防双触发）。
+        if expandButton.isHidden == false {
+            let location = gesture.location(in: expandButton)
+            if expandButton.bounds.contains(location) {
                 return
             }
         }
@@ -377,6 +435,9 @@ final class BearyQuoteCardView: UIView {
     }
 
     func clear() {
+        quoteExpanded = false
+        contentLabel.numberOfLines = 3
+        expandButton.isHidden = true
         isAccessibilityElement = false
         accessibilityTraits = []
         accessibilityLabel = nil

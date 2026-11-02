@@ -1377,6 +1377,20 @@ final class BearyDraftBoxViewController: UIViewController {
     }
 
     @objc private func closeBox() {
+        // 审计-编辑器详情：补查证实——删盘在 finishDelete 即落盘，撤销只活
+        // 在箱内 pendingUndos 内存（deinit 即清计时器与队列），故 6 秒窗内
+        // 关箱即丢撤销。修法取审计“弹确认”分支：仅当仍有可撤销笔时确认，
+        // 无待撤销笔时关闭路径一字不动；打开/新建篇幅走各自退场，不在此拦。
+        if presentedViewController is UIAlertController { return }
+        if !pendingUndos.isEmpty {
+            let alert = UIAlertController(title: nil, message: "关闭草稿箱后，刚删除的草稿将无法撤销", preferredStyle: .alert)
+            alert.addAction(UIAlertAction(title: "仍要关闭", style: .destructive) { [weak self] _ in
+                self?.dismissWithExitAnimation(completion: nil)
+            })
+            alert.addAction(UIAlertAction(title: "取消", style: .cancel, handler: nil))
+            present(alert, animated: true)
+            return
+        }
         // 弹窗审计 E1-18：关闭钮/遮罩/把手下滑三路只走统一退场，回调为空，
         // 不另播动画——旧 closeBox 本身就是这支退场，抽成共用方法后行为不变。
         dismissWithExitAnimation(completion: nil)
