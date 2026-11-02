@@ -290,7 +290,7 @@ class BearyFeedViewController: UIViewController {
             feedEmptySubtitleLabel?.text = "你关注的人的日记会出现在这里"
         } else {
             feedEmptyTitleLabel?.text = "还没有公开的日记"
-            feedEmptySubtitleLabel?.text = "公开的日记会出现在这里，写一篇并公开试试"
+            feedEmptySubtitleLabel?.text = "写一篇并公开试试"
         }
     }
 
@@ -317,7 +317,7 @@ class BearyFeedViewController: UIViewController {
         titleLabel.textAlignment = .center
         let subtitleLabel = UILabel()
         subtitleLabel.translatesAutoresizingMaskIntoConstraints = false
-        subtitleLabel.text = "公开的日记会出现在这里，写一篇并公开试试"
+        subtitleLabel.text = "写一篇并公开试试"
         feedEmptySubtitleLabel = subtitleLabel
         subtitleLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13))
         subtitleLabel.adjustsFontForContentSizeCategory = true

@@ -410,7 +410,7 @@ private final class BearyDMMessageCell: UITableViewCell {
             textLabel.translatesAutoresizingMaskIntoConstraints = false
             textLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 15))
             textLabel.adjustsFontForContentSizeCategory = true
-            textLabel.textColor = isMine ? .white : BearyColors.ink
+            textLabel.textColor = isMine ? BearyColors.onBrand : BearyColors.ink
             textLabel.numberOfLines = 0
             timeLabel.translatesAutoresizingMaskIntoConstraints = false
             timeLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 11))
