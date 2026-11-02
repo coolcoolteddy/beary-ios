@@ -93,6 +93,9 @@ final class BearyDetailViewController: UIViewController {
     /// 点按代次 +1 并立即按本次点按态渲染；在途回包代次落后于最新代次
     /// 时直接丢弃，不得覆盖更新的点按态；失败回滚到最后确认态。
     private var likeSeq = 0
+    /// 审计动效组：点赞按下预览标记——bearyAddPressFeedback 已在 touchDown 给过
+    /// press 轻震，likeTapped 里不再补 likeTap，只震一次；取消/滑出时清零。
+    private var likePressPreviewActive = false
     private var likeConfirmedSeq = 0
     private var bookmarkSeq = 0
     private var bookmarkConfirmedSeq = 0
@@ -356,16 +359,19 @@ final class BearyDetailViewController: UIViewController {
             let progress = max(0, min(1, stripPinchStartProgress + (1 - gesture.scale)))
             imagesStack.spacing = 8 * (1 - progress)
             applyImageStripCornerRadius(progress: progress)
-            imagesScrollView.layoutIfNeeded()
+            // 审计动效组：跟手过程只改值 + setNeedsLayout，不逐帧强制 layout；
+            // 松手后的落点动画（.ended 的 UIView.animate 内）仍用 layoutIfNeeded 结算。
+            imagesScrollView.setNeedsLayout()
         case .ended, .cancelled, .failed:
             imagesScrollView.isScrollEnabled = true
             let progress = max(0, min(1, stripPinchStartProgress + (1 - gesture.scale)))
             let wasJoined = stripPinchJoined
             stripPinchJoined = progress >= 0.5
             // 拼合/张开落点到位时各轻震一次：只在 .ended 且落点状态真的变化时震，
-            // 跟手过程、取消/失败、原地未变都不震；减动效时不震（系统触感开关由 UIKit 自身遵循）。
-            if gesture.state == .ended && wasJoined != stripPinchJoined && !UIAccessibility.isReduceMotionEnabled {
-                UIImpactFeedbackGenerator(style: .light).impactOccurred()
+            // 跟手过程、取消/失败、原地未变都不震；震动走 BearyHaptics 口径，
+            // 不拿减动效门控（两者不是一回事，见 BearyHaptics 头注释）。
+            if gesture.state == .ended && wasJoined != stripPinchJoined {
+                BearyHaptics.press()
             }
             UIView.animate(withDuration: 0.25, animations: {
                 self.imagesStack.spacing = self.stripPinchJoined ? 0 : 8
@@ -981,6 +987,8 @@ final class BearyDetailViewController: UIViewController {
         likeButton.titleEdgeInsets = UIEdgeInsets(top: 0, left: 6, bottom: 0, right: 0)
         likeButton.adjustsImageWhenHighlighted = false
         likeButton.addTarget(self, action: #selector(likeTapped), for: .touchUpInside)
+        likeButton.addTarget(self, action: #selector(likePressDown), for: .touchDown)
+        likeButton.addTarget(self, action: #selector(likePressCancelled), for: [.touchUpOutside, .touchCancel])
         likeButton.bearyAddPressFeedback()
         // 显式宽约束（卡片同款，见 likeButtonWidthConstraint 注释）：初始只图标宽，
         // refreshActionRow 按赞数重算；不靠按钮固有宽，防数字被裁成左半弧。
@@ -2220,6 +2228,9 @@ final class BearyDetailViewController: UIViewController {
         entry.ephemeralUntil = nil
         refreshVisibilityViews()
         BearySoundPlayer.play(.visibilityClick)
+        // 审计动效组：可见性翻转统一为“图标＋pill 文案＋轻震”——图标与文案
+        // 已由上方 refreshVisibilityViews 先行刷出，此处补轻震。
+        BearyHaptics.press()
         BearyAPI.shared.setVisibility(id: entryId, published: target) { [weak self] result in
             DispatchQueue.main.async {
                 guard let self = self else { return }
@@ -2276,8 +2287,21 @@ final class BearyDetailViewController: UIViewController {
         }
     }
 
+    @objc private func likePressDown() {
+        likePressPreviewActive = true
+        BearyHaptics.prepareLike()
+    }
+
+    @objc private func likePressCancelled() {
+        likePressPreviewActive = false
+    }
+
     @objc private func likeTapped() {
         guard let entryId = entry.id, !entryId.isEmpty else { return }
+        // 审计动效组：守卫标记在函数顶部统一消费——deny/未登录等早退路径
+        // 同样清零，防残留标记影响下一次点按的守卫判定。
+        let hadPressPreview = likePressPreviewActive
+        likePressPreviewActive = false
         // 审计 P2-11：非作者的非公开时不再静默 return——拒绝动效＋“公开后才能互动”。
         // 2026-10-31 私密自互动口径：作者本人看自己私密篇时放行。
         if !BearyEphemeral.isEffectivelyPublic(entry) && !isAuthor {
@@ -2296,8 +2320,13 @@ final class BearyDetailViewController: UIViewController {
         let targetLiked = !currentlyLiked
         // 先行反馈（卡片口径）：点赞即填亮红＋计数 +1，取消即褪色＋计数 −1；
         // 液体炸开与填色同起——点按确认时即播，不再等服务端回包。
+        // 审计动效组：touchDown 已由 bearyAddPressFeedback 给过一次 press 轻震，
+        // 此处照搬卡片页 hadPressPreview 守卫——有预览时不再补 likeTap，只震一次；
+        // 直达抬起（无 touchDown）时仍补一次；音效只在确认时播，不受守卫影响。
         if !currentlyLiked {
-            BearyHaptics.likeTap()
+            if !hadPressPreview {
+                BearyHaptics.likeTap()
+            }
             BearySoundPlayer.play(.likePop)
         } else {
             BearySoundPlayer.play(.unlikeSoft)

@@ -184,10 +184,16 @@ final class BearyAppLockManager {
         isColdLocked = false
         lockOverlay = nil
         lockStatusLabel = nil
-        UIView.animate(withDuration: 0.25, animations: {
+        // 审计动效组：锁屏解锁补减动效分支——减动效时直出终值，不播 0.25s 淡出。
+        if UIAccessibility.isReduceMotionEnabled {
             overlay.alpha = 0
-        }) { _ in
             overlay.removeFromSuperview()
+        } else {
+            UIView.animate(withDuration: 0.25, animations: {
+                overlay.alpha = 0
+            }) { _ in
+                overlay.removeFromSuperview()
+            }
         }
         onUnlocked?()
     }

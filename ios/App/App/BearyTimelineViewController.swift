@@ -6130,6 +6130,8 @@ class BearyTimelineViewController: UIViewController {
         // 先行：目标态立即落地（模型 + 可见行，不整页重拉）。
         applyVisibilityLocally(entryId: entryId, isPublic: target == 1, publishedAt: nil)
         BearySoundPlayer.play(.visibilityClick)
+        // 审计动效组：可见性翻转统一为“图标＋pill 文案＋轻震”，此处补轻震。
+        BearyHaptics.press()
         reloadVisibleTimelineRow(entryId: entryId)
         BearyAPI.shared.setVisibility(id: entryId, published: target) { [weak self] result in
             DispatchQueue.main.async {

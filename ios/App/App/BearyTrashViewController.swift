@@ -1074,7 +1074,7 @@ final class BearyTrashViewController: UIViewController, UIScrollViewDelegate, UI
                 }
             }
         })
-        present(alert, animated: true, completion: nil)
+        present(alert, animated: BearyMotion.animated(true), completion: nil)
     }
 
     /// 成功后原地移除该行：只动该行视图，不重建列表、不滚顶；空了则出空态。

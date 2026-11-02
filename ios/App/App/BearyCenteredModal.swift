@@ -53,7 +53,7 @@ private final class BearyCenteredPresentationController: UIPresentationControlle
         if let handler = dimTapHandler {
             handler()
         } else {
-            presentedViewController.dismiss(animated: true)
+            presentedViewController.dismiss(animated: BearyMotion.animated(true))
         }
     }
 

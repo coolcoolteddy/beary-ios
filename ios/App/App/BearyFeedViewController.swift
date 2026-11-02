@@ -2066,6 +2066,8 @@ class BearyFeedViewController: UIViewController {
         // 先行：目标态立即落地（与成功路径同一同步函数，不重建行、不重播动效）。
         applyVisibilityState(entryId: entryId, isPublic: target == 1, publishedAt: nil)
         BearySoundPlayer.play(.visibilityClick)
+        // 审计动效组：可见性翻转统一为“图标＋pill 文案＋轻震”，此处补轻震。
+        BearyHaptics.press()
         BearyAPI.shared.setVisibility(id: entryId, published: target) { [weak self] result in
             DispatchQueue.main.async {
                 guard let strongSelf = self else { return }
