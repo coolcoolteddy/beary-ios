@@ -17,8 +17,8 @@ import UIKit
 // 全屏页副标题“邮箱验证码登录，无需密码；新邮箱登录即注册”14 灰（Sheet 弹窗无副标题，
 // 改标题“欢迎回来”17 半粗体居中）、字段 label 11/600、输入框高 48 圆角 12 faint 底、
 // 发码钮高 44（行高 48 内居中）圆角 12、登录钮高 44 圆角 12（全屏页墨底白字，
-// Sheet 弹窗品牌橙底墨字——全弹窗唯一重色）、Sheet 弹窗邀请码收起为“有邀请码？ ›”行、
-// 底部圆点排（橙灰灰橙）。颜色一律走 BearyColors，不新增字面量颜色；
+// Sheet 弹窗品牌橙底墨字——全弹窗唯一重色）、Sheet 弹窗邀请码收起为“有邀请码？ ›”行。
+// 颜色一律走 BearyColors，不新增字面量颜色；
 // 图标走 icon_close/icon_check/icon_chevron_right/icon_chevron_down 资产；
 // 全屏页不使用液态玻璃效果，Sheet 弹窗的玻璃由 BearyLoginSheet 容器提供
 // （顶栏同款 UIGlassEffect，Li 2026-11-02 批准的 BearyGlass token 例外）。
@@ -77,8 +77,6 @@ final class BearyLoginViewController: UIViewController {
     private let inviteDisclosureRow = UIView()
     private let inviteDisclosureLabel = UILabel()
     private let inviteDisclosureChevron = UIImageView()
-    /// Sheet 弹窗专属：底部圆点排（橙灰灰橙，纯装饰）。
-    private let dotsRow = UIView()
     /// Sheet 弹窗：邀请码展开态（收起时只留收起行，字段隐藏但文本保留，登录照常读取）。
     private var inviteExpanded = false
     /// Sheet 弹窗：上次上报的内容高，变化 <0.5 不重复设 preferredContentSize，防布局循环。
@@ -342,33 +340,6 @@ final class BearyLoginViewController: UIViewController {
         guestNoteLabel.textColor = BearyColors.gray
         guestNoteLabel.numberOfLines = 0
 
-        // Sheet 弹窗底部圆点排（橙灰灰橙，纯装饰、非无障碍元素）。
-        dotsRow.translatesAutoresizingMaskIntoConstraints = false
-        dotsRow.isAccessibilityElement = false
-        let dotsStack = UIStackView()
-        dotsStack.translatesAutoresizingMaskIntoConstraints = false
-        dotsStack.axis = .horizontal
-        dotsStack.spacing = 8
-        dotsStack.isAccessibilityElement = false
-        for color in [BearyColors.orange, BearyColors.gray, BearyColors.gray, BearyColors.orange] {
-            let dot = UIView()
-            dot.translatesAutoresizingMaskIntoConstraints = false
-            dot.backgroundColor = color
-            dot.layer.cornerRadius = 3
-            dot.isAccessibilityElement = false
-            dotsStack.addArrangedSubview(dot)
-            NSLayoutConstraint.activate([
-                dot.widthAnchor.constraint(equalToConstant: 6),
-                dot.heightAnchor.constraint(equalToConstant: 6),
-            ])
-        }
-        dotsRow.addSubview(dotsStack)
-        NSLayoutConstraint.activate([
-            dotsStack.centerXAnchor.constraint(equalTo: dotsRow.centerXAnchor),
-            dotsStack.centerYAnchor.constraint(equalTo: dotsRow.centerYAnchor),
-            dotsRow.heightAnchor.constraint(equalToConstant: 6),
-        ])
-
         let emailContainer = makeFieldContainer(field: emailField)
         emailInputContainer = emailContainer
         let codeContainer = makeFieldContainer(field: codeField)
@@ -403,9 +374,7 @@ final class BearyLoginViewController: UIViewController {
         stackView.addArrangedSubview(agreeRow)
         stackView.addArrangedSubview(loginButton)
         stackView.addArrangedSubview(guestButton)
-        if sheetMode {
-            stackView.addArrangedSubview(dotsRow)
-        } else {
+        if !sheetMode {
             stackView.addArrangedSubview(guestNoteLabel)
         }
         // Sheet 弹窗：邀请码收起（只留收起行，字段隐藏但文本保留）；邀请 label 在
@@ -434,11 +403,7 @@ final class BearyLoginViewController: UIViewController {
         stackView.setCustomSpacing(8, after: messageLabel)
         stackView.setCustomSpacing(12, after: agreeRow)
         stackView.setCustomSpacing(12, after: loginButton)
-        if sheetMode {
-            stackView.setCustomSpacing(20, after: guestButton)
-        } else {
-            stackView.setCustomSpacing(8, after: guestButton)
-        }
+        stackView.setCustomSpacing(8, after: guestButton)
 
         // Sheet 弹窗：logo 居中（全屏页左对齐）；宽高比约束与原值一致。
         let logoXConstraint = sheetMode
