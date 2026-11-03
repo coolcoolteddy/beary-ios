@@ -19,7 +19,9 @@ final class BearyDMConversationsViewController: UIViewController, UITableViewDel
     var onBack: (() -> Void)?
 
     private let tableView = UITableView(frame: .zero, style: .plain)
-    private let emptyLabel = UILabel()
+    // C5：空态/失败态走统一 BearyStateView（旧 emptyLabel 退役；文案与下拉重试不变，
+    // 失败态另加“重试”动作钮调同一 load()，下拉手势仍在）。
+    private let conversationStateView = BearyStateView()
     // 审计第 19 项：首次加载态复用 BearyStateView（转圈 +“加载中…”），不加骨架屏。
     // 只在“首次请求且尚无旧数据”时出现；有旧数据时保留内容后台刷新。
     private let firstLoadStateView = BearyStateView()
@@ -69,14 +71,9 @@ final class BearyDMConversationsViewController: UIViewController, UITableViewDel
         tableView.refreshControl = refresh
         view.addSubview(tableView)
 
-        emptyLabel.translatesAutoresizingMaskIntoConstraints = false
-        emptyLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 14))
-        emptyLabel.adjustsFontForContentSizeCategory = true
-        emptyLabel.textColor = BearyColors.gray
-        emptyLabel.textAlignment = .center
-        emptyLabel.numberOfLines = 0
-        emptyLabel.isHidden = true
-        view.addSubview(emptyLabel)
+        conversationStateView.translatesAutoresizingMaskIntoConstraints = false
+        conversationStateView.isHidden = true
+        view.addSubview(conversationStateView)
 
         firstLoadStateView.translatesAutoresizingMaskIntoConstraints = false
         firstLoadStateView.isHidden = true
@@ -100,15 +97,15 @@ final class BearyDMConversationsViewController: UIViewController, UITableViewDel
             tableView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             tableView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
             tableView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
-            emptyLabel.centerXAnchor.constraint(equalTo: view.centerXAnchor),
-            emptyLabel.centerYAnchor.constraint(equalTo: view.centerYAnchor),
-            emptyLabel.leadingAnchor.constraint(greaterThanOrEqualTo: view.leadingAnchor, constant: 32),
-            emptyLabel.trailingAnchor.constraint(lessThanOrEqualTo: view.trailingAnchor, constant: -32),
             // 首次加载态与空态同槽位居中（互斥显隐，见 load/updateEmptyState）。
             firstLoadStateView.centerXAnchor.constraint(equalTo: view.centerXAnchor),
             firstLoadStateView.centerYAnchor.constraint(equalTo: view.centerYAnchor),
             firstLoadStateView.leadingAnchor.constraint(greaterThanOrEqualTo: view.leadingAnchor, constant: 32),
             firstLoadStateView.trailingAnchor.constraint(lessThanOrEqualTo: view.trailingAnchor, constant: -32),
+            conversationStateView.centerXAnchor.constraint(equalTo: view.centerXAnchor),
+            conversationStateView.centerYAnchor.constraint(equalTo: view.centerYAnchor),
+            conversationStateView.leadingAnchor.constraint(greaterThanOrEqualTo: view.leadingAnchor, constant: 32),
+            conversationStateView.trailingAnchor.constraint(lessThanOrEqualTo: view.trailingAnchor, constant: -32),
         ])
 
         NotificationCenter.default.addObserver(self, selector: #selector(friendsChanged), name: .bearyFriendsChanged, object: nil)
@@ -190,7 +187,7 @@ final class BearyDMConversationsViewController: UIViewController, UITableViewDel
         // 审计第 19 项：首次无数据才显加载态（下拉刷新自带转圈时不叠加）；
         // 有旧数据时不遮内容，后台刷新完直接换行。
         if firstLoadPending && conversations.isEmpty && tableView.refreshControl?.isRefreshing != true {
-            emptyLabel.isHidden = true
+            conversationStateView.isHidden = true
             firstLoadStateView.configure(kind: .loading, title: "加载中…", subtitle: nil, iconName: nil, actionTitle: nil)
             firstLoadStateView.isHidden = false
         }
@@ -228,13 +225,15 @@ final class BearyDMConversationsViewController: UIViewController, UITableViewDel
 
     private func updateEmptyState() {
         if loadFailed && conversations.isEmpty {
-            emptyLabel.text = "加载失败，下拉重试"
-            emptyLabel.isHidden = false
+            // 失败文案拆标题/副文案（旧“加载失败，下拉重试”两段原意不变），
+            // 动作钮与下拉刷新同入口 load()，减动效时 BearyStateView 内部直设终值。
+            conversationStateView.configure(kind: .error, title: "加载失败", subtitle: "下拉重试", iconName: nil, actionTitle: "重试", onAction: { [weak self] in self?.load() })
+            conversationStateView.isHidden = false
         } else if conversations.isEmpty {
-            emptyLabel.text = "还没有私信\n收到或发出的消息会显示在这里"
-            emptyLabel.isHidden = false
+            conversationStateView.configure(kind: .empty, title: "还没有私信", subtitle: "发第一条纯文字消息吧", iconName: nil, actionTitle: nil, onAction: nil)
+            conversationStateView.isHidden = false
         } else {
-            emptyLabel.isHidden = true
+            conversationStateView.isHidden = true
         }
     }
 
@@ -282,38 +281,17 @@ final class BearyDMConversationsViewController: UIViewController, UITableViewDel
 
 private final class BearyDMConversationCell: UITableViewCell {
 
-    private let avatarView = UIImageView()
-    private let fallbackLabel = UILabel()
+    // C3：头像走统一 BearyAvatarView（44 圆角 22、首字母占位、失败重试内含）。
+    private let avatarView = BearyAvatarView()
     private let nameLabel = UILabel()
     private let snippetLabel = UILabel()
     private let timeLabel = UILabel()
     private let unreadBadge = UILabel()
     private let separatorView = UIView()
-    private var avatarTask: URLSessionDataTask?
-    private var avatarURL: URL?
-    /// 重试回包校验用：当前行代表的用户 id（configure 时记录，复用时清零）。
-    private var representedUserID: Int?
     private var unreadBadgeMinWidthConstraint: NSLayoutConstraint?
     private var unreadBadgeZeroWidthConstraint: NSLayoutConstraint?
 
-    // 审计：头像失败重试钮（搜索页 icon_refresh 44×44 同款口径），仅失败态可见。
-    private lazy var avatarRetryButton: UIButton = {
-        let button = UIButton(type: .custom)
-        button.translatesAutoresizingMaskIntoConstraints = false
-        button.setImage(BearyIconImages.image(named: "icon_refresh", pointSize: 20), for: .normal)
-        button.tintColor = BearyColors.ink
-        button.accessibilityLabel = "重试"
-        button.accessibilityHint = "重新加载头像"
-        button.isHidden = true
-        button.addTarget(self, action: #selector(avatarRetryTapped), for: .touchUpInside)
-        button.bearyAddPressFeedback()
-        return button
-    }()
-    /// 审计-性能：头像代次。prepareForReuse 已取消旧任务，但同 cell 不经复用
-    /// 再次 configure（如可见行刷新）时旧任务仍在途；内存命中分支返回 nil、
-    /// 回调仍异步上主线程，无代次校验即会把旧头像写进新行，故 configure
-    /// 起始先取消旧任务并 +1，回调凭代次 + URL 双重校验，旧回包直接丢弃。
-    private var avatarGeneration = 0
+    /// 审计-性能：头像代次已随 BearyAvatarView 内化（见该组件），本 cell 不再自持。
     private static let conversationTimeFormatter: DateFormatter = {
         let formatter = DateFormatter()
         formatter.locale = Locale(identifier: "zh_CN")
@@ -327,18 +305,6 @@ private final class BearyDMConversationCell: UITableViewCell {
         selectionStyle = .default
 
         avatarView.translatesAutoresizingMaskIntoConstraints = false
-        avatarView.contentMode = .scaleAspectFill
-        avatarView.clipsToBounds = true
-        avatarView.layer.cornerRadius = 22
-        avatarView.layer.masksToBounds = true
-        fallbackLabel.translatesAutoresizingMaskIntoConstraints = false
-        fallbackLabel.font = BearyDynamicType.cappedFont(for: UIFont.boldSystemFont(ofSize: 17))
-        fallbackLabel.adjustsFontForContentSizeCategory = true
-        fallbackLabel.textColor = BearyColors.orange
-        fallbackLabel.backgroundColor = BearyColors.orange.withAlphaComponent(0.14)
-        fallbackLabel.textAlignment = .center
-        fallbackLabel.layer.cornerRadius = 22
-        fallbackLabel.layer.masksToBounds = true
         nameLabel.translatesAutoresizingMaskIntoConstraints = false
         nameLabel.font = BearyDynamicType.cardTitleFont()
         nameLabel.textColor = BearyColors.ink
@@ -365,8 +331,6 @@ private final class BearyDMConversationCell: UITableViewCell {
         separatorView.translatesAutoresizingMaskIntoConstraints = false
         separatorView.backgroundColor = BearyColors.line
         contentView.addSubview(avatarView)
-        contentView.addSubview(fallbackLabel)
-        contentView.addSubview(avatarRetryButton)
         contentView.addSubview(nameLabel)
         contentView.addSubview(snippetLabel)
         contentView.addSubview(timeLabel)
@@ -380,10 +344,6 @@ private final class BearyDMConversationCell: UITableViewCell {
             avatarView.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 16),
             avatarView.widthAnchor.constraint(equalToConstant: 44),
             avatarView.heightAnchor.constraint(equalToConstant: 44),
-            fallbackLabel.topAnchor.constraint(equalTo: avatarView.topAnchor),
-            fallbackLabel.leadingAnchor.constraint(equalTo: avatarView.leadingAnchor),
-            fallbackLabel.widthAnchor.constraint(equalToConstant: 44),
-            fallbackLabel.heightAnchor.constraint(equalToConstant: 44),
             nameLabel.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 14),
             nameLabel.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 71),
             nameLabel.trailingAnchor.constraint(lessThanOrEqualTo: timeLabel.leadingAnchor, constant: -8),
@@ -396,10 +356,6 @@ private final class BearyDMConversationCell: UITableViewCell {
             unreadBadge.topAnchor.constraint(equalTo: timeLabel.bottomAnchor, constant: 6),
             unreadBadge.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -16),
             unreadBadge.heightAnchor.constraint(equalToConstant: 17),
-            avatarRetryButton.centerXAnchor.constraint(equalTo: avatarView.centerXAnchor),
-            avatarRetryButton.centerYAnchor.constraint(equalTo: avatarView.centerYAnchor),
-            avatarRetryButton.widthAnchor.constraint(equalToConstant: 44),
-            avatarRetryButton.heightAnchor.constraint(equalToConstant: 44),
             // 审计低风险项：行底 1pt 分隔线。
             separatorView.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 16),
             separatorView.trailingAnchor.constraint(equalTo: contentView.trailingAnchor),
@@ -423,13 +379,7 @@ private final class BearyDMConversationCell: UITableViewCell {
 
     override func prepareForReuse() {
         super.prepareForReuse()
-        avatarTask?.cancel()
-        avatarTask = nil
-        avatarGeneration += 1
-        avatarURL = nil
-        representedUserID = nil
-        avatarView.image = nil
-        avatarRetryButton.isHidden = true
+        avatarView.reset()
     }
 
     func configure(conversation: BearyAPI.DMConversation) {
@@ -453,78 +403,7 @@ private final class BearyDMConversationCell: UITableViewCell {
         unreadBadge.text = unread > 99 ? "99+" : "\(unread)"
         unreadBadgeMinWidthConstraint?.isActive = unread > 0
         unreadBadgeZeroWidthConstraint?.isActive = unread <= 0
-        avatarRetryButton.isHidden = true
-        // configure 前先取消旧任务（复用路径之外再次 configure 也守门）。
-        avatarTask?.cancel()
-        avatarTask = nil
-        avatarGeneration += 1
-        avatarURL = nil
-        representedUserID = peer?.id
-        if let avatarPath = peer?.avatarUrl, let url = BearyImageURLs.avatarURL(avatarPath) {
-            avatarView.isHidden = false
-            fallbackLabel.isHidden = true
-            avatarURL = url
-            let generation = avatarGeneration
-            // 头像框 44pt：下采样到 44×scale 解码，不整图全解码进内存。
-            avatarTask = BearyImageLoader.shared.loadDetailed(url: url, downsampleToWidth: 44 * UIScreen.main.scale) { [weak self] result in
-                DispatchQueue.main.async {
-                    guard let self = self, generation == self.avatarGeneration, self.avatarURL == url else { return }
-                    switch result {
-                    case .success(let image):
-                        self.avatarView.image = image
-                        self.avatarRetryButton.isHidden = true
-                    case .failure:
-                        // 审计：头像失败不再留空白圆圈——回默认首字母占位＋点按重试。
-                        self.avatarView.isHidden = true
-                        self.fallbackLabel.isHidden = false
-                        self.fallbackLabel.text = String(displayName.prefix(1)).uppercased()
-                        self.avatarRetryButton.isHidden = false
-                    }
-                }
-            }
-        } else {
-            avatarView.isHidden = true
-            fallbackLabel.isHidden = false
-            fallbackLabel.text = String(displayName.prefix(1)).uppercased()
-        }
-    }
-
-    /// 审计 18 残留：重试路径与主 configure 同口径——代次 + URL + 代表用户 id
-    /// 三重校验，过期回包（复用/换行后才到的旧重试结果）直接丢弃，不串位；
-    /// 下采样与主路径一致（头像框 44pt × scale），失败恢复当前用户首字母
-    /// 占位＋重试钮，不留空白头像。
-    private func loadAvatar(url: URL, displayName: String, representedID: Int?) {
-        avatarURL = url
-        avatarTask?.cancel()
-        avatarTask = nil
-        avatarGeneration += 1
-        let generation = avatarGeneration
-        avatarTask = BearyImageLoader.shared.loadDetailed(url: url, downsampleToWidth: 44 * UIScreen.main.scale) { [weak self] result in
-            DispatchQueue.main.async {
-                guard let self = self, generation == self.avatarGeneration, self.avatarURL == url, self.representedUserID == representedID else { return }
-                switch result {
-                case .success(let image):
-                    self.avatarView.image = image
-                    self.avatarView.isHidden = false
-                    self.fallbackLabel.isHidden = true
-                    self.avatarRetryButton.isHidden = true
-                case .failure:
-                    // 审计：头像失败不再留空白圆圈——回当前用户首字母占位＋点按重试。
-                    self.avatarView.isHidden = true
-                    self.fallbackLabel.isHidden = false
-                    self.fallbackLabel.text = String(displayName.prefix(1)).uppercased()
-                    self.avatarRetryButton.isHidden = false
-                }
-            }
-        }
-    }
-
-    @objc private func avatarRetryTapped() {
-        guard let url = avatarURL else { return }
-        avatarRetryButton.isHidden = true
-        avatarView.isHidden = false
-        fallbackLabel.isHidden = true
-        let displayName = nameLabel.text ?? "beary 用户"
-        loadAvatar(url: url, displayName: displayName, representedID: representedUserID)
+        // C3：头像加载/占位/重试全走 BearyAvatarView（与旧 configure 同口径）。
+        avatarView.configure(displayName: displayName, avatarURL: peer?.avatarUrl.flatMap { BearyImageURLs.avatarURL($0) }, ownerID: peer?.id)
     }
 }

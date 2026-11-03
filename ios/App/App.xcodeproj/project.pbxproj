@@ -42,6 +42,7 @@
 		69DE2C19E74C327FA3626A93 /* BearyButton.swift in Sources */ = {isa = PBXBuildFile; fileRef = 25DEEB6AE3A0566F76549F5F /* BearyButton.swift */; };
 		66D8B958C1FD407A7ECEA90D /* BearyInputContainer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6559CFA8DB2B71E75B013E4D /* BearyInputContainer.swift */; };
 		23D88D2D590450808C9EF6BE /* BearyStateView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4373B88D3E61CD26A7F93F7F /* BearyStateView.swift */; };
+		8B953B521BC24EF1807184F7 /* BearyAvatarView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A147B76F8584FBF96D83CFD /* BearyAvatarView.swift */; };
 		5FF297D2E2804166BA8159B5 /* BearyDiaryCardCell.swift in Sources */ = {isa = PBXBuildFile; fileRef = BD0D12B066C04B3780DCF797 /* BearyDiaryCardCell.swift */; };
 		1476E40C4B0A489082D4F060 /* BearyQuoteCardView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7B1C032A6C0F4B51BD65D3E6 /* BearyQuoteCardView.swift */; };
 		6E1E41D1D67C42CEB3FBC5F3 /* BearyEmoteFlowView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 009D1C4789D54436BA953274 /* BearyEmoteFlowView.swift */; };
@@ -254,6 +255,7 @@
 		25DEEB6AE3A0566F76549F5F /* BearyButton.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BearyButton.swift; sourceTree = "<group>"; };
 		6559CFA8DB2B71E75B013E4D /* BearyInputContainer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BearyInputContainer.swift; sourceTree = "<group>"; };
 		4373B88D3E61CD26A7F93F7F /* BearyStateView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BearyStateView.swift; sourceTree = "<group>"; };
+		1A147B76F8584FBF96D83CFD /* BearyAvatarView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BearyAvatarView.swift; sourceTree = "<group>"; };
 		BD0D12B066C04B3780DCF797 /* BearyDiaryCardCell.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BearyDiaryCardCell.swift; sourceTree = "<group>"; };
 		7B1C032A6C0F4B51BD65D3E6 /* BearyQuoteCardView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BearyQuoteCardView.swift; sourceTree = "<group>"; };
 		009D1C4789D54436BA953274 /* BearyEmoteFlowView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BearyEmoteFlowView.swift; sourceTree = "<group>"; };
@@ -493,6 +495,7 @@
 				25DEEB6AE3A0566F76549F5F /* BearyButton.swift */,
 				6559CFA8DB2B71E75B013E4D /* BearyInputContainer.swift */,
 				4373B88D3E61CD26A7F93F7F /* BearyStateView.swift */,
+				1A147B76F8584FBF96D83CFD /* BearyAvatarView.swift */,
 				BD0D12B066C04B3780DCF797 /* BearyDiaryCardCell.swift */,
 				7B1C032A6C0F4B51BD65D3E6 /* BearyQuoteCardView.swift */,
 				009D1C4789D54436BA953274 /* BearyEmoteFlowView.swift */,
@@ -924,6 +927,7 @@
 				69DE2C19E74C327FA3626A93 /* BearyButton.swift in Sources */,
 				66D8B958C1FD407A7ECEA90D /* BearyInputContainer.swift in Sources */,
 				23D88D2D590450808C9EF6BE /* BearyStateView.swift in Sources */,
+				8B953B521BC24EF1807184F7 /* BearyAvatarView.swift in Sources */,
 				5FF297D2E2804166BA8159B5 /* BearyDiaryCardCell.swift in Sources */,
 				1476E40C4B0A489082D4F060 /* BearyQuoteCardView.swift in Sources */,
 				6E1E41D1D67C42CEB3FBC5F3 /* BearyEmoteFlowView.swift in Sources */,

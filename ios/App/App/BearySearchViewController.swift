@@ -194,7 +194,7 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         }
         return nil
     }
-    // 图片失败重试槽位（用户头像 / 日记首图各一）：随行重建而丢弃，见文件末尾
+    // 图片失败重试槽位（日记首图）：随行重建而丢弃，见文件末尾
     // BearySearchImageRetry；clearResultRows 时连同行一起清空。
     private var imageRetryHolders: [BearySearchImageRetry] = []
     /// 扫 bug 第 9 项：三组分区头（增量追加的落点锚点）。renderResults
@@ -1902,28 +1902,16 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
 
     /// 用户行：网页 .srch-user——padding 9/8、gap 11、头像 44 圆、名字 16.5 bold、
     /// handle 13 gray、右 chevron 16 gray；无图回退首字母大写、橙 14% 底橙字 17 bold。
+    /// C3：头像三件套改走统一 BearyAvatarView（规格与上句一致；失败态由旧“只亮
+    /// 重试钮”改为与好友/会话一致的“首字母占位＋重试钮”，见 BearyAvatarView 注释）。
     private func makeUserRow(user: SearchUser, query: String) -> UIButton {
         let row = UIButton(type: .custom)
         row.translatesAutoresizingMaskIntoConstraints = false
         row.layer.cornerRadius = 14
         row.layer.masksToBounds = true
 
-        let avatarView = UIImageView()
+        let avatarView = BearyAvatarView()
         avatarView.translatesAutoresizingMaskIntoConstraints = false
-        avatarView.contentMode = .scaleAspectFill
-        avatarView.clipsToBounds = true
-        avatarView.layer.cornerRadius = 22
-        avatarView.layer.masksToBounds = true
-
-        let fallbackLabel = UILabel()
-        fallbackLabel.translatesAutoresizingMaskIntoConstraints = false
-        fallbackLabel.font = BearyDynamicType.cappedFont(for: UIFont.boldSystemFont(ofSize: 17))
-        fallbackLabel.adjustsFontForContentSizeCategory = true
-        fallbackLabel.textColor = BearyColors.orange
-        fallbackLabel.backgroundColor = BearyColors.orange.withAlphaComponent(0.14)
-        fallbackLabel.textAlignment = .center
-        fallbackLabel.layer.cornerRadius = 22
-        fallbackLabel.layer.masksToBounds = true
 
         let nameLabel = BearyRoundedMarkLabel()
         nameLabel.translatesAutoresizingMaskIntoConstraints = false
@@ -1954,32 +1942,11 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         } else {
             handleLabel.isHidden = true
         }
-        // 图片失败重试：纯图标（icon_refresh 20pt，消息页头像重试同款；#224 误用 icon_restore 已回退），
-        // 44×44 点击区居中压在头像上；仅失败态可见，加载中与成功态隐藏
-        // （显隐由 BearySearchImageRetry 持有，见文件末尾）。
-        let avatarRetryButton = UIButton(type: .custom)
-        avatarRetryButton.translatesAutoresizingMaskIntoConstraints = false
-        avatarRetryButton.setImage(BearyIconImages.image(named: "icon_refresh", pointSize: 20), for: .normal)
-        avatarRetryButton.tintColor = BearyColors.ink
-        avatarRetryButton.isHidden = true
-        avatarRetryButton.accessibilityLabel = "重试"
-        avatarRetryButton.accessibilityHint = "重新加载头像"
-
-        if let avatarPath = user.avatarUrl, let url = BearyImageURLs.avatarURL(avatarPath) {
-            let avatarRetry = BearySearchImageRetry(imageView: avatarView, retryButton: avatarRetryButton, imageURL: url)
-            imageRetryHolders.append(avatarRetry)
-            avatarRetry.load()
-            avatarView.isHidden = false
-            fallbackLabel.isHidden = true
-        } else {
-            avatarView.isHidden = true
-            fallbackLabel.isHidden = false
-            fallbackLabel.text = String(displayName.prefix(1)).uppercased()
-        }
+        // C3：头像加载/占位/重试全走 BearyAvatarView（日记首图仍走
+        // BearySearchImageRetry，不动；imageRetryHolders 只剩首图槽位）。
+        avatarView.configure(displayName: displayName, avatarURL: user.avatarUrl.flatMap { BearyImageURLs.avatarURL($0) })
 
         row.addSubview(avatarView)
-        row.addSubview(fallbackLabel)
-        row.addSubview(avatarRetryButton)
         row.addSubview(nameLabel)
         row.addSubview(handleLabel)
         row.addSubview(chevron)
@@ -1989,15 +1956,6 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
             avatarView.leadingAnchor.constraint(equalTo: row.leadingAnchor, constant: 16),
             avatarView.widthAnchor.constraint(equalToConstant: 44),
             avatarView.heightAnchor.constraint(equalToConstant: 44),
-            fallbackLabel.topAnchor.constraint(equalTo: row.topAnchor, constant: 14),
-            fallbackLabel.bottomAnchor.constraint(equalTo: row.bottomAnchor, constant: -14),
-            fallbackLabel.leadingAnchor.constraint(equalTo: row.leadingAnchor, constant: 16),
-            fallbackLabel.widthAnchor.constraint(equalToConstant: 44),
-            fallbackLabel.heightAnchor.constraint(equalToConstant: 44),
-            avatarRetryButton.centerXAnchor.constraint(equalTo: avatarView.centerXAnchor),
-            avatarRetryButton.centerYAnchor.constraint(equalTo: avatarView.centerYAnchor),
-            avatarRetryButton.widthAnchor.constraint(equalToConstant: 44),
-            avatarRetryButton.heightAnchor.constraint(equalToConstant: 44),
             nameLabel.topAnchor.constraint(equalTo: row.topAnchor, constant: 14),
             nameLabel.leadingAnchor.constraint(equalTo: row.leadingAnchor, constant: 71),
             nameLabel.trailingAnchor.constraint(lessThanOrEqualTo: chevron.leadingAnchor, constant: -8),
@@ -2488,7 +2446,7 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
     }
 }
 
-// MARK: - 图片失败重试槽位（用户头像 / 日记首图共用）
+// MARK: - 图片失败重试槽位（日记首图用；用户头像已改走 BearyAvatarView）
 //
 // 形态（用户定）：纯图标，不带文字按钮——icon_refresh 20pt，消息页头像重试（#224 误用 icon_restore 已回退）
 // 同款；按钮无背景无描边，图标色取动态 BearyColors.ink，故深浅切换无需重刷。
