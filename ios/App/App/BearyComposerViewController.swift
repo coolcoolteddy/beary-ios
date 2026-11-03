@@ -6284,6 +6284,8 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             // DF-2 接线（收尾）：箱内删正在写草稿时通知编辑器，编辑器清 currentDraftId，
             // 下次落盘不再复活已删草稿；箱内“正在写”标记以 currentDraftId 为准。
             box.currentDraftId = self.currentDraftId
+            // 无障碍：草稿箱纯关闭后焦点回草稿钮（新建／打开走回调时不发）。
+            box.accessibilityFocusReturnElement = self.draftPillButton
             box.onDeleteCurrentDraft = { [weak self] deletedId in
                 if self?.currentDraftId == deletedId {
                     self?.currentDraftId = nil
