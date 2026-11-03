@@ -182,6 +182,12 @@ final class BearyNotificationsViewController: UIViewController {
     private var followCardLoadingIds: Set<Int> = []
     /// 审计：回关卡请求代次——切号时 +1，在途回包凭代次丢弃，不写回新号。
     private var followCardGeneration = 0
+    /// 第 7 轮属实项 5：按关注方计的操作代次——发起一次关注／回关就 +1，
+    /// 使此前在途的 state 查询回包失效。仅全局切号代次不够：同账号内
+    /// 发起关注不会 bump 全局代次，旧查询回包会覆盖 .busy 或刚确认的
+    /// 结果。查询发起时快照本代次，回包时代次不等即丢弃（仍清 loading
+    /// 旗，不写态、不刷新行）。
+    private var followCardOperationGeneration: [Int: Int] = [:]
     private var lastPublishedUnread = -1
     private var lastPublishedSysUnread = -1
     /// 上次整页加载时的未读数快照（门控用，与 unreadTotal 严格分开）：
@@ -1138,6 +1144,7 @@ final class BearyNotificationsViewController: UIViewController {
         notifPageEntered = false
         followCardStates.removeAll()
         followCardLoadingIds.removeAll()
+        followCardOperationGeneration.removeAll()
         followCardGeneration += 1
         // 切号清列表：旧号通知不得残留；hasSuccessfulLoad 同步复位，
         // 否则离页写回（saveNotificationCache 按当前账号写）会把旧号
@@ -1796,20 +1803,23 @@ final class BearyNotificationsViewController: UIViewController {
         guard item.type == "follow", let actorId = item.actorId else { return }
         if let state = followCardStates[actorId] {
             cell.configureFollowCard(state: state) { [weak self] in
-                self?.handleFollowBack(itemIndex: itemIndex)
+                // 第 7 轮属实项 5：闭包直接带关注方 id 与通知 id，不带下标——
+                // 整页替换移位后旧下标可能指向另一条，点按时再按下标取人会跟错人。
+                self?.handleFollowBack(actorId: actorId, notificationId: item.id)
             }
             return
         }
         // 未拉取：先画禁用态回关钮，同时按关注方 id 拉一次 state（同人多卡共享
         // 一次请求；在途复用行重配时不重复发）。
         cell.configureFollowCard(state: .loading) { [weak self] in
-            self?.handleFollowBack(itemIndex: itemIndex)
+            self?.handleFollowBack(actorId: actorId, notificationId: item.id)
         }
         fetchFollowCardState(actorId: actorId)
     }
 
     /// 回关卡 state 拉取（configure 与失败重试共用；重验共用本函数但 silentFailure
-    /// 为真）：切号后在途回包凭代次丢弃；拉取失败不再永久禁用——写 .loadFailed，
+    /// 为真）：切号后在途回包凭代次丢弃；同账号内发起关注后在途回包凭按人操作
+    /// 代次丢弃（见 followCardOperationGeneration）；拉取失败不再永久禁用——写 .loadFailed，
     /// 按钮恢复可点并 toast 说明，点按重试拉取（见 handleFollowBack 的 .loadFailed
     /// 分支）。重验失败（silentFailure）静默保留旧缓存态：不写 .loadFailed、
     /// 不 toast——离线时不把上次已知态洗成失败态。
@@ -1817,11 +1827,15 @@ final class BearyNotificationsViewController: UIViewController {
         guard !followCardLoadingIds.contains(actorId) else { return }
         followCardLoadingIds.insert(actorId)
         let gen = followCardGeneration
+        // 第 7 轮属实项 5：快照按人操作代次。查询在途时发起关注会 bump
+        // 本代次，旧查询回包到此即丢弃，不得覆盖 .busy 或刚确认的态。
+        let operationGen = followCardOperationGeneration[actorId] ?? 0
         BearyAPI.shared.fetchFollowState(userId: actorId) { [weak self] result in
             DispatchQueue.main.async {
                 guard let self = self else { return }
                 self.followCardLoadingIds.remove(actorId)
-                guard gen == self.followCardGeneration else { return }
+                guard gen == self.followCardGeneration,
+                      operationGen == (self.followCardOperationGeneration[actorId] ?? 0) else { return }
                 switch result {
                 case .success(let state):
                     // 实时关系四态直定，不再把“非互关”一律折成回关：
@@ -1870,13 +1884,10 @@ final class BearyNotificationsViewController: UIViewController {
         revalidateFollowCardStates()
     }
 
-    private func handleFollowBack(itemIndex: Int) {
-        guard itemIndex < items.count else { return }
-        let item = items[itemIndex]
-        guard let actorId = item.actorId else {
-            showToast(message: "回关失败，请重试")
-            return
-        }
+    /// 第 7 轮属实项 5：关系读写只按关注方 id，不按下标。点按时带入的
+    /// actorId／notificationId 是闭包创建时的快照，整页替换移位也不变；
+    /// 旧签名在点按与回包两处都按下标重读 items，移位后会跟错人／标错行。
+    private func handleFollowBack(actorId: Int, notificationId: Int?) {
         // 失败态点按 = 重试拉取 state，不发 follow 请求。
         if case .loadFailed = followCardStates[actorId] {
             followCardStates.removeValue(forKey: actorId)
@@ -1894,11 +1905,17 @@ final class BearyNotificationsViewController: UIViewController {
         if case .canFollowBack = previousState { wasFollowBack = true }
         followCardStates[actorId] = .busy
         refreshFollowCardRows(actorId: actorId)
+        // 发起关注即 bump 按人操作代次：此前在途的 state 查询回包到
+        // fetchFollowCardState 时代次已不等，直接丢弃，不覆盖 .busy 与
+        // 下面刚确认的结果；本请求回包同样凭代次核对后才写态。
+        followCardOperationGeneration[actorId, default: 0] += 1
+        let operationGen = followCardOperationGeneration[actorId] ?? 0
         let gen = followCardGeneration
         BearyAPI.shared.followFriend(userId: actorId) { [weak self] result in
             DispatchQueue.main.async {
                 guard let self = self else { return }
-                guard gen == self.followCardGeneration else { return }
+                guard gen == self.followCardGeneration,
+                      operationGen == (self.followCardOperationGeneration[actorId] ?? 0) else { return }
                 switch result {
                 case .success:
                     // 成功后态由点按前关系直定：回关（对方关注我）→ 互关；
@@ -1907,7 +1924,7 @@ final class BearyNotificationsViewController: UIViewController {
                     // 关注成功给 light 震动（点赞轻震动口径）；取关不给震动。
                     BearyHaptics.press()
                     BearyFriends.clearDiaryCachesAndNotify()
-                    self.markFollowCardRead(itemIndex: itemIndex)
+                    self.markFollowCardRead(notificationId: notificationId)
                     self.refreshFollowCardRows(actorId: actorId)
                 case .failure(let error):
                     // 失败回滚回点按前确认态，不再一律回 canFollowBack（那会把一次
@@ -1934,24 +1951,32 @@ final class BearyNotificationsViewController: UIViewController {
             let path = IndexPath(row: rowIndex, section: 0)
             guard let cell = tableView.cellForRow(at: path) as? BearyNotificationCell else { continue }
             let state = followCardStates[actorId] ?? .loading
+            // 闭包带 id 快照，不带下标：重配后列表若移位，旧下标点按会跟错人。
+            let notificationId = items[itemIndex].id
             cell.configureFollowCard(state: state) { [weak self] in
-                self?.handleFollowBack(itemIndex: itemIndex)
+                self?.handleFollowBack(actorId: actorId, notificationId: notificationId)
             }
         }
     }
 
     /// 回关成功后顺带标已读（与 openNotification 的乐观已读同口径，唯独不跳转）。
-    private func markFollowCardRead(itemIndex: Int) {
-        guard itemIndex < items.count else { return }
-        let item = items[itemIndex]
-        guard (item.read ?? true) == false, item.id != nil else { return }
-        items[itemIndex].read = true
+    /// 第 7 轮属实项 5：已读更新按通知 id 定位，不按下标。旧实现在回包时刻
+    /// 重读 items[itemIndex]，整页替换移位后会把另一条本地标已读、并以
+    /// 另一条的 id 发 POST（本地＋服务端同时标错）；现按点按时快照的通知
+    /// id 在回包时刻重查下标，查不到（行已不在列表）则不标不发，行已在
+    /// 别处标过已读则不重复扣未读数。
+    private func markFollowCardRead(notificationId: Int?) {
+        guard let notificationId = notificationId,
+              let index = items.firstIndex(where: { $0.id == notificationId }),
+              (items[index].read ?? true) == false else { return }
+        let item = items[index]
+        items[index].read = true
         unreadTotal = max(0, unreadTotal - 1)
         publishUnread(unreadTotal)
         updateReadAllButton()
         recordFullLoadUnread()
         applyReadAppearanceToVisibleRows()
-        markSingleRead(item, at: itemIndex)
+        markSingleRead(item, at: index)
     }
 
     private func openNotification(_ item: NotificationItem, at index: Int) {
