@@ -40,7 +40,7 @@ class BearyEntryImageViewerViewController: UIViewController, UIGestureRecognizer
     /// BearyColors.bg（浅白／深黑，随 trait 自动跟随），不是纯黑、不是
     /// 骨架屏；图到／失败即藏，旧图绝不滑回的口径不动。
     private let placeholderView = UIView()
-    private let retryLabel = UILabel()
+    private let retryButton = UIButton(type: .custom)
     private let counterLabel = UILabel()
     private let closeButton = BearyButton.closeButton()
     private let dotsStack = UIStackView()
@@ -171,19 +171,22 @@ class BearyEntryImageViewerViewController: UIViewController, UIGestureRecognizer
         self.liveOverlay = liveOverlay
         loadingSpinner.tintColor = .white
         view.addSubview(loadingSpinner)
-        retryLabel.text = "图片加载失败，重试"
-        retryLabel.textColor = .white
-        retryLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 14))
-        retryLabel.adjustsFontForContentSizeCategory = true
-        // 审计-编辑器详情：失败重试文案本是纯 UILabel（点按重试走整场手势），
-        // VoiceOver 下补可点读法；关闭钮为纯图标钮，补“关闭”读法。
-        retryLabel.isAccessibilityElement = true
-        retryLabel.accessibilityLabel = "图片加载失败，点按重试"
-        retryLabel.accessibilityTraits = .button
-        retryLabel.textAlignment = .center
-        retryLabel.translatesAutoresizingMaskIntoConstraints = false
-        retryLabel.isHidden = true
-        view.addSubview(retryLabel)
+        retryButton.setTitle("图片加载失败，重试", for: .normal)
+        retryButton.setTitleColor(.white, for: .normal)
+        retryButton.titleLabel?.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 14))
+        retryButton.titleLabel?.adjustsFontForContentSizeCategory = true
+        // 失败重试现为真实 UIButton：VoiceOver 双击即触发 .touchUpInside，
+        // 不再只靠 .button 读法（纯 UILabel 时双击走 accessibilityActivate，
+        // 未实现即无动作，也不会转发给舞台点按手势）；关闭钮为纯图标钮，补“关闭”读法。
+        // 文案／字号／颜色／位置一字不动，只换承载控件。
+        retryButton.isAccessibilityElement = true
+        retryButton.accessibilityLabel = "图片加载失败，点按重试"
+        retryButton.accessibilityTraits = .button
+        retryButton.titleLabel?.textAlignment = .center
+        retryButton.translatesAutoresizingMaskIntoConstraints = false
+        retryButton.isHidden = true
+        retryButton.addTarget(self, action: #selector(retryTapped), for: .touchUpInside)
+        view.addSubview(retryButton)
         counterLabel.textColor = .white
         counterLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 14))
         counterLabel.adjustsFontForContentSizeCategory = true
@@ -258,9 +261,9 @@ class BearyEntryImageViewerViewController: UIViewController, UIGestureRecognizer
             liveOverlay.trailingAnchor.constraint(equalTo: view.trailingAnchor),
             loadingSpinner.centerXAnchor.constraint(equalTo: view.centerXAnchor),
             loadingSpinner.centerYAnchor.constraint(equalTo: view.centerYAnchor),
-            retryLabel.centerXAnchor.constraint(equalTo: view.centerXAnchor),
+            retryButton.centerXAnchor.constraint(equalTo: view.centerXAnchor),
             // E2：图片加载失败重试态按可视区中心往上 30pt 统一放（原正中心）。
-            retryLabel.centerYAnchor.constraint(equalTo: view.centerYAnchor, constant: -30),
+            retryButton.centerYAnchor.constraint(equalTo: view.centerYAnchor, constant: -30),
             counterLabel.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 20),
             counterLabel.centerXAnchor.constraint(equalTo: view.centerXAnchor),
             // 32 清单第 17 项：计数跟随放大后不得压到右上关闭钮之下（文案短，平时不触发；极端字号下宁可截尾不断钮）。
@@ -417,7 +420,7 @@ class BearyEntryImageViewerViewController: UIViewController, UIGestureRecognizer
             guard currentIndex >= 0 && currentIndex < localImages.count else { return }
             loadingKey = nil
             isFailed = false
-            retryLabel.isHidden = true
+            retryButton.isHidden = true
             imageView.image = localImages[currentIndex]
             updateLoadingSpinner()
             updateLiveOverlay()
@@ -434,7 +437,7 @@ class BearyEntryImageViewerViewController: UIViewController, UIGestureRecognizer
         zoomHiResKey = nil
         zoomHiResWidth = 0
         isFailed = false
-        retryLabel.isHidden = true
+        retryButton.isHidden = true
         // 审计 P2-25：切图/重试时不再先置 nil 回落黑屏——旧图保留到新图到达
         // （首张加载时 imageView 本就为空，无变化；失败时旧图仍在、重试文案在上）。
         // imageView.image = nil（旧写法，已删）
@@ -444,7 +447,7 @@ class BearyEntryImageViewerViewController: UIViewController, UIGestureRecognizer
         updateLiveOverlay()
         guard let url = BearyImageURLs.imageURL(key: key, thumb: false) else {
             isFailed = true
-            retryLabel.isHidden = false
+            retryButton.isHidden = false
             updateLoadingSpinner()
             return
         }
@@ -468,10 +471,10 @@ class BearyEntryImageViewerViewController: UIViewController, UIGestureRecognizer
             if let img = img {
                 self.imageView.image = img
                 self.isFailed = false
-                self.retryLabel.isHidden = true
+                self.retryButton.isHidden = true
             } else {
                 self.isFailed = true
-                self.retryLabel.isHidden = false
+                self.retryButton.isHidden = false
             }
             self.updateLoadingSpinner()
         }
@@ -623,7 +626,7 @@ class BearyEntryImageViewerViewController: UIViewController, UIGestureRecognizer
         dotsStack.isHidden = hidden ? true : (imageKeys.count <= 1 || imageKeys.count > 20)
         closeButton.isHidden = hidden
         viewEntryButton.isHidden = hidden
-        retryLabel.isHidden = hidden ? true : !isFailed
+        retryButton.isHidden = hidden ? true : !isFailed
         if hidden {
             loadingSpinner.stopSpinning()
             placeholderView.isHidden = true
@@ -662,10 +665,25 @@ class BearyEntryImageViewerViewController: UIViewController, UIGestureRecognizer
         return BearyImageViewerReturnAnimator(viewer: self)
     }
 
+    @objc private func retryTapped() {
+        // 失败重试钮：与舞台点按失败分支共用 loadCurrent；仅失败态才重载。
+        // 主动点按即表示抬手误触期已过，待挡的一次舞台点按不再生效（同 viewEntryButtonTapped 口径）。
+        guard isFailed == true else { return }
+        suppressNextStageTapAfterLive = false
+        loadCurrent()
+    }
+
     @objc private func stageTapped(_ sender: UITapGestureRecognizer) {
         // 实况长按抬手后的那一次误触点按：挡一次即清，后续主动点按不再受影响。
         if suppressNextStageTapAfterLive {
             suppressNextStageTapAfterLive = false
+            return
+        }
+        let point = sender.location(in: view)
+        // 重试钮自身 target/action 已处理：舞台手势在此放行，避免同一触摸
+        // 再走失败分支重复调 loadCurrent（代次 +1、重复取图）；钮隐藏时
+        // 该区域仍走原路径（失败分支／关闭），行为不变。
+        if retryButton.isHidden == false && retryButton.frame.contains(point) {
             return
         }
         // 失败图点按重试，不关闭（网页 img-err 口径）；关闭钮点按由按钮自身处理。
@@ -677,7 +695,6 @@ class BearyEntryImageViewerViewController: UIViewController, UIGestureRecognizer
         if scale > 1 {
             return
         }
-        let point = sender.location(in: view)
         if closeButton.frame.contains(point) {
             return
         }
@@ -914,7 +931,7 @@ class BearyEntryImageViewerViewController: UIViewController, UIGestureRecognizer
                 // 第 4 项：此处直接换图、未走 loadCurrent，代次也须同步 +1，
                 // 否则换图前在途的旧升级回包仍可能凭旧代次蒙混过关。
                 self.isFailed = false
-                self.retryLabel.isHidden = true
+                self.retryButton.isHidden = true
                 self.loadingKey = self.imageKeys[wrapped]
                 self.imageLoadGeneration += 1
                 // 快速通道交接：当前显示的是相邻槽位的基础图，高清标记须随图清零
@@ -981,7 +998,7 @@ class BearyEntryImageViewerViewController: UIViewController, UIGestureRecognizer
             if let targetImage = self.neighborImageView.image {
                 self.imageView.image = targetImage
                 self.isFailed = false
-                self.retryLabel.isHidden = true
+                self.retryButton.isHidden = true
                 self.loadingKey = self.imageKeys[wrapped]
             } else {
                 // 目标未到：先空 + 加载圈，loadCurrent 回包填图（不留旧图）。
