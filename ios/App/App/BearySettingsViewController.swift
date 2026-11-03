@@ -256,6 +256,7 @@ final class BearySettingsViewController: UIViewController {
     /// 切换时预检 401 证实已死的账号（内存态，不进保管库）：列表不再
     /// 把这类账号装成可直接切换，行上标“登录已过期”、点按直走重登。
     /// 账号回到当前（重登成功）或从列表消失时由刷新处剪掉。
+    private var expiredSwitchUserIds = Set<Int>()
     private var switchCardBuilt = false
     private var isSwitchingAccount = false
     private var isRemovingAccount = false
