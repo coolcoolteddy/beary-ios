@@ -4529,7 +4529,7 @@ class BearyProfileViewController: UIViewController {
             thisDayBodyLabel.isHidden = false
             thisDayBodyLabel.textAlignment = .center
             thisDayBodyLabel.textColor = BearyColors.gray
-            thisDayBodyLabel.text = "往年今天还没有留下记录"
+            thisDayBodyLabel.text = "往年今天还没有日记。"
             return
         }
         thisDayMainEntry = main

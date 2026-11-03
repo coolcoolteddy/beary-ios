@@ -1200,7 +1200,7 @@ final class BearyBlindBoxFlowViewController: UIViewController {
     /// 的日记有问题、晚点 / 明天再来试；不编造具体补货时间与数量。
     /// 只认服务端既有码 pool_empty（.server 直传，或 .http 原始片段含该码
     /// 的兜底），不凭“开盒失败”等通用失败反推池空，不改交换规则与次数口径。
-    private static let poolEmptyText = "池子里暂时没有可交换的旧公开日记，不是你的日记有问题，晚点或明天再来试试。"
+    private static let poolEmptyText = "暂时没有可交换的日记，不是你的日记有问题，晚点再试。"
 
     /// 清单 11：跨设备已入池码 already_pooled（.server 直传，或 .http 原始片段
     /// 含该码的兜底；与 isPoolEmptyError 同款认码方式）。裸 409 不进本函数——
