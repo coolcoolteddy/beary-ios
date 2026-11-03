@@ -17,6 +17,9 @@ final class BearyProfilePhotosViewController: UIViewController {
     private var photosValue: [BearyProfilePhotoItem]
     private var photosHasMore: Bool
     private var photosFetching = false
+    /// 翻页失败持续态：true 时尾部多一节重试入口；只由显式点按清掉，
+    /// 绝不由 willDisplay 自动重拉（见 fetchNextPageIfNeeded 失败分支）。
+    private var photosPageLoadFailed = false
     var onOpenEntry: ((Entry) -> Void)?
 
     /// 审计-个人页设置：全量照片页同样走互关过滤（调用方按实时 followState 传；
@@ -73,6 +76,7 @@ final class BearyProfilePhotosViewController: UIViewController {
         collectionValue.delegate = self
         collectionValue.dataSource = self
         collectionValue.register(BearyProfilePhotoCell.self, forCellWithReuseIdentifier: "BearyProfilePhotoCell")
+        collectionValue.register(BearyProfilePhotosLoadMoreFooterCell.self, forCellWithReuseIdentifier: "BearyProfilePhotosLoadMoreFooterCell")
         return collectionValue
     }()
 
@@ -143,7 +147,7 @@ final class BearyProfilePhotosViewController: UIViewController {
         guard !UIAccessibility.isReduceMotionEnabled else { return }
         collectionView.layoutIfNeeded()
         let newPaths = collectionView.indexPathsForVisibleItems
-            .filter { $0.item >= oldCount }
+            .filter { $0.section == 0 && $0.item >= oldCount }
             .sorted { $0.item < $1.item }
         var delay: TimeInterval = 0
         for path in newPaths {
@@ -198,6 +202,8 @@ final class BearyProfilePhotosViewController: UIViewController {
                     let oldPhotoCount = strongSelf.photosValue.count
                     strongSelf.diaryEntriesValue.append(contentsOf: appended)
                     strongSelf.photosValue = BearyProfileViewController.profilePhotoItems(from: strongSelf.diaryEntriesValue, isOwnProfile: strongSelf.ownProfileValue, isMutualFriend: strongSelf.mutualFriendValue)
+                    // 成功即清持续失败态：本次 reloadData 会把尾部重试节一并撤掉。
+                    strongSelf.photosPageLoadFailed = false
                     strongSelf.collectionView.reloadData()
                     strongSelf.updateTitleAndEmpty()
                     // 116：续拉新格错峰滑入（已有格不重播）。
@@ -208,10 +214,28 @@ final class BearyProfilePhotosViewController: UIViewController {
                     // 与全 App 失败提示口径一致），已有照片照常看。原“不 toast”
                     // 口径改为提示，因为静默断流会让用户误以为后面没有照片；
                     // 失败时不 reload，不会因重建触发 willDisplay 循环重拉。
+                    // 本轮新增：除 toast 外再立一节持续尾部重试入口——只插一节，
+                    // 不 reload 已有照片（保留照片与滚动位置）；末格留屏时用户
+                    // 点尾部按钮即可重试，不再只靠末项重入视野。
                     BearyToast.show(in: strongSelf.view, message: "照片加载失败，请稍后重试")
+                    if !strongSelf.photosPageLoadFailed {
+                        strongSelf.photosPageLoadFailed = true
+                        strongSelf.collectionView.insertSections(IndexSet(integer: 1))
+                    }
                 }
             }
         }
+    }
+
+    /// 尾部重试唯一入口：先撤重试节（不 reload，保滚动位置），再走已有
+    /// 翻页入口；photosFetching 守门保证点按只触发一次，不自动循环重拉。
+    private func retryNextPage() {
+        guard photosHasMore, !photosFetching, authorIdValue != nil else { return }
+        if photosPageLoadFailed {
+            photosPageLoadFailed = false
+            collectionView.deleteSections(IndexSet(integer: 1))
+        }
+        fetchNextPageIfNeeded()
     }
 
     private func presentLightbox(startIndex: Int, originFrame: CGRect? = nil) {
@@ -245,11 +269,26 @@ let viewer = BearyEntryImageViewerViewController(imageKeys: keys, liveVideos: wa
 
 extension BearyProfilePhotosViewController: UICollectionViewDataSource, UICollectionViewDelegateFlowLayout {
 
+    func numberOfSections(in collectionView: UICollectionView) -> Int {
+        // 第 0 节照片，第 1 节只在翻页失败时存在（持续重试入口）。
+        return photosPageLoadFailed ? 2 : 1
+    }
+
     func collectionView(_ collectionView: UICollectionView, numberOfItemsInSection section: Int) -> Int {
+        if section == 1 {
+            return photosPageLoadFailed ? 1 : 0
+        }
         return photosValue.count
     }
 
     func collectionView(_ collectionView: UICollectionView, cellForItemAt indexPath: IndexPath) -> UICollectionViewCell {
+        if indexPath.section == 1 {
+            guard let footerValue = collectionView.dequeueReusableCell(withReuseIdentifier: "BearyProfilePhotosLoadMoreFooterCell", for: indexPath) as? BearyProfilePhotosLoadMoreFooterCell else {
+                return UICollectionViewCell()
+            }
+            footerValue.onRetry = { [weak self] in self?.retryNextPage() }
+            return footerValue
+        }
         guard let cellValue = collectionView.dequeueReusableCell(withReuseIdentifier: "BearyProfilePhotoCell", for: indexPath) as? BearyProfilePhotoCell else {
             return UICollectionViewCell()
         }
@@ -259,13 +298,17 @@ extension BearyProfilePhotosViewController: UICollectionViewDataSource, UICollec
     }
 
     func collectionView(_ collectionView: UICollectionView, layout collectionViewLayout: UICollectionViewLayout, sizeForItemAt indexPath: IndexPath) -> CGSize {
+        if indexPath.section == 1 {
+            return CGSize(width: collectionView.bounds.width, height: 44)
+        }
         let widthValue = collectionView.bounds.width > 0 ? collectionView.bounds.width : view.bounds.width
         let side = floor((widthValue - 40 - 16) / 3)
         return CGSize(width: side, height: side)
     }
 
     func collectionView(_ collectionView: UICollectionView, willDisplay cell: UICollectionViewCell, forItemAt indexPath: IndexPath) {
-        if indexPath.item == photosValue.count - 1 {
+        // 只看照片节末项；尾部重试节的出现不触发自动翻页。
+        if indexPath.section == 0, indexPath.item == photosValue.count - 1 {
             fetchNextPageIfNeeded()
         }
     }
@@ -273,6 +316,15 @@ extension BearyProfilePhotosViewController: UICollectionViewDataSource, UICollec
     func collectionView(_ collectionView: UICollectionView, didSelectItemAt indexPath: IndexPath) {
         collectionView.deselectItem(at: indexPath, animated: true)
         BearyHaptics.press()
+        if indexPath.section == 1 {
+            retryNextPage()
+            return
+        }
+        // 失败格点按只重试本格图片，不进灯箱（灯箱是成功图的另一条路）。
+        if let photoCell = collectionView.cellForItem(at: indexPath) as? BearyProfilePhotoCell, photoCell.isFailed {
+            photoCell.retryLoading()
+            return
+        }
         let originFrame = collectionView.cellForItem(at: indexPath).map { $0.convert($0.bounds, to: nil) }
         presentLightbox(startIndex: indexPath.item, originFrame: originFrame)
     }
@@ -292,14 +344,47 @@ final class BearyProfilePhotoCell: UICollectionViewCell {
 
     private var loadingKey: String?
 
+    /// 单张三态（加载中／成功／失败）：失败格不留淡色空白，见 configure。
+    /// VC 的 didSelectItemAt 读它判定“失败格点按重试、不进灯箱”。
+    private(set) var isFailed = false
+
+    private let loadingIndicator: UIActivityIndicatorView = {
+        let indicatorValue = UIActivityIndicatorView(style: .medium)
+        indicatorValue.translatesAutoresizingMaskIntoConstraints = false
+        indicatorValue.color = BearyColors.gray
+        indicatorValue.hidesWhenStopped = true
+        return indicatorValue
+    }()
+
+    private let failedLabel: UILabel = {
+        let labelValue = UILabel()
+        labelValue.translatesAutoresizingMaskIntoConstraints = false
+        labelValue.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 12))
+        labelValue.adjustsFontForContentSizeCategory = true
+        labelValue.textColor = BearyColors.gray
+        labelValue.textAlignment = .center
+        labelValue.numberOfLines = 2
+        labelValue.text = "加载失败，点按重试"
+        labelValue.isHidden = true
+        return labelValue
+    }()
+
     override init(frame: CGRect) {
         super.init(frame: frame)
         contentView.addSubview(photoImageView)
+        contentView.addSubview(loadingIndicator)
+        contentView.addSubview(failedLabel)
         NSLayoutConstraint.activate([
             photoImageView.topAnchor.constraint(equalTo: contentView.topAnchor),
             photoImageView.leadingAnchor.constraint(equalTo: contentView.leadingAnchor),
             photoImageView.trailingAnchor.constraint(equalTo: contentView.trailingAnchor),
             photoImageView.bottomAnchor.constraint(equalTo: contentView.bottomAnchor),
+            loadingIndicator.centerXAnchor.constraint(equalTo: contentView.centerXAnchor),
+            loadingIndicator.centerYAnchor.constraint(equalTo: contentView.centerYAnchor),
+            failedLabel.centerXAnchor.constraint(equalTo: contentView.centerXAnchor),
+            failedLabel.centerYAnchor.constraint(equalTo: contentView.centerYAnchor),
+            failedLabel.leadingAnchor.constraint(greaterThanOrEqualTo: contentView.leadingAnchor, constant: 4),
+            failedLabel.trailingAnchor.constraint(lessThanOrEqualTo: contentView.trailingAnchor, constant: -4),
         ])
     }
 
@@ -310,7 +395,10 @@ final class BearyProfilePhotoCell: UICollectionViewCell {
     override func prepareForReuse() {
         super.prepareForReuse()
         loadingKey = nil
+        isFailed = false
         photoImageView.image = nil
+        loadingIndicator.stopAnimating()
+        failedLabel.isHidden = true
         // 审计动效组：错峰入场动的是 cell 本体（alpha/transform），复用时同步
         // 复位本体并清掉在途（含延迟未起播）动画，防残留到下一格。
         layer.removeAllAnimations()
@@ -320,11 +408,81 @@ final class BearyProfilePhotoCell: UICollectionViewCell {
 
     func configure(imageKey: String) {
         loadingKey = imageKey
-        guard let url = BearyImageURLs.imageURL(key: imageKey, thumb: true) else { return }
+        isFailed = false
+        photoImageView.image = nil
+        failedLabel.isHidden = true
+        loadingIndicator.startAnimating()
+        guard let url = BearyImageURLs.imageURL(key: imageKey, thumb: true) else {
+            // 地址无效也是失败态：不直接 return 留淡色空白，显失败占位、可点按重试。
+            loadingIndicator.stopAnimating()
+            isFailed = true
+            failedLabel.isHidden = false
+            return
+        }
         let downsampleWidth = (bounds.width > 0 ? bounds.width : 120) * UIScreen.main.scale
         BearyImageLoader.shared.load(url: url, downsampleToWidth: downsampleWidth) { [weak self] imageValue in
             guard let strongSelf = self, strongSelf.loadingKey == imageKey else { return }
-            strongSelf.photoImageView.image = imageValue
+            strongSelf.loadingIndicator.stopAnimating()
+            if let imageValue {
+                strongSelf.isFailed = false
+                strongSelf.failedLabel.isHidden = true
+                strongSelf.photoImageView.image = imageValue
+            } else {
+                // 加载失败：保留原格尺寸（只换格内占位，不改布局），显失败占位。
+                strongSelf.isFailed = true
+                strongSelf.photoImageView.image = nil
+                strongSelf.failedLabel.isHidden = false
+            }
         }
+    }
+
+    /// 失败格点按重试：只重新加载本格同一 key，不进灯箱、不碰其他格。
+    func retryLoading() {
+        guard isFailed, let key = loadingKey else { return }
+        configure(imageKey: key)
+    }
+}
+
+/// 翻页失败尾部重试格（与本文件同文件，不新增文件）：整格即重试入口，
+/// 文案常驻直到成功或下次翻页；点按只走 VC 的 retryNextPage，不自动重拉。
+final class BearyProfilePhotosLoadMoreFooterCell: UICollectionViewCell {
+
+    var onRetry: (() -> Void)?
+
+    private lazy var retryButton: UIButton = {
+        let buttonValue = UIButton(type: .custom)
+        buttonValue.translatesAutoresizingMaskIntoConstraints = false
+        buttonValue.setTitle("更多照片加载失败 · 重试", for: .normal)
+        buttonValue.setTitleColor(BearyColors.ink, for: .normal)
+        buttonValue.titleLabel?.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 15))
+        buttonValue.titleLabel?.adjustsFontForContentSizeCategory = true
+        buttonValue.accessibilityLabel = "更多照片加载失败，点按重试"
+        buttonValue.addTarget(self, action: #selector(retryButtonTapped), for: .touchUpInside)
+        buttonValue.bearyAddPressFeedback()
+        return buttonValue
+    }()
+
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        contentView.addSubview(retryButton)
+        NSLayoutConstraint.activate([
+            retryButton.topAnchor.constraint(equalTo: contentView.topAnchor),
+            retryButton.leadingAnchor.constraint(equalTo: contentView.leadingAnchor),
+            retryButton.trailingAnchor.constraint(equalTo: contentView.trailingAnchor),
+            retryButton.bottomAnchor.constraint(equalTo: contentView.bottomAnchor),
+        ])
+    }
+
+    required init?(coder: NSCoder) {
+        return nil
+    }
+
+    override func prepareForReuse() {
+        super.prepareForReuse()
+        onRetry = nil
+    }
+
+    @objc private func retryButtonTapped() {
+        onRetry?()
     }
 }
