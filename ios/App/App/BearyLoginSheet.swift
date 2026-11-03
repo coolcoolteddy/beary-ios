@@ -142,7 +142,7 @@ private final class BearyLoginSheetPresentationController: UIPresentationControl
         scrimView.addGestureRecognizer(UITapGestureRecognizer(target: self, action: #selector(scrimTapped)))
         container.addSubview(scrimView)
         shadowView.backgroundColor = .clear
-        BearySheetChrome.applyShadow(to: shadowView.layer)
+        BearyShadow.applyRaised(to: shadowView.layer)
         container.addSubview(shadowView)
         container.addSubview(glassView)
         grabberView.backgroundColor = BearyColors.line

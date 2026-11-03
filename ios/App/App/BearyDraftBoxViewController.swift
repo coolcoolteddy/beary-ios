@@ -672,14 +672,14 @@ final class BearyDraftBoxViewController: UIViewController {
             sheetView.layer.maskedCorners = [.layerMinXMinYCorner, .layerMaxXMinYCorner, .layerMinXMaxYCorner, .layerMaxXMaxYCorner]
             sheetView.layer.borderWidth = 1
             sheetView.layer.bearyDynamicBorderColor = BearyColors.line
-            BearySheetChrome.applyShadow(to: sheetView.layer)
+            BearyShadow.applyRaised(to: sheetView.layer)
             // 审计第 10 项：顶圆角归固定头部，底圆角归滚动区（圆角数值不动）。
             fixedHeaderView.layer.maskedCorners = [.layerMinXMinYCorner, .layerMaxXMinYCorner]
             sheetScrollView.layer.maskedCorners = [.layerMinXMaxYCorner, .layerMaxXMaxYCorner]
         } else {
             sheetView.layer.maskedCorners = [.layerMinXMinYCorner, .layerMaxXMinYCorner]
             sheetView.layer.borderWidth = 0
-            BearySheetChrome.applyShadow(to: sheetView.layer)
+            BearyShadow.applyRaised(to: sheetView.layer)
             fixedHeaderView.layer.maskedCorners = [.layerMinXMinYCorner, .layerMaxXMinYCorner]
             sheetScrollView.layer.maskedCorners = []
         }
