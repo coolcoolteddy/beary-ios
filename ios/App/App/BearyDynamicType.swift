@@ -42,3 +42,48 @@ enum BearyDynamicType {
         return base.withSize(maximumPointSize)
     }
 }
+
+// MARK: - C2：语义字体入口（只立入口，不改数值、不迁调用点）
+//
+// 只新增转发入口，旧入口（diaryBodyFont / cardTitleFont / scaledFont /
+// cappedFont）全部保留不动，全仓调用点一处不改，故任何实际显示字号不变。
+// 每条新入口的底值均取自现行调用点已在用的内联写法，不是新定字号：
+// - pageTitleFont：顶栏标题 17 semibold scaled（Composer / DMChat /
+//   DMConversations / Login 顶栏标题现行写法；固定高度容器内的 17 标题
+//   仍走原 cappedFont 调用点，本入口不覆盖那种情形）。
+// - secondaryFont：次要文本 13 regular scaled（DM snippet、AppLock 状态、
+//   Detail/卡片辅助行现行写法）。
+// - captionFont：辅助/时间/提示 12 regular scaled（BlindBox 副标题、DM 时间、
+//   Composer results、Detail 辅助行现行写法）。
+// - buttonFont / buttonCompactFont：与 BearyButton.titleFont 现行值逐字一致
+//   （常规 16 semibold capped、紧凑 14 semibold capped，默认上限 20）。
+// 数值角色暂不立入口：现行计数类字号无统一值（11 regular / 12 bold /
+// 13 semibold 混用），任选其一都是自定口径，待定版后再立。
+// diaryBodyFont（正文）与 cardTitleFont（卡片标题）本身已是按角色命名，
+// 直接列入语义清单，不重复造入口。
+extension BearyDynamicType {
+    /// 语义：页面/顶栏标题。沿用值：17 semibold，scaled。
+    static func pageTitleFont() -> UIFont {
+        scaledFont(for: UIFont.systemFont(ofSize: 17, weight: .semibold))
+    }
+
+    /// 语义：次要文本。沿用值：13 regular，scaled。
+    static func secondaryFont() -> UIFont {
+        scaledFont(for: UIFont.systemFont(ofSize: 13))
+    }
+
+    /// 语义：辅助/时间/提示。沿用值：12 regular，scaled。
+    static func captionFont() -> UIFont {
+        scaledFont(for: UIFont.systemFont(ofSize: 12))
+    }
+
+    /// 语义：按钮（常规款）。沿用值：16 semibold，capped（默认上限 20）。
+    static func buttonFont() -> UIFont {
+        cappedFont(for: UIFont.systemFont(ofSize: 16, weight: .semibold))
+    }
+
+    /// 语义：按钮（紧凑款）。沿用值：14 semibold，capped（默认上限 20）。
+    static func buttonCompactFont() -> UIFont {
+        cappedFont(for: UIFont.systemFont(ofSize: 14, weight: .semibold))
+    }
+}
