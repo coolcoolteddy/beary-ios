@@ -352,9 +352,11 @@ final class BearyDiaryMapViewController: UIViewController, MKMapViewDelegate, UI
         // 重新加载先换代并取消上一轮在途编码：旧回调不得写回新一轮。
         let generation = cancelGeocoding()
         groups = BearyLocationMap.groups(entries: allEntries, viewerIsAuthor: viewerIsAuthor)
-        // 已选组若因重算消失（删篇/翻私密），回落到未选态，不留指向旧组的列表。
-        if let selected = selectedGroup, !groups.contains(where: { $0.key == selected.key }) {
-            selectedGroup = nil
+        // 已选组一律重绑到重算后的新分组对象：键还在时旧快照的篇目已过期
+        // （删篇/翻私密后列表仍是旧篇、大头针已是新分组，两版本对不上）；
+        // 键没了才回落到未选态，不留指向旧组的列表。
+        if let selected = selectedGroup {
+            selectedGroup = groups.first(where: { $0.key == selected.key })
         }
         if groups.isEmpty {
             statusLabel.text = allEntries.isEmpty ? "还没有日记" : "还没有带位置的日记"
@@ -371,7 +373,7 @@ final class BearyDiaryMapViewController: UIViewController, MKMapViewDelegate, UI
         var cachedLocated: [(group: BearyLocationMapGroup, coordinate: CLLocationCoordinate2D)] = []
         var pendingGroups: [BearyLocationMapGroup] = []
         for group in groups {
-            if let cached = geocodeCache[group.key] {
+            if let cached = geocodeCache[geocodeCacheKey(for: group)] {
                 cachedLocated.append((group, cached))
             } else {
                 pendingGroups.append(group)
@@ -396,6 +398,19 @@ final class BearyDiaryMapViewController: UIViewController, MKMapViewDelegate, UI
             group: group, pending: pending, pendingIndex: index,
             candidates: geocodeCandidates(for: group), candidateIndex: 0,
             located: located, unlocated: unlocated, generation: generation)
+    }
+
+    /// 地理编码缓存键：组键 + 首个区级。作者组查询词依赖区级
+    /// （区级+名 → 裸名 → 区级），只用组键作缓存键时，同名换区后
+    /// 旧坐标会被复用、该组永不重编；他人组键本身就是区级，不用拼。
+    /// 取首个区级与 geocodeCandidates 的取法一致。
+    private func geocodeCacheKey(for group: BearyLocationMapGroup) -> String {
+        guard viewerIsAuthor else { return group.key }
+        for entry in group.entries {
+            let d = (entry.locationDistrict ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+            if !d.isEmpty { return "\(group.key)|\(d)" }
+        }
+        return group.key
     }
 
     /// 编码查询词（只活本页内存）：作者组 = 区级+名 → 裸名 → 区级；
@@ -442,7 +457,7 @@ final class BearyDiaryMapViewController: UIViewController, MKMapViewDelegate, UI
                 guard let self = self, generation == self.geocodeGeneration else { return }
                 if self.activeGeocoder === geocoder { self.activeGeocoder = nil }
                 if let coordinate = placemarks?.first?.location?.coordinate {
-                    self.geocodeCache[group.key] = coordinate
+                    self.geocodeCache[self.geocodeCacheKey(for: group)] = coordinate
                     var nextLocated = located
                     nextLocated.append((group, coordinate))
                     // 编出即逐批补标记，不等整批编完。
