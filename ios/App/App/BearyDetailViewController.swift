@@ -1248,7 +1248,8 @@ final class BearyDetailViewController: UIViewController {
     }
 
     private func renderHeaderMeta() {
-        let authorNameValue = entry.authorName ?? "beary 用户"
+        // 32 注销口径：作者已注销时显“用户已注销”，头像首字母同步为“用”。
+        let authorNameValue = bearyDeletedAuthorDisplayName(entry.authorName) ?? "beary 用户"
         nameButton.setTitle(authorNameValue, for: .normal)
         avatarInitialLabel.text = String(authorNameValue.prefix(1)).uppercased()
         if let createdAt = entry.createdAt {
@@ -1275,7 +1276,8 @@ final class BearyDetailViewController: UIViewController {
         }
         if let mentioned = entry.mentionedName, !mentioned.isEmpty {
             recipientRow.isHidden = false
-            recipientLabel.text = "@" + mentioned
+            // 32 注销口径：被 @ 者已注销时显“@用户已注销”。
+            recipientLabel.text = "@" + (bearyDeletedAuthorDisplayName(mentioned) ?? mentioned)
         } else {
             recipientRow.isHidden = true
             recipientLabel.text = nil

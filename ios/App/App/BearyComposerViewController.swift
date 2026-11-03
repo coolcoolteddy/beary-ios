@@ -5697,7 +5697,8 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         // 补拉重填（setupEditContent 二次调用）不碰 @ 态：用户可能已在加载期间改选/清除，
         // 首次回填时才以服务端原 @ 为准（editQuoteFetchAttempted 此时仍为 false）。
         if !editQuoteFetchAttempted {
-            lockedRecipientName = entry.mentionedName
+            // 32 注销口径：被 @ 者已注销时，编辑器“写给” chip 显“写给 用户已注销”。
+            lockedRecipientName = bearyDeletedAuthorDisplayName(entry.mentionedName)
             lockedMentionedUserId = entry.mentionedUserId
             editMentionCleared = false
         }
