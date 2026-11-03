@@ -2595,6 +2595,8 @@ final class BearyDetailViewController: UIViewController {
         if presentedViewController != nil { return }
 let viewer = BearyEntryImageViewerViewController(imageKeys: imageKeys, liveVideos: entry.liveVideos, startIndex: index)
         viewer.originFrameInWindow = sender.view.map { $0.convert($0.bounds, to: nil) }
+        // 无障碍：关闭后焦点回被点的缩略图。
+        viewer.focusReturnElement = sender.view
         viewer.modalPresentationStyle = .fullScreen
         present(viewer, animated: BearyMotion.animated(true), completion: nil)
     }
