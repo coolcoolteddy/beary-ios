@@ -3311,6 +3311,9 @@ class BearyProfileViewController: UIViewController {
                             BearyFriends.clearDiaryCachesAndNotify()
                             self.reloadProfile()
                         case .failure(let error):
+                            // 失败回滚到最后确认态；401 与关注分支同款走登录入口
+                            // （onRequireLogin），登录后由用户重试取关，不弹失败 toast；
+                            // 其他失败仍走原拒绝动效＋“取关失败”toast。
                             self.followState = self.confirmedFollowState
                             self.applyFollowButton()
                             if case .unauthorized = error {
