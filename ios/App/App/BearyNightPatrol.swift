@@ -185,25 +185,25 @@ enum NightPatrolIcons {
 
 enum BearyNightPatrolTemplate {
     private static let generic: [String] = [
-        "夜里风很轻，你写下的那几行，小熊都认真看过啦。",
+        "小熊昨晚来过。",
         "小熊昨夜轻轻走过这里，脚印留在这一页，明天也写一点，留一点。",
-        "夜深了，小熊替你守着这些日子，晚安。",
+        "小熊来过，晚安。",
     ]
     private static let sleepy: [String] = [
-        "昨夜你大概很困了，小熊放轻脚步，没吵醒你。",
-        "困意的那一夜，小熊也陪你慢慢走过去了。",
+        "昨夜小熊来过，晚安。",
+        "困意的那一夜，小熊来过。",
     ]
     private static let rainy: [String] = [
-        "雨夜里，小熊的脚印沾了一点雨，还是走到了这里。",
-        "昨夜下着雨，小熊替你把这一页好好收着。",
+        "下雨了，小熊来过。",
+        "雨夜里，小熊来过。",
     ]
     private static let short: [String] = [
-        "短短几行也很好，小熊都替你记住了。",
-        "昨夜那几句很轻，小熊听得很清楚。",
+        "这篇写得简短。",
+        "这篇写得简短。",
     ]
     private static let long: [String] = [
-        "昨夜你写了很长一段，小熊一字一句慢慢走完了。",
-        "长长的一页，小熊昨夜认真读完才离开。",
+        "这篇写了不少。",
+        "这篇写了不少。",
     ]
 
     /// Deterministically pick：心情 sleepy / goodnight → 困意池；天气 rain →
