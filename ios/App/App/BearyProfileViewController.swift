@@ -80,6 +80,15 @@ struct BearyUserProfile: Decodable {
     /// 编辑资料页签名行，见 BearyEditProfileViewController；写口为 accounts
     /// Worker PUT /api/account/profile 的 signature 字段，分支待补，见 PR 说明）。
     var signature: String?
+    /// 32 注销口径：已注销判定（App 侧唯一信号，后端 profile 不下发 deleted 字段）。
+    /// 注销 sweep 把 display_name 精确写成“已注销用户”，profilePayload 对
+    /// deleted 用户恒置 handle/avatar 为 null；活号 handle 永不为空，故
+    /// “名 == 已注销用户 且 handle 为空”即已注销。活号即使把昵称改成
+    /// 同款文字，handle 非空也不会误判。冷静期内（delete_at 未到、
+    /// deleted 仍为 0）不判已注销，个人页一切照常，期满后才变已注销态。
+    var isDeletedAccount: Bool {
+        displayName == "已注销用户" && (handle ?? "").isEmpty
+    }
 
     // R3 根因修复：BearyAPI 的 decoder 用 convertFromSnakeCase（BearyAPI.swift
     // 约 267 行），会先把服务端 display_name/avatar_url 等转成 camelCase 再匹配；
@@ -276,6 +285,9 @@ class BearyProfileViewController: UIViewController {
     /// 验证组⑨：仅 profile 接口 404 才判“用户不存在”；断网等其他失败仍属“加载失败”。
     /// 与 profileLoadFailed 分开：后者仍用于空态门控（2155 行），不受 404 区分影响。
     private var profileNotFound = false
+    /// 32 注销口径：当前资料是否为已注销用户（handleProfileResult 成功时
+    /// 按 isDeletedAccount 置位；失败时沿用旧值，与 G12“保留整套旧头”一致）。
+    private var profileDeleted = false
     private var currentTab: ProfileTab = .diary
     private var diaryEntries: [Entry] = []
     private var likedEntries: [Entry] = []
@@ -3475,6 +3487,23 @@ class BearyProfileViewController: UIViewController {
                 lastMovedToastHandle = moved
                 BearyToast.show(in: view, message: "对方已改名为 @\(moved)")
             }
+            profileDeleted = profileValue.isDeletedAccount
+            if profileDeleted {
+                // 32 注销口径：已注销用户个人页只显“用户已注销”，不展示日记
+                // 列表。关注态／私信态／标签列表／模块语料一律不拉；在途或
+                // 先到的标签数据一并清掉，不闪一下旧列表；举报／拉黑逻辑不动，
+                // 更多菜单保持原样。
+                applyProfile()
+                applyMode()
+                followButton.isHidden = true
+                dmButton.isHidden = true
+                diaryEntries = []
+                likedEntries = []
+                savedEntries = []
+                tableView.reloadData()
+                refreshFooter()
+                return
+            }
             applyProfile()
             applyMode()
             // 好友第一期：资料解析出目标 id 后才拉关注态（handle 目标此前无 id）。
@@ -3546,9 +3575,11 @@ class BearyProfileViewController: UIViewController {
 
     private func applyProfile() {
         guard let profileValue = profile else { return }
-        let displayNameValue = profileValue.displayName
+        // 32 注销口径：已注销用户头显“用户已注销”，不用后端原名“已注销用户”。
+        let isDeleted = profileValue.isDeletedAccount
+        let displayNameValue = isDeleted ? "用户已注销" : (profileValue.displayName
             ?? (profileValue.handle.map { "@" + $0 })
-            ?? "TA"
+            ?? "TA")
         setLabelTextFaded(nameLabel, displayNameValue)
         stickyHeaderNameLabel.text = displayNameValue
         if let handle = profileValue.handle, !handle.isEmpty {
@@ -3580,12 +3611,14 @@ class BearyProfileViewController: UIViewController {
         // 数据回来只改数字 label 本身；数字出现／变化时只淡入数字本身
         // （setLabelTextFaded：alpha 0→1，不弹、不缩放、不重建整行），
         // 同值不赋值不重播。
-        setLabelTextFaded(publicCountLabel, profileValue.diaryCount.map { "\($0)" } ?? "—")
-        setLabelTextFaded(likesCountLabel, profileValue.likesReceived.map { "\($0)" } ?? "—")
+        setLabelTextFaded(publicCountLabel, isDeleted ? "—" : (profileValue.diaryCount.map { "\($0)" } ?? "—"))
+        setLabelTextFaded(likesCountLabel, isDeleted ? "—" : (profileValue.likesReceived.map { "\($0)" } ?? "—"))
 
         // 头像：有图盖住首字母位，无图透出首字母（与列表页同款回退）；
         // 有图时的加载与失败回退走 startHeaderAvatarLoad（失败显式恢复首字母 + 出重试图标）。
-        if let avatarPath = profileValue.avatarUrl, let avatarURLValue = BearyImageURLs.avatarURL(avatarPath) {
+        // 32 注销口径：已注销用户不下发头像，一律中性头像位（无图、无首字母、无重试），
+        // 不把“已”字或“用”字当头像字母。
+        if let avatarPath = (isDeleted ? nil : profileValue.avatarUrl), let avatarURLValue = BearyImageURLs.avatarURL(avatarPath) {
             avatarFallbackLetter = String(displayNameValue.prefix(1)).uppercased()
             // 刷新回包同 URL 不重下：bearySetImage 会先把图清成 placeholder（nil）
             // 再异步回填，每次刷新都清一次 = 头像区闪一下；URL 未变且已有图时复用，
@@ -3596,11 +3629,17 @@ class BearyProfileViewController: UIViewController {
             }
         } else {
             headerAvatarURL = nil
-            avatarFallbackLetter = String(displayNameValue.prefix(1)).uppercased()
             avatarRetryButton.isHidden = true
             avatarImageView.image = nil
-            avatarLetterLabel.isHidden = false
-            avatarLetterLabel.text = avatarFallbackLetter
+            if isDeleted {
+                avatarFallbackLetter = nil
+                avatarLetterLabel.isHidden = true
+                avatarLetterLabel.text = nil
+            } else {
+                avatarFallbackLetter = String(displayNameValue.prefix(1)).uppercased()
+                avatarLetterLabel.isHidden = false
+                avatarLetterLabel.text = avatarFallbackLetter
+            }
         }
         applyEmailRow()
 
@@ -3647,7 +3686,14 @@ class BearyProfileViewController: UIViewController {
         updateNameTrailingLimit()
         topNameLabel.text = displayNameValue
 
-        applyWall()
+        // 32 注销口径：已注销用户不显回应墙（墙是其日记的互动汇总，随列表一并隐藏）；
+        // 走空墙同款收拢（隐藏容器＋高度约束激活），间距链由 updateHeaderSpacing 归零。
+        if isDeleted {
+            wallContainer.isHidden = true
+            wallHeightConstraint.isActive = true
+        } else {
+            applyWall()
+        }
         updateDynamicLayerColors()
         layoutHeaderForced(widthValue: headerWidthValue)
     }
@@ -5252,6 +5298,8 @@ class BearyProfileViewController: UIViewController {
     }
 
     private func loadTab(forceReload: Bool) {
+        // 32 注销口径：已注销用户不拉任何标签列表（在途回包由 handleTabResult 丢弃）。
+        if profileDeleted { return }
         guard let scopeValue = scopeForTab(tab: currentTab) else { return }
         if tabLoading || tabLoadMore { return }
         if forceReload {
@@ -5391,6 +5439,13 @@ class BearyProfileViewController: UIViewController {
     private func handleTabResult(result: Result<EntryList, APIError>, appending: Bool, requestTab: ProfileTab) {
         tabLoading = false
         tabLoadMore = false
+        // 32 注销口径：在途标签回包直接丢弃，不写进任何 tab 模型；
+        // 脚部走已注销态（见 refreshFooter 首分支）。
+        if profileDeleted {
+            refreshFooter()
+            endCustomPullRefresh()
+            return
+        }
         // 109：前台回包按请求发出时的 tab 归属分发；响应时已切走则丢弃，
         // 不写进新 tab 模型（setEntries/appendEntries/setHasMore 均按 currentTab
         // 分发，故守卫必须在它们之前）、不改新 tab 的 tabError；只清加载旗、
@@ -5702,7 +5757,8 @@ class BearyProfileViewController: UIViewController {
 
     /// 后台回填：失败只保留缓存，不改失败态；切走后回包直接丢弃。
     private func loadTabBackground() {
-        guard let scopeValue = scopeForTab(tab: currentTab), tabBackgroundTab != currentTab else { return }
+        // 32 注销口径：已注销用户不做后台回填。
+        guard let scopeValue = scopeForTab(tab: currentTab), tabBackgroundTab != currentTab, !profileDeleted else { return }
         tabBackgroundTab = currentTab
         let tabAtStart = currentTab
         BearyAPI.shared.fetchEntries(scope: scopeValue, limit: tabPageLimit) { [weak self] result in
@@ -5711,6 +5767,11 @@ class BearyProfileViewController: UIViewController {
                 // G1：回包时无论当前标签是否切走都清零（守卫只决定是否采用回包，
                 // 不再由“切走后不复位”导致切回旧标签不再刷新）。
                 strongSelf.tabBackgroundTab = nil
+                // 32 注销口径：在途后台回填回包直接丢弃，不写进任何 tab 模型。
+                if strongSelf.profileDeleted {
+                    strongSelf.refreshFooter()
+                    return
+                }
                 guard strongSelf.currentTab == tabAtStart else { return }
                 switch result {
                 case .success(let listValue):
@@ -5868,7 +5929,12 @@ class BearyProfileViewController: UIViewController {
     private func refreshFooter() {
         let kind: String
         let stateView: UIView?
-        if tabLoading {
+        // 32 注销口径：已注销用户脚部只显“用户已注销”，不展示任何列表、
+        // 不出空态／失败态／加载态（分支放首位，压过在途加载态）。
+        if profileDeleted {
+            stateView = makeDeletedFooter()
+            kind = "deleted"
+        } else if tabLoading {
             stateView = makeLoadingFooter()
             kind = "loading"
         } else if tabError || (currentTab == .diary && profileLoadFailed && targetHandleValue != nil) {
@@ -6365,6 +6431,28 @@ let viewer = BearyEntryImageViewerViewController(imageKeys: allPhotos.map { $0.i
             )
             container.frame = CGRect(x: 0, y: 0, width: footerWidth, height: fitted.height)
         }
+        return container
+    }
+
+    /// 32 注销口径：已注销用户个人页脚部——只显“用户已注销”，无重试、
+    /// 无副标题；日记列表不展示（见 handleProfileResult 已注销分支）。
+    private func makeDeletedFooter() -> UIView {
+        let container = UIView()
+        let label = UILabel()
+        label.translatesAutoresizingMaskIntoConstraints = false
+        label.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 15))
+        label.adjustsFontForContentSizeCategory = true
+        label.textColor = BearyColors.gray
+        label.textAlignment = .center
+        label.text = "用户已注销"
+        label.accessibilityLabel = "用户已注销"
+        container.addSubview(label)
+        NSLayoutConstraint.activate([
+            label.topAnchor.constraint(equalTo: container.topAnchor, constant: 26),
+            label.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 20),
+            label.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -20),
+            label.bottomAnchor.constraint(equalTo: container.bottomAnchor, constant: -8),
+        ])
         return container
     }
 
