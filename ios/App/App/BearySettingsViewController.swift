@@ -1290,7 +1290,7 @@ final class BearySettingsViewController: UIViewController {
         let avatarInitialLabel = UILabel()
         avatarInitialLabel.translatesAutoresizingMaskIntoConstraints = false
         avatarInitialLabel.font = UIFont.systemFont(ofSize: 15, weight: .bold)
-        avatarInitialLabel.textColor = BearyColors.ink
+        avatarInitialLabel.textColor = BearyColors.deepOrangeText
         avatarInitialLabel.textAlignment = .center
         avatarInitialLabel.text = String(model.title.prefix(1))
         avatarContainer.addSubview(avatarImageView)

@@ -67,6 +67,10 @@ final class BearyLoginViewController: UIViewController {
     private let guestNoteLabel = UILabel()
     private let inviteField = UITextField()
     private let messageLabel = UILabel()
+    /// 登录错误提示专用红（仅本页 messageLabel 用，不动共享 BearyColors.red）：
+    /// 浅色 #C81E1E（白底 5.74:1），深色沿用 #E5484D（黑底 5.37:1）；
+    /// 单一固定深红会顾此失彼（#C81E1E 黑底仅 3.66:1），故必须动态分值。
+    private static let loginErrorRed = UIColor { t in t.userInterfaceStyle == .dark ? UIColor(red: 0.898, green: 0.282, blue: 0.302, alpha: 1) : UIColor(red: 200.0/255.0, green: 30.0/255.0, blue: 30.0/255.0, alpha: 1) }
     private let agreeButton = BearyHit44Button(type: .system)
     /// 协议文案用 UITextView 承载可点链接（UILabel 接不住链接点按）；点按走 App 内原生法律页。
     private let agreeLabel = UITextView()
@@ -299,7 +303,7 @@ final class BearyLoginViewController: UIViewController {
         messageLabel.translatesAutoresizingMaskIntoConstraints = false
         messageLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13))
         messageLabel.adjustsFontForContentSizeCategory = true
-        messageLabel.textColor = BearyColors.red
+        messageLabel.textColor = Self.loginErrorRed
         messageLabel.numberOfLines = 0
 
         loginButton.translatesAutoresizingMaskIntoConstraints = false
@@ -710,7 +714,7 @@ final class BearyLoginViewController: UIViewController {
 
     private func showMessage(_ text: String, ok: Bool = false) {
         messageLabel.text = text
-        messageLabel.textColor = ok ? BearyColors.deepGreenText : BearyColors.red
+        messageLabel.textColor = ok ? BearyColors.deepGreenText : Self.loginErrorRed
         // 审计登录杂项：输入容器已实现 isError 红边，行内失败时同步点亮、
         // 成功 / 清空时复位（此前只写行内红字，从未设置 isError）。
         let failed = !text.isEmpty && !ok

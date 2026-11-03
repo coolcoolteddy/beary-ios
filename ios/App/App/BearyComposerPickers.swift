@@ -872,7 +872,9 @@ final class BearyRecipientPickerViewController: UIViewController, UITextFieldDel
         fallbackLabel.translatesAutoresizingMaskIntoConstraints = false
         fallbackLabel.font = BearyDynamicType.scaledFont(for: UIFont.boldSystemFont(ofSize: 16))
         fallbackLabel.adjustsFontForContentSizeCategory = true
-        fallbackLabel.textColor = BearyColors.orange
+        // 对比度：token 深橙 #C2410C 在 0.18 淡橙底上浅色仅 4.48:1（未达 4.5:1），
+        // 故本行浅色用复算过的 #BE3E0B（4.68:1），深色沿用 token 亮色值 #FF9500（7.50:1）。
+        fallbackLabel.textColor = UIColor { t in t.userInterfaceStyle == .dark ? UIColor(red: 1.0, green: 0.584, blue: 0.0, alpha: 1) : UIColor(red: 190.0/255.0, green: 62.0/255.0, blue: 11.0/255.0, alpha: 1) }
         fallbackLabel.backgroundColor = BearyColors.orange.withAlphaComponent(0.18)
         fallbackLabel.textAlignment = .center
         fallbackLabel.layer.cornerRadius = 22
