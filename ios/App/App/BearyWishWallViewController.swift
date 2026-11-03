@@ -22,7 +22,8 @@ private final class WishRowView: UIView {
     private let metaLabel = UILabel()
     private let netLabel = UILabel()
     private let donePill = UILabel()
-    private let expandButton = UIButton(type: .system)
+    // 展开/收起钮：视觉仍为 13pt 文字固有高，热区由 BearyHit44Button 的 point(inside:) 向外扩到 44pt（不改约束、不改文案）。
+    private let expandButton = BearyHit44Button(type: .system)
     private var isDetailExpanded = false
     private var detailFullText = ""
     private var detailOverflow = false
