@@ -89,6 +89,11 @@ final class BearyDiaryStarMapViewController: UIViewController {
     private let loadingLabel = UILabel()
     /// 审计登录杂项：已有数据时分页失败的弱提示标记（applyModelToSky 拼进状态行）。
     private var fetchStaleNote = false
+    /// 分批中断：本轮暂存已提升为已展示的部分结果时为真（applyModelToSky
+    /// 用它区分“旧星图未更新”与“仅部分结果”，状态行文案不同；整轮成功
+    /// 结束时与 fetchStaleNote 一起清零。重试开始时不清除：展示中的仍是
+    /// 这部分数据，成功回包后才被整轮结果替换；重试再失败时文案仍准确）。
+    private var fetchPartialNote = false
 
     // MARK: - 状态
 
@@ -203,6 +208,10 @@ final class BearyDiaryStarMapViewController: UIViewController {
 
     @objc private func didTapRetry() {
         failureView.isHidden = true
+        // 新一轮拉取开始：旧的“未更新”提示不再成立（applyModelToSky 据此
+        // 关掉状态行点按，防加载期重复点）；“部分结果”标记保留——展示中
+        // 的仍是这部分数据，成功回包后清零、再失败时文案仍准确。
+        fetchStaleNote = false
         // 扫荡 C：重试加载期间先按当前模型恢复空 / 非空布局（失败态的
         // failureBottom 与隐藏态不留到加载期），回包后再由成功分支或
         // showFailureState 定终态。
@@ -280,6 +289,11 @@ final class BearyDiaryStarMapViewController: UIViewController {
         statusLabel.adjustsFontForContentSizeCategory = true
         statusLabel.textColor = BearyStarMapNight.secondaryText
         statusLabel.numberOfLines = 0
+        // 分批中断：状态行在“数据未更新 / 部分结果”时就是重试入口
+        // （失败视图的重试钮只在无数据失败态出现，旧星图 / 部分结果态
+        // 下失败视图是藏着的）；无提示时不响应点按（见 applyModelToSky
+        // 按 fetchStaleNote 开关 isUserInteractionEnabled）。
+        statusLabel.addGestureRecognizer(UITapGestureRecognizer(target: self, action: #selector(didTapRetry)))
         contentView.addSubview(statusLabel)
 
         sheetCard.translatesAutoresizingMaskIntoConstraints = false
@@ -683,6 +697,9 @@ final class BearyDiaryStarMapViewController: UIViewController {
         skyView.isHidden = isEmpty
         emptyView.isHidden = !isEmpty
         statusLabel.isHidden = isEmpty
+        // 分批中断：只有状态行带“未更新 / 部分结果”提示时才可点按重试，
+        // 平时状态行仍是纯展示文本，不响应点按。
+        statusLabel.isUserInteractionEnabled = fetchStaleNote
         sheetBottom?.isActive = !isEmpty
         emptyBottom?.isActive = isEmpty
         failureBottom?.isActive = false
@@ -696,8 +713,10 @@ final class BearyDiaryStarMapViewController: UIViewController {
         }
         let sliceCount = BearyStarMap.entries(in: filteredEntries, slice: slice).count
         var status = "共 \(filteredEntries.count) 颗星 · 本片 \(sliceCount) 篇"
-        if fetchStaleNote {
-            status += " · 数据未更新"
+        if fetchPartialNote {
+            status += " · 仅展示已加载的部分，点按重试"
+        } else if fetchStaleNote {
+            status += " · 数据未更新，点按重试"
         }
         if !viewerIsAuthor {
             status += " · 他人视角：只显示公开篇"
@@ -934,11 +953,27 @@ final class BearyDiaryStarMapViewController: UIViewController {
                 switch result {
                 case .failure:
                     self.hideLoadingState()
-                    if self.fetchCollected.isEmpty && self.allEntries.isEmpty {
-                        self.showFailureState()
+                    // 分批中断：失败判断只看已展示数据（allEntries），不再把
+                    // 本轮暂存（fetchCollected）算作已有数据——recompute 只
+                    // 渲染 allEntries，暂存算数会让“首批成功、后续页失败”
+                    // 时出空星空加弱状态行后缀、失败视图却藏着、无重试入口。
+                    if self.allEntries.isEmpty {
+                        if self.fetchCollected.isEmpty {
+                            self.showFailureState()
+                        } else if BearyStarMap.visibleEntries(self.fetchCollected, viewerIsAuthor: self.viewerIsAuthor).isEmpty {
+                            // 暂存全被可见性滤掉时同样无可展示内容，走可重试失败态。
+                            self.showFailureState()
+                        } else {
+                            // 只有暂存数据：提升为已展示，明确展示部分结果；
+                            // 状态行“点按重试”即重试入口（失败视图此时仍藏着）。
+                            self.allEntries = self.fetchCollected
+                            self.fetchPartialNote = true
+                            self.fetchStaleNote = true
+                            self.recompute()
+                        }
                     } else {
-                        // 已有数据时网络失败不清空星空：保留已加载模型，并以状态行
-                        // “数据未更新”弱提示（不 toast、不清空），重试复用 didTapRetry。
+                        // 已有可展示数据（含进入时带的 initialEntries）：保留旧星图，
+                        // 状态行弱提示 + 点按重试，不清空、不弹失败视图。
                         self.fetchStaleNote = true
                         self.recompute()
                     }
@@ -959,6 +994,7 @@ final class BearyDiaryStarMapViewController: UIViewController {
                     self.fetchCapped = pageEntries.count >= 50 && page >= 10
                     self.failureView.isHidden = true
                     self.fetchStaleNote = false
+                    self.fetchPartialNote = false
                     self.hideLoadingState()
                     self.allEntries = self.fetchCollected
                     self.recompute()
