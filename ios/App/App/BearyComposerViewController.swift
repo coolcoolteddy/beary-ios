@@ -2575,9 +2575,17 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         quotePanelSeq += 1
         let seq = quotePanelSeq
         let tab = quotePanelTab
+        // 静态性能修复：引用面板回包补账号代次校验（通知页／#759 同款口径，
+        // 只读 BearyAPI.shared.authEpoch／authAccountId，不动 SessionManager 私有成员）。
+        // 中央 API 路径只门控 401 通知与重试、不丢弃成功回包，切号后到达的旧回包
+        // 原先会进回调写缓存；现先校验代次与账号，失配整单丢弃、不渲染、不写缓存。
+        let requestEpoch = BearyAPI.shared.authEpoch
+        let requestAccountId = BearyAPI.shared.authAccountId
         BearyAPI.shared.fetchEntries(scope: quotePanelScope(), limit: 50) { [weak self] result in
             DispatchQueue.main.async {
-                guard let self = self, seq == self.quotePanelSeq, tab == self.quotePanelTab else { return }
+                guard let self = self, seq == self.quotePanelSeq, tab == self.quotePanelTab,
+                      requestEpoch == BearyAPI.shared.authEpoch,
+                      requestAccountId == BearyAPI.shared.authAccountId else { return }
                 self.quotePanelSpinner.stopSpinning()
                 self.quotePanelLoadingLabel.isHidden = true
                 self.quotePanelLoading = false
