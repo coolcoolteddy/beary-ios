@@ -2915,7 +2915,7 @@ enum BearyQuoteGate {
                         // 审计 2026-11-02 弹窗组：异步回包时再查守卫；未过时按提醒
                         // 非门控的既有口径放行（与拉取失败同款），不把用户卡在 busy。
                         guard BearyPresentGuard.canPresent(from: vc) else { completion(true); return }
-                        let alert = UIAlertController(title: nil, message: "这篇日记被 \(count) 篇日记引用，改私密后这些引用将显示“该日记已私密”。", preferredStyle: .alert)
+                        let alert = UIAlertController(title: nil, message: "这篇日记被 \(count) 篇日记引用，改私密后这些引用将显示“该日记已设为私密”。", preferredStyle: .alert)
                         alert.addAction(UIAlertAction(title: "改私密", style: .destructive) { _ in completion(true) })
                         alert.addAction(UIAlertAction(title: "取消", style: .cancel) { _ in completion(false) })
                         vc.present(alert, animated: BearyMotion.animated(true))
@@ -2941,18 +2941,18 @@ extension BearyQuoteGate {
         }
         return placeholderText(publishedAt: publishedAt, locked: locked)
     }
-    /// 引用占位文案（2026-10-31 引用规则简化，旧“该日记已设为私密”作废）：
-    /// published_at 非 nil 即曾公开 → “该日记已私密”＋提醒句；
+    /// 引用占位文案（Li 最新决定：统一用“该日记已设为私密”，覆盖 2026-10-31 引用简化注释方向）：
+    /// published_at 非 nil 即曾公开 → “该日记已设为私密”＋提醒句；
     /// locked 体且 published_at 为 nil 即从未公开 → “该日记未公开”（不谎称已转私密）；
     /// 非 locked 体且 published_at 缺失（旧形状/占位单篇回包）→ 曾公开与否未知，
-    /// 只给主句“该日记已私密”、不加“已转”提醒句，绝不编造已转事实。
+    /// 只给主句“该日记已设为私密”、不加“已转”提醒句，绝不编造已转事实。
     static func placeholderText(publishedAt: Int?, locked: Bool) -> (main: String, detail: String?) {
         if publishedAt != nil {
-            return ("该日记已私密", "原日记已转私密，引用内容已隐藏")
+            return ("该日记已设为私密", "原日记已转私密，引用内容已隐藏")
         }
         if locked {
             return ("该日记未公开", nil)
         }
-        return ("该日记已私密", nil)
+        return ("该日记已设为私密", nil)
     }
 }

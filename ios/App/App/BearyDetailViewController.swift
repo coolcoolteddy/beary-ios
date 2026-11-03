@@ -1737,7 +1737,7 @@ final class BearyDetailViewController: UIViewController {
 
     /// 引用卡 viewer 实时判定（卡片 presentQuoteCard 同口径）：作者本人或已公开才显全文，
     /// 否则占位；gone → 已删除，locked／未公开 → 引用规则简化占位文案
-    /// （曾公开“该日记已私密”＋提醒句，从未公开“该日记未公开”，见 BearyQuoteGate.placeholderText）。
+    /// （曾公开“该日记已设为私密”＋提醒句，从未公开“该日记未公开”，见 BearyQuoteGate.placeholderText）。
     private func renderQuote() {
         guard let quote = entry.quote, let quoteId = quote.id, !quoteId.isEmpty else {
             quoteView.isHidden = true
