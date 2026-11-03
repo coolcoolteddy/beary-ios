@@ -371,8 +371,12 @@ final class BearyDiaryStarMapViewController: UIViewController {
 
         NSLayoutConstraint.activate([
             scrollView.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
-            scrollView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
-            scrollView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            // 横向安全区：scrollView 左右锚 safeArea 而非 view 边缘。内容各行
+            // 仍保留距 content 边缘 16 的现有间距（即 safeArea 内再缩 16），
+            // 横屏刘海 / 圆角侧边 inset 不再侵入内容与交互控件；竖屏横向
+            // safeArea 为 0，布局与之前一致。纵向锚点本次不动。
+            scrollView.leadingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.leadingAnchor),
+            scrollView.trailingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.trailingAnchor),
             scrollView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
             contentView.topAnchor.constraint(equalTo: scrollView.topAnchor),
             contentView.leadingAnchor.constraint(equalTo: scrollView.leadingAnchor),
