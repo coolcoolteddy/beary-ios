@@ -35,6 +35,9 @@ final class BearyEmotePickerSheetViewController: UIViewController, UICollectionV
 
     /// 本 Sheet 专属过渡（遮罩渐变与弹窗滑入解耦）；强持有，transitioningDelegate 弱引用。
     private let sheetTransition = BearyEmoteSheetTransition()
+    /// #722 修红：焦点返回用的原焦点元素（init 时记、消失时还）；#722 原支只写了
+    /// 读写两处、漏了声明本身（通知页同款写法：private weak var，见该文件 2654 行）。
+    private weak var previousFocusedElement: AnyObject?
 
     override init(nibName nibNameOrNil: String?, bundle nibBundleOrNil: Bundle?) {
         super.init(nibName: nibNameOrNil, bundle: nibBundleOrNil)
