@@ -1389,19 +1389,12 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     /// 发布钮外观跟随启用态（updatePublishState 只改 isEnabled，这里同步颜色/底色）。
     private func refreshPublishAppearance() {
         // 审计-编辑器详情：视觉禁用态与 VoiceOver 同步——只按 isEnabled
-        // 挂/摘 .notEnabled，不按外观。空正文视觉置灰但仍可点（U13）时
-        // 不得带 .notEnabled，否则 VoiceOver 与可点事实矛盾。
+        // 挂/摘 .notEnabled，不按外观。空正文现为真禁用（见 updatePublishState），
+        // 禁用态带 .notEnabled 与事实一致（旧 U13 可点置灰分支已随真禁用删除）。
         if publishButton.isEnabled {
             publishButton.accessibilityTraits.remove(.notEnabled)
         } else {
             publishButton.accessibilityTraits.insert(.notEnabled)
-        }
-        // U13：空正文时视觉置灰（与真禁用同外观），但按钮仍可点按以便给提示。
-        if publishButton.isEnabled && trimmedContent().isEmpty {
-            publishButton.backgroundColor = UIColor.clear
-            publishButton.setTitleColor(BearyColors.gray, for: .normal)
-            publishButton.tintColor = BearyColors.gray
-            return
         }
         if publishButton.isEnabled {
             publishButton.backgroundColor = BearyColors.ink
@@ -4679,13 +4672,14 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
 
     private func updatePublishState() {
         // C11：超长时发布钮保持可用（不禁用），点发布时 toast 报当前字数；上传中仍禁用。
-        // U13：空正文不再真禁用（禁用钮收不到点按、零反馈）——改视觉置灰 + 点按给“先写点什么”
-        // 轻提示（见 didTapPublish）；超长时保持可用的口径不动。
+        // U13 改真禁用（2026-11-03 Li 定，旧“视觉置灰但可点、点按给‘先写点什么’”口径作废）：
+        // 去空白后正文为空时按钮真禁用，有图也一样；空态下点按无反应、无提示。
+        // 超长时保持可用的口径不动。
         // 期限已过且在途保存已失败：保存钮持续禁用（防重发），编辑器仅保留输入供复制。
         // 补拉在途/失败时禁发：此时 lockedQuote 与图片条尚未回填，PUT 会把原引用
         // 与原图误清掉（lockedQuote 为空即清 quote_id 的口径，见 didTapRemoveQuote
         // 注释）；重试成功后 setupEditContent 末尾重调此处即恢复。
-        publishButton.isEnabled = !isPublishing && !hasUploadingImage() && !editSaveBlockedAfterDeadline && !editQuoteFetchFailed && !editQuoteFetchInFlight
+        publishButton.isEnabled = !isPublishing && !hasUploadingImage() && !editSaveBlockedAfterDeadline && !editQuoteFetchFailed && !editQuoteFetchInFlight && !trimmedContent().isEmpty
         refreshPublishAppearance()
         refreshPublishBusyState()
         refreshPublishingInputFreeze()
@@ -6653,7 +6647,8 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         }
         let trimmed = trimmedContent()
         if trimmed.isEmpty {
-            // U13：空正文点按给轻提示（按钮视觉置灰但仍可点，见 updatePublishState）。
+            // 空正文安全网：按钮现为真禁用（见 updatePublishState），正常流程到不了
+            // 这里；仅防启用态竞态下仍能点到，拦住不发请求。
             showToast(message: "先写点什么")
             updatePublishState()
             return
