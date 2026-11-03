@@ -11,7 +11,7 @@ import Darwin
 // 反色字，既定样式，不自造分段控件）+ 编辑器正文同款 UITextView；图片或视频
 // （可选，最多 5 个）添加卡（手绘 icon_image）；设备信息卡 8 行；底部依次为
 // 墨底主钮「提交反馈」、secondaryOutline「分享诊断日志」（手绘 icon_share）、
-// 「诊断」分组 + secondaryOutline「仅上传日志」、footnote。
+// 「诊断」分组 + secondaryOutline「仅发送日志」、footnote。
 // 组件规矩（2026-10-28 Li 定，长期有效）：组件一律走 iOS 系统组件
 // （UIButton / UITextView / PHPicker / MFMailCompose / UIActivityViewController），
 // 图标只用手绘官方包（icon_image、icon_share 均取 89 包 xcassets；资产缺失时
@@ -221,7 +221,7 @@ final class BearyFeedbackViewController: UIViewController, UITextViewDelegate, P
     private let attachClearButton = UIButton(type: .system)
     private let submitButton = BearyButton.make(style: .primaryPill(.ink), title: "提交反馈")
     private let shareButton = BearyButton.make(style: .secondaryOutline(.regular), title: "分享诊断日志")
-    private let logOnlyButton = BearyButton.make(style: .secondaryOutline(.regular), title: "仅上传日志")
+    private let logOnlyButton = BearyButton.make(style: .secondaryOutline(.regular), title: "仅发送日志")
 
     private var attachments: [Attachment] = []
     /// 审计反馈清除回填：附件选择代次。每轮选择占一个代次，清除或重选时
@@ -587,7 +587,7 @@ final class BearyFeedbackViewController: UIViewController, UITextViewDelegate, P
         footnote.font = UIFont.systemFont(ofSize: 13)
         footnote.textColor = BearyColors.gray
         footnote.numberOfLines = 0
-        footnote.text = "发送走邮件到 hi@teddyhn.com；未配邮箱时只复制文字，不含附件；仅发日志包时不含描述与附件。"
+        footnote.text = "反馈发送走邮件到 hi@teddyhn.com。未配置邮箱时，仅复制反馈文字，附件不随复制发出。分享或仅发送日志时只发日志包，不含描述与附件。"
 
         let views: [UIView] = [statusCard, descLabel, descCard, mediaLabel, attachCard, deviceLabel, deviceCard, submitButton, shareButton, diagLabel, logOnlyButton, footnote]
         for viewItem in views {
@@ -660,7 +660,7 @@ final class BearyFeedbackViewController: UIViewController, UITextViewDelegate, P
         return description + "\n\n--- 设备信息 ---\n" + deviceInfoText()
     }
 
-    // MARK: - zip 生成（进页时生成一次；分享 / 仅上传日志按需重生成）
+    // MARK: - zip 生成（进页时生成一次；分享 / 仅发送日志按需重生成）
 
     private func generateZip(completion: @escaping (URL?) -> Void) {
         DispatchQueue.global(qos: .utility).async {
@@ -733,7 +733,7 @@ final class BearyFeedbackViewController: UIViewController, UITextViewDelegate, P
         }
     }
 
-    /// 审计反馈分享防重：zip 生成等待期间，分享与仅上传日志两钮同置忙碌
+    /// 审计反馈分享防重：zip 生成等待期间，分享与仅发送日志两钮同置忙碌
     /// 外观（沿用提交钮已有的 isEnabled + alpha 0.4 口径），不改文案与选项。
     private func setShareButtonsBusy(_ busy: Bool) {
         shareButton.isEnabled = !busy
@@ -845,7 +845,7 @@ final class BearyFeedbackViewController: UIViewController, UITextViewDelegate, P
             if MFMailComposeViewController.canSendMail() {
                 self.presentLogOnlyComposer()
             } else {
-                // 仅上传日志无文字可复制，不走复制 fallback：toast 明说两条出路。
+                // 仅发送日志无文字可复制，不走复制 fallback：toast 明说两条出路。
                 BearyToast.show(in: self.view, message: "请先配置邮箱，或改用“分享诊断日志”")
                 BearyHaptics.rejectionWarning()
             }
@@ -861,7 +861,7 @@ final class BearyFeedbackViewController: UIViewController, UITextViewDelegate, P
         guard MFMailComposeViewController.canSendMail() else {
             // 补缺 P3-34：复制 fallback 只复制描述文字，设备信息与附件不随复制发出，toast 明说。
             UIPasteboard.general.string = textView.text.trimmingCharacters(in: .whitespacesAndNewlines)
-            BearyToast.show(in: view, message: "未配置邮箱，已复制反馈内容，不含附件")
+            BearyToast.show(in: view, message: "未配置邮箱，已仅复制反馈文字，附件不随复制发出")
             BearyAppLog.event("feedback mail no account copy fallback")
             return
         }

@@ -5,10 +5,10 @@ import UIKit
 // 网页对照：beary.html 的 inviteModal（1287–1302）+ ivRender（1611 起）+
 // ivDoBind（1656 起）+ openInvite（1631 起，打开时先 ivRender 再 fetchMe 刷新）。
 // 内容口径与网页一致：
-//   - 标题“邀请好友”+ 副标题“好友注册时填你的邀请码，成功后你们各得 1 个月 Plus”；
+//   - 标题“邀请好友”+ 副标题“好友注册时填你的邀请码，成功后你们各得 30 天 Plus；待审核通过后发放，邀请作废则不发放”；
 //   - 邀请码展示 + “复制”钮（复制后 1.6 秒内显示“已复制”，与网页 ivCopied 同口径）；
 //   - （2026-10-29 第 4 项：风控提示行已删，零残留；风控逻辑本身不动。）
-//   - 统计“已邀请 N 人 · 累计获得 M 个月 Plus”（accounts /me 的 referral
+//   - 统计“已邀请 N 人 · 累计获得 M 天 Plus（rewardMonths × 30）”（accounts /me 的 referral
 //     invited_count / reward_months，只数 granted/pending/granting/flagged）；
 //   - 绑定区三态：已绑定 → “已通过 X 的邀请加入 beary”（status 为 cancelled/expired
 //     时显示“邀请已作废”）；未绑定且 30 天补绑期内 → 输入框 + “绑定”钮 +
@@ -181,7 +181,7 @@ final class BearyInviteViewController: UIViewController {
         titleLabel.textColor = BearyColors.ink
 
         subtitleLabel.translatesAutoresizingMaskIntoConstraints = false
-        subtitleLabel.text = "好友注册时填你的邀请码，成功后你们各得 30 天 Plus"
+        subtitleLabel.text = "好友注册时填你的邀请码，成功后你们各得 30 天 Plus；待审核通过后发放，邀请作废则不发放"
         subtitleLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 14))
         subtitleLabel.adjustsFontForContentSizeCategory = true
         subtitleLabel.textColor = BearyColors.gray
@@ -507,9 +507,9 @@ final class BearyInviteViewController: UIViewController {
         if let ref = referral {
             let invited = ref.invitedCount ?? 0
             let months = ref.rewardMonths ?? 0
-            // 清单第 8 项：与网页一致，统计单位改“个月”（rewardMonths 本就是月数，
-            // 不再 ×30 换算成天；#405 的文案淡入保留）。
-            setLabelTextFaded(statsLabel, "已邀请 \(invited) 人 · 累计获得 \(months) 个月 Plus")
+            // 统计单位按 30 天：rewardMonths 计奖励次数，每次 30 天，故 ×30 换算成天；
+            // #405 的文案淡入保留）。
+            setLabelTextFaded(statsLabel, "已邀请 \(invited) 人 · 累计获得 \(months * 30) 天 Plus")
         } else {
             setLabelTextFaded(statsLabel, "加载中…")
         }

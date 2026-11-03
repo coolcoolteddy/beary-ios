@@ -668,7 +668,7 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
         errorStateWrap.isHidden = true
         contentStack.addArrangedSubview(errorStateWrap)
         errorStateView.translatesAutoresizingMaskIntoConstraints = false
-        errorStateView.configure(kind: .error, title: "搜索失败", subtitle: "网络好像不太顺", iconName: "icon_search", actionTitle: "重试", onAction: { [weak self] in self?.retryTapped() })
+        errorStateView.configure(kind: .error, title: "搜索失败", subtitle: "搜索失败，请重试", iconName: "icon_search", actionTitle: "重试", onAction: { [weak self] in self?.retryTapped() })
         errorStateWrap.addSubview(errorStateView)
         NSLayoutConstraint.activate([
             errorStateView.topAnchor.constraint(equalTo: errorStateWrap.topAnchor, constant: 28),
@@ -1440,7 +1440,7 @@ final class BearySearchViewController: UIViewController, UITextFieldDelegate, UI
 
     private func showFailedState() {
         // 8-6：无旧结果的失败态改走统一 BearyStateView（文案与重试动作不变，
-        // 仍是标题“搜索失败”+ 副文案“网络好像不太顺”+ 重试钮走 retryTapped）；
+        // 仍是标题“搜索失败”+ 副文案“搜索失败，请重试”+ 重试钮走 retryTapped）；
         // 有旧结果的失败仍走结果区尾行重试（showFailedStateKeepingResults），不动。
         let wasErrorHidden = errorStateWrap.isHidden
         showingResults = false

@@ -149,7 +149,7 @@ final class BearyLocationPopoverView: UIView, CLLocationManagerDelegate, MKLocal
         subLabel.adjustsFontForContentSizeCategory = true
         subLabel.textColor = BearyColors.gray
         subLabel.numberOfLines = 0
-        subLabel.text = "打开即自动定位，不用再点一次获取"
+        subLabel.text = "正在获取当前位置，也可以自己输入"
 
         inputField.translatesAutoresizingMaskIntoConstraints = false
         inputField.borderStyle = .roundedRect
@@ -331,7 +331,7 @@ final class BearyLocationPopoverView: UIView, CLLocationManagerDelegate, MKLocal
             self.spinner.startSpinning()
             self.statusIconView.isHidden = true
             self.statusLabel.text = "正在获取当前位置…"
-            self.subLabel.text = "打开即自动定位，不用再点一次获取"
+            self.subLabel.text = "正在获取当前位置，也可以自己输入"
             self.setConfirmEnabled(false)
             self.inputField.isHidden = true
             self.suggestionsScrollView.isHidden = true
@@ -348,7 +348,7 @@ final class BearyLocationPopoverView: UIView, CLLocationManagerDelegate, MKLocal
             self.statusIconView.isHidden = false
             self.statusLabel.text = location.name ?? location.district
             if let district = location.district, location.name != nil, district != location.name {
-                self.subLabel.text = "已定位 · 公开后他人仅见区级（\(district)）"
+                self.subLabel.text = "已定位 · 公开时仅显示大致位置（\(district)）"
             } else {
                 self.subLabel.text = "已定位"
             }

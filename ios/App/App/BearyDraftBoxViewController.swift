@@ -22,7 +22,7 @@ import UIKit
 // 不用 async/await，不用 if-let 简写。
 
 /// 审计第 2 项：草稿卡片 meta 区流式布局视图。
-/// 原 metaRow 是单行横排 stack（字数 required + 写给/心情 chip + 图片未保存钮 +
+/// 原 metaRow 是单行横排 stack（字数 required + 写给/心情 chip + “忽略丢失图片”钮 +
 /// 正在写 + 保存状态 required + 末尾 spacer）：窄屏多标签时横排总宽超卡片宽，
 /// 只能靠压 chip 或触发约束冲突。UIStackView 本身不换行，故此处用手动分行：
 /// 按现有顺序从左到右排，排不下即另起一行；行高取本行最高项，行距 6。
@@ -739,7 +739,7 @@ final class BearyDraftBoxViewController: UIViewController {
     /// 草稿库损坏态清除：先弹系统确认框（App 现有确认口径），确认后删当前
     /// 账号的坏 v3 文件（.bak 备份不动），成功后重读 → 空态；失败则留失败态＋toast。
     @objc private func clearCorruptStoreTapped() {
-        let alert = UIAlertController(title: "清除损坏的草稿库？", message: "损坏的草稿无法恢复，备份会保留在手机里。清除后草稿箱会变空，新草稿可以正常保存。", preferredStyle: .alert)
+        let alert = UIAlertController(title: "清除无法读取的草稿？", message: "这些草稿目前无法读取。清除后草稿箱会变空，备份会保留在手机里，新草稿可以正常保存。", preferredStyle: .alert)
         alert.addAction(UIAlertAction(title: "取消", style: .cancel))
         alert.addAction(UIAlertAction(title: "清除", style: .destructive) { [weak self] _ in
             BearyDraftStore.clearCorruptStoreAsync { [weak self] ok in
@@ -961,7 +961,7 @@ final class BearyDraftBoxViewController: UIViewController {
         inner.addArrangedSubview(summaryLabel)
 
         // 审计第 2 项：meta 区改流式布局 + 状态独立成行。顺序与原来一致：
-        // 字数 → 写给 chip → 心情 chip → 图片未保存钮 → 正在写（流式区内自然换行），
+        // 字数 → 写给 chip → 心情 chip → “忽略丢失图片”钮 → 正在写（流式区内自然换行），
         // 保存状态放末尾下一行，不再与 chip 挤同一行；字号与 chip 上限宽均不动。
         let metaFlow = BearyDraftMetaFlowView()
         let wordLabel = UILabel()
@@ -989,12 +989,12 @@ final class BearyDraftBoxViewController: UIViewController {
             chip.translatesAutoresizingMaskIntoConstraints = false
             metaFlow.addSubview(chip)
         }
-        // DF-1 图片未保存可点清除 chip：只针对已无物可续传的失败图
+        // DF-1 “忽略丢失图片”可点清除 chip：只针对已无物可续传的失败图
         // （本地文件与服务端 key 皆无，网页 imgs_lost 的等价情形）；点一下清掉
         // 这些图项与提示，可续传的失败图仍走原有“文字已保存，图片未保存”状态行。
         if hasUnrecoverableImage(for: draftValue) {
             let lostButton = UIButton(type: .custom)
-            lostButton.setTitle("图片未保存", for: .normal)
+            lostButton.setTitle("忽略丢失图片", for: .normal)
             // D-G13：网页 .df-chip.df-lost 为 faint 底 + 灰字 + 500 字重；
             // 原 App 红底红字 semibold 改齐。
             lostButton.setTitleColor(BearyColors.gray, for: .normal)
@@ -1003,7 +1003,7 @@ final class BearyDraftBoxViewController: UIViewController {
             lostButton.layer.cornerRadius = 999
             lostButton.layer.masksToBounds = true
             lostButton.contentEdgeInsets = UIEdgeInsets(top: 2.5, left: 9, bottom: 2.5, right: 9)
-            lostButton.accessibilityLabel = "图片未保存，点一下清除这条提示"
+            lostButton.accessibilityLabel = "移除无法恢复的图片记录"
             lostButton.addTarget(self, action: #selector(clearLostTapped(_:)), for: .touchUpInside)
             lostButton.bearyAddPressFeedback()
             lostButton.translatesAutoresizingMaskIntoConstraints = false
@@ -1206,7 +1206,7 @@ final class BearyDraftBoxViewController: UIViewController {
         return false
     }
 
-    /// 图片未保存 chip 点按：清掉已无物可续传的失败图项并后台写盘、重渲卡片
+    /// “忽略丢失图片”chip 点按：清掉已无物可续传的失败图项并后台写盘、重渲卡片
     /// （网页点 imgs_lost chip 清标记 + 重渲的等价动作；可续传图项不受影响）。
     @objc private func clearLostTapped(_ sender: UIButton) {
         var targetDraft: BearyDraft?
