@@ -88,7 +88,7 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
         titleLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 17, weight: .semibold))
         titleLabel.adjustsFontForContentSizeCategory = true
         titleLabel.textColor = BearyColors.ink
-        titleLabel.text = (peer.displayName?.isEmpty == false) ? peer.displayName! : "Beary 用户"
+        titleLabel.text = (peer.displayName?.isEmpty == false) ? peer.displayName! : "beary 用户"
         topBar.addSubview(titleLabel)
 
         tableView.translatesAutoresizingMaskIntoConstraints = false
@@ -358,10 +358,14 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
     }
 
     /// 输入框占位与接近 2000 字计数（审计）：占位随有无文字显隐；
-    /// 计数仅在 ≥1800 字时出现；发送时超限仍 toast（旧口径不动）。
+    /// 计数仅在 ≥1800 字时出现；发送时超限仍 toast。
+    /// 计数单位与服务端一致：服务端 dm/send 按 JS .length（UTF-16 码元）判 2000
+    /// 上限（worker.js:9168），故此处与发送守卫同走 utf16.count；Swift .count
+    /// （字素簇）会在表情多的消息上少算、致客户端放行而服务端 400。
     private func updateInputChrome() {
         placeholderLabel.isHidden = !inputTextView.text.isEmpty
-        let count = inputTextView.text.count
+        // 服务端先 trim 再判长，显示计数同样按 trim 后算（首尾空白不占数）。
+        let count = inputTextView.text.trimmingCharacters(in: .whitespacesAndNewlines).utf16.count
         countLabel.isHidden = count < 1800
         countLabel.text = "\(count)/2000"
     }
@@ -442,7 +446,7 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
                     self.didMarkRead = true
                     self.lastMarkedReadMessageId = markId
                 case .failure:
-                    BearyToast.show(in: self.view, message: "未读标记失败，下拉刷新可重试")
+                    BearyToast.show(in: self.view, message: "已读状态同步失败，下拉刷新可重试")
                 }
             }
         }
@@ -613,7 +617,7 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
         guard let userId = peer.id, !sending, !sessionClosed, !dmNotAllowed else { return }
         let body = inputTextView.text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !body.isEmpty else { return }
-        guard body.count <= 2000 else {
+        guard body.utf16.count <= 2000 else {
             BearyToast.show(in: view, message: "消息最多 2000 字")
             return
         }

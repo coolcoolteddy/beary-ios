@@ -4508,7 +4508,7 @@ class BearyProfileViewController: UIViewController {
             thisDayBodyLabel.isHidden = false
             thisDayBodyLabel.textAlignment = .center
             thisDayBodyLabel.textColor = BearyColors.gray
-            thisDayBodyLabel.text = "往年今天还没有日记\n不编造、不拿别的日子顶替"
+            thisDayBodyLabel.text = "往年今天还没有留下记录"
             return
         }
         thisDayMainEntry = main
@@ -4519,7 +4519,12 @@ class BearyProfileViewController: UIViewController {
         thisDayBodyLabel.textColor = BearyColors.ink
         var meta = "\(history.year) 年 \(month) 月 \(day) 日"
         if isOwnProfile {
-            meta += main.isPublic == true ? " · 公开" : " · 私密"
+            // 可见性三档实标：仅好友不再误标私密；存活限时篇补限时剩余信息。
+            let visValue = BearyVisibility.current(for: main)
+            meta += " · \(BearyVisibility.title(for: visValue))"
+            if visValue == "public", BearyEphemeral.isLive(main), let until = main.ephemeralUntil {
+                meta += " · \(BearyEphemeral.remainingText(until: until))"
+            }
         }
         thisDayMetaLabel.text = meta
         // 标题行已去掉口径：空标题时整行标题不渲染（不再用 personalTitle 的正文

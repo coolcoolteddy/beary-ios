@@ -1765,13 +1765,12 @@ class BearyDiaryCardCell: UITableViewCell {
         shareButton.accessibilityLabel = "分享"
     }
 
-    /// 网页口径：authorName = author_name || 'teddy'（空名时名显 teddy、头像字母为 T；
-    /// 有名字时两者一致，此差异只在空名时出现）。个人主页口径空名 fallback 为“beary 用户”。
+    /// 空名回退一律为“beary 用户”（不再以 Li 的 handle "teddy" 充当他人名，避免错归属）。
     private func displayAuthorName(_ rawName: String?) -> String {
         if let rawName = rawName, !rawName.isEmpty {
             return rawName
         }
-        return cardMode == .feed ? "teddy" : "beary 用户"
+        return "beary 用户"
     }
 
     /// F5：216 高按宽高比定宽（网页 stripW 同口径：0.55–2.22 倍高夹取，无尺寸老图默认 280）。

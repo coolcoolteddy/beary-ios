@@ -2015,7 +2015,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         storedQuotePromptShown = true
         storedQuotePromptPending = false
         let mine = BearyQuoteGate.sourceIsMine(isMine: locked.isMine, authorId: locked.authorId)
-        BearyQuoteGate.promptStoredPrivateQuote(from: self, sourceIsMine: mine, onPublishTogether: { [weak self] in
+        BearyQuoteGate.promptStoredPrivateQuote(from: self, sourceIsMine: mine, sourceIsFriendsOnly: locked.visibility == "friends", onPublishTogether: { [weak self] in
             guard let self = self, let current = self.lockedQuote else { return }
             BearyAPI.shared.setVisibility(id: current.entryId, published: 1) { result in
                 DispatchQueue.main.async {
@@ -6391,7 +6391,7 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         // 本快照（删除/保持私密只改快照副本对应字段，现场值改动不进载荷）。
         if selectedVisibilityPublished, let pendingQuote = selectedQuote, pendingQuote.isDeleted == false, pendingQuote.isPublic != true {
             let mine = BearyQuoteGate.sourceIsMine(isMine: pendingQuote.isMine, authorId: pendingQuote.authorId)
-            BearyQuoteGate.gateEditorPublish(from: self, sourceIsMine: mine, onPublishTogether: { [weak self] in
+            BearyQuoteGate.gateEditorPublish(from: self, sourceIsMine: mine, sourceIsFriendsOnly: pendingQuote.visibility == "friends", onPublishTogether: { [weak self] in
                 guard let self = self else { return }
                 self.beginPublishTogether(snapshot: snapshot, generation: generation)
             }, onDeleteQuote: { [weak self] in
