@@ -42,6 +42,10 @@ private final class BearyCenteredPresentationController: UIPresentationControlle
 
     private let dimmingView = UIView()
     private let cardShadowView = UIView()
+    /// 审计第 20 项：外层尺寸容器——只负责卡片尺寸与位置，自身永不参与变换。
+    /// presentedView（内层）是转场动画位移/透明度的载体；布局回调只写本容器的
+    /// frame，内层只写 bounds/center，永不在非 identity transform 下写 frame。
+    private let cardFrameView = UIView()
     private var lastShadowBounds: CGRect = .zero
     var dimTapCloses = false
     var dimTapHandler: (() -> Void)?
@@ -108,6 +112,10 @@ private final class BearyCenteredPresentationController: UIPresentationControlle
         cardShadowView.backgroundColor = .clear
         BearyShadow.applyRaised(to: cardShadowView.layer)
         container.addSubview(cardShadowView)
+        // 审计第 20 项：尺寸容器挂在容器里、阴影层之上；presentedView 随后在
+        // 布局回调里被移入本容器（转场动画仍直接作用于 presentedView 本身）。
+        cardFrameView.backgroundColor = .clear
+        container.addSubview(cardFrameView)
         if let coordinator = presentedViewController.transitionCoordinator {
             coordinator.animate(alongsideTransition: { _ in self.dimmingView.alpha = 1 }, completion: nil)
         } else {
@@ -120,6 +128,7 @@ private final class BearyCenteredPresentationController: UIPresentationControlle
             // 审计 2026-11-02 弹窗组：取消路径同时清遮罩与阴影（旧路径只清阴影）。
             dimmingView.removeFromSuperview()
             cardShadowView.removeFromSuperview()
+            cardFrameView.removeFromSuperview()
         }
     }
 
@@ -137,6 +146,7 @@ private final class BearyCenteredPresentationController: UIPresentationControlle
             // 再通知调用方做 dismiss 后清理（如 transitioningDelegate=nil）。
             dimmingView.removeFromSuperview()
             cardShadowView.removeFromSuperview()
+            cardFrameView.removeFromSuperview()
             dismissalHandler?()
         }
     }
@@ -145,10 +155,30 @@ private final class BearyCenteredPresentationController: UIPresentationControlle
         super.containerViewWillLayoutSubviews()
         // 旋转/多任务改容器尺寸时重算卡片帧（居中、宽/高上限只跟容器走），
         // 外框与阴影层同步跟帧走。
-        guard let presentedView = presentedView else { return }
+        // 审计第 20 项：尺寸只写到不参与变换的外层 cardFrameView；内层
+        // presentedView 只写 bounds/center——transform 非 identity 时 frame
+        // 无定义，旧代码无条件写 frame 会在转场期间遇旋转/窗口变化时跳变。
+        // 转场动画中途把 presentedView 加到容器直属时，这里把它移回外层；
+        // transform/alpha 是视图自身属性，移层不影响正在播的动画。
+        guard let container = containerView else { return }
         let frame = frameOfPresentedViewInContainerView
-        presentedView.frame = frame
-        applyCardChrome()
+        if cardFrameView.superview !== container {
+            if cardShadowView.superview === container {
+                container.insertSubview(cardFrameView, aboveSubview: cardShadowView)
+            } else {
+                container.addSubview(cardFrameView)
+            }
+        }
+        cardFrameView.frame = frame
+        if let presentedView = presentedView {
+            if presentedView.superview !== cardFrameView {
+                cardFrameView.addSubview(presentedView)
+            }
+            // 内层铺满外层：bounds 定尺寸、center 定位置，二者都不受 transform 影响。
+            presentedView.bounds = CGRect(origin: .zero, size: frame.size)
+            presentedView.center = CGPoint(x: frame.width / 2, y: frame.height / 2)
+            applyCardChrome()
+        }
         cardShadowView.frame = frame
         // 审计 E2 第 14 项：shadowPath 仅在尺寸变化时更新，不逐帧重算。
         // 冻结令（2026-11-02 Li 新令）：阴影 path 属冻结范围，本支不改计算方式，
