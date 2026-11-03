@@ -48,6 +48,7 @@
 		5FF297D2E2804166BA8159B5 /* BearyDiaryCardCell.swift in Sources */ = {isa = PBXBuildFile; fileRef = BD0D12B066C04B3780DCF797 /* BearyDiaryCardCell.swift */; };
 		33682D1F43521B7B51E6FF30 /* BearyDiaryPin.swift in Sources */ = {isa = PBXBuildFile; fileRef = 10390C7D70B53CA0EAC36E09 /* BearyDiaryPin.swift */; };
 		BE2B0EB0998F4D128F9ABC4F613BC305 /* BearyDepthBackgroundViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6F35D9B786C44F9B94496CC7AD342A62 /* BearyDepthBackgroundViewController.swift */; };
+		AEA9D9D3FBCB5ACEDC623626 /* BearyProfileCoverView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E759B4A0FB236185ECACFD00 /* BearyProfileCoverView.swift */; };
 		5CD0ACC7665FEC6310F8023D /* BearyFestivalWallpaperView.swift in Sources */ = {isa = PBXBuildFile; fileRef = D041B25C74C0DEB0BECC18CC /* BearyFestivalWallpaperView.swift */; };
 		1476E40C4B0A489082D4F060 /* BearyQuoteCardView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7B1C032A6C0F4B51BD65D3E6 /* BearyQuoteCardView.swift */; };
 		6E1E41D1D67C42CEB3FBC5F3 /* BearyEmoteFlowView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 009D1C4789D54436BA953274 /* BearyEmoteFlowView.swift */; };
@@ -100,6 +101,20 @@
 		EA84A3E04072B1309A399108 /* BearyEmoteImages.swift in Sources */ = {isa = PBXBuildFile; fileRef = B67362B50D4D2A91E59412D2 /* BearyEmoteImages.swift */; };
 		248993E9EF7C4D73A470CCE9 /* BearyNightPatrol.swift in Sources */ = {isa = PBXBuildFile; fileRef = 60F7AC7C7B59449186BD24AF /* BearyNightPatrol.swift */; };
 		93F45F628E22C5045A1EF58F /* agree.json in Resources */ = {isa = PBXBuildFile; fileRef = DAE48A2C16A1E3B2821093EB /* agree.json */; };
+		F0BA37BF138BC1AB2A53CFA5 /* china-back.png in Resources */ = {isa = PBXBuildFile; fileRef = 1799C4BBEDF12CE142160CE9 /* china-back.png */; };
+		57ABEC728626AE618F29E08E /* china-mid.png in Resources */ = {isa = PBXBuildFile; fileRef = F60C62B05422A56422ED65ED /* china-mid.png */; };
+		D395C5A456F0D264FAA5D081 /* china-poster.png in Resources */ = {isa = PBXBuildFile; fileRef = F61DF01274DB03D3F0AB6FE0 /* china-poster.png */; };
+		458261CCB14D75C8A02C3D59 /* boat.png in Resources */ = {isa = PBXBuildFile; fileRef = 770CDB4F475CB4470169E468 /* boat.png */; };
+		84B1A93E06744FACFE10FD3D /* japan-back.png in Resources */ = {isa = PBXBuildFile; fileRef = D4AF0DE64C31D9DF76E33049 /* japan-back.png */; };
+		DC7C52ADCC1FDB0DD6025E2E /* japan-mid.png in Resources */ = {isa = PBXBuildFile; fileRef = 57F2A0666B1A0B033030C0D8 /* japan-mid.png */; };
+		C4DF3D688EA35C5EB0DA7BCC /* japan-near.png in Resources */ = {isa = PBXBuildFile; fileRef = 13D9C8D8381723F847C8D208 /* japan-near.png */; };
+		1938F81450975213C5CE2010 /* japan-poster.png in Resources */ = {isa = PBXBuildFile; fileRef = B18573473A12570FBD9DB089 /* japan-poster.png */; };
+		11FA40ED504B55B3BFC9A460 /* chime.png in Resources */ = {isa = PBXBuildFile; fileRef = 63CEB537944B35C818A7F025 /* chime.png */; };
+		BEEA9495C51B19EC0E8285BB /* usa-back.png in Resources */ = {isa = PBXBuildFile; fileRef = 6DC2792BB1C92F74C7D7A891 /* usa-back.png */; };
+		CB349888BBAC6E36C3E9E3BF /* usa-mid.png in Resources */ = {isa = PBXBuildFile; fileRef = B25C141874D6116F9E7AF5A1 /* usa-mid.png */; };
+		9B44079FFAAE7F51FC0CD697 /* usa-near.png in Resources */ = {isa = PBXBuildFile; fileRef = 85041667868D6796E7B4722A /* usa-near.png */; };
+		C73ABC14EF8C1B595064A827 /* usa-poster.png in Resources */ = {isa = PBXBuildFile; fileRef = 95FB0D0AFDFEF9F5C38C947B /* usa-poster.png */; };
+		984F4D06BD4BDF6548E5F437 /* train.png in Resources */ = {isa = PBXBuildFile; fileRef = C6A82CD6F214A049AE6723F2 /* train.png */; };
 		3A970A89A5411DB05EA8D92C /* BearyFestivalWallpapers.json in Resources */ = {isa = PBXBuildFile; fileRef = C69BECF80F639F3B86A1C5F7 /* BearyFestivalWallpapers.json */; };
 		4497343DBC967B83178641E1 /* agree_dark.json in Resources */ = {isa = PBXBuildFile; fileRef = 37B9943EDEF2C3A792782E9E /* agree_dark.json */; };
 		7089387273580DA6004FDF8A /* crown.json in Resources */ = {isa = PBXBuildFile; fileRef = 4ED6BF206A0F34DF117D855A /* crown.json */; };
@@ -291,6 +306,21 @@
 		BD0D12B066C04B3780DCF797 /* BearyDiaryCardCell.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BearyDiaryCardCell.swift; sourceTree = "<group>"; };
 		10390C7D70B53CA0EAC36E09 /* BearyDiaryPin.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BearyDiaryPin.swift; sourceTree = "<group>"; };
 		6F35D9B786C44F9B94496CC7AD342A62 /* BearyDepthBackgroundViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BearyDepthBackgroundViewController.swift; sourceTree = "<group>"; };
+		E759B4A0FB236185ECACFD00 /* BearyProfileCoverView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BearyProfileCoverView.swift; sourceTree = "<group>"; };
+		1799C4BBEDF12CE142160CE9 /* china-back.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = ProfileCovers/china-back.png; sourceTree = "<group>"; };
+		F60C62B05422A56422ED65ED /* china-mid.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = ProfileCovers/china-mid.png; sourceTree = "<group>"; };
+		F61DF01274DB03D3F0AB6FE0 /* china-poster.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = ProfileCovers/china-poster.png; sourceTree = "<group>"; };
+		770CDB4F475CB4470169E468 /* boat.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = ProfileCovers/boat.png; sourceTree = "<group>"; };
+		D4AF0DE64C31D9DF76E33049 /* japan-back.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = ProfileCovers/japan-back.png; sourceTree = "<group>"; };
+		57F2A0666B1A0B033030C0D8 /* japan-mid.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = ProfileCovers/japan-mid.png; sourceTree = "<group>"; };
+		13D9C8D8381723F847C8D208 /* japan-near.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = ProfileCovers/japan-near.png; sourceTree = "<group>"; };
+		B18573473A12570FBD9DB089 /* japan-poster.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = ProfileCovers/japan-poster.png; sourceTree = "<group>"; };
+		63CEB537944B35C818A7F025 /* chime.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = ProfileCovers/chime.png; sourceTree = "<group>"; };
+		6DC2792BB1C92F74C7D7A891 /* usa-back.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = ProfileCovers/usa-back.png; sourceTree = "<group>"; };
+		B25C141874D6116F9E7AF5A1 /* usa-mid.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = ProfileCovers/usa-mid.png; sourceTree = "<group>"; };
+		85041667868D6796E7B4722A /* usa-near.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = ProfileCovers/usa-near.png; sourceTree = "<group>"; };
+		95FB0D0AFDFEF9F5C38C947B /* usa-poster.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = ProfileCovers/usa-poster.png; sourceTree = "<group>"; };
+		C6A82CD6F214A049AE6723F2 /* train.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = ProfileCovers/train.png; sourceTree = "<group>"; };
 		D041B25C74C0DEB0BECC18CC /* BearyFestivalWallpaperView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BearyFestivalWallpaperView.swift; sourceTree = "<group>"; };
 		7B1C032A6C0F4B51BD65D3E6 /* BearyQuoteCardView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BearyQuoteCardView.swift; sourceTree = "<group>"; };
 		009D1C4789D54436BA953274 /* BearyEmoteFlowView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BearyEmoteFlowView.swift; sourceTree = "<group>"; };
@@ -763,6 +793,21 @@
 				BE07B090D304A418C102D6C5 /* keep_v3_hold_light.png */,
 				BBA0D0BEA2AE929C2EB3A121 /* keep_v3_hold_dark.png */,
 				0AB06C47E08A427BB03EDF69 /* BearySoundPlayer.swift */,
+				E759B4A0FB236185ECACFD00 /* BearyProfileCoverView.swift */,
+				1799C4BBEDF12CE142160CE9 /* china-back.png */,
+				F60C62B05422A56422ED65ED /* china-mid.png */,
+				F61DF01274DB03D3F0AB6FE0 /* china-poster.png */,
+				770CDB4F475CB4470169E468 /* boat.png */,
+				D4AF0DE64C31D9DF76E33049 /* japan-back.png */,
+				57F2A0666B1A0B033030C0D8 /* japan-mid.png */,
+				13D9C8D8381723F847C8D208 /* japan-near.png */,
+				B18573473A12570FBD9DB089 /* japan-poster.png */,
+				63CEB537944B35C818A7F025 /* chime.png */,
+				6DC2792BB1C92F74C7D7A891 /* usa-back.png */,
+				B25C141874D6116F9E7AF5A1 /* usa-mid.png */,
+				85041667868D6796E7B4722A /* usa-near.png */,
+				95FB0D0AFDFEF9F5C38C947B /* usa-poster.png */,
+				C6A82CD6F214A049AE6723F2 /* train.png */,
 			);
 			path = App;
 			sourceTree = "<group>";
@@ -1008,6 +1053,20 @@
 				11154CAD773B5B9029A42D91 /* keep_v3_dark.json in Resources */,
 				CB5D246C81D576E1DC471B44 /* keep_v3_hold_light.png in Resources */,
 				985366A89C5D0D001010E6BB /* keep_v3_hold_dark.png in Resources */,
+				F0BA37BF138BC1AB2A53CFA5 /* china-back.png in Resources */,
+				57ABEC728626AE618F29E08E /* china-mid.png in Resources */,
+				D395C5A456F0D264FAA5D081 /* china-poster.png in Resources */,
+				458261CCB14D75C8A02C3D59 /* boat.png in Resources */,
+				84B1A93E06744FACFE10FD3D /* japan-back.png in Resources */,
+				DC7C52ADCC1FDB0DD6025E2E /* japan-mid.png in Resources */,
+				C4DF3D688EA35C5EB0DA7BCC /* japan-near.png in Resources */,
+				1938F81450975213C5CE2010 /* japan-poster.png in Resources */,
+				11FA40ED504B55B3BFC9A460 /* chime.png in Resources */,
+				BEEA9495C51B19EC0E8285BB /* usa-back.png in Resources */,
+				CB349888BBAC6E36C3E9E3BF /* usa-mid.png in Resources */,
+				9B44079FFAAE7F51FC0CD697 /* usa-near.png in Resources */,
+				C73ABC14EF8C1B595064A827 /* usa-poster.png in Resources */,
+				984F4D06BD4BDF6548E5F437 /* train.png in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -1097,6 +1156,7 @@
 				EA84A3E04072B1309A399108 /* BearyEmoteImages.swift in Sources */,
 				248993E9EF7C4D73A470CCE9 /* BearyNightPatrol.swift in Sources */,
 				3AA12B2885B64262BB5A9AD8 /* BearySoundPlayer.swift in Sources */,
+				AEA9D9D3FBCB5ACEDC623626 /* BearyProfileCoverView.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

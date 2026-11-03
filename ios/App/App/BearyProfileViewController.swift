@@ -725,13 +725,25 @@ class BearyProfileViewController: UIViewController {
     /// 流程（Li 2026-11-03 定）：本人页点封面带弹选择框（图库／景深背景），
     /// 景深背景进 BearyDepthBackgroundViewController 新页选主题；枚举放 internal
     /// 供新页共用同一主题口径。
+    /// 中美日三张封面（2026-11-04 Li 定放同一选择页）与节日款同页、同 Plus
+    /// 门控：封面款走 ProfileCoverView（陀螺仪分层视差），不走节日款的
+    /// BearyFestivalWallpaperView、不压深色遮罩。
     enum FestivalTheme: String {
-        case none, halloween, spring
+        case none, halloween, spring, china, usa, japan
         var wallpaperTheme: BearyFestivalWallpaperView.Theme? {
             switch self {
             case .none: return nil
             case .halloween: return .halloween
             case .spring: return .spring
+            case .china, .usa, .japan: return nil
+            }
+        }
+        var coverTheme: ProfileCoverTheme? {
+            switch self {
+            case .china: return .china
+            case .usa: return .usa
+            case .japan: return .japan
+            case .none, .halloween, .spring: return nil
             }
         }
         var title: String {
@@ -739,11 +751,15 @@ class BearyProfileViewController: UIViewController {
             case .none: return "默认"
             case .halloween: return "万圣节"
             case .spring: return "春节"
+            case .china: return "中国 · 归舟"
+            case .usa: return "美国 · 夜班车"
+            case .japan: return "日本 · 海风候车室"
             }
         }
     }
 
     private var festivalWallpaperView: BearyFestivalWallpaperView?
+    private var profileCoverView: ProfileCoverView?
     private let festivalDimView: UIView = {
         let viewValue = UIView()
         viewValue.translatesAutoresizingMaskIntoConstraints = false
@@ -755,6 +771,7 @@ class BearyProfileViewController: UIViewController {
     }()
     private var festivalTheme: FestivalTheme = .none
     private var festivalWallpaperVisible = false
+    private var profileCoverVisible = false
 
     private var festivalThemeDefaultsKey: String {
         // 切号／退出不串号：键跟当前账号 id 走；未取到 id 时落单键（仅游客态兜底，
@@ -2141,6 +2158,11 @@ class BearyProfileViewController: UIViewController {
         updateTopBarVisibility()
         // 景深背景：回页时按当前带子位置重算动画开关。
         updateFestivalWallpaperVisibility()
+        updateProfileCoverVisibility()
+        // 封面（中美日）：每次进页重置彩蛋可见态（组件说明：每次打开新主页调用 restartVisit）。
+        if festivalTheme.coverTheme != nil {
+            profileCoverView?.restartVisit()
+        }
     }
 
     /// 批 C 回页钩子：容器切页只改 isHidden、不触发 appearance 回调时，
@@ -2155,6 +2177,7 @@ class BearyProfileViewController: UIViewController {
         updateProfileCoverScroll(offsetY: tableView.contentOffset.y, topBaseline: -tableView.contentInset.top)
         // 景深背景：容器切回时滚动事件不一定触发，按当前带子位置重算动画开关。
         updateFestivalWallpaperVisibility()
+        updateProfileCoverVisibility()
     }
 
     /// 顶栏透度批（容器调用，见 SceneDelegate.applyHeaderTopInsets）：主滚动视图即 tableView。
@@ -8247,6 +8270,12 @@ let viewer = BearyEntryImageViewerViewController(imageKeys: keys, liveVideos: en
                 oldView.removeFromSuperview()
                 festivalWallpaperView = nil
             }
+            if let oldCover = profileCoverView {
+                oldCover.isPlaying = false
+                oldCover.removeFromSuperview()
+                profileCoverView = nil
+            }
+            profileCoverVisible = false
             festivalDimView.removeFromSuperview()
             festivalWallpaperVisible = false
             festivalTheme = .none
@@ -8260,7 +8289,49 @@ let viewer = BearyEntryImageViewerViewController(imageKeys: keys, liveVideos: en
             }
             return true
         }
+        if let coverTheme = effective.coverTheme {
+            // 封面图缺资源则失败、不改存量（与节日款缺图口径一致；海报图是
+            // 减动效／无姿态时的静态兜底，以它为资源齐全的探针）。
+            guard Bundle.main.url(forResource: effective.rawValue + "-poster", withExtension: "png") != nil else { return false }
+            if let oldView = festivalWallpaperView {
+                oldView.isAnimationEnabled = false
+                oldView.removeFromSuperview()
+                festivalWallpaperView = nil
+            }
+            festivalDimView.removeFromSuperview()
+            if profileCoverView == nil || festivalTheme != effective {
+                let coverView = ProfileCoverView(theme: coverTheme)
+                coverView.translatesAutoresizingMaskIntoConstraints = false
+                coverView.accessibilityElementsHidden = true
+                profileCoverView?.removeFromSuperview()
+                profileCoverView = coverView
+                coverClipView.addSubview(coverView)
+                NSLayoutConstraint.activate([
+                    coverView.topAnchor.constraint(equalTo: coverClipView.topAnchor),
+                    coverView.leadingAnchor.constraint(equalTo: coverClipView.leadingAnchor),
+                    coverView.trailingAnchor.constraint(equalTo: coverClipView.trailingAnchor),
+                    coverView.bottomAnchor.constraint(equalTo: coverClipView.bottomAnchor),
+                ])
+                coverView.restartVisit()
+            }
+            festivalTheme = effective
+            coverImageView.isHidden = true
+            defaultWordmarkView.isHidden = true
+            profileCoverVisible = false
+            updateProfileCoverVisibility()
+            if persist {
+                UserDefaults.standard.set(effective.rawValue, forKey: festivalThemeDefaultsKey)
+            }
+            return true
+        }
         guard let wallpaperTheme = effective.wallpaperTheme else { return false }
+        // 切到节日款时撤掉封面视图（反向切换同理见封面分支）。
+        if let oldCover = profileCoverView {
+            oldCover.isPlaying = false
+            oldCover.removeFromSuperview()
+            profileCoverView = nil
+        }
+        profileCoverVisible = false
         if festivalWallpaperView == nil || festivalTheme != effective {
             do {
                 let wallpaperView = try BearyFestivalWallpaperView(theme: wallpaperTheme)
@@ -8311,6 +8382,17 @@ let viewer = BearyEntryImageViewerViewController(imageKeys: keys, liveVideos: en
         guard visible != festivalWallpaperVisible else { return }
         festivalWallpaperVisible = visible
         wallpaperView.isAnimationEnabled = visible
+    }
+
+    /// 封面（中美日）：与节日款同款可见性开关；带子滚出视野（或切走页、
+    /// 未进窗口）时停陀螺仪动画，回视野再开。变化守卫防滚动每帧重复开关。
+    private func updateProfileCoverVisibility() {
+        guard let coverView = profileCoverView else { return }
+        let bandFrame = coverClipView.convert(coverClipView.bounds, to: view)
+        let visible = view.window != nil && !view.isHidden && view.bounds.intersects(bandFrame)
+        guard visible != profileCoverVisible else { return }
+        profileCoverVisible = visible
+        coverView.isPlaying = visible
     }
 
     /// 批 E 日记地图入口：以作者日记 tab（diaryEntries）为即时数据源进地图页，
@@ -8378,6 +8460,7 @@ let viewer = BearyEntryImageViewerViewController(imageKeys: keys, liveVideos: en
         updateProfileCoverScroll(offsetY: y, topBaseline: -scrollView.contentInset.top)
         // 景深背景：带子滚出视野即停陀螺仪动画，回视野再开。
         updateFestivalWallpaperVisibility()
+        updateProfileCoverVisibility()
         // 顶栏透度批：在顶判定改以 -contentInset.top 为基准（现行收起态内边距 0 时与旧 y<=0 等价）。
         if y <= -scrollView.contentInset.top {
             if profileChromeHidden {

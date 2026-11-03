@@ -2,11 +2,13 @@ import UIKit
 
 // ===== 景深背景选择页（2026-11-03，Li 定流程）=====
 // 入口：本人页点封面带 → 选择框「景深背景」→ 本页；他人页不进。
-// 列表：默认／万圣节／春节。节日行用真的 BearyFestivalWallpaperView 做实时
-// 预览，动画只在行可见时开、滚出视野关（与个人页 header 同款省电口径）。
-// 拥有口径：Plus 拥有全部节日款；非 Plus 行显「Plus 专属」锁定态、预览照常看，
-// 点按走个人页同款 Plus 提示、不应用；默认档人人可回；当前档点按直接关闭。
-// 深色压暗与 header 同值（黑遮罩 0.35）；减动效沿用包内 freeze。
+// 列表：默认／万圣节／春节／中国归舟／美国夜班车／日本海风候车室。节日行
+// 与封面行都用真的视图做实时预览，动画只在行可见时开、滚出视野关（与个人
+// 页 header 同款省电口径）。
+// 拥有口径：Plus 拥有全部非默认款（含三张封面）；非 Plus 行显「Plus 专属」
+// 锁定态、预览照常看，点按走个人页同款 Plus 提示、不应用；默认档人人可回；
+// 当前档点按直接关闭。
+// 深色压暗与 header 同值（黑遮罩 0.35，封面行不压）；减动效沿用包内 freeze。
 
 final class BearyDepthBackgroundViewController: UIViewController {
 
@@ -16,7 +18,7 @@ final class BearyDepthBackgroundViewController: UIViewController {
     private let isPlusValue: Bool
     private let onPickValue: (Theme) -> Bool
 
-    private let themesValue: [Theme] = [.none, .halloween, .spring]
+    private let themesValue: [Theme] = [.none, .halloween, .spring, .china, .usa, .japan]
 
     init(currentTheme: Theme, isPlus: Bool, onPick: @escaping (Theme) -> Bool) {
         self.currentThemeValue = currentTheme
@@ -74,7 +76,7 @@ final class BearyDepthBackgroundViewController: UIViewController {
         labelValue.textColor = BearyColors.gray
         labelValue.textAlignment = .center
         labelValue.numberOfLines = 0
-        labelValue.text = "Plus 会员可使用全部节日款"
+        labelValue.text = "Plus 会员可使用全部景深背景"
         return labelValue
     }()
 
@@ -183,9 +185,10 @@ extension BearyDepthBackgroundViewController: UITableViewDataSource, UITableView
     }
 }
 
-/// 景深背景行：上为实时预览（节日款走真的 BearyFestivalWallpaperView，默认档为
-/// 纯底色占位），下为主题名＋状态（已应用／Plus 专属）。预览创建失败时（缺资源）
-/// 退回纯底色占位，点按仍走个人页应用流程、失败由个人页 toast。
+/// 景深背景行：上为实时预览（节日款走真的 BearyFestivalWallpaperView，封面款
+/// 走真的 ProfileCoverView，默认档为纯底色占位），下为主题名＋状态（已应用／
+/// Plus 专属）。预览创建失败时（缺资源）退回纯底色占位，点按仍走个人页应用
+/// 流程、失败由个人页 toast。
 private final class BearyDepthBackgroundCell: UITableViewCell {
 
     private let previewContainer: UIView = {
@@ -226,6 +229,8 @@ private final class BearyDepthBackgroundCell: UITableViewCell {
     }()
 
     private var wallpaperView: BearyFestivalWallpaperView?
+    private var coverView: ProfileCoverView?
+    private var currentTheme: BearyDepthBackgroundViewController.Theme?
 
     override init(style: UITableViewCell.CellStyle, reuseIdentifier: String?) {
         super.init(style: style, reuseIdentifier: reuseIdentifier)
@@ -261,11 +266,18 @@ private final class BearyDepthBackgroundCell: UITableViewCell {
         setPreviewAnimationEnabled(false)
         wallpaperView?.removeFromSuperview()
         wallpaperView = nil
+        coverView?.isPlaying = false
+        coverView?.removeFromSuperview()
+        coverView = nil
     }
 
     func configure(theme: BearyDepthBackgroundViewController.Theme, isCurrent: Bool, isLocked: Bool) {
         wallpaperView?.removeFromSuperview()
         wallpaperView = nil
+        coverView?.isPlaying = false
+        coverView?.removeFromSuperview()
+        coverView = nil
+        currentTheme = theme
         nameLabel.text = theme.title
         if isCurrent {
             stateLabel.text = "已应用"
@@ -277,7 +289,26 @@ private final class BearyDepthBackgroundCell: UITableViewCell {
             stateLabel.text = nil
         }
         accessibilityLabel = isCurrent ? "\(theme.title)，已应用" : (isLocked ? "\(theme.title)，Plus 专属" : theme.title)
-        guard let wallpaperTheme = theme.wallpaperTheme else { return }
+        if let coverTheme = theme.coverTheme {
+            let preview = ProfileCoverView(theme: coverTheme)
+            preview.translatesAutoresizingMaskIntoConstraints = false
+            preview.accessibilityElementsHidden = true
+            preview.isPlaying = false
+            previewContainer.insertSubview(preview, belowSubview: dimView)
+            NSLayoutConstraint.activate([
+                preview.topAnchor.constraint(equalTo: previewContainer.topAnchor),
+                preview.leadingAnchor.constraint(equalTo: previewContainer.leadingAnchor),
+                preview.trailingAnchor.constraint(equalTo: previewContainer.trailingAnchor),
+                preview.bottomAnchor.constraint(equalTo: previewContainer.bottomAnchor),
+            ])
+            coverView = preview
+            updateDim()
+            return
+        }
+        guard let wallpaperTheme = theme.wallpaperTheme else {
+            updateDim()
+            return
+        }
         do {
             let preview = try BearyFestivalWallpaperView(theme: wallpaperTheme)
             preview.translatesAutoresizingMaskIntoConstraints = false
@@ -300,10 +331,16 @@ private final class BearyDepthBackgroundCell: UITableViewCell {
 
     func setPreviewAnimationEnabled(_ enabled: Bool) {
         wallpaperView?.isAnimationEnabled = enabled
+        coverView?.isPlaying = enabled
     }
 
-    /// 深色压暗与 header 同值（黑遮罩 0.35，浅色 0）。
+    /// 深色压暗与 header 同值（黑遮罩 0.35，浅色 0）；封面行不压（插画本身
+    /// 已铺满，压暗会闷住夜班车那张的灯光）。
     func updateDim() {
-        dimView.alpha = traitCollection.userInterfaceStyle == .dark ? 0.35 : 0
+        if currentTheme?.wallpaperTheme != nil {
+            dimView.alpha = traitCollection.userInterfaceStyle == .dark ? 0.35 : 0
+        } else {
+            dimView.alpha = 0
+        }
     }
 }
