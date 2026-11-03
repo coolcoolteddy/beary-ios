@@ -80,7 +80,7 @@ final class BearyFriendsViewController: UIViewController, UITableViewDelegate, U
         // 段内分流入口（顶栏右钮，官方图标）：会话 icon_mail。
         let dmButton = UIButton(type: .system)
         dmButton.translatesAutoresizingMaskIntoConstraints = false
-        dmButton.setImage(BearyIconImages.image(named: "icon_mail", pointSize: 20), for: .normal)
+        dmButton.setImage(BearyIconImages.image(named: "icon_mail", pointSize: 24), for: .normal)
         dmButton.tintColor = BearyColors.ink
         dmButton.accessibilityLabel = "打开私信会话"
         dmButton.addTarget(self, action: #selector(dmTapped), for: .touchUpInside)
@@ -499,7 +499,7 @@ private final class BearyFriendCell: UITableViewCell {
     private lazy var moreButton: UIButton = {
         let button = UIButton(type: .system)
         button.translatesAutoresizingMaskIntoConstraints = false
-        button.setImage(BearyIconImages.image(named: "icon_more", pointSize: 20), for: .normal)
+        button.setImage(BearyIconImages.image(named: "icon_more", pointSize: 24), for: .normal)
         button.tintColor = BearyColors.ink
         button.accessibilityLabel = "更多"
         button.addTarget(self, action: #selector(moreTapped), for: .touchUpInside)

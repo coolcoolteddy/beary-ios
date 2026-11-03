@@ -726,7 +726,7 @@ class BearyProfileViewController: UIViewController {
     private lazy var avatarRetryButton: UIButton = {
         let buttonValue = UIButton(type: .system)
         buttonValue.translatesAutoresizingMaskIntoConstraints = false
-        buttonValue.setImage(BearyIconImages.image(named: "icon_refresh", pointSize: 20), for: .normal)
+        buttonValue.setImage(BearyIconImages.image(named: "icon_refresh", pointSize: 24), for: .normal)
         buttonValue.tintColor = BearyColors.ink
         buttonValue.accessibilityLabel = "重新加载头像"
         buttonValue.isHidden = true
@@ -791,7 +791,7 @@ class BearyProfileViewController: UIViewController {
     private lazy var dmButton: BearyHit44Button = {
         let buttonValue = BearyHit44Button(type: .system)
         buttonValue.translatesAutoresizingMaskIntoConstraints = false
-        buttonValue.setImage(BearyIconImages.image(named: "icon_comment", pointSize: 20), for: .normal)
+        buttonValue.setImage(BearyIconImages.image(named: "icon_comment", pointSize: 24), for: .normal)
         buttonValue.tintColor = BearyColors.ink
         buttonValue.accessibilityLabel = "私信"
         buttonValue.addTarget(self, action: #selector(dmButtonTapped), for: .touchUpInside)
@@ -1015,7 +1015,7 @@ class BearyProfileViewController: UIViewController {
         buttonValue.translatesAutoresizingMaskIntoConstraints = false
         // 2026-10-28 Li 令：设置钮图标语义换回齿轮（icon_settings），不再用三点
         // （此前 I1 按网页 pfGearBtn 的 beary-more 用 icon_more；现以 Li 口径为准）。
-        buttonValue.setImage(BearyIconImages.image(named: "icon_settings", pointSize: 19), for: .normal)
+        buttonValue.setImage(BearyIconImages.image(named: "icon_settings", pointSize: 24), for: .normal)
         buttonValue.tintColor = BearyColors.ink
         buttonValue.accessibilityLabel = "设置"
         buttonValue.layer.borderWidth = 1
@@ -1028,7 +1028,7 @@ class BearyProfileViewController: UIViewController {
     private lazy var headerShareButton: UIButton = {
         let buttonValue = UIButton(type: .system)
         buttonValue.translatesAutoresizingMaskIntoConstraints = false
-        buttonValue.setImage(BearyIconImages.image(named: "icon_share", pointSize: 21), for: .normal)
+        buttonValue.setImage(BearyIconImages.image(named: "icon_share", pointSize: 24), for: .normal)
         buttonValue.tintColor = BearyColors.ink
         buttonValue.addTarget(self, action: #selector(headerShareButtonTapped), for: .touchUpInside)
         buttonValue.bearyAddPressFeedback()

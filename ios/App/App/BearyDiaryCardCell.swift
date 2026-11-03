@@ -940,7 +940,7 @@ class BearyDiaryCardCell: UITableViewCell {
     private lazy var shareButton: UIButton = {
         let btn = BearyHit44Button(type: .system)
         btn.translatesAutoresizingMaskIntoConstraints = false
-        btn.setImage(BearyFeedIconCache.image(named: "icon_share", pointSize: 21), for: .normal)
+        btn.setImage(BearyFeedIconCache.image(named: "icon_share", pointSize: 24), for: .normal)
         btn.tintColor = BearyColors.gray
         btn.addTarget(self, action: #selector(shareButtonTapped), for: .touchUpInside)
         // W6：同收藏钮，改通用按压（缩 .84 + .light）。
@@ -958,8 +958,8 @@ class BearyDiaryCardCell: UITableViewCell {
         v.translatesAutoresizingMaskIntoConstraints = false
         v.isHidden = true
         v.isAccessibilityElement = false
-        v.widthAnchor.constraint(equalToConstant: 21).isActive = true
-        v.heightAnchor.constraint(equalToConstant: 21).isActive = true
+        v.widthAnchor.constraint(equalToConstant: 24).isActive = true
+        v.heightAnchor.constraint(equalToConstant: 24).isActive = true
         return v
     }()
 
@@ -984,7 +984,7 @@ class BearyDiaryCardCell: UITableViewCell {
     private lazy var moreButton: UIButton = {
         let btn = BearyHit44Button(type: .custom)
         btn.translatesAutoresizingMaskIntoConstraints = false
-        btn.setImage(BearyFeedIconCache.image(named: "icon_more", pointSize: 21), for: .normal)
+        btn.setImage(BearyFeedIconCache.image(named: "icon_more", pointSize: 24), for: .normal)
         btn.tintColor = BearyColors.gray
         btn.widthAnchor.constraint(equalToConstant: 28).isActive = true
         btn.heightAnchor.constraint(equalToConstant: 28).isActive = true
@@ -1365,7 +1365,7 @@ class BearyDiaryCardCell: UITableViewCell {
         moodStack.setContentCompressionResistancePriority(.required, for: .horizontal)
         let imageHeight = imagesScrollView.heightAnchor.constraint(equalToConstant: 0)
         imageHeightConstraint = imageHeight
-        let likeWidth = likeButton.widthAnchor.constraint(equalToConstant: 22)
+        let likeWidth = likeButton.widthAnchor.constraint(equalToConstant: 24)
         likeWidth.isActive = true
         likeButtonWidthConstraint = likeWidth
         let emoteHeight = emoteFlowView.heightAnchor.constraint(equalToConstant: 0)
@@ -1378,11 +1378,11 @@ class BearyDiaryCardCell: UITableViewCell {
         var extraConstraints: [NSLayoutConstraint] = []
         if cardMode == .profile {
             // 个人主页口径：点赞高 22、收藏/分享 21×21（原 required 约束）。
-            extraConstraints.append(likeButton.heightAnchor.constraint(equalToConstant: 22))
-            extraConstraints.append(bookmarkButton.widthAnchor.constraint(equalToConstant: 21))
-            extraConstraints.append(bookmarkButton.heightAnchor.constraint(equalToConstant: 21))
-            extraConstraints.append(shareButton.widthAnchor.constraint(equalToConstant: 21))
-            extraConstraints.append(shareButton.heightAnchor.constraint(equalToConstant: 21))
+            extraConstraints.append(likeButton.heightAnchor.constraint(equalToConstant: 24))
+            extraConstraints.append(bookmarkButton.widthAnchor.constraint(equalToConstant: 24))
+            extraConstraints.append(bookmarkButton.heightAnchor.constraint(equalToConstant: 24))
+            extraConstraints.append(shareButton.widthAnchor.constraint(equalToConstant: 24))
+            extraConstraints.append(shareButton.heightAnchor.constraint(equalToConstant: 24))
             extraConstraints.append(recipientIconView.widthAnchor.constraint(equalToConstant: 13))
             extraConstraints.append(recipientIconView.heightAnchor.constraint(equalToConstant: 13))
             extraConstraints.append(badgeImageView.widthAnchor.constraint(equalToConstant: 17))
@@ -1398,10 +1398,10 @@ class BearyDiaryCardCell: UITableViewCell {
             // 原 2pt 内边距依赖删除（内边距 + 无约束曾使图标框随内容浮动）。
             // 标题行内可隐藏子视图的固定尺寸用 999 优先级，避免与 stack 的
             // 零尺寸约束冲突出警告。
-            extraConstraints.append(bookmarkButton.widthAnchor.constraint(equalToConstant: 21))
-            extraConstraints.append(bookmarkButton.heightAnchor.constraint(equalToConstant: 21))
-            extraConstraints.append(shareButton.widthAnchor.constraint(equalToConstant: 21))
-            extraConstraints.append(shareButton.heightAnchor.constraint(equalToConstant: 21))
+            extraConstraints.append(bookmarkButton.widthAnchor.constraint(equalToConstant: 24))
+            extraConstraints.append(bookmarkButton.heightAnchor.constraint(equalToConstant: 24))
+            extraConstraints.append(shareButton.widthAnchor.constraint(equalToConstant: 24))
+            extraConstraints.append(shareButton.heightAnchor.constraint(equalToConstant: 24))
             let recipientIconHeight = recipientIconView.heightAnchor.constraint(equalToConstant: 13)
             recipientIconHeight.priority = UILayoutPriority(999)
             let badgeWidth = badgeImageView.widthAnchor.constraint(equalToConstant: 17)
@@ -1672,7 +1672,7 @@ class BearyDiaryCardCell: UITableViewCell {
         guestLoginPromptButton.isHidden = true
         actionStack.isHidden = false
         emoteFlowView.isHidden = false
-        likeButtonWidthConstraint?.constant = 22
+        likeButtonWidthConstraint?.constant = 24
         likeButton.isEnabled = true
         bookmarkButton.isEnabled = true
         likeButton.imageView?.transform = .identity
@@ -2754,7 +2754,7 @@ class BearyDiaryCardCell: UITableViewCell {
     private func updateLikeButton() {
         let liked = currentEntry?.likedByMe ?? false
         let countValue = currentEntry?.likeCount ?? 0
-        let heartImage = BearyFeedIconCache.image(named: liked ? "icon_heart_fill" : "icon_heart", pointSize: 22) ?? BearyFeedIconCache.image(named: "icon_heart", pointSize: 22)
+        let heartImage = BearyFeedIconCache.image(named: liked ? "icon_heart_fill" : "icon_heart", pointSize: 24) ?? BearyFeedIconCache.image(named: "icon_heart", pointSize: 24)
         likeButton.setImage(heartImage, for: .normal)
         // 计数位宽度由显式约束定，不靠按钮固有宽：按钮固有宽不含标题边距，
         // 栈按固有宽给帧时标题框只剩边距差，数字会被裁成左半弧。
@@ -2788,7 +2788,7 @@ class BearyDiaryCardCell: UITableViewCell {
     /// 已赞态爱心与计数同为点赞亮红（BearyColors.likeRed = #ff3b30）。
     private func applyLikeButtonState(liked: Bool, count: Int) {
         let likedImageName = liked ? "icon_heart_fill" : "icon_heart"
-        let likedImage = BearyFeedIconCache.image(named: likedImageName, pointSize: 22)
+        let likedImage = BearyFeedIconCache.image(named: likedImageName, pointSize: 24)
         likeButton.setImage(likedImage, for: .normal)
         let imageWidth = likedImage?.size.width ?? 22
         if count <= 0 {
@@ -2808,7 +2808,7 @@ class BearyDiaryCardCell: UITableViewCell {
 
     private func applyProfileBookmarkState(bookmarked: Bool) {
         let bookmarkImageName = bookmarked ? "icon_bookmark_fill" : "icon_bookmark"
-        bookmarkButton.setImage(BearyFeedIconCache.image(named: bookmarkImageName, pointSize: 21), for: .normal)
+        bookmarkButton.setImage(BearyFeedIconCache.image(named: bookmarkImageName, pointSize: 24), for: .normal)
         bookmarkButton.tintColor = bookmarked ? BearyColors.orange : BearyColors.gray
         refreshActionAccessibility()
     }
@@ -2816,7 +2816,7 @@ class BearyDiaryCardCell: UITableViewCell {
     /// 取消点赞 pre-unlike（首页模式；网页 .pre-unlike 同款：心形缩 .8 + 填充先清），
     /// 失败由完成回调调 updateLikeButton 恢复。未赞色与第 6 项统一为灰。
     private func applyPreUnlike() {
-        let outlineImage = BearyFeedIconCache.image(named: "icon_heart", pointSize: 22) ?? BearyFeedIconCache.image(named: "icon_heart", pointSize: 22)
+        let outlineImage = BearyFeedIconCache.image(named: "icon_heart", pointSize: 24) ?? BearyFeedIconCache.image(named: "icon_heart", pointSize: 24)
         likeButton.setImage(outlineImage, for: .normal)
         likeButton.tintColor = BearyColors.gray
         likeButton.setTitleColor(BearyColors.gray, for: .normal)
@@ -2826,7 +2826,7 @@ class BearyDiaryCardCell: UITableViewCell {
     /// 取消赞预态（个人主页模式；首页 applyPreUnlike 同款，未赞色与第 6 项统一为灰）：
     /// 先换空心图 + 灰色 + 缩 .8，失败由控制器 reload 复原。
     private func applyCellPreUnlike() {
-        likeButton.setImage(BearyFeedIconCache.image(named: "icon_heart", pointSize: 22), for: .normal)
+        likeButton.setImage(BearyFeedIconCache.image(named: "icon_heart", pointSize: 24), for: .normal)
         likeButton.tintColor = BearyColors.gray
         likeButton.setTitleColor(BearyColors.gray, for: .normal)
         BearyIconMotion.animateIconScale(on: likeButton, to: 0.8)
@@ -2834,7 +2834,7 @@ class BearyDiaryCardCell: UITableViewCell {
 
     private func updateBookmarkButton() {
         let bookmarked = currentEntry?.bookmarkedByMe ?? false
-        let bookmarkImage = BearyFeedIconCache.image(named: bookmarked ? "icon_bookmark_fill" : "icon_bookmark", pointSize: 21) ?? BearyFeedIconCache.image(named: "icon_bookmark", pointSize: 21)
+        let bookmarkImage = BearyFeedIconCache.image(named: bookmarked ? "icon_bookmark_fill" : "icon_bookmark", pointSize: 24) ?? BearyFeedIconCache.image(named: "icon_bookmark", pointSize: 24)
         bookmarkButton.setImage(bookmarkImage, for: .normal)
         bookmarkButton.tintColor = bookmarked ? BearyColors.orange : BearyColors.gray
         refreshActionAccessibility()
@@ -3117,7 +3117,7 @@ class BearyDiaryCardCell: UITableViewCell {
         likePressPreviewActive = false
         if cardMode == .profile {
             if cellLikedByMe {
-                likeButton.setImage(BearyFeedIconCache.image(named: "icon_heart_fill", pointSize: 22), for: .normal)
+                likeButton.setImage(BearyFeedIconCache.image(named: "icon_heart_fill", pointSize: 24), for: .normal)
                 likeButton.tintColor = BearyColors.likeRed
                 likeButton.setTitleColor(BearyColors.likeRed, for: .normal)
             }
@@ -3491,7 +3491,7 @@ class BearyDiaryCardCell: UITableViewCell {
             } else {
                 let made = BearyDiaryCardDashedAddButton(frame: .zero)
                 made.translatesAutoresizingMaskIntoConstraints = false
-                made.setImage(BearyFeedIconCache.image(named: "icon_plus", pointSize: 16), for: .normal)
+                made.setImage(BearyFeedIconCache.image(named: "icon_plus", pointSize: 24), for: .normal)
                 made.tintColor = BearyColors.gray
                 made.accessibilityLabel = "贴一只小熊"
                 made.widthAnchor.constraint(equalToConstant: 34).isActive = true
@@ -3511,7 +3511,7 @@ class BearyDiaryCardCell: UITableViewCell {
             } else {
                 let made = BearyDiaryCardDashedAddButton(frame: .zero)
                 made.translatesAutoresizingMaskIntoConstraints = false
-                made.setImage(BearyFeedIconCache.image(named: "icon_plus", pointSize: 16), for: .normal)
+                made.setImage(BearyFeedIconCache.image(named: "icon_plus", pointSize: 24), for: .normal)
                 made.tintColor = BearyColors.gray
                 made.accessibilityLabel = "贴一只小熊"
                 made.widthAnchor.constraint(equalToConstant: 34).isActive = true

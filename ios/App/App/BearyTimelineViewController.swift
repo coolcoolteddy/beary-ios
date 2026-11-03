@@ -1142,7 +1142,7 @@ final class BearyTimelineCell: UITableViewCell {
         moreButton.translatesAutoresizingMaskIntoConstraints = false
         // 2026-10-29 改版：⋯ 菜单钮接替原 meta 行末地球钮的位置，
         // 21pt 灰色图标、28×28 帧（BearyHit44Button 扩后热区仍 44）。
-        if let moreImage = BearyIconImages.image(named: "icon_more", pointSize: 21) {
+        if let moreImage = BearyIconImages.image(named: "icon_more", pointSize: 24) {
             moreButton.setImage(moreImage, for: .normal)
         }
         moreButton.tintColor = BearyColors.gray
