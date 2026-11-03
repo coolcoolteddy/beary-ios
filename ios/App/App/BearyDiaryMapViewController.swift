@@ -259,10 +259,18 @@ final class BearyDiaryMapViewController: UIViewController, MKMapViewDelegate, UI
     /// 只重拉数据，不动地图视角（不调 setRegion/showAnnotations、不重置
     /// didInitialGeocode）、不动列表偏移、不清地理编码缓存与已选组，
     /// 因此重试前后视角与列表位置自然保留。
+    /// 分页中断并解（#784）：中断且续拉游标还在时从游标续拉，已收页
+    /// 与去重集保留、成功后整批成表，不从头重拉、不丢已收页；无游标
+    /// 时（首页面失败）仍从头重拉。
     @objc private func didTapInlineRetry() {
         inlineRetryButton.isHidden = true
-        setStatusTextFaded("加载中…")
-        fetchAllEntries()
+        if fetchInterrupted, let before = fetchResumeBefore, let beforeId = fetchResumeBeforeId {
+            loadGeneration += 1
+            fetchEntriesPage(before: before, beforeId: beforeId, page: fetchResumePage, generation: loadGeneration)
+        } else {
+            setStatusTextFaded("加载中…")
+            fetchAllEntries()
+        }
     }
 
     // MARK: - 数据：游标分页拉全量（上限 10 页防无界；不是轮询）
@@ -270,11 +278,26 @@ final class BearyDiaryMapViewController: UIViewController, MKMapViewDelegate, UI
 
     private var fetchCollected: [Entry] = []
     private var fetchSeenIds = Set<String>()
+    /// 分页中断续拉状态：上轮成功页的游标与页码；失败时原地重试
+    /// 从该游标续拉，不从头重拉、不动已展示的列表与视角。
+    private var fetchResumeBefore: Int?
+    private var fetchResumeBeforeId: String?
+    private var fetchResumePage: Int = 1
+    private var fetchInterrupted: Bool = false
+    /// 本轮拉取开始时是否已有数据（调用方初始日记或上一轮成功数据）：
+    /// 有旧数据时失败只保留旧表、不拿部分页替换整表；无旧数据时
+    /// 部分页才成表（星图 #732 同款口径）。
+    private var fetchHadBaseContent: Bool = false
 
     private func fetchAllEntries() {
         loadGeneration += 1
+        fetchHadBaseContent = !allEntries.isEmpty
         fetchCollected = []
         fetchSeenIds = []
+        fetchResumeBefore = nil
+        fetchResumeBeforeId = nil
+        fetchResumePage = 1
+        fetchInterrupted = false
         inlineRetryButton.isHidden = true
         fetchEntriesPage(before: nil, beforeId: nil, page: 1, generation: loadGeneration)
     }
@@ -299,19 +322,12 @@ final class BearyDiaryMapViewController: UIViewController, MKMapViewDelegate, UI
                         self.inlineRetryButton.isHidden = true
                         self.showFailureViewFaded()
                         self.setStatusTextFaded("日记加载失败")
-                    } else if !self.allEntries.isEmpty {
-                        // 已有已展示数据时网络失败不清空地图：保留已加载聚合，
-                        // 状态行明示，并在状态行旁给就近重试（失败页重试钮在
-                        // 隐藏的 failureView 内，本分支点不到，故另设此钮）。
-                        self.setStatusTextFaded("网络失败，显示已加载的日记")
-                        self.inlineRetryButton.isHidden = false
-                    } else {
-                        // 同构修正：无初始数据、首批成功后后续页失败时，
-                        // allEntries 仍空、画面实际什么都没显示，不能再写
-                        // “显示已加载的日记”。把本轮已暂存的部分结果先上屏
-                        // 并明示“仅部分”，同时给就近重试；若暂存结果里连
-                        // 一个可展示的地点组都没有，则仍走可重试的失败页，
-                        // 不谎称已显示部分结果。
+                    } else if !self.fetchCollected.isEmpty && !self.fetchHadBaseContent {
+                        // 无旧数据、中途断了：部分页成表，不丢已收页；
+                        // 视角不动：首批已缩放过的不再抢区域（didInitialGeocode 门控）。
+                        // 同构修正（主线已有）：暂存结果里若一个可展示的地点组
+                        // 都没有，则仍走可重试的失败页，不谎称已显示部分结果。
+                        self.failureView.isHidden = true
                         self.allEntries = self.fetchCollected
                         self.regroupAndGeocode()
                         if self.groups.isEmpty {
@@ -319,9 +335,18 @@ final class BearyDiaryMapViewController: UIViewController, MKMapViewDelegate, UI
                             self.showFailureViewFaded()
                             self.setStatusTextFaded("日记加载失败")
                         } else {
-                            self.setStatusTextFaded("网络失败，仅显示已加载的部分日记")
+                            self.fetchInterrupted = true
+                            self.setStatusTextFaded("仅展示已加载的部分，点按重试")
                             self.inlineRetryButton.isHidden = false
                         }
+                    } else {
+                        // 已有数据时网络失败不清空地图：保留已加载聚合，状态行明示；
+                        // 有内容时同样给状态行旁就近重试，列表与视角位置不动。
+                        // 续拉游标还在时点重试从游标续拉（见 didTapInlineRetry），
+                        // 不从头重拉、不丢已收页。
+                        self.fetchInterrupted = self.fetchResumeBefore != nil
+                        self.setStatusTextFaded("网络失败，显示已加载的日记")
+                        self.inlineRetryButton.isHidden = false
                     }
                 case .success(let list):
                     let pageEntries = list.entries ?? []
@@ -334,10 +359,14 @@ final class BearyDiaryMapViewController: UIViewController, MKMapViewDelegate, UI
                     }
                     let last = pageEntries.last
                     if pageEntries.count >= 50, page < 10, let cursor = last?.createdAt, let lastId = last?.id {
+                        self.fetchResumeBefore = cursor
+                        self.fetchResumeBeforeId = lastId
+                        self.fetchResumePage = page + 1
                         self.fetchEntriesPage(before: cursor, beforeId: lastId, page: page + 1, generation: generation)
                         return
                     }
                     self.failureView.isHidden = true
+                    self.fetchInterrupted = false
                     self.inlineRetryButton.isHidden = true
                     self.allEntries = self.fetchCollected
                     self.regroupAndGeocode()
