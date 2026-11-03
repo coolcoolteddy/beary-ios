@@ -1337,7 +1337,7 @@ final class BearyDetailViewController: UIViewController {
             return
         }
         label.alpha = 0
-        UIView.animate(withDuration: 0.25, delay: 0, options: [.curveEaseOut, .beginFromCurrentState], animations: {
+        UIView.animate(withDuration: BearyMotion.localStateDuration, delay: 0, options: [.curveEaseOut, .beginFromCurrentState], animations: {
             label.alpha = 1
         })
     }
@@ -1346,7 +1346,7 @@ final class BearyDetailViewController: UIViewController {
         guard !UIAccessibility.isReduceMotionEnabled, button.window != nil,
               let titleLabel = button.titleLabel else { return }
         titleLabel.alpha = 0
-        UIView.animate(withDuration: 0.25, delay: 0, options: [.curveEaseOut, .beginFromCurrentState], animations: {
+        UIView.animate(withDuration: BearyMotion.localStateDuration, delay: 0, options: [.curveEaseOut, .beginFromCurrentState], animations: {
             titleLabel.alpha = 1
         })
     }
@@ -1357,7 +1357,7 @@ final class BearyDetailViewController: UIViewController {
             return
         }
         view.alpha = 0
-        UIView.animate(withDuration: 0.25, delay: 0, options: [.curveEaseOut, .beginFromCurrentState], animations: {
+        UIView.animate(withDuration: BearyMotion.localStateDuration, delay: 0, options: [.curveEaseOut, .beginFromCurrentState], animations: {
             view.alpha = 1
         })
     }

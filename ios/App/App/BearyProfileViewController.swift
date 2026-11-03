@@ -3381,7 +3381,7 @@ class BearyProfileViewController: UIViewController {
         let scaleX = targetWidth / underlineBaseWidth
         let targetTransform = CGAffineTransform(a: scaleX, b: 0, c: 0, d: 1, tx: targetX - scaleX * underlineBaseX, ty: 0)
         if animated {
-            UIView.animate(withDuration: 0.28, delay: 0, options: [.curveEaseInOut, .beginFromCurrentState], animations: {
+            UIView.animate(withDuration: BearyMotion.localStateDuration, delay: 0, options: [.curveEaseInOut, .beginFromCurrentState], animations: {
                 self.tabsUnderline.transform = targetTransform
             })
         } else {
