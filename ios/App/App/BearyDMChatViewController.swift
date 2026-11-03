@@ -35,7 +35,7 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
     private let inputTextView = UITextView()
     // 审计：发送钮视觉高 32 不变，热区用 Hit44 扩到 44（读“全部已读”钮同款口径）。
     private let sendButton = BearyHit44Button(type: .system)
-    private let newMessagePill = UIButton(type: .system)
+    private let newMessagePill = BearyHit44Button(type: .system)
     // U5：加载失败态（空消息时）复用 BearyStateView 的动作入口（重试钮），
     // 与 #685 的 firstLoadStateView（仅 loading 形态）分开，不动它。
     private let loadFailedStateView = BearyStateView()
@@ -54,8 +54,20 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
     /// 输入框高度约束：跟内容走（空态一行、上限五行），替代旧的 36~160 区间约束。
     private var inputTextViewHeightConstraint: NSLayoutConstraint?
     private var messages: [BearyAPI.DMMessage] = []
-    // 审计：下拉刷新与翻旧消息共用同一 busy 锁，不再两套守卫并发。
-    private var messageBusy = false
+    // 审计：下拉刷新与翻旧消息分开加载态，不再共用同一 busy 锁静默吞刷新：
+    // latestLoading = 最新页在途；olderLoading = 翻旧消息在途；
+    // refreshQueued = 翻旧在途时用户下拉刷新排队（翻旧结束即跑，不静默丢）。
+    private var latestLoading = false
+    private var olderLoading = false
+    private var refreshQueued = false
+    private var newMessagePillBottomConstraint: NSLayoutConstraint?
+    /// 翻旧加载态浮标：加载中显“正在加载更早消息…”（转圈），失败显
+    /// “加载失败，点按重试”（点按即重试）；平时隐藏。浮在列表顶部，
+    /// 不占表高、不进 contentSize，锚点计算不受影响。
+    private let olderLoadingView = UIView()
+    private let olderLoadingSpinner = UIActivityIndicatorView(style: .medium)
+    private let olderLoadingLabel = UILabel()
+    private var olderLoadFailed = false
     private var hasMoreOlder = false
     private var loadFailed = false
     private var sessionClosed = false
@@ -195,7 +207,6 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
         NSLayoutConstraint.activate([
             countLabel.bottomAnchor.constraint(equalTo: inputBar.topAnchor, constant: -4),
             countLabel.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -16),
-            newMessagePill.bottomAnchor.constraint(equalTo: inputBar.topAnchor, constant: -8),
             newMessagePill.centerXAnchor.constraint(equalTo: view.centerXAnchor),
             newMessagePill.heightAnchor.constraint(equalToConstant: 32),
         ])
@@ -219,6 +230,34 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
             syncFailedPill.bottomAnchor.constraint(equalTo: inputBar.topAnchor, constant: -8),
             syncFailedPill.centerXAnchor.constraint(equalTo: view.centerXAnchor),
             syncFailedPill.heightAnchor.constraint(equalToConstant: 32),
+        ])
+        newMessagePillBottomConstraint = newMessagePill.bottomAnchor.constraint(equalTo: inputBar.topAnchor, constant: -8)
+        newMessagePillBottomConstraint?.isActive = true
+        // 翻旧加载态浮标（见声明处注释）：悬在列表顶部，不占表高。
+        olderLoadingView.translatesAutoresizingMaskIntoConstraints = false
+        olderLoadingView.backgroundColor = BearyColors.ink
+        olderLoadingView.layer.cornerRadius = 16
+        olderLoadingView.isHidden = true
+        olderLoadingView.addGestureRecognizer(UITapGestureRecognizer(target: self, action: #selector(olderLoadingViewTapped)))
+        view.addSubview(olderLoadingView)
+        olderLoadingSpinner.translatesAutoresizingMaskIntoConstraints = false
+        olderLoadingSpinner.color = BearyColors.bg
+        olderLoadingView.addSubview(olderLoadingSpinner)
+        olderLoadingLabel.translatesAutoresizingMaskIntoConstraints = false
+        olderLoadingLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 13, weight: .semibold))
+        olderLoadingLabel.adjustsFontForContentSizeCategory = true
+        olderLoadingLabel.textColor = BearyColors.bg
+        olderLoadingLabel.text = "正在加载更早消息…"
+        olderLoadingView.addSubview(olderLoadingLabel)
+        NSLayoutConstraint.activate([
+            olderLoadingView.topAnchor.constraint(equalTo: tableView.topAnchor, constant: 8),
+            olderLoadingView.centerXAnchor.constraint(equalTo: view.centerXAnchor),
+            olderLoadingView.heightAnchor.constraint(equalToConstant: 32),
+            olderLoadingSpinner.leadingAnchor.constraint(equalTo: olderLoadingView.leadingAnchor, constant: 16),
+            olderLoadingSpinner.centerYAnchor.constraint(equalTo: olderLoadingView.centerYAnchor),
+            olderLoadingLabel.leadingAnchor.constraint(equalTo: olderLoadingSpinner.trailingAnchor, constant: 8),
+            olderLoadingLabel.trailingAnchor.constraint(equalTo: olderLoadingView.trailingAnchor, constant: -16),
+            olderLoadingLabel.centerYAnchor.constraint(equalTo: olderLoadingView.centerYAnchor),
         ])
 
         // 私信权限横幅：对方不接受私信时出现（高 36），平时高 0 不占位。
@@ -422,6 +461,8 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
         let count = inputTextView.text.trimmingCharacters(in: .whitespacesAndNewlines).utf16.count
         countLabel.isHidden = count < 1800
         countLabel.text = "\(count)/2000"
+        // 字数提示显隐变化时 pill 位置/预留随之变（两者共存即 pill 上移）。
+        updateNewMessagePillLayout()
     }
 
     private func isNearBottom() -> Bool {
@@ -431,7 +472,7 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
     }
 
     @objc private func newMessagePillTapped() {
-        newMessagePill.isHidden = true
+        setNewMessagePillVisible(false)
         scrollToBottomIfNeeded()
     }
 
@@ -448,6 +489,59 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
     @objc private func syncFailedPillTapped() {
         // 重试语义：只重拉历史确认送达状态，不重发消息。
         loadLatest()
+    }
+
+    /// “新消息”pill 显隐唯一入口：显隐之外同步两件事——
+    /// (1) 列表底部预留：pill 出现时 tableView.contentInset.bottom 预留 pill 所占高度
+    /// （视觉高 32 + 与输入条的间距），底部一条消息不再被 pill 盖住；收起即清零。
+    /// (2) 与字数提示共存：两者同时出现时 pill 上移到字数提示上方（间距 12），
+    /// 纵向不再互叠；字数提示收起即回到底部 -8。视觉高 32、圆角、颜色、字号一律不动；
+    /// 操作区扩到 44 靠 BearyHit44Button 的 point(inside:)（视觉帧不动）。
+    private func setNewMessagePillVisible(_ visible: Bool) {
+        if newMessagePill.isHidden != !visible {
+            newMessagePill.isHidden = !visible
+        }
+        updateNewMessagePillLayout()
+    }
+
+    private func updateNewMessagePillLayout() {
+        let pillVisible = !newMessagePill.isHidden
+        let newConstant: CGFloat
+        if pillVisible, !countLabel.isHidden {
+            let countHeight = countLabel.intrinsicContentSize.height
+            newConstant = -((countHeight > 0 ? countHeight : 16) + 12)
+        } else {
+            newConstant = -8
+        }
+        if newMessagePillBottomConstraint?.constant != newConstant {
+            newMessagePillBottomConstraint?.constant = newConstant
+        }
+        let reserved: CGFloat = pillVisible ? (-newConstant + 32) : 0
+        if tableView.contentInset.bottom != reserved {
+            tableView.contentInset.bottom = reserved
+            tableView.scrollIndicatorInsets.bottom = reserved
+        }
+    }
+
+    /// 翻旧加载态浮标：加载中转圈、失败显点按重试、平时隐藏。
+    private func setOlderLoadingState(loading: Bool, failed: Bool) {
+        olderLoadFailed = failed
+        olderLoadingView.isHidden = !loading && !failed
+        if loading {
+            olderLoadingLabel.text = "正在加载更早消息…"
+            olderLoadingSpinner.startAnimating()
+        } else {
+            olderLoadingSpinner.stopAnimating()
+            if failed {
+                olderLoadingLabel.text = "加载失败，点按重试"
+            }
+        }
+    }
+
+    @objc private func olderLoadingViewTapped() {
+        // 仅失败态可点按重试；加载中点按无动作。
+        guard olderLoadFailed, !olderLoading else { return }
+        loadOlder()
     }
 
     private func updateSendButton() {
@@ -581,13 +675,25 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
             onRequireLogin?()
             return
         }
-        guard !messageBusy else {
-            tableView.refreshControl?.endRefreshing()
+        // 分开加载态：翻旧在途时下拉刷新不再被共用锁静默吞掉——排队，
+        // 刷新控件保持转圈（可见反馈），翻旧结束即跑这次刷新；
+        // 翻旧在途蕴含 hasMoreOlder（loadOlder 守卫），无更早消息时翻旧根本跑不起来，
+        // 正常刷新路径不受影响。最新页本身在途时同样不断刷新控件，
+        // 等在途那次结束（它会 endRefreshing），不另排队。
+        if olderLoading {
+            refreshQueued = true
+            return
+        }
+        // U1 分锁版：共用 messageBusy 已由 #727 拆为 latestLoading／olderLoading；
+        // 最新页在途的跳过仍走 onSkipped 回调（发送后重拉即走此路），但不 endRefreshing——
+        // 在途那次结束时会 endRefreshing（#727“最新页在途同样不断刷新控件”口径）；
+        // 翻旧在途的跳过走上面排队路，同样不断刷新控件。
+        guard !latestLoading else {
             // U1：被守卫跳过不是“已确认”——回调给调用方补反馈（发送后重拉即走此路）。
             onSkipped?()
             return
         }
-        messageBusy = true
+        latestLoading = true
         loadFailed = false
         // 审计第 19 项：首次无本地消息才显加载态；有本地消息时先显旧消息、
         // 后台刷新（不遮内容）。下拉刷新自带转圈时不叠加；发送成功后的重拉
@@ -609,7 +715,7 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
         BearyAPI.shared.fetchDMHistory(userId: userId, limit: 30) { [weak self] result in
             DispatchQueue.main.async {
                 guard let self = self else { return }
-                self.messageBusy = false
+                self.latestLoading = false
                 self.tableView.refreshControl?.endRefreshing()
                 switch result {
                 case .success(let history):
@@ -634,7 +740,7 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
                     self.tableView.reloadData()
                     if wasAtBottom {
                         self.scrollToBottomIfNeeded()
-                        self.newMessagePill.isHidden = true
+                        self.setNewMessagePillVisible(false)
                     }
                     // 对方发了新消息时重标已读：以最新一条对方消息 id 为准，
                     // 变了才放行再标（旧 didMarkRead 本页只标一次，之后的新消息永不清未读）。
@@ -667,13 +773,18 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
         }
     }
 
-    /// 向上翻 older：before_id 取最旧一条 id；前插后以翻页前首条消息 id 为锚点
-    /// 修正 offset（锚点行在视口内的相对位置不变），行高重算也不跳视口；
-    /// 锚点丢失时才回落到整表高度差口径。
+    /// 向上翻 older：before_id 取最旧一条 id；回包时先校验当前视口——
+    /// 锚点行仍可见且用户未滑离顶部时才按发请求时的锚点恢复 offset；
+    /// 用户已滑走时不用锚点覆盖当前位置，改为按插入高度平移当前视口
+    /// （前插行会把绝对位置顶下去，平移后用户看到的内容原地不动）；
+    /// 锚点丢失且用户仍在顶部时才回落到整表高度差口径。
     private func loadOlder() {
-        guard let userId = peer.id, !messageBusy, hasMoreOlder,
+        // 数据互斥仍保留单向旧口径：最新页在途时翻旧不并发（等下次滚动再触发），
+        // 避免两路回包交错改表；反向（翻旧在途时下拉刷新）不再静默吞，见 loadLatest 的排队。
+        guard let userId = peer.id, !olderLoading, !latestLoading, hasMoreOlder,
               let oldestId = messages.first?.id else { return }
-        messageBusy = true
+        olderLoading = true
+        setOlderLoadingState(loading: true, failed: false)
         let anchorId = oldestId
         let anchorViewportOffset: CGFloat = {
             let rect = tableView.rectForRow(at: IndexPath(row: 0, section: 0))
@@ -684,26 +795,50 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
         BearyAPI.shared.fetchDMHistory(userId: userId, beforeId: oldestId, limit: 30) { [weak self] result in
             DispatchQueue.main.async {
                 guard let self = self else { return }
-                self.messageBusy = false
+                self.olderLoading = false
                 switch result {
                 case .success(let history):
+                    // 回包时视口校验（在改数据前取当前态）：锚点行 = 旧首条（row 0）。
+                    // 滑走判定 = 锚点行已不在可见区，或拖动/减速中视口已离开顶部
+                    // 触发区（>120，与 scrollViewDidScroll 的翻页阈值同口径）；
+                    // 单纯拖动/减速本身不判滑走——手指仍按在顶部等待时，锚点恢复
+                    // 正是抵消上方新行对视口的顶推，跳过它反而会顶跳。
+                    let responseOffsetY = self.tableView.contentOffset.y
+                    let anchorStillVisible = self.tableView.indexPathsForVisibleRows?.contains(IndexPath(row: 0, section: 0)) == true
+                    let userIsScrolling = self.tableView.isDragging || self.tableView.isDecelerating
+                    let userMovedAway = !anchorStillVisible || (userIsScrolling && responseOffsetY > 120)
                     let older = self.resolvedSenders(Array(history.resolvedMessages.reversed()))
                     self.hasMoreOlder = history.resolvedMessages.count >= 30
                     BearyDMStore.saveMessages(accountId: self.storeAccountId, peer: self.peer, messages: older)
                     self.messages = BearyDMStore.messages(accountId: self.storeAccountId, peerId: userId)
                     self.tableView.reloadData()
                     self.tableView.layoutIfNeeded()
-                    if let anchorIndex = self.messages.firstIndex(where: { $0.id == anchorId }) {
+                    self.setOlderLoadingState(loading: false, failed: false)
+                    let delta = self.tableView.contentSize.height - oldHeight
+                    if userMovedAway {
+                        // 不用发请求时的锚点覆盖当前位置：按插入高度平移当前视口。
+                        self.tableView.contentOffset = CGPoint(x: 0, y: responseOffsetY + delta)
+                    } else if let anchorIndex = self.messages.firstIndex(where: { $0.id == anchorId }) {
                         let rect = self.tableView.rectForRow(at: IndexPath(row: anchorIndex, section: 0))
                         self.tableView.contentOffset = CGPoint(x: 0, y: rect.origin.y - anchorViewportOffset)
                     } else {
-                        let delta = self.tableView.contentSize.height - oldHeight
                         self.tableView.contentOffset = CGPoint(x: 0, y: oldOffsetY + delta)
                     }
+                    // 排队过的下拉刷新：翻旧结束即跑（刷新控件一直转圈未停）。
+                    if self.refreshQueued {
+                        self.refreshQueued = false
+                        self.loadLatest()
+                    }
                 case .failure:
-                    // 审计：翻旧失败不再静默——toast 说明，hasMoreOlder 保持，
-                    // 用户再次滚动到顶部即重试（loadOlder 守卫已放行）。
+                    // 审计：翻旧失败不再静默——浮标切点按重试 + toast 说明，
+                    // hasMoreOlder 保持，用户再次滚动到顶部即重试（loadOlder 守卫已放行）。
+                    self.setOlderLoadingState(loading: false, failed: true)
                     BearyToast.show(in: self.view, message: "加载更早消息失败，滚动可重试")
+                    // 翻旧失败也不吞排队的刷新：用户要的是最新页，照常跑。
+                    if self.refreshQueued {
+                        self.refreshQueued = false
+                        self.loadLatest()
+                    }
                 }
             }
         }
@@ -749,7 +884,7 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
                     self.sendUnconfirmed = true
                     self.loadLatest(onLoaded: { [weak self] wasAtBottom in
                         if !wasAtBottom {
-                            self?.newMessagePill.isHidden = false
+                            self?.setNewMessagePillVisible(true)
                         } else {
                             // 发送动画：刚发出的气泡从输入框位置动进历史区末行。
                             self?.animateLastMineRow()
@@ -823,12 +958,17 @@ final class BearyDMChatViewController: UIViewController, UITableViewDelegate, UI
     func scrollViewDidScroll(_ scrollView: UIScrollView) {
         // 回到底部附近即收起“新消息”pill（程序化跟随到底同样收起）。
         if isNearBottom() {
-            newMessagePill.isHidden = true
+            setNewMessagePillVisible(false)
+        }
+        // 翻旧失败浮标只在顶部附近有意义：滑离顶部即收起，回到顶部滚动本身即重试。
+        if olderLoadFailed && scrollView.contentOffset.y > 120 {
+            setOlderLoadingState(loading: false, failed: false)
         }
         // 仅用户手势滚动到顶部附近且还有 older 时翻页：程序化滚动（首拉后
         // 回到底部、reloadData 布局抖动）不得触发，否则首屏会连翻 older。
-        // 下拉刷新控件也在顶部，阈值取 120，与下拉手势不打架（下拉刷新在途
-        // 时 loadOlder 的共用 busy 锁互斥）。
+        // 下拉刷新控件也在顶部，阈值取 120，与下拉手势不打架；
+        // 最新页在途时 loadOlder 不并发（loadOlder 的 latestLoading 守卫），
+        // 翻旧在途时滚动不再重复触发（loadOlder 的 olderLoading 守卫）。
         guard scrollView.isDragging || scrollView.isDecelerating else { return }
         if scrollView.contentOffset.y < 120 {
             loadOlder()
