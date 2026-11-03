@@ -126,6 +126,13 @@ final class BearyDraftBoxViewController: UIViewController {
     /// 面板先随加载态出现，数据到达后 tryPlayEntrance 只补卡片部分，不重播面板。
     private var didPlaySheetEntrance = false
     private var isDismissing = false
+    /// 无障碍：关闭后焦点返回的触发入口（编辑器草稿钮，由打开方在 present
+    /// 前传入；未传入时不发焦点通知）。新建／打开草稿走回调开新界面时不
+    /// 用它（新界面自己接管焦点）。
+    var accessibilityFocusReturnElement: UIView?
+    /// 无障碍：打开首焦点只发一次（viewDidAppear 会在上层弹框关闭回来时
+    /// 再触发，不重复抢焦点）。
+    private var didPostDraftBoxOpenFocus = false
     private var isPadLayout = false
     private var bottomSpacerHeight: NSLayoutConstraint?
     /// G5：草稿库读取失败标记（loadAllResult 失败时置位，渲染时出失败态，不出空态）。
@@ -237,6 +244,15 @@ final class BearyDraftBoxViewController: UIViewController {
         // 卡片入场仍由 tryPlayEntrance 的 draftsInitialLoaded 门控。
         playSheetEntrance()
         tryPlayEntrance()
+        // 无障碍：打开首焦点只发一次，落到面板标题“草稿箱”；上层弹框关闭
+        // 回来时不再重发抢焦点。未开 VoiceOver 时 post 为空操作。
+        if !didPostDraftBoxOpenFocus {
+            didPostDraftBoxOpenFocus = true
+            DispatchQueue.main.async { [weak self] in
+                guard let self = self, !self.isDismissing else { return }
+                UIAccessibility.post(notification: .layoutChanged, argument: self.titleLabel)
+            }
+        }
     }
 
     /// E1-19 面板框架入场（只播 sheet + 遮罩，不碰卡片）：首个 viewDidAppear
@@ -361,6 +377,10 @@ final class BearyDraftBoxViewController: UIViewController {
         // 玻璃范围 Token 只允许栏/菜单，底 sheet 不在内）；sheetView 本身不裁剪，阴影保留。
         sheetView.backgroundColor = BearyColors.surface
         sheetView.layer.cornerRadius = BearySheetChrome.topCornerRadius
+        // 无障碍：面板是 overFullScreen 呈现，底层编辑器仍在视图层级里，
+        // 不置 modal 则 VoiceOver 滑动能滑到被遮的编辑器内容；置 modal 后
+        // 导航只限面板内，触摸与遮罩关闭行为不动。
+        sheetView.accessibilityViewIsModal = true
         // 阴影一律走底 sheet 档（2026-11-02 定版第 2 组，旧 0.30/30/(0, 24) 档已废弃），
         // 此处不再自写数值。
         sheetView.translatesAutoresizingMaskIntoConstraints = false
@@ -938,7 +958,12 @@ final class BearyDraftBoxViewController: UIViewController {
         }
         deleteButton.imageView?.contentMode = .scaleAspectFit
         deleteButton.tintColor = BearyColors.red
-        deleteButton.accessibilityLabel = "删除草稿"
+        // 无障碍：照抄回收站口径，把草稿标题拼进按钮名（“删除草稿，标题”）；
+        // 无标题草稿用时间文案兜底，不读出空名；删除行为本身不动。
+        let draftName = (draftValue.title ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        deleteButton.accessibilityLabel = draftName.isEmpty
+            ? "删除草稿，\(draftTimeText(updatedAtSeconds: draftValue.updatedAt))"
+            : "删除草稿，\(draftName)"
         deleteButton.translatesAutoresizingMaskIntoConstraints = false
         // U19：删除钮触摸区域扩到 44×44（图标 8-12 改为 21pt 档，视觉随档变大）。
         NSLayoutConstraint.activate([
@@ -1424,8 +1449,21 @@ final class BearyDraftBoxViewController: UIViewController {
     private func dismissWithExitAnimation(completion: (() -> Void)?) {
         guard !isDismissing else { return }
         isDismissing = true
+        // 无障碍：纯关闭（completion 为 nil）时，dismiss 完成后把焦点还给
+        // 打开方传入的触发入口；新建／打开草稿带回调时新界面接管焦点，
+        // 这里不发。触发入口已隐藏或离线时不发。
+        let focusReturnElement = accessibilityFocusReturnElement
+        // 包裹闭包只活到 dismiss 完成，强持有触发入口一小段无害，不用 weak
+        //（weak 捕获可选值会在闭包内变成双层可选，反而容易写错）。
+        let wrappedCompletion: (() -> Void)? = {
+            completion?()
+            if completion == nil, let element = focusReturnElement,
+               !element.isHidden, element.window != nil {
+                UIAccessibility.post(notification: .layoutChanged, argument: element)
+            }
+        }
         if UIAccessibility.isReduceMotionEnabled {
-            dismiss(animated: false, completion: completion)
+            dismiss(animated: false, completion: wrappedCompletion)
             return
         }
         let duration: TimeInterval = 0.25
@@ -1441,7 +1479,7 @@ final class BearyDraftBoxViewController: UIViewController {
                 self.sheetView.transform = CGAffineTransform(translationX: 0, y: self.sheetView.bounds.height)
             }
         }, completion: { _ in
-            self.dismiss(animated: false, completion: completion)
+            self.dismiss(animated: false, completion: wrappedCompletion)
         })
     }
 
@@ -1491,10 +1529,15 @@ final class BearyDraftBoxViewController: UIViewController {
                     self.sheetView.transform = .identity
                     self.backdropButton.alpha = 1
                 }
+                // 无障碍：拖拽取消后面板仍开着，焦点回到面板内的关闭钮，
+                // 不送回面板后的编辑器触发入口（面板未关，送回去会穿透）。
                 if UIAccessibility.isReduceMotionEnabled {
                     restore()
+                    UIAccessibility.post(notification: .layoutChanged, argument: self.closeButton)
                 } else {
-                    UIView.animate(withDuration: 0.25, animations: restore)
+                    UIView.animate(withDuration: 0.25, animations: restore) { _ in
+                        UIAccessibility.post(notification: .layoutChanged, argument: self.closeButton)
+                    }
                 }
             }
         case .cancelled, .failed:
@@ -1502,10 +1545,14 @@ final class BearyDraftBoxViewController: UIViewController {
                 self.sheetView.transform = .identity
                 self.backdropButton.alpha = 1
             }
+            // 无障碍：同上，取消／失败后焦点回面板内关闭钮。
             if UIAccessibility.isReduceMotionEnabled {
                 restore()
+                UIAccessibility.post(notification: .layoutChanged, argument: self.closeButton)
             } else {
-                UIView.animate(withDuration: 0.25, animations: restore)
+                UIView.animate(withDuration: 0.25, animations: restore) { _ in
+                    UIAccessibility.post(notification: .layoutChanged, argument: self.closeButton)
+                }
             }
         default:
             break
