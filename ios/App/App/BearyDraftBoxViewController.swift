@@ -1752,7 +1752,7 @@ final class BearyDraftBoxViewController: UIViewController {
         }
         if pendingUndos.count == 1, let only = pendingUndos.first {
             let short = summaryText(for: only.draft)
-            undoLabel.text = short.count > 20 ? "已删除“\(String(short.prefix(20)))…”" : "已删除“\(short)”"
+            undoLabel.text = short.count > 20 ? "已删除草稿“\(String(short.prefix(20)))…”" : "已删除草稿“\(short)”"
         } else {
             undoLabel.text = "\(pendingUndos.count) 份草稿已删除"
         }
