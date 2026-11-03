@@ -57,7 +57,9 @@ final class BearyInviteViewController: UIViewController {
     private let bindButton = UIButton(type: .system)
     private let bindHintLabel = UILabel()
     private let messageLabel = UILabel()
-    private let retryButton = UIButton(type: .system)
+    // 邀请失败态重试钮：Hit44 口径——BearyHit44Button 扩触摸帧 + 下方 ≥44 帧约束，
+    // 文案/字色/字号/按压反馈均不动（见 buildLayout 处注释）。
+    private let retryButton = BearyHit44Button(type: .system)
 
     private var inviteCode: String?
     private var referral: ReferralInfo?
@@ -281,6 +283,9 @@ final class BearyInviteViewController: UIViewController {
         messageLabel.numberOfLines = 0
 
         retryButton.translatesAutoresizingMaskIntoConstraints = false
+        // Hit44：只换类名 + 下方 ≥44 帧约束；标题/字色/字号/按压反馈/target 均不动。
+        // 光靠 BearyHit44Button 的 point(inside:) 外扩不够：重试钮是栈末项，栈底即钮底，
+        // 向下扩的约 12pt 落在栈外、命中测试到不了，实测有效高只剩约 32pt；帧本身到 44 才保底。
         retryButton.setTitle("重试", for: .normal)
         retryButton.setTitleColor(BearyColors.deepOrangeText, for: .normal)
         retryButton.titleLabel?.font = BearyDynamicType.cappedFont(for: UIFont.systemFont(ofSize: 14, weight: .semibold))
@@ -354,6 +359,12 @@ final class BearyInviteViewController: UIViewController {
             bindButton.bottomAnchor.constraint(equalTo: bindRow.bottomAnchor),
             bindContainer.trailingAnchor.constraint(equalTo: bindButton.leadingAnchor, constant: -9),
             messageLabel.heightAnchor.constraint(greaterThanOrEqualToConstant: 18),
+            // Hit44：重试钮帧本身 ≥44×44（栈 .fill 下宽本已撑满列宽，宽约束只作下限兜底；
+            // 大字号下标题可继续长高，不被本约束裁掉）。隐藏态与已有的 bindRow（≥48、
+            // 同为栈内隐藏项）同口径。副作用仅行高：重试可见时标题在 44 高内居中、
+            // 弹窗随之长高约一档，文案样式与位置左右不动。
+            retryButton.widthAnchor.constraint(greaterThanOrEqualToConstant: 44),
+            retryButton.heightAnchor.constraint(greaterThanOrEqualToConstant: 44),
         ])
     }
 
