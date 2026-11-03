@@ -3904,7 +3904,7 @@ private final class BearyComposerSheetPresentationController: UIPresentationCont
     var dimTapCloses = false
 
     @objc private func dimTapped() {
-        presentedViewController.dismiss(animated: true)
+        presentedViewController.dismiss(animated: BearyMotion.animated(true))
     }
     private let grabberStrip = BearyGrabberHitView()
     private let grabberPill = UIView()
