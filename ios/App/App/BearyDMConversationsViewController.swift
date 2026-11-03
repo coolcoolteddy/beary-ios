@@ -35,6 +35,14 @@ final class BearyDMConversationsViewController: UIViewController, UITableViewDel
     private var loading = false
     private var needsReloadAfterUserChange = false
     private var loadFailed = false
+    // 第 7 轮属实项 6：已有内容时刷新失败的非阻断提示条。只在
+    // loadFailed && !conversations.isEmpty 时显（空列表仍走居中空态文案，
+    // 不与本条重复）；显隐只切换表顶约束，不动 contentOffset、不清列表。
+    private let refreshFailedBanner = UIView()
+    private let refreshFailedLabel = UILabel()
+    private let refreshFailedRetryButton = UIButton(type: .system)
+    private var tableViewTopToTopBarConstraint: NSLayoutConstraint?
+    private var tableViewTopToBannerConstraint: NSLayoutConstraint?
 
     override func viewDidLoad() {
         super.viewDidLoad()
@@ -76,6 +84,30 @@ final class BearyDMConversationsViewController: UIViewController, UITableViewDel
         conversationStateView.translatesAutoresizingMaskIntoConstraints = false
         conversationStateView.isHidden = true
         view.addSubview(conversationStateView)
+        // 已有内容刷新失败条：常驻于顶栏下方、列表上方（非弹框、非 toast，
+        // 失败不消失直至下次成功）；点“重试”只重拉，不改列表与滚动位置。
+        // 注：旧 emptyLabel 已退役（#706），失败／空态走 conversationStateView，
+        // 本条只负责已有内容时的非阻断失败提示。
+        refreshFailedBanner.translatesAutoresizingMaskIntoConstraints = false
+        refreshFailedBanner.backgroundColor = BearyColors.alpha(BearyColors.red, 0.12)
+        refreshFailedBanner.isHidden = true
+        view.addSubview(refreshFailedBanner)
+        refreshFailedLabel.translatesAutoresizingMaskIntoConstraints = false
+        refreshFailedLabel.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 14))
+        refreshFailedLabel.adjustsFontForContentSizeCategory = true
+        refreshFailedLabel.textColor = BearyColors.ink
+        refreshFailedLabel.text = "未能刷新"
+        refreshFailedBanner.addSubview(refreshFailedLabel)
+        refreshFailedRetryButton.translatesAutoresizingMaskIntoConstraints = false
+        refreshFailedRetryButton.setTitle("重试", for: .normal)
+        refreshFailedRetryButton.titleLabel?.font = BearyDynamicType.scaledFont(for: UIFont.systemFont(ofSize: 14, weight: .semibold))
+        refreshFailedRetryButton.titleLabel?.adjustsFontForContentSizeCategory = true
+        refreshFailedRetryButton.setTitleColor(BearyColors.blue, for: .normal)
+        refreshFailedRetryButton.accessibilityLabel = "重试"
+        refreshFailedRetryButton.accessibilityHint = "重新拉取会话列表，不改变当前列表位置"
+        refreshFailedRetryButton.addTarget(self, action: #selector(refreshFailedRetryTapped), for: .touchUpInside)
+        refreshFailedRetryButton.bearyAddPressFeedback()
+        refreshFailedBanner.addSubview(refreshFailedRetryButton)
 
         firstLoadStateView.translatesAutoresizingMaskIntoConstraints = false
         firstLoadStateView.isHidden = true
@@ -95,7 +127,16 @@ final class BearyDMConversationsViewController: UIViewController, UITableViewDel
             // 审计：居中标题加左右限位，小屏＋大字体时不与两侧钮重叠（超长截断）。
             titleLabel.leadingAnchor.constraint(greaterThanOrEqualTo: backButton.trailingAnchor, constant: 8),
             titleLabel.trailingAnchor.constraint(lessThanOrEqualTo: view.safeAreaLayoutGuide.trailingAnchor, constant: -16),
-            tableView.topAnchor.constraint(equalTo: topBar.bottomAnchor),
+            refreshFailedBanner.topAnchor.constraint(equalTo: topBar.bottomAnchor),
+            refreshFailedBanner.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            refreshFailedBanner.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            refreshFailedBanner.heightAnchor.constraint(equalToConstant: 44),
+            refreshFailedLabel.leadingAnchor.constraint(equalTo: refreshFailedBanner.leadingAnchor, constant: 16),
+            refreshFailedLabel.centerYAnchor.constraint(equalTo: refreshFailedBanner.centerYAnchor),
+            refreshFailedRetryButton.trailingAnchor.constraint(equalTo: refreshFailedBanner.trailingAnchor, constant: -16),
+            refreshFailedRetryButton.centerYAnchor.constraint(equalTo: refreshFailedBanner.centerYAnchor),
+            refreshFailedRetryButton.heightAnchor.constraint(equalToConstant: 44),
+            refreshFailedRetryButton.leadingAnchor.constraint(greaterThanOrEqualTo: refreshFailedLabel.trailingAnchor, constant: 8),
             tableView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             tableView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
             tableView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
@@ -109,6 +150,11 @@ final class BearyDMConversationsViewController: UIViewController, UITableViewDel
             conversationStateView.leadingAnchor.constraint(greaterThanOrEqualTo: view.leadingAnchor, constant: 32),
             conversationStateView.trailingAnchor.constraint(lessThanOrEqualTo: view.trailingAnchor, constant: -32),
         ])
+        // 表顶二选一：无失败条时贴顶栏，有失败条时贴失败条底部。
+        // 只换约束，不碰 tableView.contentOffset，故列表滚动位置不动。
+        tableViewTopToTopBarConstraint = tableView.topAnchor.constraint(equalTo: topBar.bottomAnchor)
+        tableViewTopToBannerConstraint = tableView.topAnchor.constraint(equalTo: refreshFailedBanner.bottomAnchor)
+        tableViewTopToTopBarConstraint?.isActive = true
 
         NotificationCenter.default.addObserver(self, selector: #selector(friendsChanged), name: .bearyFriendsChanged, object: nil)
         NotificationCenter.default.addObserver(self, selector: #selector(userChanged), name: .bearyUserDidChange, object: nil)
@@ -198,6 +244,12 @@ final class BearyDMConversationsViewController: UIViewController, UITableViewDel
         load()
     }
 
+    @objc private func refreshFailedRetryTapped() {
+        // 只重拉：load() 在途时直接返回、不重复请求；成功才清条，
+        // 失败条继续留着；全程不清 conversations、不 scrollToTop。
+        load()
+    }
+
     @objc private func friendsChanged() {
         // 取关/拉黑后会话自动消失：关系变化即重拉，不靠旧列表。
         load()
@@ -282,12 +334,23 @@ final class BearyDMConversationsViewController: UIViewController, UITableViewDel
             // 动作钮与下拉刷新同入口 load()，减动效时 BearyStateView 内部直设终值。
             conversationStateView.configure(kind: .error, title: "加载失败", subtitle: "下拉重试", iconName: nil, actionTitle: "重试", onAction: { [weak self] in self?.load() })
             conversationStateView.isHidden = false
+            setRefreshFailedBannerVisible(false)
         } else if conversations.isEmpty {
             conversationStateView.configure(kind: .empty, title: "还没有私信", subtitle: "发第一条纯文字消息吧", iconName: nil, actionTitle: nil, onAction: nil)
             conversationStateView.isHidden = false
+            setRefreshFailedBannerVisible(false)
         } else {
             conversationStateView.isHidden = true
+            // 已有内容时失败不再零反馈：旧列表原样保留，顶栏下出
+            // “未能刷新 · 重试”常驻条；成功（loadFailed=false）时收起。
+            setRefreshFailedBannerVisible(loadFailed)
         }
+    }
+
+    private func setRefreshFailedBannerVisible(_ visible: Bool) {
+        refreshFailedBanner.isHidden = !visible
+        tableViewTopToTopBarConstraint?.isActive = !visible
+        tableViewTopToBannerConstraint?.isActive = visible
     }
 
     // MARK: - Table
