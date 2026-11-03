@@ -218,10 +218,14 @@ private final class BearyLoginSheetPresentationController: UIPresentationControl
     override func preferredContentSizeDidChange(forChildContentContainer container: UIContentContainer) {
         super.preferredContentSizeDidChange(forChildContentContainer: container)
         guard let containerView = containerView else { return }
-        // 内容高变化（邀请展开/收起、字号档位）时 0.25s 跟帧走。
-        UIView.animate(withDuration: 0.25, delay: 0, options: [.beginFromCurrentState], animations: {
+        // 内容高变化（邀请展开/收起、字号档位）时 0.25s 跟帧走；减动效直落终值。
+        if UIAccessibility.isReduceMotionEnabled {
             containerView.layoutIfNeeded()
-        })
+        } else {
+            UIView.animate(withDuration: 0.25, delay: 0, options: [.beginFromCurrentState], animations: {
+                containerView.layoutIfNeeded()
+            })
+        }
     }
 
     // MARK: - 遮罩与拖动
@@ -272,10 +276,19 @@ private final class BearyLoginSheetPresentationController: UIPresentationControl
             self.dragStripView.transform = .identity
             self.scrimView.alpha = 1
         }
+        // 拖动结束时强制一次布局：拖动中 containerViewWillLayoutSubviews 为保跟手
+        // 提前返回，期间键盘帧变化只记了 keyboardTopY、未落帧；复位完成后再落一次帧，
+        // 否则 sheet 会停在拖动前的键盘位置，直到下一次布局才纠正。拖动中不改 chrome
+        // 帧：帧与平移 transform 混写会跳变（见 containerViewWillLayoutSubviews 注释）。
+        let relayout = { [weak self] in
+            self?.containerView?.setNeedsLayout()
+            self?.containerView?.layoutIfNeeded()
+        }
         if UIAccessibility.isReduceMotionEnabled {
             restore()
+            relayout()
         } else {
-            UIView.animate(withDuration: 0.25, animations: restore)
+            UIView.animate(withDuration: 0.25, animations: restore, completion: { _ in relayout() })
         }
     }
 
