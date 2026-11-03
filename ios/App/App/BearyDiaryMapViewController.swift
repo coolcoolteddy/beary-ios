@@ -38,6 +38,9 @@ final class BearyDiaryMapViewController: UIViewController, MKMapViewDelegate, UI
     private var allEntries: [Entry] = []
     private var groups: [BearyLocationMapGroup] = []
     private var unlocatedGroups: [BearyLocationMapGroup] = []
+    /// 地理编码暂时失败（网络问题）的组：与“全部候选无匹配”分开记，
+    /// 不进“未能在地图上定位”，点按可重试；重算时随未定位列表一并清掉。
+    private var transientFailedGroups: [BearyLocationMapGroup] = []
     private var selectedGroup: BearyLocationMapGroup?
     /// 文本 → 坐标的本页内存缓存（只活在本页实例里，deinit 即丢；绝不写盘）。
     private var geocodeCache: [String: CLLocationCoordinate2D] = [:]
@@ -362,6 +365,7 @@ final class BearyDiaryMapViewController: UIViewController, MKMapViewDelegate, UI
             statusLabel.text = allEntries.isEmpty ? "还没有日记" : "还没有带位置的日记"
             mapView.removeAnnotations(mapView.annotations)
             unlocatedGroups = []
+            transientFailedGroups = []
             tableView.reloadData()
             return
         }
@@ -369,6 +373,7 @@ final class BearyDiaryMapViewController: UIViewController, MKMapViewDelegate, UI
         // 先展示已有列表与已命中的坐标缓存：清掉上一轮标记、列表即时刷新，
         // 缓存组一次成图；未缓存的组随后串行编码、逐批补标记。
         unlocatedGroups = []
+        transientFailedGroups = []
         mapView.removeAnnotations(mapView.annotations)
         var cachedLocated: [(group: BearyLocationMapGroup, coordinate: CLLocationCoordinate2D)] = []
         var pendingGroups: [BearyLocationMapGroup] = []
@@ -428,6 +433,23 @@ final class BearyDiaryMapViewController: UIViewController, MKMapViewDelegate, UI
         return ["\(district)\(group.key)", group.key, district]
     }
 
+    /// 暂时失败判定：只认网络类错误（CLGeocoder 的 .network，底层
+    /// URLError 的断网／超时／连接丢失）。无匹配（geocodeFoundNoResult、
+    /// 空结果无错误）不是暂时失败，继续试下一候选；被取消的请求
+    /// 已由代次门控丢弃，不会走到这里。
+    private func isTransientGeocodeError(_ error: Error?) -> Bool {
+        guard let error = error else { return false }
+        if let clError = error as? CLError {
+            return clError.code == .network
+        }
+        if let urlError = error as? URLError {
+            return urlError.code == .notConnectedToInternet
+                || urlError.code == .timedOut
+                || urlError.code == .networkConnectionLost
+        }
+        return false
+    }
+
     /// 逐级兜底编码：某一级编出坐标即进 located，全部编不出才进 unlocated。
     /// 代次门控：重算/切账号/退出后代次已变，旧回调（含被取消请求的回调）
     /// 到达时直接丢弃，不写缓存、不补标记、不续跑下一组。
@@ -452,10 +474,19 @@ final class BearyDiaryMapViewController: UIViewController, MKMapViewDelegate, UI
         }
         let geocoder = CLGeocoder()
         activeGeocoder = geocoder
-        geocoder.geocodeAddressString(candidates[candidateIndex]) { [weak self] placemarks, _ in
+        geocoder.geocodeAddressString(candidates[candidateIndex]) { [weak self] placemarks, error in
             DispatchQueue.main.async {
                 guard let self = self, generation == self.geocodeGeneration else { return }
                 if self.activeGeocoder === geocoder { self.activeGeocoder = nil }
+                if self.isTransientGeocodeError(error) {
+                    // 暂时失败（网络问题）：不再试下一候选（同网络下同样失败），
+                    // 也不进“未能在地图上定位”；单独成组、点按可重试。
+                    // 只有全部候选都无匹配时，才在候选穷尽分支进未定位列表。
+                    self.transientFailedGroups.append(group)
+                    self.tableView.reloadData()
+                    self.geocodePendingGroups(pending: pending, index: pendingIndex + 1, located: located, unlocated: unlocated, generation: generation)
+                    return
+                }
                 if let coordinate = placemarks?.first?.location?.coordinate {
                     self.geocodeCache[self.geocodeCacheKey(for: group)] = coordinate
                     var nextLocated = located
@@ -550,11 +581,13 @@ final class BearyDiaryMapViewController: UIViewController, MKMapViewDelegate, UI
 
     private enum DiaryMapSection {
         case main
+        case transient
         case unlocated
     }
 
     private var diaryMapSections: [DiaryMapSection] {
         var sections: [DiaryMapSection] = [.main]
+        if !transientFailedGroups.isEmpty { sections.append(.transient) }
         if !unlocatedGroups.isEmpty { sections.append(.unlocated) }
         return sections
     }
@@ -565,6 +598,8 @@ final class BearyDiaryMapViewController: UIViewController, MKMapViewDelegate, UI
 
     func tableView(_ tableView: UITableView, numberOfRowsInSection section: Int) -> Int {
         switch diaryMapSections[section] {
+        case .transient:
+            return transientFailedGroups.count
         case .unlocated:
             return unlocatedGroups.count
         case .main:
@@ -575,6 +610,8 @@ final class BearyDiaryMapViewController: UIViewController, MKMapViewDelegate, UI
 
     func tableView(_ tableView: UITableView, titleForHeaderInSection section: Int) -> String? {
         switch diaryMapSections[section] {
+        case .transient:
+            return "定位失败（网络问题），点按重试"
         case .unlocated:
             return "未能在地图上定位"
         case .main:
@@ -585,6 +622,15 @@ final class BearyDiaryMapViewController: UIViewController, MKMapViewDelegate, UI
 
     func tableView(_ tableView: UITableView, cellForRowAt indexPath: IndexPath) -> UITableViewCell {
         switch diaryMapSections[indexPath.section] {
+        case .transient:
+            let cell = tableView.dequeueReusableCell(withIdentifier: "DiaryMapGroupCell", for: indexPath)
+            let group = transientFailedGroups[indexPath.row]
+            var config = cell.defaultContentConfiguration()
+            config.text = group.key
+            config.secondaryText = "\(group.count) 篇 · 点此重试定位"
+            cell.contentConfiguration = config
+            cell.accessoryType = .disclosureIndicator
+            return cell
         case .unlocated:
             let cell = tableView.dequeueReusableCell(withIdentifier: "DiaryMapGroupCell", for: indexPath)
             let group = unlocatedGroups[indexPath.row]
@@ -631,6 +677,11 @@ final class BearyDiaryMapViewController: UIViewController, MKMapViewDelegate, UI
     func tableView(_ tableView: UITableView, didSelectRowAt indexPath: IndexPath) {
         tableView.deselectRow(at: indexPath, animated: true)
         switch diaryMapSections[indexPath.section] {
+        case .transient:
+            // 暂时失败组点按重试整轮编码：缓存组仍即时成图，代次换代后
+            // 旧链丢弃；不做单组链（会与在途整轮链抢代次与标记）。
+            regroupAndGeocode()
+            return
         case .unlocated:
             selectGroup(unlocatedGroups[indexPath.row])
             return
