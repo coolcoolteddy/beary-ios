@@ -777,7 +777,12 @@ final class BearyDraftBoxViewController: UIViewController {
             subWrap.isHidden = true
             hintWrap.isHidden = true
             let failedLabel = UILabel()
-            failedLabel.text = "草稿读取失败\n原文件已保留，请稍后再试"
+            // 两种失败态文案分开：损坏态不再沿用“原文件已保留，请稍后再试”
+            //（清除会删坏 v3 文件、只留 .bak），须讲清清除结果与重读回空态；
+            // 非损坏态沿用原话 + 下方“重新读取”，按钮与确认框均不动。
+            failedLabel.text = draftsLoadCorrupt
+                ? "草稿库已损坏\n损坏的草稿无法恢复，.bak 备份保留在手机里。清除后重新读取会回到空态，新草稿可以正常保存。"
+                : "草稿读取失败\n原文件已保留，请稍后再试"
             failedLabel.font = UIFont.systemFont(ofSize: 13)
             failedLabel.textColor = BearyColors.gray
             failedLabel.textAlignment = .center
