@@ -3288,7 +3288,15 @@ class BearyProfileViewController: UIViewController {
             // 互关取关退为对方单向关注我（按钮变“回关”）；单向取关变无关系。
             BearyFriends.confirmUnfollowAlert(from: self, displayName: displayName, mutual: state == .mutual) { [weak self] in
                 guard let self = self else { return }
-                let target: BearyFollowState = state == .mutual ? .followedBy : .none
+                // A4：确认执行时以当前态重算目标，不沿用点按时捕获的 state；
+                // 若已不是 .following/.mutual（刷新回包已改态），放弃本次取关并刷新，
+                // 不按旧目标发 unfollow，避免瞬时错误态。
+                guard let currentState = self.followState,
+                      currentState == .following || currentState == .mutual else {
+                    self.reloadProfile()
+                    return
+                }
+                let target: BearyFollowState = currentState == .mutual ? .followedBy : .none
                 self.followActionSeq += 1
                 let requestSeq = self.followActionSeq
                 self.followState = target
@@ -3302,11 +3310,15 @@ class BearyProfileViewController: UIViewController {
                             self.confirmedFollowState = target
                             BearyFriends.clearDiaryCachesAndNotify()
                             self.reloadProfile()
-                        case .failure:
+                        case .failure(let error):
                             self.followState = self.confirmedFollowState
                             self.applyFollowButton()
-                            self.playFollowDenyShake()
-                            BearyToast.show(in: self.view, message: "取关失败，请重试")
+                            if case .unauthorized = error {
+                                self.onRequireLogin?()
+                            } else {
+                                self.playFollowDenyShake()
+                                BearyToast.show(in: self.view, message: "取关失败，请重试")
+                            }
                         }
                     }
                 }
