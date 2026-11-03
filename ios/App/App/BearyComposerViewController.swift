@@ -366,6 +366,47 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     /// setVisibility 与 publishEntry 的回调只认创建时的代次；过期回调直接
     /// 丢弃，不碰 isPublishing、不 toast、不覆盖新一轮流程的状态。
     private var publishGeneration = 0
+    /// 发布发起账号（新建发布专用）：首次点发布时捕获，之后本篇的发布重试
+    /// 一律认它，不随重登改写。401 后重登成另一账号时，旧账号内容不得
+    /// 写进新账号草稿文件、也不得以新账号发出：didTapPublish、saveDraftNow、
+    /// beginPublishTogether、performPublish 四处均以它校验，失配即中止并
+    /// 提示回到原账号或重新开始（见 showPublishAccountMismatchAlert）。
+    /// 同账号重登 id 不变，校验通过、同一草稿可续写；编辑模式不设它
+    /// （saveDraftNow 在编辑态本就是空操作，见 saveDraftNow 首行守卫）。
+    private var publishOriginAccountId: Int?
+    /// 一并公开部分成功态：setVisibility 已成功、原日记已公开的原日记 id。
+    /// 此后新篇发布失败不再回滚原日记（见 performPublish 部分成功分支），
+    /// 重试（弹框按钮或再点发布）只发新篇，不再走门禁/setVisibility。
+    /// 发布成功、清草稿、重置空白、从草稿箱切篇时清掉。
+    private var publishTogetherPublishedSourceId: String?
+    /// 发布账号口径：登录态 id 优先，取不到时退回草稿分桶 id（两者正常
+    /// 情况下一致，登录切换时由容器 setAccount 同步）。
+    private func currentAccountIdForPublish() -> Int? {
+        if let id = SessionManager.shared.currentUser?.id {
+            return id
+        }
+        return BearyDraftStore.currentAccountId
+    }
+    /// 发起账号是否已失配：发起账号已定、且当前账号已定、两者不同。
+    /// 当前账号未定（如 401 刚清态、尚未重登）不算失配，沿旧口径走
+    /// 登录入口，不在此处误拦。
+    private func isPublishOriginMismatch() -> Bool {
+        guard let origin = publishOriginAccountId,
+              let current = currentAccountIdForPublish() else { return false }
+        return origin != current
+    }
+    /// 账号失配提示：只提示、不删不改任何草稿与已公开态。部分成功态
+    /// （原日记已公开）另加一句，免得用户误以为什么都没发生。
+    /// “重新开始”不由本弹框自动执行：用户走现有草稿箱“丢弃并新建”，
+    /// clearDraftAndFiles 会清掉发起账号绑定，新篇再发布即按新账号计。
+    private func showPublishAccountMismatchAlert() {
+        if let sourceId = publishTogetherPublishedSourceId,
+           sourceId == selectedQuote?.entryId {
+            showAlert(message: "原日记已公开，新篇未发布。账号已变化，请回到原账号后再发布，或丢弃本篇重新开始。")
+        } else {
+            showAlert(message: "账号已变化，本篇未发布。请回到原账号后再发布，或丢弃本篇重新开始。")
+        }
+    }
     /// 第一次点按时拍下的不可变完整发布快照（quote-freeze）：正文、图片、
     /// 实况映射、心情、天气、气温、引用、可见性、@、标题、限时、位置、
     /// clientReq 全在点按瞬间定格；门禁与 setVisibility 在途期间
@@ -388,6 +429,9 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         let locationName: String?
         let locationDistrict: String?
         let clientReq: String
+        /// 快照拍定时的发起账号：performPublish 入口再校验一次，防门禁/
+        /// setVisibility 在途期间账号已变仍把旧篇以新账号发出。
+        let originAccountId: Int?
     }
     /// 新建发布快照（quote-freeze）：在 didTapPublish 校验通过后、门禁弹出
     /// 前调用。clientReq 在此创建（原 performPublish 首步），调用方随后 saveDraftNow
@@ -412,7 +456,8 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
             ephemeral: isEphemeral ? 1 : nil,
             locationName: selectedLocation?.name,
             locationDistrict: selectedLocation?.district,
-            clientReq: req)
+            clientReq: req,
+            originAccountId: currentAccountIdForPublish())
     }
     private var didAutoFocus = false
     // 标题行已去掉：进页拉回旗标与 ensureTitleRowVisibleOnEntry 已整段删除
@@ -2549,9 +2594,29 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                     if self.quotePanelOpen {
                         self.renderQuotePanelRows(entries: entries)
                     }
-                case .failure:
+                case .failure(let error):
                     self.quotePanelFailed = true
-                    self.quotePanelRetryButton.isHidden = false
+                    // 引用面板 401 分流：此前失败分支不分错误，面板内既无登录
+                    // 回退、重试也只会再撞 401。401（含 /me 专用的 authFailure）
+                    // 走统一登录入口 onRequireLogin（与发布 401 同入口，不另起
+                    // 登录 UI）；登录后不自动重拉——由用户点面板重试钮或切 tab
+                    // 重试当前面板，避免换号后自动把别号的列表顶进当前面板。
+                    // 普通网络/业务错误沿用面板重试钮，不弹登录。
+                    let loginExpired: Bool
+                    switch error {
+                    case .unauthorized, .authFailure:
+                        loginExpired = true
+                    default:
+                        loginExpired = false
+                    }
+                    if loginExpired {
+                        self.quotePanelEmptyLabel.text = "登录已失效，请重新登录后重试"
+                        self.quotePanelEmptyLabel.isHidden = false
+                        self.quotePanelRetryButton.isHidden = false
+                        self.onRequireLogin?()
+                    } else {
+                        self.quotePanelRetryButton.isHidden = false
+                    }
                 }
             }
         }
@@ -5745,8 +5810,23 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     /// 失败时不关闭、留页提示重试（P0：此前无条件关闭，失败红字随页面消失）。
     private func saveDraftNow(completion: ((DraftSaveResult) -> Void)? = nil) {
         // 编辑模式不写草稿（scheduleDraftSave 已拦，这里再拦一道，防以后新增调用点漏拦）。
+        // 编辑态 saveDraftNow 是空操作、无草稿文件可串账号，故本支的跨账号
+        // 修复只针对新建发布；编辑保存的账号问题不在本支范围。
         if isEditMode {
             completion?(DraftSaveResult(succeeded: true, hadPreviousSavedVersion: false))
+            return
+        }
+        // 发布发起账号失配：不写盘、不生成新 draftId/clientReq、不碰
+        // 当前账号的草稿桶。旧代码只在入队时捕获账号防“排队期间切号”，
+        // 挡不住 401 重登后再次调用 saveDraftNow（此时当前账号已是新号，
+        // 捕获到的就是新号，旧内容会原样写进新号文件）。失配时按失败回传，
+        // 关闭/保留路径沿旧口径留页重试；状态行置红，不谎称已保存。
+        // hadPreviousSavedVersion 计真：发布起点 didTapPublish 已落盘一次，
+        // 原账号桶里已有本次发布前的版本，旧版未被本次调用覆盖。
+        if isPublishOriginMismatch() {
+            draftStatusLevel = 0
+            updateDraftStatusLabel()
+            completion?(DraftSaveResult(succeeded: false, hadPreviousSavedVersion: true))
             return
         }
         // clientReq 与 draftId 都是本篇草稿创建时生成一次，之后全程复用（含发布重试），
@@ -6118,6 +6198,10 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         currentDraftId = nil
         clearedCurrentDraftId = nil
         draftClientReq = nil
+        // 发布绑定随篇清掉：丢弃/发布成功后不再有“本篇发起账号”，
+        // 下一篇发布重新捕获，不被旧绑定误拦。
+        publishOriginAccountId = nil
+        publishTogetherPublishedSourceId = nil
         draftStatusLevel = nil
         updateDraftStatusLabel()
         if let draftIdValue = draftIdValue {
@@ -6295,6 +6379,9 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         // 删本篇，保留路径先调 saveDraftNow 落盘本篇）；这里再整库清会误删其他篇。
         currentDraftId = nil
         draftClientReq = nil
+        // 空白新篇不再继承上一篇的发布绑定与部分成功态。
+        publishOriginAccountId = nil
+        publishTogetherPublishedSourceId = nil
         draftStatusLevel = nil
         updateCountLabel()
         updatePublishState()
@@ -6323,6 +6410,10 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         updateDraftStatusLabel()
         draftTimer?.invalidate()
         removeAllImageViews()
+        // 切篇即换发布绑定：上一篇的发起账号与部分成功态不带到新篇，
+        // 新篇首次点发布时重新捕获。
+        publishOriginAccountId = nil
+        publishTogetherPublishedSourceId = nil
         currentDraftId = draft.draftId
         draftClientReq = draft.clientReq
         setBodyAttributedText(draft.content)
@@ -6541,9 +6632,29 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
         // 快照后落盘一次草稿（原 performPublish 首步的 clientReq 落盘，现移到
         // 请求链起点，使门禁路径的 setVisibility 之前幂等键已持久化）。
         guard let snapshot = makePublishSnapshot(trimmed: trimmed) else { return }
+        // 发布发起账号校验（本支新增，须在落盘与代次递增之前）：已有发起
+        // 绑定且当前账号已变时，中止发布、不落盘、不递增代次——旧弹框的
+        // “只重试新篇”回调仍认旧代次，不会被本次递增作废；同账号重登
+        // id 不变，直接通过。首次发布在此定下绑定，之后重试不改写。
+        if isPublishOriginMismatch() {
+            showPublishAccountMismatchAlert()
+            return
+        }
+        if publishOriginAccountId == nil {
+            publishOriginAccountId = snapshot.originAccountId
+        }
         publishGeneration += 1
         let generation = publishGeneration
         saveDraftNow()
+        // 一并公开部分成功后重按发布：原日记已公开，不再走门禁与
+        // setVisibility，只发新篇（publishTogetherPublishedSourceId 在
+        // setVisibility 成功时记下，发布成功/清草稿/切篇时清掉）。
+        if selectedVisibilityPublished, let pendingQuote = selectedQuote,
+           let publishedSourceId = publishTogetherPublishedSourceId,
+           publishedSourceId == pendingQuote.entryId {
+            performPublish(snapshot: snapshot, generation: generation, sourceAlreadyPublished: true)
+            return
+        }
         // 引用规则简化（2026-10-31）：新建将公开且含私密引用时先拦截，不直接发。
         // 自己来源三选一、他人来源两项（见 BearyQuoteGate.gateEditorPublish）；
         // 一并公开先发原日记 visibility=1，成功才发本篇；失败停在编辑器、不发本篇。
@@ -6587,6 +6698,12 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     private func beginPublishTogether(snapshot: PublishSnapshot, generation: Int) {
         guard generation == publishGeneration else { return }
         guard let sourceId = snapshot.quoteId, !sourceId.isEmpty else { return }
+        // setVisibility 发出前再校验发起账号：门禁弹框在途期间账号若已变，
+        // 不把原日记以新账号公开（isPublishing 尚未置位，直接中止即可）。
+        if isPublishOriginMismatch() {
+            showPublishAccountMismatchAlert()
+            return
+        }
         isPublishing = true
         updatePublishState()
         BearyAPI.shared.setVisibility(id: sourceId, published: 1) { [weak self] result in
@@ -6594,7 +6711,10 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                 guard let self = self, generation == self.publishGeneration else { return }
                 switch result {
                 case .success:
-                    self.performPublish(snapshot: snapshot, generation: generation)
+                    // 原日记已公开：先记部分成功态，再发新篇。此后新篇
+                    // 失败不回滚原日记（见 performPublish 部分成功分支）。
+                    self.publishTogetherPublishedSourceId = sourceId
+                    self.performPublish(snapshot: snapshot, generation: generation, sourceAlreadyPublished: true)
                 case .failure:
                     self.isPublishing = false
                     self.updatePublishState()
@@ -6602,6 +6722,45 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                 }
             }
         }
+    }
+
+    /// 一并公开部分成功提示：原日记已公开、新篇发布失败。原日记不回滚：
+    /// 用户已明确同意一起公开，且公开后可能已被看到/引用，回滚既收不回
+    /// 可见性、又会把已同意的公开态悄悄改回私密，故部分成功即为终态，
+    /// 新篇单独重试。401 时不直接重发新篇（必再撞 401），改给重新登录；
+    /// 登录后用户再点发布即走部分成功跳门禁路径，只发新篇。
+    private func showPartialPublishFailureAlert(snapshot: PublishSnapshot, generation: Int, error: APIError) {
+        if let sourceId = snapshot.quoteId, !sourceId.isEmpty {
+            publishTogetherPublishedSourceId = sourceId
+        }
+        var message = "原日记已公开，新篇发布失败"
+        let isUnauthorized: Bool
+        if case .unauthorized = error {
+            isUnauthorized = true
+            message += "，登录已失效，请重新登录后只重试新篇"
+        } else if case .network = error {
+            isUnauthorized = false
+            message += "，网络不可用，已保存为草稿，联网后可只重试新篇"
+        } else {
+            isUnauthorized = false
+            message += "，请只重试新篇"
+        }
+        let alert = UIAlertController(title: nil, message: message, preferredStyle: .alert)
+        if isUnauthorized {
+            alert.addAction(UIAlertAction(title: "重新登录", style: .default) { [weak self] _ in
+                self?.onRequireLogin?()
+            })
+        } else {
+            // 同一代次内只重试新篇：不走门禁、不再 setVisibility。
+            // 代次已变（用户已另起一轮发布）时 performPublish 入口守卫
+            // 会丢弃本次回调，不碰在途流程。
+            alert.addAction(UIAlertAction(title: "只重试新篇", style: .default) { [weak self] _ in
+                guard let self = self else { return }
+                self.performPublish(snapshot: snapshot, generation: generation, sourceAlreadyPublished: true)
+            })
+        }
+        alert.addAction(UIAlertAction(title: "知道了", style: .cancel, handler: nil))
+        present(alert, animated: BearyMotion.animated(true))
     }
 
     private func hasFailedImage() -> Bool {
@@ -6619,8 +6778,21 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
     /// 失败分支的 saveDraftNow 只是草稿兜底（保留失败篇），不进请求。
     /// 代次过期（新一轮发布已开始）的回调直接丢弃，不碰 isPublishing、
     /// 不覆盖新流程状态。
-    private func performPublish(snapshot: PublishSnapshot, generation: Int) {
+    /// - sourceAlreadyPublished：一并公开的原日记已公开成功，本次只发新篇；
+    ///   失败分支走部分成功提示、不回滚原日记（见 showPartialPublishFailureAlert）。
+    private func performPublish(snapshot: PublishSnapshot, generation: Int, sourceAlreadyPublished: Bool = false) {
         guard generation == publishGeneration else { return }
+        // 发布请求发出前再校验发起账号：快照发起账号或本篇发起绑定
+        // 任一失配即中止、不发请求。部分成功态下失配用部分成功口径
+        // 提示（原日记已公开仍要明说），不给“只重试新篇”按钮——换号
+        // 重发仍会被本守卫拦下，须先回到原账号。
+        if isPublishOriginMismatch()
+            || (snapshot.originAccountId != nil && snapshot.originAccountId != currentAccountIdForPublish()) {
+            isPublishing = false
+            updatePublishState()
+            showPublishAccountMismatchAlert()
+            return
+        }
         isPublishing = true
         updatePublishState()
         // 109：新建标题取快照（空 = nil 省略不传，按无标题创建）。
@@ -6672,11 +6844,20 @@ final class BearyComposerViewController: UIViewController, UITextViewDelegate, P
                     }
                 case .failure(let error):
                     // 失败一律保留草稿；离线/网络错误给明确文案。
-                    // 网络分支：草稿兜底须按落盘成败分文案——此前无条件称“已保存为
-                    // 草稿”，落盘失败时即谎称；现接 saveDraftNow 的 DraftSaveResult，
-                    // 成功才称已保存，失败明示草稿也未保存、请保留内容后重试。
-                    // 非网络分支（未授权/通用）口径不动，仍沿用原 fire-and-forget 调用。
-                    if case .network = error {
+                    // saveDraftNow 受发起账号守卫约束：账号已变时不写新号桶，
+                    // 原账号旧版仍在，失败提示仍按本分支出（不因保存被拦而改口径）。
+                    // 两边都保：部分成功先行（原日记已公开，不回滚、给只重试新篇
+                    // 的路径，401 时给重新登录）；网络分支按落盘成败分文案。
+                    if sourceAlreadyPublished {
+                        // 部分成功：原日记已公开，不回滚、不走通用“发布失败”
+                        // 文案，弹框给只重试新篇的路径（401 时给重新登录）。
+                        self.saveDraftNow()
+                        self.showPartialPublishFailureAlert(snapshot: snapshot, generation: generation, error: error)
+                    } else if case .network = error {
+                        // 网络分支：草稿兜底须按落盘成败分文案——此前无条件称“已保存为
+                        // 草稿”，落盘失败时即谎称；现接 saveDraftNow 的 DraftSaveResult，
+                        // 成功才称已保存，失败明示草稿也未保存、请保留内容后重试。
+                        // 非网络分支（未授权/通用）口径不动，仍沿用原 fire-and-forget 调用。
                         self.saveDraftNow { [weak self] result in
                             guard let self = self else { return }
                             if result.succeeded {
