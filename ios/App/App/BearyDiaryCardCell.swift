@@ -1791,8 +1791,9 @@ class BearyDiaryCardCell: UITableViewCell {
     }
 
     /// R9 A 卡片部分：只补无障碍标签，不改视觉与热区。点赞含状态与计数
-    /// （“点赞，12”/“已点赞，12”，feed 0 赞亦为“点赞，0”）；收藏含状态
-    /// （“收藏”/“已收藏”）；分享为功能标签“分享”。来源按模式取：feed 走
+    /// （“点赞，12”/“已点赞，12”）；零赞时只读“点赞”，与详情口径一致
+    /// （详情零赞不显示数字、读屏名就是“点赞”，旧口径卡片读“点赞，0”）；
+    /// 收藏含状态（“收藏”/“已收藏”）；分享为功能标签“分享”。来源按模式取：feed 走
     /// currentEntry，profile 走 cellLikedByMe/cellLikeCount/cellBookmarkedByMe；
     /// profile 就地同步时 applyLike 与 applyProfileBookmark 先后各调一次，
     /// 末次调用时三项均为最新值。
@@ -1809,7 +1810,7 @@ class BearyDiaryCardCell: UITableViewCell {
             likeCount = currentEntry?.likeCount ?? 0
             bookmarked = currentEntry?.bookmarkedByMe ?? false
         }
-        likeButton.accessibilityLabel = "\(liked ? "已点赞" : "点赞")，\(likeCount)"
+        likeButton.accessibilityLabel = likeCount <= 0 ? "点赞" : "\(liked ? "已点赞" : "点赞")，\(likeCount)"
         bookmarkButton.accessibilityLabel = bookmarked ? "已收藏" : "收藏"
         shareButton.accessibilityLabel = "分享"
     }
